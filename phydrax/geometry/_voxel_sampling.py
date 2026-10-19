@@ -111,6 +111,7 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
                                 "shape": list(spec.shape),
                                 "dtype": spec.dtype,
                                 "role": spec.role,
+                                "unit_id": spec.unit.unit_id,
                                 "physical_scale": spec.physical_scale,
                                 "bounds": list(spec.bounds),
                                 "trainable": spec.trainable,

@@ -12,6 +12,26 @@ import pytest
 import phydrax as phx
 
 
+# Empirical `test_mixed_quadratic_h1_reproduces_physical_quadratic_in_both_cells`: matched max |delta|=8.88178e-16; joint allowance fraction=4.31152e-09, margin=100%.
+_MIXED_QUADRATIC_VALUES_ATOL = 1e-12
+# Empirical `test_periodic_mixed_prism_tet_p2_retains_common_nodal_traces`: matched max |delta|=8.88178e-16; joint allowance fraction=4.31152e-09, margin=100%.
+_PERIODIC_MIXED_QUADRATIC_VALUES_ATOL = 1.0e-12
+# Empirical `test_periodic_pyramid_hex_common_quad_and_triangular_traces`: matched max |delta|=6.66134e-16; joint allowance fraction=5.7228e-09, margin=100%.
+_PERIODIC_HEX_PYRAMID_VALUES_ATOL = 1.0e-10
+# Empirical `test_mixed_dg_constant_density_integrates_actual_region_volume`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_MIXED_DG_DENSITY_CONTENT_ATOL = 1e-12
+# Empirical `test_mixed_h1_components_preserve_distinct_polynomial_values`: matched max |delta|=2.22045e-16; joint allowance fraction=1.91411e-09, margin=100%.
+_MIXED_COMPONENT_VALUES_ATOL = 1e-12
+# Empirical `test_mixed_canonical_forms_reconstruct_one_physical_vector_across_interface`: matched max |delta|=2.22045e-16; joint allowance fraction=5.55112e-06, margin=99.9994%.
+_MIXED_FORM_MOMENTS_ATOL = 2e-11
+# Empirical `test_mixed_canonical_forms_reconstruct_one_physical_vector_across_interface`: matched max |delta|=2.22045e-16; joint allowance fraction=5.55112e-06, margin=99.9994%.
+_MIXED_FORM_MOMENTS_RTOL = 2e-11
+# Empirical `test_mixed_canonical_forms_reconstruct_one_physical_vector_across_interface`: matched max |delta|=3.54161e-14; joint allowance fraction=0.00118054, margin=99.8819%.
+_MIXED_PHYSICAL_VECTOR_ATOL = 2e-11
+# Empirical `test_mixed_canonical_forms_reconstruct_one_physical_vector_across_interface`: matched max |delta|=3.54161e-14; joint allowance fraction=0.00118054, margin=99.8819%.
+_MIXED_PHYSICAL_VECTOR_RTOL = 2e-11
+
+
 def _mixed_mesh() -> Any:
     coordinates = np.asarray(
         (
@@ -122,10 +142,14 @@ def test_mixed_quadratic_h1_reproduces_physical_quadratic_in_both_cells() -> Non
         space.elements[0][1].tabulate(np.asarray([[0.2, 0.3, 0.1]], dtype=np.float64))[0]
     )
     np.testing.assert_allclose(
-        first_basis @ coefficients[first_route], 0.2**2 + 0.3**2 + 0.4**2, atol=1e-12
+        first_basis @ coefficients[first_route],
+        0.2**2 + 0.3**2 + 0.4**2,
+        atol=_MIXED_QUADRATIC_VALUES_ATOL,
     )
     np.testing.assert_allclose(
-        second_basis @ coefficients[second_route], 0.1**2 + 0.3**2 + 1.4**2, atol=1e-12
+        second_basis @ coefficients[second_route],
+        0.1**2 + 0.3**2 + 1.4**2,
+        atol=_MIXED_QUADRATIC_VALUES_ATOL,
     )
 
 
@@ -159,10 +183,14 @@ def test_periodic_mixed_prism_tet_p2_retains_common_nodal_traces() -> None:
         space.elements[0][1].tabulate(np.asarray(((0.2, 0.3, 0.1),), dtype=np.float64))[0]
     )
     np.testing.assert_allclose(
-        prism_values @ coefficients[prism_route], 0.2**2 + 0.3**2 + 0.4**2, atol=1.0e-12
+        prism_values @ coefficients[prism_route],
+        0.2**2 + 0.3**2 + 0.4**2,
+        atol=_PERIODIC_MIXED_QUADRATIC_VALUES_ATOL,
     )
     np.testing.assert_allclose(
-        tet_values @ coefficients[tet_route], 0.1**2 + 0.3**2 + 1.4**2, atol=1.0e-12
+        tet_values @ coefficients[tet_route],
+        0.1**2 + 0.3**2 + 1.4**2,
+        atol=_PERIODIC_MIXED_QUADRATIC_VALUES_ATOL,
     )
 
 
@@ -215,12 +243,14 @@ def test_periodic_pyramid_hex_common_quad_and_triangular_traces(degree: int) -> 
         space.elements[0][1].tabulate(np.asarray(((0.4, 0.3, 0.2),), dtype=np.float64))[0]
     )
     np.testing.assert_allclose(
-        hex_values @ coefficients[hex_route], 0.2**2 + 0.3**2 + 0.4**2, atol=1.0e-10
+        hex_values @ coefficients[hex_route],
+        0.2**2 + 0.3**2 + 0.4**2,
+        atol=_PERIODIC_HEX_PYRAMID_VALUES_ATOL,
     )
     np.testing.assert_allclose(
         pyramid_values @ coefficients[pyramid_route],
         0.3**2 + 0.2**2 + 1.2**2,
-        atol=1.0e-10,
+        atol=_PERIODIC_HEX_PYRAMID_VALUES_ATOL,
     )
 
 
@@ -240,7 +270,9 @@ def test_mixed_dg_constant_density_integrates_actual_region_volume() -> None:
         lambda values, gradients, points, context: values**2,
     )
     np.testing.assert_allclose(
-        density.evaluate(space, jnp.ones((2,), dtype=jnp.float64)), 2.0 / 3.0, atol=1e-12
+        density.evaluate(space, jnp.ones((2,), dtype=jnp.float64)),
+        2.0 / 3.0,
+        atol=_MIXED_DG_DENSITY_CONTENT_ATOL,
     )
 
 
@@ -259,10 +291,14 @@ def test_mixed_h1_components_preserve_distinct_polynomial_values() -> None:
         space.elements[0][1].tabulate(np.asarray([[0.2, 0.3, 0.1]], dtype=np.float64))[0]
     )
     np.testing.assert_allclose(
-        first_basis @ coefficients[first_route], [[0.9, 0.29]], atol=1e-12
+        first_basis @ coefficients[first_route],
+        [[0.9, 0.29]],
+        atol=_MIXED_COMPONENT_VALUES_ATOL,
     )
     np.testing.assert_allclose(
-        second_basis @ coefficients[second_route], [[1.8, 2.06]], atol=1e-12
+        second_basis @ coefficients[second_route],
+        [[1.8, 2.06]],
+        atol=_MIXED_COMPONENT_VALUES_ATOL,
     )
 
 
@@ -275,7 +311,7 @@ def test_mixed_canonical_forms_reconstruct_one_physical_vector_across_interface(
     proxy: Any,
 ) -> None:
     from phydrax.discretization._cell_geometry import (
-        _require_scalar_coordinate_element,
+        require_scalar_coordinate_element,
     )
     from phydrax.linalg import (
         DenseLinearOperator,
@@ -309,7 +345,7 @@ def test_mixed_canonical_forms_reconstruct_one_physical_vector_across_interface(
         space.coordinate_dofs,
         strict=True,
     ):
-        coordinate = _require_scalar_coordinate_element(
+        coordinate = require_scalar_coordinate_element(
             coordinate, "Mixed canonical form fixture"
         )
         basis = element.form_basis
@@ -342,7 +378,10 @@ def test_mixed_canonical_forms_reconstruct_one_physical_vector_across_interface(
             )[:, 0]
             owned = np.isfinite(coefficients[route])
             np.testing.assert_allclose(
-                coefficients[route[owned]], local[owned], atol=2e-11, rtol=2e-11
+                coefficients[route[owned]],
+                local[owned],
+                atol=_MIXED_FORM_MOMENTS_ATOL,
+                rtol=_MIXED_FORM_MOMENTS_RTOL,
             )
             coefficients[route] = local
         sample = np.asarray(((0.2, 0.3, 0.4),), dtype=np.float64)
@@ -362,7 +401,12 @@ def test_mixed_canonical_forms_reconstruct_one_physical_vector_across_interface(
                 reconstructed = np.asarray(solved.value)
             else:
                 reconstructed = jacobian @ reference / np.linalg.det(jacobian)
-            np.testing.assert_allclose(reconstructed, physical, atol=2e-11, rtol=2e-11)
+            np.testing.assert_allclose(
+                reconstructed,
+                physical,
+                atol=_MIXED_PHYSICAL_VECTOR_ATOL,
+                rtol=_MIXED_PHYSICAL_VECTOR_RTOL,
+            )
 
 
 def test_mixed_raw_vector_element_without_canonical_owner_is_refused() -> None:
@@ -383,12 +427,12 @@ def test_mixed_raw_vector_element_without_canonical_owner_is_refused() -> None:
             tabulator=scalar.tabulator,
             tabulator_id=scalar.tabulator_id,
         )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"FiniteElementPlan\.fields"):
         phx.discretization.FiniteElementPlan(
             mesh, phx.discretization.FiniteElementFieldSpec("u", elements)
         )
 
 
 def test_prism_form_family_without_owning_reference_contract_is_refused() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="family"):
         phx.discretization.form_element("prism", 1, 2, family="full", proxy="circulation")

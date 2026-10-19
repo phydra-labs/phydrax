@@ -175,7 +175,7 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
             else:
                 if not isinstance(trim.outer, PolygonTrimLoop) or trim.holes:
                     raise ValueError(
-                        "Surface panelization supports affine triangular trim cells only."
+                        f"SurfacePanelization3D.trim must have a PolygonTrimLoop outer boundary and no holes; got {(type(trim.outer).__name__, len(trim.holes))!r}."
                     )
                 vertices = trim.outer.vertices
                 if vertices.shape != (3, 2):

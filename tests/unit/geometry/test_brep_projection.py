@@ -1,4 +1,5 @@
 import io
+from pathlib import Path
 from typing import Any
 
 import equinox as eqx
@@ -22,12 +23,30 @@ from OCP.gp import gp_Ax2, gp_Circ, gp_Dir, gp_Pnt
 
 import phydrax as phx
 from phydrax._fingerprint import array_tree_fingerprint
+from phydrax.units import METER
+from tests._support.cad_models import native_solid
+
+
+# Empirical `test_mesh_region_queries_follow_changed_radius_and_derivative`: matched max |delta|=2.00362e-12; joint allowance fraction=0.000184373, margin=99.9816%.
+_MESH_REGION_RADIUS_DERIVATIVE_RTOL = 1e-8
+# Empirical `test_mesh_region_queries_follow_changed_radius_and_derivative`: matched max |delta|=2.00362e-12; joint allowance fraction=0.000184373, margin=99.9816%.
+_MESH_REGION_RADIUS_DERIVATIVE_ATOL = 1e-9
+# Empirical `test_fixed_topology_native_brep_queries_follow_changed_radius_and_derivative`: matched max |delta|=2.22045e-16; joint allowance fraction=3.89978e-09, margin=100%.
+_BREP_DYNAMIC_RADIUS_CLOSEST_POINT_ATOL = 2e-13
 
 
 _CONTRACT = phx.SpatialCoordinateContract.si()
 _STATUS = phx.geometry.BRepProjectionStatus
 _FACE = phx.geometry.BRepEntityDimension.FACE
 _EDGE = phx.geometry.BRepEntityDimension.EDGE
+
+# Existing empirical budgets from the cylinder/sphere OCCT closed-form scenarios
+# (d2dfcb941 test_brep_projection_scenario_1/2) and the seed-7, 48-sample native
+# cylinder comparison below. These oracle tolerances are not certified bounds.
+_OCCT_CLOSED_FORM_ATOL = 1e-12
+_NATIVE_OCCT_ATOL = 1e-9
+# Declared classification distance for the on-surface cylinder membership case.
+_CLASSIFICATION_DISTANCE = 1e-9
 
 
 def _bound(shape: Any, embedding: Any = None) -> Any:
@@ -71,11 +90,15 @@ def test_brep_projection_scenario_1() -> None:
     assert np.all(np.asarray(result.status) == _STATUS.UNIQUE)
     # The lateral face's oriented normal points out of the solid.
     np.testing.assert_allclose(
-        result.normals, [[0.6, 0.8, 0.0], [2**-0.5, 2**-0.5, 0.0]], atol=1e-12
+        result.normals,
+        [[0.6, 0.8, 0.0], [2**-0.5, 2**-0.5, 0.0]],
+        atol=_OCCT_CLOSED_FORM_ATOL,
     )
     tangents = np.asarray(result.tangents)
     np.testing.assert_allclose(
-        np.einsum("nka,na->nk", tangents, result.normals), 0.0, atol=1e-12
+        np.einsum("nka,na->nk", tangents, result.normals),
+        0.0,
+        atol=_OCCT_CLOSED_FORM_ATOL,
     )
     np.testing.assert_allclose(np.linalg.norm(tangents, axis=-1), 1.0)
     assert result.entity_ids()[0] == f"{projection.source_revision}:face:0"
@@ -99,7 +122,9 @@ def test_brep_projection_scenario_1() -> None:
     np.testing.assert_allclose(np.asarray(edge.parameters)[0, 0], np.pi / 2)
     np.testing.assert_allclose(edge.residuals, [1.0, 2.0, 1.0])
     np.testing.assert_allclose(
-        np.abs(np.asarray(edge.tangents)[0, 0]), [1.0, 0.0, 0.0], atol=1e-12
+        np.abs(np.asarray(edge.tangents)[0, 0]),
+        [1.0, 0.0, 0.0],
+        atol=_OCCT_CLOSED_FORM_ATOL,
     )
     shape = BRepPrimAPI_MakeSphere(1.0).Shape()
     _, projection = _bound(shape)
@@ -123,7 +148,7 @@ def test_brep_projection_scenario_1() -> None:
     points = np.asarray(
         [[0.0, 1.0, 1.0], [0.0, 1.0, 2.0], [1.0, 0.0, 2.0], [0.2, 0.1, 1.0]]
     )
-    result = projection.classify(points, tolerance=1e-9)
+    result = projection.classify(points, tolerance=_CLASSIFICATION_DISTANCE)
     located = projection.locate_solids(points)
     rim = _circle_edge(projection, 2.0)
 
@@ -157,9 +182,9 @@ def test_brep_projection_scenario_2() -> None:
         angular_deflection=0.3,
     )
 
-    # Tessellating the shape does not change its exact-geometry revision.
+    # Tessellation settings leave the source geometry revision unchanged.
     assert remodeled.source_revision == model.source_revision
-    with pytest.raises(ValueError, match="revision digest"):
+    with pytest.raises(ValueError, match=r"prepare_occt_projection\.source"):
         phx.interchange.prepare_occt_projection(
             model, BRepPrimAPI_MakeCylinder(1.0, 3.0).Shape()
         )
@@ -183,7 +208,9 @@ def test_brep_projection_scenario_2() -> None:
     np.testing.assert_allclose(edge.residuals, [1.0 - 2**-0.5])
     # Inside the hole the trimmed face's closest point lies on the hole boundary.
     np.testing.assert_allclose(face.points, [[2**-0.5, 2**-0.5], [1.5, 0.0]])
-    np.testing.assert_allclose(face.residuals, [1.0 - 2**-0.5, 0.0], atol=1e-12)
+    np.testing.assert_allclose(
+        face.residuals, [1.0 - 2**-0.5, 0.0], atol=_OCCT_CLOSED_FORM_ATOL
+    )
     assert np.all(np.isnan(np.asarray(face.normals)))
 
 
@@ -210,23 +237,23 @@ def test_native_projection_agrees_with_occt_on_independent_samples() -> None:
     np.testing.assert_allclose(
         np.asarray(result.residuals)[reference_unique],
         np.asarray(reference.residuals)[reference_unique],
-        atol=1e-9,
+        atol=_NATIVE_OCCT_ATOL,
     )
     np.testing.assert_allclose(
         np.asarray(result.points)[reference_unique],
         np.asarray(reference.points)[reference_unique],
-        atol=1e-9,
+        atol=_NATIVE_OCCT_ATOL,
     )
     np.testing.assert_allclose(
         np.asarray(result.normals)[reference_unique],
         np.asarray(reference.normals)[reference_unique],
-        atol=1e-9,
+        atol=_NATIVE_OCCT_ATOL,
     )
     classified = native.classify(points, tolerance=0.3)
     reference_classified = occt.classify(points, tolerance=0.3)
     np.testing.assert_array_equal(classified.dimensions, reference_classified.dimensions)
     np.testing.assert_allclose(
-        classified.residuals, reference_classified.residuals, atol=1e-9
+        classified.residuals, reference_classified.residuals, atol=_NATIVE_OCCT_ATOL
     )
     located = native.locate_solids(points)
     reference_located = occt.locate_solids(points)
@@ -276,7 +303,7 @@ def _mesh_reference(
 
 @pytest.fixture
 def query_box_model() -> Any:
-    return phx.geometry.model_from_occt_shape(
+    return phx.interchange.model_from_occt_shape(
         BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
         coordinate_contract=_CONTRACT,
         linear_deflection=0.1,
@@ -284,19 +311,14 @@ def query_box_model() -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    "differentiable", [False, True], ids=["imported", "fixed-topology"]
-)
-def test_brep_query_nearest_matches_independent_faces(
-    query_box_model: Any, differentiable: bool
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_mesh_region_query_nearest_matches_independent_faces(
+    query_box_model: Any, compiled: bool
 ) -> None:
     model = query_box_model
-    source = (
-        phx.geometry.FixedTopologyBRepSource(model)
-        if differentiable
-        else phx.geometry.BRepSource(model)
-    )
-    geometry = source.compile()
+    geometry = phx.geometry.MeshRegion(
+        model.mesh_vertices, model.mesh_faces, feature_id=model.model_id
+    ).compile(coordinate_unit=METER)
     # Include face interiors, a two-face tie, a corner and an interior query.
     points = np.asarray(
         [
@@ -311,7 +333,8 @@ def test_brep_query_nearest_matches_independent_faces(
     closest, face, first, _ = _mesh_reference(
         points, np.asarray(model.mesh_vertices), np.asarray(model.mesh_faces)
     )
-    result = geometry.closest_point(jnp.asarray(points))
+    query = eqx.filter_jit(geometry.closest_point) if compiled else geometry.closest_point
+    result = query(jnp.asarray(points))
     np.testing.assert_allclose(result.closest_point, closest, atol=2e-14)
     np.testing.assert_array_equal(result.source_entity_id, face)
     np.testing.assert_allclose(
@@ -323,16 +346,18 @@ def test_brep_query_nearest_matches_independent_faces(
     )
     normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
     np.testing.assert_allclose(result.oriented_normal, normals, atol=2e-14)
-    assert result.physical_geometry_id == model.source_revision
-    assert result.represented_geometry_id == (
-        f"{model.model_id}:fixed-topology-query" if differentiable else model.model_id
-    )
-    assert not result.exact_to_physical
+    assert result.physical_geometry_id == model.model_id
+    assert result.represented_geometry_id == model.model_id
+    assert result.exact_to_physical
 
 
-def test_brep_two_face_margin_matches_independent_reference(query_box_model: Any) -> None:
+def test_mesh_region_two_face_margin_matches_independent_reference(
+    query_box_model: Any,
+) -> None:
     model = query_box_model
-    geometry = phx.geometry.FixedTopologyBRepSource(model).compile()
+    geometry = phx.geometry.MeshRegion(
+        model.mesh_vertices, model.mesh_faces, feature_id=model.model_id
+    ).compile(coordinate_unit=METER)
     points = np.asarray([[-0.02, 0.3, 0.8], [-0.2, -0.2, 1.0]], dtype=np.float64)
     closest, face, first, second = _mesh_reference(
         points, np.asarray(model.mesh_vertices), np.asarray(model.mesh_faces)
@@ -367,10 +392,28 @@ def test_brep_two_face_margin_matches_independent_reference(query_box_model: Any
     assert float(result.margin[1]) == 0.0
 
 
-def test_brep_imported_boundary_tolerance_includes_face_edge_vertex(
-    query_box_model: Any,
+def test_native_cad_import_boundary_tolerance_includes_face_edge_vertex(
+    tmp_path: Path,
 ) -> None:
-    geometry = phx.geometry.BRepSource(query_box_model).compile()
+    path = tmp_path / "box.brep"
+    phx.interchange.write_brep_text(native_solid("box"), path)
+    imported = phx.interchange.read_brep_text(
+        path,
+        phx.interchange.CadImportPolicy(
+            _CONTRACT,
+            phx.interchange.ResourceLimits(
+                max_bytes=1 << 22,
+                max_depth=32,
+                max_nodes=20_000,
+                max_attributes=2_000_000,
+                max_losses=8,
+            ),
+        ),
+        source_length_unit=phx.units.METER,
+        trusted_root=tmp_path,
+    )
+    assert imported.tolerance_evidence is not None
+    assert imported.tolerance_evidence.model_id == imported.model.model_id
     points = jnp.asarray(
         [
             [0.0, 0.7, 1.2],
@@ -381,8 +424,23 @@ def test_brep_imported_boundary_tolerance_includes_face_edge_vertex(
         ],
         dtype=jnp.float64,
     )
+    # Retain the old roundoff-scale boundary acceptance, not the wider default
+    # CAD classifier tolerance. The native import carries certified gap evidence.
+    tolerance = (
+        64.0 * np.finfo(np.float64).eps * max(float(jnp.max(jnp.abs(points))), 1.0)
+    )
+    query = phx.geometry.prepare_brep_query(
+        imported.model,
+        projection_policy=phx.geometry.BRepProjectionPolicy(
+            classifier_tolerance=tolerance
+        ),
+    )
+    containment = query.contains(points)
+    boundary = containment.distance_upper_bounds <= tolerance
+    assert not bool(jnp.any(containment.unresolved & ~boundary))
+    assert not bool(jnp.any(containment.resource_exhausted))
     np.testing.assert_array_equal(
-        geometry.contains(points), [True, True, True, True, False]
+        containment.inside | boundary, [True, True, True, True, False]
     )
 
 
@@ -427,30 +485,31 @@ def test_brep_memory_candidate_nearest_preserves_second_face_and_refit(
     )
 
 
-def test_fixed_topology_brep_queries_follow_changed_radius_and_derivative() -> None:
-    model = phx.geometry.model_from_occt_shape(
+def test_mesh_region_queries_follow_changed_radius_and_derivative() -> None:
+    model = phx.interchange.model_from_occt_shape(
         BRepPrimAPI_MakeSphere(1.0).Shape(),
         coordinate_contract=_CONTRACT,
         linear_deflection=0.2,
         angular_deflection=0.4,
     )
-    geometry = phx.geometry.FixedTopologyBRepSource(model).compile()
+    source = phx.geometry.MeshRegion(
+        model.mesh_vertices, model.mesh_faces, feature_id=model.model_id
+    )
+    geometry = source.compile(coordinate_unit=METER)
     kernel: Any = geometry.kernel
-    radius_index = next(
+    vertices_index = next(
         index
         for index, spec in enumerate(geometry.schema.specs)
-        if spec.parameter_id.name == "radius"
+        if spec.parameter_id.name == "vertices"
     )
     vertices = np.asarray(model.mesh_vertices)
     faces = np.asarray(model.mesh_faces)
     centroid = vertices[faces[len(faces) // 3]].mean(axis=0)
     points = np.asarray([2.0 * centroid, 1.1 * centroid], dtype=np.float64)
-    changed_state = geometry.state.replace_at(
-        radius_index, jnp.asarray(1.3, dtype=jnp.float64)
-    )
-    realization = kernel.realize(changed_state)
+    changed_vertices = 1.3 * source.vertices
+    changed_state = geometry.state.replace_at(vertices_index, changed_vertices)
     closest, face, _, _ = _mesh_reference(
-        points, np.asarray(realization.vertices), np.asarray(realization.faces)
+        points, np.asarray(changed_vertices), np.asarray(source.faces)
     )
     result = kernel.closest_point(changed_state, jnp.asarray(points))
     np.testing.assert_allclose(result.closest_point, closest, atol=2e-13)
@@ -459,7 +518,65 @@ def test_fixed_topology_brep_queries_follow_changed_radius_and_derivative() -> N
         kernel.contains(changed_state, jnp.asarray(points)), [False, True]
     )
     np.testing.assert_array_equal(geometry.contains(jnp.asarray(points)), [False, False])
+    np.testing.assert_array_equal(source.faces, model.mesh_faces)
+
+    def coordinate(radius: jax.Array) -> jax.Array:
+        state = geometry.state.replace_at(vertices_index, radius * source.vertices)
+        return kernel.closest_point(state, jnp.asarray(points[:1])).normal_coordinate[0]
+
+    radius = jnp.asarray(1.3, dtype=jnp.float64)
+    epsilon = 1e-5
+    derivative = jax.grad(coordinate)(radius)
+    finite_difference = (coordinate(radius + epsilon) - coordinate(radius - epsilon)) / (
+        2.0 * epsilon
+    )
+    np.testing.assert_allclose(
+        derivative,
+        finite_difference,
+        rtol=_MESH_REGION_RADIUS_DERIVATIVE_RTOL,
+        atol=_MESH_REGION_RADIUS_DERIVATIVE_ATOL,
+    )
+
+
+def test_fixed_topology_native_brep_queries_follow_changed_radius_and_derivative() -> (
+    None
+):
+    model = native_solid(
+        "sphere",
+        catalog="geometry",
+        tessellation=phx.geometry.BRepTessellationPolicy(
+            linear_deflection=0.2, angular_deflection=0.4
+        ),
+    )
+    geometry = phx.geometry.FixedTopologyBRepSource(model).compile(coordinate_unit=METER)
+    kernel: Any = geometry.kernel
+    radius_index = next(
+        index
+        for index, spec in enumerate(geometry.schema.specs)
+        if spec.parameter_id.name == "radius"
+    )
+    centroid = np.asarray(model.mesh_vertices)[
+        np.asarray(model.mesh_faces)[model.mesh_faces.shape[0] // 3]
+    ].mean(axis=0)
+    points = np.asarray([2.0 * centroid, 1.1 * centroid], dtype=np.float64)
+    changed_state = geometry.state.replace_at(
+        radius_index, jnp.asarray(1.3, dtype=jnp.float64)
+    )
+    realization = kernel.realize(changed_state)
+    result = kernel.closest_point(changed_state, jnp.asarray(points))
+    expected = 1.3 * points / np.linalg.norm(points, axis=-1, keepdims=True)
+    np.testing.assert_allclose(
+        result.closest_point, expected, atol=_BREP_DYNAMIC_RADIUS_CLOSEST_POINT_ATOL
+    )
+    np.testing.assert_array_equal(result.source_entity_id, np.zeros(2, dtype=np.int32))
+    np.testing.assert_array_equal(
+        kernel.contains(changed_state, jnp.asarray(points)), [False, True]
+    )
+    np.testing.assert_array_equal(geometry.contains(jnp.asarray(points)), [False, False])
     np.testing.assert_array_equal(realization.faces, model.mesh_faces)
+    assert result.physical_geometry_id == model.source_revision
+    assert result.represented_geometry_id == f"{model.model_id}:fixed-topology-query"
+    assert result.exact_to_physical
 
     def coordinate(radius: jax.Array) -> jax.Array:
         state = geometry.state.replace_at(radius_index, radius)
@@ -474,8 +591,12 @@ def test_fixed_topology_brep_queries_follow_changed_radius_and_derivative() -> N
     np.testing.assert_allclose(derivative, finite_difference, rtol=1e-8, atol=1e-9)
 
 
-def test_fixed_topology_brep_prepared_leaves_round_trip(query_box_model: Any) -> None:
-    geometry = phx.geometry.FixedTopologyBRepSource(query_box_model).compile()
+def test_mesh_region_prepared_leaves_round_trip(query_box_model: Any) -> None:
+    geometry = phx.geometry.MeshRegion(
+        query_box_model.mesh_vertices,
+        query_box_model.mesh_faces,
+        feature_id=query_box_model.model_id,
+    ).compile(coordinate_unit=METER)
     payload = io.BytesIO()
     eqx.tree_serialise_leaves(payload, geometry)
     payload.seek(0)
@@ -483,8 +604,7 @@ def test_fixed_topology_brep_prepared_leaves_round_trip(query_box_model: Any) ->
     fingerprint = array_tree_fingerprint(geometry)
     assert array_tree_fingerprint(restored) == fingerprint
     assert any(
-        record["path"].startswith(".kernel.query_bvh.")
-        for record in fingerprint["signature"]
+        record["path"].startswith(".kernel.index.") for record in fingerprint["signature"]
     )
     points = jnp.asarray(((-0.02, 0.3, 0.8), (-0.2, -0.2, 1.0)), dtype=jnp.float64)
     expected = geometry.closest_point(points)
@@ -492,5 +612,5 @@ def test_fixed_topology_brep_prepared_leaves_round_trip(query_box_model: Any) ->
     np.testing.assert_array_equal(actual.closest_point, expected.closest_point)
     np.testing.assert_array_equal(actual.source_entity_id, expected.source_entity_id)
     np.testing.assert_array_equal(actual.margin, expected.margin)
-    assert actual.physical_geometry_id == query_box_model.source_revision
+    assert actual.physical_geometry_id == query_box_model.model_id
     assert actual.represented_geometry_id == expected.represented_geometry_id

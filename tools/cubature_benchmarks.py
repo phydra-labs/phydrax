@@ -12,6 +12,7 @@ import jax.numpy as jnp
 
 import phydrax as phx
 from benchmarks._runtime import measure_repeated, measure_synchronized
+from phydrax.units import METER
 
 
 def _timed(callback: Any, *, repeats: int = 5) -> Any:
@@ -30,7 +31,9 @@ def _timed(callback: Any, *, repeats: int = 5) -> Any:
 
 
 def _disk_records() -> Any:
-    domain = phx.domain.GeometryDomain(phx.geometry.Circle((0.0, 0.0), 1.0).compile())
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
+    )
     target = phx.integration.over(domain.component())
     legacy_plan = phx.integration.FixedQuadraturePlan(
         phx.integration.GaussLegendreRule(32)
@@ -67,7 +70,7 @@ def _disk_records() -> Any:
 
 def _sphere_records() -> Any:
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile()
+        phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     )
     target = phx.integration.over(domain.component({"x": phx.domain.Boundary()}))
     legacy = phx.integration.materialize(

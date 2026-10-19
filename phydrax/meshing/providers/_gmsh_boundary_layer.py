@@ -6,10 +6,10 @@
 
 The BRep boundary is surface-meshed first. ADVANCING layers grow natively from
 the wall faces; PROVIDER layers are Gmsh boundary-layer extrusions of the same
-wall mesh, certified afterwards by the native validity and exact intersection
+wall mesh, certified afterwards by the native validity and intersection
 tests. Either way the cap and the remaining boundary are handed to Gmsh as
 fixed discrete surfaces: the core may neither move nor split them, which is
-verified bitwise and by exact face conformity before the meshes merge.
+verified bitwise and by face conformity before the meshes merge.
 """
 
 from __future__ import annotations
@@ -21,41 +21,46 @@ import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
-from ..._fingerprint import canonical_fingerprint
-from ..._identity import SemanticProvenance
-from ...discretization import CellBlock, CellGeometrySpec, CellMesh
-from ...geometry._meshing_domain import MeshingDomain
-from ...geometry.brep._model import BRepEntityId, BRepModel
-from ...geometry.brep._projection_contracts import brep_entity_id
-from ...geometry.surface import SurfaceMetadata, SurfaceModel
-from ...geometry.surface._model import _repair_orientations
-from .._association import GeometryAssociation, GeometryAssociationKind
-from .._audit import audit_cell_mesh
-from .._boundary_layer import (
-    _analyze_wall,
-    _certify_cells,
-    _Environment,
-    _grow_boundary_layers,
-    _nearest_distances,
-    _split_ridges,
-    BoundaryLayerMesh,
-    BoundaryLayerPolicy,
+import phydrax.discretization as cell_geometry_owner
+import phydrax.discretization as cell_mesh_owner
+import phydrax.discretization as reference_cell_types_owner
+from phydrax.meshing._association_state import (
+    GeometryAssociation,
+    GeometryAssociationKind,
 )
-from .._canonical import canonicalize_cell_mesh
-from .._contracts import (
+from phydrax.meshing._contracts import (
     MeshingDerivativeMode,
     MeshingExecutionMode,
-    MeshingFailure,
-    MeshingFailureCategory,
     MeshingProviderInfo,
     VolumeMeshingSpec,
 )
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
+from ..._fingerprint import canonical_fingerprint
+from ..._identity import SemanticProvenance
+from ...geometry import MeshingDomain
+from ...geometry.brep import brep_entity_id, BRepEntityId, BRepModel
+from ...geometry.surface import SurfaceMetadata, SurfaceModel
+from ...geometry.surface._model import repair_orientations
+from ...typing import checked
+from .._audit import audit_cell_mesh
+from .._boundary_layer import (
+    analyze_wall,
+    BoundaryLayerMesh,
+    BoundaryLayerPolicy,
+    certify_cells,
+    Environment,
+    grow_boundary_layers,
+    nearest_distances,
+    split_ridges,
+)
+from .._canonical import canonicalize_cell_mesh
 from .._controls import (
     BoundaryLayerControl,
     BoundaryLayerCornerPolicy,
     BoundaryLayerRoute,
 )
-from .._organization import (
+from .._organization_records import (
     MeshAttribute,
     MeshAttributeRole,
     MeshPatch,
@@ -71,14 +76,14 @@ from .._trace import (
     MeshingTrace,
 )
 from ._gmsh_evidence import (
-    _boundary_association,
-    _connectivity_face_incidents,
-    _connectivity_face_rows,
-    _patch_is_connected,
+    boundary_association,
+    connectivity_face_incidents,
+    connectivity_face_rows,
+    patch_is_connected,
 )
-from ._gmsh_execute import _prepare_generation
-from ._gmsh_import import _brep_model, _entity_scope, _resolve_entities
-from ._gmsh_inventory import _cad_occurrence_inventory, _cad_scope_set
+from ._gmsh_execute import prepare_generation
+from ._gmsh_import import brep_model, entity_scope, resolve_entities
+from ._gmsh_inventory import cad_occurrence_inventory, cad_scope_set
 
 
 _VOLUME_ORDER = (
@@ -89,14 +94,14 @@ _VOLUME_ORDER = (
 )
 _ARITY = {"tetrahedron": 4, "pyramid": 5, "prism": 6, "hexahedron": 8}
 # Relative agreement required between measured and requested layer thickness;
-# measurements are exact distances to the discrete wall, so curved walls carry
+# measurements are distances to the discrete wall, so curved walls carry
 # a discretization-level deviation.
 _LAYER_TOLERANCE = 1.0e-2
 _LAYER_STAGE = MeshingStageKind.LAYER_GENERATION.value
 _FILL_STAGE = MeshingStageKind.VOLUME_FILL.value
 
 
-def _layered_volume(plan: Any, /) -> bool:
+def layered_volume(plan: Any, /) -> bool:
     """Whether a plan realizes ADVANCING or PROVIDER layers around a core fill."""
     specification = plan.specification
     return isinstance(specification, VolumeMeshingSpec) and any(
@@ -123,7 +128,7 @@ def _domain_inward(
     points: np.ndarray, triangles: np.ndarray, /
 ) -> tuple[np.ndarray, float]:
     """Orient closed shells so every normal points into the enclosed domain."""
-    repaired, repair = _repair_orientations(points, triangles, orient_closed_outward=True)
+    repaired, repair = repair_orientations(points, triangles, orient_closed_outward=True)
     components = np.asarray(repair.component_ids)
     corners = points[repaired]
     signed = np.sum(corners[:, 0] * np.cross(corners[:, 1], corners[:, 2]), axis=1) / 6.0
@@ -139,8 +144,8 @@ def _domain_inward(
 def _surface_boundary(
     gmsh: Any, plan: Any, generation: Any, control: BoundaryLayerControl, /
 ) -> _Boundary:
-    source = _brep_model(plan.source)
-    inventory = _cad_occurrence_inventory(source)
+    source = brep_model(plan.source)
+    inventory = cad_occurrence_inventory(source)
     node_tags, node_coordinates, _ = gmsh.model.mesh.getNodes()
     node_tags = np.asarray(node_tags, dtype=np.int64)
     order = np.argsort(node_tags, kind="stable")
@@ -150,12 +155,15 @@ def _surface_boundary(
     rows = []
     owners = []
     for face in range(len(inventory.entities[2])):
-        surface = _resolve_entities(gmsh, source, _entity_scope(source, 2, (face,)))[0]
+        surface = resolve_entities(gmsh, source, entity_scope(source, 2, (face,)))[0]
         element_types, _, node_blocks = gmsh.model.mesh.getElements(2, surface)
         if tuple(int(value) for value in element_types) != (triangle_type,):
             raise MeshingFailure(
                 MeshingFailureCategory.CONVERSION_FAILED,
-                "Layered volumes require linear triangle boundary meshes.",
+                (
+                    "gmsh.surface_boundary must enclose the source volume with one linear triangle shell; got "
+                    + "Layered volumes require linear triangle boundary meshes."
+                ),
                 stage=MeshingStageKind.SURFACE_MESHING.value,
             )
         nodes = np.asarray(node_blocks[0], dtype=np.int64).reshape(-1, 3)
@@ -174,7 +182,10 @@ def _surface_boundary(
     if not volume > 0.0 or abs(volume - cad_volume) > 0.05 * cad_volume:
         raise MeshingFailure(
             MeshingFailureCategory.CONVERSION_FAILED,
-            "The discrete boundary does not enclose the CAD volume with one exterior shell.",
+            (
+                "gmsh.surface_boundary must enclose the source volume with one linear triangle shell; got "
+                + "The discrete boundary does not enclose the CAD volume with one exterior shell."
+            ),
             stage=MeshingStageKind.SURFACE_MESHING.value,
         )
     wall_faces = np.asarray(control.wall_scope.entity_ids, dtype=np.int64)
@@ -264,7 +275,10 @@ def _extract_volume(gmsh: Any, volume: int, name: str, corners: int, /) -> np.nd
     if tuple(int(value) for value in element_types) != (expected,):
         raise MeshingFailure(
             MeshingFailureCategory.CONVERSION_FAILED,
-            f"Gmsh returned elements other than linear {name.lower()} cells.",
+            (
+                "gmsh.extract_volume must contain only the requested linear cell family; got "
+                + f"Gmsh returned elements other than linear {name.lower()} cells."
+            ),
             stage=_FILL_STAGE,
         )
     return np.asarray(node_blocks[0], dtype=np.int64).reshape(-1, corners)
@@ -284,7 +298,10 @@ def _fixed_nodes(gmsh: Any, points: np.ndarray, /) -> tuple[np.ndarray, np.ndarr
     ):
         raise MeshingFailure(
             MeshingFailureCategory.COMPLIANCE_FAILED,
-            "The core provider moved or dropped fixed cap/boundary nodes.",
+            (
+                "gmsh.fixed_nodes must retain fixed cap and boundary coordinates and node IDs; got "
+                + "The core provider moved or dropped fixed cap/boundary nodes."
+            ),
             stage=_FILL_STAGE,
         )
     return tags, values[~fixed]
@@ -304,7 +321,10 @@ def _require_conforming(tetrahedra: np.ndarray, fixed: np.ndarray, /) -> None:
     if np.any(counts > 2) or not np.array_equal(boundary, expected):
         raise MeshingFailure(
             MeshingFailureCategory.COMPLIANCE_FAILED,
-            "Core cells do not conform exactly to the fixed cap and boundary triangles.",
+            (
+                "gmsh.require_conforming must conform to every fixed cap and boundary triangle; got "
+                + "Core cells do not conform exactly to the fixed cap and boundary triangles."
+            ),
             stage=_FILL_STAGE,
         )
 
@@ -348,7 +368,10 @@ def _fill_core(
         ):
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "The core provider altered a fixed boundary surface mesh.",
+                (
+                    "gmsh.fill_core must retain the fixed boundary surface mesh; got "
+                    + "The core provider altered a fixed boundary surface mesh."
+                ),
                 stage=_FILL_STAGE,
             )
     cells = _node_index(tags, used.size, _extract_volume(gmsh, volume, "Tetrahedron", 4))
@@ -392,10 +415,11 @@ def _padded(triangles: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
 def _native_layer_control(
     model: BRepModel, control: BoundaryLayerControl, /
 ) -> tuple[MeshingDomain, BoundaryLayerControl]:
-    """Convert an external occurrence scope through exact entity/path identities."""
+    """Convert an external occurrence scope through entity/path identities."""
     domain = MeshingDomain.from_brep(model)
-    inventory = _cad_occurrence_inventory(model)
+    inventory = cad_occurrence_inventory(model)
 
+    @checked
     def scope(value: MeshingScope | None, /) -> MeshingScope | None:
         if value is None:
             return None
@@ -404,10 +428,13 @@ def _native_layer_control(
             value.entity_kind is not MeshingEntityKind.GEOMETRY
             or value.source_id != domain.source_id
             or value.source_revision != domain.source_revision
-            or value.entity_set_id != _cad_scope_set(model, dimension)
+            or value.entity_set_id != cad_scope_set(model, dimension)
         ):
             raise ValueError(
-                "The external layer scope must bind its exact occurrence inventory."
+                (
+                    "gmsh.scope must bind populated source occurrence rows and native counterparts; got "
+                    + "The external layer scope must bind its occurrence inventory."
+                )
             )
         definitions = (
             domain.region_source_indices
@@ -430,7 +457,10 @@ def _native_layer_control(
         selected = np.asarray(value.entity_ids, dtype=np.int64)
         if np.any(selected < 0) or np.any(selected >= len(entities)):
             raise ValueError(
-                "The external layer scope selects absent occurrence entities."
+                (
+                    "gmsh.scope must bind populated source occurrence rows and native counterparts; got "
+                    + "The external layer scope selects absent occurrence entities."
+                )
             )
         keys = tuple(
             (entities[int(index)].index, entities[int(index)].occurrence_path)
@@ -438,7 +468,10 @@ def _native_layer_control(
         )
         if any(key not in native for key in keys):
             raise ValueError(
-                "The external source entity has no exact native domain counterpart."
+                (
+                    "gmsh.scope must bind populated source occurrence rows and native counterparts; got "
+                    + "The external source entity has no native domain counterpart."
+                )
             )
         return MeshingScope(
             domain.source_id,
@@ -451,7 +484,12 @@ def _native_layer_control(
 
     wall = scope(control.wall_scope)
     if wall is None:
-        raise RuntimeError("An external layer control has no wall scope.")
+        raise RuntimeError(
+            (
+                "gmsh.native_layer_control must bind a wall scope; got "
+                + "An external layer control has no wall scope."
+            )
+        )
     return domain, BoundaryLayerControl(
         wall,
         control.schedule,
@@ -482,9 +520,13 @@ def _advancing_layers(
     source_domain, realization_control = _native_layer_control(model, control)
     empty_points = np.empty((0, 3))
     empty_triangles = np.empty((0, 3), dtype=np.int64)
-    source_wall = CellMesh(
+    source_wall = cell_mesh_owner.CellMesh(
         boundary.points,
-        (CellBlock("boundary", "triangle", boundary.triangles),),
+        (
+            reference_cell_types_owner.CellBlock(
+                "boundary", "triangle", boundary.triangles
+            ),
+        ),
         numeric_version=control.wall_scope.source_revision,
     )
     source_cells = source_wall.entity_set(2)
@@ -513,7 +555,7 @@ def _advancing_layers(
         ),
         exact=False,
     )
-    layers = _grow_boundary_layers(
+    layers = grow_boundary_layers(
         boundary.points,
         faces,
         arity,
@@ -577,14 +619,20 @@ def _cap_triangles(layers: BoundaryLayerMesh, /) -> np.ndarray:
     if not layers.closed_cap:
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "Core fill requires a closed layer cap; open wall rims need EXACT_SWEEP.",
+            (
+                "gmsh.cap_triangles must provide a closed triangular cap for simplex core fill; got "
+                + "Core fill requires a closed layer cap; open wall rims need EXACT_SWEEP."
+            ),
             stage=_FILL_STAGE,
         )
     # ty: ignore[unresolved-attribute]
     if any(block.cell_kind != "triangle" for block in layers.cap.blocks):
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "A simplex core requires a triangle layer cap (enable transition pyramids).",
+            (
+                "gmsh.cap_triangles must provide a closed triangular cap for simplex core fill; got "
+                + "A simplex core requires a triangle layer cap (enable transition pyramids)."
+            ),
             stage=_FILL_STAGE,
         )
     cap_vertices = np.asarray(layers.cap_vertices, dtype=np.int64)
@@ -599,8 +647,8 @@ def _provider_layers(
     """Gmsh boundary-layer extrusion of the wall mesh, certified natively."""
     faces, arity = _padded(boundary.triangles)
     if control.corner is BoundaryLayerCornerPolicy.REJECT:
-        _split_ridges(
-            _analyze_wall(
+        split_ridges(
+            analyze_wall(
                 boundary.points, faces, arity, boundary.wall, control.feature_angle
             ),
             control.corner,
@@ -653,19 +701,22 @@ def _provider_layers(
         name: np.empty((0, _ARITY[name]), dtype=np.int64) for name, _ in _VOLUME_ORDER
     }
     cells["prism"] = prisms
-    environment = _Environment(
+    environment = Environment(
         boundary.triangles,
         np.zeros((boundary.triangles.shape[0],), dtype=np.bool_),
         np.empty((0, 3)),
         np.empty((0, 3), dtype=np.int64),
     )
-    bad, hits = _certify_cells(points, cells, [], environment, BoundaryLayerPolicy())
+    bad, hits = certify_cells(points, cells, [], environment, BoundaryLayerPolicy())
     if np.any(bad["prism"]):
         vertices = prisms[bad["prism"]][:, :3].reshape(-1)
         vertices = vertices[vertices < count]
         raise MeshingFailure(
             MeshingFailureCategory.CONTROL_CONFLICT,
-            f"Gmsh boundary-layer prisms collide or are invalid ({hits} certified intersections).",
+            (
+                "gmsh.provider_layers must publish valid collision-free layer prisms; got "
+                + f"Gmsh boundary-layer prisms collide or are invalid ({hits} certified intersections)."
+            ),
             stage=_LAYER_STAGE,
             entity_ids=tuple(int(value) for value in np.unique(vertices)),
             locations=tuple(
@@ -716,7 +767,7 @@ def _level_thicknesses(
     points: Any, wall_triangles: Any, level: Any, layers: Any, /
 ) -> np.ndarray:
     selected = np.flatnonzero(level > 0)
-    distance = _nearest_distances(points[wall_triangles], points[selected])
+    distance = nearest_distances(points[wall_triangles], points[selected])
     means = np.asarray(
         [np.mean(distance[level[selected] == value]) for value in range(1, layers + 1)]
     )
@@ -727,7 +778,7 @@ def _level_thicknesses(
 
 
 def _merged_mesh(layered: _Layered, numeric_version: str, /) -> Any:
-    """Merged cells in canonical (block-name) order with zone mask and layer indices."""
+    """Merged cells in (block-name) order with zone mask and layer indices."""
     # ``layer_index`` follows the layer mesh's kind order (_VOLUME_ORDER).
     offsets = {}
     start = 0
@@ -747,7 +798,7 @@ def _merged_mesh(layered: _Layered, numeric_version: str, /) -> Any:
         if not rows.size:
             continue
         blocks.append(
-            CellBlock(
+            reference_cell_types_owner.CellBlock(
                 name,
                 kind,
                 rows,
@@ -766,13 +817,19 @@ def _merged_mesh(layered: _Layered, numeric_version: str, /) -> Any:
         layer_values.append(layered.layer_index[lower:upper])
         cursor += rows.shape[0]
     mesh = canonicalize_cell_mesh(
-        CellMesh(layered.points, tuple(blocks), numeric_version=numeric_version)
+        cell_mesh_owner.CellMesh(
+            layered.points, tuple(blocks), numeric_version=numeric_version
+        )
     )
     return mesh, np.concatenate(zone_of), np.concatenate(layer_values)
 
 
 def _organization(
-    mesh: CellMesh, core: np.ndarray, layer_values: np.ndarray, layered: _Layered, /
+    mesh: cell_mesh_owner.CellMesh,
+    core: np.ndarray,
+    layer_values: np.ndarray,
+    layered: _Layered,
+    /,
 ) -> Any:
     cells = mesh.entity_set(3)
     cell_ids = np.asarray(cells.entity_ids, dtype=np.int64)
@@ -797,7 +854,7 @@ def _organization(
     )
     connectivity = mesh.connectivity
     # ty: ignore[invalid-argument-type]
-    rows = _connectivity_face_rows(connectivity)
+    rows = connectivity_face_rows(connectivity)
     faces = mesh.entity_set(2)
     face_ids = np.asarray(faces.entity_ids, dtype=np.int64)
     padded = np.full((len(rows), 4), np.iinfo(np.int64).max, dtype=np.int64)
@@ -809,7 +866,7 @@ def _organization(
             )
     incidents = np.asarray(
         # ty: ignore[invalid-argument-type]
-        [len(adjacent) for adjacent in _connectivity_face_incidents(connectivity)]
+        [len(adjacent) for adjacent in connectivity_face_incidents(connectivity)]
     )
     patches = []
     for name, triangles, zones in (
@@ -829,13 +886,19 @@ def _organization(
         if selected.size and selected[0] < 0:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                f"Patch {name!r} triangles are not faces of the merged mesh.",
+                (
+                    "gmsh.organization must bind merged mesh faces with the requested cell incidence; got "
+                    + f"Patch {name!r} triangles are not faces of the merged mesh."
+                ),
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         if np.any(incidents[selected] != len(zones)):
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                f"Patch {name!r} faces have the wrong cell incidence.",
+                (
+                    "gmsh.organization must bind merged mesh faces with the requested cell incidence; got "
+                    + f"Patch {name!r} faces have the wrong cell incidence."
+                ),
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         patches.append(
@@ -850,7 +913,7 @@ def _organization(
                     face_ids[selected],
                 ),
                 # ty: ignore[invalid-argument-type]
-                connected=_patch_is_connected(connectivity, selected),
+                connected=patch_is_connected(connectivity, selected),
                 adjacent_zone_ids=tuple(zone.zone_id for zone in zones),
             )
         )
@@ -953,6 +1016,14 @@ def _layered_result(
     mesh, core, layer_values = _merged_mesh(layered, report.source_revision)
     zones, patches, attribute = _organization(mesh, core, layer_values, layered)
     boundary_triangles = np.concatenate((layered.wall, layered.outer))
+    boundary_ids = np.arange(boundary_triangles.shape[0], dtype=np.int64)
+    source_faces = np.concatenate((layered.wall_faces, layered.outer_faces))
+    model = brep_model(source)
+    inventory = cad_occurrence_inventory(model)
+    owners = {
+        int(identifier): inventory.entities[2][int(face)]
+        for identifier, face in zip(boundary_ids, source_faces, strict=True)
+    }
     metadata = SurfaceMetadata(
         source_id=report.source_id,
         source_revision=report.source_revision,
@@ -964,15 +1035,16 @@ def _layered_result(
         np.asarray(mesh.coordinates),
         boundary_triangles,
         metadata,
+        cell_global_ids=boundary_ids,
         numeric_version=report.source_revision,
         repair_orientation=True,
         orient_closed_outward=True,
     )
-    association, boundary_zones, provider_attribute = _boundary_association(
-        _brep_model(source), boundary.mesh, plan.options.association_tolerance_factor
+    association, boundary_zones, provider_attribute = boundary_association(
+        model, boundary.mesh, owners
     )
     del boundary_zones
-    geometry = CellGeometrySpec.affine(mesh)
+    geometry = cell_geometry_owner.CellGeometrySpec.affine(mesh)
     attributes = (provider_attribute, attribute)
     audit = audit_cell_mesh(
         mesh,
@@ -1120,7 +1192,7 @@ def _layered_stages(
     )
 
 
-def _execute_layered_volume(
+def execute_layered_volume(
     gmsh: Any,
     plan: Any,
     version: str,
@@ -1131,7 +1203,7 @@ def _execute_layered_volume(
 ) -> CellMeshingResult:
     """Surface-mesh the BRep, grow the layers, and fill the core with fixed caps."""
     control = plan.specification.layer_controls[0]
-    generation = _prepare_generation(gmsh, plan, cache, background)
+    generation = prepare_generation(gmsh, plan, cache, background)
     gmsh.model.mesh.generate(2)
     boundary = _surface_boundary(gmsh, plan, generation, control)
     maximum_size = control.core_maximum_size
@@ -1143,7 +1215,7 @@ def _execute_layered_volume(
                 control,
                 plan.options,
                 maximum_size,
-                _brep_model(plan.source),
+                brep_model(plan.source),
             )
         case BoundaryLayerRoute.PROVIDER:
             layered = _provider_layers(
@@ -1151,7 +1223,10 @@ def _execute_layered_volume(
             )
         case route:
             raise TypeError(
-                f"Layered volumes realize ADVANCING or PROVIDER routes, not {route!r}."
+                (
+                    "gmsh.execute_layered_volume must select ADVANCING or PROVIDER layer routes; got "
+                    + f"Layered volumes realize ADVANCING or PROVIDER routes, not {route!r}."
+                )
             )
     return _layered_result(plan, layered, control, version, info)
 
@@ -1159,7 +1234,8 @@ def _execute_layered_volume(
 # ---------------------------------------------------------------- standalone core fill
 
 
-def _fill_boundary_layer_core(
+@checked
+def fill_boundary_layer_core(
     gmsh: Any,
     layers: BoundaryLayerMesh,
     boundary: SurfaceModel,
@@ -1208,7 +1284,7 @@ def _fill_boundary_layer_core(
     )
     mesh, core_mask, layer_values = _merged_mesh(layered, boundary.mesh.numeric_version)
     zones, patches, attribute = _organization(mesh, core_mask, layer_values, layered)
-    geometry = CellGeometrySpec.affine(mesh)
+    geometry = cell_geometry_owner.CellGeometrySpec.affine(mesh)
     audit = audit_cell_mesh(
         mesh,
         geometry,
@@ -1304,9 +1380,9 @@ def _wall_triangles(layers: BoundaryLayerMesh, /) -> np.ndarray:
     on_wall[wall_vertices[wall_vertices >= 0]] = True
     connectivity = layers.mesh.connectivity
     # ty: ignore[invalid-argument-type]
-    rows = _connectivity_face_rows(connectivity)
+    rows = connectivity_face_rows(connectivity)
     # ty: ignore[invalid-argument-type]
-    incidents = _connectivity_face_incidents(connectivity)
+    incidents = connectivity_face_incidents(connectivity)
     faces = [
         row
         for row, adjacent in zip(rows, incidents, strict=True)
@@ -1315,7 +1391,10 @@ def _wall_triangles(layers: BoundaryLayerMesh, /) -> np.ndarray:
     if any(len(row) != 3 for row in faces):
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "Core-fill wall patches require triangle wall faces.",
+            (
+                "gmsh.wall_triangles must contain triangular wall faces; got "
+                + "Core-fill wall patches require triangle wall faces."
+            ),
             stage=_FILL_STAGE,
         )
     return np.asarray(faces, dtype=np.int64).reshape(-1, 3)

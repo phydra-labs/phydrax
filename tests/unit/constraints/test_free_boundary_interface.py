@@ -13,6 +13,7 @@ import phydrax as phx
 import phydrax.axes as cx
 from phydrax._doc import DOC_KEY0
 from phydrax._frozendict import frozendict
+from phydrax.units import METER
 
 
 def test_interface_feature_lift_encodes_normalized_distance_cusp_and_side() -> None:
@@ -36,7 +37,9 @@ def test_interface_feature_lift_encodes_normalized_distance_cusp_and_side() -> N
 
 def test_exact_stefan_interface_condition_factories_have_zero_residual() -> None:
     spatial = phx.domain.GeometryDomain(
-        phx.geometry.Rectangle(center=(0.75, 0.0), size=(1.5, 1.0)).compile()
+        phx.geometry.Rectangle(center=(0.75, 0.0), size=(1.5, 1.0)).compile(
+            coordinate_unit=METER
+        )
     )
     domain = spatial @ phx.domain.TimeInterval(0.0, 0.5)
     component = domain.component()

@@ -29,7 +29,7 @@ from ..linalg import (
     SparseFactorizationStatus,
 )
 from ..sparse import EdgeRelation, SparseCoordinateOperator
-from ..sparse._linear import _SparseStoragePlan
+from ..sparse._linear import SparseStoragePlan
 from ..typing import Dim, Float64, parse
 from ._gram import diagonal_gram_space, gram_solve_policy, sparse_gram_space
 from ._topology import CellComplexTopology
@@ -113,7 +113,7 @@ class DiagonalHodge(StrictModule):
 
 def _admission_pattern(
     rows: tuple[int, ...], columns: tuple[int, ...], mirror: tuple[int, ...], size: int, /
-) -> tuple[SparseFactorizationPlan | None, tuple[int, ...], _SparseStoragePlan]:
+) -> tuple[SparseFactorizationPlan | None, tuple[int, ...], SparseStoragePlan]:
     """Prepare reusable storage and native SPD evidence from immutable routes."""
     row = np.asarray(rows, dtype=np.int32)
     column = np.asarray(columns, dtype=np.int32)
@@ -131,7 +131,7 @@ def _admission_pattern(
         relation = EdgeRelation(
             full_columns, full_rows, source_size=size, target_size=size
         )
-        storage_plan = _SparseStoragePlan(relation)
+        storage_plan = SparseStoragePlan(relation)
         operator = SparseCoordinateOperator(
             relation,
             jnp.ones((full_rows.shape[0],), dtype=jnp.float64),
@@ -168,7 +168,7 @@ class SparseHodge(StrictModule):
     _mirror: tuple[int, ...] = eqx.field(static=True)
     _admission_plan: SparseFactorizationPlan | None
     _admission_order: tuple[int, ...] = eqx.field(static=True)
-    _storage_plan: _SparseStoragePlan
+    _storage_plan: SparseStoragePlan
 
     def __init__(
         self,

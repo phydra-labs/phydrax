@@ -68,7 +68,7 @@ def _initial(compiled: Any) -> Any:
     return compiled.initialize_state(position, velocity)
 
 
-def test_wcsph_scenario_1() -> None:
+def test_wcsph_density_methods_publish_supported_state_layouts() -> None:
     summation = _compiled(continuity=False)
     continuity = _compiled(continuity=True)
     summation_state = _initial(summation)
@@ -86,6 +86,9 @@ def test_wcsph_scenario_1() -> None:
         summation.initialize_state(
             summation_state[:, :1], summation_state[:, 1:2], jnp.ones((8,))
         )
+
+
+def test_wcsph_step_restriction_graph_and_linearization_are_evidenced() -> None:
     compiled = _compiled(
         continuity=True,
         backend="cell",
@@ -111,6 +114,9 @@ def test_wcsph_scenario_1() -> None:
         rtol=2e-9,
         atol=2e-10,
     )
+
+
+def test_wcsph_summation_density_matches_barotropic_acceleration() -> None:
     compiled = _compiled(continuity=False)
     state = _initial(compiled)
     position, velocity, _ = compiled.dynamics.state_layout.unpack(state)

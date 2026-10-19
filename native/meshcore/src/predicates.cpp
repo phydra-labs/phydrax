@@ -2,6 +2,7 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
 #include "predicates.hpp"
+#include "exact_scalar.hpp"
 
 #include <algorithm>
 #include <array>
@@ -24,19 +25,6 @@ constexpr double kIspErrBoundB = (5.0 + 72.0 * kEpsilon) * kEpsilon;
 
 inline int sign_of(double value) { return (value > 0.0) - (value < 0.0); }
 
-// Shewchuk's orient3d value det[a - d; b - d; c - d] on difference rows.
-template <class T>
-T orient3d_rows(const T* x, const T* y, const T* z) {
-  return z[0] * (x[1] * y[2] - x[2] * y[1]) + z[1] * (x[2] * y[0] - x[0] * y[2]) +
-         z[2] * (x[0] * y[1] - x[1] * y[0]);
-}
-
-// det[[x_k, y_k, lift_k]] for k = 0, 1, 2 (incircle/power2d value).
-template <class T>
-T lifted2_rows(const T* x, const T* y, const T* lift) {
-  return lift[0] * (x[1] * y[2] - x[2] * y[1]) + lift[1] * (x[2] * y[0] - x[0] * y[2]) +
-         lift[2] * (x[0] * y[1] - x[1] * y[0]);
-}
 
 // Shewchuk's insphere value det[[x_k, y_k, z_k, lift_k]] for k = 0..3.
 template <class T>
@@ -103,7 +91,7 @@ int orient3d_shewchuk(const double* a, const double* b, const double* c, const d
   const Expansion rx[3] = {Expansion(adx), Expansion(bdx), Expansion(cdx)};
   const Expansion ry[3] = {Expansion(ady), Expansion(bdy), Expansion(cdy)};
   const Expansion rz[3] = {Expansion(adz), Expansion(bdz), Expansion(cdz)};
-  const Expansion stage_b = orient3d_rows(rx, ry, rz);
+  const Expansion stage_b = exact::det3_columns(rx, ry, rz);
   const double estimate = stage_b.estimate();
   const double errbound_b = kO3dErrBoundB * permanent;
   if (estimate >= errbound_b || -estimate >= errbound_b) {
@@ -124,7 +112,7 @@ int orient3d_shewchuk(const double* a, const double* b, const double* c, const d
                            Expansion::difference(c[1], d[1])};
   const Expansion fz[3] = {Expansion::difference(a[2], d[2]), Expansion::difference(b[2], d[2]),
                            Expansion::difference(c[2], d[2])};
-  return orient3d_rows(fx, fy, fz).sign();
+  return exact::det3_columns(fx, fy, fz).sign();
 }
 
 // ---------------------------------------------------------------- incircle
@@ -145,7 +133,7 @@ int incircle_adapt(const double* const* p, double permanent) {
     ry[k] = Expansion(y[k]);
     lift[k] = rx[k] * rx[k] + ry[k] * ry[k];
   }
-  const Expansion stage_b = lifted2_rows(rx, ry, lift);
+  const Expansion stage_b = exact::det3_columns(rx, ry, lift);
   const double estimate = stage_b.estimate();
   const double errbound = kIccErrBoundB * permanent;
   if (estimate >= errbound || -estimate >= errbound) {
@@ -159,7 +147,7 @@ int incircle_adapt(const double* const* p, double permanent) {
     ry[k] = Expansion::difference(p[k][1], d[1]);
     lift[k] = rx[k] * rx[k] + ry[k] * ry[k];
   }
-  return lifted2_rows(rx, ry, lift).sign();
+  return exact::det3_columns(rx, ry, lift).sign();
 }
 
 // ---------------------------------------------------------------- insphere (Shewchuk sign)
@@ -270,7 +258,7 @@ T power2d_value(const double* const* p, const double* w, Diff diff) {
     y[k] = diff(p[k][1], p[3][1]);
     lift[k] = x[k] * x[k] + y[k] * y[k] - diff(w[k], w[3]);
   }
-  return lifted2_rows(x, y, lift);
+  return exact::det3_columns(x, y, lift);
 }
 
 template <class T, class Diff>
@@ -709,7 +697,7 @@ Expansion orient3d_exact(const double* a, const double* b, const double* c, cons
                           Expansion::difference(c[1], d[1])};
   const Expansion z[3] = {Expansion::difference(a[2], d[2]), Expansion::difference(b[2], d[2]),
                           Expansion::difference(c[2], d[2])};
-  return -orient3d_rows(x, y, z);
+  return -exact::det3_columns(x, y, z);
 }
 
 Approx orient2d_approx(const double* a, const double* b, const double* c) {
@@ -727,7 +715,7 @@ Approx orient3d_approx(const double* a, const double* b, const double* c, const 
                        approx_difference(c[1], d[1])};
   const Approx z[3] = {approx_difference(a[2], d[2]), approx_difference(b[2], d[2]),
                        approx_difference(c[2], d[2])};
-  return -orient3d_rows(x, y, z);
+  return -exact::det3_columns(x, y, z);
 }
 
 }  // namespace phx::mc

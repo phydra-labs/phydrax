@@ -12,11 +12,12 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import DomainFunction, TimeInterval
 from phydrax.operators.differential import material_derivative
+from phydrax.units import METER
 
 
 def test_material_derivative_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 
@@ -39,7 +40,7 @@ def test_material_derivative_scalar_point() -> None:
 
 def test_material_derivative_vector_point() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 
@@ -62,7 +63,7 @@ def test_material_derivative_vector_point() -> None:
 
 def test_material_derivative_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 
@@ -73,7 +74,7 @@ def test_material_derivative_preserves_metadata() -> None:
 
 def test_material_derivative_ad_engine_jvp_matches_default() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 

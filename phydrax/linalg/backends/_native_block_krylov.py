@@ -291,6 +291,7 @@ def solve_native_block_krylov(
     )
 
 
+# Keep two-pass block Arnoldi, true-residual callbacks, and gated carries in execution order.
 def _block_gmres_raw(
     action: _BlockAction,
     precondition: _BlockPrecondition,

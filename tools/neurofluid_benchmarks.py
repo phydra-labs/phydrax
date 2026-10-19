@@ -22,6 +22,7 @@ from multiprocessing.connection import Connection
 from time import perf_counter
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -124,7 +125,7 @@ def hdiv_tabulation(repeats: int) -> dict[str, float | int]:
     points = jnp.asarray(((0.1, 0.2, 0.3), (0.25, 0.25, 0.25)))
     if element.tabulator is None:
         raise RuntimeError("BDM benchmark requires its native reference tabulator.")
-    tabulate = jax.jit(element.tabulator)
+    tabulate = eqx.filter_jit(element.tabulator)
     values, gradients = tabulate(points)
     jax.block_until_ready(values)
     start = perf_counter()
@@ -143,7 +144,7 @@ def hdiv_tabulation(repeats: int) -> dict[str, float | int]:
 
 
 def _transport_worker(connection: Connection, args: argparse.Namespace) -> None:
-    """Send lifecycle phases and one complete native record from a fresh process."""
+    """Send lifecycle phases and one native record from a fresh process."""
 
     def phase(name: str) -> None:
         connection.send({"kind": "phase", "phase": name})
@@ -194,7 +195,7 @@ def _native_attempt(args: argparse.Namespace, attempt: int) -> dict[str, Any]:
                 record = message["record"]
             else:
                 raise RuntimeError(
-                    "Native campaign received an invalid lifecycle message."
+                    f"native_campaign.message.kind must be phase or result; got {message['kind']!r}"
                 )
     except Exception as error:
         process_error = {"exception_type": type(error).__name__, "message": str(error)}

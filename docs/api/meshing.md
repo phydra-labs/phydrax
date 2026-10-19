@@ -3,13 +3,10 @@
 See the [meshing guide](../guides_meshing.md) for identity, provider,
 certification, and topology-transition contracts.
 
-The symbols below are implementation/API documentation, not a release index.
-Exact source × route × family × order × control × placement × derivative ×
-transfer combinations are recorded by the generated capability catalog.
-Independent flags must not be combined into an unsupported request. The
-[current closure table](../guides_meshing.md#evidence-vocabulary-and-current-closure-state)
-keeps implemented, tested, qualified, released, optional-provider, refused, and
-open research states distinct.
+The capability catalog records admitted source, route, family, order, control,
+placement, derivative, and transfer combinations. Use the
+[evidence guide](../guides_meshing.md#evidence-and-resource-limits) to interpret
+request-bound certification and qualification records.
 
 For an exact scalar zero set with sound value and derivative enclosures,
 `NativeMeshingOptions("implicit_adaptive_tetrahedral")` combines the canonical
@@ -25,6 +22,8 @@ specialization; the adaptive route never substitutes that specialization for a
 general field. Multiple material/junction sources use the shared image/interface
 complex, rather than assigning a tetrahedron from one scalar sample.
 
+
+## Requests and controls
 
 ::: phydrax.meshing
     options:
@@ -49,6 +48,10 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - MeshAttribute
         - RegionControl
         - PatchControl
+        - prepare_native_layer_association_transfer
+        - SourceProximityGapEvidence
+        - RegionBoundaryEvidence
+        - RegionMeshingEvidence
         - LayerSchedule
         - BoundaryLayerRoute
         - BoundaryLayerCollisionPolicy
@@ -95,12 +98,22 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - metric_edge_lengths
         - HessianMetricEvidence
         - lp_metric_from_hessian
+
+## Results, certification, and associations
+
+::: phydrax.meshing
+    options:
+      members:
         - CellMeshingResult
         - CellMeshAuditDisposition
         - CellMeshAuditPolicy
         - CellMeshAuditReport
         - GeometryAssociation
         - GeometryAssociationKind
+        - GeometryAssociationSourceBank
+        - ComposedAssociationTransfer
+        - ImplicitAssociationTransfer
+        - MappedReferenceAssociationTransfer
         - GeometryAssociationProvenance
         - AssociationPropagationPolicy
         - AssociationPropagationError
@@ -114,13 +127,39 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - MeshingFailure
         - MeshingFailureEvidence
         - certify_cell_mesh
+        - MeshCertificationCheck
+        - MeshCertificationInputs
+        - MeshCertificationOutcome
+        - MeshCertificationPreparedEvidence
+        - MeshCertificationReport
+        - MeshCertificationRoute
+        - MeshCertificationSchedule
+        - MeshingEvidenceBinding
+        - acceptance_stage_report
+        - certify_meshing_acceptance
         - evaluate_cell_quality
         - FiniteVolumeQualityEvaluation
         - evaluate_finite_volume_quality
         - import_cell_mesh
         - export_cell_mesh
         - export_mesh_array_artifact
+
+## Adaptation and optimization
+
+`MeshLineage.validate_complete(source_mesh, target_mesh)` validates the bound
+source and target topology and accounts for every retained entity. It returns
+host-only `LineageAccounting`: `lineage_id` identifies the checked lineage;
+`dimensions` stores dimension-ordered `EntityLineageAccounting` records with
+`relations`, `created`, and `deleted` counts. Missing or contradictory entity
+accounting refuses instead of producing a completeness record. `to_record()`
+serializes the validated counts without retaining either mesh.
+
+::: phydrax.meshing
+    options:
+      members:
         - MeshLineage
+        - LineageAccounting
+        - EntityLineageAccounting
         - CellMeshTransition
         - VertexInterpolationStencil
         - MeshAdaptationRoute
@@ -133,9 +172,18 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - MeshAdaptationResult
         - prepare_mesh_adaptation
         - execute_mesh_adaptation
+        - MeshProposalFeatures
+        - MixedAdaptationHierarchy
+        - MixedLayerColumns
+        - GeometryRealizationMeshAdaptation
+        - LevelSetEvidence
+        - LevelSetMeshAdaptation
+        - PolyhedralAdaptationOperation
+        - PolyhedralMeshAdaptation
         - BisectionCompatibility
         - BisectionHierarchy
         - BisectionEvidence
+        - BisectionUniformRefinement
         - LocalMetricEvidence
         - PreparedAdaptiveSimplex
         - prepare_adaptive_simplex
@@ -143,6 +191,8 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - PartitionedAdaptiveSimplex
         - partition_adaptive_simplex
         - commit_partitioned_adaptive_simplex
+        - PartitionedMeshAdaptationResult
+        - CollectiveMeshIdentity
         - PreparedDeviceMetricAdaptation
         - DeviceMetricLayout
         - DeviceMetricState
@@ -174,6 +224,12 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - MeshMotionAssessment
         - MeshMotionAdvance
         - advance_mesh_motion
+
+## Providers and native construction
+
+::: phydrax.meshing
+    options:
+      members:
         - GmshProvider
         - GmshOptions
         - GmshSurfaceAlgorithm
@@ -183,6 +239,7 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - GmshRemeshingPlan
         - GmshSession
         - NativeMeshingProvider
+        - NativeMeshingSession
         - NativeMeshingPlan
         - NativeMeshingOptions
         - NativeMeshingRoute
@@ -191,6 +248,39 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - NativePlanarSource
         - NativeImplicitSource
         - NativeCurveSource
+        - PiecewiseLinearComplex
+        - NativeVolumeSchedule
+        - NativeLayerCoreSource
+        - NativeHexGridRoute
+        - NativeHexGridSchedule
+        - NativeMappedHexSource
+        - NativePeriodicSource
+        - NativePlcSource
+        - NativePolyhedralSchedule
+        - NativePolyhedralSource
+        - NativeStructuredSchedule
+        - NativeStructuredSource
+        - NativeSurfaceEnvelopeSource
+        - NativeSurfaceSchedule
+        - NativeSurfaceSource
+        - NativeSweepSource
+        - NativeMeshingPhase
+        - NativeMeshingPhaseMeasurement
+        - NativeMeshingPhaseRecorder
+        - MultiblockConstruction
+        - StructuredConstruction
+        - TransfiniteBlock
+        - TransfiniteCurveControl
+        - TransfiniteSurfaceControl
+        - assemble_independent_blocks
+        - generate_structured_block
+        - glue_structured_blocks
+        - SweepConstruction
+        - SweepControl
+        - SweepMapKind
+        - generate_sweep
+        - BlockInterfaceControl
+        - declared_plc_domain
         - ManifoldProvider
         - MmgProvider
         - MmgOptions
@@ -227,6 +317,12 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - TiogaProvider
         - TiogaOptions
         - TiogaRegistration
+
+## Distribution, periodicity, and coupling
+
+::: phydrax.meshing
+    options:
+      members:
         - MeshPart
         - MeshAssembly
         - MeshInterfaceAttachment
@@ -241,11 +337,43 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - MetisPartitionError
         - ConformalCoupling
         - PeriodicCoupling
+        - PeriodicAssociationTransfer
+        - PeriodicMeshConstruction
+        - PeriodicPointOrbits
+        - PeriodicQuotientEvidence
+        - PeriodicRefinement
+        - periodic_cell_from_constraints
+        - periodic_delaunay_mesh
+        - publish_periodic_simplices
+        - refine_periodic_mesh
         - ContactCoupling
         - OversetCoupling
+        - OversetCellStatus
+        - OversetConnectivity
+        - OversetConnectivityError
+        - OversetDonorPacket
+        - OversetPartBlanking
+        - OversetPartSpec
+        - OversetPolicy
+        - OversetReceptorEvidence
+        - OversetRegistration
+        - OversetVertexStatus
+        - PreparedOversetFieldTransfer
+        - PreparedOversetMotion
+        - prepare_overset_connectivity
+        - prepare_overset_conservative_remap
+        - prepare_overset_conservative_state_transport
+        - prepare_overset_field_transfer
+        - prepare_overset_motion_rebind
         - CouplingSearchStatus
         - CouplingSearchEvidence
         - CouplingSearchError
+
+## Proposals and solver-aware decisions
+
+::: phydrax.meshing
+    options:
+      members:
         - MeshMarkingProposal
         - MeshSizeProposal
         - MeshMetricProposal
@@ -257,11 +385,6 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - project_mesh_proposal
         - prepare_mesh_proposal
         - AdaptationAction
-        - ComposedAssociationTransfer
-        - ImplicitAssociationTransfer
-        - MappedReferenceAssociationTransfer
-        - BisectionUniformRefinement
-        - BlockInterfaceControl
         - DecisionBudget
         - DeviceGenerationCandidates
         - DeviceGenerationEvidence
@@ -289,86 +412,6 @@ complex, rather than assigning a tetrahedron from one scalar sample.
         - SolverAwareCandidate
         - SolverAwareDecision
         - GeometrySourceEntityRole
-        - GeometryRealizationMeshAdaptation
-        - LevelSetEvidence
-        - LevelSetMeshAdaptation
-        - MeshCertificationCheck
-        - MeshCertificationInputs
-        - MeshCertificationOutcome
-        - MeshCertificationPreparedEvidence
-        - MeshCertificationReport
-        - MeshCertificationRoute
-        - MeshCertificationSchedule
-        - MeshingEvidenceBinding
-        - acceptance_stage_report
-        - certify_meshing_acceptance
-        - declared_plc_domain
-        - MeshProposalFeatures
-        - MixedAdaptationHierarchy
-        - MixedLayerColumns
-        - MultiblockConstruction
-        - StructuredConstruction
-        - TransfiniteBlock
-        - TransfiniteCurveControl
-        - TransfiniteSurfaceControl
-        - assemble_independent_blocks
-        - generate_structured_block
-        - glue_structured_blocks
-        - SweepConstruction
-        - SweepControl
-        - SweepMapKind
-        - generate_sweep
-        - PiecewiseLinearComplex
-        - NativeVolumeSchedule
-        - NativeLayerCoreSource
-        - NativeHexGridRoute
-        - NativeHexGridSchedule
-        - NativeMappedHexSource
-        - NativePeriodicSource
-        - NativePlcSource
-        - NativePolyhedralSchedule
-        - NativePolyhedralSource
-        - NativeStructuredSchedule
-        - NativeStructuredSource
-        - NativeSurfaceEnvelopeSource
-        - NativeSurfaceSchedule
-        - NativeSurfaceSource
-        - NativeSweepSource
-        - NativeMeshingPhase
-        - NativeMeshingPhaseMeasurement
-        - NativeMeshingPhaseRecorder
-        - PeriodicAssociationTransfer
-        - PeriodicMeshConstruction
-        - PeriodicPointOrbits
-        - PeriodicQuotientEvidence
-        - PeriodicRefinement
-        - periodic_cell_from_constraints
-        - periodic_delaunay_mesh
-        - publish_periodic_simplices
-        - refine_periodic_mesh
-        - PolyhedralAdaptationOperation
-        - PolyhedralMeshAdaptation
-        - OversetCellStatus
-        - OversetConnectivity
-        - OversetConnectivityError
-        - OversetDonorPacket
-        - OversetPartBlanking
-        - OversetPartSpec
-        - OversetPolicy
-        - OversetReceptorEvidence
-        - OversetRegistration
-        - OversetVertexStatus
-        - PreparedOversetFieldTransfer
-        - PreparedOversetMotion
-        - prepare_overset_connectivity
-        - prepare_overset_conservative_remap
-        - prepare_overset_conservative_state_transport
-        - prepare_overset_field_transfer
-        - prepare_overset_motion_rebind
-        - prepare_native_layer_association_transfer
-        - SourceProximityGapEvidence
-        - RegionBoundaryEvidence
-        - RegionMeshingEvidence
         - metric_simplex_quality
         - transition_interface_attachment
 
@@ -405,3 +448,74 @@ the prepared conservative remap owners used to produce it.
 ---
 
 ::: phydrax.solver.refinement_parent_cells
+
+## Qualification preparation and evidence
+
+The qualification owner prepares authored sources, binds physical fields to
+accepted carriers, and produces scientific continuation and benchmark evidence.
+Its preparation entry points consume domain limits; resource scopes and tickets
+remain inside the package operations. Repository tools use these operations for
+CLI workflows and serialize their results at the reporting boundary.
+
+`declared_geometry_edge_lengths` evaluates affine source edges after validating
+their published coordinate carriers. Authenticated retained coefficients and
+once-rounded descendants follow their declared publication laws; inconsistent
+source maps and unsupported curved maps refuse through the supplied
+`failure_factory`. This check is shared by product tests and CLI qualification
+without depending on tool-owned scientific logic.
+
+`validate_envelope_acceptance` requires keyword-only `limits=` from the
+caller-owned meshing specification. Acceptance must use that request's limits,
+not an independently constructed allowance. This API requirement does not
+establish that envelope qualification or retained-evidence replay has passed.
+
+::: phydrax.meshing.qualification
+    options:
+      members:
+        - AuthoredPeriodicLayerSource
+        - prepare_corrected_periodic_layer_source
+        - periodic_layer_source_identity_record
+        - LayerCoreLifecyclePlans
+        - LayerCoreLifecycleReport
+        - continue_layer_core_lifecycle
+        - continue_layer_core_fields
+        - continue_layer_core_finite_volume
+        - continue_layer_core_history
+        - rigid_planar_successor
+        - deform_planar_interior
+        - native_planar_part
+        - field_plans
+        - field_declarations
+        - prepare_poisson_update
+        - poisson_update
+        - restart_native
+        - PreparedEnvelopeSource
+        - prepare_envelope_source
+        - prepare_envelope_association_transfer
+        - validate_envelope_acceptance
+        - prepare_envelope_accepted_epoch
+        - prepare_envelope_solver
+        - SurfaceAcceptedEpoch
+        - prepare_surface_fields
+        - prepare_surface_checkpoint
+        - prepare_periodic_accepted_epoch
+        - FamilyQualityMeasurements
+        - prepare_family_association_transfer
+        - prepare_family_quality_measurements
+        - write_family_oracle
+        - read_family_oracle
+        - DistributedCheckpointSourceArrays
+        - prepare_distributed_checkpoint_source_closure
+        - bind_distributed_checkpoint_source_arrays
+        - QualifiedSimplexArrays
+        - qualify_simplex_resources
+        - declared_geometry_edge_lengths
+        - prepare_plc_associations
+        - PeriodicSourceQuadrature
+        - prepare_periodic_source_quadrature
+        - PredicateFamilyQualification
+        - reference_predicate_signs
+        - qualify_predicate_families
+        - qualify_bvh_scaling
+        - qualify_overlap_pair_scaling
+        - prepare_benchmark_provider_input

@@ -29,18 +29,28 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pytest
+
+if TYPE_CHECKING:
+    import pytest
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NODE_OUTCOMES = ("passed", "failed", "skipped")
 _MESSAGE_LIMIT = 240
-_ABORTED = (
-    pytest.ExitCode.INTERRUPTED,
-    pytest.ExitCode.INTERNAL_ERROR,
-    pytest.ExitCode.USAGE_ERROR,
-)
+
+
+def _aborted(exit_code: int, /) -> bool:
+    """Report pytest's interrupted, internal-error, or usage-error outcomes."""
+    # The optional test runner is admitted when its outcome codes are consumed.
+    import pytest
+
+    return exit_code in (
+        pytest.ExitCode.INTERRUPTED,
+        pytest.ExitCode.INTERNAL_ERROR,
+        pytest.ExitCode.USAGE_ERROR,
+    )
 
 
 @dataclass(frozen=True)
@@ -111,7 +121,7 @@ class PytestCollection:
     @property
     def aborted(self) -> bool:
         """Whether pytest stopped before collecting every requested path."""
-        return self.exit_code in _ABORTED
+        return _aborted(self.exit_code)
 
 
 def _short_message(report: pytest.TestReport | pytest.CollectReport, /) -> str:
@@ -176,6 +186,9 @@ class _NodeCollector:
 def _session(
     arguments: Sequence[str], root: Path, collector: _NodeCollector, /
 ) -> pytest.ExitCode | int:
+    # The optional test runner is admitted when a selection is executed.
+    import pytest
+
     options = [
         *arguments,
         f"--rootdir={root}",
@@ -197,7 +210,7 @@ def run_pytest(arguments: Sequence[str], /, *, root: Path, workers: int) -> Pyte
     exit_code = _session(options, root, collector)
     return PytestRun(
         nodes=collector.outcomes(),
-        collection_failed=bool(collector.failed_collectors) or exit_code in _ABORTED,
+        collection_failed=bool(collector.failed_collectors) or _aborted(exit_code),
     )
 
 

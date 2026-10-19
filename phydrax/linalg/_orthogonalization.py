@@ -4,11 +4,35 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+
+
+def _scaled_vector_normalization(
+    value: Array, /
+) -> tuple[Array, Array, Array, Array, Array]:
+    """Return a unit vector, norm, scaling gauge, scaled norm, and row validity."""
+    scale = jax.lax.stop_gradient(jnp.max(jnp.abs(value)))
+    finite = jnp.all(jnp.isfinite(value))
+    nonzero = finite & (scale > 0.0)
+    safe_scale = jnp.where(nonzero, scale, 1.0)
+    # Keep the norm reduction in scaled coordinates under compiled reassociation.
+    scaled = jax.lax.optimization_barrier(value / safe_scale)
+    scaled_norm = jnp.linalg.norm(scaled)
+    valid = nonzero & jnp.isfinite(scaled_norm) & (scaled_norm > 0.0)
+    unit = jnp.where(
+        valid,
+        scaled / jnp.where(valid, scaled_norm, 1.0),
+        jnp.full_like(value, jnp.nan),
+    )
+    # Scale is a numerical gauge: its derivative cancels from unit, norm, and
+    # inverse-norm applications. Stopping it avoids differentiating an unstable
+    # unscaled quotient while retaining the full vector derivative.
+    return unit, scale * scaled_norm, scale, scaled_norm, valid
 
 
 class OrthonormalFrameResult(StrictModule):

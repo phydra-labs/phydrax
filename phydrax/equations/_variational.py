@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -208,14 +209,27 @@ class VariationalCoefficient(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Callable coefficients require an explicit coefficient_id."
                 )
-            array = jnp.asarray(0.0)
+            array = jax.device_put(0.0)
             evaluator = cast(Callable[[Array, object], ArrayLike], value)
             identifier = str(coefficient_id)
             data_fingerprint = None
         else:
-            array = jnp.asarray(value)
-            if not jnp.issubdtype(array.dtype, jnp.inexact):
-                array = array.astype("float64")
+            if isinstance(value, Array):
+                array = value
+                if not jnp.issubdtype(array.dtype, jnp.inexact):
+                    array = array.astype(jnp.float64)
+            elif isinstance(value, (np.ndarray, np.generic, float, complex, int, bool)):
+                host = np.asarray(value)
+                if not np.issubdtype(host.dtype, np.inexact):
+                    array = jax.device_put(host.astype(np.float64))
+                elif isinstance(value, (float, complex)):
+                    array = jax.device_put(value)
+                else:
+                    array = jax.device_put(host)
+            else:
+                array = jnp.asarray(value)
+                if not jnp.issubdtype(array.dtype, jnp.inexact):
+                    array = array.astype(jnp.float64)
             evaluator = None
             data_fingerprint = array_tree_fingerprint(np.asarray(array))
             identifier = (

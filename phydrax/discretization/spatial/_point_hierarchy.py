@@ -13,7 +13,7 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
-from ._morton import _canonical_morton_point_order, MortonAddressPlan
+from ._morton import canonical_morton_point_order, MortonAddressPlan
 
 
 _UINT64_MAX = np.iinfo(np.uint64).max
@@ -123,7 +123,7 @@ class MortonPointHierarchyPlan(StrictModule):
         stable_ids: jax.Array | None = None,
         epoch: int | jax.Array = 0,
     ) -> MortonPointHierarchyState:
-        point_order = _canonical_morton_point_order(
+        point_order = canonical_morton_point_order(
             self.address_plan,
             points,
             point_capacity=self.point_capacity,

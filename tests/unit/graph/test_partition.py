@@ -1,49 +1,20 @@
+import jax
 import numpy as np
 import pytest
 
 from phydrax._meshcore import meshcore_available, MeshcoreError, MeshcoreStatus
 from phydrax.graph import (
+    GraphPartitionEvidence,
     GraphPartitionPlan,
     partition_graph,
     WeightedCSRGraph,
 )
+from tests._support.graph_partition import csr, distributed_graph, grid, grid_edges
 
 
 pytestmark = pytest.mark.skipif(
     not meshcore_available(), reason="phydrax-meshcore unavailable"
 )
-
-
-def _csr(
-    count: int, edges: list[tuple[int, int, int]]
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Canonical CSR arrays of an undirected weighted edge list."""
-    pairs = np.asarray([(u, v) for u, v, _ in edges], dtype=np.int64).reshape(-1, 2)
-    weights = np.asarray([w for _, _, w in edges], dtype=np.int64)
-    rows = np.concatenate((pairs[:, 0], pairs[:, 1]))
-    columns = np.concatenate((pairs[:, 1], pairs[:, 0]))
-    both = np.concatenate((weights, weights))
-    order = np.lexsort((columns, rows))
-    offsets = np.zeros((count + 1,), dtype=np.int64)
-    np.cumsum(np.bincount(rows, minlength=count), out=offsets[1:])
-    return offsets, columns[order], both[order]
-
-
-def _grid_edges(nx: int, ny: int, offset: int = 0) -> list[tuple[int, int, int]]:
-    edges = []
-    for j in range(ny):
-        for i in range(nx):
-            vertex = offset + j * nx + i
-            if i + 1 < nx:
-                edges.append((vertex, vertex + 1, 1))
-            if j + 1 < ny:
-                edges.append((vertex, vertex + nx, 1))
-    return edges
-
-
-def _grid(nx: int, ny: int) -> WeightedCSRGraph:
-    offsets, neighbors, weights = _csr(nx * ny, _grid_edges(nx, ny))
-    return WeightedCSRGraph(offsets, neighbors, edge_weights=weights)
 
 
 def _cut(graph: WeightedCSRGraph, parts: np.ndarray) -> int:
@@ -53,7 +24,7 @@ def _cut(graph: WeightedCSRGraph, parts: np.ndarray) -> int:
 
 
 def test_grid_bisection_finds_the_optimal_strip_cut() -> None:
-    graph = _grid(32, 32)
+    graph = grid(32, 32)
     result = partition_graph(graph, GraphPartitionPlan(2, maximum_imbalance=1.03))
     evidence = result.evidence
     # A balanced bisection of a 32 x 32 grid cuts at least one 32-edge line.
@@ -68,7 +39,7 @@ def test_grid_bisection_finds_the_optimal_strip_cut() -> None:
 
 
 def test_grid_four_way_partition_approaches_quadrants() -> None:
-    graph = _grid(40, 40)
+    graph = grid(40, 40)
     evidence = partition_graph(graph, GraphPartitionPlan(4)).evidence
     # Quadrants cut 80 edges; four strips cut 120.
     assert evidence.edge_cut <= 90
@@ -77,7 +48,7 @@ def test_grid_four_way_partition_approaches_quadrants() -> None:
 
 
 def test_unequal_part_shares_set_the_part_weights() -> None:
-    graph = _grid(30, 30)
+    graph = grid(30, 30)
     evidence = partition_graph(
         graph, GraphPartitionPlan(2, maximum_imbalance=1.02, part_shares=(1.0, 2.0))
     ).evidence
@@ -88,8 +59,8 @@ def test_unequal_part_shares_set_the_part_weights() -> None:
 
 
 def test_disconnected_components_are_kept_whole() -> None:
-    edges = [edge for block in range(4) for edge in _grid_edges(6, 6, 36 * block)]
-    graph = WeightedCSRGraph(*_csr(4 * 36, edges)[:2])
+    edges = [edge for block in range(4) for edge in grid_edges(6, 6, 36 * block)]
+    graph = WeightedCSRGraph(*csr(4 * 36, edges)[:2])
     result = partition_graph(graph, GraphPartitionPlan(4))
     assert result.evidence.edge_cut == 0
     assert result.evidence.boundary_vertex_count == 0
@@ -108,9 +79,9 @@ def test_isolated_vertices_are_balanced() -> None:
 
 def test_edge_weights_steer_the_cut_to_the_light_seam() -> None:
     edges = [
-        (u, v, 1 if (u % 16, v % 16) == (7, 8) else 50) for u, v, _ in _grid_edges(16, 8)
+        (u, v, 1 if (u % 16, v % 16) == (7, 8) else 50) for u, v, _ in grid_edges(16, 8)
     ]
-    offsets, neighbors, weights = _csr(128, edges)
+    offsets, neighbors, weights = csr(128, edges)
     graph = WeightedCSRGraph(offsets, neighbors, edge_weights=weights)
     evidence = partition_graph(
         graph, GraphPartitionPlan(2, maximum_imbalance=1.0)
@@ -121,7 +92,7 @@ def test_edge_weights_steer_the_cut_to_the_light_seam() -> None:
 
 
 def test_indivisible_heavy_vertex_is_reported_not_split() -> None:
-    offsets, neighbors, _ = _csr(12, [(v, v + 1, 1) for v in range(11)])
+    offsets, neighbors, _ = csr(12, [(v, v + 1, 1) for v in range(11)])
     weights = np.ones((12,), dtype=np.int64)
     weights[5] = 40
     graph = WeightedCSRGraph(offsets, neighbors, vertex_weights=weights)
@@ -136,7 +107,7 @@ def test_indivisible_heavy_vertex_is_reported_not_split() -> None:
 
 
 def test_partition_is_deterministic_and_independent_of_row_order() -> None:
-    offsets, neighbors, weights = _csr(24 * 20, _grid_edges(24, 20))
+    offsets, neighbors, weights = csr(24 * 20, grid_edges(24, 20))
     shuffled = neighbors.copy()
     for row in range(offsets.size - 1):
         shuffled[offsets[row] : offsets[row + 1]] = neighbors[
@@ -154,20 +125,22 @@ def test_partition_is_deterministic_and_independent_of_row_order() -> None:
 
 
 def test_nonempty_policy_gives_every_part_a_vertex() -> None:
-    offsets, neighbors, _ = _csr(5, [(v, v + 1, 1) for v in range(4)])
+    offsets, neighbors, _ = csr(5, [(v, v + 1, 1) for v in range(4)])
     graph = WeightedCSRGraph(offsets, neighbors, vertex_weights=(1, 0, 0, 0, 0))
     result = partition_graph(graph, GraphPartitionPlan(5))
     np.testing.assert_array_equal(np.sort(np.asarray(result.parts)), np.arange(5))
     assert result.evidence.empty_part_count == 0
-    with pytest.raises(ValueError, match="exceeds the vertex count"):
+    with pytest.raises(ValueError, match="GraphPartitionPlan.part_count"):
         partition_graph(graph, GraphPartitionPlan(6))
     permitted = partition_graph(graph, GraphPartitionPlan(6, empty_parts="permit_empty"))
     assert permitted.evidence.empty_part_count >= 1
 
 
 def test_work_limit_is_a_resource_refusal() -> None:
-    with pytest.raises(MeshcoreError, match="work limit 50") as refusal:
-        partition_graph(_grid(20, 20), GraphPartitionPlan(2, work_limit=50))
+    with pytest.raises(
+        MeshcoreError, match=r"graph_partition\.work_units must not exceed 50;"
+    ) as refusal:
+        partition_graph(grid(20, 20), GraphPartitionPlan(2, work_limit=50))
     assert refusal.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
 
 
@@ -194,7 +167,7 @@ def test_weighted_disconnected_packing_meets_exact_capacity() -> None:
 
 
 def test_multilevel_projection_keeps_exact_fine_capacities() -> None:
-    result = partition_graph(_grid(32, 32), GraphPartitionPlan(8, maximum_imbalance=1.0))
+    result = partition_graph(grid(32, 32), GraphPartitionPlan(8, maximum_imbalance=1.0))
     assert result.evidence.status == "balanced"
     np.testing.assert_array_equal(
         result.evidence.part_weights, np.full((8,), 128, np.int64)
@@ -228,8 +201,8 @@ def test_integer_weight_total_above_exact_limit_is_refused() -> None:
 
 
 def test_disconnected_kway_matches_independently_constructed_grid_cut() -> None:
-    edges = _grid_edges(16, 16) + _grid_edges(16, 16, 256)
-    graph = WeightedCSRGraph(*_csr(512, edges)[:2])
+    edges = grid_edges(16, 16) + grid_edges(16, 16, 256)
+    graph = WeightedCSRGraph(*csr(512, edges)[:2])
     result = partition_graph(graph, GraphPartitionPlan(32, maximum_imbalance=1.0))
     assert result.evidence.status == "balanced"
     np.testing.assert_array_equal(
@@ -253,7 +226,7 @@ def test_disconnected_spatial_kway_matches_independent_grid_cut() -> None:
                 edges.append((source, source + 8, 1))
             if vertex // 64 < 7:
                 edges.append((source, source + 64, 1))
-    graph = WeightedCSRGraph(*_csr(1024, edges)[:2])
+    graph = WeightedCSRGraph(*csr(1024, edges)[:2])
     result = partition_graph(graph, GraphPartitionPlan(32, maximum_imbalance=1.0))
     assert result.evidence.status == "balanced"
     np.testing.assert_array_equal(
@@ -264,7 +237,7 @@ def test_disconnected_spatial_kway_matches_independent_grid_cut() -> None:
 
 
 def test_component_weights_match_unequal_capacity_parts() -> None:
-    offsets, neighbors, _ = _csr(4, [(0, 1, 1), (2, 3, 1)])
+    offsets, neighbors, _ = csr(4, [(0, 1, 1), (2, 3, 1)])
     graph = WeightedCSRGraph(offsets, neighbors, vertex_weights=(4, 4, 1, 1))
     result = partition_graph(
         graph, GraphPartitionPlan(2, maximum_imbalance=1.0, part_shares=(1.0, 4.0))
@@ -274,7 +247,7 @@ def test_component_weights_match_unequal_capacity_parts() -> None:
     assert result.evidence.edge_cut == 0
 
 
-_PATH = _csr(4, [(0, 1, 1), (1, 2, 1), (2, 3, 1)])
+_PATH = csr(4, [(0, 1, 1), (1, 2, 1), (2, 3, 1)])
 
 
 @pytest.mark.parametrize(
@@ -343,90 +316,42 @@ def test_invalid_csr_is_refused(
 
 
 @pytest.mark.parametrize(
-    ("arguments", "options", "error"),
+    ("arguments", "options", "error", "field"),
     [
         pytest.param(
-            (2,), {"maximum_imbalance": 0.9}, ValueError, id="imbalance-below-one"
+            (2,),
+            {"maximum_imbalance": 0.9},
+            ValueError,
+            "maximum_imbalance",
+            id="imbalance-below-one",
         ),
-        pytest.param((2,), {"empty_parts": "allow"}, ValueError, id="unknown-policy"),
-        pytest.param((2,), {"part_shares": (1.0,)}, ValueError, id="share-count"),
-        pytest.param((2,), {"part_shares": (1.0, 0.0)}, ValueError, id="zero-share"),
-        pytest.param((0,), {}, ValueError, id="no-parts"),
-        pytest.param((True,), {}, TypeError, id="boolean-parts"),
+        pytest.param(
+            (2,), {"empty_parts": "allow"}, ValueError, "empty_parts", id="unknown-policy"
+        ),
+        pytest.param(
+            (2,), {"part_shares": (1.0,)}, ValueError, "part_shares", id="share-count"
+        ),
+        pytest.param(
+            (2,), {"part_shares": (1.0, 0.0)}, ValueError, "part_shares", id="zero-share"
+        ),
+        pytest.param((0,), {}, ValueError, "part_count", id="no-parts"),
+        pytest.param((True,), {}, TypeError, "part_count", id="boolean-parts"),
     ],
 )
 def test_invalid_plans_are_refused(
-    arguments: tuple[object, ...], options: dict[str, object], error: type[Exception]
+    arguments: tuple[object, ...],
+    options: dict[str, object],
+    error: type[Exception],
+    field: str,
 ) -> None:
-    with pytest.raises(error):
+    with pytest.raises(error, match=field):
         GraphPartitionPlan(*arguments, **options)  # ty: ignore[invalid-argument-type]
 
 
-def _distributed_graph(
-    weights: np.ndarray,
-    edges: list[tuple[int, int, int]],
-    *,
-    active_count: int | None = None,
-    corrupt: bool = False,
-    ghost: bool = False,
-    corrupt_ghost: bool = False,
-) -> tuple[WeightedCSRGraph, np.ndarray, np.ndarray]:
-    import jax
-    from jax.sharding import Mesh, NamedSharding, PartitionSpec
-
-    if jax.device_count() < 2:
-        pytest.skip("Requires two or more real CPU devices.")
-    ranks = jax.device_count()
-    capacity = len(weights) // ranks
-    weights = np.asarray(weights, np.int64).copy()
-    ids = (np.arange(len(weights), dtype=np.int64) * 17 + 9).reshape(ranks, capacity)
-    count = len(weights) if active_count is None else active_count
-    offsets = np.zeros((ranks, capacity + 1), np.int64)
-    neighbors = np.full((ranks, max(1, 2 * len(edges))), 2**63 - 1, np.int64)
-    edge_weights = np.zeros_like(neighbors)
-    for rank in range(ranks):
-        position = 0
-        for row in range(capacity):
-            vertex = rank * capacity + row
-            for left, right, weight in edges:
-                other = right if left == vertex else left if right == vertex else None
-                if other is not None:
-                    neighbors[rank, position] = ids.flat[other]
-                    edge_weights[rank, position] = weight
-                    position += 1
-            offsets[rank, row + 1] = position
-    if corrupt:
-        edge_weights[0, 0] += 1
-    owners = np.broadcast_to(np.arange(ranks, dtype=np.int32)[:, None], ids.shape).copy()
-    valid = np.arange(len(weights)).reshape(ids.shape) < count
-    if ghost:
-        ids[-1, -1] = ids[0, 0]
-        owners[-1, -1] = 0
-        valid[-1, -1] = True
-        weights[-1] = weights[0] + int(corrupt_ghost)
-    mesh = Mesh(np.asarray(jax.devices()), ("parts",))
-    sharding = NamedSharding(mesh, PartitionSpec("parts"))
-    put = lambda value: jax.device_put(value, sharding)
-    graph = WeightedCSRGraph.owner_local(
-        put(offsets),
-        put(neighbors),
-        put(ids),
-        put(owners),
-        put(valid),
-        mesh=mesh,
-        axis_name="parts",
-        edge_weights=put(edge_weights),
-        vertex_weights=put(np.asarray(weights, np.int64).reshape(ids.shape)),
-    )
-    return graph, owners, ids
-
-
-def test_distributed_partition_balances_and_measures_actual_cut() -> None:
-    import jax
-
+def test_distributed_partition_balances_and_measures_cut() -> None:
     count = jax.device_count() * 4
     edges = [(vertex, vertex + 1, 3) for vertex in range(count - 1)]
-    graph, owners, _ = _distributed_graph(np.ones(count, np.int64), edges)
+    graph, owners, _ = distributed_graph(np.ones(count, np.int64), edges)
     result = partition_graph(
         graph, GraphPartitionPlan(jax.device_count(), refinement_passes=2)
     )
@@ -446,11 +371,9 @@ def test_distributed_partition_balances_and_measures_actual_cut() -> None:
 
 
 def test_distributed_disconnected_unequal_weights_and_indivisible_vertex() -> None:
-    import jax
-
     ranks = jax.device_count()
     weights = np.tile((1, 2, 1, 2), ranks)
-    graph, _, _ = _distributed_graph(weights, [])
+    graph, _, _ = distributed_graph(weights, [])
     shares = tuple(range(1, ranks + 1))
     result = partition_graph(
         graph,
@@ -465,7 +388,7 @@ def test_distributed_disconnected_unequal_weights_and_indivisible_vertex() -> No
     )
     assert np.all(result.evidence.part_weights <= result.evidence.part_capacities)
     weights[0] = 100
-    heavy, _, ids = _distributed_graph(weights, [])
+    heavy, _, ids = distributed_graph(weights, [])
     overloaded = partition_graph(heavy, GraphPartitionPlan(ranks, refinement_passes=1))
     assert overloaded.evidence.accepted
     assert overloaded.evidence.status == "indivisible_vertex_overload"
@@ -474,17 +397,15 @@ def test_distributed_disconnected_unequal_weights_and_indivisible_vertex() -> No
 
 
 def test_distributed_collective_refusals_preserve_original_owners() -> None:
-    import jax
-
     ranks = jax.device_count()
     weights = np.ones(ranks * 4, np.int64)
     edges = [(vertex, vertex + 1, 1) for vertex in range(weights.size - 1)]
-    graph, owners, _ = _distributed_graph(weights, edges)
+    graph, owners, _ = distributed_graph(weights, edges)
     refused = partition_graph(graph, GraphPartitionPlan(ranks, work_limit=1))
     assert not refused.evidence.accepted
     assert refused.evidence.resource_status & 2
     np.testing.assert_array_equal(refused.parts, owners)
-    invalid, owners, _ = _distributed_graph(weights, edges, corrupt=True)
+    invalid, owners, _ = distributed_graph(weights, edges, corrupt=True)
     refused = partition_graph(invalid, GraphPartitionPlan(ranks, refinement_passes=1))
     assert not refused.evidence.accepted
     assert refused.evidence.resource_status & 1
@@ -492,12 +413,8 @@ def test_distributed_collective_refusals_preserve_original_owners() -> None:
 
 
 def test_distributed_empty_policy_is_collective() -> None:
-    import jax
-
     ranks = jax.device_count()
-    graph, owners, _ = _distributed_graph(
-        np.ones(ranks * 2, np.int64), [], active_count=1
-    )
+    graph, owners, _ = distributed_graph(np.ones(ranks * 2, np.int64), [], active_count=1)
     required = partition_graph(graph, GraphPartitionPlan(ranks, refinement_passes=0))
     assert not required.evidence.accepted and required.evidence.resource_status & 1
     np.testing.assert_array_equal(required.parts, owners)
@@ -510,27 +427,23 @@ def test_distributed_empty_policy_is_collective() -> None:
 
 
 def test_distributed_ghost_copy_tracks_accepted_owner_and_refuses_stale_weight() -> None:
-    import jax
-
     ranks = jax.device_count()
     weights = np.ones(ranks * 3, np.int64)
     weights[0] = 2
-    graph, _, _ = _distributed_graph(weights, [], ghost=True)
+    graph, _, _ = distributed_graph(weights, [], ghost=True)
     result = partition_graph(graph, GraphPartitionPlan(ranks, refinement_passes=1))
     assert result.evidence.accepted
     assert np.asarray(result.parts)[-1, -1] == np.asarray(result.parts)[0, 0]
     assert np.sum(result.evidence.part_weights) == np.sum(weights[:-1])
-    invalid, owners, _ = _distributed_graph(weights, [], ghost=True, corrupt_ghost=True)
+    invalid, owners, _ = distributed_graph(weights, [], ghost=True, corrupt_ghost=True)
     refused = partition_graph(invalid, GraphPartitionPlan(ranks, refinement_passes=1))
     assert not refused.evidence.accepted and refused.evidence.resource_status & 1
     np.testing.assert_array_equal(refused.parts, owners)
 
 
 def test_distributed_nonempty_singleton_parts_cannot_be_refined_away() -> None:
-    import jax
-
     ranks = jax.device_count()
-    graph, _, _ = _distributed_graph(
+    graph, _, _ = distributed_graph(
         np.ones(ranks * 2, np.int64),
         [(vertex, vertex + 1, 3) for vertex in range(ranks - 1)],
         active_count=ranks,
@@ -543,10 +456,8 @@ def test_distributed_nonempty_singleton_parts_cannot_be_refined_away() -> None:
 
 
 def test_distributed_semantic_priorities_ignore_local_slot_order() -> None:
-    import jax
-
     count = jax.device_count() * 4
-    graph, _, _ = _distributed_graph(
+    graph, _, _ = distributed_graph(
         np.ones(count, np.int64), [(vertex, vertex + 1, 5) for vertex in range(count - 1)]
     )
     assert graph.vertex_ids is not None
@@ -596,10 +507,8 @@ def test_distributed_semantic_priorities_ignore_local_slot_order() -> None:
 
 
 def test_distributed_graph_refuses_implicit_whole_graph_resharding() -> None:
-    import jax
-
     count = jax.device_count() * 2
-    graph, _, _ = _distributed_graph(np.ones(count, np.int64), [])
+    graph, _, _ = distributed_graph(np.ones(count, np.int64), [])
     assert isinstance(graph.offsets, jax.Array)
     assert isinstance(graph.edge_weights, jax.Array)
     assert isinstance(graph.vertex_weights, jax.Array)
@@ -621,3 +530,25 @@ def test_distributed_graph_refuses_implicit_whole_graph_resharding() -> None:
             vertex_weights=graph.vertex_weights,
             edge_weights=graph.edge_weights,
         )
+
+
+def test_serial_evidence_constructor_preserves_measured_identity() -> None:
+    graph = grid(4, 4)
+    result = partition_graph(graph, GraphPartitionPlan(2))
+    rebuilt = GraphPartitionEvidence.serial(
+        graph,
+        np.asarray(result.parts),
+        np.asarray(result.evidence.part_targets),
+        np.asarray(result.evidence.part_capacities),
+        result.evidence.work,
+        result.evidence.backend,
+    )
+    assert rebuilt.evidence_id == result.evidence.evidence_id
+    assert rebuilt.status == result.evidence.status
+    assert rebuilt.edge_cut == result.evidence.edge_cut
+    assert rebuilt.accepted
+    assert rebuilt.resource_status == 0
+    np.testing.assert_array_equal(rebuilt.part_weights, result.evidence.part_weights)
+    np.testing.assert_array_equal(
+        rebuilt.part_vertex_counts, result.evidence.part_vertex_counts
+    )

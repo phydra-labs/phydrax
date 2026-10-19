@@ -215,7 +215,9 @@ def test_projection_reports_its_target_mass_solve_evidence(planar: Any) -> None:
     np.testing.assert_allclose(
         prepared.dof_measures, _integrals(planar[1]), rtol=1e-13, atol=1e-16
     )
-    with pytest.raises(TypeError, match="prepare_l2_projection_target"):
+    with pytest.raises(
+        TypeError, match=r"PreparedL2ProjectionTarget\._construction_token"
+    ):
         phx.discretization.PreparedL2ProjectionTarget(
             prepared.discretization,
             prepared.mass,
@@ -224,7 +226,9 @@ def test_projection_reports_its_target_mass_solve_evidence(planar: Any) -> None:
             prepared.dof_measures,
             field_name=prepared.field_name,
         )
-    with pytest.raises(TypeError, match="prepare_l2_projection_transfer"):
+    with pytest.raises(
+        TypeError, match=r"FiniteElementL2Projection\._construction_token"
+    ):
         phx.discretization.FiniteElementL2Projection(
             projection.mixed_mass, prepared, operator_id="forged"
         )
@@ -272,9 +276,9 @@ def test_fem_l2_projection_transfer_scenario_2() -> None:
         _space(mesh, "triangle"), field_name="u"
     )
     refresh = phx.discretization.refresh_l2_projection_target
-    with pytest.raises(ValueError, match="unchanged DOF structure"):
+    with pytest.raises(ValueError, match=r"refresh_l2_projection_target\.dof_map_id"):
         refresh(prepared, _space(mesh, "triangle", 2))
-    with pytest.raises(ValueError, match="unchanged DOF structure"):
+    with pytest.raises(ValueError, match=r"refresh_l2_projection_target\.dof_map_id"):
         refresh(prepared, _space(_triangles(4, perturb=0.2, seed=16), "triangle"))
     with pytest.raises(TypeError, match="PreparedL2ProjectionTarget"):
         refresh(_space(mesh, "triangle"), _space(mesh, "triangle"))
@@ -335,7 +339,7 @@ def test_fem_l2_projection_transfer_scenario_3() -> None:
             field_name="u",
         )
     shrunk = _triangles(2, lower=0.1, upper=0.9)
-    with pytest.raises(ValueError, match="successful common refinement"):
+    with pytest.raises(ValueError, match=r"validated_overlaps\.refinement\.status"):
         prepare(
             source,
             phx.discretization.prepare_l2_projection_target(
@@ -357,5 +361,10 @@ def test_fem_l2_projection_transfer_scenario_3() -> None:
             ),
         ),
     ).prepare()
-    with pytest.raises(ValueError):
+    piola_target = phx.discretization.prepare_l2_projection_target(vector, field_name="u")
+    assert piola_target.mass.source.size == vector.dof_maps[0].global_dof_count == 33
+    assert piola_target.discretization.field_spaces[0].conformity == "Hdiv"
+    with pytest.raises(
+        ValueError, match="scientific form type, twist, and physical proxy"
+    ):
         prepare(vector, target, _refinement(first, second), field_name="u")

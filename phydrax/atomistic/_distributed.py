@@ -51,7 +51,7 @@ from ..discretization import (
     ParticleNeighborhoodState,
 )
 from ..discretization._periodic_cell import (
-    _complete_image_shifts,
+    complete_image_shifts,
     PeriodicCell,
     PeriodicImageStencil,
 )
@@ -2159,7 +2159,7 @@ def _require_complete_stencil(
     """
     extents = stencil.extents
     if len(extents) != cell.rank or not np.array_equal(
-        np.asarray(stencil.shifts), _complete_image_shifts(extents)
+        np.asarray(stencil.shifts), complete_image_shifts(extents)
     ):
         raise ValueError(
             "The image stencil shifts are not the complete box of its extents."

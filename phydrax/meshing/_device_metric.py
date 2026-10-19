@@ -36,7 +36,6 @@ transfer follow the conventions of ``NATIVE_METRIC_2D``.
 from __future__ import annotations
 
 import math
-import time
 from typing import Any, final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
@@ -55,62 +54,65 @@ from .._geometry_predicates import (
     PredicateSign,
     resolve_host_predicate_mode,
 )
+from .._meshcore import NativeExecutionScope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_integer
 from ..discretization._adaptive_simplex import (
-    _count,
-    _FAILURES,
-    _INDEX_LIMIT,
-    _select,
     AdaptiveSimplexStatus,
+    FAILURES,
+    INDEX_LIMIT,
     masked_simplex_facet_neighbors,
     masked_simplex_signature,
     MaskedSimplexMesh,
+    select,
 )
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..linalg import hermitian_exp, hermitian_log
 from ..typing import checked
 from ._device_status import DeviceEpoch, require_committed_status
-from ._lineage import MeshTransitionKind
+from ._lineage_records import MeshTransitionKind
 from ._local_metric import (
-    _assemble,
-    _boolean_array,
-    _codes,
-    _COLLAPSE_LIMIT,
-    _COLLAPSED,
-    _CORNER,
-    _CURVE,
-    _distinct,
-    _IMPROVEMENT,
-    _initial_state,
-    _integer_array,
-    _INTERIOR,
-    _lookup,
-    _LOWER,
-    _measured,
-    _PHASE_ROUNDS,
-    _REFINED,
-    _RELOCATED,
-    _RELOCATION_STEPS,
-    _SELECTION_ROUNDS,
-    _Source,
-    _State,
-    _SWAPPED,
-    _topology as _host_topology,
-    _UPPER,
-    _validate_classification,
-    _validate_mesh,
+    assemble,
+    boolean_array,
+    COLLAPSE_LIMIT,
+    COLLAPSED,
+    CORNER,
+    CURVE,
+    distinct_rows,
+    entity_codes,
+    IMPROVEMENT,
+    initial_state,
+    integer_array,
+    INTERIOR,
+    lookup,
+    LOWER,
+    measured,
+    metric_topology as _host_topology,
+    PHASE_ROUNDS,
+    REFINED,
+    RELOCATED,
+    RELOCATION_STEPS,
+    SELECTION_ROUNDS,
+    Source,
+    State,
+    SWAPPED,
+    UPPER,
+    validate_classification,
+    validate_mesh,
 )
+from ._measurements import NativeExecutionRecord
 from ._metric import metric_edge_lengths
 
 
 if TYPE_CHECKING:
     from ._adaptation import (
-        _RouteOutcome,
         MeshAdaptationPolicy,
         MeshAdaptationResult,
         MetricMeshAdaptation,
         PreparedMeshAdaptation,
         RelocationMeshAdaptation,
+        RouteOutcome,
     )
     from ._result import CellMeshingResult
 
@@ -174,12 +176,12 @@ class DeviceMetricLayout(StrictModule, NonTrainableState):
     signature_id: str = eqx.field(static=True)
 
     def __init__(self, *, vertex_capacity: int, cell_capacity: int) -> None:
-        vertices = _count(vertex_capacity, "vertex_capacity")
-        cells = _count(cell_capacity, "cell_capacity")
+        vertices = positive_integer(vertex_capacity, "vertex_capacity")
+        cells = positive_integer(cell_capacity, "cell_capacity")
         records = _RECORDS_PER_SLOT * (vertices + cells)
         pairs = _PAIRS_PER_CELL * cells
-        steps = 1 + _RELOCATION_STEPS.size
-        if max(vertices * steps, 6 * cells, 2 * records, 2 * pairs) > _INDEX_LIMIT:
+        steps = 1 + RELOCATION_STEPS.size
+        if max(vertices * steps, 6 * cells, 2 * records, 2 * pairs) > INDEX_LIMIT:
             raise ValueError("Device metric capacities must address int32 slots.")
         mesh_signature = masked_simplex_signature(
             "triangle", 2, vertices, cells, np.dtype(np.float64)
@@ -372,7 +374,7 @@ class DeviceMetricReport(StrictModule):
 
     @property
     def failed(self) -> Array:
-        return (self.status & _FAILURES) != 0
+        return (self.status & FAILURES) != 0
 
 
 @final
@@ -479,7 +481,7 @@ class DeviceMetricEvidence(StrictModule, NonTrainableState):
             raise ValueError("A converged adaptation cannot be stalled.")
         if not isinstance(status, AdaptiveSimplexStatus):
             raise TypeError("status must be AdaptiveSimplexStatus.")
-        if status & _FAILURES:
+        if status & FAILURES:
             raise ValueError("Committed evidence cannot carry a refused call.")
         if not isinstance(layout_id, str):
             raise TypeError("layout_id must be a str.")
@@ -518,7 +520,7 @@ class DeviceMetricEvidence(StrictModule, NonTrainableState):
 class _Anchor(NamedTuple):
     """Host source description shared by preparation and commit."""
 
-    source: _Source
+    source: Source
     first_cell_id: int
 
 
@@ -818,7 +820,7 @@ def _independent(rank: Array, valid: Array, items: Array, cell_capacity: int, /)
 
     def undecided_remain(carry: Any) -> Any:
         undecided, _, rounds = carry
-        return jnp.any(undecided) & (rounds < _SELECTION_ROUNDS)
+        return jnp.any(undecided) & (rounds < SELECTION_ROUNDS)
 
     def select_round(carry: Any) -> Any:
         undecided, selected, rounds = carry
@@ -933,7 +935,7 @@ def _vertex_classes(
     )
     curve = (incident == 2) & (label_low == label_high) & ~guarded
     kind = jnp.where(
-        curve, _CURVE, jnp.where(guarded | (incident > 0), _CORNER, _INTERIOR)
+        curve, CURVE, jnp.where(guarded | (incident > 0), CORNER, INTERIOR)
     ).astype(jnp.int32)
     first = (
         jnp.full(shape, vertex_capacity, dtype=jnp.int32)
@@ -1317,7 +1319,7 @@ def _split_children(
             axis=2,
         ).reshape((-1, 3)),
         parents=jnp.repeat(parents, 2, axis=0),
-        rank=_REFINED,
+        rank=REFINED,
         classes=child_features(work.edge_classes),
         protected=child_features(work.edge_protected),
     )
@@ -1333,7 +1335,7 @@ def _split_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any
     work = _compact_cells(work, layout)
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
-    candidate = topology.canonical & (topology.lengths > _UPPER) & ~topology.protected
+    candidate = topology.canonical & (topology.lengths > UPPER) & ~topology.protected
     first, second = topology.ends[:, 0], topology.ends[:, 1]
     points = work.coordinates
     t = jnp.where(candidate, _metric_midpoint(work.metric, points, first, second), 0.5)
@@ -1382,7 +1384,7 @@ def _split_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any
     half = _edge_half(topology, keys[:, 0], keys[:, 1], vertex_capacity)
     hit = _live_records(work) & (half >= 0) & selected[jnp.maximum(half, 0)]
     midpoint = vertex_slot[jnp.maximum(half, 0)]
-    ranks = jnp.where(hit, jnp.maximum(work.record_ranks, _REFINED), work.record_ranks)
+    ranks = jnp.where(hit, jnp.maximum(work.record_ranks, REFINED), work.record_ranks)
     work, record_overflow = _store_records(
         work,
         _live_records(work),
@@ -1426,8 +1428,8 @@ def _collapse_candidates(
     # region; straight curve vertices along an edge of their own curve class.
     label = topology.classes[edge]
     kind = topology.kind[removed]
-    interior = (kind == _INTERIOR) & (label == 0) & topology.uniform[removed]
-    curve = (kind == _CURVE) & (label > 0) & (label == topology.curve_class[removed])
+    interior = (kind == INTERIOR) & (label == 0) & topology.uniform[removed]
+    curve = (kind == CURVE) & (label > 0) & (label == topology.curve_class[removed])
     straight = jnp.where(curve, topology.straight[removed], _OK)
     cavity = (topology.valence[removed] > width) | (topology.valence[kept] > width)
     ball = topology.ball[removed]
@@ -1472,7 +1474,7 @@ def _collapse_candidates(
     longest = jnp.max(jnp.where(fresh, created, 0.0), axis=1)
     geometric = jnp.maximum(
         jnp.maximum(orientation, straight),
-        jnp.where(linked & (longest <= _COLLAPSE_LIMIT), _OK, _INVALID),
+        jnp.where(linked & (longest <= COLLAPSE_LIMIT), _OK, _INVALID),
     )
     status = jnp.where(
         interior | curve, jnp.where(cavity, _CAVITY, geometric), _INADMISSIBLE
@@ -1537,7 +1539,7 @@ def _collapse_children(
         mask=(selected[:, None] & present & ~found.holds_kept).reshape((-1,)),
         rows=found.moved.reshape((-1, 3)),
         parents=jnp.concatenate((ball[..., None], absorbed), axis=2).reshape((-1, 3)),
-        rank=_COLLAPSED,
+        rank=COLLAPSED,
         classes=jnp.where(
             merging,
             jnp.maximum(own_classes, work.edge_classes[safe_neighbor, position]),
@@ -1560,7 +1562,7 @@ def _collapse_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> 
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
     halves_count = 3 * layout.cell_capacity
-    short = topology.canonical & (topology.lengths < _LOWER) & ~topology.protected
+    short = topology.canonical & (topology.lengths < LOWER) & ~topology.protected
     found = _collapse_candidates(work, topology, layout)
     counters, bits = _tally(
         work.counters,
@@ -1601,7 +1603,7 @@ def _collapse_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> 
         _live_records(work) & (remapped[:, 0] != remapped[:, 1]),
         remapped,
         work.record_sources,
-        jnp.where(touched, jnp.maximum(work.record_ranks, _COLLAPSED), work.record_ranks),
+        jnp.where(touched, jnp.maximum(work.record_ranks, COLLAPSED), work.record_ranks),
         layout,
     )
     bits = bits | _overflow(cell_overflow | record_overflow)
@@ -1661,7 +1663,7 @@ def _flip_children(
             ),
             axis=1,
         ).reshape((-1, 3)),
-        rank=_SWAPPED,
+        rank=SWAPPED,
         classes=child_features(work.edge_classes),
         protected=child_features(work.edge_protected),
     )
@@ -1715,7 +1717,7 @@ def _flip_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -> Any:
     )
     duplicate = _edge_half(topology, x0, x1, vertex_capacity) >= 0
     status = jnp.where(duplicate, _INVALID, status)
-    improving = candidate & (after > before + _IMPROVEMENT)
+    improving = candidate & (after > before + IMPROVEMENT)
     counters, bits = _tally(work.counters, status, improving)
     valid = improving & (status == _OK)
     ids = work.vertex_ids
@@ -1760,7 +1762,7 @@ def _relocation_targets(work: _Work, topology: _Topology, /) -> Any:
     listed = link >= 0
     length = jnp.where(listed, topology.lengths[topology.link_half], 1.0)
     badness = jnp.max(jnp.where(listed, jnp.maximum(length, 1.0 / length), 0.0), axis=1)
-    curve = topology.kind == _CURVE
+    curve = topology.kind == CURVE
     along = (link == topology.curve_neighbors[:, :1]) | (
         link == topology.curve_neighbors[:, 1:]
     )
@@ -1779,20 +1781,20 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
     topology = _topology(work, layout)
     vertex_capacity = layout.vertex_capacity
     cell_capacity = layout.cell_capacity
-    steps = _RELOCATION_STEPS.size
+    steps = RELOCATION_STEPS.size
     points = work.coordinates
     kind = topology.kind
-    curve = kind == _CURVE
+    curve = kind == CURVE
     movable = (
         (topology.valence > 0)
         & ~done
-        & ((kind == _INTERIOR) | (curve & (topology.straight != _INVALID)))
+        & ((kind == INTERIOR) | (curve & (topology.straight != _INVALID)))
     )
     cavity = topology.valence > layout.ball_width
     displacement, badness = _relocation_targets(work, topology)
     active = movable & ~cavity & jnp.any(displacement != 0.0, axis=1)
     target = points[:, None, :] + (
-        jnp.asarray(_RELOCATION_STEPS)[None, :, None] * displacement[:, None, :]
+        jnp.asarray(RELOCATION_STEPS)[None, :, None] * displacement[:, None, :]
     )
     ball = topology.ball
     present = ball >= 0
@@ -1854,7 +1856,7 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
     before = jnp.min(
         jnp.where(present, topology.quality[jnp.maximum(ball, 0)], jnp.inf), axis=1
     )
-    improving = active[:, None] & (after > before[:, None] + _IMPROVEMENT)
+    improving = active[:, None] & (after > before[:, None] + IMPROVEMENT)
     accepted = improving & (status == _OK)
     success = jnp.any(accepted, axis=1)
     rejected = jnp.where(
@@ -1877,11 +1879,11 @@ def _relocation_round(work: _Work, done: Array, layout: DeviceMetricLayout, /) -
         metric=jnp.where(selected[:, None, None], chosen_metric, work.metric),
         vertex_moved=work.vertex_moved | selected,
         cell_ranks=jnp.where(
-            touched_cells, jnp.maximum(work.cell_ranks, _RELOCATED), work.cell_ranks
+            touched_cells, jnp.maximum(work.cell_ranks, RELOCATED), work.cell_ranks
         ),
         record_ranks=jnp.where(
             touched_records,
-            jnp.maximum(work.record_ranks, _RELOCATED),
+            jnp.maximum(work.record_ranks, RELOCATED),
             work.record_ranks,
         ),
         counters=counters.at[_RELOCATIONS].add(count),
@@ -1898,7 +1900,7 @@ def _unit(work: _Work, /) -> Array:
     active = jnp.repeat(work.cell_active, 3)
     unprotected = active & ~work.edge_protected.reshape((-1,))
     measured = jnp.where(jnp.any(unprotected), unprotected, active)
-    inside = (lengths >= _LOWER) & (lengths <= _UPPER)
+    inside = (lengths >= LOWER) & (lengths <= UPPER)
     return jnp.all(~measured | inside)
 
 
@@ -1907,7 +1909,7 @@ def _phase(step: Any, work: _Work, done: Array, bits: Array, layout: Any, /) -> 
 
     def proceed(carry: Any) -> Any:
         _, _, bits, count, rounds, _ = carry
-        return (rounds < _PHASE_ROUNDS) & (count > 0) & ((bits & _FAILURES) == 0)
+        return (rounds < PHASE_ROUNDS) & (count > 0) & ((bits & FAILURES) == 0)
 
     def sub_round(carry: Any) -> Any:
         work, done, bits, _, rounds, total = carry
@@ -1984,7 +1986,7 @@ def _report(
     lengths = _lengths(result, _half_ends(cells))
     unprotected = canonical & ~result.edge_protected.reshape((-1,))
     measured = jnp.where(jnp.any(unprotected), unprotected, canonical)
-    inside = measured & (lengths >= _LOWER) & (lengths <= _UPPER)
+    inside = measured & (lengths >= LOWER) & (lengths <= UPPER)
     count = jnp.sum(measured, dtype=jnp.int32)
     within = jnp.sum(inside, dtype=jnp.int32)
     cell_lengths = jnp.where(
@@ -2019,7 +2021,7 @@ def _report(
 def _adapt(layout: DeviceMetricLayout, state: DeviceMetricState, /) -> DeviceMetricUpdate:
     source = _work(state)
     return jax.lax.cond(
-        (source.flags[_STATUS] & _FAILURES) != 0,
+        (source.flags[_STATUS] & FAILURES) != 0,
         lambda: _refused_call(layout, state, source),
         lambda: _adapted(layout, source),
     )
@@ -2030,7 +2032,7 @@ def _refused_call(
 ) -> DeviceMetricUpdate:
     """A call on an epoch that already failed: nothing runs, the state is kept."""
 
-    status = (source.flags[_STATUS] & _FAILURES).astype(jnp.int32)
+    status = (source.flags[_STATUS] & FAILURES).astype(jnp.int32)
     report = _report(source, source, status, jnp.bool_(False), _geometry(source), layout)
     return DeviceMetricUpdate(state, report)
 
@@ -2042,7 +2044,7 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
 
     def proceed(carry: Any) -> Any:
         work, bits, passes, stalled = carry
-        return (passes < maximum) & ~stalled & ((bits & _FAILURES) == 0) & ~_unit(work)
+        return (passes < maximum) & ~stalled & ((bits & FAILURES) == 0) & ~_unit(work)
 
     def adaptation_pass(carry: Any) -> Any:
         work, bits, passes, _ = carry
@@ -2056,7 +2058,7 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
     )
     converged = _unit(work)
     stalled = stalled & ~converged
-    refused = (bits & _FAILURES) != 0
+    refused = (bits & FAILURES) != 0
     uncertain, invalid = _geometry(work)
     bits = (
         bits
@@ -2068,7 +2070,7 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
         | jnp.where(invalid > 0, int(AdaptiveSimplexStatus.INVALID_GEOMETRY), 0)
         | jnp.where(uncertain > 0, int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION), 0)
     ).astype(jnp.int32)
-    failed = (bits & _FAILURES) != 0
+    failed = (bits & FAILURES) != 0
     work = work._replace(
         flags=work.flags.at[_STATUS]
         .set(work.flags[_STATUS] | bits)
@@ -2077,7 +2079,7 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
         .at[_STALLED]
         .set(stalled.astype(jnp.int32))
     )
-    result = _select(failed, source, work)
+    result = select(failed, source, work)
     # A failed call rolls back numerical/topological arrays but keeps all
     # attempted-call status, convergence, and stall evidence.
     result = result._replace(
@@ -2093,7 +2095,7 @@ def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate
         result,
         bits,
         stalled & ~failed,
-        _select(failed, _geometry(source), (uncertain, invalid)),
+        select(failed, _geometry(source), (uncertain, invalid)),
         layout,
     )
     return DeviceMetricUpdate(_state(result), report)
@@ -2142,7 +2144,7 @@ def _edge_features(topology: Any, host_cells: np.ndarray, /) -> Any:
     """Feature class and protection of the edge opposite every local vertex."""
     first = host_cells[:, _NEXT].reshape((-1,))
     second = host_cells[:, _PREVIOUS].reshape((-1,))
-    rows = _lookup(topology.codes, _codes(np.sort(np.stack((first, second), 1), 1)))
+    rows = lookup(topology.codes, entity_codes(np.sort(np.stack((first, second), 1), 1)))
     shape = host_cells.shape
     return (
         topology.edge_class[rows].reshape(shape),
@@ -2151,7 +2153,7 @@ def _edge_features(topology: Any, host_cells: np.ndarray, /) -> Any:
 
 
 def _device_state(
-    layout: DeviceMetricLayout, state: _State, topology: Any, controls: np.ndarray, /
+    layout: DeviceMetricLayout, state: State, topology: Any, controls: np.ndarray, /
 ) -> DeviceMetricState:
     """Pad the host working state into global-ID-ordered slots of the bucket."""
 
@@ -2224,48 +2226,56 @@ def _device_state(
     return _state(work)
 
 
-def _prepared_metric(adaptation: PreparedMeshAdaptation, /) -> Any:
+def _prepared_metric(
+    adaptation: PreparedMeshAdaptation,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> Any:
     # Lazy: the adaptation transaction imports this module's evidence type.
-    from ._adaptation import MetricMeshAdaptation
+    from ._adaptation import adaptation_phase, MetricMeshAdaptation
 
-    policy = adaptation.policy
-    constraints = adaptation.constraints
-    mesh = adaptation.source.mesh
-    mode = _host_mode()
-    values = _validate_mesh(mesh, constraints.metric_values)
-    vertex_count = mesh.coordinates.shape[0]
-    edge_count = mesh.entity_set(1).entity_ids.shape[0]
-    cell_count = mesh.entity_set(2).entity_ids.shape[0]
-    state, source = _initial_state(
-        mesh,
-        values,
-        _integer_array(constraints.cell_classes, cell_count, "cell_classes"),
-        _integer_array(constraints.edge_classes, edge_count, "edge_classes"),
-        _boolean_array(constraints.protected_edge_mask, edge_count, "protected_edges"),
-        _boolean_array(constraints.fixed_vertex_mask, vertex_count, "fixed_vertices"),
-        mode,
-    )
-    topology = _host_topology(state, mode)
-    _validate_classification(state, topology)
-    # ty: ignore[unresolved-attribute]
-    vertex_capacity, cell_capacity = policy.device_policy.capacities(
-        vertex_count, cell_count
-    )
-    layout = DeviceMetricLayout(
-        vertex_capacity=vertex_capacity, cell_capacity=cell_capacity
-    )
-    controls = np.asarray(
-        (
-            policy.maximum_passes,
-            isinstance(adaptation.request, MetricMeshAdaptation),
-            policy.relocation,
-        ),
-        dtype=np.int32,
-    )
-    device = _device_state(layout, state, topology, controls)
-    return PreparedDeviceMetricAdaptation(
-        adaptation, layout, device, _Anchor(source, int(np.max(state.cell_ids)) + 1)
-    )
+    with adaptation_phase(scope, budget):
+        policy = adaptation.policy
+        constraints = adaptation.constraints
+        mesh = adaptation.source.mesh
+        mode = _host_mode()
+        values = validate_mesh(mesh, constraints.metric_values)
+        vertex_count = mesh.coordinates.shape[0]
+        edge_count = mesh.entity_set(1).entity_ids.shape[0]
+        cell_count = mesh.entity_set(2).entity_ids.shape[0]
+        state, source = initial_state(
+            mesh,
+            values,
+            integer_array(constraints.cell_classes, cell_count, "cell_classes"),
+            integer_array(constraints.edge_classes, edge_count, "edge_classes"),
+            boolean_array(constraints.protected_edge_mask, edge_count, "protected_edges"),
+            boolean_array(constraints.fixed_vertex_mask, vertex_count, "fixed_vertices"),
+            mode,
+            budget=budget,
+        )
+        topology = _host_topology(state, mode, budget=budget)
+        validate_classification(state, topology)
+        # ty: ignore[unresolved-attribute]
+        vertex_capacity, cell_capacity = policy.device_policy.capacities(
+            vertex_count, cell_count
+        )
+        layout = DeviceMetricLayout(
+            vertex_capacity=vertex_capacity, cell_capacity=cell_capacity
+        )
+        controls = np.asarray(
+            (
+                policy.maximum_passes,
+                isinstance(adaptation.request, MetricMeshAdaptation),
+                policy.relocation,
+            ),
+            dtype=np.int32,
+        )
+        device = _device_state(layout, state, topology, controls)
+        return PreparedDeviceMetricAdaptation(
+            adaptation, layout, device, _Anchor(source, int(np.max(state.cell_ids)) + 1)
+        )
 
 
 def prepare_device_metric_adaptation(
@@ -2293,7 +2303,18 @@ def prepare_device_metric_adaptation(
         raise TypeError("policy must be MeshAdaptationPolicy.")
     if policy.route is not MeshAdaptationRoute.DEVICE_METRIC_2D:
         raise ValueError("Device metric adaptation requires the DEVICE_METRIC_2D route.")
-    return _prepared_metric(prepare_mesh_adaptation(source, request, policy=policy))
+    limits = policy.limits
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        ticket = scope.batch(0)
+        ticket.settle()
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+            adaptation = prepare_mesh_adaptation(source, request, policy=policy)
+            return _prepared_metric(adaptation, scope=scope, budget=budget)
 
 
 # ------------------------------------------------------------------ commit
@@ -2316,17 +2337,17 @@ def _host_state(
         np.stack((cells[:, _NEXT], cells[:, _PREVIOUS]), axis=2).reshape((-1, 2)), axis=1
     )
     flagged = np.flatnonzero((classes > 0) | protected)
-    features = flagged[_distinct(_codes(halves[flagged]))]
+    features = flagged[distinct_rows(entity_codes(halves[flagged]))]
     records = int(cursors[_RECORDS])
     keys = np.sort(np.asarray(host.record_keys, dtype=np.int64)[:records], axis=1)
     sources = np.asarray(host.record_sources, dtype=np.int64)[:records]
     ranks = np.asarray(host.record_ranks, dtype=np.int64)[:records]
     # Identical records (same key, source edge, and rank) stem from one record
     # and share every later operation; the host deduplicates them eagerly.
-    distinct = _distinct(_codes(keys), sources, -ranks)
+    distinct = distinct_rows(entity_codes(keys), sources, -ranks)
     pairs = np.asarray(host.ancestry, dtype=np.int64)[: int(cursors[_PAIRS])]
     cell_ids = np.asarray(mesh.cell_ids, dtype=np.int64)[active]
-    return _State(
+    return State(
         points=np.asarray(mesh.coordinates, dtype=np.float64)[:count],
         metric=np.asarray(host.metric, dtype=np.float64)[:count],
         vertex_ids=np.asarray(mesh.vertex_ids, dtype=np.int64)[:count],
@@ -2358,8 +2379,8 @@ def _evidence(
     counters = np.asarray(host.counters)
     flags = np.asarray(host.flags)
     controls = np.asarray(host.controls)
-    lengths = _measured(topology)
-    inside = (lengths >= _LOWER) & (lengths <= _UPPER)
+    lengths = measured(topology)
+    inside = (lengths >= LOWER) & (lengths <= UPPER)
     converged = bool(np.all(inside))
     return DeviceMetricEvidence(
         passes=int(counters[_PASSES]),
@@ -2386,39 +2407,53 @@ def _evidence(
 
 
 def _outcome(
-    prepared: PreparedDeviceMetricAdaptation, host: DeviceMetricState, /
-) -> _RouteOutcome:
+    prepared: PreparedDeviceMetricAdaptation,
+    host: DeviceMetricState,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> RouteOutcome:
     # Lazy: the adaptation transaction imports this module's evidence type.
     from ._adaptation import (
-        _finalize_native,
-        _metric_status,
-        _RouteOutcome,
-        _target_metric,
-        _unchanged,
+        adaptation_phase,
+        finalize_native,
+        metric_status,
+        RouteOutcome,
+        target_metric,
+        unchanged,
     )
 
-    adaptation = prepared.adaptation
-    mesh = host.mesh
-    require_committed_status(
-        int(np.asarray(host.status_flags)),
-        np.asarray(mesh.coordinates, dtype=np.float64),
-        np.asarray(mesh.cells, dtype=np.int64)[np.asarray(mesh.cell_active)],
-        DeviceEpoch.METRIC,
+    with adaptation_phase(scope, budget):
+        adaptation = prepared.adaptation
+        mesh = host.mesh
+        require_committed_status(
+            int(np.asarray(host.status_flags)),
+            np.asarray(mesh.coordinates, dtype=np.float64),
+            np.asarray(mesh.cells, dtype=np.int64)[np.asarray(mesh.cell_active)],
+            DeviceEpoch.METRIC,
+        )
+        mode = _host_mode()
+        state = _host_state(prepared, host)
+        evidence = _evidence(prepared, host, _host_topology(state, mode, budget=budget))
+        applied = (
+            evidence.splits + evidence.collapses + evidence.flips + evidence.relocations
+        )
+        status = metric_status(evidence, evidence.topology_operations)
+        if applied == 0:
+            # Preserve the source while exposing an unmet criterion as STALLED or
+            # PASS_LIMIT rather than the converged UNCHANGED status.
+            return unchanged(adaptation, evidence, None, status=status)
+        edit, metric = assemble(state, prepared.anchor.source, mode, budget=budget)
+    native = finalize_native(
+        adaptation,
+        edit,
+        MeshTransitionKind.REMESH,
+        conservative=False,
+        scope=scope,
+        budget=budget,
     )
-    mode = _host_mode()
-    state = _host_state(prepared, host)
-    evidence = _evidence(prepared, host, _host_topology(state, mode))
-    applied = evidence.splits + evidence.collapses + evidence.flips + evidence.relocations
-    status = _metric_status(evidence, evidence.topology_operations)
-    if applied == 0:
-        # Preserve the source while exposing an unmet criterion as STALLED or
-        # PASS_LIMIT rather than the converged UNCHANGED status.
-        return _unchanged(adaptation, evidence, None, status=status)
-    edit, metric = _assemble(state, prepared.anchor.source, mode)
-    native = _finalize_native(
-        adaptation, edit, MeshTransitionKind.REMESH, conservative=False
-    )
-    return _RouteOutcome(
+    return RouteOutcome(
         status,
         native.target,
         native.transition,
@@ -2426,7 +2461,7 @@ def _outcome(
         native.stencil,
         native.transfer,
         # ty: ignore[unresolved-attribute]
-        _target_metric(adaptation.request.metric, native.target.mesh, metric),
+        target_metric(adaptation.request.metric, native.target.mesh, metric),
         evidence,
         None,
     )
@@ -2448,22 +2483,47 @@ def commit_device_metric_adaptation(
     positively oriented by exact host predicates (else QUALITY_REJECTED).
     """
 
-    from ._adaptation import _adaptation_result
+    from ._adaptation import adaptation_result
 
     if not isinstance(prepared, PreparedDeviceMetricAdaptation):
         raise TypeError("prepared must be PreparedDeviceMetricAdaptation.")
     _check_state(prepared.layout, state)
-    started = time.monotonic()
-    host = jax.device_get(state)
-    return _adaptation_result(prepared.adaptation, _outcome(prepared, host), started)
+    limits = prepared.adaptation.policy.limits
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        started = scope.operation_started
+        host = jax.device_get(state)
+        ticket = scope.batch(0)
+        ticket.settle()
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+            outcome = _outcome(prepared, host, scope=scope, budget=budget)
+    if scope.evidence is not None:
+        outcome = outcome._replace(
+            target=outcome.target.with_execution_evidence(
+                NativeExecutionRecord(
+                    scope.evidence, owner_id=prepared.adaptation.prepared_id
+                )
+            )
+        )
+    return adaptation_result(prepared.adaptation, outcome, started)
 
 
-def _execute_device_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def execute_device_metric_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> RouteOutcome:
     """Prepare the device epoch, run the compiled passes once, and commit."""
 
-    metric = _prepared_metric(prepared)
+    metric = _prepared_metric(prepared, scope=scope, budget=budget)
     update = adapt_device_metric(metric.layout, metric.state)
-    return _outcome(metric, jax.device_get(update.state))
+    return _outcome(metric, jax.device_get(update.state), scope=scope, budget=budget)
 
 
 __all__ = [

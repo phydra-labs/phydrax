@@ -960,7 +960,7 @@ class LatticeDecompositionPlan(StrictModule, NonTrainableState):
                 halo_sets[right_part].add(int(left))
         if max((len(values) for values in halo_sets), default=0) > maximum_halo:
             raise ValueError("Lattice decomposition exceeds maximum_halo_sites.")
-        distributed = DistributedHaloPlan(owner, adjacency_array, part_count)
+        distributed = DistributedHaloPlan.from_global(owner, adjacency_array, part_count)
         face_axes = np.asarray(
             [
                 (left, right)

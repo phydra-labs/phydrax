@@ -41,6 +41,7 @@ _MODEL = """
 
 
 def qualify(steps: int) -> dict[str, object]:
+    # The optional dependency is admitted when this workflow executes.
     import mujoco
 
     model = mujoco.MjModel.from_xml_string(_MODEL)

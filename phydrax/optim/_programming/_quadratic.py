@@ -775,8 +775,10 @@ def _dense_constrained_single(
         jnp.zeros((variables,), dtype=quadratic.dtype),
         equality_candidate,
     )
-    raw_slack = inequality_rhs - inequality_matrix @ default_primal
-    default_slack = jnp.where(raw_slack > 0, raw_slack, jnp.ones_like(raw_slack))
+    # The infeasible-start method restores Gx + s = h through its residual.
+    # Unit slacks and duals keep the initial complementarity blocks interior;
+    # an equality solve's roundoff near Gx = h must not set their scale.
+    default_slack = jnp.ones((inequalities,), dtype=quadratic.dtype)
     warm = jnp.asarray(use_warm_start)
     primal = jnp.where(warm, initial_primal, default_primal)
     slack = jnp.where(warm, initial_slack, default_slack)

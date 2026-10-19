@@ -29,10 +29,10 @@ from ._factorizations import (
     refresh_factorization,
 )
 from ._materialization import MaterializationPolicy, materialize
-from ._operators import _materialize_by_basis, AbstractLinearOperator, DenseLinearOperator
+from ._operators import AbstractLinearOperator, DenseLinearOperator, materialize_by_basis
 from ._policies import RankPolicy, SolveResourcePolicy
 from ._results import LinearSolveStatus
-from ._spaces import _coordinate_dtype, AbstractVectorSpace, ArraySpace, RHSLayout
+from ._spaces import AbstractVectorSpace, ArraySpace, coordinate_dtype, RHSLayout
 from ._subspaces import LinearSubspace
 
 
@@ -636,14 +636,14 @@ def _bind_prepared_constraint(
             "Constraint certification cannot fit one column in its workspace budget."
         )
     block_size = min(32, max(1, rows // 2), workspace_limit // block_bytes)
-    right_matrix = jnp.zeros((columns, rows), dtype=_coordinate_dtype(operator.source))
+    right_matrix = jnp.zeros((columns, rows), dtype=coordinate_dtype(operator.source))
     incompatible_rhs = False
     normal_residual_squared = jnp.asarray(0.0, dtype=matrix.real.dtype)
     for start in range(0, rows, block_size):
         width = min(block_size, rows - start)
         identity_columns = (
             jnp.arange(rows)[:, None] == jnp.arange(start, start + width)[None, :]
-        ).astype(_coordinate_dtype(operator.target))
+        ).astype(coordinate_dtype(operator.target))
         target_block = _unflatten_coordinate_block(operator.target, identity_columns)
         solve_result = factorization.solve(target_block, rhs_layout=RHSLayout((width,)))
         incompatible = solve_result.status == int(LinearSolveStatus.INCOMPATIBLE_RHS)
@@ -700,9 +700,7 @@ def _bind_prepared_constraint(
             raise RuntimeError(
                 "Selected factorization cannot expose a nontrivial nullspace."
             )
-        nullspace_basis = jnp.zeros(
-            (columns, 0), dtype=_coordinate_dtype(operator.source)
-        )
+        nullspace_basis = jnp.zeros((columns, 0), dtype=coordinate_dtype(operator.source))
         nullspace = LinearSubspace(
             operator.source,
             nullspace_basis,
@@ -711,7 +709,7 @@ def _bind_prepared_constraint(
         )
     reduced_space = ArraySpace(
         (nullity,),
-        dtype=_coordinate_dtype(operator.source),
+        dtype=coordinate_dtype(operator.source),
         space_id=canonical_fingerprint(
             {
                 "kind": "constraint-nullspace-coordinate-space",
@@ -903,8 +901,8 @@ def _dense_constraint_operator(
     /,
 ) -> tuple[DenseLinearOperator, Array, ConstraintOperatorKind, int]:
     entries = operator.source.size * operator.target.size
-    coordinate_dtype = _coordinate_dtype(operator.target)
-    required_bytes = entries * coordinate_dtype.itemsize
+    stored_dtype = coordinate_dtype(operator.target)
+    required_bytes = entries * stored_dtype.itemsize
     if entries > policy.max_entries or required_bytes > policy.max_bytes:
         raise ValueError(
             "Constraint operator dense preparation exceeds its materialization policy."
@@ -920,12 +918,12 @@ def _dense_constraint_operator(
     else:
         # Probe one canonical coordinate at a time, rather than allocating a
         # source-square identity unrelated to the bounded rectangular output.
-        matrix = _materialize_by_basis(operator)
+        matrix = materialize_by_basis(operator)
         expected = (operator.target.size, operator.source.size)
-        if matrix.shape != expected or matrix.dtype != coordinate_dtype:
+        if matrix.shape != expected or matrix.dtype != stored_dtype:
             raise ValueError(
                 "Matrix-free constraint probing must return canonical coordinates "
-                f"with shape/dtype {expected} and {coordinate_dtype}."
+                f"with shape/dtype {expected} and {stored_dtype}."
             )
         operator_kind = "matrix-free"
         setup_matvec_count = operator.source.size

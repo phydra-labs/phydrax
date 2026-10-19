@@ -4,14 +4,12 @@
 
 """Boundary-degree embedding of curved (mapped) cell meshes.
 
-Oracles are independent of the certificate: exact polynomial diffeomorphisms
+Oracles are independent of the certificate: polynomial diffeomorphisms
 (sheared cubes and squares), explicit nested or self-overlapping constructions,
 and deliberately nonconforming shared nodes.
 """
 
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import equinox as eqx
 import numpy as np
@@ -19,70 +17,24 @@ import pytest
 
 import phydrax as phx
 from phydrax.discretization._cell_geometry import coordinate_lagrange_element
-from phydrax.meshing._curving import _straight_geometry
-
-
-type _Transform = Callable[[np.ndarray], np.ndarray]
-
-
-def _kuhn_cube(count: int, lower: float, upper: float) -> tuple[np.ndarray, np.ndarray]:
-    """Positively oriented Kuhn tetrahedra of a cube grid."""
-    grid = np.linspace(lower, upper, count + 1)
-    points = np.stack(np.meshgrid(grid, grid, grid, indexing="ij"), -1).reshape(-1, 3)
-    index = np.arange(points.shape[0]).reshape((count + 1,) * 3)
-    cells = []
-    for i, j, k in np.ndindex((count,) * 3):
-        corner = {
-            (a, b, c): int(index[i + a, j + b, k + c])
-            for a, b, c in np.ndindex((2, 2, 2))
-        }
-        for path in (
-            ((1, 0, 0), (1, 1, 0)),
-            ((1, 0, 0), (1, 0, 1)),
-            ((0, 1, 0), (1, 1, 0)),
-            ((0, 1, 0), (0, 1, 1)),
-            ((0, 0, 1), (1, 0, 1)),
-            ((0, 0, 1), (0, 1, 1)),
-        ):
-            row = [corner[(0, 0, 0)], corner[path[0]], corner[path[1]], corner[(1, 1, 1)]]
-            edges = points[row[1:]] - points[row[0]]
-            if np.linalg.det(edges) < 0:
-                row[1], row[2] = row[2], row[1]
-            cells.append(row)
-    return points, np.asarray(cells, dtype=np.int64)
-
-
-def _p2(mesh: Any, transform: _Transform) -> Any:
-    """Shared-node P2 geometry whose nodes are the exact images of straight nodes."""
-    straight = _straight_geometry(mesh, 2)
-    return phx.discretization.CellGeometrySpec(
-        dict(zip(straight.block_names, straight.elements, strict=True)),
-        dict(zip(straight.block_names, straight.geometry_dofs, strict=True)),
-        transform(np.asarray(straight.coordinates, dtype=np.float64)),
-    )
-
-
-def _certify(mesh: Any, geometry: Any) -> Any:
-    validity = phx.discretization.certify_cell_geometry_validity(geometry, mesh=mesh)
-    assert validity.all_certified
-    return phx.geometry.certify_global_embedding(mesh, geometry, validity)
-
-
-def _shear(points: np.ndarray) -> np.ndarray:
-    # (x, y, z) -> (x + y (1 - y) / 4, y, z): a quadratic diffeomorphism with
-    # unit Jacobian that P2 interpolates exactly and that bends the x = 0 face.
-    result = points.copy()
-    result[:, 0] += 0.25 * points[:, 1] * (1.0 - points[:, 1])
-    return result
-
-
-def _checks(certificate: Any, status: str) -> set[str]:
-    return {value.check for value in certificate.findings if value.status == status}
+from phydrax.geometry import GlobalEmbeddingCertificate
+from phydrax.lifecycle._meshing_sources import (
+    read_meshing_source_closure,
+    write_meshing_source_closure,
+)
+from tests._support.cell_meshes import kuhn_cube_arrays
+from tests._support.mapped_embedding import (
+    certify_mapped_fixture,
+    p2_geometry,
+    shear,
+    square_with_hole,
+)
+from tests._support.meshing_fixtures import finding_checks
 
 
 def test_curved_p2_cube_face_certifies_by_boundary_degree() -> None:
-    mesh = phx.discretization.CellMesh.from_tetrahedra(*_kuhn_cube(2, 0.0, 1.0))
-    embedding = _certify(mesh, _p2(mesh, _shear))
+    mesh = phx.discretization.CellMesh.from_tetrahedra(*kuhn_cube_arrays(2, 0.0, 1.0))
+    embedding = certify_mapped_fixture(mesh, p2_geometry(mesh, shear))
     evidence = embedding.boundary_degree
     assert embedding.status == "certified" and not embedding.findings
     assert evidence is not None and evidence.status == "embedded"
@@ -103,10 +55,10 @@ def test_curved_p2_cube_face_certifies_by_boundary_degree() -> None:
 
 
 def test_straight_p2_tetrahedra_use_the_exact_affine_contact_route() -> None:
-    # Dyadic straight edge nodes make every complete quadratic action exactly
-    # affine; the exact affine boundary-contact and exterior-degree proof runs.
-    mesh = phx.discretization.CellMesh.from_tetrahedra(*_kuhn_cube(2, 0.0, 1.0))
-    embedding = _certify(mesh, _p2(mesh, np.copy))
+    # Dyadic straight edge nodes make every quadratic coefficient action
+    # affine; the rational affine boundary-contact and exterior-degree proof runs.
+    mesh = phx.discretization.CellMesh.from_tetrahedra(*kuhn_cube_arrays(2, 0.0, 1.0))
+    embedding = certify_mapped_fixture(mesh, p2_geometry(mesh, np.copy))
     assert embedding.status == "certified"
     assert embedding.binding.coordinate_scope == "mapped"
     assert {"mapped_affine_source_maps", "boundary_contact", "exterior_degree"} <= set(
@@ -119,8 +71,8 @@ def test_ulp_curved_edge_adjacent_p2_tetrahedra_certify_without_deep_subdivision
     None
 ):
     # Kuhn tetrahedra share the cube diagonal and other edges without sharing
-    # facets. One-ulp edge-node offsets make every map genuinely quadratic.
-    mesh = phx.discretization.CellMesh.from_tetrahedra(*_kuhn_cube(1, 0.0, 1.0))
+    # facets. One-ulp edge-node offsets make every map quadratic.
+    mesh = phx.discretization.CellMesh.from_tetrahedra(*kuhn_cube_arrays(1, 0.0, 1.0))
     vertices = mesh.coordinates.shape[0]
 
     def nudge(points: np.ndarray) -> np.ndarray:
@@ -128,7 +80,7 @@ def test_ulp_curved_edge_adjacent_p2_tetrahedra_certify_without_deep_subdivision
         result[vertices:] = np.nextafter(result[vertices:], np.inf)
         return result
 
-    embedding = _certify(mesh, _p2(mesh, nudge))
+    embedding = certify_mapped_fixture(mesh, p2_geometry(mesh, nudge))
     evidence = embedding.boundary_degree
     assert embedding.status == "certified"
     assert evidence is not None and evidence.status == "embedded"
@@ -140,7 +92,7 @@ def test_ulp_curved_edge_adjacent_p2_tetrahedra_certify_without_deep_subdivision
 def test_ulp_curved_p2_surface_adjacent_cells_certify_by_tangent_cones() -> None:
     # The outward boundary triangles of a Kuhn cube: adjacent cells meet at
     # 90 and 180 degree dihedral angles along shared edges and at vertices.
-    points, tetrahedra = _kuhn_cube(1, 0.0, 1.0)
+    points, tetrahedra = kuhn_cube_arrays(1, 0.0, 1.0)
     faces = phx.discretization.reference_cell_topology("tetrahedron").entities[2]
     rows = np.asarray([cell[list(face)] for cell in tetrahedra for face in faces])
     _, inverse, counts = np.unique(
@@ -155,7 +107,7 @@ def test_ulp_curved_p2_surface_adjacent_cells_certify_by_tangent_cones() -> None
         result[points.shape[0] :] = np.nextafter(result[points.shape[0] :], -np.inf)
         return result
 
-    embedding = _certify(surface, _p2(surface, nudge))
+    embedding = certify_mapped_fixture(surface, p2_geometry(surface, nudge))
     assert embedding.status == "certified"
     assert embedding.boundary_degree is None
 
@@ -175,7 +127,7 @@ def test_folded_adjacent_p2_surface_cells_are_never_certified() -> None:
         result[points.shape[0] :, 2] = np.nextafter(0.0, 1.0)
         return result
 
-    geometry = _p2(surface, nudge)
+    geometry = p2_geometry(surface, nudge)
     validity = phx.discretization.certify_cell_geometry_validity(geometry, mesh=surface)
     assert validity.all_certified
     # A folded contact stays undecided at every depth; a shallow budget keeps
@@ -186,21 +138,10 @@ def test_folded_adjacent_p2_surface_cells_are_never_certified() -> None:
         validity,
         limits=phx.geometry.MeshCertificateLimits(maximum_subdivision_depth=4),
     )
-    assert embedding.status != "certified"
-
-
-def _square_with_hole() -> Any:
-    grid = np.linspace(0.0, 3.0, 4)
-    points = np.stack(np.meshgrid(grid, grid, indexing="ij"), -1).reshape(-1, 2)
-    index = np.arange(16).reshape(4, 4)
-    triangles = []
-    for i, j in np.ndindex(3, 3):
-        if (i, j) == (1, 1):
-            continue
-        a, b = int(index[i, j]), int(index[i + 1, j])
-        c, d = int(index[i + 1, j + 1]), int(index[i, j + 1])
-        triangles.extend(((a, b, c), (a, c, d)))
-    return phx.discretization.CellMesh.from_triangles(points, np.asarray(triangles))
+    assert embedding.status == "unresolved"
+    assert "mapped_intersection_subdivision_depth" in finding_checks(
+        embedding, "unresolved"
+    )
 
 
 def test_curved_p2_square_with_hole_certifies_two_shells() -> None:
@@ -209,7 +150,9 @@ def test_curved_p2_square_with_hole_certifies_two_shells() -> None:
         result[:, 0] += points[:, 1] * (3.0 - points[:, 1]) / 16.0
         return result
 
-    embedding = _certify(_square_with_hole(), _p2(_square_with_hole(), bend))
+    embedding = certify_mapped_fixture(
+        square_with_hole(), p2_geometry(square_with_hole(), bend)
+    )
     evidence = embedding.boundary_degree
     assert embedding.status == "certified"
     assert evidence is not None and evidence.status == "embedded"
@@ -219,8 +162,8 @@ def test_curved_p2_square_with_hole_certifies_two_shells() -> None:
 
 
 def test_nested_p2_components_have_degree_two_and_are_refused() -> None:
-    outer, outer_cells = _kuhn_cube(1, 0.0, 3.0)
-    inner, inner_cells = _kuhn_cube(1, 1.0, 2.0)
+    outer, outer_cells = kuhn_cube_arrays(1, 0.0, 3.0)
+    inner, inner_cells = kuhn_cube_arrays(1, 1.0, 2.0)
     mesh = phx.discretization.CellMesh.from_tetrahedra(
         np.concatenate((outer, inner)),
         np.concatenate((outer_cells, inner_cells + outer.shape[0])),
@@ -231,10 +174,10 @@ def test_nested_p2_components_have_degree_two_and_are_refused() -> None:
         result[:, 0] += points[:, 1] * (3.0 - points[:, 1]) / 64.0
         return result
 
-    embedding = _certify(mesh, _p2(mesh, bend))
+    embedding = certify_mapped_fixture(mesh, p2_geometry(mesh, bend))
     evidence = embedding.boundary_degree
     assert embedding.status == "violated"
-    assert "mapped_boundary_degree" in _checks(embedding, "violated")
+    assert "mapped_boundary_degree" in finding_checks(embedding, "violated")
     assert evidence is not None and evidence.status == "violated"
     assert evidence.failed_premise == "mapped_shell_exterior_degree"
     assert evidence.shell_count == 2
@@ -262,16 +205,15 @@ def test_folded_boundary_with_valid_cells_is_never_accepted() -> None:
         r = points[:, 0] + 0.3 * points[:, 1] / (2.0 * np.pi)
         return np.stack((r * np.cos(points[:, 1]), r * np.sin(points[:, 1])), axis=1)
 
-    geometry = _p2(mesh, wind)
+    geometry = p2_geometry(mesh, wind)
     validity = phx.discretization.certify_cell_geometry_validity(geometry, mesh=mesh)
     assert validity.all_certified
     embedding = phx.geometry.certify_global_embedding(mesh, geometry, validity)
-    assert embedding.status != "certified"
-    assert embedding.findings
-    assert (
-        embedding.boundary_degree is None
-        or embedding.boundary_degree.status != "embedded"
-    )
+    assert embedding.status == "violated"
+    assert "mapped_cell_overlap" in finding_checks(embedding, "violated")
+    assert embedding.boundary_degree is not None
+    assert embedding.boundary_degree.status == "violated"
+    assert embedding.boundary_degree.failed_premise == "mapped_boundary_injectivity"
 
 
 def test_nonconforming_shared_edge_midpoint_is_not_conforming() -> None:
@@ -296,7 +238,7 @@ def test_nonconforming_shared_edge_midpoint_is_not_conforming() -> None:
         origin = corners[row[0]]
         nodes.append(origin + reference @ (corners[row[1:]] - origin))
     midpoint = np.flatnonzero(
-        np.all(np.isclose(reference, (0.5, 0.0, 0.0)), axis=1)
+        np.all(reference == np.asarray((0.5, 0.0, 0.0), dtype=np.float64), axis=1)
     ).item()
     nodes[1][midpoint] += (0.0, -0.001, -0.001)
     name = mesh.blocks[0].name
@@ -305,10 +247,10 @@ def test_nonconforming_shared_edge_midpoint_is_not_conforming() -> None:
         {name: np.arange(2 * reference.shape[0], dtype=np.int64).reshape(2, -1)},
         np.concatenate(nodes),
     )
-    embedding = _certify(mesh, geometry)
+    embedding = certify_mapped_fixture(mesh, geometry)
     evidence = embedding.boundary_degree
     assert embedding.status == "violated"
-    assert "mapped_trace_mismatch" in _checks(embedding, "violated")
+    assert "mapped_trace_mismatch" in finding_checks(embedding, "violated")
     assert evidence is not None and evidence.status == "violated"
     assert evidence.failed_premise == "mapped_shared_entity_conformity"
 
@@ -316,14 +258,10 @@ def test_nonconforming_shared_edge_midpoint_is_not_conforming() -> None:
 def test_certified_curved_embedding_round_trips_through_source_closure(
     tmp_path: Path,
 ) -> None:
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        write_meshing_source_closure,
-    )
 
-    mesh = phx.discretization.CellMesh.from_tetrahedra(*_kuhn_cube(1, 0.0, 1.0))
-    geometry = _p2(mesh, _shear)
-    embedding = _certify(mesh, geometry)
+    mesh = phx.discretization.CellMesh.from_tetrahedra(*kuhn_cube_arrays(1, 0.0, 1.0))
+    geometry = p2_geometry(mesh, shear)
+    embedding = certify_mapped_fixture(mesh, geometry)
     assert embedding.boundary_degree is not None
     receipt = write_meshing_source_closure(
         tmp_path / "curved-embedding", (mesh, geometry, embedding)
@@ -332,40 +270,55 @@ def test_certified_curved_embedding_round_trips_through_source_closure(
         receipt.path, expected_content_id=receipt.content_id
     )
     assert type(restored) is type(embedding)
+    assert isinstance(restored, GlobalEmbeddingCertificate)
+    assert restored.boundary_degree is not None
     assert restored.certificate_id == embedding.certificate_id
     assert restored.boundary_degree.evidence_id == embedding.boundary_degree.evidence_id
     assert eqx.tree_equal(restored, embedding)
 
 
 @pytest.mark.parametrize(
-    ("change", "message"),
+    ("shell_degrees", "maximum_degree"),
     (
-        pytest.param(
-            {"maximum_degree": 2}, "zero exterior degree", id="embedded-degree-two"
-        ),
-        pytest.param(
-            {"shell_exterior_degrees": (1,)},
-            "zero exterior degree",
-            id="embedded-nonzero-shell",
-        ),
+        pytest.param((0,), 2, id="embedded-degree-two"),
+        pytest.param((1,), 1, id="embedded-nonzero-shell"),
     ),
 )
 def test_boundary_degree_evidence_refuses_inconsistent_embedded_records(
-    change: dict[str, Any], message: str
+    shell_degrees: tuple[int, ...], maximum_degree: int
 ) -> None:
-    fields: dict[str, Any] = {
-        "oriented_cell_count": 1,
-        "conforming_entity_count": 0,
-        "boundary_facet_count": 4,
-        "boundary_pair_count": 0,
-        "tangent_cone_contact_count": 0,
-        "shell_count": 1,
-        "shell_exterior_degrees": (0,),
-        "maximum_degree": 1,
-    }
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(
+        ValueError,
+        match=r"MappedBoundaryDegreeEvidence\.shell_exterior_degrees must be zero on every embedded shell with maximum degree one",
+    ):
         phx.geometry.MappedBoundaryDegreeEvidence(
-            "embedded", None, **{**fields, **change}
+            "embedded",
+            None,
+            oriented_cell_count=1,
+            conforming_entity_count=0,
+            boundary_facet_count=4,
+            boundary_pair_count=0,
+            tangent_cone_contact_count=0,
+            shell_count=1,
+            shell_exterior_degrees=shell_degrees,
+            maximum_degree=maximum_degree,
         )
-    with pytest.raises(ValueError, match="deciding premise"):
-        phx.geometry.MappedBoundaryDegreeEvidence("violated", None, **fields)
+
+
+def test_boundary_degree_evidence_requires_a_deciding_premise_for_violation() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"MappedBoundaryDegreeEvidence\.failed_premise must be absent exactly for embedded status",
+    ):
+        phx.geometry.MappedBoundaryDegreeEvidence(
+            "violated",
+            None,
+            oriented_cell_count=1,
+            conforming_entity_count=0,
+            boundary_facet_count=4,
+            boundary_pair_count=0,
+            tangent_cone_contact_count=0,
+            shell_count=1,
+            shell_exterior_degrees=(0,),
+            maximum_degree=1,
+        )

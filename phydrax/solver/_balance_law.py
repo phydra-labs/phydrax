@@ -245,6 +245,12 @@ class BalanceLawRolloutResult(StrictModule):
     temporal_mesh_id: str = eqx.field(static=True)
 
 
+# Source sweeps carry ownership/consistency flags with the provisional budget.
+type _SourceHalfState = tuple[
+    Array, list[BalanceLawProcessState], Array, Array, Array, Array
+]
+
+
 class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
     """Symmetric transactional source/transport composition."""
 
@@ -498,6 +504,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         realization: StochasticRealization | None = None,
         /,
     ) -> BalanceLawAdvanceResult:
+        """Stage forward sources, transport, reverse sources and couplings, then commit."""
         if runtime_state.process_ids != self.process_ids:
             raise ValueError("Balance-law runtime state process order changed.")
         self.transport.validate_state(runtime_state.transport_state)
@@ -546,48 +553,27 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         successful = within_limits
         ownership_valid = jnp.asarray(True)
         source_valid = jnp.asarray(True)
-        first_diagnostics = []
-        for index, process in enumerate(self.processes):
-            component = self._realization_component(
-                process, realization, stochastic_count
-            )
-            count = self.composition.process_subcycles[index]
-            process_diagnostics = []
-            for subcycle in range(count):
-                fraction_start = subcycle / count
-                fraction_end = (subcycle + 1) / count
-                substart = start + fraction_start * (midpoint - start)
-                subend = start + fraction_end * (midpoint - start)
-                result = process.advance(
-                    substart,
-                    subend,
-                    average,
-                    states[index],
-                    component,
-                    args,
-                )
-                average, process_successful, component_ownership, source_consistent = (
-                    self._accepted_process_average(index, average, result)
-                )
-                source_integrals = source_integrals.at[index].add(
-                    self._integrate_source_view(
-                        jnp.where(process_successful, result.source_change, 0.0),
-                        source_view,
-                    )
-                )
-                states[index] = jax.lax.cond(
-                    process_successful,
-                    lambda _: result.process_state,
-                    lambda _: states[index],
-                    operand=None,
-                )
-                successful = successful & process_successful
-                ownership_valid = ownership_valid & component_ownership
-                source_valid = source_valid & source_consistent
-                process_diagnostics.append(result.diagnostics)
-            first_diagnostics.append(
-                process_diagnostics[0] if count == 1 else tuple(process_diagnostics)
-            )
+        source_state, first_diagnostics = _advance_balance_law_source_half(
+            self,
+            start,
+            midpoint,
+            (
+                average,
+                states,
+                source_integrals,
+                successful,
+                ownership_valid,
+                source_valid,
+            ),
+            source_view,
+            args,
+            realization,
+            stochastic_count,
+            reverse=False,
+        )
+        average, states, source_integrals, successful, ownership_valid, source_valid = (
+            source_state
+        )
 
         source_updated = self.transport.with_source_view(
             runtime_state.transport_state, average
@@ -602,49 +588,27 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
             incoming_transport_view.cell_average, incoming_transport_view
         )
         average = jax.lax.optimization_barrier(source_view.cell_average)
-        second_diagnostics = []
-        for reverse_index, process in enumerate(reversed(self.processes)):
-            index = len(self.processes) - 1 - reverse_index
-            component = self._realization_component(
-                process, realization, stochastic_count
-            )
-            count = self.composition.process_subcycles[index]
-            process_diagnostics = []
-            for subcycle in range(count):
-                fraction_start = subcycle / count
-                fraction_end = (subcycle + 1) / count
-                substart = midpoint + fraction_start * (end - midpoint)
-                subend = midpoint + fraction_end * (end - midpoint)
-                result = process.advance(
-                    substart,
-                    subend,
-                    average,
-                    states[index],
-                    component,
-                    args,
-                )
-                average, process_successful, component_ownership, source_consistent = (
-                    self._accepted_process_average(index, average, result)
-                )
-                source_integrals = source_integrals.at[index].add(
-                    self._integrate_source_view(
-                        jnp.where(process_successful, result.source_change, 0.0),
-                        source_view,
-                    )
-                )
-                states[index] = jax.lax.cond(
-                    process_successful,
-                    lambda _: result.process_state,
-                    lambda _: states[index],
-                    operand=None,
-                )
-                successful = successful & process_successful
-                ownership_valid = ownership_valid & component_ownership
-                source_valid = source_valid & source_consistent
-                process_diagnostics.append(result.diagnostics)
-            second_diagnostics.append(
-                process_diagnostics[0] if count == 1 else tuple(process_diagnostics)
-            )
+        source_state, second_diagnostics = _advance_balance_law_source_half(
+            self,
+            midpoint,
+            end,
+            (
+                average,
+                states,
+                source_integrals,
+                successful,
+                ownership_valid,
+                source_valid,
+            ),
+            source_view,
+            args,
+            realization,
+            stochastic_count,
+            reverse=True,
+        )
+        average, states, source_integrals, successful, ownership_valid, source_valid = (
+            source_state
+        )
         coupling_diagnostics = []
         for index, coupling in enumerate(self.accepted_step_couplings):
             context = BalanceLawAcceptedStepContext(
@@ -717,6 +681,74 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
             stability_margin=margin,
             process_diagnostics=diagnostics,
         )
+
+
+def _advance_balance_law_source_half(
+    runtime: PreparedBalanceLawRuntime,
+    start: Array,
+    end: Array,
+    source_state: _SourceHalfState,
+    source_view: BalanceLawSourceView,
+    args: Any,
+    realization: StochasticRealization | None,
+    stochastic_count: int,
+    *,
+    reverse: bool,
+) -> tuple[_SourceHalfState, list[Any]]:
+    """Subcycle a source sweep in composition order without publishing its state."""
+    average, states, source_integrals, successful, ownership_valid, source_valid = (
+        source_state
+    )
+    indices = (
+        range(len(runtime.processes) - 1, -1, -1)
+        if reverse
+        else range(len(runtime.processes))
+    )
+    diagnostics = []
+    for index in indices:
+        process = runtime.processes[index]
+        component = runtime._realization_component(process, realization, stochastic_count)
+        count = runtime.composition.process_subcycles[index]
+        process_diagnostics = []
+        for subcycle in range(count):
+            fraction_start = subcycle / count
+            fraction_end = (subcycle + 1) / count
+            substart = start + fraction_start * (end - start)
+            subend = start + fraction_end * (end - start)
+            result = process.advance(
+                substart,
+                subend,
+                average,
+                states[index],
+                component,
+                args,
+            )
+            average, process_successful, component_ownership, source_consistent = (
+                runtime._accepted_process_average(index, average, result)
+            )
+            source_integrals = source_integrals.at[index].add(
+                runtime._integrate_source_view(
+                    jnp.where(process_successful, result.source_change, 0.0),
+                    source_view,
+                )
+            )
+            states[index] = jax.lax.cond(
+                process_successful,
+                lambda _: result.process_state,
+                lambda _: states[index],
+                operand=None,
+            )
+            successful = successful & process_successful
+            ownership_valid = ownership_valid & component_ownership
+            source_valid = source_valid & source_consistent
+            process_diagnostics.append(result.diagnostics)
+        diagnostics.append(
+            process_diagnostics[0] if count == 1 else tuple(process_diagnostics)
+        )
+    return (
+        (average, states, source_integrals, successful, ownership_valid, source_valid),
+        diagnostics,
+    )
 
 
 _RolloutCarry: TypeAlias = tuple[BalanceLawRuntimeState, Array]

@@ -49,7 +49,7 @@ type SquareFixture = tuple[
 
 
 def _square(count: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Jittered Cartesian unit-square cloud with exact boundary rows and normals."""
+    """Jittered Cartesian unit-square cloud with boundary rows and normals."""
     axis = np.linspace(0.0, 1.0, count)
     x, y = np.meshgrid(axis, axis, indexing="ij")
     points = np.stack((x.reshape(-1), y.reshape(-1)), axis=1)
@@ -351,7 +351,7 @@ def test_capacity_refusal_and_no_change_cannot_become_epochs(
     )
     assert degree.admitted and degree.changes == ("degree", "support")
     # Degree 5 needs 21 basis functions: 16 neighbors are not unisolvent.
-    with pytest.raises(ValueError, match="needs between"):
+    with pytest.raises(ValueError, match="MeshfreeAdaptiveSupport.neighbors"):
         propose_adaptation(
             support,
             silent,

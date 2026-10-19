@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Exact authored occurrence inventory at the optional Gmsh comparison boundary."""
+"""authored occurrence inventory at the optional Gmsh comparison boundary."""
 
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ...geometry.brep._model import (
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
+from ...geometry.brep import (
     BRepEntityId,
     BRepGeometry,
     BRepModel,
@@ -18,25 +20,30 @@ from ...geometry.brep._model import (
     BRepQualifiedIncidence,
     BRepTopology,
 )
-from .._contracts import MeshingFailure, MeshingFailureCategory
+from ...typing import checked
 from .._trace import MeshingStageKind
 
 
 _KINDS = ("vertex", "edge", "face", "solid")
 
 
-def _exact_geometry(source: BRepModel, /) -> BRepGeometry:
+@checked
+def exact_geometry(source: BRepModel, /) -> BRepGeometry:
     geometry = source.geometry
     if geometry is None:
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SOURCE,
-            "External comparison requires authoritative native CAD carriers and incidence.",
+            (
+                "gmsh.exact_geometry must retain native CAD geometry and incidence; got "
+                + "External comparison requires native CAD carriers and incidence."
+            ),
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
         )
     return geometry
 
 
-def _cad_scope_set(source: BRepModel, dimension: int, /) -> str:
+@checked
+def cad_scope_set(source: BRepModel, dimension: int, /) -> str:
     return f"{source.model_id}:cad-occurrences:{dimension}"
 
 
@@ -59,7 +66,10 @@ def _belongs_to_solid(
             )
         case _:
             raise ValueError(
-                "Comparison inventories admit vertex, edge, face and solid IDs."
+                (
+                    "gmsh.belongs_to_solid must select a vertex, edge, face, or solid ID; got "
+                    + "Comparison inventories admit vertex, edge, face and solid IDs."
+                )
             )
 
 
@@ -72,7 +82,10 @@ def _placement(
         if occurrence.path == entity.occurrence_path:
             if not _belongs_to_solid(entity, occurrence.solid, geometry, topology):
                 raise ValueError(
-                    "An authored entity is absent from its declared occurrence."
+                    (
+                        "gmsh.placement must bind a declared occurrence with consistent member placements; got "
+                        + "An authored entity is absent from its declared occurrence."
+                    )
                 )
             return occurrence
     for container in geometry.assembly_containers:
@@ -84,22 +97,35 @@ def _placement(
                 and _belongs_to_solid(entity, occurrence.solid, geometry, topology)
             )
             if not owners:
-                raise ValueError("A shared stratum has no authored container member.")
+                raise ValueError(
+                    (
+                        "gmsh.placement must bind a declared occurrence with consistent member placements; got "
+                        + "A shared stratum has no authored container member."
+                    )
+                )
             first = owners[0]
             if any(
                 first.rotation != other.rotation or first.translation != other.translation
                 for other in owners[1:]
             ):
                 raise ValueError(
-                    "A shared stratum has contradictory authored placements."
+                    (
+                        "gmsh.placement must bind a declared occurrence with consistent member placements; got "
+                        + "A shared stratum has contradictory authored placements."
+                    )
                 )
             return first
-    raise ValueError("An entity occurrence path has no declared placement or container.")
+    raise ValueError(
+        (
+            "gmsh.placement must bind a declared occurrence with consistent member placements; got "
+            + "An entity occurrence path has no declared placement or container."
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
-class _CadOccurrenceInventory:
-    """Numeric scope rows backed by exact IDs, frames and oriented authored links."""
+class CadOccurrenceInventory:
+    """Numeric scope rows backed by IDs, frames and oriented authored links."""
 
     entities: tuple[tuple[BRepEntityId, ...], ...]
     placements: tuple[tuple[BRepOccurrence | None, ...], ...]
@@ -127,7 +153,10 @@ class _CadOccurrenceInventory:
             if not matches:
                 raise MeshingFailure(
                     MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                    "The selector has no authored native definition or occurrence member.",
+                    (
+                        "gmsh.select must resolve a declared definition or occurrence member; got "
+                        + "The selector has no authored native definition or occurrence member."
+                    ),
                     stage=MeshingStageKind.SCOPE_RESOLUTION.value,
                 )
             result.update(matches)
@@ -159,7 +188,10 @@ def _face_wires(
                 record = coedges.get((face, use))
                 if record is None:
                     raise ValueError(
-                        "An authored face loop lost its qualified coedge use."
+                        (
+                            "gmsh.face_wires must retain each qualified coedge use; got "
+                            + "An authored face loop lost its qualified coedge use."
+                        )
                     )
                 wire.append(record.orientation * (edges[record.member] + 1))
             wires.append(tuple(wire))
@@ -184,15 +216,19 @@ def _solid_faces(
         native_faces = topology.solid_faces[solid.index]
         if set(members) != set(native_faces):
             raise ValueError(
-                "A qualified solid lost its exact definition face incidence."
+                (
+                    "gmsh.solid_faces must retain every definition face in qualified incidence; got "
+                    + "A qualified solid lost its definition face incidence."
+                )
             )
         result.append(tuple(faces[members[face].member] for face in native_faces))
         signs.append(tuple(members[face].orientation for face in native_faces))
     return tuple(result), tuple(signs)
 
 
-def _cad_occurrence_inventory(source: BRepModel, /) -> _CadOccurrenceInventory:
-    geometry = _exact_geometry(source)
+@checked
+def cad_occurrence_inventory(source: BRepModel, /) -> CadOccurrenceInventory:
+    geometry = exact_geometry(source)
     incidence = geometry.qualified_entity_incidence(source.source_revision)
     authored = {record.container for record in incidence} | {
         record.member for record in incidence
@@ -236,6 +272,6 @@ def _cad_occurrence_inventory(source: BRepModel, /) -> _CadOccurrenceInventory:
         tuple(_placement(entity, geometry, source.topology) for entity in rows)
         for rows in entities
     )
-    return _CadOccurrenceInventory(
+    return CadOccurrenceInventory(
         entities, placements, topology, edge_vertices, incidence
     )

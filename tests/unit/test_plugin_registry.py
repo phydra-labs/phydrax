@@ -71,7 +71,7 @@ def test_plugin_registry_scenario_1() -> None:
     assert phx.artifact_value_id(_activation) == "test.registry:activation"
     assert phx.artifact_value("test.registry:activation") is _activation
     # A distinct object with the same module and qualified name is unregistered.
-    with pytest.raises(TypeError, match="explicit canonical registration"):
+    with pytest.raises(TypeError, match=r"artifact\.value"):
         phx.artifact_value_id(_same_named_activation)
     with pytest.raises(ValueError, match="already registered"):
         phx.register_artifact_value("test.registry:activation", _same_named_activation)

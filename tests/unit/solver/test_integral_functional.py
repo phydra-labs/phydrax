@@ -13,6 +13,7 @@ import optax
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _fixed_problem(integrand: Any, *, label: Any = None) -> Any:
@@ -223,7 +224,7 @@ def test_integral_functional_gradient_matches_analytic_value() -> None:
 
 def test_lbfgs_rejects_nonfinite_neo_hookean_trial() -> None:
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     coordinate = domain.Function("x")(lambda x: x)
     displacement = domain.Parameter(0.0) * coordinate

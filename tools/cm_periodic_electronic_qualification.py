@@ -42,13 +42,13 @@ def _spin_case(reference_kind: str, smearing: float, magnetization: float) -> An
     basis = phx.operators.periodic.PeriodicOrbitalBasisPlan(
         cell,
         ("lower", "upper"),
-        [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0]],
+        np.asarray([[0.0, 0.0, 0.0], [0.25, 0.0, 0.0]], dtype=np.float64),
         phx.units.ANGSTROM,
         phx.operators.periodic.PeriodicBlochGauge("lattice"),
     )
     blocks = np.asarray([np.diag([-1.0, 0.8])]).reshape((1, 2, 1, 2, 1))
     family = phx.operators.periodic.periodic_translation_family_from_dense_blocks(
-        [[0, 0, 0]],
+        np.asarray([[0, 0, 0]], dtype=np.int64),
         blocks,
     )
     pencil = phx.operators.periodic.PeriodicOrbitalPencilPlan.orthonormal(
@@ -261,7 +261,7 @@ def qualification() -> Any:
         [[-1.0]],
         [[1.0]],
         phx.operators.quantum.gaussian.FactorizedERITensor(
-            [[[0.5]]],
+            np.asarray([[[0.5]]], dtype=np.float64),
             0.0,
             gdf_manifest.source_id,
             "gdf",

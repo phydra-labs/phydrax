@@ -9,12 +9,12 @@ import numpy as np
 import pytest
 
 from phydrax.discretization import TopologyEpoch, TransferGeometryBinding
-from phydrax.discretization.meshfree._surface_transfer import SurfaceTransferPlan
-from phydrax.discretization.meshfree._transfer import (
+from phydrax.discretization.meshfree import (
     PointTransferPlan,
     PointTransferRequest,
     PointTransferStatus,
     PreparedPointTransfer,
+    SurfaceTransferPlan,
 )
 from phydrax.linalg import (
     FailurePolicy,
@@ -26,12 +26,12 @@ from phydrax.sparse import EdgeRelation, RowRelation
 
 
 def _cells(count: int, /) -> tuple[np.ndarray, np.ndarray]:
-    """Midpoints and widths of ``count`` uniform cells of [0, 1] (exact to degree 1)."""
+    """Midpoints and widths of ``count`` uniform cells of [0, 1] (integrating polynomials through degree 1)."""
     return (np.arange(count) + 0.5) / count, np.full(count, 1.0 / count)
 
 
 def _simpson(intervals: int, /) -> tuple[np.ndarray, np.ndarray]:
-    """Composite Simpson nodes and positive weights of [0, 1] (exact to degree 3)."""
+    """Composite Simpson nodes and positive weights of [0, 1] (integrating polynomials through degree 3)."""
     weights = np.where(np.arange(intervals + 1) % 2 == 1, 4.0, 2.0)
     weights[[0, -1]] = 1.0
     return np.linspace(0.0, 1.0, intervals + 1), weights / (3.0 * intervals)
@@ -297,7 +297,7 @@ def test_high_moments_conflict_with_positivity_but_not_with_signed_weights() -> 
 
 def test_quadratic_exactness_needs_quadratures_that_agree_on_quadratics() -> None:
     # Midpoint rules of different widths integrate x^2 differently, so the
-    # summed equations of a conservative quadratic-exact transfer contradict.
+    # summed equations of a conservative quadratic-reproducing transfer contradict.
     route = _joint_line(6, 5, request=PointTransferRequest("joint", moment_degree=2))
     evidence = route.evidence
     assert evidence.status is PointTransferStatus.INFEASIBLE
@@ -372,7 +372,7 @@ def test_signed_high_order_route_reproduces_quadratics_and_converges() -> None:
         return float(np.max(np.abs(mapped - np.sin(2 * np.pi * target))))
 
     coarse, fine = error(24, 20), error(48, 40)
-    # Independently measured point error of a quadratic-exact remap.
+    # Independently measured point error of a quadratic-reproducing remap.
     assert fine < coarse / 4.0
 
 
@@ -536,7 +536,7 @@ def test_values_differentiate_through_the_frozen_transfer() -> None:
 
 
 def _circle(sources: int, targets: int, /) -> tuple[SurfaceTransferPlan, float]:
-    """Tangential quadratic-exact remap between two equal-arc circle samplings."""
+    """Tangential quadratic-reproducing remap between two equal-arc circle samplings."""
     old_angles = 2 * np.pi * (np.arange(sources) + 0.5) / sources
     new_angles = 2 * np.pi * (np.arange(targets) + 0.25) / targets
     points = np.stack((np.cos(old_angles), np.sin(old_angles)), axis=1)
@@ -578,7 +578,7 @@ def test_transfer_refuses_case_local_routes_without_global_column_identity() -> 
     relation = RowRelation(
         np.zeros((2, 1, 1), dtype=np.int32), source_size=1, case_shape=(2,)
     )
-    with pytest.raises(ValueError, match="unbatched compact target"):
+    with pytest.raises(ValueError, match="PointTransferPlan.relation"):
         PointTransferPlan(
             relation,
             np.ones((2, 1, 1)),
@@ -591,9 +591,9 @@ def test_transfer_refuses_case_local_routes_without_global_column_identity() -> 
 
 
 def test_requests_declare_their_constraints_explicitly() -> None:
-    with pytest.raises(ValueError, match="conservation only"):
+    with pytest.raises(ValueError, match="PointTransferRequest.route"):
         PointTransferRequest("conservative-signed", nonnegative=True)
-    with pytest.raises(ValueError, match="no moments"):
+    with pytest.raises(ValueError, match="PointTransferRequest.moment_degree"):
         PointTransferRequest("conservative-positive", moment_degree=1)
     with pytest.raises(ValueError, match="route"):
         PointTransferRequest("high-order")  # ty: ignore[invalid-argument-type]

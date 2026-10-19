@@ -9,14 +9,14 @@ region contains the void cavity [1.25, 1.75] x [0.25, 0.75] x [0.25, 0.75].
 Facets declare the region on each side of their oriented loops, so the native
 route (``NativeMeshingOptions("plc_tetrahedral")``):
 
-1. validates the complex exactly and recovers every facet, interface and
+1. validates the complex and recovers every facet, interface and
    cavity wall in a constrained tetrahedralization (``recover_plc_3d``);
 2. classifies regions from the facet incidence, refines and improves;
 3. publishes only after the independent ``volume_plc`` certification (global
-   embedding and exact coverage of the declared facets and region volumes).
+   embedding and coverage of the declared facets and region volumes).
 
 The mesh then carries a P1 solve of -Δu = f with the manufactured solution
-u = sin(x) cosh(y) + z², whose exact Dirichlet data holds on every boundary
+u = sin(x) cosh(y) + z², whose Dirichlet data holds on every boundary
 (outer walls and cavity). The report compares the region volumes with the
 analytic ones and the discrete solution with u in the energy norm.
 
@@ -26,12 +26,17 @@ Run from the repository root::
 """
 
 import json
-from typing import Any
+from collections.abc import Sequence
 
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
+from numpy.typing import NDArray
 
 import phydrax as phx
+from phydrax.discretization import CellMesh
+from phydrax.discretization.fem import FiniteElementDiscretization
+from phydrax.meshing import CellMeshingResult, PiecewiseLinearComplex
 
 
 M = phx.meshing
@@ -48,14 +53,14 @@ BOX_LOOPS = (
 )
 
 
-def box(lower: Any, upper: Any) -> Any:
+def box(lower: Sequence[float], upper: Sequence[float]) -> NDArray[np.float64]:
     return np.asarray(
         [[(upper if i >> k & 1 else lower)[k] for k in range(3)] for i in range(8)],
         dtype=np.float64,
     )
 
 
-def complex_with_cavity() -> Any:
+def complex_with_cavity() -> PiecewiseLinearComplex:
     """Two unit cubes sharing x = 1, plus a void cavity inside the right one."""
     left = box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0))
     right = box((1.0, 0.0, 0.0), (2.0, 1.0, 1.0))
@@ -79,7 +84,7 @@ def complex_with_cavity() -> Any:
     return M.PiecewiseLinearComplex(vertices, loops, facets, regions, ("left", "right"))
 
 
-def generate(complex_: Any) -> Any:
+def generate(complex_: PiecewiseLinearComplex) -> CellMeshingResult:
     source = M.NativePlcSource(complex_, "cavity-box", "r1")
     scope = M.MeshingScope(
         "cavity-box",
@@ -143,19 +148,19 @@ def generate(complex_: Any) -> Any:
     ).execute()
 
 
-def exact_solution(points: Any) -> Any:
+def exact_solution(points: Array) -> Array:
     return jnp.sin(points[..., 0]) * jnp.cosh(points[..., 1]) + points[..., 2] ** 2
 
 
-def exact_gradient(points: Any) -> Any:
+def exact_gradient(points: Array) -> Array:
     x, y, z = points[..., 0], points[..., 1], points[..., 2]
     return jnp.stack(
         (jnp.cos(x) * jnp.cosh(y), jnp.sin(x) * jnp.sinh(y), 2.0 * z), axis=-1
     )
 
 
-def solve(mesh: Any) -> Any:
-    """P1 solve of -Δu = -2 (the Laplacian of u is 2) with exact boundary data."""
+def solve(mesh: CellMesh) -> tuple[FiniteElementDiscretization, Array]:
+    """P1 solve of -Δu = -2 (the Laplacian of u is 2) with manufactured boundary data."""
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.lagrange_element("tetrahedron", 1)
     )
@@ -183,11 +188,13 @@ def solve(mesh: Any) -> Any:
     operator, rhs = problem.linear_system()
     solved = phx.linalg.solve(operator, rhs)
     if not bool(jnp.all(solved.successful)):
-        raise RuntimeError("The P1 diffusion solve failed.")
+        raise RuntimeError(
+            f"diffusion.solve.successful must be true for every entry; got {solved.successful}"
+        )
     return space, problem.expand(solved.value)
 
 
-def energy_error(space: Any, values: Any) -> Any:
+def energy_error(space: FiniteElementDiscretization, values: Array) -> Array:
     """||∇(u - u_h)||_L2 with a Duffy-mapped Gauss rule of 5^3 points."""
     rule = phx.integration.ReferenceTetrahedronRule(phx.integration.GaussLegendreRule(5))
     data = phx.integration.reference_rule_data(rule)

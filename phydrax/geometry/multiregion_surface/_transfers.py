@@ -67,7 +67,7 @@ from ...sparse import (
     route_reduce,
     SparseCoordinateOperator,
 )
-from ...typing import Bool, Dim, Float, Identifier, Scalar, Size
+from ...typing import Bool, checked, Dim, Float, Identifier, Scalar, Size
 
 
 # Roundoff admission: dtype epsilon scaled by the route fan-in.
@@ -143,30 +143,50 @@ def _routes(
         or targets.shape != sources.shape
         or values.shape != sources.shape
     ):
-        raise ValueError("Transfer routes must be aligned rank-1 arrays.")
+        raise ValueError(
+            f"FieldTransfer.routes must be aligned rank-1 arrays; got shapes {(sources.shape, targets.shape, values.shape)}"
+        )
     if sources.size == 0:
-        raise ValueError("A transfer needs at least one route.")
+        raise ValueError(
+            "FieldTransfer.routes must contain at least one route; got an empty array"
+        )
     if not (
         np.issubdtype(sources.dtype, np.integer)
         and np.issubdtype(targets.dtype, np.integer)
     ):
-        raise TypeError("Transfer route indices must be integers.")
+        raise TypeError(
+            f"FieldTransfer.indices must be integers; got dtypes {(sources.dtype, targets.dtype)}"
+        )
     if source_mask.ndim != 1 or source_mask.dtype != np.bool_:
-        raise TypeError("source_active must be a boolean vector.")
+        raise TypeError(
+            f"FieldTransfer.source_active must be a boolean vector; got {source_mask.dtype} {source_mask.shape}"
+        )
     if target_mask.ndim != 1 or target_mask.dtype != np.bool_:
-        raise TypeError("target_active must be a boolean vector.")
+        raise TypeError(
+            f"FieldTransfer.target_active must be a boolean vector; got {target_mask.dtype} {target_mask.shape}"
+        )
     positive_integer(source_mask.size, "source size")
     positive_integer(target_mask.size, "target size")
     if np.any(sources < 0) or np.any(sources >= source_mask.size):
-        raise ValueError("Transfer source indices are out of range.")
+        raise ValueError(
+            f"FieldTransfer.source_indices must be within source capacity {source_mask.size}; got out-of-range indices"
+        )
     if np.any(targets < 0) or np.any(targets >= target_mask.size):
-        raise ValueError("Transfer target indices are out of range.")
+        raise ValueError(
+            f"FieldTransfer.target_indices must be within target capacity {target_mask.size}; got out-of-range indices"
+        )
     if not (np.all(source_mask[sources]) and np.all(target_mask[targets])):
-        raise ValueError("Transfer routes must join active sources to active targets.")
+        raise ValueError(
+            "FieldTransfer.routes must join active sources to active targets; got inactive endpoints"
+        )
     if not np.all(np.isfinite(values)) or np.any(values < 0.0):
-        raise ValueError("Transfer weights must be finite and nonnegative.")
+        raise ValueError(
+            "FieldTransfer.weights must be finite and nonnegative; got nonfinite or negative weights"
+        )
     if np.unique(np.stack((sources, targets), axis=1), axis=0).shape[0] != sources.size:
-        raise ValueError("Transfer routes must be unique (source, target) pairs.")
+        raise ValueError(
+            "FieldTransfer.routes must have unique (source, target) pairs; got duplicate pairs"
+        )
     return (
         sources.astype(np.int64),
         targets.astype(np.int64),
@@ -250,12 +270,14 @@ class ConservativeFieldTransfer(StrictModule, NonTrainableState):
         defect = float(np.max(np.abs(partition[source_mask] - 1.0)))
         if defect > tolerance:
             raise ValueError(
-                "Extensive transfer weights must sum to one over the routes of every "
-                f"active source (defect {defect:.3e} > {tolerance:.3e})."
+                "ConservativeFieldTransfer.weights must sum to one over every active source's routes; "
+                f"got defect {defect:.3e} > {tolerance:.3e}"
             )
         received = np.bincount(targets, weights=values, minlength=target_mask.size)
         if np.any(received[target_mask] <= 0.0):
-            raise ValueError("Every active target must receive positive transfer weight.")
+            raise ValueError(
+                "ConservativeFieldTransfer.target_active must receive positive transfer weight at every active target; got nonpositive weight"
+            )
         self.relation, self.weights = _padded_routes(
             sources, targets, values, source_mask.size, target_mask.size
         )
@@ -281,7 +303,9 @@ class ConservativeFieldTransfer(StrictModule, NonTrainableState):
     def _masked(self, values: ArrayLike, /) -> Array:
         array = jnp.asarray(values)
         if array.ndim < 1 or array.shape[0] != self.source_size:
-            raise ValueError("Transfer values must lead with the source capacity axis.")
+            raise ValueError(
+                f"ConservativeFieldTransfer.values must lead with source capacity {self.source_size}; got shape {array.shape}"
+            )
         mask = self.source_active.reshape((-1,) + (1,) * (array.ndim - 1))
         return jnp.where(mask, array, jnp.zeros((), dtype=array.dtype))
 
@@ -296,7 +320,9 @@ class ConservativeFieldTransfer(StrictModule, NonTrainableState):
         source = self._masked(source_values)
         target = jnp.asarray(target_values)
         if target.shape != (self.target_size,) + source.shape[1:]:
-            raise ValueError("target_values must match the target layout.")
+            raise ValueError(
+                f"ConservativeFieldTransfer.target_values must match target layout {(self.target_size,) + source.shape[1:]}; got {target.shape}"
+            )
         target_mask = self.target_active.reshape((-1,) + (1,) * (target.ndim - 1))
         target = jnp.where(target_mask, target, jnp.zeros((), dtype=target.dtype))
         source_total = jnp.sum(source, axis=0)
@@ -333,6 +359,7 @@ class ConservativeFieldTransfer(StrictModule, NonTrainableState):
             successful=finite & conservative & positivity & support,
         )
 
+    @checked
     def epoch_transition(
         self,
         source: TopologyEpoch,
@@ -348,13 +375,10 @@ class ConservativeFieldTransfer(StrictModule, NonTrainableState):
         measures (inactive padding slots carry zero content), so the epoch
         transition's conservation check is the total-content identity.
 
-        ``geometry`` must bind the owning source and target surface records.
-        The extensive route map alone has no coordinate witness; the epochs
+        ``geometry`` binds the source and target surface records; both epochs
         are checked independently against this binding.
         """
         name = canonical_identifier(field_name, "field_name")
-        if not isinstance(geometry, TransferGeometryBinding):
-            raise TypeError("geometry must be TransferGeometryBinding.")
         source_space = _content_space(name, source, self.source_size)
         target_space = _content_space(name, target, self.target_size)
         primal = SparseCoordinateOperator(
@@ -453,7 +477,9 @@ class BoundedFieldReconstruction(StrictModule, NonTrainableState):
         )
         totals = np.bincount(targets, weights=values, minlength=target_mask.size)
         if np.any(totals[target_mask] <= 0.0):
-            raise ValueError("Every active target needs positive reconstruction support.")
+            raise ValueError(
+                "BoundedFieldReconstruction.target_active must have positive reconstruction support; got nonpositive weight"
+            )
         normalized = values / totals[targets]
         self.relation, self.weights = _padded_routes(
             sources, targets, normalized, source_mask.size, target_mask.size
@@ -479,7 +505,9 @@ class BoundedFieldReconstruction(StrictModule, NonTrainableState):
         """Reconstruct intensive target values as convex source combinations."""
         array = jnp.asarray(values)
         if array.ndim < 1 or array.shape[0] != self.source_size:
-            raise ValueError("Reconstruction values must lead with the source axis.")
+            raise ValueError(
+                f"BoundedFieldReconstruction.values must lead with source capacity {self.source_size}; got shape {array.shape}"
+            )
         return linear_apply(self.relation, self.weights, array)
 
     def evidence(
@@ -489,7 +517,9 @@ class BoundedFieldReconstruction(StrictModule, NonTrainableState):
         source = jnp.asarray(source_values)
         target = jnp.asarray(target_values)
         if target.shape != (self.target_size,) + source.shape[1:]:
-            raise ValueError("target_values must match the target layout.")
+            raise ValueError(
+                f"BoundedFieldReconstruction.target_values must match target layout {(self.target_size,) + source.shape[1:]}; got {target.shape}"
+            )
         routed = gather_routes(self.relation, source)
         lower = route_reduce(self.relation, routed, reduction="min")
         upper = route_reduce(self.relation, routed, reduction="max")
@@ -515,7 +545,7 @@ class BoundedFieldReconstruction(StrictModule, NonTrainableState):
         )
 
 
-def _combined_routes(
+def combined_routes(
     sources: np.ndarray, targets: np.ndarray, weights: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Merge repeated ``(source, target)`` routes by summing their weights."""
@@ -526,7 +556,7 @@ def _combined_routes(
     return keys[:, 0], keys[:, 1], summed
 
 
-def _pooled_slot_routes(
+def pooled_slot_routes(
     source_slots: np.ndarray,
     source_areas: np.ndarray,
     source_pairs: np.ndarray,
@@ -558,7 +588,9 @@ def _pooled_slot_routes(
     weights = [fraction[kept]]
     for replaced, replacement in groups:
         if replacement.size == 0:
-            raise RuntimeError("An event group lost every replacement face.")
+            raise RuntimeError(
+                "FieldTransfer.replacement_faces must retain at least one face per event group; got an empty group"
+            )
         for pair in np.unique(source_pairs[replaced]):
             members = replaced[source_pairs[replaced] == pair]
             receivers = replacement[target_pairs[replacement] == pair]
@@ -572,7 +604,7 @@ def _pooled_slot_routes(
             sources.append(np.repeat(corner_source, corner_target.size))
             targets.append(np.tile(corner_target, corner_source.size))
             weights.append(np.outer(corner_fraction, share / 3.0).reshape(-1))
-    return _combined_routes(
+    return combined_routes(
         np.concatenate(sources), np.concatenate(targets), np.concatenate(weights)
     )
 

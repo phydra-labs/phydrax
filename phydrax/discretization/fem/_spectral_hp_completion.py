@@ -5,49 +5,41 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from fractions import Fraction
 from itertools import product
-from typing import final, Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from scipy.special import eval_jacobi
 
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._polynomial._orthogonal import legendre_rule_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...exterior import FormType, FormValueSpec
+from ..._validation import integer
 from ...linalg import (
     ArraySpace,
     DenseLinearOperator,
     LinearSystem,
+    RHSLayout,
     solve,
 )
-from .._reference_cell import reference_cell_topology
-from ._high_order import (
-    _simplex_node_tuples,
-    lagrange_1d_tabulation,
-    SimplexNodalFamily,
-)
+from ...typing import checked
+from . import _hp_runtime as hp_runtime_owner
 from ._hp import (
     FiniteElementHPLineage,
     FiniteElementHPLineageKind,
     FiniteElementHPTopology,
 )
-from ._hp_runtime import (
-    _host_integer,
-    finite_element_hp_balance_error,
-    FiniteElementHPGeometry,
-    FiniteElementHPRefinementResult,
-    tensor_trace_interpolation,
+from ._hp_admission_types import hp_admission_types
+from ._hp_forest_preparation import (
+    multilinear_cell_map,
+    prepare_hp_forest_edit,
+    tensor_corner_points,
 )
-from ._reference import FiniteElementSpec
 
 
 if TYPE_CHECKING:
@@ -69,7 +61,9 @@ class AnisotropicHPattern(StrictModule, NonTrainableState):
             or any(axis < 0 or axis >= dimension_ for axis in axes_)
             or len(set(axes_)) != len(axes_)
         ):
-            raise ValueError("Anisotropic h axes must be unique tensor axes.")
+            raise ValueError(
+                "AnisotropicHPattern.axes must be unique tensor axes; got Anisotropic h axes must be unique tensor axes."
+            )
         ordinals = []
         for local_bits in product((0, 1), repeat=len(axes_)):
             ordinal = sum(
@@ -84,61 +78,32 @@ class AnisotropicHPattern(StrictModule, NonTrainableState):
         )
 
 
-def _tensor_corners(dimension: int) -> np.ndarray:
-    if dimension == 1:
-        return np.asarray(((0.0,), (1.0,)))
-    if dimension == 2:
-        return np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
-    if dimension == 3:
-        return np.asarray(
-            (
-                (0.0, 0.0, 0.0),
-                (1.0, 0.0, 0.0),
-                (1.0, 1.0, 0.0),
-                (0.0, 1.0, 0.0),
-                (0.0, 0.0, 1.0),
-                (1.0, 0.0, 1.0),
-                (1.0, 1.0, 1.0),
-                (0.0, 1.0, 1.0),
-            )
-        )
-    raise ValueError("Tensor corners require dimension one, two, or three.")
-
-
-def _multilinear(vertices: np.ndarray, points: np.ndarray) -> np.ndarray:
-    corners = _tensor_corners(points.shape[1])
-    factors = np.where(
-        corners[None, :, :] == 0.0,
-        1.0 - points[:, None, :],
-        points[:, None, :],
-    )
-    return np.prod(factors, axis=-1) @ vertices
-
-
+@checked
 def refine_anisotropic_hp_cells(
     topology: FiniteElementHPTopology,
-    geometry: FiniteElementHPGeometry,
+    geometry: hp_runtime_owner.FiniteElementHPGeometry,
     marked_cell_ids: ArrayLike,
     pattern: AnisotropicHPattern,
     /,
     *,
     target_degrees: ArrayLike | None = None,
-) -> FiniteElementHPRefinementResult:
+) -> hp_runtime_owner.FiniteElementHPRefinementResult:
     if (
         pattern.dimension != topology.dimension
         or geometry.topology_id != topology.topology_id
     ):
-        raise ValueError("Anisotropic pattern, topology, and geometry disagree.")
-    identifiers = np.array(topology.cell_global_ids, dtype=np.int64, copy=True)
-    allocated = np.array(topology.allocated, dtype=np.bool_, copy=True)
-    active = np.array(topology.active, dtype=np.bool_, copy=True)
-    degrees = np.array(topology.cell_degrees, dtype=np.int32, copy=True)
-    roots = np.array(topology.root_cell_ids, dtype=np.int64, copy=True)
-    paths = np.array(topology.path_codes, dtype=np.int64, copy=True)
-    levels = np.array(topology.levels, dtype=np.int32, copy=True)
-    parents = np.array(topology.parent_slots, dtype=np.int32, copy=True)
-    children = np.array(topology.child_slots, dtype=np.int32, copy=True)
-    child_valid = np.array(topology.child_valid, dtype=np.bool_, copy=True)
+        raise ValueError(
+            "refine_anisotropic_hp_cells.topology must agree with the declared geometry, topology, and field layout; got Anisotropic pattern, topology, and geometry disagree."
+        )
+    prepared = prepare_hp_forest_edit(topology)
+    identifiers, allocated, active = (
+        prepared.identifiers,
+        prepared.allocated,
+        prepared.active,
+    )
+    degrees, roots, paths = prepared.degrees, prepared.roots, prepared.paths
+    levels, parents = prepared.levels, prepared.parents
+    children, child_valid = prepared.children, prepared.child_valid
     vertices = np.array(geometry.cell_vertices, copy=True)
     lower = np.array(geometry.reference_lower, copy=True)
     upper = np.array(geometry.reference_upper, copy=True)
@@ -146,13 +111,18 @@ def refine_anisotropic_hp_cells(
     marked = np.asarray(marked_cell_ids, dtype=np.int64)
     unknown = set(marked.tolist()) - set(slot_by_id)
     if marked.ndim != 1 or np.unique(marked).size != marked.size or unknown:
-        raise ValueError(f"Anisotropic h marked IDs are invalid: {sorted(unknown)!r}.")
+        raise ValueError(
+            f"refine_anisotropic_hp_cells.configuration must have valid anisotropic h marked ids; got Anisotropic h marked IDs are invalid: {sorted(unknown)!r}."
+        )
     marked_slots = np.asarray(
         sorted(
             (slot_by_id[int(value)] for value in marked),
             key=lambda slot: (
-                _host_integer(roots[_host_integer(slot, "cell slot")], "root cell ID"),
-                _host_integer(paths[_host_integer(slot, "cell slot")], "path code"),
+                integer(
+                    roots[integer(slot, "cell slot")],
+                    "root cell ID",
+                ),
+                integer(paths[integer(slot, "cell slot")], "path code"),
             ),
         ),
         dtype=np.int32,
@@ -160,7 +130,9 @@ def refine_anisotropic_hp_cells(
     free = np.flatnonzero(~allocated)
     required = marked_slots.size * len(pattern.child_ordinals)
     if free.size < required:
-        raise ValueError("Anisotropic h refinement exceeds forest capacity.")
+        raise ValueError(
+            "refine_anisotropic_hp_cells.configuration must fit the declared capacity; got Anisotropic h refinement exceeds forest capacity."
+        )
     requested_degrees = (
         None if target_degrees is None else np.asarray(target_degrees, dtype=np.int32)
     )
@@ -168,7 +140,9 @@ def refine_anisotropic_hp_cells(
         marked_slots.size,
         topology.dimension,
     ):
-        raise ValueError("target_degrees must contain one tuple per marked cell.")
+        raise ValueError(
+            "refine_anisotropic_hp_cells.target_degrees must contain one tuple per marked cell; got target_degrees must contain one tuple per marked cell."
+        )
     next_global = int(np.max(identifiers[allocated], initial=-1)) + 1
     source_routes = []
     target_routes = []
@@ -180,7 +154,7 @@ def refine_anisotropic_hp_cells(
             target_routes.append(int(slot))
             relations.append("unchanged")
     cursor = 0
-    corners = _tensor_corners(topology.dimension)
+    corners = tensor_corner_points(topology.dimension)
     for marked_index, parent_value in enumerate(marked_slots.tolist()):
         parent = int(parent_value)
         parent_degree = degrees[parent].copy()
@@ -222,7 +196,7 @@ def refine_anisotropic_hp_cells(
             child_valid[parent, ordinal] = True
             lower[child] = child_lower
             upper[child] = child_upper
-            vertices[child] = _multilinear(vertices[parent], child_points)
+            vertices[child] = multilinear_cell_map(vertices[parent], child_points)
             source_routes.append(parent)
             target_routes.append(child)
             relations.append("refinement")
@@ -247,9 +221,18 @@ def refine_anisotropic_hp_cells(
         child_slots=children,
         child_valid=child_valid,
     )
-    refined_geometry = FiniteElementHPGeometry(refined_topology, vertices, lower, upper)
-    if finite_element_hp_balance_error(refined_topology, refined_geometry) > 1:
-        raise ValueError("Anisotropic h refinement violates directional 2:1 balance.")
+    refined_geometry = hp_runtime_owner.FiniteElementHPGeometry(
+        refined_topology, vertices, lower, upper
+    )
+    if (
+        hp_runtime_owner.finite_element_hp_balance_error(
+            refined_topology, refined_geometry
+        )
+        > 1
+    ):
+        raise ValueError(
+            "refine_anisotropic_hp_cells.configuration must satisfy the declared balance and admission constraints; got Anisotropic h refinement violates directional 2:1 balance."
+        )
     lineage = FiniteElementHPLineage(
         topology.topology_id,
         refined_topology.topology_id,
@@ -259,7 +242,7 @@ def refine_anisotropic_hp_cells(
         np.asarray(target_routes, dtype=np.int32),
         tuple(relations),
     )
-    return FiniteElementHPRefinementResult(
+    return hp_runtime_owner.FiniteElementHPRefinementResult(
         refined_topology,
         refined_geometry,
         lineage,
@@ -268,19 +251,24 @@ def refine_anisotropic_hp_cells(
     )
 
 
+@checked
 def resize_hp_forest(
     topology: FiniteElementHPTopology,
-    geometry: FiniteElementHPGeometry,
+    geometry: hp_runtime_owner.FiniteElementHPGeometry,
     new_capacity: int,
     /,
-) -> tuple[FiniteElementHPTopology, FiniteElementHPGeometry]:
+) -> tuple[FiniteElementHPTopology, hp_runtime_owner.FiniteElementHPGeometry]:
     capacity = int(new_capacity)
     if capacity < topology.capacity:
         allocated_slots = np.flatnonzero(np.asarray(topology.allocated))
         if allocated_slots.size and int(np.max(allocated_slots)) >= capacity:
-            raise ValueError("Shrink requires compact allocated hp slots.")
+            raise ValueError(
+                "resize_hp_forest.configuration must provide compact allocated hp slots; got Shrink requires compact allocated hp slots."
+            )
     if capacity < 1:
-        raise ValueError("hp forest capacity must be positive.")
+        raise ValueError(
+            "resize_hp_forest.configuration must be positive; got hp forest capacity must be positive."
+        )
 
     def pad(vector: ArrayLike, shape: tuple[int, ...], fill: float) -> np.ndarray:
         result = np.full(shape, fill, dtype=np.asarray(vector).dtype)
@@ -328,16 +316,17 @@ def resize_hp_forest(
     )
     lower = pad(geometry.reference_lower, (capacity, topology.dimension), 0.0)
     upper = pad(geometry.reference_upper, (capacity, topology.dimension), 0.0)
-    return resized_topology, FiniteElementHPGeometry(
+    return resized_topology, hp_runtime_owner.FiniteElementHPGeometry(
         resized_topology, vertices, lower, upper
     )
 
 
+@checked
 def compact_hp_forest(
     topology: FiniteElementHPTopology,
-    geometry: FiniteElementHPGeometry,
+    geometry: hp_runtime_owner.FiniteElementHPGeometry,
     /,
-) -> tuple[FiniteElementHPTopology, FiniteElementHPGeometry, Array]:
+) -> tuple[FiniteElementHPTopology, hp_runtime_owner.FiniteElementHPGeometry, Array]:
     allocated = np.flatnonzero(np.asarray(topology.allocated))
     order = sorted(
         allocated.tolist(),
@@ -403,7 +392,7 @@ def compact_hp_forest(
     )
     return (
         compacted,
-        FiniteElementHPGeometry(compacted, vertices, lower, upper),
+        hp_runtime_owner.FiniteElementHPGeometry(compacted, vertices, lower, upper),
         jnp.asarray(old_to_new),
     )
 
@@ -435,16 +424,21 @@ class GeometryOrderAdaptation(StrictModule, NonTrainableState):
         source_revision_id: str | None = None,
         target_revision_id: str | None = None,
     ) -> None:
+
         source = np.asarray(source_nodes)
         target = np.asarray(target_nodes)
         values = np.asarray(coordinate_values)
         source_order_ = tuple(source_order)
         target_order_ = tuple(target_order)
-        interpolation = np.asarray(tensor_trace_interpolation(source, target))
+        interpolation = np.asarray(
+            hp_runtime_owner.tensor_trace_interpolation(source, target)
+        )
         if values.shape[-2] != source.shape[0]:
-            raise ValueError("Geometry coordinate values do not match source nodes.")
+            raise ValueError(
+                "GeometryOrderAdaptation.configuration must match source nodes; got Geometry coordinate values do not match source nodes."
+            )
         target_values = ein.contract("qi,...id->...qd", interpolation, values)
-        linear = _multilinear(
+        linear = multilinear_cell_map(
             values.reshape((-1, values.shape[-1]))[: 2 ** source.shape[1]], target
         )
         indicator = np.max(
@@ -477,24 +471,24 @@ class GeometryOrderAdaptation(StrictModule, NonTrainableState):
             }
         )
         if solver_decision is not None:
-            from ...meshing._decision import AdaptationAction, SolverAwareDecision
-
-            if not isinstance(solver_decision, SolverAwareDecision):
-                raise TypeError("solver_decision must be SolverAwareDecision or None.")
+            if not isinstance(solver_decision, hp_admission_types().solver_decision):
+                raise TypeError(
+                    "GeometryOrderAdaptation.solver_decision must be SolverAwareDecision or None; got solver_decision must be SolverAwareDecision or None."
+                )
             if not source_revision_id or not target_revision_id:
                 raise ValueError(
-                    "Geometry-order admission requires prepared revision identities."
+                    "GeometryOrderAdaptation.configuration must provide prepared revision identities; got Geometry-order admission requires prepared revision identities."
                 )
             selected = solver_decision.require_selected(
                 source_revision_id, candidate_id, target_revision_id
             )
-            if selected.action != AdaptationAction.GEOMETRY_ORDER:
+            if selected.action != hp_admission_types().action.GEOMETRY_ORDER:
                 raise ValueError(
-                    "Geometry interpolation cannot realize a field-p or h action."
+                    "GeometryOrderAdaptation.configuration must select a geometry-order action; got Geometry interpolation cannot realize a field-p or h action."
                 )
             if selected.error.geometry_error < solver_decision.baseline.geometry_error:
                 raise ValueError(
-                    "Map interpolation cannot claim improved source-geometry fidelity."
+                    "GeometryOrderAdaptation.configuration must use independently certified source-geometry improvement; got Map interpolation cannot claim improved source-geometry fidelity."
                 )
             if (
                 len(source_order_) != source.shape[1]
@@ -508,11 +502,11 @@ class GeometryOrderAdaptation(StrictModule, NonTrainableState):
                 )
             ):
                 raise ValueError(
-                    "Admitted geometry elevation requires compatible tensor orders."
+                    "GeometryOrderAdaptation.configuration must provide compatible tensor orders; got Admitted geometry elevation requires compatible tensor orders."
                 )
         elif source_revision_id is not None or target_revision_id is not None:
             raise ValueError(
-                "Geometry revision identities require solver admission evidence."
+                "GeometryOrderAdaptation.configuration must provide solver admission evidence; got Geometry revision identities require solver admission evidence."
             )
         self.plan_id = plan_id
         self.candidate_id = candidate_id
@@ -536,19 +530,21 @@ class GeometryOrderAdaptation(StrictModule, NonTrainableState):
                 != self.source_coordinates_id
             ):
                 raise ValueError(
-                    "Admitted geometry interpolation has stale source coordinates."
+                    "GeometryOrderAdaptation.apply.configuration must match the retained revision and layout; got Admitted geometry interpolation has stale source coordinates."
                 )
             if reanalysis is None:
                 raise ValueError(
-                    "Geometry-order publication requires independent physical reanalysis."
+                    "GeometryOrderAdaptation.apply.reanalysis must provide independent physical reanalysis; got Geometry-order publication requires independent physical reanalysis."
                 )
             self.solver_decision.require_reanalysis(reanalysis)
             if reanalysis.geometry_error < self.solver_decision.baseline.geometry_error:
                 raise ValueError(
-                    "Interpolated geometry does not certify source-fidelity improvement."
+                    "GeometryOrderAdaptation.apply.configuration must certify source-fidelity improvement; got Interpolated geometry does not certify source-fidelity improvement."
                 )
         elif reanalysis is not None:
-            raise ValueError("Geometry reanalysis requires a solver-aware decision.")
+            raise ValueError(
+                "GeometryOrderAdaptation.apply.reanalysis must provide a solver-aware decision; got Geometry reanalysis requires a solver-aware decision."
+            )
         values = jnp.asarray(coordinate_values)
         return ein.contract("qi,...id->...qd", self.interpolation, values)
 
@@ -570,15 +566,20 @@ class NIrregularMortarPlan(StrictModule, NonTrainableState):
         points = tuple(np.asarray(value) for value in patch_points)
         weights = tuple(np.asarray(value) for value in patch_weights)
         if not points or len(points) != len(weights):
-            raise ValueError("n-irregular mortars require points and weights per patch.")
+            raise ValueError(
+                "NIrregularMortarPlan.configuration must provide points and weights per patch; got n-irregular mortars require points and weights per patch."
+            )
         matrices = tuple(
-            np.asarray(tensor_trace_interpolation(nodes, value)) for value in points
+            np.asarray(hp_runtime_owner.tensor_trace_interpolation(nodes, value))
+            for value in points
         )
         if any(
             weight.shape != (point.shape[0],)
             for point, weight in zip(points, weights, strict=True)
         ):
-            raise ValueError("n-irregular patch weights must match patch points.")
+            raise ValueError(
+                "NIrregularMortarPlan.configuration must match patch points; got n-irregular patch weights must match patch points."
+            )
         constant_integral = sum(float(np.sum(weight)) for weight in weights)
         coarse_measure = float(np.sum(np.concatenate(weights)))
         error = abs(constant_integral - coarse_measure)
@@ -592,502 +593,6 @@ class NIrregularMortarPlan(StrictModule, NonTrainableState):
                 "points": [array_tree_fingerprint(value) for value in points],
                 "weights": [array_tree_fingerprint(value) for value in weights],
             }
-        )
-
-
-def _shifted_jacobi(
-    degree: int, alpha: float, beta: float, values: np.ndarray, /
-) -> tuple[np.ndarray, np.ndarray]:
-    polynomial = eval_jacobi(degree, alpha, beta, 2.0 * values - 1.0)
-    derivative = (
-        np.zeros_like(values)
-        if degree == 0
-        else (degree + alpha + beta + 1.0)
-        * eval_jacobi(degree - 1, alpha + 1.0, beta + 1.0, 2.0 * values - 1.0)
-    )
-    return np.asarray(polynomial), np.asarray(derivative)
-
-
-def _pyramid_modal_tabulation(
-    points: np.ndarray,
-    indices: tuple[tuple[int, int, int], ...],
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
-    values = np.asarray(points, dtype=np.float64)
-    height = values[:, 2]
-    scale = 1.0 - height
-    safe = np.where(scale > 1.0e-12, scale, 1.0)
-    first = np.where(scale > 1.0e-12, (values[:, 0] - 0.5 * height) / safe, 0.5)
-    second = np.where(scale > 1.0e-12, (values[:, 1] - 0.5 * height) / safe, 0.5)
-    modal_values = []
-    modal_gradients = []
-    for first_degree, second_degree, height_degree in indices:
-        maximum = max(first_degree, second_degree)
-        first_value, first_derivative = _shifted_jacobi(first_degree, 0.0, 0.0, first)
-        second_value, second_derivative = _shifted_jacobi(second_degree, 0.0, 0.0, second)
-        height_value, height_derivative = _shifted_jacobi(
-            height_degree, 2.0 * maximum + 2.0, 0.0, height
-        )
-        scale_power = scale**maximum
-        mode = first_value * second_value * scale_power * height_value
-        x_gradient = (
-            first_derivative
-            * second_value
-            * np.where(maximum > 0, scale ** max(maximum - 1, 0), 1.0)
-            * height_value
-        )
-        y_gradient = (
-            first_value
-            * second_derivative
-            * np.where(maximum > 0, scale ** max(maximum - 1, 0), 1.0)
-            * height_value
-        )
-        first_height_derivative = np.where(scale > 1.0e-12, (first - 0.5) / safe, 0.0)
-        second_height_derivative = np.where(scale > 1.0e-12, (second - 0.5) / safe, 0.0)
-        scale_derivative = (
-            np.zeros_like(scale) if maximum == 0 else -maximum * scale ** (maximum - 1)
-        )
-        z_gradient = (
-            first_derivative
-            * first_height_derivative
-            * second_value
-            * scale_power
-            * height_value
-            + first_value
-            * second_derivative
-            * second_height_derivative
-            * scale_power
-            * height_value
-            + first_value * second_value * scale_derivative * height_value
-            + first_value * second_value * scale_power * height_derivative
-        )
-        modal_values.append(mode)
-        modal_gradients.append(np.stack((x_gradient, y_gradient, z_gradient), axis=-1))
-    return np.stack(tuple(modal_values), axis=-1), np.stack(
-        tuple(modal_gradients), axis=1
-    )
-
-
-def _pyramid_modal_tabulation_jax(
-    points: Array,
-    indices: tuple[tuple[int, int, int], ...],
-) -> tuple[Array, Array]:
-    """Execute the same prepared Bergot modes without host conversion."""
-    from .._coordinate_enclosure import _jacobi_derivative_jax, _jacobi_jax
-
-    height = points[:, 2]
-    collapse = 1.0 - height
-    interior = collapse != 0.0
-    denominator = jnp.where(interior, collapse, 1.0)
-    first = jnp.where(interior, (points[:, 0] - 0.5 * height) / denominator, 0.5)
-    second = jnp.where(interior, (points[:, 1] - 0.5 * height) / denominator, 0.5)
-    first_height = jnp.where(interior, (first - 0.5) / denominator, 0.0)
-    second_height = jnp.where(interior, (second - 0.5) / denominator, 0.0)
-    values, gradients = [], []
-    for i, j, k in indices:
-        maximum = max(i, j)
-        a, da = _jacobi_jax(i, 0, 0, first), _jacobi_derivative_jax(i, 0, 0, first)
-        b, db = _jacobi_jax(j, 0, 0, second), _jacobi_derivative_jax(j, 0, 0, second)
-        c = _jacobi_jax(k, 2 * maximum + 2, 0, height)
-        dc = _jacobi_derivative_jax(k, 2 * maximum + 2, 0, height)
-        power = collapse**maximum
-        horizontal = collapse ** max(maximum - 1, 0)
-        derivative = jnp.zeros_like(collapse) if maximum == 0 else -maximum * horizontal
-        values.append(a * b * power * c)
-        gradients.append(
-            jnp.stack(
-                (
-                    da * b * horizontal * c,
-                    a * db * horizontal * c,
-                    (da * first_height * b + a * db * second_height) * power * c
-                    + a * b * derivative * c
-                    + a * b * power * dc,
-                ),
-                axis=-1,
-            )
-        )
-    return jnp.stack(values, axis=-1), jnp.stack(gradients, axis=1)
-
-
-def _conforming_pyramid_boundary_nodes(nodes: np.ndarray, degree: int, /) -> np.ndarray:
-    """Use the same triangular trace nodes as tetrahedra and prisms.
-
-    Base quadrilateral and edge Lobatto nodes, and interior collapsed nodes,
-    remain unchanged. Only triangular face-interior dual points are relocated;
-    the complete rational modal space is preserved by the owning nodal solve.
-    """
-    if degree < 3:
-        return nodes
-    triangle = np.asarray(SimplexNodalFamily("triangle", degree).nodes, dtype=np.float64)
-    barycentric = np.column_stack((1.0 - np.sum(triangle, axis=1), triangle))
-    interior = barycentric[np.all(barycentric > 2.0e-10, axis=1)]
-    height = nodes[:, 2]
-    collapse = 1.0 - height
-    regular = collapse > 2.0e-10
-    first = np.full(nodes.shape[0], 0.5, dtype=np.float64)
-    second = first.copy()
-    first[regular] = (nodes[regular, 0] - 0.5 * height[regular]) / collapse[regular]
-    second[regular] = (nodes[regular, 1] - 0.5 * height[regular]) / collapse[regular]
-    weights = np.column_stack(
-        (
-            collapse * (1.0 - first) * (1.0 - second),
-            collapse * first * (1.0 - second),
-            collapse * first * second,
-            collapse * (1.0 - first) * second,
-            height,
-        )
-    )
-    support = weights > 2.0e-10
-    topology = reference_cell_topology("pyramid")
-    vertices = np.asarray(topology.vertices, dtype=np.float64)
-    result = nodes.copy()
-    for face in topology.entities[2]:
-        if len(face) != 3:
-            continue
-        rows = np.flatnonzero(
-            np.all(support[:, list(face)], axis=1) & (np.sum(support, axis=1) == 3)
-        )
-        if rows.size != interior.shape[0]:
-            raise ValueError(
-                "Pyramid triangular trace dimension must match its simplex trace."
-            )
-        result[rows] = interior @ vertices[list(face)]
-    return result
-
-
-@final
-class HybridReferenceFamily(StrictModule, NonTrainableState):
-    """Anisotropic prism/rational pyramid with common simplex/tensor nodal traces."""
-
-    cell_kind: Literal["prism", "pyramid"] = eqx.field(static=True)
-    degree: int = eqx.field(static=True)
-    orders: tuple[int, int] = eqx.field(static=True)
-    nodes: Array
-    basis_permutation: tuple[int, ...] = eqx.field(static=True)
-    modal_indices: tuple[tuple[int, int, int], ...] = eqx.field(static=True)
-    coefficients: Array
-    condition_number: float = eqx.field(static=True)
-    triangle_family: SimplexNodalFamily | None
-    axial_nodes: Array
-    family_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        cell_kind: Literal["prism", "pyramid"],
-        degree: int | tuple[int, int],
-        /,
-    ) -> None:
-        kind = str(cell_kind)
-        if kind == "prism" and isinstance(degree, tuple):
-            if len(degree) != 2:
-                raise ValueError("Prism degree tuples must be (triangle, axial).")
-            triangle_degree, axial_degree = (int(value) for value in degree)
-        else:
-            if isinstance(degree, tuple):
-                raise TypeError("Only prism references accept (triangle, axial) degrees.")
-            triangle_degree = axial_degree = int(degree)
-        p = triangle_degree
-        q = axial_degree
-        if kind not in ("prism", "pyramid") or min(p, q) < 1:
-            raise ValueError("Hybrid references require prism/pyramid and degree >= 1.")
-        if kind == "pyramid" and p != q:
-            raise ValueError("Pyramid orders must be isotropic.")
-        triangle = None
-        z_nodes = np.zeros(0, dtype=np.float64)
-
-        if kind == "prism":
-            triangle = SimplexNodalFamily("triangle", p)
-            rule = legendre_rule_data(q + 1, "lobatto")
-            z_nodes = 0.5 * (np.asarray(rule.nodes) + 1.0)
-            generated_nodes = np.asarray(
-                [
-                    (float(point[0]), float(point[1]), float(z))
-                    for point in np.asarray(triangle.nodes)
-                    for z in z_nodes
-                ]
-            )
-            if (p, q) == (1, 1):
-                nodes = np.asarray(reference_cell_topology("prism").vertices)
-                permutation = tuple(
-                    int(
-                        np.flatnonzero(
-                            np.max(np.abs(generated_nodes - point), axis=1) <= 2.0e-12
-                        )[0]
-                    )
-                    for point in nodes
-                )
-            else:
-                nodes = generated_nodes
-                permutation = tuple(range(nodes.shape[0]))
-            modal_indices: tuple[tuple[int, int, int], ...] = ()
-            coefficients = np.zeros((0, 0))
-            condition_number = 1.0
-        else:
-            height_rule = legendre_rule_data(p + 1, "lobatto")
-            height_nodes = 0.5 * (np.asarray(height_rule.nodes) + 1.0)
-            pyramid_nodes = []
-            for layer, height in enumerate(height_nodes):
-                cross_degree = p - layer
-                if cross_degree == 0:
-                    cross_nodes = np.asarray((0.5,))
-                else:
-                    cross_rule = legendre_rule_data(cross_degree + 1, "lobatto")
-                    cross_nodes = 0.5 * (np.asarray(cross_rule.nodes) + 1.0)
-                scale = 1.0 - height
-                pyramid_nodes.extend(
-                    (
-                        scale * first + 0.5 * height,
-                        scale * second + 0.5 * height,
-                        height,
-                    )
-                    for first in cross_nodes
-                    for second in cross_nodes
-                )
-            nodes = (
-                np.asarray(reference_cell_topology("pyramid").vertices)
-                if p == 1
-                else np.asarray(pyramid_nodes)
-            )
-            nodes = _conforming_pyramid_boundary_nodes(nodes, p)
-            permutation = tuple(range(nodes.shape[0]))
-            modal_indices = tuple(
-                (first, second, height)
-                for first in range(p + 1)
-                for second in range(p + 1)
-                for height in range(p - max(first, second) + 1)
-            )
-            modal, _modal_gradients = _pyramid_modal_tabulation(nodes, modal_indices)
-            if modal.shape[0] != modal.shape[1]:
-                raise ValueError("Pyramid node and modal dimensions must match.")
-            coefficients = np.linalg.solve(modal, np.eye(modal.shape[0]))
-            condition_number = float(np.linalg.cond(modal))
-
-        self.cell_kind = kind
-        self.degree = max(p, q)
-        self.orders = (p, q)
-        self.nodes = jnp.asarray(nodes)
-        self.basis_permutation = permutation
-        self.modal_indices = modal_indices
-        self.coefficients = jnp.asarray(coefficients)
-        self.condition_number = condition_number
-        self.triangle_family = triangle
-        self.axial_nodes = jnp.asarray(z_nodes)
-        self.family_id = canonical_fingerprint(
-            {
-                "kind": "hybrid-reference-family",
-                "cell_kind": kind,
-                "degree": max(p, q),
-                "orders": (p, q),
-                "basis": (
-                    "simplex-times-legendre"
-                    if kind == "prism"
-                    else "bergot-cohen-durufle-rational-pyramid"
-                ),
-                "nodes": array_tree_fingerprint(nodes),
-                "condition_number": condition_number,
-            }
-        )
-
-    def nodal_reference_labels(self) -> tuple[tuple[Fraction, ...], ...]:
-        """Exact logical dual labels in the existing basis/node ordering.
-
-        Lobatto and warp-and-blend coordinates remain dynamic numerical leaves;
-        labels identify their owning integer reference nodes, not rounded points.
-        """
-        p, q = self.orders
-        if self.cell_kind == "prism":
-            triangle = self.triangle_family
-            if triangle is None:
-                raise RuntimeError(
-                    "A prism reference is missing its prepared triangle family."
-                )
-            labels = tuple(
-                (Fraction(alpha[1], p), Fraction(alpha[2], p), Fraction(axial, q))
-                for alpha in triangle.multiindices
-                for axial in range(q + 1)
-            )
-            return tuple(labels[index] for index in self.basis_permutation)
-        topology = reference_cell_topology("pyramid")
-        vertices = tuple(
-            tuple(Fraction(float(value)) for value in point)
-            for point in topology.vertices
-        )
-        if p == 1:
-            return tuple(vertices[index] for index in self.basis_permutation)
-        labels: list[tuple[Fraction, ...]] = []
-        face_rows: dict[frozenset[int], list[int]] = {
-            frozenset(face): [] for face in topology.entities[2] if len(face) == 3
-        }
-        for height in range(p + 1):
-            cross = p - height
-            for first in range(cross + 1):
-                for second in range(cross + 1):
-                    row = len(labels)
-                    labels.append(
-                        (
-                            Fraction(2 * first + height, 2 * p),
-                            Fraction(2 * second + height, 2 * p),
-                            Fraction(height, p),
-                        )
-                    )
-                    if 0 < height < p:
-                        support = frozenset(
-                            vertex
-                            for vertex, active in enumerate(
-                                (
-                                    first < cross and second < cross,
-                                    first > 0 and second < cross,
-                                    first > 0 and second > 0,
-                                    first < cross and second > 0,
-                                    True,
-                                )
-                            )
-                            if active
-                        )
-                        if support in face_rows:
-                            face_rows[support].append(row)
-        if p >= 3:
-            interior = tuple(
-                (p - sum(index), *index)
-                for index in _simplex_node_tuples(p, 2)
-                if all(value > 0 for value in (p - sum(index), *index))
-            )
-            # The constructor relocates each triangular interior in precisely
-            # this simplex-owner order, without changing the rational space.
-            for face in topology.entities[2]:
-                if len(face) != 3:
-                    continue
-                rows = face_rows[frozenset(face)]
-                if len(rows) != len(interior):
-                    raise RuntimeError(
-                        "Pyramid labels lack their complete owning simplex trace."
-                    )
-                for row, alpha in zip(rows, interior, strict=True):
-                    labels[row] = tuple(
-                        sum(
-                            (
-                                Fraction(weight, p) * vertices[vertex][axis]
-                                for weight, vertex in zip(alpha, face, strict=True)
-                            ),
-                            Fraction(0),
-                        )
-                        for axis in range(3)
-                    )
-        return tuple(labels[index] for index in self.basis_permutation)
-
-    def tabulate_with_gradients(self, points: ArrayLike, /) -> tuple[Array, Array]:
-        points_ = jnp.asarray(points)
-        if points_.ndim != 2 or points_.shape[-1] != 3:
-            raise ValueError("Hybrid reference points must have shape (n, 3).")
-        if self.cell_kind == "pyramid":
-            modal, modal_gradients = _pyramid_modal_tabulation_jax(
-                points_, self.modal_indices
-            )
-            values = modal @ self.coefficients
-            gradients = ein.contract("qim,ij->qjm", modal_gradients, self.coefficients)
-            return values, gradients
-
-        triangle = self.triangle_family
-        if triangle is None:
-            raise RuntimeError(
-                "A prism reference is missing its prepared triangle family."
-            )
-        triangle_values, triangle_gradients = triangle.tabulate(points_[..., :2])
-        z_values, z_gradients = lagrange_1d_tabulation(self.axial_nodes, points_[..., 2])
-        values = ein.contract(
-            "qi,qj->qij", triangle_values, z_values, backend="jax"
-        ).reshape((points_.shape[0], -1))
-        horizontal = ein.contract(
-            "qid,qj->qijd", triangle_gradients, z_values, backend="jax"
-        )
-        vertical = ein.contract(
-            "qi,qj->qij", triangle_values, z_gradients, backend="jax"
-        )[..., None]
-        gradients = jnp.concatenate((horizontal, vertical), axis=-1).reshape(
-            (points_.shape[0], -1, 3)
-        )
-        permutation = jnp.asarray(self.basis_permutation, dtype=jnp.int32)
-        return values[:, permutation], gradients[:, permutation]
-
-    def tabulate(self, points: ArrayLike, /) -> Array:
-        return self.tabulate_with_gradients(points)[0]
-
-    def _entity_support(self, point: np.ndarray, /) -> frozenset[int]:
-        tolerance = 2.0e-10
-        if self.cell_kind == "prism":
-            height = float(point[2])
-            triangle = np.asarray(point[:2])
-            barycentric = np.asarray(
-                (1.0 - triangle[0] - triangle[1], triangle[0], triangle[1])
-            )
-            triangle_support = tuple(
-                index for index, value in enumerate(barycentric) if value > tolerance
-            )
-            if height <= tolerance:
-                return frozenset(triangle_support)
-            if height >= 1.0 - tolerance:
-                return frozenset(index + 3 for index in triangle_support)
-            return frozenset(
-                value for index in triangle_support for value in (index, index + 3)
-            )
-
-        height = float(point[2])
-        if height >= 1.0 - tolerance:
-            return frozenset((4,))
-        scale = 1.0 - height
-        first = (float(point[0]) - 0.5 * height) / scale
-        second = (float(point[1]) - 0.5 * height) / scale
-        base_weights = np.asarray(
-            (
-                (1.0 - first) * (1.0 - second),
-                first * (1.0 - second),
-                first * second,
-                (1.0 - first) * second,
-            )
-        )
-        base_support = frozenset(
-            index for index, value in enumerate(base_weights) if value > tolerance
-        )
-        return base_support if height <= tolerance else frozenset((*base_support, 4))
-
-    def finite_element(self, /, *, conformity: str = "H1") -> FiniteElementSpec:
-        if conformity not in ("H1", "L2"):
-            raise ValueError("Hybrid finite elements support H1 or L2 conformity.")
-        topology = reference_cell_topology(self.cell_kind)
-        entities = [[[] for _entity in dimension] for dimension in topology.entities]
-        if conformity == "H1":
-            entity_sets = [
-                tuple(frozenset(entity) for entity in dimension)
-                for dimension in topology.entities
-            ]
-            for dof, point in enumerate(np.asarray(self.nodes)):
-                support = self._entity_support(point)
-                matches = tuple(
-                    (dimension, entities_.index(support))
-                    for dimension, entities_ in enumerate(entity_sets)
-                    if support in entities_
-                )
-                if len(matches) != 1:
-                    raise ValueError(
-                        "Hybrid nodal support has ambiguous entity ownership."
-                    )
-                dimension, entity = matches[0]
-                entities[dimension][entity].append(dof)
-        else:
-            entities[-1][0].extend(range(self.nodes.shape[0]))
-        return FiniteElementSpec(
-            "HybridLagrange",
-            self.cell_kind,
-            self.degree,
-            self.nodes,
-            tuple(tuple(tuple(values) for values in dimension) for dimension in entities),
-            value_spec=FormValueSpec(
-                FormType(topology.dimension, 0, twist="untwisted"), proxy="scalar"
-            ),
-            continuity="conforming" if conformity == "H1" else "discontinuous",
-            representation="point_value",
-            tabulator=self.tabulate_with_gradients,
-            tabulator_id=self.family_id,
         )
 
 
@@ -1105,7 +610,7 @@ class LevelSetCutQuadrature(StrictModule, NonTrainableState):
         phi = jnp.asarray(level_set)
         if weights_.shape != phi.shape or points_.shape[:-1] != phi.shape:
             raise ValueError(
-                "Cut quadrature points, weights, and level-set values disagree."
+                "LevelSetCutQuadrature.points must agree with the declared geometry, topology, and field layout; got Cut quadrature points, weights, and level-set values disagree."
             )
         active = phi <= 0.0
         selected = jnp.where(active, weights_, 0.0)
@@ -1127,12 +632,16 @@ class HybridRefinementPlan(StrictModule, NonTrainableState):
             (jnp.asarray(lower), jnp.asarray(upper)) for lower, upper in child_bounds
         )
         if kind not in ("triangle", "tetrahedron", "prism", "pyramid") or not bounds:
-            raise ValueError("Hybrid refinement requires supported cells and child maps.")
+            raise ValueError(
+                "HybridRefinementPlan.configuration must provide supported cells and child maps; got Hybrid refinement requires supported cells and child maps."
+            )
         if any(
             lower.shape != upper.shape or jnp.any(lower >= upper)
             for lower, upper in bounds
         ):
-            raise ValueError("Hybrid child bounds are invalid.")
+            raise ValueError(
+                "HybridRefinementPlan.configuration must have valid hybrid child bounds; got Hybrid child bounds are invalid."
+            )
         self.cell_kind = kind
         self.child_maps = bounds
 
@@ -1206,20 +715,26 @@ class UnfittedAggregationPlan(StrictModule, NonTrainableState):
         fractions = np.asarray(volume_fractions)
         neighbors_ = np.asarray(neighbors, dtype=np.int32)
         if fractions.ndim != 1 or neighbors_.shape[0] != fractions.size:
-            raise ValueError("Unfitted fractions and neighbors disagree.")
+            raise ValueError(
+                "UnfittedAggregationPlan.neighbors must agree with the declared geometry, topology, and field layout; got Unfitted fractions and neighbors disagree."
+            )
         target = np.arange(fractions.size, dtype=np.int32)
         valid = fractions < minimum_fraction
         for cell in np.flatnonzero(valid):
             candidates = neighbors_[cell][neighbors_[cell] >= 0]
             if candidates.size == 0:
-                raise ValueError("Small cut cells require one aggregation neighbor.")
+                raise ValueError(
+                    "UnfittedAggregationPlan.configuration must provide one aggregation neighbor; got Small cut cells require one aggregation neighbor."
+                )
             target[cell] = int(candidates[np.argmax(fractions[candidates])])
         for cell in np.flatnonzero(valid):
             root = int(target[cell])
             visited = {int(cell)}
             while valid[root]:
                 if root in visited:
-                    raise ValueError("Cut-cell aggregation targets contain a cycle.")
+                    raise ValueError(
+                        "UnfittedAggregationPlan.configuration must have an acyclic aggregation relation; got Cut-cell aggregation targets contain a cycle."
+                    )
                 visited.add(root)
                 root = int(target[root])
             target[cell] = root
@@ -1256,7 +771,9 @@ class ConservativeMovingInterfaceTransfer(StrictModule, NonTrainableState):
         target = np.asarray(target_basis)
         weights = np.asarray(physical_weights)
         if source.shape[0] != target.shape[0] or weights.shape != (source.shape[0],):
-            raise ValueError("Moving-interface basis and weights disagree.")
+            raise ValueError(
+                "ConservativeMovingInterfaceTransfer.configuration must agree with the declared geometry, topology, and field layout; got Moving-interface basis and weights disagree."
+            )
         target_mass = target.T @ (weights[:, None] * target)
         coupling = target.T @ (weights[:, None] * source)
         self.projection = jnp.asarray(np.linalg.solve(target_mass, coupling))
@@ -1281,24 +798,23 @@ def physical_mass_projection(
         or source.shape[0] != target.shape[0]
         or weights.shape != (source.shape[0],)
     ):
-        raise ValueError("Physical mass projection basis and metric data disagree.")
+        raise ValueError(
+            "physical_mass_projection.configuration must agree with the declared geometry, topology, and field layout; got Physical mass projection basis and metric data disagree."
+        )
     target_mass = jnp.swapaxes(target, -1, -2) @ (weights[:, None] * target)
     coupling = jnp.swapaxes(target, -1, -2) @ (weights[:, None] * source)
     space = ArraySpace((target.shape[1],), dtype=target.dtype)
     operator = DenseLinearOperator(target_mass, source=space, target=space)
-    results = tuple(
-        solve(LinearSystem(operator), coupling[:, column])
-        for column in range(coupling.shape[1])
+    result = solve(
+        LinearSystem(operator),
+        coupling,
+        rhs_layout=RHSLayout((coupling.shape[1],)),
     )
-    columns = tuple(
-        eqx.error_if(
-            result.value,
-            jnp.any(~result.successful) | jnp.any(~jnp.isfinite(result.value)),
-            "Physical mass-projection solve failed.",
-        )
-        for result in results
+    return eqx.error_if(
+        result.value,
+        jnp.any(~result.successful) | jnp.any(~jnp.isfinite(result.value)),
+        "physical_mass_projection.solve must succeed for every RHS; got failed native mass solve",
     )
-    return jnp.stack(columns, axis=1)
 
 
 __all__ = [
@@ -1308,7 +824,6 @@ __all__ = [
     "GeometryOrderAdaptation",
     "HybridMortarPlan",
     "HybridRefinementPlan",
-    "HybridReferenceFamily",
     "LevelSetCutQuadrature",
     "NIrregularMortarPlan",
     "UnfittedAggregationPlan",

@@ -508,11 +508,24 @@ def test_inactive_retarded_samples_report_absent_charge_of_a_created_pair() -> N
     assert result.evidence.status[0] == LienardWiechertStatus.INACTIVE_RETARDED
     np.testing.assert_array_equal(result.evidence.supported, [True, True])
     np.testing.assert_array_equal(result.evidence.derivative_valid, [False, True])
-    expected = sum(
-        _heaviside(events[1:], np.zeros(3), lane[1][0], charge)[0]
-        for lane, charge in zip(lanes, (-Q, Q), strict=True)
+    contributions = np.stack(
+        [
+            _heaviside(events[1:], np.zeros(3), lane[1][0], charge)[0]
+            for lane, charge in zip(lanes, (-Q, Q), strict=True)
+        ]
     )
-    np.testing.assert_allclose(field[1:], expected, rtol=1e-10)
+    expected = np.sum(contributions, axis=0)
+    # A two-term charge-weighted dot product has absolute error at most
+    # gamma_2 times the sum of contribution magnitudes, including cancellation.
+    epsilon = np.finfo(np.float64).eps
+    gamma_2 = 2 * epsilon / (1 - 2 * epsilon)
+    allowance = float(np.max(gamma_2 * np.sum(np.abs(contributions), axis=0)))
+    np.testing.assert_allclose(field[1:], expected, rtol=1e-10, atol=allowance)
+    np.testing.assert_array_equal(field[:, 2], 0.0)
+    corrupted = field[1:].copy()
+    corrupted[:, 1] += 1e-10 * np.sum(np.abs(contributions[:, :, 1]), axis=0)
+    with pytest.raises(AssertionError):
+        np.testing.assert_allclose(corrupted, expected, rtol=1e-10, atol=allowance)
 
 
 def test_chunked_execution_matches_one_block() -> None:

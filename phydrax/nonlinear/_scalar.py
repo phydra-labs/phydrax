@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, Callable, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, Callable, final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -14,6 +14,8 @@ from jax import Array
 
 from .._iteration import IterationPlan
 from .._strict import StrictModule
+from .._validation import positive_integer, positive_real_scalar
+from ..typing import checked
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     NonlinearDiagnostics,
@@ -618,6 +620,401 @@ class TOMS748(AbstractBracketedScalarRoot):
         return "toms748"
 
 
+type _ITPCarry = tuple[Array, Array, Array, Array, Array, Array, Array]
+
+
+def _itp_run(
+    function: Callable[[Array], Array],
+    lower_values: Array,
+    upper_values: Array,
+    tolerance: Array,
+    template: Array,
+    bracket_tolerance: float,
+    maximum_steps: int,
+    truncation_factor: float,
+    truncation_exponent: float,
+    /,
+) -> _ITPCarry:
+    """Isolate unit-interval roots with a shared bounded batch traversal.
+
+    The seven-field carry freezes a lane after its residual meets tolerance.
+    Interpolation, truncation, projection, and bracket updates retain their
+    arithmetic order; all callback evaluations remain inside one JAX loop.
+    """
+    count = lower_values.shape[0]
+    initial: _ITPCarry = (
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.zeros((count,), dtype=template.dtype),
+        jnp.ones((count,), dtype=template.dtype),
+        lower_values,
+        upper_values,
+        jnp.zeros((count,), dtype=template.dtype),
+        jnp.zeros((count,), dtype=jnp.bool_),
+    )
+
+    def active(carry: _ITPCarry) -> Array:
+        _, left, right, _, _, _, converged = carry
+        return ~converged & (right - left > 2.0 * bracket_tolerance)
+
+    def condition(carry: _ITPCarry) -> Array:
+        return (carry[0] < maximum_steps) & jnp.any(active(carry))
+
+    def body(carry: _ITPCarry) -> _ITPCarry:
+        iteration, left, right, left_value, right_value, root, converged = carry
+        running = active(carry)
+        width = right - left
+        middle = 0.5 * (left + right)
+        radius = jnp.maximum(
+            bracket_tolerance
+            * jnp.exp2((maximum_steps - 1 - iteration).astype(template.dtype))
+            - 0.5 * width,
+            0.0,
+        )
+        truncation = truncation_factor * width**truncation_exponent
+        falsi = (right_value * left - left_value * right) / (right_value - left_value)
+        falsi = jnp.where(jnp.isfinite(falsi), falsi, middle)
+        sigma = jnp.sign(middle - falsi)
+        truncated = jnp.where(
+            truncation <= jnp.abs(middle - falsi), falsi + sigma * truncation, middle
+        )
+        candidate = jnp.where(
+            jnp.abs(truncated - middle) <= radius, truncated, middle - sigma * radius
+        )
+        value = function(candidate)
+        same_as_left = (value < 0.0) == (left_value < 0.0)
+        move_left = running & same_as_left
+        move_right = running & ~same_as_left
+        hit = running & (jnp.abs(value) <= tolerance)
+        return (
+            iteration + 1,
+            jnp.where(move_left, candidate, left),
+            jnp.where(move_right, candidate, right),
+            jnp.where(move_left, value, left_value),
+            jnp.where(move_right, value, right_value),
+            jnp.where(hit, candidate, root),
+            converged | hit,
+        )
+
+    return jax.lax.while_loop(condition, body, initial)
+
+
+def _itp_result(
+    function: Callable[[Array], Array],
+    run: _ITPCarry,
+    initial_lower_values: Array,
+    initial_upper_values: Array,
+    tolerance: Array,
+    precision: NonlinearPrecisionPolicy,
+    bracket_tolerance: float,
+    problem_id: str,
+    /,
+    *,
+    evaluation_limited: bool = False,
+) -> ScalarRootResult:
+    """Publish lane statuses and batch-global iteration/evaluation evidence."""
+    iterations, left, right, left_value, right_value, root, converged = run
+    parameter = jnp.where(converged, root, 0.5 * (left + right))
+    certificate_state = precision.certificate(parameter)
+    value = precision.certificate(function(certificate_state))
+    residual = _scalar_abs(value, precision)
+    initial = jnp.minimum(
+        _scalar_abs(initial_lower_values, precision),
+        _scalar_abs(initial_upper_values, precision),
+    )
+    finite_inputs = jnp.isfinite(initial_lower_values) & jnp.isfinite(
+        initial_upper_values
+    )
+    bracket_valid = finite_inputs & (
+        _sign_product(initial_lower_values, initial_upper_values, precision) <= 0.0
+    )
+    finite_result = jnp.isfinite(certificate_state) & jnp.isfinite(value)
+    exhausted = (
+        NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED
+        if evaluation_limited
+        else NonlinearStatus.MAXIMUM_STEPS_REACHED
+    )
+    status = jnp.where(
+        ~finite_inputs,
+        int(NonlinearStatus.NONFINITE_INPUT),
+        jnp.where(
+            ~bracket_valid,
+            int(NonlinearStatus.UNRECOVERABLE_DOMAIN_FAILURE),
+            jnp.where(
+                ~finite_result,
+                int(NonlinearStatus.NONFINITE_EVALUATION),
+                jnp.where(
+                    residual <= tolerance,
+                    int(NonlinearStatus.SUCCESS),
+                    jnp.where(
+                        right - left <= 2.0 * bracket_tolerance,
+                        int(NonlinearStatus.RESIDUAL_STAGNATION),
+                        int(exhausted),
+                    ),
+                ),
+            ),
+        ),
+    ).astype(jnp.int32)
+    output = precision.output(certificate_state)
+    nonlinear = NonlinearResult(
+        state=output,
+        residual=value,
+        auxiliary=None,
+        status=status,
+        diagnostics=NonlinearDiagnostics(
+            initial_residual_norm=initial,
+            final_residual_norm=residual,
+            final_step_norm=precision.decision(right - left),
+            iterations=iterations,
+            residual_evaluations=iterations + 3,
+            accepted_steps=iterations,
+            domain_failures=(finite_inputs & ~bracket_valid).astype(jnp.int32),
+            nonfinite_trials=(~finite_result).astype(jnp.int32),
+        ),
+        provenance=NonlinearProvenance(
+            problem_id=problem_id,
+            method_id="itp",
+            derivative_id="function-values",
+            globalization_id="certified-bracket",
+            precision_policy_id=precision.policy_id,
+        ),
+        precision_evidence=precision.evidence_for(parameter, value, output_value=output),
+    )
+    return ScalarRootResult(
+        nonlinear, left, right, left_value, right_value, bracket_valid
+    )
+
+
+@final
+class ITP(AbstractScalarRootMethod):
+    """Interpolate, truncate, and project bracketed scalar roots.
+
+    Oliveira and Takahashi, ACM TOMS 47(1), Article 5 (2021),
+    doi:10.1145/3423597. Unit-interval batches use the same seven-field carry
+    as scalar solves; residual and bracket failures remain visible in status.
+    """
+
+    bracket_tolerance: float = eqx.field(static=True)
+    truncation_factor: float = eqx.field(static=True)
+    truncation_exponent: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        bracket_tolerance: float = 2.0**-50,
+        truncation_factor: float = 0.2,
+        truncation_exponent: float = 2.0,
+    ) -> None:
+        tolerance = positive_real_scalar(bracket_tolerance, "ITP.bracket_tolerance")
+        factor = positive_real_scalar(truncation_factor, "ITP.truncation_factor")
+        exponent = positive_real_scalar(truncation_exponent, "ITP.truncation_exponent")
+        if tolerance >= 0.5:
+            raise ValueError(
+                f"ITP.bracket_tolerance must be below one half; got {tolerance}"
+            )
+        if not 1.0 <= exponent < 1.0 + (1.0 + 5.0**0.5) / 2.0:
+            raise ValueError(
+                "ITP.truncation_exponent must lie in [1, 1 + golden ratio); "
+                f"got {exponent}"
+            )
+        self.bracket_tolerance = tolerance
+        self.truncation_factor = factor
+        self.truncation_exponent = exponent
+
+    @property
+    def method_id(self) -> str:
+        return "itp"
+
+    @checked
+    def solve_batched(
+        self,
+        function: Callable[[Array], Array],
+        lower_values: Array,
+        upper_values: Array,
+        tolerance: Array,
+        template: Array,
+        /,
+        *,
+        maximum_steps: int = 51,
+        precision: NonlinearPrecisionPolicy | None = None,
+        problem_id: str = "batched-unit-interval-root",
+    ) -> ScalarRootResult:
+        """Solve independent roots on [0, 1] with supplied endpoint evaluations.
+
+        ``template`` selects parameter precision. Endpoint values and residual
+        tolerances are lane data; scalar counters measure the shared batch.
+        The callback preserves lane shape, and each lane must have a finite
+        sign-changing bracket for successful status.
+        """
+        steps = positive_integer(maximum_steps, "ITP.maximum_steps")
+        if lower_values.ndim != 1 or upper_values.shape != lower_values.shape:
+            raise ValueError(
+                "ITP.endpoint_values must be matching rank-one arrays; "
+                f"got {lower_values.shape}, {upper_values.shape}"
+            )
+        if tolerance.shape not in ((), lower_values.shape):
+            raise ValueError(
+                f"ITP.tolerance must be scalar or match the lanes; got {tolerance.shape}"
+            )
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        run = _itp_run(
+            function,
+            lower_values,
+            upper_values,
+            tolerance,
+            template,
+            self.bracket_tolerance,
+            steps,
+            self.truncation_factor,
+            self.truncation_exponent,
+        )
+        return _itp_result(
+            function,
+            run,
+            lower_values,
+            upper_values,
+            tolerance,
+            precision_,
+            self.bracket_tolerance,
+            problem_id,
+        )
+
+    @checked
+    def solve(
+        self,
+        problem: ScalarRootProblem,
+        /,
+        *,
+        termination: NonlinearTermination,
+        args: Any = None,
+        precision: NonlinearPrecisionPolicy | None = None,
+    ) -> ScalarRootResult:
+        """Solve a scalar bracket with native residual and work-limit evidence."""
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        precision_.validate_tolerance(termination.absolute_residual)
+        if problem.lower is None or problem.upper is None:
+            raise ValueError(
+                f"ITP.problem.bracket must contain lower and upper bounds; got {(problem.lower, problem.upper)!r}."
+            )
+        lower, upper = precision_.state(problem.lower), precision_.state(problem.upper)
+        width = upper - lower
+
+        def function(parameter: Array) -> Array:
+            return precision_.residual(
+                problem.evaluate(lower + parameter[0] * width, args)
+            )[None]
+
+        lower_value = precision_.residual(problem.evaluate(lower, args))[None]
+        upper_value = precision_.residual(problem.evaluate(upper, args))[None]
+        initial = jnp.maximum(
+            jnp.minimum(
+                _scalar_abs(lower_value, precision_), _scalar_abs(upper_value, precision_)
+            ),
+            precision_.decision(1e-30),
+        )
+        tolerance = termination.residual_threshold(initial)
+        steps = termination.maximum_steps
+        evaluation_limited = termination.maximum_evaluations is not None and (
+            termination.maximum_evaluations - 3 < steps
+        )
+        if termination.maximum_evaluations is not None:
+            steps = max(0, min(steps, termination.maximum_evaluations - 3))
+        lower_best = _scalar_abs(lower_value, precision_) <= _scalar_abs(
+            upper_value, precision_
+        )
+        endpoint_success = (
+            jnp.minimum(
+                _scalar_abs(lower_value, precision_), _scalar_abs(upper_value, precision_)
+            )
+            <= tolerance
+        )
+        endpoint_run: _ITPCarry = (
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.zeros_like(lower_value),
+            jnp.ones_like(upper_value),
+            lower_value,
+            upper_value,
+            jnp.where(
+                lower_best, jnp.zeros_like(lower_value), jnp.ones_like(upper_value)
+            ),
+            endpoint_success,
+        )
+        run = jax.lax.cond(
+            jnp.all(endpoint_success),
+            lambda: endpoint_run,
+            lambda: _itp_run(
+                function,
+                lower_value,
+                upper_value,
+                tolerance,
+                lower,
+                self.bracket_tolerance,
+                steps,
+                self.truncation_factor,
+                self.truncation_exponent,
+            ),
+        )
+        normalized = _itp_result(
+            function,
+            run,
+            lower_value,
+            upper_value,
+            tolerance,
+            precision_,
+            self.bracket_tolerance,
+            problem.problem_id,
+            evaluation_limited=evaluation_limited,
+        )
+        parameter = jnp.where(run[-1], run[-2], 0.5 * (run[1] + run[2]))[0]
+        certificate_root = precision_.certificate(lower + parameter * width)
+        root = precision_.output(certificate_root)
+        value = normalized.value[0]
+        status = normalized.status[0]
+        valid = (
+            problem.valid(lower, lower_value[0], args)
+            & problem.valid(upper, upper_value[0], args)
+            & problem.valid(root, value, args)
+        )
+        status = jnp.where(
+            valid, status, int(NonlinearStatus.UNRECOVERABLE_DOMAIN_FAILURE)
+        ).astype(jnp.int32)
+        diagnostics = eqx.tree_at(
+            lambda d: (
+                d.initial_residual_norm,
+                d.final_residual_norm,
+                d.final_step_norm,
+                d.domain_failures,
+                d.nonfinite_trials,
+            ),
+            normalized.nonlinear_result.diagnostics,
+            (
+                initial[0],
+                _scalar_abs(value, precision_),
+                precision_.decision((normalized.upper[0] - normalized.lower[0]) * width),
+                normalized.nonlinear_result.diagnostics.domain_failures[0],
+                normalized.nonlinear_result.diagnostics.nonfinite_trials[0],
+            ),
+        )
+        nonlinear = NonlinearResult(
+            state=root,
+            residual=value,
+            auxiliary=None,
+            status=status,
+            diagnostics=diagnostics,
+            provenance=normalized.nonlinear_result.provenance,
+            precision_evidence=precision_.evidence_for(
+                certificate_root, value, output_value=root
+            ),
+        )
+        return ScalarRootResult(
+            nonlinear,
+            lower + normalized.lower[0] * width,
+            lower + normalized.upper[0] * width,
+            normalized.lower_value[0],
+            normalized.upper_value[0],
+            normalized.bracket_valid[0] & valid,
+        )
+
+
 class _OpenRun(StrictModule):
     current: Array
     current_value: Array
@@ -948,6 +1345,7 @@ __all__ = [
     "AbstractScalarRootMethod",
     "Bisection",
     "Brent",
+    "ITP",
     "Ridder",
     "SafeguardedHalley",
     "SafeguardedNewton",

@@ -10,12 +10,14 @@ from math import isfinite
 from numbers import Integral, Real
 from typing import Any, final, Literal, TypeAlias
 
+import equinox as eqx
 from jax import Array, lax
 
 from phydrax.units import DIMENSIONLESS, DimensionSignature
 
+from .._strict import StrictModule
 from ..exterior._form_type import FiberProduct, FormValueSpec
-from ..typing import parse
+from ..typing import checked, parse
 
 
 PDERepresentation: TypeAlias = Literal[
@@ -183,61 +185,67 @@ class PDEField:
                 )
 
 
-@dataclass(frozen=True, slots=True)
-class PDEParameter:
+@final
+class PDEParameter(StrictModule):
     """Named scalar, vector, or field-valued coefficient in a PDE problem.
 
-    ``representation`` declares the physical identity. When it is omitted, a
-    one-component parameter is a scalar and a multi-component parameter is a
-    vector; a one-component vector must declare ``representation="vector"``.
-    Scalar and pseudoscalar representations require exactly one component.
+    ``representation`` declares the physical identity explicitly and defaults to
+    ``"scalar"``; it is never inferred from ``components`` (a one-dimensional
+    vector has one component). Scalar and pseudoscalar representations require
+    exactly one component. Every field is static problem metadata, validated
+    before it is assigned.
     """
 
-    name: str
-    value: float | tuple[float, ...] | None = None
-    components: int = 1
-    dimension: DimensionSignature = DIMENSIONLESS
-    scale: tuple[float, ...] = (1.0,)
-    functional: bool = False
-    representation: PDERepresentation | None = None
+    name: str = eqx.field(static=True)
+    value: float | tuple[float, ...] | None = eqx.field(static=True)
+    components: int = eqx.field(static=True)
+    dimension: DimensionSignature = eqx.field(static=True)
+    scale: tuple[float, ...] = eqx.field(static=True)
+    functional: bool = eqx.field(static=True)
+    representation: PDERepresentation = eqx.field(static=True)
 
-    def __post_init__(self) -> None:
-        if not self.name or int(self.components) <= 0:
+    @checked
+    def __init__(
+        self,
+        name: str,
+        value: float | tuple[float, ...] | None = None,
+        components: int = 1,
+        dimension: DimensionSignature = DIMENSIONLESS,
+        scale: tuple[float, ...] = (1.0,),
+        functional: bool = False,
+        representation: PDERepresentation = "scalar",
+    ) -> None:
+        if not name or int(components) <= 0:
             raise ValueError(
                 "PDE parameters require a name and positive component count."
             )
-        object.__setattr__(self, "components", int(self.components))
-        representation = (
-            "scalar"
-            if self.representation is None and self.components == 1
-            else (
-                "vector"
-                if self.representation is None
-                else parse(self.representation, PDERepresentation, "representation")
-            )
-        )
-        object.__setattr__(self, "representation", representation)
-        if representation in ("scalar", "pseudoscalar") and self.components != 1:
+        count = int(components)
+        resolved = parse(representation, PDERepresentation, "representation")
+        if resolved in ("scalar", "pseudoscalar") and count != 1:
             raise ValueError(
-                "PDE parameter scalar representations require exactly one component."
+                f"PDEParameter.components must be 1 for {resolved!r} representation; got {count!r}"
             )
-        if not isinstance(self.dimension, DimensionSignature):
-            raise TypeError("PDE parameter dimension must be a DimensionSignature.")
-        scales = _finite_values(list(self.scale), "PDE parameter scale")
-        if len(scales) not in (1, self.components) or any(item <= 0.0 for item in scales):
+        scales = _finite_values(list(scale), "PDE parameter scale")
+        if len(scales) not in (1, count) or any(item <= 0.0 for item in scales):
             raise ValueError(
                 "PDE parameter scale must be positive and scalar or per-component."
             )
-        object.__setattr__(self, "scale", scales)
-        if self.value is not None:
-            value = (
-                _finite_float(self.value, "PDE parameter value")
-                if isinstance(self.value, (int, float))
-                else _finite_values(list(self.value), "PDE parameter value")
+        canonical_value: float | tuple[float, ...] | None = None
+        if value is not None:
+            canonical_value = (
+                _finite_float(value, "PDE parameter value")
+                if isinstance(value, (int, float))
+                else _finite_values(list(value), "PDE parameter value")
             )
-            if isinstance(value, tuple) and len(value) != self.components:
+            if isinstance(canonical_value, tuple) and len(canonical_value) != count:
                 raise ValueError("PDE parameter value must match its component count.")
-            object.__setattr__(self, "value", value)
+        self.name = name
+        self.value = canonical_value
+        self.components = count
+        self.dimension = dimension
+        self.scale = scales
+        self.functional = functional
+        self.representation = resolved
 
 
 @final

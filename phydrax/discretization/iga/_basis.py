@@ -17,6 +17,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation._bspline_grid import BSplineGrid
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
 
 
 class SplineAxisPlan(StrictModule, NonTrainableState):
@@ -170,6 +171,23 @@ class TensorSplineBasisSpec(StrictModule, NonTrainableState):
                 "layout": layout,
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[TensorSplineBasisSpec], value: TensorSplineBasisSpec, /
+    ) -> TensorSplineBasisSpec:
+        """Revalidate named spline axes without supplying a second axis-name declaration."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"TensorSplineBasisSpec.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        fresh = cls(value.axes)
+        if fresh.basis_id != value.basis_id or fresh.layout_id != value.layout_id:
+            raise ValueError(
+                f"TensorSplineBasisSpec.basis_id must match its retained axes; got {value.basis_id}"
+            )
+        return fresh
 
     @property
     def degree(self) -> int | tuple[int, ...]:

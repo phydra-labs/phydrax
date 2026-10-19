@@ -1,26 +1,340 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Exact source-map contacts in a bounded scientific periodic group neighborhood.
+"""Certify source-map contacts in a bounded periodic group neighborhood.
 
-Images are execution worksets, not new mesh entities. Lifted corner keys retain
-both authored representative identity and relative winding. Bernstein hulls of
-the entire source map, not its corner carrier, prove image sufficiency.
-Finite linear cosets retain original generator windings; infinite-axis periods
-are exact powers of those same generators, including screw translations.
+Lifted corners retain representative identity and generator winding. Bernstein
+hulls enclose source-map images, and finite linear cosets retain their periods.
+
+Mesh certificate checks
+-----------------------
+[
+  {
+    "owner": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+    "checks": [
+      "periodic_authored_group_identity"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "Generator matrices, orders, period translations, and source preparation bind the supplied periodic group."
+      }
+    ],
+    "conclusion": "A group identity failure leaves the quotient embedding unresolved.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+      "locator": "admission and failure conditions",
+      "url": ""
+    },
+    "failure_statuses": [
+      "unresolved"
+    ]
+  },
+  {
+    "owner": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+    "checks": [
+      "periodic_full_source_hulls",
+      "periodic_image_sufficiency"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "Every coordinate enclosure is finite and every Bernstein control net stays within its node allowance."
+      },
+      {
+        "tag": "X",
+        "statement": "The translation dual maps period displacements to their generator exponents; finite linear cosets retain their declared windings."
+      }
+    ],
+    "conclusion": "Bernstein control hulls enclose each source map; a full-source P1 affine simplex has its degree-one controls at its reference vertices, so exact vertex extrema give the same directed hull without another control-net preparation. Affine group actions preserve that premise. Difference hulls bound every translation exponent that can produce contact.",
+    "citation": {
+      "kind": "mathematical",
+      "reference": "Rida T. Farouki, The Bernstein polynomial basis: a centennial retrospective",
+      "locator": "slides 12 and 17: nonnegative partition of unity and convex-hull property",
+      "url": "https://faculty.engineering.ucdavis.edu/farouki/wp-content/uploads/sites/51/2021/07/Bernstein-polynomial-basis.pdf"
+    },
+    "failure_statuses": []
+  },
+  {
+    "owner": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+    "checks": [
+      "periodic_mapped_trace_equivariance",
+      "periodic_mapped_self_image_embedding"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "Lifted corner identifiers include representative identity, winding, and fixed-generator flags."
+      },
+      {
+        "tag": "X",
+        "statement": "Every candidate source-map contact and quotient trace is checked under its group action."
+      }
+    ],
+    "conclusion": "Quotient admission requires equal identified traces and separation of every nonincident image pair.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+      "locator": "admission and failure conditions",
+      "url": ""
+    },
+    "failure_statuses": []
+  },
+  {
+    "owner": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+    "checks": [
+      "cell_validity",
+      "periodic_layer_column_validity_reuse",
+      "periodic_layer_column_graph_source",
+      "periodic_layer_column_affine_reference_contact"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "A prior cell-validity check covers the layer graph map, and every fiber child has a reference carrier."
+      }
+    ],
+    "conclusion": "The layer route reuses local injectivity and checks quotient contacts on the fiber reference cells.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+      "locator": "admission and failure conditions",
+      "url": ""
+    },
+    "failure_statuses": []
+  },
+  {
+    "owner": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+    "checks": [
+      "periodic_affine_validity_reuse"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "The bound cell-validity certificate certifies every cell of this source geometry, and the piece has the same simplex reference kind as its mesh block and coordinate element."
+      },
+      {
+        "tag": "N",
+        "statement": "The coordinate-source owner proves the full root basis is P1 affine and every restriction is affine; this is not an interpolation of corner samples."
+      },
+      {
+        "tag": "T",
+        "statement": "An affine map with full-column-rank derivative is injective on its full reference simplex, including its boundary."
+      }
+    ],
+    "conclusion": "The bound positive validity proof supplies the constant derivative rank, so repeating a projected-Jacobian injectivity proof is unnecessary. Quotient traces and contacts remain independently checked.",
+    "citation": {
+      "kind": "mathematical",
+      "reference": "Sheldon Axler, Linear Algebra Done Right, fourth edition (2024)",
+      "locator": "Section 3B, null spaces and injectivity: a linear map is injective exactly when its null space is zero",
+      "url": "https://linear.axler.net/LADR4e.pdf"
+    },
+    "failure_statuses": []
+  },
+  {
+    "owner": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+    "checks": [
+      "periodic_affine_quotient_contact"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "Every full-dimensional simplex has a canonical full-source affinity proof, the bound validity certificate proves positive orientation, and every quotient facet trace has been checked with no physical boundary facets or source-facet exceptions. PeriodicAffineQuotientEvidence records the affinity, validity, and facet-trace certificate IDs."
+      },
+      {
+        "tag": "N",
+        "statement": "Exact rational source-corner separating axes prove disjoint open interiors under every admitted group image; shared source traces and ordered candidate/image bounds retain their separate checks."
+      },
+      {
+        "tag": "T",
+        "statement": "A positive affine local star on a closed oriented quotient has positive integer degree. An additional nonincident closed contact would force overlapping open interiors in a neighborhood of that contact."
+      }
+    ],
+    "conclusion": "The closed oriented affine quotient and open-interior separation prove the closed-contact obligation without enumerating intersection-plane vertices. Missing premises retain the generic exact contact proof.",
+    "citation": {
+      "kind": "mathematical",
+      "reference": "Lipman, Bijective Mappings of Meshes with Boundary and the Degree in Mesh Processing",
+      "locator": "Theorems 1 and 4; Section 3, cycle degree",
+      "url": "https://arxiv.org/abs/1310.0955"
+    },
+    "failure_statuses": []
+  },
+  {
+    "owner": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+    "checks": [
+      "periodic_inverse_pair_proof_reuse"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "The contact pair and its inverse have the same unordered orbit key within this request's immutable source bank, no source facet exception is active, and the earlier classification includes matching source traces."
+      }
+    ],
+    "conclusion": "The exact invertible group action transports the earlier trace equality and contact classification to the inverse pair. Both are reused before repeating trace or contact preparation; ordered contact findings and candidate counts are retained.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+      "locator": "admission and failure conditions",
+      "url": ""
+    },
+    "failure_statuses": []
+  },
+  {
+    "owner": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+    "checks": [
+      "periodic_packed_polyhedral_source_identity",
+      "periodic_coordinate_source_expression",
+      "periodic_rational_enclosure_premise"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "Packed polyhedral routes match mesh vertices, and all supported source laws produce rational expressions and certified star pieces."
+      }
+    ],
+    "conclusion": "Unsupported source identity, expression, or enclosure conditions refuse embedding certification.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+      "locator": "admission and failure conditions",
+      "url": ""
+    },
+    "failure_statuses": [
+      "unresolved"
+    ]
+  },
+  {
+    "owner": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+    "checks": [
+      "periodic_bernstein_node_budget",
+      "periodic_coordinate_bound_range",
+      "periodic_image_budget",
+      "periodic_candidate_pair_budget",
+      "periodic_source_expression_resource_budget"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "Node, image, candidate, expression-work, and scratch-storage counts stay within the request limits; binary64 enclosure endpoints are finite."
+      }
+    ],
+    "conclusion": "An exceeded limit or unrepresentable enclosure reports unresolved resource evidence at the phase that incurred it.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+      "locator": "admission and failure conditions",
+      "url": ""
+    },
+    "failure_statuses": [
+      "unresolved"
+    ]
+  },
+  {
+    "owner": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+    "checks": [
+      "periodic_mapped_trace_mismatch"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "Identified source traces have equal rational coordinate expressions after applying their group actions."
+      }
+    ],
+    "conclusion": "Unequal identified traces violate quotient trace continuity.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+      "locator": "admission and failure conditions",
+      "url": ""
+    },
+    "failure_statuses": [
+      "violated"
+    ]
+  },
+  {
+    "owner": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+    "checks": [
+      "periodic_mapped_cell_overlap"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "The classified source-map pair intersects outside its authenticated incidence traces."
+      }
+    ],
+    "conclusion": "A nonincident image overlap violates quotient embedding and retains its piece, owner, and action observations.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._periodic_embedding.certify_periodic_mapped_embedding",
+      "locator": "admission and failure conditions",
+      "url": ""
+    },
+    "failure_statuses": [
+      "violated"
+    ]
+  }
+]
+End mesh certificate checks
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from fractions import Fraction
-from itertools import product
-from typing import TYPE_CHECKING
+from itertools import combinations, product
 
 import numpy as np
+from jax import Array
+
+import phydrax._fingerprint as fingerprint_owner
+import phydrax._geometry_predicates as geometry_predicates_owner
+import phydrax.discretization._coordinate_enclosure as coordinate_enclosure_owner
+import phydrax.discretization._exact_power_geometry as exact_power_geometry_owner
+import phydrax.discretization._periodic_topology as periodic_topology_owner
+import phydrax.geometry._affine_mapped_contact as affine_mapped_contact_owner
+import phydrax.geometry._embedding_cells as embedding_cells_owner
+import phydrax.geometry._embedding_state as embedding_state_owner
+import phydrax.geometry._exact_polyhedral_geometry as exact_polyhedral_geometry_owner
+import phydrax.geometry._periodic_power_preparation as periodic_power_preparation_owner
+import phydrax.geometry._planar_primitives as planar_primitives_owner
+import phydrax.geometry._supermesh as supermesh_owner
+import phydrax.linalg._small_batched as small_batched_owner
+from phydrax._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
+from phydrax._strict import StrictModule
+from phydrax.discretization._cell_complex import PolyhedralConnectivity
+from phydrax.discretization._cell_geometry_validity import CellValidityCertificate
+from phydrax.discretization._cell_mesh import CellMesh
+from phydrax.discretization._periodic_exact import (
+    exact_isometry_power,
+    exact_periodic_element,
+    exact_periodic_generators,
+    PeriodicIsometryGroup,
+    PeriodicIsometryIdentityError,
+)
+from phydrax.discretization._reference_cell_types import (
+    CellBlock,
+    CellGeometryElement,
+    PolyhedralBlock,
+)
+from phydrax.geometry._embedding_cells import (
+    bounds,
+    Cell,
+    domain,
+    vertices as embedding_vertices,
+)
+from phydrax.geometry._embedding_state import (
+    EmbeddingState,
+    MeshCertificateEntityKind,
+    MeshCertificateLimits,
+)
+from phydrax.geometry._periodic_image_frame import transformed_source_box
+from phydrax.linalg._exact import solve_exact
+from phydrax.typing import checked
 
 from ..discretization._cell_geometry import (
     BarycentricCellGeometryElement,
-    CellGeometryElement,
+    CellGeometrySpec,
     CellVertexGeometryElement,
     coordinate_lagrange_element,
     LayerColumnCellGeometryElement,
@@ -28,279 +342,135 @@ from ..discretization._cell_geometry import (
     RationalComposedCellGeometryElement,
     RestrictedCellGeometryElement,
 )
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+    RationalEnclosureError,
+)
 from ..discretization._coordinate_enclosure import (
-    _solve_exact,
     constant,
     coordinate_corner_images,
-    coordinate_enclosure_budget,
     coordinate_expressions,
     coordinate_reference_chain,
-    CoordinateEnclosureResourceError,
     CoordinateSourceBank,
     expression_bernstein_coefficients,
     expression_evaluate,
     expression_node_count,
     expression_scale,
+    expression_sequence_equal,
     expression_sum,
     ExpressionComposition,
     prepared_coordinate_source_bank,
-    RationalEnclosureError,
     restrict_chart_expressions,
 )
-from ..discretization._periodic_topology import (
-    _exact_isometry_power,
-    _exact_periodic_element,
-    _exact_periodic_generators,
-    PeriodicIsometryGroup,
-    PeriodicIsometryIdentityError,
+from ..discretization._exact_algebraic_geometry import (
+    coefficient_interval,
+    RadicalElement,
+    reserve_algebraic_work,
 )
 from ..discretization._reference_cell import reference_cell_topology
+from ._embedding_state import ContactDecision
 from ._mapped_embedding import (
-    _bounds,
-    _Cell,
-    _common_atlas_extension,
-    _domain,
-    _injective,
-    _pair_decision,
-    _separating_plane,
-    _tensor_gluing,
-    _trace_equal,
-    _vertices,
+    cell_traces_equal,
+    common_atlas_extension,
+    injective,
+    pair_decision,
+    separating_plane,
+    tensor_gluing,
 )
-
-
-if TYPE_CHECKING:
-    from ..discretization._cell_geometry import CellGeometrySpec
-    from ..discretization._cell_mesh import CellMesh
-    from ._mesh_certificates import (
-        _EmbeddingState,
-        MeshCertificateEntityKind,
-        MeshCertificateLimits,
-    )
+from ._rational import fraction_endpoint, rational_vector, translation_ranges
 
 
 def _transform(
-    cell: _Cell, matrix: tuple[tuple[Fraction, ...], ...], vertices: tuple[int, ...]
-) -> _Cell:
+    cell: Cell,
+    matrix: tuple[tuple[coordinate_enclosure_owner.ExactScalar, ...], ...],
+    vertices: tuple[int, ...],
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> Cell:
+    dimension = len(cell.coordinates)
+    budget.reserve(dimension * (dimension + 1))
+    if all(
+        weight == (axis == component)
+        for component, row in enumerate(matrix[:-1])
+        for axis, weight in enumerate(row[:-1])
+    ):
+        # A translation leaves every nonconstant coefficient unchanged. Share
+        # the source expression for zero shifts; no polynomial is mutated.
+        coordinates = tuple(
+            value
+            if not row[-1]
+            else expression_sum(
+                (value, constant(row[-1], cell.dimension, budget=budget)),
+                budget=budget,
+            )
+            for value, row in zip(cell.coordinates, matrix[:-1], strict=True)
+        )
+        return replace(
+            cell, coordinates=coordinates, vertices=vertices, corner_images=None
+        )
     coordinates = tuple(
         expression_sum(
             (
                 *tuple(
-                    expression_scale(value, weight)
+                    expression_scale(value, weight, budget=budget)
                     for value, weight in zip(cell.coordinates, row[:-1], strict=True)
                 ),
-                constant(row[-1], cell.dimension),
-            )
+                constant(row[-1], cell.dimension, budget=budget),
+            ),
+            budget=budget,
         )
         for row in matrix[:-1]
     )
-    return _Cell(
-        coordinates,
-        cell.domain,
-        cell.kind,
-        cell.dimension,
-        vertices,
-        cell.reference_vertices,
+    return replace(cell, coordinates=coordinates, vertices=vertices, corner_images=None)
+
+
+@checked
+def affine_reference_contact(
+    first: Cell,
+    second: Cell,
+    maximum_work: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> ContactDecision | None:
+    """Decide affine tetra/prism contact through the prism's tetrahedral partition."""
+    polytope = affine_mapped_contact_owner.contact_decision(
+        first, second, maximum_work, budget=budget, method="affine_polytope"
     )
-
-
-def _shared_affine_parent_traces(
-    first: _Cell, second: _Cell, /
-) -> tuple[tuple[int, ...], ...]:
-    """Return exact entities or facet subdivisions shared by two cells."""
-    first_topology = reference_cell_topology(first.kind)
-    second_topology = reference_cell_topology(second.kind)
-    second_vertices = set(second.vertices)
-    result: dict[tuple[int, ...], None] = {}
-    for entities in first_topology.entities[:-1]:
-        for entity in entities:
-            trace = tuple(first.vertices[index] for index in entity)
-            if set(trace).issubset(second_vertices):
-                result[trace] = None
-    first_facets = first_topology.entities[first.dimension - 1]
-    second_facets = second_topology.entities[second.dimension - 1]
-    for first_facet in first_facets:
-        first_trace = tuple(first.vertices[index] for index in first_facet)
-        first_set = set(first_trace)
-        for second_facet in second_facets:
-            second_trace = tuple(second.vertices[index] for index in second_facet)
-            second_set = set(second_trace)
-            if second_set.issubset(first_set):
-                support = tuple(
-                    identifier for identifier in first_trace if identifier in second_set
-                )
-                if support:
-                    result[support] = None
-    return tuple(result)
-
-
-def _affine_polytope_contact(
-    first: _Cell, second: _Cell, maximum_work: int, /
-) -> tuple[str, int] | None:
-    """Use the exact convex-polytope separating axes of affine 3D cells."""
-    from ..discretization._coordinate_enclosure import (
-        _COORDINATE_BUDGET,
-        RationalPolynomial,
-    )
-
-    if (
-        first.kind not in ("tetrahedron", "prism")
-        or second.kind not in ("tetrahedron", "prism")
-        or first.dimension != 3
-        or second.dimension != 3
-    ):
-        return None
-    if any(
-        isinstance(value, RationalPolynomial) or any(sum(index) > 1 for index in value)
-        for cell in (first, second)
-        for value in cell.coordinates
-    ):
-        return None
-    if maximum_work <= 0:
-        return "mapped_intersection_piece_budget", 0
-    budget = _COORDINATE_BUDGET.get()
-    if budget is not None:
-        budget.reserve(2_048, 32_768)
-    vertices = tuple(
-        tuple(
-            tuple(expression_evaluate(value, point) for value in cell.coordinates)
-            for point in cell.reference_vertices
-        )
-        for cell in (first, second)
-    )
-
-    def subtract(
-        left: tuple[Fraction, ...], right: tuple[Fraction, ...], /
-    ) -> tuple[Fraction, ...]:
-        return tuple(a - b for a, b in zip(left, right, strict=True))
-
-    def cross(
-        left: tuple[Fraction, ...], right: tuple[Fraction, ...], /
-    ) -> tuple[Fraction, ...]:
-        return (
-            left[1] * right[2] - left[2] * right[1],
-            left[2] * right[0] - left[0] * right[2],
-            left[0] * right[1] - left[1] * right[0],
-        )
-
-    def canonical(axis: tuple[Fraction, ...], /) -> tuple[Fraction, ...] | None:
-        pivot = next((value for value in axis if value), None)
-        if pivot is None:
-            return None
-        return tuple(value / pivot for value in axis)
-
-    axes: dict[tuple[Fraction, ...], None] = {}
-    edge_vectors: list[tuple[tuple[Fraction, ...], ...]] = []
-    for cell, points in zip((first, second), vertices, strict=True):
-        topology = reference_cell_topology(cell.kind)
-        edges = tuple(
-            subtract(points[edge[1]], points[edge[0]]) for edge in topology.entities[1]
-        )
-        edge_vectors.append(edges)
-        for facet in topology.entities[2]:
-            origin = points[facet[0]]
-            normal = next(
-                (
-                    value
-                    for left, right in product(facet[1:], repeat=2)
-                    if left < right
-                    for value in (
-                        cross(
-                            subtract(points[left], origin),
-                            subtract(points[right], origin),
-                        ),
-                    )
-                    if any(value)
-                ),
-                None,
-            )
-            if normal is None:
-                return None
-            normalized = canonical(normal)
-            if normalized is not None:
-                axes[normalized] = None
-    for first_edge in edge_vectors[0]:
-        for second_edge in edge_vectors[1]:
-            normalized = canonical(cross(first_edge, second_edge))
-            if normalized is not None:
-                axes[normalized] = None
-
-    traces = tuple(set(trace) for trace in _shared_affine_parent_traces(first, second))
-    work = 0
-    for axis in axes:
-        if work >= maximum_work:
-            return "mapped_intersection_piece_budget", work
-        work += 1
-        if budget is not None:
-            budget.reserve(256)
-        projections = tuple(
-            tuple(
-                sum(
-                    (weight * value for weight, value in zip(axis, point, strict=True)),
-                    Fraction(0),
-                )
-                for point in points
-            )
-            for points in vertices
-        )
-        first_min, first_max = min(projections[0]), max(projections[0])
-        second_min, second_max = min(projections[1]), max(projections[1])
-        if first_max < second_min or second_max < first_min:
-            return "separated", work
-        first_support: tuple[int, ...] = ()
-        if first_max == second_min:
-            first_support = tuple(
-                first.vertices[index]
-                for index, value in enumerate(projections[0])
-                if value == first_max
-            )
-        elif second_max == first_min:
-            first_support = tuple(
-                first.vertices[index]
-                for index, value in enumerate(projections[0])
-                if value == first_min
-            )
-        if first_support and any(set(first_support).issubset(trace) for trace in traces):
-            return "separated", work
-    return "overlap", work
-
-
-def _affine_reference_contact(
-    first: _Cell, second: _Cell, maximum_work: int, /
-) -> tuple[str, int] | None:
-    """Decide affine tetra/prism contact through canonical prism tetrahedra."""
-    polytope = _affine_polytope_contact(first, second, maximum_work)
     if polytope is not None:
         return polytope
-    from ._affine_mapped_contact import affine_simplex_contact
 
     tetrahedron = coordinate_lagrange_element("tetrahedron", 1)
     prism_tetrahedra = ((0, 1, 2, 3), (1, 2, 4, 3), (2, 4, 5, 3))
 
-    def pieces(cell: _Cell) -> tuple[_Cell, ...] | None:
+    def pieces(cell: Cell) -> tuple[Cell, ...] | None:
         if cell.kind == "tetrahedron":
             return (cell,)
         if cell.kind != "prism":
             return None
         corners = tuple(
-            tuple(expression_evaluate(value, point) for value in cell.coordinates)
+            tuple(
+                expression_evaluate(value, point, budget=budget)
+                for value in cell.coordinates
+            )
             for point in cell.reference_vertices
         )
         result = []
         for indices in prism_tetrahedra:
             coordinates = coordinate_expressions(
-                tetrahedron, tuple(corners[index] for index in indices)
+                tetrahedron, tuple(corners[index] for index in indices), budget=budget
             )
             if coordinates is None:
                 return None
             result.append(
-                _Cell(
+                Cell(
                     coordinates,
                     "simplex",
                     "tetrahedron",
                     cell.dimension,
                     tuple(cell.vertices[index] for index in indices),
-                    _vertices("tetrahedron"),
+                    embedding_vertices("tetrahedron"),
                 )
             )
         return tuple(result)
@@ -308,7 +478,7 @@ def _affine_reference_contact(
     left, right = pieces(first), pieces(second)
     if left is None or right is None:
         return None
-    parent_traces = _shared_affine_parent_traces(first, second)
+    parent_traces = affine_mapped_contact_owner.shared_affine_parent_traces(first, second)
     work = 0
     for a in left:
         traces: dict[tuple[int, ...], None] = {}
@@ -320,61 +490,68 @@ def _affine_reference_contact(
             if support and len(set(support)) <= a.dimension:
                 traces[support] = None
         for b in right:
-            decision = affine_simplex_contact(
+            decision = affine_mapped_contact_owner.contact_decision(
                 a,
                 b,
                 maximum_work - work,
-                authoritative_first_traces=tuple(traces),
+                authenticated_first_traces=tuple(traces),
+                budget=budget,
+                method="affine_simplex",
             )
             if decision is None:
                 raise ValueError(
-                    "Canonical affine reference tetrahedra lost their exact P1 source."
+                    "affine_reference_contact.source must provide affine P1 tetrahedra; got unsupported expressions"
                 )
-            status, used = decision
+            status = decision.status
+            used = decision.work
             work += used
             if status != "separated":
-                return status, work
-    return "separated", work
+                return ContactDecision(status, work, check=decision.check)
+    return ContactDecision("separated", work)
 
 
 def _layer_fiber_reference_cell(
     element: LayerColumnCellGeometryElement,
     source_local: CoordinateSourceBank,
-    chart_coordinates: tuple | None,
-    cell: _Cell,
+    chart_coordinates: tuple[coordinate_enclosure_owner.Expression, ...] | None,
+    cell: Cell,
     /,
-) -> _Cell | None:
-    """Pull one root or child chart back to its exact affine fiber carrier."""
-    affine_coordinates = element.fiber_reference_expressions(source_local)
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> Cell | None:
+    """Pull one root or child chart back to its affine fiber carrier."""
+    affine_coordinates = element.fiber_reference_expressions(source_local, budget=budget)
     if affine_coordinates is None:
         return None
     if chart_coordinates is None:
         reference_coordinates = affine_coordinates
     else:
-        composition = ExpressionComposition(chart_coordinates)
-        reference_coordinates = tuple(composition(value) for value in affine_coordinates)
+        composition = ExpressionComposition(chart_coordinates, budget=budget)
+        reference_coordinates = (
+            replace(cell, coordinates=affine_coordinates, corner_images=None)
+            .composed(composition, budget=budget)
+            .coordinates
+        )
     corner_values = tuple(
-        tuple(expression_evaluate(value, point) for value in reference_coordinates)
+        tuple(
+            expression_evaluate(value, point, budget=budget)
+            for value in reference_coordinates
+        )
         for point in cell.reference_vertices
     )
     canonical_reference = coordinate_expressions(
-        coordinate_lagrange_element(cell.kind, 1), corner_values
+        coordinate_lagrange_element(cell.kind, 1), corner_values, budget=budget
     )
     if canonical_reference is None:
-        raise ValueError("A layer fiber child lost its exact affine reference chart.")
-    return _Cell(
-        canonical_reference,
-        cell.domain,
-        cell.kind,
-        cell.dimension,
-        cell.vertices,
-        cell.reference_vertices,
-    )
+        raise ValueError(
+            "periodic_embedding.layer_fiber_child must provide an affine chart; got unsupported reference expressions"
+        )
+    return replace(cell, coordinates=canonical_reference, corner_images=None)
 
 
-def _source_contact_quantities(
-    first: _Cell,
-    second: _Cell,
+def source_contact_quantities(
+    first: Cell,
+    second: Cell,
     matrix: tuple[tuple[Fraction, ...], ...],
     exponents: tuple[int, ...],
     first_piece: int,
@@ -383,7 +560,7 @@ def _source_contact_quantities(
     second_owner: int,
     /,
 ) -> tuple[tuple[str, int], ...]:
-    """Actual offending SCI action/incidence, never a reconstructed proxy."""
+    """Encode the contact action, source incidence, and offending piece identities."""
     quantities = [
         ("first_piece", first_piece),
         ("second_piece", second_piece),
@@ -423,8 +600,7 @@ def _source_contact_quantities(
         if value <= (1 << 53) - 1:
             encoded.append((name, value))
             continue
-        # Public failure quantities are binary64. Preserve arbitrary exact SCI
-        # integer bits as actual little-endian 32-bit limbs, never float(value).
+        # Binary64 observations retain larger integers as little-endian 32-bit limbs.
         limb = 0
         while value:
             encoded.append((f"{name}_limb_{limb}", value & ((1 << 32) - 1)))
@@ -435,87 +611,120 @@ def _source_contact_quantities(
 
 
 def _has_full_coefficient_source(element: CellGeometryElement) -> bool:
-    """Nominal source-law dispatch; full W is not a Cartesian chart."""
-    while isinstance(
-        element,
-        (
-            RestrictedCellGeometryElement,
-            PolynomialComposedCellGeometryElement,
-            RationalComposedCellGeometryElement,
-        ),
-    ):
-        element = element.source_element
-    return isinstance(element, BarycentricCellGeometryElement)
+    """Return whether the source chain ends at a full barycentric coefficient law."""
+    match element:
+        case (
+            RestrictedCellGeometryElement()
+            | PolynomialComposedCellGeometryElement()
+            | RationalComposedCellGeometryElement()
+        ):
+            return _has_full_coefficient_source(element.source_element)
+        case BarycentricCellGeometryElement():
+            return True
+        case _:
+            return False
 
 
-def _closed_source_polygon_contains(
-    source: tuple[tuple[Fraction, ...], ...],
-    subject: tuple[tuple[Fraction, ...], ...],
+def _closed_polygon_point(
+    source: CoordinateSourceBank,
+    point: tuple[coordinate_enclosure_owner.ExactScalar, ...],
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> bool:
-    """Contain a complete loop in one authored simple polygon, without a hull."""
-    from ._planar_coverage import _reserve_fraction_work, turn
+    winding = 0
+    for a, b in zip(source, (*source[1:], source[0]), strict=True):
+        side = planar_primitives_owner.turn(a, b, point, budget=budget)
+        if not side and all(
+            min(x, y) <= p <= max(x, y) for x, y, p in zip(a, b, point, strict=True)
+        ):
+            return True
+        if a[1] <= point[1] < b[1] and side > 0:
+            winding += 1
+        elif b[1] <= point[1] < a[1] and side < 0:
+            winding -= 1
+    return bool(winding)
 
-    def inside(point: tuple[Fraction, ...]) -> bool:
-        winding = 0
-        for a, b in zip(source, (*source[1:], source[0]), strict=True):
-            side = turn(a, b, point)
-            if not side and all(
-                min(x, y) <= p <= max(x, y) for x, y, p in zip(a, b, point, strict=True)
-            ):
-                return True
-            if a[1] <= point[1] < b[1] and side > 0:
-                winding += 1
-            elif b[1] <= point[1] < a[1] and side < 0:
-                winding -= 1
-        return bool(winding)
 
-    if not source or not subject or not all(inside(point) for point in subject):
+def _source_edge_parameters(
+    source: CoordinateSourceBank,
+    a: tuple[coordinate_enclosure_owner.ExactScalar, ...],
+    b: tuple[coordinate_enclosure_owner.ExactScalar, ...],
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[coordinate_enclosure_owner.ExactScalar, ...]:
+    parameters: set[coordinate_enclosure_owner.ExactScalar] = {Fraction(0), Fraction(1)}
+    for c, d in zip(source, (*source[1:], source[0]), strict=True):
+        planar_primitives_owner.reserve_fraction_work(
+            (a, b, c, d), 48, 4, 16, budget=budget
+        )
+        r = tuple(y - x for x, y in zip(a, b, strict=True))
+        s = tuple(y - x for x, y in zip(c, d, strict=True))
+        q = tuple(y - x for x, y in zip(a, c, strict=True))
+        divisor = r[0] * s[1] - r[1] * s[0]
+        if divisor:
+            t = (q[0] * s[1] - q[1] * s[0]) / divisor
+            u = (q[0] * r[1] - q[1] * r[0]) / divisor
+            if 0 <= t <= 1 and 0 <= u <= 1:
+                parameters.add(t)
+        elif not planar_primitives_owner.turn(a, b, c, budget=budget):
+            axis = next(index for index, value in enumerate(r) if value)
+            for point in (c, d):
+                t = (point[axis] - a[axis]) / r[axis]
+                if 0 <= t <= 1:
+                    parameters.add(t)
+    return tuple(sorted(parameters))
+
+
+@checked
+def closed_source_polygon_contains(
+    source: CoordinateSourceBank,
+    subject: CoordinateSourceBank,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
+    """Prove a subject loop lies in a simple source polygon, including its boundary."""
+    if (
+        not source
+        or not subject
+        or not all(
+            _closed_polygon_point(source, point, budget=budget) for point in subject
+        )
+    ):
         return False
     for a, b in zip(subject, (*subject[1:], subject[0]), strict=True):
         if a == b:
             continue
-        parameters = {Fraction(0), Fraction(1)}
-        for c, d in zip(source, (*source[1:], source[0]), strict=True):
-            _reserve_fraction_work((a, b, c, d), 48, 4, 16)
-            r = tuple(y - x for x, y in zip(a, b, strict=True))
-            s = tuple(y - x for x, y in zip(c, d, strict=True))
-            q = tuple(y - x for x, y in zip(a, c, strict=True))
-            divisor = r[0] * s[1] - r[1] * s[0]
-            if divisor:
-                t = (q[0] * s[1] - q[1] * s[0]) / divisor
-                u = (q[0] * r[1] - q[1] * r[0]) / divisor
-                if 0 <= t <= 1 and 0 <= u <= 1:
-                    parameters.add(t)
-            elif not turn(a, b, c):
-                axis = next(index for index, value in enumerate(r) if value)
-                for point in (c, d):
-                    t = (point[axis] - a[axis]) / r[axis]
-                    if 0 <= t <= 1:
-                        parameters.add(t)
-        ordered = sorted(parameters)
+        ordered = _source_edge_parameters(source, a, b, budget=budget)
         for low, high in zip(ordered, ordered[1:]):
-            _reserve_fraction_work((a, b, (low, high)), 8, 3, 8)
+            planar_primitives_owner.reserve_fraction_work(
+                (a, b, (low, high)), 8, 3, 8, budget=budget
+            )
             middle = (low + high) / 2
             point = tuple(x + middle * (y - x) for x, y in zip(a, b, strict=True))
-            if not inside(point):
+            if not _closed_polygon_point(source, point, budget=budget):
                 return False
-    # A simple authored polygon has connected exterior. A contained closed
-    # subject boundary cannot enclose an exterior component without crossing it.
+    # A simple polygon's connected exterior cannot cross a contained boundary.
     return True
 
 
-def _source_polygon_plane(
-    points: tuple[tuple[Fraction, ...], ...],
-) -> tuple[tuple[Fraction, ...], tuple[int, ...], int, int] | None:
-    from ._planar_coverage import _reserve_fraction_work, plane_key
+def source_polygon_plane(
+    points: CoordinateSourceBank, *, budget: CoordinateEnclosureBudget
+) -> (
+    tuple[tuple[coordinate_enclosure_owner.ExactScalar, ...], tuple[int, ...], int, int]
+    | None
+):
 
     for a in range(1, len(points)):
         for b in range(a + 1, len(points)):
-            plane = plane_key((points[0], points[a], points[b]))
+            plane = planar_primitives_owner.plane_key(
+                (points[0], points[a], points[b]), budget=budget
+            )
             if plane is not None:
                 key = plane[0]
                 for point in points:
-                    _reserve_fraction_work((key, point), 2 * len(point), 1, 4)
+                    planar_primitives_owner.reserve_fraction_work(
+                        (key, point), 2 * len(point), 1, 4, budget=budget
+                    )
                     if sum(
                         (a * b for a, b in zip(key[:-1], point, strict=True)), key[-1]
                     ):
@@ -527,88 +736,77 @@ def _source_polygon_plane(
 def _original_power_facet_authority(
     geometry: CellGeometrySpec,
     group: PeriodicIsometryGroup,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[
-    tuple[int, tuple[Fraction, ...], tuple[int, ...], tuple[tuple[Fraction, ...], ...]],
+    tuple[
+        int,
+        tuple[coordinate_enclosure_owner.ExactScalar, ...],
+        tuple[int, ...],
+        CoordinateSourceBank,
+    ],
     ...,
 ]:
-    from ..discretization._coordinate_enclosure import _COORDINATE_BUDGET
-    from ..discretization._exact_power_geometry import (
-        _power_domain_binding,
-        _power_preparation_binding,
-        ExactPowerCellGeometryLinearActionSource,
-        ExactPowerCellGeometryRestrictionSource,
-        ExactPowerCellGeometrySource,
-    )
-    from ..meshing._controls import PeriodicConstraint
-    from ..meshing._volume_generation import PiecewiseLinearComplex
-    from ._planar_coverage import project, rational_points
-    from ._triangulation import PeriodicPowerPreparation
 
     source = geometry.exact_source
     while isinstance(
         source,
         (
-            ExactPowerCellGeometryLinearActionSource,
-            ExactPowerCellGeometryRestrictionSource,
+            exact_power_geometry_owner.ExactPowerCellGeometryLinearActionSource,
+            exact_power_geometry_owner.ExactPowerCellGeometryRestrictionSource,
         ),
     ):
         source = source.parent
-    if not isinstance(source, ExactPowerCellGeometrySource):
+    if not isinstance(source, exact_power_geometry_owner.ExactPowerCellGeometrySource):
         return ()
-    domain, constraints = source._domain_owner()
-    if domain is None or not constraints:
+    power_domain, constraints = source.domain_source, source.periodic_constraints
+    if power_domain is None or not constraints:
         return ()
-    if source.authority_binding != _power_domain_binding(domain, constraints):
+    if source.authority_binding != exact_power_geometry_owner.power_domain_binding(
+        power_domain, constraints
+    ):
         raise ValueError(
-            "Original periodic source facet authority no longer matches "
-            "its owning binding."
+            "periodic_embedding.source.authority_binding must match its domain and controls; got mismatched binding"
         )
-    preparation = source._periodic_owner()
+    preparation = source.periodic_preparation
     if (
-        not isinstance(preparation, PeriodicPowerPreparation)
+        not isinstance(
+            preparation, periodic_power_preparation_owner.PeriodicPowerPreparation
+        )
         or not isinstance(preparation.periodic_group, PeriodicIsometryGroup)
         or preparation.periodic_group.group_id != group.group_id
     ):
         raise ValueError(
-            "Original periodic source facet authority requires the actual original group."
+            "periodic_embedding.source.periodic_preparation must bind the requested group; got mismatched group"
         )
-    if source.periodic_source_binding != _power_preparation_binding(preparation):
-        raise ValueError(
-            "Original periodic source facet authority requires the complete original source payload."
-        )
-    from .._fingerprint import array_tree_fingerprint
-
-    if array_tree_fingerprint(preparation.periodic_group) != array_tree_fingerprint(
-        group
+    if (
+        source.periodic_source_binding
+        != exact_power_geometry_owner.power_preparation_binding(preparation)
     ):
         raise ValueError(
-            "Original periodic source facet authority requires the complete original group leaves."
+            "periodic_embedding.source.periodic_source_binding must match its preparation; got mismatched binding"
         )
-    domain = source.domain_source
-    if not isinstance(domain, PiecewiseLinearComplex):
-        raise TypeError(
-            "Original periodic facet authority requires its owning PLC source."
+
+    if fingerprint_owner.array_tree_fingerprint(
+        preparation.periodic_group
+    ) != fingerprint_owner.array_tree_fingerprint(group):
+        raise ValueError(
+            "periodic_embedding.source.periodic_group must match every group leaf; got mismatched group payload"
         )
-    budget = _COORDINATE_BUDGET.get()
-    if budget is not None:
-        budget.reserve(
-            domain.facet_regions.shape[0], 64 + 64 * domain.facet_regions.shape[0]
-        )
-    roots = list(range(domain.facet_regions.shape[0]))
+
+    budget.reserve(
+        power_domain.facet_regions.shape[0], 64 + 64 * power_domain.facet_regions.shape[0]
+    )
+    roots = list(range(power_domain.facet_regions.shape[0]))
 
     def root(value: int) -> int:
         while roots[value] != value:
-            if budget is not None:
-                budget.reserve(1)
+            budget.reserve(1)
             roots[value] = roots[roots[value]]
             value = roots[value]
         return value
 
     for constraint in source.periodic_constraints:
-        if not isinstance(constraint, PeriodicConstraint):
-            raise TypeError(
-                "Original periodic facet authority requires original typed controls."
-            )
         if (
             constraint.source_scope.entity_dimension != 2
             or constraint.target_scope.entity_dimension != 2
@@ -617,9 +815,8 @@ def _original_power_facet_authority(
         targets = np.asarray(constraint.target_scope.entity_ids)
         if constraint.source_entity_ids is None:
             sources = np.asarray(constraint.source_scope.entity_ids)
-            # A unique scope pair declares one facet correspondence. Larger
-            # unpaired scopes do not identify same-side facets with each other.
-            # Only the existing complete SCI trace proof may authorize them.
+            # A singleton scope pair declares a facet correspondence.
+            # Larger scopes use the source trace proof.
             pairs = (
                 ((int(sources[0]), int(targets[0])),)
                 if len(sources) == len(targets) == 1
@@ -628,92 +825,50 @@ def _original_power_facet_authority(
         else:
             pairs = zip(np.asarray(constraint.source_entity_ids), targets, strict=True)
         for a, b in pairs:
-            if budget is not None:
-                budget.reserve(1, 32)
+            budget.reserve(1, 32)
             a, b = int(a), int(b)
             if not 0 <= a < len(roots) or not 0 <= b < len(roots):
                 raise ValueError(
-                    "Original periodic source scopes index undeclared PLC facets."
+                    "periodic_embedding.source.periodic_constraints must index declared PLC facets; got out-of-range facet"
                 )
             ra, rb = root(a), root(b)
             roots[max(ra, rb)] = min(ra, rb)
-    points = rational_points(np.asarray(domain.vertices))
-    from ._exact_polyhedral_geometry import triangulate_loop, triangulation_charge
+    points = planar_primitives_owner.rational_points(
+        np.asarray(power_domain.vertices), budget=budget
+    )
 
-    if budget is not None:
-        budget.reserve(0, 256 + 24 * len(points))
+    budget.reserve(0, 256 + 24 * len(points))
     point_array = np.asarray(points, dtype=object)
     result = []
     offsets, indices = (
-        np.asarray(domain.polygon_offsets),
-        np.asarray(domain.polygon_vertices),
+        np.asarray(power_domain.polygon_offsets),
+        np.asarray(power_domain.polygon_vertices),
     )
-    for polygon, facet in enumerate(np.asarray(domain.polygon_facets)):
+    for polygon, facet in enumerate(np.asarray(power_domain.polygon_facets)):
         row = tuple(map(int, indices[offsets[polygon] : offsets[polygon + 1]]))
-        work, storage = triangulation_charge(point_array, row)
-        if budget is not None:
-            budget.admit_work_bound(work)
-            budget.reserve(work, storage)
-        triangulate_loop(point_array, row)
-        loop = tuple(points[index] for index in row)
-        plane = _source_polygon_plane(loop)
-        if plane is None:
-            raise ValueError("Original periodic source polygon has no supporting plane.")
-        key, axes_, _, _ = plane
-        if budget is not None:
-            budget.reserve(1, 256)
-        result.append((root(int(facet)), key, axes_, project(loop, axes_)))
-    return tuple(result)
-
-
-def _translation_ranges(
-    boxes: list[tuple[np.ndarray, np.ndarray]], vectors: tuple[tuple[Fraction, ...], ...]
-) -> tuple[range, ...]:
-    if not vectors:
-        return ()
-    # Independent translation generators give a left inverse on their span.
-    # Applying it to any difference T*n returns n, even for a partial lattice.
-    gram = [
-        [sum((a * b for a, b in zip(x, y, strict=True)), Fraction(0)) for y in vectors]
-        for x in vectors
-    ]
-    inverse = _solve_exact(
-        gram,
-        [[Fraction(i == j) for j in range(len(vectors))] for i in range(len(vectors))],
-    )
-    dual = tuple(
-        tuple(
-            sum((inverse[i][k] * vectors[k][j] for k in range(len(vectors))), Fraction(0))
-            for j in range(len(vectors[0]))
+        work, storage = exact_polyhedral_geometry_owner.triangulation_charge(
+            point_array, row, budget=budget
         )
-        for i in range(len(vectors))
-    )
-    ranges = []
-    for row in dual:
-        minima, maxima = [], []
-        for lower, upper in boxes:
-            minima.append(
-                sum(
-                    (
-                        weight * Fraction(float(lo if weight >= 0 else hi))
-                        for weight, lo, hi in zip(row, lower, upper, strict=True)
-                    ),
-                    Fraction(0),
-                )
+        budget.admit_work_bound(work)
+        budget.reserve(work, storage)
+        exact_polyhedral_geometry_owner.triangulate_loop(point_array, row, budget=budget)
+        loop = tuple(points[index] for index in row)
+        plane = source_polygon_plane(loop, budget=budget)
+        if plane is None:
+            raise ValueError(
+                "periodic_embedding.source.polygon must have a supporting plane; got nonplanar or degenerate loop"
             )
-            maxima.append(
-                sum(
-                    (
-                        weight * Fraction(float(hi if weight >= 0 else lo))
-                        for weight, lo, hi in zip(row, lower, upper, strict=True)
-                    ),
-                    Fraction(0),
-                )
+        key, axes_, _, _ = plane
+        budget.reserve(1, 256)
+        result.append(
+            (
+                root(int(facet)),
+                key,
+                axes_,
+                planar_primitives_owner.project(loop, axes_, budget=budget),
             )
-        diameter = max(maxima) - min(minima)
-        limit = diameter.numerator // diameter.denominator
-        ranges.append(range(-limit, limit + 1))
-    return tuple(ranges)
+        )
+    return tuple(result)
 
 
 def _planar_polyhedral_pieces(
@@ -724,28 +879,32 @@ def _planar_polyhedral_pieces(
     valid: np.ndarray,
     source: CoordinateSourceBank,
 ) -> tuple[np.ndarray, np.ndarray]:
-    from .._geometry_predicates import PredicateMode
-    from ._supermesh import _cone_decomposition, _polyhedral_face_triangles
 
-    triangles, triangle_valid = _polyhedral_face_triangles(
-        mesh.connectivity, first_cell, count
-    )
+    match mesh.connectivity:
+        case PolyhedralConnectivity() as connectivity:
+            triangles, triangle_valid = supermesh_owner.polyhedral_face_triangles(
+                connectivity, first_cell, count
+            )
+        case connectivity:
+            raise TypeError(
+                "periodic_embedding.mesh.connectivity must provide polyhedral face incidence; "
+                f"got {type(connectivity).__name__}"
+            )
     vertices = np.asarray(vertices, dtype=np.int64)
     ordered = np.sort(np.where(valid, vertices, np.iinfo(np.int64).max), axis=1)
     candidate_valid = ordered != np.iinfo(np.int64).max
-    apex, _, invalid, uncertain = _cone_decomposition(
+    apex, _, invalid, uncertain = supermesh_owner.cone_decomposition(
         np.asarray(mesh.coordinates, dtype=np.float64),
         triangles,
         triangle_valid,
         np.where(candidate_valid, ordered, 0),
         candidate_valid,
-        PredicateMode.EXACT,
+        geometry_predicates_owner.PredicateMode.EXACT,
     )
     if np.any(invalid) or np.any(uncertain):
         raise RationalEnclosureError(
-            "Packed planar polyhedral star decomposition is not certified."
+            "periodic_embedding.polyhedral_star must have certified carrier cones; got invalid or uncertain decomposition"
         )
-    from ._mesh_certificates import _det3
 
     owners = []
     pieces = []
@@ -754,9 +913,8 @@ def _planar_polyhedral_pieces(
         cell_pieces = []
         anchor = int(apex[cell])
         for triangle in triangles[cell][triangle_valid[cell]]:
-            # The numerical carrier proposes a star vertex only. Every cone
-            # sign and every retained simplex is decided from actual source
-            # coefficients, including ideal rational power vertices.
+            # The carrier proposes a star vertex; source coefficients determine
+            # every cone sign, including rational power vertices.
             vectors = tuple(
                 tuple(
                     value - origin
@@ -766,7 +924,7 @@ def _planar_polyhedral_pieces(
                 )
                 for vertex in triangle
             )
-            determinant = _det3(
+            determinant = small_batched_owner.cofactor_determinant_3(
                 *tuple(np.asarray(vector, dtype=object) for vector in vectors)
             )
             if determinant:
@@ -774,7 +932,7 @@ def _planar_polyhedral_pieces(
                 cell_pieces.append((anchor, *triangle.tolist()))
         if len(signs) != 1:
             raise RationalEnclosureError(
-                "The proposed polyhedral star is not valid in the exact source."
+                "periodic_embedding.polyhedral_star must have consistent rational source cone signs; got mixed or degenerate cones"
             )
         owners.extend([cell] * len(cell_pieces))
         pieces.extend(cell_pieces)
@@ -782,12 +940,17 @@ def _planar_polyhedral_pieces(
 
 
 def _tensor_pair(
-    first: _Cell, second: _Cell, state: _EmbeddingState, limits: MeshCertificateLimits
+    first: Cell,
+    second: Cell,
+    state: EmbeddingState,
+    limits: MeshCertificateLimits,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> bool:
     shared = np.asarray(
         sorted(set(first.vertices).intersection(second.vertices)), dtype=np.int64
     )
-    gluing = _tensor_gluing(first, second, shared)
+    gluing = tensor_gluing(first, second, shared)
     if gluing is None:
         return False
     matrix, offset = gluing
@@ -802,7 +965,7 @@ def _tensor_pair(
     )
     lower = np.min(combined, axis=0)
     spans = np.max(combined, axis=0) - lower
-    return _common_atlas_extension(
+    return common_atlas_extension(
         [first, second],
         {
             0: (
@@ -815,29 +978,30 @@ def _tensor_pair(
         spans,
         state,
         limits,
+        budget=budget,
     )
 
 
 def _root_action_pair(
-    root: _Cell,
-    first: _Cell,
-    second: _Cell,
+    root: Cell,
+    first: Cell,
+    second: Cell,
     physical_action: tuple[tuple[Fraction, ...], ...],
-    root_corners: tuple[tuple[Fraction, ...], ...],
-    state: _EmbeddingState,
+    root_corners: CoordinateSourceBank,
+    state: EmbeddingState,
     limits: MeshCertificateLimits,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> bool:
-    """Prove a physical group action in one explicitly owned source reference.
+    """Prove the physical group action through its source reference chart.
 
-    An affine corner chart proposes an action; exact equality of the complete
-    root source expressions proves it. Corner agreement alone proves nothing.
+    An affine corner chart proposes the action. Equality of root expressions
+    establishes the map relation over the reference cell.
     """
-    from itertools import combinations
 
     dimension = root.dimension
     reference = tuple(
-        tuple(Fraction(float(value)) for value in row)
-        for row in reference_cell_topology(root.kind).vertices
+        rational_vector(row) for row in reference_cell_topology(root.kind).vertices
     )
     basis = next(
         (
@@ -864,7 +1028,7 @@ def _root_action_pair(
     physical_columns = [
         [root_corners[j][i] - root_corners[0][i] for i in range(dimension)] for j in basis
     ]
-    coefficients = _solve_exact(reference_columns, physical_columns)
+    coefficients = solve_exact(reference_columns, physical_columns)
     affine = [[coefficients[j][i] for j in range(dimension)] for i in range(dimension)]
     if (
         np.linalg.matrix_rank(
@@ -900,8 +1064,8 @@ def _root_action_pair(
         ]
         for i in range(dimension)
     ]
-    matrix_exact = _solve_exact(affine, rotated)
-    offset_exact = tuple(row[0] for row in _solve_exact(affine, displacement))
+    matrix_exact = solve_exact(affine, rotated)
+    offset_exact = tuple(row[0] for row in solve_exact(affine, displacement))
     matrix = np.asarray(
         [[float(value) for value in row] for row in matrix_exact], dtype=np.float64
     )
@@ -919,28 +1083,34 @@ def _root_action_pair(
         tuple((*row, start))
         for row, start in zip(matrix_exact, offset_exact, strict=True)
     ) + ((Fraction(0),) * dimension + (Fraction(1),),)
-    image_chart = _transform(second, action, second.vertices)
+    image_chart = _transform(second, action, second.vertices, budget=budget)
     box_kind = "quadrilateral" if dimension == 2 else "hexahedron"
     identity = np.eye(dimension, dtype=np.float64)
     zero = np.zeros(dimension, dtype=np.float64)
     root_on_box = restrict_chart_expressions(
-        root.coordinates, root.kind, box_kind, zero, identity
+        root.coordinates, root.kind, box_kind, zero, identity, budget=budget
     )
     shifted = restrict_chart_expressions(
-        root.coordinates, root.kind, box_kind, offset, matrix
+        root.coordinates, root.kind, box_kind, offset, matrix, budget=budget
     )
     transformed = _transform(
-        _Cell(root_on_box, "box", box_kind, dimension, (), ()), physical_action, ()
+        Cell(root_on_box, "box", box_kind, dimension, (), ()),
+        physical_action,
+        (),
+        budget=budget,
     ).coordinates
     if shifted != transformed:
         return False
-    boxes = (_bounds(first, zero, identity), _bounds(image_chart, zero, identity))
+    boxes = (
+        bounds(first, zero, identity, budget=budget),
+        bounds(image_chart, zero, identity, budget=budget),
+    )
     lower = np.minimum(boxes[0][0], boxes[1][0])
     upper = np.maximum(boxes[0][1], boxes[1][1])
     spans = np.nextafter(upper - lower, np.inf)
-    extension = _Cell(
+    extension = Cell(
         restrict_chart_expressions(
-            root.coordinates, root.kind, box_kind, lower, np.diag(spans)
+            root.coordinates, root.kind, box_kind, lower, np.diag(spans), budget=budget
         ),
         "box",
         box_kind,
@@ -953,14 +1123,17 @@ def _root_action_pair(
         for value in extension.coordinates
     ):
         return False
-    if _injective(extension, limits, state) is not None:
+    if injective(extension, limits, state, budget=budget) is not None:
         return False
-    decision, work = _pair_decision(
+    contact_decision_1 = pair_decision(
         first,
         image_chart,
         limits,
         limits.maximum_subdivision_pieces - state.subdivision_pieces,
+        budget=budget,
     )
+    decision = contact_decision_1.status
+    work = contact_decision_1.work
     state.subdivision_pieces += work
     return decision == "separated"
 
@@ -983,15 +1156,1589 @@ def _inverse_equivalent_pair_key(
     return min(forward, reverse)
 
 
+@dataclass
+class _PeriodicProgress:
+    image_count: int = 0
+    resource_kind: MeshCertificateEntityKind = "mesh"
+    resource_ids: tuple[int, ...] = ()
+    facet_trace_certificate_id: str | None = None
+
+
+class _PeriodicRequest(StrictModule):
+    state: EmbeddingState
+    mesh: CellMesh
+    geometry: CellGeometrySpec
+    topology: periodic_topology_owner.PeriodicMeshTopology
+    cell_ids: np.ndarray
+    limits: MeshCertificateLimits
+    budget: CoordinateEnclosureBudget
+    progress: _PeriodicProgress
+    validity: CellValidityCertificate | None
+
+
+class _PeriodicGroup(StrictModule):
+    matrices: tuple[tuple[tuple[Fraction, ...], ...], ...]
+    orders: tuple[int, ...]
+    periods: tuple[int, ...]
+    translations: tuple[tuple[Fraction, ...], ...]
+    finite_count: int
+    finite: tuple[tuple[tuple[int, ...], tuple[tuple[Fraction, ...], ...]], ...]
+
+
+class _LiftedVertices(StrictModule):
+    roots: np.ndarray
+    shifts: np.ndarray
+    fixed: np.ndarray
+    orders: tuple[int, ...]
+    keys: dict[tuple[int, ...], int]
+
+    def identifiers(
+        self, vertices: np.ndarray, image: tuple[int, ...]
+    ) -> tuple[int, ...]:
+        roots, shifts, fixed, orders, keys = (
+            self.roots,
+            self.shifts,
+            self.fixed,
+            self.orders,
+            self.keys,
+        )
+        result = []
+        for vertex in vertices.tolist():
+            exponents = tuple(
+                0
+                if is_fixed
+                else ((int(value) + shift) % order if order else int(value) + shift)
+                for value, shift, order, is_fixed in zip(
+                    shifts[vertex], image, orders, fixed[vertex], strict=True
+                )
+            )
+            key = (int(roots[vertex]), *exponents)
+            result.append(keys.setdefault(key, len(keys)))
+        return tuple(result)
+
+
+class _SourceRoot(StrictModule):
+    parent: int
+    root: Cell
+    chart: Cell
+    corners: CoordinateSourceBank
+    element_id: str
+    parent_vertices: tuple[int, ...]
+
+
+class _PeriodicCells(StrictModule):
+    cells: list[Cell]
+    owners: list[int]
+    piece_vertices: list[np.ndarray]
+    planar_polyhedral_owners: set[int]
+    source_roots: dict[int, _SourceRoot]
+    layer_reference_cells: dict[int, Cell]
+    layer_column_owners: set[int]
+    source_bank: CoordinateSourceBank
+    lifted: _LiftedVertices
+    affine_pieces: set[int]
+    affine_source_ids: dict[int, str]
+
+
+class _ParentFace(StrictModule):
+    dimension: int
+    orbit: int
+    source_vertices: tuple[int, ...]
+    lifted_vertices: tuple[int, ...]
+
+
+class _PeriodicFacets(StrictModule):
+    facets: embedding_state_owner.Facets
+    entity_ids: np.ndarray
+    facet_rows: dict[int, int]
+    orbits: np.ndarray
+    anchors: np.ndarray
+    parent_faces: dict[int, list[_ParentFace]]
+    by_orbit: dict[
+        int, dict[tuple[int, int], list[tuple[tuple[int, ...], tuple[int, ...]]]]
+    ]
+
+
+class _PeriodicSourceFaces(StrictModule):
+    original_facets: tuple[
+        tuple[
+            int,
+            tuple[coordinate_enclosure_owner.ExactScalar, ...],
+            tuple[int, ...],
+            CoordinateSourceBank,
+        ],
+        ...,
+    ]
+    source_faces: dict[
+        tuple[int, tuple[int, ...]],
+        tuple[tuple[coordinate_enclosure_owner.ExactScalar, ...], set[int]],
+    ]
+
+
+class _PeriodicImages(StrictModule):
+    ranges: tuple[range, ...]
+    base_boxes: list[tuple[np.ndarray, np.ndarray]]
+    cell_ids: np.ndarray
+
+
+@dataclass
+class _PeriodicContactCache:
+    decisions: dict[tuple[int, int, tuple[int, ...]], str]
+    recorded_reuse: bool = False
+
+
+def _prepare_periodic_group(request: _PeriodicRequest) -> _PeriodicGroup:
+    state, limits, budget = request.state, request.limits, request.budget
+    topology = request.topology
+    maximum_images = limits.maximum_periodic_images
+    matrices, orders = exact_periodic_generators(topology.cell, budget=budget)
+    if isinstance(topology.cell, PeriodicIsometryGroup):
+        linear_orders = topology.cell.linear_orders
+        periods = topology.cell.translation_periods
+    else:
+        linear_orders = tuple(1 for _ in orders)
+        periods = tuple(1 if not order else 0 for order in orders)
+    translations = tuple(
+        tuple(row[-1] for row in period_matrix[:-1])
+        for matrix, period in zip(matrices, periods, strict=True)
+        if period
+        for period_matrix in (exact_isometry_power(matrix, period, budget=budget),)
+    )
+    finite_count = 1
+    for order in linear_orders:
+        finite_count *= order
+    if finite_count > maximum_images:
+        state.add("periodic_image_budget", "unresolved", "mesh")
+        return _PeriodicGroup(matrices, orders, periods, translations, finite_count, ())
+    finite = []
+    for exponents in product(*(range(order) for order in linear_orders)):
+        transform = exact_periodic_element(matrices, orders, exponents, budget=budget)
+        finite.append((exponents, transform))
+    return _PeriodicGroup(
+        matrices, orders, periods, translations, finite_count, tuple(finite)
+    )
+
+
+def _periodic_source_rows(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    block: CellBlock | PolyhedralBlock,
+    element: CellGeometryElement,
+    route: Array,
+    points: np.ndarray,
+    first_cell: int,
+) -> list[tuple[int, str, CellGeometryElement, np.ndarray, np.ndarray]] | None:
+    state, mesh, cell_ids, budget = (
+        request.state,
+        request.mesh,
+        request.cell_ids,
+        request.budget,
+    )
+    planar_polyhedral_owners, source_bank = (
+        prepared.planar_polyhedral_owners,
+        prepared.source_bank,
+    )
+    source_rows: list[tuple[int, str, CellGeometryElement, np.ndarray, np.ndarray]]
+    if isinstance(element, CellVertexGeometryElement) and block.cell_kind == "polyhedron":
+        if not np.array_equal(
+            np.asarray(route), np.asarray(block.vertices)
+        ) or not np.array_equal(points, np.asarray(mesh.coordinates)):
+            state.add(
+                "periodic_packed_polyhedral_source_identity",
+                "unresolved",
+                "cell",
+                cell_ids[first_cell : first_cell + block.cell_count],
+            )
+            return None
+        planar_polyhedral_owners.update(range(first_cell, first_cell + block.cell_count))
+        budget.reserve(block.vertices.size, block.vertices.size * 64)
+        local_owners, rows = _planar_polyhedral_pieces(
+            mesh,
+            first_cell,
+            block.cell_count,
+            np.asarray(block.vertices),
+            np.asarray(block.vertex_valid),
+            source_bank,
+        )
+        source_rows = [
+            (
+                int(owner),
+                "tetrahedron",
+                coordinate_lagrange_element("tetrahedron", 1),
+                vertices,
+                vertices,
+            )
+            for owner, vertices in zip(local_owners, rows, strict=True)
+        ]
+    else:
+        source_rows = [
+            (owner, block.cell_kind, element, row, vertices)
+            for owner, (row, vertices) in enumerate(
+                zip(np.asarray(route), np.asarray(block.vertices), strict=True)
+            )
+        ]
+    return source_rows
+
+
+class _PeriodicRootPreparation(StrictModule):
+    domain_certified: bool
+    layer_column: bool
+
+
+def _prepare_periodic_root(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    cell: Cell,
+    source_element: CellGeometryElement,
+    source_local: CoordinateSourceBank,
+    block: CellBlock | PolyhedralBlock,
+    local_owner: int,
+    owner: int,
+    layer_column_root: bool,
+) -> _PeriodicRootPreparation:
+    mesh, geometry, budget = request.mesh, request.geometry, request.budget
+    source_roots, layer_column_owners, layer_reference_cells = (
+        prepared.source_roots,
+        prepared.layer_column_owners,
+        prepared.layer_reference_cells,
+    )
+    record = geometry.restriction_source
+    if record is None:
+        return _PeriodicRootPreparation(False, layer_column_root)
+    root_domain_certified = False
+    root_element, chart_coordinates = coordinate_reference_chain(
+        source_element, budget=budget
+    )
+    layer_column_root |= (
+        isinstance(root_element, LayerColumnCellGeometryElement)
+        and root_element.fiber_graph
+    )
+    root_coordinates = coordinate_expressions(root_element, source_local, budget=budget)
+    root_corners = coordinate_corner_images(root_element, source_local, budget=budget)
+    if (
+        isinstance(root_element, LayerColumnCellGeometryElement)
+        and root_element.fiber_graph
+    ):
+        layer_column_owners.add(owner)
+        reference_cell = _layer_fiber_reference_cell(
+            root_element,
+            source_local,
+            chart_coordinates,
+            cell,
+            budget=budget,
+        )
+        if reference_cell is None:
+            raise ValueError(
+                "periodic_embedding.layer_fiber must provide an affine carrier; got unsupported source"
+            )
+        layer_reference_cells[owner] = reference_cell
+    if root_coordinates is not None and root_corners is not None:
+        parent = int(np.asarray(record.block_parent_cell_ids[block.name])[local_owner])
+        root = Cell(
+            root_coordinates,
+            domain(root_element.cell_kind),
+            root_element.cell_kind,
+            mesh.topological_dimension,
+            (),
+            embedding_vertices(root_element.cell_kind),
+        )
+        chart = replace(cell, coordinates=chart_coordinates, corner_images=None)
+        parent_vertices = tuple(
+            int(value)
+            for value in np.asarray(record.block_parent_vertex_ids[block.name])[
+                local_owner
+            ]
+            if value >= 0
+        )
+        source_roots[owner] = _SourceRoot(
+            parent,
+            root,
+            chart,
+            root_corners,
+            root_element.element_id,
+            parent_vertices,
+        )
+
+        root_domain_certified = all(
+            min(
+                expression_bernstein_coefficients(
+                    value, cell.domain, cell.dimension, budget=budget
+                )
+            )
+            >= 0
+            for value in embedding_cells_owner.reference_constraints(
+                chart_coordinates,
+                root.kind,
+                cell.dimension,
+                budget=budget,
+            )
+        )
+    return _PeriodicRootPreparation(root_domain_certified, layer_column_root)
+
+
+def _prepare_periodic_piece(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    group: _PeriodicGroup,
+    block: CellBlock | PolyhedralBlock,
+    source_element: CellGeometryElement,
+    row: np.ndarray,
+    vertices: np.ndarray,
+    kind: str,
+    local_owner: int,
+    owner: int,
+) -> Cell | None:
+    state, mesh, geometry, cell_ids, limits, budget = (
+        request.state,
+        request.mesh,
+        request.geometry,
+        request.cell_ids,
+        request.limits,
+        request.budget,
+    )
+    identifiers = prepared.lifted.identifiers
+    source_bank, source_roots = prepared.source_bank, prepared.source_roots
+    layer_column_owners, layer_reference_cells = (
+        prepared.layer_column_owners,
+        prepared.layer_reference_cells,
+    )
+    orders, record = group.orders, geometry.restriction_source
+    source_local = tuple(source_bank[int(index)] for index in row)
+    expressions = coordinate_expressions(source_element, source_local, budget=budget)
+    if expressions is None:
+        state.add(
+            "periodic_coordinate_source_expression",
+            "unresolved",
+            "cell",
+            cell_ids[owner : owner + 1],
+        )
+        return None
+    if any(
+        expression_node_count(value, domain(kind), mesh.topological_dimension)
+        > limits.maximum_bernstein_nodes
+        for value in expressions
+    ):
+        state.add(
+            "periodic_bernstein_node_budget",
+            "unresolved",
+            "cell",
+            cell_ids[owner : owner + 1],
+        )
+        return None
+    cell = Cell(
+        expressions,
+        domain(kind),
+        kind,
+        mesh.topological_dimension,
+        identifiers(vertices, (0,) * len(orders)),
+        embedding_vertices(kind),
+    )
+    root_domain_certified = False
+    layer_column_root = (
+        isinstance(source_element, LayerColumnCellGeometryElement)
+        and source_element.fiber_graph
+    )
+    if layer_column_root:
+        layer_column_owners.add(owner)
+        reference_cell = _layer_fiber_reference_cell(
+            source_element, source_local, None, cell, budget=budget
+        )
+        if reference_cell is None:
+            raise ValueError(
+                "periodic_embedding.layer_fiber must provide an affine carrier; got unsupported source"
+            )
+        layer_reference_cells[owner] = reference_cell
+    if (
+        record is not None
+        and not isinstance(source_element, CellVertexGeometryElement)
+        and not _has_full_coefficient_source(source_element)
+    ):
+        root_preparation = _prepare_periodic_root(
+            request,
+            prepared,
+            cell,
+            source_element,
+            source_local,
+            block,
+            local_owner,
+            owner,
+            layer_column_root,
+        )
+        root_domain_certified, layer_column_root = (
+            root_preparation.domain_certified,
+            root_preparation.layer_column,
+        )
+    root_record = source_roots.get(owner)
+    # The proof returns only a reason; its derivative/SPD tensors are not cells.
+    with budget.temporary_scope():
+        affine_validity = (
+            request.validity is not None
+            and request.validity.all_certified
+            and state.closed_cell_orientation
+            and block.cell_kind == kind == source_element.cell_kind
+            and kind in ("interval", "triangle", "tetrahedron")
+            and coordinate_enclosure_owner.affine_simplex_corner_images(
+                source_element, source_local, budget=budget
+            )
+            is not None
+        )
+        if affine_validity:
+            prepared.affine_pieces.add(len(prepared.cells))
+            prepared.affine_source_ids[len(prepared.cells)] = source_element.element_id
+            if state.subdivision_pieces >= limits.maximum_subdivision_pieces:
+                reason = "local_injectivity_piece_budget"
+            else:
+                state.subdivision_pieces += 1
+                reason = None
+                if "periodic_affine_validity_reuse" not in state.checks:
+                    state.checks.append("periodic_affine_validity_reuse")
+        elif layer_column_root and "cell_validity" in state.checks:
+            # The Bernstein validity certificate proved column injectivity.
+            # Quotient traces, images, and inter-cell contacts are checked below.
+            reason = None
+            if "periodic_layer_column_validity_reuse" not in state.checks:
+                state.checks.append("periodic_layer_column_validity_reuse")
+        elif root_record is None or not root_domain_certified:
+            reason = injective(cell, limits, state, budget=budget)
+        else:
+            reason = injective(
+                root_record.root, limits, state, budget=budget
+            ) or injective(root_record.chart, limits, state, budget=budget)
+        if reason is not None:
+            state.add(reason, "unresolved", "cell", cell_ids[owner : owner + 1])
+    return cell
+
+
+def _prepare_periodic_cells(
+    request: _PeriodicRequest, group: _PeriodicGroup
+) -> _PeriodicCells | None:
+    state, mesh, geometry, cell_ids, budget = (
+        request.state,
+        request.mesh,
+        request.geometry,
+        request.cell_ids,
+        request.budget,
+    )
+    topology = request.topology
+    elements, routes, coordinates = geometry.resolve(mesh)
+    points = np.asarray(coordinates, dtype=np.float64)
+    source_bank = prepared_coordinate_source_bank(geometry, budget=budget)
+    roots = np.asarray(topology.vertex_representatives, dtype=np.int64)
+    shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
+    fixed = np.asarray(topology.vertex_fixed_generators, dtype=np.bool_)
+    lifted = _LiftedVertices(roots, shifts, fixed, group.orders, {})
+    budget.reserve(0, 128 + 192 * cell_ids.size)
+    prepared = _PeriodicCells(
+        [], [], [], set(), {}, {}, set(), source_bank, lifted, set(), {}
+    )
+    first_cell = 0
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        request.progress.resource_kind = "cell"
+        request.progress.resource_ids = tuple(
+            int(value) for value in cell_ids[first_cell : first_cell + block.cell_count]
+        )
+        source_rows = _periodic_source_rows(
+            request, prepared, block, element, route, points, first_cell
+        )
+        if source_rows is None:
+            return None
+        for local_owner, kind, source_element, row, vertices in source_rows:
+            owner = first_cell + local_owner
+            request.progress.resource_ids = (int(cell_ids[owner]),)
+            cell = _prepare_periodic_piece(
+                request,
+                prepared,
+                group,
+                block,
+                source_element,
+                row,
+                vertices,
+                kind,
+                local_owner,
+                owner,
+            )
+            if cell is None:
+                return None
+            prepared.cells.append(cell)
+            prepared.owners.append(owner)
+            prepared.piece_vertices.append(vertices)
+        first_cell += block.cell_count
+    layer_column_owners, layer_reference_cells = (
+        prepared.layer_column_owners,
+        prepared.layer_reference_cells,
+    )
+    if layer_column_owners:
+        if layer_column_owners != set(layer_reference_cells):
+            raise ValueError(
+                "periodic_embedding.layer_reference_cells must cover every fiber child; got missing child charts"
+            )
+        state.checks.extend(
+            (
+                "periodic_layer_column_graph_source",
+                "periodic_layer_column_affine_reference_contact",
+            )
+        )
+    request.progress.resource_kind, request.progress.resource_ids = "mesh", ()
+    return prepared
+
+
+def _prepare_periodic_facets(
+    request: _PeriodicRequest, prepared: _PeriodicCells, group: _PeriodicGroup
+) -> _PeriodicFacets:
+    mesh, topology, budget = request.mesh, request.topology, request.budget
+    identifiers = prepared.lifted.identifiers
+    orders, planar_polyhedral_owners = group.orders, prepared.planar_polyhedral_owners
+    facets = embedding_state_owner.mesh_facets(mesh, budget=budget)
+    entity_ids = embedding_state_owner.facet_entity_ids(mesh, facets.rows)
+    facet_rows = {
+        int(value): row
+        for row, value in enumerate(
+            np.asarray(mesh.entity_set(mesh.topological_dimension - 1).entity_ids)
+        )
+    }
+    orbits, _, anchors = (
+        np.asarray(value) for value in topology.orbits(mesh.topological_dimension - 1)
+    )
+
+    edge_orbits = np.asarray(topology.orbits(1)[0])
+    edge_rows = {}
+    for rows_, corners_ in periodic_topology_owner.lifted_loops(mesh, 1):
+        edge_rows.update(
+            (frozenset(int(vertex) for vertex in corners), int(row_))
+            for row_, corners in zip(rows_, corners_, strict=True)
+        )
+    vertex_orbits = np.asarray(topology.orbits(0)[0])
+    parent_faces: dict[int, list[_ParentFace]] = {}
+    for occurrence, entity in enumerate(entity_ids.tolist()):
+        owner = int(facets.cells[occurrence])
+        if owner not in planar_polyhedral_owners:
+            continue
+        row_vertices = facets.rows[occurrence]
+        row_vertices = row_vertices[row_vertices >= 0]
+        budget.reserve(len(row_vertices), 128 + 64 * len(row_vertices))
+        face_keys = identifiers(row_vertices, (0,) * len(orders))
+        parent_faces.setdefault(owner, []).append(
+            _ParentFace(
+                mesh.topological_dimension - 1,
+                int(orbits[facet_rows[entity]]),
+                tuple(int(vertex) for vertex in row_vertices),
+                face_keys,
+            )
+        )
+        # Close each source facet through its declared edge and vertex orbits.
+        budget.reserve(2 * len(row_vertices), 512 * len(row_vertices))
+        for vertex in row_vertices:
+            vertex_ = int(vertex)
+            parent_faces[owner].append(
+                _ParentFace(
+                    0,
+                    int(vertex_orbits[vertex_]),
+                    (vertex_,),
+                    identifiers(
+                        np.asarray((vertex_,), dtype=np.int64), (0,) * len(orders)
+                    ),
+                )
+            )
+        for position, vertex in enumerate(row_vertices):
+            edge = int(vertex), int(row_vertices[(position + 1) % len(row_vertices)])
+            edge_row = edge_rows[frozenset(edge)]
+            parent_faces[owner].append(
+                _ParentFace(
+                    1,
+                    int(edge_orbits[edge_row]),
+                    edge,
+                    identifiers(np.asarray(edge, dtype=np.int64), (0,) * len(orders)),
+                )
+            )
+    by_orbit: dict[
+        int, dict[tuple[int, int], list[tuple[tuple[int, ...], tuple[int, ...]]]]
+    ] = {}
+    for owner, entities in parent_faces.items():
+        unique = {
+            (face.dimension, frozenset(face.source_vertices)): face for face in entities
+        }
+        parent_faces[owner] = list(unique.values())
+        lookup: dict[tuple[int, int], list[tuple[tuple[int, ...], tuple[int, ...]]]] = {}
+        for face in parent_faces[owner]:
+            lookup.setdefault((face.dimension, face.orbit), []).append(
+                (face.source_vertices, face.lifted_vertices)
+            )
+        by_orbit[owner] = lookup
+    return _PeriodicFacets(
+        facets, entity_ids, facet_rows, orbits, anchors, parent_faces, by_orbit
+    )
+
+
+def _prepare_periodic_source_faces(
+    request: _PeriodicRequest, prepared: _PeriodicCells, facets: _PeriodicFacets
+) -> _PeriodicSourceFaces:
+    mesh, topology, geometry, budget = (
+        request.mesh,
+        request.topology,
+        request.geometry,
+        request.budget,
+    )
+    parent_faces, source_bank = facets.parent_faces, prepared.source_bank
+    original_facets = (
+        _original_power_facet_authority(geometry, topology.cell, budget=budget)
+        if isinstance(topology.cell, PeriodicIsometryGroup)
+        else ()
+    )
+    source_faces = {}
+    for owner, entities in parent_faces.items() if original_facets else ():
+        for face in entities:
+            degree, vertices_ = face.dimension, face.source_vertices
+            if degree != mesh.topological_dimension - 1:
+                continue
+            points_ = tuple(source_bank[vertex] for vertex in vertices_)
+            plane = source_polygon_plane(points_, budget=budget)
+            if plane is None:
+                continue
+            key = plane[0]
+            budget.reserve(1, 256)
+            authorities = set()
+            for facet_root, source_plane, axes_, polygon in original_facets:
+                budget.reserve(1)
+                if source_plane == key and closed_source_polygon_contains(
+                    polygon,
+                    planar_primitives_owner.project(points_, axes_, budget=budget),
+                    budget=budget,
+                ):
+                    if facet_root not in authorities:
+                        budget.reserve(1, 128)
+                    authorities.add(facet_root)
+            if authorities:
+                budget.reserve(len(authorities), 128 + 32 * len(authorities))
+                source_faces[(owner, vertices_)] = (key, authorities)
+    return _PeriodicSourceFaces(original_facets, source_faces)
+
+
+def _permit_orbit_traces(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    facets: _PeriodicFacets,
+    first: Cell,
+    owner_a: int,
+    owner_b: int,
+    action: tuple[tuple[Fraction, ...], ...],
+    image: tuple[int, ...],
+    permitted: dict[tuple[int, ...], None],
+) -> None:
+    budget, source_bank, identifiers = (
+        request.budget,
+        prepared.source_bank,
+        prepared.lifted.identifiers,
+    )
+    parent_faces, by_orbit = facets.parent_faces, facets.by_orbit
+    for face in parent_faces[owner_a]:
+        degree_a, orbit_a, face_a, keys_a = (
+            face.dimension,
+            face.orbit,
+            face.source_vertices,
+            face.lifted_vertices,
+        )
+        source_a = dict(
+            zip(
+                keys_a,
+                (source_bank[vertex] for vertex in face_a),
+                strict=True,
+            )
+        )
+        support = tuple(vertex for vertex in first.vertices if vertex in source_a)
+        if not support or len(support) > first.dimension or support in permitted:
+            continue
+        for face_b, _ in by_orbit[owner_b].get((degree_a, orbit_a), ()):
+            budget.reserve(len(face_b))
+            keys_b = identifiers(np.asarray(face_b, dtype=np.int64), image)
+            if set(keys_a) != set(keys_b):
+                continue
+            equal = True
+            for key, vertex in zip(keys_b, face_b, strict=True):
+                point = source_bank[vertex]
+                budget.reserve(len(point) * (len(point) + 1))
+                transformed = tuple(
+                    row[-1]
+                    + sum(
+                        (
+                            weight * value
+                            for weight, value in zip(row[:-1], point, strict=True)
+                        ),
+                        Fraction(0),
+                    )
+                    for row in action[:-1]
+                )
+                if transformed != source_a[key]:
+                    equal = False
+                    break
+            if equal:
+                budget.reserve(len(support), 128 + 64 * len(support))
+                permitted[support] = None
+                break
+
+
+def _permit_source_plane_traces(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    facets: _PeriodicFacets,
+    sources: _PeriodicSourceFaces,
+    first: Cell,
+    owner_b: int,
+    action: tuple[tuple[Fraction, ...], ...],
+    first_source_vertices: np.ndarray,
+    permitted: dict[tuple[int, ...], None],
+) -> None:
+    mesh, budget, source_bank = request.mesh, request.budget, prepared.source_bank
+    parent_faces, original_facets, source_faces = (
+        facets.parent_faces,
+        sources.original_facets,
+        sources.source_faces,
+    )
+    for facet_root, source_plane, axes_, polygon in original_facets:
+        budget.reserve(0, 128 + 64 * len(first_source_vertices))
+        support_points = []
+        support_ids = []
+        for identifier, vertex in zip(first.vertices, first_source_vertices, strict=True):
+            point = source_bank[int(vertex)]
+            budget.reserve(2 * len(point))
+            if sum(
+                (a * b for a, b in zip(source_plane[:-1], point, strict=True)),
+                source_plane[-1],
+            ):
+                continue
+            if closed_source_polygon_contains(
+                polygon,
+                planar_primitives_owner.project((point,), axes_, budget=budget),
+                budget=budget,
+            ):
+                support_points.append(point)
+                support_ids.append(identifier)
+        support = tuple(support_ids)
+        if not support or len(support) > first.dimension or support in permitted:
+            continue
+        if not closed_source_polygon_contains(
+            polygon,
+            planar_primitives_owner.project(tuple(support_points), axes_, budget=budget),
+            budget=budget,
+        ):
+            continue
+        for face in parent_faces[owner_b]:
+            degree_b, face_b = face.dimension, face.source_vertices
+            if degree_b != mesh.topological_dimension - 1:
+                continue
+            authority_b = source_faces.get((owner_b, face_b))
+            if authority_b is None or facet_root not in authority_b[1]:
+                continue
+            budget.reserve(len(face_b) * first.dimension * (first.dimension + 1))
+            transformed = tuple(
+                tuple(
+                    row[-1]
+                    + sum(
+                        (
+                            weight * value
+                            for weight, value in zip(
+                                row[:-1], source_bank[vertex], strict=True
+                            )
+                        ),
+                        Fraction(0),
+                    )
+                    for row in action[:-1]
+                )
+                for vertex in face_b
+            )
+            plane_b = source_polygon_plane(transformed, budget=budget)
+            if plane_b is not None and plane_b[0] == source_plane:
+                budget.reserve(len(support), 128 + 64 * len(support))
+                permitted[support] = None
+                break
+
+
+def _authored_periodic_traces(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    group: _PeriodicGroup,
+    facets: _PeriodicFacets,
+    sources: _PeriodicSourceFaces,
+    first: Cell,
+    owner_a: int,
+    owner_b: int,
+    action: tuple[tuple[Fraction, ...], ...],
+    image: tuple[int, ...],
+    first_source_vertices: np.ndarray,
+) -> tuple[tuple[int, ...], ...]:
+    if owner_a not in facets.parent_faces or owner_b not in facets.parent_faces:
+        return ()
+    if (
+        prepared.lifted.identifiers(first_source_vertices, (0,) * len(group.orders))
+        != first.vertices
+    ):
+        raise ValueError(
+            "periodic_trace.first_source_vertices must identify every first-piece lifted corner; got mismatched source bank"
+        )
+    permitted: dict[tuple[int, ...], None] = {}
+    _permit_orbit_traces(
+        request, prepared, facets, first, owner_a, owner_b, action, image, permitted
+    )
+    _permit_source_plane_traces(
+        request,
+        prepared,
+        facets,
+        sources,
+        first,
+        owner_b,
+        action,
+        first_source_vertices,
+        permitted,
+    )
+    return tuple(permitted)
+
+
+def _certify_periodic_traces(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    group: _PeriodicGroup,
+    prepared_facets: _PeriodicFacets,
+) -> None:
+    state, mesh, topology, budget = (
+        request.state,
+        request.mesh,
+        request.topology,
+        request.budget,
+    )
+    cells, owners, piece_vertices, identifiers = (
+        prepared.cells,
+        prepared.owners,
+        prepared.piece_vertices,
+        prepared.lifted.identifiers,
+    )
+    matrices, orders = group.matrices, group.orders
+    facets, entity_ids, facet_rows, orbits, anchors = (
+        prepared_facets.facets,
+        prepared_facets.entity_ids,
+        prepared_facets.facet_rows,
+        prepared_facets.orbits,
+        prepared_facets.anchors,
+    )
+    initial_findings = len(state.findings)
+    traces: dict[int, tuple[Cell, ...]] = {}
+    owner_pieces: dict[int, list[int]] = {}
+    for piece, owner in enumerate(owners):
+        owner_pieces.setdefault(owner, []).append(piece)
+    for occurrence, entity in enumerate(entity_ids.tolist()):
+        request.progress.resource_kind, request.progress.resource_ids = (
+            "facet",
+            (int(entity),),
+        )
+        row = facet_rows[entity]
+        image = tuple(-int(value) for value in anchors[row])
+        cell_row = int(facets.cells[occurrence])
+        normalized = tuple(
+            _transform(
+                cells[piece],
+                exact_periodic_element(matrices, orders, image, budget=budget),
+                identifiers(piece_vertices[piece], image),
+                budget=budget,
+            )
+            for piece in owner_pieces[cell_row]
+        )
+        orbit = int(orbits[row])
+        previous = traces.get(orbit)
+        if previous is not None and any(
+            not cell_traces_equal(a, b, budget=budget)
+            for a in previous
+            for b in normalized
+        ):
+            state.add("periodic_mapped_trace_mismatch", "violated", "facet", (entity,))
+        traces[orbit] = normalized
+    state.boundary_facets = int(
+        np.count_nonzero(
+            np.asarray(
+                topology.quotient.entities(mesh.topological_dimension - 1)
+                .subset("boundary")
+                .mask
+            )
+        )
+    )
+    if request.validity is not None and len(state.findings) == initial_findings:
+        request.progress.facet_trace_certificate_id = (
+            fingerprint_owner.canonical_fingerprint(
+                {
+                    "kind": "periodic-full-source-facet-traces",
+                    "mesh": mesh.mesh_id,
+                    "geometry": request.validity.geometry_id,
+                    "periodic_topology": topology.periodic_topology_id,
+                    "facets": tuple(int(value) for value in entity_ids),
+                }
+            )
+        )
+    request.progress.resource_kind, request.progress.resource_ids = "mesh", ()
+
+
+def _prepare_periodic_affine_quotient(
+    request: _PeriodicRequest, prepared: _PeriodicCells, facets: _PeriodicFacets
+) -> None:
+    """Bind the three earned premises of the closed affine quotient theorem."""
+    validity = request.validity
+    trace_id = request.progress.facet_trace_certificate_id
+    mesh, state = request.mesh, request.state
+    if (
+        validity is None
+        or not validity.all_certified
+        or not state.closed_cell_orientation
+        or state.findings
+        or state.boundary_facets
+        or trace_id is None
+        or facets.parent_faces
+        or mesh.topological_dimension != mesh.ambient_dimension
+        or mesh.topological_dimension not in (2, 3)
+        or len(prepared.affine_pieces) != len(prepared.cells)
+        or not prepared.cells
+    ):
+        return
+    request.budget.reserve(len(prepared.cells), 1024 + 128 * len(prepared.cells))
+    affinity_id = fingerprint_owner.canonical_fingerprint(
+        {
+            "kind": "periodic-full-source-affine-simplex-bank",
+            "mesh": mesh.mesh_id,
+            "geometry": validity.geometry_id,
+            "pieces": tuple(
+                (
+                    int(request.cell_ids[owner]),
+                    prepared.affine_source_ids[piece],
+                )
+                for piece, owner in enumerate(prepared.owners)
+            ),
+        }
+    )
+    state.periodic_affine = embedding_state_owner.PeriodicAffineQuotientEvidence(
+        mesh.mesh_id,
+        validity.geometry_id,
+        request.topology.periodic_topology_id,
+        validity.certificate_id,
+        affinity_id,
+        trace_id,
+    )
+    state.checks.append("periodic_affine_quotient_contact")
+
+
+def _periodic_piece_bounds(
+    cell: Cell, affine: bool, *, budget: CoordinateEnclosureBudget
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bound a proved affine simplex at its vertices; otherwise use Bernstein."""
+    if not affine:
+        return bounds(
+            cell,
+            np.zeros(cell.dimension, dtype=np.float64),
+            np.eye(cell.dimension, dtype=np.float64),
+            budget=budget,
+        )
+    budget.reserve(len(cell.coordinates) * len(cell.reference_vertices))
+    intervals = []
+    for coordinate in cell.coordinates:
+        values = tuple(
+            expression_evaluate(coordinate, point, budget=budget)
+            for point in cell.reference_vertices
+        )
+        if any(isinstance(value, RadicalElement) for value in values):
+            reserve_algebraic_work(
+                values, 4 * len(values), 2 * len(values), 1, budget=budget
+            )
+        lower = coefficient_interval(min(values), budget=budget)[0]
+        upper = coefficient_interval(max(values), budget=budget)[1]
+        intervals.append(
+            (
+                fraction_endpoint(lower, upper=False, saturate=True),
+                fraction_endpoint(upper, upper=True, saturate=True),
+            )
+        )
+    result = np.asarray(intervals, dtype=np.float64)
+    return result[:, 0], result[:, 1]
+
+
+def _prepare_periodic_images(
+    request: _PeriodicRequest, prepared: _PeriodicCells, group: _PeriodicGroup
+) -> _PeriodicImages | None:
+    state, mesh, cell_ids, budget = (
+        request.state,
+        request.mesh,
+        request.cell_ids,
+        request.budget,
+    )
+    cells, owners, finite, finite_count, translations = (
+        prepared.cells,
+        prepared.owners,
+        group.finite,
+        group.finite_count,
+        group.translations,
+    )
+    maximum_images = request.limits.maximum_periodic_images
+    cell_ids = cell_ids[np.asarray(owners, dtype=np.int64)]
+    budget.reserve(
+        finite_count * len(cells),
+        finite_count * len(cells) * mesh.ambient_dimension * 16,
+    )
+    base_boxes = [
+        _periodic_piece_bounds(cell, index in prepared.affine_pieces, budget=budget)
+        for index, cell in enumerate(cells)
+    ]
+    boxes = [
+        base_boxes[index]
+        if not any(exponents)
+        else _periodic_piece_bounds(
+            _transform(cell, matrix, cell.vertices, budget=budget),
+            index in prepared.affine_pieces,
+            budget=budget,
+        )
+        for exponents, matrix in finite
+        for index, cell in enumerate(cells)
+    ]
+    if any(not np.all(np.isfinite(bound)) for box in boxes for bound in box):
+        state.add("periodic_coordinate_bound_range", "unresolved", "mesh")
+        return None
+    ranges = translation_ranges(boxes, translations)
+    image_count = finite_count
+    for interval in ranges:
+        image_count *= len(interval)
+    request.progress.image_count = image_count
+    if image_count > maximum_images:
+        state.add("periodic_image_budget", "unresolved", "mesh")
+        return None
+    request.progress.image_count = image_count
+    return _PeriodicImages(ranges, base_boxes, cell_ids)
+
+
+def _periodic_root_contact(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    first_piece: int,
+    second_piece: int,
+    image: Cell,
+    transform_: tuple[tuple[Fraction, ...], ...],
+) -> bool:
+    state, limits, budget = request.state, request.limits, request.budget
+    source_roots, owners = prepared.source_roots, prepared.owners
+    a, b = first_piece, second_piece
+    root_a, root_b = (
+        source_roots.get(owners[a]),
+        source_roots.get(owners[b]),
+    )
+    if (
+        root_a is not None
+        and root_b is not None
+        and root_a.parent == root_b.parent
+        and (root_a.element_id, root_a.parent_vertices)
+        == (root_b.element_id, root_b.parent_vertices)
+        and expression_sequence_equal(
+            root_a.root.coordinates,
+            root_b.root.coordinates,
+            budget=budget,
+        )
+    ):
+        chart_b = replace(root_b.chart, vertices=image.vertices, corner_images=None)
+        if _root_action_pair(
+            root_a.root,
+            root_a.chart,
+            chart_b,
+            transform_,
+            root_a.corners,
+            state,
+            limits,
+            budget=budget,
+        ):
+            return True
+    return False
+
+
+def _layer_periodic_contact(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    a: int,
+    b: int,
+    image: Cell,
+    transform_: tuple[tuple[Fraction, ...], ...],
+) -> ContactDecision | None:
+    state, limits, budget = request.state, request.limits, request.budget
+    reference_first = prepared.layer_reference_cells.get(prepared.owners[a])
+    reference_second = prepared.layer_reference_cells.get(prepared.owners[b])
+    if reference_first is None or reference_second is None:
+        return None
+    reference_image = _transform(
+        reference_second, transform_, image.vertices, budget=budget
+    )
+    if separating_plane(reference_first, reference_image, budget=budget):
+        return ContactDecision("separated", 0)
+    result = affine_reference_contact(
+        reference_first,
+        reference_image,
+        limits.maximum_subdivision_pieces - state.subdivision_pieces,
+        budget=budget,
+    )
+    if result is None:
+        result = pair_decision(
+            reference_first,
+            reference_image,
+            limits,
+            limits.maximum_subdivision_pieces - state.subdivision_pieces,
+            budget=budget,
+        )
+    state.subdivision_pieces += result.work
+    return result
+
+
+def _record_periodic_contact(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    images: _PeriodicImages,
+    first: Cell,
+    image: Cell,
+    transform_: tuple[tuple[Fraction, ...], ...],
+    exponents: tuple[int, ...],
+    a: int,
+    b: int,
+    decision: str,
+) -> None:
+    state, cell_ids, owners = request.state, images.cell_ids, prepared.owners
+    if decision == "overlap":
+        state.findings.append(
+            embedding_state_owner.MeshCertificateFinding(
+                "periodic_mapped_cell_overlap",
+                "violated",
+                "cell",
+                tuple(int(value) for value in cell_ids[[a, b]]),
+                observations=source_contact_quantities(
+                    first,
+                    image,
+                    transform_,
+                    exponents,
+                    a,
+                    b,
+                    owners[a],
+                    owners[b],
+                ),
+            )
+        )
+    elif decision != "separated":
+        state.add(
+            decision,
+            "unresolved",
+            "cell",
+            cell_ids[[a, b]],
+        )
+
+
+def _certify_periodic_pair(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    group: _PeriodicGroup,
+    facets: _PeriodicFacets,
+    sources: _PeriodicSourceFaces,
+    images: _PeriodicImages,
+    cache: _PeriodicContactCache,
+    a: int,
+    b: int,
+    image: Cell,
+    transform_: tuple[tuple[Fraction, ...], ...],
+    exponents: tuple[int, ...],
+) -> None:
+    state, limits, budget = request.state, request.limits, request.budget
+    first, cell_ids, owners = prepared.cells[a], images.cell_ids, prepared.owners
+    key = (
+        None
+        if facets.parent_faces
+        else _inverse_equivalent_pair_key(a, b, exponents, group.orders)
+    )
+    inverse_decision = None if key is None else cache.decisions.get(key)
+    if inverse_decision is not None:
+        if not cache.recorded_reuse:
+            state.checks.append("periodic_inverse_pair_proof_reuse")
+            cache.recorded_reuse = True
+        _record_periodic_contact(
+            request,
+            prepared,
+            images,
+            first,
+            image,
+            transform_,
+            exponents,
+            a,
+            b,
+            inverse_decision,
+        )
+        return
+    if not cell_traces_equal(first, image, budget=budget):
+        state.add("periodic_mapped_trace_mismatch", "violated", "cell", cell_ids[[a, b]])
+        return
+    if state.periodic_affine is not None:
+        overlap = affine_mapped_contact_owner.affine_simplex_interiors_overlap(
+            first, image, budget=budget
+        )
+        if overlap is not None:
+            decision = "overlap" if overlap else "separated"
+            if key is not None:
+                cache.decisions[key] = decision
+            _record_periodic_contact(
+                request,
+                prepared,
+                images,
+                first,
+                image,
+                transform_,
+                exponents,
+                a,
+                b,
+                decision,
+            )
+            return
+    if _tensor_pair(first, image, state, limits, budget=budget):
+        return
+    if _periodic_root_contact(request, prepared, a, b, image, transform_):
+        return
+    allowed_traces = _authored_periodic_traces(
+        request,
+        prepared,
+        group,
+        facets,
+        sources,
+        first,
+        owners[a],
+        owners[b],
+        transform_,
+        exponents,
+        prepared.piece_vertices[a],
+    )
+    reference = _layer_periodic_contact(request, prepared, a, b, image, transform_)
+    if reference is not None and reference.status == "separated":
+        return
+    decision = (
+        (
+            reference.unresolved_check()
+            if reference.status == "unresolved"
+            else reference.status
+        )
+        if reference is not None
+        else None
+    )
+    if decision is None:
+        algebraic = any(
+            isinstance(coefficient, RadicalElement)
+            for cell in (first, image)
+            for expression in cell.coordinates
+            if isinstance(expression, dict)
+            for coefficient in expression.values()
+        )
+        affine_contact = (
+            affine_mapped_contact_owner.affine_simplex_contact(
+                first,
+                image,
+                limits.maximum_work_units,
+                authenticated_first_traces=allowed_traces,
+                budget=budget,
+            )
+            if algebraic
+            else None
+        )
+        if affine_contact is not None:
+            decision = (
+                affine_contact.unresolved_check()
+                if affine_contact.status == "unresolved"
+                else affine_contact.status
+            )
+            work = affine_contact.work
+        elif separating_plane(first, image, budget=budget):
+            decision, work = "separated", 0
+        else:
+            contact = pair_decision(
+                first,
+                image,
+                limits,
+                limits.maximum_subdivision_pieces - state.subdivision_pieces,
+                authenticated_first_traces=allowed_traces,
+                budget=budget,
+            )
+            decision = (
+                contact.unresolved_check()
+                if contact.status == "unresolved"
+                else contact.status
+            )
+            work = contact.work
+        state.subdivision_pieces += work
+        if key is not None and decision in ("overlap", "separated"):
+            cache.decisions[key] = decision
+    _record_periodic_contact(
+        request, prepared, images, first, image, transform_, exponents, a, b, decision
+    )
+
+
+def _periodic_contact_tree(
+    lower: np.ndarray,
+    upper: np.ndarray,
+    budget: CoordinateEnclosureBudget,
+) -> PackedBVH:
+    def storage(amount: int) -> None:
+        budget.reserve(0, amount)
+
+    tree = prepare_bvh(
+        lower,
+        upper,
+        dtype=np.float64,
+        _charge_work=budget.reserve,
+        _reserve_storage=storage,
+    )
+    # Host traversal retains a second bank: node bounds/links, leaf payload,
+    # and item bounds. Admit it before the tree owner materializes it.
+    budget.reserve(
+        0,
+        1024
+        + 2 * lower.shape[0] * (16 * lower.shape[1] + 24)
+        + (lower.shape[0] + tree.leaf_size) * 8
+        + lower.nbytes
+        + upper.nbytes,
+    )
+    return tree
+
+
+def _certify_periodic_image_candidates(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    group: _PeriodicGroup,
+    facets: _PeriodicFacets,
+    sources: _PeriodicSourceFaces,
+    images: _PeriodicImages,
+    cache: _PeriodicContactCache,
+    transform_: tuple[tuple[Fraction, ...], ...],
+    exponents: tuple[int, ...],
+    b: int,
+    candidates: np.ndarray,
+) -> bool:
+    state, budget, limits = request.state, request.budget, request.limits
+    request.progress.resource_kind, request.progress.resource_ids = (
+        "cell",
+        (int(images.cell_ids[b]),),
+    )
+    with budget.polynomial_preparation_scope():
+        image = _transform(
+            prepared.cells[b],
+            transform_,
+            prepared.lifted.identifiers(prepared.piece_vertices[b], exponents),
+            budget=budget,
+        )
+        lower, upper = _periodic_piece_bounds(
+            image, b in prepared.affine_pieces, budget=budget
+        )
+        for index in candidates:
+            a = int(index)
+            with budget.temporary_scope():
+                if not any(exponents) and (
+                    a >= b or prepared.owners[a] == prepared.owners[b]
+                ):
+                    continue
+                # Broad boxes only propose candidates. Coefficient-field source-map bounds
+                # and every trace/contact predicate keep their previous order.
+                lo, hi = images.base_boxes[a]
+                budget.reserve(2 * request.mesh.ambient_dimension + 4)
+                if np.any(hi < lower) or np.any(upper < lo):
+                    continue
+                if state.candidate_pairs >= limits.maximum_candidate_pairs:
+                    state.add(
+                        "periodic_candidate_pair_budget",
+                        "unresolved",
+                        "cell",
+                        images.cell_ids[[a, b]],
+                    )
+                    return False
+                state.candidate_pairs += 1
+                request.progress.resource_ids = (
+                    int(images.cell_ids[a]),
+                    int(images.cell_ids[b]),
+                )
+                _certify_periodic_pair(
+                    request,
+                    prepared,
+                    group,
+                    facets,
+                    sources,
+                    images,
+                    cache,
+                    a,
+                    b,
+                    image,
+                    transform_,
+                    exponents,
+                )
+    return True
+
+
+def _certify_periodic_contact_chunk(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    group: _PeriodicGroup,
+    facets: _PeriodicFacets,
+    sources: _PeriodicSourceFaces,
+    images: _PeriodicImages,
+    cache: _PeriodicContactCache,
+    tree: PackedBVH,
+    transform_: tuple[tuple[Fraction, ...], ...],
+    exponents: tuple[int, ...],
+    start: int,
+    stop: int,
+) -> bool:
+    budget = request.budget
+    dimension = request.mesh.ambient_dimension
+    count = stop - start
+    # Affine images of the full source enclosures bound every curved or
+    # rational map. Directed field-valued row extrema retain touching contacts.
+    with budget.temporary_scope():
+        budget.reserve(2 * count * dimension, 512 * count + 16 * count * dimension)
+        lower = np.empty((count, dimension), dtype=np.float64)
+        upper = np.empty_like(lower)
+        for local, b in enumerate(range(start, stop)):
+            request.progress.resource_kind, request.progress.resource_ids = (
+                "cell",
+                (int(images.cell_ids[b]),),
+            )
+            lower[local], upper[local] = transformed_source_box(
+                *images.base_boxes[b], transform_, budget=budget
+            )
+        query = _periodic_contact_tree(lower, upper, budget)
+        maximum_block_pairs = 256
+        # Pair banks, concatenation, lexicographic ordering and traversal stacks
+        # are admitted even when the broad phase rejects every item.
+        budget.reserve(
+            0,
+            64 * len(prepared.cells) * count
+            + maximum_block_pairs
+            * (512 + 32 * dimension)
+            * (tree.max_depth + query.max_depth + 2),
+        )
+
+        def visit(count: int) -> None:
+            budget.reserve(count * (2 * dimension + 4))
+
+        owners: list[object] = []
+        budget.reserve(
+            sum(
+                2 * value.bbox_min.size
+                + 3 * value.left.size
+                + value.leaf_items.size
+                + 2 * value.item_bbox_min.size
+                for value in (tree, query)
+            )
+        )
+        blocks = list(
+            bvh_overlap_pair_blocks(
+                tree,
+                query,
+                include_touching=True,
+                visit=visit,
+                maximum_block_pairs=maximum_block_pairs,
+                retain_owner=owners.append,
+            )
+        )
+        if not blocks:
+            return True
+        first = np.concatenate([block[0] for block in blocks])
+        second = np.concatenate([block[1] for block in blocks])
+        budget.reserve(first.size * max(1, first.size.bit_length()))
+        order = np.lexsort((first, second))
+        first, second = first[order], second[order]
+        budget.reserve(count * max(1, second.size.bit_length()), 16 * (count + 1))
+        offsets = np.searchsorted(second, np.arange(count + 1, dtype=np.int64))
+        for local, b in enumerate(range(start, stop)):
+            selected = first[offsets[local] : offsets[local + 1]]
+            if selected.size and not _certify_periodic_image_candidates(
+                request,
+                prepared,
+                group,
+                facets,
+                sources,
+                images,
+                cache,
+                transform_,
+                exponents,
+                b,
+                selected,
+            ):
+                return False
+    return True
+
+
+def _certify_periodic_contacts(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    group: _PeriodicGroup,
+    facets: _PeriodicFacets,
+    sources: _PeriodicSourceFaces,
+    images: _PeriodicImages,
+) -> None:
+    budget = request.budget
+    cache = _PeriodicContactCache({})
+    if not prepared.cells:
+        return
+    # Source whole-map outward bounds and tree are shared by every image chunk.
+    with budget.temporary_scope():
+        budget.reserve(
+            2 * len(prepared.cells) * request.mesh.ambient_dimension,
+            16 * len(prepared.cells) * request.mesh.ambient_dimension,
+        )
+        lower = np.asarray([box[0] for box in images.base_boxes], dtype=np.float64)
+        upper = np.asarray([box[1] for box in images.base_boxes], dtype=np.float64)
+        tree = _periodic_contact_tree(lower, upper, budget)
+        _certify_periodic_contact_images(
+            request, prepared, group, facets, sources, images, cache, tree
+        )
+
+
+def _certify_periodic_contact_images(
+    request: _PeriodicRequest,
+    prepared: _PeriodicCells,
+    group: _PeriodicGroup,
+    facets: _PeriodicFacets,
+    sources: _PeriodicSourceFaces,
+    images: _PeriodicImages,
+    cache: _PeriodicContactCache,
+    tree: PackedBVH,
+) -> None:
+    for finite_exponents, _ in group.finite:
+        for translation_exponents in product(*images.ranges):
+            iterator = iter(translation_exponents)
+            # Winding remains G^(r + L*k) on each declared generator axis.
+            exponents = tuple(
+                value + period * next(iterator) if period else value
+                for value, period in zip(finite_exponents, group.periods, strict=True)
+            )
+            transform_ = exact_periodic_element(
+                group.matrices, group.orders, exponents, budget=request.budget
+            )
+            for start in range(0, len(prepared.cells), 16):
+                if not _certify_periodic_contact_chunk(
+                    request,
+                    prepared,
+                    group,
+                    facets,
+                    sources,
+                    images,
+                    cache,
+                    tree,
+                    transform_,
+                    exponents,
+                    start,
+                    min(start + 16, len(prepared.cells)),
+                ):
+                    return
+
+
+@checked
 def certify_periodic_mapped_embedding(
-    state: _EmbeddingState,
+    state: EmbeddingState,
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     cell_ids: np.ndarray,
     limits: MeshCertificateLimits,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    validity: CellValidityCertificate | None = None,
 ) -> int:
-    """Populate the canonical global certificate; return enumerated image count."""
+    """Certify source-map contacts in the quotient and return the image count."""
     state.checks.extend(
         (
             "periodic_authored_group_identity",
@@ -1003,825 +2750,36 @@ def certify_periodic_mapped_embedding(
     )
     topology = mesh.periodic_topology
     if topology is None:
-        raise ValueError("Periodic mapped embedding requires quotient topology.")
-    maximum_images = limits.maximum_periodic_images
-    image_count = 0
-    budget = coordinate_enclosure_budget(
-        limits.maximum_work_units, limits.maximum_scratch_bytes
+        raise ValueError(
+            "certify_periodic_mapped_embedding.mesh.periodic_topology must declare quotient topology; got None"
+        )
+    if validity is not None:
+        validity.require_bound(geometry, mesh=mesh)
+    progress = _PeriodicProgress()
+    request = _PeriodicRequest(
+        state, mesh, geometry, topology, cell_ids, limits, budget, progress, validity
     )
-    resource_kind: MeshCertificateEntityKind = "mesh"
-    resource_ids: tuple[int, ...] = ()
     try:
         with (
+            budget.measurement() as phase_measurement,
             budget.activate(),
             budget.bound_stage(limits.maximum_work_units, limits.maximum_scratch_bytes),
         ):
-            matrices, orders = _exact_periodic_generators(topology.cell)
-            if isinstance(topology.cell, PeriodicIsometryGroup):
-                linear_orders = topology.cell.linear_orders
-                periods = topology.cell.translation_periods
-            else:
-                linear_orders = tuple(1 for _ in orders)
-                periods = tuple(1 if not order else 0 for order in orders)
-            translations = tuple(
-                tuple(row[-1] for row in period_matrix[:-1])
-                for matrix, period in zip(matrices, periods, strict=True)
-                if period
-                for period_matrix in (_exact_isometry_power(matrix, period),)
-            )
-            finite_count = 1
-            for order in linear_orders:
-                finite_count *= order
-            if finite_count > maximum_images:
-                state.add("periodic_image_budget", "unresolved", "mesh")
-                return finite_count
-            finite = []
-            for exponents in product(*(range(order) for order in linear_orders)):
-                transform = _exact_periodic_element(matrices, orders, exponents)
-                finite.append((exponents, transform))
-            elements, routes, coordinates = geometry.resolve(mesh)
-            points = np.asarray(coordinates, dtype=np.float64)
-            source_bank = prepared_coordinate_source_bank(geometry)
-            roots = np.asarray(topology.vertex_representatives, dtype=np.int64)
-            shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
-            fixed = np.asarray(topology.vertex_fixed_generators, dtype=np.bool_)
-            keys: dict[tuple[int, ...], int] = {}
-
-            def identifiers(
-                vertices: np.ndarray, image: tuple[int, ...]
-            ) -> tuple[int, ...]:
-                result = []
-                for vertex in vertices.tolist():
-                    exponents = tuple(
-                        0
-                        if is_fixed
-                        else (
-                            (int(value) + shift) % order if order else int(value) + shift
-                        )
-                        for value, shift, order, is_fixed in zip(
-                            shifts[vertex], image, orders, fixed[vertex], strict=True
-                        )
-                    )
-                    key = (int(roots[vertex]), *exponents)
-                    result.append(keys.setdefault(key, len(keys)))
-                return tuple(result)
-
-            cells: list[_Cell] = []
-            owners: list[int] = []
-            piece_vertices: list[np.ndarray] = []
-            planar_polyhedral_owners: set[int] = set()
-            source_roots: dict[
-                int,
-                tuple[
-                    int,
-                    _Cell,
-                    _Cell,
-                    tuple[tuple[Fraction, ...], ...],
-                    str,
-                    tuple[int, ...],
-                ],
-            ] = {}
-            layer_reference_cells: dict[int, _Cell] = {}
-            layer_column_owners: set[int] = set()
-            record = geometry.restriction_source
-            first_cell = 0
-            for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
-                resource_kind = "cell"
-                resource_ids = tuple(
-                    int(value)
-                    for value in cell_ids[first_cell : first_cell + block.cell_count]
-                )
-                if (
-                    isinstance(element, CellVertexGeometryElement)
-                    and block.cell_kind == "polyhedron"
-                ):
-                    if not np.array_equal(
-                        np.asarray(route), np.asarray(block.vertices)
-                    ) or not np.array_equal(points, np.asarray(mesh.coordinates)):
-                        state.add(
-                            "periodic_packed_polyhedral_source_identity",
-                            "unresolved",
-                            "cell",
-                            cell_ids[first_cell : first_cell + block.cell_count],
-                        )
-                        return image_count
-                    planar_polyhedral_owners.update(
-                        range(first_cell, first_cell + block.cell_count)
-                    )
-                    budget.reserve(block.vertices.size, block.vertices.size * 64)
-                    local_owners, rows = _planar_polyhedral_pieces(
-                        mesh,
-                        first_cell,
-                        block.cell_count,
-                        np.asarray(block.vertices),
-                        np.asarray(block.vertex_valid),
-                        source_bank,
-                    )
-                    source_rows = [
-                        (
-                            int(owner),
-                            "tetrahedron",
-                            coordinate_lagrange_element("tetrahedron", 1),
-                            vertices,
-                            vertices,
-                        )
-                        for owner, vertices in zip(local_owners, rows, strict=True)
-                    ]
-                else:
-                    source_rows = [
-                        (owner, block.cell_kind, element, row, vertices)
-                        for owner, (row, vertices) in enumerate(
-                            zip(
-                                np.asarray(route), np.asarray(block.vertices), strict=True
-                            )
-                        )
-                    ]
-                for local_owner, kind, source_element, row, vertices in source_rows:
-                    owner = first_cell + local_owner
-                    resource_ids = (int(cell_ids[owner]),)
-                    source_local = tuple(source_bank[int(index)] for index in row)
-                    expressions = coordinate_expressions(source_element, source_local)
-                    if expressions is None:
-                        state.add(
-                            "periodic_coordinate_source_expression",
-                            "unresolved",
-                            "cell",
-                            cell_ids[owner : owner + 1],
-                        )
-                        return image_count
-                    if any(
-                        expression_node_count(
-                            value, _domain(kind), mesh.topological_dimension
-                        )
-                        > limits.maximum_bernstein_nodes
-                        for value in expressions
-                    ):
-                        state.add(
-                            "periodic_bernstein_node_budget",
-                            "unresolved",
-                            "cell",
-                            cell_ids[owner : owner + 1],
-                        )
-                        return image_count
-                    cell = _Cell(
-                        expressions,
-                        _domain(kind),
-                        kind,
-                        mesh.topological_dimension,
-                        identifiers(vertices, (0,) * len(orders)),
-                        _vertices(kind),
-                    )
-                    root_domain_certified = False
-                    layer_column_root = (
-                        isinstance(source_element, LayerColumnCellGeometryElement)
-                        and source_element.fiber_graph
-                    )
-                    if layer_column_root:
-                        layer_column_owners.add(owner)
-                        reference_cell = _layer_fiber_reference_cell(
-                            source_element,
-                            source_local,
-                            None,
-                            cell,
-                        )
-                        if reference_cell is None:
-                            raise ValueError(
-                                "A declared layer fiber graph lost its affine carrier."
-                            )
-                        layer_reference_cells[owner] = reference_cell
-                    if (
-                        record is not None
-                        and not isinstance(source_element, CellVertexGeometryElement)
-                        and not _has_full_coefficient_source(source_element)
-                    ):
-                        root_element, chart_coordinates = coordinate_reference_chain(
-                            source_element
-                        )
-                        layer_column_root |= (
-                            isinstance(root_element, LayerColumnCellGeometryElement)
-                            and root_element.fiber_graph
-                        )
-                        root_coordinates = coordinate_expressions(
-                            root_element, source_local
-                        )
-                        root_corners = coordinate_corner_images(
-                            root_element, source_local
-                        )
-                        if (
-                            isinstance(root_element, LayerColumnCellGeometryElement)
-                            and root_element.fiber_graph
-                        ):
-                            layer_column_owners.add(owner)
-                            reference_cell = _layer_fiber_reference_cell(
-                                root_element,
-                                source_local,
-                                chart_coordinates,
-                                cell,
-                            )
-                            if reference_cell is None:
-                                raise ValueError(
-                                    "A declared layer fiber graph lost its affine carrier."
-                                )
-                            layer_reference_cells[owner] = reference_cell
-                        if root_coordinates is not None and root_corners is not None:
-                            parent = int(
-                                np.asarray(record.block_parent_cell_ids[block.name])[
-                                    local_owner
-                                ]
-                            )
-                            root = _Cell(
-                                root_coordinates,
-                                _domain(root_element.cell_kind),
-                                root_element.cell_kind,
-                                mesh.topological_dimension,
-                                (),
-                                _vertices(root_element.cell_kind),
-                            )
-                            chart = _Cell(
-                                chart_coordinates,
-                                cell.domain,
-                                cell.kind,
-                                cell.dimension,
-                                cell.vertices,
-                                cell.reference_vertices,
-                            )
-                            parent_vertices = tuple(
-                                int(value)
-                                for value in np.asarray(
-                                    record.block_parent_vertex_ids[block.name]
-                                )[local_owner]
-                                if value >= 0
-                            )
-                            source_roots[owner] = (
-                                parent,
-                                root,
-                                chart,
-                                root_corners,
-                                root_element.element_id,
-                                parent_vertices,
-                            )
-                            from ._restricted_embedding import _reference_constraints
-
-                            root_domain_certified = all(
-                                min(
-                                    expression_bernstein_coefficients(
-                                        value, cell.domain, cell.dimension
-                                    )
-                                )
-                                >= 0
-                                for value in _reference_constraints(
-                                    chart_coordinates, root.kind, cell.dimension
-                                )
-                            )
-                    root_record = source_roots.get(owner)
-                    if layer_column_root and "cell_validity" in state.checks:
-                        # The owning exact Bernstein validity certificate has
-                        # already proved this complete column map injective.
-                        # Reuse that bound; the checks below still certify all
-                        # quotient traces, images, and inter-cell contacts.
-                        reason = None
-                        if "periodic_layer_column_validity_reuse" not in state.checks:
-                            state.checks.append("periodic_layer_column_validity_reuse")
-                    elif root_record is None or not root_domain_certified:
-                        reason = _injective(cell, limits, state)
-                    else:
-                        reason = _injective(root_record[1], limits, state) or _injective(
-                            root_record[2], limits, state
-                        )
-                    if reason is not None:
-                        state.add(
-                            reason, "unresolved", "cell", cell_ids[owner : owner + 1]
-                        )
-                    cells.append(cell)
-                    owners.append(owner)
-                    piece_vertices.append(vertices)
-                first_cell += block.cell_count
-            if layer_column_owners:
-                if layer_column_owners != set(layer_reference_cells):
-                    raise ValueError(
-                        "Layer fiber contact proof requires every declared child chart."
-                    )
-                state.checks.extend(
-                    (
-                        "periodic_layer_column_graph_source",
-                        "periodic_layer_column_affine_reference_contact",
-                    )
-                )
-            resource_kind, resource_ids = "mesh", ()
-            from ._mesh_certificates import _facet_entity_ids, _mesh_facets
-
-            facets = _mesh_facets(mesh)
-            entity_ids = _facet_entity_ids(mesh, facets.rows)
-            facet_rows = {
-                int(value): row
-                for row, value in enumerate(
-                    np.asarray(mesh.entity_set(mesh.topological_dimension - 1).entity_ids)
-                )
-            }
-            orbits, _, anchors = (
-                np.asarray(value)
-                for value in topology.orbits(mesh.topological_dimension - 1)
-            )
-            from ..discretization._periodic_topology import _lifted_loops
-
-            edge_orbits = np.asarray(topology.orbits(1)[0])
-            edge_rows = {}
-            for rows_, corners_ in _lifted_loops(mesh, 1):
-                edge_rows.update(
-                    (frozenset(int(vertex) for vertex in corners), int(row_))
-                    for row_, corners in zip(rows_, corners_, strict=True)
-                )
-            vertex_orbits = np.asarray(topology.orbits(0)[0])
-            # Authored polyhedral facets, not the auxiliary tetrahedral fan.
-            # Source keys give incidence; exact original coefficients separately
-            # authenticate every coincident face point under the actual action.
-            parent_faces = {}
-            for occurrence, entity in enumerate(entity_ids.tolist()):
-                owner = int(facets.cells[occurrence])
-                if owner not in planar_polyhedral_owners:
-                    continue
-                row_vertices = facets.rows[occurrence]
-                row_vertices = row_vertices[row_vertices >= 0]
-                budget.reserve(len(row_vertices), 128 + 64 * len(row_vertices))
-                face_keys = identifiers(row_vertices, (0,) * len(orders))
-                parent_faces.setdefault(owner, []).append(
-                    (
-                        mesh.topological_dimension - 1,
-                        int(orbits[facet_rows[entity]]),
-                        tuple(int(vertex) for vertex in row_vertices),
-                        face_keys,
-                    )
-                )
-                # Close the AUTHORED source facet downward, retaining the
-                # canonical edge/vertex orbit, not an auxiliary fan diagonal.
-                budget.reserve(2 * len(row_vertices), 512 * len(row_vertices))
-                for vertex in row_vertices:
-                    vertex_ = int(vertex)
-                    parent_faces[owner].append(
-                        (
-                            0,
-                            int(vertex_orbits[vertex_]),
-                            (vertex_,),
-                            identifiers(
-                                np.asarray((vertex_,), dtype=np.int64), (0,) * len(orders)
-                            ),
-                        )
-                    )
-                for position, vertex in enumerate(row_vertices):
-                    edge = (
-                        int(vertex),
-                        int(row_vertices[(position + 1) % len(row_vertices)]),
-                    )
-                    edge_row = edge_rows[frozenset(edge)]
-                    parent_faces[owner].append(
-                        (
-                            1,
-                            int(edge_orbits[edge_row]),
-                            edge,
-                            identifiers(
-                                np.asarray(edge, dtype=np.int64), (0,) * len(orders)
-                            ),
-                        )
-                    )
-
-            by_orbit = {}
-            for owner, entities in parent_faces.items():
-                unique = {
-                    (degree, frozenset(vertices_)): (degree, orbit, vertices_, keys_)
-                    for degree, orbit, vertices_, keys_ in entities
-                }
-                parent_faces[owner] = list(unique.values())
-                lookup = {}
-                for degree, orbit, vertices_, keys_ in parent_faces[owner]:
-                    lookup.setdefault((degree, orbit), []).append((vertices_, keys_))
-                by_orbit[owner] = lookup
-
-            from ._planar_coverage import project
-
-            original_facets = (
-                _original_power_facet_authority(geometry, topology.cell)
-                if isinstance(topology.cell, PeriodicIsometryGroup)
-                else ()
-            )
-            source_faces = {}
-            for owner, entities in parent_faces.items() if original_facets else ():
-                for degree, _, vertices_, _ in entities:
-                    if degree != mesh.topological_dimension - 1:
-                        continue
-                    points_ = tuple(source_bank[vertex] for vertex in vertices_)
-                    plane = _source_polygon_plane(points_)
-                    if plane is None:
-                        continue
-                    key = plane[0]
-                    budget.reserve(1, 256)
-                    authorities = set()
-                    for facet_root, source_plane, axes_, polygon in original_facets:
-                        budget.reserve(1)
-                        if source_plane == key and _closed_source_polygon_contains(
-                            polygon,
-                            project(points_, axes_),
-                        ):
-                            if facet_root not in authorities:
-                                budget.reserve(1, 128)
-                            authorities.add(facet_root)
-                    if authorities:
-                        budget.reserve(len(authorities), 128 + 32 * len(authorities))
-                        source_faces[(owner, vertices_)] = (key, authorities)
-
-            def authored_traces(
-                first: _Cell,
-                owner_a: int,
-                owner_b: int,
-                action: tuple[tuple[Fraction, ...], ...],
-                image: tuple[int, ...],
-                first_source_vertices: np.ndarray,
-            ) -> tuple[tuple[int, ...], ...]:
-                if owner_a not in parent_faces or owner_b not in parent_faces:
-                    return ()
-                if (
-                    identifiers(first_source_vertices, (0,) * len(orders))
-                    != first.vertices
-                ):
-                    raise ValueError(
-                        "Original periodic trace requires its complete first-piece SCI source bank."
-                    )
-                permitted = {}
-                for degree_a, orbit_a, face_a, keys_a in parent_faces[owner_a]:
-                    source_a = dict(
-                        zip(
-                            keys_a,
-                            (source_bank[vertex] for vertex in face_a),
-                            strict=True,
-                        )
-                    )
-                    support = tuple(
-                        vertex for vertex in first.vertices if vertex in source_a
-                    )
-                    if (
-                        not support
-                        or len(support) > first.dimension
-                        or support in permitted
-                    ):
-                        continue
-                    for face_b, _ in by_orbit[owner_b].get((degree_a, orbit_a), ()):
-                        budget.reserve(len(face_b))
-                        keys_b = identifiers(np.asarray(face_b, dtype=np.int64), image)
-                        if set(keys_a) != set(keys_b):
-                            continue
-                        equal = True
-                        for key, vertex in zip(keys_b, face_b, strict=True):
-                            point = source_bank[vertex]
-                            budget.reserve(len(point) * (len(point) + 1))
-                            transformed = tuple(
-                                row[-1]
-                                + sum(
-                                    (
-                                        weight * value
-                                        for weight, value in zip(
-                                            row[:-1], point, strict=True
-                                        )
-                                    ),
-                                    Fraction(0),
-                                )
-                                for row in action[:-1]
-                            )
-                            if transformed != source_a[key]:
-                                equal = False
-                                break
-                        if equal:
-                            budget.reserve(len(support), 128 + 64 * len(support))
-                            permitted[support] = None
-                            break
-                for facet_root, source_plane, axes_, polygon in original_facets:
-                    budget.reserve(0, 128 + 64 * len(first_source_vertices))
-                    support_points = []
-                    support_ids = []
-                    for identifier, vertex in zip(
-                        first.vertices, first_source_vertices, strict=True
-                    ):
-                        point = source_bank[int(vertex)]
-                        budget.reserve(2 * len(point))
-                        if sum(
-                            (
-                                a * b
-                                for a, b in zip(source_plane[:-1], point, strict=True)
-                            ),
-                            source_plane[-1],
-                        ):
-                            continue
-                        if _closed_source_polygon_contains(
-                            polygon, project((point,), axes_)
-                        ):
-                            support_points.append(point)
-                            support_ids.append(identifier)
-                    support = tuple(support_ids)
-                    if (
-                        not support
-                        or len(support) > first.dimension
-                        or support in permitted
-                    ):
-                        continue
-                    if not _closed_source_polygon_contains(
-                        polygon, project(tuple(support_points), axes_)
-                    ):
-                        continue
-                    for degree_b, _, face_b, _ in parent_faces[owner_b]:
-                        if degree_b != mesh.topological_dimension - 1:
-                            continue
-                        authority_b = source_faces.get((owner_b, face_b))
-                        if authority_b is None or facet_root not in authority_b[1]:
-                            continue
-                        budget.reserve(
-                            len(face_b) * first.dimension * (first.dimension + 1)
-                        )
-                        transformed = tuple(
-                            tuple(
-                                row[-1]
-                                + sum(
-                                    (
-                                        weight * value
-                                        for weight, value in zip(
-                                            row[:-1], source_bank[vertex], strict=True
-                                        )
-                                    ),
-                                    Fraction(0),
-                                )
-                                for row in action[:-1]
-                            )
-                            for vertex in face_b
-                        )
-                        plane_b = _source_polygon_plane(transformed)
-                        if plane_b is not None and plane_b[0] == source_plane:
-                            budget.reserve(len(support), 128 + 64 * len(support))
-                            permitted[support] = None
-                            break
-                return tuple(permitted)
-
-            traces: dict[int, tuple[_Cell, ...]] = {}
-            owner_pieces: dict[int, list[int]] = {}
-            for piece, owner in enumerate(owners):
-                owner_pieces.setdefault(owner, []).append(piece)
-            for occurrence, entity in enumerate(entity_ids.tolist()):
-                resource_kind, resource_ids = "facet", (int(entity),)
-                row = facet_rows[entity]
-                image = tuple(-int(value) for value in anchors[row])
-                cell_row = int(facets.cells[occurrence])
-                normalized = tuple(
-                    _transform(
-                        cells[piece],
-                        _exact_periodic_element(matrices, orders, image),
-                        identifiers(piece_vertices[piece], image),
-                    )
-                    for piece in owner_pieces[cell_row]
-                )
-                orbit = int(orbits[row])
-                previous = traces.get(orbit)
-                if previous is not None and any(
-                    not _trace_equal(a, b) for a in previous for b in normalized
-                ):
-                    state.add(
-                        "periodic_mapped_trace_mismatch", "violated", "facet", (entity,)
-                    )
-                traces[orbit] = normalized
-            state.boundary_facets = int(
-                np.count_nonzero(
-                    np.asarray(
-                        topology.quotient.entities(mesh.topological_dimension - 1)
-                        .subset("boundary")
-                        .mask
-                    )
-                )
-            )
-            resource_kind, resource_ids = "mesh", ()
-            cell_ids = cell_ids[np.asarray(owners, dtype=np.int64)]
-            identity = np.eye(mesh.topological_dimension, dtype=np.float64)
-            origin = np.zeros(mesh.topological_dimension, dtype=np.float64)
-            budget.reserve(
-                finite_count * len(cells),
-                finite_count * len(cells) * mesh.ambient_dimension * 16,
-            )
-            boxes = [
-                _bounds(_transform(cell, matrix, cell.vertices), origin, identity)
-                for _, matrix in finite
-                for cell in cells
-            ]
-            if any(not np.all(np.isfinite(bound)) for box in boxes for bound in box):
-                state.add("periodic_coordinate_bound_range", "unresolved", "mesh")
-                return image_count
-            ranges = _translation_ranges(boxes, translations)
-            image_count = finite_count
-            for interval in ranges:
-                image_count *= len(interval)
-            if image_count > maximum_images:
-                state.add("periodic_image_budget", "unresolved", "mesh")
-                return image_count
-            base_boxes = [_bounds(cell, origin, identity) for cell in cells]
-            vertices = piece_vertices
-            inverse_pair_decisions: dict[tuple[int, int, tuple[int, ...]], str] = {}
-            recorded_inverse_reuse = False
-            for finite_exponents, _ in finite:
-                for translation_exponents in product(*ranges):
-                    iterator = iter(translation_exponents)
-                    # Winding stays on the original authored generator axis:
-                    # G^(r + L*k), never an independently authored translation.
-                    exponents = tuple(
-                        value + period * next(iterator) if period else value
-                        for value, period in zip(finite_exponents, periods, strict=True)
-                    )
-                    transform_ = _exact_periodic_element(matrices, orders, exponents)
-                    image_identity = not any(exponents)
-                    for b, cell in enumerate(cells):
-                        resource_kind, resource_ids = "cell", (int(cell_ids[b]),)
-                        with budget.temporary_scope():
-                            image = _transform(
-                                cell, transform_, identifiers(vertices[b], exponents)
-                            )
-                            lower, upper = _bounds(image, origin, identity)
-                            for a, first in enumerate(cells):
-                                with budget.temporary_scope():
-                                    if image_identity and (
-                                        a >= b or owners[a] == owners[b]
-                                    ):
-                                        continue
-                                    lo, hi = base_boxes[a]
-                                    if np.any(hi < lower) or np.any(upper < lo):
-                                        continue
-                                    if (
-                                        state.candidate_pairs
-                                        >= limits.maximum_candidate_pairs
-                                    ):
-                                        state.add(
-                                            "periodic_candidate_pair_budget",
-                                            "unresolved",
-                                            "cell",
-                                            cell_ids[[a, b]],
-                                        )
-                                        return image_count
-                                    state.candidate_pairs += 1
-                                    resource_ids = (int(cell_ids[a]), int(cell_ids[b]))
-                                    if not _trace_equal(first, image):
-                                        state.add(
-                                            "periodic_mapped_trace_mismatch",
-                                            "violated",
-                                            "cell",
-                                            cell_ids[[a, b]],
-                                        )
-                                        continue
-                                    if _tensor_pair(first, image, state, limits):
-                                        continue
-                                    root_a, root_b = (
-                                        source_roots.get(owners[a]),
-                                        source_roots.get(owners[b]),
-                                    )
-                                    if (
-                                        root_a is not None
-                                        and root_b is not None
-                                        and root_a[0] == root_b[0]
-                                        and root_a[4:] == root_b[4:]
-                                        and root_a[1].coordinates == root_b[1].coordinates
-                                    ):
-                                        chart_b = _Cell(
-                                            root_b[2].coordinates,
-                                            root_b[2].domain,
-                                            root_b[2].kind,
-                                            root_b[2].dimension,
-                                            image.vertices,
-                                            root_b[2].reference_vertices,
-                                        )
-                                        if _root_action_pair(
-                                            root_a[1],
-                                            root_a[2],
-                                            chart_b,
-                                            transform_,
-                                            root_a[3],
-                                            state,
-                                            limits,
-                                        ):
-                                            continue
-                                    allowed_traces = authored_traces(
-                                        first,
-                                        owners[a],
-                                        owners[b],
-                                        transform_,
-                                        exponents,
-                                        piece_vertices[a],
-                                    )
-                                    reference_decision = None
-                                    reference_first = layer_reference_cells.get(owners[a])
-                                    reference_second = layer_reference_cells.get(
-                                        owners[b]
-                                    )
-                                    if (
-                                        reference_first is not None
-                                        and reference_second is not None
-                                    ):
-                                        reference_image = _transform(
-                                            reference_second, transform_, image.vertices
-                                        )
-                                        if _separating_plane(
-                                            reference_first, reference_image
-                                        ):
-                                            continue
-                                        reference_result = _affine_reference_contact(
-                                            reference_first,
-                                            reference_image,
-                                            limits.maximum_subdivision_pieces
-                                            - state.subdivision_pieces,
-                                        )
-                                        if reference_result is None:
-                                            reference_decision, reference_work = (
-                                                _pair_decision(
-                                                    reference_first,
-                                                    reference_image,
-                                                    limits,
-                                                    limits.maximum_subdivision_pieces
-                                                    - state.subdivision_pieces,
-                                                )
-                                            )
-                                        else:
-                                            reference_decision, reference_work = (
-                                                reference_result
-                                            )
-                                        state.subdivision_pieces += reference_work
-                                        if reference_decision == "separated":
-                                            continue
-                                    key = (
-                                        None
-                                        if parent_faces
-                                        else _inverse_equivalent_pair_key(
-                                            a, b, exponents, orders
-                                        )
-                                    )
-                                    inverse_decision = (
-                                        None
-                                        if key is None
-                                        else inverse_pair_decisions.get(key)
-                                    )
-                                    reused_inverse = (
-                                        reference_decision is None
-                                        and inverse_decision is not None
-                                    )
-                                    decision = (
-                                        reference_decision
-                                        if reference_decision is not None
-                                        else inverse_decision
-                                    )
-                                    if decision is None:
-                                        if _separating_plane(first, image):
-                                            decision, work = "separated", 0
-                                        else:
-                                            decision, work = _pair_decision(
-                                                first,
-                                                image,
-                                                limits,
-                                                limits.maximum_subdivision_pieces
-                                                - state.subdivision_pieces,
-                                                authoritative_first_traces=allowed_traces,
-                                            )
-                                        state.subdivision_pieces += work
-                                        if key is not None and decision in (
-                                            "overlap",
-                                            "separated",
-                                        ):
-                                            inverse_pair_decisions[key] = decision
-                                    elif reused_inverse and not recorded_inverse_reuse:
-                                        state.checks.append(
-                                            "periodic_inverse_pair_proof_reuse"
-                                        )
-                                        recorded_inverse_reuse = True
-                                    if decision == "overlap":
-                                        from ._mesh_certificates import (
-                                            MeshCertificateFinding,
-                                        )
-
-                                        state.findings.append(
-                                            MeshCertificateFinding(
-                                                "periodic_mapped_cell_overlap",
-                                                "violated",
-                                                "cell",
-                                                tuple(
-                                                    int(value)
-                                                    for value in cell_ids[[a, b]]
-                                                ),
-                                                observations=_source_contact_quantities(
-                                                    first,
-                                                    image,
-                                                    transform_,
-                                                    exponents,
-                                                    a,
-                                                    b,
-                                                    owners[a],
-                                                    owners[b],
-                                                ),
-                                            )
-                                        )
-                                    elif decision != "separated":
-                                        state.add(
-                                            decision,
-                                            "unresolved",
-                                            "cell",
-                                            cell_ids[[a, b]],
-                                        )
+            group = _prepare_periodic_group(request)
+            if group.finite_count > limits.maximum_periodic_images:
+                progress.image_count = group.finite_count
+                return progress.image_count
+            prepared = _prepare_periodic_cells(request, group)
+            if prepared is None:
+                return progress.image_count
+            facets = _prepare_periodic_facets(request, prepared, group)
+            sources = _prepare_periodic_source_faces(request, prepared, facets)
+            _certify_periodic_traces(request, prepared, group, facets)
+            _prepare_periodic_affine_quotient(request, prepared, facets)
+            images = _prepare_periodic_images(request, prepared, group)
+            if images is None:
+                return progress.image_count
+            _certify_periodic_contacts(request, prepared, group, facets, sources, images)
     except PeriodicIsometryIdentityError:
         state.add("periodic_authored_group_identity", "unresolved", "mesh")
     except RationalEnclosureError:
@@ -1830,12 +2788,12 @@ def certify_periodic_mapped_embedding(
         state.add(
             "periodic_source_expression_resource_budget",
             "unresolved",
-            resource_kind,
-            resource_ids,
+            progress.resource_kind,
+            progress.resource_ids,
             resource_error=error,
             expression_budget=budget,
         )
     finally:
-        state.source_expression_work_units = budget.work_units
-        state.source_expression_peak_bytes = budget.peak_bytes_upper
-    return image_count
+        state.source_expression_work_units = phase_measurement.work_units
+        state.source_expression_peak_bytes = phase_measurement.peak_bytes_upper
+    return progress.image_count

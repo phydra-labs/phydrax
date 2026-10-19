@@ -125,6 +125,16 @@ whose interpolation sites may be warped or Lobatto.
 
 ::: phydrax.discretization.coordinate_lagrange_element
 
+`coordinate_lagrange_reference_nodes(cell_kind, degree)` returns immutable
+tuples of exact `Fraction` coordinates in that same element's node ordering.
+Both factories admit degrees 1 through 10. The bounded canonical host-table
+cache owns this preparation; rational lifting consumes it without recovering
+fractions from rounded floating nodes. Lift construction is charged against
+the caller's aggregate node/tabulation allowances, and exact preparation
+retains separate work, storage, and numerator/denominator bit bounds.
+
+::: phydrax.discretization.coordinate_lagrange_reference_nodes
+
 ---
 
 `CellGeometrySpec.exact_source` owns the exact construction behind a numerical
@@ -133,6 +143,33 @@ identity/revision, and per-vertex construction witnesses. Power sources retain
 their exact polyhedral construction. Layout admission rejects a source from
 the wrong cell family; exact source coordinates, not rounded carrier
 coordinates, govern host certification and measure preparation.
+
+`ExactRationalCellGeometrySource` retains the original `CellGeometrySpec` bank
+and canonical sparse rational interpolation actions. A straight high-order
+lift preserves the declared coordinate degree (1 through 10) for interval,
+simplex, quadrilateral, hexahedral, prism, and rational pyramid elements.
+Original numerical arrays remain dynamic PyTree leaves; rational actions and
+explicit layout/bank identities are immutable host metadata, not device
+arbitrary-precision arrays. Newly generated coefficients round only after exact
+interpolation, with generated exact zeros represented by positive zero.
+Unit identity actions retain the authenticated parent's representative bytes,
+including signed zero and any source-owner-certified carrier error. Exact
+representative-to-authority errors remain explicit for all rows and enter
+runtime fidelity/error preparation. Checkpoint reconstruction authenticates
+these distinct rules byte-for-byte; it
+rejects foreign banks, changed actions, missing coefficients, mismatched node
+routes, or noncanonical representatives under the original resource limits.
+This does not authorize curved maps as degree-one geometry: the full rational
+expression equality proof remains required.
+Nested restriction and coefficient-bank compaction retain the same original
+authority and rational actions. When an independently authored root uses a
+different nodal representation, ordered scientific root IDs and vertices still
+must agree, and full rational expression equality proves the root law before
+reference-chart transfer. Corner samples alone never establish equivalence.
+
+::: phydrax.discretization.ExactRationalCellGeometrySource
+
+---
 
 ::: phydrax.discretization.ExactPlcCellGeometrySource
 

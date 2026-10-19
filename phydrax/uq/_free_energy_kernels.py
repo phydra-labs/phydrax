@@ -274,10 +274,13 @@ def mbar_asymptotic_covariance_kernel(
     middle = jnp.eye(singular.size, dtype=weights.dtype) - (
         singular[:, None] * projected_counts * singular[None, :]
     )
+    # A thin reduction omits identity directions only for more samples than
+    # states. Preserve their unit scale without adding a second rank cutoff.
     middle_factors = factor_pseudoinverse(
         middle,
         RankPolicy(relative_cutoff=rank_tolerance),
         hermitian=True,
+        rank_scale_floor=1.0 if weighted.shape[0] > weighted.shape[1] else None,
     )
     middle_inverse = materialize_pseudoinverse(middle_factors)
     theta = (

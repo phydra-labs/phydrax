@@ -53,6 +53,7 @@ class WorksetSignature(StrictModule, NonTrainableState):
     material_id: str | None = eqx.field(static=True)
     signature_id: str = eqx.field(static=True)
 
+    # Canonicalize and validate all identity bindings before field assignment and fingerprinting.
     def __init__(
         self,
         region_kind: str,
@@ -103,29 +104,11 @@ class WorksetSignature(StrictModule, NonTrainableState):
         reference_realization = (
             None if reference_realization_id is None else str(reference_realization_id)
         )
-        widths = tuple(
-            sorted(
-                (str(name), int(width))
-                for name, width in (
-                    local_widths.items()
-                    if isinstance(local_widths, Mapping)
-                    else local_widths
-                )
-            )
-        )
+        widths = _canonical_workset_widths(local_widths)
         neighbor_widths = (
             widths
             if neighbor_local_widths is None
-            else tuple(
-                sorted(
-                    (str(name), int(width))
-                    for name, width in (
-                        neighbor_local_widths.items()
-                        if isinstance(neighbor_local_widths, Mapping)
-                        else neighbor_local_widths
-                    )
-                )
-            )
+            else _canonical_workset_widths(neighbor_local_widths)
         )
         material = None if material_id is None else str(material_id)
         selection_values = (
@@ -154,19 +137,12 @@ class WorksetSignature(StrictModule, NonTrainableState):
             or not references
             or not fields
             or any(not value for value in layouts)
-            or not widths
-            or any(not name or width <= 0 for name, width in widths)
-            or set(name for name, _ in neighbor_widths) != set(name for name, _ in widths)
-            or any(not name or width <= 0 for name, width in neighbor_widths)
-            or (has_neighbor and not neighbor_block)
-            or (not has_neighbor and neighbor_block is not None)
-            or (
-                any(value is None for value in selection_values)
-                and any(value is not None for value in selection_values)
-            )
-            or any(value == "" for value in selection_values if value is not None)
+            or _invalid_workset_widths(widths, neighbor_widths)
+            or _invalid_workset_bindings(has_neighbor, neighbor_block, selection_values)
         ):
-            raise ValueError("Workset signature identities and widths must be complete.")
+            raise ValueError(
+                f"WorksetSignature.fields must contain nonempty identities, positive matching widths and consistent neighbor/selection bindings; got identities={identities!r}, widths={widths!r}, neighbor_widths={neighbor_widths!r}, neighbor_block={neighbor_block!r}, selections={selection_values!r}"
+            )
         self.region_kind = region
         self.block_name = block
         self.neighbor_block_name = neighbor_block
@@ -216,6 +192,48 @@ class WorksetSignature(StrictModule, NonTrainableState):
         )
 
 
+def _canonical_workset_widths(
+    widths: Mapping[str, int] | Sequence[tuple[str, int]],
+) -> tuple[tuple[str, int], ...]:
+    """Sort field names and convert their widths to integers for identity."""
+    return tuple(
+        sorted(
+            (str(name), int(width))
+            for name, width in (widths.items() if isinstance(widths, Mapping) else widths)
+        )
+    )
+
+
+def _invalid_workset_widths(
+    widths: tuple[tuple[str, int], ...],
+    neighbor_widths: tuple[tuple[str, int], ...],
+) -> bool:
+    """Both sides bind the same fields to positive local extents."""
+    return (
+        not widths
+        or any(not name or width <= 0 for name, width in widths)
+        or set(name for name, _ in neighbor_widths) != set(name for name, _ in widths)
+        or any(not name or width <= 0 for name, width in neighbor_widths)
+    )
+
+
+def _invalid_workset_bindings(
+    has_neighbor: bool,
+    neighbor_block: str | None,
+    selection_values: tuple[str | None, ...],
+) -> bool:
+    """Detect inconsistent neighbor ownership or partially specified providers."""
+    return (
+        (has_neighbor and not neighbor_block)
+        or (not has_neighbor and neighbor_block is not None)
+        or (
+            any(value is None for value in selection_values)
+            and any(value is not None for value in selection_values)
+        )
+        or any(value == "" for value in selection_values if value is not None)
+    )
+
+
 def _canonical_int32_routes(
     routes: Mapping[str, ArrayLike] | Sequence[tuple[str, ArrayLike]],
 ) -> tuple[tuple[str, np.ndarray], ...]:
@@ -238,9 +256,13 @@ def _workset_index_routes(
     owners = np.asarray(owner_cells, dtype=np.int32)
     neighbors = np.asarray(neighbor_cells, dtype=np.int32)
     if actions.ndim != 1 or entities.ndim != 1:
-        raise ValueError("Workset action/entity indices must be rank-1.")
+        raise ValueError(
+            f"workset.indices must have rank 1; got action_shape={actions.shape!r}, entity_shape={entities.shape!r}"
+        )
     if owners.shape != entities.shape or neighbors.shape != entities.shape:
-        raise ValueError("Workset owner/neighbor routes must match entities.")
+        raise ValueError(
+            f"workset.cell_routes must match entity shape {entities.shape!r}; got owner_shape={owners.shape!r}, neighbor_shape={neighbors.shape!r}"
+        )
     return actions, entities, owners, neighbors
 
 
@@ -253,11 +275,15 @@ def _workset_gathers(
     if set(name for name, _ in gather_items) != set(
         name for name, _ in signature.local_widths
     ):
-        raise ValueError("Workset gathers must match signature field widths.")
+        raise ValueError(
+            f"workset.gathers must match signature fields {signature.local_widths!r}; got {tuple(name for name, _ in gather_items)!r}"
+        )
     widths = dict(signature.local_widths)
     for name, route in gather_items:
         if route.shape != (count, widths[name]):
-            raise ValueError("Workset gather shape does not match its signature.")
+            raise ValueError(
+                f"workset.gathers.{name}.shape must be {(count, widths[name])!r}; got {route.shape!r}"
+            )
     return gather_items
 
 
@@ -279,7 +305,9 @@ def _workset_neighbor_gathers(
     if tuple(name for name, _ in neighbor_items) != tuple(
         name for name, _ in gather_items
     ) or any(route.shape != (count, widths[name]) for name, route in neighbor_items):
-        raise ValueError("Neighbor gathers must match neighbor signature layouts.")
+        raise ValueError(
+            f"workset.neighbor_gathers must match field names and neighbor widths {signature.neighbor_local_widths!r}; got {tuple((name, route.shape) for name, route in neighbor_items)!r}"
+        )
     return neighbor_items
 
 
@@ -299,7 +327,7 @@ def _facet_permutation(values: ArrayLike | None, count: int) -> np.ndarray:
     )
     if result.ndim not in (1, 2) or result.shape[0] != count:
         raise ValueError(
-            "Workset facet permutations require one scalar or route per entity."
+            f"workset.facet_permutations must have rank 1 or 2 and {count!r} rows; got {result.shape!r}"
         )
     return result
 
@@ -323,10 +351,12 @@ def _workset_facet_routes(
     )
     if trace_permutations.ndim != 2 or trace_permutations.shape[0] != count:
         raise ValueError(
-            "Neighbor trace permutations require one point route per entity."
+            f"workset.neighbor_trace_permutations must have rank 2 and {count!r} rows; got {trace_permutations.shape!r}"
         )
     if owner_local.shape != (count,) or neighbor_local.shape != (count,):
-        raise ValueError("Workset local-entity routes are invalid.")
+        raise ValueError(
+            f"workset.local_entity_routes must have shape {(count,)!r}; got owner_shape={owner_local.shape!r}, neighbor_shape={neighbor_local.shape!r}"
+        )
     return (
         owner_local,
         neighbor_local,
@@ -345,14 +375,19 @@ def _validate_prepared_references(
         not isinstance(reference, PreparedFiniteElementReference)
         or reference.prepared_id not in signature.reference_action_ids
     ):
-        raise ValueError("Prepared reference does not match the workset signature.")
+        raise ValueError(
+            f"workset.reference must be a prepared reference bound to the signature; got {reference!r}"
+        )
     if neighbor_reference is not None and (
         not isinstance(neighbor_reference, PreparedFiniteElementReference)
         or neighbor_reference.prepared_id not in signature.reference_action_ids
     ):
-        raise ValueError("Neighbor reference does not match the workset signature.")
+        raise ValueError(
+            f"workset.neighbor_reference must be a prepared reference bound to the signature; got {neighbor_reference!r}"
+        )
 
 
+@checked
 def _validate_local_region(
     signature: WorksetSignature,
     local_region: PreparedLocalRegion | None,
@@ -360,29 +395,26 @@ def _validate_local_region(
 ) -> None:
     if local_region is None:
         return
-    if not isinstance(local_region, PreparedLocalRegion):
-        raise TypeError("local_region must be PreparedLocalRegion or None.")
     if (
         local_region.geometry_actions.action_id != signature.geometry_action_id
         or tuple(sorted(value.action_id for value in local_region.reference_actions))
         != signature.reference_action_ids
-        or tuple(local_region.entity_indices) != tuple(entities)
+        or not np.array_equal(np.asarray(local_region.entity_indices), entities)
     ):
-        raise ValueError("Prepared local region does not match its workset.")
+        raise ValueError(
+            f"workset.local_region must match geometry actions, reference actions and entity indices; got {local_region!r}"
+        )
 
 
+@checked
 def _validate_mortar(
     mortar: FiniteElementMortarPlan | None,
     mortar_metric: FiniteElementMortarMetricData | None,
 ) -> None:
-    if mortar is not None and not isinstance(mortar, FiniteElementMortarPlan):
-        raise TypeError("mortar must be FiniteElementMortarPlan or None.")
-    if mortar_metric is not None and not isinstance(
-        mortar_metric, FiniteElementMortarMetricData
-    ):
-        raise TypeError("mortar_metric must be FiniteElementMortarMetricData or None.")
     if (mortar is None) != (mortar_metric is None):
-        raise ValueError("Mortar reference and metric data must be supplied together.")
+        raise ValueError(
+            f"workset.mortar must be supplied together with mortar_metric; got {(mortar is not None, mortar_metric is not None)!r}"
+        )
 
 
 class CompiledWorkset(StrictModule, NonTrainableState):
@@ -465,7 +497,9 @@ class CompiledWorkset(StrictModule, NonTrainableState):
             else np.asarray(valid, dtype=np.bool_)
         )
         if valid_.shape != (count,):
-            raise ValueError("Workset validity must have one entry per entity.")
+            raise ValueError(
+                f"workset.valid.shape must be {(count,)!r}; got {valid_.shape!r}"
+            )
         self.signature = signature
         self.local_region = local_region
         self.reference = reference
@@ -529,14 +563,18 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         name = str(field_name)
         routes = dict(self.gathers)
         if name not in routes:
-            raise KeyError(f"Workset has no field gather {name!r}.")
+            raise KeyError(
+                f"workset.field_name must identify a field gather; got {name!r}"
+            )
         return jnp.asarray(values)[routes[name]]
 
     def gather_neighbor(self, field_name: str, values: ArrayLike, /) -> Array:
         name = str(field_name)
         routes = dict(self.neighbor_gathers)
         if name not in routes:
-            raise KeyError(f"Workset has no neighbor gather {name!r}.")
+            raise KeyError(
+                f"workset.neighbor_field_name must identify a neighbor gather; got {name!r}"
+            )
         safe = jnp.maximum(routes[name], 0)
         gathered = jnp.asarray(values)[safe]
         valid = routes[name] >= 0
@@ -559,7 +597,7 @@ class WorksetBucket(StrictModule, NonTrainableState):
         values = tuple(worksets)
         if not values or len({value.signature.signature_id for value in values}) != 1:
             raise ValueError(
-                "Workset buckets require one or more equal-signature worksets."
+                f"WorksetBucket.worksets must be nonempty and share one signature; got {tuple(value.signature.signature_id for value in values)!r}"
             )
         arrays = []
         for value in values:
@@ -618,7 +656,9 @@ class WorksetProgram(StrictModule, NonTrainableState):
     ) -> None:
         worksets_ = tuple(worksets)
         if not isinstance(ir, LocalActionIR) or not worksets_:
-            raise ValueError("WorksetProgram requires an IR and worksets.")
+            raise ValueError(
+                f"WorksetProgram.inputs must contain LocalActionIR and nonempty worksets; got ir_type={type(ir).__name__}, workset_count={len(worksets_)!r}"
+            )
         bucket_id = canonical_fingerprint(
             {
                 "kind": "finite-element-operator-program-buckets",
@@ -633,7 +673,9 @@ class WorksetProgram(StrictModule, NonTrainableState):
             else operator_program
         )
         if not isinstance(operator_program_, OperatorProgram):
-            raise TypeError("operator_program must be OperatorProgram or None.")
+            raise TypeError(
+                f"WorksetProgram.operator_program must be OperatorProgram or None; got {type(operator_program_).__name__}"
+            )
         self.ir = ir
         self.worksets = worksets_
         self.operator_program = operator_program_

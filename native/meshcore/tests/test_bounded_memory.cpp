@@ -132,7 +132,7 @@ void test_nested_window_shares_ledger_and_restores_parent_quota() {
     try { temporary.reserve(32); } catch (const std::bad_alloc&) { refused = true; }
     PHX_CHECK(refused);
     const auto evidence = window.evidence();
-    PHX_CHECK(evidence[0] == 64 && evidence[2] == 64 && evidence[5] == 1);
+    PHX_CHECK(evidence[PHX_MC_MEMORY_LIMIT_BYTES] == 64 && evidence[PHX_MC_MEMORY_PEAK_BYTES] == 64 && evidence[PHX_MC_MEMORY_REFUSALS] == 1);
   }
   PHX_CHECK(owner->limit_bytes() == 1024 && owner->live_bytes() == baseline);
 }
@@ -167,7 +167,7 @@ void test_host_array_and_native_buffers_share_actual_cap() {
   PHX_CHECK(remaining[3] == metadata + 64 && owner->live_bytes() == 32);
   uint64_t counters[PHX_MC_EXECUTION_COUNTERS], bytes[PHX_MC_EXECUTION_MEMORY_VALUES];
   PHX_CHECK(phx_mc_execution_end(execution, counters, bytes, &seconds) == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(bytes[1] == 32 && bytes[2] == metadata + 96 && bytes[4] == 3 && bytes[5] == 1);
+  PHX_CHECK(bytes[PHX_MC_EXECUTION_MEMORY_LIVE_BYTES] == 32 && bytes[PHX_MC_EXECUTION_MEMORY_PEAK_BYTES] == metadata + 96 && bytes[PHX_MC_EXECUTION_MEMORY_ALLOCATIONS] == 3 && bytes[PHX_MC_EXECUTION_MEMORY_REFUSALS] == 1);
 }
 
 void test_host_payload_refusal_counts_only_successful_metadata() {
@@ -252,7 +252,7 @@ void test_host_array_zero_and_invalid_arguments_preserve_accounting() {
   uint64_t counters[PHX_MC_EXECUTION_COUNTERS], bytes[PHX_MC_EXECUTION_MEMORY_VALUES];
   double seconds;
   PHX_CHECK(phx_mc_execution_end(execution, counters, bytes, &seconds) == PHX_MC_OK);
-  PHX_CHECK(bytes[1] == 0 && bytes[4] == 2 && bytes[5] == 0);
+  PHX_CHECK(bytes[PHX_MC_EXECUTION_MEMORY_LIVE_BYTES] == 0 && bytes[PHX_MC_EXECUTION_MEMORY_ALLOCATIONS] == 2 && bytes[PHX_MC_EXECUTION_MEMORY_REFUSALS] == 0);
   PHX_CHECK(phx_mc_execution_allocate_host_array(execution, 0, 8, &ignored,
                                                 &data) == PHX_MC_INVALID_ARGUMENT);
 }
@@ -276,13 +276,13 @@ void test_host_array_nested_scopes_keep_root_minimum() {
   PHX_CHECK(phx_mc_execution_allocate_host_array(inner, 256, 8, &refused_owner,
                                                 &refused_data) == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(phx_mc_execution_end(inner, counters, bytes, &seconds) == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(bytes[0] == 256 - metadata - 16 && bytes[1] == metadata + 32);
-  PHX_CHECK(bytes[2] == 2 * metadata + 32 && bytes[3] == 256 && bytes[4] == 3 && bytes[5] == 1);
+  PHX_CHECK(bytes[PHX_MC_EXECUTION_MEMORY_LIMIT_BYTES] == 256 - metadata - 16 && bytes[PHX_MC_EXECUTION_MEMORY_LIVE_BYTES] == metadata + 32);
+  PHX_CHECK(bytes[PHX_MC_EXECUTION_MEMORY_PEAK_BYTES] == 2 * metadata + 32 && bytes[PHX_MC_EXECUTION_MEMORY_REQUESTED_BYTES] == 256 && bytes[PHX_MC_EXECUTION_MEMORY_ALLOCATIONS] == 3 && bytes[PHX_MC_EXECUTION_MEMORY_REFUSALS] == 1);
   phx_mc_execution_free_host_array(inner_host);
   PHX_CHECK(phx_mc_execution_remaining(outer, remaining, &seconds) == PHX_MC_OK);
   PHX_CHECK(remaining[3] == 256 - metadata - 16);
   PHX_CHECK(phx_mc_execution_end(outer, counters, bytes, &seconds) == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(bytes[0] == 256 && bytes[1] == metadata + 16 && bytes[4] == 5);
+  PHX_CHECK(bytes[PHX_MC_EXECUTION_MEMORY_LIMIT_BYTES] == 256 && bytes[PHX_MC_EXECUTION_MEMORY_LIVE_BYTES] == metadata + 16 && bytes[PHX_MC_EXECUTION_MEMORY_ALLOCATIONS] == 5);
   phx_mc_execution_free_host_array(outer_host);
 }
 
@@ -299,7 +299,7 @@ void test_host_allocation_preserves_original_execution_refusal() {
     uint64_t counters[PHX_MC_EXECUTION_COUNTERS], bytes[PHX_MC_EXECUTION_MEMORY_VALUES];
     double seconds;
     PHX_CHECK(phx_mc_execution_end(execution, counters, bytes, &seconds) == expected);
-    PHX_CHECK(bytes[1] == 0 && bytes[2] == 0 && bytes[4] == 0 && bytes[5] == 0);
+    PHX_CHECK(bytes[PHX_MC_EXECUTION_MEMORY_LIVE_BYTES] == 0 && bytes[PHX_MC_EXECUTION_MEMORY_PEAK_BYTES] == 0 && bytes[PHX_MC_EXECUTION_MEMORY_ALLOCATIONS] == 0 && bytes[PHX_MC_EXECUTION_MEMORY_REFUSALS] == 0);
   }
 }
 
@@ -347,7 +347,7 @@ void test_host_concurrent_release_serializes_pool_operations_and_scope_exit() {
     NativeVector<uint64_t> values(8, 3);
     values.reserve(16);
     const auto evidence = window.evidence();
-    PHX_CHECK(evidence[1] <= evidence[0] && evidence[2] <= evidence[0] && evidence[5] == 0);
+    PHX_CHECK(evidence[PHX_MC_MEMORY_LIVE_BYTES] <= evidence[PHX_MC_MEMORY_LIMIT_BYTES] && evidence[PHX_MC_MEMORY_PEAK_BYTES] <= evidence[PHX_MC_MEMORY_LIMIT_BYTES] && evidence[PHX_MC_MEMORY_REFUSALS] == 0);
   }
   uint64_t counters[PHX_MC_EXECUTION_COUNTERS], bytes[PHX_MC_EXECUTION_MEMORY_VALUES];
   double seconds;
@@ -513,9 +513,25 @@ void test_envelope_refusals_share_original_work_queries_and_memory() {
     void* envelope = nullptr;
     int64_t counts[7];
     double bounds[4];
-    PHX_CHECK(phx_mc_surface_envelope_create(points,3,faces,1,
-        .263,.11,.05,100000,10000000,10000,20000,20000,100000,
-        &envelope,counts,bounds) == PHX_MC_CAPACITY_EXCEEDED);
+    const phx_mc_surface_envelope_create_request request{
+        .vertices = points,
+        .vertex_count = 3,
+        .faces = faces,
+        .face_count = 1,
+        .offset = .263,
+        .spacing = .11,
+        .certificate_spacing = .05,
+        .sample_limit = 100000,
+        .work_limit = 10000000,
+        .surface_vertex_capacity = 10000,
+        .surface_triangle_capacity = 20000,
+        .volume_vertex_capacity = 20000,
+        .tetrahedron_capacity = 100000,
+        .result = &envelope,
+        .counts = counts,
+        .bounds = bounds,
+    };
+    PHX_CHECK(phx_mc_surface_envelope_create(&request) == PHX_MC_CAPACITY_EXCEEDED);
     PHX_CHECK(envelope == nullptr);
     // Failed construction releases every partially built source/carrier owner.
     PHX_CHECK(owner->live_bytes() == 0);

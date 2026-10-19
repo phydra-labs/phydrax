@@ -1,26 +1,32 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
-// PLC validation and recovery: exact volume and facet coverage oracles, fixed
+// PLC validation and recovery: volume and facet coverage oracles, fixed
 // boundary preservation and failure evidence.
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <map>
+#include <span>
 #include <vector>
 
+#include "bounded_memory.hpp"
 #include "check.hpp"
 #include "phydrax_meshcore.h"
 #include "plc3d.hpp"
 #include "predicates.hpp"
+#include "tet_mesh_fixtures.hpp"
 
 namespace {
 
 using phx::mc::BoundaryPolicy;
 using phx::mc::PlcInput;
 using phx::mc::PlcRecovery;
+using phx::mc::test::face_area;
+using phx::mc::test::tet_volume;
 
 struct Plc {
   std::vector<double> points;
@@ -75,21 +81,6 @@ Plc cube(double scale = 1.0) {
   return plc;
 }
 
-double tet_volume(const PlcRecovery& r, std::size_t t) {
-  const double* p[4];
-  for (int k = 0; k < 4; ++k) {
-    p[k] = r.points.data() + 3 * r.tets[4 * t + k];
-  }
-  double u[3], v[3], w[3];
-  for (int a = 0; a < 3; ++a) {
-    u[a] = p[1][a] - p[0][a];
-    v[a] = p[2][a] - p[0][a];
-    w[a] = p[3][a] - p[0][a];
-  }
-  return (u[0] * (v[1] * w[2] - v[2] * w[1]) - u[1] * (v[0] * w[2] - v[2] * w[0]) +
-          u[2] * (v[0] * w[1] - v[1] * w[0])) /
-         6.0;
-}
 
 // Region measures of published cells, each exactly positively oriented (the
 // floating volume of a valid sliver between nearly coplanar facets may round
@@ -105,15 +96,16 @@ std::map<int32_t, double> region_volumes(const PlcRecovery& r) {
   return volumes;
 }
 
-double face_area(const PlcRecovery& r, std::size_t f) {
-  const double* a = r.points.data() + 3 * r.faces[3 * f];
-  const double* b = r.points.data() + 3 * r.faces[3 * f + 1];
-  const double* c = r.points.data() + 3 * r.faces[3 * f + 2];
-  const double u[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
-  const double v[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-  const double n[3] = {u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2],
-                       u[0] * v[1] - u[1] * v[0]};
-  return 0.5 * std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+struct TriangleSurface {
+  std::span<const double> points;
+  std::span<const int32_t> faces;
+};
+
+// Divergence-theorem contribution of one outward source triangle.
+double source_triangle_volume(const double* a, const double* b, const double* c) {
+  return (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) +
+          a[2] * (b[0] * c[1] - b[1] * c[0])) /
+         6.0;
 }
 
 // Independent oriented incidence oracle, reconstructed from published cells
@@ -170,9 +162,8 @@ void test_reflex_l_prism() {
     plc.polygon({i, j, j + 6, i + 6}, facet);
   }
   PlcRecovery r;
-  // Actual planar-CDT work is now included: this fixture consumes 10,267
-  // units in the integrated kernel, rather than the prior 2,859 partial count.
-  // Keep a coherent positive-case budget and an independent hard bound below.
+  // The planar CDT and recovery fit within 20,000 work units; the independent
+  // 500-unit request below must refuse without exceeding its hard bound.
   const int32_t status = plc.run(BoundaryPolicy::kConforming, r, 20000);
   PHX_CHECK(status == PHX_MC_OK);
   if (status != PHX_MC_OK) {
@@ -188,7 +179,7 @@ void test_reflex_l_prism() {
   PlcRecovery depleted;
   PHX_CHECK(plc.run(BoundaryPolicy::kConforming, depleted, 500) == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(depleted.failure.reason == phx::mc::kPlcWorkBudget);
-  PHX_CHECK(depleted.counters[phx::mc::kPlcWork] <= 500);
+  PHX_CHECK(depleted.counters.work_units <= 500);
 }
 
 void test_cube(BoundaryPolicy policy) {
@@ -203,7 +194,7 @@ void test_cube(BoundaryPolicy policy) {
   }
   PHX_CHECK_NEAR(area, 6.0, 1e-14);
   PHX_CHECK(r.plc_edges.size() == 2 * 12);
-  PHX_CHECK(r.counters[phx::mc::kPlcSegmentSteiner] == 0);
+  PHX_CHECK(r.counters.segment_steiner_points == 0);
 }
 
 // Two unit cubes sharing the interface x = 1 (regions 0 and 1).
@@ -345,16 +336,14 @@ void test_schonhardt() {
     const double* a = plc.points.data() + 3 * loop[0];
     const double* b = plc.points.data() + 3 * loop[1];
     const double* c = plc.points.data() + 3 * loop[2];
-    reference += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) +
-                  a[2] * (b[0] * c[1] - b[1] * c[0])) /
-                 6.0;
+    reference += source_triangle_volume(a, b, c);
   }
   PHX_CHECK_NEAR(volumes.at(0), reference, 1e-13);
   PlcRecovery fixed;
   PHX_CHECK(plc.run(BoundaryPolicy::kFixed, fixed) == PHX_MC_OK);
   PHX_CHECK_NEAR(region_volumes(fixed).at(0), reference, 1e-13);
-  PHX_CHECK(fixed.counters[phx::mc::kPlcSegmentSteiner] == 0);
-  PHX_CHECK(fixed.counters[phx::mc::kPlcFacetSteiner] == 0);
+  PHX_CHECK(fixed.counters.segment_steiner_points == 0);
+  PHX_CHECK(fixed.counters.facet_steiner_points == 0);
   PHX_CHECK(std::equal(plc.points.begin(), plc.points.end(), fixed.points.begin()));
   std::map<std::array<int32_t, 3>, int> expected, actual;
   for (std::size_t p = 0; p + 1 < plc.offsets.size(); ++p) {
@@ -376,7 +365,7 @@ void test_schonhardt() {
 
 // Freudenthal categorical reconstruction of a two-label 2 x 1 x 1 image with
 // unit voxels at the integers (labels "left" and "right"): 276 single-triangle
-// facets, many coplanar with their neighbours, with coordinates in twelfths.
+// facets, many coplanar with their neighbors, with coordinates in twelfths.
 // Most of its PLC edges have no exactly representable split point, so both
 // policies must recover them by reconnection, those between coplanar facets
 // from both sides of their common planar component.
@@ -474,19 +463,12 @@ void test_categorical_interface(BoundaryPolicy policy) {
     const double* a = plc.points.data() + 3 * loop[0];
     const double* b = plc.points.data() + 3 * loop[1];
     const double* c = plc.points.data() + 3 * loop[2];
-    const double volume = (a[0] * (b[1] * c[2] - b[2] * c[1]) -
-                           a[1] * (b[0] * c[2] - b[2] * c[0]) +
-                           a[2] * (b[0] * c[1] - b[1] * c[0])) /
-                          6.0;
+    const double volume = source_triangle_volume(a, b, c);
     reference[plc.facet_regions[2 * p + 1]] += volume;
     if (plc.facet_regions[2 * p] >= 0) {
       reference[plc.facet_regions[2 * p]] -= volume;
     }
-    const double u[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
-    const double v[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-    const double n[3] = {u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2],
-                         u[0] * v[1] - u[1] * v[0]};
-    facet_area.push_back(0.5 * std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]));
+    facet_area.push_back(face_area(TriangleSurface{plc.points, {loop, 3}}, 0));
   }
   PlcRecovery r;
   const int32_t status = plc.run(policy, r);
@@ -508,8 +490,8 @@ void test_categorical_interface(BoundaryPolicy policy) {
     PHX_CHECK_NEAR(covered[facet], facet_area[facet], 1e-14);
   }
   if (policy == BoundaryPolicy::kFixed) {
-    PHX_CHECK(r.counters[phx::mc::kPlcSegmentSteiner] == 0);
-    PHX_CHECK(r.counters[phx::mc::kPlcFacetSteiner] == 0);
+    PHX_CHECK(r.counters.segment_steiner_points == 0);
+    PHX_CHECK(r.counters.facet_steiner_points == 0);
     PHX_CHECK(r.face_sources.size() == facet_area.size());
   }
 }
@@ -555,6 +537,287 @@ void test_failures() {
   PHX_CHECK(leak.failure.reason == phx::mc::kPlcRegionLeak);
 }
 
+// A cavity limit too small for a recovery edit is a resource refusal with the
+// tetrahedron-budget reason, never an internal error.
+void test_cavity_limit_refusal() {
+  struct Case {
+    Plc plc;
+    uint64_t cavity_limit;
+  };
+  const Case cases[] = {{schonhardt(), 11}, {categorical_interface(), 64}};
+  for (const Case& c : cases) {
+    phx::mc::NativeExecutionScope scope(std::numeric_limits<uint64_t>::max(),
+                                        std::numeric_limits<uint64_t>::max(), c.cavity_limit,
+                                        std::numeric_limits<std::size_t>::max(),
+                                        std::numeric_limits<double>::infinity());
+    PlcRecovery r;
+    PHX_CHECK(c.plc.run(BoundaryPolicy::kFixed, r) == PHX_MC_CAPACITY_EXCEEDED);
+    PHX_CHECK(r.failure.reason == phx::mc::kPlcTetrahedronBudget);
+    PHX_CHECK(r.failure.first_kind == phx::mc::kPlcEdge);
+    PHX_CHECK(scope.status() == PHX_MC_CAPACITY_EXCEEDED);
+  }
+}
+
+phx_mc_plc3d* recover_handle(const Plc& plc) {
+  phx_mc_plc3d* handle = nullptr;
+  phx_mc_plc3d_recover_request request{};
+  request.point_count = static_cast<int64_t>(plc.points.size() / 3);
+  request.points = plc.points.data();
+  request.polygon_count = static_cast<int64_t>(plc.polygon_facets.size());
+  request.polygon_offsets = plc.offsets.data();
+  request.polygon_vertices = plc.loops.data();
+  request.polygon_facets = plc.polygon_facets.data();
+  request.facet_count = static_cast<int64_t>(plc.facet_regions.size() / 2);
+  request.facet_regions = plc.facet_regions.data();
+  request.segment_count = static_cast<int64_t>(plc.segments.size() / 2);
+  request.segments = plc.segments.data();
+  request.boundary_policy = PHX_MC_PLC3D_FIXED;
+  request.max_vertices = 100000;
+  request.max_tetrahedra = 1000000;
+  request.work_limit = int64_t{1} << 40;
+  request.maximum_scratch_bytes = std::numeric_limits<uint64_t>::max();
+  request.result = &handle;
+  const int32_t status = phx_mc_plc3d_recover(&request);
+  PHX_CHECK(status == PHX_MC_OK);
+  PHX_CHECK(handle != nullptr);
+  if (status != PHX_MC_OK) {
+    phx_mc_plc3d_free(handle);
+    return nullptr;
+  }
+  return handle;
+}
+
+void test_getters_reject_null_handles() {
+  std::array<int64_t, PHX_MC_PLC3D_COUNTERS> output;
+  output.fill(-7);
+  double refusal[PHX_MC_PLC3D_SOURCE_REFUSAL_VALUES] = {-7.0, -7.0};
+  PHX_CHECK(phx_mc_plc3d_sizes(nullptr, output.data()) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_plc3d_counters(nullptr, output.data()) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_plc3d_failure(nullptr, output.data()) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_plc3d_export(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                              nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                              nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_plc3d_source_witnesses(nullptr, nullptr, nullptr, nullptr, nullptr,
+                                        refusal) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(std::all_of(output.begin(), output.end(), [](int64_t v) { return v == -7; }));
+  PHX_CHECK(refusal[0] == -7.0 && refusal[1] == -7.0);
+}
+
+void test_diagnostic_getter_outputs() {
+  phx_mc_plc3d* handle = recover_handle(cube());
+  if (handle == nullptr) {
+    return;
+  }
+  PHX_CHECK(phx_mc_plc3d_sizes(handle, nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_plc3d_counters(handle, nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_plc3d_failure(handle, nullptr) == PHX_MC_INVALID_ARGUMENT);
+  int64_t sizes[PHX_MC_PLC3D_SIZES];
+  int64_t counters[PHX_MC_PLC3D_COUNTERS];
+  int64_t failure[PHX_MC_PLC3D_FAILURE];
+  PHX_CHECK(phx_mc_plc3d_sizes(handle, sizes) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_plc3d_counters(handle, counters) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_plc3d_failure(handle, failure) == PHX_MC_OK);
+  PHX_CHECK(sizes[PHX_MC_PLC3D_SIZE_POINTS] == 8);
+  PHX_CHECK(sizes[PHX_MC_PLC3D_SIZE_TETRAHEDRA] > 0);
+  PHX_CHECK(counters[PHX_MC_PLC3D_WORK_UNITS] > 0);
+  PHX_CHECK(failure[PHX_MC_PLC3D_FAILURE_REASON] == phx::mc::kPlcNoFailure);
+  phx_mc_plc3d_free(handle);
+}
+
+void test_export_checks_all_buffers_before_copying() {
+  const Plc plc = cube();
+  phx_mc_plc3d* handle = recover_handle(plc);
+  if (handle == nullptr) {
+    return;
+  }
+  int64_t sizes[PHX_MC_PLC3D_SIZES];
+  const int32_t size_status = phx_mc_plc3d_sizes(handle, sizes);
+  PHX_CHECK(size_status == PHX_MC_OK);
+  if (size_status != PHX_MC_OK) {
+    phx_mc_plc3d_free(handle);
+    return;
+  }
+  PlcRecovery out;
+  const auto points = static_cast<std::size_t>(sizes[PHX_MC_PLC3D_SIZE_POINTS]);
+  const auto tets = static_cast<std::size_t>(sizes[PHX_MC_PLC3D_SIZE_TETRAHEDRA]);
+  const auto faces = static_cast<std::size_t>(sizes[PHX_MC_PLC3D_SIZE_FACES]);
+  const auto segments = static_cast<std::size_t>(sizes[PHX_MC_PLC3D_SIZE_SEGMENTS]);
+  const auto edges = static_cast<std::size_t>(sizes[PHX_MC_PLC3D_SIZE_PLC_EDGES]);
+  const auto triangles = static_cast<std::size_t>(sizes[PHX_MC_PLC3D_SIZE_INPUT_TRIANGLES]);
+  out.points.assign(3 * points, -7.0);
+  out.tets.assign(4 * tets, -7);
+  out.tet_regions.assign(tets, -7);
+  out.faces.assign(3 * faces, -7);
+  out.face_sources.assign(faces, -7);
+  out.segments.assign(2 * segments, -7);
+  out.segment_sources.assign(segments, -7);
+  out.protection.assign(points, -7.0);
+  out.plc_edges.assign(2 * edges, -7);
+  out.vertex_dimension.assign(points, -7);
+  out.input_triangles.assign(3 * triangles, -7);
+  out.input_polygons.assign(triangles, -7);
+  std::array<void*, 12> buffers{
+      out.points.data(), out.tets.data(), out.tet_regions.data(), out.faces.data(),
+      out.face_sources.data(), out.segments.data(), out.segment_sources.data(),
+      out.protection.data(), out.plc_edges.data(), out.vertex_dimension.data(),
+      out.input_triangles.data(), out.input_polygons.data()};
+  constexpr const char* names[] = {
+      "missing points", "missing tets", "missing tet_regions", "missing faces",
+      "missing face_sources", "missing segments", "missing segment_sources",
+      "missing protection", "missing plc_edges", "missing vertex_dimension",
+      "missing input_triangles", "missing input_polygons"};
+  const auto export_buffers = [&]() {
+    return phx_mc_plc3d_export(
+        handle, static_cast<double*>(buffers[0]), static_cast<int32_t*>(buffers[1]),
+        static_cast<int32_t*>(buffers[2]), static_cast<int32_t*>(buffers[3]),
+        static_cast<int32_t*>(buffers[4]), static_cast<int32_t*>(buffers[5]),
+        static_cast<int32_t*>(buffers[6]), static_cast<double*>(buffers[7]),
+        static_cast<int32_t*>(buffers[8]), static_cast<int8_t*>(buffers[9]),
+        static_cast<int32_t*>(buffers[10]), static_cast<int32_t*>(buffers[11]));
+  };
+  for (std::size_t k = 0; k < buffers.size(); ++k) {
+    void* buffer = buffers[k];
+    buffers[k] = nullptr;
+    if (export_buffers() != PHX_MC_INVALID_ARGUMENT) {
+      phx::mc::test::record_failure(__FILE__, __LINE__, names[k]);
+    }
+    buffers[k] = buffer;
+  }
+  const auto untouched = [](const auto& values) {
+    return std::all_of(values.begin(), values.end(), [](auto value) { return value == -7; });
+  };
+  PHX_CHECK(untouched(out.points));
+  PHX_CHECK(untouched(out.tets));
+  PHX_CHECK(untouched(out.tet_regions));
+  PHX_CHECK(untouched(out.faces));
+  PHX_CHECK(untouched(out.face_sources));
+  PHX_CHECK(untouched(out.segments));
+  PHX_CHECK(untouched(out.segment_sources));
+  PHX_CHECK(untouched(out.protection));
+  PHX_CHECK(untouched(out.plc_edges));
+  PHX_CHECK(untouched(out.vertex_dimension));
+  PHX_CHECK(untouched(out.input_triangles));
+  PHX_CHECK(untouched(out.input_polygons));
+  PHX_CHECK(export_buffers() == PHX_MC_OK);
+  PHX_CHECK_NEAR(region_volumes(out).at(0), 1.0, 1e-14);
+  check_cover_incidence(plc, out);
+  phx_mc_plc3d_free(handle);
+}
+
+void test_witness_output_contract() {
+  phx_mc_plc3d* handle = recover_handle(cube());
+  if (handle == nullptr) {
+    return;
+  }
+  int64_t sizes[PHX_MC_PLC3D_SIZES];
+  const int32_t size_status = phx_mc_plc3d_sizes(handle, sizes);
+  PHX_CHECK(size_status == PHX_MC_OK);
+  if (size_status != PHX_MC_OK) {
+    phx_mc_plc3d_free(handle);
+    return;
+  }
+  const auto points = static_cast<std::size_t>(sizes[PHX_MC_PLC3D_SIZE_POINTS]);
+  std::vector<int8_t> strata(points, -7);
+  std::vector<int32_t> entities(points, -7);
+  std::vector<double> parameters(2 * points, -7.0);
+  std::vector<double> deviations(points, -7.0);
+  double refusal[PHX_MC_PLC3D_SOURCE_REFUSAL_VALUES] = {-7.0, -7.0};
+  PHX_CHECK(phx_mc_plc3d_source_witnesses(handle, nullptr, entities.data(), parameters.data(),
+                                        deviations.data(), refusal) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_plc3d_source_witnesses(handle, strata.data(), nullptr, parameters.data(),
+                                        deviations.data(), refusal) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_plc3d_source_witnesses(handle, strata.data(), entities.data(), nullptr,
+                                        deviations.data(), refusal) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_plc3d_source_witnesses(handle, strata.data(), entities.data(), parameters.data(),
+                                        nullptr, refusal) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(std::all_of(strata.begin(), strata.end(), [](int8_t v) { return v == -7; }));
+  PHX_CHECK(std::all_of(entities.begin(), entities.end(), [](int32_t v) { return v == -7; }));
+  PHX_CHECK(std::all_of(parameters.begin(), parameters.end(), [](double v) { return v == -7.0; }));
+  PHX_CHECK(std::all_of(deviations.begin(), deviations.end(), [](double v) { return v == -7.0; }));
+  PHX_CHECK(refusal[0] == -7.0 && refusal[1] == -7.0);
+  PHX_CHECK(phx_mc_plc3d_source_witnesses(handle, strata.data(), entities.data(), parameters.data(),
+                                        deviations.data(), nullptr) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_plc3d_source_witnesses(handle, strata.data(), entities.data(), parameters.data(),
+                                        deviations.data(), refusal) == PHX_MC_OK);
+  PHX_CHECK(refusal[PHX_MC_PLC3D_SOURCE_REFUSAL_CERTIFIED_DEVIATION] == 0.0);
+  PHX_CHECK(refusal[PHX_MC_PLC3D_SOURCE_REFUSAL_DECLARED_BOUND] == 0.0);
+  phx_mc_plc3d_free(handle);
+}
+
+void test_source_export_allows_empty_banks() {
+  const Plc plc = cube();
+  phx_mc_plc3d* handle = nullptr;
+  const int32_t source_status = phx_mc_plc3d_source_constraints(
+      static_cast<int64_t>(plc.points.size() / 3), plc.points.data(),
+      static_cast<int64_t>(plc.polygon_facets.size()), plc.offsets.data(),
+      plc.loops.data(), plc.polygon_facets.data(),
+      static_cast<int64_t>(plc.facet_regions.size() / 2), plc.facet_regions.data(),
+      0, nullptr, int64_t{1} << 40, std::numeric_limits<uint64_t>::max(), 0, &handle);
+  PHX_CHECK(source_status == PHX_MC_OK);
+  PHX_CHECK(handle != nullptr);
+  if (source_status != PHX_MC_OK || handle == nullptr) {
+    phx_mc_plc3d_free(handle);
+    return;
+  }
+  int64_t sizes[PHX_MC_PLC3D_SIZES];
+  const int32_t size_status = phx_mc_plc3d_sizes(handle, sizes);
+  PHX_CHECK(size_status == PHX_MC_OK);
+  if (size_status != PHX_MC_OK) {
+    phx_mc_plc3d_free(handle);
+    return;
+  }
+  std::vector<double> points(3 * static_cast<std::size_t>(sizes[PHX_MC_PLC3D_SIZE_POINTS]));
+  std::vector<int32_t> edges(2 * static_cast<std::size_t>(sizes[PHX_MC_PLC3D_SIZE_PLC_EDGES]));
+  std::vector<int32_t> triangles(
+      3 * static_cast<std::size_t>(sizes[PHX_MC_PLC3D_SIZE_INPUT_TRIANGLES]));
+  std::vector<int32_t> polygons(
+      static_cast<std::size_t>(sizes[PHX_MC_PLC3D_SIZE_INPUT_TRIANGLES]));
+  PHX_CHECK(phx_mc_plc3d_export(handle, points.data(), nullptr, nullptr, nullptr, nullptr,
+                              nullptr, nullptr, nullptr, edges.data(), nullptr,
+                              triangles.data(), polygons.data()) == PHX_MC_OK);
+  PHX_CHECK(points == plc.points);
+  PHX_CHECK(phx_mc_plc3d_source_witnesses(handle, nullptr, nullptr, nullptr, nullptr,
+                                        nullptr) == PHX_MC_OK);
+  phx_mc_plc3d_free(handle);
+}
+
+void test_planar_recovery_debits_global_work_once() {
+  const Plc plc = cube();
+  PlcRecovery baseline;
+  PHX_CHECK(plc.run(BoundaryPolicy::kFixed, baseline) == PHX_MC_OK);
+  const uint64_t required = static_cast<uint64_t>(baseline.counters.work_units);
+  PHX_CHECK(required > 1);
+  {
+    phx::mc::NativeExecutionScope scope(
+        required, std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(), 1 << 24, INFINITY);
+    PlcRecovery result;
+    PHX_CHECK(plc.run(BoundaryPolicy::kFixed, result,
+                      static_cast<int64_t>(required)) == PHX_MC_OK);
+    PHX_CHECK(result.counters.work_units == baseline.counters.work_units);
+    const auto work = scope.evidence();
+    PHX_CHECK(work[PHX_MC_EXECUTION_CONSTRUCTION_WORK] == required);
+    PHX_CHECK(work[PHX_MC_EXECUTION_EXTERNAL_WORK] == 0);
+    PHX_CHECK(work[PHX_MC_EXECUTION_WORK_REFUSALS] == 0);
+    PHX_CHECK(result.points == baseline.points && result.tets == baseline.tets);
+  }
+  {
+    phx::mc::NativeExecutionScope scope(
+        required - 1, std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(), 1 << 24, INFINITY);
+    PlcRecovery result;
+    PHX_CHECK(plc.run(BoundaryPolicy::kFixed, result,
+                      static_cast<int64_t>(required)) == PHX_MC_CAPACITY_EXCEEDED);
+    PHX_CHECK(result.failure.reason == phx::mc::kPlcWorkBudget);
+    const auto work = scope.evidence();
+    PHX_CHECK(work[PHX_MC_EXECUTION_CONSTRUCTION_WORK] ==
+              static_cast<uint64_t>(result.counters.work_units));
+    PHX_CHECK(work[PHX_MC_EXECUTION_CONSTRUCTION_WORK] <= required - 1);
+    PHX_CHECK(work[PHX_MC_EXECUTION_EXTERNAL_WORK] == 0);
+    PHX_CHECK(work[PHX_MC_EXECUTION_WORK_REFUSALS] == 1);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -567,5 +830,12 @@ int main() {
   test_categorical_interface(BoundaryPolicy::kConforming);
   test_categorical_interface(BoundaryPolicy::kFixed);
   test_failures();
+  test_cavity_limit_refusal();
+  test_getters_reject_null_handles();
+  test_diagnostic_getter_outputs();
+  test_export_checks_all_buffers_before_copying();
+  test_witness_output_contract();
+  test_source_export_allows_empty_banks();
+  test_planar_recovery_debits_global_work_once();
   return phx::mc::test::finish("test_plc3d");
 }

@@ -2,45 +2,52 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Original-source acceptance for immutable layer/core composition."""
+"""Source-source acceptance for immutable layer/core composition."""
 
 from __future__ import annotations
 
 import numpy as np
 
-from ..geometry._mesh_certificates import PiecewiseLinearDomain, SourceBoundaryQuery
-from ..geometry._meshing_domain import MeshingDomain, MeshingDomainBoundarySource
-from ._certification import MeshCertificationSchedule
-from ._contracts import VolumeMeshingSpec
-from ._controls import FeatureKind
-from ._layer_core import LayerCoreConstruction
-from ._layer_core_controls import layer_source_face_ancestry
-from ._layer_core_resources import _row_entity_vertex_keys, LayerCoreSourceWork
-from ._sizing import UniformSizeControl
-from .providers._native_publication import NativeCertificationRequest
-from .providers._native_sources import NativeLayerCoreSource
+import phydrax.geometry._domain_boundary as domain_boundary
+import phydrax.geometry._domain_coverage as _dependency_phydrax_geometry__mesh_certificates
+import phydrax.geometry._meshing_domain as _dependency_phydrax_geometry__meshing_domain
+import phydrax.geometry._source_boundary_records as source_boundary_records_owner
+import phydrax.meshing._certification_schedule as _leaf_phydrax_meshing__certification_schedule
+import phydrax.meshing._contracts as _dependency_phydrax_meshing__contracts
+import phydrax.meshing._controls as _dependency_phydrax_meshing__controls
+import phydrax.meshing._layer_core_controls as _dependency_phydrax_meshing__layer_core_controls
+import phydrax.meshing._layer_core_resources as _dependency_phydrax_meshing__layer_core_resources
+import phydrax.meshing._layer_core_topology as _dependency_phydrax_meshing__layer_core
+import phydrax.meshing._sizing as _dependency_phydrax_meshing__sizing
+import phydrax.meshing.providers._native_publication as _dependency_phydrax_meshing_providers__native_publication
+import phydrax.meshing.providers._native_sources as _dependency_phydrax_meshing_providers__native_sources
+
+from ..typing import checked
 
 
+@checked
 def layer_source_certification(
-    source: NativeLayerCoreSource,
-    specification: VolumeMeshingSpec,
-    construction: LayerCoreConstruction,
+    source: _dependency_phydrax_meshing_providers__native_sources.NativeLayerCoreSource,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    construction: _dependency_phydrax_meshing__layer_core.LayerCoreConstruction,
     /,
     *,
-    work: LayerCoreSourceWork,
-) -> NativeCertificationRequest:
-    """Compose original represented coverage and continuous original fidelity.
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
+) -> _dependency_phydrax_meshing_providers__native_publication.NativeCertificationRequest:
+    """Compose source represented coverage and continuous source fidelity.
 
     A curved source's PLC coverage remains explicitly an approximation-domain
-    certificate; continuous fidelity is independently bound to the original
-    source query. It is not relabeled as exact curved-domain coverage.
+    certificate; continuous fidelity is independently bound to the source
+    source query. It is not relabeled as curved-domain coverage.
     """
     original = source.source_domain
     query = source.fidelity_source
     scope = source.source_boundary_scope
     if original is None:
-        return NativeCertificationRequest(
-            MeshCertificationSchedule("volume_plc"),
+        return _dependency_phydrax_meshing_providers__native_publication.NativeCertificationRequest(
+            _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule(
+                "volume_plc"
+            ),
             source.source_id,
             source.source_revision,
             specification.limits,
@@ -49,57 +56,66 @@ def layer_source_certification(
         )
     if query is None or scope is None:
         raise ValueError(
-            "Original layer geometry requires its complete boundary scope and continuous query."
+            "NativeLayerCoreSource.source_domain must provide its full boundary scope and continuous query; got missing or incompatible its full boundary scope and continuous query"
         )
     if (query.source_id, query.source_revision) != (
         original.source_id,
         original.source_revision,
     ):
         raise ValueError(
-            "The original fidelity query must bind the declared original geometry revision."
+            "NativeLayerCoreSource.source_domain must bind the declared source geometry revision; got incompatible source fidelity query"
         )
     whole = tuple(
         feature
         for feature in specification.protected_features
-        if feature.feature_kind is FeatureKind.SURFACE
+        if feature.feature_kind
+        is _dependency_phydrax_meshing__controls.FeatureKind.SURFACE
         and feature.scope.scope_id == scope.scope_id
     )
     size = specification.size_controls[0]
-    if not isinstance(size, UniformSizeControl):
-        raise ValueError(
-            "A layer/core request must declare its whole-source resolution bound."
-        )
+    match size:
+        case _dependency_phydrax_meshing__sizing.UniformSizeControl():
+            pass
+        case _:
+            raise ValueError(
+                "NativeLayerCoreSource.source_domain must declare its whole-source resolution bound; got incompatible layer/core request"
+            )
     # The size request supplies an explicit geometric resolution bound when
     # no tighter whole-boundary deviation was requested. The consumer reports
     # this resolution semantics rather than inventing a zero-distance claim.
     tolerance = min(
         (feature.maximum_deviation for feature in whole), default=size.target_size
     )
-    if isinstance(original, PiecewiseLinearDomain):
-        indices = {
-            identifier: index for index, identifier in enumerate(original.region_ids)
-        }
-        if any(identifier not in indices for identifier in source.region_ids):
-            raise ValueError(
-                "Original represented regions must include every declared layer/core material identity."
+    match original:
+        case (
+            _dependency_phydrax_geometry__mesh_certificates.PiecewiseLinearDomain() as original
+        ):
+            indices = {
+                identifier: index for index, identifier in enumerate(original.region_ids)
+            }
+            if any(identifier not in indices for identifier in source.region_ids):
+                raise ValueError(
+                    "NativeLayerCoreSource.source_domain must include every declared layer/core material identity; got incompatible Source represented regions"
+                )
+            regions = np.asarray(
+                [
+                    indices[source.region_ids[int(index)]]
+                    for index in construction.cell_regions
+                ],
+                dtype=np.int64,
             )
-        regions = np.asarray(
-            [
-                indices[source.region_ids[int(index)]]
-                for index in construction.cell_regions
-            ],
-            dtype=np.int64,
-        )
-        domain = original
-    elif isinstance(original, MeshingDomain):
-        regions = construction.cell_regions
-        domain = construction.domain
-    else:
-        raise TypeError(
-            "Original layer geometry must be MeshingDomain or PiecewiseLinearDomain."
-        )
-    return NativeCertificationRequest(
-        MeshCertificationSchedule("volume_layer"),
+            domain = original
+        case _dependency_phydrax_geometry__meshing_domain.MeshingDomain() as original:
+            regions = construction.cell_regions
+            domain = construction.domain
+        case _:
+            raise TypeError(
+                "NativeLayerCoreSource.source_domain must be MeshingDomain or PiecewiseLinearDomain; got incompatible Source layer geometry"
+            )
+    return _dependency_phydrax_meshing_providers__native_publication.NativeCertificationRequest(
+        _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule(
+            "volume_layer"
+        ),
         original.source_id,
         original.source_revision,
         specification.limits,
@@ -113,15 +129,23 @@ def layer_source_certification(
     )
 
 
+@checked
 def layer_source_fidelity_requests(
-    source: NativeLayerCoreSource,
-    specification: VolumeMeshingSpec,
-    construction: LayerCoreConstruction,
+    source: _dependency_phydrax_meshing_providers__native_sources.NativeLayerCoreSource,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    construction: _dependency_phydrax_meshing__layer_core.LayerCoreConstruction,
     /,
     *,
-    work: LayerCoreSourceWork,
-) -> tuple[tuple[SourceBoundaryQuery, np.ndarray, float], ...]:
-    """Bind each original face to its complete authored target trace and query."""
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
+) -> tuple[
+    tuple[
+        source_boundary_records_owner.SourceBoundaryQuery,
+        np.ndarray,
+        float,
+    ],
+    ...,
+]:
+    """Bind each source face to its full authored target trace and query."""
     original, query, scope = (
         source.source_domain,
         source.fidelity_source,
@@ -129,29 +153,38 @@ def layer_source_fidelity_requests(
     )
     if original is None:
         return ()
-    if (
-        not isinstance(original, MeshingDomain)
-        or not isinstance(query, MeshingDomainBoundarySource)
-        or scope is None
-    ):
-        if any(
-            feature.scope.scope_id != specification.boundary_scope.scope_id
-            or feature.feature_kind is FeatureKind.MATERIAL_INTERFACE
-            for feature in specification.protected_features
-        ):
-            raise ValueError(
-                "Scoped original-source fidelity requires its nominal parametric face query."
-            )
-        return ()
+    match (original, query):
+        case (
+            _dependency_phydrax_geometry__meshing_domain.MeshingDomain() as original,
+            domain_boundary.MeshingDomainBoundarySource() as query,
+        ) if scope is not None:
+            pass
+        case _:
+            if any(
+                feature.scope.scope_id != specification.boundary_scope.scope_id
+                or feature.feature_kind
+                is _dependency_phydrax_meshing__controls.FeatureKind.MATERIAL_INTERFACE
+                for feature in specification.protected_features
+            ):
+                raise ValueError(
+                    "NativeLayerCoreSource.fidelity_source must provide a parametric face query for scoped features; got missing or incompatible face support"
+                )
+            return ()
     if query.domain.domain_id != original.domain_id:
         raise ValueError(
-            "Scoped fidelity must retain the actual original parametric domain."
+            "NativeLayerCoreSource.fidelity_source must retain the realized source parametric domain; got incompatible Scoped fidelity"
         )
-    authored = layer_source_face_ancestry(source, work=work)
+    authored = (
+        _dependency_phydrax_meshing__layer_core_controls.layer_source_face_ancestry(
+            source, work=work
+        )
+    )
     mesh = construction.mesh
     face_ids = dict(
         zip(
-            _row_entity_vertex_keys(mesh, 2),
+            _dependency_phydrax_meshing__layer_core_resources.row_entity_vertex_keys(
+                mesh, 2
+            ),
             np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64).tolist(),
             strict=True,
         )
@@ -161,7 +194,7 @@ def layer_source_fidelity_requests(
         work.charge(1)
         if key not in face_ids:
             raise ValueError(
-                "An authored original face is absent from the combined volume trace."
+                "NativeLayerCoreSource.fidelity_source must retain source patch identity and the requested combined-volume face trace; got an authored source face is absent from the combined volume trace"
             )
         targets.setdefault(owner, []).append(face_ids[key])
     patches = dict(
@@ -172,23 +205,33 @@ def layer_source_fidelity_requests(
         )
     )
     size = specification.size_controls[0]
-    if not isinstance(size, UniformSizeControl):
-        raise ValueError(
-            "Scoped layer fidelity requires its declared whole-source resolution."
-        )
+    match size:
+        case _dependency_phydrax_meshing__sizing.UniformSizeControl():
+            pass
+        case _:
+            raise ValueError(
+                "NativeLayerCoreSource.fidelity_source must provide its declared whole-source resolution; got missing or incompatible its declared whole-source resolution"
+            )
     whole = tuple(
         feature.maximum_deviation
         for feature in specification.protected_features
-        if feature.feature_kind is FeatureKind.SURFACE
+        if feature.feature_kind
+        is _dependency_phydrax_meshing__controls.FeatureKind.SURFACE
         and feature.scope.scope_id == scope.scope_id
     )
     default = min(whole, default=size.target_size)
-    requests: list[tuple[SourceBoundaryQuery, np.ndarray, float]] = []
+    requests: list[
+        tuple[
+            source_boundary_records_owner.SourceBoundaryQuery,
+            np.ndarray,
+            float,
+        ]
+    ] = []
     for identifier in np.asarray(scope.entity_ids, dtype=np.int64).tolist():
         work.charge(1)
         if identifier not in patches or identifier not in targets:
             raise ValueError(
-                "Every original requested face needs its actual source patch and complete target trace."
+                "NativeLayerCoreSource.fidelity_source must retain source patch identity and the requested combined-volume face trace; got every source requested face needs its realized source patch and full target trace"
             )
         patch = patches[identifier]
         tolerances = [
@@ -200,7 +243,7 @@ def layer_source_fidelity_requests(
         charts = tuple(
             record for record in query.chart_triangulations if record[0] == patch
         )
-        scoped = MeshingDomainBoundarySource(
+        scoped = domain_boundary.MeshingDomainBoundarySource(
             original, (patch,), resolution=query.resolution, chart_triangulations=charts
         )
         identifiers = np.asarray(sorted(set(targets[identifier])), dtype=np.int64)

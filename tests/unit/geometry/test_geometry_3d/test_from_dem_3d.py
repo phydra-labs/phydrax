@@ -6,6 +6,7 @@ import jax
 import numpy as np
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def test_geometry3d_from_dem_basic() -> None:
@@ -19,7 +20,7 @@ def test_geometry3d_from_dem_basic() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.reconstruct_dem_region(
             Z, x=x, y=y, extrude_depth=0.25, alpha=0.0
-        ).compile()
+        ).compile(coordinate_unit=METER)
     )
 
     assert isinstance(geom, phx.domain.GeometryDomain)

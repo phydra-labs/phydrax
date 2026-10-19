@@ -27,7 +27,93 @@ from phydrax import config as pxconfig
 
 
 # These supported preparation workloads determine the ceilings, not guessed RSS.
+_REFERENCE_KINDS = (
+    "interval",
+    "triangle",
+    "quadrilateral",
+    "tetrahedron",
+    "hexahedron",
+    "prism",
+    "pyramid",
+)
+_SIMPLEX_FORMS = tuple(
+    (n, k, r, family)
+    for family in ("trimmed", "full")
+    for n in (1, 2, 3)
+    for r in range(0 if family == "full" else 1, 4)
+    for k in range(n + 1)
+)
+_TENSOR_FORMS = tuple(
+    (n, k, r) for n in (1, 2, 3) for r in range(1, 4) for k in range(n + 1)
+)
+_HYBRID_FORMS = tuple((k, r) for r in range(1, 4) for k in range(4))
+
 HOT_SETS: tuple[tuple[str, str, tuple[tuple[Any, ...], ...]], ...] = (
+    (
+        "discretization._cell_geometry",
+        "_coordinate_lagrange_preparation",
+        tuple((kind, degree) for kind in _REFERENCE_KINDS for degree in range(1, 4)),
+    ),
+    (
+        "discretization._coordinate_enclosure",
+        "box_corner_lattice",
+        tuple((f"tensor:{dimension}",) for dimension in range(1, 7)),
+    ),
+    (
+        "discretization._coordinate_enclosure",
+        "_pyramid_execution_table",
+        tuple((degree,) for degree in range(1, 6)),
+    ),
+    ("discretization.fem._form_elements", "_prepare_simplex", _SIMPLEX_FORMS),
+    ("discretization.fem._form_elements", "_prepare_tensor", _TENSOR_FORMS),
+    (
+        "discretization.fem._form_elements",
+        "_polynomial_form_preparation",
+        (*_SIMPLEX_FORMS, *(args + ("tensor-trimmed",) for args in _TENSOR_FORMS)),
+    ),
+    ("discretization.fem._hybrid_forms", "_prism_generators", _HYBRID_FORMS),
+    ("discretization.fem._hybrid_forms", "_pyramid_generators", _HYBRID_FORMS),
+    (
+        "discretization.fem._hybrid_forms",
+        "_hybrid_exponent_cover",
+        tuple(
+            (family, k, r)
+            for family in ("prism-trimmed", "pyramid-trimmed")
+            for k, r in _HYBRID_FORMS
+        ),
+    ),
+    (
+        "discretization.fem._hybrid_moments",
+        "_body_monomial_integral",
+        tuple(
+            (family, alpha)
+            for family in ("prism-trimmed", "pyramid-trimmed")
+            for alpha in product(range(7), repeat=3)
+        ),
+    ),
+    ("meshing._quality", "_boundary_rule", tuple((kind,) for kind in _REFERENCE_KINDS)),
+    (
+        "meshing._quality",
+        "_face_rules",
+        tuple((kind, ambient) for kind in _REFERENCE_KINDS for ambient in (2, 3)),
+    ),
+    (
+        "meshing._quality",
+        "_volume_rule",
+        tuple((kind, degree) for kind in _REFERENCE_KINDS for degree in range(7)),
+    ),
+    (
+        "geometry._embedding_cells",
+        "vertices",
+        (
+            *((kind,) for kind in _REFERENCE_KINDS),
+            *(
+                (f"{family}:{dimension}",)
+                for family in ("simplex", "tensor")
+                for dimension in range(1, 7)
+            ),
+        ),
+    ),
     (
         "discretization.spectral._spherical_algebra",
         "_coupled_angular_momentum_block",
@@ -38,7 +124,7 @@ HOT_SETS: tuple[tuple[str, str, tuple[tuple[Any, ...], ...]], ...] = (
             for m in range(-a - b, a + b + 1)
         ),
     ),
-    ("meshing._quality", "_corner_table", tuple(("polygon", n) for n in range(3, 33))),
+    ("meshing._quality", "corner_table", tuple(("polygon", n) for n in range(3, 33))),
     (
         "applications.conformal_bootstrap._virasoro_generic",
         "_partitions",
@@ -66,7 +152,7 @@ HOT_SETS: tuple[tuple[str, str, tuple[tuple[Any, ...], ...]], ...] = (
     ),
     (
         "discretization.meshfree._stencils",
-        "_basis_exponents",
+        "polynomial_basis_exponents",
         tuple((d, p) for d in (1, 2, 3) for p in range(1, 7)),
     ),
     (
@@ -177,6 +263,20 @@ def fem_hot_sets() -> tuple[tuple[str, str, tuple[tuple[Any, ...], ...]], ...]:
 
     module = "discretization.fem._form_elements"
     return (
+        (
+            module,
+            "_tensor_coefficients",
+            tuple(
+                (
+                    n,
+                    r,
+                    tuple(product(range(r + 1), repeat=n)),
+                    labels(n, k, r),
+                    tuple(combinations(range(n), k)),
+                )
+                for n, k, r in _TENSOR_FORMS
+            ),
+        ),
         (module, "_tensor_interval", tuple((r,) for r in range(1, 6))),
         (
             module,

@@ -15,83 +15,279 @@ quotient edge is keyed by its representative endpoints and their relative
 lattice shift, and bisecting it splits every cell of its orbit star at the one
 new quotient vertex, each in its own local lift. All seam copies of the edge
 are therefore refined together and the result is conforming on the quotient.
+
+The closed affine quotient route combines full-source positive-cell validity,
+the topology owner's oppositely oriented two-sided facet admission, and provably
+interior-disjoint group lifts. The local-star degree is a positive integer:
+distinct preimages of a closed contact would each cover an open neighborhood
+and contradict interior disjointness. Nonclosed quotients retain closed mapped
+contact predicates. See Lipman, *Bijective Mappings of Meshes with Boundary and
+the Degree in Mesh Processing*, Section 3 (https://arxiv.org/abs/1310.0955).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Iterator, Sequence
-from contextlib import closing, contextmanager
-from dataclasses import dataclass
+import math
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
+from contextlib import closing, contextmanager, nullcontext
 from fractions import Fraction
-from itertools import combinations, product
-from typing import NamedTuple, TYPE_CHECKING
+from itertools import combinations
+from types import MappingProxyType
+from typing import assert_never, Literal, NamedTuple
 
 import equinox as eqx
+import jax
 import numpy as np
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.discretization._periodic_cell as periodic_cell_owner
+import phydrax.discretization._periodic_topology as periodic_topology_owner
+import phydrax.discretization._reference_cell_types as reference_cell_types_owner
+import phydrax.meshing._host_banks as _leaf_phydrax_meshing__host_banks
+from phydrax.discretization._periodic_exact import (
+    exact_periodic_element,
+    exact_periodic_generators,
+    identification_id,
+    identification_orders,
+    PeriodicIsometryGroup,
+    reduce_periodic_exponents,
+)
+from phydrax.discretization._sphere_chart_records import PreparedSphereChartDeformation
+from phydrax.discretization._surface_chart_records import PreparedSurfaceChartDeformation
+from phydrax.geometry._embedding_state import (
+    coordinate_certificate_request,
+    MeshCertificateLimits,
+)
+from phydrax.geometry._rational import (
+    dyadic_integers,
+    fraction_endpoint,
+)
+from phydrax.linalg._small_batched import cofactor_determinant_2, cofactor_determinant_3
+from phydrax.meshing._association_state import GeometryAssociation
+from phydrax.meshing._contracts import MeshingLimits
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from .._bvh import bvh_overlap_pair_blocks, BVHBuildPolicy, PackedBVH, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import NativeHostStorageWorkspace
+from .._geometry_predicates import bigint_bytes
+from .._meshcore import NativeExecutionScope
+from .._model._structure import model_array_bytes
+from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import (
-    CellBlock,
-    CellMesh,
-    periodic_orbit_measures,
-    PeriodicCell,
-    PeriodicMeshTopology,
-)
+from ..discretization import _periodic_measures as periodic_measures_owner
 from ..discretization._cell_complex import (
     PolygonalConnectivity,
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
 from ..discretization._cell_geometry import (
+    cell_geometry_preparation_bounds,
+    cell_geometry_preparation_query_upper,
     CellGeometrySpec,
     coordinate_lagrange_element,
 )
+from ..discretization._cell_geometry_transition_types import (
+    CellGeometryTransition,
+    NestedReferenceWitnesses,
+)
+from ..discretization._cell_geometry_validity import (
+    cell_geometry_id,
+    CellValidityCertificate,
+    CellValidityPolicy,
+    certify_cell_geometry_validity,
+)
 from ..discretization._cell_mesh import SimplicialConnectivity
-from ..discretization._periodic_topology import PeriodicIsometryGroup
-from ..geometry._mesh_certificates import (
-    _det2,
-    _det3,
-    _dyadic_integers,
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+    CoordinateLiveStorage,
+)
+from ..discretization._coordinate_enclosure import (
+    coordinate_corner_images,
+    coordinate_expressions,
+    CoordinateSourceBank,
+    prepared_coordinate_source_bank,
+    rounded_point,
+)
+from ..discretization._exact_algebraic_geometry import (
+    coefficient_interval,
+    ExactAlgebraicCellGeometrySource,
+    RadicalElement,
+    reserve_algebraic_work,
+)
+from ..discretization._exact_power_geometry import (
+    ExactPowerCellGeometryLinearActionSource,
+    ExactPowerCellGeometryRestrictionSource,
+    ExactPowerCellGeometrySource,
+)
+from ..discretization._periodic_topology import periodic_preparation_bounds
+from ..geometry import _affine_mapped_contact as affine_mapped_contact_owner
+from ..geometry._global_embedding import (
+    certify_global_embedding,
     GlobalEmbeddingCertificate,
-    MeshCertificateLimits,
+)
+from ..geometry._periodic_image_frame import (
+    periodic_exact_product,
+    PeriodicEmbeddingResourceError,
+    PeriodicImage,
+    PeriodicImageFrame,
+    prepare_periodic_image_frame,
+    reserve_periodic_exact_terms,
 )
 from ..geometry._triangulation import (
     PeriodicDelaunayTriangulation,
     PeriodicTriangulationEvidence,
 )
+from ..typing import checked, Dim, HostInt64, parse
+from . import _adaptation as adaptation_owner, _layer_core as layer_core_owner
+from ._association import SurfaceAssociationTransfer
+from ._bisection import BisectionEvidence
+from ._entity_keys import entity_keys, key_rows
+from ._lineage_records import (
+    EntityLineageKind,
+    MeshLineage,
+    MeshTransitionKind,
+    VertexInterpolationStencil,
+)
+from ._organization_records import MeshZoneRole
+from ._periodic_constraint import PeriodicConstraint
+from ._result import CellMeshingResult
+from ._scope import resolve_mesh_scope
+from ._topology_edit import (
+    assemble_topology_edit,
+    build_mesh,
+    CellTopologyEdit,
+    entity_lineage,
+    EntityRelations,
+    PeriodicEntityIdentityBank,
+    PeriodicNonnestedGeometryAuthority,
+    PeriodicVertexOrbitWitness,
+    PrescribedEntityIds,
+    require_periodic_nonnested_geometry,
+    require_periodic_nonnested_source,
+    TopologyEditBlock,
+)
+from .providers._native_route_checks import edge_growth_evidence, published_entity_limits
 
 
-if TYPE_CHECKING:
-    from ..discretization._cell_geometry_transfer import NestedReferenceWitnesses
-    from ..discretization._cell_geometry_validity import (
-        CellValidityCertificate,
-        CellValidityPolicy,
+@checked
+def feature_entity_mask(
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
+    identifiers: np.ndarray,
+    degree: int,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Recognize affine source-edge/face subdivisions on every lifted copy."""
+    original = require_periodic_topology(source)
+    orbit = np.asarray(original.orbits(degree)[0])
+    source_rows = simplex_entity_corners(source, degree)
+    target_rows = simplex_entity_corners(target, degree)
+    segments = np.asarray(source.coordinates)[source_rows[np.isin(orbit, identifiers)]]
+    corners = np.asarray(target.coordinates)[target_rows]
+    result = np.zeros(corners.shape[0], dtype=np.bool_)
+    item_work = corners.size + segments.shape[1] * source.ambient_dimension
+    active = not budget.ticket.settled
+    work_upper = segments.shape[0] * item_work
+    bytes_upper = 1024 * item_work if segments.shape[0] else 0
+    if active:
+        if work_upper > budget.ticket.remaining_work_units:
+            budget.ticket.refuse(
+                budget.ticket.work_upper - budget.ticket.remaining_work_units + work_upper
+            )
+    owner = budget.ticket if active else scope
+    with (
+        budget.temporary_scope() if active else nullcontext(),
+        owner.batch(work_upper, bytes_upper=0 if active else bytes_upper) as ticket,
+    ):
+        if active:
+            budget.reserve(0, bytes_upper)
+        for segment in segments:
+            ticket.consume(item_work, managed_bytes=0 if active else bytes_upper)
+            # Refinement retains each parent's continuous lift. Check every source
+            # copy directly; nearest-image shifts lose long winding features.
+            packed = np.concatenate(
+                (corners.reshape((-1, source.ambient_dimension)), segment)
+            )
+            integers, _ = dyadic_integers(packed)
+            corner_count = corners.shape[0] * corners.shape[1]
+            test = integers[:corner_count].reshape(corners.shape)
+            original_corners = integers[corner_count : corner_count + segment.shape[0]]
+            result |= source_entity_contains(test, original_corners)
+    return result
+
+
+def source_entity_contains(corners: np.ndarray, source: np.ndarray, /) -> np.ndarray:
+    """Return affine source support using exact arithmetic on the supplied integer bank."""
+    if source.shape[0] == 1:
+        return np.all(corners == source[0], axis=(1, 2))
+    start, stop = source[:2]
+    direction, delta = stop - start, corners - start
+    if source.shape[0] == 2:
+        squared = direction @ direction
+        if squared == 0:
+            return np.zeros(corners.shape[0], dtype=np.bool_)
+        if source.shape[1] == 2:
+            collinear = delta[..., 0] * direction[1] == delta[..., 1] * direction[0]
+        else:
+            collinear = np.all(
+                np.stack(
+                    (
+                        delta[..., 1] * direction[2] - delta[..., 2] * direction[1],
+                        delta[..., 2] * direction[0] - delta[..., 0] * direction[2],
+                        delta[..., 0] * direction[1] - delta[..., 1] * direction[0],
+                    ),
+                    axis=-1,
+                )
+                == 0,
+                axis=-1,
+            )
+        supported = np.all(collinear, axis=1)
+        result = np.zeros(corners.shape[0], dtype=np.bool_)
+        if np.any(supported):
+            parameter = delta[supported] @ direction
+            result[supported] = np.all((parameter >= 0) & (parameter <= squared), axis=1)
+        return result
+    second = source[2] - start
+    normal = np.asarray(
+        (
+            direction[1] * second[2] - direction[2] * second[1],
+            direction[2] * second[0] - direction[0] * second[2],
+            direction[0] * second[1] - direction[1] * second[0],
+        ),
+        dtype=object,
     )
-    from ._adaptation import _RouteOutcome, MeshAdaptationResult, PreparedMeshAdaptation
-    from ._lineage import MeshLineage, VertexInterpolationStencil
-    from ._result import CellMeshingResult
-    from ._topology_edit import (
-        CellTopologyEdit,
-        EntityRelations,
-        PeriodicEntityIdentityBank,
-        PeriodicNonnestedGeometryAuthority,
-        PeriodicVertexOrbitWitness,
-        PrescribedEntityIds,
-    )
+    aa, ab, bb = direction @ direction, direction @ second, second @ second
+    denominator = aa * bb - ab * ab
+    if denominator == 0:
+        return np.zeros(corners.shape[0], dtype=np.bool_)
+    supported = np.all(delta @ normal == 0, axis=1)
+    result = np.zeros(corners.shape[0], dtype=np.bool_)
+    if np.any(supported):
+        pa, pb = delta[supported] @ direction, delta[supported] @ second
+        first_parameter, second_parameter = pa * bb - pb * ab, pb * aa - pa * ab
+        result[supported] = np.all(
+            (first_parameter >= 0)
+            & (second_parameter >= 0)
+            & (first_parameter + second_parameter <= denominator),
+            axis=1,
+        )
+    return result
 
-from ._controls import PeriodicConstraint
 
-
-def _require_periodic_topology(mesh: CellMesh, /) -> PeriodicMeshTopology:
+def require_periodic_topology(
+    mesh: cell_mesh_owner.CellMesh, /
+) -> periodic_topology_owner.PeriodicMeshTopology:
     periodic = mesh.periodic_topology
     if periodic is None:
-        raise ValueError("The operation requires a bound periodic mesh topology.")
+        raise ValueError(
+            "require_periodic_topology.mesh must retain a periodic quotient descriptor; got The operation requires a bound periodic mesh topology."
+        )
     return periodic
 
 
@@ -100,14 +296,11 @@ type PeriodicConstructionPointKey = tuple[tuple[int, tuple[int, ...], Fraction],
 
 
 class PeriodicConstructionOrbits:
-    """Exact source-incidence point orbits, bound to one source numeric frame."""
+    """Rational source-incidence point orbits, bound to one source numeric frame."""
 
-    def __init__(self, mesh: CellMesh) -> None:
-        from ..discretization._periodic_topology import (
-            _identification_orders,
-        )
+    def __init__(self, mesh: cell_mesh_owner.CellMesh) -> None:
 
-        periodic = _require_periodic_topology(mesh)
+        periodic = require_periodic_topology(mesh)
         ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
         roots = np.asarray(periodic.vertex_representatives, dtype=np.int64)
         shifts = np.asarray(periodic.vertex_shifts, dtype=np.int64)
@@ -122,29 +315,28 @@ class PeriodicConstructionOrbits:
                 ids, roots, shifts, fixed, strict=True
             )
         }
-        self.orders = _identification_orders(periodic.cell)
+        self.orders = identification_orders(periodic.cell)
         self.rank = periodic.cell.rank
         self.source_topology_id = mesh.topology_id
         self.source_periodic_topology_id = periodic.periodic_topology_id
         self.source_numeric_version = mesh.numeric_version
         self.source_frame_id = array_tree_fingerprint(mesh.coordinates)
 
-    def require_source(self, mesh: CellMesh, /) -> None:
+    def require_source(self, mesh: cell_mesh_owner.CellMesh, /) -> None:
         if (
             mesh.topology_id != self.source_topology_id
-            or _require_periodic_topology(mesh).periodic_topology_id
+            or require_periodic_topology(mesh).periodic_topology_id
             != self.source_periodic_topology_id
             or mesh.numeric_version != self.source_numeric_version
             or array_tree_fingerprint(mesh.coordinates) != self.source_frame_id
         ):
             raise ValueError(
-                "Periodic construction orbits require their exact source topology and numeric frame."
+                "require_source.mesh must retain the bound source topology and numeric frame; got Periodic construction orbits require their rational source topology and numeric frame."
             )
 
     def reduced(self, shifts: np.ndarray) -> np.ndarray:
-        from ..discretization._periodic_topology import _reduced
 
-        return _reduced(shifts, self.orders)
+        return reduce_periodic_exponents(shifts, self.orders)
 
     def point(
         self,
@@ -153,7 +345,7 @@ class PeriodicConstructionOrbits:
     ) -> tuple[PeriodicConstructionPointKey, np.ndarray]:
         if not key or any(identifier not in self.vertices for identifier, _ in key):
             raise ValueError(
-                "A periodic construction point must name its actual source vertex support."
+                "point.key must retain normalized source support and a group-image anchor; got A periodic construction point must name its source vertex support."
             )
         support = [self.vertices[identifier] for identifier, _ in key]
         invariant = np.all(np.stack([fixed for _, _, fixed in support]), axis=0)
@@ -168,7 +360,7 @@ class PeriodicConstructionOrbits:
         )
         if not anchors:
             raise ValueError(
-                "Construction support has no authoritative group-image anchor."
+                "point.key must retain normalized source support and a group-image anchor; got Construction support has no group-image anchor."
             )
         candidates = []
         for origin in anchors:
@@ -197,12 +389,14 @@ class PeriodicConstructionOrbits:
 
     def witness(
         self,
-        source: CellMesh,
-        target: CellMesh,
+        source: cell_mesh_owner.CellMesh,
+        target: cell_mesh_owner.CellMesh,
         stencils: dict[int, ConstructionPointKey],
         retained: tuple[PeriodicEntityIdentityBank, ...],
         *,
-        allocation_prior: tuple[CellMesh, PeriodicVertexOrbitWitness] | None = None,
+        allocation_prior: tuple[cell_mesh_owner.CellMesh, PeriodicVertexOrbitWitness]
+        | None = None,
+        budget: CoordinateEnclosureBudget,
     ) -> PeriodicVertexOrbitWitness:
         self.require_source(source)
         ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
@@ -227,7 +421,7 @@ class PeriodicConstructionOrbits:
             )
             if reference is None:
                 raise ValueError(
-                    "Construction removes a representative of a retained periodic orbit."
+                    "PeriodicVertexOrbitWitness.source must retain representatives of every surviving periodic orbit; got a removed retained representative"
                 )
             for identifier, anchor in members:
                 orbit[identifier] = (
@@ -250,16 +444,17 @@ class PeriodicConstructionOrbits:
             None,
             retained_quotient_entities=retained,
             allocation_prior=allocation_prior,
+            budget=budget,
         )
 
 
-def _simplex_entity_corners(mesh: CellMesh, degree: int, /) -> np.ndarray:
+def simplex_entity_corners(mesh: cell_mesh_owner.CellMesh, degree: int, /) -> np.ndarray:
     connectivity = mesh.connectivity
     if isinstance(connectivity, SimplicialConnectivity):
         if 0 < degree < connectivity.dimension:
             return np.asarray(connectivity.entities[degree])
         raise ValueError(
-            "The periodic simplex mesh has no entities of that intermediate degree."
+            "simplex_entity_corners.mesh must retain simplex connectivity for the requested degree; got The periodic simplex mesh has no entities of that intermediate degree."
         )
     if isinstance(connectivity, PolyhedralConnectivity):
         if degree == 1:
@@ -268,37 +463,409 @@ def _simplex_entity_corners(mesh: CellMesh, degree: int, /) -> np.ndarray:
             offsets = np.asarray(connectivity.face_vertex_offsets)
             if np.any(np.diff(offsets) != 3):
                 raise TypeError(
-                    "Periodic simplex faces require triangular packed incidence."
+                    "simplex_entity_corners.mesh must retain simplex connectivity for the requested degree; got Periodic simplex faces require triangular packed incidence."
                 )
             return np.asarray(connectivity.face_vertex_values).reshape((-1, 3))
         raise ValueError(
-            "The periodic simplex mesh has no entities of that intermediate degree."
+            "simplex_entity_corners.mesh must retain simplex connectivity for the requested degree; got The periodic simplex mesh has no entities of that intermediate degree."
         )
     if not isinstance(connectivity, (PolygonalConnectivity, TetrahedralConnectivity)):
         raise TypeError(
-            "Periodic simplex operations require canonical simplex connectivity."
+            "simplex_entity_corners.mesh must retain simplex connectivity for the requested degree; got Periodic simplex operations require deterministic simplex connectivity."
         )
     if degree == 1:
         return np.asarray(connectivity.edges)
     if degree == 2 and isinstance(connectivity, TetrahedralConnectivity):
         return np.asarray(connectivity.faces)
     raise ValueError(
-        "The periodic simplex mesh has no entities of that intermediate degree."
+        "simplex_entity_corners.mesh must retain simplex connectivity for the requested degree; got The periodic simplex mesh has no entities of that intermediate degree."
     )
 
 
-def periodic_edge_size_evidence(mesh: CellMesh, /) -> tuple[np.ndarray, float]:
-    """Physical length/growth of each authoritative quotient edge exactly once."""
+def periodic_exact_coordinate_bank(
+    mesh: cell_mesh_owner.CellMesh,
+    geometry: CellGeometrySpec | None = None,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> CoordinateSourceBank:
+    """Return scientific vertex images, never lifts of rounded declared sources."""
+    topology = require_periodic_topology(mesh)
+    if geometry is None:
+        coordinates = np.asarray(mesh.coordinates)
+        roots = np.asarray(topology.vertex_representatives)
+        shifts = np.asarray(topology.vertex_shifts)
+        matrices, orders = exact_periodic_generators(topology.cell, budget=budget)
+        reserve_periodic_exact_terms(
+            coordinates.size, 512 * coordinates.size, budget=budget
+        )
+        result = []
+        for vertex, root in enumerate(roots):
+            original = np.asarray(
+                [Fraction(float(value)) for value in coordinates[int(root)]],
+                dtype=object,
+            )
+            action = np.asarray(
+                exact_periodic_element(
+                    matrices,
+                    orders,
+                    tuple(int(value) for value in shifts[vertex]),
+                    budget=budget,
+                ),
+                dtype=object,
+            )
+            result.append(
+                tuple(
+                    periodic_exact_product(action[:-1, :-1], original, budget=budget)
+                    + action[:-1, -1]
+                )
+            )
+        return tuple(result)
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
+    source = prepared_coordinate_source_bank(geometry, budget=budget)
+    budget.reserve(mesh.coordinates.size, 128 * mesh.coordinates.size)
+    images: list[tuple[Fraction | RadicalElement, ...] | None] = [
+        None
+    ] * mesh.coordinates.shape[0]
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        for vertices, row in zip(
+            np.asarray(block.vertices), np.asarray(route), strict=True
+        ):
+            corners = coordinate_corner_images(
+                element,
+                tuple(source[int(index)] for index in row if index >= 0),
+                budget=budget,
+            )
+            if corners is None:
+                raise ValueError(
+                    "periodic_exact_coordinate_bank.geometry must expose reference-corner images; got no corner capability"
+                )
+            for vertex, point in zip(
+                (int(value) for value in vertices if value >= 0), corners, strict=True
+            ):
+                previous = images[vertex]
+                if previous is not None and previous != point:
+                    raise ValueError(
+                        "periodic_exact_coordinate_bank.geometry must have identical shared vertex images; got conflicting images"
+                    )
+                images[vertex] = point
+    return tuple(
+        tuple(Fraction(float(value)) for value in np.asarray(mesh.coordinates)[vertex])
+        if point is None
+        else point
+        for vertex, point in enumerate(images)
+    )
 
-    from .providers._native_publication import edge_growth_evidence
 
-    topology = _require_periodic_topology(mesh)
+def periodic_edge_squared_lengths(
+    mesh: cell_mesh_owner.CellMesh,
+    /,
+    *,
+    geometry: CellGeometrySpec | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> np.ndarray:
+    """Return field-valued squared lengths in scientific quotient-edge order."""
+    if budget is None:
+        with coordinate_certificate_request(MeshCertificateLimits()) as owned:
+            return periodic_edge_squared_lengths(mesh, geometry=geometry, budget=owned)
+    topology = require_periodic_topology(mesh)
+    edges = simplex_entity_corners(mesh, 1)[np.asarray(topology.orbit_representatives(1))]
+    bank = periodic_exact_coordinate_bank(mesh, geometry, budget=budget)
+    values = np.asarray(bank, dtype=object)[edges]
+    reserve_algebraic_work(
+        tuple(values.flat), 4 * values.size, 3 * values.size, 2, budget=budget
+    )
+    delta = values[:, 1] - values[:, 0]
+    return np.sum(delta * delta, axis=1)
+
+
+def _root_interpolation_compare(
+    first: Fraction | RadicalElement,
+    second: Fraction | RadicalElement,
+    weight: Fraction,
+    target: Fraction,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> int:
+    """Compare a nonnegative weighted root sum without extending its number field."""
+    reserve_algebraic_work((first, second, weight, target), 40, 20, 4, budget=budget)
+    if target < 0:
+        return 1
+    left_weight = 1 - weight
+    remainder = (
+        target * target - left_weight * left_weight * first - weight * weight * second
+    )
+    cross_squared = 4 * left_weight * left_weight * weight * weight * first * second
+    if remainder < 0:
+        return 1
+    difference = cross_squared - remainder * remainder
+    return (difference > 0) - (difference < 0)
+
+
+def _rounded_root_interpolation(
+    first: Fraction | RadicalElement,
+    second: Fraction | RadicalElement,
+    weight: Fraction,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> float:
+    """Round the algebraic root sum to nearest binary64, with ties to even."""
+    maximum = float(np.finfo(np.float64).max)
+
+    def compare(target: Fraction) -> int:
+        return _root_interpolation_compare(first, second, weight, target, budget=budget)
+
+    def value(bits: int) -> float:
+        return float(np.asarray(bits, dtype=np.uint64).view(np.float64))
+
+    def midpoint(lower: int, upper: int) -> Fraction:
+        if upper == 0x7FF0000000000000:
+            return Fraction(maximum) + Fraction(2) ** 970
+        return (Fraction(value(lower)) + Fraction(value(upper))) / 2
+
+    reserve_algebraic_work((first, second), 8, 8, 2, budget=budget)
+
+    # Ordinary finite edges start within a few ulps. The ordered-bit fallback
+    # also handles underflow, squared-norm overflow, and cancellation in a radical.
+    def approximate_root(squared: Fraction | RadicalElement) -> float:
+        if squared > Fraction(maximum):
+            return math.sqrt(maximum)
+        nominal = (
+            squared.rounded(budget=budget)[0]
+            if isinstance(squared, RadicalElement)
+            else float(squared)
+        )
+        return math.sqrt(nominal)
+
+    approximate = (1 - float(weight)) * approximate_root(first) + float(
+        weight
+    ) * approximate_root(second)
+    candidate = int(np.asarray(approximate, dtype=np.float64).view(np.uint64))
+    if candidate < 0x7FF0000000000000:
+        low_comparison = (
+            1 if candidate == 0 else compare(midpoint(candidate - 1, candidate))
+        )
+        high_comparison = compare(midpoint(candidate, candidate + 1))
+        even = candidate % 2 == 0
+        if (low_comparison > 0 or low_comparison == 0 and even) and (
+            high_comparison < 0 or high_comparison == 0 and even
+        ):
+            return approximate
+    lower, upper = 0, 0x7FF0000000000000
+    while upper - lower > 1:
+        middle = (lower + upper) // 2
+        if compare(Fraction(value(middle))) >= 0:
+            lower = middle
+        else:
+            upper = middle
+    decision = compare(midpoint(lower, upper))
+    return value(lower if decision < 0 or decision == 0 and lower % 2 == 0 else upper)
+
+
+def _edge_quantile_roots(
+    squared: np.ndarray, quantile: float, /, *, budget: CoordinateEnclosureBudget
+) -> tuple[Fraction | RadicalElement, Fraction | RadicalElement, Fraction]:
+    if not math.isfinite(quantile) or not 0 <= quantile <= 1:
+        raise ValueError(
+            f"periodic_edge_size_quantile.quantile must lie in [0, 1]; got {quantile!r}"
+        )
+    if not squared.size:
+        raise ValueError(
+            "periodic_edge_size_quantile.edges must be nonempty; got an empty bank"
+        )
+    reserve_algebraic_work(
+        tuple(squared),
+        squared.size * max(1, squared.size.bit_length()),
+        squared.size,
+        1,
+        budget=budget,
+    )
+    ordered = sorted(squared)
+    rank = float(np.float64(quantile) * np.float64(len(ordered) - 1))
+    lower = math.floor(rank)
+    upper = min(lower + 1, len(ordered) - 1)
+    return ordered[lower], ordered[upper], Fraction(rank - lower)
+
+
+def periodic_edge_size_quantile_compare(
+    mesh: cell_mesh_owner.CellMesh,
+    quantile: float,
+    target: Fraction | float,
+    /,
+    *,
+    geometry: CellGeometrySpec | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> int:
+    """Compare the algebraic linear quantile with an authored bound, without tolerance."""
+    if budget is None:
+        with coordinate_certificate_request(MeshCertificateLimits()) as owned:
+            return periodic_edge_size_quantile_compare(
+                mesh, quantile, target, geometry=geometry, budget=owned
+            )
+    squared = periodic_edge_squared_lengths(mesh, geometry=geometry, budget=budget)
+    first, second, weight = _edge_quantile_roots(squared, quantile, budget=budget)
+    return _root_interpolation_compare(
+        first,
+        second,
+        weight,
+        target if isinstance(target, Fraction) else Fraction(float(target)),
+        budget=budget,
+    )
+
+
+def periodic_edge_size_quantile(
+    mesh: cell_mesh_owner.CellMesh,
+    quantiles: ArrayLike,
+    /,
+    *,
+    geometry: CellGeometrySpec | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> np.ndarray:
+    """Return correctly rounded algebraic linear quantiles of declared edge lengths."""
+    if geometry is None:
+        return np.asarray(
+            np.quantile(periodic_edge_size_evidence(mesh)[0], np.asarray(quantiles))
+        )
+    if budget is None:
+        with coordinate_certificate_request(MeshCertificateLimits()) as owned:
+            return periodic_edge_size_quantile(
+                mesh, quantiles, geometry=geometry, budget=owned
+            )
+    squared = periodic_edge_squared_lengths(mesh, geometry=geometry, budget=budget)
+    requested = np.asarray(quantiles, dtype=np.float64)
+    result = np.empty(requested.shape, dtype=np.float64)
+    for index in np.ndindex(requested.shape):
+        first, second, weight = _edge_quantile_roots(
+            squared, float(requested[index]), budget=budget
+        )
+        result[index] = _rounded_root_interpolation(first, second, weight, budget=budget)
+    return result
+
+
+class ExactPeriodicEdgeSizeEvidence(StrictModule, NonTrainableState):
+    """Algebraic positive-root edge lengths with their binary64 execution views."""
+
+    squared_lengths: tuple[Fraction | RadicalElement, ...] = eqx.field(static=True)
+    representative_lengths: np.ndarray
+    length_rounding_error_bounds: tuple[Fraction, ...] = eqx.field(static=True)
+    maximum_local_edge_ratio_squared: Fraction | RadicalElement = eqx.field(static=True)
+    maximum_local_edge_ratio: float = eqx.field(static=True)
+    maximum_local_edge_ratio_rounding_error_bound: Fraction = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    periodic_topology_id: str = eqx.field(static=True)
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[ExactPeriodicEdgeSizeEvidence],
+        value: ExactPeriodicEdgeSizeEvidence,
+        /,
+        *,
+        mesh: cell_mesh_owner.CellMesh,
+        geometry: CellGeometrySpec,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> ExactPeriodicEdgeSizeEvidence:
+        """Recompute algebraic roots and rounding bounds against the retained source."""
+        rebuilt = periodic_exact_edge_size_evidence(mesh, geometry, budget=budget)
+        if not eqx.tree_equal(rebuilt, value, typematch=True):
+            raise ValueError(
+                "ExactPeriodicEdgeSizeEvidence.fields must agree with the retained source geometry; got inconsistent evidence"
+            )
+        return rebuilt
+
+
+def _root_rounding_error_bound(
+    squared: Fraction | RadicalElement,
+    representative: float,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> Fraction:
+    reserve_algebraic_work((squared,), 4, 4, 2, budget=budget)
+    if not math.isfinite(representative):
+        raise ValueError(
+            f"ExactPeriodicEdgeSizeEvidence.representative_lengths must be finite; got {representative!r}"
+        )
+    nominal = Fraction(representative)
+    if squared == nominal * nominal:
+        return Fraction(0)
+    previous = Fraction(float(np.nextafter(representative, -np.inf)))
+    following_float = float(np.nextafter(representative, np.inf))
+    spacing = nominal - previous
+    if math.isfinite(following_float):
+        spacing = max(spacing, Fraction(following_float) - nominal)
+    return spacing / 2
+
+
+def periodic_exact_edge_size_evidence(
+    mesh: cell_mesh_owner.CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> ExactPeriodicEdgeSizeEvidence:
+    """Retain field-valued squared edges and certified rounding of their positive roots."""
+    if budget is None:
+        with coordinate_certificate_request(MeshCertificateLimits()) as owned:
+            return periodic_exact_edge_size_evidence(mesh, geometry, budget=owned)
+    squared = periodic_edge_squared_lengths(mesh, geometry=geometry, budget=budget)
+    lengths = np.asarray(
+        [
+            _rounded_root_interpolation(value, value, Fraction(0), budget=budget)
+            for value in squared
+        ],
+        dtype=np.float64,
+    )
+    topology = require_periodic_topology(mesh)
+    edges = simplex_entity_corners(mesh, 1)[np.asarray(topology.orbit_representatives(1))]
+    orbits = np.asarray(topology.orbits(0)[0])[edges]
+    reserve_algebraic_work(
+        tuple(squared), 8 * squared.size, 4 * squared.size, 2, budget=budget
+    )
+    incident: dict[int, list[Fraction | RadicalElement]] = {}
+    for edge, value in zip(orbits, squared, strict=True):
+        if value <= 0:
+            raise ValueError(
+                "periodic_exact_edge_size_evidence.geometry must have positive quotient edge lengths; got a nonpositive squared length"
+            )
+        for vertex in edge:
+            incident.setdefault(int(vertex), []).append(value)
+    ratio = max(
+        (max(values) / min(values) for values in incident.values()),
+        default=Fraction(1),
+    )
+    growth = _rounded_root_interpolation(ratio, ratio, Fraction(0), budget=budget)
+    lengths.setflags(write=False)
+    return ExactPeriodicEdgeSizeEvidence(
+        squared_lengths=tuple(squared),
+        representative_lengths=lengths,
+        length_rounding_error_bounds=tuple(
+            _root_rounding_error_bound(value, float(length), budget=budget)
+            for value, length in zip(squared, lengths, strict=True)
+        ),
+        maximum_local_edge_ratio_squared=ratio,
+        maximum_local_edge_ratio=growth,
+        maximum_local_edge_ratio_rounding_error_bound=_root_rounding_error_bound(
+            ratio, growth, budget=budget
+        ),
+        geometry_id=cell_geometry_id(geometry),
+        periodic_topology_id=topology.periodic_topology_id,
+    )
+
+
+def periodic_edge_size_evidence(
+    mesh: cell_mesh_owner.CellMesh, /
+) -> tuple[np.ndarray, float]:
+    """Physical length/growth of each quotient edge exactly once."""
+    topology = require_periodic_topology(mesh)
     representatives = np.asarray(topology.orbit_representatives(1))
-    edges = _simplex_entity_corners(mesh, 1)[representatives]
+    edges = simplex_entity_corners(mesh, 1)[representatives]
     roots = np.asarray(topology.vertex_representatives)
     shifts = np.asarray(topology.vertex_shifts)[edges]
     points = np.asarray(mesh.coordinates)[roots[edges]]
-    if isinstance(topology.cell, PeriodicCell):
+    if isinstance(topology.cell, periodic_cell_owner.PeriodicCell):
         delta = (
             points[:, 1]
             - points[:, 0]
@@ -323,7 +890,6 @@ class PeriodicEmbeddingEvidence(StrictModule, NonTrainableState):
 
     ``maximum_coordinate_residual`` is an outward-rounded infinity-norm bound;
     finite isometries additionally check their declared Euclidean tolerance.
-    This is not an exact-construction claim for independently rounded images.
     """
 
     periodic_topology_id: str = eqx.field(static=True)
@@ -336,574 +902,191 @@ class PeriodicEmbeddingEvidence(StrictModule, NonTrainableState):
     global_embedding: GlobalEmbeddingCertificate | None = None
 
 
-def _cross(first: np.ndarray, second: np.ndarray, /) -> np.ndarray:
-    return np.asarray(
-        (
-            first[1] * second[2] - first[2] * second[1],
-            first[2] * second[0] - first[0] * second[2],
-            first[0] * second[1] - first[1] * second[0],
-        ),
-        dtype=object,
-    )
-
-
-def _interiors_overlap(first: np.ndarray, second: np.ndarray, /) -> bool:
-    """Separating-axis theorem for exact integer triangles/tetrahedra."""
-
-    dimension = first.shape[1]
-    if dimension == 2:
-        edges = [
-            corners[b] - corners[a]
-            for corners in (first, second)
-            for a, b in ((0, 1), (1, 2), (2, 0))
-        ]
-        axes = [np.asarray((-edge[1], edge[0]), dtype=object) for edge in edges]
-    else:
-        pairs = tuple(combinations(range(4), 2))
-        first_edges = [first[b] - first[a] for a, b in pairs]
-        second_edges = [second[b] - second[a] for a, b in pairs]
-        axes = [
-            _cross(corners[b] - corners[a], corners[c] - corners[a])
-            for corners in (first, second)
-            for a, b, c in combinations(range(4), 3)
-        ]
-        axes.extend(_cross(a, b) for a in first_edges for b in second_edges)
-    for axis in axes:
-        if not np.any(axis):
-            continue
-        left, right = first @ axis, second @ axis
-        if max(left) <= min(right) or max(right) <= min(left):
-            return False
-    return True
-
-
-def _lattice_overlap_images(
-    points: np.ndarray, vectors: np.ndarray, /
-) -> tuple[range, ...]:
-    """Exact fractional bounding box of all potentially intersecting images."""
-
-    dimension = vectors.shape[0]
-    determinant = (
-        _det2(vectors[0], vectors[1])
-        if dimension == 2
-        else _det3(vectors[0], vectors[1], vectors[2])
-    )
-    fractions = []
-    for point in points:
-        row = []
-        for axis in range(dimension):
-            replaced = vectors.copy()
-            replaced[axis] = point
-            numerator = (
-                _det2(replaced[0], replaced[1])
-                if dimension == 2
-                else _det3(replaced[0], replaced[1], replaced[2])
-            )
-            row.append(Fraction(int(numerator), int(determinant)))
-        fractions.append(row)
-    ranges = []
-    for axis in range(dimension):
-        values = [row[axis] for row in fractions]
-        diameter = max(values) - min(values)
-        limit = diameter.numerator // diameter.denominator
-        ranges.append(range(-limit, limit + 1))
-    return tuple(ranges)
-
-
-type _PeriodicImage = int | tuple[int, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _PeriodicImageFrame:
-    """Exact scientific lifts and their sufficient, bounded group image bank."""
-
-    points: np.ndarray
-    base_points: np.ndarray
-    lattice: np.ndarray | None
-    group_matrices: np.ndarray | None
-    ranges: tuple[range, ...]
-    exponent: int
-    image_count: int
-    residual: Fraction
-    residual_float: float
-    residual_bound: float
-    image_exponents: np.ndarray | None = None
-
-    def images(self) -> Iterator[_PeriodicImage]:
-        if self.lattice is not None:
-            return product(*self.ranges)
-        return iter(range(self.image_count))
-
-    def image_points(
-        self, image: _PeriodicImage, rows: slice = slice(None), /
-    ) -> np.ndarray:
-        if self.lattice is not None:
-            if not isinstance(image, tuple):
-                raise TypeError("A lattice image requires its integer exponent tuple.")
-            _reserve_periodic_exact_terms(self.points[rows].size)
-            return self.points[rows] + _periodic_exact_product(
-                np.asarray(image, dtype=object), self.lattice
-            )
-        matrices = self.group_matrices
-        if matrices is None or not isinstance(image, int):
-            raise TypeError("A finite isometry image requires its group-bank index.")
-        matrix = matrices[image]
-        _reserve_periodic_exact_terms(
-            self.base_points[rows].size + self.base_points.shape[1]
-        )
-        return _periodic_exact_product(
-            self.base_points[rows], matrix[:-1, :-1].T
-        ) + matrix[:-1, -1] * (1 << (-2 * self.exponent))
-
-
-def _reserve_periodic_exact_terms(work: int, storage_upper: int = 0, /) -> None:
-    """Reserve actual scalar/term visits on the existing scientific ledger."""
-    from ..discretization._coordinate_enclosure import _COORDINATE_BUDGET
-
-    budget = _COORDINATE_BUDGET.get()
-    if budget is not None:
-        budget.admit_work_bound(work)
-        budget.reserve(work, storage_upper)
-
-
-def _periodic_exact_product(left: np.ndarray, right: np.ndarray, /) -> np.ndarray:
-    """Object matmul with its actual dense dot-product term bank admitted."""
-    rows = left.shape[0] if left.ndim == 2 else 1
-    columns = right.shape[1] if right.ndim == 2 else 1
-    _reserve_periodic_exact_terms(rows * left.shape[-1] * columns)
-    return left @ right
-
-
-def _exact_periodic_group_element(
-    cell: PeriodicIsometryGroup,
-    exponents: np.ndarray,
+def _periodic_charge(
+    work: int = 0,
     /,
     *,
-    prepared_generators: tuple[
-        tuple[tuple[tuple[Fraction, ...], ...], ...], tuple[int, ...]
-    ]
-    | None = None,
-) -> np.ndarray:
-    """Compose authored dyadic isometries over Q, without matrix roundoff."""
-    from ..discretization._periodic_topology import (
-        _exact_periodic_element,
-        _exact_periodic_generators,
+    geometry_queries: int = 0,
+    cavity_cells: int | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+
+    ticket = budget.ticket
+    if (
+        work > ticket.remaining_work_units
+        or geometry_queries > ticket.remaining_geometry_queries
+        or (cavity_cells is not None and cavity_cells > ticket.cavity_upper)
+    ):
+        ticket.refuse(
+            ticket.work_units + work,
+            queries_upper=ticket.geometry_queries + geometry_queries,
+            bytes_upper=ticket.managed_bytes,
+            cavity_upper=ticket.cavity_cells if cavity_cells is None else cavity_cells,
+        )
+    ticket.consume(work, geometry_queries=geometry_queries, cavity_cells=cavity_cells)
+
+
+@contextmanager
+def _periodic_phase(
+    scope: NativeExecutionScope | None,
+    budget: CoordinateEnclosureBudget,
+    maximum_work: int,
+    maximum_bytes: int,
+    /,
+) -> Iterator[CoordinateEnclosureBudget]:
+    if not budget.ticket.settled:
+        with budget.bound_stage(maximum_work, maximum_bytes):
+            yield budget
+        return
+    if scope is None:
+        ticket = HostBatchTicket(
+            maximum_work,
+            queries_upper=maximum_work,
+            bytes_upper=maximum_bytes,
+        )
+        with budget.bind_ticket(ticket), budget.bound_stage(maximum_work, maximum_bytes):
+            yield budget
+        return
+    remaining = scope.remaining()
+    ticket = scope.batch(
+        min(maximum_work, remaining.remaining_work_units),
+        queries_upper=remaining.remaining_geometry_queries,
+        bytes_upper=min(maximum_bytes, remaining.remaining_managed_bytes),
+        cavity_upper=remaining.remaining_cavity_cells,
     )
-
-    matrices, orders = (
-        _exact_periodic_generators(cell)
-        if prepared_generators is None
-        else prepared_generators
-    )
-    return np.asarray(
-        _exact_periodic_element(
-            matrices, orders, tuple(int(value) for value in exponents)
-        ),
-        dtype=object,
-    )
+    with (
+        budget.bind_ticket(ticket),
+        ticket.native_target(),
+        budget.bound_stage(maximum_work, maximum_bytes),
+    ):
+        yield budget
 
 
-def _exact_periodic_dyadic_bank(values: np.ndarray, /) -> tuple[np.ndarray, int]:
-    """Pack exact composed rational dyadics in one immutable integer frame."""
-    _reserve_periodic_exact_terms(3 * values.size)
-    fractions = [
-        value if isinstance(value, Fraction) else Fraction(float(value))
-        for value in values.reshape(-1)
-    ]
-    exponent = min(
-        (-value.denominator.bit_length() + 1 for value in fractions), default=0
-    )
-    integers = np.asarray(
-        [
-            value.numerator * ((1 << -exponent) // value.denominator)
-            for value in fractions
-        ],
-        dtype=object,
-    ).reshape(values.shape)
-    return integers, exponent
-
-
-def _affine_periodic_source_support_boxes(
+def affine_periodic_source_support_boxes(
     coordinates: np.ndarray,
     roots: np.ndarray,
     shifts: np.ndarray,
     cell: PeriodicIsometryGroup,
     /,
+    *,
+    exact_coordinates: CoordinateSourceBank | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
-    """Whole affine-cell support from exact SCI lifts, not displayed corners."""
-    from ..discretization._periodic_topology import (
-        _exact_periodic_element,
-        _exact_periodic_generators,
-    )
+    """Whole affine-cell support from coefficient-field SCI lifts, not displayed corners."""
 
-    matrices, orders = _exact_periodic_generators(cell)
+    matrices, orders = exact_periodic_generators(cell, budget=budget)
     lower, upper = None, None
     for vertex, root in enumerate(roots):
-        _reserve_periodic_exact_terms(3 * cell.ambient_dimension)
+        reserve_periodic_exact_terms(3 * cell.ambient_dimension, budget=budget)
         original = np.asarray(
-            [Fraction(float(value)) for value in coordinates[int(root)]],
+            [Fraction(float(value)) for value in coordinates[int(root)]]
+            if exact_coordinates is None
+            else exact_coordinates[int(root)],
             dtype=object,
         )
         matrix = np.asarray(
-            _exact_periodic_element(
+            exact_periodic_element(
                 matrices,
                 orders,
                 tuple(int(value) for value in shifts[vertex]),
+                budget=budget,
             ),
             dtype=object,
         )
-        point = _periodic_exact_product(matrix[:-1, :-1], original) + matrix[:-1, -1]
+        point = (
+            periodic_exact_product(matrix[:-1, :-1], original, budget=budget)
+            + matrix[:-1, -1]
+        )
         if lower is None:
             lower, upper = point.copy(), point.copy()
         else:
             if upper is None:
-                raise RuntimeError("Periodic affine support lost its paired upper bound.")
+                raise RuntimeError(
+                    "affine_periodic_source_support_boxes.coordinates must retain a nonempty source and paired affine support bounds; got Periodic affine support lost its paired upper bound."
+                )
             lower, upper = np.minimum(lower, point), np.maximum(upper, point)
     if lower is None or upper is None:
-        raise ValueError("Periodic affine support requires a nonempty scientific source.")
-    return ((lower, upper),)
-
-
-def _periodic_overlap_image_exponents(
-    cell: PeriodicIsometryGroup,
-    source_boxes: tuple[tuple[np.ndarray, np.ndarray], ...],
-    maximum_images: int,
-    /,
-) -> np.ndarray:
-    """Complete SCI action bank from whole-source support, not power radii."""
-    from ..discretization._coordinate_enclosure import outward
-    from ..discretization._periodic_topology import (
-        _exact_isometry_power,
-        _exact_periodic_element,
-        _exact_periodic_generators,
-    )
-    from ..geometry._periodic_embedding import _translation_ranges
-
-    matrices, orders = _exact_periodic_generators(cell)
-    finite_count = int(np.prod(cell.linear_orders, dtype=object))
-    if finite_count > maximum_images:
-        raise _PeriodicEmbeddingResourceError(
-            f"Periodic overlap requires {finite_count} images, exceeding {maximum_images}."
+        raise ValueError(
+            "affine_periodic_source_support_boxes.coordinates must retain a nonempty source and paired affine support bounds; got Periodic affine support requires a nonempty scientific source."
         )
-    if not source_boxes:
-        raise ValueError("Periodic overlap requires complete nonempty source support.")
-    # Explicit conservative CPython tuple/list + array bounds, not an RSS or
-    # maximum-images proxy. These remain live until the caller's source scope
-    # releases the resulting bank.
-    _reserve_periodic_exact_terms(
-        finite_count * len(orders),
-        128
-        + finite_count * (40 + 48 * len(orders))
-        + finite_count * len(source_boxes) * (512 + 96 * cell.ambient_dimension),
-    )
-    finite_actions = tuple(product(*(range(order) for order in cell.linear_orders)))
-    transformed_boxes = []
-    for action in finite_actions:
-        matrix = _exact_periodic_element(matrices, orders, action)
-        for lower, upper in source_boxes:
-            if (
-                len(lower) != cell.ambient_dimension
-                or len(upper) != cell.ambient_dimension
-            ):
-                raise ValueError(
-                    "Periodic source support must have one bound per ambient axis."
-                )
-            if any(
-                Fraction(lo) > Fraction(hi) for lo, hi in zip(lower, upper, strict=True)
-            ):
-                raise ValueError("Periodic whole-source support bounds are reversed.")
-            lows, highs = [], []
-            for row in matrix[:-1]:
-                _reserve_periodic_exact_terms(2 * cell.ambient_dimension + 2)
-                low = row[-1] + sum(
-                    (
-                        weight * Fraction(lo if weight >= 0 else hi)
-                        for weight, lo, hi in zip(row[:-1], lower, upper, strict=True)
-                    ),
-                    Fraction(0),
-                )
-                high = row[-1] + sum(
-                    (
-                        weight * Fraction(hi if weight >= 0 else lo)
-                        for weight, lo, hi in zip(row[:-1], lower, upper, strict=True)
-                    ),
-                    Fraction(0),
-                )
-                lows.append(outward(low, -np.inf))
-                highs.append(outward(high, np.inf))
-            if not np.all(np.isfinite(lows)) or not np.all(np.isfinite(highs)):
-                raise ValueError(
-                    "Periodic whole-source support exceeds finite enclosure range."
-                )
-            transformed_boxes.append((np.asarray(lows), np.asarray(highs)))
-    translations = []
-    for matrix, period in zip(matrices, cell.translation_periods, strict=True):
-        if period:
-            translation = _exact_isometry_power(matrix, period)
-            translations.append(tuple(row[-1] for row in translation[:-1]))
-    ranges = _translation_ranges(transformed_boxes, tuple(translations))
-    image_count = finite_count * int(
-        np.prod([len(interval) for interval in ranges], dtype=object)
-    )
-    if image_count > maximum_images:
-        raise _PeriodicEmbeddingResourceError(
-            f"Periodic overlap requires {image_count} images, exceeding {maximum_images}."
+    if exact_coordinates is not None:
+        reserve_algebraic_work(
+            tuple(lower) + tuple(upper),
+            4 * len(lower),
+            2 * len(lower),
+            1,
+            budget=budget,
         )
-    _reserve_periodic_exact_terms(
-        image_count * len(orders),
-        128 + image_count * (64 + 56 * len(orders)),
-    )
-    actions = []
-    for finite in finite_actions:
-        for translated in product(*ranges):
-            iterator = iter(translated)
-            actions.append(
-                tuple(
-                    value if order else value + period * next(iterator)
-                    for value, order, period in zip(
-                        finite, orders, cell.translation_periods, strict=True
-                    )
-                )
-            )
-    result = np.asarray(actions, dtype=np.int64).reshape((image_count, len(orders)))
-    result.setflags(write=False)
-    return result
-
-
-def _prepare_periodic_image_frame(
-    coordinates: np.ndarray,
-    roots: np.ndarray,
-    vertex_shifts: np.ndarray,
-    cell: PeriodicCell | PeriodicIsometryGroup,
-    maximum_images: int,
-    /,
-    *,
-    image_exponents: np.ndarray | None = None,
-    source_support_boxes: tuple[tuple[np.ndarray, np.ndarray], ...] | None = None,
-) -> _PeriodicImageFrame:
-    """Prepare the same exact image arithmetic for embedding and source support."""
-    dimension = coordinates.shape[1]
-    lattice, group_matrices = None, None
-    if (
-        isinstance(cell, PeriodicIsometryGroup)
-        and any(order == 0 for order in cell.orders)
-        and image_exponents is None
-        and source_support_boxes is not None
-    ):
-        image_exponents = _periodic_overlap_image_exponents(
-            cell,
-            source_support_boxes,
-            maximum_images,
-        )
-    ranges: tuple[range, ...] = ()
-    if isinstance(cell, PeriodicCell):
-        _reserve_periodic_exact_terms(3 * (coordinates.size + cell.vectors.size))
-        values, exponent = _dyadic_integers(
-            np.concatenate((coordinates, np.asarray(cell.vectors)))
-        )
-        actual, lattice = values[: coordinates.shape[0]], values[coordinates.shape[0] :]
-        _reserve_periodic_exact_terms(actual.size)
-        points = actual[roots] + _periodic_exact_product(
-            vertex_shifts.astype(object), lattice
-        )
-        base_points = points
-        _reserve_periodic_exact_terms(3 * actual.size + 2)
-        residual_integer = max(np.abs(actual - points).reshape(-1), default=0)
-        residual = Fraction(int(residual_integer)) * Fraction(2) ** exponent
-        scale = max(
-            1.0,
-            float(np.max(np.abs(coordinates))),
-            float(np.max(np.abs(vertex_shifts @ np.asarray(cell.vectors)), initial=0.0)),
-        )
-        residual_bound = 64.0 * np.finfo(np.float64).eps * scale
-        if image_exponents is None:
-            ranges = _lattice_overlap_images(points, lattice)
-            ranges = tuple(
-                value if periodic else range(1)
-                for value, periodic in zip(ranges, cell.periodic_axes, strict=True)
-            )
-            image_count = int(np.prod([len(value) for value in ranges], dtype=object))
-        else:
-            actions = np.asarray(image_exponents)
-            if (
-                actions.ndim != 2
-                or actions.shape[1] != cell.rank
-                or not np.issubdtype(actions.dtype, np.integer)
-                or len(actions) == 0
-            ):
-                raise ValueError(
-                    "Explicit lattice images require nonempty integer action rows."
-                )
-            _reserve_periodic_exact_terms(3 * actions.size)
-            lower = [int(value) for value in np.min(actions, axis=0)]
-            upper = [int(value) for value in np.max(actions, axis=0)]
-            image_count = int(
-                np.prod(
-                    [high - low + 1 for low, high in zip(lower, upper, strict=True)],
-                    dtype=object,
-                )
-            )
-            if image_count > maximum_images:
-                raise _PeriodicEmbeddingResourceError(
-                    f"Periodic embedding requires {image_count} images, exceeding {maximum_images}."
-                )
-            if (
-                image_count != len(actions)
-                or len(np.unique(actions, axis=0)) != image_count
-            ):
-                raise ValueError(
-                    "Explicit lattice actions must form one complete rectangular image bank."
-                )
-            ranges = tuple(
-                range(low, high + 1) for low, high in zip(lower, upper, strict=True)
-            )
-    else:
-        if image_exponents is None:
-            if any(order == 0 for order in cell.orders):
-                raise ValueError(
-                    "Mixed rotational/translational embedding needs a bounded fundamental domain."
-                )
-            image_count = int(np.prod(cell.orders, dtype=object))
-            if image_count > maximum_images:
-                raise _PeriodicEmbeddingResourceError(
-                    f"Periodic embedding requires {image_count} images, exceeding {maximum_images}."
-                )
-            actions = np.asarray(
-                tuple(product(*(range(order) for order in cell.orders))),
-                dtype=np.int64,
-            ).reshape((image_count, cell.rank))
-        else:
-            actions = np.asarray(image_exponents)
-            if (
-                actions.ndim != 2
-                or actions.shape[1] != cell.rank
-                or not np.issubdtype(actions.dtype, np.integer)
-            ):
-                raise ValueError(
-                    "Explicit image actions require one integer exponent per generator."
-                )
-            image_count = len(actions)
-            if image_count > maximum_images:
-                raise _PeriodicEmbeddingResourceError(
-                    f"Periodic embedding requires {image_count} images, exceeding {maximum_images}."
-                )
-            if image_count == 0:
-                raise ValueError("The explicit image action bank must not be empty.")
-        from ..discretization._periodic_topology import _exact_periodic_generators
-
-        prepared_generators = _exact_periodic_generators(cell)
-        matrices = [
-            _exact_periodic_group_element(
-                cell, action, prepared_generators=prepared_generators
-            )
-            for action in actions
-        ]
-        vertex_matrices = np.asarray(
+        lower = np.asarray(
             [
-                _exact_periodic_group_element(
-                    cell, shift, prepared_generators=prepared_generators
-                )
-                for shift in vertex_shifts
+                value.interval(budget=budget)[0]
+                if isinstance(value, RadicalElement)
+                else value
+                for value in lower
             ],
             dtype=object,
         )
-        actions = np.asarray(actions, dtype=np.int64)
-        actions.setflags(write=False)
-        packed, exponent = _exact_periodic_dyadic_bank(
-            np.concatenate(
-                (
-                    coordinates.reshape(-1),
-                    np.asarray(matrices).reshape(-1),
-                    vertex_matrices.reshape(-1),
-                )
-            )
+        upper = np.asarray(
+            [
+                value.interval(budget=budget)[1]
+                if isinstance(value, RadicalElement)
+                else value
+                for value in upper
+            ],
+            dtype=object,
         )
-        coordinate_count = coordinates.size
-        matrix_count = image_count * (dimension + 1) ** 2
-        actual = packed[:coordinate_count].reshape(coordinates.shape)
-        group_matrices = packed[
-            coordinate_count : coordinate_count + matrix_count
-        ].reshape((image_count, dimension + 1, dimension + 1))
-        vertex_matrices = packed[coordinate_count + matrix_count :].reshape(
-            vertex_matrices.shape
-        )
-        base_points = np.empty_like(actual)
-        for vertex, matrix in enumerate(vertex_matrices):
-            _reserve_periodic_exact_terms(2 * dimension)
-            base_points[vertex] = _periodic_exact_product(
-                actual[roots[vertex]], matrix[:-1, :-1].T
-            ) + matrix[:-1, -1] * (1 << -exponent)
-        _reserve_periodic_exact_terms(5 * actual.size)
-        points = base_points * (1 << -exponent)
-        difference = actual * (1 << (-2 * exponent)) - points
-        residual_integer = max(np.abs(difference).reshape(-1), default=0)
-        residual = Fraction(int(residual_integer)) * Fraction(2) ** (3 * exponent)
-        residual_bound = cell.tolerance
-        squared = max(
-            (sum(int(value) ** 2 for value in row) for row in difference), default=0
-        )
-        if (
-            Fraction(squared) * Fraction(2) ** (6 * exponent)
-            > Fraction(cell.tolerance) ** 2
-        ):
-            raise ValueError(
-                "The scientific isometry lift exceeds its declared Euclidean construction tolerance."
-            )
-    if image_count > maximum_images:
-        raise _PeriodicEmbeddingResourceError(
-            f"Periodic embedding requires {image_count} images, exceeding {maximum_images}."
-        )
-    residual_float = float(residual)
-    if Fraction(residual_float) < residual:
-        residual_float = float(np.nextafter(residual_float, np.inf))
-    if residual > Fraction(float(residual_bound)):
-        raise ValueError(
-            "The exact scientific group lift exceeds its declared coordinate construction bound."
-        )
-    for values in (points, base_points, lattice, group_matrices):
-        if values is not None:
-            values.setflags(write=False)
-    return _PeriodicImageFrame(
-        points,
-        base_points,
-        lattice,
-        group_matrices,
-        ranges,
-        exponent,
-        image_count,
-        residual,
-        residual_float,
-        residual_bound,
-        actions if isinstance(cell, PeriodicIsometryGroup) else None,
-    )
-
-
-class _PeriodicEmbeddingResourceError(ValueError):
-    """An original image/candidate allowance refused before scientific publication."""
+    return ((lower, upper),)
 
 
 @contextmanager
-def _embedding_storage(bound: int, /) -> Iterator[NativeHostStorageWorkspace | None]:
-    budget = current_native_execution_budget()
-    if budget is None:
-        yield None
-    else:
-        # Each index lifetime borrows the same original managed pool.
-        with NativeHostStorageWorkspace(budget) as owned:
-            owned.set_bound(bound)
-            yield owned
+def _embedding_storage(
+    bound: int, /, *, budget: CoordinateEnclosureBudget
+) -> Iterator[CoordinateLiveStorage]:
+    with budget.live_storage() as owned:
+        owned.set_bound(bound)
+        yield owned
 
 
-def _integer_cell_bounds(
-    corners: np.ndarray, scale_bits: int, /
+def integer_cell_bounds(
+    corners: np.ndarray,
+    scale_bits: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Outward float64 index boxes; exact integer predicates remain authoritative."""
+    """Return outward float64 index boxes for coefficient-field predicates."""
+    algebraic = any(
+        isinstance(value, (Fraction, RadicalElement)) for value in corners.flat
+    )
+    if algebraic and budget is not None:
+        reserve_algebraic_work(
+            tuple(corners.flat), 4 * corners.size, 2 * corners.size, 1, budget=budget
+        )
     lower, upper = np.min(corners, axis=1), np.max(corners, axis=1)
     denominator = 1 << scale_bits
     lower_float = np.empty(lower.shape, dtype=np.float64)
     upper_float = np.empty(upper.shape, dtype=np.float64)
     for row in range(lower.shape[0]):
         for axis in range(lower.shape[1]):
+            if algebraic:
+                low, high = lower[row, axis], upper[row, axis]
+                low = (
+                    low.interval(budget=budget)[0]
+                    if isinstance(low, RadicalElement)
+                    else Fraction(low)
+                )
+                high = (
+                    high.interval(budget=budget)[1]
+                    if isinstance(high, RadicalElement)
+                    else Fraction(high)
+                )
+                lower_float[row, axis] = fraction_endpoint(
+                    low / denominator, upper=False, saturate=True
+                )
+                upper_float[row, axis] = fraction_endpoint(
+                    high / denominator, upper=True, saturate=True
+                )
+                continue
             lower_float[row, axis] = np.nextafter(
                 float(Fraction(int(lower[row, axis]), denominator)),
                 -np.inf,
@@ -915,11 +1098,55 @@ def _integer_cell_bounds(
     return lower_float, upper_float
 
 
-def _image_scale_bits(frame: _PeriodicImageFrame, dimension: int, /) -> int:
-    """One monotone power-of-two index scale covers every exact group image."""
+def _image_scale_bits(
+    frame: PeriodicImageFrame,
+    dimension: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> int:
+    """One monotone power-of-two index scale covers every field-valued group image."""
+    if any(isinstance(value, (Fraction, RadicalElement)) for value in frame.points.flat):
+
+        def magnitude(values: np.ndarray) -> Fraction:
+            if budget is not None:
+                reserve_algebraic_work(
+                    tuple(values.flat), 4 * values.size, 2 * values.size, 1, budget=budget
+                )
+            return max(
+                (
+                    max(abs(lo), abs(hi))
+                    for value in values.flat
+                    for lo, hi in (coefficient_interval(value, budget=budget),)
+                ),
+                default=Fraction(0),
+            )
+
+        point_bound = magnitude(frame.points)
+        if frame.lattice is not None:
+            shifts = max(
+                (max(abs(value.start), abs(value.stop - 1)) for value in frame.ranges),
+                default=0,
+            )
+            bound = point_bound + dimension * shifts * magnitude(frame.lattice)
+        elif frame.group_matrices is not None:
+            bank_bound = magnitude(frame.group_matrices)
+            bound = max(
+                point_bound,
+                dimension * magnitude(frame.base_points) * bank_bound + bank_bound,
+            )
+        else:
+            raise RuntimeError(
+                "image_scale_bits.frame must retain group operands; got no lattice or group matrix"
+            )
+        return max(
+            0, bound.numerator.bit_length() - bound.denominator.bit_length() + 2 - 500
+        )
     image_bank = frame.lattice if frame.lattice is not None else frame.group_matrices
     if image_bank is None:
-        raise RuntimeError("The exact image frame must retain its group operands.")
+        raise RuntimeError(
+            "image_scale_bits.frame must retain the image frame group operands; got The rational image frame must retain its group operands."
+        )
     point_bits = max(
         (abs(int(value)).bit_length() for value in frame.points.flat),
         default=0,
@@ -954,7 +1181,7 @@ def _image_scale_bits(frame: _PeriodicImageFrame, dimension: int, /) -> int:
 
 
 def _embedding_image_pairs(
-    frame: _PeriodicImageFrame,
+    frame: PeriodicImageFrame,
     connectivity: np.ndarray,
     first_bvh: PackedBVH,
     lower: np.ndarray,
@@ -964,43 +1191,38 @@ def _embedding_image_pairs(
     tree_scratch: int,
     visit: Callable[[int], None],
     prepare_image: Callable[[], None],
-    record_storage: Callable[[NativeHostStorageWorkspace | None], None],
+    record_storage: Callable[[int], None],
     /,
-) -> Generator[tuple[int, int, np.ndarray, _PeriodicImage], None, None]:
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> Generator[tuple[int, int, np.ndarray, PeriodicImage], None, None]:
     for shift in frame.images():
-        with _embedding_storage(image_storage) as owner:
+        with _embedding_storage(image_storage, budget=budget) as owner:
             prepare_image()
-            imaged = frame.image_points(shift)[connectivity]
+            imaged = frame.image_points(shift, budget=budget)[connectivity]
             image_lower, image_upper = np.min(imaged, axis=1), np.max(imaged, axis=1)
             identity = shift == 0 if isinstance(shift, int) else not any(shift)
             second_bvh = prepare_bvh(
-                *_integer_cell_bounds(imaged, scale_bits),
+                *integer_cell_bounds(imaged, scale_bits, budget=budget),
                 policy=BVHBuildPolicy(leaf_size=1),
                 dtype=np.float64,
             )
-            if owner is not None:
-                owner.retain_owner(second_bvh)
-                owner.set_bound(owner.bound - tree_scratch)
-            record_storage(owner)
+            owner.set_bound(owner.bound - tree_scratch)
+            record_storage(model_array_bytes(second_bvh))
 
             def retain_host(value: object) -> None:
-                if owner is None:
-                    raise RuntimeError(
-                        "Host-copy retention requires its actual child owner."
-                    )
                 if not isinstance(value, tuple):
-                    raise TypeError("The canonical BVH host bank must be a tuple.")
-                copied_bytes = 0
+                    raise TypeError(
+                        "retain_host.value must retain a tuple of NumPy host banks; got The deterministic BVH host bank must be a tuple."
+                    )
                 for array in value:
                     if not isinstance(array, np.ndarray):
                         raise TypeError(
-                            "The canonical BVH host bank must contain NumPy arrays."
+                            "retain_host.value must retain a tuple of NumPy host banks; got The deterministic BVH host bank must contain NumPy arrays."
                         )
-                    copied_bytes += array.nbytes
-                owner.retain_owner(value)
-                # Actual retained copy owners replace their admitted raw bytes.
-                owner.set_bound(owner.bound - copied_bytes)
-                record_storage(owner)
+                # Payload copies fit the image scratch bound; account array metadata locally.
+                owner.set_bound(owner.bound + 64 + 128 * len(value))
+                record_storage(model_array_bytes(second_bvh))
 
             for first_rows, second_rows in bvh_overlap_pair_blocks(
                 first_bvh,
@@ -1008,7 +1230,7 @@ def _embedding_image_pairs(
                 include_touching=True,
                 visit=visit,
                 maximum_block_pairs=256,
-                retain_owner=None if owner is None else retain_host,
+                retain_owner=retain_host,
             ):
                 for first, second in zip(first_rows, second_rows, strict=True):
                     if identity and second <= first:
@@ -1022,24 +1244,32 @@ def _embedding_image_pairs(
 
 
 def _affine_periodic_embedding(
-    mesh: CellMesh,
-    topology: PeriodicMeshTopology,
+    mesh: cell_mesh_owner.CellMesh,
+    topology: periodic_topology_owner.PeriodicMeshTopology,
     maximum_images: int,
     maximum_pairs: int,
     record_work: Callable[[int, int, int], None] | None,
     record_unmanaged: Callable[[int], None] | None,
     /,
+    *,
+    geometry: CellGeometrySpec | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> PeriodicEmbeddingEvidence:
-    block = mesh.blocks[0]
     dimension = mesh.ambient_dimension
-    vertices, cells = mesh.coordinates.shape[0], block.cell_count
+    vertices = mesh.coordinates.shape[0]
+    cells = sum(block.cell_count for block in mesh.blocks)
     group = topology.cell
     matrix_count = (
-        1 if isinstance(group, PeriodicCell) else int(np.prod(group.orders, dtype=object))
+        1
+        if isinstance(group, periodic_cell_owner.PeriodicCell)
+        else int(np.prod(group.orders, dtype=object))
     )
     if matrix_count > maximum_images:
-        raise _PeriodicEmbeddingResourceError(
-            f"Periodic embedding requires {matrix_count} images, exceeding {maximum_images}."
+        raise PeriodicEmbeddingResourceError(
+            "affine_periodic_embedding.mesh must retain disjoint lifted simplex interiors within its image and pair allowances; got "
+            + (
+                f"Periodic embedding requires {matrix_count} images, exceeding {maximum_images}."
+            )
         )
     # IEEE float dyadic lifting multiplies at most three integer factors. 1024
     # bytes cover each resulting Python integer; indexed corners share owners.
@@ -1049,74 +1279,79 @@ def _affine_periodic_embedding(
     frame_storage = 1024 * (
         8 * vertices * dimension + matrix_count * (dimension + 1) ** 2
     )
-    storage_upper = frame_storage + tree_scratch + query_scratch
+    connectivity_storage = 8 * cells * (dimension + 2) if len(mesh.blocks) > 1 else 0
+    storage_upper = frame_storage + tree_scratch + query_scratch + connectivity_storage
     setup_bound = 80 * (vertices * dimension + matrix_count * (dimension + 1) ** 2)
     aabb_tests = exact_tests = 0
-    budget = current_native_execution_budget()
 
     def visit(count: int) -> None:
         nonlocal aabb_tests
-        if budget is not None:
-            budget.charge(work=count, geometry_queries=count)
+        _periodic_charge(count, geometry_queries=count, budget=budget)
         aabb_tests += count
         if record_work is not None:
             record_work(setup_bound, aabb_tests, exact_tests)
 
-    with _embedding_storage(storage_upper) as source_owner:
-        if budget is not None:
-            budget.admit_work_bound(setup_bound)
-            budget.charge(work=setup_bound)
+    with _embedding_storage(storage_upper, budget=budget) as source_owner:
+        _periodic_charge(setup_bound, geometry_queries=0, budget=budget)
         if record_work is not None:
             record_work(setup_bound, aabb_tests, exact_tests)
         coordinates = np.asarray(mesh.coordinates)
-        connectivity = np.asarray(block.vertices)
-        cell_ids = np.asarray(block.global_ids)
-        frame = _prepare_periodic_image_frame(
+        if len(mesh.blocks) == 1:
+            connectivity = np.asarray(mesh.blocks[0].vertices)
+            cell_ids = np.asarray(mesh.blocks[0].global_ids)
+        else:
+            copy_work = cells * (dimension + 2)
+            _periodic_charge(copy_work, geometry_queries=0, budget=budget)
+            setup_bound += copy_work
+            connectivity, cell_ids = _periodic_simplex_rows(mesh)
+        exact_coordinates = (
+            None
+            if geometry is None
+            else periodic_exact_coordinate_bank(mesh, geometry, budget=budget)
+        )
+        frame = prepare_periodic_image_frame(
             coordinates,
             np.asarray(topology.vertex_representatives),
             np.asarray(topology.vertex_shifts),
             group,
             maximum_images,
+            budget=budget,
+            exact_coordinates=exact_coordinates,
         )
         corners = frame.points[connectivity]
         lower, upper = np.min(corners, axis=1), np.max(corners, axis=1)
-        scale_bits = _image_scale_bits(frame, dimension)
+        scale_bits = _image_scale_bits(
+            frame, dimension, budget=budget if geometry is not None else None
+        )
         policy = BVHBuildPolicy(leaf_size=1)
         build_work = 64 * cells * (dimension + depth)
-        if budget is not None:
-            budget.admit_work_bound(build_work)
-            budget.charge(work=build_work)
+        _periodic_charge(build_work, geometry_queries=0, budget=budget)
         setup_bound += build_work
         first_bvh = prepare_bvh(
-            *_integer_cell_bounds(corners, scale_bits), policy=policy, dtype=np.float64
+            *integer_cell_bounds(
+                corners, scale_bits, budget=budget if geometry is not None else None
+            ),
+            policy=policy,
+            dtype=np.float64,
         )
-        if source_owner is not None:
-            source_owner.retain_owner(first_bvh)
-            source_owner.set_bound(source_owner.bound - tree_scratch - query_scratch)
+        source_owner.set_bound(source_owner.bound - tree_scratch - query_scratch)
         unmanaged_peak = 0
 
-        def record_storage(image_owner: NativeHostStorageWorkspace | None) -> None:
+        def record_storage(image_bytes: int) -> None:
             nonlocal unmanaged_peak
-            source_bytes = (
-                0 if source_owner is None else source_owner.logical_unmanaged_bytes_upper
-            )
-            image_bytes = (
-                0 if image_owner is None else image_owner.logical_unmanaged_bytes_upper
-            )
+            source_bytes = model_array_bytes(first_bvh)
             unmanaged_peak = max(unmanaged_peak, source_bytes + image_bytes)
             if record_unmanaged is not None:
                 record_unmanaged(unmanaged_peak)
 
         def prepare_image() -> None:
             nonlocal setup_bound
-            if budget is not None:
-                budget.admit_work_bound(build_work)
-                budget.charge(work=build_work)
+            _periodic_charge(build_work, geometry_queries=0, budget=budget)
             setup_bound += build_work
             if record_work is not None:
                 record_work(setup_bound, aabb_tests, exact_tests)
 
-        record_storage(None)
+        record_storage(0)
         candidates = 0
         pairs = _embedding_image_pairs(
             frame,
@@ -1130,32 +1365,42 @@ def _affine_periodic_embedding(
             visit,
             prepare_image,
             record_storage,
+            budget=budget,
         )
         with closing(pairs):
             for first, second, imaged_cell, shift in pairs:
                 if candidates == maximum_pairs:
-                    raise _PeriodicEmbeddingResourceError(
-                        "Periodic embedding exhausted its candidate-pair budget."
+                    raise PeriodicEmbeddingResourceError(
+                        "affine_periodic_embedding.mesh must retain disjoint lifted simplex interiors within its image and pair allowances; got Periodic embedding exhausted its candidate-pair budget."
                     )
                 candidates += 1
-                if budget is not None:
-                    budget.charge(work=1, geometry_queries=1)
+                _periodic_charge(1, geometry_queries=1, budget=budget)
                 exact_tests += 1
                 if record_work is not None:
                     record_work(setup_bound, aabb_tests, exact_tests)
-                if _interiors_overlap(corners[first], imaged_cell):
+                if affine_mapped_contact_owner.interiors_overlap(
+                    corners[first],
+                    imaged_cell,
+                    budget=budget if geometry is not None else None,
+                ):
                     raise ValueError(
-                        f"Quotient cells {first} and {second} "
-                        f"(scientific IDs {int(cell_ids[first])}, {int(cell_ids[second])}) "
-                        f"overlap under image {shift}."
+                        "affine_periodic_embedding.mesh must retain disjoint lifted simplex interiors within its image and pair allowances; got "
+                        + (
+                            f"Quotient cells {first} and {second} (scientific IDs {int(cell_ids[first])}, {int(cell_ids[second])}) overlap under image {shift}."
+                        )
                     )
         if record_work is not None:
             record_work(setup_bound, aabb_tests, exact_tests)
+        coordinate_scope = (
+            "exact_dyadic_group_lift"
+            if geometry is None
+            else "exact_algebraic_group_lift"
+        )
         return PeriodicEmbeddingEvidence(
             periodic_topology_id=topology.periodic_topology_id,
             image_count=frame.image_count,
             candidate_pair_count=candidates,
-            coordinate_scope="exact_dyadic_group_lift",
+            coordinate_scope=coordinate_scope,
             maximum_coordinate_residual=frame.residual_float,
             coordinate_residual_bound=float(frame.residual_bound),
             certificate_id=canonical_fingerprint(
@@ -1166,8 +1411,13 @@ def _affine_periodic_embedding(
                     "cell_ids": array_tree_fingerprint(cell_ids),
                     "images": frame.image_count,
                     "pairs": candidates,
-                    "coordinate_scope": "exact_dyadic_group_lift",
-                    # Preserve the canonical bound payload separately from host scalar metadata.
+                    "coordinate_scope": coordinate_scope,
+                    **(
+                        {}
+                        if geometry is None
+                        else {"geometry": cell_geometry_id(geometry)}
+                    ),
+                    # Preserve the deterministic bound payload separately from host scalar metadata.
                     "coordinate_residual": frame.residual_float,
                     "coordinate_residual_bound": frame.residual_bound,
                 }
@@ -1175,8 +1425,371 @@ def _affine_periodic_embedding(
         )
 
 
+class _MappedEmbeddingPreparation(StrictModule):
+    geometry: CellGeometrySpec
+    validity: CellValidityCertificate
+    limits: MeshCertificateLimits
+
+
+def _prepare_mapped_embedding(
+    mesh: cell_mesh_owner.CellMesh,
+    geometry: CellGeometrySpec | None,
+    limits: MeshCertificateLimits | None,
+    validity: CellValidityCertificate | None,
+    validity_policy: CellValidityPolicy | None,
+    maximum_images: int,
+    maximum_pairs: int,
+    budget: CoordinateEnclosureBudget,
+) -> _MappedEmbeddingPreparation:
+    spec = CellGeometrySpec.affine(mesh) if geometry is None else geometry
+    limits_ = (
+        MeshCertificateLimits(
+            maximum_candidate_pairs=maximum_pairs,
+            maximum_periodic_images=maximum_images,
+        )
+        if limits is None
+        else limits
+    )
+    if (
+        maximum_images < limits_.maximum_periodic_images
+        or maximum_pairs < limits_.maximum_candidate_pairs
+    ):
+        limits_ = MeshCertificateLimits(
+            maximum_candidate_pairs=min(maximum_pairs, limits_.maximum_candidate_pairs),
+            maximum_periodic_images=min(maximum_images, limits_.maximum_periodic_images),
+            maximum_ray_tests=limits_.maximum_ray_tests,
+            maximum_source_samples=limits_.maximum_source_samples,
+            maximum_distance_evaluations=limits_.maximum_distance_evaluations,
+            maximum_subdivision_depth=limits_.maximum_subdivision_depth,
+            maximum_subdivision_pieces=limits_.maximum_subdivision_pieces,
+            maximum_bernstein_nodes=limits_.maximum_bernstein_nodes,
+            maximum_work_units=limits_.maximum_work_units,
+            maximum_scratch_bytes=limits_.maximum_scratch_bytes,
+        )
+    if validity is not None:
+        validity.require_bound(spec, mesh=mesh)
+        if (
+            validity_policy is not None
+            and validity.policy_id != validity_policy.policy_id
+        ):
+            raise ValueError(
+                "prepare_mapped_embedding.mesh must retain certified validity under the authored policy; got Periodic mapped validity changes its authored policy."
+            )
+        if not validity.all_certified:
+            raise ValueError(
+                "prepare_mapped_embedding.mesh must retain certified validity under the authored policy; got Periodic mapped validity is unresolved."
+            )
+    else:
+        validity = certify_cell_geometry_validity(
+            spec, mesh=mesh, policy=validity_policy, budget=budget
+        )
+    return _MappedEmbeddingPreparation(spec, validity, limits_)
+
+
+def _require_mapped_embedding(
+    certificate: GlobalEmbeddingCertificate,
+) -> GlobalEmbeddingCertificate:
+    if certificate.status != "certified":
+        resource_findings = tuple(
+            finding for finding in certificate.findings if finding.resource is not None
+        )
+        if resource_findings:
+            requested: list[tuple[str, int]] = []
+            achieved: list[tuple[str, int]] = []
+            for finding in resource_findings:
+                prefix = (
+                    f"certificate:{certificate.certificate_id}:finding:{finding.finding_id}"
+                    f":{finding.check}:resource:{finding.resource}"
+                )
+                requested.extend(
+                    (f"{prefix}:{key}", value) for key, value in finding.requested
+                )
+                achieved.extend(
+                    (f"{prefix}:{key}", value) for key, value in finding.achieved
+                )
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "require_mapped_embedding.certificate must certify disjoint quotient images within its resource allowance; got Periodic mapped embedding exhausted its coordinate proof allowance.",
+                stage="periodic_embedding",
+                entity_ids=tuple(
+                    sorted(
+                        {
+                            identifier
+                            for finding in resource_findings
+                            for identifier in finding.entity_ids
+                        }
+                    )
+                ),
+                requested=tuple(requested),
+                achieved=tuple(achieved),
+            )
+        raise ValueError(
+            "require_mapped_embedding.certificate must certify disjoint quotient images within its resource allowance; got "
+            + (
+                f"Periodic mapped embedding {certificate.status}: "
+                + ", ".join((value.check for value in certificate.findings))
+            )
+        )
+    return certificate
+
+
+def _closed_affine_quotient_embedding(
+    mesh: cell_mesh_owner.CellMesh,
+    topology: periodic_topology_owner.PeriodicMeshTopology,
+    preparation: _MappedEmbeddingPreparation,
+    maximum_images: int,
+    maximum_pairs: int,
+    budget: CoordinateEnclosureBudget,
+) -> PeriodicEmbeddingEvidence | None:
+    """Combine source validity, closed quotient incidence, and field-arithmetic open contacts."""
+    if (
+        not preparation.validity.all_certified
+        or any(
+            block.cell_kind != _SIMPLEX_KINDS.get(mesh.ambient_dimension)
+            for block in mesh.blocks
+        )
+        or (
+            isinstance(topology.cell, PeriodicIsometryGroup)
+            and any(order == 0 for order in topology.cell.orders)
+        )
+    ):
+        return None
+    algebraic = isinstance(
+        preparation.geometry.exact_source, ExactAlgebraicCellGeometrySource
+    )
+    if algebraic:
+        spec = preparation.geometry
+        elements, routes, _ = spec.resolve(mesh, budget=budget)
+        bank = prepared_coordinate_source_bank(spec, budget=budget)
+        for element, route in zip(elements, routes, strict=True):
+            for row in np.asarray(route):
+                expressions = coordinate_expressions(
+                    element,
+                    tuple(bank[int(index)] for index in row if index >= 0),
+                    budget=budget,
+                )
+                if (
+                    expressions is None
+                    or not affine_mapped_contact_owner.affine_expressions(expressions)
+                ):
+                    return None
+    facets = topology.quotient.entities(mesh.topological_dimension - 1)
+    with budget.temporary_scope():
+        budget.reserve(facets.count, facets.count)
+        if np.any(np.asarray(facets.subset("boundary").mask)):
+            return None
+    # PeriodicMeshTopology has proved at most two sides and opposite incidence
+    # orientation on each quotient facet. With no boundary, a positive affine
+    # local star has positive integer degree. Nonincident closed contact would
+    # force open-interior overlap in a neighborhood of that contact.
+    affine = _affine_periodic_embedding(
+        mesh,
+        topology,
+        min(maximum_images, preparation.limits.maximum_periodic_images),
+        min(maximum_pairs, preparation.limits.maximum_candidate_pairs),
+        None,
+        None,
+        budget=budget,
+        geometry=preparation.geometry if algebraic else None,
+    )
+    return PeriodicEmbeddingEvidence(
+        periodic_topology_id=affine.periodic_topology_id,
+        image_count=affine.image_count,
+        candidate_pair_count=affine.candidate_pair_count,
+        coordinate_scope=(
+            "exact_algebraic_closed_quotient_lift"
+            if algebraic
+            else "exact_dyadic_closed_quotient_lift"
+        ),
+        maximum_coordinate_residual=affine.maximum_coordinate_residual,
+        coordinate_residual_bound=affine.coordinate_residual_bound,
+        certificate_id=canonical_fingerprint(
+            {
+                "kind": "periodic-closed-affine-quotient-embedding",
+                "interior_embedding": affine.certificate_id,
+                "source_validity": preparation.validity.certificate_id,
+                "closed_oriented_quotient": topology.periodic_topology_id,
+            }
+        ),
+    )
+
+
+def _mapped_periodic_embedding(
+    mesh: cell_mesh_owner.CellMesh,
+    topology: periodic_topology_owner.PeriodicMeshTopology,
+    geometry: CellGeometrySpec | None,
+    limits: MeshCertificateLimits | None,
+    validity: CellValidityCertificate | None,
+    validity_policy: CellValidityPolicy | None,
+    maximum_images: int,
+    maximum_pairs: int,
+    budget: CoordinateEnclosureBudget,
+) -> PeriodicEmbeddingEvidence:
+    request_limits = MeshCertificateLimits() if limits is None else limits
+    try:
+        with (
+            budget.measurement() as measurement,
+            budget.activate(),
+            budget.bound_stage(
+                request_limits.maximum_work_units,
+                request_limits.maximum_scratch_bytes,
+            ),
+        ):
+            preparation = _prepare_mapped_embedding(
+                mesh,
+                geometry,
+                limits,
+                validity,
+                validity_policy,
+                maximum_images,
+                maximum_pairs,
+                budget,
+            )
+            if (
+                geometry is None
+                and len(mesh.blocks) > 1
+                or (
+                    geometry is not None
+                    and isinstance(
+                        geometry.exact_source, ExactAlgebraicCellGeometrySource
+                    )
+                )
+            ):
+                closed_affine = _closed_affine_quotient_embedding(
+                    mesh, topology, preparation, maximum_images, maximum_pairs, budget
+                )
+                if closed_affine is not None:
+                    return closed_affine
+            spec = preparation.geometry
+            certificate = certify_global_embedding(
+                mesh, spec, preparation.validity, limits=preparation.limits, budget=budget
+            )
+            _require_mapped_embedding(certificate)
+            _, _, executed = spec.resolve(mesh, budget=budget)
+            source_bank = prepared_coordinate_source_bank(spec, budget=budget)
+            if isinstance(spec.exact_source, ExactAlgebraicCellGeometrySource):
+                reserve_algebraic_work(
+                    source_bank,
+                    4 * np.asarray(executed).size,
+                    2 * np.asarray(executed).size,
+                    1,
+                    budget=budget,
+                )
+            coefficient_error = max(
+                (
+                    abs(Fraction(float(actual)) - exact)
+                    for row, source_row in zip(
+                        np.asarray(executed), source_bank, strict=True
+                    )
+                    for actual, exact in zip(row, source_row, strict=True)
+                ),
+                default=Fraction(0),
+            )
+            if isinstance(coefficient_error, RadicalElement):
+                coefficient_error = coefficient_error.interval(budget=budget)[1]
+            residual = fraction_endpoint(coefficient_error, upper=True, saturate=True)
+            return PeriodicEmbeddingEvidence(
+                periodic_topology_id=topology.periodic_topology_id,
+                image_count=certificate.periodic_image_count,
+                candidate_pair_count=certificate.candidate_pair_count,
+                coordinate_scope="exact_source_group_images",
+                maximum_coordinate_residual=residual,
+                coordinate_residual_bound=residual,
+                certificate_id=certificate.certificate_id,
+                global_embedding=certificate,
+            )
+    except CoordinateEnclosureResourceError as error:
+        prefix = f"periodic:coordinate_source:resource:{error.resource}"
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "mapped_periodic_embedding.mesh must fit the coordinate-source preparation allowance; got Periodic source preparation exhausted its coordinate proof allowance.",
+            stage="periodic_embedding",
+            requested=(
+                (f"{prefix}:limit", error.limit),
+                (f"{prefix}:requested", error.requested),
+            ),
+            achieved=(
+                (f"{prefix}:completed", error.completed),
+                (f"{prefix}:source_expression_work_units", measurement.work_units),
+                (f"{prefix}:source_expression_peak_bytes", measurement.peak_bytes_upper),
+                (
+                    f"{prefix}:source_expression_native_charged_work_units",
+                    measurement.native_charged_work_units,
+                ),
+                (
+                    f"{prefix}:source_expression_retained_basis_bytes_at_catch",
+                    budget.retained_basis_bytes,
+                ),
+                (
+                    f"{prefix}:source_expression_temporary_bytes_upper_at_catch",
+                    budget.temporary_bytes_upper,
+                ),
+            ),
+        ) from error
+
+
+def _certify_periodic_embedding(
+    mesh: cell_mesh_owner.CellMesh,
+    /,
+    *,
+    geometry: CellGeometrySpec | None = None,
+    limits: MeshCertificateLimits | None = None,
+    validity: CellValidityCertificate | None = None,
+    validity_policy: CellValidityPolicy | None = None,
+    maximum_images: int = 100000,
+    maximum_pairs: int = 5000000,
+    record_work: Callable[[int, int, int], None] | None = None,
+    record_unmanaged: Callable[[int], None] | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> PeriodicEmbeddingEvidence:
+    """Certify group-lift interior disjointness or the recorded closed-contact proof.
+
+    Mapped/mixed cells use the continuous global certificate. Default-affine
+    multi-block simplices reuse coefficient-field group-lift predicates only after proving
+    full-source positive validity and closed oriented quotient incidence.
+    Nonclosed multi-block quotients retain the mapped closed-contact proof.
+    The default-affine single-block control records interior-disjoint lifts.
+    """
+
+    topology = require_periodic_topology(mesh)
+    if (
+        geometry is not None
+        or len(mesh.blocks) != 1
+        or mesh.blocks[0].cell_kind != _SIMPLEX_KINDS.get(mesh.ambient_dimension)
+        or (
+            isinstance(topology.cell, PeriodicIsometryGroup)
+            and any(order == 0 for order in topology.cell.orders)
+        )
+    ):
+        return _mapped_periodic_embedding(
+            mesh,
+            topology,
+            geometry,
+            limits,
+            validity,
+            validity_policy,
+            maximum_images,
+            maximum_pairs,
+            budget,
+        )
+    if maximum_images <= 0 or maximum_pairs <= 0:
+        raise ValueError(
+            "certify_periodic_embedding.mesh must retain full-dimensional simplices and positive image and pair allowances; got Image and candidate-pair budgets must be positive."
+        )
+    return _affine_periodic_embedding(
+        mesh,
+        topology,
+        maximum_images,
+        maximum_pairs,
+        record_work,
+        record_unmanaged,
+        budget=budget,
+    )
+
+
+@checked
 def certify_periodic_embedding(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     /,
     *,
     geometry: CellGeometrySpec | None = None,
@@ -1187,232 +1800,51 @@ def certify_periodic_embedding(
     maximum_pairs: int = 5_000_000,
     record_work: Callable[[int, int, int], None] | None = None,
     record_unmanaged: Callable[[int], None] | None = None,
+    scope: NativeExecutionScope | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> PeriodicEmbeddingEvidence:
-    """Refuse full source-map quotient overlaps, including nontrivial self images.
-
-    Mapped/mixed cells use the canonical continuous global certificate. The
-    affine simplex control retains its exact dyadic separating-axis algorithm.
-    Every image neighborhood has a full physical-hull sufficiency proof.
-    """
-
-    topology = _require_periodic_topology(mesh)
-    if (
-        geometry is not None
-        or len(mesh.blocks) != 1
-        or mesh.blocks[0].cell_kind != _SIMPLEX_KINDS.get(mesh.ambient_dimension)
-        or (
-            isinstance(topology.cell, PeriodicIsometryGroup)
-            and any(order == 0 for order in topology.cell.orders)
+    """Certify quotient embedding under the certificate request allowance."""
+    request_limits = MeshCertificateLimits() if limits is None else limits
+    if budget is None:
+        initial = HostBatchTicket(0)
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=request_limits.maximum_work_units,
+            maximum_memory_bytes=request_limits.maximum_scratch_bytes,
         )
+        initial.settle()
+    with _periodic_phase(
+        scope,
+        budget,
+        request_limits.maximum_work_units,
+        request_limits.maximum_scratch_bytes,
     ):
-        from ..discretization._coordinate_enclosure import (
-            coordinate_enclosure_budget,
-            CoordinateEnclosureResourceError,
+        return _certify_periodic_embedding(
+            mesh,
+            geometry=geometry,
+            limits=limits,
+            validity=validity,
+            validity_policy=validity_policy,
+            maximum_images=maximum_images,
+            maximum_pairs=maximum_pairs,
+            record_work=record_work,
+            record_unmanaged=record_unmanaged,
+            budget=budget,
         )
-
-        request_limits = MeshCertificateLimits() if limits is None else limits
-        ledger = coordinate_enclosure_budget(
-            request_limits.maximum_work_units, request_limits.maximum_scratch_bytes
-        )
-        try:
-            with (
-                ledger.activate(),
-                ledger.bound_stage(
-                    request_limits.maximum_work_units,
-                    request_limits.maximum_scratch_bytes,
-                ),
-            ):
-                from ..discretization._cell_geometry_validity import (
-                    CellValidityCertificate,
-                    CellValidityPolicy,
-                    certify_cell_geometry_validity,
-                )
-                from ..geometry._mesh_certificates import certify_global_embedding
-
-                spec = CellGeometrySpec.affine(mesh) if geometry is None else geometry
-                limits_ = (
-                    MeshCertificateLimits(
-                        maximum_candidate_pairs=maximum_pairs,
-                        maximum_periodic_images=maximum_images,
-                    )
-                    if limits is None
-                    else limits
-                )
-                if (
-                    maximum_images < limits_.maximum_periodic_images
-                    or maximum_pairs < limits_.maximum_candidate_pairs
-                ):
-                    limits_ = MeshCertificateLimits(
-                        maximum_candidate_pairs=min(
-                            maximum_pairs, limits_.maximum_candidate_pairs
-                        ),
-                        maximum_periodic_images=min(
-                            maximum_images, limits_.maximum_periodic_images
-                        ),
-                        maximum_ray_tests=limits_.maximum_ray_tests,
-                        maximum_source_samples=limits_.maximum_source_samples,
-                        maximum_distance_evaluations=limits_.maximum_distance_evaluations,
-                        maximum_subdivision_depth=limits_.maximum_subdivision_depth,
-                        maximum_subdivision_pieces=limits_.maximum_subdivision_pieces,
-                        maximum_bernstein_nodes=limits_.maximum_bernstein_nodes,
-                        maximum_work_units=limits_.maximum_work_units,
-                        maximum_scratch_bytes=limits_.maximum_scratch_bytes,
-                    )
-                if validity is not None:
-                    if not isinstance(validity, CellValidityCertificate):
-                        raise TypeError(
-                            "Periodic mapped validity must be its actual owning certificate."
-                        )
-                    validity.require_bound(spec, mesh=mesh)
-                    if (
-                        validity_policy is not None
-                        and validity.policy_id != validity_policy.policy_id
-                    ):
-                        raise ValueError(
-                            "Periodic mapped validity changes its authored original policy."
-                        )
-                    if not validity.all_certified:
-                        raise ValueError("Periodic mapped validity is unresolved.")
-                else:
-                    if validity_policy is not None and not isinstance(
-                        validity_policy, CellValidityPolicy
-                    ):
-                        raise TypeError(
-                            "Periodic mapped validity policy must be CellValidityPolicy."
-                        )
-                    validity = certify_cell_geometry_validity(
-                        spec, mesh=mesh, policy=validity_policy
-                    )
-                certificate = certify_global_embedding(
-                    mesh, spec, validity, limits=limits_
-                )
-                if certificate.status != "certified":
-                    resource_findings = tuple(
-                        finding
-                        for finding in certificate.findings
-                        if finding.resource is not None
-                    )
-                    if resource_findings:
-                        from ._contracts import MeshingFailure, MeshingFailureCategory
-
-                        requested: list[tuple[str, int]] = []
-                        achieved: list[tuple[str, int]] = []
-                        for finding in resource_findings:
-                            prefix = (
-                                f"certificate:{certificate.certificate_id}:finding:{finding.finding_id}"
-                                f":{finding.check}:resource:{finding.resource}"
-                            )
-                            requested.extend(
-                                (f"{prefix}:{key}", value)
-                                for key, value in finding.requested
-                            )
-                            achieved.extend(
-                                (f"{prefix}:{key}", value)
-                                for key, value in finding.achieved
-                            )
-                        raise MeshingFailure(
-                            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                            "Periodic mapped embedding exhausted its original coordinate proof allowance.",
-                            stage="periodic_embedding",
-                            entity_ids=tuple(
-                                sorted(
-                                    {
-                                        identifier
-                                        for finding in resource_findings
-                                        for identifier in finding.entity_ids
-                                    }
-                                )
-                            ),
-                            requested=tuple(requested),
-                            achieved=tuple(achieved),
-                        )
-                    raise ValueError(
-                        f"Periodic mapped embedding {certificate.status}: "
-                        + ", ".join(value.check for value in certificate.findings)
-                    )
-                from ..discretization._coordinate_enclosure import (
-                    outward,
-                    prepared_coordinate_source_bank,
-                )
-
-                _, _, executed = spec.resolve(mesh)
-                source_bank = prepared_coordinate_source_bank(spec)
-                coefficient_error = max(
-                    (
-                        abs(Fraction(float(actual)) - exact)
-                        for row, source_row in zip(
-                            np.asarray(executed), source_bank, strict=True
-                        )
-                        for actual, exact in zip(row, source_row, strict=True)
-                    ),
-                    default=Fraction(0),
-                )
-                residual = outward(coefficient_error, np.inf)
-                return PeriodicEmbeddingEvidence(
-                    periodic_topology_id=topology.periodic_topology_id,
-                    image_count=certificate.periodic_image_count,
-                    candidate_pair_count=certificate.candidate_pair_count,
-                    coordinate_scope="exact_source_group_images",
-                    maximum_coordinate_residual=residual,
-                    coordinate_residual_bound=residual,
-                    certificate_id=certificate.certificate_id,
-                    global_embedding=certificate,
-                )
-        except CoordinateEnclosureResourceError as error:
-            from ._contracts import MeshingFailure, MeshingFailureCategory
-
-            prefix = f"periodic:coordinate_source:resource:{error.resource}"
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Periodic source preparation exhausted its original coordinate proof allowance.",
-                stage="periodic_embedding",
-                requested=(
-                    (f"{prefix}:limit", error.limit),
-                    (f"{prefix}:requested", error.requested),
-                ),
-                achieved=(
-                    (f"{prefix}:completed", error.completed),
-                    (f"{prefix}:source_expression_work_units", ledger.work_units),
-                    (f"{prefix}:source_expression_peak_bytes", ledger.peak_bytes_upper),
-                    (
-                        f"{prefix}:source_expression_native_charged_work_units",
-                        ledger.native_charged_work_units,
-                    ),
-                    (
-                        f"{prefix}:source_expression_retained_basis_bytes_at_catch",
-                        ledger.retained_basis_bytes,
-                    ),
-                    (
-                        f"{prefix}:source_expression_temporary_bytes_upper_at_catch",
-                        ledger.temporary_bytes_upper,
-                    ),
-                ),
-            ) from error
-    block = mesh.blocks[0]
-    dimension = mesh.ambient_dimension
-    if block.cell_kind != _SIMPLEX_KINDS.get(dimension):
-        raise ValueError("Periodic embedding requires full-dimensional simplices.")
-    if maximum_images <= 0 or maximum_pairs <= 0:
-        raise ValueError("Image and candidate-pair budgets must be positive.")
-    return _affine_periodic_embedding(
-        mesh,
-        topology,
-        maximum_images,
-        maximum_pairs,
-        record_work,
-        record_unmanaged,
-    )
 
 
 _SIMPLEX_KINDS = {2: "triangle", 3: "tetrahedron"}
+_REFINEMENT_CELL_WORK = 64
 
 
-def _periodic_simplex_rows(mesh: CellMesh, /) -> tuple[np.ndarray, np.ndarray]:
-    """Actual cell rows and SCI IDs in the same complete block order as geometry."""
+def _periodic_simplex_rows(
+    mesh: cell_mesh_owner.CellMesh, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """cell rows and SCI IDs in the same all required block order as geometry."""
     kind = _SIMPLEX_KINDS.get(mesh.topological_dimension)
     if kind is None or any(block.cell_kind != kind for block in mesh.blocks):
         raise ValueError(
-            "Periodic simplex transactions require one complete simplex family."
+            "periodic_simplex_rows.mesh must retain all simplex blocks in scientific row order; got Periodic simplex transactions require all blocks of one simplex family."
         )
     return (
         np.concatenate(tuple(np.asarray(block.vertices) for block in mesh.blocks)),
@@ -1425,7 +1857,7 @@ def periodic_cell_from_constraints(
     /,
     *,
     origin: ArrayLike | None = None,
-) -> PeriodicCell:
+) -> periodic_cell_owner.PeriodicCell:
     """Compile translational periodic constraints into their lattice.
 
     Every constraint must be a pure translation (identity linear part within
@@ -1436,7 +1868,9 @@ def periodic_cell_from_constraints(
 
     values = tuple(constraints)
     if not values or not all(isinstance(item, PeriodicConstraint) for item in values):
-        raise TypeError("constraints must be a nonempty sequence of PeriodicConstraint.")
+        raise TypeError(
+            "periodic_cell_from_constraints.constraints must provide translational identifications spanning each ambient axis; got constraints must be a nonempty sequence of PeriodicConstraint."
+        )
     vectors = []
     for index, constraint in enumerate(values):
         transform = np.asarray(constraint.transform, dtype=np.float64)
@@ -1444,16 +1878,18 @@ def periodic_cell_from_constraints(
         deviation = np.max(np.abs(transform[:dimension, :dimension] - np.eye(dimension)))
         if deviation > constraint.tolerance:
             raise ValueError(
-                f"constraints[{index}] is not a translation; boundary isometries "
-                "do not define a translational periodic lattice."
+                "periodic_cell_from_constraints.constraints must provide translational identifications spanning each ambient axis; got "
+                + (
+                    f"constraints[{index}] is not a translation; boundary isometries do not define a translational periodic lattice."
+                )
             )
         vectors.append(transform[:dimension, dimension])
     matrix = np.stack(vectors)
     if matrix.shape[0] != matrix.shape[1]:
         raise ValueError(
-            "A periodic lattice needs one translational constraint per ambient axis."
+            "periodic_cell_from_constraints.constraints must provide translational identifications spanning each ambient axis; got A periodic lattice needs one translational constraint per ambient axis."
         )
-    return PeriodicCell(matrix, origin=origin)
+    return periodic_cell_owner.PeriodicCell(matrix, origin=origin)
 
 
 class _Orbits:
@@ -1483,7 +1919,7 @@ class PeriodicPointOrbits(StrictModule, NonTrainableState):
     representative are refused as ambiguous.
     """
 
-    cell: PeriodicCell
+    cell: periodic_cell_owner.PeriodicCell
     points: np.ndarray
     representatives: np.ndarray
     orbits: np.ndarray
@@ -1491,25 +1927,37 @@ class PeriodicPointOrbits(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     orbits_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
-        self, points: ArrayLike, cell: PeriodicCell, /, *, tolerance: float = 0.0
+        self,
+        points: ArrayLike,
+        cell: periodic_cell_owner.PeriodicCell,
+        /,
+        *,
+        tolerance: float = 0.0,
     ) -> None:
-        if not isinstance(cell, PeriodicCell):
-            raise TypeError("cell must be a PeriodicCell.")
         array = np.asarray(points, dtype=np.float64)
         if (
             array.ndim != 2
             or array.shape[0] == 0
             or array.shape[1] != cell.ambient_dimension
         ):
-            raise ValueError("points must have shape (n > 0, ambient dimension).")
+            raise ValueError(
+                "PeriodicPointOrbits.points must use finite ambient-dimension points, nonnegative tolerance, and a full-rank periodic lattice; got points must have shape (n > 0, ambient dimension)."
+            )
         if not np.all(np.isfinite(array)):
-            raise ValueError("points must be finite.")
+            raise ValueError(
+                "PeriodicPointOrbits.points must use finite ambient-dimension points, nonnegative tolerance, and a full-rank periodic lattice; got points must be finite."
+            )
         threshold = float(tolerance)
         if not np.isfinite(threshold) or threshold < 0.0:
-            raise ValueError("tolerance must be finite and nonnegative.")
+            raise ValueError(
+                "PeriodicPointOrbits.tolerance must use finite ambient-dimension points, nonnegative tolerance, and a full-rank periodic lattice; got tolerance must be finite and nonnegative."
+            )
         if cell.rank != cell.ambient_dimension or not cell.fully_periodic:
-            raise ValueError("Point orbits require a fully periodic full-rank lattice.")
+            raise ValueError(
+                "PeriodicPointOrbits.cell must use finite ambient-dimension points, nonnegative tolerance, and a full-rank periodic lattice; got Point orbits require a fully periodic full-rank lattice."
+            )
         roots, shifts = _point_orbits(array, cell, threshold)
         _, first, orbit = np.unique(roots, return_index=True, return_inverse=True)
         # Orbits are numbered by first appearance; that input point represents
@@ -1547,7 +1995,7 @@ def _frozen(array: np.ndarray, /) -> np.ndarray:
 
 
 def _point_orbits(
-    points: np.ndarray, cell: PeriodicCell, tolerance: float, /
+    points: np.ndarray, cell: periodic_cell_owner.PeriodicCell, tolerance: float, /
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return each point's orbit root and its lattice shift from that root."""
 
@@ -1596,21 +2044,78 @@ def _point_orbits(
     deviation = np.linalg.norm(points - points[roots] - shifts @ vectors, axis=1)
     if np.any(deviation > tolerance):
         raise ValueError(
-            "Periodic point orbits are ambiguous: a copy lies farther than the "
-            "tolerance from its orbit representative."
+            "point_orbits.points must place each copy within tolerance of its orbit representative; got Periodic point orbits are ambiguous: a copy lies farther than the tolerance from its orbit representative."
         )
     return roots, shifts
 
 
-def publish_periodic_simplices(
+def _lifted_exact_point_bank(
+    coordinates: CoordinateSourceBank,
+    lifted: np.ndarray,
+    cell: periodic_cell_owner.PeriodicCell,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> CoordinateSourceBank:
+    lattice = np.asarray(
+        [[Fraction(float(value)) for value in row] for row in np.asarray(cell.vectors)],
+        dtype=object,
+    )
+    bank = np.asarray(coordinates, dtype=object)
+    reserve_algebraic_work(
+        coordinates, 4 * lifted.size, 4 * lifted.size, 2, budget=budget
+    )
+    images = bank[lifted[:, 0]] + periodic_exact_product(
+        lifted[:, 1:].astype(object), lattice, budget=budget
+    )
+    return tuple(tuple(row) for row in images)
+
+
+def periodic_lifted_exact_coordinates(
+    coordinates: CoordinateSourceBank,
+    simplices: ArrayLike,
+    shifts: ArrayLike,
+    cell: periodic_cell_owner.PeriodicCell,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> CoordinateSourceBank:
+    """Return field-valued vertices in the publication's declared lifted-row order."""
+    cells = np.asarray(simplices, dtype=np.int64)
+    actions = np.asarray(shifts, dtype=np.int64)
+    if (
+        cells.ndim != 2
+        or actions.shape != (*cells.shape, cell.rank)
+        or any(len(row) != cell.ambient_dimension for row in coordinates)
+    ):
+        raise ValueError(
+            "periodic_lifted_exact_coordinates.inputs must align source lifts and ambient dimensions; got incompatible banks"
+        )
+    reserve_periodic_exact_terms(
+        cells.size * (cell.rank + 1),
+        32 * cells.size * (cell.rank + 1),
+        budget=budget,
+    )
+    lifted = np.unique(
+        np.concatenate(
+            (cells.reshape((-1, 1)), actions.reshape((-1, cell.rank))), axis=1
+        ),
+        axis=0,
+    )
+    return _lifted_exact_point_bank(coordinates, lifted, cell, budget=budget)
+
+
+def _publish_periodic_simplices(
     points: ArrayLike,
     simplices: ArrayLike,
     shifts: ArrayLike,
-    cell: PeriodicCell,
+    cell: periodic_cell_owner.PeriodicCell,
     /,
     *,
     block_name: str = "periodic",
-) -> CellMesh:
+    exact_coordinates: CoordinateSourceBank | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> cell_mesh_owner.CellMesh:
     """Publish quotient simplices as a lifted ``CellMesh`` with its quotient topology.
 
     ``simplices`` (T, d + 1) name representative ``points`` and ``shifts``
@@ -1631,7 +2136,7 @@ def publish_periodic_simplices(
         or corner_shifts.shape != (*cells.shape, dimension)
     ):
         raise ValueError(
-            "Periodic simplices must be (T, d + 1) with (T, d + 1, d) shifts."
+            "publish_periodic_simplices.points must retain dimension-aligned simplices, shifts, and used representatives; got Periodic simplices must be (T, d + 1) with (T, d + 1, d) shifts."
         )
     corners = np.concatenate(
         (cells.reshape((-1, 1)), corner_shifts.reshape((-1, dimension))), axis=1
@@ -1640,7 +2145,9 @@ def publish_periodic_simplices(
     representatives = lifted[:, 0]
     lifted_shifts = lifted[:, 1:]
     if np.unique(representatives).size != point_array.shape[0]:
-        raise ValueError("Every representative point must be a simplex corner.")
+        raise ValueError(
+            "publish_periodic_simplices.points must retain dimension-aligned simplices, shifts, and used representatives; got Every representative point must be a simplex corner."
+        )
     zero = np.all(lifted_shifts == 0, axis=1)
     # np.unique sorts rows, so the first row per representative is its
     # smallest shift; a zero-shift image takes precedence.
@@ -1650,17 +2157,123 @@ def publish_periodic_simplices(
     reference[representatives[zero_rows]] = zero_rows
     vertex_representatives = reference[representatives]
     vertex_shifts = lifted_shifts - lifted_shifts[vertex_representatives]
-    coordinates = point_array[representatives] + lifted_shifts.astype(
-        np.float64
-    ) @ np.asarray(cell.vectors, dtype=np.float64)
-    block = CellBlock(
+    if exact_coordinates is None:
+        coordinates = point_array[representatives] + lifted_shifts.astype(
+            np.float64
+        ) @ np.asarray(cell.vectors, dtype=np.float64)
+    else:
+        if len(exact_coordinates) != point_array.shape[0] or any(
+            len(row) != dimension for row in exact_coordinates
+        ):
+            raise ValueError(
+                "publish_periodic_simplices.exact_coordinates must match the representative bank; got incompatible dimensions"
+            )
+        reserve_algebraic_work(
+            exact_coordinates, 2 * point_array.size, point_array.size, 1, budget=budget
+        )
+        if any(
+            (
+                exact.rounded(budget=budget)[0]
+                if isinstance(exact, RadicalElement)
+                else float(exact)
+            )
+            != point_array[vertex, axis]
+            for vertex, row in enumerate(exact_coordinates)
+            for axis, exact in enumerate(row)
+        ):
+            raise ValueError(
+                "publish_periodic_simplices.points must correctly round source coordinates; got differing representative bytes"
+            )
+        exact_lifts = _lifted_exact_point_bank(
+            exact_coordinates, lifted, cell, budget=budget
+        )
+        coordinates = np.asarray(
+            [
+                [
+                    value.rounded(budget=budget)[0]
+                    if isinstance(value, RadicalElement)
+                    else float(value)
+                    for value in row
+                ]
+                for row in exact_lifts
+            ],
+            dtype=np.float64,
+        )
+    block = reference_cell_types_owner.CellBlock(
         block_name,
         _SIMPLEX_KINDS[dimension],
         inverse.reshape(cells.shape).astype(np.int32),
     )
-    carrier = CellMesh(coordinates, (block,))
-    topology = PeriodicMeshTopology(carrier, cell, vertex_representatives, vertex_shifts)
-    return CellMesh(coordinates, (block,), periodic_topology=topology)
+    carrier = cell_mesh_owner.CellMesh(coordinates, (block,))
+    topology = periodic_topology_owner.PeriodicMeshTopology(
+        carrier, cell, vertex_representatives, vertex_shifts, budget=budget
+    )
+    return cell_mesh_owner.CellMesh(coordinates, (block,), periodic_topology=topology)
+
+
+def publish_periodic_simplices(
+    points: ArrayLike,
+    simplices: ArrayLike,
+    shifts: ArrayLike,
+    cell: periodic_cell_owner.PeriodicCell,
+    /,
+    *,
+    block_name: str = "periodic",
+    scope: NativeExecutionScope | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+    exact_coordinates: CoordinateSourceBank | None = None,
+) -> cell_mesh_owner.CellMesh:
+    """Publish quotient simplices using explicit or input-derived rational preparation."""
+    if budget is None and exact_coordinates is not None:
+        with coordinate_certificate_request(MeshCertificateLimits()) as owned:
+            return publish_periodic_simplices(
+                points,
+                simplices,
+                shifts,
+                cell,
+                block_name=block_name,
+                scope=scope,
+                budget=owned,
+                exact_coordinates=exact_coordinates,
+            )
+    if budget is None:
+        cells = np.asarray(simplices, dtype=np.int64)
+        actions = np.asarray(shifts, dtype=np.int64)
+        work_upper, bytes_upper, queries_upper = periodic_preparation_bounds(
+            cell, cells.size, actions, stabilizers=True
+        )
+        ticket = HostBatchTicket(
+            work_upper, queries_upper=queries_upper, bytes_upper=bytes_upper
+        )
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=work_upper,
+            maximum_memory_bytes=bytes_upper,
+        )
+        if scope is None:
+            with ticket, budget.activate():
+                return _publish_periodic_simplices(
+                    points,
+                    cells,
+                    actions,
+                    cell,
+                    block_name=block_name,
+                    budget=budget,
+                    exact_coordinates=exact_coordinates,
+                )
+        ticket.settle()
+    with _periodic_phase(
+        scope, budget, budget.maximum_work_units, budget.maximum_memory_bytes
+    ):
+        return _publish_periodic_simplices(
+            points,
+            simplices,
+            shifts,
+            cell,
+            block_name=block_name,
+            budget=budget,
+            exact_coordinates=exact_coordinates,
+        )
 
 
 class PeriodicQuotientEvidence(StrictModule, NonTrainableState):
@@ -1680,11 +2293,23 @@ class PeriodicQuotientEvidence(StrictModule, NonTrainableState):
     all_cells_valid: bool = eqx.field(static=True)
     periodic_topology_id: str = eqx.field(static=True)
 
-    def __init__(self, mesh: CellMesh, /) -> None:
+    @checked
+    def __init__(
+        self,
+        mesh: cell_mesh_owner.CellMesh,
+        /,
+        *,
+        geometry: CellGeometrySpec | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> None:
         periodic = mesh.periodic_topology
         if periodic is None:
-            raise ValueError("Quotient evidence requires a periodic CellMesh.")
-        report = periodic_orbit_measures(mesh)
+            raise ValueError(
+                "PeriodicQuotientEvidence.mesh must retain a periodic mesh descriptor; got Quotient evidence requires a periodic CellMesh."
+            )
+        report = periodic_measures_owner.periodic_orbit_measures(
+            mesh, geometry=geometry, budget=budget
+        )
         defect = report.relative_coverage_defect
         facets = periodic.quotient.entities(mesh.topological_dimension - 1)
         self.quotient_counts = tuple(
@@ -1700,16 +2325,42 @@ class PeriodicQuotientEvidence(StrictModule, NonTrainableState):
         self.all_cells_valid = bool(np.all(np.asarray(report.valid)))
         self.periodic_topology_id = periodic.periodic_topology_id
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[PeriodicQuotientEvidence],
+        value: PeriodicQuotientEvidence,
+        /,
+        *,
+        mesh: cell_mesh_owner.CellMesh,
+        geometry: CellGeometrySpec | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> PeriodicQuotientEvidence:
+        """Recompute stored quotient evidence against its retained mesh."""
+        topology = require_periodic_topology(mesh)
+        if value.periodic_topology_id != topology.periodic_topology_id:
+            raise ValueError(
+                f"PeriodicQuotientEvidence.periodic_topology_id must bind the retained mesh; got {value.periodic_topology_id!r}."
+            )
+        restored = cls(mesh, geometry=geometry, budget=budget)
+        if not eqx.tree_equal(restored, value, typematch=True):
+            raise ValueError(
+                "PeriodicQuotientEvidence.fields must agree with recomputed quotient evidence; "
+                "got inconsistent stored fields."
+            )
+        return restored
+
 
 class PeriodicMeshConstruction(StrictModule, NonTrainableState):
     """Periodic Delaunay mesh of point orbits with its certificates."""
 
-    mesh: CellMesh
+    mesh: cell_mesh_owner.CellMesh
     orbits: PeriodicPointOrbits
     triangulation: PeriodicTriangulationEvidence
     quotient: PeriodicQuotientEvidence
 
 
+@checked
 def periodic_delaunay_mesh(
     orbits: PeriodicPointOrbits,
     /,
@@ -1718,6 +2369,8 @@ def periodic_delaunay_mesh(
     maximum_images: int | None = None,
     maximum_simplices: int | None = None,
     block_name: str = "periodic",
+    scope: NativeExecutionScope | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> PeriodicMeshConstruction:
     """Construct and publish the periodic Delaunay mesh of point orbits.
 
@@ -1727,43 +2380,53 @@ def periodic_delaunay_mesh(
     acceptance.
     """
 
-    if not isinstance(orbits, PeriodicPointOrbits):
-        raise TypeError("orbits must be PeriodicPointOrbits.")
-    triangulation = PeriodicDelaunayTriangulation(
-        orbits.representatives,
-        orbits.cell,
-        initial_margin=initial_margin,
-        maximum_images=maximum_images,
-        maximum_simplices=maximum_simplices,
+    context = (
+        nullcontext()
+        if budget is None
+        else _periodic_phase(
+            scope, budget, budget.maximum_work_units, budget.maximum_memory_bytes
+        )
     )
-    mesh = publish_periodic_simplices(
-        triangulation.points,
-        triangulation.simplices,
-        triangulation.simplex_shifts,
-        orbits.cell,
-        block_name=block_name,
-    )
-    return PeriodicMeshConstruction(
-        mesh=mesh,
-        orbits=orbits,
-        triangulation=triangulation.evidence,
-        quotient=PeriodicQuotientEvidence(mesh),
-    )
+    with context:
+        triangulation = PeriodicDelaunayTriangulation(
+            orbits.representatives,
+            orbits.cell,
+            initial_margin=initial_margin,
+            maximum_images=maximum_images,
+            maximum_simplices=maximum_simplices,
+        )
+        mesh = publish_periodic_simplices(
+            triangulation.points,
+            triangulation.simplices,
+            triangulation.simplex_shifts,
+            orbits.cell,
+            block_name=block_name,
+            scope=scope,
+            budget=budget,
+        )
+        return PeriodicMeshConstruction(
+            mesh=mesh,
+            orbits=orbits,
+            triangulation=triangulation.evidence,
+            quotient=PeriodicQuotientEvidence(mesh),
+        )
 
 
-def _quotient_simplices(
-    mesh: CellMesh, /
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, PeriodicCell, str]:
+def quotient_simplices(
+    mesh: cell_mesh_owner.CellMesh, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, periodic_cell_owner.PeriodicCell, str]:
     """Representative points, quotient simplices and corner shifts of a mesh."""
 
     periodic = mesh.periodic_topology
     if periodic is None:
         raise ValueError(
-            "Periodic refinement requires a CellMesh with periodic topology."
+            "quotient_simplices.mesh must retain a translational periodic quotient; got Periodic refinement requires a CellMesh with periodic topology."
         )
     vertices, _ = _periodic_simplex_rows(mesh)
-    if not isinstance(periodic.cell, PeriodicCell):
-        raise TypeError("Translational quotient simplices require a PeriodicCell.")
+    if not isinstance(periodic.cell, periodic_cell_owner.PeriodicCell):
+        raise TypeError(
+            "quotient_simplices.mesh must retain a translational periodic quotient; got Translational quotient simplices require a PeriodicCell."
+        )
     representatives = np.asarray(periodic.vertex_representatives, dtype=np.int64)
     quotient, local = np.unique(representatives, return_inverse=True)
     vertices = np.asarray(vertices, dtype=np.int64)
@@ -1778,7 +2441,7 @@ def _quotient_simplices(
     )
 
 
-def _edge_key(
+def edge_key(
     first: int, first_shift: np.ndarray, second: int, second_shift: np.ndarray, /
 ) -> tuple[tuple[int, ...], bool]:
     """Translation-invariant quotient edge key and whether ``first`` leads it."""
@@ -1819,7 +2482,7 @@ class _QuotientBisection:
         arity = vertices.shape[0]
         edges = [
             (
-                _edge_key(int(vertices[i]), shifts[i], int(vertices[j]), shifts[j])[0],
+                edge_key(int(vertices[i]), shifts[i], int(vertices[j]), shifts[j])[0],
                 i,
                 j,
             )
@@ -1828,8 +2491,7 @@ class _QuotientBisection:
         ]
         if len({key for key, _, _ in edges}) != len(edges):
             raise ValueError(
-                "A cell contains two members of one quotient edge orbit; orbit "
-                "bisection requires distinct quotient edges per cell."
+                "edges.cell must retain distinct quotient edge orbits within each cell; got A cell contains two members of one quotient edge orbit; orbit bisection requires distinct quotient edges per cell."
             )
         return edges
 
@@ -1854,7 +2516,7 @@ class _QuotientBisection:
         )
 
     def longest_edge(self, cell: int, /) -> tuple[int, ...]:
-        # Ties are broken by the canonical key, so every lift decides alike.
+        # Ties are broken by the deterministic key, so every lift decides alike.
         return min(
             (key for key, _, _ in self._edges(cell)),
             key=lambda key: (-self.length(key), key),
@@ -1876,7 +2538,7 @@ class _QuotientBisection:
             shifts = self.shifts[cell]
             parent_barycentric = self.barycentric[cell]
             midpoint_barycentric = 0.5 * (parent_barycentric[i] + parent_barycentric[j])
-            _, leads = _edge_key(int(vertices[i]), shifts[i], int(vertices[j]), shifts[j])
+            _, leads = edge_key(int(vertices[i]), shifts[i], int(vertices[j]), shifts[j])
             # The midpoint sits at the leading corner's image in this lift;
             # replacing either endpoint by it preserves the orientation.
             image = shifts[i] if leads else shifts[j]
@@ -1903,6 +2565,197 @@ class _QuotientBisection:
             self._register(len(self.cells) - 1)
 
 
+class _RefinementSource(StrictModule):
+    dimension: int = eqx.field(static=True)
+    cell_count: int = eqx.field(static=True)
+    source_cell_count: int = eqx.field(static=True)
+
+
+class _RefinementBanks(StrictModule):
+    parents: np.ndarray
+    reference: np.ndarray
+    generations: np.ndarray
+
+
+def _prepare_refinement_source(
+    mesh: cell_mesh_owner.CellMesh,
+    source: cell_mesh_owner.CellMesh,
+    source_geometry: CellGeometrySpec,
+    budget: CoordinateEnclosureBudget,
+) -> _RefinementSource:
+    bank = prepared_coordinate_source_bank(source_geometry, budget=budget)
+    elements, routes, _ = source_geometry.resolve(
+        source, exact_source_prepared=True, budget=budget
+    )
+    reserve_periodic_exact_terms(
+        _REFINEMENT_CELL_WORK * sum(block.cell_count for block in source.blocks),
+        budget=budget,
+    )
+    host_coordinates, host_vertices = jax.device_get(
+        (source.coordinates, tuple(block.vertices for block in source.blocks))
+    )
+    for element, rows, vertices in zip(elements, routes, host_vertices, strict=True):
+        carrier = np.asarray(host_coordinates)[np.asarray(vertices)]
+        for row, expected in zip(rows, carrier, strict=True):
+            corners = coordinate_corner_images(
+                element, tuple(bank[int(index)] for index in row), budget=budget
+            )
+            if corners is None or not np.array_equal(
+                np.asarray(tuple(rounded_point(point) for point in corners)).view(
+                    np.uint64
+                ),
+                np.asarray(expected, dtype=np.float64).view(np.uint64),
+            ):
+                raise ValueError(
+                    "prepare_refinement_source.mesh must match the source geometry, simplex dimension, and group action; got Periodic history source geometry differs from its source carrier."
+                )
+    dimension = source.topological_dimension
+    if mesh.topological_dimension != dimension or dimension not in (2, 3):
+        raise ValueError(
+            "prepare_refinement_source.mesh must match the source geometry, simplex dimension, and group action; got Periodic history requires matching simplex dimensions."
+        )
+    source_topology = require_periodic_topology(source)
+    target_topology = require_periodic_topology(mesh)
+
+    if identification_id(source_topology.cell) != identification_id(target_topology.cell):
+        raise ValueError(
+            "prepare_refinement_source.mesh must match the source geometry, simplex dimension, and group action; got Periodic history changes the group action."
+        )
+    if any(
+        block.cell_kind != _SIMPLEX_KINDS[dimension]
+        for block in (*source.blocks, *mesh.blocks)
+    ):
+        raise ValueError(
+            "prepare_refinement_source.mesh must match the source geometry, simplex dimension, and group action; got Periodic histories require simplex carriers."
+        )
+    return _RefinementSource(
+        dimension,
+        sum(block.cell_count for block in mesh.blocks),
+        sum(block.cell_count for block in source.blocks),
+    )
+
+
+def _prepare_refinement_banks(
+    prepared: _RefinementSource,
+    mesh: cell_mesh_owner.CellMesh,
+    parent_cells: np.ndarray,
+    parent_reference_vertices: np.ndarray,
+    cell_generations: np.ndarray,
+    bisected_edges: int,
+    quotient: PeriodicQuotientEvidence,
+) -> _RefinementBanks:
+    dimension, count, source_count = (
+        prepared.dimension,
+        prepared.cell_count,
+        prepared.source_cell_count,
+    )
+    target_topology = require_periodic_topology(mesh)
+    parents = np.asarray(parent_cells)
+    reference = np.asarray(parent_reference_vertices)
+    generations = np.asarray(cell_generations)
+    if (
+        parents.shape != (count,)
+        or parents.dtype.kind not in "iu"
+        or generations.shape != (count,)
+        or generations.dtype.kind not in "iu"
+        or reference.shape != (count, dimension + 1, dimension)
+        or reference.dtype != np.dtype(np.float64)
+        or np.any(parents < 0)
+        or np.any(parents >= source_count)
+        or np.any(generations < 0)
+        or not np.all(np.isfinite(reference))
+        or type(bisected_edges) is not int
+        or bisected_edges < 0
+    ):
+        raise ValueError(
+            "prepare_refinement_banks.prepared must retain valid parent, reference, generation, and quotient banks; got Periodic history has invalid retained parent, reference or generation banks."
+        )
+    if (
+        quotient.periodic_topology_id != target_topology.periodic_topology_id
+        or not quotient.all_cells_valid
+    ):
+        raise ValueError(
+            "prepare_refinement_banks.prepared must retain valid parent, reference, generation, and quotient banks; got Periodic history requires its target quotient evidence."
+        )
+    return _RefinementBanks(parents, reference, generations)
+
+
+def _certify_refinement_partition(
+    prepared: _RefinementSource,
+    banks: _RefinementBanks,
+    previous: PeriodicRefinement | None,
+    retired: PeriodicRefinement | None,
+    budget: CoordinateEnclosureBudget,
+) -> _RefinementBanks:
+    dimension, count, source_count = (
+        prepared.dimension,
+        prepared.cell_count,
+        prepared.source_cell_count,
+    )
+    parents, reference = banks.parents, banks.reference
+    active, visited = set(), set()
+
+    def visit(node: PeriodicRefinement | None) -> None:
+        if node is None or id(node) in visited:
+            return
+        if id(node) in active:
+            raise ValueError(
+                "visit.node must retain an acyclic predecessor and retirement history; got Periodic history contains a cyclic predecessor or retirement."
+            )
+        active.add(id(node))
+        visit(node.previous)
+        visit(node.retired)
+        active.remove(id(node))
+        visited.add(id(node))
+
+    visit(previous)
+    visit(retired)
+    reserve_periodic_exact_terms(_REFINEMENT_CELL_WORK * count, budget=budget)
+    measures = [Fraction(0) for _ in range(source_count)]
+    charts = set()
+    for parent, row in zip(parents, reference, strict=True):
+        vertices = tuple(
+            tuple(Fraction(float(value)) for value in vertex) for vertex in row
+        )
+        if any(
+            any(value < 0 for value in vertex) or sum(vertex) > 1 for vertex in vertices
+        ):
+            raise ValueError(
+                "certify_refinement_partition.prepared must partition each source simplex through an acyclic retained history; got Periodic child reference vertices leave their parent simplex."
+            )
+        chart = (int(parent), tuple(sorted(vertices)))
+        if chart in charts:
+            raise ValueError(
+                "certify_refinement_partition.prepared must partition each source simplex through an acyclic retained history; got Periodic history duplicates a retained sibling simplex."
+            )
+        charts.add(chart)
+        edges = np.asarray(
+            [
+                [
+                    value - origin
+                    for value, origin in zip(vertex, vertices[0], strict=True)
+                ]
+                for vertex in vertices[1:]
+            ],
+            dtype=object,
+        )
+        measure = abs(
+            cofactor_determinant_2(*edges)
+            if dimension == 2
+            else cofactor_determinant_3(*edges)
+        )
+        if measure == 0:
+            raise ValueError(
+                "certify_refinement_partition.prepared must partition each source simplex through an acyclic retained history; got Periodic history contains a degenerate sibling reference simplex."
+            )
+        measures[int(parent)] += measure
+    if any(measure != 1 for measure in measures):
+        raise ValueError(
+            "certify_refinement_partition.prepared must partition each source simplex through an acyclic retained history; got Periodic sibling reference simplices do not conserve every source cell."
+        )
+    return banks
+
+
 class PeriodicRefinement(StrictModule, NonTrainableState):
     """Orbit-preserving bisection of a periodic mesh.
 
@@ -1911,8 +2764,8 @@ class PeriodicRefinement(StrictModule, NonTrainableState):
     split, each at one new quotient vertex shared by every seam copy.
     """
 
-    mesh: CellMesh
-    source: CellMesh
+    mesh: cell_mesh_owner.CellMesh
+    source: cell_mesh_owner.CellMesh
     source_geometry: CellGeometrySpec
     parent_reference_vertices: np.ndarray
     parent_cells: np.ndarray
@@ -1923,11 +2776,12 @@ class PeriodicRefinement(StrictModule, NonTrainableState):
     previous: PeriodicRefinement | None = None
     retired: PeriodicRefinement | None = None
 
+    @checked
     def __init__(
         self,
         *,
-        mesh: CellMesh,
-        source: CellMesh,
+        mesh: cell_mesh_owner.CellMesh,
+        source: cell_mesh_owner.CellMesh,
         source_geometry: CellGeometrySpec,
         parent_reference_vertices: np.ndarray,
         parent_cells: np.ndarray,
@@ -1936,152 +2790,25 @@ class PeriodicRefinement(StrictModule, NonTrainableState):
         quotient: PeriodicQuotientEvidence,
         previous: PeriodicRefinement | None = None,
         retired: PeriodicRefinement | None = None,
+        budget: CoordinateEnclosureBudget,
     ) -> None:
-        from ..discretization._cell_geometry_validity import cell_geometry_id
-        from ..discretization._coordinate_enclosure import (
-            coordinate_corner_images,
-            prepared_coordinate_source_bank,
-            rounded_point,
+
+        prepared = _prepare_refinement_source(mesh, source, source_geometry, budget)
+        banks = _prepare_refinement_banks(
+            prepared,
+            mesh,
+            parent_cells,
+            parent_reference_vertices,
+            cell_generations,
+            bisected_edges,
+            quotient,
         )
-
-        if type(source_geometry) is not CellGeometrySpec:
-            raise TypeError(
-                "Periodic history requires its actual owning source coordinate specification."
-            )
-        bank = prepared_coordinate_source_bank(source_geometry)
-        elements, routes, _ = source_geometry._resolve(source, exact_source_prepared=True)
-        _reserve_periodic_exact_terms(
-            64 * sum(block.cell_count for block in source.blocks)
+        banks = _certify_refinement_partition(prepared, banks, previous, retired, budget)
+        parents, reference, generations = (
+            banks.parents,
+            banks.reference,
+            banks.generations,
         )
-        for block, element, rows in zip(source.blocks, elements, routes, strict=True):
-            carrier = np.asarray(source.coordinates)[np.asarray(block.vertices)]
-            for row, expected in zip(rows, carrier, strict=True):
-                corners = coordinate_corner_images(
-                    element, tuple(bank[int(index)] for index in row)
-                )
-                if corners is None or not np.array_equal(
-                    np.asarray(tuple(rounded_point(point) for point in corners)).view(
-                        np.uint64
-                    ),
-                    np.asarray(expected, dtype=np.float64).view(np.uint64),
-                ):
-                    raise ValueError(
-                        "Periodic history source geometry differs from its actual source carrier."
-                    )
-        dimension = source.topological_dimension
-        if mesh.topological_dimension != dimension or dimension not in (2, 3):
-            raise ValueError("Periodic history requires matching simplex dimensions.")
-        source_topology = _require_periodic_topology(source)
-        target_topology = _require_periodic_topology(mesh)
-        if source_topology is None or target_topology is None:
-            raise ValueError(
-                "Periodic history requires actual source and target quotient descriptors."
-            )
-        from ..discretization._periodic_topology import _identification_id
-
-        if _identification_id(source_topology.cell) != _identification_id(
-            target_topology.cell
-        ):
-            raise ValueError("Periodic history changes the original group action.")
-        if any(
-            block.cell_kind != _SIMPLEX_KINDS[dimension]
-            for block in (*source.blocks, *mesh.blocks)
-        ):
-            raise ValueError("Periodic histories require actual simplex carriers.")
-        count = sum(block.cell_count for block in mesh.blocks)
-        source_count = sum(block.cell_count for block in source.blocks)
-        parents = np.asarray(parent_cells)
-        reference = np.asarray(parent_reference_vertices)
-        generations = np.asarray(cell_generations)
-        if (
-            parents.shape != (count,)
-            or parents.dtype.kind not in "iu"
-            or generations.shape != (count,)
-            or generations.dtype.kind not in "iu"
-            or reference.shape != (count, dimension + 1, dimension)
-            or reference.dtype != np.dtype(np.float64)
-            or np.any(parents < 0)
-            or np.any(parents >= source_count)
-            or np.any(generations < 0)
-            or not np.all(np.isfinite(reference))
-            or type(bisected_edges) is not int
-            or bisected_edges < 0
-        ):
-            raise ValueError(
-                "Periodic history has invalid retained parent, reference or generation banks."
-            )
-        if (
-            type(quotient) is not PeriodicQuotientEvidence
-            or quotient.periodic_topology_id != target_topology.periodic_topology_id
-            or not quotient.all_cells_valid
-        ):
-            raise ValueError(
-                "Periodic history requires its actual target quotient evidence."
-            )
-        if any(
-            node is not None and type(node) is not PeriodicRefinement
-            for node in (previous, retired)
-        ):
-            raise TypeError(
-                "Periodic predecessor and retirement require actual owning histories."
-            )
-        active, visited = set(), set()
-
-        def visit(node: PeriodicRefinement | None) -> None:
-            if node is None or id(node) in visited:
-                return
-            if id(node) in active:
-                raise ValueError(
-                    "Periodic history contains a cyclic predecessor or retirement."
-                )
-            active.add(id(node))
-            visit(node.previous)
-            visit(node.retired)
-            active.remove(id(node))
-            visited.add(id(node))
-
-        visit(previous)
-        visit(retired)
-        _reserve_periodic_exact_terms(64 * count)
-        measures = [Fraction(0) for _ in range(source_count)]
-        charts = set()
-        for parent, row in zip(parents, reference, strict=True):
-            vertices = tuple(
-                tuple(Fraction(float(value)) for value in vertex) for vertex in row
-            )
-            if any(
-                any(value < 0 for value in vertex) or sum(vertex) > 1
-                for vertex in vertices
-            ):
-                raise ValueError(
-                    "Periodic child reference vertices leave their actual parent simplex."
-                )
-            chart = (int(parent), tuple(sorted(vertices)))
-            if chart in charts:
-                raise ValueError(
-                    "Periodic history duplicates a retained sibling simplex."
-                )
-            charts.add(chart)
-            edges = np.asarray(
-                [
-                    [
-                        value - origin
-                        for value, origin in zip(vertex, vertices[0], strict=True)
-                    ]
-                    for vertex in vertices[1:]
-                ],
-                dtype=object,
-            )
-            measure = abs(_det2(*edges) if dimension == 2 else _det3(*edges))
-            if measure == 0:
-                raise ValueError(
-                    "Periodic history contains a degenerate sibling reference simplex."
-                )
-            measures[int(parent)] += measure
-        if any(measure != 1 for measure in measures):
-            raise ValueError(
-                "Periodic sibling reference simplices do not conserve every actual source cell."
-            )
         self.mesh, self.source = mesh, source
         self.parent_cells = _frozen(parents)
         self.parent_reference_vertices = _frozen(reference)
@@ -2106,11 +2833,23 @@ class PeriodicRefinement(StrictModule, NonTrainableState):
             }
         )
 
+    def reconstruction_preparation_bounds(self) -> tuple[int, int, int]:
+        """Bound replay of the source coefficient bank and both cell-visit charges."""
+        work, storage = cell_geometry_preparation_bounds(self.source_geometry)
+        cells = sum(
+            block.cell_count for mesh in (self.source, self.mesh) for block in mesh.blocks
+        )
+        return (
+            work + _REFINEMENT_CELL_WORK * cells,
+            storage,
+            cell_geometry_preparation_query_upper(self.source_geometry),
+        )
+
 
 def _periodic_child_blocks(
-    source: CellMesh, vertices: np.ndarray, parents: np.ndarray
-) -> tuple[tuple[CellBlock, ...], np.ndarray]:
-    """Keep source block metadata and return the actual child publication order."""
+    source: cell_mesh_owner.CellMesh, vertices: np.ndarray, parents: np.ndarray
+) -> tuple[tuple[reference_cell_types_owner.CellBlock, ...], np.ndarray]:
+    """Keep source block metadata and return the child publication order."""
     blocks = []
     rows = []
     start = 0
@@ -2121,7 +2860,7 @@ def _periodic_child_blocks(
         )
         rows.append(selected)
         blocks.append(
-            CellBlock(
+            reference_cell_types_owner.CellBlock(
                 block.name,
                 block.cell_kind,
                 vertices[selected],
@@ -2134,17 +2873,21 @@ def _periodic_child_blocks(
 
 
 def _refine_isometry_mesh(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     cells: ArrayLike | None,
     edge_orbits: ArrayLike | None,
     source_geometry: CellGeometrySpec,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> PeriodicRefinement:
     """Bisect all lifted copies of each selected quotient edge together."""
 
-    topology = _require_periodic_topology(mesh)
+    topology = require_periodic_topology(mesh)
     if topology is None or not isinstance(topology.cell, PeriodicIsometryGroup):
-        raise ValueError("Boundary-isometry refinement requires an isometry topology.")
+        raise ValueError(
+            "refine_isometry_mesh.mesh must retain an isometry topology and valid marked source cells; got Boundary-isometry refinement requires an isometry topology."
+        )
     source_vertices, _ = _periodic_simplex_rows(mesh)
     points = np.asarray(mesh.coordinates).tolist()
     vertices = source_vertices.tolist()
@@ -2153,7 +2896,7 @@ def _refine_isometry_mesh(
     representatives = np.asarray(topology.vertex_representatives).tolist()
     barycentric = [np.eye(source_vertices.shape[1]) for _ in vertices]
     shifts = np.asarray(topology.vertex_shifts).tolist()
-    edges = _simplex_entity_corners(mesh, 1)
+    edges = simplex_entity_corners(mesh, 1)
     orbit, _, anchors = (np.asarray(value) for value in topology.orbits(1))
     leaders = np.asarray(topology.orbit_representatives(1))
     lengths = np.linalg.norm(
@@ -2163,9 +2906,13 @@ def _refine_isometry_mesh(
     if cells is not None:
         marked = np.asarray(cells)
         if marked.ndim != 1 or not np.issubdtype(marked.dtype, np.integer):
-            raise TypeError("cells must be a one-dimensional integer array.")
+            raise TypeError(
+                "refine_isometry_mesh.mesh must retain an isometry topology and valid marked source cells; got cells must be a one-dimensional integer array."
+            )
         if np.any(marked < 0) or np.any(marked >= len(source_vertices)):
-            raise ValueError("cells must index cells of the periodic mesh.")
+            raise ValueError(
+                "refine_isometry_mesh.mesh must retain an isometry topology and valid marked source cells; got cells must index cells of the periodic mesh."
+            )
         by_pair = {tuple(sorted(edge)): row for row, edge in enumerate(edges.tolist())}
         selected = set()
         for cell in np.unique(marked):
@@ -2219,11 +2966,17 @@ def _refine_isometry_mesh(
     successor_blocks, publication_order = _periodic_child_blocks(
         mesh, np.asarray(vertices, dtype=np.int32), np.asarray(parents)
     )
-    lifted = CellMesh(coordinates, successor_blocks)
-    quotient = PeriodicMeshTopology(
-        lifted, topology.cell, np.asarray(representatives), np.asarray(shifts)
+    lifted = cell_mesh_owner.CellMesh(coordinates, successor_blocks)
+    quotient = periodic_topology_owner.PeriodicMeshTopology(
+        lifted,
+        topology.cell,
+        np.asarray(representatives),
+        np.asarray(shifts),
+        budget=budget,
     )
-    successor = CellMesh(coordinates, successor_blocks, periodic_topology=quotient)
+    successor = cell_mesh_owner.CellMesh(
+        coordinates, successor_blocks, periodic_topology=quotient
+    )
     ancestry = _frozen(np.asarray(parents, dtype=np.int32)[publication_order])
     return PeriodicRefinement(
         source=mesh,
@@ -2238,11 +2991,12 @@ def _refine_isometry_mesh(
         parent_cells=ancestry,
         bisected_edges=len(queue),
         quotient=PeriodicQuotientEvidence(successor),
+        budget=budget,
     )
 
 
-def _bare_periodic_affine_source(mesh: CellMesh, /) -> CellGeometrySpec:
-    """Bind exact stored source rows for the bare topological refinement API."""
+def _bare_periodic_affine_source(mesh: cell_mesh_owner.CellMesh, /) -> CellGeometrySpec:
+    """Bind rational stored source rows for the bare topological refinement API."""
     return CellGeometrySpec(
         {
             block.name: coordinate_lagrange_element(block.cell_kind, 1)
@@ -2254,13 +3008,14 @@ def _bare_periodic_affine_source(mesh: CellMesh, /) -> CellGeometrySpec:
     )
 
 
-def refine_periodic_mesh(
-    mesh: CellMesh,
+def _refine_periodic_mesh(
+    mesh: cell_mesh_owner.CellMesh,
     /,
     *,
     cells: ArrayLike | None = None,
     edge_orbits: ArrayLike | None = None,
     source_geometry: CellGeometrySpec | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> PeriodicRefinement:
     """Refine a periodic simplex mesh by quotient edge bisection.
 
@@ -2271,36 +3026,44 @@ def refine_periodic_mesh(
     conformity and periodicity hold without closure refinement.
     """
     if source_geometry is None:
-        source_geometry = _require_periodic_topology(mesh).actual_geometry
+        source_geometry = require_periodic_topology(mesh).actual_geometry
         if source_geometry is None:
             source_geometry = _bare_periodic_affine_source(mesh)
     if cells is not None and edge_orbits is not None:
-        raise ValueError("Select cells or quotient edge orbits, not both.")
+        raise ValueError(
+            "refine_periodic_mesh.mesh must select valid source cells or quotient edge orbits exclusively; got Select cells or quotient edge orbits, not both."
+        )
     if edge_orbits is not None:
         marked_edges = np.asarray(edge_orbits)
-        count = _require_periodic_topology(mesh).quotient.entities(1).count
+        count = require_periodic_topology(mesh).quotient.entities(1).count
         if marked_edges.ndim != 1 or not np.issubdtype(marked_edges.dtype, np.integer):
-            raise TypeError("edge_orbits must be a one-dimensional integer array.")
+            raise TypeError(
+                "refine_periodic_mesh.mesh must select valid source cells or quotient edge orbits exclusively; got edge_orbits must be a one-dimensional integer array."
+            )
         if np.any(marked_edges < 0) or np.any(marked_edges >= count):
-            raise ValueError("edge_orbits must name quotient edges of the source.")
+            raise ValueError(
+                "refine_periodic_mesh.mesh must select valid source cells or quotient edge orbits exclusively; got edge_orbits must name quotient edges of the source."
+            )
 
     if mesh.periodic_topology is not None and isinstance(
-        _require_periodic_topology(mesh).cell, PeriodicIsometryGroup
+        require_periodic_topology(mesh).cell, PeriodicIsometryGroup
     ):
-        return _refine_isometry_mesh(mesh, cells, edge_orbits, source_geometry)
-    points, simplices, shifts, cell, block_name = _quotient_simplices(mesh)
+        return _refine_isometry_mesh(
+            mesh, cells, edge_orbits, source_geometry, budget=budget
+        )
+    points, simplices, shifts, cell, block_name = quotient_simplices(mesh)
     vectors = np.asarray(cell.vectors, dtype=np.float64)
     state = _QuotientBisection(points, simplices, shifts, vectors)
     if edge_orbits is not None:
-        topology = _require_periodic_topology(mesh)
+        topology = require_periodic_topology(mesh)
         leaders = np.asarray(topology.orbit_representatives(1))[np.asarray(edge_orbits)]
-        endpoints = _simplex_entity_corners(mesh, 1)[leaders]
+        endpoints = simplex_entity_corners(mesh, 1)[leaders]
         roots = np.asarray(topology.vertex_representatives)
         unique = np.unique(roots)
         local = np.searchsorted(unique, roots)
         vertex_shifts = np.asarray(topology.vertex_shifts)
         keys = {
-            _edge_key(
+            edge_key(
                 int(local[first]),
                 vertex_shifts[first],
                 int(local[second]),
@@ -2314,9 +3077,13 @@ def refine_periodic_mesh(
     else:
         marked = np.asarray(cells)
         if not np.issubdtype(marked.dtype, np.integer) or marked.ndim != 1:
-            raise TypeError("cells must be a one-dimensional integer array.")
+            raise TypeError(
+                "refine_periodic_mesh.mesh must select valid source cells or quotient edge orbits exclusively; got cells must be a one-dimensional integer array."
+            )
         if np.any(marked < 0) or np.any(marked >= simplices.shape[0]):
-            raise ValueError("cells must index cells of the periodic mesh.")
+            raise ValueError(
+                "refine_periodic_mesh.mesh must select valid source cells or quotient edge orbits exclusively; got cells must index cells of the periodic mesh."
+            )
         queue = sorted(
             {state.longest_edge(int(index)) for index in np.unique(marked)},
             key=lambda key: (-state.length(key), key),
@@ -2326,24 +3093,29 @@ def refine_periodic_mesh(
         if key in state.star:
             state.bisect(key)
             bisected += 1
-    refined = publish_periodic_simplices(
+    refined = _publish_periodic_simplices(
         np.stack(state.points),
         np.stack(state.cells),
         np.stack(state.shifts),
         cell,
         block_name=block_name,
+        budget=budget,
     )
     parents = np.asarray(state.parents, dtype=np.int32)
     refined_blocks, publication_order = _periodic_child_blocks(
         mesh, _periodic_simplex_rows(refined)[0], parents
     )
-    lifted = CellMesh(np.asarray(refined.coordinates), refined_blocks)
-    topology = _require_periodic_topology(refined)
-    refined = CellMesh(
+    lifted = cell_mesh_owner.CellMesh(np.asarray(refined.coordinates), refined_blocks)
+    topology = require_periodic_topology(refined)
+    refined = cell_mesh_owner.CellMesh(
         np.asarray(refined.coordinates),
         refined_blocks,
-        periodic_topology=PeriodicMeshTopology(
-            lifted, cell, topology.vertex_representatives, topology.vertex_shifts
+        periodic_topology=periodic_topology_owner.PeriodicMeshTopology(
+            lifted,
+            cell,
+            topology.vertex_representatives,
+            topology.vertex_shifts,
+            budget=budget,
         ),
     )
     return PeriodicRefinement(
@@ -2359,7 +3131,87 @@ def refine_periodic_mesh(
         parent_cells=_frozen(parents[publication_order]),
         bisected_edges=bisected,
         quotient=PeriodicQuotientEvidence(refined),
+        budget=budget,
     )
+
+
+def refine_periodic_mesh(
+    mesh: cell_mesh_owner.CellMesh,
+    /,
+    *,
+    cells: ArrayLike | None = None,
+    edge_orbits: ArrayLike | None = None,
+    source_geometry: CellGeometrySpec | None = None,
+    scope: NativeExecutionScope | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> PeriodicRefinement:
+    """Refine quotient edge orbits under explicit or source-derived preparation bounds."""
+    if budget is None:
+        topology = require_periodic_topology(mesh)
+        if source_geometry is None:
+            source_geometry = topology.actual_geometry
+            if source_geometry is None:
+                source_geometry = _bare_periodic_affine_source(mesh)
+        source_work, source_bytes = cell_geometry_preparation_bounds(source_geometry)
+        source_queries = cell_geometry_preparation_query_upper(source_geometry)
+        source_cells = sum(block.cell_count for block in mesh.blocks)
+        dimension = mesh.topological_dimension
+        # Each cell can branch twice at each of its edge keys.
+        # No newly created edge is added to the refinement queue.
+        edges_per_cell = dimension * (dimension + 1) // 2
+        child_cells_upper = source_cells * (1 << edges_per_cell)
+        vertices_upper = mesh.coordinates.shape[0] + child_cells_upper * (dimension + 1)
+        shift_bits = np.full(
+            (1, topology.cell.rank), np.iinfo(np.int64).min, dtype=np.int64
+        )
+        target_work, target_bytes, target_queries = periodic_preparation_bounds(
+            topology.cell, vertices_upper, shift_bits, stabilizers=True
+        )
+        input_work, input_bytes, input_queries = periodic_preparation_bounds(
+            topology.cell,
+            mesh.coordinates.shape[0],
+            np.asarray(topology.vertex_shifts),
+            actual_geometry=source_geometry,
+            stabilizers=True,
+        )
+        # Publication and block-preserving reconstruction each build a topology;
+        # the source evidence retains the constructor's declared cell visits.
+        work_upper = (
+            source_work
+            + input_work
+            + 2 * target_work
+            + _REFINEMENT_CELL_WORK * source_cells
+        )
+        bytes_upper = source_bytes + input_bytes + 2 * target_bytes
+        queries_upper = source_queries + input_queries + 2 * target_queries
+        ticket = HostBatchTicket(
+            work_upper, queries_upper=queries_upper, bytes_upper=bytes_upper
+        )
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=work_upper,
+            maximum_memory_bytes=bytes_upper,
+        )
+        if scope is None:
+            with ticket, budget.activate():
+                return _refine_periodic_mesh(
+                    mesh,
+                    cells=cells,
+                    edge_orbits=edge_orbits,
+                    source_geometry=source_geometry,
+                    budget=budget,
+                )
+        ticket.settle()
+    with _periodic_phase(
+        scope, budget, budget.maximum_work_units, budget.maximum_memory_bytes
+    ):
+        return _refine_periodic_mesh(
+            mesh,
+            cells=cells,
+            edge_orbits=edge_orbits,
+            source_geometry=source_geometry,
+            budget=budget,
+        )
 
 
 def _periodic_history_nodes(
@@ -2382,7 +3234,9 @@ def _periodic_history_nodes(
     return tuple(result)
 
 
-def _periodic_history_meshes(history: PeriodicRefinement | None) -> tuple[CellMesh, ...]:
+def _periodic_history_meshes(
+    history: PeriodicRefinement | None,
+) -> tuple[cell_mesh_owner.CellMesh, ...]:
     meshes = {}
     for node in _periodic_history_nodes(history):
         for mesh in (node.source, node.mesh):
@@ -2390,52 +3244,19 @@ def _periodic_history_meshes(history: PeriodicRefinement | None) -> tuple[CellMe
     return tuple(meshes.values())
 
 
-def _periodic_scientific_block_rows(
-    source: CellMeshingResult,
+class _ScientificOwners(StrictModule):
+    meshes: tuple[cell_mesh_owner.CellMesh, ...]
+
+
+class _ScientificBlockRows(StrictModule):
+    rows: NDArray[np.int32]
+
+
+def _prepare_scientific_owners(
     history: PeriodicRefinement,
-    /,
-    *,
-    limits: MeshingLimits,
-) -> NDArray[np.int32]:
-    """Bind presentation rows to their real retained original scientific blocks."""
-    import jax
-
-    from .._meshcore import current_native_execution_budget
-    from ._bisection import _uniform_charge
-    from ._contracts import MeshingFailure, MeshingFailureCategory
-
-    origin = source.geometry.restriction_source
-    if origin is None:
-        raise ValueError(
-            "Periodic scientific block lookup requires its declared restriction root."
-        )
-    if (
-        history.mesh.mesh_id != source.mesh.mesh_id
-        or history.mesh.numeric_version != source.mesh.numeric_version
-    ):
-        raise ValueError(
-            "Periodic scientific blocks require their actual current retained history."
-        )
-    budget = current_native_execution_budget()
-    work, storage = 0, 0
-
-    def admit(amount: int, byte_count: int) -> None:
-        nonlocal work, storage
-        if (
-            work + amount > limits.maximum_work_units
-            or storage + byte_count > limits.maximum_scratch_bytes
-        ):
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Periodic scientific block preparation exceeds its original allowance.",
-                stage="scientific-class-preparation",
-            )
-        if budget is not None:
-            budget.admit_work_bound(amount)
-            _uniform_charge(amount, byte_count)
-        work += amount
-        storage += byte_count
-
+    source_topology_id: str,
+    admit: Callable[[int, int], None],
+) -> _ScientificOwners:
     admit(1, 256)
     queue, visited, active, owners = [(history, False)], set(), set(), []
     while queue:
@@ -2446,7 +3267,7 @@ def _periodic_scientific_block_rows(
             continue
         if type(node) is not PeriodicRefinement or id(node) in active:
             raise ValueError(
-                "Periodic scientific block ownership has an invalid or cyclic history."
+                "prepare_scientific_owners.history must retain an acyclic history with its declared source owner; got Periodic scientific block ownership has an invalid or cyclic history."
             )
         if id(node) in visited:
             continue
@@ -2454,75 +3275,25 @@ def _periodic_scientific_block_rows(
         active.add(id(node))
         queue.append((node, True))
         for mesh in (node.source, node.mesh):
-            if mesh.topology_id == origin.source_topology_id:
+            if mesh.topology_id == source_topology_id:
                 owners.append(mesh)
         queue.extend(
             (child, False) for child in (node.previous, node.retired) if child is not None
         )
     if not owners:
         raise ValueError(
-            "Periodic restriction declares a root with no true retained source owner."
+            "prepare_scientific_owners.history must retain an acyclic history with its declared source owner; got Periodic restriction declares a root with no true retained source owner."
         )
-    candidates = (source.mesh, history.mesh, *owners)
-    count = sum(block.cell_count for block in source.mesh.blocks)
-    bank_rows = sum(
-        sum(block.cell_count for block in mesh.blocks) + mesh.coordinates.shape[0]
-        for mesh in candidates
-    )
-    admit(bank_rows + count, (bank_rows + count) * 256)
-    # All genuine source leaves are fetched together, before any per-row iteration.
-    banks = jax.device_get(
-        tuple(
-            (
-                mesh.coordinates,
-                mesh.vertex_global_ids,
-                tuple((block.vertices, block.global_ids) for block in mesh.blocks),
-            )
-            for mesh in candidates
-        )
-        + (
-            tuple(
-                (
-                    origin.block_parent_cell_ids[block.name],
-                    origin.block_parent_vertex_ids[block.name],
-                )
-                for block in source.mesh.blocks
-            ),
-        )
-    )
+    return _ScientificOwners(tuple(owners))
 
-    def identity(
-        mesh: CellMesh,
-        bank: tuple[
-            np.ndarray,
-            np.ndarray,
-            tuple[tuple[np.ndarray, np.ndarray], ...],
-        ],
-        /,
-    ) -> str:
-        return canonical_fingerprint(
-            {
-                "topology": mesh.topology_id,
-                "numeric_version": mesh.numeric_version,
-                "blocks": tuple((block.name, block.cell_kind) for block in mesh.blocks),
-                "arrays": array_tree_fingerprint(bank),
-            }
-        )
 
-    if identity(source.mesh, banks[0]) != identity(history.mesh, banks[1]):
-        raise ValueError(
-            "Periodic scientific block history has changed actual current mesh banks."
-        )
-    root = owners[0]
-    root_bank = banks[2]
-    expected = identity(root, root_bank)
-    if any(
-        identity(mesh, bank) != expected
-        for mesh, bank in zip(owners[1:], banks[3:-1], strict=True)
-    ):
-        raise ValueError(
-            "Periodic restriction has conflicting retained original scientific owners."
-        )
+def _bind_scientific_rows(
+    source: CellMeshingResult,
+    root: cell_mesh_owner.CellMesh,
+    root_bank: tuple[np.ndarray, np.ndarray, tuple[tuple[np.ndarray, np.ndarray], ...]],
+    parent_banks: tuple[tuple[np.ndarray, np.ndarray], ...],
+    count: int,
+) -> _ScientificBlockRows:
     root_cells = {}
     root_vertices = np.asarray(root_bank[1])
     for block_index, (_, (vertices, identifiers)) in enumerate(
@@ -2532,7 +3303,7 @@ def _periodic_scientific_block_rows(
             identifier = int(cell)
             if identifier in root_cells:
                 raise ValueError(
-                    "Periodic scientific root duplicates an original cell ID."
+                    "bind_scientific_rows.source must bind each presentation row to a unique retained source cell; got Periodic scientific root duplicates an cell ID."
                 )
             root_cells[identifier] = (
                 block_index,
@@ -2540,10 +3311,10 @@ def _periodic_scientific_block_rows(
             )
     result = np.empty((count,), dtype=np.int32)
     offset = 0
-    for block, (parents, corners) in zip(source.mesh.blocks, banks[-1], strict=True):
+    for block, (parents, corners) in zip(source.mesh.blocks, parent_banks, strict=True):
         if parents.shape != (block.cell_count,) or corners.shape[0] != block.cell_count:
             raise ValueError(
-                "Periodic presentation rows lack complete original SCI parent banks."
+                "bind_scientific_rows.source must bind each presentation row to a unique retained source cell; got Periodic presentation rows lack all required SCI parent banks."
             )
         for parent, vertices in zip(parents, corners, strict=True):
             owner = root_cells.get(int(parent))
@@ -2552,17 +3323,129 @@ def _periodic_scientific_block_rows(
                 or tuple(int(value) for value in vertices if value >= 0) != owner[1]
             ):
                 raise ValueError(
-                    "Periodic presentation has a missing, foreign or changed original SCI cell."
+                    "bind_scientific_rows.source must bind each presentation row to a unique retained source cell; got Periodic presentation has a missing, foreign or changed SCI cell."
                 )
             result[offset] = owner[0]
             offset += 1
-    return result
+    return _ScientificBlockRows(result)
 
 
-def _periodic_vertex_stencils(
+@checked
+def periodic_scientific_block_rows(
+    source: CellMeshingResult,
+    history: PeriodicRefinement,
+    /,
+    *,
+    limits: MeshingLimits,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> NDArray[np.int32]:
+    """Bind presentation rows to their real retained scientific blocks."""
+    with _periodic_phase(
+        scope, budget, budget.maximum_work_units, budget.maximum_memory_bytes
+    ):
+        origin = source.geometry.restriction_source
+        if origin is None:
+            raise ValueError(
+                "periodic_scientific_block_rows.source must bind the current history and declared scientific source root; got Periodic scientific block lookup requires its declared restriction root."
+            )
+        if (
+            history.mesh.mesh_id != source.mesh.mesh_id
+            or history.mesh.numeric_version != source.mesh.numeric_version
+        ):
+            raise ValueError(
+                "periodic_scientific_block_rows.source must bind the current history and declared scientific source root; got Periodic scientific blocks require their current retained history."
+            )
+        work, storage = 0, 0
+
+        def admit(amount: int, byte_count: int) -> None:
+            nonlocal work, storage
+            if (
+                work + amount > limits.maximum_work_units
+                or storage + byte_count > limits.maximum_scratch_bytes
+            ):
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "admit.amount must fit the declared work and scratch allowances; got Periodic scientific block preparation exceeds its allowance.",
+                    stage="scientific-class-preparation",
+                )
+            _periodic_charge(amount, budget=budget)
+            budget.reserve(0, byte_count)
+            work += amount
+            storage += byte_count
+
+        owners = _prepare_scientific_owners(
+            history, origin.source_topology_id, admit
+        ).meshes
+        candidates = (source.mesh, history.mesh, *owners)
+        count = sum(block.cell_count for block in source.mesh.blocks)
+        bank_rows = sum(
+            sum(block.cell_count for block in mesh.blocks) + mesh.coordinates.shape[0]
+            for mesh in candidates
+        )
+        admit(bank_rows + count, (bank_rows + count) * 256)
+        # All source leaves are fetched together, before any per-row iteration.
+        banks = jax.device_get(
+            tuple(
+                (
+                    mesh.coordinates,
+                    mesh.vertex_global_ids,
+                    tuple((block.vertices, block.global_ids) for block in mesh.blocks),
+                )
+                for mesh in candidates
+            )
+            + (
+                tuple(
+                    (
+                        origin.block_parent_cell_ids[block.name],
+                        origin.block_parent_vertex_ids[block.name],
+                    )
+                    for block in source.mesh.blocks
+                ),
+            )
+        )
+
+        def identity(
+            mesh: cell_mesh_owner.CellMesh,
+            bank: tuple[
+                np.ndarray,
+                np.ndarray,
+                tuple[tuple[np.ndarray, np.ndarray], ...],
+            ],
+            /,
+        ) -> str:
+            return canonical_fingerprint(
+                {
+                    "topology": mesh.topology_id,
+                    "numeric_version": mesh.numeric_version,
+                    "blocks": tuple(
+                        (block.name, block.cell_kind) for block in mesh.blocks
+                    ),
+                    "arrays": array_tree_fingerprint(bank),
+                }
+            )
+
+        if identity(source.mesh, banks[0]) != identity(history.mesh, banks[1]):
+            raise ValueError(
+                "periodic_scientific_block_rows.source must bind the current history and declared scientific source root; got Periodic scientific block history has changed current mesh banks."
+            )
+        root = owners[0]
+        root_bank = banks[2]
+        expected = identity(root, root_bank)
+        if any(
+            identity(mesh, bank) != expected
+            for mesh, bank in zip(owners[1:], banks[3:-1], strict=True)
+        ):
+            raise ValueError(
+                "periodic_scientific_block_rows.source must bind the current history and declared scientific source root; got Periodic restriction has conflicting retained scientific owners."
+            )
+        return _bind_scientific_rows(source, root, root_bank, banks[-1], count).rows
+
+
+def periodic_vertex_stencils(
     history: PeriodicRefinement,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Exact dyadic construction stencils, reconciled on shared lifted vertices."""
+    """Rational dyadic construction stencils, reconciled on shared lifted vertices."""
 
     source = history.source
     target = history.mesh
@@ -2591,28 +3474,28 @@ def _periodic_vertex_stencils(
                 or not np.array_equal(weights[vertex], values)
             ):
                 raise ValueError(
-                    "Periodic cell lifts disagree on a shared vertex's construction witness."
+                    "periodic_vertex_stencils.history must retain consistent shared-vertex construction and use every lifted vertex; got Periodic cell lifts disagree on a shared vertex's construction evidence."
                 )
             sources[vertex], weights[vertex] = row, values
     if np.any(sources[:, 0] < 0):
-        raise ValueError("A periodic refinement contains an unused lifted vertex.")
+        raise ValueError(
+            "periodic_vertex_stencils.history must retain consistent shared-vertex construction and use every lifted vertex; got A periodic refinement contains an unused lifted vertex."
+        )
     return sources, weights
 
 
 def _periodic_entity_relations(
-    source: CellMesh,
-    target: CellMesh,
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
     vertex_sources: np.ndarray,
     *,
     coarsening: bool = False,
 ) -> list[EntityRelations]:
-    from ._lineage import EntityLineageKind
-    from ._topology_edit import entity_keys, EntityRelations
 
     records = []
     fine, coarse = (source, target) if coarsening else (target, source)
     for degree in range(1, source.topological_dimension):
-        fine_rows = _simplex_entity_corners(fine, degree)
+        fine_rows = simplex_entity_corners(fine, degree)
         coarse_keys = entity_keys(coarse, degree)
         lookup = {tuple(row): row for row in coarse_keys}
         fine_keys = entity_keys(fine, degree)
@@ -2648,9 +3531,10 @@ def _periodic_entity_relations(
 
 
 def _periodic_prescribed_ids(
-    source: CellMesh, target: CellMesh, prior: PeriodicRefinement | None
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
+    prior: PeriodicRefinement | None,
 ) -> tuple[PrescribedEntityIds, ...]:
-    from ._topology_edit import entity_keys, PrescribedEntityIds
 
     result = []
     for degree in range(1, source.topological_dimension):
@@ -2679,7 +3563,7 @@ def _periodic_prescribed_ids(
                 maximum += 1
                 if maximum > np.iinfo(np.int64).max:
                     raise ValueError(
-                        "Periodic scientific entity identity space is exhausted."
+                        "periodic_prescribed_ids.source must allocate scientific entity IDs within the integer identity space; got Periodic scientific entity identity space is exhausted."
                     )
                 known[key] = maximum
             keys.append(key)
@@ -2696,14 +3580,14 @@ def _periodic_prescribed_ids(
 
 
 def _periodic_refinement_edit(
-    history: PeriodicRefinement, prior: PeriodicRefinement | None
+    history: PeriodicRefinement,
+    prior: PeriodicRefinement | None,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> CellTopologyEdit:
-    from ..discretization._cell_geometry_transfer import NestedReferenceWitnesses
-    from ._lineage import EntityLineageKind
-    from ._topology_edit import CellTopologyEdit, EntityRelations, TopologyEditBlock
 
     source, target = history.source, history.mesh
-    sources, weights = _periodic_vertex_stencils(history)
+    sources, weights = periodic_vertex_stencils(history)
     count = sources.shape[0]
     vertex_ids = np.empty(count, dtype=np.int64)
     old_meshes = (source, *_periodic_history_meshes(prior))
@@ -2712,7 +3596,7 @@ def _periodic_refinement_edit(
     )
     retired_vertices = {}
     for node in _periodic_history_nodes(prior):
-        old_sources, old_weights = _periodic_vertex_stencils(node)
+        old_sources, old_weights = periodic_vertex_stencils(node)
         for vertex, identifier in enumerate(np.asarray(node.mesh.vertex_global_ids)):
             valid = old_sources[vertex] >= 0
             key = (
@@ -2750,7 +3634,7 @@ def _periodic_refinement_edit(
         else:
             if next_id > np.iinfo(np.int64).max:
                 raise ValueError(
-                    "Periodic scientific vertex identity space is exhausted."
+                    "periodic_refinement_edit.history must allocate scientific vertex and cell IDs within the integer identity space; got Periodic scientific vertex identity space is exhausted."
                 )
             vertex_ids[vertex] = next_id
             next_id += 1
@@ -2787,7 +3671,7 @@ def _periodic_refinement_edit(
             else:
                 if next_cell > np.iinfo(np.int64).max:
                     raise ValueError(
-                        "Periodic scientific cell identity space is exhausted."
+                        "periodic_refinement_edit.history must allocate scientific vertex and cell IDs within the integer identity space; got Periodic scientific cell identity space is exhausted."
                     )
                 fine_ids[cell] = next_cell
                 next_cell += 1
@@ -2841,7 +3725,7 @@ def _periodic_refinement_edit(
     for block in target.blocks:
         stop = start + block.cell_count
         labeled_blocks.append(
-            CellBlock(
+            reference_cell_types_owner.CellBlock(
                 block.name,
                 block.cell_kind,
                 cells[start:stop],
@@ -2858,7 +3742,7 @@ def _periodic_refinement_edit(
             )
         )
         start = stop
-    labeled_target = CellMesh(
+    labeled_target = cell_mesh_owner.CellMesh(
         np.asarray(target.coordinates)[order],
         tuple(labeled_blocks),
         vertex_global_ids=vertex_ids[order],
@@ -2875,7 +3759,7 @@ def _periodic_refinement_edit(
         tuple(relations),
         prescribed_entity_ids=prescribed,
         periodic_orbits=_periodic_orbit_witness(
-            source, history.mesh, labeled_target, prior, order
+            source, history.mesh, labeled_target, prior, order, budget=budget
         ),
         refinement=NestedReferenceWitnesses(
             fine_ids,
@@ -2885,17 +3769,82 @@ def _periodic_refinement_edit(
     )
 
 
-def _periodic_coarsening_parents(
-    prepared: PreparedMeshAdaptation, history: PeriodicRefinement
-) -> np.ndarray:
-    """Complete compatible sibling families, closed across every split edge orbit."""
+class PeriodicCoarseningCellDim(Dim):
+    """Scientific cells admitted for one periodic sibling coarsening request."""
 
-    from ._adaptation import MarkedMeshAdaptation
-    from ._topology_edit import entity_keys, key_rows
+
+@checked
+def periodic_coarsening_cell_ids(
+    prepared: adaptation_owner.PreparedMeshAdaptation, /
+) -> HostInt64[PeriodicCoarseningCellDim]:
+    """Return ascending requested cell IDs admitted by periodic sibling closure.
+
+    The execution owner uses the same metered selection. This is a selection
+    query, not a topology edit or a certificate for a later modified request.
+    """
+    request = prepared.request
+    if not isinstance(request, adaptation_owner.MarkedMeshAdaptation) or not isinstance(
+        request.hierarchy, PeriodicRefinement
+    ):
+        raise ValueError(
+            "periodic_coarsening_cell_ids.prepared must retain marked periodic history; got no periodic sibling request"
+        )
+    if np.asarray(request.refine_cell_ids).size:
+        raise ValueError(
+            "periodic_coarsening_cell_ids.prepared must contain only coarsening marks; got refinement marks"
+        )
+    history = request.hierarchy
+    limits = prepared.policy.limits
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        initial = scope.batch(0)
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        initial.settle()
+        with _periodic_phase(
+            scope, budget, limits.maximum_work_units, limits.maximum_scratch_bytes
+        ):
+            validate_periodic_bisection(prepared, budget=budget)
+            parents = _periodic_coarsening_parents(prepared, history, budget=budget)
+            _, cell_ids = _periodic_simplex_rows(history.mesh)
+            selected = np.sort(cell_ids[np.isin(history.parent_cells, parents)])
+    return parse(
+        selected,
+        HostInt64[PeriodicCoarseningCellDim],
+        "periodic_coarsening_cell_ids",
+    )
+
+
+def _periodic_coarsening_parents(
+    prepared: adaptation_owner.PreparedMeshAdaptation,
+    history: PeriodicRefinement,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Meter the common compatible sibling/edge-star selection."""
+    fine_count = sum(block.cell_count for block in history.mesh.blocks)
+    coarse_count = sum(block.cell_count for block in history.source.blocks)
+    _periodic_charge(
+        8 * fine_count * coarse_count + 64 * (fine_count + coarse_count),
+        budget=budget,
+    )
+    with budget.temporary_scope():
+        budget.reserve(0, 512 * (fine_count + coarse_count))
+        return _select_periodic_coarsening_parents(prepared, history)
+
+
+def _select_periodic_coarsening_parents(
+    prepared: adaptation_owner.PreparedMeshAdaptation, history: PeriodicRefinement
+) -> np.ndarray:
+    """All required compatible sibling families, closed across every split edge orbit."""
 
     request = prepared.request
-    if not isinstance(request, MarkedMeshAdaptation):
-        raise TypeError("Periodic sibling coarsening requires a marked request.")
+    if not isinstance(request, adaptation_owner.MarkedMeshAdaptation):
+        raise TypeError(
+            "periodic_coarsening_parents.prepared must retain marked sibling families with scientific constraint rows; got Periodic sibling coarsening requires a marked request."
+        )
     fine, coarse = history.mesh, history.source
     fine_cells, fine_ids = _periodic_simplex_rows(fine)
     coarse_cells, _ = _periodic_simplex_rows(coarse)
@@ -2906,7 +3855,7 @@ def _periodic_coarsening_parents(
     )
     if np.any(class_rows < 0):
         raise ValueError(
-            "Periodic sibling cells lack their actual scientific constraint rows."
+            "periodic_coarsening_parents.prepared must retain marked sibling families with scientific constraint rows; got Periodic sibling cells lack their scientific constraint rows."
         )
     cell_classes = np.asarray(prepared.constraints.cell_classes)[class_rows]
     families = [
@@ -2931,7 +3880,7 @@ def _periodic_coarsening_parents(
     for edge in np.flatnonzero(prepared.constraints.protected_edge_mask):
         if tuple(edge_keys[edge]) in source_edge_keys:
             continue
-        endpoints = _simplex_entity_corners(fine, 1)[edge]
+        endpoints = simplex_entity_corners(fine, 1)[edge]
         # Explicit endpoint containment avoids treating a merely adjacent vertex
         # as an edge-protection conflict.
         touched = np.asarray(
@@ -2940,8 +3889,8 @@ def _periodic_coarsening_parents(
         selected[np.unique(parents[touched])] = False
     # A label/material trace may not be merged across inconsistent child classes.
     degree = coarse.topological_dimension - 1
-    construction, _ = _periodic_vertex_stencils(history)
-    fine_facets = _simplex_entity_corners(fine, degree)
+    construction, _ = periodic_vertex_stencils(history)
+    fine_facets = simplex_entity_corners(fine, degree)
     coarse_keys = entity_keys(coarse, degree)
     lookup = {tuple(key): index for index, key in enumerate(coarse_keys)}
     children = {}
@@ -2962,18 +3911,18 @@ def _periodic_coarsening_parents(
             selected[incident] = False
     by_pair = {
         tuple(sorted(edge)): row
-        for row, edge in enumerate(_simplex_entity_corners(coarse, 1).tolist())
+        for row, edge in enumerate(simplex_entity_corners(coarse, 1).tolist())
     }
-    edge_orbit = np.asarray(_require_periodic_topology(coarse).orbits(1)[0])
+    edge_orbit = np.asarray(require_periodic_topology(coarse).orbits(1)[0])
     stars = {}
     for parent, corners in enumerate(coarse_cells):
         for pair in combinations(corners.tolist(), 2):
             orbit = int(edge_orbit[by_pair[tuple(sorted(pair))]])
             stars.setdefault(orbit, set()).add(parent)
-    present = set(_require_periodic_topology(fine).entity_keys(1))
+    present = set(require_periodic_topology(fine).entity_keys(1))
     split = [
         index
-        for index, key in enumerate(_require_periodic_topology(coarse).entity_keys(1))
+        for index, key in enumerate(require_periodic_topology(coarse).entity_keys(1))
         if key not in present
     ]
     changed = True
@@ -2988,14 +3937,14 @@ def _periodic_coarsening_parents(
 
 
 def _periodic_coarsening_edit(
-    history: PeriodicRefinement, restored_parents: np.ndarray
+    history: PeriodicRefinement,
+    restored_parents: np.ndarray,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[CellTopologyEdit, np.ndarray, np.ndarray, np.ndarray]:
-    from ..discretization._cell_geometry_transfer import NestedReferenceWitnesses
-    from ._lineage import EntityLineageKind
-    from ._topology_edit import CellTopologyEdit, EntityRelations, TopologyEditBlock
 
     fine, original = history.mesh, history.source
-    construction_sources, _ = _periodic_vertex_stencils(history)
+    construction_sources, _ = periodic_vertex_stencils(history)
     fine_cells, fine_ids = _periodic_simplex_rows(fine)
     original_cells, original_ids = _periodic_simplex_rows(original)
     parents = np.asarray(history.parent_cells)
@@ -3043,10 +3992,12 @@ def _periodic_coarsening_edit(
             )
         )
     output_order = np.concatenate(output_rows)
-    target = CellMesh(
+    target = cell_mesh_owner.CellMesh(
         np.asarray(fine.coordinates)[used],
         tuple(
-            CellBlock(block.name, block.cell_kind, block.cells, global_ids=block.cell_ids)
+            reference_cell_types_owner.CellBlock(
+                block.name, block.cell_kind, block.cells, global_ids=block.cell_ids
+            )
             for block in blocks
         ),
         vertex_global_ids=ids,
@@ -3093,7 +4044,9 @@ def _periodic_coarsening_edit(
         np.ones(sources.shape, dtype=np.bool_),
         tuple(relations),
         prescribed_entity_ids=_periodic_prescribed_ids(fine, target, history),
-        periodic_orbits=_periodic_orbit_witness(fine, fine, target, history, used),
+        periodic_orbits=_periodic_orbit_witness(
+            fine, fine, target, history, used, budget=budget
+        ),
         coarsening=NestedReferenceWitnesses(fine_ids, target_ids, reference),
     )
     target_reference = np.concatenate(
@@ -3127,20 +4080,19 @@ def _periodic_coarsening_edit(
 
 
 def _periodic_identity_banks(
-    source: CellMesh, history: PeriodicRefinement | None
+    source: cell_mesh_owner.CellMesh, history: PeriodicRefinement | None
 ) -> tuple[PeriodicEntityIdentityBank, ...]:
     """Read keyed allocation history from scientific owners, never live row order."""
 
-    from ..discretization._periodic_topology import _identification_id
-    from ._topology_edit import PeriodicEntityIdentityBank
-
-    topology = _require_periodic_topology(source)
-    identification = _identification_id(topology.cell)
+    topology = require_periodic_topology(source)
+    identification = identification_id(topology.cell)
     if history is not None and (
         history.mesh.topology_id != source.topology_id
         or not np.array_equal(history.mesh.coordinates, source.coordinates)
     ):
-        raise ValueError("Periodic allocation history does not bind the source epoch.")
+        raise ValueError(
+            "periodic_identity_banks.source must retain source-epoch bindings, identification, and unique scientific entity IDs; got Periodic allocation history does not bind the source epoch."
+        )
     owners = (source, *_periodic_history_meshes(history))
     result = []
     for degree in range(1, source.topological_dimension):
@@ -3148,12 +4100,16 @@ def _periodic_identity_banks(
         reverse: dict[int, tuple[int, ...]] = {}
         cursor = 0
         for owner in owners:
-            periodic = _require_periodic_topology(owner)
-            if _identification_id(periodic.cell) != identification:
-                raise ValueError("Periodic allocation history changes identification.")
+            periodic = require_periodic_topology(owner)
+            if identification_id(periodic.cell) != identification:
+                raise ValueError(
+                    "periodic_identity_banks.source must retain source-epoch bindings, identification, and unique scientific entity IDs; got Periodic allocation history changes identification."
+                )
             recorded = periodic.allocator_next_ids[degree]
             if recorded < 0:
-                raise ValueError("Periodic scientific allocation history is unresolved.")
+                raise ValueError(
+                    "periodic_identity_banks.source must retain source-epoch bindings, identification, and unique scientific entity IDs; got Periodic scientific allocation history is unresolved."
+                )
             cursor = max(cursor, recorded)
             for key, identifier in zip(
                 periodic.entity_keys(degree),
@@ -3167,7 +4123,7 @@ def _periodic_identity_banks(
                     and reverse[identifier] != key
                 ):
                     raise ValueError(
-                        "Periodic history reuses a scientific entity identity."
+                        "periodic_identity_banks.source must retain source-epoch bindings, identification, and unique scientific entity IDs; got Periodic history reuses a scientific entity identity."
                     )
                 known[key] = int(identifier)
                 reverse[int(identifier)] = key
@@ -3180,12 +4136,10 @@ def _periodic_identity_banks(
     return tuple(result)
 
 
-def _require_periodic_identity_bank(bank: PeriodicEntityIdentityBank, /) -> None:
+@checked
+def require_periodic_identity_bank(bank: PeriodicEntityIdentityBank, /) -> None:
     """Validate the immutable variable-arity identity payload without coercion."""
-    from ._topology_edit import PeriodicEntityIdentityBank
 
-    if not isinstance(bank, PeriodicEntityIdentityBank):
-        raise TypeError("Periodic scientific identities require their canonical bank.")
     if (
         not isinstance(bank.entity_keys, tuple)
         or not isinstance(bank.entity_global_ids, tuple)
@@ -3216,50 +4170,56 @@ def _require_periodic_identity_bank(bank: PeriodicEntityIdentityBank, /) -> None
         or len(set(bank.entity_global_ids)) != len(bank.entity_global_ids)
     ):
         raise ValueError(
-            "Periodic scientific identity keys, IDs or allocation cursor are invalid."
+            "require_periodic_identity_bank.bank must retain integer keys, IDs, and a valid allocation cursor; got Periodic scientific identity keys, IDs or allocation cursor are invalid."
         )
 
 
 def _periodic_target_identity_banks(
-    source: CellMesh,
-    target: PeriodicMeshTopology,
+    source: cell_mesh_owner.CellMesh,
+    target: periodic_topology_owner.PeriodicMeshTopology,
     history: PeriodicRefinement | None,
     retained: tuple[PeriodicEntityIdentityBank, ...] = (),
-    allocation_prior: tuple[CellMesh, PeriodicVertexOrbitWitness] | None = None,
+    allocation_prior: tuple[cell_mesh_owner.CellMesh, PeriodicVertexOrbitWitness]
+    | None = None,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[PeriodicEntityIdentityBank, ...]:
     current = _periodic_identity_banks(source, history)
     if allocation_prior is not None:
-        current = _validated_periodic_allocation_prior(source, allocation_prior)
+        current = _validated_periodic_allocation_prior(
+            source, allocation_prior, budget=budget
+        )
         if retained != current:
             raise ValueError(
-                "Retained periodic identities must equal the validated prior complete allocation bank."
+                "periodic_target_identity_banks.source must retain the validated prior allocation bank; got Retained periodic identities must equal the validated prior allocation bank."
             )
     return _allocate_periodic_identity_banks(target, current, retained)
 
 
 def _allocate_periodic_identity_banks(
-    target: PeriodicMeshTopology,
+    target: periodic_topology_owner.PeriodicMeshTopology,
     current: tuple[PeriodicEntityIdentityBank, ...],
     retained: tuple[PeriodicEntityIdentityBank, ...],
     /,
 ) -> tuple[PeriodicEntityIdentityBank, ...]:
     """Allocate only beyond the validated base's keyed high-water."""
-    from ._topology_edit import PeriodicEntityIdentityBank
 
     result = []
     if retained and tuple(bank.degree for bank in retained) != tuple(
         bank.degree for bank in current
     ):
-        raise ValueError("Retained periodic identities omit an entity dimension.")
+        raise ValueError(
+            "allocate_periodic_identity_banks.target must retain all entity degrees, scientific IDs, and allocation cursors; got Retained periodic identities omit an entity dimension."
+        )
     for index, bank in enumerate(current):
         known = dict(zip(bank.entity_keys, bank.entity_global_ids, strict=True))
         cursor = bank.allocator_next_id
         if retained:
             prior = retained[index]
-            _require_periodic_identity_bank(prior)
+            require_periodic_identity_bank(prior)
             if prior.allocator_next_id != cursor:
                 raise ValueError(
-                    "Retained periodic identities do not bind the current allocation cursor."
+                    "allocate_periodic_identity_banks.target must retain all entity degrees, scientific IDs, and allocation cursors; got Retained periodic identities do not bind the current allocation cursor."
                 )
             historical = dict(
                 zip(prior.entity_keys, prior.entity_global_ids, strict=True)
@@ -3268,7 +4228,7 @@ def _allocate_periodic_identity_banks(
                 historical.get(key) != identifier for key, identifier in known.items()
             ):
                 raise ValueError(
-                    "Retained periodic identities do not include the current scientific epoch."
+                    "allocate_periodic_identity_banks.target must retain all entity degrees, scientific IDs, and allocation cursors; got Retained periodic identities do not include the current scientific epoch."
                 )
             known = historical
             cursor = prior.allocator_next_id
@@ -3276,7 +4236,7 @@ def _allocate_periodic_identity_banks(
             if key not in known:
                 if cursor > np.iinfo(np.int64).max:
                     raise ValueError(
-                        "Periodic scientific identity allocation is exhausted."
+                        "allocate_periodic_identity_banks.target must retain all entity degrees, scientific IDs, and allocation cursors; got Periodic scientific identity allocation is exhausted."
                     )
                 known[key] = cursor
                 cursor += 1
@@ -3290,41 +4250,44 @@ def _allocate_periodic_identity_banks(
 
 
 def _validated_periodic_allocation_prior(
-    source: CellMesh,
-    prior: tuple[CellMesh, PeriodicVertexOrbitWitness],
+    source: cell_mesh_owner.CellMesh,
+    prior: tuple[cell_mesh_owner.CellMesh, PeriodicVertexOrbitWitness],
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[PeriodicEntityIdentityBank, ...]:
-    """Validate the complete prior chain iteratively, without a private depth cap."""
-    from ._topology_edit import PeriodicVertexOrbitWitness
+    """Validate the all required prior chain iteratively, without a private depth cap."""
 
-    chain: list[tuple[CellMesh, PeriodicVertexOrbitWitness]] = []
+    chain: list[tuple[cell_mesh_owner.CellMesh, PeriodicVertexOrbitWitness]] = []
     seen: set[int] = set()
-    cursor: tuple[CellMesh, PeriodicVertexOrbitWitness] | None = prior
+    cursor: tuple[cell_mesh_owner.CellMesh, PeriodicVertexOrbitWitness] | None = prior
     while cursor is not None:
         if not isinstance(cursor, tuple) or len(cursor) != 2:
             raise TypeError(
-                "A periodic allocation prior requires its bound target and canonical witness."
+                "validated_periodic_allocation_prior.source must retain a bound, acyclic prior scientific allocation chain; got A periodic allocation prior requires its bound target and deterministic evidence."
             )
         previous, witness = cursor
-        if not isinstance(previous, CellMesh) or not isinstance(
+        if not isinstance(previous, cell_mesh_owner.CellMesh) or not isinstance(
             witness, PeriodicVertexOrbitWitness
         ):
             raise TypeError(
-                "A periodic allocation prior requires its bound target and canonical witness."
+                "validated_periodic_allocation_prior.source must retain a bound, acyclic prior scientific allocation chain; got A periodic allocation prior requires its bound target and deterministic evidence."
             )
         identity = id(witness)
         if identity in seen:
             raise ValueError(
-                "A periodic allocation prior contains a cyclic witness chain."
+                "validated_periodic_allocation_prior.source must retain a bound, acyclic prior scientific allocation chain; got A periodic allocation prior contains a cyclic evidence chain."
             )
         seen.add(identity)
         chain.append((previous, witness))
         cursor = witness.allocation_prior
     current: tuple[PeriodicEntityIdentityBank, ...] | None = None
     for previous, witness in reversed(chain):
-        periodic = _require_periodic_topology(previous)
-        validated = _bind_periodic_target(source, previous, witness, current)
-        bound = _require_periodic_topology(validated)
+        periodic = require_periodic_topology(previous)
+        validated = _bind_periodic_target(
+            source, previous, witness, current, budget=budget
+        )
+        bound = require_periodic_topology(validated)
         if (
             validated.topology_id != previous.topology_id
             or bound.allocator_next_ids != periodic.allocator_next_ids
@@ -3337,43 +4300,204 @@ def _validated_periodic_allocation_prior(
             )
         ):
             raise ValueError(
-                "A periodic allocation prior does not match its actual bound target identities."
+                "validated_periodic_allocation_prior.source must retain a bound, acyclic prior scientific allocation chain; got A periodic allocation prior does not match its bound target identities."
             )
         current = witness.quotient_entities
     if current is None:
-        raise ValueError("A periodic allocation prior omits its actual bound target.")
+        raise ValueError(
+            "validated_periodic_allocation_prior.source must retain a bound, acyclic prior scientific allocation chain; got A periodic allocation prior omits its bound target."
+        )
     return current
 
 
+def _periodic_replay_identity_storage_upper(
+    witness: PeriodicVertexOrbitWitness, /
+) -> int:
+    """Bound keyed identity tuples, allocation dictionaries and orbit-array metadata."""
+    storage = witness.vertex_representative_ids.nbytes + witness.vertex_shifts.nbytes
+    banks = (*witness.quotient_entities, *witness.retained_quotient_entities)
+    storage += 64 + 8 * len(banks)
+    for bank in banks:
+        storage += 64 + 8 * len(bank)
+        storage += bigint_bytes(abs(int(bank.degree)).bit_length())
+        storage += bigint_bytes(abs(int(bank.allocator_next_id)).bit_length())
+        storage += 2 * (64 + 8 * len(bank.entity_keys))
+        for key, identifier in zip(bank.entity_keys, bank.entity_global_ids, strict=True):
+            # Key/ID and reverse-ID dictionaries coexist with sorted key lists.
+            storage += 2 * (64 + 8 * len(key)) + 128
+            storage += bigint_bytes(abs(int(identifier)).bit_length())
+            storage += sum(bigint_bytes(abs(int(value)).bit_length()) for value in key)
+    return storage
+
+
+def _periodic_bind_stage_preparation_bounds(
+    source: cell_mesh_owner.CellMesh,
+    point_count: int,
+    shifts: np.ndarray,
+    target_geometry: CellGeometrySpec | None,
+    witness: PeriodicVertexOrbitWitness,
+    /,
+) -> tuple[int, int, int]:
+    """Bound the two descriptor constructors and their source-provenance preparation."""
+    topology = require_periodic_topology(source)
+    topology_work, topology_bytes, topology_queries = periodic_preparation_bounds(
+        topology.cell,
+        point_count,
+        shifts,
+        actual_geometry=target_geometry,
+        stabilizers=True,
+    )
+    work, storage, queries = (2 * topology_work, 2 * topology_bytes, 2 * topology_queries)
+    storage += _periodic_replay_identity_storage_upper(witness)
+    # The target source is prepared by each constructor; the source lift
+    # check or nonnested provenance also prepares its source banks.
+    geometries: list[CellGeometrySpec] = []
+    if target_geometry is not None:
+        geometries.extend((target_geometry, target_geometry))
+    authority = witness.nonnested_geometry
+    if authority is not None:
+        geometries.extend((authority.source_geometry, authority.target_geometry))
+    elif topology.actual_geometry is not None:
+        geometries.append(topology.actual_geometry)
+    for geometry in geometries:
+        geometry_work, geometry_bytes = cell_geometry_preparation_bounds(geometry)
+        work += geometry_work
+        storage += geometry_bytes
+        queries += cell_geometry_preparation_query_upper(geometry)
+    return work, storage, queries
+
+
+def periodic_topology_bind_preparation_bounds(
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
+    witness: PeriodicVertexOrbitWitness,
+    /,
+) -> tuple[int, int, int]:
+    """Return host work/storage/query bounds for a all required periodic evidence replay.
+
+    Each allocation-prior stage is replayed once before the current target.
+    The bound reads only existing source, shift and descriptor metadata."""
+    work = storage = queries = 0
+    current_target, current_witness = target, witness
+    seen: set[int] = set()
+    while True:
+        if id(current_witness) in seen:
+            raise ValueError(
+                "periodic_topology_bind_preparation_bounds.source must retain an acyclic prior allocation chain; got A periodic allocation prior contains a cyclic evidence chain."
+            )
+        seen.add(id(current_witness))
+        descriptor = current_target.periodic_topology
+        storage += model_array_bytes(current_target)
+        geometry = None if descriptor is None else descriptor.actual_geometry
+        stage_work, stage_bytes, stage_queries = _periodic_bind_stage_preparation_bounds(
+            source,
+            current_target.coordinates.shape[0],
+            np.asarray(current_witness.vertex_shifts),
+            geometry,
+            current_witness,
+        )
+        work += stage_work
+        storage += stage_bytes
+        queries += stage_queries
+        if current_witness.allocation_prior is None:
+            return work, storage, queries
+        current_target, current_witness = current_witness.allocation_prior
+
+
+def topology_edit_assembly_preparation_bounds(
+    source: cell_mesh_owner.CellMesh, edit: CellTopologyEdit, /
+) -> tuple[int, int, int]:
+    """Return host preparation bounds for target construction and periodic binding.
+
+    Target preparation builds twice. Each attached descriptor rebuild renews
+    its source and runs two constructors; evidence binding then replays the
+    allocation-prior chain and two constructors for the current target.
+    Nonperiodic assembly has no charged coordinate preparation."""
+    work = storage = queries = 0
+    storage += model_array_bytes(edit)
+    descriptor = edit.target_periodic_topology
+    geometry = None if descriptor is None else descriptor.actual_geometry
+    if descriptor is not None:
+        rebuild_work, rebuild_bytes, rebuild_queries = periodic_preparation_bounds(
+            descriptor.cell,
+            edit.coordinates.shape[0],
+            np.asarray(descriptor.vertex_shifts),
+            actual_geometry=geometry,
+            stabilizers=True,
+        )
+        # Each rebuild has a source renewal and two constructor passes.
+        work += 2 * 3 * rebuild_work
+        storage += 2 * 3 * rebuild_bytes
+        queries += 2 * 3 * rebuild_queries
+        if geometry is not None:
+            geometry_work, geometry_bytes = cell_geometry_preparation_bounds(geometry)
+            work += 2 * 3 * geometry_work
+            storage += 2 * 3 * geometry_bytes
+            queries += 2 * 3 * cell_geometry_preparation_query_upper(geometry)
+    witness = edit.periodic_orbits
+    if witness is not None:
+        stage_work, stage_bytes, stage_queries = _periodic_bind_stage_preparation_bounds(
+            source,
+            edit.coordinates.shape[0],
+            np.asarray(witness.vertex_shifts),
+            geometry,
+            witness,
+        )
+        work += stage_work
+        storage += stage_bytes
+        queries += stage_queries
+        if witness.allocation_prior is not None:
+            previous, previous_witness = witness.allocation_prior
+            prior_work, prior_bytes, prior_queries = (
+                periodic_topology_bind_preparation_bounds(
+                    source,
+                    previous,
+                    previous_witness,
+                )
+            )
+            work += prior_work
+            storage += prior_bytes
+            queries += prior_queries
+    return work, storage, queries
+
+
+@checked
 def bind_periodic_topology_edit(
-    source: CellMesh, target: CellMesh, witness: PeriodicVertexOrbitWitness, /
-) -> CellMesh:
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
+    witness: PeriodicVertexOrbitWitness,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> cell_mesh_owner.CellMesh:
     """Validate explicit target-global-ID orbits and keyed scientific identities."""
 
-    from ._topology_edit import PeriodicVertexOrbitWitness
-
-    if not isinstance(witness, PeriodicVertexOrbitWitness):
-        raise TypeError("A periodic edit requires its explicit vertex-orbit witness.")
     current = (
         None
         if witness.allocation_prior is None
-        else _validated_periodic_allocation_prior(source, witness.allocation_prior)
-    )
-    return _bind_periodic_target(source, target, witness, current)
-
-
-def prepare_periodic_edit_target(source: CellMesh, target: CellMesh, /) -> CellMesh:
-    """Stage canonical quotient IDs before preparing the actual overlap certificate."""
-    from ..discretization._cell_complex import PolyhedralConnectivity
-    from ..discretization._periodic_topology import _identification_id
-
-    original = _require_periodic_topology(source)
-    descriptor = _require_periodic_topology(target)
-    if _identification_id(original.cell) != _identification_id(descriptor.cell):
-        raise ValueError(
-            "A staged periodic edit changes its original identification group."
+        else _validated_periodic_allocation_prior(
+            source, witness.allocation_prior, budget=budget
         )
-    banks = _periodic_target_identity_banks(source, descriptor, None)
+    )
+    return _bind_periodic_target(source, target, witness, current, budget=budget)
+
+
+def prepare_periodic_edit_target(
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> cell_mesh_owner.CellMesh:
+    """Stage deterministic quotient IDs before preparing the overlap certificate."""
+
+    original = require_periodic_topology(source)
+    descriptor = require_periodic_topology(target)
+    if identification_id(original.cell) != identification_id(descriptor.cell):
+        raise ValueError(
+            "prepare_periodic_edit_target.source must preserve the source identification group; got A staged periodic edit changes its identification group."
+        )
+    banks = _periodic_target_identity_banks(source, descriptor, None, budget=budget)
     ids = {}
     cursors = {}
     for bank in banks:
@@ -3382,7 +4506,7 @@ def prepare_periodic_edit_target(source: CellMesh, target: CellMesh, /) -> CellM
             [known[key] for key in descriptor.entity_keys(bank.degree)], dtype=np.int64
         )
         cursors[bank.degree] = bank.allocator_next_id
-    plain = CellMesh(
+    plain = cell_mesh_owner.CellMesh(
         target.coordinates,
         target.blocks,
         vertex_global_ids=target.vertex_global_ids,
@@ -3395,7 +4519,7 @@ def prepare_periodic_edit_target(source: CellMesh, target: CellMesh, /) -> CellM
         else None,
         numeric_version=target.numeric_version,
     )
-    staged = PeriodicMeshTopology(
+    staged = periodic_topology_owner.PeriodicMeshTopology(
         plain,
         descriptor.cell,
         descriptor.vertex_representatives,
@@ -3403,8 +4527,9 @@ def prepare_periodic_edit_target(source: CellMesh, target: CellMesh, /) -> CellM
         actual_geometry=descriptor.actual_geometry,
         entity_global_ids=ids,
         entity_allocator_next_ids=cursors,
+        budget=budget,
     )
-    return CellMesh(
+    return cell_mesh_owner.CellMesh(
         plain.coordinates,
         plain.blocks,
         vertex_global_ids=plain.vertex_global_ids,
@@ -3421,28 +4546,25 @@ def prepare_periodic_edit_target(source: CellMesh, target: CellMesh, /) -> CellM
 
 
 def _periodic_target_lift_authority(
-    source: PeriodicMeshTopology,
-    target: CellMesh,
+    source: periodic_topology_owner.PeriodicMeshTopology,
+    target: cell_mesh_owner.CellMesh,
     nonnested_geometry: PeriodicNonnestedGeometryAuthority | None = None,
     /,
-) -> tuple[CellMesh, CellGeometrySpec | None]:
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[cell_mesh_owner.CellMesh, CellGeometrySpec | None]:
     """Retain the producer's real successor source before stripping its descriptor."""
-    from ..discretization._exact_power_geometry import (
-        ExactPowerCellGeometryLinearActionSource,
-        ExactPowerCellGeometryRestrictionSource,
-        ExactPowerCellGeometrySource,
-    )
 
     descriptor = target.periodic_topology
     geometry = descriptor.actual_geometry if descriptor is not None else None
     if nonnested_geometry is not None:
-        from ._topology_edit import require_periodic_nonnested_geometry
-
-        require_periodic_nonnested_geometry(source, target, nonnested_geometry)
+        require_periodic_nonnested_geometry(
+            source, target, nonnested_geometry, budget=budget
+        )
     if source.actual_geometry is not None and nonnested_geometry is None:
         if geometry is None:
             raise ValueError(
-                "An exact periodic edit requires its actual target geometry source authority."
+                "periodic_target_lift_authority.source must retain target geometry provenance and acyclic predecessor sources; got A rational periodic edit requires its target geometry source authority."
             )
         original = source.actual_geometry.exact_source
         current = geometry.exact_source
@@ -3455,30 +4577,28 @@ def _periodic_target_lift_authority(
             current, source_types
         ):
             raise TypeError(
-                "Exact periodic edits require canonical vertex source owners."
+                "periodic_target_lift_authority.source must retain target geometry provenance and acyclic predecessor sources; got Rational periodic edits require deterministic vertex source owners."
             )
-        source.actual_geometry.source_coordinates()
+        source.actual_geometry.source_coordinates(budget=budget)
         visited: set[int] = set()
         while current.source_id != original.source_id:
             if id(current) in visited:
                 raise ValueError(
-                    "Exact periodic successor source ancestry contains a cycle."
+                    "periodic_target_lift_authority.source must retain target geometry provenance and acyclic predecessor sources; got Rational periodic successor source ancestry contains a cycle."
                 )
             visited.add(id(current))
             if isinstance(current, ExactPowerCellGeometrySource):
                 raise ValueError(
-                    "Exact periodic successor does not retain its actual predecessor source."
+                    "periodic_target_lift_authority.source must retain target geometry provenance and acyclic predecessor sources; got Rational periodic successor does not retain its predecessor source."
                 )
             parent = current.parent
             if not isinstance(parent, source_types):
                 raise TypeError(
-                    "Exact periodic successor ancestry omits a canonical source owner."
+                    "periodic_target_lift_authority.source must retain target geometry provenance and acyclic predecessor sources; got Rational periodic successor ancestry omits a deterministic source owner."
                 )
             current = parent
     if descriptor is not None:
-        from ..discretization._cell_complex import PolyhedralConnectivity
-
-        target = CellMesh(
+        target = cell_mesh_owner.CellMesh(
             target.coordinates,
             target.blocks,
             vertex_global_ids=target.vertex_global_ids,
@@ -3495,26 +4615,25 @@ def _periodic_target_lift_authority(
 
 
 def _bind_periodic_target(
-    source: CellMesh,
-    target: CellMesh,
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
     witness: PeriodicVertexOrbitWitness,
     allocation_base: tuple[PeriodicEntityIdentityBank, ...] | None,
     /,
-) -> CellMesh:
-    """Bind one target after its owning caller validates the prior allocation chain."""
-    from ..discretization._periodic_topology import _identification_id
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> cell_mesh_owner.CellMesh:
+    """Bind one target after its caller validates the prior allocation chain."""
 
     if witness.nonnested_geometry is not None:
-        from ._topology_edit import require_periodic_nonnested_source
-
         require_periodic_nonnested_source(source, witness.nonnested_geometry)
-    topology = _require_periodic_topology(source)
+    topology = require_periodic_topology(source)
     if (
         witness.source_topology_id != source.topology_id
-        or witness.identification_id != _identification_id(topology.cell)
+        or witness.identification_id != identification_id(topology.cell)
     ):
         raise ValueError(
-            "Periodic orbit witness does not bind source topology/identification."
+            "bind_periodic_target.source must retain scientific vertex orbits and all entity allocation banks; got Periodic orbit evidence does not bind source topology/identification."
         )
     identifiers = np.asarray(target.vertex_global_ids)
     representative_ids = np.asarray(witness.vertex_representative_ids)
@@ -3523,23 +4642,22 @@ def _bind_periodic_target(
         representative_ids.dtype, np.integer
     ):
         raise ValueError(
-            "Periodic representatives must be global integer IDs per target vertex row."
+            "bind_periodic_target.source must retain scientific vertex orbits and all entity allocation banks; got Periodic representatives must be global integer IDs per target vertex row."
         )
     if shifts.shape != (identifiers.size, topology.cell.rank) or not np.issubdtype(
         shifts.dtype, np.integer
     ):
         raise ValueError(
-            "Periodic image exponents must be integer target-row lattice shifts."
+            "bind_periodic_target.source must retain scientific vertex orbits and all entity allocation banks; got Periodic image exponents must be integer target-row lattice shifts."
         )
     lookup = {int(identifier): row for row, identifier in enumerate(identifiers)}
-    try:
-        rows = np.asarray(
-            [lookup[int(identifier)] for identifier in representative_ids], dtype=np.int64
-        )
-    except KeyError as error:
+    if any(int(identifier) not in lookup for identifier in representative_ids):
         raise ValueError(
-            "A periodic representative is not a global target vertex."
-        ) from error
+            "bind_periodic_target.source must retain scientific vertex orbits and all entity allocation banks; got A periodic representative is not a global target vertex."
+        )
+    rows = np.asarray(
+        [lookup[int(identifier)] for identifier in representative_ids], dtype=np.int64
+    )
     original_ids = np.asarray(source.vertex_global_ids)
     old_roots = original_ids[np.asarray(topology.vertex_representatives)]
     original_lookup = dict(zip(original_ids.tolist(), old_roots.tolist(), strict=True))
@@ -3549,7 +4667,7 @@ def _bind_periodic_target(
             and representative_ids[vertex] != original_lookup[int(identifier)]
         ):
             raise ValueError(
-                "A periodic edit changes an old vertex's scientific quotient membership."
+                "bind_periodic_target.source must retain scientific vertex orbits and all entity allocation banks; got A periodic edit changes an old vertex's scientific quotient membership."
             )
     old_representatives = set(old_roots.tolist())
     for representative in np.unique(representative_ids):
@@ -3558,13 +4676,18 @@ def _bind_periodic_target(
             members
         ):
             raise ValueError(
-                "A born quotient vertex must use its canonical global representative."
+                "bind_periodic_target.source must retain scientific vertex orbits and all entity allocation banks; got A born quotient vertex must use its deterministic global representative."
             )
     target, actual_geometry = _periodic_target_lift_authority(
-        topology, target, witness.nonnested_geometry
+        topology, target, witness.nonnested_geometry, budget=budget
     )
-    probe = PeriodicMeshTopology(
-        target, topology.cell, rows, shifts, actual_geometry=actual_geometry
+    probe = periodic_topology_owner.PeriodicMeshTopology(
+        target,
+        topology.cell,
+        rows,
+        shifts,
+        actual_geometry=actual_geometry,
+        budget=budget,
     )
     if witness.allocation_prior is None:
         current = _periodic_identity_banks(source, witness.history)
@@ -3574,7 +4697,7 @@ def _bind_periodic_target(
             or witness.retained_quotient_entities != allocation_base
         ):
             raise ValueError(
-                "Retained periodic identities must equal the validated prior complete allocation bank."
+                "bind_periodic_target.source must retain scientific vertex orbits and all entity allocation banks; got Retained periodic identities must equal the validated prior all required allocation bank."
             )
         current = allocation_base
     expected = _allocate_periodic_identity_banks(
@@ -3583,24 +4706,26 @@ def _bind_periodic_target(
     if tuple(bank.degree for bank in witness.quotient_entities) != tuple(
         bank.degree for bank in expected
     ):
-        raise ValueError("A periodic witness omits quotient scientific identity banks.")
+        raise ValueError(
+            "bind_periodic_target.source must retain scientific vertex orbits and all entity allocation banks; got A periodic evidence omits quotient scientific identity banks."
+        )
     entity_ids, cursors = {}, {}
     for actual, bank in zip(witness.quotient_entities, expected, strict=True):
-        _require_periodic_identity_bank(actual)
+        require_periodic_identity_bank(actual)
         if (
             actual.allocator_next_id != bank.allocator_next_id
             or actual.entity_keys != bank.entity_keys
             or actual.entity_global_ids != bank.entity_global_ids
         ):
             raise ValueError(
-                "Periodic live/restored/retired identities or allocator high-water disagree."
+                "bind_periodic_target.source must retain scientific vertex orbits and all entity allocation banks; got Periodic live/restored/retired identities or allocator high-water disagree."
             )
         known = dict(zip(bank.entity_keys, bank.entity_global_ids, strict=True))
         entity_ids[bank.degree] = np.asarray(
             [known[key] for key in probe.entity_keys(bank.degree)], dtype=np.int64
         )
         cursors[bank.degree] = bank.allocator_next_id
-    periodic = PeriodicMeshTopology(
+    periodic = periodic_topology_owner.PeriodicMeshTopology(
         target,
         topology.cell,
         rows,
@@ -3608,10 +4733,10 @@ def _bind_periodic_target(
         entity_global_ids=entity_ids,
         entity_allocator_next_ids=cursors,
         actual_geometry=actual_geometry,
+        budget=budget,
     )
-    from ..discretization._cell_complex import PolyhedralConnectivity
 
-    return CellMesh(
+    return cell_mesh_owner.CellMesh(
         target.coordinates,
         target.blocks,
         vertex_global_ids=target.vertex_global_ids,
@@ -3628,36 +4753,32 @@ def _bind_periodic_target(
 
 
 def periodic_vertex_orbit_witness(
-    source: CellMesh,
-    target: CellMesh,
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
     representative_ids: np.ndarray,
     exponents: np.ndarray,
     history: PeriodicRefinement | None,
     /,
     *,
     retained_quotient_entities: tuple[PeriodicEntityIdentityBank, ...] = (),
-    allocation_prior: tuple[CellMesh, PeriodicVertexOrbitWitness] | None = None,
+    allocation_prior: tuple[cell_mesh_owner.CellMesh, PeriodicVertexOrbitWitness]
+    | None = None,
     nonnested_geometry: PeriodicNonnestedGeometryAuthority | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> PeriodicVertexOrbitWitness:
-    """Witness a producer's explicit target orbits with keyed scientific identity banks.
+    """Bind a producer's explicit target orbits to scientific identity banks.
 
     ``representative_ids`` names the global representative vertex of every
     target vertex row of the unbound ``target`` carrier; ``exponents`` holds its
     integer group exponents relative to that representative.
     Advanced retained banks require ``allocation_prior``: the real bound prior
-    target and its canonical witness, recursively validated against ``source``.
-    """
-
-    from ..discretization._periodic_topology import _identification_id
-    from ._topology_edit import PeriodicVertexOrbitWitness
+    target and its deterministic evidence, recursively validated against ``source``."""
 
     if nonnested_geometry is not None:
-        from ._topology_edit import require_periodic_nonnested_source
-
         require_periodic_nonnested_source(source, nonnested_geometry)
-    topology = _require_periodic_topology(source)
+    topology = require_periodic_topology(source)
     target, actual_geometry = _periodic_target_lift_authority(
-        topology, target, nonnested_geometry
+        topology, target, nonnested_geometry, budget=budget
     )
     ids = np.asarray(target.vertex_global_ids)
     representatives = np.asarray(representative_ids)
@@ -3666,36 +4787,41 @@ def periodic_vertex_orbit_witness(
         representatives.dtype, np.integer
     ):
         raise ValueError(
-            "Periodic representatives must be global integer IDs per target vertex row."
+            "periodic_vertex_orbit_witness.source must bind global representatives and integer group exponents; got Periodic representatives must be global integer IDs per target vertex row."
         )
     if shifts.shape != (ids.size, topology.cell.rank) or not np.issubdtype(
         shifts.dtype, np.integer
     ):
         raise ValueError(
-            "Periodic image exponents must be integer target-row group exponents."
+            "periodic_vertex_orbit_witness.source must bind global representatives and integer group exponents; got Periodic image exponents must be integer target-row group exponents."
         )
     indices = {int(identifier): row for row, identifier in enumerate(ids)}
-    try:
-        local_roots = np.asarray(
-            [indices[int(identifier)] for identifier in representatives], dtype=np.int64
-        )
-    except KeyError as error:
+    if any(int(identifier) not in indices for identifier in representatives):
         raise ValueError(
-            "A periodic representative is not a global target vertex."
-        ) from error
-    probe = PeriodicMeshTopology(
+            "periodic_vertex_orbit_witness.source must bind global representatives and integer group exponents; got A periodic representative is not a global target vertex."
+        )
+    local_roots = np.asarray(
+        [indices[int(identifier)] for identifier in representatives], dtype=np.int64
+    )
+    probe = periodic_topology_owner.PeriodicMeshTopology(
         target,
         topology.cell,
         local_roots,
         shifts,
         actual_geometry=actual_geometry,
+        budget=budget,
     )
     banks = _periodic_target_identity_banks(
-        source, probe, history, retained_quotient_entities, allocation_prior
+        source,
+        probe,
+        history,
+        retained_quotient_entities,
+        allocation_prior,
+        budget=budget,
     )
     return PeriodicVertexOrbitWitness(
         source.topology_id,
-        _identification_id(topology.cell),
+        identification_id(topology.cell),
         representatives.astype(np.int64),
         shifts.astype(np.int64),
         banks,
@@ -3707,18 +4833,18 @@ def periodic_vertex_orbit_witness(
 
 
 def _periodic_orbit_witness(
-    source: CellMesh,
-    geometric: CellMesh,
-    target: CellMesh,
+    source: cell_mesh_owner.CellMesh,
+    geometric: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
     history: PeriodicRefinement | None,
     source_rows: np.ndarray,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> PeriodicVertexOrbitWitness:
     """Lower a real construction's orbit map onto global target identities."""
 
-    from ..discretization._periodic_topology import _identification_orders, _reduced
-
-    topology = _require_periodic_topology(source)
-    geometry = _require_periodic_topology(geometric)
+    topology = require_periodic_topology(source)
+    geometry = require_periodic_topology(geometric)
     orbit = np.asarray(geometry.orbits(0)[0])[source_rows]
     shifts = np.asarray(geometry.vertex_shifts)[source_rows]
     ids = np.asarray(target.vertex_global_ids)
@@ -3734,18 +4860,18 @@ def _periodic_orbit_witness(
             int(retained[0]) if retained.size else int(members[np.argmin(ids[members])])
         )
         representatives[members] = ids[root]
-        exponents[members] = _reduced(
-            shifts[members] - shifts[root], _identification_orders(topology.cell)
+        exponents[members] = reduce_periodic_exponents(
+            shifts[members] - shifts[root], identification_orders(topology.cell)
         )
     return periodic_vertex_orbit_witness(
-        source, target, representatives, exponents, history
+        source, target, representatives, exponents, history, budget=budget
     )
 
 
 class PeriodicTopologyEditStage(NamedTuple):
-    """Immutable complete candidate; accepted state is never mutated by staging."""
+    """Immutable all required candidate; accepted state is never mutated by staging."""
 
-    mesh: CellMesh
+    mesh: cell_mesh_owner.CellMesh
     lineage: MeshLineage
     stencil: VertexInterpolationStencil | None
     embedding: PeriodicEmbeddingEvidence
@@ -3753,11 +4879,16 @@ class PeriodicTopologyEditStage(NamedTuple):
 
 
 def _require_complete_periodic_entity_changes(
-    source: CellMesh, target: CellMesh, edit: CellTopologyEdit, /
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
+    edit: CellTopologyEdit,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
-    from ._topology_edit import entity_keys
 
-    periodic = _require_periodic_topology(source)
+    periodic = require_periodic_topology(source)
     source_ids = np.asarray(source.vertex_global_ids)
     target_ids = np.asarray(target.vertex_global_ids)
     source_coordinates, target_coordinates = (
@@ -3786,7 +4917,7 @@ def _require_complete_periodic_entity_changes(
         for group in np.unique(orbit[changed]):
             if not np.all(changed[orbit == group]):
                 raise ValueError(
-                    "A periodic transaction changes only part of a scientific entity orbit."
+                    "require_complete_periodic_entity_changes.source must preserve whole entity orbits and physical-boundary coverage; got A periodic transaction changes only part of a scientific entity orbit."
                 )
     degree = source.topological_dimension - 1
     before = np.asarray(periodic.quotient.entities(degree).subset("boundary").mask)
@@ -3797,20 +4928,18 @@ def _require_complete_periodic_entity_changes(
     for old, new in zip(relation.source_keys, relation.target_keys, strict=True):
         if tuple(old) in allowed:
             allowed.add(tuple(new))
-    successor = _require_periodic_topology(target)
+    successor = require_periodic_topology(target)
     after = np.asarray(successor.quotient.entities(degree).subset("boundary").mask)
     target_boundary = after[np.asarray(successor.orbits(degree)[0])]
     if any(
         tuple(key) not in allowed for key in entity_keys(target, degree)[target_boundary]
     ):
         raise ValueError(
-            "A periodic transaction creates an unbound physical boundary or partial seam."
+            "require_complete_periodic_entity_changes.source must preserve whole entity orbits and physical-boundary coverage; got A periodic transaction creates an unbound physical boundary or partial seam."
         )
     if np.any(before):
-        from .providers._native_periodic import _feature_entity_mask
-
-        source_corners = _simplex_entity_corners(source, degree)
-        target_corners = _simplex_entity_corners(target, degree)
+        source_corners = simplex_entity_corners(source, degree)
+        target_corners = simplex_entity_corners(target, degree)
         source_points = source_coordinates[source_corners]
         target_points = target_coordinates[target_corners]
         if degree == 1:
@@ -3839,8 +4968,13 @@ def _require_complete_periodic_entity_changes(
         new_leaders = np.asarray(successor.orbit_representatives(degree))
         covered = np.zeros(target_boundary.shape, dtype=np.bool_)
         for group in np.flatnonzero(before):
-            matched = _feature_entity_mask(
-                source, target, np.asarray([group], dtype=np.int64), degree
+            matched = feature_entity_mask(
+                source,
+                target,
+                np.asarray([group], dtype=np.int64),
+                degree,
+                scope=scope,
+                budget=budget,
             )
             covered |= matched
             measured = float(
@@ -3849,11 +4983,11 @@ def _require_complete_periodic_entity_changes(
             expected = float(source_measures[old_leaders[group]])
             if abs(measured - expected) > 1.0e-10 * max(1.0, expected):
                 raise ValueError(
-                    "Periodic physical-boundary coverage changed in the staged transaction."
+                    "require_complete_periodic_entity_changes.source must preserve whole entity orbits and physical-boundary coverage; got Periodic physical-boundary coverage changed in the staged transaction."
                 )
         if np.any(target_boundary & ~covered):
             raise ValueError(
-                "Periodic physical boundary moved away from its represented source."
+                "require_complete_periodic_entity_changes.source must preserve whole entity orbits and physical-boundary coverage; got Periodic physical boundary moved away from its represented source."
             )
 
 
@@ -3865,173 +4999,205 @@ def stage_periodic_topology_edit(
     numeric_version: str,
     maximum_images: int,
     maximum_pairs: int,
+    budget: CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
 ) -> PeriodicTopologyEditStage:
-    """Certify a complete private orbit candidate before any accepted/native commit."""
+    """Certify a all required private orbit candidate before any accepted/native commit."""
 
-    from ._adaptation import _require_affine_geometry
-    from ._organization import MeshZoneRole
-    from ._scope import resolve_mesh_scope
-    from ._topology_edit import assemble_topology_edit
-
-    _require_affine_geometry(source)
-    if edit.periodic_orbits is None:
-        raise ValueError(
-            "A periodic candidate omits its complete scientific orbit witness."
-        )
-    target, lineage, stencil = assemble_topology_edit(
-        source.mesh, edit, numeric_version=numeric_version
-    )
-    _require_complete_periodic_entity_changes(source.mesh, target, edit)
-    embedding = certify_periodic_embedding(
-        target, maximum_images=maximum_images, maximum_pairs=maximum_pairs
-    )
-    old = periodic_orbit_measures(source.mesh)
-    new = periodic_orbit_measures(target)
-    if abs(float(old.total_measure) - float(new.total_measure)) > 1.0e-10 * float(
-        old.total_measure
+    with _periodic_phase(
+        scope, budget, budget.maximum_work_units, budget.maximum_memory_bytes
     ):
-        raise ValueError(
-            "A periodic staged transaction changes one-orbit domain coverage."
+        adaptation_owner.require_affine_geometry(source, budget=budget)
+        if edit.periodic_orbits is None:
+            raise ValueError(
+                "stage_periodic_topology_edit.source must preserve entity orbits and source material coverage; got A periodic candidate omits its all required scientific orbit evidence."
+            )
+        target, lineage, stencil = assemble_topology_edit(
+            source.mesh, edit, numeric_version=numeric_version, budget=budget
         )
-    source_ids = np.asarray(
-        source.mesh.entity_set(source.mesh.topological_dimension).entity_ids
-    )
-    target_ids = np.asarray(target.entity_set(target.topological_dimension).entity_ids)
-    relation = edit.relations[source.mesh.topological_dimension]
-    origins: dict[int, set[int]] = {}
-    for before, after in zip(
-        relation.source_keys[:, 0], relation.target_keys[:, 0], strict=True
-    ):
-        origins.setdefault(int(after), set()).add(int(before))
-    source_id_set = set(source_ids.tolist())
-    for identifier in target_ids:
-        if int(identifier) in source_id_set:
-            origins.setdefault(int(identifier), set()).add(int(identifier))
-    regions = [zone for zone in source.zones if zone.role is MeshZoneRole.REGION]
-    if regions:
-        assignment: dict[int, int] = {}
-        for region, zone in enumerate(regions):
-            mask = np.asarray(resolve_mesh_scope(source.mesh, zone.scope).mask)
-            for identifier in source_ids[mask]:
-                if int(identifier) in assignment:
-                    raise ValueError(
-                        "Source periodic material regions are not exclusive."
-                    )
-                assignment[int(identifier)] = region
-        target_assignment = []
+        _require_complete_periodic_entity_changes(
+            source.mesh, target, edit, scope=scope, budget=budget
+        )
+        embedding = certify_periodic_embedding(
+            target,
+            maximum_images=maximum_images,
+            maximum_pairs=maximum_pairs,
+            budget=budget,
+            scope=scope,
+        )
+        old = periodic_measures_owner.periodic_orbit_measures(source.mesh)
+        new = periodic_measures_owner.periodic_orbit_measures(target)
+        if abs(float(old.total_measure) - float(new.total_measure)) > 1.0e-10 * float(
+            old.total_measure
+        ):
+            raise ValueError(
+                "stage_periodic_topology_edit.source must preserve entity orbits and source material coverage; got A periodic staged transaction changes one-orbit domain coverage."
+            )
+        source_ids = np.asarray(
+            source.mesh.entity_set(source.mesh.topological_dimension).entity_ids
+        )
+        target_ids = np.asarray(
+            target.entity_set(target.topological_dimension).entity_ids
+        )
+        relation = edit.relations[source.mesh.topological_dimension]
+        origins: dict[int, set[int]] = {}
+        for before, after in zip(
+            relation.source_keys[:, 0], relation.target_keys[:, 0], strict=True
+        ):
+            origins.setdefault(int(after), set()).add(int(before))
+        source_id_set = set(source_ids.tolist())
         for identifier in target_ids:
-            materials = {
-                assignment[parent]
-                for parent in origins.get(int(identifier), ())
-                if parent in assignment
-            }
-            if len(materials) != 1:
-                raise ValueError(
-                    "A periodic candidate has unresolved or contradictory source material ancestry."
+            if int(identifier) in source_id_set:
+                origins.setdefault(int(identifier), set()).add(int(identifier))
+        regions = [zone for zone in source.zones if zone.role is MeshZoneRole.REGION]
+        if regions:
+            assignment: dict[int, int] = {}
+            for region, zone in enumerate(regions):
+                mask = np.asarray(resolve_mesh_scope(source.mesh, zone.scope).mask)
+                for identifier in source_ids[mask]:
+                    if int(identifier) in assignment:
+                        raise ValueError(
+                            "stage_periodic_topology_edit.source must preserve entity orbits and source material coverage; got Source periodic material regions are not exclusive."
+                        )
+                    assignment[int(identifier)] = region
+            target_assignment = []
+            for identifier in target_ids:
+                materials = {
+                    assignment[parent]
+                    for parent in origins.get(int(identifier), ())
+                    if parent in assignment
+                }
+                if len(materials) != 1:
+                    raise ValueError(
+                        "stage_periodic_topology_edit.source must preserve entity orbits and source material coverage; got A periodic candidate has unresolved or contradictory source material ancestry."
+                    )
+                target_assignment.append(next(iter(materials)))
+            dimension = source.mesh.topological_dimension
+            source_orbits = np.asarray(
+                require_periodic_topology(source.mesh).orbits(dimension)[0],
+                dtype=np.int64,
+            )
+            target_orbits = np.asarray(
+                require_periodic_topology(target).orbits(dimension)[0], dtype=np.int64
+            )
+            for region in range(len(regions)):
+                source_mask = np.asarray(
+                    [
+                        assignment.get(int(identifier), -1) == region
+                        for identifier in source_ids
+                    ],
+                    dtype=np.bool_,
                 )
-            target_assignment.append(next(iter(materials)))
-        dimension = source.mesh.topological_dimension
-        source_orbits = np.asarray(
-            _require_periodic_topology(source.mesh).orbits(dimension)[0], dtype=np.int64
+                target_mask = np.asarray(target_assignment, dtype=np.int64) == region
+                # Each quotient cell is measured once, whatever its lifted multiplicity.
+                before = float(
+                    np.sum(
+                        np.asarray(old.orbit_measures)[
+                            np.unique(source_orbits[source_mask])
+                        ]
+                    )
+                )
+                after = float(
+                    np.sum(
+                        np.asarray(new.orbit_measures)[
+                            np.unique(target_orbits[target_mask])
+                        ]
+                    )
+                )
+                if abs(before - after) > 1.0e-10 * max(1.0, before):
+                    raise ValueError(
+                        "stage_periodic_topology_edit.source must preserve entity orbits and source material coverage; got A periodic staged transaction changes source material coverage."
+                    )
+        return PeriodicTopologyEditStage(
+            target, lineage, stencil, embedding, PeriodicQuotientEvidence(target)
         )
-        target_orbits = np.asarray(
-            _require_periodic_topology(target).orbits(dimension)[0], dtype=np.int64
-        )
-        for region in range(len(regions)):
-            source_mask = np.asarray(
-                [
-                    assignment.get(int(identifier), -1) == region
-                    for identifier in source_ids
-                ],
-                dtype=np.bool_,
-            )
-            target_mask = np.asarray(target_assignment, dtype=np.int64) == region
-            # Each quotient cell is measured once, whatever its lifted multiplicity.
-            before = float(
-                np.sum(
-                    np.asarray(old.orbit_measures)[np.unique(source_orbits[source_mask])]
-                )
-            )
-            after = float(
-                np.sum(
-                    np.asarray(new.orbit_measures)[np.unique(target_orbits[target_mask])]
-                )
-            )
-            if abs(before - after) > 1.0e-10 * max(1.0, before):
-                raise ValueError(
-                    "A periodic staged transaction changes source material coverage."
-                )
-    return PeriodicTopologyEditStage(
-        target, lineage, stencil, embedding, PeriodicQuotientEvidence(target)
-    )
 
 
-def validate_periodic_bisection(prepared: PreparedMeshAdaptation, /) -> None:
-    """Admit exact affine orbit refinement and retained-epoch coarsening."""
-
-    from ._adaptation import (
-        _check_marked_source,
-        _require_affine_geometry,
-        MarkedMeshAdaptation,
-    )
+def validate_periodic_bisection(
+    prepared: adaptation_owner.PreparedMeshAdaptation,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Admit rational affine orbit refinement and retained-epoch coarsening."""
 
     request, source = prepared.request, prepared.source.mesh
-    if not isinstance(request, MarkedMeshAdaptation) or source.periodic_topology is None:
-        raise TypeError("Periodic bisection requires a marked periodic source.")
-    _require_affine_geometry(prepared.source)
-    _check_marked_source(prepared.source, request)
+    if (
+        not isinstance(request, adaptation_owner.MarkedMeshAdaptation)
+        or source.periodic_topology is None
+    ):
+        raise TypeError(
+            "validate_periodic_bisection.prepared must retain marked simplex sources and current coarsening history; got Periodic bisection requires a marked periodic source."
+        )
+    adaptation_owner.require_affine_geometry(prepared.source, budget=budget)
+    _leaf_phydrax_meshing__host_banks.check_marked_source(prepared.source, request)
     if any(
         block.cell_kind != _SIMPLEX_KINDS.get(source.topological_dimension)
         for block in source.blocks
     ):
-        raise ValueError("Periodic orbit bisection requires a complete simplex family.")
+        raise ValueError(
+            "validate_periodic_bisection.prepared must retain marked simplex sources and current coarsening history; got Periodic orbit bisection requires a all required simplex family."
+        )
     if request.hierarchy is not None:
         history = request.hierarchy
         if not isinstance(history, PeriodicRefinement):
-            raise TypeError("Periodic bisection history must be a PeriodicRefinement.")
+            raise TypeError(
+                "validate_periodic_bisection.prepared must retain marked simplex sources and current coarsening history; got Periodic bisection history must be a PeriodicRefinement."
+            )
         if history.mesh.topology_id != source.topology_id or not np.array_equal(
             history.mesh.coordinates, source.coordinates
         ):
             raise ValueError(
-                "Periodic coarsening requires its current retained orbit-refinement history."
+                "validate_periodic_bisection.prepared must retain marked simplex sources and current coarsening history; got Periodic coarsening requires its current retained orbit-refinement history."
             )
     if np.asarray(request.coarsen_cell_ids).size and request.hierarchy is None:
-        raise ValueError("Periodic coarsening needs the retained source-epoch history.")
+        raise ValueError(
+            "validate_periodic_bisection.prepared must retain marked simplex sources and current coarsening history; got Periodic coarsening needs the retained source-epoch history."
+        )
 
 
-def _execute_periodic_bisection_route(
-    prepared: PreparedMeshAdaptation, /
-) -> _RouteOutcome:
-    from ._adaptation import (
-        _finalize_native,
-        _RouteOutcome,
-        _unchanged,
-        MarkedMeshAdaptation,
-        MeshAdaptationStatus,
-    )
-    from ._bisection import BisectionEvidence
-    from ._lineage import MeshTransitionKind
-    from ._topology_edit import assemble_topology_edit
+class _BisectionSelection(StrictModule):
+    source_ids: np.ndarray
+    refine_ids: np.ndarray
+    coarsen_ids: np.ndarray
+    history: PeriodicRefinement | None
+    restored_parents: np.ndarray
+    coarsening: bool = eqx.field(static=True)
+    rejected_coarsening: np.ndarray
+    edges: np.ndarray
+    selected: frozenset[int] = eqx.field(static=True)
+    rejected_refinement: tuple[int, ...] = eqx.field(static=True)
 
-    validate_periodic_bisection(prepared)
-    source, request, limits = (
-        prepared.source.mesh,
-        prepared.request,
-        prepared.policy.limits,
-    )
-    if not isinstance(request, MarkedMeshAdaptation):
-        raise TypeError("Periodic bisection requires a marked request.")
+
+class _BisectionEvidencePhase(StrictModule):
+    evidence: BisectionEvidence
+    partial: bool = eqx.field(static=True)
+
+
+def _prepare_periodic_bisection(
+    prepared: adaptation_owner.PreparedMeshAdaptation, budget: CoordinateEnclosureBudget
+) -> _BisectionSelection:
+    validate_periodic_bisection(prepared, budget=budget)
+    source, request = prepared.source.mesh, prepared.request
+    if not isinstance(request, adaptation_owner.MarkedMeshAdaptation):
+        raise TypeError(
+            "prepare_periodic_bisection.prepared must retain a marked source and current refinement history; got Periodic bisection requires a marked request."
+        )
     source_cells, source_ids = _periodic_simplex_rows(source)
     refine_ids = np.asarray(request.refine_cell_ids)
     coarsen_ids = np.asarray(request.coarsen_cell_ids)
     history = request.hierarchy
     if history is not None and not isinstance(history, PeriodicRefinement):
-        raise TypeError("Periodic bisection history must be a PeriodicRefinement.")
+        raise TypeError(
+            "prepare_periodic_bisection.prepared must retain a marked source and current refinement history; got Periodic bisection history must be a PeriodicRefinement."
+        )
     restored_parents = np.empty(0, dtype=np.int64)
     if coarsen_ids.size:
         if history is None:
-            raise ValueError("Periodic coarsening has no retained source epoch.")
-        restored_parents = _periodic_coarsening_parents(prepared, history)
+            raise ValueError(
+                "prepare_periodic_bisection.prepared must retain a marked source and current refinement history; got Periodic coarsening has no retained source epoch."
+            )
+        restored_parents = _periodic_coarsening_parents(prepared, history, budget=budget)
     coarsening = restored_parents.size > 0
     accepted_coarse = (
         source_ids[np.isin(history.parent_cells, restored_parents)]
@@ -4040,19 +5206,19 @@ def _execute_periodic_bisection_route(
     )
     rejected_coarsening = coarsen_ids[~np.isin(coarsen_ids, accepted_coarse)]
     protected = set(
-        np.asarray(_require_periodic_topology(source).orbits(1)[0])[
+        np.asarray(require_periodic_topology(source).orbits(1)[0])[
             prepared.constraints.protected_edge_mask
         ].tolist()
     )
-    edges = _simplex_entity_corners(source, 1)
-    orbit = np.asarray(_require_periodic_topology(source).orbits(1)[0])
+    edges = simplex_entity_corners(source, 1)
+    orbit = np.asarray(require_periodic_topology(source).orbits(1)[0])
     lengths = np.linalg.norm(
         np.asarray(source.coordinates)[edges[:, 1]]
         - np.asarray(source.coordinates)[edges[:, 0]],
         axis=1,
     )
     by_pair = {tuple(sorted(edge)): row for row, edge in enumerate(edges.tolist())}
-    quotient_keys = _require_periodic_topology(source).entity_keys(1)
+    quotient_keys = require_periodic_topology(source).entity_keys(1)
     selected, rejected_refinement = set(), []
     for row in np.flatnonzero(np.isin(source_ids, refine_ids)):
         corners = source_cells[row]
@@ -4067,52 +5233,36 @@ def _execute_periodic_bisection_route(
             rejected_refinement.append(int(source_ids[row]))
         else:
             selected.add(key)
-    refinement = None
-    if selected and coarsening:
-        rejected_coarsening = coarsen_ids
-        coarsening = False
-    if selected:
-        upper_cells = source_ids.size * (4 if source.topological_dimension == 2 else 64)
-        upper_vertices = source.coordinates.shape[0] + edges.shape[0] * (
-            source.topological_dimension + 1
-        )
-        if (
-            upper_cells > limits.maximum_cells
-            or upper_vertices > limits.maximum_vertices
-            or upper_cells * 128 + upper_vertices * 64 > limits.maximum_scratch_bytes
-            or upper_cells > limits.maximum_work_units
-        ):
-            raise ValueError(
-                "Periodic orbit closure exceeds its declared construction budget."
-            )
-        refinement = refine_periodic_mesh(
-            source,
-            edge_orbits=np.asarray(sorted(selected), dtype=np.int64),
-            source_geometry=prepared.source.geometry,
-        )
-        edit = _periodic_refinement_edit(refinement, history)
-        kind = MeshTransitionKind.REFINE
-    elif coarsening and history is not None:
-        edit, coarse_parents, coarse_reference, coarse_generations = (
-            _periodic_coarsening_edit(history, restored_parents)
-        )
-        kind = MeshTransitionKind.COARSEN
-    else:
-        edit = None
-    generations = (
-        np.asarray(refinement.cell_generations)
-        + (
-            np.asarray(history.cell_generations)[refinement.parent_cells]
-            if history is not None
-            else 0
-        )
-        if refinement is not None
-        else (
-            coarse_generations
-            if coarsening
-            else np.zeros(source_ids.size, dtype=np.int32)
-        )
+    return _BisectionSelection(
+        source_ids,
+        refine_ids,
+        coarsen_ids,
+        history,
+        restored_parents,
+        coarsening,
+        rejected_coarsening,
+        edges,
+        frozenset(selected),
+        tuple(rejected_refinement),
     )
+
+
+def _periodic_bisection_evidence(
+    source: cell_mesh_owner.CellMesh,
+    selection: _BisectionSelection,
+    refinement: PeriodicRefinement | None,
+    edit: CellTopologyEdit | None,
+    generations: np.ndarray,
+    coarsening: bool,
+    rejected_coarsening: np.ndarray,
+) -> _BisectionEvidencePhase:
+    source_ids, refine_ids, coarsen_ids = (
+        selection.source_ids,
+        selection.refine_ids,
+        selection.coarsen_ids,
+    )
+    rejected_refinement, selected = selection.rejected_refinement, selection.selected
+    restored_parents = selection.restored_parents
     evidence = BisectionEvidence(
         requested_refinements=refine_ids.size,
         accepted_refinements=refine_ids.size - len(rejected_refinement),
@@ -4138,34 +5288,34 @@ def _execute_periodic_bisection_route(
         rejected_coarsening_ids=rejected_coarsening,
     )
     partial = bool(rejected_refinement) or bool(rejected_coarsening.size)
-    if edit is None:
-        return _unchanged(
-            prepared,
-            evidence,
-            history,
-            status=MeshAdaptationStatus.PARTIAL
-            if partial
-            else MeshAdaptationStatus.UNCHANGED,
-        )
-    probe, _, _ = assemble_topology_edit(
-        source, edit, numeric_version=f"adaptation:{prepared.prepared_id}"
-    )
-    certify_periodic_embedding(
-        probe,
-        maximum_images=limits.maximum_scratch_bytes // max(1, probe.coordinates.size * 8),
-        maximum_pairs=limits.maximum_work_units,
-    )
-    old_measure, new_measure = (
-        periodic_orbit_measures(source).total_measure,
-        periodic_orbit_measures(probe).total_measure,
-    )
-    if abs(float(old_measure) - float(new_measure)) > 1.0e-10 * float(old_measure):
-        raise ValueError("Periodic bisection changed the quotient's one-orbit measure.")
-    native = _finalize_native(prepared, edit, kind, conservative=not coarsening)
+    return _BisectionEvidencePhase(evidence, partial)
+
+
+class _BisectionCoarseBanks(StrictModule):
+    parents: np.ndarray
+    reference: np.ndarray
+    generations: np.ndarray
+
+
+class _BisectionHistoryPhase(StrictModule):
+    history: PeriodicRefinement | None
+
+
+def _publish_bisection_history(
+    prepared: adaptation_owner.PreparedMeshAdaptation,
+    edit: CellTopologyEdit,
+    target: cell_mesh_owner.CellMesh,
+    history: PeriodicRefinement | None,
+    refinement: PeriodicRefinement | None,
+    generations: np.ndarray,
+    coarse: _BisectionCoarseBanks | None,
+    budget: CoordinateEnclosureBudget,
+) -> _BisectionHistoryPhase:
+    source = prepared.source.mesh
     next_history = None
     edit_ids = np.concatenate(tuple(np.asarray(block.cell_ids) for block in edit.blocks))
     target_ids = np.concatenate(
-        tuple(np.asarray(block.global_ids) for block in native.target.mesh.blocks)
+        tuple(np.asarray(block.global_ids) for block in target.blocks)
     )
     rows_by_id = {int(identifier): row for row, identifier in enumerate(edit_ids)}
     if (
@@ -4174,31 +5324,32 @@ def _execute_periodic_bisection_route(
         or set(rows_by_id) != set(target_ids.tolist())
     ):
         raise ValueError(
-            "Periodic publication changed the actual retained child scientific cell bank."
+            "publish_bisection_history.prepared must preserve the retained child scientific cell bank; got Periodic publication changed the retained child scientific cell bank."
         )
     order = np.fromiter(
         (rows_by_id[int(identifier)] for identifier in target_ids),
         dtype=np.int64,
         count=target_ids.size,
     )
-    if coarsening and history is not None:
-        source_keys = set(_require_periodic_topology(history.source).entity_keys(1))
-        present_keys = set(_require_periodic_topology(native.target.mesh).entity_keys(1))
+    if coarse is not None and history is not None:
+        source_keys = set(require_periodic_topology(history.source).entity_keys(1))
+        present_keys = set(require_periodic_topology(target).entity_keys(1))
         next_history = PeriodicRefinement(
-            mesh=native.target.mesh,
+            mesh=target,
             source=history.source,
             source_geometry=history.source_geometry,
-            parent_cells=coarse_parents[order],
-            parent_reference_vertices=coarse_reference[order],
-            cell_generations=coarse_generations[order],
+            parent_cells=coarse.parents[order],
+            parent_reference_vertices=coarse.reference[order],
+            cell_generations=coarse.generations[order],
             bisected_edges=len(source_keys - present_keys),
-            quotient=PeriodicQuotientEvidence(native.target.mesh),
+            quotient=PeriodicQuotientEvidence(target),
             previous=history.previous,
             retired=history,
+            budget=budget,
         )
     if refinement is not None:
         next_history = PeriodicRefinement(
-            mesh=native.target.mesh,
+            mesh=target,
             source=source,
             source_geometry=prepared.source.geometry,
             parent_cells=np.asarray(refinement.parent_cells)[order],
@@ -4207,34 +5358,166 @@ def _execute_periodic_bisection_route(
             ],
             cell_generations=generations[order],
             bisected_edges=refinement.bisected_edges,
-            quotient=PeriodicQuotientEvidence(native.target.mesh),
+            quotient=PeriodicQuotientEvidence(target),
             previous=history,
+            budget=budget,
         )
-    return _RouteOutcome(
-        MeshAdaptationStatus.PARTIAL if partial else MeshAdaptationStatus.COMPLETE,
-        native.target,
-        native.transition,
-        native.lineage,
-        native.stencil,
-        native.transfer,
-        None,
-        evidence,
-        next_history,
-    )
+    return _BisectionHistoryPhase(next_history)
+
+
+@checked
+def execute_periodic_bisection_route(
+    prepared: adaptation_owner.PreparedMeshAdaptation,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> adaptation_owner.RouteOutcome:
+
+    with _periodic_phase(
+        scope, budget, budget.maximum_work_units, budget.maximum_memory_bytes
+    ):
+        selection = _prepare_periodic_bisection(prepared, budget)
+        source, limits = prepared.source.mesh, prepared.policy.limits
+        source_ids, coarsen_ids = selection.source_ids, selection.coarsen_ids
+        history, restored_parents = selection.history, selection.restored_parents
+        coarsening, rejected_coarsening = (
+            selection.coarsening,
+            selection.rejected_coarsening,
+        )
+        edges, selected = selection.edges, selection.selected
+        refinement = None
+        if selected and coarsening:
+            rejected_coarsening = coarsen_ids
+            coarsening = False
+        if selected:
+            upper_cells = source_ids.size * (
+                4 if source.topological_dimension == 2 else 64
+            )
+            upper_vertices = source.coordinates.shape[0] + edges.shape[0] * (
+                source.topological_dimension + 1
+            )
+            if (
+                upper_cells > limits.maximum_cells
+                or upper_vertices > limits.maximum_vertices
+                or upper_cells * 128 + upper_vertices * 64 > limits.maximum_scratch_bytes
+                or upper_cells > limits.maximum_work_units
+            ):
+                raise ValueError(
+                    "execute_periodic_bisection_route.prepared must fit construction limits and preserve one-orbit measure; got Periodic orbit closure exceeds its declared construction budget."
+                )
+            refinement = refine_periodic_mesh(
+                source,
+                edge_orbits=np.asarray(sorted(selected), dtype=np.int64),
+                source_geometry=prepared.source.geometry,
+                budget=budget,
+                scope=scope,
+            )
+            edit = _periodic_refinement_edit(refinement, history, budget=budget)
+            kind = MeshTransitionKind.REFINE
+        elif coarsening and history is not None:
+            edit, coarse_parents, coarse_reference, coarse_generations = (
+                _periodic_coarsening_edit(history, restored_parents, budget=budget)
+            )
+            kind = MeshTransitionKind.COARSEN
+        else:
+            edit = None
+        generations = (
+            np.asarray(refinement.cell_generations)
+            + (
+                np.asarray(history.cell_generations)[refinement.parent_cells]
+                if history is not None
+                else 0
+            )
+            if refinement is not None
+            else (
+                coarse_generations
+                if coarsening
+                else np.zeros(source_ids.size, dtype=np.int32)
+            )
+        )
+        result_evidence = _periodic_bisection_evidence(
+            source,
+            selection,
+            refinement,
+            edit,
+            generations,
+            coarsening,
+            rejected_coarsening,
+        )
+        evidence, partial = result_evidence.evidence, result_evidence.partial
+        if edit is None:
+            return adaptation_owner.unchanged(
+                prepared,
+                evidence,
+                history,
+                status=adaptation_owner.MeshAdaptationStatus.PARTIAL
+                if partial
+                else adaptation_owner.MeshAdaptationStatus.UNCHANGED,
+            )
+        probe, _, _ = assemble_topology_edit(
+            source,
+            edit,
+            numeric_version=f"adaptation:{prepared.prepared_id}",
+            budget=budget,
+        )
+        certify_periodic_embedding(
+            probe,
+            maximum_images=limits.maximum_scratch_bytes
+            // max(1, probe.coordinates.size * 8),
+            maximum_pairs=limits.maximum_work_units,
+            budget=budget,
+            scope=scope,
+        )
+        old_measure, new_measure = (
+            periodic_measures_owner.periodic_orbit_measures(source).total_measure,
+            periodic_measures_owner.periodic_orbit_measures(probe).total_measure,
+        )
+        if abs(float(old_measure) - float(new_measure)) > 1.0e-10 * float(old_measure):
+            raise ValueError(
+                "execute_periodic_bisection_route.prepared must fit construction limits and preserve one-orbit measure; got Periodic bisection changed the quotient's one-orbit measure."
+            )
+        native = adaptation_owner.finalize_native(
+            prepared, edit, kind, conservative=not coarsening, scope=scope, budget=budget
+        )
+        coarse = (
+            _BisectionCoarseBanks(coarse_parents, coarse_reference, coarse_generations)
+            if coarsening
+            else None
+        )
+        next_history = _publish_bisection_history(
+            prepared,
+            edit,
+            native.target.mesh,
+            history,
+            refinement,
+            generations,
+            coarse,
+            budget,
+        ).history
+        return adaptation_owner.RouteOutcome(
+            adaptation_owner.MeshAdaptationStatus.PARTIAL
+            if partial
+            else adaptation_owner.MeshAdaptationStatus.COMPLETE,
+            native.target,
+            native.transition,
+            native.lineage,
+            native.stencil,
+            native.transfer,
+            None,
+            evidence,
+            next_history,
+        )
 
 
 def periodic_coarsening_witnesses(
-    adaptation: MeshAdaptationResult, /
+    adaptation: adaptation_owner.MeshAdaptationResult, /
 ) -> NestedReferenceWitnesses | None:
-    """Authoritative fine-to-coarse reference charts of a periodic coarsening.
+    """Return fine-to-coarse charts in concatenated fine-cell block order.
 
     Retained source cells use the reference identity. Restored sibling families
     use their recorded dyadic construction charts. This joins scientific cell
-    IDs only; it never intersects or nearest-matches independently lifted ghosts.
-    """
-
-    from ..discretization._cell_geometry_transfer import NestedReferenceWitnesses
-    from ._lineage import MeshTransitionKind
+    IDs only; it never intersects or nearest-matches independently lifted ghosts."""
 
     transition = adaptation.transition
     history = adaptation.hierarchy
@@ -4245,19 +5528,20 @@ def periodic_coarsening_witnesses(
     retired = history.retired
     fine, target = retired.mesh, adaptation.target.mesh
     if fine.topology_id != transition.source_topology_id:
-        raise ValueError("Periodic coarsening witnesses are stale for the source epoch.")
-    fine_ids = np.asarray(fine.blocks[0].global_ids, dtype=np.int64)
-    original_ids = np.asarray(retired.source.blocks[0].global_ids, dtype=np.int64)[
-        np.asarray(retired.parent_cells, dtype=np.int64)
-    ]
-    target_ids = np.asarray(target.blocks[0].global_ids, dtype=np.int64)
+        raise ValueError(
+            "periodic_coarsening_witnesses.adaptation must bind reference charts to the source epoch and cover all target cells; got Periodic coarsening witnesses are stale for the source epoch."
+        )
+    _, fine_ids = _periodic_simplex_rows(fine)
+    _, source_ids = _periodic_simplex_rows(retired.source)
+    original_ids = source_ids[np.asarray(retired.parent_cells, dtype=np.int64)]
+    _, target_ids = _periodic_simplex_rows(target)
     restored = np.isin(original_ids, target_ids)
     coarse_ids = np.where(restored, original_ids, fine_ids)
     if not np.all(np.isin(coarse_ids, target_ids)) or set(coarse_ids.tolist()) != set(
         target_ids.tolist()
     ):
         raise ValueError(
-            "Periodic coarsening reference charts do not cover the target cells."
+            "periodic_coarsening_witnesses.adaptation must bind reference charts to the source epoch and cover all target cells; got Periodic coarsening reference charts do not cover the target cells."
         )
     dimension = fine.topological_dimension
     identity = np.concatenate((np.zeros((1, dimension)), np.eye(dimension)))
@@ -4270,6 +5554,8 @@ def periodic_coarsening_witnesses(
 
 
 __all__ = [
+    "ExactPeriodicEdgeSizeEvidence",
+    "periodic_exact_edge_size_evidence",
     "PeriodicEmbeddingEvidence",
     "certify_periodic_embedding",
     "PeriodicMeshConstruction",
@@ -4280,100 +5566,50 @@ __all__ = [
     "periodic_delaunay_mesh",
     "publish_periodic_simplices",
     "refine_periodic_mesh",
+    "periodic_coarsening_cell_ids",
     "periodic_coarsening_witnesses",
 ]
 
 
-# Source-aware metric edits select authoritative lifted carriers. Concrete
+# Source-aware metric edits select lifted carriers. Concrete
 # Surface/Sphere owners construct every local operation on one private state.
-from collections.abc import Mapping
-from contextlib import contextmanager
-from contextvars import ContextVar
-from typing import assert_never, Literal, TypeAlias
-
-from .._meshcore import current_native_execution_budget, NativeExecutionBudget
-from ..discretization._cell_geometry_transfer import CellGeometryTransition
-from ..discretization._cell_geometry_validity import cell_geometry_id
-from ..discretization._coordinate_enclosure import CoordinateEnclosureBudget
-from ..discretization._sphere_chart_deformation import PreparedSphereChartDeformation
-from ..discretization._surface_chart_deformation import PreparedSurfaceChartDeformation
-from ..typing import parse
-from ._association import GeometryAssociation
-from ._contracts import MeshingLimits
-from ._result import CellMeshingResult
-from ._topology_edit import (
-    assemble_topology_edit,
-    CellTopologyEdit,
-    entity_keys,
-    EntityRelations,
-    PeriodicEntityIdentityBank,
-    PeriodicVertexOrbitWitness,
-    TopologyEditBlock,
-)
 
 
-if TYPE_CHECKING:
-    from ._adaptation import MeshAdaptationPolicy
-
-
-PeriodicMetricOperation: TypeAlias = Literal["split", "collapse", "flip", "relocate"]
+type PeriodicMetricOperation = Literal["split", "collapse", "flip", "relocate"]
 
 
 class _MetricControllerWork:
-    """Attempted controller entity visits, separate from owning primitive work."""
+    """Attempted controller entity visits, separate from primitive work."""
 
-    def __init__(
-        self, ledger: CoordinateEnclosureBudget, execution: NativeExecutionBudget
-    ) -> None:
+    def __init__(self, ledger: CoordinateEnclosureBudget) -> None:
         self.ledger = ledger
-        self.execution = execution
         self.visits = 0
         self.charged = 0
-        self.remaining_work = execution.remaining().remaining_work_units
+        self.remaining_work = ledger.maximum_work_units - ledger.work_units
 
     def visit(self, count: int = 1) -> None:
         if self.visits - self.charged + count > self.remaining_work:
             raise ValueError(
-                "Periodic controller visits exceed the actual original native work remainder."
+                "visit.count must fit the remaining native controller work allowance; got Periodic controller visits exceed the native work remainder."
             )
         self.ledger.reserve(count)
         self.visits += count
 
     def flush(self) -> None:
-        if current_native_execution_budget() is not self.execution:
-            raise RuntimeError(
-                "The periodic controller cannot replace its original native execution scope."
-            )
-        self.ledger.charge_native_work(self.visits - self.charged)
+
         self.charged = self.visits
-        self.remaining_work = self.execution.remaining().remaining_work_units
+        self.remaining_work = self.ledger.maximum_work_units - self.ledger.work_units
 
     @contextmanager
     def activate(self) -> Iterator[None]:
-        token = _METRIC_CONTROLLER_WORK.set(self)
         try:
             yield
         finally:
-            _METRIC_CONTROLLER_WORK.reset(token)
             self.flush()
 
 
-_METRIC_CONTROLLER_WORK: ContextVar[_MetricControllerWork | None] = ContextVar(
-    "periodic_metric_controller_work", default=None
-)
-
-
-def _metric_visit(count: int = 1, /) -> None:
-    work = _METRIC_CONTROLLER_WORK.get()
-    if work is None:
-        raise RuntimeError(
-            "Periodic metric controller visits require the original active ledger."
-        )
-    work.visit(count)
-
-
 class PeriodicMetricOrbitCarrier(NamedTuple):
-    """One actual source incidence, with exact action from the original carrier."""
+    """One source incidence, with rational action from the carrier."""
 
     entity_global_id: int
     vertex_global_ids: tuple[int, ...]
@@ -4386,7 +5622,7 @@ class PeriodicMetricOrbitCarrier(NamedTuple):
 
 
 class PeriodicMetricOrbitSelection(NamedTuple):
-    """Complete winding-sensitive operation support in the immutable source frame."""
+    """All required winding-sensitive operation support in the immutable source frame."""
 
     operation: PeriodicMetricOperation
     original_result_id: str
@@ -4404,7 +5640,7 @@ class PeriodicMetricOrbitSelection(NamedTuple):
 
 
 class PeriodicMetricCandidateStage(NamedTuple):
-    """Actual aggregate edit returned after every required owning operation."""
+    """aggregate edit returned after every required operation."""
 
     edit: CellTopologyEdit
     exact_stencils: Mapping[int, ConstructionPointKey]
@@ -4412,9 +5648,9 @@ class PeriodicMetricCandidateStage(NamedTuple):
 
 
 class PeriodicMetricGeometryStage(NamedTuple):
-    """Actual full-map successor and its complete source-owned correspondence."""
+    """full-map successor and its all required source-owned correspondence."""
 
-    target_mesh: CellMesh
+    target_mesh: cell_mesh_owner.CellMesh
     target_geometry: CellGeometrySpec
     source_membership: tuple[GeometryAssociation, ...]
     source_correspondence: (
@@ -4438,7 +5674,7 @@ class PeriodicMetricOrbitEvidence(NamedTuple):
 
 class PeriodicMetricOrbitOutcome(NamedTuple):
     edit: CellTopologyEdit
-    target_mesh: CellMesh
+    target_mesh: cell_mesh_owner.CellMesh
     periodic_witness: PeriodicVertexOrbitWitness
     geometry_stage: PeriodicMetricGeometryStage
     exact_stencils: Mapping[int, ConstructionPointKey]
@@ -4465,14 +5701,16 @@ class _MetricOrbitCell(NamedTuple):
     vertices: tuple[int, ...]
 
 
-def _metric_orbit_cells(mesh: CellMesh, /) -> tuple[_MetricOrbitCell, ...]:
+def _metric_orbit_cells(
+    mesh: cell_mesh_owner.CellMesh, /, *, controller_work: _MetricControllerWork
+) -> tuple[_MetricOrbitCell, ...]:
     ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     cells = []
     for block in mesh.blocks:
         for identifier, vertices in zip(
             np.asarray(block.global_ids), np.asarray(block.vertices), strict=True
         ):
-            _metric_visit()
+            controller_work.visit()
             cells.append(
                 _MetricOrbitCell(
                     block.name,
@@ -4484,15 +5722,17 @@ def _metric_orbit_cells(mesh: CellMesh, /) -> tuple[_MetricOrbitCell, ...]:
     return tuple(cells)
 
 
-def _metric_candidate_cells(edit: CellTopologyEdit, /) -> tuple[_MetricOrbitCell, ...]:
+def _metric_candidate_cells(
+    edit: CellTopologyEdit, /, *, controller_work: _MetricControllerWork
+) -> tuple[_MetricOrbitCell, ...]:
     cells = []
     for block in edit.blocks:
         if not isinstance(block, TopologyEditBlock):
             raise ValueError(
-                "A local metric rewrite requires its owning fixed-family candidate."
+                "metric_candidate_cells.edit must retain fixed-family topology edit blocks; got A local metric rewrite requires its fixed-family candidate."
             )
         for identifier, vertices in zip(block.cell_ids, block.cells, strict=True):
-            _metric_visit()
+            controller_work.visit()
             cells.append(
                 _MetricOrbitCell(
                     block.name,
@@ -4505,10 +5745,12 @@ def _metric_candidate_cells(edit: CellTopologyEdit, /) -> tuple[_MetricOrbitCell
 
 
 def _require_metric_stencils(
-    source: CellMesh,
+    source: cell_mesh_owner.CellMesh,
     edit: CellTopologyEdit,
     stencils: Mapping[int, ConstructionPointKey],
     /,
+    *,
+    controller_work: _MetricControllerWork,
 ) -> dict[int, ConstructionPointKey]:
     source_ids = set(np.asarray(source.vertex_global_ids).tolist())
     ids = np.asarray(edit.vertex_global_ids)
@@ -4518,11 +5760,11 @@ def _require_metric_stencils(
         or len(set(ids.tolist())) != ids.size
     ):
         raise ValueError(
-            "A metric candidate requires unique integer scientific vertex IDs."
+            "require_metric_stencils.source must retain normalized positive source supports aligned with target IDs; got A metric candidate requires unique integer scientific vertex IDs."
         )
     if set(stencils) != set(ids.tolist()):
         raise ValueError(
-            "Exact metric stencils must cover exactly the private target vertices."
+            "require_metric_stencils.source must retain normalized positive source supports aligned with target IDs; got Rational metric stencils must cover exactly the private target vertices."
         )
     if (
         edit.stencil_sources.shape != edit.stencil_weights.shape
@@ -4530,33 +5772,33 @@ def _require_metric_stencils(
         or edit.stencil_sources.shape[0] != ids.size
     ):
         raise ValueError(
-            "Metric candidate interpolation rows do not align with target IDs."
+            "require_metric_stencils.source must retain normalized positive source supports aligned with target IDs; got Metric candidate interpolation rows do not align with target IDs."
         )
     result = {}
     for row, identifier in enumerate(ids):
-        _metric_visit()
+        controller_work.visit()
         key = stencils[int(identifier)]
         if not isinstance(key, tuple) or not key:
             raise ValueError(
-                "Exact construction stencils need canonical positive source supports."
+                "require_metric_stencils.source must retain normalized positive source supports aligned with target IDs; got Rational construction stencils need deterministic positive source supports."
             )
         for vertex, weight in key:
-            _metric_visit()
+            controller_work.visit()
             if (
                 not isinstance(weight, Fraction)
                 or weight <= 0
                 or vertex not in source_ids
             ):
                 raise ValueError(
-                    "Exact construction stencils need canonical positive source supports."
+                    "require_metric_stencils.source must retain normalized positive source supports aligned with target IDs; got Rational construction stencils need deterministic positive source supports."
                 )
         if tuple(sorted(key)) != key or len({vertex for vertex, _ in key}) != len(key):
             raise ValueError(
-                "Exact construction stencils need canonical positive source supports."
+                "require_metric_stencils.source must retain normalized positive source supports aligned with target IDs; got Rational construction stencils need deterministic positive source supports."
             )
         if sum((weight for _, weight in key), Fraction(0)) != 1:
             raise ValueError(
-                "An exact metric construction stencil must preserve constants."
+                "require_metric_stencils.source must retain normalized positive source supports aligned with target IDs; got A rational metric construction stencil must preserve constants."
             )
         actual = tuple(
             sorted(
@@ -4572,17 +5814,27 @@ def _require_metric_stencils(
         )
         if actual != tuple((vertex, float(weight)) for vertex, weight in key):
             raise ValueError(
-                "Exact construction support disagrees with the actual candidate stencil."
+                "require_metric_stencils.source must retain normalized positive source supports aligned with target IDs; got Rational construction support disagrees with the candidate stencil."
             )
         result[int(identifier)] = key
     return result
 
 
+class _MetricCavity(StrictModule):
+    source_cells: tuple[_MetricOrbitCell, ...]
+    target_cells: tuple[_MetricOrbitCell, ...]
+    support: frozenset[int] = eqx.field(static=True)
+
+
 def _metric_orbit_cavity(
-    source: CellMesh, edit: CellTopologyEdit, /
-) -> tuple[tuple[_MetricOrbitCell, ...], tuple[_MetricOrbitCell, ...], set[int]]:
-    before = _metric_orbit_cells(source)
-    after = _metric_candidate_cells(edit)
+    source: cell_mesh_owner.CellMesh,
+    edit: CellTopologyEdit,
+    /,
+    *,
+    controller_work: _MetricControllerWork,
+) -> _MetricCavity:
+    before = _metric_orbit_cells(source, controller_work=controller_work)
+    after = _metric_candidate_cells(edit, controller_work=controller_work)
     targets = {cell.identifier: cell for cell in after}
     old_ids = np.asarray(source.vertex_global_ids)
     new_rows = {
@@ -4591,14 +5843,14 @@ def _metric_orbit_cavity(
     old_points = np.asarray(source.coordinates)
     moved = set()
     for row, identifier in enumerate(old_ids):
-        _metric_visit()
+        controller_work.visit()
         if int(identifier) not in new_rows or not np.array_equal(
             old_points[row], edit.coordinates[new_rows[int(identifier)]]
         ):
             moved.add(int(identifier))
     selected = []
     for cell in before:
-        _metric_visit()
+        controller_work.visit()
         if (
             cell.identifier not in targets
             or targets[cell.identifier] != cell
@@ -4607,11 +5859,13 @@ def _metric_orbit_cavity(
             selected.append(cell)
     cavity = tuple(selected)
     if not cavity:
-        raise ValueError("A periodic metric candidate must contain a real local edit.")
+        raise ValueError(
+            "metric_orbit_cavity.source must retain nonempty changed source and target cavities; got A periodic metric candidate must contain a real local edit."
+        )
     originals = {cell.identifier: cell for cell in before}
     replacements = []
     for cell in after:
-        _metric_visit()
+        controller_work.visit()
         if (
             cell.identifier not in originals
             or originals[cell.identifier] != cell
@@ -4619,40 +5873,40 @@ def _metric_orbit_cavity(
         ):
             replacements.append(cell)
     if not replacements:
-        raise ValueError("A local metric edit has no complete target cavity.")
+        raise ValueError(
+            "metric_orbit_cavity.source must retain nonempty changed source and target cavities; got A local metric edit has no all required target cavity."
+        )
     support = {vertex for cell in cavity for vertex in cell.vertices}
-    return cavity, tuple(replacements), support
+    return _MetricCavity(cavity, tuple(replacements), frozenset(support))
 
 
 def _metric_protected_rows(
-    source: CellMeshingResult, policy: MeshAdaptationPolicy, /
+    source: CellMeshingResult,
+    policy: adaptation_owner.MeshAdaptationPolicy,
+    /,
+    *,
+    controller_work: _MetricControllerWork,
 ) -> tuple[set[int], ...]:
-    from ._adaptation import (
-        _closure_rows,
-        _membership,
-        _organization_scopes,
-        _selected_rows,
-        MeshAdaptationRoute,
-    )
-    from ._association import SurfaceAssociationTransfer
 
     mesh = source.mesh
-    periodic = _require_periodic_topology(mesh)
+    periodic = require_periodic_topology(mesh)
     protected: tuple[set[int], ...] = tuple(
         set() for _ in range(mesh.topological_dimension + 1)
     )
     for scope in policy.protected_scopes:
-        _metric_visit()
-        selected = _selected_rows(mesh, scope)
+        controller_work.visit()
+        selected = _leaf_phydrax_meshing__host_banks.selected_rows(mesh, scope)
         for degree in range(scope.entity_dimension + 1):
-            rows = _closure_rows(mesh, scope.entity_dimension, selected, degree)
+            rows = _leaf_phydrax_meshing__host_banks.closure_rows(
+                mesh, scope.entity_dimension, selected, degree
+            )
             orbit = np.asarray(periodic.orbits(degree)[0])
-            _metric_visit(orbit.size)
+            controller_work.visit(orbit.size)
             protected[degree].update(np.flatnonzero(np.isin(orbit, orbit[rows])).tolist())
     # A scientific corner or ambiguous membership is fixed under every copy,
     # not just the lifted row on which the source happened to publish it.
     for association in source.associations:
-        _metric_visit()
+        controller_work.visit()
         if association.target_entity_set_id != mesh.entity_set(0).entity_set_id:
             continue
         rows = association.target_rows(np.asarray(mesh.vertex_global_ids))
@@ -4660,148 +5914,220 @@ def _metric_protected_rows(
             np.asarray(association.source_dimensions)[rows] == 0
         )
         orbit = np.asarray(periodic.orbits(0)[0])
-        _metric_visit(orbit.size)
+        controller_work.visit(orbit.size)
         protected[0].update(np.flatnonzero(np.isin(orbit, orbit[fixed])).tolist())
-    fixed = np.any(_membership(mesh, _organization_scopes(source), 0), axis=1)
+    fixed = np.any(
+        _leaf_phydrax_meshing__host_banks.membership(
+            mesh, _leaf_phydrax_meshing__host_banks.organization_scopes(source), 0
+        ),
+        axis=1,
+    )
     orbit = np.asarray(periodic.orbits(0)[0])
-    _metric_visit(orbit.size)
+    controller_work.visit(orbit.size)
     protected[0].update(np.flatnonzero(np.isin(orbit, orbit[fixed])).tolist())
     transfer = policy.association_transfer
     if isinstance(transfer, SurfaceAssociationTransfer):
         classes = transfer.classes(source)
         fixed = classes[0].dimensions == 0
-        _metric_visit(orbit.size)
+        controller_work.visit(orbit.size)
         protected[0].update(np.flatnonzero(np.isin(orbit, orbit[fixed])).tolist())
         edge_mask = (
             transfer.protected_edges(
                 source,
                 midpoint_required=policy.route
                 in (
-                    MeshAdaptationRoute.NATIVE_BISECTION,
-                    MeshAdaptationRoute.DEVICE_BISECTION,
-                    MeshAdaptationRoute.NATIVE_MIXED,
+                    adaptation_owner.MeshAdaptationRoute.NATIVE_BISECTION,
+                    adaptation_owner.MeshAdaptationRoute.DEVICE_BISECTION,
+                    adaptation_owner.MeshAdaptationRoute.NATIVE_MIXED,
                 ),
             )
             | ~classes[1].resolved
         )
         edge_orbit = np.asarray(periodic.orbits(1)[0])
-        _metric_visit(edge_orbit.size)
+        controller_work.visit(edge_orbit.size)
         protected[1].update(
             np.flatnonzero(np.isin(edge_orbit, edge_orbit[edge_mask])).tolist()
         )
     return protected
 
 
-def _metric_original_support(
-    mesh: CellMesh, candidate: CellTopologyEdit, operation: PeriodicMetricOperation, /
-) -> tuple[int, int, tuple[int, ...]]:
-    from ._topology_edit import _build_mesh
+class _MetricSupport(StrictModule):
+    dimension: int = eqx.field(static=True)
+    entity_id: int = eqx.field(static=True)
+    vertices: tuple[int, ...] = eqx.field(static=True)
 
+
+class _MetricSupportVertices(StrictModule):
+    vertices: tuple[int, ...] = eqx.field(static=True)
+
+
+def _metric_relocation_support(
+    mesh: cell_mesh_owner.CellMesh,
+    candidate: CellTopologyEdit,
+    old_ids: set[int],
+    new_ids: set[int],
+    controller_work: _MetricControllerWork,
+) -> _MetricSupport:
+    coordinates = np.asarray(jax.device_get(mesh.coordinates))
+    identifiers = np.asarray(jax.device_get(mesh.vertex_global_ids))
+    rows = {
+        int(identifier): row for row, identifier in enumerate(candidate.vertex_global_ids)
+    }
+    changed = []
+    for row, identifier in enumerate(identifiers):
+        controller_work.visit()
+        if int(identifier) in rows and not np.array_equal(
+            coordinates[row],
+            candidate.coordinates[rows[int(identifier)]],
+        ):
+            changed.append(int(identifier))
+    moved = tuple(changed)
+    if len(moved) != 1 or old_ids != new_ids:
+        raise ValueError(
+            "metric_relocation_support.mesh must move one retained source vertex; got A periodic relocation seed must name one retained source vertex."
+        )
+    return _MetricSupport(0, moved[0], moved)
+
+
+def _metric_collapse_support(
+    mesh: cell_mesh_owner.CellMesh,
+    candidate: CellTopologyEdit,
+    old_ids: set[int],
+    new_ids: set[int],
+    controller_work: _MetricControllerWork,
+) -> _MetricSupportVertices:
+    removed = old_ids - new_ids
+    if len(removed) != 1 or new_ids - old_ids:
+        raise ValueError(
+            "metric_collapse_support.mesh must identify a unique source edge contraction; got A periodic collapse seed must remove exactly one source vertex."
+        )
+    vertex = next(iter(removed))
+    before = _metric_orbit_cells(mesh, controller_work=controller_work)
+    after = _metric_candidate_cells(candidate, controller_work=controller_work)
+    target_keys = {(cell.name, cell.kind, tuple(sorted(cell.vertices))) for cell in after}
+    neighbors = {
+        value for cell in before if vertex in cell.vertices for value in cell.vertices
+    }
+    successors = set()
+    for kept in sorted((neighbors - {vertex}) & new_ids):
+        substituted = set()
+        for cell in before:
+            controller_work.visit()
+            values = tuple(kept if value == vertex else value for value in cell.vertices)
+            if len(set(values)) == len(values):
+                substituted.add((cell.name, cell.kind, tuple(sorted(values))))
+        if substituted == target_keys:
+            successors.add(kept)
+    if len(successors) != 1:
+        raise ValueError(
+            "metric_collapse_support.mesh must identify a unique source edge contraction; got A collapse seed has no unique source edge contraction evidence."
+        )
+    support = (vertex, next(iter(successors)))
+    return _MetricSupportVertices(support)
+
+
+def _metric_removed_edge_support(
+    mesh: cell_mesh_owner.CellMesh,
+    candidate: CellTopologyEdit,
+    operation: PeriodicMetricOperation,
+    old_ids: set[int],
+    new_ids: set[int],
+    controller_work: _MetricControllerWork,
+) -> _MetricSupportVertices:
+    probe = build_mesh(
+        candidate, mesh.numeric_version, None, budget=controller_work.ledger
+    )
+    target_keys = set(map(tuple, entity_keys(probe, 1)))
+    removed = []
+    for key in entity_keys(mesh, 1):
+        controller_work.visit()
+        if tuple(key) not in target_keys:
+            removed.append(tuple(int(value) for value in key))
+    removed_edges = tuple(removed)
+    if len(removed_edges) != 1:
+        raise ValueError(
+            "metric_removed_edge_support.mesh must remove one source edge with the declared vertex birth or retention; got A split or flip seed must remove one source edge."
+        )
+    if operation == "split" and (len(new_ids - old_ids) != 1 or old_ids - new_ids):
+        raise ValueError(
+            "metric_removed_edge_support.mesh must remove one source edge with the declared vertex birth or retention; got A split seed must construct one born vertex."
+        )
+    if operation == "flip" and old_ids != new_ids:
+        raise ValueError(
+            "metric_removed_edge_support.mesh must remove one source edge with the declared vertex birth or retention; got A flip seed cannot construct or remove source vertices."
+        )
+    support = removed_edges[0]
+    return _MetricSupportVertices(support)
+
+
+def _metric_original_support(
+    mesh: cell_mesh_owner.CellMesh,
+    candidate: CellTopologyEdit,
+    operation: PeriodicMetricOperation,
+    /,
+    *,
+    controller_work: _MetricControllerWork,
+) -> _MetricSupport:
     old_ids = set(np.asarray(mesh.vertex_global_ids).tolist())
     new_ids = set(candidate.vertex_global_ids.tolist())
-    if operation == "relocate":
-        rows = {
-            int(identifier): row
-            for row, identifier in enumerate(candidate.vertex_global_ids)
-        }
-        changed = []
-        for row, identifier in enumerate(mesh.vertex_global_ids):
-            _metric_visit()
-            if int(identifier) in rows and not np.array_equal(
-                np.asarray(mesh.coordinates)[row],
-                candidate.coordinates[rows[int(identifier)]],
-            ):
-                changed.append(int(identifier))
-        moved = tuple(changed)
-        if len(moved) != 1 or old_ids != new_ids:
-            raise ValueError(
-                "A periodic relocation seed must name one actual retained source vertex."
+    match operation:
+        case "relocate":
+            return _metric_relocation_support(
+                mesh, candidate, old_ids, new_ids, controller_work
             )
-        return 0, moved[0], moved
-    if operation == "collapse":
-        removed = old_ids - new_ids
-        if len(removed) != 1 or new_ids - old_ids:
-            raise ValueError(
-                "A periodic collapse seed must remove exactly one source vertex."
+        case "collapse":
+            selected = _metric_collapse_support(
+                mesh, candidate, old_ids, new_ids, controller_work
             )
-        vertex = next(iter(removed))
-        before = _metric_orbit_cells(mesh)
-        after = _metric_candidate_cells(candidate)
-        target_keys = {
-            (cell.name, cell.kind, tuple(sorted(cell.vertices))) for cell in after
-        }
-        neighbors = {
-            value for cell in before if vertex in cell.vertices for value in cell.vertices
-        }
-        successors = set()
-        for kept in sorted((neighbors - {vertex}) & new_ids):
-            substituted = set()
-            for cell in before:
-                _metric_visit()
-                values = tuple(
-                    kept if value == vertex else value for value in cell.vertices
-                )
-                if len(set(values)) == len(values):
-                    substituted.add((cell.name, cell.kind, tuple(sorted(values))))
-            if substituted == target_keys:
-                successors.add(kept)
-        if len(successors) != 1:
-            raise ValueError(
-                "A collapse seed has no unique actual source edge contraction witness."
+        case "split" | "flip":
+            selected = _metric_removed_edge_support(
+                mesh, candidate, operation, old_ids, new_ids, controller_work
             )
-        support = (vertex, next(iter(successors)))
-    else:
-        probe = _build_mesh(candidate, mesh.numeric_version, None)
-        target_keys = set(map(tuple, entity_keys(probe, 1)))
-        removed = []
-        for key in entity_keys(mesh, 1):
-            _metric_visit()
-            if tuple(key) not in target_keys:
-                removed.append(tuple(int(value) for value in key))
-        removed_edges = tuple(removed)
-        if len(removed_edges) != 1:
-            raise ValueError(
-                "A split or flip seed must remove one authoritative source edge."
-            )
-        if operation == "split" and (len(new_ids - old_ids) != 1 or old_ids - new_ids):
-            raise ValueError("A split seed must construct one actual born vertex.")
-        if operation == "flip" and old_ids != new_ids:
-            raise ValueError("A flip seed cannot construct or remove source vertices.")
-        support = removed_edges[0]
+        case invalid:
+            assert_never(invalid)
+    support = selected.vertices
     keys = entity_keys(mesh, 1)
     rows = [row for row, key in enumerate(keys) if tuple(key) == tuple(sorted(support))]
     if len(rows) != 1:
-        raise ValueError("The operation support is not one actual lifted source edge.")
+        raise ValueError(
+            "metric_original_support.mesh must identify one lifted source edge; got The operation support is not one lifted source edge."
+        )
     identifier = int(np.asarray(mesh.entity_set(1).entity_ids)[rows[0]])
-    return 1, identifier, support
+    return _MetricSupport(1, identifier, support)
 
 
 def _metric_source_classes(
-    source: CellMeshingResult, policy: MeshAdaptationPolicy, /
+    source: CellMeshingResult,
+    policy: adaptation_owner.MeshAdaptationPolicy,
+    /,
+    *,
+    controller_work: _MetricControllerWork,
 ) -> dict[int, int]:
-    from ._adaptation import _cell_classes, _cell_ids, _organization_scopes, _row_classes
-    from ._association import SurfaceAssociationTransfer
-    from ._topology_edit import key_rows
 
     mesh = source.mesh
-    classes = _cell_classes(mesh, _organization_scopes(source), family_identity=True)
-    _metric_visit(classes.size)
+    classes = _leaf_phydrax_meshing__host_banks.mesh_cell_classes(
+        mesh,
+        _leaf_phydrax_meshing__host_banks.organization_scopes(source),
+        family_identity=True,
+    )
+    controller_work.visit(classes.size)
     if source.attributes:
-        from ._layer_core import layer_interval_classes
-
         rows = key_rows(
-            _cell_ids(mesh)[:, None], entity_keys(mesh, mesh.topological_dimension)
+            _leaf_phydrax_meshing__host_banks.mesh_cell_ids(mesh)[:, None],
+            entity_keys(mesh, mesh.topological_dimension),
         )
-        classes = _row_classes(
-            np.column_stack((classes, layer_interval_classes(source)[rows]))
+        classes = _leaf_phydrax_meshing__host_banks.row_classes(
+            np.column_stack(
+                (classes, layer_core_owner.layer_interval_classes(source)[rows])
+            )
         )
-        _metric_visit(classes.size)
+        controller_work.visit(classes.size)
     if isinstance(policy.association_transfer, SurfaceAssociationTransfer):
         source_classes = policy.association_transfer.classes(source)
-        classes = _row_classes(
+        classes = _leaf_phydrax_meshing__host_banks.row_classes(
             np.column_stack((classes, source_classes[mesh.topological_dimension].codes))
         )
-        _metric_visit(classes.size)
+        controller_work.visit(classes.size)
     return dict(
         zip(
             entity_keys(mesh, mesh.topological_dimension)[:, 0].tolist(),
@@ -4813,31 +6139,33 @@ def _metric_source_classes(
 
 def _metric_current_classes(
     source: CellMeshingResult,
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     prior: PeriodicMetricOrbitOutcome | None,
-    policy: MeshAdaptationPolicy,
+    policy: adaptation_owner.MeshAdaptationPolicy,
     /,
+    *,
+    controller_work: _MetricControllerWork,
 ) -> dict[int, int]:
-    originals = _metric_source_classes(source, policy)
+    originals = _metric_source_classes(source, policy, controller_work=controller_work)
     if prior is None:
         return originals
     inherited: dict[int, set[int]] = {}
     relations = prior.edit.relations[source.mesh.topological_dimension]
     for old, new in zip(relations.source_keys, relations.target_keys, strict=True):
-        _metric_visit()
+        controller_work.visit()
         if int(old[0]) not in originals:
             raise ValueError(
-                "The private prior stage carries stale original cell ancestry."
+                "metric_current_classes.source must retain compatible source cell ancestry and organization; got The private prior stage carries stale cell ancestry."
             )
         inherited.setdefault(int(new[0]), set()).add(originals[int(old[0])])
     result = {}
     for identifier in entity_keys(mesh, mesh.topological_dimension)[:, 0]:
-        _metric_visit()
+        controller_work.visit()
         value = int(identifier)
         values = inherited.get(value, {originals[value]} if value in originals else set())
         if len(values) != 1:
             raise ValueError(
-                "The private current carrier has incomplete or incompatible original cell classes."
+                "metric_current_classes.source must retain compatible source cell ancestry and organization; got The private current carrier has incomplete or incompatible cell classes."
             )
         result[value] = next(iter(values))
     return result
@@ -4847,15 +6175,20 @@ def _metric_orbit_selection(
     source: CellMeshingResult,
     candidate: CellTopologyEdit,
     operation: PeriodicMetricOperation,
-    policy: MeshAdaptationPolicy,
+    policy: adaptation_owner.MeshAdaptationPolicy,
     orbits: PeriodicConstructionOrbits,
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     geometry: CellGeometrySpec,
     prior: PeriodicMetricOrbitOutcome | None,
     /,
+    *,
+    controller_work: _MetricControllerWork,
 ) -> PeriodicMetricOrbitSelection:
-    periodic = _require_periodic_topology(mesh)
-    degree, identifier, original = _metric_original_support(mesh, candidate, operation)
+    periodic = require_periodic_topology(mesh)
+    support = _metric_original_support(
+        mesh, candidate, operation, controller_work=controller_work
+    )
+    degree, identifier, original = support.dimension, support.entity_id, support.vertices
     ids = np.asarray(mesh.entity_set(degree).entity_ids)
     original_row = int(np.flatnonzero(ids == identifier)[0])
     orbit, _, shifts = (np.asarray(value) for value in periodic.orbits(degree))
@@ -4865,7 +6198,7 @@ def _metric_orbit_selection(
     corners = (
         np.arange(vertex_ids.size, dtype=np.int32)[:, None]
         if degree == 0
-        else _simplex_entity_corners(mesh, degree)
+        else simplex_entity_corners(mesh, degree)
     )
     permutations = (
         (np.zeros((1,), dtype=np.int32),) * vertex_ids.size
@@ -4878,7 +6211,9 @@ def _metric_orbit_selection(
         int(canonical): original_positions[slot]
         for slot, canonical in enumerate(permutations[original_row])
     }
-    original_protected = _metric_protected_rows(source, policy)
+    original_protected = _metric_protected_rows(
+        source, policy, controller_work=controller_work
+    )
     protected: tuple[set[int], ...] = tuple(
         set() for _ in range(mesh.topological_dimension + 1)
     )
@@ -4890,21 +6225,23 @@ def _metric_orbit_selection(
         selected_rows = [
             row for row, key in enumerate(current_keys) if tuple(key) in keys
         ]
-        _metric_visit(current_orbits.size)
+        controller_work.visit(current_orbits.size)
         protected[protected_degree].update(
             np.flatnonzero(
                 np.isin(current_orbits, current_orbits[selected_rows])
             ).tolist()
         )
-    cells = _metric_orbit_cells(mesh)
-    class_by_id = _metric_current_classes(source, mesh, prior, policy)
+    cells = _metric_orbit_cells(mesh, controller_work=controller_work)
+    class_by_id = _metric_current_classes(
+        source, mesh, prior, policy, controller_work=controller_work
+    )
     carriers = []
     for row in rows:
-        _metric_visit()
+        controller_work.visit()
         vertices = tuple(int(value) for value in vertex_ids[corners[row]])
         incident = []
         for cell in cells:
-            _metric_visit()
+            controller_work.visit()
             if (
                 bool(set(vertices).intersection(cell.vertices))
                 if operation == "collapse"
@@ -4914,7 +6251,7 @@ def _metric_orbit_selection(
         incidence = tuple(sorted(incident))
         if not incidence:
             raise ValueError(
-                "An authoritative periodic carrier has no actual source incidence."
+                "metric_orbit_selection.source must retain operation support within its periodic source incidence; got An periodic carrier has no source incidence."
             )
         carriers.append(
             PeriodicMetricOrbitCarrier(
@@ -4944,7 +6281,9 @@ def _metric_orbit_selection(
             carrier.entity_global_id,
         )
     )
-    cavity, _, _ = _metric_orbit_cavity(mesh, candidate)
+    cavity = _metric_orbit_cavity(
+        mesh, candidate, controller_work=controller_work
+    ).source_cells
     selected_incidence = set(
         next(
             value.incident_cell_global_ids
@@ -4954,7 +6293,7 @@ def _metric_orbit_selection(
     )
     if not {cell.identifier for cell in cavity} <= selected_incidence:
         raise ValueError(
-            "A metric seed changes cells outside its actual source operation incidence."
+            "metric_orbit_selection.source must retain operation support within its periodic source incidence; got A metric seed changes cells outside its source operation incidence."
         )
     return PeriodicMetricOrbitSelection(
         operation,
@@ -4973,20 +6312,26 @@ def _metric_orbit_selection(
     )
 
 
+class _MetricCandidateValidation(StrictModule):
+    exact: dict[int, ConstructionPointKey]
+    cavity_count: int = eqx.field(static=True)
+
+
+@checked
 def _require_metric_candidate_stage(
     source: CellMeshingResult,
-    current: CellMesh,
+    current: cell_mesh_owner.CellMesh,
     candidate: CellTopologyEdit,
     stage: PeriodicMetricCandidateStage,
     selection: PeriodicMetricOrbitSelection,
     seed_exact: Mapping[int, ConstructionPointKey],
     /,
-) -> tuple[dict[int, ConstructionPointKey], int]:
-    if not isinstance(stage, PeriodicMetricCandidateStage) or not isinstance(
-        stage.edit, CellTopologyEdit
-    ):
+    *,
+    controller_work: _MetricControllerWork,
+) -> _MetricCandidateValidation:
+    if not isinstance(stage.edit, CellTopologyEdit):
         raise TypeError(
-            "The actual operation owner must return PeriodicMetricCandidateStage."
+            "require_metric_candidate_stage.source must execute each required carrier operation with compatible ancestry and coordinates; got The operation owner must return PeriodicMetricCandidateStage."
         )
     required = {carrier.entity_global_id for carrier in selection.carriers}
     if (
@@ -4994,7 +6339,7 @@ def _require_metric_candidate_stage(
         or set(stage.executed_entity_ids) != required
     ):
         raise ValueError(
-            "The owning candidate omits or duplicates authoritative periodic operations."
+            "require_metric_candidate_stage.source must execute each required carrier operation with compatible ancestry and coordinates; got The candidate omits or duplicates periodic operations."
         )
     edit = stage.edit
     if (
@@ -5003,20 +6348,24 @@ def _require_metric_candidate_stage(
         or edit.coarsening is not None
     ):
         raise ValueError(
-            "The owning callback changed the actual operation or substituted a family template."
+            "require_metric_candidate_stage.source must execute each required carrier operation with compatible ancestry and coordinates; got The callback changed the operation or substituted a family template."
         )
     if edit.shared_faces is not None or edit.prescribed_entity_ids:
         raise ValueError(
-            "The owning metric callback cannot substitute restored family witnesses."
+            "require_metric_candidate_stage.source must execute each required carrier operation with compatible ancestry and coordinates; got The metric callback cannot substitute restored family witnesses."
         )
     if tuple(record.dimension for record in edit.relations) != tuple(
         range(source.mesh.topological_dimension + 1)
     ):
         raise ValueError(
-            "The aggregate periodic candidate omits complete entity ancestry."
+            "require_metric_candidate_stage.source must execute each required carrier operation with compatible ancestry and coordinates; got The aggregate periodic candidate omits all required entity ancestry."
         )
-    exact = _require_metric_stencils(source.mesh, edit, stage.exact_stencils)
-    cavity, _, _ = _metric_orbit_cavity(current, edit)
+    exact = _require_metric_stencils(
+        source.mesh, edit, stage.exact_stencils, controller_work=controller_work
+    )
+    cavity = _metric_orbit_cavity(
+        current, edit, controller_work=controller_work
+    ).source_cells
     changed = {cell.identifier for cell in cavity}
     allowed = {
         identifier
@@ -5025,28 +6374,30 @@ def _require_metric_candidate_stage(
     }
     if not changed <= allowed:
         raise ValueError(
-            "The aggregate operation changes cells outside its complete authoritative incidence."
+            "require_metric_candidate_stage.source must execute each required carrier operation with compatible ancestry and coordinates; got The aggregate operation changes cells outside its all required incidence."
         )
     for carrier in selection.carriers:
-        _metric_visit()
+        controller_work.visit()
         if not changed.intersection(carrier.incident_cell_global_ids):
             raise ValueError(
-                "A purported periodic operation left an authoritative carrier unchanged."
+                "require_metric_candidate_stage.source must execute each required carrier operation with compatible ancestry and coordinates; got A purported periodic operation left an carrier unchanged."
             )
     # Compatible neighboring operations may further subdivide seed children.
-    # The actual seed's constructions and moved coordinates remain authoritative.
-    seed_cavity, _, _ = _metric_orbit_cavity(current, candidate)
+    # The seed's constructions and moved coordinates remain .
+    seed_cavity = _metric_orbit_cavity(
+        current, candidate, controller_work=controller_work
+    ).source_cells
     seed_ids = {cell.identifier for cell in seed_cavity}
     if not seed_ids <= changed:
         raise ValueError(
-            "The aggregate operation lost its original private source cavity."
+            "require_metric_candidate_stage.source must execute each required carrier operation with compatible ancestry and coordinates; got The aggregate operation lost its private source cavity."
         )
     rows = {int(identifier): row for row, identifier in enumerate(edit.vertex_global_ids)}
     original_rows = {
         int(identifier): row for row, identifier in enumerate(current.vertex_global_ids)
     }
     for row, identifier in enumerate(candidate.vertex_global_ids):
-        _metric_visit()
+        controller_work.visit()
         value = int(identifier)
         constructed = value not in original_rows or not np.array_equal(
             candidate.coordinates[row],
@@ -5060,13 +6411,18 @@ def _require_metric_candidate_stage(
             )
         ):
             raise ValueError(
-                "Overlapping periodic operations prescribe incompatible seed constructions or coordinates."
+                "require_metric_candidate_stage.source must execute each required carrier operation with compatible ancestry and coordinates; got Overlapping periodic operations prescribe incompatible seed constructions or coordinates."
             )
-    return exact, len(changed)
+    return _MetricCandidateValidation(exact, len(changed))
 
 
 def _require_metric_operation_support(
-    current: CellMesh, target: CellMesh, selection: PeriodicMetricOrbitSelection, /
+    current: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
+    selection: PeriodicMetricOrbitSelection,
+    /,
+    *,
+    controller_work: _MetricControllerWork,
 ) -> None:
     target_ids = set(np.asarray(target.vertex_global_ids).tolist())
     old_rows = {
@@ -5077,7 +6433,7 @@ def _require_metric_operation_support(
     }
     edges = set(map(tuple, entity_keys(target, 1)))
     for carrier in selection.carriers:
-        _metric_visit()
+        controller_work.visit()
         ordered = tuple(
             carrier.vertex_global_ids[carrier.vertex_permutation.index(slot)]
             for slot in range(len(carrier.vertex_global_ids))
@@ -5086,12 +6442,12 @@ def _require_metric_operation_support(
             case "split" | "flip":
                 if tuple(sorted(ordered)) in edges:
                     raise ValueError(
-                        "A synchronized edge operation retains an unedited authoritative carrier."
+                        "require_metric_operation_support.current must apply the declared operation to every selected carrier; got A synchronized edge operation retains an unedited carrier."
                     )
             case "collapse":
                 if ordered[0] in target_ids or ordered[1] not in target_ids:
                     raise ValueError(
-                        "A synchronized collapse loses its exact oriented contraction witness."
+                        "require_metric_operation_support.current must apply the declared operation to every selected carrier; got A synchronized collapse loses its rational oriented contraction evidence."
                     )
             case "relocate":
                 vertex = ordered[0]
@@ -5100,164 +6456,303 @@ def _require_metric_operation_support(
                     np.asarray(target.coordinates)[new_rows[vertex]],
                 ):
                     raise ValueError(
-                        "A synchronized relocation leaves an authoritative source copy unchanged."
+                        "require_metric_operation_support.current must apply the declared operation to every selected carrier; got A synchronized relocation leaves an source copy unchanged."
                     )
             case invalid:
                 assert_never(invalid)
 
 
 def _require_metric_protected_scopes(
-    source: CellMeshingResult, target: CellMesh, policy: MeshAdaptationPolicy, /
+    source: CellMeshingResult,
+    target: cell_mesh_owner.CellMesh,
+    policy: adaptation_owner.MeshAdaptationPolicy,
+    /,
+    *,
+    controller_work: _MetricControllerWork,
 ) -> None:
-    protected = _metric_protected_rows(source, policy)
+    protected = _metric_protected_rows(source, policy, controller_work=controller_work)
     old_ids = np.asarray(source.mesh.vertex_global_ids)
     new_rows = {
         int(identifier): row for row, identifier in enumerate(target.vertex_global_ids)
     }
     for row in protected[0]:
-        _metric_visit()
+        controller_work.visit()
         identifier = int(old_ids[row])
         if identifier not in new_rows or not np.array_equal(
             np.asarray(source.mesh.coordinates)[row],
             np.asarray(target.coordinates)[new_rows[identifier]],
         ):
             raise ValueError(
-                "Periodic metric closure changes a protected source vertex or orbit copy."
+                "require_metric_protected_scopes.source must preserve protected source entities and their orbit copies; got Periodic metric closure changes a protected source vertex or orbit copy."
             )
     for degree in range(1, source.mesh.topological_dimension + 1):
-        _metric_visit()
+        controller_work.visit()
         present = set(map(tuple, entity_keys(target, degree)))
         keys = entity_keys(source.mesh, degree)
         if any(tuple(keys[row]) not in present for row in protected[degree]):
             raise ValueError(
-                "Periodic metric closure splits or removes a protected source entity or orbit copy."
+                "require_metric_protected_scopes.source must preserve protected source entities and their orbit copies; got Periodic metric closure splits or removes a protected source entity or orbit copy."
             )
 
 
 def _require_metric_organization(
     source: CellMeshingResult,
-    target: CellMesh,
+    target: cell_mesh_owner.CellMesh,
     edit: CellTopologyEdit,
-    policy: MeshAdaptationPolicy,
+    policy: adaptation_owner.MeshAdaptationPolicy,
     /,
+    *,
+    controller_work: _MetricControllerWork,
 ) -> None:
     dimension = source.mesh.topological_dimension
-    source_classes = _metric_source_classes(source, policy)
+    source_classes = _metric_source_classes(
+        source, policy, controller_work=controller_work
+    )
     origins: dict[int, set[int]] = {}
     for old, new in zip(
         edit.relations[dimension].source_keys[:, 0],
         edit.relations[dimension].target_keys[:, 0],
         strict=True,
     ):
-        _metric_visit()
+        controller_work.visit()
         if int(old) not in source_classes:
             raise ValueError(
-                "Periodic metric cell ancestry names a stale or absent original scientific cell."
+                "require_metric_organization.source must preserve scientific source cell classes; got Periodic metric cell ancestry names a stale or absent scientific cell."
             )
         origins.setdefault(int(new), set()).add(source_classes[int(old)])
     for identifier in entity_keys(target, dimension)[:, 0]:
-        _metric_visit()
+        controller_work.visit()
         if int(identifier) in source_classes:
             origins.setdefault(int(identifier), set()).add(
                 source_classes[int(identifier)]
             )
         if len(origins.get(int(identifier), ())) != 1:
             raise ValueError(
-                "Periodic metric closure merges or loses scientific source cell classes."
+                "require_metric_organization.source must preserve scientific source cell classes; got Periodic metric closure merges or loses scientific source cell classes."
             )
 
 
 def metric_target_lineage(
-    source: CellMesh, edit: CellTopologyEdit, target: CellMesh, /
+    source: cell_mesh_owner.CellMesh,
+    edit: CellTopologyEdit,
+    target: cell_mesh_owner.CellMesh,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
 ) -> MeshLineage:
-    """Bind ancestry to the actual reconstructed carrier by scientific identity."""
-    from ._lineage import MeshLineage
-    from ._topology_edit import _entity_lineage, key_rows
+    """Bind ancestry to the reconstructed carrier by scientific identity."""
 
     staged, _, _ = assemble_topology_edit(
-        source, edit, numeric_version=target.numeric_version
+        source, edit, numeric_version=target.numeric_version, budget=budget
     )
     if staged.topological_dimension != target.topological_dimension:
-        raise ValueError("Reconstruction changes the staged carrier dimension.")
+        raise ValueError(
+            "metric_target_lineage.source must preserve staged dimensions, scientific IDs, incidence, and identification; got Reconstruction changes the staged carrier dimension."
+        )
     for degree in range(source.topological_dimension + 1):
         staged_ids = np.asarray(staged.entity_set(degree).entity_ids)
         target_ids = np.asarray(target.entity_set(degree).entity_ids)
         rows = key_rows(staged_ids[:, None], target_ids[:, None])
         if staged_ids.size != target_ids.size or np.any(rows < 0):
             raise ValueError(
-                "Reconstruction changes scientific carrier entity identities."
+                "metric_target_lineage.source must preserve staged dimensions, scientific IDs, incidence, and identification; got Reconstruction changes scientific carrier entity identities."
             )
         if not np.array_equal(
             entity_keys(staged, degree)[rows], entity_keys(target, degree)
         ):
-            raise ValueError("Reconstruction changes scientific carrier incidence.")
+            raise ValueError(
+                "metric_target_lineage.source must preserve staged dimensions, scientific IDs, incidence, and identification; got Reconstruction changes scientific carrier incidence."
+            )
     if (staged.periodic_topology is None) != (target.periodic_topology is None):
-        raise ValueError("Reconstruction changes the periodic quotient identity.")
+        raise ValueError(
+            "metric_target_lineage.source must preserve staged dimensions, scientific IDs, incidence, and identification; got Reconstruction changes the periodic quotient identity."
+        )
     if staged.periodic_topology is not None:
-        from ..discretization._periodic_topology import _identification_id
-
         if target.periodic_topology is None:
             raise RuntimeError(
-                "Matched periodic reconstruction lost its target quotient."
+                "metric_target_lineage.source must preserve staged dimensions, scientific IDs, incidence, and identification; got Matched periodic reconstruction lost its target quotient."
             )
-        if _identification_id(staged.periodic_topology.cell) != _identification_id(
+        if identification_id(staged.periodic_topology.cell) != identification_id(
             target.periodic_topology.cell
         ):
             raise ValueError(
-                "Reconstruction changes the original periodic identification."
+                "metric_target_lineage.source must preserve staged dimensions, scientific IDs, incidence, and identification; got Reconstruction changes the periodic identification."
             )
-        _require_complete_periodic_entity_changes(source, target, edit)
+        _require_complete_periodic_entity_changes(
+            source, target, edit, scope=scope, budget=budget
+        )
     return MeshLineage(
         source.topology_id,
         target.topology_id,
-        tuple(_entity_lineage(source, target, relation) for relation in edit.relations),
+        tuple(entity_lineage(source, target, relation) for relation in edit.relations),
     )
 
 
+class _MetricMembership(StrictModule):
+    dimensions: dict[int, GeometryAssociation]
+
+
+def _prepare_metric_membership(
+    source: CellMeshingResult,
+    target: cell_mesh_owner.CellMesh,
+    stage: PeriodicMetricGeometryStage,
+    controller_work: _MetricControllerWork,
+) -> _MetricMembership:
+    if not isinstance(stage.source_membership, tuple) or not stage.source_membership:
+        raise ValueError(
+            "prepare_metric_membership.source must bind source membership to every target entity dimension; got The periodic full-map builder must return all required source membership."
+        )
+    declared = {
+        (association.source_id, association.source_revision)
+        for association in source.associations
+    }
+    dimensions = {}
+    for association in stage.source_membership:
+        controller_work.visit()
+        if not isinstance(association, GeometryAssociation):
+            raise TypeError(
+                "prepare_metric_membership.source must bind source membership to every target entity dimension; got Periodic source membership requires deterministic GeometryAssociation records."
+            )
+        if (
+            association.source_id,
+            association.source_revision,
+        ) not in declared or not association.complete:
+            raise ValueError(
+                "prepare_metric_membership.source must bind source membership to every target entity dimension; got Periodic successor membership loses its source/version or is undecided."
+            )
+        matches = [
+            degree
+            for degree in range(target.topological_dimension + 1)
+            if target.entity_set(degree).entity_set_id == association.target_entity_set_id
+        ]
+        if len(matches) != 1 or matches[0] in dimensions:
+            raise ValueError(
+                "prepare_metric_membership.source must bind source membership to every target entity dimension; got Periodic successor membership is stale or duplicates an entity dimension."
+            )
+        degree = matches[0]
+        association.validate_target(target.entity_set(degree))
+        association.target_rows(np.asarray(target.entity_set(degree).entity_ids))
+        dimensions[degree] = association
+    if set(dimensions) != set(range(target.topological_dimension + 1)):
+        raise ValueError(
+            "prepare_metric_membership.source must bind source membership to every target entity dimension; got Periodic successor membership omits an mesh entity dimension."
+        )
+    return _MetricMembership(dimensions)
+
+
+def _certify_metric_membership(
+    source: CellMeshingResult,
+    target: cell_mesh_owner.CellMesh,
+    membership: _MetricMembership,
+    controller_work: _MetricControllerWork,
+) -> _MetricMembership:
+    dimensions = membership.dimensions
+    for association in source.associations:
+        controller_work.visit()
+        matches = [
+            degree
+            for degree in range(source.mesh.topological_dimension + 1)
+            if source.mesh.entity_set(degree).entity_set_id
+            == association.target_entity_set_id
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                "certify_metric_membership.source must preserve retained scientific source strata and fixed corners; got Source geometry membership does not bind its scientific mesh epoch."
+            )
+        degree = matches[0]
+        successor = dimensions[degree]
+        old_keys = entity_keys(source.mesh, degree)
+        old_ids = np.asarray(source.mesh.entity_set(degree).entity_ids)
+        source_rows = association.target_rows(old_ids)
+        new_ids = np.asarray(target.entity_set(degree).entity_ids)
+        target_rows = successor.target_rows(new_ids)
+        new_key_rows = {
+            tuple(key): row for row, key in enumerate(entity_keys(target, degree))
+        }
+        for old_row, key in enumerate(old_keys):
+            controller_work.visit()
+            row = int(source_rows[old_row])
+            ambiguous = bool(np.asarray(association.ambiguous)[row])
+            corner = (
+                degree == 0 and int(np.asarray(association.source_dimensions)[row]) == 0
+            )
+            if ambiguous or corner:
+                if tuple(key) not in new_key_rows:
+                    raise ValueError(
+                        "certify_metric_membership.source must preserve retained scientific source strata and fixed corners; got Periodic metric closure removes a fixed or ambiguous source class."
+                    )
+                if degree == 0 and not np.array_equal(
+                    np.asarray(source.mesh.coordinates)[old_row],
+                    np.asarray(target.coordinates)[new_key_rows[tuple(key)]],
+                ):
+                    raise ValueError(
+                        "certify_metric_membership.source must preserve retained scientific source strata and fixed corners; got Periodic metric closure relocates a scientific source corner."
+                    )
+            if tuple(key) in new_key_rows:
+                after = int(target_rows[new_key_rows[tuple(key)]])
+                if (
+                    association.source_entities.entity_id(row),
+                    association.source_entities.occurrence_path(row),
+                ) != (
+                    successor.source_entities.entity_id(after),
+                    successor.source_entities.occurrence_path(after),
+                ):
+                    raise ValueError(
+                        "certify_metric_membership.source must preserve retained scientific source strata and fixed corners; got Periodic metric closure changes a retained scientific source stratum."
+                    )
+    return membership
+
+
+@checked
 def _require_metric_geometry_stage(
     source: CellMeshingResult,
-    target: CellMesh,
+    target: cell_mesh_owner.CellMesh,
     edit: CellTopologyEdit,
     stage: PeriodicMetricGeometryStage,
-    policy: MeshAdaptationPolicy,
+    policy: adaptation_owner.MeshAdaptationPolicy,
     certificate_limits: MeshCertificateLimits,
     /,
+    *,
+    controller_work: _MetricControllerWork,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
-    if not isinstance(stage, PeriodicMetricGeometryStage):
-        raise TypeError(
-            "The owning geometry builder must return PeriodicMetricGeometryStage."
-        )
     if stage.target_mesh is not target:
         raise ValueError(
-            "The periodic geometry stage must retain its actual target carrier."
+            "require_metric_geometry_stage.source must bind its target, correspondence, transition, and authored certificate policies; got The periodic geometry stage must retain its target carrier."
         )
     if not isinstance(stage.target_geometry, CellGeometrySpec) or not isinstance(
         stage.geometry_transition, CellGeometryTransition
     ):
         raise TypeError(
-            "A periodic geometry stage requires actual complete geometry and transition owners."
+            "require_metric_geometry_stage.source must bind its target, correspondence, transition, and authored certificate policies; got A periodic geometry stage requires all required geometry and transition owners."
         )
     correspondence = stage.source_correspondence
-    if not isinstance(
-        correspondence, (PreparedSurfaceChartDeformation, PreparedSphereChartDeformation)
-    ):
-        raise TypeError(
-            "Periodic source correspondence requires its actual Surface or Sphere owner."
-        )
-    stage.target_geometry.resolve(target)
-    correspondence.require_bound(
-        source.mesh, source.geometry, target, stage.target_geometry
-    )
+    match correspondence:
+        case PreparedSphereChartDeformation():
+            stage.target_geometry.resolve(target, budget=budget)
+            correspondence.require_bound(
+                source.mesh, source.geometry, target, stage.target_geometry, budget=budget
+            )
+        case PreparedSurfaceChartDeformation():
+            stage.target_geometry.resolve(target, budget=budget)
+            correspondence.require_bound(
+                source.mesh, source.geometry, target, stage.target_geometry
+            )
+        case _:
+            raise TypeError(
+                "require_metric_geometry_stage.source must bind its target, correspondence, transition, and authored certificate policies; got Periodic source correspondence requires its Surface or Sphere owner."
+            )
     if (
         correspondence.target_validity.policy_id
         != policy.audit_policy.validity_policy.policy_id
     ):
         raise ValueError(
-            "The periodic full-map builder renewed or changed the original validity policy."
+            "require_metric_geometry_stage.source must bind its target, correspondence, transition, and authored certificate policies; got The periodic full-map builder renewed or changed the validity policy."
         )
     if correspondence.target_embedding.binding.limits_id != certificate_limits.limits_id:
         raise ValueError(
-            "The periodic full-map builder changed the original authored certificate limits."
+            "require_metric_geometry_stage.source must bind its target, correspondence, transition, and authored certificate policies; got The periodic full-map builder changed the authored certificate limits."
         )
     transition = stage.geometry_transition
     if (
@@ -5272,122 +6767,32 @@ def _require_metric_geometry_stage(
         cell_geometry_id(stage.target_geometry),
     ) or cell_geometry_id(transition.geometry) != cell_geometry_id(stage.target_geometry):
         raise ValueError(
-            "The periodic full-map transition is stale for its actual source or target."
+            "require_metric_geometry_stage.source must bind its target, correspondence, transition, and authored certificate policies; got The periodic full-map transition is stale for its source or target."
         )
     if not np.array_equal(transition.vertex_coordinates, target.coordinates):
         raise ValueError(
-            "The periodic full-map transition does not place the actual target vertices."
+            "require_metric_geometry_stage.source must bind its target, correspondence, transition, and authored certificate policies; got The periodic full-map transition does not place the target vertices."
         )
-    if not isinstance(stage.source_membership, tuple) or not stage.source_membership:
-        raise ValueError(
-            "The periodic full-map builder must return complete actual source membership."
-        )
-    declared = {
-        (association.source_id, association.source_revision)
-        for association in source.associations
-    }
-    dimensions = {}
-    for association in stage.source_membership:
-        _metric_visit()
-        if not isinstance(association, GeometryAssociation):
-            raise TypeError(
-                "Periodic source membership requires canonical GeometryAssociation records."
-            )
-        if (
-            association.source_id,
-            association.source_revision,
-        ) not in declared or not association.complete:
-            raise ValueError(
-                "Periodic successor membership loses its original source/version or is undecided."
-            )
-        matches = [
-            degree
-            for degree in range(target.topological_dimension + 1)
-            if target.entity_set(degree).entity_set_id == association.target_entity_set_id
-        ]
-        if len(matches) != 1 or matches[0] in dimensions:
-            raise ValueError(
-                "Periodic successor membership is stale or duplicates an entity dimension."
-            )
-        degree = matches[0]
-        association.validate_target(target.entity_set(degree))
-        association.target_rows(np.asarray(target.entity_set(degree).entity_ids))
-        dimensions[degree] = association
-    if set(dimensions) != set(range(target.topological_dimension + 1)):
-        raise ValueError(
-            "Periodic successor membership omits an actual mesh entity dimension."
-        )
-    for association in source.associations:
-        _metric_visit()
-        matches = [
-            degree
-            for degree in range(source.mesh.topological_dimension + 1)
-            if source.mesh.entity_set(degree).entity_set_id
-            == association.target_entity_set_id
-        ]
-        if len(matches) != 1:
-            raise ValueError(
-                "Source geometry membership does not bind its scientific mesh epoch."
-            )
-        degree = matches[0]
-        successor = dimensions[degree]
-        old_keys = entity_keys(source.mesh, degree)
-        old_ids = np.asarray(source.mesh.entity_set(degree).entity_ids)
-        source_rows = association.target_rows(old_ids)
-        new_ids = np.asarray(target.entity_set(degree).entity_ids)
-        target_rows = successor.target_rows(new_ids)
-        new_key_rows = {
-            tuple(key): row for row, key in enumerate(entity_keys(target, degree))
-        }
-        for old_row, key in enumerate(old_keys):
-            _metric_visit()
-            row = int(source_rows[old_row])
-            ambiguous = bool(np.asarray(association.ambiguous)[row])
-            corner = (
-                degree == 0 and int(np.asarray(association.source_dimensions)[row]) == 0
-            )
-            if ambiguous or corner:
-                if tuple(key) not in new_key_rows:
-                    raise ValueError(
-                        "Periodic metric closure removes a fixed or ambiguous source class."
-                    )
-                if degree == 0 and not np.array_equal(
-                    np.asarray(source.mesh.coordinates)[old_row],
-                    np.asarray(target.coordinates)[new_key_rows[tuple(key)]],
-                ):
-                    raise ValueError(
-                        "Periodic metric closure relocates a scientific source corner."
-                    )
-            if tuple(key) in new_key_rows:
-                after = int(target_rows[new_key_rows[tuple(key)]])
-                if (
-                    association.source_entity_ids[row],
-                    association.source_occurrence_paths[row],
-                ) != (
-                    successor.source_entity_ids[after],
-                    successor.source_occurrence_paths[after],
-                ):
-                    raise ValueError(
-                        "Periodic metric closure changes a retained scientific source stratum."
-                    )
+    membership = _prepare_metric_membership(source, target, stage, controller_work)
+    _certify_metric_membership(source, target, membership, controller_work)
 
 
 def _require_metric_output_limits(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     stage: PeriodicMetricGeometryStage | None,
     edit: CellTopologyEdit,
     limits: MeshingLimits,
     /,
+    *,
+    controller_work: _MetricControllerWork,
 ) -> None:
-    from .._model._structure import model_array_bytes
-    from .providers._native_publication import _published_entity_limits
 
-    _metric_visit(mesh.topological_dimension + 1 + len(mesh.topology.incidences))
-    _published_entity_limits(mesh, limits)
-    _metric_visit()
+    controller_work.visit(mesh.topological_dimension + 1 + len(mesh.topology.incidences))
+    published_entity_limits(mesh, limits)
+    controller_work.visit()
     if model_array_bytes((mesh, stage, edit)) > limits.maximum_data_bytes:
         raise ValueError(
-            "Periodic metric full-map stage exceeds its complete original retained-data capacity."
+            "require_metric_output_limits.mesh must fit the authored publication and retained-data limits; got Periodic metric full-map stage exceeds its all required retained-data capacity."
         )
 
 
@@ -5396,9 +6801,10 @@ def _metric_identity_storage(
     witness: PeriodicVertexOrbitWitness | None,
     ledger: CoordinateEnclosureBudget,
     /,
+    *,
+    controller_work: _MetricControllerWork,
 ) -> int:
-    """Bound actual retained bank DAG metadata, separately from numerical buffers."""
-    import sys
+    """Bound retained bank DAG metadata, separately from numerical buffers."""
 
     pending_banks: list[tuple[PeriodicEntityIdentityBank, ...]] = [banks]
     pending_witnesses = [] if witness is None else [witness]
@@ -5406,11 +6812,11 @@ def _metric_identity_storage(
     storage = 0
     while pending_witnesses:
         owner = pending_witnesses.pop()
-        _metric_visit()
+        controller_work.visit()
         if id(owner) in seen_witnesses:
             continue
         seen_witnesses.add(id(owner))
-        # Bank-reference lists and witness dedup tables are included before grow.
+        # Bank-reference lists and evidence dedup tables are included before grow.
         ledger.reserve(0, 1024)
         storage += 1024
         pending_banks.extend((owner.quotient_entities, owner.retained_quotient_entities))
@@ -5420,12 +6826,20 @@ def _metric_identity_storage(
     pending: list[object] = list(pending_banks)
     while pending:
         value = pending.pop()
-        _metric_visit()
+        controller_work.visit()
         if id(value) in seen:
             continue
         seen.add(id(value))
-        # Actual immutable tuple/int payload plus conservative stack/set overhead.
-        upper = sys.getsizeof(value) + 512
+        # immutable tuple/int payload plus conservative stack/set overhead.
+        match value:
+            case tuple():
+                upper = 64 + 8 * len(value) + 512
+            case int():
+                upper = bigint_bytes(abs(value).bit_length()) + 512
+            case _:
+                raise TypeError(
+                    "metric_identity_storage.banks must contain retained tuple and integer identity metadata; got Periodic identity storage must contain tuple/int metadata."
+                )
         ledger.reserve(0, upper)
         storage += upper
         if isinstance(value, tuple):
@@ -5433,19 +6847,25 @@ def _metric_identity_storage(
     return storage
 
 
+class _MetricAdmission(StrictModule):
+    work_upper: int = eqx.field(static=True)
+    host_upper: int = eqx.field(static=True)
+
+
 def _metric_controller_admission(
     source: CellMeshingResult,
     candidate: CellTopologyEdit,
     exact_stencils: Mapping[int, ConstructionPointKey],
     limits: MeshingLimits,
-    coordinate_budget: CoordinateEnclosureBudget,
+    budget: CoordinateEnclosureBudget,
     /,
-) -> tuple[int, int]:
-    import sys
+    *,
+    scope: NativeExecutionScope,
+) -> _MetricAdmission:
 
-    # The authoritative support has at most one carrier per source entity.
-    # Each carrier can inspect the source incidence bank; dictionaries and exact
-    # canonical keys have a separately proved CPython bound (not native RSS).
+    # The support has at most one carrier per source entity.
+    # Each carrier can inspect the source incidence bank; dictionaries and rational
+    # deterministic keys have a separately proved CPython bound (not native RSS).
     # Fraction numerator/denominator growth is bounded by all supplied input bits.
     vertices = source.mesh.coordinates.shape[0]
     cells = sum(block.cell_count for block in source.mesh.blocks)
@@ -5456,13 +6876,8 @@ def _metric_controller_admission(
         for key in exact_stencils.values()
         for _, weight in key
     )
-    digits = (
-        max(1, bit_bound) + sys.int_info.bits_per_digit - 1
-    ) // sys.int_info.bits_per_digit
     coefficient_upper = (
-        512
-        + 32 * source.mesh.ambient_dimension
-        + 2 * (sys.getsizeof(0) + digits * sys.int_info.sizeof_digit)
+        512 + 32 * source.mesh.ambient_dimension + 2 * bigint_bytes(max(1, bit_bound))
     )
     candidate_vertices = candidate.vertex_global_ids.size
     relation_rows = sum(record.kinds.size for record in candidate.relations)
@@ -5492,39 +6907,33 @@ def _metric_controller_admission(
     work_upper = (
         records_upper * copies_upper * (arity + source.mesh.topological_dimension + 4)
     )
-    execution = current_native_execution_budget()
-    if execution is None:
+    allowance = scope.remaining()
+    if host_upper > min(limits.maximum_scratch_bytes, budget.maximum_memory_bytes):
         raise ValueError(
-            "Periodic metric synchronization requires the actual original native execution scope."
+            "metric_controller_admission.source must fit the source request work, wall, and scratch allowances; got Periodic metric host-object preparation exceeds its proven scratch upper bound."
         )
-    allowance = execution.remaining()
-    if host_upper > min(
-        limits.maximum_scratch_bytes, coordinate_budget.maximum_memory_bytes
-    ):
+    if work_upper > limits.maximum_work_units or allowance.remaining_seconds <= 0:
         raise ValueError(
-            "Periodic metric host-object preparation exceeds its proven original scratch upper bound."
+            "metric_controller_admission.source must fit the source request work, wall, and scratch allowances; got Periodic metric preparation exceeds the work or wall allowance."
         )
-    if work_upper > limits.maximum_work_units or allowance.remaining_wall_seconds <= 0:
-        raise ValueError(
-            "Periodic metric preparation exceeds the original work or wall allowance."
-        )
-    execution.admit_work_bound(work_upper)
-    coordinate_budget.reserve(0, host_upper)
-    return work_upper, host_upper
+    budget.admit_work_bound(work_upper)
+    budget.reserve(0, host_upper)
+    return _MetricAdmission(work_upper, host_upper)
 
 
-def synchronize_periodic_metric_edit(
-    source: CellMeshingResult,
-    candidate: CellTopologyEdit,
-    exact_stencils: Mapping[int, ConstructionPointKey],
-    /,
-    *,
-    operation: PeriodicMetricOperation,
-    limits: MeshingLimits,
-    policy: MeshAdaptationPolicy,
-    coordinate_budget: CoordinateEnclosureBudget,
-    certificate_limits: MeshCertificateLimits,
-    prior_stage: PeriodicMetricOrbitOutcome | None,
+class PeriodicMetricEditRequest(StrictModule, NonTrainableState):
+    """Bind one periodic metric attempt to its source, owners, and resource ledger."""
+
+    source: CellMeshingResult
+    candidate: CellTopologyEdit
+    exact_stencils: Mapping[int, ConstructionPointKey]
+    scope: NativeExecutionScope
+    operation: PeriodicMetricOperation
+    limits: MeshingLimits
+    policy: adaptation_owner.MeshAdaptationPolicy
+    budget: CoordinateEnclosureBudget
+    certificate_limits: MeshCertificateLimits
+    prior_stage: PeriodicMetricOrbitOutcome | None
     build_candidate: Callable[
         [
             CellTopologyEdit,
@@ -5532,352 +6941,590 @@ def synchronize_periodic_metric_edit(
             PeriodicMetricOrbitSelection,
         ],
         PeriodicMetricCandidateStage,
-    ],
-    build_geometry: Callable[[CellTopologyEdit, CellMesh], PeriodicMetricGeometryStage],
-    retained_quotient_entities: tuple[PeriodicEntityIdentityBank, ...],
-) -> PeriodicMetricOrbitOutcome:
-    """Stage complete authoritative carrier operations, full maps and correspondence.
+    ]
+    build_geometry: Callable[
+        [CellTopologyEdit, cell_mesh_owner.CellMesh], PeriodicMetricGeometryStage
+    ]
+    retained_quotient_entities: tuple[PeriodicEntityIdentityBank, ...]
 
-    Nothing mutates the accepted source. Any invalid orbit, incompatible cavity,
-    undecided source geometry or original resource refusal raises before a
-    successor is returned. The caller's geometry builder owns reconstruction,
-    source queries and its original fidelity/quality admission.
-    """
-    from ._adaptation import MeshAdaptationPolicy
+    @checked
+    def __init__(
+        self,
+        source: CellMeshingResult,
+        candidate: CellTopologyEdit,
+        exact_stencils: Mapping[int, ConstructionPointKey],
+        /,
+        *,
+        scope: NativeExecutionScope,
+        operation: PeriodicMetricOperation,
+        limits: MeshingLimits,
+        policy: adaptation_owner.MeshAdaptationPolicy,
+        budget: CoordinateEnclosureBudget,
+        certificate_limits: MeshCertificateLimits,
+        prior_stage: PeriodicMetricOrbitOutcome | None,
+        build_candidate: Callable[
+            [
+                CellTopologyEdit,
+                Mapping[int, ConstructionPointKey],
+                PeriodicMetricOrbitSelection,
+            ],
+            PeriodicMetricCandidateStage,
+        ],
+        build_geometry: Callable[
+            [CellTopologyEdit, cell_mesh_owner.CellMesh], PeriodicMetricGeometryStage
+        ],
+        retained_quotient_entities: tuple[PeriodicEntityIdentityBank, ...],
+    ) -> None:
+        self.source = source
+        self.candidate = candidate
+        self.exact_stencils = exact_stencils
+        self.scope = scope
+        self.operation = operation
+        self.limits = limits
+        self.policy = policy
+        self.budget = budget
+        self.certificate_limits = certificate_limits
+        self.prior_stage = prior_stage
+        self.build_candidate = build_candidate
+        self.build_geometry = build_geometry
+        self.retained_quotient_entities = retained_quotient_entities
 
-    if not isinstance(source, CellMeshingResult) or not isinstance(
-        candidate, CellTopologyEdit
-    ):
-        raise TypeError(
-            "Periodic metric synchronization requires actual source and private edit records."
-        )
-    if not isinstance(policy, MeshAdaptationPolicy) or not isinstance(
-        limits, MeshingLimits
-    ):
-        raise TypeError(
-            "Periodic metric synchronization requires the authored adaptation policy and limits."
-        )
+
+class _MetricPreparation(StrictModule):
+    operation: PeriodicMetricOperation = eqx.field(static=True)
+    orbits: PeriodicConstructionOrbits
+    original_geometry_id: str = eqx.field(static=True)
+
+
+class _MetricContinuation(StrictModule):
+    mesh: cell_mesh_owner.CellMesh
+    geometry: CellGeometrySpec
+    retained: tuple[PeriodicEntityIdentityBank, ...]
+    allocation_prior: tuple[cell_mesh_owner.CellMesh, PeriodicVertexOrbitWitness] | None
+    host_upper: int = eqx.field(static=True)
+
+
+class _MetricCandidate(StrictModule):
+    edit: CellTopologyEdit
+    target: cell_mesh_owner.CellMesh
+    exact: dict[int, ConstructionPointKey]
+    selection: PeriodicMetricOrbitSelection
+    current_orbits: PeriodicConstructionOrbits
+    cavity_count: int = eqx.field(static=True)
+    host_upper: int = eqx.field(static=True)
+
+
+class _MetricGeometryExecution(StrictModule):
+    stage: PeriodicMetricGeometryStage
+
+
+class _MetricCertification(StrictModule):
+    stage: PeriodicMetricGeometryStage
+    evidence: PeriodicMetricOrbitEvidence
+
+
+def _prepare_metric_edit(request: PeriodicMetricEditRequest) -> _MetricPreparation:
+    source = request.source
+    candidate = request.candidate
+    operation = request.operation
+    policy = request.policy
+    limits = request.limits
+    budget = request.budget
     if not bool(eqx.tree_equal(limits, policy.limits, typematch=True)):
         raise ValueError(
-            "Periodic metric synchronization cannot reset the original policy limits."
-        )
-    if (
-        not isinstance(coordinate_budget, CoordinateEnclosureBudget)
-        or not callable(build_geometry)
-        or not callable(build_candidate)
-    ):
-        raise TypeError(
-            "Periodic synchronization requires its original ledger and actual candidate/geometry owners."
-        )
-    if not isinstance(certificate_limits, MeshCertificateLimits):
-        raise TypeError(
-            "Periodic synchronization requires the original authored certificate limits."
+            "prepare_metric_edit.request must retain compatible operation ancestry and an unchanged Cartesian source frame; got Periodic metric synchronization cannot reset the policy limits."
         )
     selected = parse(operation, PeriodicMetricOperation, "operation")
     if selected == "relocate" and not policy.relocation:
-        raise ValueError("The original adaptation policy forbids periodic relocation.")
+        raise ValueError(
+            "prepare_metric_edit.request must retain compatible operation ancestry and an unchanged Cartesian source frame; got The adaptation policy forbids periodic relocation."
+        )
     if candidate.operation not in ("local_reconnection", "relocation"):
         raise ValueError(
-            "Nested family constructions must use their concrete periodic template owner."
+            "prepare_metric_edit.request must retain compatible operation ancestry and an unchanged Cartesian source frame; got Nested family constructions must use their concrete periodic template owner."
         )
     if (selected == "relocate") != (candidate.operation == "relocation"):
         raise ValueError(
-            "The periodic operation does not describe the actual private metric candidate."
+            "prepare_metric_edit.request must retain compatible operation ancestry and an unchanged Cartesian source frame; got The periodic operation does not describe the private metric candidate."
         )
     if candidate.refinement is not None or candidate.coarsening is not None:
         raise ValueError(
-            "Local metric candidates cannot substitute nested family geometry witnesses."
+            "prepare_metric_edit.request must retain compatible operation ancestry and an unchanged Cartesian source frame; got Local metric candidates cannot substitute nested family geometry witnesses."
         )
     if candidate.shared_faces is not None or candidate.prescribed_entity_ids:
         raise ValueError(
-            "A concrete restored/template candidate must be synchronized by its owning family."
+            "prepare_metric_edit.request must retain compatible operation ancestry and an unchanged Cartesian source frame; got A concrete restored/template candidate must be synchronized by its family."
         )
     dimension = source.mesh.topological_dimension
     if tuple(record.dimension for record in candidate.relations) != tuple(
         range(dimension + 1)
     ):
-        raise ValueError("The private metric candidate omits complete entity ancestry.")
+        raise ValueError(
+            "prepare_metric_edit.request must retain compatible operation ancestry and an unchanged Cartesian source frame; got The private metric candidate omits all required entity ancestry."
+        )
     if not source.coordinate_contract.is_orthonormal_cartesian:
         raise ValueError(
-            "Periodic metric group actions require the actual Cartesian source frame."
+            "prepare_metric_edit.request must retain compatible operation ancestry and an unchanged Cartesian source frame; got Periodic metric group actions require the Cartesian source frame."
         )
-    source.geometry.resolve(source.mesh)
+    source.geometry.resolve(source.mesh, budget=budget)
     orbits = PeriodicConstructionOrbits(source.mesh)
     original_geometry_id = cell_geometry_id(source.geometry)
-    current = source.mesh
-    current_geometry = source.geometry
-    retained = retained_quotient_entities
-    allocation_prior = None
     if (
         candidate.periodic_orbits is not None
         and candidate.periodic_orbits.source_topology_id != source.mesh.topology_id
     ):
         raise ValueError(
-            "The private metric candidate carries a stale scientific source topology."
+            "prepare_metric_edit.request must retain compatible operation ancestry and an unchanged Cartesian source frame; got The private metric candidate carries a stale scientific source topology."
         )
-    execution = current_native_execution_budget()
-    if execution is None:
-        raise ValueError(
-            "Periodic synchronization requires the original native execution scope."
-        )
-    controller_work = _MetricControllerWork(coordinate_budget, execution)
-    with (
-        coordinate_budget.activate(),
-        coordinate_budget.temporary_scope(),
-        controller_work.activate(),
-    ):
-        _, host_upper = _metric_controller_admission(
-            source, candidate, exact_stencils, limits, coordinate_budget
-        )
-        if prior_stage is not None:
-            if not isinstance(prior_stage, PeriodicMetricOrbitOutcome):
-                raise TypeError(
-                    "A continued periodic edit requires the actual prior private stage."
-                )
-            if (
-                coordinate_budget.work_units < prior_stage.coordinate_work_units
-                or coordinate_budget.peak_bytes_upper
-                < prior_stage.coordinate_peak_storage_upper_bytes
-            ):
-                raise ValueError(
-                    "A private periodic continuation cannot renew its original coordinate ledger."
-                )
-            if (
-                prior_stage.source_result_id,
-                prior_stage.source_topology_id,
-                prior_stage.source_numeric_version,
-                prior_stage.source_frame_id,
-                prior_stage.source_geometry_id,
-                prior_stage.coordinate_contract_id,
-                prior_stage.policy_id,
-                prior_stage.certificate_limits_id,
-            ) != (
-                source.result_id,
-                source.mesh.topology_id,
-                source.mesh.numeric_version,
-                canonical_fingerprint(orbits.source_frame_id),
-                cell_geometry_id(source.geometry),
-                source.coordinate_contract.spatial_id,
-                policy.policy_id,
-                certificate_limits.limits_id,
-            ):
-                raise ValueError(
-                    "The private periodic continuation is stale or renews the original source policy."
-                )
-            current = prior_stage.target_mesh
-            current_geometry = prior_stage.geometry_stage.target_geometry
-            if (
-                current.numeric_version,
-                canonical_fingerprint(array_tree_fingerprint(current.coordinates)),
-                cell_geometry_id(current_geometry),
-            ) != (
-                prior_stage.target_numeric_version,
-                prior_stage.target_frame_id,
-                prior_stage.target_geometry_id,
-            ):
-                raise ValueError(
-                    "The private periodic continuation changed its actual current coordinate frame or map."
-                )
-            if prior_stage.periodic_witness is not prior_stage.edit.periodic_orbits:
-                raise ValueError(
-                    "The private periodic continuation lost its exact owning orbit witness."
-                )
-            current_periodic = _require_periodic_topology(current)
-            if (
-                prior_stage.evidence.embedding.periodic_topology_id
-                != current_periodic.periodic_topology_id
-                or prior_stage.evidence.quotient.periodic_topology_id
-                != current_periodic.periodic_topology_id
-                or prior_stage.evidence.status != "complete"
-            ):
-                raise ValueError(
-                    "The private periodic continuation lost its complete actual quotient embedding evidence."
-                )
-            _require_metric_stencils(
-                source.mesh, prior_stage.edit, prior_stage.exact_stencils
-            )
-            _require_metric_geometry_stage(
-                source,
-                current,
-                prior_stage.edit,
-                prior_stage.geometry_stage,
-                policy,
-                certificate_limits,
-            )
-            _require_metric_protected_scopes(source, current, policy)
-            _require_metric_organization(source, current, prior_stage.edit, policy)
-            retained = prior_stage.periodic_witness.quotient_entities
-            allocation_prior = (current, prior_stage.periodic_witness)
-        host_upper += _metric_identity_storage(
-            retained,
-            None if allocation_prior is None else allocation_prior[1],
-            coordinate_budget,
-        )
-        current_orbits = PeriodicConstructionOrbits(current)
-        stencils = _require_metric_stencils(source.mesh, candidate, exact_stencils)
-        selection = _metric_orbit_selection(
-            source,
-            candidate,
-            selected,
-            policy,
-            current_orbits,
-            current,
-            current_geometry,
-            prior_stage,
-        )
-        required_incidence = {
-            identifier
-            for carrier in selection.carriers
-            for identifier in carrier.incident_cell_global_ids
-        }
-        execution.admit_cavity(len(required_incidence))
-        controller_work.flush()
-        candidate_stage = build_candidate(candidate, stencils, selection)
-        controller_work.flush()
-        orbits.require_source(source.mesh)
-        current_orbits.require_source(current)
-        if cell_geometry_id(current_geometry) != selection.source_geometry_id:
-            raise ValueError("The owning callback changed the actual current source map.")
-        exact, cavity_count = _require_metric_candidate_stage(
-            source, current, candidate, candidate_stage, selection, stencils
-        )
-        edit = candidate_stage.edit
-        _, additional_host_upper = _metric_controller_admission(
-            source, edit, exact, limits, coordinate_budget
-        )
-        host_upper += additional_host_upper
-        from ._topology_edit import _build_mesh
+    return _MetricPreparation(selected, orbits, original_geometry_id)
 
-        probe = _build_mesh(edit, source.mesh.numeric_version, None)
-        _require_metric_operation_support(current, probe, selection)
-        _metric_visit(probe.coordinates.shape[0])
-        witness = orbits.witness(
-            source.mesh, probe, exact, retained, allocation_prior=allocation_prior
-        )
-        host_upper += _metric_identity_storage(
-            witness.quotient_entities, witness, coordinate_budget
-        )
-        edit = edit._replace(periodic_orbits=witness)
-        version = canonical_fingerprint(
-            {
-                "kind": "periodic-source-metric-frame",
-                "source": source.mesh.numeric_version,
-                "operation": selected,
-                "coordinates": array_tree_fingerprint(edit.coordinates),
-            }
-        )
-        target, _, _ = assemble_topology_edit(source.mesh, edit, numeric_version=version)
-        _require_metric_output_limits(target, None, edit, limits)
-        _require_complete_periodic_entity_changes(source.mesh, target, edit)
-        _require_metric_protected_scopes(source, target, policy)
-        _require_metric_organization(source, target, edit, policy)
-        orbits.require_source(source.mesh)
-        controller_work.flush()
-        stage = build_geometry(edit, target)
-        controller_work.flush()
-        if not isinstance(stage, PeriodicMetricGeometryStage) or not isinstance(
-            stage.target_mesh, CellMesh
-        ):
+
+def _prepare_metric_continuation(
+    request: PeriodicMetricEditRequest,
+    preparation: _MetricPreparation,
+    controller_work: _MetricControllerWork,
+) -> _MetricContinuation:
+    source = request.source
+    candidate = request.candidate
+    exact_stencils = request.exact_stencils
+    limits = request.limits
+    budget = request.budget
+    scope = request.scope
+    prior_stage = request.prior_stage
+    policy = request.policy
+    certificate_limits = request.certificate_limits
+    retained_quotient_entities = request.retained_quotient_entities
+    orbits = preparation.orbits
+    current = source.mesh
+    current_geometry = source.geometry
+    retained = retained_quotient_entities
+    allocation_prior = None
+    admission = _metric_controller_admission(
+        source, candidate, exact_stencils, limits, budget, scope=scope
+    )
+    host_upper = admission.host_upper
+    if prior_stage is not None:
+        if not isinstance(prior_stage, PeriodicMetricOrbitOutcome):
             raise TypeError(
-                "The owning geometry builder must retain its actual target CellMesh."
+                "prepare_metric_continuation.request must retain source bindings, prior evidence, and the same coordinate ledger; got A continued periodic edit requires the prior private stage."
             )
-        target = stage.target_mesh
-        metric_target_lineage(source.mesh, edit, target)
-        _require_metric_protected_scopes(source, target, policy)
-        _require_metric_organization(source, target, edit, policy)
-        orbits.require_source(source.mesh)
-        current_orbits.require_source(current)
-        if cell_geometry_id(current_geometry) != selection.source_geometry_id:
+        if (
+            budget.work_units < prior_stage.coordinate_work_units
+            or budget.peak_bytes_upper < prior_stage.coordinate_peak_storage_upper_bytes
+        ):
             raise ValueError(
-                "The geometry builder changed the actual current source map."
+                "prepare_metric_continuation.request must retain source bindings, prior evidence, and the same coordinate ledger; got A private periodic continuation cannot renew its coordinate ledger."
             )
-        _require_metric_geometry_stage(
-            source, target, edit, stage, policy, certificate_limits
-        )
-        _require_metric_output_limits(target, stage, edit, limits)
-        controller_work.flush()
-        remaining = execution.remaining()
-        if remaining.remaining_work_units <= 0 or remaining.remaining_scratch_bytes <= 0:
-            raise ValueError(
-                "The original periodic certificate work or storage allowance is exhausted."
-            )
-        bounded_certificate_limits = MeshCertificateLimits(
-            maximum_candidate_pairs=min(
-                certificate_limits.maximum_candidate_pairs, remaining.remaining_work_units
-            ),
-            maximum_ray_tests=certificate_limits.maximum_ray_tests,
-            maximum_source_samples=certificate_limits.maximum_source_samples,
-            maximum_distance_evaluations=certificate_limits.maximum_distance_evaluations,
-            maximum_subdivision_depth=certificate_limits.maximum_subdivision_depth,
-            maximum_subdivision_pieces=certificate_limits.maximum_subdivision_pieces,
-            maximum_bernstein_nodes=certificate_limits.maximum_bernstein_nodes,
-            maximum_periodic_images=min(
-                certificate_limits.maximum_periodic_images,
-                remaining.remaining_scratch_bytes // max(1, target.coordinates.size * 8),
-            ),
-            maximum_work_units=min(
-                certificate_limits.maximum_work_units, remaining.remaining_work_units
-            ),
-            maximum_scratch_bytes=min(
-                certificate_limits.maximum_scratch_bytes,
-                remaining.remaining_scratch_bytes,
-            ),
-        )
-        embedding = certify_periodic_embedding(
-            target,
-            geometry=stage.target_geometry,
-            validity=stage.source_correspondence.target_validity,
-            validity_policy=policy.audit_policy.validity_policy,
-            limits=bounded_certificate_limits,
-            maximum_images=bounded_certificate_limits.maximum_periodic_images,
-            maximum_pairs=bounded_certificate_limits.maximum_candidate_pairs,
-        )
-        orbits.require_source(source.mesh)
-        current_orbits.require_source(current)
-        if cell_geometry_id(current_geometry) != selection.source_geometry_id:
-            raise ValueError(
-                "The quotient certificate changed the actual current source map."
-            )
-        if cell_geometry_id(source.geometry) != original_geometry_id:
-            raise ValueError(
-                "The periodic operation changed its immutable original full source map."
-            )
-        execution.charge(work=0)
-        witness = edit.periodic_orbits
-        if witness is None:
-            raise RuntimeError(
-                "A synchronized metric edit lost its canonical periodic witness."
-            )
-        evidence = PeriodicMetricOrbitEvidence(
-            selected,
-            "complete",
-            len(selection.carriers),
-            cavity_count,
-            controller_work.visits,
-            host_upper,
-            embedding,
-            PeriodicQuotientEvidence(target),
-        )
-        from types import MappingProxyType
-
-        return PeriodicMetricOrbitOutcome(
-            edit,
-            target,
-            witness,
-            stage,
-            MappingProxyType(exact),
+        if (
+            prior_stage.source_result_id,
+            prior_stage.source_topology_id,
+            prior_stage.source_numeric_version,
+            prior_stage.source_frame_id,
+            prior_stage.source_geometry_id,
+            prior_stage.coordinate_contract_id,
+            prior_stage.policy_id,
+            prior_stage.certificate_limits_id,
+        ) != (
             source.result_id,
             source.mesh.topology_id,
             source.mesh.numeric_version,
             canonical_fingerprint(orbits.source_frame_id),
-            source.coordinate_contract.spatial_id,
             cell_geometry_id(source.geometry),
-            target.numeric_version,
-            canonical_fingerprint(array_tree_fingerprint(target.coordinates)),
-            cell_geometry_id(stage.target_geometry),
+            source.coordinate_contract.spatial_id,
             policy.policy_id,
             certificate_limits.limits_id,
-            coordinate_budget.work_units,
-            coordinate_budget.peak_bytes_upper,
-            evidence,
+        ):
+            raise ValueError(
+                "prepare_metric_continuation.request must retain source bindings, prior evidence, and the same coordinate ledger; got The private periodic continuation is stale or renews the source policy."
+            )
+        current = prior_stage.target_mesh
+        current_geometry = prior_stage.geometry_stage.target_geometry
+        if (
+            current.numeric_version,
+            canonical_fingerprint(array_tree_fingerprint(current.coordinates)),
+            cell_geometry_id(current_geometry),
+        ) != (
+            prior_stage.target_numeric_version,
+            prior_stage.target_frame_id,
+            prior_stage.target_geometry_id,
+        ):
+            raise ValueError(
+                "prepare_metric_continuation.request must retain source bindings, prior evidence, and the same coordinate ledger; got The private periodic continuation changed its current coordinate frame or map."
+            )
+        if prior_stage.periodic_witness is not prior_stage.edit.periodic_orbits:
+            raise ValueError(
+                "prepare_metric_continuation.request must retain source bindings, prior evidence, and the same coordinate ledger; got The private periodic continuation lost its rational orbit evidence."
+            )
+        current_periodic = require_periodic_topology(current)
+        if (
+            prior_stage.evidence.embedding.periodic_topology_id
+            != current_periodic.periodic_topology_id
+            or prior_stage.evidence.quotient.periodic_topology_id
+            != current_periodic.periodic_topology_id
+            or prior_stage.evidence.status != "complete"
+        ):
+            raise ValueError(
+                "prepare_metric_continuation.request must retain source bindings, prior evidence, and the same coordinate ledger; got The private periodic continuation lost its all required quotient embedding evidence."
+            )
+        _require_metric_stencils(
+            source.mesh,
+            prior_stage.edit,
+            prior_stage.exact_stencils,
+            controller_work=controller_work,
         )
+        _require_metric_geometry_stage(
+            source,
+            current,
+            prior_stage.edit,
+            prior_stage.geometry_stage,
+            policy,
+            certificate_limits,
+            controller_work=controller_work,
+            budget=budget,
+        )
+        _require_metric_protected_scopes(
+            source, current, policy, controller_work=controller_work
+        )
+        _require_metric_organization(
+            source,
+            current,
+            prior_stage.edit,
+            policy,
+            controller_work=controller_work,
+        )
+        retained = prior_stage.periodic_witness.quotient_entities
+        allocation_prior = (current, prior_stage.periodic_witness)
+    host_upper += _metric_identity_storage(
+        retained,
+        None if allocation_prior is None else allocation_prior[1],
+        budget,
+        controller_work=controller_work,
+    )
+    return _MetricContinuation(
+        current, current_geometry, retained, allocation_prior, host_upper
+    )
+
+
+def _execute_metric_candidate(
+    request: PeriodicMetricEditRequest,
+    preparation: _MetricPreparation,
+    continuation: _MetricContinuation,
+    controller_work: _MetricControllerWork,
+) -> _MetricCandidate:
+    source = request.source
+    candidate = request.candidate
+    exact_stencils = request.exact_stencils
+    policy = request.policy
+    budget = request.budget
+    limits = request.limits
+    scope = request.scope
+    prior_stage = request.prior_stage
+    build_candidate = request.build_candidate
+    selected = preparation.operation
+    orbits = preparation.orbits
+    current = continuation.mesh
+    current_geometry = continuation.geometry
+    retained = continuation.retained
+    allocation_prior = continuation.allocation_prior
+    host_upper = continuation.host_upper
+    current_orbits = PeriodicConstructionOrbits(current)
+    stencils = _require_metric_stencils(
+        source.mesh, candidate, exact_stencils, controller_work=controller_work
+    )
+    selection = _metric_orbit_selection(
+        source,
+        candidate,
+        selected,
+        policy,
+        current_orbits,
+        current,
+        current_geometry,
+        prior_stage,
+        controller_work=controller_work,
+    )
+    required_incidence = {
+        identifier
+        for carrier in selection.carriers
+        for identifier in carrier.incident_cell_global_ids
+    }
+    _periodic_charge(cavity_cells=len(required_incidence), budget=budget)
+    controller_work.flush()
+    candidate_stage = build_candidate(candidate, stencils, selection)
+    controller_work.flush()
+    orbits.require_source(source.mesh)
+    current_orbits.require_source(current)
+    if cell_geometry_id(current_geometry) != selection.source_geometry_id:
+        raise ValueError(
+            "execute_metric_candidate.request must leave the retained source map and construction frame unchanged; got The callback changed the current source map."
+        )
+    validated = _require_metric_candidate_stage(
+        source,
+        current,
+        candidate,
+        candidate_stage,
+        selection,
+        stencils,
+        controller_work=controller_work,
+    )
+    exact, cavity_count = validated.exact, validated.cavity_count
+    edit = candidate_stage.edit
+    admission = _metric_controller_admission(
+        source, edit, exact, limits, budget, scope=scope
+    )
+    host_upper += admission.host_upper
+
+    probe = build_mesh(edit, source.mesh.numeric_version, None, budget=budget)
+    _require_metric_operation_support(
+        current, probe, selection, controller_work=controller_work
+    )
+    controller_work.visit(probe.coordinates.shape[0])
+    witness = orbits.witness(
+        source.mesh,
+        probe,
+        exact,
+        retained,
+        allocation_prior=allocation_prior,
+        budget=budget,
+    )
+    host_upper += _metric_identity_storage(
+        witness.quotient_entities,
+        witness,
+        budget,
+        controller_work=controller_work,
+    )
+    edit = edit._replace(periodic_orbits=witness)
+    version = canonical_fingerprint(
+        {
+            "kind": "periodic-source-metric-frame",
+            "source": source.mesh.numeric_version,
+            "operation": selected,
+            "coordinates": array_tree_fingerprint(edit.coordinates),
+        }
+    )
+    target, _, _ = assemble_topology_edit(
+        source.mesh, edit, numeric_version=version, budget=budget
+    )
+    _require_metric_output_limits(
+        target, None, edit, limits, controller_work=controller_work
+    )
+    _require_complete_periodic_entity_changes(
+        source.mesh, target, edit, scope=scope, budget=budget
+    )
+    _require_metric_protected_scopes(
+        source, target, policy, controller_work=controller_work
+    )
+    _require_metric_organization(
+        source, target, edit, policy, controller_work=controller_work
+    )
+    return _MetricCandidate(
+        edit, target, exact, selection, current_orbits, cavity_count, host_upper
+    )
+
+
+def _execute_metric_geometry(
+    request: PeriodicMetricEditRequest,
+    preparation: _MetricPreparation,
+    continuation: _MetricContinuation,
+    candidate: _MetricCandidate,
+    controller_work: _MetricControllerWork,
+) -> _MetricGeometryExecution:
+    source = request.source
+    policy = request.policy
+    budget = request.budget
+    scope = request.scope
+    certificate_limits = request.certificate_limits
+    build_geometry = request.build_geometry
+    limits = request.limits
+    edit, target, selection = candidate.edit, candidate.target, candidate.selection
+    orbits = preparation.orbits
+    current = continuation.mesh
+    current_geometry = continuation.geometry
+    current_orbits = candidate.current_orbits
+    orbits.require_source(source.mesh)
+    controller_work.flush()
+    stage = build_geometry(edit, target)
+    controller_work.flush()
+    if not isinstance(stage, PeriodicMetricGeometryStage) or not isinstance(
+        stage.target_mesh, cell_mesh_owner.CellMesh
+    ):
+        raise TypeError(
+            "execute_metric_geometry.request must retain the reconstructed target and leave the source map unchanged; got The geometry builder must retain its target CellMesh."
+        )
+    target = stage.target_mesh
+    metric_target_lineage(source.mesh, edit, target, budget=budget, scope=scope)
+    _require_metric_protected_scopes(
+        source, target, policy, controller_work=controller_work
+    )
+    _require_metric_organization(
+        source, target, edit, policy, controller_work=controller_work
+    )
+    orbits.require_source(source.mesh)
+    current_orbits.require_source(current)
+    if cell_geometry_id(current_geometry) != selection.source_geometry_id:
+        raise ValueError(
+            "execute_metric_geometry.request must retain the reconstructed target and leave the source map unchanged; got The geometry builder changed the current source map."
+        )
+    _require_metric_geometry_stage(
+        source,
+        target,
+        edit,
+        stage,
+        policy,
+        certificate_limits,
+        controller_work=controller_work,
+        budget=budget,
+    )
+    _require_metric_output_limits(
+        target, stage, edit, limits, controller_work=controller_work
+    )
+    return _MetricGeometryExecution(stage)
+
+
+def _certify_metric_edit(
+    request: PeriodicMetricEditRequest,
+    preparation: _MetricPreparation,
+    continuation: _MetricContinuation,
+    candidate: _MetricCandidate,
+    stage: PeriodicMetricGeometryStage,
+    controller_work: _MetricControllerWork,
+) -> _MetricCertification:
+    source = request.source
+    budget = request.budget
+    scope = request.scope
+    certificate_limits = request.certificate_limits
+    policy = request.policy
+    execution = scope
+    target = stage.target_mesh
+    selected = preparation.operation
+    orbits = preparation.orbits
+    original_geometry_id = preparation.original_geometry_id
+    current = continuation.mesh
+    current_geometry = continuation.geometry
+    current_orbits = candidate.current_orbits
+    edit, selection = candidate.edit, candidate.selection
+    cavity_count, host_upper = candidate.cavity_count, candidate.host_upper
+    controller_work.flush()
+    remaining = execution.remaining()
+    if remaining.remaining_work_units <= 0 or remaining.remaining_managed_bytes <= 0:
+        raise ValueError(
+            "certify_metric_edit.request must retain the source map and fit the remaining quotient-certificate allowance; got The periodic certificate work or storage allowance is exhausted."
+        )
+    bounded_certificate_limits = MeshCertificateLimits(
+        maximum_candidate_pairs=min(
+            certificate_limits.maximum_candidate_pairs,
+            remaining.remaining_work_units,
+        ),
+        maximum_ray_tests=certificate_limits.maximum_ray_tests,
+        maximum_source_samples=certificate_limits.maximum_source_samples,
+        maximum_distance_evaluations=certificate_limits.maximum_distance_evaluations,
+        maximum_subdivision_depth=certificate_limits.maximum_subdivision_depth,
+        maximum_subdivision_pieces=certificate_limits.maximum_subdivision_pieces,
+        maximum_bernstein_nodes=certificate_limits.maximum_bernstein_nodes,
+        maximum_periodic_images=min(
+            certificate_limits.maximum_periodic_images,
+            remaining.remaining_managed_bytes // max(1, target.coordinates.size * 8),
+        ),
+        maximum_work_units=min(
+            certificate_limits.maximum_work_units, remaining.remaining_work_units
+        ),
+        maximum_scratch_bytes=min(
+            certificate_limits.maximum_scratch_bytes,
+            remaining.remaining_managed_bytes,
+        ),
+    )
+    embedding = certify_periodic_embedding(
+        target,
+        geometry=stage.target_geometry,
+        validity=stage.source_correspondence.target_validity,
+        validity_policy=policy.audit_policy.validity_policy,
+        limits=bounded_certificate_limits,
+        maximum_images=bounded_certificate_limits.maximum_periodic_images,
+        maximum_pairs=bounded_certificate_limits.maximum_candidate_pairs,
+        budget=budget,
+        scope=scope,
+    )
+    orbits.require_source(source.mesh)
+    current_orbits.require_source(current)
+    if cell_geometry_id(current_geometry) != selection.source_geometry_id:
+        raise ValueError(
+            "certify_metric_edit.request must retain the source map and fit the remaining quotient-certificate allowance; got The quotient certificate changed the current source map."
+        )
+    if cell_geometry_id(source.geometry) != original_geometry_id:
+        raise ValueError(
+            "certify_metric_edit.request must retain the source map and fit the remaining quotient-certificate allowance; got The periodic operation changed its immutable full source map."
+        )
+    budget.ticket.checkpoint()
+    witness = edit.periodic_orbits
+    if witness is None:
+        raise RuntimeError(
+            "certify_metric_edit.request must retain the source map and fit the remaining quotient-certificate allowance; got A synchronized metric edit lost its deterministic periodic evidence."
+        )
+    evidence = PeriodicMetricOrbitEvidence(
+        selected,
+        "complete",
+        len(selection.carriers),
+        cavity_count,
+        controller_work.visits,
+        host_upper,
+        embedding,
+        PeriodicQuotientEvidence(target),
+    )
+    return _MetricCertification(stage, evidence)
+
+
+@checked
+def synchronize_periodic_metric_edit(
+    request: PeriodicMetricEditRequest, /
+) -> PeriodicMetricOrbitOutcome:
+    """Stage, certify, and return one orbit-preserving metric successor."""
+    source, scope, budget = request.source, request.scope, request.budget
+    policy, certificate_limits = request.policy, request.certificate_limits
+    with _periodic_phase(
+        scope, budget, budget.maximum_work_units, budget.maximum_memory_bytes
+    ):
+        preparation = _prepare_metric_edit(request)
+        controller_work = _MetricControllerWork(budget)
+        with budget.activate(), budget.temporary_scope(), controller_work.activate():
+            continuation = _prepare_metric_continuation(
+                request, preparation, controller_work
+            )
+            candidate = _execute_metric_candidate(
+                request, preparation, continuation, controller_work
+            )
+            stage = _execute_metric_geometry(
+                request, preparation, continuation, candidate, controller_work
+            ).stage
+            certification = _certify_metric_edit(
+                request, preparation, continuation, candidate, stage, controller_work
+            )
+            edit, exact = candidate.edit, candidate.exact
+            target = certification.stage.target_mesh
+            stage, evidence = certification.stage, certification.evidence
+            orbits = preparation.orbits
+            witness = edit.periodic_orbits
+            if witness is None:
+                raise ValueError(
+                    "PeriodicMetricEditRequest.candidate must retain its periodic orbit evidence; got None"
+                )
+
+            return PeriodicMetricOrbitOutcome(
+                edit,
+                target,
+                witness,
+                stage,
+                MappingProxyType(exact),
+                source.result_id,
+                source.mesh.topology_id,
+                source.mesh.numeric_version,
+                canonical_fingerprint(orbits.source_frame_id),
+                source.coordinate_contract.spatial_id,
+                cell_geometry_id(source.geometry),
+                target.numeric_version,
+                canonical_fingerprint(array_tree_fingerprint(target.coordinates)),
+                cell_geometry_id(stage.target_geometry),
+                policy.policy_id,
+                certificate_limits.limits_id,
+                budget.work_units,
+                budget.peak_bytes_upper,
+                evidence,
+            )

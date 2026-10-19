@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _grid() -> Any:
@@ -26,7 +27,7 @@ def _grid() -> Any:
 def test_voxel_contracts() -> None:
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0), 0.5, feature_id="sampled-sphere"
-    ).compile()
+    ).compile(coordinate_unit=METER)
     enclosure = phx.geometry.ExactSDFEnclosureCertificate(geometry.field_certificate)
     plan = phx.geometry.VoxelGeometrySamplingPlan(
         _grid(),
@@ -49,7 +50,7 @@ def test_voxel_contracts() -> None:
     )
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0), 0.5, feature_id="dynamic-sphere"
-    ).compile()
+    ).compile(coordinate_unit=METER)
     plan = phx.geometry.VoxelGeometrySamplingPlan(_grid())
     sample = eqx.filter_jit(plan.sample)
     first = sample(geometry)
@@ -67,10 +68,10 @@ def test_voxel_contracts() -> None:
     assert not bool(jnp.allclose(first.field.values, second.field.values))
     certified = phx.geometry.Sphere(
         (0.0, 0.0, 0.0), 0.5, feature_id="certified-sphere"
-    ).compile()
+    ).compile(coordinate_unit=METER)
     unrelated = phx.geometry.Sphere(
         (0.0, 0.0, 0.0), 0.5, feature_id="unrelated-sphere"
-    ).compile()
+    ).compile(coordinate_unit=METER)
     enclosure = phx.geometry.ExactSDFEnclosureCertificate(certified.field_certificate)
     plan = phx.geometry.VoxelGeometrySamplingPlan(
         _grid(),

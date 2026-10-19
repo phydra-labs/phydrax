@@ -6,11 +6,12 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.linalg import trace
+from phydrax.units import METER
 
 
 def test_trace_matches_real_complex_spacetime_references_and_metadata() -> None:
     geometry = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     spacetime = geometry @ TimeInterval(0.0, 1.0)
 

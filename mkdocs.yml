@@ -783,6 +783,7 @@ nav:
             - Array state geometry: "api/metrix/state_geometry.md"
             - Vector bundles and gauge geometry: "api/metrix/bundles.md"
         - Meshing: "api/meshing.md"
+        - Mesh certificate theorems: "api/mesh_certificate_theorems.md"
         - Measurement: "api/measurement.md"
         - Scientific imaging: "api/imaging.md"
         - Rendering: "api/rendering.md"

@@ -7,7 +7,7 @@ contract.
 
 ## Source, kernel, state, and realization
 
-A `GeometrySource` is the authoritative construction object. Calling `compile()`
+A `GeometrySource` is the authoritative construction object. Calling `compile(coordinate_unit=...)`
 produces a `CompiledGeometry` containing:
 
 - an immutable `GeometryKernel` that defines algorithms and topology;
@@ -15,17 +15,23 @@ produces a `CompiledGeometry` containing:
 - a `ParameterSchema` with stable, feature-scoped parameter identities; and
 - a `GeometryTolerance` used by tolerance-sensitive queries.
 
+Compilation requires an explicit `coordinate_unit` imported from `phydrax.units`.
+It declares the native unit of source coordinates and spatial design parameters;
+it does not rescale numeric values. BRep sources must use their model's declared
+coordinate-contract length unit.
+
 ```python
 import jax
 import jax.numpy as jnp
 import phydrax as phx
+from phydrax.units import METER
 
 source = phx.geometry.Sphere(
     center=(0.0, 0.0, 0.0),
     radius=1.0,
     feature_id="body",
 )
-geometry = source.compile()
+geometry = source.compile(coordinate_unit=METER)
 
 radius = phx.geometry.ParameterId("body", "radius")
 larger = geometry.with_parameters({radius: 1.5})
@@ -104,8 +110,7 @@ remain caller-owned and must be identical across compared interfaces.
 The default source and target caps are `chunk_size=None` and
 `target_chunk_size=None`: both derive from `interface_workspace_bytes`
 (2 MiB), counting broadcast cases and dtype item size for the pair table.
-This admits a 256-by-1024 float64 pair table, the measured moderate-size
-crossover that exceeded the earlier 512 KiB default. Full-fit sets execute the
+This admits a 256-by-1024 float64 pair table. Full-fit sets execute the
 dense parallel computation directly, without tile loops; larger sets retain
 bounded pair tiles. Positive integer chunks override their respective automatic
 extent; supplying both bypasses budget derivation. The budget is validated even
@@ -297,28 +302,25 @@ STEP, IGES or external OCCT BRep text codec. The format-specific `read_step`,
 STEP and IGES own embedded units; BRep text requires `source_length_unit`.
 The native decoders implement these file formats without invoking OCP.
 
-These native carriers, codecs, queries, bounded intersections, sewing, Boolean,
-and tessellation routes are implemented surfaces. Source-only
-`BRepTessellationPolicy(realize=False)`, spline-preserving loft, topology/volume,
-cavity/shared-shell, unattached-edge, periodic-rational, surface-array, and
-scaled-oblique checks passed their targeted matrix. Overlapping-sphere
-partitions retain the exact rational chart coordinate of every collapsed-pole
-radial split; the rounded binary64 vertex is only an execution representative
-bound to that authority. Curved-void trim ribbons are bounded per source-curve
-interval, and an interval whose ribbon exceeds the requested deviation is
-bisected locally before publication. Native BRep text refuses implicit curved
-intersection branches instead of approximating them. This is not complete
-native CAD qualification: complete STEP/IGES entity coverage, every
-intersection curve, singular arrangements, the independent writer campaign,
-W15, and release remain separate gates.
+Native carriers remain authoritative through construction, bounded intersections,
+sewing, Booleans, and tessellation. `BRepTessellationPolicy(realize=False)`
+publishes source geometry without a query tessellation. Overlapping-sphere
+partitions retain exact rational chart coordinates for collapsed-pole radial
+splits; binary64 vertices are execution representatives bound to that authority.
+Curved-void trim ribbons are enclosed per source-curve interval and subdivided
+before publication when their bound exceeds the declared deviation. Native
+BRep text refuses implicit curved intersection branches rather than fitting
+them. Supported entity families and typed refusals are reported by each codec;
+native decoding is not a claim of complete STEP or IGES coverage.
 
 Fixed-topology B-Rep nearest queries prepare one triangle hierarchy, refit it
 to current realized vertices, and select one or two faces without a full
 face-distance sort. The second selected distance supplies closest-point
 uniqueness evidence, and projection derivatives remain local to those faces.
 This adds prepared hierarchy leaves but preserves model/revision source IDs.
-The existing dense solid-angle containment route is retained: the measured
-winding candidate did not pass its memory adoption gate.
+The dense solid-angle containment route remains separate from native
+carrier-based certified membership; its numerical winding value is not an
+outward whole-source certificate.
 
 Rational spline evaluation uses the shared span-local B-spline kernel. Each
 curve query gathers `degree + 1` controls; each surface query gathers only the
@@ -379,7 +381,7 @@ model = phx.geometry.brep_box(
     coordinate_contract=coordinate_contract,
 )
 source = phx.geometry.BRepSource(model)
-geometry = source.compile()
+geometry = source.compile(coordinate_unit=model.coordinate_contract.length_unit)
 print(source.model.report)
 ```
 
@@ -453,6 +455,238 @@ tolerance classification and coordinate frames; a concrete projection supplies
 `project` and `locate_solids`. Native queries and optional external comparisons
 are distinct implementations of this contract, not aliases.
 
+### Public coordinate request resources
+
+Certified host geometry queries take a
+`phydrax.discretization.CoordinateEnclosureBudget` borrowing an admitted
+`phydrax.BatchTicket`. For standalone host preparation, construct
+`phydrax.HostBatchTicket(work_upper, bytes_upper=...)`, enter its context,
+construct `CoordinateEnclosureBudget(ticket, maximum_work_units=...,
+maximum_memory_bytes=...)`, and enter `budget.activate()` before evaluating.
+The ticket bounds parent work and simultaneous managed storage; coordinate
+limits bound exact coefficient work and retained/temporary enclosure storage.
+Reservations must fit both layers, and child batches cannot overcommit their
+parent. These are explicit work/storage limits, not requested accuracy, retry
+settings, or geometric tolerances.
+
+`CoordinateEnclosureResourceError` and `RationalEnclosureError` are public at
+`phydrax.discretization`. A resource refusal retains `.resource`, `.limit`,
+`.requested`, `.completed`, and available `.phase_evidence`; a rational
+enclosure refusal reports an unresolved denominator or chart limit. Neither
+means an approximate result is certified. Scope ticket/budget lifetimes to the
+request; do not store them in a numerical model or process-global cache.
+See the [executable request helper](../guides_differentiable_geometry.md#host-certification-and-coordinate-tickets).
+
+
+### Certified mass properties and signed shell volumes
+
+`brep_mass_properties(model, geometry, subdivisions=...,
+coordinate_budget=...)` returns `BRepMassProperties` bound to `model_id` and
+the model's exact coordinate unit. It publishes geometric volume, first and
+second moments, centroid, and centroidal inertia, independently of a material
+density. Face area/centroid rows follow canonical face order; solid rows follow
+canonical solid order. The lower/upper axis comes immediately after the entity
+axis: `volume_enclosures` is `(S, 2)`, `centroid_enclosures` is `(S, 2, 3)`,
+and `inertia_enclosures` is `(S, 2, 3, 3)`. The corresponding `*_error_bound`
+properties bound error about the reported midpoint outward.
+
+Complete exactly orthonormal sphere and torus charts use enclosed closed forms.
+Other native analytic and NURBS trims use signed Green-map interval cell
+integration, including certified endpoint parameter intervals. `subdivisions`
+declares work, not a promised accuracy. A volume interval containing zero
+refuses centroid/inertia publication. JAX x64 must be enabled before evaluating
+these binary64 certificates.
+
+Mass-weighted fields (`mass`, `mass_enclosures`, `mass_inertia`, and
+`mass_inertia_enclosures`) require all of `density`, `density_unit`, and
+`coordinate_unit`; the density dimension must be mass per length cubed and the
+coordinate unit must equal the source contract. No conversion is implicit.
+The older prepared-query fine/coarse measure estimate is not this certificate.
+
+`brep_signed_shell_volume_enclosures` uses the same integration with only the
+signed volume channel. Its `(H, 2)` rows are keyed by canonical source `shell_ids`;
+correctly oriented cavities are negative. Negative or zero-containing intervals
+are retained, not rejected by the solid mass-property positivity gate.
+
+### Certified edge classification
+
+`brep_edge_classification(model, geometry, maximum_cells=...,
+coordinate_budget=...)` returns one `BRepEdgeClassification` per canonical edge.
+Each row retains `edge_id`, `model_id`, `sign_enclosure`, `dihedral_range`,
+`length_enclosure`, and enclosed `change_parameters`. `dihedral_range` is the
+angle between material-side normals in radians, not the interior solid angle.
+The closed status is `convex`, `concave`, `sign_change`, or `unresolved`.
+Classification uses whole-edge derivative intervals and coedge sense, not a
+point sample. A sign change requires regular continuous carriers; singular,
+nonmanifold, or conflicting material-side incidence remains unresolved.
+Lengths use line/circle closed forms where admitted and interval speed
+integration otherwise. The caller supplies a cell limit and coordinate ticket;
+binary32 certificate publication refuses. Consumers choose their own feature
+angle rather than receiving an implicit "smooth" classification.
+
+### Analytic fillets, chamfers, and planar offsets
+
+`brep_fillet(model, edges, radius, ...)` and
+`brep_chamfer(model, edges, (first_setback, second_setback), ...)` take exact
+source edge identities. `BRepBlendResult` retains those identities, a reason,
+`certified`/`unsupported`/`unresolved` status, the represented `.model`, and
+per-boundary `g1_angle_bounds`. Inspect status before using the optional model.
+Supported local analytic constructions include plane pairs, admitted circular
+plane/cylinder/cone/sphere contacts, and parallel-cylinder intersections.
+Several selected edges sharing a vertex refuse corner-patch blending;
+variable-radius, general NURBS rolling-ball, and G2/G3 blends are not supported.
+
+An available fillet `.source` is a correlated radius parameter map consumed by
+`FixedTopologyBRepSource`: surfaces, curves, p-curves, vertices, bounds, and
+seam evidence move together. `sensitivity_status` is independently
+`available`, `unsupported`, or `not_applicable`. Oblique intersection-cap
+fillets can certify the primal while reporting unsupported radius sensitivity
+and `source=None`; chamfers have no radius source. A certified primal does not
+imply a supported derivative.
+
+`brep_offset` returns **`BRepOffsetResult`**, not `BRepModel`; consume `.model`
+explicitly. Planar solids, including affine degree-one extrusion charts and
+admitted concave prisms, use rational incident-plane solves with local edge-sign
+and nonadjacent-face separation proofs. Vanishing/reversed edges, collisions,
+irrational unit normals, and sharp curved adjacencies refuse instead of
+approximating a displacement.
+
+Planar `.evidence` retains canonical `face_rounding_bounds`,
+`vertex_rounding_bounds`, and a `volume_enclosure` enclosing rational intent and
+rounded publication. Intrinsic endpoint/face gaps belong to the generic model.
+Smooth normal-operation trees may still construct exactly, but publish these
+planar evidence fields as `None` with unresolved `volume_status`; absence is
+not a zero-error proof. Use `brep_mass_properties` for their independent volume
+certificate.
+
+### Sewing with declared gaps
+
+`BRepSewingPolicy.maximum_gap` defaults to zero. Positive-gap sewing admits
+unique full-range, equal-length parallel line lamina pairs whose exact
+coefficient displacement is outward-bounded within that fixed declaration.
+`source_uncertainty` may supply a recorded STEP bound only up to the policy
+maximum. Curved gaps, partial overlaps, root-authored gap endpoints, and
+ambiguous pairings refuse. No carrier is moved and no tolerance grows.
+
+`BRepSewingLineage.pair_gap_bounds` records retained/other source edges and their
+pair-carrier bound. `edge_face_gap_coedges` identifies affected face uses;
+the bounds themselves live once in `BRepGeometry.edge_face_gap_bounds`, in
+canonical coedge order. `edge_vertex_gap_bounds` separately records endpoint
+displacement. Publication and replay recompute admitted bounds and reject
+underclaims. Both optional fields are absent for exact gap-free models.
+Native archives retain present evidence, and downstream source-fidelity bounds
+include it; a positive gap cannot claim zero source equality.
+
+### Sections, contact junctions, and clearance
+
+`brep_section(first, second, maximum_boxes=..., coordinate_budget=...)` accepts
+models or `SurfaceRegion`s, with a `PlanePatch` also allowed as the second
+operand. `BRepSectionResult.intersections` retains native certified curve atlases
+and unresolved parameter regions, paired with canonical `.face_pairs`. Infinite
+planes are clipped conservatively to source bounds. Authored rectangular model
+face domains are admitted; nonrectangular model trims are explicitly unsupported.
+The result does not mutate either operand.
+
+`ParametricIntersectionPoint.kind` distinguishes `crossing`, `tangent_point`,
+`tangent_curve`, and `singular_point`. `.branch_count` is a certified outgoing
+half-branch count, or `-1` if unresolved. Interval common-graph second forms
+certify zero branches for a definite difference and four for an indefinite one;
+zero-containing determinants and degenerate contacts remain unresolved.
+The count must agree with the native branch atlas, including periodic seams.
+
+`brep_clearance(first, second, maximum_boxes=256, coordinate_budget=...)`
+encloses the minimum **boundary** distance, not solid penetration depth.
+`distance_lower`/`distance_upper` are outward bounds;
+`witness_lower`/`witness_upper` enclose the two chart witness points, one row per
+operand. Full exact-orthonormal spheres and parallel-axis cylinder walls use
+closed forms, including nested/concentric and touching cases. General admitted
+native charts use a face BVH and best-first subdivision of both parameter
+domains; certified trim membership, not chord masks, admits point candidates.
+The upper bound comes from witnesses and the lower bound from all surviving
+pair cells. Budget-limited results retain `unresolved_pairs` (zero-based face
+indices) and `boxes_processed`, with conservative bounds. Unsupported geometry
+has no witnesses and distance `[0, infinity]`; inspect status and reason rather
+than treating an unavailable bound as a clash decision.
+
+### Certified polynomial deformation
+
+`PolynomialDeformation` represents a Bernstein lattice with fixed identity
+boundary controls, or a named `.taper(...)`/`.shear(...)`. `identity_lattice`
+constructs identity controls. `certify_deformation(..., maximum_cells=...,
+coordinate_budget=...)` encloses the physical determinant with rational
+Bernstein subdivision; cells retain dyadic boxes and
+`certified`/`negative`/`unresolved` evidence. Sampled positive Jacobians are
+insufficient. Identity on the box boundary together with strictly positive
+determinant certifies lattice injectivity; named inverses require their own
+positive-scale certificate.
+
+`deform_brep` returns a `BRepDeformationResult.parameter_map` for
+`FixedTopologyBRepSource(model, parameter_map=...)`. It transports definition-space
+patches, curves, and vertices while retaining p-curves, UV bounds, incidence,
+and declared occurrence placements. Interior lattice positions are dynamic
+length-unit leaves. Full-span rational Bernstein and plane carriers compose
+exactly with coefficient enclosures; aligned cylinder taper retains an exact
+cone carrier. Patches crossing the proof box, restricted/multi-span splines,
+implicit intersection edges, unaligned cylinders, twist, and bend refuse.
+Outside lattice patches remain identity. This is shared-definition motion,
+not per-occurrence world-space deformation.
+
+### Certified defeaturing
+
+`brep_defeature(model, face, operation=..., budget=...)` selects one source face
+by identity for `fillet`, `chamfer`, or `hole` removal. Its result distinguishes
+`certified`, `unsupported`, `unresolved`, and `collision`. Admitted families
+include local plane-pair cylindrical fillets/planar chamfers with planar ends,
+normal plane/cylinder quarter-torus blends, and single cylindrical/conical
+through-hole walls between planar hosts. Retained faces and pockets keep their
+source topology; the operation does not rebuild an unrelated bounding prism.
+Sphere corner blends, cylinder/cylinder quartics, non-normal circular blends,
+nonanalytic neighbors, and unsupported intersection/clipping families refuse.
+An overlapping unsupported curved face remains unresolved, not collision-free.
+
+The record publishes symbolic volume terms where supported or enclosed
+differences of certified mass properties otherwise. `volume_gap_error_bound`
+accounts for closing-gap flux; `hausdorff_enclosure` includes intersection
+rounding, intrinsic gaps, and phase enclosures. `intersection_kind` interprets
+`carrier_intent_points` as none, line endpoints, or a circle center, with
+`intersection_rounding_bounds`. Canonical source `g1_edges` key
+`g1_angle_bounds`; `face_images`/`edge_images` retain surviving lineage.
+Unaffected face recipe keys survive. Edge naming refuses when a new sharp edge
+prevents exhaustive source ancestry.
+
+### Feasible parameter ranges
+
+`CertifiedParameterRange` retains the parameter, an **open** `.interval`,
+per-end `.end_status`, binding `.constraints` and `.entity_ids`, and `.evidence`.
+An `attained_exactly` end is an exact limiting value, not an admissible boundary.
+`certified_inner_bound` is conservative; `unknown` has endpoint `None`.
+Signed infinity means proved unbounded, never "no limit found." Finite feasible
+endpoints round inward.
+
+Fillets, chamfers, offsets, tubes, and deformations accept
+`include_parameter_range=True` to retain success evidence. Construction parameter
+refusals retain it without opt-in, either on their result or through
+`refusal_parameter_range(error)` for existing `ValueError` boundaries.
+Chamfer ranges describe dimensionless `setback_scale` at the fixed authored
+setback ratio; tube ranges are `(0, reach)`. Planar offsets distinguish exact
+edge-vanishing roots from inner collision bounds. Unsupported whole-source
+proofs report unknown rather than an estimate. Resource errors propagate.
+`deformation_feasibility_scale` certifies space and the whole scale interval,
+not only endpoint samples; determinant singular suprema are not admitted.
+
+### Occurrence placement evidence
+
+`BRepOccurrence.placement_evidence` is optional `BRepPlacementEvidence`.
+It encloses source-frame/polar-factor rotation deviation, translation deviation,
+native model extent, point deviation, and optional `(3, 4)` entrywise affine
+coefficient errors. Positive evidence enters geometry identity and native
+archives; exact occurrences omit it. Placement queries remain available.
+Materialization, sewing, and Booleans refuse nonzero displacement with
+`placement-deviation`, and external CAD writers refuse unsupported projection.
+The [interchange reference](interchange.md#step-assemblies-and-placement-evidence)
+describes explicit source-frame admission; these bounds are not incidence gaps.
+
+
 ## Physical CAD identity and selection
 
 CAD construction, import, and persistence are bound to an explicit
@@ -466,6 +700,37 @@ fallback.
 model's revision inventory and complete topology selections. A B-Rep partition
 or process result carries its resulting `CADRevision` and `AssociationGraph`, so
 downstream scopes remain bound to the created physical entities.
+
+### Geometric predicates and normal ranges
+
+`BRepPredicate` expresses analytic family, facing/parallel/perpendicular,
+edge convexity, extremal position, adjacency, and combinations. `a & b`,
+`a | b`, `~a`, and `a.neighbors()` preserve three-valued logic.
+`select_brep_entities(model, predicate, kind="face", maximum_cells=...,
+coordinate_budget=...)` returns disjoint selected/rejected/unresolved identities
+exhausting the canonical face or edge family. Unsupported normal-on-edge and
+convexity-on-face predicates remain unresolved. Extremal selection requires an
+entity wholly on the supporting extreme; touching at a corner is insufficient.
+
+`brep_normal_ranges(model, direction, draft_angle=..., maximum_cells=...,
+coordinate_budget=..., angle_thresholds=...)` encloses whole-face angles in
+radians against outward material-side normals. Rows retain canonical `face_id`,
+`angle_enclosure`, `unresolved_cells`, and enclosed `singular_points`. The status
+is `positive`, `insufficient`, `vertical`, `undercut`, or `unresolved`.
+Exact threshold contact is unresolved; singular normals are reported, not
+nudged. Native derivative families and certified trims qualify each decision;
+budget exhaustion never becomes a sampled classification. The same direction
+test supports draft or overhang analysis, not a draft modeling operation.
+
+`selection.bind_region(name, names, domain, adjacent_region_names,
+include_unresolved=...)` returns the existing meshing `PatchControl`. Unresolved
+membership requires an explicit inclusion/exclusion choice; empty membership
+refuses. Its `recipe_binding` retains stable selected keys and the exhaustive
+family inventory. `control.rebind(names, domain)` resolves those keys after a
+topology-preserving edit and refuses splits/merges, missing names, and revision
+mismatches. Definitions expand only through declared domain occurrence rows,
+never spatial proximity or occurrence-path prefixes.
+
 
 ## B-Rep and planar partitions
 
@@ -495,16 +760,116 @@ persists the resulting B-Rep partition with exact region, patch, revision, and
 association identities. It does not infer a fabrication process, layers, or
 void targets from layout content.
 
+Design parameters also declare exact native units:
+`ParameterSpec(..., role=..., unit=...)` and
+`ParameterCollector(coordinate_unit).bind(..., role=..., unit=...)` refuse
+incompatible dimensions or repeated declarations with differing units.
+Schema identity includes unit IDs. Compilation requires an explicit length
+coordinate unit; angular and dimensionless kernel roles use `RADIAN` and `ONE`.
+`ZInterval(lower, upper, unit)` must match the process coordinate unit exactly;
+conversion is explicitly owned by `phydrax.units.convert_value`.
+
+`geometry.design.RecipeEntityName(kind, region, source_entity, lineage_path)`
+is a stable value key, not a revision-scoped entity ID. `RecipeEntityNames`
+binds canonical faces/edges to these keys with `.resolve(name)` and
+`.name(entity_id)`. `name_partition_entities` requires exhaustive authored
+source occurrence keys and bijective lineage; sewing transport appends its
+operation path. Splits/merges and ambiguous or missing ancestry refuse.
+Planar partitions support both families; current 3D partitions expose
+`edge_names=None`, explicitly unsupported rather than an empty supported set.
+See [stable recipe names](../guides_planar_process_layout.md#bind-stable-recipe-names).
+
+
 ## Sketches and geometric constraints
 
-`Sketch` solves fixed-connectivity 2D line/circle systems with declarative
+`Sketch` solves fixed-connectivity 2D line/arc/circle systems with declarative
 constraints such as `Coincident`, `Horizontal`, `EqualLength`, `Radius`, and
-tangency. A solved sketch lowers to `PlanarMeshRegion`.
+tangency. `Sketch.solve` and `DesignConstraintSystem.solve` use native
+`phydrax.optim.least_squares` with Levenberg–Marquardt and `phydrax.linalg`
+Jacobian solves. Only admissible, residual-decreasing trials commit; nonpositive
+radii refuse rather than being clamped.
+
+Both results expose the native `OptimizationStatus` as `status` and preserve
+diagnostics and provenance in `solver_result`. `converged` additionally requires
+the weighted residual norm to satisfy the requested tolerance. A stationary
+least-squares point with a nonzero, out-of-bound residual is not a solved sketch.
+`SketchSolution.points` and `circle_radii` carry implicit sensitivities to the
+constraint targets and numerical constraint data. The native nonlinear output
+attachment differentiates the converged weighted least-squares stationarity
+equations, \(J_r^\mathsf{T}r=0\), without resolving the primal or differentiating
+the LM iterations. Initial seeds remain conditioned inputs, not algorithmic
+solution sensitivities.
+
+`derivative_evidence` is native `phydrax.nonlinear.SensitivityEvidence`;
+`derivative_rank` is the native numerical rank of the endpoint stationarity
+Jacobian. Rank and conditioning preparation uses a bounded native SVD:
+at most 64 coordinates, 4,096 materialized entries, and one MiB workspace.
+Tangent and adjoint actions use native matrix-free linear solves. Nonconverged,
+rank-deficient, ill-conditioned, or uncertified endpoints retain their primal
+solution and optimizer evidence but return NaN derivative actions, with the
+reason recorded in `derivative_evidence.status`. A sketch larger than the
+declared derivative preparation budget reports `UNSUPPORTED` sensitivity;
+its matrix-free primal solve remains available. For example, an independently
+targeted radius has unit target sensitivity and zero initial-radius sensitivity,
+while an underdetermined sketch does not claim a unique implicit derivative.
+
+`DesignConstraintSystem.solve` continues to provide values and optimizer
+evidence; this sketch endpoint attachment does not extend its sensitivity scope.
+
+`to_source(solution)`, `to_profile(solution)`, and `to_model(solution, ...)`
+require a converged `SketchSolution` bound to the sketch's stored geometry and
+constraints. Missing, unconverged, or differently bound solutions refuse
+lowering. A line loop or circle lowers through
+`to_source`; mixed line/arc/circle loops use `to_profile` or `to_model`. The
+profile's `residual_bound` retains the weighted solve-residual bound. It is not
+a spatial error enclosure or a tolerance for changing geometry; profile topology
+is certified independently from the solution snapshot.
+
+### Root certification and priority tiers
+
+`geometry.design.certify_sketch_solution(solution, budget=...)` is a separate
+host certification step. It publishes component rank/nullity, native rank-gap
+and backward-error evidence, authored under/over/redundant constraint IDs,
+and, for admitted regular square systems, a strict Krawczyk unique-root box.
+Its status is `certified`, `rank_unresolved`, `not_fully_constrained`,
+`unsupported`, or `enclosure_unresolved`; residual convergence alone is not
+root certification. Redundant rectangular systems retain DOF evidence but
+refuse the square-root enclosure. Custom constraints lack admitted interval
+work bounds and report unsupported rank/nullity `-1`.
+
+`certificate.to_profile()` returns `SketchCertifiedProfile` coupling the native
+profile with point/radius source-fidelity enclosures, not merely a weighted
+residual. `sketch_dimension_derivatives(certificate, budget=...)` admits only
+fully constrained, certified-rank, converged regular endpoints. Rows follow
+flattened points then radii; columns follow authored distance/radius/angle
+dimensions. The derivative uses native implicit-root attachment at the endpoint,
+not LM iteration differentiation or finite differences.
+
+`Sketch.constraint_ids` names every authored constraint;
+`constraint_priorities` declares zero mandatory and ascending optional tiers.
+`solve_priority_sketch(sketch, budget=...)` solves cumulative tiers and advances
+`lowest_satisfied_tier` only after strict root inclusion. Underconstrained tiers
+remain provisional. `tier_certificates`, unsatisfied/rejected IDs, and authored
+residual norms retain every attempted decision. A failed tier rejects itself
+and all lower-priority tiers; no certified tier yields `-1`.
+
 
 `DesignConstraintSystem` solves geometry-state constraints without coupling to a
 particular representation. Available constraints include parameter targets and
-equalities, point distances, interior/exterior clearance, measure and boundary
-measure targets, boundary-point conditions, and B-Rep seam compatibility.
+equalities, interior/exterior clearance, measure and boundary-measure targets,
+boundary-point conditions, and B-Rep seam compatibility. Physical parameter
+bounds and `CompiledGeometry.validity(state)` reject inadmissible trials without
+projecting them. Invalid or unresolved initial geometry validity refuses before
+iteration. Native trial refusal or stationary nonconvergence remains observable
+through solver status and diagnostics.
+
+Ball primitives, including circles and spheres, orthotopes, ellipses, and
+ellipsoid families require finite centers and strictly positive finite radius
+or size components after design-state updates as well as at source construction.
+Their geometry-validity evidence reports dimensionless positive-extent margins
+normalized by the parameter's declared physical scale. Restricted field
+certificates remain inconclusive rather than bypassing their representation
+contract.
 
 ## Bounded global design search
 
@@ -531,12 +896,13 @@ reflected into the box before both evaluation and storage.
 ```python
 import jax.random as jr
 import phydrax as phx
+from phydrax.units import METER
 
 geometry = phx.geometry.Sphere(
     center=(0.0, 0.0, 0.0),
     radius=1.0,
     feature_id="body",
-).compile()
+).compile(coordinate_unit=METER)
 center = phx.geometry.ParameterId("body", "center")
 radius = phx.geometry.ParameterId("body", "radius")
 
@@ -560,6 +926,10 @@ global_result = system.search(
 
 # Local refinement is a separate, explicit phase.
 local_result = system.solve(initial_state=global_result.state)
+if not bool(local_result.converged):
+    raise ValueError(
+        f"design.local_result.converged must be true; got status={local_result.status}"
+    )
 optimized_geometry = geometry.with_state(local_result.state)
 domain = phx.domain.GeometryDomain(optimized_geometry)
 ```
@@ -583,6 +953,17 @@ candidates become explicit invalid objective evaluations.
 R-(d+1). `Revolution` remains the explicitly axisymmetric 2D-to-3D operation.
 `CompiledGeometry.validity()` exposes parameter and representation validity as
 `GeometryValidityEvidence`.
+
+`Tube(path, radius, feature_id=..., include_parameter_range=...)` is the path
+distance minus radius, with a JAX field and normals. Admitted paths are finite
+line `CurveRange`s (round caps, infinite reach) and full `CircleCurve`s with
+exactly orthonormal binary axes (reach equal to circle radius). Radius is a
+length-unit design parameter and must be strictly between zero and reach.
+Other paths refuse rather than estimating reach from samples.
+`distance_bounds(points)` outward-encloses the **path** distance with rational
+arithmetic and directed square roots under the coordinate request budget.
+See [tube and range workflow](../guides_differentiable_geometry.md#certified-tubes-and-construction-ranges).
+
 
 `ImplicitPointProjectionPlan` supplies fixed-shape normal-gauge boundary motion.
 `discover_implicit_curve` discovers an oriented closed planar segment topology.
@@ -666,18 +1047,16 @@ fit by the level set, which are refused (`ComponentFitEvidence`).
 `reconstruct_trimmed_surface` instead trims unsupported triangles and returns
 the open `TriangleSurface` in a `TrimmedSurfaceReconstruction`.
 
-The `native-reconstruction-lifecycle` qualification scenario retains the actual
-noisy point-cloud digest, native screened-Poisson report, and extracted triangle
-coordinates in the revision of its `NativePlcSource`. Native constrained volume
-fill must certify that exact represented PLC, independently close its signed
-boundary volume, and retain the original region identity. Reconstruction's
-sampled distances remain separate from exact extracted-domain coverage; an
-analytic reference surface never replaces the reconstructed triangles.
-The scalar diffusion continuation uses `FiniteElementTopologyTransaction` and
-`CompositionRebind`, including a rejected physical-error gate that must preserve
-the accepted mesh and state. The repaired-envelope scenario uses the same atomic
-solver-state transition while retaining its raw/repaired identities, explicit
-feature/topology permissions, two directed bounds, and inclusion margin.
+Reconstructed `NativePlcSource` revisions retain the actual point-cloud digest,
+screened-Poisson report, and extracted triangle coordinates. Native constrained
+volume fill certifies that represented PLC and independently checks signed
+boundary volume while retaining region identity. Reconstruction's sampled
+distances remain separate from exact extracted-domain coverage; an analytic
+reference surface never replaces the reconstructed triangles.
+`FiniteElementTopologyTransaction` and `CompositionRebind` preserve the accepted
+mesh and state when a continuation proposal is rejected. Repaired-envelope
+transitions retain raw/repaired identities, explicit feature/topology
+permissions, directed bounds, and inclusion margin.
 Generated interior vertices inherit PLC authority only from one explicit
 incident-cell/source-parent owner and an exact mapped interior-support proof;
 boundary, interface, and feature vertices still require their lower-stratum
@@ -692,12 +1071,10 @@ coverage work ledger is retained once, not recomputed or replaced with zero
 cost. The strict target audit remains independent, and any required whole-source
 or scoped fidelity checks still run; a volume proof is not a fidelity verdict.
 
-The fixed lifecycle controls are `--resolution 4 --capacity 20000 --timeout 120
---repeats 3 --target-error 0.05 --adaptation-rounds 1`. These are acceptance gates,
-not a claim that either workflow has qualified. Native circumcenter failure is
-reported as structured meshing failure before publication, rather than replacing
-nonfinite quality evidence with a finite value. Envelope carrier initialization
-also enforces the request's actual native scratch-allocation allowance.
+Native circumcenter failure is reported as structured meshing failure before
+publication, rather than replacing nonfinite quality evidence with a finite
+value. Envelope carrier initialization enforces the request's actual native
+scratch-allocation allowance.
 Ordinary single-device organization-ID banks use immutable NumPy host preparation
 instead of repeated dynamic-size JAX selections. Named/collective placements,
 nonaddressable arrays, and tracers retain their existing array route. This does
@@ -1021,6 +1398,11 @@ closed results with non-manifold vertices or edges, which the evidence reports.
 
 ::: phydrax.geometry.ProcessStackResult
 
+`ProcessStackResult.operand_artifact_paths` records `(operand_name, Path)` pairs
+in stack operand order for the lossless native `.phx` operand archives.
+These locations are distinct from model source identities; returned operand
+models are restored from the archives.
+
 ---
 
 ::: phydrax.geometry.StackRegion
@@ -1197,11 +1579,15 @@ external shape into native source authority.
         - CurveRange
         - CurveTrimLoop
         - CurveTrimSegment
+        - ApproximateSourceCoverageCertificate
+        - CadSourceDomain
         - DomainCoverageCertificate
         - FieldBoundOrigin
         - GlobalEmbeddingCertificate
+        - PeriodicAffineQuotientEvidence
         - ImplicitBoundOrigin
         - ImplicitBoundarySource
+        - EmbeddedPlanarBoundarySource
         - ImplicitDiscoveryAccuracy
         - ImplicitDiscoveryEnclosure
         - ImplicitTopologyPremise
@@ -1244,6 +1630,7 @@ external shape into native source authority.
         - TrimClassification
         - UnresolvedIntersectionReason
         - UnresolvedParameterRegion
+        - certify_approximate_source_coverage
         - certify_domain_coverage
         - certify_global_embedding
         - certify_source_fidelity

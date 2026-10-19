@@ -2,13 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Exact oriented shell sewing from identity incidence or proved carrier maps.
+"""Sew oriented shells from source incidence or proved carrier maps.
 
-Already identity-conforming coedges are assembled unchanged. Otherwise distinct
-edges are identified only through an exact source-coefficient carrier
-correspondence and exact parameter fragmentation; proximity, sampled points and
-parameterization equality never identify entities, and a refusal publishes
-nothing.
+Identity-conforming coedges are assembled unchanged. Distinct edges are
+identified through source-coefficient carrier correspondence and fragmentation
+at rational or native-period parameter stations. Proximity and sampled points
+do not establish entity identity; a refusal leaves the source unchanged.
+
+The validated SewingPlan retains region incidence and orientations through both
+identity and correspondence publication. Certificates use the same source,
+orientation and lineage payloads as the assembled geometry.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from fractions import Fraction
 from functools import cmp_to_key
-from typing import Literal, TypeAlias
+from typing import assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
 import numpy as np
@@ -27,6 +30,9 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked
+from ._coordinate_request import coordinate_source_request
 from ._correspondence import (
     curve_support_key,
     CurveParameterMap,
@@ -37,21 +43,28 @@ from ._correspondence import (
     prove_curve_correspondence,
     reparameterize_pcurve,
 )
+from ._exact import square_root_interval
 from ._intersection import (
+    BranchRootEndpoint,
     intersect_curve_ranges,
     NativePeriodEndpoint,
     ParametricIntersectionPolicy,
     RootEndpoint,
+    TrimRootEndpoint,
 )
-from ._intersection_curve import _native_curve_period_symbol, _period_offset, CurveRange
+from ._intersection_curve import CurveRange
 from ._model import BRepCurve, BRepGeometry, BRepPCurve
-from ._patches import AbstractCurve, AbstractSurfacePatch
+from ._patches import AbstractCurve, AbstractSurfacePatch, LineCurve
+from ._request_preparations import TrimRequestPreparations
+from ._source_correspondence import fraction_norm_upper
+from ._trim_helpers import period_offset
 
 
 BRepSewingContactRelation: TypeAlias = Literal[
-    "transversal",
-    "tangent",
-    "singular",
+    "crossing",
+    "tangent_point",
+    "tangent_curve",
+    "singular_point",
     "coincident-within-bound",
     "unresolved",
     "separated",
@@ -61,52 +74,67 @@ _OPEN_SHELL = "open, nonmanifold, or inconsistently oriented shell"
 
 
 class BRepSewingPolicy(StrictModule):
-    """Exact sewing budgets; never proximity repair.
+    """Bound shell sewing and the intersection diagnostics for refused shells.
 
-    A nonzero tolerance is not permission to merge distinct scientific entities.
-    Distinct coincident edges are identified only through a proved exact carrier
-    parameter correspondence and exact fragmentation. ``maximum_contact_pairs``
-    and ``contact_intersection`` bound the canonical intersection evidence
-    attached to a refused open shell; that evidence never decides a pairing.
+    Distinct coincident edges require a proved carrier parameter correspondence
+    and fragmentation at member endpoints. ``maximum_contact_pairs`` and
+    ``contact_intersection`` bound diagnostics attached to a refused open shell.
+    Those diagnostics do not decide edge pairing. ``maximum_gap`` separately
+    admits unique certified full-range parallel-line pairs without moving geometry.
+    Nonzero ``tolerance`` remains forbidden.
     """
 
     tolerance: float = eqx.field(static=True)
+    maximum_gap: float = eqx.field(static=True)
     maximum_coedges: int = eqx.field(static=True)
     maximum_contact_pairs: int = eqx.field(static=True)
     contact_intersection: ParametricIntersectionPolicy
 
+    @checked
     def __init__(
         self,
         *,
         tolerance: float = 0.0,
+        maximum_gap: float = 0.0,
         maximum_coedges: int = 1_000_000,
         maximum_contact_pairs: int = 64,
         contact_intersection: ParametricIntersectionPolicy | None = None,
     ) -> None:
         if not np.isfinite(tolerance) or tolerance < 0.0:
-            raise ValueError("tolerance must be finite and non-negative.")
+            raise ValueError(
+                "BRepSewingPolicy.tolerance must be finite and non-negative; got an invalid tolerance"
+            )
+        if not np.isfinite(maximum_gap) or maximum_gap < 0.0:
+            raise ValueError(
+                "BRepSewingPolicy.maximum_gap must be finite and nonnegative; got invalid gap"
+            )
         for name, value in (
             ("maximum_coedges", maximum_coedges),
             ("maximum_contact_pairs", maximum_contact_pairs),
         ):
             if isinstance(value, bool) or not isinstance(value, int):
-                raise TypeError(f"{name} must be an integer.")
+                raise TypeError(
+                    f"BRepSewingPolicy.limits must contain integer values; got {name}={value!r}"
+                )
         if maximum_coedges <= 0:
-            raise ValueError("maximum_coedges must be positive.")
+            raise ValueError(
+                "BRepSewingPolicy.maximum_coedges must be positive; got a nonpositive limit"
+            )
         if maximum_contact_pairs < 0:
-            raise ValueError("maximum_contact_pairs must be non-negative.")
+            raise ValueError(
+                "BRepSewingPolicy.maximum_contact_pairs must be non-negative; got a negative limit"
+            )
         if tolerance != 0.0:
-            raise ValueError("Native identity sewing does not admit proximity repair.")
+            raise ValueError(
+                "BRepSewingPolicy.tolerance must forbid proximity repair; got a nonzero tolerance"
+            )
         intersection = (
             ParametricIntersectionPolicy()
             if contact_intersection is None
             else contact_intersection
         )
-        if not isinstance(intersection, ParametricIntersectionPolicy):
-            raise TypeError(
-                "contact_intersection must be a ParametricIntersectionPolicy."
-            )
         self.tolerance = float(tolerance)
+        self.maximum_gap = float(maximum_gap)
         self.maximum_coedges = maximum_coedges
         self.maximum_contact_pairs = maximum_contact_pairs
         self.contact_intersection = intersection
@@ -114,12 +142,12 @@ class BRepSewingPolicy(StrictModule):
 
 @dataclass(frozen=True, slots=True)
 class BRepSewingContact:
-    """Canonical intersection evidence for an open source edge and a candidate.
+    """Report intersection diagnostics for an open edge and a candidate edge.
 
-    ``relations`` lists the event classes reported by the native curve
-    intersection owner (``separated`` when it reports none); ``gap_bound`` is
-    the smallest reported operand gap or coincidence distance bound. This is
-    diagnostic evidence only: exact carrier algebra refused the pairing.
+    ``relations`` lists native curve-intersection event classes, or ``separated``
+    when no event is reported. ``gap_bound`` is the smallest reported operand gap
+    or coincidence distance bound. Carrier algebra decides the pairing; these
+    diagnostics explain a refusal.
     """
 
     open_edge: int
@@ -165,10 +193,11 @@ class BRepSewingFailure(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class BRepSewingEdgeImage:
-    """Exact source-edge parameter on one target edge: ``s = scale * t + offset``.
+    """Map a target-edge parameter to its source: ``s = scale * t + offset``.
 
-    ``offset = offset_rational + offset_turns * 2*pi`` exactly. The sign of
-    ``scale`` is the source orientation relative to the authoritative target.
+    ``offset`` comprises a rational term and a native-period term:
+    ``offset_rational + offset_turns * 2*pi``. The sign of ``scale`` records
+    source traversal orientation relative to the target edge.
     """
 
     source_edge: int
@@ -185,52 +214,86 @@ class BRepSewingEdgeImage:
     def parameter_map(self) -> CurveParameterMap:
         """``source(scale * t + offset) == target(t)``."""
         return CurveParameterMap(
-            self.scale, _period_offset(self.offset_rational, self.offset_turns)
+            self.scale, period_offset(self.offset_rational, self.offset_turns)
         )
 
 
-@dataclass(frozen=True, slots=True)
-class BRepSewingLineage:
+@final
+class BRepSewingLineage(StrictModule):
     """Exhaustive many-source lineage of one sewing publication.
 
     Faces keep their indices. ``vertex_sources[v]`` lists every source vertex
     identified as target vertex ``v``; ``edge_images`` covers every fragment of
     every source edge (degenerate edges map identically); ``coedge_sources[c]``
     is the source coedge whose ordered fragment is target coedge ``c``.
+    ``pair_gap_bounds`` rows contain (target edge, retained source edge, other
+    source edge, certified upper bound). ``edge_face_gap_coedges`` refers to
+    target coedges whose induced face gaps are stored once on
+    ``geometry.edge_face_gap_bounds``. Authored source agreement is not healed.
     """
 
-    vertex_sources: tuple[tuple[int, ...], ...]
-    edge_images: tuple[BRepSewingEdgeImage, ...]
-    coedge_sources: tuple[int, ...]
-    lineage_id: str = field(init=False)
+    vertex_sources: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    edge_images: tuple[BRepSewingEdgeImage, ...] = eqx.field(static=True)
+    coedge_sources: tuple[int, ...] = eqx.field(static=True)
+    pair_gap_bounds: tuple[tuple[int, int, int, float], ...] = eqx.field(static=True)
+    edge_face_gap_coedges: tuple[int, ...] = eqx.field(static=True)
+    lineage_id: str = eqx.field(static=True)
 
-    def __post_init__(self) -> None:
-        images = tuple(
-            sorted(
-                self.edge_images, key=lambda image: (image.source_edge, image.target_edge)
+    def __init__(
+        self,
+        vertex_sources: tuple[tuple[int, ...], ...],
+        edge_images: tuple[BRepSewingEdgeImage, ...],
+        coedge_sources: tuple[int, ...],
+        pair_gap_bounds: tuple[tuple[int, int, int, float], ...] = (),
+        edge_face_gap_coedges: tuple[int, ...] = (),
+    ) -> None:
+        if any(
+            target < 0
+            or retained < 0
+            or partner < 0
+            or retained == partner
+            or not np.isfinite(bound)
+            or bound < 0.0
+            for target, retained, partner, bound in pair_gap_bounds
+        ) or any(
+            coedge < 0 or coedge >= len(coedge_sources)
+            for coedge in edge_face_gap_coedges
+        ):
+            raise ValueError(
+                "BRepSewingLineage.gap_bounds must have valid entities and finite nonnegative bounds; got invalid rows"
             )
+        images = tuple(
+            sorted(edge_images, key=lambda image: (image.source_edge, image.target_edge))
         )
-        object.__setattr__(self, "edge_images", images)
-        object.__setattr__(
-            self,
-            "lineage_id",
-            canonical_fingerprint(
-                {
-                    "kind": "brep-sewing-lineage",
-                    "vertex_sources": [list(sources) for sources in self.vertex_sources],
-                    "edge_images": [
-                        [
-                            image.source_edge,
-                            image.target_edge,
-                            str(image.scale),
-                            str(image.offset_rational),
-                            str(image.offset_turns),
-                        ]
-                        for image in images
-                    ],
-                    "coedge_sources": list(self.coedge_sources),
-                }
-            ),
+        self.vertex_sources = vertex_sources
+        self.edge_images = images
+        self.coedge_sources = coedge_sources
+        self.pair_gap_bounds = tuple(sorted(pair_gap_bounds))
+        self.edge_face_gap_coedges = tuple(sorted(edge_face_gap_coedges))
+        self.lineage_id = canonical_fingerprint(
+            {
+                "kind": "brep-sewing-lineage",
+                "vertex_sources": [list(sources) for sources in self.vertex_sources],
+                "edge_images": [
+                    [
+                        image.source_edge,
+                        image.target_edge,
+                        str(image.scale),
+                        str(image.offset_rational),
+                        str(image.offset_turns),
+                    ]
+                    for image in images
+                ],
+                "coedge_sources": list(self.coedge_sources),
+                **(
+                    {
+                        "pair_gap_bounds": self.pair_gap_bounds,
+                        "edge_face_gap_coedges": self.edge_face_gap_coedges,
+                    }
+                    if self.pair_gap_bounds
+                    else {}
+                ),
+            }
         )
 
     def source_images(self, edge: int, /) -> tuple[BRepSewingEdgeImage, ...]:
@@ -247,15 +310,14 @@ class BRepSewingResult(StrictModule):
     certificate_id: str = eqx.field(static=True)
     lineage: BRepSewingLineage = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, geometry: BRepGeometry, certificate_id: str, lineage: BRepSewingLineage
     ) -> None:
-        if not isinstance(geometry, BRepGeometry):
-            raise TypeError("geometry must be a BRepGeometry.")
         if not certificate_id:
-            raise ValueError("certificate_id must be non-empty.")
-        if not isinstance(lineage, BRepSewingLineage):
-            raise TypeError("lineage must be a BRepSewingLineage.")
+            raise ValueError(
+                "BRepSewingResult.certificate_id must be nonempty; got an empty identifier"
+            )
         self.geometry = geometry
         self.certificate_id = certificate_id
         self.lineage = lineage
@@ -288,7 +350,8 @@ def _invalid_edges(uses: dict[int, list[tuple[int, int]]], /) -> tuple[int, ...]
     )
 
 
-def _shells(
+@checked
+def shells(
     geometry: BRepGeometry, faces: tuple[int, ...], signs: np.ndarray
 ) -> tuple[tuple[int, ...], ...]:
     uses = _edge_uses(geometry, faces, signs)
@@ -333,11 +396,11 @@ def _region_invalid_edges(
     )
 
 
-# ---------------------------------------------------- exact parameter algebra
+# ------------------------------------------ rational/native-period parameters
 
 
 def _turns(count: int, /) -> ExactParameter:
-    return _period_offset(Fraction(0), Fraction(count))
+    return period_offset(Fraction(0), Fraction(count))
 
 
 def _difference(first: ExactParameter, second: ExactParameter, /) -> ExactParameter:
@@ -347,7 +410,9 @@ def _difference(first: ExactParameter, second: ExactParameter, /) -> ExactParame
 def _compare(first: ExactParameter, second: ExactParameter, /) -> int:
     sign = exact_parameter_sign(_difference(first, second))
     if sign is None:
-        raise BRepSewingFailure("exact carrier parameter order is unresolved")
+        raise BRepSewingFailure(
+            "sew_brep.parameters must have a resolved algebraic order; got an unresolved parameter order"
+        )
     return sign
 
 
@@ -385,7 +450,7 @@ class _Member:
 
 @dataclass(frozen=True, slots=True)
 class _Piece:
-    """One fragment of a member between consecutive exact stations."""
+    """Retain a member fragment between consecutive parameter stations."""
 
     member: _Member
     position: int
@@ -436,6 +501,8 @@ class _Staging:
     group_edges: dict[_GroupKey, int] = field(default_factory=dict)
     fragments: dict[tuple[_GroupKey, int], _Coedge] = field(default_factory=dict)
     merged: list[tuple[int, tuple[int, ...]]] = field(default_factory=list)
+    gaps: dict[_GroupKey, float] = field(default_factory=dict)
+    gap_carriers: dict[_GroupKey, int] = field(default_factory=dict)
 
     def find(self, vertex: int, /) -> int:
         root = vertex
@@ -465,7 +532,7 @@ class _Staging:
 def _exact_range(
     geometry: BRepGeometry, edge: int, coedges: tuple[int, ...], /
 ) -> tuple[ExactParameter, ExactParameter] | None:
-    """Authored exact endpoints; isolated-root endpoints need an alias proof."""
+    """Return authored scalar endpoints; root endpoints require an alias proof."""
     if any(
         root is not None and not isinstance(root, NativePeriodEndpoint)
         for coedge in coedges
@@ -475,12 +542,15 @@ def _exact_range(
     values = np.asarray(geometry.edge_ranges)[edge]
     result: list[ExactParameter] = []
     for endpoint, root in enumerate(geometry.edge_endpoint_roots[edge]):
-        if root is None:
-            result.append(Fraction(float(values[endpoint])))
-        elif isinstance(root, NativePeriodEndpoint):
-            result.append(root.exact_parameter)
-        else:
-            return None
+        match root:
+            case None:
+                result.append(Fraction(float(values[endpoint])))
+            case NativePeriodEndpoint():
+                result.append(root.exact_parameter)
+            case TrimRootEndpoint() | BranchRootEndpoint():
+                return None
+            case _:
+                assert_never(root)
     return result[0], result[1]
 
 
@@ -493,13 +563,13 @@ def _member(
     )
     if frame is None:
         raise BRepSewingFailure(
-            "coincident carrier support has no exactly representable parameter correspondence",
+            "sew_brep.carriers must have a representable parameter correspondence; got no exactly representable parameter correspondence",
             (edge,),
         )
     bounds = _exact_range(geometry, edge, staging.coedges(edge))
     if bounds is None:
         raise BRepSewingFailure(
-            "root-valued edge endpoints require a source alias proof for identification",
+            "sew_brep.edge_endpoint_roots must have a source alias proof; got unproved endpoint identification",
             (edge,),
         )
     start, end = geometry.edge_vertices[edge]
@@ -508,10 +578,14 @@ def _member(
         periodic and _compare(length, _turns(1)) > 0
     ):
         raise BRepSewingFailure(
-            "edge range is not an exact positive carrier interval", (edge,)
+            "sew_brep.edge_ranges must be positive carrier intervals; got an invalid interval",
+            (edge,),
         )
     if start == end and (not periodic or length != _turns(1)):
-        raise BRepSewingFailure("closed edge lacks an exact native period", (edge,))
+        raise BRepSewingFailure(
+            "sew_brep.closed_edges must have a native period; got an edge without a period",
+            (edge,),
+        )
     images = frame.apply(bounds[0]), frame.apply(bounds[1])
     lower, upper = images if frame.scale > 0 else (images[1], images[0])
     first_vertex, last_vertex = (start, end) if frame.scale > 0 else (end, start)
@@ -572,19 +646,31 @@ def _endpoint(
     authority: tuple[AbstractSurfacePatch | None, Literal[0, 1] | None] | None,
     edges: tuple[int, ...],
     /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[float, NativePeriodEndpoint | None]:
-    """Literal binary endpoint when exact, else an authored native-period scalar."""
+    """Return a binary scalar when representable, otherwise a native-period endpoint."""
     rational, turns = exact_parameter_parts(value)
     if not periodic or (not turns and authority is None):
         number = float(rational)
         if turns or Fraction(number) != rational:
             raise BRepSewingFailure(
-                "fragment endpoint is not exactly representable on its carrier", edges
+                "sew_brep.fragment_endpoint must be representable on its carrier; got an unrepresentable endpoint",
+                edges,
             )
         return number, None
     patch, axis = (None, None) if authority is None else authority
-    root = NativePeriodEndpoint(carrier, patch, axis, rational=rational, turns=turns)
-    lower, upper = root.parameter_enclosure()
+    root = NativePeriodEndpoint(
+        carrier,
+        patch,
+        axis,
+        rational=rational,
+        turns=turns,
+        budget=budget,
+        preparations=preparations,
+    )
+    lower, upper = root.parameter_enclosure(preparations=preparations, budget=budget)
     return (
         root.parameter if lower <= root.parameter <= upper else 0.5 * (lower + upper)
     ), root
@@ -597,8 +683,11 @@ def _transport(
     target: tuple[ExactParameter, ExactParameter],
     periodic: bool,
     /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[CurveParameterMap, dict[int, _Coedge]] | None:
-    """Exact target-to-source map and transported p-curves of one covering member."""
+    """Transport a covering member's p-curves through its target-to-source map."""
     geometry = staging.geometry
     source, own = carrier.member.frame, piece.member.frame
     shift = _difference(piece.lower, carrier.lower)
@@ -620,8 +709,24 @@ def _transport(
         if authority is not None:
             edges = (piece.member.edge,)
             roots = (
-                _endpoint(target[0], pcurve, periodic, authority, edges)[1],
-                _endpoint(target[1], pcurve, periodic, authority, edges)[1],
+                _endpoint(
+                    target[0],
+                    pcurve,
+                    periodic,
+                    authority,
+                    edges,
+                    preparations=preparations,
+                    budget=budget,
+                )[1],
+                _endpoint(
+                    target[1],
+                    pcurve,
+                    periodic,
+                    authority,
+                    edges,
+                    preparations=preparations,
+                    budget=budget,
+                )[1],
             )
         result[coedge] = _Coedge(
             pcurve,
@@ -636,6 +741,9 @@ def _select_carrier(
     covering: tuple[_Piece, ...],
     periodic: bool,
     /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[
     _Piece,
     tuple[ExactParameter, ExactParameter],
@@ -648,25 +756,43 @@ def _select_carrier(
         ends = inverse.apply(carrier.lower), inverse.apply(carrier.upper)
         target = ends if frame.scale > 0 else (ends[1], ends[0])
         plans = tuple(
-            _transport(staging, carrier, piece, target, periodic) for piece in covering
+            _transport(
+                staging,
+                carrier,
+                piece,
+                target,
+                periodic,
+                preparations=preparations,
+                budget=budget,
+            )
+            for piece in covering
         )
         complete = tuple(plan for plan in plans if plan is not None)
         if len(complete) == len(plans):
             return carrier, target, complete
     raise BRepSewingFailure(
-        "coincident edges have no exactly representable common parameterization",
+        "sew_brep.carriers must have a representable common parameterization; got incompatible coincident edges",
         tuple(piece.member.edge for piece in covering),
     )
 
 
 def _build_group(
-    staging: _Staging, key: _GroupKey, points: _Points, periodic: bool, /
+    staging: _Staging,
+    key: _GroupKey,
+    points: _Points,
+    periodic: bool,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
-    """Publish one authoritative target edge from the first exactly transportable carrier."""
+    """Publish a target edge using the first carrier with proved p-curve transport."""
     geometry = staging.geometry
     covering = tuple(sorted(staging.groups[key], key=lambda value: value.member.edge))
     sources = tuple(piece.member.edge for piece in covering)
-    carrier, target, plans = _select_carrier(staging, covering, periodic)
+    carrier, target, plans = _select_carrier(
+        staging, covering, periodic, preparations=preparations, budget=budget
+    )
     frame = carrier.member.frame
     source_curve = geometry.edge_curves[carrier.member.edge]
     curve = geometry.curves[source_curve]
@@ -677,8 +803,24 @@ def _build_group(
         and any(exact_parameter_parts(value)[1] for value in target)
     ):
         authority = (None, None)
-    lower, lower_root = _endpoint(target[0], curve, periodic, authority, sources)
-    upper, upper_root = _endpoint(target[1], curve, periodic, authority, sources)
+    lower, lower_root = _endpoint(
+        target[0],
+        curve,
+        periodic,
+        authority,
+        sources,
+        preparations=preparations,
+        budget=budget,
+    )
+    upper, upper_root = _endpoint(
+        target[1],
+        curve,
+        periodic,
+        authority,
+        sources,
+        preparations=preparations,
+        budget=budget,
+    )
     member = carrier.member
 
     def station_vertex(station: ExactParameter, /) -> int:
@@ -707,6 +849,8 @@ def _build_group(
         )
     )
     staging.group_edges[key] = index
+    if key in staging.gaps:
+        staging.gap_carriers[key] = carrier.member.edge
     for piece, (mapping, coedges) in zip(covering, plans, strict=True):
         rational, turns = exact_parameter_parts(mapping.offset)
         staging.images.append(
@@ -753,7 +897,7 @@ def _target_vertices(
             geometry.vertex_roots[vertex] is not None for vertex in members
         ):
             raise BRepSewingFailure(
-                "root-valued vertex identification requires a source alias proof",
+                "sew_brep.vertex_roots must have a source alias proof; got unproved vertex identification",
                 tuple(
                     edge
                     for edge, ends in enumerate(geometry.edge_vertices)
@@ -767,7 +911,7 @@ def _target_vertices(
 
 
 def _stage_buckets(staging: _Staging, /) -> dict[_GroupKey, tuple[_Points, bool]]:
-    """Exact members, fragments and fragment groups of every shared support."""
+    """Group shared-support members and their fragments at common stations."""
     geometry = staging.geometry
     buckets: dict[tuple[object, ...], list[int]] = {}
     for edge, curve in enumerate(geometry.edge_curves):
@@ -778,7 +922,7 @@ def _stage_buckets(staging: _Staging, /) -> dict[_GroupKey, tuple[_Points, bool]
         reference = geometry.curves[geometry.edge_curves[edges[0]]]
         periodic = (
             isinstance(reference, AbstractCurve)
-            and _native_curve_period_symbol(reference) == "two_pi"
+            and reference.native_period_symbol() == "two_pi"
         )
         members = tuple(_member(staging, reference, edge, periodic) for edge in edges)
         pieces, points = _bucket_pieces(members, periodic)
@@ -804,10 +948,139 @@ def _stage_buckets(staging: _Staging, /) -> dict[_GroupKey, tuple[_Points, bool]
     return contexts
 
 
+def _line_gap_map(
+    staging: _Staging, first: int, second: int, /, *, budget: CoordinateEnclosureBudget
+) -> tuple[CurveParameterMap, float] | None:
+    """Certify full parallel-line ranges by rational source-coefficient displacement."""
+    geometry = staging.geometry
+    a = geometry.curves[geometry.edge_curves[first]]
+    b = geometry.curves[geometry.edge_curves[second]]
+    if not isinstance(a, LineCurve) or not isinstance(b, LineCurve):
+        return None
+    ra = _exact_range(geometry, first, staging.coedges(first))
+    rb = _exact_range(geometry, second, staging.coedges(second))
+    if (
+        ra is None
+        or rb is None
+        or any(exact_parameter_parts(value)[1] for value in (*ra, *rb))
+    ):
+        return None
+    budget.reserve(64)
+    da = tuple(Fraction(float(value)) for value in np.asarray(a.direction))
+    db = tuple(Fraction(float(value)) for value in np.asarray(b.direction))
+    axis = next((index for index, value in enumerate(db) if value), None)
+    if axis is None:
+        return None
+    scale = da[axis] / db[axis]
+    if not scale or any(x != scale * y for x, y in zip(da, db, strict=True)):
+        return None
+    lower, upper = (exact_parameter_parts(value)[0] for value in ra)
+    start, end = (exact_parameter_parts(value)[0] for value in rb)
+    if scale < 0:
+        start, end = end, start
+    if scale * (upper - lower) != end - start:
+        return None
+    offset = start - scale * lower
+    displacement = tuple(
+        Fraction(float(x)) - Fraction(float(y)) - offset * direction
+        for x, y, direction in zip(
+            np.asarray(a.origin), np.asarray(b.origin), db, strict=True
+        )
+    )
+    squared = sum((component * component for component in displacement), Fraction(0))
+    return CurveParameterMap(scale, offset), square_root_interval(squared)[1]
+
+
+def _gap_pair_candidates(
+    staging: _Staging, maximum_gap: float, /, *, budget: CoordinateEnclosureBudget
+) -> dict[tuple[int, int], tuple[CurveParameterMap, float]]:
+    """Prove a unique matching before making any topological identifications."""
+    geometry = staging.geometry
+    lamina = tuple(
+        edge
+        for edge, curve in enumerate(geometry.edge_curves)
+        if curve != -1 and len(staging.coedges(edge)) == 1
+    )
+    budget.reserve(len(lamina), 512 * len(lamina))
+    candidates: dict[int, list[int]] = {edge: [] for edge in lamina}
+    proofs: dict[tuple[int, int], tuple[CurveParameterMap, float]] = {}
+    for position, first in enumerate(lamina):
+        for second in lamina[position + 1 :]:
+            with budget.temporary_scope():
+                budget.reserve(1, 4096)
+                proof = _line_gap_map(staging, first, second, budget=budget)
+            if proof is not None and proof[1] <= maximum_gap:
+                if candidates[first] or candidates[second]:
+                    raise BRepSewingFailure(
+                        "sew_brep.pairing must be unique; got ambiguous certified-gap pairing",
+                        (first, second),
+                    )
+                budget.reserve(1, 4096)
+                candidates[first].append(second)
+                candidates[second].append(first)
+                proofs[(first, second)] = proof
+    return proofs
+
+
+def _stage_gap_pairs(
+    staging: _Staging,
+    contexts: dict[_GroupKey, tuple[_Points, bool]],
+    maximum_gap: float,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Identify unique lamina partners without altering any carrier or p-curve."""
+    proofs = _gap_pair_candidates(staging, maximum_gap, budget=budget)
+    geometry = staging.geometry
+    for (first, second), (mapping, bound) in proofs.items():
+        # Source correspondence owns already-covered ranges. They still enter
+        # candidate counting so a proved mate cannot hide a competing gap mate.
+        if any(
+            edge in staging.pieces
+            and any(
+                len(staging.groups[staging.piece_groups[piece.address]]) > 1
+                for piece in staging.pieces[edge]
+            )
+            for edge in (first, second)
+        ):
+            continue
+        bounds = _exact_range(geometry, first, staging.coedges(first))
+        if bounds is None:
+            raise RuntimeError(
+                "sew_brep.gap_range must retain authored endpoints; got a missing range"
+            )
+        lower, upper = bounds
+        av = geometry.edge_vertices[first]
+        bv = geometry.edge_vertices[second]
+        if mapping.scale < 0:
+            bv = bv[::-1]
+        members = (
+            _Member(
+                first, CurveParameterMap(Fraction(1), Fraction(0)), lower, upper, *av
+            ),
+            _Member(second, mapping.inverse(), lower, upper, *bv),
+        )
+        key = (-first - 1, lower, _difference(upper, lower))
+        contexts[key] = ({lower: [av[0], bv[0]], upper: [av[1], bv[1]]}, False)
+        staging.gaps[key] = bound
+        staging.groups[key] = []
+        for member in members:
+            piece = _Piece(member, 0, lower, upper)
+            staging.pieces[member.edge] = (piece,)
+            staging.piece_groups[piece.address] = key
+            staging.groups[key].append(piece)
+        staging.union(av[0], bv[0])
+        staging.union(av[1], bv[1])
+
+
 def _sew_by_correspondence(
     geometry: BRepGeometry,
     policy: BRepSewingPolicy,
     /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[BRepGeometry, BRepSewingLineage, _Staging] | None:
     """Fragment and identify exactly corresponding edges; None when none exist."""
     owned: dict[int, list[int]] = {}
@@ -815,6 +1088,8 @@ def _sew_by_correspondence(
         owned.setdefault(edge, []).append(coedge)
     staging = _Staging(geometry, {edge: tuple(values) for edge, values in owned.items()})
     contexts = _stage_buckets(staging)
+    if policy.maximum_gap > 0.0:
+        _stage_gap_pairs(staging, contexts, policy.maximum_gap, budget=budget)
     if all(
         len(values) == 1 and len(staging.pieces[values[0].member.edge]) == 1
         for values in staging.groups.values()
@@ -831,8 +1106,10 @@ def _sew_by_correspondence(
         for piece in member_pieces:
             key = staging.piece_groups[piece.address]
             if key not in staging.group_edges:
-                _build_group(staging, key, *contexts[key])
-    target, lineage = _publish_correspondence(staging, policy)
+                _build_group(
+                    staging, key, *contexts[key], preparations=preparations, budget=budget
+                )
+    target, lineage = _publish_correspondence(staging, policy, budget=budget)
     return target, lineage, staging
 
 
@@ -860,8 +1137,82 @@ def _target_uses(staging: _Staging, coedge: int, /) -> list[tuple[int, _Coedge]]
     return [(staging.group_edges[key], staging.fragments[(key, coedge)]) for key in keys]
 
 
+def _publication_vertex_gaps(
+    staging: _Staging,
+    points: np.ndarray,
+    vertices: tuple[tuple[int, int], ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[float, float], ...] | None:
+    """Enclose retained-carrier endpoints against unchanged representative vertices."""
+    if not staging.gaps and staging.geometry.edge_vertex_gap_bounds is None:
+        return None
+    result: list[tuple[float, float]] = []
+    for edge, ends in zip(staging.edges, vertices, strict=True):
+        curve = None if edge.curve == -1 else staging.curves[edge.curve]
+        if not isinstance(curve, LineCurve):
+            result.append((0.0, 0.0))
+            continue
+        budget.reserve(64, 256)
+        bounds = tuple(
+            fraction_norm_upper(
+                tuple(
+                    Fraction(float(origin))
+                    + Fraction(parameter) * Fraction(float(direction))
+                    - Fraction(float(point))
+                    for origin, direction, point in zip(
+                        np.asarray(curve.origin),
+                        np.asarray(curve.direction),
+                        points[vertex],
+                        strict=True,
+                    )
+                )
+            )
+            for parameter, vertex in zip((edge.lower, edge.upper), ends, strict=True)
+        )
+        result.append((bounds[0], bounds[1]))
+    return tuple(result) if any(any(row) for row in result) else None
+
+
+def _publication_face_gaps(
+    staging: _Staging,
+    uses: list[tuple[int, _Coedge]],
+    sources: list[int],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[float, ...] | None, tuple[int, ...]]:
+    """Transport source face bounds and bound the retained-carrier displacement."""
+    budget.reserve(len(uses), 64 * len(uses))
+    paired = {
+        staging.group_edges[key]: (staging.gap_carriers[key], bound)
+        for key, bound in staging.gaps.items()
+    }
+    inherited = staging.geometry.edge_face_gap_bounds
+    bounds: list[float] = []
+    affected: list[int] = []
+    for coedge, ((target, _), source) in enumerate(zip(uses, sources, strict=True)):
+        base = 0.0 if inherited is None else inherited[source]
+        pair = paired.get(target)
+        extra = (
+            pair[1]
+            if pair is not None and staging.geometry.coedge_edges[source] != pair[0]
+            else 0.0
+        )
+        if extra > 0.0:
+            affected.append(coedge)
+        bound = (
+            float(np.nextafter(base + extra, np.inf))
+            if base > 0.0 and extra > 0.0
+            else max(base, extra)
+        )
+        bounds.append(bound)
+    return (tuple(bounds) if any(bounds) else None), tuple(affected)
+
+
 def _publish_correspondence(
-    staging: _Staging, policy: BRepSewingPolicy, /
+    staging: _Staging, policy: BRepSewingPolicy, /, *, budget: CoordinateEnclosureBudget
 ) -> tuple[BRepGeometry, BRepSewingLineage]:
     geometry = staging.geometry
     vertex_ids, vertex_sources = _target_vertices(staging)
@@ -879,13 +1230,15 @@ def _publish_correspondence(
             rebuilt.append(tuple(range(start, len(uses))))
         face_loops.append(tuple(rebuilt))
     if len(uses) > policy.maximum_coedges:
-        raise BRepSewingFailure("coedge budget exhausted")
+        raise BRepSewingFailure(
+            "sew_brep.coedges must fit maximum_coedges; got coedge budget exhausted"
+        )
     edge_vertices = []
     for index, edge in enumerate(staging.edges):
         ends = (vertex_ids[edge.vertices[0]], vertex_ids[edge.vertices[1]])
         if ends[0] == ends[1] and not edge.closed:
             raise BRepSewingFailure(
-                "exact vertex identification collapses an edge",
+                "sew_brep.vertex_classes must preserve nonclosed edges; got a collapsed edge",
                 tuple(
                     image.source_edge
                     for image in staging.images
@@ -894,16 +1247,25 @@ def _publish_correspondence(
             )
         edge_vertices.append(ends)
     points = np.asarray(geometry.vertex_points)
+    target_points = np.asarray(
+        [points[sources[0]] for sources in vertex_sources], dtype=np.float64
+    ).reshape((-1, 3))
+    vertex_gaps = _publication_vertex_gaps(
+        staging, target_points, tuple(edge_vertices), budget=budget
+    )
+    face_gaps, gap_coedges = _publication_face_gaps(
+        staging, uses, coedge_sources, budget=budget
+    )
     target = BRepGeometry(
-        vertex_points=np.asarray(
-            [points[sources[0]] for sources in vertex_sources], dtype=np.float64
-        ).reshape((-1, 3)),
+        vertex_points=target_points,
         curves=tuple(staging.curves),
         edge_curves=tuple(edge.curve for edge in staging.edges),
         edge_ranges=np.asarray(
             [(edge.lower, edge.upper) for edge in staging.edges], dtype=np.float64
         ).reshape((-1, 2)),
         edge_vertices=tuple(edge_vertices),
+        edge_vertex_gap_bounds=vertex_gaps,
+        edge_face_gap_bounds=face_gaps,
         pcurves=tuple(use.pcurve for _, use in uses),
         coedge_edges=tuple(edge for edge, _ in uses),
         coedge_senses=tuple(use.sense for _, use in uses),
@@ -916,9 +1278,28 @@ def _publish_correspondence(
         ),
         edge_endpoint_roots=tuple(edge.roots for edge in staging.edges),
         coedge_endpoint_roots=tuple(use.roots for _, use in uses),
+        budget=budget,
+    )
+    pair_bounds = tuple(
+        (
+            staging.group_edges[key],
+            staging.gap_carriers[key],
+            next(
+                piece.member.edge
+                for piece in values
+                if piece.member.edge != staging.gap_carriers[key]
+            ),
+            bound,
+        )
+        for key, bound in sorted(staging.gaps.items())
+        for values in (staging.groups[key],)
     )
     lineage = BRepSewingLineage(
-        vertex_sources, tuple(staging.images), tuple(coedge_sources)
+        vertex_sources,
+        tuple(staging.images),
+        tuple(coedge_sources),
+        pair_bounds,
+        gap_coedges,
     )
     _require_exhaustive(geometry, lineage)
     return target, lineage
@@ -927,13 +1308,19 @@ def _publish_correspondence(
 def _require_exhaustive(geometry: BRepGeometry, lineage: BRepSewingLineage, /) -> None:
     vertices = sorted(vertex for sources in lineage.vertex_sources for vertex in sources)
     if vertices != list(range(geometry.vertex_points.shape[0])):
-        raise RuntimeError("Sewing lineage lost or repeated a source vertex.")
+        raise RuntimeError(
+            "BRepSewingLineage.vertex_sources must exhaust source vertices once; got missing or repeated vertices"
+        )
     if {image.source_edge for image in lineage.edge_images} != set(
         range(len(geometry.edge_curves))
     ):
-        raise RuntimeError("Sewing lineage lost a source edge.")
+        raise RuntimeError(
+            "BRepSewingLineage.edge_images must exhaust source edges; got a missing edge"
+        )
     if set(lineage.coedge_sources) != set(range(len(geometry.coedge_edges))):
-        raise RuntimeError("Sewing lineage lost a source coedge.")
+        raise RuntimeError(
+            "BRepSewingLineage.coedge_sources must exhaust source coedges; got a missing coedge"
+        )
 
 
 def _require_region_connectivity(
@@ -964,7 +1351,7 @@ def _require_region_connectivity(
                     queue.append(other)
         if len(reached) != len(faces):
             raise BRepSewingFailure(
-                "coincident edges of distinct regions require a declared shared face",
+                "sew_brep.solid_faces must declare a shared face for coincident edges; got undeclared contact between distinct regions",
                 sources,
             )
 
@@ -978,19 +1365,24 @@ def _contacts(
     vertex_class: dict[int, int],
     policy: BRepSewingPolicy,
     /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[tuple[BRepSewingContact, ...], bool]:
-    """Canonical intersection evidence among open edges without a common vertex.
+    """Report intersection diagnostics for open edges without a common vertex.
 
-    Candidates are prefiltered by enclosures inflated by the intersection
-    owner's relative tangency scale, so near-coincident and tangent carriers
-    reach the canonical curve intersection rather than a local proximity test.
+    Enclosures inflated by the intersection owner's relative tangency scale
+    retain near-coincident and tangent carriers for native curve intersection.
     """
     candidates = tuple(edge for edge in edges if geometry.edge_curves[edge] != -1)
     ranges = np.asarray(geometry.edge_ranges)
     boxes = {
         edge: np.asarray(
             geometry.curves[geometry.edge_curves[edge]].bounding_box(
-                float(ranges[edge, 0]), float(ranges[edge, 1])
+                float(ranges[edge, 0]),
+                float(ranges[edge, 1]),
+                preparations=preparations,
+                budget=budget,
             )
         )
         for edge in candidates
@@ -1012,12 +1404,28 @@ def _contacts(
                 continue
             if len(contacts) == policy.maximum_contact_pairs:
                 return tuple(contacts), False
-            contacts.append(_contact(geometry, first, second, policy))
+            contacts.append(
+                _contact(
+                    geometry,
+                    first,
+                    second,
+                    policy,
+                    preparations=preparations,
+                    budget=budget,
+                )
+            )
     return tuple(contacts), True
 
 
 def _contact(
-    geometry: BRepGeometry, first: int, second: int, policy: BRepSewingPolicy, /
+    geometry: BRepGeometry,
+    first: int,
+    second: int,
+    policy: BRepSewingPolicy,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> BRepSewingContact:
     ranges = np.asarray(geometry.edge_ranges)
     operands = tuple(
@@ -1028,7 +1436,12 @@ def _contact(
         )
         for edge in (first, second)
     )
-    result = intersect_curve_ranges(*operands, policy=policy.contact_intersection)
+    result = intersect_curve_ranges(
+        *operands,
+        policy=policy.contact_intersection,
+        preparations=preparations,
+        coordinate_budget=budget,
+    )
     relations: set[BRepSewingContactRelation] = set()
     relations.update(point.kind for point in result.points)
     if result.coincident:
@@ -1054,8 +1467,13 @@ def _open_failure(
     vertex_class: dict[int, int],
     policy: BRepSewingPolicy,
     /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> BRepSewingFailure:
-    contacts, complete = _contacts(geometry, edges, vertex_class, policy)
+    contacts, complete = _contacts(
+        geometry, edges, vertex_class, policy, preparations=preparations, budget=budget
+    )
     return BRepSewingFailure(reason, edges, contacts=contacts, contacts_complete=complete)
 
 
@@ -1073,6 +1491,32 @@ def _identity_lineage(geometry: BRepGeometry, /) -> BRepSewingLineage:
     )
 
 
+class SewingPlan(StrictModule):
+    """Retain the validated source incidence and region orientations for publication."""
+
+    source: BRepGeometry
+    regions: tuple[tuple[tuple[int, ...], np.ndarray], ...]
+    signs: np.ndarray
+    solid_faces: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    policy: BRepSewingPolicy
+
+    def __init__(
+        self,
+        *,
+        source: BRepGeometry,
+        regions: tuple[tuple[tuple[int, ...], np.ndarray], ...],
+        signs: np.ndarray,
+        solid_faces: tuple[tuple[int, ...], ...],
+        policy: BRepSewingPolicy,
+    ) -> None:
+        self.source = source
+        self.regions = regions
+        self.signs = signs
+        self.solid_faces = solid_faces
+        self.policy = policy
+
+
+@checked
 def sew_brep(
     geometry: BRepGeometry,
     orientation: ArrayLike,
@@ -1080,42 +1524,91 @@ def sew_brep(
     /,
     *,
     policy: BRepSewingPolicy | None = None,
+    source_uncertainty: float | None = None,
     solid_orientations: tuple[tuple[int, ...], ...] | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepSewingResult:
-    """Assemble closed shells from authoritative or exactly proved edge incidence.
+    """Assemble closed shells from source incidence or proved carrier maps.
 
     ``solid_faces`` declares region ownership, including cavity shell faces.
     Sewing neither classifies regions nor guesses cavity ownership from location.
     Each supplied face orientation is its outward normal for that region.
 
-    Identity-conforming coedges are assembled unchanged. Otherwise every pair of
-    distinct edges whose carriers have an exact source-coefficient parameter
-    correspondence is fragmented at every member endpoint and published as one
-    authoritative target edge per common fragment; the result lineage records
-    every source vertex/edge/coedge image with its exact orientation and
-    parameter map. Unproved, tangent, one-ulp or cross-region contacts refuse
-    atomically with native intersection evidence.
+    Identity-conforming coedges are assembled unchanged. Distinct edges with
+    proved source-coefficient carrier maps are fragmented at member endpoints
+    and published as one target edge per common fragment. The lineage records
+    each source vertex, edge and coedge image, including orientation and
+    parameter transport. Unproved, tangent, one-ulp and cross-region contacts
+    refuse before publication and retain native intersection diagnostics.
+    A recorded STEP ``source_uncertainty`` can declare the gap; the effective
+    value is capped by ``policy.maximum_gap`` and never enlarged.
     """
-    if not isinstance(geometry, BRepGeometry):
-        raise TypeError("geometry must be a BRepGeometry.")
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                geometry,
+                orientation,
+                solid_faces,
+            )
+        ) as budget:
+            return sew_brep(
+                geometry,
+                orientation,
+                solid_faces,
+                policy=policy,
+                source_uncertainty=source_uncertainty,
+                solid_orientations=solid_orientations,
+                preparations=preparations,
+                budget=budget,
+            )
     policy_ = BRepSewingPolicy() if policy is None else policy
-    if not isinstance(policy_, BRepSewingPolicy):
-        raise TypeError("policy must be a BRepSewingPolicy.")
+    for occurrence in geometry.occurrences:
+        evidence = occurrence.placement_evidence
+        if evidence is not None and evidence.point_deviation_bound > 0.0:
+            raise BRepSewingFailure(
+                "sew_brep.occurrences must have supported displacement evidence; "
+                f"got placement-deviation at path={occurrence.path!r}, "
+                f"bound={evidence.point_deviation_bound}"
+            )
+    if source_uncertainty is not None:
+        if not np.isfinite(source_uncertainty) or source_uncertainty < 0.0:
+            raise ValueError(
+                "sew_brep.source_uncertainty must be finite and nonnegative; got invalid uncertainty"
+            )
+        policy_ = BRepSewingPolicy(
+            maximum_gap=min(policy_.maximum_gap, source_uncertainty),
+            maximum_coedges=policy_.maximum_coedges,
+            maximum_contact_pairs=policy_.maximum_contact_pairs,
+            contact_intersection=policy_.contact_intersection,
+        )
     if len(geometry.coedge_edges) > policy_.maximum_coedges:
-        raise BRepSewingFailure("coedge budget exhausted")
+        raise BRepSewingFailure(
+            "sew_brep.coedges must fit maximum_coedges; got coedge budget exhausted"
+        )
     signs = np.asarray(orientation, dtype=np.float64)
     if signs.shape != (len(geometry.face_loops),) or not np.all(
         np.isin(signs, (-1.0, 1.0))
     ):
-        raise ValueError("orientation must have one -1 or +1 per face.")
+        raise ValueError(
+            "sew_brep.orientation must have one -1 or +1 per face; got invalid face orientations"
+        )
     owned = [face for faces in solid_faces for face in faces]
     if set(owned) != set(range(len(geometry.face_loops))):
-        raise ValueError("solid_faces must exhaust the geometry faces.")
+        raise ValueError(
+            "sew_brep.solid_faces must exhaust the geometry faces; got an incomplete face inventory"
+        )
     if any(len(faces) != len(set(faces)) for faces in solid_faces):
-        raise ValueError("A solid cannot repeat a face.")
+        raise ValueError(
+            "sew_brep.solid_faces must have unique faces per solid; got a repeated face"
+        )
     uses = {face: owned.count(face) for face in set(owned)}
     if any(count > 2 for count in uses.values()):
-        raise ValueError("A face may belong to at most two regions.")
+        raise ValueError(
+            "sew_brep.solid_faces must assign each face to at most two regions; got excess region ownership"
+        )
     region_signs = (
         tuple(tuple(int(signs[face]) for face in faces) for faces in solid_faces)
         if solid_orientations is None
@@ -1125,31 +1618,44 @@ def sew_brep(
         len(values) != len(faces) or any(value not in (-1, 1) for value in values)
         for faces, values in zip(solid_faces, region_signs, strict=True)
     ):
-        raise ValueError("solid_orientations must align with faces and contain signs.")
+        raise ValueError(
+            "sew_brep.solid_orientations must align with faces and contain signs; got invalid region orientations"
+        )
     regions = []
     for faces, values in zip(solid_faces, region_signs, strict=True):
         if not faces:
-            raise ValueError("A solid must own at least one face.")
+            raise ValueError(
+                "sew_brep.solid_faces must give each solid at least one face; got an empty solid"
+            )
         outward = signs.copy()
         for face, value in zip(faces, values, strict=True):
             outward[face] = value
         regions.append((tuple(faces), outward))
     regions_ = tuple(regions)
+    plan = SewingPlan(
+        source=geometry,
+        regions=regions_,
+        signs=signs,
+        solid_faces=solid_faces,
+        policy=policy_,
+    )
     invalid = _region_invalid_edges(geometry, regions_)
     if not invalid:
-        return _assemble(
-            geometry,
-            geometry,
-            regions_,
-            signs,
-            solid_faces,
-            policy_,
-            _identity_lineage(geometry),
-        )
-    sewn = _sew_by_correspondence(geometry, policy_)
+        return _assemble(plan, geometry, _identity_lineage(geometry))
+    sewn = _sew_by_correspondence(
+        geometry, policy_, preparations=preparations, budget=budget
+    )
     if sewn is None:
         identity = {vertex: vertex for vertex in range(geometry.vertex_points.shape[0])}
-        raise _open_failure(geometry, _OPEN_SHELL, invalid, identity, policy_)
+        raise _open_failure(
+            geometry,
+            _OPEN_SHELL,
+            invalid,
+            identity,
+            policy_,
+            preparations=preparations,
+            budget=budget,
+        )
     target, lineage, staging = sewn
     _require_region_connectivity(target, tuple(staging.merged), solid_faces)
     open_target = set(_region_invalid_edges(target, regions_))
@@ -1169,29 +1675,32 @@ def sew_brep(
         }
         raise _open_failure(
             geometry,
-            f"{_OPEN_SHELL} after exact correspondence",
+            f"sew_brep.shells must have closed balanced incidence after carrier correspondence; got {_OPEN_SHELL}",
             sources,
             classes,
             policy_,
+            preparations=preparations,
+            budget=budget,
         )
-    return _assemble(geometry, target, regions_, signs, solid_faces, policy_, lineage)
+    return _assemble(plan, target, lineage)
 
 
 def _assemble(
-    source: BRepGeometry,
+    plan: SewingPlan,
     geometry: BRepGeometry,
-    regions: tuple[tuple[tuple[int, ...], np.ndarray], ...],
-    signs: np.ndarray,
-    solid_faces: tuple[tuple[int, ...], ...],
-    policy: BRepSewingPolicy,
     lineage: BRepSewingLineage,
     /,
 ) -> BRepSewingResult:
+    source = plan.source
+    regions = plan.regions
+    signs = plan.signs
+    solid_faces = plan.solid_faces
+    policy = plan.policy
     shell_faces = []
     shell_orientations = []
     solid_shells = []
     for faces, outward in regions:
-        components = _shells(geometry, faces, outward)
+        components = shells(geometry, faces, outward)
         solid_shells.append(
             tuple(range(len(shell_faces), len(shell_faces) + len(components)))
         )
@@ -1203,7 +1712,7 @@ def _assemble(
     inherited = source.topology().solid_faces == solid_faces
     if not inherited and (source.occurrences or source.assembly_containers):
         raise ValueError(
-            "Regrouping existing solids requires an explicit occurrence remap."
+            "sew_brep.solid_faces must retain existing occurrence ownership; got regrouped solids without an occurrence remap"
         )
     assembled = BRepGeometry(
         vertex_points=geometry.vertex_points,
@@ -1211,6 +1720,8 @@ def _assemble(
         edge_curves=geometry.edge_curves,
         edge_ranges=geometry.edge_ranges,
         edge_vertices=geometry.edge_vertices,
+        edge_vertex_gap_bounds=geometry.edge_vertex_gap_bounds,
+        edge_face_gap_bounds=geometry.edge_face_gap_bounds,
         pcurves=geometry.pcurves,
         coedge_edges=geometry.coedge_edges,
         coedge_senses=geometry.coedge_senses,
@@ -1224,18 +1735,24 @@ def _assemble(
         occurrences=source.occurrences if inherited else None,
         assembly_containers=source.assembly_containers if inherited else None,
     )
-    payload: dict[str, object] = {
-        "kind": "native-oriented-sewing",
-        "source_geometry": source.geometry_id,
-        "target_geometry": assembled.geometry_id,
-        "orientation": signs,
-        "tolerance": policy.tolerance,
-    }
-    if geometry is not source:
-        payload |= {
+    payload = (
+        {
+            "kind": "native-oriented-sewing",
+            "source_geometry": source.geometry_id,
+            "target_geometry": assembled.geometry_id,
+            "orientation": signs,
+            "tolerance": policy.tolerance,
+        }
+        if geometry is source
+        else {
             "kind": "native-exact-correspondence-sewing",
+            "source_geometry": source.geometry_id,
+            "target_geometry": assembled.geometry_id,
+            "orientation": signs,
+            "tolerance": policy.tolerance,
             "lineage": lineage.lineage_id,
         }
+    )
     return BRepSewingResult(assembled, canonical_fingerprint(payload), lineage)
 
 

@@ -3,7 +3,7 @@
 #
 
 
-from typing import Any
+from typing import Any, NoReturn
 
 import jax
 import jax.numpy as jnp
@@ -137,7 +137,7 @@ def test_adaptive_splitting_reports_tied_population_extinction() -> None:
         del key
         return _population(jnp.zeros((population_size,)))
 
-    def unreachable_branch(population: Any, request: Any) -> None:
+    def unreachable_branch(population: Any, request: Any) -> NoReturn:
         raise AssertionError("An extinct population must not request branching.")
 
     result = phx.integration.adaptive_multilevel_splitting(

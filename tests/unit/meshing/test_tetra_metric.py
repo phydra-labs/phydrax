@@ -1,17 +1,32 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from fractions import Fraction
-from itertools import combinations, permutations
+from itertools import combinations
+from pathlib import Path
 from time import monotonic
-from typing import assert_never, Literal
+from typing import assert_never, Literal, NamedTuple
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from jax import Array, jvp, vjp
+from jax import Array
 
-from phydrax._meshcore import meshcore_available, MeshcoreError, MeshcoreStatus, TetMesh3D
+import phydrax as phx
+from phydrax._meshcore import (
+    meshcore_available,
+    MeshcoreError,
+    MeshcoreStatus,
+    NativeExecutionLimits,
+    NativeExecutionMemoryCounters,
+    NativeExecutionScope,
+    NativeExecutionWorkCounters,
+    TetMesh3D,
+)
+from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization import (
     CellBlock,
     CellMesh,
@@ -19,6 +34,7 @@ from phydrax.discretization import (
     FiniteElementFieldSpec,
     FiniteElementPlan,
 )
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.discretization.fem import (
     discontinuous_element,
     form_element,
@@ -27,62 +43,164 @@ from phydrax.discretization.fem import (
     prepare_projection_field_transfer,
 )
 from phydrax.geometry import CommonRefinementPolicy, prepare_common_refinement
-from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+from phydrax.lifecycle._meshing_sources import (
+    read_meshing_source_closure,
+    write_meshing_source_closure,
+)
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
 from phydrax.meshing._metric import metric_simplex_quality
 from phydrax.meshing._tetra_metric import (
-    _append_global_size_branches,
-    _global_size_branch_gradients,
-    _global_size_branch_targets,
-    _global_size_canonical_residual_bound,
-    _global_size_residual,
-    _global_size_shape_residual,
-    _GlobalSizeArgs,
-    _GlobalSizeBranchBank,
-    _GlobalSizeTrialPolicy,
-    _size_quantile,
+    _metric_relocation_merit,
+    constraints,
+    execute_native_tetra_metric,
     execute_tetra_metric_adaptation,
+    MetricMemoryEvidence,
+    MetricOptimizerEvidence,
+    MetricRemeshingEvidence,
     MetricRemeshingStatus,
+    TetraMetricSource,
 )
 from phydrax.meshing._topology_edit import assemble_topology_edit
-from phydrax.optim._least_squares import _prepare_residual_model
+from tests._support.cell_meshes import kuhn_cube_arrays
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.metric_meshes import (
+    TETRA_DG_TOLERANCE,
+    TETRA_FIELD_TOLERANCE,
+    TETRA_GEOMETRY_TOLERANCE,
+    TETRA_VOLUME_TOLERANCE,
+)
 
 
-def _trial_policy(
-    parameters: Array, direction: Array, residual: Array, args: _GlobalSizeArgs
-) -> tuple[Array, Array, Array, Array]:
-    model = _prepare_residual_model(
-        lambda value: _global_size_residual(value, args), parameters
+_METRIC_LIMITS = NativeExecutionLimits(
+    1_000_000_000, 10_000_000, 512, 8_000_000_000, np.inf
+)
+
+
+@contextmanager
+def _metric_request(
+    limits: NativeExecutionLimits, /, *, mesh: TetMesh3D | None = None
+) -> Iterator[tuple[NativeExecutionScope, CoordinateEnclosureBudget]]:
+    ticket = HostBatchTicket(0)
+    budget = CoordinateEnclosureBudget(
+        ticket,
+        maximum_work_units=limits.maximum_work_units,
+        maximum_memory_bytes=limits.maximum_managed_bytes,
     )
-    work_limit = jnp.asarray(1_000_000_000, dtype=jnp.int64)
-    result = _GlobalSizeTrialPolicy()(
-        parameters, direction, residual, model.jacobian, work_limit, args
-    )
-    assert bool(result.receipts_valid())
-    assert int(result.jvp_actions) == int(result.vjp_actions) == 1
-    assert 0 <= int(result.model_visits) <= 11
-    assert 0 <= int(result.model_work_units) <= int(work_limit)
-    assert not bool(result.resource_refused)
-    return result.direction, result.scale, result.model_image, result.valid
+    with ticket, budget.activate():
+        pass
+    with NativeExecutionScope(limits, mesh=mesh) as scope:
+        yield scope, budget
 
 
 def _box() -> CellMesh:
-    points = np.asarray(tuple(np.ndindex(2, 2, 2)), dtype=np.float64)
-    cells = []
-    for order in permutations(range(3)):
-        corner = np.zeros((3,), dtype=np.int32)
-        path = [0]
-        for axis in order:
-            corner[axis] = 1
-            path.append(int(np.ravel_multi_index(tuple(corner), (2, 2, 2))))
-        cells.append(path)
-    tetrahedra = np.asarray(cells, dtype=np.int32)
-    negative = np.linalg.det(points[tetrahedra[:, 1:]] - points[tetrahedra[:, :1]]) < 0.0
-    tetrahedra[negative, 0], tetrahedra[negative, 1] = (
-        tetrahedra[negative, 1].copy(),
-        tetrahedra[negative, 0].copy(),
-    )
+    points, tetrahedra = kuhn_cube_arrays(orientation_swap=(0, 1))
     points *= np.asarray((2.0, 0.5, 1.0), dtype=np.float64)
     return CellMesh(points, (CellBlock("box", "tetrahedron", tetrahedra),))
+
+
+class _PublicMetricRemesh(NamedTuple):
+    source: phx.meshing.CellMeshingResult
+    result: phx.meshing.MeshAdaptationResult
+
+
+@pytest.fixture(scope="module")
+def public_metric_remesh() -> _PublicMetricRemesh:
+    if not meshcore_available():
+        pytest.skip("native meshcore library is unavailable")
+    source = phx.meshing.certify_cell_mesh(_box(), phx.SpatialCoordinateContract.si())
+    vertices = source.mesh.entity_set(0)
+    scope = phx.meshing.MeshingScope(
+        source.mesh.mesh_id,
+        source.mesh.numeric_version,
+        phx.meshing.MeshingEntityKind.MESH,
+        0,
+        vertices.entity_set_id,
+        vertices.entity_ids,
+    )
+    metric = phx.meshing.MeshMetricField(
+        scope,
+        np.broadcast_to(np.diag((0.25, 4.0, 1.0)), (8, 3, 3)),
+        minimum_size=0.1,
+        maximum_size=2.0,
+    )
+    result = phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            source,
+            phx.meshing.MetricMeshAdaptation(metric),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_3D,
+                maximum_passes=12,
+                relocation=False,
+            ),
+        )
+    )
+    return _PublicMetricRemesh(source, result)
+
+
+def _assert_anisotropic_unit_mesh(mesh: CellMesh) -> None:
+    points = np.asarray(mesh.coordinates)
+    cells = np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
+    corners = points[cells]
+    volumes = np.linalg.det(corners[:, 1:] - corners[:, :1]) / 6.0
+    assert np.all(volumes > 0)
+    np.testing.assert_allclose(
+        np.sum(volumes), 1.0, atol=TETRA_GEOMETRY_TOLERANCE, rtol=0
+    )
+    # Independent Euclidean lengths in the declared anisotropic pullback.
+    edges = np.unique(
+        np.sort(cells[:, tuple(combinations(range(4), 2))].reshape((-1, 2)), axis=1),
+        axis=0,
+    )
+    delta = (points[edges[:, 1]] - points[edges[:, 0]]) * np.asarray(
+        (0.5, 2.0, 1.0), dtype=np.float64
+    )
+    lengths = np.linalg.norm(delta, axis=1)
+    assert np.count_nonzero((lengths < 1 / np.sqrt(2.0)) | (lengths > np.sqrt(2.0))) == 0
+
+
+def test_public_metric_remesh_publishes_domain_and_size_evidence(
+    public_metric_remesh: _PublicMetricRemesh,
+) -> None:
+    source, result = public_metric_remesh
+    assert result.status is phx.meshing.MeshAdaptationStatus.COMPLETE
+    assert source.audit.passed and result.target.audit.passed
+    evidence = result.evidence
+    assert isinstance(evidence, MetricRemeshingEvidence)
+    mesh = result.target.mesh
+    _assert_anisotropic_unit_mesh(mesh)
+    assert evidence.out_of_range_edges == 0
+    assert (
+        evidence.work_units
+        == evidence.native_work_units + evidence.optimizer.host_work_units
+    )
+    assert evidence.native_work_units > 0
+    assert evidence.optimizer.refused_proposals <= sum(
+        count for _, count in evidence.optimizer.refusal_counts
+    )
+    execution = evidence.execution_evidence
+    assert execution is not None
+    execution.require_valid()
+    field = FiniteElementFieldSpec("u", lagrange_element("tetrahedron", 1))
+    space = FiniteElementPlan(
+        mesh, field, coordinate_spec=result.target.geometry
+    ).prepare()
+    integrated = sum(
+        float(np.sum(np.asarray(block.measure)))
+        for block in space.evaluate_geometry("u", result.target.geometry.coordinates)
+    )
+    np.testing.assert_allclose(integrated, 1.0, atol=TETRA_GEOMETRY_TOLERANCE, rtol=0)
+
+
+def test_public_metric_guard_rejects_unrefined_source(
+    public_metric_remesh: _PublicMetricRemesh,
+) -> None:
+    corrupted = eqx.tree_at(
+        lambda result: result.target,
+        public_metric_remesh.result,
+        public_metric_remesh.source,
+    )
+    with pytest.raises(AssertionError):
+        _assert_anisotropic_unit_mesh(corrupted.target.mesh)
 
 
 def test_metric_quality_is_regular_after_anisotropic_coordinate_pullback() -> None:
@@ -100,7 +218,9 @@ def test_metric_quality_is_regular_after_anisotropic_coordinate_pullback() -> No
     quality = metric_simplex_quality(
         metric, points, np.asarray(((0, 1, 2, 3),), dtype=np.int32)
     )
-    np.testing.assert_allclose(quality, 1.0, rtol=1.0e-12, atol=1.0e-12)
+    np.testing.assert_allclose(
+        quality, 1.0, rtol=TETRA_GEOMETRY_TOLERANCE, atol=TETRA_GEOMETRY_TOLERANCE
+    )
 
 
 def test_unit_edges_do_not_hide_tetrahedral_slivers() -> None:
@@ -110,7 +230,7 @@ def test_unit_edges_do_not_hide_tetrahedral_slivers() -> None:
     )
     edges = np.asarray(tuple(combinations(range(4), 2)), dtype=np.int32)
     lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
-    assert np.all((lengths >= 1.0) & (lengths <= np.sqrt(2.0) + 1.0e-12))
+    assert np.all((lengths >= 1.0) & (lengths <= np.sqrt(2.0) + TETRA_GEOMETRY_TOLERANCE))
     quality = np.asarray(
         metric_simplex_quality(
             np.broadcast_to(np.eye(3), (4, 3, 3)),
@@ -121,748 +241,6 @@ def test_unit_edges_do_not_hide_tetrahedral_slivers() -> None:
     assert quality[0] < 1.0e-5
 
 
-@pytest.mark.parametrize("crossing_length", (3.0, np.nextafter(2.0, np.inf)))
-def test_statistical_rank_residual_tracks_crossing_edge_and_ignores_padding(
-    crossing_length: float,
-) -> None:
-    """A formerly unweighted edge must govern after it crosses the size rank."""
-    origins = jnp.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (2.0, 0.0, 0.0),
-        )
-    )
-    basis = jnp.broadcast_to(jnp.eye(3), (5, 3, 3))
-    args = _GlobalSizeArgs(
-        origins,
-        basis,
-        jnp.asarray(((0, 1), (0, 4), (0, 0))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((1.0, 1.0, 0.0)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((1.0,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0),
-        jnp.asarray(10.0),
-    )
-    parameters = jnp.zeros_like(origins).at[1, 0].set(crossing_length - 1.0)
-    direction = jnp.zeros_like(origins).at[1, 0].set(1.0)
-    residual, derivative = jvp(
-        lambda value: _global_size_residual(value, args),
-        (parameters,),
-        (direction,),
-    )
-    # The old fixed-identity support would remain at edge (0, 4), with
-    # residual one and zero derivative in the crossing edge's direction.
-    np.testing.assert_array_equal(residual[:1], (crossing_length - 1.0,))
-    np.testing.assert_array_equal(derivative[:1], (1.0,))
-    _, pullback = vjp(lambda value: _global_size_residual(value, args), parameters)
-    seed = jnp.zeros_like(residual).at[0].set(1.0)
-    reverse = pullback(seed)[0]
-    np.testing.assert_array_equal(reverse, direction.at[0, 0].set(-1.0))
-    reordered = args._replace(edges=args.edges[jnp.asarray((1, 0, 2))])
-    np.testing.assert_array_equal(
-        _global_size_residual(parameters, reordered)[:1],
-        residual[:1],
-    )
-
-
-@pytest.mark.parametrize("quantile", (0.5, 0.95))
-def test_statistical_residual_uses_interpolated_statistic_not_each_support_edge(
-    quantile: float,
-) -> None:
-    lower = 0.5
-    upper = lower + (1.0 - lower) / quantile
-    origins = jnp.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (lower, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (upper, 0.0, 0.0),
-        )
-    )
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (5, 3, 3)),
-        jnp.asarray(((0, 1), (0, 4), (0, 0))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((quantile,)),
-        jnp.asarray((1.0, 1.0, 0.0)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((lower,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0),
-        jnp.asarray(10.0),
-    )
-    residual = _global_size_residual(jnp.zeros_like(origins), args)
-    expected = np.quantile(np.asarray((lower, upper)), quantile) - 1.0
-    np.testing.assert_array_equal(residual[:1], (expected,))
-    assert lower != 1.0 and upper != 1.0
-
-
-@pytest.mark.parametrize("edge_velocities", ((-1.0, -2.0, 1.0), (-1.0, -2.0, 0.0)))
-@pytest.mark.parametrize("quantile", (0.5, 0.95, 1.0))
-def test_statistical_repeated_tie_uses_outgoing_rank_for_finite_movement(
-    quantile: float,
-    edge_velocities: tuple[float, float, float],
-) -> None:
-    """No fixed tied-row identity can replace the actual outgoing statistic."""
-    origins = jnp.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (2.0, 0.0, 0.0),
-            (2.0, 0.0, 0.0),
-            (2.0, 0.0, 0.0),
-        )
-    )
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (7, 3, 3)),
-        jnp.asarray(((0, 4), (0, 5), (0, 6), (0, 0))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((quantile,)),
-        jnp.asarray((1.0, 1.0, 1.0, 0.0)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((1.0,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0),
-        jnp.asarray(10.0),
-    )
-    velocities = np.asarray(edge_velocities)
-    step = 0.125
-    parameters = jnp.zeros_like(origins).at[4:, 0].set(step * velocities)
-    baseline = _global_size_residual(parameters, args)
-    for order in permutations(range(3)):
-        reordered = args._replace(edges=args.edges[jnp.asarray((*order, 3))])
-        residual = _global_size_residual(parameters, reordered)
-        np.testing.assert_array_equal(residual, baseline)
-        assert bool(jnp.all(jnp.isfinite(residual)))
-    # Reversing movement must reselect the outgoing ranks as well; it
-    # cannot reuse the branch selected for the positive displacement.
-    reverse = _global_size_residual(-parameters, args)[0]
-    initial = _global_size_residual(jnp.zeros_like(origins), args)[0]
-    assert float(reverse) > float(initial)
-    if quantile == 0.5 and edge_velocities[-1] == 0.0:
-        # A tied support that does not move has zero branch directional
-        # derivative, yet it must not falsely prevent median descent.
-        assert float(baseline[0] * baseline[0]) < float(initial * initial)
-
-
-def test_statistical_tie_linear_model_is_symmetric_not_directional_rank_proxy() -> None:
-    lengths = jnp.asarray((2.0, 2.0, 2.0, jnp.nan))
-    quantiles = jnp.asarray((0.5, 0.95))
-    direction = jnp.asarray((-1.0, -2.0, 0.0, 0.0))
-    primal, image = jvp(
-        lambda value: _size_quantile(value, quantiles), (lengths,), (direction,)
-    )
-    np.testing.assert_array_equal(primal, (2.0, 2.0))
-    np.testing.assert_array_equal(image, (-1.0, -1.0))
-    _, pullback = vjp(lambda value: _size_quantile(value, quantiles), lengths)
-    gradient = pullback(jnp.asarray((1.0, 0.0)))[0]
-    np.testing.assert_allclose(
-        gradient, (1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0, 0.0), rtol=0.0, atol=0.0
-    )
-    # The outgoing p95 derivative is -0.1, not the linear model's -1.
-    # This distinction is essential to native trial merit prediction.
-    step = 0.125
-    actual = _size_quantile(lengths + step * direction, quantiles)
-    expected = np.quantile(
-        np.asarray((2.0, 2.0, 2.0)) + step * np.asarray(direction[:3]),
-        np.asarray(quantiles),
-    )
-    np.testing.assert_array_equal(actual, expected)
-    assert float(actual[1]) != float(primal[1] + step * image[1])
-    order = jnp.asarray((2, 0, 1, 3))
-    reordered, reordered_image = jvp(
-        lambda value: _size_quantile(value, quantiles),
-        (lengths[order],),
-        (direction[order],),
-    )
-    np.testing.assert_array_equal(reordered, primal)
-    np.testing.assert_array_equal(reordered_image, image)
-
-
-@pytest.mark.parametrize("sign", (-1.0, 1.0))
-def test_statistical_tolerance_hinge_preserves_one_sided_finite_movement(
-    sign: float,
-) -> None:
-    origins = jnp.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (1.25, 0.0, 0.0),
-        )
-    )
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (5, 3, 3)),
-        jnp.asarray(((0, 4), (0, 0))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((0.5, 0.95)),
-        jnp.asarray((1.0, 0.0)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((1.0,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.25),
-        jnp.asarray(1.0),
-        jnp.asarray(10.0),
-    )
-    origin = _global_size_residual(jnp.zeros_like(origins), args)
-    np.testing.assert_array_equal(origin[:2], (0.0, 0.0))
-    parameters = jnp.zeros_like(origins).at[4, 0].set(sign * 0.125)
-    residual = _global_size_residual(parameters, args)
-    np.testing.assert_array_equal(residual[:2], (max(sign * 0.125, 0.0),) * 2)
-    assert bool(jnp.all(jnp.isfinite(residual)))
-
-
-def test_statistical_trial_policy_uses_exact_outgoing_tied_rank_merit() -> None:
-    origins = jnp.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (2.0, 0.0, 0.0),
-            (2.0, 0.0, 0.0),
-            (2.0, 0.0, 0.0),
-        )
-    )
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (7, 3, 3)),
-        jnp.asarray(((0, 4), (0, 5), (0, 6), (0, 0))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((0.5, 0.95)),
-        jnp.asarray((1.0, 1.0, 1.0, 0.0)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((1.0,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0),
-        jnp.asarray(10.0),
-    )
-    parameters = jnp.zeros_like(origins)
-    direction = parameters.at[4:, 0].set(jnp.asarray((-1.0, -2.0, 0.0)))
-    residual, image = jvp(
-        lambda value: _global_size_residual(value, args), (parameters,), (direction,)
-    )
-    direction, scale, outgoing, valid = _trial_policy(
-        parameters, direction, residual, args
-    )
-    assert bool(valid)
-    actual = _global_size_residual(parameters + scale * direction, args)
-    assert 0.0 < float(scale) <= 1.0
-    assert float(jnp.sum(actual * actual)) < float(jnp.sum(residual * residual))
-    np.testing.assert_allclose(image[:2], (-1.0, -1.0), rtol=0.0, atol=1e-15)
-    # The rank-frontier policy may replace the authored direction; its
-    # published model image belongs to that selected finite trajectory.
-    np.testing.assert_allclose(
-        outgoing, (actual - residual) / scale, rtol=0.0, atol=1e-15
-    )
-    assert float(jnp.sum(residual * outgoing)) < 0.0
-    assert not bool(_GlobalSizeTrialPolicy().termination_valid(residual, args))
-    order = jnp.asarray((2, 0, 1, 3))
-    reordered = args._replace(edges=args.edges[order], edge_valid=args.edge_valid[order])
-    direction, repeated_scale, repeated_image, repeated_valid = _trial_policy(
-        parameters, direction, residual, reordered
-    )
-    np.testing.assert_array_equal(repeated_scale, scale)
-    np.testing.assert_array_equal(repeated_image, outgoing)
-    assert bool(repeated_valid)
-
-
-def test_statistical_trial_merit_selects_outgoing_shortest_edge_in_active_radius_hinge() -> (
-    None
-):
-    origins = jnp.asarray(
-        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-    )
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (4, 3, 3)),
-        jnp.asarray(((0, 1), (0, 2), (0, 3), (0, 0))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((0.5,)),
-        jnp.asarray((1.0, 1.0, 1.0, 0.0)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((1.0,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0),
-        jnp.asarray(0.5),
-    )
-    parameters = jnp.zeros_like(origins)
-    direction = parameters.at[1, 0].set(1.0).at[2, 1].set(-2.0)
-    residual, image = jvp(
-        lambda value: _global_size_residual(value, args), (parameters,), (direction,)
-    )
-    direction, _, outgoing, valid = _trial_policy(parameters, direction, residual, args)
-    # Size is already satisfied; the chosen direction increases the actual
-    # active shape merit, so refusal is truthful, not scientific infeasibility.
-    assert not bool(valid)
-    radius_row = args.quantiles.size + args.cells.shape[0]
-    assert float(residual[radius_row]) > 0.0
-    step = 1e-6
-    actual = _global_size_residual(parameters + step * direction, args)
-    np.testing.assert_allclose(
-        outgoing[radius_row],
-        (actual[radius_row] - residual[radius_row]) / step,
-        rtol=1e-5,
-        atol=1e-5,
-    )
-    assert float(outgoing[radius_row]) > float(image[radius_row])
-
-
-def test_statistical_finite_rank_model_crosses_subulp_merit_event_with_real_descent() -> (
-    None
-):
-    origins = jnp.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (0.8, 0.0, 0.0),
-            (0.9, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (np.nextafter(1.0, np.inf), 0.0, 0.0),
-            (2.0, 0.0, 0.0),
-            (3.0, 0.0, 0.0),
-        )
-    )
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (11, 3, 3)),
-        jnp.asarray(((0, 4), (0, 5), (0, 6), (0, 7), (0, 8), (0, 9), (0, 10), (0, 0))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((0.5, 0.95)),
-        jnp.asarray((1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((1.0,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0),
-        jnp.asarray(10.0),
-    )
-    parameters = jnp.zeros_like(origins)
-    direction = parameters.at[8, 0].set(-0.01).at[10, 0].set(-0.001)
-    residual, linear_image = jvp(
-        lambda value: _global_size_residual(value, args), (parameters,), (direction,)
-    )
-    # The adjacent-to-unit edge meets the fixed unit block at this authored
-    # rank event. That represented movement cannot change either residual.
-    event_scale = np.spacing(1.0) / 0.01
-    clipped = _global_size_residual(parameters + event_scale * direction, args)
-    np.testing.assert_array_equal(clipped, residual)
-    direction, scale, finite_image, valid = _trial_policy(
-        parameters, direction, residual, args
-    )
-    assert bool(valid)
-    assert 0.0 < float(scale) <= 1.0
-    actual = _global_size_residual(parameters + scale * direction, args)
-    # The collinear affine model admits finite progress without disturbing
-    # the already satisfied median or adding any scientific tolerance.
-    np.testing.assert_array_equal(scale * finite_image, actual - residual)
-    assert float(actual[0]) == 0.0
-    assert float(jnp.sum(actual * actual)) < float(jnp.sum(residual * residual))
-    model = _prepare_residual_model(
-        lambda value: _global_size_residual(value, args), parameters
-    )
-    original_direction = parameters.at[8, 0].set(-0.01).at[10, 0].set(-0.001)
-    receipt = _GlobalSizeTrialPolicy()(
-        parameters,
-        original_direction,
-        residual,
-        model.jacobian,
-        jnp.asarray(1_000_000_000, dtype=jnp.int64),
-        args,
-    )
-    assert bool(receipt.receipts_valid())
-    assert not bool(receipt.resource_refused)
-    allowance = receipt.model_work_units - 1
-    refused = _GlobalSizeTrialPolicy()(
-        parameters, original_direction, residual, model.jacobian, allowance, args
-    )
-    assert bool(refused.resource_refused)
-    assert not bool(refused.valid)
-    assert bool(refused.receipts_valid())
-    assert int(refused.model_work_units) <= int(allowance)
-
-
-def test_statistical_finite_rank_model_reselects_support_after_crossing() -> None:
-    origins = jnp.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (2.0, 0.0, 0.0),
-            (np.nextafter(2.0, np.inf), 0.0, 0.0),
-            (3.0, 0.0, 0.0),
-        )
-    )
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (7, 3, 3)),
-        jnp.asarray(((0, 4), (0, 5), (0, 6), (0, 0))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((0.5,)),
-        jnp.asarray((1.0, 1.0, 1.0, 0.0)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((1.0,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0),
-        jnp.asarray(10.0),
-    )
-    parameters = jnp.zeros_like(origins)
-    direction = parameters.at[4, 0].set(-0.125).at[5, 0].set(-0.25)
-    residual, linear_image = jvp(
-        lambda value: _global_size_residual(value, args), (parameters,), (direction,)
-    )
-    direction, scale, finite_image, valid = _trial_policy(
-        parameters, direction, residual, args
-    )
-    assert bool(valid)
-    assert 0.0 < float(scale) <= 1.0
-    actual = _global_size_residual(parameters + scale * direction, args)
-    np.testing.assert_array_equal(scale * finite_image, actual - residual)
-    # This is a genuine finite support switch, not a rounding difference.
-    assert float(finite_image[0]) > float(linear_image[0])
-    assert float(jnp.sum(actual * actual)) < float(jnp.sum(residual * residual))
-
-
-def test_statistical_finite_rank_model_selects_intermediate_descent_not_full_ascent() -> (
-    None
-):
-    origins = jnp.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (2.0, 0.0, 0.0),
-            (2.1, 0.0, 0.0),
-            (3.0, 0.0, 0.0),
-        )
-    )
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (7, 3, 3)).at[:4].set(0.0),
-        jnp.asarray(((0, 4), (0, 5), (0, 6), (0, 0))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((0.5,)),
-        jnp.asarray((1.0, 1.0, 1.0, 0.0)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((1.0,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0),
-        jnp.asarray(10.0),
-    )
-    parameters = jnp.zeros_like(origins)
-    direction = parameters.at[4, 0].set(4.0).at[5, 0].set(-1.0)
-    original_direction = direction
-    residual, image = jvp(
-        lambda value: _global_size_residual(value, args), (parameters,), (direction,)
-    )
-    full = _global_size_residual(direction, args)
-    direction, scale, secant, valid = _trial_policy(parameters, direction, residual, args)
-    actual = _global_size_residual(scale * direction, args)
-    assert bool(valid)
-    assert 0.0 < float(scale) <= 1.0
-    assert bool(jnp.any(direction != original_direction))
-    np.testing.assert_array_equal(direction[:4], jnp.zeros((4, 3)))
-    assert float(jnp.sum(full * full)) > float(jnp.sum(residual * residual))
-    assert float(jnp.sum(actual * actual)) < float(jnp.sum(residual * residual))
-    # A finite secant is a distinct model, not a bit-identical actual
-    # residual after subtract/divide/multiply/reconstruct operations.
-    prediction = -scale * jnp.sum(residual * secant) - 0.5 * scale**2 * jnp.sum(
-        secant * secant
-    )
-    assert float(prediction) > 0.0
-    assert bool(jnp.all(jnp.isfinite(secant)))
-
-
-def test_statistical_finite_radius_model_reselects_all_cell_edges() -> None:
-    origins = jnp.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, np.nextafter(1.0, np.inf), 0.0),
-            (0.0, 0.0, 2.5),
-        )
-    )
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (4, 3, 3)),
-        jnp.asarray(((0, 1), (0, 2), (0, 3), (0, 0))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((1.0, 1.0, 1.0, 0.0)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((2.5,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0),
-        jnp.asarray(1.2),
-    )
-    parameters = jnp.zeros_like(origins)
-    direction = parameters.at[1, 0].set(0.02).at[2, 1].set(-0.04).at[3, 2].set(-0.5)
-    residual, linear_image = jvp(
-        lambda value: _global_size_residual(value, args), (parameters,), (direction,)
-    )
-    direction, scale, finite_image, valid = _trial_policy(
-        parameters, direction, residual, args
-    )
-    assert bool(valid)
-    assert 0.0 < float(scale) <= 1.0
-    radius_row = args.quantiles.size + args.cells.shape[0]
-    # The x edge is initially shortest but the y edge becomes shortest.
-    # Freezing x would falsely deactivate this finite modeled radius hinge.
-    assert float(residual[radius_row] + scale * finite_image[radius_row]) > 0.0
-    actual = _global_size_residual(parameters + scale * direction, args)
-    assert float(actual[radius_row]) > 0.0
-    assert float(jnp.sum(actual * actual)) < float(jnp.sum(residual * residual))
-
-
-def test_statistical_rank_model_zero_work_budget_refuses_before_actions() -> None:
-    origins = jnp.asarray(
-        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
-    )
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (4, 3, 3)),
-        jnp.asarray(((0, 1), (0, 2), (0, 3), (0, 0))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((0.5, 0.95)),
-        jnp.asarray((1.0, 1.0, 1.0, 0.0)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((1.0,)),
-        jnp.asarray(0.5),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0),
-        jnp.asarray(10.0),
-    )
-    parameters = jnp.zeros_like(origins)
-    model = _prepare_residual_model(
-        lambda value: _global_size_residual(value, args), parameters
-    )
-    result = _GlobalSizeTrialPolicy()(
-        parameters,
-        -jnp.ones_like(parameters),
-        model.residual,
-        model.jacobian,
-        jnp.asarray(0, dtype=jnp.int64),
-        args,
-    )
-    assert bool(result.resource_refused)
-    assert not bool(result.valid)
-    assert bool(result.receipts_valid())
-    assert int(result.jvp_actions) == int(result.vjp_actions) == 0
-    assert int(result.model_work_units) == int(result.model_visits) == 0
-
-
-def test_statistical_branch_bank_retains_tied_rows_and_refuses_overflow() -> None:
-    empty = jnp.zeros((2,), dtype=jnp.int32)
-    bank = _GlobalSizeBranchBank(empty, empty, empty, jnp.asarray(0), jnp.asarray(False))
-    bank, work = _append_global_size_branches(
-        bank,
-        jnp.asarray((1, 1, 1)),
-        jnp.asarray((7, 8, 7)),
-        jnp.asarray((7, 8, 7)),
-        jnp.asarray((True, True, True)),
-    )
-    assert int(bank.count) == 2
-    assert not bool(bank.overflow)
-    assert int(work) > 0
-    np.testing.assert_array_equal(bank.lower, (7, 8))
-    previous = bank
-    bank, work = _append_global_size_branches(
-        bank,
-        jnp.asarray((1,)),
-        jnp.asarray((9,)),
-        jnp.asarray((9,)),
-        jnp.asarray((True,)),
-    )
-    assert bool(bank.overflow)
-    assert int(bank.count) == 2
-    assert int(work) > 0
-    np.testing.assert_array_equal(bank.lower, previous.lower)
-    np.testing.assert_array_equal(bank.upper, previous.upper)
-
-
-def test_statistical_branch_rows_preserve_individual_targets_and_source_tangents() -> (
-    None
-):
-    origins = jnp.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (0.6, 0.0, 0.0),
-            (0.7, 0.0, 0.0),
-            (0.8, 0.0, 0.0),
-            (1.2, 0.0, 0.0),
-            (1.2, 0.0, 0.0),
-        )
-    )
-    edges = jnp.asarray(((0, 4), (0, 5), (0, 6), (0, 7), (0, 8), (0, 0)))
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (9, 3, 3)).at[:4].set(0.0),
-        edges,
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((0.5, 0.95)),
-        jnp.asarray((1.0, 1.0, 1.0, 1.0, 1.0, 0.0)),
-        jnp.asarray((1.0,)),
-        jnp.asarray((1.0,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.0),
-        jnp.asarray(1.0),
-        jnp.asarray(10.0),
-    )
-    residual = _global_size_residual(jnp.zeros_like(origins), args)
-    delta = origins[edges[:, 1]] - origins[edges[:, 0]]
-    lengths = jnp.sqrt(
-        jnp.where(args.edge_valid > 0.0, jnp.sum(delta * delta, axis=-1), 1.0)
-    )
-    bank = _GlobalSizeBranchBank(
-        jnp.asarray((0, 1, 1)),
-        jnp.asarray((2, 3, 4)),
-        jnp.asarray((2, 3, 4)),
-        jnp.asarray(3),
-        jnp.asarray(False),
-    )
-    gradients, active, equality = _global_size_branch_gradients(
-        bank, delta, lengths, residual, jnp.zeros_like(origins), args
-    )
-    expected = (
-        jnp.zeros((3, 9, 3))
-        .at[0, 6, 0]
-        .set(1.0)
-        .at[1, 7, 0]
-        .set(-1.0)
-        .at[2, 8, 0]
-        .set(-1.0)
-    )
-    np.testing.assert_array_equal(gradients, expected)
-    np.testing.assert_array_equal(active, (True, True, True))
-    np.testing.assert_array_equal(equality, (False, False, False))
-    gradients, active, equality = _global_size_branch_gradients(
-        bank, delta, lengths, residual.at[0].set(0.0), jnp.zeros_like(origins), args
-    )
-    np.testing.assert_array_equal(gradients[0], expected[0])
-    np.testing.assert_array_equal(active, (False, True, True))
-    np.testing.assert_array_equal(equality, (True, False, False))
-
-
-def test_statistical_branch_targets_preserve_actual_component_gaps_and_padding() -> None:
-    statistics = jnp.asarray((1, -1, 0, 0, 1, -1, 0, 1), dtype=jnp.int32)
-    empty = jnp.zeros((8,), dtype=jnp.int32)
-    bank = _GlobalSizeBranchBank(
-        statistics, empty, empty, jnp.asarray(3), jnp.asarray(False)
-    )
-    inequality = jnp.asarray((True, True, True, False, False, False, False, False))
-    residual = jnp.asarray((-1.0e-6, 0.18, 3.0, 4.0))
-    targets = _global_size_branch_targets(bank, residual, inequality, 2)
-    np.testing.assert_array_equal(targets, (0.18, 25.0, 1.0e-6, 0.0, 0.0, 0.0, 0.0, 0.0))
-    equality_residual = residual.at[0].set(0.0)
-    targets = _global_size_branch_targets(
-        bank, equality_residual, inequality.at[2].set(False), 2
-    )
-    np.testing.assert_array_equal(targets, (0.18, 25.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
-
-
-def test_statistical_canonical_primal_bound_uses_original_evaluation_guard() -> None:
-    # Original 32 steps / four trials can make 162 real primals, but the
-    # original 128-evaluation outer guard permits only a last complete step
-    # and final model beyond that guard. Finite policy models are separate.
-    assert _global_size_canonical_residual_bound() == 128 + 4 + 1
-    assert _global_size_canonical_residual_bound() >= 1 + 32 * 2 + 1
-
-
-def test_statistical_finite_model_does_not_trade_hard_dihedral_for_size_descent() -> None:
-    origins = jnp.asarray(
-        ((0.0, 0.0, 0.0), (1.5, 0.0, 0.0), (0.0, 1.5, 0.0), (0.0, 0.0, 1.5))
-    )
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (4, 3, 3)),
-        jnp.asarray(tuple(combinations(range(4), 2))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((0.5, 0.95)),
-        jnp.ones((6,)),
-        jnp.ones((1,)),
-        jnp.asarray((3.375,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.0),
-        jnp.asarray(np.cos(np.deg2rad(10.0))),
-        jnp.asarray(1000.0),
-    )
-    parameters = jnp.zeros_like(origins)
-    direction = parameters.at[1, 0].set(-0.9).at[2, 1].set(-0.9).at[3, 2].set(-1.49)
-    residual = _global_size_residual(parameters, args)
-    full = _global_size_shape_residual(origins + direction, args)
-    assert bool(jnp.any(full[1:] > 0.0))
-    selected, scale, _, valid = _trial_policy(parameters, direction, residual, args)
-    assert bool(valid)
-    assert float(scale) < 1.0
-    actual = _global_size_shape_residual(origins + scale * selected, args)
-    np.testing.assert_array_equal(actual[1:], 0.0)
-
-
-def test_statistical_refused_full_point_recovers_with_distinct_finite_scale() -> None:
-    height = 1.5 * np.tan(np.deg2rad(10.01)) / np.sqrt(2.0)
-    origins = jnp.asarray(
-        ((0.0, 0.0, 0.0), (1.5, 0.0, 0.0), (0.0, 1.5, 0.0), (0.0, 0.0, height))
-    )
-    args = _GlobalSizeArgs(
-        origins,
-        jnp.broadcast_to(jnp.eye(3), (4, 3, 3)),
-        jnp.asarray(tuple(combinations(range(4), 2))),
-        jnp.asarray(((0, 1, 2, 3),)),
-        jnp.asarray((0.5, 0.95)),
-        jnp.ones((6,)),
-        jnp.ones((1,)),
-        jnp.asarray((2.25 * height,)),
-        jnp.asarray(1.0),
-        jnp.asarray(0.0),
-        jnp.asarray(np.cos(np.deg2rad(10.0))),
-        jnp.asarray(1000.0),
-    )
-    parameters = jnp.zeros_like(origins)
-    direction = (
-        parameters.at[1, 0].set(-1.0e-5).at[2, 1].set(-1.0e-5).at[3, 2].set(-3.0e-4)
-    )
-    residual = _global_size_residual(parameters, args)
-    assert bool(jnp.all(residual[2:] == 0.0))
-    full = _global_size_residual(direction, args)
-    assert bool(jnp.all(jnp.abs(full[:2]) < jnp.abs(residual[:2])))
-    assert bool(jnp.any(full[4:] > 0.0))
-    selected, scale, image, valid = _trial_policy(parameters, direction, residual, args)
-    assert bool(valid)
-    assert float(scale) == 0.5
-    actual = _global_size_residual(scale * selected, args)
-    np.testing.assert_array_equal(actual[4:], 0.0)
-    np.testing.assert_array_equal(scale * image, actual - residual)
-
-
 @pytest.mark.skipif(
     not meshcore_available(), reason="native meshcore library is unavailable"
 )
@@ -870,17 +248,24 @@ def test_anisotropic_box_remesh_keeps_exact_domain_and_p1_source_coverage() -> N
     source = _box()
     coordinates = np.asarray(source.coordinates).copy()
     metric = np.broadcast_to(np.diag((0.25, 4.0, 1.0)), (8, 3, 3))
-    outcome = execute_tetra_metric_adaptation(
-        source, metric, maximum_passes=12, relocation=False
-    )
+    with _metric_request(_METRIC_LIMITS) as (scope, budget):
+        outcome = execute_tetra_metric_adaptation(
+            source,
+            metric,
+            maximum_passes=12,
+            relocation=False,
+            scope=scope,
+            budget=budget,
+        )
     assert outcome.evidence.status is MetricRemeshingStatus.COMPLETE
-    target, lineage, stencil = assemble_topology_edit(
-        source, outcome.edit, numeric_version="box-remesh"
-    )
+    with coordinate_reference_budget() as budget:
+        target, lineage, stencil = assemble_topology_edit(
+            source, outcome.edit, numeric_version="box-remesh", budget=budget
+        )
     corners = np.asarray(target.coordinates)[np.asarray(target.blocks[0].vertices)]
     volumes = np.linalg.det(corners[:, 1:] - corners[:, :1]) / 6.0
     assert np.all(volumes > 0.0)
-    assert np.sum(volumes) == pytest.approx(1.0, abs=1.0e-12)
+    assert np.sum(volumes) == pytest.approx(1.0, abs=TETRA_GEOMETRY_TOLERANCE)
     assert outcome.evidence.out_of_range_edges == 0
     assert lineage.source_topology_id == source.topology_id
     sources = np.asarray(outcome.edit.stencil_sources)
@@ -899,8 +284,48 @@ def test_anisotropic_box_remesh_keeps_exact_domain_and_p1_source_coverage() -> N
         * weights[..., None],
         axis=1,
     )
-    np.testing.assert_allclose(reproduced, target.coordinates, atol=1.0e-12)
+    np.testing.assert_allclose(
+        reproduced, target.coordinates, atol=TETRA_GEOMETRY_TOLERANCE
+    )
     np.testing.assert_array_equal(source.coordinates, coordinates)
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native meshcore library is unavailable"
+)
+def test_repeated_boundary_splits_retain_native_source_facet_lineage() -> None:
+    source = _box()
+    metric = np.broadcast_to(np.diag((1.0, 16.0, 4.0)), (8, 3, 3))
+    with _metric_request(_METRIC_LIMITS) as (scope, budget):
+        outcome = execute_tetra_metric_adaptation(
+            source,
+            metric,
+            maximum_passes=12,
+            relocation=True,
+            scope=scope,
+            budget=budget,
+        )
+    with coordinate_reference_budget() as budget:
+        target, lineage, _ = assemble_topology_edit(
+            source, outcome.edit, numeric_version="boundary-refinement", budget=budget
+        )
+    old_connectivity, new_connectivity = source.connectivity, target.connectivity
+    assert isinstance(old_connectivity, phx.discretization.TetrahedralConnectivity)
+    assert isinstance(new_connectivity, phx.discretization.TetrahedralConnectivity)
+    old_ids = np.asarray(source.entity_set(2).entity_ids)[
+        np.asarray(old_connectivity.boundary_faces)
+    ]
+    new_ids = np.asarray(target.entity_set(2).entity_ids)[
+        np.asarray(new_connectivity.boundary_faces)
+    ]
+    assert new_ids.size > old_ids.size
+    record = lineage.entity_lineage(2)
+    assert not np.intersect1d(record.created_target_ids, new_ids).size
+    relevant = np.isin(np.asarray(record.target_global_ids), new_ids)
+    assert np.all(np.isin(np.asarray(record.source_global_ids)[relevant], old_ids))
+    np.testing.assert_array_equal(
+        np.unique(np.asarray(record.target_global_ids)[relevant]), np.sort(new_ids)
+    )
 
 
 @pytest.mark.skipif(
@@ -909,12 +334,15 @@ def test_anisotropic_box_remesh_keeps_exact_domain_and_p1_source_coverage() -> N
 def test_exhausted_metric_work_keeps_source_and_reports_unmet_edges() -> None:
     source = _box()
     before = np.asarray(source.coordinates).copy()
-    outcome = execute_tetra_metric_adaptation(
-        source,
-        np.broadcast_to(np.diag((1.0, 16.0, 4.0)), (8, 3, 3)),
-        maximum_operations=0,
-        maximum_passes=4,
-    )
+    with _metric_request(_METRIC_LIMITS) as (scope, budget):
+        outcome = execute_tetra_metric_adaptation(
+            source,
+            np.broadcast_to(np.diag((1.0, 16.0, 4.0)), (8, 3, 3)),
+            maximum_operations=0,
+            maximum_passes=4,
+            scope=scope,
+            budget=budget,
+        )
     assert outcome.evidence.status is MetricRemeshingStatus.RESOURCE_LIMIT
     assert outcome.evidence.out_of_range_edges > 0
     assert outcome.evidence.splits == 0
@@ -977,13 +405,20 @@ def test_repeated_native_remesh_transfers_each_declared_field_family(
         metric = np.broadcast_to(
             scale * np.diag((0.25, 4.0, 1.0)), (mesh.coordinates.shape[0], 3, 3)
         )
-        outcome = execute_tetra_metric_adaptation(
-            mesh, metric, maximum_passes=16, relocation=False
-        )
+        with _metric_request(_METRIC_LIMITS) as (scope, budget):
+            outcome = execute_tetra_metric_adaptation(
+                mesh,
+                metric,
+                maximum_passes=16,
+                relocation=False,
+                scope=scope,
+                budget=budget,
+            )
         assert outcome.evidence.status is MetricRemeshingStatus.COMPLETE
-        target, _, _ = assemble_topology_edit(
-            mesh, outcome.edit, numeric_version=f"field-remesh:{epoch}"
-        )
+        with coordinate_reference_budget() as budget:
+            target, _, _ = assemble_topology_edit(
+                mesh, outcome.edit, numeric_version=f"field-remesh:{epoch}", budget=budget
+            )
         successor = FiniteElementPlan(target, specification).prepare()
         common = prepare_common_refinement(
             mesh, target, policy=CommonRefinementPolicy(overlap_simplices=True)
@@ -1004,13 +439,16 @@ def test_repeated_native_remesh_transfers_each_declared_field_family(
             assert transfer.evidence.defect("commuting") <= transfer.evidence.tolerance
         if family == "dg":
             assert dg_content(successor, values) == pytest.approx(
-                source_content, abs=1.0e-11
+                source_content, abs=TETRA_DG_TOLERANCE
             )
-            assert np.min(values) >= source_minimum - 1.0e-11
-            assert np.max(values) <= source_maximum + 1.0e-11
+            assert np.min(values) >= source_minimum - TETRA_DG_TOLERANCE
+            assert np.max(values) <= source_maximum + TETRA_DG_TOLERANCE
         else:
             np.testing.assert_allclose(
-                values, successor.project("u", field), atol=1.0e-10, rtol=1.0e-10
+                values,
+                successor.project("u", field),
+                atol=TETRA_FIELD_TOLERANCE,
+                rtol=TETRA_FIELD_TOLERANCE,
             )
         mesh, prepared = target, successor
 
@@ -1046,17 +484,21 @@ def test_metric_ring_reconnection_improves_quality_without_changing_boundary() -
         return 6.0 * (2.0 * determinant**2) ** (1.0 / 3.0) / np.sum(squares, axis=1)
 
     requested = float((np.min(mean_ratio(cells)) + np.min(mean_ratio(expected))) / 2.0)
-    outcome = execute_tetra_metric_adaptation(
-        source,
-        np.broadcast_to(np.eye(3), (5, 3, 3)),
-        minimum_metric_quality=requested,
-        relocation=False,
-        maximum_passes=4,
-    )
+    with _metric_request(_METRIC_LIMITS) as (scope, budget):
+        outcome = execute_tetra_metric_adaptation(
+            source,
+            np.broadcast_to(np.eye(3), (5, 3, 3)),
+            minimum_metric_quality=requested,
+            relocation=False,
+            maximum_passes=4,
+            scope=scope,
+            budget=budget,
+        )
     assert outcome.evidence.status is MetricRemeshingStatus.COMPLETE
-    target, _, _ = assemble_topology_edit(
-        source, outcome.edit, numeric_version="ring-remesh"
-    )
+    with coordinate_reference_budget() as budget:
+        target, _, _ = assemble_topology_edit(
+            source, outcome.edit, numeric_version="ring-remesh", budget=budget
+        )
     actual_cells = np.asarray(target.blocks[0].vertices)
     assert {tuple(row) for row in np.sort(actual_cells, axis=1)} == {
         tuple(row) for row in np.sort(expected, axis=1)
@@ -1081,11 +523,16 @@ def test_metric_ring_reconnection_improves_quality_without_changing_boundary() -
 def test_source_location_budget_refuses_atomically_with_resource_evidence() -> None:
     source = _box()
     before = np.asarray(source.coordinates).copy()
-    with pytest.raises(MeshingFailure) as caught:
+    with (
+        pytest.raises(MeshingFailure) as caught,
+        _metric_request(_METRIC_LIMITS) as (scope, budget),
+    ):
         execute_tetra_metric_adaptation(
             source,
             np.broadcast_to(np.diag((0.25, 4.0, 1.0)), (8, 3, 3)),
             maximum_location_pairs=0,
+            scope=scope,
+            budget=budget,
         )
     assert caught.value.evidence.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
     assert caught.value.evidence.requested == (("source_location_candidates", 0.0),)
@@ -1131,7 +578,9 @@ def test_rotated_decimal_constraint_splits_at_an_exact_nonmidpoint() -> None:
         corners = target.points[target.tetrahedra]
         volumes = np.linalg.det(corners[:, 1:] - corners[:, :1]) / 6.0
         assert np.all(volumes > 0.0)
-        assert np.sum(volumes) == pytest.approx(source_volume, abs=1.0e-12)
+        assert np.sum(volumes) == pytest.approx(
+            source_volume, abs=TETRA_GEOMETRY_TOLERANCE
+        )
         np.testing.assert_array_equal(target.points[:4], points)
         np.testing.assert_array_equal(target.points[inserted], point)
     finally:
@@ -1189,7 +638,7 @@ def test_coordinated_relocation_commits_once_and_refuses_the_entire_cavity_union
         corners = accepted.points[accepted.tetrahedra]
         volumes = np.linalg.det(corners[:, 1:] - corners[:, :1]) / 6.0
         assert np.all(volumes > 0.0)
-        assert np.sum(volumes) == pytest.approx(1.0 / 6.0, abs=1.0e-14)
+        assert np.sum(volumes) == pytest.approx(1.0 / 6.0, abs=TETRA_VOLUME_TOLERANCE)
 
         inverted = positions.copy()
         inverted[0] += 0.001
@@ -1301,17 +750,12 @@ def test_batch_curve_construction_retains_exact_decimal_source_and_reports_refus
     not meshcore_available(), reason="native meshcore library is unavailable"
 )
 def test_metric_epoch_checks_original_host_deadline_before_preparation() -> None:
-    from phydrax.meshing._tetra_metric import (
-        _constraints,
-        execute_native_tetra_metric,
-        TetraMetricSource,
-    )
 
     mesh = _box()
     points = np.asarray(mesh.coordinates)
     cells = np.asarray(mesh.blocks[0].vertices)
     regions = np.zeros((cells.shape[0],), dtype=np.int32)
-    faces, face_ids, segments, segment_ids = _constraints(
+    faces, face_ids, segments, segment_ids = constraints(
         mesh,
         cells,
         regions,
@@ -1329,43 +773,262 @@ def test_metric_epoch_checks_original_host_deadline_before_preparation() -> None
         segment_ids,
         boundary_policy="fixed",
     )
-    source = TetraMetricSource(
-        points,
-        cells,
-        np.arange(points.shape[0], dtype=np.int64),
-        np.arange(cells.shape[0], dtype=np.int64),
-    )
-    before = native.arrays()
-    work = native.work_units()
     try:
-        with pytest.raises(MeshingFailure) as caught:
-            execute_native_tetra_metric(
-                native,
-                source,
-                np.broadcast_to(np.eye(3, dtype=np.float64), (points.shape[0], 3, 3)),
-                fixed_vertices=np.zeros((points.shape[0],), dtype=np.bool_),
-                protected_edges=set(),
-                maximum_passes=16,
-                topology_operations=True,
-                relocation=True,
-                minimum_metric_quality=0.05,
-                lower_metric_length=0.0,
-                upper_metric_length=np.sqrt(2.0),
-                maximum_vertices=4096,
-                maximum_cells=4096,
-                maximum_operations=100000,
-                maximum_work_units=1000000,
-                maximum_location_pairs=1000000,
-                maximum_cavity_cells=512,
-                maximum_cavity_work=1000000,
-                operation_started=monotonic() - 2.0,
-                maximum_wall_seconds=1.0,
+        limits = NativeExecutionLimits(1000000, 1000000, 512, 8000000000, np.inf)
+        with _metric_request(limits, mesh=native) as (scope, budget):
+            source = TetraMetricSource(
+                points,
+                cells,
+                np.arange(points.shape[0], dtype=np.int64),
+                np.arange(cells.shape[0], dtype=np.int64),
+                budget=budget,
             )
-        assert caught.value.evidence.category is MeshingFailureCategory.TIMED_OUT
-        assert caught.value.evidence.requested == (("maximum_wall_seconds", 1.0),)
-        assert dict(caught.value.evidence.achieved)["elapsed_seconds"] > 1.0
-        np.testing.assert_array_equal(native.arrays().points, before.points)
-        np.testing.assert_array_equal(native.arrays().tetrahedra, before.tetrahedra)
-        assert native.work_units() == work
+            before = native.arrays()
+            work = native.work_units()
+            with pytest.raises(MeshingFailure) as caught:
+                execute_native_tetra_metric(
+                    native,
+                    source,
+                    np.broadcast_to(np.eye(3, dtype=np.float64), (points.shape[0], 3, 3)),
+                    fixed_vertices=np.zeros((points.shape[0],), dtype=np.bool_),
+                    protected_edges=set(),
+                    maximum_passes=16,
+                    topology_operations=True,
+                    relocation=True,
+                    minimum_metric_quality=0.05,
+                    lower_metric_length=0.0,
+                    upper_metric_length=np.sqrt(2.0),
+                    maximum_vertices=4096,
+                    maximum_cells=4096,
+                    maximum_operations=100000,
+                    maximum_work_units=1000000,
+                    maximum_location_pairs=1000000,
+                    maximum_cavity_cells=512,
+                    maximum_cavity_work=1000000,
+                    operation_started=monotonic() - 2.0,
+                    maximum_wall_seconds=1.0,
+                    scope=scope,
+                    budget=budget,
+                )
+            assert caught.value.evidence.category is MeshingFailureCategory.TIMED_OUT
+            assert caught.value.evidence.requested == (("maximum_wall_seconds", 1.0),)
+            assert dict(caught.value.evidence.achieved)["elapsed_seconds"] > 1.0
+            np.testing.assert_array_equal(native.arrays().points, before.points)
+            np.testing.assert_array_equal(native.arrays().tetrahedra, before.tetrahedra)
+            assert native.work_units() == work
     finally:
         native.close()
+
+
+def test_metric_evidence_composes_optimizer_and_memory_counters() -> None:
+    optimizer = MetricOptimizerEvidence(
+        method_id="bounded-lm",
+        iterations=2,
+        evaluations=3,
+        constraint_evaluations=4,
+        proposal_evaluations=5,
+        refused_proposals=1,
+        refusal_counts=(("source_support", 1),),
+        host_work_units=7,
+    )
+    memory = MetricMemoryEvidence(
+        native_counters=NativeExecutionMemoryCounters(100, 10, 20, 5, 4, 0),
+        optimizer_scratch_required_bytes=64,
+    )
+    evidence = MetricRemeshingEvidence(
+        MetricRemeshingStatus.COMPLETE,
+        passes=1,
+        counts=(1, 0, 0, 0),
+        rejected_operations=1,
+        work_units=10,
+        native_work_units=3,
+        lengths=np.asarray([1.0], dtype=np.float64),
+        quality=np.asarray([1.0], dtype=np.float64),
+        optimizer=optimizer,
+        memory=memory,
+    )
+    evidence.validate_restored()
+    assert evidence.optimizer is optimizer
+    assert evidence.memory is memory
+    assert evidence.optimizer.evaluations == 3
+    assert evidence.optimizer.constraint_evaluations == 4
+    assert evidence.optimizer.proposal_evaluations == 5
+    assert evidence.optimizer.refusal_counts == (("source_support", 1),)
+    assert (
+        evidence.work_units
+        == evidence.native_work_units + evidence.optimizer.host_work_units
+    )
+    assert evidence.memory.native_counters is memory.native_counters
+    assert memory.native_counters is not None
+    assert dict(memory.native_counters.items()) == {
+        "limit_bytes": 100,
+        "live_bytes": 10,
+        "peak_bytes": 20,
+        "requested_bytes": 5,
+        "allocations": 4,
+        "refusals": 0,
+    }
+    assert evidence.memory.optimizer_scratch_required_bytes == 64
+
+
+@pytest.mark.parametrize(
+    "constructor",
+    (
+        pytest.param(lambda: MetricOptimizerEvidence(iterations=-1), id="iterations"),
+        pytest.param(lambda: MetricOptimizerEvidence(evaluations=-1), id="evaluations"),
+        pytest.param(
+            lambda: MetricOptimizerEvidence(constraint_evaluations=-1), id="constraint"
+        ),
+        pytest.param(
+            lambda: MetricOptimizerEvidence(proposal_evaluations=-1), id="proposal"
+        ),
+        pytest.param(lambda: MetricOptimizerEvidence(refused_proposals=-1), id="refused"),
+        pytest.param(lambda: MetricOptimizerEvidence(host_work_units=-1), id="host-work"),
+    ),
+)
+def test_metric_optimizer_evidence_refuses_negative_counters(
+    constructor: Callable[[], MetricOptimizerEvidence],
+) -> None:
+    with pytest.raises(ValueError, match="MetricOptimizerEvidence.counters"):
+        constructor()
+
+
+def test_metric_memory_evidence_refuses_wrong_native_counter_owner() -> None:
+    with pytest.raises(ValueError, match="MetricMemoryEvidence.native_counters"):
+        MetricMemoryEvidence(native_counters=NativeExecutionWorkCounters())  # ty: ignore[invalid-argument-type]
+
+
+def test_metric_evidence_archive_round_trip_preserves_composed_fields(
+    tmp_path: Path,
+) -> None:
+    evidence = MetricRemeshingEvidence(
+        MetricRemeshingStatus.COMPLETE,
+        passes=1,
+        counts=(0, 0, 0, 0),
+        rejected_operations=0,
+        work_units=5,
+        native_work_units=2,
+        lengths=np.asarray([1.0], dtype=np.float64),
+        quality=np.asarray([1.0], dtype=np.float64),
+        optimizer=MetricOptimizerEvidence(
+            method_id="bounded-lm",
+            evaluations=2,
+            host_work_units=3,
+            refusal_counts=(("source_support", 1),),
+        ),
+        memory=MetricMemoryEvidence(
+            native_counters=NativeExecutionMemoryCounters(100, 10, 20, 5, 4, 0),
+            optimizer_scratch_required_bytes=64,
+        ),
+    )
+    receipt = write_meshing_source_closure(tmp_path / "metric-evidence", evidence)
+    restored = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    assert isinstance(restored, MetricRemeshingEvidence)
+    assert restored.evidence_id == evidence.evidence_id
+    assert restored.optimizer.method_id == evidence.optimizer.method_id
+    assert restored.optimizer.evaluations == evidence.optimizer.evaluations
+    assert restored.optimizer.host_work_units == evidence.optimizer.host_work_units
+    assert restored.optimizer.refusal_counts == evidence.optimizer.refusal_counts
+    assert restored.memory.native_counters is not None
+    assert evidence.memory.native_counters is not None
+    assert (
+        restored.memory.native_counters.items() == evidence.memory.native_counters.items()
+    )
+    assert (
+        restored.memory.optimizer_scratch_required_bytes
+        == evidence.memory.optimizer_scratch_required_bytes
+    )
+
+
+@pytest.mark.parametrize("band", ((1.0 / np.sqrt(2.0), np.sqrt(2.0)), (0.8, 1.3)))
+def test_metric_size_descent_preserves_the_declared_quality_floor(
+    band: tuple[float, float],
+) -> None:
+    old = np.asarray((0.5, 1.6, 1.0), dtype=np.float64)
+    improved = np.asarray((0.6, 1.5, 1.0), dtype=np.float64)
+    assert _metric_relocation_merit(old, improved, 0.7, 0.6, 0.05, band)
+    assert not _metric_relocation_merit(old, improved, 0.7, 0.04, 0.05, band)
+    assert not _metric_relocation_merit(improved, old, 0.6, 0.7, 0.05, band)
+    assert not _metric_relocation_merit(old, old, 0.7, 0.7, 0.05, band)
+    assert _metric_relocation_merit(old, old, 0.6, 0.7, 0.05, band)
+
+
+def test_metric_epoch_can_monotonically_repair_an_initial_quality_deficit() -> None:
+    lengths = np.asarray((1.0,), dtype=np.float64)
+    band = (0.8, 1.3)
+    assert _metric_relocation_merit(lengths, lengths, 0.02, 0.03, 0.05, band)
+    assert not _metric_relocation_merit(lengths, lengths, 0.03, 0.02, 0.05, band)
+    assert _metric_relocation_merit(lengths, lengths, 0.03, 0.06, 0.05, band)
+    assert not _metric_relocation_merit(lengths, lengths, 0.06, 0.04, 0.05, band)
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native meshcore library is unavailable"
+)
+def test_unrepaired_initial_quality_deficit_cannot_complete_the_metric_epoch() -> None:
+    source = _box()
+    before = np.asarray(source.coordinates).copy()
+    with _metric_request(_METRIC_LIMITS) as (scope, budget):
+        outcome = execute_tetra_metric_adaptation(
+            source,
+            np.broadcast_to(
+                np.eye(3, dtype=np.float64), (source.coordinates.shape[0], 3, 3)
+            ),
+            minimum_metric_quality=1.0,
+            topology_operations=False,
+            relocation=False,
+            scope=scope,
+            budget=budget,
+        )
+    assert outcome.evidence.status is MetricRemeshingStatus.STALLED
+    assert outcome.evidence.minimum_metric_quality < 1.0
+    assert outcome.evidence.operation_attempts == 0
+    np.testing.assert_array_equal(source.coordinates, before)
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native meshcore library is unavailable"
+)
+def test_partial_quality_repair_remains_an_uncommitted_metric_epoch() -> None:
+    corners = 1.4 * np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.5, np.sqrt(3.0) / 2.0, 0.0),
+            (0.5, np.sqrt(3.0) / 6.0, np.sqrt(2.0 / 3.0)),
+        ),
+        dtype=np.float64,
+    )
+    center = np.mean(corners, axis=0)
+    points = np.concatenate((corners, (center + 0.15 * (corners[0] - center))[None]))
+    faces = np.asarray(((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)), dtype=np.int32)
+    cells = np.column_stack((np.full((4,), 4, dtype=np.int32), faces))
+    negative = np.linalg.det(points[cells[:, 1:]] - points[cells[:, :1]]) < 0.0
+    cells[negative] = cells[negative][:, (1, 0, 2, 3)]
+    source = CellMesh.from_tetrahedra(points, cells)
+    edge_pairs = np.asarray(tuple(combinations(range(4), 2)), dtype=np.int32)
+    determinant = np.linalg.det(points[cells[:, 1:]] - points[cells[:, :1]])
+    squares = np.sum(
+        (points[cells[:, edge_pairs[:, 1]]] - points[cells[:, edge_pairs[:, 0]]]) ** 2,
+        axis=-1,
+    )
+    initial_quality = float(
+        np.min(6.0 * (2.0 * determinant**2) ** (1.0 / 3.0) / np.sum(squares, axis=1))
+    )
+    with _metric_request(_METRIC_LIMITS) as (scope, budget):
+        outcome = execute_tetra_metric_adaptation(
+            source,
+            np.broadcast_to(np.eye(3, dtype=np.float64), (5, 3, 3)),
+            minimum_metric_quality=0.95,
+            topology_operations=False,
+            relocation=True,
+            maximum_passes=1,
+            scope=scope,
+            budget=budget,
+        )
+    assert outcome.evidence.relocations == 1
+    assert initial_quality < outcome.evidence.minimum_metric_quality < 0.95
+    assert outcome.evidence.status is MetricRemeshingStatus.PASS_LIMIT
+    np.testing.assert_array_equal(source.coordinates, points)

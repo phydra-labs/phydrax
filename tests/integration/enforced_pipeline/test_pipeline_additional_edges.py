@@ -36,6 +36,7 @@ from phydrax.operators.differential import (
 )
 from phydrax.operators.integral import mean
 from phydrax.operators.linalg import einsum
+from phydrax.units import METER
 
 
 def _line_batch(domain: Any, xs: Any) -> Any:
@@ -210,7 +211,7 @@ def test_identity_remainder_toggle_changes_output() -> None:
 
 def test_enforce_traction_enforces_zero_boundary() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
 
@@ -272,7 +273,7 @@ def test_enforce_traction_enforces_zero_boundary() -> None:
 
 def test_enforce_neumann_enforces_zero_normal_derivative() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
 
@@ -313,7 +314,7 @@ def test_enforce_neumann_enforces_zero_normal_derivative() -> None:
 
 def test_enforce_robin_enforces_boundary_relation() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
 
@@ -708,7 +709,7 @@ def test_where_all_weight_all_mean() -> None:
 
 def test_enforce_traction_cancels_nonzero_affine_boundary_traction() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
 
@@ -762,7 +763,7 @@ def test_enforce_traction_cancels_nonzero_affine_boundary_traction() -> None:
 
 def test_enforce_neumann_cad_ansatz_is_bounded_in_the_interior() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
 

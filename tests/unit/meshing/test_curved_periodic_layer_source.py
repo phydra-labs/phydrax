@@ -1,5 +1,5 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Exact source identities for the corrected and immutable original W09 cases."""
+"""Check source identities for the corrected and immutable W09 cases."""
 
 from __future__ import annotations
 
@@ -16,20 +16,20 @@ from phydrax.lifecycle._meshing_sources import (
     read_meshing_source_closure,
     write_meshing_source_closure,
 )
-from tools._hybrid_layer_source import (
+from phydrax.meshing.qualification import (
     AuthoredPeriodicLayerSource,
-    corrected_periodic_layer_source,
+    CURVED_PERIODIC_LAYER_PERIOD,
     ORIGINAL_CURVED_PERIODIC_SOURCE_DIGEST,
     ORIGINAL_CURVED_PERIODIC_SOURCE_ID,
     ORIGINAL_CURVED_PERIODIC_SOURCE_REVISION,
-    ORIGINAL_PERIODIC_TRACE_RESIDUALS,
-    PERIOD,
+    ORIGINAL_CURVED_PERIODIC_TRACE_RESIDUALS,
+    prepare_corrected_periodic_layer_source,
 )
 from tools._meshing_cases import load_curved_periodic_source_registration
-from tools.meshing_qualification import (
-    _corpus_profiles,
+from tools.meshing_qualification._controls import _hybrid_qualification_profile_contracts
+from tools.meshing_qualification._records import _corpus_profiles
+from tools.meshing_qualification.scenarios.hybrid import (
     _hybrid_qualification_original_curved_refusal_profile,
-    _hybrid_qualification_profile_contracts,
 )
 
 
@@ -43,7 +43,7 @@ def corrected_source() -> tuple[
     AuthoredPeriodicLayerSource, phx.meshing.CellMeshingResult
 ]:
     limits = phx.meshing.MeshingLimits(maximum_wall_seconds=120.0)
-    authored = corrected_periodic_layer_source(limits=limits)
+    authored = prepare_corrected_periodic_layer_source(limits=limits)
     result = (
         phx.meshing.NativeMeshingProvider(authored.options)
         .plan(
@@ -70,13 +70,16 @@ def test_corrected_source_authors_wall_and_coefficient_mates_by_unit_translation
     topology = authored.wall.periodic_topology
     if topology is None or authored.source.mapped_domain is None:
         raise AssertionError(
-            "The corrected source requires explicit wall and mapped owners."
+            "fixture.source must retain wall topology and mapped domain; got missing owner"
         )
     points = np.asarray(authored.wall.coordinates, dtype=np.float64)
     roots = np.asarray(topology.vertex_representatives, dtype=np.int64)
     shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)
     for row in range(points.shape[0]):
-        expected = tuple(Fraction(float(value)) for value in shifts[row, 0] * PERIOD)
+        expected = tuple(
+            Fraction(float(value))
+            for value in shifts[row, 0] * CURVED_PERIODIC_LAYER_PERIOD
+        )
         assert _exact_difference(points[roots[row]], points[row]) == expected
 
     counts = Counter(authored.coefficient_orbit_ids)
@@ -132,7 +135,9 @@ def test_corrected_source_archive_restores_distinct_identity(
     authored, result = corrected_source
     certificate = result.certification
     if certificate is None:
-        raise AssertionError("The corrected source must be certified before persistence.")
+        raise AssertionError(
+            "fixture.certification must exist before persistence; got None"
+        )
     records = {
         "certification_inputs": certificate.request,
         "report": certificate,
@@ -153,7 +158,7 @@ def test_corrected_source_archive_restores_distinct_identity(
     assert reopened.binding_id == authored.source.binding_id
     mapped = reopened.mapped_domain
     if mapped is None:
-        raise AssertionError("The restored corrected source lost its mapped owner.")
+        raise AssertionError("fixture.mapped_domain must survive restoration; got None")
     assert all(
         getattr(element, "fiber_graph", False)
         for element in mapped.source_geometry.elements
@@ -166,9 +171,9 @@ def test_original_source_remains_an_exact_periodic_refusal() -> None:
     assert isinstance(evidence, dict)
     assert evidence["source_id"] == ORIGINAL_CURVED_PERIODIC_SOURCE_ID
     assert evidence["original_top_trace_x_residuals"] == list(
-        ORIGINAL_PERIODIC_TRACE_RESIDUALS
+        ORIGINAL_CURVED_PERIODIC_TRACE_RESIDUALS
     )
-    assert all(Fraction(value) != 0 for value in ORIGINAL_PERIODIC_TRACE_RESIDUALS)
+    assert all(Fraction(value) != 0 for value in ORIGINAL_CURVED_PERIODIC_TRACE_RESIDUALS)
     assert evidence["source_bits_preserved"] is True
     assert "Exact periodic certification refused" in str(evidence["rejection"])
 
@@ -183,7 +188,9 @@ def test_reviewed_source_registration_binds_distinct_revisions(
     records: list[dict[str, object]] = []
     for source in sources:
         if not isinstance(source, dict):
-            raise AssertionError("Source registrations must be mappings.")
+            raise AssertionError(
+                "fixture.source_registration must be a mapping; got incompatible registration"
+            )
         records.append(source)
     by_role = {str(source["role"]): source for source in records}
     assert set(by_role) == {"positive", "negative-refusal"}
@@ -202,7 +209,9 @@ def test_reviewed_source_registration_binds_distinct_revisions(
     assert artifact["fiber_graph"] is True
     mapped = authored.source.mapped_domain
     if mapped is None:
-        raise AssertionError("The registered corrected source lost its mapped domain.")
+        raise AssertionError(
+            "fixture.mapped_domain must exist for registration; got None"
+        )
     assert artifact["mapped_domain_id"] == mapped.domain_id
     assert artifact["source_binding_id"] == authored.source.binding_id
     assert negative["source_id"] == ORIGINAL_CURVED_PERIODIC_SOURCE_ID

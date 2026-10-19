@@ -828,4 +828,75 @@ class CavityEdit {
   std::uint32_t star_stamp_ = 0;
 };
 
+// Quotient cells cannot be encoded as tetrahedra: an image vertex is a
+// (representative, shift) pair and adjacency includes a translation. This
+// replacement transaction shares W01's staging invariant without discarding
+// that identity. The caller validates oriented quotient boundary multiplicity
+// and preallocates its secondary indices before prepare(). Cell must be
+// nothrow-copyable and expose a bool live member. publish is a no-fail update
+// of those already-preallocated indices, invoked in the atomic commit block.
+template <class Cell>
+class QuotientCavityEdit final {
+ public:
+  explicit QuotientCavityEdit(NativeVector<Cell>& cells) : cells_(cells) {}
+
+  template <class Validate>
+  EditStatus prepare(std::span<const int32_t> removed, std::span<const Cell> proposal,
+                     int64_t live_count, int64_t limit, const Validate& validate) {
+    staged_ = false;
+    removed_.assign(removed.begin(), removed.end());
+    proposal_.assign(proposal.begin(), proposal.end());
+    NativeVector<int32_t> sorted(removed_.begin(), removed_.end());
+    std::sort(sorted.begin(), sorted.end());
+    if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end())
+      return EditStatus::kDuplicate;
+    for (int32_t id : removed_)
+      if (id < 0 || static_cast<std::size_t>(id) >= cells_.size() || !cells_[id].live)
+        return EditStatus::kNotLive;
+    if (live_count - static_cast<int64_t>(removed_.size()) +
+            static_cast<int64_t>(proposal_.size()) > limit)
+      return EditStatus::kCellLimit;
+    if (!validate(removed_, proposal_)) return EditStatus::kBoundaryMismatch;
+    ids_.clear();
+    const std::size_t reused = std::min(removed_.size(), proposal_.size());
+    for (std::size_t i = 0; i < reused; ++i) ids_.push_back(removed_[i]);
+    for (std::size_t i = reused; i < proposal_.size(); ++i)
+      ids_.push_back(static_cast<int32_t>(cells_.size() + i - reused));
+    const std::size_t fresh = proposal_.size() - reused;
+    if (cells_.size() + fresh > static_cast<std::size_t>(INT32_MAX))
+      return EditStatus::kSlotLimit;
+    reserve_for(cells_, cells_.size() + fresh);
+    staged_ = true;
+    return EditStatus::kOk;
+  }
+
+  std::span<const int32_t> created() const { return ids_; }
+
+  template <class Publish>
+  EditStatus commit(const Publish& publish) {
+    static_assert(std::is_nothrow_copy_assignable_v<Cell>);
+    static_assert(std::is_nothrow_copy_constructible_v<Cell>);
+    static_assert(std::is_nothrow_invocable_v<Publish>);
+    if (!staged_) return EditStatus::kBoundaryMismatch;
+    if (!native_execution_spend(0)) return EditStatus::kBufferLimit;
+    staged_ = false;
+    for (int32_t id : removed_) cells_[id].live = false;
+    for (std::size_t i = 0; i < proposal_.size(); ++i) {
+      if (static_cast<std::size_t>(ids_[i]) == cells_.size())
+        cells_.push_back(proposal_[i]);
+      else
+        cells_[ids_[i]] = proposal_[i];
+    }
+    publish();
+    return EditStatus::kOk;
+  }
+
+ private:
+  NativeVector<Cell>& cells_;
+  NativeVector<int32_t> removed_;
+  NativeVector<Cell> proposal_;
+  NativeVector<int32_t> ids_;
+  bool staged_ = false;
+};
+
 }  // namespace phx::mc

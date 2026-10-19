@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Prepared cubical spline-Whitney reconstruction and exact chain moments."""
+"""Prepared cubical spline-Whitney reconstruction and chain moments."""
 
 from __future__ import annotations
 
@@ -63,11 +63,17 @@ class _CubicalWhitneyAxis(StrictModule):
 
     def __init__(self, knots: np.ndarray, /, *, axis: int) -> None:
         if knots.dtype != np.dtype(np.float64):
-            raise TypeError("Cubical Whitney knots must have float64 dtype.")
+            raise TypeError(
+                f"CubicalWhitneyAxis.knots must have float64 dtype; got {knots.dtype}"
+            )
         if knots.ndim != 1 or knots.size < 2 or axis < 0:
-            raise ValueError("Cubical Whitney axes require at least two knot points.")
+            raise ValueError(
+                f"CubicalWhitneyAxis.knots must have at least two 1-D knot points and a nonnegative axis; got {knots.shape}, {axis=}"
+            )
         if np.any(~np.isfinite(knots)) or np.any(np.diff(knots) <= 0):
-            raise ValueError("Cubical Whitney knots must be finite and increasing.")
+            raise ValueError(
+                "CubicalWhitneyAxis.knots must be finite and increasing; got invalid knot intervals"
+            )
         self.knots = jnp.asarray(knots)
         self.knot_count = knots.size
         self.axis = axis
@@ -184,11 +190,11 @@ def _multiply(left: Array, right: Array, /) -> Array:
 
 @final
 class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
-    """Exact cardinal spline chains, with nonuniform lowest-order geometry.
+    """Cardinal spline chains, with nonuniform lowest-order geometry.
 
     Slots are segment-major, orientation-major, then lexicographic support.
     Capacity exhaustion is reported, never replaced by uniform subdivisions.
-    Higher orders require uniform axes; order one uses actual cell widths.
+    Higher orders require uniform axes; order one uses the cell widths.
     """
 
     __strict_contract__ = True
@@ -216,7 +222,9 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
             np.allclose(value, value[0], rtol=1e-12, atol=1e-14) for value in widths
         )
         if order > 1 and not uniform:
-            raise ValueError("Higher-order cardinal spline chains require uniform axes.")
+            raise ValueError(
+                "CubicalSplineWhitneyKernel.shape_order must use uniform axes above order one; got nonuniform axes"
+            )
         prepared_axes = tuple(
             _CubicalWhitneyAxis(_cell_facets(axis), axis=index)
             for index, axis in enumerate(axes)
@@ -242,17 +250,26 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
     ) -> tuple[tuple[float, ...], ...]:
         proxy = parse(proxy, FormProxy, "proxy")
         orientations = self.bridge.orientations[degree]
-        if proxy == "flux":
-            if self.bridge.dimension != 3 or degree != 2:
+        match proxy:
+            case "flux":
+                if self.bridge.dimension != 3 or degree != 2:
+                    raise ValueError(
+                        "CubicalSplineWhitneyKernel.proxy must use degree two in three dimensions for Cartesian flux; got incompatible degree or dimension"
+                    )
+                orientations = ((1, 2), (0, 2), (0, 1))
+            case "circulation":
+                if degree != 1:
+                    raise ValueError(
+                        f"CubicalSplineWhitneyKernel.degree must be one for circulation offsets; got {degree}"
+                    )
+            case "components":
+                pass
+            case "scalar" | "density":
                 raise ValueError(
-                    "Cartesian flux offsets require degree two in three dimensions."
+                    f"CubicalSplineWhitneyKernel.proxy must use components, circulation, or flux for entity offsets; got {proxy!r}"
                 )
-            orientations = ((1, 2), (0, 2), (0, 1))
-        elif proxy == "circulation":
-            if degree != 1:
-                raise ValueError("Circulation offsets require degree one.")
-        elif proxy != "components":
-            raise ValueError("Unknown form proxy.")
+            case invalid:
+                assert_never(invalid)
         return tuple(
             tuple(
                 0.5 if axis in orientation else 0.0
@@ -261,16 +278,19 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
             for orientation in orientations
         )
 
+    @checked
     def assignment(
         self, layout: TensorEntityLayout, /
     ) -> AbstractStructuredSplatAssignment:
-        """The owning spline-Whitney assignment for existing prepared splats."""
+        """Return the spline-Whitney assignment for a prepared splat layout."""
         if self.shape_order == 1 and all(
             kind == "point" for kind in layout.axis_entities
         ):
             return MultilinearSplatAssignment()
         if not self.uniform:
-            raise ValueError("Nonuniform mixed entities use prepared chain queries.")
+            raise ValueError(
+                "CubicalSplineWhitneyKernel.assignment.layout must use prepared chain queries for nonuniform mixed entities; got a mixed layout"
+            )
         return TensorBSplineSplatAssignment(
             tuple(
                 self.shape_order if kind == "point" else self.shape_order - 1
@@ -281,9 +301,13 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
     def _points(self, points: ArrayLike, /) -> Array:
         value = jnp.asarray(points)
         if jnp.issubdtype(value.dtype, jnp.complexfloating):
-            raise TypeError("Chain coordinates must be real.")
+            raise TypeError(
+                "CubicalSplineWhitneyKernel.points must be real; got complex coordinates"
+            )
         if value.ndim != 2 or value.shape[1] != self.bridge.dimension:
-            raise ValueError("Points must have shape (particles, dimension).")
+            raise ValueError(
+                f"CubicalSplineWhitneyKernel.points must have shape (particles, dimension); got {value.shape}"
+            )
         if not jnp.issubdtype(value.dtype, jnp.floating):
             value = value.astype(jnp.float64)
         return value
@@ -342,16 +366,8 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
                 crossing = (boundary - start[:, axis]) / jnp.where(
                     speed != 0.0, speed, 1.0
                 )
-                # A crossing within epsilon of the path end belongs to the final
-                # segment; a masked sliver would still carry a nonzero moment.
                 crossings.append(
-                    jnp.where(
-                        (speed != 0.0)
-                        & (crossing > time + epsilon)
-                        & (crossing < 1.0 - epsilon),
-                        crossing,
-                        1.0,
-                    )
+                    jnp.where((speed != 0.0) & (crossing > time + epsilon), crossing, 1.0)
                 )
             stop = jnp.minimum(
                 jnp.min(jnp.stack(tuple(crossings), axis=-1), axis=-1), 1.0
@@ -456,7 +472,9 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
     def evaluate(self, points: ArrayLike, degree: int, /) -> PreparedChainQuery:
         value = self._points(points)
         if not 0 <= degree <= self.bridge.dimension:
-            raise ValueError("Form degree is outside the complex.")
+            raise ValueError(
+                f"CubicalSplineWhitneyKernel.degree must be inside the complex; got {degree}"
+            )
         indices, coefficients, valid = self._routes(value, value, degree)
         count = len(self.bridge.orientations[degree])
         routes = indices.shape[1] // count
@@ -493,7 +511,9 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
     ) -> PreparedChainQuery:
         first, last = self._points(start), self._points(end)
         if first.shape != last.shape:
-            raise ValueError("Segment endpoints must have equal shape.")
+            raise ValueError(
+                "CubicalSplineWhitneyKernel.segment_endpoints must have equal shape; got different endpoint shapes"
+            )
         weight = parse(weight, SegmentWeight, "weight")
         capacity = (
             sum(axis.interval_centers.size for axis in self.bridge.grid.structured_axes)
@@ -502,9 +522,13 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
             else maximum_segments
         )
         if not isinstance(capacity, int) or isinstance(capacity, bool):
-            raise TypeError("maximum_segments must be an integer.")
+            raise TypeError(
+                f"CubicalSplineWhitneyKernel.maximum_segments must be an integer; got {maximum_segments!r}"
+            )
         if capacity < 1:
-            raise ValueError("maximum_segments must be positive.")
+            raise ValueError(
+                f"CubicalSplineWhitneyKernel.maximum_segments must be positive; got {maximum_segments!r}"
+            )
         intervals, segment_valid, overflow = self._split(first, last, capacity)
         delta = last - first
         a = first[:, None] + intervals[..., 0, None] * delta[:, None]
@@ -516,15 +540,21 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
         length = intervals[..., 1] - intervals[..., 0]
         if weight == "uniform":
             if phase_rate is not None:
-                raise ValueError("phase_rate is only accepted for phase weights.")
+                raise ValueError(
+                    "CubicalSplineWhitneyKernel.phase_rate must be used only with phase weights; got another weight kind"
+                )
             moments = 1.0 / jnp.arange(1, polynomial.shape[-1] + 1, dtype=first.dtype)
             integral = jnp.sum(polynomial * moments, axis=-1)
         else:
             if phase_rate is None:
-                raise ValueError("phase weights require phase_rate.")
+                raise ValueError(
+                    "CubicalSplineWhitneyKernel.phase_rate must be supplied for phase weights; got None"
+                )
             raw_rate = jnp.asarray(phase_rate)
             if jnp.issubdtype(raw_rate.dtype, jnp.complexfloating):
-                raise TypeError("phase_rate must be real.")
+                raise TypeError(
+                    "CubicalSplineWhitneyKernel.phase_rate must be real; got complex rate"
+                )
             rate = jnp.broadcast_to(raw_rate.astype(first.dtype), (first.shape[0],))
             moments = phase_moments(rate[:, None] * length, polynomial.shape[-1])
             integral = jnp.sum(polynomial * moments[..., None, :], axis=-1) * jnp.exp(
@@ -572,9 +602,11 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
     def prepare_path(
         self, origin: np.ndarray, direction: np.ndarray, breakpoints: np.ndarray, /
     ) -> PreparedCubicalWhitneyPath:
-        """Prepare reusable exact polynomial loads on an admitted host path."""
+        """Prepare reusable polynomial loads on an admitted host path."""
         if self.shape_order != 1:
-            raise ValueError("Host polynomial path preparation requires lowest order.")
+            raise ValueError(
+                f"CubicalSplineWhitneyKernel.prepare_path.shape_order must be one; got {self.shape_order}"
+            )
         return PreparedCubicalWhitneyPath(
             CubicalGridGeometry(self.bridge), origin, direction, breakpoints
         )
@@ -687,13 +719,21 @@ class PreparedCubicalWhitneyPath(StrictModule):
     ) -> None:
         dimension = grid.dimension
         if origin.shape != (dimension,) or direction.shape != origin.shape:
-            raise ValueError("Origin and direction must have the grid dimension.")
+            raise ValueError(
+                "PreparedCubicalWhitneyPath.origin must share the grid dimension with direction; got incompatible shapes"
+            )
         if not np.all(np.isfinite(origin)) or not np.all(np.isfinite(direction)):
-            raise ValueError("Path origin and direction must be finite.")
+            raise ValueError(
+                "PreparedCubicalWhitneyPath.origin must be finite with direction; got nonfinite path coordinates"
+            )
         if breakpoints.ndim != 1 or breakpoints.size < 2:
-            raise ValueError("Path breakpoints must contain at least two parameters.")
+            raise ValueError(
+                "PreparedCubicalWhitneyPath.breakpoints must contain at least two parameters; got insufficient parameters"
+            )
         if not np.all(np.isfinite(breakpoints)) or np.any(np.diff(breakpoints) <= 0.0):
-            raise ValueError("Path breakpoints must be finite and strictly increasing.")
+            raise ValueError(
+                "PreparedCubicalWhitneyPath.breakpoints must be finite and strictly increasing; got invalid parameter intervals"
+            )
         edge_rows: list[int] = []
         edge_coefficients: list[np.ndarray] = []
         edge_segments: list[int] = []
@@ -752,7 +792,9 @@ class PreparedCubicalWhitneyPath(StrictModule):
                 node_coefficients.append(_padded(polynomial))
                 node_segments.append(segment)
         if not starts:
-            raise ValueError("The charge path has no segment inside the domain.")
+            raise ValueError(
+                "PreparedCubicalWhitneyPath.breakpoints must contain a segment inside the domain; got no interior segment"
+            )
         self.edge_rows = np.asarray(edge_rows, dtype=np.int32)
         self.edge_coefficients = np.stack(edge_coefficients)
         self.edge_segments = np.asarray(edge_segments, dtype=np.int32)

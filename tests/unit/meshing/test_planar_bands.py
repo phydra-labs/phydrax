@@ -4,100 +4,34 @@
 
 
 from importlib.util import find_spec
-from typing import Any
+from pathlib import Path
 
-import numpy as np
 import pytest
 
 import phydrax as phx
-
-
-_EMBEDDING = phx.geometry.PlanarEmbedding(
-    (0.0, 0.0, 0.0),
-    (1.0, 0.0, 0.0),
-    (0.0, 1.0, 0.0),
-    (0.0, 0.0, 1.0),
+from tests._support.planar_band_sources import (
+    BAND_EMBEDDING,
+    band_meshing_controls,
+    interface_patch,
+    rectangular_partition,
 )
-_COORDINATES = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
 
 
-def _rectangle(x0: Any, x1: Any, *, feature_id: Any) -> Any:
-    return phx.geometry.PlanarMeshRegion(
-        np.asarray(((x0, 0.0), (x1, 0.0), (x1, 1.0), (x0, 1.0))),
-        ((0, 1, 2, 3),),
-        feature_id=feature_id,
-    )
+# Preserved unit-scale millimeter qualification threshold from the Gmsh front
+# contract in test_planar_bands at merge base d2dfcb941.
+_FRONT_DISTANCE_TOLERANCE = 1e-13
 
 
-def _partition(tmp_path: Any, widths: Any = (1.0, 1.0)) -> Any:
-    cursor = 0.0
-    operands = []
-    names = []
-    for index, width in enumerate(widths):
-        name = f"region-{index}"
-        names.append(name)
-        operands.append(
-            phx.geometry.PlanarPartitionOperand(
-                name,
-                _rectangle(cursor, cursor + width, feature_id=name),
-                phx.geometry.BRepPartitionRole.REGION,
-            )
-        )
-        cursor += width
-    return phx.geometry.partition_planar(
-        phx.geometry.PlanarPartitionPlan(
-            _COORDINATES,
-            _EMBEDDING,
-            tuple(operands),
-            phx.geometry.BRepPartitionPolicy(tuple(names)),
-        ),
-        destination=tmp_path / "partition.brep",
-        linear_deflection=0.05,
-        angular_deflection=0.2,
-    )
-
-
-def _interface(partition: Any, first: Any, second: Any) -> Any:
-    adjacent = tuple(sorted((first, second)))
-    return next(
-        patch
-        for patch in partition.patches
-        if tuple(sorted(patch.adjacent_region_ids)) == adjacent
-    )
-
-
-def _controls(provider: Any, source: Any) -> Any:
-    regions = tuple(
-        phx.meshing.RegionControl(
-            provider.entity_scope(source, region.entity_ids),
-            region.name,
-            f"material:{region.name}",
-            phx.meshing.RegionRole.SOLID,
-        )
-        for region in source.partition.regions
-    )
-    patches = tuple(
-        phx.meshing.PatchControl(
-            patch.name,
-            provider.entity_scope(source, patch.entity_ids),
-            patch.adjacent_region_ids,
-        )
-        for patch in source.partition.patches
-        if len(set(patch.adjacent_region_ids)) == len(patch.adjacent_region_ids)
-    )
-    return regions, patches
-
-
-def test_planar_band_partition_retains_regions_and_exact_named_fronts(
-    tmp_path: Any,
+def test_planar_band_partition_retains_regions_and_named_fronts(
+    tmp_path: Path,
 ) -> None:
-    source = _partition(tmp_path)
-    interface = _interface(source, "region-0", "region-1")
+    source = rectangular_partition(tmp_path)
+    interface = interface_patch(source, "region-0", "region-1")
     # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.05, 0.1))
     plan = phx.meshing.PlanarBandPlan(
         source,
-        _EMBEDDING,
+        BAND_EMBEDDING,
         (
             phx.meshing.PlanarBandControl(
                 interface.name,
@@ -134,9 +68,9 @@ def test_planar_band_partition_retains_regions_and_exact_named_fronts(
     find_spec("gmsh") is None, reason="optional gmsh package is not installed"
 )
 @pytest.mark.meshing_gmsh
-def test_real_gmsh_planar_band_fronts_equal_cumulative_schedule(tmp_path: Any) -> None:
-    partition = _partition(tmp_path)
-    interface = _interface(partition, "region-0", "region-1")
+def test_real_gmsh_planar_band_fronts_equal_cumulative_schedule(tmp_path: Path) -> None:
+    partition = rectangular_partition(tmp_path)
+    interface = interface_patch(partition, "region-0", "region-1")
     # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.05, 0.1))
     control = phx.meshing.PlanarBandControl(
@@ -145,12 +79,12 @@ def test_real_gmsh_planar_band_fronts_equal_cumulative_schedule(tmp_path: Any) -
         0.2,
     )
     source = phx.meshing.prepare_planar_bands(
-        phx.meshing.PlanarBandPlan(partition, _EMBEDDING, (control,)),
+        phx.meshing.PlanarBandPlan(partition, BAND_EMBEDDING, (control,)),
         destination=tmp_path / "mesh-bands.brep",
     )
     provider = phx.meshing.GmshProvider()
     scope = provider.whole_scope(source, 2)
-    regions, patches = _controls(provider, source)
+    regions, patches = band_meshing_controls(provider, source)
     specification = phx.meshing.SurfaceMeshingSpec(
         phx.meshing.CellMeshingTarget(
             2,
@@ -159,7 +93,7 @@ def test_real_gmsh_planar_band_fronts_equal_cumulative_schedule(tmp_path: Any) -
             geometry_order=1,
         ),
         scope,
-        planar_embedding=_EMBEDDING,
+        planar_embedding=BAND_EMBEDDING,
         size_controls=(phx.meshing.UniformSizeControl(scope, 0.2),),
         region_controls=regions,
         patch_controls=patches,
@@ -171,19 +105,21 @@ def test_real_gmsh_planar_band_fronts_equal_cumulative_schedule(tmp_path: Any) -
     for region_name in ("region-0", "region-1"):
         for index, distance in enumerate((0.05, 0.15), start=1):
             key = f"planar_band:{control.control_id}:{region_name}:front:{index}"
-            assert achieved[f"{key}:distance"] == pytest.approx(distance, abs=1e-13)
-            assert achieved[f"{key}:maximum_residual"] <= 1e-13
+            assert achieved[f"{key}:distance"] == pytest.approx(
+                distance, abs=_FRONT_DISTANCE_TOLERANCE
+            )
+            assert achieved[f"{key}:maximum_residual"] <= _FRONT_DISTANCE_TOLERANCE
     assert "quadrilateral" in {block.cell_kind for block in result.mesh.blocks}
     assert result.boundary is None
     assert result.audit.passed and result.compliance.passed
 
 
-def test_planar_band_rejects_insufficient_clearance(tmp_path: Any) -> None:
-    source = _partition(tmp_path)
-    interface = _interface(source, "region-0", "region-1")
+def test_planar_band_rejects_insufficient_clearance(tmp_path: Path) -> None:
+    source = rectangular_partition(tmp_path)
+    interface = interface_patch(source, "region-0", "region-1")
     plan = phx.meshing.PlanarBandPlan(
         source,
-        _EMBEDDING,
+        BAND_EMBEDDING,
         (
             phx.meshing.PlanarBandControl(
                 interface.name,
@@ -198,14 +134,14 @@ def test_planar_band_rejects_insufficient_clearance(tmp_path: Any) -> None:
         ),
     )
 
-    with pytest.raises(ValueError, match="clearance"):
+    with pytest.raises(ValueError, match="prepare_planar_bands.side.clearance"):
         phx.meshing.prepare_planar_bands(plan, destination=tmp_path / "no-clearance.brep")
 
 
-def test_planar_band_rejects_colliding_straight_strips(tmp_path: Any) -> None:
-    source = _partition(tmp_path, widths=(1.0, 0.5, 1.0))
-    left = _interface(source, "region-0", "region-1")
-    right = _interface(source, "region-1", "region-2")
+def test_planar_band_rejects_colliding_straight_strips(tmp_path: Path) -> None:
+    source = rectangular_partition(tmp_path, widths=(1.0, 0.5, 1.0))
+    left = interface_patch(source, "region-0", "region-1")
+    right = interface_patch(source, "region-1", "region-2")
     controls = (
         phx.meshing.PlanarBandControl(
             left.name,
@@ -229,8 +165,8 @@ def test_planar_band_rejects_colliding_straight_strips(tmp_path: Any) -> None:
         ),
     )
 
-    with pytest.raises(ValueError, match="collide"):
+    with pytest.raises(ValueError, match="prepare_planar_bands.layers"):
         phx.meshing.prepare_planar_bands(
-            phx.meshing.PlanarBandPlan(source, _EMBEDDING, controls),
+            phx.meshing.PlanarBandPlan(source, BAND_EMBEDDING, controls),
             destination=tmp_path / "collision.brep",
         )

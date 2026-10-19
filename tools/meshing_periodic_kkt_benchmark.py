@@ -7,13 +7,15 @@ import argparse
 import json
 from pathlib import Path
 from time import perf_counter
-from typing import Protocol, runtime_checkable
+from typing import final, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import StrictModule
+from phydrax.linalg import SparseFactorizationPlan
 from phydrax.meshing.providers import _native_periodic_size as size
 from phydrax.optim import MinimizationProblem
 from phydrax.optim._primal_dual import PrimalDualNewtonKrylov
@@ -61,10 +63,52 @@ class _PolishCompilerEntry(Protocol):
     ) -> _LoweredPolish: ...
 
 
-def benchmark(snapshot: Path, repeats: int) -> dict[str, object]:
-    """Time the unchanged captured hard problem, not a new meshing qualification."""
-    if repeats < 1:
-        raise ValueError("repeats must be positive.")
+@final
+class _CapturedPolishInput(StrictModule):
+    parameters: jax.Array
+    args: size._PolishArgs
+    problem: MinimizationProblem
+    lower: np.ndarray
+    upper: np.ndarray
+    mutable: np.ndarray
+    active: np.ndarray
+    roots: np.ndarray
+    edge_keys: np.ndarray
+    source_binding: str
+    maximum_work: int
+    maximum_bytes: int
+    input_preparation: float
+
+
+@final
+class _PreparedPolishBenchmark(StrictModule):
+    captured: _CapturedPolishInput
+    method: PrimalDualNewtonKrylov
+    setup: size._PeriodicSparseKKTSetup
+    factor_plan: SparseFactorizationPlan
+    coefficient_dtype: np.dtype
+    rhs_dtype: np.dtype
+    symbolic_work_upper: int
+    hard_work_phases: tuple[tuple[str, int], ...]
+    symbolic_preparation: float
+
+
+@final
+class _PolishCompilation(StrictModule):
+    compiled: _CompiledPolish
+    lowering: float
+    compilation: float
+
+
+@final
+class _PolishExecution(StrictModule):
+    cold: size._SolveRecord
+    cold_seconds: float
+    warm_seconds: list[float]
+
+
+def _prepare_captured_polish_input(snapshot: Path) -> _CapturedPolishInput:
+    """Load and bind the captured constraints, scientific identity, and rank witness."""
     started = perf_counter()
     with np.load(snapshot, allow_pickle=False) as bank:
         parameters = jnp.asarray(bank["parameters"])
@@ -127,15 +171,37 @@ def benchmark(snapshot: Path, repeats: int) -> dict[str, object]:
                 "Captured equality-row ownership differs from the actual hard solve."
             )
     input_preparation = perf_counter() - started
+    return _CapturedPolishInput(
+        parameters=parameters,
+        args=args,
+        problem=problem,
+        lower=lower,
+        upper=upper,
+        mutable=mutable,
+        active=active,
+        roots=roots,
+        edge_keys=edge_keys,
+        source_binding=source_binding,
+        maximum_work=maximum_work,
+        maximum_bytes=maximum_bytes,
+        input_preparation=input_preparation,
+    )
+
+
+def _prepare_polish_benchmark(
+    captured: _CapturedPolishInput,
+) -> _PreparedPolishBenchmark:
+    """Prepare the sparse symbolic owners and synchronize their numerical leaves."""
+    parameters, args = captured.parameters, captured.args
     started = perf_counter()
     method, symbolic_work_upper = size._prepare_polish_method(
-        source_binding,
-        roots,
-        edge_keys,
-        active,
+        captured.source_binding,
+        captured.roots,
+        captured.edge_keys,
+        captured.active,
         np.asarray(args.size.mutable),
-        maximum_work,
-        maximum_bytes,
+        captured.maximum_work,
+        captured.maximum_bytes,
         args,
     )
     hard_work_phases = size._polish_work_bounds(
@@ -143,15 +209,39 @@ def benchmark(snapshot: Path, repeats: int) -> dict[str, object]:
         args.size.edges.shape[0],
         args.size.cells.shape[0],
         parameters.size,
-        mutable.size,
-        int(np.count_nonzero(active)),
+        captured.mutable.size,
+        int(np.count_nonzero(captured.active)),
         method,
     )
     setup, factor_plan = size._polish_sparse_owners(method)
     coefficient_dtype = setup.kkt_assembly.template.coefficients.dtype
-    rhs_dtype = size._coordinate_dtype(setup.primal_space)
+    rhs_dtype = setup.primal_space.dtype
     jax.block_until_ready((parameters, args, method))
     symbolic_preparation = perf_counter() - started
+    return _PreparedPolishBenchmark(
+        captured=captured,
+        method=method,
+        setup=setup,
+        factor_plan=factor_plan,
+        coefficient_dtype=coefficient_dtype,
+        rhs_dtype=rhs_dtype,
+        symbolic_work_upper=symbolic_work_upper,
+        hard_work_phases=hard_work_phases,
+        symbolic_preparation=symbolic_preparation,
+    )
+
+
+def _measure_polish_compilation(
+    preparation: _PreparedPolishBenchmark,
+) -> _PolishCompilation:
+    """Lower and compile the unchanged hard-polish entry with its prepared owners."""
+    captured = preparation.captured
+    parameters, args, problem, method = (
+        captured.parameters,
+        captured.args,
+        captured.problem,
+        preparation.method,
+    )
     entry = size._solve_polish
     if not isinstance(entry, _PolishCompilerEntry):
         raise TypeError("The owning hard-polish entry must support lowering.")
@@ -161,6 +251,25 @@ def benchmark(snapshot: Path, repeats: int) -> dict[str, object]:
     started = perf_counter()
     compiled = lowered.compile()
     compilation = perf_counter() - started
+    return _PolishCompilation(
+        compiled=compiled, lowering=lowering, compilation=compilation
+    )
+
+
+def _execute_polish_benchmark(
+    preparation: _PreparedPolishBenchmark,
+    compilation: _PolishCompilation,
+    repeats: int,
+) -> _PolishExecution:
+    """Measure cold and repeated executions, requiring leafwise exact reproduction."""
+    captured = preparation.captured
+    parameters, args, problem, method = (
+        captured.parameters,
+        captured.args,
+        captured.problem,
+        preparation.method,
+    )
+    compiled = compilation.compiled
     started = perf_counter()
     cold = jax.block_until_ready(compiled(parameters, args, problem, method))
     cold_seconds = perf_counter() - started
@@ -173,28 +282,126 @@ def benchmark(snapshot: Path, repeats: int) -> dict[str, object]:
             jax.tree.leaves(cold), jax.tree.leaves(warm), strict=True
         ):
             np.testing.assert_array_equal(np.asarray(first), np.asarray(second))
+    return _PolishExecution(
+        cold=cold, cold_seconds=cold_seconds, warm_seconds=warm_seconds
+    )
+
+
+def _polish_derivative_report(
+    preparation: _PreparedPolishBenchmark,
+) -> dict[str, object]:
+    """Report prepared exact derivative support and logical operation bounds."""
+    setup, coefficient_dtype = preparation.setup, preparation.coefficient_dtype
+    return {
+        "scope": "Current true Lagrangian Hessian and original canonical bound Jacobian.",
+        "representation": "Prepared exact local edge norm blocks and oriented cell cross-product minors.",
+        "local_derivative_id": setup.local_derivative_id,
+        "original_mutable_edge_blocks": setup.edge_positions.shape[0],
+        "original_source_cell_blocks": setup.cell_positions.shape[0],
+        "edge_gradient_shape": [setup.edge_positions.shape[0], 2],
+        "edge_hessian_shape": [setup.edge_positions.shape[0], 2, 2],
+        "cell_gradient_shape": [setup.cell_positions.shape[0], 3, 2],
+        "cell_hessian": "Exact constant oriented2x2 minors, not a dense6x6 bank.",
+        "sparse_saddle_contributions": setup.kkt_assembly.template.relation.capacity,
+        "preconditioner": "Native unit-L/signed-U-magnitude paired congruence, not LDL or abs(H).",
+        "kkt_representation": "Prepared true local Hessian+barrier rank-one blocks, fused saddle action.",
+        "canonical_equality_rows": setup.derivative_source.equality_indices.size,
+        "canonical_lower_rows": setup.derivative_source.lower_indices.size,
+        "canonical_upper_rows": setup.derivative_source.upper_indices.size,
+        "one_derivative_preparation_work_upper": setup.derivative_preparation_work_upper(),
+        "one_sparse_saddle_setup_work_upper": setup.sparse_setup_work_upper(),
+        "one_kkt_action_work_upper": setup.kkt_action_work_upper(),
+        "one_kkt_preparation_work_upper": setup.kkt_preparation_work_upper(),
+        "logical_workspace_bytes_upper": setup.derivative_workspace_bytes_upper(
+            coefficient_dtype.itemsize
+        ),
+    }
+
+
+def _polish_substitution_report(
+    preparation: _PreparedPolishBenchmark,
+) -> dict[str, object]:
+    """Report native substitution support and dtype-dependent logical bounds."""
+    factor_plan = preparation.factor_plan
+    coefficient_dtype, rhs_dtype = (
+        preparation.coefficient_dtype,
+        preparation.rhs_dtype,
+    )
+    return {
+        "scope": "Prepared logical upper bounds, not measured host/device memory.",
+        "coefficient_dtype": str(coefficient_dtype),
+        "rhs_dtype": str(rhs_dtype),
+        "symbolic_factor_nnz": factor_plan.factor_nnz,
+        "lower_symbolic_nnz": factor_plan.lower_positions.size,
+        "refresh_preparation_work_upper": (
+            factor_plan.numeric_substitution_preparation_work_units_upper
+            + factor_plan.lu_congruence_preparation_work_units_upper
+        ),
+        "one_rhs_work_upper": factor_plan.lu_congruence_solve_work_units_upper_for(
+            coefficient_dtype, rhs_dtype
+        ),
+        "promoted_rhs_work_upper": factor_plan.lu_congruence_solve_work_units_upper_for(
+            coefficient_dtype, np.dtype("complex128")
+        ),
+        "lower_scheduled_coefficient_slots": factor_plan.lower_analysis.schedule_positions.size,
+        "upper_scheduled_coefficient_slots": factor_plan.lower_analysis.transpose_schedule_positions.size,
+        "lower_original_reduction_width": factor_plan.lower_analysis.row_width,
+        "upper_original_reduction_width": factor_plan.lower_analysis.transpose_row_width,
+        "lower_analysis_pattern_id": factor_plan.lower_analysis.pattern_id,
+        "upper_analysis_pattern_id": factor_plan.lower_analysis.pattern_id,
+        "cache_logical_storage_bytes_upper": (
+            factor_plan.numeric_substitution_storage_bytes_upper(
+                coefficient_dtype.itemsize
+            )
+            + factor_plan.lu_congruence_storage_bytes_upper(coefficient_dtype.itemsize)
+        ),
+        "refresh_logical_workspace_bytes_upper": (
+            factor_plan.numeric_substitution_refresh_workspace_bytes_upper(
+                coefficient_dtype.itemsize
+            )
+            + factor_plan.lu_congruence_refresh_workspace_bytes_upper(
+                coefficient_dtype.itemsize
+            )
+        ),
+    }
+
+
+def _polish_benchmark_report(
+    snapshot: Path,
+    preparation: _PreparedPolishBenchmark,
+    compilation: _PolishCompilation,
+    execution: _PolishExecution,
+) -> dict[str, object]:
+    """Join execution measurements and prepared diagnostics without changing identities."""
+    captured = preparation.captured
+    parameters, args, problem, method = (
+        captured.parameters,
+        captured.args,
+        captured.problem,
+        preparation.method,
+    )
     leaves = {
         id(leaf): leaf
         for leaf in jax.tree.leaves(
             eqx.filter((parameters, args, problem, method), eqx.is_array)
         )
     }
-    memory = compiled.compiled.memory_analysis()
+    memory = compilation.compiled.compiled.memory_analysis()
     return {
         "scope": "Captured original hard solve only; no placement, publication or archive claim.",
         "snapshot": str(snapshot),
         "method_id": size._POLISH_METHOD.method_id,
         "problem_id": problem.problem_id,
         "dimension": parameters.size,
-        "kept_equalities": int(np.count_nonzero(lower == upper)),
+        "kept_equalities": int(np.count_nonzero(captured.lower == captured.upper)),
         "retained_input_bytes": sum(leaf.nbytes for leaf in leaves.values()),
         "stages_seconds": {
-            "input_preparation": input_preparation,
-            "symbolic_preparation": symbolic_preparation,
-            "lowering": lowering,
-            "compilation": compilation,
-            "cold_execution": cold_seconds,
-            "warm_execution": warm_seconds,
+            "input_preparation": captured.input_preparation,
+            "symbolic_preparation": preparation.symbolic_preparation,
+            "lowering": compilation.lowering,
+            "compilation": compilation.compilation,
+            "cold_execution": execution.cold_seconds,
+            "warm_execution": execution.warm_seconds,
         },
         "compiler_memory": {
             "temporary_bytes": memory.temp_size_in_bytes,
@@ -202,75 +409,25 @@ def benchmark(snapshot: Path, repeats: int) -> dict[str, object]:
             "argument_bytes": memory.argument_size_in_bytes,
             "generated_code_bytes": memory.generated_code_size_in_bytes,
         },
-        "symbolic_preparation_work_upper": symbolic_work_upper,
-        "hard_solve_work_upper": sum(work for _, work in hard_work_phases),
-        "hard_solve_work_upper_by_phase": dict(hard_work_phases),
-        "prepared_exact_derivatives": {
-            "scope": "Current true Lagrangian Hessian and original canonical bound Jacobian.",
-            "representation": "Prepared exact local edge norm blocks and oriented cell cross-product minors.",
-            "local_derivative_id": setup.local_derivative_id,
-            "original_mutable_edge_blocks": setup.edge_positions.shape[0],
-            "original_source_cell_blocks": setup.cell_positions.shape[0],
-            "edge_gradient_shape": [setup.edge_positions.shape[0], 2],
-            "edge_hessian_shape": [setup.edge_positions.shape[0], 2, 2],
-            "cell_gradient_shape": [setup.cell_positions.shape[0], 3, 2],
-            "cell_hessian": "Exact constant oriented2x2 minors, not a dense6x6 bank.",
-            "sparse_saddle_contributions": setup.kkt_assembly.template.relation.capacity,
-            "preconditioner": "Native unit-L/signed-U-magnitude paired congruence, not LDL or abs(H).",
-            "kkt_representation": "Prepared true local Hessian+barrier rank-one blocks, fused saddle action.",
-            "canonical_equality_rows": setup.derivative_source.equality_indices.size,
-            "canonical_lower_rows": setup.derivative_source.lower_indices.size,
-            "canonical_upper_rows": setup.derivative_source.upper_indices.size,
-            "one_derivative_preparation_work_upper": setup.derivative_preparation_work_upper(),
-            "one_sparse_saddle_setup_work_upper": setup.sparse_setup_work_upper(),
-            "one_kkt_action_work_upper": setup.kkt_action_work_upper(),
-            "one_kkt_preparation_work_upper": setup.kkt_preparation_work_upper(),
-            "logical_workspace_bytes_upper": setup.derivative_workspace_bytes_upper(
-                coefficient_dtype.itemsize
-            ),
-        },
-        "native_numeric_substitution": {
-            "scope": "Prepared logical upper bounds, not measured host/device memory.",
-            "coefficient_dtype": str(coefficient_dtype),
-            "rhs_dtype": str(rhs_dtype),
-            "symbolic_factor_nnz": factor_plan.factor_nnz,
-            "lower_symbolic_nnz": factor_plan.lower_positions.size,
-            "refresh_preparation_work_upper": (
-                factor_plan.numeric_substitution_preparation_work_units_upper
-                + factor_plan.lu_congruence_preparation_work_units_upper
-            ),
-            "one_rhs_work_upper": factor_plan.lu_congruence_solve_work_units_upper_for(
-                coefficient_dtype, rhs_dtype
-            ),
-            "promoted_rhs_work_upper": factor_plan.lu_congruence_solve_work_units_upper_for(
-                coefficient_dtype, np.dtype("complex128")
-            ),
-            "lower_scheduled_coefficient_slots": factor_plan.lower_analysis.schedule_positions.size,
-            "upper_scheduled_coefficient_slots": factor_plan.lower_analysis.transpose_schedule_positions.size,
-            "lower_original_reduction_width": factor_plan.lower_analysis.row_width,
-            "upper_original_reduction_width": factor_plan.lower_analysis.transpose_row_width,
-            "lower_analysis_pattern_id": factor_plan.lower_analysis.pattern_id,
-            "upper_analysis_pattern_id": factor_plan.lower_analysis.pattern_id,
-            "cache_logical_storage_bytes_upper": (
-                factor_plan.numeric_substitution_storage_bytes_upper(
-                    coefficient_dtype.itemsize
-                )
-                + factor_plan.lu_congruence_storage_bytes_upper(
-                    coefficient_dtype.itemsize
-                )
-            ),
-            "refresh_logical_workspace_bytes_upper": (
-                factor_plan.numeric_substitution_refresh_workspace_bytes_upper(
-                    coefficient_dtype.itemsize
-                )
-                + factor_plan.lu_congruence_refresh_workspace_bytes_upper(
-                    coefficient_dtype.itemsize
-                )
-            ),
-        },
-        "source_binding_id": source_binding,
-        "hard_solve": size._polish_record(cold, method)._asdict(),
+        "symbolic_preparation_work_upper": preparation.symbolic_work_upper,
+        "hard_solve_work_upper": sum(work for _, work in preparation.hard_work_phases),
+        "hard_solve_work_upper_by_phase": dict(preparation.hard_work_phases),
+        "prepared_exact_derivatives": _polish_derivative_report(preparation),
+        "native_numeric_substitution": _polish_substitution_report(preparation),
+        "source_binding_id": captured.source_binding,
+        "hard_solve": size._polish_record(execution.cold, method)._asdict(),
     }
+
+
+def benchmark(snapshot: Path, repeats: int) -> dict[str, object]:
+    """Time the unchanged captured hard problem, not a new meshing qualification."""
+    if repeats < 1:
+        raise ValueError("repeats must be positive.")
+    captured = _prepare_captured_polish_input(snapshot)
+    preparation = _prepare_polish_benchmark(captured)
+    compilation = _measure_polish_compilation(preparation)
+    execution = _execute_polish_benchmark(preparation, compilation, repeats)
+    return _polish_benchmark_report(snapshot, preparation, compilation, execution)
 
 
 def main() -> None:

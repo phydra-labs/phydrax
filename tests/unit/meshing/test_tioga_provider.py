@@ -9,20 +9,21 @@ import pytest
 from phydrax import config as pxconfig
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellBlock, CellMesh
-from phydrax.meshing._assembly import MeshAssembly, MeshPart
+from phydrax.meshing._assembly import MeshAssembly
 from phydrax.meshing._canonical import certify_cell_mesh
-from phydrax.meshing._contracts import (
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingLimits,
-)
+from phydrax.meshing._contracts import MeshingLimits
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+from phydrax.meshing._mesh_part import MeshPart
 from phydrax.meshing.providers._tioga import TiogaOptions, TiogaProvider
 
 
 CENTERS = {"body-left": np.array((-2.0, 0.0, 0.0)), "body-right": np.array((2.0, 0, 0))}
 # Background spacing is 0.5 and body spacing 0.25; this rigid translation is
-# not a symmetry of either grid, so blanking and donors genuinely change.
+# not a symmetry of either grid, so blanking and donors change.
 TRANSLATION = np.array((0.75, 0.25, -0.25))
+# Historical TIOGA affine-transfer absolute bound from this fixture at d2dfcb941.
+# Its zero relative tolerance is retained for every rank configuration.
+_AFFINE_TRANSFER_ATOL = 1.0e-8
 
 
 def _grid(
@@ -120,7 +121,7 @@ def overset_case() -> Any:
 
 
 def _assert_overset_assembly(result: Any, centers: Any) -> None:
-    """Holes lie inside the solids, receptors match donors, and transfer is affine-exact."""
+    """Check hole containment, donor ownership, and affine-preserving transfer."""
     by_name = {status.part_name: status for status in result.blanking}
     background = by_name["background"]
     hole_mask = np.asarray(background.node_iblank) == 0
@@ -151,7 +152,12 @@ def _assert_overset_assembly(result: Any, centers: Any) -> None:
         target_points = np.asarray(target.point_coordinates(link.target_scope))
         values = 2 + source_points @ np.array((1.5, -2.5, 3.5))
         expected = 2 + target_points @ np.array((1.5, -2.5, 3.5))
-        np.testing.assert_allclose(link.transfer(values), expected, rtol=0, atol=1e-8)
+        np.testing.assert_allclose(
+            link.transfer(values),
+            expected,
+            rtol=0,
+            atol=_AFFINE_TRANSFER_ATOL,
+        )
         record = next(
             item for item in result.donors if item.coupling_id == link.coupling_id
         )
@@ -177,21 +183,20 @@ def _blanking(result: Any) -> Any:
     }
 
 
+@pytest.mark.parametrize("ranks", (1, 2), ids=("serial", "two-ranks"))
 def test_tioga_real_hole_cut_and_affine_transfer(
     overset_case: Any,
+    ranks: int,
 ) -> None:
-    for ranks in (1, 2):
-        executable, assembly, walls, overset = overset_case
-        with TiogaProvider(_options(executable, ranks)) as provider:
-            result = provider.execute(assembly, wall_scopes=walls, overset_scopes=overset)
-        assert {part.part_id for part in result.assembly.parts} == {
-            part.part_id for part in assembly.parts
-        }
-        assert result.provider.version
-        assert result.registration.part_names == tuple(
-            part.name for part in assembly.parts
-        )
-        _assert_overset_assembly(result, CENTERS)
+    executable, assembly, walls, overset = overset_case
+    with TiogaProvider(_options(executable, ranks)) as provider:
+        result = provider.execute(assembly, wall_scopes=walls, overset_scopes=overset)
+    assert {part.part_id for part in result.assembly.parts} == {
+        part.part_id for part in assembly.parts
+    }
+    assert result.provider.version
+    assert result.registration.part_names == tuple(part.name for part in assembly.parts)
+    _assert_overset_assembly(result, CENTERS)
 
 
 def test_tioga_reuses_one_worker_session_across_registrations(overset_case: Any) -> None:
@@ -205,70 +210,71 @@ def test_tioga_reuses_one_worker_session_across_registrations(overset_case: Any)
     assert second.assembly.assembly_id == first.assembly.assembly_id
 
 
+@pytest.mark.parametrize("ranks", (1, 2), ids=("serial", "two-ranks"))
 def test_tioga_moves_parts_without_restarting_the_worker(
     overset_case: Any,
+    ranks: int,
 ) -> None:
-    for ranks in (1, 2):
-        executable, assembly, walls, overset = overset_case
-        with TiogaProvider(_options(executable, ranks)) as provider:
-            first = provider.execute(assembly, wall_scopes=walls, overset_scopes=overset)
-            # ty: ignore[unresolved-attribute]
-            right = np.asarray(first.assembly.part("body-right").carrier.mesh.coordinates)
+    executable, assembly, walls, overset = overset_case
+    with TiogaProvider(_options(executable, ranks)) as provider:
+        first = provider.execute(assembly, wall_scopes=walls, overset_scopes=overset)
+        # ty: ignore[unresolved-attribute]
+        right = np.asarray(first.assembly.part("body-right").carrier.mesh.coordinates)
 
-            unchanged = provider.move(first, {"body-right": right})
-            moved = provider.move(unchanged, {"body-right": right + TRANSLATION})
-            with pytest.raises(MeshingFailure) as stale:
-                provider.move(unchanged, {"body-right": right})
-            # The moved assembly is exactly what a fresh registration of the
-            # translated geometry produces.
-            parts = {part.name: part for part in moved.assembly.parts}
-            fresh = provider.execute(
-                MeshAssembly(moved.assembly.parts),
-                wall_scopes=tuple(
-                    parts[scope.source_id].scope(0, np.asarray(scope.entity_ids))
-                    for scope in walls
-                ),
-                overset_scopes=tuple(
-                    parts[scope.source_id].scope(0, np.asarray(scope.entity_ids))
-                    for scope in overset
-                ),
-            )
-            assert provider.worker.launches == 1
+        unchanged = provider.move(first, {"body-right": right})
+        moved = provider.move(unchanged, {"body-right": right + TRANSLATION})
+        with pytest.raises(MeshingFailure) as stale:
+            provider.move(unchanged, {"body-right": right})
+        # The moved assembly is exactly what a fresh registration of the
+        # translated geometry produces.
+        parts = {part.name: part for part in moved.assembly.parts}
+        fresh = provider.execute(
+            MeshAssembly(moved.assembly.parts),
+            wall_scopes=tuple(
+                parts[scope.source_id].scope(0, np.asarray(scope.entity_ids))
+                for scope in walls
+            ),
+            overset_scopes=tuple(
+                parts[scope.source_id].scope(0, np.asarray(scope.entity_ids))
+                for scope in overset
+            ),
+        )
+        assert provider.worker.launches == 1
 
-        sessions = {
-            result.registration.session_id for result in (first, unchanged, moved, fresh)
-        }
-        assert len(sessions) == 1
-        assert (
-            first.registration.registration
-            == unchanged.registration.registration
-            == moved.registration.registration
-        )
-        assert unchanged.assembly.assembly_id == first.assembly.assembly_id
-        for name, (nodes, cells) in _blanking(first).items():
-            np.testing.assert_array_equal(_blanking(unchanged)[name][0], nodes)
-            np.testing.assert_array_equal(_blanking(unchanged)[name][1], cells)
-        assert stale.value.category is MeshingFailureCategory.INVALID_SPECIFICATION
+    sessions = {
+        result.registration.session_id for result in (first, unchanged, moved, fresh)
+    }
+    assert len(sessions) == 1
+    assert (
+        first.registration.registration
+        == unchanged.registration.registration
+        == moved.registration.registration
+    )
+    assert unchanged.assembly.assembly_id == first.assembly.assembly_id
+    for name, (nodes, cells) in _blanking(first).items():
+        np.testing.assert_array_equal(_blanking(unchanged)[name][0], nodes)
+        np.testing.assert_array_equal(_blanking(unchanged)[name][1], cells)
+    assert stale.value.category is MeshingFailureCategory.INVALID_SPECIFICATION
 
-        np.testing.assert_array_equal(
-            # ty: ignore[unresolved-attribute]
-            moved.assembly.part("body-right").carrier.mesh.coordinates,
-            right + TRANSLATION,
-        )
-        assert (
-            moved.assembly.part("body-left").part_id
-            == first.assembly.part("body-left").part_id
-        )
-        assert not np.array_equal(
-            _blanking(moved)["background"][0], _blanking(first)["background"][0]
-        )
-        _assert_overset_assembly(
-            moved, {**CENTERS, "body-right": CENTERS["body-right"] + TRANSLATION}
-        )
-        assert fresh.assembly.assembly_id == moved.assembly.assembly_id
-        assert [item.evidence_id for item in fresh.donors] == [
-            item.evidence_id for item in moved.donors
-        ]
+    np.testing.assert_array_equal(
+        # ty: ignore[unresolved-attribute]
+        moved.assembly.part("body-right").carrier.mesh.coordinates,
+        right + TRANSLATION,
+    )
+    assert (
+        moved.assembly.part("body-left").part_id
+        == first.assembly.part("body-left").part_id
+    )
+    assert not np.array_equal(
+        _blanking(moved)["background"][0], _blanking(first)["background"][0]
+    )
+    _assert_overset_assembly(
+        moved, {**CENTERS, "body-right": CENTERS["body-right"] + TRANSLATION}
+    )
+    assert fresh.assembly.assembly_id == moved.assembly.assembly_id
+    assert [item.evidence_id for item in fresh.donors] == [
+        item.evidence_id for item in moved.donors
+    ]
 
 
 def test_tioga_move_after_session_loss_fails_explicitly(overset_case: Any) -> None:

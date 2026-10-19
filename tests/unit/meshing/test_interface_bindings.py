@@ -115,7 +115,9 @@ def _plate_side(
         mesh, vertex, projection, 2, policy=_POLICY
     )
     rows = [
-        row for row, value in enumerate(edges.source_entity_ids) if value == wall_entity
+        row
+        for row, value in enumerate(edges.source_entities.entity_ids())
+        if value == wall_entity
     ]
     wall = phx.meshing.MeshPatch(
         "wall",
@@ -326,7 +328,7 @@ def _wrong_entities(plate: Plate) -> MeshInterfaceAttachment:
 
 
 def _wrong_entity_set(plate: Plate) -> MeshInterfaceAttachment:
-    # Same part, same patch, but a cell association: equal shapes are no witness.
+    # Same part, same patch, but a cell association: equal shapes do not establish identity.
     return MeshInterfaceAttachment(
         plate.right.part,
         plate.right.wall,
@@ -377,14 +379,18 @@ _REFUSALS = {
     "same-side": RefusalCase(_same_side, ValueError, "same side"),
     "other-source-revision": RefusalCase(_other_revision, ValueError, "source revision"),
     "uncertified-witness": RefusalCase(
-        _uncertified_association, ValueError, "not certified evidence"
+        _uncertified_association, ValueError, r"MeshInterfaceAttachment\.association"
     ),
-    "foreign-patch": RefusalCase(_foreign_patch, ValueError, "not organization evidence"),
+    "foreign-patch": RefusalCase(
+        _foreign_patch, ValueError, r"MeshInterfaceAttachment\.scope"
+    ),
     "undeclared-geometry": RefusalCase(
-        _wrong_entities, ValueError, "outside the declared"
+        _wrong_entities, ValueError, r"MeshInterfaceAttachment\.association"
     ),
     "shape-without-witness": RefusalCase(
-        _wrong_entity_set, ValueError, "another entity set"
+        _wrong_entity_set,
+        ValueError,
+        r"MeshInterfaceAttachment\.association\.target_entity_set_id",
     ),
     "junction-of-two": RefusalCase(_junction_of_two, ValueError, "at least three"),
     "sided-overlap": RefusalCase(_sided_overlap, ValueError, "does not acquire a normal"),

@@ -11,6 +11,10 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.linalg._small_batched import (
+    cofactor_determinant_2,
+    cofactor_determinant_3,
+)
 
 
 la = phx.linalg
@@ -551,3 +555,30 @@ def test_complex_pseudoinverse_preserves_dtype_and_moore_penrose_action(
     np.testing.assert_allclose(
         matrix @ result.value @ matrix, matrix, rtol=tolerance, atol=tolerance
     )
+
+
+@pytest.mark.parametrize(
+    "dimension", (2, 3), ids=("two-dimensional", "three-dimensional")
+)
+def test_host_cofactor_determinants_preserve_large_integer_cancellation(
+    dimension: int,
+) -> None:
+    magnitude = 1 << 100
+    if dimension == 2:
+        matrix = np.asarray(
+            ((magnitude, magnitude + 1), (magnitude - 1, magnitude)), dtype=object
+        )
+        expected = 1
+        result = cofactor_determinant_2(matrix[0], matrix[1])
+    else:
+        matrix = np.asarray(
+            (
+                (magnitude, magnitude + 1, 0),
+                (magnitude - 1, magnitude, 0),
+                (1, 2, magnitude),
+            ),
+            dtype=object,
+        )
+        expected = magnitude
+        result = cofactor_determinant_3(matrix[0], matrix[1], matrix[2])
+    assert result == expected

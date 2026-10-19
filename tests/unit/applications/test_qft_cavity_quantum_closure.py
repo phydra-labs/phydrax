@@ -31,15 +31,14 @@ from phydrax.applications.cavity_quantum import (
     PreparedAdaptiveHcurlCapability,
     PurcellLoweringPlan,
 )
-from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.discretization._topology_epoch import TopologyEpoch
+from tests._support.cell_meshes import bisect, unit_tetrahedron
 
 
-def _tetrahedral_mesh() -> Any:
-    return CellMesh.from_tetrahedra(
-        np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
-        np.asarray(((0, 1, 2, 3),), dtype=np.int32),
-    )
+# Empirical `test_adaptive_hcurl_transfer_preserves_circulation_and_curl`: matched max |delta|=2.77556e-16; joint allowance fraction=6.16159e-08, margin=100%.
+_BISECTED_HCURL_MOMENT_TRANSFER_ATOL = 1e-13
+# Empirical `test_adaptive_hcurl_transfer_preserves_circulation_and_curl`: matched max |delta|=1.33227e-15; joint allowance fraction=0.0133227, margin=98.6677%.
+_BISECTED_GRADIENT_CURL_ATOL = 1e-13
 
 
 def test_qft_contracts() -> None:
@@ -164,7 +163,7 @@ def test_qft_contracts() -> None:
         ).state_coordinates.evidence.domain_kind
         == "full"
     )
-    mesh = _tetrahedral_mesh()
+    mesh = unit_tetrahedron()
     high_order = AdaptiveHcurlCapabilityPlan(mesh, requested_polynomial_order=2)
     adaptive = AdaptiveHcurlCapabilityPlan(
         mesh, requested_polynomial_order=1, require_adaptation=True
@@ -190,7 +189,7 @@ def test_qft_contracts() -> None:
 
 
 def _hcurl_moments(space: Any, constant: np.ndarray, rotation: np.ndarray) -> Any:
-    """Canonical one-form moments, including non-edge higher-order functionals."""
+    """Return one-form moments, including non-edge higher-order functionals."""
     return space.interpolant(
         1,
         lambda points: (
@@ -205,20 +204,12 @@ def _refined_cavity(mesh: Any) -> Any:
     import phydrax as phx
 
     certified = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
-    return phx.meshing.execute_mesh_adaptation(
-        phx.meshing.prepare_mesh_adaptation(
-            certified,
-            phx.meshing.MarkedMeshAdaptation(np.asarray((0,), dtype=np.int64)),
-            policy=phx.meshing.MeshAdaptationPolicy(
-                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
-            ),
-        )
-    )
+    return bisect(certified, (0,))
 
 
 @pytest.mark.parametrize("order", (1, 2))
 def test_adaptive_hcurl_transfer_preserves_circulation_and_curl(order: int) -> None:
-    mesh = _tetrahedral_mesh()
+    mesh = unit_tetrahedron()
     prepared = AdaptiveHcurlCapabilityPlan(
         mesh, requested_polynomial_order=order, require_adaptation=True
     ).prepare()
@@ -230,12 +221,15 @@ def test_adaptive_hcurl_transfer_preserves_circulation_and_curl(order: int) -> N
 
     assert result.committed and result.receipt is not None and result.receipt.published
     successor = result.capability.space
+    # Unit-tetrahedron/order-1-or-2 acceptance ceiling retained from 03ef670bc,
+    # this same fixture: transfer/interpolation of the affine-plus-rotation
+    # field (coefficients <= 1.2) through a single native edge bisection.
     np.testing.assert_allclose(
         result.edge_integrals,
         _hcurl_moments(successor, constant, rotation),
-        atol=1e-13,
+        atol=_BISECTED_HCURL_MOMENT_TRANSFER_ATOL,
     )
-    # A canonical zero-form differential stays curl-free at every order.
+    # A zero-form differential stays curl-free at every order.
     potential = prepared.space.interpolant(
         0, lambda points: (points @ jnp.asarray((1.0, -2.0, 0.5)))[:, None]
     ).values
@@ -244,8 +238,12 @@ def test_adaptive_hcurl_transfer_preserves_circulation_and_curl(order: int) -> N
         prepared.space.exterior_derivative(0, potential),
         accepted_boundary=True,
     )
+    # The same 03ef670bc ceiling bounds incidence cancellation after transferring
+    # the linear potential x - 2*y + z/2; its continuous curl is zero.
     np.testing.assert_allclose(
-        successor.exterior_derivative(1, gradient.edge_integrals), 0.0, atol=1e-13
+        successor.exterior_derivative(1, gradient.edge_integrals),
+        0.0,
+        atol=_BISECTED_GRADIENT_CURL_ATOL,
     )
     assert result.transfer is not None and result.transfer.evidence.passed
     assert result.transfer.evidence.defect("commuting") <= (
@@ -255,7 +253,7 @@ def test_adaptive_hcurl_transfer_preserves_circulation_and_curl(order: int) -> N
 
 
 def test_adaptive_hcurl_rejection_retains_the_accepted_epoch() -> None:
-    mesh = _tetrahedral_mesh()
+    mesh = unit_tetrahedron()
     prepared = AdaptiveHcurlCapabilityPlan(mesh, require_adaptation=True).prepare()
     field = _hcurl_moments(
         prepared.space, np.asarray((1.0, 0.0, 0.0)), np.asarray((0.0, 0.0, 1.0))
@@ -273,7 +271,7 @@ def test_adaptive_hcurl_rejection_retains_the_accepted_epoch() -> None:
 
 
 def test_adaptive_hcurl_rejects_stale_geometry_before_publication() -> None:
-    mesh = _tetrahedral_mesh()
+    mesh = unit_tetrahedron()
     prepared = AdaptiveHcurlCapabilityPlan(mesh, require_adaptation=True).prepare()
     field = _hcurl_moments(
         prepared.space, np.asarray((1.0, 0.0, 0.0)), np.asarray((0.0, 0.0, 1.0))
@@ -296,7 +294,7 @@ def test_adaptive_hcurl_rejects_stale_geometry_before_publication() -> None:
 
 
 def test_high_order_hcurl_resource_refusal_retains_all_form_moments() -> None:
-    mesh = _tetrahedral_mesh()
+    mesh = unit_tetrahedron()
     prepared = AdaptiveHcurlCapabilityPlan(
         mesh, requested_polynomial_order=2, require_adaptation=True, maximum_edges=20
     ).prepare()

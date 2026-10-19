@@ -5,14 +5,13 @@
 """Geometry transitions of curved coordinate maps through native adaptation.
 
 Nested-transition oracles use analytic shears ``x -> x + a q(y, z)`` of straight
-simplex meshes: child maps are exact restrictions and measures stay unchanged.
+simplex meshes: child maps are algebraic restrictions and measures stay unchanged.
 Source-realization oracles instead use ``(x, y) -> (x, y(1 + x/4))``:
 the physical measure changes from 1 to 9/8, density inventory remains 2, and
-material history/flux follow their actual reference pullback and Piola laws.
+material history/flux follow their reference pullback and Piola laws.
 """
 
-import itertools
-from collections.abc import Callable
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -22,9 +21,17 @@ import pytest
 import phydrax as phx
 from phydrax.discretization import CellGeometrySpec, CellMesh, FiniteElementSpec
 from phydrax.discretization._cell_geometry_transfer import (
+    transition_displaced_cell_geometry,
+)
+from phydrax.discretization._cell_geometry_transition_types import (
     CellGeometryTransitionError,
     CellGeometryTransitionPolicy,
-    transition_displaced_cell_geometry,
+    NestedReferenceWitnesses,
+)
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.lifecycle._meshing_sources import (
+    read_meshing_source_closure,
+    write_meshing_source_closure,
 )
 from phydrax.meshing import (
     execute_mesh_adaptation,
@@ -35,77 +42,38 @@ from phydrax.meshing import (
     MetricMeshAdaptation,
     prepare_mesh_adaptation,
 )
-from phydrax.meshing._curving import _straight_geometry
+from phydrax.meshing._bisection import BisectionHierarchy
+from phydrax.meshing._curving import straight_geometry
+from phydrax.meshing._topology_edit import (
+    assemble_topology_edit,
+    CellTopologyEdit,
+    EntityRelations,
+    TopologyEditBlock,
+)
+from tests._support.cell_meshes import kuhn_cube
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.geometry_transfer_cases import (
+    apply_shear,
+    curved_shear_source,
+    shear_term,
+    transfer_triangles,
+)
 
 
 _CONTRACT = phx.SpatialCoordinateContract.si()
-_SHEAR = 0.1
 
-
-def _shear(degree: int, dimension: int) -> Callable[[np.ndarray], np.ndarray]:
-    """``x + a q`` with ``q`` a monomial of total ``degree`` in the other axes."""
-
-    def term(points: np.ndarray) -> np.ndarray:
-        if dimension == 2:
-            return points[..., 1] ** degree
-        return points[..., 1] ** (degree - 1) * points[..., 2]
-
-    return term
-
-
-def _apply(
-    points: np.ndarray, term: Callable[[np.ndarray], np.ndarray], sign: float
-) -> np.ndarray:
-    moved = np.array(points, dtype=np.float64, copy=True)
-    moved[..., 0] += sign * _SHEAR * term(points)
-    return moved
-
-
-def _triangles(size: int) -> CellMesh:
-    axis = np.linspace(0.0, 1.0, size + 1)
-    points = np.stack(np.meshgrid(axis, axis), axis=-1).reshape((-1, 2))
-    cells = []
-    for j, i in itertools.product(range(size), range(size)):
-        a = j * (size + 1) + i
-        cells.extend(((a, a + 1, a + size + 2), (a, a + size + 2, a + size + 1)))
-    return CellMesh.from_triangles(points, np.asarray(cells, dtype=np.int32))
-
-
-def _tetrahedra(size: int) -> CellMesh:
-    axis = np.linspace(0.0, 1.0, size + 1)
-    points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1)
-    points = points.reshape((-1, 3))
-    cells = []
-    for origin in itertools.product(range(size), repeat=3):
-        for order in itertools.permutations(range(3)):
-            corner = list(origin)
-            path = [(corner[0] * (size + 1) + corner[1]) * (size + 1) + corner[2]]
-            for direction in order:
-                corner[direction] += 1
-                path.append((corner[0] * (size + 1) + corner[1]) * (size + 1) + corner[2])
-            cells.append(path)
-    cells_ = np.asarray(cells, dtype=np.int32)
-    edges = points[cells_[:, 1:]] - points[cells_[:, :1]]
-    negative = np.linalg.det(edges) < 0.0
-    cells_[negative] = cells_[negative][:, [1, 0, 2, 3]]
-    return CellMesh.from_tetrahedra(points, cells_)
-
-
-def _curved(mesh: CellMesh, degree: int, term: Callable[[np.ndarray], np.ndarray]) -> Any:
-    """Certified result whose coordinate map is the shear of the straight mesh."""
-
-    mesh = phx.meshing.canonicalize_cell_mesh(mesh)
-    straight = _straight_geometry(mesh, degree)
-    names = [block.name for block in mesh.blocks]
-    geometry = CellGeometrySpec(
-        dict(zip(names, straight.elements, strict=True)),
-        dict(zip(names, straight.geometry_dofs, strict=True)),
-        _apply(np.asarray(straight.coordinates), term, 1.0),
-    )
-    moved = mesh.with_coordinates(
-        _apply(np.asarray(mesh.coordinates), term, 1.0), numeric_version="sheared"
-    )
-    return phx.meshing.certify_cell_mesh(moved, _CONTRACT, geometry=geometry)
+# Unit-coordinate accuracy requirements allocate 8, 64, 512, and 8192 binary64
+# ulps to affine motion, source interpolation, repeated restriction, and measure
+# reduction. The retained decimal thresholds are stricter than those allocations;
+# the analytic shear and unit-determinant measure provide independent references.
+_MOTION_ROUNDING = 1e-15
+_SOURCE_ROUNDING = 1e-14
+_RESTRICTION_ROUNDING = 1e-13
+_MEASURE_ROUNDING = 1e-12
+# Piola reconstruction and solve certificates have separate unit-scale accuracy
+# allocations of 2**14 and 2**20 eps; retain their stricter decimal requirements.
+_PIOLA_ROUNDING = 2e-12
+_SOLVE_ACCURACY = 1e-10
 
 
 def _adapt(source: Any, refine: Any = (), coarsen: Any = (), **options: Any) -> Any:
@@ -129,11 +97,13 @@ def _map(result: Any, row: int, reference: np.ndarray) -> np.ndarray:
             values, _ = element.tabulate(reference)
             return np.asarray(values) @ np.asarray(geometry.coordinates)[route]
         row -= routes.shape[0]
-    raise ValueError("The requested geometry cell row is absent.")
+    raise ValueError(
+        f"fixture.geometry.row must index a cell; got unmatched remainder {row}"
+    )
 
 
 def _max_shear_deviation(result: Any, term: Any, samples: int) -> float:
-    """Largest distance between each cell's map and the exact sheared simplex."""
+    """Largest distance between each cell's map and the algebraic sheared simplex."""
 
     mesh = result.mesh
     dimension = mesh.topological_dimension
@@ -143,8 +113,8 @@ def _max_shear_deviation(result: Any, term: Any, samples: int) -> float:
     for row in range(corners.shape[0]):
         barycentric = rng.dirichlet(np.ones(dimension + 1), size=samples)
         # The shear keeps y and z, so its inverse subtracts the same term.
-        straight = _apply(corners[row], term, -1.0)
-        exact = _apply(barycentric @ straight, term, 1.0)
+        straight = apply_shear(corners[row], term, -1.0)
+        exact = apply_shear(barycentric @ straight, term, 1.0)
         mapped = _map(result, row, barycentric[:, 1:])
         worst = max(worst, float(np.max(np.abs(mapped - exact))))
     return worst
@@ -157,9 +127,15 @@ def _max_shear_deviation(result: Any, term: Any, samples: int) -> float:
 )
 def test_native_bisection_restricts_curved_maps_exactly(kind: str, degree: int) -> None:
     dimension = 2 if kind == "triangle" else 3
-    term = _shear(degree, dimension)
-    source = _curved(_triangles(2) if dimension == 2 else _tetrahedra(1), degree, term)
-    assert _max_shear_deviation(source, term, 5) < 1e-14
+    term = shear_term(degree, dimension)
+    source = curved_shear_source(
+        transfer_triangles(2)
+        if dimension == 2
+        else kuhn_cube(1, orientation_swap=(0, 1)),
+        degree,
+        term,
+    )
+    assert _max_shear_deviation(source, term, 5) < _SOURCE_ROUNDING
     refined = _adapt(source, (0, 1))
 
     target = refined.target
@@ -169,12 +145,12 @@ def test_native_bisection_restricts_curved_maps_exactly(kind: str, degree: int) 
     assert target.geometry.elements[0].element_id == (
         source.geometry.elements[0].element_id
     )
-    assert _max_shear_deviation(target, term, 9) < 1e-13
+    assert _max_shear_deviation(target, term, 9) < _RESTRICTION_ROUNDING
     assert transition.evidence.kind == "nested_restriction"
     assert transition.evidence.exact
     # Unit-determinant shear: the mapped measure is the straight unit measure.
     assert transition.evidence.measure_exact
-    assert abs(transition.evidence.target_measure - 1.0) < 1e-12
+    assert abs(transition.evidence.target_measure - 1.0) < _MEASURE_ROUNDING
     # The certified mesh corners are the map's vertex nodes, not straight midpoints.
     vertex_rows = np.asarray(target.mesh.blocks[0].vertices)
     node_rows = np.asarray(target.geometry.geometry_dofs[0])[
@@ -189,8 +165,8 @@ def test_native_bisection_restricts_curved_maps_exactly(kind: str, degree: int) 
 
 
 def test_parent_witnesses_evaluate_the_source_map() -> None:
-    term = _shear(3, 2)
-    source = _curved(_triangles(2), 3, term)
+    term = shear_term(3, 2)
+    source = curved_shear_source(transfer_triangles(2), 3, term)
     refined = _adapt(source, (0, 3, 5))
     parents = refined.parent_cells
     corners = refined.parent_reference_vertices
@@ -201,13 +177,13 @@ def test_parent_witnesses_evaluate_the_source_map() -> None:
             _map(refined.target, row, barycentric[:, 1:]),
             _map(source, int(parents[row]), barycentric @ corners[row]),
             rtol=0.0,
-            atol=1e-14,
+            atol=_SOURCE_ROUNDING,
         )
 
 
 def test_restored_parents_coarsen_back_to_the_source_map() -> None:
-    term = _shear(2, 2)
-    source = _curved(_triangles(2), 2, term)
+    term = shear_term(2, 2)
+    source = curved_shear_source(transfer_triangles(2), 2, term)
     refined = _adapt(source, (0,))
     new_cells = np.setdiff1d(
         np.asarray(refined.target.mesh.blocks[0].global_ids),
@@ -224,9 +200,9 @@ def test_restored_parents_coarsen_back_to_the_source_map() -> None:
         np.asarray(restored.target.geometry.coordinates),
         np.asarray(source.geometry.coordinates),
         rtol=0.0,
-        atol=1e-14,
+        atol=_SOURCE_ROUNDING,
     )
-    with pytest.raises(ValueError, match="no parent"):
+    with pytest.raises(ValueError, match="MeshAdaptationResult.transition"):
         restored.parent_cells
 
 
@@ -234,11 +210,11 @@ def _wavy_refinement() -> tuple[Any, Any, np.ndarray]:
     """A refined mesh whose fine map is not a restriction of any coarse P2 map."""
 
     affine = phx.meshing.certify_cell_mesh(
-        phx.meshing.canonicalize_cell_mesh(_triangles(2)), _CONTRACT
+        phx.meshing.canonicalize_cell_mesh(transfer_triangles(2)), _CONTRACT
     )
     refined = _adapt(affine, (0,))
     mesh = refined.target.mesh
-    straight = _straight_geometry(mesh, 2)
+    straight = straight_geometry(mesh, 2)
     points = np.asarray(straight.coordinates)
     bumped = points.copy()
     bumped[:, 0] += 0.02 * np.sin(np.pi * points[:, 0]) * np.sin(np.pi * points[:, 1])
@@ -326,8 +302,8 @@ def test_curved_coarsening_follows_its_declared_approximation_bound() -> None:
 
 
 def test_metric_route_still_refuses_curved_sources_it_cannot_carry() -> None:
-    term = _shear(2, 2)
-    source = _curved(_triangles(2), 2, term)
+    term = shear_term(2, 2)
+    source = curved_shear_source(transfer_triangles(2), 2, term)
     mesh = source.mesh
     vertices = mesh.entity_set(0)
     metric = phx.meshing.MeshMetricField(
@@ -352,8 +328,8 @@ def test_metric_route_still_refuses_curved_sources_it_cannot_carry() -> None:
 
 
 def test_displacement_keeps_curvature_and_moves_vertex_nodes() -> None:
-    term = _shear(2, 2)
-    source = _curved(_triangles(2), 2, term)
+    term = shear_term(2, 2)
+    source = curved_shear_source(transfer_triangles(2), 2, term)
     offset = np.asarray((0.25, -0.5))
     moved = source.mesh.with_coordinates(
         np.asarray(source.mesh.coordinates) + offset, numeric_version="translated"
@@ -364,30 +340,25 @@ def test_displacement_keeps_curvature_and_moves_vertex_nodes() -> None:
         np.asarray(transition.geometry.coordinates),
         np.asarray(source.geometry.coordinates) + offset,
         rtol=0.0,
-        atol=1e-15,
+        atol=_MOTION_ROUNDING,
     )
     assert transition.evidence.kind == "vertex_displacement"
-    assert abs(transition.evidence.target_measure - 1.0) < 1e-12
+    assert abs(transition.evidence.target_measure - 1.0) < _MEASURE_ROUNDING
 
 
 def test_geometry_transition_refuses_beyond_its_evaluation_budget() -> None:
-    source = _curved(_triangles(2), 2, _shear(2, 2))
+    source = curved_shear_source(transfer_triangles(2), 2, shear_term(2, 2))
     policy = CellGeometryTransitionPolicy(maximum_evaluations=10)
     with pytest.raises(CellGeometryTransitionError) as refusal:
         _adapt(source, (0,), geometry_transition=policy)
     assert refusal.value.reason == "resource_limit"
 
 
-def test_incomplete_topology_edit_refuses_atomically() -> None:
-    from phydrax.discretization._cell_geometry_transfer import NestedReferenceWitnesses
-    from phydrax.meshing._topology_edit import (
-        assemble_topology_edit,
-        CellTopologyEdit,
-        EntityRelations,
-        TopologyEditBlock,
-    )
+def test_incomplete_topology_edit_refuses_atomically(
+    budget: CoordinateEnclosureBudget,
+) -> None:
 
-    source = _triangles(1)
+    source = transfer_triangles(1)
     ids = np.asarray(source.vertex_global_ids)
     before = np.asarray(source.coordinates).copy()
     block = source.blocks[0]
@@ -424,8 +395,8 @@ def test_incomplete_topology_edit_refuses_atomically() -> None:
         relations,
         refinement=witness,
     )
-    with pytest.raises(ValueError, match="Every target cell"):
-        assemble_topology_edit(source, edit, numeric_version="refused")
+    with pytest.raises(ValueError, match=r"CellTopologyEdit\.witnesses"):
+        assemble_topology_edit(source, edit, numeric_version="refused", budget=budget)
     np.testing.assert_array_equal(source.coordinates, before)
     np.testing.assert_array_equal(edit.coordinates, before)
 
@@ -454,12 +425,12 @@ def _discretization(result: Any) -> Any:
 
 
 def test_nested_field_transfer_reproduces_curved_coordinate_fields() -> None:
-    source = _curved(_triangles(2), 2, _shear(2, 2))
+    source = curved_shear_source(transfer_triangles(2), 2, shear_term(2, 2))
     refined = _adapt(source, (0, 4))
     coarse = _discretization(source)
     fine = _discretization(refined.target)
 
-    with pytest.raises(ValueError, match="affine geometry"):
+    with pytest.raises(ValueError, match=r"require_affine_simplices\.coordinate_element"):
         phx.discretization.prepare_nested_field_transfer(
             coarse, fine, refined.parent_cells, field_name="u"
         )
@@ -472,13 +443,13 @@ def test_nested_field_transfer_reproduces_curved_coordinate_fields() -> None:
     )
 
     # Physical coordinates are P2 fields of an isoparametric P2 map whose
-    # coefficients are the geometry nodes; the exact nested transfer must carry
+    # coefficients are the geometry nodes; the algebraic nested transfer must carry
     # the coarse coordinate field onto the refined one.
     np.testing.assert_allclose(
         np.asarray(transfer.transfer.apply(_coordinate_field(coarse, source))),
         _coordinate_field(fine, refined.target),
         rtol=0.0,
-        atol=1e-13,
+        atol=_RESTRICTION_ROUNDING,
     )
     assert transfer.evidence.passed
     assert transfer.geometry.relation == "exact-restriction"
@@ -493,9 +464,9 @@ def _source_realization_case() -> tuple[
     CellGeometrySpec,
     phx.discretization.SourceGeometryRealization,
 ]:
-    source = phx.meshing.canonicalize_cell_mesh(_triangles(1))
+    source = phx.meshing.canonicalize_cell_mesh(transfer_triangles(1))
     old = CellGeometrySpec.affine(source)
-    layout = _straight_geometry(source, 2)
+    layout = straight_geometry(source, 2)
 
     def moved(values: np.ndarray) -> np.ndarray:
         result = np.array(values, dtype=np.float64, copy=True)
@@ -539,15 +510,17 @@ def test_source_realization_records_changed_physical_support_and_enclosed_measur
     transition = realization.transition
     assert source.topology_id == target.topology_id
     assert transition.source_geometry_id != transition.target_geometry_id
-    assert transition.evidence.source_measure == pytest.approx(1.0, abs=1e-14)
-    assert transition.evidence.target_measure == pytest.approx(9.0 / 8.0, abs=1e-14)
+    assert transition.evidence.source_measure == pytest.approx(1.0, abs=_SOURCE_ROUNDING)
+    assert transition.evidence.target_measure == pytest.approx(
+        9.0 / 8.0, abs=_SOURCE_ROUNDING
+    )
     assert not transition.evidence.exact
     assert transition.evidence.coverage_defect is None
     assert 0.0 < transition.evidence.approximation_bound <= 0.3
     assert transition.evidence.source_measure_error_bound is not None
     assert transition.evidence.target_measure_error_bound is not None
-    assert transition.evidence.source_measure_error_bound < 1e-12
-    assert transition.evidence.target_measure_error_bound < 1e-12
+    assert transition.evidence.source_measure_error_bound < _MEASURE_ROUNDING
+    assert transition.evidence.target_measure_error_bound < _MEASURE_ROUNDING
 
 
 def test_source_realization_density_projection_conserves_inventory_not_constant_values() -> (
@@ -581,15 +554,15 @@ def test_source_realization_density_projection_conserves_inventory_not_constant_
             * np.asarray(realization.source_cell_measures)[row]
             / np.asarray(realization.target_cell_measures)[row]
         )
-    np.testing.assert_allclose(carried, expected, rtol=0.0, atol=1e-13)
-    assert not np.allclose(carried, 2.0, rtol=0.0, atol=1e-13)
+    np.testing.assert_allclose(carried, expected, rtol=0.0, atol=_RESTRICTION_ROUNDING)
+    assert not np.allclose(carried, 2.0, rtol=0.0, atol=_RESTRICTION_ROUNDING)
     assert float(np.dot(carried, np.asarray(transfer.target_measures))) == pytest.approx(
-        2.0, abs=1e-13
+        2.0, abs=_RESTRICTION_ROUNDING
     )
     assert transfer.geometry.relation == "source-realization"
     assert transfer.geometry.coverage_defect is None
     assert transfer.evidence.passed
-    assert transfer.evidence.bound("content") < 1e-10
+    assert transfer.evidence.bound("content") < _SOLVE_ACCURACY
     assert transfer.transfer.conservative
     assert not transfer.transfer.preserves_constants
 
@@ -680,139 +653,16 @@ def test_source_realization_flux_retains_material_cochain_and_actual_piola_value
     expected[..., 1] = old_values[..., 1] + old_points[..., 1] * old_values[..., 0] / (
         4.0 * determinant
     )
-    np.testing.assert_allclose(new_values, expected, rtol=2e-12, atol=2e-12)
-    assert not np.allclose(new_values, old_values, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(
+        new_values, expected, rtol=_PIOLA_ROUNDING, atol=_PIOLA_ROUNDING
+    )
+    assert not np.allclose(
+        new_values, old_values, rtol=_SOLVE_ACCURACY, atol=_SOLVE_ACCURACY
+    )
     assert transfer.evidence.passed
 
 
-@pytest.mark.parametrize(
-    ("kind", "expected"), (("triangle", (409, 400)), ("quadrilateral", (1059, 400)))
-)
-def test_high_degree_sqrt_density_keeps_actual_weighted_reference_moments(
-    kind: str,
-    expected: tuple[int, int],
-) -> None:
-    from fractions import Fraction
-
-    from phydrax.discretization._cell_geometry_transfer import (
-        _certified_sqrt_polynomial_integral_state,
-    )
-    from phydrax.discretization._coordinate_enclosure import (
-        CoordinateEnclosureBudget,
-        multiply,
-        Polynomial,
-    )
-
-    root: Polynomial = {
-        (0, 0): Fraction(1),
-        (3, 0): Fraction(1, 10),
-        (0, 3): Fraction(1, 10),
-    }
-    weight: Polynomial = {(0, 0): Fraction(1), (1, 0): Fraction(1), (0, 1): Fraction(2)}
-    ledger = CoordinateEnclosureBudget(1_000_000, 16 * 1024**2)
-    with ledger.activate():
-        value, error = _certified_sqrt_polynomial_integral_state(
-            multiply(root, root),
-            weight,
-            kind,
-            Fraction(1, 10**11),
-            1e-11,
-            10000,
-            32,
-            [0, 1_000_000],
-        )
-    assert abs(Fraction(value) - Fraction(*expected)) <= Fraction(error)
-    assert error <= 1e-11 * float(Fraction(*expected))
-
-
-@pytest.mark.parametrize("increment", ((1, 10**11), (1, 2)))
-def test_area_reuse_encloses_changed_gram_or_integrates_it_fresh(
-    increment: tuple[int, int],
-) -> None:
-    from fractions import Fraction
-
-    from phydrax.discretization._cell_geometry_transfer import (
-        _reuse_embedded_polynomial_area,
-    )
-    from phydrax.discretization._coordinate_enclosure import (
-        CoordinateEnclosureBudget,
-        multiply,
-        Polynomial,
-    )
-
-    delta = Fraction(*increment)
-    root: Polynomial = {(0, 0): Fraction(2), (1, 0): delta}
-    reference: tuple[Polynomial, Fraction, float, float] = (
-        {(0, 0): Fraction(4)},
-        Fraction(4),
-        1.0,
-        0.0,
-    )
-    ledger = CoordinateEnclosureBudget(1_000_000, 16 * 1024**2)
-    with ledger.activate():
-        (value, error), prepared = _reuse_embedded_polynomial_area(
-            multiply(root, root),
-            "triangle",
-            [reference],
-            Fraction(1, 10**10),
-            1e-10,
-            10000,
-            32,
-            [0, 1_000_000],
-        )
-    assert abs(Fraction(value) - (Fraction(1) + delta / 6)) <= Fraction(error)
-    assert error <= max(1e-10, 1e-10 * (value - error))
-    if delta < Fraction(1, 1000):
-        assert value == 1.0
-        assert error > 0.0
-        assert prepared is None
-    else:
-        assert value > 1.08
-        assert prepared is not None
-
-
-def test_exact_polynomial_square_preserves_cancelled_consumer_values_under_work_cap() -> (
-    None
-):
-    from fractions import Fraction
-
-    from phydrax.discretization._coordinate_enclosure import (
-        CoordinateEnclosureBudget,
-        evaluate,
-        multiply,
-        Polynomial,
-    )
-
-    polynomial: Polynomial = {
-        (a, b): Fraction((-1) ** (a + b) * (a + 1), 2 ** (a + b + 3))
-        for a in range(11)
-        for b in range(11 - a)
-    }
-    ledger = CoordinateEnclosureBudget(2800, 16 * 1024**2)
-    with ledger.activate():
-        squared = multiply(polynomial, polynomial)
-    for point in (
-        (Fraction(0), Fraction(0)),
-        (Fraction(1, 3), Fraction(-2, 5)),
-        (Fraction(7, 6), Fraction(2, 3)),
-    ):
-        assert evaluate(squared, point) == evaluate(polynomial, point) ** 2
-    cancellation: Polynomial = {
-        (0, 0): Fraction(1),
-        (1, 0): Fraction(-2),
-        (2, 0): Fraction(1),
-    }
-    squared = multiply(cancellation, cancellation)
-    assert evaluate(squared, (Fraction(1), Fraction(0))) == 0
-    assert evaluate(squared, (Fraction(3), Fraction(0))) == 16
-
-
 def test_scientific_block_authority_survives_hierarchy_archive(tmp_path: Path) -> None:
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        write_meshing_source_closure,
-    )
-    from phydrax.meshing._bisection import BisectionHierarchy
 
     _, hierarchy, _ = _wavy_refinement()
     receipt = write_meshing_source_closure(tmp_path / "scientific-hierarchy", hierarchy)
@@ -830,88 +680,7 @@ def test_scientific_block_authority_survives_hierarchy_archive(tmp_path: Path) -
     assert np.unique(np.asarray(restored.scientific_block_ids)).size == 1
 
 
-@pytest.mark.parametrize("coarsening", (False, True))
-def test_exact_affine_correspondence_bounds_actual_corner_difference(
-    coarsening: bool,
-) -> None:
-    from phydrax.discretization._cell_geometry_transfer import (
-        _plc_nested_approximation,
-        NestedReferenceWitnesses,
-    )
-    from phydrax.discretization._coordinate_enclosure import CoordinateEnclosureBudget
-
-    source = _tetrahedra(1)
-    coordinates = np.asarray(source.coordinates).copy()
-    coordinates[0, 0] += 0.125
-    target = source.with_coordinates(coordinates, numeric_version="perturbed-map")
-    ids = np.concatenate([np.asarray(block.global_ids) for block in source.blocks])
-    reference = np.concatenate((np.zeros((1, 3)), np.eye(3)), axis=0)
-    witness = NestedReferenceWitnesses(
-        ids,
-        ids,
-        np.broadcast_to(reference, (ids.size, 4, 3)).copy(),
-    )
-    empty = NestedReferenceWitnesses(
-        np.zeros(0, dtype=np.int64),
-        np.zeros(0, dtype=np.int64),
-        np.zeros((0, 4, 3), dtype=np.float64),
-    )
-    ledger = CoordinateEnclosureBudget(100_000, 16 * 1024**2)
-    with ledger.activate():
-        bounds = _plc_nested_approximation(
-            source,
-            CellGeometrySpec.affine(source),
-            target,
-            CellGeometrySpec.affine(target),
-            empty if coarsening else witness,
-            witness if coarsening else empty,
-        )
-    assert bounds == ((0.0, 0.125) if coarsening else (0.125, 0.0))
-    assert ledger.work_units > 0
-
-
-def test_constant_embedded_area_work_is_independent_of_prior_candidates() -> None:
-    from fractions import Fraction
-
-    from phydrax.discretization._cell_geometry_transfer import (
-        _reuse_embedded_polynomial_area,
-    )
-    from phydrax.discretization._coordinate_enclosure import CoordinateEnclosureBudget
-
-    def measure(candidate_count: int) -> tuple[tuple[float, float], int]:
-        ledger = CoordinateEnclosureBudget(1_000_000, 64 * 1024**2)
-        work = [0, 1_000_000]
-        with ledger.activate():
-            _, reference = _reuse_embedded_polynomial_area(
-                {(0, 0): Fraction(1), (2, 0): Fraction(1, 4)},
-                "triangle",
-                [],
-                Fraction(1, 1000),
-                0.0,
-                1000,
-                32,
-                work,
-            )
-            if reference is None:
-                raise RuntimeError(
-                    "The positive varying Gram must earn its reference proof."
-                )
-            starting_work = ledger.work_units
-            result, _ = _reuse_embedded_polynomial_area(
-                {(0, 0): Fraction(2)},
-                "triangle",
-                [reference] * candidate_count,
-                Fraction(1, 10**10),
-                0.0,
-                1000,
-                32,
-                work,
-            )
-        return result, ledger.work_units - starting_work
-
-    empty, empty_work = measure(0)
-    crowded, crowded_work = measure(100)
-    assert crowded == empty
-    assert crowded_work == empty_work > 0
-    value, error = crowded
-    assert abs(value - np.sqrt(2.0) / 2.0) <= error
+@pytest.fixture
+def budget() -> Iterator[CoordinateEnclosureBudget]:
+    with coordinate_reference_budget() as ledger:
+        yield ledger

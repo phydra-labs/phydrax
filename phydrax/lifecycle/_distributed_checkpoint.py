@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
 import operator
 import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -26,10 +26,18 @@ from .._array_archive import (
     DEFAULT_ARRAY_ARCHIVE_LIMITS,
     read_npy_metadata,
 )
-from .._fingerprint import canonical_fingerprint, canonical_json
-from .._strict import Strict
+from .._fingerprint import (
+    canonical_fingerprint,
+    canonical_json,
+)
+from .._model._structure import (
+    model_from_logical_array_recipe,
+    model_recipe_array_inventory,
+    ModelRecipeArray,
+)
+from .._strict import StrictModule
+from ..typing import checked
 from ._chunk_repository import (
-    _MAX_METADATA_VALUE_BYTES,
     ArtifactManifest,
     ArtifactRepository,
     ChunkEncoding,
@@ -37,10 +45,25 @@ from ._chunk_repository import (
     RepositoryCorruptionError,
     RepositoryTransaction,
 )
+from ._meshing_checkpoint_binding import (
+    admit_meshing_source_logical_arrays,
+    AdmittedMeshingSourceArrays,
+    authenticate_meshing_source_publication,
+    MESHING_SOURCE_PREFIX,
+    meshing_source_recipe,
+    meshing_source_restore_admission,
+    metadata_json,
+    source_array_name,
+    source_logical_array_name,
+)
+from ._meshing_sources import (
+    meshing_source_owner_reconstruction_scope,
+    validate_collective_mesh_source_epochs,
+    validate_meshing_source_checkpoint_references,
+)
 from ._models import CheckpointManifest, CheckpointShard
 from ._restart_topology import (
     admit_topology_restart,
-    MeshingArrayRole,
     MeshingCheckpointState,
     RestartAdmission,
     TopologyRestartPolicy,
@@ -48,16 +71,11 @@ from ._restart_topology import (
 )
 
 
-if TYPE_CHECKING:
-    from .._model._structure import ModelRecipeArray
-    from ._meshing_sources import MeshingSourceValidation
-
-
 CanonicalIndex = tuple[tuple[int, int, int], ...]
 _DISTRIBUTED_CHECKPOINT_LIMITS = DEFAULT_ARRAY_ARCHIVE_LIMITS
 _NO_PARENT_ID = "none"
 # One process artifact holds two logical streams: packed shard payloads and the
-# canonical JSON shard descriptor table that metadata references by digest.
+# deterministically encoded JSON shard table that metadata references by digest.
 _SHARD_PAYLOADS = "shard-payloads"
 _SHARD_DESCRIPTORS = "shard-descriptors"
 # Shards no larger than this share packed chunks; it also bounds the plaintext
@@ -108,77 +126,36 @@ _SHARD_METADATA_KEYS = frozenset(
         "replica_id",
     }
 )
-_PROCESS_SHARD_TABLE_CAPACITY = 64
 
 
 def _canonical_index(index: Any, shape: tuple[int, ...]) -> CanonicalIndex:
     entries = index if isinstance(index, tuple) else (index,)
     if len(entries) != len(shape):
-        raise ValueError("shard index rank does not match global array rank")
+        raise ValueError(
+            f"checkpoint.shard_index must match the global array rank; got {len(entries)} axes for rank {len(shape)}"
+        )
     normalized: list[tuple[int, int, int]] = []
     for entry, size in zip(entries, shape, strict=True):
-        if isinstance(entry, int):
-            value = entry if entry >= 0 else size + entry
-            if not 0 <= value < size:
-                raise ValueError("integer shard index is out of bounds")
-            normalized.append((value, value + 1, 1))
-        elif isinstance(entry, slice):
-            start, stop, step = entry.indices(size)
-            if step != 1:
-                raise ValueError("checkpoint shards require unit-stride indices")
-            normalized.append((start, stop, step))
-        else:
-            raise TypeError("checkpoint shard indices must contain integers or slices")
-    return tuple(normalized)
-
-
-def _unique_json_object(pairs: list[tuple[str, Any]], /) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for name, item in pairs:
-        if name in value:
-            raise ValueError(f"duplicate checkpoint metadata member {name!r}")
-        value[name] = item
-    return value
-
-
-def _metadata_json(
-    value: str,
-    /,
-    *,
-    maximum_nesting: int = 16,
-    maximum_bytes: int = _MAX_METADATA_VALUE_BYTES,
-) -> Any:
-    if not isinstance(value, str) or len(value.encode("utf-8")) > maximum_bytes:
-        raise RepositoryCorruptionError("Checkpoint metadata exceeds its byte limit.")
-    depth = 0
-    in_string = False
-    escaped = False
-    for character in value:
-        if in_string:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == '"':
-                in_string = False
-        elif character == '"':
-            in_string = True
-        elif character in "[{":
-            depth += 1
-            if depth > maximum_nesting:
-                raise RepositoryCorruptionError(
-                    "Checkpoint metadata exceeds its nesting limit."
+        match entry:
+            case int():
+                value = entry if entry >= 0 else size + entry
+                if not 0 <= value < size:
+                    raise ValueError(
+                        f"checkpoint.shard_index must lie inside the global axis; got index {entry} for extent {size}"
+                    )
+                normalized.append((value, value + 1, 1))
+            case slice():
+                start, stop, step = entry.indices(size)
+                if step != 1:
+                    raise ValueError(
+                        f"checkpoint.shard_index must use unit-stride slices; got stride {step}"
+                    )
+                normalized.append((start, stop, step))
+            case _:
+                raise TypeError(
+                    f"checkpoint.shard_index must contain integers or slices; got {type(entry).__name__}"
                 )
-        elif character in "]}":
-            depth -= 1
-            if depth < 0:
-                raise RepositoryCorruptionError("Checkpoint metadata JSON is invalid.")
-    if depth or in_string:
-        raise RepositoryCorruptionError("Checkpoint metadata JSON is invalid.")
-    try:
-        return json.loads(value, object_pairs_hook=_unique_json_object)
-    except (json.JSONDecodeError, RecursionError, ValueError) as error:
-        raise RepositoryCorruptionError("Checkpoint metadata JSON is invalid.") from error
+    return tuple(normalized)
 
 
 def _admit_array_spec(
@@ -190,14 +167,20 @@ def _admit_array_spec(
     if not isinstance(shape_value, list) or any(
         type(extent) is not int or extent < 0 for extent in shape_value
     ):
-        raise RepositoryCorruptionError("Checkpoint global shape is invalid.")
+        raise RepositoryCorruptionError(
+            "checkpoint.array.shape must contain nonnegative integer extents; got an invalid global shape"
+        )
     shape = tuple(shape_value)
     if len(shape) > limits.max_array_rank:
-        raise RepositoryCorruptionError("Checkpoint array exceeds the rank limit.")
+        raise RepositoryCorruptionError(
+            f"checkpoint.array.shape must have rank at most {limits.max_array_rank}; got rank {len(shape)}"
+        )
     try:
         dtype = np.dtype(dtype_value)
     except (TypeError, ValueError) as error:
-        raise RepositoryCorruptionError("Checkpoint array dtype is invalid.") from error
+        raise RepositoryCorruptionError(
+            "checkpoint.array.dtype must resolve to a NumPy dtype; got an invalid dtype"
+        ) from error
     if (
         dtype.hasobject
         or dtype.fields is not None
@@ -207,33 +190,33 @@ def _admit_array_spec(
         or dtype.itemsize > limits.max_dtype_itemsize
     ):
         raise RepositoryCorruptionError(
-            "Checkpoint array dtype is not admitted by policy."
+            "checkpoint.array.dtype must satisfy the archive dtype policy; got a dtype not admitted by policy"
         )
     elements = 1
     for extent in shape:
         if extent > limits.max_axis_length:
             raise RepositoryCorruptionError(
-                "Checkpoint array exceeds the axis-length limit."
+                f"checkpoint.array.shape must have axes at most {limits.max_axis_length}; got extent {extent}"
             )
         if extent and elements > limits.max_total_array_elements // extent:
             raise RepositoryCorruptionError(
-                "Checkpoint array exceeds the aggregate element limit."
+                "checkpoint.array.shape must fit the aggregate element limit; got aggregate element limit exceeded"
             )
         elements *= extent
     if elements > limits.max_total_array_elements:
         raise RepositoryCorruptionError(
-            "Checkpoint array exceeds the aggregate element limit."
+            "checkpoint.array.shape must fit the aggregate element limit; got aggregate element limit exceeded"
         )
     byte_count = elements * dtype.itemsize
     if byte_count > limits.max_aggregate_bytes:
         raise RepositoryCorruptionError(
-            "Checkpoint array exceeds the aggregate byte limit."
+            f"checkpoint.array.nbytes must not exceed {limits.max_aggregate_bytes}; got {byte_count} bytes"
         )
     return shape, dtype, elements
 
 
 def _parse_index(value: str, shape: tuple[int, ...], /) -> CanonicalIndex:
-    raw = _metadata_json(value)
+    raw = metadata_json(value)
     if (
         not isinstance(raw, list)
         or len(raw) != len(shape)
@@ -244,13 +227,17 @@ def _parse_index(value: str, shape: tuple[int, ...], /) -> CanonicalIndex:
             for entry in raw
         )
     ):
-        raise RepositoryCorruptionError("Checkpoint shard index is invalid.")
+        raise RepositoryCorruptionError(
+            "checkpoint.shard_index must contain integer start-stop-stride triples matching the global rank; got an invalid index encoding"
+        )
     index = tuple(tuple(entry) for entry in raw)
     if any(
         step != 1 or start < 0 or stop < start or stop > extent
         for (start, stop, step), extent in zip(index, shape, strict=True)
     ):
-        raise RepositoryCorruptionError("Checkpoint shard index is out of bounds.")
+        raise RepositoryCorruptionError(
+            "checkpoint.shard_index must contain ordered unit-stride ranges inside the global shape; got out-of-bounds shard ranges"
+        )
     return index
 
 
@@ -259,18 +246,22 @@ def _index_size(index: CanonicalIndex, maximum: int, /) -> int:
     for start, stop, step in index:
         if step != 1:
             raise RepositoryCorruptionError(
-                "Checkpoint shard indices require unit stride."
+                f"checkpoint.shard_index must use unit stride; got {step}"
             )
         extent = stop - start
         if extent and size > maximum // extent:
-            raise RepositoryCorruptionError("Checkpoint shard exceeds the element limit.")
+            raise RepositoryCorruptionError(
+                "checkpoint.shard_index must fit the element limit; got shard element limit exceeded"
+            )
         size *= extent
     return size
 
 
 def _indices_overlap(left: CanonicalIndex, right: CanonicalIndex) -> bool:
     if len(left) != len(right):
-        raise ValueError("checkpoint shard index ranks differ")
+        raise ValueError(
+            f"checkpoint.shard_index must have equal ranks for overlap comparison; got {len(left)} and {len(right)} axes"
+        )
     return all(
         max(left_start, right_start) < min(left_stop, right_stop)
         for (left_start, left_stop, _), (right_start, right_stop, _) in zip(
@@ -333,7 +324,7 @@ def _shard_id(
 
 @dataclass(frozen=True, slots=True)
 class AddressableCheckpointShard:
-    """Host snapshot of one canonical, non-redundant JAX array shard."""
+    """Snapshot one non-redundant addressable array shard on the host."""
 
     array_path: str
     global_shape: tuple[int, ...]
@@ -360,6 +351,125 @@ class ProcessCheckpointPublication:
     meshing_state: MeshingCheckpointState | None = None
 
 
+class _PendingCheckpointShard(StrictModule):
+    array_path: str = eqx.field(static=True)
+    global_shape: tuple[int, ...] = eqx.field(static=True)
+    dtype: str = eqx.field(static=True)
+    index: CanonicalIndex = eqx.field(static=True)
+    process_index: int = eqx.field(static=True)
+    device_id: int = eqx.field(static=True)
+    replica_id: int = eqx.field(static=True)
+    data: jax.Array
+
+
+def _snapshot_host_array(
+    array_path: str,
+    leaf: np.ndarray,
+    host_array_owner: int,
+    topology_epoch: int,
+) -> AddressableCheckpointShard:
+    # Authored coefficients stay on the host, with one publishing replica.
+    payload = np.array(leaf, copy=True, order="C") if leaf.flags.writeable else leaf
+    payload.setflags(write=False)
+    shape = tuple(leaf.shape)
+    index = tuple((0, size, 1) for size in shape)
+    device = next(
+        device for device in jax.devices() if device.process_index == host_array_owner
+    )
+    dtype = np.dtype(leaf.dtype).str
+    process_index, device_id = int(device.process_index), int(device.id)
+    return AddressableCheckpointShard(
+        array_path,
+        shape,
+        dtype,
+        index,
+        process_index,
+        device_id,
+        0,
+        payload,
+        _layout_id(
+            array_path, shape, dtype, index, process_index, device_id, 0, topology_epoch
+        ),
+    )
+
+
+def _stage_addressable_shards(
+    array_path: str,
+    leaf: jax.Array,
+    pending: list[_PendingCheckpointShard],
+    snapshot_count: int,
+    limits: ArrayArchiveLimits,
+) -> None:
+    shape = tuple(leaf.shape)
+    ownership: dict[CanonicalIndex, tuple[int, int]] = {}
+    for device, index in leaf.sharding.devices_indices_map(shape).items():
+        normalized = _canonical_index(index, shape)
+        key = (int(device.process_index), int(device.id))
+        previous = ownership.get(normalized)
+        if previous is None or key < previous:
+            ownership[normalized] = key
+    for shard in leaf.addressable_shards:
+        normalized = _canonical_index(shard.index, shape)
+        device_key = (int(shard.device.process_index), int(shard.device.id))
+        if ownership[normalized] != device_key:
+            continue
+        if len(pending) + snapshot_count >= limits.max_members:
+            raise ValueError(
+                "checkpoint.shards must fit the shard-count limit; got shard-count limit exceeded"
+            )
+        shard.data.copy_to_host_async()
+        pending.append(
+            _PendingCheckpointShard(
+                array_path,
+                shape,
+                np.dtype(leaf.dtype).str,
+                normalized,
+                device_key[0],
+                device_key[1],
+                int(shard.replica_id),
+                shard.data,
+            )
+        )
+
+
+def _snapshot_staged_shard(
+    staged: _PendingCheckpointShard,
+    topology_epoch: int,
+    limits: ArrayArchiveLimits,
+) -> AddressableCheckpointShard:
+    payload = np.asarray(staged.data)
+    local_shape = tuple(stop - start for start, stop, _ in staged.index)
+    if (
+        payload.shape != local_shape
+        or payload.dtype != np.dtype(staged.dtype)
+        or payload.nbytes > limits.max_member_bytes
+    ):
+        raise ValueError(
+            "checkpoint.shard.payload must match its layout and byte limit; got inconsistent shape, dtype, or byte count"
+        )
+    return AddressableCheckpointShard(
+        staged.array_path,
+        staged.global_shape,
+        staged.dtype,
+        staged.index,
+        staged.process_index,
+        staged.device_id,
+        staged.replica_id,
+        payload,
+        _layout_id(
+            staged.array_path,
+            staged.global_shape,
+            staged.dtype,
+            staged.index,
+            staged.process_index,
+            staged.device_id,
+            staged.replica_id,
+            topology_epoch,
+        ),
+    )
+
+
+@checked
 def snapshot_addressable_arrays(
     tree: Any,
     /,
@@ -371,15 +481,17 @@ def snapshot_addressable_arrays(
     """Snapshot addressable JAX shards and one replica of authored host arrays."""
 
     if type(topology_epoch) is not int or topology_epoch < 0:
-        raise ValueError("topology_epoch must be a non-negative integer")
-    if not isinstance(limits, ArrayArchiveLimits):
-        raise TypeError("limits must be an ArrayArchiveLimits instance")
+        raise ValueError(
+            f"checkpoint.topology_epoch must be a nonnegative integer; got {topology_epoch if type(topology_epoch) is int else type(topology_epoch).__name__!r}"
+        )
     if (
         type(host_array_owner) is not int
         or not 0 <= host_array_owner < jax.process_count()
     ):
-        raise ValueError("host_array_owner must identify one current process.")
-    pending: list[tuple[str, jax.Array, Any, CanonicalIndex]] = []
+        raise ValueError(
+            f"checkpoint.host_array_owner must identify a current process; got {host_array_owner if type(host_array_owner) is int else type(host_array_owner).__name__!r}"
+        )
+    pending: list[_PendingCheckpointShard] = []
     snapshots: list[AddressableCheckpointShard] = []
     total_bytes = 0
     for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
@@ -395,98 +507,34 @@ def snapshot_addressable_arrays(
             raise ValueError(str(error)) from error
         byte_count = elements * admitted_dtype.itemsize
         if total_bytes > limits.max_aggregate_bytes - byte_count:
-            raise ValueError("Checkpoint arrays exceed the aggregate byte limit.")
+            raise ValueError(
+                "checkpoint.arrays must fit the aggregate byte limit; got aggregate byte limit exceeded"
+            )
         total_bytes += byte_count
-        if isinstance(leaf, np.ndarray):
-            # Native authored coefficients already belong to the host. Publish
-            # one canonical replica without staging the complete value on a device.
-            if jax.process_index() != host_array_owner:
-                continue
-            if len(pending) + len(snapshots) >= limits.max_members:
-                raise ValueError("Checkpoint exceeds the shard-count limit.")
-            payload = (
-                np.array(leaf, copy=True, order="C") if leaf.flags.writeable else leaf
-            )
-            payload.setflags(write=False)
-            index = tuple((0, size, 1) for size in shape)
-            device = next(
-                device
-                for device in jax.devices()
-                if device.process_index == host_array_owner
-            )
-            layout_id = _layout_id(
-                array_path,
-                shape,
-                np.dtype(leaf.dtype).str,
-                index,
-                int(device.process_index),
-                int(device.id),
-                0,
-                topology_epoch,
-            )
-            snapshots.append(
-                AddressableCheckpointShard(
-                    array_path=array_path,
-                    global_shape=shape,
-                    dtype=np.dtype(leaf.dtype).str,
-                    index=index,
-                    process_index=int(device.process_index),
-                    device_id=int(device.id),
-                    replica_id=0,
-                    payload=payload,
-                    layout_id=layout_id,
+        match leaf:
+            case np.ndarray():
+                if jax.process_index() != host_array_owner:
+                    continue
+                if len(pending) + len(snapshots) >= limits.max_members:
+                    raise ValueError(
+                        "checkpoint.shards must fit the shard-count limit; got shard-count limit exceeded"
+                    )
+                snapshots.append(
+                    _snapshot_host_array(
+                        array_path, leaf, host_array_owner, topology_epoch
+                    )
                 )
-            )
-            continue
-        ownership: dict[CanonicalIndex, tuple[int, int]] = {}
-        for device, index in leaf.sharding.devices_indices_map(shape).items():
-            normalized = _canonical_index(index, shape)
-            key = (int(device.process_index), int(device.id))
-            previous = ownership.get(normalized)
-            if previous is None or key < previous:
-                ownership[normalized] = key
-        for shard in leaf.addressable_shards:
-            normalized = _canonical_index(shard.index, shape)
-            device_key = (int(shard.device.process_index), int(shard.device.id))
-            if ownership[normalized] != device_key:
-                continue
-            if len(pending) + len(snapshots) >= limits.max_members:
-                raise ValueError("Checkpoint exceeds the shard-count limit.")
-            shard.data.copy_to_host_async()
-            pending.append((array_path, leaf, shard, normalized))
+            case jax.Array():
+                _stage_addressable_shards(
+                    array_path, leaf, pending, len(snapshots), limits
+                )
+            case _:
+                raise TypeError(
+                    f"checkpoint.leaf must be a JAX or NumPy array; got {type(leaf).__name__}"
+                )
 
-    for array_path, leaf, shard, index in pending:
-        payload = np.asarray(shard.data)
-        local_shape = tuple(stop - start for start, stop, _ in index)
-        if (
-            payload.shape != local_shape
-            or payload.dtype != np.dtype(leaf.dtype)
-            or payload.nbytes > limits.max_member_bytes
-        ):
-            raise ValueError("Addressable checkpoint shard payload is inconsistent.")
-        layout_id = _layout_id(
-            array_path,
-            leaf.shape,
-            np.dtype(leaf.dtype).str,
-            index,
-            int(shard.device.process_index),
-            int(shard.device.id),
-            int(shard.replica_id),
-            topology_epoch,
-        )
-        snapshots.append(
-            AddressableCheckpointShard(
-                array_path=array_path,
-                global_shape=tuple(leaf.shape),
-                dtype=np.dtype(leaf.dtype).str,
-                index=index,
-                process_index=int(shard.device.process_index),
-                device_id=int(shard.device.id),
-                replica_id=int(shard.replica_id),
-                payload=payload,
-                layout_id=layout_id,
-            )
-        )
+    for staged in pending:
+        snapshots.append(_snapshot_staged_shard(staged, topology_epoch, limits))
     return tuple(snapshots)
 
 
@@ -541,7 +589,7 @@ def _iter_artifact_range(
     byte_count: int,
     /,
 ) -> Iterator[memoryview]:
-    """Stream one exact plaintext range of a logical artifact in bounded chunks."""
+    """Stream one plaintext byte range of a logical artifact in bounded chunks."""
 
     stop = offset + byte_count
     observed = 0
@@ -556,13 +604,15 @@ def _iter_artifact_range(
             artifact, chunk, maximum_plaintext_bytes=chunk.plaintext_size
         )
         if len(data) != chunk.plaintext_size:
-            raise RepositoryCorruptionError("Checkpoint artifact chunk size mismatch.")
+            raise RepositoryCorruptionError(
+                "artifact.chunk.plaintext_size must match the decoded chunk; got chunk size mismatch"
+            )
         payload = memoryview(data)[max(offset - chunk.offset, 0) : stop - chunk.offset]
         observed += len(payload)
         yield payload
     if observed != byte_count:
         raise RepositoryCorruptionError(
-            "Checkpoint artifact range is not covered by its chunks."
+            "artifact.payload_range must be covered by its chunks; got uncovered payload bytes"
         )
 
 
@@ -589,10 +639,6 @@ class _ProcessShardTable:
     fingerprints: frozenset[str]
 
 
-# Keyed by content-addressed manifest identity, so a hit names identical bytes.
-_PROCESS_SHARD_TABLES: dict[tuple[str, str, ArrayArchiveLimits], _ProcessShardTable] = {}
-
-
 def _process_artifact_metadata(
     repository: ArtifactRepository, artifact: ArtifactManifest, /
 ) -> dict[str, str]:
@@ -605,7 +651,7 @@ def _process_artifact_metadata(
         != f"{metadata['checkpoint_id']}.process-{metadata['process_index']}"
     ):
         raise RepositoryCorruptionError(
-            "Process checkpoint artifact metadata is invalid."
+            "artifact.metadata must bind the declared owner and streams to this repository; got invalid process artifact metadata"
         )
     return metadata
 
@@ -633,7 +679,7 @@ def _artifact_shards(
         or len(descriptors) > limits.max_members
     ):
         raise RepositoryCorruptionError(
-            "Process checkpoint shard descriptors are invalid."
+            "artifact.shard_descriptors must contain bounded records with declared fields and ownership; got invalid shard descriptors"
         )
     shards = []
     offset = 0
@@ -651,7 +697,7 @@ def _artifact_shards(
             )
         ):
             raise RepositoryCorruptionError(
-                "Process checkpoint shard descriptors are invalid."
+                "artifact.shard_descriptors must contain bounded records with declared fields and ownership; got invalid shard descriptors"
             )
         try:
             layout_id = _layout_id(
@@ -690,12 +736,12 @@ def _artifact_shards(
             )
         except (TypeError, ValueError) as error:
             raise RepositoryCorruptionError(
-                "Process checkpoint shard descriptors are invalid."
+                "artifact.shard_descriptors must contain bounded records with declared fields and ownership; got invalid shard descriptors"
             ) from error
         _validated_shard(shard, limits)
         if offset > limits.max_aggregate_bytes - shard.byte_count:
             raise RepositoryCorruptionError(
-                "Checkpoint exceeds the aggregate payload-byte limit."
+                "checkpoint.shards must fit the aggregate payload-byte limit; got aggregate payload-byte limit exceeded"
             )
         offset += shard.byte_count
         shards.append(shard)
@@ -710,10 +756,6 @@ def _process_shard_table(
 ) -> _ProcessShardTable:
     """Read the digest-bound descriptor table of one committed process artifact."""
 
-    key = (artifact.provider_id, artifact.manifest_id, limits)
-    table = _PROCESS_SHARD_TABLES.get(key)
-    if table is not None:
-        return table
     metadata = _process_artifact_metadata(repository, artifact)
     descriptor_bytes = _metadata_integer(metadata, "shard_descriptor_bytes")
     descriptor_chunks = tuple(
@@ -724,25 +766,25 @@ def _process_shard_table(
         or sum(chunk.plaintext_size for chunk in descriptor_chunks) != descriptor_bytes
     ):
         raise RepositoryCorruptionError(
-            "Process checkpoint shard descriptor table exceeds its declared bounds."
+            "artifact.shard_descriptors must fit the manifest byte bound and declared stream size; got descriptor byte bound or size mismatch"
         )
     payload = _read_artifact_range(
         repository, artifact, _SHARD_DESCRIPTORS, 0, descriptor_bytes
     )
     if hashlib.sha256(payload).hexdigest() != metadata["shard_descriptor_sha256"]:
         raise RepositoryCorruptionError(
-            "Process checkpoint shard descriptor digest mismatch."
+            "artifact.shard_descriptor_sha256 must match descriptor content; got descriptor digest mismatch"
         )
     try:
         text = payload.decode("utf-8")
     except UnicodeError as error:
         raise RepositoryCorruptionError(
-            "Process checkpoint shard descriptors are invalid."
+            "artifact.shard_descriptors must contain bounded records with declared fields and ownership; got invalid shard descriptors"
         ) from error
-    descriptors = _metadata_json(text, maximum_bytes=limits.max_manifest_bytes)
+    descriptors = metadata_json(text, maximum_bytes=limits.max_manifest_bytes)
     if canonical_json(descriptors) != text:
         raise RepositoryCorruptionError(
-            "Process checkpoint shard descriptors are not canonical."
+            "artifact.shard_descriptors must use deterministic JSON encoding; got different bytes"
         )
     shards, payload_bytes = _artifact_shards(artifact, descriptors, limits)
     if (
@@ -756,17 +798,15 @@ def _process_shard_table(
         != payload_bytes
     ):
         raise RepositoryCorruptionError(
-            "Process checkpoint artifact payload inventory is inconsistent."
+            f"ProcessCheckpoint.artifact.chunks must contain only shard descriptors and {payload_bytes} shard payload bytes; got {tuple((chunk.logical_name, chunk.plaintext_size) for chunk in artifact.chunks)!r}."
         )
     table = _ProcessShardTable(
         shards, frozenset(shard.shard_fingerprint for shard in shards)
     )
-    if len(_PROCESS_SHARD_TABLES) >= _PROCESS_SHARD_TABLE_CAPACITY:
-        del _PROCESS_SHARD_TABLES[next(iter(_PROCESS_SHARD_TABLES))]
-    _PROCESS_SHARD_TABLES[key] = table
     return table
 
 
+@checked
 def read_process_checkpoint_shards(
     repository: ArtifactRepository,
     artifact: ArtifactManifest,
@@ -789,13 +829,14 @@ def _parent_lineage(
 ) -> tuple[str, str]:
     if parent_manifest is None:
         return _NO_PARENT_ID, _NO_PARENT_ID
-    if (
-        not isinstance(parent_manifest, CheckpointManifest)
-        or parent_manifest.complete is not True
-    ):
-        raise TypeError("parent_manifest must be a complete CheckpointManifest or None")
+    if parent_manifest.complete is not True:
+        raise TypeError(
+            "CheckpointManifest.complete must be True for checkpoint lineage; got False"
+        )
     if parent_manifest.execution_plan_id != execution_plan_id:
-        raise ValueError("Parent checkpoint has the wrong execution ownership.")
+        raise ValueError(
+            "parent_manifest.execution_plan_id must match the successor execution plan; got incompatible execution ownership"
+        )
     parent_artifact_id = f"{parent_manifest.checkpoint_id}.process-{process_index}"
     parent_artifact = repository.get_manifest(parent_artifact_id)
     parent_metadata = dict(parent_artifact.metadata)
@@ -814,7 +855,7 @@ def _parent_lineage(
         != (parent_manifest.parent_manifest_id or _NO_PARENT_ID)
     ):
         raise RepositoryCorruptionError(
-            "Parent checkpoint artifact ownership is inconsistent."
+            "parent_artifact.metadata must match its parent manifest and repository; got inconsistent artifact ownership"
         )
     durable = _process_shard_table(repository, parent_artifact, limits)
     parent_process_fingerprints = [
@@ -827,11 +868,12 @@ def _parent_lineage(
         or set(parent_process_fingerprints) != durable.fingerprints
     ):
         raise RepositoryCorruptionError(
-            "Parent checkpoint manifest does not match its repository artifact."
+            "parent_manifest.shards must match the committed process artifact; got inconsistent process shard inventory"
         )
     return parent_manifest.checkpoint_id, parent_manifest.manifest_id
 
 
+@checked
 def publish_process_checkpoint(
     repository: ArtifactRepository,
     checkpoint_id: str,
@@ -849,7 +891,7 @@ def publish_process_checkpoint(
     parent_manifest: CheckpointManifest | None = None,
     host_array_owner: int = 0,
 ) -> ProcessCheckpointPublication:
-    """Publish this process's canonical addressable shards transactionally.
+    """Publish this process's non-redundant addressable shards transactionally.
 
     Shard payloads are packed into one bounded-chunk stream. Their descriptor
     table is a second content-addressed stream that artifact metadata binds by
@@ -876,7 +918,9 @@ def publish_process_checkpoint(
         for snapshot in snapshots:
             payload = snapshot.payload_bytes
             if len(payload) > limits.max_member_bytes:
-                raise ValueError("Checkpoint shard payload exceeds its byte limit.")
+                raise ValueError(
+                    "checkpoint.shard.payload must fit its admitted layout and byte limit; got payload byte-count refusal"
+                )
             descriptors.append(
                 {
                     "array_path": snapshot.array_path,
@@ -902,7 +946,9 @@ def publish_process_checkpoint(
     )
     descriptor_payload = canonical_json(descriptors).encode("utf-8")
     if len(descriptor_payload) > limits.max_manifest_bytes:
-        raise ValueError("Checkpoint shard descriptors exceed their byte limit.")
+        raise ValueError(
+            "checkpoint.shard_descriptors must fit the manifest byte limit; got descriptor byte limit exceeded"
+        )
     chunk_records += _write_packed_stream(
         repository,
         transaction,
@@ -944,7 +990,9 @@ def _metadata_integer(metadata: Mapping[str, str], name: str, /) -> int:
         or not value.isascii()
         or not value.isdecimal()
     ):
-        raise RepositoryCorruptionError(f"Checkpoint shard {name} metadata is invalid.")
+        raise RepositoryCorruptionError(
+            f"checkpoint.shard_metadata.{name} must be nonnegative decimal text; got {value if type(value) is str else type(value).__name__!r}"
+        )
     return int(value)
 
 
@@ -967,9 +1015,13 @@ def _validated_shard(
             "repository_id",
         )
     ):
-        raise RepositoryCorruptionError("Checkpoint shard metadata is invalid.")
+        raise RepositoryCorruptionError(
+            "checkpoint.shard_metadata.fields must contain the declared nonempty owner and array fields; got invalid metadata fields"
+        )
     if bool(metadata["parent_checkpoint_id"]) != bool(metadata["parent_manifest_id"]):
-        raise RepositoryCorruptionError("Checkpoint shard parent lineage is incomplete.")
+        raise RepositoryCorruptionError(
+            "checkpoint.shard_metadata.parent_ids must declare checkpoint and manifest lineage together; got incomplete parent lineage"
+        )
     for name in (
         "process_index",
         "device_id",
@@ -978,7 +1030,7 @@ def _validated_shard(
         "payload_offset",
     ):
         _metadata_integer(metadata, name)
-    shape_value = _metadata_json(metadata["global_shape"])
+    shape_value = metadata_json(metadata["global_shape"])
     shape, dtype, _ = _admit_array_spec(shape_value, metadata["dtype"], limits)
     index = _parse_index(metadata["index"], shape)
     local_elements = _index_size(index, limits.max_array_elements)
@@ -989,7 +1041,7 @@ def _validated_shard(
         or shard.byte_count < local_bytes
     ):
         raise RepositoryCorruptionError(
-            "Checkpoint shard payload exceeds its byte limit."
+            "checkpoint.shard.payload must fit its admitted layout and byte limit; got payload byte-count refusal"
         )
     return metadata["array_path"], shape, dtype, index
 
@@ -1000,7 +1052,9 @@ def _validate_exact_coverage(
     /,
 ) -> None:
     if len(shards) > limits.max_members:
-        raise RepositoryCorruptionError("Checkpoint exceeds the shard-count limit.")
+        raise RepositoryCorruptionError(
+            "checkpoint.shards must fit the shard-count limit; got shard-count limit exceeded"
+        )
     by_path: dict[
         str,
         list[tuple[CheckpointShard, tuple[int, ...], np.dtype[Any], CanonicalIndex]],
@@ -1010,7 +1064,7 @@ def _validate_exact_coverage(
         path, shape, dtype, index = _validated_shard(shard, limits)
         if total_payload_bytes > limits.max_aggregate_bytes - shard.byte_count:
             raise RepositoryCorruptionError(
-                "Checkpoint exceeds the aggregate payload-byte limit."
+                "checkpoint.shards must fit the aggregate payload-byte limit; got aggregate payload-byte limit exceeded"
             )
         total_payload_bytes += shard.byte_count
         by_path.setdefault(path, []).append((shard, shape, dtype, index))
@@ -1020,27 +1074,27 @@ def _validate_exact_coverage(
         dtypes = {item[2].str for item in path_shards}
         if len(shapes) != 1 or len(dtypes) != 1:
             raise RepositoryCorruptionError(
-                f"Checkpoint array {path!r} has inconsistent metadata."
+                f"checkpoint.array.layout must agree across shards; got inconsistent metadata for {path!r}"
             )
         shape = next(iter(shapes))
         _, _, expected = _admit_array_spec(list(shape), next(iter(dtypes)), limits)
         indices = [item[3] for item in path_shards]
         if len(set(indices)) != len(indices):
             raise RepositoryCorruptionError(
-                f"Checkpoint array {path!r} contains duplicate shards."
+                f"checkpoint.array.shards must have distinct ranges; got duplicate shards for {path!r}"
             )
         for left_index, left in enumerate(indices):
             for right in indices[left_index + 1 :]:
                 if _indices_overlap(left, right):
                     raise RepositoryCorruptionError(
-                        f"Checkpoint array {path!r} contains overlapping shards."
+                        f"checkpoint.array.shards must have disjoint ranges; got overlapping shards for {path!r}"
                     )
         covered = sum(
             _index_size(index, limits.max_total_array_elements) for index in indices
         )
         if covered != expected:
             raise RepositoryCorruptionError(
-                f"Checkpoint array {path!r} covers {covered} of {expected} values."
+                f"checkpoint.array.coverage must match the global element count; got {path!r} covers {covered} of {expected} values"
             )
 
 
@@ -1054,22 +1108,26 @@ def _validate_parent_ownership(
 ) -> tuple[str, str]:
     if parent_manifest is None:
         return _NO_PARENT_ID, _NO_PARENT_ID
-    if (
-        not isinstance(parent_manifest, CheckpointManifest)
-        or parent_manifest.complete is not True
-    ):
-        raise TypeError("parent_manifest must be a complete CheckpointManifest or None")
+    if parent_manifest.complete is not True:
+        raise TypeError(
+            "CheckpointManifest.complete must be True for checkpoint lineage; got False"
+        )
     if parent_manifest.checkpoint_id == checkpoint_id:
-        raise ValueError("A distributed checkpoint cannot parent itself.")
+        raise ValueError(
+            "parent_manifest.checkpoint_id must differ from the successor checkpoint ID; got a self-parented checkpoint"
+        )
     if (
         parent_manifest.analysis_plan_id != analysis_plan_id
         or parent_manifest.numeric_revision_id != numeric_revision_id
         or parent_manifest.execution_plan_id != execution_plan_id
     ):
-        raise ValueError("Parent checkpoint has incompatible lifecycle ownership.")
+        raise ValueError(
+            "parent_manifest.lifecycle_ids must match the successor analysis, revision, and execution; got incompatible lifecycle ownership"
+        )
     return parent_manifest.checkpoint_id, parent_manifest.manifest_id
 
 
+@checked
 def assemble_distributed_checkpoint_manifest(
     checkpoint_id: str,
     analysis_plan_id: str,
@@ -1086,11 +1144,13 @@ def assemble_distributed_checkpoint_manifest(
     """Validate all process acknowledgements and create the global commit record."""
 
     if type(expected_process_count) is not int or expected_process_count <= 0:
-        raise ValueError("expected_process_count must be a positive integer")
-    if not isinstance(limits, ArrayArchiveLimits):
-        raise TypeError("limits must be an ArrayArchiveLimits instance")
+        raise ValueError(
+            f"checkpoint.expected_process_count must be a positive integer; got {expected_process_count if type(expected_process_count) is int else type(expected_process_count).__name__!r}"
+        )
     if expected_process_count > limits.max_members:
-        raise ValueError("expected_process_count exceeds the process-count limit")
+        raise ValueError(
+            f"checkpoint.expected_process_count must not exceed {limits.max_members}; got {expected_process_count}"
+        )
     parent_checkpoint_id, parent_manifest_id = _validate_parent_ownership(
         parent_manifest,
         checkpoint_id,
@@ -1103,16 +1163,18 @@ def assemble_distributed_checkpoint_manifest(
         publication.artifact_manifest is None for publication in publications_
     ):
         raise ValueError(
-            "Parented distributed checkpoints require repository-backed publications."
+            "publications.artifact_manifest must retain repository-backed parent lineage; got a parented publication without an artifact"
         )
     process_indices = tuple(publication.process_index for publication in publications_)
     if tuple(sorted(process_indices)) != tuple(range(expected_process_count)):
         raise ValueError(
-            "checkpoint publications do not cover every process exactly once"
+            "publications.process_index must cover every process once; got missing or duplicate process indices"
         )
     shards = tuple(shard for publication in publications_ for shard in publication.shards)
     if not shards:
-        raise ValueError("a complete distributed checkpoint requires array shards")
+        raise ValueError(
+            "publications.shards must contain checkpoint arrays; got no shards"
+        )
     _validate_exact_coverage(shards, limits)
     expected_lineage = (parent_checkpoint_id, parent_manifest_id)
     repository_ids = set()
@@ -1130,7 +1192,7 @@ def assemble_distributed_checkpoint_manifest(
                 or artifact_metadata.get("parent_manifest_id") != parent_manifest_id
             ):
                 raise RepositoryCorruptionError(
-                    "Process checkpoint publication lineage is inconsistent."
+                    "publication.artifact_metadata must match checkpoint lifecycle and parent IDs; got inconsistent publication lineage"
                 )
             repository_ids.add(repository_id)
         for shard in publication.shards:
@@ -1147,12 +1209,12 @@ def assemble_distributed_checkpoint_manifest(
                 or metadata["execution_plan_id"] != execution_plan_id
             ):
                 raise RepositoryCorruptionError(
-                    "Checkpoint shard ownership or parent lineage is inconsistent."
+                    "checkpoint.shard_metadata.owner_ids must match the publication lifecycle and parent IDs; got inconsistent ownership or lineage"
                 )
             repository_ids.add(metadata["repository_id"])
     if len(repository_ids) != 1:
         raise RepositoryCorruptionError(
-            "Distributed checkpoint publications span repository identities."
+            "publications.repository_id must agree across processes; got multiple repository identities"
         )
     _validate_meshing_manifest_admission(publications_, shards, limits=limits)
     return CheckpointManifest(
@@ -1168,6 +1230,7 @@ def assemble_distributed_checkpoint_manifest(
     )
 
 
+@checked
 def assemble_distributed_checkpoint_from_repository(
     repository: ArtifactRepository,
     checkpoint_id: str,
@@ -1184,11 +1247,13 @@ def assemble_distributed_checkpoint_from_repository(
     """Assemble deterministic process acknowledgements from durable artifacts."""
 
     if type(expected_process_count) is not int or expected_process_count <= 0:
-        raise ValueError("expected_process_count must be a positive integer")
-    if not isinstance(limits, ArrayArchiveLimits):
-        raise TypeError("limits must be an ArrayArchiveLimits instance")
+        raise ValueError(
+            f"checkpoint.expected_process_count must be a positive integer; got {expected_process_count if type(expected_process_count) is int else type(expected_process_count).__name__!r}"
+        )
     if expected_process_count > limits.max_members:
-        raise ValueError("expected_process_count exceeds the process-count limit")
+        raise ValueError(
+            f"checkpoint.expected_process_count must not exceed {limits.max_members}; got {expected_process_count}"
+        )
     parent_checkpoint_id, parent_manifest_id = _validate_parent_ownership(
         parent_manifest,
         checkpoint_id,
@@ -1211,30 +1276,30 @@ def assemble_distributed_checkpoint_from_repository(
         artifact_metadata = _process_artifact_metadata(repository, artifact)
         if artifact_metadata["checkpoint_id"] != checkpoint_id:
             raise RepositoryCorruptionError(
-                "Process checkpoint artifact has the wrong checkpoint_id."
+                "artifact.metadata.checkpoint_id must match the requested checkpoint; got the wrong checkpoint_id"
             )
         if artifact_metadata["analysis_plan_id"] != analysis_plan_id:
             raise RepositoryCorruptionError(
-                "Process checkpoint artifact has the wrong analysis plan."
+                "artifact.metadata.analysis_plan_id must match the requested analysis; got the wrong analysis plan"
             )
         if artifact_metadata["numeric_revision_id"] != numeric_revision_id:
             raise RepositoryCorruptionError(
-                "Process checkpoint artifact has the wrong numeric revision."
+                "artifact.metadata.numeric_revision_id must match the requested revision; got the wrong numeric revision"
             )
         if artifact_metadata["execution_plan_id"] != execution_plan_id:
             raise RepositoryCorruptionError(
-                "Process checkpoint artifact has the wrong execution plan."
+                "artifact.metadata.execution_plan_id must match the requested execution; got the wrong execution plan"
             )
         if artifact_metadata["process_index"] != str(process_index):
             raise RepositoryCorruptionError(
-                "Process checkpoint artifact has the wrong process index."
+                "artifact.metadata.process_index must match the requested owner; got the wrong process index"
             )
         if (
             artifact_metadata["parent_checkpoint_id"] != parent_checkpoint_id
             or artifact_metadata["parent_manifest_id"] != parent_manifest_id
         ):
             raise RepositoryCorruptionError(
-                "Process checkpoint artifact parent lineage is inconsistent."
+                "artifact.metadata.parent_ids must match the requested parent manifest; got inconsistent parent lineage"
             )
         shards = _process_shard_table(repository, artifact, limits).shards
         publications.append(
@@ -1266,6 +1331,7 @@ def _validate_shard_repository_binding(
     shard: CheckpointShard,
     limits: ArrayArchiveLimits,
     /,
+    tables: dict[str, _ProcessShardTable],
 ) -> None:
     metadata = _metadata(shard)
     if (
@@ -1280,7 +1346,7 @@ def _validate_shard_repository_binding(
         != (manifest.parent_manifest_id or _NO_PARENT_ID)
     ):
         raise RepositoryCorruptionError(
-            "Checkpoint shard lifecycle ownership is inconsistent."
+            "checkpoint.shard_metadata.lifecycle_ids must match the manifest; got inconsistent lifecycle ownership"
         )
     artifact = repository.get_manifest(metadata["artifact_id"])
     artifact_metadata = dict(artifact.metadata)
@@ -1299,13 +1365,16 @@ def _validate_shard_repository_binding(
         != (manifest.parent_manifest_id or _NO_PARENT_ID)
     ):
         raise RepositoryCorruptionError(
-            "Checkpoint shard repository artifact ownership is inconsistent."
+            "checkpoint.shard_metadata.artifact_ids must match the committed repository artifact; got inconsistent artifact ownership"
         )
-    if (
-        shard.shard_fingerprint
-        not in _process_shard_table(repository, artifact, limits).fingerprints
-    ):
-        raise RepositoryCorruptionError("Checkpoint shard descriptor was substituted.")
+    table = tables.get(artifact.manifest_id)
+    if table is None:
+        table = _process_shard_table(repository, artifact, limits)
+        tables[artifact.manifest_id] = table
+    if shard.shard_fingerprint not in table.fingerprints:
+        raise RepositoryCorruptionError(
+            "checkpoint.shard_descriptor must belong to the committed descriptor table; got a substituted descriptor"
+        )
 
 
 def _read_shard_payload(
@@ -1323,7 +1392,7 @@ def _read_shard_payload(
         or shard.byte_count > limits.max_member_bytes
     ):
         raise RepositoryCorruptionError(
-            "Checkpoint shard payload binding is inconsistent."
+            "checkpoint.shard_metadata.payload_binding must match the artifact and byte policy; got inconsistent payload binding"
         )
     digest = hashlib.sha256()
     observed = 0
@@ -1338,26 +1407,28 @@ def _read_shard_payload(
             observed += len(payload)
             if observed > shard.byte_count:
                 raise RepositoryCorruptionError(
-                    "Checkpoint shard payload byte count mismatch."
+                    "checkpoint.shard.byte_count must match decoded bytes; got payload byte count mismatch"
                 )
             digest.update(payload)
             stream.write(payload)
         if observed != shard.byte_count:
             raise RepositoryCorruptionError(
-                "Checkpoint shard payload byte count mismatch."
+                "checkpoint.shard.byte_count must match decoded bytes; got payload byte count mismatch"
             )
         if digest.hexdigest() != shard.payload_digest:
-            raise RepositoryCorruptionError("Checkpoint shard payload digest mismatch.")
+            raise RepositoryCorruptionError(
+                "checkpoint.shard.payload_digest must match archived bytes; got payload digest mismatch"
+            )
         stream.seek(0)
         try:
             dtype, shape, _ = read_npy_metadata(stream, observed, limits)
         except ArrayArchiveCorruptionError as error:
             raise RepositoryCorruptionError(
-                "Checkpoint shard NumPy payload metadata is invalid."
+                "checkpoint.shard.npy_metadata must satisfy the array archive policy; got invalid NumPy payload metadata"
             ) from error
         if shape != expected_shape or dtype != expected_dtype:
             raise RepositoryCorruptionError(
-                "Checkpoint shard payload shape or dtype is inconsistent."
+                "checkpoint.shard.layout must match the declared shape and dtype; got inconsistent payload shape or dtype"
             )
         stream.seek(0)
         try:
@@ -1368,10 +1439,12 @@ def _read_shard_payload(
             )
         except (EOFError, OSError, ValueError) as error:
             raise RepositoryCorruptionError(
-                "Checkpoint shard NumPy payload is invalid."
+                "checkpoint.shard.npy_payload must decode without pickles under header limits; got invalid NumPy payload"
             ) from error
     if value.shape != expected_shape or value.dtype != expected_dtype:
-        raise RepositoryCorruptionError("Checkpoint shard payload changed while loading.")
+        raise RepositoryCorruptionError(
+            "checkpoint.shard.layout must remain unchanged during decoding; got payload shape or dtype changed while loading"
+        )
     value.setflags(write=False)
     return value
 
@@ -1396,6 +1469,16 @@ def _intersection(
     return tuple(source_slices), tuple(destination_slices)
 
 
+def _checkpoint_shards_by_path(
+    manifest: CheckpointManifest,
+) -> dict[str, tuple[CheckpointShard, ...]]:
+    """Index immutable shard selection metadata without admitting payloads."""
+    grouped: dict[str, list[CheckpointShard]] = {}
+    for shard in manifest.shards:
+        grouped.setdefault(_metadata(shard)["array_path"], []).append(shard)
+    return {path: tuple(shards) for path, shards in grouped.items()}
+
+
 def _checkpoint_array_loader(
     repository: ArtifactRepository,
     manifest: CheckpointManifest,
@@ -1404,15 +1487,17 @@ def _checkpoint_array_loader(
     *,
     limits: ArrayArchiveLimits = _DISTRIBUTED_CHECKPOINT_LIMITS,
     parent_manifest: CheckpointManifest | None = None,
-) -> tuple[tuple[int, ...], Callable[[Any], np.ndarray]]:
-    """Admit one canonical array and prepare bounded destination range loading."""
+    tables: dict[str, _ProcessShardTable] | None = None,
+    shards_by_path: Mapping[str, tuple[CheckpointShard, ...]] | None = None,
+) -> tuple[tuple[int, ...], Callable[[Any], np.ndarray], tuple[CheckpointShard, ...]]:
+    """Admit an array's shard coverage and prepare bounded destination loading."""
 
-    if not isinstance(manifest, CheckpointManifest) or manifest.complete is not True:
-        raise TypeError("manifest must be a complete CheckpointManifest")
+    if manifest.complete is not True:
+        raise TypeError("CheckpointManifest.complete must be True for restore; got False")
     if not isinstance(array_path, str) or not array_path:
-        raise ValueError("array_path must be non-empty text")
-    if not isinstance(limits, ArrayArchiveLimits):
-        raise TypeError("limits must be an ArrayArchiveLimits instance")
+        raise ValueError(
+            f"checkpoint.array_path must be nonempty text; got {array_path if type(array_path) is str else type(array_path).__name__!r}"
+        )
     parent_checkpoint_id, parent_manifest_id = _validate_parent_ownership(
         parent_manifest,
         manifest.checkpoint_id,
@@ -1425,14 +1510,22 @@ def _checkpoint_array_loader(
     ) or manifest.parent_manifest_id != (
         None if parent_manifest is None else parent_manifest_id
     ):
-        raise ValueError("Checkpoint restore parent lineage is inconsistent.")
-    path_shards = tuple(
-        shard
-        for shard in manifest.shards
-        if _metadata(shard).get("array_path") == array_path
+        raise ValueError(
+            "checkpoint.parent_ids must match the supplied parent manifest; got inconsistent restore parent lineage"
+        )
+    path_shards = (
+        tuple(
+            shard
+            for shard in manifest.shards
+            if _metadata(shard).get("array_path") == array_path
+        )
+        if shards_by_path is None
+        else shards_by_path.get(array_path, ())
     )
     if not path_shards:
-        raise KeyError(f"checkpoint has no array at path {array_path!r}")
+        raise KeyError(
+            f"checkpoint.array_path must identify an archived array; got no array at path {array_path!r}"
+        )
     for process_index in {
         _metadata_integer(_metadata(shard), "process_index") for shard in path_shards
     }:
@@ -1445,21 +1538,23 @@ def _checkpoint_array_loader(
         )
         if expected_parent != (parent_checkpoint_id, parent_manifest_id):
             raise RepositoryCorruptionError(
-                "Checkpoint restore parent repository lineage is inconsistent."
+                "checkpoint.parent_artifacts must match the requested repository lineage; got inconsistent parent repository lineage"
             )
     _validate_exact_coverage(path_shards, limits)
     _, global_shape, dtype, _ = _validated_shard(path_shards[0], limits)
 
     source_records = []
+    if tables is None:
+        tables = {}
     # Preserve full-checkpoint integrity admission without retaining the global
     # payload on each host. Source bytes are validated one shard at a time;
     # callbacks then retain only one intersecting source and one local output.
     for shard in path_shards:
-        _validate_shard_repository_binding(repository, manifest, shard, limits)
+        _validate_shard_repository_binding(repository, manifest, shard, limits, tables)
         _, shape, shard_dtype, source_index = _validated_shard(shard, limits)
         if shape != global_shape or shard_dtype != dtype:
             raise RepositoryCorruptionError(
-                "Checkpoint array shard metadata is inconsistent."
+                "checkpoint.array.layout must match the admitted global shape and dtype; got inconsistent shard metadata"
             )
         local_shape = tuple(stop - start for start, stop, _ in source_index)
         _read_shard_payload(
@@ -1487,11 +1582,11 @@ def _checkpoint_array_loader(
             covered[destination_slice] = True
         if not bool(np.all(covered)):
             raise RepositoryCorruptionError(
-                "Destination checkpoint shard is not fully covered."
+                "checkpoint.destination_shard.coverage must include every destination element; got a destination not fully covered"
             )
         return output
 
-    return global_shape, load_destination
+    return global_shape, load_destination, path_shards
 
 
 @jax.jit(donate_argnums=(0,))
@@ -1504,8 +1599,7 @@ def _place_checkpoint_packet(
 
 
 def _restore_checkpoint_packets(
-    manifest: CheckpointManifest,
-    array_path: str,
+    path_shards: tuple[CheckpointShard, ...],
     global_shape: tuple[int, ...],
     load_destination: Callable[[Any], np.ndarray],
     sharding: Sharding,
@@ -1515,26 +1609,32 @@ def _restore_checkpoint_packets(
     """Assemble admitted addressable archive packets only in device storage."""
     budget = operator.index(maximum_host_packet_bytes)
     if isinstance(maximum_host_packet_bytes, bool) or budget < 1:
-        raise ValueError("maximum_host_packet_bytes must be a positive integer.")
-    if isinstance(sharding, NamedSharding):
-        placement = NamedSharding(sharding.mesh, PartitionSpec())
-    elif isinstance(sharding, SingleDeviceSharding):
-        placement = sharding
-    else:
-        raise TypeError(
-            "Packet restoration requires an explicit named or single-device sharding."
+        raise ValueError(
+            f"restore.maximum_host_packet_bytes must be a positive integer; got {maximum_host_packet_bytes!r}"
         )
-    records = tuple(
-        _validated_shard(shard, limits)
-        for shard in manifest.shards
-        if _metadata(shard)["array_path"] == array_path
-    )
+    match sharding:
+        case NamedSharding():
+            placement = NamedSharding(sharding.mesh, PartitionSpec())
+        case SingleDeviceSharding():
+            placement = sharding
+        case _:
+            raise TypeError(
+                "restore.sharding must be NamedSharding or SingleDeviceSharding for packet restoration; got an unsupported sharding"
+            )
+    records = tuple(_validated_shard(shard, limits) for shard in path_shards)
     dtype = records[0][2]
     for _, _, source_dtype, index in records:
         if _index_size(index, limits.max_array_elements) * source_dtype.itemsize > budget:
             raise ValueError(
-                "An archived numerical packet exceeds maximum_host_packet_bytes."
+                "restore.maximum_host_packet_bytes must cover every archived numerical packet; got an over-limit packet"
             )
+    full_index = tuple((0, size, 1) for size in global_shape)
+    if all(index == full_index for _, _, _, index in records):
+        # A full-extent source packet is already the bounded result. Adopt it
+        # directly rather than compiling a zero-fill and a redundant copy.
+        destination = tuple(slice(0, size) for size in global_shape)
+        result = jax.device_put(load_destination(destination), sharding)
+        return result.block_until_ready()
     result = jnp.zeros(global_shape, dtype=dtype, device=placement)
     for _, _, _, index in records:
         destination = tuple(slice(start, stop, step) for start, stop, step in index)
@@ -1544,11 +1644,48 @@ def _restore_checkpoint_packets(
         )
         # This is the explicit cold-I/O packet barrier, not a runtime topology
         # iteration. It bounds live ingress packets while donating the device
-        # assembly buffer; no complete logical host destination is allocated.
+        # assembly buffer; no global logical host destination is allocated.
         result.block_until_ready()
     return jax.device_put(result, sharding)
 
 
+@checked
+def _restore_checkpoint_array(
+    repository: ArtifactRepository,
+    manifest: CheckpointManifest,
+    array_path: str,
+    sharding: Sharding,
+    /,
+    *,
+    limits: ArrayArchiveLimits,
+    parent_manifest: CheckpointManifest | None,
+    maximum_host_packet_bytes: int | None,
+    tables: dict[str, _ProcessShardTable],
+    shards_by_path: Mapping[str, tuple[CheckpointShard, ...]] | None = None,
+) -> jax.Array:
+    """Restore an array while retaining this restore's admitted artifact tables."""
+    global_shape, load_destination, path_shards = _checkpoint_array_loader(
+        repository,
+        manifest,
+        array_path,
+        limits=limits,
+        parent_manifest=parent_manifest,
+        tables=tables,
+        shards_by_path=shards_by_path,
+    )
+    if maximum_host_packet_bytes is not None:
+        return _restore_checkpoint_packets(
+            path_shards,
+            global_shape,
+            load_destination,
+            sharding,
+            limits,
+            maximum_host_packet_bytes,
+        )
+    return jax.make_array_from_callback(global_shape, sharding, load_destination)
+
+
+@checked
 def restore_global_array_from_checkpoint(
     repository: ArtifactRepository,
     manifest: CheckpointManifest,
@@ -1562,371 +1699,21 @@ def restore_global_array_from_checkpoint(
 ) -> jax.Array:
     """Restore one globally bounded array into a destination sharding.
 
-    With ``maximum_host_packet_bytes``, restore original archive rectangles
+    With ``maximum_host_packet_bytes``, restore archived rectangles
     individually and assemble only on devices. The limit bounds each decoded
     numerical packet, not aggregate process peak memory or archive codec bytes.
-    This avoids a complete global NumPy destination when owner count shrinks.
+    This avoids a global NumPy destination when owner count shrinks.
     """
-    global_shape, load_destination = _checkpoint_array_loader(
-        repository, manifest, array_path, limits=limits, parent_manifest=parent_manifest
+    return _restore_checkpoint_array(
+        repository,
+        manifest,
+        array_path,
+        sharding,
+        limits=limits,
+        parent_manifest=parent_manifest,
+        maximum_host_packet_bytes=maximum_host_packet_bytes,
+        tables={},
     )
-    if maximum_host_packet_bytes is not None:
-        return _restore_checkpoint_packets(
-            manifest,
-            array_path,
-            global_shape,
-            load_destination,
-            sharding,
-            limits,
-            maximum_host_packet_bytes,
-        )
-    return jax.make_array_from_callback(global_shape, sharding, load_destination)
-
-
-_MESHING_SOURCE_PREFIX = "source-record"
-
-
-class _AdmittedMeshingSourceArrays(Strict, Mapping[str, jax.Array]):
-    """Immutable exact logical-bank values with one canonical content admission."""
-
-    _arrays: Mapping[str, jax.Array]
-    content_digest: str
-    maximum_chunk_bytes: int
-    source_validation: MeshingSourceValidation | None
-
-    def __init__(
-        self,
-        arrays: Mapping[str, jax.Array],
-        /,
-        *,
-        maximum_chunk_bytes: int,
-        source_validation: MeshingSourceValidation | None = None,
-    ) -> None:
-        from types import MappingProxyType
-
-        from .._fingerprint import logical_array_value_collection_digest
-
-        if isinstance(arrays, _AdmittedMeshingSourceArrays):
-            self._arrays = arrays._arrays
-            self.content_digest = arrays.content_digest
-        else:
-            values = dict(sorted(arrays.items()))
-            if any(
-                not isinstance(name, str) or not name or not isinstance(value, jax.Array)
-                for name, value in values.items()
-            ):
-                raise TypeError(
-                    "Source logical banks require canonical names and exact JAX arrays."
-                )
-            self._arrays = MappingProxyType(values)
-            self.content_digest = logical_array_value_collection_digest(
-                values, maximum_chunk_bytes=maximum_chunk_bytes
-            )
-        if source_validation is not None:
-            source_validation.require_binding(self._arrays, self.content_digest)
-        self.maximum_chunk_bytes = maximum_chunk_bytes
-        self.source_validation = source_validation
-
-    def __getitem__(self, name: str, /) -> jax.Array:
-        return self._arrays[name]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._arrays)
-
-    def __len__(self) -> int:
-        return len(self._arrays)
-
-
-def _admit_meshing_source_logical_arrays(
-    arrays: Mapping[str, jax.Array] | None,
-    /,
-    *,
-    maximum_chunk_bytes: int = 1 << 20,
-) -> Mapping[str, jax.Array] | None:
-    if isinstance(arrays, _AdmittedMeshingSourceArrays):
-        return arrays
-    if arrays is None or not arrays:
-        return None
-    return _AdmittedMeshingSourceArrays(arrays, maximum_chunk_bytes=maximum_chunk_bytes)
-
-
-def _source_array_name(
-    name: str, owner_index: int, bindings: Mapping[str, str], /
-) -> str:
-    alias = bindings.get(name)
-    if alias is not None:
-        return _source_logical_array_name(alias)
-    return f"source-owner-{owner_index}:{name.replace('/', ':')}"
-
-
-def _source_logical_array_name(alias: str, /) -> str:
-    return f"source-logical-{canonical_fingerprint(alias)}"
-
-
-def _meshing_source_recipe(
-    recipe_json: str,
-    /,
-    *,
-    limits: ArrayArchiveLimits = _DISTRIBUTED_CHECKPOINT_LIMITS,
-) -> dict[str, Any]:
-    from .._model._structure import validate_model_structure_recipe
-    from ._meshing_sources import register_meshing_source_artifacts
-
-    register_meshing_source_artifacts()
-    # A semantic recipe edge can use a mapping object, its items list and an
-    # item-pair list. The owning recipe validator still admits semantic depth.
-    recipe = _metadata_json(
-        recipe_json,
-        maximum_nesting=4 * limits.max_manifest_nesting + 2,
-        maximum_bytes=limits.max_manifest_bytes,
-    )
-    if not isinstance(recipe, dict) or canonical_json(recipe) != recipe_json:
-        raise ValueError("Source closure recipe must be canonical JSON.")
-    validate_model_structure_recipe(recipe, limits=limits)
-    return recipe
-
-
-def _validate_meshing_source_logical_bank(
-    inventory: Sequence[ModelRecipeArray],
-    array_bindings: Mapping[str, str],
-    logical_arrays: Mapping[str, jax.Array] | None,
-    logical_array_names: Sequence[str],
-    logical_content_digest: str | None,
-    /,
-    *,
-    maximum_chunk_bytes: int,
-) -> tuple[tuple[str, ...], str | None]:
-    from ._chunk_repository import _digest
-
-    entries = {entry.name: entry for entry in inventory}
-    if set(array_bindings) - set(entries):
-        raise ValueError("Source logical bindings refer to undeclared recipe arrays.")
-    if any(
-        entries[name].backend != "jax" or not isinstance(alias, str) or not alias
-        for name, alias in array_bindings.items()
-    ):
-        raise ValueError("Source logical bindings require JAX arrays and explicit names.")
-    names = tuple(sorted(logical_array_names))
-    if len(set(names)) != len(names) or any(
-        not isinstance(name, str) or not name for name in names
-    ):
-        raise ValueError("Source logical array names must be unique canonical strings.")
-    admitted = _admit_meshing_source_logical_arrays(
-        logical_arrays, maximum_chunk_bytes=maximum_chunk_bytes
-    )
-    if admitted is not None:
-        actual_names = tuple(sorted(admitted))
-        if names and names != actual_names:
-            raise ValueError("Source logical bank inventory changed.")
-        names = actual_names
-        if not isinstance(admitted, _AdmittedMeshingSourceArrays):
-            raise TypeError(
-                "Logical bank admission must retain its exact verified mapping."
-            )
-        actual_digest = admitted.content_digest
-        if logical_content_digest is not None and logical_content_digest != actual_digest:
-            raise ValueError("Source logical numerical content changed.")
-        logical_content_digest = actual_digest if names else None
-    if set(array_bindings.values()) - set(names):
-        raise ValueError(
-            "Source recipe bindings require complete declared logical banks."
-        )
-    if names:
-        if not isinstance(logical_content_digest, str):
-            raise TypeError("Source logical banks require their complete content digest.")
-        _digest(logical_content_digest, "source_logical_content_digest")
-    elif logical_content_digest is not None:
-        raise ValueError("An empty source logical bank cannot declare a content digest.")
-    return names, logical_content_digest
-
-
-def _meshing_source_content_digest(
-    values: Mapping[str, jax.Array | np.ndarray],
-    array_bindings: Mapping[str, str],
-    logical_arrays: Mapping[str, jax.Array] | None,
-    logical_content_digest: str | None,
-    /,
-    *,
-    maximum_chunk_bytes: int,
-    owner_index: int,
-    array_paths: Mapping[str, str],
-) -> str:
-    from .._fingerprint import logical_array_value_collection_digest
-
-    local_values: dict[str, jax.Array | np.ndarray] = {}
-    for name, value in values.items():
-        alias = array_bindings.get(name)
-        if alias is not None:
-            if logical_arrays is None or value is not logical_arrays[alias]:
-                raise ValueError(
-                    f"Source owner {owner_index} field {array_paths[name]} "
-                    f"must retain exact logical binding {alias!r} value identity."
-                )
-        else:
-            if isinstance(value, jax.Array) and not value.is_fully_addressable:
-                raise ValueError(
-                    f"Nonaddressable source owner {owner_index} field {array_paths[name]} "
-                    "requires its explicit logical binding."
-                )
-            local_values[name] = value
-    return canonical_fingerprint(
-        {
-            "local_content_digest": logical_array_value_collection_digest(
-                local_values, maximum_chunk_bytes=maximum_chunk_bytes
-            ),
-            "logical_content_digest": logical_content_digest,
-            "array_bindings": tuple(sorted(array_bindings.items())),
-        }
-    )
-
-
-def _prepare_meshing_source_binding(
-    closure: Mapping[str, Any] | None,
-    recipe_json: str | None,
-    content_digest: str | None,
-    /,
-    *,
-    owner_index: int,
-    array_bindings: Mapping[str, str],
-    logical_arrays: Mapping[str, jax.Array] | None,
-    logical_array_names: Sequence[str],
-    logical_content_digest: str | None,
-    limits: ArrayArchiveLimits = _DISTRIBUTED_CHECKPOINT_LIMITS,
-    maximum_chunk_bytes: int = 1 << 20,
-) -> tuple[
-    str | None,
-    str | None,
-    tuple[tuple[str, MeshingArrayRole], ...],
-    tuple[str, ...],
-    str | None,
-    Mapping[str, jax.Array] | None,
-]:
-    if not isinstance(limits, ArrayArchiveLimits):
-        raise TypeError("limits must be ArrayArchiveLimits.")
-    if closure is None and recipe_json is None:
-        if (
-            content_digest is not None
-            or array_bindings
-            or logical_arrays
-            or logical_array_names
-            or logical_content_digest is not None
-        ):
-            raise ValueError("Source content requires its canonical recipe.")
-        return None, None, (), (), None, None
-    from .._model._structure import (
-        model_recipe_array_inventory,
-        model_recipe_array_values,
-        model_structure_recipe,
-    )
-    from ._chunk_repository import _digest
-    from ._meshing_sources import (
-        register_meshing_source_artifacts,
-        validate_collective_mesh_source_epochs,
-        validate_meshing_source_closure,
-    )
-
-    register_meshing_source_artifacts()
-    if closure is not None:
-        admitted = _admit_meshing_source_logical_arrays(
-            logical_arrays, maximum_chunk_bytes=maximum_chunk_bytes
-        )
-        if admitted is None:
-            admitted = _AdmittedMeshingSourceArrays(
-                {}, maximum_chunk_bytes=maximum_chunk_bytes
-            )
-        if not isinstance(admitted, _AdmittedMeshingSourceArrays):
-            raise TypeError(
-                "Source validation requires the actual immutable bank admission."
-            )
-        if admitted.source_validation is None:
-            proof = validate_collective_mesh_source_epochs(
-                (closure,),
-                source_logical_arrays=admitted,
-                source_logical_content_digest=admitted.content_digest,
-                maximum_chunk_bytes=maximum_chunk_bytes,
-                limits=limits,
-            )
-            admitted = _AdmittedMeshingSourceArrays(
-                admitted,
-                maximum_chunk_bytes=maximum_chunk_bytes,
-                source_validation=proof,
-            )
-        logical_arrays = admitted
-        validate_meshing_source_closure(
-            closure,
-            limits=limits,
-            source_logical_arrays=admitted,
-            source_logical_content_digest=admitted.content_digest,
-            maximum_chunk_bytes=maximum_chunk_bytes,
-            source_validation=admitted.source_validation,
-        )
-        actual_recipe_json = canonical_json(model_structure_recipe(closure))
-        if recipe_json is not None and actual_recipe_json != recipe_json:
-            raise ValueError("Source closure records changed from their recipe.")
-        recipe_json = actual_recipe_json
-    if not isinstance(recipe_json, str):
-        raise TypeError("Source closure recipe must be canonical JSON.")
-    recipe = _meshing_source_recipe(recipe_json, limits=limits)
-    inventory = model_recipe_array_inventory(
-        recipe, prefix=_MESHING_SOURCE_PREFIX, limits=limits
-    )
-    names, logical_content_digest = _validate_meshing_source_logical_bank(
-        inventory,
-        array_bindings,
-        logical_arrays,
-        logical_array_names,
-        logical_content_digest,
-        maximum_chunk_bytes=maximum_chunk_bytes,
-    )
-    if closure is not None:
-        values = model_recipe_array_values(
-            closure, recipe, prefix=_MESHING_SOURCE_PREFIX, limits=limits
-        )
-        actual_digest = _meshing_source_content_digest(
-            values,
-            array_bindings,
-            logical_arrays,
-            logical_content_digest,
-            maximum_chunk_bytes=maximum_chunk_bytes,
-            owner_index=owner_index,
-            array_paths={entry.name: entry.path for entry in inventory},
-        )
-        if content_digest is not None and content_digest != actual_digest:
-            raise ValueError("Source closure numerical content changed.")
-        content_digest = actual_digest
-    if not isinstance(content_digest, str):
-        raise TypeError("Source closure requires its numerical content digest.")
-    _digest(content_digest, "source_content_digest")
-    roles: tuple[tuple[str, MeshingArrayRole], ...] = tuple(
-        sorted(
-            {
-                (
-                    _source_array_name(entry.name, owner_index, array_bindings),
-                    "source-record",
-                )
-                for entry in inventory
-            }
-            | {(_source_logical_array_name(name), "source-record") for name in names}
-        )
-    )
-    return (
-        recipe_json,
-        content_digest,
-        roles,
-        names,
-        logical_content_digest,
-        logical_arrays,
-    )
-
-
-def _validate_meshing_source_references(
-    closure: Mapping[str, Any],
-    references: Mapping[str, str | None],
-    /,
-) -> None:
-    from ._meshing_sources import validate_meshing_source_checkpoint_references
-
-    validate_meshing_source_checkpoint_references(closure, references)
 
 
 def _meshing_source_arrays(
@@ -1935,23 +1722,22 @@ def _meshing_source_arrays(
     *,
     limits: ArrayArchiveLimits,
 ) -> dict[str, jax.Array | np.ndarray]:
-    from .._model._structure import model_recipe_array_values
 
     if state.source_recipe_json is None:
         return {}
     if state.source_closure is None:
-        raise ValueError("Publishing source closure requires the actual source records.")
-    bank = state.source_logical_arrays
-    if (
-        not isinstance(bank, _AdmittedMeshingSourceArrays)
-        or bank.source_validation is None
-    ):
         raise ValueError(
-            "Process publication requires its actual prior common source admission."
+            "state.source_closure must retain the source records for publication; got None"
+        )
+    bank = state.source_logical_arrays
+    if bank is None or bank.source_validation is None:
+        raise ValueError(
+            "state.source_logical_arrays must retain prior collective source admission; "
+            f"got {type(bank).__name__}"
         )
     bank.source_validation.require_binding(bank, bank.content_digest)
     bindings = dict(state.source_array_bindings)
-    _prepare_meshing_source_binding(
+    binding = authenticate_meshing_source_publication(
         state.source_closure,
         state.source_recipe_json,
         state.source_content_digest,
@@ -1961,26 +1747,26 @@ def _meshing_source_arrays(
         logical_array_names=state.source_logical_array_names,
         logical_content_digest=state.source_logical_content_digest,
         limits=limits,
-        maximum_chunk_bytes=(
-            state.source_logical_arrays.maximum_chunk_bytes
-            if isinstance(state.source_logical_arrays, _AdmittedMeshingSourceArrays)
-            else 1 << 20
-        ),
+        maximum_chunk_bytes=bank.maximum_chunk_bytes,
     )
-    _validate_meshing_source_references(state.source_closure, state.to_payload())
-    recipe = _meshing_source_recipe(state.source_recipe_json, limits=limits)
+    # Immediate metadata reads need no Equinox bound method over the source DAG.
+    validate_meshing_source_checkpoint_references(
+        state.source_closure, MeshingCheckpointState.to_payload(state)
+    )
+    if binding.array_values is None:
+        raise ValueError(
+            "source.publication must retain authenticated live array values; got None"
+        )
     local = {
-        _source_array_name(name, state.source_owner_index, bindings): value
-        for name, value in model_recipe_array_values(
-            state.source_closure, recipe, prefix=_MESHING_SOURCE_PREFIX, limits=limits
-        ).items()
+        source_array_name(name, state.source_owner_index, bindings): value
+        for name, value in binding.array_values.items()
         if name not in bindings
     }
-    if state.source_logical_arrays is not None:
+    if binding.logical_arrays is not None:
         local.update(
             {
-                _source_logical_array_name(name): value
-                for name, value in state.source_logical_arrays.items()
+                source_logical_array_name(name): value
+                for name, value in binding.logical_arrays.items()
             }
         )
     return local
@@ -1997,22 +1783,28 @@ def _validate_meshing_arrays(
     arrays: Mapping[str, jax.Array | np.ndarray],
     /,
 ) -> None:
-    if not isinstance(state, MeshingCheckpointState):
-        raise TypeError("state must be MeshingCheckpointState.")
     if set(arrays) != {name for name, _ in state.array_roles}:
-        raise ValueError("Meshing checkpoint arrays must exactly match declared roles.")
+        raise ValueError(
+            "state.array_roles must match checkpoint array names; "
+            f"got {tuple(sorted(arrays))}"
+        )
     for name, role in state.array_roles:
         array = arrays[name]
         if role == "source-record" and isinstance(array, np.ndarray):
             continue
         if not isinstance(array, jax.Array):
-            raise TypeError("Meshing checkpoint scientific arrays must be JAX arrays.")
+            raise TypeError(
+                f"checkpoint.array.backend must be JAX for scientific roles; got {type(array).__name__} for {name!r}"
+            )
         if role == "entity-ids" and (
             array.ndim != 1 or not np.issubdtype(array.dtype, np.integer)
         ):
-            raise ValueError("Stable entity IDs must be logical integer vectors.")
+            raise ValueError(
+                f"checkpoint.entity_ids must be logical integer vectors; got invalid rank or dtype for {name!r}"
+            )
 
 
+@checked
 def publish_process_meshing_checkpoint(
     repository: ArtifactRepository,
     checkpoint_id: str,
@@ -2032,32 +1824,35 @@ def publish_process_meshing_checkpoint(
     """Publish accepted scientific leaves, never a prepared execution object.
 
     ``arrays`` are globally logical arrays, not a process's dense closure views.
-    The canonical CellMesh storage owner supplies logical coordinates, stable
+    The CellMesh storage owner supplies logical coordinates, stable
     IDs and global-ID incidences. Solver/history and accepted evidence owners
     supply the other declared leaves. Source-record leaves are taken from
     ``state.source_closure``; callers cannot replace them in ``arrays``. JAX
     numerical values cross to host only as addressable shards. Authored native
-    NumPy coefficients are snapshotted directly on their canonical process owner.
+    NumPy coefficients are snapshotted directly on their publishing process.
     """
 
     if set(arrays) != {
         name for name, role in state.array_roles if role != "source-record"
     }:
         raise ValueError(
-            "Accepted arrays must exactly cover non-source scientific roles."
+            "publication.arrays must cover every non-source scientific role; got missing or undeclared accepted arrays"
         )
     source_arrays = _meshing_source_arrays(state, limits=limits)
     scientific_arrays = {**arrays, **source_arrays}
     _validate_meshing_arrays(state, scientific_arrays)
-    payload = canonical_json(state.to_payload()).encode("utf-8")
+    payload = canonical_json(MeshingCheckpointState.to_payload(state)).encode("utf-8")
     if len(payload) > limits.max_manifest_bytes:
-        raise ValueError("Meshing checkpoint metadata exceeds its byte limit.")
+        raise ValueError(
+            "checkpoint_state.metadata must fit the manifest byte limit; got metadata byte limit exceeded"
+        )
     if (
         state.source_recipe_json is not None
         and state.source_owner_index != jax.process_index()
     ):
         raise ValueError(
-            "Source publication must retain the current owner's exact record."
+            "state.source_owner_index must identify the publishing process; "
+            f"got {state.source_owner_index} for process {jax.process_index()}"
         )
     record_name = f"record-owner-{jax.process_index()}"
     record = np.frombuffer(payload, dtype=np.uint8)
@@ -2083,7 +1878,7 @@ def publish_process_meshing_checkpoint(
     return replace(
         publication,
         meshing_state=MeshingCheckpointState.from_payload(
-            state.to_payload(), limits=limits
+            MeshingCheckpointState.to_payload(state), limits=limits
         ),
     )
 
@@ -2092,23 +1887,30 @@ def _meshing_record_path(process_index: int, /) -> str:
     return jax.tree_util.keystr((jax.tree_util.DictKey(f"record-owner-{process_index}"),))
 
 
+class _MeshingStateRecord(StrictModule):
+    payload: dict[str, Any]
+    state: MeshingCheckpointState
+
+
 def _decode_meshing_state_record(
     record: np.ndarray,
     /,
     *,
     limits: ArrayArchiveLimits,
-) -> tuple[dict[str, Any], MeshingCheckpointState]:
+) -> _MeshingStateRecord:
     try:
         text = record.tobytes().decode("utf-8")
-        payload = _metadata_json(text, maximum_bytes=limits.max_manifest_bytes)
+        payload = metadata_json(text, maximum_bytes=limits.max_manifest_bytes)
         if not isinstance(payload, dict) or canonical_json(payload) != text:
-            raise ValueError("Meshing checkpoint record must be canonical JSON.")
+            raise ValueError(
+                "checkpoint.record must use deterministic JSON encoding; got different bytes"
+            )
         state = MeshingCheckpointState.from_payload(payload, limits=limits)
     except (TypeError, ValueError, UnicodeError) as error:
         raise RepositoryCorruptionError(
-            "Meshing checkpoint record is invalid."
+            "checkpoint.record must decode into the declared scientific state; got invalid checkpoint metadata"
         ) from error
-    return payload, state
+    return _MeshingStateRecord(payload, state)
 
 
 def _meshing_record_shard(
@@ -2124,7 +1926,8 @@ def _meshing_record_shard(
         return None
     if len(matching) != 1:
         raise RepositoryCorruptionError(
-            "An owner must publish exactly one canonical metadata record."
+            "process.shards must contain one metadata record; "
+            f"got {len(matching)} records for owner {process_index}"
         )
     shard = matching[0]
     _, shape, dtype, index = _validated_shard(shard, limits)
@@ -2136,7 +1939,7 @@ def _meshing_record_shard(
         or _metadata_integer(_metadata(shard), "process_index") != process_index
     ):
         raise RepositoryCorruptionError(
-            "Meshing checkpoint owner record layout is invalid."
+            "checkpoint.owner_record.layout must be a bounded uint8 vector owned by its process; got invalid owner record layout"
         )
     return shard
 
@@ -2154,7 +1957,7 @@ def _read_process_meshing_state(
         return None
     _, shape, dtype, _ = _validated_shard(shard, limits)
     record = _read_shard_payload(repository, shard, shape, dtype, limits)
-    return _decode_meshing_state_record(record, limits=limits)[1]
+    return _decode_meshing_state_record(record, limits=limits).state
 
 
 def _validate_meshing_source_manifest_layouts(
@@ -2164,7 +1967,6 @@ def _validate_meshing_source_manifest_layouts(
     *,
     limits: ArrayArchiveLimits,
 ) -> None:
-    from .._model._structure import model_recipe_array_inventory
 
     specifications = {}
     for shard in shards:
@@ -2173,15 +1975,14 @@ def _validate_meshing_source_manifest_layouts(
     for state in states:
         if state.source_recipe_json is None:
             continue
-        recipe = _meshing_source_recipe(state.source_recipe_json, limits=limits)
+        recipe = meshing_source_recipe(state.source_recipe_json, limits=limits)
         for entry in model_recipe_array_inventory(
-            recipe, prefix=_MESHING_SOURCE_PREFIX, limits=limits
+            recipe, prefix=MESHING_SOURCE_PREFIX, limits=limits
         ):
             path = _meshing_array_path(state.source_array_name(entry.name))
             if specifications[path] != (entry.shape, entry.dtype):
                 raise RepositoryCorruptionError(
-                    f"Source owner {state.source_owner_index} field {entry.path} "
-                    "has inconsistent checkpoint shape or dtype."
+                    f"source_owner.{state.source_owner_index}.array_layout must match its recipe; got inconsistent checkpoint shape or dtype for {entry.path}"
                 )
 
 
@@ -2209,14 +2010,15 @@ def _validate_meshing_manifest_admission(
         state = publication.meshing_state
         if not isinstance(state, MeshingCheckpointState):
             raise RepositoryCorruptionError(
-                "Meshing manifest requires every owner's canonical record acknowledgement."
+                "publications.meshing_state must acknowledge every source owner; "
+                f"got no state for owner {publication.process_index}"
             )
         shard = _meshing_record_shard(
             publication.shards, publication.process_index, limits=limits
         )
         if shard is None:
             raise RepositoryCorruptionError(
-                "Meshing manifest lacks an acknowledged owner record."
+                "manifest.source_owner_records must include each acknowledged owner record; got a missing acknowledged record"
             )
         record = canonical_json(state.to_payload()).encode("utf-8")
         payload = _array_payload(np.frombuffer(record, dtype=np.uint8))
@@ -2225,13 +2027,13 @@ def _validate_meshing_manifest_admission(
             or len(payload) != shard.byte_count
         ):
             raise RepositoryCorruptionError(
-                "Meshing owner record acknowledgement changed its exact payload."
+                "publications.meshing_state must match its acknowledged payload; got different bytes"
             )
         states.append(state)
     source_flags = tuple(state.source_recipe_json is not None for state in states)
     if any(source_flags) and not all(source_flags):
         raise RepositoryCorruptionError(
-            "Source and no-source owner records cannot share an accepted checkpoint."
+            "manifest.source_owner_records must either all bind sources or all omit sources; got mixed source and no-source records"
         )
     expected: str | Mapping[int, str] = (
         {index: state.checkpoint_state_id for index, state in enumerate(states)}
@@ -2247,7 +2049,7 @@ def _validate_meshing_manifest_admission(
         for shard in shards
     ):
         raise RepositoryCorruptionError(
-            "Meshing manifest scientific inventory or epoch is incomplete."
+            "manifest.scientific_inventory must match every declared array and epoch; got incomplete scientific inventory or epoch"
         )
     _validate_meshing_source_manifest_layouts(states, shards, limits=limits)
 
@@ -2260,21 +2062,25 @@ def _read_meshing_checkpoint_record(
     *,
     limits: ArrayArchiveLimits,
     parent_manifest: CheckpointManifest | None,
-) -> tuple[dict[str, Any], MeshingCheckpointState]:
+) -> _MeshingStateRecord:
     shards = tuple(
         shard
         for shard in manifest.shards
         if _metadata(shard)["array_path"] == record_path
     )
     if not shards:
-        raise RepositoryCorruptionError("Meshing checkpoint has no scientific record.")
+        raise RepositoryCorruptionError(
+            "manifest.scientific_record must identify a published owner record; got no scientific record"
+        )
     _, shape, dtype, _ = _validated_shard(shards[0], limits)
     if (
         len(shape) != 1
         or shape[0] > limits.max_manifest_bytes
         or dtype != np.dtype(np.uint8)
     ):
-        raise RepositoryCorruptionError("Meshing checkpoint record layout is invalid.")
+        raise RepositoryCorruptionError(
+            "checkpoint.record.layout must be a bounded uint8 vector; got invalid record layout"
+        )
     record = restore_global_array_from_checkpoint(
         repository,
         manifest,
@@ -2283,8 +2089,7 @@ def _read_meshing_checkpoint_record(
         limits=limits,
         parent_manifest=parent_manifest,
     )
-    payload, state = _decode_meshing_state_record(np.asarray(record), limits=limits)
-    return payload, state
+    return _decode_meshing_state_record(np.asarray(record), limits=limits)
 
 
 def _meshing_checkpoint_record_paths(manifest: CheckpointManifest, /) -> tuple[str, ...]:
@@ -2294,14 +2099,14 @@ def _meshing_checkpoint_record_paths(manifest: CheckpointManifest, /) -> tuple[s
     }
     if not processes or max(processes) >= len(manifest.shards):
         raise RepositoryCorruptionError(
-            "Meshing source owner count exceeds its record coverage."
+            "manifest.source_owner_count must fit its shard-record coverage; got invalid owner count or insufficient record coverage"
         )
     owner_paths = tuple(
         _meshing_record_path(index) for index in range(max(processes) + 1)
     )
     if not owner_paths or any(path not in paths for path in owner_paths):
         raise RepositoryCorruptionError(
-            "Meshing source records do not cover every original owner."
+            "manifest.source_records must cover every source owner; got missing owner records"
         )
     for owner_index, path in enumerate(owner_paths):
         if any(
@@ -2309,10 +2114,13 @@ def _meshing_checkpoint_record_paths(manifest: CheckpointManifest, /) -> tuple[s
             for shard in manifest.shards
             if _metadata(shard)["array_path"] == path
         ):
-            raise RepositoryCorruptionError("Meshing source record ownership is invalid.")
+            raise RepositoryCorruptionError(
+                "manifest.source_record.process_index must match the named record owner; got invalid source record ownership"
+            )
     return owner_paths
 
 
+@checked
 def read_meshing_checkpoint_states(
     repository: ArtifactRepository,
     manifest: CheckpointManifest,
@@ -2321,19 +2129,19 @@ def read_meshing_checkpoint_states(
     limits: ArrayArchiveLimits = _DISTRIBUTED_CHECKPOINT_LIMITS,
     parent_manifest: CheckpointManifest | None = None,
 ) -> tuple[MeshingCheckpointState, ...]:
-    """Read bounded canonical owner recipes without loading scientific leaves.
+    """Read bounded owner recipes without loading scientific leaves.
 
     Source records remain absent until full restore. The returned declarations
     let cold callers prepare placement from the accepted archive alone; callers
     still bind the archive/record identities to their accepted composition.
     """
-    if not isinstance(manifest, CheckpointManifest) or manifest.complete is not True:
-        raise TypeError("manifest must be a complete CheckpointManifest")
+    if manifest.complete is not True:
+        raise TypeError("CheckpointManifest.complete must be True for restore; got False")
     _validate_exact_coverage(manifest.shards, limits)
     return tuple(
         _read_meshing_checkpoint_record(
             repository, manifest, path, limits=limits, parent_manifest=parent_manifest
-        )[1]
+        ).state
         for path in _meshing_checkpoint_record_paths(manifest)
     )
 
@@ -2344,34 +2152,41 @@ def _validate_meshing_owner_states(
     source_owner_index: int,
     /,
 ) -> None:
-    if isinstance(expected_state_id, str):
-        if len(states) != 1 and any(
-            state.source_recipe_json is not None for state in states
-        ):
-            raise ValueError(
-                "Multi-owner source restart requires every original state ID."
+    match expected_state_id:
+        case str():
+            if len(states) != 1 and any(
+                state.source_recipe_json is not None for state in states
+            ):
+                raise ValueError(
+                    "restore.expected_state_id must name every source owner for multi-owner restart; "
+                    f"got one ID for {len(states)} owners"
+                )
+            expected_ids = dict.fromkeys(range(len(states)), expected_state_id)
+        case Mapping():
+            expected_ids = dict(expected_state_id)
+            if any(type(index) is not int for index in expected_ids) or set(
+                expected_ids
+            ) != set(range(len(states))):
+                raise ValueError(
+                    f"restore.expected_state_id must cover source owner indices once; got indices {tuple(expected_ids)}"
+                )
+        case _:
+            raise TypeError(
+                f"restore.expected_state_id must be a state ID or owner mapping; got {type(expected_state_id).__name__}"
             )
-        expected_ids = dict.fromkeys(range(len(states)), expected_state_id)
-    elif isinstance(expected_state_id, Mapping):
-        expected_ids = dict(expected_state_id)
-        if any(type(index) is not int for index in expected_ids) or set(
-            expected_ids
-        ) != set(range(len(states))):
-            raise ValueError(
-                "Expected state IDs must cover every original owner exactly once."
-            )
-    else:
-        raise TypeError("expected_state_id must be a state ID or complete owner mapping.")
     if type(source_owner_index) is not int or not 0 <= source_owner_index < len(states):
-        raise ValueError("source_owner_index must select one original source owner.")
+        raise ValueError(
+            f"restore.source_owner_index must select a source owner; got {source_owner_index if type(source_owner_index) is int else type(source_owner_index).__name__!r} for {len(states)} owners"
+        )
     for index, state in enumerate(states):
         if state.checkpoint_state_id != expected_ids[index]:
             raise RepositoryCorruptionError(
-                "Meshing checkpoint scientific binding changed."
+                "checkpoint_state.checkpoint_state_id must match its accepted scientific binding; got scientific binding changed"
             )
         if state.source_recipe_json is not None and state.source_owner_index != index:
             raise RepositoryCorruptionError(
-                "Meshing source record changed its original owner."
+                "state.source_owner_index must match its checkpoint record owner; "
+                f"got {state.source_owner_index} for owner {index}"
             )
     scientific_roles = tuple(
         item for item in states[0].array_roles if item[1] != "source-record"
@@ -2385,10 +2200,233 @@ def _validate_meshing_owner_states(
         for state in states[1:]
     ):
         raise RepositoryCorruptionError(
-            "Source owners disagree on shared logical scientific state."
+            "source_owner_states.shared_scientific_state must agree across owners; got different roles, epoch, or logical content"
         )
 
 
+class MeshingCheckpointRestore(StrictModule):
+    """Return the admitted state, restored arrays, and topology decision."""
+
+    state: MeshingCheckpointState
+    arrays: dict[str, jax.Array | np.ndarray]
+    admission: RestartAdmission
+
+
+@dataclass(frozen=True, slots=True)
+class _MeshingRestorePlan:
+    records: tuple[_MeshingStateRecord, ...]
+    recipes: tuple[dict[str, Any] | None, ...]
+    inventories: tuple[tuple[ModelRecipeArray, ...], ...]
+    names: frozenset[str]
+    host_names: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _RestoredMeshingArrays:
+    arrays: dict[str, jax.Array | np.ndarray]
+    logical_arrays: AdmittedMeshingSourceArrays | None
+    source_chunk_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class _RestoredMeshingSources:
+    states: tuple[MeshingCheckpointState, ...]
+    logical_arrays: AdmittedMeshingSourceArrays | None
+
+
+def _prepare_meshing_restore(
+    repository: ArtifactRepository,
+    manifest: CheckpointManifest,
+    shardings: Mapping[str, Sharding],
+    expected_state_id: str | Mapping[int, str],
+    source_owner_index: int,
+    limits: ArrayArchiveLimits,
+    parent_manifest: CheckpointManifest | None,
+) -> _MeshingRestorePlan:
+    if manifest.complete is not True:
+        raise TypeError("CheckpointManifest.complete must be True for restore; got False")
+    _validate_exact_coverage(manifest.shards, limits)
+    record_paths = _meshing_checkpoint_record_paths(manifest)
+    records = tuple(
+        _read_meshing_checkpoint_record(
+            repository, manifest, path, limits=limits, parent_manifest=parent_manifest
+        )
+        for path in record_paths
+    )
+    states = tuple(record.state for record in records)
+    _validate_meshing_owner_states(states, expected_state_id, source_owner_index)
+    recipes = tuple(
+        None
+        if state.source_recipe_json is None
+        else meshing_source_recipe(state.source_recipe_json, limits=limits)
+        for state in states
+    )
+    inventories = tuple(
+        ()
+        if recipe is None
+        else model_recipe_array_inventory(
+            recipe, prefix=MESHING_SOURCE_PREFIX, limits=limits
+        )
+        for recipe in recipes
+    )
+    names = frozenset(name for state in states for name, _ in state.array_roles)
+    host_names = frozenset(
+        state.source_array_name(entry.name)
+        for state, inventory in zip(states, inventories, strict=True)
+        for entry in inventory
+        if entry.backend == "numpy"
+    )
+    if set(shardings) != names - host_names:
+        raise ValueError(
+            "restore.destination_shardings must cover every logical JAX scientific array; got missing or undeclared destination shardings"
+        )
+    expected_paths = set(record_paths) | {_meshing_array_path(name) for name in names}
+    if {
+        _metadata(shard)["array_path"] for shard in manifest.shards
+    } != expected_paths or any(
+        _metadata_integer(_metadata(shard), "topology_epoch") != states[0].mesh_epoch
+        for shard in manifest.shards
+    ):
+        raise RepositoryCorruptionError(
+            "manifest.array_epoch_binding must match the restored scientific state; got invalid array or epoch binding"
+        )
+    return _MeshingRestorePlan(records, recipes, inventories, names, host_names)
+
+
+def _restore_meshing_arrays(
+    repository: ArtifactRepository,
+    manifest: CheckpointManifest,
+    shardings: Mapping[str, Sharding],
+    plan: _MeshingRestorePlan,
+    limits: ArrayArchiveLimits,
+    parent_manifest: CheckpointManifest | None,
+    maximum_host_packet_bytes: int | None,
+) -> _RestoredMeshingArrays:
+    # Each committed artifact table is authenticated once for this restore.
+    # Shard membership, lifecycle ownership and every payload remain checked.
+    tables: dict[str, _ProcessShardTable] = {}
+    # Index only the immutable manifest's selection metadata. Every selected
+    # shard still undergoes coverage, repository binding and payload admission.
+    shards_by_path = _checkpoint_shards_by_path(manifest)
+    arrays: dict[str, jax.Array | np.ndarray] = {
+        name: _restore_checkpoint_array(
+            repository,
+            manifest,
+            _meshing_array_path(name),
+            shardings[name],
+            limits=limits,
+            parent_manifest=parent_manifest,
+            maximum_host_packet_bytes=maximum_host_packet_bytes,
+            tables=tables,
+            shards_by_path=shards_by_path,
+        )
+        for name in sorted(plan.names - plan.host_names)
+    }
+    for name in sorted(plan.host_names):
+        shape, load_host, _ = _checkpoint_array_loader(
+            repository,
+            manifest,
+            _meshing_array_path(name),
+            limits=limits,
+            parent_manifest=parent_manifest,
+            tables=tables,
+            shards_by_path=shards_by_path,
+        )
+        host = load_host(tuple(slice(0, size) for size in shape))
+        host.setflags(write=False)
+        arrays[name] = host
+    logical_arrays: dict[str, jax.Array] = {}
+    for name in plan.records[0].state.source_logical_array_names:
+        value = arrays[source_logical_array_name(name)]
+        match value:
+            case jax.Array():
+                logical_arrays[name] = value
+            case _:
+                raise RepositoryCorruptionError(
+                    f"source_binding.logical_arrays.backend must remain JAX during restore; got {type(value).__name__}"
+                )
+    source_chunk_bytes = (
+        1 << 20 if maximum_host_packet_bytes is None else maximum_host_packet_bytes
+    )
+    admitted = admit_meshing_source_logical_arrays(
+        logical_arrays, maximum_chunk_bytes=source_chunk_bytes
+    )
+    return _RestoredMeshingArrays(arrays, admitted, source_chunk_bytes)
+
+
+def _restore_meshing_sources(
+    plan: _MeshingRestorePlan,
+    restored_arrays: _RestoredMeshingArrays,
+    limits: ArrayArchiveLimits,
+) -> _RestoredMeshingSources:
+    arrays = restored_arrays.arrays
+    source_chunk_bytes = restored_arrays.source_chunk_bytes
+    admitted = restored_arrays.logical_arrays
+    decoded_closures: list[Mapping[str, Any] | None] = []
+    for record, recipe, inventory in zip(
+        plan.records, plan.recipes, plan.inventories, strict=True
+    ):
+        if recipe is None:
+            decoded_closures.append(None)
+            continue
+        source_arrays = {
+            entry.name: arrays[record.state.source_array_name(entry.name)]
+            for entry in inventory
+        }
+        try:
+            closure = model_from_logical_array_recipe(
+                recipe, source_arrays, prefix=MESHING_SOURCE_PREFIX, limits=limits
+            )
+            if not isinstance(closure, Mapping):
+                raise TypeError(
+                    "source_binding.closure must be an immutable scientific mapping; got an incompatible decoded closure"
+                )
+            decoded_closures.append(closure)
+        except (TypeError, ValueError) as error:
+            raise RepositoryCorruptionError(
+                "source_binding.closure must reconstruct and validate its retained scientific fields; got an invalid source closure"
+            ) from error
+    source_roots = tuple(closure for closure in decoded_closures if closure is not None)
+    if source_roots:
+        if admitted is None:
+            admitted = AdmittedMeshingSourceArrays(
+                {}, maximum_chunk_bytes=source_chunk_bytes
+            )
+        proof = validate_collective_mesh_source_epochs(
+            source_roots,
+            source_logical_arrays=admitted,
+            source_logical_content_digest=admitted.content_digest,
+            maximum_chunk_bytes=source_chunk_bytes,
+            limits=limits,
+        )
+        admitted = AdmittedMeshingSourceArrays(
+            admitted, maximum_chunk_bytes=source_chunk_bytes, source_validation=proof
+        )
+    restored_states: list[MeshingCheckpointState] = []
+    for record, closure in zip(plan.records, decoded_closures, strict=True):
+        if closure is None:
+            restored_states.append(record.state)
+            continue
+        try:
+            restored = MeshingCheckpointState.from_payload(
+                record.payload,
+                source_closure=closure,
+                source_logical_arrays=admitted,
+                limits=limits,
+                maximum_source_chunk_bytes=source_chunk_bytes,
+            )
+        except (TypeError, ValueError) as error:
+            raise RepositoryCorruptionError(
+                "source_binding.closure must reconstruct and validate its retained scientific fields; got an invalid source closure"
+            ) from error
+        _validate_meshing_arrays(
+            restored, {name: arrays[name] for name, _ in restored.array_roles}
+        )
+        restored_states.append(restored)
+    return _RestoredMeshingSources(tuple(restored_states), admitted)
+
+
+@checked
 def restore_meshing_checkpoint(
     repository: ArtifactRepository,
     manifest: CheckpointManifest,
@@ -2402,189 +2440,57 @@ def restore_meshing_checkpoint(
     limits: ArrayArchiveLimits = _DISTRIBUTED_CHECKPOINT_LIMITS,
     parent_manifest: CheckpointManifest | None = None,
     maximum_host_packet_bytes: int | None = None,
-) -> tuple[MeshingCheckpointState, dict[str, jax.Array | np.ndarray], RestartAdmission]:
-    """Restore exact source-owner records and logical arrays into new placement.
+) -> MeshingCheckpointRestore:
+    """Restore source-owner records and logical arrays into new placement.
 
-    The owner bank retains complete historical typed source records, including
-    local result shapes and original collective proofs. It is not a new mesh
-    carrier. Repack/reprepare consumes ``state.source_owner_states`` and selects
-    an authoritative original record explicitly; source ranks never determine
-    successor scientific IDs or local slots. Multi-owner archives require the
-    complete expected identity mapping, not a single partial owner hash.
+    The owner bank retains historical typed source records, local result shapes,
+    and collective evidence. Repreparation explicitly selects a source owner;
+    source ranks never determine successor scientific IDs or local slots.
+    Multi-owner archives require the expected identity mapping for every owner.
     """
     admission = admit_topology_restart(relation, policy)
     if not admission.admitted:
-        raise ValueError(f"Topology restart is not admitted: {admission.reason}")
-    if not isinstance(manifest, CheckpointManifest) or manifest.complete is not True:
-        raise TypeError("manifest must be a complete CheckpointManifest")
-    _validate_exact_coverage(manifest.shards, limits)
-    record_paths = _meshing_checkpoint_record_paths(manifest)
-    records = tuple(
-        _read_meshing_checkpoint_record(
-            repository, manifest, path, limits=limits, parent_manifest=parent_manifest
-        )
-        for path in record_paths
-    )
-    states = tuple(state for _, state in records)
-    _validate_meshing_owner_states(states, expected_state_id, source_owner_index)
-    from .._model._structure import (
-        model_from_logical_array_recipe,
-        model_recipe_array_inventory,
-    )
-
-    recipes = tuple(
-        None
-        if state.source_recipe_json is None
-        else _meshing_source_recipe(state.source_recipe_json, limits=limits)
-        for state in states
-    )
-    inventories = tuple(
-        ()
-        if recipe is None
-        else model_recipe_array_inventory(
-            recipe, prefix=_MESHING_SOURCE_PREFIX, limits=limits
-        )
-        for recipe in recipes
-    )
-    names = {name for state in states for name, _ in state.array_roles}
-    host_names = {
-        state.source_array_name(entry.name)
-        for state, inventory in zip(states, inventories, strict=True)
-        for entry in inventory
-        if entry.backend == "numpy"
-    }
-    if set(shardings) != names - host_names:
         raise ValueError(
-            "Destination shardings must exactly cover logical JAX scientific arrays."
+            f"restore_plan.admission must admit the topology restart; got {admission.reason}"
         )
-    expected_paths = set(record_paths) | {_meshing_array_path(name) for name in names}
-    if {
-        _metadata(shard)["array_path"] for shard in manifest.shards
-    } != expected_paths or any(
-        _metadata_integer(_metadata(shard), "topology_epoch") != states[0].mesh_epoch
-        for shard in manifest.shards
-    ):
-        raise RepositoryCorruptionError(
-            "Meshing checkpoint array/epoch binding is invalid."
-        )
-    arrays: dict[str, jax.Array | np.ndarray] = {
-        name: restore_global_array_from_checkpoint(
-            repository,
-            manifest,
-            _meshing_array_path(name),
-            shardings[name],
-            limits=limits,
-            parent_manifest=parent_manifest,
-            maximum_host_packet_bytes=maximum_host_packet_bytes,
-        )
-        for name in sorted(names - host_names)
-    }
-    for name in sorted(host_names):
-        shape, load_host = _checkpoint_array_loader(
-            repository,
-            manifest,
-            _meshing_array_path(name),
-            limits=limits,
-            parent_manifest=parent_manifest,
-        )
-        host = load_host(tuple(slice(0, size) for size in shape))
-        host.setflags(write=False)
-        arrays[name] = host
-    logical_arrays: dict[str, jax.Array] = {}
-    for name in states[0].source_logical_array_names:
-        value = arrays[_source_logical_array_name(name)]
-        if not isinstance(value, jax.Array):
-            raise RepositoryCorruptionError(
-                "A source logical bank changed its JAX backend."
-            )
-        logical_arrays[name] = value
-    source_chunk_bytes = (
-        1 << 20 if maximum_host_packet_bytes is None else maximum_host_packet_bytes
+    plan = _prepare_meshing_restore(
+        repository,
+        manifest,
+        shardings,
+        expected_state_id,
+        source_owner_index,
+        limits,
+        parent_manifest,
     )
-    admitted_logical_arrays = _admit_meshing_source_logical_arrays(
-        logical_arrays, maximum_chunk_bytes=source_chunk_bytes
+    restored_arrays = _restore_meshing_arrays(
+        repository,
+        manifest,
+        shardings,
+        plan,
+        limits,
+        parent_manifest,
+        maximum_host_packet_bytes,
     )
-    decoded_closures: list[Mapping[str, Any] | None] = []
-    for (_, state), recipe, inventory in zip(records, recipes, inventories, strict=True):
-        if recipe is None:
-            decoded_closures.append(None)
-            continue
-        source_arrays = {
-            entry.name: arrays[state.source_array_name(entry.name)] for entry in inventory
-        }
-        try:
-            closure = model_from_logical_array_recipe(
-                recipe, source_arrays, prefix=_MESHING_SOURCE_PREFIX, limits=limits
-            )
-            if not isinstance(closure, Mapping):
-                raise TypeError("Source closure must be an immutable scientific mapping.")
-            decoded_closures.append(closure)
-        except (TypeError, ValueError) as error:
-            raise RepositoryCorruptionError(
-                "Meshing source closure is invalid."
-            ) from error
-    source_roots = tuple(closure for closure in decoded_closures if closure is not None)
-    if source_roots:
-        from ._meshing_sources import validate_collective_mesh_source_epochs
-
-        if admitted_logical_arrays is None:
-            admitted_logical_arrays = _AdmittedMeshingSourceArrays(
-                {}, maximum_chunk_bytes=source_chunk_bytes
-            )
-        if not isinstance(admitted_logical_arrays, _AdmittedMeshingSourceArrays):
-            raise TypeError(
-                "Source restore must retain its exact immutable bank admission."
-            )
-        proof = validate_collective_mesh_source_epochs(
-            source_roots,
-            source_logical_arrays=admitted_logical_arrays,
-            source_logical_content_digest=admitted_logical_arrays.content_digest,
-            maximum_chunk_bytes=source_chunk_bytes,
-            limits=limits,
-        )
-        admitted_logical_arrays = _AdmittedMeshingSourceArrays(
-            admitted_logical_arrays,
-            maximum_chunk_bytes=source_chunk_bytes,
-            source_validation=proof,
-        )
-    restored_states = []
-    for (payload, state), closure in zip(records, decoded_closures, strict=True):
-        if closure is None:
-            restored_states.append(state)
-            continue
-        try:
-            restored = MeshingCheckpointState.from_payload(
-                payload,
-                source_closure=closure,
-                source_logical_arrays=admitted_logical_arrays,
+    with meshing_source_restore_admission(), meshing_source_owner_reconstruction_scope():
+        restored_sources = _restore_meshing_sources(plan, restored_arrays, limits)
+        selected = restored_sources.states[source_owner_index]
+        if selected.source_closure is not None:
+            selected = MeshingCheckpointState.from_payload(
+                plan.records[source_owner_index].payload,
+                source_closure=selected.source_closure,
+                source_logical_arrays=selected.source_logical_arrays,
+                source_owner_states=restored_sources.states,
                 limits=limits,
-                maximum_source_chunk_bytes=source_chunk_bytes,
+                maximum_source_chunk_bytes=restored_arrays.source_chunk_bytes,
             )
-        except (TypeError, ValueError) as error:
-            raise RepositoryCorruptionError(
-                "Meshing source closure is invalid."
-            ) from error
-        _validate_meshing_arrays(
-            restored, {name: arrays[name] for name, _ in restored.array_roles}
-        )
-        restored_states.append(restored)
-    selected = restored_states[source_owner_index]
-    if selected.source_closure is not None:
-        selected = MeshingCheckpointState.from_payload(
-            records[source_owner_index][0],
-            source_closure=selected.source_closure,
-            source_logical_arrays=admitted_logical_arrays,
-            source_owner_states=restored_states,
-            limits=limits,
-            maximum_source_chunk_bytes=source_chunk_bytes,
-        )
-    else:
-        _validate_meshing_arrays(selected, arrays)
-    return selected, arrays, admission
+        else:
+            _validate_meshing_arrays(selected, restored_arrays.arrays)
+        return MeshingCheckpointRestore(selected, restored_arrays.arrays, admission)
 
 
 __all__ = (
     "AddressableCheckpointShard",
+    "MeshingCheckpointRestore",
     "assemble_distributed_checkpoint_from_repository",
     "ProcessCheckpointPublication",
     "assemble_distributed_checkpoint_manifest",

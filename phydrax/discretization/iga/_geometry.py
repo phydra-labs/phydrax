@@ -7,7 +7,6 @@ from __future__ import annotations
 from math import isfinite
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
@@ -31,28 +30,34 @@ class NURBSGeometryState(StrictModule):
         weights_ = jnp.asarray(weights)
         if points.ndim < 2:
             raise ValueError(
-                "NURBS control points require tensor control axes and one coordinate axis."
+                f"NURBSGeometryState.control_points must have tensor control axes and a coordinate axis; got shape={points.shape}"
             )
         if weights_.shape != points.shape[:-1]:
-            raise ValueError("NURBS weights must match the control-point tensor shape.")
+            raise ValueError(
+                f"NURBSGeometryState.weights must match the control-point tensor; got weights={weights_.shape}, controls={points.shape}"
+            )
         if points.shape[-1] <= 0:
-            raise ValueError("NURBS control points require a positive ambient dimension.")
+            raise ValueError(
+                f"NURBSGeometryState.control_points must have positive ambient dimension; got shape={points.shape}"
+            )
         if jnp.issubdtype(points.dtype, jnp.complexfloating) or jnp.issubdtype(
             weights_.dtype, jnp.complexfloating
         ):
-            raise TypeError("NURBS geometry values must be real.")
+            raise TypeError(
+                f"NURBSGeometryState.values must be real; got points={points.dtype}, weights={weights_.dtype}"
+            )
         dtype = inexact_result_type(points, weights_)
         points = points.astype(dtype)
         weights_ = weights_.astype(dtype)
         points = eqx.error_if(
             points,
             jnp.any(~jnp.isfinite(points)),
-            "NURBS control points must be finite.",
+            "NURBSGeometryState.control_points must be finite; got nonfinite control points",
         )
         weights_ = eqx.error_if(
             weights_,
             jnp.any(~jnp.isfinite(weights_)) | jnp.any(weights_ <= 0.0),
-            "NURBS weights must be finite and strictly positive.",
+            "NURBSGeometryState.weights must be finite and strictly positive; got nonfinite or nonpositive weights",
         )
         self.control_points = points
         self.weights = weights_
@@ -64,29 +69,6 @@ class NURBSGeometryState(StrictModule):
     @property
     def control_shape(self) -> tuple[int, ...]:
         return tuple(self.weights.shape)
-
-
-def _require_nurbs_geometry_integrity(state: NURBSGeometryState, /) -> None:
-    """Validate the retained source bank without changing its weight scale."""
-    if type(state) is not NURBSGeometryState:
-        raise TypeError("NURBS integrity requires its exact owning geometry state.")
-    points, weights = state.control_points, state.weights
-    if points.ndim < 2 or points.shape[-1] <= 0 or weights.size == 0:
-        raise ValueError("Retained NURBS geometry requires nonempty tensor controls.")
-    if weights.shape != points.shape[:-1]:
-        raise ValueError("Retained NURBS weights must match their control tensor.")
-    if not jnp.issubdtype(points.dtype, jnp.floating) or not jnp.issubdtype(
-        weights.dtype,
-        jnp.floating,
-    ):
-        raise TypeError("Retained NURBS geometry requires real inexact banks.")
-    invalid = (
-        jnp.any(~jnp.isfinite(points))
-        | jnp.any(~jnp.isfinite(weights))
-        | jnp.any(weights <= 0.0)
-    )
-    if bool(jax.device_get(invalid)):
-        raise ValueError("Retained NURBS weights must be finite and strictly positive.")
 
 
 class IsogeometricRuntimeData(StrictModule):
@@ -111,12 +93,14 @@ class IsogeometricRuntimeData(StrictModule):
     ) -> None:
         if geometry.control_shape != basis.control_shape:
             raise ValueError(
-                "NURBS geometry control shape must exactly match the spline basis."
+                f"IsogeometricRuntimeData.geometry must match the spline control shape; got geometry={geometry.control_shape}, basis={basis.control_shape}"
             )
         topology = str(topology_id)
         version = str(numeric_version)
         if not topology or not version:
-            raise ValueError("IGA topology and numeric version must be non-empty.")
+            raise ValueError(
+                f"IsogeometricRuntimeData.identifiers must be non-empty; got topology={topology!r}, numeric_version={version!r}"
+            )
         geometry_layout = canonical_fingerprint(
             {
                 "kind": "isogeometric-geometry-layout",
@@ -171,7 +155,9 @@ class IsogeometricGeometryEvidence(StrictModule, NonTrainableState):
         parametric = int(parametric_dimension)
         identifier = str(evidence_id)
         if ambient < parametric or parametric <= 0 or not identifier:
-            raise ValueError("IGA geometry evidence dimensions and ID must be valid.")
+            raise ValueError(
+                f"IsogeometricGeometryEvidence.metadata must have ambient >= parametric > 0 and a nonempty ID; got ambient={ambient}, parametric={parametric}, ID={identifier!r}"
+            )
         self.coordinate_scale = jnp.asarray(coordinate_scale)
         self.minimum_weight_ratio = jnp.asarray(minimum_weight_ratio)
         self.minimum_rank_ratio = jnp.asarray(minimum_rank_ratio)
@@ -231,7 +217,9 @@ class IsogeometricH1QualificationPolicy(StrictModule, NonTrainableState):
                 return None
             result = float(value)
             if not isfinite(result) or result <= 0.0:
-                raise ValueError(f"{name} must be finite and positive or None.")
+                raise ValueError(
+                    f"IsogeometricH1QualificationPolicy.{name} must be finite and positive or None; got {value}"
+                )
             return result
 
         weight = optional_tolerance("weight_tolerance", weight_tolerance)
@@ -266,26 +254,36 @@ class IsogeometricH1QualificationPolicy(StrictModule, NonTrainableState):
             quadrature_fraction,
         )
         if not all(isfinite(value) for value in real_values):
-            raise ValueError("IGA qualification thresholds must be finite.")
+            raise ValueError(
+                f"IsogeometricH1QualificationPolicy.thresholds must be finite; got {real_values}"
+            )
         if levels < 4:
             raise ValueError(
-                "IGA convergence qualification requires at least four levels."
+                f"IsogeometricH1QualificationPolicy.refinement_levels must be at least four; got {levels}"
             )
         if h1_slack < 0.0 or l2_slack < 0.0:
-            raise ValueError("IGA convergence rate slacks must be non-negative.")
+            raise ValueError(
+                f"IsogeometricH1QualificationPolicy.rate_slacks must be non-negative; got H1={h1_slack}, L2={l2_slack}"
+            )
         if (
             min(residual, residual_epsilon, parity, parity_epsilon) <= 0.0
             or min(duality, duality_epsilon) <= 0.0
         ):
             raise ValueError(
-                "IGA residual, parity, and duality factors must be positive."
+                f"IsogeometricH1QualificationPolicy.factors must be positive; got residual={residual}, residual_epsilon={residual_epsilon}, parity={parity}, parity_epsilon={parity_epsilon}, duality={duality}, duality_epsilon={duality_epsilon}"
             )
         if not 0.0 < slope_min < slope_max or step_count < 4:
-            raise ValueError("IGA Taylor slope interval/count is invalid.")
+            raise ValueError(
+                f"IsogeometricH1QualificationPolicy.taylor_interval must have 0 < min < max and at least four steps; got min={slope_min}, max={slope_max}, steps={step_count}"
+            )
         if minimum_intervals < 3 or minimum_intervals >= step_count:
-            raise ValueError("IGA Taylor minimum interval count is invalid.")
+            raise ValueError(
+                f"IsogeometricH1QualificationPolicy.taylor_minimum_intervals must be at least three and below step count; got intervals={minimum_intervals}, steps={step_count}"
+            )
         if not 0.0 < quadrature_fraction <= 1.0 or quadrature_increment <= 0:
-            raise ValueError("IGA quadrature qualification thresholds are invalid.")
+            raise ValueError(
+                f"IsogeometricH1QualificationPolicy.quadrature must have fraction in (0, 1] and positive reference increment; got fraction={quadrature_fraction}, increment={quadrature_increment}"
+            )
         self.weight_tolerance = weight
         self.rank_tolerance = rank
         self.orientation_tolerance = orientation

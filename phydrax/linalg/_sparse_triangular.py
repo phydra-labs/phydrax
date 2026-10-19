@@ -49,8 +49,10 @@ class SparseTriangularAnalysis(StrictModule):
 
     Each orientation's ``level_schedule`` lists its rows by dependency level,
     then row index, packed into fixed-width blocks whose rows share one level;
-    padding slots hold ``shape[0]``. Prepared position/column/validity grids
-    retain every original CSR reduction slot. A solve runs one step per block.
+    padding slots hold ``shape[0]``. Position grids retain every original CSR
+    reduction slot, using ``indices.size`` for padding. Columns and validity
+    are derived from these positions, not retained as duplicate grids.
+    A solve runs one step per block.
     """
 
     indices: Array
@@ -62,8 +64,6 @@ class SparseTriangularAnalysis(StrictModule):
     level_schedule_widths: Array
     transpose_indices: Array
     schedule_positions: Array
-    schedule_columns: Array
-    schedule_valid: Array
     transpose_indptr: Array
     transpose_row_indices: Array
     transpose_value_positions: Array
@@ -72,8 +72,6 @@ class SparseTriangularAnalysis(StrictModule):
     transpose_level_schedule: Array
     transpose_level_schedule_widths: Array
     transpose_schedule_positions: Array
-    transpose_schedule_columns: Array
-    transpose_schedule_valid: Array
     shape: tuple[int, int] = eqx.field(static=True)
     triangle: SparseTriangle = eqx.field(static=True)
     unit_diagonal: bool = eqx.field(static=True)
@@ -86,10 +84,20 @@ class SparseTriangularAnalysis(StrictModule):
     pattern_id: str = eqx.field(static=True)
 
     @property
+    def schedule_valid(self) -> Array:
+        """Validity of forward CSR positions, excluding the padding sentinel."""
+        return self.schedule_positions < self.indices.size
+
+    @property
+    def transpose_schedule_valid(self) -> Array:
+        """Validity of transpose CSR positions, excluding the padding sentinel."""
+        return self.transpose_schedule_positions < self.indices.size
+
+    @property
     def numeric_preparation_work_units_upper(self) -> int:
         """One orientation's coefficient/pivot preparation, once per refresh."""
         slots = max(self.schedule_positions.size, self.transpose_schedule_positions.size)
-        return 8 * self.indices.size + 2 * slots + 16 * self.shape[0] + 32
+        return 8 * self.indices.size + 4 * slots + 16 * self.shape[0] + 32
 
     @property
     def promoted_rhs_work_units_upper(self) -> int:
@@ -339,12 +347,12 @@ def _schedule_entry_widths(
     prefix_slots = int(np.sum(choices[selectors])) * schedule.shape[1]
     reduction_slots = schedule.size * row_width
     # Prepared substitution owns coefficient/pivot evidence once per refresh.
-    # Each RHS still owns its finite/solution checks and the complete original
+    # Each RHS still owns its finite/solution checks and the CSR
     # padding/reduction tree. This bound is for the coefficient dtype; promoted
     # RHS work is accounted separately by the consuming factor plan.
     work_upper = (
         3 * prefix_slots
-        + 2 * reduction_slots
+        + 5 * reduction_slots
         + 8 * schedule.size
         + 6 * (indptr.size - 1)
         + 32
@@ -354,18 +362,16 @@ def _schedule_entry_widths(
 
 def _scheduled_entries(
     schedule: np.ndarray,
-    indices: np.ndarray,
+    entry_count: int,
     indptr: np.ndarray,
     row_width: int,
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Prepare exact CSR slot order, including the original zero padding."""
+) -> np.ndarray:
+    """Prepare CSR slot order with the entry-count sentinel for zero padding."""
     padded_indptr = np.concatenate((indptr, indptr[-1:]))
     positions = padded_indptr[schedule][:, None, :] + np.arange(row_width)[None, :, None]
     valid = positions < padded_indptr[schedule + 1][:, None, :]
-    positions = np.where(valid, positions, 0)
-    columns = indices[positions]
-    return positions, columns, valid
+    return np.where(valid, positions, entry_count)
 
 
 def analyze_sparse_triangular(
@@ -409,19 +415,9 @@ def analyze_sparse_triangular(
         transpose_indptr,
         transpose_row_width,
     )
-    schedule_positions, schedule_columns, schedule_valid = _scheduled_entries(
-        schedule,
-        indices,
-        indptr,
-        row_width,
-    )
-    transpose_positions_grid, transpose_columns_grid, transpose_valid = (
-        _scheduled_entries(
-            transpose_schedule,
-            transpose_indices,
-            transpose_indptr,
-            transpose_row_width,
-        )
+    schedule_positions = _scheduled_entries(schedule, indices.size, indptr, row_width)
+    transpose_positions_grid = _scheduled_entries(
+        transpose_schedule, indices.size, transpose_indptr, transpose_row_width
     )
     index_dtype = storage.indices.dtype
     pattern_bytes = b"|".join(
@@ -431,7 +427,7 @@ def analyze_sparse_triangular(
             indptr.tobytes(),
             triangle.encode(),
             str(bool(unit_diagonal)).encode(),
-            b"prepared-scheduled-gather-original-reduction-tree:numeric-block-cache",
+            b"compact-csr-positions-original-reduction-tree:numeric-block-cache",
         )
     )
     return SparseTriangularAnalysis(
@@ -443,8 +439,6 @@ def analyze_sparse_triangular(
         level_schedule=jnp.asarray(schedule, dtype=index_dtype),
         level_schedule_widths=jnp.asarray(schedule_widths, dtype=jnp.int32),
         schedule_positions=jnp.asarray(schedule_positions, dtype=index_dtype),
-        schedule_columns=jnp.asarray(schedule_columns, dtype=index_dtype),
-        schedule_valid=jnp.asarray(schedule_valid),
         transpose_indices=jnp.asarray(transpose_indices, dtype=index_dtype),
         transpose_indptr=jnp.asarray(transpose_indptr, dtype=index_dtype),
         transpose_row_indices=jnp.asarray(
@@ -461,8 +455,6 @@ def analyze_sparse_triangular(
         transpose_schedule_positions=jnp.asarray(
             transpose_positions_grid, dtype=index_dtype
         ),
-        transpose_schedule_columns=jnp.asarray(transpose_columns_grid, dtype=index_dtype),
-        transpose_schedule_valid=jnp.asarray(transpose_valid),
         shape=storage.shape,
         triangle=triangle,
         unit_diagonal=bool(unit_diagonal),
@@ -486,7 +478,7 @@ def solve_sparse_triangular(
     transpose: bool = False,
     adjoint: bool = False,
 ) -> SparseTriangularSolveResult:
-    """Prepare current values, then use the canonical scheduled substitution."""
+    """Prepare current values, then apply scheduled substitution."""
     if not isinstance(analysis, SparseTriangularAnalysis):
         raise TypeError("analysis must be SparseTriangularAnalysis.")
     tolerance = float(pivot_tolerance)
@@ -531,13 +523,19 @@ def _prepare_sparse_triangular_substitution(
 ) -> _PreparedTriangularSubstitution:
     """Refresh one numeric orientation; no RHS or numerical static cache."""
     if not isinstance(analysis, SparseTriangularAnalysis):
-        raise TypeError("analysis must be SparseTriangularAnalysis.")
+        raise TypeError(
+            f"_prepare_sparse_triangular_substitution.analysis must be SparseTriangularAnalysis; got {type(analysis).__name__}."
+        )
     tolerance = float(pivot_tolerance)
     if not isfinite(tolerance) or tolerance < 0.0:
-        raise ValueError("pivot_tolerance must be finite and non-negative.")
+        raise ValueError(
+            f"_prepare_sparse_triangular_substitution.pivot_tolerance must be finite and non-negative; got {tolerance!r}."
+        )
     values_ = jnp.asarray(values)
     if values_.shape != analysis.indices.shape:
-        raise ValueError("values must match the analyzed CSR nonzero pattern.")
+        raise ValueError(
+            f"_prepare_sparse_triangular_substitution.values must match the analyzed CSR nonzero pattern; got shape={values_.shape}, expected={analysis.indices.shape}."
+        )
     if transpose or adjoint:
         values_ = values_[analysis.transpose_value_positions]
         rows = analysis.transpose_row_indices
@@ -570,7 +568,9 @@ def _prepare_sparse_triangular_substitution(
     off_values = jnp.where(off_diagonal, values_, jnp.zeros((), dtype=values_.dtype))
     return _PreparedTriangularSubstitution(
         scheduled_values=jnp.where(
-            valid, off_values[positions], jnp.zeros((), dtype=values_.dtype)
+            valid,
+            off_values[jnp.where(valid, positions, 0)],
+            jnp.zeros((), dtype=values_.dtype),
         ),
         diagonal=diagonal,
         safe_diagonal=jnp.concatenate(
@@ -593,7 +593,7 @@ def _solve_prepared_sparse_triangular(
     vector_input: bool = False,
     transpose: bool = False,
 ) -> SparseTriangularSolveResult:
-    """Reuse immutable numeric evidence; inspect every actual RHS and solution."""
+    """Reuse immutable numeric evidence; inspect every RHS and solution."""
     dtype = jnp.result_type(prepared.scheduled_values.dtype, right_hand_side.dtype)
     rhs = right_hand_side.astype(dtype)
     scheduled_values = prepared.scheduled_values.astype(dtype)
@@ -602,7 +602,7 @@ def _solve_prepared_sparse_triangular(
         zero_pivot = prepared.zero_pivot
         minimum_pivot = prepared.minimum_pivot
     else:
-        # Abs/pivot thresholds must be evaluated in the actual promoted dtype,
+        # Abs/pivot thresholds must be evaluated in the promoted dtype,
         # not inherited from lower-precision coefficient evidence.
         diagonal = prepared.diagonal.astype(dtype)
         valid_pivot = jnp.isfinite(diagonal) & (
@@ -621,19 +621,17 @@ def _solve_prepared_sparse_triangular(
             analysis.transpose_number_levels,
             analysis.transpose_row_width,
         )
-        schedule_columns, schedule_valid = (
-            analysis.transpose_schedule_columns,
-            analysis.transpose_schedule_valid,
-        )
+        positions = analysis.transpose_schedule_positions
+        indices = analysis.transpose_indices
     else:
         schedule = analysis.level_schedule
         schedule_widths = analysis.level_schedule_widths
         number_levels, row_width = analysis.number_levels, analysis.row_width
-        schedule_columns, schedule_valid = (
-            analysis.schedule_columns,
-            analysis.schedule_valid,
-        )
-    # Padding retains the exact original reduction positions and absorbs the
+        positions = analysis.schedule_positions
+        indices = analysis.indices
+    schedule_valid = positions < indices.size
+    schedule_columns = indices[jnp.where(schedule_valid, positions, 0)]
+    # Padding retains the CSR reduction positions and absorbs the
     # writes of empty scheduled rows; cached safe pivots include its unit entry.
     padded_rhs = jnp.concatenate((rhs, jnp.zeros((1, rhs.shape[1]), dtype=dtype)))
     initial = jnp.zeros_like(padded_rhs)
@@ -648,7 +646,7 @@ def _solve_prepared_sparse_triangular(
             products = scheduled_values[step, :width, ..., None] * solution[columns]
             products = jnp.where(valid[..., None], products, 0.0)
             # Do not shorten/reassociate the declared floating reduction:
-            # omitted CSR padding was exactly zero in these original slots.
+            # omitted CSR padding was exactly zero in these input slots.
             products = jnp.pad(products, ((0, row_width - width), (0, 0), (0, 0)))
             row_sum = jnp.sum(products, axis=0)
             candidate = (padded_rhs[block] - row_sum) / padded_diagonal[block][:, None]

@@ -11,30 +11,40 @@ from typing import Any
 
 import numpy as np
 
+import phydrax.discretization as cell_mesh_owner
+import phydrax.discretization as reference_cell_types_owner
+from phydrax.meshing._association_state import (
+    GeometryAssociation,
+    GeometryAssociationKind,
+)
+from phydrax.meshing._contracts import (
+    MeshingDerivativeMode,
+    MeshingExecutionMode,
+    MeshingProviderInfo,
+    SurfaceMeshingSpec,
+    VolumeMeshingSpec,
+)
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from ..._identity import SemanticProvenance
-from ...discretization import CellBlock, CellMesh
-from ...discretization._cell_complex import (
+from ...discretization import (
     PolygonalConnectivity,
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
 from ...discretization._hexahedral import HexahedralConnectivity
-from ...geometry.brep._projection_contracts import brep_entity_id
+from ...geometry.brep import (
+    brep_entity_id,
+    BRepEntityId,
+    BRepImportReport,
+    BRepModel,
+)
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
-from .._association import GeometryAssociation, GeometryAssociationKind
+from ...typing import checked
 from .._audit import audit_cell_mesh
 from .._canonical import canonicalize_cell_mesh
-from .._contracts import (
-    MeshingDerivativeMode,
-    MeshingExecutionMode,
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingProviderInfo,
-    SurfaceMeshingSpec,
-    VolumeMeshingSpec,
-)
 from .._controls import BackgroundMetricControl, BackgroundMetricMode
-from .._organization import MeshAttribute, MeshPatch, MeshZone
+from .._organization_records import MeshAttribute, MeshPatch, MeshZone
 from .._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
 from .._sizing import ProximitySizeControl, SizeControlStrength, UniformSizeControl
 from .._trace import (
@@ -44,55 +54,58 @@ from .._trace import (
     MeshingTrace,
 )
 from ._gmsh_constraints import (
-    _apply_protected_features,
-    _audit_periodic,
-    _audit_protected_features,
-    _set_periodic,
+    apply_protected_features,
+    audit_periodic,
+    audit_protected_features,
+    set_periodic,
 )
 from ._gmsh_elements import (
-    _cell_geometry,
-    _CurvedGeometry,
-    _element_rows,
-    _local_connectivity,
-    _native_quality,
-    _NativeQuality,
+    cell_geometry,
+    CurvedGeometry,
+    element_rows,
+    ElementRows,
+    local_connectivity,
+    native_quality,
+    NativeQuality,
 )
 from ._gmsh_evidence import (
-    _boundary_association,
-    _canonical_cell_solid_ids,
-    _EvidenceSection,
-    _planar_surface_evidence,
-    _region_evidence,
-    _semantic_surface_evidence,
+    boundary_association,
+    canonical_cell_solid_ids,
+    EvidenceSection,
+    planar_surface_evidence,
+    region_evidence,
+    semantic_surface_evidence,
 )
 from ._gmsh_import import (
-    _CadEntityMap,
-    _CadImportCache,
-    _resolve_cad_entity_map,
-    _resolve_planar_cad_entity_map,
-    _source_scale,
+    CadEntityMap,
+    CadImportCache,
+    entity_scope,
+    resolve_cad_entity_map,
+    resolve_entities,
+    resolve_planar_cad_entity_map,
+    source_scale,
 )
-from ._gmsh_inventory import _cad_occurrence_inventory
+from ._gmsh_inventory import cad_occurrence_inventory
 from ._gmsh_layers import (
-    _apply_boundary_layer_field,
-    _apply_planar_band_constraints,
-    _audit_boundary_layer_field,
-    _audit_layers,
-    _audit_planar_band_fronts,
-    _audit_swept_interfaces,
-    _install_swept_cells,
-    _layer_attributes,
-    _prepare_swept_geometry,
+    apply_boundary_layer_field,
+    apply_planar_band_constraints,
+    audit_boundary_layer_field,
+    audit_layers,
+    audit_planar_band_fronts,
+    audit_swept_interfaces,
+    install_swept_cells,
+    layer_attributes,
+    prepare_swept_geometry,
 )
 from ._gmsh_options import GmshHighOrderOptimization
 from ._gmsh_sizing import (
-    _apply_size_fields,
-    _background_metric_evidence,
-    _edge_size_evidence,
-    _proximity_evidence,
-    _semantic_size_compliance,
-    _size_values,
-    _SizeFields,
+    apply_size_fields,
+    background_metric_evidence,
+    edge_size_evidence,
+    proximity_evidence,
+    semantic_size_compliance,
+    size_values,
+    SizeFields,
 )
 
 
@@ -107,8 +120,8 @@ class _Generation:
     semantic_surface: bool
     requested_kinds: set[str]
     target: float | None
-    cad_entities: _CadEntityMap | None
-    size_fields: _SizeFields
+    cad_entities: CadEntityMap | None
+    size_fields: SizeFields
     sweep: object
     band_generation: object
     layer_field: object
@@ -125,7 +138,7 @@ def _configure_options(
 ) -> None:
     specification = plan.specification
     options = plan.options
-    minimum, target, maximum, curvature_points = _size_values(specification)
+    minimum, target, maximum, curvature_points = size_values(specification)
     anisotropic = (
         background is not None and background.mode is BackgroundMetricMode.ANISOTROPIC
     )
@@ -156,7 +169,7 @@ def _configure_options(
     gmsh.option.setNumber("Mesh.OptimizeNetgen", 1 if options.optimize_netgen else 0)
     pure_recombined = requested_kinds in ({"quadrilateral"}, {"hexahedron"})
     # Full-quad algorithm 3 halves every edge and cannot represent a single
-    # exact normal layer. Blossom recombination preserves those transfinite
+    # normal layer. Blossom recombination preserves those transfinite
     # one-cell strips; later family compliance rejects unrecombined remainder.
     recombination_algorithm = (
         1 if pure_recombined and plan.planar_bands is not None else 3
@@ -168,10 +181,11 @@ def _configure_options(
     gmsh.model.add(f"phydrax-{plan.plan_id[:12]}")
 
 
-def _prepare_generation(
+@checked
+def prepare_generation(
     gmsh: Any,
     plan: Any,
-    cache: _CadImportCache,
+    cache: CadImportCache,
     background: BackgroundMetricControl | None,
     /,
 ) -> _Generation:
@@ -180,14 +194,17 @@ def _prepare_generation(
     entry = cache.acquire(source)
     shape = entry.shape
     limits = specification.limits
-    inventory = _cad_occurrence_inventory(source)
+    inventory = cad_occurrence_inventory(source)
     if sum(len(rows) for rows in inventory.entities[:3]) > limits.maximum_faces:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "BRep entity count exceeds the meshing limit.",
+            (
+                "gmsh.prepare_generation must fit source entity limits before generation; got "
+                + "BRep entity count exceeds the meshing limit."
+            ),
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
         )
-    _, target, _, _ = _size_values(specification)
+    _, target, _, _ = size_values(specification)
     dimension = specification.target.topological_dimension
     semantic_volume = isinstance(specification, VolumeMeshingSpec) and bool(
         specification.region_controls
@@ -208,15 +225,15 @@ def _prepare_generation(
     cache.import_shapes(gmsh, entry)
     if semantic_volume:
         cad_entities = cache.entity_map(
-            entry, "volume", lambda: _resolve_cad_entity_map(gmsh, source, entry)
+            entry, "volume", lambda: resolve_cad_entity_map(gmsh, source, entry)
         )
     elif semantic_surface:
         cad_entities = cache.entity_map(
-            entry, "planar", lambda: _resolve_planar_cad_entity_map(gmsh, source, entry)
+            entry, "planar", lambda: resolve_planar_cad_entity_map(gmsh, source, entry)
         )
     else:
         cad_entities = None
-    protected = _apply_protected_features(
+    protected = apply_protected_features(
         gmsh,
         source,
         shape,
@@ -231,7 +248,7 @@ def _prepare_generation(
             )
         ),
     )
-    size_fields = _apply_size_fields(
+    size_fields = apply_size_fields(
         gmsh,
         source,
         shape,
@@ -241,24 +258,24 @@ def _prepare_generation(
         background,
     )
     sweep = (
-        _prepare_swept_geometry(gmsh, plan, shape, cad_entities)
+        prepare_swept_geometry(gmsh, plan, cad_entities)
         if isinstance(specification, VolumeMeshingSpec)
         else None
     )
     if dimension == 2 and "quadrilateral" in requested_kinds:
         for entity_dimension, tag in gmsh.model.getEntities(2):
             gmsh.model.mesh.setRecombine(entity_dimension, tag)
-    band_generation = _apply_planar_band_constraints(
+    band_generation = apply_planar_band_constraints(
         gmsh,
         plan.planar_bands,
         cad_entities,
         requested_kinds,
         target,
     )
-    layer_field = _apply_boundary_layer_field(
+    layer_field = apply_boundary_layer_field(
         gmsh, specification, cad_entities, requested_kinds
     )
-    periodic_records = _set_periodic(gmsh, plan, shape)
+    periodic_records = set_periodic(gmsh, plan, shape)
     return _Generation(
         shape,
         dimension,
@@ -283,13 +300,19 @@ def _generate(gmsh: Any, plan: Any, generation: _Generation, /) -> None:
     if not top_entities:
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SOURCE,
-            "BRep source has no requested top-dimensional entities.",
+            (
+                "gmsh.generate must retain requested top-dimensional entities within the entity limit; got "
+                + "BRep source has no requested top-dimensional entities."
+            ),
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
         )
     if len(gmsh.model.getEntities()) > limits.maximum_faces:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Imported Gmsh entities exceed the declared limit.",
+            (
+                "gmsh.generate must retain requested top-dimensional entities within the entity limit; got "
+                + "Imported Gmsh entities exceed the declared limit."
+            ),
         )
     point_entities = gmsh.model.getEntities(0)
     if point_entities and generation.target is not None:
@@ -301,7 +324,7 @@ def _generate(gmsh: Any, plan: Any, generation: _Generation, /) -> None:
     else:
         gmsh.model.mesh.generate(2)
         # ty: ignore[invalid-argument-type]
-        _install_swept_cells(gmsh, generation.sweep)
+        install_swept_cells(gmsh, generation.sweep)
         gmsh.option.setNumber("Mesh.MeshOnlyEmpty", 1)
         gmsh.model.mesh.generate(3)
         gmsh.option.setNumber("Mesh.MeshOnlyEmpty", 0)
@@ -313,11 +336,11 @@ class _Extraction:
     points: np.ndarray
     top: tuple
     cell_count: int
-    native: _NativeQuality
-    periodic: _EvidenceSection
+    native: NativeQuality
+    periodic: EvidenceSection
     layer_audit: object
-    bands: _EvidenceSection
-    layer_field: _EvidenceSection
+    bands: EvidenceSection
+    layer_field: EvidenceSection
 
 
 def _extract(gmsh: Any, plan: Any, generation: _Generation, /) -> _Extraction:
@@ -330,24 +353,30 @@ def _extract(gmsh: Any, plan: Any, generation: _Generation, /) -> _Extraction:
     if points.shape[0] > limits.maximum_vertices:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Generated Gmsh mesh exceeds maximum_vertices.",
+            (
+                "gmsh.extract must fit generated vertex and cell limits; got "
+                + "Generated Gmsh mesh exceeds maximum_vertices."
+            ),
         )
-    top = _element_rows(gmsh, generation.dimension, generation.geometry_order)
+    top = element_rows(gmsh, generation.dimension, generation.geometry_order)
     cell_count = sum(rows.tags.size for rows in top)
     if cell_count > limits.maximum_cells:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Generated Gmsh mesh exceeds maximum_cells.",
+            (
+                "gmsh.extract must fit generated vertex and cell limits; got "
+                + "Generated Gmsh mesh exceeds maximum_cells."
+            ),
         )
-    native = _native_quality(gmsh, top)
-    periodic = _audit_periodic(gmsh, generation.periodic_records, node_tags, points)
-    layer_audit = _audit_layers(generation.sweep, top, node_tags, points)
-    band_requested, band_achieved = _audit_planar_band_fronts(
+    native = native_quality(gmsh, top)
+    periodic = audit_periodic(gmsh, generation.periodic_records, node_tags, points)
+    layer_audit = audit_layers(generation.sweep, top, node_tags, points)
+    band_requested, band_achieved = audit_planar_band_fronts(
         gmsh,
         # ty: ignore[invalid-argument-type]
         generation.band_generation,
     )
-    field_requested, field_achieved, field_issues = _audit_boundary_layer_field(
+    field_requested, field_achieved, field_issues = audit_boundary_layer_field(
         gmsh,
         # ty: ignore[invalid-argument-type]
         generation.layer_field,
@@ -363,14 +392,14 @@ def _extract(gmsh: Any, plan: Any, generation: _Generation, /) -> _Extraction:
         native,
         periodic,
         layer_audit,
-        _EvidenceSection(band_requested, band_achieved),
-        _EvidenceSection(field_requested, field_achieved, field_issues),
+        EvidenceSection(band_requested, band_achieved),
+        EvidenceSection(field_requested, field_achieved, field_issues),
     )
 
 
 @dataclass(frozen=True, slots=True)
 class _CanonicalMesh:
-    mesh: CellMesh
+    mesh: cell_mesh_owner.CellMesh
     mesh_points: np.ndarray
     vertex_ids: np.ndarray
     output_points: np.ndarray
@@ -393,7 +422,10 @@ def _output_points(plan: Any, points: np.ndarray, /) -> np.ndarray:
     if embedding is None:
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SPECIFICATION,
-            "Ambient-dimension-two execution lost its PlanarEmbedding.",
+            (
+                "gmsh.output_points must lie in the declared planar embedding; got "
+                + "Ambient-dimension-two execution lost its PlanarEmbedding."
+            ),
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
         )
     residuals = np.abs(embedding.plane_residual(points))
@@ -406,7 +438,10 @@ def _output_points(plan: Any, points: np.ndarray, /) -> np.ndarray:
     if np.max(residuals, initial=0.0) > plane_tolerance:
         raise MeshingFailure(
             MeshingFailureCategory.ASSOCIATION_FAILED,
-            "CAD-associated Gmsh nodes do not lie in the declared planar embedding.",
+            (
+                "gmsh.output_points must lie in the declared planar embedding; got "
+                + "CAD-associated Gmsh nodes do not lie in the declared planar embedding."
+            ),
             stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
         )
     return embedding.to_planar(points)
@@ -417,7 +452,7 @@ def _canonical_mesh(
 ) -> _CanonicalMesh:
     top = extraction.top
     top_vertices = {
-        rows.block_name: _local_connectivity(extraction.node_tags, rows.vertices)
+        rows.block_name: local_connectivity(extraction.node_tags, rows.vertices)
         for rows in top
     }
     corner_nodes = np.unique(
@@ -450,7 +485,7 @@ def _canonical_mesh(
         )
         row_orders[rows.block_name] = row_order
         blocks.append(
-            CellBlock(
+            reference_cell_types_owner.CellBlock(
                 rows.block_name,
                 rows.cell_kind,
                 corners[row_order],
@@ -464,14 +499,14 @@ def _canonical_mesh(
         next_cell_id += rows.tags.size
     mesh_points = output_points[corner_nodes]
     vertex_ids = np.arange(corner_nodes.size, dtype=np.int64)
-    mesh = CellMesh(
+    mesh = cell_mesh_owner.CellMesh(
         mesh_points,
         tuple(blocks),
         vertex_global_ids=vertex_ids,
         numeric_version=plan.source.report.source_revision,
     )
     boundary_rows = (
-        _element_rows(gmsh, 2, generation.geometry_order)
+        element_rows(gmsh, 2, generation.geometry_order)
         if generation.dimension == 3
         else top
     )
@@ -489,29 +524,57 @@ def _canonical_mesh(
     )
 
 
+def _surface_owners(
+    gmsh: Any, source: BRepModel, rows: tuple[ElementRows, ...], /
+) -> dict[int, BRepEntityId]:
+    """Resolve CAD surface tags to source face occurrences before organization."""
+    inventory = cad_occurrence_inventory(source)
+    entities = inventory.entities[2]
+    tags = resolve_entities(
+        gmsh, source, entity_scope(source, 2, tuple(range(len(entities))))
+    )
+    owners = dict(zip(tags, entities, strict=True))
+    if len(owners) != len(entities) or any(
+        int(tag) not in owners for block in rows for tag in block.entity_tags
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.ASSOCIATION_FAILED,
+            "boundary.surface_tags must bind source face occurrences uniquely; "
+            f"got {len(owners)} surface tags for {len(entities)} faces",
+            stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
+        )
+    return owners
+
+
 def _boundary_surface(
     plan: Any,
     generation: _Generation,
     extraction: _Extraction,
     canonical: _CanonicalMesh,
+    surface_owners: dict[int, BRepEntityId],
     /,
-) -> SurfaceModel:
+) -> tuple[SurfaceModel, dict[int, BRepEntityId]]:
     report = plan.source.report
     boundary_triangles = []
+    boundary_owners = []
     for rows in canonical.boundary_rows:
         corners = canonical.source_to_corner[
-            _local_connectivity(
+            local_connectivity(
                 extraction.node_tags, rows.vertices[:, : rows.corner_count]
             )
         ]
         if np.any(corners < 0):
             raise MeshingFailure(
                 MeshingFailureCategory.CONVERSION_FAILED,
-                "Boundary corner is absent from the volume mesh.",
+                (
+                    "gmsh.boundary_surface must retain every boundary corner in the volume mesh; got "
+                    + "Boundary corner is absent from the volume mesh."
+                ),
             )
         splits = ((0, 1, 2),) if rows.cell_kind == "triangle" else ((0, 1, 2), (0, 2, 3))
         for split in splits:
             boundary_triangles.append(corners[:, split])
+            boundary_owners.extend(surface_owners[int(tag)] for tag in rows.entity_tags)
     boundary_triangles = np.concatenate(boundary_triangles)
     boundary_keys = np.sort(boundary_triangles, axis=1)
     boundary_order = np.lexsort(
@@ -527,21 +590,27 @@ def _boundary_surface(
         provenance=("gmsh-occ", plan.plan_id),
         cell_tags=("gmsh-occ-surface",) * boundary_triangles.shape[0],
     )
-    return SurfaceModel.from_triangles(
+    boundary_ids = np.arange(boundary_triangles.shape[0], dtype=np.int64)
+    owners = {
+        int(identifier): boundary_owners[int(row)]
+        for identifier, row in zip(boundary_ids, boundary_order, strict=True)
+    }
+    boundary = SurfaceModel.from_triangles(
         canonical.mesh_points,
         boundary_triangles[boundary_order],
         boundary_metadata,
         vertex_global_ids=canonical.vertex_ids,
-        cell_global_ids=np.arange(boundary_triangles.shape[0], dtype=np.int64),
+        cell_global_ids=boundary_ids,
         numeric_version=report.source_revision,
         repair_orientation=True,
         orient_closed_outward=generation.dimension == 3,
     )
+    return boundary, owners
 
 
 @dataclass(frozen=True, slots=True)
-class _Organization:
-    mesh: CellMesh
+class Organization:
+    mesh: cell_mesh_owner.CellMesh
     boundary: SurfaceModel | None
     zones: tuple[MeshZone, ...]
     patches: tuple[MeshPatch, ...]
@@ -549,9 +618,172 @@ class _Organization:
     attributes: tuple[MeshAttribute, ...]
     region_count: int
     cell_solid_ids: np.ndarray | None
-    layer_interfaces: _EvidenceSection
+    layer_interfaces: EvidenceSection
 
 
+def _organize_semantic_volume(
+    gmsh: Any,
+    source: BRepModel,
+    specification: VolumeMeshingSpec,
+    report: BRepImportReport,
+    generation: _Generation,
+    extraction: _Extraction,
+    canonical: _CanonicalMesh,
+    mesh: cell_mesh_owner.CellMesh,
+    local_layer_attributes: tuple[MeshAttribute, ...],
+    plan: Any,
+    /,
+) -> Organization:
+    """Publish source-solid ownership, CAD boundary evidence, and swept interfaces."""
+    cad_entities = generation.cad_entities
+    if cad_entities is None:
+        raise MeshingFailure(
+            MeshingFailureCategory.CONVERSION_FAILED,
+            (
+                "gmsh.organize must retain boundary meshes and semantic CAD correspondence; got "
+                + "Semantic volume execution lost its resolved CAD entity map."
+            ),
+            stage=MeshingStageKind.CANONICALIZATION.value,
+        )
+    cell_solid_ids = canonical_cell_solid_ids(
+        mesh,
+        extraction.top,
+        canonical.row_orders,
+        cad_entities,
+    )
+    surface_evidence = semantic_surface_evidence(
+        gmsh,
+        source,
+        mesh,
+        canonical.boundary_rows,
+        extraction.node_tags,
+        canonical.source_to_corner,
+        cell_solid_ids,
+        cad_entities,
+        plan.plan_id,
+    )
+    layer_interface_achieved = audit_swept_interfaces(
+        mesh,
+        source,
+        cell_solid_ids,
+        surface_evidence.mesh_face_source,
+        # ty: ignore[invalid-argument-type]
+        generation.sweep,
+    )
+    region_zones, patches = region_evidence(
+        source,
+        mesh,
+        specification,
+        cell_solid_ids,
+        surface_evidence.mesh_face_source,
+        cad_entities,
+    )
+    cell_entity_set = mesh.entity_set(3)
+    cell_association = GeometryAssociation(
+        GeometryAssociationKind.BREP,
+        report.source_id,
+        report.source_revision,
+        cell_entity_set.entity_set_id,
+        cell_entity_set.entity_ids,
+        tuple(
+            brep_entity_id(
+                report.source_revision,
+                3,
+                cad_entities.inventory.entities[3][int(owner)].index,
+                occurrence_path=cad_entities.inventory.entities[3][
+                    int(owner)
+                ].occurrence_path,
+            )
+            for owner in cell_solid_ids
+        ),
+        np.zeros((cell_solid_ids.size,), dtype=np.float64),
+        exact=True,
+        source_dimensions=np.full((cell_solid_ids.size,), 3, dtype=np.int8),
+        source_indices=np.asarray(
+            [
+                cad_entities.inventory.entities[3][int(owner)].index
+                for owner in cell_solid_ids
+            ],
+            dtype=np.int64,
+        ),
+        source_occurrence_paths=tuple(
+            cad_entities.inventory.entities[3][int(owner)].occurrence_path
+            for owner in cell_solid_ids
+        ),
+    )
+    return Organization(
+        mesh,
+        surface_evidence.boundary,
+        (*surface_evidence.zones, *region_zones),
+        patches,
+        (surface_evidence.association, cell_association),
+        (surface_evidence.attribute, *local_layer_attributes),
+        len(region_zones),
+        cell_solid_ids,
+        EvidenceSection((), layer_interface_achieved),
+    )
+
+
+def _organize_boundary_association(
+    source: BRepModel,
+    dimension: int,
+    extraction: _Extraction,
+    canonical: _CanonicalMesh,
+    mesh: cell_mesh_owner.CellMesh,
+    boundary: SurfaceModel | None,
+    boundary_owners: dict[int, BRepEntityId],
+    surface_owners: dict[int, BRepEntityId],
+    local_layer_attributes: tuple[MeshAttribute, ...],
+    /,
+) -> Organization:
+    """Bind retained surface ownership for nonsemantic surface and volume routes."""
+    if dimension == 3 and boundary is None:
+        raise MeshingFailure(
+            MeshingFailureCategory.CONVERSION_FAILED,
+            (
+                "gmsh.organize must retain boundary meshes and semantic CAD correspondence; got "
+                + "Volume execution lost its generated boundary mesh."
+            ),
+            stage=MeshingStageKind.CANONICALIZATION.value,
+        )
+    if dimension == 2 and canonical.mixed_boundary:
+        rows_by_name = {rows.block_name: rows for rows in extraction.top}
+        boundary_owners = {
+            int(identifier): surface_owners[int(tag)]
+            for block in mesh.blocks
+            for identifier, tag in zip(
+                np.asarray(block.global_ids, dtype=np.int64),
+                rows_by_name[block.name].entity_tags[canonical.row_orders[block.name]],
+                strict=True,
+            )
+        }
+    association_mesh = mesh
+    if dimension == 3:
+        if boundary is None:
+            raise RuntimeError(
+                (
+                    "gmsh.organize must retain boundary meshes and semantic CAD correspondence; got "
+                    + "boundary must be present for volume association; got None"
+                )
+            )
+        association_mesh = boundary.mesh
+    association, boundary_zones, provider_attribute = boundary_association(
+        source, association_mesh, boundary_owners
+    )
+    return Organization(
+        mesh,
+        boundary,
+        boundary_zones if dimension == 2 else (),
+        (),
+        (association,),
+        (provider_attribute, *local_layer_attributes),
+        0,
+        None,
+        EvidenceSection(),
+    )
+
+
+# Canonicalize once before dispatching semantic volume, planar, or boundary evidence.
 def _organize(
     gmsh: Any,
     plan: Any,
@@ -559,15 +791,23 @@ def _organize(
     extraction: _Extraction,
     canonical: _CanonicalMesh,
     /,
-) -> _Organization:
+) -> Organization:
     source = plan.source
     specification = plan.specification
     report = source.report
     dimension = generation.dimension
     mesh = canonical.mesh
     boundary = None
+    boundary_owners: dict[int, BRepEntityId] = {}
+    surface_owners = (
+        _surface_owners(gmsh, source, canonical.boundary_rows)
+        if not generation.semantic_volume and specification.target.ambient_dimension == 3
+        else {}
+    )
     if not generation.semantic_volume and specification.target.ambient_dimension == 3:
-        boundary = _boundary_surface(plan, generation, extraction, canonical)
+        boundary, boundary_owners = _boundary_surface(
+            plan, generation, extraction, canonical, surface_owners
+        )
         if (
             dimension == 2
             and not canonical.mixed_boundary
@@ -575,7 +815,7 @@ def _organize(
         ):
             mesh = boundary.mesh
     mesh = canonicalize_cell_mesh(mesh)
-    layer_attributes = _layer_attributes(
+    local_layer_attributes = layer_attributes(
         mesh,
         extraction.top,
         canonical.row_orders,
@@ -583,99 +823,30 @@ def _organize(
         extraction.layer_audit,
     )
     if generation.semantic_volume:
-        cad_entities = generation.cad_entities
-        if cad_entities is None:
-            raise MeshingFailure(
-                MeshingFailureCategory.CONVERSION_FAILED,
-                "Semantic volume execution lost its resolved CAD entity map.",
-                stage=MeshingStageKind.CANONICALIZATION.value,
-            )
-        cell_solid_ids = _canonical_cell_solid_ids(
-            mesh,
-            extraction.top,
-            canonical.row_orders,
-            cad_entities,
-        )
-        surface_evidence = _semantic_surface_evidence(
+        return _organize_semantic_volume(
             gmsh,
             source,
-            mesh,
-            canonical.boundary_rows,
-            extraction.node_tags,
-            canonical.source_to_corner,
-            cell_solid_ids,
-            cad_entities,
-            plan.plan_id,
-        )
-        layer_interface_achieved = _audit_swept_interfaces(
-            mesh,
-            source,
-            cell_solid_ids,
-            surface_evidence.mesh_face_source,
-            # ty: ignore[invalid-argument-type]
-            generation.sweep,
-        )
-        region_zones, patches = _region_evidence(
-            source,
-            mesh,
             specification,
-            cell_solid_ids,
-            surface_evidence.mesh_face_source,
-            cad_entities,
-        )
-        cell_entity_set = mesh.entity_set(3)
-        cell_association = GeometryAssociation(
-            GeometryAssociationKind.BREP,
-            report.source_id,
-            report.source_revision,
-            cell_entity_set.entity_set_id,
-            cell_entity_set.entity_ids,
-            tuple(
-                brep_entity_id(
-                    report.source_revision,
-                    3,
-                    cad_entities.inventory.entities[3][int(owner)].index,
-                    occurrence_path=cad_entities.inventory.entities[3][
-                        int(owner)
-                    ].occurrence_path,
-                )
-                for owner in cell_solid_ids
-            ),
-            np.zeros((cell_solid_ids.size,), dtype=np.float64),
-            exact=True,
-            source_dimensions=np.full((cell_solid_ids.size,), 3, dtype=np.int8),
-            source_indices=np.asarray(
-                [
-                    cad_entities.inventory.entities[3][int(owner)].index
-                    for owner in cell_solid_ids
-                ],
-                dtype=np.int64,
-            ),
-            source_occurrence_paths=tuple(
-                cad_entities.inventory.entities[3][int(owner)].occurrence_path
-                for owner in cell_solid_ids
-            ),
-        )
-        return _Organization(
+            report,
+            generation,
+            extraction,
+            canonical,
             mesh,
-            surface_evidence.boundary,
-            (*surface_evidence.zones, *region_zones),
-            patches,
-            (surface_evidence.association, cell_association),
-            (surface_evidence.attribute, *layer_attributes),
-            len(region_zones),
-            cell_solid_ids,
-            _EvidenceSection((), layer_interface_achieved),
+            local_layer_attributes,
+            plan,
         )
     if generation.semantic_surface:
         cad_entities = generation.cad_entities
         if cad_entities is None:
             raise MeshingFailure(
                 MeshingFailureCategory.CONVERSION_FAILED,
-                "Semantic planar execution lost its resolved CAD entity map.",
+                (
+                    "gmsh.organize must retain boundary meshes and semantic CAD correspondence; got "
+                    + "Semantic planar execution lost its resolved CAD entity map."
+                ),
                 stage=MeshingStageKind.CANONICALIZATION.value,
             )
-        planar_evidence = _planar_surface_evidence(
+        planar_evidence = planar_surface_evidence(
             gmsh,
             source,
             mesh,
@@ -687,43 +858,32 @@ def _organize(
             cad_entities,
             generation.geometry_order,
         )
-        return _Organization(
+        return Organization(
             mesh,
             boundary,
             planar_evidence.zones,
             planar_evidence.patches,
             planar_evidence.associations,
-            (*planar_evidence.attributes, *layer_attributes),
+            (*planar_evidence.attributes, *local_layer_attributes),
             0,
             None,
-            _EvidenceSection(),
+            EvidenceSection(),
         )
-    if dimension == 3 and boundary is None:
-        raise MeshingFailure(
-            MeshingFailureCategory.CONVERSION_FAILED,
-            "Volume execution lost its generated boundary mesh.",
-            stage=MeshingStageKind.CANONICALIZATION.value,
-        )
-    association, boundary_zones, provider_attribute = _boundary_association(
+    return _organize_boundary_association(
         source,
-        # ty: ignore[unresolved-attribute]
-        mesh if dimension == 2 else boundary.mesh,
-        plan.options.association_tolerance_factor,
-    )
-    return _Organization(
+        dimension,
+        extraction,
+        canonical,
         mesh,
         boundary,
-        boundary_zones if dimension == 2 else (),
-        (),
-        (association,),
-        (provider_attribute, *layer_attributes),
-        0,
-        None,
-        _EvidenceSection(),
+        boundary_owners,
+        surface_owners,
+        local_layer_attributes,
     )
 
 
-def _mesh_edges(mesh: CellMesh, /) -> np.ndarray:
+@checked
+def mesh_edges(mesh: cell_mesh_owner.CellMesh, /) -> np.ndarray:
     connectivity = mesh.connectivity
     if not isinstance(
         connectivity,
@@ -736,7 +896,10 @@ def _mesh_edges(mesh: CellMesh, /) -> np.ndarray:
     ):
         raise MeshingFailure(
             MeshingFailureCategory.CONVERSION_FAILED,
-            "Gmsh surface/volume conversion requires two- or three-dimensional connectivity.",
+            (
+                "gmsh.mesh_edges must provide two- or three-dimensional cell connectivity; got "
+                + "Gmsh surface/volume conversion requires two- or three-dimensional connectivity."
+            ),
             stage=MeshingStageKind.CANONICALIZATION.value,
         )
     return np.asarray(connectivity.edges, dtype=np.int32)
@@ -744,8 +907,8 @@ def _mesh_edges(mesh: CellMesh, /) -> np.ndarray:
 
 def _size_compliance(
     specification: Any,
-    mesh: CellMesh,
-    organization: _Organization,
+    mesh: cell_mesh_owner.CellMesh,
+    organization: Organization,
     connectivity_edges: np.ndarray,
     minimum_edge: float,
     maximum_edge: float,
@@ -753,7 +916,7 @@ def _size_compliance(
     semantic_volume: bool,
     size_field_count: int,
     /,
-) -> _EvidenceSection:
+) -> EvidenceSection:
     issues = []
     requested = [
         (
@@ -783,7 +946,7 @@ def _size_compliance(
             )
         )
     if semantic_volume:
-        size_issues, local_requested, local_achieved = _semantic_size_compliance(
+        size_issues, local_requested, local_achieved = semantic_size_compliance(
             mesh,
             specification,
             # ty: ignore[invalid-argument-type]
@@ -805,7 +968,7 @@ def _size_compliance(
                 ("size_field_count", float(size_field_count)),
             )
         )
-        return _EvidenceSection(tuple(requested), tuple(achieved), tuple(issues))
+        return EvidenceSection(tuple(requested), tuple(achieved), tuple(issues))
     top_scope = (
         specification.scope
         if isinstance(specification, SurfaceMeshingSpec)
@@ -818,7 +981,7 @@ def _size_compliance(
         ):
             continue
         if isinstance(control, UniformSizeControl):
-            size_issues, local_requested, local_achieved = _edge_size_evidence(
+            size_issues, local_requested, local_achieved = edge_size_evidence(
                 control,
                 connectivity_edges,
                 np.asarray(mesh.coordinates, dtype=np.float64),
@@ -856,20 +1019,20 @@ def _size_compliance(
                 if maximum_edge > control.maximum_size + tolerance:
                     issues.append(f"maximum_size:{control.control_id}")
     achieved.append(("size_field_count", float(size_field_count)))
-    return _EvidenceSection(tuple(requested), tuple(achieved), tuple(issues))
+    return EvidenceSection(tuple(requested), tuple(achieved), tuple(issues))
 
 
-def _audit_gmsh_mesh(
+def audit_gmsh_mesh(
     specification: Any,
     specification_id: str,
     geometry: Any,
-    organization: _Organization,
+    organization: Organization,
     requested_kinds: set[str],
     minimum_jacobian: float,
     semantic_surface: bool,
     semantic_volume: bool,
     size_field_count: int,
-    sections: tuple[_EvidenceSection, ...],
+    sections: tuple[EvidenceSection, ...],
     /,
 ) -> Any:
     mesh = organization.mesh
@@ -891,7 +1054,7 @@ def _audit_gmsh_mesh(
         )
     family_policy = specification.target.cell_families
     achieved_kinds = {block.cell_kind for block in mesh.blocks}
-    connectivity_edges = _mesh_edges(mesh)
+    connectivity_edges = mesh_edges(mesh)
     edge_lengths = np.linalg.norm(
         np.asarray(mesh.coordinates)[connectivity_edges[:, 1]]
         - np.asarray(mesh.coordinates)[connectivity_edges[:, 0]],
@@ -954,7 +1117,7 @@ def _stages(
     plan: Any,
     generation: _Generation,
     extraction: _Extraction,
-    organization: _Organization,
+    organization: Organization,
     background: BackgroundMetricControl | None,
     geometry_layout_id: str,
     audit: Any,
@@ -1105,27 +1268,28 @@ def _stages(
     )
 
 
-def _conformity_section(curved: _CurvedGeometry, /) -> _EvidenceSection:
+def conformity_section(curved: CurvedGeometry, /) -> EvidenceSection:
     if curved.conformity_residual is None:
-        return _EvidenceSection()
-    return _EvidenceSection(
+        return EvidenceSection()
+    return EvidenceSection(
         (), (("high_order_node_conformity_residual", curved.conformity_residual),)
     )
 
 
-def _execute_brep(
+@checked
+def execute_brep(
     gmsh: Any,
     plan: Any,
     version: str,
     info: MeshingProviderInfo,
-    cache: _CadImportCache,
+    cache: CadImportCache,
     background: BackgroundMetricControl | None,
     /,
 ) -> CellMeshingResult:
     source = plan.source
     specification = plan.specification
     report = source.report
-    generation = _prepare_generation(gmsh, plan, cache, background)
+    generation = prepare_generation(gmsh, plan, cache, background)
     _generate(gmsh, plan, generation)
     extraction = _extract(gmsh, plan, generation)
     canonical = _canonical_mesh(gmsh, plan, generation, extraction)
@@ -1137,7 +1301,7 @@ def _execute_brep(
         and specification.target.ambient_dimension == 2
         else None
     )
-    curved = _cell_geometry(
+    curved = cell_geometry(
         gmsh,
         mesh,
         extraction.top,
@@ -1154,7 +1318,7 @@ def _execute_brep(
     corner_points = extraction.points[canonical.corner_nodes]
     size_fields = generation.size_fields
     corner_edges = (
-        _mesh_edges(mesh)
+        mesh_edges(mesh)
         if size_fields.proximity or size_fields.background is not None
         else np.empty((0, 2), dtype=np.int32)
     )
@@ -1163,7 +1327,7 @@ def _execute_brep(
     )
     sections = (
         extraction.periodic,
-        _EvidenceSection(
+        EvidenceSection(
             # ty: ignore[unresolved-attribute]
             extraction.layer_audit.requested,
             # ty: ignore[unresolved-attribute]
@@ -1172,25 +1336,25 @@ def _execute_brep(
         extraction.bands,
         extraction.layer_field,
         organization.layer_interfaces,
-        _EvidenceSection((), extraction.native.achieved, extraction.native.issues),
-        _conformity_section(curved),
-        _audit_protected_features(
+        EvidenceSection((), extraction.native.achieved, extraction.native.issues),
+        conformity_section(curved),
+        audit_protected_features(
             gmsh,
             generation.protected,
             mesh,
             extraction.node_tags,
             extraction.points,
             canonical.source_to_corner,
-            1.0e-9 * _source_scale(source),
+            1.0e-9 * source_scale(source),
         ),
-        _proximity_evidence(
+        proximity_evidence(
             gmsh,
             generation.size_fields.proximity,
             corner_edges,
             corner_points,
             specification.size_compliance,
         ),
-        _background_metric_evidence(
+        background_metric_evidence(
             gmsh,
             generation.size_fields.background,
             corner_edges,
@@ -1199,7 +1363,7 @@ def _execute_brep(
             metric_tolerance,
         ),
     )
-    audit, compliance = _audit_gmsh_mesh(
+    audit, compliance = audit_gmsh_mesh(
         specification,
         specification.specification_id,
         geometry,

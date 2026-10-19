@@ -88,8 +88,8 @@ class SemiconductorTransferEvidence(StrictModule):
 class SemiconductorTransferResult(StrictModule):
     """Atomic result of one composition rebind of an adapted device.
 
-    ``prepared`` and ``coordinates`` are read from ``receipt.composition``: the
-    staged target when the rebind is published, otherwise the exact accepted
+    ``prepared`` and ``coordinates`` come from the composition rebind result: the
+    staged target when the rebind is published, otherwise the accepted
     source objects. ``candidate_*`` retain the unpublished staged device and
     reclosed state for diagnosis.
     """
@@ -192,7 +192,7 @@ def _transition_routes(
 
 
 def _material_identity(model: Any, /) -> str:
-    """Canonical identity of one complete material model, never its display name."""
+    """Compute the material model fingerprint from its family and parameters."""
     return canonical_fingerprint(
         {
             "kind": "semiconductor-material",
@@ -278,14 +278,12 @@ def _redistribution(
     coverage = np.bincount(sources, weights=share, minlength=source_active.size)
     if np.any(source_active & (coverage <= 0)):
         raise ValueError(
-            f"Native transition leaves source {inventory} without a same-material "
-            "target route."
+            f"transfer.source.{inventory} must have same-material target routes; got uncovered controls {np.flatnonzero(source_active & (coverage <= 0))!r}"
         )
     received = np.bincount(targets, weights=share, minlength=target_active.size)
     if np.any(target_active & (received <= 0)):
         raise ValueError(
-            f"Transfer cannot create {inventory} on a target control volume without "
-            "a same-material source route."
+            f"transfer.target.{inventory} must have same-material source routes; got uncovered controls {np.flatnonzero(target_active & (received <= 0))!r}"
         )
     pairs, inverse = np.unique(
         np.stack((sources, targets), axis=1), axis=0, return_inverse=True
@@ -378,7 +376,9 @@ def _stage_candidate(
     old, new = prepared.plan, target_prepared.plan
     fields = _physical_fields(prepared, point.coordinates)
     if bool(jnp.any(~jnp.isfinite(fields)) | jnp.any(fields < 0)):
-        raise ValueError("Source particle densities must be finite and nonnegative.")
+        raise ValueError(
+            f"transfer.source.particle_densities must be finite and nonnegative; got {fields!r}"
+        )
     old_codes, new_codes = _material_codes(old, new)
     same_material = (old_codes[routes] == new_codes[:, None]) & (interpolation > 0)
     target_volumes = np.asarray(new.support.volumes, dtype=np.float64)
@@ -602,7 +602,7 @@ def semiconductor_reprepare(
 
     ``epoch_index`` is the index of the accepted source topology epoch; the
     adapted device is epoch ``epoch_index + 1``. Material identity is the
-    canonical identity of each complete material model. Carrier and dopant
+    fingerprint of each material model. Carrier and dopant
     counts per control volume and each differential stored material energy
     cross only same-material routes through a shared positive conservative
     transfer; bulk or surface trap populations keep their extensive occupied
@@ -621,8 +621,8 @@ def semiconductor_reprepare(
     inventory against its reclosed value with the conservation tolerance, and
     succeeds only for positive redistribution evidence and a positive, finite
     reclosed state. Reclosure success and the source point's success decide the
-    accepted boundary. Anything else leaves the receipt unpublished and the
-    result on the exact accepted source device and coordinates. Stale lineage,
+    accepted boundary. Anything else leaves the composition rebind unpublished and the
+    result on the accepted source device and coordinates. Stale lineage,
     mismatched material identity or unsupported populations raise before any
     candidate is staged.
     """
@@ -634,7 +634,9 @@ def semiconductor_reprepare(
         or not np.isfinite(absolute_energy_tolerance)
         or absolute_energy_tolerance < 0
     ):
-        raise ValueError("Conservation tolerances must be finite and nonnegative.")
+        raise ValueError(
+            f"transfer.conservation_tolerances must be finite and nonnegative; got {(relative_tolerance, absolute_particle_tolerance, absolute_energy_tolerance)!r}"
+        )
     routes, interpolation = _transition_routes(
         prepared, target_prepared, transition, source_result
     )

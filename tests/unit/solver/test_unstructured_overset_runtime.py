@@ -169,13 +169,16 @@ def test_canonical_route_sign_reverses_receptor_normal_and_preserves_cfl() -> No
         )
 
         def correction_flux(value: Any) -> Any:
-            block, _, _ = dynamics._overset_correction(value, metrics, None)
+            block = dynamics._overset_correction(value, metrics, None).block
             assert block is not None
             return block.flux_rate
 
         flux_rate = eqx.filter_jit(correction_flux)(state)
         gradient = jax.grad(lambda value: jnp.sum(correction_flux(value) ** 2))(state)
-        block, speed, measures = dynamics._overset_correction(state, metrics, None)
+        correction = dynamics._overset_correction(state, metrics, None)
+        block = correction.block
+        speed = correction.signal_speed
+        measures = correction.route_measures
         assert block is not None
         np.testing.assert_allclose(flux_rate, block.flux_rate)
         assert bool(np.asarray(jnp.all(jnp.isfinite(gradient))))

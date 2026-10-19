@@ -43,9 +43,9 @@ from .._validity import (
     representation_validity,
 )
 from ..design._schema import (
-    _ParameterCollector,
     DesignState,
     ParameterBinding,
+    ParameterCollector,
     ParameterId,
 )
 
@@ -76,7 +76,7 @@ class Translation(GeometrySource):
         self.offset = jnp.asarray(offset_, dtype=jnp.float64)
         self.feature_id = feature_id or f"translation-{uuid4().hex}"
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         child = self.child._compile(context)
         if self.offset.shape != (child.ambient_dimension,):
             raise ValueError(
@@ -86,6 +86,7 @@ class Translation(GeometrySource):
             ParameterId(self.feature_id, "offset"),
             self.offset,
             role="position_offset",
+            unit=context.coordinate_unit,
         )
         return _TranslationKernel(child, offset, source_id=self.feature_id)
 
@@ -272,7 +273,7 @@ class Union(GeometrySource):
         self.children = children_
         self.feature_id = feature_id or f"union-{uuid4().hex}"
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         children = tuple(child._compile(context) for child in self.children)
         dimension = children[0].ambient_dimension
         intrinsic_dimension = children[0].intrinsic_dimension

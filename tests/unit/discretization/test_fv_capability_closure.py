@@ -59,7 +59,6 @@ def test_fv_capability_closure_scenario_1() -> None:
             (3, 0, 4, 7),
         ),
     )
-    # ty: ignore[invalid-argument-type]
     mesh = CellMesh.from_polyhedra(coordinates, cells)
     geometry = prepare_polyhedral_finite_volume_geometry(mesh)
     finite_volume = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare()
@@ -115,7 +114,6 @@ def test_fv_capability_closure_scenario_1() -> None:
         ),
     )
     finite_volume = UnstructuredFiniteVolumePlan.from_cell_mesh(
-        # ty: ignore[invalid-argument-type]
         CellMesh.from_polyhedra(coordinates, cells)
     ).prepare()
 

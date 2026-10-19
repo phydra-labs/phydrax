@@ -1187,7 +1187,7 @@
       "role": "negative-refusal",
       "source_artifact": {
         "license": "LicenseRef-PHYDRA-Proprietary",
-        "locator": "tools/_hybrid_layer_source.py::ORIGINAL_CURVED_PERIODIC_SOURCE_DIGEST",
+        "locator": "phydrax/meshing/qualification/_layer_source.py::ORIGINAL_CURVED_PERIODIC_SOURCE_DIGEST",
         "media_type": "application/vnd.phydrax.source-identity+json"
       },
       "source_digest": "ebeaa8557815eada07f50d04b77fe40d4ed2809392af56d147c6876bace97a35",
@@ -1234,7 +1234,7 @@
       "source_artifact": {
         "fiber_graph": true,
         "license": "LicenseRef-PHYDRA-Proprietary",
-        "locator": "tools/_hybrid_layer_source.py::corrected_periodic_layer_source",
+        "locator": "phydrax/meshing/qualification/_layer_source.py::prepare_corrected_periodic_layer_source",
         "mapped_domain_id": "78c304f2b99052d26ca7f234cdd423da5ee59050d942dc38218ee29921a97c6d",
         "media_type": "text/x-python",
         "source_binding_id": "b5f3d366ae32ddcb7144334d9b381e1bb829403253dd13cd7f363784d23c2078"
@@ -1261,5 +1261,5 @@
     "moving-overset",
     "design-learned-loop"
   ],
-  "registration_id": "32cb394bcb750a93e17386064c3292c91a350fe3f71f65d60981a328e57cf377"
+  "registration_id": "1d49c288a0a9a2a5c52df503c27810b34dcd883529afee5d32b7b13ee8056836"
 }

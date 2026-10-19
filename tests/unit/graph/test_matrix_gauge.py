@@ -3,20 +3,20 @@
 #
 
 
-from typing import Any
-
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
+from jax import Array
 
 import phydrax as phx
 
 
-def _triangle() -> Any:
+def _triangle() -> phx.discretization.CellComplexTopology:
     return phx.discretization.polygonal_cell_complex(jnp.asarray([[0, 1, 2]]), None, 3)
 
 
-def _su2_links(space: Any) -> Any:
+def _su2_links(space: phx.graph.MatrixGaugeLinkSpace) -> Array:
     coordinates = jnp.asarray(
         [[0.21, -0.08, 0.13], [-0.17, 0.09, 0.04], [0.06, 0.14, -0.11]]
     )
@@ -132,3 +132,60 @@ def test_matrix_gauge_scenario_2() -> None:
         reordered = reordered @ factor
 
     assert not jnp.allclose(ordered, reordered)
+
+
+@pytest.mark.parametrize("dimension", (2, 5), ids=("small-native", "native-lu"))
+def test_special_unitary_membership_refuses_unit_determinant_violation(
+    dimension: int,
+) -> None:
+    topology = _triangle()
+    links = (
+        jnp.broadcast_to(
+            jnp.eye(dimension, dtype=jnp.complex128), (3, dimension, dimension)
+        )
+        .at[:, 0, 0]
+        .set(-1.0)
+    )
+    unitary = phx.graph.MatrixGaugeLinkSpace(topology, phx.metrix.UnitaryGroup(dimension))
+    special = phx.graph.MatrixGaugeLinkSpace(
+        topology, phx.metrix.SpecialUnitaryGroup(dimension)
+    )
+    assert unitary.contains(links)
+    assert not special.contains(links)
+
+
+@pytest.mark.parametrize(
+    ("ulps", "accepted"),
+    ((4, True), (128, False)),
+    ids=("below-membership-floor", "above-membership-floor"),
+)
+def test_special_unitary_membership_preserves_dtype_tolerance_floor(
+    ulps: int,
+    accepted: bool,
+) -> None:
+    # The declared tolerance is below one dtype ulp, so 64*eps controls admission.
+    declared_tolerance = float(np.finfo(np.float64).eps / 1024)
+    space = phx.graph.MatrixGaugeLinkSpace(
+        _triangle(), phx.metrix.SpecialUnitaryGroup(2, tolerance=declared_tolerance)
+    )
+    # A diagonal phase residual of ulps*eps brackets the preserved 64*eps
+    # membership floor; its Gram residual is only O(eps**2).
+    residual = ulps * jnp.finfo(jnp.float64).eps
+    links = space.identity().at[:, 0, 0].set(1.0 + 1j * residual)
+    assert bool(space.contains(links)) is accepted
+
+
+def test_native_determinant_retains_singular_jvp() -> None:
+    matrix = jnp.asarray([[2.0, 0.0], [0.0, 0.0]], dtype=jnp.float64)
+    tangent = jnp.asarray([[0.0, 0.0], [0.0, 3.0]], dtype=jnp.float64)
+    value, derivative = jax.jvp(phx.linalg.determinant, (matrix,), (tangent,))
+    assert value == 0.0
+    assert derivative == 6.0
+
+
+def test_native_determinant_retains_singular_holomorphic_gradient() -> None:
+    matrix = jnp.asarray([[1.0 + 2.0j, 0.0], [0.0, 0.0]], dtype=jnp.complex128)
+    gradient = jax.grad(phx.linalg.determinant, holomorphic=True)(matrix)
+    np.testing.assert_array_equal(
+        gradient, np.asarray([[0.0, 0.0], [0.0, 1.0 + 2.0j]], dtype=np.complex128)
+    )

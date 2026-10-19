@@ -5,8 +5,10 @@
 // byte requests presented to the resource, including simultaneous old/new
 // buffers during growth, not estimates of container lengths or process RSS.
 #pragma once
+#include "counter_records.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -20,7 +22,10 @@
 #include <new>
 #include <mutex>
 #include <set>
+#include <span>
 #include <type_traits>
+#include <stdexcept>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -30,6 +35,9 @@
 namespace phx::mc {
 
 inline bool native_execution_spend(int64_t work, uint64_t queries) noexcept;
+struct NativeBatchStorage;
+class NativeExecutionTarget;
+extern thread_local NativeExecutionTarget* active_execution_target;
 
 class BoundedMemoryResource final : public std::pmr::memory_resource {
  public:
@@ -39,8 +47,9 @@ class BoundedMemoryResource final : public std::pmr::memory_resource {
       : limit_(limit), upstream_(upstream) {}
 
   bool set_limit(std::size_t limit) noexcept {
+    const std::lock_guard ledger(*ledger_mutex_);
     const std::lock_guard lock(mutex_);
-    if (limit < live_ || limit - live_ < external_upper_) {
+    if (limit < live_ || limit - live_ < external_upper_ + batch_upper_) {
       return false;
     }
     limit_ = limit;
@@ -69,80 +78,67 @@ class BoundedMemoryResource final : public std::pmr::memory_resource {
   }
   std::size_t limit_bytes() const noexcept {
     const std::lock_guard lock(mutex_);
-    return limit_;
+    return effective_limit_locked();
   }
-  std::size_t available_bytes() const noexcept {
+  std::size_t available_bytes() const noexcept;
+  const std::shared_ptr<std::mutex>& ledger_mutex() const noexcept { return ledger_mutex_; }
+  // Allocator headers are separate from exact numerical payload requests.
+  std::size_t bookkeeping_bytes() const noexcept {
     const std::lock_guard lock(mutex_);
-    return limit_ - live_ - external_upper_;
+    return bookkeeping_;
   }
   // Conservative live Python/object storage is not native allocated memory.
   // It consumes the same cap without allocating a dummy payload.
-  bool resize_external_storage(std::size_t previous, std::size_t requested) noexcept {
+  bool resize_external_storage(std::size_t previous, std::size_t requested,
+                               const std::shared_ptr<NativeBatchStorage>& storage = {}) noexcept;
+  void release_external_storage(std::size_t bytes,
+                                const std::shared_ptr<NativeBatchStorage>& storage = {}) noexcept;
+  bool reserve_batch_storage(std::size_t bytes) noexcept {
     const std::lock_guard lock(mutex_);
-    if (requested > previous &&
-        requested - previous > limit_ - live_ - external_upper_) return false;
-    external_upper_ = external_upper_ - previous + requested;
-    for (Observation* observer = observation_; observer != nullptr; observer = observer->previous) {
-      observer->external_peak_upper = std::max(observer->external_peak_upper, external_upper_);
-    }
+    if (bytes > available_locked()) return false;
+    batch_upper_ += bytes;
     return true;
   }
-  void release_external_storage(std::size_t bytes) noexcept {
+  void settle_batch_storage(std::size_t upper, std::size_t peak) noexcept {
     const std::lock_guard lock(mutex_);
-    external_upper_ -= bytes;
+    batch_upper_ -= upper;
+    if (peak == 0) return;
+    for (Observation* observer = observation_; observer != nullptr; observer = observer->previous) {
+      observer->external_peak_upper = std::max(
+          observer->external_peak_upper, external_upper_ + batch_upper_ + peak);
+    }
   }
   std::array<std::uint64_t, 6> evidence() const noexcept {
     const std::lock_guard lock(mutex_);
-    return {static_cast<std::uint64_t>(limit_), static_cast<std::uint64_t>(live_),
+    return {static_cast<std::uint64_t>(effective_limit_locked()), static_cast<std::uint64_t>(live_),
             static_cast<std::uint64_t>(peak_), static_cast<std::uint64_t>(requested_),
             static_cast<std::uint64_t>(allocations_), static_cast<std::uint64_t>(refusals_)};
   }
 
  private:
   friend class MemoryBudgetWindow;
+  friend class NativeExecutionScope;
+  friend class NativeExecutionBatch;
+  friend class NativeExecutionTarget;
   struct Observation {
     Observation* previous = nullptr;
     std::size_t peak = 0;
+    std::size_t limit = 0;
+    std::size_t managed_limit = 0;
+    std::size_t external_baseline = 0;
     std::size_t last_request = 0;
+    std::thread::id thread;
+    bool aggregate = false;
+    std::size_t allocation_start = 0;
+    std::size_t allocations = 0, refusals = 0, live = 0;
     std::size_t external_peak_upper = 0;
   };
-  void* do_allocate(std::size_t bytes, std::size_t alignment) override {
-    const std::lock_guard lock(mutex_);
-    requested_ = bytes;
-    for (Observation* observer = observation_; observer != nullptr; observer = observer->previous) {
-      observer->last_request = bytes;
-    }
-    if (!native_execution_spend(0, 0) || bytes > limit_ - live_ - external_upper_ ||
-        allocations_ == std::numeric_limits<std::size_t>::max()) {
-      if (refusals_ != std::numeric_limits<std::size_t>::max()) {
-        ++refusals_;
-      }
-      throw std::bad_alloc();
-    }
-    void* buffer;
-    try {
-      buffer = upstream_->allocate(bytes, alignment);
-    } catch (const std::bad_alloc&) {
-      if (refusals_ != std::numeric_limits<std::size_t>::max()) {
-        ++refusals_;
-      }
-      throw;
-    }
-    live_ += bytes;
-    ++allocations_;
-    if (live_ > peak_) {
-      peak_ = live_;
-    }
-    for (Observation* observer = observation_; observer != nullptr; observer = observer->previous) {
-      observer->peak = std::max(observer->peak, live_);
-    }
-    return buffer;
-  }
-  void do_deallocate(void* pointer, std::size_t bytes, std::size_t alignment) override {
-    const std::lock_guard lock(mutex_);
-    upstream_->deallocate(pointer, bytes, alignment);
-    live_ -= bytes;
-  }
+  std::size_t effective_limit_locked() const noexcept;
+  std::size_t available_locked() const noexcept;
+  void change_storage_locked(const std::shared_ptr<NativeBatchStorage>& storage,
+                             std::size_t bytes, bool increase) noexcept;
+  void* do_allocate(std::size_t bytes, std::size_t alignment) override;
+  void do_deallocate(void* pointer, std::size_t bytes, std::size_t alignment) override;
   bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override {
     return this == &other;
   }
@@ -151,14 +147,17 @@ class BoundedMemoryResource final : public std::pmr::memory_resource {
   // buffers may release on another thread, so allocation, observations,
   // evidence, limits, and upstream release share this resource lock.
   mutable std::mutex mutex_;
+  std::shared_ptr<std::mutex> ledger_mutex_ = std::make_shared<std::mutex>();
   std::size_t limit_;
   std::pmr::memory_resource* upstream_;
   std::size_t live_ = 0;
   std::size_t external_upper_ = 0;
+  std::size_t batch_upper_ = 0;
   std::size_t peak_ = 0;
   std::size_t requested_ = 0;
   std::size_t allocations_ = 0;
   std::size_t refusals_ = 0;
+  std::size_t bookkeeping_ = 0;
   Observation* observation_ = nullptr;
 };
 
@@ -193,50 +192,28 @@ class MemoryScope final {
 class MemoryBudgetWindow final {
  public:
   explicit MemoryBudgetWindow(std::size_t additional_limit,
-                              MemoryOwner owner = scratch_memory_owner())
-      : owner_(owner ? std::move(owner)
-                     : std::make_shared<BoundedMemoryResource>(additional_limit)) {
-    const std::lock_guard lock(owner_->mutex_);
-    baseline_ = owner_->live_;
-    previous_limit_ = owner_->limit_;
-    allocation_start_ = owner_->allocations_;
-    refusal_start_ = owner_->refusals_;
-    limit_ = std::min(additional_limit, previous_limit_ - baseline_ - owner_->external_upper_);
-    owner_->limit_ = baseline_ + owner_->external_upper_ + limit_;
-    observation_.previous = owner_->observation_;
-    observation_.peak = baseline_;
-    observation_.external_peak_upper = owner_->external_upper_;
-    owner_->observation_ = &observation_;
-  }
-  ~MemoryBudgetWindow() {
-    const std::lock_guard lock(owner_->mutex_);
-    owner_->observation_ = observation_.previous;
-    owner_->limit_ = previous_limit_;
-  }
+                              MemoryOwner owner = scratch_memory_owner());
+  ~MemoryBudgetWindow();
   MemoryBudgetWindow(const MemoryBudgetWindow&) = delete;
   MemoryBudgetWindow& operator=(const MemoryBudgetWindow&) = delete;
   const MemoryOwner& owner() const noexcept { return owner_; }
   std::array<std::uint64_t, 6> evidence() const noexcept {
     const std::lock_guard lock(owner_->mutex_);
-    const std::size_t current = owner_->live_;
     return {static_cast<std::uint64_t>(limit_),
-            static_cast<std::uint64_t>(current > baseline_ ? current - baseline_ : 0),
-            static_cast<std::uint64_t>(observation_.peak - baseline_),
+            static_cast<std::uint64_t>(observation_.live),
+            static_cast<std::uint64_t>(observation_.peak),
             static_cast<std::uint64_t>(observation_.last_request),
-            static_cast<std::uint64_t>(owner_->allocations_ - allocation_start_),
-            static_cast<std::uint64_t>(owner_->refusals_ - refusal_start_)};
+            static_cast<std::uint64_t>(observation_.allocations),
+            static_cast<std::uint64_t>(observation_.refusals)};
   }
   std::array<std::uint64_t, 2> external_evidence() const noexcept {
+    // Reservations are not host payload peaks.
     const std::lock_guard lock(owner_->mutex_);
-    return {static_cast<std::uint64_t>(owner_->external_upper_),
+    return {static_cast<std::uint64_t>(owner_->external_upper_ + owner_->batch_upper_),
             static_cast<std::uint64_t>(observation_.external_peak_upper)};
   }
  private:
   MemoryOwner owner_;
-  std::size_t baseline_;
-  std::size_t previous_limit_;
-  std::size_t allocation_start_;
-  std::size_t refusal_start_;
   std::size_t limit_ = 0;
   BoundedMemoryResource::Observation observation_;
 };
@@ -250,169 +227,218 @@ struct ExecutionRefusal {
 };
 
 class NativeExecutionScope;
+class NativeExecutionBatch;
 extern thread_local NativeExecutionScope* active_execution_scope;
 
 class NativeExecutionScope final {
  public:
   NativeExecutionScope(uint64_t work, uint64_t queries, uint64_t cavity,
                        std::size_t scratch, double seconds,
-                       MemoryOwner owner = scratch_memory_owner())
-      : previous_(active_execution_scope), work_limit_(work),
-        query_limit_(queries), cavity_limit_(cavity),
-        start_(Clock::now()),
-        deadline_(seconds == std::numeric_limits<double>::infinity()
-                      ? Clock::time_point::max()
-                      : start_ + std::chrono::duration_cast<Clock::duration>(
-                                     std::chrono::duration<double>(seconds))),
-        memory_(scratch, std::move(owner)), memory_scope_(memory_.owner()) {
-    active_execution_scope = this;
-  }
-  ~NativeExecutionScope() { active_execution_scope = previous_; }
+                       MemoryOwner owner = scratch_memory_owner());
+  ~NativeExecutionScope();
   NativeExecutionScope(const NativeExecutionScope&) = delete;
   NativeExecutionScope& operator=(const NativeExecutionScope&) = delete;
 
-  bool admit(uint64_t work, uint64_t queries = 0) noexcept {
-    const auto now = Clock::now();
-    for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
-      if (scope->status_ != PHX_MC_OK) return false;
-      if (now >= scope->deadline_) {
-        scope->status_ = PHX_MC_TIMEOUT;
-        return false;
-      }
-      if (work > scope->work_limit_ - scope->work_) {
-        for (auto* owner = this; owner != nullptr; owner = owner->previous_) {
-          ++owner->work_refusals_;
-          owner->status_ = PHX_MC_CAPACITY_EXCEEDED;
-        }
-        return false;
-      }
-      if (queries > scope->query_limit_ - scope->queries_) {
-        for (auto* owner = this; owner != nullptr; owner = owner->previous_) {
-          ++owner->query_refusals_;
-          owner->status_ = PHX_MC_CAPACITY_EXCEEDED;
-        }
-        return false;
-      }
-    }
-    return true;
-  }
-  bool charge(uint64_t work, uint64_t queries = 0) noexcept {
-    if (!admit(work, queries)) return false;
-    for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
-      scope->work_ += work;
-      scope->queries_ += queries;
-    }
-    return true;
-  }
-  bool charge_external(uint64_t work, uint64_t queries) noexcept {
-    if (!charge(work, queries)) return false;
-    for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
-      scope->external_work_ += work;
-      scope->external_queries_ += queries;
-    }
-    return true;
-  }
-  bool import_preparation(uint64_t work, uint64_t queries, double seconds) noexcept {
-    if (!admit(work, queries)) return false;
-    const auto now = Clock::now();
-    for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
-      if (scope->deadline_ != Clock::time_point::max() &&
-          seconds > std::chrono::duration<double>(scope->deadline_ - now).count()) {
-        scope->status_ = PHX_MC_TIMEOUT;
-        return false;
-      }
-      if (!std::isfinite(scope->prior_seconds_ + seconds)) return false;
-    }
-    if (!charge_external(work, queries)) return false;
-    const auto debit = std::chrono::ceil<Clock::duration>(
-        std::chrono::duration<double>(seconds));
-    for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
-      scope->prior_seconds_ += seconds;
-      if (scope->deadline_ != Clock::time_point::max()) scope->deadline_ -= debit;
-    }
-    return true;
-  }
-  double prior_seconds() const noexcept { return prior_seconds_; }
-  bool admit_cavity(std::size_t cells) noexcept {
-    if (!charge(0)) return false;
-    for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
-      if (cells > scope->cavity_limit_) {
-        ++scope->cavity_refusals_;
-        scope->status_ = PHX_MC_CAPACITY_EXCEEDED;
-        return false;
-      }
-    }
-    for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
-      scope->peak_cavity_ = std::max(scope->peak_cavity_, static_cast<uint64_t>(cells));
-    }
-    return true;
-  }
-  void refuse_external_storage() noexcept {
-    for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
-      scope->status_ = PHX_MC_CAPACITY_EXCEEDED;
-    }
-  }
-  int32_t status() const noexcept {
-    for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
-      if (scope->status_ != PHX_MC_OK) return scope->status_;
-    }
-    return PHX_MC_OK;
-  }
-  bool primitive_query() noexcept {
-    if (!charge(0)) return false;
-    for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
-      if (scope->primitive_queries_ != std::numeric_limits<uint64_t>::max()) {
-        ++scope->primitive_queries_;
-      }
-    }
-    return true;
-  }
-  std::array<uint64_t, 9> evidence() const noexcept {
-    return {work_, queries_, peak_cavity_, work_refusals_, query_refusals_, cavity_refusals_,
-            external_work_, external_queries_, primitive_queries_};
-  }
-  std::array<uint64_t, PHX_MC_EXECUTION_MEMORY_VALUES> memory_evidence() const noexcept {
-    const auto allocated = memory_.evidence();
-    const auto external = memory_.external_evidence();
-    return {allocated[0], allocated[1], allocated[2], allocated[3],
-            allocated[4], allocated[5], external[0], external[1]};
-  }
-  double seconds() const noexcept {
-    return std::chrono::duration<double>(Clock::now() - start_).count();
-  }
-  std::array<uint64_t, 4> remaining() const noexcept {
-    std::array<uint64_t, 4> result;
-    result.fill(std::numeric_limits<uint64_t>::max());
-    for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
-      result[0] = std::min(result[0], scope->work_limit_ - scope->work_);
-      result[1] = std::min(result[1], scope->query_limit_ - scope->queries_);
-      result[2] = std::min(result[2], scope->cavity_limit_);
-      const auto& pool = scope->memory_.owner();
-      result[3] = std::min(result[3], static_cast<uint64_t>(pool->available_bytes()));
-    }
-    return result;
-  }
-  double remaining_wall_seconds() const noexcept {
-    auto deadline = Clock::time_point::max();
-    for (auto* scope = this; scope != nullptr; scope = scope->previous_) {
-      deadline = std::min(deadline, scope->deadline_);
-    }
-    if (deadline == Clock::time_point::max()) return std::numeric_limits<double>::infinity();
-    return std::max(0.0, std::chrono::duration<double>(deadline - Clock::now()).count());
-  }
+  bool admit(uint64_t work, uint64_t queries = 0) noexcept;
+  bool charge(uint64_t work, uint64_t queries = 0) noexcept;
+  bool charge_external(uint64_t work, uint64_t queries) noexcept;
+  bool import_preparation(uint64_t work, uint64_t queries, double seconds) noexcept;
+  double prior_seconds() const noexcept;
+  bool admit_cavity(std::size_t cells) noexcept;
+  void refuse_external_storage(uint64_t bytes = 0) noexcept;
+  int32_t status() const noexcept;
+  bool primitive_query() noexcept;
+  bool checkpoint() noexcept;
+  bool has_live_batches() const noexcept;
+  int32_t batch_refusal(uint64_t* values) const noexcept;
+  int32_t refusal_request(uint64_t* values) const noexcept;
+  std::array<uint64_t, PHX_MC_EXECUTION_COUNTERS> evidence() const noexcept;
+  std::array<uint64_t, PHX_MC_EXECUTION_MEMORY_VALUES> memory_evidence() const noexcept;
+  uint64_t allocator_bookkeeping() const noexcept;
+  double seconds() const noexcept;
+  std::array<uint64_t, 4> remaining() const noexcept;
+  double remaining_wall_seconds() const noexcept;
  private:
   using Clock = std::chrono::steady_clock;
+  friend class NativeExecutionBatch;
+  friend class NativeParallelBatch;
+  bool checkpoint_locked(Clock::time_point now) noexcept;
+  bool logical_checkpoint_locked() noexcept;
+  bool admit_locked(uint64_t work, uint64_t queries) noexcept;
+  void commit_locked(uint64_t work, uint64_t queries, bool external) noexcept;
+  void refuse_locked(std::size_t resource) noexcept;
+  int32_t status_locked() const noexcept;
+  std::array<uint64_t, 4> remaining_locked() const noexcept;
   NativeExecutionScope* previous_;
+  NativeExecutionTarget* borrowed_target_;
+  MemoryBudgetWindow memory_;
+  std::shared_ptr<std::mutex> ledger_mutex_;
+  std::thread::id thread_ = std::this_thread::get_id();
   uint64_t work_limit_, query_limit_, cavity_limit_;
   uint64_t work_ = 0, queries_ = 0, peak_cavity_ = 0;
+  uint64_t borrowed_cavity_ = 0;
+  uint64_t reserved_work_ = 0, reserved_queries_ = 0, reserved_cavity_ = 0;
+  uint64_t reserved_bytes_ = 0;
+  uint64_t live_batches_ = 0;
+  uint64_t live_scopes_ = 0, live_targets_ = 0;
+  uint16_t checkpoint_charges_ = 0;
   uint64_t work_refusals_ = 0, query_refusals_ = 0, cavity_refusals_ = 0;
   uint64_t external_work_ = 0, external_queries_ = 0;
   uint64_t primitive_queries_ = 0;
   double prior_seconds_ = 0.0;
   int32_t status_ = PHX_MC_OK;
+  ExecutionBatchRefusal batch_refusal_;
+  bool has_batch_refusal_ = false;
+  std::array<uint64_t, 4> refusal_request_{};
+  bool has_refusal_request_ = false;
   Clock::time_point start_, deadline_;
-  MemoryBudgetWindow memory_;
+  friend class NativeExecutionTarget;
+  friend class BoundedMemoryResource;
   MemoryScope memory_scope_;
+};
+
+// Shared allocation state outlives ticket handles and lexical scopes. It never
+// contains borrowed scope/mutex pointers; escaped payloads retain this state.
+struct NativeBatchStorage {
+  explicit NativeBatchStorage(std::shared_ptr<NativeBatchStorage> parent_state)
+      : parent(std::move(parent_state)) {}
+  std::shared_ptr<NativeBatchStorage> parent;
+  phx_mc_execution_usage usage{};
+  uint64_t inclusive_live = 0;
+  bool reservation_open = true;
+};
+
+class NativeExecutionBatch final {
+ public:
+  static int32_t admit(NativeExecutionScope& scope, NativeExecutionBatch* parent,
+                       std::array<uint64_t, 4> upper, void** out);
+  int32_t settle(std::array<uint64_t, 4> actual) noexcept;
+  int32_t refuse(std::array<uint64_t, 4> actual,
+                 std::array<uint64_t, 4> requested, uint64_t* out) noexcept;
+  int32_t checkpoint() noexcept;
+  int32_t usage(phx_mc_execution_usage** out) noexcept;
+ private:
+  friend class NativeExecutionTarget;
+  friend class NativeExecutionScope;
+  friend class BoundedMemoryResource;
+  friend class NativeHostStorage;
+  friend class NativeParallelBatch;
+  static void capture_refusal_locked(
+      NativeExecutionScope& scope, NativeExecutionBatch* parent,
+      std::array<uint64_t, 4> requested,
+      NativeExecutionScope* admitting_scope = nullptr) noexcept;
+  std::array<uint64_t, 4> remaining_locked() const noexcept;
+  ExecutionBatchRefusal snapshot_locked() const noexcept;
+  int32_t validate_actual_locked(std::array<uint64_t, 4>& actual) const noexcept;
+  void settle_locked(std::array<uint64_t, 4> actual,
+                     std::array<uint64_t, 4> host) noexcept;
+  NativeExecutionBatch(NativeExecutionScope& scope, NativeExecutionBatch* parent,
+                       std::array<uint64_t, 4> upper);
+  NativeExecutionScope& scope_;
+  NativeExecutionBatch* parent_;
+  std::array<uint64_t, 4> upper_;
+  std::shared_ptr<NativeBatchStorage> storage_;
+  std::array<uint64_t, 2> external_consumed_{};
+  uint64_t child_host_peak_bytes_ = 0;
+  uint64_t live_children_ = 0;
+  bool target_active_ = false;
+  bool has_usage_ = false;
+};
+
+class NativeExecutionTarget final {
+ public:
+  explicit NativeExecutionTarget(NativeExecutionBatch& ticket);
+  ~NativeExecutionTarget();
+  NativeExecutionTarget(const NativeExecutionTarget&) = delete;
+  NativeExecutionTarget& operator=(const NativeExecutionTarget&) = delete;
+  int32_t close() noexcept;
+  phx_mc_execution_usage* usage() noexcept { return &ticket_.storage_->usage; }
+ private:
+  friend class NativeExecutionScope;
+  friend class NativeExecutionBatch;
+  friend class BoundedMemoryResource;
+  friend class MemoryBudgetWindow;
+  friend class NativeHostStorage;
+  friend class NativeParallelBatch;
+  bool admit_locked(uint64_t work, uint64_t queries) noexcept;
+  void commit_locked(uint64_t work, uint64_t queries, bool external) noexcept;
+  bool cavity_locked(uint64_t cells) noexcept;
+  void refuse_locked(std::size_t resource, std::array<uint64_t, 4> requested = {}) noexcept;
+  std::array<uint64_t, 4> remaining_locked() const noexcept;
+  NativeExecutionBatch& ticket_;
+  NativeExecutionTarget* previous_target_;
+  NativeExecutionScope* previous_scope_;
+  MemoryOwner previous_memory_;
+  std::thread::id thread_;
+  bool closed_ = false;
+};
+
+struct NativeChunkAllowance {
+  uint64_t work = 0;
+  uint64_t queries = 0;
+  uint64_t cavity = 0;
+  // Fixed arena capacity, including native allocation headers and alignment.
+  uint64_t bytes = 0;
+};
+
+struct NativeChunkEvidence {
+  ExecutionCounters counters;
+  ManagedMemory memory;
+  int32_t status = PHX_MC_OK;
+  bool completed = false;
+};
+
+// Bounds one allocation in a recyclable chunk arena. Sum cumulative requests
+// unless lifetimes prove a tighter fragmentation bound. Overflow is a caller
+// bound defect, detected before launching any chunk.
+uint64_t native_parallel_allocation_bytes(
+    uint64_t payload, std::size_t alignment = alignof(std::max_align_t));
+
+class NativeParallelBatch final {
+ public:
+  explicit NativeParallelBatch(std::span<const NativeChunkAllowance> allowances);
+  ~NativeParallelBatch();
+  NativeParallelBatch(const NativeParallelBatch&) = delete;
+  NativeParallelBatch& operator=(const NativeParallelBatch&) = delete;
+  int32_t status() const noexcept { return status_; }
+  const MemoryOwner& chunk_owner(std::size_t index) const noexcept { return owners_[index]; }
+  const NativeChunkAllowance& chunk_allowance(std::size_t index) const noexcept {
+    return allowances_[index];
+  }
+  double remaining_wall_seconds() const noexcept;
+  int32_t settle(std::span<const NativeChunkEvidence> evidence) noexcept;
+ private:
+  void release() noexcept;
+  void fail_internal() noexcept;
+  std::unique_ptr<NativeExecutionScope> implicit_scope_;
+  NativeExecutionScope* scope_ = nullptr;
+  std::unique_ptr<NativeExecutionBatch> ticket_;
+  std::vector<NativeChunkAllowance> allowances_;
+  std::vector<MemoryOwner> owners_;
+  std::thread::id thread_ = std::this_thread::get_id();
+  int32_t status_ = PHX_MC_OK;
+};
+
+// Clearing TLS precedes local scope construction; restoration follows scope
+// destruction, including construction failures and exception unwinding.
+class NativeDetachedExecution final {
+ public:
+  NativeDetachedExecution(NativeChunkAllowance allowance, MemoryOwner owner);
+  NativeDetachedExecution(const NativeDetachedExecution&) = delete;
+  NativeDetachedExecution& operator=(const NativeDetachedExecution&) = delete;
+  NativeExecutionScope& execution() noexcept { return execution_; }
+  NativeChunkEvidence evidence(int32_t status = PHX_MC_OK,
+                               bool completed = true) const noexcept;
+ private:
+  struct Affinity final {
+    Affinity() noexcept;
+    ~Affinity();
+    NativeExecutionScope* scope;
+    NativeExecutionTarget* target;
+    MemoryOwner memory;
+  };
+  Affinity affinity_;
+  NativeExecutionScope execution_;
 };
 
 inline bool native_execution_spend(int64_t work, uint64_t queries = 0) noexcept {
@@ -430,12 +456,12 @@ inline void native_execution_primitive_query() {
     throw ExecutionRefusal{active_execution_scope->status()};
   }
 }
-inline void charge_preparation_visit(void (*charge)(void*), void* context) {
-  if (charge != nullptr) charge(context);
-  else native_execution_charge(0);
-}
 inline bool native_execution_cavity(std::size_t cells) noexcept {
   return active_execution_scope == nullptr || active_execution_scope->admit_cavity(cells);
+}
+// Refusal recorded on the active scope chain; PHX_MC_OK without a scope.
+inline int32_t native_execution_refusal() noexcept {
+  return active_execution_scope == nullptr ? PHX_MC_OK : active_execution_scope->status();
 }
 inline int32_t native_execution_status(int32_t status) noexcept {
   if (active_execution_scope != nullptr &&

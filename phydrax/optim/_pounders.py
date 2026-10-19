@@ -191,6 +191,7 @@ class POUNDERS(AbstractLeastSquaresMethod):
     def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
         return state.metrics
 
+    # Invariant: trial commit precedes model refresh and independent certification.
     @checked
     def solve(
         self,
@@ -202,7 +203,9 @@ class POUNDERS(AbstractLeastSquaresMethod):
         args: Any,
     ) -> LeastSquaresResult:
         if problem.trial_policy is not None:
-            raise ValueError("POUNDERS does not implement an identified trial policy.")
+            raise ValueError(
+                f"POUNDERS.problem.trial_policy must be None; got {type(problem.trial_policy).__name__}."
+            )
         self.precision.validate_tolerance(termination.absolute_optimality)
         parameters = self.precision.state(
             validate_real_inexact_tree(

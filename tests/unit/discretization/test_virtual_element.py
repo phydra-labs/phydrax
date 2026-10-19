@@ -92,7 +92,7 @@ def _global_state_from_local(space: Any, local: Any) -> Any:
     return jnp.asarray(state)
 
 
-def test_virtual_element_scenario_1() -> None:
+def test_polygon_mesh_preserves_connectivity_and_global_cell_identity() -> None:
     coordinates = jnp.asarray(
         ((0.0, 0.0), (0.0, 1.0), (0.5, 1.4), (1.0, 1.0), (1.0, 0.0))
     )
@@ -114,6 +114,9 @@ def test_virtual_element_scenario_1() -> None:
     assert int(mesh.topology.entity_sets[2].entity_ids[0]) == 17
     # ty: ignore[unresolved-attribute]
     assert jnp.all(connectivity.boundary_edges)
+
+
+def test_virtual_element_refuses_a_self_intersecting_cell() -> None:
     coordinates = jnp.asarray(((0.0, 0.0), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0)))
     mesh = phx.discretization.CellMesh(
         coordinates,
@@ -128,6 +131,9 @@ def test_virtual_element_scenario_1() -> None:
     )
     with np.testing.assert_raises(ValueError):
         phx.discretization.VirtualElementPlan(mesh, field).prepare()
+
+
+def test_virtual_element_projector_storage_limit_refuses_before_preparation() -> None:
     coordinates = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
     # ty: ignore[invalid-argument-type]
     mesh = phx.discretization.CellMesh.from_polygons(coordinates, ((0, 1, 2, 3),))
@@ -135,8 +141,11 @@ def test_virtual_element_scenario_1() -> None:
         "u", phx.discretization.conforming_hdiv_virtual_element(1)
     )
     budget = phx.discretization.VirtualElementResourceBudget(maximum_projector_bytes=1)
-    with pytest.raises(ValueError, match="projector storage budget"):
+    with pytest.raises(ValueError, match="VirtualElementPlan.resource_budget"):
         phx.discretization.VirtualElementPlan(mesh, field, resource_budget=budget)
+
+
+def test_h1_virtual_element_dof_layout_tracks_vertices_edges_and_cell_moments() -> None:
     coordinates = jnp.asarray(
         ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
     )
@@ -159,6 +168,9 @@ def test_virtual_element_scenario_1() -> None:
     assert not jnp.any(dof_map.point_dof_valid[-6:])
     assert space.field_space.representation == "functional"
     assert space.field_space.conformity == "H1"
+
+
+def test_virtual_element_families_publish_their_conformity_and_oriented_traces() -> None:
     coordinates = jnp.asarray(
         ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))
     )
@@ -216,6 +228,9 @@ def test_virtual_element_scenario_1() -> None:
             np.asarray(orientation[1, 6:8]),
             np.asarray((-1.0, 1.0)),
         )
+
+
+def test_virtual_element_projectors_reproduce_polynomials_and_are_idempotent() -> None:
     points = ((0.0, 0.0), (1.0, 0.0), (1.2, 0.8), (0.5, 1.3), (-0.2, 0.8))
     for degree in (1, 2, 3):
         space = _single_polygon(points, degree)
@@ -229,7 +244,7 @@ def test_virtual_element_scenario_1() -> None:
         assert jnp.all(evidence.factorization_valid)
 
 
-def test_virtual_element_scenario_2() -> None:
+def test_virtual_element_stabilization_preserves_polynomial_energy() -> None:
     space = _single_polygon(
         ((0.0, 0.0), (1.0, 0.0), (1.1, 0.8), (0.4, 1.2), (-0.1, 0.7)),
         2,
@@ -249,6 +264,9 @@ def test_virtual_element_scenario_2() -> None:
     assert jnp.max(stabilized.evidence.polynomial_leakage) < 1.0e-9
     assert jnp.max(stabilized.evidence.symmetry_error) < 1.0e-12
     assert jnp.min(stabilized.evidence.minimum_kernel_eigenvalue) > -1.0e-10
+
+
+def test_virtual_element_projectors_reproduce_vector_and_scalar_differentials() -> None:
     points = ((0.0, 0.0), (1.0, 0.0), (1.2, 0.8), (0.5, 1.3), (-0.2, 0.8))
     coordinates = jnp.asarray(points, dtype="float64")
     mesh = phx.discretization.CellMesh.from_polygons(
@@ -301,6 +319,9 @@ def test_virtual_element_scenario_2() -> None:
     np.testing.assert_allclose(
         np.asarray(recovered), np.asarray(polynomial), atol=5.0e-10
     )
+
+
+def test_virtual_element_vector_reconstruction_and_dirichlet_moments_agree() -> None:
     for factory, differential_kind, expected_differential in (
         (phx.discretization.conforming_hdiv_virtual_element, "divergence", 5.0),
         (phx.discretization.conforming_hcurl_virtual_element, "curl", 2.0),
@@ -381,7 +402,7 @@ def test_virtual_element_scenario_2() -> None:
             constant_lift[constraint.constrained_dofs],
             jnp.where(constraint.trace_modes == 0, 2.0, 0.0),
         )
-        with pytest.raises(ValueError, match="prescribed DOF moments"):
+        with pytest.raises(ValueError, match="VirtualElementDirichletConstraint.values"):
             constraint.lift(lambda points: points[:, 0])
 
 
@@ -440,7 +461,7 @@ def test_virtual_element_scenario_3() -> None:
             jnp.asarray(((0,),)),
             jnp.asarray(((0.0,),)),
         )
-    with pytest.raises(ValueError, match="no boundary trace"):
+    with pytest.raises(ValueError, match="VirtualElementDiscretization.trace_kind"):
         phx.discretization.virtual_element_dirichlet_constraint(space, "v")
     with pytest.raises(ValueError, match="H1 projector is undefined"):
         phx.discretization.stabilize_virtual_element_tensor(
@@ -449,7 +470,9 @@ def test_virtual_element_scenario_3() -> None:
             phx.discretization.VirtualElementStabilizationPolicy(),
             projector="h1",
         )
-    with pytest.raises(NotImplementedError, match="Component-replicated"):
+    with pytest.raises(
+        NotImplementedError, match="VirtualElementFieldSpec.component_shape"
+    ):
         phx.discretization.VirtualElementFieldSpec(
             "u",
             phx.discretization.conforming_h1_virtual_element(1),

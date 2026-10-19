@@ -18,7 +18,7 @@ from jaxtyping import PyTree
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ._operators import AbstractLinearOperator
-from ._spaces import _coordinate_dtype, AbstractVectorSpace
+from ._spaces import AbstractVectorSpace, coordinate_dtype
 from ._subspaces import LinearSubspace
 
 
@@ -159,9 +159,9 @@ class RecyclingState(StrictModule):
             raise ValueError("Recycling state bases must be rank-two arrays.")
         if source_basis_.shape[1] != image_basis_.shape[1]:
             raise ValueError("Recycling state bases must have the same capacity.")
-        if np.dtype(source_basis_.dtype) != _coordinate_dtype(source):
+        if np.dtype(source_basis_.dtype) != coordinate_dtype(source):
             raise TypeError("source_basis dtype must match the source space.")
-        if np.dtype(image_basis_.dtype) != _coordinate_dtype(target):
+        if np.dtype(image_basis_.dtype) != coordinate_dtype(target):
             raise TypeError("image_basis dtype must match the target space.")
         capacity = source_basis_.shape[1]
         effective = jnp.asarray(effective_dimension, dtype=jnp.int32)

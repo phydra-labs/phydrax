@@ -2,56 +2,63 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Canonical host topology-edit record shared by the native adaptation routes.
+"""Assemble host topology-edit records for native adaptation routes.
 
-A route describes its target mesh relative to the source in global identities only:
-vertices and cells by global ID, intermediate entities (edges, faces) by their sorted
-vertex-global-ID keys. `CellTopologyEdit` carries typed fixed-family or packed
-polyhedral target blocks, the operation class, lineage relations, any complete vertex stencil, oriented shared-face
-closure witnesses of template edits, and the reference-coordinate geometry witnesses
-of nested operations. `assemble_topology_edit` owns the one conversion into a
-canonical `CellMesh` with deterministic intermediate entity IDs, a complete
-`MeshLineage`, and the sparse vertex interpolation stencil.
+A route describes its target mesh relative to the source in global identities:
+vertices and cells by global ID, intermediate entities by sorted
+vertex-global-ID keys. ``CellTopologyEdit`` carries fixed-family or packed
+polyhedral blocks, lineage relations, vertex stencils, oriented shared-face
+closure, and reference-coordinate geometry witnesses of nested operations.
+``assemble_topology_edit`` builds a ``CellMesh`` with deterministic intermediate
+entity IDs, ``MeshLineage``, and a sparse vertex interpolation stencil.
 """
 
 from __future__ import annotations
 
-from typing import assert_never, Literal, NamedTuple, TYPE_CHECKING, TypeAlias
+from typing import assert_never, Literal, NamedTuple, TYPE_CHECKING
 
 import numpy as np
 
+import phydrax.discretization._cell_complex as cell_complex_owner
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.discretization._reference_cell_types as reference_cell_types_owner
+import phydrax.meshing._lineage_records as lineage_owner
+from phydrax.discretization._periodic_exact import identification_id
+from phydrax.discretization._reference_cell_types import PolyhedralBlock
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..discretization import CellBlock, CellMesh, PolyhedralConnectivity
 from ..discretization._cell_complex import (
-    PolygonalConnectivity,
     polyhedral_connectivity,
-    TetrahedralConnectivity,
 )
-from ..discretization._cell_geometry_transfer import NestedReferenceWitnesses
-from ..discretization._cell_mesh import PolyhedralBlock
-from ..discretization._hexahedral import HexahedralConnectivity
+from ..discretization._cell_geometry import CellGeometrySpec
+from ..discretization._cell_geometry_transition_types import NestedReferenceWitnesses
+from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._coordinate_enclosure import prepared_coordinate_source_bank
+from ..discretization._exact_power_geometry import (
+    ExactPowerCellGeometryLinearActionSource,
+    ExactPowerCellGeometryRestrictionSource,
+    ExactPowerCellGeometrySource,
+)
+from ..discretization._periodic_topology import PeriodicMeshTopology
 from ..discretization._reference_cell import (
     facet_orientation_between,
     reference_cell_topology,
 )
-from ..typing import parse
-from ._lineage import (
-    EntityLineage,
-    EntityLineageKind,
-    MeshLineage,
-    VertexInterpolationStencil,
+from ..geometry._supermesh import (
+    CommonRefinementCoverage,
+    CommonRefinementStatus,
+    PreparedCommonRefinement,
 )
+from ..typing import checked, parse
+from ._entity_keys import entity_keys, key_rows
 
 
 if TYPE_CHECKING:
-    from ..discretization._cell_geometry import CellGeometrySpec
-    from ..discretization._exact_power_geometry import ExactPowerCellGeometrySource
-    from ..discretization._periodic_topology import PeriodicMeshTopology
-    from ..geometry._supermesh import PreparedCommonRefinement
     from ._periodic import PeriodicRefinement
 
 
-TopologyEditOperation: TypeAlias = Literal[
+type TopologyEditOperation = Literal[
     "nested_refinement",
     "nested_coarsening",
     "nested_adaptation",
@@ -61,7 +68,7 @@ TopologyEditOperation: TypeAlias = Literal[
 """Operation class of one edit; it selects the geometry-transition obligation.
 
 ``nested_*`` edits keep every target cell inside one source cell or assemble it
-from complete source cells and carry reference witnesses; ``local_reconnection``
+from whole source cells and carry reference witnesses; ``local_reconnection``
 creates cells spanning several source cells; ``relocation`` keeps the topology
 and moves vertices.
 """
@@ -119,7 +126,7 @@ class PolyhedralTopologyEditBlock(NamedTuple):
 
     name: str
     source_kind: str | None
-    connectivity: PolyhedralConnectivity
+    connectivity: cell_complex_owner.PolyhedralConnectivity
     cell_ids: np.ndarray
 
     @property
@@ -145,7 +152,7 @@ class SharedFaceWitnesses(NamedTuple):
 
 
 class PeriodicEntityIdentityBank(NamedTuple):
-    """Canonical relative-shift entity keys and their scientific allocation history."""
+    """Relative-shift entity keys and their scientific allocation history."""
 
     degree: int
     entity_keys: tuple[tuple[int, ...], ...]
@@ -154,10 +161,10 @@ class PeriodicEntityIdentityBank(NamedTuple):
 
 
 class PeriodicNonnestedGeometryAuthority(NamedTuple):
-    """One real complete overlap of unchanged authored periodic material domain."""
+    """Overlap coverage of an unchanged authored periodic material domain."""
 
-    source: CellMesh
-    target: CellMesh
+    source: cell_mesh_owner.CellMesh
+    target: cell_mesh_owner.CellMesh
     source_geometry: CellGeometrySpec
     target_geometry: CellGeometrySpec
     common_refinement: PreparedCommonRefinement
@@ -165,13 +172,13 @@ class PeriodicNonnestedGeometryAuthority(NamedTuple):
 
 
 class PeriodicVertexOrbitWitness(NamedTuple):
-    """Explicit complete target vertex orbits bound to one scientific source epoch.
+    """Target vertex orbits bound to one scientific source epoch.
 
-    Representatives are GLOBAL target vertex IDs, never local source/target rows.
-    Quotient entity banks include live/restored/retired keyed IDs and the owning
-    allocator high-water; ``history`` binds retained periodic adaptation epochs.
-    ``allocation_prior`` retains an actual bound private target and its canonical
-    witness when multiple staged edits allocate against one immutable source.
+    Representatives are global target vertex IDs, never local source/target rows.
+    Quotient entity banks include live/restored/retired keyed IDs and allocator
+    high-water; ``history`` binds retained periodic adaptation epochs.
+    ``allocation_prior`` retains a bound staged target and its orbit correspondence
+    when several edits allocate against one immutable source.
     """
 
     source_topology_id: str
@@ -181,7 +188,9 @@ class PeriodicVertexOrbitWitness(NamedTuple):
     quotient_entities: tuple[PeriodicEntityIdentityBank, ...]
     history: PeriodicRefinement | None = None
     retained_quotient_entities: tuple[PeriodicEntityIdentityBank, ...] = ()
-    allocation_prior: tuple[CellMesh, PeriodicVertexOrbitWitness] | None = None
+    allocation_prior: (
+        tuple[cell_mesh_owner.CellMesh, PeriodicVertexOrbitWitness] | None
+    ) = None
     nonnested_geometry: PeriodicNonnestedGeometryAuthority | None = None
 
 
@@ -195,7 +204,7 @@ class CellTopologyEdit(NamedTuple):
     ID, in sorted key order. ``refinement``/``coarsening`` are the geometry
     witnesses of nested operations (required by, and only by, ``nested_*``):
     refinement witnesses have target fine cells in source coarse cells (preserved
-    cells map onto themselves with the identity witness); coarsening witnesses
+    cells map onto themselves with the identity correspondence); coarsening witnesses
     have source fine cells in target coarse cells.
     """
 
@@ -224,7 +233,9 @@ def source_family_blocks(
     """Keep source families with surviving target cells; omit retired empty groups."""
 
     if len(block_cells) != len(families) or len(block_cell_ids) != len(families):
-        raise ValueError("A family-preserving edit needs one target block per source.")
+        raise ValueError(
+            "CellTopologyEdit.blocks must supply one target block per source family; got misaligned family arrays."
+        )
     return tuple(
         TopologyEditBlock(name, kind, kind, cells, ids)
         for (name, kind), cells, ids in zip(
@@ -248,92 +259,34 @@ def nested_reference_vertices(
     reference simplex has vertex ``0`` at the origin and vertex ``j`` at the unit
     vector ``e_j``, so the reference coordinates are the barycentric weights of
     vertices ``1..d``. A stencil source outside its coarse cell refuses the
-    witness.
+    reference-coordinate correspondence.
     """
 
     sources = np.asarray(fine_sources, dtype=np.int64)
     weights = np.asarray(fine_weights, dtype=np.float64)
     rows = np.asarray(coarse_rows, dtype=np.int64)
     if sources.ndim != 3 or weights.shape != sources.shape or rows.ndim != 2:
-        raise ValueError("Nested witnesses need (C, d+1, w) stencils and (C, d+1) rows.")
+        raise ValueError(
+            "CellTopologyEdit.stencils must have (C, d+1, w) stencils and (C, d+1) rows; got incompatible shapes."
+        )
     if sources.shape[:2] != rows.shape:
-        raise ValueError("Fine and coarse simplices must have equal vertex counts.")
+        raise ValueError(
+            "CellTopologyEdit.stencils must give fine and coarse simplices equal vertex counts; got incompatible counts."
+        )
     matches = (sources[..., :, None] == rows[:, None, None, :]) & (
         sources[..., :, None] >= 0
     )
     if np.any(np.any(matches, axis=-1) != (sources >= 0)):
-        raise ValueError("A nested witness references a vertex outside its coarse cell.")
+        raise ValueError(
+            "CellTopologyEdit.stencils must reference vertices inside their coarse cell; got an outside vertex."
+        )
     barycentric = np.sum(np.where(matches, weights[..., None], 0.0), axis=2)
     return barycentric[..., 1:]
 
 
-def entity_keys(mesh: CellMesh, dimension: int, /) -> np.ndarray:
-    """Keys aligned with ``mesh.entity_set(dimension)`` rows.
-
-    Vertices and cells give ``(n, 1)`` global IDs; edges and faces give ascending
-    vertex-global-ID rows, padded with ``-1`` after the IDs when faces of a mixed
-    mesh have different arities.
-    """
-
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be CellMesh.")
-    target = int(dimension)
-    if target == 0:
-        return np.asarray(mesh.vertex_global_ids, dtype=np.int64)[:, None]
-    if target == mesh.topological_dimension:
-        return np.asarray(mesh.entity_set(target).entity_ids, dtype=np.int64)[:, None]
-    connectivity = mesh.connectivity
-    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    if target == 1 and isinstance(
-        connectivity,
-        (
-            PolygonalConnectivity,
-            TetrahedralConnectivity,
-            HexahedralConnectivity,
-            PolyhedralConnectivity,
-        ),
-    ):
-        return np.sort(vertex_ids[np.asarray(connectivity.edges, dtype=np.int64)], axis=1)
-    if target == 2 and isinstance(
-        connectivity, (TetrahedralConnectivity, HexahedralConnectivity)
-    ):
-        return np.sort(vertex_ids[np.asarray(connectivity.faces, dtype=np.int64)], axis=1)
-    if target == 2 and isinstance(connectivity, PolyhedralConnectivity):
-        offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
-        values = vertex_ids[np.asarray(connectivity.face_vertex_values, dtype=np.int64)]
-        arity = np.diff(offsets)
-        width = int(np.max(arity, initial=0))
-        column = np.arange(values.size, dtype=np.int64) - np.repeat(offsets[:-1], arity)
-        padded = np.full((arity.size, width), np.iinfo(np.int64).max, dtype=np.int64)
-        padded[np.repeat(np.arange(arity.size), arity), column] = values
-        ordered = np.sort(padded, axis=1)
-        return np.where(ordered == np.iinfo(np.int64).max, -1, ordered)
-    raise ValueError(f"Entity keys of dimension {target} are unavailable.")
-
-
-def key_rows(table: np.ndarray, queries: np.ndarray, /) -> np.ndarray:
-    """Row of each query key in ``table`` (unique rows), or -1 when absent."""
-
-    table_ = np.asarray(table, dtype=np.int64)
-    queries_ = np.asarray(queries, dtype=np.int64)
-    if queries_.shape[0] == 0:
-        return np.zeros((0,), dtype=np.int64)
-    if table_.shape[0] == 0:
-        return np.full((queries_.shape[0],), -1, dtype=np.int64)
-    width = table_.shape[1]
-    if queries_.ndim != 2 or queries_.shape[1] != width:
-        raise ValueError("Key queries must match the table key width.")
-    combined = np.concatenate((table_, queries_), axis=0)
-    _, inverse = np.unique(combined, axis=0, return_inverse=True)
-    inverse = inverse.reshape((-1,))
-    owner = np.full((int(np.max(inverse)) + 1,), -1, dtype=np.int64)
-    owner[inverse[: table_.shape[0]]] = np.arange(table_.shape[0], dtype=np.int64)
-    return owner[inverse[table_.shape[0] :]]
-
-
 def _target_entity_ids(
-    source: CellMesh,
-    probe: CellMesh,
+    source: cell_mesh_owner.CellMesh,
+    probe: cell_mesh_owner.CellMesh,
     dimension: int,
     prescribed: tuple[PrescribedEntityIds, ...],
     /,
@@ -369,7 +322,9 @@ def _target_entity_ids(
         or np.any(key_rows(source_keys, keys) >= 0)
         or np.intersect1d(restored, source_ids).size
     ):
-        raise ValueError("Prescribed entity IDs must name new, unique entities.")
+        raise ValueError(
+            "CellTopologyEdit.prescribed_entity_ids must name new, unique entities; got reused IDs or incompatible keys."
+        )
     matched = key_rows(keys, target_keys)
     restoring = np.flatnonzero(matched >= 0)
     identifiers[restoring] = restored[matched[restoring]]
@@ -380,43 +335,61 @@ def _target_entity_ids(
     return identifiers
 
 
-def _build_mesh(
+@checked
+def build_mesh(
     edit: CellTopologyEdit,
     numeric_version: str,
     entity_ids: dict[int, np.ndarray] | None,
     /,
-) -> CellMesh:
-    blocks: list[CellBlock | PolyhedralBlock] = []
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> cell_mesh_owner.CellMesh:
+    blocks: list[reference_cell_types_owner.CellBlock | PolyhedralBlock] = []
     entries: list[tuple[str, np.ndarray] | tuple[np.ndarray, ...]] = []
     for block in edit.blocks:
         order = np.argsort(block.cell_ids, kind="stable")
         ids = np.asarray(block.cell_ids, dtype=np.int64)[order]
-        if isinstance(block, PolyhedralTopologyEditBlock):
-            connectivity = block.connectivity
-            co = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
-            cf = np.asarray(connectivity.cell_face_values, dtype=np.int64)
-            signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int32)
-            fo = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
-            fv = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
-            if co.size != ids.size + 1:
-                raise ValueError("Packed edit connectivity must match its cell IDs.")
-            loops = []
-            rows = []
-            for row in order:
-                faces = tuple(
-                    fv[fo[cf[position]] : fo[cf[position] + 1]][:: int(signs[position])]
-                    for position in range(co[row], co[row + 1])
+        match block:
+            case PolyhedralTopologyEditBlock():
+                connectivity = block.connectivity
+                co = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
+                cf = np.asarray(connectivity.cell_face_values, dtype=np.int64)
+                signs = np.asarray(connectivity.cell_face_sign_values, dtype=np.int32)
+                fo = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
+                fv = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
+                if co.size != ids.size + 1:
+                    raise ValueError(
+                        "CellTopologyEdit.connectivity must match its cell IDs; got incompatible cell offsets."
+                    )
+                loops = []
+                rows = []
+                for row in order:
+                    faces = tuple(
+                        fv[fo[cf[position]] : fo[cf[position] + 1]][
+                            :: int(signs[position])
+                        ]
+                        for position in range(co[row], co[row + 1])
+                    )
+                    loops.append(faces)
+                    rows.append(np.unique(np.concatenate(faces)))
+                if len({row.size for row in rows}) != 1:
+                    raise ValueError(
+                        "CellTopologyEdit.blocks must have one vertex arity per packed block; got differing vertex counts."
+                    )
+                blocks.append(PolyhedralBlock(block.name, np.stack(rows), global_ids=ids))
+                entries.extend(loops)
+            case TopologyEditBlock():
+                cells = np.asarray(block.cells, dtype=np.int32)[order]
+                blocks.append(
+                    reference_cell_types_owner.CellBlock(
+                        block.name, block.cell_kind, cells, global_ids=ids
+                    )
                 )
-                loops.append(faces)
-                rows.append(np.unique(np.concatenate(faces)))
-            if len({row.size for row in rows}) != 1:
-                raise ValueError("A packed edit block needs one exact vertex arity.")
-            blocks.append(PolyhedralBlock(block.name, np.stack(rows), global_ids=ids))
-            entries.extend(loops)
-        else:
-            cells = np.asarray(block.cells, dtype=np.int32)[order]
-            blocks.append(CellBlock(block.name, block.cell_kind, cells, global_ids=ids))
-            entries.append((block.cell_kind, cells))
+                entries.append((block.cell_kind, cells))
+            case _:
+                raise TypeError(
+                    f"CellTopologyEdit.blocks must contain typed topology edit blocks; got {type(block).__name__}."
+                )
     packed = (
         polyhedral_connectivity(
             tuple(entries),
@@ -431,7 +404,7 @@ def _build_mesh(
         if any(isinstance(block, PolyhedralTopologyEditBlock) for block in edit.blocks)
         else None
     )
-    target = CellMesh(
+    target = cell_mesh_owner.CellMesh(
         edit.coordinates,
         tuple(blocks),
         vertex_global_ids=edit.vertex_global_ids,
@@ -440,8 +413,8 @@ def _build_mesh(
         polyhedral_connectivity=packed,
     )
     if edit.target_periodic_topology is not None:
-        descriptor = edit.target_periodic_topology.rebuilt(target)
-        target = CellMesh(
+        descriptor = edit.target_periodic_topology.rebuilt(target, budget=budget)
+        target = cell_mesh_owner.CellMesh(
             target.coordinates,
             target.blocks,
             vertex_global_ids=target.vertex_global_ids,
@@ -453,12 +426,13 @@ def _build_mesh(
     return target
 
 
-def _entity_lineage(
-    source: CellMesh,
-    target: CellMesh,
+@checked
+def entity_lineage(
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
     relations: EntityRelations,
     /,
-) -> EntityLineage:
+) -> lineage_owner.EntityLineage:
     dimension = relations.dimension
     source_keys = entity_keys(source, dimension)
     target_keys = entity_keys(target, dimension)
@@ -468,7 +442,7 @@ def _entity_lineage(
     explicit_targets = key_rows(target_keys, relations.target_keys)
     if np.any(explicit_sources < 0) or np.any(explicit_targets < 0):
         raise ValueError(
-            f"Dimension-{dimension} relations reference entities outside the meshes."
+            f"CellTopologyEdit.relations must reference entities in the meshes; got outside entities in dimension {dimension}."
         )
     related_targets = np.zeros((target_ids.size,), dtype=np.bool_)
     related_targets[explicit_targets] = True
@@ -499,11 +473,15 @@ def _entity_lineage(
     kinds = np.concatenate(
         (
             np.asarray(relations.kinds, dtype=np.int32),
-            np.full(preserved.shape, int(EntityLineageKind.PRESERVED), dtype=np.int32),
+            np.full(
+                preserved.shape,
+                int(lineage_owner.EntityLineageKind.PRESERVED),
+                dtype=np.int32,
+            ),
         )
     )
     order = np.lexsort((kinds, targets, sources))
-    return EntityLineage(
+    return lineage_owner.EntityLineage(
         dimension,
         source.entity_set(dimension).entity_set_id,
         target.entity_set(dimension).entity_set_id,
@@ -515,7 +493,9 @@ def _entity_lineage(
     )
 
 
-def _cell_rows(mesh: CellMesh, identifiers: np.ndarray, /) -> tuple[np.ndarray, ...]:
+def _cell_rows(
+    mesh: cell_mesh_owner.CellMesh, identifiers: np.ndarray, /
+) -> tuple[np.ndarray, ...]:
     """Block index and block row of each cell global ID."""
 
     ids = np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks])
@@ -527,17 +507,37 @@ def _cell_rows(mesh: CellMesh, identifiers: np.ndarray, /) -> tuple[np.ndarray, 
     position = np.searchsorted(ids[order], identifiers)
     position = np.minimum(position, ids.size - 1)
     if np.any(ids[order][position] != identifiers):
-        raise ValueError("A witness references a cell absent from its mesh.")
+        raise ValueError(
+            "CellTopologyEdit.witnesses must reference cells in their mesh; got an absent cell ID."
+        )
     return blocks[order][position], rows[order][position]
 
 
+def _host_block_vertices(
+    mesh: cell_mesh_owner.CellMesh,
+    block_index: int,
+    host_vertices: dict[int, np.ndarray],
+    /,
+) -> np.ndarray:
+    """Transfer each used vertex bank once during a shared-face validation scope."""
+    vertices = host_vertices.get(block_index)
+    if vertices is None:
+        vertices = np.asarray(mesh.blocks[block_index].vertices, dtype=np.int64)
+        host_vertices[block_index] = vertices
+    return vertices
+
+
 def _facet_vertices(
-    mesh: CellMesh, cell_ids: np.ndarray, facets: np.ndarray, /
+    mesh: cell_mesh_owner.CellMesh,
+    cell_ids: np.ndarray,
+    facets: np.ndarray,
+    host_vertices: dict[int, np.ndarray],
+    /,
 ) -> list[tuple[int, ...]]:
     blocks, rows = _cell_rows(mesh, cell_ids)
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     dimension = mesh.topological_dimension
-    if isinstance(mesh.connectivity, PolyhedralConnectivity) and any(
+    if isinstance(mesh.connectivity, cell_complex_owner.PolyhedralConnectivity) and any(
         mesh.blocks[int(index)].cell_kind == "polyhedron" for index in blocks
     ):
         connectivity = mesh.connectivity
@@ -557,16 +557,20 @@ def _facet_vertices(
                 local = reference_cell_topology(block.cell_kind).entities[dimension - 1]
                 if not 0 <= facet < len(local):
                     raise ValueError(
-                        "A shared-face witness names an undeclared local facet."
+                        "CellTopologyEdit.shared_faces must name declared local facets; got an out-of-range local facet."
                     )
-                cell = np.asarray(block.vertices[int(block_row)], dtype=np.int64)
+                cell = _host_block_vertices(mesh, int(block_index), host_vertices)[
+                    int(block_row)
+                ]
                 loops.append(
                     tuple(int(value) for value in vertex_ids[cell[list(local[facet])]])
                 )
                 continue
             row = indices[int(identifier)]
             if not 0 <= facet < co[row + 1] - co[row]:
-                raise ValueError("A packed face witness names an undeclared facet.")
+                raise ValueError(
+                    "CellTopologyEdit.shared_faces must name declared packed facets; got an out-of-range facet."
+                )
             position = co[row] + facet
             face = cf[position]
             loop = fv[fo[face] : fo[face + 1]][:: int(signs[position])]
@@ -578,21 +582,23 @@ def _facet_vertices(
         topology = reference_cell_topology(block.cell_kind)
         local = topology.entities[dimension - 1]
         if not 0 <= int(facet) < len(local):
-            raise ValueError("A shared-face witness names an undeclared local facet.")
-        cell = np.asarray(block.vertices[int(row)], dtype=np.int64)
+            raise ValueError(
+                "CellTopologyEdit.shared_faces must name declared local facets; got an out-of-range local facet."
+            )
+        cell = _host_block_vertices(mesh, int(block_index), host_vertices)[int(row)]
         result.append(tuple(int(value) for value in vertex_ids[cell[list(local[facet])]]))
     return result
 
 
-def _facet_counts(mesh: CellMesh, keys: np.ndarray, /) -> np.ndarray:
+def _facet_counts(mesh: cell_mesh_owner.CellMesh, keys: np.ndarray, /) -> np.ndarray:
     """Number of cells having each ``-1``-padded sorted facet key as a facet."""
 
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     dimension = mesh.topological_dimension
     width = keys.shape[1]
-    if isinstance(mesh.connectivity, PolyhedralConnectivity):
+    if isinstance(mesh.connectivity, cell_complex_owner.PolyhedralConnectivity):
         face_keys = entity_keys(mesh, 2)
-        # Width may exceed that of a particular witness batch.
+        # Width may exceed that of a particular reference-coordinate batch.
         query = np.full((keys.shape[0], face_keys.shape[1]), -1, dtype=np.int64)
         query[:, : keys.shape[1]] = keys
         found = key_rows(face_keys, query)
@@ -610,7 +616,9 @@ def _facet_counts(mesh: CellMesh, keys: np.ndarray, /) -> np.ndarray:
     return np.where(found >= 0, counts[np.maximum(found, 0)], 0)
 
 
-def _require_shared_faces(target: CellMesh, witnesses: SharedFaceWitnesses, /) -> None:
+def _require_shared_faces(
+    target: cell_mesh_owner.CellMesh, witnesses: SharedFaceWitnesses, /
+) -> None:
     """Every witnessed face joins exactly its two cells under its orientation."""
 
     count = witnesses.first_cells.size
@@ -627,11 +635,18 @@ def _require_shared_faces(target: CellMesh, witnesses: SharedFaceWitnesses, /) -
         or witnesses.permutations.ndim != 2
         or witnesses.permutations.shape[0] != count
     ):
-        raise ValueError("Shared-face witness arrays must have aligned face rows.")
+        raise ValueError(
+            "CellTopologyEdit.shared_faces must have aligned face rows; got incompatible correspondence arrays."
+        )
     if count == 0:
         return
-    first = _facet_vertices(target, witnesses.first_cells, witnesses.first_facets)
-    second = _facet_vertices(target, witnesses.second_cells, witnesses.second_facets)
+    host_vertices: dict[int, np.ndarray] = {}
+    first = _facet_vertices(
+        target, witnesses.first_cells, witnesses.first_facets, host_vertices
+    )
+    second = _facet_vertices(
+        target, witnesses.second_cells, witnesses.second_facets, host_vertices
+    )
     width = max((len(value) for value in first), default=0)
     keys = np.full((len(first), width), -1, dtype=np.int64)
     for index, value in enumerate(first):
@@ -639,20 +654,26 @@ def _require_shared_faces(target: CellMesh, witnesses: SharedFaceWitnesses, /) -
     counts = _facet_counts(target, keys)
     for index, (left, right) in enumerate(zip(first, second, strict=True)):
         if set(left) != set(right):
-            raise ValueError("A shared-face witness joins faces of different vertices.")
+            raise ValueError(
+                "CellTopologyEdit.shared_faces must join faces of the same vertices; got different vertex sets."
+            )
         action = facet_orientation_between(left, right)
         declared = tuple(
             int(value) for value in witnesses.permutations[index] if value >= 0
         )
         if action.permutation != declared:
-            raise ValueError("A shared-face witness declares the wrong orientation.")
+            raise ValueError(
+                "CellTopologyEdit.shared_faces must declare the facet orientation action; got the wrong orientation."
+            )
         if counts[index] != 2:
-            raise ValueError("A witnessed face is not shared by exactly two cells.")
+            raise ValueError(
+                "CellTopologyEdit.shared_faces must join exactly two cells; got a differing face incidence count."
+            )
 
 
 def _require_nested(
-    fine: CellMesh,
-    coarse: CellMesh,
+    fine: cell_mesh_owner.CellMesh,
+    coarse: cell_mesh_owner.CellMesh,
     witnesses: NestedReferenceWitnesses,
     name: str,
     /,
@@ -671,7 +692,7 @@ def _require_nested(
         or np.unique(fine_ids).size != fine_ids.size
     ):
         raise ValueError(
-            f"{name} witnesses must be unique finite padded reference records."
+            f"CellTopologyEdit.{name} must have unique finite padded reference records; got invalid correspondence arrays."
         )
     blocks, _ = _cell_rows(fine, fine_ids)
     if any(
@@ -679,41 +700,45 @@ def _require_nested(
         < len(reference_cell_topology(fine.blocks[int(block)].cell_kind).vertices)
         for block in blocks
     ):
-        raise ValueError("A nested witness omits fine-cell reference corners.")
+        raise ValueError(
+            "CellTopologyEdit.witnesses must include fine-cell reference corners; got omitted corners."
+        )
     _cell_rows(coarse, coarse_ids)
 
 
-def _power_domain_root(geometry: CellGeometrySpec) -> ExactPowerCellGeometrySource:
-    from ..discretization._exact_power_geometry import (
-        ExactPowerCellGeometryLinearActionSource,
-        ExactPowerCellGeometryRestrictionSource,
-        ExactPowerCellGeometrySource,
-    )
+@checked
+def power_domain_root(
+    geometry: CellGeometrySpec, *, budget: CoordinateEnclosureBudget
+) -> ExactPowerCellGeometrySource:
 
     current = geometry.exact_source
     visited = set()
-    while isinstance(
-        current,
-        (
-            ExactPowerCellGeometryRestrictionSource,
-            ExactPowerCellGeometryLinearActionSource,
-        ),
-    ):
-        if id(current) in visited:
-            raise ValueError("Periodic domain source ancestry contains a cycle.")
-        visited.add(id(current))
-        current = current.parent
-    if not isinstance(current, ExactPowerCellGeometrySource):
-        raise TypeError(
-            "Nonnested periodic edits require actual exact power domain roots."
-        )
+    while True:
+        match current:
+            case (
+                ExactPowerCellGeometryRestrictionSource()
+                | ExactPowerCellGeometryLinearActionSource()
+            ):
+                if id(current) in visited:
+                    raise ValueError(
+                        "CellTopologyEdit.geometry_source must have acyclic ancestry; "
+                        "got a cycle."
+                    )
+                visited.add(id(current))
+                current = current.parent
+            case ExactPowerCellGeometrySource():
+                break
+            case _:
+                raise TypeError(
+                    "CellTopologyEdit.geometry_source must have "
+                    "ExactPowerCellGeometrySource domain roots; got another source kind."
+                )
     if current.domain_source is None or not current.periodic_constraints:
         raise ValueError(
-            "A nonnested periodic source omits its original domain/control authority."
+            "CellTopologyEdit.geometry_source must retain domain source and periodic constraints; got missing domain/control data."
         )
-    from ..discretization._coordinate_enclosure import prepared_coordinate_source_bank
 
-    prepared_coordinate_source_bank(geometry)
+    prepared_coordinate_source_bank(geometry, budget=budget)
     return current
 
 
@@ -739,12 +764,11 @@ def _nonnested_binding(authority: PeriodicNonnestedGeometryAuthority) -> str:
     )
 
 
+@checked
 def require_periodic_nonnested_source(
-    source: CellMesh, authority: PeriodicNonnestedGeometryAuthority, /
+    source: cell_mesh_owner.CellMesh, authority: PeriodicNonnestedGeometryAuthority, /
 ) -> None:
-    """Bind the actual caller's source epoch, not only a reused quotient descriptor."""
-    if not isinstance(authority, PeriodicNonnestedGeometryAuthority):
-        raise TypeError("Nonnested source admission requires its canonical authority.")
+    """Bind a source mesh's numeric and scientific epoch to the overlap."""
     if (
         source.mesh_id != authority.source.mesh_id
         or source.numeric_version != authority.source.numeric_version
@@ -752,42 +776,40 @@ def require_periodic_nonnested_source(
         != canonical_fingerprint(array_tree_fingerprint(authority.source))
     ):
         raise ValueError(
-            "Nonnested authority belongs to a different numeric/scientific source epoch."
+            "CellTopologyEdit.nonnested_geometry must bind the source numeric/scientific epoch; got a different epoch."
         )
 
 
+@checked
 def require_periodic_nonnested_geometry(
     source: PeriodicMeshTopology,
-    target: CellMesh,
+    target: cell_mesh_owner.CellMesh,
     authority: PeriodicNonnestedGeometryAuthority,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
-    from ..discretization._cell_geometry_validity import cell_geometry_id
-    from ..discretization._periodic_topology import _identification_id
-    from ..geometry._supermesh import CommonRefinementCoverage, CommonRefinementStatus
 
-    if not isinstance(authority, PeriodicNonnestedGeometryAuthority):
-        raise TypeError(
-            "Nonnested periodic geometry requires its canonical overlap authority."
-        )
     original, successor = authority.source.periodic_topology, target.periodic_topology
     if original is None or successor is None:
         raise ValueError(
-            "Nonnested periodic overlap omits actual source/target descriptors."
+            "CellTopologyEdit.nonnested_geometry must have source/target periodic descriptors; got missing descriptors."
         )
     if original.periodic_topology_id != source.periodic_topology_id:
         raise ValueError(
-            "Nonnested authority belongs to a different source periodic epoch."
+            "CellTopologyEdit.nonnested_geometry must bind the source periodic epoch; got a different epoch."
         )
-    if _identification_id(source.cell) != _identification_id(successor.cell):
-        raise ValueError("Nonnested periodic regeneration changes the authored group.")
+    if identification_id(source.cell) != identification_id(successor.cell):
+        raise ValueError(
+            "CellTopologyEdit.nonnested_geometry must preserve the authored group; got a changed identification."
+        )
     before, after = (
-        _power_domain_root(authority.source_geometry),
-        _power_domain_root(authority.target_geometry),
+        power_domain_root(authority.source_geometry, budget=budget),
+        power_domain_root(authority.target_geometry, budget=budget),
     )
     if before.authority_binding != after.authority_binding:
         raise ValueError(
-            "Nonnested regeneration changes original domain/facets/materials/periodic controls."
+            "CellTopologyEdit.nonnested_geometry must preserve domain/facets/materials/periodic controls; got changed source bindings."
         )
     original_geometry, successor_geometry = (
         original.actual_geometry,
@@ -795,7 +817,7 @@ def require_periodic_nonnested_geometry(
     )
     if original_geometry is None or successor_geometry is None:
         raise ValueError(
-            "Nonnested overlap requires real descriptor geometry authorities."
+            "CellTopologyEdit.nonnested_geometry must include descriptor geometry; got missing source or target geometry."
         )
     declared_source, declared_target = (
         authority.source_geometry.exact_source,
@@ -809,7 +831,9 @@ def require_periodic_nonnested_geometry(
         or original_geometry.exact_source.source_id != declared_source.source_id
         or successor_geometry.exact_source.source_id != declared_target.source_id
     ):
-        raise ValueError("Nonnested overlap substitutes its descriptor source geometry.")
+        raise ValueError(
+            "CellTopologyEdit.nonnested_geometry must bind the descriptor source geometry; got substituted geometry."
+        )
     common, evidence = authority.common_refinement, authority.common_refinement.evidence
     if (
         common.status is not CommonRefinementStatus.SUCCESS
@@ -817,7 +841,7 @@ def require_periodic_nonnested_geometry(
         or common.policy.coverage is not CommonRefinementCoverage.COMPLETE
     ):
         raise ValueError(
-            "Nonnested periodic overlap is not a complete successful certificate."
+            "CellTopologyEdit.nonnested_geometry must certify successful COMPLETE overlap coverage; got failed or incomplete coverage."
         )
     if (
         authority.target.mesh_id != target.mesh_id
@@ -830,7 +854,7 @@ def require_periodic_nonnested_geometry(
         or common.target_geometry_id != cell_geometry_id(authority.target_geometry)
     ):
         raise ValueError(
-            "Nonnested overlap has stale mesh/geometry/scientific identity bindings."
+            "CellTopologyEdit.nonnested_geometry must bind current mesh/geometry/scientific identities; got stale bindings."
         )
     if any(
         (
@@ -844,7 +868,7 @@ def require_periodic_nonnested_geometry(
         )
     ):
         raise ValueError(
-            "Nonnested overlap retains unresolved coverage or predicate evidence."
+            "CellTopologyEdit.nonnested_geometry must resolve coverage and predicates; got unresolved evidence."
         )
     if (
         evidence.candidate_pair_count > common.policy.maximum_candidate_pairs
@@ -853,11 +877,13 @@ def require_periodic_nonnested_geometry(
         > common.policy.maximum_memory_bytes
     ):
         raise ValueError(
-            "Nonnested overlap exceeds its original admitted resource policy."
+            "CellTopologyEdit.nonnested_geometry must obey its admitted resource policy; got exceeded limits."
         )
     volumes = np.asarray(common.volumes)
     if np.any(~np.isfinite(volumes)) or np.any(volumes <= 0):
-        raise ValueError("Nonnested overlap contains invalid positive-measure entries.")
+        raise ValueError(
+            "CellTopologyEdit.nonnested_geometry must contain finite positive-measure entries; got invalid overlap volumes."
+        )
     for indices, measures, tolerances in (
         (
             common.source_cells,
@@ -878,68 +904,81 @@ def require_periodic_nonnested_geometry(
             np.abs(covered - measured) > np.asarray(tolerances)
         ):
             raise ValueError(
-                "Nonnested overlap entries do not certify every original source/target cell."
+                "CellTopologyEdit.nonnested_geometry must certify every source/target cell; got coverage outside its declared tolerances."
             )
     if authority.binding_id != _nonnested_binding(authority):
         raise ValueError(
-            "Nonnested authority numerical/source payload changed after preparation."
+            "CellTopologyEdit.nonnested_geometry must retain its prepared numerical/source payload; got a changed binding ID."
         )
 
 
+@checked
 def prepare_periodic_nonnested_geometry(
-    source: CellMesh,
-    target: CellMesh,
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
     source_geometry: CellGeometrySpec,
     target_geometry: CellGeometrySpec,
     common_refinement: PreparedCommonRefinement,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> PeriodicNonnestedGeometryAuthority:
     authority = PeriodicNonnestedGeometryAuthority(
         source, target, source_geometry, target_geometry, common_refinement, ""
     )
     authority = authority._replace(binding_id=_nonnested_binding(authority))
     if source.periodic_topology is None:
-        raise ValueError("Nonnested periodic authority requires a periodic predecessor.")
-    require_periodic_nonnested_geometry(source.periodic_topology, target, authority)
+        raise ValueError(
+            "CellTopologyEdit.nonnested_geometry must have a periodic predecessor; got a nonperiodic source."
+        )
+    require_periodic_nonnested_geometry(
+        source.periodic_topology, target, authority, budget=budget
+    )
     return authority
 
 
+@checked
 def prepare_topology_edit_target(
-    source: CellMesh,
+    source: cell_mesh_owner.CellMesh,
     edit: CellTopologyEdit,
     /,
     *,
+    budget: CoordinateEnclosureBudget,
     numeric_version: str,
-) -> CellMesh:
-    """Stage canonical lifted IDs before certifying a nonnested periodic overlap."""
-    probe = _build_mesh(edit, numeric_version, None)
+) -> cell_mesh_owner.CellMesh:
+    """Stage lifted IDs before certifying a nonnested periodic overlap."""
+    probe = build_mesh(edit, numeric_version, None, budget=budget)
     entity_ids = {
         degree: _target_entity_ids(source, probe, degree, edit.prescribed_entity_ids)
         for degree in range(1, source.topological_dimension)
     }
-    return _build_mesh(edit, numeric_version, entity_ids or None)
+    return build_mesh(edit, numeric_version, entity_ids or None, budget=budget)
 
 
+@checked
 def assemble_topology_edit(
-    source: CellMesh,
+    source: cell_mesh_owner.CellMesh,
     edit: CellTopologyEdit,
     /,
     *,
     numeric_version: str,
-) -> tuple[CellMesh, MeshLineage, VertexInterpolationStencil | None]:
+    budget: CoordinateEnclosureBudget,
+) -> tuple[
+    cell_mesh_owner.CellMesh,
+    lineage_owner.MeshLineage,
+    lineage_owner.VertexInterpolationStencil | None,
+]:
     """Build target and lineage; return no interpolation when target rows are unknown."""
 
-    if not isinstance(source, CellMesh):
-        raise TypeError("source must be CellMesh.")
-    if not isinstance(edit, CellTopologyEdit):
-        raise TypeError("edit must be CellTopologyEdit.")
     if source.periodic_topology is not None:
         if edit.periodic_orbits is None:
             raise ValueError(
-                "A periodic topology edit requires a complete orbit/identity witness."
+                "CellTopologyEdit.periodic_orbits must supply orbit and identity correspondences for a periodic source; got missing orbits."
             )
     elif edit.periodic_orbits is not None:
-        raise ValueError("A periodic orbit witness cannot relabel a nonperiodic source.")
+        raise ValueError(
+            "CellTopologyEdit.periodic_orbits must be absent for a nonperiodic source; got an orbit correspondence."
+        )
     match parse(edit.operation, TopologyEditOperation, "operation"):
         case "nested_refinement" | "nested_coarsening" | "nested_adaptation":
             nested = True
@@ -948,29 +987,42 @@ def assemble_topology_edit(
         case operation:
             assert_never(operation)
     if nested != (edit.refinement is not None or edit.coarsening is not None):
-        raise ValueError("Nested operations, and only they, carry geometry witnesses.")
+        raise ValueError(
+            "CellTopologyEdit.operation must carry geometry correspondences only for nested operations; got a correspondence/operation mismatch."
+        )
     if (
         edit.operation == "nested_refinement"
         and edit.coarsening is not None
         and np.asarray(edit.coarsening.fine_cell_ids).size
     ):
-        raise ValueError("A refinement operation cannot carry coarsening witnesses.")
+        raise ValueError(
+            "CellTopologyEdit.coarsening must be empty for a refinement operation; got coarsening witnesses."
+        )
     if edit.operation == "nested_coarsening" and edit.coarsening is None:
-        raise ValueError("A coarsening operation requires coarsening witnesses.")
+        raise ValueError(
+            "CellTopologyEdit.coarsening must be supplied for a coarsening operation; got missing witnesses."
+        )
     dimension = source.topological_dimension
     if tuple(value.dimension for value in edit.relations) != tuple(range(dimension + 1)):
-        raise ValueError("A topology edit needs one relation record per dimension.")
+        raise ValueError(
+            "CellTopologyEdit.relations must supply one record per dimension in ascending order; got incompatible dimensions."
+        )
     kinds = {block.name: block.cell_kind for block in source.blocks}
     for block in edit.blocks:
         if block.source_kind is not None and kinds.get(block.name) != block.source_kind:
             raise ValueError(
-                f"Edit block {block.name!r} misstates its source cell family."
+                f"CellTopologyEdit.blocks must state their source cell family; got a mismatched family in block {block.name!r}."
             )
-    target = prepare_topology_edit_target(source, edit, numeric_version=numeric_version)
+    target = prepare_topology_edit_target(
+        source, edit, numeric_version=numeric_version, budget=budget
+    )
     if edit.periodic_orbits is not None:
+        # _topology_edit ↔ _periodic: bind after the edit and orbit owners initialize.
         from ._periodic import bind_periodic_topology_edit
 
-        target = bind_periodic_topology_edit(source, target, edit.periodic_orbits)
+        target = bind_periodic_topology_edit(
+            source, target, edit.periodic_orbits, budget=budget
+        )
     if edit.shared_faces is not None:
         _require_shared_faces(target, edit.shared_faces)
     if edit.refinement is not None:
@@ -994,15 +1046,15 @@ def assemble_topology_edit(
         covered = np.concatenate((refined_ids, coarse_ids))
         if not np.array_equal(np.sort(covered), np.sort(target_ids)):
             raise ValueError(
-                "Every target cell needs exactly one nested geometry witness."
+                "CellTopologyEdit.witnesses must supply one nested geometry correspondence per target cell; got differing cell coverage."
             )
-    lineage = MeshLineage(
+    lineage = lineage_owner.MeshLineage(
         source.topology_id,
         target.topology_id,
-        tuple(_entity_lineage(source, target, value) for value in edit.relations),
+        tuple(entity_lineage(source, target, value) for value in edit.relations),
     )
     stencil = (
-        VertexInterpolationStencil(
+        lineage_owner.VertexInterpolationStencil(
             source.entity_set(0).entity_set_id,
             target.entity_set(0).entity_set_id,
             edit.vertex_global_ids,
@@ -1028,8 +1080,6 @@ __all__ = [
     "TopologyEditBlock",
     "TopologyEditOperation",
     "assemble_topology_edit",
-    "entity_keys",
-    "key_rows",
     "nested_reference_vertices",
     "source_family_blocks",
 ]

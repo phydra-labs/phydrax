@@ -68,6 +68,7 @@ from phydrax.solver.coupling import (
     VectorTransmissionLaw,
     VectorTransmissionSide,
 )
+from phydrax.units import METER
 
 
 phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
@@ -120,7 +121,11 @@ def region(
         falling = np.stack((np.full(resolution, INTERFACE_X), axis[::-1][:-1]), axis=1)
         vertices = np.concatenate(([[INTERFACE_X, 0.0], [2.0, 0.0], [2.0, 1.0]], falling))
         charts = tuple(range(3, 3 + resolution))
-    atlas = phx.geometry.Polygon([tuple(v) for v in vertices]).compile().boundary_atlas
+    atlas = (
+        phx.geometry.Polygon([tuple(v) for v in vertices])
+        .compile(coordinate_unit=METER)
+        .boundary_atlas
+    )
     authority = PointBoundaryCharts(
         cloud, atlas, FacetTraceRule("gauss-lobatto-legendre", points=2), charts=charts
     )
@@ -172,7 +177,9 @@ def block_component(
     )
     reconstruction = prepare_point_cloud_field_reconstruction(
         cloud,
-        support_geometry=phx.geometry.Rectangle((x0 + 0.5, 0.5), (1.0, 1.0)).compile(),
+        support_geometry=phx.geometry.Rectangle((x0 + 0.5, 0.5), (1.0, 1.0)).compile(
+            coordinate_unit=METER
+        ),
         radius=3.5 / resolution,
         capacity=36,
     )

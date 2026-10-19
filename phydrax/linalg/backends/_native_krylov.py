@@ -25,6 +25,7 @@ from ..._iteration import (
     update_iteration,
 )
 from ..._strict import StrictModule
+from ...typing import checked
 from .._certificates import KernelCertificate
 from .._operators import AbstractLinearOperator
 from .._plans import _certified_rank, LinearSolvePlan
@@ -54,8 +55,8 @@ from ..krylov._results import KrylovBreakdownStatus
 # first converged or broken-down step through data-dependent loops; it is the
 # only route of every non-algorithmic solve. `"fixed-trip"` executes the same
 # gated steps inside static-length scans so the executed algorithm is
-# reverse-differentiable: inactive steps are exact identities, masked
-# orthogonalization/rotation entries contribute exact zeros, and active work
+# reverse-differentiable: inactive steps are identities, masked
+# orthogonalization/rotation entries contribute zeros, and active work
 # keeps the early-exit floating-point order.
 KrylovLoopDriver: TypeAlias = Literal["early-exit", "fixed-trip"]
 
@@ -190,7 +191,9 @@ def _loop_driver(plan: LinearSolvePlan, /) -> KrylovLoopDriver:
         case "mathematical" | "rhs-only" | "none":
             return "early-exit"
         case mode:
-            raise ValueError(f"Unknown differentiation mode {mode!r}.")
+            raise ValueError(
+                f"LinearSolvePolicy.differentiation.mode must be algorithmic, mathematical, rhs-only, or none; got {mode!r}."
+            )
 
 
 def _fixed_trip(driver: KrylovLoopDriver, /) -> bool:
@@ -200,7 +203,9 @@ def _fixed_trip(driver: KrylovLoopDriver, /) -> bool:
         case "early-exit":
             return False
         case _:
-            raise ValueError(f"Unknown native Krylov loop driver {driver!r}.")
+            raise ValueError(
+                f"native_krylov.loop_driver must be fixed-trip or early-exit; got {driver!r}."
+            )
 
 
 def _pcg_checkpoint_block(max_steps: int, /) -> int:
@@ -218,7 +223,7 @@ class NativeKrylovBackendOutput(StrictModule):
     """Native Krylov value and evidence.
 
     Minimum-norm LSMR solves also return the zero-start multiplier ``y`` of the
-    adjoint witness solve ``min ||A* y - x||_M`` (target coordinates per
+    adjoint multiplier solve ``min ||A* y - x||_M`` (target coordinates per
     right-hand side) and the true stationarity residual ``||x - A* y||_M``; both
     are ``None`` for every other problem. Least-squares LSMR solves return the
     roundoff floor ``normal_residual_floor`` below which their stationarity
@@ -381,11 +386,17 @@ def prepare_native_krylov(
     preconditioner: AbstractPreconditioner | None = None,
 ) -> NativeKrylovState:
     if plan.backend != "native-krylov":
-        raise ValueError("Native Krylov preparation requires a native-krylov plan.")
+        raise ValueError(
+            f"prepare_native_krylov.plan.backend must be native-krylov; got {plan.backend!r}."
+        )
     if problem.operator.batch_shape:
-        raise ValueError("Native Krylov preparation requires an unbatched operator.")
+        raise ValueError(
+            f"prepare_native_krylov.problem.operator.batch_shape must be empty; got {problem.operator.batch_shape}."
+        )
     if (plan.preconditioner_plan is None) != (preconditioner is None):
-        raise ValueError("Prepared preconditioning must match the symbolic solve plan.")
+        raise ValueError(
+            f"prepare_native_krylov.preconditioner must match presence in the symbolic solve plan; got preconditioner={type(preconditioner).__name__}, plan={type(plan.preconditioner_plan).__name__}."
+        )
     return NativeKrylovState(problem, preconditioner)
 
 
@@ -435,198 +446,20 @@ def _runtime_controls(
     return relative, absolute, max_steps, structural_max_steps
 
 
-def solve_native_krylov(
-    state: NativeKrylovState,
+def _native_krylov_status(
+    problem: AbstractLinearProblem,
     rhs: Array,
+    residual: Array,
+    condition: Array,
+    breakdown: Array,
     plan: LinearSolvePlan,
+    method_name: str,
+    relative_tolerance: Array,
+    absolute_tolerance: Array,
     /,
-    *,
-    initial_guess: Array | None = None,
-    control: LinearSolveControl | None = None,
-    iteration: IterationPlan | None = None,
-    iteration_state: IterationRuntimeState | None = None,
-) -> NativeKrylovBackendOutput:
-    if rhs.ndim != 2:
-        raise ValueError("Native Krylov right-hand sides must have shape (m, k).")
-    if control is not None and not isinstance(control, LinearSolveControl):
-        raise TypeError("control must be a LinearSolveControl or None.")
-    problem = state.problem
-    if plan.policy.differentiation.mode == "rhs-only":
-        problem = jax.tree.map(
-            lambda value: jax.lax.stop_gradient(value) if eqx.is_array(value) else value,
-            problem,
-        )
+) -> Array:
+    """Translate true-residual convergence and breakdowns in fixed precedence order."""
     method = plan.policy.method
-    method_name = plan.method if method.name == "auto" else method.name
-    (
-        relative_tolerance,
-        absolute_tolerance,
-        maximum_steps,
-        structural_maximum_steps,
-    ) = _runtime_controls(problem, plan, control, rhs.real.dtype)
-    guesses = (
-        jnp.zeros((problem.operator.source.size, rhs.shape[1]), dtype=rhs.dtype)
-        if initial_guess is None
-        else initial_guess
-    )
-    if guesses.shape != (problem.operator.source.size, rhs.shape[1]):
-        raise ValueError("initial_guess must match canonical solution and RHS axes.")
-    inner_plan = (
-        iteration
-        if iteration is not None and iteration.granularity == "inner-iteration"
-        else None
-    )
-    if inner_plan is not None and rhs.shape[1] != 1:
-        raise ValueError("Inner native Krylov observation requires one right-hand side.")
-
-    def solve_column(
-        target: Array, guess: Array, observed_state: IterationRuntimeState | None
-    ) -> _SolveResult:
-        if method_name == PCG().name:
-            return _square_solve(
-                problem,
-                target,
-                guess,
-                plan,
-                "pcg",
-                preconditioner=state.preconditioner,
-                relative=relative_tolerance,
-                absolute=absolute_tolerance,
-                max_steps=maximum_steps,
-                structural_max_steps=structural_maximum_steps,
-                iteration=inner_plan,
-                iteration_state=observed_state,
-            )
-        if method_name == ProjectedPCG().name:
-            return _square_solve(
-                problem,
-                target,
-                guess,
-                plan,
-                "projected-pcg",
-                preconditioner=state.preconditioner,
-                relative=relative_tolerance,
-                absolute=absolute_tolerance,
-                max_steps=maximum_steps,
-                structural_max_steps=structural_maximum_steps,
-                iteration=inner_plan,
-                iteration_state=observed_state,
-            )
-        if method_name == MINRES().name:
-            return _square_solve(
-                problem,
-                target,
-                guess,
-                plan,
-                "minres",
-                preconditioner=state.preconditioner,
-                relative=relative_tolerance,
-                absolute=absolute_tolerance,
-                max_steps=maximum_steps,
-                structural_max_steps=structural_maximum_steps,
-                iteration=inner_plan,
-                iteration_state=observed_state,
-            )
-        if method_name == FGMRES().name:
-            return _square_solve(
-                problem,
-                target,
-                guess,
-                plan,
-                "fgmres",
-                preconditioner=state.preconditioner,
-                relative=relative_tolerance,
-                absolute=absolute_tolerance,
-                max_steps=maximum_steps,
-                structural_max_steps=structural_maximum_steps,
-                iteration=inner_plan,
-                iteration_state=observed_state,
-            )
-        if method_name == GMRES().name:
-            return _square_solve(
-                problem,
-                target,
-                guess,
-                plan,
-                "gmres",
-                preconditioner=state.preconditioner,
-                relative=relative_tolerance,
-                absolute=absolute_tolerance,
-                max_steps=maximum_steps,
-                structural_max_steps=structural_maximum_steps,
-                iteration=inner_plan,
-                iteration_state=observed_state,
-            )
-        if method_name in (GeneralizedLSMR().name, LSMR().name):
-            return _least_squares_solve(
-                problem,
-                target,
-                guess,
-                plan,
-                relative=relative_tolerance,
-                absolute=absolute_tolerance,
-                max_steps=maximum_steps,
-                structural_max_steps=structural_maximum_steps,
-                iteration=inner_plan,
-                iteration_state=observed_state,
-            )
-        if method_name == Craig().name:
-            return _craig_solve(
-                problem,
-                target,
-                plan,
-                preconditioner=state.preconditioner,
-                relative=relative_tolerance,
-                absolute=absolute_tolerance,
-                max_steps=maximum_steps,
-                structural_max_steps=structural_maximum_steps,
-                iteration=inner_plan,
-                iteration_state=observed_state,
-            )
-        raise ValueError(f"Unsupported native Krylov method {method_name!r}.")
-
-    if rhs.shape[1] == 1:
-        value_column, auxiliary_column, updated_iteration_state = solve_column(
-            rhs[:, 0], guesses[:, 0], iteration_state
-        )
-        value = value_column[:, None]
-        auxiliary = jax.tree.map(lambda item: item[None], auxiliary_column)
-    elif method_name in (PCG().name, ProjectedPCG().name):
-        value, auxiliary, _ = _square_pcg_batched(
-            problem,
-            rhs,
-            guesses,
-            "projected-pcg" if method_name == ProjectedPCG().name else "pcg",
-            preconditioner=state.preconditioner,
-            relative=relative_tolerance,
-            absolute=absolute_tolerance,
-            max_steps=maximum_steps,
-            structural_max_steps=structural_maximum_steps,
-            driver=_loop_driver(plan),
-        )
-        updated_iteration_state = iteration_state
-    else:
-
-        def solve_unobserved(
-            target: Array, guess: Array
-        ) -> tuple[Array, _SolveAuxiliary]:
-            value_, auxiliary_, _ = solve_column(target, guess, None)
-            return value_, auxiliary_
-
-        value, auxiliary = jax.vmap(solve_unobserved, in_axes=(1, 1), out_axes=(1, 0))(
-            rhs, guesses
-        )
-        updated_iteration_state = iteration_state
-    (
-        iterations,
-        residual,
-        normal_residual,
-        condition,
-        breakdown,
-        matvec_count,
-        adjoint_matvec_count,
-        normal_residual_floor,
-    ) = auxiliary
     tolerance = (relative_tolerance, absolute_tolerance)
     rhs_norms = jax.vmap(
         lambda column: _space_norm(problem.operator.target, column), in_axes=1
@@ -668,6 +501,46 @@ def solve_native_krylov(
         & (breakdown != int(KrylovBreakdownStatus.STAGNATION)),
         int(LinearSolveStatus.BREAKDOWN),
         status,
+    )
+    return status
+
+
+def _native_krylov_output(
+    state: NativeKrylovState,
+    problem: AbstractLinearProblem,
+    rhs: Array,
+    plan: LinearSolvePlan,
+    method_name: str,
+    relative_tolerance: Array,
+    absolute_tolerance: Array,
+    structural_maximum_steps: int,
+    value: Array,
+    auxiliary: _SolveAuxiliary,
+    updated_iteration_state: IterationRuntimeState | None,
+    /,
+) -> NativeKrylovBackendOutput:
+    """Construct solve evidence with ordered post-solve multiplier actions."""
+    method = plan.policy.method
+    (
+        iterations,
+        residual,
+        normal_residual,
+        condition,
+        breakdown,
+        matvec_count,
+        adjoint_matvec_count,
+        normal_residual_floor,
+    ) = auxiliary
+    status = _native_krylov_status(
+        problem,
+        rhs,
+        residual,
+        condition,
+        breakdown,
+        plan,
+        method_name,
+        relative_tolerance,
+        absolute_tolerance,
     )
     craig_multiplier: Array | None = None
     left_null_direction: Array | None = None
@@ -712,21 +585,23 @@ def solve_native_krylov(
                 condition_limit=selected_lsmr.condition_limit,
             )
 
-        # Evidence only: the witness is not differentiated.
+        # Evidence only: the multiplier solve is not differentiated.
         multiplier, stationarity, witness_iterations, witness_confirmations = jax.vmap(
             witness_column, in_axes=1, out_axes=(1, 0, 0, 0)
         )(jax.lax.stop_gradient(value))
-        # The witness applies A* as its forward action and A as its adjoint; each
+        # The multiplier solve applies A* forward and A adjoint; each
         # true-quantity confirmation applies both.
         matvec_count = matvec_count + witness_iterations + 2 + witness_confirmations
         adjoint_matvec_count = (
             adjoint_matvec_count + witness_iterations + 3 + witness_confirmations
         )
     if method_name == ProjectedPCG().name:
-        rank = (
-            problem.operator.source.size
-            - problem.nullspace_policy.certificate.right.dimension
-        ).astype(jnp.int32)
+        # ProjectedPCG planning certifies this policy and kernel before execution.
+        nullspace = cast(NullspacePolicy, problem.nullspace_policy)
+        certificate = cast(KernelCertificate, nullspace.certificate)
+        rank = (problem.operator.source.size - certificate.right.dimension).astype(
+            jnp.int32
+        )
     elif isinstance(problem, MinimumNormProblem) and problem.rank_certificate is not None:
         certificate = problem.rank_certificate
         rank = jnp.where(certificate.matches(problem.operator), certificate.rank, -1)
@@ -753,6 +628,161 @@ def solve_native_krylov(
         ),
         left_null_direction=left_null_direction,
         least_squares_stationary=least_squares_stationary,
+    )
+
+
+@checked
+def solve_native_krylov(
+    state: NativeKrylovState,
+    rhs: Array,
+    plan: LinearSolvePlan,
+    /,
+    *,
+    initial_guess: Array | None = None,
+    control: LinearSolveControl | None = None,
+    iteration: IterationPlan | None = None,
+    iteration_state: IterationRuntimeState | None = None,
+) -> NativeKrylovBackendOutput:
+    if rhs.ndim != 2:
+        raise ValueError(
+            f"solve_native_krylov.rhs must have rank 2 with shape (m, k); got shape={rhs.shape}."
+        )
+    problem = state.problem
+    if plan.policy.differentiation.mode == "rhs-only":
+        problem = jax.tree.map(
+            lambda value: jax.lax.stop_gradient(value) if eqx.is_array(value) else value,
+            problem,
+        )
+    method = plan.policy.method
+    method_name = plan.method if method.name == "auto" else method.name
+    (
+        relative_tolerance,
+        absolute_tolerance,
+        maximum_steps,
+        structural_maximum_steps,
+    ) = _runtime_controls(problem, plan, control, rhs.real.dtype)
+    guesses = (
+        jnp.zeros((problem.operator.source.size, rhs.shape[1]), dtype=rhs.dtype)
+        if initial_guess is None
+        else initial_guess
+    )
+    if guesses.shape != (problem.operator.source.size, rhs.shape[1]):
+        raise ValueError(
+            f"solve_native_krylov.initial_guess must match solution and RHS axes; got shape={guesses.shape}, expected={(problem.operator.source.size, rhs.shape[1])}."
+        )
+    inner_plan = (
+        iteration
+        if iteration is not None and iteration.granularity == "inner-iteration"
+        else None
+    )
+    if inner_plan is not None and rhs.shape[1] != 1:
+        raise ValueError(
+            f"solve_native_krylov.rhs must contain one right-hand side for inner observation; got shape={rhs.shape}."
+        )
+
+    def solve_column(
+        target: Array, guess: Array, observed_state: IterationRuntimeState | None
+    ) -> _SolveResult:
+        square_method: str | None = None
+        if method_name == PCG().name:
+            square_method = "pcg"
+        elif method_name == ProjectedPCG().name:
+            square_method = "projected-pcg"
+        elif method_name == MINRES().name:
+            square_method = "minres"
+        elif method_name == FGMRES().name:
+            square_method = "fgmres"
+        elif method_name == GMRES().name:
+            square_method = "gmres"
+        if square_method is not None:
+            return _square_solve(
+                problem,
+                target,
+                guess,
+                plan,
+                square_method,
+                preconditioner=state.preconditioner,
+                relative=relative_tolerance,
+                absolute=absolute_tolerance,
+                max_steps=maximum_steps,
+                structural_max_steps=structural_maximum_steps,
+                iteration=inner_plan,
+                iteration_state=observed_state,
+            )
+        if method_name in (GeneralizedLSMR().name, LSMR().name):
+            return _least_squares_solve(
+                problem,
+                target,
+                guess,
+                plan,
+                relative=relative_tolerance,
+                absolute=absolute_tolerance,
+                max_steps=maximum_steps,
+                structural_max_steps=structural_maximum_steps,
+                iteration=inner_plan,
+                iteration_state=observed_state,
+            )
+        if method_name == Craig().name:
+            return _craig_solve(
+                problem,
+                target,
+                plan,
+                preconditioner=state.preconditioner,
+                relative=relative_tolerance,
+                absolute=absolute_tolerance,
+                max_steps=maximum_steps,
+                structural_max_steps=structural_maximum_steps,
+                iteration=inner_plan,
+                iteration_state=observed_state,
+            )
+        raise ValueError(
+            f"solve_native_krylov.method must be supported by the native Krylov backend; got {method_name!r}."
+        )
+
+    if rhs.shape[1] == 1:
+        value_column, auxiliary_column, updated_iteration_state = solve_column(
+            rhs[:, 0], guesses[:, 0], iteration_state
+        )
+        value = value_column[:, None]
+        auxiliary = jax.tree.map(lambda item: item[None], auxiliary_column)
+    elif method_name in (PCG().name, ProjectedPCG().name):
+        value, auxiliary, _ = _square_pcg_batched(
+            problem,
+            rhs,
+            guesses,
+            "projected-pcg" if method_name == ProjectedPCG().name else "pcg",
+            preconditioner=state.preconditioner,
+            relative=relative_tolerance,
+            absolute=absolute_tolerance,
+            max_steps=maximum_steps,
+            structural_max_steps=structural_maximum_steps,
+            driver=_loop_driver(plan),
+        )
+        updated_iteration_state = iteration_state
+    else:
+
+        def solve_unobserved(
+            target: Array, guess: Array
+        ) -> tuple[Array, _SolveAuxiliary]:
+            value_, auxiliary_, _ = solve_column(target, guess, None)
+            return value_, auxiliary_
+
+        value, auxiliary = jax.vmap(solve_unobserved, in_axes=(1, 1), out_axes=(1, 0))(
+            rhs, guesses
+        )
+        updated_iteration_state = iteration_state
+    return _native_krylov_output(
+        state,
+        problem,
+        rhs,
+        plan,
+        method_name,
+        relative_tolerance,
+        absolute_tolerance,
+        structural_maximum_steps,
+        value,
+        auxiliary,
+        updated_iteration_state,
     )
 
 
@@ -1314,6 +1344,7 @@ def _confirmed_residual(
     return residual, _norm(residual, inner)
 
 
+# Keep the Paige–Saunders recurrence and true-quantity confirmations in one gated carry.
 def _minres_raw(
     action: _Action,
     rhs: Array,
@@ -1338,7 +1369,7 @@ def _minres_raw(
 
     ``row_gram_stop`` declares ``A = B B*`` (Craig's multiplier system for
     ``B z = b``) and also stops, consistent or not, at a weighted least-squares
-    point of ``B z = b``: the witness ``d = M r`` satisfies
+    point of ``B z = b``: the residual vector ``d = M r`` satisfies
     ``||B* d|| <= tol ||M^1/2 B|| ||r||_M`` with ``tol = max(relative,
     sqrt(4 sqrt(m) eps))``, ``||B* d||^2 = <d, A d>`` and ``||M^1/2 B||^2 =
     ||A_hat||`` (``A_hat = M^1/2 A M^1/2``, estimated by the Lanczos Frobenius
@@ -1622,6 +1653,8 @@ def _minres_raw(
     )
 
 
+# Keep fixed-trip checkpoints and early-exit Arnoldi in the same floating-point order.
+@eqx.filter_jit
 def _fgmres_raw(
     action: _Action,
     rhs: Array,
@@ -1675,7 +1708,7 @@ def _fgmres_raw(
         iteration_state,
     )
     # A projected convergence nomination can shorten a cycle without satisfying
-    # the physical residual. Such a cycle consumes only its actual Arnoldi
+    # the physical residual. Such a cycle consumes only its executed Arnoldi
     # steps, so the maximum number of cycles is the iteration budget itself.
     cycles = max_steps
     columns = jnp.arange(restart, dtype=jnp.int32)
@@ -1696,6 +1729,7 @@ def _fgmres_raw(
         )
         return jnp.where(active_columns, coefficients, 0)
 
+    # Cycle gating must preserve per-lane carries and scalar checkpoint admission together.
     def cycle_step(_: None, state: _FGMRESCycleCarry) -> _FGMRESCycleCarry:
         (
             x,
@@ -1713,6 +1747,7 @@ def _fgmres_raw(
             cycle_active & (iterations < step_limit) & (iterations < max_steps)
         )
 
+        # One restart owns its Arnoldi checkpoint scope and true-residual commit.
         def execute_cycle(operand: _FGMRESCycleCarry) -> _FGMRESCycleCarry:
             (
                 cycle_base,
@@ -1763,6 +1798,7 @@ def _fgmres_raw(
                 observed_outer,
             )
 
+            # Inactive lanes retain the full Arnoldi carry without changing callback operands.
             def arnoldi_step(local_index: Array, current: _ArnoldiCarry) -> _ArnoldiCarry:
                 (
                     basis_,
@@ -1783,6 +1819,7 @@ def _fgmres_raw(
                 )
                 step_executing = cycle_executing & can_execute
 
+                # Keep two-pass Gram–Schmidt, rotations, and observation in recurrence order.
                 def execute_arnoldi(inner_operand: _ArnoldiCarry) -> _ArnoldiCarry:
                     (
                         basis_i,
@@ -1813,7 +1850,7 @@ def _fgmres_raw(
 
                     # Early exit bounds the modified Gram-Schmidt passes by the
                     # dynamic basis size; fixed trip runs the static restart
-                    # length and masks entries beyond `local_index` to exact
+                    # length and masks entries beyond `local_index` to
                     # zeros, so active work keeps the same order.
                     def orthogonalize(
                         index: Array, state: tuple[Array, Array]
@@ -1970,7 +2007,7 @@ def _fgmres_raw(
                         estimated_norm,
                         rhs_norm,
                         # A near-invariant step is a restart, not yet a failure;
-                        # the cycle reports genuine breakdown from true residuals.
+                        # the cycle reports breakdown from true residuals.
                         jnp.where(
                             step_breakdown == int(KrylovBreakdownStatus.NEAR_BREAKDOWN),
                             int(KrylovBreakdownStatus.NONE),
@@ -2079,7 +2116,7 @@ def _fgmres_raw(
                 stagnated = next_stagnant >= stagnation_iterations
                 # A near-invariant Krylov subspace that still reduced the true
                 # residual is restarted from the new residual. Only an invariant
-                # direction without true-residual progress is a genuine breakdown.
+                # direction without true-residual progress is classified as breakdown.
                 progressing_restart = (
                     inner_breakdown == int(KrylovBreakdownStatus.NEAR_BREAKDOWN)
                 ) & (
@@ -2233,7 +2270,7 @@ def _craig_solve(
     every stop. A redundant consistent system has a singular ``B B*`` whose range
     contains ``b``. An inconsistent ``b`` is never declared converged: MINRES
     approaches the preconditioned least-squares point, where the weighted
-    residual ``M r`` lies in ``null(B*)`` and is a left-null witness. Its
+    residual ``M r`` lies in ``null(B*)`` and is a left-null vector. Its
     stationarity ``||B* M r|| <= max(relative, sqrt(eps)) ||M^1/2 B|| ||r||_M`` is
     confirmed with true actions and reported as ``STAGNATION``; the iteration
     stops there instead of amplifying roundoff along ``null(B*)``. Conjugate
@@ -2333,6 +2370,7 @@ def _least_squares_solve(
     )
 
 
+# Keep LSMR rotations, stationarity confirmations, and action counts in one gated recurrence.
 def _lsmr_raw(
     action: _TargetAction,
     adjoint: _TargetAdjoint,
@@ -2357,7 +2395,7 @@ def _lsmr_raw(
     the stationarity roundoff floor of the returned point.
 
     Both modes stop only on true quantities; recurrence estimates merely schedule
-    one confirming forward and adjoint action. ``constraint=True`` solves an exact
+    one confirming forward and adjoint action. ``constraint=True`` solves a
     (minimum-norm) constraint: it stops on a confirmed true residual or a
     scale-free least-squares stationary point (reported as ``STAGNATION``), never
     on an absolute normal-residual threshold. Otherwise the least-squares
@@ -2437,9 +2475,11 @@ def _lsmr_raw(
     def stationarity_floor(norm_a: Array, residual_norm: Array) -> Array:
         return roundoff * norm_a * residual_norm
 
+    # An inactive lane retains every field of the LSMR state.
     def step(index: Array, current: _LSMRState) -> _LSMRState:
         executing = current.active & (index < step_limit)
 
+        # Bidiagonalization and confirmed acceptance update the same ordered LSMR carry.
         def execute(value: _LSMRState) -> _LSMRState:
             image_operator, image_regularizer = action(
                 _gated_input(executing, value.v, initial)
@@ -2530,7 +2570,7 @@ def _lsmr_raw(
             normal_residual = jnp.abs(zeta_bar)
             next_iteration_index = value.iteration + 1
             if constraint:
-                # An exact constraint stops only on true quantities; recurrence
+                # A constraint stops only on true quantities; recurrence
                 # estimates merely schedule one forward plus one adjoint action.
                 # It stops on a true residual within tolerance, or on a
                 # least-squares stationary point (r orthogonal to the range) by
@@ -2816,7 +2856,7 @@ def _least_squares_actions(
         weights = jnp.asarray(problem.weights).reshape((-1,))
         if weights.shape != (operator.target.size,):
             raise ValueError(
-                "GeneralizedLSMR weights must have one target coordinate entry."
+                f"GeneralizedLSMR.weights must have one entry per target coordinate; got shape={weights.shape}, expected={(operator.target.size,)}."
             )
 
     def action(vector: Array) -> _TargetPair:

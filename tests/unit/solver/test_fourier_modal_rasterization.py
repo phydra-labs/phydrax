@@ -10,6 +10,7 @@ import pytest
 import phydrax as phx
 from phydrax.discretization.spectral import LatticeHarmonicPlan
 from phydrax.solver.maxwell import fourier_modal as fm
+from phydrax.units import METER
 
 
 def _harmonics(points: int = 48) -> Any:
@@ -23,7 +24,7 @@ def _circle(radius: Any = 0.25) -> Any:
         center=(0.5, 0.5),
         radius=radius,
         feature_id="inclusion",
-    ).compile()
+    ).compile(coordinate_unit=METER)
 
 
 def test_fourier_modal_rasterization_scenario_1() -> None:

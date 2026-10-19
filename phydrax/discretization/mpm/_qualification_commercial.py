@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from enum import IntEnum
+from typing import assert_never
 
 import equinox as eqx
 
@@ -13,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...qualification import CapabilityProfile
+from ...typing import checked, parse
 from ._commercial import (
     MPMClaimTuple,
     MPMIntendedUse,
@@ -57,7 +59,9 @@ class MPMIndependentReview(StrictModule, NonTrainableState):
             None if validation_data_owner_id is None else str(validation_data_owner_id)
         )
         if any(not value for value in values) or len(set(values)) != len(values):
-            raise ValueError("Commercial review roles must be non-empty and independent.")
+            raise ValueError(
+                f"MPMIndependentReview.roles must be non-empty and independent; got {values!r}"
+            )
         self.author_id, self.technical_reviewer_id, self.release_approver_id = values
         self.validation_data_owner_id = data_owner
         self.review_record_id = canonical_fingerprint(
@@ -101,7 +105,9 @@ class MPMStandardsTrace(StrictModule, NonTrainableState):
             )
             or not evidence
         ):
-            raise ValueError("Standards trace record is incomplete.")
+            raise ValueError(
+                f"MPMStandardsTrace.fields must have nonempty standard, edition, applicability, requirement, and evidence; got standard={standard_!r}, edition={edition_!r}, applicability={applicability_!r}, requirement={requirement_!r}, evidence={evidence!r}"
+            )
         self.standard = standard_
         self.edition = edition_
         self.applicability = applicability_
@@ -130,7 +136,9 @@ class MPMStandardsTraceabilityMatrix(StrictModule, NonTrainableState):
         if not traces_ or any(
             not isinstance(value, MPMStandardsTrace) for value in traces_
         ):
-            raise TypeError("Standards matrix requires typed trace records.")
+            raise TypeError(
+                "MPMStandardsTraceabilityMatrix.traces must contain one or more MPMStandardsTrace records; got empty or untyped records"
+            )
         self.traces = traces_
         self.matrix_id = canonical_fingerprint(
             {"kind": "mpm-standards-matrix", "traces": [v.trace_id for v in traces_]}
@@ -150,6 +158,7 @@ class MPMCommercialProfile(StrictModule, NonTrainableState):
     capability_profile: CapabilityProfile
     profile_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         name: str,
@@ -159,24 +168,36 @@ class MPMCommercialProfile(StrictModule, NonTrainableState):
         /,
     ) -> None:
         name_ = str(name)
-        kind_ = MPMCommercialProfileKind(kind)
-        if (
-            not name_
-            or not isinstance(support_matrix, MPMSupportMatrix)
-            or not isinstance(standards, MPMStandardsTraceabilityMatrix)
-        ):
-            raise ValueError("Commercial MPM profile is incomplete.")
-        if kind_ == MPMCommercialProfileKind.CODE_SOLUTION_VERIFIED:
-            required = (
-                MPMReleaseGate.INTENDED_USE,
-                MPMReleaseGate.CODE_VERIFICATION,
-                MPMReleaseGate.SOLUTION_VERIFICATION,
-                MPMReleaseGate.PROVENANCE_SBOM,
-                MPMReleaseGate.QUALITY_RELIABILITY,
-                MPMReleaseGate.RELEASE_DECISION,
+        kind_ = parse(
+            MPMCommercialProfileKind(kind),
+            MPMCommercialProfileKind,
+            "MPMCommercialProfile.kind",
+        )
+        if not name_:
+            raise ValueError(
+                "MPMCommercialProfile.name must be non-empty; got empty name"
             )
-        else:
-            required = tuple(MPMReleaseGate)
+        match kind_:
+            case MPMCommercialProfileKind.CODE_SOLUTION_VERIFIED:
+                required = (
+                    MPMReleaseGate.INTENDED_USE,
+                    MPMReleaseGate.CODE_VERIFICATION,
+                    MPMReleaseGate.SOLUTION_VERIFICATION,
+                    MPMReleaseGate.PROVENANCE_SBOM,
+                    MPMReleaseGate.QUALITY_RELIABILITY,
+                    MPMReleaseGate.RELEASE_DECISION,
+                )
+            case (
+                MPMCommercialProfileKind.COMMERCIAL_RUNTIME
+                | MPMCommercialProfileKind.ADVANCED_MECHANICS
+                | MPMCommercialProfileKind.LARGE_SCALE
+                | MPMCommercialProfileKind.DIFFERENTIABLE_ENGINEERING
+                | MPMCommercialProfileKind.APPLICATION_VALIDATED
+                | MPMCommercialProfileKind.REGULATED_OVERLAY
+            ):
+                required = tuple(MPMReleaseGate)
+            case unknown:
+                assert_never(unknown)
         supported = tuple(
             decision.claim.support_tuple
             for decision in support_matrix.decisions
@@ -184,7 +205,7 @@ class MPMCommercialProfile(StrictModule, NonTrainableState):
         )
         if not supported:
             raise ValueError(
-                "Commercial MPM profile must contain exact supported tuples."
+                "MPMCommercialProfile.support_matrix must contain supported tuples; got no supported decisions"
             )
         self.kind = kind_
         self.support_matrix = support_matrix
@@ -230,6 +251,7 @@ class MPMReleaseAssessment(StrictModule, NonTrainableState):
     assessment_id: str = eqx.field(static=True)
 
 
+@checked
 def assess_release(
     profile: MPMCommercialProfile,
     claim: MPMClaimTuple,
@@ -238,14 +260,6 @@ def assess_release(
     review: MPMIndependentReview,
     /,
 ) -> MPMReleaseAssessment:
-    if not isinstance(profile, MPMCommercialProfile):
-        raise TypeError("profile must be MPMCommercialProfile.")
-    if not isinstance(claim, MPMClaimTuple) or not isinstance(
-        intended_use, MPMIntendedUse
-    ):
-        raise TypeError("Release assessment needs claim and intended use.")
-    if not isinstance(review, MPMIndependentReview):
-        raise TypeError("review must be MPMIndependentReview.")
     decision = profile.support_matrix.decision(claim.claim_id)
     reasons = []
     if decision.outcome.name != "SUPPORTED":

@@ -31,6 +31,7 @@ from ._unstructured_overset import (
     PeriodicSlidingInterfacePlan,
     UnstructuredOversetPlan,
 )
+from ._unstructured_types import AbstractUnstructuredFiniteVolumeDiscretization
 from ._unstructured_vof import UnstructuredVOFPlan
 from ._vof_phase_change import VOFPhaseChangePlan
 
@@ -84,7 +85,7 @@ def _validate_current_geometry(
 
 def _validate_prepared_geometry(
     name: str,
-    artifact: UnstructuredFiniteVolumeDiscretization,
+    artifact: AbstractUnstructuredFiniteVolumeDiscretization,
     discretization: UnstructuredFiniteVolumeDiscretization
     | DyadicFiniteVolumeDiscretization,
     /,

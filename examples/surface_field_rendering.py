@@ -9,6 +9,7 @@ import json
 import numpy as np
 
 import phydrax as phx
+from phydrax.geometry.surface import SurfaceMetadata, SurfaceModel
 
 
 vertices = np.asarray(
@@ -20,13 +21,13 @@ contract = phx.SpatialCoordinateContract(
     coordinate_system="cartesian-world",
     reference_frame="world",
 )
-metadata = phx.geometry.surface.SurfaceMetadata(
+metadata = SurfaceMetadata(
     source_id="moving-tetrahedron",
     source_revision="1",
     coordinate_contract=contract,
     provenance=("synthetic",),
 )
-realization = phx.geometry.surface.SurfaceModel.from_triangles(
+realization = SurfaceModel.from_triangles(
     vertices,
     triangles,
     metadata,

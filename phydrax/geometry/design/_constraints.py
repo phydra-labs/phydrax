@@ -6,32 +6,26 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
 
 from ..._mass import require_exact_mass
 from ..._strict import StrictModule
-from ...typing import checked, PRNGKey
+from ..._validation import positive_integer, positive_real_scalar
+from ...optim import DifferentialEvolutionSearch, LeastSquaresResult
+from ...typing import checked, ConvertibleToArray, PRNGKey
 from .._capabilities import (
     GeometryCapability,
     SeamDiagnosticsProvider,
 )
 from .._contracts import CompiledGeometry, GeometryKernel
 from ._schema import DesignState, ParameterId, ParameterSchema
-
-
-if TYPE_CHECKING:
-    from ...optim import DifferentialEvolutionSearch
-    from ._search import DesignSearchResult
-
-
-_SolveState: TypeAlias = tuple[Array, Array, Array]
+from ._search_result import DesignSearchResult
+from ._solve import DesignTrialPolicy, solve_design_residual
 
 
 class AbstractDesignConstraint(StrictModule):
@@ -41,7 +35,9 @@ class AbstractDesignConstraint(StrictModule):
 
     def __init__(self, weight: float = 1.0) -> None:
         if not np.isfinite(weight) or weight <= 0.0:
-            raise ValueError("constraint weight must be finite and positive.")
+            raise ValueError(
+                f"AbstractDesignConstraint.weight must be finite and positive; got {weight}"
+            )
         self.weight = jnp.asarray(weight, dtype=jnp.float64).reshape(())
 
     @abstractmethod
@@ -67,14 +63,16 @@ class ParameterTarget(AbstractDesignConstraint):
     def __init__(
         self,
         parameter_id: ParameterId,
-        target: Array,
+        target: ConvertibleToArray,
         *,
         scale: float = 1.0,
         weight: float = 1.0,
     ) -> None:
         super().__init__(weight)
         if not np.isfinite(scale) or scale <= 0.0:
-            raise ValueError("scale must be finite and positive.")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.scale must be finite and positive; got {scale}"
+            )
         self.parameter_id = parameter_id
         self.target = jnp.asarray(target, dtype=jnp.float64)
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
@@ -96,6 +94,7 @@ class ParameterEquality(AbstractDesignConstraint):
     second: ParameterId = eqx.field(static=True)
     scale: Array
 
+    @checked
     def __init__(
         self,
         first: ParameterId,
@@ -105,10 +104,10 @@ class ParameterEquality(AbstractDesignConstraint):
         weight: float = 1.0,
     ) -> None:
         super().__init__(weight)
-        if not isinstance(first, ParameterId) or not isinstance(second, ParameterId):
-            raise TypeError("first and second must be ParameterId objects.")
         if not np.isfinite(scale) or scale <= 0.0:
-            raise ValueError("scale must be finite and positive.")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.scale must be finite and positive; got {scale}"
+            )
         self.first = first
         self.second = second
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
@@ -139,9 +138,13 @@ class MeasureTarget(AbstractDesignConstraint):
     ) -> None:
         super().__init__(weight)
         if not np.isfinite(target):
-            raise ValueError("target must be finite.")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.target must be finite; got {target}"
+            )
         if not np.isfinite(scale) or scale <= 0.0:
-            raise ValueError("scale must be finite and positive.")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.scale must be finite and positive; got {scale}"
+            )
         self.target = jnp.asarray(target, dtype=jnp.float64).reshape(())
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
@@ -173,9 +176,13 @@ class BoundaryMeasureTarget(AbstractDesignConstraint):
     ) -> None:
         super().__init__(weight)
         if not np.isfinite(target):
-            raise ValueError("target must be finite.")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.target must be finite; got {target}"
+            )
         if not np.isfinite(scale) or scale <= 0.0:
-            raise ValueError("scale must be finite and positive.")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.scale must be finite and positive; got {scale}"
+            )
         self.target = jnp.asarray(target, dtype=jnp.float64).reshape(())
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
@@ -208,9 +215,13 @@ class BoundaryPoints(AbstractDesignConstraint):
         super().__init__(weight)
         points_ = jnp.asarray(points, dtype=jnp.float64)
         if points_.ndim != 2:
-            raise ValueError("points must have shape (num_points, ambient_dimension).")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.points must have shape (num_points, ambient_dimension); got {points_.shape}"
+            )
         if not np.isfinite(scale) or scale <= 0.0:
-            raise ValueError("scale must be finite and positive.")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.scale must be finite and positive; got {scale}"
+            )
         self.points = points_
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
@@ -241,11 +252,17 @@ class InteriorClearance(AbstractDesignConstraint):
         super().__init__(weight)
         points_ = jnp.asarray(points, dtype=jnp.float64)
         if points_.ndim != 2:
-            raise ValueError("points must have shape (num_points, ambient_dimension).")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.points must have shape (num_points, ambient_dimension); got {points_.shape}"
+            )
         if not np.isfinite(clearance) or clearance < 0.0:
-            raise ValueError("clearance must be finite and non-negative.")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.clearance must be finite and nonnegative; got {clearance}"
+            )
         if not np.isfinite(scale) or scale <= 0.0:
-            raise ValueError("scale must be finite and positive.")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.scale must be finite and positive; got {scale}"
+            )
         self.points = points_
         self.clearance = jnp.asarray(clearance, dtype=jnp.float64).reshape(())
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
@@ -278,11 +295,17 @@ class ExteriorClearance(AbstractDesignConstraint):
         super().__init__(weight)
         points_ = jnp.asarray(points, dtype=jnp.float64)
         if points_.ndim != 2:
-            raise ValueError("points must have shape (num_points, ambient_dimension).")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.points must have shape (num_points, ambient_dimension); got {points_.shape}"
+            )
         if not np.isfinite(clearance) or clearance < 0.0:
-            raise ValueError("clearance must be finite and non-negative.")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.clearance must be finite and nonnegative; got {clearance}"
+            )
         if not np.isfinite(scale) or scale <= 0.0:
-            raise ValueError("scale must be finite and positive.")
+            raise ValueError(
+                f"DesignConstraintSystem.constraints.scale must be finite and positive; got {scale}"
+            )
         self.points = points_
         self.clearance = jnp.asarray(clearance, dtype=jnp.float64).reshape(())
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
@@ -305,7 +328,9 @@ class BRepSeamCompatibility(AbstractDesignConstraint):
     def __init__(self, tolerance: float = 1e-8, *, weight: float = 1.0) -> None:
         super().__init__(weight)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
-            raise ValueError("tolerance must be finite and positive.")
+            raise ValueError(
+                f"BRepSeamCompatibility.tolerance must be finite and positive; got {tolerance}"
+            )
         self.tolerance = jnp.asarray(tolerance, dtype=jnp.float64).reshape(())
 
     def residual(
@@ -316,34 +341,48 @@ class BRepSeamCompatibility(AbstractDesignConstraint):
         /,
     ) -> Array:
         del schema
-        if not isinstance(kernel, SeamDiagnosticsProvider):
-            raise TypeError(
-                "BRepSeamCompatibility requires a seam-diagnostics geometry kernel."
-            )
-        return self._weighted(kernel.seam_residual(state) / self.tolerance)
+        match kernel:
+            case SeamDiagnosticsProvider():
+                return self._weighted(kernel.seam_residual(state) / self.tolerance)
+            case _:
+                raise TypeError(
+                    f"BRepSeamCompatibility.kernel must provide seam diagnostics; got {type(kernel).__name__}"
+                )
 
 
 class ConstraintSolveResult(StrictModule):
+    """Return a design state with native status and weighted residual evidence."""
+
     state: DesignState
     residual: Array
     residual_norm: Array
+    residual_bound: Array
     converged: Array
     iterations: Array
+    status: Array
+    solver_result: LeastSquaresResult
 
+    @checked
     def __init__(
         self,
         *,
         state: DesignState,
-        residual: ArrayLike,
-        residual_norm: ArrayLike,
-        converged: ArrayLike,
-        iterations: ArrayLike,
+        solver_result: LeastSquaresResult,
+        residual_bound: float,
     ) -> None:
+        residual_bound = positive_real_scalar(
+            residual_bound, "ConstraintSolveResult.residual_bound"
+        )
         self.state = state
-        self.residual = jnp.asarray(residual, dtype=jnp.float64)
-        self.residual_norm = jnp.asarray(residual_norm, dtype=jnp.float64).reshape(())
-        self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
-        self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
+        self.residual = jnp.asarray(solver_result.residual, dtype=jnp.float64)
+        self.residual_norm = jnp.linalg.norm(self.residual)
+        self.residual_bound = jnp.asarray(residual_bound, dtype=jnp.float64)
+        self.converged = solver_result.successful & (
+            self.residual_norm <= self.residual_bound
+        )
+        self.iterations = solver_result.diagnostics.iterations
+        self.status = solver_result.status
+        self.solver_result = solver_result
 
 
 class DesignConstraintSystem(StrictModule):
@@ -364,15 +403,21 @@ class DesignConstraintSystem(StrictModule):
     ) -> None:
         constraints_ = tuple(constraints)
         if not constraints_:
-            raise ValueError("At least one design constraint is required.")
+            raise ValueError(
+                "DesignConstraintSystem.constraints must contain at least one constraint; got empty constraints"
+            )
         if any(not isinstance(item, AbstractDesignConstraint) for item in constraints_):
-            raise TypeError("constraints must contain design constraint objects.")
+            raise TypeError(
+                "DesignConstraintSystem.constraints must contain design constraints; got unsupported member"
+            )
         self._validate_constraints(geometry, constraints_)
         indices = tuple(
             index for index, spec in enumerate(geometry.schema.specs) if spec.trainable
         )
         if not indices:
-            raise ValueError("The compiled geometry has no trainable parameters.")
+            raise ValueError(
+                "DesignConstraintSystem.geometry must have trainable parameters; got none"
+            )
         slices: list[tuple[int, int, tuple[int, ...]]] = []
         lower: list[np.ndarray] = []
         upper: list[np.ndarray] = []
@@ -400,52 +445,72 @@ class DesignConstraintSystem(StrictModule):
     ) -> None:
         schema = geometry.schema
         for constraint in constraints:
-            if isinstance(constraint, ParameterTarget):
-                index = schema.index(constraint.parameter_id)
-                if constraint.target.shape != schema.specs[index].shape:
-                    raise ValueError(
-                        "ParameterTarget shape does not match its parameter."
+            match constraint:
+                case ParameterTarget():
+                    index = schema.index(constraint.parameter_id)
+                    if constraint.target.shape != schema.specs[index].shape:
+                        raise ValueError(
+                            "ParameterTarget.target must match its parameter shape; "
+                            f"got {constraint.target.shape}"
+                        )
+                case ParameterEquality():
+                    first = schema.specs[schema.index(constraint.first)]
+                    second = schema.specs[schema.index(constraint.second)]
+                    if first.unit != second.unit:
+                        raise ValueError(
+                            "ParameterEquality.parameters must have exactly matching units; "
+                            f"got {first.unit.symbol}, {second.unit.symbol}"
+                        )
+                    if first.shape != second.shape:
+                        raise ValueError(
+                            "ParameterEquality.parameters must have matching shapes; "
+                            f"got {first.shape}, {second.shape}"
+                        )
+                case MeasureTarget():
+                    geometry.require(GeometryCapability.INTERIOR_MEASURE)
+                    require_exact_mass(
+                        geometry.interior_mass,
+                        operation="Geometry measure target",
                     )
-            elif isinstance(constraint, ParameterEquality):
-                first = schema.specs[schema.index(constraint.first)]
-                second = schema.specs[schema.index(constraint.second)]
-                if first.shape != second.shape:
-                    raise ValueError("ParameterEquality requires matching shapes.")
-            elif isinstance(constraint, MeasureTarget):
-                geometry.require(GeometryCapability.INTERIOR_MEASURE)
-                require_exact_mass(
-                    geometry.interior_mass,
-                    operation="Geometry measure target",
-                )
-            elif isinstance(constraint, BoundaryMeasureTarget):
-                geometry.require(GeometryCapability.BOUNDARY_MEASURE)
-                require_exact_mass(
-                    geometry.boundary_mass,
-                    operation="Geometry boundary-measure target",
-                )
-            elif isinstance(
-                constraint,
-                (BoundaryPoints, InteriorClearance, ExteriorClearance),
-            ):
-                geometry.require(GeometryCapability.SIGNED_DISTANCE)
-                if constraint.points.shape[1] != geometry.ambient_dimension:
-                    raise ValueError(
-                        "Constraint point dimension does not match geometry."
+                case BoundaryMeasureTarget():
+                    geometry.require(GeometryCapability.BOUNDARY_MEASURE)
+                    require_exact_mass(
+                        geometry.boundary_mass,
+                        operation="Geometry boundary-measure target",
                     )
-            elif isinstance(constraint, BRepSeamCompatibility):
-                geometry.require(GeometryCapability.SEAM_DIAGNOSTICS)
-                if not isinstance(geometry.kernel, SeamDiagnosticsProvider):
+                case BoundaryPoints() | InteriorClearance() | ExteriorClearance():
+                    geometry.require(GeometryCapability.SIGNED_DISTANCE)
+                    if constraint.points.shape[1] != geometry.ambient_dimension:
+                        raise ValueError(
+                            "DesignConstraintSystem.constraints.points must match geometry dimension; "
+                            f"got {constraint.points.shape[1]}"
+                        )
+                case BRepSeamCompatibility():
+                    geometry.require(GeometryCapability.SEAM_DIAGNOSTICS)
+                    if not isinstance(geometry.kernel, SeamDiagnosticsProvider):
+                        raise TypeError(
+                            "BRepSeamCompatibility.geometry must provide seam diagnostics; "
+                            f"got {type(geometry.kernel).__name__}"
+                        )
+                case AbstractDesignConstraint():
+                    pass
+                case _:
                     raise TypeError(
-                        "BRepSeamCompatibility requires a seam-diagnostics geometry."
+                        "DesignConstraintSystem.constraints must contain design constraints; "
+                        f"got {type(constraint).__name__}"
                     )
 
+    @checked
     def pack(self, state: DesignState, /) -> Array:
         if state.schema != self.geometry.schema:
-            raise ValueError("state schema does not match the constraint system.")
+            raise ValueError(
+                "DesignConstraintSystem.state.schema must match geometry.schema; got different schema"
+            )
         return jnp.concatenate(
             tuple(state.values[index].reshape((-1,)) for index in self.trainable_indices)
         )
 
+    @checked
     def unpack(
         self,
         vector: Array,
@@ -456,13 +521,13 @@ class DesignConstraintSystem(StrictModule):
         vector_ = jnp.asarray(vector, dtype=jnp.float64).reshape((-1,))
         if vector_.shape != self.lower_bounds.shape:
             raise ValueError(
-                "vector has the wrong number of trainable degrees of freedom."
+                f"DesignConstraintSystem.vector must match trainable degree count; got {vector_.shape}"
             )
         state = self.geometry.state if base_state is None else base_state
-        if not isinstance(state, DesignState):
-            raise TypeError("base_state must be a DesignState or None.")
         if state.schema != self.geometry.schema:
-            raise ValueError("base_state schema does not match the constraint system.")
+            raise ValueError(
+                "DesignConstraintSystem.base_state.schema must match geometry.schema; got different schema"
+            )
         values = list(state.values)
         for index, (start, stop, shape) in zip(
             self.trainable_indices, self.slices, strict=True
@@ -470,6 +535,7 @@ class DesignConstraintSystem(StrictModule):
             values[index] = vector_[start:stop].reshape(shape)
         return DesignState(self.geometry.schema, tuple(values))
 
+    @checked
     def residual(self, state: DesignState, /) -> Array:
         values = tuple(
             constraint.residual(
@@ -481,16 +547,19 @@ class DesignConstraintSystem(StrictModule):
         )
         return jnp.concatenate(values)
 
+    @checked
     def search(
         self,
         search: DifferentialEvolutionSearch,
         /,
         *,
         key: PRNGKey,
-        bounds: Mapping[ParameterId, tuple[ArrayLike, ArrayLike]] | None = None,
+        bounds: Mapping[ParameterId, tuple[ConvertibleToArray, ConvertibleToArray]]
+        | None = None,
         initial_state: DesignState | None = None,
     ) -> DesignSearchResult:
         """Search globally over a finite box of trainable geometry parameters."""
+        # Search callbacks depend on this system; keep this one cycle lazy.
         from ._search import search_design_constraints
 
         return search_design_constraints(
@@ -501,6 +570,7 @@ class DesignConstraintSystem(StrictModule):
             initial_state=initial_state,
         )
 
+    @checked
     def solve(
         self,
         *,
@@ -510,81 +580,64 @@ class DesignConstraintSystem(StrictModule):
         damping: float = 1e-8,
         line_search_steps: int = 8,
     ) -> ConstraintSolveResult:
-        if max_iterations <= 0 or line_search_steps <= 0:
-            raise ValueError("iteration counts must be positive.")
-        if tolerance <= 0.0 or damping <= 0.0:
-            raise ValueError("tolerance and damping must be positive.")
+        """Solve weighted design residuals with native LM and bound refusal.
+
+        Only residual-decreasing, admissible trials commit. Native optimization
+        status and work evidence accompany the value-only design solution.
+        """
+        max_iterations = positive_integer(
+            max_iterations, "DesignConstraintSystem.solve.max_iterations"
+        )
+        line_search_steps = positive_integer(
+            line_search_steps, "DesignConstraintSystem.solve.line_search_steps"
+        )
+        tolerance = positive_real_scalar(
+            tolerance, "DesignConstraintSystem.solve.tolerance"
+        )
+        damping = positive_real_scalar(damping, "DesignConstraintSystem.solve.damping")
         state = self.geometry.state if initial_state is None else initial_state
-        if not isinstance(state, DesignState):
-            raise TypeError("initial_state must be a DesignState or None.")
         initial = self.pack(state)
-
-        def residual_vector(vector: Array) -> Array:
-            return self.residual(self.unpack(vector, base_state=state))
-
-        initial_norm = jnp.linalg.norm(residual_vector(initial))
-        loop_state: _SolveState = (
+        result = solve_design_residual(
+            _DesignResidual(self, state),
             initial,
-            initial_norm <= tolerance,
-            jnp.asarray(0, dtype=jnp.int32),
+            DesignTrialPolicy(
+                self.lower_bounds,
+                self.upper_bounds,
+                jnp.zeros(initial.shape, dtype=jnp.bool_),
+                tolerance,
+                validity=_DesignAdmissibility(self, state),
+            ),
+            max_iterations=max_iterations,
+            damping=damping,
+            maximum_trials=line_search_steps,
+            problem_id="geometry/design-constraints",
         )
-
-        def iteration(_: int | Array, state: _SolveState) -> _SolveState:
-            vector, converged, count = state
-
-            def update(current: Array) -> Array:
-                values = residual_vector(current)
-                jacobian = jax.jacfwd(residual_vector)(current)
-                normal = jacobian.T @ jacobian + damping * jnp.eye(
-                    current.shape[0], dtype=current.dtype
-                )
-                step = jnp.linalg.solve(normal, -(jacobian.T @ values))
-                current_loss = jnp.sum(values * values)
-                search_state: _SolveState = (
-                    jnp.asarray(1.0, dtype=current.dtype),
-                    current,
-                    current_loss,
-                )
-
-                def search(_: int | Array, trial_state: _SolveState) -> _SolveState:
-                    alpha, best, best_loss = trial_state
-                    candidate = jnp.clip(
-                        current + alpha * step,
-                        self.lower_bounds,
-                        self.upper_bounds,
-                    )
-                    candidate_values = residual_vector(candidate)
-                    candidate_loss = jnp.sum(candidate_values * candidate_values)
-                    improve = candidate_loss < best_loss
-                    return (
-                        alpha * 0.5,
-                        jnp.where(improve, candidate, best),
-                        jnp.where(improve, candidate_loss, best_loss),
-                    )
-
-                _, best, _ = jax.lax.fori_loop(0, line_search_steps, search, search_state)
-                return best
-
-            candidate = jax.lax.cond(converged, lambda value: value, update, vector)
-            norm = jnp.linalg.norm(residual_vector(candidate))
-            active = ~converged
-            return (
-                candidate,
-                converged | (norm <= tolerance),
-                count + active.astype(jnp.int32),
-            )
-
-        vector, converged, iterations = jax.lax.fori_loop(
-            0, max_iterations, iteration, loop_state
-        )
-        state = self.unpack(vector, base_state=state)
-        residual = self.residual(state)
+        vector = jnp.asarray(result.parameters, dtype=initial.dtype)
         return ConstraintSolveResult(
-            state=state,
-            residual=residual,
-            residual_norm=jnp.linalg.norm(residual),
-            converged=converged,
-            iterations=iterations,
+            state=self.unpack(vector, base_state=state),
+            solver_result=result,
+            residual_bound=tolerance,
+        )
+
+
+class _DesignAdmissibility(StrictModule):
+    system: DesignConstraintSystem
+    base_state: DesignState
+
+    def __call__(self, vector: Array, /) -> Array:
+        state = self.system.unpack(vector, base_state=self.base_state)
+        evidence = self.system.geometry.validity(state)
+        return evidence.resolved & evidence.accepted
+
+
+class _DesignResidual(StrictModule):
+    system: DesignConstraintSystem
+    base_state: DesignState
+
+    def __call__(self, vector: Array, args: None, /) -> Array:
+        del args
+        return self.system.residual(
+            self.system.unpack(vector, base_state=self.base_state)
         )
 
 

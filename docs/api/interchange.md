@@ -41,6 +41,159 @@ Execution workset preparation streams its original canonical JSON identity rathe
 than retaining expanded array lists. This does not change `prepared_id`, bucket
 ordering, padding, or semantic RNG addressing.
 
+## Native CAD import and export
+
+`read_cad` selects the bounded STEP, IGES, or OCCT BRep-text codec by suffix.
+File readers require `trusted_root`; BRep text also requires an explicit
+`source_length_unit`, while STEP and IGES preserve their embedded units.
+
+STEP import reports classify every instance as consumed or ignored by design.
+The source-profile qualifiers `coverage-consumed` and
+`coverage-ignored-by-design` contain JSON arrays of entity labels. Ignored
+geometry-bearing records produce `DECLARED_LOSS` entries naming those records;
+unsupported entities reached from a shape root carry a refusal chain.
+Tessellation-only input refuses with `unsupported-entity`, including input
+that also declares an empty shape representation.
+
+`CadImportResult.source_tolerance` records the largest representable declared
+source tolerance in the target coordinate contract's length units, or `None`
+when no converted bound is available. STEP's `source-uncertainties`
+source-profile qualifier retains each uncertainty entity and its converted
+bound, using `null` for an unrepresentable conversion. `tolerance_evidence`
+carries per-entity source bounds separately from unchanged certified gap bounds;
+its published upper bounds are their maximum. Carrying a declaration within the
+importing model's enforced physical tolerance limit remains lossless, even when
+the certified geometry gap is smaller. A declaration above that limit produces
+`DECLARED_LOSS`, naming the entity, declared value, and limit without moving
+geometry or increasing the limit.
+`source_tolerances` retains every raw source-unit declaration by external
+reference, including unused declarations. STEP records each declaration's
+length-unit scale in `source-uncertainty-length-units-m`. Finite raw declarations
+whose conversion overflows also produce `DECLARED_LOSS`: the loss retains the
+raw value and source unit, names the entity and importing limit, and leaves the
+converted source bound absent. That entity's published evidence retains only
+its certified bound. An absent converted bound consumes the semantic-loss
+allowance, so `max_losses=0` refuses it; comparing representable retained
+metadata with the limit does not consume that allowance. Malformed or unknown
+units, non-finite raw declarations, and negative values remain refusals.
+
+BRep-text exports write per-vertex, per-edge, and per-face tolerances from
+certified gap evidence. STEP writes their largest bound as its uncertainty.
+Intersection substitutions include their certified approximation bounds.
+Output tolerances are rounded upward to the written precision; missing or
+unbounded export evidence refuses instead of using a fixed default tolerance.
+
+::: phydrax.interchange.CadExportTolerances
+
+::: phydrax.interchange.certified_cad_export_tolerances
+
+::: phydrax.interchange.CadImportToleranceEvidence
+
+::: phydrax.interchange.build_cad_import_tolerance_evidence
+
+### STEP assemblies and placement evidence
+
+Nested `MAPPED_ITEM`/`REPRESENTATION_MAP` graphs share native solid definitions
+and compose occurrence placements recursively. The default path admits only
+unit-scale, proper frames whose normalized binary64 axes are exactly
+orthogonal under rational dot products. Reflections, nonuniform scale,
+nextafter-unit scale, and unsupported transformation operators refuse.
+
+`CadImportPolicy.maximum_placement_deviation=0.0` keeps that exact default.
+A positive value declares a fixed maximum in target length coordinates and
+requires an explicit `coordinate_budget` on the STEP reader. Source directions
+then define a frame by ISO 10303-42 projection and normalization; outward
+rational/square-root enclosures admit rounded oblique proper frames only when
+the resulting whole-occurrence point deviation is within the declaration.
+This does not admit arbitrary scale/shear matrices.
+
+`BRepOccurrence.placement_evidence` retains norm and entrywise rotation/
+translation errors against source intent, the native chart extent, and the
+resulting point bound. Composition and inversion propagate evidence rather
+than discarding it. Native archives preserve it; placement queries can consume
+it. Materialization, Booleans, sewing, and external CAD projection currently
+refuse positive displacement with `placement-deviation`. A source-frame
+certificate is not an edge/face incidence-gap certificate.
+
+### STEP names, colors, and layers
+
+`CadImportResult.entity_metadata` is `StepEntityMetadata` for STEP and `None`
+for non-STEP adapters. Canonical `StepEntityLabels` rows retain all authored
+names, RGB colors, and layers on solid/face/edge/vertex identities.
+Unsupported presentation forms are explicitly ignored by design, not
+interpreted as guessed colors.
+
+`metadata.entities(kind, label, unique=...)` performs exact lookup.
+`select_step_entities(model, metadata, kind, label, family="face",
+unique=...)` returns the same `BRepSelection` as geometric predicates.
+Names require uniqueness by default; `StepMetadataConflict` retains all
+matching identities instead of choosing one. Color/layer lookups select exact
+sets. Body labels expand to faces by declared solid incidence.
+Selections use recipe keys for [region binding](geometry.md#geometric-predicates-and-normal-ranges).
+`write_step(..., metadata=...)` emits the retained presentation labels.
+
+Metadata is outside the model payload: edits on the same model leave
+`model_id`, `source_revision`, and entity IDs unchanged. Rewriting source-file
+labels still changes the whole-file source revision/model ID, while unchanged
+geometry retains `geometry_id`. Import result identity includes present
+metadata; it is not a geometry-only identity.
+
+### Exact STEP repairs and orientation audit
+
+`StepRepairPolicy` defaults to no enabled repair.
+`read_step`, `decode_step_bytes`, and `decode_step_resource` accept
+`repair_policy` and `coordinate_budget`; any enabled repair requires that
+explicit request budget. `add_missing_seams` supports coaxial full-circle
+cylinder bands and natural sphere/torus seams. `orient_face_senses` supports
+closed convex linear shells through exact supporting-plane tests; curved,
+nonconvex, and cavity sense repairs refuse. `reverse_inverted_shells` requires
+certified signed shell-volume signs and nesting roles; unresolved or
+zero-containing evidence refuses an opt-in reversal.
+
+Repairs move no carrier and grow no tolerance. Each repaired source entity and
+proof reason is an `AdapterLoss`; report status `AdapterStatus.REPAIRED`
+composes through successful report admission, without erasing those records.
+The default orientation audit rejects certified inverted shells with
+`inverted-shell`; exhaustion or unresolved evidence retains an admitted import
+with `orientation_unresolved` assumptions, never a verified sign.
+`subdivisions=1`, `maximum_boxes=4096`, and `maximum_depth=32` declare work
+limits, not accuracy. Default audit limits are 2,000,000 work units and 16 MiB
+through `audit_maximum_work_units` and `audit_maximum_memory_bytes`.
+
+## DXF planar profiles
+
+`decode_dxf_bytes(data, policy, source_length_unit=..., coordinate_budget=...)`
+and rooted `read_dxf(path, policy, trusted_root=...)` return `DxfImportResult`
+with `.profile`, `.coordinate_unit`, and `.report`.
+`DxfImportPolicy` declares byte/group/entity limits (defaults 4 MiB, 100,000,
+and 10,000) and `maximum_junction_gap=0.0`. Units require `$INSUNITS` or an
+explicit native source length unit; conflicts refuse. Supported unit codes are
+inch, foot, millimeter, centimeter, meter, kilometer, and micrometer.
+
+Native ASCII entities include lines, circles/arcs, bulged lightweight
+polylines, rational quadrantal ellipses, general-angle analytic conics with
+certified junction gaps, and clamped control-point splines with positive
+weights. Fit-point-only or periodic unclamped splines, nonplanar entities,
+width/thickness, unsupported geometry, and unrepresentable coefficients refuse.
+`DxfImportError` retains its report and open endpoints. Coverage distinguishes
+consumed, refused, and ignored-by-design entities/sections.
+
+`ProfileCurveUse` retains directed source conics. `PlanarProfile` stores
+independently recomputed `endpoint_gap_bounds`; source/chord isotopy certifies
+orientation and containment before extrusion. A positive declared junction
+limit never snaps geometry: successful gap-bearing imports retain actual
+outward bounds, an `AdapterLoss`, and a waiver grounded in that fixed limit.
+Extrusion/planar-face publication recomputes generic endpoint and face gaps;
+exact legacy profiles keep those fields absent. Profile coordinate-budget
+arguments borrow a request ticket and are not stored identity fields.
+
+`encode_dxf(profile, coordinate_unit=..., policy=...,
+coordinate_budget=...)` returns bounded bytes. `write_dxf(profile, path,
+coordinate_unit=..., policy=..., mode="exclusive")` publishes atomically and
+returns `DxfExportResult.receipt` plus its semantic `.report`.
+See the [DXF workflow](../guides_file_interchange.md#dxf-planar-profiles).
+
+
 ## Cartesian raster cell fields
 
 ::: phydrax.interchange.GeospatialCellField

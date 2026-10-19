@@ -15,6 +15,7 @@ from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
 
 from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -23,7 +24,6 @@ from ..._trainable import NonTrainableState
 from ...discretization._conservation_ledger import (
     ConservationStageLedger,
 )
-from ...discretization.fem._reference import FiniteElementSpec
 from ...typing import checked
 
 

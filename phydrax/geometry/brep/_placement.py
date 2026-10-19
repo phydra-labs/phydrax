@@ -2,15 +2,23 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Exact occurrence-to-world CAD cutover with explicit source incidence lineage."""
+"""Materialize CAD occurrences through preparation, topology, and lineage phases.
+
+Qualified source incidence determines sharing and traversal order. Phase records
+retain source operation trees and the certificate payloads of world publication.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+import equinox as eqx
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
+from ..._strict import StrictModule
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked
 from .._cad_revision import (
     AssociationCoverageEvidence,
     AssociationGraph,
@@ -20,11 +28,21 @@ from .._cad_revision import (
     OccurrenceCorrespondenceTransaction,
 )
 from ._constructors import assemble_brep_model, BRepTessellationPolicy
+from ._coordinate_request import coordinate_source_request
+from ._exact import exact_determinant
 from ._intersection import RootEndpoint
-from ._model import BRepEntityId, BRepGeometry, BRepModel, BRepOccurrence, BRepPCurve
+from ._model import (
+    BRepEntityId,
+    BRepGeometry,
+    BRepModel,
+    BRepOccurrence,
+    BRepPCurve,
+    BRepQualifiedIncidence,
+)
 from ._patches import AbstractSurfacePatch
-from ._placed import _exact_determinant, PlacedCurve, PlacedSurface
+from ._placed import PlacedCurve, PlacedSurface
 from ._projection_contracts import brep_entity_id
+from ._request_preparations import TrimRequestPreparations
 from ._root_bindings import BRepPlacedVertex, BRepVertexRoot
 
 
@@ -37,7 +55,12 @@ class BRepPlacementResult:
     certificate_id: str
 
 
-def _entity_text(entity: BRepEntityId, /) -> str:
+@checked
+def entity_text(entity: BRepEntityId, /) -> str:
+    if entity.kind in ("coedge", "shell"):
+        raise ValueError(
+            f"BRepPlacement.entity.kind must identify a spatial stratum; got {entity.kind!r}"
+        )
     dimensions = {"vertex": 0, "edge": 1, "face": 2, "solid": 3}
     return brep_entity_id(
         entity.source_revision,
@@ -47,17 +70,21 @@ def _entity_text(entity: BRepEntityId, /) -> str:
     )
 
 
-def _entity_occurrence(entity: BRepEntityId, /) -> str:
+@checked
+def entity_occurrence(entity: BRepEntityId, /) -> str:
     return canonical_fingerprint(
-        {"kind": "cad-qualified-entity-occurrence", "entity": _entity_text(entity)}
+        {"kind": "cad-qualified-entity-occurrence", "entity": entity_text(entity)}
     )
 
 
+@checked
 def qualified_placement_revision(model: BRepModel, /) -> CADRevision:
-    """Inventory every authored physical entity, with its exact instance namespace."""
+    """Inventory authored entities with their occurrence-qualified namespaces."""
     geometry = model.geometry
     if geometry is None:
-        raise ValueError("A placement revision requires exact native geometry.")
+        raise ValueError(
+            "BRepModel.geometry must provide native B-Rep geometry for placement; got None"
+        )
     entities = sorted(
         {
             record.member
@@ -111,7 +138,7 @@ def qualified_placement_revision(model: BRepModel, /) -> CADRevision:
             )
         )
     for entity in entities:
-        identifier = _entity_occurrence(entity)
+        identifier = entity_occurrence(entity)
         parent = by_namespace.get(entity.occurrence_path)
         path = (
             (identifier,)
@@ -122,7 +149,7 @@ def qualified_placement_revision(model: BRepModel, /) -> CADRevision:
             CADOccurrence(
                 model.source_revision,
                 identifier,
-                _entity_text(entity),
+                entity_text(entity),
                 entity.kind,
                 path,
                 parent,
@@ -133,29 +160,53 @@ def qualified_placement_revision(model: BRepModel, /) -> CADRevision:
     )
 
 
-def materialize_brep_occurrences(
-    model: BRepModel,
-    /,
-    *,
-    tessellation: BRepTessellationPolicy,
-) -> BRepPlacementResult:
-    """Publish one exact world model, retaining independent authored instances.
+class _PlacementPreparation(StrictModule):
+    geometry: BRepGeometry
+    records: tuple[BRepQualifiedIncidence, ...] = eqx.field(static=True)
+    incidence: dict[tuple[BRepEntityId, str, int], BRepEntityId] = eqx.field(static=True)
+    edge_ranges: np.ndarray
+    vertex_points: np.ndarray
+    parameter_bounds: np.ndarray
+    orientation: np.ndarray
 
-    Topology sharing follows qualified incidence alone. Curves, patches and
-    vertices remain authored pose operation trees around the original exact
-    sources, including complete implicit root/branch graphs. UV parameters and
-    source scalar endpoint constraints are unchanged by spatial placement.
-    """
-    if not isinstance(model, BRepModel) or model.geometry is None:
-        raise ValueError("World occurrence materialization requires an exact BRepModel.")
-    if not isinstance(tessellation, BRepTessellationPolicy):
-        raise TypeError("tessellation must be the actual BRepTessellationPolicy.")
-    original = model.geometry
-    records = original.qualified_entity_incidence(model.source_revision)
+
+class _PlacementTopology(StrictModule):
+    geometry: BRepGeometry
+    patches: tuple[AbstractSurfacePatch, ...]
+    parameter_bounds: np.ndarray
+    orientation: np.ndarray
+    tags: tuple[str, ...] = eqx.field(static=True)
+    sources: tuple[BRepEntityId, ...] = eqx.field(static=True)
+    targets: tuple[tuple[str, int, tuple[str, ...]], ...] = eqx.field(static=True)
+
+
+def _prepare_placement(model: BRepModel, /) -> _PlacementPreparation:
+    geometry = model.require_geometry()
+    records = geometry.qualified_entity_incidence(model.source_revision)
     incidence = {
         (record.container, record.member.kind, record.member.index): record.member
         for record in records
     }
+    return _PlacementPreparation(
+        geometry,
+        records,
+        incidence,
+        np.asarray(geometry.edge_ranges),
+        np.asarray(geometry.vertex_points),
+        np.asarray(model.parameter_bounds),
+        np.asarray(model.orientation),
+    )
+
+
+def _place_occurrences(
+    model: BRepModel,
+    prepared: _PlacementPreparation,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations,
+) -> _PlacementTopology:
+    original, records, incidence = prepared.geometry, prepared.records, prepared.incidence
     mapped: dict[BRepEntityId, int] = {}
     points: list[np.ndarray] = []
     roots: list[BRepVertexRoot | None] = []
@@ -180,10 +231,8 @@ def materialize_brep_occurrences(
     sources: list[BRepEntityId] = []
     targets: list[tuple[str, int, tuple[str, ...]]] = []
     curve_definitions: dict[tuple[tuple[str, ...], int], int] = {}
-    ranges_host = np.asarray(original.edge_ranges)
-    points_host = np.asarray(original.vertex_points)
-    bounds_host = np.asarray(model.parameter_bounds)
-    signs_host = np.asarray(model.orientation)
+    ranges_host, points_host = prepared.edge_ranges, prepared.vertex_points
+    bounds_host, signs_host = prepared.parameter_bounds, prepared.orientation
 
     def remember(entity: BRepEntityId, kind: str, index: int, /) -> None:
         mapped[entity] = index
@@ -197,14 +246,14 @@ def materialize_brep_occurrences(
             points_host[entity.index, :],
             occurrence.rotation,
             occurrence.translation,
-            _entity_text(entity),
+            entity_text(entity),
             source_root=original.vertex_roots[entity.index],
         )
         root = BRepVertexRoot(expression)
         point, _, certified = root.evaluate()
         if not certified:
             raise ValueError(
-                "A posed source vertex lost its original root qualification."
+                "BRepPlacedVertex.source_root must retain source root qualification; got an uncertified posed vertex"
             )
         index = len(points)
         points.append(point)
@@ -269,7 +318,7 @@ def materialize_brep_occurrences(
         )
         bounds.append(bounds_host[source, :, :])
         coorientation = (
-            -1.0 if _exact_determinant(np.asarray(occurrence.rotation)) < 0 else 1.0
+            -1.0 if exact_determinant(np.asarray(occurrence.rotation)) < 0 else 1.0
         )
         orientation.append(coorientation * float(signs_host[source]))
         tags.append(model.physical_tags[source])
@@ -326,7 +375,31 @@ def materialize_brep_occurrences(
         vertex_roots=tuple(roots),
         edge_endpoint_roots=tuple(edge_roots),
         coedge_endpoint_roots=tuple(coedge_roots),
+        budget=budget,
+        preparations=preparations,
     )
+    return _PlacementTopology(
+        geometry,
+        tuple(patches),
+        np.asarray(bounds, dtype=np.float64).reshape((-1, 2, 2)),
+        np.asarray(orientation, dtype=np.float64),
+        tuple(tags),
+        tuple(sources),
+        tuple(targets),
+    )
+
+
+def _publish_placement(
+    model: BRepModel,
+    topology: _PlacementTopology,
+    /,
+    *,
+    tessellation: BRepTessellationPolicy,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations,
+) -> BRepPlacementResult:
+    original = model.require_geometry()
+    geometry, sources, targets = topology.geometry, topology.sources, topology.targets
     certificate = canonical_fingerprint(
         {
             "kind": "exact-cad-world-occurrence-materialization",
@@ -336,10 +409,10 @@ def materialize_brep_occurrences(
     )
     world = assemble_brep_model(
         geometry,
-        tuple(patches),
-        np.asarray(bounds, dtype=np.float64).reshape((-1, 2, 2)),
-        np.asarray(orientation, dtype=np.float64),
-        tuple(tags),
+        topology.patches,
+        topology.parameter_bounds,
+        topology.orientation,
+        topology.tags,
         coordinate_contract=model.coordinate_contract,
         source_id=f"native-world-occurrences:{certificate}",
         source_format="native",
@@ -347,6 +420,8 @@ def materialize_brep_occurrences(
         import_policy_id=model.import_policy_id,
         tessellation=tessellation,
         curve_surface_tolerance=model.report.curve_surface_tolerance,
+        preparations=preparations,
+        budget=budget,
     )
     target_entities = tuple(
         BRepEntityId(world.source_revision, kind, index, path)
@@ -360,14 +435,14 @@ def materialize_brep_occurrences(
     }
     pairs = tuple(
         OccurrenceCorrespondence(
-            _entity_occurrence(source),
-            target_inventory[_entity_text(target)],
+            entity_occurrence(source),
+            target_inventory[entity_text(target)],
             certificate,
         )
         for source, target in zip(sources, target_entities, strict=True)
     )
     # Namespace occurrences express authored assembly identity separately from
-    # entity topology, and map by their explicit original path, not position.
+    # entity topology, and map by their authored path rather than tuple position.
     source_namespaces = {
         occurrence.entity_id: occurrence
         for occurrence in source_revision.occurrences
@@ -428,3 +503,51 @@ def materialize_brep_occurrences(
     )
     graph = AssociationGraph(source_revision, target_revision, transaction)
     return BRepPlacementResult(world, graph, tuple(sources), target_entities, certificate)
+
+
+@checked
+def materialize_brep_occurrences(
+    model: BRepModel,
+    /,
+    *,
+    tessellation: BRepTessellationPolicy,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> BRepPlacementResult:
+    """Publish a world model while retaining independent authored instances.
+
+    Topology sharing follows qualified incidence alone. Curves, patches and
+    vertices retain pose operation trees around their source definitions,
+    including implicit root and branch graphs. Spatial placement leaves UV
+    parameters and source scalar endpoint constraints unchanged.
+    """
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request((model,)) as budget:
+            return materialize_brep_occurrences(
+                model, tessellation=tessellation, preparations=preparations, budget=budget
+            )
+    if model.geometry is None:
+        raise ValueError(
+            "BRepModel.geometry must provide native B-Rep geometry for materialization; got None"
+        )
+    for occurrence in model.geometry.occurrences:
+        evidence = occurrence.placement_evidence
+        if evidence is not None and evidence.point_deviation_bound > 0.0:
+            raise ValueError(
+                "materialize_brep_occurrences.placements must have supported displacement evidence; "
+                f"got placement-deviation at path={occurrence.path!r}, "
+                f"bound={evidence.point_deviation_bound}"
+            )
+    prepared = _prepare_placement(model)
+    topology = _place_occurrences(
+        model, prepared, preparations=preparations, budget=budget
+    )
+    return _publish_placement(
+        model,
+        topology,
+        tessellation=tessellation,
+        preparations=preparations,
+        budget=budget,
+    )

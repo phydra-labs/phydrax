@@ -83,7 +83,7 @@ class PreparedDiscontinuousMassInverse(StrictModule):
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("structure_tolerance must be finite and positive.")
         field = str(field_name)
-        field_index = discretization._field_index(field)
+        field_index = discretization.field_index(field)
         rules = (
             dict(volume_rules)
             if isinstance(volume_rules, Mapping)

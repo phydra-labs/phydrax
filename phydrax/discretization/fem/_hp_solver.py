@@ -28,8 +28,9 @@ from ...linalg import (
     PreconditionerRefreshPolicy,
 )
 from ...typing import checked
+from . import _hp_runtime as hp_runtime_owner
 from ._hp import FiniteElementHPTransferPlan
-from ._hp_runtime import FiniteElementHPEpoch, FiniteElementHPTraceConstraintPlan
+from ._hp_admission_types import hp_admission_types
 
 
 if TYPE_CHECKING:
@@ -57,7 +58,9 @@ class FiniteElementHPCondensationPlan(StrictModule, NonTrainableState):
             or len(set(degrees)) != len(degrees)
             or any(not isinstance(plan, LocalEliminationPlan) for plan in plans)
         ):
-            raise ValueError("hp condensation degrees or elimination plans are invalid.")
+            raise ValueError(
+                "FiniteElementHPCondensationPlan.configuration must have valid hp condensation degrees or elimination plans; got hp condensation degrees or elimination plans are invalid."
+            )
         self.bucket_degrees = degrees
         self.eliminations = plans
         self.plan_id = canonical_fingerprint(
@@ -77,7 +80,9 @@ class FiniteElementHPCondensationPlan(StrictModule, NonTrainableState):
     ) -> LocalEliminationResult:
         key = tuple(degree)
         if key not in self.bucket_degrees:
-            raise KeyError(f"No hp condensation bucket for degree {key!r}.")
+            raise KeyError(
+                f"FiniteElementHPCondensationPlan.condense.degree must select a supported declared route; got No hp condensation bucket for degree {key!r}."
+            )
         return self.eliminations[self.bucket_degrees.index(key)].condense(
             local_matrix,
             local_rhs,
@@ -92,21 +97,26 @@ class FiniteElementHPCondensationPlan(StrictModule, NonTrainableState):
     ) -> Array:
         key = tuple(degree)
         if key not in self.bucket_degrees:
-            raise KeyError(f"No hp condensation bucket for degree {key!r}.")
+            raise KeyError(
+                f"FiniteElementHPCondensationPlan.condense.degree must select a supported declared route; got No hp condensation bucket for degree {key!r}."
+            )
         return self.eliminations[self.bucket_degrees.index(key)].reconstruct(
             retained_solution,
             result,
         )
 
 
+@checked
 def finite_element_hp_condensation_plan(
-    epoch: FiniteElementHPEpoch,
+    epoch: hp_runtime_owner.FiniteElementHPEpoch,
     field_name: str,
     /,
 ) -> FiniteElementHPCondensationPlan:
     if epoch.discretization is None:
-        raise ValueError("hp condensation requires a prepared discretization.")
-    field_index = epoch.discretization._field_index(field_name)
+        raise ValueError(
+            "finite_element_hp_condensation_plan.configuration must provide a prepared discretization; got hp condensation requires a prepared discretization."
+        )
+    field_index = epoch.discretization.field_index(field_name)
     degrees = []
     plans = []
     for element in epoch.discretization.elements[field_index]:
@@ -125,7 +135,7 @@ def finite_element_hp_condensation_plan(
         plans.append(LocalEliminationPlan(element.local_dof_count, retained))
     if not plans:
         raise ValueError(
-            "hp condensation requires at least one element with interior DOFs."
+            "finite_element_hp_condensation_plan.configuration must provide at least one element with interior DOFs; got hp condensation requires at least one element with interior DOFs."
         )
     return FiniteElementHPCondensationPlan(degrees, plans)
 
@@ -139,16 +149,17 @@ class FiniteElementHPSkeletonPlan(StrictModule, NonTrainableState):
     epoch_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        epoch: FiniteElementHPEpoch,
+        epoch: hp_runtime_owner.FiniteElementHPEpoch,
         condensation: FiniteElementHPCondensationPlan,
         /,
     ) -> None:
         constraints = tuple(
             value.plan_id
             for _, value in epoch.constraints
-            if isinstance(value, FiniteElementHPTraceConstraintPlan)
+            if isinstance(value, hp_runtime_owner.FiniteElementHPTraceConstraintPlan)
         )
         interfaces = tuple(
             value
@@ -186,7 +197,7 @@ class FiniteElementHPMultigridPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        epochs: Sequence[FiniteElementHPEpoch],
+        epochs: Sequence[hp_runtime_owner.FiniteElementHPEpoch],
         transfers: Sequence[FiniteElementHPTransferPlan],
         /,
     ) -> None:
@@ -194,19 +205,21 @@ class FiniteElementHPMultigridPlan(StrictModule, NonTrainableState):
         transfers_ = tuple(transfers)
         if len(levels) < 2 or len(transfers_) != len(levels) - 1:
             raise ValueError(
-                "hp multigrid requires one transfer between adjacent levels."
+                "FiniteElementHPMultigridPlan.configuration must provide one transfer between adjacent levels; got hp multigrid requires one transfer between adjacent levels."
             )
         for fine, coarse, transfer in zip(
             levels[:-1], levels[1:], transfers_, strict=True
         ):
             if (
-                not isinstance(fine, FiniteElementHPEpoch)
-                or not isinstance(coarse, FiniteElementHPEpoch)
+                not isinstance(fine, hp_runtime_owner.FiniteElementHPEpoch)
+                or not isinstance(coarse, hp_runtime_owner.FiniteElementHPEpoch)
                 or not isinstance(transfer, FiniteElementHPTransferPlan)
                 or transfer.source_topology_id != fine.topology.topology_id
                 or transfer.target_topology_id != coarse.topology.topology_id
             ):
-                raise ValueError("hp multigrid epoch and transfer identities disagree.")
+                raise ValueError(
+                    "FiniteElementHPMultigridPlan.configuration must agree with the declared geometry, topology, and field layout; got hp multigrid epoch and transfer identities disagree."
+                )
         self.level_epoch_ids = tuple(value.epoch_id for value in levels)
         self.transfers = transfers_
         self.plan_id = canonical_fingerprint(
@@ -220,21 +233,25 @@ class FiniteElementHPMultigridPlan(StrictModule, NonTrainableState):
     def restrict(self, level: int, values: ArrayLike, /) -> Array:
         index = int(level)
         if index < 0 or index >= len(self.transfers):
-            raise ValueError("hp multigrid restriction level is out of range.")
+            raise ValueError(
+                "FiniteElementHPMultigridPlan.restrict.level must address a prepared multigrid transfer level; got hp multigrid restriction level is out of range."
+            )
         return self.transfers[index].apply_l2_projection(values)
 
     def pullback(self, level: int, coarse_dual: ArrayLike, /) -> Array:
         index = int(level)
         if index < 0 or index >= len(self.transfers):
-            raise ValueError("hp multigrid pullback level is out of range.")
+            raise ValueError(
+                "FiniteElementHPMultigridPlan.pullback.level must address a prepared multigrid transfer level; got hp multigrid pullback level is out of range."
+            )
         return self.transfers[index].pullback_raw(coarse_dual)
 
 
 class FiniteElementHPSolverRefreshPlan(StrictModule, NonTrainableState):
-    """Degree signature availability and actual prepared-layout invalidations.
+    """Degree signature availability and represented prepared-layout invalidations.
 
     Matching degree signatures do not prove compiled executable reuse. Common
-    admission additionally requires the compiler owner's actual layout identity.
+    admission additionally requires the compiler owner's represented layout identity.
     """
 
     reused_signatures: tuple[str, ...] = eqx.field(static=True)
@@ -252,10 +269,11 @@ class FiniteElementHPSolverRefreshPlan(StrictModule, NonTrainableState):
     dofs: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        accepted: FiniteElementHPEpoch,
-        candidate: FiniteElementHPEpoch,
+        accepted: hp_runtime_owner.FiniteElementHPEpoch,
+        candidate: hp_runtime_owner.FiniteElementHPEpoch,
         /,
     ) -> None:
         accepted_signatures = {
@@ -353,11 +371,12 @@ class FiniteElementHPSolverRefreshPlan(StrictModule, NonTrainableState):
         *,
         compiled_layout_id: str,
     ) -> None:
-        """Bind refresh evidence to the actual independently compiled trial route."""
-        from ...meshing._decision import RouteFeasibility
+        """Bind refresh evidence to the represented independently compiled trial route."""
 
-        if not isinstance(feasibility, RouteFeasibility):
-            raise TypeError("hp refresh admission requires RouteFeasibility.")
+        if not isinstance(feasibility, hp_admission_types().feasibility):
+            raise TypeError(
+                "FiniteElementHPSolverRefreshPlan.require_feasibility.configuration must provide RouteFeasibility; got hp refresh admission requires RouteFeasibility."
+            )
         if (
             feasibility.source_revision_id != self.source_revision_id
             or feasibility.target_revision_id != self.target_revision_id
@@ -369,12 +388,12 @@ class FiniteElementHPSolverRefreshPlan(StrictModule, NonTrainableState):
             or feasibility.issues
         ):
             raise ValueError(
-                "hp refresh does not realize the admitted compiled route and layouts."
+                "FiniteElementHPSolverRefreshPlan.require_feasibility.configuration must realize the admitted compiled route and layouts; got hp refresh does not realize the admitted compiled route and layouts."
             )
 
 
 class FiniteElementHPMultigridPreconditionerBuilder(AbstractPreconditionerBuilder):
-    """Lifecycle-compatible hp hierarchy builder with exact coarse fallback."""
+    """Lifecycle-compatible hp hierarchy builder with algebraic coarse fallback."""
 
     hierarchy: FiniteElementHPMultigridPlan
     coarse_builder: DenseInversePreconditionerBuilder

@@ -22,6 +22,8 @@ from phydrax.meshing import (
     MeshPart,
     transition_interface_attachment,
 )
+from tests._support.cell_meshes import triangle_grid
+from tests._support.meshing_fixtures import mesh_scope
 
 
 _CONTRACT = phx.SpatialCoordinateContract.si()
@@ -46,26 +48,10 @@ def _projection() -> Any:
 
 
 def _mesh() -> phx.discretization.CellMesh:
-    xs = np.linspace(-1.0, 0.0, 3)
-    points = np.asarray([[x, y] for y in np.linspace(0.0, 1.0, 3) for x in xs])
-    cells = []
-    for row in range(2):
-        for column in range(2):
-            a = row * 3 + column
-            cells += [[a, a + 1, a + 4], [a, a + 4, a + 3]]
+    mesh = triangle_grid(2, 2)
+    points = np.asarray(mesh.coordinates) + np.asarray((-1.0, 0.0), dtype=np.float64)
     return phx.meshing.canonicalize_cell_mesh(
-        phx.discretization.CellMesh.from_triangles(points, np.asarray(cells))
-    )
-
-
-def _scope(mesh: Any, dimension: int, ids: Any) -> phx.meshing.MeshingScope:
-    return phx.meshing.MeshingScope(
-        mesh.mesh_id,
-        mesh.numeric_version,
-        phx.meshing.MeshingEntityKind.MESH,
-        dimension,
-        mesh.entity_set(dimension).entity_set_id,
-        np.asarray(ids),
+        phx.discretization.CellMesh.from_triangles(points, mesh.blocks[0].vertices)
     )
 
 
@@ -85,11 +71,11 @@ def _plate() -> tuple[Any, Any, Any]:
     cells = phx.meshing.associate_mesh_entities(
         mesh, vertex, projection, 2, policy=_POLICY
     )
-    wall = phx.meshing.MeshPatch("wall", _scope(mesh, 1, _wall_edge_ids(mesh)))
+    wall = phx.meshing.MeshPatch("wall", mesh_scope(mesh, 1, _wall_edge_ids(mesh)))
     region = phx.meshing.MeshZone(
         "plate",
         phx.meshing.MeshZoneRole.REGION,
-        _scope(mesh, 2, mesh.entity_set(2).entity_ids),
+        mesh_scope(mesh, 2, mesh.entity_set(2).entity_ids),
         material_id="steel",
         region_role=phx.meshing.RegionRole.SOLID,
     )
@@ -102,10 +88,10 @@ def _plate() -> tuple[Any, Any, Any]:
     )
     rows = [
         row
-        for row, value in enumerate(edges.source_entity_ids)
+        for row, value in enumerate(edges.source_entities.entity_ids())
         if int(np.asarray(edges.target_global_ids)[row]) in set(_wall_edge_ids(mesh))
     ]
-    wall_entity = edges.source_entity_ids[rows[0]]
+    wall_entity = edges.source_entities.entity_id(rows[0])
     part = MeshPart("plate", result)
     attachment = MeshInterfaceAttachment(
         part, wall, edges, (wall_entity,), tolerance=_TOLERANCE, region=region

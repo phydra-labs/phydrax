@@ -6,21 +6,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...optim import DifferentialEvolutionSearch
-from ...optim._differential_evolution import _bounded_differential_evolution
-from ...typing import PRNGKey
+from ...optim._differential_evolution import bounded_differential_evolution
+from ...typing import checked, ConvertibleToArray, PRNGKey
 from ._constraints import DesignConstraintSystem
 from ._schema import DesignState, ParameterId
+from ._search_result import DesignSearchResult
 
 
-SearchBounds = Mapping[ParameterId, tuple[ArrayLike, ArrayLike]]
+SearchBounds = Mapping[ParameterId, tuple[ConvertibleToArray, ConvertibleToArray]]
 
 
 class _DesignObjective(StrictModule):
@@ -52,85 +52,20 @@ class _DesignValidity(StrictModule):
         return evidence.resolved & evidence.accepted
 
 
-class DesignSearchResult(StrictModule):
-    """Best design state and convergence evidence from a bounded global search."""
-
-    __strict_contract__ = True
-
-    state: DesignState
-    residual: Array
-    residual_norm: Array
-    objective: Array
-    population_vectors: Array
-    population_objectives: Array
-    best_objective_history: Array
-    lower_bounds: Array
-    upper_bounds: Array
-    key: PRNGKey
-    search: DifferentialEvolutionSearch
-    converged: bool = eqx.field(static=True)
-    termination_reason: str = eqx.field(static=True)
-    generations: int = eqx.field(static=True)
-    objective_evaluations: int = eqx.field(static=True)
-    invalid_evaluations: int = eqx.field(static=True)
-    design_signature: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        *,
-        state: DesignState,
-        residual: Array,
-        objective: Array,
-        population_vectors: Array,
-        population_objectives: Array,
-        best_objective_history: Array,
-        lower_bounds: Array,
-        upper_bounds: Array,
-        key: PRNGKey,
-        search: DifferentialEvolutionSearch,
-        converged: bool,
-        termination_reason: str,
-        generations: int,
-        objective_evaluations: int,
-        invalid_evaluations: int,
-        design_signature: str,
-    ) -> None:
-        residual_ = jnp.asarray(residual, dtype=jnp.float64).reshape((-1,))
-        self.state = state
-        self.residual = residual_
-        self.residual_norm = jnp.linalg.norm(residual_)
-        self.objective = jnp.asarray(objective, dtype=jnp.float64).reshape(())
-        self.population_vectors = jnp.asarray(population_vectors, dtype=jnp.float64)
-        self.population_objectives = jnp.asarray(population_objectives, dtype=jnp.float64)
-        self.best_objective_history = jnp.asarray(
-            best_objective_history, dtype=jnp.float64
-        )
-        self.lower_bounds = jnp.asarray(lower_bounds, dtype=jnp.float64)
-        self.upper_bounds = jnp.asarray(upper_bounds, dtype=jnp.float64)
-        self.key = key
-        self.search = search
-        self.converged = bool(converged)
-        self.termination_reason = str(termination_reason)
-        self.generations = int(generations)
-        self.objective_evaluations = int(objective_evaluations)
-        self.invalid_evaluations = int(invalid_evaluations)
-        self.design_signature = str(design_signature)
-
-
 def _parameter_bound(
-    value: ArrayLike,
+    value: ConvertibleToArray,
     shape: tuple[int, ...],
     /,
     *,
     parameter_id: ParameterId,
     side: str,
 ) -> np.ndarray:
-    array = np.asarray(value, dtype=np.float64)
+    array = np.asarray(jax.device_get(value), dtype=np.float64)
     if array.shape == ():
         return np.full(shape, float(array), dtype=np.float64).reshape((-1,))
     if array.shape != shape:
         raise ValueError(
-            f"{side} search bound for {parameter_id} must be scalar or have shape {shape}, got {array.shape}."
+            f"DesignSearch.bounds must be scalar or have shape {shape}; got {parameter_id} {side}: {array.shape}"
         )
     return array.reshape((-1,))
 
@@ -142,7 +77,9 @@ def _resolve_search_bounds(
     /,
 ) -> tuple[Array, Array, Array]:
     if bounds is not None and not isinstance(bounds, Mapping):
-        raise TypeError("bounds must be a mapping from ParameterId to (lower, upper).")
+        raise TypeError(
+            f"DesignSearch.bounds must map ParameterId to lower and upper bounds; got {type(bounds).__name__}"
+        )
     overrides = {} if bounds is None else dict(bounds)
     schema = system.geometry.schema
     index_by_id = {spec.parameter_id: index for index, spec in enumerate(schema.specs)}
@@ -154,40 +91,47 @@ def _resolve_search_bounds(
             strict=True,
         )
     }
-    lower = np.asarray(system.lower_bounds, dtype=np.float64).copy()
-    upper = np.asarray(system.upper_bounds, dtype=np.float64).copy()
+    lower_host, upper_host = jax.device_get((system.lower_bounds, system.upper_bounds))
+    lower = np.asarray(lower_host, dtype=np.float64).copy()
+    upper = np.asarray(upper_host, dtype=np.float64).copy()
 
     for parameter_id, pair in overrides.items():
         if not isinstance(parameter_id, ParameterId):
-            raise TypeError("Every search-bound key must be a ParameterId.")
+            raise TypeError(
+                f"DesignSearch.bounds.keys must contain ParameterId values; got {type(parameter_id).__name__}"
+            )
         if parameter_id not in index_by_id:
-            raise KeyError(f"Unknown geometry parameter {parameter_id}.")
+            raise KeyError(
+                f"DesignSearch.bounds.parameter_id must identify a geometry parameter; got {parameter_id}"
+            )
         index = index_by_id[parameter_id]
         if index not in slices_by_index:
             raise ValueError(
-                f"Search bounds were provided for non-trainable {parameter_id}."
+                f"DesignSearch.bounds.parameter_id must be trainable; got {parameter_id}"
             )
         if not isinstance(pair, tuple) or len(pair) != 2:
             raise TypeError(
-                f"Search bounds for {parameter_id} must be a (lower, upper) tuple."
+                f"DesignSearch.bounds.pair must be a lower and upper tuple; got {parameter_id}: {pair!r}"
             )
         start, stop, shape = slices_by_index[index]
         lower_ = _parameter_bound(pair[0], shape, parameter_id=parameter_id, side="Lower")
         upper_ = _parameter_bound(pair[1], shape, parameter_id=parameter_id, side="Upper")
         if not np.all(np.isfinite(lower_)) or not np.all(np.isfinite(upper_)):
-            raise ValueError(f"Search bounds for {parameter_id} must be finite.")
+            raise ValueError(
+                f"DesignSearch.bounds must be finite; got {parameter_id}: {lower_}, {upper_}"
+            )
         if np.any(lower_ >= upper_):
             raise ValueError(
-                f"Every lower search bound for {parameter_id} must be smaller than its upper bound."
+                f"DesignSearch.bounds.lower must be smaller than upper; got {parameter_id}: {lower_}, {upper_}"
             )
         physical_lower, physical_upper = schema.specs[index].bounds
         if physical_lower is not None and np.any(lower_ < physical_lower):
             raise ValueError(
-                f"Search bounds for {parameter_id} extend below the physical lower bound {physical_lower}."
+                f"DesignSearch.bounds.lower must respect the physical lower bound {physical_lower}; got {parameter_id}: {lower_}"
             )
         if physical_upper is not None and np.any(upper_ > physical_upper):
             raise ValueError(
-                f"Search bounds for {parameter_id} extend above the physical upper bound {physical_upper}."
+                f"DesignSearch.bounds.upper must respect the physical upper bound {physical_upper}; got {parameter_id}: {upper_}"
             )
         lower[start:stop] = lower_
         upper[start:stop] = upper_
@@ -200,14 +144,20 @@ def _resolve_search_bounds(
             missing.append(str(schema.specs[index].parameter_id))
     if missing:
         names = ", ".join(missing)
-        raise ValueError(f"Finite search bounds are required for: {names}.")
+        raise ValueError(
+            f"DesignSearch.bounds must provide finite bounds for every trainable parameter; got missing {names}"
+        )
     if np.any(lower >= upper):
-        raise ValueError("Every lower search bound must be smaller than its upper bound.")
+        raise ValueError(
+            "DesignSearch.bounds.lower must be smaller than upper; got invalid bound ordering"
+        )
 
-    initial = np.asarray(system.pack(initial_state), dtype=np.float64)
+    initial = np.asarray(jax.device_get(system.pack(initial_state)), dtype=np.float64)
     outside = (initial < lower) | (initial > upper)
     if np.any(outside):
-        raise ValueError("The initial design state lies outside the search bounds.")
+        raise ValueError(
+            "DesignSearch.initial_state must lie inside search bounds; got outside state"
+        )
     return (
         jnp.asarray(lower, dtype=jnp.float64),
         jnp.asarray(upper, dtype=jnp.float64),
@@ -215,6 +165,7 @@ def _resolve_search_bounds(
     )
 
 
+@checked
 def search_design_constraints(
     system: DesignConstraintSystem,
     search: DifferentialEvolutionSearch,
@@ -225,26 +176,23 @@ def search_design_constraints(
     initial_state: DesignState | None = None,
 ) -> DesignSearchResult:
     """Run bounded differential evolution over a compiled geometry design state."""
-    if not isinstance(system, DesignConstraintSystem):
-        raise TypeError("system must be a DesignConstraintSystem.")
-    if not isinstance(search, DifferentialEvolutionSearch):
-        raise TypeError("search must be a DifferentialEvolutionSearch.")
     initial_geometry_validity = system.geometry.validity(
         system.geometry.state if initial_state is None else initial_state
     )
-    if not bool(np.asarray(initial_geometry_validity.resolved)):
+    resolved, accepted = jax.device_get(
+        (initial_geometry_validity.resolved, initial_geometry_validity.accepted)
+    )
+    if not bool(resolved):
         raise NotImplementedError(
-            "Global design search requires executable geometry validity for a "
-            f"restricted region; got "
-            f"{system.geometry.field_certificate.validity_region!r}."
+            f"DesignSearch.geometry must provide executable geometry validity; got {system.geometry.field_certificate.validity_region!r}"
         )
-    if not bool(np.asarray(initial_geometry_validity.accepted)):
-        raise ValueError("The initial geometry design state is invalid.")
+    if not bool(accepted):
+        raise ValueError(
+            "DesignSearch.initial_state must satisfy geometry validity; got invalid state"
+        )
     state = system.geometry.state if initial_state is None else initial_state
-    if not isinstance(state, DesignState):
-        raise TypeError("initial_state must be a DesignState or None.")
     lower, upper, initial = _resolve_search_bounds(system, bounds, state)
-    result = _bounded_differential_evolution(
+    result = bounded_differential_evolution(
         _DesignObjective(system, state),
         initial,
         lower,
@@ -253,13 +201,13 @@ def search_design_constraints(
         key=key,
         validity=_DesignValidity(system, state),
     )
-    best_state = system.unpack(result.best_vector, base_state=state)
+    best_state = system.unpack(jnp.asarray(result.best), base_state=state)
     residual = system.residual(best_state)
     no_valid_candidates = result.termination_reason == "no_valid_candidates"
     best_valid = (
         False
         if no_valid_candidates
-        else bool(np.asarray(system.geometry.validity(best_state).accepted))
+        else bool(jax.device_get(system.geometry.validity(best_state).accepted))
     )
     objective = jnp.where(
         best_valid,
@@ -277,11 +225,11 @@ def search_design_constraints(
         state=best_state,
         residual=residual,
         objective=objective,
-        population_vectors=result.population_vectors,
+        population_vectors=jnp.asarray(result.population),
         population_objectives=result.population_objectives,
         best_objective_history=result.best_objective_history,
-        lower_bounds=result.lower_bounds,
-        upper_bounds=result.upper_bounds,
+        lower_bounds=lower,
+        upper_bounds=upper,
         key=result.key,
         search=result.search,
         converged=converged,
@@ -293,4 +241,4 @@ def search_design_constraints(
     )
 
 
-__all__ = ["DesignSearchResult"]
+__all__ = ["search_design_constraints"]

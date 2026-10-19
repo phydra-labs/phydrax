@@ -21,7 +21,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
-from .._distributed_field import _color_directed_pairs
+from .._distributed_field import color_directed_pairs
 from ._core import (
     BlockHierarchyPlan,
     BlockHierarchyState,
@@ -427,7 +427,7 @@ def _route_plan(
             )
     for messages in pair_messages.values():
         messages.sort(key=lambda value: value[2])
-    permutations = _color_directed_pairs(pair_messages, include_empty_phase=True)
+    permutations = color_directed_pairs(pair_messages, include_empty_phase=True)
     message_capacity = max(
         1, max((len(messages) for messages in pair_messages.values()), default=0)
     )

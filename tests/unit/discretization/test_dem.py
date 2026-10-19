@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _compiled_dem(
@@ -208,7 +209,7 @@ def test_dem_scenario_1() -> None:
 
 def test_dem_scenario_2() -> None:
     barrier = phx.discretization.ImplicitDEMBarrier(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(),
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER),
         phx.discretization.DEMBarrierSide.INTERIOR,
         0,
         barrier_id="square-container",

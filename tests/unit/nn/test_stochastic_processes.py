@@ -4,6 +4,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -86,17 +87,32 @@ def test_stochastic_processes_scenario_1() -> None:
         sample_shape=(2048,),
         tolerance=1e-4,
     )
+    query = jnp.asarray([0.0, 0.4, 1.0])
     diagnostics = phx.stochastic.gaussian_process_diagnostics(
         process,
         realization,
-        jnp.asarray([0.0, 0.4, 1.0]),
+        query,
     )
 
     assert diagnostics.uncertainty_source == "process"
     assert diagnostics.num_samples == 2048
     assert diagnostics.mean_relative_error < 0.04
     assert diagnostics.covariance_relative_error < 0.06
-    assert diagnostics.query_max_absolute_error == 0.0
+    driver = np.asarray(realization.driver_values(query))
+    refined_query = jnp.asarray([0.0, 0.2, 0.4, 0.7, 1.0])
+    refined_driver = np.asarray(realization.driver_values(refined_query))[:, (0, 2, 4)]
+    np.testing.assert_array_equal(driver, refined_driver)
+    # Each affine state uses a two-term dot product, a drift product, and two
+    # additions: six rounded operations. Two grids differ by at most 2 gamma_6
+    # times the absolute affine term sum while sharing exactly the same driver.
+    epsilon = np.finfo(driver.dtype).eps
+    gamma_6 = 6 * epsilon / (1 - 6 * epsilon)
+    magnitude = (
+        np.abs(np.asarray(realization.initial_state))
+        + np.abs(np.asarray(query))[:, None] * np.abs(np.asarray(process.drift))
+        + np.abs(driver) @ np.abs(np.asarray(process.diffusion)).T
+    )
+    assert 0 <= diagnostics.query_max_absolute_error <= 2 * gamma_6 * np.max(magnitude)
     assert diagnostics.cocycle_max_absolute_error < 1e-12
     assert diagnostics.replay_exact
     distribution = phx.stochastic.GaussianProcessDistribution(

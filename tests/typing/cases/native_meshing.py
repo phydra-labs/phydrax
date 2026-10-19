@@ -7,7 +7,7 @@ from jax.typing import ArrayLike, DTypeLike
 from numpy.typing import NDArray
 
 from phydrax import SpatialCoordinateContract
-from phydrax._meshcore import NativeExecutionBudget
+from phydrax._meshcore import NativeExecutionScope
 from phydrax.discretization import CellMesh, PreparedTensorGrid
 from phydrax.geometry import (
     BoundaryAtlas,
@@ -46,7 +46,7 @@ from phydrax.meshing import (
 
 
 def host_allocator_boundary(
-    execution: NativeExecutionBudget,
+    execution: NativeExecutionScope,
     dtype: DTypeLike,
 ) -> None:
     assert_type(execution.allocate_host_array((3, 4), np.float64), NDArray[np.float64])

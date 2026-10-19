@@ -2,41 +2,105 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Bounded source-complete ray parity for host CAD solid containment."""
+"""Bounded ray-parity evidence for host CAD solid containment."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from fractions import Fraction
+from typing import assert_never
 
+import equinox as eqx
 import numpy as np
 
 from ..._bvh import prepare_bvh
-from .._atlas import CurveTrimLoop, PolygonTrimLoop, TrimDomain
-from ._affine_query import QueryBroadphase
+from ..._strict import StrictModule
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked, ConvertibleToArray
+from .._atlas import CurveTrimLoop, DynamicCurveTrimLoop, PolygonTrimLoop, TrimDomain
+from .._rational import rational_vector
+from ._affine_query import (
+    AffineFace,
+    certify_affine_parity,
+    prepare_affine_faces,
+    QueryBroadphase,
+)
 from ._constructors import brep_trim_domain
-from ._intersection import intersect_curve_region, ParametricIntersectionPolicy
+from ._coordinate_request import coordinate_source_request
+from ._intersection import (
+    CurveIntersectionResult,
+    intersect_curve_region,
+    ParametricIntersectionPolicy,
+)
 from ._intersection_curve import CurveRange, SurfaceRegion
 from ._model import BRepModel
 from ._patches import LineCurve
+from ._request_preparations import TrimRequestPreparations
 
 
-@dataclass(frozen=True, slots=True)
-class SolidContainmentCertificate:
-    """Ray-parity evidence; ``ray_start`` is the declared search start (<= 0).
+class SolidContainmentCertificate(StrictModule):
+    """Return parity and work evidence for a solid query.
 
-    Searching from ``ray_start`` makes a root at the query point interior to
-    the ray range, so it can be classified rather than left at a range wall.
+    Curved-carrier searches begin at ``ray_start <= 0`` so a boundary root is
+    interior to the search range. Boundary points never establish parity.
     """
 
-    inside: bool
-    complete: bool
-    crossings: int
-    boxes_processed: int
-    unresolved_faces: tuple[int, ...]
-    ray_start: float
-    owner_operations: int
-    resource_exhausted: bool
+    inside: bool = eqx.field(static=True)
+    complete: bool = eqx.field(static=True)
+    crossings: int = eqx.field(static=True)
+    boxes_processed: int = eqx.field(static=True)
+    unresolved_faces: tuple[int, ...] = eqx.field(static=True)
+    ray_start: float = eqx.field(static=True)
+    owner_operations: int = eqx.field(static=True)
+    resource_exhausted: bool = eqx.field(static=True)
+
+
+class _ContainmentPreparation(StrictModule):
+    """Retain validated host inputs and the source-face index mapping."""
+
+    query: np.ndarray
+    faces: tuple[int, ...]
+    parameter_boxes: np.ndarray
+    domains: tuple[TrimDomain, ...]
+    broadphase: QueryBroadphase
+    source_indices: tuple[int, ...]
+    upper: np.ndarray
+    extent: float
+
+
+class _AffineContainmentPreparation(StrictModule):
+    """Retain admitted affine faces without constructing curved trim covers."""
+
+    query: np.ndarray
+    faces: tuple[int, ...]
+    affine: tuple[AffineFace, ...]
+
+
+class _RayEvidence(StrictModule):
+    """Retain one ray's accepted roots and cumulative work."""
+
+    crossings: tuple[tuple[float, float], ...]
+    pending: tuple[int, ...]
+    processed: int
+    operations: int
+    exhausted: bool
+    admitted: bool
+
+
+class _TrimmedRoots(StrictModule):
+    """Retain trim decisions for one face's isolated roots."""
+
+    crossings: tuple[tuple[float, float], ...]
+    unresolved: bool
+    operations: int
+    exhausted: bool
+
+
+def _trim_work(domain: TrimDomain, /) -> int:
+    return sum(
+        3 * loop.arc_lower.shape[0] + 2 * loop.junction_lower.shape[0]
+        if isinstance(loop, (CurveTrimLoop, DynamicCurveTrimLoop))
+        else 2 * loop.vertices.shape[0]
+        for loop in domain.loops
+    )
 
 
 def _trim_box_decision(
@@ -45,39 +109,49 @@ def _trim_box_decision(
     /,
     *,
     maximum_depth: int,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[bool, bool, int]:
-    """A connected box disjoint from all exact boundary covers has constant winding."""
+    """Classify a connected box disjoint from every trim boundary cover."""
     operations = 0
     for loop in domain.loops:
-        if isinstance(loop, CurveTrimLoop):
-            operations += loop.arc_lower.shape[0]
-            if np.any(
-                np.all((loop.arc_upper >= box[0]) & (loop.arc_lower <= box[1]), axis=1)
-            ):
-                return False, False, operations
-            operations += loop.junction_lower.shape[0]
-            if np.any(
-                np.all(
-                    (loop.junction_upper >= box[0]) & (loop.junction_lower <= box[1]),
-                    axis=1,
+        match loop:
+            case CurveTrimLoop():
+                operations += loop.arc_lower.shape[0]
+                if np.any(
+                    np.all(
+                        (loop.arc_upper >= box[0]) & (loop.arc_lower <= box[1]), axis=1
+                    )
+                ):
+                    return False, False, operations
+                operations += loop.junction_lower.shape[0]
+                if np.any(
+                    np.all(
+                        (loop.junction_upper >= box[0]) & (loop.junction_lower <= box[1]),
+                        axis=1,
+                    )
+                ):
+                    return False, False, operations
+            case PolygonTrimLoop():
+                operations += loop.vertices.shape[0]
+                first, second = loop.vertices, np.roll(loop.vertices, -1, axis=0)
+                lower, upper = np.minimum(first, second), np.maximum(first, second)
+                if np.any(np.all((upper >= box[0]) & (lower <= box[1]), axis=1)):
+                    return False, False, operations
+            case _:
+                raise TypeError(
+                    f"containment.trim_loop must be a curve or polygon loop; got {type(loop).__name__}"
                 )
-            ):
-                return False, False, operations
-        elif isinstance(loop, PolygonTrimLoop):
-            operations += loop.vertices.shape[0]
-            first, second = loop.vertices, np.roll(loop.vertices, -1, axis=0)
-            lower, upper = np.minimum(first, second), np.maximum(first, second)
-            if np.any(np.all((upper >= box[0]) & (lower <= box[1]), axis=1)):
-                return False, False, operations
-        else:
-            raise TypeError("Containment requires a canonical native trim loop.")
     decision = domain.classify(
-        (0.5 * (box[0] + box[1]))[None], maximum_depth=maximum_depth
+        (0.5 * (box[0] + box[1]))[None],
+        maximum_depth=maximum_depth,
+        preparations=preparations,
+        budget=budget,
     )
     for loop in domain.loops:
         operations += (
             2 * loop.arc_lower.shape[0] + loop.junction_lower.shape[0]
-            if isinstance(loop, CurveTrimLoop)
+            if isinstance(loop, (CurveTrimLoop, DynamicCurveTrimLoop))
             else loop.vertices.shape[0]
         )
     return (
@@ -87,9 +161,377 @@ def _trim_box_decision(
     )
 
 
+def _prepare_containment(
+    model: BRepModel,
+    point: ConvertibleToArray,
+    solid: int,
+    *,
+    maximum_boxes: int,
+    maximum_depth: int,
+    maximum_operations: int | None,
+    source_boxes: np.ndarray | None,
+    trim_domains: tuple[TrimDomain, ...] | None,
+    broadphase: QueryBroadphase | None,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> (
+    _ContainmentPreparation | _AffineContainmentPreparation | SolidContainmentCertificate
+):
+    if model.geometry is None or not 0 <= solid < model.topology.num_solids:
+        raise ValueError(
+            f"containment.solid must index a model with geometry; got {solid}"
+        )
+    query = np.asarray(point, dtype=np.float64)
+    if (
+        query.shape != (3,)
+        or not np.all(np.isfinite(query))
+        or maximum_boxes < 1
+        or maximum_depth < 0
+    ):
+        raise ValueError(
+            "containment.point_and_limits must specify a finite (3,) point, positive box limit "
+            f"and nonnegative depth; got shape={query.shape}, boxes={maximum_boxes}, depth={maximum_depth}"
+        )
+    if maximum_operations is not None and (
+        type(maximum_operations) is not int or maximum_operations < 0
+    ):
+        raise ValueError(
+            "containment.maximum_operations must be a nonnegative integer or None; "
+            f"got {maximum_operations!r}"
+        )
+    faces = model.topology.solid_faces[solid]
+    parameter_boxes = np.asarray(model.parameter_bounds)
+    if source_boxes is None:
+        source_boxes = np.asarray(
+            [
+                model.patches[face].bounding_box(
+                    parameter_boxes[face], preparations=preparations, budget=budget
+                )
+                for face in faces
+            ]
+        )
+    elif source_boxes.shape != (len(faces), 2, 3):
+        raise ValueError(
+            f"containment.source_boxes must have shape {(len(faces), 2, 3)}; got {source_boxes.shape}"
+        )
+    if maximum_operations == 0:
+        return SolidContainmentCertificate(
+            inside=False,
+            complete=False,
+            crossings=0,
+            boxes_processed=0,
+            unresolved_faces=faces,
+            ray_start=0.0,
+            owner_operations=0,
+            resource_exhausted=True,
+        )
+    lower, upper = np.min(source_boxes[:, 0], axis=0), np.max(source_boxes[:, 1], axis=0)
+    if np.any(query < lower) or np.any(query > upper):
+        return SolidContainmentCertificate(
+            inside=False,
+            complete=True,
+            crossings=0,
+            boxes_processed=0,
+            unresolved_faces=(),
+            ray_start=0.0,
+            owner_operations=1,
+            resource_exhausted=False,
+        )
+    extent = float(np.max(upper - lower))
+    if not np.isfinite(extent) or extent <= 0:
+        return SolidContainmentCertificate(
+            inside=False,
+            complete=False,
+            crossings=0,
+            boxes_processed=0,
+            unresolved_faces=faces,
+            ray_start=0.0,
+            owner_operations=1,
+            resource_exhausted=False,
+        )
+    if trim_domains is not None and len(trim_domains) != len(faces):
+        raise ValueError(
+            f"containment.trim_domains must contain {len(faces)} face domains; got {len(trim_domains)}"
+        )
+    affine = prepare_affine_faces(model, faces, budget=budget)
+    if affine is not None:
+        return _AffineContainmentPreparation(query=query, faces=faces, affine=affine)
+    if trim_domains is None:
+        domains = tuple(
+            brep_trim_domain(
+                model.geometry, face, model.patches[face], tolerance=0.01, budget=budget
+            )
+            for face in faces
+        )
+    else:
+        domains = trim_domains
+    source_indices = faces if broadphase is None else tuple(range(len(model.patches)))
+    if broadphase is None:
+        broadphase = QueryBroadphase.prepare(
+            prepare_bvh(source_boxes[:, 0], source_boxes[:, 1])
+        )
+    return _ContainmentPreparation(
+        query=query,
+        faces=faces,
+        parameter_boxes=parameter_boxes,
+        domains=domains,
+        broadphase=broadphase,
+        source_indices=source_indices,
+        upper=upper,
+        extent=extent,
+    )
+
+
+def _classify_face_roots(
+    intersection: CurveIntersectionResult,
+    domain: TrimDomain,
+    last: float,
+    operations: int,
+    *,
+    maximum_operations: int | None,
+    maximum_depth: int,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> _TrimmedRoots:
+    crossings: list[tuple[float, float]] = []
+    unresolved = False
+    exhausted = False
+    for root in intersection.points:
+        start, end = float(root.parameter_lower[0]), float(root.parameter_upper[0])
+        if end < 0.0:
+            continue
+        if root.kind != "crossing" or root.certificate != "krawczyk":
+            unresolved = True
+            continue
+        box = np.stack((root.parameter_lower[1:], root.parameter_upper[1:]))
+        required = _trim_work(domain)
+        if maximum_operations is not None and operations + required > maximum_operations:
+            unresolved = True
+            exhausted = True
+            continue
+        inside, complete, trim_work = _trim_box_decision(
+            domain,
+            box,
+            maximum_depth=maximum_depth,
+            preparations=preparations,
+            budget=budget,
+        )
+        operations += trim_work
+        if not complete:
+            unresolved = True
+        elif inside:
+            # A root enclosing zero is a boundary query, not a crossing.
+            if start <= 0.0 or end >= last:
+                unresolved = True
+            else:
+                crossings.append((start, end))
+    return _TrimmedRoots(
+        crossings=tuple(crossings),
+        unresolved=unresolved,
+        operations=operations,
+        exhausted=exhausted,
+    )
+
+
+def _curved_ray(
+    model: BRepModel,
+    prepared: _ContainmentPreparation,
+    direction: np.ndarray,
+    previous: _RayEvidence,
+    ray_start: float,
+    *,
+    maximum_boxes: int,
+    maximum_operations: int | None,
+    maximum_depth: int,
+    relative_resolution: float,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> _RayEvidence:
+    broadphase = prepared.broadphase
+    axis = int(np.argmax(direction))
+    last = float(
+        np.nextafter(
+            (prepared.upper[axis] - prepared.query[axis] + prepared.extent)
+            / direction[axis],
+            np.inf,
+        )
+    )
+    ray = CurveRange(LineCurve(prepared.query, direction), ray_start, last)
+    crossings: list[tuple[float, float]] = []
+    pending: set[int] = set()
+    processed, operations, exhausted = (
+        previous.processed,
+        previous.operations,
+        previous.exhausted,
+    )
+    if (
+        maximum_operations is not None
+        and operations + broadphase.lower.shape[0] > maximum_operations
+    ):
+        return _RayEvidence(
+            crossings=(),
+            pending=tuple(sorted(prepared.faces)),
+            processed=processed,
+            operations=operations,
+            exhausted=True,
+            admitted=False,
+        )
+    work = [0]
+    query, vector = rational_vector(prepared.query), rational_vector(direction)
+    offset = rational_vector((ray_start,))[0]
+    start = tuple(
+        value + offset * component for value, component in zip(query, vector, strict=True)
+    )
+    candidates = {
+        prepared.source_indices[index] for index in broadphase.ray(start, vector, work)
+    }
+    operations += work[0]
+    for face, domain in zip(prepared.faces, prepared.domains, strict=True):
+        if face not in candidates:
+            continue
+        remaining = maximum_boxes - processed
+        if maximum_operations is not None:
+            remaining = min(remaining, maximum_operations - operations - 1)
+        operations += 1 if remaining > 0 else 0
+        if remaining < 1:
+            pending.add(face)
+            exhausted = True
+            continue
+        intersection = intersect_curve_region(
+            ray,
+            SurfaceRegion(
+                model.patches[face],
+                prepared.parameter_boxes[face],
+                budget=budget,
+                preparations=preparations,
+            ),
+            policy=ParametricIntersectionPolicy(
+                maximum_boxes=remaining, relative_resolution=relative_resolution
+            ),
+            preparations=preparations,
+            coordinate_budget=budget,
+        )
+        processed += intersection.work.boxes_processed
+        operations += intersection.work.boxes_processed
+        if not intersection.complete or intersection.coincident:
+            pending.add(face)
+            continue
+        roots = _classify_face_roots(
+            intersection,
+            domain,
+            last,
+            operations,
+            maximum_operations=maximum_operations,
+            maximum_depth=maximum_depth,
+            preparations=preparations,
+            budget=budget,
+        )
+        operations = roots.operations
+        exhausted |= roots.exhausted
+        crossings.extend(roots.crossings)
+        if roots.unresolved:
+            pending.add(face)
+    crossings.sort()
+    if any(
+        first[1] >= second[0]
+        for first, second in zip(crossings[:-1], crossings[1:], strict=True)
+    ):
+        pending.update(prepared.faces)
+    return _RayEvidence(
+        crossings=tuple(crossings),
+        pending=tuple(sorted(pending)),
+        processed=processed,
+        operations=operations,
+        exhausted=exhausted,
+        admitted=True,
+    )
+
+
+def _certify_prepared(
+    model: BRepModel,
+    preparation: _ContainmentPreparation
+    | _AffineContainmentPreparation
+    | SolidContainmentCertificate,
+    *,
+    maximum_boxes: int,
+    maximum_depth: int,
+    relative_resolution: float,
+    maximum_operations: int | None,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> SolidContainmentCertificate:
+    match preparation:
+        case SolidContainmentCertificate():
+            return preparation
+        case _AffineContainmentPreparation():
+            parity = certify_affine_parity(
+                preparation.query,
+                preparation.affine,
+                preparation.faces,
+                maximum_operations=(
+                    None if maximum_operations is None else maximum_operations - 1
+                ),
+            )
+            return SolidContainmentCertificate(
+                inside=parity.inside,
+                complete=parity.complete,
+                crossings=parity.crossings,
+                boxes_processed=0,
+                unresolved_faces=tuple(sorted(parity.unresolved_faces)),
+                ray_start=0.0,
+                owner_operations=1 + parity.operations,
+                resource_exhausted=parity.resource_exhausted,
+            )
+        case _ContainmentPreparation():
+            prepared = preparation
+        case _:
+            assert_never(preparation)
+    ray_start = -float(np.ldexp(prepared.extent, -20))
+    evidence = _RayEvidence(
+        crossings=(),
+        pending=(),
+        processed=0,
+        operations=1,
+        exhausted=False,
+        admitted=True,
+    )
+    for values in ((1.0, 0.317, 0.613), (0.487, 1.0, 0.293), (0.211, 0.719, 1.0)):
+        evidence = _curved_ray(
+            model,
+            prepared,
+            np.asarray(values, dtype=np.float64),
+            evidence,
+            ray_start,
+            maximum_boxes=maximum_boxes,
+            maximum_operations=maximum_operations,
+            maximum_depth=maximum_depth,
+            relative_resolution=relative_resolution,
+            preparations=preparations,
+            budget=budget,
+        )
+        if not evidence.pending or evidence.processed >= maximum_boxes:
+            break
+        if not evidence.admitted:
+            break
+    complete = not evidence.pending
+    return SolidContainmentCertificate(
+        inside=bool(len(evidence.crossings) % 2) if complete else False,
+        complete=complete,
+        crossings=len(evidence.crossings),
+        boxes_processed=evidence.processed,
+        unresolved_faces=evidence.pending,
+        ray_start=ray_start,
+        owner_operations=evidence.operations,
+        resource_exhausted=False
+        if complete
+        else evidence.exhausted or evidence.processed >= maximum_boxes,
+    )
+
+
+@checked
 def certify_solid_containment(
     model: BRepModel,
-    point: np.ndarray,
+    point: ConvertibleToArray,
     solid: int,
     /,
     *,
@@ -100,202 +542,70 @@ def certify_solid_containment(
     source_boxes: np.ndarray | None = None,
     trim_domains: tuple[TrimDomain, ...] | None = None,
     broadphase: QueryBroadphase | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> SolidContainmentCertificate:
-    """Count every transverse source intersection on one proved admissible ray.
+    """Certify solid parity, refusing boundary queries and unresolved curved roots.
 
-    Rays through an edge, a pole, tangent/coincident components or unresolved
-    root boxes do not establish parity. Finite alternate directions only seek
-    an admissible certified ray; exhausting them remains explicitly unresolved.
-    The search starts at ``-2**-20 * extent`` so a supporting surface through
-    the query point gives an interior root: roots certified at negative ray
-    parameters are ignored, a root inside a face trim whose enclosure holds 0
-    means the point is on the boundary (unresolved), and only roots certified
-    at positive parameters inside a face trim are crossings.
+    Planar faces with affine polygon loops use rational half-open winding and a
+    direction outside finitely many tangent and edge-plane exclusions. These
+    queries are unresolved only on the boundary or on resource exhaustion.
+    Root-defined and non-affine trims retain source-intersection certification.
+
+    Curved faces retain three alternate ray directions. A negative search start
+    makes a root on the query's supporting plane interior to the search range;
+    only strictly positive in-trim roots count toward parity. Work and unresolved
+    faces are retained when the declared allowance is exhausted.
     """
-    if model.geometry is None or not 0 <= solid < model.topology.num_solids:
-        raise ValueError("Solid containment requires an authoritative model solid.")
-    query = np.asarray(point, dtype=np.float64)
-    if (
-        query.shape != (3,)
-        or not np.all(np.isfinite(query))
-        or maximum_boxes < 1
-        or maximum_depth < 0
-    ):
-        raise ValueError(
-            "Containment requires a finite point and valid resource budgets."
-        )
-    if maximum_operations is not None and (
-        type(maximum_operations) is not int or maximum_operations < 0
-    ):
-        raise ValueError("Containment operation allowance must be a nonnegative integer.")
-    faces = model.topology.solid_faces[solid]
-    parameter_boxes = np.asarray(model.parameter_bounds)
-    if source_boxes is None:
-        source_boxes = np.asarray(
-            [model.patches[face].bounding_box(parameter_boxes[face]) for face in faces]
-        )
-    elif source_boxes.shape != (len(faces), 2, 3):
-        raise ValueError(
-            "Prepared containment source boxes must align with the authoritative solid faces."
-        )
-    if maximum_operations == 0:
-        return SolidContainmentCertificate(False, False, 0, 0, faces, 0.0, 0, True)
-    lower, upper = np.min(source_boxes[:, 0], axis=0), np.max(source_boxes[:, 1], axis=0)
-    if np.any(query < lower) or np.any(query > upper):
-        return SolidContainmentCertificate(False, True, 0, 0, (), 0.0, 1, False)
-    extent = float(np.max(upper - lower))
-    if not np.isfinite(extent) or extent <= 0:
-        return SolidContainmentCertificate(False, False, 0, 0, faces, 0.0, 1, False)
-    if trim_domains is None:
-        domains = {
-            face: brep_trim_domain(
-                model.geometry, face, model.patches[face], tolerance=0.01
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request((model, point, solid)) as request_budget:
+            prepared = _prepare_containment(
+                model,
+                point,
+                solid,
+                maximum_boxes=maximum_boxes,
+                maximum_depth=maximum_depth,
+                maximum_operations=maximum_operations,
+                source_boxes=source_boxes,
+                trim_domains=trim_domains,
+                broadphase=broadphase,
+                preparations=preparations,
+                budget=request_budget,
             )
-            for face in faces
-        }
-    else:
-        if len(trim_domains) != len(faces):
-            raise ValueError(
-                "Prepared containment trims must align with the authoritative solid faces."
+            return _certify_prepared(
+                model,
+                prepared,
+                maximum_boxes=maximum_boxes,
+                maximum_depth=maximum_depth,
+                relative_resolution=relative_resolution,
+                maximum_operations=maximum_operations,
+                preparations=preparations,
+                budget=request_budget,
             )
-        domains = dict(zip(faces, trim_domains, strict=True))
-    if broadphase is None:
-        broadphase = QueryBroadphase.prepare(
-            prepare_bvh(source_boxes[:, 0], source_boxes[:, 1])
-        )
-        source_indices = faces
-    else:
-        source_indices = tuple(range(len(model.patches)))
-    ray_start = -float(np.ldexp(extent, -20))
-    processed = 0
-    owner_operations = 1
-    exhausted = False
-    pending: set[int] = set()
-    for direction_values in (
-        (1.0, 0.317, 0.613),
-        (0.487, 1.0, 0.293),
-        (0.211, 0.719, 1.0),
-    ):
-        direction = np.asarray(direction_values, dtype=np.float64)
-        axis = int(np.argmax(direction))
-        last = float(
-            np.nextafter((upper[axis] - query[axis] + extent) / direction[axis], np.inf)
-        )
-        ray = CurveRange(LineCurve(query, direction), ray_start, last)
-        crossings: list[tuple[float, float]] = []
-        pending = set()
-        if (
-            maximum_operations is not None
-            and owner_operations + broadphase.lower.shape[0] > maximum_operations
-        ):
-            pending.update(faces)
-            exhausted = True
-            break
-        work = [0]
-        start = tuple(
-            Fraction(float(value)) + Fraction(ray_start) * Fraction(float(component))
-            for value, component in zip(query, direction, strict=True)
-        )
-        candidates = {
-            source_indices[index]
-            for index in broadphase.ray(
-                start, tuple(Fraction(float(value)) for value in direction), work
-            )
-        }
-        owner_operations += work[0]
-        for face in faces:
-            if face not in candidates:
-                continue
-            if maximum_operations is not None:
-                remaining = min(
-                    maximum_boxes - processed, maximum_operations - owner_operations - 1
-                )
-            else:
-                remaining = maximum_boxes - processed
-            owner_operations += 1 if remaining > 0 else 0
-            if remaining < 1:
-                pending.add(face)
-                exhausted = True
-                continue
-            intersection = intersect_curve_region(
-                ray,
-                SurfaceRegion(model.patches[face], parameter_boxes[face]),
-                policy=ParametricIntersectionPolicy(
-                    maximum_boxes=remaining, relative_resolution=relative_resolution
-                ),
-            )
-            processed += intersection.work.boxes_processed
-            owner_operations += intersection.work.boxes_processed
-            if not intersection.complete or intersection.coincident:
-                pending.add(face)
-                continue
-            for root in intersection.points:
-                start, end = (
-                    float(root.parameter_lower[0]),
-                    float(root.parameter_upper[0]),
-                )
-                if end < 0.0:
-                    # Certified behind the query point: not on the parity ray.
-                    continue
-                if root.kind != "transversal" or root.certificate != "krawczyk":
-                    pending.add(face)
-                    continue
-                box = np.stack((root.parameter_lower[1:], root.parameter_upper[1:]))
-                required = sum(
-                    3 * loop.arc_lower.shape[0] + 2 * loop.junction_lower.shape[0]
-                    if isinstance(loop, CurveTrimLoop)
-                    else 2 * loop.vertices.shape[0]
-                    for loop in domains[face].loops
-                )
-                if (
-                    maximum_operations is not None
-                    and owner_operations + required > maximum_operations
-                ):
-                    pending.add(face)
-                    exhausted = True
-                    continue
-                inside, complete, trim_work = _trim_box_decision(
-                    domains[face], box, maximum_depth=maximum_depth
-                )
-                owner_operations += trim_work
-                if not complete:
-                    pending.add(face)
-                    continue
-                if inside:
-                    # An in-trim root whose enclosure holds 0 is the query point
-                    # on the boundary; it never establishes parity.
-                    if start <= 0.0 or end >= last:
-                        pending.add(face)
-                    else:
-                        crossings.append((start, end))
-        crossings.sort()
-        if any(
-            first[1] >= second[0]
-            for first, second in zip(crossings[:-1], crossings[1:], strict=True)
-        ):
-            pending.update(faces)
-        if not pending:
-            return SolidContainmentCertificate(
-                bool(len(crossings) % 2),
-                True,
-                len(crossings),
-                processed,
-                (),
-                ray_start,
-                owner_operations,
-                False,
-            )
-        if processed >= maximum_boxes:
-            break
-    return SolidContainmentCertificate(
-        False,
-        False,
-        len(crossings),
-        processed,
-        tuple(sorted(pending)),
-        ray_start,
-        owner_operations,
-        exhausted or processed >= maximum_boxes,
+    prepared = _prepare_containment(
+        model,
+        point,
+        solid,
+        maximum_boxes=maximum_boxes,
+        maximum_depth=maximum_depth,
+        maximum_operations=maximum_operations,
+        source_boxes=source_boxes,
+        trim_domains=trim_domains,
+        broadphase=broadphase,
+        preparations=preparations,
+        budget=budget,
+    )
+    return _certify_prepared(
+        model,
+        prepared,
+        maximum_boxes=maximum_boxes,
+        maximum_depth=maximum_depth,
+        relative_resolution=relative_resolution,
+        maximum_operations=maximum_operations,
+        preparations=preparations,
+        budget=budget,
     )
 
 

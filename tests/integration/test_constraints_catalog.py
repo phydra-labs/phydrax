@@ -13,6 +13,7 @@ import jax.random as jr
 import phydrax as phx
 import phydrax.axes as cx
 from phydrax.domain import Boundary, FixedStart, Interval1d, SampleLayout, TimeInterval
+from phydrax.units import METER
 
 
 def _continuous_term(condition: Any, num_samples: Any) -> Any:
@@ -84,7 +85,7 @@ def test_functional_boundary_and_initial_constraints() -> None:
 
 def test_cfd_constraints_continuous_and_discrete() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
     structure = SampleLayout((("x",),))
@@ -139,7 +140,7 @@ def test_cfd_constraints_continuous_and_discrete() -> None:
 
 def test_solid_constraints_continuous_and_discrete() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
     structure = SampleLayout((("x",),))
@@ -313,7 +314,7 @@ def test_thermal_constraints_use_physical_outward_flux_sign() -> None:
 
 def test_em_constraints_continuous_and_discrete() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
     structure = SampleLayout((("x",),))

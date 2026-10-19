@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.discretization._cell_geometry_validity import _simplex_child_maps
+from phydrax.discretization._reference_subdivision import simplex_child_maps
 from phydrax.discretization._simplicial_locator import PreparedSimplicialCellLocator
 
 
@@ -140,7 +140,7 @@ def test_outside_start_does_not_reenter_disconnected_path() -> None:
 
 @pytest.mark.parametrize("dimension", (1, 4, 5))
 def test_generic_simplex_subdivision_partitions_reference_volume(dimension: int) -> None:
-    origins, matrices = _simplex_child_maps(dimension)
+    origins, matrices = simplex_child_maps(dimension)
     np.testing.assert_allclose(
         np.sum(np.abs(np.linalg.det(matrices))), 1.0, rtol=0.0, atol=1e-14
     )

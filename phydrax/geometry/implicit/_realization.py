@@ -122,7 +122,7 @@ def _segment_triangle_intersection(
     )
 
 
-def _triangles_intersect(first: Array, second: Array, tolerance: float) -> Array:
+def triangles_intersect(first: Array, second: Array, tolerance: float) -> Array:
     first_normal = jnp.cross(first[1] - first[0], first[2] - first[0])
     second_normal = jnp.cross(second[1] - second[0], second[2] - second[0])
     scale = jnp.maximum(
@@ -257,9 +257,15 @@ class ImplicitSurfaceRealization(StrictModule):
         safe = jnp.asarray(vertices, dtype=proposed.dtype)
         faces_ = jnp.asarray(faces, dtype=jnp.int32)
         if proposed.ndim != 2 or proposed.shape[1] != 3 or safe.shape != proposed.shape:
-            raise ValueError("Implicit surface vertices must have shape (vertices, 3).")
+            raise ValueError(
+                "ImplicitSurfaceRealization.vertices must match proposed_vertices with shape (vertices, 3); "
+                f"got proposed shape {proposed.shape} and safe shape {safe.shape}"
+            )
         if faces_.ndim != 2 or faces_.shape[1] != 3:
-            raise ValueError("Implicit surface faces must have shape (faces, 3).")
+            raise ValueError(
+                "ImplicitSurfaceRealization.faces must have shape (faces, 3); "
+                f"got shape {faces_.shape}"
+            )
         self.proposed_vertices = proposed
         self.vertices = safe
         self.faces = faces_
@@ -276,7 +282,9 @@ class ImplicitSurfaceRealization(StrictModule):
 
     def to_triangle_mesh(self, /) -> TriangleMesh:
         if not bool(np.asarray(self.accepted)):
-            raise ValueError("Only an accepted implicit realization can be materialized.")
+            raise ValueError(
+                "ImplicitSurfaceRealization.accepted must be true before materialization; got false"
+            )
         return TriangleMesh(
             np.asarray(self.vertices),
             np.asarray(self.faces),
@@ -343,32 +351,53 @@ class ImplicitSurfacePlan(StrictModule):
         }
         vertices = arrays["base_vertices"].shape[0]
         if arrays["base_vertices"].shape != (vertices, 3):
-            raise ValueError("base_vertices must have shape (vertices, 3).")
+            raise ValueError(
+                "ImplicitSurfacePlan.base_vertices must have shape (vertices, 3); "
+                f"got shape {arrays['base_vertices'].shape}"
+            )
         if arrays["cell_lower"].shape != (vertices, 3) or arrays["cell_upper"].shape != (
             vertices,
             3,
         ):
-            raise ValueError("Implicit cell bounds must match base vertices.")
+            raise ValueError(
+                "ImplicitSurfacePlan.cell_bounds must match base_vertices with shape (vertices, 3); "
+                f"got lower shape {arrays['cell_lower'].shape}, upper shape {arrays['cell_upper'].shape}, "
+                f"and {vertices} vertices"
+            )
         if (
             arrays["vertex_anchor_indices"].shape != arrays["vertex_anchor_mask"].shape
             or arrays["vertex_anchor_indices"].shape[0] != vertices
         ):
-            raise ValueError("Implicit vertex-anchor routes are inconsistent.")
+            raise ValueError(
+                "ImplicitSurfacePlan.vertex_anchor_indices must match vertex_anchor_mask with one row per vertex; "
+                f"got index shape {arrays['vertex_anchor_indices'].shape}, "
+                f"mask shape {arrays['vertex_anchor_mask'].shape}, and {vertices} vertices"
+            )
         if arrays["qef_regularization"].shape != (vertices,) or np.any(
             arrays["qef_regularization"] <= 0.0
         ):
             raise ValueError(
-                "qef_regularization must contain one positive value per vertex."
+                "ImplicitSurfacePlan.qef_regularization must contain one positive value per vertex; "
+                f"got shape {arrays['qef_regularization'].shape} for {vertices} vertices or nonpositive values"
             )
         if arrays["faces"].ndim != 2 or arrays["faces"].shape[1] != 3:
-            raise ValueError("faces must have shape (faces, 3).")
+            raise ValueError(
+                "ImplicitSurfacePlan.faces must have shape (faces, 3); "
+                f"got shape {arrays['faces'].shape}"
+            )
         if arrays["base_face_normals"].shape != (arrays["faces"].shape[0], 3):
-            raise ValueError("base_face_normals must match faces.")
+            raise ValueError(
+                "ImplicitSurfacePlan.base_face_normals must match faces with shape (faces, 3); "
+                f"got shape {arrays['base_face_normals'].shape} for {arrays['faces'].shape[0]} faces"
+            )
         if (
             arrays["intersection_pairs"].ndim != 2
             or arrays["intersection_pairs"].shape[1] != 2
         ):
-            raise ValueError("intersection_pairs must have shape (pairs, 2).")
+            raise ValueError(
+                "ImplicitSurfacePlan.intersection_pairs must have shape (pairs, 2); "
+                f"got shape {arrays['intersection_pairs'].shape}"
+            )
         identifier = canonical_fingerprint(
             {
                 "kind": "implicit-surface-plan",
@@ -402,9 +431,40 @@ class ImplicitSurfacePlan(StrictModule):
         self.topology_id = str(topology_id)
         self.plan_id = identifier
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls,
+        value: ImplicitSurfacePlan,
+        *,
+        geometry: CompiledGeometry,
+    ) -> ImplicitSurfacePlan:
+        """Reconstruct retained surface data and validate it with the source geometry."""
+        return cls(
+            geometry=geometry,
+            grid_points=value.grid_points,
+            inside_pattern=value.inside_pattern,
+            projection=value.projection,
+            vertex_anchor_indices=value.vertex_anchor_indices,
+            vertex_anchor_mask=value.vertex_anchor_mask,
+            qef_regularization=value.qef_regularization,
+            cell_lower=value.cell_lower,
+            cell_upper=value.cell_upper,
+            base_vertices=value.base_vertices,
+            faces=value.faces,
+            base_face_normals=value.base_face_normals,
+            intersection_pairs=value.intersection_pairs,
+            policy=value.policy,
+            source_id=value.source_id,
+            topology_id=value.topology_id,
+        )
+
     def realize(self, state: DesignState, /) -> ImplicitSurfaceRealization:
         if not isinstance(state, DesignState) or state.schema != self.schema:
-            raise ValueError("Implicit realization state must use the discovery schema.")
+            raise ValueError(
+                "ImplicitSurfacePlan.state must be a DesignState using the discovery schema; "
+                "got an incompatible state"
+            )
         projection = self.projection.realize(state)
         field = self.kernel.boundary_field(state, self.grid_points)
         sign_pattern = field < 0.0
@@ -467,7 +527,7 @@ class ImplicitSurfacePlan(StrictModule):
             first_triangles = triangles[self.intersection_pairs[:, 0]]
             second_triangles = triangles[self.intersection_pairs[:, 1]]
             intersections = jax.vmap(
-                lambda first, second: _triangles_intersect(
+                lambda first, second: triangles_intersect(
                     first,
                     second,
                     self.policy.projection.root_tolerance,

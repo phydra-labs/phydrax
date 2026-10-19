@@ -43,9 +43,11 @@
 #include <vector>
 
 #include "capi_guard.hpp"
+#include "counter_records.hpp"
 #include "expansion.hpp"
 #include "filtered.hpp"
 #include "mesh.hpp"
+#include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "triangulation2d.hpp"
@@ -83,7 +85,6 @@ int dot_sign(const double* a, const double* b, const double* v) {
          }).sign();
 }
 
-bool same_point(const double* a, const double* b) { return a[0] == b[0] && a[1] == b[1]; }
 
 // For m collinear with a and b: whether m lies strictly between them.
 bool strictly_between(const double* a, const double* b, const double* m) {
@@ -130,17 +131,26 @@ struct Quality {
   double badness = 0.0;
 };
 
+struct SplitWitness {
+  int32_t a = -1;
+  int32_t b = -1;
+  int32_t segment = -1;
+  double ratio = 0.0;
+};
+
 class ConstrainedMesher {
  public:
   ConstrainedMesher(Triangulation2D& triangulation, int32_t input_count, double min_angle_degrees,
-                    double max_area, int64_t max_steiner, int64_t max_triangles)
+                    double max_area, int64_t max_steiner, int64_t max_triangles,
+                    bool retain_witnesses)
       : tri_(triangulation),
         input_count_(input_count),
         max_area_(max_area),
         max_steiner_(max_steiner),
         max_triangles_(max_triangles),
         angle_enabled_(min_angle_degrees > 0.0),
-        sin_min_angle_(std::sin(min_angle_degrees * (3.14159265358979323846 / 180.0))) {}
+        sin_min_angle_(std::sin(min_angle_degrees * (3.14159265358979323846 / 180.0))),
+        retain_witnesses_(retain_witnesses) {}
 
   // Inserts the edge chain from a to b; vertices exactly on the open segment
   // split it and every piece carries id.
@@ -237,6 +247,30 @@ class ConstrainedMesher {
     return PHX_MC_OK;
   }
 
+  // Charge every staged row before the first caller-owned row is changed.
+  // No allocation, predicate or further budget charge follows these writes.
+  void publish_witnesses(int32_t* parents, int32_t* segments, double* ratios) const {
+    if (!retain_witnesses_) {
+      return;
+    }
+    const std::size_t count = static_cast<std::size_t>(input_count_) + witnesses_.size();
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+      tri_.budget.charge();
+    }
+    const std::size_t inputs = static_cast<std::size_t>(input_count_);
+    std::fill_n(parents, 2 * inputs, int32_t{-1});
+    std::fill_n(segments, inputs, int32_t{-1});
+    std::fill_n(ratios, inputs, 0.0);
+    for (std::size_t s = 0; s < witnesses_.size(); ++s) {
+      const std::size_t v = static_cast<std::size_t>(input_count_) + s;
+      const SplitWitness& witness = witnesses_[s];
+      parents[2 * v] = witness.a;
+      parents[2 * v + 1] = witness.b;
+      segments[v] = witness.segment;
+      ratios[v] = witness.ratio;
+    }
+  }
+
  private:
   Triangulation2D& tri_;
   int32_t input_count_;
@@ -246,6 +280,9 @@ class ConstrainedMesher {
   bool angle_enabled_;
   double sin_min_angle_;
   int64_t steiner_count_ = 0;
+  bool retain_witnesses_;
+  // Per appended vertex: immediate construction parents, not chain endpoints.
+  NativeVector<SplitWitness> witnesses_;
   NativeVector<int32_t> segment_degree_;
   // Per Steiner vertex (index - input_count_): the input vertices ending the
   // constrained chain it was inserted on, {-1, -1} for circumcenters.
@@ -687,12 +724,16 @@ class ConstrainedMesher {
     } while (t != start);
   }
 
-  int32_t new_vertex(const double* xy, std::pair<int32_t, int32_t> ends = {-1, -1}) {
+  int32_t new_vertex(const double* xy, std::pair<int32_t, int32_t> ends = {-1, -1},
+                     SplitWitness witness = {}) {
     if (tri_.vertex_count() >= kMaxMeshPoints) {
       throw StatusError{PHX_MC_CAPACITY_EXCEEDED};
     }
     tri_.budget.charge();
     chain_ends_.push_back(ends);
+    if (retain_witnesses_) {
+      witnesses_.push_back(witness);
+    }
     const int32_t v = tri_.add_vertex(xy);
     return v;
   }
@@ -928,6 +969,7 @@ class ConstrainedMesher {
     double m[2];
     const bool shell_a = shared_input_vertex(a);
     const bool shell_b = shared_input_vertex(b);
+    SplitWitness witness{a, b, id, 0.5};
     if (shell_a != shell_b) {
       // Concentric shells: the piece at the shared input vertex gets the power
       // of two length closest to half the subsegment.
@@ -940,6 +982,9 @@ class ConstrainedMesher {
       const double fraction = std::frexp(0.5 * length, &exponent);
       const double piece = std::ldexp(1.0, fraction < 0.75 ? exponent - 1 : exponent);
       const double ratio = piece / length;
+      // Retain the shell orientation and raw binary64 construction ratio:
+      // rounding 1 - ratio could change its exact rational complement.
+      witness = {shell_a ? a : b, shell_a ? b : a, id, ratio};
       m[0] = po[0] + ratio * dx;
       m[1] = po[1] + ratio * dy;
     } else {
@@ -955,7 +1000,7 @@ class ConstrainedMesher {
     // (or hull ghost) on its side.
     const int32_t across = triangle.n[k];
     auto placement = [&](const double* c) {
-      if (same_point(c, pa) || same_point(c, pb)) {
+      if (geometry::same_point<2>(c, pa) || geometry::same_point<2>(c, pb)) {
         return 0;
       }
       const int side = tri_.budget.orient(pa, pb, c);
@@ -976,8 +1021,8 @@ class ConstrainedMesher {
                  : 0;
     };
     auto step = [](double x, int ulps) {
-      for (; ulps > 0; --ulps) x = std::nextafter(x, std::numeric_limits<double>::infinity());
-      for (; ulps < 0; ++ulps) x = std::nextafter(x, -std::numeric_limits<double>::infinity());
+      for (; ulps > 0; --ulps) x = geometry::next_up(x);
+      for (; ulps < 0; ++ulps) x = geometry::next_down(x);
       return x;
     };
     double chosen[2] = {0.0, 0.0};
@@ -1005,7 +1050,7 @@ class ConstrainedMesher {
     const std::pair<int32_t, int32_t> ends = chain_ends_of(a, b);
     const int side = tri_.budget.orient(pa, pb, chosen);
     if (side == 0) {
-      const int32_t v = new_vertex(chosen, ends);
+      const int32_t v = new_vertex(chosen, ends, witness);
       split_edge(t, k, v, id);
       legalize(v);
       after_insertion(v);
@@ -1017,14 +1062,14 @@ class ConstrainedMesher {
     const int32_t near_side = side > 0 ? t : across;
     const int32_t far_side = side > 0 ? across : t;
     if (tri_.is_ghost(near_side)) {
-      const int32_t v = new_vertex(chosen, ends);
+      const int32_t v = new_vertex(chosen, ends, witness);
       attach_to_hull(near_side, p, q, v, id);
       legalize(v);
       after_insertion(v);
       return true;
     }
     const uint8_t far_region = tri_.region[static_cast<std::size_t>(far_side)];
-    const int32_t v = new_vertex(chosen, ends);
+    const int32_t v = new_vertex(chosen, ends, witness);
     split_triangle(near_side, v);
     const int32_t sliver = find_edge(p, q).first;
     tri_.set_edge_constraint(sliver, p, q, kFree);
@@ -1170,8 +1215,10 @@ class ConstrainedMesher {
 int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t segment_count,
                              const int32_t* segments, int64_t hole_count, const double* holes,
                              int32_t keep_convex_hull, double min_angle_degrees, double max_area,
-                             int64_t max_steiner, int64_t max_triangles,
-                             PlanarBudget& budget, phx_mc_mesh** mesh) {
+                             int64_t max_steiner, int64_t max_triangles, PlanarBudget& budget,
+                             int64_t witness_capacity, int32_t* witness_parents,
+                             int32_t* witness_segments, double* witness_ratios,
+                             phx_mc_mesh** mesh) {
   if (mesh == nullptr) {
     return PHX_MC_INVALID_ARGUMENT;
   }
@@ -1183,9 +1230,24 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
       !(min_angle_degrees >= 0.0 && min_angle_degrees < 60.0) || !(max_area > 0.0)) {
     return PHX_MC_INVALID_ARGUMENT;
   }
-  int32_t status = validate_points(points, point_count, 2, nullptr, charge_planar_work, &budget);
+  const bool retain_witnesses = witness_capacity != 0 || witness_parents != nullptr ||
+                                witness_segments != nullptr || witness_ratios != nullptr;
+  if (witness_capacity < 0 ||
+      (retain_witnesses &&
+       (witness_parents == nullptr || witness_segments == nullptr || witness_ratios == nullptr ||
+        !addressable(witness_capacity, 2, sizeof(int32_t)) ||
+        !addressable(witness_capacity, 1, sizeof(double))))) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  // Subtract only after checking capacity against point_count, avoiding overflow
+  // in point_count + max_steiner even for an unrepresentable caller request.
+  if (retain_witnesses &&
+      (witness_capacity < point_count || max_steiner > witness_capacity - point_count)) {
+    return PHX_MC_CAPACITY_EXCEEDED;
+  }
+  int32_t status = validate_points(points, point_count, 2, nullptr, [&budget] { budget.charge(); });
   if (status == PHX_MC_OK) {
-    status = validate_points(holes, hole_count, 2, nullptr, charge_planar_work, &budget);
+    status = validate_points(holes, hole_count, 2, nullptr, [&budget] { budget.charge(); });
   }
   if (status != PHX_MC_OK) {
     return status;
@@ -1218,7 +1280,7 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
   }
   const bool refine = min_angle_degrees > 0.0 || std::isfinite(max_area);
   ConstrainedMesher mesher(triangulation, static_cast<int32_t>(point_count), min_angle_degrees,
-                           max_area, max_steiner, max_triangles);
+                           max_area, max_steiner, max_triangles, retain_witnesses);
   try {
     for (int64_t s = 0; s < segment_count; ++s) {
       budget.charge();
@@ -1248,7 +1310,8 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
       result->cell_constraints.push_back(id >= 0 ? id : -1);
     }
   }
-  canonicalize_cells(*result, charge_planar_work, &budget);
+  canonicalize_cells(*result, [&budget] { budget.charge(); });
+  mesher.publish_witnesses(witness_parents, witness_segments, witness_ratios);
   *mesh = result.release();
   return status;
 }
@@ -1258,18 +1321,35 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
 
 extern "C" {
 
-int32_t phx_mc_constrained_delaunay_2d(int64_t point_count, const double* points,
-                                       int64_t segment_count, const int32_t* segments,
-                                       int64_t hole_count, const double* holes,
-                                       int32_t keep_convex_hull, double min_angle_degrees,
-                                       double max_area, int64_t max_steiner,
-                                       int64_t max_triangles, int64_t max_cavity_cells,
-                                       int64_t max_work, int64_t max_scratch_bytes,
-                                       uint64_t* work_evidence, uint64_t* memory_evidence,
-                                       phx_mc_mesh** mesh) {
+int32_t phx_mc_constrained_delaunay_2d(
+    const phx_mc_constrained_delaunay_2d_request* request) {
+  if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  auto point_count = request->point_count;
+  auto points = request->points;
+  auto segment_count = request->segment_count;
+  auto segments = request->segments;
+  auto hole_count = request->hole_count;
+  auto holes = request->holes;
+  auto keep_convex_hull = request->keep_convex_hull;
+  auto min_angle_degrees = request->min_angle_degrees;
+  auto max_area = request->max_area;
+  auto max_steiner = request->max_steiner;
+  auto max_triangles = request->max_triangles;
+  auto max_cavity_cells = request->max_cavity_cells;
+  auto max_work = request->max_work;
+  auto max_scratch_bytes = request->max_scratch_bytes;
+  auto work_evidence = request->work_evidence;
+  auto memory_evidence = request->memory_evidence;
+  auto witness_capacity = request->witness_capacity;
+  auto witness_parents = request->witness_parents;
+  auto witness_segments = request->witness_segments;
+  auto witness_ratios = request->witness_ratios;
+  auto mesh = request->mesh;
   if (mesh != nullptr) *mesh = nullptr;
-  if (work_evidence != nullptr) std::fill_n(work_evidence, 9, uint64_t{0});
-  if (memory_evidence != nullptr) std::fill_n(memory_evidence, 6, uint64_t{0});
+  phx::mc::PlanarCounters work_state;
+  phx::mc::ManagedMemory memory_state;
+  phx::mc::CounterPublisher memory_publisher{memory_state, memory_evidence};
+  phx::mc::CounterPublisher work_publisher{work_state, work_evidence};
   return phx::mc::guarded([&] {
     if (max_cavity_cells < 0 || max_work < 0 || max_scratch_bytes < 0) {
       return int32_t{PHX_MC_INVALID_ARGUMENT};
@@ -1281,15 +1361,16 @@ int32_t phx_mc_constrained_delaunay_2d(int64_t point_count, const double* points
       phx::mc::MemoryScope scope(owner);
       return phx::mc::constrained_delaunay(
           point_count, points, segment_count, segments, hole_count, holes, keep_convex_hull,
-          min_angle_degrees, max_area, max_steiner, max_triangles, budget, mesh);
+          min_angle_degrees, max_area, max_steiner, max_triangles, budget, witness_capacity,
+          witness_parents, witness_segments, witness_ratios, mesh);
     });
     if (work_evidence != nullptr) {
-      const auto evidence = budget.evidence();
-      std::copy(evidence.begin(), evidence.end(), work_evidence);
+      const auto slots = budget.evidence();
+      work_state = phx::mc::PlanarCounters::from_slots(slots.data());
     }
     if (memory_evidence != nullptr) {
-      const auto evidence = window.evidence();
-      std::copy(evidence.begin(), evidence.end(), memory_evidence);
+      const auto slots = window.evidence();
+      memory_state = phx::mc::ManagedMemory::from_slots(slots.data());
     }
     return status;
   });

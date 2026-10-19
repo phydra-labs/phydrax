@@ -26,9 +26,10 @@ from __future__ import annotations
 import math
 from abc import abstractmethod
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import final, Protocol, runtime_checkable
+from typing import final, Protocol, runtime_checkable, Self
 
 import equinox as eqx
 import jax
@@ -36,18 +37,60 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.extend import core as jax_core
-from jax.typing import DTypeLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._meshcore import charge_native_geometry_queries
+from ..._resource_ticket import HostBatchTicket
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked
 from .._atlas import BoundaryAtlas
 from .._certificate import FieldCertificate
 from .._contracts import CompiledGeometry, GeometryKernel
 from ..design._schema import DesignState
 from ._policy import ImplicitDiscoveryEnclosure
-from ._projection import _field_and_gradient
+from ._projection import field_and_gradient
+
+
+@contextmanager
+def query_budget(
+    budget: CoordinateEnclosureBudget | None,
+    /,
+    *,
+    work_upper: int,
+    queries_upper: int,
+    bytes_upper: int = 0,
+) -> Iterator[CoordinateEnclosureBudget]:
+    """Borrow an explicit query ledger or settle an input-bounded host request."""
+    if budget is not None:
+        yield budget
+        return
+    with HostBatchTicket(
+        work_upper, queries_upper=queries_upper, bytes_upper=bytes_upper
+    ) as ticket:
+        with CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=work_upper,
+            maximum_memory_bytes=bytes_upper,
+        ).activate() as local:
+            yield local
+
+
+def consume_queries(
+    budget: CoordinateEnclosureBudget,
+    count: int,
+    /,
+    *,
+    work_units: int = 0,
+) -> None:
+    """Count source queries locally; retain ticket refusal evidence at capacity."""
+
+    ticket = budget.ticket
+    if work_units > ticket.remaining_work_units:
+        ticket.refuse(work_units, queries_upper=count)
+    budget.reserve_geometry_queries(count)
+    ticket.consume(work_units)
 
 
 _EPSILON = float(np.finfo(np.float64).eps)
@@ -55,7 +98,7 @@ _EPSILON = float(np.finfo(np.float64).eps)
 # transcendental functions carry a documented few-ulp error and are widened by
 # `_TRANSCENDENTAL_ULPS` before the final outward step.
 _TRANSCENDENTAL_ULPS = 4.0
-_BOX_CHUNK = 4096
+BOX_CHUNK = 4096
 # Directional-derivative seeds: the axes first, then the face and body
 # diagonals. Each direction's derivative is enclosed independently, so an
 # undecided max/min keeps the scalar hull of its branch derivatives instead of a
@@ -157,7 +200,7 @@ ENCLOSURE_ROUNDING_MODEL = (
 
 
 @dataclass(frozen=True, slots=True)
-class _Interval:
+class Interval:
     """Float interval with forward interval tangents shaped ``(inputs,) + shape``."""
 
     lower: Array
@@ -167,7 +210,7 @@ class _Interval:
 
 
 @dataclass(frozen=True, slots=True)
-class _Exact:
+class Exact:
     """Integer or boolean data known exactly."""
 
     value: Array
@@ -181,7 +224,7 @@ class _Truth:
     possible_false: Array
 
 
-type _Value = _Interval | _Exact | _Truth
+type _Value = Interval | Exact | _Truth
 
 
 def _down(value: Array) -> Array:
@@ -234,7 +277,7 @@ def _mignitude(lower: Array, upper: Array) -> Array:
     )
 
 
-def _ranked(value: _Interval, rank: int) -> _Interval:
+def _ranked(value: Interval, rank: int) -> Interval:
     """Insert leading value axes so a scalar operand broadcasts against ``rank``."""
 
     missing = rank - value.lower.ndim
@@ -242,7 +285,7 @@ def _ranked(value: _Interval, rank: int) -> _Interval:
         return value
     shape = (1,) * missing + value.lower.shape
     tangent_shape = (value.tangent_lower.shape[0], *shape)
-    return _Interval(
+    return Interval(
         value.lower.reshape(shape),
         value.upper.reshape(shape),
         value.tangent_lower.reshape(tangent_shape),
@@ -250,13 +293,13 @@ def _ranked(value: _Interval, rank: int) -> _Interval:
     )
 
 
-def _aligned(*values: _Interval) -> list[_Interval]:
+def _aligned(*values: Interval) -> list[Interval]:
     rank = max(value.lower.ndim for value in values)
     return [_ranked(value, rank) for value in values]
 
 
-def _hull(first: _Interval, second: _Interval) -> _Interval:
-    return _Interval(
+def _hull(first: Interval, second: Interval) -> Interval:
+    return Interval(
         jnp.minimum(first.lower, second.lower),
         jnp.maximum(first.upper, second.upper),
         jnp.minimum(first.tangent_lower, second.tangent_lower),
@@ -264,9 +307,9 @@ def _hull(first: _Interval, second: _Interval) -> _Interval:
     )
 
 
-def _where(mask: Array, when_true: _Interval, when_false: _Interval) -> _Interval:
+def _where(mask: Array, when_true: Interval, when_false: Interval) -> Interval:
     tangent_mask = mask[None]
-    return _Interval(
+    return Interval(
         jnp.where(mask, when_true.lower, when_false.lower),
         jnp.where(mask, when_true.upper, when_false.upper),
         jnp.where(tangent_mask, when_true.tangent_lower, when_false.tangent_lower),
@@ -274,23 +317,23 @@ def _where(mask: Array, when_true: _Interval, when_false: _Interval) -> _Interva
     )
 
 
-def _select(truth: _Truth, when_false: _Interval, when_true: _Interval) -> _Interval:
+def _select(truth: _Truth, when_false: Interval, when_true: Interval) -> Interval:
     when_false, when_true = _aligned(when_false, when_true)
     chosen = _where(truth.possible_true, when_true, when_false)
     both = truth.possible_true & truth.possible_false
     return _where(both, _hull(when_false, when_true), chosen)
 
 
-def _scale_tangent(value: _Interval, lower: Array, upper: Array) -> tuple[Array, Array]:
+def _scale_tangent(value: Interval, lower: Array, upper: Array) -> tuple[Array, Array]:
     """Tangent of ``g(value)`` for a derivative enclosure ``[lower, upper]`` of ``g'``."""
 
     return _product(value.tangent_lower, value.tangent_upper, lower, upper)
 
 
-def _constant(value: Array, inputs: int) -> _Interval:
+def _constant(value: Array, inputs: int) -> Interval:
     array = jnp.asarray(value)
     zeros = jnp.zeros((inputs, *array.shape), dtype=array.dtype)
-    return _Interval(array, array, zeros, zeros)
+    return Interval(array, array, zeros, zeros)
 
 
 def _cos_range(lower: Array, upper: Array) -> tuple[Array, Array]:
@@ -309,32 +352,32 @@ def _cos_range(lower: Array, upper: Array) -> tuple[Array, Array]:
 
 
 def _monotone_unary(
-    value: _Interval,
+    value: Interval,
     function: Callable[[Array], Array],
     derivative: tuple[Array, Array],
     *,
     increasing: bool,
     ulps: float,
-) -> _Interval:
+) -> Interval:
     first = function(value.lower)
     second = function(value.upper)
     lower, upper = (first, second) if increasing else (second, first)
     lower, upper = _widened(lower, upper, ulps)
     tangent_lower, tangent_upper = _scale_tangent(value, *derivative)
-    return _Interval(lower, upper, tangent_lower, tangent_upper)
+    return Interval(lower, upper, tangent_lower, tangent_upper)
 
 
-def _unary(name: str, value: _Interval, params: dict[str, object]) -> _Interval:
+def _unary(name: str, value: Interval, params: dict[str, object]) -> Interval:
     lower, upper = value.lower, value.upper
     zeros = jnp.zeros_like(value.tangent_lower)
     match name:
         case "neg":
-            return _Interval(-upper, -lower, -value.tangent_upper, -value.tangent_lower)
+            return Interval(-upper, -lower, -value.tangent_upper, -value.tangent_lower)
         case "abs":
             positive = lower >= 0.0
             negative = upper <= 0.0
             magnitude = _magnitude(value.tangent_lower, value.tangent_upper)
-            return _Interval(
+            return Interval(
                 _mignitude(lower, upper),
                 _magnitude(lower, upper),
                 jnp.where(
@@ -355,7 +398,7 @@ def _unary(name: str, value: _Interval, params: dict[str, object]) -> _Interval:
                 "ceil": jnp.ceil,
                 "round": jnp.round,
             }[name]
-            return _Interval(function(lower), function(upper), zeros, zeros)
+            return Interval(function(lower), function(upper), zeros, zeros)
         case "exp" | "expm1":
             function = jnp.exp if name == "exp" else jnp.expm1
             derivative = _widened(jnp.exp(lower), jnp.exp(upper), _TRANSCENDENTAL_ULPS)
@@ -380,7 +423,7 @@ def _unary(name: str, value: _Interval, params: dict[str, object]) -> _Interval:
             )
             derivative = _reciprocal(argument_lower, argument_upper)
             tangent_lower, tangent_upper = _scale_tangent(value, *derivative)
-            return _Interval(
+            return Interval(
                 jnp.where(positive, result_lower, -jnp.inf),
                 jnp.where(defined, result_upper, jnp.inf),
                 tangent_lower,
@@ -398,7 +441,7 @@ def _unary(name: str, value: _Interval, params: dict[str, object]) -> _Interval:
                 jnp.where(root_lower > 0.0, derivative[1], jnp.inf),
             )
             tangent_lower, tangent_upper = _scale_tangent(value, *derivative)
-            return _Interval(
+            return Interval(
                 jnp.where(defined, root_lower, -jnp.inf),
                 jnp.where(defined, root_upper, jnp.inf),
                 tangent_lower,
@@ -414,7 +457,7 @@ def _unary(name: str, value: _Interval, params: dict[str, object]) -> _Interval:
             )
             derivative = (-0.5 * cube_upper, -0.5 * cube_lower)
             tangent_lower, tangent_upper = _scale_tangent(value, *derivative)
-            return _Interval(
+            return Interval(
                 jnp.where(positive, reciprocal[0], -jnp.inf),
                 jnp.where(positive, reciprocal[1], jnp.inf),
                 tangent_lower,
@@ -426,7 +469,7 @@ def _unary(name: str, value: _Interval, params: dict[str, object]) -> _Interval:
             square_upper = _magnitude(*result) ** 2
             derivative = _widened(1.0 - square_upper, 1.0 - square_lower)
             tangent_lower, tangent_upper = _scale_tangent(value, *derivative)
-            return _Interval(*result, tangent_lower, tangent_upper)
+            return Interval(*result, tangent_lower, tangent_upper)
         case "logistic":
             result = _widened(
                 jax.nn.sigmoid(lower), jax.nn.sigmoid(upper), _TRANSCENDENTAL_ULPS
@@ -439,7 +482,7 @@ def _unary(name: str, value: _Interval, params: dict[str, object]) -> _Interval:
                 jnp.min(ends, axis=0), jnp.where(peak, 0.25, jnp.max(ends, axis=0))
             )
             tangent_lower, tangent_upper = _scale_tangent(value, *derivative)
-            return _Interval(*result, tangent_lower, tangent_upper)
+            return Interval(*result, tangent_lower, tangent_upper)
         case "atan":
             derivative = _widened(
                 1.0 / (1.0 + _magnitude(lower, upper) ** 2),
@@ -456,28 +499,32 @@ def _unary(name: str, value: _Interval, params: dict[str, object]) -> _Interval:
             result = _cos_range(lower, upper)
             sine = _cos_range(lower - 0.5 * math.pi, upper - 0.5 * math.pi)
             tangent_lower, tangent_upper = _scale_tangent(value, -sine[1], -sine[0])
-            return _Interval(*result, tangent_lower, tangent_upper)
+            return Interval(*result, tangent_lower, tangent_upper)
         case "sin":
             result = _cos_range(lower - 0.5 * math.pi, upper - 0.5 * math.pi)
             cosine = _cos_range(lower, upper)
             tangent_lower, tangent_upper = _scale_tangent(value, *cosine)
-            return _Interval(*result, tangent_lower, tangent_upper)
+            return Interval(*result, tangent_lower, tangent_upper)
         case "square":
             return _power(value, 2)
         case "integer_pow":
             exponent = params["y"]
             if not isinstance(exponent, int):
-                raise TypeError("integer_pow requires an integer exponent.")
+                raise TypeError(
+                    f"IntervalEnclosure.integer_pow.exponent must be an integer; got {type(exponent).__name__}"
+                )
             return _power(value, exponent)
         case _:
-            raise ValueError(f"Interval enclosure has no unary rule for {name!r}.")
+            raise ValueError(
+                f"IntervalEnclosure.unary.primitive must have a supported rule; got {name!r}"
+            )
 
 
-def _power(value: _Interval, exponent: int) -> _Interval:
+def _power(value: Interval, exponent: int) -> Interval:
     lower, upper = value.lower, value.upper
     if exponent == 0:
         ones = jnp.ones_like(lower)
-        return _Interval(
+        return Interval(
             ones,
             ones,
             jnp.zeros_like(value.tangent_lower),
@@ -493,7 +540,7 @@ def _power(value: _Interval, exponent: int) -> _Interval:
             *scale, jnp.asarray(float(exponent)), jnp.asarray(float(exponent))
         )
         tangent_lower, tangent_upper = _scale_tangent(value, *derivative)
-        return _Interval(*result, tangent_lower, tangent_upper)
+        return Interval(*result, tangent_lower, tangent_upper)
     if exponent % 2 == 0:
         result = _widened(
             _mignitude(lower, upper) ** exponent, _magnitude(lower, upper) ** exponent
@@ -505,7 +552,7 @@ def _power(value: _Interval, exponent: int) -> _Interval:
         derivative = (jnp.ones_like(lower), jnp.ones_like(lower))
     else:
         base = _power(
-            _Interval(lower, upper, value.tangent_lower, value.tangent_upper),
+            Interval(lower, upper, value.tangent_lower, value.tangent_upper),
             exponent - 1,
         )
         derivative = _product(
@@ -515,16 +562,14 @@ def _power(value: _Interval, exponent: int) -> _Interval:
             jnp.asarray(float(exponent)),
         )
     tangent_lower, tangent_upper = _scale_tangent(value, *derivative)
-    return _Interval(*result, tangent_lower, tangent_upper)
+    return Interval(*result, tangent_lower, tangent_upper)
 
 
-def _binary(
-    name: str, first: _Interval, second: _Interval, same_operand: bool
-) -> _Interval:
+def _binary(name: str, first: Interval, second: Interval, same_operand: bool) -> Interval:
     first, second = _aligned(first, second)
     match name:
         case "add" | "add_any":
-            return _Interval(
+            return Interval(
                 *_widened(first.lower + second.lower, first.upper + second.upper),
                 *_widened(
                     first.tangent_lower + second.tangent_lower,
@@ -532,7 +577,7 @@ def _binary(
                 ),
             )
         case "sub":
-            return _Interval(
+            return Interval(
                 *_widened(first.lower - second.upper, first.upper - second.lower),
                 *_widened(
                     first.tangent_lower - second.tangent_upper,
@@ -549,7 +594,7 @@ def _binary(
             right = _product(
                 first.lower, first.upper, second.tangent_lower, second.tangent_upper
             )
-            return _Interval(*value, *_widened(left[0] + right[0], left[1] + right[1]))
+            return Interval(*value, *_widened(left[0] + right[0], left[1] + right[1]))
         case "div":
             reciprocal = _reciprocal(second.lower, second.upper)
             value = _product(first.lower, first.upper, *reciprocal)
@@ -562,7 +607,7 @@ def _binary(
                 first.tangent_upper - quotient_tangent[0],
             )
             tangent = _product(*numerator, *reciprocal)
-            return _Interval(*value, *tangent)
+            return Interval(*value, *tangent)
         case "max" | "min":
             larger = name == "max"
             function = jnp.maximum if larger else jnp.minimum
@@ -575,17 +620,19 @@ def _binary(
             tangents = _where(
                 first_wins, first, _where(second_wins, second, _hull(first, second))
             )
-            return _Interval(
+            return Interval(
                 function(first.lower, second.lower),
                 function(first.upper, second.upper),
                 tangents.tangent_lower,
                 tangents.tangent_upper,
             )
         case _:
-            raise ValueError(f"Interval enclosure has no binary rule for {name!r}.")
+            raise ValueError(
+                f"IntervalEnclosure.binary.primitive must have a supported rule; got {name!r}"
+            )
 
 
-def _compare(name: str, first: _Interval, second: _Interval) -> _Truth:
+def _compare(name: str, first: Interval, second: Interval) -> _Truth:
     match name:
         case "lt":
             return _Truth(first.lower < second.upper, first.upper >= second.lower)
@@ -606,29 +653,33 @@ def _compare(name: str, first: _Interval, second: _Interval) -> _Truth:
                 return _Truth(overlap, ~equal)
             return _Truth(~equal, overlap)
         case _:
-            raise ValueError(f"Interval enclosure has no comparison rule for {name!r}.")
+            raise ValueError(
+                f"IntervalEnclosure.comparison.primitive must have a supported rule; got {name!r}"
+            )
 
 
 def _truth(value: _Value) -> _Truth:
     match value:
         case _Truth():
             return value
-        case _Exact():
+        case Exact():
             boolean = value.value.astype(jnp.bool_)
             return _Truth(boolean, ~boolean)
-        case _Interval():
-            raise ValueError("A float interval cannot act as a boolean.")
+        case Interval():
+            raise ValueError(
+                "IntervalEnclosure.truth.value must be boolean or known integer data; got a floating interval"
+            )
 
 
-def _interval(value: _Value, inputs: int) -> _Interval:
+def interval(value: _Value, inputs: int) -> Interval:
     match value:
-        case _Interval():
+        case Interval():
             return value
-        case _Exact():
+        case Exact():
             return _constant(value.value.astype(jnp.float64), inputs)
         case _Truth():
             zeros = jnp.zeros((inputs, *value.possible_true.shape), dtype=jnp.float64)
-            return _Interval(
+            return Interval(
                 jnp.where(value.possible_false, 0.0, 1.0),
                 jnp.where(value.possible_true, 1.0, 0.0),
                 zeros,
@@ -637,8 +688,8 @@ def _interval(value: _Value, inputs: int) -> _Interval:
 
 
 def _dot_general(
-    first: _Interval, second: _Interval, params: dict[str, object]
-) -> _Interval:
+    first: Interval, second: Interval, params: dict[str, object]
+) -> Interval:
     def dot(left: Array, right: Array) -> Array:
         return jax.lax.dot_general(
             left,
@@ -682,10 +733,10 @@ def _dot_general(
     right = jax.vmap(interval_dot, in_axes=(None, None, 0, 0))(
         first.lower, first.upper, second.tangent_lower, second.tangent_upper
     )
-    return _Interval(*value, *_widened(left[0] + right[0], left[1] + right[1]))
+    return Interval(*value, *_widened(left[0] + right[0], left[1] + right[1]))
 
 
-def _reduce(name: str, value: _Interval, params: dict[str, object]) -> _Interval:
+def _reduce(name: str, value: Interval, params: dict[str, object]) -> Interval:
     axes = tuple(params["axes"])  # ty: ignore[invalid-argument-type]
     tangent_axes = tuple(axis + 1 for axis in axes)
     match name:
@@ -701,7 +752,7 @@ def _reduce(name: str, value: _Interval, params: dict[str, object]) -> _Interval
                     axis=tangent_axes,
                 )
             )
-            return _Interval(
+            return Interval(
                 *_widened(
                     jnp.sum(value.lower, axis=axes) - slack,
                     jnp.sum(value.upper, axis=axes) + slack,
@@ -722,7 +773,7 @@ def _reduce(name: str, value: _Interval, params: dict[str, object]) -> _Interval
                 upper = jnp.min(value.upper, axis=axes)
                 candidate = value.lower <= jnp.expand_dims(upper, axes)
             mask = candidate[None]
-            return _Interval(
+            return Interval(
                 lower,
                 upper,
                 jnp.min(jnp.where(mask, value.tangent_lower, jnp.inf), axis=tangent_axes),
@@ -731,7 +782,9 @@ def _reduce(name: str, value: _Interval, params: dict[str, object]) -> _Interval
                 ),
             )
         case _:
-            raise ValueError(f"Interval enclosure has no reduction rule for {name!r}.")
+            raise ValueError(
+                f"IntervalEnclosure.reduction.primitive must have a supported rule; got {name!r}"
+            )
 
 
 def _structural(
@@ -746,9 +799,9 @@ def _structural(
         result = primitive.bind(*arguments, **params)
         return list(result) if primitive.multiple_results else [result]
 
-    if not any(isinstance(value, _Interval) for value in inputs):
-        if all(isinstance(value, _Exact) for value in inputs):
-            return [_Exact(item) for item in bind(*(_exact(value) for value in inputs))]
+    if not any(isinstance(value, Interval) for value in inputs):
+        if all(isinstance(value, Exact) for value in inputs):
+            return [Exact(item) for item in bind(*(_exact(value) for value in inputs))]
         truths = [_truth(value) for value in inputs]
         possible_true = bind(*(truth.possible_true for truth in truths))
         possible_false = bind(*(truth.possible_false for truth in truths))
@@ -757,32 +810,32 @@ def _structural(
             for first, second in zip(possible_true, possible_false, strict=True)
         ]
     operands = [
-        _interval(value, dimensions)
-        if isinstance(value, _Interval)
+        interval(value, dimensions)
+        if isinstance(value, Interval)
         or jnp.issubdtype(_exact(value).dtype, jnp.floating)
         else value
         for value in inputs
     ]
 
-    def endpoint(selected: Callable[[_Interval], Array]) -> list[Array]:
+    def endpoint(selected: Callable[[Interval], Array]) -> list[Array]:
         return bind(
             *(
-                selected(value) if isinstance(value, _Interval) else _exact(value)
+                selected(value) if isinstance(value, Interval) else _exact(value)
                 for value in operands
             )
         )
 
-    def tangent(selected: Callable[[_Interval], Array]) -> list[Array]:
-        axes = tuple(0 if isinstance(value, _Interval) else None for value in operands)
+    def tangent(selected: Callable[[Interval], Array]) -> list[Array]:
+        axes = tuple(0 if isinstance(value, Interval) else None for value in operands)
         return jax.vmap(bind, in_axes=axes)(
             *(
-                selected(value) if isinstance(value, _Interval) else _exact(value)
+                selected(value) if isinstance(value, Interval) else _exact(value)
                 for value in operands
             )
         )
 
     return [
-        _Interval(*items)
+        Interval(*items)
         for items in zip(
             endpoint(lambda value: value.lower),
             endpoint(lambda value: value.upper),
@@ -794,32 +847,50 @@ def _structural(
 
 
 def _exact(value: _Value) -> Array:
-    if not isinstance(value, _Exact):
-        raise ValueError("Interval enclosure expected exact integer or boolean data.")
+    if not isinstance(value, Exact):
+        raise ValueError(
+            f"IntervalEnclosure.integer_operand must contain known integer or boolean data; got {type(value).__name__}"
+        )
     return value.value
 
 
-def _closed(jaxpr: object) -> tuple[jax_core.Jaxpr, Sequence[object]]:
-    if isinstance(jaxpr, jax_core.ClosedJaxpr):
-        return jaxpr.jaxpr, jaxpr.consts
-    if isinstance(jaxpr, jax_core.Jaxpr):
-        return jaxpr, ()
-    raise TypeError("Interval enclosure expected a nested jaxpr.")
+def _closed(
+    jaxpr: jax_core.Jaxpr | jax_core.ClosedJaxpr,
+) -> tuple[jax_core.Jaxpr, Sequence[ArrayLike]]:
+    match jaxpr:
+        case jax_core.ClosedJaxpr():
+            return jaxpr.jaxpr, jaxpr.consts
+        case jax_core.Jaxpr():
+            return jaxpr, ()
+        case _:
+            raise TypeError(
+                "IntervalEnclosure.call.jaxpr must be Jaxpr or ClosedJaxpr; got an unsupported nested program"
+            )
 
 
-def _call_jaxpr(equation: jax_core.JaxprEqn) -> object:
+def _call_jaxpr(
+    equation: jax_core.JaxprEqn,
+) -> jax_core.Jaxpr | jax_core.ClosedJaxpr:
     params = equation.params
     for key in ("jaxpr", "call_jaxpr", "fun_jaxpr"):
         if key in params:
-            return params[key]
-    raise ValueError(f"{equation.primitive.name} carries no nested jaxpr.")
+            match params[key]:
+                case jax_core.Jaxpr() | jax_core.ClosedJaxpr() as nested:
+                    return nested
+                case _:
+                    raise TypeError(
+                        "IntervalEnclosure.call.jaxpr must be Jaxpr or ClosedJaxpr; got an unsupported nested program"
+                    )
+    raise ValueError(
+        f"IntervalEnclosure.call.jaxpr must retain a nested program; got primitive {equation.primitive.name!r} without one"
+    )
 
 
-def _lift(value: object, dimensions: int) -> _Value:
+def _lift(value: ArrayLike, dimensions: int) -> _Value:
     array = jnp.asarray(value)
     if jnp.issubdtype(array.dtype, jnp.floating):
         return _constant(array, dimensions)
-    return _Exact(array)
+    return Exact(array)
 
 
 def _cond(
@@ -827,44 +898,48 @@ def _cond(
 ) -> list[_Value]:
     branches = equation.params["branches"]
     index, *operands = inputs
-    if isinstance(index, _Exact):
+    if isinstance(index, Exact):
         # A vmapped index is a tracer; select every branch and combine by index.
         results = [
-            _evaluate(*_closed(branch), operands, dimensions) for branch in branches
+            evaluate(*_closed(branch), operands, dimensions) for branch in branches
         ]
         selected: list[_Value] = list(results[0])
         for branch_index, candidate in enumerate(results[1:], start=1):
             chosen = index.value == branch_index
             truth = _Truth(chosen, ~chosen)
             selected = [
-                _select(truth, _interval(old, dimensions), _interval(new, dimensions))
+                _select(truth, interval(old, dimensions), interval(new, dimensions))
                 for old, new in zip(selected, candidate, strict=True)
             ]
         return selected
     if isinstance(index, _Truth) and len(branches) == 2:
-        false_branch = _evaluate(*_closed(branches[0]), operands, dimensions)
-        true_branch = _evaluate(*_closed(branches[1]), operands, dimensions)
+        false_branch = evaluate(*_closed(branches[0]), operands, dimensions)
+        true_branch = evaluate(*_closed(branches[1]), operands, dimensions)
         return [
-            _select(index, _interval(first, dimensions), _interval(second, dimensions))
+            _select(index, interval(first, dimensions), interval(second, dimensions))
             for first, second in zip(false_branch, true_branch, strict=True)
         ]
-    raise ValueError("Interval enclosure requires a boolean or exact cond index.")
+    raise ValueError(
+        "IntervalEnclosure.cond.index must be a boolean truth enclosure or known integer index; got an unsupported condition index"
+    )
 
 
 def _convert(value: _Value, params: dict[str, object], dimensions: int) -> _Value:
     dtype = params["new_dtype"]
     if not isinstance(dtype, np.dtype):
-        raise TypeError("convert_element_type requires a NumPy dtype parameter.")
+        raise TypeError(
+            f"IntervalEnclosure.convert_element_type.dtype must be a NumPy dtype; got {type(dtype).__name__}"
+        )
     floating = jnp.issubdtype(dtype, jnp.floating)
     match value:
-        case _Interval():
+        case Interval():
             if not floating:
                 raise ValueError(
-                    "Interval enclosure cannot convert an uncertain float to integers."
+                    f"IntervalEnclosure.convert_element_type.target must be floating for an uncertain interval; got {dtype}"
                 )
             if dtype == jnp.float64:
                 return value
-            return _Interval(
+            return Interval(
                 *_widened(
                     value.lower.astype(dtype).astype(jnp.float64),
                     value.upper.astype(dtype).astype(jnp.float64),
@@ -874,27 +949,31 @@ def _convert(value: _Value, params: dict[str, object], dimensions: int) -> _Valu
                 value.tangent_upper,
             )
         case _Truth():
-            return _interval(value, dimensions) if floating else value
-        case _Exact():
+            return interval(value, dimensions) if floating else value
+        case Exact():
             converted = value.value.astype(dtype)
-            return _constant(converted, dimensions) if floating else _Exact(converted)
+            return _constant(converted, dimensions) if floating else Exact(converted)
 
 
 def _select_n(inputs: Sequence[_Value], dimensions: int) -> _Value:
     predicate, *cases = inputs
-    if all(isinstance(case, _Exact) for case in (predicate, *cases)):
-        return _Exact(
+    if all(isinstance(case, Exact) for case in (predicate, *cases)):
+        return Exact(
             jax.lax.select_n(_exact(predicate), *(_exact(case) for case in cases))
         )
-    intervals = [_interval(case, dimensions) for case in cases]
+    intervals = [interval(case, dimensions) for case in cases]
     if isinstance(predicate, _Truth) or (
-        isinstance(predicate, _Exact) and predicate.value.dtype == jnp.bool_
+        isinstance(predicate, Exact) and predicate.value.dtype == jnp.bool_
     ):
         if len(intervals) != 2:
-            raise ValueError("A boolean select requires two cases.")
+            raise ValueError(
+                f"IntervalEnclosure.select.cases must contain two boolean branches; got {len(intervals)}"
+            )
         return _select(_truth(predicate), intervals[0], intervals[1])
-    if not isinstance(predicate, _Exact):
-        raise ValueError("Interval enclosure cannot select by an uncertain index.")
+    if not isinstance(predicate, Exact):
+        raise ValueError(
+            f"IntervalEnclosure.select.index must be a known integer index; got {type(predicate).__name__}"
+        )
     selected = intervals[0]
     for index, candidate in enumerate(intervals[1:], start=1):
         chosen = predicate.value == index
@@ -902,9 +981,9 @@ def _select_n(inputs: Sequence[_Value], dimensions: int) -> _Value:
     return selected
 
 
-def _clamp(inputs: Sequence[_Value], dimensions: int) -> _Interval:
+def _clamp(inputs: Sequence[_Value], dimensions: int) -> Interval:
     minimum, operand, maximum = _aligned(
-        *(_interval(value, dimensions) for value in inputs)
+        *(interval(value, dimensions) for value in inputs)
     )
     interior = (operand.lower > minimum.upper) & (operand.upper < maximum.lower)
     below = operand.upper < minimum.lower
@@ -915,7 +994,7 @@ def _clamp(inputs: Sequence[_Value], dimensions: int) -> _Interval:
         operand,
         _where(below, minimum, _where(above, maximum, hull)),
     )
-    return _Interval(
+    return Interval(
         jnp.clip(operand.lower, minimum.lower, maximum.lower),
         jnp.clip(operand.upper, minimum.upper, maximum.upper),
         tangents.tangent_lower,
@@ -924,11 +1003,11 @@ def _clamp(inputs: Sequence[_Value], dimensions: int) -> _Interval:
 
 
 def _logic(name: str, inputs: Sequence[_Value]) -> _Value:
-    if all(isinstance(value, _Exact) for value in inputs):
+    if all(isinstance(value, Exact) for value in inputs):
         function = {"and": jnp.logical_and, "or": jnp.logical_or, "not": jnp.logical_not}[
             name
         ]
-        return _Exact(function(*(_exact(value) for value in inputs)))
+        return Exact(function(*(_exact(value) for value in inputs)))
     truths = [_truth(value) for value in inputs]
     match name:
         case "not":
@@ -944,7 +1023,9 @@ def _logic(name: str, inputs: Sequence[_Value]) -> _Value:
                 truths[0].possible_false & truths[1].possible_false,
             )
         case _:
-            raise ValueError(f"Interval enclosure has no logic rule for {name!r}.")
+            raise ValueError(
+                f"IntervalEnclosure.logic.primitive must have a supported rule; got {name!r}"
+            )
 
 
 def _evaluate_equation(
@@ -953,24 +1034,24 @@ def _evaluate_equation(
     name = equation.primitive.name
     params = dict(equation.params)
     if name in _CALLS or name in ("checkpoint", "remat"):
-        return _evaluate(*_closed(_call_jaxpr(equation)), inputs, dimensions)
-    if all(isinstance(value, _Exact) for value in inputs) and name != "cond":
+        return evaluate(*_closed(_call_jaxpr(equation)), inputs, dimensions)
+    if all(isinstance(value, Exact) for value in inputs) and name != "cond":
         result = equation.primitive.bind(*(_exact(value) for value in inputs), **params)
         results = result if equation.primitive.multiple_results else [result]
         return [_lift(item, dimensions) for item in results]
     if name in _STRUCTURAL:
         return _structural(equation, inputs, dimensions)
     if name in _UNARY:
-        return [_unary(name, _interval(inputs[0], dimensions), params)]
+        return [_unary(name, interval(inputs[0], dimensions), params)]
     if name in _BINARY:
-        first, second = (_interval(value, dimensions) for value in inputs)
+        first, second = (interval(value, dimensions) for value in inputs)
         same = (
             isinstance(equation.invars[0], jax_core.Var)
             and equation.invars[0] is equation.invars[1]
         )
         return [_binary(name, first, second, same)]
     if name in _COMPARISON:
-        first, second = (_interval(value, dimensions) for value in inputs)
+        first, second = (interval(value, dimensions) for value in inputs)
         return [_compare(name, first, second)]
     if name in _LOGIC:
         return [_logic(name, inputs)]
@@ -982,10 +1063,10 @@ def _evaluate_equation(
         case "clamp":
             return [_clamp(inputs, dimensions)]
         case "dot_general":
-            first, second = (_interval(value, dimensions) for value in inputs)
+            first, second = (interval(value, dimensions) for value in inputs)
             return [_dot_general(first, second, params)]
         case "reduce_sum" | "reduce_max" | "reduce_min":
-            return [_reduce(name, _interval(inputs[0], dimensions), params)]
+            return [_reduce(name, interval(inputs[0], dimensions), params)]
         case "reduce_and" | "reduce_or":
             truth = _truth(inputs[0])
             axes = tuple(params["axes"])
@@ -1003,11 +1084,13 @@ def _evaluate_equation(
                 )
             ]
         case "cumsum":
-            value = _interval(inputs[0], dimensions)
+            value = interval(inputs[0], dimensions)
             axis = params["axis"]
             reverse = params["reverse"]
             if not isinstance(axis, int) or not isinstance(reverse, bool):
-                raise TypeError("cumsum requires integer axis and boolean reverse.")
+                raise TypeError(
+                    f"IntervalEnclosure.cumsum.parameters must have an integer axis and boolean reverse; got axis={axis!r}, reverse={reverse!r}"
+                )
             count = value.lower.shape[axis]
             slack = (
                 count
@@ -1026,7 +1109,7 @@ def _evaluate_equation(
                 )
             )
             return [
-                _Interval(
+                Interval(
                     *_widened(
                         jax.lax.cumsum(value.lower, axis=axis, reverse=reverse) - slack,
                         jax.lax.cumsum(value.upper, axis=axis, reverse=reverse) + slack,
@@ -1044,41 +1127,47 @@ def _evaluate_equation(
                 )
             ]
         case "reduce_precision":
-            value = _interval(inputs[0], dimensions)
+            value = interval(inputs[0], dimensions)
             rounded = equation.primitive.bind(value.lower, **params)
             rounded_upper = equation.primitive.bind(value.upper, **params)
             scale = 2.0 ** (52 - int(params["mantissa_bits"]))
             return [
-                _Interval(
+                Interval(
                     *_widened(rounded, rounded_upper, scale),
                     value.tangent_lower,
                     value.tangent_upper,
                 )
             ]
         case "stop_gradient":
-            value = _interval(inputs[0], dimensions)
+            value = interval(inputs[0], dimensions)
             zeros = jnp.zeros_like(value.tangent_lower)
-            return [_Interval(value.lower, value.upper, zeros, zeros)]
+            return [Interval(value.lower, value.upper, zeros, zeros)]
         case "cond":
             return _cond(equation, inputs, dimensions)
         case _:
-            raise ValueError(f"Interval enclosure has no rule for primitive {name!r}.")
+            raise ValueError(
+                f"IntervalEnclosure.primitive must have a supported rule; got {name!r}"
+            )
 
 
-def _evaluate(
+def evaluate(
     jaxpr: jax_core.Jaxpr,
-    consts: Sequence[object],
+    consts: Sequence[ArrayLike],
     arguments: Sequence[_Value],
     dimensions: int,
 ) -> list[_Value]:
     environment: dict[jax_core.Var, _Value] = {}
 
-    def read(atom: object) -> _Value:
-        if isinstance(atom, jax_core.Literal):
-            return _lift(atom.val, dimensions)
-        if not isinstance(atom, jax_core.Var):
-            raise TypeError("Interval enclosure met an unknown jaxpr atom.")
-        return environment[atom]
+    def read(atom: jax_core.Literal | jax_core.Var) -> _Value:
+        match atom:
+            case jax_core.Literal():
+                return _lift(atom.val, dimensions)
+            case jax_core.Var():
+                return environment[atom]
+            case _:
+                raise TypeError(
+                    f"IntervalEnclosure.atom must be a Literal or Var; got {type(atom).__name__}"
+                )
 
     for variable, value in zip(jaxpr.constvars, consts, strict=True):
         environment[variable] = _lift(value, dimensions)
@@ -1095,19 +1184,19 @@ def _evaluate(
     return [read(atom) for atom in jaxpr.outvars]
 
 
-def _unsupported_primitives(jaxpr: jax_core.Jaxpr) -> set[str]:
+def unsupported_primitives(jaxpr: jax_core.Jaxpr) -> set[str]:
     missing: set[str] = set()
     for equation in jaxpr.eqns:
         name = equation.primitive.name
         if name not in _SUPPORTED:
             missing.add(name)
         for nested in jax_core.jaxprs_in_params(equation.params):
-            missing |= _unsupported_primitives(nested)
+            missing |= unsupported_primitives(nested)
     return missing
 
 
 @dataclass(frozen=True, slots=True)
-class _BoxBounds:
+class BoxBounds:
     """Host value, gradient, and directional-derivative bounds of boxes.
 
     ``directional_lower/upper[:, k]`` bound the derivative along
@@ -1140,11 +1229,13 @@ def _sampled_boxes(
     state: DesignState,
     lower: np.ndarray,
     upper: np.ndarray,
-) -> _BoxBounds:
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> BoxBounds:
     """Corner and center value/gradient sample ranges of every box."""
 
     dimension = lower.shape[1]
-    charge_native_geometry_queries(lower.shape[0] * ((1 << dimension) + 1))
+    consume_queries(budget, lower.shape[0] * ((1 << dimension) + 1))
     corners = np.asarray(
         [
             [(mask >> axis) & 1 for axis in range(dimension)]
@@ -1163,14 +1254,14 @@ def _sampled_boxes(
     if not samples.shape[0]:
         empty = np.zeros((0,), dtype=np.float64)
         directional = np.zeros((0, directions), dtype=np.float64)
-        return _BoxBounds(empty, empty, directional, directional)
-    values, gradients = _field_and_gradient(
+        return BoxBounds(empty, empty, directional, directional)
+    values, gradients = field_and_gradient(
         kernel, state, jnp.asarray(samples.reshape((-1, dimension)))
     )
     values_ = np.asarray(values, dtype=np.float64).reshape(samples.shape[:2])
     gradients_ = np.asarray(gradients, dtype=np.float64).reshape(samples.shape)
     directional = gradients_ @ DISCOVERY_DIRECTIONS.T
-    return _BoxBounds(
+    return BoxBounds(
         np.min(values_, axis=1),
         np.max(values_, axis=1),
         np.min(directional, axis=1),
@@ -1178,7 +1269,7 @@ def _sampled_boxes(
     )
 
 
-class _AbstractFieldBounds(StrictModule):
+class AbstractFieldBounds(StrictModule):
     """Box bounds of one compiled field state; host batches in, host bounds out."""
 
     kernel: eqx.AbstractVar[GeometryKernel]
@@ -1201,22 +1292,81 @@ class _AbstractFieldBounds(StrictModule):
 
     @property
     def continuity_rigorous(self) -> bool:
-        """Whether the actual source expression establishes spatial continuity."""
+        """Whether the source expression establishes spatial continuity."""
         return False
 
+    def boxes(
+        self,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> BoxBounds:
+        """Value and gradient bounds of an explicitly counted host query."""
+        match self.enclosure:
+            case "interval":
+                queries = 2 * lower.shape[0]
+            case "lipschitz":
+                queries = lower.shape[0] * ((1 << self.dimension) + 2)
+            case "sampled":
+                queries = lower.shape[0] * ((1 << self.dimension) + 1)
+        with query_budget(budget, work_upper=0, queries_upper=queries) as query:
+            return self._boxes(lower, upper, budget=query)
+
     @abstractmethod
-    def boxes(self, lower: np.ndarray, upper: np.ndarray, /) -> _BoxBounds:
+    def _boxes(
+        self,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> BoxBounds:
         """Value bounds and the gradient bounds that drive refinement."""
 
-    @abstractmethod
-    def point_values(self, points: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-        """Lower/upper bounds of the field at points (equal when sampled)."""
+    def point_values(
+        self,
+        points: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Lower/upper field bounds at explicitly counted points."""
+        with query_budget(budget, work_upper=0, queries_upper=points.shape[0]) as query:
+            return self._point_values(points, budget=query)
 
-    def field_values(self, points: np.ndarray, /) -> np.ndarray:
+    @abstractmethod
+    def _point_values(
+        self,
+        points: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Lower/upper bounds of the field at points."""
+
+    def field_values(
+        self,
+        points: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        with query_budget(budget, work_upper=0, queries_upper=points.shape[0]) as query:
+            return self._field_values(points, budget=query)
+
+    def _field_values(
+        self,
+        points: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> np.ndarray:
         """Ordinary floating-point field values at points."""
         if not points.shape[0]:
             return np.zeros((0,), dtype=np.float64)
-        charge_native_geometry_queries(points.shape[0])
+        consume_queries(budget, points.shape[0])
         return np.asarray(
             self.kernel.boundary_field(self.state, jnp.asarray(points)),
             dtype=np.float64,
@@ -1225,7 +1375,7 @@ class _AbstractFieldBounds(StrictModule):
 
 @runtime_checkable
 class _ShapedIntervalValue(Protocol):
-    """Actual compiler abstract value required by the interval executor."""
+    """Compiler abstract value required by the interval executor."""
 
     @property
     def shape(self) -> tuple[int, ...]: ...
@@ -1235,7 +1385,7 @@ class _ShapedIntervalValue(Protocol):
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class _IntervalProgram:
+class IntervalProgram:
     """Derived execution only; no source module retains this live program."""
 
     value_dtype: str
@@ -1253,23 +1403,27 @@ type _IntervalProgramKey = tuple[
     str,
     str,
 ]
-_INTERVAL_PROGRAMS: OrderedDict[_IntervalProgramKey, _IntervalProgram] = OrderedDict()
+INTERVAL_PROGRAMS: OrderedDict[_IntervalProgramKey, IntervalProgram] = OrderedDict()
 
 
 def _point_continuity(
     jaxpr: jax_core.Jaxpr, arguments: Sequence[tuple[bool, bool]], /
 ) -> list[tuple[bool, bool]]:
-    """Track point dependence and continuity through the actual expression."""
+    """Track point dependence and continuity through the source expression."""
     environment: dict[jax_core.Var, tuple[bool, bool]] = {
         variable: (False, True) for variable in jaxpr.constvars
     }
 
-    def read(atom: object) -> tuple[bool, bool]:
-        if isinstance(atom, jax_core.Literal):
-            return False, True
-        if not isinstance(atom, jax_core.Var):
-            raise TypeError("Continuity analysis met an unknown source atom.")
-        return environment[atom]
+    def read(atom: jax_core.Literal | jax_core.Var) -> tuple[bool, bool]:
+        match atom:
+            case jax_core.Literal():
+                return False, True
+            case jax_core.Var():
+                return environment[atom]
+            case _:
+                raise TypeError(
+                    f"IntervalContinuity.atom must be a Literal or Var; got {type(atom).__name__}"
+                )
 
     for variable, argument in zip(jaxpr.invars, arguments, strict=True):
         environment[variable] = argument
@@ -1308,7 +1462,7 @@ def _point_continuity(
     return [read(atom) for atom in jaxpr.outvars]
 
 
-def _derived_interval_program(
+def derived_interval_program(
     source: tuple[GeometryKernel, DesignState] | BoundaryAtlas,
     operator: Callable[[Array], Array],
     operator_tokens: tuple[int, ...],
@@ -1320,16 +1474,16 @@ def _derived_interval_program(
     point_dtype: str,
     certificate: FieldCertificate | None = None,
     value_dtype: str | None = None,
-) -> _IntervalProgram:
-    """Prepare a bounded runtime program from complete actual source semantics."""
+) -> IntervalProgram:
+    """Prepare a bounded runtime program from source semantics."""
     if point_dtype != np.dtype(np.float64).name:
         raise ValueError(
-            "Interval source queries require the declared binary64 point precision."
+            f"IntervalProgram.point_dtype must declare binary64 precision; got {point_dtype}"
         )
     point = jnp.zeros((input_dimension,), dtype=jnp.float64)
     if np.dtype(point.dtype).name != point_dtype:
         raise ValueError(
-            "The runtime cannot realize the declared interval point precision."
+            f"IntervalProgram.point.dtype must match declared precision {point_dtype}; got {point.dtype}"
         )
     seeds = np.asarray(directions, dtype=np.float64)
     if (
@@ -1338,7 +1492,7 @@ def _derived_interval_program(
         or not np.all(np.isfinite(seeds))
     ):
         raise ValueError(
-            "Interval derivative directions must bind the actual input dimension."
+            "interval_program.directions must bind the input dimension; got incompatible shape"
         )
     key: _IntervalProgramKey = (
         jax.tree_util.tree_structure(source),
@@ -1350,15 +1504,19 @@ def _derived_interval_program(
         point_dtype,
         ENCLOSURE_ROUNDING_MODEL,
     )
-    cached = _INTERVAL_PROGRAMS.get(key)
+    cached = INTERVAL_PROGRAMS.get(key)
     if cached is not None:
         if value_dtype is not None and cached.value_dtype != value_dtype:
-            raise ValueError("The source's declared interval value precision is stale.")
-        _INTERVAL_PROGRAMS.move_to_end(key)
+            raise ValueError(
+                "IntervalProgram.value_dtype must match the derived source precision; got a stale declared value dtype"
+            )
+        INTERVAL_PROGRAMS.move_to_end(key)
         return cached
     closed = jax.make_jaxpr(operator)(point)
     if len(closed.jaxpr.invars) != 1 or len(closed.jaxpr.outvars) != 1:
-        raise ValueError("An interval source program requires one input and one output.")
+        raise ValueError(
+            f"IntervalProgram.jaxpr must have one input and one output; got {len(closed.jaxpr.invars)} inputs and {len(closed.jaxpr.outvars)} outputs"
+        )
     input_aval = closed.jaxpr.invars[0].aval
     output_aval = closed.jaxpr.outvars[0].aval
     if (
@@ -1370,37 +1528,39 @@ def _derived_interval_program(
         or not jnp.issubdtype(output_aval.dtype, jnp.floating)
     ):
         raise ValueError(
-            "The actual interval operator has an incompatible shape or scalar kind."
+            "interval_program.operator must have the declared shape and floating scalar kind; got incompatible abstract values"
         )
     actual_dtype = np.dtype(output_aval.dtype).name
     if value_dtype is not None and actual_dtype != value_dtype:
-        raise ValueError("The source's declared interval value precision is stale.")
-    missing = _unsupported_primitives(closed.jaxpr)
+        raise ValueError(
+            "IntervalProgram.value_dtype must match the derived source precision; got a stale declared value dtype"
+        )
+    missing = unsupported_primitives(closed.jaxpr)
     if missing:
         raise ValueError(
-            f"Interval source enclosure has no rule for primitives {sorted(missing)}."
+            f"IntervalProgram.primitives must have supported interval rules; got {sorted(missing)}"
         )
     consts = tuple(jnp.asarray(value) for value in closed.consts)
     tangents = jnp.asarray(seeds, dtype=jnp.float64)
 
     def enclose(lower: Array, upper: Array) -> tuple[Array, Array, Array, Array]:
-        argument = _Interval(lower, upper, tangents, tangents)
-        (output,) = _evaluate(closed.jaxpr, consts, [argument], seeds.shape[0])
-        result = _interval(output, seeds.shape[0])
+        argument = Interval(lower, upper, tangents, tangents)
+        (output,) = evaluate(closed.jaxpr, consts, [argument], seeds.shape[0])
+        result = interval(output, seeds.shape[0])
         return result.lower, result.upper, result.tangent_lower, result.tangent_upper
 
     continuous = all(
         value[1] for value in _point_continuity(closed.jaxpr, [(True, True)])
     )
-    program = _IntervalProgram(actual_dtype, jax.jit(jax.vmap(enclose)), continuous)
-    _INTERVAL_PROGRAMS[key] = program
-    if len(_INTERVAL_PROGRAMS) > 8:
-        _INTERVAL_PROGRAMS.popitem(last=False)
+    program = IntervalProgram(actual_dtype, jax.jit(jax.vmap(enclose)), continuous)
+    INTERVAL_PROGRAMS[key] = program
+    if len(INTERVAL_PROGRAMS) > 8:
+        INTERVAL_PROGRAMS.popitem(last=False)
     return program
 
 
 @final
-class _IntervalFieldBounds(_AbstractFieldBounds, NonTrainableState):
+class IntervalFieldBounds(AbstractFieldBounds, NonTrainableState):
     """Outward-rounded interval evaluation of the field program with tangents."""
 
     kernel: GeometryKernel
@@ -1411,20 +1571,21 @@ class _IntervalFieldBounds(_AbstractFieldBounds, NonTrainableState):
     certificate: FieldCertificate = eqx.field(static=True)
     rounding_model: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, geometry: CompiledGeometry, /) -> None:
-        if not isinstance(geometry, CompiledGeometry):
-            raise TypeError("geometry must be CompiledGeometry.")
         dimension = geometry.ambient_dimension
         if dimension != DISCOVERY_DIRECTIONS.shape[1]:
-            raise ValueError("Interval field enclosures are three-dimensional.")
+            raise ValueError(
+                f"IntervalFieldBounds.dimension must be three; got {dimension}"
+            )
         DesignState(geometry.state.schema, geometry.state.values)
         if not bool(np.asarray(geometry.validity().accepted)):
             raise ValueError(
-                "Interval source preparation requires a valid geometry state."
+                "IntervalFieldBounds.geometry must have accepted validity evidence; got a rejected state"
             )
         point_dtype = np.dtype(np.float64).name
         certificate = geometry.kernel.field_certificate
-        program = _derived_interval_program(
+        program = derived_interval_program(
             (geometry.kernel, geometry.state),
             _point_field(geometry.kernel, geometry.state),
             (id(type(geometry.kernel).boundary_field),),
@@ -1442,6 +1603,25 @@ class _IntervalFieldBounds(_AbstractFieldBounds, NonTrainableState):
         self.certificate = certificate
         self.rounding_model = ENCLOSURE_ROUNDING_MODEL
 
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[Self], value: IntervalFieldBounds, /) -> Self:
+        """Validate retained source facts and return the unchanged interval owner.
+
+        The retained kernel and DesignState reconstruct their geometry context
+        inside the source-integrity validator; interval precision, certificate,
+        dimension and rounding metadata must match that context.
+        """
+        match value:
+            case cls():
+                value.validate_source_integrity()
+                return value
+            case _:
+                raise TypeError(
+                    "IntervalFieldBounds.restore.value must match the registered type; "
+                    f"got {type(value).__name__}"
+                )
+
     @property
     def enclosure(self) -> ImplicitDiscoveryEnclosure:
         return "interval"
@@ -1458,13 +1638,13 @@ class _IntervalFieldBounds(_AbstractFieldBounds, NonTrainableState):
     def continuity_rigorous(self) -> bool:
         return self._validated_program().continuity_rigorous
 
-    def _validated_program(self) -> _IntervalProgram:
+    def _validated_program(self) -> IntervalProgram:
         """Reject inconsistent restored source facts before any numerical output."""
         if not isinstance(self.kernel, GeometryKernel) or not isinstance(
             self.state, DesignState
         ):
             raise TypeError(
-                "An interval source requires its actual kernel and DesignState."
+                "IntervalFieldBounds.source must retain a GeometryKernel and DesignState; got incompatible retained values"
             )
         DesignState(self.state.schema, self.state.values)
         geometry = CompiledGeometry(self.kernel, self.state)
@@ -1477,9 +1657,9 @@ class _IntervalFieldBounds(_AbstractFieldBounds, NonTrainableState):
             or not bool(np.asarray(geometry.validity().accepted))
         ):
             raise ValueError(
-                "The restored interval source's state, certificate or precision is invalid."
+                "IntervalFieldBounds.state must match source dimension, certificate and binary64 rounding model; got invalid restored source metadata"
             )
-        return _derived_interval_program(
+        return derived_interval_program(
             (self.kernel, self.state),
             _point_field(self.kernel, self.state),
             (id(type(self.kernel).boundary_field),),
@@ -1494,12 +1674,22 @@ class _IntervalFieldBounds(_AbstractFieldBounds, NonTrainableState):
     def validate_source_integrity(self) -> None:
         self._validated_program()
 
-    def field_values(self, points: np.ndarray, /) -> np.ndarray:
+    def _field_values(
+        self,
+        points: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> np.ndarray:
         self.validate_source_integrity()
-        return super().field_values(points)
+        return super()._field_values(points, budget=budget)
 
     def _evaluate_boxes(
-        self, lower: np.ndarray, upper: np.ndarray
+        self,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        *,
+        budget: CoordinateEnclosureBudget,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         program = self._validated_program()
         if (
@@ -1508,17 +1698,17 @@ class _IntervalFieldBounds(_AbstractFieldBounds, NonTrainableState):
             or upper.shape != lower.shape
         ):
             raise ValueError(
-                "Interval source boxes must bind the actual input dimension."
+                "interval_source.boxes must bind the input dimension; got incompatible shape"
             )
         dimension = DISCOVERY_DIRECTIONS.shape[0]
         count = lower.shape[0]
-        charge_native_geometry_queries(count)
+        consume_queries(budget, count)
         parts: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
-        for start in range(0, count, _BOX_CHUNK):
-            stop = min(start + _BOX_CHUNK, count)
+        for start in range(0, count, BOX_CHUNK):
+            stop = min(start + BOX_CHUNK, count)
             size = stop - start
             # Two padded bucket extents bound the compiled program count.
-            bucket = _SMALL_BOX_CHUNK if size <= _SMALL_BOX_CHUNK else _BOX_CHUNK
+            bucket = _SMALL_BOX_CHUNK if size <= _SMALL_BOX_CHUNK else BOX_CHUNK
             padding = ((0, bucket - size), (0, 0))
             result = program.evaluate(
                 jnp.asarray(np.pad(lower[start:stop], padding, mode="edge")),
@@ -1546,12 +1736,20 @@ class _IntervalFieldBounds(_AbstractFieldBounds, NonTrainableState):
             np.concatenate([part[3] for part in parts]),
         )
 
-    def boxes(self, lower: np.ndarray, upper: np.ndarray, /) -> _BoxBounds:
+    def _boxes(
+        self,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> BoxBounds:
         count = lower.shape[0]
         center = 0.5 * (lower + upper)
         value_lower, value_upper, gradient_lower, gradient_upper = self._evaluate_boxes(
             np.concatenate((lower, center), axis=0),
             np.concatenate((upper, center), axis=0),
+            budget=budget,
         )
         # Mean-value form: f(B) lies inside f(c) + G(B) (B - c).
         half = np.maximum(upper - center, center - lower)
@@ -1564,20 +1762,24 @@ class _IntervalFieldBounds(_AbstractFieldBounds, NonTrainableState):
             mean_upper = np.nextafter(value_upper[count:] + spread, np.inf)
         mean_lower = np.where(np.isnan(mean_lower), -np.inf, mean_lower)
         mean_upper = np.where(np.isnan(mean_upper), np.inf, mean_upper)
-        return _BoxBounds(
+        return BoxBounds(
             np.maximum(value_lower[:count], mean_lower),
             np.minimum(value_upper[:count], mean_upper),
             gradient_lower[:count],
             gradient_upper[:count],
         )
 
-    def point_values(self, points: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-        value_lower, value_upper, _, _ = self._evaluate_boxes(points, points)
+    def _point_values(
+        self, points: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+    ) -> tuple[np.ndarray, np.ndarray]:
+        value_lower, value_upper, _, _ = self._evaluate_boxes(
+            points, points, budget=budget
+        )
         return value_lower, value_upper
 
 
 @final
-class _LipschitzFieldBounds(_AbstractFieldBounds, NonTrainableState):
+class _LipschitzFieldBounds(AbstractFieldBounds, NonTrainableState):
     """Certificate Lipschitz value enclosures; sampled gradients steer refinement."""
 
     kernel: GeometryKernel
@@ -1593,9 +1795,8 @@ class _LipschitzFieldBounds(_AbstractFieldBounds, NonTrainableState):
             or certificate.validity_region != "all_space"
         ):
             raise ValueError(
-                "The lipschitz enclosure requires owner-established global Lipschitz "
-                "and evaluation-error bounds; select the 'interval' or 'sampled' "
-                "enclosure."
+                "LipschitzFieldBounds.certificate must establish global Lipschitz and evaluation-error bounds; "
+                "got unestablished bounds or a restricted validity region"
             )
         self.kernel = geometry.kernel
         self.state = geometry.state
@@ -1615,30 +1816,39 @@ class _LipschitzFieldBounds(_AbstractFieldBounds, NonTrainableState):
     def gradient_rigorous(self) -> bool:
         return False
 
-    def boxes(self, lower: np.ndarray, upper: np.ndarray, /) -> _BoxBounds:
+    def _boxes(
+        self,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> BoxBounds:
         center = 0.5 * (lower + upper)
         radius = 0.5 * np.linalg.norm(upper - lower, axis=1)
-        values = self.field_values(center)
+        values = self.field_values(center, budget=budget)
         # The center is rounded by at most one ulp per axis; the relative slack
         # covers that displacement and the rounding of the enclosure itself.
         spread = (self.lipschitz * radius + self.evaluation_error) * (
             1.0 + 64.0 * _EPSILON
         )
-        sampled = _sampled_boxes(self.kernel, self.state, lower, upper)
-        return _BoxBounds(
+        sampled = _sampled_boxes(self.kernel, self.state, lower, upper, budget=budget)
+        return BoxBounds(
             np.nextafter(values - spread, -np.inf),
             np.nextafter(values + spread, np.inf),
             sampled.directional_lower,
             sampled.directional_upper,
         )
 
-    def point_values(self, points: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-        values = self.field_values(points)
+    def _point_values(
+        self, points: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+    ) -> tuple[np.ndarray, np.ndarray]:
+        values = self.field_values(points, budget=budget)
         return values - self.evaluation_error, values + self.evaluation_error
 
 
 @final
-class _SampledFieldBounds(_AbstractFieldBounds, NonTrainableState):
+class _SampledFieldBounds(AbstractFieldBounds, NonTrainableState):
     """Corner and center sample ranges; heuristic only, never an enclosure."""
 
     kernel: GeometryKernel
@@ -1662,26 +1872,37 @@ class _SampledFieldBounds(_AbstractFieldBounds, NonTrainableState):
     def gradient_rigorous(self) -> bool:
         return False
 
-    def boxes(self, lower: np.ndarray, upper: np.ndarray, /) -> _BoxBounds:
-        return _sampled_boxes(self.kernel, self.state, lower, upper)
+    def _boxes(
+        self,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> BoxBounds:
+        return _sampled_boxes(self.kernel, self.state, lower, upper, budget=budget)
 
-    def point_values(self, points: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-        values = self.field_values(points)
+    def _point_values(
+        self, points: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+    ) -> tuple[np.ndarray, np.ndarray]:
+        values = self.field_values(points, budget=budget)
         return values, values
 
 
-def _field_bounds(
+def field_bounds(
     geometry: CompiledGeometry, enclosure: ImplicitDiscoveryEnclosure, /
-) -> _AbstractFieldBounds:
+) -> AbstractFieldBounds:
     match enclosure:
         case "interval":
-            return _IntervalFieldBounds(geometry)
+            return IntervalFieldBounds(geometry)
         case "lipschitz":
             return _LipschitzFieldBounds(geometry)
         case "sampled":
             return _SampledFieldBounds(geometry)
         case _:
-            raise ValueError(f"Unknown implicit discovery enclosure {enclosure!r}.")
+            raise ValueError(
+                f"ImplicitDiscovery.enclosure must select a supported enclosure; got {enclosure!r}"
+            )
 
 
 __all__ = ["DISCOVERY_DIRECTIONS", "ENCLOSURE_ROUNDING_MODEL"]

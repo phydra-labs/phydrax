@@ -1,4 +1,4 @@
-"""Durable column-profile source values and fail-closed restored authority."""
+"""Durable column-profile source values and fail-closed restored source validation."""
 
 from dataclasses import fields
 from pathlib import Path
@@ -27,8 +27,14 @@ from phydrax.lifecycle._meshing_sources import (
 
 def test_layer_column_archive_retains_original_profile_tabulation(tmp_path: Path) -> None:
     profile = coordinate_lagrange_element("quadrilateral", 2)
-    element = LayerColumnCellGeometryElement(profile, fiber_graph=True)
-    assert element.element_id != LayerColumnCellGeometryElement(profile).element_id
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    with coordinate_reference_budget() as budget:
+        element = LayerColumnCellGeometryElement(profile, fiber_graph=True, budget=budget)
+        assert (
+            element.element_id
+            != LayerColumnCellGeometryElement(profile, budget=budget).element_id
+        )
     receipt = write_meshing_source_closure(
         tmp_path / "column-profile", (profile, element)
     )
@@ -53,14 +59,24 @@ def test_layer_column_archive_retains_original_profile_tabulation(tmp_path: Path
 
 
 @pytest.mark.parametrize(
-    "malformation",
-    ("station-axis", "coefficient-count", "corner-source", "fiber-graph"),
+    ("malformation", "expected_field"),
+    (
+        ("station-axis", "station_axis"),
+        ("coefficient-count", "local_dof_count"),
+        ("corner-source", "corner_element"),
+        ("fiber-graph", "element_id"),
+    ),
 )
-def test_restored_layer_column_refuses_changed_authority(malformation: str) -> None:
+def test_restored_layer_column_refuses_changed_authority(
+    malformation: str, expected_field: str
+) -> None:
     register_meshing_source_artifacts()
-    element = LayerColumnCellGeometryElement(
-        coordinate_lagrange_element("quadrilateral", 2)
-    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    with coordinate_reference_budget() as budget:
+        element = LayerColumnCellGeometryElement(
+            coordinate_lagrange_element("quadrilateral", 2), budget=budget
+        )
     if malformation == "corner-source":
         element = eqx.tree_at(
             lambda value: value.corner_element,
@@ -77,5 +93,7 @@ def test_restored_layer_column_refuses_changed_authority(malformation: str) -> N
     elif malformation == "fiber-graph":
         recipe["items"][field_rows["fiber_graph"]]["value"] = True
     restored = model_from_array_recipe(recipe, arrays, prefix="column")
-    with pytest.raises(ValueError, match="Restored layer column"):
+    with pytest.raises(
+        ValueError, match=rf"LayerColumnCellGeometryElement\.{expected_field} must"
+    ):
         validate_meshing_source_closure(restored)

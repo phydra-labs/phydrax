@@ -52,11 +52,13 @@
 
 #include "capi_guard.hpp"
 #include "cavity.hpp"
+#include "geometry3.hpp"
 #include "intersections.hpp"
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "spatial_sort.hpp"
+#include "topology_keys.hpp"
 #include "triangulation3d.hpp"
 
 namespace phx::mc {
@@ -72,7 +74,7 @@ class PhaseTimer {
   PhaseTimer(bool enabled, PlcRecovery& result, PlcPhase phase)
       : enabled_(enabled), result_(result), phase_(phase) {
     if (enabled_) {
-      ++result_.phase_invocations[phase_];
+      ++result_.phase_invocations.for_phase(phase_);
       start_ = std::chrono::steady_clock::now();
     }
   }
@@ -81,7 +83,7 @@ class PhaseTimer {
   PhaseTimer& operator=(const PhaseTimer&) = delete;
   void stop() {
     if (enabled_) {
-      result_.phase_nanoseconds[phase_] +=
+      result_.phase_nanoseconds.for_phase(phase_) +=
           std::chrono::duration_cast<std::chrono::nanoseconds>(
               std::chrono::steady_clock::now() - start_).count();
       enabled_ = false;
@@ -95,12 +97,6 @@ class PhaseTimer {
 };
 
 
-uint64_t edge_key(int32_t a, int32_t b) {
-  if (a > b) {
-    std::swap(a, b);
-  }
-  return (static_cast<uint64_t>(static_cast<uint32_t>(a)) << 32) | static_cast<uint32_t>(b);
-}
 
 Triple sorted_triple(const int32_t* v) {
   Triple key{v[0], v[1], v[2]};
@@ -140,10 +136,10 @@ bool overlap(const Box& a, const Box& b) {
 // Axis whose coordinate-plane projection of a nondegenerate triangle keeps an
 // exactly nonzero orientation; the largest approximate normal component first.
 int projection_axis(const double* a, const double* b, const double* c) {
-  const double u[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
-  const double w[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-  const double normal[3] = {u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2],
-                            u[0] * w[1] - u[1] * w[0]};
+  double u[3], w[3], normal[3];
+  geometry::difference(b, a, u);
+  geometry::difference(c, a, w);
+  geometry::cross(u, w, normal);
   int order[3] = {0, 1, 2};
   std::sort(order, order + 3,
             [&](int x, int y) { return std::fabs(normal[x]) > std::fabs(normal[y]); });
@@ -166,8 +162,8 @@ bool segments_meet(const double* a, const double* b, const double* c, const doub
   if (orient3d(a, b, c, d) != 0) {
     return false;
   }
-  const bool c_on_line = collinear3d(a, b, c);
-  const bool d_on_line = collinear3d(a, b, d);
+  const bool c_on_line = geometry::collinear(a, b, c, 1);
+  const bool d_on_line = geometry::collinear(a, b, d, 1);
   if (c_on_line && d_on_line) {
     int axis = 0;
     for (int k = 0; k < 3; ++k) {
@@ -232,10 +228,30 @@ bool triangulate_planar(std::span<const double* const> corners, int64_t loop_cou
       : static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
   const int64_t scratch_limit = static_cast<int64_t>(std::min<uint64_t>(
       remaining_bytes, static_cast<uint64_t>(std::numeric_limits<int64_t>::max())));
-  status = phx_mc_constrained_delaunay_2d(count, planar.data(), loop_count, loop.data(), 0,
-                                          nullptr, 0, 0.0, std::numeric_limits<double>::infinity(),
-                                          0, 4 * count + 8, 4 * count + 8, max_work,
-                                          scratch_limit, work_evidence, memory_evidence, &raw);
+  const phx_mc_constrained_delaunay_2d_request request{
+      .point_count = count,
+      .points = planar.data(),
+      .segment_count = loop_count,
+      .segments = loop.data(),
+      .hole_count = 0,
+      .holes = nullptr,
+      .keep_convex_hull = 0,
+      .min_angle_degrees = 0.0,
+      .max_area = std::numeric_limits<double>::infinity(),
+      .max_steiner = 0,
+      .max_triangles = 4 * count + 8,
+      .max_cavity_cells = 4 * count + 8,
+      .max_work = max_work,
+      .max_scratch_bytes = scratch_limit,
+      .work_evidence = work_evidence,
+      .memory_evidence = memory_evidence,
+      .witness_capacity = 0,
+      .witness_parents = nullptr,
+      .witness_segments = nullptr,
+      .witness_ratios = nullptr,
+      .mesh = &raw,
+  };
+  status = phx_mc_constrained_delaunay_2d(&request);
   const std::unique_ptr<phx_mc_mesh, void (*)(phx_mc_mesh*)> mesh(raw, phx_mc_mesh_free);
   used_work = static_cast<int64_t>(work_evidence[0]);
   refusal = memory_evidence[5] ? kPlcScratchByteBudget
@@ -296,9 +312,8 @@ class Recoverer {
   int32_t run(bool source_only = false) try {
     out_.measurement_enabled = in_.measure_phases;
     PhaseTimer validation(in_.measure_phases, out_, kPlcValidationPhase);
-    int32_t status = validate_points(
-        in_.points, in_.point_count, 3, nullptr,
-        [](void* context) { static_cast<Recoverer*>(context)->charge_visit(); }, this);
+    int32_t status =
+        validate_points(in_.points, in_.point_count, 3, nullptr, [this] { charge_visit(); });
     if (status != PHX_MC_OK) {
       return status;
     }
@@ -361,6 +376,20 @@ class Recoverer {
     return fail(PHX_MC_CAPACITY_EXCEEDED, kPlcWorkBudget, kPlcNoEntity, -1);
   }
 
+  // Resource refusals of a cavity edit keep their resource classification: a
+  // buffer refusal reports the active scope's status (capacity or deadline),
+  // cell and slot limits the declared tetrahedron capacity.
+  static bool resource_refusal(EditStatus status) {
+    return status == EditStatus::kBufferLimit || status == EditStatus::kCellLimit ||
+           status == EditStatus::kSlotLimit;
+  }
+  int32_t refuse_edit(EditStatus status, int32_t kind, int64_t entity) {
+    const int32_t code = status == EditStatus::kBufferLimit
+                             ? native_execution_status(PHX_MC_CAPACITY_EXCEEDED)
+                             : PHX_MC_CAPACITY_EXCEEDED;
+    return fail(code, kPlcTetrahedronBudget, kind, entity);
+  }
+
   int64_t work() const {
     return work_ + (triangulation_ ? triangulation_->work() : 0);
   }
@@ -368,6 +397,18 @@ class Recoverer {
   bool spend(int64_t units) {
     if (work_exhausted_ || units < 0 || work() > in_.work_limit - units ||
         !native_execution_spend(units)) {
+      work_exhausted_ = true;
+      return false;
+    }
+    work_ += units;
+    return true;
+  }
+
+  bool observe_planar_work(int64_t units) {
+    // The child PlanarBudget already debited the active native scope. Retain
+    // its earned prefix in this PLC's local limit/evidence without charging
+    // the same units a second time, including when the child refused.
+    if (work_exhausted_ || units < 0 || work() > in_.work_limit - units) {
       work_exhausted_ = true;
       return false;
     }
@@ -383,14 +424,14 @@ class Recoverer {
   int32_t vertex_count() const { return static_cast<int32_t>(points_.size() / 3); }
 
   void finish_counters() {
-    out_.counters[kPlcWork] = work();
-    out_.counters[kPlcInputTriangles] = static_cast<int64_t>(tri_facet_.size());
-    out_.counters[kPlcFacetGroups] = static_cast<int64_t>(group_facet_.size());
-    out_.counters[kPlcEdges] = static_cast<int64_t>(edges_.size() / 2);
+    out_.counters.work_units = work();
+    out_.counters.input_triangles = static_cast<int64_t>(tri_facet_.size());
+    out_.counters.facet_groups = static_cast<int64_t>(group_facet_.size());
+    out_.counters.plc_edges = static_cast<int64_t>(edges_.size() / 2);
     if (triangulation_) {
       peak_bytes_ = std::max(peak_bytes_, triangulation_->retained_bytes());
     }
-    out_.counters[kPlcPeakBytes] = static_cast<int64_t>(
+    out_.counters.peak_retained_bytes = static_cast<int64_t>(
         out_.memory_owner ? out_.memory_owner->peak_bytes() : peak_bytes_);
   }
 
@@ -434,7 +475,8 @@ class Recoverer {
         return invalid();
       }
       int64_t third = 2;
-      while (third < size && collinear3d(p + 3 * loop[0], p + 3 * loop[1], p + 3 * loop[third])) {
+      while (third < size &&
+             geometry::collinear(p + 3 * loop[0], p + 3 * loop[1], p + 3 * loop[third], 1)) {
         ++third;
         charge_visit();
       }
@@ -464,7 +506,7 @@ class Recoverer {
       const bool valid = triangulate_planar(
           corners, size, projection_axis(a, b, c), local, status,
           std::max<int64_t>(in_.work_limit - work(), 0), used_work, refusal);
-      if (!spend(used_work)) {
+      if (!observe_planar_work(used_work)) {
         return work_failure();
       }
       if (!valid || static_cast<int64_t>(local.size()) != size - 2) {
@@ -534,9 +576,10 @@ class Recoverer {
     }
     const auto range = std::equal_range(
         edge_uses_.begin(), edge_uses_.end(),
-        std::pair<uint64_t, int32_t>{edge_key(edges_[2 * static_cast<std::size_t>(e)],
-                                              edges_[2 * static_cast<std::size_t>(e) + 1]),
-                                     -1},
+        std::pair<uint64_t, int32_t>{
+            topology::undirected_edge(edges_[2 * static_cast<std::size_t>(e)],
+                                      edges_[2 * static_cast<std::size_t>(e) + 1]),
+            -1},
         [](const auto& x, const auto& y) { return x.first < y.first; });
     for (auto use = range.first; use != range.second; ++use) {
       tolerance = std::min(tolerance, facet_tolerance(tri_facet_[static_cast<std::size_t>(use->second)]));
@@ -548,14 +591,6 @@ class Recoverer {
     return witnesses_[static_cast<std::size_t>(v)].deviation == 0.0;
   }
 
-  int32_t find_root(std::span<int32_t> parent, int32_t x) {
-    while (parent[static_cast<std::size_t>(x)] != x) {
-      parent[static_cast<std::size_t>(x)] =
-          parent[static_cast<std::size_t>(parent[static_cast<std::size_t>(x)])];
-      x = parent[static_cast<std::size_t>(x)];
-    }
-    return x;
-  }
 
   // Triangles of one facet sharing an edge used by exactly those two, in
   // opposite directions and coplanar, belong to one planar group.
@@ -564,7 +599,7 @@ class Recoverer {
     for (int32_t t = 0; t < count; ++t) {
       charge_visit();
       for (int r = 0; r < 3; ++r) {
-        edge_uses_.push_back({edge_key(tri(t)[r], tri(t)[(r + 1) % 3]), t});
+        edge_uses_.push_back({topology::undirected_edge(tri(t)[r], tri(t)[(r + 1) % 3]), t});
       }
     }
     std::sort(edge_uses_.begin(), edge_uses_.end(), [&](const auto& a, const auto& b) {
@@ -584,7 +619,8 @@ class Recoverer {
         const int32_t t = edge_uses_[k + 1].second;
         if (tri_facet_[static_cast<std::size_t>(s)] == tri_facet_[static_cast<std::size_t>(t)] &&
             coplanar_and_opposed(s, t)) {
-          parent[static_cast<std::size_t>(find_root(parent, s))] = find_root(parent, t);
+          parent[static_cast<std::size_t>(topology::find_root(parent, s))] =
+              topology::find_root(parent, t);
         }
       }
       k = end;
@@ -593,7 +629,7 @@ class Recoverer {
     tri_group_.resize(static_cast<std::size_t>(count));
     for (int32_t t = 0; t < count; ++t) {
       charge_visit();
-      const int32_t root = find_root(parent, t);
+      const int32_t root = topology::find_root(parent, t);
       int32_t& group = group_of_root[static_cast<std::size_t>(root)];
       if (group < 0) {
         group = static_cast<int32_t>(group_facet_.size());
@@ -642,7 +678,7 @@ class Recoverer {
     const int32_t id = static_cast<int32_t>(edges_.size() / 2);
     edges_.push_back(a);
     edges_.push_back(b);
-    edge_ids_.emplace(edge_key(a, b), id);
+    edge_ids_.emplace(topology::undirected_edge(a, b), id);
     return id;
   }
 
@@ -650,7 +686,7 @@ class Recoverer {
     for (int64_t s = 0; s < in_.segment_count; ++s) {
       const int32_t a = in_.segments[2 * s];
       const int32_t b = in_.segments[2 * s + 1];
-      const auto existing = edge_ids_.find(edge_key(a, b));
+      const auto existing = edge_ids_.find(topology::undirected_edge(a, b));
       if (a == b || existing != edge_ids_.end()) {
         return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcIntersecting, kPlcEdge,
                     existing != edge_ids_.end() ? existing->second : s, kPlcEdge, s);
@@ -661,7 +697,7 @@ class Recoverer {
       for (int r = 0; r < 3; ++r) {
         const int32_t a = tri(t)[r];
         const int32_t b = tri(t)[(r + 1) % 3];
-        const uint64_t key = edge_key(a, b);
+        const uint64_t key = topology::undirected_edge(a, b);
         if (!internal_edge(key) && edge_ids_.find(key) == edge_ids_.end()) {
           add_edge(std::min(a, b), std::max(a, b));
         }
@@ -738,7 +774,7 @@ class Recoverer {
         if (!spend(1)) {
           return work_failure();
         }
-        ++out_.counters[kPlcContactTests];
+        ++out_.counters.contact_tests;
         const Item& x = items[i].kind <= items[j].kind ? items[i] : items[j];
         const Item& y = items[i].kind <= items[j].kind ? items[j] : items[i];
         if (!legal_pair(x.kind, x.index, y.kind, y.index, contact)) {
@@ -798,7 +834,7 @@ class Recoverer {
         const int32_t x = s[0] == common ? s[1] : s[0];
         const int32_t y = u[0] == common ? u[1] : u[0];
         const double* c = p + 3 * common;
-        if (!collinear3d(c, p + 3 * x, p + 3 * y)) {
+        if (!geometry::collinear(c, p + 3 * x, p + 3 * y, 1)) {
           return true;
         }
         for (int axis = 0; axis < 3; ++axis) {
@@ -811,7 +847,7 @@ class Recoverer {
         return false;
       }
       const double* q = p + 3 * second;
-      return !(collinear3d(p + 3 * s[0], p + 3 * s[1], q) &&
+      return !(geometry::collinear(p + 3 * s[0], p + 3 * s[1], q, 1) &&
                segments_meet(p + 3 * s[0], p + 3 * s[1], q, q));
     }
     return true;  // two distinct free points
@@ -839,10 +875,10 @@ class Recoverer {
         const int32_t b = tri(t)[(r + 1) % 3];
         const int32_t sense = a < b ? 1 : -1;
         if (positive >= 0) {
-          entries.push_back({positive, edge_key(a, b), -sense});
+          entries.push_back({positive, topology::undirected_edge(a, b), -sense});
         }
         if (negative >= 0) {
-          entries.push_back({negative, edge_key(a, b), sense});
+          entries.push_back({negative, topology::undirected_edge(a, b), sense});
         }
       }
     }
@@ -879,7 +915,7 @@ class Recoverer {
       return work_failure();
     }
     for (double radius : protection_) {
-      out_.counters[kPlcProtectedVertices] += radius > 0.0 ? 1 : 0;
+      out_.counters.protected_vertices += radius > 0.0 ? 1 : 0;
     }
     points_.assign(in_.points, in_.points + 3 * static_cast<int64_t>(n_));
     add_corners();
@@ -889,7 +925,7 @@ class Recoverer {
     tri_interior_.assign(tri_facet_.size(), {});
     preparation.stop();
     for (int64_t round = 1;; ++round) {
-      out_.counters[kPlcRounds] = round;
+      out_.counters.rounds = round;
       int32_t status;
       {
         PhaseTimer initial(in_.measure_phases, out_, kPlcPreparationPhase);
@@ -1084,8 +1120,11 @@ class Recoverer {
     const double* corners[2] = {point(edges_[2 * static_cast<std::size_t>(e)]),
                                 point(edges_[2 * static_cast<std::size_t>(e) + 1])};
     const double first = edge_parameter(e, u);
-    witness = SourceWitness{SourceStratum::kSegment, e,
-                            {first + fraction * (edge_parameter(e, v) - first), 0.0}, 0.0};
+    witness = SourceWitness{
+        .stratum = SourceStratum::kSegment,
+        .entity = e,
+        .parameters = {first + fraction * (edge_parameter(e, v) - first), 0.0},
+        .deviation = 0.0};
     if (exact_vertex(u) && exact_vertex(v) &&
         exact_segment_point(point(u), point(v), fraction, window, p)) {
       source_locator(corners, SourceStratum::kSegment, p, witness.parameters);
@@ -1108,8 +1147,8 @@ class Recoverer {
     }
     witness.deviation = deviation;
     if (deviation > tolerance) {
-      out_.source_refusal[0] = deviation;
-      out_.source_refusal[1] = tolerance;
+      out_.source_refusal.certified_deviation = deviation;
+      out_.source_refusal.declared_bound = tolerance;
       return fail(PHX_MC_INVALID_INPUT, kPlcSourceDeviation, kPlcEdge, e);
     }
     return PHX_MC_OK;
@@ -1136,7 +1175,7 @@ class Recoverer {
       return ascending ? point(x)[axis] < point(y)[axis] : point(x)[axis] > point(y)[axis];
     };
     inner.insert(std::upper_bound(inner.begin(), inner.end(), id, before), id);
-    ++out_.counters[kPlcSegmentSteiner];
+    ++out_.counters.segment_steiner_points;
     if (!insert) {
       return PHX_MC_OK;
     }
@@ -1216,7 +1255,8 @@ class Recoverer {
         for (std::size_t k = 0; k + 1 < vertices.size(); ++k) {
           if (has_edge(vertices[k], vertices[k + 1])) {
             protected_segments_.push_back({vertices[k], vertices[k + 1]});
-          } else if (deferred_segments_.count(edge_key(vertices[k], vertices[k + 1])) == 0) {
+          } else if (deferred_segments_.count(
+                         topology::undirected_edge(vertices[k], vertices[k + 1])) == 0) {
             missing.push_back({e, vertices[k], vertices[k + 1]});
           }
         }
@@ -1253,12 +1293,11 @@ class Recoverer {
           return status;
         }
         protected_segments_.pop_back();
-        recovery_edge_ = {-1, -1};
         out_.failure = PlcFailure{};
-        out_.source_refusal[0] = 0.0;
-        out_.source_refusal[1] = 0.0;
+        out_.source_refusal.certified_deviation = 0.0;
+        out_.source_refusal.declared_bound = 0.0;
         if (defer) {
-          deferred_segments_.insert(edge_key(u, v));
+          deferred_segments_.insert(topology::undirected_edge(u, v));
           continue;
         }
         if (reconnected_) {
@@ -1278,9 +1317,10 @@ class Recoverer {
   bool coplanar_incidence(int32_t e) const {
     const auto range = std::equal_range(
         edge_uses_.begin(), edge_uses_.end(),
-        std::pair<uint64_t, int32_t>{edge_key(edges_[2 * static_cast<std::size_t>(e)],
-                                              edges_[2 * static_cast<std::size_t>(e) + 1]),
-                                     -1},
+        std::pair<uint64_t, int32_t>{
+            topology::undirected_edge(edges_[2 * static_cast<std::size_t>(e)],
+                                      edges_[2 * static_cast<std::size_t>(e) + 1]),
+            -1},
         [](const auto& x, const auto& y) { return x.first < y.first; });
     for (auto first = range.first; first != range.second; ++first) {
       for (auto second = first + 1; second != range.second; ++second) {
@@ -1317,7 +1357,7 @@ class Recoverer {
         const int32_t a = tri(t)[r];
         const int32_t b = tri(t)[(r + 1) % 3];
         boundary.push_back(a);
-        const auto edge = edge_ids_.find(edge_key(a, b));
+        const auto edge = edge_ids_.find(topology::undirected_edge(a, b));
         if (edge != edge_ids_.end()) {
           const NativeVector<int32_t>& inner = edge_points_[static_cast<std::size_t>(edge->second)];
           if (edges_[2 * static_cast<std::size_t>(edge->second)] == a) {
@@ -1348,7 +1388,7 @@ class Recoverer {
       const bool valid = triangulate_planar(
           corners, static_cast<int64_t>(boundary.size()), axis, local, status,
           std::max<int64_t>(in_.work_limit - work(), 0), used_work, refusal);
-      if (!spend(used_work)) {
+      if (!observe_planar_work(used_work)) {
         return work_failure();
       }
       if (!valid) {
@@ -1364,8 +1404,8 @@ class Recoverer {
         if (deviation == 0.0) {
           return PHX_MC_INTERNAL_ERROR;
         }
-        out_.source_refusal[0] = deviation;
-        out_.source_refusal[1] = facet_tolerance(tri_facet_[static_cast<std::size_t>(t)]);
+        out_.source_refusal.certified_deviation = deviation;
+        out_.source_refusal.declared_bound = facet_tolerance(tri_facet_[static_cast<std::size_t>(t)]);
         return fail(PHX_MC_INVALID_INPUT, kPlcSourceDeviation, kPlcPolygon,
                     tri_polygon_[static_cast<std::size_t>(t)]);
       }
@@ -1399,7 +1439,7 @@ class Recoverer {
       const Triple& t = sub_[static_cast<std::size_t>(s)];
       members[static_cast<std::size_t>(sub_group_[static_cast<std::size_t>(s)])].push_back(s);
       for (int r = 0; r < 3; ++r) {
-        uses.push_back({edge_key(t[r], t[(r + 1) % 3]), s});
+        uses.push_back({topology::undirected_edge(t[r], t[(r + 1) % 3]), s});
       }
     }
     std::sort(uses.begin(), uses.end());
@@ -1455,7 +1495,7 @@ class Recoverer {
       for (int r = 0; r < 3; ++r) {
         const int32_t a = g[r];
         const int32_t b = g[(r + 1) % 3];
-        const uint64_t key = edge_key(a, b);
+        const uint64_t key = topology::undirected_edge(a, b);
         if (deferred_segments_.count(key) == 0 || has_edge(a, b)) {
           continue;
         }
@@ -1484,7 +1524,7 @@ class Recoverer {
     for (int32_t k = 0; k < static_cast<int32_t>(missing.size()); ++k) {
       const Triple& t = sub_[static_cast<std::size_t>(missing[static_cast<std::size_t>(k)])];
       for (int r = 0; r < 3; ++r) {
-        uses.push_back({edge_key(t[r], t[(r + 1) % 3]), k});
+        uses.push_back({topology::undirected_edge(t[r], t[(r + 1) % 3]), k});
       }
     }
     std::sort(uses.begin(), uses.end());
@@ -1560,11 +1600,11 @@ class Recoverer {
       const double* a = point(t[0]);
       const double* b = point(t[1]);
       const double* c = point(t[2]);
-      const double u[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
-      const double w[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-      const double n[3] = {u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2],
-                           u[0] * w[1] - u[1] * w[0]};
-      const double area = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+      double u[3], w[3], n[3];
+      geometry::difference(b, a, u);
+      geometry::difference(c, a, w);
+      geometry::cross(u, w, n);
+      const double area = geometry::dot(n, n);
       if (area > best) {
         best = area;
         largest = s;
@@ -1599,8 +1639,8 @@ class Recoverer {
         return fail(PHX_MC_INVALID_INPUT, kPlcNonrepresentable, kPlcFacet, facet);
       }
       if (witness.deviation > tolerance) {
-        out_.source_refusal[0] = witness.deviation;
-        out_.source_refusal[1] = tolerance;
+        out_.source_refusal.certified_deviation = witness.deviation;
+        out_.source_refusal.declared_bound = tolerance;
         return fail(PHX_MC_INVALID_INPUT, kPlcSourceDeviation, kPlcFacet, facet);
       }
     }
@@ -1609,7 +1649,7 @@ class Recoverer {
       return fail(PHX_MC_CAPACITY_EXCEEDED, kPlcVertexBudget, kPlcFacet, facet);
     }
     tri_interior_[static_cast<std::size_t>(origin)].push_back(id);
-    ++out_.counters[kPlcFacetSteiner];
+    ++out_.counters.facet_steiner_points;
     restart = true;
     return PHX_MC_OK;
   }
@@ -1683,7 +1723,7 @@ class Recoverer {
     const double* const second[3] = {point(y[0]), point(y[1]), point(y[2])};
     const int64_t first_ids[3] = {x[0], x[1], x[2]};
     const int64_t second_ids[3] = {y[0], y[1], y[2]};
-    ++out_.counters[kPlcContactTests];
+    ++out_.counters.contact_tests;
     Contact contact;
     return intersect_triangles(first, second, first_ids, second_ids, contact) == PHX_MC_OK &&
            legal_contact(contact.kind);
@@ -1697,7 +1737,7 @@ class Recoverer {
     if (!spend(1)) {
       return false;
     }
-    ++out_.counters[kPlcContactTests];
+    ++out_.counters.contact_tests;
     Contact contact;
     return intersect_segment_triangle(segment, triangle, segment_ids, triangle_ids, contact) ==
                PHX_MC_OK &&
@@ -1827,8 +1867,8 @@ class Recoverer {
             return false;
           }
           added.push_back(next);
-          out_.counters[kPlcLargestCavity] =
-              std::max(out_.counters[kPlcLargestCavity],
+          out_.counters.largest_cavity =
+              std::max(out_.counters.largest_cavity,
                        static_cast<int64_t>(cavity.size() + added.size()));
         }
       }
@@ -1970,7 +2010,7 @@ class Recoverer {
             best = k;
           }
         }
-        ++out_.counters[kPlcCandidates];
+        ++out_.counters.gift_wrap_candidates;
         if (!spend(static_cast<int64_t>(remaining.size() + side.faces.size()))) {
           return false;
         }
@@ -2087,7 +2127,7 @@ class Recoverer {
       }
       const int32_t chosen = frame.choices[best];
       frame.choices.erase(frame.choices.begin() + static_cast<std::ptrdiff_t>(best));
-      ++out_.counters[kPlcCandidates];
+      ++out_.counters.gift_wrap_candidates;
       if (!spend(static_cast<int64_t>(side.faces.size() + side.vertices.size()))) {
         reset();
         return false;
@@ -2181,12 +2221,25 @@ class Recoverer {
   // contacts select the cavity; the same contacts prohibit a candidate fill
   // from cutting the edge.  CavityEdit verifies the oriented boundary and
   // all surviving facet constraints before committing the replacement.
-  int32_t recover_edge(int32_t e, int32_t u, int32_t v) {
-    recovery_edge_ = {u, v};
-    protected_segments_.push_back({u, v});
+  struct RecoveryEdgeGuard {
+    std::array<int32_t, 2>& edge;
+    RecoveryEdgeGuard(std::array<int32_t, 2>& state, int32_t u, int32_t v) : edge(state) {
+      edge = {u, v};
+    }
+    ~RecoveryEdgeGuard() { edge = {-1, -1}; }
+  };
+
+  struct EdgeRecovery {
+    NativeVector<int32_t> cavity;
+    Side side;
+    NativeMap<Triple, int32_t> labels;
+    NativeVector<int32_t> appended;
+  };
+
+  int32_t collect_edge_cavity(int32_t e, int32_t u, int32_t v, EdgeRecovery& recovery) {
     TetrahedralComplex& complex = triangulation_->complex();
     complex.enable_labels();
-    NativeVector<int32_t> cavity;
+    auto& cavity = recovery.cavity;
     const int32_t edge[2] = {u, v};
     const Box edge_box = box_of(edge, 2);
     for (int32_t t = 0; t < static_cast<int32_t>(complex.tets.size()); ++t) {
@@ -2203,8 +2256,8 @@ class Recoverer {
                         kPlcTetrahedronBudget, kPlcEdge, e);
           }
           cavity.push_back(t);
-          out_.counters[kPlcLargestCavity] =
-              std::max(out_.counters[kPlcLargestCavity], static_cast<int64_t>(cavity.size()));
+          out_.counters.largest_cavity =
+              std::max(out_.counters.largest_cavity, static_cast<int64_t>(cavity.size()));
           break;
         }
       }
@@ -2215,157 +2268,182 @@ class Recoverer {
     if (cavity.empty()) {
       return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcFixedSegment, kPlcEdge, e);
     }
-    Side side;
-    NativeMap<Triple, int32_t> labels;
-    NativeVector<int32_t> appended;
-    for (;;) {
-      side = Side{};
-      labels.clear();
-      for (int32_t t : cavity) {
-        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(t)];
-        side.vertices.insert(side.vertices.end(), tet.v, tet.v + 4);
-        for (int k = 0; k < 4; ++k) {
-          const bool inside = std::binary_search(cavity.begin(), cavity.end(), tet.n[k]);
-          const int32_t constraint = complex.constraint(t, k);
-          if (inside && (constraint == kNoConstraint || tet.n[k] < t)) {
-            continue;
-          }
-          Triple face{};
-          oriented_facet(tet.v, k, face.data());
-          add_face(side, face, true);
-          if (constraint != kNoConstraint) {
-            labels.emplace(sorted_triple(face.data()), constraint);
-          }
-          if (inside) {
-            add_face(side, Triple{face[0], face[2], face[1]}, true);
-          }
+    return PHX_MC_OK;
+  }
+
+  void prepare_edge_side(EdgeRecovery& recovery) {
+    const TetrahedralComplex& complex = triangulation_->complex();
+    auto& cavity = recovery.cavity;
+    auto& side = recovery.side;
+    auto& labels = recovery.labels;
+    side = Side{};
+    labels.clear();
+    for (int32_t t : cavity) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(t)];
+      side.vertices.insert(side.vertices.end(), tet.v, tet.v + 4);
+      for (int k = 0; k < 4; ++k) {
+        const bool inside = std::binary_search(cavity.begin(), cavity.end(), tet.n[k]);
+        const int32_t constraint = complex.constraint(t, k);
+        if (inside && (constraint == kNoConstraint || tet.n[k] < t)) {
+          continue;
+        }
+        Triple face{};
+        oriented_facet(tet.v, k, face.data());
+        add_face(side, face, true);
+        if (constraint != kNoConstraint) {
+          labels.emplace(sorted_triple(face.data()), constraint);
+        }
+        if (inside) {
+          add_face(side, Triple{face[0], face[2], face[1]}, true);
         }
       }
-      std::sort(side.vertices.begin(), side.vertices.end());
-      side.vertices.erase(std::unique(side.vertices.begin(), side.vertices.end()),
-                          side.vertices.end());
-      const std::size_t initial_faces = side.faces.size();
-      if (gift_wrap_greedy(side)) {
-        break;
+    }
+    std::sort(side.vertices.begin(), side.vertices.end());
+    side.vertices.erase(std::unique(side.vertices.begin(), side.vertices.end()),
+                        side.vertices.end());
+  }
+
+  int32_t try_edge_kernel(int32_t e, EdgeRecovery& recovery, bool& filled) {
+    auto& side = recovery.side;
+    auto& appended = recovery.appended;
+    double q[3];
+    if (edge_kernel_point(side, q)) {
+      const int32_t id = append_vertex(q, 3, SourceWitness{});
+      if (id < 0) {
+        return fail(PHX_MC_CAPACITY_EXCEEDED, kPlcVertexBudget, kPlcEdge, e);
+      }
+      appended.push_back(id);
+      alive_.push_back(1);
+      vertex_tet_.push_back(-1);
+      triangulation_->rebind(points_.data(), vertex_count());
+      side.vertices.push_back(id);
+      filled = gift_wrap_greedy(side);
+      if (filled) {
+        return PHX_MC_OK;
+      }
+      discard(appended);
+      appended.clear();
+    }
+    return PHX_MC_OK;
+  }
+
+  int32_t enlarge_edge_cavity(int32_t e, int32_t u, int32_t v, EdgeRecovery& recovery) {
+    // Enlarged cavities cost superlinear exact contact work. Prefer a source
+    // split or deferred planar recovery; otherwise grow across unconstrained faces.
+    double split_at[3];
+    SourceWitness split_witness;
+    int32_t split_status = PHX_MC_INVALID_INPUT;
+    if (in_.policy == BoundaryPolicy::kConforming) {
+      const PlcFailure previous_failure = out_.failure;
+      const double previous_deviation = out_.source_refusal.certified_deviation;
+      const double previous_bound = out_.source_refusal.declared_bound;
+      split_status = construct_split(e, u, v, split_at, split_witness);
+      if (split_status == PHX_MC_CAPACITY_EXCEEDED) {
+        return split_status;
+      }
+      // An unsplittable edge may still reconnect; restore the probe's diagnostics.
+      out_.failure = previous_failure;
+      out_.source_refusal.certified_deviation = previous_deviation;
+      out_.source_refusal.declared_bound = previous_bound;
+    }
+    if (split_status == PHX_MC_OK || coplanar_incidence(e)) {
+      return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcFixedSegment, kPlcEdge, e);
+    }
+    auto one_side = [](int32_t) { return 1; };
+    if (!grow_cavity(recovery.cavity, one_side)) {
+      if (!work_exhausted_ && native_execution_refusal() != PHX_MC_OK) {
+        return fail(native_execution_status(PHX_MC_CAPACITY_EXCEEDED),
+                    kPlcTetrahedronBudget, kPlcEdge, e);
+      }
+      return work_exhausted_ ? work_failure()
+                            : fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcFixedSegment,
+                                   kPlcEdge, e);
+    }
+    return PHX_MC_OK;
+  }
+
+  int32_t fill_edge_cavity(int32_t e, int32_t u, int32_t v, EdgeRecovery& recovery) {
+    for (;;) {
+      prepare_edge_side(recovery);
+      const std::size_t initial_faces = recovery.side.faces.size();
+      if (gift_wrap_greedy(recovery.side)) {
+        return PHX_MC_OK;
       }
       if (work_exhausted_) {
         return work_failure();
       }
-      reset_front(side, initial_faces);
-      double q[3];
-      if (edge_kernel_point(side, q)) {
-        const int32_t id = append_vertex(q, 3, SourceWitness{});
-        if (id < 0) {
-          return fail(PHX_MC_CAPACITY_EXCEEDED, kPlcVertexBudget, kPlcEdge, e);
-        }
-        appended.push_back(id);
-        alive_.push_back(1);
-        vertex_tet_.push_back(-1);
-        triangulation_->rebind(points_.data(), vertex_count());
-        side.vertices.push_back(id);
-        if (gift_wrap_greedy(side)) {
-          break;
-        }
-        discard(appended);
-        appended.clear();
+      reset_front(recovery.side, initial_faces);
+      bool filled = false;
+      int32_t status = try_edge_kernel(e, recovery, filled);
+      if (status != PHX_MC_OK || filled) {
+        return status;
       }
-      // Enlarged reconnection cavities cost superlinear exact contact work.
-      // A subdividable segment admitted by the original source owner takes the
-      // conforming split, and a segment between coplanar input triangles is
-      // recovered with their planar facet component (recover_segments).
-      // Otherwise the segment may be recoverable only after the surrounding
-      // tetrahedra are reconnected as well.  Grow across unconstrained facets
-      // only; every prior PLC facet stays an obstacle in the enlarged cavity.
-      double split_at[3];
-      SourceWitness split_witness;
-      int32_t split_status = PHX_MC_INVALID_INPUT;
-      if (in_.policy == BoundaryPolicy::kConforming) {
-        const PlcFailure previous_failure = out_.failure;
-        const double previous_deviation = out_.source_refusal[0];
-        const double previous_bound = out_.source_refusal[1];
-        split_status = construct_split(e, u, v, split_at, split_witness);
-        if (split_status == PHX_MC_CAPACITY_EXCEEDED) {
-          return split_status;
-        }
-        // This is an alternative-construction probe, not a failed recovery:
-        // an unsplittable edge may still be recovered by cavity reconnection.
-        out_.failure = previous_failure;
-        out_.source_refusal[0] = previous_deviation;
-        out_.source_refusal[1] = previous_bound;
-      }
-      if (split_status == PHX_MC_OK ||
-          coplanar_incidence(e)) {
-        return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcFixedSegment, kPlcEdge, e);
-      }
-      auto one_side = [](int32_t) { return 1; };
-      if (!grow_cavity(cavity, one_side)) {
-        if (!work_exhausted_ && native_execution_status(PHX_MC_OK) != PHX_MC_OK) {
-          return fail(native_execution_status(PHX_MC_CAPACITY_EXCEEDED),
-                      kPlcTetrahedronBudget, kPlcEdge, e);
-        }
-        return work_exhausted_ ? work_failure()
-                              : fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcFixedSegment,
-                                     kPlcEdge, e);
+      status = enlarge_edge_cavity(e, u, v, recovery);
+      if (status != PHX_MC_OK) {
+        return status;
       }
     }
+  }
+
+  int32_t check_edge_fill(int32_t e, int32_t u, int32_t v,
+                          const EdgeRecovery& recovery) {
     bool recovered = false;
-    for (const auto& tet : side.tets) {
+    for (const auto& tet : recovery.side.tets) {
       recovered = recovered ||
                   (std::find(tet.begin(), tet.end(), u) != tet.end() &&
                    std::find(tet.begin(), tet.end(), v) != tet.end());
     }
     if (!recovered) {
-      discard(appended);
+      discard(recovery.appended);
       return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcFixedSegment, kPlcEdge, e);
     }
-    CavityEdit edit(complex);
-    edit.begin(EditLimits{std::numeric_limits<std::size_t>::max(),
-                          std::numeric_limits<std::size_t>::max(), in_.max_tetrahedra});
-    for (int32_t t : cavity) {
-      if (edit.remove(t) != EditStatus::kOk) {
-        discard(appended);
-        return PHX_MC_INTERNAL_ERROR;
-      }
-    }
-    for (const auto& tet : side.tets) {
-      int32_t constraints[4];
-      for (int k = 0; k < 4; ++k) {
-        Triple face{};
-        oriented_facet(tet.data(), k, face.data());
-        const auto label = labels.find(sorted_triple(face.data()));
-        constraints[k] = label == labels.end() ? kNoConstraint : label->second;
-      }
-      if (edit.add(tet.data(), constraints, kNoRegion) != EditStatus::kOk) {
-        discard(appended);
-        return PHX_MC_INTERNAL_ERROR;
-      }
-    }
-    EditStatus status = edit.validate([&](const int32_t* tet) {
-      return orient3d(point(tet[0]), point(tet[1]), point(tet[2]), point(tet[3])) > 0;
-    });
-    if (status == EditStatus::kOk) {
-      status = edit.commit();
-    }
-    if (status != EditStatus::kOk) {
-      edit.rollback();
-      discard(appended);
-      if (status == EditStatus::kCellLimit || status == EditStatus::kSlotLimit) {
-        return fail(PHX_MC_CAPACITY_EXCEEDED, kPlcTetrahedronBudget, kPlcEdge, e);
-      }
-      return fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcFixedSegment, kPlcEdge, e);
-    }
+    return PHX_MC_OK;
+  }
+
+  void publish_edge_fill(const EdgeRecovery& recovery, CavityEdit& edit) {
+    const TetrahedralComplex& complex = triangulation_->complex();
     reconnected_ = true;
     for (int32_t t : edit.created()) {
       for (int32_t w : complex.tets[static_cast<std::size_t>(t)].v) {
         vertex_tet_[static_cast<std::size_t>(w)] = t;
       }
     }
-    ++out_.counters[kPlcCavities];
-    out_.counters[kPlcInteriorSteiner] += static_cast<int64_t>(appended.size());
-    out_.counters[kPlcLargestCavity] =
-        std::max(out_.counters[kPlcLargestCavity], static_cast<int64_t>(cavity.size()));
+    ++out_.counters.cavities;
+    out_.counters.interior_steiner_points += static_cast<int64_t>(recovery.appended.size());
+    out_.counters.largest_cavity =
+        std::max(out_.counters.largest_cavity, static_cast<int64_t>(recovery.cavity.size()));
     peak_bytes_ = std::max(peak_bytes_, triangulation_->retained_bytes() + edit.retained_bytes());
-    recovery_edge_ = {-1, -1};
+  }
+
+  int32_t recover_edge(int32_t e, int32_t u, int32_t v) {
+    RecoveryEdgeGuard guard(recovery_edge_, u, v);
+    protected_segments_.push_back({u, v});
+    EdgeRecovery recovery;
+    int32_t status = collect_edge_cavity(e, u, v, recovery);
+    if (status != PHX_MC_OK) {
+      return status;
+    }
+    status = fill_edge_cavity(e, u, v, recovery);
+    if (status != PHX_MC_OK) {
+      return status;
+    }
+    status = check_edge_fill(e, u, v, recovery);
+    if (status != PHX_MC_OK) {
+      return status;
+    }
+    CavityEdit edit(triangulation_->complex());
+    const CavityCommit commit =
+        commit_cavity_fill(edit, recovery.cavity, {&recovery.side, 1}, recovery.labels);
+    if (commit.status != EditStatus::kOk) {
+      discard(recovery.appended);
+      if (resource_refusal(commit.status)) {
+        return refuse_edit(commit.status, kPlcEdge, e);
+      }
+      return commit.staged
+                 ? fail(PHX_MC_CONSTRAINT_INTERSECTION, kPlcFixedSegment, kPlcEdge, e)
+                 : PHX_MC_INTERNAL_ERROR;
+    }
+    publish_edge_fill(recovery, edit);
     return PHX_MC_OK;
   }
 
@@ -2379,299 +2457,373 @@ class Recoverer {
   // section whose vertices are edge crossings strictly inside the component
   // (in a subfacet interior or on an internal subfacet edge); one on a single
   // side has a facet lying in the component.
-  int32_t recover_component(std::span<const int32_t> component, bool& failed) {
-    TetrahedralComplex& complex = triangulation_->complex();
-    const Triple& base = sub_[static_cast<std::size_t>(component[0])];
-    const double* pa = point(base[0]);
-    const double* pb = point(base[1]);
-    const double* pc = point(base[2]);
+  struct ComponentRecovery {
+    explicit ComponentRecovery(std::span<const int32_t> members) : component(members) {}
+    std::span<const int32_t> component;
+    const double* plane[3];
     NativeVector<int32_t> members_vertices;
     NativeMap<uint64_t, int32_t> edge_count;
     NativeMap<Triple, int32_t> keys;
-    for (int32_t s : component) {
+    NativeUnorderedMap<int32_t, int> sign;
+    NativeUnorderedSet<int32_t> examined;
+    NativeVector<int32_t> cavity;
+    NativeVector<int32_t> frontier;
+    Side sides[2];
+    NativeVector<std::pair<Triple, int32_t>> inner_constraints;
+    NativeVector<int32_t> cavity_vertices;
+    NativeVector<double> cones[2];
+  };
+
+  void prepare_component(ComponentRecovery& recovery) {
+    const Triple& base = sub_[static_cast<std::size_t>(recovery.component[0])];
+    recovery.plane[0] = point(base[0]);
+    recovery.plane[1] = point(base[1]);
+    recovery.plane[2] = point(base[2]);
+    for (int32_t s : recovery.component) {
       const Triple& t = sub_[static_cast<std::size_t>(s)];
-      members_vertices.insert(members_vertices.end(), t.begin(), t.end());
-      keys.emplace(sorted_triple(t.data()), s);
+      recovery.members_vertices.insert(recovery.members_vertices.end(), t.begin(), t.end());
+      recovery.keys.emplace(sorted_triple(t.data()), s);
       for (int r = 0; r < 3; ++r) {
-        ++edge_count[edge_key(t[r], t[(r + 1) % 3])];
+        ++recovery.edge_count[topology::undirected_edge(t[r], t[(r + 1) % 3])];
       }
     }
-    std::sort(members_vertices.begin(), members_vertices.end());
-    members_vertices.erase(std::unique(members_vertices.begin(), members_vertices.end()),
-                           members_vertices.end());
-    const auto member = [&](int32_t v) {
-      return std::binary_search(members_vertices.begin(), members_vertices.end(), v);
-    };
-    NativeUnorderedMap<int32_t, int> sign;
-    const auto side_of = [&](int32_t v) {
-      const auto found = sign.find(v);
-      if (found != sign.end()) {
-        return found->second;
-      }
-      const int value = orient3d(pa, pb, pc, point(v));
-      sign.emplace(v, value);
-      return value;
-    };
-    const auto in_cavity = [&](int32_t t) {
-      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(t)];
-      int signs[4];
-      int zeros = 0;
-      bool positive = false;
-      bool negative = false;
-      for (int k = 0; k < 4; ++k) {
-        signs[k] = side_of(tet.v[k]);
-        zeros += signs[k] == 0 ? 1 : 0;
-        positive = positive || signs[k] > 0;
-        negative = negative || signs[k] < 0;
-      }
-      Contact contact;
-      if (positive && negative) {
-        for (int i = 0; i < 4; ++i) {
-          for (int j = i + 1; j < 4; ++j) {
-            if (signs[i] * signs[j] >= 0) {
-              continue;
-            }
-            const double* const segment[2] = {point(tet.v[i]), point(tet.v[j])};
-            const int64_t segment_ids[2] = {tet.v[i], tet.v[j]};
-            for (int32_t s : component) {
-              const Triple& g = sub_[static_cast<std::size_t>(s)];
-              const double* const triangle[3] = {point(g[0]), point(g[1]), point(g[2])};
-              const int64_t triangle_ids[3] = {g[0], g[1], g[2]};
-              ++out_.counters[kPlcContactTests];
-              if (intersect_segment_triangle(segment, triangle, segment_ids, triangle_ids,
-                                             contact) != PHX_MC_OK) {
-                continue;
-              }
-              if (contact.kind == PHX_MC_CROSSING) {
-                return true;
-              }
-              const int8_t feature = contact.points[0].second_feature;
-              if (contact.kind == PHX_MC_TOUCHING && feature >= 3 && feature < 6 &&
-                  contact.points[0].first_feature == kFeatureInterior) {
-                const int opposite = feature - 3;
-                if (edge_count[edge_key(g[(opposite + 1) % 3], g[(opposite + 2) % 3])] == 2) {
-                  return true;
-                }
-              }
-            }
-          }
+    std::sort(recovery.members_vertices.begin(), recovery.members_vertices.end());
+    recovery.members_vertices.erase(
+        std::unique(recovery.members_vertices.begin(), recovery.members_vertices.end()),
+        recovery.members_vertices.end());
+  }
+
+  static bool component_member(const ComponentRecovery& recovery, int32_t v) {
+    return std::binary_search(recovery.members_vertices.begin(),
+                              recovery.members_vertices.end(), v);
+  }
+
+  int component_side(ComponentRecovery& recovery, int32_t v) {
+    const auto found = recovery.sign.find(v);
+    if (found != recovery.sign.end()) {
+      return found->second;
+    }
+    const int value =
+        orient3d(recovery.plane[0], recovery.plane[1], recovery.plane[2], point(v));
+    recovery.sign.emplace(v, value);
+    return value;
+  }
+
+  bool component_crossing_contact(ComponentRecovery& recovery, const Tetrahedron& tet,
+                                  const int* signs) {
+    Contact contact;
+    for (int i = 0; i < 4; ++i) {
+      for (int j = i + 1; j < 4; ++j) {
+        if (signs[i] * signs[j] >= 0) {
+          continue;
         }
-        return false;
-      }
-      // A mesh edge lying in the plane through the component's interior
-      // (the other diagonal of a planar quadrilateral) bounds tetrahedra that
-      // meet the component in that edge only; its whole star is replaced.
-      for (int i = 0; i < 4 && zeros >= 2; ++i) {
-        for (int j = i + 1; j < 4; ++j) {
-          if (signs[i] != 0 || signs[j] != 0 || !member(tet.v[i]) || !member(tet.v[j])) {
+        const double* const segment[2] = {point(tet.v[i]), point(tet.v[j])};
+        const int64_t segment_ids[2] = {tet.v[i], tet.v[j]};
+        for (int32_t s : recovery.component) {
+          const Triple& g = sub_[static_cast<std::size_t>(s)];
+          const double* const triangle[3] = {point(g[0]), point(g[1]), point(g[2])};
+          const int64_t triangle_ids[3] = {g[0], g[1], g[2]};
+          ++out_.counters.contact_tests;
+          if (intersect_segment_triangle(segment, triangle, segment_ids, triangle_ids,
+                                         contact) != PHX_MC_OK) {
             continue;
           }
-          const double* const segment[2] = {point(tet.v[i]), point(tet.v[j])};
-          const int64_t segment_ids[2] = {tet.v[i], tet.v[j]};
-          for (int32_t s : component) {
-            const Triple& g = sub_[static_cast<std::size_t>(s)];
-            const double* const triangle[3] = {point(g[0]), point(g[1]), point(g[2])};
-            const int64_t triangle_ids[3] = {g[0], g[1], g[2]};
-            ++out_.counters[kPlcContactTests];
-            if (intersect_segment_triangle(segment, triangle, segment_ids, triangle_ids,
-                                           contact) == PHX_MC_OK &&
-                contact.kind == PHX_MC_COPLANAR_OVERLAP) {
+          if (contact.kind == PHX_MC_CROSSING) {
+            return true;
+          }
+          const int8_t feature = contact.points[0].second_feature;
+          if (contact.kind == PHX_MC_TOUCHING && feature >= 3 && feature < 6 &&
+              contact.points[0].first_feature == kFeatureInterior) {
+            const int opposite = feature - 3;
+            if (recovery.edge_count[topology::undirected_edge(g[(opposite + 1) % 3],
+                                                              g[(opposite + 2) % 3])] == 2) {
               return true;
             }
           }
         }
       }
-      if (zeros != 3) {
-        return false;
-      }
-      int32_t face[3];
-      int r = 0;
-      for (int k = 0; k < 4; ++k) {
-        if (signs[k] == 0) {
-          face[r++] = tet.v[k];
+    }
+    return false;
+  }
+
+  // A planar mesh edge through the component's interior replaces its whole star.
+  bool component_planar_edge_contact(const ComponentRecovery& recovery,
+                                     const Tetrahedron& tet, const int* signs, int zeros) {
+    Contact contact;
+    for (int i = 0; i < 4 && zeros >= 2; ++i) {
+      for (int j = i + 1; j < 4; ++j) {
+        if (signs[i] != 0 || signs[j] != 0 || !component_member(recovery, tet.v[i]) ||
+            !component_member(recovery, tet.v[j])) {
+          continue;
         }
-      }
-      if (!member(face[0]) || !member(face[1]) || !member(face[2])) {
-        return false;
-      }
-      for (int32_t s : component) {
-        const double* const first[3] = {point(face[0]), point(face[1]), point(face[2])};
-        const Triple& g = sub_[static_cast<std::size_t>(s)];
-        const double* const second[3] = {point(g[0]), point(g[1]), point(g[2])};
-        const int64_t first_ids[3] = {face[0], face[1], face[2]};
-        const int64_t second_ids[3] = {g[0], g[1], g[2]};
-        ++out_.counters[kPlcContactTests];
-        if (intersect_triangles(first, second, first_ids, second_ids, contact) == PHX_MC_OK &&
-            (contact.kind == PHX_MC_COPLANAR_OVERLAP || contact.kind == PHX_MC_COINCIDENT)) {
-          return true;
-        }
-      }
-      return false;
-    };
-    // Breadth-first search from the stars of the component vertices,
-    // expanding only through cavity tetrahedra.
-    NativeUnorderedSet<int32_t> examined;
-    NativeVector<int32_t> cavity;
-    NativeVector<int32_t> frontier;
-    for (int32_t v : members_vertices) {
-      for (int32_t t : star(v)) {
-        if (!is_ghost(complex.tets[static_cast<std::size_t>(t)]) && examined.insert(t).second) {
-          frontier.push_back(t);
+        const double* const segment[2] = {point(tet.v[i]), point(tet.v[j])};
+        const int64_t segment_ids[2] = {tet.v[i], tet.v[j]};
+        for (int32_t s : recovery.component) {
+          const Triple& g = sub_[static_cast<std::size_t>(s)];
+          const double* const triangle[3] = {point(g[0]), point(g[1]), point(g[2])};
+          const int64_t triangle_ids[3] = {g[0], g[1], g[2]};
+          ++out_.counters.contact_tests;
+          if (intersect_segment_triangle(segment, triangle, segment_ids, triangle_ids,
+                                         contact) == PHX_MC_OK &&
+              contact.kind == PHX_MC_COPLANAR_OVERLAP) {
+            return true;
+          }
         }
       }
     }
-    std::sort(frontier.begin(), frontier.end());
-    while (!frontier.empty()) {
-      const int32_t t = frontier.back();
-      frontier.pop_back();
+    return false;
+  }
+
+  bool component_planar_face_contact(const ComponentRecovery& recovery,
+                                     const Tetrahedron& tet, const int* signs) {
+    int32_t face[3];
+    int r = 0;
+    for (int k = 0; k < 4; ++k) {
+      if (signs[k] == 0) {
+        face[r++] = tet.v[k];
+      }
+    }
+    if (!component_member(recovery, face[0]) || !component_member(recovery, face[1]) ||
+        !component_member(recovery, face[2])) {
+      return false;
+    }
+    Contact contact;
+    for (int32_t s : recovery.component) {
+      const double* const first[3] = {point(face[0]), point(face[1]), point(face[2])};
+      const Triple& g = sub_[static_cast<std::size_t>(s)];
+      const double* const second[3] = {point(g[0]), point(g[1]), point(g[2])};
+      const int64_t first_ids[3] = {face[0], face[1], face[2]};
+      const int64_t second_ids[3] = {g[0], g[1], g[2]};
+      ++out_.counters.contact_tests;
+      if (intersect_triangles(first, second, first_ids, second_ids, contact) == PHX_MC_OK &&
+          (contact.kind == PHX_MC_COPLANAR_OVERLAP || contact.kind == PHX_MC_COINCIDENT)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool component_in_cavity(ComponentRecovery& recovery, int32_t t) {
+    const Tetrahedron& tet = triangulation_->complex().tets[static_cast<std::size_t>(t)];
+    int signs[4];
+    int zeros = 0;
+    bool positive = false;
+    bool negative = false;
+    for (int k = 0; k < 4; ++k) {
+      signs[k] = component_side(recovery, tet.v[k]);
+      zeros += signs[k] == 0 ? 1 : 0;
+      positive = positive || signs[k] > 0;
+      negative = negative || signs[k] < 0;
+    }
+    if (positive && negative) {
+      return component_crossing_contact(recovery, tet, signs);
+    }
+    if (component_planar_edge_contact(recovery, tet, signs, zeros)) {
+      return true;
+    }
+    if (zeros != 3) {
+      return false;
+    }
+    return component_planar_face_contact(recovery, tet, signs);
+  }
+
+  // Traverse from component vertex stars, expanding only through cavity cells.
+  int32_t collect_component_cavity(ComponentRecovery& recovery) {
+    const TetrahedralComplex& complex = triangulation_->complex();
+    for (int32_t v : recovery.members_vertices) {
+      for (int32_t t : star(v)) {
+        if (!is_ghost(complex.tets[static_cast<std::size_t>(t)]) &&
+            recovery.examined.insert(t).second) {
+          recovery.frontier.push_back(t);
+        }
+      }
+    }
+    std::sort(recovery.frontier.begin(), recovery.frontier.end());
+    while (!recovery.frontier.empty()) {
+      const int32_t t = recovery.frontier.back();
+      recovery.frontier.pop_back();
       if (!spend(4)) {
         return work_failure();
       }
-      if (!in_cavity(t)) {
+      if (!component_in_cavity(recovery, t)) {
         continue;
       }
-      if (!native_execution_cavity(cavity.size() + 1)) {
+      if (!native_execution_cavity(recovery.cavity.size() + 1)) {
         return fail(native_execution_status(PHX_MC_CAPACITY_EXCEEDED),
-                    kPlcTetrahedronBudget, kPlcFacet, sub_facet(component[0]));
+                    kPlcTetrahedronBudget, kPlcFacet, sub_facet(recovery.component[0]));
       }
-      cavity.push_back(t);
-      out_.counters[kPlcLargestCavity] =
-          std::max(out_.counters[kPlcLargestCavity], static_cast<int64_t>(cavity.size()));
+      recovery.cavity.push_back(t);
+      out_.counters.largest_cavity =
+          std::max(out_.counters.largest_cavity, static_cast<int64_t>(recovery.cavity.size()));
       for (int32_t next : complex.tets[static_cast<std::size_t>(t)].n) {
         if (!is_ghost(complex.tets[static_cast<std::size_t>(next)]) &&
-            examined.insert(next).second) {
-          frontier.push_back(next);
+            recovery.examined.insert(next).second) {
+          recovery.frontier.push_back(next);
         }
       }
     }
-    std::sort(cavity.begin(), cavity.end());
-    ++out_.counters[kPlcCavities];
-    out_.counters[kPlcLargestCavity] =
-        std::max(out_.counters[kPlcLargestCavity], static_cast<int64_t>(cavity.size()));
-    // Cavity sides: boundary facets, constrained facets inside the cavity
-    // (both orientations, as obstacles of their side) and the component.  A
-    // boundary facet takes the side of its off-plane vertices, or of its
-    // tetrahedron's apex when it lies in the plane outside the component.
-    // When a side admits no fill (the facet's chosen triangulation disagrees
-    // with a degenerate, e.g. coplanar, neighborhood outside the cavity) the
-    // cavity grows by one layer of one-sided tetrahedra across unconstrained
-    // facets and both sides are wrapped again.
-    Side sides[2];
-    NativeVector<std::pair<Triple, int32_t>> inner_constraints;
-    NativeVector<int32_t> cavity_vertices;
-    NativeVector<double> cones[2];
-    for (;;) {
-      sides[0] = Side{};
-      sides[1] = Side{};
-      cones[0].clear();
-      cones[1].clear();
-      inner_constraints.clear();
-      cavity_vertices.clear();
-      for (int32_t t : cavity) {
-        const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(t)];
-        cavity_vertices.insert(cavity_vertices.end(), tet.v, tet.v + 4);
-        for (int k = 0; k < 4; ++k) {
-          const int32_t next = tet.n[k];
-          const bool inside = std::binary_search(cavity.begin(), cavity.end(), next);
-          const int32_t constraint = complex.constraint(t, k);
-          if (inside && next < t) {
-            continue;
-          }
-          Triple face{};
-          oriented_facet(tet.v, k, face.data());
-          // An inner face in the group plane outside the component (an
-          // enlarged cavity reaches both sides there) separates the sides:
-          // each side keeps it, one orientation each, as a fixed boundary.
-          const bool planar = inside && side_of(face[0]) == 0 && side_of(face[1]) == 0 &&
-                              side_of(face[2]) == 0 &&
-                              std::all_of(component.begin(), component.end(), [&](int32_t s) {
-                                return triangle_contact_legal(face, sub_[static_cast<std::size_t>(s)]);
-                              });
-          if (inside && constraint == kNoConstraint && !planar) {
-            continue;
-          }
-          int side = 0;
-          for (int32_t v : face) {
-            side = side != 0 ? side : side_of(v);
-          }
-          side = side != 0 ? side : side_of(tet.v[k]);
-          if (side == 0) {
-            return PHX_MC_INTERNAL_ERROR;
-          }
-          Side& target = sides[side > 0 ? 0 : 1];
-          add_face(target, face, true);
-          if (inside) {
-            add_face(planar ? sides[side > 0 ? 1 : 0] : target,
-                     Triple{face[0], face[2], face[1]}, true);
-            if (constraint != kNoConstraint) {
-              inner_constraints.push_back({sorted_triple(face.data()), constraint});
-            }
-          }
+    std::sort(recovery.cavity.begin(), recovery.cavity.end());
+    ++out_.counters.cavities;
+    out_.counters.largest_cavity =
+        std::max(out_.counters.largest_cavity, static_cast<int64_t>(recovery.cavity.size()));
+    return PHX_MC_OK;
+  }
+
+  // A planar face outside the component separates both closed cavity sides.
+  bool component_separator(ComponentRecovery& recovery, const Triple& face) {
+    return component_side(recovery, face[0]) == 0 &&
+           component_side(recovery, face[1]) == 0 &&
+           component_side(recovery, face[2]) == 0 &&
+           std::all_of(recovery.component.begin(), recovery.component.end(), [&](int32_t s) {
+             return triangle_contact_legal(face, sub_[static_cast<std::size_t>(s)]);
+           });
+  }
+
+  int component_boundary_side(ComponentRecovery& recovery, const Triple& face,
+                               int32_t apex) {
+    int side = 0;
+    for (int32_t v : face) {
+      side = side != 0 ? side : component_side(recovery, v);
+    }
+    return side != 0 ? side : component_side(recovery, apex);
+  }
+
+  // Boundary faces and surviving constraints close each side of the planar cut.
+  int32_t add_component_boundary(ComponentRecovery& recovery, int32_t t, int k) {
+    const TetrahedralComplex& complex = triangulation_->complex();
+    const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(t)];
+    const int32_t next = tet.n[k];
+    const bool inside = std::binary_search(recovery.cavity.begin(), recovery.cavity.end(), next);
+    const int32_t constraint = complex.constraint(t, k);
+    if (inside && next < t) {
+      return PHX_MC_OK;
+    }
+    Triple face{};
+    oriented_facet(tet.v, k, face.data());
+    const bool planar = inside && component_separator(recovery, face);
+    if (inside && constraint == kNoConstraint && !planar) {
+      return PHX_MC_OK;
+    }
+    const int side = component_boundary_side(recovery, face, tet.v[k]);
+    if (side == 0) {
+      return PHX_MC_INTERNAL_ERROR;
+    }
+    Side& target = recovery.sides[side > 0 ? 0 : 1];
+    add_face(target, face, true);
+    if (inside) {
+      add_face(planar ? recovery.sides[side > 0 ? 1 : 0] : target,
+               Triple{face[0], face[2], face[1]}, true);
+      if (constraint != kNoConstraint) {
+        recovery.inner_constraints.push_back({sorted_triple(face.data()), constraint});
+      }
+    }
+    return PHX_MC_OK;
+  }
+
+  int32_t prepare_component_sides(ComponentRecovery& recovery) {
+    const TetrahedralComplex& complex = triangulation_->complex();
+    recovery.sides[0] = Side{};
+    recovery.sides[1] = Side{};
+    recovery.cones[0].clear();
+    recovery.cones[1].clear();
+    recovery.inner_constraints.clear();
+    recovery.cavity_vertices.clear();
+    for (int32_t t : recovery.cavity) {
+      const Tetrahedron& tet = complex.tets[static_cast<std::size_t>(t)];
+      recovery.cavity_vertices.insert(recovery.cavity_vertices.end(), tet.v, tet.v + 4);
+      for (int k = 0; k < 4; ++k) {
+        const int32_t status = add_component_boundary(recovery, t, k);
+        if (status != PHX_MC_OK) {
+          return status;
         }
       }
-      for (int32_t s : component) {
-        const Triple& g = sub_[static_cast<std::size_t>(s)];
-        add_face(sides[0], g, true);
-        add_face(sides[1], Triple{g[0], g[2], g[1]}, true);
+    }
+    for (int32_t s : recovery.component) {
+      const Triple& g = sub_[static_cast<std::size_t>(s)];
+      add_face(recovery.sides[0], g, true);
+      add_face(recovery.sides[1], Triple{g[0], g[2], g[1]}, true);
+    }
+    std::sort(recovery.cavity_vertices.begin(), recovery.cavity_vertices.end());
+    recovery.cavity_vertices.erase(
+        std::unique(recovery.cavity_vertices.begin(), recovery.cavity_vertices.end()),
+        recovery.cavity_vertices.end());
+    for (int32_t v : recovery.cavity_vertices) {
+      const int value = component_side(recovery, v);
+      if (value >= 0) {
+        recovery.sides[0].vertices.push_back(v);
       }
-      std::sort(cavity_vertices.begin(), cavity_vertices.end());
-      cavity_vertices.erase(std::unique(cavity_vertices.begin(), cavity_vertices.end()),
-                            cavity_vertices.end());
-      for (int32_t v : cavity_vertices) {
-        const int value = side_of(v);
-        if (value >= 0) {
-          sides[0].vertices.push_back(v);
-        }
-        if (value <= 0) {
-          sides[1].vertices.push_back(v);
-        }
+      if (value <= 0) {
+        recovery.sides[1].vertices.push_back(v);
       }
-      // A side whose greedy fill is trapped by unconstrained cavity boundary
-      // faces first takes the tetrahedra behind those faces (TetGen-style
-      // local enlargement), which costs no exhaustive search.  A side that
-      // gift wrapping cannot fill (a polyhedron that needs a Steiner point,
-      // like Schönhardt's) is filled by the cone from an interior Steiner
-      // point strictly inside every boundary facet's half-space -- a verified
-      // point of the side's kernel.  The fixed policy permits it: the point
-      // is interior, not on the boundary.
-      bool filled = true;
-      bool enlarged = false;
-      for (int s = 0; s < 2 && filled; ++s) {
-        const std::size_t initial_faces = sides[s].faces.size();
-        if (gift_wrap_greedy(sides[s])) {
-          continue;
-        }
-        reset_front(sides[s], initial_faces);
-        if (work_exhausted_) {
-          return work_failure();
-        }
-        if (grow_cavity(cavity, side_of, true)) {
-          enlarged = true;
-          filled = false;
-          break;
-        }
-        if (work_exhausted_) {
-          return work_failure();
-        }
-        if (native_execution_status(PHX_MC_OK) != PHX_MC_OK) {
-          return fail(native_execution_status(PHX_MC_CAPACITY_EXCEEDED),
-                      kPlcTetrahedronBudget, kPlcFacet, sub_facet(component[0]));
-        }
-        if (gift_wrap_search(sides[s])) {
-          continue;
-        }
-        filled = kernel_point(sides[s], component, cones[s]);
+    }
+    return PHX_MC_OK;
+  }
+
+  struct ComponentFill {
+    int32_t status = PHX_MC_OK;
+    bool filled = true;
+    bool enlarged = false;
+  };
+
+  // Try greedy wrapping, blocked-face enlargement, search, then a kernel point.
+  ComponentFill fill_component_sides(ComponentRecovery& recovery) {
+    ComponentFill fill;
+    auto side_of = [&](int32_t v) { return component_side(recovery, v); };
+    for (int s = 0; s < 2 && fill.filled; ++s) {
+      const std::size_t initial_faces = recovery.sides[s].faces.size();
+      if (gift_wrap_greedy(recovery.sides[s])) {
+        continue;
       }
-      if (filled) {
+      reset_front(recovery.sides[s], initial_faces);
+      if (work_exhausted_) {
+        fill.status = work_failure();
+        return fill;
+      }
+      if (grow_cavity(recovery.cavity, side_of, true)) {
+        fill.enlarged = true;
+        fill.filled = false;
         break;
+      }
+      if (work_exhausted_) {
+        fill.status = work_failure();
+        return fill;
+      }
+      if (native_execution_refusal() != PHX_MC_OK) {
+        fill.status = fail(native_execution_status(PHX_MC_CAPACITY_EXCEEDED),
+                           kPlcTetrahedronBudget, kPlcFacet,
+                           sub_facet(recovery.component[0]));
+        return fill;
+      }
+      if (gift_wrap_search(recovery.sides[s])) {
+        continue;
+      }
+      fill.filled = kernel_point(recovery.sides[s], recovery.component, recovery.cones[s]);
+    }
+    return fill;
+  }
+
+  // Rebuild both closed sides after every admitted one-sided cavity enlargement.
+  int32_t fill_component_cavity(ComponentRecovery& recovery, bool& failed) {
+    auto side_of = [&](int32_t v) { return component_side(recovery, v); };
+    for (;;) {
+      const int32_t status = prepare_component_sides(recovery);
+      if (status != PHX_MC_OK) {
+        return status;
+      }
+      const ComponentFill fill = fill_component_sides(recovery);
+      if (fill.status != PHX_MC_OK) {
+        return fill.status;
+      }
+      if (fill.filled) {
+        return PHX_MC_OK;
       }
       if (work_exhausted_ || work() > in_.work_limit) {
         return work_failure();
       }
-      if (!enlarged && !grow_cavity(cavity, side_of)) {
-        if (!work_exhausted_ && native_execution_status(PHX_MC_OK) != PHX_MC_OK) {
+      if (!fill.enlarged && !grow_cavity(recovery.cavity, side_of)) {
+        if (!work_exhausted_ && native_execution_refusal() != PHX_MC_OK) {
           return fail(native_execution_status(PHX_MC_CAPACITY_EXCEEDED),
-                      kPlcTetrahedronBudget, kPlcFacet, sub_facet(component[0]));
+                      kPlcTetrahedronBudget, kPlcFacet, sub_facet(recovery.component[0]));
         }
         if (work_exhausted_) {
           return work_failure();
@@ -2679,36 +2831,41 @@ class Recoverer {
         failed = true;
         return PHX_MC_OK;
       }
-      out_.counters[kPlcLargestCavity] =
-          std::max(out_.counters[kPlcLargestCavity], static_cast<int64_t>(cavity.size()));
+      out_.counters.largest_cavity =
+          std::max(out_.counters.largest_cavity, static_cast<int64_t>(recovery.cavity.size()));
     }
-    // One transactional edit replaces the cavity by both fills.
-    NativeMap<Triple, int32_t> labels;
-    for (const auto& [key, id] : inner_constraints) {
+  }
+
+  void label_component_fill(const ComponentRecovery& recovery,
+                            NativeMap<Triple, int32_t>& labels) const {
+    for (const auto& [key, id] : recovery.inner_constraints) {
       labels.emplace(key, id);
     }
-    for (const auto& [key, s] : keys) {
+    for (const auto& [key, s] : recovery.keys) {
       labels.emplace(key, sub_facet(s));
     }
-    NativeVector<int32_t> appended;
+  }
+
+  // Tentative interior vertices stay discardable until the cavity edit commits.
+  int32_t append_component_vertices(ComponentRecovery& recovery,
+                                    NativeVector<int32_t>& appended, bool& failed) {
     for (int s = 0; s < 2; ++s) {
-      if (cones[s].empty()) {
+      if (recovery.cones[s].empty()) {
         continue;
       }
-      const int32_t id = append_vertex(cones[s].data(), 3, SourceWitness{});
+      const int32_t id = append_vertex(recovery.cones[s].data(), 3, SourceWitness{});
       if (id < 0) {
         discard(appended);
         return fail(PHX_MC_CAPACITY_EXCEEDED, kPlcVertexBudget, kPlcFacet,
-                    sub_facet(component[0]));
+                    sub_facet(recovery.component[0]));
       }
       appended.push_back(id);
       alive_.push_back(1);
       vertex_tet_.push_back(-1);
       triangulation_->rebind(points_.data(), vertex_count());
-      sides[s].vertices.push_back(id);
-      // Wrapping with the kernel candidate, rather than blindly coning the
-      // boundary, preserves interior PLC points and curves as well.
-      if (!gift_wrap(sides[s])) {
+      recovery.sides[s].vertices.push_back(id);
+      // Wrapping with the kernel candidate preserves interior PLC points and curves.
+      if (!gift_wrap(recovery.sides[s])) {
         discard(appended);
         if (work_exhausted_) {
           return work_failure();
@@ -2716,15 +2873,19 @@ class Recoverer {
         failed = true;
         return PHX_MC_OK;
       }
-      cavity_vertices.push_back(id);
+      recovery.cavity_vertices.push_back(id);
     }
-    CavityEdit edit(complex);
+    return PHX_MC_OK;
+  }
+
+  EditStatus stage_cavity_fill(CavityEdit& edit, std::span<const int32_t> cavity,
+                               std::span<const Side> sides,
+                               const NativeMap<Triple, int32_t>& labels) {
     edit.begin(EditLimits{std::numeric_limits<std::size_t>::max(),
                           std::numeric_limits<std::size_t>::max(), in_.max_tetrahedra});
     for (int32_t t : cavity) {
-      if (edit.remove(t) != EditStatus::kOk) {
-        discard(appended);
-        return PHX_MC_INTERNAL_ERROR;
+      if (const EditStatus removed = edit.remove(t); removed != EditStatus::kOk) {
+        return removed;
       }
     }
     for (const Side& side : sides) {
@@ -2736,13 +2897,29 @@ class Recoverer {
           const auto label = labels.find(sorted_triple(face));
           constraints[k] = label == labels.end() ? kNoConstraint : label->second;
         }
-        if (edit.add(tet.data(), constraints, kNoRegion) != EditStatus::kOk) {
-          discard(appended);
-          return PHX_MC_INTERNAL_ERROR;
+        if (const EditStatus added = edit.add(tet.data(), constraints, kNoRegion);
+            added != EditStatus::kOk) {
+          return added;
         }
       }
     }
-    EditStatus status = edit.validate([&](const int32_t* v) {
+    return EditStatus::kOk;
+  }
+
+  struct CavityCommit {
+    EditStatus status;
+    bool staged;
+  };
+
+  // The shared commit preserves removal, insertion, orientation and rollback order.
+  CavityCommit commit_cavity_fill(CavityEdit& edit, std::span<const int32_t> cavity,
+                                  std::span<const Side> sides,
+                                  const NativeMap<Triple, int32_t>& labels) {
+    EditStatus status = stage_cavity_fill(edit, cavity, sides, labels);
+    if (status != EditStatus::kOk) {
+      return {status, false};
+    }
+    status = edit.validate([&](const int32_t* v) {
       return orient3d(point(v[0]), point(v[1]), point(v[2]), point(v[3])) > 0;
     });
     if (status == EditStatus::kOk) {
@@ -2750,13 +2927,13 @@ class Recoverer {
     }
     if (status != EditStatus::kOk) {
       edit.rollback();
-      discard(appended);
-      if (status == EditStatus::kCellLimit || status == EditStatus::kSlotLimit) {
-        return fail(PHX_MC_CAPACITY_EXCEEDED, kPlcTetrahedronBudget, kPlcNoEntity, -1);
-      }
-      failed = true;
-      return PHX_MC_OK;
     }
+    return {status, true};
+  }
+
+  int32_t publish_component_fill(const ComponentRecovery& recovery, CavityEdit& edit,
+                                 const NativeVector<int32_t>& appended) {
+    const TetrahedralComplex& complex = triangulation_->complex();
     reconnected_ = true;
     peak_bytes_ = std::max(peak_bytes_, triangulation_->retained_bytes() + edit.retained_bytes());
     for (int32_t t : edit.created()) {
@@ -2769,17 +2946,52 @@ class Recoverer {
         }
       }
     }
-    for (int32_t v : cavity_vertices) {
+    for (int32_t v : recovery.cavity_vertices) {
       const int32_t t = vertex_tet_[static_cast<std::size_t>(v)];
       if (!complex.live(t) || vertex_slot(complex.tets[static_cast<std::size_t>(t)], v) < 0) {
         return PHX_MC_INTERNAL_ERROR;
       }
     }
-    for (std::size_t k = 0; k < keys.size(); ++k) {
+    for (std::size_t k = 0; k < recovery.keys.size(); ++k) {
       triangulation_->count_constrained_facet();
     }
-    out_.counters[kPlcInteriorSteiner] += static_cast<int64_t>(appended.size());
+    out_.counters.interior_steiner_points += static_cast<int64_t>(appended.size());
     return PHX_MC_OK;
+  }
+
+  int32_t recover_component(std::span<const int32_t> component, bool& failed) {
+    ComponentRecovery recovery(component);
+    prepare_component(recovery);
+    int32_t status = collect_component_cavity(recovery);
+    if (status != PHX_MC_OK) {
+      return status;
+    }
+    status = fill_component_cavity(recovery, failed);
+    if (status != PHX_MC_OK || failed) {
+      return status;
+    }
+    NativeMap<Triple, int32_t> labels;
+    label_component_fill(recovery, labels);
+    NativeVector<int32_t> appended;
+    status = append_component_vertices(recovery, appended, failed);
+    if (status != PHX_MC_OK || failed) {
+      return status;
+    }
+    CavityEdit edit(triangulation_->complex());
+    const CavityCommit commit =
+        commit_cavity_fill(edit, recovery.cavity, recovery.sides, labels);
+    if (commit.status != EditStatus::kOk) {
+      discard(appended);
+      if (resource_refusal(commit.status)) {
+        return refuse_edit(commit.status, kPlcFacet, sub_facet(component[0]));
+      }
+      if (!commit.staged) {
+        return PHX_MC_INTERNAL_ERROR;
+      }
+      failed = true;
+      return PHX_MC_OK;
+    }
+    return publish_component_fill(recovery, edit, appended);
   }
 
   // ------------------------------------------------------------ classification
@@ -3067,7 +3279,7 @@ static int32_t execute_plc(const PlcInput& input, PlcRecovery& result, bool sour
   if (budget) {
     result.memory_measured = true;
     result.memory_snapshot = budget->evidence();
-    result.counters[kPlcPeakBytes] = static_cast<int64_t>(result.memory_snapshot[2]);
+    result.counters.peak_retained_bytes = static_cast<int64_t>(result.memory_snapshot[2]);
   }
   return status;
 }
@@ -3088,22 +3300,30 @@ struct phx_mc_plc3d : phx::mc::NativeAllocatedObject {
 
 namespace {
 
-int32_t check_arguments(const phx::mc::PlcInput& in) {
+bool invalid_input_extents(const phx::mc::PlcInput& in) {
   using phx::mc::addressable;
-  if (in.point_count < 0 || in.point_count > phx::mc::kMaxMeshPoints - 8 ||
-      in.polygon_count < 0 || in.facet_count < 0 || in.segment_count < 0 ||
-      in.seed_count < 0 || !addressable(in.point_count, 3, sizeof(double)) ||
-      !addressable(in.facet_count, 2, sizeof(int32_t)) ||
-      !addressable(in.segment_count, 2, sizeof(int32_t)) ||
-      !addressable(in.seed_count, 3, sizeof(double)) || in.max_vertices < in.point_count ||
-      in.max_vertices > phx::mc::kMaxMeshPoints - 8 || in.max_tetrahedra < 1 ||
-      in.work_limit < 0 || (in.point_count > 0 && in.points == nullptr) ||
-      in.polygon_offsets == nullptr || (in.polygon_count > 0 && in.polygon_facets == nullptr) ||
-      (in.facet_count > 0 && in.facet_regions == nullptr) ||
-      (in.segment_count > 0 && in.segments == nullptr) ||
-      (in.seed_count > 0 && (in.seeds == nullptr || in.seed_regions == nullptr))) {
-    return PHX_MC_INVALID_ARGUMENT;
-  }
+  return in.point_count < 0 || in.point_count > phx::mc::kMaxMeshPoints - 8 ||
+         in.polygon_count < 0 || in.facet_count < 0 || in.segment_count < 0 ||
+         in.seed_count < 0 || !addressable(in.point_count, 3, sizeof(double)) ||
+         !addressable(in.facet_count, 2, sizeof(int32_t)) ||
+         !addressable(in.segment_count, 2, sizeof(int32_t)) ||
+         !addressable(in.seed_count, 3, sizeof(double));
+}
+
+bool invalid_input_limits(const phx::mc::PlcInput& in) {
+  return in.max_vertices < in.point_count || in.max_vertices > phx::mc::kMaxMeshPoints - 8 ||
+         in.max_tetrahedra < 1 || in.work_limit < 0;
+}
+
+bool invalid_input_storage(const phx::mc::PlcInput& in) {
+  return (in.point_count > 0 && in.points == nullptr) || in.polygon_offsets == nullptr ||
+         (in.polygon_count > 0 && in.polygon_facets == nullptr) ||
+         (in.facet_count > 0 && in.facet_regions == nullptr) ||
+         (in.segment_count > 0 && in.segments == nullptr) ||
+         (in.seed_count > 0 && (in.seeds == nullptr || in.seed_regions == nullptr));
+}
+
+int32_t check_polygon_arguments(const phx::mc::PlcInput& in) {
   if (in.polygon_offsets[0] != 0) {
     return PHX_MC_INVALID_ARGUMENT;
   }
@@ -3124,6 +3344,10 @@ int32_t check_arguments(const phx::mc::PlcInput& in) {
       return PHX_MC_INVALID_ARGUMENT;
     }
   }
+  return PHX_MC_OK;
+}
+
+int32_t check_constraint_arguments(const phx::mc::PlcInput& in) {
   for (int64_t k = 0; k < 2 * in.segment_count; ++k) {
     phx::mc::native_execution_charge(0);
     if (in.segments[k] < 0 || in.segments[k] >= in.point_count) {
@@ -3145,20 +3369,119 @@ int32_t check_arguments(const phx::mc::PlcInput& in) {
   return phx::mc::validate_points(in.seeds, in.seed_count, 3, nullptr);
 }
 
+int32_t check_arguments(const phx::mc::PlcInput& in) {
+  if (invalid_input_extents(in) || invalid_input_limits(in) || invalid_input_storage(in)) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  const int32_t status = check_polygon_arguments(in);
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  return check_constraint_arguments(in);
+}
+
+struct PlcExportBuffers {
+  double* points;
+  int32_t* tets;
+  int32_t* tet_regions;
+  int32_t* faces;
+  int32_t* face_sources;
+  int32_t* segments;
+  int32_t* segment_sources;
+  double* protection;
+  int32_t* plc_edges;
+  int8_t* vertex_dimension;
+  int32_t* input_triangles;
+  int32_t* input_polygons;
+};
+
+bool invalid_volume_buffers(const phx::mc::PlcRecovery& r, const PlcExportBuffers& out) {
+  return (!r.points.empty() && out.points == nullptr) ||
+         (!r.tets.empty() && out.tets == nullptr) ||
+         (!r.tet_regions.empty() && out.tet_regions == nullptr);
+}
+
+bool invalid_constraint_buffers(const phx::mc::PlcRecovery& r,
+                                const PlcExportBuffers& out) {
+  return (!r.faces.empty() && out.faces == nullptr) ||
+         (!r.face_sources.empty() && out.face_sources == nullptr) ||
+         (!r.segments.empty() && out.segments == nullptr) ||
+         (!r.segment_sources.empty() && out.segment_sources == nullptr);
+}
+
+bool invalid_source_buffers(const phx::mc::PlcRecovery& r, const PlcExportBuffers& out) {
+  return (!r.protection.empty() && out.protection == nullptr) ||
+         (!r.plc_edges.empty() && out.plc_edges == nullptr) ||
+         (!r.vertex_dimension.empty() && out.vertex_dimension == nullptr) ||
+         (!r.input_triangles.empty() && out.input_triangles == nullptr) ||
+         (!r.input_polygons.empty() && out.input_polygons == nullptr);
+}
+
+// Validation permits null only for empty banks; do not copy through a null buffer.
+void copy_volume_buffers(const phx::mc::PlcRecovery& r, const PlcExportBuffers& out) {
+  if (out.points != nullptr) std::copy(r.points.begin(), r.points.end(), out.points);
+  if (out.tets != nullptr) std::copy(r.tets.begin(), r.tets.end(), out.tets);
+  if (out.tet_regions != nullptr) {
+    std::copy(r.tet_regions.begin(), r.tet_regions.end(), out.tet_regions);
+  }
+}
+
+void copy_constraint_buffers(const phx::mc::PlcRecovery& r, const PlcExportBuffers& out) {
+  if (out.faces != nullptr) std::copy(r.faces.begin(), r.faces.end(), out.faces);
+  if (out.face_sources != nullptr) {
+    std::copy(r.face_sources.begin(), r.face_sources.end(), out.face_sources);
+  }
+  if (out.segments != nullptr) std::copy(r.segments.begin(), r.segments.end(), out.segments);
+  if (out.segment_sources != nullptr) {
+    std::copy(r.segment_sources.begin(), r.segment_sources.end(), out.segment_sources);
+  }
+}
+
+void copy_source_buffers(const phx::mc::PlcRecovery& r, const PlcExportBuffers& out) {
+  if (out.protection != nullptr) {
+    std::copy(r.protection.begin(), r.protection.end(), out.protection);
+  }
+  if (out.plc_edges != nullptr) std::copy(r.plc_edges.begin(), r.plc_edges.end(), out.plc_edges);
+  if (out.vertex_dimension != nullptr) {
+    std::copy(r.vertex_dimension.begin(), r.vertex_dimension.end(), out.vertex_dimension);
+  }
+  if (out.input_triangles != nullptr) {
+    std::copy(r.input_triangles.begin(), r.input_triangles.end(), out.input_triangles);
+  }
+  if (out.input_polygons != nullptr) {
+    std::copy(r.input_polygons.begin(), r.input_polygons.end(), out.input_polygons);
+  }
+}
+
 }  // namespace
 
 extern "C" {
 
-int32_t phx_mc_plc3d_recover(int64_t point_count, const double* points, int64_t polygon_count,
-                             const int64_t* polygon_offsets, const int32_t* polygon_vertices,
-                             const int32_t* polygon_facets, int64_t facet_count,
-                             const int32_t* facet_regions, int64_t segment_count,
-                             const int32_t* segments, int64_t seed_count, const double* seeds,
-                             const int32_t* seed_regions, int32_t boundary_policy,
-                             const double* facet_tolerances, const double* segment_tolerances,
-                             int64_t max_vertices, int64_t max_tetrahedra, int64_t work_limit,
-                             uint64_t maximum_scratch_bytes, int32_t measure_phases,
-                             phx_mc_plc3d** result) {
+int32_t phx_mc_plc3d_recover(
+    const phx_mc_plc3d_recover_request* request) {
+  if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  auto point_count = request->point_count;
+  auto points = request->points;
+  auto polygon_count = request->polygon_count;
+  auto polygon_offsets = request->polygon_offsets;
+  auto polygon_vertices = request->polygon_vertices;
+  auto polygon_facets = request->polygon_facets;
+  auto facet_count = request->facet_count;
+  auto facet_regions = request->facet_regions;
+  auto segment_count = request->segment_count;
+  auto segments = request->segments;
+  auto seed_count = request->seed_count;
+  auto seeds = request->seeds;
+  auto seed_regions = request->seed_regions;
+  auto boundary_policy = request->boundary_policy;
+  auto facet_tolerances = request->facet_tolerances;
+  auto segment_tolerances = request->segment_tolerances;
+  auto max_vertices = request->max_vertices;
+  auto max_tetrahedra = request->max_tetrahedra;
+  auto work_limit = request->work_limit;
+  auto maximum_scratch_bytes = request->maximum_scratch_bytes;
+  auto measure_phases = request->measure_phases;
+  auto result = request->result;
   return phx::mc::guarded([&]() -> int32_t {
     if (result == nullptr) {
       return PHX_MC_INVALID_ARGUMENT;
@@ -3265,18 +3588,30 @@ int32_t phx_mc_plc3d_source_constraints(
   });
 }
 
-void phx_mc_plc3d_sizes(const phx_mc_plc3d* result, int64_t* sizes) {
-  const phx::mc::PlcRecovery& r = result->recovery;
-  sizes[0] = static_cast<int64_t>(r.points.size() / 3);
-  sizes[1] = static_cast<int64_t>(r.tet_regions.size());
-  sizes[2] = static_cast<int64_t>(r.face_sources.size());
-  sizes[3] = static_cast<int64_t>(r.segment_sources.size());
-  sizes[4] = static_cast<int64_t>(r.plc_edges.size() / 2);
-  sizes[5] = static_cast<int64_t>(r.input_polygons.size());
+int32_t phx_mc_plc3d_sizes(const phx_mc_plc3d* result, int64_t* sizes) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || sizes == nullptr) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    const phx::mc::PlcRecovery& r = result->recovery;
+    sizes[PHX_MC_PLC3D_SIZE_POINTS] = static_cast<int64_t>(r.points.size() / 3);
+    sizes[PHX_MC_PLC3D_SIZE_TETRAHEDRA] = static_cast<int64_t>(r.tet_regions.size());
+    sizes[PHX_MC_PLC3D_SIZE_FACES] = static_cast<int64_t>(r.face_sources.size());
+    sizes[PHX_MC_PLC3D_SIZE_SEGMENTS] = static_cast<int64_t>(r.segment_sources.size());
+    sizes[PHX_MC_PLC3D_SIZE_PLC_EDGES] = static_cast<int64_t>(r.plc_edges.size() / 2);
+    sizes[PHX_MC_PLC3D_SIZE_INPUT_TRIANGLES] = static_cast<int64_t>(r.input_polygons.size());
+    return PHX_MC_OK;
+  });
 }
 
-void phx_mc_plc3d_counters(const phx_mc_plc3d* result, int64_t* counters) {
-  std::copy_n(result->recovery.counters, phx::mc::kPlcCounterCount, counters);
+int32_t phx_mc_plc3d_counters(const phx_mc_plc3d* result, int64_t* counters) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || counters == nullptr) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    phx::mc::CounterPublisher publisher{result->recovery.counters, counters};
+    return PHX_MC_OK;
+  });
 }
 
 extern "C" int32_t phx_mc_plc3d_phase_times(const phx_mc_plc3d* result, int64_t* nanoseconds,
@@ -3286,55 +3621,74 @@ extern "C" int32_t phx_mc_plc3d_phase_times(const phx_mc_plc3d* result, int64_t*
       return PHX_MC_INVALID_ARGUMENT;
     }
     const phx::mc::PlcRecovery& recovery = result->recovery;
-    std::copy_n(recovery.phase_nanoseconds, phx::mc::kPlcPhaseCount, nanoseconds);
-    std::copy_n(recovery.phase_invocations, phx::mc::kPlcPhaseCount, invocations);
+    phx::mc::CounterPublisher invocation_publisher{recovery.phase_invocations, invocations};
+    phx::mc::CounterPublisher nanosecond_publisher{recovery.phase_nanoseconds, nanoseconds};
+    
     *enabled = recovery.measurement_enabled ? 1 : 0;
     return PHX_MC_OK;
   });
 }
 
-void phx_mc_plc3d_failure(const phx_mc_plc3d* result, int64_t* failure) {
-  const phx::mc::PlcFailure& f = result->recovery.failure;
-  failure[0] = f.reason;
-  failure[1] = f.first_kind;
-  failure[2] = f.first;
-  failure[3] = f.second_kind;
-  failure[4] = f.second;
+int32_t phx_mc_plc3d_failure(const phx_mc_plc3d* result, int64_t* failure) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || failure == nullptr) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    const phx::mc::PlcFailure& f = result->recovery.failure;
+    const phx::mc::PlcFailureRecord state{
+        f.reason, f.first_kind, f.first, f.second_kind, f.second};
+    phx::mc::CounterPublisher publisher{state, failure};
+    return PHX_MC_OK;
+  });
 }
 
-void phx_mc_plc3d_export(const phx_mc_plc3d* result, double* points, int32_t* tets,
-                         int32_t* tet_regions, int32_t* faces, int32_t* face_sources,
-                         int32_t* segments, int32_t* segment_sources, double* protection,
-                         int32_t* plc_edges, int8_t* vertex_dimension, int32_t* input_triangles,
-                         int32_t* input_polygons) {
-  const phx::mc::PlcRecovery& r = result->recovery;
-  std::copy(r.points.begin(), r.points.end(), points);
-  std::copy(r.tets.begin(), r.tets.end(), tets);
-  std::copy(r.tet_regions.begin(), r.tet_regions.end(), tet_regions);
-  std::copy(r.faces.begin(), r.faces.end(), faces);
-  std::copy(r.face_sources.begin(), r.face_sources.end(), face_sources);
-  std::copy(r.segments.begin(), r.segments.end(), segments);
-  std::copy(r.segment_sources.begin(), r.segment_sources.end(), segment_sources);
-  std::copy(r.protection.begin(), r.protection.end(), protection);
-  std::copy(r.plc_edges.begin(), r.plc_edges.end(), plc_edges);
-  std::copy(r.vertex_dimension.begin(), r.vertex_dimension.end(), vertex_dimension);
-  std::copy(r.input_triangles.begin(), r.input_triangles.end(), input_triangles);
-  std::copy(r.input_polygons.begin(), r.input_polygons.end(), input_polygons);
+int32_t phx_mc_plc3d_export(const phx_mc_plc3d* result, double* points, int32_t* tets,
+                          int32_t* tet_regions, int32_t* faces, int32_t* face_sources,
+                          int32_t* segments, int32_t* segment_sources, double* protection,
+                          int32_t* plc_edges, int8_t* vertex_dimension, int32_t* input_triangles,
+                          int32_t* input_polygons) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    const phx::mc::PlcRecovery& r = result->recovery;
+    const PlcExportBuffers buffers{points, tets, tet_regions, faces, face_sources,
+                                   segments, segment_sources, protection, plc_edges,
+                                   vertex_dimension, input_triangles, input_polygons};
+    if (invalid_volume_buffers(r, buffers) || invalid_constraint_buffers(r, buffers) ||
+        invalid_source_buffers(r, buffers)) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    copy_volume_buffers(r, buffers);
+    copy_constraint_buffers(r, buffers);
+    copy_source_buffers(r, buffers);
+    return PHX_MC_OK;
+  });
 }
 
-void phx_mc_plc3d_source_witnesses(const phx_mc_plc3d* result, int8_t* strata,
-                                   int32_t* entities, double* parameters, double* deviations,
-                                   double* refusal) {
-  const phx::mc::PlcRecovery& r = result->recovery;
-  for (std::size_t v = 0; v < r.witnesses.size(); ++v) {
-    strata[v] = static_cast<int8_t>(r.witnesses[v].stratum);
-    entities[v] = r.witnesses[v].entity;
-    parameters[2 * v] = r.witnesses[v].parameters[0];
-    parameters[2 * v + 1] = r.witnesses[v].parameters[1];
-    deviations[v] = r.witnesses[v].deviation;
-  }
-  refusal[0] = r.source_refusal[0];
-  refusal[1] = r.source_refusal[1];
+int32_t phx_mc_plc3d_source_witnesses(const phx_mc_plc3d* result, int8_t* strata,
+                                    int32_t* entities, double* parameters, double* deviations,
+                                    double* refusal) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    const phx::mc::PlcRecovery& r = result->recovery;
+    if (!r.witnesses.empty() &&
+        (strata == nullptr || entities == nullptr || parameters == nullptr ||
+         deviations == nullptr)) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    for (std::size_t v = 0; v < r.witnesses.size(); ++v) {
+      strata[v] = static_cast<int8_t>(r.witnesses[v].stratum);
+      entities[v] = r.witnesses[v].entity;
+      parameters[2 * v] = r.witnesses[v].parameters[0];
+      parameters[2 * v + 1] = r.witnesses[v].parameters[1];
+      deviations[v] = r.witnesses[v].deviation;
+    }
+    phx::mc::CounterPublisher publisher{r.source_refusal, refusal};
+    return PHX_MC_OK;
+  });
 }
 
 int32_t phx_mc_plc3d_memory_evidence(const phx_mc_plc3d* result, uint64_t* evidence,
@@ -3346,7 +3700,8 @@ int32_t phx_mc_plc3d_memory_evidence(const phx_mc_plc3d* result, uint64_t* evide
     *enabled = result->recovery.memory_measured ? 1 : 0;
     if (result->recovery.memory_measured) {
       const auto& snapshot = result->recovery.memory_snapshot;
-      std::copy(snapshot.begin(), snapshot.end(), evidence);
+      const auto state = phx::mc::ManagedMemory::from_slots(snapshot.data());
+      phx::mc::CounterPublisher publisher{state, evidence};
     }
     return PHX_MC_OK;
   });

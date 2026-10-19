@@ -29,30 +29,22 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <queue>
 
 #include "bounded_memory.hpp"
 #include "capi_guard.hpp"
+#include "counter_records.hpp"
 #include "filtered.hpp"
+#include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "tet_mesh.hpp"
+#include "topology_keys.hpp"
 
 namespace phx::mc {
 namespace {
 
-enum Counter : int {
-  kCircumcenters = 0,
-  kSubfacets,
-  kSubsegments,
-  kDeferrals,
-  kRefusals,
-  kPops,
-  kUnmetCells,
-  kWork,
-  kLargestCavity,
-  kVertices,
-};
 
 // Encroachment ranks inexact constructions: a point within rounding of a
 // diametral or equatorial sphere does not encroach, so cospherical lattices
@@ -76,13 +68,10 @@ bool encroaches_face(const double* a, const double* b, const double* c, const do
   return geometry::squared_distance(q, center) < (1.0 - kEncroachmentMargin) * radius2;
 }
 
-bool representable(const double* p) {
-  return coordinate_in_domain(p[0]) && coordinate_in_domain(p[1]) && coordinate_in_domain(p[2]);
-}
 
 // Whether m lies exactly on the open segment (a, b).
 bool exactly_inside_segment(const double* a, const double* b, const double* m) {
-  if (!representable(m) || !collinear3d(a, b, m)) {
+  if (!geometry::point_in_domain(m) || !geometry::collinear(a, b, m)) {
     return false;
   }
   int axis = 0;
@@ -168,7 +157,7 @@ class Refiner {
  public:
   Refiner(TetMesh& mesh, const RefineOptions& options) : mesh_(mesh), options_(options) {}
 
-  int32_t run(int64_t* counters) {
+  int32_t run(TetMeshRefineCounters& counters) {
     const int64_t initial_work = mesh_.work();
     int32_t status = PHX_MC_OK;
     try {
@@ -184,7 +173,7 @@ class Refiner {
           status = PHX_MC_CAPACITY_EXCEEDED;
           break;
         }
-        ++counters_[kPops];
+        ++counters_.queue_pops;
         Step step = Step::kContinue;
         if (!segments_.empty()) {
           const SegmentEntry entry = segments_.front();
@@ -212,11 +201,11 @@ class Refiner {
     } catch (const std::bad_alloc&) {
       status = native_execution_status(PHX_MC_CAPACITY_EXCEEDED);
     }
-    counters_[kUnmetCells] = static_cast<int64_t>(mesh_.unmet().size());
-    counters_[kWork] = mesh_.work() - initial_work;
-    counters_[kLargestCavity] = static_cast<int64_t>(mesh_.largest_cavity());
-    counters_[kVertices] = mesh_.vertex_count();
-    std::copy_n(counters_, PHX_MC_TET_MESH_REFINE_COUNTERS, counters);
+    counters_.unmet_cells = static_cast<int64_t>(mesh_.unmet().size());
+    counters_.work_units = mesh_.work() - initial_work;
+    counters_.largest_cavity = static_cast<int64_t>(mesh_.largest_cavity());
+    counters_.vertices = mesh_.vertex_count();
+    counters = counters_;
     return native_execution_status(status);
   }
 
@@ -227,7 +216,7 @@ class Refiner {
     NativeUnorderedSet<std::uint64_t> original_segments;
     for (const auto& edge : mesh_.original_segments()) {
       native_execution_charge(0);
-      original_segments.insert(undirected_edge(edge[0], edge[1]));
+      original_segments.insert(topology::undirected_edge(edge[0], edge[1]));
     }
     for (const auto& facet : mesh_.original_faces()) {
       native_execution_charge(0);
@@ -236,8 +225,8 @@ class Refiner {
         const int32_t a = facet[static_cast<std::size_t>((k + 1) % 3)];
         const int32_t b = facet[static_cast<std::size_t>((k + 2) % 3)];
         if (conforming() &&
-            (original_segments.count(undirected_edge(v, a)) == 0 ||
-             original_segments.count(undirected_edge(v, b)) == 0)) {
+            (original_segments.count(topology::undirected_edge(v, a)) == 0 ||
+             original_segments.count(topology::undirected_edge(v, b)) == 0)) {
           continue;
         }
         if (!mesh_.spend(32)) return;
@@ -269,7 +258,7 @@ class Refiner {
     for (int i = 0; i < 4; ++i) {
       for (int j = i + 1; j < 4; ++j) {
         const int32_t a = mesh_.tet(t).v[i], b = mesh_.tet(t).v[j];
-        const auto found = stuck_segments_.find(undirected_edge(a, b));
+        const auto found = stuck_segments_.find(topology::undirected_edge(a, b));
         if (found != stuck_segments_.end()) {
           return found->second;
         }
@@ -542,7 +531,7 @@ class Refiner {
             if (edge_size_ratio(v[a], v[b]) > 1.0 ||
                 (c != a && c != b &&
                  encroaches_segment(mesh_.point(v[a]), mesh_.point(v[b]), mesh_.point(v[c])))) {
-              push_segment(undirected_edge(v[a], v[b]), false);
+              push_segment(topology::undirected_edge(v[a], v[b]), false);
               break;
             }
           }
@@ -569,7 +558,7 @@ class Refiner {
         // representation; the refused deviation is recorded by the mesh.
         const Unmet reason =
             result == Insertion::kDeviation ? Unmet::kNonrepresentable : Unmet::kRefused;
-        ++counters_[kRefusals];
+        ++counters_.refused_insertions;
         if (t >= 0) {
           mesh_.set_slot_reason(t, reason);
         }
@@ -591,7 +580,7 @@ class Refiner {
         for (int b = a + 1; b < 4; ++b) {
           if (v[a] >= 0 && v[b] >= 0 && mesh_.segment_source(v[a], v[b]) >= 0 &&
               encroaches_segment(mesh_.point(v[a]), mesh_.point(v[b]), p)) {
-            hit_segments_.push_back(undirected_edge(v[a], v[b]));
+            hit_segments_.push_back(topology::undirected_edge(v[a], v[b]));
           }
         }
       }
@@ -650,7 +639,7 @@ class Refiner {
       }
     }
     if (queued) {
-      ++counters_[kDeferrals];
+      ++counters_.encroachment_deferrals;
       return Unmet::kNone;
     }
     return reason == Unmet::kNone ? Unmet::kRefused : reason;
@@ -672,7 +661,7 @@ class Refiner {
     const double* p[4];
     mesh_.corners(t, p);
     double c[3];
-    if (!geometry::tetrahedron_circumcenter(p[0], p[1], p[2], p[3], c) || !representable(c)) {
+    if (!geometry::tetrahedron_circumcenter(p[0], p[1], p[2], p[3], c) || !geometry::point_in_domain(c)) {
       mesh_.set_slot_reason(t, Unmet::kNonrepresentable);
       return Step::kContinue;
     }
@@ -717,7 +706,7 @@ class Refiner {
     if (committed != Insertion::kOk) {
       return failed(committed, t, nullptr);
     }
-    ++counters_[kCircumcenters];
+    ++counters_.circumcenter_insertions;
     after_insert();
     return Step::kContinue;
   }
@@ -827,8 +816,8 @@ class Refiner {
       const int32_t* v = mesh_.tet(t).v;
       for (int i = 0; i < 4; ++i) {
         for (int j = i + 1; j < 4; ++j) {
-          const std::uint64_t edge = undirected_edge(v[i], v[j]);
-          if (edge != undirected_edge(a, b) && mesh_.segment_source(v[i], v[j]) >= 0 &&
+          const std::uint64_t edge = topology::undirected_edge(v[i], v[j]);
+          if (edge != topology::undirected_edge(a, b) && mesh_.segment_source(v[i], v[j]) >= 0 &&
               encroaches_segment(mesh_.point(v[i]), mesh_.point(v[j]), m)) {
             hit_segments_.push_back(edge);
           }
@@ -888,7 +877,7 @@ class Refiner {
       if (stuck != Unmet::kNone) {
         stuck_segments_.emplace(entry.edge, stuck);
       } else if (step == Step::kContinue) {
-        ++counters_[kSubsegments];
+        ++counters_.subsegment_splits;
       }
       return step;
     }
@@ -915,7 +904,7 @@ class Refiner {
       }
       return step;
     }
-    ++counters_[kSubsegments];
+    ++counters_.subsegment_splits;
     after_insert();
     return Step::kContinue;
   }
@@ -948,31 +937,39 @@ class Refiner {
       }
       return step;
     }
-    ++counters_[kSubfacets];
+    ++counters_.subfacet_splits;
     after_insert();
     return Step::kContinue;
   }
 
-  Step split_face(const FaceEntry& entry) {
-    const int32_t* key = entry.key.v;
-    int32_t t = -1;
-    int slot = -1;
-    if (stuck_faces_.count(entry.key) != 0 || !mesh_.find_face(key[0], key[1], key[2], t, slot) ||
-        mesh_.complex().constraint(t, slot) == kNoConstraint) {
-      return Step::kContinue;
-    }
-    if (!entry.forced && !face_encroached(t, slot)) {
-      return Step::kContinue;
-    }
-    const double* x = mesh_.point(key[0]);
-    const double* y = mesh_.point(key[1]);
-    const double* z = mesh_.point(key[2]);
-    double c[3];
-    const bool bounded_face = mesh_.witness(key[0]).deviation > 0.0 ||
-                              mesh_.witness(key[1]).deviation > 0.0 ||
-                              mesh_.witness(key[2]).deviation > 0.0;
-    const bool oversized = facet_size_ratio(t, slot) > 1.0;
-    if (!oversized && geometry::triangle_circumcenter(x, y, z, c) && representable(c) &&
+  struct FaceSplitGeometry {
+    int32_t cell;
+    int slot;
+    const double* x;
+    const double* y;
+    const double* z;
+    double center[3];
+    bool bounded_face;
+    bool oversized;
+
+    FaceSplitGeometry(TetMesh& mesh, int32_t t, int s, const int32_t* key)
+        : cell(t), slot(s), x(mesh.point(key[0])), y(mesh.point(key[1])), z(mesh.point(key[2])),
+          bounded_face(mesh.witness(key[0]).deviation > 0.0 ||
+                       mesh.witness(key[1]).deviation > 0.0 ||
+                       mesh.witness(key[2]).deviation > 0.0) {}
+  };
+
+  std::optional<Step> prepare_source_face_center(const FaceEntry& entry,
+                                                FaceSplitGeometry& state) {
+    const int32_t t = state.cell;
+    const int slot = state.slot;
+    const double* x = state.x;
+    const double* y = state.y;
+    const double* z = state.z;
+    double* c = state.center;
+    const bool bounded_face = state.bounded_face;
+    const bool oversized = state.oversized;
+    if (!oversized && geometry::triangle_circumcenter(x, y, z, c) && geometry::point_in_domain(c) &&
         (bounded_face || orient3d(x, y, z, c) != 0)) {
       double carrier[3];
       SourceWitness witness;
@@ -992,8 +989,21 @@ class Refiner {
         return Step::kContinue;
       }
     }
+    return std::nullopt;
+  }
+
+  std::optional<Step> prepare_exact_face_center(const FaceEntry& entry,
+                                               FaceSplitGeometry& state) {
+    const int32_t t = state.cell;
+    const int slot = state.slot;
+    const double* x = state.x;
+    const double* y = state.y;
+    const double* z = state.z;
+    double* c = state.center;
+    const bool bounded_face = state.bounded_face;
+    const bool oversized = state.oversized;
     if (!bounded_face && !oversized && geometry::triangle_circumcenter(x, y, z, c) &&
-        representable(c) && orient3d(x, y, z, c) == 0) {
+        geometry::point_in_domain(c) && orient3d(x, y, z, c) == 0) {
       int32_t blocked_tet = -1;
       int blocked_slot = -1;
       const int32_t located = mesh_.locate(c, t, blocked_tet, blocked_slot);
@@ -1017,6 +1027,11 @@ class Refiner {
         }
       }
     }
+    return std::nullopt;
+  }
+
+  Step split_face_longest_edge(const FaceEntry& entry, int32_t t) {
+    const int32_t* key = entry.key.v;
     // An arbitrary exact interior point is not a circumcenter: repeated star
     // subdivision can create ever smaller protected angles on a source plane.
     // If no exact circumcenter transaction retires this facet, bisect its
@@ -1033,7 +1048,7 @@ class Refiner {
     const int32_t u = key[longest];
     const int32_t w = key[(longest + 1) % 3];
     if (mesh_.segment_source(u, w) >= 0) {
-      hit_segments_.assign(1, undirected_edge(u, w));
+      hit_segments_.assign(1, topology::undirected_edge(u, w));
       hit_faces_.clear();
       const Unmet reason = defer_to_constraints();
       if (reason == Unmet::kNone) {
@@ -1058,7 +1073,7 @@ class Refiner {
       } else if (stuck != Unmet::kNone) {
         stuck_faces_.emplace(entry.key, stuck);
       } else if (step == Step::kContinue) {
-        ++counters_[kSubfacets];
+        ++counters_.subfacet_splits;
       }
       return step;
     }
@@ -1072,6 +1087,24 @@ class Refiner {
       return step;
     }
     return commit_face_split(entry, m, 0.5 * (mesh_.size(u) + mesh_.size(w)));
+  }
+
+  Step split_face(const FaceEntry& entry) {
+    const int32_t* key = entry.key.v;
+    int32_t t = -1;
+    int slot = -1;
+    if (stuck_faces_.count(entry.key) != 0 || !mesh_.find_face(key[0], key[1], key[2], t, slot) ||
+        mesh_.complex().constraint(t, slot) == kNoConstraint) {
+      return Step::kContinue;
+    }
+    if (!entry.forced && !face_encroached(t, slot)) {
+      return Step::kContinue;
+    }
+    FaceSplitGeometry state(mesh_, t, slot, key);
+    state.oversized = facet_size_ratio(t, slot) > 1.0;
+    if (const auto step = prepare_source_face_center(entry, state)) return *step;
+    if (const auto step = prepare_exact_face_center(entry, state)) return *step;
+    return split_face_longest_edge(entry, t);
   }
 
   void record_unmet() {
@@ -1109,7 +1142,7 @@ class Refiner {
 
   TetMesh& mesh_;
   RefineOptions options_;
-  int64_t counters_[PHX_MC_TET_MESH_REFINE_COUNTERS] = {};
+  TetMeshRefineCounters counters_;
   int64_t inserted_ = 0;
   int32_t stop_status_ = PHX_MC_OK;
   NativeDeque<SegmentEntry> segments_;
@@ -1127,7 +1160,7 @@ class Refiner {
 
 }  // namespace
 
-int32_t refine_mesh(TetMesh& mesh, const RefineOptions& options, int64_t* counters) {
+int32_t refine_mesh(TetMesh& mesh, const RefineOptions& options, TetMeshRefineCounters& counters) {
   const MemoryScope memory_scope(mesh.memory_owner());
   Refiner refiner(mesh, options);
   return refiner.run(counters);
@@ -1154,7 +1187,8 @@ int32_t phx_mc_tet_mesh_refine(phx_mc_tet_mesh* handle, const double* sizes,
     if (mesh.broken()) {
       return PHX_MC_INTERNAL_ERROR;
     }
-    std::fill_n(counters, PHX_MC_TET_MESH_REFINE_COUNTERS, 0);
+    phx::mc::TetMeshRefineCounters state;
+    phx::mc::CounterPublisher publisher{state, counters};
     phx::mc::TetWorkBudgetWindow budget(mesh, work_limit);
     if (sizes != nullptr) {
       const auto count = static_cast<std::size_t>(mesh.vertex_count());
@@ -1169,7 +1203,7 @@ int32_t phx_mc_tet_mesh_refine(phx_mc_tet_mesh* handle, const double* sizes,
     phx::mc::RefineOptions options;
     options.radius_edge_bound = radius_edge_bound;
     options.max_insertions = max_insertions;
-    const int32_t status = phx::mc::refine_mesh(mesh, options, counters);
+    const int32_t status = phx::mc::refine_mesh(mesh, options, state);
     return mesh.broken() ? PHX_MC_INTERNAL_ERROR : status;
   });
 }

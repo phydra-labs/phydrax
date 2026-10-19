@@ -9,7 +9,7 @@ The file-by-file sections below remain the design and acceptance record.
 “Proposed” and imperative text describes a requirement, not a claim that the
 symbol, workflow, qualification, or benchmark is complete. Current public
 support and evidence boundaries are authoritative in
-[`guides_meshing.md`](guides_meshing.md#evidence-vocabulary-and-current-closure-state)
+[`guides_meshing.md`](guides_meshing.md#evidence-and-resource-limits)
 and the generated capability catalog.
 
 The deliverable is a Phydrax-owned geometry-to-simulation meshing system, not a facade over other meshers. It includes native initial generation, improvement, adaptation, geometry preservation, state transfer, distribution, persistence, and solver integration. It also includes native CAD construction/query/Boolean/interchange capability, rather than treating OCCT independence as an unspecified future project.
@@ -20,28 +20,20 @@ Completion requires all mandatory positive workflows in this plan to execute wit
 
 General automatic high-quality all-hex construction, robust singular CAD arrangements, and reconstruction of underspecified defective surfaces have research-dependent boundaries. Those workstreams remain in scope. Their acceptance domains and evidence must be explicit; an unresolved research gate does not become a completed capability by changing its label or silently narrowing the user's scope. Narrowing the final goal requires a separate user decision.
 
-### Current disposition
+Within a platform, results, identities, evidence and canonical ordering must
+not depend on worker count, scheduling or process. Refusal points come from
+deterministic bounds; wall-clock deadlines are the only nondeterministic
+refusal exception. Hard scientific controls must pass on every supported
+platform without relaxing the request. Topology decisions use exact predicates
+or certified bounds, never platform-dependent last bits from fusion, FMA,
+transcendentals or `long double`. Floating constructions need not be bitwise
+equal across platforms.
 
-The current implementation has focused owner verification for W02/W03,
-W05/W06, W08, and W10--W14. W05 closes sheet, dirty, disconnected, and
-marked-adaptation envelope cases under the unchanged 20,000,000-work request;
-W06 includes rotational-volume and mixed rotation/screw compatible-field
-lifecycles under unchanged limits. W04's focused matrix is 83/83. W07's
-targeted source-only/loft/topology matrix passed, and exact rational
-collapsed-pole radial splits plus locally refined per-interval trim ribbons
-close the overlapping-sphere and curved-void positives. W08's surface/tetra metric
-matrices, rational-trim continuation/archive, curved-sphere, and positional
-archive-recipe checks passed; its implementation evidence is not a final W15
-qualification campaign. W09 is implemented and
-focused-qualified on corrected source `curved-periodic-narrow-gap-exact-x-orbits`
-(revision `2afa0d24…`, digest `059b334c…`): the final complete repeats took
-106.2345 and 108.5906 seconds under the unchanged 120-second limit. The
-original period-x=1 source remains the immutable exact negative described
-below; neither tolerance changes nor a
-source rewrite reclassify it. W15 tooling/corpus checks are 46/46, but no final
-qualification, like-for-like benchmark-leadership, authenticated release, or
-leadership artifact has been produced. These are separate implementation,
-test, qualification, and release facts.
+Resource accounting uses one mechanical substrate, with domain limits and
+evidence owned by the scientific operation. A live scope reserves a batch upper
+bound before work so nested or concurrent batches cannot overcommit it. Counting
+inside the batch is local; settlement commits actual use and releases the unused
+reservation, without per-item FFI calls or `sys.getsizeof` traversal.
 
 ### 1.1 Scope traceability
 
@@ -117,181 +109,6 @@ replace the integrated typing or unchanged transport acceptance gates.
 Resumed image preparation now proves exact coplanar voxel-face coalescing and preserves rounded oblique triangles when that proof fails. The unchanged two-material box uses 12 authoritative vertices and 11 source polygons instead of 27 vertices and 56 independently constrained triangles. Conforming PLC generation no longer promotes internal polygon triangulation diagonals into scientific feature curves; fixed-boundary obligations remain unchanged. Native memory counters cover the native allocation owner, not JAX or whole-process/device peaks.
 
 The frozen native Neurofluid profile still requires exact `p50` and `p95` edge statistics at target 1.0. Shape-only construction and global circumradius sizing satisfy different subsets of those goals; neither is a complete positive result. The owning native metric pass manager is being joined to initial generation with the original statistical goal, exact source-boundary coarsening and actual work/resource evidence. Publication, continued transport, integrated typing and phase-separated benchmarks must pass before this workflow is marked complete.
-
-### 1.5 Bounded integration checkpoint
-
-The user approved collecting atomic owner handoffs, one integrated verification
-pass, and an acceptance/blocker report before further qualifications. That
-checkpoint is complete. The user subsequently requested completion of all
-remaining tasks; implementation and prerequisite-controlled qualifications have
-resumed. No new feature scope or long lifecycle qualification was launched during
-the checkpoint pass. `AGENTS.md` was copied verbatim from `dev`; both copies
-have SHA-256 `5c1d66087a2dacda0a3dbbac12171521d770f54979b0dfe3936967f71f9d12e8`.
-
-Fresh checks on the collected implementation:
-
-| Surface | Observed result |
-| --- | --- |
-| Native build and CTest | All 17 tests passed in 18.01 seconds |
-| Focused model recipes, archive safety, checkpoint and native source restoration | 66 tests passed with `-n auto` |
-| Checked signature audit | No redundant checked guards reported; identity-sensitive and static-only guards retained |
-| Selector audit | Zero findings |
-| Public API data | Regenerated; manifest check passed |
-| Actual native planar publication and recipe restoration | Certified 5-vertex, 4-cell mesh; 87 recipe arrays; exact restored coordinates, connectivity, active masks, vertex/cell IDs and request identity |
-| First-party typing | One invalid-argument-type diagnostic at `_meshing_field_records.py:408`: `Array \| ndarray` passed to an `Array` recovery kernel |
-| First-party Ruff lint | 483 diagnostics; baseline-versus-change attribution not established |
-| Collected substrate formatting | `_coordinate_enclosure.py`, `_mapped_embedding.py` and `_distributed_checkpoint.py` would be reformatted; numerical-relativity `_checkpoint.py` already formatted |
-
-The runtime smoke's first attempt used a nonexistent `CellBlock.connectivity`
-field in the throwaway harness. After changing that check to canonical `vertices`
-and `vertex_valid`, the smoke passed. It is a serial publication/recipe check,
-not different-process-count restart or continued FE/FV qualification.
-
-Collected failures remain blockers, not completed positive capabilities:
-
-- The already-running final CAD intersection/Boolean/B-Rep set finished with
-  20 failures, 82 passes and 55 warnings. Failures include cone preparation,
-  torus criteria, revolved/trimmed tessellation, cylinder trim and tangency
-  discovery, coincident-cylinder face graphs, sphere material labeling and
-  incorrect solid classification. One failure is an incidental message assertion.
-- The interchange owners reported 22 STEP failures and 12 IGES failures from
-  runs overlapping earlier edits. Source-only round trips do not establish
-  realized interchange correctness; first-round native symbolic-period identity
-  is not preserved by the external floating-period representation.
-- Mixed adaptation passed 10 cases, but mapped DG retains two work-count
-  assertion failures. Coverage retains an `unresolved` versus `violated` status
-  mismatch. Other mapped-support/high-order failures remain unattributed.
-- Packed checkpoint descriptor publication, restoration and corruption refusal
-  have focused proof. Different-process-count restart and continued FE/FV
-  execution on that new durable representation were not run.
-- Periodic full lifecycle remains outside its 120-second wall gate; the observed
-  epoch-zero L2 error was about 0.143, above the 0.05 target. Neurofluid exact
-  p50/p95 sizing and continued transport remain incomplete.
-- At the checkpoint, size length comparisons added `16 * float64 epsilon` to the
-  requested relative tolerance. That implicit allowance has since been removed:
-  comparisons use only the authored absolute and relative tolerances. An actual
-  measured edge of `1.0000000000000002` is refused at zero tolerance and accepted
-  at an explicitly requested one-ulp allowance; seven focused sizing regressions
-  pass. Earlier passes using automatic slack do not qualify exact frozen goals.
-- Resumed native publication measures the complete distinct retained scientific
-  array footprint, not only vertex/connectivity carriers. A tetrahedral smoke
-  retained 2540 bytes against 112 carrier bytes; a 2539-byte cap refused at
-  canonicalization with the original requested/achieved data quantities and
-  cumulative native execution measurements intact. Its permanent consumer
-  regression passes. Source-only STEP sphere import retains both authored pole
-  vertices, and sphere/plate native archives preserve exact model and geometry
-  identity; these do not qualify realized external interchange.
-
-This checkpoint does not mark W02–W15, the mandatory corpus, release qualification
-or the original end-to-end deliverable complete. Resolve each workflow's scientific
-and integration prerequisites before its next long qualification run.
-
-#### Resumed scientific and lifecycle evidence
-
-| Surface | Observed result | Still required |
-| --- | --- | --- |
-| Exact n-ary surface classification | Implicit construction-point ray classification replaces floating winding/trust margins; 63 scoped tests pass with explicit work and native byte refusals | Full source-solid validation remains a separate contract |
-| Native-backed host arrays | Actual 96-byte float64 payload plus 40-byte owner metadata; views remain valid after scope exit, including last-view release on another thread; 20 scoped Python cases pass | Arbitrary NumPy, JAX, device and compiler allocations are not thereby measured |
-| Execution identity and source restoration | Fresh current-default source, transfer, refinement, and separate-process reopen/coarsening complete for the unchanged periodic/material source, 31→35→31 cells, with exact original scientific arrays, source-coordinate banks, routes, columns, regions, and quotient data. Final source content `70f1c8e1…` and lifecycle content `f5afaaff…` use seven members/six dtype banks under unchanged 257-member/16-level/rank-8 defaults; `.tmp/archive_final31_{source_attempt5,refine_attempt2,coarsen_attempt2}.run.json` | Full field/history/PDE and mandatory corpus qualification remain separate; historical larger-limit or earlier native/representation receipts are not the current final receipts |
-| Installed native dependency isolation | Normal-resolver installation outside the checkout realizes native STEP/IGES/BRep box queries and archives, area 22 and volume 6, with no external geometry engines loaded | Final global isolation after all remaining code lands |
-| Earlier native ABI and quality | The matching wheel used for these records binds header contract `17a42093…`, source digest `b4815b31…`, and binary digest `5172440c…`. Both native configurations build; all 17 CTests pass. Twelve selected-edge/pole/resource Python consumers pass, and the unchanged ball-in-box native BRep source plus Gmsh layer consumer passes in 57.354798 seconds after explicit selected-edge paired-cavity closure; `.tmp/native_surface_cavity_build_wheel_attempt1.run.json`, `.tmp/native_surface_cavity_python_consumers_attempt3.run.json`, and `.tmp/gmsh_ball_native_source_layer_after_cavity_attempt1.run.json`. These and earlier decimal-split/115-case records remain preserved under their actual native identities | Later prepared-source changes use the current identities recorded below. Full original reconstruction, statistical sizing, curved-layer, periodic/material, surface, CAD and final isolation gates remain separate; mismatched binaries remain refused |
-| Source-safe native predicates and resource ownership | Independent source banks, geometric subsegment bounds, shared-facet ancestry, real bounded shape refinement, exact-source cavity positivity/empty-ball decisions, and canonical carrier priority have native consumer proof. Native measured allocation counters remain six; two additional conservative host-storage bounds share the original cap without dummy buffers. Full first-party typing and both selector/signature audits are clean | The unchanged complete workflow corpus still requires its own runtime proof; later layer-source changes have focused typing proof and await final integrated checks |
-| Native spatial curve density | Source-breakpoint quadrature and local cumulative-density residuals converge for both sphere-intersection density variants and the meridian. The formerly stagnating sixths root has residual `-1.787426315116441e-16`; all three actual spatial publication consumers pass after owned certainty-mask composition, `.tmp/cad_topology_spatial_consumers_attempt2.run.json` | Full curved CAD partition, sweep, interchange, and physical continuation remain separate |
-| Registered archive authority and dynamic fidelity | Nine self-certified foreign PLC identity/bank/bound cases and four represented/parametric layer query/domain cases refuse at archive admission after genuine original-positive closures. Closed parametric originals retain all six scoped source-face checks; dynamic query numerical leaves are visible and fixed-role/nontrainable, with no static-array warnings. User-approved partition cutover changes whole-container/PyTree/model/receipt representation; `.tmp/archive_final_layer_authority_consumers_attempt7.run.json` | Closed restoration fixtures do not replace original open-wall lateral ancestry or curved W09 acceptance; those retain their original inputs and independent positive gates |
-| Original W14 declared-field campaign | The unchanged resolution-4/capacity-20000/120-second/three-repeat/one-round campaign reports `passed` and `mandatory_workflow_completion: complete`: all uniform, analytic and learned trials complete, all-field reanalysis and learned admission publish receipts, analytic selection continues its solve, and geometry/PDE/transfer FD-duality plus event invalidation pass. Measured lifecycle 71.915896 seconds, wrapper 93.765553 seconds; `benchmarks/native_design_lifecycle.json` and `.tmp/w14_original_prepared_linearization_attempt1.run.json` | Earlier stale-marker and 129.482753-second timeout records remain preserved. Full h/p/metric corpus and final release evidence remain separate. Learned had higher observed cost and physical error than both baselines in this single ordered campaign; no superiority/generalization claim |
-| Original C0 mixed-sketch extrusion | Authoritative knot-stratum interpolation closes the original native tessellation; source-u knot partition then corrects the Green measure defect from 1.330178878851034 to 1.3298672286276014 against independent analytic volume 1.3298672286269282. All seven independent signed-face comparisons pass. The unchanged default-tessellation/source-measure/save-load/no-external-kernel consumer passes in 564.4084 seconds under its original 600-second deadline, with exact model/source identities and restored-volume equality; `.tmp/cad_topology_green_original_source_measures_after_syntax_attempt1.run.json` and `.tmp/cad_topology_mixed_extrusion_green_after_attempt1.run.json` | Three original interval warnings remain visible. Fine/coarse reported error zero is not an outward integral certificate. Other CAD intersections, curved partitions, periodic realized interchange and the captured source-distance tail still require their separate original gates |
-| Compatible nonnested transfer and second-order entity transforms | Eight original independent contracts pass under `-n auto`: all 24 tetrahedral order-two circulation base transformations, shared tetra/hex moment identity, arbitrary RT/BDM divergence moments, realizable 3D curl companions and transpose pairing, and incompatible-family refusal. Direct public native common-refinement/compiled transfer smoke passes for 74 circulation and 144 full-flux DOFs: affine reproduction errors 6.22e-15 and 4.77e-15, transpose errors 7.11e-15 and 6.66e-16; `.tmp/w08_compatible_original_moment_contracts_attempt1.run.json` and `.tmp/w08_compatible_public_smoke_attempt1.json` | Coverage bounds remain explicit (1.02e-10); 3D curl commutes with the realizable discrete curl-image companion, not an arbitrary discontinuous cellwise projection. This closes the scoped compatible-transfer/entity-transform item, not general curved nonnested remeshing, periodic fields or the all-state PDE corpus |
-| Original curved-layer periodic source | Constructor-authored missing root period descriptor and current source archive pass in 271.958167 seconds with original physical bits/columns/intervals retained. The targeted original facet-18 orbit diagnostic completes in 158.15742 seconds; bottom vertices agree exactly, but original top traces retain x residuals -101121/2361183241434822606848 and -6620711477/77371252455336267181195264 under period-x = 1. `.tmp/layer_root_periodic_declaration_attempt1.json` and `.tmp/layer_first_periodic_trace_attempt1.json` | User explicitly chose to preserve the original source and strict periodic semantics. This original positive gate is blocked by mathematical source incompatibility; no rounding, source revision, tolerance waiver or false acceptance is permitted. Independent quality/resource/archive obligations remain actionable |
-| W10 exact embedding work | After actual shared face-expression power preparation and eleven independent contracts pass, original attempt 10 still certifies the 1,952-cell source embedding at 1,958,596 cumulative work but refuses coverage at 2,000,000 completed units with 2,000,002 requested under the unchanged 2M-work/81,920,000-byte limits. Peak storage remains 33,819,669 bytes; actual retained storage increases to 27,204,533 bytes as more complete face data is retained. `.tmp/coordinate_face_composition_contracts_attempt1.run.json` and `.tmp/coordinate_original2m_source_target_attempt10.ledger.json` | Source support/publication, the 15,616-cell target, Q1 oracle, field/history/archive/coarsening remain unreached. Nineteen later ownership/action contracts and a compiled source-map smoke close their scoped invariants, not this workflow. Attribute each actual preparation key/work delta before a performance rewrite; two aggregate scope calls do not establish duplicate full traversal, and genuine Jacobian work remains charged. |
-| Current exact source-key sharing | Per-key attribution observes 7,837 bank/key calls and 188,088 charged coefficient visits, including a second traversal inside multi-affine corner preparation. The validated complete bank/key now feeds corner construction directly. Eight host/exact-signed-bank/source-basis/changed-source/reference-map contracts pass in 29.69 seconds; the unchanged original source runtime measures exactly 46,848 fewer visits, embedding certified at 1,911,748 work, `.tmp/native_exact_source_key_sharing_contracts_attempt1.run.json` and `.tmp/coordinate_original2m_source_target_after_key_sharing_attempt1.run.json`, wrapper 28.570325 seconds | Coverage still refuses at 1,999,999 completed with 2,000,005 requested under the original 2M/81,920,000-byte limits; retained storage 27,617,580, peak 36,818,453 bytes. Genuine Jacobian work remains charged. The 15,616-cell target and physical field/history/archive continuation remain unreached; this measured sharing is not full W10 acceptance |
-| Original envelope source archive | Original resolution-4/capacity-20000 raw sheet and wrapping policy publish their complete source closure and reopen in a separate process under unchanged default 257-member/16-level/rank-8 archive limits. Every raw vertex/triangle/feature value, policy, carrier, repaired model/realization, PLC binding and repair theorem identity is preserved; content `cbbe0bd1…`. Producer/cold wrapper times are 19.037107/18.958237 seconds; three independent repair-bound/topology-forgery and source-bound contracts pass in 29.37 seconds. `.tmp/w05_original_envelope_source_archive_produce_after_identity_attempt1.run.json`, `.tmp/w05_original_envelope_source_archive_cold_after_json_boundary_attempt1.run.json`, `.tmp/w05_envelope_archive_theorem_contracts_attempt1.run.json` | This is source-only archive completion, not the full W05 volume/field/PDE/adaptation lifecycle. Complete registered-part validation and original exact successor geometry/continuation remain separately required. Diagnostic-script owner-field and tuple/JSON-boundary failures remain preserved |
-| Current original image sizing and native cavity ownership | Actual first-divergence attribution proves a non-compound source-witness insertion admits 3 old/6 predicted binary children but legitimately commits a 9-old/16-new native conflict cavity. Source-aware prepared inspection/commit fixes admission, retains the original source fraction and generation, and uses actual ambient native buffers. Matching C ABI `f52d53c8…` wheel builds; two affected CTests pass in 1.51 seconds. The unchanged size-two/capacity-4096/target-1/default-16-pass/zero-tolerance request now completes every metric pass and reaches certification/compliance with every independently counted committed edge incidence correct; `.tmp/native_prepared_source_split_build_attempt1.run.json` and `.tmp/native_image_metric_actual_prepared_cavities_attempt1.run.json`, wrapper 78.536585 seconds | Final honest `COMPLIANCE_FAILED`: p50 0.9814366945225572 and p95 1.1130049976183884 still differ from target 1. Sizing convergence and full image/Neurofluid transport remain open. Original source, schedule, controls and resource limits stay unchanged; no tolerance waiver or replay of unchanged failure. |
-| Current owning-quantile proposal and prepared work | Four independent one-ULP crossing, forward/reverse padding and linear-interpolation cases pass in 34.70 seconds. Global proposals now use the owning requested linear quantiles, not a frozen/full equal-edge band. Native stored linearization retains the primal sort permutation; actual derivative actions reuse its gathers/scatters. The unchanged original request reaches its owning compliance check after the corrected accounting in 62.147456 seconds with 73,320,354 cumulative metric work (71,198,726 host, 2,121,628 native), `.tmp/native_image_owning_quantile_contracts_attempt1.run.json` and `.tmp/native_image_metric_prepared_sort_accounting_attempt1.run.json` | Final `COMPLIANCE_FAILED`/stalled after 12 passes: p50 0.9999768301466239 and p95 1.2134051921683116. Actual supporting edges have movable source tangents; no incompatibility theorem is inferred from a fixed corner. Preserve original LM controls and zero tolerance; inspect the retained last solve and native admission before another full run |
-| Exact source/storage ownership and full P1 coefficient actions | Nineteen independent alias/lifetime/atomic-quota/live-scope/full-weight/source-cache/physical-measure/shared-incident contracts pass with `-n auto` in 30.69 seconds. Direct compiled full-weight tetrahedral physical map/JVP matches independent rational references with unchanged source coefficients; an actual ended native scope retains work/memory and explicit logical-unmanaged JAX evidence, `.tmp/native_source_ownership_contracts_attempt1.run.json` and `.tmp/native_source_ownership_smoke_attempt1.run.json`, smoke wrapper 20.831721 seconds. | This does not establish W10's original complete source/target work gate or Packed direct/device/collective/archive lifecycle. General Cartesian interpretation of nonunit coefficient rows and arbitrary curved-source extension remain refused. |
-| Current bounded-source inspection and atomic publication | The original decimal RNE witness exposes an existing complete-star route that generic conflict preparation can refuse. Direct and inspected star routes now share source/protection/surface/work admission; inspection retains the exact finite 1-old/2-new cavity under its original allowance. Actual preview→commit smoke preserves original coordinates and certifies deviation 5.721958498152808e-17 against 1e-12, wrapper 18.551968 seconds. Eight prepared/direct/source-bound/fixed-source/unauthorized-carrier contracts pass in 28.57 seconds; two affected CTests pass after the matching wheel rebuild. Header ABI `f52d53c8…`, current source `16474257…`, binary `c069d833…`; `.tmp/native_prepared_source_star_build_after_nested_type_attempt1.run.json`, `.tmp/native_prepared_rne_source_smoke_after_reporting_fix_attempt1.run.json`, `.tmp/native_prepared_source_star_contracts_attempt1.run.json` | Raw smoke memory is measured; whole-operation work counts are explicitly incomplete. Original image sizing, broad refinement and final isolation remain separately required; this scoped proof does not relabel the prior image compliance failure |
-| Direct and scheduled source-segment relocation | The original right-tetrahedron direct move to exact parameter 0.375 remains covered. Automatic improvement now generates bounded source-line candidates and commits a genuine physical-quality improvement while preserving original coordinates, source-chain ancestry, facet planes/areas, region volume and positive orientation. The current matching-wheel original multiface, vertex-removal, protected-vertex and scheduled-curve consumer smoke passes all four cases; the vertex-removal minimum remains unchanged | This scoped schedule/source proof does not qualify the complete material/cavity lifecycle, public resource declarations, broad W03 corpus or final robustness |
-| Original periodic sparse hard-solve admission | After causal sparse Gram/block-inverse, native failure, sticky quota and warning-free affine BVH contracts, the full original source/request/options inventory and actual ended native scope are observed. Original attempt 11 preserves every scientific array and source identity but refuses before hard polishing: proposal work 18,441,298 plus admitted hard bound 39,324,230 exceeds the unchanged local remaining 21,394,151; root remaining 22,518,190 is not a replacement local allowance. Wrapper 21.585075 seconds; `.tmp/periodic_restart_material_sparse_schur_attempt11.run.json`. Ended root work is `[18441810, 0, 0, 0, 0, 0]`, managed peak 37,420 bytes and host-storage upper peak 8,210,286 bytes | No hard solve, exact placement, publication, field/PDE or archive positive follows from this refusal. Whole-work instrumentation remains incomplete. Native sparse schedule and scientific graph preparation optimization must fit original controls and both actual allowances |
-| Original W11 polyhedral lifecycle | Native material-L generation, certified canonical adaptation, physical/history rebind, conservative overlap remap and continued mimetic diffusion pass: left inventory 4→4, right 5→5, physical error 1.0658e-14 against 1e-7, 20.663169 seconds, 63,350 logical retained bytes; artifact 5864 | Source construction still reports cavity/query/scratch guarantees as unenforced; broader quality/corpus/scaling and final release checks remain separate |
-| Original W13 lifecycle | Full unchanged resolution-4, three-repeat, two-motion workflow passes in 105.289781 seconds under the 120-second/0.05 gates: conservative density 72→72, material inventories 18 each, history defect 5.684e-14, both accepted-boundary/PDE transitions and rollback, 22,769,635-byte checkpoint, source-authorized restart/reprepare, and continued-versus-uninterrupted PDE error zero; artifacts 5894/5903 | Scientific ambiguity counts 2/1 remain explicit; final global checks and broader corpus/scaling claims remain separate |
-| Fresh original W12 lifecycle | One fresh two-producer → one-process restart run passes native generation, refine/coarsen/re-refine, GRAPH, all-role checkpoint, cold source recertification/repack/rearchive and continued FE/FV; all four hot/cold field errors are zero, essential masks exact, nine IDs/clocks/cursors preserved, both tamper proofs refuse; FV updates all eight cells with full-component inventory drift 5.551115123125783e-19 | Final global release checks and broader scaling claims remain separate |
-
-The final W12 run finished in 964.676739 seconds under its unchanged
-3600-second deadline. Its complete record is
-`benchmarks/native_distributed_lifecycle.json`; it is not the earlier stitched
-continuation. The process-lifetime resident peak was 13,543,211,008 bytes, not
-a native-managed or device-memory measurement. Compiler/device peaks and
-message payload bytes were not measured. Earlier failed and diagnostic records
-remain preserved, rather than being rewritten as successful outcomes.
-
-The final W13 checkpoint has content identity
-`57623ce5a98a70c933b15085ef2ec18b63e7c0904b82c592e968b05fd8076868`.
-Its measured lifecycle time includes both motions, checkpoint write/read,
-restart preparation, and continued PDE execution. Process startup is separate
-(124.83 seconds overall); earlier source-association and timeout failures remain
-retained evidence, not successful outcomes.
-
-
-### 1.6 Reassessment after stopping all jobs
-
-All running agents and services were stopped at the user's request. Applied
-worktree changes and actual positive/failing records remain intact. The
-architecture is not being restarted: the remaining work combines incomplete
-cross-owner implementation, unverified integrations and original positive
-workflows that still fail. Completed administrative tasks are not a percentage
-of scientific capability completion.
-
-The original mixed-sketch extrusion/archive, ball-in-box source/layer consumer,
-compatible nonnested differential transfer, W12/W13 lifecycles and W14 design
-campaign have actual positive evidence above. They are not requeued merely to
-confirm those observations. The original curved-layer source remains an explicit
-incompatibility refusal under the user's preserve-source decision.
-
-#### Dependency-first implementation sequence
-
-1. **Stabilize shared source and resource ownership.** Complete actual distinct
-   owner retention in `NativeHostStorageWorkspace` and escaped live-workspace
-   accounting in `CoordinateEnclosureBudget`. Release discarded per-node
-   composition/Bernstein workspaces while retaining genuinely live frontier
-   charts and source banks. Reuse complete source preparation across embedding,
-   face traces and coverage, keyed by explicit scientific identity. W10's small
-   face-sharing change does not resolve the dominant original 2M-work failure.
-2. **Close packed scientific lifecycles before dependent campaigns.** Complete
-   approved 6/24 lineage with the actual original `CellMeshingResult` owner,
-   exact source barycentric data and dynamic nontrainable leaves. Direct,
-   device and distributed execution share the original allowance. Collective
-   proof retains untouched compiled outputs and derives actual host inverse
-   publication states; cold archive validation must replay that derivation.
-   Finish envelope source-family admission and independently restored repair
-   bounds, then original volume/field/solve continuation. No affine substitution
-   or parent-source reconstruction from coincident dimensions is permitted.
-3. **Resolve measured numerical blockers.** Finish canonical matrix-free SPD
-   preconditioning for the original periodic hard-constrained solve: all
-   observed MINRES solves exhausted 64 iterations, so finite directions are not
-   convergence evidence. Integrate and verify cumulative image/implicit clocks,
-   measured source-query accounting and complete failure evidence, then capture
-   the original image metric state on its current global route before choosing
-   a p95/preparation correction. Older failures do not identify the newer route.
-4. **Close remaining geometry and cell-family gates.** W02/W03 retain their
-   complete native source and constrained-volume consumers, including positive
-   segment relocation and current schedule-level cavity/removal evidence.
-   W07 closes original curved partitions, Boolean/intersection matrices,
-   periodic source-query attribution and the default STEP/IGES/BRep writer
-   campaign. W08 closes surface/tetrahedral/mixed/polyhedral transitions with
-   exact successor geometry and all state roles. W10/W11 close structured,
-   swept, multiblock, quad/hex/polyhedral original consumers and scaling.
-   Reachable W09/W06 layers, high-order fields, quotient/distributed semantics
-   continue; the preserved incompatible curved-periodic positive is not rerun.
-5. **Qualify and publish the complete reachable contract matrix.** Complete
-   W14 h/p/metric decisions and W15 corpus, independent physical oracles,
-   unchanged resource gates and phase-separated capacity scaling. Update all
-   callers, examples, source inventories, current recipe identities, docs,
-   changelog and generated API/capability data. Finish typing/selector/signature
-   audits and dependency-isolated installed execution after final integration.
-
-Implementation uses bounded ownership slices, not another broad feature fan-out.
-Every shared file has one integration owner. Numerical windows are serialized;
-long original workflows follow causal fixes and prerequisite proof, never a
-different input, higher allowance, proxy source or relabeled safe refusal.
 
 ## 2. Architecture and nonnegotiable invariants
 
@@ -436,31 +253,33 @@ General all-hex research and singular-CAD investigations start early with bounde
 - Benchmark location, conflict discovery, construction, canonical publication, predicate uncertainty/exact resolution and retained/peak bytes separately over increasing point count, local valence and degeneracy rate. Preserve the existing point-set benchmark baseline.
 - Gate: reusable native topology is not a regression in numerical semantics, deterministic ordering, status or resource behavior; no second numerical substrate is introduced.
 
-The CPU-native execution boundary is `NativeExecutionBudget` in
-`phydrax/_meshcore.py`, backed by the nestable native scope in
+The CPU-native execution boundary is `NativeExecutionScope` in
+`phydrax/_meshcore.py`, opened from `NativeExecutionLimits` (each domain limit
+type lowers itself through one owner method, for example
+`MeshingLimits.native_limits()`) and backed by the nestable native scope in
 `bounded_memory.hpp`. It borrows the existing managed allocation pool. Managed
 allocation counters remain measured; conservative external-host reservations
 share the same cap and have separate live/peak upper-bound evidence.
-Original construction/root-solve work
-units and explicit source-evaluation queries are cumulative; internal geometric
-primitive requests have separate telemetry and native deadline checks, not an
-automatic debit to either original quantity. Separately owned host/JAX source
-batches enter through `charge_native_geometry_queries`. Static pure-solver work
-bounds are admitted without recording them as actual consumption, then actual
-work is charged before candidate commit. Atomic tetrahedral calls narrow and
-restore the original absolute work ceiling, and allocation-free work observation
-remains available after refusal. Native steady-clock exhaustion reports
-`TIMEOUT`, distinct from capacity or scientific refinement failure.
-`NativeExecutionBudget.remaining()` observes original nested work/query/cavity
-minima, available bytes after native allocations and live external-host bounds,
-and the native deadline;
-it never ends, renews or replaces a scope. External local edits bind their actual
-touched-cell sets through `admit_cavity`, sharing the same cap and peak/refusal
-evidence instead of substituting published-cell or fragment counts.
-`current_native_execution_budget` exposes the actual ambient admission owner
-without loading a library, so publication helpers reuse the existing root.
-Native scopes remain creating-thread owned; original request and operation-clock
-metadata belongs to the Python execution wrapper, not this accessor.
+Original construction/root-solve work units and explicit source-evaluation
+queries are cumulative; internal geometric primitive requests have separate
+telemetry and native deadline checks, not an automatic debit to either original
+quantity. A phase reserves its complete upper bound with `scope.batch(...)`,
+counts consumption locally on the returned ticket, and settles actual
+consumption and releases the rest with one native call each way, also on
+exceptions; nested tickets reserve from their parent and worker threads receive
+explicit child tickets. `ticket.native_target()` makes a ticket the charge
+target of native calls on the current thread. A bound that exceeds the remaining
+allowance refuses at admission with the requested, remaining and consumed
+evidence; consumption beyond a ticket's own bound is an estimate defect. Native
+steady-clock exhaustion reports `TIMEOUT`, distinct from capacity or scientific
+refinement failure. `scope.remaining()` returns a `RemainingAllowance` with the
+original nested work/query/cavity minima, available managed bytes after native
+allocations, live external-host bounds and outstanding reservations, and the
+native deadline; it never ends, renews or replaces a scope. Library code receives
+the scope and its coordinate resource view (`CoordinateEnclosureBudget`)
+explicitly; only native FFI owners consult the active scope. Native scopes
+remain creating-thread owned, and the scope owns the request's operation clock
+(`operation_started`).
 
 Exact rational reference-triangle clipping packs coefficients and results in
 actual native-backed host arrays, narrows its local caps to the original live
@@ -1860,7 +1679,7 @@ Execution placement and local slot assignment are reconstruction metadata. Same-
 - Extend proposal, hp transaction/runtime, IGA adaptive and solver topology-event tests; add **proposed new** `tests/unit/meshing/test_solver_aware_decisions.py`.
 - Cases: geometry-error-dominated versus field-error-dominated problems, incompatible p/geometry/family requests, misleading cheap cost estimates, stale learned features, infeasible metrics, event-boundary derivative invalidation, missing state transfer and rejected physical reanalysis.
 - Verify fixed-epoch JVP/VJP and adjoint duality against independent finite differences/analytic cases away from events. At an event, test explicit invalidation rather than an invented smooth gradient.
-- Add **proposed new** `examples/curved_native_transfer.py`, `hp_metric_order_adaptation.py` and a bounded learned-proposal example. Smoke a complete design/solve/adapt/reanalyse loop and inspect accepted physical error, conservation and derivative evidence.
+- Add **proposed new** `examples/curved_native_transfer.py`, a tool-owned h/p/metric qualification campaign, and a bounded learned-proposal example. Smoke a complete design/solve/adapt/reanalyse loop and inspect accepted physical error, conservation and derivative evidence.
 - Benchmark total cost to target error, estimator/decision overhead, topology/transfer/compile reuse, linear iterations/conditioning and peak memory. Compare against uniform refinement and established analytic adaptation before claiming a learned improvement.
 - Gate: decisions improve the preregistered physical objective on mandatory workflows without weakening geometry/state constraints; a learned proposer is only an accelerator of the trusted system.
 
@@ -2044,347 +1863,4 @@ Implementation checkpoints:
 - [Hex-Mesh Generation and Processing: a Survey](https://arxiv.org/abs/2202.12670).
 
 These references guide independent implementation and comparison. They do not transfer another library's guarantees to Phydrax and do not authorize copying incompatible licensed code.
-
-## EXECUTION STATUS — W15 qualification integration
-
-This section records implementation and verification state without changing any
-requirement above. No run, success rate, timing, memory improvement, release
-authorization, or leadership result is claimed here. Integrated execution is
-pending the owning native build, registered routes, and stable caller cutover.
-
-- `tools/_meshing_cases.py` supplies deterministic analytic, source-digested
-  planar-hole/embedded-feature, thin-channel, and cavity/material/internal-curve
-  PLC cases. Deliberate stale-revision and capacity cases are negative cases;
-  their expected refusals never satisfy a positive workflow.
-- `tools/meshing_qualification.py --scenario native-lifecycle` executes native
-  preparation/publication, independent source-domain coverage/global embedding,
-  hard requested sizing/quality and embedded-feature checks, canonical
-  adaptation, actual P1 state transfer and a manufactured diffusion solve.
-  Transferred state seeds the next solve through the correction equation.
-  Failed acceptance or native refusal remains a failed positive case.
-- `--scenario native-corpus` preserves each attempt and the complete thirteen
-  workflow ledger. Presence of the current routine cases does not close the
-  larger mandatory corpus or any missing combined-control workflow.
-- `tools/meshing_benchmarks.py --case native-lifecycle` varies resolution and
-  entity/work capacities, uses isolated repeated attempts with a hard process
-  timeout, and retains failed/timed-out attempts alongside accepted samples.
-  Lowering, compilation, first execution, warmed samples, compiler memory,
-  logical retention, process peaks, backend-reported device memory and
-  end-to-end time to a fixed physical error are separate evidence fields.
-- Optional Triangle comparison is explicitly selected by
-  `--scenario comparison-triangle-lifecycle` or benchmark `--comparison triangle`.
-  It runs Triangle as its primary generation algorithm and the same independent
-  source/control checks and common native adaptation/transfer/solver consumer.
-  It is not a native fallback. Missing Triangle is `missing-dependency`.
-  Matching source/request identities alone do not establish equal construction
-  work/scratch/query guarantees or authorize a leadership comparison.
-- Neurofluid tools provide `--scenario native-generated-transport`: occupied
-  labeled-image source → canonical native result with exact region evidence →
-  Neurofluid admission/re-admission → bulk/network transfer → transport loop.
-  Independent material/interface geometry, local/compartment/total inventory,
-  positivity and host continuous-time physical-error checks accompany native
-  lifecycle identities. Benchmark attempts support hard cancellation; failed
-  preparation, generation and scientific outcomes remain evidence records.
-- Built-in native capability entries bind exact conjunctions rather than a
-  Cartesian product of flags. Source-inspected implementation/admission,
-  mandatory positive completion, independent scientific evidence and
-  release/leadership authorization remain separate facts. Internal capability
-  profile generation fields are being removed through the canonical registry
-  and caller cutover; external provider releases and standards remain explicit
-  boundary metadata.
-
-The following invocations are requested verification commands, **not observed
-results** (run from the worktree with the newly built in-house kernel):
-
-```sh
-JAX_ENABLE_X64=1 python -m tools.meshing_qualification --scenario native-lifecycle --corpus-case planar-hole-feature --resolution 4 --capacity 20000 --timeout 120 --repeats 3 --target-error 0.05 --adaptation-rounds 1
-JAX_ENABLE_X64=1 python -m tools.meshing_qualification --scenario native-lifecycle --corpus-case plc-material-cavity --resolution 4 --capacity 20000 --timeout 120 --repeats 3 --target-error 0.05 --adaptation-rounds 1
-JAX_ENABLE_X64=1 python -m tools.meshing_qualification --scenario native-corpus --resolution 4 --capacity 20000 --timeout 120 --repeats 3 --target-error 0.05 --adaptation-rounds 1
-JAX_ENABLE_X64=1 python -m tools.meshing_benchmarks --case native-lifecycle --corpus-case planar-hole-feature --resolution 2 4 8 --capacity 20000 40000 --repeats 3 --timeout 120 --target-error 0.05 --adaptation-rounds 1
-JAX_ENABLE_X64=1 python -m tools.neurofluid_qualification --scenario native-generated-transport --size 2 --maximum-cells 4096 --maximum-vertices 4096 --oracle-capacity 2048 --steps 5 --dt 0.01 --repeats 3 --target-error 0.05 --balance-tolerance 1e-9
-JAX_ENABLE_X64=1 python -m tools.neurofluid_benchmarks --scenario native-generated-transport --size 2 --maximum-cells 4096 --maximum-vertices 4096 --oracle-capacity 2048 --steps 5 --dt 0.01 --repeats 5 --attempts 2 --timeout 120 --target-error 0.05 --balance-tolerance 1e-9
-```
-
-All thirteen mandatory workflows remain required. In particular, an immersed
-surface area/integral check is not a surface PDE; direct structured construction
-is not independently accepted provider publication; an affine dual-hex example
-is not the complete curved/nonsweepable all-hex corpus; stored partitioned
-arrays are not distributed generation/refine/coarsen/restart proof. Research
-gates for singular CAD arrangements, underspecified defective-surface
-reconstruction and general all-hex remain incomplete until their prescribed
-positive evidence exists. No safe refusal is being relabeled positive
-completion, and no current tooling entry closes an unexecuted owner workflow.
-
-### Subsequent W15 integration state
-
-The canonical `CapabilityProfile` now contains no internal generation argument,
-attribute, serialized field or restoration read. Implemented/admitted native
-conjunctions use actual typed candidate profiles with `released=False`; mandatory
-unclosed combinations remain explicit obligations, not qualified entries.
-Actual constructor and semantic consumers were migrated, including battery
-release/OED identity, commercial MPM/category identity and explicit external HEP
-provider release metadata. Historical signed/generated battery evidence remains
-historical; it cannot be converted into current release evidence by changing
-dates or subject IDs. Generator-owned data requires the owning normal
-regeneration and integrated verification after the source cutover.
-
-Native phase observations now use the implemented execution-only
-`NativeMeshingPhaseMeasurement` callback at provider preparation/execution.
-Drivers preserve only emitted records and actual invocation/work counters.
-Missing phases are unmeasured, not zero; inclusive construction intervals are
-not summed with their contained subphases. The channel does not add timing to
-source, specification, plan, trace, result or scientific identity.
-Runtime records include the actual loaded C-API source digest, loaded binary
-digest and compiled configuration, together with the Python package actually
-imported and driver-source identity; a checkout digest is not used as a
-substitute for a loaded native build.
-
-Two additional registered scientific drivers are available for integrated
-execution. The surface and benchmark commands below remain separate
-qualification obligations; the original polyhedral qualification is observed
-passing as recorded below:
-
-```sh
-JAX_ENABLE_X64=1 python -m tools.meshing_qualification --scenario native-surface-pde --resolution 4 --capacity 20000 --timeout 120 --repeats 3 --target-error 0.05
-JAX_ENABLE_X64=1 python -m tools.meshing_benchmarks --case native-surface-pde --resolution 2 4 8 --capacity 20000 40000 --repeats 3 --timeout 120 --target-error 0.05
-JAX_ENABLE_X64=1 python -m tools.meshing_qualification --scenario native-polyhedral-lifecycle --polyhedral-source polyhedral-material-L --resolution 2 --capacity 20000 --timeout 120 --repeats 3 --target-error 1e-7
-JAX_ENABLE_X64=1 python -m tools.meshing_benchmarks --case native-polyhedral-lifecycle --polyhedral-source polyhedral-material-L polyhedral-stretched-L --resolution 2 4 --capacity 20000 40000 --repeats 2 --timeout 120 --target-error 1e-7
-```
-
-The surface driver performs an actual zero-mean scalar H1 Laplace–Beltrami
-solve and independent radial-lift error measurement, not an area substitute.
-Its hard size/source-deviation requests are distinct from any earlier
-soft-sizing source-owner smoke and require their own run. It explicitly does
-not qualify surface state adaptation. The polyhedral driver uses the native
-two-material nonconvex power-cell route and canonical organized-source
-regeneration, preserving source patch and material organization. Exact-source
-common refinement transfers material inventory; an accepted-boundary
-composition rebind publishes both physical state and history before continued
-mimetic FV response. VEM and FV consume the same exact geometry owner.
-The unchanged original command above passed with complete mandatory workflow
-completion in 20.663169 seconds against the 120-second bound, physical error
-`1.0658141036401503e-14` against `1e-7`, material inventories `4 → 4` and
-`5 → 5`, and zero consumed inventory defect. Its actual published physical/
-history receipt is
-`b4925d48578e356b61cc7e12276cb03d72f153908287690c67b7cc7a0beba702`.
-Resolution 2, entity capacity 20000 and three repeats were not changed.
-Exact overlap work admission bounds actions before execution and charges
-executed actions, not hypothetical plane-triple solves rejected by exact
-separation. Soft-size requests, site derivatives, the larger benchmark corpus
-and release/leadership claims remain explicit nonclaims.
-
-Exact positive prerequisites remain: represented planar/PLC/envelope
-associations need an owning authority-aware native lineage transfer rather
-than the current B-Rep-only admission; implicit volume extraction must publish
-a source-conforming result rather than a preparation workset; periodic
-provider publication must be joined to orbit-preserving field-state/solver
-closure; native distributed generation/refine/coarsen/repartition/checkpoint/
-changed-placement restart must be joined to continued owner-local physics;
-and design-state provider realization must be joined to accepted physical
-reanalysis. Native CAD and repaired-envelope consumer helpers are retained
-unregistered until their exact source/adaptation prerequisites and positive
-runtime evidence are available. These facts keep the complete thirteen-workflow
-gate incomplete rather than weakening or relabeling its requirements.
-
-### Active mandatory caller joins and observed hard-control outcome
-
-The earlier missing-driver ledger is superseded by concrete callable wiring:
-`native-cad-lifecycle`, `native-envelope-lifecycle`,
-`native-periodic-lifecycle`, `native-design-lifecycle`,
-`native-family-lifecycle`, `native-hybrid-lifecycle`,
-`native-implicit-lifecycle`, `native-distributed-lifecycle`,
-`native-overset-lifecycle` and `native-image-lifecycle` are registered beside
-the planar/PLC, surface PDE and polyhedral drivers. Their actual owning
-generation, certification, source/state transfer, solver, motion or restart
-APIs are called; scientific-owner gaps remain failed positive evidence, not
-manufactured success. In particular the restricted implicit volume driver now
-consumes the implemented native `CellMeshingResult` publication, never a
-preparation workset. The periodic caller consumes owner-supplied coarsening
-witnesses and compatible transfer. The overset caller generates both native
-parts and retains original source, request, certificates and actual accepted
-state through its source-aware motion and scientific archive.
-
-The current explicit verification library is
-`.tmp/build/ResumeIntegration/libphydrax_meshcore.dylib`; the installed virtual
-environment copy was reported stale. Select the current library explicitly,
-not by silently using the installed copy. A bounded per-workflow invocation is:
-
-```sh
-JAX_ENABLE_X64=1 PHYDRAX_MESHCORE_LIBRARY="$PWD/.tmp/build/ResumeIntegration/libphydrax_meshcore.dylib" .venv/bin/python -m tools.meshing_qualification --scenario native-periodic-lifecycle --periodic-case skew-lattice --resolution 4 --capacity 20000 --timeout 120 --repeats 3 --target-error 0.05 --adaptation-rounds 1
-```
-
-Additional frozen controls include CAD `--cad-format step|iges|brep`, periodic
-`--periodic-case skew-lattice|skew-material-feature`, family
-`--family-case dual-quad|dual-hex|transfinite-quad|multiblock-quad|sweep-hex`,
-hybrid `--layer-count`, `--first-thickness`, `--layer-growth`,
-`--geometry-order`, implicit radius/fidelity/discovery/root/refinement
-capacities, overset motion/wall/donor/overlap capacities, and actual distributed
-placement/halo/cavity/slack/checkpoint controls. Design decisions consume
-explicit `--maximum-memory-bytes` and `--maximum-condition`. Qualification
-and isolated benchmark drivers expose the same controls; the benchmark
-enforces a hard process deadline and retains every failed/timed-out sample.
-The corpus orchestrates the available thirteen workflow categories in
-isolated bounded attempts rather than omitting unverified caller joins.
-
-`native-distributed-lifecycle` is a two-role scenario. A single-process
-invocation with a fresh shared `--distributed-checkpoint-root` launches
-`--distributed-processes` producer processes through the canonical local
-launcher with the same frozen request; each producer joins the distributed
-runtime from the PHYDRAX rank environment, owns exactly one accepted
-partition, generates the native unit square, accepts Morton-partitioned
-owner-local refine/coarsen/refine epochs, projects every physical role into
-its stable-ID allocated history bank, replays a native graph restart
-repartition, recovers all roles across it, and publishes its process-local
-checkpoint. The invoking process then restores every owner with the changed
-`--restart-parts` owner count, recertifies the retained source, repacks the
-allocated forest, recovers every role, rearchives the closure, and continues an
-FE Dirichlet solve and an owner-local FV advance from the reopened archive:
-
-```sh
-JAX_ENABLE_X64=1 PHYDRAX_MESHCORE_LIBRARY="$PWD/.tmp/build/ResumeIntegration/libphydrax_meshcore.dylib" .venv/bin/python -m tools.meshing_qualification --scenario native-distributed-lifecycle --resolution 1 --distributed-processes 2 --distributed-parts 2 --restart-parts 1 --distributed-checkpoint-root /shared/fresh-root
-```
-
-The archived closure uses only the canonical source-closure roles: accepted
-data carries exactly `fields` and `adaptation_results`. The accepted adaptation
-policy is the retained result's `policy`; earlier topology epochs are reached
-through the collective target's evidence chain, not a second accepted-data
-role.
-
-**Observed qualification failure, not completion:** the hard
-`native-surface-pde` unit-sphere request at resolution 4/capacity 20000, h = 0.4,
-median relative tolerance 0.5, maximum edge 0.6 and two-sided deviation 0.04
-failed `target_size_p50` compliance before the PDE. The measured median edge
-was 0.17352029242384795, below the required 0.2; maximum edge
-0.39018064403225655 and rigorous deviation bound 0.03974638772319786 satisfied
-their separate requests. The run reported 149 refused points and incomplete
-refinement. Its actual callback/source/binary/configuration evidence was
-retained. The hard requests were not relaxed, and the earlier soft-sizing
-sphere/PDE smoke is not credited to this hard profile. The sizing owner was
-given the failed-case evidence for correction. No leadership, release,
-complete positive corpus, or complete thirteen-workflow outcome follows.
-
-### Observed native overset routine and remaining physical failures
-
-The authorized **post-cutover** `native-overset-lifecycle` routine completed
-with exit 0 at resolution 1, capacity 20000, two motion steps, one warmed
-repetition, timeout 120 seconds and wall/donor/overlap pair capacities 500000.
-Its actual native sources, strict carrier publication, wall/donor refresh,
-prepared field queries, refused and accepted composition rebinds, carried-state
-Poisson updates, canonical source/request/physical-declaration archive and
-restored-owner continuation were exercised. The measured residual/boundary
-QoI was 1.9152779376365187e-13 and restart continuation error was zero. This is
-**not** an analytic L2 error or a conservation claim for moving FE interpolation.
-The separately certified stationary cell-average overlap profile had zero
-inventory defect.
-
-Evidence: `.tmp/overset-native-lifecycle-field-declarations.json`.
-The canonical checkpoint contained 2307014 bytes with content identity
-`d89a740e03dd12cf2b265a69cf72f8e8940b8cd413e24d1c80b489ff9b83477b`.
-The loaded native source digest was
-`41d0a0b9363753d3a590b52ff08dfc62c9d5e9633c745ffdcbb93d97e3e1a9bc`,
-binary digest
-`52528cf4862bec13622164ea1c89383f8dea9cd83af8cf2ad7aef0ac4a5d8e93`.
-The single routine measured 85.2645241250284 seconds end-to-end and a
-2851356672-byte process-lifetime peak; neither is a repeated comparative
-benchmark or a leadership result. Earlier residual and nonfinite-static
-archive failures remain historical evidence; their owning policy/codec fixes
-did not relax the independent acceptance threshold or strip carrier evidence.
-
-The repaired-envelope driver binds the actual owning source-table and
-represented-PLC association transfer. An earlier changed-kernel attempt
-achieved strict publication/global embedding/domain coverage, measured volume
-0.1515250772265342 and complete 1052/1052 source-facet coverage before failing
-the scalar H1 metric admission. Subsequent owning evidence (`artifact://2590`)
-reports epoch-zero H1 solver success after 111 iterations and independent L2
-error 0.001597291864532493, followed by a real `NATIVE_MIXED` adaptation refusal:
-no family-preserving template matches all oriented shared-face subdivisions.
-The frozen 100000-cell cap remains unchanged; global 24-child subdivision is
-not an admissible replacement. The native face-preserving template owner must
-close that prerequisite before the transferred-state solve can be credited.
-
-Dual-hex source publication now proves actual canonical Q1 point, whole-edge,
-whole-facet and whole-cell PLC membership against explicit source role/index
-authorities before issuing fresh exact associations. A genuine dyadic rigid
-translation of the current resolution-2, 712-cell source preserved authority/incidence tables
-and domain-region identities, proved coordinate-polynomial coefficient identity,
-and passed fresh geometry/coverage/stratum support plus an independent strict
-complete-association watertight audit. The public volume transition dispatch also
-passed an actual tetrahedral source translation with all four exact, complete
-role/index association tables and parent provenance preserved. Source-class
-revalidation also passes the actual source audit validity object and exact
-accepted certification-request limits together with its embedding certificate
-to the canonical prepared-evidence owner. An actual native tetrahedral source
-and fresh-target identity-propagation smoke passed all four complete exact
-strata with this paired evidence. These observations
-do not credit the unchanged dual-hex lifecycle: the original resolution-2,
-712-cell scalar PDE error 0.08438428094646884 misses the frozen 0.05 target.
-A separate resolution-4 initial solve reached 0.03497457 but hit native
-mixed-template closure at the first refinement epoch. Mixed refine/coarsen and accepted distributed
-reconstruction therefore remain open thirteen-positive-workflow gates.
-
-Owner-local planar PLC association transfer consumes current canonical global
-embedding and domain-coverage premises through the `embedding` and `coverage`
-keywords of `PlcAssociationTransfer.propagate`. Both certificates must bind the
-actual target coordinate map, authoritative domain/region identities and the
-collective partition evidence; local polynomial/stratum support still runs.
-Accepted source classes consume their current coverage theorem rather than
-rerunning whole-domain coverage on a partial owner carrier. An actual native
-planar source smoke passed all three complete exact association tables with
-the explicit target premises and rejected a source certificate presented for
-translated target coordinates.
-
-`geometry._collective_domain_coverage.certify_collective_premises` is the
-fresh-target producer of those premises. Every owner calls it collectively with
-its owner-local target, the original serial affine source with its certified
-embedding/coverage and region request, and the restored numerical epoch. It
-checks the complete disjoint dyadic partition, exact root restriction charts,
-reciprocal facet incidence and source-boundary contact on the logical banks,
-certifies the actual target maps with the canonical validity owner on every
-partition, and transports exact root integrals; bank failures refuse. In an
-actual two-process native planar refine, both owners obtained certified
-validity, embedding (4 cells, 4 boundary facets) and coverage (achieved 1.0,
-error 0.0, no subdivision) bound to the storage partition evidence. This does
-not credit the cold distributed physical continuation gate.
-
-### Observed hard surface PDE correction
-
-The unchanged resolution-4/capacity-20000 unit-sphere workflow now completes
-with hard h = 0.4, maximum edge 0.6, median relative tolerance 0.5 and two-sided
-deviation 0.04. The accepted carrier has 216 vertices and 428 triangles; cell
-validity, topology, quality, global embedding and source fidelity are certified.
-Both directed deviation bounds are 0.02596559454955228. The actual zero-mean
-Laplace–Beltrami solve has radial-lift L2 error 0.04183681101707906 against the
-unchanged 0.05 target, mean 2.2451120315840452e-17 and successful native solver
-status after 74 iterations.
-
-The phase-diagnostic run measured 45.18909987504594 seconds for the workflow
-and 93.05 seconds for the process including import and diagnostic instrumentation.
-Lowering took 4.042996791074984 seconds, compilation 2.107307124999352 seconds;
-three warmed solves took 0.061905583017505705, 0.053019083105027676 and
-0.061366792069748044 seconds. Compiler temporary/output/argument bytes were
-1262248/3766/45588, logical retained bytes 622593 and process-lifetime peak RSS
-1783578624 bytes. These are one run's observations, not comparative leadership.
-Evidence is `.tmp/native_surface_pde_postfix.json`; the loaded source/binary
-digests are retained in that record. A preceding concurrent invocation timed
-out at the hard 180-second launcher limit without a result; that failure remains
-historical evidence. This positive PDE case does not close surface adaptation,
-the full curved/trimmed corpus, or the thirteen-workflow completion gate.
-
-### Observed resumed periodic hard-control refusal
-
-The documented skew-lattice periodic lifecycle at resolution 4, capacity 20000,
-three warmed repetitions and one adaptation round fails specification
-compliance before its solver. The unchanged hard target is 0.25 with maximum
-edge 0.375. Measured median and 95th-percentile edges are
-0.2576941016011038 and 0.3125; minimum/maximum edges are 0.25/0.3125.
-Quotient measure is 0.9999999999999999, coordinate-lift residual is zero, and
-the native embedding check uses nine images and 37 candidate pairs. Those
-source checks do not establish target-statistics compliance.
-
-The failed workflow takes 4.505857417010702 seconds and reports a
-1232699392-byte process-lifetime peak. Native phase observations and loaded
-source/binary/configuration identities remain in its failure record. The
-periodic owner must realize the original hard request through bounded,
-orbit-preserving generation/adaptation; no seed replacement, tolerance
-increase or soft-control downgrade is credited as a correction.
 

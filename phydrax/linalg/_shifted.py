@@ -23,7 +23,7 @@ from .._strict import StrictModule
 from ..typing import parse
 from ._certificates import SpectralInterval
 from ._operators import AbstractLinearOperator
-from ._spaces import _coordinate_dtype
+from ._spaces import coordinate_dtype
 from .backends._native_shifted_krylov import streaming_shifted_lanczos
 from .krylov import (
     KrylovBreakdownStatus,
@@ -80,7 +80,7 @@ class ShiftedLinearSystemFamily(StrictModule):
             values.dtype, jnp.bool_
         ):
             raise TypeError("shifts must contain real or complex numbers.")
-        dtype = jnp.result_type(_coordinate_dtype(operator.source), values.dtype)
+        dtype = jnp.result_type(coordinate_dtype(operator.source), values.dtype)
         values = _validate_finite_shifts(values.astype(dtype))
         if spectral_interval is not None:
             if not isinstance(spectral_interval, SpectralInterval):
@@ -918,7 +918,7 @@ def _shifted_cost(
     count = family.num_shifts
     source_size = family.operator.source.size
     output_dtype = jnp.result_type(
-        _coordinate_dtype(family.operator.source),
+        coordinate_dtype(family.operator.source),
         family.shifts.dtype,
     )
     coordinate_itemsize = jnp.dtype(output_dtype).itemsize
@@ -998,7 +998,7 @@ def _validate_operator(operator: AbstractLinearOperator, /) -> None:
         raise TypeError("operator must be an AbstractLinearOperator.")
     if operator.batch_shape or not operator.source.compatible(operator.target):
         raise ValueError("Shifted families require an unbatched endomorphism.")
-    if not jnp.issubdtype(_coordinate_dtype(operator.source), jnp.inexact):
+    if not jnp.issubdtype(coordinate_dtype(operator.source), jnp.inexact):
         raise TypeError("Shifted families require real or complex coordinates.")
 
 
@@ -1070,7 +1070,7 @@ def _streaming_lower_evidence(
         and self_adjoint_evidence in ("construction", "transformed", "verified")
         and semidefinite_evidence in ("construction", "transformed", "verified")
     )
-    real_dtype = jnp.empty((), dtype=_coordinate_dtype(operator.source)).real.dtype
+    real_dtype = jnp.empty((), dtype=coordinate_dtype(operator.source)).real.dtype
     return (
         jnp.asarray(0.0, dtype=real_dtype),
         available,

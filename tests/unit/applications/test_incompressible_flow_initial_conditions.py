@@ -193,7 +193,7 @@ def test_vortex_patch_against_independent_disk_quadrature() -> None:
     assert omega[0, 0] == 0
 
 
-def test_piecewise_boxes_against_midpoint_quadrature() -> None:
+def test_piecewise_boxes_against_independent_cell_quadrature() -> None:
     space = _space(9, length=2.0)
     state = (
         PeriodicFlowInitialMeasure(
@@ -203,17 +203,32 @@ def test_piecewise_boxes_against_midpoint_quadrature() -> None:
         .realize(jax.random.key(4), np.array([0], dtype=np.uint32))
     )
     values = np.asarray(state.parameters["cell_values"])[0]
-    n = 1200
-    t = (np.arange(n, dtype=np.float64) + 0.5) / n
-    sampled = values[(np.arange(n) * 3 // n)[:, None], (np.arange(n) * 4 // n)[None, :]]
+    roots, weights = np.polynomial.legendre.leggauss(16)
+    x = (np.arange(3, dtype=np.float64)[:, None] + (roots + 1) / 2) / 3
+    y = (np.arange(4, dtype=np.float64)[:, None] + (roots + 1) / 2) / 4
     omega = _vorticity(space, state.velocity[0])
     modes = [np.asarray(a.modes.mode_numbers) for a in space.axes]
     for i, j in [(1, 0), (0, 2), (2, 3), (8, 1)]:
-        expected = 2 * np.mean(
-            sampled
-            * np.exp(-2j * np.pi * (modes[0][i] * t[:, None] + modes[1][j] * t[None, :]))
+        phase = np.exp(
+            -2j
+            * np.pi
+            * (modes[0][i] * x[:, None, :, None] + modes[1][j] * y[None, :, None, :])
         )
-        np.testing.assert_allclose(omega[i, j], expected, atol=2e-6)
+        integrand = (
+            values[:, :, None, None]
+            * phase
+            * weights[None, None, :, None]
+            * weights[None, None, None, :]
+        )
+        expected = 2 * np.sum(integrand) / (4 * values.size)
+        # Integrate within each constant cell, never across its discontinuities.
+        # The 16-point Gauss remainder is below 7e-29 for these modes/values.
+        # gamma_(term count + 32) bounds reduction and per-term float64 work.
+        operations = integrand.size + 32
+        epsilon = np.finfo(np.float64).eps
+        gamma = operations * epsilon / (1 - operations * epsilon)
+        allowance = 2 * gamma * np.sum(np.abs(integrand)) / (4 * values.size) + 7e-29
+        np.testing.assert_allclose(omega[i, j], expected, rtol=0, atol=allowance)
     np.testing.assert_allclose(state.removed_mean_vorticity, np.mean(values), atol=1e-15)
 
 

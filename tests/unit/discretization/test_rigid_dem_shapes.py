@@ -498,7 +498,10 @@ def test_nonspherical_periodic_geometry_is_refused_before_state_publication(
         jnp.full((3,), 2.0, dtype=jnp.float64),
         periodic_axes=(True, True, True),
     )
-    with pytest.raises(ValueError, match="Periodic.*sphere"):
+    with pytest.raises(
+        ValueError,
+        match=r"PreparedCompliantDEMDynamics\.admit_contact_bindings\.shapes must provide sphere shapes",
+    ):
         _compile(
             _shapes(kind),
             neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(1, box=box),

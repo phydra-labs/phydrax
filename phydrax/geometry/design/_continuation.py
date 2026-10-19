@@ -12,16 +12,21 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...optim import DifferentialEvolutionSearch
-from ...typing import PRNGKey
+from ...typing import checked, ConvertibleToArray, PRNGKey
+from ...units import UnitDefinition
 from .._contracts import CompiledGeometry, GeometrySource, GeometryTolerance
-from ..analytic._operations import BlendCSG, SharpCSG
-from ._constraints import AbstractDesignConstraint, DesignConstraintSystem
+from ..analytic import BlendCSG, SharpCSG
+from ._constraints import (
+    AbstractDesignConstraint,
+    ConstraintSolveResult,
+    DesignConstraintSystem,
+)
 from ._schema import DesignState, ParameterId, ParameterSchema
+from ._search_result import DesignSearchResult
 
 
 class CSGContinuationPolicy(StrictModule):
@@ -40,12 +45,18 @@ class CSGContinuationPolicy(StrictModule):
     ) -> None:
         widths_ = tuple(float(value) for value in widths)
         if not widths_ or any(not isfinite(value) or value <= 0.0 for value in widths_):
-            raise ValueError("CSG continuation widths must be finite and positive.")
+            raise ValueError(
+                f"CSGContinuationPolicy.widths must be finite and positive; got {widths_}"
+            )
         if any(right > left for left, right in zip(widths_, widths_[1:])):
-            raise ValueError("CSG continuation widths must be nonincreasing.")
+            raise ValueError(
+                f"CSGContinuationPolicy.widths must be nonincreasing; got {widths_}"
+            )
         tolerance = float(terminal_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
-            raise ValueError("terminal_tolerance must be finite and nonnegative.")
+            raise ValueError(
+                f"CSGContinuationPolicy.terminal_tolerance must be finite and nonnegative; got {tolerance}"
+            )
         self.widths = widths_
         self.terminal_tolerance = tolerance
         self.policy_id = canonical_fingerprint(
@@ -54,7 +65,7 @@ class CSGContinuationPolicy(StrictModule):
 
 
 class PreparedCSGContinuation(StrictModule):
-    """One fixed smooth topology, terminal sharp topology, and exact state maps."""
+    """Return fixed smooth and sharp topologies with schema-aligned state maps."""
 
     policy: CSGContinuationPolicy
     smooth_geometry: CompiledGeometry
@@ -73,7 +84,7 @@ class CSGContinuationResult(StrictModule):
 
     state: DesignState
     terminal_state: DesignState
-    epoch_results: tuple[Any, ...]
+    epoch_results: tuple[ConstraintSolveResult | DesignSearchResult, ...]
     terminal_residual: Array
     terminal_residual_norm: Array
     sharp_valid: Array
@@ -87,27 +98,32 @@ class _SmoothBuild:
         self.width_ids: list[ParameterId] = []
 
     def convert(self, source: GeometrySource, path: str = "root") -> GeometrySource:
-        if isinstance(source, SharpCSG):
-            feature_id = f"csg-continuation-{path}"
-            width_id = ParameterId(feature_id, "width")
-            self.width_ids.append(width_id)
-            children = tuple(
-                self.convert(child, f"{path}-{index}")
-                for index, child in enumerate(source.children)
-            )
-            return BlendCSG(
-                children,
-                1.0,
-                operation=source.operation,
-                feature_id=feature_id,
-            )
-        if isinstance(source, BlendCSG):
-            raise TypeError(
-                "Continuation input must be sharp; nested BlendCSG is unsupported."
-            )
-        if not isinstance(source, GeometrySource):
-            raise TypeError("CSG children must be GeometrySource values.")
-        return source
+        match source:
+            case SharpCSG():
+                feature_id = f"csg-continuation-{path}"
+                width_id = ParameterId(feature_id, "width")
+                self.width_ids.append(width_id)
+                children = tuple(
+                    self.convert(child, f"{path}-{index}")
+                    for index, child in enumerate(source.children)
+                )
+                return BlendCSG(
+                    children,
+                    1.0,
+                    operation=source.operation,
+                    feature_id=feature_id,
+                )
+            case BlendCSG():
+                raise TypeError(
+                    "CSGContinuation.source must contain sharp nodes; got nested BlendCSG"
+                )
+            case GeometrySource():
+                return source
+            case _:
+                raise TypeError(
+                    "CSGContinuation.source.children must contain GeometrySource values; "
+                    f"got {type(source).__name__}"
+                )
 
 
 def _freeze_widths(
@@ -123,31 +139,36 @@ def _freeze_widths(
     return CompiledGeometry(geometry.kernel, state, tolerance=geometry.tolerance)
 
 
+@checked
 def prepare_csg_continuation(
     source: SharpCSG,
     constraints: Sequence[AbstractDesignConstraint],
     policy: CSGContinuationPolicy,
     /,
     *,
+    coordinate_unit: UnitDefinition,
     tolerance: GeometryTolerance = GeometryTolerance(),
 ) -> PreparedCSGContinuation:
     """Prepare a supported recursive sharp intersection/difference continuation."""
-    if not isinstance(source, SharpCSG):
-        raise TypeError("source must be a SharpCSG intersection or difference.")
-    if not isinstance(policy, CSGContinuationPolicy):
-        raise TypeError("policy must be a CSGContinuationPolicy.")
     constraints_ = tuple(constraints)
     if not constraints_ or any(
         not isinstance(value, AbstractDesignConstraint) for value in constraints_
     ):
-        raise TypeError("constraints must contain design constraint objects.")
+        raise TypeError(
+            "CSGContinuation.constraints must contain design constraints; got empty or unsupported constraints"
+        )
     builder = _SmoothBuild()
     smooth_source = builder.convert(source)
     width_ids = tuple(builder.width_ids)
     if not width_ids:
-        raise ValueError("No supported sharp CSG node was found.")
-    smooth = _freeze_widths(smooth_source.compile(tolerance=tolerance), width_ids)
-    sharp = source.compile(tolerance=tolerance)
+        raise ValueError(
+            "CSGContinuation.source must contain supported sharp CSG nodes; got none"
+        )
+    smooth = _freeze_widths(
+        smooth_source.compile(coordinate_unit=coordinate_unit, tolerance=tolerance),
+        width_ids,
+    )
+    sharp = source.compile(coordinate_unit=coordinate_unit, tolerance=tolerance)
     # Construction validates capabilities and every parameter reference on both epochs.
     DesignConstraintSystem(smooth, constraints_)
     DesignConstraintSystem(sharp, constraints_)
@@ -159,14 +180,21 @@ def prepare_csg_continuation(
     if set(shared) != set(sharp_ids):
         missing = set(sharp_ids) - set(shared)
         raise ValueError(
-            f"Smooth continuation omits sharp parameters: {sorted(map(str, missing))}."
+            f"CSGContinuation.smooth_schema must contain sharp parameters; got missing {sorted(map(str, missing))}"
         )
     smooth_indices = tuple(smooth.schema.index(parameter_id) for parameter_id in shared)
     sharp_indices = tuple(sharp.schema.index(parameter_id) for parameter_id in shared)
     for smooth_index, sharp_index in zip(smooth_indices, sharp_indices, strict=True):
         left, right = smooth.schema.specs[smooth_index], sharp.schema.specs[sharp_index]
-        if (left.shape, left.dtype, left.role) != (right.shape, right.dtype, right.role):
-            raise ValueError("Shared CSG parameter schemas are not exactly transferable.")
+        if (left.shape, left.dtype, left.role, left.unit) != (
+            right.shape,
+            right.dtype,
+            right.role,
+            right.unit,
+        ):
+            raise ValueError(
+                "CSGContinuation.shared_parameters must match shape, dtype, role, and unit; got incompatible schemas"
+            )
     identifier = canonical_fingerprint(
         {
             "kind": "prepared-csg-continuation",
@@ -214,6 +242,7 @@ def _terminal_state(
     return DesignState(prepared.sharp_geometry.schema, values)
 
 
+@checked
 def solve_csg_continuation(
     prepared: PreparedCSGContinuation,
     /,
@@ -221,24 +250,22 @@ def solve_csg_continuation(
     initial_state: DesignState | None = None,
     search: DifferentialEvolutionSearch | None = None,
     key: PRNGKey | None = None,
-    bounds: Mapping[ParameterId, tuple[ArrayLike, ArrayLike]] | None = None,
+    bounds: Mapping[ParameterId, tuple[ConvertibleToArray, ConvertibleToArray]]
+    | None = None,
     solve_options: Mapping[str, Any] | None = None,
 ) -> CSGContinuationResult:
     """Run fixed-width epochs and audit terminal acceptance on sharp geometry."""
-    if not isinstance(prepared, PreparedCSGContinuation):
-        raise TypeError("prepared must be a PreparedCSGContinuation.")
     state = prepared.smooth_geometry.state if initial_state is None else initial_state
-    if (
-        not isinstance(state, DesignState)
-        or state.schema != prepared.smooth_geometry.schema
-    ):
-        raise ValueError("initial_state must match the prepared smooth schema.")
-    if search is not None and not isinstance(search, DifferentialEvolutionSearch):
-        raise TypeError("search must be DifferentialEvolutionSearch or None.")
+    if state.schema != prepared.smooth_geometry.schema:
+        raise ValueError(
+            "CSGContinuation.initial_state.schema must match the smooth schema; got different schema"
+        )
     if search is not None and key is None:
-        raise ValueError("Global continuation search requires an explicit key.")
+        raise ValueError(
+            "CSGContinuation.key must be explicit for global search; got None"
+        )
     options = {} if solve_options is None else dict(solve_options)
-    epoch_results: list[Any] = []
+    epoch_results: list[ConstraintSolveResult | DesignSearchResult] = []
     system = DesignConstraintSystem(prepared.smooth_geometry, prepared.smooth_constraints)
     for epoch, width in enumerate(prepared.policy.widths):
         state = _with_width(prepared, state, width)
@@ -275,7 +302,7 @@ def solve_csg_continuation(
         residual_norm,
         validity.accepted,
         accepted,
-        jnp.asarray(prepared.policy.widths),
+        jnp.asarray(prepared.policy.widths, dtype=jnp.float64),
         prepared.preparation_id,
     )
 

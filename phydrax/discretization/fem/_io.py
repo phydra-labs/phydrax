@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from ..._mesh_file_profiles import resolve_mesh_file_profile
 from ..._publication import publish_bytes
+from ...typing import checked
 from ._generic import FiniteElementDiscretization, FiniteElementRuntimeData
 
 
@@ -25,6 +26,7 @@ _MESHIO_CELL_KINDS = {
 }
 
 
+@checked
 def write_finite_element_field(
     path: str | Path,
     discretization: FiniteElementDiscretization,
@@ -37,14 +39,14 @@ def write_finite_element_field(
 ) -> None:
     import meshio
 
-    if not isinstance(discretization, FiniteElementDiscretization):
-        raise TypeError("discretization must be FiniteElementDiscretization.")
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     if discretization.dof_maps[field_index].association not in (
         "vertex",
         "vertex_edge",
     ):
-        raise ValueError("Point-data export currently requires an H1 nodal field.")
+        raise ValueError(
+            "write_finite_element_field.configuration must provide an H1 nodal field; got Point-data export currently requires an H1 nodal field."
+        )
     values = discretization.field_spaces[field_index].vector_space.validate(coefficients)
     realized = discretization.default_runtime if runtime is None else runtime
     cells: list[tuple[str, npt.ArrayLike] | meshio.CellBlock] = [
@@ -66,7 +68,9 @@ def write_finite_element_field(
         direction="write",
     )
     if profile.carrier != "single-file":
-        raise ValueError("Finite-element field export requires a single-file profile.")
+        raise ValueError(
+            "write_finite_element_field.configuration must provide a single-file profile; got Finite-element field export requires a single-file profile."
+        )
     with TemporaryDirectory(prefix="phydrax-fe-field-") as temporary:
         staged = Path(temporary) / destination.name
         mesh.write(staged, file_format=profile.meshio_format)
@@ -84,7 +88,9 @@ def write_finite_element_field(
             or field_name not in decoded.point_data
             or not np.array_equal(decoded.point_data[field_name], point_values)
         ):
-            raise ValueError("Finite-element field codec changed exported data.")
+            raise ValueError(
+                "write_finite_element_field.configuration must preserve the declared data and scientific identity; got Finite-element field codec changed exported data."
+            )
         payload = staged.read_bytes()
     publish_bytes(
         destination,
@@ -94,6 +100,7 @@ def write_finite_element_field(
     )
 
 
+@checked
 def evaluate_finite_element_field(
     discretization: FiniteElementDiscretization,
     field_name: str,

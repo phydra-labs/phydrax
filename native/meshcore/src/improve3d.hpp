@@ -9,6 +9,7 @@
 // Refusal preserves coordinates and connectivity. require_improvement raises
 // the replaced cells' smallest dihedral; tensor owners rank reconnect separately.
 #pragma once
+#include "counter_records.hpp"
 
 #include <array>
 #include <cstdint>
@@ -59,14 +60,14 @@ Insertion try_split_edge(TetMesh& mesh, int32_t a, int32_t b, const double* posi
 bool try_collapse_edge(TetMesh& mesh, int32_t remove, int32_t keep,
                        bool require_improvement);
 
-// Moves an interior vertex, a conforming facet vertex exactly within every
-// incident original source plane, or a conforming segment vertex on its
-// original line. Fixed constrained vertices do not move.
+// Certifies the protected star, source stratum and local quality before a
+// coordinate/witness commit. Interior vertices and conforming facet/segment
+// vertices may move within their source geometry; fixed vertices do not move.
 bool try_relocate(TetMesh& mesh, int32_t vertex, const double* position, bool require_improvement);
 
-// Admit a coordinated move of sorted unique vertices without publishing any
-// intermediate coordinate. Exact source strata, oriented constrained facets,
-// segment order, positivity and optional shape bounds hold on the cavity union.
+// Prepares the union of sorted unique vertex stars, certifies positive cells,
+// shape bounds and oriented source facets/segments, then admits all witnesses
+// before the allocation-free coordinate commit. No intermediate move is published.
 bool try_relocate_vertices(TetMesh& mesh, std::span<const int32_t> vertices,
                            const double* positions, double radius_edge_bound,
                            double minimum_dihedral_degrees);
@@ -82,13 +83,13 @@ struct ImproveOptions {
   int32_t max_passes = 8;
 };
 
-// Improvement passes over cells below the dihedral target, with uncertain
-// construction, or at/below `minimum_relative_determinant` times the product
-// of their canonical edge lengths. A below-floor cell that no reconnection
-// repairs may receive one interior edge-star vertex whose children are all
-// certified above that floor. counters receives
-// PHX_MC_TET_MESH_IMPROVE_COUNTERS values; mesh.unmet() the remaining ones.
-int32_t improve_mesh(TetMesh& mesh, const ImproveOptions& options, int64_t* counters);
+// Runs vertex-removal admission before ordered sliver-frontier reconnection;
+// unmet evidence is assembled after the pass loop or its bounded refusal.
+// Cells below the angle target, with uncertain construction, or at/below the
+// canonical-chart determinant floor are candidates. A floor repair may insert
+// one interior edge-star vertex whose children all exceed the floor.
+// counters receives PHX_MC_TET_MESH_IMPROVE_COUNTERS; mesh.unmet() the remaining cells.
+int32_t improve_mesh(TetMesh& mesh, const ImproveOptions& options, TetMeshImproveCounters& counters);
 
 struct ExudeOptions {
   double min_dihedral_degrees = 10.0;
@@ -107,6 +108,6 @@ struct ExudeOptions {
 // evidence, not coordinate displacement. Counters: trials, flips, weighted
 // vertices, passes, remaining slivers, work. Unmet quality remains failure.
 int32_t exude_mesh(TetMesh& mesh, const ExudeOptions& options,
-                   NativeVector<double>& weights, int64_t* counters);
+                   NativeVector<double>& weights, TetMeshExudeCounters& counters);
 
 }  // namespace phx::mc

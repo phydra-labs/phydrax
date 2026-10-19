@@ -97,7 +97,10 @@ _ELLIPSE_PERIMETER_CHECK = textwrap.dedent("""
     import jax.numpy as jnp
     import numpy as np
     from scipy.special import ellipe
-    ellipse = phydrax.geometry.Ellipse((0.0, 0.0), (2.0, 1.0)).compile()
+    from phydrax.units import METER
+    ellipse = phydrax.geometry.Ellipse((0.0, 0.0), (2.0, 1.0)).compile(
+        coordinate_unit=METER
+    )
     perimeter = ellipse.boundary_measure
     assert perimeter.dtype == jnp.dtype("float64")
     np.testing.assert_allclose(

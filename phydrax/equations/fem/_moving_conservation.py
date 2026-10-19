@@ -13,12 +13,12 @@ from jax import Array
 from jax.typing import ArrayLike
 
 import phydrax.ein as ein
+from phydrax.discretization.fem._reference_rules import degree_aware_reference_rule
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.fem._generic import (
-    _degree_aware_reference_rule,
     FiniteElementDiscretization,
     FiniteElementRuntimeData,
 )
@@ -154,7 +154,7 @@ def finite_element_ale_metric_evidence(
     residuals = []
     for block_index, block in enumerate(discretization.mesh.blocks):
         coordinate_element = discretization.coordinate_elements[block_index]
-        points, _weights = _degree_aware_reference_rule(
+        points, _weights = degree_aware_reference_rule(
             block.cell_kind,
             # ty: ignore[unresolved-attribute]
             max(2, coordinate_element.degree + 2),

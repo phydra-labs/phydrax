@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Exact analytic proof descriptors; authoritative placed operations remain intact."""
+"""Analytic proof descriptors retaining the placed source operation trees."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from fractions import Fraction
 
 import numpy as np
 
+from ...typing import checked
 from ._patches import AbstractCurve, AbstractSurfacePatch, LineCurve, PlanePatch
 from ._placed import PlacedCurve, PlacedSurface
 
@@ -35,14 +36,16 @@ def _mapped_vector(
     return np.asarray(result, dtype=np.float64)
 
 
+@checked
 def exact_line_descriptor(curve: AbstractCurve, /) -> LineCurve | None:
-    if isinstance(curve, LineCurve):
-        return curve
-    if not isinstance(curve, PlacedCurve) or not isinstance(
-        curve.definition, AbstractCurve
-    ):
-        return None
-    source = exact_line_descriptor(curve.definition)
+    match curve:
+        case LineCurve():
+            return curve
+        case PlacedCurve(definition=AbstractCurve() as definition):
+            pass
+        case _:
+            return None
+    source = exact_line_descriptor(definition)
     if source is None:
         return None
     origin = _mapped_vector(
@@ -58,11 +61,15 @@ def exact_line_descriptor(curve: AbstractCurve, /) -> LineCurve | None:
     return LineCurve(origin, direction)
 
 
+@checked
 def exact_plane_descriptor(patch: AbstractSurfacePatch, /) -> PlanePatch | None:
-    if isinstance(patch, PlanePatch):
-        return patch
-    if not isinstance(patch, PlacedSurface):
-        return None
+    match patch:
+        case PlanePatch():
+            return patch
+        case PlacedSurface():
+            pass
+        case _:
+            return None
     source = exact_plane_descriptor(patch.definition)
     if source is None:
         return None

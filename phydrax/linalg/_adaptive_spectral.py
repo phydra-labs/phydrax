@@ -21,7 +21,7 @@ from ._operators import (
     DenseLinearOperator,
     estimate_operator_action_cost,
 )
-from ._spaces import _coordinate_dtype
+from ._spaces import coordinate_dtype
 from ._spectral import (
     _addressed_rademacher_probe,
     _batched_dense_stochastic,
@@ -315,11 +315,11 @@ def _adaptive_stochastic_trace(
     _validate_endomorphism(operator)
     _require_square_root_pairing(operator.source)
     dimension = min(selected.max_dimension, operator.source.size)
-    coordinate_dtype = _coordinate_dtype(operator.source)
+    stored_dtype = coordinate_dtype(operator.source)
     one = _trace_probe(operator, scalar_function, dimension, selected)
     specification = jax.eval_shape(
         one,
-        jax.ShapeDtypeStruct((operator.source.size,), coordinate_dtype),
+        jax.ShapeDtypeStruct((operator.source.size,), stored_dtype),
     )
     sample_spec = specification[0]
     if not np.issubdtype(sample_spec.dtype, np.inexact):
@@ -385,7 +385,7 @@ def _adaptive_stochastic_trace(
             lambda index: _whiten_coordinates(
                 operator.source,
                 _addressed_rademacher_probe(
-                    key, index, operator.source.size, coordinate_dtype
+                    key, index, operator.source.size, stored_dtype
                 ),
             )
         )(indices)
@@ -644,7 +644,7 @@ def _adaptive_cost(
     sample_dtype: Any,
     /,
 ) -> AdaptiveStochasticCostEstimate:
-    coordinate_itemsize = _coordinate_dtype(operator.source).itemsize
+    coordinate_itemsize = coordinate_dtype(operator.source).itemsize
     sample_itemsize = np.dtype(sample_dtype).itemsize
     real_itemsize = np.empty((), dtype=np.dtype(sample_dtype)).real.dtype.itemsize
     retained_per_probe = (

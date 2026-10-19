@@ -18,13 +18,24 @@ import os
 import threading
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+
+from phydrax.meshing._contracts import (
+    MeshingCapability,
+    MeshingDerivativeMode,
+    MeshingExecutionMode,
+    MeshingLimits,
+    MeshingOperation,
+    MeshingProviderInfo,
+    MeshingSourceKind,
+)
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
 
 from ..._external_runtime import NativeWorkerCall, NativeWorkerPolicy
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -33,23 +44,15 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import CellBlock, CellMesh, CellPartition
 from ...typing import checked
-from .._assembly import MeshPart
 from .._association import BRepAssociationTransfer
 from .._canonical import canonicalize_cell_mesh, certify_cell_mesh
-from .._contracts import (
-    MeshingCapability,
-    MeshingDerivativeMode,
-    MeshingExecutionMode,
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingLimits,
-    MeshingOperation,
-    MeshingProviderInfo,
-    MeshingSourceKind,
-)
-from .._distribution import MeshDistribution, MeshPartitionKind
-from .._metric import _bound_violations, MeshMetricField
-from .._organization import MeshLabel, MeshPatch, MeshZone
+from .._mesh_part import MeshPart
+
+
+if TYPE_CHECKING:
+    from .._distribution import MeshDistribution
+from .._metric import bound_violations, MeshMetricField
+from .._organization_records import MeshLabel, MeshPatch, MeshZone
 from .._result import CellMeshingResult, MeshingRuntimeInfo
 from .._scope import MeshingEntityKind, MeshingScope
 from .._trace import (
@@ -929,7 +932,7 @@ def _require_adapted_metric_bounds(
     """Reject a provider metric that weakens the input field's hard bounds."""
 
     try:
-        violations = _bound_violations(
+        violations = bound_violations(
             np.asarray(values, dtype=np.float64),
             metric.minimum_size,
             metric.maximum_size,
@@ -1683,6 +1686,9 @@ def _gather(
 def _distribution(
     gathered: _GatheredTarget, merged: Mapping[str, Any], ranks: int, /
 ) -> MeshDistribution:
+    # Lazy: providers._omega_h -> _distribution -> _device_adaptation -> _adaptation import cycle.
+    from .._distribution import MeshDistribution, MeshPartitionKind
+
     cell_ids, _, cell_owned = merged["cell"]
     ghost_rank = merged["cell_rank"][~cell_owned]
     ghost_ids = cell_ids[~cell_owned]

@@ -1572,7 +1572,7 @@ def test_variable_flux_parity_and_scalar_divergence_fail_explicitly() -> None:
 
     with pytest.raises(
         ValueError,
-        match="divergence requires an explicitly vector-valued field",
+        match="requires a vector-like operand",
     ):
         phx.equations.compile_semidiscrete_pde(
             problem(u.divergence("x")),

@@ -3,6 +3,7 @@
 #
 
 
+import math
 from typing import Any
 
 import equinox as eqx
@@ -280,7 +281,36 @@ def test_games_stochastic_saa_scenario_2() -> None:
     compiled = eqx.filter_jit(solve_prepared_stochastic_policy_game)(prepared)
 
     np.testing.assert_allclose(compiled.parameters, eager.parameters)
-    np.testing.assert_allclose(compiled.original_residual, eager.original_residual)
+    bounds = []
+    for result in (eager, compiled):
+        gradients = np.asarray(result.training_owned_path_gradients)
+        weights = np.asarray(result.training_weights)
+        reference = np.asarray(
+            [
+                math.fsum(
+                    float(weight) * float(gradient)
+                    for weight, gradient in zip(
+                        weights, gradients[:, component], strict=True
+                    )
+                )
+                for component in range(gradients.shape[-1])
+            ],
+            dtype=np.float64,
+        )
+        # A three-path weighted pseudo-gradient has three products and two
+        # additions; gamma_6 also covers the independent host reference.
+        epsilon = np.finfo(gradients.dtype).eps
+        gamma_6 = 6 * epsilon / (1 - 6 * epsilon)
+        bound = float(
+            gamma_6 * np.max(np.sum(weights[:, None] * np.abs(gradients), axis=0))
+        )
+        bounds.append(bound)
+        np.testing.assert_allclose(
+            result.original_residual, reference, rtol=1e-7, atol=bound
+        )
+    np.testing.assert_allclose(
+        compiled.original_residual, eager.original_residual, rtol=1e-7, atol=sum(bounds)
+    )
     np.testing.assert_allclose(compiled.holdout_path_costs, eager.holdout_path_costs)
     np.testing.assert_array_equal(compiled.status, eager.status)
 

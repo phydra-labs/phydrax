@@ -35,10 +35,10 @@ from ._properties import (
     OperatorProperties,
 )
 from ._spaces import (
-    _coordinate_dtype,
     _coordinate_pairing_weights,
     _has_diagonal_pairing,
     AbstractVectorSpace,
+    coordinate_dtype,
 )
 from ._sparse_contract import AbstractSparseLinearOperator
 from ._structured_operators import (
@@ -55,7 +55,7 @@ from ._structured_operators import (
 
 if TYPE_CHECKING:
     from ..sparse import EdgeRelation
-    from ..sparse._linear import _SparseStoragePlan
+    from ..sparse._linear import SparseStoragePlan
 
 
 def assemble_diagonal(
@@ -273,7 +273,7 @@ class _SparseAssemblyRecipe(StrictModule):
     children: tuple["_SparseAssemblyRecipe", ...]
     input_indices: tuple[Array, ...]
     output_indices: tuple[Array, ...]
-    storage_plan: _SparseStoragePlan | None
+    storage_plan: SparseStoragePlan | None
     kind: SparseAssemblyKind = eqx.field(static=True)
     operator_type: type = eqx.field(static=True)
     shape: tuple[int, int] = eqx.field(static=True)
@@ -295,7 +295,7 @@ class _SparseAssemblyRecipe(StrictModule):
         input_indices: tuple[np.ndarray, ...] = (),
         output_indices: tuple[np.ndarray, ...] = (),
         payload: tuple[Any, ...] = (),
-        storage_plan: _SparseStoragePlan | None = None,
+        storage_plan: SparseStoragePlan | None = None,
         contribution_count: int,
         symbolic_workspace_bytes: int,
         numeric_workspace_bytes: int,
@@ -340,7 +340,7 @@ class SparseAssemblyPlan(StrictModule):
     cost: SparseAssemblyCostEstimate
     _recipe: _SparseAssemblyRecipe
     _relation: EdgeRelation
-    _storage_plan: _SparseStoragePlan
+    _storage_plan: SparseStoragePlan
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -354,7 +354,7 @@ class SparseAssemblyPlan(StrictModule):
         plan_id: str,
     ) -> None:
         from ..sparse import EdgeRelation
-        from ..sparse._linear import _SparseStoragePlan
+        from ..sparse._linear import SparseStoragePlan
 
         with jax.ensure_compile_time_eval():
             relation = EdgeRelation(
@@ -363,7 +363,7 @@ class SparseAssemblyPlan(StrictModule):
                 source_size=operator.source.size,
                 target_size=operator.target.size,
             )
-            storage_plan = _SparseStoragePlan(relation)
+            storage_plan = SparseStoragePlan(relation)
         self.policy = policy
         self.source = operator.source
         self.target = operator.target
@@ -459,7 +459,7 @@ def plan_sparse_assembly(
     output_bytes = _sparse_output_bytes(
         recipe.shape,
         recipe.rows.size,
-        _coordinate_dtype(operator.target).itemsize,
+        coordinate_dtype(operator.target).itemsize,
     )
     cost = SparseAssemblyCostEstimate(
         result_nnz=recipe.rows.size,
@@ -662,7 +662,7 @@ def _materialized_sparse_recipe(
         )
     rows_count, columns_count = operator.target.size, operator.source.size
     entries = rows_count * columns_count
-    required_bytes = entries * _coordinate_dtype(operator.target).itemsize
+    required_bytes = entries * coordinate_dtype(operator.target).itemsize
     if entries > materialization.max_entries:
         raise LinearResourceLimitError(
             f"Dense sparse-assembly fallback requires {entries} entries, exceeding "
@@ -706,7 +706,7 @@ def _make_sparse_recipe(
     input_indices: tuple[np.ndarray, ...] = (),
     output_indices: tuple[np.ndarray, ...] = (),
     payload: tuple[Any, ...] = (),
-    storage_plan: _SparseStoragePlan | None = None,
+    storage_plan: SparseStoragePlan | None = None,
     contribution_count: int,
 ) -> _SparseAssemblyRecipe:
     rows_ = np.asarray(rows, dtype=np.int64).reshape((-1,))
@@ -730,7 +730,7 @@ def _make_sparse_recipe(
     contributions = int(contribution_count)
     if nnz > policy.max_nnz:
         raise LinearResourceLimitError(
-            f"Sparse assembly requires {nnz} nonzeros, exceeding the limit {policy.max_nnz}.",
+            f"SparseAssemblyPolicy.max_nnz must be >= required nonzeros; got limit={policy.max_nnz}, required={nnz}.",
             resource="sparse_assembly:nonzeros",
             requested=nnz,
             limit=policy.max_nnz,
@@ -746,11 +746,11 @@ def _make_sparse_recipe(
     output_bytes = _sparse_output_bytes(
         shape,
         nnz,
-        _coordinate_dtype(operator.target).itemsize,
+        coordinate_dtype(operator.target).itemsize,
     )
     if output_bytes > policy.max_bytes:
         raise LinearResourceLimitError(
-            f"Sparse assembly output requires {output_bytes} bytes, exceeding the limit {policy.max_bytes}.",
+            f"SparseAssemblyPolicy.max_bytes must be >= output bytes; got limit={policy.max_bytes}, required={output_bytes}.",
             resource="sparse_assembly:output_bytes",
             requested=output_bytes,
             limit=policy.max_bytes,
@@ -774,7 +774,7 @@ def _make_sparse_recipe(
             storage_bytes_upper=recipe_bytes,
         )
     symbolic_workspace_bytes = 8 * (6 * contributions + 2 * nnz) + 4 * mapping_entries
-    numeric_workspace_bytes = (contributions + nnz) * _coordinate_dtype(
+    numeric_workspace_bytes = (contributions + nnz) * coordinate_dtype(
         operator.target
     ).itemsize
     required_workspace = max(
@@ -870,7 +870,7 @@ def _check_contribution_budget(
     count = int(contributions)
     if count > policy.max_contributions:
         raise LinearResourceLimitError(
-            f"Sparse assembly requires {count} symbolic contributions, exceeding the limit {policy.max_contributions}.",
+            f"SparseAssemblyPolicy.max_contributions must be >= symbolic contributions; got limit={policy.max_contributions}, required={count}.",
             resource="sparse_assembly:contributions",
             requested=count,
             limit=policy.max_contributions,
@@ -1008,7 +1008,7 @@ def _plan_sparse_block(
     _check_contribution_budget(policy, contributions, arrays=4)
     if contributions > policy.max_nnz:
         raise LinearResourceLimitError(
-            "Named block sparse pattern exceeds max_nnz.",
+            f"SparseAssemblyPolicy.max_nnz must be >= block pattern contributions; got limit={policy.max_nnz}, required={contributions}.",
             resource="sparse_assembly:nonzeros",
             requested=contributions,
             limit=policy.max_nnz,
@@ -1229,7 +1229,7 @@ def _evaluate_sparse_recipe(
         case "sparse":
             return _evaluate_sparse_storage(recipe, operator)
         case "identity":
-            return jnp.ones(rows.shape, dtype=_coordinate_dtype(operator.target))
+            return jnp.ones(rows.shape, dtype=coordinate_dtype(operator.target))
         case "diagonal":
             if not isinstance(operator, DiagonalLinearOperator):
                 raise ValueError("Sparse assembly refresh changed diagonal structure.")
@@ -1240,7 +1240,7 @@ def _evaluate_sparse_recipe(
             current_rows = np.arange(operator.source.size, dtype=np.int64)
             current_columns = np.asarray(operator.permutation, dtype=np.int64)
             _validate_numeric_pattern(recipe, current_rows, current_columns)
-            return jnp.ones(rows.shape, dtype=_coordinate_dtype(operator.target))
+            return jnp.ones(rows.shape, dtype=coordinate_dtype(operator.target))
         case "triangular" | "tridiagonal" | "banded" | "local-block":
             return _evaluate_sparse_stencil(recipe, operator)
         case "materialized":
@@ -1449,7 +1449,7 @@ def _evaluate_sparse_algebra(
             child_values = _evaluate_sparse_recipe(
                 recipe.children[0], scaled.operator, policy
             )
-            dtype = _coordinate_dtype(operator.target)
+            dtype = coordinate_dtype(operator.target)
             return scaled.scalar.astype(dtype) * child_values.astype(dtype)
         case "sum":
             summed = cast(SumLinearOperator, operator)
@@ -1513,9 +1513,9 @@ def _plan_sparse_storage(
 ) -> _SparseAssemblyRecipe:
     """Admit canonical sparse storage and retain its numerical route scatter."""
     from ..sparse._linear import (
-        _SparseStoragePlan,
         SparseCoordinateOperator,
         SparseLinearMap,
+        SparseStoragePlan,
     )
 
     if isinstance(operator, (SparseCoordinateOperator, SparseLinearMap)):
@@ -1525,7 +1525,7 @@ def _plan_sparse_storage(
             else None
         )
         if storage_plan is None:
-            storage_plan = _SparseStoragePlan(
+            storage_plan = SparseStoragePlan(
                 operator.relation,
                 block_shape=operator.block_shape
                 if isinstance(operator, SparseCoordinateOperator)
@@ -1819,7 +1819,7 @@ def _evaluate_sparse_blocks(
                 raise ValueError("Sparse refresh changed the named block grid.")
             if not blocks:
                 return jnp.zeros(
-                    recipe.rows.shape, dtype=_coordinate_dtype(operator.target)
+                    recipe.rows.shape, dtype=coordinate_dtype(operator.target)
                 )
             return _sum_recipe_contributions(recipe, blocks, policy)
         case "coordinate-view":
@@ -1854,7 +1854,7 @@ def _evaluate_sparse_tensor(
     )
     dtype = np.result_type(
         *(value.dtype for value in child_values),
-        _coordinate_dtype(operator.target),
+        coordinate_dtype(operator.target),
     )
     if recipe.kind == "kronecker":
         contributions = jnp.ones((recipe.contribution_count,), dtype=dtype)

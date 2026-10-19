@@ -15,6 +15,7 @@ import pytest
 from numpy.typing import NDArray
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _dem(
@@ -104,7 +105,9 @@ def test_reactive_particle_foundation_scenario_1() -> None:
         evaluation.particle_contact.rotational_torque_left,
         -evaluation.particle_contact.rotational_torque_right,
     )
-    geometry = phx.geometry.Superquadric((0.0, 0.0, 0.0), (0.5, 0.5, 0.5)).compile()
+    geometry = phx.geometry.Superquadric((0.0, 0.0, 0.0), (0.5, 0.5, 0.5)).compile(
+        coordinate_unit=METER
+    )
     points = jnp.asarray([[0.5, 0.0, 0.0], [0.0, 0.5, 0.0]])
     curvature = geometry.contact_curvature(points)
     assert jnp.allclose(geometry.boundary_field(points), 0.0)

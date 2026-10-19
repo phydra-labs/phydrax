@@ -17,6 +17,7 @@ from phydrax.discretization.particle._level_set import (
     LevelSetShapeTemplatePlan,
 )
 from phydrax.equations import CompiledDiscreteElementProblem
+from phydrax.units import METER
 
 
 def _template(
@@ -33,7 +34,7 @@ def _template(
     ).prepare(coordinates)
     geometry = phx.geometry.Sphere(
         (0.0,) * 3, 0.5, feature_id="level-set-sphere"
-    ).compile()
+    ).compile(coordinate_unit=METER)
     samples = phx.geometry.VoxelGeometrySamplingPlan(
         grid,
         enclosure=phx.geometry.ExactSDFEnclosureCertificate(geometry.field_certificate),

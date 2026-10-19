@@ -29,6 +29,16 @@ from phydrax.geometry.multiregion_surface import (
 )
 
 
+# Empirical allowances retained from the pre-remediation sphere/double-bubble
+# split, collapse, burst, and reconstruction fixtures; source and target
+# extensive-content totals and analytic sphere volume are independent oracles.
+_CONSERVATION_RTOL_10 = 1e-10
+_CONSERVATION_RTOL_11 = 1e-11
+_CONSERVATION_RTOL_12 = 1e-12
+_CONSERVATION_RTOL_13 = 1e-13
+_CONSERVATION_RTOL_14 = 1e-14
+
+
 DRY_FOAM = MultiRegionSurfaceValidationPolicy(profile="dry_foam")
 SPLITS = SurfaceEventPolicy()
 DRY_SPLITS = SurfaceEventPolicy(
@@ -108,7 +118,9 @@ def test_split_preserves_geometry_uniform_thickness_and_content(
     new_id = record.created_vertex_ids[0]
     lineage = result.evidence.lineage
     if lineage is None:
-        raise AssertionError("A committed split must carry lineage.")
+        raise AssertionError(
+            "result.evidence.lineage must accompany a committed split; got None"
+        )
     assert (new_id, tuple(sorted(edge))) in lineage.vertex_parents
     split = result.topology
     assert (split.vertex_count, split.face_count) == (
@@ -123,17 +135,19 @@ def test_split_preserves_geometry_uniform_thickness_and_content(
     after = PreparedMultiRegionSurface(split, result.state, policy=SPLITS.validation)
     before_volume = float(prepared.region_volumes(base.positions)[0])
     assert float(after.region_volumes(result.state.positions)[0]) == pytest.approx(
-        before_volume, rel=1e-14
+        before_volume, rel=_CONSERVATION_RTOL_14
     )
     assert float(jnp.sum(after.face_areas(result.state.positions))) == pytest.approx(
-        float(jnp.sum(prepared.face_areas(base.positions))), rel=1e-14
+        float(jnp.sum(prepared.face_areas(base.positions))), rel=_CONSERVATION_RTOL_14
     )
     slot_area = np.asarray(after.slot_areas(result.state.positions))
     content = np.asarray(result.state.sheet_fields[..., 0])
     active = slot_area > 0.0
-    np.testing.assert_allclose(content[active] / slot_area[active], thickness, rtol=1e-12)
+    np.testing.assert_allclose(
+        content[active] / slot_area[active], thickness, rtol=_CONSERVATION_RTOL_12
+    )
     assert float(jnp.sum(result.state.sheet_fields)) == pytest.approx(
-        float(jnp.sum(liquid)), rel=1e-14
+        float(jnp.sum(liquid)), rel=_CONSERVATION_RTOL_14
     )
     transition = result.transition
     assert transition is not None
@@ -177,7 +191,9 @@ def test_junction_split_keeps_the_plateau_border() -> None:
         result.topology, result.state, policy=DRY_SPLITS.validation
     )
     assert evidence.accepted and evidence.maximum_edge_valence == 3
-    np.testing.assert_allclose(_totals(result.state), _totals(state), rtol=1e-13)
+    np.testing.assert_allclose(
+        _totals(result.state), _totals(state), rtol=_CONSERVATION_RTOL_13
+    )
 
 
 def test_collapse_restores_region_volumes_and_keeps_topology() -> None:
@@ -211,14 +227,20 @@ def test_collapse_restores_region_volumes_and_keeps_topology() -> None:
     after = validate_multiregion_surface(result.topology, result.state, policy=DRY_FOAM)
     assert after.accepted
     assert after.region_euler_characteristics == before.region_euler_characteristics
-    np.testing.assert_allclose(after.signed_volumes, before.signed_volumes, rtol=1e-11)
-    np.testing.assert_allclose(_totals(result.state), _totals(state), rtol=1e-13)
+    np.testing.assert_allclose(
+        after.signed_volumes, before.signed_volumes, rtol=_CONSERVATION_RTOL_11
+    )
+    np.testing.assert_allclose(
+        _totals(result.state), _totals(state), rtol=_CONSERVATION_RTOL_13
+    )
     sheet = result.evidence.sheet_transfer
     assert sheet is not None and bool(sheet.successful) and bool(sheet.target_nonnegative)
     removed = {vertex for record in accepted for vertex in record.removed_vertex_ids}
     lineage = result.evidence.lineage
     if lineage is None:
-        raise AssertionError("A committed collapse must carry lineage.")
+        raise AssertionError(
+            "result.evidence.lineage must accompany a committed collapse; got None"
+        )
     survivors = dict(lineage.vertex_parents)
     assert removed == {p for parents in survivors.values() for p in parents} - set(
         survivors
@@ -287,7 +309,9 @@ def test_flip_sweep_is_certified_by_ccd() -> None:
     assert record.ccd_certified and record.ccd_time_of_impact == 1.0
     faces = {tuple(sorted(row)) for row in result.topology.host_faces().tolist()}
     assert faces == {(0, 2, 3), (1, 2, 3)}
-    np.testing.assert_allclose(_totals(result.state), _totals(state), rtol=1e-14)
+    np.testing.assert_allclose(
+        _totals(result.state), _totals(state), rtol=_CONSERVATION_RTOL_14
+    )
 
     blocked = _tent_seed(pebble=True)
     topology, state = _with_fields(blocked, events=2)
@@ -366,13 +390,17 @@ def test_remesh_pass_conserves_content_and_is_order_independent() -> None:
     assert result.committed
     statuses = {record.status for record in result.evidence.records}
     assert SurfaceEventStatus.CONFLICT in statuses
-    np.testing.assert_allclose(_totals(result.state), _totals(state), rtol=1e-12)
+    np.testing.assert_allclose(
+        _totals(result.state), _totals(state), rtol=_CONSERVATION_RTOL_12
+    )
     before = validate_multiregion_surface(topology, state, policy=DRY_FOAM)
     after = validate_multiregion_surface(
         result.topology, result.state, policy=policy.validation
     )
     assert after.accepted
-    np.testing.assert_allclose(after.signed_volumes, before.signed_volumes, rtol=1e-10)
+    np.testing.assert_allclose(
+        after.signed_volumes, before.signed_volumes, rtol=_CONSERVATION_RTOL_10
+    )
     assert bool(jnp.all(result.state.sheet_fields >= 0.0))
 
     shuffled = list(proposals)

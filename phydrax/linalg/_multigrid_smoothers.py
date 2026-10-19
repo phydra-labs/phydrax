@@ -26,7 +26,7 @@ from ._preconditioner_properties import PreconditionerProperties
 from ._preconditioners import AbstractPreconditioner
 from ._preconditioning import _lowered_space, AbstractPreconditionerBuilder
 from ._properties import LinearCapabilityError, PropertyEvidence
-from ._spaces import _coordinate_dtype
+from ._spaces import coordinate_dtype
 from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ._sparse_triangular import (
     _analysis_storage_bytes,
@@ -279,7 +279,7 @@ class GaussSeidelPreconditioner(AbstractPreconditioner, NonTrainableState):
             if compute_dtype is None
             else _lowered_space(operator.source, compute_dtype)
         )
-        value_dtype = np.dtype(_coordinate_dtype(space))
+        value_dtype = np.dtype(coordinate_dtype(space))
         storage = (
             operator.sparse_storage()
             if isinstance(operator, AbstractSparseLinearOperator)

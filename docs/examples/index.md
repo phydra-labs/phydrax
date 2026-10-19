@@ -620,14 +620,21 @@ python -m tools.meshing_qualification --scenario bisection
 python -m tools.meshing_benchmarks --case host-bisection --resolution 64 --repeats 1
 ```
 
-Bounded repository integration recipes additionally include
-`native_quad_hex_meshing.py`, `curved_native_transfer.py`, and
-`hp_metric_order_adaptation.py`. The qualification-only
+Runnable native-meshing demonstrations include `native_quad_hex_meshing.py`
+and `curved_native_transfer.py`. Their JSON qualification harnesses run through
+`python -m tools.meshing_qualification --scenario native-quad-hex` and
+`python -m tools.meshing_qualification --scenario curved-native-transfer`.
+Select the smallest quad profile with `--corpus-profile quad_plate`.
+`brep_graph_surrogate.py` trains a sampled B-Rep incidence-graph readout on
+certified sphere areas and takes one radius-gradient step.
+Run the h/p/metric qualification campaign with
+`python -m tools.meshing_qualification.scenarios.hp_metric_order_adaptation`.
 `tools/native_moving_overset.py` exercises source-aware motion and restart.
 `tools/layer_core_lifecycle_continuation.py` consumes an already published
 source archive and therefore also requires its path and expected content ID.
-Those tools use internal source/archive owners; they do not enlarge the public
-API.
+Those tools consume the public scientific preparation, recertification, and
+continuation operations in `phydrax.meshing.qualification`; CLI controls, timing,
+and JSON presentation remain tool-owned.
 
 The [meshing guide](../guides_meshing.md#workflows) records each route's exact
 source, certification, resource, periodic, tolerance, and evidence boundaries.
@@ -654,6 +661,12 @@ The image example proves affine scalar reproduction through the consistent P1
 projection. The neurofluid example advances a closed bulk/network/reservoir
 system and verifies total mass. Qualification uses only synthetic de-identified
 artifacts; it is not clinical validation.
+
+The synthetic qualification constructs its prescribed normal flux with a native
+minimum-norm solve, without assuming a basis-dependent adjoint normalization.
+Its JSON report includes flux, resistance-power and constraint errors together
+with the solve status, residuals and rank. Failed checks retain those metrics
+and exit unsuccessfully; they are not converted to a passing result.
 
 ## Cardiovascular platform
 

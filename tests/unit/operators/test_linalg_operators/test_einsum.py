@@ -6,13 +6,14 @@ import phydrax as phx
 import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.operators.linalg import einsum
+from phydrax.units import METER
 
 
 def test_domain_contractions_match_dot_outer_matrix_vector_and_constant_references() -> (
     None
 ):
     geometry = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geometry.Function("x")
@@ -62,7 +63,7 @@ def test_domain_contractions_match_dot_outer_matrix_vector_and_constant_referenc
 
 def test_domain_contraction_contracts() -> None:
     geometry = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     first = geometry.Function("x")(lambda x: jnp.asarray([x[0], x[1]])).with_metadata(m=1)
     second = geometry.Function("x")(lambda x: jnp.asarray([x[1], x[0]])).with_metadata(

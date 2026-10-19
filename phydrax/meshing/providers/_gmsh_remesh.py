@@ -12,22 +12,25 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax.meshing._association_state import (
+    GeometryAssociation,
+    GeometryAssociationKind,
+)
+from phydrax.meshing._contracts import (
+    MeshingDerivativeMode,
+    MeshingExecutionMode,
+    MeshingProviderInfo,
+)
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from ..._identity import SemanticProvenance
 from ..._physical import SpatialCoordinateContract
 from ...discretization import CellMesh
 from ...geometry.simplicial import TriangleMesh
 from ...geometry.surface import SurfaceAuditPolicy, SurfaceMetadata, SurfaceModel
-from .._association import GeometryAssociation, GeometryAssociationKind
 from .._canonical import canonicalize_cell_mesh
-from .._contracts import (
-    MeshingDerivativeMode,
-    MeshingExecutionMode,
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingProviderInfo,
-)
 from .._controls import BackgroundMetricControl
-from .._organization import MeshAttribute, MeshAttributeRole
+from .._organization_records import MeshAttribute, MeshAttributeRole
 from .._result import CellMeshingResult, MeshingRuntimeInfo
 from .._scope import MeshingEntityKind, MeshingScope
 from .._trace import (
@@ -37,23 +40,23 @@ from .._trace import (
     MeshingTrace,
 )
 from ._gmsh_elements import (
-    _cell_geometry,
-    _element_rows,
-    _local_connectivity,
-    _native_quality,
+    cell_geometry,
+    element_rows,
+    local_connectivity,
+    native_quality,
 )
-from ._gmsh_evidence import _EvidenceSection
+from ._gmsh_evidence import EvidenceSection
 from ._gmsh_execute import (
-    _audit_gmsh_mesh,
-    _conformity_section,
-    _mesh_edges,
-    _Organization,
+    audit_gmsh_mesh,
+    conformity_section,
+    mesh_edges,
+    Organization,
 )
 from ._gmsh_options import GmshHighOrderOptimization
-from ._gmsh_sizing import _background_metric_evidence, _background_view, _size_values
+from ._gmsh_sizing import background_metric_evidence, background_view, size_values
 
 
-def _surface_source(
+def surface_source(
     source: SurfaceModel | CellMesh,
     coordinate_contract: SpatialCoordinateContract | None,
     /,
@@ -99,7 +102,7 @@ def _euler_characteristic(mesh: CellMesh, /) -> int:
 def _configure_remeshing(gmsh: Any, plan: Any, /) -> float | None:
     surface = plan.specification.surface
     options = plan.options
-    minimum, target, maximum, curvature_points = _size_values(surface)
+    minimum, target, maximum, curvature_points = size_values(surface)
     gmsh.clear()
     gmsh.option.setNumber("General.Terminal", 1 if options.terminal_output else 0)
     gmsh.option.setNumber("General.NumThreads", options.num_threads)
@@ -171,7 +174,7 @@ def _apply_remeshing_sizes(
         constant = gmsh.model.mesh.field.add("MathEval")
         gmsh.model.mesh.field.setString(constant, "F", f"{target:.17g}")
         fields.append(constant)
-    view = None if background is None else _background_view(gmsh, background)
+    view = None if background is None else background_view(gmsh, background)
     if view is not None:
         fields.append(view.field)
     if fields:
@@ -266,7 +269,7 @@ def _canonical_surface(
     plan: Any, node_tags: Any, points: Any, top: Any, closed: bool, /
 ) -> _RemeshedSurface:
     top_vertices = {
-        rows.block_name: _local_connectivity(node_tags, rows.vertices) for rows in top
+        rows.block_name: local_connectivity(node_tags, rows.vertices) for rows in top
     }
     corner_nodes = np.unique(
         np.concatenate(
@@ -304,7 +307,7 @@ def _canonical_surface(
 
 def _fidelity_section(
     plan: Any, points: np.ndarray, remeshed: _RemeshedSurface, /
-) -> tuple[_EvidenceSection, np.ndarray, np.ndarray]:
+) -> tuple[EvidenceSection, np.ndarray, np.ndarray]:
     """Two-sided vertex deviation and topological invariants against the source."""
     source = plan.source
     reconstruction = plan.reconstruction
@@ -336,7 +339,7 @@ def _fidelity_section(
         or source_audit.boundary_loop_count != target_audit.boundary_loop_count
     ):
         issues.append("surface_topology")
-    section = _EvidenceSection(
+    section = EvidenceSection(
         (
             ("surface_maximum_deviation", reconstruction.maximum_deviation),
             ("surface_euler_characteristic", float(source_euler)),
@@ -358,7 +361,7 @@ def _fidelity_section(
 
 def _organization(
     plan: Any, remeshed: _RemeshedSurface, nearest: np.ndarray, residuals: np.ndarray, /
-) -> _Organization:
+) -> Organization:
     source = plan.source
     mesh = remeshed.mesh
     cell_set = mesh.entity_set(2)
@@ -401,7 +404,7 @@ def _organization(
         scope,
         source_cells,
     )
-    return _Organization(
+    return Organization(
         mesh,
         remeshed.surface,
         (),
@@ -410,7 +413,7 @@ def _organization(
         (attribute,),
         0,
         None,
-        _EvidenceSection(),
+        EvidenceSection(),
     )
 
 
@@ -418,7 +421,7 @@ def _remesh_stages(
     plan: Any,
     patch_count: int,
     cell_count: int,
-    organization: _Organization,
+    organization: Organization,
     background: BackgroundMetricControl | None,
     geometry_layout_id: str,
     audit: Any,
@@ -529,7 +532,7 @@ def _remesh_stages(
     )
 
 
-def _execute_remesh(
+def execute_remesh(
     gmsh: Any,
     plan: Any,
     version: str,
@@ -556,7 +559,7 @@ def _execute_remesh(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
             "Generated Gmsh mesh exceeds maximum_vertices.",
         )
-    top = _element_rows(gmsh, 2, geometry_order)
+    top = element_rows(gmsh, 2, geometry_order)
     cell_count = sum(rows.tags.size for rows in top)
     if cell_count > limits.maximum_cells:
         raise MeshingFailure(
@@ -569,7 +572,7 @@ def _execute_remesh(
             "Gmsh discrete remeshing returned elements other than one triangle family.",
             stage=MeshingStageKind.CANONICALIZATION.value,
         )
-    native = _native_quality(gmsh, top)
+    native = native_quality(gmsh, top)
     remeshed = _canonical_surface(plan, node_tags, points, top, closed)
     surface_audit = remeshed.surface.audit(
         SurfaceAuditPolicy(require_closed=closed, require_outward_orientation=closed)
@@ -580,7 +583,7 @@ def _execute_remesh(
             "; ".join(surface_audit.issues) or "Remeshed surface audit failed.",
             stage=MeshingStageKind.TOPOLOGY_AUDIT.value,
         )
-    curved = _cell_geometry(
+    curved = cell_geometry(
         gmsh,
         remeshed.mesh,
         top,
@@ -597,19 +600,19 @@ def _execute_remesh(
     organization = _organization(plan, remeshed, nearest, residuals)
     corner_points = points[remeshed.corner_nodes]
     sections = (
-        _EvidenceSection((), native.achieved, native.issues),
-        _conformity_section(curved),
+        EvidenceSection((), native.achieved, native.issues),
+        conformity_section(curved),
         fidelity,
-        _background_metric_evidence(
+        background_metric_evidence(
             gmsh,
             view,
-            _mesh_edges(remeshed.mesh) if view is not None else np.empty((0, 2)),
+            mesh_edges(remeshed.mesh) if view is not None else np.empty((0, 2)),
             corner_points,
             surface.size_compliance,
             plan.reconstruction.maximum_deviation,
         ),
     )
-    audit, compliance = _audit_gmsh_mesh(
+    audit, compliance = audit_gmsh_mesh(
         surface,
         plan.specification.specification_id,
         curved.geometry,

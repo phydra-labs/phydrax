@@ -35,6 +35,7 @@ from phydrax.operators.integral.layer_potential import (
     BoundaryPanelization2D,
     LaplaceLayerPotential2D,
 )
+from phydrax.units import METER
 
 from ._io import write_json_atomic
 from ._memory import (
@@ -232,7 +233,7 @@ def main() -> None:
         capacities = layer_sizes if item == "D13" else tuple((n, n) for n in dimensions)
         for capacity, width in capacities:
             if item == "D13":
-                geometry = Circle((0.0, 0.0), 1.0).compile()
+                geometry = Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
                 atlas = geometry.boundary_atlas
                 owner_count = sum(bool(owner) for owner in np.asarray(atlas.seam_owner))
                 panelization = BoundaryPanelization2D(

@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.geometry.surface import SurfaceMetadata, SurfaceModel
 
 
 def _surface_and_rays() -> Any:
@@ -16,13 +17,13 @@ def _surface_and_rays() -> Any:
     contract = phx.SpatialCoordinateContract(
         phx.units.METER, coordinate_system="cartesian", reference_frame="world"
     )
-    metadata = phx.geometry.surface.SurfaceMetadata(
+    metadata = SurfaceMetadata(
         source_id="lidar-target",
         source_revision="1",
         coordinate_contract=contract,
         provenance=("synthetic",),
     )
-    surface = phx.geometry.surface.SurfaceModel.from_triangles(
+    surface = SurfaceModel.from_triangles(
         vertices, triangles, metadata, repair_orientation=True, orient_closed_outward=True
     ).prepare()
     rays = phx.measurement.RaySampleSupport(

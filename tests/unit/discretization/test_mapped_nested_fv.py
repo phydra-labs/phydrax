@@ -2,64 +2,85 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
+from typing import NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax import Array
-from numpy.typing import NDArray
 
-from phydrax.discretization import CellBlock, CellMesh, UnstructuredFiniteVolumePlan
-from phydrax.discretization._cell_geometry import (
+from phydrax._resource_ticket import HostBatchTicket
+from phydrax.discretization import (
+    CellBlock,
     CellGeometrySpec,
-    coordinate_lagrange_element,
-)
-from phydrax.discretization._cell_geometry_transfer import (
-    _certified_cell_measures,
     CellGeometryTransition,
+    CellMesh,
+    FiniteVolumePrecisionPolicy,
+    lower_static_unstructured_stage_metrics,
+    RestrictedCellGeometryElement,
+    TopologyEpoch,
     transition_nested_cell_geometry,
+    UnstructuredFiniteVolumePlan,
 )
+from phydrax.discretization._cell_geometry import cell_geometry_preparation_query_upper
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._mapped_geometry_measure import certified_cell_measures
 from phydrax.discretization._reference_cell import reference_cell_topology
-from phydrax.discretization._surface_chart_deformation import (
-    PreparedSurfaceChartDeformation,
-)
-from phydrax.discretization._topology_epoch import TopologyEpoch
-from phydrax.discretization.fem._reference import FiniteElementSpec
+from phydrax.discretization._surface_chart_records import PreparedSurfaceChartDeformation
+from phydrax.discretization.fem import FiniteElementSpec
 from phydrax.discretization.fem._surface_chart_transfer import (
     PreparedSurfaceChartFiniteVolumeContents,
 )
-from phydrax.discretization.finite_volume._automatic_remap import (
-    prepare_unstructured_conservative_remap,
-)
-from phydrax.discretization.finite_volume._geometry_protocol import (
+from phydrax.discretization.finite_volume import (
     FiniteVolumeStageMetrics,
-)
-from phydrax.discretization.finite_volume._remap_evidence import (
+    MappedNestedRemapEvidence,
     MappedSurfaceChartRemapEvidence,
+    prepare_unstructured_conservative_remap,
     PreparedUnstructuredConservativeRemap,
-)
-from phydrax.discretization.finite_volume._unstructured import (
+    UnstructuredConservativeRemapPlan,
     UnstructuredFiniteVolumeDiscretization,
 )
-from phydrax.discretization.finite_volume._unstructured_remap import (
-    UnstructuredConservativeRemapPlan,
-)
+from phydrax.geometry import CommonRefinementPolicy
 from phydrax.lifecycle import CompositionEntry
 from phydrax.meshing._mixed_adaptation import adapt_mixed_mesh, MixedAdaptationOutcome
 from phydrax.meshing._topology_edit import assemble_topology_edit
+from phydrax.solver import FiniteVolumeConservativeContentState
 from phydrax.solver._finite_volume_topology_events import (
+    FiniteVolumeTopologyArtifacts,
+    FiniteVolumeTopologyEventJournal,
+    FiniteVolumeTopologyEventRequest,
+    FiniteVolumeTopologyEventScheduler,
     FiniteVolumeTopologyEventTransactionResult,
+    TopologyEventKind,
+    TopologyEventStatus,
 )
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.mapped_cells import (
+    curved_fv_volume,
+    curved_surface_chart_fv,
+    fv_volume_map,
+)
+
+
+# Qualification thresholds retained from the pre-remediation curved FV tests:
+# 2e-14 for polynomial measures and chart contents, 3e-14 for refinement
+# content/duality, and 4e-14 for many-to-one coarsening. Reference totals integrate
+# det(D map) = 1 + 0.1*y over each declared reference cell. Values are unchanged.
+MAPPED_MEASURE_ATOL = 2.0e-14
+REFINEMENT_ATOL = 3.0e-14
+COARSENING_ATOL = 4.0e-14
 
 
 def _require_plan(
     remap: PreparedUnstructuredConservativeRemap,
 ) -> UnstructuredConservativeRemapPlan:
     if remap.plan is None:
-        raise ValueError(f"Expected successful remap, got {remap.status}: {remap.reason}")
+        raise ValueError(
+            f"remap.plan must contain a successful plan; got {remap.status}: {remap.reason}"
+        )
     return remap.plan
 
 
@@ -67,65 +88,26 @@ def _require_chart_evidence(
     remap: PreparedUnstructuredConservativeRemap,
 ) -> MappedSurfaceChartRemapEvidence:
     evidence = remap.evidence
-    if not isinstance(evidence, MappedSurfaceChartRemapEvidence):
-        raise TypeError("Expected actual mapped surface-chart evidence.")
-    return evidence
+    match evidence:
+        case MappedSurfaceChartRemapEvidence():
+            return evidence
+        case _:
+            raise TypeError(
+                "remap.evidence must contain mapped surface-chart evidence; got another evidence kind."
+            )
 
 
 def _require_chart_contents(
     plan: UnstructuredConservativeRemapPlan,
 ) -> PreparedSurfaceChartFiniteVolumeContents:
     contents = plan.surface_chart_contents
-    if not isinstance(contents, PreparedSurfaceChartFiniteVolumeContents):
-        raise TypeError("Expected actual mapped surface-chart contents.")
-    return contents
-
-
-def _map(points: NDArray[np.float64]) -> NDArray[np.float64]:
-    points = np.asarray(points, dtype=np.float64).copy()
-    points[:, 1] += 0.05 * points[:, 1] ** 2 + 0.05 * points[:, 0] * points[:, 2]
-    return points
-
-
-def _fixture(kind: str) -> tuple[CellMesh, CellGeometrySpec]:
-    if kind == "connected":
-        corners = np.concatenate(
-            (
-                np.asarray(reference_cell_topology("hexahedron").vertices),
-                [[0.5, 0.5, 2.0]],
+    match contents:
+        case PreparedSurfaceChartFiniteVolumeContents():
+            return contents
+        case _:
+            raise TypeError(
+                "remap.surface_chart_contents must contain mapped surface-chart contents; got another contents kind."
             )
-        )
-        blocks = (
-            CellBlock(
-                "hex", "hexahedron", np.arange(8)[None], global_ids=np.asarray([10])
-            ),
-            CellBlock(
-                "cap",
-                "pyramid",
-                np.asarray([[4, 5, 6, 7, 8]]),
-                global_ids=np.asarray([11]),
-            ),
-        )
-    else:
-        corners = np.asarray(reference_cell_topology(kind).vertices)
-        blocks = (
-            CellBlock(
-                "volume", kind, np.arange(len(corners))[None], global_ids=np.asarray([17])
-            ),
-        )
-    mesh = CellMesh(_map(corners), blocks)
-    elements, routes, coefficients = {}, {}, []
-    offset = 0
-    for block in blocks:
-        element = coordinate_lagrange_element(block.cell_kind, 2)
-        nodes = np.asarray(element.reference_nodes).copy()
-        if kind == "connected" and block.cell_kind == "pyramid":
-            nodes[:, 2] += 1
-        elements[block.name] = element
-        routes[block.name] = np.arange(offset, offset + len(nodes))[None]
-        coefficients.append(_map(nodes))
-        offset += len(nodes)
-    return mesh, CellGeometrySpec(elements, routes, np.concatenate(coefficients))
 
 
 def _prepare(
@@ -141,7 +123,10 @@ def _refine(
 ) -> tuple[CellMesh, CellGeometryTransition, MixedAdaptationOutcome]:
     ids = np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks])
     outcome = adapt_mixed_mesh(mesh, refine_cell_ids=ids)
-    target, _, _ = assemble_topology_edit(mesh, outcome.edit, numeric_version="fine")
+    with coordinate_reference_budget() as budget:
+        target, _, _ = assemble_topology_edit(
+            mesh, outcome.edit, numeric_version="fine", budget=budget
+        )
     transition = transition_nested_cell_geometry(
         mesh,
         geometry,
@@ -152,33 +137,55 @@ def _refine(
     return target, transition, outcome
 
 
-@pytest.mark.parametrize(
-    "kind,total",
-    [
+class _NestedFVCase(NamedTuple):
+    geometry: CellGeometrySpec
+    source: UnstructuredFiniteVolumeDiscretization
+    fine_mesh: CellMesh
+    transition: CellGeometryTransition
+    outcome: MixedAdaptationOutcome
+    fine: UnstructuredFiniteVolumeDiscretization
+    remap: PreparedUnstructuredConservativeRemap
+
+
+@pytest.fixture(
+    scope="module",
+    params=(
         ("hexahedron", 1.05),
         ("prism", 31 / 60),
         ("pyramid", 0.35),
         ("tetrahedron", 41 / 240),
         ("connected", 1.4),
-    ],
+    ),
+    ids=("hexahedron", "prism", "pyramid", "tetrahedron", "connected"),
 )
-def test_curved_nested_inventory_refine_coarsen_and_transpose(
-    kind: str, total: float
-) -> None:
-    mesh, geometry = _fixture(kind)
+def nested_fv_case(request: pytest.FixtureRequest) -> _NestedFVCase:
+    kind, total = request.param
+    policy = CommonRefinementPolicy()
+    mesh, geometry = curved_fv_volume(kind)
     source = _prepare(mesh, geometry)
-    np.testing.assert_allclose(np.sum(source.cell_volumes), total, rtol=0, atol=2e-14)
+    np.testing.assert_allclose(
+        np.sum(source.cell_volumes), total, rtol=0, atol=MAPPED_MEASURE_ATOL
+    )
     fine_mesh, transition, outcome = _refine(mesh, geometry)
     fine = _prepare(fine_mesh, transition.geometry)
     remap = prepare_unstructured_conservative_remap(
         source,
         fine,
         provenance="curved-refine",
+        policy=policy,
         source_geometry=geometry,
         target_geometry=transition.geometry,
         geometry_transition=transition,
     )
-    assert remap.refinement is None and remap.route == "mapped-nested"
+    return _NestedFVCase(geometry, source, fine_mesh, transition, outcome, fine, remap)
+
+
+def test_curved_nested_refinement_inventory_epoch_and_transpose(
+    nested_fv_case: _NestedFVCase,
+) -> None:
+    _geometry, source, fine_mesh, transition, _outcome, fine, remap = nested_fv_case
+    policy = CommonRefinementPolicy()
+    assert isinstance(remap.route, MappedNestedRemapEvidence)
     values = jnp.arange(source.cell_count, dtype=jnp.float64)[:, None] + 2
     content = source.cell_volumes[:, None] * values
     transferred = _require_plan(remap).apply(values)
@@ -219,7 +226,7 @@ def test_curved_nested_inventory_refine_coarsen_and_transpose(
         np.asarray(transport.target_content),
         np.asarray(transport.source_content),
         rtol=0,
-        atol=3e-14,
+        atol=REFINEMENT_ATOL,
     )
     corrupt_entry = CompositionEntry(
         transferred + 1,
@@ -234,22 +241,48 @@ def test_curved_nested_inventory_refine_coarsen_and_transpose(
         epoch_transfer.composition_transport(source_entry, corrupt_entry).successful
     )
     np.testing.assert_allclose(
-        transferred_content, fine.cell_volumes[:, None] * transferred, rtol=0, atol=3e-14
+        transferred_content,
+        fine.cell_volumes[:, None] * transferred,
+        rtol=0,
+        atol=REFINEMENT_ATOL,
     )
     np.testing.assert_allclose(
-        np.sum(transferred_content), np.sum(content), rtol=0, atol=3e-14
+        np.sum(transferred_content), np.sum(content), rtol=0, atol=REFINEMENT_ATOL
     )
     probe = jnp.sin(jnp.arange(fine.cell_count, dtype=jnp.float64))[:, None]
     np.testing.assert_allclose(
         jnp.vdot(transferred, probe),
-        jnp.vdot(values, _require_plan(remap)._transpose_averages(probe)),
+        jnp.vdot(values, epoch_transfer.pullback(probe)),
         rtol=0,
-        atol=3e-14,
+        atol=REFINEMENT_ATOL,
     )
-    measured, errors, _ = _certified_cell_measures(fine_mesh, transition.geometry)
+    ticket = HostBatchTicket(
+        policy.maximum_exact_work,
+        queries_upper=(policy.maximum_exact_work + 1)
+        * cell_geometry_preparation_query_upper(transition.geometry),
+        bytes_upper=policy.maximum_memory_bytes,
+    )
+    budget = CoordinateEnclosureBudget(
+        ticket,
+        maximum_work_units=policy.maximum_exact_work,
+        maximum_memory_bytes=policy.maximum_memory_bytes,
+    )
+    with ticket, budget.activate():
+        measured, errors, _ = certified_cell_measures(
+            fine_mesh, transition.geometry, budget=budget
+        )
     np.testing.assert_array_equal(fine.cell_volumes, measured)
     np.testing.assert_array_equal(fine.cell_volume_error_bounds, errors)
     np.testing.assert_array_equal(_require_plan(remap).target_volumes, measured)
+
+
+def test_curved_nested_coarsening_inventory_and_transpose(
+    nested_fv_case: _NestedFVCase,
+) -> None:
+    _geometry, source, fine_mesh, transition, outcome, fine, remap = nested_fv_case
+    values = jnp.arange(source.cell_count, dtype=jnp.float64)[:, None] + 2
+    content = source.cell_volumes[:, None] * values
+    transferred_content = _require_plan(remap).apply_content(content)
     ids = np.concatenate([np.asarray(block.global_ids) for block in fine_mesh.blocks])
     coarsened = adapt_mixed_mesh(
         fine_mesh,
@@ -257,9 +290,10 @@ def test_curved_nested_inventory_refine_coarsen_and_transpose(
         coarsen_cell_ids=ids,
         hierarchy=outcome.hierarchy,
     )
-    restored_mesh, _, _ = assemble_topology_edit(
-        fine_mesh, coarsened.edit, numeric_version="restored"
-    )
+    with coordinate_reference_budget() as budget:
+        restored_mesh, _, _ = assemble_topology_edit(
+            fine_mesh, coarsened.edit, numeric_version="restored", budget=budget
+        )
     restoration = transition_nested_cell_geometry(
         fine_mesh,
         transition.geometry,
@@ -277,6 +311,12 @@ def test_curved_nested_inventory_refine_coarsen_and_transpose(
         target_geometry=restoration.geometry,
         geometry_transition=restoration,
     )
+    reverse_epoch = _require_plan(reverse).epoch_transition(
+        fine.cell_space,
+        restored.cell_space,
+        TopologyEpoch(1, fine.geometry_id, fine.topology_id, "serial"),
+        TopologyEpoch(2, restored.geometry_id, restored.topology_id, "serial"),
+    )
     # Nonconstant fine inventory exercises true many-to-one weighted aggregation.
     fine_values = jnp.arange(fine.cell_count, dtype=jnp.float64)[:, None] / 7 + 1
     fine_content = fine_values * fine.cell_volumes[:, None]
@@ -285,17 +325,17 @@ def test_curved_nested_inventory_refine_coarsen_and_transpose(
         coarse_content,
         _require_plan(reverse).apply(fine_values) * restored.cell_volumes[:, None],
         rtol=0,
-        atol=4e-14,
+        atol=COARSENING_ATOL,
     )
     np.testing.assert_allclose(
-        np.sum(coarse_content), np.sum(fine_content), rtol=0, atol=4e-14
+        np.sum(coarse_content), np.sum(fine_content), rtol=0, atol=COARSENING_ATOL
     )
     coarse_probe = jnp.arange(restored.cell_count, dtype=jnp.float64)[:, None] + 0.7
     np.testing.assert_allclose(
         jnp.vdot(_require_plan(reverse).apply(fine_values), coarse_probe),
-        jnp.vdot(fine_values, _require_plan(reverse)._transpose_averages(coarse_probe)),
+        jnp.vdot(fine_values, reverse_epoch.pullback(coarse_probe)),
         rtol=0,
-        atol=4e-14,
+        atol=COARSENING_ATOL,
     )
     source_rows = {
         int(cell): row for row, cell in enumerate(np.asarray(source.cell_global_ids))
@@ -307,20 +347,19 @@ def test_curved_nested_inventory_refine_coarsen_and_transpose(
         _require_plan(reverse).apply_content(transferred_content),
         content[restored_rows],
         rtol=0,
-        atol=4e-14,
+        atol=COARSENING_ATOL,
     )
     np.testing.assert_array_equal(
         restored.cell_volumes, source.cell_volumes[restored_rows]
     )
 
 
-def test_stale_wrong_and_incomplete_mapped_witnesses_are_rejected() -> None:
-    mesh, geometry = _fixture("hexahedron")
-    source = _prepare(mesh, geometry)
-    fine_mesh, transition, _ = _refine(mesh, geometry)
-    fine = _prepare(fine_mesh, transition.geometry)
-    wrong = replace(transition, source_topology_id="foreign")
-    incomplete = eqx.tree_at(
+def _foreign_topology(transition: CellGeometryTransition) -> CellGeometryTransition:
+    return replace(transition, source_topology_id="foreign")
+
+
+def _missing_target_cell(transition: CellGeometryTransition) -> CellGeometryTransition:
+    return eqx.tree_at(
         lambda x: (x.target_cell_ids, x.parent_cell_ids, x.parent_reference_vertices),
         transition,
         (
@@ -329,22 +368,48 @@ def test_stale_wrong_and_incomplete_mapped_witnesses_are_rejected() -> None:
             transition.parent_reference_vertices[:-1],
         ),
     )
-    for witness in (wrong, incomplete):
-        with pytest.raises(ValueError):
-            prepare_unstructured_conservative_remap(
-                source,
-                fine,
-                provenance="reject",
-                source_geometry=geometry,
-                target_geometry=transition.geometry,
-                geometry_transition=witness,
-            )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "field"),
+    (
+        (_foreign_topology, r"nested_reference\.geometry_transition"),
+        (_missing_target_cell, r"nested_reference\.records"),
+    ),
+    ids=("foreign-topology", "missing-target-cell"),
+)
+def test_nested_remap_rejects_invalid_reference_transition(
+    mutation: Callable[[CellGeometryTransition], CellGeometryTransition],
+    field: str,
+) -> None:
+    mesh, geometry = curved_fv_volume("hexahedron")
+    source = _prepare(mesh, geometry)
+    fine_mesh, transition, _ = _refine(mesh, geometry)
+    fine = _prepare(fine_mesh, transition.geometry)
+    with pytest.raises(ValueError, match=field):
+        prepare_unstructured_conservative_remap(
+            source,
+            fine,
+            provenance="reject",
+            source_geometry=geometry,
+            target_geometry=transition.geometry,
+            geometry_transition=mutation(transition),
+        )
+
+
+def test_nested_remap_rejects_different_coordinate_bank() -> None:
+    mesh, geometry = curved_fv_volume("hexahedron")
+    source = _prepare(mesh, geometry)
+    fine_mesh, transition, _ = _refine(mesh, geometry)
+    fine = _prepare(fine_mesh, transition.geometry)
     stale = CellGeometrySpec(
         dict(zip(geometry.block_names, geometry.elements, strict=True)),
         dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
         np.asarray(geometry.coordinates) + 0.01,
     )
-    with pytest.raises(ValueError, match="bound"):
+    with pytest.raises(
+        ValueError, match=r"prepare_unstructured_conservative_remap\.cell_geometry"
+    ):
         prepare_unstructured_conservative_remap(
             source,
             fine,
@@ -362,10 +427,9 @@ def _represented_two_child_hex(
     UnstructuredFiniteVolumeDiscretization,
     PreparedUnstructuredConservativeRemap,
 ]:
-    """Actual affine reference partition, with both children using the root map."""
-    from phydrax.discretization._cell_geometry import RestrictedCellGeometryElement
+    """Return an affine reference partition whose children retain the root map."""
 
-    source_mesh, source_geometry = _fixture("hexahedron")
+    source_mesh, source_geometry = curved_fv_volume("hexahedron")
     shift = np.asarray(translation, dtype=np.float64)
     source_mesh = CellMesh(
         np.asarray(source_mesh.coordinates) + shift, source_mesh.blocks
@@ -378,7 +442,9 @@ def _represented_two_child_hex(
     reference = np.asarray(reference_cell_topology("hexahedron").vertices)
     root = source_geometry.elements[0]
     if not isinstance(root, (FiniteElementSpec, RestrictedCellGeometryElement)):
-        raise TypeError("Represented children require a tabulatable coordinate root.")
+        raise TypeError(
+            f"fixture.root must be a FiniteElementSpec or RestrictedCellGeometryElement; got {type(root).__name__}"
+        )
     matrix = np.diag([1.0, 0.5, 1.0])
     corners = [reference @ matrix.T + [0, offset, 0] for offset in (0.0, 0.5)]
     points, lookup, blocks, elements, routes = [], {}, [], {}, {}
@@ -403,7 +469,9 @@ def _represented_two_child_hex(
             root, "hexahedron", matrix, np.asarray([0, 0.5 * child, 0])
         )
         routes[name] = source_geometry.geometry_dofs[0]
-    target_mesh = CellMesh(_map(np.asarray(points, dtype=np.float64)) + shift, blocks)
+    target_mesh = CellMesh(
+        fv_volume_map(np.asarray(points, dtype=np.float64)) + shift, blocks
+    )
     target_geometry = CellGeometrySpec(elements, routes, source_geometry.coordinates)
     source, target = (
         _prepare(source_mesh, source_geometry),
@@ -421,20 +489,7 @@ def _represented_two_child_hex(
     return source, target, remap
 
 
-def test_actual_mapped_transaction_rolls_back_stale_remap_geometry() -> None:
-    from phydrax.discretization import (
-        FiniteVolumePrecisionPolicy,
-        lower_static_unstructured_stage_metrics,
-    )
-    from phydrax.solver import FiniteVolumeConservativeContentState
-    from phydrax.solver._finite_volume_topology_events import (
-        FiniteVolumeTopologyArtifacts,
-        FiniteVolumeTopologyEventJournal,
-        FiniteVolumeTopologyEventRequest,
-        FiniteVolumeTopologyEventScheduler,
-        TopologyEventKind,
-        TopologyEventStatus,
-    )
+def test_mapped_transaction_rolls_back_different_remap_geometry() -> None:
 
     source, target, remap = _represented_two_child_hex([0, 0, 0])
     _, _, stale_remap = _represented_two_child_hex([0.2, 0, 0])
@@ -504,7 +559,7 @@ def test_actual_mapped_transaction_rolls_back_stale_remap_geometry() -> None:
     assert committed.receipt is not None
     assert committed.receipt.published
     np.testing.assert_allclose(
-        committed.content_state.volume_integral(), 3.15, rtol=0, atol=2e-14
+        committed.content_state.volume_integral(), 3.15, rtol=0, atol=MAPPED_MEASURE_ATOL
     )
     assert committed.journal.current_epoch_id == successor.epoch_id
     rejected = transact(stale_remap)
@@ -518,142 +573,17 @@ def test_actual_mapped_transaction_rolls_back_stale_remap_geometry() -> None:
     assert rejected.journal.artifact_table == journal.artifact_table
 
 
-def _curved_surface_chart_fv_fixture(
-    radius: float = 1.0,
-) -> tuple[
-    UnstructuredFiniteVolumeDiscretization,
-    UnstructuredFiniteVolumeDiscretization,
-    PreparedSurfaceChartDeformation,
-    CellGeometryTransition,
-]:
-    from phydrax.discretization._cell_geometry_transfer import (
-        CellGeometryTransitionPolicy,
-        reconstruct_parametric_surface_cell_geometry,
-        transition_chart_deformed_cell_geometry,
-    )
-    from phydrax.discretization._cell_geometry_validity import cell_geometry_id
-    from phydrax.discretization._surface_chart_deformation import (
-        prepare_surface_chart_deformation,
-        SurfaceChartWitness,
-    )
-    from phydrax.geometry._meshing_domain import (
-        MeshingDomain,
-        MeshingDomainCurve,
-        MeshingSurfacePatch,
-        PatchCurveUse,
-    )
-    from phydrax.geometry.brep._patches import LineCurve, SpherePatch
-
-    uv = np.asarray([[0.125, 0.125], [0.25, 0.125], [0.25, 0.25], [0.125, 0.25]])
-    surface = SpherePatch([0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], radius)
-    uses = tuple(
-        PatchCurveUse(i, LineCurve(uv[i], uv[(i + 1) % 4] - uv[i]), 0.0, 1.0)
-        for i in range(4)
-    )
-    domain = MeshingDomain(
-        (MeshingSurfacePatch(surface, (uses,)),),
-        tuple(MeshingDomainCurve(i, (i + 1) % 4) for i in range(4)),
-        4,
-        source_id="regular-patch",
-        source_revision="r1",
-        source_occurrences=(
-            tuple(("assembly", f"corner-{i}") for i in range(4)),
-            tuple(("assembly", f"curve-{i}") for i in range(4)),
-            (("assembly", "face-7"),),
-        ),
-    )
-    xyz = domain.evaluate(np.zeros(4, dtype=np.int32), uv)
-    old = np.asarray([[0, 2, 1], [0, 3, 2]], dtype=np.int32)
-    new = np.asarray([[0, 1, 3], [1, 2, 3]], dtype=np.int32)
-    # The accepted old represented surface is within its declared CAD fidelity
-    # budget but has genuinely smaller area than the reconstructed target.
-    source_mesh = CellMesh.from_triangles(
-        0.99 * xyz, old, cell_global_ids=np.asarray([107, 13])
-    )
-    target_mesh = CellMesh.from_triangles(xyz, new, cell_global_ids=np.asarray([59, 211]))
-    element = coordinate_lagrange_element("triangle", 2)
-    nodes = np.asarray(element.reference_nodes)
-    barycentric = np.column_stack((1 - nodes.sum(axis=1), nodes))
-
-    def layout(cells: NDArray[np.int32], radial_scale: float = 1.0) -> CellGeometrySpec:
-        charts = np.einsum("nk,ckd->cnd", barycentric, uv[cells])
-        unique, inverse = np.unique(charts.reshape((-1, 2)), axis=0, return_inverse=True)
-        return CellGeometrySpec(
-            {"triangles": element},
-            {"triangles": inverse.reshape((2, -1))},
-            radial_scale * domain.evaluate(np.zeros(len(unique), dtype=np.int32), unique),
-        )
-
-    source_geometry = layout(old, radial_scale=0.99)
-    entities, paths = (
-        (domain.entity_id(2, 0),) * 2,
-        (domain.source_occurrences[2][0],) * 2,
-    )
-    reconstruction = reconstruct_parametric_surface_cell_geometry(
-        source_mesh,
-        source_geometry,
-        target_mesh,
-        layout(new),
-        domain,
-        domain_id=domain.domain_id,
-        cell_ids=np.asarray([59, 211]),
-        cell_patches=np.zeros(2, dtype=np.int32),
-        cell_charts=uv[new],
-        cell_geometry_entity_ids=entities,
-        cell_occurrence_paths=paths,
-        maximum_fidelity=0.5,
-    )
-    source_witness = SurfaceChartWitness(
-        geometry_id=cell_geometry_id(source_geometry),
-        topology_id=source_mesh.topology_id,
-        domain_id=domain.domain_id,
-        cell_global_ids=jnp.asarray([107, 13]),
-        patches=jnp.zeros(2, dtype=jnp.int32),
-        charts=jnp.asarray(uv[old]),
-        geometry_entity_ids=entities,
-        occurrence_paths=paths,
-    )
-    target_witness = SurfaceChartWitness(
-        geometry_id=cell_geometry_id(reconstruction.geometry),
-        topology_id=target_mesh.topology_id,
-        domain_id=domain.domain_id,
-        cell_global_ids=jnp.asarray([59, 211]),
-        patches=jnp.zeros(2, dtype=jnp.int32),
-        charts=jnp.asarray(uv[new]),
-        geometry_entity_ids=entities,
-        occurrence_paths=paths,
-    )
-    core = prepare_surface_chart_deformation(
-        source_mesh,
-        source_geometry,
-        target_mesh,
-        reconstruction,
-        domain,
-        source_witness=source_witness,
-        target_witness=target_witness,
-        maximum_fidelity=0.5,
-        maximum_displacement=1.0,
-    )
-    carrier = transition_chart_deformed_cell_geometry(
-        source_mesh,
-        source_geometry,
-        target_mesh,
-        reconstruction,
-        core,
-        policy=CellGeometryTransitionPolicy(
-            reconstruction="bounded_chart_deformation", reconstruction_tolerance=1.0
-        ),
-    )
-    return (
-        _prepare(source_mesh, source_geometry),
-        _prepare(target_mesh, reconstruction.geometry),
-        core,
-        carrier,
-    )
+class _ChartFVCase(NamedTuple):
+    source: UnstructuredFiniteVolumeDiscretization
+    target: UnstructuredFiniteVolumeDiscretization
+    core: PreparedSurfaceChartDeformation
+    carrier: CellGeometryTransition
+    remap: PreparedUnstructuredConservativeRemap
 
 
-def test_actual_curved_chart_fv_density_content_and_transpose() -> None:
-    source, target, core, carrier = _curved_surface_chart_fv_fixture()
+@pytest.fixture(scope="module")
+def chart_fv_case() -> _ChartFVCase:
+    source, target, core, carrier = curved_surface_chart_fv()
     remap = prepare_unstructured_conservative_remap(
         source,
         target,
@@ -662,7 +592,14 @@ def test_actual_curved_chart_fv_density_content_and_transpose() -> None:
         target_geometry=core.target_geometry,
         geometry_transition=carrier,
     )
-    assert remap.route == "mapped-surface-chart" and remap.refinement is None
+    return _ChartFVCase(source, target, core, carrier, remap)
+
+
+def test_curved_chart_fv_density_content_and_transpose(
+    chart_fv_case: _ChartFVCase,
+) -> None:
+    source, target, _core, _carrier, remap = chart_fv_case
+    assert isinstance(remap.route, MappedSurfaceChartRemapEvidence)
     assert _require_chart_evidence(remap).passed
     assert np.sum(source.cell_volumes) < np.sum(target.cell_volumes)
     assert np.max(_require_plan(remap).apply(jnp.ones((2, 1)))) < 0.99
@@ -671,7 +608,10 @@ def test_actual_curved_chart_fv_density_content_and_transpose() -> None:
     target_density = _require_plan(remap).apply(density)
     target_content = _require_plan(remap).apply_content(source_content)
     np.testing.assert_allclose(
-        target_content, target_density * target.cell_volumes[:, None], rtol=0, atol=2e-14
+        target_content,
+        target_density * target.cell_volumes[:, None],
+        rtol=0,
+        atol=MAPPED_MEASURE_ATOL,
     )
     content_bound = jnp.vdot(
         _require_chart_contents(_require_plan(remap)).source_content_defect_bounds,
@@ -680,12 +620,18 @@ def test_actual_curved_chart_fv_density_content_and_transpose() -> None:
     assert abs(np.sum(target_content) - np.sum(source_content)) <= content_bound
     np.testing.assert_array_equal(_require_plan(remap).source_cell_global_ids, [107, 13])
     np.testing.assert_array_equal(_require_plan(remap).target_cell_global_ids, [59, 211])
+    transition = _require_plan(remap).epoch_transition(
+        source.cell_space,
+        target.cell_space,
+        TopologyEpoch(0, source.geometry_id, source.topology_id, "serial"),
+        TopologyEpoch(1, target.geometry_id, target.topology_id, "serial"),
+    )
     probe = jnp.asarray([[0.7], [-0.3]])
     np.testing.assert_allclose(
         jnp.vdot(target_density, probe),
-        jnp.vdot(density, _require_plan(remap)._transpose_averages(probe)),
+        jnp.vdot(density, transition.pullback(probe)),
         rtol=0,
-        atol=2e-14,
+        atol=MAPPED_MEASURE_ATOL,
     )
     np.testing.assert_array_equal(
         _require_plan(remap).source_volumes, source.cell_volumes
@@ -693,32 +639,27 @@ def test_actual_curved_chart_fv_density_content_and_transpose() -> None:
     np.testing.assert_array_equal(
         _require_plan(remap).target_volumes, target.cell_volumes
     )
-    transition = _require_plan(remap).epoch_transition(
-        source.cell_space,
-        target.cell_space,
-        TopologyEpoch(0, source.geometry_id, source.topology_id, "serial"),
-        TopologyEpoch(1, target.geometry_id, target.topology_id, "serial"),
-    )
     assert transition.transfer.properties.conservative
     assert not transition.transfer.properties.constant_preserving
     assert bool(transition.apply(density).successful)
     with pytest.raises(ValueError, match="density bounds"):
         _require_plan(remap).apply_bounded(jnp.full((2, 1), 0.5))
 
-    from phydrax.discretization import (
-        FiniteVolumePrecisionPolicy,
-        lower_static_unstructured_stage_metrics,
-    )
-    from phydrax.solver import FiniteVolumeConservativeContentState
-    from phydrax.solver._finite_volume_topology_events import (
-        FiniteVolumeTopologyArtifacts,
-        FiniteVolumeTopologyEventJournal,
-        FiniteVolumeTopologyEventRequest,
-        FiniteVolumeTopologyEventScheduler,
-        TopologyEventKind,
-        TopologyEventStatus,
-    )
 
+def test_curved_chart_fv_transaction_commit_and_stale_rollback(
+    chart_fv_case: _ChartFVCase,
+) -> None:
+    source, target, _core, _carrier, remap = chart_fv_case
+    density = jnp.asarray([[2.0], [3.0]])
+    target_content = _require_plan(remap).apply_content(
+        density * source.cell_volumes[:, None]
+    )
+    transition = _require_plan(remap).epoch_transition(
+        source.cell_space,
+        target.cell_space,
+        TopologyEpoch(0, source.geometry_id, source.topology_id, "serial"),
+        TopologyEpoch(1, target.geometry_id, target.topology_id, "serial"),
+    )
     initial, successor = transition.source, transition.target
     initial_artifacts = FiniteVolumeTopologyArtifacts(initial, source.prepared_id)
     successor_artifacts = FiniteVolumeTopologyArtifacts(successor, target.prepared_id)
@@ -793,10 +734,13 @@ def test_actual_curved_chart_fv_density_content_and_transpose() -> None:
         <= transport.content_tolerance[0]
     )
     np.testing.assert_allclose(
-        committed.content_state.conservative_content, target_content, rtol=0, atol=2e-14
+        committed.content_state.conservative_content,
+        target_content,
+        rtol=0,
+        atol=MAPPED_MEASURE_ATOL,
     )
-    stale_source, stale_target, stale_core, stale_carrier = (
-        _curved_surface_chart_fv_fixture(radius=1.1)
+    stale_source, stale_target, stale_core, stale_carrier = curved_surface_chart_fv(
+        radius=1.1
     )
     stale_remap = prepare_unstructured_conservative_remap(
         stale_source,
@@ -814,6 +758,13 @@ def test_actual_curved_chart_fv_density_content_and_transpose() -> None:
     assert rejected.content_state is accepted
     assert rejected.journal.epoch_table == journal.epoch_table
     assert rejected.journal.artifact_table == journal.artifact_table
+
+
+def test_curved_chart_fv_rejects_stale_incomplete_and_mismatched_bindings(
+    chart_fv_case: _ChartFVCase,
+) -> None:
+    source, target, core, carrier, _remap = chart_fv_case
+    _, _, stale_core, _ = curved_surface_chart_fv(radius=1.1)
     with pytest.raises(ValueError, match="stale"):
         prepare_unstructured_conservative_remap(
             source,
@@ -832,7 +783,9 @@ def test_actual_curved_chart_fv_density_content_and_transpose() -> None:
             target_geometry=core.target_geometry,
             surface_chart_deformation=replace(core, occurrences=()),
         )
-    with pytest.raises(ValueError, match="stale"):
+    with pytest.raises(
+        ValueError, match=r"prepare_unstructured_conservative_remap\.geometry_transition"
+    ):
         prepare_unstructured_conservative_remap(
             source,
             target,

@@ -18,7 +18,8 @@
 #pragma once
 
 #include <cmath>
-#include <limits>
+
+#include "rounding.hpp"
 
 namespace phx::mc {
 
@@ -59,13 +60,13 @@ inline double add_upper(double a, double b) {
   if (b == 0.0) {
     return a;
   }
-  return std::nextafter(a + b, std::numeric_limits<double>::infinity());
+  return geometry::next_up(a + b);
 }
 
 inline double multiply_upper(double a, double b) {
   return a == 0.0 || b == 0.0
              ? 0.0
-             : std::nextafter(a * b, std::numeric_limits<double>::infinity());
+             : geometry::next_up(a * b);
 }
 }  // namespace detail
 

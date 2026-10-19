@@ -14,47 +14,55 @@
 #include <vector>
 
 #include "capi_guard.hpp"
+#include "counter_records.hpp"
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 
 namespace phx::mc {
 namespace {
 
-int32_t create(int64_t point_count, const double* points, int64_t tet_count, const int32_t* tets,
-               const int32_t* regions, int64_t face_count, const int32_t* faces,
-               const int32_t* face_sources, int64_t segment_count, const int32_t* segments,
-               const int32_t* segment_sources, const double* protection,
-               const SourceComplex* source, int32_t policy, int64_t max_vertices,
-               int64_t max_tetrahedra, int64_t max_scratch_bytes, phx_mc_tet_mesh** out) {
-  if (out == nullptr) {
-    return PHX_MC_INVALID_ARGUMENT;
-  }
-  *out = nullptr;
-  if (point_count < 4 || point_count > kMaxMeshPoints || tet_count < 1 || face_count < 0 ||
-      segment_count < 0 || max_vertices < point_count || max_vertices > kMaxMeshPoints ||
-      max_tetrahedra < tet_count || max_tetrahedra > kMaxTetrahedronSlots / 2 ||
-      max_scratch_bytes < 0 ||
-      static_cast<std::uint64_t>(max_scratch_bytes) > std::numeric_limits<std::size_t>::max() ||
-      !addressable(point_count, 3, sizeof(double)) || !addressable(tet_count, 4, sizeof(int32_t)) ||
-      !addressable(face_count, 3, sizeof(int32_t)) ||
-      !addressable(segment_count, 2, sizeof(int32_t)) || points == nullptr || tets == nullptr ||
-      regions == nullptr || (face_count > 0 && (faces == nullptr || face_sources == nullptr)) ||
-      (segment_count > 0 && (segments == nullptr || segment_sources == nullptr)) ||
-      (source != nullptr &&
-       (source->face_count < 0 || source->segment_count < 0 ||
-        source->point_count < 0 || !addressable(source->point_count, 3, sizeof(double)) ||
-        !addressable(source->face_count, 3, sizeof(int32_t)) ||
-        !addressable(source->segment_count, 2, sizeof(int32_t)) ||
-        !addressable(point_count, 2, sizeof(double)) ||
-        (source->face_count > 0 && (source->faces == nullptr || source->face_sources == nullptr)) ||
-        (source->segment_count > 0 &&
-         (source->segments == nullptr || source->segment_sources == nullptr)) ||
-        (source->witness_strata == nullptr) != (source->witness_entities == nullptr) ||
-        (source->witness_strata == nullptr) != (source->witness_parameters == nullptr)))) {
+bool valid_creation_limits(const phx_mc_tet_mesh_create_request& in) {
+  return in.point_count >= 4 && in.point_count <= kMaxMeshPoints && in.tet_count >= 1 &&
+         in.face_count >= 0 && in.segment_count >= 0 && in.max_vertices >= in.point_count &&
+         in.max_vertices <= kMaxMeshPoints && in.max_tetrahedra >= in.tet_count &&
+         in.max_tetrahedra <= kMaxTetrahedronSlots / 2 && in.max_scratch_bytes >= 0 &&
+         static_cast<std::uint64_t>(in.max_scratch_bytes) <=
+             std::numeric_limits<std::size_t>::max();
+}
+
+bool valid_creation_buffers(const phx_mc_tet_mesh_create_request& in) {
+  return addressable(in.point_count, 3, sizeof(double)) &&
+         addressable(in.tet_count, 4, sizeof(int32_t)) &&
+         addressable(in.face_count, 3, sizeof(int32_t)) &&
+         addressable(in.segment_count, 2, sizeof(int32_t)) &&
+         in.points != nullptr && in.tets != nullptr && in.tet_regions != nullptr &&
+         (in.face_count == 0 || (in.faces != nullptr && in.face_sources != nullptr)) &&
+         (in.segment_count == 0 ||
+          (in.segments != nullptr && in.segment_sources != nullptr));
+}
+
+bool valid_source_buffers(const SourceComplex& source, int64_t point_count) {
+  return source.face_count >= 0 && source.segment_count >= 0 && source.point_count >= 0 &&
+         addressable(source.point_count, 3, sizeof(double)) &&
+         addressable(source.face_count, 3, sizeof(int32_t)) &&
+         addressable(source.segment_count, 2, sizeof(int32_t)) &&
+         addressable(point_count, 2, sizeof(double)) &&
+         (source.face_count == 0 || (source.faces != nullptr && source.face_sources != nullptr)) &&
+         (source.segment_count == 0 ||
+          (source.segments != nullptr && source.segment_sources != nullptr)) &&
+         (source.witness_strata == nullptr) == (source.witness_entities == nullptr) &&
+         (source.witness_strata == nullptr) == (source.witness_parameters == nullptr);
+}
+
+int32_t create(const phx_mc_tet_mesh_create_request& in, const SourceComplex* source) {
+  if (in.mesh == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  *in.mesh = nullptr;
+  if (!valid_creation_limits(in) || !valid_creation_buffers(in) ||
+      (source != nullptr && !valid_source_buffers(*source, in.point_count))) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   BoundaryPolicy boundary = BoundaryPolicy::kFixed;
-  switch (policy) {
+  switch (in.boundary_policy) {
     case PHX_MC_TET_MESH_BOUNDARY_FIXED:
       boundary = BoundaryPolicy::kFixed;
       break;
@@ -64,23 +72,38 @@ int32_t create(int64_t point_count, const double* points, int64_t tet_count, con
     default:
       return PHX_MC_INVALID_ARGUMENT;
   }
-  const MemoryBudgetWindow budget(static_cast<std::size_t>(max_scratch_bytes));
+  const MemoryBudgetWindow budget(static_cast<std::size_t>(in.max_scratch_bytes));
   const MemoryScope memory_scope(budget.owner());
+  // Coordinate refusals need no retained mesh allocation.
+  const int32_t valid = validate_points(in.points, in.point_count, 3, nullptr);
+  if (valid != PHX_MC_OK) return valid;
   auto handle = make_native_unique<phx_mc_tet_mesh>();
-  handle->mesh = make_native_unique<TetMesh>(
-      boundary, max_vertices, max_tetrahedra, static_cast<std::size_t>(max_scratch_bytes));
-  const int32_t valid = validate_points(points, point_count, 3, nullptr);
-  if (valid != PHX_MC_OK) {
-    return valid;
-  }
-  const int32_t status = handle->mesh->build(point_count, points, tet_count, tets, regions,
-                                             face_count, faces, face_sources, segment_count,
-                                             segments, segment_sources, protection, source);
-  if (status != PHX_MC_OK) {
-    return status;
-  }
-  *out = handle.release();
+  handle->mesh =
+      make_native_unique<TetMesh>(boundary, in.max_vertices, in.max_tetrahedra, budget.owner());
+  const int32_t status = handle->mesh->build(
+      in.point_count, in.points, in.tet_count, in.tets, in.tet_regions, in.face_count, in.faces,
+      in.face_sources, in.segment_count, in.segments, in.segment_sources, in.protection_radii, source);
+  if (status != PHX_MC_OK) return status;
+  *in.mesh = handle.release();
   return PHX_MC_OK;
+}
+
+SourceComplex source_from_request(const phx_mc_tet_mesh_create_request& in) {
+  SourceComplex source;
+  source.point_count = in.source_point_count;
+  source.points = in.source_points;
+  source.face_count = in.source_face_count;
+  source.faces = in.source_faces;
+  source.face_sources = in.source_face_group_rows;
+  source.face_tolerances = in.source_face_tolerances;
+  source.segment_count = in.source_segment_count;
+  source.segments = in.source_segments;
+  source.segment_sources = in.source_segment_group_rows;
+  source.segment_tolerances = in.source_segment_tolerances;
+  source.witness_strata = in.witness_strata;
+  source.witness_entities = in.witness_entities;
+  source.witness_parameters = in.witness_parameters;
+  return source;
 }
 
 int32_t check(const phx_mc_tet_mesh* handle) {
@@ -88,6 +111,10 @@ int32_t check(const phx_mc_tet_mesh* handle) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   return handle->mesh->broken() ? PHX_MC_INTERNAL_ERROR : PHX_MC_OK;
+}
+
+MemoryOwner memory_owner_of(const phx_mc_tet_mesh* handle) {
+  return handle != nullptr && handle->mesh ? handle->mesh->memory_owner() : MemoryOwner{};
 }
 
 // Shared by the owning quality report and borrowed proposal tables.
@@ -114,10 +141,8 @@ struct ProposalWork {
     return true;
   }
 
-  static void charge(void* context) {
-    if (!static_cast<ProposalWork*>(context)->spend()) {
-      throw ProposalWorkLimit{};
-    }
+  void operator()() {
+    if (!spend()) throw ProposalWorkLimit{};
   }
 };
 
@@ -142,7 +167,7 @@ int32_t proposal_shape(phx_mc_tet_mesh* handle, int64_t point_count, const doubl
   ProposalWork work{mesh, work_limit};
   try {
     const int32_t valid = validate_points(points, point_count, 3, nullptr,
-                                         ProposalWork::charge, &work);
+                                         [&work] { work(); });
     if (valid != PHX_MC_OK) {
       return valid;
     }
@@ -269,12 +294,14 @@ int32_t counts(const phx_mc_tet_mesh* handle, int64_t* values) {
   const MemoryScope memory_scope(mesh.memory_owner());
   NativeVector<std::array<int32_t, 4>> faces;
   mesh.collect_faces(faces);
-  values[0] = mesh.vertex_count();
-  values[1] = mesh.complex().finite_count;
-  values[2] = static_cast<int64_t>(faces.size());
-  values[3] = static_cast<int64_t>(mesh.segments().size());
-  values[4] = static_cast<int64_t>(mesh.unmet().size());
-  values[5] = mesh.work();
+  TetMeshCounts state;
+  CounterPublisher publisher{state, values};
+  state.vertices = mesh.vertex_count();
+  state.tetrahedra = mesh.complex().finite_count;
+  state.faces = static_cast<int64_t>(faces.size());
+  state.segments = static_cast<int64_t>(mesh.segments().size());
+  state.unmet_records = static_cast<int64_t>(mesh.unmet().size());
+  state.work_units = mesh.work();
   return PHX_MC_OK;
 }
 
@@ -351,55 +378,23 @@ int32_t unmet(const phx_mc_tet_mesh* handle, int32_t* tets, int32_t* codes, doub
 
 extern "C" {
 
-int32_t phx_mc_tet_mesh_create(int64_t point_count, const double* points, int64_t tet_count,
-                               const int32_t* tets, const int32_t* tet_regions,
-                               int64_t face_count, const int32_t* faces,
-                               const int32_t* face_sources, int64_t segment_count,
-                               const int32_t* segments, const int32_t* segment_sources,
-                               const double* protection_radii,
-                               int64_t source_point_count, const double* source_points,
-                               int64_t source_face_count,
-                               const int32_t* source_faces, const int32_t* source_face_ids,
-                               const double* source_face_tolerances,
-                               int64_t source_segment_count, const int32_t* source_segments,
-                               const int32_t* source_segment_ids,
-                               const double* source_segment_tolerances,
-                               const int8_t* witness_strata, const int32_t* witness_entities,
-                               const double* witness_parameters, int32_t boundary_policy,
-                               int64_t max_vertices, int64_t max_tetrahedra,
-                               int64_t max_scratch_bytes, phx_mc_tet_mesh** mesh) {
+int32_t phx_mc_tet_mesh_create(const phx_mc_tet_mesh_create_request* request) {
+  if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
-    // NULL source rows: the initial faces and segments are their own exact
-    // source complex, which then admits no bounds or witnesses.
-    const bool declared = source_points != nullptr;
-    if ((declared && source_point_count < 1) ||
-        (!declared && (source_point_count != 0 || source_faces != nullptr ||
-                      source_segments != nullptr || source_face_count != 0 ||
-                      source_segment_count != 0 ||
-                      source_face_tolerances != nullptr || source_segment_tolerances != nullptr ||
-                      witness_strata != nullptr || witness_entities != nullptr ||
-                      witness_parameters != nullptr))) {
-      if (mesh != nullptr) *mesh = nullptr;
+    const auto& in = *request;
+    // Absent source rows use the initial exact faces and segments.
+    const bool declared = in.source_points != nullptr;
+    if ((declared && in.source_point_count < 1) ||
+        (!declared && (in.source_point_count != 0 || in.source_faces != nullptr ||
+                       in.source_segments != nullptr || in.source_face_count != 0 ||
+                       in.source_segment_count != 0 || in.source_face_tolerances != nullptr ||
+                       in.source_segment_tolerances != nullptr || in.witness_strata != nullptr ||
+                       in.witness_entities != nullptr || in.witness_parameters != nullptr))) {
+      if (in.mesh != nullptr) *in.mesh = nullptr;
       return PHX_MC_INVALID_ARGUMENT;
     }
-    phx::mc::SourceComplex source;
-    source.point_count = source_point_count;
-    source.points = source_points;
-    source.face_count = source_face_count;
-    source.faces = source_faces;
-    source.face_sources = source_face_ids;
-    source.face_tolerances = source_face_tolerances;
-    source.segment_count = source_segment_count;
-    source.segments = source_segments;
-    source.segment_sources = source_segment_ids;
-    source.segment_tolerances = source_segment_tolerances;
-    source.witness_strata = witness_strata;
-    source.witness_entities = witness_entities;
-    source.witness_parameters = witness_parameters;
-    return phx::mc::create(point_count, points, tet_count, tets, tet_regions, face_count, faces,
-                           face_sources, segment_count, segments, segment_sources,
-                           protection_radii, declared ? &source : nullptr, boundary_policy,
-                           max_vertices, max_tetrahedra, max_scratch_bytes, mesh);
+    const auto source = phx::mc::source_from_request(in);
+    return phx::mc::create(in, declared ? &source : nullptr);
   });
 }
 
@@ -407,7 +402,7 @@ int32_t phx_mc_tet_mesh_quality(const phx_mc_tet_mesh* mesh, double sliver_degre
                                 double* values, int64_t* histogram, int64_t* slivers) {
   return phx::mc::guarded([&] {
     const phx::mc::MemoryScope memory_scope(
-        mesh != nullptr && mesh->mesh ? mesh->mesh->memory_owner() : phx::mc::MemoryOwner{});
+        phx::mc::memory_owner_of(mesh));
     return phx::mc::quality(mesh, sliver_degrees, values, histogram, slivers);
   });
 }
@@ -419,7 +414,7 @@ int32_t phx_mc_tet_mesh_proposal_shape(phx_mc_tet_mesh* mesh, int64_t point_coun
                                       int64_t work_limit, double* values) {
   return phx::mc::guarded([&] {
     const phx::mc::MemoryScope memory_scope(
-        mesh != nullptr && mesh->mesh ? mesh->mesh->memory_owner() : phx::mc::MemoryOwner{});
+        phx::mc::memory_owner_of(mesh));
     return phx::mc::proposal_shape(mesh, point_count, points, vertex_ids, tet_count, tets,
                                    minimum_relative_determinant, work_limit, values);
   });
@@ -428,7 +423,7 @@ int32_t phx_mc_tet_mesh_proposal_shape(phx_mc_tet_mesh* mesh, int64_t point_coun
 int32_t phx_mc_tet_mesh_counts(const phx_mc_tet_mesh* mesh, int64_t* counts) {
   return phx::mc::guarded([&] {
     const phx::mc::MemoryScope memory_scope(
-        mesh != nullptr && mesh->mesh ? mesh->mesh->memory_owner() : phx::mc::MemoryOwner{});
+        phx::mc::memory_owner_of(mesh));
     return phx::mc::counts(mesh, counts);
   });
 }
@@ -447,7 +442,7 @@ int32_t phx_mc_tet_mesh_work_units(const phx_mc_tet_mesh* handle, int64_t* work)
 int32_t phx_mc_tet_mesh_set_work_limit(phx_mc_tet_mesh* mesh, int64_t remaining_work_units) {
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::MemoryScope memory_scope(
-        mesh != nullptr && mesh->mesh ? mesh->mesh->memory_owner() : phx::mc::MemoryOwner{});
+        phx::mc::memory_owner_of(mesh));
     const int32_t status = phx::mc::check(mesh);
     if (status != PHX_MC_OK) {
       return status;
@@ -466,7 +461,7 @@ int32_t phx_mc_tet_mesh_export(const phx_mc_tet_mesh* mesh, double* points, int3
                                int8_t* vertex_dimension, double* vertex_sizes) {
   return phx::mc::guarded([&] {
     const phx::mc::MemoryScope memory_scope(
-        mesh != nullptr && mesh->mesh ? mesh->mesh->memory_owner() : phx::mc::MemoryOwner{});
+        phx::mc::memory_owner_of(mesh));
     return phx::mc::export_arrays(mesh, points, tets, tet_regions, faces, face_sources, segments,
                                   segment_sources, vertex_dimension, vertex_sizes);
   });
@@ -476,33 +471,49 @@ int32_t phx_mc_tet_mesh_unmet(const phx_mc_tet_mesh* mesh, int32_t* tets, int32_
                               double* values) {
   return phx::mc::guarded([&] {
     const phx::mc::MemoryScope memory_scope(
-        mesh != nullptr && mesh->mesh ? mesh->mesh->memory_owner() : phx::mc::MemoryOwner{});
+        phx::mc::memory_owner_of(mesh));
     return phx::mc::unmet(mesh, tets, codes, values);
   });
 }
 
-int32_t phx_mc_tet_mesh_source_evidence(const phx_mc_tet_mesh* handle, double* values,
-                                        int32_t* face_ancestors, int32_t* segment_ancestors,
+int32_t phx_mc_tet_mesh_source_evidence(const phx_mc_tet_mesh* handle, int64_t capacity,
+                                        int64_t* count, double* values,
+                                        int64_t* face_ancestor_offsets,
+                                        int32_t* face_ancestor_rows, int32_t* segment_ancestors,
                                         int8_t* witness_strata, int32_t* witness_entities,
                                         double* witness_parameters,
                                         double* witness_deviations) {
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::MemoryScope memory_scope(
-        handle != nullptr && handle->mesh ? handle->mesh->memory_owner() : phx::mc::MemoryOwner{});
+        phx::mc::memory_owner_of(handle));
     const int32_t status = phx::mc::check(handle);
-    if (status != PHX_MC_OK) {
-      return status;
+    if (status != PHX_MC_OK || capacity < 0 || count == nullptr) {
+      return status != PHX_MC_OK ? status : PHX_MC_INVALID_ARGUMENT;
     }
     const phx::mc::TetMesh& mesh = *handle->mesh;
     phx::mc::NativeVector<std::array<int32_t, 4>> faces;
     mesh.collect_faces(faces);
+    phx::mc::NativeVector<int64_t> offsets(1, 0);
+    phx::mc::NativeVector<int32_t> rows, contributors;
+    for (const auto& face : faces) {
+      if (!mesh.face_ancestry(face.data(), face[3], contributors)) {
+        return PHX_MC_INVALID_INPUT;
+      }
+      rows.insert(rows.end(), contributors.begin(), contributors.end());
+      offsets.push_back(static_cast<int64_t>(rows.size()));
+    }
+    *count = static_cast<int64_t>(rows.size());
+    if (values == nullptr && face_ancestor_offsets == nullptr && face_ancestor_rows == nullptr &&
+        segment_ancestors == nullptr && witness_strata == nullptr && witness_entities == nullptr &&
+        witness_parameters == nullptr && witness_deviations == nullptr) return PHX_MC_OK;
     phx::mc::NativeVector<std::array<int32_t, 3>> segments;
     segments.reserve(mesh.segments().size());
     for (const auto& [edge, source] : mesh.segments()) {
       segments.push_back({phx::mc::edge_low(edge), phx::mc::edge_high(edge), source});
     }
     std::sort(segments.begin(), segments.end());
-    if (values == nullptr || (!faces.empty() && face_ancestors == nullptr) ||
+    if (capacity < *count || values == nullptr || face_ancestor_offsets == nullptr ||
+        (!rows.empty() && face_ancestor_rows == nullptr) ||
         (!segments.empty() && segment_ancestors == nullptr) || witness_strata == nullptr ||
         witness_entities == nullptr || witness_parameters == nullptr ||
         witness_deviations == nullptr) {
@@ -510,9 +521,8 @@ int32_t phx_mc_tet_mesh_source_evidence(const phx_mc_tet_mesh* handle, double* v
     }
     values[0] = mesh.requested_source_tolerance();
     values[1] = mesh.achieved_source_error_bound();
-    for (std::size_t i = 0; i < faces.size(); ++i) {
-      face_ancestors[i] = mesh.original_face_ancestor(faces[i].data(), faces[i][3]);
-    }
+    std::copy(offsets.begin(), offsets.end(), face_ancestor_offsets);
+    std::copy(rows.begin(), rows.end(), face_ancestor_rows);
     for (std::size_t i = 0; i < segments.size(); ++i) {
       segment_ancestors[i] =
           mesh.original_segment_ancestor(segments[i][0], segments[i][1], segments[i][2]);
@@ -563,7 +573,7 @@ int32_t phx_mc_tet_mesh_protect_vertices(phx_mc_tet_mesh* handle, int64_t count,
                                         const int32_t* vertices) {
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::MemoryScope memory_scope(
-        handle != nullptr && handle->mesh ? handle->mesh->memory_owner() : phx::mc::MemoryOwner{});
+        phx::mc::memory_owner_of(handle));
     const int32_t status = phx::mc::check(handle);
     if (status != PHX_MC_OK || count < 0 || (count > 0 && vertices == nullptr)) {
       return status != PHX_MC_OK ? status : PHX_MC_INVALID_ARGUMENT;
@@ -577,7 +587,7 @@ int32_t phx_mc_tet_mesh_protect_vertices(phx_mc_tet_mesh* handle, int64_t count,
 int32_t phx_mc_tet_mesh_measure_execution(phx_mc_tet_mesh* handle, int32_t enabled) {
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::MemoryScope memory_scope(
-        handle != nullptr && handle->mesh ? handle->mesh->memory_owner() : phx::mc::MemoryOwner{});
+        phx::mc::memory_owner_of(handle));
     if (handle == nullptr || handle->mesh == nullptr || (enabled != 0 && enabled != 1)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
@@ -590,7 +600,7 @@ int32_t phx_mc_tet_mesh_execution_times(const phx_mc_tet_mesh* handle, double* s
                                        int32_t* measured) {
   return phx::mc::guarded([&]() -> int32_t {
     const phx::mc::MemoryScope memory_scope(
-        handle != nullptr && handle->mesh ? handle->mesh->memory_owner() : phx::mc::MemoryOwner{});
+        phx::mc::memory_owner_of(handle));
     // Failure timing remains readable even when scientific mesh operations are
     // refused because the handle is broken. This does not clear its failure.
     if (handle == nullptr || handle->mesh == nullptr || seconds == nullptr || measured == nullptr) {
@@ -625,14 +635,15 @@ int32_t phx_mc_tet_mesh_memory_evidence(const phx_mc_tet_mesh* handle, std::uint
     }
     const phx::mc::MemoryScope memory_scope(handle->mesh->memory_owner());
     const auto evidence = handle->mesh->memory_evidence();
-    std::copy(evidence.begin(), evidence.end(), values);
+    const auto state = phx::mc::ManagedMemory::from_slots(evidence.data());
+    phx::mc::CounterPublisher publisher{state, values};
     return PHX_MC_OK;
   });
 }
 
 void phx_mc_tet_mesh_free(phx_mc_tet_mesh* mesh) {
   const phx::mc::MemoryScope memory_scope(
-      mesh != nullptr && mesh->mesh ? mesh->mesh->memory_owner() : phx::mc::MemoryOwner{});
+      phx::mc::memory_owner_of(mesh));
   phx::mc::destroy_native_object(mesh);
 }
 

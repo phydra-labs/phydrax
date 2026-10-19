@@ -13,7 +13,7 @@ from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..optim import DifferentialEvolutionSearch
-from ..optim._differential_evolution import _bounded_differential_evolution
+from ..optim._differential_evolution import bounded_differential_evolution
 from ..optim._pytree import _PyTreeVectorizer
 from ..typing import PRNGKey
 from ._bayesian_optimization import (
@@ -165,7 +165,7 @@ def search_map(
     upper_vector = vectorizer.ravel_bound(position_bounds[1], side="Upper")
     objective = _PosteriorObjective(problem, vectorizer)
     if isinstance(search, DifferentialEvolutionSearch):
-        result = _bounded_differential_evolution(
+        result = bounded_differential_evolution(
             objective, initial_vector, lower_vector, upper_vector, search, key=key
         )
         return MAPSearchResult(

@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.discretization.fem._reference_rules import degree_aware_reference_rule
 
 
 fem = phx.discretization.fem
@@ -159,7 +160,7 @@ def _effectivity(count: Any) -> Any:
     discretization, solution = _p1_poisson(count)
     prepared = fem.prepare_gradient_recovery(discretization, "u")
     estimate, evidence = fem.recovery_error_estimate(prepared, solution)
-    points, weights = fem._generic._degree_aware_reference_rule("triangle", 6)
+    points, weights = degree_aware_reference_rule("triangle", 6)
     geometry = discretization.evaluate_block_geometry(
         "u", 0, discretization.default_runtime.coordinates, points, weights
     )

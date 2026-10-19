@@ -330,7 +330,7 @@ class _PackedCompositeRoutes(StrictModule, NonTrainableState):
         if np.any(left < 0) or np.any(right < 0):
             raise ValueError("Composite face routes reference non-leaf storage.")
         adjacency = np.stack((left, right), axis=1)
-        halo = DistributedHaloPlan(entity_owner, adjacency, part_count)
+        halo = DistributedHaloPlan.from_global(entity_owner, adjacency, part_count)
         halo_ids = np.asarray(halo.local_global_ids, dtype=np.int32)
         halo_valid = np.asarray(halo.local_valid, dtype=np.bool_)
         halo_owned = np.asarray(halo.local_owned, dtype=np.bool_)
@@ -2390,7 +2390,7 @@ class PreparedDistributedWaveAMRTopologyTransition(StrictModule, NonTrainableSta
             )
         adjacency = np.asarray(sorted(adjacency_records), dtype=np.int32)
         combined_owner = np.concatenate((source_owner, target_owner))
-        halo = DistributedHaloPlan(
+        halo = DistributedHaloPlan.from_global(
             combined_owner,
             adjacency,
             source.hierarchy.partition.part_count,

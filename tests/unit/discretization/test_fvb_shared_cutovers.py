@@ -11,7 +11,8 @@ from phydrax.discretization._cell_complex import (
     PolyhedralWorksetLimitError,
     prepare_polyhedral_worksets,
 )
-from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+from phydrax.discretization._cell_mesh import CellMesh
+from phydrax.discretization._reference_cell_types import CellBlock
 from phydrax.discretization.finite_volume import (
     prepare_polyhedral_finite_volume_geometry,
 )
@@ -39,7 +40,6 @@ def test_fvb_shared_cutovers_scenario_1() -> None:
         (0, 3, 2),
         (1, 2, 3),
     )
-    # ty: ignore[invalid-argument-type]
     mesh = CellMesh.from_polyhedra(points, (faces,))
     assert isinstance(mesh.connectivity, PolyhedralConnectivity)
     assert bool(jnp.all(mesh.connectivity.boundary_faces))
@@ -57,7 +57,6 @@ def test_fvb_shared_cutovers_scenario_1() -> None:
     )
     vertex_count = arity + 1 + 4 * tetrahedron_count
     connectivity = polyhedral_connectivity(
-        # ty: ignore[invalid-argument-type]
         (pyramid, ("tetrahedron", tetrahedra)),
         vertex_count,
     )
@@ -84,13 +83,11 @@ def test_mixed_contracts() -> None:
         "cell_global_ids": np.asarray((901, 42)),
     }
     connectivity = polyhedral_connectivity(
-        # ty: ignore[invalid-argument-type]
         (("prism", np.arange(6)[None, :]), tetrahedron_faces),
         7,
         **identifiers,
     )
     rotated = polyhedral_connectivity(
-        # ty: ignore[invalid-argument-type]
         tuple(
             tuple(face[1:] + face[:1] for face in faces)
             for faces in (prism_faces, tetrahedron_faces)

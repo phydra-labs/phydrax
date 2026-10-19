@@ -55,7 +55,7 @@ from ._preconditioning import (
     PreconditionerSource,
 )
 from ._properties import LinearCapabilityError, OperatorCapabilities, OperatorProperties
-from ._spaces import _coordinate_dtype, AbstractVectorSpace, ArraySpace
+from ._spaces import AbstractVectorSpace, ArraySpace, coordinate_dtype
 from ._sparse_contract import AbstractSparseLinearOperator
 from ._subspaces import LinearSubspace
 
@@ -285,7 +285,7 @@ class GalerkinHierarchyBuilder(AbstractPreconditionerBuilder):
             role_prefix="galerkin-coarse",
             assembly=self.assembly,
         )
-        itemsize = _coordinate_dtype(setup_operator.source).itemsize
+        itemsize = coordinate_dtype(setup_operator.source).itemsize
         dimensions = (
             setup_operator.source.size,
             *(prolongation.source.size for _, prolongation in self.transfers),
@@ -1357,7 +1357,7 @@ def _smoothed_aggregation_transition(
     }
     coarse_space = ArraySpace(
         (prolongator.shape[1],),
-        dtype=_coordinate_dtype(operator.source),
+        dtype=coordinate_dtype(operator.source),
         space_id=canonical_fingerprint(
             {"kind": "sa-coarse-space", **identity, "level": index + 1}
         ),
@@ -1417,7 +1417,7 @@ def _smoothed_aggregation_cost(
     /,
 ) -> PreconditionerCostEstimate:
     estimates = () if levels.estimates is None else levels.estimates
-    itemsize = _coordinate_dtype(setup_operator.source).itemsize
+    itemsize = coordinate_dtype(setup_operator.source).itemsize
     hierarchy_storage = _galerkin_stored_state_bytes(
         levels.transfers,
         levels.operators[1:],
@@ -1972,7 +1972,7 @@ def _construct_galerkin_operator(
                 DenseLinearOperator(
                     jnp.asarray(
                         coarse_matrix,
-                        dtype=_coordinate_dtype(restriction.target),
+                        dtype=coordinate_dtype(restriction.target),
                     ),
                     source=prolongation.source,
                     target=restriction.target,
@@ -2112,7 +2112,7 @@ def _dense_galerkin_resources(
     coarse_entries = restriction.target.size * prolongation.source.size
     entries += intermediate_entries + coarse_entries
     required_bytes += (intermediate_entries + coarse_entries) * result_itemsize
-    output_bytes = coarse_entries * _coordinate_dtype(restriction.target).itemsize
+    output_bytes = coarse_entries * coordinate_dtype(restriction.target).itemsize
     return int(entries), int(required_bytes), int(required_bytes + output_bytes)
 
 
@@ -2220,7 +2220,7 @@ def _sparse_operator_from_csr(
     canonical = matrix.tocsr(copy=True)
     canonical.sum_duplicates()
     canonical.sort_indices()
-    canonical.data = canonical.data.astype(_coordinate_dtype(target), copy=False)
+    canonical.data = canonical.data.astype(coordinate_dtype(target), copy=False)
     identifier = canonical_fingerprint(
         {
             "declared": str(operator_id),
@@ -2267,7 +2267,7 @@ def _initial_candidates(
         raise LinearCapabilityError(
             "A semantic vector space requires explicit near-nullspace candidates."
         )
-    candidate = jnp.ones((space.size,), dtype=_coordinate_dtype(space))
+    candidate = jnp.ones((space.size,), dtype=coordinate_dtype(space))
     vector = space.unflatten(candidate)
     norm = float(np.asarray(jnp.sqrt(jnp.real(space.inner(vector, vector)))))
     if not np.isfinite(norm) or norm <= 0.0:

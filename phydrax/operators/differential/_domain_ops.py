@@ -908,9 +908,10 @@ def hessian(
 
     ```python
     import phydrax as phx
+    from phydrax.units import METER
 
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")

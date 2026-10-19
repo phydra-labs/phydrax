@@ -14,7 +14,9 @@ license.
 
 ## Public layout
 
-```python executable
+Expected standard output: none.
+
+```python {.executable}
 from phydrax.applications import cardiovascular as cardio
 
 quantity = cardio.cardiovascular_quantity("transmembrane_potential")

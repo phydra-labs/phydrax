@@ -5,6 +5,7 @@
 // entry point, and every row offset of a caller array is representable.
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -15,6 +16,17 @@
 #include "bounded_memory.hpp"
 
 namespace phx::mc {
+
+// Empty exported banks permit an omitted output without null iterator arithmetic.
+template <class Bank, class T>
+bool output_bank_valid(const Bank& bank, T* output) noexcept {
+  return output != nullptr || bank.empty();
+}
+
+template <class Bank, class T>
+void copy_output_bank(const Bank& bank, T* output) {
+  if (!bank.empty()) std::copy(bank.begin(), bank.end(), output);
+}
 
 // Runs one entry-point body and maps an escaping exception to its call status:
 // allocation failure is a work-limit refusal, a rejected argument is invalid,

@@ -403,7 +403,7 @@ class SolarTransportPlan(StrictModule, NonTrainableState):
             (0.0, 0.0, 0.0),
             observation,
             feature_id=f"{profile.frame_id}:observation:{observation:.17g}",
-        ).compile()
+        ).compile(coordinate_unit=METER)
         specifications = (("surface:out", profile.boundary, 1, True, 20),)
         self.profile = profile
         self.scattering = scattering

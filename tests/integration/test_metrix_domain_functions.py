@@ -7,11 +7,12 @@ import pytest
 import phydrax as phx
 import phydrax.axes as cx
 from phydrax._frozendict import frozendict
+from phydrax.units import METER
 
 
 def _polar_problem() -> Any:
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(2.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(2.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     chart = phx.metrix.CoordinateChart("polar", ("r", "theta"))
     metric = phx.metrix.diagonal_metric(
@@ -81,7 +82,7 @@ def test_metrix_domain_functions_scenario_1() -> None:
     )
     metric = embedded.induced_metric()
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(1.5, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(1.5, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     scalar = domain.Function("x")(lambda q: jnp.sin(q[0]) * jnp.cos(q[1]))
     points = _points([[0.6, -0.7], [1.1, 0.4], [2.2, 0.8]])

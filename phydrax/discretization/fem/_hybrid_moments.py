@@ -4,21 +4,20 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from functools import lru_cache
 from itertools import combinations
 from math import factorial
 
 import numpy as np
 
-from . import _form_elements as forms
-from ._hybrid_forms import (
-    _coefficient_array,
-    _derivative,
-    _independent_columns,
-    _sum_polynomials,
-    HybridPreparation,
-    prepare_hybrid,
+from ..._host_table_cache import host_table_cache, logical_table_bytes
+from ...typing import checked
+from .. import (
+    _coordinate_enclosure as algebra,
+    _coordinate_enclosure as imported_coordinate_enclosure,
 )
+from .._coordinate_budget import CoordinateEnclosureBudget
+from . import _form_elements as forms, _hybrid_forms as hybrid_forms_owner
+from ._form_basis_types import FormElementFamily
 
 
 type _SourceSupport = tuple[
@@ -26,32 +25,42 @@ type _SourceSupport = tuple[
 ]
 
 
-def _body_bubble(family: forms.FormElementFamily) -> forms._Polynomial:
+def _body_bubble(family: FormElementFamily) -> forms.FormPolynomial:
     zero = (0, 0, 0)
-    variables: tuple[forms._Polynomial, ...] = tuple(
+    variables: tuple[forms.FormPolynomial, ...] = tuple(
         {tuple(int(axis == column) for column in range(3)): 1.0} for axis in range(3)
     )
-    one: forms._Polynomial = {zero: 1.0}
+    one: forms.FormPolynomial = {zero: 1.0}
     x, y, z = variables
-    height = forms._multiply(z, _sum_polynomials((one, z), (1.0, -1.0)))
+    height = forms.multiply_form_polynomials(
+        z, hybrid_forms_owner.sum_polynomials((one, z), (1.0, -1.0))
+    )
     if family == "prism-trimmed":
-        triangle = forms._multiply(
-            forms._multiply(x, y), _sum_polynomials((one, x, y), (1.0, -1.0, -1.0))
+        triangle = forms.multiply_form_polynomials(
+            forms.multiply_form_polynomials(x, y),
+            hybrid_forms_owner.sum_polynomials((one, x, y), (1.0, -1.0, -1.0)),
         )
         return {
             alpha: 108.0 * value
-            for alpha, value in forms._multiply(triangle, height).items()
+            for alpha, value in forms.multiply_form_polynomials(triangle, height).items()
         }
-    base = forms._multiply(
-        forms._multiply(x, _sum_polynomials((one, x), (1.0, -1.0))),
-        forms._multiply(y, _sum_polynomials((one, y), (1.0, -1.0))),
+    base = forms.multiply_form_polynomials(
+        forms.multiply_form_polynomials(
+            x, hybrid_forms_owner.sum_polynomials((one, x), (1.0, -1.0))
+        ),
+        forms.multiply_form_polynomials(
+            y, hybrid_forms_owner.sum_polynomials((one, y), (1.0, -1.0))
+        ),
     )
-    return {alpha: 64.0 * value for alpha, value in forms._multiply(base, height).items()}
+    return {
+        alpha: 64.0 * value
+        for alpha, value in forms.multiply_form_polynomials(base, height).items()
+    }
 
 
 def _density_derivatives(
-    higher: HybridPreparation, k: int
-) -> tuple[tuple[forms._Polynomial, ...], ...]:
+    higher: hybrid_forms_owner.HybridPreparation, k: int
+) -> tuple[tuple[forms.FormPolynomial, ...], ...]:
     higher_degree = k + 1
     field_blades = tuple(combinations(range(3), higher_degree))
     test_blades = tuple(combinations(range(3), 3 - higher_degree))
@@ -60,11 +69,11 @@ def _density_derivatives(
     coefficients = higher.body_test_coefficients
     tests = []
     for column in range(coefficients.shape[-1]):
-        derivative: list[forms._Polynomial] = [{} for _ in output_blades]
+        derivative: list[forms.FormPolynomial] = [{} for _ in output_blades]
         for blade in test_blades:
             complement = tuple(axis for axis in range(3) if axis not in blade)
             field_component = field_blades.index(complement)
-            sign = forms._wedge_sign(complement, blade)
+            sign = forms.form_wedge_sign(complement, blade)
             polynomial = {
                 alpha: sign * float(coefficients[row, field_component, column])
                 for row, alpha in enumerate(higher.body_test_exponents)
@@ -74,14 +83,14 @@ def _density_derivatives(
                 if axis in blade:
                     continue
                 output = tuple(sorted((axis, *blade)))
-                partial = _derivative(polynomial, axis)
+                partial = hybrid_forms_owner.derivative(polynomial, axis)
                 index = output_blades.index(output)
-                derivative[index] = _sum_polynomials(
+                derivative[index] = hybrid_forms_owner.sum_polynomials(
                     (derivative[index], partial),
-                    (1.0, float(forms._wedge_sign((axis,), blade))),
+                    (1.0, float(forms.form_wedge_sign((axis,), blade))),
                 )
         density = tuple(
-            _sum_polynomials(
+            hybrid_forms_owner.sum_polynomials(
                 (
                     derivative[
                         output_blades.index(
@@ -91,7 +100,7 @@ def _density_derivatives(
                 ),
                 (
                     float(
-                        forms._wedge_sign(
+                        forms.form_wedge_sign(
                             blade, tuple(axis for axis in range(3) if axis not in blade)
                         )
                     ),
@@ -103,14 +112,22 @@ def _density_derivatives(
             tests.append(density)
     if not tests:
         return ()
-    _, candidate = _coefficient_array(tuple(tests))
-    independent = _independent_columns(candidate.reshape(-1, len(tests)))
+    _, candidate = hybrid_forms_owner.coefficient_array(tuple(tests))
+    independent = hybrid_forms_owner.independent_columns(
+        candidate.reshape(-1, len(tests))
+    )
     return tuple(tests[index] for index in independent)
 
 
-@lru_cache(maxsize=65536)
+def _body_monomial_integral_bytes(value: Fraction, /) -> int:
+    return logical_table_bytes(value.numerator) + logical_table_bytes(value.denominator)
+
+
+@host_table_cache(
+    max_entries=65536, max_bytes=1048576, weight=_body_monomial_integral_bytes
+)
 def _body_monomial_integral(
-    family: forms.FormElementFamily, alpha: tuple[int, ...]
+    family: FormElementFamily, alpha: tuple[int, ...]
 ) -> Fraction:
     if family == "prism-trimmed":
         return Fraction(
@@ -121,12 +138,12 @@ def _body_monomial_integral(
 
 
 def _density_moment_row(
-    density: tuple[forms._Polynomial, ...],
+    density: tuple[forms.FormPolynomial, ...],
     support: _SourceSupport,
     width: int,
-    family: forms.FormElementFamily,
-) -> forms._HostArray:
-    # Exact source pairing avoids cancellation of expanded bubble factors
+    family: FormElementFamily,
+) -> forms.HostFormArray:
+    # algebraic source pairing avoids cancellation of expanded bubble factors
     # before the native numerical dual solve. Only the final entries round.
     row = [Fraction(0)] * width
     for component, polynomial in enumerate(density):
@@ -140,16 +157,23 @@ def _density_moment_row(
     return np.asarray(row, dtype=np.float64)
 
 
-@lru_cache(maxsize=1024)
-def _orthogonal_test_polynomial(alpha: tuple[int, ...]) -> forms._Polynomial:
-    from .._coordinate_enclosure import _jacobi, math_product_polynomials
+def _orthogonal_test_polynomial(
+    alpha: tuple[int, ...], *, budget: CoordinateEnclosureBudget
+) -> forms.FormPolynomial:
 
-    modes = tuple(_jacobi(degree, 0, axis, 3) for axis, degree in enumerate(alpha))
-    polynomial = math_product_polynomials(modes, 3)
+    modes = tuple(
+        imported_coordinate_enclosure.jacobi(degree, 0, axis, 3, budget=budget)
+        for axis, degree in enumerate(alpha)
+    )
+    polynomial = imported_coordinate_enclosure.math_product_polynomials(
+        modes, 3, budget=budget
+    )
     return {power: float(value) for power, value in polynomial.items()}
 
 
-def _admit_moment_row(row: forms._HostArray, orthogonal: list[forms._HostArray]) -> bool:
+def _admit_moment_row(
+    row: forms.HostFormArray, orthogonal: list[forms.HostFormArray]
+) -> bool:
     residual = row.copy()
     for _ in range(2):
         for basis in orthogonal:
@@ -162,20 +186,26 @@ def _admit_moment_row(row: forms._HostArray, orthogonal: list[forms._HostArray])
     return True
 
 
+@checked
 def body_moments(
-    family: forms.FormElementFamily,
+    family: FormElementFamily,
     k: int,
     r: int,
     exponents: tuple[tuple[int, ...], ...],
-    generators: forms._HostArray,
-    boundary: forms._HostArray,
+    generators: forms.HostFormArray,
+    boundary: forms.HostFormArray,
     source_bank: tuple[tuple[Fraction, ...], ...],
-) -> tuple[tuple[tuple[int, ...], ...], forms._HostArray]:
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: dict[
+        tuple[FormElementFamily, int, int], hybrid_forms_owner.HybridPreparation
+    ],
+) -> tuple[tuple[tuple[int, ...], ...], forms.HostFormArray]:
     """Construct a zero-trace, exterior-closed dual test complex.
 
     The sole nonzero boundary restriction is the top scalar constant, whose
     Stokes functional is total boundary flux. All remaining tests vanish on
-    the boundary as differential forms. This makes d Pi = Pi d an actual
+    the boundary as differential forms. This makes d Pi = Pi d an represented
     smooth-field identity, not just nilpotence on represented polynomials.
     """
     width, count = generators.shape[-1], generators.shape[1]
@@ -194,29 +224,38 @@ def body_moments(
         )
         for component in range(count)
     )
-    orthogonal: list[forms._HostArray] = []
+    orthogonal: list[forms.HostFormArray] = []
     for row in boundary:
         if not _admit_moment_row(row, orthogonal):
-            raise ValueError("Hybrid trace moments are deficient or not surjective.")
-    selected: list[tuple[forms._Polynomial, ...]] = []
+            raise ValueError(
+                "body_moments.configuration must pass the declared scientific certificate; got Hybrid trace moments are deficient or not surjective."
+            )
+    selected: list[tuple[forms.FormPolynomial, ...]] = []
     required = width - len(boundary)
-    initial: tuple[tuple[forms._Polynomial, ...], ...] = (
+    initial: tuple[tuple[forms.FormPolynomial, ...], ...] = (
         (({(0, 0, 0): 1.0},),)
         if k == 3
-        else _density_derivatives(prepare_hybrid(family, k + 1, r), k)
+        else _density_derivatives(
+            hybrid_forms_owner.prepare_hybrid_active(
+                family, k + 1, r, budget=budget, preparations=preparations
+            ),
+            k,
+        )
     )
     for density in initial:
         row = _density_moment_row(density, support, width, family)
         if not _admit_moment_row(row, orthogonal):
             raise ValueError(
-                "Exterior-derived hybrid moment tests are not independently unisolvent."
+                "body_moments.configuration must have independent unisolvent moment rows; got Exterior-derived hybrid moment tests are not independently unisolvent."
             )
         selected.append(density)
     bubble = _body_bubble(family)
-    for alpha in forms._exponents(3, max(sum(alpha) for alpha in exponents)):
+    for alpha in forms.form_exponents(3, max(sum(alpha) for alpha in exponents)):
         if len(selected) == required:
             break
-        polynomial = forms._multiply(bubble, _orthogonal_test_polynomial(alpha))
+        polynomial = forms.multiply_form_polynomials(
+            bubble, _orthogonal_test_polynomial(alpha, budget=budget)
+        )
         for component in range(count):
             density = tuple(
                 polynomial if index == component else {} for index in range(count)
@@ -227,8 +266,29 @@ def body_moments(
             if len(selected) == required:
                 break
     if len(selected) != required:
-        raise ValueError("Hybrid exterior-closed body moments are rank deficient.")
+        raise ValueError(
+            "body_moments.configuration must have full rank; got Hybrid exterior-closed body moments are rank deficient."
+        )
     if not selected:
         return (), np.zeros((0, count, 0), dtype=np.float64)
-    test_exponents, coefficients = _coefficient_array(tuple(selected))
+    test_exponents, coefficients = hybrid_forms_owner.coefficient_array(tuple(selected))
     return test_exponents, coefficients
+
+
+def body_moments_estimate(
+    exponents: tuple[tuple[int, ...], ...],
+) -> algebra.CoordinateEnclosureEstimate:
+    """Bound every admissible Jacobi candidate, including rejected moment rows."""
+    maximum_degree = max(sum(alpha) for alpha in exponents)
+    return algebra.coordinate_estimate_bank(
+        tuple(
+            algebra.coordinate_estimate_product(
+                tuple(
+                    algebra.coordinate_jacobi_estimate(degree, 0, axis, 3)
+                    for axis, degree in enumerate(alpha)
+                ),
+                3,
+            )
+            for alpha in forms.form_exponents(3, maximum_degree)
+        )
+    )

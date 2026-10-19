@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _diamond_discretization() -> Any:
@@ -41,7 +42,7 @@ def run() -> Any:
         (0.0, 0.0),
         1.0,
         feature_id="design-circle",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     discretization = _diamond_discretization()
     projection = phx.geometry.ImplicitPointProjectionPlan(
         geometry,
@@ -85,7 +86,7 @@ def run() -> Any:
         (0.0, 0.0, 0.0),
         0.75,
         feature_id="display-sphere",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformAxisSpec(7) for _ in range(3)),
         axis_names=("x", "y", "z"),

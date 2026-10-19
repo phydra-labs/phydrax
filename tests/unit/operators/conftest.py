@@ -10,6 +10,7 @@ import pytest
 
 import phydrax as phx
 from phydrax.domain import SampleLayout
+from phydrax.units import METER
 
 
 @pytest.fixture
@@ -19,7 +20,7 @@ def box3d() -> Any:
             center=(0.0, 0.0, 0.0),
             size=(2.0, 2.0, 2.0),
             feature_id="operator-test-box",
-        ).compile()
+        ).compile(coordinate_unit=METER)
     )
 
 

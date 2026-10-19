@@ -56,7 +56,7 @@ def explicit_polygon_h1_dirichlet_constraint(
     """Resolve a component-aware strong constraint on exact polygon traces."""
     if not isinstance(discretization, ExplicitPolygonH1Discretization):
         raise TypeError("discretization must be ExplicitPolygonH1Discretization.")
-    discretization._field_index(field_name)
+    discretization.field_index(field_name)
     if boundary_mask is not None and domain is not None:
         raise ValueError("Specify boundary_mask or domain, not both.")
     node_mask = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=np.bool_)

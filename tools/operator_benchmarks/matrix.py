@@ -8,7 +8,6 @@ from typing import Any
 
 import jax
 import numpy as np
-import polars as pl
 
 from benchmarks._io import atomic_write, write_json_atomic
 from benchmarks._runtime import capture_environment, RuntimeEnvironment
@@ -445,6 +444,9 @@ def save_benchmark_artifacts(
     /,
 ) -> tuple[Path, Path]:
     """Write canonical JSON metadata/results and a columnar aggregate table."""
+    # Admit optional Polars only when serializing benchmark Parquet artifacts.
+    import polars as pl
+
     root = Path(directory)
     root.mkdir(parents=True, exist_ok=True)
     json_path = root / "operator_benchmarks.json"

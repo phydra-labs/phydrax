@@ -97,6 +97,10 @@ def delay(
     )
 
 
+delay_operator = delay
+
+
 __all__ = [
     "delay",
+    "delay_operator",
 ]

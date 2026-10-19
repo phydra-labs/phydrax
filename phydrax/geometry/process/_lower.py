@@ -2,10 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Lower final-state planar stack extrusions through the exact CAD partition seam."""
+"""Lower final-state planar stack extrusions through CAD partitioning."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -14,6 +15,7 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ...interchange._cad_archive import load_brep_archive, save_brep_archive
+from ...typing import checked
 from .._cad_revision import AssociationGraph, CADRevision
 from ..brep._constructors import (
     brep_extrusion,
@@ -34,42 +36,63 @@ from ..brep._partition import (
     BRepPartitionRole,
     partition_brep,
 )
+from ..design._naming import name_partition_entities, RecipeEntityName, RecipeEntityNames
 from ..simplicial import PlanarMeshRegion
 from ._stack import ProcessStack, ZInterval
 
 
 @dataclass(frozen=True, slots=True)
 class ProcessStackResult:
-    """Persisted operands and authoritative final CAD partition history."""
+    """Persisted operand locations and relocation-invariant CAD partition history."""
 
     stack: ProcessStack
     partition: BRepPartitionResult
     operand_models: tuple[tuple[str, BRepModel], ...]
+    operand_artifact_paths: tuple[tuple[str, Path], ...]
     result_id: str = field(init=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.stack, ProcessStack):
-            raise TypeError("stack must be a ProcessStack.")
+            raise TypeError(
+                f"ProcessStackResult.stack must be a ProcessStack; got {type(self.stack).__name__}"
+            )
         if not isinstance(self.partition, BRepPartitionResult):
-            raise TypeError("partition must be a BRepPartitionResult.")
+            raise TypeError(
+                f"ProcessStackResult.partition must be a BRepPartitionResult; got {type(self.partition).__name__}"
+            )
         operands = tuple(self.operand_models)
         expected_ids = tuple(value.region_id for value in self.stack.regions) + tuple(
             value.void_id for value in self.stack.voids
         )
         if tuple(name for name, _ in operands) != expected_ids:
-            raise ValueError("operand_models must follow the stack operand order.")
+            raise ValueError(
+                f"ProcessStackResult.operand_models must follow stack operand order {expected_ids!r}; got {tuple(name for name, _ in operands)!r}"
+            )
         if not all(isinstance(model, BRepModel) for _, model in operands):
-            raise TypeError("operand_models must contain BRepModel values.")
+            raise TypeError(
+                f"ProcessStackResult.operand_models must contain BRepModel values; got {tuple(type(model).__name__ for _, model in operands)!r}"
+            )
+        artifacts = tuple(self.operand_artifact_paths)
+        if tuple(name for name, _ in artifacts) != expected_ids:
+            raise ValueError(
+                "ProcessStackResult.operand_artifact_paths must follow the stack operand order; "
+                f"got {tuple(name for name, _ in artifacts)}"
+            )
+        if not all(isinstance(path, Path) for _, path in artifacts):
+            raise TypeError(
+                "ProcessStackResult.operand_artifact_paths must contain Path values; "
+                f"got {tuple(type(path).__name__ for _, path in artifacts)}"
+            )
         spatial_id = self.stack.coordinate_contract.spatial_id
         if any(
             model.coordinate_contract.spatial_id != spatial_id for _, model in operands
         ):
             raise ValueError(
-                "Every persisted operand must use the stack coordinate contract."
+                f"ProcessStackResult.operand_models must use stack coordinate contract {spatial_id!r}; got inconsistent operand contracts"
             )
         if self.partition.model.coordinate_contract.spatial_id != spatial_id:
             raise ValueError(
-                "The partition model must use the stack coordinate contract."
+                f"ProcessStackResult.partition must use stack coordinate contract {spatial_id!r}; got {self.partition.model.coordinate_contract.spatial_id!r}"
             )
         if tuple(value.name for value in self.partition.regions) != tuple(
             value.region_id
@@ -79,8 +102,11 @@ class ProcessStackResult:
                 reverse=True,
             )
         ):
-            raise ValueError("Partition regions must preserve explicit stack precedence.")
+            raise ValueError(
+                f"ProcessStackResult.partition must preserve stack region precedence; got {tuple(value.name for value in self.partition.regions)!r}"
+            )
         object.__setattr__(self, "operand_models", operands)
+        object.__setattr__(self, "operand_artifact_paths", artifacts)
         object.__setattr__(
             self,
             "result_id",
@@ -132,13 +158,26 @@ class ProcessStackResult:
     ) -> tuple[tuple[str, tuple[BRepEntityId, ...]], ...]:
         return self.partition.named_face_entity_ids
 
+    def recipe_names(
+        self, source_names: Mapping[str, RecipeEntityName], /
+    ) -> RecipeEntityNames:
+        """Bind authored recipe names through exhaustive partition lineage.
+
+        Source keys are occurrences in ``association_graph.source_revision``.
+        Three-dimensional partition edge ancestry is unsupported and explicitly
+        refused in the returned binding record.
+        """
+        return name_partition_entities(self.partition, source_names)
+
 
 def _footprint_loops(footprint: PlanarMeshRegion, /) -> tuple[np.ndarray, ...]:
     vertices = np.asarray(footprint.vertices, dtype=np.float64)
     edges = np.asarray(footprint.edges, dtype=np.int64)
     offsets = np.asarray(footprint.loop_offsets, dtype=np.int64)
     if vertices.ndim != 2 or vertices.shape[1] != 2 or not np.all(np.isfinite(vertices)):
-        raise ValueError("Process stack footprints require finite shape (N, 2).")
+        raise ValueError(
+            f"ProcessStack.footprint_vertices must be finite with shape (N, 2); got shape {vertices.shape}"
+        )
     if (
         edges.ndim != 2
         or edges.shape[1] != 2
@@ -148,7 +187,9 @@ def _footprint_loops(footprint: PlanarMeshRegion, /) -> tuple[np.ndarray, ...]:
         or offsets[-1] != edges.shape[0]
         or np.any(offsets[1:] <= offsets[:-1])
     ):
-        raise ValueError("Process stack footprint loop topology is malformed.")
+        raise ValueError(
+            f"ProcessStack.footprint_topology must have aligned edge and strictly increasing loop-offset arrays; got shapes {(edges.shape, offsets.shape)}"
+        )
     loops: list[np.ndarray] = []
     for index in range(offsets.size - 1):
         start = int(offsets[index])
@@ -161,7 +202,9 @@ def _footprint_loops(footprint: PlanarMeshRegion, /) -> tuple[np.ndarray, ...]:
             or np.any(vertex_ids < 0)
             or np.any(vertex_ids >= vertices.shape[0])
         ):
-            raise ValueError("Process stack footprint loops must be closed edge cycles.")
+            raise ValueError(
+                f"ProcessStack.footprint_loops must be closed edge cycles with at least three valid vertices; got invalid loop {index}"
+            )
         loops.append(vertices[vertex_ids])
     return tuple(loops)
 
@@ -203,7 +246,7 @@ def _persist_operand(
     linear_deflection: float,
     angular_deflection: float,
     trim_samples_per_edge: int,
-) -> tuple[str, BRepModel]:
+) -> tuple[str, BRepModel, Path]:
     destination = directory / f"{index:04d}-{fingerprint[:16]}.phx"
     tessellation = BRepTessellationPolicy(
         linear_deflection=linear_deflection,
@@ -224,10 +267,13 @@ def _persist_operand(
     )
     model = load_brep_archive(receipt.path)
     if model.topology.num_solids != 1:
-        raise RuntimeError("A persisted process operand must contain exactly one solid.")
-    return operand_id, model
+        raise RuntimeError(
+            f"ProcessStack.operand_model must contain one solid; got {model.topology.num_solids}"
+        )
+    return operand_id, model, receipt.path
 
 
+@checked
 def lower_process_stack(
     stack: ProcessStack,
     destination: str | Path,
@@ -240,21 +286,25 @@ def lower_process_stack(
     angular_deflection: float = 0.1,
     trim_samples_per_edge: int = 33,
 ) -> ProcessStackResult:
-    """Persist exact extrusions, partition them, and return exact named CAD history.
+    """Persist planar extrusions, partition them, and return named CAD history.
 
     Operands are lossless native ``.phx`` B-Rep archives in ``operand_directory``;
-    the returned operand models are restored from those archives. Coordinates,
-    exact wall/cap/solid topology and source identities retain the stack's
-    physical coordinate contract. The final destination is external B-Rep text.
+    ``operand_artifact_paths`` records their locations independently of model
+    source identities. The returned operand models are restored from those
+    archives. Coordinates, wall/cap/solid topology and source identities
+    retain the stack's physical coordinate contract. The final destination is
+    external B-Rep text.
     """
 
-    if not isinstance(stack, ProcessStack):
-        raise TypeError("stack must be a ProcessStack.")
     if not isinstance(overwrite, bool) or not isinstance(run_parallel, bool):
-        raise TypeError("overwrite and run_parallel must be boolean.")
+        raise TypeError(
+            f"lower_process_stack.options must have boolean overwrite and run_parallel; got {(type(overwrite).__name__, type(run_parallel).__name__)}"
+        )
     target = Path(destination).expanduser().resolve()
     if target.suffix.lower() not in {".brep", ".brp"}:
-        raise ValueError("A process stack destination requires a .brep or .brp suffix.")
+        raise ValueError(
+            f"lower_process_stack.destination must have a .brep or .brp suffix; got {target.suffix!r}"
+        )
     if target.exists() and not overwrite:
         raise FileExistsError(target)
     operand_root = (
@@ -263,12 +313,15 @@ def lower_process_stack(
         else Path(operand_directory).expanduser().resolve()
     )
     if operand_root == target:
-        raise ValueError("operand_directory must differ from the result destination.")
+        raise ValueError(
+            f"lower_process_stack.operand_directory must differ from the result destination; got {operand_root!s}"
+        )
 
     persisted: list[tuple[str, BRepModel]] = []
+    artifacts: list[tuple[str, Path]] = []
     partition_operands: list[BRepPartitionOperand] = []
     for index, region in enumerate(stack.regions):
-        operand_id, model = _persist_operand(
+        operand_id, model, artifact_path = _persist_operand(
             region.region_id,
             region.stack_region_id,
             region.footprint,
@@ -282,6 +335,7 @@ def lower_process_stack(
             trim_samples_per_edge=trim_samples_per_edge,
         )
         persisted.append((operand_id, model))
+        artifacts.append((operand_id, artifact_path))
         partition_operands.append(
             BRepPartitionOperand(
                 operand_id,
@@ -290,7 +344,7 @@ def lower_process_stack(
             )
         )
     for void_index, void in enumerate(stack.voids, start=len(stack.regions)):
-        operand_id, model = _persist_operand(
+        operand_id, model, artifact_path = _persist_operand(
             void.void_id,
             void.stack_void_id,
             void.footprint,
@@ -304,6 +358,7 @@ def lower_process_stack(
             trim_samples_per_edge=trim_samples_per_edge,
         )
         persisted.append((operand_id, model))
+        artifacts.append((operand_id, artifact_path))
         partition_operands.append(
             BRepPartitionOperand(
                 operand_id,
@@ -329,7 +384,7 @@ def lower_process_stack(
         angular_deflection=angular_deflection,
         trim_samples_per_edge=trim_samples_per_edge,
     )
-    return ProcessStackResult(stack, result, tuple(persisted))
+    return ProcessStackResult(stack, result, tuple(persisted), tuple(artifacts))
 
 
 __all__ = ["ProcessStackResult", "lower_process_stack"]

@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Iterator
+from contextlib import contextmanager
 from enum import IntEnum
 from typing import final, Literal, Protocol, runtime_checkable, TypeAlias
 
@@ -15,6 +17,8 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax.discretization._reference_cell_types import CellGeometryElement
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
 from phydrax.ein import contract
 
 from .._bvh import BVHBuildPolicy, PackedBVH, point_select_leaf_items, prepare_bvh
@@ -22,11 +26,22 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import Bool, checked, Dim, Float, Int32, Integer
-from ._cell_geometry import CellGeometryElement, RestrictedCellGeometryElement
-from ._coordinate_enclosure import coordinate_polynomials, polynomial_bounds
+from ._cell_geometry import (
+    cell_geometry_preparation_bounds,
+    cell_geometry_preparation_query_upper,
+    owned_coordinate_preparation,
+    RestrictedCellGeometryElement,
+)
+from ._coordinate_budget import CoordinateEnclosureBudget
+from ._coordinate_enclosure import (
+    coordinate_bernstein_estimate,
+    coordinate_map_expression_estimates,
+    coordinate_polynomials,
+    coordinate_polynomials_estimate,
+    polynomial_bounds,
+)
 from ._reference_cell import reference_cell_topology
 from .fem._cell_map import FiniteElementCellMapEvaluation, PreparedFiniteElementCellMap
-from .fem._reference import FiniteElementSpec
 
 
 # (reference points, converged, first converged iteration, ever-valid geometry)
@@ -69,9 +84,13 @@ class SimplicialLocationPolicy(StrictModule, NonTrainableState):
             int(maximum_seeds),
         )
         if any(value < 1 for value in capacities):
-            raise ValueError("Simplicial location capacities must be positive.")
+            raise ValueError(
+                f"SimplicialLocationPolicy.capacities must be positive for candidates, iterations, and seeds; got {capacities}."
+            )
         if residual_tolerance <= 0.0 or reference_tolerance < 0.0 or trust_radius <= 0.0:
-            raise ValueError("Simplicial location tolerances are invalid.")
+            raise ValueError(
+                f"SimplicialLocationPolicy.tolerances must have positive residual tolerance and trust radius with nonnegative reference tolerance; got {(residual_tolerance, reference_tolerance, trust_radius)}."
+            )
         self.maximum_candidates, self.maximum_iterations, self.maximum_seeds = capacities
         self.residual_tolerance = float(residual_tolerance)
         self.reference_tolerance = float(reference_tolerance)
@@ -179,9 +198,8 @@ class AbstractCellLocator(StrictModule):
     """Inverse chart of one prepared cell block.
 
     `locate(points, cell_mask=None)` returns a `CellLocationResult` whose
-    candidates are restricted to cells where `cell_mask` is true. Canonical FE
-    maps and physical Cartesian polyhedral charts share the result contract,
-    not a fabricated common finite-element descriptor.
+    candidates are restricted to cells where `cell_mask` is true. Finite-element
+    maps and physical Cartesian polyhedral charts share location-result metadata.
     """
 
     cell_map: eqx.AbstractVar[LocatedCellMap]
@@ -199,13 +217,87 @@ class AbstractCellLocator(StrictModule):
     ) -> CellLocationResult:
         raise NotImplementedError
 
+    def support_cells(self, points: Array, /) -> Array:
+        """Return candidate cell IDs with negative padding for unsupported points."""
+        return self.locate(points).candidate_cells
+
+
+def cell_locator_preparation_bounds(
+    cell_map: PreparedFiniteElementCellMap,
+    coordinates: np.ndarray,
+    domain: str,
+    /,
+) -> tuple[int, int, int]:
+    """Bound source rebinding, map preparation and whole-cell Bernstein enclosures."""
+    geometry = cell_map.coordinate_spec
+    work, memory = cell_geometry_preparation_bounds(geometry)
+    queries = cell_geometry_preparation_query_upper(geometry)
+    source = geometry.exact_source
+    periodic = geometry.periodic_source
+    coefficient_bits = (
+        periodic.preparation_bounds()[2]
+        if periodic is not None
+        else max(source.maximum_bits, 1075)
+        if source is not None
+        else None
+    )
+    routes = np.asarray(cell_map.coordinate_dofs)
+    if routes.shape[0]:
+        local = coordinates[routes[0]]
+        element = cell_map.coordinate_element
+        preparation = coordinate_polynomials_estimate(
+            element, local, coefficient_bits_upper=coefficient_bits
+        )
+        expressions = coordinate_map_expression_estimates(
+            element, local, coefficient_bits_upper=coefficient_bits
+        )
+        if preparation is None or expressions is None:
+            raise ValueError(
+                f"Locator.coordinate_source must provide source-expression enclosures; got {element.cell_kind}."
+            )
+        # Every cell has this same declared source tree, coefficient shape and
+        # source-bit bound; no sampled carrier value defines the estimate.
+        work += routes.shape[0] * preparation.work_upper
+        memory += routes.shape[0] * preparation.bytes_upper
+        for value in expressions:
+            enclosure = coordinate_bernstein_estimate(
+                value, domain, cell_map.reference_dimension
+            )
+            work += routes.shape[0] * enclosure.work_upper
+            memory += routes.shape[0] * enclosure.bytes_upper
+    return work, memory, queries
+
+
+@contextmanager
+def owned_locator_coordinate_preparation(
+    cell_map: PreparedFiniteElementCellMap,
+    coordinates: np.ndarray,
+    domain: str,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> Iterator[CoordinateEnclosureBudget]:
+    """Reuse the request ledger or admit its host enclosure preparation."""
+    if budget is not None:
+        yield budget
+        return
+    work, memory, queries = cell_locator_preparation_bounds(cell_map, coordinates, domain)
+    with owned_coordinate_preparation(
+        work, memory, maximum_geometry_queries=queries
+    ) as budget:
+        yield budget
+
 
 def _certified_cell_bounds(
-    cell_map: PreparedFiniteElementCellMap, coordinates: np.ndarray, /
+    cell_map: PreparedFiniteElementCellMap,
+    coordinates: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Enclose each whole mapped cell from its exact coordinate source expression."""
+    """Enclose each whole mapped cell from its coordinate source expression."""
     element = cell_map.coordinate_element
-    source_coordinates = cell_map.source_coordinates(coordinates)
+    source_coordinates = cell_map.source_coordinates(coordinates, budget=budget)
     cell_coordinates = tuple(
         tuple(source_coordinates[index] for index in route)
         for route in np.asarray(cell_map.coordinate_dofs)
@@ -213,19 +305,19 @@ def _certified_cell_bounds(
     lower = np.empty((cell_map.cell_count, cell_map.ambient_dimension), dtype=np.float64)
     upper = np.empty_like(lower)
     for cell, local in enumerate(cell_coordinates):
-        polynomials = coordinate_polynomials(element, local)
+        polynomials = coordinate_polynomials(element, local, budget=budget)
         if polynomials is None:
             raise ValueError(
-                "Simplicial locator requires a canonical coordinate source enclosure."
+                f"PreparedSimplicialCellLocator.coordinate_source must provide a source-expression enclosure; got {element.cell_kind}."
             )
         for axis, polynomial in enumerate(polynomials):
             lower[cell, axis], upper[cell, axis] = polynomial_bounds(
-                polynomial, "simplex", cell_map.reference_dimension
+                polynomial, "simplex", cell_map.reference_dimension, budget=budget
             )
     return lower, upper
 
 
-def _cell_map_vertices(cell_map: PreparedFiniteElementCellMap, /) -> np.ndarray:
+def cell_map_vertices(cell_map: PreparedFiniteElementCellMap, /) -> np.ndarray:
     blocks = (
         cell_map.mesh.blocks
         if cell_map.block_index is None
@@ -234,7 +326,7 @@ def _cell_map_vertices(cell_map: PreparedFiniteElementCellMap, /) -> np.ndarray:
     return np.concatenate(tuple(np.asarray(block.vertices) for block in blocks), axis=0)
 
 
-def _is_affine_simplex_element(element: CellGeometryElement, /) -> bool:
+def is_affine_simplex_element(element: CellGeometryElement, /) -> bool:
     kind = element.cell_kind
     if kind not in ("interval", "triangle", "tetrahedron") and not kind.startswith(
         "simplex:"
@@ -252,7 +344,42 @@ def _is_affine_simplex_element(element: CellGeometryElement, /) -> bool:
     )
 
 
-class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState):
+class _LocationCandidates(StrictModule):
+    """Bounded BVH candidates expanded over the admitted reference seeds."""
+
+    values: Array
+    candidates: Array
+    candidate_valid: Array
+    search_complete: Array
+    flat_cells: Array
+    flat_candidate_valid: Array
+    targets: Array
+    reference_flat: Array
+    seed_count: int = eqx.field(static=True)
+
+
+class _LocationInverses(StrictModule):
+    """Newton iterates with convergence and geometry evidence for every seed."""
+
+    reference_flat: Array
+    converged: Array
+    first_iteration: Array
+    ever_valid_geometry: Array
+
+
+class _ResolvedLocationCandidates(StrictModule):
+    """Containing candidates and diagnostic arrays after source-image exclusion."""
+
+    accepted: Array
+    reference_all: Array
+    residual_all: Array
+    condition_all: Array
+    iteration_all: Array
+    inverses_complete: Array
+    ever_valid_geometry: Array
+
+
+class AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState):
     """Shared bounded damped-Newton inverse for prepared coordinate maps."""
 
     __strict_contract__ = True
@@ -279,7 +406,8 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
     def coordinate_count(self) -> int:
         return self.cell_map.coordinate_count
 
-    def _reference_seeds(self, dtype: jnp.dtype, /) -> Array:
+    def reference_seeds(self, dtype: jnp.dtype, /) -> Array:
+        """Return the reference center followed by reference vertices in cell order."""
         center = jnp.full((self.dimension,), 1.0 / (self.dimension + 1), dtype=dtype)
         vertices = jnp.asarray(
             reference_cell_topology(self.cell_map.coordinate_element.cell_kind).vertices,
@@ -287,29 +415,34 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
         )
         return jnp.concatenate((center[None], vertices), axis=0)
 
-    def _inside_reference(self, reference: Array, /) -> Array:
+    def contains_reference(self, reference: Array, /) -> Array:
+        """Test simplex containment with the policy's reference-coordinate tolerance."""
         tolerance = self.policy.reference_tolerance
         return jnp.all(reference >= -tolerance, axis=-1) & (
             jnp.sum(reference, axis=-1) <= 1.0 + tolerance
         )
 
-    def _reference_weights(self, reference: Array, /) -> Array:
+    def reference_weights(self, reference: Array, /) -> Array:
+        """Return simplex barycentric weights in reference-vertex order."""
         return jnp.concatenate(
             ((1.0 - jnp.sum(reference, axis=-1))[:, None], reference), axis=-1
         )
 
-    @eqx.filter_jit
-    def locate(
-        self, points: ArrayLike, /, *, cell_mask: ArrayLike | None = None
-    ) -> CellLocationResult:
+    def _prepare_location_candidates(
+        self,
+        points: ArrayLike,
+        cell_mask: ArrayLike | None,
+    ) -> _LocationCandidates:
         values = jnp.asarray(points, dtype=self.coordinates.dtype)
         if values.ndim != 2 or values.shape[1] != self.cell_map.ambient_dimension:
-            raise ValueError("Locator points have incompatible ambient dimension.")
+            raise ValueError(
+                f"PreparedSimplicialCellLocator.points must be rank two with the prepared ambient dimension; got {values.shape}."
+            )
         if cell_mask is not None:
             mask = jnp.asarray(cell_mask)
             if mask.shape != (self.cell_count,) or mask.dtype != jnp.bool_:
                 raise ValueError(
-                    "cell_mask must be a boolean array with one entry per cell."
+                    f"PreparedSimplicialCellLocator.cell_mask must be boolean with one entry per cell; got {(mask.shape, mask.dtype)}."
                 )
         point_count = values.shape[0]
         candidate_capacity = min(self.policy.maximum_candidates, self.cell_count)
@@ -324,7 +457,7 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
                 candidate_valid & mask[jnp.where(candidate_valid, candidates, 0)]
             )
         reference_dimension = self.dimension
-        seed_pool = self._reference_seeds(values.dtype)
+        seed_pool = self.reference_seeds(values.dtype)
         seed_count = min(self.policy.maximum_seeds, seed_pool.shape[0])
         seeds = seed_pool[:seed_count]
         reference = jnp.broadcast_to(
@@ -342,9 +475,28 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
             values[:, None, None, :],
             (point_count, candidate_capacity, seed_count, values.shape[1]),
         ).reshape((-1, values.shape[1]))
+        reference_flat = reference.reshape((-1, reference_dimension))
+        return _LocationCandidates(
+            values,
+            candidates,
+            candidate_valid,
+            search_complete,
+            flat_cells,
+            flat_candidate_valid,
+            targets,
+            reference_flat,
+            seed_count,
+        )
+
+    def _invert_location_candidates(
+        self, prepared: _LocationCandidates
+    ) -> _LocationInverses:
+        flat_cells = prepared.flat_cells
+        flat_candidate_valid = prepared.flat_candidate_valid
+        targets = prepared.targets
+        reference_flat = prepared.reference_flat
         converged = jnp.zeros((flat_cells.size,), dtype=jnp.bool_)
         first_iteration = jnp.zeros((flat_cells.size,), dtype=jnp.int32)
-        reference_flat = reference.reshape((-1, reference_dimension))
         ever_valid_geometry = jnp.zeros_like(converged)
 
         def newton_step(iteration: Array, carry: _NewtonCarry) -> _NewtonCarry:
@@ -399,6 +551,29 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
                 ever_valid_geometry,
             ),
         )
+        return _LocationInverses(
+            reference_flat, converged, first_iteration, ever_valid_geometry
+        )
+
+    def _resolve_location_candidates(
+        self,
+        prepared: _LocationCandidates,
+        inverse: _LocationInverses,
+    ) -> _ResolvedLocationCandidates:
+        candidates = prepared.candidates
+        candidate_valid = prepared.candidate_valid
+        flat_cells, flat_candidate_valid = (
+            prepared.flat_cells,
+            prepared.flat_candidate_valid,
+        )
+        targets = prepared.targets
+        point_count, candidate_capacity = candidates.shape
+        seed_count, reference_dimension = prepared.seed_count, self.dimension
+        reference_flat, converged = inverse.reference_flat, inverse.converged
+        first_iteration, ever_valid_geometry = (
+            inverse.first_iteration,
+            inverse.ever_valid_geometry,
+        )
         evaluation = self.cell_map.evaluate(self.coordinates, flat_cells, reference_flat)
         residual_norm = jnp.sqrt(
             jnp.sum((evaluation.physical_points - targets) ** 2, axis=-1)
@@ -420,7 +595,7 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
         jacobian_norm = jnp.sqrt(jnp.sum(evaluation.jacobian**2, axis=(-2, -1)))
         inverse_norm = jnp.sqrt(jnp.sum(evaluation.inverse_jacobian**2, axis=(-2, -1)))
         condition = jacobian_norm * inverse_norm
-        inside_reference = self._inside_reference(reference_flat)
+        inside_reference = self.contains_reference(reference_flat)
         accepted = converged & evaluation.valid & flat_candidate_valid & inside_reference
         accepted = accepted.reshape((point_count, candidate_capacity, seed_count))
         reference_all = reference_flat.reshape(
@@ -441,7 +616,7 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
         candidate_resolved = jnp.any(converged_valid, axis=2) | ~candidate_valid
         if (
             self.cell_map.ambient_dimension > self.cell_map.reference_dimension
-            and _is_affine_simplex_element(self.cell_map.coordinate_element)
+            and is_affine_simplex_element(self.cell_map.coordinate_element)
         ):
             # An affine source has a constant tangent space. Its orthogonal
             # residual excludes a point from the entire source image, including
@@ -458,6 +633,36 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
             ).reshape((point_count, candidate_capacity, seed_count))
             candidate_resolved = candidate_resolved | jnp.any(excluded, axis=2)
         inverses_complete = jnp.all(candidate_resolved, axis=1)
+        return _ResolvedLocationCandidates(
+            accepted,
+            reference_all,
+            residual_all,
+            condition_all,
+            iteration_all,
+            inverses_complete,
+            ever_valid_geometry,
+        )
+
+    def _location_result(
+        self,
+        prepared: _LocationCandidates,
+        resolved: _ResolvedLocationCandidates,
+    ) -> CellLocationResult:
+        values, candidates = prepared.values, prepared.candidates
+        candidate_valid, search_complete = (
+            prepared.candidate_valid,
+            prepared.search_complete,
+        )
+        flat_candidate_valid = prepared.flat_candidate_valid
+        point_count, candidate_capacity = candidates.shape
+        seed_count = prepared.seed_count
+        accepted, reference_all = resolved.accepted, resolved.reference_all
+        residual_all, condition_all = resolved.residual_all, resolved.condition_all
+        iteration_all, inverses_complete = (
+            resolved.iteration_all,
+            resolved.inverses_complete,
+        )
+        ever_valid_geometry = resolved.ever_valid_geometry
         stable_cells = jnp.where(accepted, candidates[:, :, None], self.cell_count)
         found = jnp.any(accepted, axis=(1, 2))
         accepted_choice = jnp.argmin(stable_cells.reshape((point_count, -1)), axis=1)
@@ -481,7 +686,7 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
         residual_result = residual_all[rows, candidate_choice, seed_choice]
         condition_result = condition_all[rows, candidate_choice, seed_choice]
         iteration_result = iteration_all[rows, candidate_choice, seed_choice]
-        barycentric = self._reference_weights(reference_result)
+        barycentric = self.reference_weights(reference_result)
         candidate_accepted = jnp.any(accepted, axis=2)
         candidate_seed = jnp.argmax(accepted, axis=2)
         candidate_reference = jnp.take_along_axis(
@@ -523,28 +728,42 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
             ),
         ).astype(jnp.int32)
         return CellLocationResult(
-            cell_ids,
-            jnp.where(inside[:, None], reference_result, 0.0),
-            jnp.where(inside[:, None], barycentric, 0.0),
-            jnp.where(has_candidates, residual_result, jnp.inf),
-            jnp.where(
+            cell_ids=cell_ids,
+            reference_coordinates=jnp.where(inside[:, None], reference_result, 0.0),
+            barycentric=jnp.where(inside[:, None], barycentric, 0.0),
+            geometry_residual=jnp.where(has_candidates, residual_result, jnp.inf),
+            iterations=jnp.where(
                 iteration_result > 0, iteration_result, self.policy.maximum_iterations
             ),
-            jnp.where(has_candidates, condition_result, jnp.inf),
-            inside,
-            seed_choice != 0,
-            jnp.sum(candidate_accepted, axis=1, dtype=jnp.int32),
-            status,
-            inside & finite,
-            candidate_cells,
-            jnp.where(candidate_accepted[:, :, None], candidate_reference, 0.0),
-            finite & search_complete & inverses_complete,
-            self.locator_id,
+            jacobian_condition=jnp.where(has_candidates, condition_result, jnp.inf),
+            inside=inside,
+            used_fallback=seed_choice != 0,
+            candidate_count=jnp.sum(candidate_accepted, axis=1, dtype=jnp.int32),
+            status=status,
+            successful=inside & finite,
+            candidate_cells=candidate_cells,
+            candidate_reference=jnp.where(
+                candidate_accepted[:, :, None], candidate_reference, 0.0
+            ),
+            candidates_complete=finite & search_complete & inverses_complete,
+            locator_id=self.locator_id,
         )
 
+    @eqx.filter_jit
+    @checked
+    def locate(
+        self, points: ArrayLike, /, *, cell_mask: ArrayLike | None = None
+    ) -> CellLocationResult:
+        prepared = self._prepare_location_candidates(points, cell_mask)
+        inverse = self._invert_location_candidates(prepared)
+        resolved = self._resolve_location_candidates(prepared, inverse)
+        return self._location_result(prepared, resolved)
+
     def _affine_geometry(self) -> tuple[Array, Array, Array, Array]:
-        if not _is_affine_simplex_element(self.cell_map.coordinate_element):
-            raise ValueError("Exact facet traversal requires an affine simplex cell map.")
+        if not is_affine_simplex_element(self.cell_map.coordinate_element):
+            raise ValueError(
+                f"PreparedSimplicialCellLocator.cell_map must be an affine simplex map for facet traversal; got {self.cell_map.coordinate_element.cell_kind}."
+            )
         reference = jnp.zeros(
             (self.cell_count, self.dimension), dtype=self.coordinates.dtype
         )
@@ -561,14 +780,16 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
         return geometry.physical_points, gradients, geometry.valid, geometry.jacobian
 
     def affine_gradients(self) -> Array:
-        """Return the single owning barycentric-gradient table, cell/local/ambient."""
+        """Return barycentric gradients indexed by cell, local vertex, and ambient axis."""
         return self._affine_geometry()[1]
 
     def affine_barycentric(self, points: ArrayLike, /) -> Array:
         """Evaluate all affine cells, with shape (point, cell, local vertex)."""
         values = jnp.asarray(points, dtype=self.coordinates.dtype)
         if values.ndim != 2 or values.shape[1] != self.cell_map.ambient_dimension:
-            raise ValueError("Affine points have incompatible ambient dimension.")
+            raise ValueError(
+                f"PreparedSimplicialCellLocator.affine_barycentric.points must be rank two with the prepared ambient dimension; got {values.shape}."
+            )
         origins, gradients, _, _ = self._affine_geometry()
         coordinates = contract("pcd,cvd->pcv", values[:, None] - origins[None], gradients)
         return coordinates.at[:, :, 0].add(1.0)
@@ -581,7 +802,7 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
         *,
         maximum_segments: int | None = None,
     ) -> SegmentLocationResult:
-        """Walk exact affine facet intervals, choosing the lowest cell on ties.
+        """Walk affine facet intervals, choosing the lowest cell on ties.
 
         Prepared vertex stars admit face, edge, and vertex crossings without
         allocating point-by-mesh search tables. Gaps terminate at the first
@@ -590,13 +811,19 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
         """
         capacity = self.cell_count if maximum_segments is None else maximum_segments
         if capacity < 1:
-            raise ValueError("maximum_segments must be positive.")
+            raise ValueError(
+                f"PreparedSimplicialCellLocator.maximum_segments must be positive; got {capacity}."
+            )
         first = jnp.asarray(start, dtype=self.coordinates.dtype)
         last = jnp.asarray(end, dtype=first.dtype)
         if first.shape != last.shape or first.ndim != 2:
-            raise ValueError("Segment endpoints must be matching rank-two arrays.")
+            raise ValueError(
+                f"PreparedSimplicialCellLocator.segment_endpoints must be matching rank-two arrays; got {(first.shape, last.shape)}."
+            )
         if first.shape[1] != self.cell_map.ambient_dimension:
-            raise ValueError("Segment endpoints have incompatible ambient dimension.")
+            raise ValueError(
+                f"PreparedSimplicialCellLocator.segment_endpoints must match the prepared ambient dimension; got {first.shape}."
+            )
         origins, gradients, geometry_valid, jacobians = self._affine_geometry()
         left = self.locate(first)
         right = self.locate(last)
@@ -646,7 +873,7 @@ class _AbstractPreparedNewtonCellLocator(AbstractCellLocator, NonTrainableState)
         )
 
 
-def _vertex_star_routes(cells: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+def vertex_star_routes(cells: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     """Prepare sorted local tie candidates; any facet crossing stays in this star."""
     incident: dict[int, set[int]] = {}
     for cell_index, vertices in enumerate(cells.tolist()):
@@ -751,7 +978,7 @@ def _walk_facet_intervals(
     capacity: int,
     /,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
-    """Bounded exact walk with deterministic lowest-index outgoing-cell ties."""
+    """Walk affine intervals within bounds with lowest-index outgoing-cell ties."""
     point_count = start.shape[0]
     ids = jnp.full((point_count, capacity), -1, dtype=jnp.int32)
     intervals = jnp.zeros((point_count, capacity, 2), dtype=start.dtype)
@@ -792,8 +1019,8 @@ def _walk_facet_intervals(
 
 
 @final
-class PreparedSimplicialCellLocator(_AbstractPreparedNewtonCellLocator):
-    """Arbitrary-dimensional simplex inverse with exact whole-source BVH enclosures."""
+class PreparedSimplicialCellLocator(AbstractPreparedNewtonCellLocator):
+    """Invert arbitrary-dimensional simplex maps with whole-source BVH enclosures."""
 
     @checked
     def __init__(
@@ -802,21 +1029,35 @@ class PreparedSimplicialCellLocator(_AbstractPreparedNewtonCellLocator):
         coordinates: ArrayLike,
         policy: SimplicialLocationPolicy,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         kind = cell_map.coordinate_element.cell_kind
         if kind not in ("interval", "triangle", "tetrahedron") and not kind.startswith(
             "simplex:"
         ):
-            raise ValueError("Simplicial locator requires a simplex coordinate map.")
+            raise ValueError(
+                f"PreparedSimplicialCellLocator.cell_map must use a simplex coordinate element; got {kind!r}."
+            )
         values = jnp.asarray(coordinates)
         if values.shape != (cell_map.coordinate_count, cell_map.ambient_dimension):
-            raise ValueError("Locator coordinates do not match the prepared cell map.")
+            raise ValueError(
+                f"PreparedSimplicialCellLocator.coordinates must match the prepared coordinate count and ambient dimension; got {values.shape}."
+            )
         cells = cell_map.coordinate_dofs
-        lower, upper = _certified_cell_bounds(cell_map, np.asarray(values))
-        lower = np.asarray(
-            jnp.nextafter(jnp.asarray(lower, dtype=values.dtype), -jnp.inf)
+        host = np.asarray(jax.device_get(values))
+        with owned_locator_coordinate_preparation(
+            cell_map, host, "simplex", budget=budget
+        ) as budget:
+            lower, upper = _certified_cell_bounds(cell_map, host, budget=budget)
+        lower = np.nextafter(
+            np.asarray(lower, dtype=values.dtype),
+            np.asarray(-np.inf, dtype=values.dtype),
         )
-        upper = np.asarray(jnp.nextafter(jnp.asarray(upper, dtype=values.dtype), jnp.inf))
+        upper = np.nextafter(
+            np.asarray(upper, dtype=values.dtype),
+            np.asarray(np.inf, dtype=values.dtype),
+        )
         bvh = prepare_bvh(
             lower,
             upper,
@@ -831,8 +1072,8 @@ class PreparedSimplicialCellLocator(_AbstractPreparedNewtonCellLocator):
         centroids = cell_map.evaluate(
             values, jnp.arange(cell_map.cell_count), center
         ).physical_points
-        if _is_affine_simplex_element(cell_map.coordinate_element):
-            star_cells, star_valid = _vertex_star_routes(_cell_map_vertices(cell_map))
+        if is_affine_simplex_element(cell_map.coordinate_element):
+            star_cells, star_valid = vertex_star_routes(cell_map_vertices(cell_map))
         else:
             star_cells = np.zeros((cell_map.cell_count, 1), dtype=np.int32)
             star_valid = np.zeros(star_cells.shape, dtype=np.bool_)

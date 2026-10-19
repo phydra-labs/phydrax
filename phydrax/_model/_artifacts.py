@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 
 from .._frozendict import frozendict
+from ..typing import checked
 from ._binding import ModelBinding
 
 
@@ -20,6 +21,7 @@ ArchitectureDecoder = Callable[[Mapping[str, Any]], Any]
 
 _ARTIFACT_VALUES_BY_ID: dict[str, Any] = {}
 _ARTIFACT_IDS_BY_VALUE: dict[int, tuple[Any, str]] = {}
+_ARTIFACT_RESTORE_VALIDATORS_BY_ID: dict[str, Callable[[Any], None]] = {}
 
 
 def _load_builtin_registrations() -> None:
@@ -64,13 +66,36 @@ def _register_artifact_identity(
     return value
 
 
-def register_artifact_value(value_id: str, value: Any, /) -> Any:
-    """Register one path-independent canonical artifact value identity."""
-    return _register_artifact_identity(value_id, value)
+def register_artifact_value(
+    value_id: str,
+    value: Any,
+    /,
+    *,
+    validate_restored: Callable[[Any], None] | None = None,
+) -> Any:
+    """Register one artifact identity and its restored-value validator."""
+    if validate_restored is not None and not callable(validate_restored):
+        raise TypeError(
+            f"artifact.validate_restored must be callable; got {type(validate_restored).__name__}"
+        )
+    identity = str(value_id).strip()
+    existing = _ARTIFACT_RESTORE_VALIDATORS_BY_ID.get(identity)
+    if (
+        existing is not None
+        and validate_restored is not None
+        and existing is not validate_restored
+    ):
+        raise ValueError(
+            f"artifact.value_id must retain its registered restored-value validator; got {identity!r} with a different validator"
+        )
+    registered = _register_artifact_identity(value_id, value)
+    if validate_restored is not None:
+        _ARTIFACT_RESTORE_VALIDATORS_BY_ID[identity] = validate_restored
+    return registered
 
 
 def registered_artifact_value_id(value: Any, /) -> str | None:
-    """Inspect canonical registration without admitting an unregistered value."""
+    """Inspect registration without admitting an unregistered value."""
     existing = _ARTIFACT_IDS_BY_VALUE.get(id(value))
     return existing[1] if existing is not None and existing[0] is value else None
 
@@ -82,7 +107,7 @@ def artifact_value_id(value: Any, /) -> str:
         return identity
     owner = value if isinstance(value, type) else type(value)
     raise TypeError(
-        "Portable artifact values require an explicit canonical registration: "
+        "artifact.value must have an explicit registration; got "
         f"{owner.__module__}.{owner.__qualname__}."
     )
 
@@ -99,14 +124,22 @@ def artifact_value(value_id: str, /) -> Any:
     return registered
 
 
+def validate_restored_artifact_value(value: Any, /) -> None:
+    """Validate a restored value through its registered owner."""
+    identity = artifact_value_id(type(value))
+    validator = _ARTIFACT_RESTORE_VALIDATORS_BY_ID.get(identity)
+    if validator is not None:
+        validator(value)
+
+
 @dataclass(frozen=True, slots=True)
 class ArtifactValueCodec:
-    """Constructor codec for an exact registered, array-free immutable value.
+    """Constructor codec for a registered, array-free immutable value.
 
-    Encoders declare a closed canonical mapping, rather than capturing instance
+    Encoders declare a closed mapping, rather than capturing instance
     attributes. Decoders must validate that mapping through the value's public
-    constructor; recipe loading additionally checks the exact returned type and
-    canonical re-encoding.
+    constructor; recipe loading additionally checks the returned type and
+    deterministic re-encoding.
     """
 
     value_id: str
@@ -117,32 +150,44 @@ class ArtifactValueCodec:
     def __post_init__(self) -> None:
         identity = self.value_id.strip()
         if not identity:
-            raise ValueError("Artifact value codec IDs must be non-empty.")
+            raise ValueError(
+                f"ArtifactValueCodec.value_id must be nonempty; got {self.value_id!r}"
+            )
         if not isinstance(self.value_type, type):
-            raise TypeError("Artifact value codec value_type must be a type.")
+            raise TypeError(
+                f"ArtifactValueCodec.value_type must be a type; got {type(self.value_type).__name__}"
+            )
         if not callable(self.encode) or not callable(self.decode):
-            raise TypeError("Artifact value codecs require callable encode and decode.")
+            raise TypeError(
+                f"ArtifactValueCodec.encode_decode must be callable; got encode={type(self.encode).__name__}, decode={type(self.decode).__name__}"
+            )
         object.__setattr__(self, "value_id", identity)
 
     def encode_value(self, value: Any, /) -> Mapping[str, Any]:
         if type(value) is not self.value_type:
-            raise TypeError("Artifact value encoding requires its exact registered type.")
+            raise TypeError(
+                f"ArtifactValueCodec.value must have registered type {self.value_type.__qualname__}; got {type(value).__qualname__}"
+            )
         payload = self.encode(value)
         if not isinstance(payload, Mapping) or any(
             not isinstance(key, str) for key in payload
         ):
-            raise TypeError("Artifact value encoders must return a text-keyed mapping.")
+            raise TypeError(
+                f"ArtifactValueCodec.payload must be a text-keyed mapping; got {payload!r}"
+            )
         return payload
 
     def decode_value(self, payload: Mapping[str, Any], /) -> Any:
         if not isinstance(payload, Mapping) or any(
             not isinstance(key, str) for key in payload
         ):
-            raise TypeError("Artifact value decoders require a text-keyed mapping.")
+            raise TypeError(
+                f"ArtifactValueCodec.payload must be a text-keyed mapping; got {payload!r}"
+            )
         value = self.decode(payload)
         if type(value) is not self.value_type:
             raise TypeError(
-                "Artifact value decoder did not return its exact registered type."
+                f"ArtifactValueCodec.decoded_value must have registered type {self.value_type.__qualname__}; got {type(value).__qualname__}"
             )
         return value
 
@@ -151,19 +196,18 @@ _VALUE_CODECS_BY_ID: dict[str, ArtifactValueCodec] = {}
 _VALUE_CODECS_BY_TYPE: dict[type, ArtifactValueCodec] = {}
 
 
+@checked
 def register_artifact_value_codec(codec: ArtifactValueCodec, /) -> ArtifactValueCodec:
-    """Register a constructor codec under the value's canonical artifact identity."""
-    if not isinstance(codec, ArtifactValueCodec):
-        raise TypeError("codec must be an ArtifactValueCodec.")
+    """Register a constructor codec under the value's artifact identity."""
     existing_id = _VALUE_CODECS_BY_ID.get(codec.value_id)
     if existing_id is not None and existing_id != codec:
         raise ValueError(
-            f"Artifact value codec ID {codec.value_id!r} is already registered."
+            f"artifact.codec.value_id must retain its registered codec; got {codec.value_id!r} with a different codec"
         )
     existing_type = _VALUE_CODECS_BY_TYPE.get(codec.value_type)
     if existing_type is not None and existing_type != codec:
         raise ValueError(
-            f"Artifact value type {codec.value_type.__name__} already has codec ID "
+            f"artifact.codec.value_type must retain codec ID {existing_type.value_id!r}; got {codec.value_type.__name__} with "
             f"{existing_type.value_id!r}."
         )
     _register_artifact_identity(codec.value_id, codec.value_type)
@@ -176,12 +220,14 @@ def artifact_value_codec(value_id: str, /) -> ArtifactValueCodec:
     """Resolve only an explicitly registered immutable-value constructor codec."""
     codec = _VALUE_CODECS_BY_ID.get(value_id)
     if codec is None:
-        raise ValueError(f"Unknown artifact value codec ID {value_id!r}.")
+        raise ValueError(
+            f"artifact.codec.value_id must identify a registered codec; got {value_id!r}"
+        )
     return codec
 
 
 def artifact_value_codec_for(value: Any, /) -> ArtifactValueCodec | None:
-    """Inspect the constructor codec registered for a value's exact type."""
+    """Inspect the constructor codec registered for a value's type."""
     return _VALUE_CODECS_BY_TYPE.get(type(value))
 
 
@@ -283,4 +329,5 @@ __all__ = [
     "register_artifact_value_codec",
     "registered_artifact_value_id",
     "register_operator_architecture_codec",
+    "validate_restored_artifact_value",
 ]

@@ -4,23 +4,11 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-
-
-def _scope(
-    dimension: Any = 2, ids: Any = (10, 20), *, revision: Any = "revision-1"
-) -> Any:
-    return phx.meshing.MeshingScope(
-        "shape",
-        revision,
-        phx.meshing.MeshingEntityKind.GEOMETRY,
-        dimension,
-        f"entities-{dimension}",
-        np.asarray(ids, dtype=np.int64),
-    )
+from tests._support.meshing_specifications import exact_sweep_request, geometry_scope
 
 
 def test_surface_and_volume_specs_share_generic_semantic_and_sizing_controls() -> None:
-    surface_scope = _scope()
+    surface_scope = geometry_scope()
     surface_target = phx.meshing.CellMeshingTarget(
         2,
         3,
@@ -28,13 +16,13 @@ def test_surface_and_volume_specs_share_generic_semantic_and_sizing_controls() -
     )
     surface_regions = (
         phx.meshing.RegionControl(
-            _scope(2, (10,)),
+            geometry_scope(2, (10,)),
             "left",
             "material-left",
             phx.meshing.RegionRole.SOLID,
         ),
         phx.meshing.RegionControl(
-            _scope(2, (20,)),
+            geometry_scope(2, (20,)),
             "right",
             "material-right",
             phx.meshing.RegionRole.SOLID,
@@ -42,7 +30,7 @@ def test_surface_and_volume_specs_share_generic_semantic_and_sizing_controls() -
     )
     surface_patch = phx.meshing.PatchControl(
         "left-boundary",
-        _scope(1, (30,)),
+        geometry_scope(1, (30,)),
         ("left",),
     )
     compliance = phx.meshing.SizeCompliancePolicy(
@@ -59,7 +47,7 @@ def test_surface_and_volume_specs_share_generic_semantic_and_sizing_controls() -
         size_compliance=compliance,
     )
 
-    volume_scope = _scope(3)
+    volume_scope = geometry_scope(3)
     volume_target = phx.meshing.CellMeshingTarget(
         3,
         3,
@@ -67,13 +55,13 @@ def test_surface_and_volume_specs_share_generic_semantic_and_sizing_controls() -
     )
     volume_regions = (
         phx.meshing.RegionControl(
-            _scope(3, (10,)),
+            geometry_scope(3, (10,)),
             "fluid",
             "water",
             phx.meshing.RegionRole.FLUID,
         ),
         phx.meshing.RegionControl(
-            _scope(3, (20,)),
+            geometry_scope(3, (20,)),
             "solid",
             "steel",
             phx.meshing.RegionRole.SOLID,
@@ -81,23 +69,23 @@ def test_surface_and_volume_specs_share_generic_semantic_and_sizing_controls() -
     )
     interface = phx.meshing.PatchControl(
         "fluid-solid",
-        _scope(2, (40,)),
+        geometry_scope(2, (40,)),
         ("solid", "fluid"),
     )
     reversed_interface = phx.meshing.PatchControl(
         "fluid-solid",
-        _scope(2, (40,)),
+        geometry_scope(2, (40,)),
         ("fluid", "solid"),
     )
     optional_interface = phx.meshing.PatchControl(
         "fluid-solid",
-        _scope(2, (40,)),
+        geometry_scope(2, (40,)),
         ("fluid", "solid"),
         required=False,
     )
     repeated_pair = phx.meshing.PatchControl(
         "second-fluid-solid",
-        _scope(2, (50,)),
+        geometry_scope(2, (50,)),
         ("fluid", "solid"),
         required=False,
     )
@@ -128,7 +116,7 @@ def test_surface_and_volume_specs_share_generic_semantic_and_sizing_controls() -
 def test_generic_semantic_controls_reject_wrong_scope_overlap_and_unknown_region() -> (
     None
 ):
-    scope = _scope(3)
+    scope = geometry_scope(3)
     target = phx.meshing.CellMeshingTarget(
         3,
         3,
@@ -137,20 +125,20 @@ def test_generic_semantic_controls_reject_wrong_scope_overlap_and_unknown_region
     size = (phx.meshing.UniformSizeControl(scope, 0.2),)
     regions = (
         phx.meshing.RegionControl(
-            _scope(3, (10,)),
+            geometry_scope(3, (10,)),
             "first",
             "material-first",
             phx.meshing.RegionRole.SOLID,
         ),
         phx.meshing.RegionControl(
-            _scope(3, (20,)),
+            geometry_scope(3, (20,)),
             "second",
             "material-second",
             phx.meshing.RegionRole.SOLID,
         ),
     )
     with pytest.raises(ValueError, match="one or two"):
-        phx.meshing.PatchControl("invalid", _scope(2, (30,)), ())
+        phx.meshing.PatchControl("invalid", geometry_scope(2, (30,)), ())
     with pytest.raises(ValueError, match="codimension-one"):
         phx.meshing.VolumeMeshingSpec(
             target,
@@ -159,7 +147,9 @@ def test_generic_semantic_controls_reject_wrong_scope_overlap_and_unknown_region
             size_controls=size,
             region_controls=regions,
             patch_controls=(
-                phx.meshing.PatchControl("wrong-dimension", _scope(1, (30,)), ("first",)),
+                phx.meshing.PatchControl(
+                    "wrong-dimension", geometry_scope(1, (30,)), ("first",)
+                ),
             ),
         )
     with pytest.raises(ValueError, match="must be disjoint"):
@@ -171,7 +161,7 @@ def test_generic_semantic_controls_reject_wrong_scope_overlap_and_unknown_region
             region_controls=(
                 regions[0],
                 phx.meshing.RegionControl(
-                    _scope(3, (10, 20)),
+                    geometry_scope(3, (10, 20)),
                     "overlap",
                     "material-overlap",
                     phx.meshing.RegionRole.SOLID,
@@ -186,7 +176,9 @@ def test_generic_semantic_controls_reject_wrong_scope_overlap_and_unknown_region
             size_controls=size,
             region_controls=regions,
             patch_controls=(
-                phx.meshing.PatchControl("unknown", _scope(2, (30,)), ("absent",)),
+                phx.meshing.PatchControl(
+                    "unknown", geometry_scope(2, (30,)), ("absent",)
+                ),
             ),
         )
     with pytest.raises(ValueError, match="top-level source binding"):
@@ -197,14 +189,14 @@ def test_generic_semantic_controls_reject_wrong_scope_overlap_and_unknown_region
             size_controls=size,
             region_controls=(
                 phx.meshing.RegionControl(
-                    _scope(3, (10,), revision="foreign"),
+                    geometry_scope(3, (10,), revision="foreign"),
                     "foreign",
                     "material-foreign",
                     phx.meshing.RegionRole.SOLID,
                 ),
             ),
         )
-    with pytest.raises(ValueError, match="Patch control scopes must be disjoint"):
+    with pytest.raises(ValueError, match=r"MeshingSpec\.patch_controls\.scopes"):
         phx.meshing.VolumeMeshingSpec(
             target,
             scope,
@@ -212,16 +204,18 @@ def test_generic_semantic_controls_reject_wrong_scope_overlap_and_unknown_region
             size_controls=size,
             region_controls=regions,
             patch_controls=(
-                phx.meshing.PatchControl("first-patch", _scope(2, (30,)), ("first",)),
                 phx.meshing.PatchControl(
-                    "second-patch", _scope(2, (30, 40)), ("second",)
+                    "first-patch", geometry_scope(2, (30,)), ("first",)
+                ),
+                phx.meshing.PatchControl(
+                    "second-patch", geometry_scope(2, (30, 40)), ("second",)
                 ),
             ),
         )
 
 
 def test_provider_support_report_fails_before_execution() -> None:
-    scope = _scope()
+    scope = geometry_scope()
     target = phx.meshing.CellMeshingTarget(
         2,
         3,
@@ -319,27 +313,14 @@ def test_geometric_layer_schedule_rejects_non_integral_count_and_invalid_paramet
         phx.meshing.LayerSchedule.geometric(2, 0.1, growth_rate=0.0)
 
 
-def _exact_sweep(
-    wall: Any, cap: Any, volume_scope: Any, schedule: Any, **options: Any
-) -> Any:
-    return phx.meshing.BoundaryLayerControl(
-        wall,
-        schedule,
-        route=phx.meshing.BoundaryLayerRoute.EXACT_SWEEP,
-        volume_scope=volume_scope,
-        cap_scope=cap,
-        **options,
-    )
-
-
 def test_exact_sweep_boundary_layer_is_wall_to_cap_and_volume_bound() -> None:
-    wall = _scope(2, (10,))
-    cap = _scope(2, (20,))
-    volume_scope = _scope(3, (30,))
+    wall = geometry_scope(2, (10,))
+    cap = geometry_scope(2, (20,))
+    volume_scope = geometry_scope(3, (30,))
     # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.1, 0.15, 0.2))
-    control = _exact_sweep(wall, cap, volume_scope, schedule)
-    equivalent = _exact_sweep(
+    control = exact_sweep_request(wall, cap, volume_scope, schedule)
+    equivalent = exact_sweep_request(
         wall,
         cap,
         volume_scope,
@@ -367,21 +348,23 @@ def test_exact_sweep_boundary_layer_is_wall_to_cap_and_volume_bound() -> None:
     assert control.control_id == equivalent.control_id
     assert (
         control.control_id
-        != _exact_sweep(wall, cap, volume_scope, schedule, feature_angle=0.3).control_id
+        != exact_sweep_request(
+            wall, cap, volume_scope, schedule, feature_angle=0.3
+        ).control_id
     )
     assert specification.layer_controls == (control,)
 
 
 def test_boundary_layer_control_rejects_route_scopes_bindings_and_policies() -> None:
-    wall = _scope(2, (10,))
-    cap = _scope(2, (20,))
-    volume_scope = _scope(3, (30,))
+    wall = geometry_scope(2, (10,))
+    cap = geometry_scope(2, (20,))
+    volume_scope = geometry_scope(3, (30,))
     # ty: ignore[invalid-argument-type]
     schedule = phx.meshing.LayerSchedule((0.1, 0.2))
 
-    with pytest.raises(ValueError, match="EXACT_SWEEP requires"):
-        _exact_sweep(_scope(1, (10,)), cap, volume_scope, schedule)
-    with pytest.raises(ValueError, match="CAD_EXTRUSION requires"):
+    with pytest.raises(ValueError, match="EXACT_SWEEP"):
+        exact_sweep_request(geometry_scope(1, (10,)), cap, volume_scope, schedule)
+    with pytest.raises(ValueError, match="CAD_EXTRUSION"):
         phx.meshing.BoundaryLayerControl(
             wall,
             schedule,
@@ -390,11 +373,13 @@ def test_boundary_layer_control_rejects_route_scopes_bindings_and_policies() -> 
             cap_scope=cap,
         )
     with pytest.raises(ValueError, match="source binding"):
-        _exact_sweep(wall, _scope(2, (20,), revision="foreign"), volume_scope, schedule)
+        exact_sweep_request(
+            wall, geometry_scope(2, (20,), revision="foreign"), volume_scope, schedule
+        )
     with pytest.raises(ValueError, match="disjoint"):
-        _exact_sweep(wall, wall, volume_scope, schedule)
-    with pytest.raises(ValueError, match="Only the ADVANCING route"):
-        _exact_sweep(
+        exact_sweep_request(wall, wall, volume_scope, schedule)
+    with pytest.raises(ValueError, match=r"BoundaryLayerControl\.collision"):
+        exact_sweep_request(
             wall,
             cap,
             volume_scope,
@@ -402,15 +387,19 @@ def test_boundary_layer_control_rejects_route_scopes_bindings_and_policies() -> 
             collision=phx.meshing.BoundaryLayerCollisionPolicy.REDUCE_THICKNESS,
         )
     with pytest.raises(ValueError, match="growth_rate_bounds"):
-        _exact_sweep(wall, cap, volume_scope, schedule, growth_rate_bounds=(1.0, 1.5))
+        exact_sweep_request(
+            wall, cap, volume_scope, schedule, growth_rate_bounds=(1.0, 1.5)
+        )
     with pytest.raises(ValueError, match="minimum_thickness_fraction"):
-        _exact_sweep(wall, cap, volume_scope, schedule, minimum_thickness_fraction=0.0)
+        exact_sweep_request(
+            wall, cap, volume_scope, schedule, minimum_thickness_fraction=0.0
+        )
     with pytest.raises(ValueError, match="maximum_corner_stretch"):
-        _exact_sweep(wall, cap, volume_scope, schedule, maximum_corner_stretch=0.5)
+        exact_sweep_request(wall, cap, volume_scope, schedule, maximum_corner_stretch=0.5)
 
 
 def test_volume_spec_rejects_boundary_layer_outside_top_level_volume_scope() -> None:
-    boundary_scope = _scope(3, (30,))
+    boundary_scope = geometry_scope(3, (30,))
     target_spec = phx.meshing.CellMeshingTarget(
         3,
         3,
@@ -419,10 +408,10 @@ def test_volume_spec_rejects_boundary_layer_outside_top_level_volume_scope() -> 
             allow_mixed=True,
         ),
     )
-    control = _exact_sweep(
-        _scope(2, (10,)),
-        _scope(2, (20,)),
-        _scope(3, (40,)),
+    control = exact_sweep_request(
+        geometry_scope(2, (10,)),
+        geometry_scope(2, (20,)),
+        geometry_scope(3, (40,)),
         # ty: ignore[invalid-argument-type]
         phx.meshing.LayerSchedule((0.1,)),
     )
@@ -444,7 +433,7 @@ def _curve_target() -> Any:
 
 
 def test_curve_meshing_spec_validates_junctions_and_fingerprints_canonically() -> None:
-    scope = _scope(1, (0, 1, 2))
+    scope = geometry_scope(1, (0, 1, 2))
     sizes = (phx.meshing.UniformSizeControl(scope, 0.1),)
     first = phx.meshing.CurveJunction("a", ((1, "start"), (0, "end")))
     second = phx.meshing.CurveJunction("b", ((2, "start"), (1, "end")))
@@ -456,7 +445,7 @@ def test_curve_meshing_spec_validates_junctions_and_fingerprints_canonically() -
     )
     assert forward.specification_id == reverse.specification_id
     assert first.endpoints == ((0, "end"), (1, "start"))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="end"):
         phx.meshing.CurveJunction("bad", ((0, "middle"), (1, "start")))  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError, match="at most one junction"):
         phx.meshing.CurveMeshingSpec(
@@ -486,11 +475,11 @@ def test_meshing_limits_validate_and_fingerprint_native_budgets() -> None:
     base = phx.meshing.MeshingLimits()
     assert base.limits_id == phx.meshing.MeshingLimits().limits_id
     assert phx.meshing.MeshingLimits(maximum_cavity_cells=10).limits_id != base.limits_id
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="maximum_work_units"):
         phx.meshing.MeshingLimits(maximum_work_units=True)
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="maximum_geometry_queries"):
         phx.meshing.MeshingLimits(maximum_geometry_queries=1.5)  # ty: ignore[invalid-argument-type]
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="maximum_scratch_bytes"):
         phx.meshing.MeshingLimits(maximum_scratch_bytes=0)
 
 
@@ -517,13 +506,13 @@ def test_meshing_failure_carries_canonical_typed_evidence() -> None:
     assert failure.evidence.requested == (("a", 1.0), ("b", 2.0))
     assert failure.evidence.evidence_id == again.evidence.evidence_id
     assert failure.entity_ids == (3, 1)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"achieved\.quantities"):
         phx.meshing.MeshingFailure(
             phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED,
             "nan",
             achieved=(("a", float("nan")),),
         )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"MeshingFailureEvidence\.checkpoint_id"):
         phx.meshing.MeshingFailure(
             phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED,
             "empty checkpoint",

@@ -1,5 +1,5 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Original-bank affine reference restrictions of curved tensor form sources."""
+"""Affine reference restrictions preserve curved tensor-form source banks."""
 
 from fractions import Fraction
 
@@ -8,96 +8,118 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.discretization import (
     CellGeometrySpec,
     CellMesh,
+    coordinate_lagrange_element,
     FiniteElementFieldSpec,
     FiniteElementPlan,
-)
-from phydrax.discretization._cell_geometry import (
-    coordinate_lagrange_element,
+    FiniteElementSpec,
     PolynomialComposedCellGeometryElement,
+    reference_cell_topology,
     RestrictedCellGeometryElement,
+    transition_nested_cell_geometry,
 )
-from phydrax.discretization._cell_geometry_transfer import transition_nested_cell_geometry
-from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization.fem import (
     FiniteElementDiscretization,
     form_element,
     prepare_nested_field_transfer,
 )
-from phydrax.discretization.fem._reference import FiniteElementSpec
 from phydrax.meshing._mixed_adaptation import adapt_mixed_mesh
 from phydrax.meshing._topology_edit import assemble_topology_edit
-from tests.unit.discretization.test_mapped_nested_dg import _curved
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.mapped_cells import curved_volume
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
+# Empirical Q2 tensor-form regression envelopes declared in this fixture at
+# 286aa734a; these unchanged bounds cover JVP, dual pairing, and chart pullback.
+_JVP_REGRESSION_TOLERANCE = 2e-12
+_DUAL_REGRESSION_TOLERANCE = 2e-11
+_PULLBACK_REGRESSION_TOLERANCE = 3e-11
 
 
 def _charts(
     amplitude: float,
 ) -> tuple[CellMesh, CellGeometrySpec, CellMesh, CellGeometrySpec, np.ndarray]:
-    mesh, original = _curved("hexahedron")
-    root_element = original.elements[0]
-    if not isinstance(root_element, FiniteElementSpec):
-        raise TypeError("Affine form fixture requires its finite-element root.")
-    nodes = np.asarray(root_element.reference_nodes).copy()
-    nodes[:, 1] += amplitude * nodes[:, 0] * nodes[:, 2]
-    vertices = np.asarray(mesh.coordinates).copy()
-    vertices[:, 1] += (amplitude - 0.05) * vertices[:, 0] * vertices[:, 2]
-    mesh = mesh.with_coordinates(vertices, numeric_version=f"form-root-{amplitude}")
-    root = CellGeometrySpec(
-        {"volume": root_element}, {"volume": original.geometry_dofs[0]}, nodes
-    )
-    outcome = adapt_mixed_mesh(mesh, refine_cell_ids=np.array([17]))
-    child, _, _ = assemble_topology_edit(mesh, outcome.edit, numeric_version="form-child")
-    transition = transition_nested_cell_geometry(
-        mesh,
-        root,
-        child,
-        CellGeometrySpec.affine(child),
-        refinement=outcome.edit.refinement,
-    )
-    child = child.with_coordinates(
-        transition.vertex_coordinates, numeric_version="form-child-curved"
-    )
-    chart = coordinate_lagrange_element("hexahedron", 1)
-    if not isinstance(chart, FiniteElementSpec):
-        raise TypeError("Affine form fixture requires its Q1 chart.")
-    elements, routes, references = {}, {}, []
-    for block, restricted, route in zip(
-        child.blocks,
-        transition.geometry.elements,
-        transition.geometry.geometry_dofs,
-        strict=True,
-    ):
-        if not isinstance(restricted, RestrictedCellGeometryElement):
-            raise TypeError("Affine form fixture requires exact restrictions.")
-        points = np.asarray(chart.reference_nodes) @ np.asarray(
-            restricted.matrix
-        ).T + np.asarray(restricted.offset)
-        fractions = [[Fraction(float(value)) for value in row] for row in points]
-        elements[block.name] = PolynomialComposedCellGeometryElement(
-            root_element,
-            chart,
-            np.array([[v.numerator for v in row] for row in fractions], dtype=object),
-            np.array([[v.denominator for v in row] for row in fractions], dtype=object),
+    with coordinate_reference_budget() as budget:
+        mesh, original = curved_volume("hexahedron")
+        root_element = original.elements[0]
+        if not isinstance(root_element, FiniteElementSpec):
+            raise TypeError(
+                f"fixture.root_element must be a FiniteElementSpec; got {type(root_element).__name__}"
+            )
+        nodes = np.asarray(root_element.reference_nodes).copy()
+        nodes[:, 1] += amplitude * nodes[:, 0] * nodes[:, 2]
+        vertices = np.asarray(mesh.coordinates).copy()
+        vertices[:, 1] += (amplitude - 0.05) * vertices[:, 0] * vertices[:, 2]
+        mesh = mesh.with_coordinates(vertices, numeric_version=f"form-root-{amplitude}")
+        root = CellGeometrySpec(
+            {"volume": root_element}, {"volume": original.geometry_dofs[0]}, nodes
         )
-        routes[block.name] = route
-        corners = np.asarray(reference_cell_topology("hexahedron").vertices)
-        references.extend(
-            [corners @ np.asarray(restricted.matrix).T + np.asarray(restricted.offset)]
-            * len(route)
+        outcome = adapt_mixed_mesh(mesh, refine_cell_ids=np.array([17]))
+        child, _, _ = assemble_topology_edit(
+            mesh, outcome.edit, numeric_version="form-child", budget=budget
         )
-    composed = CellGeometrySpec(
-        elements,
-        routes,
-        root.coordinates,
-        restriction_source=transition.geometry.restriction_source,
-    )
-    assert sum(len(block.vertices) for block in child.blocks) == 8
-    return mesh, root, child, composed, np.asarray(references)
+        transition = transition_nested_cell_geometry(
+            mesh,
+            root,
+            child,
+            CellGeometrySpec.affine(child),
+            refinement=outcome.edit.refinement,
+        )
+        child = child.with_coordinates(
+            transition.vertex_coordinates, numeric_version="form-child-curved"
+        )
+        chart = coordinate_lagrange_element("hexahedron", 1)
+        if not isinstance(chart, FiniteElementSpec):
+            raise TypeError(
+                f"fixture.chart must be a FiniteElementSpec; got {type(chart).__name__}"
+            )
+        elements, routes, references = {}, {}, []
+        for block, restricted, route in zip(
+            child.blocks,
+            transition.geometry.elements,
+            transition.geometry.geometry_dofs,
+            strict=True,
+        ):
+            if not isinstance(restricted, RestrictedCellGeometryElement):
+                raise TypeError(
+                    f"fixture.restricted must be a RestrictedCellGeometryElement; got {type(restricted).__name__}"
+                )
+            points = np.asarray(chart.reference_nodes) @ np.asarray(
+                restricted.matrix
+            ).T + np.asarray(restricted.offset)
+            fractions = [[Fraction(float(value)) for value in row] for row in points]
+            elements[block.name] = PolynomialComposedCellGeometryElement(
+                root_element,
+                chart,
+                np.array(
+                    [[v.numerator for v in row] for row in fractions], dtype=np.object_
+                ),
+                np.array(
+                    [[v.denominator for v in row] for row in fractions], dtype=np.object_
+                ),
+                budget=budget,
+            )
+            routes[block.name] = route
+            corners = np.asarray(reference_cell_topology("hexahedron").vertices)
+            references.extend(
+                [
+                    corners @ np.asarray(restricted.matrix).T
+                    + np.asarray(restricted.offset)
+                ]
+                * len(route)
+            )
+        composed = CellGeometrySpec(
+            elements,
+            routes,
+            root.coordinates,
+            restriction_source=transition.geometry.restriction_source,
+        )
+        assert sum(len(block.vertices) for block in child.blocks) == 8
+        return mesh, root, child, composed, np.asarray(references)
 
 
 def _spaces(
@@ -157,16 +179,19 @@ def test_affine_composed_3d_named_forms_pullback_jvp_and_dual(
             prepared.transfer.apply, (jnp.asarray(values),), (jnp.asarray(tangent),)
         )
         np.testing.assert_allclose(
-            derivative, prepared.transfer.apply(tangent), atol=2e-12, rtol=2e-12
+            derivative,
+            prepared.transfer.apply(tangent),
+            atol=_JVP_REGRESSION_TOLERANCE,
+            rtol=_JVP_REGRESSION_TOLERANCE,
         )
         dual = np.random.default_rng(91).normal(size=actual.shape)
         np.testing.assert_allclose(
             np.vdot(actual, dual),
             np.vdot(values, prepared.transfer.pullback(dual)),
-            atol=2e-11,
-            rtol=2e-11,
+            atol=_DUAL_REGRESSION_TOLERANCE,
+            rtol=_DUAL_REGRESSION_TOLERANCE,
         )
-        # Independently tabulate the source form on each actual parent chart;
+        # Independently tabulate the source form on each retained parent chart;
         # covariant and contravariant pullbacks use different exterior powers.
         points = np.array([[0.17, 0.31, 0.43], [0.73, 0.59, 0.21]])
         coarse_local = (
@@ -182,7 +207,9 @@ def test_affine_composed_3d_named_forms_pullback_jvp_and_dual(
             strict=True,
         ):
             if not isinstance(coordinate, PolynomialComposedCellGeometryElement):
-                raise TypeError("Affine form fixture requires composed child charts.")
+                raise TypeError(
+                    f"fixture.coordinate must be a PolynomialComposedCellGeometryElement; got {type(coordinate).__name__}"
+                )
             chart_values, chart_gradients = coordinate.chart_element.tabulate(points)
             parent_points = np.asarray(chart_values) @ np.asarray(
                 coordinate.chart_coordinates
@@ -208,8 +235,8 @@ def test_affine_composed_3d_named_forms_pullback_jvp_and_dual(
                 np.testing.assert_allclose(
                     np.einsum("qnc,n->qc", np.asarray(basis), local),
                     expected,
-                    atol=3e-11,
-                    rtol=3e-11,
+                    atol=_PULLBACK_REGRESSION_TOLERANCE,
+                    rtol=_PULLBACK_REGRESSION_TOLERANCE,
                 )
                 offset += 1
         assert offset == 8
@@ -218,14 +245,32 @@ def test_affine_composed_3d_named_forms_pullback_jvp_and_dual(
     np.testing.assert_array_equal(composed.coordinates, before)
 
 
-@pytest.mark.parametrize("resource", ("work", "storage"))
+@pytest.mark.parametrize(
+    ("maximum_work", "maximum_storage_bytes", "refusal_field"),
+    (
+        pytest.param(
+            1,
+            256_000_000,
+            r"CoordinateEnclosureBudget\.coefficient_work",
+            id="work",
+        ),
+        pytest.param(
+            100_000_000,
+            1,
+            r"CoordinateEnclosureBudget\.polynomial_storage",
+            id="storage",
+        ),
+    ),
+)
 def test_affine_composed_3d_form_resource_refusal_preserves_bank(
-    resource: str,
+    maximum_work: int,
+    maximum_storage_bytes: int,
+    refusal_field: str,
 ) -> None:
     mesh, root, child, composed, references = _charts(0.125)
     source, target = _spaces(mesh, root, child, composed, 1)
     before = np.asarray(root.coordinates).copy()
-    with pytest.raises(ValueError, match="budget"):
+    with pytest.raises(ValueError, match=refusal_field):
         prepare_nested_field_transfer(
             source,
             target,
@@ -234,8 +279,8 @@ def test_affine_composed_3d_form_resource_refusal_preserves_bank(
             source_geometry=root,
             target_geometry=composed,
             parent_reference_vertices=references,
-            maximum_work=1 if resource == "work" else 100_000_000,
-            maximum_storage_bytes=1 if resource == "storage" else 256_000_000,
+            maximum_work=maximum_work,
+            maximum_storage_bytes=maximum_storage_bytes,
         )
     np.testing.assert_array_equal(root.coordinates, before)
 
@@ -246,7 +291,7 @@ def test_affine_composed_3d_form_wrong_parent_map_preserves_bank() -> None:
     before = np.asarray(root.coordinates).copy()
     wrong = references.copy()
     wrong[0, :, 0] += 0.125
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"nested_reference\.(corners|boundary_facets)"):
         prepare_nested_field_transfer(
             source,
             target,

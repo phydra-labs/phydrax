@@ -6,9 +6,9 @@
 
 Source dimensions are geometric (vertex zero, edge one, region two). Explicit
 source entity roles distinguish planar regions from three-dimensional PLC facets.
-Identity comes from authority tables and lineage; rational geometry proves support.
-Triangle, bilinear Q1, and restricted Q1 coordinate polynomials stay authoritative:
-native positivity, global embedding, and exact domain coverage prove their whole
+Identity comes from source ownership tables and lineage; rational geometry proves support.
+Triangle, bilinear Q1, and restricted Q1 coordinate polynomials stay declared:
+native positivity, global embedding, and rational domain coverage prove their whole
 images; polynomial edge restrictions prove their declared source-segment support.
 """
 
@@ -18,51 +18,34 @@ from fractions import Fraction
 from typing import NamedTuple, Protocol
 
 import numpy as np
+from jax.experimental import multihost_utils
+
+import phydrax.discretization._cell_geometry as _dependency_phydrax_discretization__cell_geometry
+import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.geometry._domain_coverage as domain_coverage_owner
+import phydrax.geometry._embedding_state as _dependency_phydrax_geometry__embedding_state
+import phydrax.geometry._global_embedding as global_embedding_owner
+import phydrax.geometry._planar_primitives as planar_primitives_owner
+import phydrax.meshing._association_routes as association_routes
+import phydrax.meshing._association_state as association_state_owner
+import phydrax.meshing._lineage_records as _dependency_phydrax_meshing__lineage
+import phydrax.meshing._plc_mapped_support as _dependency_phydrax_meshing__plc_mapped_support
+import phydrax.meshing._result as _dependency_phydrax_meshing__result
+from phydrax.discretization._coordinate_identity import coordinate_scope_key
 
 from .._physical import SpatialCoordinateContract
 from ..discretization import _coordinate_enclosure as algebra, CellMesh
-from ..discretization._cell_geometry import (
-    _require_scalar_coordinate_element,
-    CellGeometrySpec,
-    RestrictedCellGeometryElement,
-)
-from ..discretization._cell_geometry_validity import (
-    cell_geometry_id,
-    CellValidityPolicy,
-    certify_cell_geometry_validity,
-)
 from ..discretization._reference_cell import reference_cell_topology
-from ..geometry._mesh_certificates import (
-    certify_domain_coverage,
-    certify_global_embedding,
-    DomainCoverageCertificate,
-    GlobalEmbeddingCertificate,
-    MeshCertificateLimits,
-    PiecewiseLinearDomain,
-)
-from ..geometry._planar_coverage import Point, Polygon, rational_points, turn
-from ._association import (
-    _child_sources,
-    _entity_rows,
-    _incidence_pairs,
-    _ordered_vertices,
-    _target_dimension,
-    AssociationPropagationError,
-    GeometryAssociation,
-    GeometryAssociationKind,
-    GeometryAssociationProvenance,
-    GeometrySourceEntityRole,
-    PlcEntityClasses,
-)
-from ._lineage import EntityLineageKind, MeshLineage
-from ._plc_mapped_support import _edge_support
-from ._result import CellMeshingResult, require_original_meshing_source
+from ..typing import checked
+from ._association_routes import PlcEntityClasses
+from ._support_work import spend_support_work
 
 
 class PlanarPlcTransfer(Protocol):
     """Immutable tables supplied by the represented source's transfer owner."""
 
-    domain: PiecewiseLinearDomain
+    domain: domain_coverage_owner.PiecewiseLinearDomain
     coordinate_contract: SpatialCoordinateContract
     source_vertices: np.ndarray
     edge_vertices: np.ndarray
@@ -73,16 +56,12 @@ class PlanarPlcTransfer(Protocol):
     maximum_support_queries: int
 
 
-def _spend(work: list[int], count: int, /) -> None:
-    work[0] -= count
-    if work[0] < 0:
-        raise ValueError("Planar PLC exact support query budget exhausted.")
-
-
 def _position(indices: np.ndarray, identifier: int, /) -> int:
     rows = np.flatnonzero(indices == identifier)
     if rows.size != 1:
-        raise ValueError("Planar PLC support names an undeclared authority index.")
+        raise ValueError(
+            "PlanarPlcSupport.source_index must name one declared source row; got an undeclared or duplicate index"
+        )
     return int(rows[0])
 
 
@@ -93,91 +72,131 @@ def _vertices(mesh: CellMesh, dimension: int, /) -> np.ndarray:
         width = max(block.vertices.shape[1] for block in mesh.blocks)
         rows = np.full((mesh.entity_set(2).count, width), -1, dtype=np.int64)
         for block in mesh.blocks:
-            positions = _entity_rows(
+            positions = association_state_owner.entity_rows(
                 mesh, 2, np.asarray(block.global_ids, dtype=np.int64)
             )
             rows[positions, : block.vertices.shape[1]] = np.asarray(
                 block.vertices, dtype=np.int64
             )
         return rows
-    rows = _ordered_vertices(mesh, dimension)
+    rows = association_routes.ordered_vertices(mesh, dimension)
     if rows is None:
         raise ValueError(
-            "Planar PLC transfer requires native triangle or quadrilateral incidence."
+            "PlanarPlcSupport.mesh must expose triangle or quadrilateral incidence; got unsupported incidence"
         )
     return rows
 
 
-class _PlanarMap(NamedTuple):
+class PlanarMap(NamedTuple):
     kind: str
     vertices: tuple[int, ...]
     coordinates: tuple[algebra.Polynomial, ...]
 
 
-def _cell_maps(mesh: CellMesh, geometry: CellGeometrySpec, /) -> tuple[_PlanarMap, ...]:
-    if mesh.topological_dimension != 2 or mesh.ambient_dimension != 2:
-        raise ValueError("Planar PLC transfer requires actual two-dimensional cells.")
-    elements, routes, values = geometry.resolve(mesh)
-    controls = np.asarray(values, dtype=np.float64)
-    carrier = rational_points(np.asarray(mesh.coordinates, dtype=np.float64))
-    block_cells: list[_PlanarMap] = []
-    block_ids: list[np.ndarray] = []
-    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
-        element = _require_scalar_coordinate_element(element, "Planar PLC transfer")
-        if block.cell_kind not in ("triangle", "quadrilateral") or element.degree != 1:
+@checked
+def cell_maps(
+    mesh: CellMesh,
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[PlanarMap, ...]:
+    with budget.activate():
+        if mesh.topological_dimension != 2 or mesh.ambient_dimension != 2:
             raise ValueError(
-                "Planar PLC transfer requires actual degree-one native maps."
+                "PlanarPlcSupport.mesh must have topology and ambient dimension 2; got different dimensions"
             )
-        root = element
-        while isinstance(root, RestrictedCellGeometryElement):
-            root = root.source_element
-        if root.degree != 1:
-            raise ValueError(
-                "Planar PLC restrictions require a degree-one source expression."
-            )
-        corners = rational_points(
-            np.asarray(
-                reference_cell_topology(block.cell_kind).vertices, dtype=np.float64
-            )
+        key = coordinate_scope_key(mesh, geometry)
+        cached = budget.planar_cell_map_cache.get(key)
+        if cached is not None:
+            budget.reserve(0)
+            return cached
+        elements, routes, _ = geometry.resolve(mesh, budget=budget)
+        controls = algebra.prepared_coordinate_source_bank(geometry, budget=budget)
+        carrier = planar_primitives_owner.rational_points(
+            np.asarray(mesh.coordinates, dtype=np.float64), budget=budget
         )
-        for local, vertices in zip(
-            controls[np.asarray(route, dtype=np.int64)],
-            np.asarray(block.vertices, dtype=np.int64),
-            strict=True,
-        ):
-            local = np.asarray(local, dtype=np.float64)
-            vertices = np.asarray(vertices, dtype=np.int64)
-            polynomial = algebra.coordinate_polynomials(element, local)
-            if polynomial is None:
-                raise ValueError("Planar PLC coordinate source expression is unresolved.")
-            for corner, vertex in zip(corners, vertices.tolist(), strict=True):
-                actual = tuple(algebra.evaluate(value, corner) for value in polynomial)
-                if actual != carrier[vertex]:
-                    raise ValueError(
-                        "Planar carrier corners disagree with actual coordinate-map expressions."
-                    )
-            block_cells.append(
-                _PlanarMap(block.cell_kind, tuple(vertices.tolist()), polynomial)
+        expected_corners: dict[int, tuple[algebra.ExactScalar, ...]] = (
+            dict(enumerate(carrier)) if geometry.exact_source is None else {}
+        )
+        block_cells: list[PlanarMap] = []
+        block_ids: list[np.ndarray] = []
+        for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+            element = _dependency_phydrax_discretization__cell_geometry.require_scalar_coordinate_element(
+                element, "Planar PLC transfer"
             )
-        block_ids.append(np.asarray(block.global_ids, dtype=np.int64))
-    order = _entity_rows(mesh, 2, np.concatenate(block_ids))
-    inverse = np.argsort(order, kind="stable")
-    return tuple(block_cells[index] for index in inverse.tolist())
+            if (
+                block.cell_kind not in ("triangle", "quadrilateral")
+                or element.degree != 1
+            ):
+                raise ValueError(
+                    "PlanarPlcSupport.elements must be degree-one triangle or quadrilateral maps; got unsupported elements"
+                )
+            root = element
+            while isinstance(
+                root,
+                _dependency_phydrax_discretization__cell_geometry.RestrictedCellGeometryElement,
+            ):
+                root = root.source_element
+            if root.degree != 1:
+                raise ValueError(
+                    "PlanarPlcSupport.root_element must have degree 1; got a different source degree"
+                )
+            for route_row, vertices in zip(
+                np.asarray(route, dtype=np.int64),
+                np.asarray(block.vertices, dtype=np.int64),
+                strict=True,
+            ):
+                local = tuple(
+                    controls[int(index)]
+                    for index in np.asarray(route_row, dtype=np.int64).reshape((-1,))
+                )
+                vertices = np.asarray(vertices, dtype=np.int64)
+                corners = algebra.coordinate_corner_images(element, local, budget=budget)
+                if corners is None:
+                    raise ValueError(
+                        "PlanarPlcSupport.coordinates must resolve source expressions; got unresolved expressions"
+                    )
+                polynomial = algebra.coordinate_polynomials(element, local, budget=budget)
+                if polynomial is None:
+                    raise ValueError(
+                        "PlanarPlcSupport.coordinates must resolve source expressions; got unresolved expressions"
+                    )
+                for actual, vertex in zip(corners, vertices.tolist(), strict=True):
+                    prior = expected_corners.setdefault(vertex, actual)
+                    if actual != prior:
+                        raise ValueError(
+                            "PlanarPlcSupport.carrier must agree with coordinate-map corner images; got different corners"
+                        )
+                block_cells.append(
+                    PlanarMap(block.cell_kind, tuple(vertices.tolist()), polynomial)
+                )
+            block_ids.append(np.asarray(block.global_ids, dtype=np.int64))
+        order = association_state_owner.entity_rows(mesh, 2, np.concatenate(block_ids))
+        inverse = np.argsort(order, kind="stable")
+        maps = tuple(block_cells[index] for index in inverse.tolist())
+        budget.retain_basis((key, maps))
+        budget.planar_cell_map_cache[key] = maps
+        return maps
 
 
 def _prepare_planar_support(
     transfer: PlanarPlcTransfer,
     mesh: CellMesh,
-    geometry: CellGeometrySpec,
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
     regions: np.ndarray,
     /,
     *,
-    embedding: GlobalEmbeddingCertificate | None = None,
-    coverage: DomainCoverageCertificate | None = None,
-) -> tuple[tuple[_PlanarMap, ...], MeshCertificateLimits]:
-    """Prove actual image coverage, including bilinear and restricted Q1 maps."""
-    cells = _cell_maps(mesh, geometry)
-    limits = MeshCertificateLimits(
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate | None = None,
+    coverage: domain_coverage_owner.DomainCoverageCertificate | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[
+    tuple[PlanarMap, ...],
+    _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
+]:
+    """Prove represented image coverage, including bilinear and restricted Q1 maps."""
+    cells = cell_maps(mesh, geometry, budget=budget)
+    limits = _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits(
         maximum_candidate_pairs=transfer.maximum_support_queries,
         maximum_ray_tests=transfer.maximum_support_queries,
         maximum_subdivision_pieces=transfer.maximum_support_queries,
@@ -185,31 +204,43 @@ def _prepare_planar_support(
     ids = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
     )
-    rows = _entity_rows(mesh, 2, ids)
+    rows = association_state_owner.entity_rows(mesh, 2, ids)
     labels = np.asarray(
         [_position(transfer.region_indices, label) for label in regions[rows].tolist()],
         dtype=np.int64,
     )
     if mesh.storage is not None and (embedding is None or coverage is None):
         raise ValueError(
-            "Owner-local PLC support requires current collective embedding and domain-coverage premises."
+            "PlanarPlcSupport.storage must retain collective embedding and domain coverage; got missing certificates"
         )
     if embedding is None:
-        policy = CellValidityPolicy(
-            maximum_subdivision_depth=limits.maximum_subdivision_depth,
-            maximum_piece_count=limits.maximum_subdivision_pieces,
-            maximum_bernstein_nodes=limits.maximum_bernstein_nodes,
+        policy = (
+            _dependency_phydrax_discretization__cell_geometry_validity.CellValidityPolicy(
+                maximum_subdivision_depth=limits.maximum_subdivision_depth,
+                maximum_piece_count=limits.maximum_subdivision_pieces,
+                maximum_bernstein_nodes=limits.maximum_bernstein_nodes,
+            )
         )
-        validity = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy)
+        validity = _dependency_phydrax_discretization__cell_geometry_validity.certify_cell_geometry_validity(
+            geometry, mesh=mesh, policy=policy, budget=budget
+        )
         if not validity.all_certified:
             raise ValueError(
-                "Planar PLC coordinate-map positivity is invalid or unresolved."
+                "PlanarPlcSupport.validity must certify coordinate-map positivity; got invalid or unresolved cells"
             )
-        embedding = certify_global_embedding(mesh, geometry, validity, limits=limits)
+        embedding = global_embedding_owner.certify_global_embedding(
+            mesh, geometry, validity, limits=limits, budget=budget
+        )
     embedding.binding.require(mesh, geometry)
     if coverage is None:
-        coverage = certify_domain_coverage(
-            mesh, geometry, transfer.domain, labels, embedding=embedding, limits=limits
+        coverage = domain_coverage_owner.certify_domain_coverage(
+            mesh,
+            geometry,
+            transfer.domain,
+            labels,
+            embedding=embedding,
+            limits=limits,
+            budget=budget,
         )
     coverage.binding.require(mesh, geometry)
     if (
@@ -219,24 +250,29 @@ def _prepare_planar_support(
         or coverage.embedding_certificate_id != embedding.certificate_id
     ):
         raise ValueError(
-            "Planar PLC source support requires current global embedding and complete exact domain coverage."
+            "PlanarPlcSupport.coverage must bind certified embedding and whole-domain coverage; got failed or different certificates"
         )
     if coverage.region_ids != transfer.domain.region_ids:
         raise ValueError(
-            "PLC coverage does not bind the authoritative source-region identities."
+            "PlanarPlcSupport.coverage must bind declared region identities; got different region IDs"
         )
     if (
         mesh.storage is not None
         and mesh.storage.evidence_id not in coverage.premise_certificate_ids
     ):
         raise ValueError(
-            "Owner-local PLC coverage lacks the actual collective partition premise."
+            "PlanarPlcSupport.coverage must retain the collective partition evidence; got no storage evidence ID"
         )
     return cells, limits
 
 
 def _edge_charts(
-    cells: tuple[_PlanarMap, ...], vertices: np.ndarray, parents: np.ndarray, /
+    cells: tuple[PlanarMap, ...],
+    vertices: np.ndarray,
+    parents: np.ndarray,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[tuple[algebra.Polynomial, ...], ...]:
     charts: list[tuple[algebra.Polynomial, ...]] = []
     for parent in parents.tolist():
@@ -246,20 +282,35 @@ def _edge_charts(
         )
         topology = reference_cell_topology(cell.kind)
         if not any(set(local.tolist()) == set(edge) for edge in topology.entities[1]):
-            raise ValueError("Planar edge does not bind an actual reference-map edge.")
+            raise ValueError(
+                "PlanarPlcSupport.edge must bind a reference-map edge; got no incident reference edge"
+            )
         corners = np.asarray(topology.vertices, dtype=np.float64)[local]
         arguments = algebra.affine_arguments(
-            corners[0], (corners[1] - corners[0])[:, None]
+            corners[0],
+            (corners[1] - corners[0])[:, None],
+            budget=budget,
         )
         charts.append(
-            tuple(algebra.compose(value, arguments) for value in cell.coordinates)
+            tuple(
+                algebra.compose(value, arguments, budget=budget)
+                for value in cell.coordinates
+            )
         )
     if not charts:
-        raise ValueError("Planar edge lacks actual coordinate-map incidence.")
+        raise ValueError(
+            "PlanarPlcSupport.edge must have coordinate-map incidence; got no chart"
+        )
     return tuple(charts)
 
 
-def _segments(transfer: PlanarPlcTransfer, region: int, /) -> tuple[Polygon, ...]:
+def _segments(
+    transfer: PlanarPlcTransfer,
+    region: int,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[planar_primitives_owner.Polygon, ...]:
     local = _position(transfer.region_indices, region)
     pairs = transfer.domain.facet_regions
     rows = np.array(
@@ -270,26 +321,46 @@ def _segments(transfer: PlanarPlcTransfer, region: int, /) -> tuple[Polygon, ...
     selected = pairs[(pairs[:, 0] == local) | (pairs[:, 1] == local)]
     reverse = selected[:, 1] == local
     rows[reverse] = rows[reverse, ::-1]
-    return tuple(rational_points(transfer.domain.vertices[row]) for row in rows)
+    return tuple(
+        planar_primitives_owner.rational_points(
+            transfer.domain.vertices[row], budget=budget
+        )
+        for row in rows
+    )
 
 
-def _on_segment(point: Point, segment: Polygon, /) -> bool:
-    return turn(segment[0], segment[1], point) == 0 and all(
+def _on_segment(
+    point: planar_primitives_owner.Point,
+    segment: planar_primitives_owner.Polygon,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> bool:
+    return planar_primitives_owner.turn(
+        segment[0], segment[1], point, budget=budget
+    ) == 0 and all(
         min(a, b) <= p <= max(a, b)
         for a, b, p in zip(segment[0], segment[1], point, strict=True)
     )
 
 
-def _in_region(point: Point, segments: tuple[Polygon, ...], /, *, closed: bool) -> bool:
+def _in_region(
+    point: planar_primitives_owner.Point,
+    segments: tuple[planar_primitives_owner.Polygon, ...],
+    /,
+    *,
+    closed: bool,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> bool:
     winding = 0
     for segment in segments:
         a, b = segment
-        # A segment strictly above or below this exact ordinate can neither
-        # contain the point nor cross its winding ray. Keep the full original
+        # A segment strictly above or below this rational ordinate can neither
+        # contain the point nor cross its winding ray. Keep the full source
         # query charge; only the unnecessary determinant arithmetic is skipped.
         if (point[1] < a[1] and point[1] < b[1]) or (point[1] > a[1] and point[1] > b[1]):
             continue
-        side = turn(a, b, point)
+        side = planar_primitives_owner.turn(a, b, point, budget=budget)
         if side == 0 and all(
             min(first, last) <= coordinate <= max(first, last)
             for first, last, coordinate in zip(a, b, point, strict=True)
@@ -302,11 +373,20 @@ def _in_region(point: Point, segments: tuple[Polygon, ...], /, *, closed: bool) 
     return winding == 1
 
 
-def _open_triangle_contact(triangle: Polygon, segment: Polygon, /) -> bool:
-    """Exact strict half-plane feasibility along the complete source segment."""
+def _open_triangle_contact(
+    triangle: planar_primitives_owner.Polygon,
+    segment: planar_primitives_owner.Polygon,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> bool:
+    """rational strict half-plane feasibility along the whole source segment."""
     low, high = Fraction(0), Fraction(1)
     for a, b in zip(triangle, (*triangle[1:], triangle[0]), strict=True):
-        first, last = turn(a, b, segment[0]), turn(a, b, segment[1])
+        first, last = (
+            planar_primitives_owner.turn(a, b, segment[0], budget=budget),
+            planar_primitives_owner.turn(a, b, segment[1], budget=budget),
+        )
         slope = last - first
         if slope == 0:
             if first <= 0:
@@ -318,6 +398,7 @@ def _open_triangle_contact(triangle: Polygon, segment: Polygon, /) -> bool:
     return low < high
 
 
+@checked
 def planar_point_support(
     transfer: PlanarPlcTransfer,
     dimension: int,
@@ -326,112 +407,146 @@ def planar_point_support(
     work: list[int],
     /,
     *,
-    region_segments: tuple[Polygon, ...] | None = None,
+    region_segments: tuple[planar_primitives_owner.Polygon, ...] | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> bool:
-    p = rational_points(point[None, :])[0]
+    p = tuple(Fraction(value) for value in point.tolist())
     if dimension == 0:
-        _spend(work, 1)
+        work[0] = spend_support_work(
+            work[0],
+            1,
+            "PlanarPlcSupport.work must respect the support query allowance; got resource exhaustion",
+        )
         row = _position(transfer.vertex_indices, index)
-        return p == rational_points(transfer.source_vertices[row : row + 1])[0]
+        return (
+            p
+            == planar_primitives_owner.rational_points(
+                transfer.source_vertices[row : row + 1], budget=budget
+            )[0]
+        )
     if dimension == 1:
-        _spend(work, 1)
+        work[0] = spend_support_work(
+            work[0],
+            1,
+            "PlanarPlcSupport.work must respect the support query allowance; got resource exhaustion",
+        )
         edge = transfer.edge_vertices[_position(transfer.edge_indices, index)]
-        return _on_segment(p, rational_points(transfer.source_vertices[edge]))
+        return _on_segment(
+            p,
+            planar_primitives_owner.rational_points(
+                transfer.source_vertices[edge], budget=budget
+            ),
+            budget=budget,
+        )
     if dimension == 2:
         segments = (
-            _segments(transfer, index) if region_segments is None else region_segments
+            _segments(transfer, index, budget=budget)
+            if region_segments is None
+            else region_segments
         )
-        _spend(work, len(segments))
-        return _in_region(p, segments, closed=False)
-    raise ValueError("Planar PLC source strata are vertices, edges, and regions.")
+        work[0] = spend_support_work(
+            work[0],
+            len(segments),
+            "PlanarPlcSupport.work must respect the support query allowance; got resource exhaustion",
+        )
+        return _in_region(p, segments, closed=False, budget=budget)
+    raise ValueError(
+        "PlanarPlcSupport.source_dimension must be 0, 1, or 2; got another dimension"
+    )
 
 
+@checked
 def planar_cell_support(
     transfer: PlanarPlcTransfer,
     points: np.ndarray,
     region: int,
     work: list[int],
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> bool:
     """Whole-cell containment: positive triangle, degree one, no interior cut.
 
-    The center is rational, not a rounded float witness. A cavity, disconnected
-    component, or interface inside the cell is caught by the complete source
+    The center is rational, not a rounded float ancestry. A cavity, disconnected
+    component, or interface inside the cell is caught by the whole source
     segment/open-triangle intersection, even when every cell corner is inside.
     """
-    triangle = rational_points(points)
-    if len(triangle) != 3 or turn(*triangle) <= 0:
+    triangle = planar_primitives_owner.rational_points(points, budget=budget)
+    if len(triangle) != 3 or planar_primitives_owner.turn(*triangle, budget=budget) <= 0:
         return False
-    segments = _segments(transfer, region)
-    _spend(work, 2 * len(segments))
+    segments = _segments(transfer, region, budget=budget)
+    work[0] = spend_support_work(
+        work[0],
+        2 * len(segments),
+        "PlanarPlcSupport.work must respect the support query allowance; got resource exhaustion",
+    )
     center = tuple(sum((p[axis] for p in triangle), Fraction(0)) / 3 for axis in range(2))
-    return _in_region(center, segments, closed=False) and not any(
-        _open_triangle_contact(triangle, segment) for segment in segments
+    return _in_region(center, segments, closed=False, budget=budget) and not any(
+        _open_triangle_contact(triangle, segment, budget=budget) for segment in segments
     )
 
 
-def _consensus(mesh: CellMesh, dimension: int, regions: np.ndarray, /) -> np.ndarray:
-    if dimension == 2:
-        return regions.copy()
-    links = _incidence_pairs(mesh, dimension, 2)
-    pairs = np.unique(np.stack((links[:, 0], regions[links[:, 1]]), axis=1), axis=0)
-    rows, counts = np.unique(pairs[:, 0], return_counts=True)
-    result = np.full((mesh.entity_set(dimension).count,), -1, dtype=np.int64)
-    single = rows[counts == 1]
-    result[single] = pairs[np.searchsorted(pairs[:, 0], single), 1]
-    return result
-
-
-def _roles(dimensions: np.ndarray, /) -> tuple[GeometrySourceEntityRole, ...]:
+def source_entity_roles(
+    dimensions: np.ndarray, /
+) -> tuple[association_state_owner.GeometrySourceEntityRole, ...]:
     """The planar source owner's explicit vertex/edge/region stratum schema."""
     schema = {
-        0: GeometrySourceEntityRole.VERTEX,
-        1: GeometrySourceEntityRole.EDGE,
-        2: GeometrySourceEntityRole.REGION,
+        0: association_state_owner.GeometrySourceEntityRole.VERTEX,
+        1: association_state_owner.GeometrySourceEntityRole.EDGE,
+        2: association_state_owner.GeometrySourceEntityRole.REGION,
     }
     if any(dimension not in schema for dimension in dimensions.tolist()):
-        raise ValueError("Planar sources require geometric dimensions zero, one, or two.")
+        raise ValueError(
+            "PlanarPlcSupport.source_dimension must be 0, 1, or 2; got another dimension"
+        )
     return tuple(schema[dimension] for dimension in dimensions.tolist())
 
 
+@checked
 def planar_source_associations(
     transfer: PlanarPlcTransfer,
-    source: CellMeshingResult,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
     /,
-) -> tuple[GeometryAssociation, tuple[int, ...]]:
-    if not isinstance(source, CellMeshingResult):
-        raise TypeError("source must be CellMeshingResult.")
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[association_state_owner.GeometryAssociation, tuple[int, ...]]:
     if (
         transfer.domain.ambient_dimension != 2
         or source.coordinate_contract.spatial_id
         != transfer.coordinate_contract.spatial_id
     ):
         raise ValueError(
-            "Planar PLC transfer requires its actual two-dimensional source frame."
+            "PlanarPlcSupport.source must retain its two-dimensional coordinate frame; got another source binding"
         )
-    _cell_maps(source.mesh, source.geometry)
+    cell_maps(source.mesh, source.geometry, budget=budget)
     if source.mesh.storage is not None:
-        # Owner-local epochs carry no copied serial certificate: the canonical
-        # theorem chain reaches the original source, and this exact target
+        # Owner-local epochs carry no copied serial certificate: the normalized
+        # proof chain reaches the source source, and this rational target
         # retains its own collectively recertified embedding and coverage.
         collective = source.collective_evidence
         if collective is None or source.collective_certificates is None:
             raise ValueError(
-                "Owner-local planar sources require their collective theorem and target certificates."
+                "PlanarPlcSupport.source must retain collective proof and target certificates; got missing evidence"
             )
         collective.require_passed()
         storage = source.mesh.storage
         if (
             collective.mesh_id != source.mesh.mesh_id
             or collective.evidence_id != storage.evidence_id
-            or collective.coordinate_geometry_id != cell_geometry_id(source.geometry)
+            or collective.coordinate_geometry_id
+            != _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                source.geometry
+            )
         ):
             raise ValueError(
-                "Owner-local planar theorem is not bound to this target publication."
+                "PlanarPlcSupport.collective_evidence must bind the published target; got another publication"
             )
-        if not isinstance(require_original_meshing_source(source), CellMeshingResult):
+        if not isinstance(
+            _dependency_phydrax_meshing__result.require_original_meshing_source(source),
+            _dependency_phydrax_meshing__result.CellMeshingResult,
+        ):
             raise ValueError(
-                "Planar PLC transfer requires an original serial certified planar source."
+                "PlanarPlcSupport.source must have a serial certified planar predecessor; got another source kind"
             )
         embedding, coverage = source.collective_certificates
         embedding.binding.require(source.mesh, source.geometry)
@@ -443,7 +558,7 @@ def planar_source_associations(
             or storage.evidence_id not in coverage.premise_certificate_ids
         ):
             raise ValueError(
-                "Owner-local planar target lacks its current certified embedding and coverage."
+                "PlanarPlcSupport.target must retain certified embedding and coverage; got missing or failed certificates"
             )
     else:
         certificate = source.certification
@@ -453,18 +568,18 @@ def planar_source_associations(
             or certificate.mesh_id != source.mesh.mesh_id
         ):
             raise ValueError(
-                "Planar PLC transfer requires the source's current passed certification."
+                "PlanarPlcSupport.source must retain passed current certification; got missing or failed certification"
             )
         embedding = certificate.embedding
         if embedding is None:
             raise ValueError(
-                "Planar source requires current independent global embedding."
+                "PlanarPlcSupport.source must retain bound certified global embedding; got failed or different evidence"
             )
         embedding.binding.require(source.mesh, source.geometry)
         if certificate.coverage is not None:
             certificate.coverage.binding.require(source.mesh, source.geometry)
     dimensions: list[int] = []
-    vertex: GeometryAssociation | None = None
+    vertex: association_state_owner.GeometryAssociation | None = None
     namespaces = {
         0: transfer.vertex_indices,
         1: transfer.edge_indices,
@@ -472,20 +587,23 @@ def planar_source_associations(
     }
     for association in source.associations:
         if (
-            association.association_kind is not GeometryAssociationKind.PIECEWISE_LINEAR
+            association.association_kind
+            is not association_state_owner.GeometryAssociationKind.PIECEWISE_LINEAR
             or association.source_id != transfer.domain.source_id
             or association.source_revision != transfer.source_revision
         ):
             raise ValueError(
-                "Planar PLC transfer binds another represented source revision."
+                "PlanarPlcSupport.source_revision must match the represented revision; got a different revision"
             )
-        dimension = _target_dimension(source.mesh, association)
+        dimension = association_state_owner.target_dimension(source.mesh, association)
         if dimension in dimensions:
-            raise ValueError("Planar source requires one association per mesh dimension.")
+            raise ValueError(
+                "PlanarPlcSupport.associations must have one row per mesh dimension; got repeated dimensions"
+            )
         association.validate_target(source.mesh.entity_set(dimension))
         if not association.complete:
             raise ValueError(
-                "Planar source associations must be resolved and unambiguous."
+                "PlanarPlcSupport.association must be resolved and unambiguous; got unresolved or ambiguous rows"
             )
         dims = np.asarray(association.source_dimensions, dtype=np.int64)
         indices = np.asarray(association.source_indices, dtype=np.int64)
@@ -494,18 +612,20 @@ def planar_source_associations(
                 np.isin(indices[dims == kind], namespaces[kind])
             ):
                 raise ValueError(
-                    "Planar source association names undeclared authority indices."
+                    "PlanarPlcSupport.association must index declared source rows; got undeclared source IDs"
                 )
-        if association.source_entity_roles != _roles(dims):
+        if association.source_entities.roles() != source_entity_roles(dims):
             raise ValueError(
-                "Planar source entity roles disagree with its vertex/edge/region topology."
+                "PlanarPlcSupport.association must align roles with vertex, edge, or region topology; got different roles"
             )
         if dimension == 2:
             association.target_rows(
                 np.asarray(source.mesh.entity_set(2).entity_ids, dtype=np.int64)
             )
             if np.any(dims != 2):
-                raise ValueError("Planar cells must name authoritative source regions.")
+                raise ValueError(
+                    "PlanarPlcSupport.cells must name declared source regions; got nonregion cell rows"
+                )
         if dimension == 0:
             vertex = association
             association.target_rows(
@@ -514,7 +634,7 @@ def planar_source_associations(
         dimensions.append(dimension)
     if vertex is None or 1 not in dimensions or 2 not in dimensions:
         raise ValueError(
-            "Planar PLC transfer requires complete vertex and cell associations and source constraints."
+            "PlanarPlcSupport.associations must cover vertices and cells with source constraints; got missing rows"
         )
     return vertex, tuple(sorted(d for d in dimensions if d != 0))
 
@@ -526,7 +646,7 @@ def _vertex_closure(
     eligible: np.ndarray,
     /,
 ) -> None:
-    links = _incidence_pairs(mesh, 0, 1)
+    links = association_routes.incidence_pairs(mesh, 0, 1)
     vertices, edges = levels[0], levels[1]
     for row in np.flatnonzero(eligible).tolist():
         incident = links[links[:, 0] == row, 1]
@@ -545,8 +665,8 @@ def _vertex_closure(
             )
             common = endpoints if common is None else common & endpoints
         if common is None or len(common) != 1:
-            raise AssociationPropagationError(
-                "Planar incident source edges lack a unique authoritative corner.",
+            raise association_routes.AssociationPropagationError(
+                "PlanarPlcSupport.vertex must identify one shared source corner; got conflicting incident edges",
                 np.asarray(mesh.vertex_global_ids)[row : row + 1],
             )
         vertices.dimensions[row], vertices.indices[row] = (
@@ -555,28 +675,62 @@ def _vertex_closure(
         )
 
 
-def _prove_levels(
+def _prove_planar_edge(
+    transfer: PlanarPlcTransfer,
+    index: int,
+    cells: tuple[PlanarMap, ...],
+    vertices: np.ndarray,
+    parents: np.ndarray,
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
+    work: list[int],
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[bool, int]:
+    """Require every incident chart to realize the same source-edge orientation."""
+    edge = transfer.edge_vertices[_position(transfer.edge_indices, index)]
+    charts = _edge_charts(cells, vertices, parents, budget=budget)
+    outcomes = tuple(
+        _dependency_phydrax_meshing__plc_mapped_support.edge_support(
+            chart,
+            transfer.source_vertices[edge],
+            limits,
+            work,
+            budget=budget,
+        )
+        for chart in charts
+    )
+    realized = {orientation for supported_, orientation in outcomes if supported_}
+    supported = all(supported_ for supported_, _ in outcomes) and len(realized) == 1
+    return supported, next(iter(realized)) if supported else 0
+
+
+# Entity traversal keeps judged-star, endpoint, then whole-edge verdicts and support-query charges in order.
+@checked
+def prove_levels(
     transfer: PlanarPlcTransfer,
     mesh: CellMesh,
-    geometry: CellGeometrySpec,
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
     levels: tuple[PlcEntityClasses, ...] | list[PlcEntityClasses],
     work: list[int],
     /,
     *,
-    embedding: GlobalEmbeddingCertificate | None = None,
-    coverage: DomainCoverageCertificate | None = None,
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate | None = None,
+    coverage: domain_coverage_owner.DomainCoverageCertificate | None = None,
     judged: tuple[np.ndarray, ...] | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, ...]:
-    """Exact support of every class; ``judged`` limits owner-local proofs.
+    """rational support of every class; ``judged`` limits owner-local proofs.
 
     An owner-local entity outside ``judged`` has a truncated resident star; its
     edge incidence and charts are incomplete, so it receives no local verdict.
     """
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     signs: list[np.ndarray] = []
-    edge_links = _incidence_pairs(mesh, 1, 2)
+    edge_links = association_routes.incidence_pairs(mesh, 1, 2)
     edge_cells = np.bincount(edge_links[:, 0], minlength=mesh.entity_set(1).count)
-    edge_regions = _consensus(mesh, 1, levels[2].indices)
+    edge_regions = association_routes.stratum_region_consensus(
+        mesh, 1, levels[2].indices, 2
+    )
     cells, limits = _prepare_planar_support(
         transfer,
         mesh,
@@ -584,11 +738,27 @@ def _prove_levels(
         levels[2].indices,
         embedding=embedding,
         coverage=coverage,
+        budget=budget,
     )
-    # Exact authored endpoints are immutable within this proof. Retain one
+    if geometry.exact_source is not None:
+        coordinates = np.asarray(
+            planar_primitives_owner.rational_points(coordinates, budget=budget),
+            dtype=object,
+        )
+        for cell in cells:
+            corners = planar_primitives_owner.rational_points(
+                np.asarray(reference_cell_topology(cell.kind).vertices, dtype=np.float64),
+                budget=budget,
+            )
+            for vertex, corner in zip(cell.vertices, corners, strict=True):
+                coordinates[vertex] = tuple(
+                    algebra.evaluate(value, corner, budget=budget)
+                    for value in cell.coordinates
+                )
+    # rational authored endpoints are immutable within this proof. Retain one
     # bank per used region, not one reconstruction per mesh vertex; every
-    # predicate visit still consumes the original support-query allowance.
-    region_segments: dict[int, tuple[Polygon, ...]] = {}
+    # predicate visit still consumes the source support-query allowance.
+    region_segments: dict[int, tuple[planar_primitives_owner.Polygon, ...]] = {}
     for dimension, level in enumerate(levels):
         identifiers = np.asarray(mesh.entity_set(dimension).entity_ids, dtype=np.int64)
         orientations = np.zeros(identifiers.shape, dtype=np.int8)
@@ -605,7 +775,7 @@ def _prove_levels(
                 supported = edge_regions[row] == index and edge_cells[row] == 2
             else:
                 if kind == 2 and index not in region_segments:
-                    region_segments[index] = _segments(transfer, index)
+                    region_segments[index] = _segments(transfer, index, budget=budget)
                 supported = all(
                     planar_point_support(
                         transfer,
@@ -614,30 +784,24 @@ def _prove_levels(
                         point,
                         work,
                         region_segments=region_segments.get(index) if kind == 2 else None,
+                        budget=budget,
                     )
                     for point in points
                 )
                 if dimension == 1 and kind == 1 and supported:
-                    edge = transfer.edge_vertices[_position(transfer.edge_indices, index)]
-                    charts = _edge_charts(
-                        cells, vertices, edge_links[edge_links[:, 0] == row, 1]
+                    supported, orientations[row] = _prove_planar_edge(
+                        transfer,
+                        index,
+                        cells,
+                        vertices,
+                        edge_links[edge_links[:, 0] == row, 1],
+                        limits,
+                        work,
+                        budget=budget,
                     )
-                    outcomes = tuple(
-                        _edge_support(chart, transfer.source_vertices[edge], limits, work)
-                        for chart in charts
-                    )
-                    realized = {
-                        orientation for supported_, orientation in outcomes if supported_
-                    }
-                    supported = (
-                        all(supported_ for supported_, _ in outcomes)
-                        and len(realized) == 1
-                    )
-                    if supported:
-                        orientations[row] = next(iter(realized))
             if not supported:
-                raise AssociationPropagationError(
-                    "Planar coordinates lack their inherited exact source support.",
+                raise association_routes.AssociationPropagationError(
+                    "PlanarPlcSupport.coordinates must retain inherited source support; got unsupported coordinates",
                     identifiers[row : row + 1],
                 )
         signs.append(orientations)
@@ -663,7 +827,7 @@ def _finish_classes(
         level.resolved[:] = (level.dimensions >= 0) & (level.indices >= 0)
         if not np.all(level.resolved):
             raise ValueError(
-                "Planar source strata lack unambiguous authoritative incidence."
+                "PlanarPlcSupport.strata must have unambiguous source incidence; got incompatible incidence"
             )
         for row, (kind, index) in enumerate(
             zip(level.dimensions.tolist(), level.indices.tolist(), strict=True)
@@ -674,81 +838,100 @@ def _finish_classes(
     return tuple(levels)
 
 
+@checked
 def planar_classes(
-    transfer: PlanarPlcTransfer, source: CellMeshingResult, /
+    transfer: PlanarPlcTransfer,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[PlcEntityClasses, ...]:
-    planar_source_associations(transfer, source)
-    cell = next(
-        value
-        for value in source.associations
-        if _target_dimension(source.mesh, value) == 2
-    )
-    regions = np.asarray(cell.source_indices, dtype=np.int64)[
-        cell.target_rows(np.asarray(source.mesh.entity_set(2).entity_ids, dtype=np.int64))
-    ]
-    levels: list[PlcEntityClasses] = []
-    for dimension in range(3):
-        indices = _consensus(source.mesh, dimension, regions)
-        dims = np.where(indices >= 0, 2, -1).astype(np.int64)
+    with budget.activate():
+        planar_source_associations(transfer, source, budget=budget)
+        cell = association_routes.association_for_dimension(source, 2)
+        regions = np.asarray(cell.source_indices, dtype=np.int64)[
+            cell.target_rows(
+                np.asarray(source.mesh.entity_set(2).entity_ids, dtype=np.int64)
+            )
+        ]
+        levels: list[PlcEntityClasses] = []
+        for dimension in range(3):
+            indices = association_routes.stratum_region_consensus(
+                source.mesh, dimension, regions, 2
+            )
+            dims = np.where(indices >= 0, 2, -1).astype(np.int64)
+            for association in source.associations:
+                if (
+                    association_state_owner.target_dimension(source.mesh, association)
+                    == dimension
+                ):
+                    rows = association_state_owner.entity_rows(
+                        source.mesh,
+                        dimension,
+                        np.asarray(association.target_global_ids, dtype=np.int64),
+                    )
+                    dims[rows], indices[rows] = (
+                        np.asarray(association.source_dimensions),
+                        np.asarray(association.source_indices),
+                    )
+            levels.append(
+                PlcEntityClasses(
+                    dims,
+                    indices,
+                    np.zeros(dims.shape, dtype=np.bool_),
+                    np.empty(dims.shape, dtype=np.int64),
+                )
+            )
+        # planar_source_associations admitted exactly one of these evidence owners.
+        if source.mesh.storage is not None and source.collective_certificates is not None:
+            embedding, coverage = source.collective_certificates
+        elif source.certification is not None:
+            embedding, coverage = (
+                source.certification.embedding,
+                source.certification.coverage,
+            )
+        else:
+            raise ValueError(
+                "PlanarPlcSupport.source must retain current certification; got no bound evidence"
+            )
+        orientations = prove_levels(
+            transfer,
+            source.mesh,
+            source.geometry,
+            levels,
+            [transfer.maximum_support_queries],
+            embedding=embedding,
+            coverage=coverage,
+            budget=budget,
+        )
         for association in source.associations:
-            if _target_dimension(source.mesh, association) == dimension:
-                rows = _entity_rows(
+            if association_state_owner.target_dimension(source.mesh, association) == 1:
+                rows = association_state_owner.entity_rows(
                     source.mesh,
-                    dimension,
+                    1,
                     np.asarray(association.target_global_ids, dtype=np.int64),
                 )
-                dims[rows], indices[rows] = (
-                    np.asarray(association.source_dimensions),
-                    np.asarray(association.source_indices),
-                )
-        levels.append(
-            PlcEntityClasses(
-                dims,
-                indices,
-                np.zeros(dims.shape, dtype=np.bool_),
-                np.empty(dims.shape, dtype=np.int64),
-            )
-        )
-    # planar_source_associations admitted exactly one of these premise owners.
-    if source.mesh.storage is not None and source.collective_certificates is not None:
-        embedding, coverage = source.collective_certificates
-    elif source.certification is not None:
-        embedding, coverage = (
-            source.certification.embedding,
-            source.certification.coverage,
-        )
-    else:
-        raise ValueError("Planar source support requires current certification.")
-    orientations = _prove_levels(
-        transfer,
-        source.mesh,
-        source.geometry,
-        levels,
-        [transfer.maximum_support_queries],
-        embedding=embedding,
-        coverage=coverage,
-    )
-    for association in source.associations:
-        if _target_dimension(source.mesh, association) == 1:
-            rows = _entity_rows(
-                source.mesh, 1, np.asarray(association.target_global_ids, dtype=np.int64)
-            )
-            declared = np.asarray(association.orientations, dtype=np.int8)
-            if np.any((declared != 0) & (declared != orientations[1][rows])):
-                raise ValueError(
-                    "Planar source edge orientation contradicts its actual authoritative support."
-                )
-    return _finish_classes(transfer, levels)
+                declared = np.asarray(association.orientations, dtype=np.int8)
+                if np.any((declared != 0) & (declared != orientations[1][rows])):
+                    raise ValueError(
+                        "PlanarPlcSupport.edge_orientation must agree with source support; got opposite orientation"
+                    )
+        return _finish_classes(transfer, levels)
 
 
+@checked
 def planar_protected_edges(
     transfer: PlanarPlcTransfer,
-    source: CellMeshingResult,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
     /,
     *,
     midpoint_required: bool = True,
+    _classes: tuple[PlcEntityClasses, ...] | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> np.ndarray:
-    levels = planar_classes(transfer, source)
+    levels = (
+        planar_classes(transfer, source, budget=budget) if _classes is None else _classes
+    )
     endpoints = np.asarray(source.mesh.coordinates, dtype=np.float64)[
         _vertices(source.mesh, 1)
     ]
@@ -760,7 +943,12 @@ def planar_protected_edges(
         work = [transfer.maximum_support_queries]
         for row in np.flatnonzero(levels[1].dimensions == 1).tolist():
             protected[row] |= not planar_point_support(
-                transfer, 1, int(levels[1].indices[row]), midpoints[row], work
+                transfer,
+                1,
+                int(levels[1].indices[row]),
+                midpoints[row],
+                work,
+                budget=budget,
             )
     return protected
 
@@ -768,18 +956,20 @@ def planar_protected_edges(
 def _complete_stars(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
     """Owner-local entities whose every incident cell is resident.
 
-    A resident cell is complete when each of its facets is matched or physical
-    boundary. An entity whose resident incident cells are all complete cannot
+    A resident cell is whole when each of its facets is matched or physical
+    boundary. An entity whose resident incident cells are all whole cannot
     reach a missing cell across a facet, so its resident star is its whole
     star. A star truncated at the artificial halo boundary yields no verdict.
     """
     storage = mesh.storage
     if storage is None or storage.local_neighborhood_complete is None:
         raise ValueError(
-            "Owner-local planar transfer requires resident-star completeness receipts."
+            "PlanarPlcSupport.storage must retain resident-star completeness evidence; got missing evidence"
         )
     complete = np.asarray(storage.local_neighborhood_complete, dtype=np.bool_)
-    rows = _entity_rows(mesh, 2, np.asarray(storage.entity_global_ids[2], dtype=np.int64))
+    rows = association_state_owner.entity_rows(
+        mesh, 2, np.asarray(storage.entity_global_ids[2], dtype=np.int64)
+    )
     count = mesh.entity_set(2).count
     if (
         complete.shape != rows.shape
@@ -788,13 +978,13 @@ def _complete_stars(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
         or np.unique(rows).size != count
     ):
         raise ValueError(
-            "Owner-local neighborhood completeness must label every resident cell once."
+            "PlanarPlcSupport.neighborhood must label every resident cell once; got invalid resident IDs"
         )
     cells = np.zeros((count,), dtype=np.bool_)
     cells[rows] = complete
     stars: list[np.ndarray] = []
     for dimension in (0, 1):
-        links = _incidence_pairs(mesh, dimension, 2)
+        links = association_routes.incidence_pairs(mesh, dimension, 2)
         truncated = np.zeros((mesh.entity_set(dimension).count,), dtype=np.bool_)
         np.logical_or.at(truncated, links[:, 0], ~cells[links[:, 1]])
         stars.append(~truncated)
@@ -815,7 +1005,7 @@ def _agreed_owner_verdicts(
     failure: ValueError | None,
     /,
 ) -> tuple[list[PlcEntityClasses], _LevelParents, tuple[np.ndarray, ...]]:
-    """Collective: every global entity has one agreed complete-star verdict.
+    """Collective: every global entity has one agreed whole-star verdict.
 
     Every process enters both gathers, including one whose local proof failed,
     so no owner waits on a peer that already refused. Owners judging the same
@@ -823,11 +1013,12 @@ def _agreed_owner_verdicts(
     judged by no owner is refused, never inferred from a truncated star. Each
     resident row adopts the verdict and parent of its lowest judging process.
     """
-    from jax.experimental import multihost_utils
 
     storage = target.storage
     if storage is None:
-        raise ValueError("Owner-local planar verdicts require canonical mesh storage.")
+        raise ValueError(
+            "PlanarPlcSupport.verdicts must bind mesh storage; got no storage"
+        )
     ids = tuple(
         np.asarray(target.entity_set(dimension).entity_ids, dtype=np.int64)
         for dimension in range(3)
@@ -859,16 +1050,19 @@ def _agreed_owner_verdicts(
         dtype=np.int64,
     )
     gathered_sizes = np.asarray(
-        multihost_utils.process_allgather(sizes, tiled=False), dtype=np.int64
+        multihost_utils.process_allgather(sizes, tiled=False),
+        dtype=np.int64,
     ).reshape((-1, 4))
     if np.any(gathered_sizes[:, 3]):
         if failure is not None:
             raise failure
         raise ValueError(
-            "An owning process refused its complete-star planar source verdicts."
+            "PlanarPlcSupport.verdicts must be proved by every responsible process; got a process refusal"
         )
     if local is None:
-        raise ValueError("Owner-local planar verdicts lost their local proof.")
+        raise ValueError(
+            "PlanarPlcSupport.verdicts must retain local proof results; got no local proof"
+        )
     packed = np.zeros(
         (int(np.sum(np.max(gathered_sizes[:, :3], axis=0))), _VERDICT_COLUMNS),
         dtype=np.int64,
@@ -876,7 +1070,8 @@ def _agreed_owner_verdicts(
     flat = np.concatenate(packets, axis=0)
     packed[: flat.shape[0]] = flat
     table = np.asarray(
-        multihost_utils.process_allgather(packed, tiled=False), dtype=np.int64
+        multihost_utils.process_allgather(packed, tiled=False),
+        dtype=np.int64,
     ).reshape((-1, _VERDICT_COLUMNS))
     table = table[table[:, 0] == 1]
     levels, parents, orientations, _ = local
@@ -886,23 +1081,23 @@ def _agreed_owner_verdicts(
         rows = rows[np.argsort(rows[:, 2], kind="stable")]
         unique, first = np.unique(rows[:, 2], return_index=True)
         if unique.size != storage.global_entity_counts[dimension]:
-            raise AssociationPropagationError(
-                "A global planar entity has no owner holding its complete star.",
+            raise association_routes.AssociationPropagationError(
+                "PlanarPlcSupport.entity must have a process holding its whole incident star; got no qualifying process",
                 np.setdiff1d(ids[dimension], unique),
             )
         group = np.searchsorted(unique, rows[:, 2])
         conflicting = np.any(rows[:, 3:6] != rows[first[group], 3:6], axis=1)
         if np.any(conflicting):
-            raise AssociationPropagationError(
-                "Owners disagree on a complete-star planar source verdict.",
+            raise association_routes.AssociationPropagationError(
+                "PlanarPlcSupport.verdicts must agree across processes holding the incident star; got conflicting verdicts",
                 np.unique(rows[conflicting, 2]),
             )
         positions = np.searchsorted(unique, ids[dimension])
         if np.any(positions >= unique.size) or np.any(
             unique[np.minimum(positions, unique.size - 1)] != ids[dimension]
         ):
-            raise AssociationPropagationError(
-                "A resident planar entity lies outside the agreed global verdicts.",
+            raise association_routes.AssociationPropagationError(
+                "PlanarPlcSupport.entity must occur in agreed global verdicts; got an absent resident entity",
                 ids[dimension],
             )
         verdicts = rows[first[positions]]
@@ -916,30 +1111,31 @@ def _agreed_owner_verdicts(
 
 def _propagated_levels(
     transfer: PlanarPlcTransfer,
-    source: CellMeshingResult,
-    lineage: MeshLineage,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    lineage: _dependency_phydrax_meshing__lineage.MeshLineage,
     target: CellMesh,
-    geometry: CellGeometrySpec,
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
     judged: tuple[np.ndarray, ...] | None,
     /,
     *,
-    embedding: GlobalEmbeddingCertificate | None,
-    coverage: DomainCoverageCertificate | None,
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate | None,
+    coverage: domain_coverage_owner.DomainCoverageCertificate | None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[
     list[PlcEntityClasses], list[tuple[np.ndarray, np.ndarray]], tuple[np.ndarray, ...]
 ]:
-    """Lineage, consensus and closure classes with their exact support proof.
+    """Lineage, consensus and closure classes with their rational support proof.
 
     ``judged`` restricts locally inferred classes and proofs to owner-local
-    complete stars; ``None`` decides every entity of a serial mesh.
+    whole stars; ``None`` decides every entity of a serial mesh.
     """
-    _cell_maps(target, geometry)
-    old = planar_classes(transfer, source)
+    cell_maps(target, geometry, budget=budget)
+    old = planar_classes(transfer, source, budget=budget)
     levels, parents = _lineage_levels(source.mesh, target, lineage, old)
     cell_ids = np.asarray(target.entity_set(2).entity_ids, dtype=np.int64)
     if np.any(levels[2].dimensions != 2):
-        raise AssociationPropagationError(
-            "Planar target cells lack unambiguous source region lineage.",
+        raise association_routes.AssociationPropagationError(
+            "PlanarPlcSupport.cells must have unambiguous source-region lineage; got incompatible region ancestry",
             cell_ids[levels[2].dimensions != 2],
         )
     for dimension in (1, 0):
@@ -954,7 +1150,9 @@ def _propagated_levels(
             if missing.size:
                 ids = np.asarray(target.vertex_global_ids, dtype=np.int64)[missing]
                 order = np.argsort(ids, kind="stable")
-                dims, rows = _child_sources(lineage, source.mesh, target, ids[order])
+                dims, rows = association_routes.child_sources(
+                    lineage, source.mesh, target, ids[order]
+                )
                 for row, kind, parent in zip(
                     missing[order].tolist(), dims.tolist(), rows.tolist(), strict=True
                 ):
@@ -967,14 +1165,16 @@ def _propagated_levels(
                         parents[0][1][row] = np.asarray(
                             source.mesh.entity_set(kind).entity_ids
                         )[parent]
-        regions = _consensus(target, dimension, levels[2].indices)
+        regions = association_routes.stratum_region_consensus(
+            target, dimension, levels[2].indices, 2
+        )
         missing = (level.dimensions < 0) & (regions >= 0) & decided
-        links = _incidence_pairs(target, dimension, 2)
+        links = association_routes.incidence_pairs(target, dimension, 2)
         for row in np.flatnonzero(missing).tolist():
             cells = links[links[:, 0] == row, 1]
             if cells.size == 0:
                 raise ValueError(
-                    "Planar created stratum has no authoritative cell lineage."
+                    "PlanarPlcSupport.created_stratum must have source cell lineage; got no matching cell parent"
                 )
             cell = int(cells[0])
             parents[dimension][0][row] = 2
@@ -983,7 +1183,7 @@ def _propagated_levels(
             _vertex_closure(transfer, target, levels, (level.dimensions < 0) & decided)
         missing = (level.dimensions < 0) & (regions >= 0) & decided
         level.dimensions[missing], level.indices[missing] = 2, regions[missing]
-    orientations = _prove_levels(
+    orientations = prove_levels(
         transfer,
         target,
         geometry,
@@ -992,6 +1192,7 @@ def _propagated_levels(
         embedding=embedding,
         coverage=coverage,
         judged=judged,
+        budget=budget,
     )
     return levels, parents, orientations
 
@@ -999,7 +1200,7 @@ def _propagated_levels(
 def _lineage_levels(
     source: CellMesh,
     target: CellMesh,
-    lineage: MeshLineage,
+    lineage: _dependency_phydrax_meshing__lineage.MeshLineage,
     old: tuple[PlcEntityClasses, ...],
     /,
 ) -> tuple[list[PlcEntityClasses], list[tuple[np.ndarray, np.ndarray]]]:
@@ -1021,19 +1222,25 @@ def _lineage_levels(
             or record.target_entity_set_id != target.entity_set(dimension).entity_set_id
         ):
             raise ValueError(
-                "Planar lineage binds different source or target entity sets."
+                "PlanarPlcSupport.lineage must bind source and target entity sets; got different set identities"
             )
-        if np.any(np.asarray(record.relation_kinds) == EntityLineageKind.UNKNOWN):
-            raise AssociationPropagationError(
-                "Unknown lineage cannot identify planar source strata.", ids
+        if np.any(
+            np.asarray(record.relation_kinds)
+            == _dependency_phydrax_meshing__lineage.EntityLineageKind.UNKNOWN
+        ):
+            raise association_routes.AssociationPropagationError(
+                "PlanarPlcSupport.lineage must identify source strata; got an unknown relation",
+                ids,
             )
         source_ids = np.asarray(record.source_global_ids, dtype=np.int64)
-        source_rows = _entity_rows(source, dimension, source_ids)
-        target_rows = _entity_rows(
+        source_rows = association_state_owner.entity_rows(source, dimension, source_ids)
+        target_rows = association_state_owner.entity_rows(
             target, dimension, np.asarray(record.target_global_ids, dtype=np.int64)
         )
         if np.any(source_rows < 0) or np.any(target_rows < 0):
-            raise ValueError("Planar lineage names undeclared mesh entities.")
+            raise ValueError(
+                "PlanarPlcSupport.lineage must index declared mesh entities; got undeclared entity IDs"
+            )
         for row in np.unique(target_rows).tolist():
             selected = target_rows == row
             rows = source_rows[selected]
@@ -1062,11 +1269,12 @@ def _lineage_levels(
     return levels, parents
 
 
-def _preserved_parameters(
+@checked
+def preserved_parameters(
     source: CellMesh,
     target: CellMesh,
     dimension: int,
-    previous: GeometryAssociation,
+    previous: association_state_owner.GeometryAssociation,
     level: PlcEntityClasses,
     /,
 ) -> np.ndarray:
@@ -1079,7 +1287,7 @@ def _preserved_parameters(
             np.asarray(previous.target_global_ids, dtype=np.int64).tolist()
         )
     }
-    source_rows = _entity_rows(source, dimension, ids)
+    source_rows = association_state_owner.entity_rows(source, dimension, ids)
     old_dimensions = np.asarray(previous.source_dimensions, dtype=np.int64)
     old_indices = np.asarray(previous.source_indices, dtype=np.int64)
     old_parameters = np.asarray(previous.parameters, dtype=np.float64)
@@ -1116,89 +1324,85 @@ def _preserved_parameters(
     return parameters
 
 
-def _require_lineage(
-    source: CellMeshingResult, lineage: MeshLineage, target: CellMesh, /
-) -> None:
-    if (
-        not isinstance(lineage, MeshLineage)
-        or lineage.source_topology_id != source.mesh.topology_id
-        or lineage.target_topology_id != target.topology_id
-    ):
-        raise ValueError(
-            "Planar PLC transfer requires the actual source-to-target lineage."
-        )
-
-
+@checked
 def planar_propagate(
     transfer: PlanarPlcTransfer,
-    source: CellMeshingResult,
-    lineage: MeshLineage,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    lineage: _dependency_phydrax_meshing__lineage.MeshLineage,
     target: CellMesh,
     /,
     *,
-    geometry: CellGeometrySpec,
-    embedding: GlobalEmbeddingCertificate | None = None,
-    coverage: DomainCoverageCertificate | None = None,
-) -> tuple[GeometryAssociation, ...]:
-    # Source checks bind only the shared serial source, so every owner reaches
-    # the same verdict; target-dependent proofs stay inside the collective.
-    vertex, dimensions = planar_source_associations(transfer, source)
-    if target.storage is None:
-        _require_lineage(source, lineage, target)
-        levels, parents, orientations = _propagated_levels(
-            transfer,
-            source,
-            lineage,
-            target,
-            geometry,
-            None,
-            embedding=embedding,
-            coverage=coverage,
-        )
-    else:
-        # Owner-local: decide only complete resident stars, then adopt the one
-        # collectively agreed verdict of every global entity.
-        local: _LocalVerdicts | None = None
-        failure: ValueError | None = None
-        try:
-            _require_lineage(source, lineage, target)
-            judged = _complete_stars(target)
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate | None = None,
+    coverage: domain_coverage_owner.DomainCoverageCertificate | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[association_state_owner.GeometryAssociation, ...]:
+    with budget.activate():
+        # Source checks bind the shared serial source; target proofs stay collective.
+        vertex, dimensions = planar_source_associations(transfer, source, budget=budget)
+        if target.storage is None:
+            association_routes.require_transfer_lineage(
+                source.mesh,
+                lineage,
+                target,
+                message="PlanarPlcSupport.lineage must bind this source and target; got different mesh identities",
+            )
             levels, parents, orientations = _propagated_levels(
                 transfer,
                 source,
                 lineage,
                 target,
                 geometry,
-                judged,
+                None,
                 embedding=embedding,
                 coverage=coverage,
+                budget=budget,
             )
-            local = (levels, parents, orientations, judged)
-        except ValueError as error:
-            failure = error
-        levels, parents, orientations = _agreed_owner_verdicts(target, local, failure)
+        else:
+            # Only whole resident stars contribute an owner-local verdict.
+            local: _LocalVerdicts | None = None
+            failure: ValueError | None = None
+            try:
+                association_routes.require_transfer_lineage(
+                    source.mesh,
+                    lineage,
+                    target,
+                    message="PlanarPlcSupport.lineage must bind this source and target; got different mesh identities",
+                )
+                judged = _complete_stars(target)
+                levels, parents, orientations = _propagated_levels(
+                    transfer,
+                    source,
+                    lineage,
+                    target,
+                    geometry,
+                    judged,
+                    embedding=embedding,
+                    coverage=coverage,
+                    budget=budget,
+                )
+                local = (levels, parents, orientations, judged)
+            except ValueError as error:
+                failure = error
+            levels, parents, orientations = _agreed_owner_verdicts(target, local, failure)
     final = _finish_classes(transfer, levels)
-    output: list[GeometryAssociation] = []
+    output: list[association_state_owner.GeometryAssociation] = []
     for dimension in (0, *dimensions):
         previous = (
             vertex
             if dimension == 0
-            else next(
-                value
-                for value in source.associations
-                if _target_dimension(source.mesh, value) == dimension
-            )
+            else association_routes.association_for_dimension(source, dimension)
         )
         level = final[dimension]
         ids = np.asarray(target.entity_set(dimension).entity_ids, dtype=np.int64)
-        roles = _roles(level.dimensions)
+        roles = source_entity_roles(level.dimensions)
         names = tuple(
             f"{transfer.source_revision}:{role.value}:{index}"
             for role, index in zip(roles, level.indices.tolist(), strict=True)
         )
         output.append(
-            GeometryAssociation(
-                GeometryAssociationKind.PIECEWISE_LINEAR,
+            association_state_owner.GeometryAssociation(
+                association_state_owner.GeometryAssociationKind.PIECEWISE_LINEAR,
                 transfer.domain.source_id,
                 transfer.source_revision,
                 target.entity_set(dimension).entity_set_id,
@@ -1209,14 +1413,14 @@ def planar_propagate(
                 source_dimensions=level.dimensions,
                 source_indices=level.indices,
                 source_entity_roles=roles,
-                parameters=_preserved_parameters(
+                parameters=preserved_parameters(
                     source.mesh, target, dimension, previous, level
                 ),
                 orientations=orientations[dimension],
                 parent_dimensions=parents[dimension][0],
                 parent_ids=parents[dimension][1],
                 parent_association_id=previous.association_id,
-                provenance=GeometryAssociationProvenance.LINEAGE,
+                provenance=association_state_owner.GeometryAssociationProvenance.LINEAGE,
             )
         )
     return tuple(output)

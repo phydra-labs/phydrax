@@ -19,6 +19,7 @@ from phydrax.solver._maxwell import (
     PreparedCompatibleMaxwell,
 )
 from phydrax.solver._maxwell_frequency import FrequencyMaxwellSolveResult
+from phydrax.units import METER
 
 
 def _bridge(shape: tuple[int, ...]) -> phx.discretization.StructuredCochainBridge:
@@ -376,7 +377,9 @@ def test_maxwell_platform_scenario_3() -> None:
     np.testing.assert_allclose(jacobian, jnp.eye(2))
     bridge = _bridge((3, 3))
     layout = phx.solver.maxwell.MaxwellCochainLayout(bridge, "tez")
-    geometry = phx.geometry.Square(center=(0.5, 0.5), side=4.0).compile()
+    geometry = phx.geometry.Square(center=(0.5, 0.5), side=4.0).compile(
+        coordinate_unit=METER
+    )
     assembled = phx.solver.maxwell.assemble_scalar_maxwell_material(
         geometry,
         bridge,

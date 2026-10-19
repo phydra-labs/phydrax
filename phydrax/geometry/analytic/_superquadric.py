@@ -17,6 +17,7 @@ from jax import Array
 from phydrax.ein import contract
 
 from ...typing import PRNGKey
+from ...units import ONE
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -40,9 +41,9 @@ from .._sampling import (
 )
 from .._validity import GeometryValidityEvidence
 from ..design._schema import (
-    _ParameterCollector,
     DesignState,
     ParameterBinding,
+    ParameterCollector,
     ParameterId,
 )
 from ._primitives import _check_points, _feature_id
@@ -125,14 +126,18 @@ class Superquadric(GeometrySource):
         self.second_blockiness = jnp.asarray(second)
         self.feature_id = _feature_id(feature_id, "superquadric")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         center = context.bind(
-            ParameterId(self.feature_id, "center"), self.center, role="position"
+            ParameterId(self.feature_id, "center"),
+            self.center,
+            role="position",
+            unit=context.coordinate_unit,
         )
         axes = context.bind(
             ParameterId(self.feature_id, "semi_axes"),
             self.semi_axes,
             role="length",
+            unit=context.coordinate_unit,
             physical_scale=float(jnp.min(self.semi_axes)),
             bounds=(0.0, None),
         )
@@ -140,17 +145,20 @@ class Superquadric(GeometrySource):
             ParameterId(self.feature_id, "orientation"),
             self.orientation,
             role="orientation",
+            unit=ONE,
         )
         first = context.bind(
             ParameterId(self.feature_id, "first_blockiness"),
             self.first_blockiness,
             role="shape",
+            unit=ONE,
             bounds=(2.0, None),
         )
         second = context.bind(
             ParameterId(self.feature_id, "second_blockiness"),
             self.second_blockiness,
             role="shape",
+            unit=ONE,
             bounds=(2.0, None),
         )
         return _SuperquadricKernel(

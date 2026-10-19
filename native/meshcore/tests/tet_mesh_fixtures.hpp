@@ -230,15 +230,39 @@ inline phx_mc_tet_mesh* create_mesh(const Domain& domain, int32_t policy,
                                     int64_t max_vertices = 1 << 20,
                                     int64_t max_tetrahedra = 1 << 23, int32_t* status = nullptr) {
   phx_mc_tet_mesh* mesh = nullptr;
-  const int32_t result = phx_mc_tet_mesh_create(
-      static_cast<int64_t>(domain.points.size() / 3), domain.points.data(),
-      static_cast<int64_t>(domain.regions.size()), domain.tets.data(), domain.regions.data(),
-      static_cast<int64_t>(domain.face_sources.size()), domain.faces.data(),
-      domain.face_sources.data(), static_cast<int64_t>(domain.segment_sources.size()),
-      domain.segments.data(), domain.segment_sources.data(), protection, 0, nullptr,
-      0, nullptr, nullptr,
-      nullptr, 0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, policy, max_vertices,
-      max_tetrahedra, INT64_MAX, &mesh);
+  const phx_mc_tet_mesh_create_request request{
+      .point_count = static_cast<int64_t>(domain.points.size() / 3),
+      .points = domain.points.data(),
+      .tet_count = static_cast<int64_t>(domain.regions.size()),
+      .tets = domain.tets.data(),
+      .tet_regions = domain.regions.data(),
+      .face_count = static_cast<int64_t>(domain.face_sources.size()),
+      .faces = domain.faces.data(),
+      .face_sources = domain.face_sources.data(),
+      .segment_count = static_cast<int64_t>(domain.segment_sources.size()),
+      .segments = domain.segments.data(),
+      .segment_sources = domain.segment_sources.data(),
+      .protection_radii = protection,
+      .source_point_count = 0,
+      .source_points = nullptr,
+      .source_face_count = 0,
+      .source_faces = nullptr,
+      .source_face_group_rows = nullptr,
+      .source_face_tolerances = nullptr,
+      .source_segment_count = 0,
+      .source_segments = nullptr,
+      .source_segment_group_rows = nullptr,
+      .source_segment_tolerances = nullptr,
+      .witness_strata = nullptr,
+      .witness_entities = nullptr,
+      .witness_parameters = nullptr,
+      .boundary_policy = policy,
+      .max_vertices = max_vertices,
+      .max_tetrahedra = max_tetrahedra,
+      .max_scratch_bytes = INT64_MAX,
+      .mesh = &mesh,
+  };
+  const int32_t result = phx_mc_tet_mesh_create(&request);
   if (status != nullptr) {
     *status = result;
   }
@@ -268,27 +292,29 @@ inline Exported export_mesh(const phx_mc_tet_mesh* mesh) {
   int64_t counts[PHX_MC_TET_MESH_COUNTS];
   phx_mc_tet_mesh_counts(mesh, counts);
   Exported out;
-  const auto n = static_cast<std::size_t>(counts[0]);
+  const auto n = static_cast<std::size_t>(counts[PHX_MC_TET_MESH_COUNT_VERTICES]);
   out.points.resize(3 * n);
   out.dimension.resize(n);
   out.sizes.resize(n);
-  out.tets.resize(4 * static_cast<std::size_t>(counts[1]));
-  out.regions.resize(static_cast<std::size_t>(counts[1]));
-  out.faces.resize(3 * static_cast<std::size_t>(counts[2]));
-  out.face_sources.resize(static_cast<std::size_t>(counts[2]));
-  out.segments.resize(2 * static_cast<std::size_t>(counts[3]));
-  out.segment_sources.resize(static_cast<std::size_t>(counts[3]));
+  out.tets.resize(4 * static_cast<std::size_t>(counts[PHX_MC_TET_MESH_COUNT_TETRAHEDRA]));
+  out.regions.resize(static_cast<std::size_t>(counts[PHX_MC_TET_MESH_COUNT_TETRAHEDRA]));
+  out.faces.resize(3 * static_cast<std::size_t>(counts[PHX_MC_TET_MESH_COUNT_FACES]));
+  out.face_sources.resize(static_cast<std::size_t>(counts[PHX_MC_TET_MESH_COUNT_FACES]));
+  out.segments.resize(2 * static_cast<std::size_t>(counts[PHX_MC_TET_MESH_COUNT_SEGMENTS]));
+  out.segment_sources.resize(static_cast<std::size_t>(counts[PHX_MC_TET_MESH_COUNT_SEGMENTS]));
   phx_mc_tet_mesh_export(mesh, out.points.data(), out.tets.data(), out.regions.data(),
                          out.faces.data(), out.face_sources.data(), out.segments.data(),
                          out.segment_sources.data(), out.dimension.data(), out.sizes.data());
   return out;
 }
 
-inline const double* at(const Exported& mesh, int32_t v) {
+template <class Mesh>
+inline const double* at(const Mesh& mesh, int32_t v) {
   return mesh.points.data() + 3 * static_cast<std::size_t>(v);
 }
 
-inline double tet_volume(const Exported& mesh, std::size_t t) {
+template <class Mesh>
+inline double tet_volume(const Mesh& mesh, std::size_t t) {
   const int32_t* v = mesh.tets.data() + 4 * t;
   const double* a = at(mesh, v[0]);
   double u[3], w[3], z[3];
@@ -310,7 +336,8 @@ inline double region_volume(const Exported& mesh, int32_t region) {
   return total;
 }
 
-inline double face_area(const Exported& mesh, std::size_t f) {
+template <class Mesh>
+inline double face_area(const Mesh& mesh, std::size_t f) {
   const int32_t* v = mesh.faces.data() + 3 * f;
   double u[3], w[3];
   for (int i = 0; i < 3; ++i) {

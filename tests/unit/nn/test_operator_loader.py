@@ -122,7 +122,7 @@ def test_operator_loader_scenario_1() -> None:
         fingerprint["sha256"]
         == "cfa2b27e3a5889ee3a170636ec835b3e7f7370be9770a4bf1165ab64ba95e735"
     )
-    with pytest.raises(TypeError, match="object dtype"):
+    with pytest.raises(TypeError, match=r"array_tree_fingerprint\.leaf\.dtype"):
         array_tree_fingerprint(np.asarray([object()], dtype=object))
     dataset = _dataset(cases=5)
     log_weights = jnp.asarray([-2.0, 0.5, 1.25, -0.75, 3.0])

@@ -18,7 +18,9 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._numerics._compensated import compensated_sum, compensated_sum_chunks
 from .._strict import StrictModule
 from .._trainable import fixed_field
+from .._validation import is_canonical_identifier
 from ..ein import contract
+from ..typing import checked
 
 
 _STAGE_RATE_UNITS = "content/time"
@@ -27,20 +29,24 @@ _SSPRK33_WEIGHTS = (1.0 / 6.0, 1.0 / 6.0, 2.0 / 3.0)
 
 
 def _flux_identity(value: str, name: str, /) -> str:
-    if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError(f"{name} must be a nonempty canonical string.")
+    if not isinstance(value, str) or not is_canonical_identifier(value):
+        raise ValueError(
+            f"{name} must be a nonempty identifier without surrounding whitespace; got an invalid string"
+        )
     return value
 
 
 def _route_array(value: ArrayLike, name: str, /) -> tuple[Array, np.ndarray]:
     host = np.asarray(value)
     if host.ndim != 1:
-        raise ValueError(f"{name} must be one-dimensional.")
+        raise ValueError(f"{name} must be one-dimensional; got another rank")
     if not np.issubdtype(host.dtype, np.signedinteger):
-        raise TypeError(f"{name} must have a signed integer dtype.")
+        raise TypeError(f"{name} must have a signed integer dtype; got another dtype")
     limits = np.iinfo(np.int32)
     if np.any(host < limits.min) or np.any(host > limits.max):
-        raise ValueError(f"{name} contains an index outside the supported range.")
+        raise ValueError(
+            f"{name} must contain indices in the supported range; got an out-of-range index"
+        )
     normalized = np.asarray(host, dtype=np.int32)
     return jnp.asarray(normalized), normalized
 
@@ -48,9 +54,13 @@ def _route_array(value: ArrayLike, name: str, /) -> tuple[Array, np.ndarray]:
 def _active_array(value: ArrayLike, face_count: int, /) -> tuple[Array, np.ndarray]:
     host = np.asarray(value)
     if host.dtype != np.dtype(np.bool_):
-        raise TypeError("active_mask must have boolean dtype.")
+        raise TypeError(
+            "conservation_ledger.active_mask must have boolean dtype; got another dtype"
+        )
     if host.shape != (face_count,):
-        raise ValueError("active_mask must contain one value per routed face.")
+        raise ValueError(
+            "conservation_ledger.active_mask must contain one value per routed face; got another mask shape"
+        )
     normalized = np.asarray(host, dtype=np.bool_)
     return jnp.asarray(normalized), normalized
 
@@ -58,18 +68,22 @@ def _active_array(value: ArrayLike, face_count: int, /) -> tuple[Array, np.ndarr
 def _active_cell_array(value: ArrayLike, cell_count: int, /) -> Array:
     array = jnp.asarray(value)
     if array.dtype != jnp.dtype(jnp.bool_):
-        raise TypeError("active_cell_mask must have boolean dtype.")
+        raise TypeError(
+            "conservation_ledger.active_cell_mask must have boolean dtype; got another dtype"
+        )
     if array.shape != (cell_count,):
-        raise ValueError("active_cell_mask must contain one value per cell.")
+        raise ValueError(
+            "conservation_ledger.active_cell_mask must contain one value per cell; got another mask shape"
+        )
     return array
 
 
 def _integer_scalar(value: ArrayLike, name: str, /) -> Array:
     array = jnp.asarray(value)
     if array.ndim != 0:
-        raise ValueError(f"{name} must be scalar.")
+        raise ValueError(f"{name} must be scalar; got another rank")
     if not jnp.issubdtype(array.dtype, jnp.integer):
-        raise TypeError(f"{name} must have an integer dtype.")
+        raise TypeError(f"{name} must have an integer dtype; got another dtype")
     return array
 
 
@@ -83,7 +97,7 @@ def _validate_inactive_values(
     return eqx.error_if(
         values,
         jnp.any((~mask) & (values != 0)),
-        f"{name} must be exactly zero on inactive cells.",
+        f"{name} must be zero on inactive cells; got nonzero inactive content",
     )
 
 
@@ -95,11 +109,17 @@ def _validate_route_values(
     allow_self: bool = False,
 ) -> None:
     if np.any(owner_cells < 0):
-        raise ValueError("owner_cells cannot contain negative cell indices.")
+        raise ValueError(
+            "conservation_ledger.owner_cells must contain nonnegative cell indices; got a negative index"
+        )
     if np.any(neighbor_cells < -1):
-        raise ValueError("neighbor_cells can use only -1 as a boundary sentinel.")
+        raise ValueError(
+            "conservation_ledger.neighbor_cells must use only -1 as a boundary sentinel; got another negative index"
+        )
     if not allow_self and np.any(active_mask & (neighbor_cells == owner_cells)):
-        raise ValueError("An active flux route cannot connect a cell to itself.")
+        raise ValueError(
+            "conservation_ledger.neighbor_cells must differ from owner_cells on active untransformed routes; got a self-route"
+        )
 
 
 def _finite_values(value: ArrayLike, name: str, /) -> Array:
@@ -108,18 +128,18 @@ def _finite_values(value: ArrayLike, name: str, /) -> Array:
         jnp.issubdtype(array.dtype, jnp.integer)
         or jnp.issubdtype(array.dtype, jnp.floating)
     ):
-        raise TypeError(f"{name} must have a real numeric dtype.")
+        raise TypeError(f"{name} must have a real numeric dtype; got another dtype")
     return eqx.error_if(
         array,
         jnp.any(~jnp.isfinite(array)),
-        f"{name} must contain only finite values.",
+        f"{name} must contain only finite values; got a nonfinite entry",
     )
 
 
 def _finite_scalar(value: ArrayLike, name: str, /) -> Array:
     array = _finite_values(value, name)
     if array.ndim != 0:
-        raise ValueError(f"{name} must be scalar.")
+        raise ValueError(f"{name} must be scalar; got another rank")
     return array
 
 
@@ -171,29 +191,35 @@ def _capacity_route_arrays(
     neighbor = jnp.asarray(neighbor_cells)
     active = jnp.asarray(active_mask)
     if owner.dtype != jnp.int32 or neighbor.dtype != jnp.int32:
-        raise TypeError("Capacity flux routes must hold int32 cell slots.")
+        raise TypeError(
+            "conservation_ledger.owner_cells must have int32 dtype with neighbor_cells; got another slot dtype"
+        )
     if owner.ndim != 1 or neighbor.shape != owner.shape:
         raise ValueError(
-            "owner_cells and neighbor_cells must be identical one-dimensional routes."
+            "conservation_ledger.neighbor_cells must match the one-dimensional owner_cells shape; got incompatible route shapes"
         )
     if active.dtype != jnp.bool_:
-        raise TypeError("active_mask must have boolean dtype.")
+        raise TypeError(
+            "conservation_ledger.active_mask must have boolean dtype; got another dtype"
+        )
     if active.shape != owner.shape:
-        raise ValueError("active_mask must contain one value per routed face.")
+        raise ValueError(
+            "conservation_ledger.active_mask must contain one value per routed face; got another mask shape"
+        )
     owner = eqx.error_if(
         owner,
         jnp.any(owner < 0),
-        "owner_cells cannot contain negative cell indices.",
+        "conservation_ledger.owner_cells must contain nonnegative cell indices; got a negative index",
     )
     neighbor = eqx.error_if(
         neighbor,
         jnp.any(neighbor < -1),
-        "neighbor_cells can use only -1 as a boundary sentinel.",
+        "conservation_ledger.neighbor_cells must use only -1 as a boundary sentinel; got another negative index",
     )
     active = eqx.error_if(
         active,
         jnp.any(active & (neighbor == owner)) & (not allow_self),
-        "An active flux route cannot connect a cell to itself.",
+        "conservation_ledger.neighbor_cells must differ from owner_cells on active untransformed routes; got a self-route",
     )
     return owner, neighbor, active
 
@@ -228,17 +254,17 @@ def _validate_route_bounds(
     validation_token = eqx.error_if(
         validation_token,
         jnp.any((owner_cells < 0) | (owner_cells >= cell_count)),
-        f"Flux block {block_id!r} has an owner outside the cell range.",
+        f"conservation_ledger.owner_cells must index cells in the ledger range; got out-of-range block {block_id!r}",
     )
     validation_token = eqx.error_if(
         validation_token,
         jnp.any((neighbor_cells < -1) | (neighbor_cells >= cell_count)),
-        f"Flux block {block_id!r} has a neighbor outside the cell range.",
+        f"conservation_ledger.neighbor_cells must index cells in the ledger range or use -1; got out-of-range block {block_id!r}",
     )
     validation_token = eqx.error_if(
         validation_token,
         jnp.any(active_mask & (neighbor_cells == owner_cells)) & (not allow_self),
-        f"Flux block {block_id!r} has an active self-neighbor route.",
+        f"conservation_ledger.neighbor_cells must differ from owners on active untransformed routes; got self-route block {block_id!r}",
     )
     safe_neighbor = jnp.maximum(neighbor_cells, 0)
     inactive_endpoint = (~active_cell_mask[owner_cells]) | (
@@ -247,38 +273,40 @@ def _validate_route_bounds(
     return eqx.error_if(
         validation_token,
         jnp.any(active_mask & inactive_endpoint),
-        f"Flux block {block_id!r} has an active route through an inactive cell.",
+        f"conservation_ledger.active_cell_mask must enable every active routed cell; got an inactive cell in block {block_id!r}",
     )
 
 
-def _validate_blocks(
-    blocks: Sequence[
-        ConservationStageFluxRateBlock | AcceptedConservationFluxIntegralBlock
-    ],
-    block_type: type,
+def _validate_blocks[
+    Block: ConservationStageFluxRateBlock | AcceptedConservationFluxIntegralBlock
+](
+    blocks: Sequence[Block],
+    block_type: type[Block],
     cell_count: int,
     component_shape: tuple[int, ...],
     active_cell_mask: Array,
     validation_token: Array,
     /,
-) -> tuple[tuple, Array]:
+) -> tuple[tuple[Block, ...], Array]:
     normalized = tuple(blocks)
     if any(not isinstance(block, block_type) for block in normalized):
-        raise TypeError(f"blocks must contain only {block_type.__name__} values.")
+        raise TypeError(
+            f"conservation_ledger.blocks must contain only {block_type.__name__} values; got another block kind"
+        )
     block_ids = tuple(block.block_id for block in normalized)
     route_ids = tuple(block.route_id for block in normalized)
     if len(set(block_ids)) != len(block_ids):
         raise ValueError(
-            f"Conservation flux block IDs must be unique within a ledger: {block_ids!r}."
+            f"conservation_ledger.block_ids must be unique within a ledger; got {block_ids!r}"
         )
     if len(set(route_ids)) != len(route_ids):
         raise ValueError(
-            f"Conservation flux routes must be unique within a ledger: {route_ids!r}."
+            f"conservation_ledger.route_ids must be unique within a ledger; got {route_ids!r}"
         )
     for block in normalized:
         if block.component_shape != component_shape:
             raise ValueError(
-                f"Flux block {block.block_id!r} has a different component shape."
+                f"conservation_ledger.component_shape must agree across all blocks; got incompatible block {block.block_id!r}"
             )
         validation_token = _validate_route_bounds(
             validation_token,
@@ -310,7 +338,7 @@ def _prepare_state_action(values: Array, action: ArrayLike | None) -> Array | No
     count = math.prod(values.shape[1:])
     if matrix.shape != (values.shape[0], count, count):
         raise ValueError(
-            "Neighbor state action must match the explicit routed component space."
+            "conservation_ledger.neighbor_state_action must match the routed component space; got another matrix shape"
         )
     tolerance = 256 * jnp.finfo(matrix.dtype).eps
     return eqx.error_if(
@@ -318,7 +346,7 @@ def _prepare_state_action(values: Array, action: ArrayLike | None) -> Array | No
         jnp.any(
             jnp.abs(jnp.swapaxes(matrix, -1, -2) @ matrix - jnp.eye(count)) > tolerance
         ),
-        "Neighbor state action must be orthogonal.",
+        "conservation_ledger.neighbor_state_action must be orthogonal within dtype-scaled tolerance; got a nonorthogonal action",
     )
 
 
@@ -447,7 +475,7 @@ class ConservationStageFluxRateBlock(StrictModule):
             neighbor, neighbor_host = _route_array(neighbor_cells, "neighbor_cells")
             if neighbor.shape != owner.shape:
                 raise ValueError(
-                    "owner_cells and neighbor_cells must have identical shapes."
+                    "conservation_ledger.neighbor_cells must match owner_cells shape; got incompatible route shapes"
                 )
             active, active_host = _active_array(active_mask, owner.shape[0])
             _validate_route_values(
@@ -463,7 +491,9 @@ class ConservationStageFluxRateBlock(StrictModule):
             )
         rate = _finite_values(flux_rate, "flux_rate")
         if rate.ndim == 0 or rate.shape[0] != owner.shape[0]:
-            raise ValueError("flux_rate must begin with the routed face count.")
+            raise ValueError(
+                "ConservationStageFluxRateBlock.flux_rate must begin with the routed face count; got another leading shape"
+            )
         component_shape = tuple(rate.shape[1:])
         rate = _masked_face_values(rate, active)
         route_id = (
@@ -481,7 +511,7 @@ class ConservationStageFluxRateBlock(StrictModule):
         if action is not None:
             if state_action_id == "identity":
                 raise ValueError(
-                    "Explicit state actions require their owning scientific representation identity."
+                    "conservation_ledger.state_action_id must identify an explicit neighbor state action; got identity"
                 )
             route_id = canonical_fingerprint(
                 {
@@ -513,7 +543,9 @@ class ConservationStageFluxRateBlock(StrictModule):
         """Replace rates while reusing this block's validated route identity."""
         rate = _finite_values(flux_rate, "flux_rate")
         if rate.shape != self.flux_rate.shape:
-            raise ValueError("flux_rate must have the exact route-template shape.")
+            raise ValueError(
+                "ConservationStageFluxRateBlock.flux_rate must match the route-template shape; got another rate shape"
+            )
         rate = _masked_face_values(rate, self.active_mask)
         return eqx.tree_at(lambda block: block.flux_rate, self, rate)
 
@@ -573,7 +605,9 @@ class ConservationStageLedger(StrictModule):
         topology_id = _flux_identity(topology_epoch_id, "topology_epoch_id")
         source = _finite_values(source_rate, "source_rate")
         if source.ndim == 0 or source.shape[0] == 0:
-            raise ValueError("source_rate must begin with a nonempty cell axis.")
+            raise ValueError(
+                "ConservationStageLedger.source_rate must begin with a nonempty cell axis; got an empty or scalar source"
+            )
         cell_count = source.shape[0]
         component_shape = tuple(source.shape[1:])
         active_cells = _active_cell_array(active_cell_mask, cell_count)
@@ -597,7 +631,7 @@ class ConservationStageLedger(StrictModule):
             != tuple(block.route_id for block in blocks_)
         ):
             raise ValueError(
-                "High-, low-, and selected-order ledger routes must match exactly."
+                "ConservationStageLedger.blocks must match high_order_blocks and low_order_blocks route identities; got incompatible rate blocks"
             )
         raw_factors = (
             tuple(
@@ -610,12 +644,14 @@ class ConservationStageLedger(StrictModule):
             factor.shape != block.owner_cells.shape
             for factor, block in zip(raw_factors, blocks_, strict=True)
         ):
-            raise ValueError("Blend factors must contain one scalar per routed face.")
+            raise ValueError(
+                "ConservationStageLedger.blend_factors must contain one scalar per routed face; got another factor shape"
+            )
         factors = tuple(
             eqx.error_if(
                 factor,
                 jnp.any((factor < 0.0) | (factor > 1.0) | ~jnp.isfinite(factor)),
-                "Blend factors must be finite and lie in [0, 1].",
+                "ConservationStageLedger.blend_factors must be finite and lie in [0, 1]; got an invalid factor",
             )
             for factor in raw_factors
         )
@@ -641,16 +677,18 @@ class ConservationStageLedger(StrictModule):
             or levels.shape != (cell_count,)
             or accepted_.shape != ()
         ):
-            raise ValueError("Stage robustness evidence has incompatible shape.")
+            raise ValueError(
+                "ConservationStageLedger.robustness_evidence must align with routed cells and faces; got an incompatible evidence shape"
+            )
         entropy = eqx.error_if(
             entropy,
             jnp.any(~jnp.isfinite(entropy)),
-            "Stage entropy production must be finite.",
+            "ConservationStageLedger.entropy_production must be finite; got a nonfinite entry",
         )
         levels = eqx.error_if(
             levels,
             jnp.any(levels < 0),
-            "Stage correction levels must be nonnegative.",
+            "ConservationStageLedger.correction_level must be nonnegative; got a negative level",
         )
         differentiability = _flux_identity(
             differentiability_policy_id, "differentiability_policy_id"
@@ -712,12 +750,18 @@ class ConservationStageLedger(StrictModule):
         if len(selected) != len(self.blocks) or tuple(
             block.route_id for block in selected
         ) != tuple(block.route_id for block in self.blocks):
-            raise ValueError("Selected stage blocks must reuse exact ledger routes.")
+            raise ValueError(
+                "ConservationStageLedger.blocks must reuse retained route identities for rate selection; got changed routes"
+            )
         if jnp.shape(source_rate) != self.source_rate.shape:
-            raise ValueError("Selected source rate changed shape.")
+            raise ValueError(
+                "ConservationStageLedger.source_rate must retain the ledger source shape; got another selected source shape"
+            )
         factors = tuple(blend_factors)
         if len(factors) != len(selected):
-            raise ValueError("Selected ledger needs one factor block per route block.")
+            raise ValueError(
+                "ConservationStageLedger.blend_factors must provide one bank per route block; got another bank count"
+            )
         # Identity and differentiability ids are static fields, so the selected ledger
         # is rebuilt through the validating constructor rather than `eqx.tree_at`.
         return type(self)(
@@ -814,7 +858,7 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
             )
             if neighbor.shape != owner.shape:
                 raise ValueError(
-                    "owner_cells and neighbor_cells must have identical shapes."
+                    "conservation_ledger.neighbor_cells must match owner_cells shape; got incompatible route shapes"
                 )
             active, active_host = _active_array(active_mask, owner.shape[0])
             _validate_route_values(
@@ -826,10 +870,14 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
             or active.dtype != jnp.bool_
             or active.shape != owner.shape
         ):
-            raise ValueError("Prevalidated conservation route arrays changed shape.")
+            raise ValueError(
+                "AcceptedConservationFluxIntegralBlock.owner_cells must retain the validated route shape with neighbor_cells and active_mask; got changed route shapes"
+            )
         integral = _finite_values(flux_integral, "flux_integral")
         if integral.ndim == 0 or integral.shape[0] != owner.shape[0]:
-            raise ValueError("flux_integral must begin with the routed face count.")
+            raise ValueError(
+                "AcceptedConservationFluxIntegralBlock.flux_integral must begin with the routed face count; got another leading shape"
+            )
         component_shape = tuple(integral.shape[1:])
         integral = _masked_face_values(integral, active)
         route_id = (
@@ -847,7 +895,7 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
         if _validated_route_id is None and action is not None:
             if state_action_id == "identity":
                 raise ValueError(
-                    "Explicit state actions require their owning scientific representation identity."
+                    "conservation_ledger.state_action_id must identify an explicit neighbor state action; got identity"
                 )
             route_id = canonical_fingerprint(
                 {
@@ -876,6 +924,7 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
         )
 
     @classmethod
+    @checked
     def _from_stage_rate_block(
         cls,
         flux_integral: ArrayLike,
@@ -946,13 +995,13 @@ class AcceptedConservationIntegralLedger(StrictModule):
         end_time_ = eqx.error_if(
             end_time_,
             end_time_ <= start_time_,
-            "end_time must be greater than start_time.",
+            "AcceptedConservationIntegralLedger.end_time must be greater than start_time; got an empty or reversed interval",
         )
         accepted_step_ = _integer_scalar(accepted_step, "accepted_step")
         accepted_step_ = eqx.error_if(
             accepted_step_,
             accepted_step_ < 0,
-            "accepted_step must be nonnegative.",
+            "AcceptedConservationIntegralLedger.accepted_step must be nonnegative; got a negative step",
         )
         geometry_family = _flux_identity(geometry_family_id, "geometry_family_id")
         geometry_layout = _flux_identity(geometry_layout_id, "geometry_layout_id")
@@ -961,7 +1010,7 @@ class AcceptedConservationIntegralLedger(StrictModule):
             or len(stage_geometry_versions) != 3
         ):
             raise ValueError(
-                "stage_geometry_versions must identify all three SSPRK stages."
+                "AcceptedConservationIntegralLedger.stage_geometry_versions must identify all three SSPRK stages; got another version bank"
             )
         stage_versions = (
             _integer_scalar(stage_geometry_versions[0], "stage_geometry_versions[0]"),
@@ -976,7 +1025,7 @@ class AcceptedConservationIntegralLedger(StrictModule):
             or len(stage_evidence_versions) != 3
         ):
             raise ValueError(
-                "stage_evidence_versions must identify all three SSPRK stages."
+                "AcceptedConservationIntegralLedger.stage_evidence_versions must identify all three SSPRK stages; got another version bank"
             )
         stage_evidence = (
             _integer_scalar(stage_evidence_versions[0], "stage_evidence_versions[0]"),
@@ -991,11 +1040,13 @@ class AcceptedConservationIntegralLedger(StrictModule):
         end_topology = _flux_identity(end_topology_epoch_id, "end_topology_epoch_id")
         if end_topology != start_topology:
             raise ValueError(
-                "An accepted flux-integral ledger cannot span a topology epoch change."
+                "AcceptedConservationIntegralLedger.end_topology_epoch_id must match start_topology_epoch_id; got a topology epoch change"
             )
         source = _finite_values(source_integral, "source_integral")
         if source.ndim == 0 or source.shape[0] == 0:
-            raise ValueError("source_integral must begin with a nonempty cell axis.")
+            raise ValueError(
+                "AcceptedConservationIntegralLedger.source_integral must begin with a nonempty cell axis; got an empty or scalar source"
+            )
         cell_count = source.shape[0]
         component_shape = tuple(source.shape[1:])
         active_cells = _active_cell_array(active_cell_mask, cell_count)
@@ -1003,12 +1054,12 @@ class AcceptedConservationIntegralLedger(StrictModule):
         source = eqx.error_if(
             source,
             start_version != stage_versions[0],
-            "start_geometry_version must match the first stage geometry version.",
+            "AcceptedConservationIntegralLedger.start_geometry_version must match the first stage geometry version; got another version",
         )
         source = eqx.error_if(
             source,
             start_evidence != stage_evidence[0],
-            "start_evidence_version must match the first stage evidence version.",
+            "AcceptedConservationIntegralLedger.start_evidence_version must match the first stage evidence version; got another version",
         )
         blocks_, source = _validate_blocks(
             blocks,
@@ -1059,6 +1110,7 @@ class AcceptedConservationIntegralLedger(StrictModule):
         )
 
     @classmethod
+    @checked
     def integrate_ssprk33(
         cls,
         stage1: ConservationStageLedger,
@@ -1079,8 +1131,6 @@ class AcceptedConservationIntegralLedger(StrictModule):
     ) -> AcceptedConservationIntegralLedger:
         """Form accepted SSPRK(3,3) content integrals with one multiplication by dt."""
         stages = (stage1, stage2, stage3)
-        if any(not isinstance(stage, ConservationStageLedger) for stage in stages):
-            raise TypeError("SSPRK integration requires three stage flux-rate ledgers.")
         start_version = _integer_scalar(start_geometry_version, "start_geometry_version")
         end_version = _integer_scalar(end_geometry_version, "end_geometry_version")
         start_evidence = _integer_scalar(start_evidence_version, "start_evidence_version")
@@ -1094,35 +1144,53 @@ class AcceptedConservationIntegralLedger(StrictModule):
         end_time_ = eqx.error_if(
             end_time_,
             end_time_ <= start_time_,
-            "end_time must be greater than start_time.",
+            "AcceptedConservationIntegralLedger.end_time must be greater than start_time; got an empty or reversed interval",
         )
         accepted_step_ = _integer_scalar(accepted_step, "accepted_step")
         if any(stage.cell_count != stage1.cell_count for stage in stages[1:]):
-            raise ValueError("SSPRK stage ledgers must have identical cell counts.")
+            raise ValueError(
+                "AcceptedConservationIntegralLedger.stages must have identical cell counts; got incompatible cell axes"
+            )
         if any(stage.component_shape != stage1.component_shape for stage in stages[1:]):
-            raise ValueError("SSPRK stage ledgers must have identical component shapes.")
+            raise ValueError(
+                "AcceptedConservationIntegralLedger.stages must have identical component shapes; got incompatible component axes"
+            )
         if any(
             stage.geometry_family_id != stage1.geometry_family_id for stage in stages[1:]
         ):
-            raise ValueError("SSPRK stage ledgers must share one geometry family.")
+            raise ValueError(
+                "AcceptedConservationIntegralLedger.stages must share one geometry_family_id; got different geometry families"
+            )
         if any(
             stage.geometry_layout_id != stage1.geometry_layout_id for stage in stages[1:]
         ):
-            raise ValueError("SSPRK stage ledgers must share one geometry layout.")
+            raise ValueError(
+                "AcceptedConservationIntegralLedger.stages must share one geometry_layout_id; got different layouts"
+            )
         if any(
             stage.evidence_policy_id != stage1.evidence_policy_id for stage in stages[1:]
         ):
-            raise ValueError("SSPRK stage ledgers must share one evidence policy.")
+            raise ValueError(
+                "AcceptedConservationIntegralLedger.stages must share one evidence_policy_id; got different policies"
+            )
         if any(
             stage.topology_epoch_id != stage1.topology_epoch_id for stage in stages[1:]
         ):
-            raise ValueError("SSPRK stage ledgers must share one topology epoch.")
+            raise ValueError(
+                "AcceptedConservationIntegralLedger.stages must share one topology_epoch_id; got different topology epochs"
+            )
         if start_topology != stage1.topology_epoch_id:
-            raise ValueError("start_topology_epoch_id must match the stage topology.")
+            raise ValueError(
+                "AcceptedConservationIntegralLedger.start_topology_epoch_id must match the stage topology; got another epoch"
+            )
         if end_topology != stage1.topology_epoch_id:
-            raise ValueError("end_topology_epoch_id must match the stage topology.")
+            raise ValueError(
+                "AcceptedConservationIntegralLedger.end_topology_epoch_id must match the stage topology; got another epoch"
+            )
         if any(len(stage.blocks) != len(stage1.blocks) for stage in stages[1:]):
-            raise ValueError("SSPRK stage ledgers must have identical block layouts.")
+            raise ValueError(
+                "AcceptedConservationIntegralLedger.stages must have identical block layouts; got different block counts"
+            )
         for block_index, corresponding in enumerate(
             zip(*(stage.blocks for stage in stages))
         ):
@@ -1143,30 +1211,35 @@ class AcceptedConservationIntegralLedger(StrictModule):
                 for block in corresponding[1:]
             ):
                 raise ValueError(
-                    "SSPRK stage ledgers must have identical block IDs, block kinds, "
-                    f"and routes; block {block_index} differs."
+                    f"AcceptedConservationIntegralLedger.stages must have identical block IDs, kinds, and routes; got differing block {block_index}"
                 )
         validated_first_source = stage1.source_rate
         for stage in stages[1:]:
             validated_first_source = eqx.error_if(
                 validated_first_source,
                 jnp.any(stage.active_cell_mask != stage1.active_cell_mask),
-                "SSPRK stage ledgers must have identical active-cell masks.",
+                "AcceptedConservationIntegralLedger.stages must have identical active-cell masks; got changed cell activity",
             )
         step = _finite_values(dt, "dt")
         if step.ndim != 0:
-            raise ValueError("dt must be scalar.")
-        step = eqx.error_if(step, step <= 0, "dt must be positive.")
+            raise ValueError(
+                "AcceptedConservationIntegralLedger.dt must be scalar; got another rank"
+            )
+        step = eqx.error_if(
+            step,
+            step <= 0,
+            "AcceptedConservationIntegralLedger.dt must be positive; got a nonpositive increment",
+        )
         step = eqx.error_if(
             step,
             accepted_step_ < 0,
-            "accepted_step must be nonnegative.",
+            "AcceptedConservationIntegralLedger.accepted_step must be nonnegative; got a negative step",
         )
         interval = end_time_ - start_time_
         step = eqx.error_if(
             step,
             ~_time_values_close(step, interval),
-            "dt must match end_time - start_time within dtype-scaled tolerance.",
+            "AcceptedConservationIntegralLedger.dt must match end_time - start_time within dtype-scaled tolerance; got an incompatible increment",
         )
         w1, w2, w3 = _SSPRK33_WEIGHTS
 

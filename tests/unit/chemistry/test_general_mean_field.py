@@ -27,8 +27,8 @@ def _hydrogen_system(distance: Any = 0.74) -> Any:
     )
     basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
         [11, 17],
-        [_EXPONENTS, _EXPONENTS],
-        [_COEFFICIENTS, _COEFFICIENTS],
+        np.asarray([_EXPONENTS, _EXPONENTS], dtype=np.float64),
+        np.asarray([_COEFFICIENTS, _COEFFICIENTS], dtype=np.float64),
         source_id="general-mean-field-hydrogen",
     ).prepare(system)
     positions = np.asarray(structure.positions) * float(
@@ -37,7 +37,7 @@ def _hydrogen_system(distance: Any = 0.74) -> Any:
     return structure, system, basis, positions
 
 
-def test_general_mean_field_scenario_1() -> None:
+def test_restricted_hydrogen_energy_and_analytic_gradient() -> None:
     _, system, basis, positions = _hydrogen_system()
     plan = phx.chemistry.MolecularHartreeFockPlan(
         system,
@@ -60,6 +60,9 @@ def test_general_mean_field_scenario_1() -> None:
     np.testing.assert_allclose(
         np.sum(np.asarray(gradient.forces), axis=0), 0.0, atol=1.0e-10
     )
+
+
+def test_one_electron_unrestricted_open_shell_and_generalized_references_agree() -> None:
     units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
     structure = phx.atomistic.AtomicStructure(
         # ty: ignore[invalid-argument-type]
@@ -77,8 +80,8 @@ def test_general_mean_field_scenario_1() -> None:
     )
     basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
         [5],
-        [[1.0]],
-        [[1.0]],
+        np.asarray([[1.0]], dtype=np.float64),
+        np.asarray([[1.0]], dtype=np.float64),
         source_id="one-electron-reference",
     ).prepare(system)
     sector = phx.chemistry.MolecularElectronicSectorPlan(0, 2)
@@ -105,6 +108,9 @@ def test_general_mean_field_scenario_1() -> None:
         rtol=0.0,
         atol=0.0,
     )
+
+
+def test_stretched_hydrogen_has_external_restricted_instability() -> None:
     _, system, basis, positions = _hydrogen_system(distance=3.0)
     plan = phx.chemistry.MolecularHartreeFockPlan(
         system,
@@ -122,7 +128,7 @@ def test_general_mean_field_scenario_1() -> None:
     assert float(np.min(np.asarray(stability.external_eigenvalues))) < 0.0
 
 
-def test_general_mean_field_scenario_2() -> None:
+def test_hydrogen_electric_response_is_symmetric_and_axial() -> None:
     _, system, basis, positions = _hydrogen_system()
     plan = phx.chemistry.MolecularHartreeFockPlan(
         system,
@@ -144,6 +150,9 @@ def test_general_mean_field_scenario_2() -> None:
     )
     assert float(response.polarizability[2, 2]) > 0.0
     np.testing.assert_allclose(response.polarizability[:2], 0.0, atol=1.0e-12)
+
+
+def test_hydrogen_nuclear_hessian_is_symmetric_and_translation_invariant() -> None:
     _, system, basis, positions = _hydrogen_system()
     plan = phx.chemistry.MolecularHartreeFockPlan(
         system,
@@ -167,6 +176,9 @@ def test_general_mean_field_scenario_2() -> None:
         0.0,
         atol=2.0e-8,
     )
+
+
+def test_molecular_dft_grid_is_translation_covariant() -> None:
     structure, system, _, positions = _hydrogen_system()
     grid = phx.chemistry.MolecularDFTGridPlan(
         system,
@@ -183,6 +195,9 @@ def test_general_mean_field_scenario_2() -> None:
     )
     np.testing.assert_allclose(second.weights, first.weights, rtol=2.0e-13, atol=2.0e-14)
     np.testing.assert_allclose(first.partition_sum_residual, 0.0, atol=1.0e-14)
+
+
+def test_pbe_kohn_sham_hydrogen_converges_with_electron_count() -> None:
     _, system, basis, positions = _hydrogen_system()
     grid = phx.chemistry.MolecularDFTGridPlan(
         system,

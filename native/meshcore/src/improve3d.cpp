@@ -16,15 +16,20 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <tuple>
 
 #include "capi_guard.hpp"
+#include "counter_records.hpp"
 #include "exact_line.hpp"
+#include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "tet_mesh.hpp"
+#include "topology_keys.hpp"
 
 namespace phx::mc {
 namespace {
@@ -35,18 +40,6 @@ using Cell = std::array<int32_t, 4>;
 constexpr double kImprovement = 1e-9;
 constexpr int kMaxRing = 7;
 
-enum Counter : int {
-  kFaceRemovals = 0,
-  kEdgeRemovals,
-  kRelocations,
-  kVertexRemovals,
-  kPasses,
-  kAttempts,
-  kSlivers,
-  kWork,
-  kInsertions,
-  kMultifaceRemovals,
-};
 
 double quality(const TetMesh& mesh, const int32_t* v) {
   const double* p[4];
@@ -72,9 +65,6 @@ double proposal_quality(const TetMesh& mesh, std::span<const Cell> cells) {
   return worst;
 }
 
-bool representable(const double* p) {
-  return coordinate_in_domain(p[0]) && coordinate_in_domain(p[1]) && coordinate_in_domain(p[2]);
-}
 
 // Vertices (other than v) of the constrained faces incident to v.
 void facet_neighbors(const TetMesh& mesh, int32_t v, std::span<const int32_t> star,
@@ -153,51 +143,107 @@ double star_quality_at(TetMesh& mesh, int32_t v, std::span<const int32_t> star,
   return worst;
 }
 
-bool remove_vertex_above(TetMesh& mesh, int32_t vertex, bool require_improvement,
-                         double competing_quality, int32_t* accepted_neighbor);
+// Completed proposal arithmetic is reusable only within one accepted mesh
+// generation and improvement invocation. Transaction and resource refusals
+// never enter the proof bank; uncertain source coordinates are excluded.
+using EdgeRemovalFailureKey =
+    std::tuple<int64_t, int32_t, int32_t, bool, bool, uint64_t, uint64_t, uint64_t>;
 
-bool smooth_vertex(TetMesh& mesh, int32_t v, bool& removed, int32_t& accepted_neighbor) {
-  removed = false;
-  const int8_t dimension = mesh.dimension(v);
-  NativeVector<int32_t> star;
-  NativeVector<int32_t> neighbors;
-  if (dimension < 1 || mesh.protection(v) > 0.0 ||
-      (dimension < 3 && mesh.policy() == BoundaryPolicy::kFixed) || !mesh.vertex_star(v, star)) {
-    return false;
+struct SmoothingSelection {
+  double baseline;
+  double quality;
+  std::array<double, 3> position;
+};
+
+bool exact_star_witnesses(const TetMesh& mesh, std::span<const int32_t> star) {
+  for (int32_t t : star) {
+    for (int32_t v : mesh.tet(t).v) {
+      if (v >= 0 && mesh.witness(v).deviation > 0.0) return false;
+    }
   }
-  if (!native_execution_cavity(star.size())) return false;
-  if (dimension == 1) {
+  return true;
+}
+
+struct ImprovementProofs {
+  int64_t generation = -1;
+  NativeSet<EdgeRemovalFailureKey> proved;
+  NativeSet<std::tuple<int32_t, bool, uint64_t>> vertex_proved;
+  NativeMap<int32_t, SmoothingSelection> smoothing;
+
+  void synchronize(const TetMesh& mesh) {
+    if (generation != mesh.accepted_generation()) {
+      proved.clear();
+      vertex_proved.clear();
+      smoothing.clear();
+      generation = mesh.accepted_generation();
+    }
+  }
+
+  EdgeRemovalFailureKey key(const TetMesh& mesh, int32_t a, int32_t b,
+                           bool require_improvement, bool construction_objective,
+                           double radius_edge_bound, double max_weight_fraction,
+                           double minimum_relative_determinant) {
+    synchronize(mesh);
+    // Endpoint direction and scalar bit patterns preserve the exact
+    // proposal arithmetic; a mathematically equivalent order is not a hit.
+    return {generation, a, b, require_improvement, construction_objective,
+            std::bit_cast<uint64_t>(radius_edge_bound),
+            std::bit_cast<uint64_t>(max_weight_fraction),
+            std::bit_cast<uint64_t>(minimum_relative_determinant)};
+  }
+};
+
+bool remove_vertex_above(TetMesh& mesh, int32_t vertex, bool require_improvement,
+                         double competing_quality, int32_t* accepted_neighbor,
+                         ImprovementProofs* failures = nullptr);
+
+// A movable curve vertex has two incident segments of one scientific source.
+bool curve_interval(TetMesh& mesh, int32_t vertex, int32_t* endpoints, int32_t& source) {
+  int count = 0;
+  for (const auto& [edge, identity] : mesh.segments()) {
+    if (!mesh.spend(1)) return false;
+    const int32_t a = edge_low(edge), b = edge_high(edge);
+    if (a != vertex && b != vertex) continue;
+    if (count == 2 || (source >= 0 && source != identity)) return false;
+    source = identity;
+    endpoints[count++] = a == vertex ? b : a;
+  }
+  return count == 2;
+}
+
+struct CurveCarrier {
+  const double* first;
+  const double* second;
+};
+
+// Exact ancestry uses the authored line. A bounded represented line remains
+// subject to relocation_witness's source-row admission before any commit.
+bool prepare_curve_carrier(TetMesh& mesh, int32_t source, const double* first,
+                           const double* second, CurveCarrier& carrier) {
+  for (const auto& segment : mesh.original_segments()) {
+    if (!mesh.spend(1)) return false;
+    if (segment[2] != source) continue;
+    const double* a = mesh.original_point(segment[0]);
+    const double* b = mesh.original_point(segment[1]);
+    if (geometry::collinear(a, b, first) && geometry::collinear(a, b, second)) {
+      carrier.first = a;
+      carrier.second = b;
+      break;
+    }
+  }
+  return true;
+}
+
+bool smooth_segment_vertex(TetMesh& mesh, int32_t v, std::span<const int32_t> star,
+                           NativeVector<int32_t>& neighbors) {
     int32_t ends[2] = {-1, -1};
     int32_t source = -1;
-    int count = 0;
-    for (const auto& [edge, identity] : mesh.segments()) {
-      if (!mesh.spend(1)) return false;
-      const int32_t a = edge_low(edge), b = edge_high(edge);
-      if (a != v && b != v) continue;
-      if (count == 2 || (source >= 0 && source != identity)) return false;
-      source = identity;
-      ends[count++] = a == v ? b : a;
-    }
-    if (count != 2) return false;
+    if (!curve_interval(mesh, v, ends, source)) return false;
     const double* first = mesh.point(ends[0]);
     const double* second = mesh.point(ends[1]);
-    if (!collinear3d(first, second, mesh.point(v))) return false;
-    // Exact ancestry uses the authored carrier. Bounded ancestry retains its
-    // represented carrier; relocation_witness admits it against the original
-    // source bound before any coordinates or witness are committed.
-    const double* carrier_first = first;
-    const double* carrier_second = second;
-    for (const auto& segment : mesh.original_segments()) {
-      if (!mesh.spend(1)) return false;
-      if (segment[2] != source) continue;
-      const double* a = mesh.original_point(segment[0]);
-      const double* b = mesh.original_point(segment[1]);
-      if (collinear3d(a, b, first) && collinear3d(a, b, second)) {
-        carrier_first = a;
-        carrier_second = b;
-        break;
-      }
-    }
+    if (!geometry::collinear(first, second, mesh.point(v))) return false;
+    CurveCarrier carrier{first, second};
+    if (!prepare_curve_carrier(mesh, source, first, second, carrier)) return false;
     const double baseline = finite_quality(mesh, star);
     double best_quality = baseline;
     std::array<double, 3> best{};
@@ -210,7 +256,7 @@ bool smooth_vertex(TetMesh& mesh, int32_t v, bool& removed, int32_t& accepted_ne
           desired[k] = mesh.point(v)[k] + fraction * (endpoint[k] - mesh.point(v)[k]);
         }
         if (!construct_exact_line_point(
-                carrier_first, carrier_second, first, second, desired, candidate, &coordinate,
+                carrier.first, carrier.second, first, second, desired, candidate, &coordinate,
                 [](void* context, int64_t units) {
                   return static_cast<TetMesh*>(context)->spend(units);
                 }, &mesh)) {
@@ -232,9 +278,20 @@ bool smooth_vertex(TetMesh& mesh, int32_t v, bool& removed, int32_t& accepted_ne
       }
     }
     return best_quality > baseline + kImprovement && try_relocate(mesh, v, best.data(), true);
-  }
-  const double* p = mesh.point(v);
-  const double origin[3] = {p[0], p[1], p[2]};
+}
+
+struct SmoothingTargets {
+  double origin[3];
+  bool shared[3] = {true, true, true};
+  NativeVector<std::array<double, 3>> targets;
+};
+
+bool prepare_smoothing_targets(TetMesh& mesh, int32_t v, int8_t dimension,
+                               std::span<const int32_t> star,
+                               NativeVector<int32_t>& neighbors, SmoothingTargets& prepared) {
+  const double* origin = prepared.origin;
+  bool* shared = prepared.shared;
+  auto& targets = prepared.targets;
   if (dimension == 2) {
     facet_neighbors(mesh, v, star, neighbors);
   } else {
@@ -252,7 +309,6 @@ bool smooth_vertex(TetMesh& mesh, int32_t v, bool& removed, int32_t& accepted_ne
     return false;
   }
   double centroid[3] = {0.0, 0.0, 0.0};
-  bool shared[3] = {true, true, true};
   for (int32_t w : neighbors) {
     for (int i = 0; i < 3; ++i) {
       centroid[i] += mesh.point(w)[i];
@@ -264,7 +320,6 @@ bool smooth_vertex(TetMesh& mesh, int32_t v, bool& removed, int32_t& accepted_ne
   }
   // Candidate targets: the link centroid and, for interior vertices, the apex
   // position that would make the worst incident cell regular.
-  NativeVector<std::array<double, 3>> targets;
   targets.push_back({centroid[0], centroid[1], centroid[2]});
   if (dimension == 3) {
     int32_t worst = -1;
@@ -299,6 +354,18 @@ bool smooth_vertex(TetMesh& mesh, int32_t v, bool& removed, int32_t& accepted_ne
                          (a[2] + b[2] + c[2]) / 3.0 + height * n[2]});
     }
   }
+  return true;
+}
+
+bool select_smoothing_target(TetMesh& mesh, int32_t v, int8_t dimension,
+                             std::span<const int32_t> star,
+                             NativeVector<int32_t>& neighbors, SmoothingSelection& selected) {
+  const double* p = mesh.point(v);
+  SmoothingTargets prepared{.origin = {p[0], p[1], p[2]}, .targets = {}};
+  if (!prepare_smoothing_targets(mesh, v, dimension, star, neighbors, prepared)) return false;
+  const double* origin = prepared.origin;
+  const bool* shared = prepared.shared;
+  const auto& targets = prepared.targets;
   if (!mesh.spend(static_cast<int64_t>(8 * star.size()))) return false;
   const double baseline = finite_quality(mesh, star);
   double best_quality = baseline;
@@ -314,7 +381,7 @@ bool smooth_vertex(TetMesh& mesh, int32_t v, bool& removed, int32_t& accepted_ne
           candidate[i] = origin[i];
         }
       }
-      if (!representable(candidate) ||
+      if (!geometry::point_in_domain(candidate) ||
           (dimension == 2 && !on_facet_plane(mesh, v, star, candidate, neighbors))) {
         continue;
       }
@@ -326,13 +393,43 @@ bool smooth_vertex(TetMesh& mesh, int32_t v, bool& removed, int32_t& accepted_ne
       }
     }
   }
+  if (mesh.work_exhausted() || native_execution_refusal() != PHX_MC_OK) return false;
+  selected = {baseline, best_quality, {best[0], best[1], best[2]}};
+  return true;
+}
+
+bool smooth_vertex(TetMesh& mesh, int32_t v, bool& removed, int32_t& accepted_neighbor,
+                   ImprovementProofs& failures) {
+  removed = false;
+  const int8_t dimension = mesh.dimension(v);
+  NativeVector<int32_t> star;
+  NativeVector<int32_t> neighbors;
+  if (dimension < 1 || mesh.protection(v) > 0.0 ||
+      (dimension < 3 && mesh.policy() == BoundaryPolicy::kFixed) || !mesh.vertex_star(v, star)) {
+    return false;
+  }
+  if (!native_execution_cavity(star.size())) return false;
+  if (dimension == 1) return smooth_segment_vertex(mesh, v, star, neighbors);
+  failures.synchronize(mesh);
+  SmoothingSelection selected{};
+  const SmoothingSelection* selection = &selected;
+  const auto found = failures.smoothing.find(v);
+  if (found != failures.smoothing.end()) {
+    selection = &found->second;
+  } else {
+    if (!select_smoothing_target(mesh, v, dimension, star, neighbors, selected)) return false;
+    // Selection retains the exact candidate traversal and float bit patterns.
+    // Each removal/relocation admission is still retried below.
+    if (exact_star_witnesses(mesh, star)) failures.smoothing.emplace(v, selected);
+  }
   if (dimension == 3 &&
-      remove_vertex_above(mesh, v, true, best_quality, &accepted_neighbor)) {
+      remove_vertex_above(mesh, v, true, selection->quality, &accepted_neighbor, &failures)) {
     removed = true;
     return true;
   }
   if (mesh.work_exhausted()) return false;
-  return best_quality > baseline + kImprovement && try_relocate(mesh, v, best, true);
+  return selection->quality > selection->baseline + kImprovement &&
+         try_relocate(mesh, v, selection->position.data(), true);
 }
 
 bool remove_cell_face_cluster(TetMesh& mesh, int32_t cell) {
@@ -471,7 +568,7 @@ FloorInsertion insert_floor_vertex(TetMesh& mesh, const Cell& cell,
         for (int axis = 0; axis < 3; ++axis) {
           position[axis] = midpoint[axis] + step * (centroid[axis] - midpoint[axis]);
         }
-        if (!representable(position)) continue;
+        if (!geometry::point_in_domain(position)) continue;
         // Protected balls of the star vertices refuse the insertion itself;
         // rank only admissible candidates.
         bool protected_ball = false;
@@ -529,49 +626,61 @@ FloorInsertion insert_floor_vertex(TetMesh& mesh, const Cell& cell,
   return FloorInsertion::kRefused;
 }
 
-bool improve_cell(TetMesh& mesh, int32_t t, int64_t* counters, bool construction_uncertain,
+
+bool try_edge_removal_proposal(
+    TetMesh& mesh, int32_t a, int32_t b, bool require_improvement,
+    std::optional<std::span<const double>> regular_weights, double radius_edge_bound,
+    double max_weight_fraction, bool construction_objective,
+    double minimum_relative_determinant, ImprovementProofs* failures);
+
+
+bool improve_cell(TetMesh& mesh, int32_t t, TetMeshImproveCounters& counters, bool construction_uncertain,
                   bool below_floor, double minimum_relative_determinant,
-                  std::array<int32_t, 5>& affected_vertices, bool& capacity) {
+                  std::array<int32_t, 5>& affected_vertices, bool& capacity,
+                  ImprovementProofs& failures) {
   const Cell v = {mesh.tet(t).v[0], mesh.tet(t).v[1], mesh.tet(t).v[2], mesh.tet(t).v[3]};
   std::copy(v.begin(), v.end(), affected_vertices.begin());
   affected_vertices[4] = -1;
   for (int k = 0; k < 4; ++k) {
     if (try_face_removal(mesh, t, k, true)) {
-      ++counters[kFaceRemovals];
+      ++counters.face_removals;
       return true;
     }
   }
   for (int i = 0; i < 4; ++i) {
     for (int j = i + 1; j < 4; ++j) {
-      if (try_edge_removal(mesh, v[i], v[j], true, std::nullopt,
-                           std::numeric_limits<double>::infinity(), 0.25,
-                           construction_uncertain, minimum_relative_determinant)) {
-        ++counters[kEdgeRemovals];
+      if (try_edge_removal_proposal(mesh, v[i], v[j], true, std::nullopt,
+                                    std::numeric_limits<double>::infinity(), 0.25,
+                                    construction_uncertain, minimum_relative_determinant,
+                                    &failures)) {
+        ++counters.edge_removals;
         return true;
       }
     }
   }
   if (remove_cell_face_cluster(mesh, t)) {
-    ++counters[kMultifaceRemovals];
+    ++counters.multiface_removals;
     return true;
   }
   for (int32_t vertex : v) {
     bool removed = false;
-    if (smooth_vertex(mesh, vertex, removed, affected_vertices[4])) {
-      ++counters[removed ? kVertexRemovals : kRelocations];
+    if (smooth_vertex(mesh, vertex, removed, affected_vertices[4], failures)) {
+      ++(removed ? counters.vertex_removals : counters.relocations);
       return true;
     }
   }
   for (int32_t vertex : v) {
-    if (try_remove_vertex(mesh, vertex, true, &affected_vertices[4])) {
-      ++counters[kVertexRemovals];
+    if (remove_vertex_above(mesh, vertex, true,
+                            -std::numeric_limits<double>::infinity(),
+                            &affected_vertices[4], &failures)) {
+      ++counters.vertex_removals;
       return true;
     }
   }
   if (below_floor) {
     switch (insert_floor_vertex(mesh, v, minimum_relative_determinant, affected_vertices)) {
       case FloorInsertion::kApplied:
-        ++counters[kInsertions];
+        ++counters.vertex_insertions;
         return true;
       case FloorInsertion::kCapacity:
         capacity = true;
@@ -783,7 +892,7 @@ bool regular_proposal(TetMesh& mesh, std::span<const Cell> cells,
 }
 
 bool exude_vertex(TetMesh& mesh, int32_t vertex, const ExudeOptions& options,
-                  std::span<double> weights, int64_t* counters) {
+                  std::span<double> weights, TetMeshExudeCounters& counters) {
   if (mesh.dimension(vertex) != 3 || mesh.protection(vertex) > 0.0) {
     return false;
   }
@@ -810,7 +919,7 @@ bool exude_vertex(TetMesh& mesh, int32_t vertex, const ExudeOptions& options,
       if (!mesh.spend(16)) {
         return false;
       }
-      ++counters[0];
+      ++counters.trials;
       const Tetrahedron old = mesh.tet(t);
       const int slot = vertex_slot(old, vertex);
       const int32_t other = old.n[slot];
@@ -845,7 +954,7 @@ bool exude_vertex(TetMesh& mesh, int32_t vertex, const ExudeOptions& options,
       }
       if (size_valid && try_face_removal(mesh, t, slot, true)) {
         weights[static_cast<std::size_t>(vertex)] = trial;
-        ++counters[1];
+        ++counters.flips;
         return true;
       }
     }
@@ -864,11 +973,11 @@ bool exude_vertex(TetMesh& mesh, int32_t vertex, const ExudeOptions& options,
     const double saved_weight = weights[static_cast<std::size_t>(vertex)];
     weights[static_cast<std::size_t>(vertex)] = trial;
     for (int32_t other : neighbors) {
-      ++counters[0];
+      ++counters.trials;
       if (try_edge_removal(mesh, vertex, other, true, weights, options.radius_edge_bound,
                             options.max_weight_fraction, false,
                             options.minimum_relative_determinant)) {
-        ++counters[1];
+        ++counters.flips;
         return true;
       }
     }
@@ -877,266 +986,8 @@ bool exude_vertex(TetMesh& mesh, int32_t vertex, const ExudeOptions& options,
   return false;
 }
 
-}  // namespace
-
-bool try_face_removal(TetMesh& mesh, int32_t t, int slot, bool require_improvement) {
-  const MemoryScope memory_scope(mesh.memory_owner());
-  if (t < 0 || static_cast<std::size_t>(t) >= mesh.complex().tets.size() ||
-      !mesh.complex().live(t) || slot < 0 || slot > 3 || !mesh.finite(t) ||
-      mesh.complex().constraint(t, slot) != kNoConstraint) {
-    return false;
-  }
-  const Tetrahedron first = mesh.tet(t);
-  const int32_t u = first.n[slot];
-  if (!mesh.finite(u)) {
-    return false;
-  }
-  const Tetrahedron second = mesh.tet(u);
-  const int back = neighbor_slot(second, t);
-  NativeVector<Cell> proposed;
-  for (int j = 0; j < 4; ++j) {
-    if (j == back) {
-      continue;
-    }
-    Cell cell = {second.v[0], second.v[1], second.v[2], second.v[3]};
-    cell[static_cast<std::size_t>(j)] = first.v[slot];
-    if (!mesh.positive(cell.data())) {
-      return false;
-    }
-    proposed.push_back(cell);
-  }
-  if (!mesh.spend(6)) {
-    return false;
-  }
-  if (require_improvement) {
-    const double before = std::min(quality(mesh, first.v), quality(mesh, second.v));
-    if (!(proposal_quality(mesh, proposed) > before + kImprovement)) {
-      return false;
-    }
-  }
-  const int32_t removed[] = {t, u};
-  return mesh.replace(removed, proposed) == EditStatus::kOk;
-}
-
-bool try_edge_removal(TetMesh& mesh, int32_t a, int32_t b, bool require_improvement,
-                      std::optional<std::span<const double>> regular_weights, double radius_edge_bound,
-                      double max_weight_fraction, bool construction_objective,
-                      double minimum_relative_determinant) {
-  const MemoryScope memory_scope(mesh.memory_owner());
-  if (!mesh.live_vertex(a) || !mesh.live_vertex(b) || a == b || mesh.segment_source(a, b) >= 0) {
-    return false;
-  }
-  if (regular_weights &&
-      regular_weights->size() != static_cast<std::size_t>(mesh.vertex_count())) {
-    return false;
-  }
-  NativeVector<int32_t> tets;
-  NativeVector<int32_t> ring;
-  if (!mesh.edge_ring(a, b, tets, ring)) {
-    return false;
-  }
-  const int n = static_cast<int>(ring.size());
-  if (n < 3 || n > kMaxRing) {
-    return false;
-  }
-  if (!mesh.spend(static_cast<int64_t>(n * n * n))) return false;
-  for (int i = 0; i < n; ++i) {
-    // tets[i] = (a, b, ring[i], ring[i + 1]); its facet opposite ring[i] is
-    // the ring face (a, b, ring[i + 1]).
-    if (ring[static_cast<std::size_t>(i)] < 0 ||
-        mesh.complex().constraint(tets[static_cast<std::size_t>(i)],
-                                  vertex_slot(mesh.tet(tets[static_cast<std::size_t>(i)]),
-                                              ring[static_cast<std::size_t>(i)])) !=
-            kNoConstraint) {
-      return false;
-    }
-  }
-  // Triangle (i, k, j) of the ring polygon, i < k < j, yields the cells
-  // (r_k, r_i, r_j, a) and (r_i, r_k, r_j, b); -1 when either is invalid.
-  const auto r = [&](int index) { return ring[static_cast<std::size_t>(index)]; };
-  const auto cells_of = [&](int i, int k, int j, Cell& above, Cell& below) {
-    above = {r(k), r(i), r(j), a};
-    below = {r(i), r(k), r(j), b};
-  };
-  const auto construction_quality = [&](const int32_t* vertices) {
-    return assess_construction(mesh, vertices, minimum_relative_determinant).score;
-  };
-  const auto triangle = [&](int i, int k, int j) {
-    Cell above;
-    Cell below;
-    cells_of(i, k, j, above, below);
-    if (!mesh.positive(above.data()) || !mesh.positive(below.data())) {
-      return -1.0;
-    }
-    if (construction_objective) {
-      return std::min(construction_quality(above.data()), construction_quality(below.data()));
-    }
-    return std::min(quality(mesh, above.data()), quality(mesh, below.data()));
-  };
-  double best[kMaxRing][kMaxRing];
-  int choice[kMaxRing][kMaxRing];
-  for (int length = 2; length < n; ++length) {
-    for (int i = 0; i + length < n; ++i) {
-      const int j = i + length;
-      best[i][j] = -1.0;
-      choice[i][j] = -1;
-      for (int k = i + 1; k < j; ++k) {
-        native_execution_charge(0);
-        const double identity = construction_objective ? std::numeric_limits<double>::infinity() : 180.0;
-        const double left = k - i >= 2 ? best[i][k] : identity;
-        const double right = j - k >= 2 ? best[k][j] : identity;
-        const double value = std::min({left, right, triangle(i, k, j)});
-        if (value > best[i][j]) {
-          best[i][j] = value;
-          choice[i][j] = k;
-        }
-      }
-    }
-  }
-  const double result = best[0][n - 1];
-  if (result < 0.0 ||
-      (require_improvement && !construction_objective &&
-       !(result > finite_quality(mesh, tets) + kImprovement))) {
-    return false;
-  }
-  if (construction_objective) {
-    double previous = std::numeric_limits<double>::infinity();
-    for (int32_t cell : tets) previous = std::min(previous, construction_quality(mesh.tet(cell).v));
-    if (!(result > previous)) return false;
-  }
-  NativeVector<Cell> proposed;
-  NativeVector<std::array<int, 2>> pending = {{0, n - 1}};
-  while (!pending.empty()) {
-    const auto [i, j] = pending.back();
-    pending.pop_back();
-    const int k = choice[i][j];
-    Cell above;
-    Cell below;
-    cells_of(i, k, j, above, below);
-    proposed.push_back(above);
-    proposed.push_back(below);
-    if (k - i >= 2) {
-      pending.push_back({i, k});
-    }
-    if (j - k >= 2) {
-      pending.push_back({k, j});
-    }
-  }
-  if (regular_weights &&
-      (!regular_proposal(mesh, proposed, *regular_weights, radius_edge_bound, max_weight_fraction) ||
-       !above_floor(mesh, proposed, minimum_relative_determinant))) {
-    return false;
-  }
-  return mesh.replace(tets, proposed) == EditStatus::kOk;
-}
-
-Insertion try_split_edge(TetMesh& mesh, int32_t a, int32_t b, const double* position,
-                         double target_size, int32_t& inserted_vertex) {
-  const MemoryScope memory_scope(mesh.memory_owner());
-  return mesh.split_edge(a, b, position, target_size, inserted_vertex);
-}
-
-bool try_multiface_removal(TetMesh& mesh, std::span<const int32_t> cavity,
-                          int32_t apex, bool require_improvement) {
-  const MemoryScope memory_scope(mesh.memory_owner());
-  if (cavity.size() < 2 || !mesh.live_vertex(apex) ||
-      !mesh.spend(static_cast<int64_t>(8 * cavity.size()))) {
-    return false;
-  }
-  NativeVector<int32_t> sorted(cavity.begin(), cavity.end());
-  std::sort(sorted.begin(), sorted.end());
-  if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) {
-    return false;
-  }
-  bool contains_apex = false;
-  NativeVector<Cell> cells;
-  for (int32_t t : sorted) {
-    if (t < 0 || static_cast<std::size_t>(t) >= mesh.complex().tets.size() ||
-        !mesh.complex().live(t) || !mesh.finite(t)) {
-      return false;
-    }
-    const Tetrahedron& old = mesh.tet(t);
-    contains_apex = contains_apex || vertex_slot(old, apex) >= 0;
-    for (int k = 0; k < 4; ++k) {
-      if (std::binary_search(sorted.begin(), sorted.end(), old.n[k])) {
-        continue;
-      }
-      int32_t f[3];
-      oriented_facet(old.v, k, f);
-      if (std::find(f, f + 3, apex) != f + 3) {
-        continue;
-      }
-      Cell cone = {old.v[0], old.v[1], old.v[2], old.v[3]};
-      cone[static_cast<std::size_t>(k)] = apex;
-      if (!mesh.positive(cone.data())) {
-        return false;
-      }
-      cells.push_back(cone);
-    }
-  }
-  if (!contains_apex || cells.empty() ||
-      (require_improvement &&
-       !(proposal_quality(mesh, cells) > finite_quality(mesh, sorted) + kImprovement))) {
-    return false;
-  }
-  return reconnect(mesh, sorted, cells) == EditStatus::kOk;
-}
-
-EditStatus reconnect(TetMesh& mesh, std::span<const int32_t> removed,
-                      std::span<const Cell> proposed) {
-  const MemoryScope memory_scope(mesh.memory_owner());
-  if (removed.empty() || proposed.empty()) {
-    return EditStatus::kNotLive;
-  }
-  if (!mesh.spend(static_cast<int64_t>(8 * (removed.size() + proposed.size())))) {
-    return EditStatus::kBufferLimit;
-  }
-  NativeSet<int32_t> old_vertices, new_vertices;
-  NativeSet<std::uint64_t> old_segments, new_edges;
-  for (int32_t t : removed) {
-    if (t < 0 || static_cast<std::size_t>(t) >= mesh.complex().tets.size() ||
-        !mesh.complex().live(t) || !mesh.finite(t)) {
-      return EditStatus::kNotLive;
-    }
-    const int32_t* v = mesh.tet(t).v;
-    old_vertices.insert(v, v + 4);
-    for (int i = 0; i < 4; ++i) {
-      for (int j = i + 1; j < 4; ++j) {
-        if (mesh.segment_source(v[i], v[j]) >= 0) {
-          old_segments.insert(undirected_edge(v[i], v[j]));
-        }
-      }
-    }
-  }
-  for (const Cell& cell : proposed) {
-    new_vertices.insert(cell.begin(), cell.end());
-    for (int i = 0; i < 4; ++i) {
-      for (int j = i + 1; j < 4; ++j) {
-        new_edges.insert(undirected_edge(cell[static_cast<std::size_t>(i)],
-                                        cell[static_cast<std::size_t>(j)]));
-      }
-    }
-  }
-  if (old_vertices != new_vertices ||
-      !std::includes(new_edges.begin(), new_edges.end(), old_segments.begin(), old_segments.end())) {
-    return EditStatus::kConstraintViolation;
-  }
-  return mesh.replace(removed, proposed);
-}
-
-bool try_relocate(TetMesh& mesh, int32_t vertex, const double* position, bool require_improvement) {
-  const MemoryScope memory_scope(mesh.memory_owner());
-  if (!mesh.live_vertex(vertex) || mesh.dimension(vertex) < 1 || !geometry::finite3(position) ||
-      mesh.protection(vertex) > 0.0 || !representable(position) ||
-      (mesh.dimension(vertex) < 3 && mesh.policy() == BoundaryPolicy::kFixed)) {
-    return false;
-  }
-  NativeVector<int32_t> star;
-  NativeVector<int32_t> neighbors;
-  if (!mesh.vertex_star(vertex, star)) {
-    return false;
-  }
-  if (!native_execution_cavity(star.size())) return false;
+bool relocation_outside_protection(TetMesh& mesh, int32_t vertex, const double* position,
+                                   std::span<const int32_t> star) {
   for (int32_t t : star) {
     if (!mesh.spend(4)) return false;
     for (int32_t w : mesh.tet(t).v) {
@@ -1147,35 +998,19 @@ bool try_relocate(TetMesh& mesh, int32_t vertex, const double* position, bool re
       }
     }
   }
-  if (mesh.dimension(vertex) < 3 && !on_facet_plane(mesh, vertex, star, position, neighbors)) {
-    return false;
-  }
-  if (mesh.dimension(vertex) == 1) {
+  return true;
+}
+
+bool relocation_on_curve(TetMesh& mesh, int32_t vertex, const double* position) {
     int32_t neighbors_on_curve[2] = {-1, -1};
     int32_t scientific_source = -1;
-    int count = 0;
-    for (const auto& [edge, source] : mesh.segments()) {
-      if (!mesh.spend(1)) {
-        return false;
-      }
-      const int32_t a = edge_low(edge);
-      const int32_t b = edge_high(edge);
-      if (a != vertex && b != vertex) {
-        continue;
-      }
-      if (count == 2 || (scientific_source >= 0 && scientific_source != source)) {
-        return false;
-      }
-      scientific_source = source;
-      neighbors_on_curve[count++] = a == vertex ? b : a;
-    }
-    if (count != 2 || !mesh.spend(6)) {
+    if (!curve_interval(mesh, vertex, neighbors_on_curve, scientific_source) || !mesh.spend(6)) {
       return false;
     }
     const double* first = mesh.point(neighbors_on_curve[0]);
     const double* second = mesh.point(neighbors_on_curve[1]);
-    if (!collinear3d(first, second, mesh.point(vertex)) ||
-        !collinear3d(first, second, position) ||
+    if (!geometry::collinear(first, second, mesh.point(vertex)) ||
+        !geometry::collinear(first, second, position) ||
         std::equal(position, position + 3, first) ||
         std::equal(position, position + 3, second)) {
       return false;
@@ -1186,76 +1021,32 @@ bool try_relocate(TetMesh& mesh, int32_t vertex, const double* position, bool re
         return false;
       }
     }
-  }
-  if (!mesh.spend(static_cast<int64_t>(4 * star.size()))) {
-    return false;
-  }
-  const double before = finite_quality(mesh, star);
-  const double after = star_quality_at(mesh, vertex, star, position);
-  if (after < 0.0 || (require_improvement && !(after > before + kImprovement))) {
-    return false;
-  }
-  // A moved boundary vertex keeps a witness its source row admits.
-  SourceWitness witness;
-  if (mesh.relocation_witness(vertex, position, witness) != Insertion::kOk) {
-    return false;
-  }
-  std::copy_n(position, 3, mesh.mutable_point(vertex));
-  mesh.set_witness(vertex, witness);
-  mesh.mark_accepted_state();
   return true;
 }
 
-bool try_relocate_vertices(TetMesh& mesh, std::span<const int32_t> vertices,
-                           const double* positions, double radius_edge_bound,
-                           double minimum_dihedral_degrees) {
-  const MemoryScope memory_scope(mesh.memory_owner());
-  NativeVector<int32_t> star, neighbors, cavity;
-  const auto proposed_point = [&](int32_t vertex) -> const double* {
+struct RelocationPositions {
+  const TetMesh& mesh;
+  std::span<const int32_t> vertices;
+  const double* positions;
+
+  const double* operator()(int32_t vertex) const {
     const auto found = std::lower_bound(vertices.begin(), vertices.end(), vertex);
     return found != vertices.end() && *found == vertex
                ? positions + 3 * (found - vertices.begin())
                : mesh.point(vertex);
-  };
-  for (std::size_t row = 0; row < vertices.size(); ++row) {
-    const int32_t vertex = vertices[row];
-    const double* position = positions + 3 * row;
-    if ((row != 0 && vertices[row - 1] >= vertex) || !mesh.live_vertex(vertex) ||
-        mesh.dimension(vertex) < 1 || mesh.protection(vertex) > 0.0 ||
-        !geometry::finite3(position) || !representable(position) ||
-        (mesh.dimension(vertex) < 3 && mesh.policy() == BoundaryPolicy::kFixed) ||
-        !mesh.vertex_star(vertex, star)) {
-      return false;
-    }
-    if (mesh.dimension(vertex) < 3 &&
-        !on_facet_plane(mesh, vertex, star, position, neighbors)) {
-      return false;
-    }
-    if (mesh.dimension(vertex) == 1) {
+  }
+};
+
+bool coordinated_relocation_on_curve(TetMesh& mesh, int32_t vertex, const double* position) {
       int32_t endpoints[2] = {-1, -1};
       int32_t source = -1;
-      int count = 0;
-      for (const auto& [edge, identity] : mesh.segments()) {
-        if (!mesh.spend(1)) {
-          return false;
-        }
-        const int32_t first = edge_low(edge), second = edge_high(edge);
-        if (first != vertex && second != vertex) {
-          continue;
-        }
-        if (count == 2 || (source >= 0 && source != identity)) {
-          return false;
-        }
-        source = identity;
-        endpoints[count++] = first == vertex ? second : first;
-      }
-      if (count != 2 || !mesh.spend(6)) {
+      if (!curve_interval(mesh, vertex, endpoints, source) || !mesh.spend(6)) {
         return false;
       }
       const double* first = mesh.point(endpoints[0]);
       const double* second = mesh.point(endpoints[1]);
-      if (!collinear3d(first, second, mesh.point(vertex)) ||
-          !collinear3d(first, second, position)) {
+      if (!geometry::collinear(first, second, mesh.point(vertex)) ||
+          !geometry::collinear(first, second, position)) {
         return false;
       }
       int axis = 0;
@@ -1266,7 +1057,30 @@ bool try_relocate_vertices(TetMesh& mesh, std::span<const int32_t> vertices,
                         position[axis] < std::max(first[axis], second[axis]))) {
         return false;
       }
+  return true;
+}
+
+bool prepare_relocation_cavity(TetMesh& mesh, const RelocationPositions& proposed_point,
+                               NativeVector<int32_t>& star, NativeVector<int32_t>& neighbors,
+                               NativeVector<int32_t>& cavity) {
+  const auto vertices = proposed_point.vertices;
+  const double* positions = proposed_point.positions;
+  for (std::size_t row = 0; row < vertices.size(); ++row) {
+    const int32_t vertex = vertices[row];
+    const double* position = positions + 3 * row;
+    if ((row != 0 && vertices[row - 1] >= vertex) || !mesh.live_vertex(vertex) ||
+        mesh.dimension(vertex) < 1 || mesh.protection(vertex) > 0.0 ||
+        !geometry::finite3(position) || !geometry::point_in_domain(position) ||
+        (mesh.dimension(vertex) < 3 && mesh.policy() == BoundaryPolicy::kFixed) ||
+        !mesh.vertex_star(vertex, star)) {
+      return false;
     }
+    if (mesh.dimension(vertex) < 3 &&
+        !on_facet_plane(mesh, vertex, star, position, neighbors)) {
+      return false;
+    }
+    if (mesh.dimension(vertex) == 1 &&
+        !coordinated_relocation_on_curve(mesh, vertex, position)) return false;
     if (!mesh.spend(static_cast<int64_t>(star.size()))) {
       return false;
     }
@@ -1277,31 +1091,11 @@ bool try_relocate_vertices(TetMesh& mesh, std::span<const int32_t> vertices,
   if (!native_execution_cavity(cavity.size())) {
     throw ExecutionRefusal{native_execution_status(PHX_MC_CAPACITY_EXCEEDED)};
   }
-  for (int32_t cell : cavity) {
-    if (!mesh.finite(cell)) {
-      continue;
-    }
-    if (!mesh.spend(8)) {
-      return false;
-    }
-    const int32_t* v = mesh.tet(cell).v;
-    const double* p[4] = {proposed_point(v[0]), proposed_point(v[1]),
-                          proposed_point(v[2]), proposed_point(v[3])};
-    if (orient3d(p[0], p[1], p[2], p[3]) <= 0) {
-      return false;
-    }
-    if (radius_edge_bound > 0.0) {
-      double center[3];
-      if (!geometry::tetrahedron_circumcenter(p[0], p[1], p[2], p[3], center) ||
-          std::sqrt(geometry::squared_distance(center, p[0])) / geometry::shortest_edge(p) >
-              radius_edge_bound) {
-        return false;
-      }
-    }
-    if (minimum_dihedral_degrees > 0.0 &&
-        geometry::minimum_dihedral(p) < minimum_dihedral_degrees) {
-      return false;
-    }
+  return true;
+}
+
+bool check_relocation_facets(TetMesh& mesh, const RelocationPositions& proposed_point,
+                             int32_t cell, const int32_t* v) {
     for (int slot = 0; slot < 4; ++slot) {
       if (mesh.complex().constraint(cell, slot) == kNoConstraint) {
         continue;
@@ -1330,7 +1124,44 @@ bool try_relocate_vertices(TetMesh& mesh, std::span<const int32_t> vertices,
         return false;
       }
     }
+  return true;
+}
+
+bool check_relocation_cells(TetMesh& mesh, const RelocationPositions& proposed_point,
+                            std::span<const int32_t> cavity, double radius_edge_bound,
+                            double minimum_dihedral_degrees) {
+  for (int32_t cell : cavity) {
+    if (!mesh.finite(cell)) {
+      continue;
+    }
+    if (!mesh.spend(8)) {
+      return false;
+    }
+    const int32_t* v = mesh.tet(cell).v;
+    const double* p[4] = {proposed_point(v[0]), proposed_point(v[1]),
+                          proposed_point(v[2]), proposed_point(v[3])};
+    if (orient3d(p[0], p[1], p[2], p[3]) <= 0) {
+      return false;
+    }
+    if (radius_edge_bound > 0.0) {
+      double center[3];
+      if (!geometry::tetrahedron_circumcenter(p[0], p[1], p[2], p[3], center) ||
+          std::sqrt(geometry::squared_distance(center, p[0])) / geometry::shortest_edge(p) >
+              radius_edge_bound) {
+        return false;
+      }
+    }
+    if (minimum_dihedral_degrees > 0.0 &&
+        geometry::minimum_dihedral(p) < minimum_dihedral_degrees) {
+      return false;
+    }
+    if (!check_relocation_facets(mesh, proposed_point, cell, v)) return false;
   }
+  return true;
+}
+
+bool check_relocation_segments(TetMesh& mesh, const RelocationPositions& proposed_point) {
+  const auto vertices = proposed_point.vertices;
   for (const auto& [edge, source] : mesh.segments()) {
     const int32_t first = edge_low(edge), second = edge_high(edge);
     if (!std::binary_search(vertices.begin(), vertices.end(), first) &&
@@ -1348,37 +1179,16 @@ bool try_relocate_vertices(TetMesh& mesh, std::span<const int32_t> vertices,
     while (axis < 3 && old_first[axis] == old_second[axis]) {
       ++axis;
     }
-    if (axis == 3 || !collinear3d(old_first, old_second, next_first) ||
-        !collinear3d(old_first, old_second, next_second) ||
+    if (axis == 3 || !geometry::collinear(old_first, old_second, next_first) ||
+        !geometry::collinear(old_first, old_second, next_second) ||
         ((old_first[axis] < old_second[axis]) != (next_first[axis] < next_second[axis])) ||
         next_first[axis] == next_second[axis]) {
       return false;
     }
   }
-  // Every allocation, exact predicate, witness and work refusal precedes the
-  // first coordinate write. The commit is allocation-free and cannot
-  // partially fail.
-  NativeVector<SourceWitness> witnesses(vertices.size());
-  for (std::size_t row = 0; row < vertices.size(); ++row) {
-    if (mesh.relocation_witness(vertices[row], positions + 3 * row, witnesses[row]) !=
-        Insertion::kOk) {
-      return false;
-    }
-  }
-  if (!mesh.spend(0)) {
-    return false;
-  }
-  for (std::size_t row = 0; row < vertices.size(); ++row) {
-    std::copy_n(positions + 3 * row, 3, mesh.mutable_point(vertices[row]));
-    mesh.set_witness(vertices[row], witnesses[row]);
-  }
-  if (!vertices.empty()) {
-    mesh.mark_accepted_state();
-  }
-  return !vertices.empty();
+  return true;
 }
 
-namespace {
 bool prepare_collapse(TetMesh& mesh, int32_t remove, int32_t keep,
                        bool require_improvement, const double* retained_quality,
                        NativeVector<int32_t>& star, NativeVector<int32_t>& other_star,
@@ -1461,33 +1271,10 @@ bool prepare_collapse(TetMesh& mesh, int32_t remove, int32_t keep,
   }
   return true;
 }
-}  // namespace
 
-bool try_collapse_edge(TetMesh& mesh, int32_t remove, int32_t keep,
-                       bool require_improvement) {
-  const MemoryScope memory_scope(mesh.memory_owner());
-  NativeVector<int32_t> star, other_star;
-  NativeVector<Cell> cells;
-  if (!prepare_collapse(mesh, remove, keep, require_improvement, nullptr,
-                        star, other_star, cells)) return false;
-  EditStatus status;
-  if (mesh.dimension(remove) < 3) {
-    status = mesh.collapse_boundary_edge(remove, keep, star, other_star);
-  } else {
-    auto prepared = mesh.prepare_replacement(star, cells);
-    if (prepared.status() != EditStatus::kOk) return false;
-    status = prepared.commit();
-  }
-  if (status != EditStatus::kOk) {
-    return false;
-  }
-  mesh.retire_vertex(remove);
-  return true;
-}
-
-namespace {
 bool remove_vertex_above(TetMesh& mesh, int32_t vertex, bool require_improvement,
-                         double competing_quality, int32_t* accepted_neighbor) {
+                         double competing_quality, int32_t* accepted_neighbor,
+                         ImprovementProofs* failures) {
   const MemoryScope memory_scope(mesh.memory_owner());
   NativeVector<int32_t> star;
   if (!mesh.live_vertex(vertex) || mesh.dimension(vertex) != 3 ||
@@ -1511,6 +1298,15 @@ bool remove_vertex_above(TetMesh& mesh, int32_t vertex, bool require_improvement
   const double lower_bound = require_improvement
       ? std::max(competing_quality, finite_quality(mesh, star))
       : -std::numeric_limits<double>::infinity();
+  // Only a completed empty quality shortlist is reusable. Link, source,
+  // transaction and resource refusals below do not certify a negative.
+  if (failures != nullptr) {
+    failures->synchronize(mesh);
+    if (!exact_star_witnesses(mesh, star)) failures = nullptr;
+  }
+  const auto failure_key =
+      std::make_tuple(vertex, require_improvement, std::bit_cast<uint64_t>(lower_bound));
+  if (failures != nullptr && failures->vertex_proved.contains(failure_key)) return false;
   struct CandidateRemoval { int32_t target; double quality; std::size_t cells; };
   NativeVector<CandidateRemoval> candidates;
   if (!mesh.spend(static_cast<int64_t>(link.size() * star.size()))) return false;
@@ -1540,6 +1336,9 @@ bool remove_vertex_above(TetMesh& mesh, int32_t vertex, bool require_improvement
       }
     }
   }
+  if (candidates.empty() && !mesh.work_exhausted() && failures != nullptr) {
+    failures->vertex_proved.insert(failure_key);
+  }
   std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
     native_execution_charge(0);
     return a.quality != b.quality ? a.quality > b.quality : a.target < b.target;
@@ -1564,44 +1363,14 @@ bool remove_vertex_above(TetMesh& mesh, int32_t vertex, bool require_improvement
   }
   return false;
 }
-}  // namespace
 
-bool try_remove_vertex(TetMesh& mesh, int32_t vertex, bool require_improvement,
-                       int32_t* accepted_neighbor) {
-  return remove_vertex_above(mesh, vertex, require_improvement,
-                            -std::numeric_limits<double>::infinity(), accepted_neighbor);
-}
-
-int32_t improve_mesh(TetMesh& mesh, const ImproveOptions& options, int64_t* counters) {
-  const MemoryScope memory_scope(mesh.memory_owner());
-  const int64_t initial_work = mesh.work();
-  std::fill_n(counters, PHX_MC_TET_MESH_IMPROVE_COUNTERS, 0);
-  struct PartialWork {
-    const TetMesh& mesh;
-    int64_t initial;
-    int64_t& output;
-    ~PartialWork() { output = mesh.work() - initial; }
-  } work_evidence{mesh, initial_work, counters[kWork]};
+int32_t remove_ordinary_sliver_vertices(TetMesh& mesh, std::span<const Candidate> slivers,
+                                       TetMeshImproveCounters& counters, bool& progress,
+                                       ImprovementProofs& failures) {
   int32_t status = PHX_MC_OK;
-  bool exhausted = false;
-  NativeVector<Candidate> slivers;
-  ConstructionFrontier frontier;
-  try {
-  for (int32_t pass = 0; pass < options.max_passes && status == PHX_MC_OK; ++pass) {
-    if (!collect_slivers(mesh, options.min_dihedral_degrees,
-                         options.minimum_relative_determinant, slivers)) {
-      status = PHX_MC_CAPACITY_EXCEEDED;
-      break;
-    }
-    if (slivers.empty()) {
-      break;
-    }
-    ++counters[kPasses];
-    bool progress = false;
     // Give each original ordinary sliver star one source/quality-admitted
     // removal opportunity before reconnections can replace its live link.
     // Construction/floor repairs retain their existing ordered objective.
-    {
       NativeSet<int32_t> removal_visited;
       for (const Candidate& entry : slivers) {
         native_execution_charge(0);
@@ -1610,12 +1379,13 @@ int32_t improve_mesh(TetMesh& mesh, const ImproveOptions& options, int64_t* coun
           status = PHX_MC_CAPACITY_EXCEEDED;
           break;
         }
-        ++counters[kAttempts];
+        ++counters.attempts;
         for (int32_t vertex : entry.v) {
           if (mesh.dimension(vertex) != 3 || mesh.protection(vertex) > 0.0 ||
               !removal_visited.insert(vertex).second) continue;
-          if (try_remove_vertex(mesh, vertex, true, nullptr)) {
-            ++counters[kVertexRemovals];
+          if (remove_vertex_above(mesh, vertex, true,
+                                  -std::numeric_limits<double>::infinity(), nullptr, &failures)) {
+            ++counters.vertex_removals;
             progress = true;
           }
           if (mesh.broken()) return PHX_MC_INTERNAL_ERROR;
@@ -1626,13 +1396,14 @@ int32_t improve_mesh(TetMesh& mesh, const ImproveOptions& options, int64_t* coun
         }
         if (status != PHX_MC_OK) break;
       }
-    }
-    if (status != PHX_MC_OK) break;
-    if (progress && !collect_slivers(mesh, options.min_dihedral_degrees,
-                                    options.minimum_relative_determinant, slivers)) {
-      status = PHX_MC_CAPACITY_EXCEEDED;
-      break;
-    }
+  return status;
+}
+
+int32_t reconnect_sliver_frontier(TetMesh& mesh, const ImproveOptions& options,
+                                 TetMeshImproveCounters& counters, bool& progress,
+                                 NativeVector<Candidate>& slivers, ConstructionFrontier& frontier,
+                                 ImprovementProofs& failures) {
+  int32_t status = PHX_MC_OK;
     frontier.begin(mesh, slivers);
     for (std::size_t cursor = 0; cursor < slivers.size(); ++cursor) {
       native_execution_charge(0);
@@ -1645,12 +1416,12 @@ int32_t improve_mesh(TetMesh& mesh, const ImproveOptions& options, int64_t* coun
         status = PHX_MC_CAPACITY_EXCEEDED;
         break;
       }
-      ++counters[kAttempts];
+      ++counters.attempts;
       std::array<int32_t, 5> affected_vertices;
       bool capacity = false;
       const bool changed = improve_cell(mesh, entry.slot, counters, entry.construction_uncertain,
                                         entry.below_floor, options.minimum_relative_determinant,
-                                        affected_vertices, capacity);
+                                        affected_vertices, capacity, failures);
       progress = changed || progress;
       if (mesh.broken()) {
         return PHX_MC_INTERNAL_ERROR;
@@ -1668,16 +1439,12 @@ int32_t improve_mesh(TetMesh& mesh, const ImproveOptions& options, int64_t* coun
         break;
       }
     }
-    if (!progress) {
-      exhausted = true;
-      break;
-    }
-  }
-  } catch (const ExecutionRefusal& refusal) {
-    status = refusal.status;
-  } catch (const std::bad_alloc&) {
-    status = PHX_MC_CAPACITY_EXCEEDED;
-  }
+  return status;
+}
+
+int32_t record_improvement_unmet(TetMesh& mesh, const ImproveOptions& options,
+                                TetMeshImproveCounters& counters, bool exhausted,
+                                NativeVector<Candidate>& slivers, int32_t status) {
   if (!collect_slivers(mesh, options.min_dihedral_degrees,
                        options.minimum_relative_determinant, slivers)) status = PHX_MC_CAPACITY_EXCEEDED;
   auto& unmet = mesh.unmet();
@@ -1700,7 +1467,7 @@ int32_t improve_mesh(TetMesh& mesh, const ImproveOptions& options, int64_t* coun
   std::sort(unmet.begin(), unmet.end(), [](const UnmetRecord& x, const UnmetRecord& y) {
     return std::lexicographical_compare(x.v, x.v + 4, y.v, y.v + 4);
   });
-  counters[kSlivers] = static_cast<int64_t>(std::count_if(
+  counters.remaining_slivers = static_cast<int64_t>(std::count_if(
       slivers.begin(), slivers.end(), [&](const Candidate& entry) {
         return !std::isfinite(entry.quality) || entry.quality < options.min_dihedral_degrees;
       }));
@@ -1710,8 +1477,446 @@ int32_t improve_mesh(TetMesh& mesh, const ImproveOptions& options, int64_t* coun
   return status;
 }
 
+}  // namespace
+
+bool try_face_removal(TetMesh& mesh, int32_t t, int slot, bool require_improvement) {
+  const MemoryScope memory_scope(mesh.memory_owner());
+  if (t < 0 || static_cast<std::size_t>(t) >= mesh.complex().tets.size() ||
+      !mesh.complex().live(t) || slot < 0 || slot > 3 || !mesh.finite(t) ||
+      mesh.complex().constraint(t, slot) != kNoConstraint) {
+    return false;
+  }
+  const Tetrahedron first = mesh.tet(t);
+  const int32_t u = first.n[slot];
+  if (!mesh.finite(u)) {
+    return false;
+  }
+  const Tetrahedron second = mesh.tet(u);
+  const int back = neighbor_slot(second, t);
+  NativeVector<Cell> proposed;
+  for (int j = 0; j < 4; ++j) {
+    if (j == back) {
+      continue;
+    }
+    Cell cell = {second.v[0], second.v[1], second.v[2], second.v[3]};
+    cell[static_cast<std::size_t>(j)] = first.v[slot];
+    if (!mesh.positive(cell.data())) {
+      return false;
+    }
+    proposed.push_back(cell);
+  }
+  if (!mesh.spend(6)) {
+    return false;
+  }
+  if (require_improvement) {
+    const double before = std::min(quality(mesh, first.v), quality(mesh, second.v));
+    if (!(proposal_quality(mesh, proposed) > before + kImprovement)) {
+      return false;
+    }
+  }
+  const int32_t removed[] = {t, u};
+  return mesh.replace(removed, proposed) == EditStatus::kOk;
+}
+
+namespace {
+
+bool try_edge_removal_proposal(
+    TetMesh& mesh, int32_t a, int32_t b, bool require_improvement,
+    std::optional<std::span<const double>> regular_weights, double radius_edge_bound,
+    double max_weight_fraction, bool construction_objective,
+    double minimum_relative_determinant, ImprovementProofs* failures) {
+  const MemoryScope memory_scope(mesh.memory_owner());
+  if (!mesh.live_vertex(a) || !mesh.live_vertex(b) || a == b || mesh.segment_source(a, b) >= 0) {
+    return false;
+  }
+  if (regular_weights &&
+      regular_weights->size() != static_cast<std::size_t>(mesh.vertex_count())) {
+    return false;
+  }
+  // Weighted and construction-objective proposals do not participate in
+  // the ordinary geometric proof bank.
+  if (regular_weights || construction_objective) failures = nullptr;
+  EdgeRemovalFailureKey failure_key{};
+  if (failures != nullptr) {
+    failure_key = failures->key(mesh, a, b, require_improvement, construction_objective,
+                                radius_edge_bound, max_weight_fraction,
+                                minimum_relative_determinant);
+    if (failures->proved.contains(failure_key)) return false;
+  }
+  NativeVector<int32_t> tets;
+  NativeVector<int32_t> ring;
+  if (!mesh.edge_ring(a, b, tets, ring)) {
+    return false;
+  }
+  const int n = static_cast<int>(ring.size());
+  if (n < 3 || n > kMaxRing) {
+    return false;
+  }
+  if (!mesh.spend(static_cast<int64_t>(n * n * n))) return false;
+  for (int i = 0; i < n; ++i) {
+    // tets[i] = (a, b, ring[i], ring[i + 1]); its facet opposite ring[i] is
+    // the ring face (a, b, ring[i + 1]).
+    if (ring[static_cast<std::size_t>(i)] < 0 ||
+        mesh.complex().constraint(tets[static_cast<std::size_t>(i)],
+                                  vertex_slot(mesh.tet(tets[static_cast<std::size_t>(i)]),
+                                              ring[static_cast<std::size_t>(i)])) !=
+            kNoConstraint) {
+      return false;
+    }
+  }
+  // Bounded source witnesses may leave source orientation unresolved.
+  // Only exact represented-coordinate legality can certify a negative DP.
+  if (failures != nullptr) {
+    if (mesh.witness(a).deviation > 0.0 || mesh.witness(b).deviation > 0.0) {
+      failures = nullptr;
+    } else {
+      for (int32_t vertex : ring) {
+        if (mesh.witness(vertex).deviation > 0.0) {
+          failures = nullptr;
+          break;
+        }
+      }
+    }
+  }
+  // Triangle (i, k, j) of the ring polygon, i < k < j, yields the cells
+  // (r_k, r_i, r_j, a) and (r_i, r_k, r_j, b); -1 when either is invalid.
+  const auto r = [&](int index) { return ring[static_cast<std::size_t>(index)]; };
+  const auto cells_of = [&](int i, int k, int j, Cell& above, Cell& below) {
+    above = {r(k), r(i), r(j), a};
+    below = {r(i), r(k), r(j), b};
+  };
+  const auto construction_quality = [&](const int32_t* vertices) {
+    return assess_construction(mesh, vertices, minimum_relative_determinant).score;
+  };
+  const auto triangle = [&](int i, int k, int j) {
+    Cell above;
+    Cell below;
+    cells_of(i, k, j, above, below);
+    if (!mesh.positive(above.data()) || !mesh.positive(below.data())) {
+      return -1.0;
+    }
+    if (construction_objective) {
+      return std::min(construction_quality(above.data()), construction_quality(below.data()));
+    }
+    return std::min(quality(mesh, above.data()), quality(mesh, below.data()));
+  };
+  double best[kMaxRing][kMaxRing];
+  int choice[kMaxRing][kMaxRing];
+  for (int length = 2; length < n; ++length) {
+    for (int i = 0; i + length < n; ++i) {
+      const int j = i + length;
+      best[i][j] = -1.0;
+      choice[i][j] = -1;
+      for (int k = i + 1; k < j; ++k) {
+        native_execution_charge(0);
+        const double identity = construction_objective ? std::numeric_limits<double>::infinity() : 180.0;
+        const double left = k - i >= 2 ? best[i][k] : identity;
+        const double right = j - k >= 2 ? best[k][j] : identity;
+        const double value = std::min({left, right, triangle(i, k, j)});
+        if (value > best[i][j]) {
+          best[i][j] = value;
+          choice[i][j] = k;
+        }
+      }
+    }
+  }
+  const double result = best[0][n - 1];
+  if (result < 0.0 ||
+      (require_improvement && !construction_objective &&
+       !(result > finite_quality(mesh, tets) + kImprovement))) {
+    if (failures != nullptr) failures->proved.insert(failure_key);
+    return false;
+  }
+  if (construction_objective) {
+    double previous = std::numeric_limits<double>::infinity();
+    for (int32_t cell : tets) previous = std::min(previous, construction_quality(mesh.tet(cell).v));
+    if (!(result > previous)) {
+      return false;
+    }
+  }
+  NativeVector<Cell> proposed;
+  NativeVector<std::array<int, 2>> pending = {{0, n - 1}};
+  while (!pending.empty()) {
+    const auto [i, j] = pending.back();
+    pending.pop_back();
+    const int k = choice[i][j];
+    Cell above;
+    Cell below;
+    cells_of(i, k, j, above, below);
+    proposed.push_back(above);
+    proposed.push_back(below);
+    if (k - i >= 2) {
+      pending.push_back({i, k});
+    }
+    if (j - k >= 2) {
+      pending.push_back({k, j});
+    }
+  }
+  if (regular_weights &&
+      (!regular_proposal(mesh, proposed, *regular_weights, radius_edge_bound, max_weight_fraction) ||
+       !above_floor(mesh, proposed, minimum_relative_determinant))) {
+    return false;
+  }
+  return mesh.replace(tets, proposed) == EditStatus::kOk;
+}
+
+}  // namespace
+
+bool try_edge_removal(TetMesh& mesh, int32_t a, int32_t b, bool require_improvement,
+                      std::optional<std::span<const double>> regular_weights,
+                      double radius_edge_bound, double max_weight_fraction,
+                      bool construction_objective, double minimum_relative_determinant) {
+  return try_edge_removal_proposal(mesh, a, b, require_improvement, regular_weights,
+                                   radius_edge_bound, max_weight_fraction,
+                                   construction_objective, minimum_relative_determinant, nullptr);
+}
+
+Insertion try_split_edge(TetMesh& mesh, int32_t a, int32_t b, const double* position,
+                         double target_size, int32_t& inserted_vertex) {
+  const MemoryScope memory_scope(mesh.memory_owner());
+  return mesh.split_edge(a, b, position, target_size, inserted_vertex);
+}
+
+bool try_multiface_removal(TetMesh& mesh, std::span<const int32_t> cavity,
+                          int32_t apex, bool require_improvement) {
+  const MemoryScope memory_scope(mesh.memory_owner());
+  if (cavity.size() < 2 || !mesh.live_vertex(apex) ||
+      !mesh.spend(static_cast<int64_t>(8 * cavity.size()))) {
+    return false;
+  }
+  NativeVector<int32_t> sorted(cavity.begin(), cavity.end());
+  std::sort(sorted.begin(), sorted.end());
+  if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) {
+    return false;
+  }
+  bool contains_apex = false;
+  NativeVector<Cell> cells;
+  for (int32_t t : sorted) {
+    if (t < 0 || static_cast<std::size_t>(t) >= mesh.complex().tets.size() ||
+        !mesh.complex().live(t) || !mesh.finite(t)) {
+      return false;
+    }
+    const Tetrahedron& old = mesh.tet(t);
+    contains_apex = contains_apex || vertex_slot(old, apex) >= 0;
+    for (int k = 0; k < 4; ++k) {
+      if (std::binary_search(sorted.begin(), sorted.end(), old.n[k])) {
+        continue;
+      }
+      int32_t f[3];
+      oriented_facet(old.v, k, f);
+      if (std::find(f, f + 3, apex) != f + 3) {
+        continue;
+      }
+      Cell cone = {old.v[0], old.v[1], old.v[2], old.v[3]};
+      cone[static_cast<std::size_t>(k)] = apex;
+      if (!mesh.positive(cone.data())) {
+        return false;
+      }
+      cells.push_back(cone);
+    }
+  }
+  if (!contains_apex || cells.empty() ||
+      (require_improvement &&
+       !(proposal_quality(mesh, cells) > finite_quality(mesh, sorted) + kImprovement))) {
+    return false;
+  }
+  return reconnect(mesh, sorted, cells) == EditStatus::kOk;
+}
+
+EditStatus reconnect(TetMesh& mesh, std::span<const int32_t> removed,
+                      std::span<const Cell> proposed) {
+  const MemoryScope memory_scope(mesh.memory_owner());
+  if (removed.empty() || proposed.empty()) {
+    return EditStatus::kNotLive;
+  }
+  if (!mesh.spend(static_cast<int64_t>(8 * (removed.size() + proposed.size())))) {
+    return EditStatus::kBufferLimit;
+  }
+  NativeSet<int32_t> old_vertices, new_vertices;
+  NativeSet<std::uint64_t> old_segments, new_edges;
+  for (int32_t t : removed) {
+    if (t < 0 || static_cast<std::size_t>(t) >= mesh.complex().tets.size() ||
+        !mesh.complex().live(t) || !mesh.finite(t)) {
+      return EditStatus::kNotLive;
+    }
+    const int32_t* v = mesh.tet(t).v;
+    old_vertices.insert(v, v + 4);
+    for (int i = 0; i < 4; ++i) {
+      for (int j = i + 1; j < 4; ++j) {
+        if (mesh.segment_source(v[i], v[j]) >= 0) {
+          old_segments.insert(topology::undirected_edge(v[i], v[j]));
+        }
+      }
+    }
+  }
+  for (const Cell& cell : proposed) {
+    new_vertices.insert(cell.begin(), cell.end());
+    for (int i = 0; i < 4; ++i) {
+      for (int j = i + 1; j < 4; ++j) {
+        new_edges.insert(topology::undirected_edge(cell[static_cast<std::size_t>(i)], cell[static_cast<std::size_t>(j)]));
+      }
+    }
+  }
+  if (old_vertices != new_vertices ||
+      !std::includes(new_edges.begin(), new_edges.end(), old_segments.begin(), old_segments.end())) {
+    return EditStatus::kConstraintViolation;
+  }
+  return mesh.replace(removed, proposed);
+}
+
+bool try_relocate(TetMesh& mesh, int32_t vertex, const double* position, bool require_improvement) {
+  const MemoryScope memory_scope(mesh.memory_owner());
+  if (!mesh.live_vertex(vertex) || mesh.dimension(vertex) < 1 || !geometry::finite3(position) ||
+      mesh.protection(vertex) > 0.0 || !geometry::point_in_domain(position) ||
+      (mesh.dimension(vertex) < 3 && mesh.policy() == BoundaryPolicy::kFixed)) {
+    return false;
+  }
+  NativeVector<int32_t> star;
+  NativeVector<int32_t> neighbors;
+  if (!mesh.vertex_star(vertex, star)) {
+    return false;
+  }
+  if (!native_execution_cavity(star.size())) return false;
+  if (!relocation_outside_protection(mesh, vertex, position, star)) return false;
+  if (mesh.dimension(vertex) < 3 && !on_facet_plane(mesh, vertex, star, position, neighbors)) {
+    return false;
+  }
+  if (mesh.dimension(vertex) == 1 && !relocation_on_curve(mesh, vertex, position)) return false;
+  if (!mesh.spend(static_cast<int64_t>(4 * star.size()))) {
+    return false;
+  }
+  const double before = finite_quality(mesh, star);
+  const double after = star_quality_at(mesh, vertex, star, position);
+  if (after < 0.0 || (require_improvement && !(after > before + kImprovement))) {
+    return false;
+  }
+  // A moved boundary vertex keeps a witness its source row admits.
+  SourceWitness witness;
+  if (mesh.relocation_witness(vertex, position, witness) != Insertion::kOk) {
+    return false;
+  }
+  std::copy_n(position, 3, mesh.mutable_point(vertex));
+  mesh.set_witness(vertex, witness);
+  mesh.mark_accepted_state();
+  return true;
+}
+
+bool try_relocate_vertices(TetMesh& mesh, std::span<const int32_t> vertices,
+                           const double* positions, double radius_edge_bound,
+                           double minimum_dihedral_degrees) {
+  const MemoryScope memory_scope(mesh.memory_owner());
+  NativeVector<int32_t> star, neighbors, cavity;
+  const RelocationPositions proposed_point{mesh, vertices, positions};
+  if (!prepare_relocation_cavity(mesh, proposed_point, star, neighbors, cavity) ||
+      !check_relocation_cells(mesh, proposed_point, cavity, radius_edge_bound,
+                              minimum_dihedral_degrees) ||
+      !check_relocation_segments(mesh, proposed_point)) return false;
+  // Every allocation, exact predicate, witness and work refusal precedes the
+  // first coordinate write. The commit is allocation-free and cannot
+  // partially fail.
+  NativeVector<SourceWitness> witnesses(vertices.size());
+  for (std::size_t row = 0; row < vertices.size(); ++row) {
+    if (mesh.relocation_witness(vertices[row], positions + 3 * row, witnesses[row]) !=
+        Insertion::kOk) {
+      return false;
+    }
+  }
+  if (!mesh.spend(0)) {
+    return false;
+  }
+  for (std::size_t row = 0; row < vertices.size(); ++row) {
+    std::copy_n(positions + 3 * row, 3, mesh.mutable_point(vertices[row]));
+    mesh.set_witness(vertices[row], witnesses[row]);
+  }
+  if (!vertices.empty()) {
+    mesh.mark_accepted_state();
+  }
+  return !vertices.empty();
+}
+
+
+bool try_collapse_edge(TetMesh& mesh, int32_t remove, int32_t keep,
+                       bool require_improvement) {
+  const MemoryScope memory_scope(mesh.memory_owner());
+  NativeVector<int32_t> star, other_star;
+  NativeVector<Cell> cells;
+  if (!prepare_collapse(mesh, remove, keep, require_improvement, nullptr,
+                        star, other_star, cells)) return false;
+  EditStatus status;
+  if (mesh.dimension(remove) < 3) {
+    status = mesh.collapse_boundary_edge(remove, keep, star, other_star);
+  } else {
+    auto prepared = mesh.prepare_replacement(star, cells);
+    if (prepared.status() != EditStatus::kOk) return false;
+    status = prepared.commit();
+  }
+  if (status != EditStatus::kOk) {
+    return false;
+  }
+  mesh.retire_vertex(remove);
+  return true;
+}
+
+
+bool try_remove_vertex(TetMesh& mesh, int32_t vertex, bool require_improvement,
+                       int32_t* accepted_neighbor) {
+  return remove_vertex_above(mesh, vertex, require_improvement,
+                            -std::numeric_limits<double>::infinity(), accepted_neighbor);
+}
+
+int32_t improve_mesh(TetMesh& mesh, const ImproveOptions& options, TetMeshImproveCounters& counters) {
+  const MemoryScope memory_scope(mesh.memory_owner());
+  const int64_t initial_work = mesh.work();
+  counters = {};
+  struct PartialWork {
+    const TetMesh& mesh;
+    int64_t initial;
+    int64_t& output;
+    ~PartialWork() { output = mesh.work() - initial; }
+  } work_evidence{mesh, initial_work, counters.work_units};
+  int32_t status = PHX_MC_OK;
+  bool exhausted = false;
+  NativeVector<Candidate> slivers;
+  ConstructionFrontier frontier;
+  ImprovementProofs proofs;
+  try {
+  for (int32_t pass = 0; pass < options.max_passes && status == PHX_MC_OK; ++pass) {
+    if (!collect_slivers(mesh, options.min_dihedral_degrees,
+                         options.minimum_relative_determinant, slivers)) {
+      status = PHX_MC_CAPACITY_EXCEEDED;
+      break;
+    }
+    if (slivers.empty()) {
+      break;
+    }
+    ++counters.passes;
+    bool progress = false;
+    status = remove_ordinary_sliver_vertices(mesh, slivers, counters, progress, proofs);
+    if (status == PHX_MC_INTERNAL_ERROR) return status;
+    if (status != PHX_MC_OK) break;
+    if (progress && !collect_slivers(mesh, options.min_dihedral_degrees,
+                                    options.minimum_relative_determinant, slivers)) {
+      status = PHX_MC_CAPACITY_EXCEEDED;
+      break;
+    }
+    status = reconnect_sliver_frontier(
+        mesh, options, counters, progress, slivers, frontier, proofs);
+    if (status == PHX_MC_INTERNAL_ERROR) return status;
+    if (!progress) {
+      exhausted = true;
+      break;
+    }
+  }
+  } catch (const ExecutionRefusal& refusal) {
+    status = refusal.status;
+  } catch (const std::bad_alloc&) {
+    status = PHX_MC_CAPACITY_EXCEEDED;
+  }
+  return record_improvement_unmet(mesh, options, counters, exhausted, slivers, status);
+}
+
 int32_t exude_mesh(TetMesh& mesh, const ExudeOptions& options,
-                   NativeVector<double>& weights, int64_t* counters) {
+                   NativeVector<double>& weights, TetMeshExudeCounters& counters) {
   const MemoryScope memory_scope(mesh.memory_owner());
   if (!std::isfinite(options.max_weight_fraction) || options.max_weight_fraction <= 0.0 ||
       options.max_weight_fraction > 0.25 || !std::isfinite(options.radius_edge_bound) ||
@@ -1721,7 +1926,7 @@ int32_t exude_mesh(TetMesh& mesh, const ExudeOptions& options,
       !(options.minimum_relative_determinant < 1.0)) {
     return PHX_MC_INVALID_ARGUMENT;
   }
-  std::fill_n(counters, 6, int64_t{0});
+  counters = {};
   if (weights.get_allocator().owner() != mesh.memory_owner()) {
     weights = NativeVector<double>(NativeAllocator<double>(mesh.memory_owner()));
   }
@@ -1739,7 +1944,7 @@ int32_t exude_mesh(TetMesh& mesh, const ExudeOptions& options,
     if (slivers.empty()) {
       break;
     }
-    ++counters[3];
+    ++counters.passes;
     bool progress = false;
     for (const Candidate& entry : slivers) {
       if (!current(mesh, entry)) {
@@ -1781,13 +1986,13 @@ int32_t exude_mesh(TetMesh& mesh, const ExudeOptions& options,
   std::sort(mesh.unmet().begin(), mesh.unmet().end(), [](const auto& a, const auto& b) {
     return std::lexicographical_compare(a.v, a.v + 4, b.v, b.v + 4);
   });
-  counters[2] = static_cast<int64_t>(std::count_if(weights.begin(), weights.end(),
+  counters.weighted_vertices = static_cast<int64_t>(std::count_if(weights.begin(), weights.end(),
                                                 [](double w) { return w > 0.0; }));
-  counters[4] = static_cast<int64_t>(std::count_if(
+  counters.remaining_slivers = static_cast<int64_t>(std::count_if(
       slivers.begin(), slivers.end(), [&](const Candidate& entry) {
         return !std::isfinite(entry.quality) || entry.quality < options.min_dihedral_degrees;
       }));
-  counters[5] = mesh.work() - initial_work;
+  counters.work_units = mesh.work() - initial_work;
   return mesh.broken() ? PHX_MC_INTERNAL_ERROR
          : capacity || mesh.work_exhausted() ? PHX_MC_CAPACITY_EXCEEDED
          : slivers.empty() ? PHX_MC_OK : PHX_MC_REFINEMENT_LIMIT;
@@ -1931,7 +2136,9 @@ int32_t phx_mc_tet_mesh_improve(phx_mc_tet_mesh* handle, double min_dihedral_deg
     options.min_dihedral_degrees = min_dihedral_degrees;
     options.minimum_relative_determinant = minimum_relative_determinant;
     options.max_passes = max_passes;
-    const int32_t status = phx::mc::improve_mesh(mesh, options, counters);
+    phx::mc::TetMeshImproveCounters state;
+    phx::mc::CounterPublisher publisher{state, counters};
+    const int32_t status = phx::mc::improve_mesh(mesh, options, state);
     return mesh.broken() ? PHX_MC_INTERNAL_ERROR : status;
   });
 }
@@ -2109,7 +2316,7 @@ int32_t phx_mc_tet_mesh_construct_curve_points(
       }
       const int32_t source = mesh.segment_source(vertex, first);
       if (source < 0 || mesh.segment_source(vertex, second) != source ||
-          !phx::mc::collinear3d(mesh.point(first), mesh.point(second), mesh.point(vertex))) {
+          !phx::mc::geometry::collinear(mesh.point(first), mesh.point(second), mesh.point(vertex))) {
         continue;
       }
       const double* original_first = nullptr;
@@ -2119,9 +2326,9 @@ int32_t phx_mc_tet_mesh_construct_curve_points(
         if (segment[2] != source) continue;
         const double* a = mesh.original_point(segment[0]);
         const double* b = mesh.original_point(segment[1]);
-        if (phx::mc::collinear3d(a, b, mesh.point(vertex)) &&
-            phx::mc::collinear3d(a, b, mesh.point(first)) &&
-            phx::mc::collinear3d(a, b, mesh.point(second))) {
+        if (phx::mc::geometry::collinear(a, b, mesh.point(vertex)) &&
+            phx::mc::geometry::collinear(a, b, mesh.point(first)) &&
+            phx::mc::geometry::collinear(a, b, mesh.point(second))) {
           original_first = a;
           original_second = b;
           break;
@@ -2135,8 +2342,8 @@ int32_t phx_mc_tet_mesh_construct_curve_points(
               return static_cast<phx::mc::TetMesh*>(context)->spend(units);
             }, &mesh) ? 1 : 0;
         if (constructed[row] &&
-            (!phx::mc::collinear3d(original_first, original_second, positions + 3 * row) ||
-             !phx::mc::collinear3d(mesh.point(first), mesh.point(second), positions + 3 * row))) {
+            (!phx::mc::geometry::collinear(original_first, original_second, positions + 3 * row) ||
+             !phx::mc::geometry::collinear(mesh.point(first), mesh.point(second), positions + 3 * row))) {
           return PHX_MC_INTERNAL_ERROR;
         }
       }
@@ -2228,7 +2435,8 @@ int32_t phx_mc_tet_mesh_inspect_edge_insertion(
         (maximum_cavity_cells > 0 && (removed_tetrahedra == nullptr || proposed_tetrahedra == nullptr))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    std::fill_n(counts, 4, int64_t{0});
+    phx::mc::EdgeInsertionCounts state;
+    phx::mc::CounterPublisher publisher{state, counts};
     phx::mc::TetMesh& mesh = *handle->mesh;
     const phx::mc::MemoryScope memory_scope(mesh.memory_owner());
     if (mesh.broken()) {
@@ -2253,21 +2461,34 @@ int32_t phx_mc_tet_mesh_inspect_edge_insertion(
       return PHX_MC_CAPACITY_EXCEEDED;
     }
     insertion_rows(mesh, removed_tetrahedra, proposed_tetrahedra);
-    counts[0] = finite[0];
-    counts[1] = finite[1];
-    counts[2] = static_cast<int32_t>(kind);
-    counts[3] = mesh.accepted_generation();
+    state.removed = finite[0];
+    state.proposed = finite[1];
+    state.kind = static_cast<int32_t>(kind);
+    state.generation = mesh.accepted_generation();
     mesh.abandon();
     return PHX_MC_OK;
   });
 }
 
 int32_t phx_mc_tet_mesh_commit_edge_insertion(
-    phx_mc_tet_mesh* handle, int32_t first, int32_t second, const double* split_position,
-    const double* final_position, double source_fraction, int64_t maximum_cavity_cells, int32_t insertion_kind,
-    int64_t accepted_generation, int64_t removed_count, const int32_t* removed_tetrahedra,
-    int64_t proposed_count, const int32_t* proposed_tetrahedra, double target_size,
-    int64_t work_limit, int32_t* inserted_vertex) {
+    const phx_mc_tet_mesh_commit_edge_insertion_request* request) {
+  if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  auto handle = request->mesh;
+  auto first = request->first;
+  auto second = request->second;
+  auto split_position = request->split_position;
+  auto final_position = request->final_position;
+  auto source_fraction = request->source_fraction;
+  auto maximum_cavity_cells = request->maximum_cavity_cells;
+  auto insertion_kind = request->insertion_kind;
+  auto accepted_generation = request->accepted_generation;
+  auto removed_count = request->removed_count;
+  auto removed_tetrahedra = request->removed_tetrahedra;
+  auto proposed_count = request->proposed_count;
+  auto proposed_tetrahedra = request->proposed_tetrahedra;
+  auto target_size = request->target_size;
+  auto work_limit = request->work_limit;
+  auto inserted_vertex = request->inserted_vertex;
   return phx::mc::guarded([&]() -> int32_t {
     if (handle == nullptr || handle->mesh == nullptr || split_position == nullptr ||
         final_position == nullptr || inserted_vertex == nullptr ||
@@ -2280,6 +2501,8 @@ int32_t phx_mc_tet_mesh_commit_edge_insertion(
         !std::isfinite(target_size) || target_size < 0.0 || work_limit < 0) {
       return PHX_MC_INVALID_ARGUMENT;
     }
+    // PHX_MC_OK reports execution without an error, not an applied edit.
+    // A stale or mismatched plan retains -1; only a committed vertex changes it.
     *inserted_vertex = -1;
     phx::mc::TetMesh& mesh = *handle->mesh;
     const phx::mc::MemoryScope memory_scope(mesh.memory_owner());
@@ -2427,7 +2650,8 @@ int32_t phx_mc_tet_mesh_exude(phx_mc_tet_mesh* handle, double min_dihedral_degre
       return PHX_MC_INVALID_ARGUMENT;
     }
     std::fill_n(weights, static_cast<std::size_t>(mesh.vertex_count()), 0.0);
-    std::fill_n(counters, 6, int64_t{0});
+    phx::mc::TetMeshExudeCounters state;
+    phx::mc::CounterPublisher publisher{state, counters};
     if (mesh.broken()) {
       return PHX_MC_INTERNAL_ERROR;
     }
@@ -2442,12 +2666,12 @@ int32_t phx_mc_tet_mesh_exude(phx_mc_tet_mesh* handle, double min_dihedral_degre
     const int64_t initial_work = mesh.work();
     int32_t status = PHX_MC_OK;
     try {
-      status = phx::mc::exude_mesh(mesh, options, accepted_weights, counters);
+      status = phx::mc::exude_mesh(mesh, options, accepted_weights, state);
     } catch (const std::bad_alloc&) {
       std::copy(accepted_weights.begin(), accepted_weights.end(), weights);
-      counters[2] = static_cast<int64_t>(std::count_if(
+      state.weighted_vertices = static_cast<int64_t>(std::count_if(
           accepted_weights.begin(), accepted_weights.end(), [](double weight) { return weight > 0.0; }));
-      counters[5] = mesh.work() - initial_work;
+      state.work_units = mesh.work() - initial_work;
       throw;  // Preserve the owning allocator's refusal status/message.
     }
     std::copy(accepted_weights.begin(), accepted_weights.end(), weights);

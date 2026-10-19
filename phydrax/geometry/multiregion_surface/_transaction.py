@@ -10,20 +10,20 @@
    splits and flips, each by priority and support ids);
 2. each proposal's vertex 2-ring must be disjoint from every accepted one;
 3. the central fail-closed dispatch drafts the local edit with stable lineage;
-4. finite-region volumes are restored locally and exact guards run
+4. finite-region volumes are restored locally and exact predicate guards run
    (duplicates, degeneracy, labels/orientation, valence, fans, region
    graph, extinction, folding, local intersections);
 5. every motion leg and the restoration motion are certified by inclusion CCD;
 6. accepted edits are applied to the host working copy; regions left in
    several components by physical events (or requested explicitly) are split;
 7. the candidate topology, sheet-slot/face/region/velocity transfers and the
-   full exact validation are built;
+   full validation using exact predicates are built;
 8. the dynamic payload commits through `phydrax.lifecycle` only when the
    validation and every transfer certificate pass, otherwise the source
    topology and state are returned unchanged.
 
 `apply_surface_burst` is the typed whole-sheet transaction. It deletes the
-complete separating sheet, merges its region labels and returns vanished
+entire separating sheet, merges its region labels and returns vanished
 sheet-slot content explicitly so the foam owner can commit its rim ledger.
 """
 
@@ -43,7 +43,7 @@ from ..._strict import StrictModule
 from ...discretization._topology_epoch import TopologyEpoch, TopologyEpochTransition
 from ...discretization._transfer import TransferGeometryBinding
 from ...lifecycle import commit_candidate, TransactionalCandidate
-from ...typing import Dim, Float, parse
+from ...typing import checked, Dim, Float, parse
 from ._contracts import (
     MultiRegionKind,
     MultiRegionSurfaceCapacityEvidence,
@@ -51,18 +51,18 @@ from ._contracts import (
     MultiRegionSurfaceEvidence,
 )
 from ._edits import (
-    _apply_edit,
-    _capacity_admits,
-    _certify_legs,
-    _duplicate_faces,
-    _Edit,
-    _local_guards,
-    _restoration_leg,
-    _restore_volumes,
-    _ring,
-    _slots_of,
-    _working_mesh,
-    _WorkingMesh,
+    apply_edit,
+    capacity_admits,
+    certify_legs,
+    duplicate_faces,
+    Edit,
+    local_guards,
+    restoration_leg,
+    restore_volumes,
+    ring as edit_ring,
+    slots_of,
+    working_mesh,
+    WorkingMesh,
 )
 from ._events import (
     MultiRegionSurfaceLineage,
@@ -75,34 +75,34 @@ from ._events import (
     SurfaceEventStatus,
 )
 from ._remesh import (
-    _collapse_edit,
-    _flip_edit,
-    _split_edit,
+    collapse_edit,
     EdgeCollapseProposal,
     EdgeFlipProposal,
     EdgeSplitProposal,
+    flip_edit,
+    split_edit,
 )
 from ._state import MultiRegionSurfaceState
-from ._topology import _host_incidence, MultiRegionSurfaceTopology
+from ._topology import host_incidence, MultiRegionSurfaceTopology
 from ._topology_transitions import (
-    _label_components,
-    _merge_edit,
-    _pinch_edit,
-    _t1_edit,
+    label_components,
+    merge_edit,
     MergeProposal,
+    pinch_edit,
     PinchProposal,
     RegionSplitProposal,
+    t1_edit,
     T1PopProposal,
 )
 from ._transfers import (
-    _combined_routes,
-    _pooled_slot_routes,
     BoundedFieldReconstruction,
+    combined_routes,
     ConservativeFieldTransfer,
     ExtensiveTransferEvidence,
     IntensiveReconstructionEvidence,
+    pooled_slot_routes,
 )
-from ._validation import _component_volumes, _geometry_id, validate_multiregion_surface
+from ._validation import component_volumes, geometry_id, validate_multiregion_surface
 
 
 SurfaceEventProposal: TypeAlias = (
@@ -159,27 +159,35 @@ def _payload(state: MultiRegionSurfaceState, /) -> _SurfacePayload:
     )
 
 
-def _expect(proposal: object, kind: type[_Proposal], /) -> _Proposal:
-    if not isinstance(proposal, kind):
-        raise TypeError(f"Proposal kind does not match {kind.__name__}.")
-    return proposal
+def _expect(proposal: SurfaceEventProposal, kind: type[_Proposal], /) -> _Proposal:
+    # The caller selected a concrete event schema; union membership alone
+    # cannot establish that its kind-specific payload has that schema.
+    match proposal:
+        case kind():
+            return proposal
+        case _:
+            raise TypeError(
+                f"SurfaceEventProposal.kind must match {kind.__name__}; got {type(proposal).__name__}"
+            )
 
 
 _EdgeProposal: TypeAlias = EdgeSplitProposal | EdgeCollapseProposal | EdgeFlipProposal
 
 
-def _expect_edge(proposal: object, /) -> _EdgeProposal:
-    if not isinstance(
-        proposal, (EdgeSplitProposal, EdgeCollapseProposal, EdgeFlipProposal)
-    ):
-        raise TypeError("Proposal kind does not match an edge event.")
-    return proposal
+def _expect_edge(proposal: SurfaceEventProposal, /) -> _EdgeProposal:
+    match proposal:
+        case EdgeSplitProposal() | EdgeCollapseProposal() | EdgeFlipProposal():
+            return proposal
+        case _:
+            raise TypeError(
+                f"SurfaceEventProposal.kind must match an edge event; got {type(proposal).__name__}"
+            )
 
 
 def _order_key(
     proposal: SurfaceEventProposal, /
 ) -> tuple[int, int, float, tuple[object, ...]]:
-    """Canonical evaluation order: phase, kind rank, priority, identity."""
+    """Return the deterministic order key: phase, kind rank, priority, identity."""
     match proposal.kind:
         case SurfaceEventKind.T1_POP:
             rank = (0, 0)
@@ -205,14 +213,16 @@ def _order_key(
             rank = (2, 0)
             identity = (_expect(proposal, RegionSplitProposal).region_id,)
         case SurfaceEventKind.BURST:
-            raise RuntimeError("Burst uses the dedicated whole-sheet transaction.")
+            raise RuntimeError(
+                "SurfaceEventProposal.kind must use the dedicated whole-sheet transaction; got BURST"
+            )
         case _:
             assert_never(proposal.kind)
     return rank[0], rank[1], proposal.priority, identity
 
 
 def _merge_support(
-    mesh: _WorkingMesh, proposal: MergeProposal, /
+    mesh: WorkingMesh, proposal: MergeProposal, /
 ) -> tuple[int, ...] | None:
     faces = []
     for face_id in proposal.face_ids:
@@ -227,19 +237,19 @@ def _merge_support(
 
 
 def _support(
-    mesh: _WorkingMesh, proposal: SurfaceEventProposal, /
+    mesh: WorkingMesh, proposal: SurfaceEventProposal, /
 ) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
     """``(core entity slots, core vertex slots)`` of a geometric proposal."""
     match proposal.kind:
         case SurfaceEventKind.SPLIT | SurfaceEventKind.COLLAPSE | SurfaceEventKind.FLIP:
             edge = _expect_edge(proposal).edge_vertex_ids
-            slots = _slots_of(mesh, edge)
+            slots = slots_of(mesh, edge)
             return None if slots is None else (slots, slots)
         case SurfaceEventKind.T1_POP:
-            slots = _slots_of(mesh, _expect(proposal, T1PopProposal).film_vertex_ids)
+            slots = slots_of(mesh, _expect(proposal, T1PopProposal).film_vertex_ids)
             return None if slots is None else (slots, slots)
         case SurfaceEventKind.PINCH:
-            slots = _slots_of(mesh, _expect(proposal, PinchProposal).loop_vertex_ids)
+            slots = slots_of(mesh, _expect(proposal, PinchProposal).loop_vertex_ids)
             return None if slots is None else (slots, slots)
         case SurfaceEventKind.MERGE:
             faces = _merge_support(mesh, _expect(proposal, MergeProposal))
@@ -247,62 +257,70 @@ def _support(
                 return None
             return faces, tuple(sorted(set(mesh.faces[list(faces)].reshape(-1).tolist())))
         case SurfaceEventKind.REGION_SPLIT:
-            raise RuntimeError("Region splits have no vertex support.")
+            raise RuntimeError(
+                "SurfaceEventProposal.kind must describe a vertex-supported event; got REGION_SPLIT"
+            )
         case SurfaceEventKind.BURST:
-            raise RuntimeError("Burst uses the dedicated whole-sheet transaction.")
+            raise RuntimeError(
+                "SurfaceEventProposal.kind must use the dedicated whole-sheet transaction; got BURST"
+            )
         case _:
             assert_never(proposal.kind)
 
 
 def _draft(
-    mesh: _WorkingMesh, proposal: SurfaceEventProposal, core: tuple[int, ...], /
-) -> _Edit | SurfaceEventStatus:
+    mesh: WorkingMesh, proposal: SurfaceEventProposal, core: tuple[int, ...], /
+) -> Edit | SurfaceEventStatus:
     """The one fail-closed dispatch over the closed geometric event kinds."""
     match proposal.kind:
         case SurfaceEventKind.SPLIT:
-            return _split_edit(mesh, core[0], core[1])
+            return split_edit(mesh, core[0], core[1])
         case SurfaceEventKind.COLLAPSE:
-            return _collapse_edit(mesh, core[0], core[1])
+            return collapse_edit(mesh, core[0], core[1])
         case SurfaceEventKind.FLIP:
-            return _flip_edit(mesh, core[0], core[1])
+            return flip_edit(mesh, core[0], core[1])
         case SurfaceEventKind.T1_POP:
-            return _t1_edit(mesh, _expect(proposal, T1PopProposal), core)
+            return t1_edit(mesh, _expect(proposal, T1PopProposal), core)
         case SurfaceEventKind.PINCH:
-            return _pinch_edit(mesh, _expect(proposal, PinchProposal), core)
+            return pinch_edit(mesh, _expect(proposal, PinchProposal), core)
         case SurfaceEventKind.MERGE:
-            return _merge_edit(mesh, _expect(proposal, MergeProposal), core)
+            return merge_edit(mesh, _expect(proposal, MergeProposal), core)
         case SurfaceEventKind.REGION_SPLIT:
-            raise RuntimeError("Region splits are applied after the geometric events.")
+            raise RuntimeError(
+                "SurfaceEventProposal.kind must be applied after geometric events; got REGION_SPLIT"
+            )
         case SurfaceEventKind.BURST:
-            raise RuntimeError("Burst uses the dedicated whole-sheet transaction.")
+            raise RuntimeError(
+                "SurfaceEventProposal.kind must use the dedicated whole-sheet transaction; got BURST"
+            )
         case _:
             assert_never(proposal.kind)
 
 
 def _evaluate(
-    mesh: _WorkingMesh,
+    mesh: WorkingMesh,
     proposal: SurfaceEventProposal,
     core: tuple[int, ...],
     policy: SurfaceEventPolicy,
     /,
-) -> tuple[SurfaceEventStatus, _Edit | None, float, float]:
+) -> tuple[SurfaceEventStatus, Edit | None, float, float]:
     """Draft, restore, guard and certify one proposal (no mutation)."""
     draft = _draft(mesh, proposal, core)
     if isinstance(draft, SurfaceEventStatus):
         return draft, None, float("nan"), 0.0
-    if not _capacity_admits(mesh, draft):
+    if not capacity_admits(mesh, draft):
         return SurfaceEventStatus.CAPACITY_EXCEEDED, None, float("nan"), 0.0
-    if _duplicate_faces(mesh, draft):
+    if duplicate_faces(mesh, draft):
         return SurfaceEventStatus.DUPLICATE_FACE, None, float("nan"), 0.0
-    restored, residual, restored_ok = _restore_volumes(mesh, draft, policy)
+    restored, residual, restored_ok = restore_volumes(mesh, draft, policy)
     if not restored_ok:
         return SurfaceEventStatus.VOLUME_RESTORATION_FAILED, None, float("nan"), residual
-    status = _local_guards(mesh, restored, policy)
+    status = local_guards(mesh, restored, policy)
     if status is not SurfaceEventStatus.ACCEPTED:
         return status, None, float("nan"), residual
-    restoration = _restoration_leg(mesh, draft, restored)
+    restoration = restoration_leg(mesh, draft, restored)
     legs = draft.legs + (() if restoration is None else (restoration,))
-    certified, impact = _certify_legs(mesh, restored, legs, policy)
+    certified, impact = certify_legs(mesh, restored, legs, policy)
     if not certified:
         return SurfaceEventStatus.CCD_NOT_CERTIFIED, None, impact, residual
     return SurfaceEventStatus.ACCEPTED, restored, impact, residual
@@ -322,10 +340,10 @@ class _Ledger:
 
 
 def _record_edit(
-    mesh: _WorkingMesh,
+    mesh: WorkingMesh,
     proposal: SurfaceEventProposal,
     support_ids: Sequence[int],
-    edit: _Edit,
+    edit: Edit,
     impact: float,
     residual: float,
     ledger: _Ledger,
@@ -346,7 +364,7 @@ def _record_edit(
         for slot, parents in edit.survivors
     ]
     base = mesh.vertex_count
-    created_vertices, created_faces, created_slots = _apply_edit(mesh, edit)
+    created_vertices, created_faces, created_slots = apply_edit(mesh, edit)
     ledger.vertex_parents += list(zip(created_vertices, parent_vertex_ids, strict=True))
     ledger.vertex_parents += survivors
     ledger.face_parents += list(zip(created_faces, parent_face_ids, strict=True))
@@ -388,7 +406,7 @@ def _record_edit(
     )
 
 
-def _support_ids(mesh: _WorkingMesh, faces: Sequence[int], /) -> tuple[int, ...]:
+def _support_ids(mesh: WorkingMesh, faces: Sequence[int], /) -> tuple[int, ...]:
     return tuple(
         sorted(
             {
@@ -410,13 +428,15 @@ def _proposal_ids(proposal: SurfaceEventProposal, /) -> tuple[int, ...]:
         case SurfaceEventKind.MERGE | SurfaceEventKind.REGION_SPLIT:
             return ()
         case SurfaceEventKind.BURST:
-            raise RuntimeError("Burst uses the dedicated whole-sheet transaction.")
+            raise RuntimeError(
+                "SurfaceEventProposal.kind must use the dedicated whole-sheet transaction; got BURST"
+            )
         case _:
             assert_never(proposal.kind)
 
 
 def _geometric_phase(
-    mesh: _WorkingMesh,
+    mesh: WorkingMesh,
     proposals: Sequence[SurfaceEventProposal],
     policy: SurfaceEventPolicy,
     ledger: _Ledger,
@@ -444,7 +464,7 @@ def _geometric_phase(
             if proposal.kind is SurfaceEventKind.MERGE
             else (_proposal_ids(proposal))
         )
-        ring = _ring(mesh, vertices, 2)
+        ring = edit_ring(mesh, vertices, 2)
         if ring & claimed:
             status, edit, impact, residual = (
                 SurfaceEventStatus.CONFLICT,
@@ -525,7 +545,7 @@ def _split_region(
 
 
 def _region_phase(
-    mesh: _WorkingMesh,
+    mesh: WorkingMesh,
     requested: Sequence[RegionSplitProposal],
     ledger: _Ledger,
     budget: int,
@@ -557,10 +577,10 @@ def _region_phase(
     compact[vertices] = np.arange(vertices.size)
     faces = compact[mesh.faces[faces_alive]]
     points = mesh.positions[vertices]
-    _, component = _label_components(
+    _, component = label_components(
         points, faces, labels, mesh.region_finite, topology.region_count, mesh.mode
     )
-    volumes, _ = _component_volumes(points, faces, labels, component)
+    volumes, _ = component_volumes(points, faces, labels, component)
     side_labels = labels.reshape(-1)
     side_faces = np.repeat(mesh.face_ids[faces_alive], 2)
     explicit_accepted = 0
@@ -636,7 +656,7 @@ def _sheet_transfer(
     source_points: np.ndarray,
     target: MultiRegionSurfaceTopology,
     target_points: np.ndarray,
-    mesh: _WorkingMesh,
+    mesh: WorkingMesh,
     faces_alive: np.ndarray,
     parents: np.ndarray,
     ledger: _Ledger,
@@ -678,7 +698,7 @@ def _sheet_transfer(
         (source_rows, compact_face[target_rows])
         for source_rows, target_rows in ledger.groups
     ]
-    sources, targets, weights = _pooled_slot_routes(
+    sources, targets, weights = pooled_slot_routes(
         source_slots,
         _areas(source_points, source_faces),
         source_pairs,
@@ -701,7 +721,7 @@ def _face_transfer(
     source: MultiRegionSurfaceTopology,
     target: MultiRegionSurfaceTopology,
     target_points: np.ndarray,
-    mesh: _WorkingMesh,
+    mesh: WorkingMesh,
     faces_alive: np.ndarray,
     parents: np.ndarray,
     ledger: _Ledger,
@@ -727,7 +747,9 @@ def _face_transfer(
         target_rows = compact_face[replacement]
         target_rows = target_rows[target_rows >= 0]
         if target_rows.size == 0:
-            raise RuntimeError("An event group lost every replacement face.")
+            raise RuntimeError(
+                "SurfaceEventPass.replacement_faces must retain at least one face per event group; got an empty group"
+            )
         for pair in np.unique(source_pairs[replaced]):
             members = replaced[source_pairs[replaced] == pair]
             receivers = target_rows[target_pairs[target_rows] == pair]
@@ -736,7 +758,7 @@ def _face_transfer(
             sources.append(np.repeat(members, receivers.size))
             targets.append(np.tile(receivers, members.size))
             weights.append(np.tile(share, members.size))
-    source_routes, target_routes, route_weights = _combined_routes(
+    source_routes, target_routes, route_weights = combined_routes(
         np.concatenate(sources), np.concatenate(targets), np.concatenate(weights)
     )
     return ConservativeFieldTransfer(
@@ -807,14 +829,14 @@ def _velocity_reconstruction(
 def _assemble(
     topology: MultiRegionSurfaceTopology,
     state: MultiRegionSurfaceState,
-    mesh: _WorkingMesh,
+    mesh: WorkingMesh,
     regions: _Regions,
     face_labels: np.ndarray,
     ledger: _Ledger,
     policy: SurfaceEventPolicy,
     /,
 ) -> _Candidate | MultiRegionSurfaceCounts:
-    """Candidate topology, exact validation and transfers (or refused counts)."""
+    """Build candidate topology, exact predicate validation, and transfers, or refused counts."""
     order = _region_order(regions)
     rank = np.empty_like(order)
     rank[order] = np.arange(order.size)
@@ -824,7 +846,7 @@ def _assemble(
     faces_alive = np.flatnonzero(mesh.face_alive[: mesh.face_count])
     faces = compact[mesh.faces[faces_alive]]
     labels = rank[face_labels]
-    incidence = _host_incidence(faces, labels, vertices.size)
+    incidence = host_incidence(faces, labels, vertices.size)
     counts = MultiRegionSurfaceCounts(
         vertex=vertices.size,
         edge=incidence.edges.shape[0],
@@ -904,27 +926,28 @@ def _accepted_flag(transfers: _Transfers, /) -> Array:
 def _epoch(topology: MultiRegionSurfaceTopology, points: np.ndarray, /) -> TopologyEpoch:
     return TopologyEpoch(
         topology.epoch,
-        _geometry_id(topology, points),
+        geometry_id(topology, points),
         topology.topology_id,
         topology.lineage_id,
     )
 
 
+@checked
 def multiregion_topology_epoch(
     topology: MultiRegionSurfaceTopology, positions: ArrayLike, /
 ) -> TopologyEpoch:
     """The topology epoch an event pass certifies for ``topology`` at ``positions``.
 
-    The identity binds the incidence, the stable lineage, and the exact active
+    The identity binds the incidence, the stable lineage, and all active
     vertex positions, so it equals ``SurfaceEventPassEvidence.source_epoch`` of
     a pass applied to this geometry. Consumers use its ``epoch_id`` as the
     structure identity of epoch-owned state that crosses an event pass.
     """
-    if not isinstance(topology, MultiRegionSurfaceTopology):
-        raise TypeError("topology must be a MultiRegionSurfaceTopology.")
     points = np.asarray(positions, dtype=np.float64)
     if points.shape != (topology.vertex_capacity, 3):
-        raise ValueError("positions must have shape (vertex_capacity, 3).")
+        raise ValueError(
+            f"multiregion_topology_epoch.positions must have shape ({topology.vertex_capacity}, 3); got {points.shape}"
+        )
     return _epoch(topology, points[: topology.vertex_count])
 
 
@@ -978,6 +1001,7 @@ def _evidence(
     )
 
 
+@checked
 def apply_surface_events(
     topology: MultiRegionSurfaceTopology,
     state: MultiRegionSurfaceState,
@@ -988,18 +1012,12 @@ def apply_surface_events(
 ) -> SurfaceEventPassResult:
     """Apply one transactional pass of topology events (host boundary).
 
-    Proposals of any kind may be mixed; they are evaluated in canonical order
+    Proposals of any kind may be mixed; they are evaluated in canonical ordering
     independent of the input order. At most ``topology.plan.event_capacity``
     events are accepted per pass. The result holds the committed candidate or
     the unchanged source objects, and evidence for every proposal.
     """
-    if not isinstance(topology, MultiRegionSurfaceTopology):
-        raise TypeError("topology must be a MultiRegionSurfaceTopology.")
-    if not isinstance(state, MultiRegionSurfaceState):
-        raise TypeError("state must be a MultiRegionSurfaceState.")
     policy_ = SurfaceEventPolicy() if policy is None else policy
-    if not isinstance(policy_, SurfaceEventPolicy):
-        raise TypeError("policy must be a SurfaceEventPolicy.")
     state.require_topology(topology)
     admissible = (
         EdgeSplitProposal,
@@ -1013,11 +1031,13 @@ def apply_surface_events(
     if isinstance(proposals, (str, bytes)) or not all(
         isinstance(proposal, admissible) for proposal in proposals
     ):
-        raise TypeError("proposals must be surface event proposals.")
+        raise TypeError(
+            "apply_surface_events.proposals must contain surface event proposals; got an invalid collection or proposal kind"
+        )
     ordered = sorted(proposals, key=_order_key)
     geometric = [p for p in ordered if not isinstance(p, RegionSplitProposal)]
     requested = [p for p in ordered if isinstance(p, RegionSplitProposal)]
-    mesh = _working_mesh(topology, state, policy_)
+    mesh = working_mesh(topology, state, policy_)
     ledger = _Ledger()
     records, accepted = _geometric_phase(mesh, geometric, policy_, ledger)
     region_records, regions, face_labels = _region_phase(
@@ -1108,8 +1128,8 @@ def apply_surface_events(
         region_field_names=state.region_field_names,
     )
     geometry = TransferGeometryBinding(
-        _geometry_id(topology, source_points),
-        _geometry_id(
+        geometry_id(topology, source_points),
+        geometry_id(
             candidate.topology,
             np.asarray(
                 committed_state.positions[: candidate.topology.vertex_count],
@@ -1126,7 +1146,9 @@ def apply_surface_events(
     )
     face_transfer = transfers.face
     if face_transfer is None:
-        raise RuntimeError("A remeshing transaction must prepare a face transfer.")
+        raise RuntimeError(
+            "SurfaceEventPass.face_transfer must be prepared for remeshing; got None"
+        )
     face_transition = face_transfer.epoch_transition(
         source_epoch, target_epoch, field_name="face-content", geometry=geometry
     )
@@ -1353,7 +1375,9 @@ def _burst_sheet_transfer(
             sources.append(flat)
             targets.append(target_flat)
     if not sources:
-        raise ValueError("A burst candidate retained no sheet-slot support.")
+        raise ValueError(
+            "SurfaceBurst.sheet_transfer must retain sheet-slot support; got no source routes"
+        )
     transfer = ConservativeFieldTransfer(
         np.asarray(sources, dtype=np.int64),
         np.asarray(targets, dtype=np.int64),
@@ -1527,11 +1551,11 @@ def _commit_surface_burst(
         target_epoch,
         field_name="surviving-sheet-slot-content",
         geometry=TransferGeometryBinding(
-            _geometry_id(
+            geometry_id(
                 topology,
                 np.asarray(state.positions[: topology.vertex_count], dtype=np.float64),
             ),
-            _geometry_id(
+            geometry_id(
                 candidate_topology,
                 np.asarray(
                     committed_state.positions[: candidate_topology.vertex_count],
@@ -1553,6 +1577,7 @@ def _commit_surface_burst(
     )
 
 
+@checked
 def apply_surface_burst(
     topology: MultiRegionSurfaceTopology,
     state: MultiRegionSurfaceState,
@@ -1563,30 +1588,26 @@ def apply_surface_burst(
     policy: SurfaceEventPolicy | None = None,
     priority: float = 0.0,
 ) -> SurfaceBurstResult:
-    """Delete one complete separating sheet and merge its region labels.
+    """Delete an entire separating sheet and merge its region labels.
 
     The supplied stable face IDs must equal *all* active faces of the declared
     region pair. Surviving sheet and region content transfer conservatively;
     content on vanished sheet slots is returned separately and never hidden in
-    another field. No point moves, so the CCD certificate is the exact unit
-    interval, while the complete candidate still undergoes the policy's full
+    another field. No point moves, so the CCD certificate is the unit
+    interval, while the candidate still undergoes the policy's full
     self-intersection validation.
     """
-    if not isinstance(topology, MultiRegionSurfaceTopology):
-        raise TypeError("topology must be MultiRegionSurfaceTopology.")
-    if not isinstance(state, MultiRegionSurfaceState):
-        raise TypeError("state must be MultiRegionSurfaceState.")
     state.require_topology(topology)
     policy_ = SurfaceEventPolicy() if policy is None else policy
-    if not isinstance(policy_, SurfaceEventPolicy):
-        raise TypeError("policy must be SurfaceEventPolicy or None.")
     if (
         not isinstance(region_ids, tuple)
         or len(region_ids) != 2
         or not all(isinstance(value, str) and value for value in region_ids)
         or region_ids[0] == region_ids[1]
     ):
-        raise ValueError("region_ids must be two distinct stable region identifiers.")
+        raise ValueError(
+            f"apply_surface_burst.region_ids must contain two distinct stable region identifiers; got {region_ids!r}"
+        )
     if any(region_id not in topology.region_ids for region_id in region_ids):
         record = _burst_record(SurfaceEventStatus.SUPPORT_INVALID, (), (), (), priority)
         return _burst_failure(topology, state, policy_, record)

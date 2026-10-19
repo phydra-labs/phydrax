@@ -9,6 +9,7 @@ from math import isfinite
 from typing import Any
 
 import equinox as eqx
+import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
@@ -23,7 +24,7 @@ from ._preconditioner_properties import PreconditionerProperties
 from ._preconditioners import AbstractPreconditioner, PrecisionCastPreconditioner
 from ._preconditioning import AbstractPreconditionerBuilder, PlannedPreconditionerSetup
 from ._properties import LinearCapabilityError, LinearResourceLimitError
-from ._spaces import _coordinate_dtype
+from ._spaces import coordinate_dtype
 from ._sparse_contract import AbstractSparseLinearOperator
 from ._sparse_factorizations import (
     _refresh_workspace_bytes,
@@ -140,7 +141,9 @@ class SparseFactorCongruencePreconditioner(AbstractPreconditioner, NonTrainableS
         preconditioner_id: str,
     ) -> None:
         if not operator.source.compatible(operator.target):
-            raise ValueError("Sparse congruence requires one compatible space.")
+            raise ValueError(
+                f"SparseFactorCongruencePreconditioner.operator must have compatible source and target spaces; got source={operator.source.space_id!r}, target={operator.target.space_id!r}."
+            )
         if not all(
             (
                 properties.linear,
@@ -150,10 +153,12 @@ class SparseFactorCongruencePreconditioner(AbstractPreconditioner, NonTrainableS
             )
         ):
             raise ValueError(
-                "Congruence claims must describe its conditional SPD action."
+                f"SparseFactorCongruencePreconditioner.properties must describe a linear stationary self-adjoint positive-definite action; got linear={properties.linear}, stationary={properties.stationary}, self_adjoint={properties.self_adjoint}, positive_definite={properties.positive_definite}."
             )
         if not preconditioner_id:
-            raise ValueError("preconditioner_id must be non-empty.")
+            raise ValueError(
+                f"SparseFactorCongruencePreconditioner.preconditioner_id must be non-empty; got {preconditioner_id!r}."
+            )
         self.space = operator.source
         self.properties = properties
         self.preconditioner_id = preconditioner_id
@@ -191,7 +196,7 @@ class SparseFactorCongruencePreconditioner(AbstractPreconditioner, NonTrainableS
 def sparse_preconditioner_factorization(
     action: AbstractPreconditioner | None, /
 ) -> PreparedSparseFactorization | None:
-    """Return actual native factor evidence through canonical precision/block holders."""
+    """Return native factor evidence through precision and block holders."""
     from ._block_preconditioning import BlockFactorizationPreconditioner
 
     while isinstance(action, PrecisionCastPreconditioner):
@@ -201,7 +206,7 @@ def sparse_preconditioner_factorization(
         schur = sparse_preconditioner_factorization(action.schur_action)
         if pivot is not None and schur is not None:
             raise ValueError(
-                "A single-factor evidence request cannot omit another native block factor."
+                f"sparse_preconditioner_factorization.action must contain at most one native block factor; got pivot={type(pivot).__name__}, schur={type(schur).__name__}."
             )
         return schur if schur is not None else pivot
     return (
@@ -343,6 +348,7 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
             reason=(
                 "fixed-pattern sparse factorization; "
                 f"factor_nnz={plan.factor_nnz}, factor_bytes={plan.factor_bytes}, "
+                f"factor_storage_bytes_upper={plan.factor_storage_bytes_upper}, "
                 f"symbolic_work={plan.symbolic_work}"
             ),
         )
@@ -357,7 +363,7 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
         /,
         *,
         materialization: MaterializationPolicy,
-    ) -> SparseFactorizationPreconditioner:
+    ) -> SparseFactorizationPreconditioner | SparseFactorCongruencePreconditioner:
         properties = self.properties_for(setup_operator)
         if not isinstance(setup_operator, AbstractSparseLinearOperator):
             raise TypeError("Sparse factorization requires a sparse operator.")
@@ -427,7 +433,11 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
 class SparseFactorizationPreconditionerBuilder(
     _AbstractSparseFactorizationBuilder, NonTrainableState
 ):
-    """Prepare a complete refreshable sparse LU or Cholesky coarse solve."""
+    """Prepare sparse inverse or LU congruence actions from one symbolic plan.
+
+    Planned setup retains the factor payload and admission reservation;
+    numeric binding reuses that construction for the same operator identity.
+    """
 
     factorization_policy: SparseFactorizationPolicy = eqx.field(static=True)
     form: str = eqx.field(static=True)
@@ -435,6 +445,7 @@ class SparseFactorizationPreconditionerBuilder(
     _prepared_operator_id: str | None = eqx.field(static=True)
     _prepared_space_id: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         policy: SparseFactorizationPolicy | None = None,
@@ -445,11 +456,9 @@ class SparseFactorizationPreconditionerBuilder(
         setup_operator: AbstractSparseLinearOperator | None = None,
     ) -> None:
         if form not in ("inverse", "lu-congruence"):
-            raise ValueError("form must be 'inverse' or 'lu-congruence'.")
-        if prepared_plan is not None and not isinstance(
-            prepared_plan, SparseFactorizationPlan
-        ):
-            raise TypeError("prepared_plan must be a native SparseFactorizationPlan.")
+            raise ValueError(
+                f"SparseFactorizationPreconditionerBuilder.form must be 'inverse' or 'lu-congruence'; got {form!r}."
+            )
         policy_ = (
             prepared_plan.policy
             if policy is None and prepared_plan is not None
@@ -457,8 +466,6 @@ class SparseFactorizationPreconditionerBuilder(
             if policy is None
             else policy
         )
-        if not isinstance(policy_, SparseFactorizationPolicy):
-            raise TypeError("policy must be SparseFactorizationPolicy or None.")
         if policy_.fill_level is not None:
             raise ValueError("A complete sparse coarse solve requires fill_level=None.")
         if form == "lu-congruence" and (
@@ -467,19 +474,21 @@ class SparseFactorizationPreconditionerBuilder(
             or policy_.diagonal_shift != 0.0
         ):
             raise ValueError(
-                "LU congruence requires unshifted native LU without pivot replacement."
+                f"SparseFactorizationPreconditionerBuilder.policy must specify unshifted LU without pivot replacement for lu-congruence; got kind={policy_.kind!r}, diagonal_shift={policy_.diagonal_shift!r}, allow_pivot_replacement={policy_.allow_pivot_replacement!r}."
             )
         self.form = form
         if (prepared_plan is None) != (setup_operator is None):
             raise ValueError(
-                "A prepared factor plan requires its exact host setup operator."
+                f"SparseFactorizationPreconditionerBuilder.setup_operator must be supplied together with prepared_plan; got prepared_plan={type(prepared_plan).__name__}, setup_operator={type(setup_operator).__name__}."
             )
         if prepared_plan is not None:
-            if not isinstance(setup_operator, AbstractSparseLinearOperator):
-                raise TypeError("setup_operator must be a native sparse operator.")
+            if setup_operator is None:
+                raise TypeError(
+                    f"SparseFactorizationPreconditionerBuilder.setup_operator must be AbstractSparseLinearOperator; got {type(setup_operator).__name__}."
+                )
             if not eqx.tree_equal(prepared_plan.policy, policy_):
                 raise ValueError(
-                    "The prepared sparse factor plan must preserve its complete policy."
+                    f"SparseFactorizationPreconditionerBuilder.prepared_plan.policy must equal the requested policy; got prepared={prepared_plan.policy!r}, requested={policy_!r}."
                 )
             storage, indices, indptr = _validated_pattern(setup_operator)
             if (
@@ -487,11 +496,11 @@ class SparseFactorizationPreconditionerBuilder(
                 != prepared_plan.input_pattern_id
             ):
                 raise ValueError(
-                    "The prepared factor plan belongs to a different exact CSR pattern."
+                    f"SparseFactorizationPreconditionerBuilder.setup_operator must match the prepared CSR pattern; got pattern_id={_pattern_identifier(storage.shape, indices, indptr)!r}, expected={prepared_plan.input_pattern_id!r}."
                 )
             if not setup_operator.source.compatible(setup_operator.target):
                 raise ValueError(
-                    "The prepared setup must act on one scientific vector space."
+                    f"SparseFactorizationPreconditionerBuilder.setup_operator must have compatible source and target spaces; got source={setup_operator.source.space_id!r}, target={setup_operator.target.space_id!r}."
                 )
             self._prepared_operator_id = setup_operator.operator_id
             self._prepared_space_id = setup_operator.source.space_id
@@ -530,17 +539,20 @@ class SparseFactorizationPreconditionerBuilder(
             or not operator.source.compatible(operator.target)
         ):
             raise ValueError(
-                "Prepared sparse setup changed its scientific operator or vector space."
+                f"SparseFactorizationPreconditionerBuilder.operator must preserve the prepared operator and vector space; got operator_id={operator.operator_id!r}, source={operator.source.space_id!r}, target={operator.target.space_id!r}, expected_operator={self._prepared_operator_id!r}, expected_space={self._prepared_space_id!r}."
             )
         return self.prepared_plan
 
     def _admit_congruence(self, plan: SparseFactorizationPlan, itemsize: int) -> None:
         if self.form != "lu-congruence":
             return
-        required = plan.factor_bytes + plan.lu_congruence_storage_bytes_upper(itemsize)
+        required = (
+            plan.factor_storage_bytes_upper
+            + plan.lu_congruence_storage_bytes_upper(itemsize)
+        )
         if required > plan.policy.max_factor_bytes:
             raise LinearResourceLimitError(
-                f"Sparse LU congruence factor_bytes requires {required}, exceeding limit {plan.policy.max_factor_bytes}.",
+                f"SparseFactorizationPolicy.max_factor_bytes must cover LU congruence storage; got limit={plan.policy.max_factor_bytes}, required={required}.",
                 resource="sparse_factorization:factor_bytes",
                 limit=plan.policy.max_factor_bytes,
                 requested=required,
@@ -557,7 +569,9 @@ class SparseFactorizationPreconditionerBuilder(
         if setup_operator.batch_shape or not setup_operator.source.compatible(
             setup_operator.target
         ):
-            raise ValueError("Sparse congruence requires an unbatched endomorphism.")
+            raise ValueError(
+                f"SparseFactorizationPreconditionerBuilder.setup_operator must be an unbatched endomorphism; got batch_shape={setup_operator.batch_shape}, source={setup_operator.source.space_id!r}, target={setup_operator.target.space_id!r}."
+            )
         return PreconditionerProperties(
             linear=True,
             stationary=True,
@@ -605,9 +619,13 @@ class SparseFactorizationPreconditionerBuilder(
             else SparseFactorizationPreconditioner
         )
         if not isinstance(preconditioner, expected):
-            raise TypeError("Sparse refresh requires the builder's exact action form.")
+            raise TypeError(
+                f"SparseFactorizationPreconditionerBuilder.preconditioner must match the builder action form; got {type(preconditioner).__name__}, expected={expected.__name__}."
+            )
         if not isinstance(setup_operator, AbstractSparseLinearOperator):
-            raise TypeError("Sparse factorization requires a sparse operator.")
+            raise TypeError(
+                f"SparseFactorizationPreconditionerBuilder.setup_operator must be AbstractSparseLinearOperator; got {type(setup_operator).__name__}."
+            )
         self._admit_congruence(
             preconditioner.factorization.plan,
             setup_operator.sparse_storage().values.dtype.itemsize,
@@ -621,64 +639,6 @@ class SparseFactorizationPreconditionerBuilder(
             preconditioner.preconditioner_id,
         )
 
-    def cost_for(
-        self,
-        setup_operator: AbstractLinearOperator,
-        /,
-        *,
-        materialization: MaterializationPolicy | None = None,
-    ) -> PreconditionerCostEstimate:
-        if not isinstance(setup_operator, AbstractSparseLinearOperator):
-            return super().cost_for(setup_operator, materialization=materialization)
-        if self.form == "inverse" and self.prepared_plan is None:
-            return super().cost_for(setup_operator, materialization=materialization)
-        self.properties_for(setup_operator)
-        try:
-            plan = self._resolved_plan(setup_operator)
-            self._admit_congruence(
-                plan, setup_operator.sparse_storage().values.dtype.itemsize
-            )
-        except LinearCapabilityError as error:
-            return PreconditionerCostEstimate(
-                component=self.builder_id, accepted=False, reason=str(error)
-            )
-        coefficient_dtype = setup_operator.sparse_storage().values.dtype
-        itemsize = (
-            coefficient_dtype.itemsize
-            if self.form == "lu-congruence"
-            else _coordinate_dtype(setup_operator.source).itemsize
-        )
-        congruence = self.form == "lu-congruence"
-        extra_storage = (
-            plan.lu_congruence_storage_bytes_upper(itemsize) if congruence else 0
-        )
-        extra_workspace = (
-            plan.lu_congruence_refresh_workspace_bytes_upper(itemsize)
-            if congruence
-            else 0
-        )
-        return PreconditionerCostEstimate(
-            component=self.builder_id,
-            storage_bytes=plan.factor_bytes + extra_storage,
-            preparation_workspace_bytes=plan.factor_nnz * itemsize
-            + _refresh_workspace_bytes(plan, itemsize)
-            + extra_workspace,
-            apply_workspace_bytes_per_rhs=(
-                plan.lu_congruence_apply_workspace_bytes_upper(
-                    max(itemsize, _coordinate_dtype(setup_operator.source).itemsize)
-                )
-                if congruence
-                else 4 * plan.shape[0] * itemsize
-            ),
-            accepted=True,
-            reason=(
-                f"native {self.form}; factor_nnz={plan.factor_nnz}, factor_bytes={plan.factor_bytes}, symbolic_work={plan.symbolic_work}; "
-                f"numeric_preparation_work_units={plan.numeric_substitution_preparation_work_units_upper}; "
-                f"extra_preparation_work_units={plan.lu_congruence_preparation_work_units_upper if congruence else 0}; "
-                f"apply_work_units={plan.lu_congruence_solve_work_units_upper_for(coefficient_dtype, _coordinate_dtype(setup_operator.source)) if congruence else plan.solve_work_units_upper_for(coefficient_dtype, _coordinate_dtype(setup_operator.source))}"
-            ),
-        )
-
     def plan_setup(
         self,
         setup_operator: AbstractLinearOperator,
@@ -686,10 +646,64 @@ class SparseFactorizationPreconditionerBuilder(
         *,
         materialization: MaterializationPolicy | None = None,
     ) -> PlannedPreconditionerSetup:
-        # Numerical symbolic leaves stay on this nontrainable builder, never
-        # inside PlannedPreconditionerSetup's opaque static construction.
+        if not isinstance(setup_operator, AbstractSparseLinearOperator):
+            return super().plan_setup(setup_operator, materialization=materialization)
+        if self.form == "inverse" and self.prepared_plan is None:
+            return super().plan_setup(setup_operator, materialization=materialization)
+        self.properties_for(setup_operator)
+        try:
+            plan = self._resolved_plan(setup_operator)
+            self._admit_congruence(
+                plan, setup_operator.sparse_storage().values.dtype.itemsize
+            )
+        except LinearCapabilityError as error:
+            return PlannedPreconditionerSetup(
+                PreconditionerCostEstimate(
+                    component=self.builder_id, accepted=False, reason=str(error)
+                )
+            )
+        coefficient_dtype = setup_operator.sparse_storage().values.dtype
+        itemsize = (
+            coefficient_dtype.itemsize
+            if self.form == "lu-congruence"
+            else coordinate_dtype(setup_operator.source).itemsize
+        )
+        congruence = self.form == "lu-congruence"
+        extra_storage = (
+            plan.numeric_cache_storage_bytes_for(coefficient_dtype)
+            + plan.lu_congruence_storage_bytes_for(coefficient_dtype)
+            if congruence
+            else 0
+        )
+        extra_workspace = (
+            plan.lu_congruence_refresh_workspace_bytes_upper(itemsize)
+            if congruence
+            else 0
+        )
+        cost = PreconditionerCostEstimate(
+            component=self.builder_id,
+            storage_bytes=plan.factor_bytes + extra_storage,
+            preparation_workspace_bytes=plan.factor_nnz * itemsize
+            + _refresh_workspace_bytes(plan, itemsize)
+            + extra_workspace,
+            apply_workspace_bytes_per_rhs=(
+                plan.lu_congruence_apply_workspace_bytes_upper(
+                    max(itemsize, coordinate_dtype(setup_operator.source).itemsize)
+                )
+                if congruence
+                else 4 * plan.shape[0] * itemsize
+            ),
+            accepted=True,
+            reason=(
+                f"native {self.form}; factor_nnz={plan.factor_nnz}, factor_bytes={plan.factor_bytes}, "
+                f"factor_storage_bytes_upper={plan.factor_storage_bytes_upper}, symbolic_work={plan.symbolic_work}; "
+                f"numeric_preparation_work_units={plan.numeric_substitution_preparation_work_units_upper}; "
+                f"extra_preparation_work_units={plan.lu_congruence_preparation_work_units_upper if congruence else 0}; "
+                f"apply_work_units={plan.lu_congruence_solve_work_units_upper_for(coefficient_dtype, coordinate_dtype(setup_operator.source)) if congruence else plan.solve_work_units_upper_for(coefficient_dtype, coordinate_dtype(setup_operator.source))}"
+            ),
+        )
         return PlannedPreconditionerSetup(
-            self.cost_for(setup_operator, materialization=materialization)
+            cost, construction=plan, content_id=setup_operator.operator_id
         )
 
     def prepare_planned(
@@ -704,9 +718,32 @@ class SparseFactorizationPreconditionerBuilder(
             raise LinearCapabilityError(planned.cost.reason)
         if planned.cost.component != self.builder_id:
             raise ValueError(
-                "Planned sparse factor setup belongs to a different native builder."
+                f"SparseFactorizationPreconditionerBuilder.planned.cost.component must match the builder; got {planned.cost.component!r}, expected={self.builder_id!r}."
             )
-        return self.prepare(setup_operator, materialization=materialization)
+        properties = self.properties_for(setup_operator)
+        if not isinstance(setup_operator, AbstractSparseLinearOperator):
+            raise TypeError(
+                f"SparseFactorizationPreconditionerBuilder.setup_operator must be AbstractSparseLinearOperator; got {type(setup_operator).__name__}."
+            )
+        plan = planned.construction_for(setup_operator.operator_id)
+        if plan is None:
+            return self.prepare(setup_operator, materialization=materialization)
+        if not isinstance(plan, SparseFactorizationPlan):
+            raise ValueError(
+                f"SparseFactorizationPreconditionerBuilder.planned.construction must be SparseFactorizationPlan; got {type(plan).__name__}."
+            )
+        if self.prepared_plan is not None:
+            self._resolved_plan(setup_operator)
+        # Reserve the planned dtype before allocation; refresh owns refusal of
+        # a changed numeric dtype rather than charging it as a new construction.
+        self._admit_congruence(plan, np.dtype(plan.value_dtype).itemsize)
+        factorization = refresh_sparse_factorization(plan, setup_operator)
+        return self._action(
+            setup_operator,
+            factorization,
+            properties,
+            f"{self.builder_id}/{plan.plan_id}",
+        )
 
     def prepare(
         self,
@@ -717,7 +754,9 @@ class SparseFactorizationPreconditionerBuilder(
     ) -> SparseFactorizationPreconditioner | SparseFactorCongruencePreconditioner:
         del materialization
         if not isinstance(setup_operator, AbstractSparseLinearOperator):
-            raise TypeError("Sparse factorization requires a sparse operator.")
+            raise TypeError(
+                f"SparseFactorizationPreconditionerBuilder.setup_operator must be AbstractSparseLinearOperator; got {type(setup_operator).__name__}."
+            )
         properties = self.properties_for(setup_operator)
         plan = self._resolved_plan(setup_operator)
         self._admit_congruence(

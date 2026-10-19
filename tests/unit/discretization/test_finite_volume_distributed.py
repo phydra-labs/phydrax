@@ -14,12 +14,38 @@ import pytest
 import phydrax as phx
 from phydrax._execution_resources import ExecutionGroupSpec
 from phydrax._execution_runtime import ExecutionGroup
-from phydrax.discretization._cell_mesh import CellBlock, CellMesh, CellMeshStorage
+from phydrax.discretization._cell_mesh import CellMesh, CellMeshStorage
 from phydrax.discretization._distributed_field import DistributedHaloPlan
-from phydrax.discretization.finite_volume._unstructured_dynamics import (
+from phydrax.discretization._reference_cell_types import CellBlock
+from phydrax.discretization.finite_volume import (
     execute_owner_local_finite_volume_advance,
     PreparedUnstructuredFiniteVolumeDynamics,
 )
+from tests._support import cell_meshes
+
+
+# Empirical `test_owner_local_fv_flux_advance_conserves_mass`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_OWNED_FV_UPDATE_RTOL = 1e-12
+# Empirical `test_owner_local_fv_flux_advance_conserves_mass`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_OWNED_FV_UPDATE_ATOL = 1e-12
+# Empirical `test_owner_local_fv_flux_advance_conserves_mass`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_OWNED_FV_CONTENT_RTOL = 1e-12
+# Empirical `test_owner_local_fv_flux_advance_conserves_mass`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_OWNED_FV_CONTENT_ATOL = 1e-12
+# Empirical `test_two_device_owner_local_fv_updates_only_owned_cells_and_conserves_mass`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_TWO_DEVICE_FV_UPDATE_RTOL = 1e-12
+# Empirical `test_two_device_owner_local_fv_updates_only_owned_cells_and_conserves_mass`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_TWO_DEVICE_FV_UPDATE_ATOL = 1e-12
+# Empirical `test_two_device_owner_local_fv_updates_only_owned_cells_and_conserves_mass`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_TWO_DEVICE_FV_CONTENT_ATOL = 1e-12
+# Empirical `test_owner_local_fv_executor_respects_reversed_placement_and_owned_inventory`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_REVERSED_FV_UPDATE_RTOL = 1e-12
+# Empirical `test_owner_local_fv_executor_respects_reversed_placement_and_owned_inventory`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_REVERSED_FV_UPDATE_ATOL = 1e-12
+# Empirical `test_owner_local_fv_executor_respects_reversed_placement_and_owned_inventory`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_REVERSED_FV_INVENTORY_ATOL = 1e-12
+# Empirical `test_owner_local_fv_uses_original_curved_coordinate_bank_by_default`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_CURVED_FV_CELL_VOLUME_ATOL = 1.0e-13
 
 
 def _compiled(cells: Any = 16) -> Any:
@@ -173,9 +199,7 @@ def _owner_local_fv(part_count: int, part: int) -> tuple[Any, Any, Any]:
         valid = np.asarray(((part == 0,) * 2, (part == 1,) * 2), dtype=np.bool_)
         permutations = (((0, 1),), ((1, 0),))
     receive_valid = valid if part_count == 1 else ~valid
-    halo = DistributedHaloPlan(
-        None,
-        None,
+    halo = DistributedHaloPlan.from_owner_local(
         part_count,
         local_global_ids=geometry.cell_global_ids,
         local_owned=geometry.cell_owned,
@@ -213,13 +237,15 @@ def test_owner_local_fv_flux_advance_conserves_mass() -> None:
     )
     updated = advance(state[None, ...])[0]
     expected = state + 0.01 * dynamics(jnp.asarray(0.0), state)
-    np.testing.assert_allclose(updated, expected, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        updated, expected, rtol=_OWNED_FV_UPDATE_RTOL, atol=_OWNED_FV_UPDATE_ATOL
+    )
     assert float(updated[0, 0]) > float(state[0, 0])
     np.testing.assert_allclose(
         jnp.sum(geometry.cell_volumes * updated[:, 0]),
         jnp.sum(geometry.cell_volumes * state[:, 0]),
-        rtol=1e-12,
-        atol=1e-12,
+        rtol=_OWNED_FV_CONTENT_RTOL,
+        atol=_OWNED_FV_CONTENT_ATOL,
     )
 
 
@@ -227,7 +253,9 @@ def test_owner_local_fv_rejects_missing_or_incomplete_closure() -> None:
     dynamics, _, _ = _owner_local_fv(2, 0)
     geometry = dynamics.discretization
     plan = phx.discretization.UnstructuredFiniteVolumePlan
-    with pytest.raises(ValueError, match="closure evidence"):
+    with pytest.raises(
+        ValueError, match=r"UnstructuredFiniteVolumePlan\.closure_evidence_id"
+    ):
         plan.from_cell_mesh(geometry.mesh)
     with pytest.raises(ValueError, match="incomplete"):
         plan.from_cell_mesh(
@@ -265,7 +293,7 @@ def test_two_device_owner_local_fv_updates_only_owned_cells_and_conserves_mass()
             halo,
         )
 
-    # Only local execution leaves enter the device map. Canonical logical
+    # Only local execution leaves enter the device map. Logical
     # checkpoint arrays remain outside map arguments and are never replicated.
     prototype = execution_data(left, left_halo)
     static = eqx.filter(prototype, lambda value: not eqx.is_array(value))
@@ -307,12 +335,16 @@ def test_two_device_owner_local_fv_updates_only_owned_cells_and_conserves_mass()
     )
     owned = updated[0].at[1::2].set(updated[1, 1::2])
     expected = state + 0.01 * serial(jnp.asarray(0.0), state)
-    np.testing.assert_allclose(owned, expected, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        owned, expected, rtol=_TWO_DEVICE_FV_UPDATE_RTOL, atol=_TWO_DEVICE_FV_UPDATE_ATOL
+    )
     np.testing.assert_array_equal(updated[0, 1::2], seeds[0, 1::2])
     np.testing.assert_array_equal(updated[1, ::2], seeds[1, ::2])
     volumes = serial.discretization.cell_volumes
     np.testing.assert_allclose(
-        jnp.sum(volumes * owned[:, 0]), jnp.sum(volumes * state[:, 0]), atol=1e-12
+        jnp.sum(volumes * owned[:, 0]),
+        jnp.sum(volumes * state[:, 0]),
+        atol=_TWO_DEVICE_FV_CONTENT_ATOL,
     )
 
 
@@ -344,9 +376,15 @@ def test_owner_local_fv_executor_respects_reversed_placement_and_owned_inventory
     serial, _, _ = _owner_local_fv(1, 0)
     expected = state + 0.01 * serial(jnp.asarray(0.0), state)
     owned = result.state[0].at[1::2].set(result.state[1, 1::2])
-    np.testing.assert_allclose(owned, expected, rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(result.inventory_before[0], 1.5, atol=1e-12)
-    np.testing.assert_allclose(result.inventory_after[0], 1.5, atol=1e-12)
+    np.testing.assert_allclose(
+        owned, expected, rtol=_REVERSED_FV_UPDATE_RTOL, atol=_REVERSED_FV_UPDATE_ATOL
+    )
+    np.testing.assert_allclose(
+        result.inventory_before[0], 1.5, atol=_REVERSED_FV_INVENTORY_ATOL
+    )
+    np.testing.assert_allclose(
+        result.inventory_after[0], 1.5, atol=_REVERSED_FV_INVENTORY_ATOL
+    )
     assert bool(result.finite)
     assert result.admissibility_checked and bool(result.admissible)
     np.testing.assert_array_equal(result.state[0, 1::2], seeds[0, 1::2])
@@ -358,7 +396,6 @@ def test_owner_local_fv_uses_original_curved_coordinate_bank_by_default() -> Non
         CellGeometrySpec,
         coordinate_lagrange_element,
     )
-    from tests.unit.discretization.test_cell_geometry_storage import _storage
 
     coordinate_element = coordinate_lagrange_element("triangle", 2)
     coefficients = np.asarray(coordinate_element.reference_nodes, dtype=np.float64).copy()
@@ -383,7 +420,7 @@ def test_owner_local_fv_uses_original_curved_coordinate_bank_by_default() -> Non
         },
         coefficients,
     )
-    storage = _storage(root, source_geometry)
+    storage = cell_meshes.storage(root, source_geometry)
     local_mesh = CellMesh(root.coordinates, root.blocks, storage=storage)
     geometry = phx.discretization.UnstructuredFiniteVolumePlan.from_cell_mesh(
         local_mesh,
@@ -391,6 +428,8 @@ def test_owner_local_fv_uses_original_curved_coordinate_bank_by_default() -> Non
         physical_boundary_faces=np.ones((3,), dtype=np.bool_),
         closure_evidence_id=storage.evidence_id,
     ).prepare()
-    # det(Dx) = 1 + reference_x/8. The actual coordinate bank gives 25/48;
+    # det(Dx) = 1 + reference_x/8. The coordinate bank gives 25/48;
     # using its unchanged sampled corners would incorrectly give 1/2.
-    np.testing.assert_allclose(geometry.cell_volumes, [25.0 / 48.0], atol=1.0e-13)
+    np.testing.assert_allclose(
+        geometry.cell_volumes, [25.0 / 48.0], atol=_CURVED_FV_CELL_VOLUME_ATOL
+    )

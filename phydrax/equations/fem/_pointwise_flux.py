@@ -590,7 +590,7 @@ def certify_finite_element_flux_stability(
     )
     energy, moments = _side_cell_energy(
         problem,
-        discretization._field_index(field_name),
+        discretization.field_index(field_name),
         gradient,
         evaluator.actions,
     )

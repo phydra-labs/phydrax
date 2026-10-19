@@ -20,7 +20,7 @@ from ._operators import (
     BlockLinearOperator,
     FunctionLinearOperator,
 )
-from ._spaces import _coordinate_dtype, ArraySpace, BlockSpace
+from ._spaces import ArraySpace, BlockSpace, coordinate_dtype
 
 
 if TYPE_CHECKING:
@@ -35,7 +35,7 @@ def _augmented_exponential_operator(
 ) -> BlockLinearOperator:
     """Use J e1 = e2 so the kth column contributes t^k phi_k(tA)."""
     count = len(coefficients)
-    auxiliary = ArraySpace((count,), dtype=_coordinate_dtype(operator.source))
+    auxiliary = ArraySpace((count,), dtype=coordinate_dtype(operator.source))
     space = BlockSpace((operator.source, auxiliary), names=("physical", "phi-chain"))
 
     def coupling(coordinates: Array) -> PyTree[Array]:
@@ -140,7 +140,7 @@ def matrix_exponential_phi_combination_action(
     else:
         augmented_operator = _augmented_exponential_operator(operator_, validated[1:])
         first_auxiliary = (
-            jnp.zeros((len(validated) - 1,), dtype=_coordinate_dtype(operator_.source))
+            jnp.zeros((len(validated) - 1,), dtype=coordinate_dtype(operator_.source))
             .at[0]
             .set(1)
         )

@@ -15,7 +15,7 @@ with \(g(x,y)=x^2+y^2\). The exact solution is \(u^\star(x,y)=x^2+y^2\).
 
 ## Domain and components
 
-- Domain: `GeometryDomain(Square(...).compile())` (label `"x"` with \(d=2\)).
+- Domain: `GeometryDomain(Square(...).compile(coordinate_unit=METER))` (label `"x"` with \(d=2\)).
 - Interior component: `geom.component()` (default).
 - Boundary component: `geom.component({"x": Boundary()})`.
 
@@ -26,9 +26,10 @@ with \(g(x,y)=x^2+y^2\). The exact solution is \(u^\star(x,y)=x^2+y^2\).
     import jax.random as jr
     import optax
     import phydrax as phx
+    from phydrax.units import METER
 
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
 
@@ -105,9 +106,10 @@ into an exact ansatz with `phx.enforcement`.
     import jax.random as jr
     import optax
     import phydrax as phx
+    from phydrax.units import METER
 
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
 
@@ -170,11 +172,12 @@ tuple plus its interior mask.
     ```python
     import jax.random as jr
     import phydrax as phx
+    from phydrax.units import METER
 
     # Basis/FD backends require the field to support structured inputs (a tuple of 1D axes).
     # Use a structured model like SeparableMLP/FNO/DeepONet for grid-native evaluation.
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     model = phx.nn.models.SeparableMLP(
         in_size=2,

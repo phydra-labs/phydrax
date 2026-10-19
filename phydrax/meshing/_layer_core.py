@@ -6,7 +6,7 @@
 
 The PLC describes the *entire* remaining core, including holes and material
 interfaces. Its vertices meet layers only through the supplied integer identity
-map. Coordinates never establish identity. Original cap polygons are matched
+map. Coordinates never establish identity. Source cap polygons are matched
 with their orientation, and native recovery must preserve every fixed polygon.
 The returned domain includes the layer exterior and every material interface;
 publication still requires the independent combined-domain certificate.
@@ -14,275 +14,83 @@ publication still requires the independent combined-domain certificate.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from contextlib import ExitStack
+from typing import final
 
 import numpy as np
 from jax.typing import ArrayLike
 
+import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.geometry._domain_coverage as domain_coverage_owner
+import phydrax.meshing._association_state as association_state_owner
+import phydrax.meshing._boundary_layer as _dependency_phydrax_meshing__boundary_layer
+import phydrax.meshing._canonical as _dependency_phydrax_meshing__canonical
+import phydrax.meshing._contracts as _dependency_phydrax_meshing__contracts
+import phydrax.meshing._controls as _dependency_phydrax_meshing__controls
+import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
+import phydrax.meshing._host_banks as _dependency_phydrax_meshing__host_banks
+import phydrax.meshing._layer_core_association as _owner_phydrax_meshing__layer_core_association
+import phydrax.meshing._layer_core_controls as _dependency_phydrax_meshing__layer_core_controls
+import phydrax.meshing._layer_core_periodic as _dependency_phydrax_meshing__layer_core_periodic
+import phydrax.meshing._layer_core_publication as layer_publication
+import phydrax.meshing._layer_core_regions as _dependency_phydrax_meshing__layer_core_regions
+import phydrax.meshing._layer_core_resources as _dependency_phydrax_meshing__layer_core_resources
+import phydrax.meshing._layer_core_topology as layer_topology
+import phydrax.meshing._layer_source_certification as _owner_phydrax_meshing__layer_source_certification
+import phydrax.meshing._lineage_records as _dependency_phydrax_meshing__lineage
+import phydrax.meshing._organization_records as _dependency_phydrax_meshing__organization
+import phydrax.meshing._plc_source as plc_source_owner
+import phydrax.meshing._result as _dependency_phydrax_meshing__result
+import phydrax.meshing._sizing as _dependency_phydrax_meshing__sizing
+import phydrax.meshing._trace as _dependency_phydrax_meshing__trace
+import phydrax.meshing._volume_generation as _dependency_phydrax_meshing__volume_generation
+import phydrax.meshing.providers._native_publication as _owner_phydrax_meshing_providers__native_publication
+import phydrax.meshing.providers._native_route_checks as route_checks
+import phydrax.meshing.providers._native_sources as _dependency_phydrax_meshing_providers__native_sources
+import phydrax.meshing.providers._native_volume as _owner_phydrax_meshing_providers__native_volume
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._meshcore import NativeExecutionScope, NativeHostStorageWorkspace
 from .._physical import SpatialCoordinateContract
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ..discretization import CellBlock, CellMesh, reference_cell_topology
-from ..discretization._cell_geometry_validity import CellValidityPolicy
-from ..geometry._mapped_reference_domain import MappedReferenceDomain
-from ..geometry._mesh_certificates import PiecewiseLinearDomain
-from ._association import (
-    GeometryAssociation,
-    GeometryAssociationKind,
-    GeometrySourceEntityRole,
-)
-from ._boundary_layer import BoundaryLayerMesh
-from ._canonical import _entity_vertex_keys, canonicalize_cell_mesh
-from ._contracts import (
-    MeshingDerivativeMode,
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingProviderInfo,
-    VolumeMeshingSpec,
-)
-from ._controls import BoundaryLayerControl
-from ._layer_core_controls import compose_layer_controls
-from ._layer_core_periodic import (
-    bind_core_periodic,
-    core_periodic_constraint_evidence,
-    prepare_core_periodic,
-)
-from ._layer_core_regions import prepare_layer_region_identity
-from ._layer_core_resources import (
-    _row_entity_vertex_keys,
-    LayerCoreSourceWork,
-    reserve_layer_storage,
-)
-from ._lineage import EntityLineageKind, MeshLineage
+from ..typing import checked
+from ._compliance_failure import compliance_failure
 from ._measurements import measure_phase, NativeMeshingPhaseRecorder
-from ._organization import (
-    MeshAttribute,
-    MeshAttributeRole,
-    MeshLabel,
-    MeshPatch,
-    MeshZone,
-    MeshZoneRole,
-)
-from ._result import CellMeshingResult, MeshingComplianceReport
-from ._scope import MeshingEntityKind, MeshingScope
-from ._sizing import SizeControlStrength, UniformSizeControl
-from ._trace import MeshingStageKind, MeshingStageReport, MeshingStageStatus
-from ._volume_generation import (
-    _entity,
-    _native_live_preparation_is_active,
-    generate_plc_volume,
-    NativeVolumeSchedule,
-    PiecewiseLinearComplex,
-    VolumeConstruction,
-)
-from .providers._native_sources import NativeLayerCoreSource
-
-
-if TYPE_CHECKING:
-    from .providers._native_layer import PreparedLayerCore
-
-
-def _cycle(row: tuple[int, ...], /) -> tuple[int, ...]:
-    offset = row.index(min(row))
-    return row[offset:] + row[:offset]
-
-
-def _bitwise_equal_points(left: np.ndarray, right: np.ndarray, /) -> bool:
-    return left.shape == right.shape and np.array_equal(
-        left.view(np.uint64), right.view(np.uint64)
-    )
-
-
-def _triangles(row: tuple[int, ...], /) -> tuple[tuple[int, int, int], ...]:
-    if len(row) == 3:
-        return ((row[0], row[1], row[2]),)
-    if len(row) != 4:
-        raise ValueError(
-            "Layer/core composition supports triangular or quadrilateral faces."
-        )
-    a, b, c, d = _cycle(row)
-    return ((a, b, c), (a, c, d))
-
-
-def _integer_array(value: ArrayLike, shape: tuple[int, ...], name: str, /) -> np.ndarray:
-    array = np.asarray(value)
-    if array.shape != shape or not np.issubdtype(array.dtype, np.integer):
-        raise TypeError(f"{name} must be an integer array of shape {shape}.")
-    return array.astype(np.int64, copy=False)
-
-
-def _failure(message: str, /) -> MeshingFailure:
-    return MeshingFailure(
-        MeshingFailureCategory.COMPLIANCE_FAILED,
-        message,
-        stage=MeshingStageKind.VOLUME_FILL.value,
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class _Face:
-    vertices: tuple[int, ...]
-    cell: int
-    region: int
-
-
-def _faces(
-    mesh: CellMesh,
-    regions: np.ndarray,
-    /,
-    *,
-    work: LayerCoreSourceWork | None = None,
-) -> dict[tuple[int, ...], list[_Face]]:
-    """Reference-oriented faces in global-cell-ID order, with exact ownership."""
-    identifiers = np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64))
-    table: dict[tuple[int, ...], list[_Face]] = {}
-    for block in mesh.blocks:
-        topology = reference_cell_topology(block.cell_kind)
-        rows = np.asarray(block.vertices, dtype=np.int64)
-        cell_ids = np.asarray(block.global_ids, dtype=np.int64)
-        for row_index in range(block.cell_count):
-            identifier = cell_ids[row_index]
-            index = int(np.searchsorted(identifiers, identifier))
-            for local in topology.entities[2]:
-                if work is not None:
-                    work.charge(1)
-                vertices = tuple(int(rows[row_index, vertex]) for vertex in local)
-                key = tuple(sorted(vertices))
-                table.setdefault(key, []).append(
-                    _Face(vertices, index, int(regions[index]))
-                )
-    for incidents in table.values():
-        if len(incidents) > 2:
-            raise _failure("Layer/core faces have more than two incident cells.")
-        if len(incidents) == 2 and _cycle(incidents[0].vertices) != _cycle(
-            tuple(reversed(incidents[1].vertices))
-        ):
-            raise _failure("Layer/core shared faces have inconsistent orientation.")
-    return table
-
-
-@dataclass(frozen=True, slots=True)
-class LayerCoreConstruction:
-    """Combined mesh and complete coverage inputs for native result publication."""
-
-    mesh: CellMesh
-    domain: PiecewiseLinearDomain | MappedReferenceDomain
-    cell_regions: np.ndarray
-    zones: tuple[MeshZone, ...]
-    patches: tuple[MeshPatch, ...]
-    labels: tuple[MeshLabel, ...]
-    attributes: tuple[MeshAttribute, ...]
-    associations: tuple[GeometryAssociation, ...]
-    stages: tuple[MeshingStageReport, ...]
-    core: VolumeConstruction
-    construction_id: str
-    work_units: int
-
-
-def _prepare_identity(
-    layers: BoundaryLayerMesh,
-    complex_: PiecewiseLinearComplex,
-    vertex_layer_ids: ArrayLike,
-    cap_polygon_ids: ArrayLike,
-    /,
-    *,
-    work: LayerCoreSourceWork | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    if complex_.boundary != "fixed":
-        raise ValueError("A layer core requires the immutable PLC boundary policy.")
-    layer_points = np.asarray(layers.mesh.coordinates, dtype=np.float64)
-    mapping = _integer_array(
-        vertex_layer_ids, (complex_.vertices.shape[0],), "vertex_layer_ids"
-    )
-    if work is not None:
-        work.charge(mapping.size)
-    if np.any(mapping < -1) or np.any(mapping >= layer_points.shape[0]):
-        raise ValueError("vertex_layer_ids index absent layer vertices.")
-    shared = mapping >= 0
-    if np.unique(mapping[shared]).size != np.count_nonzero(shared):
-        raise ValueError("Distinct PLC vertices cannot identify one layer vertex.")
-    if work is not None:
-        work.charge(int(np.count_nonzero(shared)))
-    if not _bitwise_equal_points(
-        complex_.vertices[shared], layer_points[mapping[shared]]
-    ):
-        raise ValueError(
-            "Authoritatively shared cap/rim coordinates must be bitwise identical."
-        )
-    if layers.cap is None:
-        cap_rows = np.empty((0, 3), dtype=np.int64)
-    else:
-        if any(block.cell_kind != "triangle" for block in layers.cap.blocks):
-            raise ValueError(
-                "A tetrahedral core needs a triangular cap; enable transition pyramids."
-            )
-        cap_rows = np.asarray(layers.cap_vertices, dtype=np.int64)[
-            np.concatenate(
-                [
-                    np.asarray(block.vertices, dtype=np.int64)
-                    for block in layers.cap.blocks
-                ]
-            )
-        ]
-    cap_ids = _integer_array(cap_polygon_ids, (cap_rows.shape[0],), "cap_polygon_ids")
-    polygon_count = complex_.polygon_facets.shape[0]
-    if (
-        np.any(cap_ids < 0)
-        or np.any(cap_ids >= polygon_count)
-        or np.unique(cap_ids).size != cap_ids.size
-    ):
-        raise ValueError("cap_polygon_ids must select each cap polygon exactly once.")
-    lengths = np.diff(complex_.polygon_offsets)
-    if np.any(lengths != 3):
-        raise ValueError("Fixed layer-core PLC polygons must all be triangles.")
-    polygons = complex_.polygon_vertices.reshape(-1, 3)
-    for cap_row, polygon in zip(cap_rows, polygons[cap_ids], strict=True):
-        if work is not None:
-            work.charge(1)
-        mapped = mapping[polygon]
-        if np.any(mapped < 0) or _cycle(tuple(mapped.tolist())) != _cycle(
-            tuple(cap_row.tolist())
-        ):
-            raise ValueError(
-                "Each cap polygon must match exact layer vertex IDs and orientation."
-            )
-    cap_incidence = complex_.facet_regions[complex_.polygon_facets[cap_ids]]
-    if np.any(cap_incidence[:, 0] < 0) or np.any(cap_incidence[:, 1] != -1):
-        raise ValueError(
-            "The oriented cap must have core on its positive side and void on its negative side."
-        )
-    combined_map = mapping.copy()
-    combined_map[~shared] = layer_points.shape[0] + np.arange(np.count_nonzero(~shared))
-    return (
-        combined_map,
-        cap_ids,
-        polygons,
-        np.concatenate((layer_points, complex_.vertices[~shared])),
-    )
+from ._native_preparation import native_preparation_ledger
+from ._scope import mesh_entity_scope, MeshingEntityKind
 
 
 def _require_fixed(
-    complex_: PiecewiseLinearComplex,
-    core: VolumeConstruction,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    core: _dependency_phydrax_meshing__volume_generation.VolumeConstruction,
     polygons: np.ndarray,
     /,
     *,
-    work: LayerCoreSourceWork,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
 ) -> None:
     work.charge(complex_.vertices.shape[0])
     points = np.asarray(core.mesh.coordinates, dtype=np.float64)
-    if not _bitwise_equal_points(points[: complex_.vertices.shape[0]], complex_.vertices):
-        raise _failure(
-            "Native core recovery moved, renumbered, or dropped fixed vertices."
+    if not layer_topology.bitwise_equal_points(
+        points[: complex_.vertices.shape[0]], complex_.vertices
+    ):
+        raise compliance_failure(
+            "generate_layer_core.complex_ must retain fixed PLC vertices, facets, orientation, and region incidence; got native core recovery moved, renumbered, or dropped fixed vertices",
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.VOLUME_FILL.value,
         )
-    table = _faces(core.mesh, core.cell_regions, work=work)
+    table = layer_topology.faces(core.mesh, core.cell_regions, work=work)
     constrained = {tuple(sorted(row.tolist())) for row in polygons}
     for polygon, facet in zip(polygons, complex_.polygon_facets, strict=True):
         work.charge(1)
         incidents = table.get(tuple(sorted(polygon.tolist())), [])
         expected = complex_.facet_regions[facet]
         if len(incidents) != np.count_nonzero(expected >= 0):
-            raise _failure("Native core recovery split or dropped a fixed facet.")
+            raise compliance_failure(
+                "generate_layer_core.complex_ must retain fixed PLC vertices, facets, orientation, and region incidence; got native core recovery split or dropped a fixed facet",
+                stage=_dependency_phydrax_meshing__trace.MeshingStageKind.VOLUME_FILL.value,
+            )
         for side, region in enumerate(expected):
             if region < 0:
                 continue
@@ -290,122 +98,64 @@ def _require_fixed(
                 tuple(polygon.tolist()) if side == 1 else tuple(polygon[::-1].tolist())
             )
             if not any(
-                face.region == region and _cycle(face.vertices) == _cycle(oriented)
+                face.region == region
+                and layer_topology.cycle(face.vertices) == layer_topology.cycle(oriented)
                 for face in incidents
             ):
-                raise _failure(
-                    "Native core recovery changed a fixed oriented facet or its material incidence."
+                raise compliance_failure(
+                    "generate_layer_core.complex_ must retain fixed PLC vertices, facets, orientation, and region incidence; got native core recovery changed a fixed oriented facet or its material incidence",
+                    stage=_dependency_phydrax_meshing__trace.MeshingStageKind.VOLUME_FILL.value,
                 )
     if any(
         len(incidents) == 1 and key not in constrained for key, incidents in table.items()
     ):
-        raise _failure("Native core recovery introduced an undeclared external boundary.")
-
-
-def _combined_domain(
-    layers: BoundaryLayerMesh,
-    complex_: PiecewiseLinearComplex,
-    layer_regions: np.ndarray,
-    mapping: np.ndarray,
-    cap_ids: np.ndarray,
-    polygons: np.ndarray,
-    points: np.ndarray,
-    source_id: str,
-    region_ids: tuple[str, ...],
-    core_region_map: np.ndarray,
-    /,
-) -> tuple[PiecewiseLinearDomain, dict[tuple[int, ...], list[_Face]]]:
-    layer_faces = _faces(layers.mesh, layer_regions)
-    cap_keys = {
-        tuple(sorted(mapping[polygons[index]].tolist())): int(index) for index in cap_ids
-    }
-    facets: list[tuple[int, int, int]] = []
-    incidence: list[tuple[int, int]] = []
-    for key, incidents in layer_faces.items():
-        if key in cap_keys:
-            if len(incidents) != 1:
-                raise _failure("A declared cap is not an exterior face of the layers.")
-            polygon = mapping[polygons[cap_keys[key]]]
-            if _cycle(incidents[0].vertices) != _cycle(tuple(polygon.tolist())):
-                raise _failure(
-                    "The declared cap orientation disagrees with the layer cell boundary."
-                )
-            continue
-        first = incidents[0]
-        second_region = -1 if len(incidents) == 1 else incidents[1].region
-        if first.region != second_region:
-            for triangle in _triangles(first.vertices):
-                facets.append(triangle)
-                incidence.append((first.region, second_region))
-    if not set(cap_keys) <= set(layer_faces):
-        raise _failure("The core includes a cap facet absent from the layer boundary.")
-    for index, (polygon, facet) in enumerate(
-        zip(polygons, complex_.polygon_facets, strict=True)
-    ):
-        positive, negative = (int(value) for value in complex_.facet_regions[facet])
-        positive = int(core_region_map[positive]) if positive >= 0 else -1
-        negative = int(core_region_map[negative]) if negative >= 0 else -1
-        mapped = tuple(mapping[polygon].tolist())
-        if index in cap_ids:
-            negative = layer_faces[tuple(sorted(mapped))][0].region
-        if positive != negative:
-            facets.append((mapped[0], mapped[1], mapped[2]))
-            # PLC incidence is (positive, negative); domain incidence follows normal.
-            incidence.append((negative, positive))
-    return PiecewiseLinearDomain(
-        points,
-        np.asarray(facets, dtype=np.int64),
-        np.asarray(incidence, dtype=np.int64),
-        region_ids,
-        source_id=source_id,
-    ), layer_faces
-
-
-def _scope(mesh: CellMesh, dimension: int, identifiers: np.ndarray, /) -> MeshingScope:
-    entities = mesh.entity_set(dimension)
-    return MeshingScope(
-        mesh.mesh_id,
-        mesh.numeric_version,
-        MeshingEntityKind.MESH,
-        dimension,
-        entities.entity_set_id,
-        identifiers,
-    )
+        raise compliance_failure(
+            "generate_layer_core.complex_ must retain fixed PLC vertices, facets, orientation, and region incidence; got native core recovery introduced an undeclared external boundary",
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.VOLUME_FILL.value,
+        )
 
 
 def _organization(
     mesh: CellMesh,
     regions: np.ndarray,
     layer_count: int,
-    layers: BoundaryLayerMesh,
-    complex_: PiecewiseLinearComplex,
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
     mapping: np.ndarray,
     polygons: np.ndarray,
     cap_ids: np.ndarray,
-    layer_faces: dict[tuple[int, ...], list[_Face]],
+    layer_faces: dict[tuple[int, ...], list[layer_topology.LayerCoreFace]],
     region_ids: tuple[str, ...],
     /,
 ) -> tuple[
-    tuple[MeshZone, ...],
-    tuple[MeshPatch, ...],
-    tuple[MeshLabel, ...],
-    tuple[MeshAttribute, ...],
+    tuple[_dependency_phydrax_meshing__organization.MeshZone, ...],
+    tuple[_dependency_phydrax_meshing__organization.MeshPatch, ...],
+    tuple[_dependency_phydrax_meshing__organization.MeshLabel, ...],
+    tuple[_dependency_phydrax_meshing__organization.MeshAttribute, ...],
 ]:
     cells = np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64))
     zones = tuple(
-        MeshZone(name, MeshZoneRole.REGION, _scope(mesh, 3, cells[regions == index]))
+        _dependency_phydrax_meshing__organization.MeshZone(
+            name,
+            _dependency_phydrax_meshing__organization.MeshZoneRole.REGION,
+            mesh_entity_scope(mesh, 3, cells[regions == index]),
+        )
         for index, name in enumerate(region_ids)
         if np.any(regions == index)
     )
     labels = (
-        MeshLabel("boundary-layer", _scope(mesh, 3, cells[:layer_count])),
-        MeshLabel("core", _scope(mesh, 3, cells[layer_count:])),
+        _dependency_phydrax_meshing__organization.MeshLabel(
+            "boundary-layer", mesh_entity_scope(mesh, 3, cells[:layer_count])
+        ),
+        _dependency_phydrax_meshing__organization.MeshLabel(
+            "core", mesh_entity_scope(mesh, 3, cells[layer_count:])
+        ),
     )
     attributes = tuple(
-        MeshAttribute(
+        _dependency_phydrax_meshing__organization.MeshAttribute(
             name,
-            MeshAttributeRole.MARKER,
-            _scope(mesh, 3, cells),
+            _dependency_phydrax_meshing__organization.MeshAttributeRole.MARKER,
+            mesh_entity_scope(mesh, 3, cells),
             np.concatenate(
                 (
                     np.asarray(values, dtype=np.int64),
@@ -418,10 +168,18 @@ def _organization(
             ("layer_column", layers.column_index),
         )
     )
-    # Canonical identity keys deliberately retain distinct periodic/lifted vertices.
+    # Standard identity keys deliberately retain distinct periodic/lifted vertices.
     face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
-    keys = dict(zip(_row_entity_vertex_keys(mesh, 2), face_ids.tolist(), strict=True))
-    patches: list[MeshPatch] = []
+    keys = dict(
+        zip(
+            _dependency_phydrax_meshing__layer_core_resources.row_entity_vertex_keys(
+                mesh, 2
+            ),
+            face_ids.tolist(),
+            strict=True,
+        )
+    )
+    patches: list[_dependency_phydrax_meshing__organization.MeshPatch] = []
     for facet in range(complex_.facet_count):
         selected = np.flatnonzero(complex_.polygon_facets == facet)
         ids = np.asarray(
@@ -431,13 +189,17 @@ def _organization(
             ],
             dtype=np.int64,
         )
-        patches.append(MeshPatch(f"facet:{facet}", _scope(mesh, 2, ids), connected=False))
+        patches.append(
+            _dependency_phydrax_meshing__organization.MeshPatch(
+                f"facet:{facet}", mesh_entity_scope(mesh, 2, ids), connected=False
+            )
+        )
     cap_keys = {tuple(sorted(mapping[polygons[index]].tolist())) for index in cap_ids}
     if cap_keys:
         patches.append(
-            MeshPatch(
+            _dependency_phydrax_meshing__organization.MeshPatch(
                 "layer-core-interface",
-                _scope(
+                mesh_entity_scope(
                     mesh,
                     2,
                     np.asarray([keys[key] for key in sorted(cap_keys)], dtype=np.int64),
@@ -454,13 +216,20 @@ def _organization(
         dtype=np.int64,
     )
     if wall_ids.size:
-        patches.append(MeshPatch("wall", _scope(mesh, 2, wall_ids), connected=False))
+        patches.append(
+            _dependency_phydrax_meshing__organization.MeshPatch(
+                "wall", mesh_entity_scope(mesh, 2, wall_ids), connected=False
+            )
+        )
     return zones, tuple(patches), labels, attributes
 
 
-def _core_request(
-    specification: VolumeMeshingSpec, layer_control: BoundaryLayerControl, /
-) -> VolumeMeshingSpec:
+@checked
+def core_request(
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    layer_control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
+    /,
+) -> _dependency_phydrax_meshing__contracts.VolumeMeshingSpec:
     """Combine the physical core cap with sizing without rewriting its evidence."""
     bounds = tuple(
         control.core_maximum_size
@@ -470,35 +239,41 @@ def _core_request(
     if not bounds:
         return specification
     original = specification.size_controls[0]
-    if len(specification.size_controls) != 1 or not isinstance(
-        original, UniformSizeControl
-    ):
-        raise ValueError(
-            "Native layer/core generation requires one uniform core size request."
-        )
+    match original:
+        case _dependency_phydrax_meshing__sizing.UniformSizeControl() if (
+            len(specification.size_controls) == 1
+        ):
+            pass
+        case _:
+            raise ValueError(
+                "core_request.specification must provide one uniform core size request; got missing or incompatible one uniform core size request"
+            )
     cap = min(bounds)
-    if original.strength is SizeControlStrength.HARD and (
-        (original.minimum_size is not None and original.minimum_size > cap)
-        or original.target_size
-        > cap
-        + specification.size_compliance.absolute_tolerance
-        + specification.size_compliance.relative_tolerance * original.target_size
+    if (
+        original.strength is _dependency_phydrax_meshing__sizing.SizeControlStrength.HARD
+        and (
+            (original.minimum_size is not None and original.minimum_size > cap)
+            or original.target_size
+            > cap
+            + specification.size_compliance.absolute_tolerance
+            + specification.size_compliance.relative_tolerance * original.target_size
+        )
     ):
-        raise MeshingFailure(
-            MeshingFailureCategory.CONTROL_CONFLICT,
-            "The hard core size request conflicts with the layer control's core maximum size.",
-            stage=MeshingStageKind.CONTROL_RESOLUTION.value,
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+            "core_request.specification must declare a uniform size compatible with the layer core-size cap; got the hard core size request conflicts with the layer control's core maximum size",
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.CONTROL_RESOLUTION.value,
             requested=(("core_maximum_size", cap), ("target_size", original.target_size)),
         )
     target = min(original.target_size, cap)
     minimum = original.minimum_size
     if (
-        original.strength is SizeControlStrength.SOFT
+        original.strength is _dependency_phydrax_meshing__sizing.SizeControlStrength.SOFT
         and minimum is not None
         and minimum > target
     ):
         minimum = None
-    size = UniformSizeControl(
+    size = _dependency_phydrax_meshing__sizing.UniformSizeControl(
         original.scope,
         target,
         minimum_size=minimum,
@@ -509,7 +284,7 @@ def _core_request(
         strength=original.strength,
         priority=original.priority,
     )
-    return VolumeMeshingSpec(
+    return _dependency_phydrax_meshing__contracts.VolumeMeshingSpec(
         specification.target,
         specification.boundary_scope,
         specification.fill_strategy,
@@ -529,10 +304,13 @@ def _core_request(
 
 
 def _rebind_core_associations(
-    core: VolumeConstruction, target: CellMesh, vertex_map: np.ndarray, /
-) -> tuple[GeometryAssociation, ...]:
-    """Rebind immutable PLC vertex/edge/facet identities and canonical orientation."""
-    output: list[GeometryAssociation] = []
+    core: _dependency_phydrax_meshing__volume_generation.VolumeConstruction,
+    target: CellMesh,
+    vertex_map: np.ndarray,
+    /,
+) -> tuple[association_state_owner.GeometryAssociation, ...]:
+    """Rebind immutable PLC vertex/edge/facet identities and standard orientation."""
+    output: list[association_state_owner.GeometryAssociation] = []
     source_vertex_rows = {
         int(identifier): row
         for row, identifier in enumerate(np.asarray(core.mesh.vertex_global_ids))
@@ -549,7 +327,7 @@ def _rebind_core_associations(
         )
         if len(dimensions) != 1:
             raise ValueError(
-                "Native core association must bind canonical cells, vertices, faces or edges."
+                "CellMeshingResult.associations must bind standard cells, vertices, faces or edges; got incompatible Native core association"
             )
         dimension = dimensions[0]
         source_ids = np.asarray(
@@ -559,12 +337,16 @@ def _rebind_core_associations(
         source_keys = (
             tuple((int(identifier),) for identifier in source_ids)
             if dimension == 0
-            else _entity_vertex_keys(core.mesh, dimension)
+            else _dependency_phydrax_meshing__canonical.entity_vertex_keys(
+                core.mesh, dimension
+            )
         )
         target_keys = (
             tuple((int(identifier),) for identifier in target_ids)
             if dimension == 0
-            else _entity_vertex_keys(target, dimension)
+            else _dependency_phydrax_meshing__canonical.entity_vertex_keys(
+                target, dimension
+            )
         )
         source_rows = dict(zip(source_ids.tolist(), source_keys, strict=True))
         target_rows = dict(zip(target_keys, target_ids.tolist(), strict=True))
@@ -583,21 +365,21 @@ def _rebind_core_associations(
             )
             signs.append(-1 if inversions % 2 else 1)
         output.append(
-            GeometryAssociation(
+            association_state_owner.GeometryAssociation(
                 association.association_kind,
                 association.source_id,
                 association.source_revision,
                 target.entity_set(dimension).entity_set_id,
                 np.asarray(remapped, dtype=np.int64),
-                association.source_entity_ids,
+                association.source_entities.entity_ids(),
                 association.residuals,
                 resolved=association.resolved,
                 ambiguous=association.ambiguous,
                 exact=association.exact,
                 source_dimensions=association.source_dimensions,
                 source_indices=association.source_indices,
-                source_occurrence_paths=association.source_occurrence_paths,
-                source_entity_roles=association.source_entity_roles,
+                source_occurrence_paths=association.source_entities.occurrence_paths(),
+                source_entity_roles=association.source_entities.roles(),
                 parameters=association.parameters,
                 orientations=np.asarray(association.orientations, dtype=np.int8)
                 * np.asarray(signs, dtype=np.int8),
@@ -610,44 +392,56 @@ def _rebind_core_associations(
     return tuple(output)
 
 
-def generate_layer_core(
-    layers: BoundaryLayerMesh,
-    complex_: PiecewiseLinearComplex,
-    specification: VolumeMeshingSpec,
-    schedule: NativeVolumeSchedule,
-    /,
-    *,
-    validity_policy: CellValidityPolicy,
+@final
+class LayerCoreCarrier(StrictModule, NonTrainableState):
+    """Standard core-local regions, fixed interface identity, and seam ancestry."""
+
+    region_ids: tuple[str, ...]
+    core_regions: np.ndarray
+    core_specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec
+    mapping: np.ndarray
+    cap_ids: np.ndarray
+    polygons: np.ndarray
+    initial_points: np.ndarray
+    ancestry: tuple[np.ndarray, np.ndarray] | None
+
+
+@final
+class LayerCoreTopology(StrictModule, NonTrainableState):
+    """Combined standard carrier and the core's vertex-row correspondence."""
+
+    mesh: CellMesh
+    core_map: np.ndarray
+
+
+@final
+class LayerCoreLabels(StrictModule, NonTrainableState):
+    """Ordered inherited labels and the combined facet identity table."""
+
+    labels: tuple[_dependency_phydrax_meshing__organization.MeshLabel, ...]
+    face_keys: dict[tuple[int, ...], int]
+
+
+@final
+class LayerCoreAssociations(StrictModule, NonTrainableState):
+    associations: tuple[association_state_owner.GeometryAssociation, ...]
+
+
+def _prepare_layer_carrier(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
     vertex_layer_ids: ArrayLike,
     cap_polygon_ids: ArrayLike,
-    layer_regions: ArrayLike,
+    regions: np.ndarray,
     source_id: str,
     source_revision: str,
-    input_id: str,
-    source_binding: NativeLayerCoreSource | None = None,
-    operation_started: float | None = None,
-    source_work_units: int = 0,
-    record_phase: NativeMeshingPhaseRecorder | None = None,
-) -> LayerCoreConstruction:
-    """Compose immutable layers with native filling of the complete remaining PLC.
-
-    ``vertex_layer_ids[i]`` identifies PLC vertex i with a layer vertex, or -1
-    declares a new vertex. ``cap_polygon_ids`` follows cap block order.
-    ``layer_regions`` follows sorted layer global cell IDs and indexes the
-    source binding's composite region namespace. The core PLC retains only
-    bounded core-local regions and its exact map into that namespace.
-    ``validity_policy`` is the publishing audit's cell validity policy, whose
-    determinant floor the native core improvement enforces.
-    """
-    if not isinstance(layers, BoundaryLayerMesh) or not isinstance(
-        complex_, PiecewiseLinearComplex
-    ):
-        raise TypeError(
-            "layers and complex_ must be BoundaryLayerMesh and PiecewiseLinearComplex."
-        )
-    count = sum(block.cell_count for block in layers.mesh.blocks)
-    regions = _integer_array(layer_regions, (count,), "layer_regions")
-    work = LayerCoreSourceWork(specification.limits.maximum_work_units, source_work_units)
+    source_binding: _dependency_phydrax_meshing_providers__native_sources.NativeLayerCoreSource
+    | None,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> LayerCoreCarrier:
+    """Bind authored identity before admitting native fill."""
     work.charge(0)
     if source_binding is not None and (
         source_binding.layers.result_id != layers.result_id
@@ -661,23 +455,27 @@ def generate_layer_core(
         or not np.array_equal(source_binding.layer_regions, regions)
     ):
         raise ValueError(
-            "The core construction must bind the exact authored source, layer realization, PLC, and integer ancestry."
+            "generate_layer_core.source_binding must bind the authored source, layer realization, PLC, and integer ancestry; got incompatible core construction"
         )
-    region_ids, core_regions = prepare_layer_region_identity(
-        complex_,
-        regions,
-        None if source_binding is None else source_binding.region_ids,
-        None if source_binding is None else source_binding.core_region_map,
+    region_ids, core_regions = (
+        _dependency_phydrax_meshing__layer_core_regions.prepare_layer_region_identity(
+            complex_,
+            regions,
+            None if source_binding is None else source_binding.region_ids,
+            None if source_binding is None else source_binding.core_region_map,
+        )
     )
-    core_specification = reserve_layer_storage(
-        layers,
-        complex_,
-        _core_request(specification, layers.control),
-        _integer_array(
-            vertex_layer_ids, (complex_.vertices.shape[0],), "vertex_layer_ids"
-        ),
+    core_specification = (
+        _dependency_phydrax_meshing__layer_core_resources.reserve_layer_storage(
+            layers,
+            complex_,
+            core_request(specification, layers.control),
+            layer_topology.integer_array(
+                vertex_layer_ids, (complex_.vertices.shape[0],), "vertex_layer_ids"
+            ),
+        )
     )
-    mapping, cap_ids, polygons, initial_points = _prepare_identity(
+    mapping, cap_ids, polygons, initial_points = layer_topology.prepare_identity(
         layers,
         complex_,
         vertex_layer_ids,
@@ -686,133 +484,194 @@ def generate_layer_core(
     )
     if layers.mesh.periodic_topology is not None and source_binding is None:
         raise ValueError(
-            "Periodic core fill requires its source-authored seam anatomy before construction."
+            "generate_layer_core.source_binding must provide its source-authored seam anatomy before construction; got missing or incompatible its source-authored seam anatomy before construction"
         )
     ancestry = (
         None
         if source_binding is None
-        else prepare_core_periodic(
+        else _dependency_phydrax_meshing__layer_core_periodic.prepare_core_periodic(
             source_binding,
             mapping,
             polygons,
             initial_points,
             work=work,
+            budget=budget,
         )
     )
-    core = generate_plc_volume(
-        complex_,
+    return LayerCoreCarrier(
+        region_ids,
+        core_regions,
         core_specification,
-        schedule,
-        validity_policy=validity_policy,
-        source_id=complex_.complex_id,
-        source_revision=complex_.complex_id,
-        input_id=input_id,
-        record_phase=record_phase,
-        operation_started=operation_started,
-        source_work_units=work.work_units,
-    )
-    work.work_units = core.work_units
-    _require_fixed(complex_, core, polygons, work=work)
-    with measure_phase(record_phase, "topology_construction"):
-        core_points = np.asarray(core.mesh.coordinates, dtype=np.float64)
-        work.charge(
-            core_points.shape[0]
-            + sum(block.cell_count for block in layers.mesh.blocks)
-            + core.cell_regions.size
-        )
-        points = np.concatenate(
-            (initial_points, core_points[complex_.vertices.shape[0] :])
-        )
-        core_map = np.concatenate(
-            (
-                mapping,
-                initial_points.shape[0]
-                + np.arange(core_points.shape[0] - complex_.vertices.shape[0]),
-            )
-        )
-        blocks = tuple(
-            CellBlock(
-                f"layer:{block.name}",
-                block.cell_kind,
-                block.vertices,
-                global_ids=block.global_ids,
-            )
-            for block in layers.mesh.blocks
-        )
-        layer_ids = np.sort(
-            np.asarray(layers.mesh.entity_set(3).entity_ids, dtype=np.int64)
-        )
-        core_start = int(layer_ids[-1]) + 1
-        if core_start + core.cell_regions.size - 1 > np.iinfo(np.int64).max:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "The immutable layer cell registry has no room for the core's exact identities.",
-                stage=MeshingStageKind.CANONICALIZATION.value,
-            )
-        blocks += (
-            CellBlock(
-                "core",
-                "tetrahedron",
-                core_map[np.asarray(core.mesh.blocks[0].vertices, dtype=np.int64)],
-                global_ids=core_start + np.arange(core.cell_regions.size),
-            ),
-        )
-        layer_vertex_ids = np.asarray(layers.mesh.vertex_global_ids, dtype=np.int64)
-        extra = points.shape[0] - layer_vertex_ids.size
-        next_vertex = int(np.max(layer_vertex_ids)) + 1
-        if next_vertex + extra - 1 > np.iinfo(np.int64).max:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "The immutable layer vertex registry has no room for the core's exact identities.",
-                stage=MeshingStageKind.CANONICALIZATION.value,
-            )
-        new_ids = (
-            next_vertex + np.arange(extra, dtype=np.int64)
-            if extra
-            else np.empty(0, dtype=np.int64)
-        )
-        vertex_ids = np.concatenate((layer_vertex_ids, new_ids))
-        plain = CellMesh(
-            points, blocks, vertex_global_ids=vertex_ids, numeric_version=source_revision
-        )
-        if source_binding is not None:
-            plain = bind_core_periodic(source_binding, plain, ancestry)
-        mesh = canonicalize_cell_mesh(plain)
-    combined_regions = np.concatenate((regions, core_regions[core.cell_regions]))
-    domain, layer_faces = _combined_domain(
-        layers,
-        complex_,
-        regions,
         mapping,
         cap_ids,
         polygons,
         initial_points,
-        source_id,
-        region_ids,
-        core_regions,
+        ancestry,
     )
-    combined_faces = _faces(mesh, combined_regions, work=work)
-    for index in cap_ids:
-        work.charge(1)
-        key = tuple(sorted(mapping[polygons[index]].tolist()))
-        if len(combined_faces[key]) != 2:
-            raise _failure("Layer and core do not share the exact immutable interface.")
-    with measure_phase(record_phase, "organization"):
-        zones, patches, labels, attributes = _organization(
-            mesh,
-            combined_regions,
-            count,
-            layers,
-            complex_,
-            mapping,
-            polygons,
-            cap_ids,
-            layer_faces,
-            region_ids,
+
+
+def _admit_layer_composition(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    core: _dependency_phydrax_meshing__volume_generation.VolumeConstruction,
+    carrier: LayerCoreCarrier,
+    scope: NativeExecutionScope,
+    resources: ExitStack,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
+) -> _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget:
+    """Reserve composition work and certify the recovered immutable core boundary."""
+    polygons, cap_ids = carrier.polygons, carrier.cap_ids
+    work.ticket = resources.enter_context(
+        scope.batch(
+            min(
+                specification.limits.maximum_work_units,
+                scope.remaining().remaining_work_units,
+            )
+            if layers.mesh.periodic_topology is not None
+            else (
+                complex_.vertices.shape[0]
+                + polygons.shape[0]
+                + cap_ids.size
+                + core.mesh.coordinates.shape[0]
+                + 9 * core.cell_regions.size
+                + layers.mesh.coordinates.shape[0]
+                + sum(
+                    block.cell_count
+                    * (
+                        1
+                        + 4 * len(reference_cell_topology(block.cell_kind).entities[2])
+                        + len(reference_cell_topology(block.cell_kind).entities[1])
+                        + sum(
+                            len(face) - 2
+                            for face in reference_cell_topology(block.cell_kind).entities[
+                                2
+                            ]
+                        )
+                    )
+                    for block in layers.mesh.blocks
+                )
+            ),
+            bytes_upper=min(
+                specification.limits.maximum_scratch_bytes,
+                scope.remaining().remaining_managed_bytes,
+            ),
         )
+    )
+    budget = (
+        _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
+            work.ticket,
+            maximum_work_units=specification.limits.maximum_work_units,
+            maximum_memory_bytes=specification.limits.maximum_scratch_bytes,
+        )
+    )
+    resources.enter_context(budget.activate())
+    _require_fixed(complex_, core, polygons, work=work)
+    return budget
+
+
+def _compose_layer_topology(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    core: _dependency_phydrax_meshing__volume_generation.VolumeConstruction,
+    carrier: LayerCoreCarrier,
+    source_revision: str,
+    source_binding: _dependency_phydrax_meshing_providers__native_sources.NativeLayerCoreSource
+    | None,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> LayerCoreTopology:
+    """Preserve layer IDs while appending recovered core incidence."""
+    mapping, initial_points, ancestry = (
+        carrier.mapping,
+        carrier.initial_points,
+        carrier.ancestry,
+    )
+    core_points = np.asarray(core.mesh.coordinates, dtype=np.float64)
+    work.charge(
+        core_points.shape[0]
+        + sum(block.cell_count for block in layers.mesh.blocks)
+        + core.cell_regions.size
+    )
+    points = np.concatenate((initial_points, core_points[complex_.vertices.shape[0] :]))
+    core_map = np.concatenate(
+        (
+            mapping,
+            initial_points.shape[0]
+            + np.arange(core_points.shape[0] - complex_.vertices.shape[0]),
+        )
+    )
+    blocks = tuple(
+        CellBlock(
+            f"layer:{block.name}",
+            block.cell_kind,
+            block.vertices,
+            global_ids=block.global_ids,
+        )
+        for block in layers.mesh.blocks
+    )
+    layer_ids = np.sort(np.asarray(layers.mesh.entity_set(3).entity_ids, dtype=np.int64))
+    core_start = int(layer_ids[-1]) + 1
+    if core_start + core.cell_regions.size - 1 > np.iinfo(np.int64).max:
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "BoundaryLayerMesh.mesh must leave sufficient int64 identity capacity for recovered core entities; got the immutable layer cell registry has no room for the core's identities",
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.CANONICALIZATION.value,
+        )
+    blocks += (
+        CellBlock(
+            "core",
+            "tetrahedron",
+            core_map[np.asarray(core.mesh.blocks[0].vertices, dtype=np.int64)],
+            global_ids=core_start + np.arange(core.cell_regions.size),
+        ),
+    )
+    layer_vertex_ids = np.asarray(layers.mesh.vertex_global_ids, dtype=np.int64)
+    extra = points.shape[0] - layer_vertex_ids.size
+    next_vertex = int(np.max(layer_vertex_ids)) + 1
+    if next_vertex + extra - 1 > np.iinfo(np.int64).max:
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "BoundaryLayerMesh.mesh must leave sufficient int64 identity capacity for recovered core entities; got the immutable layer vertex registry has no room for the core's identities",
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.CANONICALIZATION.value,
+        )
+    new_ids = (
+        next_vertex + np.arange(extra, dtype=np.int64)
+        if extra
+        else np.empty(0, dtype=np.int64)
+    )
+    vertex_ids = np.concatenate((layer_vertex_ids, new_ids))
+    plain = CellMesh(
+        points,
+        blocks,
+        vertex_global_ids=vertex_ids,
+        numeric_version=source_revision,
+    )
+    if source_binding is not None:
+        plain = _dependency_phydrax_meshing__layer_core_periodic.bind_core_periodic(
+            source_binding, plain, ancestry, budget=budget
+        )
+    mesh = _dependency_phydrax_meshing__canonical.canonicalize_cell_mesh(plain)
+    return LayerCoreTopology(mesh, core_map)
+
+
+def _compose_layer_labels(
+    mesh: CellMesh,
+    core: _dependency_phydrax_meshing__volume_generation.VolumeConstruction,
+    core_map: np.ndarray,
+    combined_faces: dict[tuple[int, ...], list[layer_topology.LayerCoreFace]],
+    labels: tuple[_dependency_phydrax_meshing__organization.MeshLabel, ...],
+) -> LayerCoreLabels:
+    """Transport interface and core labels using vertex correspondence."""
     face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
     face_keys = dict(
-        zip(_row_entity_vertex_keys(mesh, 2), face_ids.tolist(), strict=True)
+        zip(
+            _dependency_phydrax_meshing__layer_core_resources.row_entity_vertex_keys(
+                mesh, 2
+            ),
+            face_ids.tolist(),
+            strict=True,
+        )
     )
     interface_ids = np.asarray(
         [
@@ -823,16 +682,26 @@ def generate_layer_core(
         dtype=np.int64,
     )
     if interface_ids.size:
-        labels += (MeshLabel("interface", _scope(mesh, 2, interface_ids)),)
+        labels += (
+            _dependency_phydrax_meshing__organization.MeshLabel(
+                "interface", mesh_entity_scope(mesh, 2, interface_ids)
+            ),
+        )
     for label in core.labels:
         if label.name == "interface":
             continue
         dimension = label.scope.entity_dimension
         old_ids = np.asarray(core.mesh.entity_set(dimension).entity_ids, dtype=np.int64)
-        old_keys = _row_entity_vertex_keys(core.mesh, dimension)
+        old_keys = (
+            _dependency_phydrax_meshing__layer_core_resources.row_entity_vertex_keys(
+                core.mesh, dimension
+            )
+        )
         new_ids = dict(
             zip(
-                _row_entity_vertex_keys(mesh, dimension),
+                _dependency_phydrax_meshing__layer_core_resources.row_entity_vertex_keys(
+                    mesh, dimension
+                ),
                 np.asarray(
                     mesh.entity_set(dimension).entity_ids, dtype=np.int64
                 ).tolist(),
@@ -848,78 +717,100 @@ def generate_layer_core(
             ],
             dtype=np.int64,
         )
-        labels += (MeshLabel(label.name, _scope(mesh, dimension, remapped)),)
-    cells = np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64))
-    with measure_phase(record_phase, "geometry_association"):
-        associations = (
-            GeometryAssociation(
-                GeometryAssociationKind.PIECEWISE_LINEAR,
-                source_id,
-                source_revision,
-                mesh.entity_set(3).entity_set_id,
-                cells,
-                tuple(
-                    f"{source_revision}:region:{int(region)}"
-                    for region in combined_regions
-                ),
-                np.zeros(cells.size, dtype=np.float64),
-                exact=True,
-                source_dimensions=np.full(cells.size, 3, dtype=np.int8),
-                source_indices=combined_regions,
-                source_entity_roles=(GeometrySourceEntityRole.REGION,) * cells.size,
+        labels += (
+            _dependency_phydrax_meshing__organization.MeshLabel(
+                label.name, mesh_entity_scope(mesh, dimension, remapped)
             ),
         )
-        associations += _rebind_core_associations(core, mesh, core_map)
-        from ._layer_core_association import _layer_source_associations
+    return LayerCoreLabels(labels, face_keys)
 
-        cap_association = None
-        if layers.cap is not None and cap_ids.size:
-            cap_face_ids = np.concatenate(
-                [
-                    np.asarray(block.global_ids, dtype=np.int64)
-                    for block in layers.cap.blocks
-                ]
-            )
-            rows = mapping[polygons[cap_ids]]
-            target_ids = np.asarray(
-                [face_keys[tuple(sorted(row.tolist()))] for row in rows], dtype=np.int64
-            )
-            signs = np.asarray(
-                [
-                    -1
-                    if sum(
-                        first > second
-                        for index, first in enumerate(row)
-                        for second in row[index + 1 :]
-                    )
-                    % 2
-                    else 1
-                    for row in rows
-                ],
-                dtype=np.int8,
-            )
-            cap_association = GeometryAssociation(
-                GeometryAssociationKind.PIECEWISE_LINEAR,
-                layers.result_id,
-                layers.result_id,
-                mesh.entity_set(2).entity_set_id,
-                target_ids,
-                tuple(
-                    _entity(
-                        layers.result_id,
-                        GeometrySourceEntityRole.FACET.value,
-                        int(identifier),
-                    )
-                    for identifier in cap_face_ids
-                ),
-                np.zeros(cap_ids.size, dtype=np.float64),
-                exact=True,
-                source_dimensions=np.full(cap_ids.size, 2, dtype=np.int8),
-                source_indices=cap_face_ids,
-                orientations=signs,
-                source_entity_roles=(GeometrySourceEntityRole.FACET,) * cap_ids.size,
-            )
-        associations += _layer_source_associations(
+
+def _compose_layer_associations(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    mesh: CellMesh,
+    core: _dependency_phydrax_meshing__volume_generation.VolumeConstruction,
+    core_map: np.ndarray,
+    combined_regions: np.ndarray,
+    regions: np.ndarray,
+    region_ids: tuple[str, ...],
+    mapping: np.ndarray,
+    polygons: np.ndarray,
+    cap_ids: np.ndarray,
+    face_keys: dict[tuple[int, ...], int],
+    source_id: str,
+    source_revision: str,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
+) -> LayerCoreAssociations:
+    """Bind region, core, cap, and source layer source ancestry in order."""
+    cells = np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64))
+    associations = (
+        association_state_owner.GeometryAssociation(
+            association_state_owner.GeometryAssociationKind.PIECEWISE_LINEAR,
+            source_id,
+            source_revision,
+            mesh.entity_set(3).entity_set_id,
+            cells,
+            tuple(
+                f"{source_revision}:region:{int(region)}" for region in combined_regions
+            ),
+            np.zeros(cells.size, dtype=np.float64),
+            exact=True,
+            source_dimensions=np.full(cells.size, 3, dtype=np.int8),
+            source_indices=combined_regions,
+            source_entity_roles=(association_state_owner.GeometrySourceEntityRole.REGION,)
+            * cells.size,
+        ),
+    )
+    associations += _rebind_core_associations(core, mesh, core_map)
+
+    cap_association = None
+    if layers.cap is not None and cap_ids.size:
+        cap_face_ids = np.concatenate(
+            [np.asarray(block.global_ids, dtype=np.int64) for block in layers.cap.blocks]
+        )
+        rows = mapping[polygons[cap_ids]]
+        target_ids = np.asarray(
+            [face_keys[tuple(sorted(row.tolist()))] for row in rows],
+            dtype=np.int64,
+        )
+        signs = np.asarray(
+            [
+                -1
+                if sum(
+                    first > second
+                    for index, first in enumerate(row)
+                    for second in row[index + 1 :]
+                )
+                % 2
+                else 1
+                for row in rows
+            ],
+            dtype=np.int8,
+        )
+        cap_association = association_state_owner.GeometryAssociation(
+            association_state_owner.GeometryAssociationKind.PIECEWISE_LINEAR,
+            layers.result_id,
+            layers.result_id,
+            mesh.entity_set(2).entity_set_id,
+            target_ids,
+            tuple(
+                _dependency_phydrax_meshing__host_banks.entity_key(
+                    layers.result_id,
+                    association_state_owner.GeometrySourceEntityRole.FACET.value,
+                    int(identifier),
+                )
+                for identifier in cap_face_ids
+            ),
+            np.zeros(cap_ids.size, dtype=np.float64),
+            exact=True,
+            source_dimensions=np.full(cap_ids.size, 2, dtype=np.int8),
+            source_indices=cap_face_ids,
+            orientations=signs,
+            source_entity_roles=(association_state_owner.GeometrySourceEntityRole.FACET,)
+            * cap_ids.size,
+        )
+    associations += (
+        _owner_phydrax_meshing__layer_core_association.layer_source_associations(
             layers,
             mesh,
             regions,
@@ -927,7 +818,65 @@ def generate_layer_core(
             cap_association=cap_association,
             work=work,
         )
-    construction_id = canonical_fingerprint(
+    )
+    return LayerCoreAssociations(associations)
+
+
+def _compose_layer_domain(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    mesh: CellMesh,
+    regions: np.ndarray,
+    combined_regions: np.ndarray,
+    carrier: LayerCoreCarrier,
+    source_id: str,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[
+    domain_coverage_owner.PiecewiseLinearDomain,
+    dict[tuple[int, ...], list[layer_topology.LayerCoreFace]],
+    dict[tuple[int, ...], list[layer_topology.LayerCoreFace]],
+]:
+    """Construct the declared domain and require two incidents at every fixed cap."""
+
+    # Domain degeneracy predicates draw from the admitted composition ticket.
+    with work.ticket.native_target():
+        domain, layer_faces = layer_topology.combined_domain(
+            layers,
+            complex_,
+            regions,
+            carrier.mapping,
+            carrier.cap_ids,
+            carrier.polygons,
+            carrier.initial_points,
+            source_id,
+            carrier.region_ids,
+            carrier.core_regions,
+            work=work,
+        )
+    combined_faces = layer_topology.faces(mesh, combined_regions, work=work)
+    for index in carrier.cap_ids:
+        work.charge(1)
+        key = tuple(sorted(carrier.mapping[carrier.polygons[index]].tolist()))
+        if len(combined_faces[key]) != 2:
+            raise compliance_failure(
+                "generate_layer_core.complex_ must share the immutable cap interface with the accepted layers; got layer and core do not share the immutable interface",
+                stage=_dependency_phydrax_meshing__trace.MeshingStageKind.VOLUME_FILL.value,
+            )
+    return domain, layer_faces, combined_faces
+
+
+def _layer_core_identity(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    mesh: CellMesh,
+    domain: domain_coverage_owner.PiecewiseLinearDomain,
+    vertex_layer_ids: ArrayLike,
+    regions: np.ndarray,
+    carrier: LayerCoreCarrier,
+) -> str:
+    """Fingerprint explicit interface and region identities, never coordinates."""
+    return canonical_fingerprint(
         {
             "kind": "native-layer-core",
             "layers": layers.result_id,
@@ -937,154 +886,227 @@ def generate_layer_core(
             "vertex_layer_ids": array_tree_fingerprint(
                 np.asarray(vertex_layer_ids, dtype=np.int64)
             ),
-            "cap_polygon_ids": array_tree_fingerprint(cap_ids),
+            "cap_polygon_ids": array_tree_fingerprint(carrier.cap_ids),
             "layer_regions": array_tree_fingerprint(regions),
-            "region_ids": region_ids,
-            "core_region_map": array_tree_fingerprint(core_regions),
+            "region_ids": carrier.region_ids,
+            "core_region_map": array_tree_fingerprint(carrier.core_regions),
         }
     )
-    stages = (
-        MeshingStageReport(
-            MeshingStageKind.LAYER_GENERATION,
-            MeshingStageStatus.PASSED,
-            input_ids=(layers.control_id,),
-            output_ids=(layers.result_id,),
-            created_count=count,
-        ),
-        *core.stages,
-        MeshingStageReport(
-            MeshingStageKind.CANONICALIZATION,
-            MeshingStageStatus.PASSED,
-            input_ids=(layers.result_id, core.mesh.mesh_id),
-            output_ids=(construction_id,),
-        ),
-    )
-    block_ids = np.concatenate(
-        [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
-    )
-    block_regions = combined_regions[np.searchsorted(cells, block_ids)]
-    return LayerCoreConstruction(
-        mesh,
-        domain,
-        block_regions,
-        zones,
-        patches,
-        labels,
-        attributes,
-        associations,
-        stages,
-        core,
-        construction_id,
-        work.work_units,
-    )
 
 
-def execute_layer_core_route(
-    layers: BoundaryLayerMesh,
-    complex_: PiecewiseLinearComplex,
-    specification: VolumeMeshingSpec,
-    schedule: NativeVolumeSchedule,
-    coordinate_contract: SpatialCoordinateContract,
-    provider: MeshingProviderInfo,
-    plan_id: str,
+# Retire preparation resources before native fill; compose only after readmission.
+@checked
+def generate_layer_core(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    schedule: _dependency_phydrax_meshing__volume_generation.NativeVolumeSchedule,
     /,
     *,
+    scope: NativeExecutionScope,
+    validity_policy: _dependency_phydrax_discretization__cell_geometry_validity.CellValidityPolicy,
     vertex_layer_ids: ArrayLike,
     cap_polygon_ids: ArrayLike,
     layer_regions: ArrayLike,
     source_id: str,
     source_revision: str,
-    generation_specification: VolumeMeshingSpec,
-    original_source: NativeLayerCoreSource,
-    source_preparation_work_units: int,
-    prepared_owner: PreparedLayerCore,
+    input_id: str,
+    source_binding: _dependency_phydrax_meshing_providers__native_sources.NativeLayerCoreSource
+    | None = None,
+    source_work_units: int = 0,
     record_phase: NativeMeshingPhaseRecorder | None = None,
-) -> CellMeshingResult:
-    """Generate and independently certify the entire native layer/core domain."""
-    if not _native_live_preparation_is_active(prepared_owner):
-        raise ValueError(
-            "Layer/core publication requires its original full-route native budget; "
-            "standalone prepared execution must use execute_layer_route with its actual preparation receipt."
-        )
-    if (prepared_owner.source_binding_id, prepared_owner.specification_id) != (
-        original_source.binding_id,
-        specification.specification_id,
-    ):
-        raise ValueError(
-            "The live layer preparation belongs to another original source or specification."
-        )
-    from time import monotonic
+) -> layer_topology.LayerCoreConstruction:
+    """Compose immutable layers with native filling of the full remaining PLC.
 
-    from ._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
-    from ._layer_source_certification import layer_source_certification
-    from .providers._native_publication import (
-        check_deadline,
-        publish_native_result,
-    )
-    from .providers._native_volume import _volume_compliance
-
-    started = monotonic()
-    work = LayerCoreSourceWork(
-        specification.limits.maximum_work_units, source_preparation_work_units
-    )
-    periodic_requested, periodic_achieved = core_periodic_constraint_evidence(
-        original_source, specification, work=work
-    )
-    # The native core determinant-floor repair and the publication audit share one policy.
-    audit_policy = CellMeshAuditPolicy(
-        watertight_boundary=CellMeshAuditDisposition.REJECT
-    )
-    construction = generate_layer_core(
-        layers,
-        complex_,
-        generation_specification,
-        schedule,
-        validity_policy=audit_policy.validity_policy,
-        vertex_layer_ids=vertex_layer_ids,
-        cap_polygon_ids=cap_polygon_ids,
-        layer_regions=layer_regions,
-        source_id=source_id,
-        source_revision=source_revision,
-        input_id=plan_id,
-        record_phase=record_phase,
-        source_binding=original_source,
-        operation_started=started,
-        source_work_units=work.work_units,
-    )
-    mesh = construction.mesh
-    limits = specification.limits
-    cells = sum(block.cell_count for block in mesh.blocks)
-    entries = sum(block.vertices.size for block in mesh.blocks)
-    checks = (
-        ("vertices", mesh.coordinates.shape[0], limits.maximum_vertices),
-        ("edges", mesh.entity_set(1).count, limits.maximum_edges),
-        ("faces", mesh.entity_set(2).count, limits.maximum_faces),
-        ("cells", cells, limits.maximum_cells),
-        ("connectivity_entries", entries, limits.maximum_connectivity_entries),
-        (
-            "data_bytes",
-            mesh.coordinates.size * 8 + entries * 4,
-            limits.maximum_data_bytes,
-        ),
-    )
-    if any(actual > bound for _, actual, bound in checks):
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "The combined native layer/core mesh exceeds its declared resource limits.",
-            stage=MeshingStageKind.VOLUME_FILL.value,
-            requested=tuple((f"maximum_{name}", bound) for name, _, bound in checks),
-            achieved=tuple((name, actual) for name, actual, _ in checks),
+    ``vertex_layer_ids[i]`` identifies PLC vertex i with a layer vertex, or -1
+    declares a new vertex. ``cap_polygon_ids`` follows cap block order.
+    ``layer_regions`` follows sorted layer global cell IDs and indexes the
+    source binding's composite region namespace. The core PLC retains only
+    bounded core-local regions and its map into that namespace.
+    ``validity_policy`` is the publishing audit's cell validity policy, whose
+    determinant floor the native core improvement enforces.
+    """
+    with ExitStack() as resources:
+        count = sum(block.cell_count for block in layers.mesh.blocks)
+        regions = layer_topology.integer_array(layer_regions, (count,), "layer_regions")
+        allowance = scope.remaining()
+        source_upper = (
+            2 * complex_.vertices.shape[0] + np.asarray(cap_polygon_ids).size
+            if source_binding is None
+            else _dependency_phydrax_meshing__layer_core_resources.layer_source_work_upper(
+                source_binding, specification
+            )
         )
-    check_deadline(started, limits, MeshingStageKind.VOLUME_FILL)
-    core = construction.core
-    with measure_phase(record_phase, "compliance"):
-        core_compliance = _volume_compliance(
-            generation_specification,
+        if layers.mesh.periodic_topology is not None:
+            source_upper = min(
+                specification.limits.maximum_work_units, allowance.remaining_work_units
+            )
+        work = _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork(
+            specification.limits.maximum_work_units,
+            source_work_units,
+            ticket=resources.enter_context(
+                scope.batch(
+                    source_upper,
+                    bytes_upper=min(
+                        specification.limits.maximum_scratch_bytes,
+                        allowance.remaining_managed_bytes,
+                    ),
+                )
+            ),
+        )
+        budget = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
+            work.ticket,
+            maximum_work_units=specification.limits.maximum_work_units,
+            maximum_memory_bytes=specification.limits.maximum_scratch_bytes,
+        )
+        resources.enter_context(budget.activate())
+        carrier = _prepare_layer_carrier(
+            layers,
+            complex_,
+            specification,
+            vertex_layer_ids,
+            cap_polygon_ids,
+            regions,
+            source_id,
+            source_revision,
+            source_binding,
+            work,
+            budget,
+        )
+        region_ids, core_regions = carrier.region_ids, carrier.core_regions
+        core_specification = carrier.core_specification
+        mapping, cap_ids, polygons = carrier.mapping, carrier.cap_ids, carrier.polygons
+        resources.close()
+        del budget
+        core = _dependency_phydrax_meshing__volume_generation.generate_plc_volume(
+            complex_,
+            core_specification,
             schedule,
-            core,
-            np.asarray(core.mesh.coordinates, dtype=np.float64),
-            np.asarray(core.mesh.blocks[0].vertices, dtype=np.int64),
+            validity_policy=validity_policy,
+            scope=scope,
+            source_id=complex_.complex_id,
+            source_revision=complex_.complex_id,
+            input_id=input_id,
+            record_phase=record_phase,
+            source_work_units=work.work_units,
         )
+        work.work_units = core.work_units
+        budget = _admit_layer_composition(
+            layers, complex_, specification, core, carrier, scope, resources, work
+        )
+        with measure_phase(record_phase, "topology_construction"):
+            topology = _compose_layer_topology(
+                layers,
+                complex_,
+                core,
+                carrier,
+                source_revision,
+                source_binding,
+                work,
+                budget,
+            )
+            mesh, core_map = topology.mesh, topology.core_map
+        combined_regions = np.concatenate((regions, core_regions[core.cell_regions]))
+        domain, layer_faces, combined_faces = _compose_layer_domain(
+            layers,
+            complex_,
+            mesh,
+            regions,
+            combined_regions,
+            carrier,
+            source_id,
+            work,
+            budget,
+        )
+        with measure_phase(record_phase, "organization"):
+            zones, patches, labels, attributes = _organization(
+                mesh,
+                combined_regions,
+                count,
+                layers,
+                complex_,
+                mapping,
+                polygons,
+                cap_ids,
+                layer_faces,
+                region_ids,
+            )
+        inherited = _compose_layer_labels(mesh, core, core_map, combined_faces, labels)
+        labels, face_keys = inherited.labels, inherited.face_keys
+        cells = np.sort(np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64))
+
+        with (
+            measure_phase(record_phase, "geometry_association"),
+            work.ticket.native_target(),
+        ):
+            associations = _compose_layer_associations(
+                layers,
+                mesh,
+                core,
+                core_map,
+                combined_regions,
+                regions,
+                region_ids,
+                mapping,
+                polygons,
+                cap_ids,
+                face_keys,
+                source_id,
+                source_revision,
+                work,
+            ).associations
+        construction_id = _layer_core_identity(
+            layers, complex_, mesh, domain, vertex_layer_ids, regions, carrier
+        )
+        stages = (
+            _dependency_phydrax_meshing__trace.MeshingStageReport(
+                _dependency_phydrax_meshing__trace.MeshingStageKind.LAYER_GENERATION,
+                _dependency_phydrax_meshing__trace.MeshingStageStatus.PASSED,
+                input_ids=(layers.control_id,),
+                output_ids=(layers.result_id,),
+                created_count=count,
+            ),
+            *core.stages,
+            _dependency_phydrax_meshing__trace.MeshingStageReport(
+                _dependency_phydrax_meshing__trace.MeshingStageKind.CANONICALIZATION,
+                _dependency_phydrax_meshing__trace.MeshingStageStatus.PASSED,
+                input_ids=(layers.result_id, core.mesh.mesh_id),
+                output_ids=(construction_id,),
+            ),
+        )
+        block_ids = np.concatenate(
+            [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+        )
+        block_regions = combined_regions[np.searchsorted(cells, block_ids)]
+        return layer_topology.LayerCoreConstruction(
+            mesh,
+            domain,
+            block_regions,
+            zones,
+            patches,
+            labels,
+            attributes,
+            associations,
+            stages,
+            core,
+            construction_id,
+            work.work_units,
+        )
+
+
+@final
+class LayerCoreSizeEvidence(StrictModule, NonTrainableState):
+    requested: tuple[tuple[str, float], ...]
+    achieved: tuple[tuple[str, float], ...]
+    issues: tuple[str, ...]
+
+
+def _core_size_compliance(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    core: _dependency_phydrax_meshing__volume_generation.VolumeConstruction,
+) -> LayerCoreSizeEvidence:
+    """Measure the authored core-size cap on recovered core edges."""
     bounds = tuple(
         control.core_maximum_size
         for control in (*specification.layer_controls, layers.control)
@@ -1096,7 +1118,11 @@ def execute_layer_core_route(
     if bounds:
         cap = min(bounds)
         core_points = np.asarray(core.mesh.coordinates, dtype=np.float64)
-        core_edges = _row_entity_vertex_keys(core.mesh, 1)
+        core_edges = (
+            _dependency_phydrax_meshing__layer_core_resources.row_entity_vertex_keys(
+                core.mesh, 1
+            )
+        )
         lengths = np.linalg.norm(
             core_points[np.asarray(core_edges, dtype=np.int64)[:, 1]]
             - core_points[np.asarray(core_edges, dtype=np.int64)[:, 0]],
@@ -1112,15 +1138,29 @@ def execute_layer_core_route(
             + specification.size_compliance.relative_tolerance * cap
         ):
             core_size_issues = ("core_maximum_size",)
-    evidence = layers.evidence
-    work.work_units = construction.work_units
-    zones, patches = compose_layer_controls(
-        original_source, specification, construction, work=work
+    return LayerCoreSizeEvidence(
+        core_size_requested, core_size_achieved, core_size_issues
     )
-    certification = layer_source_certification(
-        original_source, specification, construction, work=work
+
+
+def _layer_core_compliance(
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    evidence: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerEvidence,
+    core_compliance: _dependency_phydrax_meshing__result.MeshingComplianceReport,
+    core_size: LayerCoreSizeEvidence,
+    preparation: layer_publication.LayerRoutePreparation,
+) -> _dependency_phydrax_meshing__result.MeshingComplianceReport:
+    core_size_requested, core_size_achieved, core_size_issues = (
+        core_size.requested,
+        core_size.achieved,
+        core_size.issues,
     )
-    compliance = MeshingComplianceReport(
+    periodic_requested, periodic_achieved = (
+        preparation.periodic_requested,
+        preparation.periodic_achieved,
+    )
+    work = preparation.work
+    compliance = _dependency_phydrax_meshing__result.MeshingComplianceReport(
         specification.specification_id,
         issues=(*core_compliance.issues, *core_size_issues),
         requested=(
@@ -1172,47 +1212,240 @@ def execute_layer_core_route(
             ("layer:merged_vertices", evidence.merged_vertex_count),
         ),
     )
-    result = publish_native_result(
-        mesh,
-        coordinate_contract,
-        compliance,
-        construction.stages,
-        provider,
-        {
-            "kind": "native-layer-core",
-            "plan": plan_id,
-            "source": source_id,
-            "specification": specification.specification_id,
-            "source_revision": source_revision,
-            "source_binding": original_source.binding_id,
-            "layers": layers.result_id,
-            "construction": construction.construction_id,
-        },
-        certification,
-        audit_policy=audit_policy,
-        derivative_mode=MeshingDerivativeMode.NONDIFFERENTIABLE,
-        enforced_limits=(
-            "vertices",
-            "edges",
-            "faces",
-            "cells",
-            "connectivity_entries",
-            "data_bytes",
-            "wall_time",
-        ),
-        unenforced_limits=("native_workspace",),
-        zones=zones,
-        patches=patches,
-        labels=construction.labels,
-        associations=construction.associations,
-        attributes=construction.attributes,
-        record_phase=record_phase,
+    return compliance
+
+
+def _layer_publication_work_upper(
+    source: _dependency_phydrax_meshing_providers__native_sources.NativeLayerCoreSource,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    construction: layer_topology.LayerCoreConstruction,
+    /,
+) -> int:
+    """Bound control and fidelity-request visits from prepared incidence counts.
+
+    Each ancestry pass charges mapping and shared rows, cap polygons, PLC
+    polygons, and source-wall cells once. Lateral ancestry charges each half-cell
+    corner twice at most: once for the predecessor table and once while tracing
+    roots, which are retained after the first visit. The extra visit bounds an
+    invalid cyclic trace before its refusal. Cap/PLC edges and layer facets have
+    their declared cardinalities; no loop multiplies them by all layer cells.
+
+    Controls charge one combined facet pass and at most two visits per authored
+    face per patch. Scoped fidelity repeats ancestry once, then visits authored
+    faces and requested source IDs. Numeric improvement is already settled and
+    is absent from this publication ticket.
+    """
+    layers = source.layers
+    polygons = source.complex.polygon_facets.size
+    cap_polygons = source.cap_polygon_ids.size
+    wall_cells = sum(block.cell_count for block in layers.source_wall.blocks)
+    layer_facets = sum(
+        block.cell_count * len(reference_cell_topology(block.cell_kind).entities[2])
+        for block in layers.mesh.blocks
     )
-    check_deadline(started, limits, MeshingStageKind.CERTIFICATION)
-    return result
+    ancestry = (
+        source.vertex_layer_ids.size
+        + int(np.count_nonzero(source.vertex_layer_ids >= 0))
+        + cap_polygons
+        + polygons
+        + wall_cells
+    )
+    authored_faces = polygons + wall_cells
+    if source.core_facet_source_ids is not None:
+        half_corners = sum(block.vertices.size // 2 for block in layers.mesh.blocks)
+        ancestry += (
+            2 * half_corners
+            + 1
+            + 3 * cap_polygons
+            + source.complex.polygon_vertices.size
+            + 2 * layer_facets
+        )
+        authored_faces += layer_facets
+    bound = len(construction.zones)
+    if specification.patch_controls:
+        combined_facets = sum(
+            block.cell_count * len(reference_cell_topology(block.cell_kind).entities[2])
+            for block in construction.mesh.blocks
+        )
+        bound += (
+            ancestry
+            + combined_facets
+            + 2 * len(specification.patch_controls) * authored_faces
+        )
+    if source.source_domain is not None:
+        scope = source.source_boundary_scope
+        bound += (
+            ancestry + authored_faces + (0 if scope is None else scope.entity_ids.size)
+        )
+    return bound
 
 
-def _reserved_layer_attributes(source: CellMeshingResult, /) -> tuple[MeshAttribute, ...]:
+@checked
+def execute_layer_core_route(
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    schedule: _dependency_phydrax_meshing__volume_generation.NativeVolumeSchedule,
+    coordinate_contract: SpatialCoordinateContract,
+    provider: _dependency_phydrax_meshing__contracts.MeshingProviderInfo,
+    plan_id: str,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
+    vertex_layer_ids: ArrayLike,
+    cap_polygon_ids: ArrayLike,
+    layer_regions: ArrayLike,
+    source_id: str,
+    source_revision: str,
+    generation_specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    original_source: _dependency_phydrax_meshing_providers__native_sources.NativeLayerCoreSource,
+    source_preparation_work_units: int,
+    prepared_owner: layer_publication.PreparedLayerIdentity,
+    record_phase: NativeMeshingPhaseRecorder | None = None,
+) -> _dependency_phydrax_meshing__result.CellMeshingResult:
+    """Generate and independently certify the entire native layer/core domain."""
+    with ExitStack() as resources:
+        if not native_preparation_ledger(scope).live_contains(prepared_owner):
+            raise ValueError(
+                f"execute_layer_core_route.prepared_owner must be registered in this live native scope; got unregistered preparation {prepared_owner.prepared_id!r} (standalone execution requires execute_layer_route)"
+            )
+        if (prepared_owner.source_binding_id, prepared_owner.specification_id) != (
+            original_source.binding_id,
+            specification.specification_id,
+        ):
+            raise ValueError(
+                "execute_layer_core_route.prepared_owner must bind the live source/specification preparation within publication limits; got the live layer preparation belongs to another source or specification"
+            )
+
+        started = scope.operation_started
+        preparation = layer_publication.prepare_layer_route(
+            original_source,
+            specification,
+            source_preparation_work_units,
+            scope,
+            resources,
+            started=started,
+        )
+        work = preparation.work
+        audit_policy = preparation.policy.audit_policy
+        construction = generate_layer_core(
+            layers,
+            complex_,
+            generation_specification,
+            schedule,
+            validity_policy=audit_policy.validity_policy,
+            scope=scope,
+            vertex_layer_ids=vertex_layer_ids,
+            cap_polygon_ids=cap_polygon_ids,
+            layer_regions=layer_regions,
+            source_id=source_id,
+            source_revision=source_revision,
+            input_id=plan_id,
+            record_phase=record_phase,
+            source_binding=original_source,
+            source_work_units=work.work_units,
+        )
+        mesh = construction.mesh
+        limits = specification.limits
+        cells = sum(block.cell_count for block in mesh.blocks)
+        entries = sum(block.vertices.size for block in mesh.blocks)
+        checks = (
+            ("vertices", mesh.coordinates.shape[0], limits.maximum_vertices),
+            ("edges", mesh.entity_set(1).count, limits.maximum_edges),
+            ("faces", mesh.entity_set(2).count, limits.maximum_faces),
+            ("cells", cells, limits.maximum_cells),
+            ("connectivity_entries", entries, limits.maximum_connectivity_entries),
+            (
+                "data_bytes",
+                mesh.coordinates.size * 8 + entries * 4,
+                limits.maximum_data_bytes,
+            ),
+        )
+        if any(actual > bound for _, actual, bound in checks):
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "execute_layer_core_route.prepared_owner must bind the live source/specification preparation within publication limits; got the combined native layer/core mesh exceeds its declared resource limits",
+                stage=_dependency_phydrax_meshing__trace.MeshingStageKind.VOLUME_FILL.value,
+                requested=tuple((f"maximum_{name}", bound) for name, _, bound in checks),
+                achieved=tuple((name, actual) for name, actual, _ in checks),
+            )
+        route_checks.check_deadline(
+            started,
+            limits,
+            _dependency_phydrax_meshing__trace.MeshingStageKind.VOLUME_FILL,
+        )
+        core = construction.core
+        with measure_phase(record_phase, "compliance"):
+            core_compliance = (
+                _owner_phydrax_meshing_providers__native_volume.volume_compliance(
+                    generation_specification,
+                    schedule,
+                    core,
+                    np.asarray(core.mesh.coordinates, dtype=np.float64),
+                    np.asarray(core.mesh.blocks[0].vertices, dtype=np.int64),
+                )
+            )
+        core_size = _core_size_compliance(layers, specification, core)
+        work.work_units = construction.work_units
+        work.ticket = resources.enter_context(
+            scope.batch(
+                _layer_publication_work_upper(
+                    original_source, specification, construction
+                )
+            )
+        )
+        zones, patches = (
+            _dependency_phydrax_meshing__layer_core_controls.compose_layer_controls(
+                original_source, specification, construction, work=work
+            )
+        )
+        certification = (
+            _owner_phydrax_meshing__layer_source_certification.layer_source_certification(
+                original_source, specification, construction, work=work
+            )
+        )
+        resources.close()
+        compliance = _layer_core_compliance(
+            specification, layers.evidence, core_compliance, core_size, preparation
+        )
+        publication = layer_publication.LayerCorePublication(
+            mesh=mesh,
+            compliance=compliance,
+            stages=construction.stages,
+            provenance={
+                "kind": "native-layer-core",
+                "plan": plan_id,
+                "source": source_id,
+                "specification": specification.specification_id,
+                "source_revision": source_revision,
+                "source_binding": original_source.binding_id,
+                "layers": layers.result_id,
+                "construction": construction.construction_id,
+            },
+            certification=certification,
+            organization=_owner_phydrax_meshing_providers__native_publication.NativePublicationOrganization(
+                zones=zones,
+                patches=patches,
+                labels=construction.labels,
+                associations=construction.associations,
+                attributes=construction.attributes,
+            ),
+        )
+        return layer_publication.publish_layer_route(
+            publication,
+            preparation,
+            coordinate_contract,
+            provider,
+            scope,
+            workspace,
+            record_phase=record_phase,
+        )
+
+
+def _reserved_layer_attributes(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult, /
+) -> tuple[_dependency_phydrax_meshing__organization.MeshAttribute, ...]:
     """Select the reserved physical-layer pair without admitting unrelated data."""
     return tuple(
         attribute
@@ -1221,7 +1454,10 @@ def _reserved_layer_attributes(source: CellMeshingResult, /) -> tuple[MeshAttrib
     )
 
 
-def validate_layer_index_attributes(source: CellMeshingResult, /) -> None:
+@checked
+def validate_layer_index_attributes(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult, /
+) -> None:
     """Validate the reserved layer pair; unrelated scientific attributes stay separate."""
     reserved = _reserved_layer_attributes(source)
     if not reserved:
@@ -1231,16 +1467,19 @@ def validate_layer_index_attributes(source: CellMeshingResult, /) -> None:
         "layer_column",
     }:
         raise ValueError(
-            "Native layer adaptation requires canonical layer_index and layer_column attributes."
+            "CellMeshingResult.attributes must provide standard layer_index and layer_column attributes; got missing or incompatible standard layer_index and layer_column attributes"
         )
     if source.mesh.topological_dimension != 3:
-        raise ValueError("Physical layer markers require volumetric cell identities.")
+        raise ValueError(
+            "CellMeshingResult.attributes must provide volumetric cell identities; got missing or incompatible volumetric cell identities"
+        )
     cells = source.mesh.entity_set(3)
     for attribute in reserved:
         scope = attribute.scope
         values = np.asarray(attribute.values)
         if (
-            attribute.role is not MeshAttributeRole.MARKER
+            attribute.role
+            is not _dependency_phydrax_meshing__organization.MeshAttributeRole.MARKER
             or attribute.unit is not None
             or attribute.component_shape
             or scope.entity_kind is not MeshingEntityKind.MESH
@@ -1256,17 +1495,22 @@ def validate_layer_index_attributes(source: CellMeshingResult, /) -> None:
             or np.any(values < -1)
         ):
             raise ValueError(
-                "Layer markers must bind every source cell with exact integer ancestry."
+                "CellMeshingResult.attributes must bind every source cell with integer ancestry; got incompatible Layer markers"
             )
     attributes = {attribute.name: attribute for attribute in reserved}
     if not np.array_equal(
         np.asarray(attributes["layer_index"].values) < 0,
         np.asarray(attributes["layer_column"].values) < 0,
     ):
-        raise ValueError("Physical layer interval and column support must coincide.")
+        raise ValueError(
+            "CellMeshingResult.attributes must coincide; got incompatible Physical layer interval and column support"
+        )
 
 
-def layer_interval_classes(source: CellMeshingResult, /) -> np.ndarray:
+@checked
+def layer_interval_classes(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult, /
+) -> np.ndarray:
     """Physical-interval discriminators in mesh block order for template closure."""
     validate_layer_index_attributes(source)
     ids = np.concatenate(
@@ -1291,13 +1535,14 @@ def layer_interval_classes(source: CellMeshingResult, /) -> np.ndarray:
     return classes.astype(np.int64)
 
 
+@checked
 def remap_layer_index_attribute(
-    source: CellMeshingResult,
-    lineage: MeshLineage,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    lineage: _dependency_phydrax_meshing__lineage.MeshLineage,
     target: CellMesh,
     /,
-) -> tuple[MeshAttribute, ...]:
-    """Inherit physical intervals only through complete, unambiguous cell ancestry."""
+) -> tuple[_dependency_phydrax_meshing__organization.MeshAttribute, ...]:
+    """Inherit physical intervals only through full, unambiguous cell ancestry."""
     validate_layer_index_attributes(source)
     reserved = _reserved_layer_attributes(source)
     if not reserved:
@@ -1307,7 +1552,7 @@ def remap_layer_index_attribute(
         or lineage.target_topology_id != target.topology_id
     ):
         raise ValueError(
-            "Layer interval lineage must bind the actual source and target topologies."
+            "remap_layer_index_attribute.lineage must bind the realized source and target topologies; got incompatible Layer interval lineage"
         )
     relation = lineage.entity_lineage(3)
     if (
@@ -1315,7 +1560,7 @@ def remap_layer_index_attribute(
         or relation.target_entity_set_id != target.entity_set(3).entity_set_id
     ):
         raise ValueError(
-            "Layer interval lineage must bind the actual source and target cell sets."
+            "remap_layer_index_attribute.lineage must bind the realized source and target cell sets; got incompatible Layer interval lineage"
         )
     attributes = {attribute.name: attribute for attribute in reserved}
     old_ids = np.asarray(attributes["layer_index"].scope.entity_ids, dtype=np.int64)
@@ -1341,40 +1586,48 @@ def remap_layer_index_attribute(
             or not np.any(targets == child)
         ):
             raise ValueError(
-                "Layer lineage names cells outside its bound source or target."
+                "remap_layer_index_attribute.lineage must retain unambiguous physical interval and column ancestry for every target cell; got layer lineage names cells outside its bound source or target"
             )
         value = (int(old_values[index, 0]), int(old_values[index, 1]))
-        if kind in (EntityLineageKind.UNKNOWN, EntityLineageKind.GENERATED_ON_GEOMETRY):
+        if kind in (
+            _dependency_phydrax_meshing__lineage.EntityLineageKind.UNKNOWN,
+            _dependency_phydrax_meshing__lineage.EntityLineageKind.GENERATED_ON_GEOMETRY,
+        ):
             raise ValueError(
-                "Unknown or generated cell ancestry cannot preserve a physical layer interval."
+                "remap_layer_index_attribute.lineage must retain unambiguous physical interval and column ancestry for every target cell; got unknown or generated cell ancestry cannot preserve a physical layer interval"
             )
-        if kind == EntityLineageKind.SWAPPED_FROM and value[0] >= 0:
+        if (
+            kind == _dependency_phydrax_meshing__lineage.EntityLineageKind.SWAPPED_FROM
+            and value[0] >= 0
+        ):
             raise ValueError(
-                "A layer swap requires an explicitly reconstructed physical schedule."
+                "remap_layer_index_attribute.lineage must provide an explicitly reconstructed physical schedule; got missing or incompatible an explicitly reconstructed physical schedule"
             )
         identifier = int(child)
         if identifier in inherited and inherited[identifier] != value:
             raise ValueError(
-                "Coarsening or merging different physical layer intervals or columns is forbidden."
+                "remap_layer_index_attribute.lineage must retain unambiguous physical interval and column ancestry for every target cell; got coarsening or merging different physical layer intervals or columns is forbidden"
             )
         inherited[identifier] = value
     if set(inherited) != set(targets.tolist()):
         raise ValueError(
-            "Every target layer/core cell requires complete physical-interval lineage."
+            "remap_layer_index_attribute.lineage must provide full physical-interval lineage; got missing or incompatible full physical-interval lineage"
         )
     values = np.asarray(
         [inherited[int(identifier)] for identifier in targets], dtype=np.int64
     )
     return tuple(
-        MeshAttribute(
-            name, MeshAttributeRole.MARKER, _scope(target, 3, targets), values[:, index]
+        _dependency_phydrax_meshing__organization.MeshAttribute(
+            name,
+            _dependency_phydrax_meshing__organization.MeshAttributeRole.MARKER,
+            mesh_entity_scope(target, 3, targets),
+            values[:, index],
         )
         for index, name in enumerate(("layer_index", "layer_column"))
     )
 
 
 __all__ = [
-    "LayerCoreConstruction",
     "generate_layer_core",
     "execute_layer_core_route",
     "validate_layer_index_attributes",

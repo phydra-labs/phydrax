@@ -14,7 +14,7 @@ from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...discretization.finite_volume._hybrid_diffusion import (
-    _tensor,
+    diffusion_tensor,
     HybridMimeticDiffusion,
 )
 from ...discretization.finite_volume._unstructured import (
@@ -129,7 +129,9 @@ class RichardsPlan(StrictModule):
             diffusion.cell_count,
             "temperature_K",
         )
-        self.intrinsic_tensor = _tensor(material.permeability_m2, diffusion.cell_count)
+        self.intrinsic_tensor = diffusion_tensor(
+            material.permeability_m2, diffusion.cell_count
+        )
         self.intrinsic_matrices = diffusion.local_matrices(self.intrinsic_tensor)
         self.method = NewtonKrylov() if method is None else method
         self.termination = NonlinearTermination() if termination is None else termination

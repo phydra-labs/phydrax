@@ -31,7 +31,7 @@ from ..linalg._complexes import (
     HodgeLaplacianPart,
 )
 from ..sparse import EdgeRelation, SparseCoordinateOperator
-from ..sparse._linear import _SparseStoragePlan
+from ..sparse._linear import SparseStoragePlan
 from ..typing import parse
 from ._cell_de_rham import AbstractCellDeRhamComplex
 from ._cochain_hodge import CochainHodge, DiagonalHodge, SparseHodge
@@ -323,7 +323,7 @@ def _prepare_complex(
                 source_size=len(active[degree]),
                 target_size=len(active[degree + 1]),
             )
-            storage_plan = _SparseStoragePlan(restricted_relation)
+            storage_plan = SparseStoragePlan(restricted_relation)
         operators.append(
             SparseCoordinateOperator(
                 restricted_relation,

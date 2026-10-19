@@ -9,6 +9,7 @@ components, integration, constraints, and sampling.
 
 ```python
 import phydrax as phx
+from phydrax.units import METER
 
 left = phx.geometry.Sphere((-0.4, 0.0, 0.0), 1.0, feature_id="left")
 right = phx.geometry.Box(
@@ -17,7 +18,7 @@ right = phx.geometry.Box(
     feature_id="right",
 )
 source = (left | right).rotated((0.0, 0.0, 1.0), 0.2)
-domain = phx.domain.GeometryDomain(source.compile())
+domain = phx.domain.GeometryDomain(source.compile(coordinate_unit=METER))
 ```
 
 `GeometryDomain` exposes the compiled region field, capabilities, field
@@ -45,7 +46,11 @@ model = phx.geometry.brep_box(
     (1.0, 2.0, 3.0),
     coordinate_contract=phx.SpatialCoordinateContract.si(),
 )
-solid = phx.domain.GeometryDomain(phx.geometry.BRepSource(model).compile())
+solid = phx.domain.GeometryDomain(
+    phx.geometry.BRepSource(model).compile(
+        coordinate_unit=model.coordinate_contract.length_unit
+    )
+)
 print(solid.geometry.field_certificate)
 print(solid.boundary_atlas.source_entity_ids)
 ```

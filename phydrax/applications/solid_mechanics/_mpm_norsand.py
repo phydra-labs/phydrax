@@ -23,8 +23,10 @@ The elastic metric is exp(2(h_trial-Delta ep)); native small solves pull it
 back. This corotated logarithmic-increment convention is objective and agrees
 with the published rate law under refinement, without inventing free energy.
 
-Spectral stress inputs and Newton stress variables are normalized by p_ref;
-the Newton shear coordinate is gamma/(p_ref/G_ref). Thus the native
+Spectral stress inputs and Newton stress variables are normalized by p_ref.
+Normalized inputs are rounded before spectral symmetry admission so a fused
+quotient cannot manufacture a nonzero self-transpose residual. The Newton
+shear coordinate is gamma/(p_ref/G_ref). Thus the native
 confluent-spectrum criterion is unit-independent and the five-variable
 Jacobian remains well scaled in float32. Root residual tolerances are
 max(1e-10,64 machine epsilon). At q=0 no preferred plastic direction exists;
@@ -488,7 +490,7 @@ class NorSandMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan, NonTrainab
 
         def point(stress: Array, void: Array, ratio: Array) -> tuple[Array, Array, Array]:
             mapped = hermitian_spectral_map(
-                stress / parameters.reference_pressure,
+                jax.lax.optimization_barrier(stress / parameters.reference_pressure),
                 _initial_image_map,
                 (parameters, void, ratio),
                 function_id="norsand-initial-stress",
@@ -630,8 +632,10 @@ class NorSandMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan, NonTrainab
                 * (delta - jnp.trace(delta) / 3 * jnp.eye(3, dtype=deformation.dtype))
                 + (old_p - bulk * jnp.trace(delta)) * jnp.eye(3, dtype=deformation.dtype)
             )
+            # Preserve one rounded tensor for both sides of symmetry admission.
+            normalized = jax.lax.optimization_barrier(predictor / par.reference_pressure)
             return hermitian_spectral_map(
-                predictor / par.reference_pressure,
+                normalized,
                 _principal_return,
                 (par, void, history[22], pressure),
                 function_id="norsand-principal-return",

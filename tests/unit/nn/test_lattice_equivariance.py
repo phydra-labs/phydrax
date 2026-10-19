@@ -157,6 +157,69 @@ def test_lattice_equivariance_scenario_1() -> None:
             LatticeEquivariantConvND(basis, use_bias=True)
 
 
+@pytest.mark.parametrize(
+    "group",
+    (FiniteOrthogonalGroup.c4(), FiniteOrthogonalGroup.d4()),
+    ids=("c4", "d4"),
+)
+def test_lattice_convolution_synthesizes_in_input_precision(
+    group: FiniteOrthogonalGroup,
+) -> None:
+    layout = _layout("scalar", multiplicity=4)
+    layer = LatticeEquivariantConvND(
+        InvariantFilterBasis(group, layout, layout, kernel_shape=3),
+        dtype=jnp.float32,
+        key=jr.key(0),
+    )
+    values = jr.normal(jr.key(41), (5, 5, 4), dtype=jnp.float64)
+    mask = jr.bernoulli(jr.key(42), 0.8, (5, 5))
+    quadrature = 0.5 + jr.uniform(jr.key(43), (5, 5), dtype=jnp.float64)
+
+    @eqx.filter_jit
+    def evaluate(
+        current_layer: LatticeEquivariantConvND,
+        current_values: jax.Array,
+        current_mask: jax.Array,
+        current_quadrature: jax.Array,
+    ) -> jax.Array:
+        return current_layer(
+            current_values,
+            source_mask=current_mask,
+            target_mask=current_mask,
+            quadrature=current_quadrature,
+        )
+
+    reference = evaluate(layer, values, mask, quadrature)
+    promoted = eqx.tree_at(
+        lambda current: current.coefficients,
+        layer,
+        layer.coefficients.astype(jnp.float64),
+    )
+
+    assert layer.coefficients.dtype == jnp.float32
+    assert reference.dtype == jnp.float64
+    # This is the same 1e-10 exact-equivariance bound as the benchmark protocol.
+    assert jnp.allclose(
+        reference,
+        evaluate(promoted, values, mask, quadrature),
+        atol=1e-10,
+        rtol=1e-10,
+    )
+    for element in range(group.order):
+        transformed_mask = group.spatial_action(mask, element)
+        transformed = evaluate(
+            layer,
+            group.field_action(values, layout, element),
+            transformed_mask,
+            group.spatial_action(quadrature, element),
+        )
+        expected = group.field_action(reference, layout, element)
+        relative_defect = jnp.sqrt(jnp.sum((transformed - expected) ** 2)) / jnp.sqrt(
+            jnp.sum(expected**2)
+        )
+        assert relative_defect < 1e-10
+
+
 def test_lattice_equivariance_scenario_2() -> None:
     group = FiniteOrthogonalGroup.d4()
     layout = TensorFieldLayout(

@@ -1271,7 +1271,9 @@ def _validate_publication(
         shard.shard_fingerprint
         for shard in read_process_checkpoint_shards(repository, durable)
     ) != tuple(shard.shard_fingerprint for shard in publication.shards):
-        raise ValueError("Distributed checkpoint shard bindings were substituted.")
+        raise ValueError(
+            f"DistributedCheckpointPublication.shards must stay within the restart limit and match committed shard fingerprints; got {tuple(shard.shard_fingerprint for shard in publication.shards)!r}"
+        )
     if any(chunk.transaction_id != durable.transaction_id for chunk in durable.chunks):
         raise ValueError("Distributed checkpoint chunks cross transaction boundaries.")
 

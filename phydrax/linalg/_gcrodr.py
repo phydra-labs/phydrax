@@ -38,7 +38,7 @@ from ._results import (
     LinearSolveStatus,
     RecycledLinearSolveResult,
 )
-from ._spaces import _coordinate_dtype, AbstractVectorSpace
+from ._spaces import AbstractVectorSpace, coordinate_dtype
 from .krylov._decompositions import arnoldi
 from .krylov._results import KrylovBreakdownStatus
 
@@ -482,9 +482,9 @@ def _validate_state(
         operator.target
     ):
         raise ValueError("Recycling state vector spaces are structurally incompatible.")
-    if jnp.dtype(state.source_basis.dtype) != _coordinate_dtype(operator.source):
+    if jnp.dtype(state.source_basis.dtype) != coordinate_dtype(operator.source):
         raise ValueError("Recycling source basis dtype does not match its source space.")
-    if jnp.dtype(state.image_basis.dtype) != _coordinate_dtype(operator.target):
+    if jnp.dtype(state.image_basis.dtype) != coordinate_dtype(operator.target):
         raise ValueError("Recycling image basis dtype does not match its target space.")
     if state.operator_id != operator.operator_id:
         raise ValueError("Stale recycling operator ID; structural reuse is rejected.")
@@ -517,9 +517,9 @@ def _coerce_state(
         raise ValueError(
             "Recycling subspace vector spaces are structurally incompatible."
         )
-    if jnp.dtype(recycling.source_basis.dtype) != _coordinate_dtype(operator.source):
+    if jnp.dtype(recycling.source_basis.dtype) != coordinate_dtype(operator.source):
         raise ValueError("Recycling source basis dtype does not match its source space.")
-    if jnp.dtype(recycling.image_basis.dtype) != _coordinate_dtype(operator.target):
+    if jnp.dtype(recycling.image_basis.dtype) != coordinate_dtype(operator.target):
         raise ValueError("Recycling image basis dtype does not match its target space.")
     source = jnp.zeros(
         (operator.source.size, capacity_), dtype=recycling.source_basis.dtype
@@ -561,7 +561,7 @@ def _empty_state(
     update_count: Any = 0,
 ) -> RecyclingState:
     operator = prepared.problem.operator
-    dtype = _coordinate_dtype(operator.source)
+    dtype = coordinate_dtype(operator.source)
     return RecyclingState(
         source=operator.source,
         target=operator.target,

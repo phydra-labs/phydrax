@@ -246,7 +246,15 @@ from ._nls_planner import (
     SchurComplementPlan,
     solve_schur_system,
 )
-from ._nonlinear_constraints import AugmentedLagrangian, FilterGlobalization, SQP
+from ._nonlinear_constraints import (
+    AugmentedLagrangian,
+    constraint_layout,
+    ConstraintLayout,
+    FilterGlobalization,
+    SQP,
+    SQPEvidence,
+    SQPTerminationCriterion,
+)
 from ._optimistix import OptimistixMethod
 from ._pareto import dominance_matrix, hypervolume, nondominated_mask
 from ._pde_constrained import (
@@ -267,6 +275,12 @@ from ._pde_constrained import (
 from ._pde_constrained_mma import ReducedMMA
 from ._pounders import POUNDERS, POUNDERSEvidence
 from ._precedence_space import PrecedenceNode, PrecedenceOperation, PrecedenceSpace
+from ._primal_dual import (
+    AbstractPrimalDualKKTSetup,
+    PrimalDualEvidence,
+    PrimalDualKKTSetupResult,
+    PrimalDualNewtonKrylov,
+)
 from ._programming import (
     AbstractConvexCone,
     AbstractConvexProgramMethod,
@@ -556,6 +570,12 @@ from ._variable_projection import (
 __all__ = [
     "adam",
     "polynomial",
+    "constraint_layout",
+    "ConstraintLayout",
+    "AbstractPrimalDualKKTSetup",
+    "PrimalDualEvidence",
+    "PrimalDualKKTSetupResult",
+    "PrimalDualNewtonKrylov",
     "AbstractConvexCone",
     "AbstractMixedIntegerMethod",
     "AbstractDistributionEvolutionMethod",
@@ -855,6 +875,8 @@ __all__ = [
     "mirror_descent",
     "optimization_status_message",
     "SQP",
+    "SQPEvidence",
+    "SQPTerminationCriterion",
     "SimplexIndicator",
     "StrongWolfeLineSearch",
     "StrongWolfeResult",

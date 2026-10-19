@@ -6,12 +6,13 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _circle_panelization(
     *, panels: Any = 4, order: Any = 6, partition: Any = None
 ) -> Any:
-    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     return phx.operators.BoundaryPanelization2D(
         geometry.boundary_atlas,
         panels_per_chart=None if partition is not None else panels,
@@ -91,11 +92,11 @@ def test_layer_lane1_scenario_1() -> None:
     assert jnp.isfinite(result.values)
     assert result.evaluation_report.failed_panel_count == 0
     assert result.evaluation_report.error_estimate < 1e-4
-    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     topology = phx.operators.BoundaryCornerTopology2D(
         geometry.boundary_atlas.num_charts,
         ((0, "start"), (0, "end")),
-        interior_angles=(jnp.pi, jnp.pi),
+        interior_angles=np.asarray((jnp.pi, jnp.pi), dtype=np.float64),
     )
     partition = phx.operators.BoundaryPanelPartition2D(
         geometry.boundary_atlas,
@@ -170,7 +171,7 @@ def test_layer_lane1_scenario_2() -> None:
     )
     assert bool(result.assembly_report.accuracy_supported)
     assert jnp.all(jnp.isfinite(result.density))
-    phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     panelization = _circle_panelization(panels=1, order=2)
     potential = phx.operators.HelmholtzLayerPotential2D(
         panelization,
@@ -202,7 +203,7 @@ def test_layer_lane1_scenario_2() -> None:
 
 
 def test_layer_lane1_scenario_3() -> None:
-    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile()
+    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     panelization = phx.operators.SurfacePanelization3D(
         geometry.boundary_atlas,
         quadrature_order=3,
@@ -222,7 +223,7 @@ def test_layer_lane1_scenario_3() -> None:
     assert jnp.isfinite(values[0])
     assert bool(report.pde_membership_valid)
     assert report.target_fingerprint
-    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile()
+    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     panelization = phx.operators.SurfacePanelization3D(
         geometry.boundary_atlas,
         quadrature_order=2,
@@ -303,7 +304,7 @@ def test_layer_lane1_scenario_3() -> None:
     assert reference.near_panel_count + reference.far_panel_count == (
         targets.shape[0] * panelization.panel_count
     )
-    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     uniform = _circle_panelization(panels=4, order=4)
     topology = phx.operators.BoundaryCornerTopology2D(
         geometry.boundary_atlas.num_charts,
@@ -382,6 +383,10 @@ def test_helmholtz_directional_terms_match_order_three_ad_oracle() -> None:
         direction = jnp.asarray([0.6, 0.8])
 
         if field_kind == "combined":
+            if not isinstance(potential, phx.operators.HelmholtzCombinedField2D):
+                raise RuntimeError(
+                    "LayerPotential.potential must be HelmholtzCombinedField2D for combined fields; got layer potential"
+                )
 
             def kernel(distance: Any) -> Any:
                 target = center + distance * direction

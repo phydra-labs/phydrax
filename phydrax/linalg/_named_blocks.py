@@ -30,15 +30,15 @@ from ..typing import checked
 from ._materialization import MaterializationPolicy
 from ._operators import (
     _assemble_operator_diagonal,
-    _generic_adjoint,
     AbstractLinearOperator,
     BlockLinearOperator,
+    generic_adjoint,
     ScaledLinearOperator,
     SumLinearOperator,
     TransposeLinearOperator,
 )
 from ._properties import LinearCapabilityError, OperatorCapabilities, OperatorProperties
-from ._spaces import _coordinate_dtype, AbstractVectorSpace, ArraySpace, BlockSpace
+from ._spaces import AbstractVectorSpace, ArraySpace, BlockSpace, coordinate_dtype
 
 
 type BlockPath = tuple[str, ...]
@@ -264,7 +264,7 @@ class BlockSelection(StrictModule):
             tuple(value for member in ranges for value in member), source.size
         )
         target = BlockSpace(tuple(spaces), names=tuple(names))
-        if _coordinate_dtype(target) != _coordinate_dtype(source):
+        if coordinate_dtype(target) != coordinate_dtype(source):
             raise TypeError("Selected members must share the source coordinate dtype.")
         self.source = source
         self.target = target
@@ -314,7 +314,7 @@ class BlockSelection(StrictModule):
                 placements.append((start, coordinates[offset : offset + stop - start]))
                 offset += stop - start
         return self.source.unflatten(
-            _scatter(placements, self.source.size, _coordinate_dtype(self.source))
+            _scatter(placements, self.source.size, coordinate_dtype(self.source))
         )
 
 
@@ -325,7 +325,7 @@ def _selection_matrix(selection: BlockSelection, /) -> Array:
     )
     matrix = np.zeros(
         (selection.target.size, selection.source.size),
-        dtype=_coordinate_dtype(selection.source),
+        dtype=coordinate_dtype(selection.source),
     )
     matrix[rows, columns] = 1
     return jnp.asarray(matrix)
@@ -364,7 +364,7 @@ class BlockRestrictionLinearOperator(AbstractLinearOperator):
         return self.selection.prolong(vector)
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         return _selection_matrix(self.selection)
@@ -396,7 +396,7 @@ class BlockProlongationLinearOperator(AbstractLinearOperator):
         return self.selection.restrict(vector)
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         return _selection_matrix(self.selection).T
@@ -417,7 +417,7 @@ class _CoordinateTransferLinearOperator(AbstractLinearOperator):
         pieces: tuple[CoordinatePiece, ...],
         /,
     ) -> None:
-        if _coordinate_dtype(source) != _coordinate_dtype(target):
+        if coordinate_dtype(source) != coordinate_dtype(target):
             raise TypeError("Coordinate transfers require one coordinate dtype.")
         _validate_disjoint(
             tuple((start, start + length) for start, _, length in pieces), source.size
@@ -452,7 +452,7 @@ class _CoordinateTransferLinearOperator(AbstractLinearOperator):
             for source_start, target_start, length in self.pieces
         )
         return self.target.unflatten(
-            _scatter(placements, self.target.size, _coordinate_dtype(self.target))
+            _scatter(placements, self.target.size, coordinate_dtype(self.target))
         )
 
     def transpose_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
@@ -462,15 +462,15 @@ class _CoordinateTransferLinearOperator(AbstractLinearOperator):
             for source_start, target_start, length in self.pieces
         )
         return self.source.unflatten(
-            _scatter(placements, self.source.size, _coordinate_dtype(self.source))
+            _scatter(placements, self.source.size, coordinate_dtype(self.source))
         )
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         matrix = np.zeros(
-            (self.target.size, self.source.size), dtype=_coordinate_dtype(self.source)
+            (self.target.size, self.source.size), dtype=coordinate_dtype(self.source)
         )
         for source_start, target_start, length in self.pieces:
             index = np.arange(length, dtype=np.int64)
@@ -538,7 +538,7 @@ class _SelectedBlockLinearOperator(AbstractLinearOperator):
             self.source.flatten(vector),
             self.column_ranges,
             inner.source.size,
-            _coordinate_dtype(inner.source),
+            coordinate_dtype(inner.source),
         )
         image = inner.target.flatten(inner.mv(inner.source.unflatten(embedded)))
         return self.target.unflatten(_gather(image, self.row_ranges))
@@ -549,26 +549,24 @@ class _SelectedBlockLinearOperator(AbstractLinearOperator):
             self.target.flatten(vector),
             self.row_ranges,
             inner.target.size,
-            _coordinate_dtype(inner.target),
+            coordinate_dtype(inner.target),
         )
         image = inner.source.flatten(inner.transpose_mv(inner.target.unflatten(embedded)))
         return self.source.unflatten(_gather(image, self.column_ranges))
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         return self._materialize_columns(1)
 
     def _materialize_admitted(self, policy: MaterializationPolicy, /) -> Array:
-        policy.require(
-            self.source.size * self.target.size, _coordinate_dtype(self.target)
-        )
+        policy.require(self.source.size * self.target.size, coordinate_dtype(self.target))
         inner = self.operator
         column_bytes = (
-            inner.source.size * _coordinate_dtype(inner.source).itemsize
+            inner.source.size * coordinate_dtype(inner.source).itemsize
             + (inner.target.size + self.target.size)
-            * _coordinate_dtype(inner.target).itemsize
+            * coordinate_dtype(inner.target).itemsize
         )
         policy.require_workspace(column_bytes)
         block_size = min(32, max(1, policy.max_workspace_bytes // max(column_bytes, 1)))
@@ -581,7 +579,7 @@ class _SelectedBlockLinearOperator(AbstractLinearOperator):
 
         def column(index: Array) -> Array:
             coordinates = jax.nn.one_hot(
-                index, inner.source.size, dtype=_coordinate_dtype(inner.source)
+                index, inner.source.size, dtype=coordinate_dtype(inner.source)
             )
             image = inner.target.flatten(inner.mv(inner.source.unflatten(coordinates)))
             return image[rows]
@@ -815,7 +813,7 @@ class MappedBlockLinearOperator(AbstractLinearOperator):
         return self.column_map.prolong(self.block_operator.transpose_mv(blocks))
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         return self._place_matrix(self.block_operator._materialize())
@@ -871,7 +869,7 @@ class MappedBlockLinearOperator(AbstractLinearOperator):
         flag = jnp.asarray(active)
         if flag.shape != () or flag.dtype != jnp.bool_:
             raise ValueError("active must be one Boolean scalar.")
-        real = np.finfo(_coordinate_dtype(self.source)).dtype
+        real = np.finfo(coordinate_dtype(self.source)).dtype
         weight = flag.astype(real)
         return MappedBlockLinearOperator(
             _switched_blocks(self.block_operator, weight, 1.0 - weight, 0, 0),
@@ -950,7 +948,7 @@ def _piece_space(
         return node
     return ArraySpace(
         (_range_length(local),),
-        dtype=_coordinate_dtype(member),
+        dtype=coordinate_dtype(member),
         space_id=canonical_fingerprint(
             {
                 "kind": "canonical-block-piece",

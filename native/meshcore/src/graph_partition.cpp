@@ -48,6 +48,7 @@
 #include <vector>
 
 #include "capi_guard.hpp"
+#include "counter_records.hpp"
 #include "phydrax_meshcore.h"
 
 namespace {
@@ -62,41 +63,28 @@ constexpr int32_t kVCycles = 2;
 constexpr int32_t kBisectionSeeds = 8;
 constexpr int64_t kBisectionCoarsenTo = 64;
 
-enum Counter : int {
-  kLevels = 0,
-  kCoarsestVertices = 1,
-  kMatchedPairs = 2,
-  kBisectionTrials = 3,
-  kRefinementPasses = 4,
-  kMovesCommitted = 5,
-  kMovesRolledBack = 6,
-  kBalanceMoves = 7,
-  kNonemptyRepairs = 8,
-  kAdjacencyVisits = 9,
-  kCandidateEvaluations = 10,
-};
 static_assert(PHX_MC_GRAPH_PARTITION_COUNTERS == 11);
-static_assert(PHX_MC_GRAPH_PARTITION_VISITS == kAdjacencyVisits);
+static_assert(PHX_MC_GRAPH_PARTITION_ADJACENCY_VISITS == 9);
 
 struct WorkExhausted {};
 
 struct Work {
   int64_t limit;
-  int64_t* counters;
+  phx::mc::GraphPartitionCounters& counters;
 
-  void charge(Counter counter, int64_t entries) {
-    const int64_t remaining = limit - counters[kAdjacencyVisits] -
-                              counters[kCandidateEvaluations];
+  void charge(int64_t& counter, int64_t entries) {
+    const int64_t remaining = limit - counters.adjacency_visits -
+                              counters.candidate_evaluations;
     if (entries > remaining) {
-      counters[counter] += std::min(entries, std::numeric_limits<int64_t>::max() -
-                                                counters[counter]);
+      counter += std::min(entries, std::numeric_limits<int64_t>::max() -
+                                                counter);
       throw WorkExhausted{};
     }
-    counters[counter] += entries;
+    counter += entries;
   }
 
-  void visit(int64_t entries) { charge(kAdjacencyVisits, entries); }
-  void candidate(int64_t entries = 1) { charge(kCandidateEvaluations, entries); }
+  void visit(int64_t entries) { charge(counters.adjacency_visits, entries); }
+  void candidate(int64_t entries = 1) { charge(counters.candidate_evaluations, entries); }
 };
 
 struct GraphView {
@@ -283,7 +271,7 @@ int32_t match(const GraphView& g, const Coarsening& c, std::vector<int32_t>& cma
       pending = v;
     }
   }
-  work.counters[kMatchedPairs] += pairs;
+  work.counters.matched_pairs += pairs;
   cmap.assign(n, -1);
   int32_t coarse = 0;
   for (int32_t v = 0; v < n; ++v) {
@@ -552,7 +540,7 @@ void shed_overload(const GraphView& g, Partition& p, const Balance& b, Work& wor
       }
       if (move.to >= 0) {
         p.move(g, v, move.to);
-        ++work.counters[kBalanceMoves];
+        ++work.counters.balance_moves;
       }
     }
   }
@@ -604,7 +592,7 @@ void repair_packing(const GraphView& g, Partition& p, const Balance& b, Work& wo
             p.weight[from] += difference;
             p.weight[to] -= difference;
             std::swap(p.part[v], p.part[u]);
-            work.counters[kBalanceMoves] += 2;
+            work.counters.balance_moves += 2;
             changed = repaired = true;
             break;
           }
@@ -637,7 +625,7 @@ int64_t greedy_pass(const GraphView& g, Partition& p, const Balance& b,
       ++moved;
     }
   }
-  work.counters[kMovesCommitted] += moved;
+  work.counters.moves_committed += moved;
   return moved;
 }
 
@@ -809,8 +797,8 @@ bool fm_pass(const GraphView& g, Partition& p, const Balance& b,
   for (std::size_t index = moves.size(); index > best_length; --index) {
     p.move(g, moves[index - 1].first, moves[index - 1].second);
   }
-  work.counters[kMovesCommitted] += static_cast<int64_t>(best_length);
-  work.counters[kMovesRolledBack] += static_cast<int64_t>(moves.size() - best_length);
+  work.counters.moves_committed += static_cast<int64_t>(best_length);
+  work.counters.moves_rolled_back += static_cast<int64_t>(moves.size() - best_length);
   return best_delta < 0;
 }
 
@@ -918,7 +906,7 @@ int64_t exchange_pass(const GraphView& g, Partition& p, const Balance& b,
       moved += 2;
     }
   }
-  work.counters[kMovesCommitted] += moved;
+  work.counters.moves_committed += moved;
   return moved;
 }
 
@@ -935,7 +923,7 @@ void refine(const GraphView& g, Partition& p, const Balance& b, int32_t passes, 
     return rank[a] != rank[c] ? rank[a] < rank[c] : a < c;
   });
   for (int32_t pass = 0; pass < passes; ++pass) {
-    ++work.counters[kRefinementPasses];
+    ++work.counters.refinement_passes;
     work.candidate(g.n);
     const int64_t greedy = greedy_pass(g, p, b, order, work);
     const bool improved = fm_pass(g, p, b, rank, work);
@@ -1096,10 +1084,10 @@ Partition grow_bisection(const GraphView& g, const int64_t goal[2], const Balanc
         }
       }
       p.move(g, lightest, empty);
-      ++work.counters[kNonemptyRepairs];
+      ++work.counters.nonempty_repairs;
     }
     refine(g, p, balance, passes, mix(seed ^ (static_cast<uint64_t>(trial) << 32)), work);
-    ++work.counters[kBisectionTrials];
+    ++work.counters.bisection_trials;
     if (best.part.empty() || better(g, p, best, balance, work)) {
       best = std::move(p);
     }
@@ -1247,7 +1235,7 @@ void fill_empty_parts(const GraphView& g, Partition& p, const Balance& b, Work& 
       throw std::logic_error("Required nonempty partition has no donor.");
     }
     p.move(g, pick, q);
-    ++work.counters[kNonemptyRepairs];
+    ++work.counters.nonempty_repairs;
   }
 }
 
@@ -1414,7 +1402,7 @@ void refine_pairs(const GraphView& g, Partition& p, const Balance& balance,
         p.count[b] = count[1 ^ best_flip];
         for (std::size_t v = 0; v < side.size(); ++v) {
           const int32_t next = (side[v] ^ best_flip) == 0 ? a : b;
-          work.counters[kMovesCommitted] += p.part[pair.members[v]] != next;
+          work.counters.moves_committed += p.part[pair.members[v]] != next;
           p.part[pair.members[v]] = next;
         }
         changed = true;
@@ -1442,15 +1430,15 @@ void partition_multilevel(const GraphView& input, int32_t k, const int64_t* targ
   for (int32_t trial = 0; trial < starts; ++trial) {
     const uint64_t seed = mix(seed_offset + 0x1000 + static_cast<uint64_t>(trial));
     const Hierarchy h = coarsen(input, coarsen_to, max_weight, seed, nullptr, work);
-    work.counters[kLevels] =
-        std::max(work.counters[kLevels], static_cast<int64_t>(h.depth()));
+    work.counters.coarsening_levels =
+        std::max(work.counters.coarsening_levels, static_cast<int64_t>(h.depth()));
     const GraphView coarsest = h.level(input, h.depth());
     Partition q = initial_partition(coarsest, targets, caps.at(coarsest, h.depth() > 0),
                                     passes, seed, work);
     uncoarsen(input, h, q, caps, passes, seed, work);
     if (p.part.empty() || better(input, q, p, caps.at(input, false), work)) {
       p = std::move(q);
-      work.counters[kCoarsestVertices] = coarsest.n;
+      work.counters.coarsest_vertex_count = coarsest.n;
     }
   }
   for (int32_t cycle = 0; cycle < cycles; ++cycle) {
@@ -1599,7 +1587,7 @@ void refine_regions(const GraphView& g, Partition& p, const Balance& balance,
       }
       for (std::size_t v = 0; v < region.members.size(); ++v) {
         const int32_t next = group[candidate.part[v]];
-        work.counters[kMovesCommitted] += p.part[region.members[v]] != next;
+        work.counters.moves_committed += p.part[region.members[v]] != next;
         p.part[region.members[v]] = next;
       }
       changed = true;
@@ -1616,10 +1604,10 @@ void partition_connected(const GraphView& input, int32_t k, const int64_t* targe
   Partition p;
   partition_multilevel(input, k, targets, capacities, nonempty, passes,
                        kInitialPartitions, kVCycles, 0, p, work);
-  const int64_t coarsest = work.counters[kCoarsestVertices];
+  const int64_t coarsest = work.counters.coarsest_vertex_count;
   refine_pairs(input, p, {k, capacities, nonempty}, passes, work);
   refine_regions(input, p, {k, capacities, nonempty}, passes, work);
-  work.counters[kCoarsestVertices] = coarsest;
+  work.counters.coarsest_vertex_count = coarsest;
   std::copy(p.part.begin(), p.part.end(), out);
 }
 
@@ -1749,7 +1737,7 @@ void partition_kway(const GraphView& input, int32_t k, const int64_t* targets,
       for (int32_t v = 0; v < input.n; ++v) {
         out[v] = owner[c.label[v]];
       }
-      work.counters[kCoarsestVertices] = input.n;
+      work.counters.coarsest_vertex_count = input.n;
       return;
     }
   }
@@ -1772,13 +1760,13 @@ void partition_kway(const GraphView& input, int32_t k, const int64_t* targets,
       } else {
         partition_connected(sub.view(), count, targets + first, capacities + first,
                             nonempty, passes, owners.data(), work);
-        coarsest_vertices += work.counters[kCoarsestVertices];
+        coarsest_vertices += work.counters.coarsest_vertex_count;
       }
       for (std::size_t v = 0; v < members.size(); ++v) {
         separated.part[members[v]] = first + owners[v];
       }
     }
-    work.counters[kCoarsestVertices] = coarsest_vertices;
+    work.counters.coarsest_vertex_count = coarsest_vertices;
     separated.assign(input, k);
     const Balance exact{k, capacities, nonempty};
     if (overload(separated, exact) == 0) {
@@ -1887,7 +1875,8 @@ int32_t phx_mc_graph_partition(int64_t vertex_count, const int64_t* offsets,
         parts == nullptr || counters == nullptr) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    std::fill_n(counters, PHX_MC_GRAPH_PARTITION_COUNTERS, int64_t{0});
+    phx::mc::GraphPartitionCounters state;
+    phx::mc::CounterPublisher publisher{state, counters};
     int32_t status =
         validate_graph(vertex_count, offsets, neighbors, edge_weights, vertex_weights);
     if (status == PHX_MC_OK) {
@@ -1897,7 +1886,7 @@ int32_t phx_mc_graph_partition(int64_t vertex_count, const int64_t* offsets,
     if (status != PHX_MC_OK) {
       return status;
     }
-    Work work{work_limit, counters};
+    Work work{work_limit, state};
     const GraphView input{static_cast<int32_t>(vertex_count), offsets, neighbors, edge_weights,
                           vertex_weights};
     // Returns work exhaustion as a resource refusal with the counters so far.

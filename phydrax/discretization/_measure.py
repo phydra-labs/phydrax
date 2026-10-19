@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, core as jax_core
@@ -54,6 +55,14 @@ def _validate_host_measure(
         raise ValueError("Probability-measure active weights must sum to one.")
 
 
+@jax.jit
+def _measure_total_mass(values: Array, mask: Array, /) -> Array:
+    """Reduce mass in the declared measure entity-capacity bucket."""
+    return jnp.sum(
+        jnp.where(mask, values, jnp.zeros((), dtype=values.dtype)), dtype=jnp.float64
+    )
+
+
 @final
 class DiscreteMeasure(StrictModule, NonTrainableState):
     """Identity-bearing finite measure with dynamic weights and total mass.
@@ -91,15 +100,23 @@ class DiscreteMeasure(StrictModule, NonTrainableState):
         support_id_ = nonempty_identifier("support_id", support_id)
         entity_set_id_ = nonempty_identifier("entity_set_id", entity_set_id)
         normalization = parse(normalization, MeasureNormalization, "normalization")
-        values = jnp.asarray(weights)
+        if isinstance(weights, (Array, jax_core.Tracer)):
+            values = jnp.asarray(weights)
+            if not jnp.issubdtype(values.dtype, jnp.inexact):
+                values = values.astype(jnp.float64)
+        else:
+            host_weights = np.asarray(weights)
+            if not np.issubdtype(host_weights.dtype, np.inexact):
+                host_weights = host_weights.astype(np.float64)
+            values = jax.device_put(host_weights)
         if values.ndim != 1:
             raise ValueError("Discrete measure weights must be rank-1.")
-        if not jnp.issubdtype(values.dtype, jnp.inexact):
-            values = values.astype(jnp.float64)
         mask = (
-            jnp.ones(values.shape, dtype=jnp.bool_)
+            jax.device_put(np.ones(values.shape, dtype=np.bool_))
             if active_mask is None
             else jnp.asarray(active_mask, dtype=jnp.bool_)
+            if isinstance(active_mask, (Array, jax_core.Tracer))
+            else jax.device_put(np.asarray(active_mask, dtype=np.bool_))
         )
         if mask.shape != values.shape:
             raise ValueError(
@@ -139,9 +156,7 @@ class DiscreteMeasure(StrictModule, NonTrainableState):
                         "active_mask": array_tree_fingerprint(np.asarray(mask)),
                     },
                 )
-        total = jnp.sum(
-            jnp.where(mask, values, jnp.zeros((), dtype=values.dtype)), dtype=jnp.float64
-        )
+        total = _measure_total_mass(values, mask)
         self.name = name_
         self.support_id = support_id_
         self.entity_set_id = entity_set_id_

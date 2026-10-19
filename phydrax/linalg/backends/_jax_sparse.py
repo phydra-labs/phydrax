@@ -221,7 +221,7 @@ type _ColumnSolver = Callable[[Array, Array, Array, Array], Array]
 
 
 def _spsolve_columns(tolerance: float, reorder: int, /) -> _ColumnSolver:
-    """JAX's sparse direct solve over canonical ``(n, k)`` right-hand-side columns.
+    """Apply JAX's sparse direct solve to ``(n, k)`` right-hand-side columns.
 
     ``spsolve`` accepts one vector and defines no batching rule. Under ``vmap``,
     lanes sharing one CSR matrix become additional right-hand-side columns of that

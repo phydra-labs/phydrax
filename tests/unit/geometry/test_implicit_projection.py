@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def test_normal_gauge_projection_has_expected_sphere_radius_derivative() -> None:
@@ -17,7 +18,7 @@ def test_normal_gauge_projection_has_expected_sphere_radius_derivative() -> None
         (0.0, 0.0, 0.0),
         1.0,
         feature_id="sphere",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     anchors = jnp.asarray(
         [
             [1.0, 0.0, 0.0],
@@ -55,7 +56,7 @@ def test_projection_rejects_trust_region_expiry_with_finite_fallback() -> None:
         (0.0, 0.0, 0.0),
         1.0,
         feature_id="sphere",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     plan = phx.geometry.ImplicitPointProjectionPlan(
         geometry,
         jnp.asarray([[1.0, 0.0, 0.0]]),

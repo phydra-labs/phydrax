@@ -5,38 +5,53 @@
 from __future__ import annotations
 
 import math
+import sys
+from contextlib import nullcontext
 from fractions import Fraction
-from typing import TYPE_CHECKING
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+import phydrax.discretization._mapped_geometry_measure as mapped_measure_owner
+from phydrax.discretization._polygon_types import PolyhedralFaceTriangulation
+
+from ... import linalg as linalg_owner, sparse as sparse_owner
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._meshcore import exact_orient3d
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior._form_type import FormType, FormValueSpec
-from ...linalg import FunctionLinearOperator, OperatorProperties
-from ...linalg._small_batched import SmallLinearSolvePlan, solve_small_linear
-from ...sparse import scatter_local
-from .._cell_complex import PolyhedralConnectivity
-from .._cell_geometry import CellGeometrySpec
-from .._cell_mesh import CellMesh
-from .._polygon_geometry import (
-    PolyhedralFaceTriangulation,
-    prepare_polyhedral_face_triangulation,
+from ...geometry import _exact_polyhedral_geometry as exact_polyhedral_geometry_owner
+from ...linalg import (
+    FunctionLinearOperator,
+    OperatorProperties,
+    SmallLinearSolvePlan,
+    solve_small_linear,
 )
+from ...sparse import RelationAccumulation, scatter_local
+from ...typing import checked
+from .. import (
+    _cell_geometry_validity as cell_geometry_validity_owner,
+    _spaces as spaces_owner,
+    _transfer as transfer_owner,
+)
+from .._cell_complex import PolyhedralConnectivity
+from .._cell_geometry import (
+    cell_geometry_preparation_bounds,
+    cell_geometry_preparation_query_upper,
+    CellGeometrySpec,
+    owned_coordinate_preparation,
+)
+from .._cell_mesh import CellMesh
+from .._coordinate_budget import CoordinateEnclosureBudget
+from .._polygon_geometry import prepare_polyhedral_face_triangulation
+from ..fem import _topology_transfer as topology_transfer_owner
 from ._operator import FactorizedVirtualElementOperator
 from ._precision import VirtualElementResourceBudget
-
-
-if TYPE_CHECKING:
-    from .._spaces import DiscreteFieldSpace
-    from .._transfer import FieldTransfer, TransferGeometryBinding
-    from ..fem._topology_transfer import FiniteElementTopologyTransfer
 
 
 class PolyhedralVEMEvidence3D(StrictModule, NonTrainableState):
@@ -78,61 +93,49 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
     def as_linear_operator(self, /) -> FunctionLinearOperator:
         return self.operator.as_linear_operator()
 
-    def vertex_field_space(self, name: str, /) -> DiscreteFieldSpace:
-        """Canonical scalar H1 vertex field on the actual quotient entities."""
-        from ...linalg import ArraySpace
-        from .._spaces import DiscreteFieldSpace, EntityDofLayout
+    def vertex_field_space(self, name: str, /) -> spaces_owner.DiscreteFieldSpace:
+        """Return a scalar H1 vertex field on quotient entities."""
 
         topology = (
             self.mesh.topology
             if self.mesh.periodic_topology is None
             else self.mesh.periodic_topology.quotient
         )
-        return DiscreteFieldSpace(
+        return spaces_owner.DiscreteFieldSpace(
             name,
             self.mesh.support.support_id,
-            EntityDofLayout(
+            spaces_owner.EntityDofLayout(
                 topology.entities(0).entity_set_id,
                 self.dof_count,
                 self.dof_count,
                 dofs_per_entity=1,
             ),
-            ArraySpace((self.dof_count,), dtype=self.operator.coefficient_maps[0].dtype),
+            linalg_owner.ArraySpace(
+                (self.dof_count,), dtype=self.operator.coefficient_maps[0].dtype
+            ),
             representation="functional",
             conformity="H1",
             form_type=self.value_spec.form_type,
             projection_id=self.prepared_id,
         )
 
+    @checked
     def vertex_field_transfer(
         self,
         target: PreparedPolyhedralH1VirtualElement3D,
-        physical_transfer: FiniteElementTopologyTransfer,
-        geometry: TransferGeometryBinding,
+        physical_transfer: topology_transfer_owner.FiniteElementTopologyTransfer,
+        geometry: transfer_owner.TransferGeometryBinding,
         /,
         *,
         field_name: str = "u",
-    ) -> FieldTransfer:
+    ) -> transfer_owner.FieldTransfer:
         """Compose a checked physical vertex stencil with scalar quotient maps.
 
-        A stencil must intertwine the actual SCI orbits. Representative
+        A stencil must intertwine the SCI orbits. Representative
         restriction is not coordinate matching or averaging. Only interpolation
         is claimed; arbitrary VEM interior/face interpolation is not admitted.
         """
-        from ...linalg import ComposedLinearOperator, transpose
-        from ...sparse import RowRelation, SparseLinearMap
-        from .._cell_geometry_validity import cell_geometry_id
-        from .._transfer import FieldTransfer, TransferGeometryBinding, TransferProperties
-        from ..fem._topology_transfer import FiniteElementTopologyTransfer
 
-        if not isinstance(target, PreparedPolyhedralH1VirtualElement3D) or not isinstance(
-            physical_transfer, FiniteElementTopologyTransfer
-        ):
-            raise TypeError(
-                "Scalar VEM transfer requires actual prepared endpoints and a canonical physical topology transfer."
-            )
-        if not isinstance(geometry, TransferGeometryBinding):
-            raise TypeError("Scalar VEM transfer requires its actual geometry binding.")
         if (
             physical_transfer.source_topology_id != self.mesh.topology_id
             or physical_transfer.target_topology_id != target.mesh.topology_id
@@ -140,31 +143,31 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
             or geometry.target_topology_id != target.mesh.topology_id
         ):
             raise ValueError(
-                "The physical transfer and geometry binding must name the actual VEM topologies."
+                "PreparedPolyhedralH1VirtualElement3D.geometry must name the VEM topologies; got mismatched transfer endpoints"
             )
         source_geometry = (
             self.mesh.geometry_id
             if self.cell_geometry is None
-            else cell_geometry_id(self.cell_geometry)
+            else cell_geometry_validity_owner.cell_geometry_id(self.cell_geometry)
         )
         target_geometry = (
             target.mesh.geometry_id
             if target.cell_geometry is None
-            else cell_geometry_id(target.cell_geometry)
+            else cell_geometry_validity_owner.cell_geometry_id(target.cell_geometry)
         )
         if (
             geometry.source_geometry_id != source_geometry
             or geometry.target_geometry_id != target_geometry
         ):
             raise ValueError(
-                "The VEM transfer differs from its actual scientific geometry maps."
+                "PreparedPolyhedralH1VirtualElement3D.geometry must match the scientific geometry maps; got mismatched geometry IDs"
             )
         primal = physical_transfer.primal
-        if not isinstance(primal, SparseLinearMap) or not isinstance(
-            primal.relation, RowRelation
+        if not isinstance(primal, sparse_owner.SparseLinearMap) or not isinstance(
+            primal.relation, sparse_owner.RowRelation
         ):
             raise TypeError(
-                "Scalar VEM vertex traces require a canonical sparse physical vertex stencil."
+                "PreparedPolyhedralH1VirtualElement3D.physical_transfer must carry a sparse row vertex stencil; got incompatible primal route"
             )
         source_periodic, target_periodic = (
             self.mesh.periodic_topology,
@@ -190,7 +193,7 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
             or primal.target.size != target_orbits.size
         ):
             raise ValueError(
-                "Physical transfer rows must cover the complete lifted vertex carriers."
+                f"PreparedPolyhedralH1VirtualElement3D.physical_transfer must cover lifted vertex carriers; got source={primal.source.size}, target={primal.target.size}"
             )
         routes, valid, weights = (
             np.asarray(primal.relation.source_indices),
@@ -213,27 +216,29 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
             for index, orbit in enumerate(target_orbits)
         ):
             raise ValueError(
-                "The physical vertex stencil does not intertwine the scientific scalar quotient orbits."
+                "PreparedPolyhedralH1VirtualElement3D.physical_transfer must intertwine scalar quotient orbits; got different orbit row signatures"
             )
-        lift = SparseLinearMap(
-            RowRelation(source_orbits[:, None], source_size=self.dof_count),
+        lift = sparse_owner.SparseLinearMap(
+            sparse_owner.RowRelation(source_orbits[:, None], source_size=self.dof_count),
             np.ones((source_orbits.size, 1)),
         )
-        restriction = SparseLinearMap(
-            RowRelation(representatives[:, None], source_size=target_orbits.size),
+        restriction = sparse_owner.SparseLinearMap(
+            sparse_owner.RowRelation(
+                representatives[:, None], source_size=target_orbits.size
+            ),
             np.ones((target.dof_count, 1)),
         )
-        quotient = ComposedLinearOperator(
-            restriction, ComposedLinearOperator(primal, lift)
+        quotient = linalg_owner.ComposedLinearOperator(
+            restriction, linalg_owner.ComposedLinearOperator(primal, lift)
         )
-        reverse = transpose(quotient)
-        return FieldTransfer(
+        reverse = linalg_owner.transpose(quotient)
+        return transfer_owner.FieldTransfer(
             self.vertex_field_space(field_name),
             target.vertex_field_space(field_name),
             quotient,
             dual_pullback_operator=reverse,
             hilbert_adjoint_operator=reverse,
-            properties=TransferProperties(
+            properties=transfer_owner.TransferProperties(
                 constant_preserving=physical_transfer.preserves_constants,
                 positivity_preserving=physical_transfer.positivity_preserving,
                 adjoint_paired=True,
@@ -245,9 +250,8 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
     def assemble_cellwise_constant_load(self, cell_forcing: ArrayLike, /) -> Array:
         """Volume vertex-lump a physical-cell scalar force into quotient DOFs.
 
-        Each original cell contributes once, using its admitted source volume.
-        This explicitly supported lumped load is not an exact higher-order VEM
-        moment rule. No incompatible-load mean is silently removed.
+        Each physical cell contributes once, using its admitted source volume.
+        The rule distributes that volume equally among the cell's vertex DOFs.
         """
         forcing = jnp.asarray(cell_forcing)
         count = self.mesh.connectivity.cell_count
@@ -255,7 +259,7 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
             forcing = jnp.broadcast_to(forcing, (count,))
         if forcing.shape != (count,) or jnp.iscomplexobj(forcing):
             raise ValueError(
-                "Scalar load assembly requires one real force per physical cell."
+                f"PreparedPolyhedralH1VirtualElement3D.cell_forcing must have one real force per physical cell; got shape={forcing.shape}, dtype={forcing.dtype}"
             )
         result = jnp.zeros(
             (self.dof_count,), dtype=jnp.result_type(forcing, self.evidence.cell_volumes)
@@ -282,11 +286,11 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
             coefficients = np.broadcast_to(coefficients, (count,))
         if coefficients.shape != (count,) or coefficients.dtype.kind not in "fiu":
             raise ValueError(
-                "Scalar diffusion requires one real coefficient per physical cell."
+                f"PreparedPolyhedralH1VirtualElement3D.cell_coefficients must have one real coefficient per physical cell; got shape={coefficients.shape}, dtype={coefficients.dtype}"
             )
         if not np.all(np.isfinite(coefficients)) or np.any(coefficients <= 0):
             raise ValueError(
-                "Scalar diffusion coefficients must be finite and strictly positive."
+                "PreparedPolyhedralH1VirtualElement3D.cell_coefficients must be finite and strictly positive; got nonfinite or nonpositive coefficients"
             )
         polynomials = []
         stabilizations = []
@@ -326,16 +330,20 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
         tolerance = float(compatibility_tolerance)
         pin = int(pinned_dof)
         if values.shape != (self.dof_count,) or not np.all(np.isfinite(values)):
-            raise ValueError("Diffusion load must be a finite quotient scalar vector.")
+            raise ValueError(
+                f"PreparedPolyhedralH1VirtualElement3D.load must be a finite quotient scalar vector; got shape={values.shape}"
+            )
         if not math.isfinite(tolerance) or tolerance < 0:
             raise ValueError(
-                "Load compatibility tolerance must be finite and nonnegative."
+                f"PreparedPolyhedralH1VirtualElement3D.compatibility_tolerance must be finite and nonnegative; got {tolerance}"
             )
         if not 0 <= pin < self.dof_count:
-            raise ValueError("The diffusion gauge must name an actual quotient DOF.")
+            raise ValueError(
+                f"PreparedPolyhedralH1VirtualElement3D.pinned_dof must name a quotient DOF; got {pin}"
+            )
         if abs(math.fsum(map(float, values))) > tolerance:
             raise ValueError(
-                "Periodic/Neumann diffusion requires a compatible zero-total physical load."
+                f"PreparedPolyhedralH1VirtualElement3D.load must have compatible zero-total physical load; got total={math.fsum(map(float, values))}, tolerance={tolerance}"
             )
         return jnp.asarray(load)[jnp.asarray(np.delete(np.arange(self.dof_count), pin))]
 
@@ -354,7 +362,9 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
         """
         pin = int(pinned_dof)
         if not 0 <= pin < self.dof_count:
-            raise ValueError("The diffusion gauge must name an actual quotient DOF.")
+            raise ValueError(
+                f"PreparedPolyhedralH1VirtualElement3D.pinned_dof must name a quotient DOF; got {pin}"
+            )
         parents = np.arange(self.dof_count)
 
         def root(index: int) -> int:
@@ -368,13 +378,16 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
                 for index in row[1:]:
                     parents[root(int(index))] = first
         if len({root(index) for index in range(self.dof_count)}) != 1:
-            raise ValueError("A single diffusion gauge requires a connected quotient.")
+            raise ValueError(
+                "PreparedPolyhedralH1VirtualElement3D.pinned_dof must gauge a connected quotient; got disconnected components"
+            )
         if self.dof_count == 1:
-            raise ValueError("The gauged quotient has no nonconstant scalar modes.")
+            raise ValueError(
+                f"PreparedPolyhedralH1VirtualElement3D.dof_count must exceed one for a gauged quotient; got {self.dof_count}"
+            )
         free = jnp.asarray(np.delete(np.arange(self.dof_count, dtype=np.int32), pin))
-        from ...linalg import ArraySpace
 
-        reduced = ArraySpace(
+        reduced = linalg_owner.ArraySpace(
             (self.dof_count - 1,), dtype=self.operator.coefficient_maps[0].dtype
         )
         diffusion = (
@@ -410,20 +423,94 @@ class PreparedPolyhedralH1VirtualElement3D(StrictModule, NonTrainableState):
         )
 
 
+class _PolyhedralHostTopology(StrictModule):
+    cell_face_offsets: np.ndarray
+    cell_face_values: np.ndarray
+    cell_face_signs: np.ndarray
+    cell_vertex_offsets: np.ndarray
+    cell_vertex_values: np.ndarray
+
+
+def _polyhedral_host_topology(
+    connectivity: PolyhedralConnectivity, /
+) -> _PolyhedralHostTopology:
+    """Snapshot packed topology once for host projector preparation."""
+    face_offsets, face_values, face_signs, vertex_offsets, vertex_values = jax.device_get(
+        (
+            connectivity.cell_face_offsets,
+            connectivity.cell_face_values,
+            connectivity.cell_face_sign_values,
+            connectivity.cell_vertex_offsets,
+            connectivity.cell_vertex_values,
+        )
+    )
+    return _PolyhedralHostTopology(
+        np.asarray(face_offsets, dtype=np.int32),
+        np.asarray(face_values, dtype=np.int32),
+        np.asarray(face_signs),
+        np.asarray(vertex_offsets, dtype=np.int32),
+        np.asarray(vertex_values, dtype=np.int32),
+    )
+
+
+class _PolyhedralVEMSource(StrictModule):
+    coordinates: np.ndarray
+    faces: PolyhedralFaceTriangulation
+    topology: _PolyhedralHostTopology
+
+
+def _prepare_polyhedral_vem_source(
+    mesh: CellMesh,
+    connectivity: PolyhedralConnectivity,
+    cell_geometry: CellGeometrySpec | None,
+    resource_limits: VirtualElementResourceBudget,
+    budget: CoordinateEnclosureBudget | None,
+    /,
+) -> _PolyhedralVEMSource:
+    """Prepare source vertices, face triangulation, and packed host topology."""
+    if cell_geometry is not None:
+        if budget is None:
+            work_upper, bytes_upper = cell_geometry_preparation_bounds(cell_geometry)
+            source_request = owned_coordinate_preparation(
+                2 * work_upper,
+                2 * bytes_upper,
+                maximum_geometry_queries=2
+                * cell_geometry_preparation_query_upper(cell_geometry),
+            )
+        else:
+            source_request = nullcontext(budget)
+        with source_request as source_budget:
+            coordinates = exact_polyhedral_geometry_owner.exact_vertices(
+                mesh, cell_geometry, budget=source_budget
+            )
+    else:
+        coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+    faces = prepare_polyhedral_face_triangulation(
+        mesh,
+        cell_geometry=cell_geometry,
+        maximum_entries=resource_limits.maximum_projector_bytes
+        // np.dtype(np.int32).itemsize,
+        budget=budget,
+    )
+    return _PolyhedralVEMSource(
+        coordinates, faces, _polyhedral_host_topology(connectivity)
+    )
+
+
 def _cell_matrix(
     coordinates: np.ndarray,
-    connectivity: PolyhedralConnectivity,
+    topology: _PolyhedralHostTopology,
     cell_index: int,
     prepared_faces: PolyhedralFaceTriangulation,
     /,
 ) -> tuple[np.ndarray, float, float, float]:
-    cell_face_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int32)
-    cell_face_values = np.asarray(connectivity.cell_face_values, dtype=np.int32)
-    cell_face_signs = np.asarray(connectivity.cell_face_sign_values)
+    cell_face_offsets = topology.cell_face_offsets
+    cell_face_values = topology.cell_face_values
+    cell_face_signs = topology.cell_face_signs
     triangle_offsets = prepared_faces.triangle_offsets
     triangle_vertices = prepared_faces.triangle_vertices
-    cell_vertex_offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
-    cell_vertex_values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
+    cell_vertex_offsets = topology.cell_vertex_offsets
+    cell_vertex_values = topology.cell_vertex_values
     cell_start, cell_stop = cell_vertex_offsets[cell_index : cell_index + 2]
     vertices = cell_vertex_values[int(cell_start) : int(cell_stop)]
     local = {int(vertex): index for index, vertex in enumerate(vertices)}
@@ -445,7 +532,9 @@ def _cell_matrix(
         np.max(np.linalg.norm(points - numerical_centroid[None, :], axis=1))
     )
     if not np.isfinite(characteristic_length) or characteristic_length <= 0.0:
-        raise ValueError("Polyhedral VEM cells require positive diameter.")
+        raise ValueError(
+            f"PolyhedralVEM.cell_diameter must be finite and positive; got {characteristic_length}"
+        )
 
     exact_source = coordinates.dtype == object
     gradients = np.zeros((3, vertices.size), dtype=object if exact_source else np.float64)
@@ -467,7 +556,7 @@ def _cell_matrix(
             )
             if np.any(signs * int(sign) <= 0):
                 raise ValueError(
-                    "Polyhedral VEM has unresolved/nonpositive exact star visibility."
+                    "PolyhedralVEM.cell_faces must have positive star visibility under exact predicates; got unresolved or nonpositive orientation"
                 )
         for triangle in triangle_vertices[start:stop]:
             triangle_vertices_ = tuple(map(int, triangle))
@@ -477,13 +566,15 @@ def _cell_matrix(
             signed_volume = np.dot(first - centroid, area_vector) / 3
             if not math.isfinite(float(signed_volume)) or signed_volume <= 0:
                 raise ValueError(
-                    "Polyhedral VEM requires outward faces visible from the cell centroid."
+                    f"PolyhedralVEM.cell_faces must point outward and be visible from the centroid; got signed_volume={signed_volume}"
                 )
             volume += signed_volume
             for vertex in triangle_vertices_:
                 gradients[:, local[vertex]] += area_vector / 3
     if not math.isfinite(float(volume)) or volume <= 0.0:
-        raise ValueError("Polyhedral VEM requires positive finite cell volume.")
+        raise ValueError(
+            f"PolyhedralVEM.cell_volume must be finite and positive; got {volume}"
+        )
     gradients = np.asarray(gradients / volume, dtype=np.float64)
     volume = float(volume)
     consistency = volume * gradients.T @ gradients
@@ -498,20 +589,22 @@ def _cell_matrix(
     singular_values = np.linalg.svd(monomials, compute_uv=False)
     rank_margin = float(singular_values[-1])
     if rank_margin <= np.finfo(np.float64).eps * singular_values[0] * vertices.size:
-        raise ValueError("Polyhedral VEM affine projector is rank deficient.")
+        raise ValueError(
+            f"PolyhedralVEM.projector must have full affine rank; got rank_margin={rank_margin}"
+        )
     solve = solve_small_linear(
         SmallLinearSolvePlan(4), monomials.T @ monomials, monomials.T
     )
     if not bool(solve.successful):
         raise ValueError(
-            "Polyhedral VEM affine projector fails native rank/conditioning/residual admission."
+            "PolyhedralVEM.projector must pass native rank, conditioning, and residual admission; got failed small solve"
         )
     projector = monomials @ np.asarray(solve.value)
     kernel = np.eye(vertices.size) - projector
     scale = float(np.trace(consistency) / max(vertices.size, 1))
     if not np.isfinite(scale) or scale <= 0.0:
         raise ValueError(
-            "Polyhedral VEM consistency energy has no admissible stabilization scale."
+            f"PolyhedralVEM.stabilization_scale must be finite and positive; got {scale}"
         )
     stabilization = scale * (kernel.T @ kernel)
     expected_gradient = np.column_stack((np.zeros(3), np.eye(3)))
@@ -527,36 +620,38 @@ def _cell_matrix(
     return consistency + stabilization, volume, rank_margin, reproduction
 
 
+@checked
 def prepare_polyhedral_h1_virtual_element_3d(
     mesh: CellMesh,
     /,
     *,
     degree: int = 1,
     resource_budget: VirtualElementResourceBudget | None = None,
-    accumulation: str = "fast",
+    accumulation: RelationAccumulation = "fast",
     cell_geometry: CellGeometrySpec | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> PreparedPolyhedralH1VirtualElement3D:
     """Prepare the first root-topology 3-D H1 VEM consumer.
 
-    The supported tuple is deliberately exact: affine geometry, star-visible
-    oriented polyhedra, and degree one. Higher-degree 2-D VEM remains available
-    through ``VirtualElementPlan``; unsupported 3-D degree requests fail rather
-    than substituting a low-order cell.
+    The supported tuple has affine geometry, star-visible oriented polyhedra,
+    and degree one. Higher-degree 2D VEM uses ``VirtualElementPlan``.
     """
 
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be CellMesh.")
     if mesh.topological_dimension != 3 or mesh.ambient_dimension != 3:
-        raise ValueError("Polyhedral H1 VEM requires a 3-D CellMesh in R3.")
+        raise ValueError(
+            f"prepare_polyhedral_h1_virtual_element_3d.mesh must be a 3D CellMesh in R3; got topological={mesh.topological_dimension}, ambient={mesh.ambient_dimension}"
+        )
     if not isinstance(mesh.connectivity, PolyhedralConnectivity):
-        raise TypeError("Polyhedral H1 VEM requires root PolyhedralConnectivity.")
+        raise TypeError(
+            "prepare_polyhedral_h1_virtual_element_3d.mesh.connectivity must be root PolyhedralConnectivity; got incompatible connectivity"
+        )
     if int(degree) != 1:
-        raise ValueError("The qualified polyhedral H1 VEM tuple has degree one.")
-    budget = (
+        raise ValueError(
+            f"prepare_polyhedral_h1_virtual_element_3d.degree must be one; got {degree}"
+        )
+    resource_limits = (
         VirtualElementResourceBudget() if resource_budget is None else resource_budget
     )
-    if not isinstance(budget, VirtualElementResourceBudget):
-        raise TypeError("resource_budget must be VirtualElementResourceBudget.")
     value_spec = FormValueSpec(FormType(3, 0), proxy="scalar")
     connectivity = mesh.connectivity
     periodic = mesh.periodic_topology
@@ -574,24 +669,18 @@ def prepare_polyhedral_h1_virtual_element_3d(
         cell_geometry = periodic.actual_geometry
         if cell_geometry is None:
             raise ValueError(
-                "Periodic polyhedral VEM requires its authoritative scientific cell geometry."
+                "prepare_polyhedral_h1_virtual_element_3d.cell_geometry must be supplied for periodic cells; got None"
             )
-    if connectivity.cell_count > budget.maximum_cells:
-        raise ValueError("Polyhedral VEM cell capacity exceeded.")
+    if connectivity.cell_count > resource_limits.maximum_cells:
+        raise ValueError(
+            f"prepare_polyhedral_h1_virtual_element_3d.resource_budget must admit the cell capacity; got cells={connectivity.cell_count}, maximum={resource_limits.maximum_cells}"
+        )
 
-    if cell_geometry is not None:
-        from ...geometry._exact_polyhedral_geometry import exact_vertices
-
-        coordinates = exact_vertices(mesh, cell_geometry)
-    else:
-        coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
-    prepared_faces = prepare_polyhedral_face_triangulation(
-        mesh,
-        cell_geometry=cell_geometry,
-        maximum_entries=budget.maximum_projector_bytes // np.dtype(np.int32).itemsize,
+    source = _prepare_polyhedral_vem_source(
+        mesh, connectivity, cell_geometry, resource_limits, budget
     )
-    cell_vertex_offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
-    cell_vertex_values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
+    cell_vertex_offsets = source.topology.cell_vertex_offsets
+    cell_vertex_values = source.topology.cell_vertex_values
     cell_arities = np.diff(cell_vertex_offsets)
     buckets: dict[int, list[int]] = {}
     matrices: dict[int, list[np.ndarray]] = {}
@@ -601,10 +690,12 @@ def prepare_polyhedral_h1_virtual_element_3d(
     estimated_bytes = 0
     for cell_index in range(connectivity.cell_count):
         arity = int(cell_arities[cell_index])
-        if arity > budget.maximum_local_dofs:
-            raise ValueError("Polyhedral VEM local-DOF capacity exceeded.")
+        if arity > resource_limits.maximum_local_dofs:
+            raise ValueError(
+                f"prepare_polyhedral_h1_virtual_element_3d.resource_budget must admit the local-DOF capacity; got local_dofs={arity}, maximum={resource_limits.maximum_local_dofs}"
+            )
         matrix, volume, margin, defect = _cell_matrix(
-            coordinates, connectivity, cell_index, prepared_faces
+            source.coordinates, source.topology, cell_index, source.faces
         )
         buckets.setdefault(arity, []).append(cell_index)
         matrices.setdefault(arity, []).append(matrix)
@@ -612,13 +703,28 @@ def prepare_polyhedral_h1_virtual_element_3d(
         rank_margins[cell_index] = margin
         defects[cell_index] = defect
         estimated_bytes += matrix.nbytes * 3
-    if estimated_bytes > budget.maximum_projector_bytes:
-        raise ValueError("Polyhedral VEM projector byte capacity exceeded.")
+    if estimated_bytes > resource_limits.maximum_projector_bytes:
+        raise ValueError(
+            f"prepare_polyhedral_h1_virtual_element_3d.resource_budget must admit projector byte capacity; got bytes={estimated_bytes}, maximum={resource_limits.maximum_projector_bytes}"
+        )
     volume_errors = np.zeros_like(volumes)
     if cell_geometry is not None:
-        from .._cell_geometry_transfer import _certified_cell_measures
-
-        volumes, volume_errors, _ = _certified_cell_measures(mesh, cell_geometry)
+        if budget is None:
+            # These are the existing standalone certified-measure allowances;
+            # the separate VEM projector capacity bounds projector storage.
+            measure_work = 100_000_000
+            measure_request = owned_coordinate_preparation(
+                measure_work,
+                sys.maxsize,
+                maximum_geometry_queries=(measure_work + 1)
+                * cell_geometry_preparation_query_upper(cell_geometry),
+            )
+        else:
+            measure_request = nullcontext(budget)
+        with measure_request as measure_budget:
+            volumes, volume_errors, _ = mapped_measure_owner.certified_cell_measures(
+                mesh, cell_geometry, budget=measure_budget
+            )
 
     coefficient_maps = []
     polynomial_matrices = []
@@ -678,7 +784,7 @@ def prepare_polyhedral_h1_virtual_element_3d(
             "volumes": array_tree_fingerprint(volumes),
             "volume_errors": array_tree_fingerprint(volume_errors),
             "rank_margins": array_tree_fingerprint(rank_margins),
-            "face_triangulation": prepared_faces.triangulation_id,
+            "face_triangulation": source.faces.triangulation_id,
             "defects": array_tree_fingerprint(defects),
         }
     )
@@ -691,7 +797,7 @@ def prepare_polyhedral_h1_virtual_element_3d(
         minimum_rank_margin=float(np.min(rank_margins)),
         maximum_reproduction_defect=float(np.max(defects)),
         evidence_id=evidence_id,
-        face_triangulation_id=prepared_faces.triangulation_id,
+        face_triangulation_id=source.faces.triangulation_id,
     )
     return PreparedPolyhedralH1VirtualElement3D(
         mesh=mesh,

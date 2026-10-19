@@ -6,6 +6,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._meshcore import meshcore_available
+from phydrax.geometry.surface import SurfaceMetadata, SurfaceModel
 
 
 pytestmark = [
@@ -27,6 +28,19 @@ _IMPORT_LIMITS = phx.interchange.ResourceLimits(
     max_attributes=2_000_000,
     max_losses=8,
 )
+
+# Empirical comparison ceilings inherited from the pre-remediation ball-wall
+# residual and generated-layer thickness/growth scenarios in this module.
+# Source fixtures: ball_in_box (OCCT sphere radius 0.4 mm), _SCHEDULE, and
+# test_planar_provider_layers_lower_to_a_measured_gmsh_boundary_layer_field.
+_CAD_RESIDUAL_RELATIVE_TOLERANCE = 1.0e-10
+_CAD_RESIDUAL_ABSOLUTE_TOLERANCE = 1.0e-12
+_NATIVE_LAYER_RELATIVE_TOLERANCE = 1.0e-6
+# The first-layer ceiling matches the adapter's declared BoundaryLayer-field
+# measurement allowance. Growth retains the ball-wall fixture's ratio ceiling.
+_GMSH_FIELD_THICKNESS_RELATIVE_TOLERANCE = 1.0e-2
+_GMSH_FIELD_GROWTH_RELATIVE_TOLERANCE = 2.0e-2
+_PLANAR_FIELD_RELATIVE_TOLERANCE = 1.0e-9
 
 
 def _persist(shape: Any, path: Any, **options: Any) -> Any:
@@ -54,7 +68,6 @@ def _persist(shape: Any, path: Any, **options: Any) -> Any:
 
 
 def _ball_in_box(path: Any) -> Any:
-    pytest.importorskip("OCP")
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeSphere
     from OCP.gp import gp_Pnt
@@ -65,7 +78,6 @@ def _ball_in_box(path: Any) -> Any:
 
 
 def _box(path: Any) -> Any:
-    pytest.importorskip("OCP")
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
 
@@ -182,6 +194,52 @@ def _assert_layered_organization(result: Any) -> None:
     assert result.audit.passed and result.compliance.passed
 
 
+def _assert_curved_wall_association(result: Any, source: Any) -> None:
+    boundary = result.boundary
+    assert boundary is not None
+    association = result.associations[0]
+    cells = boundary.mesh.entity_set(2)
+    np.testing.assert_array_equal(association.target_global_ids, cells.entity_ids)
+    assert association.complete and not association.exact
+    assert association.provenance is phx.meshing.GeometryAssociationProvenance.PROVIDER
+    corners = np.asarray(boundary.mesh.coordinates)[
+        np.asarray(boundary.mesh.blocks[0].vertices)
+    ]
+    centroids = np.mean(corners, axis=1)
+    wall = np.linalg.norm(centroids, axis=1) < 0.5
+    ball_faces = _faces(source, lambda points: np.linalg.norm(points, axis=2) < 0.5)
+    np.testing.assert_array_equal(
+        np.isin(np.asarray(association.source_indices), ball_faces), wall
+    )
+    # Sphere radius is fixed by the OCCT fixture; centroid sagitta is independent
+    # of the source tessellation and of the provider's retained classification.
+    np.testing.assert_allclose(
+        np.asarray(association.residuals)[wall],
+        0.4 - np.linalg.norm(centroids[wall], axis=1),
+        rtol=_CAD_RESIDUAL_RELATIVE_TOLERANCE,
+        atol=_CAD_RESIDUAL_ABSOLUTE_TOLERANCE,
+    )
+    assert np.max(np.asarray(association.residuals)[wall]) > (
+        4.0 * source.report.linear_deflection
+    )
+    owned = {entity.index: entity for entity in source.qualified_face_ids}
+    expected_entities = tuple(
+        owned[int(index)] for index in np.asarray(association.source_indices)
+    )
+    assert association.source_entities.occurrence_paths() == tuple(
+        entity.occurrence_path for entity in expected_entities
+    )
+    assert association.source_entities.entity_ids() == tuple(
+        phx.geometry.brep_entity_id(
+            source.source_revision,
+            2,
+            entity.index,
+            occurrence_path=entity.occurrence_path,
+        )
+        for entity in expected_entities
+    )
+
+
 @requires_meshcore
 def test_advancing_layers_around_a_curved_wall_fill_a_conforming_certified_core(
     tmp_path: Any,
@@ -198,11 +256,16 @@ def test_advancing_layers_around_a_curved_wall_fill_a_conforming_certified_core(
     result = provider.plan(source, _layered_spec(provider, source, control)).execute()
 
     _assert_layered_organization(result)
+    _assert_curved_wall_association(result, source)
     achieved = dict(result.compliance.achieved)
     key = f"layer:{control.control_id}"
     for index, thickness in enumerate(_SCHEDULE.thicknesses):
-        assert achieved[f"{key}:thickness:{index}"] == pytest.approx(thickness, rel=1e-6)
-    assert achieved[f"{key}:growth:1"] == pytest.approx(1.25, rel=1e-6)
+        assert achieved[f"{key}:thickness:{index}"] == pytest.approx(
+            thickness, rel=_NATIVE_LAYER_RELATIVE_TOLERANCE
+        )
+    assert achieved[f"{key}:growth:1"] == pytest.approx(
+        1.25, rel=_NATIVE_LAYER_RELATIVE_TOLERANCE
+    )
     assert achieved["fixed_boundary_bitwise"] == 1.0
     assert all(association.complete for association in result.associations)
     certificate = phx.discretization.certify_cell_geometry_validity(result.mesh)
@@ -227,11 +290,16 @@ def test_provider_boundary_layer_extrusion_meets_measured_layer_compliance(
     result = provider.plan(source, _layered_spec(provider, source, control)).execute()
 
     _assert_layered_organization(result)
+    _assert_curved_wall_association(result, source)
     achieved = dict(result.compliance.achieved)
     key = f"layer:{control.control_id}"
     assert achieved[f"{key}:layer_count"] == 3
-    assert achieved[f"{key}:first_layer_thickness"] == pytest.approx(0.02, rel=1e-2)
-    assert achieved[f"{key}:growth:1"] == pytest.approx(1.25, rel=2e-2)
+    assert achieved[f"{key}:first_layer_thickness"] == pytest.approx(
+        0.02, rel=_GMSH_FIELD_THICKNESS_RELATIVE_TOLERANCE
+    )
+    assert achieved[f"{key}:growth:1"] == pytest.approx(
+        1.25, rel=_GMSH_FIELD_GROWTH_RELATIVE_TOLERANCE
+    )
 
 
 @pytest.mark.parametrize(
@@ -273,9 +341,8 @@ def test_layered_volume_routes_reject_unsupported_requests_before_generation(
     )
 
 
-def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(
-    tmp_path: Any,
-) -> None:
+@pytest.fixture(scope="module")
+def cad_extrusion_request() -> tuple[Any, ...]:
     provider = phx.meshing.GmshProvider()
     source = phx.geometry.brep_box(
         (0.0, 0.0, 0.0),
@@ -297,11 +364,26 @@ def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(
         route=phx.meshing.BoundaryLayerRoute.CAD_EXTRUSION,
         volume_scope=provider.whole_scope(source, 3),
     )
+    return provider, source, schedule, control
+
+
+def test_cad_extrusion_requires_explicit_preparation(
+    cad_extrusion_request: tuple[Any, ...],
+) -> None:
+    provider, source, _, control = cad_extrusion_request
     with pytest.raises(
         phx.meshing.MeshingFailure, match="prepare_boundary_layer_extrusion"
     ):
         provider.plan(source, _layered_spec(provider, source, control))
 
+
+@pytest.fixture(scope="module")
+def prepared_cad_extrusion(
+    cad_extrusion_request: tuple[Any, ...],
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Any, ...]:
+    provider, source, schedule, _ = cad_extrusion_request
+    tmp_path = tmp_path_factory.mktemp("cad-extrusion")
     domain = phx.geometry.MeshingDomain.from_brep(source)
     wall_faces = set(
         _faces(source, lambda triangles: np.isclose(triangles[:, :, 2], 0.0))
@@ -341,17 +423,30 @@ def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(
         source, control, destination=tmp_path / "split.brep"
     )
 
-    part = extrusion.source
+    return provider, extrusion
+
+
+def test_cad_extrusion_partitions_an_exact_slab(
+    prepared_cad_extrusion: tuple[Any, ...],
+) -> None:
+    _, extrusion = prepared_cad_extrusion
     assert len(extrusion.layer_solid_ids) == 1 and len(extrusion.core_solid_ids) == 1
     assert np.asarray(extrusion.slab_volumes) == pytest.approx(0.3)
     assert extrusion.control.route is phx.meshing.BoundaryLayerRoute.EXACT_SWEEP
+
+
+def test_cad_extrusion_meshes_as_an_exact_sweep(
+    prepared_cad_extrusion: tuple[Any, ...],
+) -> None:
+    provider, extrusion = prepared_cad_extrusion
+    part = extrusion.source
     whole = provider.whole_scope(part, 3)
     layers = provider.entity_scope(part, part.solid_ids[extrusion.layer_solid_ids[0]])
     core = provider.entity_scope(part, part.solid_ids[extrusion.core_solid_ids[0]])
     native_control = extrusion.control
     assert native_control.volume_scope is not None
     assert native_control.cap_scope is not None
-    # Native extrusion names exact definition rows; author comparison-provider
+    # Native extrusion names definition rows; author comparison-provider
     # scopes from those entities rather than reinterpreting its numeric namespace.
     sweep = phx.meshing.BoundaryLayerControl(
         provider.entity_scope(
@@ -520,10 +615,10 @@ def test_core_fill_keeps_the_native_cap_bitwise_and_conforming() -> None:
             (1, 7, 3),
         )
     )
-    outer = phx.geometry.surface.SurfaceModel.from_triangles(
+    outer = SurfaceModel.from_triangles(
         outer_points,
         outer_faces,
-        phx.geometry.surface.SurfaceMetadata(
+        SurfaceMetadata(
             source_id="outer-box",
             source_revision="0",
             coordinate_contract=_COORDINATES,
@@ -614,11 +709,86 @@ def test_planar_provider_layers_lower_to_a_measured_gmsh_boundary_layer_field(
     achieved = dict(result.compliance.achieved)
     key = f"layer:{control.control_id}"
     assert achieved[f"{key}:layer_count"] == 4
-    assert achieved[f"{key}:first_layer_thickness"] == pytest.approx(0.01, rel=1e-9)
+    assert achieved[f"{key}:first_layer_thickness"] == pytest.approx(
+        0.01, rel=_PLANAR_FIELD_RELATIVE_TOLERANCE
+    )
     for index in range(1, 4):
-        assert achieved[f"{key}:growth:{index}"] == pytest.approx(1.2, rel=1e-9)
+        assert achieved[f"{key}:growth:{index}"] == pytest.approx(
+            1.2, rel=_PLANAR_FIELD_RELATIVE_TOLERANCE
+        )
     assert {block.cell_kind for block in result.mesh.blocks} == {
         "triangle",
         "quadrilateral",
     }
     assert result.compliance.passed
+
+
+def test_boundary_association_rebinds_owned_faces_by_preserved_cell_ids() -> None:
+    from phydrax.meshing._canonical import canonicalize_cell_mesh
+    from phydrax.meshing.providers._gmsh_evidence import boundary_association
+
+    source = phx.geometry.brep_box(
+        (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=_COORDINATES
+    )
+    bottom = source.qualified_face_ids[
+        _faces(source, lambda points: np.isclose(points[:, :, 2], 0.0))[0]
+    ]
+    top = source.qualified_face_ids[
+        _faces(source, lambda points: np.isclose(points[:, :, 2], 1.0))[0]
+    ]
+    # Equal facet coordinates cannot establish identity: the provider assigns
+    # each cell its own face, including a sampled approximation residual of one.
+    points = np.asarray(
+        ((0.2, 0.2, 1.0), (0.8, 0.2, 1.0), (0.2, 0.8, 1.0)), dtype=np.float64
+    )
+    surface = SurfaceModel.from_triangles(
+        np.concatenate((points, points)),
+        np.asarray(((0, 1, 2), (3, 5, 4)), dtype=np.int32),
+        SurfaceMetadata(
+            source_id=source.source_id,
+            source_revision=source.source_revision,
+            coordinate_contract=_COORDINATES,
+            provenance=("test",),
+        ),
+        cell_global_ids=np.asarray((91, 17), dtype=np.int64),
+        repair_orientation=True,
+        orient_closed_outward=False,
+    )
+    boundary = canonicalize_cell_mesh(surface.mesh)
+    association, _, attribute = boundary_association(
+        source, boundary, {91: bottom, 17: top}
+    )
+
+    np.testing.assert_array_equal(association.target_global_ids, (17, 91))
+    np.testing.assert_array_equal(association.source_indices, (top.index, bottom.index))
+    np.testing.assert_allclose(
+        association.residuals, (0.0, 1.0), atol=_CAD_RESIDUAL_ABSOLUTE_TOLERANCE
+    )
+    np.testing.assert_array_equal(attribute.values, (top.index, bottom.index))
+    assert association.complete and not association.exact
+    assert association.provenance is phx.meshing.GeometryAssociationProvenance.PROVIDER
+
+
+@pytest.mark.parametrize("owner_ids", ((17,), (17, 91, 100)), ids=("missing", "extra"))
+def test_boundary_association_refuses_incomplete_cell_ownership(
+    owner_ids: tuple[int, ...],
+) -> None:
+    from phydrax.meshing.providers._gmsh_evidence import boundary_association
+
+    source = phx.geometry.brep_box(
+        (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=_COORDINATES
+    )
+    boundary = phx.discretization.CellMesh.from_triangles(
+        np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))),
+        np.asarray(((0, 1, 2),), dtype=np.int32),
+        cell_global_ids=np.asarray((91,), dtype=np.int64),
+    )
+    with pytest.raises(
+        phx.meshing.MeshingFailure, match="bind every boundary cell ID exactly once"
+    ) as failure:
+        boundary_association(
+            source,
+            boundary,
+            {identifier: source.qualified_face_ids[0] for identifier in owner_ids},
+        )
+    assert failure.value.category is phx.meshing.MeshingFailureCategory.ASSOCIATION_FAILED

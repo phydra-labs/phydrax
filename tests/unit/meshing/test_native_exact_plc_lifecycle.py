@@ -1,8 +1,5 @@
 """Ancestry-backed decimal PLC publication, refinement, restart and adaptation."""
 
-import subprocess
-import sys
-import textwrap
 from collections import Counter
 from fractions import Fraction
 from pathlib import Path
@@ -16,6 +13,8 @@ import phydrax as phx
 from phydrax._meshcore import (
     meshcore_available,
     MeshcoreStatus,
+    NativeExecutionLimits,
+    NativeExecutionScope,
     TetMesh3D,
     TetMeshBoundaryPolicy,
     TetMeshSourceComplex,
@@ -26,8 +25,11 @@ from phydrax._model._structure import (
     model_structure_recipe,
 )
 from phydrax.discretization import CellGeometrySpec, CellMesh, ExactPlcCellGeometrySource
+from phydrax.discretization._cell_geometry import cell_geometry_preparation_query_upper
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.discretization._coordinate_enclosure import coordinate_corner_images
+from phydrax.discretization._exact_algebraic_geometry import rational_coefficient
 from phydrax.lifecycle._meshing_sources import (
     read_meshing_source_closure,
     register_meshing_source_artifacts,
@@ -36,6 +38,9 @@ from phydrax.lifecycle._meshing_sources import (
 )
 from phydrax.meshing._tetra_metric import execute_tetra_metric_adaptation
 from phydrax.meshing._topology_edit import TopologyEditBlock
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.distributed_meshing.cold_lifecycle_identities import record_array
+from tests._support.forced_devices import run_on_forced_devices
 
 
 pytestmark = pytest.mark.skipif(
@@ -47,6 +52,21 @@ _POINTS = np.asarray(
 _FACES = np.asarray(((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)), dtype=np.int32)
 _SEGMENTS = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int32)
 _BOUND = 1e-12
+
+
+def _plc_source(geometry: CellGeometrySpec, /) -> ExactPlcCellGeometrySource:
+    source = geometry.exact_source
+    assert isinstance(source, ExactPlcCellGeometrySource)
+    return source
+
+
+def _archive_roundtrip[Artifact](path: Path, value: Artifact, /) -> Artifact:
+    receipt = write_meshing_source_closure(path, value)
+    restored = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    assert isinstance(restored, type(value))
+    return restored
 
 
 def _determinant(corners: tuple[tuple[Fraction, ...], ...]) -> Fraction:
@@ -62,19 +82,35 @@ def _determinant(corners: tuple[tuple[Fraction, ...], ...]) -> Fraction:
 
 
 def _cell_determinants(
-    mesh: CellMesh, geometry: CellGeometrySpec, /
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[Fraction, ...]:
     elements, routes, _ = geometry.resolve(mesh)
-    source = geometry.source_coordinates()
+    source = geometry.source_coordinates(budget=budget)
     determinants = []
     for element, block_routes in zip(elements, routes, strict=True):
         for route in np.asarray(block_routes):
             corners = coordinate_corner_images(
-                element, tuple(source[int(index)] for index in route)
+                element, tuple(source[int(index)] for index in route), budget=budget
             )
             if corners is None:
-                raise AssertionError("PLC cell map has no exact reference-corner images.")
-            determinants.append(_determinant(corners))
+                raise AssertionError(
+                    "fixture.cell_map.corner_images must exist; got None"
+                )
+            determinants.append(
+                _determinant(
+                    tuple(
+                        tuple(
+                            rational_coefficient(value, role="fixture corner")
+                            for value in row
+                        )
+                        for row in corners
+                    )
+                )
+            )
     return tuple(determinants)
 
 
@@ -149,27 +185,32 @@ def _published(
         inverse = np.full(arrays.points.shape[0], -1, dtype=np.int32)
         inverse[live] = np.arange(live.size, dtype=np.int32)
         mesh = CellMesh.from_tetrahedra(arrays.points[live], inverse[arrays.tetrahedra])
-        source = ExactPlcCellGeometrySource(
-            _POINTS,
-            _FACES,
-            _SEGMENTS,
-            evidence.witness_strata[live],
-            evidence.witness_entities[live],
-            evidence.witness_parameters[live],
-            domain_source_id="tilted-decimal-plc",
-            domain_source_revision="tilted-decimal-plc-authored",
-            source_triangle_ids=declared.face_ids[declared.face_group_rows],
-            source_triangle_bounds=declared.face_tolerances,
-            source_segment_ids=declared.segment_ids[declared.segment_group_rows],
-            source_segment_bounds=declared.segment_tolerances,
-        )
+        with coordinate_reference_budget() as budget:
+            source = ExactPlcCellGeometrySource(
+                _POINTS,
+                _FACES,
+                _SEGMENTS,
+                evidence.witness_strata[live],
+                evidence.witness_entities[live],
+                evidence.witness_parameters[live],
+                domain_source_id="tilted-decimal-plc",
+                domain_source_revision="tilted-decimal-plc-authored",
+                source_triangle_ids=declared.face_ids[declared.face_group_rows],
+                source_triangle_bounds=declared.face_tolerances,
+                source_segment_ids=declared.segment_ids[declared.segment_group_rows],
+                source_segment_bounds=declared.segment_tolerances,
+                budget=budget,
+            )
     finally:
         native.close()
     return mesh, CellGeometrySpec.plc(mesh, source)
 
 
 def _assert_original_domain(mesh: CellMesh, geometry: CellGeometrySpec) -> None:
-    determinants = _cell_determinants(mesh, geometry)
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(geometry),
+    ) as budget:
+        determinants = _cell_determinants(mesh, geometry, budget=budget)
     assert min(determinants) > 0
     original = tuple(
         tuple(Fraction(float(value)) for value in point) for point in _POINTS
@@ -186,12 +227,17 @@ def test_decimal_plc_source_publication_and_restart_keep_exact_rows_and_paramete
 ):
     mesh, geometry = _published()
     _assert_original_domain(mesh, geometry)
-    assert any(
-        tuple(Fraction(float(value)) for value in carrier) != point
-        for carrier, point in zip(
-            np.asarray(mesh.coordinates), geometry.source_coordinates(), strict=True
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(geometry),
+    ) as budget:
+        assert any(
+            tuple(Fraction(float(value)) for value in carrier) != point
+            for carrier, point in zip(
+                np.asarray(mesh.coordinates),
+                geometry.source_coordinates(budget=budget),
+                strict=True,
+            )
         )
-    )
     register_meshing_source_artifacts()
     recipe = model_structure_recipe(geometry)
     restored = model_from_array_recipe(
@@ -201,7 +247,15 @@ def test_decimal_plc_source_publication_and_restart_keep_exact_rows_and_paramete
     )
     validate_meshing_source_closure(restored)
     assert cell_geometry_id(restored) == cell_geometry_id(geometry)
-    assert restored.source_coordinates() == geometry.source_coordinates()
+    with coordinate_reference_budget(
+        queries_upper=(
+            cell_geometry_preparation_query_upper(restored)
+            + cell_geometry_preparation_query_upper(geometry)
+        ),
+    ) as budget:
+        assert restored.source_coordinates(budget=budget) == geometry.source_coordinates(
+            budget=budget
+        )
     _assert_original_domain(mesh, restored)
 
 
@@ -209,33 +263,45 @@ def test_decimal_plc_metric_adaptation_retains_original_source_and_publishes_rea
     None
 ):
     mesh, geometry = _published()
-    outcome = execute_tetra_metric_adaptation(
-        mesh,
-        np.broadcast_to(
-            np.eye(3, dtype=np.float64) * 16, (mesh.coordinates.shape[0], 3, 3)
-        ),
-        source_geometry=geometry,
-        maximum_passes=1,
-        relocation=False,
+    limits = phx.meshing.MeshingLimits(
         maximum_vertices=256,
         maximum_cells=4096,
-        maximum_operations=200,
         maximum_work_units=1 << 26,
+        maximum_geometry_queries=10_000_000,
+        maximum_cavity_cells=512,
         maximum_scratch_bytes=1 << 26,
     )
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        with scope.batch(0) as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=1 << 26,
+                maximum_memory_bytes=1 << 26,
+            )
+        outcome = execute_tetra_metric_adaptation(
+            mesh,
+            np.broadcast_to(
+                np.eye(3, dtype=np.float64) * 16, (mesh.coordinates.shape[0], 3, 3)
+            ),
+            source_geometry=geometry,
+            maximum_passes=1,
+            relocation=False,
+            maximum_vertices=256,
+            maximum_cells=4096,
+            maximum_operations=200,
+            maximum_work_units=1 << 26,
+            maximum_scratch_bytes=1 << 26,
+            scope=scope,
+            budget=budget,
+        )
     assert outcome.evidence.splits > 0
     assert outcome.exact_source is not None
     block = outcome.edit.blocks[0]
-    if not isinstance(block, TopologyEditBlock):
-        raise AssertionError(
-            "Tetrahedral adaptation published a non-cell topology edit block."
-        )
+    assert isinstance(block, TopologyEditBlock)
     target = CellMesh.from_tetrahedra(outcome.edit.coordinates, block.cells)
     target_geometry = CellGeometrySpec.plc(target, outcome.exact_source)
     _assert_original_domain(target, target_geometry)
-    original = geometry.exact_source
-    if not isinstance(original, ExactPlcCellGeometrySource):
-        raise AssertionError("Decimal publication lost its original PLC source.")
+    original = _plc_source(geometry)
     assert np.array_equal(
         np.asarray(outcome.exact_source.source_points).view(np.uint64),
         np.asarray(original.source_points).view(np.uint64),
@@ -256,14 +322,9 @@ def test_decimal_plc_durable_archive_preserves_independent_source_banks_and_alia
     tmp_path: Path,
 ) -> None:
     mesh, geometry = _published()
-    source = geometry.exact_source
-    if not isinstance(source, ExactPlcCellGeometrySource):
-        raise AssertionError("Decimal publication lost its exact PLC source.")
+    source = _plc_source(geometry)
     records = (mesh, geometry, source)
-    receipt = write_meshing_source_closure(tmp_path / "decimal-plc", records)
-    restored = read_meshing_source_closure(
-        receipt.path, expected_content_id=receipt.content_id
-    )
+    restored = _archive_roundtrip(tmp_path / "decimal-plc", records)
     restored_mesh, reopened, reopened_source = restored
     assert type(reopened_source) is ExactPlcCellGeometrySource
     assert reopened.exact_source is reopened_source
@@ -271,7 +332,15 @@ def test_decimal_plc_durable_archive_preserves_independent_source_banks_and_alia
     assert reopened_source.source_id == source.source_id
     assert reopened_source.domain_source_id == "tilted-decimal-plc"
     assert reopened_source.domain_source_revision == "tilted-decimal-plc-authored"
-    assert reopened.source_coordinates() == geometry.source_coordinates()
+    with coordinate_reference_budget(
+        queries_upper=(
+            cell_geometry_preparation_query_upper(reopened)
+            + cell_geometry_preparation_query_upper(geometry)
+        ),
+    ) as budget:
+        assert reopened.source_coordinates(budget=budget) == geometry.source_coordinates(
+            budget=budget
+        )
     for name in (
         "source_points",
         "source_triangles",
@@ -295,7 +364,7 @@ def test_decimal_plc_durable_archive_preserves_independent_source_banks_and_alia
     reopened_source.require_domain(
         _POINTS, _FACES, "tilted-decimal-plc", "tilted-decimal-plc-authored"
     )
-    with pytest.raises(ValueError, match="declared domain"):
+    with pytest.raises(ValueError, match=r"ExactPlcCellGeometrySource\.domain_source_id"):
         reopened_source.require_domain(
             _POINTS, _FACES, "tilted-decimal-plc", "different-authored-revision"
         )
@@ -309,9 +378,7 @@ def test_restored_decimal_plc_source_refuses_malformed_witness_authority(
     malformation: str,
 ) -> None:
     _, geometry = _published()
-    source = geometry.exact_source
-    if not isinstance(source, ExactPlcCellGeometrySource):
-        raise AssertionError("Decimal publication lost its exact PLC source.")
+    source = _plc_source(geometry)
     match malformation:
         case "undeclared-row":
             rows = np.array(source.vertex_rows, copy=True)
@@ -323,7 +390,7 @@ def test_restored_decimal_plc_source_refuses_malformed_witness_authority(
             corrupt = eqx.tree_at(
                 lambda value: value.vertex_rows, source, jax.numpy.asarray(rows)
             )
-            expected = "undeclared source rows"
+            expected = r"ExactPlcCellGeometrySource\.vertex_rows"
         case "outside-parameters":
             parameters = np.array(source.vertex_parameters, copy=True)
             constrained = np.flatnonzero(np.asarray(source.vertex_strata) != 0)
@@ -334,14 +401,16 @@ def test_restored_decimal_plc_source_refuses_malformed_witness_authority(
                 source,
                 jax.numpy.asarray(parameters),
             )
-            expected = "closed source entity"
+            expected = r"ExactPlcCellGeometrySource\.vertex_parameters"
         case "wrong-source-kind":
             corrupt = eqx.tree_at(
                 lambda value: value.source_points, source, "not-source-coordinates"
             )
             expected = None
         case _:
-            raise AssertionError(f"Uncovered source malformation {malformation!r}.")
+            raise AssertionError(
+                f"fixture.malformation must name a source corruption; got {malformation!r}"
+            )
     recipe = model_structure_recipe(corrupt)
     with pytest.raises((TypeError, ValueError), match=expected):
         restored = model_from_array_recipe(
@@ -354,12 +423,71 @@ def test_restored_decimal_plc_source_refuses_malformed_witness_authority(
 
 def test_decimal_plc_transient_preparation_cannot_be_archived(tmp_path: Path) -> None:
     mesh, geometry = _published()
-    source = geometry.exact_source
-    if not isinstance(source, ExactPlcCellGeometrySource):
-        raise AssertionError("Decimal publication lost its exact PLC source.")
-    proof = source.prepare(mesh.coordinates)
-    with pytest.raises(TypeError, match="nonowning source type PreparedExactPlcGeometry"):
+    source = _plc_source(geometry)
+    with coordinate_reference_budget(
+        queries_upper=source.preparation_query_upper()
+    ) as budget:
+        proof = source.prepare(mesh.coordinates, budget=budget)
+    with pytest.raises(
+        TypeError, match="source_closure must have an admitted source type"
+    ):
         write_meshing_source_closure(tmp_path / "transient-plc-proof", proof)
+
+
+def _assert_cold_plc_inverse(
+    tmp_path: Path,
+    source: phx.meshing.CellMeshingResult,
+    refined: phx.meshing.MeshAdaptationResult,
+    route: phx.meshing.MeshAdaptationRoute,
+) -> None:
+    cold_receipt = write_meshing_source_closure(
+        tmp_path / "cold-original-plc",
+        (source, refined.target, refined.hierarchy),
+    )
+    cold_record = run_on_forced_devices(
+        "tests._support.distributed_meshing.cold_lifecycle",
+        "decimal_plc_inverse",
+        (str(cold_receipt.path), cold_receipt.content_id, route.value),
+        devices=1,
+        env={},
+    )
+    assert cold_record["status"] == phx.meshing.MeshAdaptationStatus.COMPLETE.value
+    cold_original, cold_target = cold_record["original"], cold_record["target"]
+    np.testing.assert_array_equal(
+        record_array(cold_target["vertex_global_ids"]),
+        record_array(cold_original["vertex_global_ids"]),
+    )
+    np.testing.assert_array_equal(
+        record_array(cold_target["coordinates"]),
+        record_array(cold_original["coordinates"]),
+    )
+    for before, after in zip(cold_original["blocks"], cold_target["blocks"], strict=True):
+        np.testing.assert_array_equal(
+            record_array(after["global_ids"]), record_array(before["global_ids"])
+        )
+        np.testing.assert_array_equal(
+            record_array(after["vertices"]), record_array(before["vertices"])
+        )
+    assert (
+        cold_record["target_source_coordinates"]
+        == cold_record["original_source_coordinates"]
+    )
+    for name in (
+        "source_points",
+        "source_triangles",
+        "source_segments",
+        "source_triangle_ids",
+        "source_triangle_bounds",
+        "source_segment_ids",
+        "source_segment_bounds",
+        "vertex_strata",
+        "vertex_rows",
+        "vertex_parameters",
+    ):
+        before_bank = record_array(cold_record["original_source"][name])
+        after_bank = record_array(cold_record["target_source"][name])
+        assert after_bank.dtype == before_bank.dtype
+        np.testing.assert_array_equal(after_bank, before_bank)
 
 
 @pytest.mark.parametrize(
@@ -390,72 +518,38 @@ def test_decimal_plc_nested_adaptation_and_coarsening_preserve_original_physical
     )
     assert refined.status is phx.meshing.MeshAdaptationStatus.COMPLETE
     _assert_original_domain(refined.target.mesh, refined.target.geometry)
-    refined_source = refined.target.geometry.exact_source
-    if not isinstance(refined_source, ExactPlcCellGeometrySource):
-        raise AssertionError("PLC refinement lost its exact source.")
-    original_source = geometry.exact_source
-    if not isinstance(original_source, ExactPlcCellGeometrySource):
-        raise AssertionError("The source geometry lost its exact PLC owner.")
+    refined_source = _plc_source(refined.target.geometry)
+    original_source = _plc_source(geometry)
     assert refined_source.domain_source_id == original_source.domain_source_id
-    refined_coordinates = refined.target.geometry.source_coordinates()
-    assert min(_cell_determinants(refined.target.mesh, refined.target.geometry)) > 0
-    receipt = write_meshing_source_closure(
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(refined.target.geometry),
+    ) as budget:
+        refined_coordinates = refined.target.geometry.source_coordinates(budget=budget)
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(refined.target.geometry),
+    ) as budget:
+        assert (
+            min(
+                _cell_determinants(
+                    refined.target.mesh, refined.target.geometry, budget=budget
+                )
+            )
+            > 0
+        )
+    reopened_target, reopened_hierarchy, reopened_source = _archive_roundtrip(
         tmp_path / "refined-plc",
         (refined.target, refined.hierarchy, refined_source),
     )
-    reopened_target, reopened_hierarchy, reopened_source = read_meshing_source_closure(
-        receipt.path,
-        expected_content_id=receipt.content_id,
-    )
     assert reopened_target.geometry.exact_source is reopened_source
     assert reopened_source.source_id == refined_source.source_id
-    assert reopened_target.geometry.source_coordinates() == refined_coordinates
-    cold_receipt = write_meshing_source_closure(
-        tmp_path / "cold-original-plc",
-        (source, refined.target, refined.hierarchy),
-    )
-    cold_script = textwrap.dedent("""
-        import sys
-        import numpy as np
-        import phydrax as phx
-        from phydrax.lifecycle._meshing_sources import read_meshing_source_closure
-        original, fine, hierarchy = read_meshing_source_closure(
-            sys.argv[1], expected_content_id=sys.argv[2])
-        children = np.concatenate([np.asarray(block.global_ids) for block in fine.mesh.blocks])
-        original_ids = np.concatenate([np.asarray(block.global_ids) for block in original.mesh.blocks])
-        marks = children[~np.isin(children, original_ids)]
-        policy = phx.meshing.MeshAdaptationPolicy(
-            phx.meshing.MeshAdaptationRoute(sys.argv[3]),
-            compatibility=phx.meshing.BisectionCompatibility.UNIFORM_REFINEMENT)
-        result = phx.meshing.execute_mesh_adaptation(phx.meshing.prepare_mesh_adaptation(
-            fine, phx.meshing.MarkedMeshAdaptation((), marks, hierarchy=hierarchy), policy=policy))
-        assert result.status is phx.meshing.MeshAdaptationStatus.COMPLETE
-        np.testing.assert_array_equal(result.target.mesh.vertex_global_ids, original.mesh.vertex_global_ids)
-        np.testing.assert_array_equal(result.target.mesh.coordinates, original.mesh.coordinates)
-        for before, after in zip(original.mesh.blocks, result.target.mesh.blocks, strict=True):
-            np.testing.assert_array_equal(after.global_ids, before.global_ids)
-            np.testing.assert_array_equal(after.vertices, before.vertices)
-        assert result.target.geometry.source_coordinates() == original.geometry.source_coordinates()
-        for name in ('source_points', 'source_triangles', 'source_segments',
-                     'source_triangle_ids', 'source_triangle_bounds', 'source_segment_ids',
-                     'source_segment_bounds', 'vertex_strata', 'vertex_rows', 'vertex_parameters'):
-            before = getattr(original.geometry.exact_source, name)
-            after = getattr(result.target.geometry.exact_source, name)
-            assert after.dtype == before.dtype
-            np.testing.assert_array_equal(after, before)
-    """)
-    subprocess.run(
-        (
-            sys.executable,
-            "-c",
-            cold_script,
-            str(cold_receipt.path),
-            cold_receipt.content_id,
-            route.value,
-        ),
-        cwd=Path(__file__).resolve().parents[3],
-        check=True,
-    )
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(reopened_target.geometry),
+    ) as budget:
+        assert (
+            reopened_target.geometry.source_coordinates(budget=budget)
+            == refined_coordinates
+        )
+    _assert_cold_plc_inverse(tmp_path, source, refined, route)
     children = np.concatenate(
         [
             np.asarray(block.global_ids, dtype=np.int64)
@@ -478,8 +572,10 @@ def test_decimal_plc_nested_adaptation_and_coarsening_preserve_original_physical
     )
     coarsening_witnesses = coarsened.coarsening_witnesses
     if coarsening_witnesses is None:
-        raise AssertionError("PLC coarsening published no inverse reference witnesses.")
-    # Exact coefficient-action publication carries coarsening charts directly
+        raise AssertionError(
+            "fixture.coarsening_witnesses must contain inverse reference charts; got None"
+        )
+    # Coefficient-action publication carries coarsening charts directly
     # even when no separately reconstructed geometry transition is necessary.
     assert set(np.asarray(coarsening_witnesses.fine_cell_ids).tolist()) == set(
         children.tolist()
@@ -493,17 +589,30 @@ def test_decimal_plc_nested_adaptation_and_coarsening_preserve_original_physical
     if coarsened_transition is not None:
         assert coarsened_transition.evidence.measure_exact
         assert coarsened_transition.evidence.coverage_defect == 0.0
-    coarsened_source = coarsened.target.geometry.exact_source
-    if not isinstance(coarsened_source, ExactPlcCellGeometrySource):
-        raise AssertionError("PLC coarsening lost its exact source.")
+    coarsened_source = _plc_source(coarsened.target.geometry)
     np.testing.assert_array_equal(
         coarsened_source.source_points, original_source.source_points
     )
     np.testing.assert_array_equal(
         coarsened_source.source_triangles, original_source.source_triangles
     )
-    coarsened_coordinates = coarsened.target.geometry.source_coordinates()
-    assert min(_cell_determinants(coarsened.target.mesh, coarsened.target.geometry)) > 0
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(coarsened.target.geometry),
+    ) as budget:
+        coarsened_coordinates = coarsened.target.geometry.source_coordinates(
+            budget=budget
+        )
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(coarsened.target.geometry),
+    ) as budget:
+        assert (
+            min(
+                _cell_determinants(
+                    coarsened.target.mesh, coarsened.target.geometry, budget=budget
+                )
+            )
+            > 0
+        )
     np.testing.assert_array_equal(
         coarsened.target.mesh.vertex_global_ids, mesh.vertex_global_ids
     )
@@ -515,7 +624,10 @@ def test_decimal_plc_nested_adaptation_and_coarsening_preserve_original_physical
             restored_block.global_ids, original_block.global_ids
         )
         np.testing.assert_array_equal(restored_block.vertices, original_block.vertices)
-    assert coarsened_coordinates == geometry.source_coordinates()
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(geometry),
+    ) as budget:
+        assert coarsened_coordinates == geometry.source_coordinates(budget=budget)
     for name in (
         "source_points",
         "source_triangles",
@@ -806,7 +918,15 @@ def test_native_provider_generates_decimal_plc_on_original_exact_source_geometry
     assert isinstance(exact_source, ExactPlcCellGeometrySource)
     assert exact_source.domain_source_id == source.source_id
     assert exact_source.domain_source_revision == source.source_revision
-    assert exact_source.prepare(produced.mesh.coordinates).maximum_rounding_error > 0
+    with coordinate_reference_budget(
+        queries_upper=exact_source.preparation_query_upper()
+    ) as budget:
+        assert (
+            exact_source.prepare(
+                produced.mesh.coordinates, budget=budget
+            ).maximum_rounding_error
+            > 0
+        )
     _assert_original_domain(produced.mesh, produced.geometry)
 
 
@@ -823,24 +943,46 @@ def test_sparse_int64_source_ids_survive_real_bounded_refinement_and_metric_adap
     mesh, geometry = _published(face_ids=face_ids, segment_ids=segment_ids)
     original = geometry.exact_source
     assert isinstance(original, ExactPlcCellGeometrySource)
-    assert original.prepare(mesh.coordinates).maximum_rounding_error > 0
+    with coordinate_reference_budget(
+        queries_upper=original.preparation_query_upper()
+    ) as budget:
+        assert (
+            original.prepare(mesh.coordinates, budget=budget).maximum_rounding_error > 0
+        )
     _assert_original_domain(mesh, geometry)
     np.testing.assert_array_equal(original.source_triangle_ids, face_ids)
     np.testing.assert_array_equal(original.source_segment_ids, segment_ids)
-    outcome = execute_tetra_metric_adaptation(
-        mesh,
-        np.broadcast_to(
-            np.eye(3, dtype=np.float64) * 16, (mesh.coordinates.shape[0], 3, 3)
-        ),
-        source_geometry=geometry,
-        maximum_passes=1,
-        relocation=False,
+    limits = phx.meshing.MeshingLimits(
         maximum_vertices=256,
         maximum_cells=4096,
-        maximum_operations=200,
         maximum_work_units=1 << 26,
+        maximum_geometry_queries=10_000_000,
+        maximum_cavity_cells=512,
         maximum_scratch_bytes=1 << 26,
     )
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        with scope.batch(0) as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=1 << 26,
+                maximum_memory_bytes=1 << 26,
+            )
+        outcome = execute_tetra_metric_adaptation(
+            mesh,
+            np.broadcast_to(
+                np.eye(3, dtype=np.float64) * 16, (mesh.coordinates.shape[0], 3, 3)
+            ),
+            source_geometry=geometry,
+            maximum_passes=1,
+            relocation=False,
+            maximum_vertices=256,
+            maximum_cells=4096,
+            maximum_operations=200,
+            maximum_work_units=1 << 26,
+            maximum_scratch_bytes=1 << 26,
+            scope=scope,
+            budget=budget,
+        )
     assert outcome.evidence.splits > 0
     assert isinstance(outcome.exact_source, ExactPlcCellGeometrySource)
     np.testing.assert_array_equal(outcome.exact_source.source_triangle_ids, face_ids)
@@ -848,10 +990,7 @@ def test_sparse_int64_source_ids_survive_real_bounded_refinement_and_metric_adap
     assert outcome.exact_source.source_triangle_ids.dtype == np.dtype(np.int64)
     assert outcome.exact_source.source_segment_ids.dtype == np.dtype(np.int64)
     block = outcome.edit.blocks[0]
-    if not isinstance(block, TopologyEditBlock):
-        raise AssertionError(
-            "Tetrahedral adaptation published a non-cell topology edit block."
-        )
+    assert isinstance(block, TopologyEditBlock)
     target = CellMesh.from_tetrahedra(outcome.edit.coordinates, block.cells)
     _assert_original_domain(target, CellGeometrySpec.plc(target, outcome.exact_source))
 
@@ -862,27 +1001,32 @@ def test_exact_plc_metric_tiny_original_scratch_refuses_without_changing_live_so
 ) -> None:
     from contextlib import nullcontext
 
-    from phydrax._meshcore import MeshcoreError, NativeExecutionBudget
-    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+    from phydrax._meshcore import (
+        MeshcoreError,
+    )
+    from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
 
     mesh, geometry = _published()
-    source = geometry.exact_source
-    if not isinstance(source, ExactPlcCellGeometrySource):
-        raise AssertionError("Decimal publication lost its canonical PLC authority.")
+    source = _plc_source(geometry)
     identity = source.source_id
-    bank = geometry.source_coordinates()
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(geometry),
+    ) as budget:
+        bank = geometry.source_coordinates(budget=budget)
     coordinates = np.asarray(mesh.coordinates).copy()
     cells = tuple(np.asarray(block.vertices).copy() for block in mesh.blocks)
     metric = np.broadcast_to(
         np.eye(3, dtype=np.float64) * 16, (mesh.coordinates.shape[0], 3, 3)
     )
     native = (
-        NativeExecutionBudget(
-            max_work=1 << 26,
-            max_geometry_queries=1 << 26,
-            max_cavity_cells=1 << 20,
-            max_scratch_bytes=32,
-            max_wall_seconds=np.inf,
+        NativeExecutionScope(
+            NativeExecutionLimits(
+                maximum_work_units=1 << 26,
+                maximum_geometry_queries=1 << 26,
+                maximum_cavity_cells=1 << 20,
+                maximum_managed_bytes=32,
+                maximum_seconds=np.inf,
+            )
         )
         if ambient
         else None
@@ -891,30 +1035,50 @@ def test_exact_plc_metric_tiny_original_scratch_refuses_without_changing_live_so
         pytest.raises(MeshcoreError) if native is not None else nullcontext(),
         nullcontext() if native is None else native,
     ):
-        with pytest.raises(MeshingFailure) as refusal:
-            execute_tetra_metric_adaptation(
-                mesh,
-                metric,
-                source_geometry=geometry,
-                maximum_passes=1,
-                relocation=False,
-                maximum_vertices=256,
-                maximum_cells=4096,
-                maximum_operations=200,
-                maximum_work_units=1 << 26,
-                maximum_location_pairs=1 << 26,
-                maximum_cavity_cells=1 << 20,
-                maximum_cavity_work=1 << 26,
-                maximum_scratch_bytes=(1 << 26) if ambient else 32,
-            )
-        assert refusal.value.category == MeshingFailureCategory.RESOURCE_EXHAUSTED
+        limits = phx.meshing.MeshingLimits(
+            maximum_vertices=256,
+            maximum_cells=4096,
+            maximum_work_units=1 << 26,
+            maximum_geometry_queries=1 << 26,
+            maximum_cavity_cells=1 << 20,
+            maximum_scratch_bytes=(1 << 26) if ambient else 32,
+        )
+        with NativeExecutionScope(limits.native_limits()) as scope:
+            with scope.batch(0) as ticket:
+                budget = CoordinateEnclosureBudget(
+                    ticket,
+                    maximum_work_units=1 << 26,
+                    maximum_memory_bytes=(1 << 26) if ambient else 32,
+                )
+            with pytest.raises(MeshingFailure) as refusal:
+                execute_tetra_metric_adaptation(
+                    mesh,
+                    metric,
+                    source_geometry=geometry,
+                    maximum_passes=1,
+                    relocation=False,
+                    maximum_vertices=256,
+                    maximum_cells=4096,
+                    maximum_operations=200,
+                    maximum_work_units=1 << 26,
+                    maximum_location_pairs=1 << 26,
+                    maximum_cavity_cells=1 << 20,
+                    maximum_cavity_work=1 << 26,
+                    maximum_scratch_bytes=(1 << 26) if ambient else 32,
+                    scope=scope,
+                    budget=budget,
+                )
+            assert refusal.value.category == MeshingFailureCategory.RESOURCE_EXHAUSTED
     if native is not None:
         assert native.evidence is not None
         assert native.evidence.status == MeshcoreStatus.CAPACITY_EXCEEDED
         assert native.evidence.host_storage_live_bytes_upper == 0
         assert native.evidence.host_storage_peak_bytes_upper == 0
     assert source.source_id == identity
-    assert geometry.source_coordinates() == bank
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(geometry),
+    ) as budget:
+        assert geometry.source_coordinates(budget=budget) == bank
     np.testing.assert_array_equal(mesh.coordinates, coordinates)
     for block, original in zip(mesh.blocks, cells, strict=True):
         np.testing.assert_array_equal(block.vertices, original)

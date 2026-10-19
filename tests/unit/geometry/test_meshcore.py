@@ -3,28 +3,37 @@
 #
 
 
+import ctypes
 import gc
 import importlib.metadata
 import threading
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
-from typing import Any
 
 import numpy as np
 import pytest
 from jax.typing import DTypeLike
+from numpy.typing import NDArray
 from scipy.spatial import ConvexHull
 
+from phydrax._host_storage import retained_host_storage_profile
 from phydrax._meshcore import (
+    constrained_delaunay_2d,
+    current_native_host_workspace,
     delaunay_2d,
     delaunay_3d,
     IncrementalDelaunay3D,
     IntersectionClass,
+    is_native_host_buffer,
     meshcore_available,
     meshcore_identity,
     MeshcoreError,
     MeshcoreStatus,
-    NativeExecutionBudget,
+    NativeBatchTicket,
+    NativeExecutionLimits,
+    NativeExecutionMemoryCounters,
+    NativeExecutionScope,
     NativeResourceFailure,
     PlanarExecutionEvidence,
     PlcRecoveryFailure,
@@ -38,11 +47,11 @@ from phydrax._meshcore import (
     tetrahedron_intersection_simplices,
     triangle_intersection_classes,
     triangle_intersections,
-    TRIANGULATION_3D_STATISTICS,
 )
 from phydrax.geometry import (
     ConstrainedDelaunayTriangulation,
     DelaunayTriangulation,
+    DiagramCells,
     incircle,
     insphere,
     orient2d,
@@ -51,6 +60,10 @@ from phydrax.geometry import (
     PredicateMode,
     VoronoiDiagram,
 )
+
+
+# Empirical `test_incremental_delaunay_preserves_constraints_and_regions`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_DELAUNAY_REGION_VOLUME_RTOL = 1e-14
 
 
 pytestmark = [
@@ -66,14 +79,19 @@ UNIT_TET = np.asarray(
     ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 )
 
+type RationalPoint = tuple[Fraction, ...]
+type RationalPlanePoint = tuple[Fraction, Fraction]
 
-def _signed_areas(corners: Any) -> Any:
+
+def _signed_areas(corners: NDArray[np.float64]) -> NDArray[np.float64]:
     first = corners[:, 1] - corners[:, 0]
     second = corners[:, 2] - corners[:, 0]
     return 0.5 * (first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0])
 
 
-def _tet_moments(vertices: Any) -> Any:
+def _tet_moments(
+    vertices: NDArray[np.float64],
+) -> tuple[np.float64, NDArray[np.float64]]:
     volume = abs(np.linalg.det(vertices[1:] - vertices[0])) / 6.0
     return volume, volume * np.mean(vertices, axis=0)
 
@@ -161,9 +179,12 @@ def test_meshcore_scenario_2() -> None:
     rng = np.random.default_rng(4)
     first = rng.random((40, 4, 3))
     second = 0.3 + rng.random((40, 4, 3))
-    simplices, counts, volume, moment, status = tetrahedron_intersection_simplices(
-        first, second
-    )
+    intersection = tetrahedron_intersection_simplices(first, second)
+    simplices = intersection.simplices
+    counts = intersection.simplex_counts
+    volume = intersection.volume
+    moment = intersection.first_moment
+    status = intersection.status
     reference_volume, reference_moment, _ = tetrahedron_intersection_moments(
         first, second
     )
@@ -183,9 +204,13 @@ def test_meshcore_scenario_2() -> None:
     assert np.all(counts[volume == 0.0] == 0)
 
     square = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
-    triangles, triangle_counts, area, _, polygon_status = polygon_intersection_simplices(
+    intersection = polygon_intersection_simplices(
         square[None], (4,), (square + 0.5)[None], (4,)
     )
+    triangles = intersection.simplices
+    triangle_counts = intersection.simplex_counts
+    area = intersection.area
+    polygon_status = intersection.status
     assert polygon_status[0] == MeshcoreStatus.OK and triangle_counts[0] == 4
     corner_edges = triangles[0, :4, 1:] - triangles[0, :4, :1]
     corner_areas = 0.5 * (
@@ -194,9 +219,10 @@ def test_meshcore_scenario_2() -> None:
     )
     assert np.all(corner_areas > 0.0)
     assert np.sum(corner_areas) == pytest.approx(area[0], rel=1e-15)
-    *_, refused = polygon_intersection_simplices(
+    intersection = polygon_intersection_simplices(
         square[None], (4,), (square + 0.5)[None], (4,), simplex_capacity=3
     )
+    refused = intersection.status
     assert refused[0] == MeshcoreStatus.CAPACITY_EXCEEDED
     rng = np.random.default_rng(0)
     random_points = rng.random((200, 2))
@@ -237,7 +263,9 @@ def test_meshcore_scenario_2() -> None:
         assert volume == pytest.approx(ConvexHull(points).volume, rel=1e-12)
 
 
-def _assert_empty_circles(points: Any, triangles: Any) -> None:
+def _assert_empty_circles(
+    points: NDArray[np.float64], triangles: NDArray[np.int32]
+) -> None:
     a, b, c = (points[triangles[:, index]] for index in range(3))
     assert np.all(orient2d(a, b, c, mode=EXACT).signs == 1)
     for query in points:
@@ -245,10 +273,13 @@ def _assert_empty_circles(points: Any, triangles: Any) -> None:
         assert np.all(signs <= 0)
 
 
-def _segment_coverage(triangulation: Any, segments: Any) -> None:
+def _segment_coverage(
+    triangulation: ConstrainedDelaunayTriangulation, segments: NDArray[np.int64]
+) -> None:
     points = triangulation.points
     triangles = triangulation.triangles
-    for segment_id, (start, stop) in enumerate(segments):
+    for segment_id in range(segments.shape[0]):
+        start, stop = segments[segment_id, 0], segments[segment_id, 1]
         cells, corners = np.nonzero(triangulation.segment_ids == segment_id)
         edges = np.stack(
             (triangles[cells, (corners + 1) % 3], triangles[cells, (corners + 2) % 3]),
@@ -369,7 +400,7 @@ def test_meshcore_scenario_3() -> None:
     assert np.sum(hidden.cells.measures) == pytest.approx(1.0, rel=1e-12)
 
 
-def _reciprocal_faces(cells: Any) -> Any:
+def _reciprocal_faces(cells: DiagramCells) -> bool:
     offsets = cells.cell_face_offsets
     owners = np.repeat(np.arange(cells.cell_count), np.diff(offsets))
     labels = cells.face_labels
@@ -384,15 +415,15 @@ def _reciprocal_faces(cells: Any) -> Any:
 # computed exactly in Fractions.
 
 
-def _vector(point: Any) -> Any:
+def _vector(point: NDArray[np.float64]) -> RationalPoint:
     return tuple(Fraction(float(value)) for value in point)
 
 
-def _sub(p: Any, q: Any) -> Any:
+def _sub(p: RationalPoint, q: RationalPoint) -> RationalPoint:
     return tuple(a - b for a, b in zip(p, q, strict=True))
 
 
-def _cross(p: Any, q: Any) -> Any:
+def _cross(p: RationalPoint, q: RationalPoint) -> RationalPoint:
     return (
         p[1] * q[2] - p[2] * q[1],
         p[2] * q[0] - p[0] * q[2],
@@ -400,20 +431,22 @@ def _cross(p: Any, q: Any) -> Any:
     )
 
 
-def _dot(p: Any, q: Any) -> Any:
-    return sum(a * b for a, b in zip(p, q, strict=True))
+def _dot(p: RationalPoint, q: RationalPoint) -> Fraction:
+    return sum((a * b for a, b in zip(p, q, strict=True)), Fraction(0))
 
 
-def _normal(triangle: Any) -> Any:
+def _normal(triangle: Sequence[RationalPoint]) -> RationalPoint:
     return _cross(_sub(triangle[1], triangle[0]), _sub(triangle[2], triangle[0]))
 
 
-def _edge_side(triangle: Any, normal: Any, k: int, x: Any) -> Any:
+def _edge_side(
+    triangle: Sequence[RationalPoint], normal: RationalPoint, k: int, x: RationalPoint
+) -> Fraction:
     u, v = triangle[(k + 1) % 3], triangle[(k + 2) % 3]
     return _dot(_cross(_sub(v, u), _sub(x, u)), normal)
 
 
-def _containment(x: Any, triangle: Any) -> int:
+def _containment(x: RationalPoint, triangle: Sequence[RationalPoint]) -> int:
     """-1 outside, 0 on the boundary, 1 inside a triangle whose plane holds x."""
 
     sides = [_edge_side(triangle, _normal(triangle), k, x) for k in range(3)]
@@ -422,7 +455,9 @@ def _containment(x: Any, triangle: Any) -> int:
     return 0 if min(sides) == 0 else 1
 
 
-def _segment_hits(p: Any, q: Any, triangle: Any) -> Any:
+def _segment_hits(
+    p: RationalPoint, q: RationalPoint, triangle: Sequence[RationalPoint]
+) -> set[RationalPoint]:
     normal = _normal(triangle)
     sp = _dot(normal, _sub(p, triangle[0]))
     sq = _dot(normal, _sub(q, triangle[0]))
@@ -454,7 +489,7 @@ def _segment_hits(p: Any, q: Any, triangle: Any) -> Any:
     return {x} if _containment(x, triangle) >= 0 else set()
 
 
-def _hull_count(points: Any, normal: Any) -> int:
+def _hull_count(points: Sequence[RationalPoint], normal: RationalPoint) -> int:
     if len(points) <= 1:
         return len(points)
     origin = points[0]
@@ -464,12 +499,14 @@ def _hull_count(points: Any, normal: Any) -> int:
     axis = next(k for k in range(3) if normal[k] != 0)
     flat = sorted({(point[(axis + 1) % 3], point[(axis + 2) % 3]) for point in points})
 
-    def turn(o: Any, a: Any, b: Any) -> Any:
+    def turn(
+        o: RationalPlanePoint, a: RationalPlanePoint, b: RationalPlanePoint
+    ) -> Fraction:
         return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
 
-    hull: list[Any] = []
+    hull: list[RationalPlanePoint] = []
     for sequence in (flat, flat[::-1]):
-        chain: list[Any] = []
+        chain: list[RationalPlanePoint] = []
         for point in sequence:
             while len(chain) >= 2 and turn(chain[-2], chain[-1], point) <= 0:
                 chain.pop()
@@ -478,15 +515,17 @@ def _hull_count(points: Any, normal: Any) -> int:
     return len(hull)
 
 
-def _extremes(points: Any) -> Any:
+def _extremes(points: Sequence[RationalPoint]) -> tuple[RationalPoint, RationalPoint]:
     ordered = sorted(points)
     return ordered[0], ordered[-1]
 
 
-def _triangle_reference(first: Any, second: Any) -> tuple[int, int, Any]:
+def _triangle_reference(
+    first: NDArray[np.float64], second: NDArray[np.float64]
+) -> tuple[IntersectionClass, int, list[RationalPoint]]:
     a = [_vector(point) for point in first]
     b = [_vector(point) for point in second]
-    points: set[Any] = set()
+    points: set[RationalPoint] = set()
     for k in range(3):
         points |= _segment_hits(a[k], a[(k + 1) % 3], b)
         points |= _segment_hits(b[k], b[(k + 1) % 3], a)
@@ -521,7 +560,9 @@ def _triangle_reference(first: Any, second: Any) -> tuple[int, int, Any]:
     return kind, count, ordered
 
 
-def _segment_reference(segment: Any, triangle: Any) -> tuple[int, int, Any]:
+def _segment_reference(
+    segment: NDArray[np.float64], triangle: NDArray[np.float64]
+) -> tuple[IntersectionClass, int, list[RationalPoint]]:
     p, q = (_vector(point) for point in segment)
     t = [_vector(point) for point in triangle]
     ordered = sorted(_segment_hits(p, q, t))
@@ -548,7 +589,9 @@ def _segment_reference(segment: Any, triangle: Any) -> tuple[int, int, Any]:
     return kind, len(ordered), ordered
 
 
-def _lattice_pairs(seed: int, count: int, corners: int) -> tuple[Any, Any]:
+def _lattice_pairs(
+    seed: int, count: int, corners: int
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     rng = np.random.default_rng(seed)
     first = rng.integers(-1, 2, size=(count, corners, 3)).astype(np.float64)
     second = rng.integers(-1, 2, size=(count, 3, 3)).astype(np.float64)
@@ -558,7 +601,12 @@ def _lattice_pairs(seed: int, count: int, corners: int) -> tuple[Any, Any]:
     return first, second
 
 
-def _assert_points_match(points: Any, bounds: Any, count: int, reference: Any) -> None:
+def _assert_points_match(
+    points: NDArray[np.float64],
+    bounds: NDArray[np.float64],
+    count: int,
+    reference: Sequence[RationalPoint],
+) -> None:
     exact = np.asarray([[float(value) for value in point] for point in reference])
     for k in range(count):
         distance = np.max(np.abs(exact - points[k]), axis=1)
@@ -567,9 +615,13 @@ def _assert_points_match(points: Any, bounds: Any, count: int, reference: Any) -
 
 def test_triangle_contacts_match_rational_reference() -> None:
     first, second = _lattice_pairs(5, 900, 3)
-    classes, counts, points, bounds, features, status = triangle_intersections(
-        first, second
-    )
+    intersection = triangle_intersections(first, second)
+    classes = intersection.classes
+    counts = intersection.point_counts
+    points = intersection.points
+    bounds = intersection.point_bounds
+    features = intersection.point_features
+    status = intersection.status
     only_classes, only_status = triangle_intersection_classes(first, second)
     np.testing.assert_array_equal(only_classes, classes)
     np.testing.assert_array_equal(only_status, status)
@@ -592,9 +644,12 @@ def test_triangle_contacts_match_rational_reference() -> None:
 
 def test_segment_contacts_match_rational_reference() -> None:
     segments, triangles = _lattice_pairs(6, 900, 2)
-    classes, counts, points, bounds, _, status = segment_triangle_intersections(
-        segments, triangles
-    )
+    intersection = segment_triangle_intersections(segments, triangles)
+    classes = intersection.classes
+    counts = intersection.point_counts
+    points = intersection.points
+    bounds = intersection.point_bounds
+    status = intersection.status
     seen = set()
     for index in range(segments.shape[0]):
         t = [_vector(point) for point in triangles[index]]
@@ -643,7 +698,7 @@ def test_contact_adjacency_follows_vertex_identity() -> None:
         segment_triangle_intersections(np.zeros((2, 2, 3)), first)
 
 
-def _cube_lattice() -> Any:
+def _cube_lattice() -> NDArray[np.float64]:
     axis = np.arange(3.0)
     return np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), -1).reshape(-1, 3)
 
@@ -656,7 +711,12 @@ def test_incremental_delaunay_batches_match_the_point_set() -> None:
     triangulation = IncrementalDelaunay3D(points[:300], max_vertices=2000)
     first, first_status = triangulation.insert(points[300:1000])
     second, second_status = triangulation.insert(points[1000:])
-    mesh_points, cells, vertex_map, constraints, regions = triangulation.finalize()
+    mesh = triangulation.finalize()
+    mesh_points = mesh.points
+    cells = mesh.cells
+    vertex_map = mesh.vertex_map
+    constraints = mesh.cell_constraints
+    regions = mesh.cell_regions
     expected_cells, expected_map = delaunay_3d(points)
 
     np.testing.assert_array_equal(first_status, MeshcoreStatus.OK)
@@ -667,18 +727,18 @@ def test_incremental_delaunay_batches_match_the_point_set() -> None:
     np.testing.assert_array_equal(mesh_points, points)
     np.testing.assert_array_equal(constraints, -1)
     np.testing.assert_array_equal(regions, -1)
-    statistics = dict(zip(TRIANGULATION_3D_STATISTICS, triangulation.statistics()))
-    assert statistics["vertex_ids"] == 1200
-    assert statistics["live_vertices"] == 1198
-    assert statistics["finite_cells"] == cells.shape[0]
-    assert statistics["refused_insertions"] == 0
-    assert statistics["peak_retained_bytes"] >= statistics["retained_bytes"] > 0
+    statistics = triangulation.statistics()
+    assert statistics.vertex_ids == 1200
+    assert statistics.live_vertices == 1198
+    assert statistics.finite_cells == cells.shape[0]
+    assert statistics.refused_insertions == 0
+    assert statistics.peak_retained_bytes >= statistics.retained_bytes > 0
 
 
 def test_incremental_delaunay_preserves_constraints_and_regions() -> None:
     lattice = _cube_lattice()
     triangulation = IncrementalDelaunay3D(lattice, max_vertices=500)
-    _, cells, _, _, _ = triangulation.finalize()
+    cells = triangulation.finalize().cells
     facets = np.asarray(
         [
             np.delete(cell, slot)
@@ -697,28 +757,35 @@ def test_incremental_delaunay_preserves_constraints_and_regions() -> None:
     seeds = np.asarray(((0.31, 0.57, 0.23), (0.31, 0.57, 1.77)))
     np.testing.assert_array_equal(triangulation.label_regions(seeds, [0, 1]), 0)
 
-    before = triangulation.finalize()[1]
+    before = triangulation.finalize().cells
     vertex, status = triangulation.insert([[0.3, 0.6, 1.0]])
     assert (vertex[0], status[0]) == (-1, MeshcoreStatus.CONSTRAINT_INTERSECTION)
-    np.testing.assert_array_equal(triangulation.finalize()[1], before)
+    triangulation_cells = triangulation.finalize().cells
+    np.testing.assert_array_equal(triangulation_cells, before)
 
     extra = 2.0 * np.random.default_rng(13).random((300, 3))
     _, status = triangulation.insert(extra)
     np.testing.assert_array_equal(status, MeshcoreStatus.OK)
-    mesh_points, cells, _, constraints, regions = triangulation.finalize()
+    mesh = triangulation.finalize()
+    mesh_points = mesh.points
+    cells = mesh.cells
+    constraints = mesh.cell_constraints
+    regions = mesh.cell_regions
     centroid_heights = mesh_points[cells, 2].mean(axis=1)
     np.testing.assert_array_equal(regions, np.where(centroid_heights < 1.0, 0, 1))
     constrained = [
         np.delete(cell, slot)
-        for cell, labels in zip(cells, constraints, strict=True)
+        for row, (cell, _) in enumerate(zip(cells, constraints, strict=True))
         for slot in range(4)
-        if labels[slot] == 4
+        if constraints[row, slot] == 4
     ]
     corners = mesh_points[np.asarray(constrained)]
     np.testing.assert_array_equal(corners[..., 2], 1.0)
     edges = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
     # Both sides of the constrained 2 x 2 square survive every insertion.
-    assert 0.5 * np.sum(np.abs(edges[:, 2])) == pytest.approx(8.0, rel=1e-14)
+    assert 0.5 * np.sum(np.abs(edges[:, 2])) == pytest.approx(
+        8.0, rel=_DELAUNAY_REGION_VOLUME_RTOL
+    )
 
     located, locations, status = triangulation.locate(
         [[0.3, 0.6, 1.0], [1.0, 1.0, 1.0], [5.0, 5.0, 5.0]]
@@ -731,16 +798,17 @@ def test_incremental_delaunay_preserves_constraints_and_regions() -> None:
 def test_incremental_delaunay_limits_refuse_without_change() -> None:
     points = np.random.default_rng(14).random((400, 3))
     triangulation = IncrementalDelaunay3D(points[:100], max_vertices=400)
-    before = triangulation.finalize()[1]
+    before = triangulation.finalize().cells
     vertices, status = triangulation.insert(points[100:300], work_limit=1)
     np.testing.assert_array_equal(status, MeshcoreStatus.CAPACITY_EXCEEDED)
     np.testing.assert_array_equal(vertices, -1)
-    np.testing.assert_array_equal(triangulation.finalize()[1], before)
+    triangulation_cells = triangulation.finalize().cells
+    np.testing.assert_array_equal(triangulation_cells, before)
     with pytest.raises(MeshcoreError, match="capacity"):
         triangulation.insert(points[:201])
     with pytest.raises(ValueError, match="exponent|magnitude"):
         triangulation.insert([[2.0**130, 0.0, 0.0]])
-    assert triangulation.statistics()[0] == 300
+    assert triangulation.statistics().vertex_ids == 300
     triangulation.close()
     with pytest.raises(ValueError, match="closed"):
         triangulation.locate(points[:1])
@@ -759,9 +827,9 @@ def test_planar_zero_limit_retains_actual_refusal(limit: str) -> None:
     evidence = observed[0]
     assert evidence.status is MeshcoreStatus.CAPACITY_EXCEEDED
     assert caught.value.work_evidence is evidence.work_evidence
-    assert caught.value.memory_evidence is evidence.memory_evidence
+    assert caught.value.memory_counters is evidence.memory_counters
     assert not evidence.work_evidence.flags.writeable
-    assert not evidence.memory_evidence.flags.writeable
+    assert isinstance(evidence.memory_counters, NativeExecutionMemoryCounters)
     if limit == "max_work":
         assert evidence.work_evidence[0] == 0
         assert evidence.work_evidence[7] > 0
@@ -769,10 +837,10 @@ def test_planar_zero_limit_retains_actual_refusal(limit: str) -> None:
         assert evidence.work_evidence[6] > 0
         assert evidence.work_evidence[8] > 0
     else:
-        assert evidence.memory_evidence[0] == 0
-        assert evidence.memory_evidence[2] == 0
-        assert evidence.memory_evidence[3] > 0
-        assert evidence.memory_evidence[5] > 0
+        assert evidence.memory_counters.limit_bytes == 0
+        assert evidence.memory_counters.peak_bytes == 0
+        assert evidence.memory_counters.requested_bytes > 0
+        assert evidence.memory_counters.refusals > 0
 
 
 def test_cdt_observed_work_budget_is_reproducible() -> None:
@@ -802,6 +870,34 @@ def test_cdt_observed_work_budget_is_reproducible() -> None:
     assert work[7] > 0
 
 
+def test_crossing_cdt_constraints_report_refusal_before_publication() -> None:
+    points = np.asarray(
+        ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), dtype=np.float64
+    )
+    segments = np.asarray(
+        ((0, 1), (1, 2), (2, 3), (3, 0), (0, 2), (1, 3)), dtype=np.int32
+    )
+    original_points = points.view(np.uint64).copy()
+    original_segments = segments.copy()
+    observed: list[PlanarExecutionEvidence] = []
+
+    with pytest.raises(ValueError, match="constraint segments cross in their interiors"):
+        constrained_delaunay_2d(
+            points,
+            segments,
+            record_native_resources=observed.append,
+        )
+
+    (evidence,) = observed
+    assert evidence.status is MeshcoreStatus.CONSTRAINT_INTERSECTION
+    assert evidence.work_evidence.shape == (9,)
+    assert evidence.work_evidence.dtype == np.dtype(np.uint64)
+    assert not evidence.work_evidence.flags.writeable
+    assert isinstance(evidence.memory_counters, NativeExecutionMemoryCounters)
+    np.testing.assert_array_equal(points.view(np.uint64), original_points)
+    np.testing.assert_array_equal(segments, original_segments)
+
+
 def test_plc_zero_scratch_cap_retains_actual_refusal() -> None:
     points = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
@@ -824,19 +920,19 @@ def test_plc_zero_scratch_cap_retains_actual_refusal() -> None:
         )
     assert caught.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
     assert caught.value.reason == "scratch_byte_budget"
-    memory = caught.value.memory_evidence
+    memory = caught.value.memory_counters
     assert memory is not None
-    assert memory[0] == 0
-    assert memory[1] == 0
-    assert memory[2] == 0
-    assert memory[3] > 0
-    assert memory[4] == 0
-    assert memory[5] > 0
-    assert not memory.flags.writeable
+    assert memory.limit_bytes == 0
+    assert memory.live_bytes == 0
+    assert memory.peak_bytes == 0
+    assert memory.requested_bytes > 0
+    assert memory.allocations == 0
+    assert memory.refusals > 0
+    assert isinstance(memory, NativeExecutionMemoryCounters)
 
 
 def test_source_only_plc_preparation_enforces_measured_work_boundary() -> None:
-    from phydrax._meshcore import PLC_3D_COUNTERS, plc_source_constraints
+    from phydrax._meshcore import plc_source_constraints
 
     points = np.asarray(
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
@@ -855,8 +951,7 @@ def test_source_only_plc_preparation_enforces_measured_work_boundary() -> None:
         work_limit=100000,
         max_scratch_bytes=1000000,
     )
-    work_index = PLC_3D_COUNTERS.index("work_units")
-    measured_work = int(source.counters[work_index])
+    measured_work = source.counters.work_units
     bounded = plc_source_constraints(
         points,
         offsets,
@@ -868,10 +963,7 @@ def test_source_only_plc_preparation_enforces_measured_work_boundary() -> None:
     )
     expected_edges = {(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)}
     assert {tuple(sorted(edge)) for edge in bounded.plc_edges.tolist()} == expected_edges
-    assert (
-        dict(zip(PLC_3D_COUNTERS, bounded.counters.tolist(), strict=True))["cavities"]
-        == 0
-    )
+    assert bounded.counters.cavities == 0
     boundary = np.zeros((4, 4), dtype=np.int32)
     for triangle in bounded.input_triangles.tolist():
         for first, second in zip(triangle, triangle[1:] + triangle[:1], strict=True):
@@ -889,18 +981,14 @@ def test_source_only_plc_preparation_enforces_measured_work_boundary() -> None:
             max_scratch_bytes=1000000,
         )
     assert caught.value.reason == "work_budget"
-    assert caught.value.counters[work_index] == measured_work - 1
+    assert caught.value.counters.work_units == measured_work - 1
 
 
 def _host_budget(
     byte_limit: int, *, mesh: TetMesh3D | None = None
-) -> NativeExecutionBudget:
-    return NativeExecutionBudget(
-        max_work=1 << 40,
-        max_geometry_queries=1 << 40,
-        max_cavity_cells=1 << 20,
-        max_scratch_bytes=byte_limit,
-        max_wall_seconds=120.0,
+) -> NativeExecutionScope:
+    return NativeExecutionScope(
+        NativeExecutionLimits(1 << 40, 1 << 40, 1 << 20, byte_limit, 120.0),
         mesh=mesh,
     )
 
@@ -908,16 +996,19 @@ def _host_budget(
 def test_deferred_worker_failure_flushes_accounting_before_propagation() -> None:
     budget = _host_budget(1 << 16)
 
-    def fail_after_charge() -> None:
-        with budget.deferred_worker():
-            budget.charge(work=7, geometry_queries=3)
-            raise ValueError("deferred preparation failed")
+    def fail_after_charge(ticket: NativeBatchTicket) -> None:
+        with ticket:
+            ticket.consume(7, geometry_queries=3)
+            raise ValueError(
+                "ticket.preparation must succeed after charging; got injected failure"
+            )
 
     with budget:
-        with pytest.raises(ValueError, match="deferred preparation failed"):
-            with budget.deferred_workers():
+        with pytest.raises(ValueError, match=r"ticket\.preparation"):
+            with budget.batch(7, queries_upper=3) as ticket:
+                child = ticket.batch(7, queries_upper=3)
                 with ThreadPoolExecutor(max_workers=1) as pool:
-                    pool.submit(fail_after_charge).result()
+                    pool.submit(fail_after_charge, child).result()
     assert budget.evidence is not None
     assert budget.evidence.externally_charged_work == 7
     assert budget.evidence.externally_charged_geometry_queries == 3
@@ -945,10 +1036,10 @@ def test_native_host_storage_bound_and_managed_payload_share_original_cap() -> N
                 workspace.set_bound(0)
     assert caught.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
     assert budget.evidence is not None
-    assert budget.evidence.memory_evidence.shape == (6,)
+    assert isinstance(budget.evidence.memory_counters, NativeExecutionMemoryCounters)
     assert budget.evidence.host_storage_live_bytes_upper == 0
     assert budget.evidence.host_storage_peak_bytes_upper == bound
-    assert budget.evidence.memory_evidence[2] < bound
+    assert budget.evidence.memory_counters.peak_bytes < bound
     record = NativeExecutionRecord(budget.evidence)
     assert int(np.asarray(record.host_storage_peak_bytes_upper)) == bound
     assert int(np.asarray(record.host_storage_live_bytes_upper)) == 0
@@ -982,8 +1073,37 @@ def test_native_zero_host_workspace_does_not_allocate_a_token() -> None:
             workspace.set_bound(0)
             assert workspace.bound == 0
     assert budget.evidence is not None
-    assert budget.evidence.memory_evidence[4] == 0
+    assert budget.evidence.memory_counters.allocations == 0
     assert budget.evidence.host_storage_peak_bytes_upper == 0
+
+
+def test_native_explicit_host_workspace_preserves_ambient_nesting_and_releases() -> None:
+    budget = _host_budget(8192)
+    with budget, budget.host_workspace() as ambient:
+        explicit = budget.host_workspace().open()
+        assert current_native_host_workspace() is ambient
+        explicit.set_bound(1024)
+        with pytest.raises(RuntimeError, match="single-use storage lifetime"):
+            explicit.open()
+        with pytest.raises(RuntimeError, match="single-use storage lifetime"):
+            explicit.__enter__()
+        with budget.host_workspace() as nested:
+            assert current_native_host_workspace() is nested
+            nested.set_bound(512)
+        assert current_native_host_workspace() is ambient
+        assert explicit.bound == 1024
+        explicit.close()
+        assert explicit.bound == 0
+        assert current_native_host_workspace() is ambient
+        assert budget.remaining().remaining_managed_bytes == 8192
+        with pytest.raises(RuntimeError, match="single-use storage lifetime"):
+            explicit.open()
+    assert current_native_host_workspace() is None
+    evidence = budget.completed_evidence()
+    assert evidence.status is MeshcoreStatus.OK
+    assert evidence.host_storage_live_bytes_upper == 0
+    assert evidence.host_storage_peak_bytes_upper == 1024 + 512
+    assert evidence.memory_counters.live_bytes == 0
 
 
 def test_native_retained_source_views_share_actual_base_owner_and_release_temporary_indices() -> (
@@ -991,18 +1111,20 @@ def test_native_retained_source_views_share_actual_base_owner_and_release_tempor
 ):
     source = np.arange(1024, dtype=np.float64)
     owners = (source, source[1:], source[2:])
+    _, declared, _, _ = retained_host_storage_profile(owners, {}, is_native_host_buffer)
     budget = _host_budget(1 << 16)
     with budget:
         with budget.host_workspace() as workspace:
             workspace.retain_owner(owners)
             retained = workspace.bound
             assert source.nbytes <= retained < 2 * source.nbytes
+            assert retained == declared
             workspace.retain_owner(source)
             assert workspace.bound == retained
             workspace.retain_owner(owners)
             assert workspace.bound == retained
     assert budget.evidence is not None
-    assert budget.evidence.externally_charged_work > 0
+    assert budget.evidence.externally_charged_work == 0
     assert budget.evidence.host_storage_live_bytes_upper == 0
     np.testing.assert_array_equal(source, np.arange(1024, dtype=np.float64))
 
@@ -1016,7 +1138,7 @@ def test_native_retained_source_does_not_double_charge_managed_array_payload() -
             workspace.retain_owner((array, array[1:]))
             assert workspace.bound < array.nbytes
     assert budget.evidence is not None
-    assert budget.evidence.memory_evidence[2] >= array.nbytes
+    assert budget.evidence.memory_counters.peak_bytes >= array.nbytes
     np.testing.assert_array_equal(array, np.arange(1024, dtype=np.float64))
 
 
@@ -1024,14 +1146,14 @@ def test_native_retained_source_refuses_cycles_callbacks_and_resource_growth_ato
     None
 ):
     source = np.arange(1024, dtype=np.float64)
-    cyclic: dict[str, Any] = {}
+    cyclic: dict[str, object] = {}
     cyclic["self"] = cyclic
     with _host_budget(1 << 16) as budget:
         with budget.host_workspace() as workspace:
             with pytest.raises(ValueError, match="cyclic"):
                 workspace.retain_owner(cyclic)
             assert workspace.bound == 0
-            with pytest.raises(TypeError, match="unsupported owner"):
+            with pytest.raises(TypeError, match=r"retained_host_storage_profile\.owner"):
                 workspace.retain_owner(lambda: source)
             assert workspace.bound == 0
             workspace.retain_owner(source)
@@ -1045,15 +1167,11 @@ def test_native_retained_source_refuses_cycles_callbacks_and_resource_growth_ato
     np.testing.assert_array_equal(source, np.arange(1024, dtype=np.float64))
 
 
-def test_retained_source_in_parent_workspace_respects_child_work_allowance() -> None:
+def test_retained_source_in_parent_workspace_respects_child_byte_allowance() -> None:
     source = np.arange(4, dtype=np.float64)
     parent = _host_budget(1 << 16)
-    child = NativeExecutionBudget(
-        max_work=1,
-        max_geometry_queries=1000,
-        max_cavity_cells=1000,
-        max_scratch_bytes=1 << 16,
-        max_wall_seconds=120.0,
+    child = NativeExecutionScope(
+        NativeExecutionLimits(1, 1000, 1000, source.nbytes - 1, 120.0)
     )
     with parent:
         with parent.host_workspace() as workspace:
@@ -1062,10 +1180,10 @@ def test_retained_source_in_parent_workspace_respects_child_work_allowance() -> 
             assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
             assert workspace.bound == 0
     assert child.evidence is not None and parent.evidence is not None
-    assert child.evidence.externally_charged_work == 1
-    assert parent.evidence.externally_charged_work == 1
-    assert child.evidence.work_evidence[0] == 1
-    assert parent.evidence.work_evidence[0] == 1
+    assert child.evidence.externally_charged_work == 0
+    assert parent.evidence.externally_charged_work == 0
+    assert child.evidence.work_counters.construction_work == 0
+    assert parent.evidence.work_counters.construction_work == 0
     assert parent.evidence.host_storage_live_bytes_upper == 0
     np.testing.assert_array_equal(source, np.arange(4, dtype=np.float64))
 
@@ -1110,7 +1228,7 @@ def test_native_retained_jax_logical_unmanaged_label_deduplicates_and_rolls_back
             workspace.retain_owner(source)
             assert workspace.bound == admitted
             assert workspace.logical_unmanaged_bytes_upper == source.nbytes
-            with pytest.raises(TypeError, match="unsupported owner"):
+            with pytest.raises(TypeError, match=r"retained_host_storage_profile\.owner"):
                 workspace.retain_owner((lambda: None, other))
             assert workspace.bound == admitted
             assert workspace.logical_unmanaged_bytes_upper == source.nbytes
@@ -1156,7 +1274,7 @@ def test_native_retains_real_form_geometry_owner_and_one_under_peak_rolls_back()
     assert calibration.evidence is not None
     original_peak = (
         calibration.evidence.host_storage_peak_bytes_upper
-        + calibration.evidence.memory_evidence[2]
+        + calibration.evidence.memory_counters.peak_bytes
     )
     refused = _host_budget(original_peak - 1)
     with pytest.raises(MeshcoreError) as final_refusal, refused:
@@ -1188,7 +1306,7 @@ def test_native_host_array_views_survive_scope_and_release_on_another_thread() -
         boundary_policy="conforming",
     )
     try:
-        baseline = int(mesh.memory_evidence()[1])
+        baseline = mesh.memory_counters().live_bytes
         source = np.arange(12, dtype=np.float64).reshape((3, 4))
         budget = _host_budget(4096, mesh=mesh)
         with budget:
@@ -1199,18 +1317,18 @@ def test_native_host_array_views_survive_scope_and_release_on_another_thread() -
             assert array.dtype == source.dtype and array.shape == source.shape
             np.testing.assert_array_equal(array, source)
             views = [array[:, ::2]]
-        retained = int(mesh.memory_evidence()[1])
+        retained = mesh.memory_counters().live_bytes
         assert retained > baseline + array.nbytes
         del array
         gc.collect()
-        assert int(mesh.memory_evidence()[1]) == retained
+        assert mesh.memory_counters().live_bytes == retained
         np.testing.assert_array_equal(views[0], source[:, ::2])
         views[0][1, 1] = -7.0
         assert views[0][1, 1] == -7.0 and source[1, 2] == 6.0
         release = threading.Thread(target=views.clear)
         release.start()
         release.join()
-        assert int(mesh.memory_evidence()[1]) == baseline
+        assert mesh.memory_counters().live_bytes == baseline
     finally:
         mesh.close()
 
@@ -1229,7 +1347,7 @@ def test_native_host_and_geometry_allocations_share_the_original_cap(
         held.fill(37)
         expected_cells, expected_map = delaunay_2d(points)
     assert baseline.evidence is not None
-    exact_peak = int(baseline.evidence.memory_evidence[2])
+    exact_peak = int(baseline.evidence.memory_counters.peak_bytes)
     del held
     gc.collect()
     budget = _host_budget(exact_peak + capacity_delta)
@@ -1249,7 +1367,7 @@ def test_native_host_and_geometry_allocations_share_the_original_cap(
         assert caught.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
         np.testing.assert_array_equal(held, np.full((128,), 37, dtype=np.int64))
     assert budget.evidence is not None
-    assert budget.evidence.memory_evidence[2] <= exact_peak + capacity_delta
+    assert budget.evidence.memory_counters.peak_bytes <= exact_peak + capacity_delta
     np.testing.assert_array_equal(points, source)
 
 
@@ -1259,19 +1377,19 @@ def test_native_host_refused_payload_does_not_inflate_an_earlier_peak() -> None:
         array = budget.allocate_host_array((128,), np.uint8)
         array.fill(19)
         np.testing.assert_array_equal(array, np.full((128,), 19, dtype=np.uint8))
-        remaining = budget.remaining().remaining_scratch_bytes
+        remaining = budget.remaining().remaining_managed_bytes
         del array
         gc.collect()
         budget.allocate_host_array((4096,), np.uint8)
     assert caught.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
     assert budget.evidence is not None
-    memory = budget.evidence.memory_evidence
-    assert memory[1] == 0
-    assert memory[2] == 4096 - remaining
-    assert memory[3] == 4096
+    memory = budget.evidence.memory_counters
+    assert memory.live_bytes == 0
+    assert memory.peak_bytes == 4096 - remaining
+    assert memory.requested_bytes == 4096
     # The earlier owner and payload succeeded, then the refused array's owner
     # metadata succeeded. Its refused payload is not a successful allocation.
-    assert memory[4] == 3
+    assert memory.allocations == 3
 
 
 @pytest.mark.parametrize("limit", ["zero", "one-byte-under"])
@@ -1281,7 +1399,9 @@ def test_native_host_nested_scope_cannot_renew_root_scratch_allowance(limit: str
         source = baseline.allocate_host_array((6,), np.float64)
         source[:] = np.arange(6, dtype=np.float64)
     assert baseline.evidence is not None
-    byte_limit = 0 if limit == "zero" else int(baseline.evidence.memory_evidence[2]) - 1
+    byte_limit = (
+        0 if limit == "zero" else int(baseline.evidence.memory_counters.peak_bytes) - 1
+    )
     root = _host_budget(byte_limit)
     nested = _host_budget(4096)
     with pytest.raises(MeshcoreError) as caught, root, nested:
@@ -1292,8 +1412,8 @@ def test_native_host_nested_scope_cannot_renew_root_scratch_allowance(limit: str
     assert (
         root.evidence.status is nested.evidence.status is MeshcoreStatus.CAPACITY_EXCEEDED
     )
-    assert root.evidence.memory_evidence[1] == 0
-    assert root.evidence.memory_evidence[2] <= byte_limit
+    assert root.evidence.memory_counters.live_bytes == 0
+    assert root.evidence.memory_counters.peak_bytes <= byte_limit
 
 
 @pytest.mark.parametrize(
@@ -1338,32 +1458,32 @@ def test_native_host_invalid_layout_refuses_before_native_allocation(
         with pytest.raises(error_type):
             budget.allocate_host_array(shape, dtype)
         assert (
-            budget.remaining().remaining_scratch_bytes == before.remaining_scratch_bytes
+            budget.remaining().remaining_managed_bytes == before.remaining_managed_bytes
         )
         accepted = budget.allocate_host_array((1,), np.int32)
         accepted[0] = 23
     assert accepted[0] == 23
     assert budget.evidence is not None
     assert budget.evidence.status is MeshcoreStatus.OK
-    assert budget.evidence.memory_evidence[4] == 2
+    assert budget.evidence.memory_counters.allocations == 2
 
 
 def test_native_host_allocation_requires_the_active_creating_thread() -> None:
     budget = _host_budget(4096)
-    with pytest.raises(RuntimeError, match="active creating thread"):
+    with pytest.raises(RuntimeError, match=r"allocate_host_array\.scope must"):
         budget.allocate_host_array((1,), np.float64)
     with budget:
         with ThreadPoolExecutor(max_workers=1) as pool:
             rejected = pool.submit(budget.allocate_host_array, (1,), np.float64)
-            with pytest.raises(RuntimeError, match="active creating thread"):
+            with pytest.raises(RuntimeError, match=r"allocate_host_array\.scope must"):
                 rejected.result()
         with _host_budget(4096):
-            with pytest.raises(RuntimeError, match="active creating thread"):
+            with pytest.raises(RuntimeError, match=r"allocate_host_array\.scope must"):
                 budget.allocate_host_array((1,), np.float64)
         accepted = budget.allocate_host_array((), np.float64)
         accepted[()] = 3.5
     assert accepted.shape == () and accepted[()] == 3.5
-    with pytest.raises(RuntimeError, match="active creating thread"):
+    with pytest.raises(RuntimeError, match=r"allocate_host_array\.scope must"):
         budget.allocate_host_array((1,), np.float64)
 
 
@@ -1375,3 +1495,118 @@ def test_native_host_empty_array_retains_its_shape_and_explicit_bool_dtype() -> 
         assert empty.nbytes == 0 and empty.flags.c_contiguous
         assert empty.base is not None
     assert empty.reshape((3, 0)).shape == (3, 0)
+
+
+def test_retained_host_profile_visits_each_owner_once_per_retention_lifetime() -> None:
+    source = (ctypes.c_double * 4)(1.0, 2.0, 3.0, 4.0)
+    graph = (source, source)
+    classifications = 0
+
+    def native_buffer(buffer: ctypes.Array) -> bool:
+        nonlocal classifications
+        assert buffer is source
+        classifications += 1
+        return False
+
+    owners, declared, logical, visits = retained_host_storage_profile(
+        graph, {}, native_buffer
+    )
+    assert visits == len(owners) == 2
+    assert declared > ctypes.sizeof(source)
+    assert logical == 0
+    assert classifications == 1
+    assert owners[id(graph)] is graph
+    assert owners[id(source)] is source
+    assert retained_host_storage_profile(graph, owners, native_buffer) == ({}, 0, 0, 0)
+    assert retained_host_storage_profile(source, owners, native_buffer) == ({}, 0, 0, 0)
+    wrapper = (source,)
+    fresh, added, logical, visits = retained_host_storage_profile(
+        wrapper, owners, native_buffer
+    )
+    assert visits == len(fresh) == 1
+    assert fresh[id(wrapper)] is wrapper
+    assert added > 0 and logical == 0
+    assert classifications == 1
+    owners.update(fresh)
+    assert retained_host_storage_profile(wrapper, owners, native_buffer) == ({}, 0, 0, 0)
+    owners.clear()
+    renewed, renewed_bytes, logical, visits = retained_host_storage_profile(
+        graph, owners, native_buffer
+    )
+    assert visits == len(renewed) == 2
+    assert renewed_bytes == declared and logical == 0
+    assert classifications == 2
+
+
+def test_retained_host_profile_owns_complete_view_graph_until_release() -> None:
+    import weakref
+
+    source = np.arange(4, dtype=np.float64)
+    view = source[1:]
+    source_reference = weakref.ref(source)
+    view_reference = weakref.ref(view)
+    graph = (view, view)
+    owners, _, _, visits = retained_host_storage_profile(graph, {}, is_native_host_buffer)
+    assert visits == len(owners) == 3
+    assert owners[id(source)] is source
+    assert owners[id(view)] is view
+    del source, view, graph
+    gc.collect()
+    assert source_reference() is not None and view_reference() is not None
+    owners.clear()
+    gc.collect()
+    assert source_reference() is None and view_reference() is None
+
+
+def test_retained_host_profile_requires_actual_owner_not_identifier_alone() -> None:
+    source = np.arange(4, dtype=np.float64)
+    foreign = source.copy()
+    owners, declared, logical, visits = retained_host_storage_profile(
+        source, {id(source): foreign}, is_native_host_buffer
+    )
+    assert visits == 1 and declared >= source.nbytes and logical == 0
+    assert owners[id(source)] is source
+    owners, declared, logical, visits = retained_host_storage_profile(
+        None, {}, is_native_host_buffer
+    )
+    assert visits == 1 and declared > 0 and logical == 0
+    assert owners[id(None)] is None
+    assert retained_host_storage_profile(None, owners, is_native_host_buffer) == (
+        {},
+        0,
+        0,
+        0,
+    )
+
+
+def test_host_cavity_refusal_retains_measured_scope_counter_identities() -> None:
+    scope = NativeExecutionScope(NativeExecutionLimits(1000, 1000, 1, 1 << 20, 120.0))
+    with pytest.raises(NativeResourceFailure) as caught, scope:
+        scope.admit_host_cavity(2)
+    failure = caught.value
+    evidence = failure.execution_evidence
+    assert evidence is not None
+    assert failure.work_evidence_kind == "execution_scope"
+    assert failure.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    assert evidence.work_counters.cavity_refusals >= 1
+    np.testing.assert_array_equal(
+        failure.work_evidence,
+        np.asarray(
+            (
+                *(value for _, value in evidence.work_counters.items()),
+                evidence.externally_charged_work,
+                evidence.externally_charged_geometry_queries,
+                evidence.native_primitive_queries,
+            ),
+            dtype=np.uint64,
+        ),
+    )
+    assert failure.memory_counters is evidence.memory_counters
+    assert 0 < failure.memory_counters.limit_bytes <= 1 << 20
+
+
+def test_host_cavity_admission_preserves_shared_scope_peak() -> None:
+    scope = NativeExecutionScope(NativeExecutionLimits(1000, 1000, 2, 1 << 20, 120.0))
+    with scope:
+        scope.admit_host_cavity(2)
+    assert scope.completed_evidence().work_counters.peak_cavity_cells == 2

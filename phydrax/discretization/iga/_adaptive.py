@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal, TYPE_CHECKING
+from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,18 +17,11 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...events import DeterministicEventAddress
-from ...typing import parse
+from ...meshing import _decision as imported_meshing__decision
+from ...typing import checked, parse
 from ._identity import OverlayCellId
 from ._thb import THBBasisCertificate, THBHierarchy
 from ._transfer import TransferPlan
-
-
-if TYPE_CHECKING:
-    from ...meshing._decision import (
-        AdaptationAction,
-        PhysicalErrorEvidence,
-        SolverAwareDecision,
-    )
 
 
 type DWRPollutionCategory = Literal["field", "geometry", "algebraic", "transfer"]
@@ -64,7 +57,7 @@ class QoICertificate(StrictModule, NonTrainableState):
         regularized = bool(regularized_point_evaluation)
         if not qoi or not state or not np.isfinite(bound) or bound <= 0.0:
             raise ValueError(
-                "QoI certificates require finite positive continuity evidence."
+                f"QoICertificate.inputs must contain nonempty QoI/state-space IDs and a finite positive continuity bound; got {(qoi, state, bound)!r}"
             )
         passed = (
             bool(frechet_differentiable)
@@ -93,7 +86,7 @@ class QoICertificate(StrictModule, NonTrainableState):
 
 
 class DWREstimate(StrictModule, NonTrainableState):
-    """Signed cell indicators and complete estimator pollution ledger."""
+    """Signed cell indicators and full estimator pollution ledger."""
 
     cell_ids: tuple[OverlayCellId, ...]
     signed_indicators: Array
@@ -103,6 +96,7 @@ class DWREstimate(StrictModule, NonTrainableState):
     qoi_certificate_id: str | None = eqx.field(static=True)
     estimator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell_ids: Sequence[OverlayCellId],
@@ -125,15 +119,17 @@ class DWREstimate(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "DWR estimates require finite cell indicators and pollution."
+                f"DWREstimate.pollution must provide finite cell indicators and nonnegative finite pollution bounds; got {indicators.shape!r}"
             )
         if not all(isinstance(cell, OverlayCellId) for cell in cells):
-            raise TypeError("cell_ids must contain OverlayCellId values.")
+            raise TypeError(
+                f"DWREstimate.cell_ids must contain OverlayCellId values; got {type(cell_ids).__name__}"
+            )
         if qoi_certificate is not None:
-            if not isinstance(qoi_certificate, QoICertificate):
-                raise TypeError("qoi_certificate must be QoICertificate or None.")
             if not qoi_certificate.passed:
-                raise ValueError("DWR QoI binding requires a passed certificate.")
+                raise ValueError(
+                    f"DWREstimate.qoi_certificate must provide a passed certificate; got {type(qoi_certificate).__name__}"
+                )
         certificate_id = (
             None if qoi_certificate is None else qoi_certificate.certificate_id
         )
@@ -157,7 +153,9 @@ class DWREstimate(StrictModule, NonTrainableState):
     def mark_dorfler(self, fraction: float, /) -> tuple[OverlayCellId, ...]:
         theta = float(fraction)
         if not 0.0 < theta <= 1.0:
-            raise ValueError("Dorfler marking fraction must lie in (0, 1].")
+            raise ValueError(
+                f"DWREstimate.mark_dorfler.fraction must lie in (0, 1]; got {fraction!r}"
+            )
         mass = np.asarray(self.absolute_mass)
         total = float(np.sum(mass))
         if total == 0.0:
@@ -167,6 +165,7 @@ class DWREstimate(StrictModule, NonTrainableState):
         count = int(np.searchsorted(cumulative, theta * total, side="left")) + 1
         return tuple(self.cell_ids[index] for index in sorted(order[:count]))
 
+    @checked
     def physical_error_evidence(
         self,
         revision_id: str,
@@ -176,7 +175,7 @@ class DWREstimate(StrictModule, NonTrainableState):
         qoi_id: str,
         state_space_id: str,
         pollution_categories: Mapping[str, DWRPollutionCategory],
-    ) -> PhysicalErrorEvidence:
+    ) -> imported_meshing__decision.PhysicalErrorEvidence:
         """Account for absolute DWR mass and explicitly owned QoI pollution.
 
         Pollution bounds must already be in the certified QoI's units. A solver
@@ -185,20 +184,21 @@ class DWREstimate(StrictModule, NonTrainableState):
         marking, not physical admission. This conversion does not certify the
         estimator's reliability.
         """
-        from ...meshing._decision import PhysicalErrorEvidence
 
-        if not isinstance(certificate, QoICertificate):
-            raise TypeError("certificate must be QoICertificate.")
         if (
             not certificate.passed
             or self.qoi_certificate_id != certificate.certificate_id
             or certificate.qoi_id != qoi_id
             or certificate.state_space_id != state_space_id
         ):
-            raise ValueError("DWR evidence requires matching passed QoI certification.")
+            raise ValueError(
+                f"DWREstimate.physical_error_evidence.qoi_id must provide matching passed QoI certification; got {qoi_id!r}"
+            )
         names = tuple(name for name, _ in self.pollution)
         if len(set(names)) != len(names) or set(pollution_categories) != set(names):
-            raise ValueError("Every DWR pollution entry requires one explicit owner.")
+            raise ValueError(
+                f"DWREstimate.physical_error_evidence.pollution_categories must provide one explicit owner; got {type(pollution_categories).__name__}"
+            )
         components = {
             "field": float(np.sum(np.asarray(self.absolute_mass))),
             "geometry": 0.0,
@@ -220,7 +220,7 @@ class DWREstimate(StrictModule, NonTrainableState):
                 "pollution_ownership": sorted(ownership),
             }
         )
-        return PhysicalErrorEvidence(
+        return imported_meshing__decision.PhysicalErrorEvidence(
             revision_id,
             certificate.qoi_id,
             estimator_id,
@@ -245,6 +245,7 @@ class AdaptiveDesignEpoch(StrictModule, NonTrainableState):
     event: DeterministicEventAddress
     epoch_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         epoch: int,
@@ -262,7 +263,9 @@ class AdaptiveDesignEpoch(StrictModule, NonTrainableState):
         plan = str(plan_id)
         design = str(accepted_design_id)
         if epoch_ < 0 or count < 0 or minimum <= 0 or not plan or not design:
-            raise ValueError("Adaptive design epoch metadata is invalid.")
+            raise ValueError(
+                f"AdaptiveDesignEpoch.epoch must have valid adaptive design epoch metadata; got {epoch!r}"
+            )
         event = DeterministicEventAddress("iga-adaptive-design", epoch_, 0, 0, 0, 0, 0)
         self.epoch = epoch_
         self.plan_id = plan
@@ -284,6 +287,7 @@ class AdaptiveDesignEpoch(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def transition_candidate_id(
         self,
         target_plan_id: str,
@@ -291,25 +295,33 @@ class AdaptiveDesignEpoch(StrictModule, NonTrainableState):
         certificate: THBBasisCertificate,
         accepted_design_id: str,
         transfer: TransferPlan,
-        action: AdaptationAction,
+        action: imported_meshing__decision.AdaptationAction,
         /,
     ) -> str:
-        """Identify the exact epoch route, including approximate versus exact transfer."""
-        from ...meshing._decision import AdaptationAction
+        """Fingerprint the epoch route and its transfer qualification."""
 
-        if not isinstance(transfer, TransferPlan):
-            raise TypeError("transfer must be TransferPlan.")
-        if not isinstance(action, AdaptationAction):
-            raise TypeError("action must be AdaptationAction.")
-        if action not in (AdaptationAction.H, AdaptationAction.P):
-            raise ValueError("THB epoch transitions require an h or p decision.")
+        action = parse(action, imported_meshing__decision.AdaptationAction, "action")
+        match action:
+            case (
+                imported_meshing__decision.AdaptationAction.H
+                | imported_meshing__decision.AdaptationAction.P
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    f"AdaptiveDesignEpoch.transition_candidate_id.target_plan_id must provide an h or p decision; got {target_plan_id!r}"
+                )
         if (
             transfer.source_plan_id != self.plan_id
             or transfer.target_plan_id != target_plan_id
         ):
-            raise ValueError("IGA transition transfer is bound to different plans.")
+            raise ValueError(
+                f"AdaptiveDesignEpoch.transition_candidate_id.transfer must bind the source and target epoch plans; got {type(transfer).__name__}"
+            )
         if not certificate.passed or certificate.hierarchy_id != target.hierarchy_id:
-            raise ValueError("IGA transition requires the target basis certificate.")
+            raise ValueError(
+                f"AdaptiveDesignEpoch.transition_candidate_id.target must provide the target basis certificate; got {type(target).__name__}"
+            )
         return canonical_fingerprint(
             {
                 "kind": "iga-adaptive-transition",
@@ -324,6 +336,7 @@ class AdaptiveDesignEpoch(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def transition(
         self,
         target_plan_id: str,
@@ -334,22 +347,26 @@ class AdaptiveDesignEpoch(StrictModule, NonTrainableState):
         *,
         completed_iterations: int,
         maximum_transitions: int,
-        decision: SolverAwareDecision | None = None,
-        decision_action: AdaptationAction | None = None,
+        decision: imported_meshing__decision.SolverAwareDecision | None = None,
+        decision_action: imported_meshing__decision.AdaptationAction | None = None,
         transfer: TransferPlan | None = None,
-        reanalysis: PhysicalErrorEvidence | None = None,
+        reanalysis: imported_meshing__decision.PhysicalErrorEvidence | None = None,
     ) -> AdaptiveDesignEpoch:
         if completed_iterations < self.minimum_iterations:
-            raise ValueError("Adaptive transition violates the frozen-epoch minimum.")
+            raise ValueError(
+                f"AdaptiveDesignEpoch.transition.completed_iterations must respect the frozen-epoch minimum; got {completed_iterations!r}"
+            )
         if self.transition_count >= int(maximum_transitions):
-            raise ValueError("Adaptive transition budget is exhausted.")
+            raise ValueError(
+                f"AdaptiveDesignEpoch.transition.maximum_transitions must retain an available transition allowance; got {maximum_transitions!r}"
+            )
         if (
             not certificate.passed
             or certificate.hierarchy_id != target.hierarchy_id
             or target.hierarchy_id == self.hierarchy_id
         ):
             raise ValueError(
-                "Adaptive transition requires a new certified THB hierarchy."
+                f"AdaptiveDesignEpoch.transition.certificate must provide a new certified THB hierarchy; got {type(certificate).__name__}"
             )
         if decision is None:
             if (
@@ -357,18 +374,14 @@ class AdaptiveDesignEpoch(StrictModule, NonTrainableState):
                 or transfer is not None
                 or reanalysis is not None
             ):
-                raise ValueError("Decision transition evidence requires a decision.")
+                raise ValueError(
+                    f"AdaptiveDesignEpoch.transition.decision must provide a decision; got {type(decision).__name__}"
+                )
         else:
-            from ...meshing._decision import PhysicalErrorEvidence, SolverAwareDecision
-
-            if not isinstance(decision, SolverAwareDecision):
-                raise TypeError("decision must be SolverAwareDecision.")
             if decision_action is None or transfer is None or reanalysis is None:
                 raise ValueError(
-                    "IGA decisions require an action, qualified transfer, and reanalysis."
+                    f"AdaptiveDesignEpoch.transition.transfer must provide an action, qualified transfer, and reanalysis; got {decision_action!r}"
                 )
-            if not isinstance(reanalysis, PhysicalErrorEvidence):
-                raise TypeError("reanalysis must be PhysicalErrorEvidence.")
             candidate_id = self.transition_candidate_id(
                 target_plan_id,
                 target,
@@ -381,10 +394,12 @@ class AdaptiveDesignEpoch(StrictModule, NonTrainableState):
                 transfer.source_revision_id, candidate_id, transfer.target_revision_id
             )
             if selected.action != decision_action:
-                raise ValueError("IGA decision selects a different adaptation action.")
+                raise ValueError(
+                    f"AdaptiveDesignEpoch.transition.decision must select the requested adaptation action; got {type(decision).__name__}"
+                )
             if reanalysis.quantity != "qoi":
                 raise ValueError(
-                    "IGA decision reanalysis requires certified QoI evidence."
+                    f"AdaptiveDesignEpoch.transition.decision must provide certified QoI evidence; got {type(decision).__name__}"
                 )
             decision.require_reanalysis(reanalysis)
         return AdaptiveDesignEpoch(

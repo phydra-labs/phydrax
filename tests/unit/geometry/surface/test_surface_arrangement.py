@@ -16,7 +16,8 @@ from phydrax._meshcore import (
     IntersectionClass,
     meshcore_available,
     MeshcoreStatus,
-    NativeExecutionBudget,
+    NativeExecutionLimits,
+    NativeExecutionScope,
     triangle_intersection_classes,
 )
 from phydrax.geometry.surface import (
@@ -25,6 +26,18 @@ from phydrax.geometry.surface import (
     SurfaceArrangementError,
     SurfaceArrangementLimits,
 )
+from tests._support.surface_arrangements import (
+    crossing_cubes,
+    CUBE_FACES,
+    CUBE_VERTICES,
+)
+
+
+# Empirical publication/area allowances retained from this module's crossing
+# triangle and n-ary cube fixtures before remediation; references are source
+# face areas, rational coordinates, and analytic unit-cube measures.
+_REFERENCE_ATOL_14 = 1e-14
+_REFERENCE_ATOL_15 = 1e-15
 
 
 pytestmark = [
@@ -39,35 +52,6 @@ _LEGAL = (
     IntersectionClass.DISJOINT,
     IntersectionClass.SHARED_VERTEX,
     IntersectionClass.SHARED_EDGE,
-)
-_CUBE_VERTICES = np.asarray(
-    (
-        (0.0, 0.0, 0.0),
-        (1.0, 0.0, 0.0),
-        (1.0, 1.0, 0.0),
-        (0.0, 1.0, 0.0),
-        (0.0, 0.0, 1.0),
-        (1.0, 0.0, 1.0),
-        (1.0, 1.0, 1.0),
-        (0.0, 1.0, 1.0),
-    )
-)
-_CUBE_FACES = np.asarray(
-    (
-        (0, 2, 1),
-        (0, 3, 2),
-        (4, 5, 6),
-        (4, 6, 7),
-        (0, 1, 5),
-        (0, 5, 4),
-        (3, 7, 6),
-        (3, 6, 2),
-        (0, 4, 7),
-        (0, 7, 3),
-        (1, 2, 6),
-        (1, 6, 5),
-    ),
-    dtype=np.int64,
 )
 
 
@@ -100,7 +84,9 @@ def _assert_area_partition(
             weights=fragment_area[rows],
             minlength=faces.shape[0],
         )
-        np.testing.assert_allclose(tiled, _areas(vertices, faces), rtol=0, atol=1e-14)
+        np.testing.assert_allclose(
+            tiled, _areas(vertices, faces), rtol=0, atol=_REFERENCE_ATOL_14
+        )
         source = vertices[faces[arrangement.source_face[rows]]]
         source_normal = np.cross(source[:, 1] - source[:, 0], source[:, 2] - source[:, 0])
         assert np.all(np.sum(fragment_normal[rows] * source_normal, axis=1) > 0.0)
@@ -141,7 +127,9 @@ def test_crossing_triangles_split_along_one_welded_segment() -> None:
     features = arrangement.vertex_features[ends]
     np.testing.assert_array_equal(features[:, 0], [[0, 1, 2], [0, 1, 2]])
     assert np.all(features[:, 1, :2] >= 0) and np.all(features[:, 1, 2] == -1)
-    np.testing.assert_allclose(arrangement.vertices[ends][:, 2], 0.0, atol=1e-15)
+    np.testing.assert_allclose(
+        arrangement.vertices[ends][:, 2], 0.0, atol=_REFERENCE_ATOL_15
+    )
     assert np.all(arrangement.vertex_bounds[ends] <= 1e-15)
     assert arrangement.evidence.split_faces == (1, 1)
     _assert_area_partition(arrangement, (first, second))
@@ -156,7 +144,7 @@ def test_open_sheet_cuts_closed_surface_in_one_loop() -> None:
         ),
         np.asarray(((0, 1, 2), (0, 2, 3))),
     )
-    cube = (_CUBE_VERTICES, _CUBE_FACES)
+    cube = (CUBE_VERTICES, CUBE_FACES)
 
     arrangement = arrange_triangle_surfaces(*sheet, *cube)
 
@@ -178,7 +166,7 @@ def test_open_sheet_cuts_closed_surface_in_one_loop() -> None:
     ) / plane_normal[2]
     corners = np.column_stack(((0.0, 1.0, 1.0, 0.0), (0.0, 0.0, 1.0, 1.0), heights))
     expected = np.sum(np.linalg.norm(corners - np.roll(corners, -1, axis=0), axis=1))
-    assert np.sum(lengths) == pytest.approx(expected, abs=1e-14)
+    assert np.sum(lengths) == pytest.approx(expected, abs=_REFERENCE_ATOL_14)
 
 
 @pytest.mark.parametrize(
@@ -202,10 +190,10 @@ def test_coplanar_overlap_records_coincident_fragments(
 
     coincident = arrangement.coincident_face >= 0
     area = _areas(arrangement.vertices, arrangement.triangles)
-    # The exact overlap is the triangle (0, 0), (2, 0), (1, 1) of area 1.
+    # The overlap is the triangle (0, 0), (2, 0), (1, 1) of area 1.
     for index in (0, 1):
         rows = coincident[:, 1 - index] & (arrangement.source_surface == index)
-        assert np.sum(area[rows]) == pytest.approx(1.0, abs=1e-15)
+        assert np.sum(area[rows]) == pytest.approx(1.0, abs=_REFERENCE_ATOL_15)
     assert set(arrangement.coincident_orientation[coincident].tolist()) == {orientation}
     assert arrangement.evidence.coincident_vertices == 2
     _assert_area_partition(arrangement, (first, second))
@@ -213,7 +201,7 @@ def test_coplanar_overlap_records_coincident_fragments(
 
 def test_touching_cubes_weld_coincident_vertices_by_identity() -> None:
     arrangement = arrange_triangle_surfaces(
-        _CUBE_VERTICES, _CUBE_FACES, _CUBE_VERTICES + (1.0, 0.0, 0.0), _CUBE_FACES
+        CUBE_VERTICES, CUBE_FACES, CUBE_VERTICES + (1.0, 0.0, 0.0), CUBE_FACES
     )
 
     assert arrangement.evidence.coincident_vertices == 4
@@ -228,12 +216,12 @@ def test_touching_cubes_weld_coincident_vertices_by_identity() -> None:
 
 
 def test_arrangement_is_deterministic() -> None:
-    rotated = (_CUBE_VERTICES - 0.5) @ np.asarray(
+    rotated = (CUBE_VERTICES - 0.5) @ np.asarray(
         ((0.8, -0.6, 0.0), (0.6, 0.8, 0.0), (0.0, 0.0, 1.0))
     ).T + (0.8, 0.7, 0.3)
 
     runs = [
-        arrange_triangle_surfaces(_CUBE_VERTICES, _CUBE_FACES, rotated, _CUBE_FACES)
+        arrange_triangle_surfaces(CUBE_VERTICES, CUBE_FACES, rotated, CUBE_FACES)
         for _ in range(2)
     ]
 
@@ -257,7 +245,7 @@ def test_self_intersecting_surface_is_refused() -> None:
     )
 
     with pytest.raises(SurfaceArrangementError) as refused:
-        arrange_triangle_surfaces(*crossing, _CUBE_VERTICES + 5.0, _CUBE_FACES)
+        arrange_triangle_surfaces(*crossing, CUBE_VERTICES + 5.0, CUBE_FACES)
 
     assert refused.value.status == "self_intersecting_surface"
     assert refused.value.surface == 0
@@ -269,7 +257,7 @@ def test_degenerate_triangle_is_refused() -> None:
 
     with pytest.raises(SurfaceArrangementError) as refused:
         arrange_triangle_surfaces(
-            _CUBE_VERTICES, _CUBE_FACES, collinear, np.asarray(((0, 1, 2),))
+            CUBE_VERTICES, CUBE_FACES, collinear, np.asarray(((0, 1, 2),))
         )
 
     assert refused.value.status == "degenerate_triangle"
@@ -281,7 +269,7 @@ def test_coordinates_outside_exact_domain_are_refused_with_status() -> None:
 
     with pytest.raises(SurfaceArrangementError) as refused:
         arrange_triangle_surfaces(
-            _CUBE_VERTICES, _CUBE_FACES, _CUBE_VERTICES * scale, _CUBE_FACES
+            CUBE_VERTICES, CUBE_FACES, CUBE_VERTICES * scale, CUBE_FACES
         )
 
     # Every cube face has a corner off the origin, so all of them are named.
@@ -293,10 +281,10 @@ def test_coordinates_outside_exact_domain_are_refused_with_status() -> None:
 def test_candidate_budget_is_refused() -> None:
     with pytest.raises(SurfaceArrangementError) as refused:
         arrange_triangle_surfaces(
-            _CUBE_VERTICES,
-            _CUBE_FACES,
-            _CUBE_VERTICES + 0.5,
-            _CUBE_FACES,
+            CUBE_VERTICES,
+            CUBE_FACES,
+            CUBE_VERTICES + 0.5,
+            CUBE_FACES,
             limits=SurfaceArrangementLimits(maximum_candidate_pairs=40),
         )
 
@@ -372,7 +360,9 @@ def test_coplanar_three_operand_coverage_retains_every_original_face() -> None:
                 continue
             covered = rows & (arrangement.coincident_face[:, other] == 0)
             expected = 0.5 if operand == 2 or other == 2 else 8.0
-            assert np.sum(area[covered]) == pytest.approx(expected, abs=1e-14)
+            assert np.sum(area[covered]) == pytest.approx(
+                expected, abs=_REFERENCE_ATOL_14
+            )
             sign = -1 if (operand == 1) != (other == 1) else 1
             assert np.all(arrangement.coincident_orientation[covered, other] == sign)
     _assert_area_partition(arrangement, sheets)
@@ -411,7 +401,7 @@ def test_native_line_plane_construction_has_outward_exact_bounds(exponent: int) 
         (exact_scale, 4 * exact_scale / 3, Fraction(0)),
     )
     actual = endpoints[np.argsort(native.vertices[endpoints, 0])]
-    # A rational independent reference compares the actual binary64 bound,
+    # A rational independent reference compares the reported binary64 bound,
     # not an allclose tolerance or a rounded version of the expected point.
     for vertex, exact_point in zip(actual, expected[::-1], strict=True):
         error = max(
@@ -461,7 +451,7 @@ def test_native_frame_accepts_exact_normal_after_overflow_cancellation() -> None
 def test_nearly_coplanar_nary_triple_retains_original_vertex_identity() -> None:
     epsilon = np.ldexp(np.float64(1.0), -40)
     faces = np.asarray(((1, 2, 4),), dtype=np.int64)
-    # The referenced vertices have noncompact original ids. The three exact
+    # The referenced vertices have noncompact input ids. The three
     # planes are z=0, 3x-z=1 and z=epsilon*(3y-1), meeting at (1/3,1/3,0).
     first = np.asarray(
         (
@@ -532,7 +522,7 @@ def test_exact_distinct_contact_points_cannot_merge_in_rounded_publication() -> 
         ((1.0, 1.0, -delta), (2.0, 1.0, 1.0), (1.0, 2.0, 1.0)),
         dtype=np.float64,
     )
-    # The two exact cut endpoints differ from (1,1,0) by delta/(1+delta)
+    # The two rational cut endpoints differ from (1,1,0) by delta/(1+delta)
     # on separate axes. All three positions round to the same binary64 point.
     with pytest.raises(SurfaceArrangementError) as refused:
         arrange_triangle_surfaces(first, faces, second, faces)
@@ -584,11 +574,11 @@ def test_rotated_nary_cubes_publish_without_collapsed_contact_ears() -> None:
             + (1.0 - math.cos(angle)) * cross @ cross
         )
         vertices = (
-            (_CUBE_VERTICES - 0.5) @ rotation.T
+            (CUBE_VERTICES - 0.5) @ rotation.T
             + 0.5
             + np.asarray(offset, dtype=np.float64)
         )
-        return vertices, _CUBE_FACES
+        return vertices, CUBE_FACES
 
     # Independently rounded square corners are not necessarily exactly
     # coplanar. Their tiny represented kinks must retain every contact vertex,
@@ -608,21 +598,8 @@ def test_rotated_nary_cubes_publish_without_collapsed_contact_ears() -> None:
     assert arrangement.evidence.triple_plane_vertices > 0
 
 
-def _crossing_cubes(
-    surfaces: tuple[int, int] = (0, 1),
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Two crossing cubes as native arrangement input with all cross pairs."""
-
-    vertices = np.concatenate((_CUBE_VERTICES, _CUBE_VERTICES + (0.5, 0.25, 0.25)))
-    faces = np.concatenate((_CUBE_FACES, _CUBE_FACES + 8))
-    labels = np.repeat(np.asarray(surfaces, dtype=np.int32), 12)
-    first, second = np.meshgrid(np.arange(12), np.arange(12, 24), indexing="ij")
-    pairs = np.stack((first.reshape(-1), second.reshape(-1)), axis=1)
-    return vertices, faces, labels, pairs
-
-
 def test_native_classification_matches_box_membership() -> None:
-    vertices, faces, labels, pairs = _crossing_cubes()
+    vertices, faces, labels, pairs = crossing_cubes()
 
     native = arrange_triangles(
         vertices,
@@ -653,7 +630,7 @@ def test_native_classification_matches_box_membership() -> None:
 
 
 def test_native_classification_admits_exact_work_and_refuses_one_under() -> None:
-    vertices, faces, labels, pairs = _crossing_cubes()
+    vertices, faces, labels, pairs = crossing_cubes()
 
     def classify(limit: int) -> ArrangementClassification:
         native = arrange_triangles(
@@ -697,7 +674,7 @@ def test_native_classification_admits_exact_work_and_refuses_one_under() -> None
 def test_native_classification_refuses_undeclared_operand_namespace(
     surfaces: tuple[int, int], declared: int
 ) -> None:
-    vertices, faces, labels, pairs = _crossing_cubes(surfaces)
+    vertices, faces, labels, pairs = crossing_cubes(surfaces)
     if surfaces[0] == surfaces[1]:
         pairs = np.empty((0, 2), dtype=np.int64)
 
@@ -717,16 +694,18 @@ def test_native_classification_refuses_undeclared_operand_namespace(
 
 
 def test_native_classification_respects_ambient_byte_cap() -> None:
-    vertices, faces, labels, pairs = _crossing_cubes()
-    budget = NativeExecutionBudget(
-        max_work=1 << 40,
-        max_geometry_queries=1 << 40,
-        max_cavity_cells=1 << 20,
-        max_scratch_bytes=64,
-        max_wall_seconds=float("inf"),
+    vertices, faces, labels, pairs = crossing_cubes()
+    budget = NativeExecutionScope(
+        NativeExecutionLimits(
+            maximum_work_units=1 << 40,
+            maximum_geometry_queries=1 << 40,
+            maximum_cavity_cells=1 << 20,
+            maximum_managed_bytes=64,
+            maximum_seconds=float("inf"),
+        )
     )
 
-    # A scratch cap below the exact construction and classification state is
+    # A scratch cap below the construction and classification state is
     # refused with evidence, never exceeded.
     with pytest.raises(ArrangementFailure) as refused, budget:
         arrange_triangles(

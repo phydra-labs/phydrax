@@ -29,8 +29,8 @@ def _h2_store() -> Any:
     gaussian = phx.operators.quantum.gaussian
     basis = gaussian.GaussianBasisPlan.from_contracted_s(
         [1, 2],
-        [_EXPONENTS, _EXPONENTS],
-        [_COEFFICIENTS, _COEFFICIENTS],
+        np.asarray([_EXPONENTS, _EXPONENTS], dtype=np.float64),
+        np.asarray([_COEFFICIENTS, _COEFFICIENTS], dtype=np.float64),
         source_id="correlation-hydrogen",
     ).prepare(system)
     positions = np.asarray(structure.positions) * float(

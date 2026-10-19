@@ -7,12 +7,12 @@ phydrax/_artifact_security.py	read_admitted_artifact	artifact	AdmittedExternalAr
 phydrax/_artifact_security.py	read_admitted_artifact	manifest	ArtifactManifest	retained	source-addressed-function
 phydrax/_artifact_security.py	read_admitted_artifact	policy	ExternalArtifactPolicy	retained	source-addressed-function
 phydrax/_axis_factorization.py	AxisFactorizedField.__init__	plan	AxisContractionPlan	migrated	checked-signature
-phydrax/_bvh.py	BVHBuildPolicy.__init__	kind	BVHBuildKind	retained	static-only-annotation
-phydrax/_bvh.py	bvh_hierarchical_sum	bvh	PackedBVH	retained	source-addressed-function
-phydrax/_bvh.py	bvh_nearest_items	bvh	PackedBVH	retained	source-addressed-function
-phydrax/_bvh.py	prepare_bvh	policy	BVHBuildPolicy	retained	source-addressed-function
-phydrax/_bvh.py	reduce_packed_bvh_nodes	bvh	PackedBVH	retained	source-addressed-function
-phydrax/_bvh.py	refit_packed_bvh_bounds	bvh	PackedBVH	retained	source-addressed-function
+phydrax/_bvh.py	BVHBuildPolicy.__init__	kind	BVHBuildKind	retained	BVHBuildKind is an Enum selector, which checked leaves static-only; this constructor owns refusal before integer policy normalization.
+phydrax/_bvh.py	bvh_hierarchical_sum	bvh	PackedBVH	migrated	checked-signature
+phydrax/_bvh.py	bvh_nearest_items	bvh	PackedBVH	migrated	checked-signature
+phydrax/_bvh.py	prepare_bvh	policy	BVHBuildPolicy	migrated	checked-signature
+phydrax/_bvh.py	reduce_packed_bvh_nodes	bvh	PackedBVH	migrated	checked-signature
+phydrax/_bvh.py	refit_packed_bvh_bounds	bvh	PackedBVH	migrated	checked-signature
 phydrax/_data_plane/_distributed.py	DistributedIndexEpochPlan.__init__	global_plan	IndexEpochPlan	migrated	checked-signature
 phydrax/_differentiation.py	DerivativeAdmission.__init__	request	DifferentiationRequest	migrated	checked-signature
 phydrax/_differentiation.py	DerivativeContract.admit	request	DifferentiationRequest	migrated	checked-signature
@@ -45,9 +45,9 @@ phydrax/_external_runtime.py	_require_execution	capabilities	ExecutionCapabiliti
 phydrax/_external_runtime.py	run_pinned_command	executable	PinnedExecutable	retained	source-addressed-function
 phydrax/_flow_matching_metric.py	ManifoldFlowMatchingMetric.__init__	geometry	AbstractRiemannianManifold	migrated	checked-signature
 phydrax/_flow_matching_metric.py	RiemannianFlowMatchingMetric.__init__	metric	RiemannianMetric	migrated	checked-signature
-phydrax/_geometry_predicates.py	PolygonSimplicityResult.__init__	mode	PredicateMode	retained	static-only-annotation
-phydrax/_geometry_predicates.py	PredicateResult.__init__	mode	PredicateMode	retained	static-only-annotation
-phydrax/_geometry_predicates.py	SegmentIntersectionResult.__init__	mode	PredicateMode	retained	static-only-annotation
+phydrax/_geometry_predicates.py	PolygonSimplicityResult.__init__	mode	PredicateMode	retained	PredicateMode is an Enum selector left static-only by checked; polygon evidence construction owns its mode refusal before dtype and shape validation.
+phydrax/_geometry_predicates.py	PredicateResult.__init__	mode	PredicateMode	retained	PredicateMode is an Enum selector left static-only by checked; predicate evidence construction owns its mode refusal before sign and certainty dtype validation.
+phydrax/_geometry_predicates.py	SegmentIntersectionResult.__init__	mode	PredicateMode	retained	PredicateMode is an Enum selector left static-only by checked; segment evidence construction owns its mode refusal before contact dtype validation.
 phydrax/_hdf5_resource.py	inspect_hdf5_resource	resource	OpenedResource	retained	source-addressed-function
 phydrax/_holomorphic_linear.py	HolomorphicMultiJet.__init__	index_set	HolomorphicMultiIndexSet	migrated	checked-signature
 phydrax/_identity.py	strict_module_payload	module	StrictModule	retained	source-addressed-function
@@ -64,6 +64,15 @@ phydrax/_likelihoods.py	ScalarNaturalExponentialFamilyLikelihood.__init__	family
 phydrax/_limit_study.py	run_scientific_limit_study	plan	ScientificLimitStudyPlan	retained	source-addressed-function
 phydrax/_linear_refresh.py	LinearRefreshState.__init__	prepared	PreparedLinearSolve	migrated	checked-signature
 phydrax/_linear_refresh.py	LinearRefreshState.refresh	problem	AbstractLinearProblem	migrated	checked-signature
+phydrax/_meshcore.py	NativeExecutionLimits.__init__	maximum_seconds	float	retained	Deadline admission rejects boolean/nonreal values while permitting positive infinity; builtin scalar annotations do not enforce this contract.
+phydrax/_meshcore.py	NativeExecutionScope.allocate_host_array	shape	tuple[int, ...]	retained	Host buffer stride admission requires a tuple of nonnegative Python integers; container annotations do not enforce element kinds or addressability.
+phydrax/_meshcore.py	NativeParallelExecution.__init__	maximum_seconds	float	retained	Native policy deadline lowering rejects boolean durations before float conversion and accepts nonnegative finite durations or infinity; builtin scalar annotations do not enforce this contract.
+phydrax/_meshcore.py	TetMesh3D.measure_execution	enabled	bool	retained	Execution timer admission accepts Python and NumPy booleans and refuses other scalar kinds before lowering the ABI flag.
+phydrax/_meshcore.py	_boolean_flag	value	bool	retained	ABI flag normalization accepts Python and NumPy booleans only; builtin scalar annotations are static-only.
+phydrax/_meshcore.py	constrained_delaunay_2d	keep_convex_hull	bool	retained	Hull selector admission requires an actual Python boolean before ABI flag lowering; builtin scalar annotations are static-only.
+phydrax/_meshcore.py	constrained_delaunay_2d	max_steiner	int	retained	Steiner capacity admission rejects booleans/nonintegral values and enforces nonnegative integral bounds before native allocation.
+phydrax/_meshcore.py	mixed_refinement_templates	axial	bool	retained	Mixed-template selector lowering accepts Python and NumPy booleans only; builtin scalar annotations are static-only.
+phydrax/_meshcore.py	polyhedron_corner_hexes	corner_orientations	NDArray[np.int8]	retained	Prepared source-corner incidence requires a contiguous int8 host bank aligned with every cell-vertex occurrence; NumPy annotations do not enforce dtype/storage layout.
 phydrax/_model/_artifacts.py	register_operator_architecture_codec	codec	OperatorArchitectureCodec	retained	source-addressed-function
 phydrax/_model/_component.py	ComponentContract.__init__	model_contract	ModelExecutionContract	migrated	checked-signature
 phydrax/_model/_component.py	ModelExecutionContract.__init__	derivative	DerivativeContract	migrated	checked-signature
@@ -853,6 +862,8 @@ phydrax/applications/cavity_quantum.py	CavityDipoleCouplingPlan.evaluate	modes	N
 phydrax/applications/cavity_quantum.py	CavityParticipationPlan.evaluate	modes	NormalizedMaxwellEigenmodes	migrated	checked-signature
 phydrax/applications/cavity_quantum.py	MaxwellBlochPlan.evidence	state	MaxwellBlochState	migrated	checked-signature
 phydrax/applications/cavity_quantum.py	MaxwellBlochPlan.prepare	initial_state	MaxwellBlochState	migrated	checked-signature
+phydrax/applications/cavity_quantum.py	PreparedAdaptiveHcurlCapability.adapt	accepted_boundary	bool	retained	Hcurl publication requires an actual host bool before edge-integral conversion; builtin bool annotations are static-only and must not accept NumPy booleans or traced flags.
+phydrax/applications/cavity_quantum.py	PreparedAdaptiveHcurlCapability.adapt	adaptation	MeshAdaptationResult	migrated	checked-signature; wrong-kind refusal now precedes value validation
 phydrax/applications/cavity_quantum.py	PreparedMaxwellEigenmodeNormalization.__init__	plan	MaxwellEigenmodeNormalizationPlan	migrated	checked-signature
 phydrax/applications/cellular_mechanics/_active_polymers.py	PreparedActinNetwork.__init__	plan	ActinNetworkPlan	migrated	checked-signature
 phydrax/applications/cellular_mechanics/_active_polymers.py	PreparedChromatinDynamics.__init__	plan	ChromatinDynamicsPlan	migrated	checked-signature
@@ -2836,6 +2847,8 @@ phydrax/applications/solid_mechanics/_topology.py	TopologyMechanicsProblem.__ini
 phydrax/applications/solid_mechanics/_topology.py	solve_topology_optimization	problem	TopologyMechanicsProblem	retained	source-addressed-function
 phydrax/applications/solid_mechanics/_topology_design.py	DensityTransform.__init__	prepared	PreparedDensityTransform	migrated	checked-signature
 phydrax/applications/solid_mechanics/_topology_reanalysis.py	TopologyReanalysisPlan.__init__	reference_problem	TopologyMechanicsProblem	migrated	checked-signature
+phydrax/applications/solid_mechanics/_topology_reanalysis.py	TopologyReanalysisReport.admit_decision	actual	PhysicalErrorEvidence	retained	PhysicalErrorEvidence is imported only under TYPE_CHECKING and locally inside admit_decision, so its signature annotation cannot resolve in the defining module; retain reanalysis-kind admission after decision-kind admission and before estimator/revision/objective checks.
+phydrax/applications/solid_mechanics/_topology_reanalysis.py	TopologyReanalysisReport.admit_decision	decision	SolverAwareDecision	retained	SolverAwareDecision is imported only under TYPE_CHECKING and locally inside admit_decision, so its signature annotation cannot resolve in the defining module; retain decision-kind admission before actual evidence and selected-route checks.
 phydrax/applications/solid_mechanics/_topology_reanalysis.py	reanalyze_topology_design	plan	TopologyReanalysisPlan	retained	source-addressed-function
 phydrax/applications/solid_mechanics/_topology_reanalysis.py	reanalyze_topology_design	result	TopologyOptimizationResult	retained	source-addressed-function
 phydrax/applications/solid_mechanics/_topology_state.py	FiniteElementStateSolver.solve	problem	StateDesignProblem	migrated	checked-signature
@@ -4089,6 +4102,7 @@ phydrax/control/stochastic/_smp.py	_validate_alignment	paths	ControlledPathBatch
 phydrax/control/stochastic/_smp.py	_validate_alignment	problem	StochasticMaximumPrincipleProblem	retained	source-addressed-function
 phydrax/coresets/_herding.py	kernel_herd	method	KernelHerding	retained	source-addressed-function
 phydrax/coresets/_pivoted_cholesky.py	randomized_pivoted_cholesky	method	RandomizedPivotedCholesky	retained	source-addressed-function
+phydrax/discretization/_adaptive_simplex.py	AdaptiveSimplexPolicy.__init__	growth_factor	float	retained	Reject boolean and non-int/non-float growth factors before coercion, then require a finite capacity growth factor of at least one; builtin float annotations do not enforce runtime scalar kind or value.
 phydrax/discretization/_adaptive_simplex.py	AdaptiveSimplexState.__init__	mesh	MaskedSimplexMesh	migrated	checked-signature
 phydrax/discretization/_adaptive_simplex.py	_checked	layout	AdaptiveSimplexLayout	retained	source-addressed-function
 phydrax/discretization/_adaptive_simplex.py	_checked	state	AdaptiveSimplexState	retained	source-addressed-function
@@ -4107,7 +4121,13 @@ phydrax/discretization/_bundle.py	DiscretizationLevel.__init__	bundle	Discretiza
 phydrax/discretization/_bundle.py	DiscretizationRecord.__init__	key	DiscretizationKey	migrated	checked-signature
 phydrax/discretization/_cell_complex.py	prepare_polyhedral_worksets	connectivity	PolyhedralConnectivity	retained	source-addressed-function
 phydrax/discretization/_cell_complex.py	simplicial_cell_geometry	topology	CellComplexTopology	retained	source-addressed-function
+phydrax/discretization/_cell_geometry.py	CellGeometryRestrictionSource.__init__	source_geometry_id	str	retained	Restriction provenance must use a string source identity before nonempty validation and fingerprint construction; builtin str annotations are static-only.
+phydrax/discretization/_cell_geometry.py	CellGeometryRestrictionSource.__init__	source_topology_id	str	retained	Restriction provenance must use a string topology identity before nonempty validation and fingerprint construction; builtin str annotations are static-only.
+phydrax/discretization/_cell_geometry.py	LayerColumnCellGeometryElement.__init__	fiber_graph	bool	retained	Fiber graph admission requires a Python boolean before selecting the station-independent displacement contract; builtin bool annotations are static-only.
+phydrax/discretization/_cell_geometry.py	SplineCellGeometryElement.__init__	source_id	str	retained	Spline source identity must be a string before nonempty validation and fingerprint construction; builtin str annotations are static-only.
+phydrax/discretization/_cell_geometry.py	SplineCellGeometryElement.__init__	source_revision	str	retained	Spline source revision must be a string before nonempty validation and fingerprint construction; builtin str annotations are static-only.
 phydrax/discretization/_cell_geometry_validity.py	polyhedral_star_tables	connectivity	PolyhedralConnectivity	retained	source-addressed-function
+phydrax/discretization/_cell_mesh.py	CellMesh.from_simplices	dimension	int	retained	Reject boolean and non-int dimensions before constructing dimension-qualified simplex cells, then require dimension at least one; builtin int annotations do not enforce runtime scalar kind or value.
 phydrax/discretization/_cell_mesh.py	SimplicialConnectivity.__init__	topology	CellComplexTopology	migrated	checked-signature
 phydrax/discretization/_cell_mesh.py	_reused_cell_mesh_topology	prepared	_PreparedCellMeshTopology	retained	source-addressed-function
 phydrax/discretization/_cochain.py	_admit_layout	topology	CellComplexTopology	retained	source-addressed-function
@@ -4122,6 +4142,7 @@ phydrax/discretization/_conservation_boundary.py	evaluate_conservation_boundary	
 phydrax/discretization/_cubical_whitney.py	CubicalGridGeometry.__init__	bridge	StructuredCochainBridge	migrated	checked-signature
 phydrax/discretization/_cubical_whitney.py	CubicalSplineWhitneyKernel.__init__	bridge	StructuredCochainBridge	migrated	checked-signature
 phydrax/discretization/_distributed_field.py	DistributedLocalOperator.__init__	halo	DistributedHaloPlan	migrated	checked-signature
+phydrax/discretization/_exact_plc_geometry.py	ExactPlcCellGeometryConvexSource.__init__	support_coefficients	tuple[Fraction, ...]	retained	Container coverage is static-only at checked signatures; convex source admission requires tuple storage with one Fraction per support vertex before verifying positivity, unit sum, and unique support rows.
 phydrax/discretization/_field_query.py	PreparedFieldQuery.__init__	reconstruction	PreparedFieldReconstruction	migrated	checked-signature
 phydrax/discretization/_field_query.py	PreparedFieldQuery.require_reconstruction	reconstruction	PreparedFieldReconstruction	migrated	checked-signature
 phydrax/discretization/_kinetic_entropy.py	solve_kinetic_entropy_root	plan	KineticEntropyRootPlan	retained	source-addressed-function
@@ -4186,8 +4207,10 @@ phydrax/discretization/_tensor_entities.py	StructuredAxis.__init__	axis	AxisDisc
 phydrax/discretization/_tensor_index.py	PreparedTensorIndexSpace.from_plan	plan	TensorGridPlan	migrated	checked-signature
 phydrax/discretization/_tensor_index.py	TensorIndexMeasure.__init__	layout	TensorIndexLayout	migrated	checked-signature
 phydrax/discretization/_tensor_support.py	PreparedTensorGrid.from_plan	plan	TensorGridPlan	migrated	checked-signature
+phydrax/discretization/_tensor_support.py	PreparedTensorGrid.from_stored_fields	value	PreparedTensorGrid	retained	Decoded records must have the exact registered class before replaying axis and support construction.
 phydrax/discretization/_topology.py	EntitySelection._binary	other	EntitySelection	migrated	checked-signature
 phydrax/discretization/_topology.py	OrientedIncidence.__init__	relation	EdgeRelation	migrated	checked-signature
+phydrax/discretization/_topology_epoch.py	FieldEpochTransition.__init__	evidence_passed	bool	retained	Builtin bool annotations are static-only; evidence admission requires a Python host bool and rejects truthy scalars, NumPy booleans, and array values before transfer property validation.
 phydrax/discretization/_topology_epoch.py	TopologyEpochTransition.__init__	transfer	FieldTransfer	migrated	checked-signature
 phydrax/discretization/_transfer.py	FieldTransfer.__init__	primal_operator	AbstractLinearOperator	migrated	checked-signature
 phydrax/discretization/_views.py	DiscreteFieldEvaluator.__init__	reconstruction	PreparedFieldReconstruction	migrated	checked-signature
@@ -4398,9 +4421,10 @@ phydrax/discretization/fem/_generic.py	FiniteElementDiscretization.assemble_fiel
 phydrax/discretization/fem/_generic.py	FiniteElementDiscretization.dof_indices	selection	EntitySelection	migrated	checked-signature
 phydrax/discretization/fem/_generic.py	FiniteElementPlan.__init__	mesh	CellMesh	migrated	checked-signature
 phydrax/discretization/fem/_generic.py	FiniteElementRuntimeData.__init__	mesh	CellMesh	migrated	checked-signature
+phydrax/discretization/fem/_generic.py	MaskedFiniteElementPlan.__init__	degree	int	retained	masked-P1-degree-scalar-kind-accepts-integers-rejects-bool
 phydrax/discretization/fem/_generic.py	MaskedFiniteElementPlan.__init__	mesh	MaskedSimplexMesh	migrated	checked-signature
-phydrax/discretization/fem/_generic.py	assemble_masked_finite_element	mesh	MaskedSimplexMesh	retained	source-addressed-function
-phydrax/discretization/fem/_generic.py	assemble_masked_finite_element	plan	MaskedFiniteElementPlan	retained	source-addressed-function
+phydrax/discretization/fem/_generic.py	assemble_masked_finite_element	mesh	MaskedSimplexMesh	retained	source-addressed-masked-P1-assembly-entry
+phydrax/discretization/fem/_generic.py	assemble_masked_finite_element	plan	MaskedFiniteElementPlan	retained	source-addressed-masked-P1-assembly-entry
 phydrax/discretization/fem/_geometry_motion.py	FiniteElementMeshMotionPlan.__init__	boundary_provider	FiniteElementBoundaryProvider	retained	static-only-annotation
 phydrax/discretization/fem/_geometry_motion.py	FiniteElementMeshMotionPlan.__init__	discretization	FiniteElementDiscretization	migrated	checked-signature
 phydrax/discretization/fem/_geometry_motion.py	FiniteElementMeshMotionPolicy.__init__	route	FiniteElementMeshMotionRoute	retained	static-only-annotation
@@ -4518,8 +4542,6 @@ phydrax/discretization/finite_volume/_amr_diffusion.py	CompositeAMRDiffusionPlan
 phydrax/discretization/finite_volume/_amr_diffusion.py	PreparedCompositeAMRDiffusion.__init__	plan	CompositeAMRDiffusionPlan	migrated	checked-signature
 phydrax/discretization/finite_volume/_atmospheric_balance.py	PreparedAtmosphericBalance.__init__	discretization	FiniteVolumeDiscretization	migrated	checked-signature
 phydrax/discretization/finite_volume/_atmospheric_balance.py	PreparedAtmosphericBalance.__init__	system	HomogeneousMixtureEulerSystem	migrated	checked-signature
-phydrax/discretization/finite_volume/_automatic_remap.py	PreparedUnstructuredConservativeRemap.__init__	refinement	PreparedCommonRefinement	retained	signature-unresolved
-phydrax/discretization/finite_volume/_automatic_remap.py	PreparedUnstructuredConservativeRemap.__init__	status	CommonRefinementStatus	retained	signature-unresolved
 phydrax/discretization/finite_volume/_block_amr.py	BlockAMRFiniteVolumePlan.__init__	boundaries	FiniteVolumeBoundarySet	migrated	checked-signature
 phydrax/discretization/finite_volume/_block_amr.py	BlockAMRFiniteVolumePlan.__init__	hierarchy	PreparedFDAMRHierarchy	migrated	checked-signature
 phydrax/discretization/finite_volume/_block_amr.py	BlockAMRFiniteVolumePlan.__init__	method	FiniteVolumeMethodPlan	migrated	checked-signature
@@ -4544,6 +4566,7 @@ phydrax/discretization/finite_volume/_diffusion.py	FaceCoefficientPlan.__init__	
 phydrax/discretization/finite_volume/_diffusion.py	PreparedConservativeAdvection.__init__	plan	ConservativeAdvectionPlan	migrated	checked-signature
 phydrax/discretization/finite_volume/_diffusion.py	PreparedConservativeDiffusion.__init__	plan	ConservativeDiffusionPlan	migrated	checked-signature
 phydrax/discretization/finite_volume/_diffusion_boundary.py	HybridDiffusionBoundary.__init__	discretization	UnstructuredFiniteVolumeDiscretization	migrated	checked-signature
+phydrax/discretization/finite_volume/_diffusion_boundary.py	HybridDiffusionBoundary.__init__.<locals>.validate_face	face	int	retained	static-only-integer-face-index
 phydrax/discretization/finite_volume/_distributed.py	PreparedFiniteVolumeDecomposition.__init__	plan	FiniteVolumeDecompositionPlan	migrated	checked-signature
 phydrax/discretization/finite_volume/_distributed.py	PreparedFiniteVolumeDecomposition._validate_dynamics	dynamics	PreparedFiniteVolumeDynamics	migrated	checked-signature
 phydrax/discretization/finite_volume/_dyadic.py	DyadicFiniteVolumePlan.__init__	topology	DyadicCellTopology	migrated	checked-signature
@@ -4620,6 +4643,8 @@ phydrax/discretization/finite_volume/_multiblock.py	ConservativeMultiblockInterf
 phydrax/discretization/finite_volume/_multiblock.py	FiniteVolumeMultiblockRuntimePlan.__init__	positivity	FluxPositivityPlan	migrated	checked-signature
 phydrax/discretization/finite_volume/_positivity.py	FluxPositivityPlan.limit_stage_rate_ledgers	fallback_ledger	ConservationStageLedger	migrated	checked-signature
 phydrax/discretization/finite_volume/_positivity.py	FluxPositivityPlan.limit_stage_rate_ledgers	high_order_ledger	ConservationStageLedger	migrated	checked-signature
+phydrax/discretization/finite_volume/_remap_evidence.py	PreparedUnstructuredConservativeRemap.__init__	route	UnstructuredRemapRoute	migrated	checked-signature
+phydrax/discretization/finite_volume/_remap_evidence.py	PreparedUnstructuredConservativeRemap.__init__	status	CommonRefinementStatus	retained	static-only-enum-selector
 phydrax/discretization/finite_volume/_riemann.py	EntropyStableFluxPlan.__init__	central	AbstractSymmetricTwoPointFluxPlan	retained	signature-unresolved
 phydrax/discretization/finite_volume/_riemann.py	EntropyStableFluxPlan.__init__	entropy_pair	ConvexEntropyPair	retained	signature-unresolved
 phydrax/discretization/finite_volume/_shallow_water.py	ShallowWaterHydrostaticHLLPlan.face_contribution	system	ShallowWaterSystem	retained	signature-unresolved
@@ -4661,14 +4686,15 @@ phydrax/discretization/finite_volume/_unstructured_dynamics.py	PreparedUnstructu
 phydrax/discretization/finite_volume/_unstructured_dynamics.py	PreparedUnstructuredFiniteVolumeDynamics._validated_stage_average	metrics	FiniteVolumeStageMetrics	migrated	checked-signature
 phydrax/discretization/finite_volume/_unstructured_dynamics.py	PreparedUnstructuredFiniteVolumeDynamics.zero_stage_ledger	metrics	FiniteVolumeStageMetrics	migrated	checked-signature
 phydrax/discretization/finite_volume/_unstructured_dynamics.py	UnstructuredFiniteVolumeMethodPlan.__init__	interface_solver	AbstractArbitraryNormalNumericalFluxPlan	migrated	checked-signature
+phydrax/discretization/finite_volume/_unstructured_dynamics.py	_prepare_owner_program_placement	state	Array	retained	static-only-global-array-placement
 phydrax/discretization/finite_volume/_unstructured_embedded_boundary.py	EmbeddedBoundaryPlan.__init__	discretization	UnstructuredFiniteVolumeDiscretization	migrated	checked-signature
 phydrax/discretization/finite_volume/_unstructured_incompressible.py	PreparedUnstructuredCollocatedOperators.__init__	discretization	UnstructuredFiniteVolumeDiscretization	migrated	checked-signature
 phydrax/discretization/finite_volume/_unstructured_incompressible.py	PreparedUnstructuredCollocatedOperators.__init__	gradient	PreparedCellPolynomialReconstruction	migrated	checked-signature
 phydrax/discretization/finite_volume/_unstructured_motion.py	FixedConnectivityMotionPlan.__init__	base_plan	UnstructuredFiniteVolumePlan	migrated	checked-signature
-phydrax/discretization/finite_volume/_unstructured_remap.py	UnstructuredSecondOrderRemapPlan.__init__	limiter	UnstructuredRemapLimiter	retained	signature-unresolved
-phydrax/discretization/finite_volume/_unstructured_remap.py	UnstructuredSecondOrderRemapPlan.__init__	refinement	PreparedCommonRefinement	retained	signature-unresolved
-phydrax/discretization/finite_volume/_unstructured_remap.py	UnstructuredSecondOrderRemapPlan.__init__	remap	UnstructuredConservativeRemapPlan	retained	signature-unresolved
-phydrax/discretization/finite_volume/_unstructured_remap.py	UnstructuredSecondOrderRemapPlan.__init__	source	UnstructuredFiniteVolumeDiscretization	retained	signature-unresolved
+phydrax/discretization/finite_volume/_unstructured_remap.py	UnstructuredSecondOrderRemapPlan.__init__	limiter	UnstructuredRemapLimiter	retained	static-only-enum-selector
+phydrax/discretization/finite_volume/_unstructured_remap.py	UnstructuredSecondOrderRemapPlan.__init__	refinement	PreparedCommonRefinement	migrated	checked-signature
+phydrax/discretization/finite_volume/_unstructured_remap.py	UnstructuredSecondOrderRemapPlan.__init__	remap	UnstructuredConservativeRemapPlan	migrated	checked-signature
+phydrax/discretization/finite_volume/_unstructured_remap.py	UnstructuredSecondOrderRemapPlan.__init__	source	UnstructuredFiniteVolumeDiscretization	migrated	checked-signature
 phydrax/discretization/finite_volume/_unstructured_thermal.py	UnstructuredTwoMaterialThermalDiffusionPlan.__init__	discretization	UnstructuredFiniteVolumeDiscretization	migrated	checked-signature
 phydrax/discretization/finite_volume/_unstructured_vof.py	UnstructuredVOFPlan.__init__	discretization	UnstructuredFiniteVolumeDiscretization	migrated	checked-signature
 phydrax/discretization/finite_volume/_unstructured_vof.py	UnstructuredVOFPlan.__init__	gradient	PreparedCellPolynomialReconstruction	migrated	checked-signature
@@ -4717,10 +4743,12 @@ phydrax/discretization/iga/_compatible.py	qualify_compatible_complex	policy	Comp
 phydrax/discretization/iga/_compatible.py	qualify_compatible_complex	relative	RelativeCohomologyEvidence	retained	source-addressed-function
 phydrax/discretization/iga/_cut.py	build_trimmed_surface_quadrature	surface	UVTrimmedSurface	retained	source-addressed-function
 phydrax/discretization/iga/_cut.py	certify_cut_condition	plan	CutStabilizationPlan	retained	source-addressed-function
-phydrax/discretization/iga/_field_view.py	prepare_isogeometric_field_reconstruction	discretization	PreparedIsogeometricDiscretization	retained	source-addressed-function
-phydrax/discretization/iga/_field_view.py	prepare_isogeometric_side_trace	discretization	PreparedIsogeometricDiscretization	retained	source-addressed-function
-phydrax/discretization/iga/_field_view.py	prepare_isogeometric_side_trace	domain	IntegrationDomain	retained	source-addressed-function
-phydrax/discretization/iga/_field_view.py	prepare_isogeometric_side_trace	rule	FacetTraceRule	retained	source-addressed-function
+phydrax/discretization/iga/_field_view.py	IsogeometricFieldReconstructionKernel.__init__	newton_iterations	int	retained	checked does not enforce builtin int inputs; this constructor requires a positive Python integer sweep count and rejects booleans before staging the fixed projected locator.
+phydrax/discretization/iga/_field_view.py	IsogeometricFieldReconstructionKernel.__init__	seeds_per_axis	int	retained	checked does not enforce builtin int inputs; this constructor requires a positive Python integer seed count and rejects booleans before preparing per-axis seed offsets.
+phydrax/discretization/iga/_field_view.py	prepare_isogeometric_field_reconstruction	discretization	PreparedIsogeometricDiscretization	migrated	checked-signature
+phydrax/discretization/iga/_field_view.py	prepare_isogeometric_side_trace	discretization	PreparedIsogeometricDiscretization	migrated	checked-signature
+phydrax/discretization/iga/_field_view.py	prepare_isogeometric_side_trace	domain	IntegrationDomain	migrated	checked-signature
+phydrax/discretization/iga/_field_view.py	prepare_isogeometric_side_trace	rule	FacetTraceRule	migrated	checked-signature
 phydrax/discretization/iga/_geometry.py	IsogeometricH1QualificationPolicy.check	evidence	IsogeometricGeometryEvidence	migrated	checked-signature
 phydrax/discretization/iga/_geometry.py	IsogeometricRuntimeData.__init__	basis	TensorSplineBasisSpec	migrated	checked-signature
 phydrax/discretization/iga/_geometry.py	IsogeometricRuntimeData.__init__	geometry	NURBSGeometryState	migrated	checked-signature
@@ -4906,6 +4934,8 @@ phydrax/discretization/meshfree/_shifting.py	surface_relative_advection	incidenc
 phydrax/discretization/meshfree/_stabilization.py	PreparedHyperviscosity.__init__	plan	HyperviscosityPlan	migrated	checked-signature
 phydrax/discretization/meshfree/_stencils.py	prepare_local_stencils	neighborhood	PreparedMeshfreeNeighborhood	retained	source-addressed-function
 phydrax/discretization/meshfree/_surface_transfer.py	SurfaceTransferPlan.from_stencils	stencils	PreparedLocalStencils	migrated	checked-signature
+phydrax/discretization/meshfree/_transfer.py	PointTransferRequest.__init__	moment_degree	int	retained	checked does not enforce builtin int inputs; this request accepts Python and NumPy integers but excludes booleans before route-specific conservation and moment-degree admission.
+phydrax/discretization/meshfree/_transfer.py	PointTransferRequest.__init__	nonnegative	bool	retained	checked does not enforce builtin bool inputs; this request requires a Python Boolean positivity declaration rather than treating integer flags as equivalent.
 phydrax/discretization/mpm/_commercial.py	MPMSupportDecision.__init__	claim	MPMClaimTuple	migrated	checked-signature
 phydrax/discretization/mpm/_contact.py	RigidMPMContactPlan.__init__	friction	AbstractMPMFrictionPlan	migrated	checked-signature
 phydrax/discretization/mpm/_contact_kway.py	KWayMPMContactPlan.solve	graph	MPMContactGraph	migrated	checked-signature
@@ -5210,6 +5240,8 @@ phydrax/discretization/spatial/_block_sparse.py	SparseBlockTopologyPlan.__init__
 phydrax/discretization/spatial/_block_sparse.py	SparseBlockTopologyPlan.refresh	previous	SparseBlockTopologyState	migrated	checked-signature
 phydrax/discretization/spatial/_dyadic.py	AdaptiveDyadicGridPlan.adapt	previous	DyadicCellTopology	migrated	checked-signature
 phydrax/discretization/spatial/_level_octree.py	AdaptiveOctreePlan.__init__	address_plan	MortonAddressPlan	migrated	checked-signature
+phydrax/discretization/spatial/_level_octree.py	AdaptiveOctreePlan.__init__	balanced	bool	retained	checked does not enforce builtin bool inputs; this constructor requires a Python Boolean before choosing and fingerprinting the optional 2-to-1 leaf-balancing policy.
+phydrax/discretization/spatial/_level_octree.py	refined_octree_leaves	balanced	bool	retained	checked does not enforce builtin bool inputs; this leaf preparation boundary requires a Python Boolean before deciding whether to apply 2-to-1 balancing to supplied refinement prefixes.
 phydrax/discretization/spatial/_neighbor_query.py	_validated_capacities	address_plan	MortonAddressPlan	retained	source-addressed-function
 phydrax/discretization/spatial/_primitive_bounds.py	MortonPrimitiveBoundsPlan.__init__	hierarchy	MortonPointHierarchyState	migrated	checked-signature
 phydrax/discretization/spatial/_voxel.py	SparseVoxelField.__init__	grid	PreparedSparseVoxelGrid	migrated	checked-signature
@@ -5726,6 +5758,7 @@ phydrax/equations/_integral_rewrite.py	rewrite_strong_to_integral	integration_pl
 phydrax/equations/_integral_rewrite.py	rewrite_strong_to_integral	problem_ir	PDEProblemIR	retained	source-addressed-function
 phydrax/equations/_integral_rewrite.py	rewrite_strong_to_integral	spec	StrongToIntegralRewriteSpec	retained	source-addressed-function
 phydrax/equations/_ionized_gas.py	IonizedMultitemperatureEulerSystem.__init__	thermodynamics	IonizedMixtureThermodynamicsPlan	migrated	checked-signature
+phydrax/equations/_ir.py	PDEParameter.__init__	dimension	DimensionSignature	migrated	checked-signature; wrong-kind refusal now precedes value validation
 phydrax/equations/_kinetic_gas.py	KineticBreakdownPlan.__init__	collision	MonatomicBGKCollisionPlan	migrated	checked-signature
 phydrax/equations/_kinetic_gas.py	MaxwellGasSurfaceBoundary.__init__	quadrature	MolecularVelocityQuadrature	migrated	checked-signature
 phydrax/equations/_kinetic_gas.py	MonatomicBGKCollisionPlan.__init__	quadrature	MolecularVelocityQuadrature	migrated	checked-signature
@@ -6549,14 +6582,30 @@ phydrax/geometry/_cad_revision.py	CADRevision.compose	parent	CADSelector	migrate
 phydrax/geometry/_cad_revision.py	CADSelectionSet.from_revision	revision	CADRevision	migrated	checked-signature
 phydrax/geometry/_cad_revision.py	CADSelector.from_occurrence	occurrence	CADOccurrence	migrated	checked-signature
 phydrax/geometry/_cubature.py	CubatureAtlas.__init__	mapping	AbstractCubatureMap	migrated	checked-signature
+phydrax/geometry/_domain_boundary.py	MeshingDomainBoundarySource.boundary_chart_cover	_topology_only	bool	retained	Requires a Python boolean topology-only flag before selecting the cover query; builtin bool annotations are static-only.
+phydrax/geometry/_domain_planar_boundary.py	CadSourceDomain.__init__	region_ids	tuple[str, ...]	retained	Requires immutable region identifier rows before uniqueness validation; general tuple annotations are not enforced by checked.
+phydrax/geometry/_embedding_state.py	MeshCertificateFinding.__init__.<locals>.quantities	values	tuple[tuple[str, int], ...]	retained	Requires immutable quantity rows and named integer-pair structure for runtime or restored finding data; general container annotations do not enforce that schema.
 phydrax/geometry/_eroded_domain.py	FiniteRadiusErosionPlan.__init__	geometry	CompiledGeometry	migrated	checked-signature
+phydrax/geometry/_global_embedding.py	MappedBoundaryDegreeEvidence.__init__	shell_exterior_degrees	tuple[int, ...]	retained	Requires immutable signed integer shell degrees and excludes booleans; general tuple and builtin integer annotations do not enforce those value rules.
 phydrax/geometry/_immersed_markers.py	ImmersedMarkerQuadraturePlan.materialize	atlas	BoundaryAtlas	migrated	checked-signature
 phydrax/geometry/_interface_extension.py	TwoSidedInterfaceCorrectionProvider.__init__	support	OrientedInterfaceSupport	migrated	checked-signature
+phydrax/geometry/_mesh_theorems.py	_mapping	value	object	retained	Decoded JSON values require object and string-key validation before field access; neither object annotations nor checked signatures establish this interchange shape.
+phydrax/geometry/_mesh_theorems.py	_sequence	value	object	retained	Decoded JSON metadata fields require array validation before traversal; object and container annotations do not enforce the supported interchange shape.
+phydrax/geometry/_mesh_theorems.py	_text	value	object	retained	Decoded JSON statements and citation fields require string-kind and field-specific emptiness validation; object and builtin scalar annotations do not enforce this interchange contract.
+phydrax/geometry/_meshing_domain.py	MeshingSurfacePatch.__init__	reversed	bool	retained	Admits and normalizes only Python or NumPy boolean orientation flags before geometric validation; builtin scalar annotations are static-only.
 phydrax/geometry/_partition.py	BoundaryAtlasPartition.__init__	atlas	BoundaryAtlas	migrated	checked-signature
+phydrax/geometry/_planar_facet_scope.py	_source_map	mapping	Mapping[int, tuple[int, ...]]	retained	Requires a mapping declaration before accessing its items and validating source-fragment rows; checked does not enforce general Mapping annotations.
 phydrax/geometry/_sampling.py	sample_boundary_atlas	atlas	BoundaryAtlas	retained	source-addressed-function
+phydrax/geometry/_source_fidelity.py	SourceFidelityCertificate.__init__	source_scope_id	str	retained	Scoped facet certificates require a nonempty source-scope binding ID; unscoped certificates permit absence but reject invalid supplied IDs. The guard owns conditional value and provenance semantics, and checked does not enforce builtin string kinds.
+phydrax/geometry/_source_fidelity.py	_prepare_fidelity_request	source	SourceBoundaryQuery	retained	Requires source revision, dimension, distance and sample query capabilities before preparation; runtime-checkable Protocol annotations remain static-only at checked boundaries.
 phydrax/geometry/_supermesh.py	CommonRefinementEvidence.__init__	status	CommonRefinementStatus	retained	static-only-annotation
 phydrax/geometry/_supermesh.py	CommonRefinementPolicy.__init__	coverage	CommonRefinementCoverage	retained	static-only-annotation
+phydrax/geometry/_supermesh.py	CommonRefinementPolicy.__init__	overlap_simplices	bool	retained	Requires a Python boolean simplex-retention policy before tolerance and capacity validation; builtin bool annotations do not enforce runtime kinds.
 phydrax/geometry/_supermesh.py	CommonRefinementPolicy.__init__	predicate_mode	PredicateMode	retained	static-only-annotation
+phydrax/geometry/_supermesh.py	CommonRefinementPolicy.__init__	second_moments	bool	retained	Requires a Python boolean second-moment policy before tolerance and capacity validation; builtin bool annotations do not enforce runtime kinds.
+phydrax/geometry/_surface_source_support.py	PreparedSurfaceSourceSupport.__init__	root_result	CellMeshingResult | SurfaceSourceRootAtlas	retained	Preserves existing deferred nominal root admission through the result/source-support/initial-certification cycle; checked cannot resolve this union at module initialization.
+phydrax/geometry/_surface_source_support.py	_source_chart_associations	associations	tuple[association_state_owner.GeometryAssociation, ...]	retained	Requires immutable association rows and admitted association members before source-key lookup; general tuple annotations do not enforce this caller-container schema.
+phydrax/geometry/_surface_source_support.py	restrict_surface_source_atlas_geometry	canonical_blocks	bool	retained	Requires a Python boolean canonical-block selection flag before chart reconstruction; builtin bool annotations remain static-only.
 phydrax/geometry/_surfel_atlas.py	BoundaryAtlasSurfelMaterialization.marker_kinematics	markers	LagrangianMarkerDiscretization	migrated	checked-signature
 phydrax/geometry/_surfel_atlas.py	BoundaryAtlasSurfelPlan.__init__	quadrature	ImmersedMarkerQuadraturePlan	migrated	checked-signature
 phydrax/geometry/_surfel_atlas.py	PreparedBoundaryAtlasSurfels.materialize	atlas	BoundaryAtlas	migrated	checked-signature
@@ -6579,12 +6628,15 @@ phydrax/geometry/analytic/_operations.py	Scaling.__init__	child	GeometrySource	m
 phydrax/geometry/analytic/_sweeps.py	Extrusion.__init__	profile	GeometrySource	migrated	checked-signature
 phydrax/geometry/analytic/_sweeps.py	Revolution.__init__	profile	GeometrySource	migrated	checked-signature
 phydrax/geometry/brep/_differentiable.py	FixedTopologyBRepSource.__init__	model	BRepModel	migrated	checked-signature
+phydrax/geometry/brep/_intersection_curve.py	encode_geometry	value	Any	retained	Dynamic geometry interchange accepts recursive scalars, arrays, tuples and registered construction records; exact registered-class identity and construction-field admission remain with this schema boundary.
 phydrax/geometry/brep/_model.py	BRepModel.__init__	coordinate_contract	SpatialCoordinateContract	migrated	checked-signature
 phydrax/geometry/brep/_model.py	BRepModel.__init__	report	BRepImportReport	migrated	checked-signature
 phydrax/geometry/brep/_model.py	BRepModel.__init__	topology	BRepTopology	migrated	checked-signature
+phydrax/geometry/brep/_model.py	BRepOccurrence.__init__	solid	int	retained	Builtin int is static-only at checked boundaries; reject bool/non-int and negative occurrence solid indices before placement conversion.
 phydrax/geometry/brep/_occt.py	import_brep	coordinate_contract	SpatialCoordinateContract	retained	source-addressed-function
 phydrax/geometry/brep/_occt.py	model_from_occt_shape	coordinate_contract	SpatialCoordinateContract	retained	source-addressed-function
 phydrax/geometry/brep/_occt.py	persist_occt_shape	coordinate_contract	SpatialCoordinateContract	retained	source-addressed-function
+phydrax/geometry/brep/_partition.py	_partition_dimension	value	int	retained	Builtin int is static-only at checked boundaries; refuse bool/non-int before Literal dimension parsing to preserve kind-before-value refusal ordering.
 phydrax/geometry/brep/_partition.py	cad_revision_from_brep_model	model	BRepModel	retained	source-addressed-function
 phydrax/geometry/brep/_partition.py	partition_brep	plan	BRepPartitionPlan	retained	source-addressed-function
 phydrax/geometry/brep/_planar.py	partition_planar	plan	PlanarPartitionPlan	retained	source-addressed-function
@@ -6616,6 +6668,7 @@ phydrax/geometry/design/_reduced.py	DesignParameterization.__init__	reference	De
 phydrax/geometry/design/_reduced.py	DesignParameterization._validate_state	state	DesignState	migrated	checked-signature
 phydrax/geometry/design/_reduced.py	ReducedDesignProblem.__init__	binding_graph	DesignBindingGraph	migrated	checked-signature
 phydrax/geometry/design/_reduced.py	ReducedDesignProblem.__init__	parameterization	DesignParameterization	migrated	checked-signature
+phydrax/geometry/design/_search.py	_resolve_search_bounds	bounds	SearchBounds | None	retained	Requires a mapping of declared search bounds rather than accepting arbitrary iterable pairs; general Mapping and optional container annotations are static-only.
 phydrax/geometry/design/_search.py	search_design_constraints	search	DifferentialEvolutionSearch	retained	source-addressed-function
 phydrax/geometry/design/_search.py	search_design_constraints	system	DesignConstraintSystem	retained	source-addressed-function
 phydrax/geometry/implicit/_curve_discovery.py	discover_implicit_curve	geometry	CompiledGeometry	retained	source-addressed-function
@@ -6647,8 +6700,10 @@ phydrax/geometry/multiregion_surface/_state.py	MultiRegionSurfaceState.require_t
 phydrax/geometry/multiregion_surface/_topology.py	MultiRegionSurfaceTopology.__init__	plan	MultiRegionSurfaceCapacityPlan	migrated	checked-signature
 phydrax/geometry/multiregion_surface/_topology_transitions.py	MergeProposal.__init__	policy	SurfaceMergePolicy	migrated	checked-signature
 phydrax/geometry/multiregion_surface/_topology_transitions.py	propose_merges	policy	SurfaceMergePolicy	retained	source-addressed-function
+phydrax/geometry/multiregion_surface/_transaction.py	_expect	proposal	SurfaceEventProposal	retained	dependent-concrete-event-schema-dispatch
 phydrax/geometry/multiregion_surface/_transaction.py	apply_surface_burst	state	MultiRegionSurfaceState	retained	source-addressed-function
 phydrax/geometry/multiregion_surface/_transaction.py	apply_surface_burst	topology	MultiRegionSurfaceTopology	retained	source-addressed-function
+phydrax/geometry/multiregion_surface/_transaction.py	apply_surface_events	proposals	Sequence[SurfaceEventProposal]	retained	sequence-text-refusal-and-event-element-admission
 phydrax/geometry/multiregion_surface/_transaction.py	apply_surface_events	state	MultiRegionSurfaceState	retained	source-addressed-function
 phydrax/geometry/multiregion_surface/_transaction.py	apply_surface_events	topology	MultiRegionSurfaceTopology	retained	source-addressed-function
 phydrax/geometry/multiregion_surface/_transaction.py	multiregion_topology_epoch	topology	MultiRegionSurfaceTopology	retained	source-addressed-function
@@ -6675,6 +6730,8 @@ phydrax/geometry/polynomial_image/_exact.py	prove_exact_containment	polynomial_m
 phydrax/geometry/polynomial_image/_exact.py	prove_exact_containment	relations	ExactSparsePolynomialSystem	retained	source-addressed-function
 phydrax/geometry/polynomial_image/_map.py	SparsePolynomialMap.__init__	system	SparsePolynomialSystem	migrated	checked-signature
 phydrax/geometry/polynomial_image/_map.py	SparsePolynomialMap.from_exact	system	ExactSparsePolynomialSystem	migrated	checked-signature
+phydrax/geometry/process/_lower.py	lower_process_stack	overwrite	bool	retained	builtin-operation-overwrite-selector
+phydrax/geometry/process/_lower.py	lower_process_stack	run_parallel	bool	retained	builtin-operation-execution-selector
 phydrax/geometry/process/_lower.py	lower_process_stack	stack	ProcessStack	retained	source-addressed-function
 phydrax/geometry/reconstruction/_core.py	ReconstructedGeometrySource.__init__	source	GeometrySource	migrated	checked-signature
 phydrax/geometry/reconstruction/_core.py	reconstruct_lidar_region	product	LidarPointProduct	retained	source-addressed-function
@@ -6683,11 +6740,15 @@ phydrax/geometry/simplicial/_bvh.py	TriangleBVH.__init__	policy	BVHBuildPolicy	m
 phydrax/geometry/simplicial/_ddg.py	DDGOperators.__init__	mesh	TriangleMesh	migrated	checked-signature
 phydrax/geometry/simplicial/_mesh.py	TriangleMeshQueryIndex.__init__	mesh	TriangleMesh	migrated	checked-signature
 phydrax/geometry/simplicial/_support_region.py	compile_simplicial_support	locator	AbstractCellLocator	retained	source-addressed-function
+phydrax/geometry/simplicial/_support_region.py	compile_simplicial_support	support_id	str	retained	builtin-scientific-support-identifier-kind
 phydrax/geometry/simplicial/_surfels.py	SimplicialSurfelPlan.__init__	surface	TriangleSurface	migrated	checked-signature
+phydrax/geometry/surface/_boolean.py	SurfaceBooleanResult.__init__	source_models	tuple[SurfaceModel, ...]	retained	immutable-source-model-member-admission
+phydrax/geometry/surface/_boolean.py	_RegionExpression.__init__	children	tuple[_RegionExpression, ...]	retained	immutable-expression-child-member-admission
+phydrax/geometry/surface/_boolean.py	_RegionExpression.__init__	operand_index	int | None	retained	builtin-operand-index-kind-and-boolean-exclusion
 phydrax/geometry/surface/_contracts.py	SurfaceInterface.__init__	support	SurfaceSelection	migrated	checked-signature
-phydrax/geometry/surface/_contracts.py	SurfaceInterface.region	side	InterfaceSide	retained	static-only-annotation
+phydrax/geometry/surface/_contracts.py	SurfaceInterface.region	side	InterfaceSide	retained	InterfaceSide is a static-only enum annotation; this boundary validates the side before choosing the minus or plus region.
 phydrax/geometry/surface/_contracts.py	SurfaceMetadata.__init__	coordinate_contract	SpatialCoordinateContract	migrated	checked-signature
-phydrax/geometry/surface/_contracts.py	SurfacePreparationError.__init__	status	SurfacePreparationStatus	retained	static-only-annotation
+phydrax/geometry/surface/_contracts.py	SurfacePreparationError.__init__	status	SurfacePreparationStatus	retained	SurfacePreparationStatus is a static-only enum annotation; the error constructor validates its retained failure reason.
 phydrax/geometry/surface/_contracts.py	SurfaceValidityCertificate.__init__	report	SurfaceAuditReport	migrated	checked-signature
 phydrax/geometry/surface/_g1_multipatch.py	BiquinticGluingBasis.__init__	constraints	BiquinticGluingConstraints	migrated	checked-signature
 phydrax/geometry/surface/_g1_multipatch.py	BiquinticGluingConstraints.__init__	continuity	GluingContinuity	retained	static-only-annotation
@@ -6710,6 +6771,7 @@ phydrax/geometry/surface/_model.py	SurfaceModel.from_triangles	metadata	SurfaceM
 phydrax/geometry/surface/_model.py	SurfaceModel.with_interface	interface	SurfaceInterface	migrated	checked-signature
 phydrax/geometry/surface/_model.py	SurfaceModel.with_selection	selection	SurfaceSelection	migrated	checked-signature
 phydrax/geometry/surface/_model.py	SurfaceRealization.chart_ids_for	selection	SurfaceSelection	migrated	checked-signature
+phydrax/geometry/surface/_model.py	SurfaceRealization.from_stored_fields	value	SurfaceRealization	retained	Decoded records must have the exact registered class before rerunning the retained surface audit.
 phydrax/graph/_abelian_gauge.py	AbelianMaxwellOperator.__init__	complex	AbstractDeRhamComplex	migrated	checked-signature
 phydrax/graph/_abelian_gauge.py	_require_form	complex	AbstractDeRhamComplex	retained	source-addressed-function
 phydrax/graph/_abelian_gauge.py	_require_form	field	DiscreteForm	retained	source-addressed-function
@@ -7251,39 +7313,46 @@ phydrax/meshing/_adaptation.py	MeshAdaptationPolicy.__init__	compatibility	Bisec
 phydrax/meshing/_adaptation.py	MeshAdaptationPolicy.__init__	route	MeshAdaptationRoute	retained	static-only-annotation
 phydrax/meshing/_adaptation.py	MetricMeshAdaptation.__init__	metric	MeshMetricField	migrated	checked-signature
 phydrax/meshing/_adaptation.py	RelocationMeshAdaptation.__init__	metric	MeshMetricField	migrated	checked-signature
-phydrax/meshing/_adaptation.py	execute_mesh_adaptation	prepared	PreparedMeshAdaptation	retained	source-addressed-function
-phydrax/meshing/_adaptation.py	prepare_mesh_adaptation	policy	MeshAdaptationPolicy	retained	source-addressed-function
-phydrax/meshing/_adaptation.py	prepare_mesh_adaptation	source	CellMeshingResult	retained	source-addressed-function
-phydrax/meshing/_adaptation.py	project_hp_lineage	lineage	FiniteElementHPLineage	retained	source-addressed-function
+phydrax/meshing/_adaptation.py	_flag	value	bool	retained	Builtin Boolean signatures are static-only; reject non-Boolean relocation selectors and retain NumPy Boolean acceptance.
+phydrax/meshing/_adaptation.py	execute_mesh_adaptation	prepared	PreparedMeshAdaptation	migrated	checked-signature
+phydrax/meshing/_adaptation.py	prepare_mesh_adaptation	policy	MeshAdaptationPolicy	migrated	checked-signature
+phydrax/meshing/_adaptation.py	prepare_mesh_adaptation	source	CellMeshingResult	migrated	checked-signature
+phydrax/meshing/_adaptation.py	project_hp_lineage	lineage	FiniteElementHPLineage	migrated	checked-signature
 phydrax/meshing/_assembly.py	MeshAssembly.require_attachment	attachment	MeshInterfaceAttachment	retained	signature-unresolved
 phydrax/meshing/_assembly.py	MeshPart.require_scope	scope	MeshingScope	migrated	checked-signature
-phydrax/meshing/_association.py	BRepAssociationTransfer.__init__	projection	PreparedBRepProjection	migrated	checked-signature
-phydrax/meshing/_association.py	BRepAssociationTransfer.source_associations	source	CellMeshingResult	retained	signature-unresolved
-phydrax/meshing/_association.py	GeometryAssociation.__init__	association_kind	GeometryAssociationKind	retained	static-only-annotation
-phydrax/meshing/_association.py	GeometryAssociation.__init__	provenance	GeometryAssociationProvenance	retained	static-only-annotation
-phydrax/meshing/_association.py	GeometryAssociation.validate_target	entity_set	EntitySet	migrated	checked-signature
-phydrax/meshing/_association.py	_policy	policy	AssociationPropagationPolicy	retained	source-addressed-function
-phydrax/meshing/_association.py	_require_brep	association	GeometryAssociation	retained	source-addressed-function
-phydrax/meshing/_association.py	_require_brep	mesh	CellMesh	retained	source-addressed-function
-phydrax/meshing/_association.py	_require_brep	projection	PreparedBRepProjection	retained	source-addressed-function
-phydrax/meshing/_association.py	associate_mesh_vertices	mesh	CellMesh	retained	source-addressed-function
-phydrax/meshing/_association.py	associate_mesh_vertices	projection	PreparedBRepProjection	retained	source-addressed-function
-phydrax/meshing/_association.py	propagate_association	lineage	MeshLineage	retained	source-addressed-function
-phydrax/meshing/_association.py	propagate_association	target_mesh	CellMesh	retained	source-addressed-function
-phydrax/meshing/_audit.py	_disposition	value	CellMeshAuditDisposition	retained	source-addressed-function
-phydrax/meshing/_audit.py	audit_cell_mesh	geometry	CellGeometrySpec	retained	source-addressed-function
-phydrax/meshing/_audit.py	audit_cell_mesh	mesh	CellMesh	retained	source-addressed-function
+phydrax/meshing/_association.py	BRepAssociationTransfer.__init__	projection	AbstractBRepProjection	migrated	checked-signature
+phydrax/meshing/_association.py	BRepAssociationTransfer.source_associations	source	result_owner.CellMeshingResult	migrated	checked-signature
+phydrax/meshing/_association.py	PlcAssociationTransfer.transition_source_associations	geometry	CellGeometrySpec	migrated	checked-signature
+phydrax/meshing/_association.py	PlcAssociationTransfer.transition_source_associations	predecessor	PlcAssociationTransfer	migrated	checked-signature
+phydrax/meshing/_association.py	PlcAssociationTransfer.transition_source_associations	source	result_owner.CellMeshingResult	migrated	checked-signature
+phydrax/meshing/_association.py	PlcAssociationTransfer.transition_source_associations	target	cell_mesh_owner.CellMesh	migrated	checked-signature
+phydrax/meshing/_association.py	associate_mesh_vertices	mesh	cell_mesh_owner.CellMesh	migrated	checked-signature
+phydrax/meshing/_association.py	associate_mesh_vertices	projection	AbstractBRepProjection	migrated	checked-signature
+phydrax/meshing/_association.py	propagate_association	lineage	lineage_records_owner.MeshLineage	migrated	checked-signature
+phydrax/meshing/_association.py	propagate_association	target_mesh	cell_mesh_owner.CellMesh	migrated	checked-signature
+phydrax/meshing/_association_state.py	GeometryAssociation.__init__	association_kind	GeometryAssociationKind	retained	The Enum parameter is static-only at checked boundaries; require an Enum instance before selecting source-stratum encoding and fingerprint payloads, without coercing display strings.
+phydrax/meshing/_association_state.py	GeometryAssociation.__init__	provenance	GeometryAssociationProvenance	retained	The Enum parameter is static-only at checked boundaries; validate provenance kind before enforcing predecessor identity and storing its Enum value in the association fingerprint.
+phydrax/meshing/_association_state.py	GeometryAssociation.validate_target	entity_set	topology_owner.EntitySet	migrated	checked-signature
+phydrax/meshing/_association_state.py	source_roles	roles	tuple[GeometrySourceEntityRole | None, ...] | None	retained	The optional tuple annotation is static-only at checked boundaries; indexed PLC rows require an explicit aligned role tuple while nonindexed representations require absence, and the role owner parses each Enum value.
+phydrax/meshing/_audit.py	_disposition	value	CellMeshAuditDisposition	migrated	selector-parse
+phydrax/meshing/_audit.py	audit_cell_mesh	geometry	CellGeometrySpec	migrated	checked-signature
+phydrax/meshing/_audit.py	audit_cell_mesh	mesh	CellMesh	migrated	checked-signature
 phydrax/meshing/_bisection.py	_bound_start	hierarchy	BisectionHierarchy	retained	source-addressed-function
+phydrax/meshing/_bisection.py	_prepare_bisection_evidence	initially_compatible	bool | None	retained	Builtin optional Boolean signatures are static-only; validate whether compatibility evidence is absent or Boolean before storing it.
+phydrax/meshing/_bisection.py	_prepare_bisection_evidence	uniform_refinement_applied	bool	retained	Builtin Boolean signatures are static-only; refinement evidence requires an authored Boolean flag.
 phydrax/meshing/_bisection.py	_prepared_source	mesh	CellMesh	retained	source-addressed-function
 phydrax/meshing/_bisection.py	execute_bisection	compatibility	BisectionCompatibility	retained	source-addressed-function
 phydrax/meshing/_boundary_layer.py	BoundaryLayerMesh.__init__	evidence	BoundaryLayerEvidence	migrated	checked-signature
 phydrax/meshing/_boundary_layer.py	BoundaryLayerMesh.__init__	validity	CellValidityCertificate	migrated	checked-signature
+phydrax/meshing/_boundary_layer.py	BoundaryLayerPolicy.__init__	simplex_cap	bool	retained	Builtin Boolean annotations are static-only; reject non-Boolean cap selectors before retaining the policy.
 phydrax/meshing/_boundary_layer.py	prepare_boundary_layers	control	BoundaryLayerControl	retained	source-addressed-function
 phydrax/meshing/_boundary_layer.py	prepare_boundary_layers	wall	CellMesh	retained	source-addressed-function
-phydrax/meshing/_canonical.py	canonicalize_cell_mesh	mesh	CellMesh	retained	source-addressed-function
-phydrax/meshing/_canonical.py	certify_cell_mesh	coordinate_contract	SpatialCoordinateContract	retained	source-addressed-function
+phydrax/meshing/_canonical.py	canonicalize_cell_mesh	mesh	CellMesh	migrated	checked-signature
+phydrax/meshing/_canonical.py	certify_cell_mesh	coordinate_contract	SpatialCoordinateContract	migrated	checked-signature
+phydrax/meshing/_certification_inputs.py	MeshCertificationInputs.__init__	source	source_boundary_records_owner.SourceBoundaryQuery | None	retained	Runtime protocol membership and StrictModule immutability are required before retaining a source query; structural annotations do not enforce both invariants.
 phydrax/meshing/_compartments.py	FTetWildCompartmentProvider.execute	specification	CompartmentMeshingSpec	migrated	checked-signature
 phydrax/meshing/_contracts.py	CellMeshingTarget.__init__	cell_families	CellFamilyPolicy	migrated	checked-signature
+phydrax/meshing/_contracts.py	MeshQualityTarget.__init__	hard	bool	retained	Builtin Boolean annotations are static-only; accept bool and np.bool_ and normalize the hard-target flag once.
 phydrax/meshing/_contracts.py	MeshingFailure.__init__	category	MeshingFailureCategory	retained	static-only-annotation
 phydrax/meshing/_contracts.py	MeshingSourceDescriptor.__init__	source_kind	MeshingSourceKind	retained	static-only-annotation
 phydrax/meshing/_contracts.py	ProviderSupportReport.__init__	provider	MeshingProviderInfo	migrated	checked-signature
@@ -7296,91 +7365,144 @@ phydrax/meshing/_controls.py	BackgroundMetricControl.__init__	coordinate_contrac
 phydrax/meshing/_controls.py	BackgroundMetricControl.__init__	mesh	CellMesh	migrated	checked-signature
 phydrax/meshing/_controls.py	BackgroundMetricControl.__init__	metric	MeshMetricField	migrated	checked-signature
 phydrax/meshing/_controls.py	BackgroundMetricControl.__init__	mode	BackgroundMetricMode	retained	static-only-annotation
+phydrax/meshing/_controls.py	BlockInterfaceControl.__init__	conforming	bool	retained	Builtin Boolean annotations are static-only; require a Python Boolean before normalizing the interface conformity flag.
+phydrax/meshing/_controls.py	BlockInterfaceControl.__init__	first_block	str	retained	Builtin string annotations are static-only; require a string block identity before validating its nonempty logical interface binding.
+phydrax/meshing/_controls.py	BlockInterfaceControl.__init__	second_block	str	retained	Builtin string annotations are static-only; require a string block identity before validating its nonempty logical interface binding.
 phydrax/meshing/_controls.py	BoundaryLayerControl.__init__	collision	BoundaryLayerCollisionPolicy	retained	static-only-annotation
 phydrax/meshing/_controls.py	BoundaryLayerControl.__init__	corner	BoundaryLayerCornerPolicy	retained	static-only-annotation
 phydrax/meshing/_controls.py	BoundaryLayerControl.__init__	route	BoundaryLayerRoute	retained	static-only-annotation
 phydrax/meshing/_controls.py	BoundaryLayerControl.__init__	schedule	LayerSchedule	migrated	checked-signature
+phydrax/meshing/_controls.py	BoundaryLayerControl.__init__	smoothing_iterations	int	retained	Builtin integer annotations are static-only; reject booleans and nonintegers before enforcing the nonnegative smoothing iteration bound.
 phydrax/meshing/_controls.py	HoleSeed.__init__	scope	MeshingScope	migrated	checked-signature
+phydrax/meshing/_controls.py	PatchControl.__init__	adjacent_region_names	tuple[str, ...]	retained	Tuple and builtin string annotations are static-only; reject a bare string before normalizing distinct adjacent region names.
 phydrax/meshing/_controls.py	PatchControl.__init__	scope	MeshingScope	migrated	checked-signature
 phydrax/meshing/_controls.py	ProtectedFeature.__init__	feature_kind	FeatureKind	retained	static-only-annotation
 phydrax/meshing/_controls.py	ProtectedFeature.__init__	scope	MeshingScope	migrated	checked-signature
-phydrax/meshing/_controls.py	RegionControl.__init__	role	_organization.RegionRole	retained	static-only-annotation
+phydrax/meshing/_controls.py	RegionControl.__init__	role	_organization_records.RegionRole	retained	static-only-annotation
 phydrax/meshing/_controls.py	RegionControl.__init__	scope	MeshingScope	migrated	checked-signature
-phydrax/meshing/_controls.py	RegionSeed.__init__	role	_organization.RegionRole	retained	static-only-annotation
-phydrax/meshing/_coupling.py	CouplingSearchEvidence.__init__	kind	MeshCouplingKind	retained	static-only-annotation
+phydrax/meshing/_controls.py	RegionSeed.__init__	role	_organization_records.RegionRole	retained	static-only-annotation
+phydrax/meshing/_controls.py	TransfiniteCurveControl.__init__	reversed	bool	retained	Builtin Boolean annotations are static-only; require a Python Boolean before preserving the declared curve orientation flag.
+phydrax/meshing/_controls.py	TransfiniteCurveControl.__init__	source_id	str	retained	Builtin string annotations are static-only; require a string source identity before checking its nonempty curve binding.
+phydrax/meshing/_controls.py	TransfiniteSurfaceControl.__init__	source_id	str	retained	Builtin string annotations are static-only; require a string source identity before checking its nonempty surface binding.
+phydrax/meshing/_coupling.py	ContactCoupling.from_stored_fields	cls	type[ContactCoupling]	retained	Restoration requires the registered ContactCoupling owner rather than an inherited constructor before endpoint-bound contact validation.
+phydrax/meshing/_coupling.py	ContactCoupling.from_stored_fields	value	ContactCoupling	retained	Restoration requires the exact registered record class without subclass substitution before rebuilding and comparing every retained contact field.
+phydrax/meshing/_coupling.py	CouplingSearchEvidence.__init__	kind	MeshCouplingKind	retained	Enum annotations are static-only; require the declared coupling kind before storing its selector value and binding donor-search evidence.
 phydrax/meshing/_curving.py	CurvedGeometryEvidence.__init__	certificate	CellValidityCertificate	migrated	checked-signature
+phydrax/meshing/_curving.py	CurvedGeometryEvidence.__init__	source_projection_id	str	retained	Builtin string annotations are static-only; require a string projection identity before nonempty source-binding validation.
+phydrax/meshing/_curving.py	CurvedGeometryEvidence.__init__	source_revision	str	retained	Builtin string annotations are static-only; require a string revision identity before nonempty source-binding validation.
+phydrax/meshing/_curving.py	HighOrderCurvingPolicy.__init__	accept_valid_nonconverged_relaxation	bool	retained	Builtin Boolean annotations are static-only; refuse non-Boolean relaxation acceptance flags before policy storage.
 phydrax/meshing/_curving.py	HighOrderCurvingResult.__init__	status	HighOrderCurvingStatus	retained	static-only-annotation
+phydrax/meshing/_curving.py	_evidence	source	source_boundary_records_owner.SourceBoundaryQuery | None	retained	The source protocol permits several scientific families; mapped-domain capability dispatch determines whether omitted domain coverage can be recovered from this source.
 phydrax/meshing/_curving.py	_require_inputs	association	GeometryAssociation	retained	source-addressed-function
 phydrax/meshing/_curving.py	_require_inputs	mesh	CellMesh	retained	source-addressed-function
 phydrax/meshing/_curving.py	_require_inputs	policy	HighOrderCurvingPolicy	retained	source-addressed-function
 phydrax/meshing/_curving.py	_require_inputs	projection	PreparedBRepProjection	retained	source-addressed-function
 phydrax/meshing/_curving.py	verify_curved_geometry	geometry	CellGeometrySpec	retained	source-addressed-function
-phydrax/meshing/_device_adaptation.py	_checked_state	prepared	PreparedAdaptiveSimplex	retained	source-addressed-function
-phydrax/meshing/_device_adaptation.py	_checked_state	state	AdaptiveSimplexState	retained	source-addressed-function
-phydrax/meshing/_device_adaptation.py	commit_partitioned_adaptive_simplex	partitioned	PartitionedAdaptiveSimplex	retained	source-addressed-function
-phydrax/meshing/_device_adaptation.py	partition_adaptive_simplex	prepared	PreparedAdaptiveSimplex	retained	source-addressed-function
-phydrax/meshing/_device_adaptation.py	prepare_adaptive_simplex	policy	MeshAdaptationPolicy	retained	source-addressed-function
+phydrax/meshing/_device_adaptation.py	_checked_state	prepared	PreparedAdaptiveSimplex	migrated	checked-signature
+phydrax/meshing/_device_adaptation.py	_checked_state	state	AdaptiveSimplexState	migrated	checked-signature
+phydrax/meshing/_device_adaptation.py	commit_partitioned_adaptive_simplex	partitioned	PartitionedAdaptiveSimplex	migrated	checked-signature
+phydrax/meshing/_device_adaptation.py	partition_adaptive_simplex	prepared	PreparedAdaptiveSimplex	migrated	checked-signature
+phydrax/meshing/_device_adaptation.py	prepare_adaptive_simplex	policy	MeshAdaptationPolicy	migrated	checked-signature
 phydrax/meshing/_device_metric.py	DeviceMetricEvidence.__init__	status	AdaptiveSimplexStatus	retained	static-only-annotation
 phydrax/meshing/_device_metric.py	DeviceMetricState.__init__	mesh	MaskedSimplexMesh	migrated	checked-signature
 phydrax/meshing/_device_metric.py	_check_state	layout	DeviceMetricLayout	retained	source-addressed-function
 phydrax/meshing/_device_metric.py	_check_state	state	DeviceMetricState	retained	source-addressed-function
 phydrax/meshing/_device_metric.py	commit_device_metric_adaptation	prepared	PreparedDeviceMetricAdaptation	retained	source-addressed-function
 phydrax/meshing/_device_metric.py	prepare_device_metric_adaptation	policy	MeshAdaptationPolicy	retained	source-addressed-function
-phydrax/meshing/_distribution.py	MeshDistribution.__init__	partition_kind	MeshPartitionKind	retained	static-only-annotation
+phydrax/meshing/_device_tetra_metric.py	prepare_device_tetra_metric	metric	NDArray[np.float64]	retained	NumPy array annotations are static-only; preserve host kind, float64 dtype and layout-shape TypeError refusal before admitting tetra metric data.
+phydrax/meshing/_distributed_generation.py	prepare_distributed_surface_generation	patch_owners	NDArray[np.int32]	retained	NumPy array annotations are static-only; require a host ndarray before copying and freezing source ownership, with dtype and patch-axis validation retained in PreparedDistributedSurfaceGeneration.
+phydrax/meshing/_distribution.py	MeshDistribution.__init__	partition_kind	MeshPartitionKind	migrated	selector-parse
 phydrax/meshing/_distribution.py	MeshDistributionTransition.__init__	lineage	MeshLineage	migrated	checked-signature
-phydrax/meshing/_distribution.py	MeshPartitionPolicy.__init__	kind	MeshPartitionKind	retained	static-only-annotation
+phydrax/meshing/_distribution.py	MeshPartitionPolicy.__init__	kind	MeshPartitionKind	migrated	selector-parse
 phydrax/meshing/_distribution.py	_lineage_routes	lineage	MeshLineage	retained	source-addressed-function
 phydrax/meshing/_distribution.py	prepare_distribution_transition	policy	MeshPartitionPolicy	retained	source-addressed-function
 phydrax/meshing/_distribution.py	prepare_mesh_distribution	part	MeshPart	retained	source-addressed-function
 phydrax/meshing/_distribution.py	prepare_mesh_distribution	policy	MeshPartitionPolicy	retained	source-addressed-function
+phydrax/meshing/_failures.py	MeshingFailureEvidence.__init__	category	MeshingFailureCategory	retained	Enum annotations are static-only; require the meshing failure category kind and preserve TypeError before fingerprinting its category value.
+phydrax/meshing/_implicit_association_transfer.py	ImplicitAssociationTransfer.__init__	maximum_queries	int	retained	Builtin integer annotations are static-only at checked boundaries; reject booleans and noninteger values before enforcing the positive source-query cap and fingerprinting its unchanged value.
+phydrax/meshing/_interface_binding.py	MeshInterfaceAttachment.__init__	association	GeometryAssociation	migrated	checked-signature
+phydrax/meshing/_interface_binding.py	MeshInterfaceAttachment.__init__	part	MeshPart	migrated	checked-signature
+phydrax/meshing/_interface_binding.py	MeshInterfaceAttachment.__init__	scope	MeshAttachmentScope	migrated	checked-signature
 phydrax/meshing/_interface_binding.py	MeshInterfaceAttachment.require_current	part	MeshPart	migrated	checked-signature
-phydrax/meshing/_interface_binding.py	_carrier	part	MeshPart	retained	source-addressed-function
-phydrax/meshing/_interface_binding.py	_witness_rows	association	GeometryAssociation	retained	source-addressed-function
+phydrax/meshing/_interface_binding.py	_entity_ids	values	tuple[str, ...]	retained	Tuple and builtin string annotations are static-only; reject bare strings and non-tuples before normalizing nonempty unique geometry entity IDs.
+phydrax/meshing/_interface_binding.py	_orientation	carrier_side	InterfaceSide | None	retained	Enum annotations are static-only; reject non-InterfaceSide values before choosing the attached carrier orientation.
 phydrax/meshing/_interop.py	export_mesh_array_artifact	policy	MeshInteropPolicy	retained	source-addressed-function
 phydrax/meshing/_interop.py	import_cell_mesh	policy	MeshInteropPolicy	retained	source-addressed-function
 phydrax/meshing/_interop.py	read_mesh_array_artifact	policy	MeshInteropPolicy	retained	source-addressed-function
 phydrax/meshing/_layer_extrusion.py	BoundaryLayerExtrusion.__init__	source	BRepModel	migrated	checked-signature
 phydrax/meshing/_layer_extrusion.py	_validated_request	control	BoundaryLayerControl	retained	source-addressed-function
 phydrax/meshing/_layer_extrusion.py	_validated_request	model	BRepModel	retained	source-addressed-function
+phydrax/meshing/_layer_extrusion.py	prepare_boundary_layer_extrusion	overwrite	bool	retained	Builtin Boolean annotations are static-only; refuse non-Boolean overwrite flags before destination admission.
+phydrax/meshing/_level_set.py	LevelSetMeshAdaptation.__init__	accept_topology_change	bool	retained	Builtin Boolean annotations are static-only; require a Python Boolean before recording consent to a moving-interface topology event.
 phydrax/meshing/_lineage.py	CellMeshTransition.__init__	lineage	MeshLineage	migrated	checked-signature
 phydrax/meshing/_lineage.py	CellMeshTransition.__init__	target	CellMeshingResult	migrated	checked-signature
 phydrax/meshing/_lineage.py	CellMeshTransition.__init__	transition_kind	MeshTransitionKind	retained	static-only-annotation
 phydrax/meshing/_local_metric.py	LocalMetricEvidence.__init__	predicate_mode	PredicateMode	retained	static-only-annotation
-phydrax/meshing/_local_metric.py	_validate_mesh	mesh	CellMesh	retained	source-addressed-function
+phydrax/meshing/_local_metric.py	validate_mesh	mesh	CellMesh	migrated	checked-signature
 phydrax/meshing/_metric.py	HessianMetricEvidence.__init__	normalization	MetricNormalizationEvidence	migrated	checked-signature
 phydrax/meshing/_metric.py	MeshMetricField.__init__	scope	MeshingScope	migrated	checked-signature
 phydrax/meshing/_metric.py	MeshMetricSamples.__init__	scope	MeshingScope	migrated	checked-signature
+phydrax/meshing/_metric.py	MetricCombinationEvidence.__init__	size_interval_conflict	bool	retained	Builtin Boolean signatures are static-only; conflict evidence stores only an authored Boolean result.
 phydrax/meshing/_metric.py	MetricCombinationResult.__init__	evidence	MetricCombinationEvidence	migrated	checked-signature
 phydrax/meshing/_metric.py	MetricGradationError.__init__	evidence	MetricGradationEvidence	migrated	checked-signature
 phydrax/meshing/_metric.py	MetricGradationEvidence.__init__	policy	MetricGradationPolicy	migrated	checked-signature
 phydrax/meshing/_metric.py	MetricGradationEvidence.__init__	status	MetricGradationStatus	retained	static-only-annotation
+phydrax/meshing/_metric.py	MetricGradationPolicy.__init__	anisotropic	bool	retained	Builtin Boolean signatures are static-only; validate the authored anisotropic gradation selector.
 phydrax/meshing/_metric.py	MetricGradationPolicy.__init__	kind	MetricGradationKind	retained	static-only-annotation
 phydrax/meshing/_metric.py	MetricNormalizationEvidence.__init__	complexity_status	MetricComplexityStatus	retained	static-only-annotation
 phydrax/meshing/_metric.py	MetricNormalizationEvidence.__init__	policy	MetricNormalizationPolicy	migrated	checked-signature
-phydrax/meshing/_metric.py	grade_mesh_metric	metric	MeshMetricField	retained	source-addressed-function
-phydrax/meshing/_metric.py	grade_mesh_metric	policy	MetricGradationPolicy	retained	source-addressed-function
-phydrax/meshing/_metric.py	normalize_mesh_metric	policy	MetricNormalizationPolicy	retained	source-addressed-function
+phydrax/meshing/_metric.py	MetricNormalizationPolicy.__init__	project_indefinite	bool	retained	Builtin Boolean signatures are static-only; validate explicit indefinite-metric projection authorization.
+phydrax/meshing/_metric.py	MetricNormalizationPolicy.__init__	symmetrize	bool	retained	Builtin Boolean signatures are static-only; validate explicit metric symmetrization authorization.
+phydrax/meshing/_metric.py	grade_mesh_metric	metric	MeshMetricField	migrated	checked-signature
+phydrax/meshing/_metric.py	grade_mesh_metric	policy	MetricGradationPolicy	migrated	checked-signature
+phydrax/meshing/_metric.py	normalize_mesh_metric	metric	MeshMetricField | MeshMetricSamples	migrated	checked-signature
+phydrax/meshing/_metric.py	normalize_mesh_metric	policy	MetricNormalizationPolicy	migrated	checked-signature
+phydrax/meshing/_metric_execution.py	validate_metric_operation_controls	relocation	bool	retained	Builtin Boolean signatures are static-only; operation schedules validate explicit relocation authorization before execution.
+phydrax/meshing/_metric_execution.py	validate_metric_operation_controls	topology_operations	bool	retained	Builtin Boolean signatures are static-only; operation schedules validate explicit topology editing authorization before execution.
+phydrax/meshing/_mixed_adaptation.py	MixedAdaptationHierarchy.from_stored_fields	value	MixedAdaptationHierarchy	retained	Requires the exact registered class before replaying constructor validation on decoded hierarchy state.
+phydrax/meshing/_mixed_adaptation.py	MixedLayerColumns.from_stored_fields	value	MixedLayerColumns	retained	Requires the exact registered class before replaying constructor validation on decoded layer ancestry.
+phydrax/meshing/_mixed_adaptation.py	adapt_mixed_mesh	maximum_scratch_bytes	int	retained	Builtin integer annotations are static-only; the explicit guard preserves scratch-bound ValueError semantics.
 phydrax/meshing/_motion.py	MeshMotionMonitor.__init__	reference	CellMesh	migrated	checked-signature
-phydrax/meshing/_motion.py	MeshMotionMonitorPolicy.__init__	relocation_objective	MeshQualityObjective	retained	static-only-annotation
-phydrax/meshing/_motion.py	advance_mesh_motion	monitor	MeshMotionMonitor	retained	source-addressed-function
-phydrax/meshing/_motion.py	advance_mesh_motion	source	CellMeshingResult	retained	source-addressed-function
+phydrax/meshing/_motion.py	MeshMotionMonitorPolicy.__init__	accept_valid_nonconverged_relocation	bool	retained	Builtin Boolean annotations are static-only; require explicit Boolean authorization before recording acceptance of a valid nonconverged relocation.
+phydrax/meshing/_motion.py	MeshMotionMonitorPolicy.__init__	relocation_objective	MeshQualityObjective	retained	Enum annotations are static-only; require the relocation objective kind before rejecting metric alignment and fingerprinting the selected shape objective.
+phydrax/meshing/_motion.py	advance_mesh_motion	monitor	MeshMotionMonitor	migrated	checked-signature
+phydrax/meshing/_motion.py	advance_mesh_motion	source	CellMeshingResult	migrated	checked-signature
 phydrax/meshing/_optimization.py	CellGeometryOptimizationResult.__init__	minimization	MinimizationResult	migrated	checked-signature
 phydrax/meshing/_optimization.py	MeshOptimizationResult.__init__	status	MeshOptimizationStatus	retained	static-only-annotation
+phydrax/meshing/_optimization.py	TargetMatrixOptimizationPlan.__init__	accept_valid_nonconverged	bool	retained	Builtin Boolean annotations are static-only; require an explicit Boolean before storing the policy that authorizes committing a valid nonconverged iterate.
 phydrax/meshing/_optimization.py	TargetMatrixOptimizationPlan.__init__	mesh	CellMesh	migrated	checked-signature
 phydrax/meshing/_optimization.py	TargetMatrixOptimizationPlan.__init__	objective	MeshQualityObjective	retained	static-only-annotation
 phydrax/meshing/_optimization.py	optimize_cell_geometry_coordinates	geometry	CellGeometrySpec	retained	source-addressed-function
 phydrax/meshing/_optimization.py	optimize_cell_mesh	coordinate_contract	SpatialCoordinateContract	retained	source-addressed-function
 phydrax/meshing/_optimization.py	optimize_cell_mesh	plan	TargetMatrixOptimizationPlan	retained	source-addressed-function
-phydrax/meshing/_organization.py	MeshAttribute.__init__	role	MeshAttributeRole	retained	static-only-annotation
-phydrax/meshing/_organization.py	MeshAttribute.__init__	scope	MeshingScope	migrated	checked-signature
-phydrax/meshing/_organization.py	MeshLabel.__init__	scope	MeshingScope	migrated	checked-signature
-phydrax/meshing/_organization.py	MeshPatch.__init__	scope	MeshingScope	migrated	checked-signature
-phydrax/meshing/_organization.py	MeshZone.__init__	role	MeshZoneRole	retained	static-only-annotation
-phydrax/meshing/_organization.py	MeshZone.__init__	scope	MeshingScope	migrated	checked-signature
+phydrax/meshing/_organization_records.py	MeshAttribute.__init__	role	MeshAttributeRole	retained	Enum selectors are static-only; this owner refuses foreign attribute-role kinds before scientific role/value-shape validation and role fingerprinting.
+phydrax/meshing/_organization_records.py	MeshAttribute.__init__	scope	MeshingScope	migrated	checked-signature
+phydrax/meshing/_organization_records.py	MeshLabel.__init__	scope	MeshingScope	migrated	checked-signature
+phydrax/meshing/_organization_records.py	MeshPatch.__init__	adjacent_zone_ids	tuple[str, ...]	retained	General tuples are static-only; this owner rejects a bare string before normalizing and sorting adjacent zone identifiers.
+phydrax/meshing/_organization_records.py	MeshPatch.__init__	scope	MeshingScope	migrated	checked-signature
+phydrax/meshing/_organization_records.py	MeshZone.__init__	region_role	RegionRole | None	retained	Optional Enum selectors are static-only; preserve role-kind refusal and coupled material/region-role admission before scientific zone identity construction.
+phydrax/meshing/_organization_records.py	MeshZone.__init__	role	MeshZoneRole	retained	Enum selectors are static-only; this owner rejects foreign zone-role kinds before interpreting REGION-only material declarations and fingerprinting the role.
+phydrax/meshing/_organization_records.py	MeshZone.__init__	scope	MeshingScope	migrated	checked-signature
+phydrax/meshing/_overset.py	OversetConnectivity.moved	coordinates	Mapping[str, ArrayLike]	retained	General mapping annotations are static-only; require a nonempty mapping before validating moved part names and successor geometry obligations.
+phydrax/meshing/_overset.py	OversetConnectivity.reregister	replacements	Mapping[str, MeshPart]	retained	General mapping annotations are static-only; require a nonempty mapping before validating replacement names and each successor carrier.
+phydrax/meshing/_overset.py	OversetPartBlanking.cell_ids_with	status	OversetCellStatus	retained	IntEnum annotations are static-only; require a cell status selector before selecting its scientific cell IDs.
+phydrax/meshing/_overset.py	OversetPartBlanking.vertex_ids_with	status	OversetVertexStatus	retained	IntEnum annotations are static-only; require a vertex status selector before selecting its scientific vertex IDs.
+phydrax/meshing/_overset.py	OversetPartSpec.__init__	owner_rank	int	retained	Builtin integer annotations are static-only; reject booleans and nonintegers before requiring nonnegative execution ownership.
+phydrax/meshing/_overset.py	OversetPartSpec.__init__	priority	int	retained	Builtin integer annotations are static-only; reject booleans and nonintegers before recording deterministic donor priority.
+phydrax/meshing/_overset.py	OversetPartSpec.__init__	solid_index	int	retained	Builtin integer annotations are static-only; reject booleans, nonintegers and negative indices before checking the selected solid query range.
+phydrax/meshing/_overset.py	PreparedOversetMotion.commit	accepted_boundary	bool	retained	Builtin Boolean annotations are static-only; require an explicit host decision before transactional motion publication.
+phydrax/meshing/_overset.py	_prepare_donor_fields	discretizations	Mapping[str, FiniteElementDiscretization | views_owner.PreparedFieldReconstruction]	retained	General mapping annotations are static-only; require a mapping before deterministic donor ordering and FE or FV owner dispatch.
+phydrax/meshing/_periodic.py	_embedding_image_pairs.<locals>.retain_host	value	object	retained	Validates dynamic BVH device-to-host callback output as a tuple of NumPy banks before accounting storage; object annotations and checked signatures do not enforce this provider-output representation.
+phydrax/meshing/_planar_bands.py	prepare_planar_bands	overwrite	bool	retained	Builtin Boolean annotations are static-only; refuse non-Boolean overwrite flags before operand preparation.
 phydrax/meshing/_planar_bands.py	prepare_planar_bands	plan	PlanarBandPlan	retained	source-addressed-function
+phydrax/meshing/_plc_source.py	PiecewiseLinearComplex.__init__	polygons	Sequence[ConvertibleToArray]	retained	Conversion-input and sequence annotations do not enforce ndarray rank; reject nonmatrix array carriers before polygon-loop conversion.
+phydrax/meshing/_plc_source.py	PiecewiseLinearComplex.from_stored_fields	value	PiecewiseLinearComplex	retained	Restored-value admission requires the exact registered concrete type before replaying packed polygon fields; nominal signature checking does not authenticate the registered class or replace constructor and stored-identity validation.
+phydrax/meshing/_polyhedral_adaptation.py	PolyhedralMeshAdaptation.__init__	operation	PolyhedralAdaptationOperation	retained	Closed Enum selectors are static-only and admitted by parse before exhaustive operation dispatch.
+phydrax/meshing/_polyhedral_adaptation.py	_prepare_polyhedral_request	periodic_constraints	tuple[PeriodicConstraint, ...]	retained	General container annotations are static-only; every supplied member must retain the periodic constraint kind.
 phydrax/meshing/_proposals.py	LearnedMeshProposer.__init__	model	AbstractArrayModel	migrated	checked-signature
 phydrax/meshing/_proposals.py	LearnedMeshProposer.propose	source	CellMeshingResult	migrated	checked-signature
 phydrax/meshing/_proposals.py	MeshProposalSafetyPolicy.__init__	source	CellMeshingResult	migrated	checked-signature
+phydrax/meshing/_proposals.py	MeshProposalTransaction.commit	accept	bool	retained	Builtin Boolean signatures are static-only; commit authorization must be Boolean before the accepted or rejected transaction branch.
 phydrax/meshing/_proposals.py	_AbstractMeshProposal.__init__	source	CellMeshingResult	migrated	checked-signature
 phydrax/meshing/_proposals.py	_scope_rows	scope	MeshingScope	retained	source-addressed-function
 phydrax/meshing/_proposals.py	mesh_proposal_scope	source	CellMeshingResult	retained	source-addressed-function
@@ -7393,14 +7515,17 @@ phydrax/meshing/_result.py	CellMeshingResult.__init__	geometry	CellGeometrySpec	
 phydrax/meshing/_result.py	CellMeshingResult.__init__	mesh	CellMesh	migrated	checked-signature
 phydrax/meshing/_result.py	CellMeshingResult.__init__	provenance	SemanticProvenance	migrated	checked-signature
 phydrax/meshing/_result.py	CellMeshingResult.__init__	provider	MeshingProviderInfo	migrated	checked-signature
-phydrax/meshing/_result.py	MeshingRuntimeInfo.__init__	execution_mode	MeshingExecutionMode	retained	static-only-annotation
-phydrax/meshing/_scope.py	MeshingScope.__init__	entity_kind	MeshingEntityKind	retained	static-only-annotation
+phydrax/meshing/_result.py	MeshingRuntimeInfo.__init__	execution_mode	_dependency_phydrax_meshing__contracts.MeshingExecutionMode	retained	Enum selectors are static-only at checked boundaries; preserve the TypeError refusal for a foreign execution-mode kind before fingerprinting its value.
+phydrax/meshing/_scope.py	MeshScopeProjection.__init__	evidence	result_owner.CollectiveMeshEvidence | initial_certification_owner.InitialCollectiveMeshEvidence	retained	Main-approved cycle-constrained accepted-evidence admission: _scope and accepted publication/evidence owners form an initialization cycle; runtime nominal annotations are resolved by the single documented constructor-local import and are unavailable to a checked signature before that boundary executes.
+phydrax/meshing/_scope.py	MeshScopeProjection.__init__	publication	publication_lowering_owner.PublicationProjection	retained	Main-approved cycle-constrained publication admission: _scope and accepted publication/evidence owners form an initialization cycle; the single documented constructor-local import resolves the publication type after scope definitions, so checked cannot resolve this annotation before that boundary executes.
+phydrax/meshing/_scope.py	MeshingScope.__init__	entity_kind	MeshingEntityKind	migrated	selector-parse
 phydrax/meshing/_scope.py	MeshingScope._check_compatible	other	MeshingScope	migrated	checked-signature
 phydrax/meshing/_scope.py	MeshingScope.from_selection	entities	EntitySet	migrated	checked-signature
 phydrax/meshing/_scope.py	MeshingScope.from_selection	selection	EntitySelection	migrated	checked-signature
 phydrax/meshing/_scope.py	ScopeResolutionReport.__init__	scope	MeshingScope	migrated	checked-signature
-phydrax/meshing/_scope.py	resolve_mesh_scope	mesh	CellMesh	retained	source-addressed-function
-phydrax/meshing/_scope.py	resolve_mesh_scope	scope	MeshingScope	retained	source-addressed-function
+phydrax/meshing/_scope.py	local_logical_lookup	queries	Array | np.ndarray	retained	JAX and NumPy conversion annotations are static-only; this host query boundary admits only array objects before locally addressable dtype and semantic-key layout validation.
+phydrax/meshing/_scope.py	resolve_mesh_scope	mesh	CellMesh	migrated	checked-signature
+phydrax/meshing/_scope.py	resolve_mesh_scope	scope	MeshingScope	migrated	checked-signature
 phydrax/meshing/_session.py	MeshingExecutionPolicy.__init__	execution_mode	MeshingExecutionMode	retained	static-only-annotation
 phydrax/meshing/_sizing.py	CurvatureSizeControl.__init__	scope	MeshingScope	migrated	checked-signature
 phydrax/meshing/_sizing.py	CurvatureSizeControl.__init__	strength	SizeControlStrength	retained	static-only-annotation
@@ -7413,6 +7538,10 @@ phydrax/meshing/_sizing.py	resolve_size_controls	combination	SizeCombinationPoli
 phydrax/meshing/_sizing.py	resolve_size_controls	domain	SizeFieldDomain	retained	source-addressed-function
 phydrax/meshing/_sizing.py	size_field_metric	field	ResolvedSizeField	retained	source-addressed-function
 phydrax/meshing/_sizing.py	size_field_metric	scope	MeshingScope	retained	source-addressed-function
+phydrax/meshing/_surface_boundary_sources.py	SurfaceSubdivisionBoundarySource.__init__	lineages	tuple[lineage_owner.MeshLineage, ...]	retained	General tuple annotations are static-only; validate every retained lineage member before source ancestry checks.
+phydrax/meshing/_surface_boundary_sources.py	SurfaceSubdivisionBoundarySource.__init__	targets	tuple[cell_mesh_owner.CellMesh, ...]	retained	General tuple annotations are static-only; validate every retained target mesh before topology chaining.
+phydrax/meshing/_surface_envelope.py	SurfaceEnvelope.__init__	execution_evidence	NativeExecutionRecord | None	retained	The retained execution graph requires the exact native record representation; nominal checked signatures permit subclasses.
+phydrax/meshing/_sweep.py	SweepControl.__init__	closed	bool	retained	Builtin Boolean annotations are static-only; refuse non-Boolean closed-sweep flags before control identity construction.
 phydrax/meshing/_topology_edit.py	assemble_topology_edit	edit	SimplexTopologyEdit	retained	source-addressed-function
 phydrax/meshing/_topology_edit.py	assemble_topology_edit	source	CellMesh	retained	source-addressed-function
 phydrax/meshing/_topology_edit.py	entity_keys	mesh	CellMesh	retained	source-addressed-function
@@ -7440,7 +7569,9 @@ phydrax/meshing/providers/_implicit.py	ImplicitMeshingPlan.__init__	grid	Prepare
 phydrax/meshing/providers/_implicit.py	ImplicitMeshingPlan.__init__	specification	SurfaceMeshingSpec	migrated	checked-signature
 phydrax/meshing/providers/_implicit.py	ImplicitMeshingPlan.__init__	surface_plan	ImplicitSurfacePlan	migrated	checked-signature
 phydrax/meshing/providers/_implicit.py	NativeImplicitProvider.plan	specification	SurfaceMeshingSpec	migrated	checked-signature
+phydrax/meshing/providers/_manifold.py	_validate_operands	operands	tuple[SurfaceModel, ...]	retained	Variadic tuple containers are static-only; Boolean preparation admits at least two nominal SurfaceModel operands before reading their spatial contracts.
 phydrax/meshing/providers/_manifold.py	_validate_operands	operation	SurfaceBooleanOperation	retained	source-addressed-function
+phydrax/meshing/providers/_manifold.py	_vertex_property_columns	vertex_properties	Mapping[str, tuple[ArrayLike, ...]]	retained	Mapping containers are static-only; property preparation requires named per-operand array columns before normalizing names and converting values.
 phydrax/meshing/providers/_mmg.py	MmgAdaptationResult.__init__	mesh	CellMeshingResult	migrated	checked-signature
 phydrax/meshing/providers/_mmg.py	MmgAdaptationResult.__init__	references	MmgReferenceRetention	migrated	checked-signature
 phydrax/meshing/providers/_mmg.py	MmgAdaptationResult.__init__	session	MmgSessionEvidence	migrated	checked-signature
@@ -7450,6 +7581,16 @@ phydrax/meshing/providers/_mmg.py	_backend	mesh	CellMesh	retained	source-address
 phydrax/meshing/providers/_mmg.py	_metric_rows	metric	MeshMetricField	retained	source-addressed-function
 phydrax/meshing/providers/_mmg.py	_scope_mask	scope	MeshingScope	retained	source-addressed-function
 phydrax/meshing/providers/_mmg.py	_vertex_values	attribute	MeshAttribute	retained	source-addressed-function
+phydrax/meshing/providers/_native_options.py	NativeMeshingOptions.__init__	hex_core_fraction	float | None	retained	Builtin real scalars are static-only; reject Python and NumPy booleans before float conversion to preserve fraction semantics.
+phydrax/meshing/providers/_native_periodic.py	NativePeriodicSource.from_stored_fields	value	NativePeriodicSource	retained	Decoded records must have the exact registered class before replaying periodic domain and region admission.
+phydrax/meshing/providers/_native_sources.py	NativeLayerCoreSource.from_stored_fields	value	NativeLayerCoreSource	retained	Decoded records must have the exact registered class before replaying layer/core incidence and source bindings.
+phydrax/meshing/providers/_native_sources.py	NativePlanarSource.from_stored_fields	value	NativePlanarSource	retained	Decoded records must have the exact registered class before replaying planar source construction.
+phydrax/meshing/providers/_native_sources.py	NativePlcSource.from_stored_fields	value	NativePlcSource	retained	Decoded records must have the exact registered class before replaying PLC source construction.
+phydrax/meshing/providers/_native_sources.py	NativePolyhedralSource.from_stored_fields	value	NativePolyhedralSource	retained	Decoded records must have the exact registered class before replaying immutable power-site construction.
+phydrax/meshing/providers/_native_sources.py	NativeSurfaceEnvelopeSource.__init__	region_id	str	retained	Builtin strings are static-only; wrong kinds must raise TypeError before native accounting, while empty values raise ValueError.
+phydrax/meshing/providers/_native_sources.py	NativeSurfaceEnvelopeSource.from_stored_fields	value	NativeSurfaceEnvelopeSource	retained	Decoded records must have the exact registered class before replaying envelope and solid-region construction.
+phydrax/meshing/providers/_native_sources.py	_fidelity_binding	source	SourceBoundaryQuery	retained	SourceBoundaryQuery is a runtime-checkable protocol that checked leaves static-only; fidelity binding admits its query capabilities before reading source identity.
+phydrax/meshing/providers/_native_sources.py	_layer_source_facets	query	SourceBoundaryQuery | None	retained	SourceBoundaryQuery is a static-only protocol; the complete optional layer-source binding requires a present capable query before matching its source revision and frame.
 phydrax/meshing/providers/_omega_h.py	OmegaHAdaptationEvidence.__init__	options	OmegaHOptions	migrated	checked-signature
 phydrax/meshing/providers/_omega_h.py	OmegaHField.__init__	scope	MeshingScope	migrated	checked-signature
 phydrax/meshing/providers/_omega_h.py	OmegaHField.__init__	transfer	OmegaHFieldTransfer	retained	static-only-annotation
@@ -7463,6 +7604,7 @@ phydrax/meshing/providers/_poisson.py	PoissonProvider.execute	source	OrientedPoi
 phydrax/meshing/providers/_poisson.py	PoissonProvider.execute	specification	PoissonReconstructionSpec	migrated	checked-signature
 phydrax/meshing/providers/_poisson.py	PoissonReconstructionSpec.__init__	boundary	PoissonBoundaryCondition	retained	static-only-annotation
 phydrax/meshing/providers/_tioga.py	TiogaProvider.execute	assembly	MeshAssembly	migrated	checked-signature
+phydrax/meshing/providers/_tioga.py	TiogaProvider.move	coordinates	Mapping[str, ArrayLike]	retained	Mapping containers are static-only; motion requires a nonempty part-name map before validating resident registration names and converting coordinates.
 phydrax/meshing/providers/_tioga.py	TiogaProvider.move	previous	TiogaAssemblyResult	migrated	checked-signature
 phydrax/meshing/providers/_worker.py	ProviderWorker.call	limits	MeshingLimits	migrated	checked-signature
 phydrax/metrix/_adm.py	ADMDecomposition.__init__	chart	CoordinateChart	migrated	checked-signature
@@ -8617,6 +8759,7 @@ phydrax/optim/_differential_evolution.py	DifferentialEvolutionCategorical.__init
 phydrax/optim/_evolution_strategy.py	DistributionEvolutionUpdateRule.__init__	method	AbstractDistributionEvolutionMethod	retained	adds-structural-enforcement
 phydrax/optim/_filter_ipm.py	FilterInteriorPoint.solve	problem	MinimizationProblem	migrated	checked-signature
 phydrax/optim/_finite.py	FiniteAdaptiveSearch.__init__	bound	FiniteCertifiedLowerBound	migrated	checked-signature
+phydrax/optim/_gradient_composition.py	compose_active_gradient_bank	rank_policy	RankPolicy	retained	hot-loop gradient-bank kernel called by _tetra_metric.prepare_targets inside lax.cond; retain local policy admission after row/mask/control validation without wrapping the traced mesh helper
 phydrax/optim/_graph_least_squares.py	linearize_residual_graph	graph	ResidualGraphProblem	retained	source-addressed-function
 phydrax/optim/_graph_least_squares.py	solve_residual_graph	graph	ResidualGraphProblem	retained	source-addressed-function
 phydrax/optim/_implicit.py	implicit_constrained_minimize	problem	MinimizationProblem	retained	source-addressed-function
@@ -8639,6 +8782,9 @@ phydrax/optim/_iterative/_types.py	LeastSquaresResult.__init__	diagnostics	Optim
 phydrax/optim/_iterative/_types.py	LeastSquaresResult.__init__	provenance	OptimizationProvenance	migrated	checked-signature
 phydrax/optim/_iterative/_types.py	MinimizationResult.__init__	diagnostics	OptimizationDiagnostics	migrated	checked-signature
 phydrax/optim/_iterative/_types.py	MinimizationResult.__init__	provenance	OptimizationProvenance	migrated	checked-signature
+phydrax/optim/_iterative/_types.py	NonlinearLeastSquaresProblem.__init__	bounds	Bounds | None	migrated	checked-signature
+phydrax/optim/_iterative/_types.py	NonlinearLeastSquaresProblem.__init__	residual	Callable[[PyTree[Any], Any], Any]	migrated	checked-signature
+phydrax/optim/_iterative/_types.py	NonlinearLeastSquaresProblem.__init__	trial_policy	AbstractLeastSquaresTrialPolicy | None	migrated	checked-signature; wrong-kind refusal now precedes value validation
 phydrax/optim/_iterative/_types.py	OptimizationStatusEvidence.__init__	certificate	OptimizationCertificate	migrated	checked-signature
 phydrax/optim/_kernel_rules.py	CompositeLeastSquaresUpdateRule.__init__	method	AbstractCompositeLeastSquaresMethod	migrated	checked-signature
 phydrax/optim/_kernel_rules.py	LeastSquaresUpdateRule.__init__	method	AbstractLeastSquaresMethod	migrated	checked-signature
@@ -8687,6 +8833,9 @@ phydrax/optim/_pde_constrained.py	solve_state_design	method	AbstractStateDesignM
 phydrax/optim/_pde_constrained.py	solve_state_design	problem	StateDesignProblem	retained	source-addressed-function
 phydrax/optim/_pde_constrained_mma.py	_solve_reduced_mma	problem	StateDesignProblem	retained	source-addressed-function
 phydrax/optim/_pounders.py	POUNDERS.solve	problem	NonlinearLeastSquaresProblem	migrated	checked-signature
+phydrax/optim/_primal_dual.py	PrimalDualNewtonKrylov.__init__	kkt_setup	AbstractPrimalDualKKTSetup | None	migrated	checked-signature; wrong-kind refusal now precedes value validation
+phydrax/optim/_primal_dual.py	_build_kkt_system	method	PrimalDualNewtonKrylov	retained	open KKT provider dispatch: Newton methods may supply AbstractPrimalDualKKTSetup.prepare, otherwise any interior method uses the Jacobi-builder fallback; this selects an optional setup capability, not a closed method union
+phydrax/optim/_primal_dual.py	_build_kkt_system	method	_AbstractPrimalDualInteriorMethod	retained	subtype capability narrowing for optional Newton kkt_setup provider before generic Jacobi preconditioner assembly; not nominal input rejection and checked on the abstract base cannot replace it
 phydrax/optim/_primal_dual.py	_solve_primal_dual_newton_krylov	termination	OptimizationTermination	retained	source-addressed-function
 phydrax/optim/_programming/_clarabel.py	prepare_clarabel_policy	program	ConicProgram	retained	source-addressed-function
 phydrax/optim/_programming/_clarabel.py	solve_clarabel_program	program	ConicProgram	retained	source-addressed-function
@@ -9312,11 +9461,17 @@ phydrax/solver/_fidelity_pinn.py	prepare_fidelity_pinn_stage	parent	FidelityPINN
 phydrax/solver/_field_equilibrium.py	PreparedFieldEquilibrium.__init__	problem	NonlinearSystemProblem	migrated	checked-signature
 phydrax/solver/_field_equilibrium.py	_parameter_subspace	subspace	ParameterSubspace	retained	source-addressed-function
 phydrax/solver/_finite_cptp.py	integrate_finite_cptp	plan	FiniteLindbladChannelPlan	retained	source-addressed-function
+phydrax/solver/_finite_element_adaptivity.py	FiniteElementTopologyTransaction.__init__	surface_chart_semantics	Mapping[str, SourceRealizationFieldSemantics] | None	retained	Chart semantics must be a field-name mapping before items are sorted and individual semantics are parsed against declared fields; general Mapping containers are static-only at checked boundaries.
 phydrax/solver/_finite_element_adaptivity.py	FiniteElementTopologyTransaction.execute	accepted	FiniteElementAcceptedState	migrated	checked-signature
 phydrax/solver/_finite_element_adaptivity.py	FiniteElementTopologyTransaction.execute	adaptation	MeshAdaptationResult	migrated	checked-signature
 phydrax/solver/_finite_element_adaptivity.py	FiniteElementTopologyTransaction.execute	mesh	CellMesh	migrated	checked-signature
 phydrax/solver/_finite_element_adaptivity.py	FiniteElementTopologyTransaction.execute_hp	accepted	FiniteElementAcceptedState	migrated	checked-signature
 phydrax/solver/_finite_element_adaptivity.py	FiniteElementTopologyTransaction.execute_hp	transaction	FiniteElementHPTransaction	migrated	checked-signature
+phydrax/solver/_finite_element_adaptivity.py	PreparedFiniteElementTopologyTransition.__init__	adaptation	MeshAdaptationResult	migrated	checked-signature; wrong-kind refusal now precedes value validation
+phydrax/solver/_finite_element_adaptivity.py	PreparedFiniteElementTopologyTransition.__init__	source	FiniteElementDiscretization	migrated	checked-signature
+phydrax/solver/_finite_element_adaptivity.py	PreparedFiniteElementTopologyTransition.__init__	target	FiniteElementDiscretization	migrated	checked-signature
+phydrax/solver/_finite_element_adaptivity.py	PreparedFiniteElementTopologyTransition.__init__	transaction	FiniteElementTopologyTransaction	migrated	checked-signature
+phydrax/solver/_finite_element_adaptivity.py	refinement_parent_cells	adaptation	MeshAdaptationResult	migrated	checked-signature
 phydrax/solver/_finite_element_adaptivity.py	write_finite_element_hp_epoch	epoch	FiniteElementHPEpoch	retained	source-addressed-function
 phydrax/solver/_finite_element_checkpoint.py	write_finite_element_checkpoint	checkpoint	FiniteElementCheckpoint	retained	source-addressed-function
 phydrax/solver/_finite_element_result.py	FiniteElementResult.__init__	diagnostics	FiniteElementSolveDiagnostics	migrated	checked-signature
@@ -9371,7 +9526,8 @@ phydrax/solver/_finite_volume_topology_events.py	FiniteVolumeTopologyEventJourna
 phydrax/solver/_finite_volume_topology_events.py	FiniteVolumeTopologyEventJournal.append_requested	request	FiniteVolumeTopologyEventRequest	migrated	checked-signature
 phydrax/solver/_finite_volume_topology_events.py	FiniteVolumeTopologyEventScheduler.__init__	journal	FiniteVolumeTopologyEventJournal	migrated	checked-signature
 phydrax/solver/_finite_volume_topology_events.py	FiniteVolumeTopologyEventScheduler.submit	request	FiniteVolumeTopologyEventRequest	migrated	checked-signature
-phydrax/solver/_finite_volume_topology_events.py	FiniteVolumeTopologyEventTransaction.__init__	journal	FiniteVolumeTopologyEventJournal	retained	signature-unresolved
+phydrax/solver/_finite_volume_topology_events.py	FiniteVolumeTopologyEventTransaction.__init__	adaptation	MeshAdaptationResult | None	retained	MeshAdaptationResult is available only under TYPE_CHECKING and a constructor-local import, so the optional signature annotation cannot resolve in module context; retain its kind admission after journal/request/coverage/remap-policy checks and before provenance storage.
+phydrax/solver/_finite_volume_topology_events.py	FiniteVolumeTopologyEventTransaction.__init__	journal	FiniteVolumeTopologyEventJournal	retained	This constructor's MeshAdaptationResult and CommonRefinementPolicy annotations have only TYPE_CHECKING and local imports; a full checked plan cannot resolve them without out-of-scope import changes, so journal-kind admission stays before request and coverage validation.
 phydrax/solver/_finite_volume_topology_events.py	_require_journal_origin	initial_artifacts	FiniteVolumeTopologyArtifacts	retained	source-addressed-function
 phydrax/solver/_finite_volume_topology_events.py	_require_journal_origin	initial_epoch	TopologyEpoch	retained	source-addressed-function
 phydrax/solver/_fixed_step.py	FixedStepProblem.__init__	method	AbstractFixedStepMethod	retained	compiler-source-protected
@@ -10207,6 +10363,11 @@ phydrax/sparse/_derivative.py	SparseDerivativePlan.__init__	precision	SparseDeri
 phydrax/sparse/_derivative.py	SparseDerivativePlan.__init__	properties	OperatorProperties	migrated	checked-signature
 phydrax/sparse/_derivative.py	prepare_sparse_linearization	plan	SparseDerivativePlan	retained	source-addressed-function
 phydrax/sparse/_derivative.py	verify_sparse_derivative	plan	SparseDerivativePlan	retained	source-addressed-function
+phydrax/sparse/_linear.py	SparseCoordinateOperator.__init__	properties	OperatorProperties | None	migrated	checked-signature
+phydrax/sparse/_linear.py	SparseCoordinateOperator.__init__	relation	SparseRelation	migrated	checked-signature
+phydrax/sparse/_linear.py	SparseCoordinateOperator.__init__	source	AbstractVectorSpace	migrated	checked-signature
+phydrax/sparse/_linear.py	SparseCoordinateOperator.__init__	storage_plan	SparseStoragePlan | None	migrated	checked-signature; wrong-kind refusal now precedes value validation
+phydrax/sparse/_linear.py	SparseCoordinateOperator.__init__	target	AbstractVectorSpace	migrated	checked-signature
 phydrax/sparse/_local_tensor.py	ElementTensorOperator.condense	plan	LocalEliminationPlan	migrated	checked-signature
 phydrax/sparse/_pattern.py	SparsePattern.__init__	relation	EdgeRelation	migrated	checked-signature
 phydrax/spatial_sampling.py	PreparedObservationOperator.__init__	stencil	GatherStencil	migrated	checked-signature
@@ -10649,8 +10810,10 @@ phydrax/transport/dynamic/_problem.py	SchrodingerBridgeProblem.__init__	referenc
 phydrax/transport/dynamic/_solver.py	SchrodingerBridgeSolver.solve	problem	SchrodingerBridgeProblem	migrated	checked-signature
 phydrax/transport/dynamic/_solver.py	require_converged_bridge	result	SchrodingerBridgeResult	retained	source-addressed-function
 phydrax/units/_dimension.py	DimensionSignature.divide	other	DimensionSignature	migrated	checked-signature
+phydrax/units/_dimension.py	DimensionSignature.from_stored_fields	value	DimensionSignature	retained	Decoded records must have the exact registered class before reconstructing canonical rational dimension powers.
 phydrax/units/_dimension.py	DimensionSignature.multiply	other	DimensionSignature	migrated	checked-signature
 phydrax/units/_unit.py	UnitDefinition.__init__	dimension	DimensionSignature	migrated	checked-signature
+phydrax/units/_unit.py	UnitDefinition.from_stored_fields	value	UnitDefinition	retained	Decoded records must have the exact registered class before reconstructing rational reference scale and unit identity.
 phydrax/uq/_atomistic_free_energy.py	reduced_potential_dataset_from_alchemical_evaluation	evaluation	AlchemicalReducedPotentialEvaluation	retained	source-addressed-function
 phydrax/uq/_atomistic_free_energy.py	reduced_potential_dataset_from_multistate	result	AtomisticMultistateSegmentResult	retained	source-addressed-function
 phydrax/uq/_atomistic_free_energy.py	reduced_work_dataset_from_alchemical_switching	record	AlchemicalSwitchingRecord	retained	source-addressed-function
@@ -11057,3 +11220,102 @@ phydrax/weighting/_geometry.py	prepare_moment_geometry	problem	MomentCalibration
 phydrax/weighting/_problem.py	GroupMassConstraints.__init__	group_map	AbstractSparseLinearOperator	migrated	checked-signature
 phydrax/weighting/_relative_entropy.py	_require_dual_compatible	execution	MomentCalibrationExecutionPolicy	retained	source-addressed-function
 phydrax/weighting/_results.py	require_converged	result	MomentCalibrationResult	retained	source-addressed-function
+phydrax/interchange/_cad.py	_canonical_source_tolerances	declarations	tuple[tuple[str, float], ...]	retained	Tuple annotations are static-only; immutable interchange tolerance metadata must reject mutable declaration containers before fingerprinting.
+phydrax/lifecycle/_meshing_field_records.py	MeshingAcceptedEpoch.__init__	fields	Mapping[str, jax.Array | np.ndarray]	retained	Mapping annotations are static-only; the epoch boundary validates nonempty field names and numerical array values before freezing the bank.
+phydrax/lifecycle/_repository.py	_bounded_bytes	value	bytes | bytearray | memoryview	retained	Bytes-like builtin annotations are static-only; repository payload validation must reject non-buffer values before inspecting and enforcing the byte bound.
+phydrax/lifecycle/_meshing_sources.py	admit_meshing_source_model	model_type	type	retained	Type annotations are static-only; artifact admission requires an AbstractArrayModel subclass before registering its constructor.
+phydrax/interchange/_cad_occt.py	model_from_occt_shape	coordinate_contract	SpatialCoordinateContract	retained	Optional OCCT extraction resolves TopoDS_Shape only after provider admission; its signature cannot compile at module import, so the coordinate contract is validated at the same provider boundary.
+phydrax/interchange/_cad_occt.py	model_from_occt_shape	shape	TopoDS_Shape	retained	Optional OCCT TopoDS_Shape is imported inside extraction rather than available to a module-level compiled signature; validate the provider object before calling IsNull.
+phydrax/interchange/_cad_occt.py	model_from_occt_shape	trim_samples_per_edge	int	retained	Builtin integer annotations are static-only; sampling counts must reject booleans and nonintegers before allocating edge samples.
+phydrax/interchange/_cad_occt.py	import_occt_brep	coordinate_contract	SpatialCoordinateContract	migrated	checked-signature
+phydrax/interchange/_cad_occt.py	persist_occt_shape	coordinate_contract	SpatialCoordinateContract	retained	Optional OCCT persistence resolves TopoDS_Shape inside the function, leaving its full signature unavailable for module-level compilation; validate the coordinate contract before writing.
+phydrax/interchange/_cad_occt.py	persist_occt_shape	shape	TopoDS_Shape	retained	Optional OCCT TopoDS_Shape is imported at the persistence boundary and cannot resolve in a module-level compiled signature; validate the provider object before querying or writing it.
+phydrax/interchange/_cad_occt.py	persist_occt_shape	overwrite	bool	retained	Builtin boolean annotations are static-only; persistence must validate explicit overwrite consent before replacing a resource.
+phydrax/lifecycle/_meshing_checkpoint_binding.py	AdmittedMeshingSourceArrays.__init__	arrays	Mapping[str, jax.Array]	retained	Mapping annotations are static-only; distinguish an already admitted bank from a new mapping whose names and JAX leaves require validation.
+phydrax/lifecycle/_meshing_checkpoint_binding.py	_validate_meshing_source_logical_bank	logical_content_digest	str | None	retained	Builtin optional text annotations are static-only; nonempty logical banks require a present validated digest while empty banks require absence.
+phydrax/lifecycle/_meshing_checkpoint_binding.py	prepare_meshing_source_binding	recipe_json	str | None	retained	Builtin optional text annotations are static-only; after live-source preparation the persisted recipe must contain JSON text before decoding.
+phydrax/lifecycle/_meshing_checkpoint_binding.py	prepare_meshing_source_binding	content_digest	str | None	retained	Builtin optional text annotations are static-only; after reconstructing source content the binding must carry a present validated digest.
+phydrax/geometry/brep/_boolean_coincidence.py	prepare_coincident_face_overlay	first_face	int	retained	Overlay face addressing rejects booleans and noninteger indices before model indexing; builtin integer annotations are static-only at checked boundaries.
+phydrax/geometry/brep/_boolean_coincidence.py	prepare_coincident_face_overlay	second_face	int	retained	Overlay face addressing rejects booleans and noninteger indices before model indexing; builtin integer annotations are static-only at checked boundaries.
+phydrax/geometry/brep/_constructors.py	BRepTessellationPolicy.__init__	realize	bool	retained	Derived tessellation admission requires an actual Python boolean before selecting artifact realization; builtin boolean annotations are static-only.
+phydrax/geometry/brep/_constructors.py	BRepTessellationPolicy.__init__	trim_samples_per_edge	int	retained	Trim sampling capacity rejects booleans and noninteger counts before checking its minimum allocation size; builtin integer annotations are static-only.
+phydrax/geometry/brep/_constructors.py	BRepTessellationPolicy.__init__	maximum_triangles	int	retained	Triangle allocation capacity rejects booleans and noninteger counts before checking its positive bound; builtin integer annotations are static-only.
+phydrax/geometry/brep/_coordinate_request.py	coordinate_source_request	leaf	(jax.Array, np.ndarray)	retained	Source reservation traverses arbitrary provider dataclasses and container leaves, measuring recognized arrays and scalar metadata while charging opaque leaves one unit; the leaf type set is open.
+phydrax/geometry/brep/_measure.py	_coedge_quadrature_breaks	source	IntersectionPCurve	retained	Quadrature refines chart and spline knot walls for recognized carriers while accepting other AbstractCurve provider subclasses with no additional walls; the carrier set is open.
+phydrax/geometry/brep/_measure.py	surface_quadrature_u_breaks.<locals>.curve_walls	curve	PlacedCurve	retained	Chart wall traversal unwraps recognized curve providers and accepts other AbstractCurve subclasses without extra source walls; the provider set is open.
+phydrax/geometry/brep/_measure.py	surface_quadrature_u_breaks.<locals>.surface_walls	source	PlacedSurface	retained	Chart wall traversal descends recognized surface providers and accepts other AbstractSurfacePatch subclasses without extra walls; the provider set is open.
+phydrax/geometry/brep/_patches.py	BSplineSpanCurve.__init__	span	int	retained	Live spline span addressing rejects booleans and noninteger metadata before selecting an active knot span; builtin integer annotations are static-only.
+phydrax/geometry/brep/_query.py	_surface_quadric	patch	PlanePatch	retained	Analytic quadric acceleration specializes planes, spheres and cylinders but returns no accelerator for other AbstractSurfacePatch provider subclasses; surface dispatch is open.
+phydrax/geometry/brep/_query.py	_edge_carrier_lower	curve	LineCurve	retained	Carrier lower bounds specialize lines and circles while retaining the conservative zero bound for other curve providers or absent carriers; the provider set is open.
+phydrax/geometry/brep/_query.py	_carrier_envelope	patch	PlanePatch	retained	Carrier envelope preparation specializes planes, spheres and cylinders while retaining a zero conservative envelope for other AbstractSurfacePatch providers; surface dispatch is open.
+phydrax/geometry/brep/_query.py	PreparedBRepQuery.__init__	certify_on_host	bool	retained	Query preparation requires an actual Python boolean to select host certification before source preparation; builtin boolean annotations are static-only.
+phydrax/geometry/brep/_root_bindings.py	BRepVertexRoot.__init__	aliases	tuple[BRepRootSupport, ...]	retained	Vertex alias admission requires a tuple containing only native face-root supports before root certification; checked does not enforce general container types or their elements.
+phydrax/geometry/brep/_root_bindings.py	BRepVertexRoot.__init__	source_edge_lifts	tuple[BRepCurveSurfaceLift, ...]	retained	Vertex lift admission requires a tuple containing only certified curve-surface lift objects before root certification; checked does not enforce general container types or their elements.
+phydrax/geometry/brep/_root_bindings.py	BRepVertexRoot.same_uv_endpoint	curve	IntersectionPCurve	retained	UV endpoint alias proof specializes coupled intersection p-curves but also accepts generic AbstractCurve providers through parameter enclosures; the p-curve provider set is open.
+phydrax/equations/fem/_worksets.py	_validate_local_region	local_region	PreparedLocalRegion | None	migrated	checked-signature
+phydrax/equations/fem/_worksets.py	_validate_mortar	mortar	FiniteElementMortarPlan | None	migrated	checked-signature
+phydrax/equations/fem/_worksets.py	_validate_mortar	mortar_metric	FiniteElementMortarMetricData | None	migrated	checked-signature
+phydrax/linalg/_hermitian_spectral.py	hermitian_exp_enclosure	logarithm	HermitianFunctionEnclosure	retained	The enclosure signature also contains CoordinateEnclosureBudget imported only under TYPE_CHECKING; retain nominal logarithm admission before square-matrix and radius validation rather than compile an unresolved signature.
+phydrax/linalg/_incomplete_factorizations.py	SparseFactorizationPreconditionerBuilder.__init__	prepared_plan	SparseFactorizationPlan | None	migrated	checked-signature
+phydrax/linalg/_incomplete_factorizations.py	SparseFactorizationPreconditionerBuilder.__init__	setup_operator	AbstractSparseLinearOperator | None	migrated	checked-signature
+phydrax/linalg/_incomplete_factorizations.py	SparseFactorizationPreconditionerBuilder.refresh	preconditioner	AbstractPreconditioner	retained	Refresh selects SparseFactorCongruencePreconditioner versus SparseFactorizationPreconditioner from self.form; the abstract annotation cannot enforce this builder-owned action-form capability before accessing the factorization.
+phydrax/linalg/_incomplete_factorizations.py	SparseFactorizationPreconditionerBuilder.refresh	setup_operator	AbstractLinearOperator	retained	Refresh requires the narrower AbstractSparseLinearOperator storage capability after action-form admission; checking the abstract linear-operator annotation cannot enforce sparse storage or preserve that refusal order.
+phydrax/linalg/_incomplete_factorizations.py	SparseFactorizationPreconditionerBuilder.prepare_planned	setup_operator	AbstractLinearOperator	retained	Planned setup requires AbstractSparseLinearOperator after accepted-cost, builder-component and properties admission; the broader linear-operator annotation cannot establish CSR access and an entry check would reorder admission errors.
+phydrax/linalg/_incomplete_factorizations.py	SparseFactorizationPreconditionerBuilder.prepare	setup_operator	AbstractLinearOperator	retained	Numeric preparation requires AbstractSparseLinearOperator before querying properties, resolving the symbolic plan and reserving congruence storage; the abstract linear-operator annotation does not establish this sparse capability.
+phydrax/linalg/_sparse_factorizations.py	prepare_sparse_factor_congruence	factorization	PreparedSparseFactorization	migrated	checked-signature
+phydrax/linalg/_sparse_triangular.py	_prepare_sparse_triangular_substitution	analysis	SparseTriangularAnalysis	retained	Internal numeric substitution refresh is called inside vmapped sparse factor and congruence preparation; keep local analysis admission before pivot-tolerance conversion and value-shape checks without adding a checked wrapper to this tracing helper.
+phydrax/linalg/backends/_native_krylov.py	solve_native_krylov	control	LinearSolveControl | None	migrated	checked-signature
+phydrax/linalg/backends/_native_krylov.py	_native_krylov_output	problem	MinimumNormProblem	retained	Output evidence accepts the open AbstractLinearProblem provider interface; MinimumNormProblem adds multiplier witnesses and optional rank-certificate evidence, while other problem implementations retain generic certified-rank evidence rather than a closed problem union.
+phydrax/_array_archive.py	_expected_archive_inventory	expected_inventory	Any	retained	Archive inventory is an open interchange mapping admitted and converted into canonical shape/dtype specifications; Any and general mappings are static-only for checked.
+phydrax/_fingerprint.py	_iter_array_list_payload_json	value	np.ndarray	retained	Array-list hashing dispatches an open interchange payload containing NumPy arrays, mappings, sequences and provider scalar leaves accepted by _canonical_payload; this is not a closed union.
+phydrax/_fingerprint.py	logical_array_value_collection_digest.<locals>.content	value	jax.Array | np.ndarray	retained	Plain JAX/NumPy array annotations are static-only for checked; this per-array streaming helper owns backend kind admission before dtype, logical extent and shard validation.
+phydrax/_model/_artifacts.py	ArtifactValueCodec.decode_value	payload	Mapping[str, Any]	retained	General Mapping annotations are static-only for checked; the codec boundary admits text-keyed interchange records before invoking its registered decoder.
+phydrax/_model/_structure.py	deserialize_model_leaf	value	Any	retained	This open Equinox deserialization boundary admits provider-restored leaf backends against the template and restores NumPy writeability; Any cannot enforce that template-dependent backend contract.
+phydrax/_model/_structure.py	_model_owner_children	value	type	retained	Full-field ownership dispatch is open to dataclasses, mappings, builtin containers, bound methods and registered JAX PyTrees; the registry fallback discovers arbitrary declared children rather than a closed union.
+phydrax/_model/_structure.py	_admit_wire_table	text	Any	retained	Wire admission accepts open interchange input and owns builtin text refusal before byte and nesting bounds; Any and builtin str are static-only for checked.
+phydrax/_model/_structure.py	_restore_dataclass	cls	type[DataclassInstance]	retained	DataclassInstance resolves only under TYPE_CHECKING from _typeshed; this registered-class reconstruction boundary also owns the exact dataclass and registry identity checks.
+phydrax/_resource_ticket.py	_bound	value	int	retained	Builtin int is static-only for checked; resource bounds require exact Python integers excluding bool before admitting nonnegative counters.
+phydrax/_bvh.py	bvh_nearest_items	k	int	retained	Builtin int is static-only for checked; nearest-item capacity explicitly rejects bool before admitting a positive bounded search width.
+phydrax/_bvh.py	bvh_overlap_pairs	include_touching	bool	retained	Builtin bool is static-only for checked; the JAX overlap boundary refuses nonboolean contact semantics before x64 admission and pair traversal.
+phydrax/_bvh.py	bvh_host_minima	points	np.ndarray	retained	Plain NumPy array annotations are static-only for checked; metered host search requires a host query bank before shape admission and any resource callback.
+phydrax/_bvh.py	_validate_host_pair_arguments	include_touching	bool	retained	Builtin bool is static-only for checked; host overlap preparation owns exact contact semantics before tolerance conversion.
+phydrax/_geometry_predicates.py	PolygonSimplicityResult.__init__	candidate_capacity_exceeded	bool	retained	Builtin bool is static-only for checked; this conversion boundary accepts bool or np.bool_ then stores one canonical Python boolean.
+phydrax/_geometry_predicates.py	polygon_simplicity_2d	maximum_candidate_pairs	int	retained	Builtin int is static-only for checked; polygon candidate capacity accepts Python or NumPy integers excluding bool and converts once before positive-budget admission.
+phydrax/discretization/_cell_geometry_transition_types.py	CellGeometryTransitionPolicy.__init__	maximum_evaluations	int	retained	Builtin integers are static-only; transition admission accepts NumPy integers but excludes booleans before positive work-limit normalization.
+phydrax/discretization/_coordinate_budget.py	CoordinateEnclosureResourceError.__init__	admission	bool	retained	Builtin booleans are static-only; resource refusal distinguishes the explicit admission flag before validating refusal quantities.
+phydrax/discretization/_coordinate_budget.py	CoordinateLiveStorage.set_bound	total_bytes_upper	int	retained	Builtin integers are static-only; an open live-storage owner requires an explicit non-Boolean Python integer before adjusting its byte ledger.
+phydrax/discretization/_coordinate_budget.py	CoordinateLiveStorage.set_bound	work	int	retained	Builtin integers are static-only; live-storage reservation requires an explicit non-Boolean Python work count before charging its budget.
+phydrax/discretization/_coordinate_budget.py	CoordinateEnclosureBudget.admit_work_bound	maximum_work	int	retained	Builtin integers are static-only; dry admission requires a nonnegative explicit non-Boolean Python work bound before observing resource requirements.
+phydrax/discretization/_coordinate_enclosure.py	_prepare_reference_composition_arguments	element	CellGeometryElement	retained	Composed coordinate classes are resolved through deferred _cell_geometry_dispatch to break the cell-geometry/enclosure import cycle; this chart preparation requires that narrower composed capability.
+phydrax/discretization/_coordinate_enclosure.py	_estimate_reference_arguments	element	CellGeometryElement	retained	Composed coordinate classes are resolved through deferred _cell_geometry_dispatch to break the cell-geometry/enclosure import cycle; reference estimates require that narrower source-chart capability.
+phydrax/discretization/_view_support.py	mapped_mesh_support_geometry	locator	AbstractCellLocator	retained	The checked input is transformed through canonical_locator; the resulting prepared FE locator must be admitted before converting simplicial support to mapped support.
+phydrax/discretization/_views.py	PreparedFieldReconstruction.__init__	coefficient_linear	bool	retained	Builtin booleans are static-only; reconstruction requires an explicit coefficient-linearity flag before parsing approximation and coefficient dtype.
+phydrax/discretization/fem/_hp_runtime.py	_prepare_hp_transaction_admission	reanalysis	PhysicalErrorEvidence | None	retained	PhysicalErrorEvidence remains TYPE_CHECKING-only because HP preparation reaches meshing decisions through providers and lineage; deferred hp_admission_types validates reanalysis after solver admission.
+phydrax/discretization/fem/_hp_runtime.py	FiniteElementHPTransaction.promote	candidate_accepted	bool	retained	Builtin booleans are static-only; promotion accepts Python and NumPy Boolean host decisions before converting and combining independent admissibility evidence.
+phydrax/discretization/fem/_hp_runtime.py	FiniteElementHPErrorEstimate.physical_evidence	independent_contributions	PhysicalErrorEvidence	retained	PhysicalErrorEvidence remains TYPE_CHECKING-only across the HP preparation/meshing decision/provider/lineage import cycle; deferred hp_admission_types admits contributions before reading scientific identity.
+phydrax/discretization/fem/_hp_runtime.py	FiniteElementHPDecision.__init__	solver_decision	SolverAwareDecision | None	retained	SolverAwareDecision remains TYPE_CHECKING-only across the HP preparation/meshing decision/provider/lineage import cycle; deferred hp_admission_types admits a supplied solver decision after candidate identity preparation.
+phydrax/discretization/fem/_hp_solver.py	FiniteElementHPSolverRefreshPlan.require_feasibility	feasibility	RouteFeasibility	retained	RouteFeasibility remains TYPE_CHECKING-only across the HP preparation/meshing decision/provider/lineage import cycle; deferred hp_admission_types admits feasibility before comparing refreshed layouts.
+phydrax/discretization/fem/_local_provider.py	FiniteElementGeometryActions.realize	runtime	object	retained	The shared local-provider interface accepts an opaque runtime conversion input; FE geometry realization must admit FiniteElementRuntimeData before gathering its coordinates.
+phydrax/discretization/fem/_local_provider.py	FiniteElementLocalProvider.validate_local_runtime	runtime	object	retained	The shared local-provider interface accepts an opaque runtime conversion input; FE layout validation must admit FiniteElementRuntimeData before comparing topology and geometry identities.
+phydrax/discretization/fem/_spectral_hp_completion.py	GeometryOrderAdaptation.__init__	solver_decision	SolverAwareDecision | None	retained	SolverAwareDecision remains TYPE_CHECKING-only across the HP preparation/meshing decision/provider/lineage import cycle; deferred hp_admission_types admits the decision after geometry candidate identity preparation.
+phydrax/discretization/meshfree/_adaptivity.py	MeshfreeAdaptationPolicy.__init__	grading	float	retained	Builtin real scalars are static-only; grading accepts real host numbers but excludes booleans before checking the bisection bound and converting to float.
+phydrax/discretization/meshfree/_adaptivity.py	adaptation_acceptance	solve_successful	bool	retained	Builtin booleans are static-only; adaptation publication requires an explicit Python host solve decision before combining transfer and stencil admission evidence.
+phydrax/discretization/meshfree/_conservation_solve.py	_parameter_owner	parameter_bindings	tuple[ParameterBinding, ...]	retained	Variadic tuple containers are static-only; parameter ownership requires a tuple before traversing and checking binding identities and refresh-only targets.
+phydrax/meshing/_entity_keys.py	entity_keys	mesh	cell_mesh_owner.CellMesh	retained	CellMesh construction reaches entity-key lookup through meshing scope; its nominal class import is deferred inside this boundary to avoid the construction import cycle.
+phydrax/meshing/qualification/_layer_continuation.py	accepted_layer_core_lineage	records	object	retained	Archived records are opaque interchange inputs and Mapping containers are static-only; lineage decoding admits a named record mapping before reading generation and accepted data.
+phydrax/meshing/qualification/_moving_overset.py	_archive_mapping	value	object	retained	Archived values are opaque interchange inputs and Mapping containers are static-only; overset decoding admits a mapping before validating keys and building a canonical named record dictionary.
+phydrax/_bvh.py	bvh_overlap_pairs	first	PackedBVH	migrated	checked-signature
+phydrax/_bvh.py	bvh_overlap_pairs	second	PackedBVH	migrated	checked-signature
+phydrax/_bvh.py	bvh_host_minima	bvh	PackedBVH	migrated	checked-signature
+phydrax/_bvh.py	_validate_host_pair_arguments	first	PackedBVH	migrated	checked-signature
+phydrax/_bvh.py	_validate_host_pair_arguments	second	PackedBVH	migrated	checked-signature
+phydrax/_model/_artifacts.py	register_artifact_value_codec	codec	ArtifactValueCodec	migrated	checked-signature
+phydrax/_model/_structure.py	_lower_recipe	limits	ArrayArchiveLimits	migrated	checked-signature
+phydrax/_model/_structure.py	model_recipe_from_wire_json	limits	ArrayArchiveLimits	migrated	checked-signature
+phydrax/geometry/brep/_revision.py	cad_revision_from_brep_model	model	BRepModel	migrated	checked-signature
+phydrax/applications/phase_field/_adaptivity.py	_prepare_phase_field_candidate	method	PreparedAllenCahnFEM	migrated	exhaustive-match
+phydrax/equations/_variational.py	VariationalCoefficient.__init__	value	Array	retained	Conversion-input dispatch: concrete JAX arrays keep device and tracer execution, while immutable host coefficient data takes direct device admission; the branch preserves array roles and restates no annotation.
+phydrax/equations/_variational.py	VariationalCoefficient.__init__	value	(float, complex)	retained	Conversion-input dispatch: Python float and complex scalars keep JAX weak typing on admission, while NumPy scalars and banks keep their declared dtype.
+phydrax/lifecycle/_meshing_sources.py	_source_owner_static_scalar_bits	value	Mapping	retained	Structural traversal of heterogeneous static owner payloads: the container kind (dataclass, mapping, sequence, set) selects how children are enumerated; unsupported kinds return None so the caller keeps ordinary reconstruction.
+phydrax/geometry/_embedding_cells.py	Cell.__init__	reference_vertices	tuple[tuple[Fraction, ...], ...]	retained	Nested tuple containers are static-only at the checked boundary; the constructor guard owns validation that every reference coordinate is an immutable Fraction.
+phydrax/geometry/_embedding_cells.py	Cell.__init__	corner_images	CoordinateSourceBank | None	retained	Nested tuple containers are static-only at the checked boundary; the constructor guard owns validation that every physical corner coordinate is a Fraction or RadicalElement in an immutable bank.

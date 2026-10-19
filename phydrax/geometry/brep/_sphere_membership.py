@@ -2,42 +2,23 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Source-exact polynomial membership of a complete affine sphere chart."""
+"""Polynomial membership and directed distance bounds for full affine sphere charts."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
 
+import jax
 import numpy as np
 
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked
+from .._rational import rational_dot, rational_vector
+from ._coordinate_request import coordinate_source_request
+from ._exact import rational_determinant, square_root_interval
 from ._patches import AbstractSurfacePatch, sphere_source_equivalence
 from ._placed import PlacedSurface
-
-
-def _determinant(matrix: tuple[tuple[Fraction, Fraction, Fraction], ...], /) -> Fraction:
-    a, b, c = matrix
-    return (
-        a[0] * (b[1] * c[2] - b[2] * c[1])
-        - a[1] * (b[0] * c[2] - b[2] * c[0])
-        + a[2] * (b[0] * c[1] - b[1] * c[0])
-    )
-
-
-def _square_root_interval(value: Fraction, /) -> tuple[float, float]:
-    if value == 0:
-        return 0.0, 0.0
-    lower = upper = float(value)
-    if Fraction(lower) > value:
-        lower = float(np.nextafter(lower, -np.inf))
-    if Fraction(upper) < value:
-        upper = float(np.nextafter(upper, np.inf))
-    lo, hi = float(np.sqrt(lower)), float(np.sqrt(upper))
-    if Fraction(lo) ** 2 > value:
-        lo = float(np.nextafter(lo, -np.inf))
-    if Fraction(hi) ** 2 < value:
-        hi = float(np.nextafter(hi, np.inf))
-    return lo, hi
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +30,7 @@ class SphereMembership:
 
 
 @dataclass(frozen=True, slots=True)
-class _SphereSource:
+class SphereSource:
     center: tuple[Fraction, ...]
     basis: tuple[tuple[Fraction, Fraction, Fraction], ...]
     determinant: Fraction
@@ -58,19 +39,30 @@ class _SphereSource:
     scale_bounds: tuple[float, float]
 
 
-def prepare_full_sphere(patch: AbstractSurfacePatch, /) -> _SphereSource | None:
-    """Retain exact radial and affine coefficients without replacing the source."""
+@checked
+def prepare_full_sphere(
+    patch: AbstractSurfacePatch, /, *, budget: CoordinateEnclosureBudget | None = None
+) -> SphereSource | None:
+    """Prepare radial and affine coefficients for a full sphere chart."""
+    if budget is None:
+        with coordinate_source_request((patch,)) as budget:
+            return prepare_full_sphere(patch, budget=budget)
+    patch = jax.device_get(patch)
     placements: list[PlacedSurface] = []
-    while isinstance(patch, PlacedSurface):
-        placements.append(patch)
-        patch = patch.definition
-    equivalence = sphere_source_equivalence(patch)
+    while True:
+        match patch:
+            case PlacedSurface():
+                placements.append(patch)
+                patch = patch.definition
+            case _:
+                break
+    equivalence = sphere_source_equivalence(patch, budget=budget)
     if equivalence is None:
         return None
     original, signed_radius = equivalence
     radius = abs(signed_radius)
     if radius == 0:
-        raise ValueError("A complete sphere solid requires a nonzero source radius.")
+        raise ValueError("prepare_full_sphere.patch.radius must be nonzero; got 0.")
     axes = np.stack(
         (
             np.asarray(original.first_axis),
@@ -83,7 +75,7 @@ def prepare_full_sphere(patch: AbstractSurfacePatch, /) -> _SphereSource | None:
         (Fraction(float(row[0])), Fraction(float(row[1])), Fraction(float(row[2])))
         for row in axes
     )
-    center = tuple(Fraction(float(value)) for value in np.asarray(original.center))
+    center = rational_vector(np.asarray(original.center))
     for placement in reversed(placements):
         rotation = np.asarray(placement.rotation)
         transform = tuple(
@@ -102,12 +94,17 @@ def prepare_full_sphere(patch: AbstractSurfacePatch, /) -> _SphereSource | None:
             )
             for i in range(3)
         )
-    determinant = _determinant(basis)
+    determinant = rational_determinant(*basis)
     if determinant == 0:
-        raise ValueError("A complete sphere solid requires a nonsingular source frame.")
+        raise ValueError(
+            "prepare_full_sphere.patch.frame must be nonsingular; got determinant 0."
+        )
     gram = tuple(
         tuple(
-            sum((basis[k][i] * basis[k][j] for k in range(3)), Fraction(0))
+            rational_dot(
+                tuple(basis[k][i] for k in range(3)),
+                tuple(basis[k][j] for k in range(3)),
+            )
             for j in range(3)
         )
         for i in range(3)
@@ -118,39 +115,40 @@ def prepare_full_sphere(patch: AbstractSurfacePatch, /) -> _SphereSource | None:
         for i in range(3)
     )
     if lower_squared > 0:
-        scale_lower = _square_root_interval(lower_squared)[0]
+        scale_lower = square_root_interval(lower_squared)[0]
     else:
         exact_lower = abs(determinant) / upper_squared
         scale_lower = float(exact_lower)
         if Fraction(scale_lower) > exact_lower:
             scale_lower = float(np.nextafter(scale_lower, -np.inf))
-    scale_upper = _square_root_interval(upper_squared)[1]
+    scale_upper = square_root_interval(upper_squared)[1]
     radius_lower = radius_upper = float(radius)
     if Fraction(radius_lower) > radius:
         radius_lower = float(np.nextafter(radius_lower, -np.inf))
     if Fraction(radius_upper) < radius:
         radius_upper = float(np.nextafter(radius_upper, np.inf))
-    return _SphereSource(
-        center,
-        basis,
-        determinant,
-        radius,
-        (radius_lower, radius_upper),
-        (scale_lower, scale_upper),
+    return SphereSource(
+        center=center,
+        basis=basis,
+        determinant=determinant,
+        radius=radius,
+        radius_bounds=(radius_lower, radius_upper),
+        scale_bounds=(scale_lower, scale_upper),
     )
 
 
-def classify_full_sphere(source: _SphereSource, point: np.ndarray, /) -> SphereMembership:
-    """Exact membership and distance bounds for the prepared original source.
+@checked
+def classify_full_sphere(source: SphereSource, point: np.ndarray, /) -> SphereMembership:
+    """Classify membership and enclose distance for the prepared source sphere.
 
-    The caller establishes complete angular/latitude chart coverage and closed
-    solid incidence. Placements retain exact affine coefficients, not assumed
+    The caller establishes full angular/latitude chart coverage and closed
+    solid incidence. Placements retain affine coefficients without assuming
     orthogonality; nonrepresentable offset radii retain directed bounds.
     """
     basis, determinant = source.basis, source.determinant
     delta = tuple(
-        Fraction(float(value)) - origin
-        for value, origin in zip(point, source.center, strict=True)
+        value - origin
+        for value, origin in zip(rational_vector(point), source.center, strict=True)
     )
     numerators = []
     for column in range(3):
@@ -162,12 +160,12 @@ def classify_full_sphere(source: _SphereSource, point: np.ndarray, /) -> SphereM
             )
             for row in range(3)
         )
-        numerators.append(_determinant(replaced))
+        numerators.append(rational_determinant(*replaced))
     squared = sum((value * value for value in numerators), Fraction(0)) / (
         determinant * determinant
     )
     sign = squared - source.radius * source.radius
-    lo, hi = _square_root_interval(squared)
+    lo, hi = square_root_interval(squared)
     radius_lower, radius_upper = source.radius_bounds
     radial_lower = max(0.0, radius_lower - hi, lo - radius_upper)
     radial_lower = max(0.0, float(np.nextafter(radial_lower, -np.inf)))
@@ -176,10 +174,10 @@ def classify_full_sphere(source: _SphereSource, point: np.ndarray, /) -> SphereM
     )
     scale_lower, scale_upper = source.scale_bounds
     return SphereMembership(
-        sign <= 0,
-        sign == 0,
-        max(0.0, float(np.nextafter(radial_lower * scale_lower, -np.inf))),
-        float(np.nextafter(radial_upper * scale_upper, np.inf)),
+        inside=sign <= 0,
+        on_surface=sign == 0,
+        distance_lower=max(0.0, float(np.nextafter(radial_lower * scale_lower, -np.inf))),
+        distance_upper=float(np.nextafter(radial_upper * scale_upper, np.inf)),
     )
 
 

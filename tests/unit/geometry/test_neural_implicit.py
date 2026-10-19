@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 # tanh(b + s x) + tanh(b - s x) = 2 tanh(b) - CURVATURE x^2 + O(x^4), so pairs of
@@ -79,7 +80,9 @@ def _region(network: Any, **overrides: Any) -> Any:
     )
     options.update(overrides)
     # ty: ignore[invalid-argument-type]
-    return phx.geometry.NeuralImplicitRegion(network, _BOUNDS, **options)
+    return phx.geometry.NeuralImplicitRegion(
+        network, _BOUNDS, coordinate_unit=METER, **options
+    )
 
 
 @pytest.fixture(scope="module")
@@ -119,6 +122,7 @@ def test_neural_implicit_scenario_1() -> None:
     ball = phx.geometry.NeuralImplicitRegion(
         network,
         ((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)),
+        coordinate_unit=METER,
         interior_points=((0.0, 0.0, 0.0),),
         exterior_points=((0.9, 0.9, 0.9),),
         sign_margin=0.05,
@@ -130,7 +134,10 @@ def test_neural_implicit_scenario_1() -> None:
     topology = ball.certificate.topology
     assert topology.betti_numbers == (1, 0, 0)
     assert topology.boundary_components == (("outer", 2),)
-    assert _GeometryCapability.BOUNDARY_NORMAL in ball.compile().capabilities
+    assert (
+        _GeometryCapability.BOUNDARY_NORMAL
+        in ball.compile(coordinate_unit=METER).capabilities
+    )
     network = phx.nn.models.MLP(
         in_size=2,
         out_size="scalar",
@@ -149,6 +156,7 @@ def test_neural_implicit_scenario_1() -> None:
     diamond = phx.geometry.NeuralImplicitRegion(
         network,
         ((-1.0, -1.0), (1.0, 1.0)),
+        coordinate_unit=METER,
         interior_points=((0.0, 0.0),),
         exterior_points=((0.9, 0.9),),
         sign_margin=0.05,
@@ -157,7 +165,7 @@ def test_neural_implicit_scenario_1() -> None:
         discovery_resolution=17,
         feature_id="diamond",
     )
-    geometry = diamond.compile()
+    geometry = diamond.compile(coordinate_unit=METER)
     assert diamond.certificate.topology.betti_numbers == (1, 0)
     assert (
         geometry.field_certificate.regularity
@@ -172,7 +180,7 @@ def test_neural_implicit_scenario_1() -> None:
 def test_smooth_region_has_negative_inside_sign_with_sampled_evidence(
     region: Any,
 ) -> None:
-    geometry = region.compile()
+    geometry = region.compile(coordinate_unit=METER)
     certificate = geometry.field_certificate
 
     assert region.certificate.topology.betti_numbers == (1, 0)
@@ -193,7 +201,7 @@ def test_smooth_region_has_negative_inside_sign_with_sampled_evidence(
 
 
 def test_capabilities_are_only_the_evidenced_ones(region: Any) -> None:
-    geometry = region.compile()
+    geometry = region.compile(coordinate_unit=METER)
     assert geometry.capabilities == frozenset(
         {
             _GeometryCapability.REGION_QUERY,
@@ -212,7 +220,7 @@ def test_capabilities_are_only_the_evidenced_ones(region: Any) -> None:
 def test_neural_implicit_scenario_2() -> None:
     declared = _region(_ellipse_network(), lipschitz_upper_bound=10.0)
     assert declared.certificate.lipschitz_evidence is phx.CapabilityEvidenceKind.DECLARED
-    certificate = declared.compile().field_certificate
+    certificate = declared.compile(coordinate_unit=METER).field_certificate
     assert certificate.lipschitz_upper_bound == 10.0
     # A declared bound checked only against sampled gradients certifies neither
     # the sign nor the topology of the region.
@@ -221,7 +229,7 @@ def test_neural_implicit_scenario_2() -> None:
     with pytest.raises(ValueError, match="lipschitz_sampled_gradient"):
         _region(_ellipse_network(), lipschitz_upper_bound=0.1)
     region = _region(_hidden_component_network())
-    geometry = region.compile()
+    geometry = region.compile(coordinate_unit=METER)
     hidden = 0.5 * (_HIDDEN_LOW + _HIDDEN_HIGH)
 
     # The true region has a second component the lattice never sees.
@@ -241,7 +249,7 @@ def test_neural_implicit_scenario_2() -> None:
     shift = jnp.asarray([0.05, 0.0])
     network = _ShiftedField(_ellipse_network(), shift)
     region = _region(network, lipschitz_upper_bound=10.0)
-    geometry = region.compile()
+    geometry = region.compile(coordinate_unit=METER)
 
     names = {parameter.name for parameter in region.parameter_ids}
     assert names == {
@@ -360,7 +368,7 @@ class _ShiftedField(phx.AbstractArrayModel):
 
 
 def test_weights_update_through_the_design_state(region: Any) -> None:
-    geometry = region.compile()
+    geometry = region.compile(coordinate_unit=METER)
     bias = _bias_id()
     assert bias in region.parameter_ids
     assert geometry.schema.spec(bias).trainable
@@ -388,18 +396,18 @@ def test_weights_update_through_the_design_state(region: Any) -> None:
 
 
 def test_small_weight_perturbation_keeps_the_sampled_topology(region: Any) -> None:
-    geometry = region.compile()
+    geometry = region.compile(coordinate_unit=METER)
     bias = _bias_id()
     base = geometry.state.values[geometry.schema.index(bias)]
     trained = geometry.with_parameters({bias: base - 0.01})
 
     recertified = region.recertify(trained.state)
     assert recertified.certificate.topology == region.certificate.topology
-    assert bool(recertified.compile().validity().accepted)
+    assert bool(recertified.compile(coordinate_unit=METER).validity().accepted)
 
 
 def test_topology_changing_update_is_rejected(region: Any) -> None:
-    geometry = region.compile()
+    geometry = region.compile(coordinate_unit=METER)
     readout = phx.geometry.ParameterId("ellipse", "layers[1].weight")
     split = _ellipse_network(split=0.5).layers[1].weight
     trained = geometry.with_parameters({readout: split})
@@ -409,7 +417,7 @@ def test_topology_changing_update_is_rejected(region: Any) -> None:
 
 
 def test_vanishing_region_is_rejected(region: Any) -> None:
-    geometry = region.compile()
+    geometry = region.compile(coordinate_unit=METER)
     bias = _bias_id()
     base = geometry.state.values[geometry.schema.index(bias)]
     with pytest.raises(ValueError, match="interior_sign"):
@@ -417,7 +425,7 @@ def test_vanishing_region_is_rejected(region: Any) -> None:
 
 
 def test_geometry_domain_contains_and_samples_the_region(region: Any) -> None:
-    geometry = region.compile()
+    geometry = region.compile(coordinate_unit=METER)
     domain = phx.domain.GeometryDomain(geometry)
     points = domain.sample_interior(64, key=jr.key(0))
     assert points.shape == (64, 2)
@@ -430,7 +438,7 @@ def test_exact_sdf_enclosure_requires_declared_field_bounds() -> None:
     exact = phx.geometry.exact_signed_distance_certificate(smooth=True)
     assert exact.lipschitz_upper_bound == 1.0
     assert exact.evaluation_error == 0.0
-    with pytest.raises(ValueError, match="declared"):
+    with pytest.raises(ValueError, match="ExactSDFEnclosureCertificate.field"):
         phx.geometry.ExactSDFEnclosureCertificate(replace(exact, evaluation_error=None))
-    with pytest.raises(ValueError, match="non-negative"):
+    with pytest.raises(ValueError, match="FieldCertificate.lipschitz_upper_bound"):
         replace(exact, lipschitz_upper_bound=-1.0)

@@ -2,14 +2,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native construction of exact B-Reps from primitives, sketches and sweeps.
+"""Construct B-Reps from primitive carriers, sketches and sweeps.
 
-Every construction builds exact carriers (analytic surfaces, lines, circles),
+Every construction builds carriers (analytic surfaces, lines, circles),
 oriented coedges with same-parameter p-curves, closed loops, shells and solids,
 then derives a query tessellation with its own identity. Sweeps recognize the
-exact analytic family of each swept edge (plane, cylinder, cone, sphere, torus)
-and fall back to exact extrusion/revolution surfaces otherwise. Primitives are
-the canonical profile sweeps (box: extruded rectangle; cylinder, cone, sphere,
+analytic family of each swept edge (plane, cylinder, cone, sphere, torus)
+and use generating extrusion/revolution surfaces otherwise. Primitives are
+profile sweeps (box: extruded rectangle; cylinder, cone, sphere,
 torus: revolved profiles), so their topology, orientation and identity follow
 one construction route.
 """
@@ -17,7 +17,7 @@ one construction route.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, InitVar
 from fractions import Fraction
 from math import atan2, ceil, cos, pi, sin
 from typing import Literal
@@ -32,12 +32,27 @@ from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..._validation import finite_real_scalar, positive_finite_float
-from ...typing import ConvertibleToArray
+from ..._validation import (
+    finite_real_scalar,
+    nonnegative_real_scalar,
+    positive_finite_float,
+)
+from ...discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
+from ...discretization._exact_algebraic_geometry import rational_coefficient
+from ...typing import checked, ConvertibleToArray
 from .._atlas import AbstractTrimCurve, CurveTrimLoop, TrimDomain
+from .._interval_enclosure import prepare_interval_function
+from .._planar_primitives import rational_points, reserve_fraction_work
+from .._rational import fraction_down, fraction_up, rational_cross_2d, rational_vector
+from ._carrier_pieces import AffineTrimChordEvidence, carrier_payload
+from ._conic_gaps import endpoint_gap_bounds
+from ._coordinate_request import coordinate_source_request
 from ._intersection import intersect_curve_ranges, NativePeriodEndpoint, RootEndpoint
 from ._intersection_curve import (
-    _affine_curve_coefficients,
+    affine_curve_coefficients,
     AffinePCurve,
     CurveRange,
     CurveTrimSegment,
@@ -45,9 +60,11 @@ from ._intersection_curve import (
     exact_line_pcurve,
     IntersectionPCurve,
     PeriodicPCurve,
+    surface_pieces_for_box,
 )
+from ._intersection_kernel import point_times_interval
 from ._model import (
-    _carrier_payload,
+    _certify_edge_face_gap_bounds,
     brep_physical_scale,
     BRepCurve,
     BRepGeometry,
@@ -56,18 +73,25 @@ from ._model import (
     BRepOccurrence,
     BRepPCurve,
 )
+from ._offset_result import BRepOffsetResult, exact_operation_offset_result
+from ._parameter_range import attach_parameter_range, unknown_parameter_range
 from ._patches import (
-    _axis_frame,
-    _closure_tangent_continuous,
-    _convex_meridian_offset,
     AbstractCurve,
     AbstractSurfacePatch,
+    axis_frame,
+    BernsteinRestrictionBank,
     BSplineCurve,
     CircleCurve,
+    closure_tangent_continuous,
+    coefficient_enclosures,
     ConePatch,
+    convex_meridian_offset,
     CylinderPatch,
+    EllipseCurve,
     ExtrusionSurface,
     LineCurve,
+    meridian_value_bounds,
+    MeridianOverlaps,
     OffsetSurface,
     PlanePatch,
     RevolutionSurface,
@@ -76,7 +100,8 @@ from ._patches import (
     SurfaceIsoparametricCurve,
     TorusPatch,
 )
-from ._planar_arrangement import _area, _cross, _inside_loop, _intersections, _sub, Point
+from ._planar_arrangement import area, inside_loop, intersections, Point, sub
+from ._request_preparations import TrimRequestPreparations
 from ._root_bindings import BRepVertexRoot, interval_jacobian_full_rank
 
 
@@ -94,9 +119,9 @@ class BRepTessellationPolicy(StrictModule, NonTrainableState):
     samples, ``angular_deflection`` the normal turn between neighboring samples
     (radians); ``trim_samples_per_edge`` is the minimum number of samples per
     coedge in the polygonal trim charts. ``maximum_triangles`` bounds the
-    tessellation size. ``realize=False`` retains exact carriers and topology
+    tessellation size. ``realize=False`` retains source carriers and topology
     without constructing the optional query tessellation. None of these
-    settings changes the exact model identity.
+    settings changes the source model identity.
     """
 
     linear_deflection: float = eqx.field(static=True)
@@ -118,19 +143,31 @@ class BRepTessellationPolicy(StrictModule, NonTrainableState):
         linear = positive_finite_float(linear_deflection, "linear_deflection")
         angular = positive_finite_float(angular_deflection, "angular_deflection")
         if not isinstance(realize, bool):
-            raise TypeError("realize must be a boolean derived-artifact request.")
+            raise TypeError(
+                f"BRepTessellationPolicy.realize must be a boolean derived-artifact request; got {realize!r}"
+            )
         if isinstance(trim_samples_per_edge, bool) or not isinstance(
             trim_samples_per_edge, int
         ):
-            raise TypeError("trim_samples_per_edge must be an integer.")
+            raise TypeError(
+                f"BRepTessellationPolicy.trim_samples_per_edge must be an integer; got {trim_samples_per_edge!r}"
+            )
         if trim_samples_per_edge < 3:
-            raise ValueError("trim_samples_per_edge must be at least three.")
+            raise ValueError(
+                f"BRepTessellationPolicy.trim_samples_per_edge must be at least three; got {trim_samples_per_edge}"
+            )
         if isinstance(maximum_triangles, bool) or not isinstance(maximum_triangles, int):
-            raise TypeError("maximum_triangles must be an integer.")
+            raise TypeError(
+                f"BRepTessellationPolicy.maximum_triangles must be an integer; got {maximum_triangles!r}"
+            )
         if maximum_triangles <= 0:
-            raise ValueError("maximum_triangles must be positive.")
+            raise ValueError(
+                f"BRepTessellationPolicy.maximum_triangles must be positive; got {maximum_triangles}"
+            )
         if angular >= pi:
-            raise ValueError("angular_deflection must be below pi.")
+            raise ValueError(
+                f"BRepTessellationPolicy.angular_deflection must be below pi; got {angular}"
+            )
         self.linear_deflection = linear
         self.angular_deflection = angular
         self.trim_samples_per_edge = trim_samples_per_edge
@@ -154,14 +191,18 @@ class BRepTessellationPolicy(StrictModule, NonTrainableState):
 def _point2(value: ConvertibleToArray, name: str, /) -> tuple[float, float]:
     point = np.asarray(value, dtype=np.float64).reshape(-1)
     if point.shape != (2,) or not np.all(np.isfinite(point)):
-        raise ValueError(f"{name} must be a finite two-dimensional point.")
+        raise ValueError(
+            f"ProfilePlane.coordinate must be a finite two-dimensional point; got {name} shape {point.shape}"
+        )
     return float(point[0]), float(point[1])
 
 
 def _point3(value: ConvertibleToArray, name: str, /) -> np.ndarray:
     point = np.asarray(value, dtype=np.float64).reshape(-1)
     if point.shape != (3,) or not np.all(np.isfinite(point)):
-        raise ValueError(f"{name} must be a finite three-dimensional vector.")
+        raise ValueError(
+            f"ProfilePlane.coordinate must be a finite three-dimensional vector; got {name} shape {point.shape}"
+        )
     return point
 
 
@@ -169,7 +210,9 @@ def _unit3(value: ConvertibleToArray, name: str, /) -> np.ndarray:
     vector = _point3(value, name)
     norm = float(np.linalg.norm(vector))
     if not norm > 0.0:
-        raise ValueError(f"{name} must be nonzero.")
+        raise ValueError(
+            f"ProfilePlane.direction must be nonzero; got {name} norm {norm}"
+        )
     return vector / norm
 
 
@@ -191,22 +234,60 @@ class ProfileArc:
     def __post_init__(self) -> None:
         object.__setattr__(self, "center", _point2(self.center, "center"))
         if not isinstance(self.counterclockwise, bool):
-            raise TypeError("counterclockwise must be a bool.")
+            raise TypeError(
+                f"ProfileArc.counterclockwise must be a bool; got {self.counterclockwise!r}"
+            )
 
 
-type ProfileSegment = ProfileLine | ProfileArc | BSplineCurve
+class ProfileCurveUse(StrictModule, NonTrainableState):
+    """Directed angular use of an unchanged planar analytic conic.
+
+    ``first`` and ``last`` are authored binary64 parameters, not angles inferred
+    from loop vertices. Decreasing ranges reverse traversal. Endpoint coincidence
+    is proved by ``PlanarProfile`` against its optional declared gap rows.
+    """
+
+    curve: CircleCurve | EllipseCurve
+    first: float = eqx.field(static=True)
+    last: float = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self, curve: CircleCurve | EllipseCurve, first: float, last: float
+    ) -> None:
+        first_ = finite_real_scalar(first, "ProfileCurveUse.first")
+        last_ = finite_real_scalar(last, "ProfileCurveUse.last")
+        if curve.ambient_dimension != 2:
+            raise ValueError(
+                "ProfileCurveUse.curve must be a planar conic; "
+                f"got dimension {curve.ambient_dimension}"
+            )
+        if first_ == last_ or abs(last_ - first_) > _TWO_PI:
+            raise ValueError(
+                "ProfileCurveUse.range must cover a positive, at-most-full turn; "
+                f"got {(first_, last_)}"
+            )
+        self.curve = curve
+        self.first = first_
+        self.last = last_
+
+
+type ProfileSegment = ProfileLine | ProfileArc | BSplineCurve | ProfileCurveUse
 
 
 @dataclass(frozen=True, slots=True)
 class ProfileLoop:
     """Closed loop; segment ``i`` joins vertex ``i`` to ``i + 1``.
 
-    A native ``BSplineCurve`` segment uses its complete clamped parameter
+    A native ``BSplineCurve`` segment uses its full clamped parameter
     domain, finite planar controls and positive rational weights. Its boundary
     controls must exactly equal the declared vertices. Closed regular splines
     may form a one-vertex loop. Continuum topology certification belongs to
-    ``PlanarProfile``; mixed native families use the canonical source/chord
+    ``PlanarProfile``; mixed native families use the source/chord
     certificate. Unproved source joins and singular boundaries remain explicit.
+    ``ProfileCurveUse`` retains a native conic and its directed angular range;
+    vertices remain independently authored. ``PlanarProfile`` owns the endpoint
+    gap replay and source-topology certificate for these uses.
     """
 
     vertices: tuple[tuple[float, float], ...]
@@ -216,20 +297,28 @@ class ProfileLoop:
         vertices = tuple(_point2(vertex, "vertex") for vertex in self.vertices)
         segments = tuple(self.segments)
         if not vertices or len(segments) != len(vertices):
-            raise ValueError("A profile loop needs one segment per vertex.")
+            raise ValueError(
+                f"ProfileLoop.segments must provide one segment per vertex; got {len(segments)} segments and {len(vertices)} vertices"
+            )
         if not all(
-            isinstance(segment, (ProfileLine, ProfileArc, BSplineCurve))
+            isinstance(segment, (ProfileLine, ProfileArc, BSplineCurve, ProfileCurveUse))
             for segment in segments
         ):
             raise TypeError(
-                "Profile segments must be lines, arcs or planar BSplineCurve values."
+                "ProfileLoop.segments must be lines, arcs or planar BSplineCurve values; got an unsupported segment"
             )
         if len(vertices) == 1 and isinstance(segments[0], ProfileLine):
-            raise ValueError("A one-vertex loop needs a closed curved carrier.")
+            raise ValueError(
+                "ProfileLoop.segments must use a closed curved carrier for a one-vertex loop; got a line"
+            )
         if len(vertices) == 2 and all(isinstance(s, ProfileLine) for s in segments):
-            raise ValueError("A two-vertex loop needs a curved segment.")
+            raise ValueError(
+                "ProfileLoop.segments must include a curved segment for a two-vertex loop; got two lines"
+            )
         if len(set(vertices)) != len(vertices):
-            raise ValueError("Profile loop vertices must be distinct.")
+            raise ValueError(
+                "ProfileLoop.vertices must be distinct; got repeated vertices"
+            )
         object.__setattr__(self, "vertices", vertices)
         object.__setattr__(self, "segments", segments)
 
@@ -267,7 +356,9 @@ class ProfilePlane:
             or abs(np.linalg.norm(y_axis) - 1.0) > _GEOMETRIC_TOLERANCE
             or abs(float(x_axis @ y_axis)) > _GEOMETRIC_TOLERANCE
         ):
-            raise ValueError("Profile plane axes must be orthonormal.")
+            raise ValueError(
+                "ProfilePlane.axes must be orthonormal; got a nonorthonormal frame"
+            )
         object.__setattr__(self, "origin", tuple(float(v) for v in origin))
         object.__setattr__(self, "x_axis", tuple(float(v) for v in x_axis))
         object.__setattr__(self, "y_axis", tuple(float(v) for v in y_axis))
@@ -293,7 +384,7 @@ class ProfilePlane:
 
 @dataclass(frozen=True, slots=True)
 class _ProfileEdge:
-    """Canonical traversal-ordered segment: 2D p-curve, range and end points.
+    """Traversal-ordered segment: 2D p-curve, range and end points.
 
     ``turn`` is +1 (-1) for counterclockwise (clockwise) arcs and 0 otherwise.
     """
@@ -305,6 +396,7 @@ class _ProfileEdge:
     end: tuple[float, float]
     turn: float
     radius: float
+    authored_range: bool = False
 
 
 def _arc_angle(
@@ -325,7 +417,7 @@ def rational_circular_arc(
     Each Bernstein piece spans at most a quarter turn of the circle
     ``(center, radius)`` with its tangent-intersection control and weight
     ``cos(step / 2)``. The boundary controls are exactly ``start`` and
-    ``end``, so the carrier is an exact rational conic spline through the
+    ``end``, so the carrier is a rational conic spline through the
     authored vertices: interior junctions follow the authored circle, and an
     end point off that circle by a solver residual perturbs only its own
     conic piece. Nothing is sampled or refitted.
@@ -336,7 +428,9 @@ def rational_circular_arc(
     first = atan2(start_[1] - cy, start_[0] - cx)
     sweep = (atan2(end_[1] - cy, end_[0] - cx) - first) % _TWO_PI
     if start_ == end_ or not sweep > 0.0:
-        raise ValueError("A circular arc requires distinct end directions.")
+        raise ValueError(
+            "rational_circular_arc.endpoints must have distinct end directions; got a zero sweep"
+        )
     pieces = max(1, ceil(sweep / (0.5 * pi)))
     step = sweep / pieces
     weight = cos(0.5 * step)
@@ -374,9 +468,9 @@ def _endpoint_line_curve(
     end: np.ndarray,
     /,
 ) -> LineCurve | BSplineCurve:
-    """Publish a line specialization only when both endpoint images are exact.
+    """Publish a line specialization when endpoint images agree in rational arithmetic.
 
-    Otherwise the endpoint controls are the actual carrier, on the same
+    Otherwise the endpoint controls define the carrier, on the same
     declared interval; a topology certificate never substitutes another curve.
     """
     exact_origin = tuple(Fraction(float(value)) for value in origin)
@@ -396,10 +490,103 @@ def _endpoint_line_curve(
     return LineCurve(origin, direction)
 
 
+def _profile_conic_edge(
+    start: tuple[float, float], end: tuple[float, float], segment: ProfileCurveUse, /
+) -> _ProfileEdge:
+    """Lower directed source parameters by an algebraic reflection when needed."""
+    curve, first, last = segment.curve, segment.first, segment.last
+    pcurve = curve if first < last else _reflected_conic(curve)
+    first_, last_ = (first, last) if first < last else (-first, -last)
+    first_axis = np.asarray(pcurve.first_axis)
+    second_axis = np.asarray(pcurve.second_axis)
+    determinant = rational_cross_2d(
+        (Fraction(float(first_axis[0])), Fraction(float(first_axis[1]))),
+        (Fraction(float(second_axis[0])), Fraction(float(second_axis[1]))),
+    )
+    turn = 1.0 if determinant > 0 else -1.0
+    radius = float(pcurve.radius) if isinstance(pcurve, CircleCurve) else 0.0
+    return _ProfileEdge(pcurve, first_, last_, start, end, turn, radius, True)
+
+
+def _profile_spline_edge(
+    start: tuple[float, float], end: tuple[float, float], segment: BSplineCurve, /
+) -> _ProfileEdge:
+    """Validate the source spline's planar, positive-weight, clamped boundary."""
+    if segment.ambient_dimension != 2:
+        raise ValueError(
+            f"ProfileLoop.spline must have two-dimensional control points; got dimension {segment.ambient_dimension}"
+        )
+    controls = np.asarray(segment.control_points)
+    weights = np.asarray(segment.weights)
+    knots = np.asarray(segment.knots)
+    if not np.all(np.isfinite(controls)) or not np.all(np.isfinite(weights)):
+        raise ValueError(
+            "ProfileLoop.spline must have finite controls and weights; got nonfinite coefficients"
+        )
+    if np.any(weights <= 0.0):
+        raise ValueError(
+            "ProfileLoop.spline_weights must be positive rational weights; got nonpositive weights"
+        )
+    first, last = segment.validate_range(
+        float(knots[segment.degree]), float(knots[-segment.degree - 1])
+    )
+    if not (
+        np.all(knots[: segment.degree + 1] == first)
+        and np.all(knots[-segment.degree - 1 :] == last)
+    ):
+        raise ValueError(
+            "ProfileLoop.spline must be clamped at its segment boundaries; got an unclamped knot bank"
+        )
+    if tuple(controls[0]) != start or tuple(controls[-1]) != end:
+        raise ValueError(
+            "ProfileLoop.spline_boundary_controls must exactly match its loop vertices; got mismatched endpoints"
+        )
+    if np.array_equal(controls[0], controls[1]) or np.array_equal(
+        controls[-1], controls[-2]
+    ):
+        raise ValueError(
+            "ProfileLoop.spline_boundary must have nonzero derivative; got an unresolved zero-derivative boundary"
+        )
+    return _ProfileEdge(segment, first, last, start, end, 0.0, 0.0)
+
+
+def _profile_arc_edge(
+    start: tuple[float, float], end: tuple[float, float], segment: ProfileArc, /
+) -> _ProfileEdge:
+    """Retain the legacy rational radial endpoint predicate and native-turn range."""
+    center = segment.center
+    sign = 1.0 if segment.counterclockwise else -1.0
+    radius = float(np.hypot(start[0] - center[0], start[1] - center[1]))
+    first_radius_squared = sum(
+        ((Fraction(a) - Fraction(b)) ** 2 for a, b in zip(start, center, strict=True)),
+        Fraction(),
+    )
+    last_radius_squared = sum(
+        ((Fraction(a) - Fraction(b)) ** 2 for a, b in zip(end, center, strict=True)),
+        Fraction(),
+    )
+    if not radius > 0.0 or first_radius_squared != last_radius_squared:
+        raise ValueError(
+            "ProfileArc.endpoints must be equidistant from its center with positive radius; got mismatched endpoint radii"
+        )
+    first = _arc_angle(start, center, sign)
+    last = _arc_angle(end, center, sign)
+    while last <= first:
+        last += _TWO_PI
+    if start != end and last - first >= _TWO_PI:
+        last -= _TWO_PI
+    if start == end:
+        last = first + _TWO_PI
+    pcurve = CircleCurve(center, (1.0, 0.0), (0.0, sign), radius)
+    return _ProfileEdge(pcurve, first, last, start, end, sign, radius)
+
+
 def _profile_edge(
     start: tuple[float, float], end: tuple[float, float], segment: ProfileSegment, /
 ) -> _ProfileEdge:
     match segment:
+        case ProfileCurveUse():
+            return _profile_conic_edge(start, end, segment)
         case ProfileLine():
             start_, end_ = (
                 np.asarray(start, dtype=np.float64),
@@ -408,7 +595,7 @@ def _profile_edge(
             delta = end_ - start_
             length = float(np.linalg.norm(delta))
             if not length > 0.0:
-                raise ValueError("A sketch line must have positive length.")
+                raise ValueError(f"ProfileLine.length must be positive; got {length}")
             return _ProfileEdge(
                 _endpoint_line_curve(start_, delta / length, 0.0, length, start_, end_),
                 0.0,
@@ -418,72 +605,14 @@ def _profile_edge(
                 0.0,
                 0.0,
             )
-        case ProfileArc(center=center, counterclockwise=counterclockwise):
-            sign = 1.0 if counterclockwise else -1.0
-            radius = float(np.hypot(start[0] - center[0], start[1] - center[1]))
-            first_radius_squared = sum(
-                (
-                    (Fraction(a) - Fraction(b)) ** 2
-                    for a, b in zip(start, center, strict=True)
-                ),
-                Fraction(),
-            )
-            last_radius_squared = sum(
-                (
-                    (Fraction(a) - Fraction(b)) ** 2
-                    for a, b in zip(end, center, strict=True)
-                ),
-                Fraction(),
-            )
-            if not radius > 0.0 or first_radius_squared != last_radius_squared:
-                raise ValueError("Arc end points must be equidistant from its center.")
-            first = _arc_angle(start, center, sign)
-            last = _arc_angle(end, center, sign)
-            while last <= first:
-                last += _TWO_PI
-            if start != end and last - first >= _TWO_PI:
-                last -= _TWO_PI
-            if start == end:
-                last = first + _TWO_PI
-            pcurve = CircleCurve(center, (1.0, 0.0), (0.0, sign), radius)
-            return _ProfileEdge(pcurve, first, last, start, end, sign, radius)
+        case ProfileArc():
+            return _profile_arc_edge(start, end, segment)
         case BSplineCurve():
-            if segment.ambient_dimension != 2:
-                raise ValueError(
-                    "A profile spline must have two-dimensional control points."
-                )
-            controls = np.asarray(segment.control_points)
-            weights = np.asarray(segment.weights)
-            knots = np.asarray(segment.knots)
-            if not np.all(np.isfinite(controls)) or not np.all(np.isfinite(weights)):
-                raise ValueError("Profile spline controls and weights must be finite.")
-            if np.any(weights <= 0.0):
-                raise ValueError(
-                    "Profile spline topology requires positive rational weights."
-                )
-            first, last = segment.validate_range(
-                float(knots[segment.degree]), float(knots[-segment.degree - 1])
-            )
-            if not (
-                np.all(knots[: segment.degree + 1] == first)
-                and np.all(knots[-segment.degree - 1 :] == last)
-            ):
-                raise ValueError(
-                    "A profile spline must be clamped at its segment boundaries."
-                )
-            if tuple(controls[0]) != start or tuple(controls[-1]) != end:
-                raise ValueError(
-                    "Profile spline boundary controls must exactly match its loop vertices."
-                )
-            if np.array_equal(controls[0], controls[1]) or np.array_equal(
-                controls[-1], controls[-2]
-            ):
-                raise ValueError(
-                    "Profile spline topology has an unresolved zero-derivative boundary."
-                )
-            return _ProfileEdge(segment, first, last, start, end, 0.0, 0.0)
+            return _profile_spline_edge(start, end, segment)
         case _:
-            raise TypeError("Unsupported sketch segment.")
+            raise TypeError(
+                f"ProfileLoop.segment must be a supported sketch segment; got {type(segment).__name__}"
+            )
 
 
 def _loop_edges(loop: ProfileLoop, /) -> tuple[_ProfileEdge, ...]:
@@ -496,7 +625,7 @@ def _loop_edges(loop: ProfileLoop, /) -> tuple[_ProfileEdge, ...]:
 
 @dataclass(frozen=True, slots=True)
 class _ProfileHull:
-    """Exact source Bernstein restriction used only for topology certification."""
+    """Source Bernstein restriction used for topology certification."""
 
     controls: tuple[tuple[Fraction, ...], ...]
 
@@ -539,7 +668,7 @@ def _source_profile_hulls(edge: _ProfileEdge, /) -> list[_ProfileHull]:
                         value = controls[row, column]
                         if not isinstance(value, Fraction):
                             raise TypeError(
-                                "Exact spline topology requires source rational coefficients."
+                                f"PlanarProfile.spline_coefficients must be source rational coefficients; got {type(value).__name__}"
                             )
                         values.append(value)
                     rows.append(tuple(values))
@@ -547,13 +676,13 @@ def _source_profile_hulls(edge: _ProfileEdge, /) -> list[_ProfileHull]:
                 points = hull.points
                 if points[0] == points[1] or points[-1] == points[-2]:
                     raise ValueError(
-                        "Profile spline topology has an unresolved zero-derivative boundary."
+                        "PlanarProfile.spline_boundary must have nonzero derivative; got an unresolved zero-derivative boundary"
                     )
                 result.append(hull)
             return result
         case _:
             raise TypeError(
-                "Exact rational profile hulls require native line or spline carriers."
+                "PlanarProfile.hull_carrier must be a native line or spline carrier; got an unsupported carrier"
             )
 
 
@@ -576,7 +705,7 @@ def _regular_profile_hull(hull: _ProfileHull, /) -> bool:
 def _supporting_line_traces(
     points: tuple[Point, ...], values: tuple[Fraction, ...], plane: Fraction, /
 ) -> tuple[tuple[Point, Point], ...]:
-    """Exact contact of a regular restriction's isotopy family with a line.
+    """Return contact of a regular restriction's isotopy family with a line.
 
     The hull lies on one closed side of the line. A straight-line homotopy
     from the source curve to its control polygon is on the line only where
@@ -599,6 +728,29 @@ def _supporting_line_traces(
     )
 
 
+def _profile_plane_separates(
+    left: tuple[Point, ...],
+    right: tuple[Point, ...],
+    left_projection: tuple[Fraction, ...],
+    right_projection: tuple[Fraction, ...],
+    allowed: frozenset[Point],
+) -> bool:
+    plane = max(left_projection)
+    boundary = min(right_projection)
+    if plane < boundary:
+        return True
+    if plane != boundary:
+        return False
+    contacts = [
+        intersections(first_trace, second_trace)
+        for first_trace in _supporting_line_traces(left, left_projection, plane)
+        for second_trace in _supporting_line_traces(right, right_projection, plane)
+    ]
+    return all(
+        len(found) <= 1 and all(point in allowed for point in found) for found in contacts
+    )
+
+
 def _separated_profile_hulls(
     first: _ProfileHull, second: _ProfileHull, allowed: frozenset[Point], /
 ) -> bool:
@@ -611,35 +763,25 @@ def _separated_profile_hulls(
                     continue
                 pa = tuple(p[0] * normal[0] + p[1] * normal[1] for p in a)
                 pb = tuple(p[0] * normal[0] + p[1] * normal[1] for p in b)
-                for left, right, lp, rp in ((a, b, pa, pb), (b, a, pb, pa)):
-                    if max(lp) < min(rp):
-                        return True
-                    if max(lp) != min(rp):
-                        continue
-                    plane = max(lp)
-                    contacts = [
-                        _intersections(first_trace, second_trace)
-                        for first_trace in _supporting_line_traces(left, lp, plane)
-                        for second_trace in _supporting_line_traces(right, rp, plane)
-                    ]
-                    if all(
-                        len(found) <= 1 and all(p in allowed for p in found)
-                        for found in contacts
-                    ):
-                        return True
+                if _profile_plane_separates(a, b, pa, pb, allowed) or (
+                    _profile_plane_separates(b, a, pb, pa, allowed)
+                ):
+                    return True
     return False
 
 
-def _certified_profile_polygons(
-    edges: tuple[tuple[_ProfileEdge, ...], ...], /
-) -> tuple[tuple[Point, ...], ...]:
-    """Certify an isotopy from source curves to exact control polygons.
+class _ProfileHullWorkset(StrictModule):
+    hulls: list[list[_ProfileHull]]
 
-    Each Bernstein restriction has a strict monotone projection; separating
-    source hull planes exclude every unintended contact during the isotopy.
-    Thus polygon orientation/containment is a consequence of a continuum
-    certificate, never authority inferred from a sampled curve.
-    """
+
+class _ProfileSubdivision(StrictModule):
+    loop: int
+    hull: int
+
+
+def _prepare_profile_hulls(
+    edges: tuple[tuple[_ProfileEdge, ...], ...],
+) -> _ProfileHullWorkset:
     hulls = [
         [hull for edge in loop for hull in _source_profile_hulls(edge)] for loop in edges
     ]
@@ -649,91 +791,142 @@ def _certified_profile_polygons(
             for first, second in zip(loop, (*loop[1:], loop[0]), strict=True)
         ):
             raise ValueError(
-                "Source spline restrictions must close exactly at every profile boundary."
+                "PlanarProfile.spline_restrictions must close exactly at every profile boundary; got an open source junction"
             )
-    for _ in range(256):
-        split: tuple[int, int] | None = None
-        for loop_index, loop in enumerate(hulls):
-            for index, hull in enumerate(loop):
-                if not _regular_profile_hull(hull):
-                    split = (loop_index, index)
-                    break
+    return _ProfileHullWorkset(hulls)
+
+
+def _profile_regularity_split(
+    workset: _ProfileHullWorkset,
+) -> _ProfileSubdivision | None:
+    for loop_index, loop in enumerate(workset.hulls):
+        for index, hull in enumerate(loop):
+            if not _regular_profile_hull(hull):
+                return _ProfileSubdivision(loop_index, index)
+    return None
+
+
+def _profile_pair_split(
+    workset: _ProfileHullWorkset,
+    li: int,
+    hi: int,
+    first: _ProfileHull,
+    lj: int,
+    hj: int,
+    second: _ProfileHull,
+) -> _ProfileSubdivision | None:
+    allowed: set[Point] = set()
+    if li == lj:
+        if (hi + 1) % len(workset.hulls[li]) == hj:
+            allowed.add(first.points[-1])
+        if (hj + 1) % len(workset.hulls[li]) == hi:
+            allowed.add(second.points[-1])
+    if _separated_profile_hulls(first, second, frozenset(allowed)):
+        return None
+    first_size = sum(
+        (a - b) ** 2 for a, b in zip(first.points[0], first.points[-1], strict=True)
+    )
+    second_size = sum(
+        (a - b) ** 2 for a, b in zip(second.points[0], second.points[-1], strict=True)
+    )
+    return (
+        _ProfileSubdivision(li, hi)
+        if len(first.controls) > 2
+        and (len(second.controls) == 2 or first_size >= second_size)
+        else _ProfileSubdivision(lj, hj)
+    )
+
+
+def _profile_contact_split(
+    workset: _ProfileHullWorkset,
+) -> _ProfileSubdivision | None:
+    entries = [
+        (li, hi, hull)
+        for li, loop in enumerate(workset.hulls)
+        for hi, hull in enumerate(loop)
+    ]
+    for index, (li, hi, first) in enumerate(entries):
+        for lj, hj, second in entries[index + 1 :]:
+            split = _profile_pair_split(workset, li, hi, first, lj, hj, second)
             if split is not None:
-                break
+                return split
+    return None
+
+
+def _profile_polygons(
+    edges: tuple[tuple[_ProfileEdge, ...], ...], /
+) -> tuple[tuple[Point, ...], ...]:
+    """Return control polygons after proving the source curves' isotopy.
+
+    Strict monotone projections establish regularity, and separating source
+    hull planes exclude unintended contacts before polygon containment is used.
+    """
+    workset = _prepare_profile_hulls(edges)
+    hulls = workset.hulls
+    for _ in range(256):
+        split = _profile_regularity_split(workset)
         if split is None:
-            entries = [
-                (li, hi, hull)
-                for li, loop in enumerate(hulls)
-                for hi, hull in enumerate(loop)
-            ]
-            for index, (li, hi, first) in enumerate(entries):
-                for lj, hj, second in entries[index + 1 :]:
-                    allowed: set[Point] = set()
-                    if li == lj:
-                        if (hi + 1) % len(hulls[li]) == hj:
-                            allowed.add(first.points[-1])
-                        if (hj + 1) % len(hulls[li]) == hi:
-                            allowed.add(second.points[-1])
-                    if not _separated_profile_hulls(first, second, frozenset(allowed)):
-                        first_size = sum(
-                            (a - b) ** 2
-                            for a, b in zip(
-                                first.points[0], first.points[-1], strict=True
-                            )
-                        )
-                        second_size = sum(
-                            (a - b) ** 2
-                            for a, b in zip(
-                                second.points[0], second.points[-1], strict=True
-                            )
-                        )
-                        split = (
-                            (li, hi)
-                            if len(first.controls) > 2
-                            and (len(second.controls) == 2 or first_size >= second_size)
-                            else (lj, hj)
-                        )
-                        break
-                if split is not None:
-                    break
+            split = _profile_contact_split(workset)
         if split is None:
             polygons = tuple(
                 tuple(p for hull in loop for p in hull.points[:-1]) for loop in hulls
             )
             _require_profile_containment(polygons)
             return polygons
-        li, hi = split
+        li, hi = split.loop, split.hull
         hull = hulls[li][hi]
         if len(hull.controls) == 2:
-            raise ValueError("Profile loops touch, cross or overlap.")
+            raise ValueError(
+                "PlanarProfile.loops must not touch, cross or overlap; got intersecting source hulls"
+            )
         hulls[li][hi : hi + 1] = hull.split()
     raise ValueError(
-        "Profile topology is unresolved: singularity or source-hull subdivision budget."
+        "PlanarProfile.topology must resolve within its source-hull subdivision budget; got unresolved singularity or separation"
     )
 
 
 def _require_profile_containment(polygons: tuple[tuple[Point, ...], ...], /) -> None:
-    if any(_area(polygon) == 0 for polygon in polygons):
-        raise ValueError("A profile loop must enclose positive area.")
+    if any(area(polygon) == 0 for polygon in polygons):
+        raise ValueError(
+            "PlanarProfile.loops must enclose positive area; got a zero-area loop"
+        )
     for index, hole in enumerate(polygons[1:]):
-        if not _inside_loop(hole[0], polygons[0]):
-            raise ValueError("Every hole must lie inside the outer loop.")
+        if not inside_loop(hole[0], polygons[0]):
+            raise ValueError(
+                "PlanarProfile.holes must lie inside the outer loop; got an exterior hole"
+            )
         for other in polygons[index + 2 :]:
-            if _inside_loop(hole[0], other) or _inside_loop(other[0], hole):
-                raise ValueError("Holes must not be nested.")
+            if inside_loop(hole[0], other) or inside_loop(other[0], hole):
+                raise ValueError(
+                    "PlanarProfile.holes must not be nested; got nested holes"
+                )
 
 
-def _source_trim_inside(loop: CurveTrimLoop, point: tuple[float, float], /) -> bool:
-    classification = TrimDomain(loop).classify(np.asarray((point,), dtype=np.float64))
+def _source_trim_inside(
+    loop: CurveTrimLoop,
+    point: tuple[float, float],
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
+    classification = TrimDomain(loop).classify(
+        np.asarray((point,), dtype=np.float64), preparations=preparations, budget=budget
+    )
     if not bool(classification.resolved[0]) or bool(classification.boundary[0]):
         raise ValueError(
-            "Mixed profile source containment has an unresolved boundary certificate."
+            "PlanarProfile.containment must resolve away from the source boundary; got an unresolved boundary certificate"
         )
     return bool(classification.inside[0])
 
 
 def _require_mixed_profile_relations(
-    loops: tuple[CurveTrimLoop, ...], edges: tuple[tuple[_ProfileEdge, ...], ...], /
+    loops: tuple[CurveTrimLoop, ...],
+    edges: tuple[tuple[_ProfileEdge, ...], ...],
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
     for first in range(len(edges)):
         for second in range(first + 1, len(edges)):
@@ -742,100 +935,558 @@ def _require_mixed_profile_relations(
                     result = intersect_curve_ranges(
                         CurveRange(a.pcurve, a.first, a.last),
                         CurveRange(b.pcurve, b.first, b.last),
+                        preparations=preparations,
+                        coordinate_budget=budget,
                     )
                     if not result.complete:
                         raise ValueError(
-                            "Mixed profile cross-loop source intersections are unresolved."
+                            "PlanarProfile.cross_loop_intersections must resolve; got unresolved source intersections"
                         )
                     if result.points or result.coincident:
-                        raise ValueError("Profile loops must not touch or cross.")
+                        raise ValueError(
+                            "PlanarProfile.loops must not touch or cross; got cross-loop contact"
+                        )
     for index in range(1, len(loops)):
         point = edges[index][0].start
-        if not _source_trim_inside(loops[0], point):
-            raise ValueError("Every hole must lie inside the outer loop.")
-        for other in range(index + 1, len(loops)):
-            if _source_trim_inside(loops[other], point) or _source_trim_inside(
-                loops[index], edges[other][0].start
-            ):
-                raise ValueError("Holes must not be nested.")
-
-
-def _certificate_segment(edge: _ProfileEdge, /) -> CurveTrimSegment:
-    """The actual source carrier, with native-turn endpoints for closed circles."""
-    match edge.pcurve:
-        case CircleCurve() if edge.start == edge.end:
-            phase = Fraction(edge.first)
-            return CurveTrimSegment(
-                edge.pcurve,
-                edge.first,
-                edge.last,
-                first_root=NativePeriodEndpoint(edge.pcurve, rational=phase, turns=0),
-                last_root=NativePeriodEndpoint(edge.pcurve, rational=phase, turns=1),
-            )
-        case _:
-            return CurveTrimSegment(edge.pcurve, edge.first, edge.last)
-
-
-def _certified_mixed_profile_polygons(
-    edges: tuple[tuple[_ProfileEdge, ...], ...], /
-) -> tuple[tuple[Point, ...], ...]:
-    """Compose canonical continuum certificates for mixed native curve loops."""
-    curves = tuple(tuple(_certificate_segment(edge) for edge in loop) for loop in edges)
-    for loop in curves:
-        if any(
-            not first.shares_endpoint(second)
-            for first, second in zip(loop, (*loop[1:], loop[0]), strict=True)
+        if not _source_trim_inside(
+            loops[0], point, preparations=preparations, budget=budget
         ):
             raise ValueError(
-                "Mixed profile junctions require exact source endpoint identity."
+                "PlanarProfile.holes must lie inside the outer loop; got an exterior hole"
             )
+        for other in range(index + 1, len(loops)):
+            if _source_trim_inside(
+                loops[other], point, preparations=preparations, budget=budget
+            ) or _source_trim_inside(
+                loops[index],
+                edges[other][0].start,
+                preparations=preparations,
+                budget=budget,
+            ):
+                raise ValueError(
+                    "PlanarProfile.holes must not be nested; got nested holes"
+                )
+
+
+def _profile_endpoint_gap_row(
+    edge: _ProfileEdge,
+    row: tuple[float, float],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[float, float]:
+    """Certify one source endpoint pair against its two declared limits."""
+    if len(row) != 2:
+        raise ValueError(
+            "PlanarProfile.endpoint_gap_bounds must contain endpoint pairs; "
+            f"got {len(row)} values"
+        )
+    limits = tuple(
+        nonnegative_real_scalar(value, "PlanarProfile.endpoint_gap_bounds")
+        for value in row
+    )
+    bounds = endpoint_gap_bounds(
+        edge.pcurve,
+        (edge.first, edge.last),
+        np.asarray((edge.start, edge.end), dtype=np.float64),
+        budget=budget,
+        endpoint_roots=_profile_period_endpoints(edge, budget=budget),
+    )
+    if any(bound > limit for bound, limit in zip(bounds, limits, strict=True)):
+        raise ValueError(
+            "PlanarProfile.endpoint_gap_bounds must cover certified source gaps; "
+            f"got bounds {bounds} above limits {limits}"
+        )
+    return bounds
+
+
+def _profile_endpoint_gaps(
+    edges: tuple[tuple[_ProfileEdge, ...], ...],
+    declared: tuple[tuple[tuple[float, float], ...], ...] | None,
+    /,
+    *,
+    conic_use: bool,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[tuple[float, float], ...], ...] | None:
+    """Replay each caller bound against immutable carrier parameters and vertices."""
+    if declared is None and not conic_use:
+        return None
+    if declared is not None and (
+        len(declared) != len(edges)
+        or any(len(rows) != len(loop) for rows, loop in zip(declared, edges, strict=True))
+    ):
+        raise ValueError(
+            "PlanarProfile.endpoint_gap_bounds must align with every source edge; "
+            "got mismatched rows"
+        )
+    certified = tuple(
+        tuple(
+            _profile_endpoint_gap_row(
+                edge,
+                (0.0, 0.0) if declared is None else declared[index][edge_index],
+                budget=budget,
+            )
+            for edge_index, edge in enumerate(loop)
+        )
+        for index, loop in enumerate(edges)
+    )
+    has_gap = any(bound for rows in certified for row in rows for bound in row)
+    return certified if has_gap else None
+
+
+def _quadrant_profile_endpoint(
+    curve: CircleCurve,
+    point: tuple[float, float],
+    parameter: float,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
+) -> NativePeriodEndpoint | None:
+    """Prove a legacy authored vertex's rational quarter-turn carrier image."""
+    quarter = round(parameter / (0.5 * pi))
+    if parameter != quarter * (0.5 * pi):
+        return None
+    cosine, sine = ((1, 0), (0, 1), (-1, 0), (0, -1))[quarter % 4]
+    center = rational_vector(np.asarray(curve.center))
+    first = rational_vector(np.asarray(curve.first_axis))
+    second = rational_vector(np.asarray(curve.second_axis))
+    radius = Fraction(float(curve.radius))
+    expected = tuple(
+        origin + radius * (cosine * a + sine * b)
+        for origin, a, b in zip(center, first, second, strict=True)
+    )
+    if expected != rational_vector(point):
+        return None
+    return NativePeriodEndpoint(
+        curve, turns=Fraction(quarter, 4), budget=budget, preparations=preparations
+    )
+
+
+def _profile_period_endpoints(
+    edge: _ProfileEdge,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
+) -> tuple[NativePeriodEndpoint | None, NativePeriodEndpoint | None]:
+    """Retain mathematical phase atoms only for the legacy vertex-authored arcs."""
+    if edge.authored_range or not isinstance(edge.pcurve, CircleCurve):
+        return None, None
+    if edge.start == edge.end:
+        phase = Fraction(edge.first)
+        return (
+            NativePeriodEndpoint(
+                edge.pcurve,
+                rational=phase,
+                turns=0,
+                budget=budget,
+                preparations=preparations,
+            ),
+            NativePeriodEndpoint(
+                edge.pcurve,
+                rational=phase,
+                turns=1,
+                budget=budget,
+                preparations=preparations,
+            ),
+        )
+    return (
+        _quadrant_profile_endpoint(
+            edge.pcurve,
+            edge.start,
+            edge.first,
+            budget=budget,
+            preparations=preparations,
+        ),
+        _quadrant_profile_endpoint(
+            edge.pcurve,
+            edge.end,
+            edge.last,
+            budget=budget,
+            preparations=preparations,
+        ),
+    )
+
+
+def _certificate_segment(
+    edge: _ProfileEdge,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
+) -> CurveTrimSegment:
+    """Bind source trims to proved legacy periodic atoms without changing carriers."""
+    first, last = _profile_period_endpoints(
+        edge, budget=budget, preparations=preparations
+    )
+    return CurveTrimSegment(
+        edge.pcurve,
+        edge.first,
+        edge.last,
+        first_root=first,
+        last_root=last,
+        budget=budget,
+        preparations=preparations,
+    )
+
+
+def _bounded_profile_trim_loop(
+    curves: tuple[CurveTrimSegment, ...],
+    edges: tuple[_ProfileEdge, ...],
+    partition: np.ndarray,
+    gaps: tuple[tuple[float, float], ...] | None,
+    /,
+    *,
+    tolerance: float,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> CurveTrimLoop:
+    """Build the E-039 homotopy cover, retaining authored junction vertices."""
+    relative_closure = 0.0
+    chords = None
+    if gaps is not None:
+        points = tuple(
+            np.asarray(
+                curve.evaluate(
+                    jnp.asarray(curve.parameter_interval),
+                    budget=budget,
+                    preparations=preparations,
+                ),
+                dtype=np.float64,
+            )
+            for curve in curves
+        )
+        scale = max(1.0, float(np.max(np.abs(np.asarray(points)))))
+        closure = max(
+            float(np.nextafter(row[1] + gaps[(index + 1) % len(gaps)][0], np.inf))
+            for index, row in enumerate(gaps)
+        )
+        relative_closure = float(np.nextafter(closure / scale, np.inf))
+        chord_rows = []
+        for curve, edge in zip(curves, edges, strict=True):
+            values = np.array(
+                curve.evaluate(
+                    jnp.asarray(partition[:-1]),
+                    budget=budget,
+                    preparations=preparations,
+                ),
+                dtype=np.float64,
+                copy=True,
+            )
+            values[0] = edge.start
+            chord_rows.extend(values)
+        chords = np.asarray(chord_rows, dtype=np.float64)
+    loop = CurveTrimLoop(
+        curves,
+        tolerance=tolerance,
+        maximum_arcs=8192,
+        arc_parameters=(partition,) * len(curves),
+        chord_vertices=chords,
+        relative_closure_tolerance=relative_closure,
+        budget=budget,
+        preparations=preparations,
+    )
+    if gaps is None:
+        return loop
+    # Junction bridges include the authored shared vertex as well as both
+    # independently enclosed source endpoint images.
+    vertices = np.asarray([edge.end for edge in edges], dtype=np.float64)
+    return eqx.tree_at(
+        lambda source: (source.junction_lower, source.junction_upper),
+        loop,
+        (
+            np.minimum(loop.junction_lower, vertices),
+            np.maximum(loop.junction_upper, vertices),
+        ),
+    )
+
+
+def _profile_covers_disjoint(
+    loops: tuple[CurveTrimLoop, ...], /, *, budget: CoordinateEnclosureBudget
+) -> bool:
+    """Separate inter-loop homotopy enclosures, not sampled polylines."""
+    for index, first in enumerate(loops):
+        for second in loops[index + 1 :]:
+            for lower, upper in zip(first.arc_lower, first.arc_upper, strict=True):
+                budget.reserve(second.arc_lower.shape[0])
+                if np.any(
+                    np.all(
+                        (upper >= second.arc_lower) & (second.arc_upper >= lower), axis=1
+                    )
+                ):
+                    return False
+    return True
+
+
+def _profile_cover_inputs(
+    edges: tuple[tuple[_ProfileEdge, ...], ...],
+    /,
+    *,
+    require_exact_joins: bool,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[tuple[CurveTrimSegment, ...], ...], float]:
+    """Prepare source trims and a fixed chart-cover scale for E-039."""
+    curves = tuple(
+        tuple(
+            _certificate_segment(edge, budget=budget, preparations=preparations)
+            for edge in loop
+        )
+        for loop in edges
+    )
+    if require_exact_joins:
+        for loop in curves:
+            if any(
+                not first.shares_endpoint(
+                    second, preparations=preparations, budget=budget
+                )
+                for first, second in zip(loop, (*loop[1:], loop[0]), strict=True)
+            ):
+                raise ValueError(
+                    "PlanarProfile.junctions must retain source endpoint identity; got incompatible source endpoints"
+                )
     boxes = np.stack(
         [
-            edge.pcurve.bounding_box(edge.first, edge.last)
+            edge.pcurve.bounding_box(
+                edge.first, edge.last, preparations=preparations, budget=budget
+            )
             for loop in edges
             for edge in loop
         ]
     )
-    tolerance = float(
+    scale = float(
         np.linalg.norm(np.max(boxes[:, 1], axis=0) - np.min(boxes[:, 0], axis=0))
     )
-    if tolerance == 0.0:
-        raise ValueError("A profile loop must enclose positive area.")
+    if scale == 0.0:
+        raise ValueError(
+            "PlanarProfile.loops must enclose positive area; got a zero-area loop"
+        )
+    return curves, scale
+
+
+def _affine_profile_homotopy_hull(
+    loop: CurveTrimLoop, arc: int, /, *, budget: CoordinateEnclosureBudget
+) -> _ProfileHull | None:
+    """Enclose an affine source/chord homotopy over one prescribed arc."""
+    segment = loop.curves[int(loop.arc_curves[arc])]
+    if not isinstance(segment, CurveTrimSegment) or not isinstance(
+        segment.curve, AbstractCurve
+    ):
+        return None
+    if segment.first_root is not None or segment.last_root is not None:
+        return None
+    coefficients = _admitted_affine_chord_coefficients(segment.curve, budget=budget)
+    if coefficients is None:
+        return None
+    origin, direction = coefficients
+    scalars = rational_points(
+        np.asarray(
+            (
+                (segment.first, segment.last),
+                (loop.arc_first[arc], loop.arc_last[arc]),
+            ),
+            dtype=np.float64,
+        ),
+        budget=budget,
+    )
+    reserve_fraction_work((*coefficients, *scalars), 24, 20, 8, budget=budget)
+    points = []
+    for local in scalars[1]:
+        fraction = 1 - local if segment.reversed else local
+        parameter = scalars[0][0] + fraction * (scalars[0][1] - scalars[0][0])
+        points.append(
+            (
+                origin[0] + parameter * direction[0],
+                origin[1] + parameter * direction[1],
+            )
+        )
+    points.extend(
+        rational_points(
+            np.stack((loop.chords[arc], loop.chords[(arc + 1) % loop.chords.shape[0]])),
+            budget=budget,
+        )
+    )
+    source_index = int(loop.arc_curves[arc])
+    junctions = []
+    if loop.arc_first[arc] == 0.0:
+        junctions.append((source_index - 1) % len(loop.curves))
+    if loop.arc_last[arc] == 1.0:
+        junctions.append(source_index)
+    for junction in junctions:
+        lower, upper = loop.junction_lower[junction], loop.junction_upper[junction]
+        points.extend(
+            rational_points(
+                np.asarray(
+                    (
+                        (lower[0], lower[1]),
+                        (lower[0], upper[1]),
+                        (upper[0], lower[1]),
+                        (upper[0], upper[1]),
+                    ),
+                    dtype=np.float64,
+                ),
+                budget=budget,
+            )
+        )
+    budget.reserve(len(points), 64 * len(points))
+    reserve_fraction_work(tuple(points), len(points), 1, 1, budget=budget)
+    weight = Fraction(1)
+    return _ProfileHull(
+        tuple(
+            (
+                rational_coefficient(x, role="brep.profile_homotopy_coordinate"),
+                rational_coefficient(y, role="brep.profile_homotopy_coordinate"),
+                weight,
+            )
+            for x, y in points
+        )
+    )
+
+
+def _affine_profile_pairs_separated(
+    loop: CurveTrimLoop,
+    pairs: tuple[tuple[int, int], ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
+    """Prove E-039 nonadjacent separation with rational convex-hull planes.
+
+    Axis-aligned boxes of separated affine rays can overlap at every uniform
+    refinement near a sharp corner. Their source/chord convex hulls retain a
+    separating rational plane. Regularity and adjacent-pair failures are never
+    cleared by this proof.
+    """
+    count = loop.chords.shape[0]
+    hulls: dict[int, _ProfileHull | None] = {}
+    for first, second in pairs:
+        if (first - second) % count in (0, 1, count - 1):
+            return False
+        for arc in (first, second):
+            if arc not in hulls:
+                hulls[arc] = _affine_profile_homotopy_hull(loop, arc, budget=budget)
+        left, right = hulls[first], hulls[second]
+        if left is None or right is None:
+            return False
+        with budget.temporary_scope():
+            points = (*left.points, *right.points)
+            work = 32 * len(points) ** 3
+            reserve_fraction_work(points, work, work, 32, budget=budget)
+            if not _separated_profile_hulls(left, right, frozenset()):
+                return False
+    return True
+
+
+def _profile_cover_ready(
+    loops: tuple[CurveTrimLoop, ...],
+    /,
+    *,
+    separate_homotopies: bool,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
+    """Require regular loop isotopies and, for gap topology, inter-loop separation."""
+    certificates = tuple(
+        loop.certify_topology(preparations=preparations, budget=budget) for loop in loops
+    )
+    if any(certificate.budget_exhausted for certificate in certificates):
+        raise ValueError(
+            "PlanarProfile.topology must resolve within the source-pair budget; got an exhausted pair budget"
+        )
+    for loop, certificate in zip(loops, certificates, strict=True):
+        if certificate.certified:
+            continue
+        with budget.temporary_scope():
+            if not _affine_profile_pairs_separated(
+                loop,
+                certificate.unresolved_pairs,
+                budget=budget,
+            ):
+                return False
+    return not separate_homotopies or _profile_covers_disjoint(loops, budget=budget)
+
+
+def _accepted_profile_polygons(
+    loops: tuple[CurveTrimLoop, ...],
+    edges: tuple[tuple[_ProfileEdge, ...], ...],
+    /,
+    *,
+    gap_topology: bool,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[Point, ...], ...]:
+    """Apply orientation and containment only after source isotopy certification."""
+    if not gap_topology:
+        _require_mixed_profile_relations(
+            loops, edges, preparations=preparations, budget=budget
+        )
+    polygons = tuple(
+        tuple(
+            (Fraction(float(point[0])), Fraction(float(point[1])))
+            for point in loop.chords
+        )
+        for loop in loops
+    )
+    if any(area(polygon) == 0 for polygon in polygons):
+        raise ValueError(
+            "PlanarProfile.loops must enclose positive area; got a zero-area loop"
+        )
+    if gap_topology:
+        _require_profile_containment(polygons)
+    return polygons
+
+
+def _mixed_profile_polygons(
+    edges: tuple[tuple[_ProfileEdge, ...], ...],
+    /,
+    *,
+    endpoint_gaps: tuple[tuple[tuple[float, float], ...], ...] | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[Point, ...], ...]:
+    """Return polygons after certifying mixed native curve loops."""
+    curves, tolerance = _profile_cover_inputs(
+        edges,
+        require_exact_joins=endpoint_gaps is None,
+        preparations=preparations,
+        budget=budget,
+    )
     segments = 4
     while segments * sum(len(loop) for loop in curves) <= 8192:
         partition = np.linspace(0.0, 1.0, segments + 1, dtype=np.float64)
         loops = tuple(
-            CurveTrimLoop(
+            _bounded_profile_trim_loop(
                 loop,
+                source,
+                partition,
+                None if endpoint_gaps is None else endpoint_gaps[index],
                 tolerance=tolerance,
-                maximum_arcs=8192,
-                arc_parameters=(partition,) * len(loop),
+                preparations=preparations,
+                budget=budget,
             )
-            for loop in curves
+            for index, (loop, source) in enumerate(zip(curves, edges, strict=True))
         )
-        certificates = tuple(loop.certify_topology() for loop in loops)
-        if any(certificate.budget_exhausted for certificate in certificates):
-            raise ValueError(
-                "Mixed profile topology exhausted the canonical source-pair budget."
+        if _profile_cover_ready(
+            loops,
+            separate_homotopies=endpoint_gaps is not None,
+            preparations=preparations,
+            budget=budget,
+        ):
+            return _accepted_profile_polygons(
+                loops,
+                edges,
+                gap_topology=endpoint_gaps is not None,
+                preparations=preparations,
+                budget=budget,
             )
-        if all(certificate.certified for certificate in certificates):
-            _require_mixed_profile_relations(loops, edges)
-            polygons = tuple(
-                tuple(
-                    (Fraction(float(point[0])), Fraction(float(point[1])))
-                    for point in loop.chords
-                )
-                for loop in loops
-            )
-            if any(_area(polygon) == 0 for polygon in polygons):
-                raise ValueError("A profile loop must enclose positive area.")
-            return polygons
         segments *= 2
     raise ValueError(
-        "Mixed profile source/chord topology is unresolved within its arc budget."
+        "PlanarProfile.topology must resolve within its arc budget; got unresolved source/chord topology"
     )
 
 
+@checked
 def reversed_bspline(curve: BSplineCurve, /) -> BSplineCurve:
     """The same rational spline traversed backwards: ``t -> -t`` on mirrored knots."""
     return eqx.tree_at(
@@ -845,12 +1496,17 @@ def reversed_bspline(curve: BSplineCurve, /) -> BSplineCurve:
     )
 
 
+def _reflected_conic(curve: CircleCurve | EllipseCurve, /) -> CircleCurve | EllipseCurve:
+    """Reflect parameters algebraically: the image at ``t`` is the source at ``-t``."""
+    return eqx.tree_at(lambda source: source.second_axis, curve, -curve.second_axis)
+
+
 def _reverse_loop(loop: ProfileLoop, /) -> ProfileLoop:
     count = len(loop.vertices)
     vertices = (loop.vertices[0],) + tuple(reversed(loop.vertices[1:]))
     segments: list[ProfileSegment] = []
     for index in range(count):
-        # Reversed segment joins vertex -index to -(index + 1) (original indices).
+        # Reversed segment joins vertex -index to -(index + 1) in the source loop.
         original = loop.segments[(count - 1 - index) % count]
         match original:
             case ProfileLine():
@@ -859,8 +1515,12 @@ def _reverse_loop(loop: ProfileLoop, /) -> ProfileLoop:
                 segments.append(ProfileArc(center, not counterclockwise))
             case BSplineCurve():
                 segments.append(reversed_bspline(original))
+            case ProfileCurveUse(curve=curve, first=first, last=last):
+                segments.append(ProfileCurveUse(curve, last, first))
             case _:
-                raise TypeError("Unsupported sketch segment.")
+                raise TypeError(
+                    f"ProfileLoop.segment must be a supported sketch segment; got {type(original).__name__}"
+                )
     return ProfileLoop(vertices, tuple(segments))
 
 
@@ -869,57 +1529,125 @@ class PlanarProfile:
     """Planar region bounded by an outer loop and disjoint interior holes.
 
     Source Bernstein hull separation and strict monotone projections certify
-    spline topology before orientation and containment use their isotopic exact
-    control polygons. Mixed families use the canonical source/chord isotopy
-    certificate, exact source intersections and source trim classification.
-    Analytic arc loops use exact polynomial and quadratic radical predicates.
+    spline topology before orientation and containment use their isotopic
+    control polygons. Mixed families use the source/chord isotopy
+    certificate, source intersections and source trim classification.
+    Analytic arc loops use polynomial and quadratic radical exact predicates.
     Unresolved singularities and exhausted certificates refuse construction;
     sampled chords never decide profile acceptance.
+    ``endpoint_gap_bounds`` optionally declares one pair of maximum Euclidean
+    endpoint distances per segment, grouped by outer loop then holes. Every row
+    is independently recomputed; absent rows require zero conic endpoint gaps.
+    Certified junction bridges retain the authored vertices without snapping. Gap-bearing
+    profiles use E-039 homotopy covers before exact orientation and containment.
+    ``coordinate_budget`` borrows the caller's preparation ticket without storing
+    it in the profile or its identity; omission retains the default source request.
     """
 
     plane: ProfilePlane
     outer: ProfileLoop
     holes: tuple[ProfileLoop, ...] = ()
+    residual_bound: float = field(default=0.0, kw_only=True)
+    endpoint_gap_bounds: tuple[tuple[tuple[float, float], ...], ...] | None = field(
+        default=None, kw_only=True
+    )
+    coordinate_budget: InitVar[CoordinateEnclosureBudget | None] = field(
+        default=None, kw_only=True
+    )
     edges: tuple[tuple[_ProfileEdge, ...], ...] = field(init=False, repr=False)
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.plane, ProfilePlane):
-            raise TypeError("plane must be a ProfilePlane.")
-        loops = (self.outer, *tuple(self.holes))
-        if not all(isinstance(loop, ProfileLoop) for loop in loops):
-            raise TypeError("Profile loops must be ProfileLoop values.")
-        original_edges = tuple(_loop_edges(loop) for loop in loops)
-        spline = any(
-            isinstance(edge.pcurve, BSplineCurve)
-            for loop in original_edges
-            for edge in loop
+    def __post_init__(self, coordinate_budget: CoordinateEnclosureBudget | None) -> None:
+        """Normalize the loops and retain weighted sketch residual evidence.
+
+        ``residual_bound`` is solver residual evidence, not a spatial length or
+        a source-geometry tolerance. Zero represents an exactly authored profile.
+        """
+        object.__setattr__(
+            self,
+            "residual_bound",
+            nonnegative_real_scalar(self.residual_bound, "PlanarProfile.residual_bound"),
         )
-        arc = any(
-            isinstance(edge.pcurve, CircleCurve)
-            for loop in original_edges
-            for edge in loop
-        )
-        areas: tuple[Fraction | int, ...]
-        if spline:
-            polygons = (
-                _certified_mixed_profile_polygons(original_edges)
-                if arc
-                else _certified_profile_polygons(original_edges)
+        preparations = TrimRequestPreparations()
+        with coordinate_source_request(
+            (self.plane, self.outer, self.holes), budget=coordinate_budget
+        ) as budget:
+            if not isinstance(self.plane, ProfilePlane):
+                raise TypeError(
+                    f"PlanarProfile.plane must be a ProfilePlane; got {type(self.plane).__name__}"
+                )
+            loops = (self.outer, *tuple(self.holes))
+            if not all(isinstance(loop, ProfileLoop) for loop in loops):
+                raise TypeError(
+                    "PlanarProfile.loops must be ProfileLoop values; got an unsupported loop"
+                )
+            original_edges = tuple(_loop_edges(loop) for loop in loops)
+            conic_use = any(
+                isinstance(segment, ProfileCurveUse)
+                for loop in loops
+                for segment in loop.segments
             )
-            areas = tuple(_area(polygon) for polygon in polygons)
-        else:
-            _require_analytic_profile_topology(original_edges)
-            areas = tuple(_analytic_profile_orientation(loop) for loop in original_edges)
-        canonical = []
-        for index, (loop, area) in enumerate(zip(loops, areas, strict=True)):
-            if area == 0:
-                raise ValueError("A profile loop must enclose positive area.")
-            wanted = 1 if index == 0 else -1
-            canonical.append(loop if area * wanted > 0 else _reverse_loop(loop))
-        edges = tuple(_loop_edges(loop) for loop in canonical)
-        object.__setattr__(self, "outer", canonical[0])
-        object.__setattr__(self, "holes", tuple(canonical[1:]))
-        object.__setattr__(self, "edges", edges)
+            gap_rows = _profile_endpoint_gaps(
+                original_edges,
+                self.endpoint_gap_bounds,
+                conic_use=conic_use,
+                budget=budget,
+            )
+            object.__setattr__(self, "endpoint_gap_bounds", gap_rows)
+            spline = any(
+                isinstance(edge.pcurve, BSplineCurve)
+                for loop in original_edges
+                for edge in loop
+            )
+            arc = any(
+                isinstance(edge.pcurve, CircleCurve)
+                for loop in original_edges
+                for edge in loop
+            )
+            areas: tuple[Fraction | int, ...]
+            if conic_use or gap_rows is not None:
+                polygons = _mixed_profile_polygons(
+                    original_edges,
+                    endpoint_gaps=gap_rows,
+                    preparations=preparations,
+                    budget=budget,
+                )
+                areas = tuple(area(polygon) for polygon in polygons)
+            elif spline:
+                polygons = (
+                    _mixed_profile_polygons(
+                        original_edges, preparations=preparations, budget=budget
+                    )
+                    if arc
+                    else _profile_polygons(original_edges)
+                )
+                areas = tuple(area(polygon) for polygon in polygons)
+            else:
+                _require_analytic_profile_topology(original_edges)
+                areas = tuple(
+                    _analytic_profile_orientation(loop) for loop in original_edges
+                )
+            canonical = []
+            for index, (loop, area_bank) in enumerate(zip(loops, areas, strict=True)):
+                if area_bank == 0:
+                    raise ValueError(
+                        "PlanarProfile.loops must enclose positive area; got a zero-area loop"
+                    )
+                wanted = 1 if index == 0 else -1
+                canonical.append(loop if area_bank * wanted > 0 else _reverse_loop(loop))
+            edges = tuple(_loop_edges(loop) for loop in canonical)
+            if gap_rows is not None:
+                gap_rows = tuple(
+                    rows
+                    if area_bank * (1 if index == 0 else -1) > 0
+                    else tuple((b, a) for a, b in reversed(rows))
+                    for index, (rows, area_bank) in enumerate(
+                        zip(gap_rows, areas, strict=True)
+                    )
+                )
+                object.__setattr__(self, "endpoint_gap_bounds", gap_rows)
+            object.__setattr__(self, "outer", canonical[0])
+            object.__setattr__(self, "holes", tuple(canonical[1:]))
+            object.__setattr__(self, "edges", edges)
 
     @property
     def loops(self) -> tuple[ProfileLoop, ...]:
@@ -941,14 +1669,10 @@ def _crossing_parity(points: np.ndarray, polyline: np.ndarray, /) -> np.ndarray:
 type _RadicalPoint = tuple[Point, Point]
 
 
-def _rational_point(point: tuple[float, float], /) -> Point:
-    return Fraction(point[0]), Fraction(point[1])
-
-
 def _radical_sign(a: Fraction, b: Fraction, radicand: Fraction, /) -> int:
-    """Exact sign of ``a + b sqrt(radicand)`` without evaluating a root."""
+    """Return the sign of ``a + b sqrt(radicand)`` without evaluating a root."""
     if radicand < 0:
-        raise ValueError("An algebraic profile root needs a nonnegative radicand.")
+        raise ValueError(f"PlanarProfile.radicand must be nonnegative; got {radicand}")
     if b == 0 or radicand == 0:
         return (a > 0) - (a < 0)
     if a == 0 or (a > 0) == (b > 0):
@@ -959,12 +1683,14 @@ def _radical_sign(a: Fraction, b: Fraction, radicand: Fraction, /) -> int:
 
 def _arc_circle(edge: _ProfileEdge, /) -> tuple[Point, Fraction]:
     if not isinstance(edge.pcurve, CircleCurve):
-        raise TypeError("An analytic arc needs a circle carrier.")
+        raise TypeError(
+            f"ProfileArc.carrier must be a CircleCurve; got {type(edge.pcurve).__name__}"
+        )
     center = tuple(float(v) for v in np.asarray(edge.pcurve.center))
     if len(center) != 2:
-        raise ValueError("Profile circle centers must be planar.")
+        raise ValueError(f"ProfileArc.center must be planar; got dimension {len(center)}")
     center_ = Fraction(center[0]), Fraction(center[1])
-    delta = _sub(_rational_point(edge.start), center_)
+    delta = sub(rational_vector(edge.start), center_)
     return center_, delta[0] ** 2 + delta[1] ** 2
 
 
@@ -974,16 +1700,18 @@ def _arc_contains_radical(
     if edge.start == edge.end:
         return True
     center, _ = _arc_circle(edge)
-    start = _sub(_rational_point(edge.start), center)
-    end = _sub(_rational_point(edge.end), center)
+    start = sub(rational_vector(edge.start), center)
+    end = sub(rational_vector(edge.end), center)
     base, radical = point
-    relative = _sub(base, center)
+    relative = sub(base, center)
     turn = 1 if edge.turn > 0 else -1
     before = turn * _radical_sign(
-        _cross(start, relative), _cross(start, radical), radicand
+        rational_cross_2d(start, relative), rational_cross_2d(start, radical), radicand
     )
-    after = turn * _radical_sign(_cross(relative, end), _cross(radical, end), radicand)
-    minor = turn * _cross(start, end) >= 0
+    after = turn * _radical_sign(
+        rational_cross_2d(relative, end), rational_cross_2d(radical, end), radicand
+    )
+    minor = turn * rational_cross_2d(start, end) >= 0
     return before >= 0 and after >= 0 if minor else before >= 0 or after >= 0
 
 
@@ -1002,7 +1730,7 @@ def _line_circle_roots(
     start: Point, direction: Point, arc: _ProfileEdge, /
 ) -> tuple[Fraction, tuple[tuple[Fraction, Fraction], ...]]:
     center, radius_squared = _arc_circle(arc)
-    relative = _sub(start, center)
+    relative = sub(start, center)
     a = direction[0] ** 2 + direction[1] ** 2
     b = 2 * (relative[0] * direction[0] + relative[1] * direction[1])
     c = relative[0] ** 2 + relative[1] ** 2 - radius_squared
@@ -1016,8 +1744,8 @@ def _line_circle_roots(
 def _line_arc_contact(
     line: _ProfileEdge, arc: _ProfileEdge, allowed: frozenset[Point], /
 ) -> bool:
-    start = _rational_point(line.start)
-    direction = _sub(_rational_point(line.end), start)
+    start = rational_vector(line.start)
+    direction = sub(rational_vector(line.end), start)
     discriminant, roots = _line_circle_roots(start, direction, arc)
     for a, b in roots:
         if (
@@ -1041,7 +1769,7 @@ def _arc_arc_contact(
 ) -> bool:
     a, ra = _arc_circle(first)
     b, rb = _arc_circle(second)
-    delta = _sub(b, a)
+    delta = sub(b, a)
     distance_squared = delta[0] ** 2 + delta[1] ** 2
     if distance_squared == 0:
         if ra != rb:
@@ -1050,18 +1778,18 @@ def _arc_arc_contact(
             return True
         for edge, other in ((first, second), (second, first)):
             for vertex in (edge.start, edge.end):
-                point = _rational_point(vertex)
+                point = rational_vector(vertex)
                 if point not in allowed and _arc_contains_radical(
                     other, (point, (Fraction(), Fraction())), Fraction()
                 ):
                     return True
-            start = _sub(_rational_point(edge.start), a)
-            end = _sub(_rational_point(edge.end), a)
+            start = sub(rational_vector(edge.start), a)
+            end = sub(rational_vector(edge.end), a)
             middle = (start[0] + end[0], start[1] + end[1])
             if middle == (0, 0):
                 turn = 1 if edge.turn > 0 else -1
                 middle = (-turn * start[1], turn * start[0])
-            elif (1 if edge.turn > 0 else -1) * _cross(start, end) < 0:
+            elif (1 if edge.turn > 0 else -1) * rational_cross_2d(start, end) < 0:
                 middle = (-middle[0], -middle[1])
             candidate = (a[0] + middle[0], a[1] + middle[1])
             if _arc_contains_radical(
@@ -1086,12 +1814,12 @@ def _arc_arc_contact(
 
 
 def _analytic_loop_contains(point: Point, loop: tuple[_ProfileEdge, ...], /) -> bool:
-    # A generic exact rational ray avoids all boundary vertices and tangencies.
+    # A generic rational ray avoids all boundary vertices and tangencies.
     direction: Point | None = None
     for slope in range(4 * len(loop) + 1):
         candidate = (Fraction(1), Fraction(slope))
         if any(
-            _cross(_sub(_rational_point(edge.start), point), candidate) == 0
+            rational_cross_2d(sub(rational_vector(edge.start), point), candidate) == 0
             for edge in loop
         ):
             continue
@@ -1104,19 +1832,21 @@ def _analytic_loop_contains(point: Point, loop: tuple[_ProfileEdge, ...], /) -> 
         direction = candidate
         break
     if direction is None:
-        raise ValueError("Profile containment has unresolved ray degeneracy.")
+        raise ValueError(
+            "PlanarProfile.containment_ray must avoid degeneracy; got unresolved ray degeneracy"
+        )
     crossings = 0
     for edge in loop:
         match edge.pcurve:
             case LineCurve():
-                start = _rational_point(edge.start)
-                delta = _sub(_rational_point(edge.end), start)
-                determinant = _cross(direction, delta)
+                start = rational_vector(edge.start)
+                delta = sub(rational_vector(edge.end), start)
+                determinant = rational_cross_2d(direction, delta)
                 if determinant == 0:
                     continue
-                relative = _sub(start, point)
-                ray = _cross(relative, delta) / determinant
-                segment = _cross(relative, direction) / determinant
+                relative = sub(start, point)
+                ray = rational_cross_2d(relative, delta) / determinant
+                segment = rational_cross_2d(relative, direction) / determinant
                 crossings += ray > 0 and 0 < segment < 1
             case CircleCurve():
                 discriminant, roots = _line_circle_roots(point, direction, edge)
@@ -1130,7 +1860,7 @@ def _analytic_loop_contains(point: Point, loop: tuple[_ProfileEdge, ...], /) -> 
                     crossings += _arc_contains_radical(edge, root, discriminant)
             case _:
                 raise TypeError(
-                    "Analytic profile containment needs line/circle carriers."
+                    "PlanarProfile.analytic_carrier must be a line or circle; got an unsupported carrier"
                 )
     return crossings % 2 == 1
 
@@ -1139,11 +1869,11 @@ def _analytic_segment_clear(
     start: Point, end: Point, loop: tuple[_ProfileEdge, ...], /
 ) -> bool:
     """Exclude all source-boundary contacts except at the starting vertex."""
-    direction = _sub(end, start)
+    direction = sub(end, start)
     for edge in loop:
         if isinstance(edge.pcurve, LineCurve):
-            contacts = _intersections(
-                (start, end), (_rational_point(edge.start), _rational_point(edge.end))
+            contacts = intersections(
+                (start, end), (rational_vector(edge.start), rational_vector(edge.end))
             )
             if any(point != start for point in contacts):
                 return False
@@ -1165,22 +1895,22 @@ def _analytic_segment_clear(
 
 
 def _analytic_profile_orientation(loop: tuple[_ProfileEdge, ...], /) -> int:
-    """Determine the traversal's interior side using exact rational queries."""
+    """Determine the traversal's interior side using rational queries."""
     if len(loop) == 1 and isinstance(loop[0].pcurve, CircleCurve):
         return 1 if loop[0].turn > 0 else -1
     for edge in loop:
         if isinstance(edge.pcurve, LineCurve):
-            start, end = _rational_point(edge.start), _rational_point(edge.end)
+            start, end = rational_vector(edge.start), rational_vector(edge.end)
             point = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
-            tangent = _sub(end, start)
+            tangent = sub(end, start)
             normal = (-tangent[1], tangent[0])
             break
     else:
-        point = _rational_point(loop[0].start)
+        point = rational_vector(loop[0].start)
         normals = []
         for edge in (loop[-1], loop[0]):
             center, _ = _arc_circle(edge)
-            radial = _sub(point, center)
+            radial = sub(point, center)
             turn = 1 if edge.turn > 0 else -1
             normals.append((-turn * radial[0], -turn * radial[1]))
         first, last = normals
@@ -1190,7 +1920,9 @@ def _analytic_profile_orientation(loop: tuple[_ProfileEdge, ...], /) -> int:
             last_squared = last[0] ** 2 + last[1] ** 2
             lower, upper = -dot / last_squared, first_squared / -dot
             if lower >= upper:
-                raise ValueError("Analytic profile orientation has an unresolved cusp.")
+                raise ValueError(
+                    "PlanarProfile.orientation must resolve a regular local side; got an unresolved cusp"
+                )
             weight = (lower + upper) / 2
         else:
             weight = Fraction(1)
@@ -1208,7 +1940,7 @@ def _analytic_profile_orientation(loop: tuple[_ProfileEdge, ...], /) -> int:
                 return 1 if left_inside else -1
         offset /= 2
     raise ValueError(
-        "Analytic profile orientation has an unresolved local-side certificate."
+        "PlanarProfile.orientation must resolve a regular local side; got an unresolved local-side certificate"
     )
 
 
@@ -1223,15 +1955,15 @@ def _require_analytic_profile_topology(
             allowed: set[Point] = set()
             if li == lj:
                 if (ei + 1) % len(edges[li]) == ej:
-                    allowed.add(_rational_point(first.end))
+                    allowed.add(rational_vector(first.end))
                 if (ej + 1) % len(edges[li]) == ei:
-                    allowed.add(_rational_point(second.end))
+                    allowed.add(rational_vector(second.end))
             vertices = frozenset(allowed)
             match first.pcurve, second.pcurve:
                 case LineCurve(), LineCurve():
-                    contacts = _intersections(
-                        (_rational_point(first.start), _rational_point(first.end)),
-                        (_rational_point(second.start), _rational_point(second.end)),
+                    contacts = intersections(
+                        (rational_vector(first.start), rational_vector(first.end)),
+                        (rational_vector(second.start), rational_vector(second.end)),
                     )
                     contact = len(contacts) > 1 or any(
                         p not in vertices for p in contacts
@@ -1243,19 +1975,25 @@ def _require_analytic_profile_topology(
                 case CircleCurve(), CircleCurve():
                     contact = _arc_arc_contact(first, second, vertices)
                 case _:
-                    raise TypeError("Unsupported analytic profile carrier.")
+                    raise TypeError(
+                        "PlanarProfile.analytic_carrier must be a line or circle; got an unsupported carrier"
+                    )
             if contact:
                 raise ValueError(
-                    "Profile loops must be simple and must not touch or cross."
+                    "PlanarProfile.loops must be simple and must not touch or cross; got source-boundary contact"
                 )
     for index, hole in enumerate(edges[1:]):
-        if not _analytic_loop_contains(_rational_point(hole[0].start), edges[0]):
-            raise ValueError("Every hole must lie inside the outer loop.")
+        if not _analytic_loop_contains(rational_vector(hole[0].start), edges[0]):
+            raise ValueError(
+                "PlanarProfile.holes must lie inside the outer loop; got an exterior hole"
+            )
         for other in edges[index + 2 :]:
             if _analytic_loop_contains(
-                _rational_point(hole[0].start), other
-            ) or _analytic_loop_contains(_rational_point(other[0].start), hole):
-                raise ValueError("Holes must not be nested.")
+                rational_vector(hole[0].start), other
+            ) or _analytic_loop_contains(rational_vector(other[0].start), hole):
+                raise ValueError(
+                    "PlanarProfile.holes must not be nested; got nested holes"
+                )
 
 
 # ------------------------------------------------------------------ builder
@@ -1288,6 +2026,14 @@ def _space_curve(edge: _ProfileEdge, plane: ProfilePlane, /) -> AbstractCurve:
                 plane.vector(np.asarray(pcurve.second_axis)),
                 pcurve.radius,
             )
+        case EllipseCurve():
+            return EllipseCurve(
+                plane.point(np.asarray(pcurve.center)),
+                plane.vector(np.asarray(pcurve.first_axis)),
+                plane.vector(np.asarray(pcurve.second_axis)),
+                pcurve.first_radius,
+                pcurve.second_radius,
+            )
         case BSplineCurve():
             return BSplineCurve(
                 plane.point(np.asarray(pcurve.control_points)),
@@ -1296,7 +2042,9 @@ def _space_curve(edge: _ProfileEdge, plane: ProfilePlane, /) -> AbstractCurve:
                 pcurve.degree,
             )
         case _:
-            raise TypeError("Unsupported sketch carrier.")
+            raise TypeError(
+                f"ProfileLoop.carrier must be a supported sketch carrier; got {type(pcurve).__name__}"
+            )
 
 
 def _moved_curve(
@@ -1317,6 +2065,14 @@ def _moved_curve(
                 rotation @ np.asarray(curve.second_axis),
                 curve.radius,
             )
+        case EllipseCurve():
+            return EllipseCurve(
+                point(curve.center),
+                rotation @ np.asarray(curve.first_axis),
+                rotation @ np.asarray(curve.second_axis),
+                curve.first_radius,
+                curve.second_radius,
+            )
         case BSplineCurve():
             controls = np.asarray(curve.control_points)
             return BSplineCurve(
@@ -1326,7 +2082,9 @@ def _moved_curve(
                 curve.degree,
             )
         case _:
-            raise TypeError("Unsupported sweep carrier.")
+            raise TypeError(
+                f"Builder.carrier must be a supported sweep carrier; got {type(curve).__name__}"
+            )
 
 
 @dataclass(slots=True)
@@ -1339,14 +2097,16 @@ class _Face:
 
 
 @dataclass(slots=True)
-class _Builder:
-    """Mutable host staging of one exact construction (never published)."""
+class Builder:
+    """Stage one construction in mutable host storage."""
 
     vertices: list[np.ndarray] = field(default_factory=list)
     curves: list[BRepCurve] = field(default_factory=list)
     edge_curves: list[int] = field(default_factory=list)
     edge_ranges: list[tuple[float, float]] = field(default_factory=list)
     edge_vertices: list[tuple[int, int]] = field(default_factory=list)
+    edge_vertex_gap_bounds: tuple[tuple[float, float], ...] | None = None
+    recompute_endpoint_gaps: bool = False
     edge_endpoint_roots: list[
         tuple[NativePeriodEndpoint | None, NativePeriodEndpoint | None]
     ] = field(default_factory=list)
@@ -1379,19 +2139,55 @@ class _Builder:
         self.edge_endpoint_roots.append((None, None))
         return len(self.edge_curves) - 1
 
-    def coedge(self, edge: int, sense: int, pcurve: BRepPCurve, /) -> int:
+    def coedge(
+        self,
+        edge: int,
+        sense: int,
+        pcurve: BRepPCurve,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> int:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    edge,
+                    sense,
+                    pcurve,
+                )
+            ) as budget:
+                return self.coedge(
+                    edge, sense, pcurve, preparations=preparations, budget=budget
+                )
         self.coedge_edges.append(edge)
         self.coedge_senses.append(sense)
         self.pcurves.append(pcurve)
-        self.coedge_endpoint_roots.append(self._coedge_endpoints(edge, pcurve))
+        self.coedge_endpoint_roots.append(
+            self._coedge_endpoints(edge, pcurve, preparations=preparations, budget=budget)
+        )
         return len(self.coedge_edges) - 1
 
     def _coedge_endpoints(
-        self, edge: int, pcurve: BRepPCurve, /
+        self,
+        edge: int,
+        pcurve: BRepPCurve,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget,
     ) -> tuple[RootEndpoint | None, RootEndpoint | None]:
         first, last = self.edge_endpoint_roots[edge]
 
-        def bind(endpoint: NativePeriodEndpoint | None, /) -> NativePeriodEndpoint | None:
+        def bind(
+            endpoint: NativePeriodEndpoint | None,
+            /,
+            *,
+            budget: CoordinateEnclosureBudget = budget,
+        ) -> NativePeriodEndpoint | None:
             return (
                 None
                 if endpoint is None
@@ -1414,8 +2210,29 @@ class _Builder:
         /,
         *,
         rational: Fraction = Fraction(),
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
-        """Author a full native phase on an edge and every original parameter use."""
+        """Author a full native phase on an edge and every source parameter use."""
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    edge,
+                    patch,
+                    axis,
+                )
+            ) as budget:
+                return self.native_phase(
+                    edge,
+                    patch,
+                    axis,
+                    rational=rational,
+                    preparations=preparations,
+                    budget=budget,
+                )
         curve_index = self.edge_curves[edge]
         curve = (
             self.pcurves[
@@ -1429,13 +2246,29 @@ class _Builder:
             else self.curves[curve_index]
         )
         self.edge_endpoint_roots[edge] = (
-            NativePeriodEndpoint(curve, patch, axis, rational=rational, turns=0),
-            NativePeriodEndpoint(curve, patch, axis, rational=rational, turns=1),
+            NativePeriodEndpoint(
+                curve,
+                patch,
+                axis,
+                rational=rational,
+                turns=0,
+                budget=budget,
+                preparations=preparations,
+            ),
+            NativePeriodEndpoint(
+                curve,
+                patch,
+                axis,
+                rational=rational,
+                turns=1,
+                budget=budget,
+                preparations=preparations,
+            ),
         )
         for coedge, source_edge in enumerate(self.coedge_edges):
             if source_edge == edge:
                 self.coedge_endpoint_roots[coedge] = self._coedge_endpoints(
-                    edge, self.pcurves[coedge]
+                    edge, self.pcurves[coedge], preparations=preparations, budget=budget
                 )
 
     def face(
@@ -1460,12 +2293,77 @@ class _Builder:
             normal = np.cross(differential[:, 0], differential[:, 1])
             value = float(normal @ direction)
             if abs(value) <= 1.0e-12 * max(1.0, float(np.linalg.norm(normal))):
-                raise ValueError("A swept face is tangent to its sweep direction.")
+                raise ValueError(
+                    "Builder.face must be transverse to its sweep direction; got a tangent swept face"
+                )
             orientation = 1 if value > 0.0 else -1
         self.faces.append(
             _Face(patch, np.asarray(box, dtype=np.float64), loops, orientation, tag)
         )
         return len(self.faces) - 1
+
+
+def _bind_profile_period_endpoints(
+    builder: Builder,
+    index: int,
+    source: _ProfileEdge,
+    /,
+    *,
+    patch: AbstractSurfacePatch | None = None,
+    axis: Literal[0, 1] | None = None,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Transport legacy phase witnesses to spatial carriers and their p-curve uses."""
+    roots = _profile_period_endpoints(source, budget=budget, preparations=preparations)
+    if roots == (None, None):
+        return
+    curve = builder.curves[builder.edge_curves[index]]
+
+    def bind(root: NativePeriodEndpoint | None) -> NativePeriodEndpoint | None:
+        if root is None:
+            return None
+        return NativePeriodEndpoint(
+            curve,
+            patch,
+            axis,
+            rational=root.rational,
+            turns=root.turns,
+            budget=budget,
+            preparations=preparations,
+        )
+
+    builder.edge_endpoint_roots[index] = (bind(roots[0]), bind(roots[1]))
+    for coedge, edge in enumerate(builder.coedge_edges):
+        if edge == index:
+            builder.coedge_endpoint_roots[coedge] = builder._coedge_endpoints(
+                index, builder.pcurves[coedge], budget=budget, preparations=preparations
+            )
+
+
+def _builder_endpoint_gap_rows(
+    builder: Builder, /, *, budget: CoordinateEnclosureBudget
+) -> tuple[tuple[float, float], ...]:
+    """Certify lifted coefficients anew against the published vertices."""
+    rows = []
+    for edge, (curve_index, parameters, (first, last)) in enumerate(
+        zip(builder.edge_curves, builder.edge_ranges, builder.edge_vertices, strict=True)
+    ):
+        curve = builder.curves[curve_index]
+        if not isinstance(curve, AbstractCurve):
+            raise TypeError(
+                f"Builder.gap_carrier must be a native curve; got {type(curve).__name__}"
+            )
+        rows.append(
+            endpoint_gap_bounds(
+                curve,
+                parameters,
+                np.stack((builder.vertices[first], builder.vertices[last])),
+                budget=budget,
+                endpoint_roots=builder.edge_endpoint_roots[edge],
+            )
+        )
+    return tuple(rows)
 
 
 @eqx.filter_jit
@@ -1484,39 +2382,74 @@ def _curve_tangent(curve: AbstractCurve, parameter: float, /) -> np.ndarray:
     return np.asarray(_curve_velocity(curve, jnp.asarray(parameter, dtype=jnp.float64)))
 
 
-def _profile_box(profile: PlanarProfile, /) -> np.ndarray:
+def _profile_box(
+    profile: PlanarProfile,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
     boxes = np.stack(
-        [edge.pcurve.bounding_box(edge.first, edge.last) for edge in profile.edges[0]]
+        [
+            edge.pcurve.bounding_box(
+                edge.first, edge.last, preparations=preparations, budget=budget
+            )
+            for edge in profile.edges[0]
+        ]
     )
     return np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0)))
 
 
 def _cap(
-    builder: _Builder,
+    builder: Builder,
     profile: PlanarProfile,
     patch: PlanePatch,
     loop_edges: list[list[int]],
     orientation: int,
     /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> int:
     for edges, profile_edges in zip(loop_edges, profile.edges, strict=True):
         for edge, source in zip(edges, profile_edges, strict=True):
+            if profile.endpoint_gap_bounds is not None:
+                _bind_profile_period_endpoints(
+                    builder, edge, source, budget=budget, preparations=preparations
+                )
             if (
                 isinstance(source.pcurve, CircleCurve)
                 and source.start == source.end
+                and not source.authored_range
                 and builder.edge_endpoint_roots[edge] == (None, None)
             ):
                 # ProfileLoop's closed arc authors one mathematical circle
                 # turn; its binary64 range is only the numerical realization.
-                builder.native_phase(edge, None, None, rational=Fraction(source.first))
+                builder.native_phase(
+                    edge,
+                    None,
+                    None,
+                    rational=Fraction(source.first),
+                    preparations=preparations,
+                    budget=budget,
+                )
     loops = [
         [
-            builder.coedge(edge, 1, profile_edge.pcurve)
+            builder.coedge(
+                edge, 1, profile_edge.pcurve, preparations=preparations, budget=budget
+            )
             for edge, profile_edge in zip(edges, profile_edges, strict=True)
         ]
         for edges, profile_edges in zip(loop_edges, profile.edges, strict=True)
     ]
-    return builder.face(patch, _profile_box(profile), loops, "plane", None, orientation)
+    return builder.face(
+        patch,
+        _profile_box(profile, preparations=preparations, budget=budget),
+        loops,
+        "plane",
+        None,
+        orientation,
+    )
 
 
 def _line2(origin: tuple[float, float], direction: tuple[float, float], /) -> LineCurve:
@@ -1530,15 +2463,23 @@ def _line2(origin: tuple[float, float], direction: tuple[float, float], /) -> Li
 # ------------------------------------------------------------------ extrusion
 
 
-def _stage_extrusion(
-    builder: _Builder, profile: PlanarProfile, vector: np.ndarray
+@checked
+def stage_extrusion(
+    builder: Builder,
+    profile: PlanarProfile,
+    vector: np.ndarray,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
     plane = profile.plane
     normal = plane.normal
     height = float(np.linalg.norm(vector))
     direction = vector / height
     if abs(float(direction @ normal)) <= 1.0e-9:
-        raise ValueError("The extrusion direction must leave the sketch plane.")
+        raise ValueError(
+            "brep_extrusion.direction must leave the sketch plane; got an in-plane sweep direction"
+        )
     identity = np.eye(3)
     zero = np.zeros(3)
     bottom_edges: list[list[int]] = []
@@ -1585,6 +2526,8 @@ def _stage_extrusion(
             )
         bottom_edges.append(bottom)
         top_edges.append(top)
+    if profile.endpoint_gap_bounds is not None:
+        builder.recompute_endpoint_gaps = True
     sweep_sign = 1 if float(direction @ normal) > 0.0 else -1
     _cap(
         builder,
@@ -1592,6 +2535,8 @@ def _stage_extrusion(
         PlanePatch(plane.origin, plane.x_axis, plane.y_axis),
         bottom_edges,
         -sweep_sign,
+        preparations=preparations,
+        budget=budget,
     )
     _cap(
         builder,
@@ -1599,15 +2544,28 @@ def _stage_extrusion(
         PlanePatch(np.asarray(plane.origin) + vector, plane.x_axis, plane.y_axis),
         top_edges,
         sweep_sign,
+        preparations=preparations,
+        budget=budget,
     )
     for bottom, top, left, right, edge, curve in side_faces:
         _stage_extruded_side(
-            builder, bottom, top, left, right, edge, curve, direction, height, normal
+            builder,
+            bottom,
+            top,
+            left,
+            right,
+            edge,
+            curve,
+            direction,
+            height,
+            normal,
+            preparations=preparations,
+            budget=budget,
         )
 
 
 def _stage_extruded_side(
-    builder: _Builder,
+    builder: Builder,
     bottom: int,
     top: int,
     left: int,
@@ -1618,6 +2576,9 @@ def _stage_extruded_side(
     height: float,
     normal: np.ndarray,
     /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
     first, last = edge.first, edge.last
     patch: AbstractSurfacePatch
@@ -1630,17 +2591,44 @@ def _stage_extruded_side(
                 curve.center, curve.first_axis, curve.second_axis, direction, curve.radius
             )
             tag = "cylinder"
-        case CircleCurve() | BSplineCurve():
+        case CircleCurve() | EllipseCurve() | BSplineCurve():
             patch = ExtrusionSurface(curve, direction)
             tag = "extrusion"
         case _:
-            raise TypeError("Unsupported exact extrusion carrier.")
+            raise TypeError(
+                f"brep_extrusion.carrier must be a supported extrusion carrier; got {type(curve).__name__}"
+            )
+    if builder.recompute_endpoint_gaps:
+        for index in (bottom, top):
+            _bind_profile_period_endpoints(
+                builder,
+                index,
+                edge,
+                patch=patch,
+                axis=0,
+                budget=budget,
+                preparations=preparations,
+            )
     box = np.asarray(((first, 0.0), (last, height)))
     lower_seam: BRepPCurve = _line2((first, 0.0), (0.0, 1.0))
     upper_seam: BRepPCurve
-    if isinstance(curve, CircleCurve) and left == right:
-        builder.native_phase(bottom, patch, 0, rational=Fraction(first))
-        builder.native_phase(top, patch, 0, rational=Fraction(first))
+    if isinstance(curve, CircleCurve) and left == right and not edge.authored_range:
+        builder.native_phase(
+            bottom,
+            patch,
+            0,
+            rational=Fraction(first),
+            preparations=preparations,
+            budget=budget,
+        )
+        builder.native_phase(
+            top,
+            patch,
+            0,
+            rational=Fraction(first),
+            preparations=preparations,
+            budget=budget,
+        )
         # The closed source circle constructs two sheets of one vertical edge.
         source_seam = lower_seam
         lower_seam = PeriodicPCurve(source_seam, patch, (0, 0))
@@ -1648,10 +2636,22 @@ def _stage_extruded_side(
     else:
         upper_seam = _line2((last, 0.0), (0.0, 1.0))
     loop = [
-        builder.coedge(bottom, 1, _line2((0.0, 0.0), (1.0, 0.0))),
-        builder.coedge(right, 1, upper_seam),
-        builder.coedge(top, -1, _line2((0.0, height), (1.0, 0.0))),
-        builder.coedge(left, -1, lower_seam),
+        builder.coedge(
+            bottom,
+            1,
+            _line2((0.0, 0.0), (1.0, 0.0)),
+            preparations=preparations,
+            budget=budget,
+        ),
+        builder.coedge(right, 1, upper_seam, preparations=preparations, budget=budget),
+        builder.coedge(
+            top,
+            -1,
+            _line2((0.0, height), (1.0, 0.0)),
+            preparations=preparations,
+            budget=budget,
+        ),
+        builder.coedge(left, -1, lower_seam, preparations=preparations, budget=budget),
     ]
     middle = 0.5 * (first + last)
     outward = np.cross(_curve_tangent(curve, middle), normal)
@@ -1689,7 +2689,7 @@ def _profile_projection_bounds(
     edge: _ProfileEdge, origin: Point, direction: Point, /
 ) -> tuple[_ProjectedValue, _ProjectedValue]:
     def projection(point: Point) -> Fraction:
-        relative = _sub(point, origin)
+        relative = sub(point, origin)
         return relative[0] * direction[0] + relative[1] * direction[1]
 
     if isinstance(edge.pcurve, (LineCurve, BSplineCurve)):
@@ -1704,12 +2704,14 @@ def _profile_projection_bounds(
             Fraction(),
         )
     if not isinstance(edge.pcurve, CircleCurve):
-        raise TypeError("Unsupported profile projection carrier.")
+        raise TypeError(
+            f"PlanarProfile.projection_carrier must be a line, spline or circle; got {type(edge.pcurve).__name__}"
+        )
     center, radius_squared = _arc_circle(edge)
     radicand = radius_squared * (direction[0] ** 2 + direction[1] ** 2)
     center_projection = projection(center)
     values = [
-        (projection(_rational_point(point)), Fraction(), radicand)
+        (projection(rational_vector(point)), Fraction(), radicand)
         for point in (edge.start, edge.end)
     ]
     for sign in (-1, 1):
@@ -1726,16 +2728,28 @@ def _profile_projection_bounds(
 
 
 def _revolution_axis(
-    profile: PlanarProfile, origin: tuple[float, float], direction: tuple[float, float]
+    profile: PlanarProfile,
+    origin: tuple[float, float],
+    direction: tuple[float, float],
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> _Axis:
+    if any(edge.authored_range for loop in profile.edges for edge in loop):
+        raise ValueError(
+            "brep_revolution.profile must use legacy conic topology; "
+            "got an authored angular conic use supported only by planar faces and extrusion"
+        )
     plane = profile.plane
     axis_direction = np.asarray(direction, dtype=np.float64)
     norm = float(np.linalg.norm(axis_direction))
     if not norm > 0.0:
-        raise ValueError("The revolution axis direction must be nonzero.")
+        raise ValueError(
+            "brep_revolution.axis_direction must be nonzero; got zero direction"
+        )
     axis_direction = axis_direction / norm
     perpendicular = np.asarray((-axis_direction[1], axis_direction[0]))
-    exact_origin = _rational_point(origin)
+    exact_origin = rational_vector(origin)
     exact_perpendicular = (-Fraction(direction[1]), Fraction(direction[0]))
     bounds = [
         (edge, _profile_projection_bounds(edge, exact_origin, exact_perpendicular))
@@ -1748,23 +2762,30 @@ def _revolution_axis(
         side = -1.0
     else:
         raise ValueError(
-            "The complete source profile must lie on one side of its revolution axis."
+            "brep_revolution.profile must lie on one side of its revolution axis; got an axis-crossing source profile"
         )
     for edge, (low, high) in bounds:
         nearest = low if side > 0 else high
         if (
             isinstance(edge.pcurve, BSplineCurve)
             and _radical_sign(*nearest) == 0
-            and _affine_curve_coefficients(
+            and affine_curve_coefficients(
                 edge.pcurve,
                 np.zeros((edge.pcurve.ambient_dimension,), dtype=np.float64),
             )
             is None
         ):
             raise ValueError(
-                "Spline revolution axis contact has an unresolved singularity certificate."
+                "brep_revolution.axis_contact must have a regularity certificate; got an unresolved spline singularity"
             )
-    scale = max(1.0, float(np.max(np.abs(_profile_box(profile)))))
+    scale = max(
+        1.0,
+        float(
+            np.max(
+                np.abs(_profile_box(profile, preparations=preparations, budget=budget))
+            )
+        ),
+    )
     axis3 = plane.vector(axis_direction)
     radial3 = plane.vector(side * perpendicular)
     return _Axis(plane.point(origin), axis3, radial3, np.cross(axis3, radial3), scale)
@@ -1821,7 +2842,7 @@ def _revolved_chart(curve: AbstractCurve, edge: _ProfileEdge, axis: _Axis) -> _S
             patch = TorusPatch(ring_center, e1, e2, k, axis.radius(center), radius)
             return _SweptChart(patch, "torus", slope, intercept, False)
         case BSplineCurve():
-            coefficients = _affine_curve_coefficients(
+            coefficients = affine_curve_coefficients(
                 curve,
                 np.zeros((curve.ambient_dimension,), dtype=np.float64),
             )
@@ -1834,17 +2855,19 @@ def _revolved_chart(curve: AbstractCurve, edge: _ProfileEdge, axis: _Axis) -> _S
                 np.asarray(curve.control_points[-1])
             ):
                 raise ValueError(
-                    "Spline revolution poles require an unresolved singularity certificate."
+                    "brep_revolution.poles must have a regularity certificate; got unresolved spline singularity"
                 )
             return _SweptChart(
                 RevolutionSurface(curve, origin, k), "revolution", 1.0, 0.0, False
             )
         case _:
-            raise TypeError("Unsupported revolution carrier.")
+            raise TypeError(
+                f"brep_revolution.carrier must be supported; got {type(curve).__name__}"
+            )
 
 
 class _Revolution:
-    """Stage the exact topology of one profile revolved about an in-plane axis.
+    """Stage the topology of a profile revolved about an in-plane axis.
 
     Off-axis profile vertices sweep circle (or arc) edges; on-axis vertices
     stay single vertices and become degenerate pole edges of curved swept
@@ -1856,7 +2879,7 @@ class _Revolution:
 
     def __init__(
         self,
-        builder: _Builder,
+        builder: Builder,
         profile: PlanarProfile,
         axis: _Axis,
         angle: float,
@@ -1908,14 +2931,26 @@ class _Revolution:
             )
         return self.circles[point2]
 
-    def stage(self) -> None:
+    def stage(
+        self,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> None:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self,)) as budget:
+                return self.stage(preparations=preparations, budget=budget)
         plane = self.profile.plane
         start_edges: list[list[int]] = []
         end_edges: list[list[int]] = []
         for loop in self.profile.edges:
             starts, ends = [], []
             for edge in loop:
-                first, last = self._stage_edge(edge)
+                first, last = self._stage_edge(
+                    edge, preparations=preparations, budget=budget
+                )
                 starts.append(first)
                 ends.append(last)
             start_edges.append(starts)
@@ -1929,6 +2964,8 @@ class _Revolution:
             PlanePatch(plane.origin, plane.x_axis, plane.y_axis),
             start_edges,
             -sweep_sign,
+            preparations=preparations,
+            budget=budget,
         )
         origin = self.axis.origin + self.rotation @ (
             np.asarray(plane.origin) - self.axis.origin
@@ -1943,9 +2980,18 @@ class _Revolution:
             ),
             end_edges,
             sweep_sign,
+            preparations=preparations,
+            budget=budget,
         )
 
-    def _stage_edge(self, edge: _ProfileEdge, /) -> tuple[int, int]:
+    def _stage_edge(
+        self,
+        edge: _ProfileEdge,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[int, int]:
         """Stage one profile segment; returns its edges at angle zero and the end."""
         plane = self.profile.plane
         curve = _space_curve(edge, plane)
@@ -1958,12 +3004,14 @@ class _Revolution:
             return -1, -1
         chart = None if axial else _revolved_chart(curve, edge, self.axis)
         if chart is not None and chart.planar and self.full:
-            self._stage_annulus(edge, curve, chart)
+            self._stage_annulus(
+                edge, curve, chart, preparations=preparations, budget=budget
+            )
             return -1, -1
         if chart is not None and chart.planar:
             # A partial sector's Cartesian end ray would independently round
-            # sin(angle) and cos(angle), losing its exact circular trim join.
-            # Retain the original revolved profile and rectangular UV chain.
+            # sin(angle) and cos(angle), losing its source circular trim join.
+            # Retain the revolved profile and rectangular UV chain.
             chart = _SweptChart(
                 RevolutionSurface(curve, self.axis.origin, self.axis.direction),
                 chart.tag,
@@ -1988,7 +3036,9 @@ class _Revolution:
                 self.vertex(edge.end, True),
             )
         if chart is not None:
-            self._stage_curved(edge, curve, chart, first, last)
+            self._stage_curved(
+                edge, curve, chart, first, last, preparations=preparations, budget=budget
+            )
         return first, last
 
     def _outward(self, curve: AbstractCurve, parameter: float, /) -> np.ndarray:
@@ -1996,14 +3046,25 @@ class _Revolution:
         return np.cross(_curve_tangent(curve, parameter), self.profile.plane.normal)
 
     def _side(
-        self, point2: tuple[float, float], pcurve: BRepPCurve, forward: bool, /
+        self,
+        point2: tuple[float, float],
+        pcurve: BRepPCurve,
+        forward: bool,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget,
     ) -> int:
         """Coedge swept by a profile vertex: its circle or a degenerate pole."""
         sense = 1 if forward else -1
         if self._on_axis(point2):
             pole = self.builder.degenerate(self.vertex(point2, False), 0.0, self.angle)
-            return self.builder.coedge(pole, sense, pcurve)
-        return self.builder.coedge(self.circle(point2), sense, pcurve)
+            return self.builder.coedge(
+                pole, sense, pcurve, preparations=preparations, budget=budget
+            )
+        return self.builder.coedge(
+            self.circle(point2), sense, pcurve, preparations=preparations, budget=budget
+        )
 
     def _stage_curved(
         self,
@@ -2013,6 +3074,9 @@ class _Revolution:
         first: int,
         last: int,
         /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget,
     ) -> None:
         values = (
             chart.slope * edge.first + chart.intercept,
@@ -2029,14 +3093,14 @@ class _Revolution:
         upper_u: BRepPCurve
         if self.full:
             # A full source revolution constructs both sheets from the same
-            # original edge parameterization; sense only changes traversal.
+            # source edge parameterization; sense only changes traversal.
             source_u = lower_u
             lower_u = PeriodicPCurve(source_u, chart.patch, (0, 0))
             upper_u = PeriodicPCurve(source_u, chart.patch, (1, 0))
         else:
             upper_u = _line2((self.angle, chart.intercept), (0.0, chart.slope))
 
-        # The corner coordinate belongs to the original affine profile map,
+        # The corner coordinate belongs to the source affine profile map,
         # not a separately rounded endpoint constant on the adjacent coedge.
         def radial_pcurve(offset: Fraction) -> BRepPCurve:
             return exact_line_pcurve((Fraction(0), offset), (1.0, 0.0))
@@ -2048,8 +3112,8 @@ class _Revolution:
             and isinstance(chart.patch, TorusPatch)
             and edge.start == edge.end
         ):
-            # Retain a nonzero original affine source endpoint, not its rounded
-            # sum. Zero has the canonical unwrapped line representation.
+            # Retain a nonzero affine source endpoint, not its rounded sum.
+            # Zero has the unwrapped line representation.
             source_offset = Fraction(chart.slope) * Fraction(edge.first) + Fraction(
                 chart.intercept
             )
@@ -2061,20 +3125,33 @@ class _Revolution:
         else:
             upper_v = radial_pcurve(max(exact_values))
         loop = [
-            self._side(low, lower_v, True),
-            self.builder.coedge(last, sense, upper_u),
-            self._side(high, upper_v, False),
+            self._side(low, lower_v, True, preparations=preparations, budget=budget),
+            self.builder.coedge(
+                last, sense, upper_u, preparations=preparations, budget=budget
+            ),
+            self._side(high, upper_v, False, preparations=preparations, budget=budget),
         ]
-        reference = self.builder.coedge(first, -sense, lower_u)
+        reference = self.builder.coedge(
+            first, -sense, lower_u, preparations=preparations, budget=budget
+        )
         loop.append(reference)
         if self.full:
             for coedge in (loop[0], loop[2]):
                 self.builder.native_phase(
-                    self.builder.coedge_edges[coedge], chart.patch, 0
+                    self.builder.coedge_edges[coedge],
+                    chart.patch,
+                    0,
+                    preparations=preparations,
+                    budget=budget,
                 )
         if isinstance(curve, CircleCurve) and edge.start == edge.end:
             self.builder.native_phase(
-                first, chart.patch, 1, rational=Fraction(edge.first)
+                first,
+                chart.patch,
+                1,
+                rational=Fraction(edge.first),
+                preparations=preparations,
+                budget=budget,
             )
         middle = 0.5 * (edge.first + edge.last)
         self.builder.face(
@@ -2108,7 +3185,14 @@ class _Revolution:
         return CircleCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), radius)
 
     def _stage_annulus(
-        self, edge: _ProfileEdge, curve: AbstractCurve, chart: _SweptChart, /
+        self,
+        edge: _ProfileEdge,
+        curve: AbstractCurve,
+        chart: _SweptChart,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget,
     ) -> None:
         """Full disk or annulus swept by a segment perpendicular to the axis."""
         radii = self._radii(edge)
@@ -2116,7 +3200,11 @@ class _Revolution:
         points = (edge.start, edge.end)
         outer_point, inner_point = points[outer_index], points[1 - outer_index]
         outer = self.builder.coedge(
-            self.circle(outer_point), 1, self._circle_pcurve(radii[outer_index])
+            self.circle(outer_point),
+            1,
+            self._circle_pcurve(radii[outer_index]),
+            preparations=preparations,
+            budget=budget,
         )
         loops = [[outer]]
         inner_radius = radii[1 - outer_index]
@@ -2124,7 +3212,11 @@ class _Revolution:
             loops.append(
                 [
                     self.builder.coedge(
-                        self.circle(inner_point), -1, self._circle_pcurve(inner_radius)
+                        self.circle(inner_point),
+                        -1,
+                        self._circle_pcurve(inner_radius),
+                        preparations=preparations,
+                        budget=budget,
                     )
                 ]
             )
@@ -2142,8 +3234,50 @@ class _Revolution:
 # ------------------------------------------------------- derived tessellation
 
 
-class _NormalizedTrimCurve(AbstractTrimCurve):
-    """Exact affine chart normalization; the carrier and its enclosure agree."""
+def _admitted_affine_chord_coefficients(
+    curve: AbstractCurve, *, budget: CoordinateEnclosureBudget
+) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...]] | None:
+    """Admit source coefficient work before proving the affine family."""
+    match curve:
+        case LineCurve():
+            origin, direction = jax.device_get((curve.origin, curve.direction))
+            if np.asarray(origin).shape != (2,) or np.asarray(direction).shape != (2,):
+                return None
+            coefficients = rational_points(np.stack((origin, direction)), budget=budget)
+            reserve_fraction_work(coefficients, 0, 4, 1, budget=budget)
+        case BSplineCurve(degree=1):
+            controls, weights, knots = jax.device_get(
+                (curve.control_points, curve.weights, curve.knots)
+            )
+            if (
+                np.asarray(controls).shape != (2, 2)
+                or np.asarray(weights).shape != (2,)
+                or np.asarray(knots).shape != (4,)
+            ):
+                return None
+            coefficients = rational_points(
+                np.concatenate((controls, weights[None], knots.reshape((2, 2)))),
+                budget=budget,
+            )
+            reserve_fraction_work(coefficients, 5, 0, 2, budget=budget)
+            if (
+                coefficients[2][0] <= 0
+                or coefficients[2][0] != coefficients[2][1]
+                or coefficients[3][0] != coefficients[3][1]
+                or coefficients[4][0] != coefficients[4][1]
+                or coefficients[3][1] >= coefficients[4][0]
+            ):
+                return None
+            # The coefficient predicate visits five guards and constructs twelve
+            # lifted scalars plus nine span/coefficient arithmetic outputs.
+            reserve_fraction_work(coefficients, 14, 21, 7, budget=budget)
+        case _:
+            return None
+    return affine_curve_coefficients(curve, np.zeros((2,), dtype=np.float64))
+
+
+class NormalizedTrimCurve(AbstractTrimCurve):
+    """Normalize an affine chart while preserving carrier/enclosure agreement."""
 
     curve: AbstractTrimCurve
     lower: Array
@@ -2171,30 +3305,247 @@ class _NormalizedTrimCurve(AbstractTrimCurve):
     def source_id(self) -> str:
         return canonical_fingerprint(self.source_definition)
 
+    def _source_segment(self) -> CurveTrimSegment:
+        match self.curve:
+            case CurveTrimSegment() as segment:
+                return segment
+            case _:
+                raise TypeError(
+                    "NormalizedTrimCurve.curve must be a ranged trim carrier; "
+                    f"got {type(self.curve).__name__}"
+                )
+
     def source_parameters(self, parameters: Array, /) -> Array:
-        if not isinstance(self.curve, CurveTrimSegment):
-            raise TypeError("Source parameters require an original ranged trim carrier.")
-        return self.curve._carrier(parameters)
+        return self._source_segment().source_parameters(parameters)
 
     def source_parameter_enclosure(
-        self, first: float, last: float, /
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        if not isinstance(self.curve, CurveTrimSegment):
-            raise TypeError(
-                "Source parameter bounds require an original ranged trim carrier."
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    first,
+                    last,
+                )
+            ) as budget:
+                return self.source_parameter_enclosure(
+                    first, last, preparations=preparations, budget=budget
+                )
+        return self._source_segment().carrier_parameter_enclosure(
+            first, last, preparations=preparations, budget=budget
+        )
+
+    def is_c1_on(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> bool:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    first,
+                    last,
+                )
+            ) as budget:
+                return self.is_c1_on(
+                    first, last, preparations=preparations, budget=budget
+                )
+        return self._source_segment().is_c1_on(
+            first, last, preparations=preparations, budget=budget
+        )
+
+    @checked
+    def affine_chord_evidence(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> AffineTrimChordEvidence | None:
+        """Certify normalized affine endpoints with their source-root parameter bounds."""
+        match self.curve:
+            case (
+                CurveTrimSegment(curve=(LineCurve() | BSplineCurve()) as basis) as segment
+            ):
+                pass
+            case _:
+                return None
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self, first, last)) as budget:
+                return self.affine_chord_evidence(
+                    first, last, preparations=preparations, budget=budget
+                )
+        source_coefficients = _admitted_affine_chord_coefficients(basis, budget=budget)
+        if source_coefficients is None:
+            return None
+        origin, direction = source_coefficients
+        lower, extent = jax.device_get((self.lower, self.extent))
+        lower_values = np.asarray(lower, dtype=np.float64)
+        extent_values = np.asarray(extent, dtype=np.float64)
+        if (
+            lower_values.shape != (2,)
+            or extent_values.shape != (2,)
+            or np.any(extent_values <= 0.0)
+            or not np.all(np.isfinite(lower_values))
+            or not np.all(np.isfinite(extent_values))
+        ):
+            raise ValueError(
+                "NormalizedTrimCurve.normalization must be finite with positive two-coordinate extents; "
+                f"got lower={lower_values!r}, extent={extent_values!r}."
             )
-        return self.curve.carrier_parameter_enclosure(first, last)
+        coefficients = rational_points(
+            np.stack(
+                (
+                    lower_values,
+                    extent_values,
+                    np.asarray((segment.first, segment.last), dtype=np.float64),
+                    np.asarray((first, last), dtype=np.float64),
+                )
+            ),
+            budget=budget,
+        )
+        coefficients = tuple(
+            tuple(
+                rational_coefficient(value, role="NormalizedTrimCurve.chord_coefficient")
+                for value in row
+            )
+            for row in coefficients
+        )
+        chart_lower, chart_extent = coefficients[:2]
 
-    def is_c1_on(self, first: float, last: float, /) -> bool:
-        if not isinstance(self.curve, CurveTrimSegment):
-            raise TypeError("Trim continuity requires an original ranged trim carrier.")
-        return self.curve.is_c1_on(first, last)
+        def point(parameter: Fraction) -> tuple[Fraction, Fraction]:
+            # Two multiply/add/subtract/divide coordinate expressions.
+            reserve_fraction_work(
+                (origin, direction, chart_lower, chart_extent, (parameter,)),
+                8,
+                2,
+                5,
+                budget=budget,
+            )
+            return (
+                rational_coefficient(
+                    (origin[0] + direction[0] * parameter - chart_lower[0])
+                    / chart_extent[0],
+                    role="NormalizedTrimCurve.chord_coordinate",
+                ),
+                rational_coefficient(
+                    (origin[1] + direction[1] * parameter - chart_lower[1])
+                    / chart_extent[1],
+                    role="NormalizedTrimCurve.chord_coordinate",
+                ),
+            )
 
-    def evaluate(self, parameters: Array, /) -> Array:
-        return (self.curve.evaluate(parameters) - self.lower) / self.extent
+        nominal = []
+        boxes = []
+        for endpoint, local in enumerate((first, last)):
+            fraction = coefficients[3][endpoint]
+            # Reversal, range subtraction, scale, and translation.
+            reserve_fraction_work((coefficients[2], (fraction,)), 4, 3, 6, budget=budget)
+            fraction = 1 - fraction if segment.reversed else fraction
+            parameter = coefficients[2][0] + fraction * (
+                coefficients[2][1] - coefficients[2][0]
+            )
+            nominal.append(point(parameter))
+            interval = segment.carrier_parameter_enclosure(
+                local, local, preparations=preparations, budget=budget
+            )
+            root_parameters = rational_points(
+                np.asarray(((float(interval[0]), float(interval[1])),), dtype=np.float64),
+                budget=budget,
+            )[0]
+            images = (point(root_parameters[0]), point(root_parameters[1]))
+            # Four endpoint comparisons and four directed binary64 conversions.
+            reserve_fraction_work(images, 8, 4, 2, budget=budget)
+            boxes.append(
+                (
+                    np.asarray(
+                        [fraction_down(min(a, b)) for a, b in zip(*images, strict=True)],
+                        dtype=np.float64,
+                    ),
+                    np.asarray(
+                        [fraction_up(max(a, b)) for a, b in zip(*images, strict=True)],
+                        dtype=np.float64,
+                    ),
+                )
+            )
+        # Admit the record's rational-versus-binary64 containment validation.
+        recorded_bounds = rational_points(
+            np.stack((boxes[0][0], boxes[0][1], boxes[1][0], boxes[1][1])),
+            budget=budget,
+        )
+        reserve_fraction_work((*tuple(nominal), *recorded_bounds), 8, 8, 2, budget=budget)
+        return AffineTrimChordEvidence(
+            nominal_start=nominal[0],
+            nominal_end=nominal[1],
+            start_lower=boxes[0][0],
+            start_upper=boxes[0][1],
+            end_lower=boxes[1][0],
+            end_upper=boxes[1][1],
+            source_id=canonical_fingerprint(carrier_payload(self)),
+            endpoint_root_ids=tuple(
+                root.root_id
+                for root in (segment.first_root, segment.last_root)
+                if root is not None
+            ),
+        )
 
-    def enclosure(self, first: float, last: float, /) -> np.ndarray:
-        box = self.curve.enclosure(first, last)
+    def evaluate(
+        self,
+        parameters: Array,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+        preparations: TrimRequestPreparations | None = None,
+    ) -> Array:
+        """Normalize point values while borrowing the supplied source request."""
+        return (
+            self.curve.evaluate(parameters, budget=budget, preparations=preparations)
+            - self.lower
+        ) / self.extent
+
+    def enclosure(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    first,
+                    last,
+                )
+            ) as budget:
+                return self.enclosure(
+                    first, last, preparations=preparations, budget=budget
+                )
+        box = self.curve.enclosure(first, last, preparations=preparations, budget=budget)
         lower = np.nextafter(box[0] - np.asarray(self.lower), -np.inf)
         upper = np.nextafter(box[1] - np.asarray(self.lower), np.inf)
         return np.stack(
@@ -2205,21 +3556,78 @@ class _NormalizedTrimCurve(AbstractTrimCurve):
         )
 
     def derivative_bounds(
-        self, first: float, last: float, /, *, order: int = 1
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        order: int = 1,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+        restriction_bank: BernsteinRestrictionBank | None = None,
+        meridian_jets: list[MeridianOverlaps] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        lower, upper = self.curve.derivative_bounds(first, last, order=order)
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    first,
+                    last,
+                )
+            ) as budget:
+                return self.derivative_bounds(
+                    first,
+                    last,
+                    order=order,
+                    preparations=preparations,
+                    restriction_bank=restriction_bank,
+                    meridian_jets=meridian_jets,
+                    budget=budget,
+                )
+        lower, upper = self.curve.derivative_bounds(
+            first,
+            last,
+            order=order,
+            preparations=preparations,
+            budget=budget,
+            restriction_bank=restriction_bank,
+            meridian_jets=meridian_jets,
+        )
         return np.nextafter(lower / np.asarray(self.extent), -np.inf), np.nextafter(
             upper / np.asarray(self.extent), np.inf
         )
 
-    def shares_endpoint(self, other: AbstractTrimCurve, /) -> bool:
+    def shares_endpoint(
+        self,
+        other: AbstractTrimCurve,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> bool:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    other,
+                )
+            ) as budget:
+                return self.shares_endpoint(
+                    other, preparations=preparations, budget=budget
+                )
         if (
-            not isinstance(other, _NormalizedTrimCurve)
+            not isinstance(other, NormalizedTrimCurve)
             or not np.array_equal(np.asarray(self.lower), np.asarray(other.lower))
             or not np.array_equal(np.asarray(self.extent), np.asarray(other.extent))
         ):
             return False
-        if self.curve.shares_endpoint(other.curve):
+        if self.curve.shares_endpoint(
+            other.curve, preparations=preparations, budget=budget
+        ):
             return True
         if (
             self.end_root is None
@@ -2239,10 +3647,17 @@ class _NormalizedTrimCurve(AbstractTrimCurve):
         ):
             return False
         return self.end_root.same_uv_endpoint(
-            self.patch, first, self.end_endpoint, second, other.start_endpoint
+            self.patch,
+            first,
+            self.end_endpoint,
+            second,
+            other.start_endpoint,
+            preparations=preparations,
+            budget=budget,
         )
 
 
+@checked
 def brep_trim_curve(
     geometry: BRepGeometry,
     coedge: int,
@@ -2250,18 +3665,28 @@ def brep_trim_curve(
     /,
     *,
     parameter_bounds: np.ndarray | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> AbstractTrimCurve:
     """One source-rooted coedge carrier; no chord-cover allocation or scheduling."""
-    if not isinstance(geometry, BRepGeometry) or not isinstance(
-        patch, AbstractSurfacePatch
-    ):
-        raise TypeError("Trim construction requires exact native geometry and a surface.")
+    if budget is None:
+        with coordinate_source_request(
+            (
+                geometry,
+                coedge,
+                patch,
+            )
+        ) as budget:
+            return brep_trim_curve(
+                geometry, coedge, patch, parameter_bounds=parameter_bounds, budget=budget
+            )
     if not 0 <= coedge < len(geometry.coedge_edges):
-        raise ValueError("coedge must index an authoritative oriented edge use.")
+        raise ValueError(
+            f"brep_trim_curve.coedge must index an oriented edge use; got {coedge}"
+        )
     if parameter_bounds is None:
         lower, extent = np.zeros((2,), dtype=np.float64), np.ones((2,), dtype=np.float64)
     else:
-        bounds = patch.validate_parameter_box(parameter_bounds)
+        bounds = patch.validate_parameter_box(parameter_bounds, budget=budget)
         lower, extent = bounds[0], bounds[1] - bounds[0]
     edge = geometry.coedge_edges[coedge]
     first, last = np.asarray(geometry.edge_ranges)[edge]
@@ -2274,8 +3699,9 @@ def brep_trim_curve(
         reversed=geometry.coedge_senses[coedge] < 0,
         first_root=first_root,
         last_root=last_root,
+        budget=budget,
     )
-    return _NormalizedTrimCurve(
+    return NormalizedTrimCurve(
         segment,
         jnp.asarray(lower, dtype=jnp.float64),
         jnp.asarray(extent, dtype=jnp.float64),
@@ -2287,6 +3713,7 @@ def brep_trim_curve(
     )
 
 
+@checked
 def brep_trim_domain(
     geometry: BRepGeometry,
     face: int,
@@ -2297,18 +3724,35 @@ def brep_trim_domain(
     maximum_arcs: int = 65536,
     parameter_bounds: np.ndarray | None = None,
     relative_closure_tolerance: float = 1.0e-9,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> TrimDomain:
-    """Build authoritative rooted loops in raw UV, or one explicit normalized chart."""
-    if not isinstance(geometry, BRepGeometry) or not isinstance(
-        patch, AbstractSurfacePatch
-    ):
-        raise TypeError("Trim construction requires exact native geometry and a surface.")
+    """Build rooted loops in raw UV, or one explicitly normalized chart."""
+    if budget is None:
+        with coordinate_source_request(
+            (
+                geometry,
+                face,
+                patch,
+            )
+        ) as budget:
+            return brep_trim_domain(
+                geometry,
+                face,
+                patch,
+                tolerance=tolerance,
+                maximum_arcs=maximum_arcs,
+                parameter_bounds=parameter_bounds,
+                relative_closure_tolerance=relative_closure_tolerance,
+                budget=budget,
+            )
     if not 0 <= face < len(geometry.face_loops):
-        raise ValueError("face must index an authoritative face loop.")
+        raise ValueError(f"brep_trim_domain.face must index a face loop; got {face}")
     loops = []
     for loop in geometry.face_loops[face]:
         curves = [
-            brep_trim_curve(geometry, coedge, patch, parameter_bounds=parameter_bounds)
+            brep_trim_curve(
+                geometry, coedge, patch, parameter_bounds=parameter_bounds, budget=budget
+            )
             for coedge in loop
         ]
         loops.append(
@@ -2331,18 +3775,16 @@ _NATIVE_CONSTRUCTION_POLICY_ID = canonical_fingerprint(
 
 
 def _check_publication_inputs(
-    coordinate_contract: SpatialCoordinateContract,
     source_id: str,
     tessellation: BRepTessellationPolicy | None,
     /,
 ) -> BRepTessellationPolicy:
-    if not isinstance(coordinate_contract, SpatialCoordinateContract):
-        raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
+    # Nominal input contracts are enforced at public construction boundaries.
     if not isinstance(source_id, str) or not source_id:
-        raise ValueError("source_id must be a non-empty string.")
+        raise ValueError(
+            f"assemble_brep_model.source_id must be a non-empty string; got {source_id!r}"
+        )
     policy = BRepTessellationPolicy() if tessellation is None else tessellation
-    if not isinstance(policy, BRepTessellationPolicy):
-        raise TypeError("tessellation must be a BRepTessellationPolicy or None.")
     return policy
 
 
@@ -2363,7 +3805,7 @@ def _solid_edge_balance(
 
 
 def _publish(
-    builder: _Builder,
+    builder: Builder,
     geometry: BRepGeometry,
     policy: BRepTessellationPolicy,
     *,
@@ -2374,8 +3816,10 @@ def _publish(
     import_policy_id: str,
     converted_surface_count: int,
     curve_surface_tolerance: float | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> BRepModel:
-    """Publish exact geometry and trim charts, realizing a query mesh only on request."""
+    """Publish geometry and trim charts, realizing a query mesh only on request."""
     face_count = len(builder.faces)
     orientation = np.asarray(
         [face.orientation for face in builder.faces], dtype=np.float64
@@ -2385,7 +3829,9 @@ def _publish(
         (-1, 2, 2)
     )
     tags = tuple(face.tag for face in builder.faces)
-    physical_scale = brep_physical_scale(geometry)
+    physical_scale = brep_physical_scale(
+        geometry, preparations=preparations, budget=budget
+    )
     correspondence_tolerance = (
         1.0e-8 * physical_scale
         if curve_surface_tolerance is None
@@ -2397,9 +3843,8 @@ def _publish(
         or correspondence_tolerance < 0.0
     ):
         raise ValueError(
-            "curve_surface_tolerance must be a finite nonnegative physical length."
+            f"assemble_brep_model.curve_surface_tolerance must be a finite nonnegative physical length; got {correspondence_tolerance!r}"
         )
-    from ._tessellation import tessellate_brep
 
     source_revision = canonical_fingerprint(
         {
@@ -2408,7 +3853,10 @@ def _publish(
             "spatial_id": coordinate_contract.spatial_id,
         }
     )
-    staged = tessellate_brep(
+    # The scheduler imports meshing domains, which consume these constructors.
+    from . import _tessellation as tessellation_owner
+
+    staged = tessellation_owner.tessellate_brep(
         geometry,
         patches,
         orientation,
@@ -2448,6 +3896,7 @@ def _publish(
                 tolerance=1.0 / policy.trim_samples_per_edge,
                 maximum_arcs=policy.maximum_triangles * 3,
                 parameter_bounds=face.box,
+                budget=budget,
             )
             for index, face in enumerate(builder.faces)
         ),
@@ -2473,6 +3922,8 @@ def _publish(
         physical_tags=tags,
         report=report,
         geometry=geometry,
+        budget=budget,
+        preparations=preparations,
     )
 
 
@@ -2481,8 +3932,9 @@ type _ShellStructure = tuple[
 ]
 
 
-def _finish(
-    builder: _Builder,
+@checked
+def finish(
+    builder: Builder,
     *,
     solid: bool,
     coordinate_contract: SpatialCoordinateContract,
@@ -2490,9 +3942,11 @@ def _finish(
     tessellation: BRepTessellationPolicy | None,
     occurrences: tuple[BRepOccurrence, ...] | None = None,
     shells: _ShellStructure | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> BRepModel:
     """Publish staged topology; ``shells`` keeps a source's shell/solid structure."""
-    policy = _check_publication_inputs(coordinate_contract, source_id, tessellation)
+    policy = _check_publication_inputs(source_id, tessellation)
     face_count = len(builder.faces)
     shell_faces, shell_orientations, solid_shells = (
         (
@@ -2503,12 +3957,49 @@ def _finish(
         if shells is None
         else shells
     )
+    edge_ranges = np.asarray(builder.edge_ranges).reshape(-1, 2)
+    if builder.recompute_endpoint_gaps:
+        rows = _builder_endpoint_gap_rows(builder, budget=budget)
+        builder.edge_vertex_gap_bounds = (
+            rows if any(bound for row in rows for bound in row) else None
+        )
+    face_gaps = None
+    if builder.edge_vertex_gap_bounds is not None or builder.recompute_endpoint_gaps:
+        budget.reserve(len(builder.coedge_edges), 16 * len(builder.coedge_edges))
+        owners = [0] * len(builder.coedge_edges)
+        for face, staged_face in enumerate(builder.faces):
+            for loop in staged_face.loops:
+                for coedge in loop:
+                    owners[coedge] = face
+        face_gaps = _certify_edge_face_gap_bounds(
+            tuple(builder.curves),
+            tuple(builder.edge_curves),
+            edge_ranges,
+            tuple(builder.pcurves),
+            tuple(builder.coedge_edges),
+            tuple(owners),
+            tuple(face.patch for face in builder.faces),
+            budget=budget,
+            exact_unsupported=builder.recompute_endpoint_gaps,
+            edge_endpoint_roots=(
+                tuple(builder.edge_endpoint_roots)
+                if builder.recompute_endpoint_gaps
+                else None
+            ),
+            coedge_endpoint_roots=(
+                tuple(builder.coedge_endpoint_roots)
+                if builder.recompute_endpoint_gaps
+                else None
+            ),
+        )
     geometry = BRepGeometry(
         vertex_points=np.asarray(builder.vertices).reshape(-1, 3),
         curves=tuple(builder.curves),
         edge_curves=tuple(builder.edge_curves),
-        edge_ranges=np.asarray(builder.edge_ranges).reshape(-1, 2),
+        edge_ranges=edge_ranges,
         edge_vertices=tuple(builder.edge_vertices),
+        edge_vertex_gap_bounds=builder.edge_vertex_gap_bounds,
+        edge_face_gap_bounds=face_gaps,
         pcurves=tuple(builder.pcurves),
         coedge_edges=tuple(builder.coedge_edges),
         coedge_senses=tuple(builder.coedge_senses),
@@ -2521,19 +4012,21 @@ def _finish(
         occurrences=occurrences,
         edge_endpoint_roots=tuple(builder.edge_endpoint_roots),
         coedge_endpoint_roots=tuple(builder.coedge_endpoint_roots),
+        budget=budget,
+        preparations=preparations,
     )
     orientation = np.asarray(
         [face.orientation for face in builder.faces], dtype=np.float64
     )
     if any(_solid_edge_balance(geometry, orientation)):
         raise RuntimeError(
-            "Native construction produced an inconsistently oriented shell."
+            "finish.shell must be consistently oriented; got a nonzero solid edge-use balance"
         )
     digest = canonical_fingerprint(
         {
             "kind": "native-brep-source",
             "geometry": geometry.geometry_id,
-            "patches": [_carrier_payload(face.patch) for face in builder.faces],
+            "patches": [carrier_payload(face.patch) for face in builder.faces],
             "parameter_bounds": np.stack([face.box for face in builder.faces]),
             "orientation": orientation,
             "physical_tags": [face.tag for face in builder.faces],
@@ -2549,9 +4042,12 @@ def _finish(
         source_digest=digest,
         import_policy_id=_NATIVE_CONSTRUCTION_POLICY_ID,
         converted_surface_count=0,
+        preparations=preparations,
+        budget=budget,
     )
 
 
+@checked
 def assemble_brep_model(
     geometry: BRepGeometry,
     patches: tuple[AbstractSurfacePatch, ...],
@@ -2568,8 +4064,10 @@ def assemble_brep_model(
     converted_surface_count: int = 0,
     tessellation: BRepTessellationPolicy | None = None,
     curve_surface_tolerance: float | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepModel:
-    """Publish exact decoded geometry with an optional derived tessellation.
+    """Publish decoded source geometry with an optional derived tessellation.
 
     ``patches``, ``parameter_bounds`` (one ``(2, 2)`` box per face),
     ``orientation`` (per face, the sign of the parametric normal against its
@@ -2579,14 +4077,37 @@ def assemble_brep_model(
     once in each direction; an inconsistently oriented or open solid is
     refused rather than repaired.
     """
-    policy = _check_publication_inputs(coordinate_contract, source_id, tessellation)
-    if not isinstance(geometry, BRepGeometry):
-        raise TypeError("geometry must be a BRepGeometry.")
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                geometry,
+                patches,
+                parameter_bounds,
+                orientation,
+                physical_tags,
+            )
+        ) as budget:
+            return assemble_brep_model(
+                geometry,
+                patches,
+                parameter_bounds,
+                orientation,
+                physical_tags,
+                coordinate_contract=coordinate_contract,
+                source_id=source_id,
+                source_format=source_format,
+                source_digest=source_digest,
+                import_policy_id=import_policy_id,
+                converted_surface_count=converted_surface_count,
+                tessellation=tessellation,
+                curve_surface_tolerance=curve_surface_tolerance,
+                preparations=preparations,
+                budget=budget,
+            )
+    policy = _check_publication_inputs(source_id, tessellation)
     face_count = len(geometry.face_loops)
-    if not isinstance(patches, tuple) or not all(
-        isinstance(patch, AbstractSurfacePatch) for patch in patches
-    ):
-        raise TypeError("patches must be a tuple of AbstractSurfacePatch values.")
     bounds = np.asarray(parameter_bounds, dtype=np.float64)
     signs = np.asarray(orientation, dtype=np.float64).reshape(-1)
     if (
@@ -2596,19 +4117,21 @@ def assemble_brep_model(
         or len(physical_tags) != face_count
     ):
         raise ValueError(
-            "patches, parameter_bounds, orientation and physical_tags must align "
-            "with the geometry faces."
+            f"assemble_brep_model.faces must align patches, parameter_bounds, orientation and physical_tags; got {len(patches)} patches, bounds {bounds.shape}, signs {signs.shape}, {len(physical_tags)} tags for {face_count} faces"
         )
     if not np.all(np.isin(signs, (-1.0, 1.0))):
-        raise ValueError("orientation entries must be -1 or 1.")
+        raise ValueError(
+            "assemble_brep_model.orientation must contain -1 or 1; got invalid signs"
+        )
     if any(not isinstance(tag, str) or not tag for tag in physical_tags):
-        raise ValueError("physical_tags must be non-empty strings.")
+        raise ValueError(
+            "assemble_brep_model.physical_tags must be non-empty strings; got an invalid tag"
+        )
     if any(_solid_edge_balance(geometry, signs)):
         raise ValueError(
-            "A solid shell is open or inconsistently oriented: some edge is not "
-            "used once in each direction."
+            "assemble_brep_model.shell must have each edge used once in each direction; got an open or inconsistently oriented solid shell"
         )
-    builder = _Builder(
+    builder = Builder(
         vertices=list(np.asarray(geometry.vertex_points)),
         curves=list(geometry.curves),
         edge_curves=list(geometry.edge_curves),
@@ -2642,18 +4165,15 @@ def assemble_brep_model(
         import_policy_id=import_policy_id,
         converted_surface_count=converted_surface_count,
         curve_surface_tolerance=curve_surface_tolerance,
+        preparations=preparations,
+        budget=budget,
     )
 
 
 # ------------------------------------------------------------------ public API
 
 
-def _profile(profile: PlanarProfile, /) -> PlanarProfile:
-    if not isinstance(profile, PlanarProfile):
-        raise TypeError("profile must be a PlanarProfile.")
-    return profile
-
-
+@checked
 def brep_planar_face(
     profile: PlanarProfile,
     /,
@@ -2661,10 +4181,24 @@ def brep_planar_face(
     coordinate_contract: SpatialCoordinateContract,
     tessellation: BRepTessellationPolicy | None = None,
     source_id: str = "native-planar-face",
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepModel:
-    """Exact trimmed planar face (no solid) bounded by the profile loops."""
-    profile_ = _profile(profile)
-    builder = _Builder()
+    """Return a trimmed planar face bounded by the profile loops."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request((profile,)) as budget:
+            return brep_planar_face(
+                profile,
+                coordinate_contract=coordinate_contract,
+                tessellation=tessellation,
+                source_id=source_id,
+                preparations=preparations,
+                budget=budget,
+            )
+    profile_ = profile
+    builder = Builder()
     plane = profile_.plane
     loop_edges = []
     for loop in profile_.edges:
@@ -2681,22 +4215,29 @@ def brep_planar_face(
                 for index, edge in enumerate(loop)
             ]
         )
+    if profile_.endpoint_gap_bounds is not None:
+        builder.recompute_endpoint_gaps = True
     _cap(
         builder,
         profile_,
         PlanePatch(plane.origin, plane.x_axis, plane.y_axis),
         loop_edges,
         1,
+        preparations=preparations,
+        budget=budget,
     )
-    return _finish(
+    return finish(
         builder,
         solid=False,
         coordinate_contract=coordinate_contract,
         source_id=source_id,
         tessellation=tessellation,
+        preparations=preparations,
+        budget=budget,
     )
 
 
+@checked
 def brep_extrusion(
     profile: PlanarProfile,
     vector: ConvertibleToArray,
@@ -2705,28 +4246,51 @@ def brep_extrusion(
     coordinate_contract: SpatialCoordinateContract,
     tessellation: BRepTessellationPolicy | None = None,
     source_id: str = "native-extrusion",
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepModel:
-    """Exact solid swept by translating a planar profile along ``vector``.
+    """Return the solid swept by translating a planar profile along ``vector``.
 
     Line segments sweep planes, arcs sweep cylinders (perpendicular sweeps) or
-    exact extrusion surfaces (oblique sweeps); caps are the profile and its
+    generating extrusion surfaces (oblique sweeps); caps are the profile and its
     translate. ``vector`` must leave the sketch plane.
     """
-    profile_ = _profile(profile)
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                profile,
+                vector,
+            )
+        ) as budget:
+            return brep_extrusion(
+                profile,
+                vector,
+                coordinate_contract=coordinate_contract,
+                tessellation=tessellation,
+                source_id=source_id,
+                preparations=preparations,
+                budget=budget,
+            )
+    profile_ = profile
     vector_ = _point3(vector, "vector")
     if not np.linalg.norm(vector_) > 0.0:
-        raise ValueError("The extrusion vector must be nonzero.")
-    builder = _Builder()
-    _stage_extrusion(builder, profile_, vector_)
-    return _finish(
+        raise ValueError("brep_extrusion.vector must be nonzero; got zero vector")
+    builder = Builder()
+    stage_extrusion(builder, profile_, vector_, preparations=preparations, budget=budget)
+    return finish(
         builder,
         solid=True,
         coordinate_contract=coordinate_contract,
         source_id=source_id,
         tessellation=tessellation,
+        preparations=preparations,
+        budget=budget,
     )
 
 
+@checked
 def brep_revolution(
     profile: PlanarProfile,
     axis_origin: ConvertibleToArray,
@@ -2737,8 +4301,10 @@ def brep_revolution(
     coordinate_contract: SpatialCoordinateContract,
     tessellation: BRepTessellationPolicy | None = None,
     source_id: str = "native-revolution",
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepModel:
-    """Exact solid swept by revolving a planar profile about an in-plane axis.
+    """Return the solid swept by revolving a profile about an in-plane axis.
 
     ``axis_origin`` and ``axis_direction`` are sketch coordinates; the profile
     must lie in one closed half-plane of the axis. The positive rotation sense
@@ -2747,23 +4313,50 @@ def brep_revolution(
     ``(0, 2 pi]`` retain their literal binary phase and distinct capped ends.
     Swept edges are recognized as plane, cylinder, cone, sphere or torus faces.
     """
-    profile_ = _profile(profile)
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                profile,
+                axis_origin,
+                axis_direction,
+            )
+        ) as budget:
+            return brep_revolution(
+                profile,
+                axis_origin,
+                axis_direction,
+                angle=angle,
+                coordinate_contract=coordinate_contract,
+                tessellation=tessellation,
+                source_id=source_id,
+                preparations=preparations,
+                budget=budget,
+            )
+    profile_ = profile
     angle_ = _TWO_PI if angle is None else positive_finite_float(angle, "angle")
     if angle_ > _TWO_PI:
-        raise ValueError("angle must lie in (0, 2 pi].")
+        raise ValueError(f"brep_revolution.angle must lie in (0, 2 pi]; got {angle_}")
     axis = _revolution_axis(
         profile_,
         _point2(axis_origin, "axis_origin"),
         _point2(axis_direction, "axis_direction"),
+        preparations=preparations,
+        budget=budget,
     )
-    builder = _Builder()
-    _Revolution(builder, profile_, axis, angle_, native_phase=angle is None).stage()
-    return _finish(
+    builder = Builder()
+    _Revolution(builder, profile_, axis, angle_, native_phase=angle is None).stage(
+        preparations=preparations, budget=budget
+    )
+    return finish(
         builder,
         solid=True,
         coordinate_contract=coordinate_contract,
         source_id=source_id,
         tessellation=tessellation,
+        preparations=preparations,
+        budget=budget,
     )
 
 
@@ -2776,15 +4369,15 @@ type _LineMap = tuple[
 
 
 _CROSS_FACE_OFFSET = (
-    "Normal offsets of sharp or cross-face edges need blend faces or a G1 "
-    "certificate between distinct source faces."
+    "brep_offset.edges must have a G1 certificate or blend faces between distinct "
+    "source faces; got sharp or cross-face edges"
 )
 
 
 def _line_pcurve_map(pcurve: AbstractCurve | AbstractTrimCurve, /) -> _LineMap | None:
-    """Exact ``(origin, direction, sheet shifts)`` of an affine/periodic line p-curve.
+    """Return ``(origin, direction, sheet shifts)`` of an affine/periodic line p-curve.
 
-    Recognition is by the exact parameter map, not the curve class: a
+    Recognition is by the rational parameter map, not the curve class: a
     polynomial B-spline is the affine map ``origin + direction t`` iff every
     control equals that map at its Greville abscissa (linear precision and
     uniqueness of B-spline coefficients).
@@ -2847,18 +4440,23 @@ def _line_pcurve_map(pcurve: AbstractCurve | AbstractTrimCurve, /) -> _LineMap |
             return None
 
 
-def _offset_isoline(pcurve: BRepPCurve, /) -> tuple[int, Fraction, tuple[int, int]]:
-    """Fixed chart axis, exact source value and sheet shifts of an isoline coedge."""
+class _OffsetIsoline(StrictModule):
+    axis: int
+    value: Fraction
+    shifts: tuple[int, int]
+
+
+def _offset_isoline(pcurve: BRepPCurve, /) -> _OffsetIsoline:
+    """Return the fixed axis, rational source value and sheet shifts of an isoline."""
     mapped = _line_pcurve_map(pcurve) if isinstance(pcurve, AbstractCurve) else None
     if mapped is not None:
         origin, direction, shifts = mapped
         for axis in (0, 1):
             free = 1 - axis
             if direction[axis] == 0 and direction[free] == 1 and origin[free] == 0:
-                return axis, origin[axis], shifts
+                return _OffsetIsoline(axis, origin[axis], shifts)
     raise ValueError(
-        "Normal offsets require every coedge to be an identity-parameter isoline of its "
-        "source chart; general trims need a curve-on-surface offset carrier."
+        "brep_offset.coedge must be an identity-parameter isoline of its source chart; got a general trim requiring a curve-on-surface offset carrier"
     )
 
 
@@ -2899,16 +4497,17 @@ def _offset_face_gluing(
     loops = geometry.face_loops[face]
     if len(loops) != 1:
         raise ValueError(
-            "Normal offsets require closed rectangular source charts without holes."
+            "brep_offset.chart must be a closed rectangle without holes; got multiple source loops"
         )
     sides: dict[tuple[int, int], set[int]] = {}
     poles: set[tuple[int, int]] = set()
     for coedge in loops[0]:
-        axis, value, shifts = _offset_isoline(geometry.pcurves[coedge])
-        chart = float(value) + shifts[axis] * _TWO_PI
+        isoline = _offset_isoline(geometry.pcurves[coedge])
+        axis = isoline.axis
+        chart = float(isoline.value) + isoline.shifts[axis] * _TWO_PI
         if chart not in (box[0, axis], box[1, axis]):
             raise ValueError(
-                "A normal-offset edge is not a side of its full source chart rectangle."
+                "brep_offset.edge must be a side of its full source chart rectangle; got an interior isoline"
             )
         side = (axis, 0 if chart == box[0, axis] else 1)
         edge = geometry.coedge_edges[coedge]
@@ -2921,12 +4520,11 @@ def _offset_face_gluing(
         low, high = sides.get((axis, 0), set()), sides.get((axis, 1), set())
         ends = {(axis, 0), (axis, 1)}
         if low and low == high and not ends & poles:
-            if not _closure_tangent_continuous(
+            if not closure_tangent_continuous(
                 patch, axis, float(box[0, axis]), float(box[1, axis])
             ):
                 raise ValueError(
-                    "A normal offset across a source seam needs an exact tangent-continuity "
-                    "certificate; sharp seams need blend faces."
+                    "brep_offset.seam must have a tangent-continuity certificate; got a sharp seam requiring blend faces"
                 )
             glued.append(True)
         elif not low and not high and ends <= poles:
@@ -2937,37 +4535,34 @@ def _offset_face_gluing(
 
 
 def _source_value_bounds(
-    patch: AbstractSurfacePatch, boxes: np.ndarray, /
+    patch: AbstractSurfacePatch,
+    boxes: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Batched source-piece interval enclosures of values over ``(B, 2, 2)`` boxes.
 
-    Uses the canonical source-piece split and interval programs grouped by
+    Uses the source-piece split and interval programs grouped by
     piece structure as ``derivative_bounds_batch`` does; chart-global
     ``bounding_box`` conveniences (a revolution encloses its whole annulus)
     cannot separate cells.
     """
-    from .._interval_enclosure import prepare_interval_function
-    from ._intersection_curve import (
-        coefficient_enclosures,
-        surface_pieces_for_box,
-        SurfaceEvaluator,
-    )
-    from ._patches import _meridian_value_bounds
 
-    # A revolution or its offset rotates batched meridian (or exact parallel
+    # A revolution or its offset rotates batched meridian (or parallel
     # meridian) hulls; generic interval AD of the normalized offset normal
     # cannot separate cells.
-    swept = _meridian_value_bounds(patch, boxes)
+    swept = meridian_value_bounds(patch, boxes, budget=budget)
     if swept is not None:
         return swept
     lower = np.full((boxes.shape[0], 3), np.inf)
     upper = np.full((boxes.shape[0], 3), -np.inf)
     groups: dict[
         tuple[object, ...],
-        tuple[SurfaceEvaluator, list[tuple[int, np.ndarray, np.ndarray]]],
+        tuple[AbstractSurfacePatch, list[tuple[int, np.ndarray, np.ndarray]]],
     ] = {}
     for row, box in enumerate(boxes):
-        for piece in surface_pieces_for_box(patch, box):
+        for piece in surface_pieces_for_box(patch, box, budget=budget):
             leaves, structure = jax.tree_util.tree_flatten(piece.evaluator)
             key = (
                 structure,
@@ -2996,9 +4591,12 @@ def _source_value_bounds(
     return lower, upper
 
 
-type _OffsetChart = tuple[
-    AbstractSurfacePatch, OffsetSurface, np.ndarray, tuple[bool, bool]
-]
+class _OffsetChart(StrictModule):
+    base: AbstractSurfacePatch
+    offset: OffsetSurface
+    parameter_box: np.ndarray
+    glued: tuple[bool, bool]
+
 
 # Fixed equal pieces of the isotopy parameter per certificate cell level. The
 # hull of DX and DF_1 alone widens with |delta| * curvature at every cell size.
@@ -3014,14 +4612,13 @@ def _projected_full_rank(lower: np.ndarray, upper: np.ndarray, /) -> bool:
     convex chart whose derivatives lie in the hull. Coordinate minors lose
     this when both columns lean diagonally against every coordinate pair.
     """
-    from ._intersection import _point_times_interval
 
     if not (np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))):
         return False
     preconditioner = np.linalg.pinv(0.5 * (lower + upper))
     if not np.all(np.isfinite(preconditioner)):
         return False
-    product_lower, product_upper = _point_times_interval(
+    product_lower, product_upper = point_times_interval(
         preconditioner[None], lower[None], upper[None]
     )
     residual = np.maximum(
@@ -3033,7 +4630,13 @@ def _projected_full_rank(lower: np.ndarray, upper: np.ndarray, /) -> bool:
 
 
 def _offset_cells_certified(
-    charts: tuple[_OffsetChart, ...], convex: tuple[bool, ...], count: int, /
+    charts: tuple[_OffsetChart, ...],
+    convex: tuple[bool, ...],
+    count: int,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> bool:
     """One uniform ``count x count`` cell level of the offset isotopy certificate.
 
@@ -3042,7 +4645,9 @@ def _offset_cells_certified(
     """
     lows, highs, owners, rows, columns = [], [], [], [], []
     grid = np.arange(count)
-    for face, (base, offset, box, glued) in enumerate(charts):
+    for face, chart in enumerate(charts):
+        base, offset = chart.base, chart.offset
+        box, glued = chart.parameter_box, chart.glued
         knots = [np.linspace(box[0, axis], box[1, axis], count + 1) for axis in (0, 1)]
         index_u, index_v = (
             value.reshape(-1) for value in np.meshgrid(grid, grid, indexing="ij")
@@ -3064,9 +4669,16 @@ def _offset_cells_certified(
                 if piece == 0
                 else offset
                 if piece == _ISOTOPY_PIECES
-                else OffsetSurface(base, distance * piece / _ISOTOPY_PIECES)
+                else OffsetSurface(
+                    base,
+                    distance * piece / _ISOTOPY_PIECES,
+                    budget=budget,
+                    preparations=preparations,
+                )
             )
-            low, high = stage.derivative_bounds_batch(boxes, order=1)
+            low, high = stage.derivative_bounds_batch(
+                boxes, order=1, preparations=preparations, budget=budget
+            )
             jacobians.append(
                 (low.reshape((count, count, 3, 2)), high.reshape((count, count, 3, 2)))
             )
@@ -3090,8 +4702,8 @@ def _offset_cells_certified(
                         interval_jacobian_full_rank(*hull) or _projected_full_rank(*hull)
                     ):
                         return False
-        source_low, source_high = _source_value_bounds(base, boxes)
-        image_low, image_high = _source_value_bounds(offset, boxes)
+        source_low, source_high = _source_value_bounds(base, boxes, budget=budget)
+        image_low, image_high = _source_value_bounds(offset, boxes, budget=budget)
         lows.append(np.minimum(source_low, image_low))
         highs.append(np.maximum(source_high, image_high))
         owners.append(np.full(boxes.shape[0], face))
@@ -3108,7 +4720,7 @@ def _offset_cells_certified(
         separated = np.any(
             (low[others] > high[cell]) | (high[others] < low[cell]), axis=1
         )
-        glued = charts[owner[cell].item()][3]
+        glued = charts[owner[cell].item()].glued
         same = owner[others] == owner[cell]
         if convex[owner[cell].item()]:
             near = same
@@ -3129,7 +4741,13 @@ def _offset_cells_certified(
     return True
 
 
-def _certify_offset_embedding(charts: tuple[_OffsetChart, ...], /) -> None:
+def _certify_offset_embedding(
+    charts: tuple[_OffsetChart, ...],
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> None:
     """Prove every intermediate normal offset embeds the closed source shell.
 
     With ``F_t = X + t delta n`` for ``t`` in ``[0, 1]``, ``DF_t`` is affine in
@@ -3139,26 +4757,28 @@ def _certify_offset_embedding(charts: tuple[_OffsetChart, ...], /) -> None:
     endpoint Jacobians over every glued 2x2 cell block therefore proves
     regularity and local injectivity of all ``F_t`` there (mean-value form
     across the glued seam chart), and disjoint hulls of both value enclosures
-    prove that non-neighboring cells never collide. A chart whose every
-    ``_ConvexOffsetEvidence`` premise is proved embeds each layer globally,
+    prove that non-neighboring cells never collide. A chart with proved
+    ``ConvexOffsetEvidence`` embeds each layer globally,
     replacing its same-chart box separation, which cannot separate cells
     nearer than ``|delta|``. The isotopy carries the source embedding and its
     outward orientation to the offset. Unresolved cells refuse after the budget.
     """
     convex = tuple(
-        _convex_meridian_offset(offset, glued).proved for _, offset, _, glued in charts
+        convex_meridian_offset(chart.offset, chart.glued, budget=budget).proved
+        for chart in charts
     )
     for count in (8, 16, 32, 64):
-        if _offset_cells_certified(charts, convex, count):
+        if _offset_cells_certified(
+            charts, convex, count, preparations=preparations, budget=budget
+        ):
             return
     raise ValueError(
-        "The normal-offset embedding certificate (regularity and global injectivity "
-        "of the isotopy) is unresolved within its cell budget."
+        "brep_offset.embedding must prove regularity and global injectivity of the isotopy within its cell budget; got an unresolved embedding certificate"
     )
 
 
 def _payload_id(carrier: StrictModule, /) -> str:
-    return canonical_fingerprint(_carrier_payload(carrier))
+    return canonical_fingerprint(carrier_payload(carrier))
 
 
 def _rebound_root(
@@ -3167,12 +4787,12 @@ def _rebound_root(
     patches: dict[str, OffsetSurface],
     /,
 ) -> NativePeriodEndpoint | None:
-    """Re-author an exact native-period endpoint on its offset carriers."""
+    """Re-author a native-period endpoint on its offset carriers."""
     if root is None:
         return None
     if not isinstance(root, NativePeriodEndpoint):
         raise ValueError(
-            "Normal offsets support only authored native-period edge endpoints."
+            "brep_offset.endpoint must be an authored native-period endpoint; got an unsupported endpoint root"
         )
     curve = carriers.get(_payload_id(root.curve))
     patch = None if root.patch is None else patches.get(_payload_id(root.patch))
@@ -3182,7 +4802,7 @@ def _rebound_root(
         or isinstance(curve, IntersectionPCurve)
     ):
         raise ValueError(
-            "A native-period endpoint references a carrier outside the offset source."
+            "brep_offset.endpoint must reference an offset source carrier; got a carrier outside the offset source"
         )
     return NativePeriodEndpoint(
         curve, patch, root.axis, rational=root.rational, turns=root.turns
@@ -3191,8 +4811,8 @@ def _rebound_root(
 
 def _offset_topology(
     geometry: BRepGeometry, offsets: tuple[OffsetSurface, ...], /
-) -> _Builder:
-    """Rebind exact topology onto offset faces: same charts, isoline edges."""
+) -> Builder:
+    """Rebind topology onto offset faces with the same charts and isoline edges."""
     coedge_faces = {
         coedge: face
         for face, loops in enumerate(geometry.face_loops)
@@ -3222,12 +4842,13 @@ def _offset_topology(
                 np.asarray(offsets[face].evaluate(jnp.asarray(uv))),
             )
         else:
-            axis, value, _ = _offset_isoline(geometry.pcurves[coedges[0]])
+            isoline = _offset_isoline(geometry.pcurves[coedges[0]])
+            value = isoline.value
             if Fraction(float(value)) != value:
                 raise ValueError(
-                    "An offset isoline coordinate must be an exact binary value."
+                    f"brep_offset.isoline_coordinate must be representable without binary rounding; got {value}"
                 )
-            curve = SurfaceIsoparametricCurve(offsets[face], axis, float(value))
+            curve = SurfaceIsoparametricCurve(offsets[face], isoline.axis, float(value))
             mapping = {_payload_id(geometry.curves[source_index]): curve}
             curves.append(curve)
             edge_curves.append(len(curves) - 1)
@@ -3236,9 +4857,11 @@ def _offset_topology(
                 vertices.setdefault(vertex, point)
         edge_carriers.append(mapping)
     if sorted(vertices) != list(range(np.asarray(geometry.vertex_points).shape[0])):
-        raise ValueError("Every offset vertex must lie on an offset edge.")
+        raise ValueError(
+            "brep_offset.vertices must lie on offset edges; got an unbound vertex"
+        )
     patches = {_payload_id(patch.base): patch for patch in offsets}
-    return _Builder(
+    return Builder(
         vertices=[vertices[index] for index in range(len(vertices))],
         curves=curves,
         edge_curves=edge_curves,
@@ -3273,6 +4896,7 @@ def _offset_topology(
     )
 
 
+@checked
 def brep_offset(
     model: BRepModel,
     distance: float,
@@ -3280,36 +4904,95 @@ def brep_offset(
     *,
     tessellation: BRepTessellationPolicy | None = None,
     source_id: str = "native-offset",
-) -> BRepModel:
-    """Exact signed normal offset of a closed smooth native solid.
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+    include_parameter_range: bool = False,
+) -> BRepOffsetResult:
+    """Return a published signed offset and its operation-intent evidence.
 
-    Positive ``distance`` moves the boundary outward. Every face becomes the
-    native ``OffsetSurface`` operation tree on its original source patch with
-    the shell-outward signed distance; trims keep the shared source chart and
-    edges become exact isolines of the offset faces, with authored native
-    periods re-bound. Support is proved, not assumed: each face must be a
-    full source chart rectangle whose sides are poles or self-glued seams
-    with exact tangent continuity, and the whole isotopy ``X + t delta n``
-    must be certified regular and injective (analytic sphere/torus
-    equivalences prove it exactly). Sharp or cross-face edges, which require
-    blend faces, holes, rooted vertices and placed occurrences are refused.
+    Planar solids retain their face lattice by rational translated-plane
+    intersection, local edge-direction and global separation certificates.
+    A vanishing face or collision refuses. Smooth single-chart solids use native
+    ``OffsetSurface`` carriers with a certified regular, injective normal isotopy.
+    Curved sharp edges requiring blend faces and placed occurrences remain unsupported.
+
+    ``include_parameter_range`` retains the open certified distance interval on
+    the result. Refusals retain typed range evidence regardless of this opt-in;
+    unsupported interval proofs explicitly identify unknown endpoints.
     """
-    if not isinstance(model, BRepModel):
-        raise TypeError("model must be a BRepModel.")
+    try:
+        return _brep_offset(
+            model,
+            distance,
+            tessellation=tessellation,
+            source_id=source_id,
+            preparations=preparations,
+            budget=budget,
+            include_parameter_range=include_parameter_range,
+        )
+    except CoordinateEnclosureResourceError:
+        raise
+    except ValueError as error:
+        if "parameter_range" not in error.__dict__:
+            attach_parameter_range(error, unknown_parameter_range("distance", str(error)))
+        raise
+
+
+def _brep_offset(
+    model: BRepModel,
+    distance: float,
+    /,
+    *,
+    tessellation: BRepTessellationPolicy | None,
+    source_id: str,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget | None,
+    include_parameter_range: bool,
+) -> BRepOffsetResult:
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                model,
+                distance,
+            )
+        ) as budget:
+            return brep_offset(
+                model,
+                distance,
+                tessellation=tessellation,
+                source_id=source_id,
+                preparations=preparations,
+                budget=budget,
+                include_parameter_range=include_parameter_range,
+            )
     distance_ = finite_real_scalar(distance, "distance")
     if distance_ == 0.0:
-        raise ValueError("A normal offset distance must be nonzero.")
-    geometry = model.geometry
-    if geometry is None:
-        raise ValueError("A normal offset requires the model's exact native geometry.")
+        raise ValueError("brep_offset.distance must be nonzero; got zero distance")
+    geometry = model.require_geometry()
     if len(geometry.solid_shells) != 1 or geometry.occurrences != (
         BRepOccurrence(("solid0",), 0),
     ):
         raise ValueError(
-            "A normal offset applies to one unplaced solid; materialize occurrences first."
+            "brep_offset.model must be one unplaced solid; got multiple solids or placed occurrences requiring materialization"
+        )
+    from ._planar_offset import planar_carrier, planar_offset
+
+    if all(planar_carrier(patch) is not None for patch in model.patches):
+        return planar_offset(
+            model,
+            distance_,
+            tessellation=tessellation,
+            source_id=source_id,
+            preparations=preparations,
+            budget=budget,
+            include_parameter_range=include_parameter_range,
         )
     if any(root is not None for root in geometry.vertex_roots):
-        raise ValueError("Rooted source vertices have no isoline offset representation.")
+        raise ValueError(
+            "brep_offset.vertices must have an isoline offset representation; got rooted source vertices"
+        )
     # A nondegenerate edge joining two faces is a sharp or cross-face edge
     # whatever either face's trim representation; it needs blend faces.
     edge_faces: dict[int, set[int]] = {}
@@ -3324,7 +5007,12 @@ def brep_offset(
     orientation = np.asarray(model.orientation, dtype=np.float64)
     bounds = np.asarray(model.parameter_bounds, dtype=np.float64)
     offsets = tuple(
-        OffsetSurface(patch, float(orientation[face]) * distance_)
+        OffsetSurface(
+            patch,
+            float(orientation[face]) * distance_,
+            budget=budget,
+            preparations=preparations,
+        )
         for face, patch in enumerate(model.patches)
     )
     gluing = tuple(
@@ -3332,22 +5020,24 @@ def brep_offset(
         for face, patch in enumerate(model.patches)
     )
     analytic = len(offsets) == 1 and (
-        (sphere := sphere_source_equivalence(offsets[0])) is not None
+        (sphere := sphere_source_equivalence(offsets[0], budget=budget)) is not None
         and sphere[1] > 0
-        or offsets[0].analytic_equivalent() is not None
+        or offsets[0].analytic_equivalent(budget=budget) is not None
     )
     if not analytic:
         if any(poles for _, poles in gluing):
             raise ValueError(
-                "Pole charts are singular; their normal offset needs an exact analytic equivalence."
+                "brep_offset.pole_chart must have an analytic equivalence; got a singular pole chart"
             )
         _certify_offset_embedding(
             tuple(
-                (patch, offset, bounds[face], glued)
+                _OffsetChart(patch, offset, bounds[face], glued)
                 for face, (patch, offset, (glued, _)) in enumerate(
                     zip(model.patches, offsets, gluing, strict=True)
                 )
-            )
+            ),
+            preparations=preparations,
+            budget=budget,
         )
     builder = _offset_topology(geometry, offsets)
     builder.faces = [
@@ -3360,13 +5050,18 @@ def brep_offset(
         )
         for face, offset in enumerate(offsets)
     ]
-    return _finish(
+    published = finish(
         builder,
         solid=True,
         coordinate_contract=model.coordinate_contract,
         source_id=source_id,
         tessellation=tessellation,
         shells=(geometry.shell_faces, geometry.shell_orientations, geometry.solid_shells),
+        preparations=preparations,
+        budget=budget,
+    )
+    return exact_operation_offset_result(
+        published, include_parameter_range=include_parameter_range
     )
 
 
@@ -3377,12 +5072,13 @@ def _triple(vector: np.ndarray, /) -> tuple[float, float, float]:
 def _axial_plane(origin: ConvertibleToArray, axis: ConvertibleToArray, /) -> ProfilePlane:
     """Profile frame with ``x`` radial and ``y`` along ``axis``."""
     direction = _unit3(axis, "axis")
-    radial, _ = _axis_frame(direction)
+    radial, _ = axis_frame(direction)
     return ProfilePlane(
         _triple(_point3(origin, "origin")), _triple(radial), _triple(direction)
     )
 
 
+@checked
 def brep_box(
     lower: ConvertibleToArray,
     upper: ConvertibleToArray,
@@ -3391,12 +5087,34 @@ def brep_box(
     coordinate_contract: SpatialCoordinateContract,
     tessellation: BRepTessellationPolicy | None = None,
     source_id: str = "native-box",
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepModel:
     """Axis-aligned box ``[lower, upper]`` (an extruded rectangle)."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                lower,
+                upper,
+            )
+        ) as budget:
+            return brep_box(
+                lower,
+                upper,
+                coordinate_contract=coordinate_contract,
+                tessellation=tessellation,
+                source_id=source_id,
+                preparations=preparations,
+                budget=budget,
+            )
     lower_, upper_ = _point3(lower, "lower"), _point3(upper, "upper")
     size = upper_ - lower_
     if np.any(size <= 0.0):
-        raise ValueError("Box upper corner must exceed its lower corner.")
+        raise ValueError(
+            "brep_box.upper must exceed its lower corner; got nonpositive box extent"
+        )
     profile = PlanarProfile(
         ProfilePlane(_triple(lower_)),
         ProfileLoop.polygon(
@@ -3409,9 +5127,12 @@ def brep_box(
         coordinate_contract=coordinate_contract,
         tessellation=tessellation,
         source_id=source_id,
+        preparations=preparations,
+        budget=budget,
     )
 
 
+@checked
 def brep_cylinder(
     radius: float,
     height: float,
@@ -3422,8 +5143,30 @@ def brep_cylinder(
     coordinate_contract: SpatialCoordinateContract,
     tessellation: BRepTessellationPolicy | None = None,
     source_id: str = "native-cylinder",
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepModel:
     """Right circular cylinder: lateral face with one seam and two disk caps."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                radius,
+                height,
+            )
+        ) as budget:
+            return brep_cylinder(
+                radius,
+                height,
+                base_center=base_center,
+                axis=axis,
+                coordinate_contract=coordinate_contract,
+                tessellation=tessellation,
+                source_id=source_id,
+                preparations=preparations,
+                budget=budget,
+            )
     return brep_cone(
         radius,
         radius,
@@ -3433,9 +5176,12 @@ def brep_cylinder(
         coordinate_contract=coordinate_contract,
         tessellation=tessellation,
         source_id=source_id,
+        preparations=preparations,
+        budget=budget,
     )
 
 
+@checked
 def brep_cone(
     bottom_radius: float,
     top_radius: float,
@@ -3447,15 +5193,41 @@ def brep_cone(
     coordinate_contract: SpatialCoordinateContract,
     tessellation: BRepTessellationPolicy | None = None,
     source_id: str = "native-cone",
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepModel:
     """Right circular cone or frustum; a zero radius is an apex (pole)."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                bottom_radius,
+                top_radius,
+                height,
+            )
+        ) as budget:
+            return brep_cone(
+                bottom_radius,
+                top_radius,
+                height,
+                base_center=base_center,
+                axis=axis,
+                coordinate_contract=coordinate_contract,
+                tessellation=tessellation,
+                source_id=source_id,
+                preparations=preparations,
+                budget=budget,
+            )
     radii = (
         float(np.asarray(bottom_radius, dtype=np.float64)),
         float(np.asarray(top_radius, dtype=np.float64)),
     )
     height_ = positive_finite_float(height, "height")
     if min(radii) < 0.0 or max(radii) <= 0.0 or not all(np.isfinite(radii)):
-        raise ValueError("Cone radii must be finite, non-negative and not both zero.")
+        raise ValueError(
+            "brep_cone.radii must be finite, nonnegative and not both zero; got invalid cone radii"
+        )
     corners = [(0.0, 0.0), (radii[0], 0.0), (radii[1], height_), (0.0, height_)]
     corners = [
         corner for index, corner in enumerate(corners) if corner not in corners[:index]
@@ -3468,9 +5240,12 @@ def brep_cone(
         coordinate_contract=coordinate_contract,
         tessellation=tessellation,
         source_id=source_id,
+        preparations=preparations,
+        budget=budget,
     )
 
 
+@checked
 def brep_sphere(
     radius: float,
     /,
@@ -3480,8 +5255,24 @@ def brep_sphere(
     coordinate_contract: SpatialCoordinateContract,
     tessellation: BRepTessellationPolicy | None = None,
     source_id: str = "native-sphere",
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepModel:
     """Sphere: one face with a meridian seam and two pole (degenerate) edges."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request((radius,)) as budget:
+            return brep_sphere(
+                radius,
+                center=center,
+                axis=axis,
+                coordinate_contract=coordinate_contract,
+                tessellation=tessellation,
+                source_id=source_id,
+                preparations=preparations,
+                budget=budget,
+            )
     radius_ = positive_finite_float(radius, "radius")
     profile = PlanarProfile(
         _axial_plane(center, axis),
@@ -3497,9 +5288,12 @@ def brep_sphere(
         coordinate_contract=coordinate_contract,
         tessellation=tessellation,
         source_id=source_id,
+        preparations=preparations,
+        budget=budget,
     )
 
 
+@checked
 def brep_torus(
     major_radius: float,
     minor_radius: float,
@@ -3510,12 +5304,36 @@ def brep_torus(
     coordinate_contract: SpatialCoordinateContract,
     tessellation: BRepTessellationPolicy | None = None,
     source_id: str = "native-torus",
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepModel:
     """Ring torus: one doubly periodic face with two seam circles."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                major_radius,
+                minor_radius,
+            )
+        ) as budget:
+            return brep_torus(
+                major_radius,
+                minor_radius,
+                center=center,
+                axis=axis,
+                coordinate_contract=coordinate_contract,
+                tessellation=tessellation,
+                source_id=source_id,
+                preparations=preparations,
+                budget=budget,
+            )
     major = positive_finite_float(major_radius, "major_radius")
     minor = positive_finite_float(minor_radius, "minor_radius")
     if minor >= major:
-        raise ValueError("A ring torus requires minor_radius < major_radius.")
+        raise ValueError(
+            f"brep_torus.minor_radius must be below major_radius; got {minor} >= {major}"
+        )
     profile = PlanarProfile(
         _axial_plane(center, axis), ProfileLoop.circle((major, 0.0), minor)
     )
@@ -3526,6 +5344,8 @@ def brep_torus(
         coordinate_contract=coordinate_contract,
         tessellation=tessellation,
         source_id=source_id,
+        preparations=preparations,
+        budget=budget,
     )
 
 

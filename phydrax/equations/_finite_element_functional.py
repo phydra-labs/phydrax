@@ -84,7 +84,7 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
         args: object = None,
         /,
     ) -> Array:
-        field_index = discretization._field_index(self.field_name)
+        field_index = discretization.field_index(self.field_name)
         values = discretization.field_spaces[field_index].vector_space.validate(state)
         binding = discretization.local_field_binding(self.field_name)
         execution_values = binding.flatten(values)

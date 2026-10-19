@@ -2,21 +2,118 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Independent degree-one tubular projection proof for qualified analytic sources.
+"""Certify degree-one tubular projection onto a qualified analytic source.
 
-The actual affine boundary must be a closed oriented two-manifold. Every face
-is covered by an exhaustive dyadic reference-triangle worklist; outward affine
-coordinate boxes and source-expression intervals establish the complete tube
-and strictly positive normal derivative premises. No rounded subdivision mesh
-is substituted for the original coordinate map.
+The affine boundary is a closed oriented two-manifold. Dyadic reference
+triangles cover every face; outward coordinate and source-field intervals
+bound its distance and strictly positive normal derivative in the reach tube.
+Oriented vertex links and source topology establish a local cover. A rational
+regular normal fiber with one positively oriented interior crossing fixes
+degree one, so the forward distance bound also bounds the reverse distance.
+Volume-cell validity and interior embedding are certified separately.
 
-For the nominal source's positive reach, nearest projection on this tube is
-well-defined. Positive face normals, manifold vertex links and source topology
-establish an orientation-preserving local cover. An exact rational regular
-normal fiber with one interior crossing establishes degree one, hence every
-source point has one preimage. The complete reverse distance bound is therefore
-the complete forward bound, not a sampled-nearest-point estimate. Volume cell
-validity and global interior embedding remain separate mandatory certificates.
+Mesh certificate checks
+-----------------------
+[
+  {
+    "checks": ["projection_closed_oriented_edges"],
+    "premises": [
+      {"tag": "X", "statement": "Every undirected boundary edge has exactly two incident faces whose directed incidence signs sum to zero."}
+    ],
+    "conclusion": "The boundary is an oriented two-cycle with paired edge incidences; an unpaired or inconsistently oriented edge leaves projection unresolved.",
+    "citation": {"kind": "definition", "reference": "Projection boundary incidence", "locator": "phydrax.geometry.implicit._projection_cover._manifold_components", "url": ""},
+    "failure_statuses": ["unresolved"]
+  },
+  {
+    "checks": ["projection_manifold_vertex_link"],
+    "premises": [
+      {"tag": "X", "statement": "Each boundary vertex link graph is connected and every link vertex has degree two."}
+    ],
+    "conclusion": "Each boundary vertex has one circular link; a disconnected or branched link leaves the local surface condition unresolved.",
+    "citation": {"kind": "definition", "reference": "Simplicial surface vertex link", "locator": "phydrax.geometry.implicit._projection_cover._manifold_components", "url": ""},
+    "failure_statuses": ["unresolved"]
+  },
+  {
+    "checks": ["projection_source_topology"],
+    "premises": [
+      {"tag": "X", "statement": "Boundary connected-component count and V-E+F agree with the qualified source profile component count and Euler characteristic."}
+    ],
+    "conclusion": "The discrete boundary satisfies the component and Euler-characteristic prerequisites used by the projection proof.",
+    "citation": {"kind": "definition", "reference": "Source topology comparison", "locator": "phydrax.geometry.implicit._projection_cover._manifold_components", "url": ""},
+    "failure_statuses": ["unresolved"]
+  },
+  {
+    "checks": ["projection_affine_triangle_carrier", "projection_empty_boundary"],
+    "premises": [
+      {"tag": "X", "statement": "Boundary extraction yields a nonempty set of affine triangular facets in three spatial dimensions."}
+    ],
+    "conclusion": "The boundary admits the exhaustive affine reference-triangle route; unsupported or absent facets leave projection unresolved.",
+    "citation": {"kind": "definition", "reference": "Projection facet admission", "locator": "phydrax.geometry.implicit._projection_cover._boundary", "url": ""},
+    "failure_statuses": ["unresolved"]
+  },
+  {
+    "checks": ["projection_actual_affine_maps", "projection_source_vertex_continuity"],
+    "premises": [
+      {"tag": "X", "statement": "Coordinate-source expressions are affine on each triangular cell, their corners round to the published coordinates, and every shared vertex has one rational source image."}
+    ],
+    "conclusion": "Rational triangle laws describe one continuous source boundary, preserving its cell and shared-vertex identities.",
+    "citation": {"kind": "definition", "reference": "Affine coordinate source admission", "locator": "phydrax.geometry.implicit._projection_cover._source_affine_boundary", "url": ""},
+    "failure_statuses": ["unresolved"]
+  },
+  {
+    "checks": ["projection_source_orientation_or_distance"],
+    "premises": [
+      {"tag": "N", "statement": "Outward field and gradient intervals cover each reference-triangle image; its distance bound is at most the requested tolerance and reach-tube radius, and its normal derivative lower bound is strictly positive."},
+      {"tag": "N", "statement": "The source profile recomputes signed-distance and positive-reach bounds from the current sphere or ring-torus state; its tube radius is strictly below that reach."},
+      {"tag": "T", "statement": "Within positive reach, nearest-point projection is unique and continuous; the qualified smooth source tube has normal fibers and positive-normal surface maps give local covers."}
+    ],
+    "conclusion": "Admitted facets lie in the projection tube with positive orientation; a nonpositive normal upper bound or a field interval wholly outside tolerance proves violation.",
+    "citation": {"kind": "mathematical", "reference": "Federer, Curvature Measures (1959)", "locator": "Section 4.8, nearest-point projection and reach", "url": "https://doi.org/10.1090/S0002-9947-1959-0110078-1"},
+    "failure_statuses": ["violated"]
+  },
+  {
+    "checks": ["projection_source_piece_depth"],
+    "premises": [
+      {"tag": "X", "statement": "The subdivision depth equals the configured maximum depth."},
+      {"tag": "N", "statement": "Terminal field and normal intervals neither establish all distance/tube/positive-normal inequalities nor disprove the distance or orientation condition."}
+    ],
+    "conclusion": "The unresolved terminal retains its interval bounds and source facet identity.",
+    "citation": {"kind": "definition", "reference": "Projection subdivision stopping condition", "locator": "phydrax.geometry.implicit._projection_cover._pieces", "url": ""},
+    "failure_statuses": ["unresolved"]
+  },
+  {
+    "checks": ["projection_regular_source_fiber"],
+    "premises": [
+      {"tag": "N", "statement": "The rational fiber endpoint field bounds straddle the forward-distance band and the normal-direction length lower bound is positive."},
+      {"tag": "X", "statement": "The candidate normal fiber avoids all boundary edges, vertices, and coplanar triangles under rational crossing predicates."}
+    ],
+    "conclusion": "The selected fiber is a regular degree-counting fiber across the qualified source tube; undecided endpoint separation leaves the count unresolved.",
+    "citation": {"kind": "mathematical", "reference": "Hatcher, Algebraic Topology (2002)", "locator": "Proposition 2.30, degree as the sum of local degrees at preimages", "url": "https://pi.math.cornell.edu/~hatcher/AT/AT.pdf"},
+    "failure_statuses": ["unresolved"]
+  },
+  {
+    "checks": ["projection_fiber_degree_one"],
+    "premises": [
+      {"tag": "X", "statement": "Rational predicates find exactly one interior triangle crossing of the regular normal fiber, with orientation sign +1."},
+      {"tag": "N", "statement": "All facets satisfy the certified distance and positive-normal tube bounds."},
+      {"tag": "X", "statement": "All boundary vertex links are connected degree-two graphs and the oriented boundary edges are paired."},
+      {"tag": "T", "statement": "The resulting map between closed oriented source and boundary surfaces is an orientation-preserving local cover; local degrees are positive."}
+    ],
+    "conclusion": "The fiber degree is one, hence the local cover has one sheet and the forward deviation bound also bounds reverse deviation; any other crossing count or orientation violates this degree requirement.",
+    "citation": {"kind": "mathematical", "reference": "Hatcher, Algebraic Topology (2002)", "locator": "Proposition 2.30 and Proposition 1.32, local degree sum and number of covering sheets", "url": "https://pi.math.cornell.edu/~hatcher/AT/AT.pdf"},
+    "failure_statuses": ["violated"]
+  },
+  {
+    "checks": ["projection_source_query_capacity", "projection_source_piece_capacity", "projection_fiber_query_capacity", "projection_fiber_capacity", "projection_generic_fiber_capacity", "projection_coordinate_resource_budget", "projection_boundary_capacity"],
+    "premises": [
+      {"tag": "X", "statement": "The next source-query, reference-piece, rational ray-test, coordinate-expression, or input-boundary admission exceeds its declared remaining query, work, memory, depth, or piece limit."}
+    ],
+    "conclusion": "Projection remains unresolved with the capacity category and completed work retained; capacity refusal proves no geometric violation.",
+    "citation": {"kind": "definition", "reference": "Projection resource admission", "locator": "phydrax.geometry.implicit._projection_cover.compute_implicit_projection_cover, _pieces, and _fiber", "url": ""},
+    "failure_statuses": ["unresolved"]
+  }
+]
+End mesh certificate checks
 """
 
 from __future__ import annotations
@@ -27,24 +124,33 @@ from fractions import Fraction
 
 import numpy as np
 
+from phydrax.geometry._embedding_state import (
+    coordinate_certificate_request,
+    MeshCertificateFinding,
+    MeshCertificateLimits,
+    MeshFindingStatus,
+)
+
 from ...discretization import CellGeometrySpec, CellMesh, TetrahedralConnectivity
-from ...discretization._coordinate_enclosure import (
-    coordinate_corner_images,
-    coordinate_enclosure_budget,
+from ...discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
+)
+from ...discretization._coordinate_enclosure import (
+    coordinate_corner_images,
     prepared_coordinate_source_bank,
     RationalPolynomial,
     source_expressions,
 )
-from .._mesh_certificates import (
-    _coordinate_scope,
+from ...discretization._exact_algebraic_geometry import rational_coefficient
+from ...typing import checked
+from .._global_embedding import coordinate_scope
+from .._mesh_certificates import MeshCertificateBinding
+from .._source_fidelity import (
     ImplicitProjectionCoverageEvidence,
-    MeshCertificateBinding,
-    MeshCertificateFinding,
-    MeshCertificateLimits,
-    MeshFindingStatus,
+    ProjectionFacetEvidence,
     ProjectionFiberCrossingKind,
+    ProjectionFiberEvidence,
 )
 from ._analytic_profile import AnalyticImplicitProfile
 
@@ -158,7 +264,7 @@ def _dot_bounds(
 def _manifold_components(
     vertices: np.ndarray, identifiers: np.ndarray, profile: AnalyticImplicitProfile, /
 ) -> tuple[np.ndarray, tuple[MeshCertificateFinding, ...]]:
-    """Establish the closed-manifold premise, not a source-distance violation."""
+    """Establish closed-manifold incidence and oriented vertex links."""
     count = vertices.shape[0]
     components = np.full(count, -1, dtype=np.int64)
     edges: dict[tuple[int, int], list[tuple[int, int]]] = {}
@@ -243,43 +349,39 @@ def _manifold_components(
 
 def _boundary(mesh: CellMesh, profile: AnalyticImplicitProfile, /) -> _Boundary:
     points = np.asarray(mesh.coordinates, dtype=np.float64)
-    if mesh.topological_dimension == 3 and isinstance(
-        mesh.connectivity, TetrahedralConnectivity
-    ):
-        connectivity = mesh.connectivity
-        selected = np.flatnonzero(np.asarray(connectivity.boundary_faces))
-        vertices = np.asarray(connectivity.faces, dtype=np.int64)[selected].copy()
-        orientation = np.zeros(connectivity.faces.shape[0], dtype=np.float64)
-        np.add.at(
-            orientation,
-            np.asarray(connectivity.cell_faces).reshape((-1,)),
-            np.asarray(connectivity.cell_face_signs).reshape((-1,)),
-        )
-        reversed_ = orientation[selected] < 0.0
-        vertices[reversed_] = vertices[reversed_][:, (0, 2, 1)]
-        ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)[selected]
-    elif mesh.topological_dimension == 2 and all(
-        block.cell_kind == "triangle" for block in mesh.blocks
-    ):
-        vertices = np.concatenate(
-            [np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks]
-        )
-        ids = np.concatenate(
-            [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
-        )
-    else:
-        return _Boundary(
-            np.empty((0, 3, 3), dtype=np.float64),
-            np.empty((0, 3), dtype=np.int64),
-            np.empty((0, 3), dtype=np.int64),
-            np.empty((0,), dtype=np.int64),
-            np.empty((0,), dtype=np.int64),
-            (
-                MeshCertificateFinding(
-                    "projection_affine_triangle_carrier", "unresolved", "mesh"
+    match (mesh.topological_dimension, mesh.connectivity):
+        case (3, TetrahedralConnectivity() as connectivity):
+            selected = np.flatnonzero(np.asarray(connectivity.boundary_faces))
+            vertices = np.asarray(connectivity.faces, dtype=np.int64)[selected].copy()
+            orientation = np.zeros(connectivity.faces.shape[0], dtype=np.float64)
+            np.add.at(
+                orientation,
+                np.asarray(connectivity.cell_faces).reshape((-1,)),
+                np.asarray(connectivity.cell_face_signs).reshape((-1,)),
+            )
+            reversed_ = orientation[selected] < 0.0
+            vertices[reversed_] = vertices[reversed_][:, (0, 2, 1)]
+            ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)[selected]
+        case (2, _) if all(block.cell_kind == "triangle" for block in mesh.blocks):
+            vertices = np.concatenate(
+                [np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks]
+            )
+            ids = np.concatenate(
+                [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+            )
+        case _:
+            return _Boundary(
+                np.empty((0, 3, 3), dtype=np.float64),
+                np.empty((0, 3), dtype=np.int64),
+                np.empty((0, 3), dtype=np.int64),
+                np.empty((0,), dtype=np.int64),
+                np.empty((0,), dtype=np.int64),
+                (
+                    MeshCertificateFinding(
+                        "projection_affine_triangle_carrier", "unresolved", "mesh"
+                    ),
                 ),
-            ),
-        )
+            )
     if not vertices.size:
         return _Boundary(
             np.empty((0, 3, 3), dtype=np.float64),
@@ -304,17 +406,20 @@ def _source_affine_boundary(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     boundary: _Boundary,
-    budget: CoordinateEnclosureBudget,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> _Boundary:
-    """Prove full source-affine laws and retain their exact, nonbinary corners."""
-    bank = prepared_coordinate_source_bank(geometry)
-    elements, routes, _ = geometry._resolve(mesh, exact_source_prepared=True)
+    """Prove full source-affine laws and retain their rational nonbinary corners."""
+    bank = prepared_coordinate_source_bank(geometry, budget=budget)
+    elements, routes, _ = geometry._resolve(
+        mesh, exact_source_prepared=True, budget=budget
+    )
     carrier = np.asarray(mesh.coordinates, dtype=np.float64)
     budget.reserve(0, 8 * carrier.shape[0] + 144 * boundary.triangles.shape[0])
     vertices: list[_RationalPoint | None] = [None] * carrier.shape[0]
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
-        expressions = source_expressions(element)
+        expressions = source_expressions(element, budget=budget)
         if (
             expressions is None
             or len(expressions) != 3
@@ -339,7 +444,7 @@ def _source_affine_boundary(
             np.asarray(route), np.asarray(block.vertices), strict=True
         ):
             local = tuple(bank[int(index)] for index in row if index >= 0)
-            images = coordinate_corner_images(element, local)
+            images = coordinate_corner_images(element, local, budget=budget)
             if images is None:
                 return replace(
                     boundary,
@@ -355,11 +460,15 @@ def _source_affine_boundary(
             actual = corners[corners >= 0]
             if len(images) != actual.size:
                 raise ValueError(
-                    "Projection source corners do not match their actual SCI cell."
+                    "projection_cover.source_corners must match the coordinate cell; got incompatible corner count"
                 )
             for vertex, image in zip(actual, images, strict=True):
                 budget.reserve(3)
-                point: _RationalPoint = (image[0], image[1], image[2])
+                point: _RationalPoint = (
+                    rational_coefficient(image[0], role="projection_cover.source_corner"),
+                    rational_coefficient(image[1], role="projection_cover.source_corner"),
+                    rational_coefficient(image[2], role="projection_cover.source_corner"),
+                )
                 rounded = np.asarray(
                     tuple(float(value) for value in point), dtype=np.float64
                 )
@@ -367,7 +476,7 @@ def _source_affine_boundary(
                     rounded.view(np.uint64), carrier[vertex].view(np.uint64)
                 ):
                     raise ValueError(
-                        "Projection carrier is not the RNE image of its actual source law."
+                        "projection_cover.carrier must equal the round-to-nearest source image; got mismatched coordinates"
                     )
                 previous = vertices[int(vertex)]
                 if previous is not None and previous != point:
@@ -388,10 +497,14 @@ def _source_affine_boundary(
     for row, face in enumerate(boundary.local_vertices):
         points = tuple(vertices[int(vertex)] for vertex in face)
         if any(point is None for point in points):
-            raise ValueError("Projection boundary has an uncovered source vertex.")
+            raise ValueError(
+                "ImplicitProjectionCover.source_vertices must have one represented rational point per boundary vertex; got an uncovered source vertex"
+            )
         first, second, third = points
         if first is None or second is None or third is None:
-            raise ValueError("Projection boundary has an uncovered source vertex.")
+            raise ValueError(
+                "ImplicitProjectionCover.source_vertices must have one represented rational point per boundary vertex; got an uncovered source vertex"
+            )
         triangle = (first, second, third)
         triangles.append(triangle)
         for corner, point in enumerate(triangle):
@@ -432,8 +545,8 @@ def _affine_piece_boxes(
 def _split_reference_triangles(parameters: np.ndarray, /) -> np.ndarray:
     first, second, third = parameters[:, 0], parameters[:, 1], parameters[:, 2]
     ab, bc, ca = 0.5 * (first + second), 0.5 * (second + third), 0.5 * (third + first)
-    # Dyadic barycentric midpoints are exact through the bounded subdivision
-    # depth; only their affine physical images need outward enclosures.
+    # Dyadic barycentric midpoints remain representable through the bounded
+    # subdivision depth; only affine physical images need outward enclosures.
     return np.stack(
         (
             np.stack((first, ab, ca), axis=1),
@@ -451,6 +564,8 @@ def _pieces(
     tolerance: float,
     limits: MeshCertificateLimits,
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> _Pieces:
     owners = np.arange(boundary.triangles.shape[0], dtype=np.int64)
     parameters = np.tile(np.eye(3, dtype=np.float64), (owners.size, 1, 1))
@@ -460,7 +575,7 @@ def _pieces(
     )
     terminals: list[tuple[np.ndarray, ...]] = []
     findings: list[MeshCertificateFinding] = []
-    queries = 1  # Nominal profile reconstruction establishes its interior witness.
+    queries = 1  # Nominal profile reconstruction establishes an interior point.
     created = owners.size
     while owners.size:
         available = (
@@ -507,7 +622,7 @@ def _pieces(
             parameters,
             boundary.coordinate_bounds,
         )
-        source = profile.field_bounds.boxes(low, high)
+        source = profile.field_bounds.boxes(low, high, budget=budget)
         queries += owners.size
         fields = np.stack((source.value_lower, source.value_upper), axis=1)
         gradients = np.stack((source.gradient_lower, source.gradient_upper), axis=1)
@@ -622,6 +737,34 @@ def _pieces(
     )
 
 
+def implicit_facet_projection_bounds(
+    triangles: np.ndarray,
+    profile: AnalyticImplicitProfile,
+    tolerance: float,
+    limits: MeshCertificateLimits,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Bound whole affine facets without changing their physical triangulation.
+
+    This is preparation evidence, not a closed-manifold or degree certificate.
+    The final projection independently recomputes those additional obligations.
+    """
+    count = triangles.shape[0]
+    identifiers = np.arange(count, dtype=np.int64)
+    vertices = np.arange(3 * count, dtype=np.int64).reshape((-1, 3))
+    boundary = _Boundary(
+        triangles, vertices, vertices, identifiers, np.zeros(count, dtype=np.int64), ()
+    )
+    pieces = _pieces(boundary, profile, tolerance, limits, budget=budget)
+    deviation = np.zeros(count, dtype=np.float64)
+    np.maximum.at(deviation, pieces.owners, np.max(np.abs(pieces.fields), axis=1))
+    oriented = np.ones(count, dtype=np.bool_)
+    np.logical_and.at(oriented, pieces.owners, pieces.normals[:, 0] > 0.0)
+    return deviation, oriented, pieces.queries - 1
+
+
 def _fraction_point(values: np.ndarray, /) -> _RationalPoint:
     return (
         Fraction(float(values[0])),
@@ -708,7 +851,7 @@ def _source_fiber(
                 Fraction(index * index + 1),
             )
         case "ring-torus":
-            # Rational unit-circle coordinates establish the exact represented
+            # Rational unit-circle coordinates fix the represented
             # torus core point. Positive radial motion keeps rho strictly > 0;
             # phi(t)=t*||end-start||-radius throughout this normal ray.
             t = Fraction(index, index + 1)
@@ -717,7 +860,9 @@ def _source_fiber(
             start = (center[0] + major * cosine, center[1] + major * sine, center[2])
             direction = (cosine, sine, Fraction(index * index + 1))
         case _:
-            raise ValueError("The nominal analytic source has no qualified normal fiber.")
+            raise ValueError(
+                f"ImplicitProjectionCover.profile.family must provide a supported normal fiber; got {profile.family!r}"
+            )
     end = tuple(start[axis] + 2 * radius * direction[axis] for axis in range(3))
     return start, (end[0], end[1], end[2])
 
@@ -729,6 +874,8 @@ def _fiber(
     limits: MeshCertificateLimits,
     remaining_queries: int,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> _Fiber:
     empty = np.empty((0,), dtype=np.int64)
     uncomputed_values = np.asarray(
@@ -820,11 +967,11 @@ def _fiber(
             orientation.append(sign)
         tests += candidates.size
         if any(kind in ("edge", "vertex", "coplanar") for kind in classes):
-            # Generic rational directions avoid every finite exceptional edge
-            # and plane set; the work limit remains authoritative.
+            # Rational directions avoid the finite exceptional edge and plane
+            # sets; every trial remains subject to the declared work limit.
             continue
         endpoint_source = profile.field_bounds.boxes(
-            endpoint_boxes[:, :, 0], endpoint_boxes[:, :, 1]
+            endpoint_boxes[:, :, 0], endpoint_boxes[:, :, 1], budget=budget
         )
         queries += 2
         value_bounds = np.stack(
@@ -882,6 +1029,7 @@ def _fiber(
     )
 
 
+@checked
 def compute_implicit_projection_cover(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -890,169 +1038,187 @@ def compute_implicit_projection_cover(
     *,
     tolerance: float,
     limits: MeshCertificateLimits,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> ImplicitProjectionCoverageEvidence:
-    """Recompute all source-projection premises from actual maps and nominal facts."""
-    if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
-        raise TypeError("Projection coverage requires CellMesh and CellGeometrySpec.")
-    if not isinstance(profile, AnalyticImplicitProfile):
-        raise TypeError(
-            "Projection coverage requires an established AnalyticImplicitProfile."
-        )
-    if not isinstance(limits, MeshCertificateLimits):
-        raise TypeError("limits must be MeshCertificateLimits.")
+    """Recompute source-projection bounds from coordinate maps and nominal source facts."""
+
     if not math.isfinite(tolerance) or tolerance < 0.0:
-        raise ValueError("tolerance must be finite and nonnegative.")
-    profile.require_bound(profile.geometry, profile.coordinate_contract)
-    established = AnalyticImplicitProfile(
-        profile.geometry,
-        profile.coordinate_contract,
-        tube_radius=profile.tube_radius,
-        cover_radius=profile.cover_radius,
-        source_id=profile.source_id,
-        source_revision=profile.source_revision,
-    )
-    if established.profile_id != profile.profile_id:
         raise ValueError(
-            "The analytic profile's cached premises are not source-established."
+            f"ImplicitProjectionCover.tolerance must be finite and nonnegative; got {tolerance}"
         )
-    budget = coordinate_enclosure_budget(
-        limits.maximum_work_units, limits.maximum_scratch_bytes
-    )
-    with budget.activate():
-        scope_resource: CoordinateEnclosureResourceError | None = None
-        try:
-            scope, _, _ = _coordinate_scope(mesh, geometry, budget)
-        except CoordinateEnclosureResourceError as error:
-            scope, scope_resource = "mapped", error
-        binding = MeshCertificateBinding(
-            mesh,
-            geometry,
-            scope,
-            limits,
-            source_id=established.source_id,
-            source_revision=established.source_revision,
-        )
-        boundary = _boundary(mesh, established)
-        if (
-            scope_resource is None
-            and scope != "affine"
-            and not boundary.findings
-            and boundary.triangles.shape[0] <= limits.maximum_subdivision_pieces
-        ):
-            try:
-                boundary = _source_affine_boundary(mesh, geometry, boundary, budget)
-            except CoordinateEnclosureResourceError as error:
-                scope_resource = error
-        findings = list(boundary.findings)
-        if scope_resource is not None:
-            findings.append(
-                MeshCertificateFinding(
-                    "projection_coordinate_resource_budget",
-                    "unresolved",
-                    "mesh",
-                    resource=scope_resource.resource,
-                    requested=(
-                        ("limit", scope_resource.limit),
-                        ("requested", scope_resource.requested),
-                    ),
-                    achieved=(
-                        ("completed", scope_resource.completed),
-                        ("source_expression_work_units", budget.work_units),
-                        ("source_expression_peak_bytes", budget.peak_bytes_upper),
-                        (
-                            "source_expression_native_charged_work_units",
-                            budget.native_charged_work_units,
-                        ),
-                        (
-                            "source_expression_retained_basis_bytes_at_catch",
-                            budget.retained_basis_bytes,
-                        ),
-                        (
-                            "source_expression_temporary_bytes_upper_at_catch",
-                            budget.temporary_bytes_upper,
-                        ),
-                    ),
-                )
+    with coordinate_certificate_request(limits, budget=budget) as budget:
+        with budget.activate():
+            profile.require_bound(
+                profile.geometry, profile.coordinate_contract, budget=budget
             )
-        if (
-            scope != "affine" and boundary.exact_triangles is None
-        ) or mesh.ambient_dimension != 3:
-            if not any(
-                finding.check == "projection_actual_affine_maps" for finding in findings
+            established = AnalyticImplicitProfile(
+                profile.geometry,
+                profile.coordinate_contract,
+                tube_radius=profile.tube_radius,
+                cover_radius=profile.cover_radius,
+                source_id=profile.source_id,
+                source_revision=profile.source_revision,
+                budget=budget,
+            )
+            if established.profile_id != profile.profile_id:
+                raise ValueError(
+                    "projection_cover.profile must match recomputed source facts; got stale cached facts"
+                )
+            scope_resource: CoordinateEnclosureResourceError | None = None
+            try:
+                with budget.measurement() as scope_measurement:
+                    scope = coordinate_scope(
+                        mesh, geometry, budget=budget
+                    ).coordinate_scope
+            except CoordinateEnclosureResourceError as error:
+                scope, scope_resource = "mapped", error
+            binding = MeshCertificateBinding(
+                mesh,
+                geometry,
+                scope,
+                limits,
+                source_id=established.source_id,
+                source_revision=established.source_revision,
+            )
+            boundary = _boundary(mesh, established)
+            if (
+                scope_resource is None
+                and scope != "affine"
+                and not boundary.findings
+                and boundary.triangles.shape[0] <= limits.maximum_subdivision_pieces
             ):
+                try:
+                    with budget.measurement() as scope_measurement:
+                        boundary = _source_affine_boundary(
+                            mesh, geometry, boundary, budget=budget
+                        )
+                except CoordinateEnclosureResourceError as error:
+                    scope_resource = error
+            findings = list(boundary.findings)
+            if scope_resource is not None:
                 findings.append(
                     MeshCertificateFinding(
-                        "projection_actual_affine_maps", "unresolved", "mesh"
+                        "projection_coordinate_resource_budget",
+                        "unresolved",
+                        "mesh",
+                        resource=scope_resource.resource,
+                        requested=(
+                            ("limit", int(scope_resource.limit)),
+                            ("requested", int(scope_resource.requested)),
+                        ),
+                        achieved=(
+                            ("completed", int(scope_resource.completed)),
+                            (
+                                "source_expression_work_units",
+                                scope_measurement.work_units,
+                            ),
+                            (
+                                "source_expression_peak_bytes",
+                                scope_measurement.peak_bytes_upper,
+                            ),
+                            (
+                                "source_expression_native_charged_work_units",
+                                scope_measurement.native_charged_work_units,
+                            ),
+                            (
+                                "source_expression_retained_basis_bytes_at_catch",
+                                budget.retained_basis_bytes,
+                            ),
+                            (
+                                "source_expression_temporary_bytes_upper_at_catch",
+                                budget.temporary_bytes_upper,
+                            ),
+                        ),
                     )
                 )
-        if boundary.triangles.shape[0] > limits.maximum_subdivision_pieces:
-            findings.append(
-                MeshCertificateFinding(
-                    "projection_boundary_capacity", "unresolved", "mesh"
+            if (
+                scope != "affine" and boundary.exact_triangles is None
+            ) or mesh.ambient_dimension != 3:
+                if not any(
+                    finding.check == "projection_actual_affine_maps"
+                    for finding in findings
+                ):
+                    findings.append(
+                        MeshCertificateFinding(
+                            "projection_actual_affine_maps", "unresolved", "mesh"
+                        )
+                    )
+            if boundary.triangles.shape[0] > limits.maximum_subdivision_pieces:
+                findings.append(
+                    MeshCertificateFinding(
+                        "projection_boundary_capacity", "unresolved", "mesh"
+                    )
                 )
+            if findings:
+                pieces = _Pieces(
+                    np.empty((0, 3, 3), dtype=np.float64),
+                    np.empty((0, 3, 3), dtype=np.float64),
+                    np.empty((0, 2, 3), dtype=np.float64),
+                    np.empty((0,), dtype=np.int64),
+                    np.empty((0, 2), dtype=np.float64),
+                    np.empty((0, 2, 3), dtype=np.float64),
+                    np.empty((0, 2), dtype=np.float64),
+                    math.inf,
+                    0.0,
+                    1,
+                    (),
+                )
+            else:
+                pieces = _pieces(boundary, established, tolerance, limits, budget=budget)
+                findings.extend(pieces.findings)
+            if findings:
+                fiber = _Fiber(
+                    (),
+                    np.asarray(((-np.inf, np.inf), (-np.inf, np.inf)), dtype=np.float64),
+                    np.asarray((-np.inf, np.inf), dtype=np.float64),
+                    np.empty((0,), dtype=np.int64),
+                    (),
+                    (),
+                    0,
+                    0,
+                    (),
+                )
+            else:
+                remaining = (
+                    min(
+                        limits.maximum_source_samples, limits.maximum_distance_evaluations
+                    )
+                    - pieces.queries
+                )
+                fiber = _fiber(
+                    boundary, established, pieces.upper, limits, remaining, budget=budget
+                )
+                findings.extend(fiber.findings)
+            return ImplicitProjectionCoverageEvidence(
+                binding,
+                established,
+                tuple(findings),
+                facet_evidence=ProjectionFacetEvidence(
+                    facets=boundary.triangles,
+                    facet_vertices=boundary.global_vertices,
+                    facet_ids=boundary.identifiers,
+                    facet_components=boundary.components,
+                    piece_triangles=pieces.triangles,
+                    piece_barycentric_vertices=pieces.parameters,
+                    piece_coordinate_bounds=pieces.coordinates,
+                    piece_owners=pieces.owners,
+                    field_bounds=pieces.fields,
+                    gradient_bounds=pieces.gradients,
+                    normal_bounds=pieces.normals,
+                ),
+                boundary_fiber=ProjectionFiberEvidence(
+                    fiber_endpoints=fiber.endpoints,
+                    fiber_value_bounds=fiber.values,
+                    fiber_gradient_bounds=fiber.gradient,
+                    fiber_candidate_facets=fiber.candidates,
+                    fiber_crossing_classes=fiber.classes,
+                    fiber_crossing_parameters=fiber.parameters,
+                ),
+                forward_upper=pieces.upper,
+                forward_lower=pieces.lower,
+                query_count=pieces.queries + fiber.queries,
+                ray_test_count=fiber.tests,
             )
-        if findings:
-            pieces = _Pieces(
-                np.empty((0, 3, 3), dtype=np.float64),
-                np.empty((0, 3, 3), dtype=np.float64),
-                np.empty((0, 2, 3), dtype=np.float64),
-                np.empty((0,), dtype=np.int64),
-                np.empty((0, 2), dtype=np.float64),
-                np.empty((0, 2, 3), dtype=np.float64),
-                np.empty((0, 2), dtype=np.float64),
-                math.inf,
-                0.0,
-                1,
-                (),
-            )
-        else:
-            pieces = _pieces(boundary, established, tolerance, limits)
-            findings.extend(pieces.findings)
-        if findings:
-            fiber = _Fiber(
-                (),
-                np.asarray(((-np.inf, np.inf), (-np.inf, np.inf)), dtype=np.float64),
-                np.asarray((-np.inf, np.inf), dtype=np.float64),
-                np.empty((0,), dtype=np.int64),
-                (),
-                (),
-                0,
-                0,
-                (),
-            )
-        else:
-            remaining = (
-                min(limits.maximum_source_samples, limits.maximum_distance_evaluations)
-                - pieces.queries
-            )
-            fiber = _fiber(boundary, established, pieces.upper, limits, remaining)
-            findings.extend(fiber.findings)
-        return ImplicitProjectionCoverageEvidence(
-            binding,
-            established,
-            tuple(findings),
-            facets=boundary.triangles,
-            facet_vertices=boundary.global_vertices,
-            facet_ids=boundary.identifiers,
-            facet_components=boundary.components,
-            piece_triangles=pieces.triangles,
-            piece_barycentric_vertices=pieces.parameters,
-            piece_coordinate_bounds=pieces.coordinates,
-            piece_owners=pieces.owners,
-            field_bounds=pieces.fields,
-            gradient_bounds=pieces.gradients,
-            normal_bounds=pieces.normals,
-            fiber_endpoints=fiber.endpoints,
-            fiber_value_bounds=fiber.values,
-            fiber_gradient_bounds=fiber.gradient,
-            fiber_candidate_facets=fiber.candidates,
-            fiber_crossing_classes=fiber.classes,
-            fiber_crossing_parameters=fiber.parameters,
-            forward_upper=pieces.upper,
-            forward_lower=pieces.lower,
-            query_count=pieces.queries + fiber.queries,
-            ray_test_count=fiber.tests,
-        )
 
 
 __all__ = ["compute_implicit_projection_cover"]

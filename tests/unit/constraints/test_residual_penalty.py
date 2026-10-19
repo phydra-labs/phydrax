@@ -14,6 +14,7 @@ import phydrax.axes as cx
 from phydrax.conditions import Residual
 from phydrax.domain import GridBatch, Interval1d, PointBatch
 from phydrax.terms import ResidualPenalty
+from phydrax.units import METER
 
 
 def _batch(realization: Any) -> Any:
@@ -43,7 +44,7 @@ def test_residual_penalty_scenario_1() -> None:
     loss_int = integral_term.loss({"u": u}, key=jr.key(0))
     assert jnp.allclose(loss_int, 6.0)
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component()
     one = geom.Function()(1.0)
@@ -74,7 +75,7 @@ def test_residual_penalty_scenario_1() -> None:
         # ty: ignore[invalid-argument-type]
         ResidualPenalty(condition, source, density=jnp.ones((4,)))
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component()
     condition = Residual("u", component, lambda field: field)
@@ -212,7 +213,7 @@ def test_residual_penalty_fixed_sampling_reuses_batch_and_honors_override() -> N
 
 def test_residual_penalty_fixed_sampling_coord_separable() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component()
     u = geom.Function()(0.0)

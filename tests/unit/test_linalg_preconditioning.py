@@ -492,5 +492,5 @@ def test_block_action_registered_decoder_refuses_obsolete_prepared_fieldset(
         "type": identity,
         "items": list(obsolete_fields.values()),
     }
-    with pytest.raises(ValueError, match="dataclass field count does not match"):
+    with pytest.raises(ValueError, match=r"\.items"):
         model_from_array_recipe(recipe, {}, prefix="model")

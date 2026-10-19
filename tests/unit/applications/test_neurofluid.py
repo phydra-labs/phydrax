@@ -1,12 +1,22 @@
 import sys
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
+
+
+# Empirical `test_native_compartment_transport_preserves_region_and_closed_inventory`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_CLOSED_TRANSPORT_TOTAL_MASS_ATOL = 1.0e-9
+# Empirical `test_native_compartment_transport_preserves_region_and_closed_inventory`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_PAIRED_TRANSPORT_EXCHANGE_DEFECT_ATOL = 1.0e-12
+# Empirical `test_native_compartment_transport_preserves_region_and_closed_inventory`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_COMPARTMENT_MASS_REDUCTION_ATOL = 1.0e-12
 
 
 def _manifest() -> Any:
@@ -354,6 +364,9 @@ def test_native_compartment_transport_preserves_region_and_closed_inventory(
         jnp.asarray((1.0, 1.5), dtype=jnp.float64),
         jnp.asarray((0.5,), dtype=jnp.float64),
     )
+    # Native two-label/one-network-edge/one-reservoir acceptance fixture from
+    # 03ef670bc, this node: use its 1e-12 relative / 1e-14 absolute Krylov
+    # residual target for the 0.05-second closed backward-Euler solve.
     initial = runtime.ledger(state)
     step = runtime.step_backward_euler(
         state,
@@ -367,10 +380,23 @@ def test_native_compartment_transport_preserves_region_and_closed_inventory(
     assert bool(step.accepted)
     final = runtime.ledger(step.state)
     assert bool(final.successful)
+    # Retain this fixture's 03ef670bc absolute mass ceiling: 1e-9 bounds the
+    # difference of bulk, network and reservoir weighted inventories after that
+    # solve (initial concentrations 3, 1/1.5 and 0.5); rtol=0 excludes scaling it.
     np.testing.assert_allclose(
-        final.total_mass, initial.total_mass, rtol=0.0, atol=1.0e-9
+        final.total_mass,
+        initial.total_mass,
+        rtol=0.0,
+        atol=_CLOSED_TRANSPORT_TOTAL_MASS_ATOL,
     )
-    np.testing.assert_allclose(final.exchange_defect, 0.0, rtol=0.0, atol=1.0e-12)
+    # The 03ef670bc 1e-12 exchange ceiling bounds cancellation of the paired
+    # bulk/network and network/reservoir flux reductions, not solver convergence.
+    np.testing.assert_allclose(
+        final.exchange_defect,
+        0.0,
+        rtol=0.0,
+        atol=_PAIRED_TRANSPORT_EXCHANGE_DEFECT_ATOL,
+    )
     assert np.sum(np.asarray(runtime.bulk.mass * step.state.bulk)) < np.sum(
         np.asarray(runtime.bulk.mass * state.bulk)
     )
@@ -386,11 +412,13 @@ def test_native_compartment_transport_preserves_region_and_closed_inventory(
         ("first", "second"),
     )
     assert bool(diagnostics.successful)
+    # The 03ef670bc 1e-12 compartment ceiling compares two summation groupings
+    # of the same mass*concentration terms, with no time-stepping error.
     np.testing.assert_allclose(
         np.sum(np.asarray(diagnostics.compartment_mass)),
         np.sum(np.asarray(runtime.bulk.mass * step.state.bulk)),
         rtol=0.0,
-        atol=1.0e-12,
+        atol=_COMPARTMENT_MASS_REDUCTION_ATOL,
     )
     assert parameters.units.length_unit == result.coordinate_contract.length_unit
 
@@ -412,7 +440,9 @@ def test_neurofluid_rejects_mesh_of_different_source_revision(
     compartments = phx.imaging.build_compartment_complex(
         labels, native_case.compartments.compartments, native_case.compartments.interfaces
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match=r"RegionMeshingEvidence\.source_complex_id must bind"
+    ):
         replace(native_case, segmentation=labels, compartments=compartments)
 
 
@@ -426,7 +456,9 @@ def test_neurofluid_rejects_different_complex_with_same_region_ids(
     )
     assert compartments.source_revision == native_case.segmentation.label_volume_id
     assert compartments.complex_id != native_case.compartments.complex_id
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match=r"RegionMeshingEvidence\.source_complex_id must bind"
+    ):
         replace(native_case, compartments=compartments)
 
 
@@ -455,5 +487,102 @@ def test_neurofluid_requires_region_evidence_even_with_matching_zone_names(
         adapter_reports=result.adapter_reports,
         certification=result.certification,
     )
-    with pytest.raises(ValueError, match="source-region evidence"):
+    with pytest.raises(ValueError, match=r"NeurofluidCase\.bulk_mesh\.region_evidence"):
         replace(native_case, bulk_mesh=unbound)
+
+
+def test_synthetic_neurofluid_qualification_solves_unit_normal_flux() -> None:
+    from tools import neurofluid_qualification as qualification
+
+    record: Any = qualification.qualify()
+
+    assert record["scenario"] == "synthetic"
+    assert record["successful"]
+    assert record["adjacency_successful"]
+    assert record["hdiv_preparation_successful"]
+    assert record["compartments"] == 2
+    assert record["interfaces"] == 1
+    assert record["bdm2_velocity_dofs"] == 30
+    assert record["dg1_pressure_dofs"] == 4
+    for metric in (
+        "rt0_flux_error",
+        "normal_flow_error",
+        "resistance_power_error",
+        "normal_constraint_error",
+    ):
+        assert record[metric] <= 1.0e-12
+    lift = record["normal_flux_lift"]
+    assert lift["status"] == int(phx.linalg.LinearSolveStatus.SUCCESS)
+    assert lift["successful"]
+    assert lift["rank"] == 1
+    assert lift["residual_norm"] <= 1.0e-12
+    assert lift["normal_residual_norm"] <= 1.0e-12
+
+
+@pytest.mark.parametrize(
+    ("scale", "status", "failed_contracts"),
+    (
+        (
+            2.0,
+            phx.linalg.LinearSolveStatus.SUCCESS,
+            ("normal_flow", "resistance_power", "normal_constraint"),
+        ),
+        (
+            1.0,
+            phx.linalg.LinearSolveStatus.RESIDUAL_TOO_LARGE,
+            ("normal_flux_lift",),
+        ),
+        (
+            np.nan,
+            phx.linalg.LinearSolveStatus.NONFINITE_OUTPUT,
+            (
+                "normal_flux_lift",
+                "normal_flow",
+                "resistance_power",
+                "normal_constraint",
+            ),
+        ),
+    ),
+)
+def test_synthetic_neurofluid_qualification_preserves_failed_numerical_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    scale: float,
+    status: phx.linalg.LinearSolveStatus,
+    failed_contracts: tuple[str, ...],
+) -> None:
+    from tools import neurofluid_qualification as qualification
+
+    native_factorize = phx.linalg.factorize
+
+    def factorize(*args: Any, **kwargs: Any) -> Any:
+        prepared = native_factorize(*args, **kwargs)
+
+        def solve(target: Any) -> Any:
+            result = prepared.solve(target)
+            return eqx.tree_at(
+                lambda value: (value.value, value.status),
+                result,
+                (scale * result.value, jnp.asarray(int(status), dtype=jnp.int32)),
+            )
+
+        return SimpleNamespace(solve=solve)
+
+    monkeypatch.setattr(qualification.phx.linalg, "factorize", factorize)
+    record: Any = qualification.qualify()
+
+    assert not record["successful"]
+    assert record["status"] == "failed"
+    assert record["failure"]["phase"] == "synthetic-invariants"
+    assert record["failure"]["failed_contracts"] == list(failed_contracts)
+    assert record["normal_flux_lift"]["status"] == int(status)
+    for metric in (
+        "normal_flow_error",
+        "resistance_power_error",
+        "normal_constraint_error",
+    ):
+        if np.isnan(scale):
+            assert np.isnan(record[metric])
+        elif scale == 1.0:
+            assert record[metric] <= 1.0e-12
+        else:
+            assert record[metric] > 1.0e-12

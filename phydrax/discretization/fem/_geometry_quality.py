@@ -10,6 +10,7 @@ import numpy as np
 from jax import Array
 
 import phydrax.ein as ein
+from phydrax.discretization.fem._reference_rules import degree_aware_reference_rule
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -21,11 +22,7 @@ from .._cell_geometry_validity import (
     CellValidityStatus,
     certify_cell_geometry_validity,
 )
-from ._generic import (
-    _degree_aware_reference_rule,
-    FiniteElementDiscretization,
-    FiniteElementRuntimeData,
-)
+from ._generic import FiniteElementDiscretization, FiniteElementRuntimeData
 
 
 class FiniteElementGeometryQualityEvidence(StrictModule, NonTrainableState):
@@ -90,7 +87,7 @@ def finite_element_geometry_quality(
         coordinate_element = discretization.coordinate_elements[block_index]
         # ty: ignore[unresolved-attribute]
         degree = max(coordinate_element.degree + increment, 2)
-        points, _weights = _degree_aware_reference_rule(block.cell_kind, degree)
+        points, _weights = degree_aware_reference_rule(block.cell_kind, degree)
         # ty: ignore[unresolved-attribute]
         _basis, gradients = coordinate_element.tabulate(points)
         local_coordinates = runtime_.coordinates[

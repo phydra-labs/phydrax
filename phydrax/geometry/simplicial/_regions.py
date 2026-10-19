@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
+from ...typing import checked
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -40,11 +41,7 @@ from .._sampling import (
     complete_sampling_result,
     RejectionSamplingPlan,
 )
-from ..design._schema import (
-    _ParameterCollector,
-    ParameterBinding,
-    ParameterId,
-)
+from ..design._schema import ParameterBinding, ParameterCollector, ParameterId
 from ._bvh import _segment_ray_parity, SegmentBVH, TriangleBVH
 from ._mesh import (
     _TriangleCubatureMap,
@@ -204,14 +201,52 @@ class PlanarMeshRegion(GeometrySource):
         self.loop_offsets = jnp.asarray(offsets, dtype=jnp.int32)
         self.feature_id = feature_id or f"planar-region-{uuid4().hex}"
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[PlanarMeshRegion], value: PlanarMeshRegion, /
+    ) -> PlanarMeshRegion:
+        """Reconstruct the retained directed polygon loops through the constructor."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"PlanarMeshRegion.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        offsets = np.asarray(value.loop_offsets)
+        edges = np.asarray(value.edges)
+        if (
+            offsets.ndim != 1
+            or offsets.size < 2
+            or not np.issubdtype(offsets.dtype, np.integer)
+            or edges.ndim != 2
+            or edges.shape[1] != 2
+            or not np.issubdtype(edges.dtype, np.integer)
+            or offsets[0] != 0
+            or offsets[-1] != edges.shape[0]
+            or np.any(np.diff(offsets) < 3)
+        ):
+            raise ValueError(
+                "PlanarMeshRegion.loop_offsets must partition its directed integer edge cycles; got invalid offsets or edge rows"
+            )
+        loops = tuple(
+            tuple(edges[first:last, 0].tolist())
+            for first, last in zip(offsets[:-1], offsets[1:], strict=True)
+        )
+        fresh = cls(value.vertices, loops, feature_id=value.feature_id)
+        if not np.array_equal(np.asarray(fresh.edges), edges):
+            raise ValueError(
+                "PlanarMeshRegion.edges must form the retained directed loops; got inconsistent edge endpoints"
+            )
+        return fresh
+
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         vertices = context.bind(
             ParameterId(self.feature_id, "vertices"),
             self.vertices,
             role="position",
+            unit=context.coordinate_unit,
             physical_scale=float(np.max(np.ptp(np.asarray(self.vertices), axis=0))),
         )
-        return _PlanarMeshRegionKernel(
+        return PlanarMeshRegionKernel(
             vertices,
             self.edges,
             self.loop_offsets,
@@ -220,7 +255,7 @@ class PlanarMeshRegion(GeometrySource):
         )
 
 
-class _PlanarMeshRegionKernel(GeometryKernel):
+class PlanarMeshRegionKernel(GeometryKernel):
     vertices: ParameterBinding = eqx.field(static=True)
     edges: Array
     loop_offsets: Array
@@ -485,9 +520,10 @@ class MeshRegion(GeometrySource):
             ParameterId(self.feature_id, "vertices"),
             self.vertices,
             role="position",
+            unit=context.coordinate_unit,
             physical_scale=float(np.max(np.ptp(np.asarray(self.vertices), axis=0))),
         )
-        return _MeshRegionKernel(
+        return MeshRegionKernel(
             vertices,
             self.faces,
             TriangleBVH(self.triangle_mesh),
@@ -495,7 +531,7 @@ class MeshRegion(GeometrySource):
         )
 
 
-class _MeshRegionKernel(GeometryKernel):
+class MeshRegionKernel(GeometryKernel):
     vertices: ParameterBinding = eqx.field(static=True)
     faces: Array
     index: TriangleBVH

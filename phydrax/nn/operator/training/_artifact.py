@@ -677,19 +677,39 @@ def save_operator_artifact(
     return destination
 
 
-def load_trained_operator(
-    path: str | Path,
-    /,
-    *,
-    execution_model_like: OperatorModel | None = None,
-    output_pipeline_like: OperatorOutputPipeline | None = None,
-) -> TrainedOperator:
-    """Verify and restore a task-bound operator without templates when portable.
+def _caller_operator_templates(
+    manifest: OperatorArtifactManifest,
+    execution_model_like: OperatorModel | None,
+    output_pipeline_like: OperatorOutputPipeline | None,
+) -> tuple[OperatorModel, OperatorOutputPipeline | None]:
+    """Require caller model and declared pipeline templates for nonportable artifacts."""
+    if execution_model_like is None:
+        raise ValueError(
+            f"load_operator_artifact.execution_model_like must provide a template for nonportable artifacts; got {execution_model_like!r}"
+        )
+    model_template = execution_model_like
+    if manifest.output_pipeline_fingerprint:
+        if output_pipeline_like is None:
+            raise ValueError(
+                f"load_operator_artifact.output_pipeline_like must provide a template for the declared output pipeline; got {output_pipeline_like!r}"
+            )
+        pipeline_template = output_pipeline_like
+    else:
+        if output_pipeline_like is not None:
+            raise ValueError(
+                "load_operator_artifact.output_pipeline_like must be None when the artifact declares no output pipeline; "
+                f"got {type(output_pipeline_like).__name__}"
+            )
+        pipeline_template = None
+    return model_template, pipeline_template
 
-    The manifest's `ArtifactBindingIdentity` is recomputed from the restored
-    model and must match exactly.
-    """
-    manifest, members = _read_operator_artifact(path)
+
+def _operator_artifact_templates(
+    manifest: OperatorArtifactManifest,
+    execution_model_like: OperatorModel | None,
+    output_pipeline_like: OperatorOutputPipeline | None,
+) -> tuple[OperatorModel, OperatorOutputPipeline | None, Mapping[str, Any] | None]:
+    """Resolve portable recipes or required caller templates before reading leaves."""
     portable_recipe = None
     if manifest.execution_model_portable:
         if manifest.execution_model_recipe is None:
@@ -720,32 +740,33 @@ def load_trained_operator(
                 f"{architecture_codec.model_type.__name__}."
             )
     else:
-        if execution_model_like is None:
-            raise ValueError(
-                "Nonportable artifacts require an explicit execution_model_like."
-            )
-        model_template = execution_model_like
-        if manifest.output_pipeline_fingerprint:
-            if output_pipeline_like is None:
-                raise ValueError(
-                    "Nonportable artifacts with a physical output pipeline require output_pipeline_like."
-                )
-            pipeline_template = output_pipeline_like
-        else:
-            if output_pipeline_like is not None:
-                raise ValueError("Artifact does not declare an output pipeline.")
-            pipeline_template = None
+        model_template, pipeline_template = _caller_operator_templates(
+            manifest, execution_model_like, output_pipeline_like
+        )
     if not isinstance(model_template, OperatorModel):
         raise TypeError("Operator artifact recipe did not restore an execution model.")
     if pipeline_template is not None and not isinstance(
         pipeline_template, OperatorOutputPipeline
     ):
         raise TypeError("Operator artifact recipe did not restore an output pipeline.")
-    stream = io.BytesIO(members[manifest.execution_model_file])
+    return model_template, pipeline_template, portable_recipe
+
+
+def _restore_operator_payload(
+    manifest: OperatorArtifactManifest,
+    model_template: OperatorModel,
+    pipeline_template: OperatorOutputPipeline | None,
+    portable_recipe: Mapping[str, Any] | None,
+    payload: bytes,
+) -> tuple[Any, OperatorOutputPipeline | None]:
+    """Restore leaves, then verify structural and output-pipeline identities."""
+    stream = io.BytesIO(payload)
     try:
         _preflight_serialization(stream, (model_template, pipeline_template))
     except (OSError, TypeError, ValueError) as error:
-        raise ValueError("Operator artifact model leaf inventory is invalid.") from error
+        raise ValueError(
+            f"load_trained_operator.model_leaf_inventory must satisfy serialization preflight; got {error!r}."
+        ) from error
     try:
         if portable_recipe is None:
             execution_model, output_pipeline = eqx.tree_deserialise_leaves(
@@ -774,6 +795,18 @@ def load_trained_operator(
         raise ValueError("Operator artifact model payload is invalid.") from error
     if stream.read(1):
         raise ValueError("Operator artifact model payload has trailing leaves.")
+    return _validated_operator_payload(
+        manifest, portable_recipe, execution_model, output_pipeline
+    )
+
+
+def _validated_operator_payload(
+    manifest: OperatorArtifactManifest,
+    portable_recipe: Mapping[str, Any] | None,
+    execution_model: Any,
+    output_pipeline: Any,
+) -> tuple[Any, OperatorOutputPipeline | None]:
+    """Validate dynamic reconstruction against the recipe and scientific identities."""
     if portable_recipe is not None:
         if _structure_recipe(execution_model, path="execution_model") != dict(
             portable_recipe
@@ -800,6 +833,32 @@ def load_trained_operator(
     )
     if actual_pipeline_fingerprint != manifest.output_pipeline_fingerprint:
         raise ValueError("Operator artifact output-pipeline fingerprint mismatch.")
+    return execution_model, output_pipeline
+
+
+def load_trained_operator(
+    path: str | Path,
+    /,
+    *,
+    execution_model_like: OperatorModel | None = None,
+    output_pipeline_like: OperatorOutputPipeline | None = None,
+) -> TrainedOperator:
+    """Verify and restore a task-bound operator without templates when portable.
+
+    The manifest's `ArtifactBindingIdentity` is recomputed from the restored
+    model and must match exactly.
+    """
+    manifest, members = _read_operator_artifact(path)
+    model_template, pipeline_template, portable_recipe = _operator_artifact_templates(
+        manifest, execution_model_like, output_pipeline_like
+    )
+    execution_model, output_pipeline = _restore_operator_payload(
+        manifest,
+        model_template,
+        pipeline_template,
+        portable_recipe,
+        members[manifest.execution_model_file],
+    )
     task = OperatorTask.from_dict(manifest.task)
     normalization = (
         None

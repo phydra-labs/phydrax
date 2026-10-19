@@ -18,21 +18,42 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
-from time import monotonic
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+import phydrax.discretization as cell_mesh_owner
+import phydrax.geometry as contracts_owner
+import phydrax.geometry.design as schema_owner
+from phydrax.meshing._association_state import (
+    GeometryAssociation,
+    GeometryAssociationKind,
+)
+from phydrax.meshing._certification_schedule import MeshCertificationSchedule
+from phydrax.meshing._contracts import (
+    MeshingDerivativeMode,
+    MeshingLimits,
+    MeshingProviderInfo,
+    SurfaceMeshingSpec,
+)
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
+from ..._meshcore import NativeExecutionScope, NativeHostStorageWorkspace
 from ..._physical import SpatialCoordinateContract
-from ...discretization import CellMesh
-from ...geometry import CompiledGeometry, DesignState
-from ...geometry._mesh_certificates import ImplicitBoundarySource
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...geometry import (
+    ImplicitBoundarySource,
+    ImplicitProjectionBoundarySource,
+)
+from ...geometry.analytic._extended import TorusKernel
+from ...geometry.analytic._primitives import BallKernel
 from ...geometry.implicit import (
     AdaptiveImplicitSurface,
     AdaptiveImplicitSurfaceEvidence,
     AdaptiveImplicitSurfacePolicy,
+    AnalyticImplicitProfile,
     discover_adaptive_implicit_surface,
     discover_implicit_surface,
     ImplicitSurfacePlan,
@@ -41,39 +62,36 @@ from ...geometry.implicit import (
 )
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...typing import checked
-from .._association import GeometryAssociation, GeometryAssociationKind
-from .._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
-from .._certification import MeshCertificationSchedule
-from .._contracts import (
-    MeshingDerivativeMode,
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingLimits,
-    MeshingProviderInfo,
-    SurfaceMeshingSpec,
-)
 from .._controls import FeatureKind
-from .._measurements import NativeMeshingPhaseRecorder, phase_started, record_elapsed
+from .._measurements import measure_phase, NativeMeshingPhaseRecorder
 from .._result import CellMeshingResult, MeshingComplianceReport
 from .._sizing import UniformSizeControl
 from .._trace import MeshingStageKind, MeshingStageReport, MeshingStageStatus
+from . import _native_sources as sources_owner
 from ._native_publication import (
+    coordinate_budget,
+    coordinate_phase,
+    NativeCertificationRequest,
+    NativePublicationExecution,
+    NativePublicationOrganization,
+    publish_native_result,
+)
+from ._native_route_checks import (
     check_deadline,
     edge_size_evidence,
-    NativeCertificationRequest,
-    publish_native_result,
     simplex_entity_limits,
     uniform_size_compliance,
     unique_edges,
 )
-from ._native_sources import NativeImplicitSource
+from ._native_route_policy import publication_policy
 
 
 _ZERO_SET = "implicit-zero-set"
 
 
+@checked
 def implicit_support_issues(
-    source: NativeImplicitSource, specification: SurfaceMeshingSpec, /
+    source: sources_owner.NativeImplicitSource, specification: SurfaceMeshingSpec, /
 ) -> list[str]:
     """Physical requests of one surface specification this route cannot enforce."""
 
@@ -88,12 +106,12 @@ def implicit_support_issues(
         unsupported.append("mixed-cell transition policies")
     if specification.planar_embedding is not None:
         unsupported.append("planar embeddings")
-    if len(specification.size_controls) != 1 or not isinstance(
-        specification.size_controls[0], UniformSizeControl
-    ):
-        unsupported.append("exactly one whole-surface uniform size control")
-    elif specification.size_controls[0].scope.scope_id != specification.scope.scope_id:
-        unsupported.append("local size-control scopes")
+    match specification.size_controls:
+        case (UniformSizeControl() as control,):
+            if control.scope.scope_id != specification.scope.scope_id:
+                unsupported.append("local size-control scopes")
+        case _:
+            unsupported.append("exactly one whole-surface uniform size control")
     if len(specification.protected_features) > 1 or any(
         feature.feature_kind is not FeatureKind.SURFACE
         or feature.scope.scope_id != specification.scope.scope_id
@@ -138,7 +156,10 @@ def _bounded_policy(
     if face_capacity < 4 or vertex_capacity < 4 or limits.maximum_edges < 6:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Meshing limits cannot admit a minimal closed implicit surface.",
+            (
+                "implicit.bounded_policy must admit a minimal closed implicit surface within declared limits; got "
+                + "Meshing limits cannot admit a minimal closed implicit surface."
+            ),
             provider_code="preflight",
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
             requested=(
@@ -162,7 +183,7 @@ def _bounded_policy(
 
 @checked
 def prepare_implicit_route(
-    source: NativeImplicitSource,
+    source: sources_owner.NativeImplicitSource,
     specification: SurfaceMeshingSpec,
     policy: ImplicitSurfacePolicy,
     /,
@@ -184,7 +205,10 @@ def prepare_implicit_route(
     ):
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Implicit lattice preparation exceeds its point, query, or scratch budget.",
+            (
+                "implicit.prepare_implicit_route must fit point, query, and scratch limits; got "
+                + "Implicit lattice preparation exceeds its point, query, or scratch budget."
+            ),
             provider_code="preflight",
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
             requested=(
@@ -229,7 +253,12 @@ def _implicit_compliance(
 ) -> MeshingComplianceReport:
     control = specification.size_controls[0]
     if not isinstance(control, UniformSizeControl):
-        raise TypeError("Admitted implicit size control must be UniformSizeControl.")
+        raise TypeError(
+            (
+                "implicit.implicit_compliance must bind an admitted UniformSizeControl; got "
+                + "Admitted implicit size control must be UniformSizeControl."
+            )
+        )
     lengths, growth = edge_size_evidence(vertices, unique_edges(faces, "triangle"))
     requested, achieved, issues = uniform_size_compliance(
         control, specification.size_compliance, lengths, growth
@@ -257,10 +286,12 @@ def _implicit_compliance(
 
 @checked
 def prepare_adaptive_implicit_route(
-    source: NativeImplicitSource,
+    source: sources_owner.NativeImplicitSource,
     specification: SurfaceMeshingSpec,
     policy: AdaptiveImplicitSurfacePolicy,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> AdaptiveImplicitSurface:
     """Discover the zero set by adaptive octree refinement within the budgets.
 
@@ -268,35 +299,43 @@ def prepare_adaptive_implicit_route(
     field-evaluation capacities are clipped to the declared limits, whose
     exhaustion discovery reports as unresolved boxes, never as success.
     """
-
-    limits = specification.limits
-    domain = np.asarray(
-        [
-            (np.min(axis.point_coordinates), np.max(axis.point_coordinates))
-            for axis in source.grid.structured_axes
-        ],
-        dtype=np.float64,
-    ).T
-    bounded = replace(
-        policy,
-        maximum_faces=min(
-            policy.maximum_faces, limits.maximum_faces, limits.maximum_cells
-        ),
-        maximum_evaluations=min(
-            policy.maximum_evaluations, limits.maximum_geometry_queries
-        ),
-    )
-    return discover_adaptive_implicit_surface(
-        source.geometry, domain=domain, policy=bounded, source_id=source.source_id
-    )
+    budget = coordinate_budget(specification.limits)
+    with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+        limits = specification.limits
+        domain = np.asarray(
+            [
+                (np.min(axis.point_coordinates), np.max(axis.point_coordinates))
+                for axis in source.grid.structured_axes
+            ],
+            dtype=np.float64,
+        ).T
+        bounded = replace(
+            policy,
+            maximum_faces=min(
+                policy.maximum_faces, limits.maximum_faces, limits.maximum_cells
+            ),
+            maximum_evaluations=min(
+                policy.maximum_evaluations, limits.maximum_geometry_queries
+            ),
+        )
+        with coordinate_phase(scope, specification.limits, budget):
+            return discover_adaptive_implicit_surface(
+                source.geometry,
+                domain=domain,
+                policy=bounded,
+                source_id=source.source_id,
+                budget=budget,
+            )
 
 
 def _certification_request(
-    source: NativeImplicitSource,
+    source: sources_owner.NativeImplicitSource,
     specification: SurfaceMeshingSpec,
-    geometry: CompiledGeometry,
+    geometry: contracts_owner.CompiledGeometry,
     coordinate_contract: SpatialCoordinateContract,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> NativeCertificationRequest:
     """Require certified two-sided fidelity for every accepted implicit surface.
 
@@ -307,7 +346,12 @@ def _certification_request(
 
     control = specification.size_controls[0]
     if not isinstance(control, UniformSizeControl):
-        raise TypeError("Admitted implicit size control must be UniformSizeControl.")
+        raise TypeError(
+            (
+                "implicit.implicit_compliance must bind an admitted UniformSizeControl; got "
+                + "Admitted implicit size control must be UniformSizeControl."
+            )
+        )
     features = specification.protected_features
     tolerance = features[0].maximum_deviation if features else control.target_size
     # A boundary sample grid of half-diagonal tolerance / 4 leaves room for the
@@ -315,18 +359,15 @@ def _certification_request(
     spacing = (tolerance if tolerance > 0.0 else control.target_size) / (
         2.0 * math.sqrt(geometry.ambient_dimension)
     )
-    from ...geometry._mesh_certificates import ImplicitProjectionBoundarySource
-    from ...geometry.analytic._extended import _TorusKernel
-    from ...geometry.analytic._primitives import _BallKernel
-    from ...geometry.implicit._analytic_profile import AnalyticImplicitProfile
 
-    if isinstance(geometry.kernel, (_BallKernel, _TorusKernel)):
+    if isinstance(geometry.kernel, (BallKernel, TorusKernel)):
         fidelity_source = ImplicitProjectionBoundarySource(
             AnalyticImplicitProfile(
                 geometry,
                 coordinate_contract,
                 source_id=source.source_id,
                 source_revision=source.source_revision,
+                budget=budget,
             )
         )
     else:
@@ -345,9 +386,9 @@ def _certification_request(
 
 
 def _publish_surface(
-    source: NativeImplicitSource,
+    source: sources_owner.NativeImplicitSource,
     specification: SurfaceMeshingSpec,
-    geometry: CompiledGeometry,
+    geometry: contracts_owner.CompiledGeometry,
     vertices: np.ndarray,
     faces: np.ndarray,
     construction: tuple[MeshingStageReport, ...],
@@ -360,117 +401,108 @@ def _publish_surface(
     derivative_mode: MeshingDerivativeMode,
     minimum_face_area: float,
     record_phase: NativeMeshingPhaseRecorder | None = None,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
     """Associate, certify, and publish one closed implicit surface."""
-
-    limits = specification.limits
-    simplex_entity_limits(
-        vertices,
-        faces,
-        limits,
-        MeshingStageKind.SURFACE_MESHING,
-        cell_kind="triangle",
-    )
-    phase_start = phase_started(record_phase)
-    mesh = CellMesh.from_triangles(
-        vertices, faces, numeric_version=source.source_revision
-    )
-    record_elapsed(record_phase, "construction", phase_start)
-    phase_start = phase_started(record_phase)
-    residuals = jnp.abs(
-        geometry.boundary_field(jnp.mean(jnp.asarray(vertices)[faces], axis=1))
-    )
-    compliance = _implicit_compliance(
-        specification,
-        vertices,
-        faces,
-        minimum_face_area=minimum_face_area,
-        maximum_implicit_residual=float(np.max(np.asarray(residuals))),
-    )
-    record_elapsed(record_phase, "compliance", phase_start)
-    phase_start = phase_started(record_phase)
-    metadata = SurfaceMetadata(
-        source_id=source.source_id,
-        source_revision=source.source_revision,
-        coordinate_contract=coordinate_contract,
-        provenance=(provenance["kind"], provenance["surface_plan"]),
-        cell_tags=tuple(_ZERO_SET for _ in range(mesh.blocks[0].cell_count)),
-    )
-    boundary = SurfaceModel.from_triangles(
-        mesh.coordinates,
-        mesh.blocks[0].vertices,
-        metadata,
-        vertex_global_ids=mesh.vertex_global_ids,
-        cell_global_ids=mesh.blocks[0].global_ids,
-        numeric_version=source.source_revision,
-        repair_orientation=False,
-    )
-    record_elapsed(record_phase, "construction", phase_start)
-    phase_start = phase_started(record_phase)
-    face_set = mesh.entity_set(2)
-    association = GeometryAssociation(
-        GeometryAssociationKind.IMPLICIT,
-        source.source_id,
-        source.source_revision,
-        face_set.entity_set_id,
-        face_set.entity_ids,
-        tuple(_ZERO_SET for _ in range(face_set.count)),
-        residuals,
-        resolved=np.ones((face_set.count,), dtype=np.bool_),
-        exact=False,
-    )
-    record_elapsed(record_phase, "geometry_association", phase_start)
-    check_deadline(started, limits, MeshingStageKind.GEOMETRY_AUDIT)
-    request = _certification_request(source, specification, geometry, coordinate_contract)
-    result = publish_native_result(
-        mesh,
-        coordinate_contract,
-        compliance,
-        construction,
-        provider,
-        provenance,
-        request,
-        # The realized dual surface is a closed manifold by construction.
-        audit_policy=CellMeshAuditPolicy(
-            require_complete_association=True,
-            watertight_boundary=CellMeshAuditDisposition.REJECT,
-        ),
-        derivative_mode=derivative_mode,
-        enforced_limits=(
-            "vertices",
-            "edges",
-            "faces",
-            "cells",
-            "connectivity_entries",
-            "data_bytes",
-            "geometry_queries",
-            "scratch_bytes",
-            "wall_seconds",
-            "grid_capacity",
-            "surface_capacity",
-            "projection",
-        ),
-        unenforced_limits=("work_units", "cavity_cells"),
-        boundary=boundary,
-        associations=(association,),
-        record_phase=record_phase,
-    )
-    check_deadline(started, limits, MeshingStageKind.SPECIFICATION_COMPLIANCE)
-    return result
+    budget = coordinate_budget(specification.limits)
+    with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+        limits = specification.limits
+        simplex_entity_limits(
+            vertices,
+            faces,
+            limits,
+            MeshingStageKind.SURFACE_MESHING,
+            cell_kind="triangle",
+        )
+        with measure_phase(record_phase, "construction"):
+            mesh = cell_mesh_owner.CellMesh.from_triangles(
+                vertices, faces, numeric_version=source.source_revision
+            )
+        with measure_phase(record_phase, "compliance"):
+            # Only field evaluation crosses to the dynamic geometry kernel.
+            centroids = np.mean(vertices[faces], axis=1)
+            residuals = np.abs(
+                np.asarray(
+                    jax.device_get(geometry.boundary_field(jnp.asarray(centroids)))
+                )
+            )
+            compliance = _implicit_compliance(
+                specification,
+                vertices,
+                faces,
+                minimum_face_area=minimum_face_area,
+                maximum_implicit_residual=float(np.max(residuals)),
+            )
+        with measure_phase(record_phase, "construction"):
+            metadata = SurfaceMetadata(
+                source_id=source.source_id,
+                source_revision=source.source_revision,
+                coordinate_contract=coordinate_contract,
+                provenance=(provenance["kind"], provenance["surface_plan"]),
+                cell_tags=tuple(_ZERO_SET for _ in range(mesh.blocks[0].cell_count)),
+            )
+            boundary = SurfaceModel.from_triangles(
+                mesh.coordinates,
+                mesh.blocks[0].vertices,
+                metadata,
+                vertex_global_ids=mesh.vertex_global_ids,
+                cell_global_ids=mesh.blocks[0].global_ids,
+                numeric_version=source.source_revision,
+                repair_orientation=False,
+            )
+        with measure_phase(record_phase, "geometry_association"):
+            face_set = mesh.entity_set(2)
+            association = GeometryAssociation(
+                GeometryAssociationKind.IMPLICIT,
+                source.source_id,
+                source.source_revision,
+                face_set.entity_set_id,
+                face_set.entity_ids,
+                tuple(_ZERO_SET for _ in range(face_set.count)),
+                residuals,
+                resolved=np.ones((face_set.count,), dtype=np.bool_),
+                exact=False,
+            )
+        check_deadline(started, limits, MeshingStageKind.GEOMETRY_AUDIT)
+        with coordinate_phase(scope, specification.limits, budget):
+            request = _certification_request(
+                source, specification, geometry, coordinate_contract, budget=budget
+            )
+        result = publish_native_result(
+            mesh,
+            coordinate_contract,
+            compliance,
+            construction,
+            provider,
+            {**provenance, "specification": specification.specification_id},
+            request,
+            # The realized dual surface is a closed manifold by construction.
+            policy=publication_policy("implicit", derivative_mode=derivative_mode),
+            organization=NativePublicationOrganization(
+                boundary=boundary,
+                associations=(association,),
+            ),
+            execution=NativePublicationExecution(scope, workspace, record_phase, budget),
+        )
+        check_deadline(started, limits, MeshingStageKind.SPECIFICATION_COMPLIANCE)
+        return result
 
 
 @checked
 def execute_implicit_route(
-    source: NativeImplicitSource,
+    source: sources_owner.NativeImplicitSource,
     specification: SurfaceMeshingSpec,
     surface_plan: ImplicitSurfacePlan,
     coordinate_contract: SpatialCoordinateContract,
     provider: MeshingProviderInfo,
     plan_id: str,
-    state: DesignState | None,
+    state: schema_owner.DesignState | None,
     /,
     *,
     record_phase: NativeMeshingPhaseRecorder | None = None,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
     """Realize, certify, and publish the fixed-topology surface for one state.
 
@@ -478,27 +510,30 @@ def execute_implicit_route(
     ``result.geometry.coordinates`` remains the JAX realization of ``state``.
     """
 
-    started = monotonic()
+    started = scope.operation_started
     limits = specification.limits
     selected = source.geometry.state if state is None else state
-    phase_start = phase_started(record_phase)
-    realization = surface_plan.realize(selected)
-    primal = jax.lax.stop_gradient(
-        (
-            realization.vertices,
-            realization.evidence.status,
-            realization.evidence.minimum_face_area,
+    with measure_phase(record_phase, "construction"):
+        realization = surface_plan.realize(selected)
+        primal = jax.lax.stop_gradient(
+            (
+                realization.vertices,
+                realization.evidence.status,
+                realization.evidence.minimum_face_area,
+            )
         )
-    )
-    vertices_host = np.asarray(primal[0], dtype=np.float64)
-    realization_status = int(np.asarray(primal[1]))
-    faces_host = np.asarray(realization.faces, dtype=np.int32)
-    record_elapsed(record_phase, "construction", phase_start)
+        primal_host, faces = jax.device_get((primal, realization.faces))
+        vertices_host = np.asarray(primal_host[0], dtype=np.float64)
+        realization_status = int(np.asarray(primal_host[1]))
+        faces_host = np.asarray(faces, dtype=np.int32)
     check_deadline(started, limits, MeshingStageKind.SURFACE_MESHING)
     if realization_status != int(ImplicitSurfaceStatus.SUCCESS):
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            "Implicit surface realization was rejected by its runtime evidence.",
+            (
+                "implicit.execute_implicit_route must report successful implicit realization evidence; got "
+                + "Implicit surface realization was rejected by its runtime evidence."
+            ),
             provider_code=f"implicit_status:{realization_status}",
             stage=MeshingStageKind.SURFACE_MESHING.value,
         )
@@ -537,8 +572,10 @@ def execute_implicit_route(
         provider,
         started=started,
         derivative_mode=MeshingDerivativeMode.FIXED_ROUTE_PIECEWISE,
-        minimum_face_area=float(np.asarray(primal[2])),
+        minimum_face_area=float(np.asarray(primal_host[2])),
         record_phase=record_phase,
+        scope=scope,
+        workspace=workspace,
     )
     # The certified host coordinates are the primal of the realization; the
     # published leaf carries the realization itself so design derivatives flow.
@@ -565,7 +602,7 @@ def _discovery_quantities(
 
 @checked
 def execute_adaptive_implicit_route(
-    source: NativeImplicitSource,
+    source: sources_owner.NativeImplicitSource,
     specification: SurfaceMeshingSpec,
     surface: AdaptiveImplicitSurface,
     coordinate_contract: SpatialCoordinateContract,
@@ -574,6 +611,8 @@ def execute_adaptive_implicit_route(
     /,
     *,
     record_phase: NativeMeshingPhaseRecorder | None = None,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
     """Certify and publish the adaptively discovered surface.
 
@@ -582,13 +621,16 @@ def execute_adaptive_implicit_route(
     decomposition. The adaptive product is not differentiable.
     """
 
-    started = monotonic()
+    started = scope.operation_started
     evidence = surface.evidence
     mesh = surface.mesh
     if mesh is None:
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            f"Adaptive implicit discovery published no surface ({evidence.status_flags!r}).",
+            (
+                "implicit.execute_adaptive_implicit_route must publish a closed surface with certified discovery evidence; got "
+                + f"Adaptive implicit discovery published no surface ({evidence.status_flags!r})."
+            ),
             provider_code=f"adaptive_status:{evidence.status}",
             stage=MeshingStageKind.SURFACE_MESHING.value,
             achieved=_discovery_quantities(evidence),
@@ -597,7 +639,10 @@ def execute_adaptive_implicit_route(
     if not evidence.certified:
         raise MeshingFailure(
             MeshingFailureCategory.AUDIT_FAILED,
-            f"Certified fidelity was demanded but adaptive discovery is {evidence.accuracy}.",
+            (
+                "implicit.execute_adaptive_implicit_route must publish a closed surface with certified discovery evidence; got "
+                + f"Certified fidelity was demanded but adaptive discovery is {evidence.accuracy}."
+            ),
             stage=MeshingStageKind.CERTIFICATION.value,
             requested=(("accuracy_certified", 1.0),),
             achieved=_discovery_quantities(evidence),
@@ -646,6 +691,8 @@ def execute_adaptive_implicit_route(
         derivative_mode=MeshingDerivativeMode.NONDIFFERENTIABLE,
         minimum_face_area=float(np.min(areas)),
         record_phase=record_phase,
+        scope=scope,
+        workspace=workspace,
     )
 
 

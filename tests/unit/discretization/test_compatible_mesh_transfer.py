@@ -2,20 +2,25 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import Any, Literal
+from fractions import Fraction
+from typing import Any
 
-import jax
+from phydrax import config as pxconfig
 
 
-jax.config.update("jax_enable_x64", True)
-
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.discretization._cell_geometry import coordinate_lagrange_element
+from phydrax.discretization._cell_geometry import (
+    BarycentricCellGeometryElement,
+    CellGeometryRestrictionSource,
+    coordinate_lagrange_element,
+)
 from phydrax.discretization._cell_geometry_validity import cell_geometry_id
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.discretization.fem import (
     discontinuous_element,
     form_element,
@@ -24,79 +29,73 @@ from phydrax.discretization.fem import (
     prepare_nested_field_transfer,
     prepare_projection_field_transfer,
 )
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
 from phydrax.geometry import CommonRefinementPolicy, prepare_common_refinement
+from tests._support.cell_meshes import (
+    kuhn_cube,
+    red_refinement,
+    tetrahedral_bisection,
+    unit_square,
+)
+from tests._support.coordinate_references import coordinate_reference_budget
 
 
 D = phx.discretization
 lc = phx.lifecycle
 
-# Nested meshes are built by hand (red refinement of triangles, one edge
-# bisection of two face-sharing tetrahedra) so the parent witness is an
-# independent reference, not an output of the code under test.
-_SOURCE_TRIANGLE_VERTICES = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.2, 0.9), (0.1, 1.0)))
-_SOURCE_TRIANGLES = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)
 
-
-def _red_refinement() -> tuple[Any, Any, np.ndarray]:
-    vertices = [tuple(point) for point in _SOURCE_TRIANGLE_VERTICES]
-    midpoints: dict[tuple[int, int], int] = {}
-
-    def midpoint(first: int, second: int) -> int:
-        key = (min(first, second), max(first, second))
-        if key not in midpoints:
-            midpoints[key] = len(vertices)
-            vertices.append(
-                tuple(
-                    0.5
-                    * (
-                        _SOURCE_TRIANGLE_VERTICES[first]
-                        + _SOURCE_TRIANGLE_VERTICES[second]
-                    )
-                )
-            )
-        return midpoints[key]
-
-    children, parents = [], []
-    for parent, (a, b, c) in enumerate(_SOURCE_TRIANGLES.tolist()):
-        ab, bc, ca = midpoint(a, b), midpoint(b, c), midpoint(c, a)
-        children += [(a, ab, ca), (ab, b, bc), (ca, bc, c), (ab, bc, ca)]
-        parents += [parent] * 4
-    source = D.CellMesh.from_triangles(_SOURCE_TRIANGLE_VERTICES, _SOURCE_TRIANGLES)
-    target = D.CellMesh.from_triangles(
-        np.asarray(vertices), np.asarray(children, dtype=np.int32)
-    )
-    return source, target, np.asarray(parents, dtype=np.int64)
-
-
-def _positive(points: np.ndarray, cells: np.ndarray) -> np.ndarray:
-    corners = points[cells]
-    frames = corners[:, 1:] - corners[:, :1]
-    negative = np.linalg.det(frames) < 0.0
-    cells = cells.copy()
-    cells[negative] = cells[negative][:, [1, 0, *range(2, cells.shape[1])]]
-    return cells
-
-
-def _tetrahedral_bisection() -> tuple[Any, Any, np.ndarray]:
-    points = np.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (1.0, 1.0, 1.0),
-            (0.5, 0.5, 0.0),
-        )
-    )
-    source = _positive(points[:5], np.asarray(((0, 1, 2, 3), (1, 2, 3, 4))))
-    target = _positive(
-        points, np.asarray(((0, 1, 5, 3), (0, 5, 2, 3), (1, 5, 3, 4), (5, 2, 3, 4)))
-    )
-    return (
-        D.CellMesh.from_tetrahedra(points[:5], source.astype(np.int32)),
-        D.CellMesh.from_tetrahedra(points, target.astype(np.int32)),
-        np.asarray((0, 0, 1, 1), dtype=np.int64),
-    )
+# Empirical `test_nested_h1_transfer_reproduces_constants_and_polynomials`: matched max |delta|=1.04361e-14; joint allowance fraction=8.51926e-08, margin=100%.
+_NESTED_H1_POLYNOMIAL_ATOL = 1e-13
+# Empirical `test_nested_h1_transfer_reproduces_constants_and_polynomials`: matched max |delta|=6.77236e-15; joint allowance fraction=6.77236e-08, margin=100%.
+_NESTED_H1_CONSTANT_ATOL = 1e-14
+# Empirical `test_nested_discontinuous_transfer_conserves_extensive_content`: matched max |delta|=2.22045e-16; joint allowance fraction=0.00208845, margin=99.7912%.
+_NESTED_DG_CONTENT_RTOL = 1e-13
+# Empirical `test_nested_discontinuous_transfer_conserves_extensive_content`: matched max |delta|=1.9984e-15; joint allowance fraction=0.0198846, margin=98.0115%.
+_NESTED_DG_AREA_RTOL = 1e-13
+# Empirical `test_planar_compatible_transfer_preserves_moments_with_commuting_evidence`: matched max |delta|=6.66134e-16; joint allowance fraction=1.27671e-07, margin=100%.
+_PLANAR_COMPATIBLE_MOMENT_ATOL = 1e-13
+# Empirical `test_tetrahedral_nedelec_transfer_preserves_circulation_and_curl_free_fields`: matched max |delta|=3.94129e-15; joint allowance fraction=1.31376e-07, margin=100%.
+_TETRAHEDRAL_CIRCULATION_ATOL = 1e-13
+# Empirical `test_tetrahedral_nedelec_transfer_preserves_circulation_and_curl_free_fields`: matched max |delta|=2.66454e-15; joint allowance fraction=0.0266454, margin=97.3355%.
+_TETRAHEDRAL_GRADIENT_CURL_ATOL = 1e-13
+# Empirical `test_nonnested_hdiv_projection_reproduces_rt0_fields_and_plane_flux`: matched max |delta|=1.38778e-16; joint allowance fraction=3.77779e-05, margin=99.9962%.
+_NONNESTED_RT0_FACE_FLUX_ATOL = 1e-12
+# Empirical `test_nonnested_hdiv_projection_reproduces_rt0_fields_and_plane_flux`: matched max |delta|=2.22045e-16; joint allowance fraction=0.00166533, margin=99.8335%.
+_SOURCE_PLANE_FLUX_RTOL = 1e-13
+# Empirical `test_nonnested_hdiv_projection_reproduces_rt0_fields_and_plane_flux`: matched max |delta|=0.000328438; joint allowance fraction=0.0123164, margin=98.7684%.
+_PROJECTED_PLANE_FLUX_RTOL = 2e-2
+# Empirical `test_nonnested_hcurl_projection_reproduces_nedelec_fields`: matched max |delta|=1.22125e-15; joint allowance fraction=0.00052549, margin=99.9475%.
+_NONNESTED_CIRCULATION_ATOL = 1e-12
+# Empirical `test_nonnested_planar_compatible_projection_reproduces_lowest_order_fields`: matched max |delta|=6.66134e-16; joint allowance fraction=1.17657e-06, margin=99.9999%.
+_NONNESTED_PLANAR_MOMENT_ATOL = 1e-12
+# Empirical `test_topology_transaction_projects_compatible_fields_on_nonnested_adaptation`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_TRANSACTION_FLUX_PROJECTION_ATOL = 1e-12
+# Empirical `test_nonnested_divergence_commutes_for_arbitrary_moments`: matched max |delta|=9.63674e-14; joint allowance fraction=0.00389802, margin=99.6102%.
+_NONNESTED_DIVERGENCE_ATOL = 2e-11
+# Empirical `test_nonnested_divergence_commutes_for_arbitrary_moments`: matched max |delta|=9.63674e-14; joint allowance fraction=0.00389802, margin=99.6102%.
+_NONNESTED_DIVERGENCE_RTOL = 2e-11
+# Empirical `test_nonnested_curl_commutes_with_its_realizable_companion`: matched max |delta|=4.49418e-13; joint allowance fraction=0.000803842, margin=99.9196%.
+_NONNESTED_CURL_ATOL = 2e-10
+# Empirical `test_nonnested_curl_commutes_with_its_realizable_companion`: matched max |delta|=4.49418e-13; joint allowance fraction=0.000803842, margin=99.9196%.
+_NONNESTED_CURL_RTOL = 2e-10
+# Empirical `test_nonnested_curl_commutes_with_its_realizable_companion`: matched max |delta|=1.19904e-14; joint allowance fraction=5.3039e-08, margin=100%.
+_NONNESTED_CURL_CONTENT_ATOL = 2e-11
+# Empirical `test_nonnested_curl_commutes_with_its_realizable_companion`: matched max |delta|=4.44089e-15; joint allowance fraction=6.26953e-09, margin=100%.
+_NONNESTED_CURL_DUAL_PAIRING_ATOL = 1e-11
+# Empirical `test_epoch_admission_rejects_same_topology_wrong_geometry_and_precision`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_EPOCH_IDENTITY_VALUES_ATOL = 1e-12
+# Empirical `test_nested_p1_transfer_on_embedded_surface_reports_physical_area_measures`: matched max |delta|=2.66454e-15; joint allowance fraction=0.266454, margin=73.3546%.
+_EMBEDDED_SURFACE_AREA_ATOL = 1e-14
+# Empirical `test_nested_p1_transfer_on_embedded_surface_reports_physical_area_measures`: matched max |delta|=1.77636e-15; joint allowance fraction=8.88178e-09, margin=100%.
+_EMBEDDED_P1_VALUES_ATOL = 1e-14
+# Empirical `test_nested_p1_transfer_on_embedded_surface_reports_physical_area_measures`: matched max |delta|=4.44089e-15; joint allowance fraction=0.444089, margin=55.5911%.
+_EMBEDDED_P1_CONTENT_ATOL = 1e-14
+# Empirical `test_retained_rational_affine_transfer_preserves_source_map_and_inventory`: matched max |delta|=4.44089e-16; joint allowance fraction=0.0444089, margin=95.5591%.
+_RATIONAL_AFFINE_DENSITY_ATOL = 1e-14
+# Empirical `test_retained_rational_affine_transfer_preserves_source_map_and_inventory`: matched max |delta|=2.44249e-15; joint allowance fraction=1.83187e-08, margin=100%.
+_RATIONAL_AFFINE_CONTENT_ATOL = 1e-14
+# Empirical `test_retained_rational_affine_transfer_preserves_source_map_and_inventory`: matched max |delta|=2.22045e-16; joint allowance fraction=0.0222045, margin=97.7796%.
+_RATIONAL_AFFINE_HISTORY_ATOL = 1e-14
 
 
 def _pair(element: Any, source: Any, target: Any) -> tuple[Any, Any]:
@@ -143,7 +142,7 @@ def _affine(points: Any, args: object) -> Any:
 def test_nested_h1_transfer_reproduces_constants_and_polynomials(
     degree: int, function: Any
 ) -> None:
-    source_mesh, target_mesh, parents = _red_refinement()
+    source_mesh, target_mesh, parents = red_refinement()
     source, target = _pair(lagrange_element("triangle", degree), source_mesh, target_mesh)
 
     transfer = prepare_nested_field_transfer(source, target, parents, field_name="u")
@@ -154,13 +153,15 @@ def test_nested_h1_transfer_reproduces_constants_and_polynomials(
     assert transfer.semantics == "nested-interpolation"
     assert transfer.geometry.relation == "exact-restriction"
     assert transfer.transfer.preserves_constants and transfer.transfer.conservative
-    np.testing.assert_allclose(polynomial, target.project("u", function), atol=1e-13)
-    np.testing.assert_allclose(constant, 1.0, atol=1e-14)
+    np.testing.assert_allclose(
+        polynomial, target.project("u", function), atol=_NESTED_H1_POLYNOMIAL_ATOL
+    )
+    np.testing.assert_allclose(constant, 1.0, atol=_NESTED_H1_CONSTANT_ATOL)
 
 
 @pytest.mark.parametrize("degree", (0, 1), ids=("dg0", "dg1"))
 def test_nested_discontinuous_transfer_conserves_extensive_content(degree: int) -> None:
-    source_mesh, target_mesh, parents = _red_refinement()
+    source_mesh, target_mesh, parents = red_refinement()
     source, target = _pair(
         discontinuous_element("triangle", degree), source_mesh, target_mesh
     )
@@ -170,7 +171,9 @@ def test_nested_discontinuous_transfer_conserves_extensive_content(degree: int) 
     assert isinstance(transition, D.TopologyEpochTransition)
     count = source.dof_maps[0].global_dof_count
     values = jnp.asarray(np.random.default_rng(3).uniform(0.5, 2.0, count))
-    corners = _SOURCE_TRIANGLE_VERTICES[_SOURCE_TRIANGLES]
+    corners = np.asarray(source_mesh.coordinates)[
+        np.asarray(source_mesh.blocks[0].vertices)
+    ]
     edges = corners[:, 1:] - corners[:, :1]
     area = 0.5 * np.sum(
         np.abs(edges[:, 0, 0] * edges[:, 1, 1] - edges[:, 0, 1] * edges[:, 1, 0])
@@ -180,9 +183,11 @@ def test_nested_discontinuous_transfer_conserves_extensive_content(degree: int) 
     unit = transition.apply(jnp.ones((count,)))
 
     assert bool(result.successful)
-    np.testing.assert_allclose(result.target_content, result.source_content, rtol=1e-13)
-    np.testing.assert_allclose(unit.source_content, area, rtol=1e-13)
-    np.testing.assert_allclose(unit.target_content, area, rtol=1e-13)
+    np.testing.assert_allclose(
+        result.target_content, result.source_content, rtol=_NESTED_DG_CONTENT_RTOL
+    )
+    np.testing.assert_allclose(unit.source_content, area, rtol=_NESTED_DG_AREA_RTOL)
+    np.testing.assert_allclose(unit.target_content, area, rtol=_NESTED_DG_AREA_RTOL)
 
 
 def _divergent_flux(points: Any, args: object) -> Any:
@@ -234,7 +239,7 @@ def _gradient_field(points: Any, args: object) -> Any:
 def test_planar_compatible_transfer_preserves_moments_with_commuting_evidence(
     element: Any, function: Any, semantics: str
 ) -> None:
-    source_mesh, target_mesh, parents = _red_refinement()
+    source_mesh, target_mesh, parents = red_refinement()
     source, target = _pair(element, source_mesh, target_mesh)
 
     transfer = prepare_nested_field_transfer(source, target, parents, field_name="u")
@@ -243,9 +248,11 @@ def test_planar_compatible_transfer_preserves_moments_with_commuting_evidence(
     assert transfer.semantics == semantics
     assert transfer.evidence.passed
     assert transfer.evidence.defect("commuting") <= transfer.evidence.tolerance
-    # Midpoint edge moments of the (linear) field on the target are the exact
+    # Midpoint edge moments of the linear field on the target give its
     # flux/circulation functionals of the target space.
-    np.testing.assert_allclose(moments, target.project("u", function), atol=1e-13)
+    np.testing.assert_allclose(
+        moments, target.project("u", function), atol=_PLANAR_COMPATIBLE_MOMENT_ATOL
+    )
 
 
 @pytest.mark.parametrize(
@@ -260,7 +267,7 @@ def test_planar_compatible_transfer_preserves_moments_with_commuting_evidence(
 def test_tetrahedral_hdiv_transfer_certifies_nesting_and_divergence_commutation(
     element: Any,
 ) -> None:
-    source_mesh, target_mesh, parents = _tetrahedral_bisection()
+    source_mesh, target_mesh, parents = tetrahedral_bisection()
     source, target = _pair(element, source_mesh, target_mesh)
 
     transfer = prepare_nested_field_transfer(source, target, parents, field_name="u")
@@ -272,7 +279,7 @@ def test_tetrahedral_hdiv_transfer_certifies_nesting_and_divergence_commutation(
 
 
 def _edge_integrals(mesh: Any, constant: np.ndarray, rotation: np.ndarray) -> Any:
-    """Exact lower-to-higher edge circulations of ``constant + rotation x x``."""
+    """Analytic lower-to-higher edge circulations of ``constant + rotation x x``."""
 
     coordinates = np.asarray(mesh.coordinates)
     edges = np.asarray(mesh.connectivity.edges)
@@ -284,13 +291,15 @@ def _edge_integrals(mesh: Any, constant: np.ndarray, rotation: np.ndarray) -> An
 def test_tetrahedral_nedelec_transfer_preserves_circulation_and_curl_free_fields() -> (
     None
 ):
-    source_mesh, target_mesh, parents = _tetrahedral_bisection()
+    source_mesh, target_mesh, parents = tetrahedral_bisection()
     source, target = _pair(
         form_element("tetrahedron", 1, 1, proxy="circulation"), source_mesh, target_mesh
     )
     constant, rotation = np.asarray((0.2, -1.0, 0.4)), np.asarray((1.1, -0.3, 0.6))
     potential = np.asarray(source_mesh.coordinates) @ np.asarray((1.0, 2.0, -1.0))
-    edges = np.asarray(source_mesh.connectivity.edges)
+    connectivity = source_mesh.connectivity
+    assert isinstance(connectivity, D.TetrahedralConnectivity)
+    edges = np.asarray(connectivity.edges)
 
     transfer = prepare_nested_field_transfer(source, target, parents, field_name="u")
     circulation = transfer.transfer.apply(
@@ -304,7 +313,9 @@ def test_tetrahedral_nedelec_transfer_preserves_circulation_and_curl_free_fields
     for name in ("containment", "continuity", "reproduction", "commuting"):
         assert transfer.evidence.defect(name) <= transfer.evidence.tolerance
     np.testing.assert_allclose(
-        circulation, _edge_integrals(target_mesh, constant, rotation), atol=1e-13
+        circulation,
+        _edge_integrals(target_mesh, constant, rotation),
+        atol=_TETRAHEDRAL_CIRCULATION_ATOL,
     )
     # The independent topological incidence of the edge space sees no curl.
     np.testing.assert_allclose(
@@ -312,12 +323,12 @@ def test_tetrahedral_nedelec_transfer_preserves_circulation_and_curl_free_fields
             target_mesh, family="trimmed", order=1
         ).exterior_derivative(1, gradient),
         0.0,
-        atol=1e-13,
+        atol=_TETRAHEDRAL_GRADIENT_CURL_ATOL,
     )
 
 
 def test_incompatible_field_family_is_refused() -> None:
-    source_mesh, target_mesh, parents = _red_refinement()
+    source_mesh, target_mesh, parents = red_refinement()
     source = D.FiniteElementPlan(
         source_mesh, D.FiniteElementFieldSpec("u", lagrange_element("triangle", 1))
     ).prepare()
@@ -328,16 +339,16 @@ def test_incompatible_field_family_is_refused() -> None:
         ),
     ).prepare()
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="field_signature.elements"):
         prepare_nested_field_transfer(source, target, parents, field_name="u")
 
 
 def test_piola_semantics_refuse_mismatched_field_conformity() -> None:
-    source_mesh, target_mesh, parents = _red_refinement()
+    source_mesh, target_mesh, parents = red_refinement()
     source, target = _pair(lagrange_element("triangle", 1), source_mesh, target_mesh)
     transfer = prepare_nested_field_transfer(source, target, parents, field_name="u")
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="FieldTransfer.semantics"):
         D.FieldTransfer(
             source.field_spaces[0],
             target.field_spaces[0],
@@ -348,11 +359,11 @@ def test_piola_semantics_refuse_mismatched_field_conformity() -> None:
 
 
 def test_rejected_transfer_leaves_the_accepted_composition_untouched() -> None:
-    source_mesh, target_mesh, parents = _red_refinement()
+    source_mesh, target_mesh, parents = red_refinement()
     source, target = _pair(
         form_element("triangle", 1, 1, proxy="circulation"), source_mesh, target_mesh
     )
-    # A wrong witness: every child claims the first parent.
+    # A wrong parent mapping: every child claims the first parent.
     wrong = prepare_nested_field_transfer(
         source, target, np.zeros_like(parents), field_name="u"
     )
@@ -395,42 +406,6 @@ def test_rejected_transfer_leaves_the_accepted_composition_untouched() -> None:
 # Non-nested remeshing: jittered interior vertices make the target cells cross
 # the source cells, while the grid plane x = 1/2 stays a union of faces of both
 # meshes so plane fluxes are sums of oriented face moments.
-def _jittered(points: np.ndarray, count: int, jitter: float, seed: int) -> np.ndarray:
-    interior = np.all((points > 1e-12) & (points < 1.0 - 1e-12), axis=1)
-    shift = np.random.default_rng(seed).uniform(-1.0, 1.0, points.shape)
-    shift[np.isclose(points[:, 0], 0.5), 0] = 0.0
-    return points + np.where(interior[:, None], jitter / count * shift, 0.0)
-
-
-def _kuhn_cube(count: int, jitter: float = 0.0) -> Any:
-    axis = np.linspace(0.0, 1.0, count + 1)
-    points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(
-        (-1, 3)
-    )
-    cells = []
-    for corner in np.ndindex(count, count, count):
-        for order in ((0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0)):
-            vertex = np.asarray(corner)
-            path = [vertex.copy()]
-            for axis_index in order:
-                vertex[axis_index] += 1
-                path.append(vertex.copy())
-            cells.append([np.ravel_multi_index(tuple(v), (count + 1,) * 3) for v in path])
-    moved = _jittered(points, count, jitter, 7)
-    tetrahedra = _positive(moved, np.asarray(cells, dtype=np.int32))
-    return D.CellMesh.from_tetrahedra(moved, tetrahedra.astype(np.int32))
-
-
-def _square(count: int, jitter: float = 0.0) -> Any:
-    axis = np.linspace(0.0, 1.0, count + 1)
-    points = np.stack(np.meshgrid(axis, axis, indexing="ij"), axis=-1).reshape((-1, 2))
-    cells = []
-    for i, j in np.ndindex(count, count):
-        a, b = i * (count + 1) + j, (i + 1) * (count + 1) + j
-        cells.extend(((a, b, b + 1), (a, b + 1, a + 1)))
-    moved = _jittered(points, count, jitter, 11)
-    triangles = _positive(moved, np.asarray(cells, dtype=np.int32))
-    return D.CellMesh.from_triangles(moved, triangles.astype(np.int32))
 
 
 def _projection(element: Any, source_mesh: Any, target_mesh: Any) -> tuple[Any, Any]:
@@ -484,7 +459,10 @@ def _solenoidal_field(points: np.ndarray) -> np.ndarray:
 
 
 def test_nonnested_hdiv_projection_reproduces_rt0_fields_and_plane_flux() -> None:
-    source_mesh, target_mesh = _kuhn_cube(2), _kuhn_cube(4, 0.3)
+    source_mesh, target_mesh = (
+        kuhn_cube(2, orientation_swap=(0, 1)),
+        kuhn_cube(4, 0.3, orientation_swap=(0, 1)),
+    )
     _, transfer = _projection(
         form_element("tetrahedron", 2, 1, twist="twisted", proxy="flux"),
         source_mesh,
@@ -510,18 +488,25 @@ def test_nonnested_hdiv_projection_reproduces_rt0_fields_and_plane_flux() -> Non
         assert evidence.defect(name) <= evidence.tolerance
     assert evidence.estimate("solve-residual") <= 1e-10
     np.testing.assert_allclose(
-        reproduced, _face_fluxes(target_mesh, _rt0_field), atol=1e-12
+        reproduced,
+        _face_fluxes(target_mesh, _rt0_field),
+        atol=_NONNESTED_RT0_FACE_FLUX_ATOL,
     )
     np.testing.assert_allclose(
-        _plane_flux(source_mesh, solenoidal), 4.0 / 3.0, rtol=1e-13
+        _plane_flux(source_mesh, solenoidal), 4.0 / 3.0, rtol=_SOURCE_PLANE_FLUX_RTOL
     )
     # The interior plane flux of the projected field matches the source flux to
     # the projection's own discretization accuracy.
-    np.testing.assert_allclose(_plane_flux(target_mesh, projected), 4.0 / 3.0, rtol=2e-2)
+    np.testing.assert_allclose(
+        _plane_flux(target_mesh, projected), 4.0 / 3.0, rtol=_PROJECTED_PLANE_FLUX_RTOL
+    )
 
 
 def test_nonnested_hcurl_projection_reproduces_nedelec_fields() -> None:
-    source_mesh, target_mesh = _kuhn_cube(2), _kuhn_cube(3, 0.3)
+    source_mesh, target_mesh = (
+        kuhn_cube(2, orientation_swap=(0, 1)),
+        kuhn_cube(3, 0.3, orientation_swap=(0, 1)),
+    )
     _, transfer = _projection(
         form_element("tetrahedron", 1, 1, proxy="circulation"), source_mesh, target_mesh
     )
@@ -537,7 +522,9 @@ def test_nonnested_hcurl_projection_reproduces_nedelec_fields() -> None:
     assert transfer.evidence.defect("commuting") <= transfer.evidence.tolerance
     assert transfer.evidence.estimate("cellwise-curl-realizability") > 1e-3
     np.testing.assert_allclose(
-        circulation, _edge_integrals(target_mesh, constant, rotation), atol=1e-12
+        circulation,
+        _edge_integrals(target_mesh, constant, rotation),
+        atol=_NONNESTED_CIRCULATION_ATOL,
     )
 
 
@@ -552,18 +539,26 @@ def test_nonnested_hcurl_projection_reproduces_nedelec_fields() -> None:
 def test_nonnested_planar_compatible_projection_reproduces_lowest_order_fields(
     element: Any, function: Any
 ) -> None:
-    source_mesh, target_mesh = _square(2), _square(5, 0.3)
+    source_mesh, target_mesh = (
+        unit_square(2, orientation_swap=(0, 1)),
+        unit_square(5, 0.3, orientation_swap=(0, 1)),
+    )
     source = D.FiniteElementPlan(source_mesh, D.FiniteElementFieldSpec("u", element))
     target, transfer = _projection(element, source_mesh, target_mesh)
 
     moments = transfer.transfer.apply(source.prepare().project("u", function))
 
     assert transfer.evidence.passed
-    np.testing.assert_allclose(moments, target.project("u", function), atol=1e-12)
+    np.testing.assert_allclose(
+        moments, target.project("u", function), atol=_NONNESTED_PLANAR_MOMENT_ATOL
+    )
 
 
 def test_nonnested_projection_refuses_mismatched_piola_maps() -> None:
-    source_mesh, target_mesh = _square(2), _square(3, 0.3)
+    source_mesh, target_mesh = (
+        unit_square(2, orientation_swap=(0, 1)),
+        unit_square(3, 0.3, orientation_swap=(0, 1)),
+    )
     source, _ = _pair(
         form_element("triangle", 1, 1, twist="twisted", proxy="flux"),
         source_mesh,
@@ -573,7 +568,9 @@ def test_nonnested_projection_refuses_mismatched_piola_maps() -> None:
         form_element("triangle", 1, 1, proxy="circulation"), source_mesh, target_mesh
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match="scientific form type, twist, and physical proxy"
+    ):
         prepare_projection_field_transfer(
             source,
             prepare_l2_projection_target(target, field_name="u"),
@@ -647,15 +644,19 @@ def test_topology_transaction_projects_compatible_fields_on_nonnested_adaptation
     assert result.transfers[0].evidence.passed
     # RT0 contains the flux a + 2x, so coarsening by projection is lossless.
     np.testing.assert_allclose(
-        result.state.fields[0], coarse.project("flux", _divergent_flux), atol=1e-12
+        result.state.fields[0],
+        coarse.project("flux", _divergent_flux),
+        atol=_TRANSACTION_FLUX_PROJECTION_ATOL,
     )
 
 
 def _opposite_cube() -> Any:
-    source = _kuhn_cube(1)
+    source = kuhn_cube(1, orientation_swap=(0, 1))
     coordinates = np.asarray(source.coordinates).copy()
     coordinates[:, 0] = 1.0 - coordinates[:, 0]
-    cells = _positive(coordinates, np.asarray(source.blocks[0].vertices).copy())
+    # Reflection reverses every positive tetrahedron; swap the source local
+    # vertices to retain the authored compatible-transfer orientation.
+    cells = np.asarray(source.blocks[0].vertices)[:, [1, 0, 2, 3]]
     return D.CellMesh.from_tetrahedra(coordinates, cells)
 
 
@@ -756,7 +757,9 @@ def _overlap_values(
     ids=("rt0", "bdm1", "bdm2"),
 )
 def test_nonnested_divergence_commutes_for_arbitrary_moments(element: Any) -> None:
-    source, target = _pair(element, _kuhn_cube(1), _opposite_cube())
+    source, target = _pair(
+        element, kuhn_cube(1, orientation_swap=(0, 1)), _opposite_cube()
+    )
     refinement = prepare_common_refinement(
         source.mesh, target.mesh, policy=CommonRefinementPolicy(overlap_simplices=True)
     )
@@ -813,14 +816,16 @@ def test_nonnested_divergence_commutes_for_arbitrary_moments(element: Any) -> No
     )
     # Independently integrate every target polynomial divergence moment,
     # including the linear moments needed by BDM2, for an arbitrary source.
-    np.testing.assert_allclose(actual, expected, atol=2e-11, rtol=2e-11)
+    np.testing.assert_allclose(
+        actual, expected, atol=_NONNESTED_DIVERGENCE_ATOL, rtol=_NONNESTED_DIVERGENCE_RTOL
+    )
 
 
 @pytest.mark.parametrize("degree", (0, 1))
 def test_nonnested_curl_commutes_with_its_realizable_companion(degree: int) -> None:
     source, target = _pair(
         form_element("tetrahedron", 1, degree + 1, proxy="circulation"),
-        _kuhn_cube(1),
+        kuhn_cube(1, orientation_swap=(0, 1)),
         _opposite_cube(),
     )
     refinement = prepare_common_refinement(
@@ -868,35 +873,37 @@ def test_nonnested_curl_commutes_with_its_realizable_companion(degree: int) -> N
     companion = np.linalg.lstsq(gram, load, rcond=1e-12)[0]
     actual = np.asarray(phx.ein.contract("cqiw,ci->cqw", curls, transferred[routes]))
     expected = np.asarray(phx.ein.contract("cqiw,ci->cqw", curls, companion[routes]))
-    np.testing.assert_allclose(actual, expected, atol=2e-10, rtol=2e-10)
+    np.testing.assert_allclose(
+        actual, expected, atol=_NONNESTED_CURL_ATOL, rtol=_NONNESTED_CURL_RTOL
+    )
     np.testing.assert_allclose(
         np.asarray(phx.ein.contract("cq,cqw->w", weights, actual)),
         np.asarray(phx.ein.contract("sq,sqw->w", overlap_weights, source_curl)),
-        atol=2e-11,
+        atol=_NONNESTED_CURL_CONTENT_ATOL,
     )
     dual = np.random.default_rng(9).normal(size=size)
     np.testing.assert_allclose(
         dual @ transferred,
         values @ np.asarray(transfer.transfer.pullback(dual)),
-        atol=1e-11,
+        atol=_NONNESTED_CURL_DUAL_PAIRING_ATOL,
     )
 
 
 def test_projection_refuses_different_hdiv_families_with_the_same_mapping() -> None:
     source, _ = _pair(
         form_element("tetrahedron", 2, 1, twist="twisted", proxy="flux"),
-        _kuhn_cube(1),
+        kuhn_cube(1, orientation_swap=(0, 1)),
         _opposite_cube(),
     )
     _, target = _pair(
         form_element("tetrahedron", 2, 1, family="full", twist="twisted", proxy="flux"),
-        _kuhn_cube(1),
+        kuhn_cube(1, orientation_swap=(0, 1)),
         _opposite_cube(),
     )
     refinement = prepare_common_refinement(
         source.mesh, target.mesh, policy=CommonRefinementPolicy(overlap_simplices=True)
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"field_signature\.elements"):
         prepare_projection_field_transfer(
             source,
             prepare_l2_projection_target(target, field_name="u"),
@@ -926,7 +933,7 @@ def test_nonnested_piola_projection_refuses_curved_coordinate_maps() -> None:
     ).prepare()
     # A common refinement of affine corners cannot authorize dropping a
     # non-affine coordinate map in a compatible field remap.
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="require_affine_simplices.coordinate_element"):
         prepare_l2_projection_target(curved, field_name="u")
 
 
@@ -978,7 +985,7 @@ def test_epoch_admission_rejects_same_topology_wrong_geometry_and_precision(
     transition = transfer.epoch_transition(source_epoch, target_epoch)
     result = transition.apply(accepted)
     assert bool(result.successful)
-    np.testing.assert_allclose(result.values, accepted, atol=1e-12)
+    np.testing.assert_allclose(result.values, accepted, atol=_EPOCH_IDENTITY_VALUES_ATOL)
     for wrong_source in (False, True):
         old = (
             D.TopologyEpoch(0, "stale-coordinate-map", mesh.topology_id, "serial")
@@ -990,9 +997,9 @@ def test_epoch_admission_rejects_same_topology_wrong_geometry_and_precision(
             if wrong_source
             else D.TopologyEpoch(1, "stale-coordinate-map", mesh.topology_id, "serial")
         )
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="represented geometry"):
             transfer.epoch_transition(old, new)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="epoch_transition.endpoints.geometry_id"):
             if isinstance(transition, D.TopologyEpochTransition):
                 D.TopologyEpochTransition(
                     old,
@@ -1010,250 +1017,9 @@ def test_epoch_admission_rejects_same_topology_wrong_geometry_and_precision(
                     evidence_passed=True,
                     evidence_id=transfer.evidence.evidence_id,
                 )
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="dtype"):
         transition.apply(accepted.astype(np.float32))
     np.testing.assert_array_equal(accepted, untouched)
-
-
-def test_embedded_twisted_flux_transfer_preserves_moments_across_reversed_charts() -> (
-    None
-):
-    from phydrax.discretization.fem._surface_chart_compatible import (
-        prepare_surface_chart_compatible_transfer,
-    )
-    from tests.unit.discretization.test_mapped_nested_fv import (
-        _curved_surface_chart_fv_fixture,
-    )
-
-    _, _, chart, _ = _curved_surface_chart_fv_fixture()
-    element = form_element("triangle", 1, 1, twist="twisted", proxy="flux")
-    field = D.FiniteElementFieldSpec("flux", element)
-    source = D.FiniteElementPlan(
-        chart.source_mesh,
-        field,
-        coordinate_spec=chart.source_geometry,
-    ).prepare()
-    target = D.FiniteElementPlan(
-        chart.target_mesh,
-        field,
-        coordinate_spec=chart.target_geometry,
-    ).prepare()
-    # Witness banks are sorted by scientific cell ID, not mesh/DOF row order.
-    source_ids = np.concatenate(
-        [np.asarray(block.global_ids) for block in source.mesh.blocks]
-    )
-    target_ids = np.concatenate(
-        [np.asarray(block.global_ids) for block in target.mesh.blocks]
-    )
-    source_order = np.searchsorted(
-        np.asarray(chart.source_witness.cell_global_ids), source_ids
-    )
-    target_order = np.searchsorted(
-        np.asarray(chart.target_witness.cell_global_ids), target_ids
-    )
-    source_charts = np.asarray(chart.source_witness.charts)[source_order]
-    target_charts = np.asarray(chart.target_witness.charts)[target_order]
-    source_determinants = np.linalg.det(source_charts[:, 1:] - source_charts[:, :1])
-    target_determinants = np.linalg.det(target_charts[:, 1:] - target_charts[:, :1])
-    assert np.all(source_determinants < 0.0)
-    assert np.all(target_determinants > 0.0)
-
-    # Exact moments of the material RT0 vector a + b * UV. A twisted flux
-    # pulls back with |det A|, not det A, even when the local chart reverses.
-    constant, slope = np.asarray((0.3, -0.8)), 0.7
-    vertices = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
-    edges = np.asarray(((0, 1), (0, 2), (1, 2)))
-    tangents = vertices[edges[:, 1]] - vertices[edges[:, 0]]
-    normals = np.column_stack((tangents[:, 1], -tangents[:, 0]))
-    midpoints = 0.5 * (vertices[edges[:, 0]] + vertices[edges[:, 1]])
-
-    def moments(discretization: Any, charts: np.ndarray) -> np.ndarray:
-        dofs = discretization.dof_maps[0]
-        coefficients = np.full(dofs.global_dof_count, np.nan)
-        for cell, corners in enumerate(charts):
-            frame = (corners[1:] - corners[:1]).T
-            material = constant + slope * (corners[0] + midpoints @ frame.T)
-            reference = abs(np.linalg.det(frame)) * np.linalg.solve(frame, material.T).T
-            local = np.sum(reference * normals, axis=-1)
-            canonical = np.linalg.solve(np.asarray(dofs.cell_transforms[0])[cell], local)
-            routes = np.asarray(dofs.cell_dofs[0])[cell]
-            shared = np.isfinite(coefficients[routes])
-            np.testing.assert_allclose(
-                coefficients[routes][shared], canonical[shared], atol=1e-14
-            )
-            coefficients[routes] = canonical
-        return coefficients
-
-    prepared = prepare_surface_chart_compatible_transfer(
-        source,
-        target,
-        chart,
-        field_name="flux",
-        source_geometry=chart.source_geometry,
-        target_geometry=chart.target_geometry,
-    )
-    values = moments(source, source_charts)
-    transferred = prepared.field_transfer.transfer.apply(jnp.asarray(values))
-    assert prepared.field_transfer.evidence.passed
-    np.testing.assert_allclose(transferred, moments(target, target_charts), atol=2e-14)
-    source_content = prepared.source_differential.mv(values)
-    target_content = prepared.target_differential.mv(transferred)
-    # div(a + b * UV) = 2b and chart area = |det A| / 2: the
-    # integrated material divergence remains positive under chart reversal.
-    np.testing.assert_allclose(
-        source_content, slope * np.abs(source_determinants), atol=2e-14
-    )
-    np.testing.assert_allclose(target_content, slope * target_determinants, atol=2e-14)
-    np.testing.assert_allclose(
-        target_content,
-        prepared.differential_companion.mv(source_content),
-        atol=2e-14,
-    )
-    target_load = jnp.arange(transferred.size, dtype=jnp.float64) + 0.25
-    np.testing.assert_allclose(
-        jnp.vdot(target_load, transferred),
-        jnp.vdot(prepared.field_transfer.transfer.pullback(target_load), values),
-        atol=2e-14,
-    )
-
-
-@pytest.mark.parametrize(
-    "proxy,twist", [("circulation", "untwisted"), ("flux", "twisted")]
-)
-def test_order_three_material_transfer_preserves_independent_moments_and_companion(
-    proxy: Literal["circulation", "flux"],
-    twist: Literal["untwisted", "twisted"],
-) -> None:
-    from phydrax.discretization.fem._surface_chart_compatible import (
-        prepare_surface_chart_compatible_transfer,
-    )
-    from tests.unit.discretization.test_mapped_nested_fv import (
-        _curved_surface_chart_fv_fixture,
-    )
-
-    _, _, chart, _ = _curved_surface_chart_fv_fixture()
-    element = form_element("triangle", 1, 3, family="trimmed", twist=twist, proxy=proxy)
-    basis = element.form_basis
-    if basis is None:
-        raise TypeError("The actual order-three field must retain its owning form basis.")
-    field = D.FiniteElementFieldSpec("material", element)
-    source = D.FiniteElementPlan(
-        chart.source_mesh, field, coordinate_spec=chart.source_geometry
-    ).prepare()
-    target = D.FiniteElementPlan(
-        chart.target_mesh, field, coordinate_spec=chart.target_geometry
-    ).prepare()
-
-    def coefficients(discretization: Any, corners: np.ndarray) -> np.ndarray:
-        points = np.asarray(basis.functional_points)
-        dofs = discretization.dof_maps[0]
-        values = np.full(dofs.global_dof_count, np.nan)
-        for cell, triangle in enumerate(corners):
-            frame = (triangle[1:] - triangle[:1]).T
-            uv = triangle[0] + points @ frame.T
-            u, v = uv[:, 0], uv[:, 1]
-            material = np.column_stack(
-                (0.3 + 0.4 * u * u - 0.2 * u * v, -0.8 + 0.7 * v * v + 0.1 * u * v)
-            )
-            if proxy == "flux":
-                reference = (
-                    abs(np.linalg.det(frame)) * np.linalg.solve(frame, material.T).T
-                )
-                components = np.column_stack((-reference[:, 1], reference[:, 0]))
-            else:
-                components = material @ frame
-            local = np.asarray(basis.interpolate(jnp.asarray(components)))
-            canonical = np.linalg.solve(np.asarray(dofs.cell_transforms[0])[cell], local)
-            rows = np.asarray(dofs.cell_dofs[0])[cell]
-            shared = np.isfinite(values[rows])
-            np.testing.assert_allclose(
-                values[rows][shared], canonical[shared], atol=2e-12
-            )
-            values[rows] = canonical
-        return values
-
-    def chart_rows(discretization: Any, witness: Any) -> np.ndarray:
-        ids = np.concatenate(
-            [np.asarray(block.global_ids) for block in discretization.mesh.blocks]
-        )
-        return np.asarray(witness.charts)[
-            np.searchsorted(np.asarray(witness.cell_global_ids), ids)
-        ]
-
-    prepared = prepare_surface_chart_compatible_transfer(
-        source,
-        target,
-        chart,
-        field_name="material",
-        source_geometry=chart.source_geometry,
-        target_geometry=chart.target_geometry,
-    )
-    old = coefficients(source, chart_rows(source, chart.source_witness))
-    expected = coefficients(target, chart_rows(target, chart.target_witness))
-    actual = prepared.field_transfer.transfer.apply(jnp.asarray(old))
-    assert prepared.field_transfer.evidence.passed
-    np.testing.assert_allclose(actual, expected, atol=2e-12)
-    np.testing.assert_allclose(
-        prepared.target_differential.mv(actual),
-        prepared.differential_companion.mv(prepared.source_differential.mv(old)),
-        atol=2e-12,
-    )
-    load = jnp.linspace(-1.0, 2.0, actual.size, dtype=jnp.float64)
-    np.testing.assert_allclose(
-        jnp.vdot(load, actual),
-        jnp.vdot(prepared.field_transfer.transfer.pullback(load), jnp.asarray(old)),
-        atol=2e-12,
-    )
-
-
-@pytest.mark.parametrize(
-    "proxy,twist", [("circulation", "untwisted"), ("flux", "twisted")]
-)
-def test_order_two_sphere_material_transfer_commutes_and_is_dual_on_native_remesh(
-    proxy: Literal["circulation", "flux"],
-    twist: Literal["untwisted", "twisted"],
-) -> None:
-    from phydrax.discretization import prepare_sphere_chart_deformation
-    from phydrax.discretization.fem import prepare_sphere_chart_compatible_transfer
-    from tests.unit.geometry.test_sphere_material_atlas import _accepted
-
-    # Two independently generated native sphere meshes: genuine projective
-    # material pieces, not a shared chart or an identity correspondence.
-    _, _, source_atlas = _accepted(1.2)
-    _, _, target_atlas = _accepted(1.0)
-    chart = prepare_sphere_chart_deformation(
-        source_atlas, target_atlas, maximum_fidelity=0.3, maximum_displacement=0.5
-    )
-    element = form_element("triangle", 1, 2, family="trimmed", twist=twist, proxy=proxy)
-    field = D.FiniteElementFieldSpec("material", element)
-    source = D.FiniteElementPlan(
-        chart.source_mesh, field, coordinate_spec=chart.source_geometry
-    ).prepare()
-    target = D.FiniteElementPlan(
-        chart.target_mesh, field, coordinate_spec=chart.target_geometry
-    ).prepare()
-    prepared = prepare_sphere_chart_compatible_transfer(
-        source,
-        target,
-        chart,
-        field_name="material",
-        source_geometry=chart.source_geometry,
-        target_geometry=chart.target_geometry,
-    )
-    assert prepared.field_transfer.evidence.passed
-    old = jnp.sin(jnp.arange(source.dof_maps[0].global_dof_count, dtype=jnp.float64))
-    new = prepared.field_transfer.transfer.apply(old)
-    np.testing.assert_allclose(
-        prepared.target_differential.mv(new),
-        prepared.differential_companion.mv(prepared.source_differential.mv(old)),
-        atol=1e-11,
-    )
-    load = jnp.cos(jnp.arange(new.size, dtype=jnp.float64))
-    np.testing.assert_allclose(
-        jnp.vdot(load, new),
-        jnp.vdot(prepared.field_transfer.transfer.pullback(load), old),
-        atol=1e-11,
-    )
 
 
 def test_nested_p1_transfer_on_embedded_surface_reports_physical_area_measures() -> None:
@@ -1294,8 +1060,12 @@ def test_nested_p1_transfer_on_embedded_surface_reports_physical_area_measures()
     assert transfer.evidence.passed
     source_measures = np.asarray(transfer.source_measures)
     target_measures = np.asarray(transfer.target_measures)
-    np.testing.assert_allclose(source_measures.sum(), 1.5, rtol=0.0, atol=1e-14)
-    np.testing.assert_allclose(target_measures.sum(), 1.5, rtol=0.0, atol=1e-14)
+    np.testing.assert_allclose(
+        source_measures.sum(), 1.5, rtol=0.0, atol=_EMBEDDED_SURFACE_AREA_ATOL
+    )
+    np.testing.assert_allclose(
+        target_measures.sum(), 1.5, rtol=0.0, atol=_EMBEDDED_SURFACE_AREA_ATOL
+    )
 
     def linear(coordinates: np.ndarray) -> np.ndarray:
         return 2.0 + coordinates[:, 0] - 3.0 * coordinates[:, 2]
@@ -1303,7 +1073,9 @@ def test_nested_p1_transfer_on_embedded_surface_reports_physical_area_measures()
     values = linear(np.asarray(source.dof_maps[0].dof_coordinates))
     mapped = np.asarray(transfer.transfer.apply(jnp.asarray(values)))
     np.testing.assert_allclose(
-        mapped, linear(np.asarray(target.dof_maps[0].dof_coordinates)), atol=1e-14
+        mapped,
+        linear(np.asarray(target.dof_maps[0].dof_coordinates)),
+        atol=_EMBEDDED_P1_VALUES_ATOL,
     )
     # Independent inventory: each unit right triangle has area 1/2 and a linear
     # integrand integrates to area times its vertex mean.
@@ -1311,5 +1083,308 @@ def test_nested_p1_transfer_on_embedded_surface_reports_physical_area_measures()
         0.5 * np.mean(linear(points[list(cell)]))
         for cell in ((0, 1, 2), (0, 2, 3), (0, 3, 1))
     )
-    np.testing.assert_allclose(source_measures @ values, exact, rtol=0.0, atol=1e-14)
-    np.testing.assert_allclose(target_measures @ mapped, exact, rtol=0.0, atol=1e-14)
+    np.testing.assert_allclose(
+        source_measures @ values, exact, rtol=0.0, atol=_EMBEDDED_P1_CONTENT_ATOL
+    )
+    np.testing.assert_allclose(
+        target_measures @ mapped, exact, rtol=0.0, atol=_EMBEDDED_P1_CONTENT_ATOL
+    )
+
+
+def _retained_rational_affine_pair(
+    budget: CoordinateEnclosureBudget, *, action_shift: float = 0.0
+) -> tuple[
+    D.FiniteElementDiscretization,
+    D.FiniteElementDiscretization,
+    D.CellGeometrySpec,
+    D.CellGeometrySpec,
+    np.ndarray,
+]:
+    # The source's middle vertex is exactly 1/3 on the authored segment.
+    # Its retained midpoint with -1 is -1/3, not the floating-point sum
+    # (-1 + float(1/3))/2, which lies one carrier ulp farther left.
+    points = np.asarray(((-1.0, 0.0), (1.0 / 3.0, 0.0), (0.0, 1.0)))
+    source_mesh = D.CellMesh.from_triangles(
+        points, np.asarray(((0, 1, 2),), dtype=np.int32)
+    )
+    exact = D.ExactPlcCellGeometrySource(
+        np.asarray(((-1.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+        np.empty((0, 3), dtype=np.int64),
+        np.asarray(((0, 1),), dtype=np.int64),
+        np.asarray((0, 1, 0), dtype=np.int64),
+        np.asarray((-1, 0, -1), dtype=np.int64),
+        np.asarray(((0.0, 0.0), (2.0 / 3.0, 0.0), (0.0, 0.0))),
+        domain_source_id="retained-rational-affine-source",
+        domain_source_revision="authored-segment",
+        source_triangle_ids=np.empty((0,), dtype=np.int64),
+        source_triangle_bounds=np.empty((0,), dtype=np.float64),
+        source_segment_ids=np.asarray((7,), dtype=np.int64),
+        source_segment_bounds=np.asarray((1e-15,), dtype=np.float64),
+        vertex_parameter_ratios=(
+            ((0, 1), (0, 1)),
+            ((2, 3), (0, 1)),
+            ((0, 1), (0, 1)),
+        ),
+        budget=budget,
+    )
+    source_geometry = D.CellGeometrySpec.plc(source_mesh, exact, budget=budget)
+    source_element = source_geometry.elements[0]
+    assert isinstance(source_element, FiniteElementSpec)
+    midpoint = Fraction(-1, 3) + Fraction(4, 3) * Fraction(action_shift)
+    target_points = np.concatenate((points, ((float(midpoint), 0.0),)))
+    target_mesh = D.CellMesh(
+        target_points,
+        (
+            D.CellBlock(
+                "left",
+                "triangle",
+                np.asarray(((0, 3, 2),), dtype=np.int32),
+                global_ids=np.asarray((10,), dtype=np.int64),
+            ),
+            D.CellBlock(
+                "right",
+                "triangle",
+                np.asarray(((3, 1, 2),), dtype=np.int32),
+                global_ids=np.asarray((11,), dtype=np.int64),
+            ),
+        ),
+    )
+    weights = (0.5 - action_shift, 0.5 + action_shift, 0.0)
+    actions = (
+        np.asarray(((1.0, 0.0, 0.0), weights, (0.0, 0.0, 1.0))),
+        np.asarray((weights, (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
+    )
+    target_geometry = D.CellGeometrySpec(
+        {
+            block.name: BarycentricCellGeometryElement(source_element, action)
+            for block, action in zip(target_mesh.blocks, actions, strict=True)
+        },
+        {block.name: np.asarray(((0, 1, 2),)) for block in target_mesh.blocks},
+        source_geometry.coordinates,
+        restriction_source=CellGeometryRestrictionSource(
+            cell_geometry_id(source_geometry),
+            source_mesh.topology_id,
+            {block.name: np.asarray((0,)) for block in target_mesh.blocks},
+            {block.name: np.asarray(((0, 1, 2),)) for block in target_mesh.blocks},
+            block_source_blocks={block.name: "triangles" for block in target_mesh.blocks},
+        ),
+        exact_source=exact,
+        budget=budget,
+    )
+    field = D.FiniteElementFieldSpec("u", lagrange_element("triangle", 1))
+    reference = np.asarray(
+        (
+            ((0.0, 0.0), (0.5, 0.0), (0.0, 1.0)),
+            ((0.5, 0.0), (1.0, 0.0), (0.0, 1.0)),
+        )
+    )
+    return (
+        D.FiniteElementPlan(source_mesh, field, coordinate_spec=source_geometry).prepare(
+            budget=budget
+        ),
+        D.FiniteElementPlan(target_mesh, field, coordinate_spec=target_geometry).prepare(
+            budget=budget
+        ),
+        source_geometry,
+        target_geometry,
+        reference,
+    )
+
+
+def test_retained_rational_affine_transfer_preserves_source_map_and_inventory() -> None:
+    with coordinate_reference_budget() as budget:
+        source, target, source_geometry, target_geometry, reference = (
+            _retained_rational_affine_pair(budget)
+        )
+        identities = (
+            source.mesh.mesh_id,
+            target.mesh.mesh_id,
+            cell_geometry_id(source_geometry),
+            cell_geometry_id(target_geometry),
+        )
+        coordinates = np.asarray(target.mesh.coordinates).copy()
+        bank = np.asarray(target_geometry.coordinates).copy()
+        target_element = target_geometry.elements[0]
+        assert isinstance(target_element, BarycentricCellGeometryElement)
+        represented = (
+            np.asarray(
+                target_element.tabulate(
+                    coordinate_lagrange_element("triangle", 1).reference_nodes
+                )[0]
+            )
+            @ bank[np.asarray(target_geometry.geometry_dofs[0])]
+        )
+        assert float(represented[0, 1, 0]).hex() == "-0x1.5555555555556p-2"
+        assert float(coordinates[3, 0]).hex() == "-0x1.5555555555555p-2"
+        transfer = prepare_nested_field_transfer(
+            source,
+            target,
+            np.asarray((0, 0)),
+            field_name="u",
+            parent_reference_vertices=reference,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            budget=budget,
+        )
+        assert transfer.evidence.passed
+        assert dict(transfer.evidence.defects)["geometry"] == 0.0
+        assert transfer.transfer.conservative
+        assert (
+            transfer.transfer.preserves_constants and transfer.transfer.preserves_linear
+        )
+        assert transfer.geometry.source_geometry_id == identities[2]
+        assert transfer.geometry.target_geometry_id == identities[3]
+        transition = transfer.epoch_transition(
+            D.TopologyEpoch(0, identities[2], source.mesh.topology_id, "serial"),
+            D.TopologyEpoch(1, identities[3], target.mesh.topology_id, "serial"),
+        )
+        assert isinstance(transition, D.TopologyEpochTransition)
+        density = transition.apply(jnp.full((source.dof_maps[0].global_dof_count,), 2.0))
+        assert bool(density.successful)
+        np.testing.assert_allclose(
+            density.values, 2.0, rtol=0.0, atol=_RATIONAL_AFFINE_DENSITY_ATOL
+        )
+        np.testing.assert_allclose(
+            density.source_content, 4.0 / 3.0, atol=_RATIONAL_AFFINE_CONTENT_ATOL
+        )
+        np.testing.assert_allclose(
+            density.target_content, 4.0 / 3.0, atol=_RATIONAL_AFFINE_CONTENT_ATOL
+        )
+        history = source.dof_maps[0].dof_coordinates[:, 0] + 0.5
+        np.testing.assert_allclose(
+            transfer.transfer.apply(history),
+            target.dof_maps[0].dof_coordinates[:, 0] + 0.5,
+            rtol=0.0,
+            atol=_RATIONAL_AFFINE_HISTORY_ATOL,
+        )
+        np.testing.assert_array_equal(target.mesh.coordinates, coordinates)
+        np.testing.assert_array_equal(target_geometry.coordinates, bank)
+        assert identities == (
+            source.mesh.mesh_id,
+            target.mesh.mesh_id,
+            cell_geometry_id(source_geometry),
+            cell_geometry_id(target_geometry),
+        )
+        # The rounded-carrier projection route still cannot drop the retained map.
+        with pytest.raises(ValueError, match="FE geometry differs"):
+            prepare_l2_projection_target(target, field_name="u")
+
+
+def test_retained_affine_transfer_refuses_nonzero_source_map_within_rounding_slack() -> (
+    None
+):
+    with coordinate_reference_budget() as budget:
+        source, target, source_geometry, target_geometry, reference = (
+            _retained_rational_affine_pair(budget, action_shift=2.0**-50)
+        )
+        with pytest.raises(ValueError, match="preserve the source map algebraically"):
+            prepare_nested_field_transfer(
+                source,
+                target,
+                np.asarray((0, 0)),
+                field_name="u",
+                parent_reference_vertices=reference,
+                source_geometry=source_geometry,
+                target_geometry=target_geometry,
+                budget=budget,
+            )
+
+
+def test_retained_affine_transfer_refuses_stale_target_corner_carrier() -> None:
+    with coordinate_reference_budget() as budget:
+        _, target, _, target_geometry, _ = _retained_rational_affine_pair(budget)
+        points = np.asarray(target.mesh.coordinates).copy()
+        points[3, 0] = np.nextafter(points[3, 0], -np.inf)
+        with pytest.raises(ValueError, match="match the bound mesh"):
+            D.FiniteElementPlan(
+                target.mesh.with_coordinates(
+                    points, numeric_version="stale-corner-carrier"
+                ),
+                D.FiniteElementFieldSpec("u", lagrange_element("triangle", 1)),
+                coordinate_spec=target_geometry,
+            ).prepare(budget=budget)
+
+
+@pytest.mark.parametrize("payload", ((), (3,), (2, 3)))
+def test_sparse_topology_transfer_compiled_actions_match_eager_payloads(
+    payload: tuple[int, ...],
+) -> None:
+    from phydrax.discretization.fem import vertex_interpolation_transfer
+
+    transfer = vertex_interpolation_transfer(
+        np.asarray(((0, 1), (2, 0), (1, 2), (0, 2)), dtype=np.int32),
+        np.asarray(((0.3, 0.7), (1.0, 0.0), (0.25, 0.75), (0.5, 0.5)), dtype=np.float64),
+        np.ones((4, 2), dtype=np.bool_),
+        source_size=3,
+        source_topology_id="payload-source",
+        target_topology_id="payload-target",
+    )
+    rng = np.random.default_rng(785)
+    values = rng.normal(size=(3,) + payload)
+    duals = rng.normal(size=(4,) + payload)
+    eager_primal = transfer.primal.mv_block(values.reshape((3, -1))).reshape(
+        (4,) + payload
+    )
+    eager_transpose = transfer.primal.transpose_mv_block(duals.reshape((4, -1))).reshape(
+        (3,) + payload
+    )
+    np.testing.assert_array_equal(transfer.apply(values), eager_primal)
+    np.testing.assert_array_equal(transfer.pullback(duals), eager_transpose)
+
+
+@pytest.mark.parametrize("retained_target", (False, True), ids=("parent", "retained"))
+def test_reference_coarsening_authenticates_exact_affine_corner_images(
+    retained_target: bool,
+) -> None:
+    from phydrax.discretization._cell_geometry_transition_types import (
+        NestedReferenceWitnesses,
+    )
+
+    with coordinate_reference_budget() as budget:
+        coarse, fine, coarse_geometry, fine_geometry, reference = (
+            _retained_rational_affine_pair(budget)
+        )
+        if retained_target:
+            coarse, coarse_geometry = fine, fine_geometry
+            reference = np.broadcast_to(
+                np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+                (2, 3, 2),
+            )
+        witnesses = NestedReferenceWitnesses(
+            np.asarray((10, 11), dtype=np.int64),
+            np.asarray((10, 11) if retained_target else (0, 0), dtype=np.int64),
+            reference,
+        )
+        transfer = prepare_nested_field_transfer(
+            fine,
+            coarse,
+            None,
+            field_name="u",
+            source_geometry=fine_geometry,
+            target_geometry=coarse_geometry,
+            coarsening_witnesses=witnesses,
+            budget=budget,
+        )
+        assert transfer.evidence.passed
+        assert transfer.transfer.conservative
+        assert transfer.transfer.preserves_constants
+        fine_points = np.asarray(fine.dof_maps[0].dof_coordinates)
+        coarse_points = np.asarray(coarse.dof_maps[0].dof_coordinates)
+        values = fine_points[:, 0] + 0.5 * fine_points[:, 1] + 1.0
+        expected = coarse_points[:, 0] + 0.5 * coarse_points[:, 1] + 1.0
+        np.testing.assert_allclose(
+            transfer.transfer.apply(values),
+            expected,
+            rtol=0.0,
+            atol=_RATIONAL_AFFINE_HISTORY_ATOL,
+        )
+        source_content = np.asarray(transfer.source_measures) @ values
+        target_content = np.asarray(transfer.target_measures) @ np.asarray(
+            transfer.transfer.apply(values)
+        )
+        np.testing.assert_allclose(
+            target_content,
+            source_content,
+            rtol=0.0,
+            atol=_RATIONAL_AFFINE_CONTENT_ATOL,
+        )

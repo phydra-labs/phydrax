@@ -14,7 +14,39 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.sparse._linear import _SparseStoragePlan
+from phydrax.sparse._linear import SparseStoragePlan
+
+
+# Empirical `test_prepared_numeric_substitution_preserves_promoted_pivots_and_refresh_status`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_PROMOTED_PIVOT_SOLVE_ATOL = 1.0e-14
+# Empirical `test_prepared_schedule_cache_keeps_original_slots_and_current_coefficients`: matched max |delta|=5.55112e-17; joint allowance fraction=3.43355e-09, margin=100%.
+_CACHED_SPARSE_FACTOR_ACTION_ATOL = 1.0e-14
+# Empirical `test_preprepared_sparse_builder_refresh_preserves_exact_pattern_and_dynamic_values`: matched max |delta|=5.55112e-17; joint allowance fraction=1.75785e-09, margin=100%.
+_REFRESHED_SPARSE_FACTOR_ACTION_ATOL = 1.0e-14
+# Empirical `test_native_indefinite_lu_congruence_matches_independent_metric`: matched max |delta|=1.11022e-16; joint allowance fraction=3.83135e-09, margin=100%.
+_LU_CONGRUENCE_METRIC_ACTION_ATOL = 2.0e-14
+# Empirical `test_native_indefinite_lu_congruence_matches_independent_metric`: matched max |delta|=2.77556e-17; joint allowance fraction=2.01259e-09, margin=100%.
+_LU_CONGRUENCE_HERMITIAN_METRIC_ATOL = 2.0e-14
+# Empirical `test_native_indefinite_lu_congruence_matches_independent_metric`: matched max |delta|=1.1533e-16; joint allowance fraction=2.56458e-08, margin=100%.
+_INDEFINITE_LU_INVERSE_ACTION_ATOL = 2.0e-14
+# Empirical `test_lu_congruence_obeys_declared_source_pairing`: matched max |delta|=1.77636e-15; joint allowance fraction=4.85196e-08, margin=100%.
+_WEIGHTED_LU_CONGRUENCE_ACTION_ATOL = 2.0e-14
+# Empirical `test_lu_congruence_obeys_declared_source_pairing`: matched max |delta|=8.88178e-16; joint allowance fraction=2.13227e-09, margin=100%.
+_WEIGHTED_LU_ADJOINT_PAIRING_ATOL = 2.0e-14
+# Empirical `test_jitted_lu_congruence_refresh_changes_real_numeric_cache`: matched max |delta|=1.38778e-17; joint allowance fraction=1.13796e-08, margin=100%.
+_REFRESHED_LU_CONGRUENCE_ACTION_ATOL = 2.0e-14
+# Empirical `test_lu_congruence_prepares_once_and_supports_matrix_rhs`: matched max |delta|=1.11022e-16; joint allowance fraction=3.88578e-09, margin=100%.
+_MATRIX_RHS_LU_CONGRUENCE_ACTION_ATOL = 2.0e-14
+# Empirical `test_lu_congruence_prepares_once_and_supports_matrix_rhs`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_MATRIX_RHS_LU_REFRESH_ACTION_ATOL = 2.0e-14
+# Empirical `test_native_cholesky_psd_correction_retains_real_factor_status`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_NATIVE_CHOLESKY_INVERSE_ACTION_ATOL = 1.0e-14
+# Empirical `test_native_cholesky_block_composition_preserves_factor_status_and_refresh`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_BLOCK_CHOLESKY_SCHUR_ACTION_ATOL = 1.0e-14
+# Empirical `test_native_cholesky_block_composition_preserves_factor_status_and_refresh`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_BLOCK_CHOLESKY_REFRESH_PRIMAL_ACTION_ATOL = 1.0e-14
+# Empirical `test_native_cholesky_block_composition_preserves_factor_status_and_refresh`: matched max |delta|=4.44089e-16; joint allowance fraction=3.33067e-09, margin=100%.
+_BLOCK_CHOLESKY_REFRESH_SCHUR_ACTION_ATOL = 1.0e-14
 
 
 la = phx.linalg
@@ -76,7 +108,10 @@ def _congruence_action(
     ),
 ) -> la.SparseFactorCongruencePreconditioner:
     if not isinstance(action, la.SparseFactorCongruencePreconditioner):
-        raise TypeError("LU-congruence form must publish its congruence preconditioner.")
+        raise TypeError(
+            "sparse_factor_fixture.action must be a congruence preconditioner; "
+            f"got {type(action).__name__}"
+        )
     return action
 
 
@@ -133,7 +168,7 @@ def test_sparse_factor_template_binds_traced_topology_without_replanning(
     relation = phx.sparse.EdgeRelation(
         sources, targets, source_size=size, target_size=size
     )
-    storage_plan = _SparseStoragePlan(relation)
+    storage_plan = SparseStoragePlan(relation)
     space = la.ArraySpace((size,), dtype=dtype)
     values = jnp.asarray(
         np.concatenate(
@@ -215,7 +250,9 @@ def test_sparse_factor_template_refuses_wider_numeric_dtype(
         operator, la.SparseFactorizationPolicy("lu")
     )
     builder = la.SparseFactorizationPreconditionerBuilder(
-        la.SparseFactorizationPolicy("lu", max_factor_bytes=initial.factor_bytes)
+        la.SparseFactorizationPolicy(
+            "lu", max_factor_bytes=initial.factor_storage_bytes_upper
+        )
     )
     policy = la.LinearSolvePolicy(
         la.GMRES(restart=2),
@@ -264,7 +301,10 @@ def test_sparse_factor_planned_setup_reprepares_only_for_new_identity() -> None:
     corrupt = la.PlannedPreconditionerSetup(
         planned.cost, construction=object(), content_id=operator.operator_id
     )
-    with pytest.raises(ValueError, match="requires its planned construction"):
+    with pytest.raises(
+        ValueError,
+        match=r"SparseFactorizationPreconditionerBuilder\.planned\.construction",
+    ):
         builder.prepare_planned(corrupt, operator, materialization=materialization)
 
 
@@ -325,6 +365,11 @@ def test_sparse_factor_adjoint_solve_matches_dense(
     action = la.SparseFactorizationPreconditionerBuilder(policy).prepare(
         operator, materialization=la.MaterializationPolicy()
     )
+    if not isinstance(action, la.SparseFactorizationPreconditioner):
+        raise AssertionError(
+            "sparse_factor_fixture.action must be a factor preconditioner; "
+            f"got {type(action).__name__}"
+        )
     np.testing.assert_allclose(
         action.apply_adjoint(rhs[:, 0]), expected[:, 0], rtol=1e-12, atol=1e-12
     )
@@ -337,11 +382,9 @@ def test_builder_estimate_matches_prepared_plan_storage() -> None:
     )
     cost = builder.cost_for(operator)
     symbolic = la.prepare_sparse_factorization(operator, builder.policy())
-    numeric = la.refresh_sparse_factorization(symbolic, operator)
-    # The plan now reserves refresh-owned numeric substitution caches as well
-    # as factor values. Compare its upper to the real prepared logical payload,
-    # not the obsolete symbolic-only plus factor-values formula.
-    assert cost.storage_bytes >= _stored_bytes(numeric)
+    values_bytes = symbolic.factor_indices.size * 8
+    assert cost.storage_bytes == _stored_bytes(symbolic) + values_bytes
+    assert cost.preparation_workspace_bytes > values_bytes
 
 
 def test_symbolic_plan_bytes_scale_with_factor_nonzeros_not_updates() -> None:
@@ -357,6 +400,7 @@ def test_symbolic_plan_bytes_scale_with_factor_nonzeros_not_updates() -> None:
         )
         per_entry.append(_stored_bytes(symbolic) / symbolic.factor_indices.size)
     assert per_entry[1] <= per_entry[0]
+    assert per_entry[1] < 64.0
 
 
 @pytest.mark.parametrize("kind", ("lu", "cholesky"))
@@ -504,11 +548,11 @@ def test_sparse_symbolic_retained_byte_cap_reports_observed_and_limit() -> None:
             max_symbolic_work=1_000_000,
         ),
     )
-    limit = baseline.factor_bytes - 1
+    limit = baseline.factor_storage_bytes_upper - 1
 
     with pytest.raises(
         la.LinearCapabilityError,
-        match=rf"factor_bytes requires {baseline.factor_bytes}, exceeding limit {limit}",
+        match=rf"factor_bytes requires {baseline.factor_storage_bytes_upper}, exceeding limit {limit}",
     ):
         la.prepare_sparse_factorization(
             operator,
@@ -557,10 +601,11 @@ def _stored_bytes(tree: object) -> int:
     return sum(leaf.size * leaf.dtype.itemsize for leaf in arrays.values())
 
 
-@pytest.mark.parametrize("singular", (False, True))
-def test_native_cholesky_psd_correction_retains_real_factor_status(
+def _cholesky_psd_builder(
     singular: bool,
-) -> None:
+) -> tuple[
+    jax.Array, phx.sparse.SparseLinearMap, la.SparseFactorizationPreconditionerBuilder
+]:
     matrix = jnp.asarray(((1.0, 1.0), (1.0, 1.0 if singular else 2.0)), dtype=np.float64)
     operator = _sparse_map(
         matrix,
@@ -580,6 +625,14 @@ def test_native_cholesky_psd_correction_retains_real_factor_status(
         prepared_plan=plan,
         setup_operator=operator,
     )
+    return matrix, operator, builder
+
+
+@pytest.mark.parametrize("singular", (False, True))
+def test_native_cholesky_psd_correction_retains_real_factor_status(
+    singular: bool,
+) -> None:
+    matrix, operator, builder = _cholesky_psd_builder(singular)
     prepared = builder.prepare_planned(
         builder.plan_setup(operator),
         operator,
@@ -595,9 +648,18 @@ def test_native_cholesky_psd_correction_retains_real_factor_status(
         assert int(factor.status) == int(la.SparseFactorizationStatus.SUCCESS)
         actual = prepared.apply(jnp.asarray((1.0, -1.0), dtype=np.float64))
         np.testing.assert_allclose(
-            actual, np.linalg.solve(np.asarray(matrix), (1.0, -1.0)), atol=1.0e-14
+            actual,
+            np.linalg.solve(np.asarray(matrix), (1.0, -1.0)),
+            atol=_NATIVE_CHOLESKY_INVERSE_ACTION_ATOL,
         )
     assert int(factor.diagnostics.replaced_pivots) == 0
+
+
+@pytest.mark.parametrize("singular", (False, True))
+def test_native_cholesky_block_composition_preserves_factor_status_and_refresh(
+    singular: bool,
+) -> None:
+    matrix, operator, builder = _cholesky_psd_builder(singular)
     # Default block composition must transform the conditional component SPD
     # evidence, without converting a failed native factor into a usable action.
     primal_space = la.ArraySpace((1,), dtype=np.float64)
@@ -648,11 +710,14 @@ def test_native_cholesky_psd_correction_retains_real_factor_status(
         actual_first, actual_second = action.apply(rhs)
         np.testing.assert_array_equal(actual_first, (2.0,))
         np.testing.assert_allclose(
-            actual_second, np.linalg.solve(np.asarray(matrix), (1.0, -1.0)), atol=1.0e-14
+            actual_second,
+            np.linalg.solve(np.asarray(matrix), (1.0, -1.0)),
+            atol=_BLOCK_CHOLESKY_SCHUR_ACTION_ATOL,
         )
         if not isinstance(operator, phx.sparse.SparseLinearMap):
             raise TypeError(
-                "The explicit sparse fixture must preserve its native map type."
+                "sparse_factor_fixture.operator must retain SparseLinearMap; "
+                f"got {type(operator).__name__}"
             )
         changed_operator = eqx.tree_at(
             lambda item: item.coefficients,
@@ -701,7 +766,7 @@ def test_native_cholesky_psd_correction_retains_real_factor_status(
             first, second = correction.apply(rhs)
             return first, second, current_factor.status
 
-        # Both branch structures retain the same actual symbolic support.
+        # Both branch structures retain the same symbolic support.
         # The update branch must still carry freshly evaluated factor/cache
         # coefficients, rather than borrowing its predecessor's numerical data.
         first_old, second_old, status_old = switched(jnp.asarray(False))
@@ -710,8 +775,12 @@ def test_native_cholesky_psd_correction_retains_real_factor_status(
         assert int(status_new) == int(la.SparseFactorizationStatus.SUCCESS)
         np.testing.assert_array_equal(first_old, actual_first)
         np.testing.assert_array_equal(second_old, actual_second)
-        np.testing.assert_allclose(first_new, actual_first / 2, atol=1.0e-14)
-        np.testing.assert_allclose(second_new, actual_second / 2, atol=1.0e-14)
+        np.testing.assert_allclose(
+            first_new, actual_first / 2, atol=_BLOCK_CHOLESKY_REFRESH_PRIMAL_ACTION_ATOL
+        )
+        np.testing.assert_allclose(
+            second_new, actual_second / 2, atol=_BLOCK_CHOLESKY_REFRESH_SCHUR_ACTION_ATOL
+        )
 
 
 def test_prepared_numeric_substitution_preserves_promoted_pivots_and_refresh_status() -> (
@@ -730,7 +799,7 @@ def test_prepared_numeric_substitution_preserves_promoted_pivots_and_refresh_sta
     )
     # The true factor pivot is exactly 3. In float32 this tolerance rounds to
     # 3; in float64 it remains strictly below 3. RHS promotion must renew the
-    # actual triangular threshold, not reuse cached lower-precision failure.
+    # triangular threshold, not reuse cached lower-precision failure.
     factor = la.factorize_sparse(
         operator,
         la.SparseFactorizationPolicy("cholesky", pivot_tolerance=2.99999999),
@@ -741,7 +810,9 @@ def test_prepared_numeric_substitution_preserves_promoted_pivots_and_refresh_sta
     promoted = factor.solve(jnp.ones(1, dtype=np.float64))
     assert promoted.value.dtype == np.dtype(np.float64)
     assert int(promoted.status) == int(la.SparseFactorizationStatus.SUCCESS)
-    np.testing.assert_allclose(promoted.value, (1.0 / 9.0,), atol=1.0e-14)
+    np.testing.assert_allclose(
+        promoted.value, (1.0 / 9.0,), atol=_PROMOTED_PIVOT_SOLVE_ATOL
+    )
     nonfinite = factor.solve(jnp.asarray((np.nan,), dtype=np.float64))
     assert int(nonfinite.status) == int(la.SparseFactorizationStatus.NONFINITE)
     assert int(nonfinite.factorization_status) == int(
@@ -778,7 +849,10 @@ def test_prepared_schedule_cache_keeps_original_slots_and_current_coefficients()
     )
     operator = _sparse_map(matrix, properties=properties)
     if not isinstance(operator, phx.sparse.SparseLinearMap):
-        raise TypeError("The explicit sparse fixture must preserve its native map type.")
+        raise TypeError(
+            "sparse_factor_fixture.operator must retain SparseLinearMap; "
+            f"got {type(operator).__name__}"
+        )
     factor = la.factorize_sparse(operator, la.SparseFactorizationPolicy("cholesky"))
     analysis = factor.plan.lower_analysis
     values = factor.factor_values[factor.plan.lower_positions]
@@ -821,13 +895,17 @@ def test_prepared_schedule_cache_keeps_original_slots_and_current_coefficients()
         assert np.all(np.asarray(cache.scheduled_values[0])[~np.asarray(valid)] == 0.0)
     rhs = jnp.asarray((1.0, -2.0, 3.0, -4.0), dtype=np.float64)
     np.testing.assert_allclose(
-        factor.solve(rhs).value, np.linalg.solve(np.asarray(matrix), rhs), atol=1.0e-14
+        factor.solve(rhs).value,
+        np.linalg.solve(np.asarray(matrix), rhs),
+        atol=_CACHED_SPARSE_FACTOR_ACTION_ATOL,
     )
     renewed = la.refresh_sparse_factorization_values(
         factor.plan, 2 * operator.coefficients
     )
     np.testing.assert_allclose(
-        renewed.solve(rhs).value, factor.solve(rhs).value / 2, atol=1.0e-14
+        renewed.solve(rhs).value,
+        factor.solve(rhs).value / 2,
+        atol=_CACHED_SPARSE_FACTOR_ACTION_ATOL,
     )
     assert int(factor.solve(jnp.asarray((np.inf, 0.0, 0.0, 0.0))).status) == int(
         la.SparseFactorizationStatus.NONFINITE,
@@ -849,7 +927,10 @@ def test_preprepared_sparse_builder_refresh_preserves_exact_pattern_and_dynamic_
         jnp.asarray(((2.0, 1.0), (1.0, 3.0)), dtype=np.float64), properties=properties
     )
     if not isinstance(operator, phx.sparse.SparseLinearMap):
-        raise TypeError("The explicit sparse fixture must preserve its native map type.")
+        raise TypeError(
+            "sparse_factor_fixture.operator must retain SparseLinearMap; "
+            f"got {type(operator).__name__}"
+        )
     plan = la.prepare_sparse_factorization(
         operator, la.SparseFactorizationPolicy("cholesky")
     )
@@ -869,10 +950,12 @@ def test_preprepared_sparse_builder_refresh_preserves_exact_pattern_and_dynamic_
     np.testing.assert_allclose(
         refreshed.apply(jnp.asarray((1.0, 2.0), dtype=np.float64)),
         np.linalg.solve(np.asarray(((4.0, 1.0), (1.0, 5.0))), (1.0, 2.0)),
-        atol=1.0e-14,
+        atol=_REFRESHED_SPARSE_FACTOR_ACTION_ATOL,
     )
     different = _sparse_map(jnp.eye(2, dtype=np.float64), properties=properties)
-    with pytest.raises(ValueError, match="different exact CSR pattern"):
+    with pytest.raises(
+        ValueError, match=r"SparseFactorizationPreconditionerBuilder\.setup_operator"
+    ):
         la.SparseFactorizationPreconditionerBuilder(
             prepared_plan=plan, setup_operator=different
         )
@@ -965,7 +1048,7 @@ def test_block_component_spd_requires_fixed_pairing_and_both_component_evidence(
 def _congruence_reference(
     factor: la.PreparedSparseFactorization, rhs: np.ndarray
 ) -> np.ndarray:
-    """Independent dense triangular reference from actual signed native LU."""
+    """Return an independent dense triangular reference from signed native LU."""
     plan = factor.plan
     n = plan.shape[0]
     packed = np.zeros((n, n), dtype=np.asarray(factor.factor_values).dtype)
@@ -1012,7 +1095,9 @@ def test_native_indefinite_lu_congruence_matches_independent_metric(
     if complex_values:
         rhs += np.asarray((0.2j, -0.3j, 0.1j))
     np.testing.assert_allclose(
-        action.apply(jnp.asarray(rhs)), _congruence_reference(factor, rhs), atol=2.0e-14
+        action.apply(jnp.asarray(rhs)),
+        _congruence_reference(factor, rhs),
+        atol=_LU_CONGRUENCE_METRIC_ACTION_ATOL,
     )
     actual_metric = np.column_stack(
         [
@@ -1020,7 +1105,9 @@ def test_native_indefinite_lu_congruence_matches_independent_metric(
             for column in np.eye(3, dtype=matrix.dtype).T
         ]
     )
-    np.testing.assert_allclose(actual_metric, actual_metric.conj().T, atol=2.0e-14)
+    np.testing.assert_allclose(
+        actual_metric, actual_metric.conj().T, atol=_LU_CONGRUENCE_HERMITIAN_METRIC_ATOL
+    )
     assert np.linalg.eigvalsh(actual_metric)[0] > 0
     assert planned.cost.storage_bytes >= _stored_bytes(action.artifact)
     assert "extra_preparation_work_units=" in planned.cost.reason
@@ -1029,7 +1116,9 @@ def test_native_indefinite_lu_congruence_matches_independent_metric(
     assert inverse.builder_id != builder.builder_id
     inverse_action = inverse.prepare(operator, materialization=la.MaterializationPolicy())
     np.testing.assert_allclose(
-        inverse_action.apply(jnp.asarray(rhs)), np.linalg.solve(matrix, rhs), atol=2.0e-14
+        inverse_action.apply(jnp.asarray(rhs)),
+        np.linalg.solve(matrix, rhs),
+        atol=_INDEFINITE_LU_INVERSE_ACTION_ATOL,
     )
 
 
@@ -1055,10 +1144,12 @@ def test_lu_congruence_obeys_declared_source_pairing() -> None:
     np.testing.assert_allclose(
         action.apply(x),
         _congruence_reference(action.factorization, np.asarray(weights * x)),
-        atol=2.0e-14,
+        atol=_WEIGHTED_LU_CONGRUENCE_ACTION_ATOL,
     )
     np.testing.assert_allclose(
-        space.inner(x, action.apply(y)), space.inner(action.apply(x), y), atol=2.0e-14
+        space.inner(x, action.apply(y)),
+        space.inner(action.apply(x), y),
+        atol=_WEIGHTED_LU_ADJOINT_PAIRING_ATOL,
     )
     assert float(space.inner(x, action.apply(x))) > 0
 
@@ -1084,12 +1175,16 @@ def test_jitted_lu_congruence_refresh_changes_real_numeric_cache() -> None:
         )
 
     doubled = refresh(2 * operator.coefficients)
-    np.testing.assert_allclose(doubled.apply(rhs), 0.5 * action.apply(rhs), atol=2.0e-14)
+    np.testing.assert_allclose(
+        doubled.apply(rhs),
+        0.5 * action.apply(rhs),
+        atol=_REFRESHED_LU_CONGRUENCE_ACTION_ATOL,
+    )
     changed = refresh(jnp.asarray((4.0, 1.5, 1.5, -2.0), dtype=np.float64))
     np.testing.assert_allclose(
         changed.apply(rhs),
         _congruence_reference(changed.factorization, np.asarray(rhs)),
-        atol=2.0e-14,
+        atol=_REFRESHED_LU_CONGRUENCE_ACTION_ATOL,
     )
     assert int(changed.artifact.status) == int(la.SparseFactorizationStatus.SUCCESS)
     assert not np.array_equal(
@@ -1153,7 +1248,7 @@ def test_lu_congruence_original_byte_allowance_charges_added_cache_before_refres
     base_plan = la.prepare_sparse_factorization(
         operator, la.SparseFactorizationPolicy("lu")
     )
-    allowance = base_plan.factor_bytes
+    allowance = base_plan.factor_storage_bytes_upper
     policy = la.SparseFactorizationPolicy("lu", max_factor_bytes=allowance)
     plan = la.prepare_sparse_factorization(operator, policy)
     builder = la.SparseFactorizationPreconditionerBuilder(
@@ -1161,12 +1256,14 @@ def test_lu_congruence_original_byte_allowance_charges_added_cache_before_refres
         setup_operator=operator,
         form="lu-congruence",
     )
-    required = plan.factor_bytes + plan.lu_congruence_storage_bytes_upper(8)
+    required = plan.factor_storage_bytes_upper + plan.lu_congruence_storage_bytes_upper(8)
     assert required > allowance
     assert not builder.cost_for(operator).accepted
 
     def forbidden_refresh(*args: object, **kwargs: object) -> NoReturn:
-        raise AssertionError("resource refusal must precede numeric allocation")
+        raise AssertionError(
+            "sparse_factor_fixture.refusal must precede numeric allocation; got refresh"
+        )
 
     monkeypatch.setattr(owner, "refresh_sparse_factorization", forbidden_refresh)
     with pytest.raises(la.LinearResourceLimitError) as refused:
@@ -1189,7 +1286,9 @@ def test_lu_congruence_original_byte_allowance_charges_added_cache_before_refres
 def test_lu_congruence_rejects_modified_or_non_lu_policies(
     policy: la.SparseFactorizationPolicy,
 ) -> None:
-    with pytest.raises(ValueError, match="unshifted native LU"):
+    with pytest.raises(
+        ValueError, match=r"SparseFactorizationPreconditionerBuilder\.policy"
+    ):
         la.SparseFactorizationPreconditionerBuilder(policy, form="lu-congruence")
 
 
@@ -1222,7 +1321,7 @@ def test_lu_congruence_prepares_once_and_supports_matrix_rhs(
     np.testing.assert_allclose(
         matrix_solve.value,
         _congruence_reference(action.factorization, np.asarray(rhs)),
-        atol=2.0e-14,
+        atol=_MATRIX_RHS_LU_CONGRUENCE_ACTION_ATOL,
     )
     assert int(matrix_solve.status) == int(la.SparseFactorizationStatus.SUCCESS)
     action.apply(rhs[:, 0])
@@ -1236,6 +1335,8 @@ def test_lu_congruence_prepares_once_and_supports_matrix_rhs(
     )
     assert len(calls) == 2
     np.testing.assert_allclose(
-        refreshed.apply(rhs[:, 0]), 0.5 * action.apply(rhs[:, 0]), atol=2.0e-14
+        refreshed.apply(rhs[:, 0]),
+        0.5 * action.apply(rhs[:, 0]),
+        atol=_MATRIX_RHS_LU_REFRESH_ACTION_ATOL,
     )
     assert len(calls) == 2

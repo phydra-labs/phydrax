@@ -12,6 +12,7 @@ from jax import Array
 
 import phydrax as phx
 from phydrax.operators.integral import layer_potential as layer
+from phydrax.units import METER
 
 
 type Family2D = Literal["helmholtz", "combined", "modified", "stokes", "elasticity"]
@@ -20,7 +21,7 @@ type Family3D = Literal["laplace", "helmholtz", "combined", "stokes", "elasticit
 
 @pytest.fixture(scope="module")
 def circle() -> layer.BoundaryPanelization2D:
-    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     return layer.BoundaryPanelization2D(
         geometry.boundary_atlas, panels_per_chart=2, quadrature_order=2, geometry=geometry
     )
@@ -33,7 +34,7 @@ def surface() -> layer.SurfacePanelization3D:
         dtype=jnp.float64,
     )
     faces = jnp.asarray([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], dtype=jnp.int32)
-    geometry = phx.geometry.MeshRegion(vertices, faces).compile()
+    geometry = phx.geometry.MeshRegion(vertices, faces).compile(coordinate_unit=METER)
     return layer.SurfacePanelization3D(
         geometry.boundary_atlas, quadrature_order=2, geometry=geometry
     )

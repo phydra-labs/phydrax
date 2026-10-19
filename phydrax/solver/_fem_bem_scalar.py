@@ -352,7 +352,7 @@ def _cell_gradient_route(
 ) -> tuple[SparseLinearMap, Array]:
     """Prepare the exact affine P1 cell-gradient map and cell volumes on the host."""
 
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     geometry = discretization.evaluate_geometry(
         field_name, discretization.default_runtime.coordinates
     )

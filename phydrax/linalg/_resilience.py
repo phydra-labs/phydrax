@@ -34,7 +34,7 @@ from ._runtime import (
     prepare_template,
     solve,
 )
-from ._spaces import _coordinate_dtype, AbstractVectorSpace, RHSLayout
+from ._spaces import AbstractVectorSpace, coordinate_dtype, RHSLayout
 from ._structured_operators import TwoSidedScaledLinearOperator
 from ._subspaces import LinearSubspace, NullspacePolicy
 
@@ -453,7 +453,7 @@ def plan_resilient_solve(
         raise TypeError("policy must be a ResilientSolvePolicy or None.")
     _validate_explicit_scales(problem, policy_.equilibration)
     n = problem.operator.source.size
-    dtype = _coordinate_dtype(problem.operator.source)
+    dtype = coordinate_dtype(problem.operator.source)
     materializes = _requires_materialization(policy_.equilibration)
     cost = ResilientCostEstimate(n, dtype.itemsize, materializes)
     if materializes:
@@ -758,7 +758,7 @@ def _prepare_with_plan(
     transformed_operator = transformed_problem.operator
     if not isinstance(transformed_operator, TwoSidedScaledLinearOperator):
         raise TypeError("Internal transformed operator construction failed.")
-    real_dtype = np.empty((), dtype=_coordinate_dtype(problem.operator.source)).real.dtype
+    real_dtype = np.empty((), dtype=coordinate_dtype(problem.operator.source)).real.dtype
     if matrix is None:
         condition_before = condition_after = jnp.asarray(jnp.nan, dtype=real_dtype)
     else:
@@ -785,7 +785,7 @@ def _build_transform(
     /,
 ) -> tuple[DiagonalSystemTransform, Array | None]:
     n = problem.operator.source.size
-    dtype = _coordinate_dtype(problem.operator.source)
+    dtype = coordinate_dtype(problem.operator.source)
     real_dtype = np.empty((), dtype=dtype).real.dtype
     one = jnp.ones((n,), dtype=dtype)
     nan = jnp.asarray(jnp.nan, dtype=real_dtype)
@@ -927,7 +927,7 @@ def _placeholder_transform(
     /,
 ) -> DiagonalSystemTransform:
     n = problem.operator.source.size
-    dtype = _coordinate_dtype(problem.operator.source)
+    dtype = coordinate_dtype(problem.operator.source)
     real_dtype = np.empty((), dtype=dtype).real.dtype
     one = jnp.ones((n,), dtype=dtype)
     return DiagonalSystemTransform(
@@ -1100,7 +1100,7 @@ def _validate_explicit_scales(
     if left_scale is None or right_scale is None:
         raise ValueError("Explicit equilibration requires both scaling arrays.")
     n = problem.operator.source.size
-    dtype = _coordinate_dtype(problem.operator.source)
+    dtype = coordinate_dtype(problem.operator.source)
     if left_scale.shape != (n,) or right_scale.shape != (n,):
         raise ValueError("Explicit equilibration scales must match the system dimension.")
     if np.dtype(left_scale.dtype) != dtype or np.dtype(right_scale.dtype) != dtype:

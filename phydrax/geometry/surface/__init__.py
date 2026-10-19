@@ -2,85 +2,251 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Authoritative surface geometry, audits, selections, and intersections."""
+"""Surface geometry, audits, selections, and intersections."""
 
-from importlib import import_module
-from typing import Any
+from typing import TYPE_CHECKING
 
-from ..._jax_config import process_numerics
-from ._contracts import (
-    InterfaceSide,
-    SurfaceAuditPolicy,
-    SurfaceAuditReport,
-    SurfaceChartMappingEvidence,
-    SurfaceInterface,
-    SurfaceMetadata,
-    SurfaceOrientationRepair,
-    SurfacePreparationError,
-    SurfacePreparationStatus,
-    SurfaceSelection,
-    SurfaceValidityCertificate,
-)
-from ._g1_multipatch import __all__ as _g1_multipatch_all
-from ._high_order import __all__ as _high_order_all
-from ._interop import __all__ as _interop_all
-from ._intersection import (
-    intersect_plane_surface,
-    PlaneSectionEvidence,
-    PlaneSectionLoop,
-    PlaneSectionStatus,
-    PlaneSurfaceSection,
-)
-from ._model import SurfaceModel, SurfaceRealization
+from ..._deferred_exports import deferred_exports
 
 
-_FACADE_EXPORT_MODULES = ("._g1_multipatch", "._high_order", "._interop", "._arrangement", "._boolean")
+_DEFERRED_EXPORTS: dict[str, str] = {
+    "BiquinticGluingBasis": "._g1_multipatch",
+    "BiquinticGluingConstraints": "._g1_multipatch",
+    "G1PatchStatus": "._g1_multipatch",
+    "GluingContinuity": "._g1_multipatch",
+    "HighOrderDifferentiationError": "._high_order",
+    "HighOrderGeometryMismatchError": "._high_order",
+    "HighOrderResourceLimitError": "._high_order",
+    "HighOrderSurfaceFrameEvidence": "._high_order",
+    "HighOrderSurfacePolicy": "._high_order",
+    "HighOrderSurfaceRealization": "._high_order",
+    "HighOrderSurfaceReport": "._high_order",
+    "HighOrderSurfaceSource": "._high_order",
+    "InterfaceSide": "._contracts",
+    "PatchEdge": "._g1_multipatch",
+    "PatchTopologyError": "._g1_multipatch",
+    "PatchVertexKind": "._g1_multipatch",
+    "PlaneSectionEvidence": "._intersection",
+    "PlaneSectionLoop": "._intersection",
+    "PlaneSectionStatus": "._intersection",
+    "PlaneSurfaceSection": "._intersection",
+    "PortableSurfaceField": "._interop",
+    "PreparedHalfEdgePatchTopology": "._g1_multipatch",
+    "ProjectedBiquinticCoefficients": "._g1_multipatch",
+    "SeamContinuityEvidence": "._g1_multipatch",
+    "SurfaceArrangement": "._arrangement",
+    "SurfaceArrangementError": "._arrangement",
+    "SurfaceArrangementEvidence": "._arrangement",
+    "SurfaceArrangementLimits": "._arrangement",
+    "SurfaceArrangementStatus": "._arrangement",
+    "SurfaceAuditPolicy": "._contracts",
+    "SurfaceAuditReport": "._contracts",
+    "SurfaceBooleanError": "._boolean",
+    "SurfaceBooleanOperation": "._boolean",
+    "SurfaceBooleanResult": "._boolean",
+    "SurfaceBooleanStatus": "._boolean",
+    "SurfaceChartMappingEvidence": "._contracts",
+    "SurfaceClosureEvidence": "._boolean",
+    "SurfaceDataCorruptionError": "._interop",
+    "SurfaceExportPolicy": "._interop",
+    "SurfaceExportResult": "._interop",
+    "SurfaceFieldAssociation": "._interop",
+    "SurfaceFieldRecord": "._interop",
+    "SurfaceFileFormat": "._interop",
+    "SurfaceImportPolicy": "._interop",
+    "SurfaceImportResult": "._interop",
+    "SurfaceInterface": "._contracts",
+    "SurfaceInteropError": "._interop",
+    "SurfaceInteropReport": "._interop",
+    "SurfaceLossyOperationError": "._interop",
+    "SurfaceMetadata": "._contracts",
+    "SurfaceModel": "._model",
+    "SurfaceOrientationPolicy": "._interop",
+    "SurfaceOrientationRepair": "._contracts",
+    "SurfacePreparationError": "._contracts",
+    "SurfacePreparationStatus": "._contracts",
+    "SurfaceProviderUnavailableError": "._interop",
+    "SurfaceRealization": "._model",
+    "SurfaceResourceLimitError": "._interop",
+    "SurfaceSelection": "._contracts",
+    "SurfaceUnsupportedFormatError": "._interop",
+    "SurfaceValidityCertificate": "._contracts",
+    "UnsupportedG1TopologyError": "._g1_multipatch",
+    "arrange_triangle_surfaces": "._arrangement",
+    "export_surface": "._interop",
+    "import_surface": "._interop",
+    "intersect_plane_surface": "._intersection",
+    "isoparametric_triangle_reference_nodes": "._high_order",
+    "realize_boundary_atlas": "._high_order",
+    "realize_bspline_surface": "._high_order",
+    "realize_isoparametric_triangles": "._high_order",
+    "surface_boolean": "._boolean",
+}
+
+__getattr__, __dir__ = deferred_exports(__name__, globals(), _DEFERRED_EXPORTS)
 
 
-def __getattr__(name: str) -> Any:
-    with process_numerics():
-        for module_name in reversed(_FACADE_EXPORT_MODULES):
-            module = import_module(module_name, __package__)
-            if name in module.__all__:
-                value = getattr(module, name)
-                globals()[name] = value
-                return value
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(__all__))
-
+# BEGIN GENERATED FACADE EXPORTS
+if TYPE_CHECKING:
+    from ._arrangement import (
+        arrange_triangle_surfaces as arrange_triangle_surfaces,
+        SurfaceArrangement as SurfaceArrangement,
+        SurfaceArrangementError as SurfaceArrangementError,
+        SurfaceArrangementEvidence as SurfaceArrangementEvidence,
+        SurfaceArrangementLimits as SurfaceArrangementLimits,
+        SurfaceArrangementStatus as SurfaceArrangementStatus,
+    )
+    from ._boolean import (
+        surface_boolean as surface_boolean,
+        SurfaceBooleanError as SurfaceBooleanError,
+        SurfaceBooleanOperation as SurfaceBooleanOperation,
+        SurfaceBooleanResult as SurfaceBooleanResult,
+        SurfaceBooleanStatus as SurfaceBooleanStatus,
+        SurfaceClosureEvidence as SurfaceClosureEvidence,
+    )
+    from ._contracts import (
+        InterfaceSide as InterfaceSide,
+        SurfaceAuditPolicy as SurfaceAuditPolicy,
+        SurfaceAuditReport as SurfaceAuditReport,
+        SurfaceChartMappingEvidence as SurfaceChartMappingEvidence,
+        SurfaceInterface as SurfaceInterface,
+        SurfaceMetadata as SurfaceMetadata,
+        SurfaceOrientationRepair as SurfaceOrientationRepair,
+        SurfacePreparationError as SurfacePreparationError,
+        SurfacePreparationStatus as SurfacePreparationStatus,
+        SurfaceSelection as SurfaceSelection,
+        SurfaceValidityCertificate as SurfaceValidityCertificate,
+    )
+    from ._g1_multipatch import (
+        BiquinticGluingBasis as BiquinticGluingBasis,
+        BiquinticGluingConstraints as BiquinticGluingConstraints,
+        G1PatchStatus as G1PatchStatus,
+        GluingContinuity as GluingContinuity,
+        PatchEdge as PatchEdge,
+        PatchTopologyError as PatchTopologyError,
+        PatchVertexKind as PatchVertexKind,
+        PreparedHalfEdgePatchTopology as PreparedHalfEdgePatchTopology,
+        ProjectedBiquinticCoefficients as ProjectedBiquinticCoefficients,
+        SeamContinuityEvidence as SeamContinuityEvidence,
+        UnsupportedG1TopologyError as UnsupportedG1TopologyError,
+    )
+    from ._high_order import (
+        HighOrderDifferentiationError as HighOrderDifferentiationError,
+        HighOrderGeometryMismatchError as HighOrderGeometryMismatchError,
+        HighOrderResourceLimitError as HighOrderResourceLimitError,
+        HighOrderSurfaceFrameEvidence as HighOrderSurfaceFrameEvidence,
+        HighOrderSurfacePolicy as HighOrderSurfacePolicy,
+        HighOrderSurfaceRealization as HighOrderSurfaceRealization,
+        HighOrderSurfaceReport as HighOrderSurfaceReport,
+        HighOrderSurfaceSource as HighOrderSurfaceSource,
+        isoparametric_triangle_reference_nodes as isoparametric_triangle_reference_nodes,
+        realize_boundary_atlas as realize_boundary_atlas,
+        realize_bspline_surface as realize_bspline_surface,
+        realize_isoparametric_triangles as realize_isoparametric_triangles,
+    )
+    from ._interop import (
+        export_surface as export_surface,
+        import_surface as import_surface,
+        PortableSurfaceField as PortableSurfaceField,
+        SurfaceDataCorruptionError as SurfaceDataCorruptionError,
+        SurfaceExportPolicy as SurfaceExportPolicy,
+        SurfaceExportResult as SurfaceExportResult,
+        SurfaceFieldAssociation as SurfaceFieldAssociation,
+        SurfaceFieldRecord as SurfaceFieldRecord,
+        SurfaceFileFormat as SurfaceFileFormat,
+        SurfaceImportPolicy as SurfaceImportPolicy,
+        SurfaceImportResult as SurfaceImportResult,
+        SurfaceInteropError as SurfaceInteropError,
+        SurfaceInteropReport as SurfaceInteropReport,
+        SurfaceLossyOperationError as SurfaceLossyOperationError,
+        SurfaceOrientationPolicy as SurfaceOrientationPolicy,
+        SurfaceProviderUnavailableError as SurfaceProviderUnavailableError,
+        SurfaceResourceLimitError as SurfaceResourceLimitError,
+        SurfaceUnsupportedFormatError as SurfaceUnsupportedFormatError,
+    )
+    from ._intersection import (
+        intersect_plane_surface as intersect_plane_surface,
+        PlaneSectionEvidence as PlaneSectionEvidence,
+        PlaneSectionLoop as PlaneSectionLoop,
+        PlaneSectionStatus as PlaneSectionStatus,
+        PlaneSurfaceSection as PlaneSurfaceSection,
+    )
+    from ._model import (
+        SurfaceModel as SurfaceModel,
+        SurfaceRealization as SurfaceRealization,
+    )
 
 __all__ = [
+    "BiquinticGluingBasis",
+    "BiquinticGluingConstraints",
+    "G1PatchStatus",
+    "GluingContinuity",
+    "HighOrderDifferentiationError",
+    "HighOrderGeometryMismatchError",
+    "HighOrderResourceLimitError",
+    "HighOrderSurfaceFrameEvidence",
+    "HighOrderSurfacePolicy",
+    "HighOrderSurfaceRealization",
+    "HighOrderSurfaceReport",
+    "HighOrderSurfaceSource",
     "InterfaceSide",
+    "PatchEdge",
+    "PatchTopologyError",
+    "PatchVertexKind",
     "PlaneSectionEvidence",
     "PlaneSectionLoop",
     "PlaneSectionStatus",
     "PlaneSurfaceSection",
+    "PortableSurfaceField",
+    "PreparedHalfEdgePatchTopology",
+    "ProjectedBiquinticCoefficients",
+    "SeamContinuityEvidence",
+    "SurfaceArrangement",
+    "SurfaceArrangementError",
+    "SurfaceArrangementEvidence",
+    "SurfaceArrangementLimits",
+    "SurfaceArrangementStatus",
     "SurfaceAuditPolicy",
     "SurfaceAuditReport",
+    "SurfaceBooleanError",
+    "SurfaceBooleanOperation",
+    "SurfaceBooleanResult",
+    "SurfaceBooleanStatus",
     "SurfaceChartMappingEvidence",
+    "SurfaceClosureEvidence",
+    "SurfaceDataCorruptionError",
+    "SurfaceExportPolicy",
+    "SurfaceExportResult",
+    "SurfaceFieldAssociation",
+    "SurfaceFieldRecord",
+    "SurfaceFileFormat",
+    "SurfaceImportPolicy",
+    "SurfaceImportResult",
     "SurfaceInterface",
+    "SurfaceInteropError",
+    "SurfaceInteropReport",
+    "SurfaceLossyOperationError",
     "SurfaceMetadata",
     "SurfaceModel",
+    "SurfaceOrientationPolicy",
     "SurfaceOrientationRepair",
     "SurfacePreparationError",
     "SurfacePreparationStatus",
+    "SurfaceProviderUnavailableError",
     "SurfaceRealization",
+    "SurfaceResourceLimitError",
     "SurfaceSelection",
+    "SurfaceUnsupportedFormatError",
     "SurfaceValidityCertificate",
-    "intersect_plane_surface",
-    "SurfaceArrangement",
-    "SurfaceArrangementError",
-    "SurfaceArrangementLimits",
-    "SurfaceBooleanError",
-    "SurfaceBooleanOperation",
+    "UnsupportedG1TopologyError",
     "arrange_triangle_surfaces",
+    "export_surface",
+    "import_surface",
+    "intersect_plane_surface",
+    "isoparametric_triangle_reference_nodes",
+    "realize_boundary_atlas",
+    "realize_bspline_surface",
+    "realize_isoparametric_triangles",
     "surface_boolean",
 ]
-__all__ += [
-    name
-    for name in (*_g1_multipatch_all, *_high_order_all, *_interop_all)
-    if name not in __all__
-]
+# END GENERATED FACADE EXPORTS

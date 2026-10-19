@@ -14,7 +14,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import polars as pl
 
 import phydrax as phx
 import phydrax.ein as ein
@@ -3770,6 +3769,9 @@ def save_benchmark_protocol_artifacts(
     /,
 ) -> tuple[Path, Path, Path, Path, Path, Path, Path, Path, Path]:
     """Write metric, sample, symmetry, audit, Pareto, and promotion artifacts."""
+    # Admit optional Polars only when serializing protocol Parquet artifacts.
+    import polars as pl
+
     root = Path(directory)
     root.mkdir(parents=True, exist_ok=True)
     json_path = root / "operator_benchmarks.json"

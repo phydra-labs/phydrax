@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
+import equinox as eqx
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -14,7 +18,9 @@ from phydrax._fingerprint import (
     array_tree_fingerprint,
     canonical_array_hex_fingerprint,
     iter_array_bytes,
+    tree_content_equal,
 )
+from phydrax._strict import StrictModule
 
 
 def _legacy(tree: Any) -> dict[str, Any]:
@@ -105,7 +111,7 @@ def test_array_fingerprint_has_bounded_scratch(strided: bool) -> None:
 
 
 def test_array_fingerprint_rejects_object_arrays() -> None:
-    with pytest.raises(TypeError, match="object dtype"):
+    with pytest.raises(TypeError, match=r"array_tree_fingerprint\.leaf\.dtype"):
         array_tree_fingerprint(np.asarray(["value"], dtype=np.object_))
 
 
@@ -130,3 +136,134 @@ def test_bounded_array_byte_and_hex_hashes(dtype: np.dtype, empty: bool) -> None
     )
     assert b"".join(bytes(chunk) for chunk in iter_array_bytes(value)) == payload
     assert all(len(chunk) <= 65536 for chunk in iter_array_bytes(value))
+
+
+class _Record(StrictModule):
+    values: np.ndarray
+    label: str = eqx.field(static=True)
+    scale: float = eqx.field(static=True, default=float("nan"))
+
+
+def _record(
+    values: np.ndarray, label: str = "source", scale: float = float("nan")
+) -> _Record:
+    return _Record(values, label, scale)
+
+
+def test_identical_nan_sentinels_compare_equal() -> None:
+    values = np.asarray([[np.nan, 1.0], [2.0, np.nan]], dtype=np.float64)
+    assert tree_content_equal(_record(values), _record(values.copy()))
+    assert tree_content_equal(jnp.asarray(values), jnp.asarray(values.copy()))
+    assert tree_content_equal({"x": float("nan")}, {"x": float("nan")})
+    # Independently constructed NaN static metadata (distinct float objects).
+    assert tree_content_equal(
+        _record(values, scale=float("nan")), _record(values, scale=float("nan"))
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "one-ulp",
+        "sentinel-to-zero",
+        "signed-zero",
+        "shape",
+        "dtype",
+        "leaf-type",
+        "static",
+        "static-signed-zero",
+        "static-nan-payload",
+        "structure",
+        "scalar-rank",
+        "static-mapping-key-type",
+    ],
+)
+def test_any_content_change_is_unequal(change: str) -> None:
+    values = np.asarray([[np.nan, 1.0], [0.0, 2.0]], dtype=np.float64)
+    first = _record(values)
+    changed = values.copy()
+    match change:
+        case "one-ulp":
+            changed[0, 1] = np.nextafter(1.0, 2.0)
+            second = _record(changed)
+        case "sentinel-to-zero":
+            changed[0, 0] = 0.0
+            second = _record(changed)
+        case "signed-zero":
+            changed[1, 0] = -0.0
+            second = _record(changed)
+        case "shape":
+            second = _record(changed.reshape(4, 1))
+        case "dtype":
+            second = _record(changed.astype(np.float32))
+        case "leaf-type":
+            assert not tree_content_equal(values, jnp.asarray(values))
+            return
+        case "static":
+            second = _record(changed, "rebuilt")
+        case "static-signed-zero":
+            first = _record(values, scale=0.0)
+            second = _record(values, scale=-0.0)
+        case "static-nan-payload":
+            payload = np.frombuffer(
+                np.uint64(0x7FF8000000000001).tobytes(), dtype=np.float64
+            )[0]
+            second = _record(values, scale=float(payload))
+        case "structure":
+            assert not tree_content_equal((values,), (values, values))
+            return
+        case "scalar-rank":
+            # A 0-d leaf differs from a length-one axis with the same bytes.
+            assert not tree_content_equal(np.asarray(1.0), np.asarray([1.0]))
+            return
+        case "static-mapping-key-type":
+            # Integer, float and boolean keys are distinct metadata.
+            assert not tree_content_equal(
+                MappingProxyType({1: "a"}), MappingProxyType({1.0: "a"})
+            )
+            assert not tree_content_equal(
+                MappingProxyType({1: "a"}), MappingProxyType({True: "a"})
+            )
+            assert tree_content_equal(
+                MappingProxyType({1: "a"}), MappingProxyType({1: "a"})
+            )
+            return
+        case _:
+            raise AssertionError(change)
+    assert not tree_content_equal(first, second)
+
+
+def _aliased_pairs(leaf: np.ndarray, depth: int) -> tuple[object, object]:
+    node: object = leaf
+    for _ in range(depth):
+        node = (node, node)
+    return node, node
+
+
+def test_aliased_subtrees_compare_by_distinct_content() -> None:
+    # Sixty doubling levels expand to 2**61 leaves; the comparison must visit
+    # each distinct aliased node pair once to finish at all.
+    values = np.asarray([np.nan, 1.0], dtype=np.float64)
+    first = _aliased_pairs(values, 60)
+    assert tree_content_equal(first, _aliased_pairs(values.copy(), 60))
+    changed = values.copy()
+    changed[1] = -1.0
+    assert not tree_content_equal(first, _aliased_pairs(changed, 60))
+
+
+@dataclass(frozen=True)
+class _ArrayMetadata:
+    values: np.ndarray
+    label: str
+    retained: float = field(compare=False, default=0.0)
+
+
+def test_dataclass_array_metadata_compares_every_field_bitwise() -> None:
+    values = np.asarray([np.nan, 0.0], dtype=np.float64)
+    first = _ArrayMetadata(values, "source")
+    assert tree_content_equal(first, _ArrayMetadata(values.copy(), "source"))
+    changed = values.copy()
+    changed[1] = -0.0
+    assert not tree_content_equal(first, _ArrayMetadata(changed, "source"))
+    assert not tree_content_equal(first, _ArrayMetadata(values, "other"))
+    assert not tree_content_equal(first, _ArrayMetadata(values, "source", -0.0))

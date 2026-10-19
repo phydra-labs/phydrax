@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import assert_never, final, TYPE_CHECKING
+from typing import assert_never, final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,7 +16,8 @@ from jax.typing import ArrayLike
 
 from .._array_archive import read_array_archive, write_array_archive
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import NativeHostStorageWorkspace
+from .._meshcore import NativeExecutionScope, NativeHostStorageWorkspace
+from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
@@ -25,7 +26,9 @@ from ..discretization import (
     TopologyEpoch,
     TopologyEpochTransition,
 )
+from ..discretization._cell_geometry_transition_types import MaterialChartDeformation
 from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..discretization.fem import (
     FiniteElementDiscretization,
     FiniteElementFieldSpec,
@@ -43,6 +46,7 @@ from ..discretization.fem import (
     SourceRealizationFieldSemantics,
 )
 from ..discretization.finite_volume._remap_evidence import (
+    MappedSurfaceChartRemapEvidence,
     PreparedUnstructuredConservativeRemap,
 )
 from ..equations import MaterialTransaction
@@ -60,22 +64,16 @@ from ..meshing import CellMeshingResult, EntityLineageKind, MeshAdaptationResult
 from ..meshing._adaptation import GeometryRealizationMeshAdaptation
 from ..meshing._decision import PhysicalErrorEvidence, SolverAwareDecision
 from ..meshing._measurements import NativeExecutionRecord
+from ..meshing._native_preparation import native_preparation_ledger
 from ..typing import checked, parse
 from ._finite_element_schedule import FiniteElementAcceptedState
 
 
 class MaterialTopologyTransferResult(StrictModule, NonTrainableState):
-    """Actual material state and the prepared remap owners used to produce it."""
+    """Material state and the prepared remap owners used to produce it."""
 
     materials: MaterialTransaction
     remaps: tuple[PreparedUnstructuredConservativeRemap, ...]
-
-
-if TYPE_CHECKING:
-    from ..discretization._sphere_chart_deformation import PreparedSphereChartDeformation
-    from ..discretization._surface_chart_deformation import (
-        PreparedSurfaceChartDeformation,
-    )
 
 
 _OWNER = "finite-element-topology-transaction"
@@ -90,7 +88,7 @@ class FiniteElementTopologyResult(StrictModule, NonTrainableState):
     before staging); ``transfers`` are the prepared field transfers with their
     semantics, geometry binding, and evidence.
     Chart transactions additionally retain ``material_remaps`` and bind all
-    consumer reports to ``execution_evidence`` only after their whole original
+    consumer reports to ``execution_evidence`` only after their shared
     execution allowance ends, including physical certification and publication.
     """
 
@@ -126,9 +124,181 @@ def _space_realizes_result(
     )
 
 
+def _topology_decision_admission(
+    adaptation: MeshAdaptationResult,
+    decision: SolverAwareDecision,
+    has_reanalysis: bool,
+    /,
+) -> str | None:
+    """Validate the selected physical action before any transfer preparation."""
+    from ..meshing._adaptation import (
+        MarkedMeshAdaptation,
+        MetricMeshAdaptation,
+        RelocationMeshAdaptation,
+    )
+    from ..meshing._decision import AdaptationAction
+
+    selected = decision.require_selected(
+        adaptation.source.result_id,
+        adaptation.result_id,
+        adaptation.target.result_id,
+    )
+    match adaptation.request:
+        case MarkedMeshAdaptation():
+            action = AdaptationAction.H
+        case MetricMeshAdaptation():
+            action = AdaptationAction.METRIC
+        case RelocationMeshAdaptation():
+            action = AdaptationAction.RELOCATION
+        case GeometryRealizationMeshAdaptation():
+            action = AdaptationAction.GEOMETRY_ORDER
+        case _:
+            raise ValueError(
+                f"MeshAdaptationResult.request must support physical decision admission; got {type(adaptation.request).__name__}"
+            )
+    if (
+        selected.action != action
+        or selected.feasibility.route_id != adaptation.route.value
+    ):
+        raise ValueError(
+            f"SolverAwareDecision.selected must match action={action!r} and route={adaptation.route.value!r}; got action={selected.action!r}, route={selected.feasibility.route_id!r}"
+        )
+    if not adaptation.status.converged:
+        return "native-admission-rejected"
+    if not has_reanalysis:
+        return "independent-reanalysis-required"
+    return None
+
+
+def _require_topology_candidate_layouts(
+    source: FiniteElementDiscretization,
+    target: FiniteElementDiscretization,
+    adaptation: MeshAdaptationResult,
+    decision: SolverAwareDecision,
+    compiled_layout_id: str | None,
+    /,
+) -> None:
+    """Bind the prepared coordinate maps and compiled layouts to admission."""
+    if any(
+        prepared.default_runtime.geometry_layout_id != result.geometry.geometry_layout_id
+        or not np.array_equal(
+            prepared.default_runtime.coordinates, result.geometry.coordinates
+        )
+        for prepared, result in (
+            (source, adaptation.source),
+            (target, adaptation.target),
+        )
+    ):
+        raise ValueError(
+            f"FiniteElementTopologyTransaction.spaces must preserve admitted coordinate maps; got source_layout={source.default_runtime.geometry_layout_id!r}, target_layout={target.default_runtime.geometry_layout_id!r}"
+        )
+    selected = decision.selected
+    if selected is None:
+        raise ValueError(
+            f"SolverAwareDecision.selected must be present for native execution; got {selected!r}"
+        )
+    feasibility = selected.feasibility
+    layouts = tuple(
+        sorted((space.name, space.layout.layout_id) for space in target.field_spaces)
+    )
+    if (
+        feasibility.cell_families
+        != tuple(sorted({block.cell_kind for block in adaptation.target.mesh.blocks}))
+        or feasibility.geometry_layout_id != adaptation.target.geometry.geometry_layout_id
+        or feasibility.field_layouts != layouts
+        or feasibility.dofs != sum(space.layout.size for space in target.field_spaces)
+        or compiled_layout_id is None
+        or feasibility.compiled_layout_id != compiled_layout_id
+        or feasibility.geometry_certificate_id != adaptation.target.audit.report_id
+        or feasibility.topology_certificate_id != adaptation.target.audit.report_id
+    ):
+        raise ValueError(
+            f"SolverAwareDecision.selected.feasibility must match the candidate certified compiled layouts; got {feasibility!r}, compiled_layout_id={compiled_layout_id!r}"
+        )
+
+
+def _adopt_topology_material_remaps(
+    materials: MaterialTopologyTransferResult | MaterialTransaction | None,
+    adaptation: MeshAdaptationResult,
+    material_remaps: list[PreparedUnstructuredConservativeRemap] | None,
+    source_workspace: NativeHostStorageWorkspace | None,
+    /,
+) -> MaterialTransaction | None:
+    """Validate borrowed remap ownership before retaining material storage."""
+    match materials:
+        case MaterialTopologyTransferResult():
+            if material_remaps is None:
+                if materials.remaps:
+                    raise ValueError(
+                        f"FiniteElementTopologyTransaction.material_remaps must provide a chart transaction scope for remap owners; got {material_remaps!r}"
+                    )
+            else:
+                geometry_transition = adaptation.geometry_transition
+                if geometry_transition is None:
+                    raise ValueError(
+                        f"MeshAdaptationResult.geometry_transition must be present for material remap owners; got {geometry_transition!r}"
+                    )
+                for owner in materials.remaps:
+                    match owner.route:
+                        case MappedSurfaceChartRemapEvidence() as chart:
+                            if (
+                                chart.deformation.deformation_id
+                                != geometry_transition.chart_correspondence_id
+                            ):
+                                raise ValueError(
+                                    f"MappedSurfaceChartRemapEvidence.deformation.deformation_id must equal {geometry_transition.chart_correspondence_id!r}; got {chart.deformation.deformation_id!r}"
+                                )
+                        case _:
+                            raise ValueError(
+                                f"PreparedUnstructuredConservativeRemap.route must bind the chart transition; got {type(owner.route).__name__}"
+                            )
+                    if owner.execution_evidence is not None:
+                        raise ValueError(
+                            f"PreparedUnstructuredConservativeRemap.execution_evidence must be None while borrowing the chart transaction; got {owner.execution_evidence!r}"
+                        )
+                material_remaps.extend(materials.remaps)
+                workspace = source_workspace
+                if workspace is None:
+                    raise RuntimeError(
+                        f"FiniteElementTopologyTransaction.source_workspace must be present for material remap owners; got {workspace!r}"
+                    )
+                workspace.retain_owner(materials)
+            return materials.materials
+        case MaterialTransaction() | None:
+            if material_remaps is not None and materials is not None:
+                raise TypeError(
+                    f"FiniteElementTopologyTransaction.material_transfer.result must be MaterialTopologyTransferResult for chart callbacks; got {type(materials).__name__}"
+                )
+            return materials
+        case _:
+            assert_never(materials)
+
+
+def _refresh_topology_fields(
+    callback: Callable[..., Sequence[ArrayLike]],
+    candidate_fields: tuple[Array, ...],
+    target: FiniteElementDiscretization,
+    adaptation: MeshAdaptationResult,
+    args: object,
+    /,
+) -> tuple[Array, ...] | str:
+    """Refresh transferred values while preserving layout-first refusal order."""
+    refreshed = tuple(
+        jnp.asarray(value) for value in callback(candidate_fields, adaptation, args)
+    )
+    if len(refreshed) != len(target.field_spaces) or any(
+        value.shape != space.vector_space.structure().shape
+        for value, space in zip(refreshed, target.field_spaces, strict=True)
+    ):
+        return "field-refresh-layout-rejected"
+    if any(not bool(jnp.all(jnp.isfinite(value))) for value in refreshed):
+        return "field-refresh-nonfinite"
+    return refreshed
+
+
 @final
 class PreparedFiniteElementTopologyTransition(StrictModule, NonTrainableState):
-    """Reusable immutable spaces and operators for one exact topology transition."""
+    """Reusable immutable spaces and operators for one topology transition."""
 
     source: FiniteElementDiscretization
     target: FiniteElementDiscretization
@@ -140,6 +310,7 @@ class PreparedFiniteElementTopologyTransition(StrictModule, NonTrainableState):
     field_spec_ids: tuple[str, ...] = eqx.field(static=True)
     preparation_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transaction: FiniteElementTopologyTransaction,
@@ -149,16 +320,6 @@ class PreparedFiniteElementTopologyTransition(StrictModule, NonTrainableState):
         transfers: Sequence[FiniteElementFieldTransfer],
         /,
     ) -> None:
-        if not isinstance(transaction, FiniteElementTopologyTransaction):
-            raise TypeError("transaction must be a FiniteElementTopologyTransaction.")
-        if not isinstance(adaptation, MeshAdaptationResult):
-            raise TypeError("adaptation must be a MeshAdaptationResult.")
-        if not isinstance(source, FiniteElementDiscretization) or not isinstance(
-            target, FiniteElementDiscretization
-        ):
-            raise TypeError(
-                "Prepared topology spaces must be finite-element discretizations."
-            )
         prepared = tuple(transfers)
         source_fields = _fields_for_mesh(transaction.fields, adaptation.source.mesh)
         target_fields = _fields_for_mesh(transaction.fields, adaptation.target.mesh)
@@ -183,8 +344,7 @@ class PreparedFiniteElementTopologyTransition(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "Prepared topology transition changed its mesh, geometry, ordered "
-                "field basis/orientation, or transfer evidence."
+                f"PreparedFiniteElementTopologyTransition.transfers must preserve mesh, geometry, ordered field basis/orientation, and passing evidence; got source={source.mesh.topology_id}, target={target.mesh.topology_id}, fields={source_ids!r}, transfers={len(prepared)}"
             )
         self.source = source
         self.target = target
@@ -235,8 +395,7 @@ class PreparedFiniteElementTopologyTransition(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "Prepared topology transition belongs to another accepted mesh, "
-                "source revision, field role/order, or adaptation."
+                f"PreparedFiniteElementTopologyTransition.transaction must match the accepted mesh, revision, field order, and adaptation; got transaction={transaction.transaction_id!r}, adaptation={adaptation.result_id!r}, fields={len(accepted.fields)}"
             )
 
 
@@ -251,19 +410,20 @@ class FiniteElementHPTopologyResult(StrictModule, NonTrainableState):
     diagnostics: str = eqx.field(static=True)
 
 
+@checked
 def refinement_parent_cells(adaptation: MeshAdaptationResult, /) -> np.ndarray | None:
-    """Parent witness of a nesting adaptation, or ``None`` when it does not nest.
+    """Return parent cell indices for a nesting adaptation, or ``None`` otherwise.
 
     Entry ``t`` is the source cell (concatenated block order) whose preserved or
     refined lineage produced target cell ``t``. Coarsening, created cells, and
     unknown (remeshing) lineage have no single parent per target cell.
     """
 
-    if not isinstance(adaptation, MeshAdaptationResult):
-        raise TypeError("adaptation must be MeshAdaptationResult.")
     transition = adaptation.transition
     if transition is None:
-        raise ValueError("An unchanged adaptation has no parent witness.")
+        raise ValueError(
+            f"refinement_parent_cells.adaptation.transition must be present; got {transition!r}"
+        )
     source = adaptation.source.mesh
     target = adaptation.target.mesh
     cells = transition.lineage.entity_lineage(target.topological_dimension)
@@ -311,12 +471,12 @@ def _fields_for_mesh(
             prior = by_kind.get(element.cell_kind)
             if prior is not None and prior.element_id != element.element_id:
                 raise ValueError(
-                    "Regrouped native blocks need explicit unambiguous field-family declarations."
+                    f"FiniteElementFieldSpec.elements must unambiguously declare each regrouped cell family; got cell_kind={element.cell_kind!r}, element_ids={(prior.element_id, element.element_id)!r}"
                 )
             by_kind[element.cell_kind] = element
         if any(block.cell_kind not in by_kind for block in mesh.blocks):
             raise ValueError(
-                "A native target family has no declared finite-element descriptor."
+                f"FiniteElementFieldSpec.elements must declare every target cell family; got declared={tuple(by_kind)!r}, target={tuple(block.cell_kind for block in mesh.blocks)!r}"
             )
         output.append(
             FiniteElementFieldSpec(
@@ -463,26 +623,26 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
     exactly those spaces, and the transfer route is chosen from them, never from
     array widths. Nested refinement moves every field through
     :func:`~phydrax.discretization.fem.prepare_nested_field_transfer` on the
-    lineage parent witness (H1/L2 Lagrange, H(curl), H(div)); non-nested
+    lineage parent indices (H1/L2 Lagrange, H(curl), H(div)); non-nested
     adaptations move every field through the Galerkin L2 projection on a
     certified common refinement (``projection_policy``), scalar Lagrange fields
     directly and H(curl)/H(div) fields through their covariant/contravariant
     Piola maps with certified reproduction and content evidence. Materials cross
     through ``material_transfer`` with the lineage.
     Chart material callbacks return ``MaterialTopologyTransferResult`` with
-    every actual FV remap used by the material update. These owners share the
-    original native work, memory and deadline with all FE field roles and
+    every FV remap used by the material update. These owners share the
+    native work, memory and deadline with all FE field roles and
     physical reanalysis; the returned transaction result owns their finalized
     immutable evidence. Ordinary non-chart callbacks return ``MaterialTransaction``.
-    Chart callbacks additionally accept the keyword ``source_workspace`` and
-    forward that actual persistent owner reservation to FV preparation; it is
-    separate from the coordinate ledger's algebra scratch reservation.
+    Chart callbacks additionally receive ``scope``, ``budget`` and
+    ``source_workspace`` explicitly. The work ticket is settled before the
+    callback; retained coordinate storage is separate from source ownership.
     Numerical/source banks used by callbacks but not already owned by accepted
     state, adaptation or ``args`` are declared explicitly in ``callback_owners``.
     Opaque Python callbacks themselves are never traversed as numerical owners.
     Bounded surface-chart adaptations require explicit ``surface_chart_semantics``
     for each scalar field: intensive values follow material chart correspondence;
-    conservative densities preserve the old physical-area inventory. The actual
+    conservative densities preserve the old physical-area inventory. The
     prepared correspondence, not an identifier or corner overlap, supplies this
     action. Vector/Piola surface transfers are not implied by that scalar route.
     With ``field_transfer`` the declared semantics also bind each refreshed
@@ -496,7 +656,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
     staged as one ``CompositionRebind`` and published by
     ``commit_composition_rebind`` only when ``certify`` accepts the candidate and
     every transport's evidence passes; otherwise the accepted mesh and state are
-    returned unchanged with the refused receipt.
+    returned unchanged with the refused ``CompositionRebindReceipt``.
     """
 
     certify: Callable
@@ -536,7 +696,9 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             raise TypeError("certify must be callable.")
         specs = (fields,) if isinstance(fields, FiniteElementFieldSpec) else tuple(fields)
         if any(not isinstance(field, FiniteElementFieldSpec) for field in specs):
-            raise TypeError("fields must contain FiniteElementFieldSpec values.")
+            raise TypeError(
+                f"FiniteElementTopologyTransaction.fields must contain FiniteElementFieldSpec values; got {tuple(type(field).__name__ for field in specs)!r}"
+            )
         if material_transfer is not None and not callable(material_transfer):
             raise TypeError("material_transfer must be callable or None.")
         if field_transfer is not None and not callable(field_transfer):
@@ -549,14 +711,18 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             else projection_policy
         )
         if not isinstance(policy, CommonRefinementPolicy):
-            raise TypeError("projection_policy must be CommonRefinementPolicy or None.")
+            raise TypeError(
+                f"FiniteElementTopologyTransaction.projection_policy must be CommonRefinementPolicy or None; got {type(projection_policy).__name__}"
+            )
         if composition_rebind is not None and not callable(composition_rebind):
-            raise TypeError("composition_rebind must be callable or None.")
+            raise TypeError(
+                f"FiniteElementTopologyTransaction.composition_rebind must be callable or None; got {composition_rebind!r}"
+            )
         if surface_chart_semantics is not None and not isinstance(
             surface_chart_semantics, Mapping
         ):
             raise TypeError(
-                "surface_chart_semantics must be a field-name mapping or None."
+                f"FiniteElementTopologyTransaction.surface_chart_semantics must be a field-name mapping or None; got {type(surface_chart_semantics).__name__}"
             )
         chart_semantics = tuple(
             sorted(
@@ -574,10 +740,12 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         declared_names = {field.name for field in specs}
         if any(name not in declared_names for name, _ in chart_semantics):
             raise ValueError(
-                "Surface chart semantics must name a declared finite-element field."
+                f"FiniteElementTopologyTransaction.surface_chart_semantics must name declared fields; got names={tuple(name for name, _ in chart_semantics)!r}, declared={tuple(sorted(declared_names))!r}"
             )
         if not policy.overlap_simplices:
-            raise ValueError("The projection route needs overlap simplices.")
+            raise ValueError(
+                f"FiniteElementTopologyTransaction.projection_policy.overlap_simplices must be True; got {policy.overlap_simplices!r}"
+            )
         identifier = str(transaction_id)
         if not identifier:
             raise ValueError("transaction_id must be non-empty.")
@@ -618,7 +786,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         """Prepare reusable spaces and field operators for one nested transition."""
         if (source is None) != (target is None):
             raise ValueError(
-                "Prepared topology transition requires both resident spaces or neither."
+                f"FiniteElementTopologyTransaction.prepare_transition.spaces must provide both resident spaces or neither; got source={type(source).__name__}, target={type(target).__name__}"
             )
         geometry_transition = adaptation.geometry_transition
         if (
@@ -626,7 +794,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             and geometry_transition.evidence.kind == "bounded_chart_deformation"
         ):
             raise ValueError(
-                "Chart transitions prepare inside their owning native execution scope."
+                f"FiniteElementTopologyTransaction.prepare_transition.geometry_transition must prepare inside its native execution scope; got kind={geometry_transition.evidence.kind!r}"
             )
         if source is None or target is None:
             source_, target_ = self._prepared_pair(accepted, adaptation)
@@ -639,7 +807,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         )
         if isinstance(transfers, str):
             raise ValueError(
-                f"Finite-element topology transition preparation refused: {transfers}."
+                f"FiniteElementTopologyTransaction.prepare_transition.transfers must be admitted; got {transfers!r}"
             )
         prepared = PreparedFiniteElementTopologyTransition(
             self, adaptation, source_, target_, transfers
@@ -671,16 +839,20 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         self,
         source: FiniteElementDiscretization,
         target: FiniteElementDiscretization,
-        correspondence: PreparedSurfaceChartDeformation | PreparedSphereChartDeformation,
+        correspondence: MaterialChartDeformation,
         adaptation: MeshAdaptationResult,
         /,
         *,
         source_workspace: NativeHostStorageWorkspace | None,
+        scope: NativeExecutionScope,
+        budget: CoordinateEnclosureBudget,
     ) -> tuple[FiniteElementFieldTransfer, ...] | str:
-        from .._meshcore import current_native_execution_budget
-        from ..discretization._coordinate_enclosure import _COORDINATE_BUDGET
-        from ..discretization._sphere_chart_deformation import (
+        from phydrax.discretization._sphere_chart_records import (
             PreparedSphereChartDeformation,
+        )
+
+        from ..discretization._surface_chart_records import (
+            PreparedSurfaceChartDeformation,
         )
         from ..discretization.fem._sphere_chart_transfer import (
             prepare_sphere_chart_compatible_transfer,
@@ -694,6 +866,12 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         )
         from ..meshing._tetra_metric import MetricRemeshingEvidence
 
+        match correspondence:
+            case PreparedSurfaceChartDeformation() | PreparedSphereChartDeformation():
+                pass
+            case _:
+                return "surface-chart-correspondence-unsupported"
+
         semantics = dict(self.surface_chart_semantics)
         if set(semantics) != {field.name for field in self.fields}:
             return "surface-chart-field-semantics-required"
@@ -702,110 +880,90 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             or adaptation.evidence.execution_evidence is None
         ):
             raise ValueError(
-                "Material field transport requires the actual ended original mesh execution record."
+                f"MeshAdaptationResult.evidence must include a MetricRemeshingEvidence execution record; got {adaptation.evidence!r}"
             )
         previous = adaptation.evidence.execution_evidence
         previous.require_valid()
-        native = current_native_execution_budget()
-        ledger = _COORDINATE_BUDGET.get()
-        if native is None or ledger is None:
-            raise RuntimeError(
-                "Chart field roles require their owning transaction execution scope."
-            )
+        ledger = budget
         transfers: list[FiniteElementFieldTransfer] = []
-        if source_workspace is None or source_workspace is ledger._host_workspace:
+        if source_workspace is None:
             raise RuntimeError(
-                "Chart field roles require a persistent reservation separate from algebra scratch."
+                f"FiniteElementTopologyTransaction.source_workspace must provide a persistent reservation separate from algebra scratch; got {source_workspace!r}"
             )
-        source_workspace.retain_owner(
-            (
-                source,
-                target,
-                adaptation.source,
-                adaptation.target,
-                correspondence.source_geometry,
-                correspondence.target_geometry,
-                previous,
-            )
-        )
         for field in self.fields:
             semantic = semantics[field.name]
-            allowance = native.remaining()
-            debt = ledger.work_units - ledger.native_charged_work_units
-            work = max(
-                0,
-                min(
-                    ledger.maximum_work_units - ledger.work_units,
-                    allowance.remaining_work_units - debt,
-                ),
+            work = min(
+                ledger.maximum_work_units - ledger.work_units,
+                ledger.ticket.remaining_work_units,
             )
-            storage = min(
-                ledger.maximum_memory_bytes,
-                allowance.remaining_scratch_bytes
-                + ledger.retained_basis_bytes
-                + ledger.temporary_bytes_upper,
-            )
+            storage = ledger.maximum_memory_bytes
             ledger.admit_work_bound(work)
             if work <= 0:
                 raise ValueError(
-                    "All material field roles exhausted their one original execution allowance."
+                    f"FiniteElementTopologyTransaction.work must be positive for material field transfer; got {work}"
                 )
             with ledger.bound_stage(work, storage):
-                if isinstance(correspondence, PreparedSphereChartDeformation):
-                    if semantic == "material-compatible":
-                        transfer = prepare_sphere_chart_compatible_transfer(
-                            source,
-                            target,
-                            correspondence,
-                            field_name=field.name,
-                            source_geometry=correspondence.source_geometry,
-                            target_geometry=correspondence.target_geometry,
-                            maximum_work=work,
-                            maximum_storage_bytes=allowance.remaining_scratch_bytes,
-                            coordinate_budget=ledger,
-                        ).field_transfer
-                    elif semantic in ("intensive", "conservative-density"):
-                        transfer = prepare_sphere_chart_field_transfer(
-                            source,
-                            target,
-                            correspondence,
-                            field_name=field.name,
-                            source_geometry=correspondence.source_geometry,
-                            target_geometry=correspondence.target_geometry,
-                            semantics=semantic,
-                            maximum_work=work,
-                        )
-                    else:
-                        raise ValueError(
-                            "Unknown declared sphere material field semantics."
-                        )
-                elif semantic == "material-compatible":
-                    transfer = prepare_surface_chart_compatible_transfer(
-                        source,
-                        target,
-                        correspondence,
-                        field_name=field.name,
-                        source_geometry=correspondence.source_geometry,
-                        target_geometry=correspondence.target_geometry,
-                        maximum_work=work,
-                        coordinate_budget=ledger,
-                    ).field_transfer
-                elif semantic in ("intensive", "conservative-density"):
-                    transfer = prepare_surface_chart_field_transfer(
-                        source,
-                        target,
-                        correspondence,
-                        field_name=field.name,
-                        source_geometry=correspondence.source_geometry,
-                        target_geometry=correspondence.target_geometry,
-                        semantics=semantic,
-                        maximum_work=work,
-                    )
-                else:
-                    raise ValueError("Unknown declared surface material field semantics.")
-                ledger.charge_native_work(
-                    ledger.work_units - ledger.native_charged_work_units
-                )
+                match correspondence:
+                    case PreparedSphereChartDeformation():
+                        if semantic == "material-compatible":
+                            transfer = prepare_sphere_chart_compatible_transfer(
+                                source,
+                                target,
+                                correspondence,
+                                field_name=field.name,
+                                source_geometry=correspondence.source_geometry,
+                                target_geometry=correspondence.target_geometry,
+                                maximum_work=work,
+                                maximum_storage_bytes=storage,
+                                budget=ledger,
+                            ).field_transfer
+                        elif semantic in ("intensive", "conservative-density"):
+                            transfer = prepare_sphere_chart_field_transfer(
+                                source,
+                                target,
+                                correspondence,
+                                field_name=field.name,
+                                source_geometry=correspondence.source_geometry,
+                                target_geometry=correspondence.target_geometry,
+                                semantics=semantic,
+                                maximum_work=work,
+                                budget=ledger,
+                            )
+                        else:
+                            raise ValueError(
+                                f"FiniteElementTopologyTransaction.surface_chart_semantics must declare a supported sphere material field semantic; got {semantic!r}"
+                            )
+                    case PreparedSurfaceChartDeformation():
+                        if semantic == "material-compatible":
+                            transfer = prepare_surface_chart_compatible_transfer(
+                                source,
+                                target,
+                                correspondence,
+                                field_name=field.name,
+                                source_geometry=correspondence.source_geometry,
+                                target_geometry=correspondence.target_geometry,
+                                maximum_work=work,
+                                budget=ledger,
+                            ).field_transfer
+                        elif semantic in ("intensive", "conservative-density"):
+                            transfer = prepare_surface_chart_field_transfer(
+                                source,
+                                target,
+                                correspondence,
+                                field_name=field.name,
+                                source_geometry=correspondence.source_geometry,
+                                target_geometry=correspondence.target_geometry,
+                                semantics=semantic,
+                                maximum_work=work,
+                                budget=ledger,
+                            )
+                        else:
+                            raise ValueError(
+                                f"FiniteElementTopologyTransaction.surface_chart_semantics must declare a supported surface material field semantic; got {semantic!r}"
+                            )
+                    case _:
+                        assert_never(correspondence)
+
                 transfers.append(transfer)
         return tuple(transfers)
 
@@ -819,7 +977,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         request = adaptation.request
         if not isinstance(request, GeometryRealizationMeshAdaptation):
             raise TypeError(
-                "Material realization transfer requires its actual geometry request."
+                f"MeshAdaptationResult.request must be GeometryRealizationMeshAdaptation for material realization transfer; got {type(request).__name__}"
             )
         meanings = dict(self.surface_chart_semantics)
         if any(field.name not in meanings for field in self.fields):
@@ -858,6 +1016,8 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         /,
         *,
         source_workspace: NativeHostStorageWorkspace | None = None,
+        scope: NativeExecutionScope | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> tuple[FiniteElementFieldTransfer, ...] | str:
         """One transfer per declared field, or the refusal reason."""
 
@@ -875,12 +1035,18 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 != correspondence.deformation_id
             ):
                 return "surface-chart-correspondence-missing"
+            if scope is None or budget is None:
+                raise RuntimeError(
+                    f"FiniteElementTopologyTransaction.execution must provide scope and budget for chart field roles; got scope={scope!r}, budget={budget!r}"
+                )
             return self._surface_chart_field_transfers(
                 source,
                 target,
                 correspondence,
                 adaptation,
                 source_workspace=source_workspace,
+                scope=scope,
+                budget=budget,
             )
         parents = refinement_parent_cells(adaptation)
         coarsening = adaptation.coarsening_witnesses
@@ -895,8 +1061,8 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             ] = {}
             transfers: list[FiniteElementFieldTransfer] = []
             for field in self.fields:
-                source_index = source._field_index(field.name)
-                target_index = target._field_index(field.name)
+                source_index = source.field_index(field.name)
+                target_index = target.field_index(field.name)
                 key = (
                     source.dof_maps[source_index].dof_map_id,
                     target.dof_maps[target_index].dof_map_id,
@@ -959,30 +1125,32 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         accepted: FiniteElementAcceptedState,
         adaptation: MeshAdaptationResult,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> tuple[FiniteElementDiscretization, FiniteElementDiscretization]:
         if not self.fields:
             raise ValueError(
-                "Mesh adaptation transfer requires the declared FE fields of the "
-                "accepted state."
+                f"FiniteElementTopologyTransaction.fields must declare accepted FE fields; got {self.fields!r}"
             )
         if len(self.fields) != len(accepted.fields):
-            raise ValueError("One declared FE field is required per accepted field.")
+            raise ValueError(
+                f"FiniteElementTopologyTransaction.fields must contain one declaration per accepted field; got declared={len(self.fields)}, accepted={len(accepted.fields)}"
+            )
         source = FiniteElementPlan(
             adaptation.source.mesh,
             _fields_for_mesh(self.fields, adaptation.source.mesh),
             coordinate_spec=adaptation.source.geometry,
-        ).prepare()
+        ).prepare(budget=budget)
         for value, space in zip(accepted.fields, source.field_spaces, strict=True):
             if value.shape != space.vector_space.structure().shape:
                 raise ValueError(
-                    f"Accepted field {space.name!r} does not realize its declared "
-                    "finite-element space."
+                    f"FiniteElementAcceptedState.fields.{space.name}.shape must equal {space.vector_space.structure().shape!r}; got {value.shape!r}"
                 )
         return source, FiniteElementPlan(
             adaptation.target.mesh,
             _fields_for_mesh(self.fields, adaptation.target.mesh),
             coordinate_spec=adaptation.target.geometry,
-        ).prepare()
+        ).prepare(budget=budget)
 
     def _transfer_materials(
         self,
@@ -992,18 +1160,28 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         /,
         *,
         source_workspace: NativeHostStorageWorkspace | None = None,
+        scope: NativeExecutionScope | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> MaterialTransaction | MaterialTopologyTransferResult | None | str:
         if accepted.materials is None:
             return None
         if self.material_transfer is None:
             return "material-transfer-policy-required"
-        transferred = (
-            self.material_transfer(accepted.materials, lineage, args)
-            if source_workspace is None
-            else self.material_transfer(
-                accepted.materials, lineage, args, source_workspace=source_workspace
+        if source_workspace is None:
+            transferred = self.material_transfer(accepted.materials, lineage, args)
+        else:
+            if scope is None or budget is None:
+                raise RuntimeError(
+                    f"FiniteElementTopologyTransaction.execution must provide scope and budget for chart material roles; got scope={scope!r}, budget={budget!r}"
+                )
+            transferred = self.material_transfer(
+                accepted.materials,
+                lineage,
+                args,
+                source_workspace=source_workspace,
+                scope=scope,
+                budget=budget,
             )
-        )
         if not isinstance(
             transferred, (MaterialTransaction, MaterialTopologyTransferResult)
         ):
@@ -1045,12 +1223,10 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             )
         if preparation is not None:
             raise ValueError(
-                "Chart transitions cannot borrow a preparation outside their native scope."
+                f"FiniteElementTopologyTransaction.preparation must be None for chart transitions prepared inside their native scope; got {preparation.preparation_id!r}"
             )
-        from .._meshcore import current_native_host_workspace
-        from ..discretization._coordinate_enclosure import CoordinateEnclosureBudget
         from ..discretization.fem._topology_transfer import FiniteElementTransferEvidence
-        from ..discretization.finite_volume._automatic_remap import _bind_remap_execution
+        from ..discretization.finite_volume._automatic_remap import bind_remap_execution
         from ..meshing._tetra_metric import MetricRemeshingEvidence
         from ..meshing._volume_generation import native_volume_source_execution_budget
 
@@ -1059,40 +1235,45 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             or adaptation.evidence.execution_evidence is None
         ):
             raise ValueError(
-                "Chart transactions require the actual ended source execution record."
+                f"MeshAdaptationResult.evidence must include a MetricRemeshingEvidence source execution record; got {adaptation.evidence!r}"
             )
         previous = adaptation.evidence.execution_evidence
         previous.require_valid()
         owner_id = previous.owner_id
         if owner_id is None:
             raise ValueError(
-                "Chart transaction predecessor lacks its actual source owner identity."
+                f"NativeExecutionRecord.owner_id must identify the chart transaction source; got {owner_id!r}"
             )
         limits = adaptation.policy.limits
         owners: list[PreparedUnstructuredConservativeRemap] = []
-        with native_volume_source_execution_budget(limits, previous, owner_id) as native:
-            workspace = current_native_host_workspace()
-            if workspace is None:
-                raise RuntimeError(
-                    "Chart transaction lacks its original execution workspace."
+        with NativeExecutionScope(limits.native_limits()) as native:
+            with (
+                native_volume_source_execution_budget(
+                    limits, previous, owner_id, scope=native
+                ),
+                native.host_workspace() as workspace,
+            ):
+                workspace.retain_owner(
+                    (
+                        accepted,
+                        mesh,
+                        adaptation,
+                        args,
+                        decision,
+                        self.callback_owners,
+                        geometry_transition.chart_deformation,
+                    )
                 )
-            workspace.retain_owner(
-                (
-                    accepted,
-                    mesh,
-                    adaptation,
-                    args,
-                    decision,
-                    self.callback_owners,
-                    geometry_transition.chart_deformation,
+                initial = HostBatchTicket(0)
+                ledger = CoordinateEnclosureBudget(
+                    initial,
+                    maximum_work_units=limits.maximum_work_units,
+                    maximum_memory_bytes=limits.maximum_scratch_bytes,
                 )
-            )
-            remaining = native.remaining()
-            ledger = CoordinateEnclosureBudget(
-                remaining.remaining_work_units, remaining.remaining_scratch_bytes
-            )
-            with ledger.activate():
-                try:
+                initial.settle()
+                with ledger.retained_storage(
+                    lambda bound: native.batch(0, bytes_upper=bound)
+                ):
                     result = self._execute(
                         accepted,
                         mesh,
@@ -1103,28 +1284,19 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                         compiled_layout_id=compiled_layout_id,
                         material_remaps=owners,
                         source_workspace=workspace,
+                        scope=native,
+                        budget=ledger,
                     )
                     workspace.retain_owner((result, tuple(owners)))
-                except BaseException as error:
-                    try:
-                        ledger.charge_native_work(
-                            ledger.work_units - ledger.native_charged_work_units
-                        )
-                    except BaseException as debit_error:
-                        error.add_note(
-                            f"Actual coordinate work debit also failed: {debit_error!r}"
-                        )
-                    raise
-                else:
-                    ledger.charge_native_work(
-                        ledger.work_units - ledger.native_charged_work_units
-                    )
+                overlap = native_preparation_ledger(native).overlap(native, previous)
         if native.evidence is None:
             raise RuntimeError(
-                "Chart transaction lacks its actual ended execution record."
+                f"NativeExecutionScope.evidence must contain the ended chart transaction record; got {native.evidence!r}"
             )
         execution = NativeExecutionRecord(
-            native.evidence, owner_id=previous.owner_id, preparation_evidence=previous
+            overlap.normalize(native.evidence),
+            owner_id=previous.owner_id,
+            preparation_evidence=previous,
         )
         transfers = []
         for transfer in result.transfers:
@@ -1157,7 +1329,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             diagnostics=result.diagnostics,
             execution_evidence=execution,
             material_remaps=tuple(
-                _bind_remap_execution(owner, execution) for owner in owners
+                bind_remap_execution(owner, execution) for owner in owners
             ),
         )
 
@@ -1180,6 +1352,8 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         material_remaps: list[PreparedUnstructuredConservativeRemap] | None = None,
         source_workspace: NativeHostStorageWorkspace | None = None,
         preparation: PreparedFiniteElementTopologyTransition | None = None,
+        scope: NativeExecutionScope | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> FiniteElementTopologyResult:
         if (
             mesh.topology_id != accepted.topology_id
@@ -1192,51 +1366,50 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         if source_realization and reanalysis is None:
             return self._retained(accepted, mesh, "independent-reanalysis-required")
         if decision is not None:
-            from ..meshing._adaptation import (
-                MarkedMeshAdaptation,
-                MetricMeshAdaptation,
-                RelocationMeshAdaptation,
+            reason = _topology_decision_admission(
+                adaptation, decision, reanalysis is not None
             )
-            from ..meshing._decision import AdaptationAction
-
-            selected = decision.require_selected(
-                adaptation.source.result_id,
-                adaptation.result_id,
-                adaptation.target.result_id,
-            )
-            match adaptation.request:
-                case MarkedMeshAdaptation():
-                    action = AdaptationAction.H
-                case MetricMeshAdaptation():
-                    action = AdaptationAction.METRIC
-                case RelocationMeshAdaptation():
-                    action = AdaptationAction.RELOCATION
-                case GeometryRealizationMeshAdaptation():
-                    action = AdaptationAction.GEOMETRY_ORDER
-                case _:
-                    raise ValueError(
-                        "This source-changing request requires its own physical decision admission."
-                    )
-            if (
-                selected.action != action
-                or selected.feasibility.route_id != adaptation.route.value
-            ):
-                raise ValueError(
-                    "Decision action/route does not match the executed native request."
-                )
-            if not adaptation.status.converged:
-                return self._retained(accepted, mesh, "native-admission-rejected")
-            if reanalysis is None:
-                return self._retained(accepted, mesh, "independent-reanalysis-required")
+            if reason is not None:
+                return self._retained(accepted, mesh, reason)
         transition = adaptation.transition
         if transition is None:
             return self._retained(accepted, mesh, "adaptation-unchanged")
         candidate_mesh = adaptation.target.mesh
         if preparation is None:
-            source, target = self._prepared_pair(accepted, adaptation)
-            transfers = self._field_transfers(
-                source, target, adaptation, source_workspace=source_workspace
-            )
+            if budget is None:
+                source, target = self._prepared_pair(accepted, adaptation)
+                transfers = self._field_transfers(source, target, adaptation)
+            else:
+                if scope is None:
+                    raise RuntimeError(
+                        f"FiniteElementTopologyTransaction.scope must be present for chart field preparation; got {scope!r}"
+                    )
+                remaining = scope.remaining()
+                ticket = scope.batch(
+                    min(
+                        budget.maximum_work_units - budget.work_units,
+                        remaining.remaining_work_units,
+                    ),
+                    queries_upper=remaining.remaining_geometry_queries,
+                    bytes_upper=min(
+                        budget.maximum_memory_bytes, remaining.remaining_managed_bytes
+                    ),
+                    cavity_upper=remaining.remaining_cavity_cells,
+                )
+                with budget.bind_ticket(ticket), ticket.native_target():
+                    source, target = self._prepared_pair(
+                        accepted, adaptation, budget=budget
+                    )
+                    transfers = self._field_transfers(
+                        source,
+                        target,
+                        adaptation,
+                        source_workspace=source_workspace,
+                        scope=scope,
+                        budget=budget,
+                    )
+                if source_workspace is not None:
+                    source_workspace.retain_owner((source, target))
             if isinstance(transfers, str):
                 return self._retained(accepted, mesh, transfers)
         else:
@@ -1244,90 +1417,22 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             source, target = preparation.source, preparation.target
             transfers = preparation.transfers
         if decision is not None:
-            if any(
-                prepared.default_runtime.geometry_layout_id
-                != result.geometry.geometry_layout_id
-                or not np.array_equal(
-                    prepared.default_runtime.coordinates, result.geometry.coordinates
-                )
-                for prepared, result in (
-                    (source, adaptation.source),
-                    (target, adaptation.target),
-                )
-            ):
-                raise ValueError(
-                    "Prepared solver spaces do not preserve the admitted coordinate maps."
-                )
-            selected = decision.selected
-            if selected is None:
-                raise ValueError("An unselected decision reached native execution.")
-            feasibility = selected.feasibility
-            layouts = tuple(
-                sorted(
-                    (space.name, space.layout.layout_id) for space in target.field_spaces
-                )
+            _require_topology_candidate_layouts(
+                source, target, adaptation, decision, compiled_layout_id
             )
-            if (
-                feasibility.cell_families
-                != tuple(sorted({block.cell_kind for block in candidate_mesh.blocks}))
-                or feasibility.geometry_layout_id
-                != adaptation.target.geometry.geometry_layout_id
-                or feasibility.field_layouts != layouts
-                or feasibility.dofs
-                != sum(space.layout.size for space in target.field_spaces)
-                or compiled_layout_id is None
-                or feasibility.compiled_layout_id != compiled_layout_id
-                or feasibility.geometry_certificate_id
-                != adaptation.target.audit.report_id
-                or feasibility.topology_certificate_id
-                != adaptation.target.audit.report_id
-            ):
-                raise ValueError(
-                    "Decision does not realize the native candidate's certified compiled layouts."
-                )
         materials = self._transfer_materials(
-            accepted, transition.lineage, args, source_workspace=source_workspace
+            accepted,
+            transition.lineage,
+            args,
+            source_workspace=source_workspace,
+            scope=scope,
+            budget=budget,
         )
         if isinstance(materials, str):
             return self._retained(accepted, mesh, materials, transfers=transfers)
-        if isinstance(materials, MaterialTopologyTransferResult):
-            if material_remaps is None:
-                if materials.remaps:
-                    raise ValueError(
-                        "Actual remap owners require their chart transaction scope."
-                    )
-            else:
-                geometry_transition = adaptation.geometry_transition
-                if geometry_transition is None:
-                    raise ValueError(
-                        "Material remap owners require the actual chart transition."
-                    )
-                for owner in materials.remaps:
-                    chart = owner.surface_chart_evidence
-                    if (
-                        chart is None
-                        or chart.deformation.deformation_id
-                        != geometry_transition.chart_correspondence_id
-                    ):
-                        raise ValueError(
-                            "Material remap owner does not bind the actual chart transition."
-                        )
-                    if owner.execution_evidence is not None:
-                        raise ValueError(
-                            "Chart callback returned an independently ended remap instead of borrowing its transaction."
-                        )
-                material_remaps.extend(materials.remaps)
-                workspace = source_workspace
-                if workspace is None:
-                    raise RuntimeError(
-                        "Material remap owners lack the original transaction workspace."
-                    )
-                workspace.retain_owner(materials)
-            materials = materials.materials
-        elif material_remaps is not None and materials is not None:
-            raise TypeError(
-                "Chart material callbacks must return MaterialTopologyTransferResult."
-            )
+        materials = _adopt_topology_material_remaps(
+            materials, adaptation, material_remaps, source_workspace
+        )
         source_epoch = TopologyEpoch(
             accepted.state_version,
             cell_geometry_id(adaptation.source.geometry),
@@ -1352,21 +1457,11 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         )
         transferred_fields = candidate_fields
         if self.field_transfer is not None:
-            refreshed = tuple(
-                jnp.asarray(value)
-                for value in self.field_transfer(candidate_fields, adaptation, args)
+            refreshed = _refresh_topology_fields(
+                self.field_transfer, candidate_fields, target, adaptation, args
             )
-            if len(refreshed) != len(target.field_spaces) or any(
-                value.shape != space.vector_space.structure().shape
-                for value, space in zip(refreshed, target.field_spaces, strict=True)
-            ):
-                return self._retained(
-                    accepted, mesh, "field-refresh-layout-rejected", transfers=transfers
-                )
-            if any(not bool(jnp.all(jnp.isfinite(value))) for value in refreshed):
-                return self._retained(
-                    accepted, mesh, "field-refresh-nonfinite", transfers=transfers
-                )
+            if isinstance(refreshed, str):
+                return self._retained(accepted, mesh, refreshed, transfers=transfers)
             candidate_fields = refreshed
         certified = bool(
             jnp.asarray(
@@ -1383,12 +1478,12 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             actual = reanalysis(candidate_mesh, candidate_fields, materials, args)
             if not isinstance(actual, PhysicalErrorEvidence):
                 raise TypeError(
-                    "Independent geometry reanalysis must return PhysicalErrorEvidence."
+                    f"FiniteElementTopologyTransaction.reanalysis.result must be PhysicalErrorEvidence; got {type(actual).__name__}"
                 )
             certified = certified and actual.revision_id == adaptation.target.result_id
             if decision is not None:
                 certified = certified and not decision.reanalysis_issues(actual)
-        # Source-realization trials expose a staged receipt, never a publication
+        # Source-realization trials expose a staged CompositionRebindReceipt, never a publication
         # authorized by an opaque Boolean instead of the physical decision.
         if source_realization and decision is None:
             certified = False
@@ -1451,7 +1546,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
         """Certify the remap image, then stage the independently checked solve.
 
         The solved field is not falsely labeled as the remap image. An explicit
-        conservative density requires the owner's actual content ledger; an
+        conservative density requires the remap's content ledger; an
         unspecified field retains any content obligation of its prepared remap.
         A declared intensive/material-compatible re-solve is
         a different physical transition: it reports no inherited content and is
@@ -1631,9 +1726,13 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             core if self.composition_rebind is None else self.composition_rebind(core)
         )
         if not isinstance(rebind, CompositionRebind):
-            raise TypeError("composition_rebind must return CompositionRebind.")
+            raise TypeError(
+                f"FiniteElementTopologyTransaction.composition_rebind.result must be CompositionRebind; got {type(rebind).__name__}"
+            )
         if rebind.source.boundary_id != core.source.boundary_id:
-            raise ValueError("Extended composition must retain the accepted boundary.")
+            raise ValueError(
+                f"CompositionRebind.source.boundary_id must equal {core.source.boundary_id!r}; got {rebind.source.boundary_id!r}"
+            )
         for original, extended in (
             (core.source, rebind.source),
             (core.candidate, rebind.candidate),
@@ -1644,18 +1743,20 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                     or extended.entry(entry.entry_id).record_id != entry.record_id
                 ):
                     raise ValueError(
-                        "Extended composition cannot replace core mesh/state artifacts."
+                        f"CompositionRebind.entries must retain core mesh/state artifacts; got entry_id={entry.entry_id!r}, extended_entry_ids={extended.entry_ids!r}"
                     )
         if not {item.transport_id for item in core.transports}.issubset(
             item.transport_id for item in rebind.transports
         ):
             raise ValueError(
-                "Extended composition cannot replace core field/material transports."
+                f"CompositionRebind.transports must retain core field/material transports; got {tuple(item.transport_id for item in rebind.transports)!r}"
             )
         if decision is not None:
             selected = decision.selected
             if selected is None:
-                raise ValueError("Unselected decision cannot publish a composition.")
+                raise ValueError(
+                    f"SolverAwareDecision.selected must be present to publish a composition; got {selected!r}"
+                )
             selected.feasibility.require_rebind(rebind)
         return rebind
 
@@ -1724,7 +1825,9 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 for value in self.field_transfer(accepted.fields, transaction, args)
             )
         if len(candidate_fields) != len(accepted.fields):
-            raise ValueError("hp field transfer must return one field per field.")
+            raise ValueError(
+                f"FiniteElementTopologyTransaction.field_transfer.result must contain one field per accepted field; got returned={len(candidate_fields)}, accepted={len(accepted.fields)}"
+            )
         candidate_materials: MaterialTransaction | None = None
         if accepted.materials is not None:
             if self.material_transfer is None:

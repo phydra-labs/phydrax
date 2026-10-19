@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "capi_guard.hpp"
+#include "counter_records.hpp"
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -492,21 +493,23 @@ int32_t phx_mc_triangulation_3d_statistics(const phx_mc_triangulation_3d* triang
     for (int64_t id = 0; id < triangulation->vertex_count(); ++id) {
       live += triangulation->live_vertex(id) ? 1 : 0;
     }
-    values[PHX_MC_TRIANGULATION_3D_VERTEX_IDS] = triangulation->vertex_count();
-    values[PHX_MC_TRIANGULATION_3D_LIVE_VERTICES] = live;
-    values[PHX_MC_TRIANGULATION_3D_FINITE_CELLS] = complex.finite_count;
-    values[PHX_MC_TRIANGULATION_3D_GHOST_CELLS] = complex.live_count() - complex.finite_count;
-    values[PHX_MC_TRIANGULATION_3D_CELL_SLOTS] = static_cast<int64_t>(complex.tets.size());
-    values[PHX_MC_TRIANGULATION_3D_FREE_SLOTS] = static_cast<int64_t>(complex.free_slots.size());
-    values[PHX_MC_TRIANGULATION_3D_CONSTRAINED_FACETS] = state.constrained_facets();
-    values[PHX_MC_TRIANGULATION_3D_WORK] = state.work();
-    values[PHX_MC_TRIANGULATION_3D_COMMITTED] = triangulation->committed;
-    values[PHX_MC_TRIANGULATION_3D_REFUSED] = triangulation->refused;
-    values[PHX_MC_TRIANGULATION_3D_LARGEST_CAVITY] =
+    phx::mc::TriangulationStatistics statistics;
+    phx::mc::CounterPublisher publisher{statistics, values};
+    statistics.vertex_ids = triangulation->vertex_count();
+    statistics.live_vertices = live;
+    statistics.finite_cells = complex.finite_count;
+    statistics.ghost_cells = complex.live_count() - complex.finite_count;
+    statistics.cell_slots = static_cast<int64_t>(complex.tets.size());
+    statistics.free_slots = static_cast<int64_t>(complex.free_slots.size());
+    statistics.constrained_facets = state.constrained_facets();
+    statistics.work = state.work();
+    statistics.committed = triangulation->committed;
+    statistics.refused = triangulation->refused;
+    statistics.largest_cavity =
         static_cast<int64_t>(state.largest_cavity());
-    values[PHX_MC_TRIANGULATION_3D_RETAINED_BYTES] =
+    statistics.retained_bytes =
         static_cast<int64_t>(triangulation->retained_bytes());
-    values[PHX_MC_TRIANGULATION_3D_PEAK_BYTES] = static_cast<int64_t>(triangulation->peak_bytes);
+    statistics.peak_bytes = static_cast<int64_t>(triangulation->peak_bytes);
     return triangulation->broken ? PHX_MC_INTERNAL_ERROR : PHX_MC_OK;
   });
 }

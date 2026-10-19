@@ -38,7 +38,7 @@ class AdaptiveOctreeInteractionList(NonTrainableState, StrictModule):
 
     ``routes`` holds ``(source node, target node)`` pairs sorted by target node and
     then source node; ``row_offsets[n]:row_offsets[n + 1]`` addresses the stored
-    routes of target node ``n``. ``required_routes`` counts the complete list and
+    routes of target node ``n``. ``required_routes`` counts all required routes and
     ``overflow`` reports that routes beyond ``routes.capacity`` were not stored.
     ``row_width`` covers every stored row and is at least one.
     """
@@ -73,13 +73,13 @@ class AdaptiveOctreeEvidence(NonTrainableState, StrictModule):
 
 
 class AdaptiveOctree(NonTrainableState, StrictModule):
-    """Complete adaptive linear octree over one Morton-sorted point set.
+    """An adaptive linear octree over one Morton-sorted point set.
 
     Nodes are stored level by level and in Morton order within each level. Every
     refined node owns all ``2**dimension`` children in one contiguous block, so the
     leaves tile the address box and every domain point has exactly one containing
     leaf; unoccupied children are empty leaves. Node point spans index
-    ``point_order``, the canonical ``(Morton code, logical index)`` point order.
+    ``point_order``, the canonical ordering by ``(Morton code, logical index)``.
 
     Two nodes are separated when, along some axis, their gap is at least the width
     of the smaller node plus ``separation_padding``; with zero padding this is the
@@ -215,6 +215,8 @@ class AdaptiveOctree(NonTrainableState, StrictModule):
         order.
         """
         branching = 1 << self.address_plan.dimension
+        # Level widths differ, so these immutable prepared blocks stage separate
+        # shapes while preserving the declared deepest-first child reduction.
         for level in range(self.maximum_level, 0, -1):
             start = self.level_offsets[level]
             stop = self.level_offsets[level + 1]
@@ -245,6 +247,8 @@ class AdaptiveOctree(NonTrainableState, StrictModule):
         ``translate(parent_values, parent_centers, child_centers)`` maps one level of
         parent payloads to the expansion centers of their children.
         """
+        # The prepared level blocks have different shapes and keep their
+        # coarsest-first propagation order.
         for level in range(1, self.maximum_level + 1):
             start = self.level_offsets[level]
             stop = self.level_offsets[level + 1]
@@ -263,7 +267,7 @@ class AdaptiveOctree(NonTrainableState, StrictModule):
 
 
 class _NodeTable(NamedTuple):
-    """Host node arrays of one complete adaptive tree."""
+    """Host node arrays of one adaptive tree."""
 
     prefixes: np.ndarray
     levels: np.ndarray
@@ -554,7 +558,7 @@ class AdaptiveOctreePlan(StrictModule):
     above ``address_plan.maximum_depth``. ``balanced=True`` additionally refines
     leaves until leaves that touch differ by at most one level. ``u_capacity``,
     ``v_capacity``, ``w_capacity``, and ``x_capacity`` bound the stored routes of
-    each list; ``None`` stores the complete list.
+    each list; ``None`` stores all required routes.
     """
 
     address_plan: MortonAddressPlan
@@ -582,10 +586,12 @@ class AdaptiveOctreePlan(StrictModule):
         x_capacity: int | None = None,
     ) -> None:
         if not isinstance(balanced, bool):
-            raise TypeError("balanced must be a bool.")
+            raise TypeError(
+                f"AdaptiveOctreePlan.balanced must be a bool; got {balanced!r}"
+            )
         if any(address_plan.periodic_axes):
             raise ValueError(
-                "Adaptive octree interaction lists are free-space; periodic axes are unsupported."
+                f"AdaptiveOctreePlan.address_plan.periodic_axes must be false for free-space interactions; got {address_plan.periodic_axes}"
             )
         capacity = index(leaf_capacity)
         padding = float(separation_padding)
@@ -594,11 +600,17 @@ class AdaptiveOctreePlan(StrictModule):
             for value in (u_capacity, v_capacity, w_capacity, x_capacity)
         )
         if capacity < 1:
-            raise ValueError("leaf_capacity must be positive.")
+            raise ValueError(
+                f"AdaptiveOctreePlan.leaf_capacity must be positive; got {capacity}"
+            )
         if not math.isfinite(padding) or padding < 0.0:
-            raise ValueError("separation_padding must be finite and nonnegative.")
+            raise ValueError(
+                f"AdaptiveOctreePlan.separation_padding must be finite and nonnegative; got {padding}"
+            )
         if any(value is not None and value < 1 for value in list_capacities):
-            raise ValueError("Interaction list capacities must be positive.")
+            raise ValueError(
+                f"AdaptiveOctreePlan.list_capacities must be positive or None; got capacities={list_capacities}"
+            )
         self.address_plan = address_plan
         self.leaf_capacity = capacity
         self.balanced = balanced
@@ -627,12 +639,14 @@ class AdaptiveOctreePlan(StrictModule):
             or positions.shape[1] != address.dimension
         ):
             raise ValueError(
-                f"points must have shape (count, {address.dimension}) with count >= 1."
+                f"AdaptiveOctreePlan.points must have shape (count, {address.dimension}) with count >= 1; got shape={positions.shape}"
             )
-        encoding = address.encode(jnp.asarray(positions))
-        if not bool(jnp.all(encoding.in_domain)):
-            raise ValueError("Octree points must be finite and lie in [lower, upper).")
-        raw_codes = np.asarray(encoding.codes, dtype=np.uint64)
+        encoding = address.encode_host(positions)
+        if not bool(np.all(encoding.in_domain)):
+            raise ValueError(
+                f"AdaptiveOctreePlan.points must be finite and lie in [lower, upper); got points outside lower={address.lower}, upper={address.upper}"
+            )
+        raw_codes = encoding.codes
         order = np.lexsort((np.arange(positions.shape[0]), raw_codes))
         codes = raw_codes[order]
         refined = _subdivided_prefixes(codes, address, self.leaf_capacity)
@@ -705,6 +719,7 @@ class AdaptiveOctreePlan(StrictModule):
         )
 
 
+@checked
 def refined_octree_leaves(
     address_plan: MortonAddressPlan,
     refined: Sequence[np.ndarray],
@@ -712,7 +727,7 @@ def refined_octree_leaves(
     *,
     balanced: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Leaves of the complete tree whose refined cells are ``refined[level]``.
+    """Return tree leaves for the cells refined by ``refined[level]``.
 
     ``refined[level]`` lists level-``level`` Morton prefixes to subdivide; every
     listed cell's parent must itself be listed one level up. ``balanced=True``
@@ -721,13 +736,13 @@ def refined_octree_leaves(
     leaf prefixes, levels, and finest-cell integer lower corners in ascending
     Morton order of their first finest cell.
     """
-    if not isinstance(address_plan, MortonAddressPlan):
-        raise TypeError("address_plan must be a MortonAddressPlan.")
     if not isinstance(balanced, bool):
-        raise TypeError("balanced must be a bool.")
+        raise TypeError(f"AdaptiveOctreePlan.balanced must be a bool; got {balanced!r}")
     depth = address_plan.maximum_depth
     if len(refined) > depth:
-        raise ValueError("refined lists more levels than the address depth.")
+        raise ValueError(
+            f"refined_octree_leaves.refined must not exceed address depth; got levels={len(refined)}, depth={depth}"
+        )
     levels = [np.unique(np.asarray(prefixes, dtype=np.uint64)) for prefixes in refined]
     levels += [np.zeros((0,), dtype=np.uint64)] * (depth - len(levels))
     dimension = np.uint64(address_plan.dimension)
@@ -735,9 +750,13 @@ def refined_octree_leaves(
         if levels[level].size and not np.all(
             np.isin(levels[level] >> dimension, levels[level - 1])
         ):
-            raise ValueError("Every refined cell requires a refined parent.")
+            raise ValueError(
+                f"refined_octree_leaves.refined must contain every refined parent; got orphaned cells at level={level}"
+            )
     if levels[0].size and not np.array_equal(levels[0], np.zeros((1,), np.uint64)):
-        raise ValueError("Level zero holds only the root prefix.")
+        raise ValueError(
+            f"refined_octree_leaves.refined must hold only the root prefix at level zero; got {levels[0]}"
+        )
     if balanced:
         levels = _balanced_prefixes(levels, address_plan)
     table = _node_table(levels, np.zeros((0,), dtype=np.uint64), address_plan)

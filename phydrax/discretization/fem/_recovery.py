@@ -27,6 +27,8 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax.discretization.fem._reference_rules import degree_aware_reference_rule
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -51,12 +53,8 @@ from ._adaptivity import (
     FiniteElementErrorEstimate,
     local_dual_weighted_residual,
 )
-from ._generic import (
-    _degree_aware_reference_rule,
-    FiniteElementDiscretization,
-    FiniteElementRuntimeData,
-)
-from ._reference import FiniteElementSpec, lagrange_element
+from ._generic import FiniteElementDiscretization, FiniteElementRuntimeData
+from ._reference import lagrange_element
 
 
 _PATCH_PROPERTY_POLICY = DensePropertyVerificationPolicy(require_positive_definite=True)
@@ -100,7 +98,7 @@ def _field_elements(
 ) -> tuple[int, tuple[FiniteElementSpec, ...]]:
     if not isinstance(discretization, FiniteElementDiscretization):
         raise TypeError("discretization must be FiniteElementDiscretization.")
-    field = discretization._field_index(field_name)
+    field = discretization.field_index(field_name)
     if discretization.dof_maps[field].component_shape != ():
         raise ValueError("Recovery requires a scalar finite-element field.")
     return field, tuple(discretization.elements[field])
@@ -382,7 +380,7 @@ def prepare_gradient_recovery(
         raise ValueError("Recovery requires full-dimensional simplex cells.")
     samples = jnp.asarray(_SAMPLE_POINTS[(kind, degree)])
     samples_per_cell = samples.shape[0]
-    quadrature_points, quadrature_weights = _degree_aware_reference_rule(kind, 2 * degree)
+    quadrature_points, quadrature_weights = degree_aware_reference_rule(kind, 2 * degree)
     blocks = []
     sample_points = []
     cell_vertices = []

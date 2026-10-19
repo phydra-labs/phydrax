@@ -16,9 +16,9 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..typing import parse
-from ._operators import _generic_adjoint, _id, AbstractLinearOperator
+from ._operators import _id, AbstractLinearOperator, generic_adjoint
 from ._properties import OperatorCapabilities, OperatorProperties
-from ._spaces import _coordinate_dtype, _has_euclidean_pairing, ArraySpace
+from ._spaces import _has_euclidean_pairing, ArraySpace, coordinate_dtype
 
 
 OrthogonalTransformKind: TypeAlias = Literal["fft", "dct"]
@@ -65,7 +65,7 @@ class TransformDiagonalLinearOperator(AbstractLinearOperator):
         )
         if not isinstance(space_, ArraySpace) or space_.shape != spectrum_.shape:
             raise ValueError("space must be an ArraySpace matching spectrum.shape.")
-        if _coordinate_dtype(space_) != np.dtype(spectrum_.dtype):
+        if coordinate_dtype(space_) != np.dtype(spectrum_.dtype):
             raise TypeError("Spectrum dtype must match the space coordinate dtype.")
         if not _has_euclidean_pairing(space_):
             raise ValueError("Transform-diagonal operators require Euclidean pairing.")
@@ -178,7 +178,7 @@ class TransformDiagonalLinearOperator(AbstractLinearOperator):
     def adjoint_mv(self, vector: ArrayLike, /) -> Array:
         value = self.target.validate(jnp.asarray(vector))
         if not _has_euclidean_pairing(self.source):
-            return _generic_adjoint(self, value)
+            return generic_adjoint(self, value)
         transformed = _forward_transform(value, self.transform, self.axes)
         return self.source.validate(
             _inverse_transform(

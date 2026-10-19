@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def test_geometry_validity_scenario_1() -> None:
@@ -17,7 +18,7 @@ def test_geometry_validity_scenario_1() -> None:
         (0.0, 0.0, 0.0),
         1.0,
         feature_id="sphere",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     radius = sphere.schema.index(phx.geometry.ParameterId("sphere", "radius"))
     invalid_sphere = sphere.state.replace_at(radius, jnp.asarray(-1.0))
 
@@ -37,7 +38,7 @@ def test_geometry_validity_scenario_1() -> None:
             feature_id="sq",
         )
         .translated((1.0, 0.0, 0.0))
-        .compile()
+        .compile(coordinate_unit=METER)
     )
     orientation = superquadric.schema.index(phx.geometry.ParameterId("sq", "orientation"))
     invalid_orientation = superquadric.state.replace_at(
@@ -50,7 +51,7 @@ def test_geometry_validity_scenario_1() -> None:
     polygon = phx.geometry.Polygon(
         ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
         feature_id="polygon",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     polygon_index = polygon.schema.index(phx.geometry.ParameterId("polygon", "vertices"))
     invalid_vertices = (
         jnp.asarray(((0.0, 0.0), (0.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
@@ -85,7 +86,7 @@ def test_geometry_validity_scenario_1() -> None:
         ),
     )
     for source in full_sources:
-        geometry = source.compile()
+        geometry = source.compile(coordinate_unit=METER)
         angle_index = next(
             index
             for index, spec in enumerate(geometry.schema.specs)
@@ -98,7 +99,7 @@ def test_geometry_validity_scenario_1() -> None:
     uniform_scale = (
         phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0, feature_id="scaled-sphere")
         .scaled((1.0, 1.0, 1.0))
-        .compile()
+        .compile(coordinate_unit=METER)
     )
     scale_index = next(
         index
@@ -117,17 +118,19 @@ def test_geometry_validity_scenario_1() -> None:
         (1.0, 1.0, 1.0),
         0.5,
         feature_id="wedge",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     top_index = wedge.schema.index(phx.geometry.ParameterId("wedge", "top_extent"))
     assert not bool(
         wedge.validity(wedge.state.replace_at(top_index, jnp.asarray(0.0))).accepted
     )
     sphere = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0, feature_id="capability-sphere")
-    translated_sphere = sphere.translated((1.0, 0.0, 0.0)).compile()
+    translated_sphere = sphere.translated((1.0, 0.0, 0.0)).compile(coordinate_unit=METER)
     curvature = translated_sphere.contact_curvature(jnp.asarray(((2.0, 0.0, 0.0),)))
     assert bool(curvature.valid[0])
     scaled_curvature = (
-        sphere.scaled(2.0).compile().contact_curvature(jnp.asarray(((2.0, 0.0, 0.0),)))
+        sphere.scaled(2.0)
+        .compile(coordinate_unit=METER)
+        .contact_curvature(jnp.asarray(((2.0, 0.0, 0.0),)))
     )
     assert bool(scaled_curvature.valid[0])
 
@@ -138,12 +141,12 @@ def test_geometry_validity_scenario_1() -> None:
         feature_id="support-superquadric",
     )
     direction = jnp.asarray(((1.0, 0.5, -0.25),))
-    base_support = superquadric.compile().support_map(direction)
-    translated = superquadric.translated((2.0, -1.0, 0.5)).compile()
+    base_support = superquadric.compile(coordinate_unit=METER).support_map(direction)
+    translated = superquadric.translated((2.0, -1.0, 0.5)).compile(coordinate_unit=METER)
     rigid = superquadric.transformed(
         phx.geometry.RigidFrame(jnp.eye(3), jnp.asarray((2.0, -1.0, 0.5)))
-    ).compile()
-    scaled = superquadric.scaled((2.0, 1.5, 0.5)).compile()
+    ).compile(coordinate_unit=METER)
+    scaled = superquadric.scaled((2.0, 1.5, 0.5)).compile(coordinate_unit=METER)
     offset = jnp.asarray((2.0, -1.0, 0.5))
     assert jnp.allclose(translated.support_map(direction), base_support + offset)
     assert jnp.allclose(rigid.support_map(direction), base_support + offset)
@@ -163,7 +166,9 @@ def test_geometry_validity_scenario_1() -> None:
         (0.0, 0.0, 0.0),
         (),
     )
-    reconstructed = phx.geometry.ReconstructedGeometrySource(sphere, report).compile()
+    reconstructed = phx.geometry.ReconstructedGeometrySource(sphere, report).compile(
+        coordinate_unit=METER
+    )
     closest = reconstructed.closest_point(jnp.asarray(((2.0, 0.0, 0.0),)))
     reconstructed_curvature = reconstructed.contact_curvature(
         jnp.asarray(((1.0, 0.0, 0.0),))
@@ -178,7 +183,7 @@ def test_geometry_validity_is_jittable_and_keeps_fixed_evidence_shape() -> None:
         (0.0, 0.0, 0.0),
         1.0,
         feature_id="body",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     radius = compiled.schema.index(phx.geometry.ParameterId("body", "radius"))
 
     def evaluate(value: Any) -> Any:

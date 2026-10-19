@@ -8,9 +8,9 @@ The reader lexes and parses one exchange structure under explicit byte,
 instance, parameter, nesting and reference-depth budgets, verifies that the
 instance graph has no dangling or cyclic references, and maps the AP203/AP214/
 AP242 geometry, topology, unit and assembly entities listed in
-`STEP_ENTITY_COVERAGE` to an exact native `BRepModel`. Any other entity reached
+`STEP_ENTITY_COVERAGE` to a native `BRepModel`. Any other entity reached
 from an admitted root is refused with its dependency chain. The writer emits
-the same exact entity set with deterministic instance numbering and
+the same entity set with deterministic instance numbering and
 shortest-round-trip real literals.
 
 Canonicalization (documented, stable under repeated round trips): placements
@@ -23,7 +23,7 @@ after the regular edges; occurrences are listed in depth-first assembly order.
 Native tuple identities use versionless ``phydrax:container:``,
 ``phydrax:occurrence:`` and ``phydrax:definition:`` opaque standard identifier
 namespaces with bounded flat-string JSON paths. Literal foreign identifiers
-remain literal. Membership comes only from actual product/usage relationships;
+remain literal. Membership comes from declared product/usage relationships;
 shared path components or placements never imply a container.
 """
 
@@ -35,20 +35,24 @@ import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
+from functools import partial
 from typing import Any, Literal, TypeAlias
 
-import jax.numpy as jnp
+import equinox as eqx
 import numpy as np
 
 from .._external_resource import (
     account_bounded_resource,
-    bounded_resource_from_bytes,
     BoundedResource,
-    read_bounded_resource,
     ResourceReadError,
 )
 from .._fingerprint import canonical_fingerprint
 from .._publication import PublicationMode, publish_bytes
+from .._strict import StrictModule
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
 from ..geometry.brep._model import (
     BRepAssemblyContainer,
     BRepGeometry,
@@ -62,6 +66,7 @@ from ..geometry.brep._patches import (
     BSplineSurfacePatch,
     CircleCurve,
     ConePatch,
+    curve_evaluate_host,
     CylinderPatch,
     EllipseCurve,
     ExtrusionSurface,
@@ -72,16 +77,20 @@ from ..geometry.brep._patches import (
     SpherePatch,
     TorusPatch,
 )
-from ..typing import parse
+from ..typing import checked, parse
 from ._cad import (
-    _export_loss_waivers,
-    approximation_export_qualifiers,
+    build_cad_export_report,
+    build_cad_import_tolerance_evidence,
+    CadCodecInvariantError,
     CadExportPolicy,
     CadExportResult,
     CadImportPolicy,
     CadImportResult,
+    CadImportToleranceEvidence,
     CadInterchangeError,
+    CadRefusalReason,
     CadStage,
+    certified_cad_export_tolerances,
     curve_parameter,
     explicit_carrier,
     length_factor,
@@ -92,13 +101,24 @@ from ._cad import (
     si_prefix_scale,
     StagedCoedge,
     transform_pcurve,
+    unrepresentable_cad_tolerance_loss,
 )
 from ._cad_carriers import RigidPlacement, surface_tag
+from ._cad_io import decode_cad_bytes, read_cad_file
+from ._cad_placement_evidence import certify_placed_model, source_placement_evidence
 from ._report import (
     AdapterFormatProfile,
     AdapterLoss,
     AdapterReport,
     AdapterStatus,
+)
+from ._step_metadata import StepEntityLabels, StepEntityMetadata
+from ._step_repair import (
+    add_cylinder_seam,
+    audit_shells,
+    repair_record,
+    StepRepairPolicy,
+    supporting_plane_sense,
 )
 
 
@@ -126,6 +146,7 @@ STEP_ENTITY_COVERAGE: tuple[str, ...] = tuple(
             "B_SPLINE_CURVE_WITH_KNOTS",
             "B_SPLINE_SURFACE_WITH_KNOTS",
             "CARTESIAN_POINT",
+            "CARTESIAN_TRANSFORMATION_OPERATOR_3D",
             "CIRCLE",
             "CLOSED_SHELL",
             "CONICAL_SURFACE",
@@ -143,6 +164,7 @@ STEP_ENTITY_COVERAGE: tuple[str, ...] = tuple(
             "ITEM_DEFINED_TRANSFORMATION",
             "LINE",
             "MANIFOLD_SOLID_BREP",
+            "MAPPED_ITEM",
             "MANIFOLD_SURFACE_SHAPE_REPRESENTATION",
             "NEXT_ASSEMBLY_USAGE_OCCURRENCE",
             "OPEN_SHELL",
@@ -155,6 +177,7 @@ STEP_ENTITY_COVERAGE: tuple[str, ...] = tuple(
             "PRODUCT_DEFINITION_SHAPE",
             "RATIONAL_B_SPLINE_CURVE",
             "RATIONAL_B_SPLINE_SURFACE",
+            "REPRESENTATION_MAP",
             "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION",
             "SEAM_CURVE",
             "SHAPE_DEFINITION_REPRESENTATION",
@@ -168,9 +191,21 @@ STEP_ENTITY_COVERAGE: tuple[str, ...] = tuple(
             "SURFACE_OF_REVOLUTION",
             "TOROIDAL_SURFACE",
             "TRIMMED_CURVE",
+            "UNCERTAINTY_MEASURE_WITH_UNIT",
             "VECTOR",
             "VERTEX_LOOP",
             "VERTEX_POINT",
+            "COLOUR_RGB",
+            "FILL_AREA_STYLE",
+            "FILL_AREA_STYLE_COLOUR",
+            "NAME_ATTRIBUTE",
+            "PRESENTATION_LAYER_ASSIGNMENT",
+            "PRESENTATION_STYLE_ASSIGNMENT",
+            "PRODUCT",
+            "STYLED_ITEM",
+            "SURFACE_SIDE_STYLE",
+            "SURFACE_STYLE_FILL_AREA",
+            "SURFACE_STYLE_USAGE",
         )
     )
 )
@@ -205,12 +240,93 @@ _REPRESENTATIONS = frozenset(
     }
 )
 
+# Metadata has no native geometric interpretation. Other unreached records are
+# reported as discarded semantics rather than assumed harmless.
+_METADATA_ENTITIES = frozenset(
+    {
+        "APPLICATION_CONTEXT",
+        "APPLICATION_PROTOCOL_DEFINITION",
+        "PRODUCT",
+        "PRODUCT_CONTEXT",
+        "PRODUCT_DEFINITION_CONTEXT",
+        "PRODUCT_DEFINITION_FORMATION",
+        "PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE",
+        "PRODUCT_RELATED_PRODUCT_CATEGORY",
+        "PERSON",
+        "ORGANIZATION",
+        "PERSON_AND_ORGANIZATION",
+        "DATE_AND_TIME",
+        "CALENDAR_DATE",
+        "LOCAL_TIME",
+        "COORDINATED_UNIVERSAL_TIME_OFFSET",
+        "APPROVAL",
+        "APPROVAL_STATUS",
+        "DESCRIPTIVE_REPRESENTATION_ITEM",
+        "NAME_ATTRIBUTE",
+        "PRESENTATION_LAYER_ASSIGNMENT",
+        "PRESENTATION_STYLE_BY_CONTEXT",
+        "SURFACE_STYLE_RENDERING",
+        "SURFACE_STYLE_TRANSPARENT",
+        "SURFACE_STYLE_REFLECTANCE_AMBIENT",
+        "PRESENTATION_STYLE_ASSIGNMENT",
+        "STYLED_ITEM",
+        "COLOUR_RGB",
+        "CURVE_STYLE",
+        "SURFACE_STYLE_USAGE",
+        "SURFACE_SIDE_STYLE",
+        "SURFACE_STYLE_FILL_AREA",
+        "FILL_AREA_STYLE",
+        "FILL_AREA_STYLE_COLOUR",
+        "DRAUGHTING_PRE_DEFINED_COLOUR",
+        "DRAUGHTING_PRE_DEFINED_CURVE_FONT",
+        "CURVE_STYLE_FONT",
+        "CURVE_STYLE_FONT_PATTERN",
+        "POINT_STYLE",
+        "TEXT_STYLE",
+        "TEXT_STYLE_FOR_DEFINED_FONT",
+        "SURFACE_STYLE_BOUNDARY",
+        "SURFACE_STYLE_PARAMETER_LINE",
+        "SURFACE_STYLE_SILHOUETTE",
+        "SURFACE_STYLE_CONTROL_GRID",
+        "SURFACE_STYLE_REFLECTANCE_AMBIENT_DIFFUSE",
+        "SURFACE_STYLE_REFLECTANCE_AMBIENT_DIFFUSE_SPECULAR",
+        "NAMED_UNIT",
+        "LENGTH_UNIT",
+        "PLANE_ANGLE_UNIT",
+        "SOLID_ANGLE_UNIT",
+        "MASS_UNIT",
+        "TIME_UNIT",
+        "THERMODYNAMIC_TEMPERATURE_UNIT",
+        "SI_UNIT",
+        "CONVERSION_BASED_UNIT",
+        "DIMENSIONAL_EXPONENTS",
+        "GEOMETRIC_REPRESENTATION_CONTEXT",
+        "PARAMETRIC_REPRESENTATION_CONTEXT",
+        "REPRESENTATION_CONTEXT",
+        "GLOBAL_UNIT_ASSIGNED_CONTEXT",
+        "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT",
+    }
+)
+_ASSEMBLY_ENTITIES = frozenset(
+    {
+        "PRODUCT_DEFINITION",
+        "PRODUCT_DEFINITION_SHAPE",
+        "NEXT_ASSEMBLY_USAGE_OCCURRENCE",
+        "SHAPE_DEFINITION_REPRESENTATION",
+        "SHAPE_REPRESENTATION_RELATIONSHIP",
+        "REPRESENTATION_RELATIONSHIP",
+        "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION",
+        "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION",
+        "ITEM_DEFINED_TRANSFORMATION",
+    }
+)
+
 
 # --------------------------------------------------------------------- lexing
 
 
 def _path_identifier(kind: str, path: tuple[str, ...], /) -> str:
-    """Opaque standard identifier carrying an exact native instance identity."""
+    """Return a standard identifier carrying a native tuple instance identity."""
     return f"phydrax:{kind}:" + json.dumps(
         list(path), ensure_ascii=True, separators=(",", ":")
     )
@@ -309,7 +425,7 @@ _TOKEN = re.compile(
     re.VERBOSE | re.DOTALL,
 )
 
-_Token: TypeAlias = tuple[str, str, int]
+type _Token = tuple[str, str, int]
 
 
 def _decode_string(raw: str, position: int, /) -> str:
@@ -368,7 +484,9 @@ def _tokens(text: str, /) -> list[_Token]:
             )
         kind = match.lastgroup
         if kind is None:
-            raise RuntimeError("Every token alternative is named.")
+            raise CadCodecInvariantError(
+                "STEP.token.kind must name an alternative; got None"
+            )
         if kind != "space":
             tokens.append((kind, match.group(), position))
         position = match.end()
@@ -695,9 +813,21 @@ def _reverse(loop: list[StagedCoedge], /) -> list[StagedCoedge]:
 class _Decoder:
     """Map an admitted instance graph to a `CadStage`."""
 
-    def __init__(self, instances: dict[int, _Instance], policy: CadImportPolicy) -> None:
+    def __init__(
+        self,
+        instances: dict[int, _Instance],
+        policy: CadImportPolicy,
+        repair_policy: StepRepairPolicy,
+        coordinate_budget: CoordinateEnclosureBudget | None,
+    ) -> None:
         self.instances = instances
         self.policy = policy
+        self.repair_policy = repair_policy
+        self.coordinate_budget = coordinate_budget
+        self.repairs: list[AdapterLoss] = []
+        self.shell_labels: list[str] = []
+        self.orientation_assumptions: tuple[str, ...] = ()
+        self.sense_vertices: tuple[np.ndarray, ...] = ()
         self.chain: list[str] = []
         self.units: _Units | None = None
         self.used: dict[str, int] = {}
@@ -708,15 +838,21 @@ class _Decoder:
         self.faces: dict[int, tuple[int, int]] = {}
         self.solids: dict[int, int] = {}
         self.representations: dict[int, list[int]] = {}
+        self.mapped_items: dict[int, list[tuple[int, int, RigidPlacement]]] = {}
         self.unit_cache: dict[int, _Units] = {}
         self.entity_units: dict[int, _Units] = {}
         self.children: dict[int, tuple[int, ...]] = {}
         self.curve_trims: dict[int, tuple[tuple[float, float], bool]] = {}
+        self.source_uncertainties: dict[int, float] = {}
+        self.raw_source_uncertainties: dict[str, float] = {}
+        self.source_uncertainty_units: dict[int, float] = {}
+        self.unrepresentable_uncertainties: dict[int, str] = {}
+        self.ignored_units: set[int] = set()
 
     # -------------------------------------------------------------- access
 
     def _refuse(
-        self, reason: Any, instance: _Instance | str, message: str
+        self, reason: CadRefusalReason, instance: _Instance | str, message: str
     ) -> CadInterchangeError:
         label = instance if isinstance(instance, str) else instance.label
         return refuse(reason, label, message, tuple(self.chain))
@@ -789,7 +925,9 @@ class _Decoder:
     @property
     def _scale(self) -> _Units:
         if self.units is None:
-            raise RuntimeError("Geometry is decoded inside a unit context.")
+            raise CadCodecInvariantError(
+                "STEP.decoder.units must contain the geometry context; got None"
+            )
         return self.units
 
     # --------------------------------------------------------------- units
@@ -800,12 +938,25 @@ class _Decoder:
         names = instance.names
         if kind not in names:
             raise self._refuse("units", instance, f"Expected a {kind}.")
+        extras = names - {"NAMED_UNIT", "SI_UNIT", "CONVERSION_BASED_UNIT", kind}
+        if extras or {"SI_UNIT", "CONVERSION_BASED_UNIT"} <= names:
+            raise self._refuse(
+                "units",
+                instance,
+                f"STEP.unit must contain supported unit partial entities; got {sorted(names)}.",
+            )
         if "SI_UNIT" in names:
             prefix, name = instance.record("SI_UNIT").params
             expected = "METRE" if kind == "LENGTH_UNIT" else "RADIAN"
             if not isinstance(name, _Enum) or name.value != expected:
                 raise self._refuse("units", instance, f"Unsupported SI unit for {kind}.")
-            value = si_prefix_scale(prefix.value if isinstance(prefix, _Enum) else None)
+            if prefix is not None and not isinstance(prefix, _Enum):
+                raise self._refuse(
+                    "units",
+                    instance,
+                    f"STEP.unit.prefix must be an SI enumeration or absent; got {prefix!r}.",
+                )
+            value = si_prefix_scale(prefix.value if prefix is not None else None)
         elif "CONVERSION_BASED_UNIT" in names:
             factor = self._get(instance.record("CONVERSION_BASED_UNIT").params[1])
             self._enter(factor)
@@ -819,6 +970,12 @@ class _Decoder:
             self._leave()
         else:
             raise self._refuse("units", instance, "Unsupported unit definition.")
+        if value <= 0:
+            raise self._refuse(
+                "units",
+                instance,
+                f"STEP.unit.scale must be positive; got {value}.",
+            )
         self._leave()
         return value
 
@@ -844,7 +1001,8 @@ class _Decoder:
             elif "PLANE_ANGLE_UNIT" in names:
                 angles.append(self._unit_value(unit, "PLANE_ANGLE_UNIT"))
             else:
-                self._get(unit)
+                ignored = self._get(unit)
+                self.ignored_units.add(ignored.id)
         if len(set(lengths)) != 1 or len(lengths) != 1:
             raise self._refuse(
                 "units", instance, "The context must assign exactly one length unit."
@@ -858,9 +1016,53 @@ class _Decoder:
             float(angles[0]),
             length_factor(lengths[0], self.policy.coordinate_contract),
         )
+        if "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT" in instance.names:
+            self._context_uncertainties(instance)
         self._leave()
         self.unit_cache[instance.id] = units
         return units
+
+    def _context_uncertainties(self, context: _Instance) -> None:
+        references = self._list(
+            context.record("GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT").params[0], context
+        )
+        for reference in references:
+            self._record_uncertainty(reference)
+
+    def _record_uncertainty(self, reference: Any) -> None:
+        uncertainty = self._get(reference)
+        if f"#{uncertainty.id}" in self.raw_source_uncertainties:
+            return
+        self._enter(uncertainty)
+        if self._simple(uncertainty).name != "UNCERTAINTY_MEASURE_WITH_UNIT":
+            raise self._refuse(
+                "unsupported-entity",
+                uncertainty,
+                "Expected UNCERTAINTY_MEASURE_WITH_UNIT.",
+            )
+        magnitude, unit, _, _ = self._params(uncertainty, 4)
+        if not isinstance(magnitude, _Typed) or magnitude.name != "LENGTH_MEASURE":
+            raise self._refuse(
+                "units",
+                uncertainty,
+                "uncertainty.measure must be LENGTH_MEASURE; got incompatible measure",
+            )
+        value = self._float(magnitude, uncertainty)
+        if value < 0.0:
+            raise self._refuse(
+                "units",
+                uncertainty,
+                f"uncertainty.value must be nonnegative; got {value}",
+            )
+        unit_meters = self._unit_value(unit, "LENGTH_UNIT")
+        converted = value * length_factor(unit_meters, self.policy.coordinate_contract)
+        if np.isfinite(converted):
+            self.source_uncertainties[uncertainty.id] = converted
+        else:
+            self.unrepresentable_uncertainties[uncertainty.id] = self._get(unit).label
+        self.raw_source_uncertainties[f"#{uncertainty.id}"] = value
+        self.source_uncertainty_units[uncertainty.id] = float(unit_meters)
+        self._leave()
 
     # ------------------------------------------------------------ geometry
 
@@ -877,7 +1079,13 @@ class _Decoder:
             values * self._scale.scale if scaled and self._scale.scale != 1.0 else values
         )
 
-    def _direction(self, reference: Any, dimension: int) -> np.ndarray:
+    def _direction(
+        self,
+        reference: Any,
+        dimension: int,
+        *,
+        normalize: bool = True,
+    ) -> np.ndarray:
         instance = self._get(reference)
         if self._simple(instance).name != "DIRECTION":
             raise self._refuse("unsupported-entity", instance, "Expected DIRECTION.")
@@ -886,7 +1094,7 @@ class _Decoder:
             raise self._refuse(
                 "malformed", instance, f"Expected a {dimension}D direction."
             )
-        return _unit(values, instance.label)
+        return _unit(values, instance.label) if normalize else values
 
     def _vector(self, reference: Any, dimension: int, scaled: bool) -> np.ndarray:
         instance = self._get(reference)
@@ -989,6 +1197,8 @@ class _Decoder:
         expanded = self._knots(multiplicities, knots, points.shape[0], degree, instance)
         try:
             return BSplineCurve(points, weights, expanded, degree)
+        except CadInterchangeError:
+            raise
         except ValueError as error:
             raise self._refuse("malformed", instance, str(error)) from error
 
@@ -1067,11 +1277,11 @@ class _Decoder:
                         raise self._refuse(
                             "unsupported-entity",
                             instance,
-                            f"Curve entity {record.name} has no exact native carrier.",
+                            f"STEP.curve must have a native carrier; got {record.name}.",
                         )
+        except CadInterchangeError:
+            raise
         except ValueError as error:
-            if isinstance(error, CadInterchangeError):
-                raise
             raise self._refuse("malformed", instance, str(error)) from error
         self._leave()
         return curve
@@ -1087,23 +1297,27 @@ class _Decoder:
         parameters: list[float] = []
         points: list[float] = []
         for selector in self._list(selectors, instance):
-            if isinstance(selector, _Typed) and selector.name == "PARAMETER_VALUE":
-                parameters.append(
-                    self._float(selector.value, instance) * self._parameter_factor(curve)
-                )
-            elif isinstance(selector, _Ref):
-                parameter, gap = curve_parameter(
-                    curve, self._point(selector, dimension, dimension == 3)
-                )
-                if gap > self._stage().tolerance:
-                    raise self._refuse(
-                        "inconsistent-geometry",
-                        instance,
-                        "Trim point is not on its basis curve.",
+            match selector:
+                case _Typed(name="PARAMETER_VALUE"):
+                    parameters.append(
+                        self._float(selector.value, instance)
+                        * self._parameter_factor(curve)
                     )
-                points.append(parameter)
-            else:
-                raise self._refuse("malformed", instance, "Invalid trimming selector.")
+                case _Ref():
+                    parameter, gap = curve_parameter(
+                        curve, self._point(selector, dimension, dimension == 3)
+                    )
+                    if gap > self._stage().tolerance:
+                        raise self._refuse(
+                            "inconsistent-geometry",
+                            instance,
+                            "Trim point is not on its basis curve.",
+                        )
+                    points.append(parameter)
+                case _:
+                    raise self._refuse(
+                        "malformed", instance, "Invalid trimming selector."
+                    )
         if len(parameters) > 1 or len(points) > 1 or not (parameters or points):
             raise self._refuse(
                 "malformed", instance, "A trim requires one parameter and/or point."
@@ -1175,6 +1389,8 @@ class _Decoder:
                 u_degree,
                 v_degree,
             )
+        except CadInterchangeError:
+            raise
         except ValueError as error:
             raise self._refuse("malformed", instance, str(error)) from error
 
@@ -1260,11 +1476,11 @@ class _Decoder:
                         raise self._refuse(
                             "unsupported-entity",
                             instance,
-                            f"Surface entity {record.name} has no exact native carrier.",
+                            f"STEP.surface must have a native carrier; got {record.name}.",
                         )
+        except CadInterchangeError:
+            raise
         except ValueError as error:
-            if isinstance(error, CadInterchangeError):
-                raise
             raise self._refuse("malformed", instance, str(error)) from error
         self._leave()
         return patch, factors
@@ -1273,7 +1489,9 @@ class _Decoder:
 
     def _stage(self) -> CadStage:
         if self.stage is None:
-            raise RuntimeError("Topology is decoded into a stage.")
+            raise CadCodecInvariantError(
+                "STEP.decoder.stage must contain topology staging; got None"
+            )
         return self.stage
 
     def _check_units(self, instance: _Instance) -> None:
@@ -1375,7 +1593,9 @@ class _Decoder:
             parameter_range = None
             if trim is not None:
                 lower, upper = trim[0]
-                endpoints = np.asarray(curve.evaluate(jnp.asarray((lower, upper))))
+                endpoints = curve_evaluate_host(
+                    curve, np.asarray((lower, upper), dtype=np.float64)
+                )
                 vertices = np.asarray([stage.vertices[index] for index in directed])
                 gaps = np.linalg.norm(endpoints - vertices, axis=1)
                 if np.all(gaps <= stage.tolerance):
@@ -1384,7 +1604,9 @@ class _Decoder:
                     first, first_gap = curve_parameter(curve, vertices[0])
                     last, last_gap = curve_parameter(curve, vertices[1])
                     if max(first_gap, last_gap) > stage.tolerance:
-                        raise ValueError("An edge vertex is not on its trimmed carrier.")
+                        raise ValueError(
+                            f"STEP.edge.vertex_gap must not exceed {stage.tolerance}; got {max(first_gap, last_gap)}"
+                        )
                     period = curve.period
                     if period is not None:
                         first = lower + (first - lower) % period
@@ -1397,7 +1619,7 @@ class _Decoder:
                         last = upper
                     if first < lower or last > upper or last <= first:
                         raise ValueError(
-                            "Edge vertices lie outside the declared curve trim."
+                            f"STEP.edge.range must lie within ({lower}, {upper}); got ({first}, {last})"
                         )
                     parameter_range = (first, last)
             index = stage.edge(
@@ -1406,6 +1628,8 @@ class _Decoder:
                 instance.label,
                 parameter_range=parameter_range,
             )
+        except CadInterchangeError:
+            raise
         except ValueError as error:
             raise self._refuse("inconsistent-geometry", instance, str(error)) from error
         self._leave()
@@ -1452,6 +1676,8 @@ class _Decoder:
             if chosen is not None:
                 try:
                     pcurve = transform_pcurve(chosen, factors, edge.parameter_factor)
+                except CadInterchangeError:
+                    raise
                 except ValueError as error:
                     raise self._refuse(
                         "unsupported-entity",
@@ -1462,9 +1688,102 @@ class _Decoder:
             coedges.append(StagedCoedge(edge.index, sense, pcurve, oriented.label))
             self._leave()
         self._leave()
-        if not coedges:
+        if not coedges and not self.repair_policy.add_missing_seams:
             raise self._refuse("malformed", instance, "An edge loop requires edges.")
         return coedges
+
+    def _repair_face_sense(
+        self,
+        patch: AbstractSurfacePatch,
+        sign: int,
+        same_sense: bool,
+        instance: _Instance,
+    ) -> bool:
+        if not self.repair_policy.orient_face_senses:
+            return same_sense
+        if not isinstance(patch, PlanePatch) or self.coordinate_budget is None:
+            raise self._refuse(
+                "unsupported-entity",
+                instance,
+                "Certified face-sense repair supports only closed convex linear shells.",
+            )
+        outward = supporting_plane_sense(
+            patch, self.sense_vertices, instance.label, self.coordinate_budget
+        )
+        corrected = outward * sign > 0
+        if corrected != same_sense:
+            self.repairs.append(
+                repair_record(
+                    instance.label,
+                    "Oriented face sense by a rational supporting-plane outward test; "
+                    "all shell vertices lie on the interior side and at least one strictly so; "
+                    "carriers and tolerance unchanged.",
+                )
+            )
+        return corrected
+
+    def _repair_face_seams(
+        self,
+        patch: AbstractSurfacePatch,
+        loops: list[list[StagedCoedge]],
+        outer_known: bool,
+        instance: _Instance,
+    ) -> tuple[list[list[StagedCoedge]], bool]:
+        if not self.repair_policy.add_missing_seams:
+            return loops, outer_known
+        stage = self._stage()
+        if (
+            patch.periods[0] is not None
+            and len(loops) == 2
+            and all(len(loop) == 1 for loop in loops)
+        ):
+            if not isinstance(patch, CylinderPatch):
+                raise self._refuse(
+                    "unsupported-entity",
+                    instance,
+                    "Missing seam between two circular bounds is supported only on a native cylinder.",
+                )
+            if self.coordinate_budget is None:
+                raise self._refuse(
+                    "limit", instance, "Seam repair requires coordinate_budget."
+                )
+            loops = [
+                add_cylinder_seam(
+                    stage, patch, loops, instance.label, self.coordinate_budget
+                )
+            ]
+            outer_known = True
+            self.repairs.append(
+                repair_record(
+                    instance.label,
+                    "Added a longitudinal periodic seam between two coaxial full-circle bounds; "
+                    "paired native-period chart representatives share one unchanged 3D carrier; "
+                    "no geometry or tolerance changed.",
+                )
+            )
+        if loops == [[]]:
+            if not isinstance(patch, (SpherePatch, TorusPatch)):
+                raise self._refuse(
+                    "unsupported-entity",
+                    instance,
+                    "Missing natural seam repair requires a certified sphere or torus periodic chart.",
+                )
+            if self.coordinate_budget is None:
+                raise self._refuse(
+                    "limit", instance, "Seam repair requires coordinate_budget."
+                )
+            self.coordinate_budget.reserve(1024, 16384)
+            loops = [stage.natural_loop(patch, instance.label)]
+            outer_known = True
+            self.repairs.append(
+                repair_record(
+                    instance.label,
+                    "Added the missing natural periodic seam and its paired chart representatives "
+                    "on the source sphere/torus; native symbolic periods prove coincident carriers; "
+                    "no geometry or tolerance changed.",
+                )
+            )
+        return loops, outer_known
 
     def _face(self, reference: Any, sign: int) -> tuple[int, int]:
         instance = self._get(reference)
@@ -1484,8 +1803,11 @@ class _Decoder:
         _, bounds, surface_, same_sense_ = self._params(instance, 4)
         patch, factors = self._surface(surface_)
         if not isinstance(surface_, _Ref):
-            raise RuntimeError("Surfaces were resolved by reference.")
+            raise CadCodecInvariantError(
+                f"STEP.face.surface must be an instance reference; got {surface_!r}"
+            )
         same_sense = self._bool(same_sense_, instance)
+        same_sense = self._repair_face_sense(patch, sign, same_sense, instance)
         outer: list[list[StagedCoedge]] = []
         inner: list[list[StagedCoedge]] = []
         boundary_vertices: list[int] = []
@@ -1514,6 +1836,7 @@ class _Decoder:
             )
         loops = outer + inner
         outer_known = bool(outer)
+        loops, outer_known = self._repair_face_seams(patch, loops, outer_known, instance)
         if not loops:
             loops = [
                 stage.natural_loop(
@@ -1566,6 +1889,30 @@ class _Decoder:
                 instance,
                 f"Shell entity {record.name} is not supported.",
             )
+        if self.repair_policy.orient_face_senses:
+            reachable = {instance.id}
+            pending = [instance.id]
+            while pending:
+                for child in self.children.get(pending.pop(), ()):
+                    if child not in reachable:
+                        reachable.add(child)
+                        pending.append(child)
+            stage = self._stage()
+            if record.name != "CLOSED_SHELL" or any(
+                not isinstance(stage.curves[stage.edge_curves[edge.index]], LineCurve)
+                for identifier, edge in self.edges.items()
+                if identifier in reachable
+            ):
+                raise self._refuse(
+                    "unsupported-entity",
+                    instance,
+                    "Face-sense repair requires a closed convex shell with linear edges.",
+                )
+            self.sense_vertices = tuple(
+                stage.vertices[index]
+                for identifier, index in self.vertices.items()
+                if identifier in reachable
+            )
         faces = []
         orientations = []
         for item in self._list(self._params(instance, 2)[1], instance):
@@ -1584,6 +1931,7 @@ class _Decoder:
         stage = self._stage()
         stage.shells.append((faces, record.name == "CLOSED_SHELL"))
         stage.shell_orientations[len(stage.shells) - 1] = orientations
+        self.shell_labels.append(instance.label)
         self._leave()
         return len(stage.shells) - 1
 
@@ -1591,7 +1939,7 @@ class _Decoder:
         """Stage a shape's vertices, then edges, in instance order.
 
         Native entity order follows the external instance numbering rather
-        than traversal order, so a canonical writer's order is reproduced.
+        than traversal order, so the deterministic writer's order is reproduced.
         """
         reachable = {root}
         pending = [root]
@@ -1617,6 +1965,12 @@ class _Decoder:
         self._enter(instance)
         self._check_units(instance)
         record = self._simple(instance)
+        if self.repair_policy.orient_face_senses and record.name == "BREP_WITH_VOIDS":
+            raise self._refuse(
+                "unsupported-entity",
+                instance,
+                "Supporting-plane face-sense repair does not support cavity shells.",
+            )
         stage = self._stage()
         self._prestage(instance.id)
         match record.name:
@@ -1666,6 +2020,13 @@ class _Decoder:
             if not element.complex and element.records[0].name == "AXIS2_PLACEMENT_3D":
                 self._frame3(item)
                 continue
+            if element.records[0].name == "MAPPED_ITEM":
+                mapped_rep, placement = self._mapped_item(element, record.params[2])
+                self._representation(mapped_rep)
+                self.mapped_items.setdefault(identifier, []).append(
+                    (element.id, mapped_rep, placement)
+                )
+                continue
             if element.complex:
                 raise self._refuse(
                     "unsupported-entity",
@@ -1680,9 +2041,141 @@ class _Decoder:
         self.representations[identifier] = solids
         return solids
 
+    def _mapped_item(
+        self, instance: _Instance, context: Any
+    ) -> tuple[int, RigidPlacement]:
+        """Decode a unit-scale map with the declared rigid-placement certificate."""
+        _, source, target = self._params(instance, 3)
+        mapping = self._get(source)
+        if self._simple(mapping).name != "REPRESENTATION_MAP":
+            raise self._refuse(
+                "unsupported-entity", mapping, "Expected REPRESENTATION_MAP."
+            )
+        origin, representation = self._params(mapping, 2)
+        mapped = self._get(representation)
+        source_placement = self._placement(origin, self._items_context(mapped.id))
+        operator = self._get(target)
+        if self._simple(operator).name != "CARTESIAN_TRANSFORMATION_OPERATOR_3D":
+            raise self._refuse(
+                "unsupported-entity",
+                operator,
+                "Only rigid 3D mapping operators are supported.",
+            )
+        _, axis1, axis2, location, scale, axis3 = self._params(operator, 6)
+        if scale is not None and self._float(scale, operator) != 1.0:
+            raise self._refuse(
+                "unsupported-entity",
+                operator,
+                "A mapped occurrence requires exactly unit scale.",
+            )
+        axes = tuple(
+            np.eye(3)[i]
+            if axis is None
+            else self._direction(
+                axis,
+                3,
+                normalize=self.policy.maximum_placement_deviation == 0.0,
+            )
+            for i, axis in enumerate((axis1, axis2, axis3))
+        )
+        if (
+            self.policy.maximum_placement_deviation > 0.0
+            and axis1 is None
+            and axes[2][1] == 0.0
+            and axes[2][2] == 0.0
+        ):
+            axes = (np.eye(3)[1], axes[1], axes[2])
+        rotation = np.stack(axes, axis=1)
+        previous = self.units
+        self.units = self._context_units(context)
+        translation = self._point(location, 3, True)
+        self.units = previous
+        if self.policy.maximum_placement_deviation > 0.0:
+            if self.coordinate_budget is None:
+                raise ValueError(
+                    "STEP.placement.coordinate_budget must be supplied; got None."
+                )
+            destination = RigidPlacement.from_source_directions(
+                axes[0],
+                axes[2],
+                translation,
+                operator.label,
+                self.coordinate_budget,
+                second_axis=axes[1],
+            )
+        else:
+            destination = RigidPlacement.from_certified_matrix(
+                np.concatenate((rotation, translation[:, None]), axis=1),
+                operator.label,
+            )
+        return mapped.id, destination.compose(
+            source_placement.inverse(coordinate_budget=self.coordinate_budget),
+            coordinate_budget=self.coordinate_budget,
+        )
+
+    def _representation_occurrences(
+        self, identifier: int, placement: RigidPlacement, path: tuple[str, ...]
+    ) -> list[tuple[int, RigidPlacement, tuple[str, ...]]]:
+        """Expand a bounded mapped representation while sharing solid definitions."""
+        if len(path) >= self.policy.limits.max_depth:
+            raise self._refuse(
+                "limit",
+                self.instances[identifier],
+                "Mapped occurrence depth exceeds its limit.",
+            )
+        result: list[tuple[int, RigidPlacement, tuple[str, ...]]] = [
+            (solid, placement, path + (f"solid{solid}",))
+            for solid in self._representation(identifier)
+        ]
+        for item, mapped, local in self.mapped_items.get(identifier, ()):
+            result.extend(
+                self._representation_occurrences(
+                    mapped,
+                    placement.compose(local, coordinate_budget=self.coordinate_budget),
+                    path + (f"mapped{item}",),
+                )
+            )
+            if len(result) > self.policy.maximum_occurrences:
+                raise self._refuse(
+                    "limit",
+                    self.instances[identifier],
+                    "Mapped occurrences exceed their limit.",
+                )
+        return result
+
     def _placement(self, reference: Any, context: Any) -> RigidPlacement:
         previous = self.units
         self.units = self._context_units(context)
+        if self.policy.maximum_placement_deviation > 0.0:
+            instance = self._get(reference)
+            if self._simple(instance).name != "AXIS2_PLACEMENT_3D":
+                raise self._refuse(
+                    "unsupported-entity",
+                    instance,
+                    "STEP.placement must be AXIS2_PLACEMENT_3D; got an unsupported source frame.",
+                )
+            _, location, axis, ref = self._params(instance, 4)
+            origin = self._point(location, 3, True)
+            z = (
+                np.eye(3)[2]
+                if axis is None
+                else self._direction(axis, 3, normalize=False)
+            )
+            x = np.eye(3)[0] if ref is None else self._direction(ref, 3, normalize=False)
+            if ref is None and z[1] == 0.0 and z[2] == 0.0:
+                x = np.eye(3)[1]
+            self.units = previous
+            if self.coordinate_budget is None:
+                raise ValueError(
+                    "STEP.placement.coordinate_budget must be supplied; got None."
+                )
+            return RigidPlacement.from_source_directions(
+                x,
+                z,
+                origin,
+                instance.label,
+                self.coordinate_budget,
+            )
         origin, x, y, z = self._frame3(reference)
         self.units = previous
         rotation = np.stack((x, y, z), axis=1)
@@ -1817,7 +2310,9 @@ class _Expansion:
         for identifier in representations:
             solids.extend(
                 solid
-                for solid in self.decoder._representation(identifier)
+                for solid, _, _ in self.decoder._representation_occurrences(
+                    identifier, RigidPlacement.identity(), ()
+                )
                 if solid not in solids
             )
         return representations, solids
@@ -1880,8 +2375,15 @@ class _Expansion:
         destination = decoder._placement(target, decoder._items_context(parent))
         decoder._leave()
         matrix = (
-            destination if origin.is_identity else destination.compose(origin.inverse())
+            destination
+            if origin.is_identity
+            else destination.compose(
+                origin.inverse(coordinate_budget=decoder.coordinate_budget),
+                coordinate_budget=decoder.coordinate_budget,
+            )
         )
+        if decoder.policy.maximum_placement_deviation > 0.0:
+            return matrix
         return RigidPlacement.from_matrix(matrix.matrix(), transform.label)
 
     def expand(
@@ -1910,15 +2412,23 @@ class _Expansion:
                 tuple(decoder.chain),
             )
         _, solids = self.solids(product)
+        representations, _ = self.solids(product)
+        placed = [
+            entry
+            for representation in representations
+            for entry in decoder._representation_occurrences(
+                representation, placement, path
+            )
+        ]
         members: list[tuple[str, ...]] = []
         child_paths: list[tuple[str, ...]] = []
-        for local, solid in enumerate(solids):
+        for local, (solid, solid_placement, mapped_path) in enumerate(placed):
             suffix = (
                 ()
                 if container_path is None and len(solids) == 1 and path
                 else (f"solid{local}",)
             )
-            member = path + suffix
+            member = mapped_path if mapped_path[:-1] != path else path + suffix
             self.count += 1
             if self.count > decoder.policy.maximum_occurrences:
                 raise refuse(
@@ -1931,8 +2441,9 @@ class _Expansion:
                 BRepOccurrence(
                     member,
                     solid,
-                    np.asarray(placement.rotation),
-                    np.asarray(placement.translation),
+                    np.asarray(solid_placement.rotation),
+                    np.asarray(solid_placement.translation),
+                    placement_evidence=source_placement_evidence(solid_placement),
                 )
             )
             members.append(member)
@@ -1955,7 +2466,14 @@ class _Expansion:
                     tuple(decoder.chain),
                 )
             local = self._usage_placement(usage, child_reps)
-            combined = local if placement.is_identity else placement.compose(local)
+            combined = (
+                local
+                if placement.is_identity
+                else placement.compose(
+                    local,
+                    coordinate_budget=decoder.coordinate_budget,
+                )
+            )
             kind = "container" if child_is_container else "occurrence"
             declared_path = _identity_path(
                 names[position],
@@ -1984,9 +2502,93 @@ class _Expansion:
         return members
 
 
+def _decode_occurrences(
+    decoder: _Decoder,
+    assembly: _Assembly,
+    roots: list[int],
+    representations: list[_Instance],
+    /,
+) -> list[BRepOccurrence]:
+    expansion = _Expansion(decoder, assembly)
+    occurrences: list[BRepOccurrence] = []
+    represented: set[int] = set()
+    root_identities = [expansion.root_identity(root) for root in roots]
+    for position, root in enumerate(roots):
+        identity, role = root_identities[position]
+        if role == "definition":
+            continue
+        if root_identities.count((identity, role)) != 1:
+            identity = (decoder.instances[root].label,)
+        is_container = role == "container"
+        if not is_container:
+            _, direct_solids = expansion.solids(root)
+            usages = assembly.children.get(root, ())
+            if not (
+                (len(direct_solids) == 1 and not usages)
+                or (not direct_solids and len(usages) == 1)
+            ):
+                raise refuse(
+                    "malformed",
+                    decoder.instances[root].label,
+                    "An independent-instance product must describe exactly one body instance.",
+                )
+        prefix = identity if not is_container or len(roots) > 1 else ()
+        expansion.expand(
+            root,
+            RigidPlacement.identity(),
+            prefix,
+            (),
+            occurrences,
+            container_path=identity if is_container else None,
+        )
+    represented.update(
+        mapped for items in decoder.mapped_items.values() for _, mapped, _ in items
+    )
+    for product in sorted(assembly.product_reps):
+        represented.update(expansion.solids(product)[0])
+    for instance in representations:
+        if instance.id in represented:
+            continue
+        for solid, placement, path in decoder._representation_occurrences(
+            instance.id, RigidPlacement.identity(), ()
+        ):
+            if all(occurrence.path != path for occurrence in occurrences):
+                occurrences.append(
+                    BRepOccurrence(
+                        path,
+                        solid,
+                        placement.rotation,
+                        placement.translation,
+                        placement_evidence=source_placement_evidence(placement),
+                    )
+                )
+                if len(occurrences) > decoder.policy.maximum_occurrences:
+                    raise refuse(
+                        "limit",
+                        instance.label,
+                        "Assembly occurrences exceed their limit.",
+                    )
+    return occurrences
+
+
+class _DecodedStep(StrictModule):
+    model: BRepModel
+    schema: StepSchema = eqx.field(static=True)
+    units: _Units = eqx.field(static=True)
+    decoder: _Decoder = eqx.field(static=True)
+    depth: int = eqx.field(static=True)
+    nodes: int = eqx.field(static=True)
+    parameters: int = eqx.field(static=True)
+
+
 def _decode(
-    resource: BoundedResource, policy: CadImportPolicy, /
-) -> tuple[BRepModel, StepSchema, _Units, dict[str, int], _Decoder, int, int, int]:
+    resource: BoundedResource,
+    policy: CadImportPolicy,
+    /,
+    *,
+    repair_policy: StepRepairPolicy,
+    coordinate_budget: CoordinateEnclosureBudget | None,
+) -> _DecodedStep:
     try:
         text = resource.data.decode("utf-8")
     except UnicodeDecodeError as error:
@@ -1997,8 +2599,10 @@ def _decode(
     header, instances = parser.parse()
     schema = _schema(header)
     depth, children = _check_graph(instances, policy.limits.max_depth)
-    decoder = _Decoder(instances, policy)
+    decoder = _Decoder(instances, policy, repair_policy, coordinate_budget)
     decoder.children = children
+    for uncertainty in _instances_named(instances, "UNCERTAINTY_MEASURE_WITH_UNIT"):
+        decoder._record_uncertainty(_Ref(uncertainty.id))
     assembly = _product_structure(instances)
     products = set(assembly.product_reps) | set(assembly.children)
     products.update(child for usages in assembly.children.values() for _, child in usages)
@@ -2055,57 +2659,18 @@ def _decode(
     # Reused placed parts reference the same already-decoded definition.
     for representation in representations:
         decoder._representation(representation.id)
-    expansion = _Expansion(decoder, assembly)
-    occurrences: list[BRepOccurrence] = []
-    represented: set[int] = set()
-    root_identities = [expansion.root_identity(root) for root in roots]
-    for position, root in enumerate(roots):
-        identity, role = root_identities[position]
-        if role == "definition":
-            continue
-        if root_identities.count((identity, role)) != 1:
-            identity = (decoder.instances[root].label,)
-        is_container = role == "container"
-        if not is_container:
-            _, direct_solids = expansion.solids(root)
-            usages = assembly.children.get(root, ())
-            if not (
-                (len(direct_solids) == 1 and not usages)
-                or (not direct_solids and len(usages) == 1)
-            ):
-                raise refuse(
-                    "malformed",
-                    decoder.instances[root].label,
-                    "An independent-instance product must describe exactly one body instance.",
-                )
-        prefix = identity if not is_container or len(roots) > 1 else ()
-        expansion.expand(
-            root,
-            RigidPlacement.identity(),
-            prefix,
-            (),
-            occurrences,
-            container_path=identity if is_container else None,
-        )
-    for product in sorted(assembly.product_reps):
-        represented.update(expansion.solids(product)[0])
-    for instance in representations:
-        if instance.id in represented:
-            continue
-        for solid in decoder._representation(instance.id):
-            if all(occurrence.solid != solid for occurrence in occurrences):
-                occurrences.append(BRepOccurrence((f"solid{solid}",), solid))
-                if len(occurrences) > policy.maximum_occurrences:
-                    raise refuse(
-                        "limit",
-                        instance.label,
-                        "Assembly occurrences exceed their limit.",
-                    )
+    occurrences = _decode_occurrences(decoder, assembly, roots, representations)
     if not stage.faces and (
         stage.shells
         or stage.solids
         or not any(
             "SHAPE_REPRESENTATION" in instance.names for instance in representations
+        )
+        or any(
+            name.startswith(("TESSELLATED_", "TRIANGULATED_", "COMPLEX_TRIANGULATED_"))
+            or name == "CARTESIAN_POINT_LIST_3D"
+            for instance in instances.values()
+            for name in instance.names
         )
     ):
         raise refuse(
@@ -2127,19 +2692,24 @@ def _decode(
             tessellation=policy.tessellation,
             default_occurrences=False,
         )
+        model, repairs, decoder.orientation_assumptions = audit_shells(
+            model, repair_policy, tuple(decoder.shell_labels), coordinate_budget
+        )
+        decoder.repairs.extend(repairs)
+        if policy.maximum_placement_deviation > 0.0:
+            model = certify_placed_model(model, policy, decoder.coordinate_budget)
+    except CadInterchangeError:
+        raise
     except ValueError as error:
-        if isinstance(error, CadInterchangeError):
-            raise
         raise refuse("inconsistent-geometry", "DATA", str(error)) from error
-    return (
-        model,
-        schema,
-        units,
-        decoder.used,
-        decoder,
-        depth,
-        len(instances),
-        parser.parameters,
+    return _DecodedStep(
+        model=model,
+        schema=schema,
+        units=units,
+        decoder=decoder,
+        depth=depth,
+        nodes=len(instances),
+        parameters=parser.parameters,
     )
 
 
@@ -2150,12 +2720,229 @@ def _numbers(value: Any, /) -> Iterator[float]:
                 yield float(item)
 
 
+def _presentation_colors(
+    decoder: _Decoder, reference: Any, /
+) -> tuple[tuple[float, float, float], ...] | None:
+    """Decode only the explicit ISO surface-fill RGB style chain."""
+    if not isinstance(reference, _Ref):
+        return None
+    instance = decoder.instances[reference.id]
+    if instance.complex:
+        return None
+    record = instance.records[0]
+    expected = {
+        "PRESENTATION_STYLE_ASSIGNMENT": (1, 0),
+        "SURFACE_STYLE_USAGE": (2, 1),
+        "SURFACE_SIDE_STYLE": (2, 1),
+        "SURFACE_STYLE_FILL_AREA": (1, 0),
+        "FILL_AREA_STYLE": (2, 1),
+        "FILL_AREA_STYLE_COLOUR": (2, 1),
+    }
+    if record.name == "COLOUR_RGB":
+        color = _rgb_color(record.params)
+        if color is not None:
+            decoder.seen.add(instance.id)
+        return color
+    if record.name not in expected:
+        return None
+    count, index = expected[record.name]
+    if len(record.params) != count:
+        return None
+    children = record.params[index]
+    references = children if isinstance(children, tuple) else (children,)
+    colors = []
+    for child in references:
+        found = _presentation_colors(decoder, child)
+        if found is None:
+            return None
+        colors.extend(found)
+    decoder.seen.add(instance.id)
+    return tuple(sorted(set(colors)))
+
+
+def _rgb_color(
+    params: tuple[Any, ...], /
+) -> tuple[tuple[float, float, float], ...] | None:
+    if len(params) != 4:
+        return None
+    values = params[1:]
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in values):
+        return None
+    color = tuple(float(v) for v in values)
+    if any(not np.isfinite(v) or not 0 <= v <= 1 for v in color):
+        return None
+    return ((color[0], color[1], color[2]),)
+
+
+def _metadata_names(decoder: _Decoder, names: dict[int, list[str]], /) -> None:
+    for key in names:
+        record = decoder.instances[key].records[0]
+        if record.params and isinstance(record.params[0], str) and record.params[0]:
+            names[key].append(record.params[0])
+    for instance in _instances_named(decoder.instances, "NAME_ATTRIBUTE"):
+        params = instance.records[0].params
+        if (
+            len(params) == 2
+            and isinstance(params[0], str)
+            and params[0]
+            and isinstance(params[1], _Ref)
+            and params[1].id in names
+        ):
+            names[params[1].id].append(params[0])
+            decoder.seen.add(instance.id)
+
+
+def _metadata_product_label(decoder: _Decoder, definition: int, /) -> str | None:
+    product_definition = decoder.instances[definition].records[0]
+    if len(product_definition.params) != 4:
+        return None
+    formation_ref = product_definition.params[2]
+    if not isinstance(formation_ref, _Ref):
+        return None
+    formation = decoder.instances[formation_ref.id].records[0]
+    expected_fields = {
+        "PRODUCT_DEFINITION_FORMATION": 3,
+        "PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE": 4,
+    }.get(formation.name)
+    if len(formation.params) != expected_fields:
+        return None
+    product_ref = formation.params[2]
+    if not isinstance(product_ref, _Ref):
+        return None
+    product = decoder.instances[product_ref.id].records[0]
+    if (
+        product.name != "PRODUCT"
+        or len(product.params) != 4
+        or not isinstance(product.params[1], str)
+    ):
+        return None
+    decoder.seen.update((definition, formation_ref.id, product_ref.id))
+    return product.params[1]
+
+
+def _metadata_product_names(decoder: _Decoder, names: dict[int, list[str]], /) -> None:
+    assembly = _product_structure(decoder.instances)
+    for definition, representations in assembly.product_reps.items():
+        name = _metadata_product_label(decoder, definition)
+        if name is None:
+            continue
+        for representation in representations:
+            solids = decoder.representations.get(representation, [])
+            for key, index in decoder.solids.items():
+                if index in solids and name:
+                    names[key].append(name)
+
+
+def _metadata_colors(
+    decoder: _Decoder, colors: dict[int, list[tuple[float, float, float]]], /
+) -> None:
+    for instance in _instances_named(decoder.instances, "STYLED_ITEM"):
+        params = instance.records[0].params
+        if (
+            len(params) != 3
+            or not isinstance(params[2], _Ref)
+            or params[2].id not in colors
+        ):
+            continue
+        if not isinstance(params[1], tuple):
+            continue
+        found = [_presentation_colors(decoder, style) for style in params[1]]
+        if any(value is None for value in found):
+            continue
+        for value in found:
+            if value is not None:
+                colors[params[2].id].extend(value)
+        decoder.seen.add(instance.id)
+
+
+def _metadata_layers(decoder: _Decoder, layers: dict[int, list[str]], /) -> None:
+    for instance in _instances_named(decoder.instances, "PRESENTATION_LAYER_ASSIGNMENT"):
+        params = instance.records[0].params
+        if (
+            len(params) != 3
+            or not isinstance(params[0], str)
+            or not params[0]
+            or not isinstance(params[2], tuple)
+        ):
+            continue
+        for reference in params[2]:
+            if isinstance(reference, _Ref) and reference.id in layers:
+                layers[reference.id].append(params[0])
+        decoder.seen.add(instance.id)
+
+
+def _entity_metadata(model: BRepModel, decoder: _Decoder, /) -> StepEntityMetadata:
+    """Bind presentation only through explicit source entity relationships."""
+    targets = {
+        **{key: model.vertex_ids[index] for key, index in decoder.vertices.items()},
+        **{key: model.edge_ids[edge.index] for key, edge in decoder.edges.items()},
+        **{key: model.face_ids[index] for key, (index, _) in decoder.faces.items()},
+        **{key: model.solid_ids[index] for key, index in decoder.solids.items()},
+    }
+    names: dict[int, list[str]] = {key: [] for key in targets}
+    colors: dict[int, list[tuple[float, float, float]]] = {key: [] for key in targets}
+    layers: dict[int, list[str]] = {key: [] for key in targets}
+    _metadata_names(decoder, names)
+    _metadata_product_names(decoder, names)
+    _metadata_colors(decoder, colors)
+    _metadata_layers(decoder, layers)
+    return StepEntityMetadata(
+        model,
+        tuple(
+            StepEntityLabels(
+                entity,
+                names=tuple(names[key]),
+                colors=tuple(colors[key]),
+                layers=tuple(layers[key]),
+            )
+            for key, entity in targets.items()
+            if names[key] or colors[key] or layers[key]
+        ),
+    )
+
+
+def _coverage_classification(
+    decoder: _Decoder, /
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    consumed: list[str] = []
+    ignored: list[str] = []
+    discarded: list[str] = []
+    for identifier, instance in sorted(decoder.instances.items()):
+        if identifier in decoder.ignored_units:
+            ignored.append(instance.label)
+        elif identifier in decoder.seen or instance.names & _ASSEMBLY_ENTITIES:
+            consumed.append(instance.label)
+        else:
+            ignored.append(instance.label)
+            if not instance.names <= _METADATA_ENTITIES:
+                discarded.append(instance.label)
+    return tuple(consumed), tuple(ignored), tuple(discarded)
+
+
 def _import_report(
-    model: BRepModel, schema: StepSchema, units: _Units, stage: CadStage, digest: str, /
+    model: BRepModel,
+    schema: StepSchema,
+    units: _Units,
+    stage: CadStage,
+    digest: str,
+    decoder: _Decoder,
+    tolerance_evidence: CadImportToleranceEvidence,
+    /,
 ) -> AdapterReport:
     losses: tuple[AdapterLoss, ...] = ()
-    if stage.pcurves_fitted:
+    consumed, ignored, discarded = _coverage_classification(decoder)
+    if discarded:
         losses = (
+            AdapterLoss(
+                "geometry.ignored-step-entities",
+                "import",
+                "dropped",
+                "Ignored geometry-bearing STEP entities: " + ", ".join(discarded),
+                changes_interpretation=False,
+            ),
+        )
+    if stage.pcurves_fitted:
+        losses += (
             AdapterLoss(
                 "geometry.pcurves",
                 "import",
@@ -2165,8 +2952,12 @@ def _import_report(
                 changes_interpretation=False,
             ),
         )
+    losses += tolerance_evidence.losses
+    losses += tuple(decoder.repairs)
     return AdapterReport(
-        AdapterStatus.DECLARED_LOSS if losses else AdapterStatus.LOSSLESS,
+        AdapterStatus.REPAIRED
+        if decoder.repairs
+        else (AdapterStatus.DECLARED_LOSS if losses else AdapterStatus.LOSSLESS),
         "step",
         "phydrax-brep",
         source_id=canonical_fingerprint({"kind": "step-source", "sha256": digest}),
@@ -2178,6 +2969,27 @@ def _import_report(
                 "schema": schema,
                 "length-unit-m": format(float(units.length_meters), ".17g"),
                 "plane-angle-unit-rad": format(units.angle_radians, ".17g"),
+                "declared-tolerance-limit": format(
+                    tolerance_evidence.declared_limit, ".17g"
+                ),
+                "carried-uncertainty": (
+                    "absent"
+                    if tolerance_evidence.uncertainty is None
+                    else format(tolerance_evidence.uncertainty, ".17g")
+                ),
+                "coverage-consumed": json.dumps(consumed, separators=(",", ":")),
+                "coverage-ignored-by-design": json.dumps(ignored, separators=(",", ":")),
+                "source-uncertainties": json.dumps(
+                    tuple(
+                        (identifier, decoder.source_uncertainties.get(identifier))
+                        for identifier in sorted(decoder.source_uncertainty_units)
+                    ),
+                    separators=(",", ":"),
+                ),
+                "source-uncertainty-length-units-m": json.dumps(
+                    tuple(sorted(decoder.source_uncertainty_units.items())),
+                    separators=(",", ":"),
+                ),
             },
         ),
         target_profile=AdapterFormatProfile(
@@ -2195,34 +3007,60 @@ def _import_report(
             "p-curves",
             "assembly occurrences",
             "units",
+            "authored product and representation-item names",
+            "RGB surface-fill colors",
+            "presentation layers",
         ),
-        assumptions=("external instance names are provenance only",),
+        assumptions=("external instance numbers are provenance only",)
+        + decoder.orientation_assumptions,
         losses=losses,
     )
 
 
+@checked
 def decode_step_resource(
-    resource: BoundedResource, policy: CadImportPolicy, /
+    resource: BoundedResource,
+    policy: CadImportPolicy,
+    /,
+    *,
+    repair_policy: StepRepairPolicy | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportResult:
-    """Decode one bounded STEP Part 21 resource into an exact native B-Rep."""
-    if not isinstance(resource, BoundedResource):
-        raise TypeError("resource must be a BoundedResource.")
-    if not isinstance(policy, CadImportPolicy):
-        raise TypeError("policy must be a CadImportPolicy.")
+    """Decode one bounded STEP Part 21 resource into a native B-Rep."""
+    repair_policy = StepRepairPolicy() if repair_policy is None else repair_policy
+    if (
+        repair_policy.add_missing_seams
+        or repair_policy.reverse_inverted_shells
+        or repair_policy.orient_face_senses
+    ) and coordinate_budget is None:
+        raise refuse("limit", "DATA", "STEP repairs require explicit coordinate_budget.")
     if resource.manifest.limits != policy.limits:
-        raise ValueError("The bounded resource and import policy limits must match.")
+        raise ValueError(
+            f"STEP.resource.limits must equal policy limits {policy.limits}; got {resource.manifest.limits}"
+        )
     try:
-        model, schema, units, used, decoder, depth, count, parameters = _decode(
-            resource, policy
+        decoded = _decode(
+            resource,
+            policy,
+            repair_policy=repair_policy,
+            coordinate_budget=coordinate_budget,
         )
         accounted = account_bounded_resource(
-            resource, depth=depth, nodes=count, attributes=parameters, losses=0
+            resource,
+            depth=decoded.depth,
+            nodes=decoded.nodes,
+            attributes=decoded.parameters,
+            losses=0,
         )
     except CadInterchangeError as error:
         error.resource_manifest = resource.manifest
         raise
     except ResourceReadError as error:
         resource_refusal(error)
+    except CoordinateEnclosureResourceError as error:
+        failure = refuse("limit", "coordinate-budget", str(error))
+        failure.resource_manifest = resource.manifest
+        raise failure from error
     except (
         IndexError,
         KeyError,
@@ -2234,10 +3072,48 @@ def decode_step_resource(
         failure = refuse("malformed", "DATA", f"Invalid STEP record: {error}")
         failure.resource_manifest = resource.manifest
         raise failure from error
-    stage = decoder._stage()
-    report = _import_report(
-        model, schema, units, stage, accounted.manifest.content_sha256
+    model, schema, units, decoder = (
+        decoded.model,
+        decoded.schema,
+        decoded.units,
+        decoded.decoder,
     )
+    stage = decoder._stage()
+    tolerance_evidence = build_cad_import_tolerance_evidence(
+        model,
+        tuple((None, value) for _, value in sorted(decoder.source_uncertainties.items())),
+        unrepresentable_losses=tuple(
+            unrepresentable_cad_tolerance_loss(
+                f"global (#{identifier})",
+                decoder.raw_source_uncertainties[f"#{identifier}"],
+                source_unit,
+                model.report.curve_surface_tolerance,
+            )
+            for identifier, source_unit in sorted(
+                decoder.unrepresentable_uncertainties.items()
+            )
+        ),
+    )
+    metadata = _entity_metadata(model, decoder)
+    report = _import_report(
+        model,
+        schema,
+        units,
+        stage,
+        accounted.manifest.content_sha256,
+        decoder,
+        tolerance_evidence,
+    )
+    try:
+        accounted = account_bounded_resource(
+            accounted,
+            depth=decoded.depth,
+            nodes=decoded.nodes,
+            attributes=decoded.parameters,
+            losses=len(decoder.unrepresentable_uncertainties),
+        )
+    except ResourceReadError as error:
+        resource_refusal(error)
     return CadImportResult(
         model,
         "step",
@@ -2247,43 +3123,59 @@ def decode_step_resource(
         units.angle_radians,
         accounted.manifest,
         report,
-        stage.coverage(used),
+        stage.coverage(decoder.used),
         tuple(stage.provenance),
+        metadata,
+        source_tolerance=max(decoder.source_uncertainties.values(), default=None),
+        source_tolerances=tuple(sorted(decoder.raw_source_uncertainties.items())),
+        tolerance_evidence=tolerance_evidence,
     )
 
 
+@checked
 def decode_step_bytes(
-    data: bytes, policy: CadImportPolicy, /, *, source_path: str | None = None
+    data: bytes,
+    policy: CadImportPolicy,
+    /,
+    *,
+    source_path: str | None = None,
+    repair_policy: StepRepairPolicy | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportResult:
-    """Bound and decode exact in-memory STEP bytes."""
-    if not isinstance(policy, CadImportPolicy):
-        raise TypeError("policy must be a CadImportPolicy.")
-    try:
-        resource = bounded_resource_from_bytes(
-            data, limits=policy.limits, source_path=source_path
-        )
-    except ResourceReadError as error:
-        resource_refusal(error)
-    return decode_step_resource(resource, policy)
+    """Bound and decode in-memory STEP bytes."""
+    return decode_cad_bytes(
+        data,
+        policy,
+        decoder=partial(
+            decode_step_resource,
+            repair_policy=repair_policy,
+            coordinate_budget=coordinate_budget,
+        ),
+        source_path=source_path,
+    )
 
 
+@checked
 def read_step(
     path: str | os.PathLike[str],
     policy: CadImportPolicy,
     /,
     *,
     trusted_root: str | os.PathLike[str],
+    repair_policy: StepRepairPolicy | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CadImportResult:
     """Descriptor-read and decode one bounded local STEP file."""
-    if not isinstance(policy, CadImportPolicy):
-        raise TypeError("policy must be a CadImportPolicy.")
-    try:
-        resource = read_bounded_resource(
-            path, trusted_root=trusted_root, limits=policy.limits
-        )
-    except ResourceReadError as error:
-        resource_refusal(error)
-    return decode_step_resource(resource, policy)
+    return read_cad_file(
+        path,
+        policy,
+        decoder=partial(
+            decode_step_resource,
+            repair_policy=repair_policy,
+            coordinate_budget=coordinate_budget,
+        ),
+        trusted_root=trusted_root,
+    )
 
 
 # -------------------------------------------------------------------- writing
@@ -2311,11 +3203,11 @@ _SCHEMA_IDENTIFIERS: dict[StepSchema, tuple[str, str, str, int]] = {
 }
 
 
-def _real(value: float, /) -> str:
+def _real(value: float, /, *, certified_precision: bool = False) -> str:
     number = float(value)
     if not np.isfinite(number):
         raise refuse("inexact-export", "real", "Nonfinite values have no STEP literal.")
-    text = repr(number)
+    text = format(number, ".17g") if certified_precision else repr(number)
     if "e" in text:
         mantissa, exponent = text.split("e")
         if "." not in mantissa:
@@ -2405,6 +3297,16 @@ def _is_rotation(matrix: np.ndarray, /) -> bool:
     )
 
 
+class _WrittenShells(StrictModule):
+    shells: list[int] = eqx.field(static=True)
+    closed: dict[int, bool] = eqx.field(static=True)
+
+
+class _WrittenShapes(StrictModule):
+    solids: list[int] = eqx.field(static=True)
+    free: list[int] = eqx.field(static=True)
+
+
 class _Writer:
     """Deterministic instance emission of one native B-Rep."""
 
@@ -2414,14 +3316,24 @@ class _Writer:
         geometry: BRepGeometry,
         schema: StepSchema,
         policy: CadExportPolicy,
+        uncertainty: float,
+        metadata: StepEntityMetadata | None,
     ) -> None:
         self.model = model
         self.geometry = geometry
         self.schema = schema
         self.policy = policy
+        self.uncertainty = uncertainty
+        self.metadata = metadata
+        self.entity_names = {
+            (row.entity.kind, row.entity.index): row.names[0]
+            for row in (() if metadata is None else metadata.rows)
+            if row.names
+        }
         self.lines: list[str] = []
         self.counts: dict[str, int] = {}
         self.context2 = 0
+        self.entity_instances: dict[tuple[str, int], int] = {}
 
     def add(self, body: str, /) -> int:
         self.lines.append(body)
@@ -2512,7 +3424,7 @@ class _Writer:
                 raise refuse(
                     "inexact-export",
                     label,
-                    f"{type(curve).__name__} has no exact STEP entity.",
+                    f"STEP.curve must have a supported entity; got {type(curve).__name__}.",
                 )
 
     def surface(
@@ -2621,7 +3533,7 @@ class _Writer:
                 raise refuse(
                     "inexact-export",
                     label,
-                    f"{type(patch).__name__} has no exact STEP surface.",
+                    f"STEP.surface must have a supported entity; got {type(patch).__name__}.",
                 )
 
     def pcurve(
@@ -2644,7 +3556,9 @@ class _Writer:
             if planar:
                 return surface
             raise refuse(
-                "inexact-export", label, "The p-curve has no exact STEP parameterization."
+                "inexact-export",
+                label,
+                "STEP.pcurve must have a supported parameterization; got unrepresentable curve.",
             )
         item = self.curve(mapped, label)
         definition = self.add(
@@ -2678,17 +3592,16 @@ class _Writer:
             "( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() )"
         )
         uncertainty = self.add(
-            f"UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),#{length},'distance_accuracy_value','confusion accuracy')"
+            f"UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE({_real(self.uncertainty, certified_precision=True)}),#{length},'distance_accuracy_value','confusion accuracy')"
         )
         return self.add(
             f"( GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{uncertainty})) "
             f"GLOBAL_UNIT_ASSIGNED_CONTEXT((#{length},#{angle},#{solid_angle})) REPRESENTATION_CONTEXT('','') )"
         )
 
-    def shapes(self) -> tuple[list[int], list[int], dict[int, bool]]:
-        """Emit exact topology; returns solid items, free shells and shell closure."""
+    def shapes(self) -> _WrittenShapes:
+        """Emit vertices, curves, faces, shells and solid definitions in order."""
         geometry = self.geometry
-        ranges = np.asarray(geometry.edge_ranges)
         model = self.model
         self.context2 = self.add(
             "( GEOMETRIC_REPRESENTATION_CONTEXT(2) PARAMETRIC_REPRESENTATION_CONTEXT() "
@@ -2698,7 +3611,9 @@ class _Writer:
             self.add(f"VERTEX_POINT('',#{self.point(point)})")
             for point in np.asarray(geometry.vertex_points)
         ]
-        owners = geometry.coedge_faces
+        self.entity_instances.update(
+            {("vertex", i): instance for i, instance in enumerate(vertices)}
+        )
         surfaces = [
             self.surface(patch, f"face:{index}")
             for index, patch in enumerate(model.patches)
@@ -2714,6 +3629,99 @@ class _Writer:
             (-1 if face in void_faces else 1) * int(np.asarray(model.orientation)[face])
             for face in range(len(model.patches))
         ]
+        edges = self._shape_edges(vertices, surfaces, normal_sign)
+        faces = self._shape_faces(edges, surfaces, normal_sign)
+        shell_records = self._shape_shells(faces, void_faces, void_shells)
+        shells, closed = shell_records.shells, shell_records.closed
+        solids: list[int] = []
+        in_solids = {shell for group in geometry.solid_shells for shell in group}
+        for group in geometry.solid_shells:
+            if any(not closed[shell] for shell in group):
+                raise refuse(
+                    "non-manifold", f"solid:{len(solids)}", "Solid shells must be closed."
+                )
+            if len(group) == 1:
+                solids.append(self.add(f"MANIFOLD_SOLID_BREP('',#{shells[group[0]]})"))
+                continue
+            voids = [
+                self.add(f"ORIENTED_CLOSED_SHELL('',*,#{shells[shell]},.F.)")
+                for shell in group[1:]
+            ]
+            solids.append(
+                self.add(f"BREP_WITH_VOIDS('',#{shells[group[0]]},{_refs(voids)})")
+            )
+        self.entity_instances.update(
+            {("solid", i): instance for i, instance in enumerate(solids)}
+        )
+        self.entity_instances.update(
+            {("face", i): instance for i, instance in enumerate(faces)}
+        )
+        self.entity_instances.update(
+            {("edge", i): instance for i, instance in edges.items()}
+        )
+        self._write_metadata()
+        free = [shells[index] for index in range(len(shells)) if index not in in_solids]
+        return _WrittenShapes(solids=solids, free=free)
+
+    def _shape_shells(
+        self,
+        faces: list[int],
+        void_faces: set[int],
+        void_shells: set[int],
+        /,
+    ) -> _WrittenShells:
+        geometry = self.geometry
+        closed: dict[int, bool] = {}
+        shells: list[int] = []
+        for shell, members in enumerate(geometry.shell_faces):
+            member_edges = [
+                geometry.coedge_edges[c]
+                for face in members
+                for loop in geometry.face_loops[face]
+                for c in loop
+            ]
+            closed[shell] = all(
+                member_edges.count(edge) == 2
+                for edge in set(member_edges)
+                if geometry.edge_curves[edge] != -1
+            )
+            kind = "CLOSED_SHELL" if closed[shell] else "OPEN_SHELL"
+            oriented_faces = []
+            for face, incidence in zip(
+                members, geometry.shell_orientations[shell], strict=True
+            ):
+                # Void shell wrappers reverse the shell. Compensate any
+                # shared face whose intrinsic emitted orientation was flipped
+                # for a different (void/non-void) shell use.
+                sign = incidence * (
+                    -1 if (face in void_faces) != (shell in void_shells) else 1
+                )
+                oriented_faces.append(
+                    faces[face]
+                    if sign > 0
+                    else self.add(f"ORIENTED_FACE('',*,#{faces[face]},.F.)")
+                )
+            shells.append(self.add(f"{kind}('',{_refs(oriented_faces)})"))
+        shelled_faces = {face for members in geometry.shell_faces for face in members}
+        for face in range(len(faces)):
+            if face in shelled_faces:
+                continue
+            shell = len(shells)
+            shells.append(self.add(f"OPEN_SHELL('',{_refs([faces[face]])})"))
+            closed[shell] = False
+        return _WrittenShells(shells=shells, closed=closed)
+
+    def _shape_edges(
+        self,
+        vertices: list[int],
+        surfaces: list[tuple[int, np.ndarray]],
+        normal_sign: list[int],
+        /,
+    ) -> dict[int, int]:
+        geometry = self.geometry
+        model = self.model
+        ranges = np.asarray(geometry.edge_ranges)
+        owners = geometry.coedge_faces
         uses: dict[int, list[int]] = {}
         for coedge, edge in enumerate(geometry.coedge_edges):
             uses.setdefault(edge, []).append(coedge)
@@ -2771,6 +3779,16 @@ class _Writer:
             edges[edge] = self.add(
                 f"EDGE_CURVE('',#{vertices[start]},#{vertices[end]},#{carrier},.T.)"
             )
+        return edges
+
+    def _shape_faces(
+        self,
+        edges: dict[int, int],
+        surfaces: list[tuple[int, np.ndarray]],
+        normal_sign: list[int],
+        /,
+    ) -> list[int]:
+        geometry = self.geometry
         faces: list[int] = []
         for face, loops in enumerate(geometry.face_loops):
             sign = normal_sign[face]
@@ -2797,63 +3815,44 @@ class _Writer:
                     f"ADVANCED_FACE('',{_refs(bounds)},#{surface},{_bool(same_sense)})"
                 )
             )
-        closed: dict[int, bool] = {}
-        shells: list[int] = []
-        for shell, members in enumerate(geometry.shell_faces):
-            member_edges = [
-                geometry.coedge_edges[c]
-                for face in members
-                for loop in geometry.face_loops[face]
-                for c in loop
-            ]
-            closed[shell] = all(
-                member_edges.count(edge) == 2
-                for edge in set(member_edges)
-                if geometry.edge_curves[edge] != -1
-            )
-            kind = "CLOSED_SHELL" if closed[shell] else "OPEN_SHELL"
-            oriented_faces = []
-            for face, incidence in zip(
-                members, geometry.shell_orientations[shell], strict=True
-            ):
-                # Void shell wrappers reverse the shell. Compensate any
-                # shared face whose intrinsic emitted orientation was flipped
-                # for a different (void/non-void) shell use.
-                sign = incidence * (
-                    -1 if (face in void_faces) != (shell in void_shells) else 1
-                )
-                oriented_faces.append(
-                    faces[face]
-                    if sign > 0
-                    else self.add(f"ORIENTED_FACE('',*,#{faces[face]},.F.)")
-                )
-            shells.append(self.add(f"{kind}('',{_refs(oriented_faces)})"))
-        shelled_faces = {face for members in geometry.shell_faces for face in members}
-        for face in range(len(faces)):
-            if face in shelled_faces:
-                continue
-            shell = len(shells)
-            shells.append(self.add(f"OPEN_SHELL('',{_refs([faces[face]])})"))
-            closed[shell] = False
-        solids: list[int] = []
-        in_solids = {shell for group in geometry.solid_shells for shell in group}
-        for group in geometry.solid_shells:
-            if any(not closed[shell] for shell in group):
+        return faces
+
+    def _write_metadata(self) -> None:
+        """Emit authored labels without altering any carrier or topology."""
+        if self.metadata is None:
+            return
+        for row in self.metadata.rows:
+            key = (row.entity.kind, row.entity.index)
+            if key not in self.entity_instances:
                 raise refuse(
-                    "non-manifold", f"solid:{len(solids)}", "Solid shells must be closed."
+                    "inexact-export",
+                    str(key),
+                    "Metadata refers to a nonrepresentable STEP entity.",
                 )
-            if len(group) == 1:
-                solids.append(self.add(f"MANIFOLD_SOLID_BREP('',#{shells[group[0]]})"))
-                continue
-            voids = [
-                self.add(f"ORIENTED_CLOSED_SHELL('',*,#{shells[shell]},.F.)")
-                for shell in group[1:]
-            ]
-            solids.append(
-                self.add(f"BREP_WITH_VOIDS('',#{shells[group[0]]},{_refs(voids)})")
-            )
-        free = [shells[index] for index in range(len(shells)) if index not in in_solids]
-        return solids, free, closed
+            instance = self.entity_instances[key]
+            if row.names:
+                body = self.lines[instance - 1]
+                prefix, suffix = body.split("('',", 1)
+                self.lines[instance - 1] = (
+                    prefix + "(" + _string(row.names[0]) + "," + suffix
+                )
+                for name in row.names[1:]:
+                    self.add(f"NAME_ATTRIBUTE({_string(name)},#{instance})")
+            for color in row.colors:
+                rgb = self.add(
+                    f"COLOUR_RGB('',{','.join(_real(value) for value in color)})"
+                )
+                fill_color = self.add(f"FILL_AREA_STYLE_COLOUR('',#{rgb})")
+                fill = self.add(f"FILL_AREA_STYLE('',(#{fill_color}))")
+                surface_fill = self.add(f"SURFACE_STYLE_FILL_AREA(#{fill})")
+                side = self.add(f"SURFACE_SIDE_STYLE('',(#{surface_fill}))")
+                usage = self.add(f"SURFACE_STYLE_USAGE(.BOTH.,#{side})")
+                assignment = self.add(f"PRESENTATION_STYLE_ASSIGNMENT((#{usage}))")
+                self.add(f"STYLED_ITEM('',(#{assignment}),#{instance})")
+            for layer in row.layers:
+                self.add(
+                    f"PRESENTATION_LAYER_ASSIGNMENT({_string(layer)},'',(#{instance}))"
+                )
 
     def product(
         self,
@@ -2875,7 +3874,8 @@ class _Writer:
 
     def encode(self) -> str:
         schema_id, application, protocol, year = _SCHEMA_IDENTIFIERS[self.schema]
-        solids, free, _ = self.shapes()
+        shapes = self.shapes()
+        solids, free = shapes.solids, shapes.free
         context = self.units()
         application_context = self.add(f"APPLICATION_CONTEXT({_string(application)})")
         self.add(
@@ -2939,7 +3939,9 @@ class _Writer:
         parts: dict[int, tuple[int, int, int]] = {}
         for index, solid in enumerate(solids):
             definition, shape = self.product(
-                f"solid{index}",
+                f"solid{index}"
+                if self.metadata is None
+                else self.entity_names.get(("solid", index), ""),
                 product_context,
                 definition_context,
                 identity=_path_identifier("definition", (f"solid{index}",)),
@@ -3061,6 +4063,7 @@ class _Writer:
             self.add(f"CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#{relation},#{shape})")
 
 
+@checked
 def write_step(
     model: BRepModel,
     path: str | os.PathLike[str],
@@ -3068,25 +4071,28 @@ def write_step(
     *,
     schema: StepSchema = "AP214",
     policy: CadExportPolicy | None = None,
+    metadata: StepEntityMetadata | None = None,
     mode: PublicationMode = "exclusive",
 ) -> CadExportResult:
     """Atomically publish a native B-Rep as a deterministic STEP Part 21 file.
 
-    Exact carriers are written unless explicit intersection approximation
+    Analytic and rational carriers are written unless intersection approximation
     requests coupled B-splines. Substitution requires continuous deviation and
     surface-lift bounds plus embedded source/fit homotopy and face-trim evidence.
+    Optional entity metadata emits authored names, RGB colors, and layers; it must
+    belong to this model and is not included in its geometric identity payload.
     """
-    if not isinstance(model, BRepModel):
-        raise TypeError("model must be a BRepModel.")
     schema_ = parse(schema, StepSchema, "schema")
     policy_ = CadExportPolicy() if policy is None else policy
-    if not isinstance(policy_, CadExportPolicy):
-        raise TypeError("policy must be a CadExportPolicy or None.")
+    if metadata is not None and metadata.model_id != model.model_id:
+        raise ValueError(
+            f"StepEntityMetadata.model_id must equal the exported model ID; got {metadata.model_id!r}, expected={model.model_id!r}"
+        )
     if model.geometry is None:
         raise refuse(
             "inexact-export",
             model.source_id,
-            "The model has no exact topology; a derived tessellation is never exported as CAD.",
+            "STEP.model.geometry must contain B-Rep topology; got only a derived tessellation.",
         )
     geometry, _, approximations = prepare_cad_export_geometry(
         model, model.geometry, policy_, format_name="step"
@@ -3094,57 +4100,41 @@ def write_step(
     approximation_policy = policy_.intersection_approximation
     if approximations and approximation_policy is None:
         raise ValueError(
-            "Intersection substitutions require an explicit approximation policy."
+            f"STEP.policy.intersection_approximation must bind {len(approximations)} substitutions; got None"
         )
-    writer = _Writer(model, geometry, schema_, policy_)
+    tolerances = certified_cad_export_tolerances(model, approximations)
+    writer = _Writer(model, geometry, schema_, policy_, tolerances.uncertainty, metadata)
     text = writer.encode()
     data = text.encode("ascii")
     receipt = publish_bytes(path, data, maximum_bytes=policy_.maximum_bytes, mode=mode)
-    losses = tuple(
-        AdapterLoss(
-            f"geometry.intersection-curve.{approximation.branch_id}",
-            "export",
-            "transformed",
-            f"New approximation {approximation.approximation_id}; continuous 3D "
-            f"deviation bound {approximation.continuous_evidence.distance_bound:.17g}, "
-            f"UV deviation bound {approximation.continuous_evidence.parameter_bound:.17g}, "
-            f"surface-lift bounds ({approximation.continuous_evidence.first_correspondence_bound:.17g}, "
-            f"{approximation.continuous_evidence.second_correspondence_bound:.17g}); "
-            "continuous embedded source-fit homotopy and exported trim separation.",
-            changes_interpretation=True,
-        )
-        for approximation in approximations
-    )
     qualifiers = {
         "schema": schema_,
         "length-unit": model.coordinate_contract.length_unit.symbol,
         "plane-angle-unit": "rad",
     }
-    qualifiers.update(approximation_export_qualifiers(approximations))
-    report = AdapterReport(
-        AdapterStatus.DECLARED_LOSS if losses else AdapterStatus.LOSSLESS,
-        "phydrax-brep",
-        "step",
-        source_id=model.model_id,
-        target_id=receipt.content_sha256,
-        stage="host-export",
-        source_profile=AdapterFormatProfile(
-            "phydrax-brep",
-            qualifiers={"coordinate-contract": model.coordinate_contract.spatial_id},
-        ),
-        target_profile=AdapterFormatProfile(
-            "step",
-            qualifiers=qualifiers,
-        ),
+    report = build_cad_export_report(
+        model,
+        receipt,
+        policy_,
+        approximations,
+        format_name="step",
+        qualifiers=qualifiers,
         preserved_fields=(
             "exact surface definitions",
             "oriented topology",
             "coedge parameter correspondence",
             "occurrences",
             "units",
+        )
+        + (
+            ("authored names", "RGB colors", "presentation layers")
+            if metadata is not None
+            else ()
         ),
-        losses=losses,
-        waivers=_export_loss_waivers(losses, policy_, "STEP"),
+        source_profile=AdapterFormatProfile(
+            "phydrax-brep",
+            qualifiers={"coordinate-contract": model.coordinate_contract.spatial_id},
+        ),
     )
     return CadExportResult(
         receipt,

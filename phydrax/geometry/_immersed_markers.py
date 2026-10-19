@@ -5,9 +5,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import cast, TYPE_CHECKING
+from typing import cast
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -16,16 +17,13 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import (
+    LagrangianMarkerDiscretization,
+    LagrangianMarkerKinematics,
+    LagrangianMarkerSetPlan,
+)
 from ..typing import checked
 from ._atlas import BoundaryAtlas
-
-
-if TYPE_CHECKING:
-    from ..discretization._lagrangian_marker import (
-        LagrangianMarkerDiscretization,
-        LagrangianMarkerKinematics,
-        LagrangianMarkerSetPlan,
-    )
 
 
 MarkerVelocityProvider = Callable[[Array, Array], Array]
@@ -42,6 +40,7 @@ class ImmersedMarkerMaterialization(StrictModule):
     finite: Array
     materialization_id: str = eqx.field(static=True)
 
+    @checked
     def kinematics(
         self, markers: LagrangianMarkerDiscretization, /
     ) -> LagrangianMarkerKinematics:
@@ -69,31 +68,58 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
         *,
         active_mask: ArrayLike | None = None,
     ) -> None:
+        (
+            marker_ids,
+            chart_indices,
+            reference_coordinates,
+            reference_weights,
+            active_mask,
+        ) = jax.device_get(
+            (
+                marker_ids,
+                chart_indices,
+                reference_coordinates,
+                reference_weights,
+                active_mask,
+            )
+        )
         ids = np.asarray(marker_ids)
         charts = np.asarray(chart_indices)
         reference = np.asarray(reference_coordinates)
         weights = np.asarray(reference_weights)
         if ids.ndim != 1 or not np.issubdtype(ids.dtype, np.integer):
-            raise ValueError("marker_ids must be a rank-one integer array.")
+            raise ValueError(
+                f"ImmersedMarkerQuadraturePlan.marker_ids must be a rank-one integer array; got {ids.dtype} {ids.shape}"
+            )
         if ids.size == 0 or np.unique(ids).size != ids.size:
-            raise ValueError("marker_ids must be nonempty and unique.")
+            raise ValueError(
+                f"ImmersedMarkerQuadraturePlan.marker_ids must be nonempty and unique; got {ids!r}"
+            )
         if charts.shape != ids.shape or not np.issubdtype(charts.dtype, np.integer):
-            raise ValueError("chart_indices must match marker_ids.")
+            raise ValueError(
+                f"ImmersedMarkerQuadraturePlan.chart_indices must be integer and match marker_ids shape {ids.shape}; got {charts.dtype} {charts.shape}"
+            )
         if reference.ndim != 2 or reference.shape[0] != ids.size:
-            raise ValueError("reference_coordinates must have one row per marker.")
+            raise ValueError(
+                f"ImmersedMarkerQuadraturePlan.reference_coordinates must have one row per marker; got {reference.shape}"
+            )
         if (
             weights.shape != ids.shape
             or np.any(~np.isfinite(weights))
             or np.any(weights <= 0.0)
         ):
-            raise ValueError("reference_weights must be positive and finite.")
+            raise ValueError(
+                f"ImmersedMarkerQuadraturePlan.reference_weights must match marker_ids and be positive and finite; got {weights!r}"
+            )
         active = (
             np.ones(ids.shape, dtype=np.bool_)
             if active_mask is None
             else np.asarray(active_mask, dtype=np.bool_)
         )
         if active.shape != ids.shape or not np.any(active):
-            raise ValueError("active_mask must activate at least one marker.")
+            raise ValueError(
+                f"ImmersedMarkerQuadraturePlan.active_mask must match marker_ids and activate at least one marker; got {active!r}"
+            )
         self.marker_ids = jnp.asarray(ids, dtype=jnp.int64)
         self.chart_indices = jnp.asarray(charts, dtype=jnp.int32)
         self.reference_coordinates = jnp.asarray(reference)
@@ -119,11 +145,13 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
         velocity: MarkerVelocityProvider | ArrayLike | None = None,
     ) -> ImmersedMarkerMaterialization:
         if atlas.reference_dimension != self.reference_coordinates.shape[1]:
-            raise ValueError("Atlas and marker reference dimensions differ.")
+            raise ValueError(
+                f"ImmersedMarkerQuadraturePlan.atlas must have reference dimension {self.reference_coordinates.shape[1]}; got {atlas.reference_dimension}"
+            )
         chart_indices = eqx.error_if(
             self.chart_indices,
             jnp.any((self.chart_indices < 0) | (self.chart_indices >= atlas.num_charts)),
-            "Marker chart indices must identify existing atlas charts.",
+            "ImmersedMarkerQuadraturePlan.chart_indices must identify existing atlas charts; got out-of-range indices",
         )
         positions = atlas.map(chart_indices, self.reference_coordinates)
         jacobian = atlas.jacobian(chart_indices, self.reference_coordinates)
@@ -137,7 +165,9 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
         else:
             velocities = jnp.asarray(velocity, dtype=positions.dtype)
         if velocities.shape != positions.shape:
-            raise ValueError("Marker velocities must have the position shape.")
+            raise ValueError(
+                f"ImmersedMarkerQuadraturePlan.velocity must have position shape {positions.shape}; got {velocities.shape}"
+            )
         source_entity = atlas.source_entity_ids[chart_indices]
         finite = (
             jnp.all(jnp.isfinite(positions))
@@ -155,6 +185,7 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
+    @checked
     def marker_plan(
         self,
         materialization: ImmersedMarkerMaterialization,
@@ -163,13 +194,20 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
         name: str = "immersed-atlas-markers",
     ) -> LagrangianMarkerSetPlan:
         """Freeze one materialized reference measure for a prepared solve epoch."""
-        from ..discretization._lagrangian_marker import LagrangianMarkerSetPlan
 
+        ids, positions, weights, active = jax.device_get(
+            (
+                self.marker_ids,
+                materialization.position,
+                materialization.physical_quadrature_weight,
+                self.active_mask,
+            )
+        )
         return LagrangianMarkerSetPlan(
-            self.marker_ids,
-            materialization.position,
-            materialization.physical_quadrature_weight,
-            active_mask=self.active_mask,
+            ids,
+            positions,
+            weights,
+            active_mask=active,
             name=name,
             plan_id=canonical_fingerprint(
                 {

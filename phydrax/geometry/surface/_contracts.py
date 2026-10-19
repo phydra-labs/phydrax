@@ -541,6 +541,46 @@ class SurfaceAuditReport(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[SurfaceAuditReport],
+        value: SurfaceAuditReport,
+        /,
+        *,
+        policy: SurfaceAuditPolicy,
+    ) -> SurfaceAuditReport:
+        """Replay admission using the realization's retained audit policy."""
+        if value.policy_id != policy.policy_id:
+            raise ValueError(
+                f"stored_fields.SurfaceAuditReport.policy_id must bind the retained policy; got {value.policy_id!r} instead of {policy.policy_id!r}"
+            )
+        return cls(
+            finite=bool(np.asarray(value.finite)),
+            topology_valid=bool(np.asarray(value.topology_valid)),
+            manifold=bool(np.asarray(value.manifold)),
+            metric_valid=bool(np.asarray(value.metric_valid)),
+            orientation_consistent=bool(np.asarray(value.orientation_consistent)),
+            capacity_valid=bool(np.asarray(value.capacity_valid)),
+            outward_orientation_valid=bool(np.asarray(value.outward_orientation_valid)),
+            face_areas=value.face_areas,
+            component_ids=value.component_ids,
+            component_closed=value.component_closed,
+            component_signed_volumes=value.component_signed_volumes,
+            vertex_count=value.vertex_count,
+            edge_count=value.edge_count,
+            boundary_edge_count=value.boundary_edge_count,
+            boundary_loop_count=value.boundary_loop_count,
+            classification=value.classification,
+            issues=value.issues,
+            model_id=value.model_id,
+            metadata_id=value.metadata_id,
+            topology_id=value.topology_id,
+            geometry_id=value.geometry_id,
+            policy_id=policy.policy_id,
+            policy_accepts_open=not policy.require_closed,
+        )
+
     @property
     def closed(self) -> bool:
         return bool(np.all(np.asarray(self.component_closed)))

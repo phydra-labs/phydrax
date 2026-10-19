@@ -22,6 +22,7 @@ from phydrax.nn._base import _AbstractBaseModel
 from phydrax.nn.models import LatentContractionModel
 from phydrax.operators.differential import partial_t, partial_x, partial_y
 from phydrax.operators.integral import integral
+from phydrax.units import METER
 
 
 def _as_scalar(x: Any) -> Any:
@@ -139,7 +140,7 @@ def _scalar_field_from_dense(field: cx.AxisArray, axis: str) -> cx.AxisArray:
 
 def test_latent_contraction_contracts() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     param = Interval1d(-1.0, 1.0).relabel("p")
     time = TimeInterval(0.0, 1.0)
@@ -202,7 +203,7 @@ def test_latent_contraction_contracts() -> None:
     _assert_array_allclose(eval_jit(du_dp, sep), expected_dp.data)
     _assert_array_allclose(eval_jit(du_dt, sep), expected_dt.data)
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     param = Interval1d(-1.0, 1.0).relabel("p")
     time = TimeInterval(0.0, 1.0)
@@ -242,7 +243,7 @@ def test_latent_contraction_contracts() -> None:
     eval_jit = eqx.filter_jit(lambda b: integral(u, from_samples(target, b)).data)
     _assert_array_allclose(eval_jit(sep), expected.data)
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     param = Interval1d(-1.0, 1.0).relabel("p")
     time = TimeInterval(0.0, 1.0)
@@ -280,7 +281,7 @@ def test_latent_contraction_contracts() -> None:
     eval_jit = eqx.filter_jit(lambda b: u(b).data)
     _assert_array_allclose(eval_jit(sep), expected.data)
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     param = Interval1d(-1.0, 1.0).relabel("p")
     time = TimeInterval(0.0, 1.0)

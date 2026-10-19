@@ -6,20 +6,43 @@ from __future__ import annotations
 
 import operator
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from types import ModuleType
+from typing import final, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.core import Tracer
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
+from phydrax.typing import (
+    as_host_array,
+    checked,
+    Dim,
+    HostBool,
+    HostFloat,
+    HostInt64,
+    HostInteger,
+    Scalar,
+    Scope,
+    VariadicDim,
+)
 
 
 if TYPE_CHECKING:
-    from phydrax.domain import Domain, PeriodicIdentification
+    from phydrax import domain as imported_phydrax_domain
+    from phydrax.domain import Domain
+
+
+def _domain_owner() -> ModuleType:
+    # Domain → discretization topology → spatial Morton → Domain.
+    from phydrax import domain
+
+    return domain
 
 
 _UINT64_MAX = np.iinfo(np.uint64).max
@@ -37,8 +60,8 @@ class MortonEncoding(NonTrainableState, StrictModule):
     successful: jax.Array
 
 
-class _MortonPointOrder(NonTrainableState, StrictModule):
-    """Canonical fixed-capacity ordering shared by Morton realizations."""
+class MortonPointOrder(NonTrainableState, StrictModule):
+    """Deterministic fixed-capacity ordering shared by Morton realizations."""
 
     encoding: MortonEncoding
     active: jax.Array
@@ -62,8 +85,43 @@ class MortonCellGeometry(NonTrainableState, StrictModule):
     half_width: jax.Array
 
 
+class MortonPointDims(VariadicDim):
+    """Leading dimensions of one batch of Morton-addressed points."""
+
+
+class MortonCoordinateDim(Dim):
+    """Coordinate components declared by a Morton address plan."""
+
+
+@final
+class MortonHostEncoding(NonTrainableState, StrictModule):
+    """NumPy Morton codes, wrapped coordinates, and domain evidence.
+
+    Codes use uint64 and integer coordinates use int64. Coordinates retain the
+    input floating dtype; nonfinite or out-of-domain points carry zero addresses.
+    """
+
+    __strict_contract__ = True
+
+    codes: HostInteger[MortonPointDims]
+    integer_coordinates: HostInt64[MortonPointDims, MortonCoordinateDim]
+    coordinates: HostFloat[MortonPointDims, MortonCoordinateDim]
+    finite: HostBool[MortonPointDims]
+    in_domain: HostBool[MortonPointDims]
+    successful: HostBool[Scalar]
+
+
+class _MortonAddressValues(StrictModule):
+    codes: jax.Array | np.ndarray
+    integer_coordinates: jax.Array | np.ndarray
+    coordinates: jax.Array | np.ndarray
+    finite: jax.Array | np.ndarray
+    in_domain: jax.Array | np.ndarray
+    successful: jax.Array | np.ndarray
+
+
 class MortonAddressPlan(StrictModule):
-    """Canonical dyadic addressing over a finite Cartesian box.
+    """Deterministic dyadic addressing over a finite Cartesian box.
 
     Periodic axes are addressed half-open, ``[lower, upper)``: encoding wraps a
     coordinate into the cell, so a cloud on a periodic address carries one
@@ -73,10 +131,10 @@ class MortonAddressPlan(StrictModule):
 
     A raw address (``coordinates`` and ``identifications`` ``None``) is a
     domain-less numerical box. A domain-bound address comes from
-    `from_periodic_identifications`, which records the canonical coordinate of
+    `from_periodic_identifications`, which records the deterministic coordinate of
     every point axis and, on periodic axes, the revision of its
     `PeriodicIdentification`; both enter ``plan_id``, so equal numerical boxes
-    over different canonical seams are distinct addresses.
+    over different deterministic seams are distinct addresses.
     """
 
     lower: tuple[float, ...] = eqx.field(static=True)
@@ -101,28 +159,38 @@ class MortonAddressPlan(StrictModule):
         lower_tuple = tuple(float(value) for value in lower)
         upper_tuple = tuple(float(value) for value in upper)
         if len(lower_tuple) not in (1, 2, 3):
-            raise ValueError("Morton addressing supports dimensions 1, 2, and 3.")
+            raise ValueError(
+                f"MortonAddressPlan.lower must support dimensions 1, 2, and 3; got {type(lower).__name__}"
+            )
         if len(upper_tuple) != len(lower_tuple):
-            raise ValueError("Morton lower and upper bounds must have equal length.")
+            raise ValueError(
+                f"MortonAddressPlan.lower must have equal lower and upper extents; got {type(lower).__name__}"
+            )
         lower_array = np.asarray(lower_tuple, dtype=np.float64)
         upper_array = np.asarray(upper_tuple, dtype=np.float64)
         if not np.all(np.isfinite(lower_array)) or not np.all(np.isfinite(upper_array)):
-            raise ValueError("Morton bounds must be finite.")
+            raise ValueError(
+                f"MortonAddressPlan.lower must be finite; got {type(lower).__name__}"
+            )
         if np.any(upper_array <= lower_array):
-            raise ValueError("Every Morton upper bound must exceed its lower bound.")
+            raise ValueError(
+                f"MortonAddressPlan.lower must exceed the corresponding lower bound on every axis; got {type(lower).__name__}"
+            )
         dimension = len(lower_tuple)
         depth = int(maximum_depth)
         maximum_supported = _MAX_CODE_BITS // dimension
         if depth < 1 or depth > maximum_supported:
             raise ValueError(
-                f"maximum_depth must lie in [1, {maximum_supported}] for dimension {dimension}."
+                f"MortonAddressPlan.maximum_depth must lie in [1, {maximum_supported}] for dimension {dimension}; got {maximum_depth!r}"
             )
         if periodic_axes is None:
             periodic_tuple = (False,) * dimension
         else:
             periodic_tuple = tuple(bool(value) for value in periodic_axes)
             if len(periodic_tuple) != dimension:
-                raise ValueError("periodic_axes must match the Morton dimension.")
+                raise ValueError(
+                    f"MortonAddressPlan.periodic_axes must match the Morton dimension; got {type(periodic_axes).__name__}"
+                )
         binding = _address_binding(coordinates, identifications, periodic_tuple)
         content: dict[str, object] = {
             "kind": "morton-address-plan",
@@ -146,7 +214,7 @@ class MortonAddressPlan(StrictModule):
     @classmethod
     def from_periodic_identifications(
         cls,
-        identifications: Sequence[PeriodicIdentification],
+        identifications: Sequence[imported_phydrax_domain.PeriodicIdentification],
         /,
         *,
         maximum_depth: int,
@@ -155,7 +223,7 @@ class MortonAddressPlan(StrictModule):
         """Derive the numerical address of a fundamental box and its seams.
 
         Every identification must belong to one fundamental domain. Point axis
-        ``i`` carries the canonical coordinate ``coordinates[i]`` (a
+        ``i`` carries the deterministic coordinate ``coordinates[i]`` (a
         ``(label, component)`` pair; ``component`` is ``None`` for a
         `ScalarInterval` factor); a single-label domain binds its coordinate
         components in order by default. Bounds come from the Cartesian factor
@@ -164,36 +232,39 @@ class MortonAddressPlan(StrictModule):
         identification whose coordinate is not a point axis, or a factor without
         Cartesian faces is refused.
         """
-        from phydrax.domain import PeriodicIdentification
 
         seams = tuple(identifications)
         if not seams:
             raise ValueError(
-                "A derived address needs at least one PeriodicIdentification."
+                f"MortonAddressPlan.from_periodic_identifications.identifications must provide at least one PeriodicIdentification; got {type(identifications).__name__}"
             )
-        if any(not isinstance(seam, PeriodicIdentification) for seam in seams):
-            raise TypeError("identifications must be PeriodicIdentification values.")
+        if any(
+            not isinstance(seam, _domain_owner().PeriodicIdentification) for seam in seams
+        ):
+            raise TypeError(
+                f"MortonAddressPlan.from_periodic_identifications.identifications must be PeriodicIdentification values; got {type(identifications).__name__}"
+            )
         domain = seams[0].domain
         if any(not seam.domain.same_support(domain) for seam in seams[1:]):
             raise ValueError(
-                "Periodic identifications must share one fundamental domain."
+                f"MortonAddressPlan.from_periodic_identifications.identifications must share one fundamental domain; got {type(identifications).__name__}"
             )
-        axes, lower, upper = _domain_point_coordinates(domain, coordinates)
+        axes, lower, upper = domain_point_coordinates(domain, coordinates)
         revisions: list[str | None] = [None] * len(axes)
         for seam in seams:
             coordinate = (seam.label, seam.component)
             if coordinate not in axes:
                 raise ValueError(
-                    f"Identified coordinate {coordinate!r} is not a point axis of {axes!r}."
+                    f"MortonAddressPlan.from_periodic_identifications.identifications must bind an axis in the declared point coordinates; got {type(identifications).__name__}; context {coordinate!r}, {axes!r}"
                 )
             axis = axes.index(coordinate)
             if revisions[axis] is not None:
                 raise ValueError(
-                    f"Coordinate {coordinate!r} is identified more than once."
+                    f"MortonAddressPlan.from_periodic_identifications.identifications must have one identification per coordinate; got {type(identifications).__name__}; context {coordinate!r}"
                 )
             if (seam.lower, seam.upper) != (lower[axis], upper[axis]):
                 raise ValueError(
-                    f"Identification of {coordinate!r} disagrees with its factor bounds."
+                    f"MortonAddressPlan.from_periodic_identifications.identifications must match the declared factor bounds; got {type(identifications).__name__}; context {coordinate!r}"
                 )
             revisions[axis] = seam.revision
         return cls(
@@ -209,44 +280,67 @@ class MortonAddressPlan(StrictModule):
     def resolution(self) -> int:
         return 1 << self.maximum_depth
 
-    def encode(self, points: jax.Array) -> MortonEncoding:
-        values = jnp.asarray(points)
-        if values.ndim < 1 or values.shape[-1] != self.dimension:
-            raise ValueError(
-                f"points must have trailing dimension {self.dimension}; got shape {values.shape}."
-            )
-        lower = jnp.broadcast_to(
-            jnp.asarray(self.lower, dtype=values.dtype), values.shape
-        )
-        upper = jnp.broadcast_to(
-            jnp.asarray(self.upper, dtype=values.dtype), values.shape
-        )
-        extent = upper - lower
-        periodic = jnp.broadcast_to(
-            jnp.asarray(self.periodic_axes, dtype=jnp.bool_), values.shape
-        )
-        finite_components = jnp.isfinite(values)
-        finite = jnp.all(finite_components, axis=-1)
-        safe = jnp.where(finite_components, values, lower)
-        wrapped = jnp.where(periodic, lower + jnp.mod(safe - lower, extent), safe)
-        component_in_domain = periodic | ((wrapped >= lower) & (wrapped < upper))
-        in_domain = finite & jnp.all(component_in_domain, axis=-1)
-        normalized = (wrapped - lower) / extent
-        resolution = jnp.asarray(self.resolution, dtype=normalized.dtype)
-        integer = jnp.floor(normalized * resolution).astype(jnp.int64)
-        integer = jnp.clip(integer, 0, self.resolution - 1)
-        integer = jnp.where(in_domain[..., None], integer, 0)
-        codes = morton_encode_integer(integer, self.maximum_depth)
-        codes = jnp.where(in_domain, codes, jnp.asarray(0, dtype=jnp.uint64))
-        codes = jax.lax.stop_gradient(codes)
-        integer = jax.lax.stop_gradient(integer)
+    def encode(self, points: ArrayLike) -> MortonEncoding:
+        values = _morton_address_values(self, points, jnp)
         return MortonEncoding(
-            codes=codes,
-            integer_coordinates=integer,
-            coordinates=wrapped,
-            finite=finite,
-            in_domain=in_domain,
-            successful=jnp.all(in_domain),
+            codes=jax.lax.stop_gradient(jnp.asarray(values.codes)),
+            integer_coordinates=jax.lax.stop_gradient(
+                jnp.asarray(values.integer_coordinates)
+            ),
+            coordinates=jnp.asarray(values.coordinates),
+            finite=jnp.asarray(values.finite),
+            in_domain=jnp.asarray(values.in_domain),
+            successful=jnp.asarray(values.successful),
+        )
+
+    @checked
+    def encode_host(
+        self, points: HostFloat[MortonPointDims, MortonCoordinateDim]
+    ) -> MortonHostEncoding:
+        """Encode NumPy floating points without dispatching or publishing device data."""
+        # NumPy warnings from masked/overflowing intermediates are not additional
+        # refusals: the shared finite/domain evidence and JAX integer conversion
+        # semantics determine every published field.
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            values = _morton_address_values(self, points, np)
+        scope = Scope()
+        return MortonHostEncoding(
+            codes=as_host_array(
+                values.codes,
+                HostInteger[MortonPointDims],
+                "MortonHostEncoding.codes",
+                scope=scope,
+            ),
+            integer_coordinates=as_host_array(
+                values.integer_coordinates,
+                HostInt64[MortonPointDims, MortonCoordinateDim],
+                "MortonHostEncoding.integer_coordinates",
+                scope=scope,
+            ),
+            coordinates=as_host_array(
+                values.coordinates,
+                HostFloat[MortonPointDims, MortonCoordinateDim],
+                "MortonHostEncoding.coordinates",
+                scope=scope,
+            ),
+            finite=as_host_array(
+                values.finite,
+                HostBool[MortonPointDims],
+                "MortonHostEncoding.finite",
+                scope=scope,
+            ),
+            in_domain=as_host_array(
+                values.in_domain,
+                HostBool[MortonPointDims],
+                "MortonHostEncoding.in_domain",
+                scope=scope,
+            ),
+            successful=as_host_array(
+                values.successful,
+                HostBool[Scalar],
+                "MortonHostEncoding.successful",
+                scope=scope,
+            ),
         )
 
     def decode(self, codes: jax.Array) -> jax.Array:
@@ -298,31 +392,110 @@ class MortonAddressPlan(StrictModule):
         )
 
 
-def morton_encode_integer(integer_coordinates: jax.Array, depth: int) -> jax.Array:
-    """Interleave low-to-high coordinate bits into canonical Morton codes."""
-    coordinates = jnp.asarray(integer_coordinates, dtype=jnp.uint64)
+def _morton_host_indices(scaled: np.ndarray) -> np.ndarray:
+    """Convert floored coordinates with JAX's saturating int64 semantics."""
+    upper = scaled >= np.float64(2**63)
+    lower = scaled <= np.float64(-(2**63))
+    representable = np.isfinite(scaled) & ~upper & ~lower
+    integer = np.where(representable, scaled, np.asarray(0, dtype=scaled.dtype)).astype(
+        np.int64
+    )
+    np.copyto(integer, np.int64(np.iinfo(np.int64).max), where=upper)
+    np.copyto(integer, np.int64(np.iinfo(np.int64).min), where=lower)
+    return integer
+
+
+def _morton_address_values(
+    plan: MortonAddressPlan, points: ArrayLike, xp: ModuleType
+) -> _MortonAddressValues:
+    values = xp.asarray(points)
+    if values.ndim < 1 or values.shape[-1] != plan.dimension:
+        raise ValueError(
+            f"MortonAddressPlan.points must have trailing dimension {plan.dimension}; got shape {values.shape}"
+        )
+    lower = xp.broadcast_to(xp.asarray(plan.lower, dtype=values.dtype), values.shape)
+    upper = xp.broadcast_to(xp.asarray(plan.upper, dtype=values.dtype), values.shape)
+    extent = upper - lower
+    periodic = xp.broadcast_to(
+        xp.asarray(plan.periodic_axes, dtype=xp.bool_), values.shape
+    )
+    finite_components = xp.isfinite(values)
+    finite = xp.all(finite_components, axis=-1)
+    safe = xp.where(finite_components, values, lower)
+    wrapped = xp.where(periodic, lower + xp.mod(safe - lower, extent), safe)
+    component_in_domain = periodic | ((wrapped >= lower) & (wrapped < upper))
+    in_domain = finite & xp.all(component_in_domain, axis=-1)
+    normalized = (wrapped - lower) / extent
+    resolution = xp.asarray(plan.resolution, dtype=normalized.dtype)
+    scaled = xp.floor(normalized * resolution)
+    integer = _morton_host_indices(scaled) if xp is np else scaled.astype(jnp.int64)
+    integer = xp.clip(integer, 0, plan.resolution - 1)
+    integer = xp.where(in_domain[..., None], integer, 0)
+    codes = (
+        _morton_encode_kernel(integer, plan.maximum_depth, np)
+        if xp is np
+        else morton_encode_integer(integer, plan.maximum_depth)
+    )
+    codes = xp.where(in_domain, codes, xp.asarray(0, dtype=xp.uint64))
+    return _MortonAddressValues(
+        codes=codes,
+        integer_coordinates=integer,
+        coordinates=wrapped,
+        finite=xp.asarray(finite),
+        in_domain=xp.asarray(in_domain),
+        successful=xp.asarray(xp.all(in_domain)),
+    )
+
+
+def _morton_encode_kernel(
+    integer_coordinates: ArrayLike, depth: int, xp: ModuleType
+) -> jax.Array | np.ndarray:
+    coordinates = xp.asarray(integer_coordinates, dtype=xp.uint64)
     if coordinates.ndim < 1 or coordinates.shape[-1] not in (1, 2, 3):
-        raise ValueError("integer_coordinates must have trailing dimension 1, 2, or 3.")
+        raise ValueError(
+            f"morton.morton_encode_kernel.integer_coordinates must have trailing dimension 1, 2, or 3; got {coordinates.shape!r}"
+        )
     dimension = coordinates.shape[-1]
-    depth_value = int(depth)
-    if depth_value < 1 or dimension * depth_value > _MAX_CODE_BITS:
-        raise ValueError("The requested Morton depth exceeds the uint64 code budget.")
-    code = jnp.zeros(coordinates.shape[:-1], dtype=jnp.uint64)
-    for bit in range(depth_value):
+    if depth < 1 or dimension * depth > _MAX_CODE_BITS:
+        raise ValueError(
+            f"morton.morton_encode_kernel.depth must fit the uint64 code budget for the declared dimension; got {depth!r}"
+        )
+    code = xp.zeros(coordinates.shape[:-1], dtype=xp.uint64)
+    for bit in range(depth):
         for axis in range(dimension):
-            value = (coordinates[..., axis] >> bit) & jnp.uint64(1)
-            code = code | (value << (dimension * bit + axis))
+            value = (coordinates[..., axis] >> xp.uint64(bit)) & xp.uint64(1)
+            code = code | (value << xp.uint64(dimension * bit + axis))
     return code
 
 
-def morton_decode_integer(codes: jax.Array, dimension: int, depth: int) -> jax.Array:
-    """Deinterleave canonical Morton codes into integer coordinates."""
+_morton_encode_device = jax.jit(_morton_encode_kernel, static_argnames=("depth", "xp"))
+
+
+def morton_encode_integer(integer_coordinates: ArrayLike, depth: int) -> jax.Array:
+    """Interleave coordinate bits, preparing host inputs before device publication."""
+    match integer_coordinates:
+        case jax.Array() | Tracer():
+            return jnp.asarray(
+                _morton_encode_device(integer_coordinates, int(depth), jnp)
+            )
+        case _:
+            return jax.device_put(
+                morton_encode_integer_host(np.asarray(integer_coordinates), int(depth))
+            )
+
+
+def morton_decode_integer(codes: ArrayLike, dimension: int, depth: int) -> jax.Array:
+    """Deinterleave deterministic Morton codes into integer coordinates."""
     dimension_value = int(dimension)
     depth_value = int(depth)
     if dimension_value not in (1, 2, 3):
-        raise ValueError("Morton decoding supports dimensions 1, 2, and 3.")
+        raise ValueError(
+            f"morton.morton_decode_integer.codes must support dimensions 1, 2, and 3; got {type(codes).__name__}"
+        )
     if depth_value < 1 or dimension_value * depth_value > _MAX_CODE_BITS:
-        raise ValueError("The requested Morton depth exceeds the uint64 code budget.")
+        raise ValueError(
+            f"morton.morton_decode_integer.depth must fit the uint64 code budget for the declared dimension; got {depth!r}"
+        )
     code_values = jnp.asarray(codes, dtype=jnp.uint64)
     coordinates = []
     for axis in range(dimension_value):
@@ -336,20 +509,9 @@ def morton_decode_integer(codes: jax.Array, dimension: int, depth: int) -> jax.A
 
 def morton_encode_integer_host(integer_coordinates: np.ndarray, depth: int) -> np.ndarray:
     """Host NumPy form of `morton_encode_integer` for immutable preparation."""
-    coordinates = np.asarray(integer_coordinates).astype(np.uint64)
-    if coordinates.ndim < 1 or coordinates.shape[-1] not in (1, 2, 3):
-        raise ValueError("integer_coordinates must have trailing dimension 1, 2, or 3.")
-    dimension = coordinates.shape[-1]
-    depth_value = operator.index(depth)
-    if depth_value < 1 or dimension * depth_value > _MAX_CODE_BITS:
-        raise ValueError("The requested Morton depth exceeds the uint64 code budget.")
-    code = np.zeros(coordinates.shape[:-1], dtype=np.uint64)
-    one = np.uint64(1)
-    for bit in range(depth_value):
-        for axis in range(dimension):
-            value = (coordinates[..., axis] >> np.uint64(bit)) & one
-            code |= value << np.uint64(dimension * bit + axis)
-    return code
+    return np.asarray(
+        _morton_encode_kernel(integer_coordinates, operator.index(depth), np)
+    )
 
 
 def morton_decode_integer_host(
@@ -359,9 +521,13 @@ def morton_decode_integer_host(
     dimension_value = operator.index(dimension)
     depth_value = operator.index(depth)
     if dimension_value not in (1, 2, 3):
-        raise ValueError("Morton decoding supports dimensions 1, 2, and 3.")
+        raise ValueError(
+            f"morton.morton_decode_integer_host.codes must support dimensions 1, 2, and 3; got {type(codes).__name__}"
+        )
     if depth_value < 1 or dimension_value * depth_value > _MAX_CODE_BITS:
-        raise ValueError("The requested Morton depth exceeds the uint64 code budget.")
+        raise ValueError(
+            f"morton.morton_decode_integer_host.depth must fit the uint64 code budget for the declared dimension; got {depth!r}"
+        )
     code_values = np.asarray(codes).astype(np.uint64)
     one = np.uint64(1)
     coordinates = []
@@ -374,8 +540,8 @@ def morton_decode_integer_host(
     return np.stack(coordinates, axis=-1)
 
 
-def hilbert_encode_integer(integer_coordinates: jax.Array, depth: int) -> jax.Array:
-    """Encode integer coordinates as canonical Hilbert-curve indices.
+def hilbert_encode_integer(integer_coordinates: ArrayLike, depth: int) -> jax.Array:
+    """Encode integer coordinates as deterministic Hilbert-curve indices.
 
     Uses Skilling's transpose construction (AIP Conf. Proc. 707, 2004): an
     inverse-undo pass and Gray encoding produce the transposed index, whose bits
@@ -384,11 +550,15 @@ def hilbert_encode_integer(integer_coordinates: jax.Array, depth: int) -> jax.Ar
     """
     coordinates = jnp.asarray(integer_coordinates, dtype=jnp.uint64)
     if coordinates.ndim < 1 or coordinates.shape[-1] not in (1, 2, 3):
-        raise ValueError("integer_coordinates must have trailing dimension 1, 2, or 3.")
+        raise ValueError(
+            f"morton.hilbert_encode_integer.integer_coordinates must have trailing dimension 1, 2, or 3; got {coordinates.shape!r}"
+        )
     dimension = coordinates.shape[-1]
     depth_value = operator.index(depth)
     if depth_value < 1 or dimension * depth_value > _MAX_CODE_BITS:
-        raise ValueError("The requested Hilbert depth exceeds the uint64 code budget.")
+        raise ValueError(
+            f"morton.hilbert_encode_integer.depth must fit the uint64 code budget for the declared dimension; got {depth!r}"
+        )
     axes = [coordinates[..., axis] for axis in range(dimension)]
     for bit in range(depth_value - 1, 0, -1):
         high = jnp.uint64(1 << bit)
@@ -416,7 +586,7 @@ def hilbert_encode_integer(integer_coordinates: jax.Array, depth: int) -> jax.Ar
     return code
 
 
-def _morton_encode_host(coordinates: tuple[int, ...], dimension: int, depth: int) -> int:
+def morton_encode_host(coordinates: tuple[int, ...], dimension: int, depth: int) -> int:
     code = 0
     for bit in range(depth):
         for axis in range(dimension):
@@ -424,7 +594,7 @@ def _morton_encode_host(coordinates: tuple[int, ...], dimension: int, depth: int
     return code
 
 
-def _morton_decode_host(code: int, dimension: int, depth: int) -> tuple[int, ...]:
+def morton_decode_host(code: int, dimension: int, depth: int) -> tuple[int, ...]:
     coordinates = []
     for axis in range(dimension):
         coordinate = 0
@@ -442,9 +612,13 @@ def canonical_morton_order(
     id_values = jnp.asarray(stable_ids)
     valid_values = jnp.asarray(valid, dtype=jnp.bool_)
     if code_values.ndim != 1 or id_values.shape != code_values.shape:
-        raise ValueError("codes and stable_ids must be rank-one arrays with equal shape.")
+        raise ValueError(
+            f"morton.canonical_morton_order.codes must be rank-one arrays with equal shape; got {id_values.shape!r}"
+        )
     if valid_values.shape != code_values.shape:
-        raise ValueError("valid must match codes.")
+        raise ValueError(
+            f"morton.canonical_morton_order.codes must match codes; got {valid_values.shape!r}"
+        )
     return jnp.lexsort(
         (
             id_values,
@@ -454,36 +628,43 @@ def canonical_morton_order(
     ).astype(jnp.int32)
 
 
-def _canonical_morton_point_order(
+@checked
+def canonical_morton_point_order(
     address_plan: MortonAddressPlan,
-    points: jax.Array,
+    points: ArrayLike,
     *,
     point_capacity: int,
-    active_mask: jax.Array | None = None,
-    stable_ids: jax.Array | None = None,
-) -> _MortonPointOrder:
+    active_mask: ArrayLike | None = None,
+    stable_ids: ArrayLike | None = None,
+) -> MortonPointOrder:
     """Validate, encode, and deterministically order one fixed-capacity point set."""
     positions = jnp.asarray(points)
     capacity = int(point_capacity)
     expected_shape = (capacity, address_plan.dimension)
     if positions.shape != expected_shape:
         raise ValueError(
-            f"points must have shape {expected_shape}; got {positions.shape}."
+            f"morton.canonical_morton_point_order.points must have shape {expected_shape}; got {positions.shape}"
         )
     if active_mask is None:
         active = jnp.ones((capacity,), dtype=jnp.bool_)
     else:
         active = jnp.asarray(active_mask, dtype=jnp.bool_)
         if active.shape != (capacity,):
-            raise ValueError("active_mask must match point_capacity.")
+            raise ValueError(
+                f"morton.canonical_morton_point_order.point_capacity must match point_capacity; got {active.shape!r}"
+            )
     if stable_ids is None:
         identifiers = jnp.arange(capacity, dtype=jnp.int64)
     else:
         identifiers = jnp.asarray(stable_ids)
         if identifiers.shape != (capacity,):
-            raise ValueError("stable_ids must match point_capacity.")
+            raise ValueError(
+                f"morton.canonical_morton_point_order.point_capacity must match point_capacity; got {identifiers.shape!r}"
+            )
         if not jnp.issubdtype(identifiers.dtype, jnp.integer):
-            raise TypeError("stable_ids must have integer dtype.")
+            raise TypeError(
+                f"morton.canonical_morton_point_order.stable_ids must have integer dtype; got {type(stable_ids).__name__}"
+            )
 
     encoding = address_plan.encode(positions)
     valid = active & encoding.in_domain
@@ -497,7 +678,7 @@ def _canonical_morton_point_order(
         & active_by_id[:-1]
         & (identifiers_by_id[1:] == identifiers_by_id[:-1])
     )
-    return _MortonPointOrder(
+    return MortonPointOrder(
         encoding=encoding,
         active=active,
         stable_ids=identifiers,
@@ -518,39 +699,53 @@ def _address_binding(
     periodic: tuple[bool, ...],
     /,
 ) -> tuple[tuple[tuple[str, int | None], ...], tuple[str | None, ...]] | None:
-    """Validate the canonical coordinate and seam revision of every address axis."""
+    """Validate the deterministic coordinate and seam revision of every address axis."""
     if coordinates is None and identifications is None:
         return None
     if coordinates is None or identifications is None:
-        raise ValueError("Address coordinates and identifications are declared together.")
+        raise ValueError(
+            f"morton.address_binding.coordinates must declare coordinates and identifications together; got {coordinates!r}"
+        )
     axes: list[tuple[str, int | None]] = []
     for coordinate in coordinates:
         if not isinstance(coordinate, tuple) or len(coordinate) != 2:
-            raise ValueError("Address coordinates must be (label, component) pairs.")
+            raise ValueError(
+                f"morton.address_binding.coordinates must be (label, component) pairs; got {type(coordinates).__name__}"
+            )
         label, component = coordinate
         if not isinstance(label, str) or not label:
-            raise ValueError("Address coordinate labels must be non-empty strings.")
+            raise ValueError(
+                f"morton.address_binding.coordinates must be non-empty strings; got {type(coordinates).__name__}"
+            )
         if component is not None and (
             isinstance(component, bool) or not isinstance(component, int) or component < 0
         ):
-            raise ValueError("Address coordinate components must be nonnegative or None.")
+            raise ValueError(
+                f"morton.address_binding.coordinates must be nonnegative or None; got {type(coordinates).__name__}"
+            )
         axes.append((label, component))
     revisions = tuple(identifications)
     if len(axes) != len(periodic) or len(revisions) != len(periodic):
-        raise ValueError("Address coordinates must bind every Morton axis once.")
+        raise ValueError(
+            f"morton.address_binding.coordinates must bind every Morton axis once; got {type(coordinates).__name__}"
+        )
     if len(set(axes)) != len(axes):
-        raise ValueError("Address coordinates must be distinct.")
+        raise ValueError(
+            f"morton.address_binding.coordinates must be distinct; got {type(coordinates).__name__}"
+        )
     for revision, periodic_axis in zip(revisions, periodic, strict=True):
         if revision is not None and (not isinstance(revision, str) or not revision):
-            raise ValueError("Identification revisions must be non-empty strings.")
+            raise ValueError(
+                f"morton.address_binding.coordinates must be non-empty strings; got {type(coordinates).__name__}"
+            )
         if (revision is not None) != periodic_axis:
             raise ValueError(
-                "Exactly the periodic axes carry an identification revision."
+                f"morton.address_binding.periodic must carry an identification revision on every periodic axis and no nonperiodic axis; got {type(periodic).__name__}"
             )
     return tuple(axes), revisions
 
 
-def _domain_point_coordinates(
+def domain_point_coordinates(
     domain: Domain, coordinates: Sequence[tuple[str, int | None]] | None, /
 ) -> tuple[tuple[tuple[str, int | None], ...], tuple[float, ...], tuple[float, ...]]:
     """Bind point-array axes to Cartesian coordinates of ``domain`` and their bounds.
@@ -559,18 +754,17 @@ def _domain_point_coordinates(
     coordinates canonicalize a one-dimensional component to ``0`` as
     `PeriodicIdentification` does; factors without Cartesian faces are refused.
     """
-    from phydrax.domain import AbstractGeometry, ScalarInterval
 
     if coordinates is None:
         if len(domain.labels) != 1:
             raise ValueError(
-                f"Domain labels {domain.labels!r} need explicit point coordinates."
+                f"morton.domain_point_coordinates.coordinates must provide explicit point coordinates; got {type(coordinates).__name__}; context {domain.labels!r}"
             )
         (label,) = domain.labels
         factor = domain.factor(label)
         requested: tuple[tuple[str, int | None], ...] = (
             tuple((label, axis) for axis in range(factor.spatial_dim))
-            if isinstance(factor, AbstractGeometry)
+            if isinstance(factor, _domain_owner().AbstractGeometry)
             else ((label, None),)
         )
     else:
@@ -580,43 +774,52 @@ def _domain_point_coordinates(
     upper: list[float] = []
     for coordinate in requested:
         if not isinstance(coordinate, tuple) or len(coordinate) != 2:
-            raise ValueError("Point coordinates must be (label, component) pairs.")
+            raise ValueError(
+                f"morton.domain_point_coordinates.coordinates must be (label, component) pairs; got {type(coordinates).__name__}"
+            )
         label, component = coordinate
         if not isinstance(label, str) or label not in domain.labels:
-            raise ValueError(f"{label!r} is not a coordinate of {domain.labels!r}.")
+            raise ValueError(
+                f"morton.domain_point_coordinates.domain must be a coordinate of {domain.labels!r}; got {type(domain).__name__}; context {label!r}"
+            )
         factor = domain.factor(label)
-        if isinstance(factor, ScalarInterval):
-            if component is not None:
-                raise ValueError(f"Scalar coordinate {label!r} takes component None.")
-            bounds = (float(factor.fixed("start")), float(factor.fixed("end")))
-        elif isinstance(factor, AbstractGeometry):
-            dimension = factor.spatial_dim
-            if component is None and dimension == 1:
-                component = 0
-            if (
-                component is None
-                or isinstance(component, bool)
-                or not isinstance(component, int)
-                or not 0 <= component < dimension
-            ):
-                raise ValueError(
-                    f"Coordinate {label!r} needs a component in [0, {dimension})."
+        domain_owner = _domain_owner()
+        match factor:
+            case domain_owner.ScalarInterval():
+                if component is not None:
+                    raise ValueError(
+                        f"morton.domain_point_coordinates.domain must use component None for scalar coordinates; got {type(domain).__name__}"
+                    )
+                bounds = (float(factor.fixed("start")), float(factor.fixed("end")))
+            case domain_owner.AbstractGeometry():
+                dimension = factor.spatial_dim
+                if component is None and dimension == 1:
+                    component = 0
+                if (
+                    component is None
+                    or isinstance(component, bool)
+                    or not isinstance(component, int)
+                    or not 0 <= component < dimension
+                ):
+                    raise ValueError(
+                        f"morton.domain_point_coordinates.domain must provide a component in [0, {dimension}); got {component!r}; context {label!r}"
+                    )
+                face_lower, face_upper = factor.coordinate_face_bounds()
+                bounds = (
+                    float(np.asarray(face_lower)[component]),
+                    float(np.asarray(face_upper)[component]),
                 )
-            face_lower, face_upper = factor.coordinate_face_bounds()
-            bounds = (
-                float(np.asarray(face_lower)[component]),
-                float(np.asarray(face_upper)[component]),
-            )
-        else:
-            raise TypeError(
-                f"Point coordinate {label!r} names a {type(factor).__name__}, not a "
-                "ScalarInterval or Cartesian geometry factor."
-            )
+            case _:
+                raise TypeError(
+                    f"morton.domain_point_coordinates.domain must name a ScalarInterval or Cartesian geometry factor; got {type(domain).__name__}"
+                )
         axes.append((label, component))
         lower.append(bounds[0])
         upper.append(bounds[1])
     if len(set(axes)) != len(axes):
-        raise ValueError("Point coordinates must be distinct.")
+        raise ValueError(
+            f"morton.domain_point_coordinates.coordinates must be distinct; got {type(coordinates).__name__}"
+        )
     return tuple(axes), tuple(lower), tuple(upper)
 
 
@@ -624,6 +827,7 @@ __all__ = [
     "MortonAddressPlan",
     "MortonCellGeometry",
     "MortonEncoding",
+    "MortonHostEncoding",
     "canonical_morton_order",
     "hilbert_encode_integer",
     "morton_decode_integer",

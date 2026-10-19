@@ -53,10 +53,10 @@ from ._preconditioners import (
 )
 from ._properties import LinearCapabilityError
 from ._spaces import (
-    _coordinate_dtype,
     _has_diagonal_pairing,
     AbstractVectorSpace,
     ArraySpace,
+    coordinate_dtype,
     DiagonalPairing,
     EuclideanPairing,
 )
@@ -89,7 +89,7 @@ def _dense_materialization_eligibility(
     if not isinstance(policy, MaterializationPolicy):
         raise TypeError("materialization must be a MaterializationPolicy or None.")
     entries = operator.source.size * operator.target.size
-    required_bytes = entries * _coordinate_dtype(operator.source).itemsize
+    required_bytes = entries * coordinate_dtype(operator.source).itemsize
     if entries > policy.max_entries:
         return (
             False,
@@ -367,7 +367,7 @@ class DenseInversePreconditionerBuilder(AbstractPreconditionerBuilder):
         materialization: MaterializationPolicy | None = None,
     ) -> PreconditionerCostEstimate:
         _validate_setup_operator(setup_operator)
-        itemsize = _coordinate_dtype(setup_operator.source).itemsize
+        itemsize = coordinate_dtype(setup_operator.source).itemsize
         entries = setup_operator.source.size * setup_operator.target.size
         accepted, materialization_reason = _dense_materialization_eligibility(
             setup_operator,
@@ -603,7 +603,7 @@ class ProjectedPseudoinversePreconditionerBuilder(AbstractPreconditionerBuilder)
     ) -> PreconditionerCostEstimate:
         self.properties_for(setup_operator)
         entries = setup_operator.source.size**2
-        itemsize = _coordinate_dtype(setup_operator.source).itemsize
+        itemsize = coordinate_dtype(setup_operator.source).itemsize
         accepted, reason = _dense_materialization_eligibility(
             setup_operator, materialization
         )
@@ -738,7 +738,7 @@ class JacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
         materialization: MaterializationPolicy | None = None,
     ) -> PreconditionerCostEstimate:
         _validate_setup_operator(setup_operator)
-        itemsize = _coordinate_dtype(setup_operator.source).itemsize
+        itemsize = coordinate_dtype(setup_operator.source).itemsize
         dimension = setup_operator.source.size
         direct_assembly = setup_operator.capabilities.diagonal_assembly
         accepted = True
@@ -827,7 +827,7 @@ class JacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
     ) -> PreconditionerCostEstimate:
         cost = self.cost_for(setup_operator, materialization=materialization)
         low_itemsize = jnp.dtype(compute_dtype).itemsize
-        high_itemsize = _coordinate_dtype(setup_operator.source).itemsize
+        high_itemsize = coordinate_dtype(setup_operator.source).itemsize
         dimension = setup_operator.source.size
         return PreconditionerCostEstimate(
             component=cost.component,
@@ -969,10 +969,10 @@ class BlockJacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
                     f"{dimension}, or the padding mask does not cover it"
                 ),
             )
-        itemsize = _coordinate_dtype(setup_operator.source).itemsize
+        itemsize = coordinate_dtype(setup_operator.source).itemsize
         real_itemsize = jnp.empty(
             (),
-            dtype=_coordinate_dtype(setup_operator.source),
+            dtype=coordinate_dtype(setup_operator.source),
         ).real.dtype.itemsize
         num_blocks = dimension // self.block_size
         block_bytes = dimension * self.block_size * itemsize
@@ -1094,7 +1094,7 @@ class BlockJacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
             return cost
         low = jnp.dtype(compute_dtype)
         real_low = jnp.empty((), dtype=low).real.dtype.itemsize
-        high_itemsize = _coordinate_dtype(setup_operator.source).itemsize
+        high_itemsize = coordinate_dtype(setup_operator.source).itemsize
         dimension = setup_operator.source.size
         block_bytes = dimension * self.block_size * low.itemsize
         return PreconditionerCostEstimate(

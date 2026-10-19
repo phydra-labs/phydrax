@@ -19,10 +19,8 @@ from phydrax.meshing import (
     MeshAdaptationPolicy,
     MeshAdaptationRoute,
     MeshAdaptationStatus,
-    MeshingEntityKind,
     MeshingFailure,
     MeshingFailureCategory,
-    MeshingScope,
     MeshMetricField,
     MeshPatch,
     MeshZone,
@@ -33,6 +31,7 @@ from phydrax.meshing import (
     RelocationMeshAdaptation,
 )
 from phydrax.meshing._device_metric import DeviceMetricEvidence
+from tests._support.meshing_fixtures import mesh_scope
 
 
 _LOWER = 1.0 / np.sqrt(2.0)
@@ -56,18 +55,6 @@ def _grid(count: Any, /, *, perturbation: Any = 0.0, shear: Any = 0.0) -> Any:
     d = index[1:, :-1].ravel()
     triangles = np.concatenate((np.stack((a, b, c), 1), np.stack((a, c, d), 1)))
     return points, triangles
-
-
-def _scope(mesh: Any, dimension: Any, entity_ids: Any, /) -> Any:
-    entities = mesh.entity_set(dimension)
-    return MeshingScope(
-        mesh.mesh_id,
-        mesh.numeric_version,
-        MeshingEntityKind.MESH,
-        dimension,
-        entities.entity_set_id,
-        np.asarray(entity_ids, dtype=np.int64),
-    )
 
 
 def _source(
@@ -94,21 +81,23 @@ def _source(
     bottom = np.all(coordinates[edges][:, :, 1] == 0.0, axis=1)
     zones = (
         MeshZone(
-            "left", MeshZoneRole.REGION, _scope(mesh, 2, cells[centroids[:, 0] < 0.5])
+            "left", MeshZoneRole.REGION, mesh_scope(mesh, 2, cells[centroids[:, 0] < 0.5])
         ),
         MeshZone(
-            "right", MeshZoneRole.REGION, _scope(mesh, 2, cells[centroids[:, 0] > 0.5])
+            "right",
+            MeshZoneRole.REGION,
+            mesh_scope(mesh, 2, cells[centroids[:, 0] > 0.5]),
         ),
     )
     edge_ids = np.asarray(mesh.entity_set(1).entity_ids)
-    patches = (MeshPatch("bottom", _scope(mesh, 1, edge_ids[bottom])),)
+    patches = (MeshPatch("bottom", mesh_scope(mesh, 1, edge_ids[bottom])),)
     return phx.meshing.certify_cell_mesh(mesh, contract, patches=patches, zones=zones)
 
 
 def _metric(source: Any, tensor: Any, /) -> Any:
     mesh = source.mesh
     vertices = mesh.entity_set(0)
-    scope = _scope(mesh, 0, vertices.entity_ids)
+    scope = mesh_scope(mesh, 0, vertices.entity_ids)
     values = np.broadcast_to(tensor, (vertices.entity_ids.shape[0], 2, 2))
     return MeshMetricField(scope, values, minimum_size=1.0e-3, maximum_size=10.0)
 
@@ -265,7 +254,7 @@ def test_device_metric_scenario_1() -> None:
     source = _source()
     mesh = source.mesh
     edges = mesh.entity_set(1)
-    protected = _scope(mesh, 1, edges.entity_ids)
+    protected = mesh_scope(mesh, 1, edges.entity_ids)
     result = _adapt(
         source,
         MetricMeshAdaptation(_metric(source, np.eye(2) / 0.1**2)),

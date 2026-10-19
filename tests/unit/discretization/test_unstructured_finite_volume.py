@@ -4,8 +4,6 @@
 
 
 import math
-import subprocess
-import sys
 from typing import Any
 
 import jax.numpy as jnp
@@ -13,6 +11,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from tests._support.forced_devices import run_on_forced_devices
 
 
 def _polygon_centroid(vertices: Any) -> Any:
@@ -89,7 +88,9 @@ def test_unstructured_finite_volume_scenario_1() -> None:
         np.asarray(((0.0, 0.0), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0))),
         np.asarray(((0.0, 0.0), (1.0, 0.0), (0.2, 0.2), (0.0, 1.0))),
     ):
-        with pytest.raises(ValueError, match="Quadrilateral"):
+        with pytest.raises(
+            ValueError, match=r"UnstructuredFiniteVolumePlan\.quadrilaterals"
+        ):
             phx.discretization.UnstructuredFiniteVolumePlan(
                 vertices,
                 quadrilaterals=np.asarray(((0, 1, 2, 3),)),
@@ -149,7 +150,7 @@ def test_tetrahedral_contracts() -> None:
 
     flat_vertices = vertices.copy()
     flat_vertices[3] = (0.25, 0.25, 0.0)
-    with pytest.raises(ValueError, match="Tetrahedral"):
+    with pytest.raises(ValueError, match=r"UnstructuredFiniteVolumePlan\.tetrahedra"):
         phx.discretization.UnstructuredFiniteVolumePlan(
             flat_vertices, tetrahedra=np.asarray(((0, 1, 2, 3),))
         )
@@ -269,71 +270,14 @@ def test_global_ids_are_lossless_or_rejected_for_the_active_jax_width(
     overflow_archive = tmp_path / "int32-overflow.fvmesh"
     phx.discretization.write_unstructured_fv_archive(boundary_archive, boundary_plan)
     phx.discretization.write_unstructured_fv_archive(overflow_archive, large_plan)
-    script = r"""
-import sys
-
-from phydrax import config as pxconfig
-import jax.numpy as jnp
-import numpy as np
-
-import phydrax as phx
-from phydrax._array_archive import read_array_archive
-
-pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=False))
-assert not bool(pxconfig.x64_enabled())
-int32_max = np.iinfo(np.int32).max
-vertices = np.asarray(
-    ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
-)
-quadrilaterals = np.asarray(((0, 1, 2, 3),), dtype=np.int32)
-boundary = phx.discretization.UnstructuredFiniteVolumePlan(
-    vertices,
-    quadrilaterals=quadrilaterals,
-    vertex_global_ids=np.arange(int32_max - 3, int32_max + 1, dtype=np.int64),
-    cell_global_ids=np.asarray((int32_max,), dtype=np.int64),
-)
-assert boundary.vertex_global_ids.dtype == jnp.int32
-assert boundary.cell_global_ids.dtype == jnp.int32
-assert int(boundary.vertex_global_ids[-1]) == int32_max
-try:
-    phx.discretization.UnstructuredFiniteVolumePlan(
-        vertices,
-        quadrilaterals=quadrilaterals,
-        vertex_global_ids=np.arange(
-            int32_max + 1, int32_max + 5, dtype=np.int64
-        ),
+    record = run_on_forced_devices(
+        "tests._support.discretization_process_scenarios",
+        "integer_width_archive",
+        (str(boundary_archive), str(overflow_archive)),
+        devices=1,
+        env={},
     )
-except ValueError as error:
-    assert "signed int32" in str(error)
-else:
-    raise AssertionError("x64-disabled construction accepted an overflowing global ID")
-
-_, canonical_arrays = read_array_archive(sys.argv[1])
-assert canonical_arrays["vertex_global_ids"].dtype == np.dtype(np.int64)
-assert canonical_arrays["cell_global_ids"].dtype == np.dtype(np.int64)
-restored = phx.discretization.read_unstructured_fv_archive(sys.argv[1])
-assert restored.vertex_global_ids.dtype == jnp.int32
-assert restored.cell_global_ids.dtype == jnp.int32
-assert int(restored.vertex_global_ids[-1]) == int32_max
-try:
-    phx.discretization.read_unstructured_fv_archive(sys.argv[2])
-except ValueError as error:
-    assert "signed int32" in str(error)
-else:
-    raise AssertionError("x64-disabled archive loading accepted an overflowing global ID")
-"""
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            script,
-            str(boundary_archive),
-            str(overflow_archive),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    assert record["integer_width_valid"]
 
 
 def test_moving_tetrahedral_quadrature_matches_static_six_point_rule() -> None:

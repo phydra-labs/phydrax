@@ -26,7 +26,7 @@ from ..linalg import (
     RHSLayout,
     solve,
 )
-from ..linalg._spaces import _coordinate_dtype
+from ..linalg._spaces import coordinate_dtype
 from ..operators.integral._convolution_quadrature import (
     causal_prefix_fft,
     ConvolutionQuadratureContour,
@@ -268,7 +268,7 @@ class PreparedConvolutionQuadrature(StrictModule):
         )
         self.node_providers = tuple(node.plan.backend for node in all_nodes)
         self.node_dtypes = tuple(
-            _coordinate_dtype(node.problem.operator.target).name for node in all_nodes
+            coordinate_dtype(node.problem.operator.target).name for node in all_nodes
         )
 
     def apply(self, history: ArrayLike, /) -> "ConvolutionQuadratureResult":
@@ -401,8 +401,8 @@ def _workspace_upper_bound(
     /,
 ) -> int:
     itemsize = max(
-        _coordinate_dtype(node.problem.operator.source).itemsize,
-        _coordinate_dtype(node.problem.operator.target).itemsize,
+        coordinate_dtype(node.problem.operator.source).itemsize,
+        coordinate_dtype(node.problem.operator.target).itemsize,
     )
     transform_values = (
         4 * contour.fft_length * contour.history_length * declaration.dimension

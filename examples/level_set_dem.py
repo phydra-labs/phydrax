@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def main() -> None:
@@ -20,7 +21,9 @@ def main() -> None:
         brick_size=2,
         brick_capacity=(resolution // 2) ** 3,
     ).prepare(coordinates)
-    sphere = phx.geometry.Sphere((0.0,) * 3, 0.5, feature_id="grain").compile()
+    sphere = phx.geometry.Sphere((0.0,) * 3, 0.5, feature_id="grain").compile(
+        coordinate_unit=METER
+    )
     enclosure = phx.geometry.ExactSDFEnclosureCertificate(sphere.field_certificate)
     samples = phx.geometry.VoxelGeometrySamplingPlan(
         grid, enclosure=enclosure, enclosure_geometry=sphere

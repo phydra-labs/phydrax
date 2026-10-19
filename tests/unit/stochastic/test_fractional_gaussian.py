@@ -158,6 +158,33 @@ def test_dense_method_preserves_seeded_values_and_identifiers() -> None:
         == automatic.coupling_id
         == "0c2e26058e824fcf5243448ae5fa48830f165bb204a2a625ba9c46fd6c5ab92b"
     )
+    # Seeded equality above is process-local: XLA's inverse-erf normal
+    # transform does not promise bitwise agreement between CPU platforms.
+    factor = default.covariance_factor
+    assert factor is not None
+    times = np.asarray(grid)
+    # Independent fBm covariance: C(s,t)=(s^(2H)+t^(2H)-|s-t|^(2H))/2.
+    expected = 0.5 * (
+        times[:, None] ** 0.7
+        + times[None, :] ** 0.7
+        - np.abs(times[:, None] - times[None, :]) ** 0.7
+    )
+    # Under the symmetric eigensolver's backward-stable model, reserve two
+    # n-by-n inner-product reconstructions plus eight scalar operations for
+    # the independent power/subtraction oracle. The Gram dot adds n operations.
+    # gamma_(2*n^2+n+8) is an absolute roundoff budget at covariance scale;
+    # it includes eigensolver reconstruction and Gram accumulation, not
+    # statistical sampling error (covered by the 4096-path test).
+    n = times.size
+    operations = 2 * n**2 + n + 8
+    unit_roundoff = np.finfo(np.float64).eps / 2
+    gamma = operations * unit_roundoff / (1 - operations * unit_roundoff)
+    np.testing.assert_allclose(
+        np.asarray(factor) @ np.asarray(factor).T,
+        expected,
+        rtol=0.0,
+        atol=gamma * np.max(np.abs(expected)),
+    )
     # LAPACK eigenvector signs and rounding are not a cross-platform byte
     # contract. Check the seeded replay above and the law against the analytic
     # fractional Brownian covariance, independent of the process implementation.

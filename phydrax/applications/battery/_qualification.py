@@ -377,7 +377,9 @@ def validate_battery_candidate_profile(
         return
     name = BATTERY_RELEASE_NAMES.get(support_tuple.support_tuple_id)
     if name is None:
-        raise ValueError("Unknown released battery profile coordinates.")
+        raise ValueError(
+            f"battery.support_tuple_id must identify a released profile; got {support_tuple.support_tuple_id!r}"
+        )
     expected = CapabilityProfile(
         name,
         _PROVIDER,

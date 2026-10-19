@@ -47,7 +47,7 @@ def _rectangle(
 
 
 def _volume(path: Path, contract: SpatialCoordinateContract) -> float:
-    """Native oracle: decode the published B-Rep text and integrate its exact solids."""
+    """Decode the published B-Rep text and integrate its solids as a native oracle."""
     policy = CadImportPolicy(
         contract, ResourceLimits(64 * 1024 * 1024, 128, 1_000_000, 10_000_000, 0)
     )
@@ -67,20 +67,20 @@ def test_process_stack_requires_total_precedence_and_explicit_void_targets() -> 
         ProcessStack(
             contract,
             (
-                StackRegion("first", footprint, ZInterval(0, 1), 0),
-                StackRegion("second", footprint, ZInterval(0, 1), 0),
+                StackRegion("first", footprint, ZInterval(0, 1, unit=MILLIMETER), 0),
+                StackRegion("second", footprint, ZInterval(0, 1, unit=MILLIMETER), 0),
             ),
         )
 
     with pytest.raises(ValueError, match="unknown regions"):
         ProcessStack(
             contract,
-            (StackRegion("region", footprint, ZInterval(0, 1), 0),),
+            (StackRegion("region", footprint, ZInterval(0, 1, unit=MILLIMETER), 0),),
             (
                 StackVoid(
                     "void",
                     footprint,
-                    ZInterval(0, 1),
+                    ZInterval(0, 1, unit=MILLIMETER),
                     ("not-a-region",),
                 ),
             ),
@@ -97,13 +97,13 @@ def test_vertical_stack_lowers_to_persisted_exact_partition_history(
             StackRegion(
                 "low",
                 _rectangle(0, 0, 2, 2, "low-footprint"),
-                ZInterval(0, 1),
+                ZInterval(0, 1, unit=MILLIMETER),
                 0,
             ),
             StackRegion(
                 "high",
                 _rectangle(1, 0, 3, 2, "high-footprint"),
-                ZInterval(0, 1),
+                ZInterval(0, 1, unit=MILLIMETER),
                 10,
             ),
         ),
@@ -111,7 +111,7 @@ def test_vertical_stack_lowers_to_persisted_exact_partition_history(
             StackVoid(
                 "opening",
                 _rectangle(0.5, 0.5, 1.5, 1.5, "opening-footprint"),
-                ZInterval(0, 1),
+                ZInterval(0, 1, unit=MILLIMETER),
                 ("high",),
             ),
         ),
@@ -163,3 +163,7 @@ def test_vertical_stack_lowers_to_persisted_exact_partition_history(
         model.coordinate_contract.spatial_id == contract.spatial_id
         for _, model in result.operand_models
     )
+    assert tuple(name for name, _ in result.operand_artifact_paths) == tuple(
+        name for name, _ in result.operand_models
+    )
+    assert all(path.is_file() for _, path in result.operand_artifact_paths)

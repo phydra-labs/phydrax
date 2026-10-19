@@ -43,7 +43,7 @@ from ._preconditioning import (
     PreconditionerSource,
 )
 from ._properties import OperatorProperties
-from ._spaces import _coordinate_dtype
+from ._spaces import coordinate_dtype
 from ._sparse_contract import AbstractSparseLinearOperator
 
 
@@ -714,7 +714,7 @@ def _cost_for_terms(
     rejected = []
     global_bytes = (
         terms[0].restriction.source.size
-        * _coordinate_dtype(terms[0].restriction.source).itemsize
+        * coordinate_dtype(terms[0].restriction.source).itemsize
     )
     for index, (term, operator) in enumerate(zip(terms, local_operators, strict=True)):
         estimate = _source_cost(
@@ -724,7 +724,7 @@ def _cost_for_terms(
         preparation_workspace += estimate.preparation_workspace_bytes
         apply_workspace += estimate.apply_workspace_bytes_per_rhs
         setup_matvecs += estimate.setup_matvec_count
-        local_bytes = operator.source.size * _coordinate_dtype(operator.source).itemsize
+        local_bytes = operator.source.size * coordinate_dtype(operator.source).itemsize
         apply_workspace += 2 * local_bytes + global_bytes
         if multiplicative:
             apply_workspace += 2 * global_bytes

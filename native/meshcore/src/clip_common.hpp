@@ -25,16 +25,6 @@
 
 namespace phx::mc::clip {
 
-template <class T>
-T lift(double x);
-template <>
-inline Approx lift<Approx>(double x) {
-  return Approx::exact(x);
-}
-template <>
-inline Expansion lift<Expansion>(double x) {
-  return Expansion(x);
-}
 
 template <class T>
 T diff(double a, double b);

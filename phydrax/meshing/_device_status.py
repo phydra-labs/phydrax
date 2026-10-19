@@ -18,6 +18,8 @@ from enum import Enum
 
 import numpy as np
 
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from .._geometry_predicates import (
     orient2d,
     orient3d,
@@ -26,7 +28,6 @@ from .._geometry_predicates import (
     resolve_host_predicate_mode,
 )
 from ..discretization._adaptive_simplex import AdaptiveSimplexStatus
-from ._contracts import MeshingFailure, MeshingFailureCategory
 
 
 class DeviceEpoch(Enum):

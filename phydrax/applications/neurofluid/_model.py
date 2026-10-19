@@ -60,10 +60,14 @@ class NeurofluidCase:
             raise ValueError("Compartment complex and segmentation revisions differ.")
         self.compartments.require_valid_adjacency()
         if not isinstance(self.bulk_mesh, CellMeshingResult):
-            raise TypeError("bulk_mesh must be CellMeshingResult.")
+            raise TypeError(
+                f"NeurofluidCase.bulk_mesh must be CellMeshingResult; got {type(self.bulk_mesh).__name__}"
+            )
         evidence = self.bulk_mesh.region_evidence
         if evidence is None:
-            raise ValueError("Neurofluid bulk meshes require source-region evidence.")
+            raise ValueError(
+                f"NeurofluidCase.bulk_mesh.region_evidence must be present; got {evidence!r}"
+            )
         evidence.require_source(self.compartments)
         evidence.require_current(
             self.bulk_mesh.mesh,
@@ -72,7 +76,9 @@ class NeurofluidCase:
             geometry=self.bulk_mesh.geometry,
         )
         if evidence.source_revision != self.segmentation.label_volume_id:
-            raise ValueError("Bulk mesh and segmentation revisions differ.")
+            raise ValueError(
+                f"NeurofluidCase.bulk_mesh.source_revision must be {self.segmentation.label_volume_id!r}; got {evidence.source_revision!r}"
+            )
         if not isinstance(self.network, PreparedMetricNetwork):
             raise TypeError("network must be PreparedMetricNetwork.")
         spatial_ids = {
@@ -434,6 +440,11 @@ class NeurofluidTransportPlan:
         tips = np.flatnonzero(np.asarray(network.tip_mask))
         if len(tips) != len(self.parameters.reservoir_volumes):
             raise ValueError("Reservoir parameters must match network tip count.")
+        regions = self.case.bulk_mesh.region_evidence
+        if regions is None:
+            raise ValueError(
+                "NeurofluidTransportPlan.case.bulk_mesh.region_evidence must retain authored regions; got missing"
+            )
         mixed = MixedDimensionalTransportPlan(
             bulk_plan,
             network_plan,
@@ -442,13 +453,14 @@ class NeurofluidTransportPlan:
             tips,
             self.parameters.reservoir_volumes,
             self.parameters.reservoir_coefficients,
+            bulk_region_ids=regions.cell_region_ids,
         )
         return mixed.prepare()
 
 
 @dataclass(frozen=True, slots=True)
 class NeurofluidTransportCheckpoint:
-    """Owned mixed-carrier physics and complete accepted history, without a runtime."""
+    """Store mixed-carrier physics and accepted transport history."""
 
     source: CompartmentMeshingSource
     result: CellMeshingResult
@@ -475,145 +487,17 @@ class NeurofluidTransportCheckpoint:
     checkpoint_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if (
-            type(self.source) is not CompartmentMeshingSource
-            or type(self.result) is not CellMeshingResult
-            or type(self.network_plan) is not MetricNetworkPlan
-            or type(self.parameters) is not NeurofluidTransportParameters
-        ):
-            raise TypeError(
-                "Transport checkpoints require exact original native source and unprepared physics owners."
-            )
-        if (
-            type(self.size) is not int
-            or self.size < 2
-            or type(self.steps) is not int
-            or self.steps < 1
-            or any(
-                not np.isfinite(value) or value <= 0.0
-                for value in (self.dt, self.target_error, self.balance_tolerance)
-            )
-        ):
-            raise ValueError(
-                "Transport checkpoints retain their positive original source/time/physical controls."
-            )
-        if (
-            type(self.step_cursor) is not int
-            or self.step_cursor != self.steps
-            or not np.isfinite(self.time)
-            or self.time != self.steps * self.dt
-        ):
-            raise ValueError(
-                "Accepted transport clock/cursor must bind its actual complete native history."
-            )
-        if (
-            type(self.physics_ids) is not tuple
-            or len(self.physics_ids) != 3
-            or any(type(value) is not str or not value for value in self.physics_ids)
-        ):
-            raise ValueError(
-                "Transport checkpoints require original case, plan and runtime identities."
-            )
-        self.source.validate_source_integrity()
-        if self.result.region_evidence is None or self.result.certification is None:
-            raise ValueError(
-                "Transport checkpoints require full region and source certification authority."
-            )
-        self.result.region_evidence.require_source(self.source.compartments)
-        self.result.certification.require_passed()
-        if not self.result.audit.passed or not self.result.compliance.passed:
-            raise ValueError(
-                "Accepted transport checkpoints require the original passing audit and hard generation request."
-            )
-        network = self.network_plan.prepare()
-        case = NeurofluidCase(
-            self.case_id,
-            self.source.labels,
-            self.source.compartments,
-            self.result,
-            network,
-        )
-        plan = NeurofluidTransportPlan(case, self.parameters)
-        if (
-            case.case_revision,
-            plan.plan_id,
-            plan.prepare().runtime_id,
-        ) != self.physics_ids:
-            raise ValueError(
-                "Transport checkpoint source or material constructor facts changed original physics."
-            )
+        """Validate the physics and both accepted trajectories before publishing identity."""
+        _validate_neurofluid_checkpoint_inputs(self)
+        _validate_neurofluid_checkpoint_clock_and_identity(self)
+        _validate_neurofluid_checkpoint_physics(self)
         sizes = (
             self.result.mesh.entity_set(3).count,
             self.network_plan.mesh.entity_set(0).count,
             len(self.parameters.reservoir_volumes),
         )
-
-        def state(
-            value: MixedDimensionalTransportState, *, history: bool = False
-        ) -> None:
-            if type(value) is not MixedDimensionalTransportState:
-                raise TypeError(
-                    "Accepted transport fields must retain their exact three-component state owner."
-                )
-            for name, count in zip(("bulk", "network", "reservoirs"), sizes, strict=True):
-                values = np.asarray(getattr(value, name))
-                expected = (self.steps, count) if history else (count,)
-                if (
-                    values.shape != expected
-                    or values.dtype != np.dtype("float64")
-                    or not np.all(np.isfinite(values))
-                ):
-                    raise ValueError(
-                        "Transport fields differ from their actual physical carrier, precision or accepted history."
-                    )
-
-        for value in (self.initial, self.final, self.ad_tangent, self.ad_value):
-            state(value)
-        state(self.history, history=True)
-        if (
-            np.asarray(self.accepted).shape != (self.steps,)
-            or np.asarray(self.accepted).dtype != np.dtype("bool")
-            or not np.all(np.asarray(self.accepted))
-        ):
-            raise ValueError(
-                "Transport checkpoints retain only complete actual accepted native steps."
-            )
-        for name in ("bulk", "network", "reservoirs"):
-            if not np.array_equal(
-                np.asarray(getattr(self.history, name))[-1],
-                np.asarray(getattr(self.final, name)),
-            ):
-                raise ValueError(
-                    "Transport final fields do not equal the actual last accepted history state."
-                )
-        if (
-            type(self.continued) is not tuple
-            or len(self.continued) != 2
-            or type(self.continued[1]) is not tuple
-            or len(self.continued[1]) != 2
-        ):
-            raise TypeError(
-                "Transport continuation retains its actual native scan result."
-            )
-        state(self.continued[0])
-        state(self.continued[1][0], history=True)
-        continued_accepted = np.asarray(self.continued[1][1])
-        if (
-            continued_accepted.shape != (self.steps,)
-            or continued_accepted.dtype != np.dtype("bool")
-            or not np.all(continued_accepted)
-        ):
-            raise ValueError(
-                "Transport continuation must retain every actual accepted step."
-            )
-        for name in ("bulk", "network", "reservoirs"):
-            if not np.array_equal(
-                np.asarray(getattr(self.continued[1][0], name))[-1],
-                np.asarray(getattr(self.continued[0], name)),
-            ):
-                raise ValueError(
-                    "Continued final fields differ from their real accepted history."
-                )
+        _validate_neurofluid_checkpoint_accepted_history(self, sizes)
+        _validate_neurofluid_checkpoint_continued_history(self, sizes)
         object.__setattr__(
             self,
             "checkpoint_id",
@@ -647,6 +531,185 @@ class NeurofluidTransportCheckpoint:
                 }
             ),
         )
+
+
+def _validate_neurofluid_checkpoint_inputs(
+    checkpoint: NeurofluidTransportCheckpoint,
+) -> None:
+    if (
+        type(checkpoint.source) is not CompartmentMeshingSource
+        or type(checkpoint.result) is not CellMeshingResult
+        or type(checkpoint.network_plan) is not MetricNetworkPlan
+        or type(checkpoint.parameters) is not NeurofluidTransportParameters
+    ):
+        raise TypeError(
+            f"NeurofluidTransportCheckpoint.physics must contain CompartmentMeshingSource, CellMeshingResult, MetricNetworkPlan and NeurofluidTransportParameters; got {tuple(type(v).__name__ for v in (checkpoint.source, checkpoint.result, checkpoint.network_plan, checkpoint.parameters))!r}"
+        )
+    if (
+        type(checkpoint.size) is not int
+        or checkpoint.size < 2
+        or type(checkpoint.steps) is not int
+        or checkpoint.steps < 1
+        or any(
+            not np.isfinite(value) or value <= 0.0
+            for value in (
+                checkpoint.dt,
+                checkpoint.target_error,
+                checkpoint.balance_tolerance,
+            )
+        )
+    ):
+        raise ValueError(
+            f"NeurofluidTransportCheckpoint.controls must have integer size >= 2, integer steps >= 1 and finite positive dt, target_error and balance_tolerance; got {(checkpoint.size, checkpoint.steps, checkpoint.dt, checkpoint.target_error, checkpoint.balance_tolerance)!r}"
+        )
+
+
+def _validate_neurofluid_checkpoint_clock_and_identity(
+    checkpoint: NeurofluidTransportCheckpoint,
+) -> None:
+    if (
+        type(checkpoint.step_cursor) is not int
+        or checkpoint.step_cursor != checkpoint.steps
+        or not np.isfinite(checkpoint.time)
+        or checkpoint.time != checkpoint.steps * checkpoint.dt
+    ):
+        raise ValueError(
+            f"NeurofluidTransportCheckpoint.clock must have integer cursor {checkpoint.steps!r} and finite time {checkpoint.steps * checkpoint.dt!r}; got {(checkpoint.step_cursor, checkpoint.time)!r}"
+        )
+    if (
+        type(checkpoint.physics_ids) is not tuple
+        or len(checkpoint.physics_ids) != 3
+        or any(type(value) is not str or not value for value in checkpoint.physics_ids)
+    ):
+        raise ValueError(
+            f"NeurofluidTransportCheckpoint.physics_ids must be a tuple of three nonempty strings; got {checkpoint.physics_ids!r}"
+        )
+
+
+def _validate_neurofluid_checkpoint_physics(
+    checkpoint: NeurofluidTransportCheckpoint,
+) -> None:
+    checkpoint.source.validate_source_integrity()
+    if (
+        checkpoint.result.region_evidence is None
+        or checkpoint.result.certification is None
+    ):
+        raise ValueError(
+            f"NeurofluidTransportCheckpoint.result must include region evidence and certification; got {(checkpoint.result.region_evidence is not None, checkpoint.result.certification is not None)!r}"
+        )
+    checkpoint.result.region_evidence.require_source(checkpoint.source.compartments)
+    checkpoint.result.certification.require_passed()
+    if not checkpoint.result.audit.passed or not checkpoint.result.compliance.passed:
+        raise ValueError(
+            f"NeurofluidTransportCheckpoint.result must pass audit and compliance; got {(checkpoint.result.audit.passed, checkpoint.result.compliance.passed)!r}"
+        )
+    network = checkpoint.network_plan.prepare()
+    case = NeurofluidCase(
+        checkpoint.case_id,
+        checkpoint.source.labels,
+        checkpoint.source.compartments,
+        checkpoint.result,
+        network,
+    )
+    plan = NeurofluidTransportPlan(case, checkpoint.parameters)
+    if (
+        case.case_revision,
+        plan.plan_id,
+        plan.prepare().runtime_id,
+    ) != checkpoint.physics_ids:
+        raise ValueError(
+            f"NeurofluidTransportCheckpoint.physics_ids must match reconstructed case, plan and runtime; got {checkpoint.physics_ids!r}"
+        )
+
+
+def _validate_neurofluid_checkpoint_state(
+    checkpoint: NeurofluidTransportCheckpoint,
+    value: MixedDimensionalTransportState,
+    sizes: tuple[int, int, int],
+    *,
+    history: bool = False,
+) -> None:
+    if type(value) is not MixedDimensionalTransportState:
+        raise TypeError(
+            f"NeurofluidTransportCheckpoint.state must be MixedDimensionalTransportState; got {type(value).__name__}"
+        )
+    for name, count in zip(("bulk", "network", "reservoirs"), sizes, strict=True):
+        values = np.asarray(getattr(value, name))
+        expected = (checkpoint.steps, count) if history else (count,)
+        if (
+            values.shape != expected
+            or values.dtype != np.dtype("float64")
+            or not np.all(np.isfinite(values))
+        ):
+            raise ValueError(
+                f"NeurofluidTransportCheckpoint.state.{name} must have shape {expected!r}, float64 dtype and finite values; got shape={values.shape!r}, dtype={values.dtype!r}"
+            )
+
+
+def _validate_neurofluid_checkpoint_accepted_history(
+    checkpoint: NeurofluidTransportCheckpoint, sizes: tuple[int, int, int]
+) -> None:
+    for value in (
+        checkpoint.initial,
+        checkpoint.final,
+        checkpoint.ad_tangent,
+        checkpoint.ad_value,
+    ):
+        _validate_neurofluid_checkpoint_state(checkpoint, value, sizes)
+    _validate_neurofluid_checkpoint_state(
+        checkpoint, checkpoint.history, sizes, history=True
+    )
+    if (
+        np.asarray(checkpoint.accepted).shape != (checkpoint.steps,)
+        or np.asarray(checkpoint.accepted).dtype != np.dtype("bool")
+        or not np.all(np.asarray(checkpoint.accepted))
+    ):
+        raise ValueError(
+            f"NeurofluidTransportCheckpoint.accepted must be an all-true bool array of shape {(checkpoint.steps,)!r}; got {checkpoint.accepted!r}"
+        )
+    for name in ("bulk", "network", "reservoirs"):
+        if not np.array_equal(
+            np.asarray(getattr(checkpoint.history, name))[-1],
+            np.asarray(getattr(checkpoint.final, name)),
+        ):
+            raise ValueError(
+                f"NeurofluidTransportCheckpoint.final.{name} must equal the last history state; got {getattr(checkpoint.final, name)!r}"
+            )
+
+
+def _validate_neurofluid_checkpoint_continued_history(
+    checkpoint: NeurofluidTransportCheckpoint, sizes: tuple[int, int, int]
+) -> None:
+    if (
+        type(checkpoint.continued) is not tuple
+        or len(checkpoint.continued) != 2
+        or type(checkpoint.continued[1]) is not tuple
+        or len(checkpoint.continued[1]) != 2
+    ):
+        raise TypeError(
+            f"NeurofluidTransportCheckpoint.continued must be a (state, (history, accepted)) tuple; got {type(checkpoint.continued).__name__}"
+        )
+    _validate_neurofluid_checkpoint_state(checkpoint, checkpoint.continued[0], sizes)
+    _validate_neurofluid_checkpoint_state(
+        checkpoint, checkpoint.continued[1][0], sizes, history=True
+    )
+    continued_accepted = np.asarray(checkpoint.continued[1][1])
+    if (
+        continued_accepted.shape != (checkpoint.steps,)
+        or continued_accepted.dtype != np.dtype("bool")
+        or not np.all(continued_accepted)
+    ):
+        raise ValueError(
+            f"NeurofluidTransportCheckpoint.continued.accepted must be an all-true bool array of shape {(checkpoint.steps,)!r}; got {continued_accepted!r}"
+        )
+    for name in ("bulk", "network", "reservoirs"):
+        if not np.array_equal(
+            np.asarray(getattr(checkpoint.continued[1][0], name))[-1],
+            np.asarray(getattr(checkpoint.continued[0], name)),
+        ):
+            raise ValueError(
+                f"NeurofluidTransportCheckpoint.continued.final.{name} must equal the last continued history state; got {getattr(checkpoint.continued[0], name)!r}"
+            )
 
 
 class NeurofluidDiagnosticReport(StrictModule):

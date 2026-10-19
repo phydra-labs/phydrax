@@ -7,46 +7,57 @@ from __future__ import annotations
 from abc import abstractmethod
 from enum import IntEnum, StrEnum
 from fractions import Fraction
-from typing import Any, Literal, TypeAlias
+from typing import assert_never, final, Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.discretization._simplicial_locator as simplicial_locator_owner
+
 from .._bvh import bvh_nearest_items, prepare_bvh
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    tree_content_equal,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import (
-    CellLocationStatus,
-    CellMesh,
-    PreparedSimplicialCellLocator,
-    SimplicialLocationPolicy,
-)
+from .._validation import positive_finite_float
 from ..discretization._field_query import PreparedFieldQuery
-from ..discretization._periodic_topology import _lifted_loops
+from ..discretization._periodic_topology import lifted_loops
 from ..discretization.fem import (
     discontinuous_element,
+    FiniteElementFieldReconstructionKernel,
     FiniteElementFieldSpec,
     FiniteElementPlan,
     PreparedFiniteElementCellMap,
 )
+from ..discretization.finite_volume._field_view import (
+    UnstructuredFiniteVolumeFieldReconstructionKernel,
+)
+from ..discretization.finite_volume._triangle_fv import TriangleFiniteVolumeDiscretization
+from ..discretization.finite_volume._unstructured import (
+    UnstructuredFiniteVolumeDiscretization,
+)
 from ..ein import contract
-from ..typing import parse
-from ._assembly import MeshPart
+from ..typing import checked, parse
+from ._mesh_part import MeshPart
 from ._result import CellMeshingResult
 from ._scope import MeshingScope
 
 
-OversetValueAction: TypeAlias = Literal[
-    "invariant", "polar-vector", "contravariant-vector"
-]
+type OversetValueAction = Literal["invariant", "polar-vector", "contravariant-vector"]
 
 
-def _encoded_image_isometry(matrix: np.ndarray, /) -> bool:
-    """Prove Euclidean Gram identity of the original binary64 coefficients."""
+def encoded_image_isometry(matrix: np.ndarray, /) -> bool:
+    """Proves the Euclidean Gram identity using rational arithmetic over the encoded
+    binary64 coefficients.
+    """
     dimension = matrix.shape[0]
     coefficients = tuple(tuple(Fraction(float(value)) for value in row) for row in matrix)
     return all(
@@ -63,6 +74,16 @@ def _encoded_image_isometry(matrix: np.ndarray, /) -> bool:
     )
 
 
+@final
+class _QueryImageAction(StrictModule, NonTrainableState):
+    """Validated source-to-target image action and authored source images."""
+
+    matrix: np.ndarray | None
+    offset: np.ndarray | None
+    source_image: np.ndarray | None
+    target_image: np.ndarray | None
+
+
 def _query_image_action(
     query: PreparedFieldQuery,
     target_points: Array,
@@ -74,9 +95,11 @@ def _query_image_action(
     action: OversetValueAction,
     tolerance: float,
     /,
-) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+) -> _QueryImageAction:
     if (rotation is None) != (translation is None):
-        raise ValueError("Overset isometries require both rotation and translation.")
+        raise ValueError(
+            "OversetCoupling.rotation must be provided together with translation or both must be None; got only one image component."
+        )
     images = tuple(
         None if image is None else np.asarray(image, dtype=np.float64)
         for image in (source_image_rotation, target_image_rotation)
@@ -85,11 +108,11 @@ def _query_image_action(
         if image is not None:
             if image.shape != (dimension, dimension) or not np.all(np.isfinite(image)):
                 raise ValueError(
-                    "Original source image maps must retain finite ambient coordinate axes."
+                    "OversetCoupling.source_image_rotation must contain finite ambient-coordinate matrices; got an incompatible shape or nonfinite coefficient."
                 )
-            if action == "polar-vector" and not _encoded_image_isometry(image):
+            if action == "polar-vector" and not encoded_image_isometry(image):
                 raise ValueError(
-                    "Polar-vector actions require exact encoded source-image isometries; use contravariant-vector for an affine map."
+                    "OversetCoupling.source_image_rotation must pass encoded_image_isometry on encoded coefficients for a polar-vector action; got coefficients failing the isometry predicate."
                 )
     matrix, offset = None, None
     points = np.asarray(query.points)
@@ -105,16 +128,18 @@ def _query_image_action(
             or not np.all(np.isfinite(matrix))
             or not np.all(np.isfinite(offset))
         ):
-            raise ValueError("Overset transform shape or finite values are invalid.")
+            raise ValueError(
+                "OversetCoupling.rotation must have ambient-dimensional finite coefficients together with translation; got invalid shapes or non-finite coefficients."
+            )
         if not np.allclose(
             matrix.T @ matrix, np.eye(dimension, dtype=np.float64), rtol=0, atol=tolerance
         ):
             raise ValueError(
-                "Overset transform must satisfy its near-isometry admission premise."
+                "OversetCoupling.rotation must satisfy the Euclidean Gram identity within tolerance; got a matrix outside the near-isometry tolerance."
             )
-        if action == "polar-vector" and not _encoded_image_isometry(matrix):
+        if action == "polar-vector" and not encoded_image_isometry(matrix):
             raise ValueError(
-                "Polar-vector actions require an exact encoded isometry; use contravariant-vector for an affine map."
+                "OversetCoupling.rotation must pass encoded_image_isometry on encoded coefficients for a polar-vector action; got coefficients failing the isometry predicate."
             )
         matched = np.allclose(
             points @ matrix.T + offset, target_sites, rtol=0, atol=tolerance
@@ -124,15 +149,17 @@ def _query_image_action(
     if matrix is not None or any(image is not None for image in images):
         if any(query.derivative):
             raise ValueError(
-                "Overset images require value queries, not derivative components."
+                "OversetCoupling.field_query.derivative must select value components only; got a derivative component request."
             )
         if action != "invariant" and query.value_shape != (dimension,):
-            raise ValueError(f"Overset images require ambient {action} value queries.")
+            raise ValueError(
+                f"OversetCoupling.field_query.value_shape must be an ambient-dimension vector shape for {action}; got a non-vector query shape."
+            )
     if not matched:
         raise ValueError(
-            "Field-query points must follow the target vertex scope order under its image map."
+            "OversetCoupling.field_query.points must follow target vertex scope order under the image map; got a different point order or image."
         )
-    return matrix, offset, images[0], images[1]
+    return _QueryImageAction(matrix, offset, images[0], images[1])
 
 
 class MeshCouplingKind(StrEnum):
@@ -140,13 +167,6 @@ class MeshCouplingKind(StrEnum):
     PERIODIC = "periodic"
     CONTACT = "contact"
     OVERSET = "overset"
-
-
-def _tolerance(value: float) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0:
-        raise ValueError("Coupling tolerance must be finite and positive.")
-    return result
 
 
 class CouplingSearchStatus(IntEnum):
@@ -180,6 +200,7 @@ class CouplingSearchEvidence(StrictModule, NonTrainableState):
     target_scope_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         kind: MeshCouplingKind,
@@ -193,7 +214,9 @@ class CouplingSearchEvidence(StrictModule, NonTrainableState):
         /,
     ) -> None:
         if not isinstance(kind, MeshCouplingKind):
-            raise TypeError("kind must be MeshCouplingKind.")
+            raise TypeError(
+                "CouplingSearchEvidence.kind must be a MeshCouplingKind; got another type."
+            )
         codes = np.asarray(status, dtype=np.int32)
         donors = np.asarray(donor_ids, dtype=np.int64)
         cells = np.asarray(source_cells, dtype=np.int32)
@@ -208,12 +231,12 @@ class CouplingSearchEvidence(StrictModule, NonTrainableState):
             or not np.all(np.isin(codes, [int(value) for value in CouplingSearchStatus]))
         ):
             raise ValueError(
-                "Coupling search evidence must hold one record per receptor."
+                "CouplingSearchEvidence.records must provide one status code, donor row, cell, and distance per receptor with every code in CouplingSearchStatus; got mismatched record arrays or an unsupported status code."
             )
-        self.status = jnp.asarray(codes)
-        self.donor_ids = jnp.asarray(donors)
-        self.source_cells = jnp.asarray(cells)
-        self.distances = jnp.asarray(distance)
+        self.status = jax.device_put(np.asarray(codes))
+        self.donor_ids = jax.device_put(np.asarray(donors))
+        self.source_cells = jax.device_put(np.asarray(cells))
+        self.distances = jax.device_put(np.asarray(distance))
         self.kind = kind
         self.method = str(method)
         self.source_scope_id = source_scope.scope_id
@@ -237,6 +260,7 @@ class CouplingSearchEvidence(StrictModule, NonTrainableState):
 class CouplingSearchError(ValueError):
     """A donor search left receptors without admissible donors; see ``evidence``."""
 
+    @checked
     def __init__(self, message: str, evidence: CouplingSearchEvidence, /) -> None:
         super().__init__(message)
         self.evidence = evidence
@@ -250,8 +274,7 @@ def _search_failure(evidence: CouplingSearchEvidence, /) -> CouplingSearchError:
         if status is not CouplingSearchStatus.FOUND and counts[status]
     )
     return CouplingSearchError(
-        f"{evidence.kind.value.capitalize()} donor search failed for receptors "
-        f"({summary}).",
+        f"CouplingSearchEvidence.status must find admissible donors for every receptor in {evidence.kind.value.capitalize()} search; got {summary}.",
         evidence,
     )
 
@@ -267,8 +290,6 @@ def _bound_search_evidence(
     """Require supplied search evidence to describe exactly this coupling."""
     if evidence is None:
         return
-    if not isinstance(evidence, CouplingSearchEvidence):
-        raise TypeError("search_evidence must be CouplingSearchEvidence or None.")
     if (
         evidence.kind is not kind
         or evidence.source_scope_id != source_scope.scope_id
@@ -276,7 +297,9 @@ def _bound_search_evidence(
         or not np.all(np.asarray(evidence.found))
         or not np.array_equal(np.asarray(evidence.donor_ids), donors)
     ):
-        raise ValueError("Coupling search evidence does not describe these donors.")
+        raise ValueError(
+            "CouplingSearchEvidence.binding must match the requested kind, source scope, target scope, and donor IDs with every receptor found; got stale or unresolved search evidence."
+        )
 
 
 def _endpoints(
@@ -285,8 +308,6 @@ def _endpoints(
     source_scope: MeshingScope,
     target_scope: MeshingScope,
 ) -> None:
-    if not isinstance(source, MeshPart) or not isinstance(target, MeshPart):
-        raise TypeError("Coupling endpoints must be MeshPart values.")
     source.require_scope(source_scope)
     target.require_scope(target_scope)
     if (
@@ -294,12 +315,16 @@ def _endpoints(
         or source.ambient_dimension != target.ambient_dimension
     ):
         raise ValueError(
-            "Coupling endpoints require one coordinate contract and ambient dimension."
+            "MeshCoupling.endpoints must share a coordinate-contract spatial ID and ambient dimension; got mismatched endpoint coordinates or dimensions."
         )
     if source.name == target.name and source.part_id != target.part_id:
-        raise ValueError("Coupling cannot mix revisions of one part.")
+        raise ValueError(
+            "MeshCoupling.endpoints must use one part revision when endpoint names match; got matching names with different part IDs."
+        )
     if source_scope.entity_dimension != target_scope.entity_dimension:
-        raise ValueError("Coupling endpoints must have matching entity dimensions.")
+        raise ValueError(
+            "MeshCoupling.endpoint_scopes must have matching entity dimensions; got different source and target entity dimensions."
+        )
 
 
 def _point_pairs(
@@ -308,17 +333,19 @@ def _point_pairs(
     source_scope: MeshingScope,
     target_scope: MeshingScope,
     source_ids: ArrayLike | None,
-) -> Any:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     _endpoints(source, target, source_scope, target_scope)
     ids = np.asarray(source_scope.entity_ids)
     paired = ids if source_ids is None else np.asarray(source_ids)
     if paired.shape != np.asarray(target_scope.entity_ids).shape or not np.issubdtype(
         paired.dtype, np.integer
     ):
-        raise ValueError("One integer source point ID is required per target point.")
+        raise ValueError(
+            "MeshCoupling.source_point_ids must provide one integer ID per target point; got a shape or dtype mismatch."
+        )
     if not np.array_equal(np.sort(paired), ids):
         raise ValueError(
-            "Conformal, periodic and node-contact pairs must be a complete bijection."
+            "MeshCoupling.point_pairs must form a bijection covering every source and target point; got source IDs that are not a bijection."
         )
     rows = np.searchsorted(ids, paired).astype(np.int32)
     return (
@@ -329,7 +356,9 @@ def _point_pairs(
 
 
 class MeshCoupling(StrictModule, NonTrainableState):
-    """Exact endpoint-scoped coupling; field arrays use sorted scope-global-ID order."""
+    """Represents endpoint-scoped coupling with field arrays in sorted scope-global-ID
+    order.
+    """
 
     __strict_abstract__ = True
 
@@ -338,6 +367,7 @@ class MeshCoupling(StrictModule, NonTrainableState):
     kind: MeshCouplingKind = eqx.field(static=True)
     coupling_id: str = eqx.field(static=True)
 
+    @checked
     def require_current(self, source: MeshPart, target: MeshPart, /) -> None:
         _endpoints(source, target, self.source_scope, self.target_scope)
 
@@ -355,13 +385,17 @@ class _PointPairCoupling(MeshCoupling):
     def transfer(self, source_values: ArrayLike, /) -> Array:
         values = jnp.asarray(source_values)
         if values.ndim == 0 or values.shape[0] != self.source_scope.entity_ids.size:
-            raise ValueError("Source field must follow source scope entity order.")
+            raise ValueError(
+                "MeshCoupling.source_values must have one leading-axis value per source-scope entity; got a scalar or mismatched leading axis."
+            )
         return values[self.source_rows]
 
     def transpose(self, target_values: ArrayLike, /) -> Array:
         values = jnp.asarray(target_values)
         if values.ndim == 0 or values.shape[0] != self.target_scope.entity_ids.size:
-            raise ValueError("Target field must follow target scope entity order.")
+            raise ValueError(
+                "MeshCoupling.target_values must have one leading-axis value per target-scope entity; got a scalar or mismatched leading axis."
+            )
         return (
             jnp.zeros(
                 (self.source_scope.entity_ids.size,) + values.shape[1:],
@@ -377,6 +411,7 @@ class ConformalCoupling(_PointPairCoupling):
 
     tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: MeshPart,
@@ -388,7 +423,7 @@ class ConformalCoupling(_PointPairCoupling):
         source_ids: ArrayLike | None = None,
         tolerance: float = 1e-10,
     ) -> None:
-        tol = _tolerance(tolerance)
+        tol = positive_finite_float(tolerance, "tolerance")
         rows, left, right = _point_pairs(
             source, target, source_scope, target_scope, source_ids
         )
@@ -397,9 +432,11 @@ class ConformalCoupling(_PointPairCoupling):
             or not np.all(np.isfinite(right))
             or np.any(np.linalg.norm(left - right, axis=-1) > tol)
         ):
-            raise ValueError("Conformal point pairs do not coincide within tolerance.")
+            raise ValueError(
+                "ConformalCoupling.point_pairs must have finite coordinates that coincide within tolerance; got non-finite or separated paired points."
+            )
         self.source_scope, self.target_scope = source_scope, target_scope
-        self.source_rows = jnp.asarray(rows)
+        self.source_rows = jax.device_put(np.asarray(rows))
         self.kind = MeshCouplingKind.CONFORMAL
         self.tolerance = tol
         self.coupling_id = canonical_fingerprint(
@@ -426,31 +463,39 @@ def _paired_rows(
     if paired.shape != np.asarray(target_scope.entity_ids).shape or not np.issubdtype(
         paired.dtype, np.integer
     ):
-        raise ValueError("One integer source entity ID is required per target entity.")
+        raise ValueError(
+            "PeriodicCoupling.source_entity_ids must provide one integer ID per target entity; got a shape or dtype mismatch."
+        )
     if not np.array_equal(np.sort(paired), ids):
-        raise ValueError("Periodic entity pairs must be a complete bijection.")
+        raise ValueError(
+            "PeriodicCoupling.entity_pairs must form a bijection covering every source and target entity; got source IDs that are not a bijection."
+        )
     return np.searchsorted(ids, paired).astype(np.int32)
 
 
-def _cell_mesh(part: MeshPart, /) -> CellMesh:
+def _cell_mesh(part: MeshPart, /) -> cell_mesh_owner.CellMesh:
     carrier = part.carrier
     if not isinstance(carrier, CellMeshingResult):
-        raise TypeError("Periodic entity pairs require certified cell mesh parts.")
+        raise TypeError(
+            "PeriodicCoupling.endpoint.carrier must be a certified CellMeshingResult; got a carrier without a certified cell mesh."
+        )
     return carrier.mesh
 
 
-def _lifted_rows(mesh: CellMesh, scope: MeshingScope, /) -> np.ndarray:
+def _lifted_rows(mesh: cell_mesh_owner.CellMesh, scope: MeshingScope, /) -> np.ndarray:
     identifiers = np.asarray(mesh.entity_set(scope.entity_dimension).entity_ids)
     order = np.argsort(identifiers, kind="stable")
     return order[np.searchsorted(identifiers[order], np.asarray(scope.entity_ids))]
 
 
-def _oriented_corners(mesh: CellMesh, dimension: int, /) -> dict[int, np.ndarray]:
+def _oriented_corners(
+    mesh: cell_mesh_owner.CellMesh, dimension: int, /
+) -> dict[int, np.ndarray]:
     """Oriented corner loop of every lifted edge or face, by lifted row."""
 
     return {
         int(row): loop
-        for rows, loops in _lifted_loops(mesh, dimension)
+        for rows, loops in lifted_loops(mesh, dimension)
         for row, loop in zip(rows, loops, strict=True)
     }
 
@@ -466,14 +511,18 @@ def _loop_orientations(
     if np.any(np.min(distances, axis=2) > tolerance) or np.any(
         np.sort(matched, axis=1) != np.arange(arity)
     ):
-        raise ValueError("Periodic entity corners do not match the transform.")
+        raise ValueError(
+            "PeriodicCoupling.entity_pair_corners must match the transform within tolerance as a corner bijection; got unmatched or repeated transformed corners."
+        )
     if arity == 2:
         return np.where(matched[:, 0] == 0, 1, -1).astype(np.int32)
     step = (np.roll(matched, -1, axis=1) - matched) % arity
     forward = np.all(step == 1, axis=1)
     backward = np.all(step == arity - 1, axis=1)
     if not np.all(forward | backward):
-        raise ValueError("Periodic entity corners are not an oriented loop image.")
+        raise ValueError(
+            "PeriodicCoupling.entity_pair_corners must form a forward or backward oriented loop image; got neither loop orientation."
+        )
     return np.where(forward, 1, -1).astype(np.int32)
 
 
@@ -499,8 +548,7 @@ def _require_distinct_quotient_orbits(
     target_rows = _lifted_rows(mesh, target_scope)
     if np.any(orbit[source_rows] == orbit[target_rows]):
         raise ValueError(
-            "Periodic coupling pairs entities that the quotient topology already "
-            "identifies; boundary-paired coupling cannot re-identify quotient orbits."
+            "PeriodicCoupling.entity_pairs must belong to distinct quotient orbits; got entities already identified by quotient topology."
         )
 
 
@@ -529,7 +577,9 @@ def _entity_pairs(
                 np.linalg.norm(left @ matrix.T + offset - right, axis=-1) > tolerance
             )
         ):
-            raise ValueError("Periodic point pairs do not match the transform.")
+            raise ValueError(
+                "PeriodicCoupling.point_pairs must have finite coordinates matching the transform within tolerance; got non-finite or mismatched paired points."
+            )
         if isinstance(source.carrier, CellMeshingResult):
             _require_distinct_quotient_orbits(
                 source, target, 0, source_scope, target_scope, rows
@@ -542,7 +592,7 @@ def _entity_pairs(
         source_mesh.topological_dimension, target_mesh.topological_dimension
     ):
         raise ValueError(
-            "Periodic coupling pairs vertices, edges or faces below the cell dimension."
+            "PeriodicCoupling.entity_dimension must be below both endpoint cell dimensions; got a cell-dimension entity request."
         )
     source_loops = _oriented_corners(source_mesh, dimension)
     target_loops = _oriented_corners(target_mesh, dimension)
@@ -554,7 +604,9 @@ def _entity_pairs(
     ]
     arities = np.asarray([loop.size for loop in target_corners])
     if np.any(arities != [loop.size for loop in source_corners]):
-        raise ValueError("Periodic entity pairs must have equal corner counts.")
+        raise ValueError(
+            "PeriodicCoupling.entity_pairs must have matching corner counts; got different source and target arities."
+        )
     source_points = np.asarray(source_mesh.coordinates, dtype=np.float64)
     target_points = np.asarray(target_mesh.coordinates, dtype=np.float64)
     orientations = np.empty(rows.shape, dtype=np.int32)
@@ -576,13 +628,13 @@ def _entity_pairs(
 
 
 class PeriodicCoupling(_PointPairCoupling):
-    """Boundary-paired entity bijection under an explicitly checked isometry.
+    """Bind a boundary-paired entity bijection under the declared isometry tolerance.
 
-    Pairs are explicit entity orbits between two boundary-paired carriers:
-    ``source_rows`` names the source-scope entity of each target entity and
-    ``orientations`` the ``±1`` witness of its oriented corner loop under the
-    isometry (always ``+1`` for points). A quotient mesh already identifies its
-    seam entities, so pairs inside one quotient orbit are refused.
+    Pairs are explicit entity orbits between two boundary-paired carriers.
+    ``source_rows`` names the source-scope entity for every target entity, and
+    ``orientations`` gives the ``±1`` sign of its oriented corner loop under the
+    isometry; the sign is always ``+1`` for points. Pairs within one quotient orbit are
+    refused because a quotient mesh already identifies its seam entities.
     """
 
     rotation: Array
@@ -590,6 +642,7 @@ class PeriodicCoupling(_PointPairCoupling):
     orientations: Array
     tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: MeshPart,
@@ -603,7 +656,7 @@ class PeriodicCoupling(_PointPairCoupling):
         source_ids: ArrayLike | None = None,
         tolerance: float = 1e-10,
     ) -> None:
-        tol = _tolerance(tolerance)
+        tol = positive_finite_float(tolerance, "tolerance")
         matrix, offset = (
             np.asarray(rotation, dtype=np.float64),
             np.asarray(translation, dtype=np.float64),
@@ -615,16 +668,23 @@ class PeriodicCoupling(_PointPairCoupling):
             or not np.all(np.isfinite(matrix))
             or not np.all(np.isfinite(offset))
         ):
-            raise ValueError("Periodic transform shape or finite values are invalid.")
+            raise ValueError(
+                "PeriodicCoupling.rotation must have ambient-dimensional finite coefficients together with translation; got invalid shapes or non-finite coefficients."
+            )
         if not np.allclose(matrix.T @ matrix, np.eye(dimension), rtol=0, atol=tol):
-            raise ValueError("Periodic transform must be an isometry.")
+            raise ValueError(
+                "PeriodicCoupling.rotation must satisfy the Euclidean Gram identity within tolerance; got a matrix that is not an admitted isometry."
+            )
         rows, orientations = _entity_pairs(
             source, target, source_scope, target_scope, source_ids, matrix, offset, tol
         )
         self.source_scope, self.target_scope = source_scope, target_scope
-        self.source_rows = jnp.asarray(rows)
-        self.rotation, self.translation = jnp.asarray(matrix), jnp.asarray(offset)
-        self.orientations = jnp.asarray(orientations)
+        self.source_rows = jax.device_put(np.asarray(rows))
+        self.rotation, self.translation = (
+            jax.device_put(np.asarray(matrix)),
+            jax.device_put(np.asarray(offset)),
+        )
+        self.orientations = jax.device_put(np.asarray(orientations))
         self.kind = MeshCouplingKind.PERIODIC
         self.tolerance = tol
         identity = {
@@ -653,14 +713,18 @@ class PeriodicCoupling(_PointPairCoupling):
         values = self.transfer(source_values)
         dimension = self.rotation.shape[0]
         if values.shape[-2:] != (dimension, dimension):
-            raise ValueError("Periodic tensors must be square in the ambient dimension.")
+            raise ValueError(
+                "PeriodicCoupling.transfer_tensors.values must have two trailing ambient-dimension axes; got a non-square or dimension-mismatched tensor shape."
+            )
         rotation = self.rotation.astype(values.dtype)
         return contract("ij,...jk,lk->...il", rotation, values, rotation, backend="jax")
 
     def transfer_vectors(self, source_values: ArrayLike, /) -> Array:
         values = self.transfer(source_values)
         if values.shape[-1] != self.rotation.shape[0]:
-            raise ValueError("Periodic vectors must match the ambient dimension.")
+            raise ValueError(
+                "PeriodicCoupling.transfer_vectors.values must have an ambient-dimension trailing axis; got a mismatched vector dimension."
+            )
         return values @ self.rotation.T
 
     def match_points(
@@ -683,7 +747,9 @@ class PeriodicCoupling(_PointPairCoupling):
             or not np.all(np.isfinite(left))
             or not np.all(np.isfinite(right))
         ):
-            raise ValueError("Periodic point sets must be finite and equally sized.")
+            raise ValueError(
+                "PeriodicCoupling.match_points.inputs must be finite two-dimensional point arrays of equal shape in the ambient dimension; got invalid ranks, shapes, dimensions, or coordinates."
+            )
         if left.shape[0] == 0:
             empty = np.zeros((0,), dtype=np.int64)
             return empty, empty
@@ -698,17 +764,19 @@ class PeriodicCoupling(_PointPairCoupling):
             np.any(distances > self.tolerance)
             or np.unique(source_rows).size != right.shape[0]
         ):
-            raise ValueError("Periodic point sets do not correspond under the transform.")
+            raise ValueError(
+                "PeriodicCoupling.match_points.correspondence must be a bijection under the transform within tolerance; got an unmatched point or repeated source match."
+            )
         return source_rows, np.arange(right.shape[0], dtype=np.int64)
 
 
 class ContactCoupling(_PointPairCoupling):
-    """Frozen node-to-node, frictionless normal contact.
+    """Represents frozen node-to-node, frictionless normal contact.
 
-    Pairs are explicit or found once by :meth:`search` (exact BVH nearest-node
-    matching); no collision detection runs during evaluation. Normals point
-    from source to target; negative signed gaps mean penetration.
-    Displacement-dependent gaps and equal/opposite penalty forces remain differentiable.
+    Pairs are explicit or are found once by :meth:`search` using BVH nearest-node
+    matching; collision detection does not run during evaluation. Normals point from
+    source to target, and negative signed gaps mean penetration. Displacement-dependent
+    gaps and equal-and-opposite penalty forces remain differentiable.
     """
 
     normals: Array
@@ -717,6 +785,7 @@ class ContactCoupling(_PointPairCoupling):
     clearance: float = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: MeshPart,
@@ -731,7 +800,7 @@ class ContactCoupling(_PointPairCoupling):
         tolerance: float = 1e-10,
         search_evidence: CouplingSearchEvidence | None = None,
     ) -> None:
-        tol = _tolerance(tolerance)
+        tol = positive_finite_float(tolerance, "tolerance")
         rows, left, right = _point_pairs(
             source, target, source_scope, target_scope, source_ids
         )
@@ -742,12 +811,18 @@ class ContactCoupling(_PointPairCoupling):
             or not np.all(np.isfinite(normal))
             or not np.allclose(np.linalg.norm(normal, axis=-1), 1.0, rtol=0, atol=tol)
         ):
-            raise ValueError("Contact requires one finite unit normal per point pair.")
+            raise ValueError(
+                "ContactCoupling.normals must provide one finite unit normal per point pair; got a shape mismatch, non-finite component, or non-unit norm."
+            )
         if not np.isfinite(distance) or distance < 0:
-            raise ValueError("Contact clearance must be finite and non-negative.")
+            raise ValueError(
+                "ContactCoupling.clearance must be finite and non-negative; got a non-finite or negative value."
+            )
         gap = np.sum((right - left) * normal, axis=-1) - distance
         if not np.all(np.isfinite(gap)):
-            raise ValueError("Contact point geometry must be finite.")
+            raise ValueError(
+                "ContactCoupling.point_geometry must yield finite normal gaps; got non-finite gap values."
+            )
         _bound_search_evidence(
             search_evidence,
             MeshCouplingKind.CONTACT,
@@ -756,8 +831,11 @@ class ContactCoupling(_PointPairCoupling):
             np.asarray(source_scope.entity_ids, dtype=np.int64)[rows][:, None],
         )
         self.source_scope, self.target_scope = source_scope, target_scope
-        self.source_rows = jnp.asarray(rows)
-        self.normals, self.reference_gap = jnp.asarray(normal), jnp.asarray(gap)
+        self.source_rows = jax.device_put(np.asarray(rows))
+        self.normals, self.reference_gap = (
+            jax.device_put(np.asarray(normal)),
+            jax.device_put(np.asarray(gap)),
+        )
         self.search_evidence = search_evidence
         self.clearance = distance
         self.tolerance = tol
@@ -779,6 +857,53 @@ class ContactCoupling(_PointPairCoupling):
         )
 
     @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[ContactCoupling],
+        value: ContactCoupling,
+        /,
+        *,
+        source: MeshPart,
+        target: MeshPart,
+    ) -> ContactCoupling:
+        """Revalidate stored contact fields against retained endpoint revisions."""
+        if cls is not ContactCoupling or type(value) is not ContactCoupling:
+            raise TypeError(
+                "ContactCoupling.restore_type must be the registered ContactCoupling; "
+                f"got {type(value).__qualname__}."
+            )
+        rows = np.asarray(value.source_rows)
+        identifiers = np.asarray(value.source_scope.entity_ids)
+        if (
+            rows.shape != (value.target_scope.entity_ids.size,)
+            or not np.issubdtype(rows.dtype, np.integer)
+            or np.any(rows < 0)
+            or np.any(rows >= identifiers.size)
+        ):
+            raise ValueError(
+                "ContactCoupling.source_rows must index its source scope once per target entity; "
+                "got invalid row shape, dtype, or range."
+            )
+        rebuilt = cls(
+            source,
+            target,
+            value.source_scope,
+            value.target_scope,
+            value.normals,
+            source_ids=identifiers[rows],
+            clearance=value.clearance,
+            tolerance=value.tolerance,
+            search_evidence=value.search_evidence,
+        )
+        if not tree_content_equal(rebuilt, value):
+            raise ValueError(
+                "ContactCoupling.stored_fields must match reconstructed contact state; "
+                "got changed scopes, rows, normals, gap, evidence, or identity."
+            )
+        return rebuilt
+
+    @classmethod
+    @checked
     def search(
         cls,
         source: MeshPart,
@@ -792,11 +917,13 @@ class ContactCoupling(_PointPairCoupling):
         clearance: float = 0.0,
         tolerance: float = 1e-10,
     ) -> ContactCoupling:
-        """Pair every target node with its exact nearest source node.
+        """Pairs every target node with its nearest source node using the bounded BVH
+        search.
 
         Ties resolve to the lowest source global ID. Receptors beyond
-        ``capture_radius``, with non-finite coordinates, or sharing a nearest
-        donor raise :class:`CouplingSearchError` carrying per-receptor evidence.
+        ``capture_radius``, receptors with non-finite coordinates, and receptors sharing
+        a nearest donor raise :class:`CouplingSearchError` with evidence for every
+        affected receptor.
         """
         evidence = _contact_donor_search(
             source, target, source_scope, target_scope, capture_radius
@@ -820,7 +947,9 @@ class ContactCoupling(_PointPairCoupling):
     ) -> Array:
         left, right = self.transfer(source_displacement), jnp.asarray(target_displacement)
         if left.shape != self.normals.shape or right.shape != self.normals.shape:
-            raise ValueError("Contact displacements must match point-normal shape.")
+            raise ValueError(
+                "ContactCoupling.gaps.displacements must match the point-normal shape; got a left or right displacement shape mismatch."
+            )
         return self.reference_gap + jnp.sum((right - left) * self.normals, axis=-1)
 
     def penalty_forces(
@@ -832,22 +961,26 @@ class ContactCoupling(_PointPairCoupling):
     ) -> tuple[Array, Array]:
         stiffness_ = float(stiffness)
         if not np.isfinite(stiffness_) or stiffness_ <= 0:
-            raise ValueError("Contact penalty stiffness must be finite and positive.")
+            raise ValueError(
+                "ContactCoupling.penalty_stiffness must be finite and positive; got a non-finite or non-positive value."
+            )
         gap = self.gaps(source_displacement, target_displacement)
         target_force = (stiffness_ * jnp.maximum(-gap, 0))[:, None] * self.normals
         return -self.transpose(target_force), target_force
 
 
 class OversetCoupling(MeshCoupling):
-    """Explicit vertex stencils or an owning canonical field-query route.
+    """Represents explicit vertex stencils or a field-query route tied to its field
+    provider.
 
-    Query mode scopes source support *cells*, not coefficients: coefficients
-    retain the query's full true field layout, including signed/Piola weights.
-    An explicit query-mode map binds donor query points to target points.
-    ``value_action`` declares invariant values, polar vectors under exact encoded
-    source isometries, or contravariant components under authored affine maps.
-    Vector transposes reverse the declared linear action before query transpose.
-    Neither mode is a conservative overlap remap.
+    Query mode scopes source support *cells*, not coefficients. Coefficients retain the
+    query's full field layout, including signed/Piola weights. An explicit query-mode
+    map binds every donor query point to a target point. ``value_action`` declares
+    invariant values, polar vectors transformed by source isometries checked through
+    rational arithmetic over encoded coefficients, or contravariant components
+    transformed by source-bound coordinate maps under authored affine maps. Vector
+    transposes reverse the declared linear action before the query transpose. Both modes
+    perform interpolation; conservation uses a separate overlap remap.
     """
 
     donor_ids: Array
@@ -864,6 +997,7 @@ class OversetCoupling(MeshCoupling):
     conservative: bool = eqx.field(static=True)
     value_action: OversetValueAction = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: MeshPart,
@@ -891,7 +1025,7 @@ class OversetCoupling(MeshCoupling):
                 or search_evidence is not None
             ):
                 raise ValueError(
-                    "Field queries and explicit vertex donor stencils are distinct modes."
+                    "OversetCoupling.mode must select either a field query or an explicit vertex donor stencil; got both modes at once."
                 )
             self._bind_field_query(
                 source,
@@ -917,11 +1051,15 @@ class OversetCoupling(MeshCoupling):
                 target_image_rotation,
             )
         ):
-            raise ValueError("Overset isometries require an actual field-query route.")
+            raise ValueError(
+                "OversetCoupling.image_transforms must accompany a field-query route; got image transforms on a route without a field query."
+            )
         _endpoints(source, target, source_scope, target_scope)
-        tol = _tolerance(tolerance)
+        tol = positive_finite_float(tolerance, "tolerance")
         if tol >= 1:
-            raise ValueError("Overset normalization tolerance must be smaller than one.")
+            raise ValueError(
+                "OversetCoupling.normalization_tolerance must be smaller than one; got a value at least one."
+            )
         donors, weights = (
             np.asarray(donor_ids),
             np.asarray(donor_weights, dtype=np.float64),
@@ -934,7 +1072,7 @@ class OversetCoupling(MeshCoupling):
             or weights.shape != donors.shape
         ):
             raise ValueError(
-                "Overset donors and weights must have shape (receptors, stencil_width)."
+                "OversetCoupling.donor_ids must form a receptor-by-stencil integer matrix paired with donor_weights and nonzero stencil width; got an invalid rank, shape, dtype, or empty stencil."
             )
         valid = donors >= 0
         source_ids = np.asarray(source_scope.entity_ids)
@@ -946,18 +1084,20 @@ class OversetCoupling(MeshCoupling):
             or np.any(weights[~valid] != 0)
         ):
             raise ValueError(
-                "Overset donor IDs, padding or non-negative weights are invalid."
+                "OversetCoupling.donor_ids must use source IDs or -1 padding, paired with finite non-negative weights and zero padding weights; got invalid donor IDs, weights, or padding."
             )
         if np.any(np.abs(np.sum(weights, axis=1) - 1.0) > tol):
             raise ValueError(
-                "Every overset receptor must have donor weights summing to one."
+                "OversetCoupling.donor_weights must provide non-negative weights summing to one for every receptor; got a receptor sum outside normalization tolerance."
             )
         # Distinct negative sentinels per column keep padding out of the check.
         stencil = np.sort(
             np.where(valid, donors, -1 - np.arange(donors.shape[1])), axis=1
         )
         if np.any(stencil[:, 1:] == stencil[:, :-1]):
-            raise ValueError("A receptor stencil cannot repeat a donor entity.")
+            raise ValueError(
+                "OversetCoupling.donor_ids must be distinct within each receptor stencil; got a repeated donor entity."
+            )
         if hole_scope is not None:
             target.require_scope(hole_scope)
             if (
@@ -968,7 +1108,7 @@ class OversetCoupling(MeshCoupling):
                 ).size
             ):
                 raise ValueError(
-                    "Overset holes must be disjoint from receptors in the same entity set."
+                    "OversetCoupling.hole_scope must share the receptor entity set and dimension while remaining disjoint from receptors; got a scope mismatch or receptor overlap refused."
                 )
         if (
             source.name == target.name
@@ -978,7 +1118,9 @@ class OversetCoupling(MeshCoupling):
             if hole_scope is not None:
                 forbidden = np.union1d(forbidden, np.asarray(hole_scope.entity_ids))
             if np.any(np.isin(donors[valid], forbidden)):
-                raise ValueError("Overset receptor or hole entities cannot be donors.")
+                raise ValueError(
+                    "OversetCoupling.donor_ids must exclude receptor and hole entities; got forbidden donor overlap refused."
+                )
         _bound_search_evidence(
             search_evidence,
             MeshCouplingKind.OVERSET,
@@ -991,9 +1133,9 @@ class OversetCoupling(MeshCoupling):
         ).astype(np.int32)
         self.source_scope, self.target_scope = source_scope, target_scope
         self.donor_ids, self.donor_weights, self.donor_rows = (
-            jnp.asarray(donors, dtype=jnp.int64),
-            jnp.asarray(weights),
-            jnp.asarray(rows),
+            jax.device_put(np.asarray(donors, dtype=np.int64)),
+            jax.device_put(np.asarray(weights)),
+            jax.device_put(np.asarray(rows)),
         )
         self.hole_scope = hole_scope
         self.field_query = None
@@ -1020,6 +1162,7 @@ class OversetCoupling(MeshCoupling):
         )
 
     @classmethod
+    @checked
     def from_field_query(
         cls,
         source: MeshPart,
@@ -1037,7 +1180,7 @@ class OversetCoupling(MeshCoupling):
         source_image_rotation: ArrayLike | None = None,
         target_image_rotation: ArrayLike | None = None,
     ) -> OversetCoupling:
-        """Bind actual field evidence and an optional ambient-vector isometry."""
+        """Bind field evidence and an optional authored image map."""
         return cls(
             source,
             target,
@@ -1069,12 +1212,11 @@ class OversetCoupling(MeshCoupling):
         source_image_rotation: ArrayLike | None,
         target_image_rotation: ArrayLike | None,
     ) -> None:
-        from ..discretization.fem import FiniteElementDiscretization
 
-        if not isinstance(query, PreparedFieldQuery) or not query.complete:
-            raise TypeError("Query-mode overset requires a complete PreparedFieldQuery.")
-        if not isinstance(source, MeshPart) or not isinstance(target, MeshPart):
-            raise TypeError("Coupling endpoints must be MeshPart values.")
+        if not query.complete:
+            raise TypeError(
+                "OversetCoupling.field_query must admit every requested point; got an incomplete field query."
+            )
         source.require_scope(source_scope)
         target.require_scope(target_scope)
         if (
@@ -1085,11 +1227,11 @@ class OversetCoupling(MeshCoupling):
             or (source.name == target.name and source.part_id != target.part_id)
         ):
             raise ValueError(
-                "Field-query endpoints require source cells and target vertices."
+                "OversetCoupling.field_query.endpoints must share a coordinate-contract spatial ID and ambient dimension, use source cells and target vertices, and use one part revision per name; got incompatible endpoint scopes or parts."
             )
-        tol = _tolerance(tolerance)
+        tol = positive_finite_float(tolerance, "tolerance")
         action = parse(value_action, OversetValueAction, "value_action")
-        matrix, offset, source_image, target_image = _query_image_action(
+        image = _query_image_action(
             query,
             target.point_coordinates(target_scope),
             source.ambient_dimension,
@@ -1100,70 +1242,79 @@ class OversetCoupling(MeshCoupling):
             action,
             tol,
         )
+        matrix, offset = image.matrix, image.offset
+        source_image, target_image = image.source_image, image.target_image
         kernel = query.reconstruction.kernel
-        owner = getattr(kernel, "discretization", None)
-        locator = getattr(kernel, "locator", None)
-        if (
-            owner is None
-            or locator is None
-            or not isinstance(source.carrier, CellMeshingResult)
-        ):
-            raise ValueError(
-                "Field-query donor must retain its actual mesh and coordinate owner."
-            )
-        mesh = source.carrier.mesh
+        match kernel:
+            case (
+                FiniteElementFieldReconstructionKernel()
+                | UnstructuredFiniteVolumeFieldReconstructionKernel()
+            ):
+                owner, locator = kernel.discretization, kernel.locator
+            case _:
+                raise ValueError(
+                    "OversetCoupling.field_query must retain its donor mesh and coordinate owner; got an unsupported kernel or carrier kind."
+                )
+        match source.carrier:
+            case CellMeshingResult() as carrier:
+                mesh = carrier.mesh
+            case _:
+                raise ValueError(
+                    "OversetCoupling.field_query must retain its donor mesh and coordinate owner; got an unsupported kernel or carrier kind."
+                )
         if owner.mesh.mesh_id != mesh.mesh_id:
             raise ValueError(
-                "Field-query donor is bound to another source mesh revision."
+                "OversetCoupling.field_query must bind its source mesh revision; got a different donor mesh."
             )
-        if isinstance(owner, FiniteElementDiscretization):
-            coordinates = source.carrier.geometry.coordinates
-        else:
-            geometry_binding = getattr(kernel, "require_source_geometry", None)
-            if geometry_binding is None:
-                raise TypeError(
-                    "Field-query owner must retain its actual FV coordinate binding."
-                )
-            geometry_binding(source.carrier.geometry)
-            owning_geometry = getattr(owner, "cell_geometry", None)
-            coordinates = (
-                mesh.coordinates
-                if owning_geometry is None
-                else owning_geometry.coordinates
-            )
+        match kernel:
+            case FiniteElementFieldReconstructionKernel():
+                coordinates = carrier.geometry.coordinates
+            case UnstructuredFiniteVolumeFieldReconstructionKernel():
+                kernel.require_source_geometry(carrier.geometry)
+                match kernel.discretization:
+                    case UnstructuredFiniteVolumeDiscretization() as fv:
+                        geometry = fv.cell_geometry
+                        coordinates = (
+                            mesh.coordinates if geometry is None else geometry.coordinates
+                        )
+                    case TriangleFiniteVolumeDiscretization():
+                        coordinates = mesh.coordinates
+                    case _ as unknown:
+                        assert_never(unknown)
+            case _ as unknown:
+                assert_never(unknown)
         if not np.array_equal(np.asarray(locator.coordinates), np.asarray(coordinates)):
             raise ValueError(
-                "Field-query donor is bound to another source coordinate revision."
+                "OversetCoupling.field_query must bind its source coordinate revision; got a different donor coordinate map."
             )
-        if isinstance(owner, FiniteElementDiscretization):
-            if (
-                owner.mesh.mesh_id != mesh.mesh_id
-                or owner.default_runtime.geometry_layout_id
-                != source.carrier.geometry.geometry_layout_id
-            ):
-                raise ValueError("Field-query donor has a stale FE mesh/geometry layout.")
-            selected = getattr(locator, "selected_cells", None)
-            if selected is None:
-                location = locator.locate(query.points)
-                selected = np.asarray(location.candidate_cells)
+        match kernel:
+            case FiniteElementFieldReconstructionKernel():
+                if (
+                    kernel.discretization.mesh.mesh_id != mesh.mesh_id
+                    or kernel.discretization.default_runtime.geometry_layout_id
+                    != carrier.geometry.geometry_layout_id
+                ):
+                    raise ValueError(
+                        "OversetCoupling.field_query must retain the FE mesh and geometry layout; got a stale donor layout."
+                    )
+                selected = np.asarray(locator.support_cells(query.points))
                 selected = selected[selected >= 0]
-            support_ids = np.asarray(mesh.block(locator.cell_map.block_name).global_ids)[
-                np.unique(selected)
-            ]
-        else:
-            support_factory = getattr(kernel, "query_support_rows", None)
-            if support_factory is None:
-                raise TypeError(
-                    "Field-query owner must publish its actual reconstruction support cells."
+                support_ids = np.asarray(
+                    mesh.block(locator.cell_map.block_name).global_ids
+                )[np.unique(selected)]
+            case UnstructuredFiniteVolumeFieldReconstructionKernel():
+                identifiers = np.concatenate(
+                    [np.asarray(block.global_ids) for block in mesh.blocks]
                 )
-            identifiers = np.concatenate(
-                [np.asarray(block.global_ids) for block in mesh.blocks]
-            )
-            support_ids = identifiers[support_factory(query)]
+                support_ids = identifiers[kernel.query_support_rows(query)]
+            case _ as unknown:
+                assert_never(unknown)
         if not np.array_equal(
             np.sort(np.unique(support_ids)), np.asarray(source_scope.entity_ids)
         ):
-            raise ValueError("Source scope must retain the query's actual support cells.")
+            raise ValueError(
+                "OversetCoupling.source_scope must retain the query support cells; got different support identities."
+            )
         if hole_scope is not None:
             target.require_scope(hole_scope)
             if (
@@ -1171,7 +1322,9 @@ class OversetCoupling(MeshCoupling):
                 or hole_scope.entity_set_id != target_scope.entity_set_id
                 or np.intersect1d(hole_scope.entity_ids, target_scope.entity_ids).size
             ):
-                raise ValueError("Field-query holes must be disjoint target vertices.")
+                raise ValueError(
+                    "OversetCoupling.field_query.hole_scope must contain target vertices in the receptor entity set while remaining disjoint from receptors; got a non-vertex scope, entity-set mismatch, or receptor overlap refused."
+                )
         self.source_scope, self.target_scope = source_scope, target_scope
         self.donor_ids = source_scope.entity_ids[None, :]
         self.donor_weights, self.donor_rows = None, None
@@ -1205,15 +1358,17 @@ class OversetCoupling(MeshCoupling):
 
     @property
     def support_cell_scope(self) -> MeshingScope | None:
-        """Actual query-read geometric cell identities, never coefficient DOF IDs.
+        """Returns every geometric cell identity read by the query, excluding coefficient
+        DOF IDs.
 
-        The field owner validates this scope against its complete selected-cell
-        and reconstruction-stencil support before query-mode publication.
-        Coefficients retain the independent PreparedFieldQuery field layout.
-        Vertex-stencil mode has no field-query support-cell scope.
+        The field provider validates this scope against every selected cell and every
+        reconstruction-stencil support cell before query-mode publication. Coefficients
+        retain the independent ``PreparedFieldQuery`` field layout. Vertex-stencil mode
+        has no field-query support-cell scope.
         """
         return self.source_scope if self.field_query is not None else None
 
+    @checked
     def require_current(self, source: MeshPart, target: MeshPart, /) -> None:
         if self.field_query is None:
             super().require_current(source, target)
@@ -1222,6 +1377,7 @@ class OversetCoupling(MeshCoupling):
             target.require_scope(self.target_scope)
 
     @classmethod
+    @checked
     def search(
         cls,
         source: MeshPart,
@@ -1231,7 +1387,7 @@ class OversetCoupling(MeshCoupling):
         /,
         *,
         hole_scope: MeshingScope | None = None,
-        location_policy: SimplicialLocationPolicy | None = None,
+        location_policy: simplicial_locator_owner.SimplicialLocationPolicy | None = None,
         tolerance: float = 1e-10,
     ) -> OversetCoupling:
         """Locate every receptor in the donor simplex mesh and interpolate linearly.
@@ -1268,10 +1424,12 @@ class OversetCoupling(MeshCoupling):
             return values
         values = jnp.asarray(source_values)
         if values.ndim == 0 or values.shape[0] != self.source_scope.entity_ids.size:
-            raise ValueError("Source field must follow source scope entity order.")
+            raise ValueError(
+                "MeshCoupling.source_values must have one leading-axis value per source-scope entity; got a scalar or mismatched leading axis."
+            )
         if self.donor_weights is None or self.donor_rows is None:
             raise RuntimeError(
-                "An overset stencil route requires prepared donor weights and rows."
+                "OversetCoupling.stencil_route must provide prepared donor weights and donor rows; got missing stencil state."
             )
         weights = self.donor_weights.reshape(
             self.donor_weights.shape + (1,) * (values.ndim - 1)
@@ -1283,16 +1441,20 @@ class OversetCoupling(MeshCoupling):
         if self.field_query is not None:
             values = jnp.asarray(target_values)
             if values.shape != self.field_query.output_shape:
-                raise ValueError("Target field must follow the field query output shape.")
+                raise ValueError(
+                    "OversetCoupling.transpose.target_field must match the field-query output shape; got a different value shape."
+                )
             if self.rotation is not None and self.value_action != "invariant":
                 values = values @ self.rotation.astype(values.dtype)
             return self.field_query.transpose(values)
         values = jnp.asarray(target_values)
         if values.ndim == 0 or values.shape[0] != self.target_scope.entity_ids.size:
-            raise ValueError("Target field must follow target scope entity order.")
+            raise ValueError(
+                "MeshCoupling.target_values must have one leading-axis value per target-scope entity; got a scalar or mismatched leading axis."
+            )
         if self.donor_weights is None or self.donor_rows is None:
             raise RuntimeError(
-                "An overset stencil route requires prepared donor weights and rows."
+                "OversetCoupling.stencil_route must provide prepared donor weights and donor rows; got missing stencil state."
             )
         weights = self.donor_weights.reshape(
             self.donor_weights.shape + (1,) * (values.ndim - 1)
@@ -1313,16 +1475,24 @@ def _contact_donor_search(
     _endpoints(source, target, source_scope, target_scope)
     radius = float(capture_radius)
     if not np.isfinite(radius) or radius <= 0.0:
-        raise ValueError("Contact capture radius must be finite and positive.")
+        raise ValueError(
+            "ContactCoupling.capture_radius must be finite and positive; got a non-finite or non-positive radius."
+        )
     if source_scope.entity_dimension != 0:
-        raise ValueError("Node contact search pairs point entities.")
+        raise ValueError(
+            "ContactCoupling.source_scope.entity_dimension must be zero for node contact search; got a non-point source scope."
+        )
     source_ids = np.asarray(source_scope.entity_ids, dtype=np.int64)
     if source_ids.size != np.asarray(target_scope.entity_ids).size:
-        raise ValueError("Node contact search requires equally sized point scopes.")
+        raise ValueError(
+            "ContactCoupling.point_scopes must contain equal numbers of source and target points; got different scope sizes."
+        )
     donors = np.asarray(source.point_coordinates(source_scope), dtype=np.float64)
     receptors = np.asarray(target.point_coordinates(target_scope), dtype=np.float64)
     if not np.all(np.isfinite(donors)):
-        raise ValueError("Contact donor points must be finite.")
+        raise ValueError(
+            "ContactCoupling.donor_points must contain finite coordinates; got non-finite donor coordinates."
+        )
     finite = np.all(np.isfinite(receptors), axis=1)
     nearest = bvh_nearest_items(
         prepare_bvh(donors, donors, dtype=jnp.float64),
@@ -1363,7 +1533,9 @@ def _donor_cell_map(
     """Affine simplex cell map of the donor part with vertex-aligned geometry."""
     carrier = source.carrier
     if not isinstance(carrier, CellMeshingResult):
-        raise TypeError("Overset donor search requires a certified cell donor part.")
+        raise TypeError(
+            "OversetCoupling.source.carrier must be a certified CellMeshingResult; got a donor carrier without a certified cell mesh."
+        )
     mesh = carrier.mesh
     if (
         len(mesh.blocks) != 1
@@ -1371,7 +1543,7 @@ def _donor_cell_map(
         or mesh.topological_dimension != mesh.ambient_dimension
     ):
         raise ValueError(
-            "Overset donor search requires one full-dimensional simplex block."
+            "OversetCoupling.donor_mesh must contain one full-dimensional triangle or tetrahedron block; got an unsupported block count, cell kind, or dimension."
         )
     block = mesh.blocks[0]
     geometry = FiniteElementPlan(
@@ -1386,7 +1558,7 @@ def _donor_cell_map(
         np.asarray(coordinates), np.asarray(mesh.coordinates)
     ) or not np.array_equal(vertex_rows, np.asarray(block.vertices)):
         raise ValueError(
-            "Overset donor search requires vertex-aligned affine donor geometry."
+            "OversetCoupling.donor_geometry must use the mesh coordinates and block vertex rows; got coordinates or connectivity not aligned with the donor mesh."
         )
     return cell_map, coordinates, vertex_rows
 
@@ -1397,25 +1569,31 @@ def _overset_donor_search(
     source_scope: MeshingScope,
     target_scope: MeshingScope,
     hole_scope: MeshingScope | None,
-    location_policy: SimplicialLocationPolicy | None,
+    location_policy: simplicial_locator_owner.SimplicialLocationPolicy | None,
     /,
 ) -> tuple[CouplingSearchEvidence, np.ndarray]:
     _endpoints(source, target, source_scope, target_scope)
     if source_scope.entity_dimension != 0:
-        raise ValueError("Overset donor search interpolates point entities.")
+        raise ValueError(
+            "OversetCoupling.source_scope.entity_dimension must be zero for donor interpolation; got a non-point source scope."
+        )
     if hole_scope is not None:
         target.require_scope(hole_scope)
     cell_map, coordinates, vertex_rows = _donor_cell_map(source)
     policy = (
-        SimplicialLocationPolicy(min(cell_map.cell_count, 64), 16, 1)
+        simplicial_locator_owner.SimplicialLocationPolicy(
+            min(cell_map.cell_count, 64), 16, 1
+        )
         if location_policy is None
         else location_policy
     )
-    if not isinstance(policy, SimplicialLocationPolicy):
-        raise TypeError("location_policy must be SimplicialLocationPolicy or None.")
-    located = PreparedSimplicialCellLocator(cell_map, coordinates, policy).locate(
-        target.point_coordinates(target_scope)
-    )
+    if not isinstance(policy, simplicial_locator_owner.SimplicialLocationPolicy):
+        raise TypeError(
+            "OversetCoupling.location_policy must be a SimplicialLocationPolicy or None; got an unsupported policy type."
+        )
+    located = simplicial_locator_owner.PreparedSimplicialCellLocator(
+        cell_map, coordinates, policy
+    ).locate(target.point_coordinates(target_scope))
     cells = np.asarray(located.cell_ids)
     inside = cells >= 0
     barycentric = np.where(
@@ -1441,9 +1619,10 @@ def _overset_donor_search(
         (
             inside & ~blocked,
             inside,
-            location == int(CellLocationStatus.OUTSIDE),
-            location == int(CellLocationStatus.NONFINITE),
-            location == int(CellLocationStatus.RESOURCE_EXCEEDED),
+            location == int(simplicial_locator_owner.CellLocationStatus.OUTSIDE),
+            location == int(simplicial_locator_owner.CellLocationStatus.NONFINITE),
+            location
+            == int(simplicial_locator_owner.CellLocationStatus.RESOURCE_EXCEEDED),
         ),
         (
             int(CouplingSearchStatus.FOUND),

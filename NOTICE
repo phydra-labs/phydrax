@@ -797,3 +797,68 @@ service contracts. No proprietary binary was inspected. No GPL or unlicensed
 source, tests, fixtures, assets, configuration vocabulary, output, shader, or
 executable is copied, translated, linked, imported, bundled, or redistributed.
 No external runtime dependency is bundled.
+
+Certified B-Rep evidence design study
+The per-entity gap evidence, certified intersection branch linking, collect-all
+validation report, typed tessellation failures, exact planar containment, and
+the certified B-Rep capability plan were informed by a study of
+NVIDIA-Omniverse/usd-brep at commit c9c5979f04cea8c38213004d4f04df0dcfb40d05
+(Apache-2.0) and its UsdSolid proposal. Phydrax independently implements its
+certified bounds, refusal semantics, records, and tests. No source, tests,
+fixtures, proposal text, schema, or data is copied, translated, linked,
+imported, bundled, or redistributed. No external runtime dependency is bundled.
+
+Sketch, STEP-coverage and certificate-register design study
+The fail-closed sketch-solution lowering, STEP reader coverage classification
+and declared uncertainty, the certificate theorem register, the exact
+half-open planar containment rule, and the associated B-Rep capability plan
+were informed by a study of the following KittyCAD (Zoo) repositories:
+KittyCAD/documentation at commit 4a1132b6a224311dacbee381f8a5dcb32d3306f8
+(MIT), KittyCAD/ezpz at commit 915882cc731da31042ce494c89b10334ee57837a
+(MIT), KittyCAD/ezpz-sympy at commit d75ba3074dd22445248d8af06445f5a17fc594d9
+(no detected license), KittyCAD/geometric-constraint-playground at commit
+3e0b7590d2cd4ce24ce1f1b98d802dde3e316589 (MIT), KittyCAD/kcl-book at commit
+eb6dd286446cb08f852136be80031fe86f453571 (MIT),
+KittyCAD/material-properties at commit
+61088092d5a90bcf4e0beee0c6a36783776a3a88 (Apache-2.0),
+KittyCAD/modeling-api at commit 29cdf3c02e71e865385be8a12ffc91d2e1afb488
+(MIT), KittyCAD/modeling-app at commit
+cc2822cc59534207b0f5f88bce6d2bf8510ed0f2 (MIT), KittyCAD/newtonls-faer at
+commit 38db32af167c9134b87c9e85074d15ef2beebc65 (MIT), KittyCAD/ruststep at
+commit 8df71d3bdb3315252d2465490fc78e64d2d3535a (Apache-2.0),
+KittyCAD/schoenflies-lean at commit 05a43d29cde026618777db3d4e4316204ccca237
+(Apache-2.0), and KittyCAD/thirty-thirty at commit
+557916d11032e951ec0b285c7fe4e71a656db2c0 (no detected license). Phydrax
+independently implements its solvers, readers, writers, certificate records,
+refusal semantics, and tests on its own substrates. No source, tests,
+fixtures, documentation, proofs, schema, data, or API is copied, translated,
+linked, imported, bundled, or redistributed, and no Zoo service is used as a
+provider or test oracle. No external runtime dependency is bundled.
+
+B-Rep graph and scale-invariant decision design study
+The seam-residual refusal from a certified bound, the oriented-tangent corner
+convexity rule in the gmsh layer adapter, the explicit graph node count, and
+the planned B-Rep edge classification and learning-graph capabilities were
+informed by a study of usman7384/brepgraph at commit
+0ac579e6fb01da97cdc5c48892b9940c1ad3e04d (MIT). Phydrax independently
+implements its geometry predicates, graph records, refusal semantics, and
+tests. No source, tests, fixtures, schema, feature definitions, or data is
+copied, translated, linked, imported, bundled, or redistributed. No external
+runtime dependency is bundled.
+
+CAD modeling-layer design study
+The certified clearance between general B-Rep faces, geometric selection of
+B-Rep entities for named regions, draft and overhang classification from
+certified normal ranges, exact polynomial deformation of B-Reps, defeaturing
+with a certified shape change, certified feasible ranges in construction
+refusals, certified deviations of near-rigid STEP placements, STEP names,
+colors and layers, exact STEP repairs, DXF profile interchange, the
+adversarial robustness corpus, the Boolean volume-consistency property,
+boundary-reduced mass properties, and checked documentation example outputs
+were informed by a study of awv-informatik/smlibpy at commit
+0aaa37f2e56962a0bd49dd5a52cc5f01e1e11574 (MIT). Phydrax independently
+implements its geometry, interchange, certificate records, refusal semantics,
+and tests on its own substrates. No source, tests, fixtures, documentation,
+guides, data, or API is copied, translated, linked, imported, bundled, or
+redistributed, and neither smlibpy nor the SMLib kernel it wraps is used as a
+provider or test oracle. No external runtime dependency is bundled.

@@ -155,6 +155,103 @@ persistence. Do not use an external `.brep` extension to imply that archive
 format. Format-specific `read_step`, `read_iges`, `read_brep_text` and their
 writers remain explicit entry points when the format profile is already known.
 
+Mapped STEP assemblies retain shared native solid definitions. Nested
+`MAPPED_ITEM`/`REPRESENTATION_MAP` placements compose in occurrence order;
+the zero-deviation default requires exactly certified proper orthonormal
+binary64 axes and exactly unit scale. It does not round a scaled/reflected
+operator into a rigid placement. Rounded oblique source frames require the
+explicit near-rigid declaration described below.
+
+
+STEP imports retain authored product and representation-item names, RGB surface-fill
+colors, and presentation layers in `CadImportResult.entity_metadata`.
+`StepEntityMetadata` binds canonical `StepEntityLabels` rows to exact `BRepEntityId`
+values. Unsupported presentation styles are ignored by design in the coverage
+report; they never become guessed RGB colors. IGES and BRep text imports explicitly
+set this STEP-specific field to `None`.
+
+`select_step_entities(model, metadata, "name", "inlet")` produces the same
+selected/rejected/unresolved record as native geometric selection. Names require
+uniqueness by default and report all conflicting entities; colors and layers
+select exact sets. Solid labels expand to faces through explicit topology.
+The returned selection uses the common `bind_region` API and recipe naming keys
+to bind native meshing controls. Pass `metadata=imported.entity_metadata` to
+`write_step` to preserve labels, colors, and layers on export.
+
+Presentation records are not part of the model identity payload: attaching or
+changing metadata on the same model leaves `model_id` and entity IDs unchanged.
+Editing labels in a source STEP file does change its whole-file source revision,
+and consequently its model ID. Source provenance is not a geometry-only digest.
+
+For an existing successful STEP import containing a unique authored `"inlet"`
+face name, this lookup preserves all nonselected and unresolved identities.
+The prerequisite is real metadata on `imported.model`; this is not a standalone
+file fixture.
+
+```python
+metadata = imported.entity_metadata
+if metadata is None:
+    raise ValueError("The imported source must carry STEP entity metadata.")
+inlet = phx.interchange.select_step_entities(
+    imported.model, metadata, "name", "inlet", family="face"
+)
+assert len(inlet.selected) == 1
+assert not inlet.unresolved
+```
+
+Use `inlet.bind_region(...)` with exhaustive recipe names rather than replacing
+the source identity by a label string. A duplicate-name conflict retains all
+matching IDs; only an explicit nonunique lookup requests the entire set.
+
+
+`StepRepairPolicy` defaults to no repairs. Its explicit `add_missing_seams`,
+`reverse_inverted_shells`, and `orient_face_senses` switches authorize only
+geometry-preserving topology changes. STEP-specific readers accept
+`repair_policy=...` and `coordinate_budget=...`; enabled repairs require an
+explicit coordinate-enclosure budget. They never move a carrier, fit a repair,
+or grow a tolerance. Unsupported and unresolved repair families refuse.
+Every applied repair records its entity and certified reason in the adapter
+report, whose status is `AdapterStatus.REPAIRED`.
+
+The bounded default orientation audit uses certified signed shell-volume
+enclosures and certified nesting roles. Outer shells require positive signed
+volume; cavity shells require negative signed volume. Certified inverted
+shells refuse with `inverted-shell` instead of silently importing inside-out
+solids. When the bounded default audit cannot resolve orientation, the import
+remains admitted and its report explicitly records `orientation_unresolved`;
+an opt-in shell repair refuses rather than guessing.
+The policy declares `audit_maximum_work_units` (default 2,000,000) and
+`audit_maximum_memory_bytes` (default 16 MiB) for this bounded default audit.
+They limit work and storage; they do not change a geometric tolerance.
+
+`StepRepairPolicy.subdivisions` defaults to one. Missing-seam repair supports
+coaxial full-circle cylinder bands and natural sphere/torus chart seams;
+face-sense repair supports closed convex linear shells, not arbitrary curved
+or nonconvex shells. Explicit repair budgets may reserve more subdivisions,
+but they cannot turn unresolved sign/nesting into an accepted reversal.
+The [API reference](api/interchange.md#exact-step-repairs-and-orientation-audit)
+lists repair switches and bounded audit semantics.
+
+
+STEP occurrence placements keep a zero displacement limit by default.
+Set `CadImportPolicy.maximum_placement_deviation` in target length coordinates
+and pass `coordinate_budget=...` to a STEP reader to admit rounded proper
+frames. Direction ratios define the source frame through normalization and
+orthogonal projection; rational arithmetic and directed square-root bounds
+enclose that frame, including oblique axes. Composition and inverse poses
+retain rotation and translation enclosures. Nonunit scale, reflecting frames,
+and degenerate direction sets refuse.
+
+`BRepOccurrence.placement_evidence` publishes entrywise affine-coefficient error
+bounds, rotation and translation norm bounds, native carrier extent, and the point-displacement
+bound. It is absent on zero-defect occurrences. The limit is checked against
+every occurrence and never enlarged. Positive placement displacement is not
+the same as authored edge/face incidence gaps in sewing: occurrence
+materialization, Boolean combination, and sewing currently refuse with
+`placement-deviation`, identifying the occurrence and its bound. Placement
+queries remain available. Native archives preserve the evidence; external CAD
+export refuses rather than dropping it.
+
 Optional live OCCT shapes and independent engine comparisons use only
 `phx.interchange.model_from_occt_shape`, `import_occt_brep`,
 `persist_occt_shape`, `read_occt_shape`, and
@@ -182,6 +279,89 @@ SciPy remains permitted numerical infrastructure. Its statistics/distance
 imports can load the bundled Qhull module, so the consumer blocks Qhull geometry
 constructors rather than misclassifying a numerical module import as geometry
 execution.
+
+## DXF planar profiles
+
+`read_dxf(path, policy, trusted_root=...)` and `decode_dxf_bytes(data, policy)`
+read bounded ASCII drawings into a `DxfImportResult` containing a `PlanarProfile`,
+its declared coordinate unit, and an `AdapterReport`. `DxfImportPolicy` declares
+byte, group, and entity limits before parsing. `$INSUNITS` or the caller's
+`source_length_unit` must declare the drawing unit; conflicting declarations
+refuse rather than triggering implicit conversion.
+
+Supported source entities are `LINE`, `ARC`, `CIRCLE`, `ELLIPSE`,
+`LWPOLYLINE`, and control-point `SPLINE`. Bulges retain circular arcs, and
+quadrantal ellipses retain rational quadratic conics. Spline controls, positive
+weights, and clamped knots remain authored coefficients. Fit-point-only splines
+refuse because interpolation would invent geometry. Non-XY entities, nonzero
+widths or thickness, periodic unclamped splines, and unsupported geometry-bearing
+entities refuse. Unreferenced sections and drawing annotations are accounted for
+as ignored by design.
+
+Loop closure retains authored vertices. Source topology certificates decide
+orientation and containment; open or ambiguous loops refuse with their endpoints.
+General-angle circles and ellipses retain analytic carriers and independently
+certified endpoint displacements. `maximum_junction_gap=0` is the default. A
+positive caller declaration admits only junctions within that fixed bound, reports
+the displacement, and publishes recomputed B-Rep gap evidence during extrusion.
+It never snaps a vertex, fits a curve, or grows the declaration.
+Successful nonzero-gap imports retain an `AdapterLoss` and a waiver grounded
+in the caller's fixed `maximum_junction_gap`; zero-default refusals remain
+unwaived. The report records both the declaration and actual outward rows.
+`coordinate_budget` is borrowed through endpoint/topology certification and
+does not become stored profile state.
+
+
+`encode_dxf(profile, coordinate_unit=..., policy=...)` returns bounded ASCII
+bytes. `write_dxf(profile, path, coordinate_unit=..., policy=...)` publishes them
+atomically and returns a `DxfExportResult` with durable byte identity and conversion
+evidence. Lines and circular carriers export analytically; rational conics and
+splines export as control-point splines without refitting. An unrepresentable
+coefficient refuses rather than becoming a rounded replacement.
+
+### Decode, extrude, and round-trip an exact profile
+
+This in-memory ASCII drawing declares millimeters and a closed four-by-two
+rectangle. No user file or optional CAD engine is needed. Expected standard
+output: none.
+
+```python {.executable}
+import phydrax as phx
+
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
+header = "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n"
+rectangle = (
+    "0\nLWPOLYLINE\n90\n4\n70\n1\n"
+    "10\n0\n20\n0\n10\n4\n20\n0\n10\n4\n20\n2\n10\n0\n20\n2\n"
+)
+drawing = (
+    header + "0\nSECTION\n2\nENTITIES\n" + rectangle + "0\nENDSEC\n0\nEOF\n"
+).encode("ascii")
+dxf_policy = phx.interchange.DxfImportPolicy()
+decoded = phx.interchange.decode_dxf_bytes(drawing, dxf_policy)
+assert decoded.coordinate_unit.unit_id == phx.units.MILLIMETER.unit_id
+assert not decoded.profile.holes
+solid = phx.geometry.brep_extrusion(
+    decoded.profile, (0.0, 0.0, 3.0),
+    coordinate_contract=phx.SpatialCoordinateContract(decoded.coordinate_unit),
+    tessellation=phx.geometry.BRepTessellationPolicy(realize=False),
+)
+assert solid.require_geometry().edge_vertex_gap_bounds is None
+encoded = phx.interchange.encode_dxf(
+    decoded.profile, coordinate_unit=decoded.coordinate_unit, policy=dxf_policy
+)
+restored = phx.interchange.decode_dxf_bytes(encoded, dxf_policy)
+assert restored.coordinate_unit.unit_id == decoded.coordinate_unit.unit_id
+assert restored.profile.outer.vertices == decoded.profile.outer.vertices
+assert restored.profile.holes == decoded.profile.holes
+```
+
+File readers require `trusted_root`. Use `write_dxf` for atomic publication;
+retain both its receipt and semantic report. `ProfileCurveUse` preserves
+directed general-angle analytic conics, while unsupported legacy revolution
+predicates refuse them. Extrusion and planar-face construction recompute
+endpoint/face correspondence bounds rather than trusting imported declarations.
+
 
 ## Mesh and visualization files
 

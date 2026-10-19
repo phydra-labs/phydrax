@@ -22,6 +22,17 @@ from typing import Any, final, NamedTuple
 import equinox as eqx
 import numpy as np
 
+from phydrax.meshing._contracts import (
+    MeshingCapability,
+    MeshingDerivativeMode,
+    MeshingExecutionMode,
+    MeshingLimits,
+    MeshingOperation,
+    MeshingProviderInfo,
+    MeshingSourceKind,
+)
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from ..._external_runtime import NativeWorkerCall, NativeWorkerPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._identity import SemanticProvenance
@@ -42,19 +53,8 @@ from ...typing import checked
 from .._association import BRepAssociationTransfer
 from .._audit import CellMeshAuditPolicy
 from .._canonical import certify_cell_mesh
-from .._contracts import (
-    MeshingCapability,
-    MeshingDerivativeMode,
-    MeshingExecutionMode,
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingLimits,
-    MeshingOperation,
-    MeshingProviderInfo,
-    MeshingSourceKind,
-)
 from .._metric import MeshMetricField
-from .._organization import (
+from .._organization_records import (
     MeshAttribute,
     MeshAttributeRole,
     MeshLabel,

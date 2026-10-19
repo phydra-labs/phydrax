@@ -16,8 +16,12 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+import phydrax.geometry.brep._carrier_pieces as carrier_owner
+
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked
 from .._interval_enclosure import (
     interval_add,
     interval_multiply,
@@ -25,41 +29,45 @@ from .._interval_enclosure import (
     prepare_interval_function,
     PreparedIntervalFunction,
 )
-from ._intersection import RootEndpoint
+from .._rational import rational_vector
+from ._carrier_pieces import CurvePiece, SurfacePiece
+from ._coordinate_request import coordinate_source_request
+from ._intersection import exact_source_lift, RootEndpoint
 from ._intersection_curve import (
-    _affine_curve_coefficients,
-    _period_offset,
-    _period_scalar_bounds,
-    _PeriodOffset,
+    affine_curve_coefficients,
     AffinePCurve,
-    BernsteinCurvePiece,
-    coefficient_enclosures,
     curve_pieces_for_interval,
     CurveEvaluator,
-    CurvePiece,
     CurveRange,
     IntersectionCurve,
     IntersectionPCurve,
     PeriodicPCurve,
     surface_pieces,
-    SurfaceEvaluator,
-    SurfacePiece,
     SurfaceRegion,
 )
+from ._interval_source import evaluate_interval
 from ._patches import (
-    _rational_piece_jet_bounds,
     AbstractCurve,
     AbstractSurfacePatch,
+    BernsteinCurvePiece,
     BSplineCurve,
     BSplineSurfacePatch,
     CircleCurve,
-    CylinderPatch,
+    coefficient_enclosures,
     LineCurve,
     PlanePatch,
+    rational_piece_jet_bounds,
     RationalBezierPiece,
 )
 from ._placed import PlacedCurve, PlacedSurface, same_source_pose
-from ._sphere_membership import _square_root_interval
+from ._request_preparations import TrimRequestPreparations
+from ._source_correspondence import (
+    circle_correspondence,
+    norm_upper,
+    placed_deviation_bound,
+    plane_correspondence,
+)
+from ._trim_helpers import period_offset, period_scalar_bounds, PeriodOffset
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,44 +78,44 @@ class CurveSurfaceCorrespondence:
     unresolved: tuple[tuple[float, float], ...]
     intervals_processed: int
 
+    @classmethod
+    def identity(cls, intervals_processed: int = 0) -> CurveSurfaceCorrespondence:
+        """Return correspondence proved by a generating carrier identity."""
+        return cls(0.0, (), intervals_processed)
+
+    @classmethod
+    def enclosed(
+        cls, deviation_bound: float, intervals_processed: int
+    ) -> CurveSurfaceCorrespondence:
+        """Return a whole-interval deviation enclosure."""
+        return cls(deviation_bound, (), intervals_processed)
+
+    @classmethod
+    def unproved(
+        cls,
+        intervals: tuple[tuple[float, float], ...],
+        intervals_processed: int = 0,
+    ) -> CurveSurfaceCorrespondence:
+        """Return the source intervals whose correspondence remains unresolved."""
+        return cls(np.inf, intervals, intervals_processed)
+
+    def rescale(self, rotation: np.ndarray) -> CurveSurfaceCorrespondence:
+        """Transport the deviation enclosure through a placed carrier's linear map."""
+        return CurveSurfaceCorrespondence(
+            placed_deviation_bound(rotation, self.deviation_bound),
+            self.unresolved,
+            self.intervals_processed,
+        )
+
     @property
     def complete(self) -> bool:
         return not self.unresolved and bool(np.isfinite(self.deviation_bound))
 
 
-class CurveSurfaceCorrespondenceError(ValueError):
-    """A face/coedge geometric closure request failed with its full interval work."""
-
-    face: int
-    coedge: int
-    evidence: CurveSurfaceCorrespondence
-    tolerance: float
-
-    def __init__(
-        self,
-        face: int,
-        coedge: int,
-        evidence: CurveSurfaceCorrespondence,
-        tolerance: float,
-        /,
-    ) -> None:
-        self.face = face
-        self.coedge = coedge
-        self.evidence = evidence
-        self.tolerance = tolerance
-        outcome = "unresolved" if not evidence.complete else "out-of-tolerance"
-        super().__init__(
-            f"Face {face} coedge {coedge} whole-edge correspondence is {outcome}: "
-            f"bound={evidence.deviation_bound}, physical tolerance={tolerance}, "
-            f"intervals processed={evidence.intervals_processed}, "
-            f"unresolved intervals={len(evidence.unresolved)}."
-        )
-
-
 class _CorrespondenceSystem(StrictModule):
     curve: CurveEvaluator | None
     pcurve: CurveEvaluator
-    surface: SurfaceEvaluator
+    surface: AbstractSurfacePatch
     point: Array
 
     def residual(self, parameter: Array, /) -> Array:
@@ -122,19 +130,19 @@ class _IntervalEvaluator(Protocol):
     ) -> tuple[np.ndarray, np.ndarray]: ...
 
 
-class _RationalCurveSurfaceJets:
-    """Canonical native chain rule with homogeneous-hull rational curve jets.
+class RationalCurveSurfaceJets:
+    """Enclose curve/surface chain-rule jets with homogeneous rational hulls.
 
-    Expanded rational spline basis AD is not used to enclose the fitted UV or
-    XYZ jets. Native generating surface programs and their source coefficient
-    intervals remain authoritative. Hooks may account bounded numeric work.
+    Native surface programs and coefficient intervals define the generating
+    surface. Hooks account for bounded numerical work.
     """
 
+    @checked
     def __init__(
         self,
         curve: RationalBezierPiece | None,
         pcurve: RationalBezierPiece,
-        surface: SurfaceEvaluator,
+        surface: AbstractSurfacePatch,
         *,
         point: np.ndarray,
         prepare: Callable[
@@ -168,12 +176,35 @@ class _RationalCurveSurfaceJets:
     ) -> tuple[np.ndarray, np.ndarray]:
         if self.observe_curve_jet is not None:
             self.observe_curve_jet()
-        return _rational_piece_jet_bounds(piece, first, last, order=order)
+        return rational_piece_jet_bounds(piece, first, last, order=order)
 
-    def jet(self, first: float, last: float, order: int) -> tuple[np.ndarray, np.ndarray]:
+    @checked
+    def jet(
+        self,
+        first: float,
+        last: float,
+        order: int,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+        preparations: TrimRequestPreparations | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    first,
+                    last,
+                    order,
+                )
+            ) as budget:
+                return self.jet(
+                    first, last, order, budget=budget, preparations=preparations
+                )
         if order not in (0, 1, 2) or isinstance(order, bool):
             raise ValueError(
-                "Curve/surface residual jets support orders zero, one and two."
+                f"RationalCurveSurfaceJets.order must be zero, one or two; got {order!r}"
             )
         uv = self._curve_jet(self.pcurve, first, last, 0)
         expected = (
@@ -182,9 +213,24 @@ class _RationalCurveSurfaceJets:
             else ((self.point, self.point) if order == 0 else (np.zeros(3), np.zeros(3)))
         )
         if order == 0:
-            value = self.value.evaluate(uv[0][None], uv[1][None])
-            return interval_subtract((value[0][0], value[1][0]), expected)
-        jacobian = self.jacobian.evaluate(uv[0][None], uv[1][None])
+            value = evaluate_interval(
+                self.value,
+                uv[0][None],
+                uv[1][None],
+                budget=budget,
+                preparations=preparations,
+            )
+            lower, upper = interval_subtract((value[0][0], value[1][0]), expected)
+            return np.asarray(lower, dtype=np.float64), np.asarray(
+                upper, dtype=np.float64
+            )
+        jacobian = evaluate_interval(
+            self.jacobian,
+            uv[0][None],
+            uv[1][None],
+            budget=budget,
+            preparations=preparations,
+        )
         direction = self._curve_jet(self.pcurve, first, last, order)
         result = (np.zeros(3), np.zeros(3))
         for axis in range(2):
@@ -210,10 +256,12 @@ class _RationalCurveSurfaceJets:
                             (hessian[0][0, :, i, j], hessian[1][0, :, i, j]), product
                         ),
                     )
-        return interval_subtract(result, expected)
+        lower, upper = interval_subtract(result, expected)
+        return np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
 
 
-def _bernstein_rational_piece(curve: BernsteinCurvePiece) -> RationalBezierPiece:
+@checked
+def bernstein_rational_piece(curve: BernsteinCurvePiece) -> RationalBezierPiece:
     return RationalBezierPiece(
         np.asarray(curve.controls),
         (curve.parameter_domain,),
@@ -226,20 +274,27 @@ def _bernstein_rational_piece(curve: BernsteinCurvePiece) -> RationalBezierPiece
 class _CorrespondenceJetMap:
     """One chain-rule order in the existing batched correspondence protocol."""
 
-    def __init__(self, jets: _RationalCurveSurfaceJets, order: int) -> None:
+    def __init__(self, jets: RationalCurveSurfaceJets, order: int) -> None:
         self.jets, self.order = jets, order
 
     def evaluate(
         self, lower: np.ndarray, upper: np.ndarray, /
     ) -> tuple[np.ndarray, np.ndarray]:
-        values = [
-            self.jets.jet(float(a[0]), float(b[0]), self.order)
-            for a, b in zip(lower, upper, strict=True)
-        ]
-        shape = (len(values), 3) + (1,) * self.order
-        return np.asarray([value[0] for value in values]).reshape(shape), np.asarray(
-            [value[1] for value in values]
-        ).reshape(shape)
+        with coordinate_source_request(
+            (
+                self,
+                lower,
+                upper,
+            )
+        ) as budget:
+            values = [
+                self.jets.jet(float(a[0]), float(b[0]), self.order, budget=budget)
+                for a, b in zip(lower, upper, strict=True)
+            ]
+            shape = (len(values), 3) + (1,) * self.order
+            return np.asarray([value[0] for value in values]).reshape(shape), np.asarray(
+                [value[1] for value in values]
+            ).reshape(shape)
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,20 +305,24 @@ class _PreparedCorrespondence:
 
 
 def _prepare(system: _CorrespondenceSystem, /) -> _PreparedCorrespondence:
-    if isinstance(system.pcurve, BernsteinCurvePiece) and (
-        system.curve is None or isinstance(system.curve, BernsteinCurvePiece)
-    ):
-        jets = _RationalCurveSurfaceJets(
-            None if system.curve is None else _bernstein_rational_piece(system.curve),
-            _bernstein_rational_piece(system.pcurve),
-            system.surface,
-            point=np.asarray(system.point),
-        )
-        return _PreparedCorrespondence(
-            _CorrespondenceJetMap(jets, 0),
-            _CorrespondenceJetMap(jets, 1),
-            _CorrespondenceJetMap(jets, 2),
-        )
+    match (system.curve, system.pcurve):
+        case (
+            (BernsteinCurvePiece() | None) as curve,
+            BernsteinCurvePiece() as pcurve,
+        ):
+            jets = RationalCurveSurfaceJets(
+                None if curve is None else bernstein_rational_piece(curve),
+                bernstein_rational_piece(pcurve),
+                system.surface,
+                point=np.asarray(system.point),
+            )
+            return _PreparedCorrespondence(
+                _CorrespondenceJetMap(jets, 0),
+                _CorrespondenceJetMap(jets, 1),
+                _CorrespondenceJetMap(jets, 2),
+            )
+        case _:
+            pass
     coefficients = coefficient_enclosures(system)
     return _PreparedCorrespondence(
         prepare_interval_function(
@@ -290,233 +349,15 @@ def _coupled_definition(
     surface: AbstractSurfacePatch,
     /,
 ) -> bool:
-    from ._model import _carrier_payload
 
     supporting = curve.first.patch if pcurve.side == "first" else curve.second.patch
     return (
         curve.fully_certified
         and pcurve.curve.branch_id == curve.branch_id
         and not pcurve.reversed
-        and canonical_fingerprint(_carrier_payload(supporting))
-        == canonical_fingerprint(_carrier_payload(surface))
+        and canonical_fingerprint(carrier_owner.carrier_payload(supporting))
+        == canonical_fingerprint(carrier_owner.carrier_payload(surface))
     )
-
-
-def _fraction_norm_upper(components: tuple[Fraction, ...], /) -> float:
-    squared = sum((value * value for value in components), Fraction(0))
-    return (
-        0.0
-        if squared == 0
-        else float(np.nextafter(np.sqrt(np.nextafter(float(squared), np.inf)), np.inf))
-    )
-
-
-def _plane_correspondence(
-    curve: AbstractCurve | None,
-    pcurve: AbstractCurve,
-    surface: PlanePatch,
-    first: float,
-    last: float,
-    point: np.ndarray,
-    /,
-) -> float | None:
-    """Exact affine coefficients or a common positive rational basis convex hull."""
-    origin = tuple(Fraction(float(value)) for value in np.asarray(surface.origin))
-    axes = tuple(
-        tuple(Fraction(float(value)) for value in np.asarray(axis))
-        for axis in (surface.first_axis, surface.second_axis)
-    )
-    expected, parameters = (
-        _affine_curve_coefficients(curve, point),
-        _affine_curve_coefficients(pcurve, np.zeros((2,), dtype=np.float64)),
-    )
-    if expected is not None and parameters is not None:
-        constant = tuple(
-            origin[dimension]
-            + sum(
-                (axes[axis][dimension] * parameters[0][axis] for axis in range(2)),
-                Fraction(0),
-            )
-            - expected[0][dimension]
-            for dimension in range(3)
-        )
-        derivative = tuple(
-            sum(
-                (axes[axis][dimension] * parameters[1][axis] for axis in range(2)),
-                Fraction(0),
-            )
-            - expected[1][dimension]
-            for dimension in range(3)
-        )
-        return max(
-            _fraction_norm_upper(
-                tuple(
-                    a + Fraction(parameter) * b
-                    for a, b in zip(constant, derivative, strict=True)
-                )
-            )
-            for parameter in (first, last)
-        )
-    if not isinstance(curve, BSplineCurve) or not isinstance(pcurve, BSplineCurve):
-        return None
-    if (
-        curve.degree != pcurve.degree
-        or not np.array_equal(np.asarray(curve.knots), np.asarray(pcurve.knots))
-        or not np.array_equal(np.asarray(curve.weights), np.asarray(pcurve.weights))
-        or np.any(np.asarray(curve.weights) <= 0.0)
-    ):
-        return None
-    residuals = [
-        tuple(
-            origin[dimension]
-            + sum(
-                (axes[axis][dimension] * Fraction(float(uv[axis])) for axis in range(2)),
-                Fraction(0),
-            )
-            - Fraction(float(xyz[dimension]))
-            for dimension in range(3)
-        )
-        for xyz, uv in zip(
-            np.asarray(curve.control_points),
-            np.asarray(pcurve.control_points),
-            strict=True,
-        )
-    ]
-    return max(_fraction_norm_upper(residual) for residual in residuals)
-
-
-def _circle_correspondence(
-    curve: AbstractCurve | None, pcurve: AbstractCurve, surface: AbstractSurfacePatch, /
-) -> float | None:
-    """Exact constant/cosine/sine source coefficients over the entire curve."""
-
-    def harmonic(
-        source: AbstractCurve,
-    ) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...], tuple[Fraction, ...]] | None:
-        if isinstance(source, CircleCurve):
-            radius = Fraction(float(source.radius))
-            return (
-                tuple(Fraction(float(value)) for value in np.asarray(source.center)),
-                tuple(
-                    radius * Fraction(float(value))
-                    for value in np.asarray(source.first_axis)
-                ),
-                tuple(
-                    radius * Fraction(float(value))
-                    for value in np.asarray(source.second_axis)
-                ),
-            )
-        if not isinstance(source, AffinePCurve) or not isinstance(
-            source.curve, AbstractCurve
-        ):
-            return None
-        coefficients = harmonic(source.curve)
-        if coefficients is None:
-            return None
-        matrix, offset = source.matrix, source.offset
-
-        def image(vector: tuple[Fraction, ...], translate: bool) -> tuple[Fraction, ...]:
-            return tuple(
-                (offset[axis] if translate else Fraction(0))
-                + sum(
-                    (
-                        coefficient * value
-                        for coefficient, value in zip(row, vector, strict=True)
-                    ),
-                    Fraction(0),
-                )
-                for axis, row in enumerate(matrix)
-            )
-
-        return (
-            image(coefficients[0], True),
-            image(coefficients[1], False),
-            image(coefficients[2], False),
-        )
-
-    if not isinstance(curve, CircleCurve):
-        return None
-    radius = Fraction(float(curve.radius))
-    center = tuple(Fraction(float(value)) for value in np.asarray(curve.center))
-    cosine = tuple(
-        radius * Fraction(float(value)) for value in np.asarray(curve.first_axis)
-    )
-    sine = tuple(
-        radius * Fraction(float(value)) for value in np.asarray(curve.second_axis)
-    )
-    if isinstance(surface, PlanePatch):
-        coefficients = harmonic(pcurve)
-        if coefficients is None:
-            return None
-        axes = tuple(
-            tuple(Fraction(float(value)) for value in np.asarray(axis))
-            for axis in (surface.first_axis, surface.second_axis)
-        )
-        origin = tuple(Fraction(float(value)) for value in np.asarray(surface.origin))
-        expected_center, expected_cosine, expected_sine = (
-            tuple(
-                (origin[dimension] if component == 0 else Fraction(0))
-                + sum(
-                    (axes[axis][dimension] * vector[axis] for axis in range(2)),
-                    Fraction(0),
-                )
-                for dimension in range(3)
-            )
-            for component, vector in enumerate(coefficients)
-        )
-    elif isinstance(surface, CylinderPatch):
-        coefficients = _affine_curve_coefficients(
-            pcurve, np.zeros((2,), dtype=np.float64)
-        )
-        if (
-            coefficients is None
-            or coefficients[0][0] != 0
-            or coefficients[1] != (Fraction(1), Fraction(0))
-        ):
-            return None
-        height = coefficients[0][1]
-        expected_center = tuple(
-            Fraction(float(a)) + height * Fraction(float(b))
-            for a, b in zip(
-                np.asarray(surface.origin), np.asarray(surface.axis), strict=True
-            )
-        )
-        cylinder_radius = Fraction(float(surface.radius))
-        expected_cosine = tuple(
-            cylinder_radius * Fraction(float(value))
-            for value in np.asarray(surface.first_axis)
-        )
-        expected_sine = tuple(
-            cylinder_radius * Fraction(float(value))
-            for value in np.asarray(surface.second_axis)
-        )
-    else:
-        return None
-    bound = 0.0
-    for actual, expected in (
-        (center, expected_center),
-        (cosine, expected_cosine),
-        (sine, expected_sine),
-    ):
-        contribution = _fraction_norm_upper(
-            tuple(a - b for a, b in zip(actual, expected, strict=True))
-        )
-        bound = (
-            bound
-            if contribution == 0.0
-            else float(np.nextafter(bound + contribution, np.inf))
-        )
-    return bound
-
-
-def _norm_upper(components: np.ndarray, /) -> float:
-    if np.any(np.isnan(components)):
-        return np.inf
-    squared = np.float64(0.0)
-    for component in components:
-        term = np.nextafter(component * component, np.inf)
-        squared = np.nextafter(squared + term, np.inf)
-    return float(np.nextafter(np.sqrt(squared), np.inf))
 
 
 def _spline_isoline_correspondence(
@@ -525,9 +366,12 @@ def _spline_isoline_correspondence(
     surface: BSplineSurfacePatch,
     /,
 ) -> bool:
-    """Exact endpoint tensor-basis restriction, with the original edge parameter."""
-    if not isinstance(curve, BSplineCurve) or not isinstance(pcurve, LineCurve):
-        return False
+    """Prove an endpoint tensor-basis restriction using the source edge parameter."""
+    match (curve, pcurve):
+        case (BSplineCurve() as spline, LineCurve() as parameter_line):
+            curve, pcurve = spline, parameter_line
+        case _:
+            return False
     origin, direction = np.asarray(pcurve.origin), np.asarray(pcurve.direction)
     for fixed in (0, 1):
         moving = 1 - fixed
@@ -570,121 +414,39 @@ def _spline_isoline_correspondence(
     return False
 
 
-def placed_deviation_bound(rotation: np.ndarray, deviation: float, /) -> float:
-    """Exact Gram/Gershgorin operator bound for an authored binary source pose."""
-    if deviation == 0.0:
-        return 0.0
-    columns = tuple(
-        tuple(Fraction(float(rotation[row, column])) for row in range(3))
-        for column in range(3)
-    )
-    gram = tuple(
-        tuple(
-            sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
-            for second in columns
-        )
-        for first in columns
-    )
-    squared = max(sum((abs(value) for value in row), Fraction(0)) for row in gram)
-    scale = _square_root_interval(squared)[1]
-    return float(np.nextafter(scale * deviation, np.inf))
+class _CorrespondenceWorkset(StrictModule):
+    curve_segments: tuple[CurvePiece[AbstractCurve], ...]
+    parameter_segments: tuple[CurvePiece[AbstractCurve], ...]
+    patches: tuple[SurfacePiece[AbstractSurfacePatch], ...]
+    pending: list[tuple[float, float]]
 
 
-def certify_curve_surface(
-    curve: AbstractCurve | IntersectionCurve | None,
-    pcurve: AbstractCurve | IntersectionPCurve,
+def _prepare_correspondence_workset(
+    curve: AbstractCurve | None,
+    pcurve: AbstractCurve,
     surface: AbstractSurfacePatch,
     parameter_box: np.ndarray,
     first: float,
     last: float,
-    /,
-    *,
-    point: np.ndarray,
-    tolerance: float,
-    maximum_intervals: int = 65536,
-    endpoint_roots: tuple[RootEndpoint | None, RootEndpoint | None] | None = None,
-) -> CurveSurfaceCorrespondence:
-    """Enclose ``surface(pcurve(t))-curve(t)`` over every source parameter.
-
-    Exact generating support and a certified coupled atlas establish an
-    intersection branch's represented correspondence directly. Other families
-    use source-aware gather-free Bernstein/analytic pieces and the mean-value
-    enclosure of the residual. A center value is itself interval-enclosed;
-    neither sampled values nor local numerical convergence prove this result.
-    Interval transcendental evaluations retain the owning four-ulp libm premise.
-    """
-    if not np.isfinite(tolerance) or tolerance < 0.0 or maximum_intervals < 1:
-        raise ValueError(
-            "Correspondence tolerance must be nonnegative and interval budget positive."
-        )
-    if isinstance(curve, PlacedCurve) and isinstance(surface, PlacedSurface):
-        if not same_source_pose(curve, surface):
-            return CurveSurfaceCorrespondence(np.inf, ((first, last),), 0)
-        scale = placed_deviation_bound(np.asarray(curve.rotation), 1.0)
-        original = certify_curve_surface(
-            curve.definition,
-            pcurve,
-            surface.definition,
-            parameter_box,
-            first,
-            last,
-            point=point,
-            tolerance=tolerance / scale,
-            maximum_intervals=maximum_intervals,
-            endpoint_roots=endpoint_roots,
-        )
-        return CurveSurfaceCorrespondence(
-            placed_deviation_bound(np.asarray(curve.rotation), original.deviation_bound),
-            original.unresolved,
-            original.intervals_processed,
-        )
-    if isinstance(curve, IntersectionCurve):
-        if isinstance(pcurve, IntersectionPCurve) and _coupled_definition(
-            curve, pcurve, surface
-        ):
-            curve.bounding_box(first, last, endpoint_roots=endpoint_roots)
-            pcurve.enclosure(first, last, endpoint_roots=endpoint_roots)
-            return CurveSurfaceCorrespondence(0.0, (), 0)
-        return CurveSurfaceCorrespondence(np.inf, ((first, last),), 0)
-    if isinstance(pcurve, IntersectionPCurve):
-        return CurveSurfaceCorrespondence(np.inf, ((first, last),), 0)
-    pcurve.validate_query_range(first, last)
-    if curve is not None:
-        curve.validate_query_range(first, last)
-    if isinstance(curve, AbstractCurve) and isinstance(pcurve, AbstractCurve):
-        from ._intersection import _exact_source_lift
-
-        if _exact_source_lift(
-            curve, pcurve, SurfaceRegion(surface, parameter_box), first, last
-        ):
-            return CurveSurfaceCorrespondence(0.0, (), 1)
-    if isinstance(surface, BSplineSurfacePatch) and _spline_isoline_correspondence(
-        curve, pcurve, surface
-    ):
-        return CurveSurfaceCorrespondence(0.0, (), 1)
-    circle_bound = _circle_correspondence(curve, pcurve, surface)
-    if circle_bound is not None:
-        return CurveSurfaceCorrespondence(circle_bound, (), 1)
-    if isinstance(surface, PlanePatch):
-        bound = _plane_correspondence(curve, pcurve, surface, first, last, point)
-        if bound is not None:
-            return CurveSurfaceCorrespondence(bound, (), 1)
-    if tolerance == 0.0:
-        # Exact roots require a represented identity above. Subdivision can
-        # bound a residual but cannot turn independently rounded carriers into
-        # the same symbolic source, so do not spend a candidate budget trying.
-        return CurveSurfaceCorrespondence(np.inf, ((first, last),), 0)
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> _CorrespondenceWorkset:
     curve_range = None if curve is None else CurveRange(curve, first, last)
     curve_segments = (
         ()
         if curve is None or curve_range is None
-        else curve_pieces_for_interval(curve, curve_range.first, curve_range.last)
+        else curve_pieces_for_interval(
+            curve, curve_range.first, curve_range.last, coordinate_budget=budget
+        )
     )
     parameter_range = CurveRange(pcurve, first, last)
     parameter_segments = curve_pieces_for_interval(
-        pcurve, parameter_range.first, parameter_range.last
+        pcurve, parameter_range.first, parameter_range.last, coordinate_budget=budget
     )
-    patches = surface_pieces(SurfaceRegion(surface, parameter_box))
+    patches = surface_pieces(
+        SurfaceRegion(surface, parameter_box, budget=budget, preparations=preparations),
+        budget=budget,
+    )
     breaks = sorted(
         {
             first,
@@ -696,6 +458,58 @@ def certify_curve_surface(
         }
     )
     pending = [(start, end) for start, end in zip(breaks[:-1], breaks[1:], strict=True)]
+    return _CorrespondenceWorkset(curve_segments, parameter_segments, patches, pending)
+
+
+def _generating_correspondence(
+    curve: AbstractCurve | None,
+    pcurve: AbstractCurve,
+    surface: AbstractSurfacePatch,
+    parameter_box: np.ndarray,
+    first: float,
+    last: float,
+    point: np.ndarray,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> CurveSurfaceCorrespondence | None:
+    if curve is not None and exact_source_lift(
+        curve,
+        pcurve,
+        SurfaceRegion(surface, parameter_box, budget=budget, preparations=preparations),
+        first,
+        last,
+    ):
+        return CurveSurfaceCorrespondence.identity(1)
+    match surface:
+        case BSplineSurfacePatch() if _spline_isoline_correspondence(
+            curve, pcurve, surface
+        ):
+            return CurveSurfaceCorrespondence.identity(1)
+        case _:
+            pass
+    circle_bound = circle_correspondence(curve, pcurve, surface)
+    if circle_bound is not None:
+        return CurveSurfaceCorrespondence.enclosed(circle_bound, 1)
+    match surface:
+        case PlanePatch():
+            bound = plane_correspondence(curve, pcurve, surface, first, last, point)
+            if bound is not None:
+                return CurveSurfaceCorrespondence.enclosed(bound, 1)
+        case _:
+            pass
+    return None
+
+
+def _execute_correspondence_workset(
+    workset: _CorrespondenceWorkset,
+    curve: AbstractCurve | None,
+    point: np.ndarray,
+    tolerance: float,
+    maximum_intervals: int,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> CurveSurfaceCorrespondence:
+    pending = workset.pending
     cache: dict[tuple[int, int, int], _PreparedCorrespondence] = {}
 
     def enclose(
@@ -705,15 +519,16 @@ def certify_curve_surface(
             intervals,
             curve,
             point,
-            curve_segments,
-            parameter_segments,
-            patches,
+            workset.curve_segments,
+            workset.parameter_segments,
+            workset.patches,
             cache,
+            preparations=preparations,
+            budget=budget,
         )
 
-    # Breadth-first levels enclose every interval of one bisection depth in
-    # shared interval-program batches. The depth-first ledger below replays
-    # them, so evidence, order and the interval budget are unchanged.
+    # Batched breadth-first enclosures are replayed through the depth-first
+    # ledger, retaining its evidence order and interval-budget boundary.
     outcomes: dict[tuple[float, float], float | None] = {}
     level = list(pending)
     while level and len(outcomes) + len(level) <= maximum_intervals:
@@ -743,9 +558,167 @@ def certify_curve_surface(
         else:
             unresolved.append((start, end))
     unresolved.extend(pending)
-    return CurveSurfaceCorrespondence(
-        np.inf if unresolved else maximum_bound, tuple(unresolved), processed
+    return (
+        CurveSurfaceCorrespondence.unproved(tuple(unresolved), processed)
+        if unresolved
+        else CurveSurfaceCorrespondence.enclosed(maximum_bound, processed)
     )
+
+
+def _certify_native_curve_surface(
+    curve: AbstractCurve | None,
+    pcurve: AbstractCurve,
+    surface: AbstractSurfacePatch,
+    parameter_box: np.ndarray,
+    first: float,
+    last: float,
+    point: np.ndarray,
+    tolerance: float,
+    maximum_intervals: int,
+    preparations: TrimRequestPreparations,
+    budget: CoordinateEnclosureBudget,
+) -> CurveSurfaceCorrespondence:
+    pcurve.validate_query_range(first, last)
+    if curve is not None:
+        curve.validate_query_range(first, last)
+    generating = _generating_correspondence(
+        curve, pcurve, surface, parameter_box, first, last, point, preparations, budget
+    )
+    if generating is not None:
+        return generating
+    if tolerance == 0.0:
+        # Subdivision encloses residuals but cannot prove a generating identity
+        # between independently rounded source carriers.
+        return CurveSurfaceCorrespondence.unproved(((first, last),))
+    workset = _prepare_correspondence_workset(
+        curve, pcurve, surface, parameter_box, first, last, preparations, budget
+    )
+    return _execute_correspondence_workset(
+        workset, curve, point, tolerance, maximum_intervals, preparations, budget
+    )
+
+
+@checked
+def certify_curve_surface(
+    curve: AbstractCurve | IntersectionCurve | None,
+    pcurve: AbstractCurve | IntersectionPCurve,
+    surface: AbstractSurfacePatch,
+    parameter_box: np.ndarray,
+    first: float,
+    last: float,
+    /,
+    *,
+    point: np.ndarray,
+    tolerance: float,
+    maximum_intervals: int = 65536,
+    endpoint_roots: tuple[RootEndpoint | None, RootEndpoint | None] | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> CurveSurfaceCorrespondence:
+    """Enclose ``surface(pcurve(t))-curve(t)`` over every source parameter.
+
+    Generating support and a certified coupled atlas establish an
+    intersection branch's represented correspondence directly. Other families
+    use source-aware gather-free Bernstein/analytic pieces and the mean-value
+    enclosure of the residual. A center value is itself interval-enclosed;
+    neither sampled values nor local numerical convergence prove this result.
+    Interval transcendental evaluations assume the documented four-ulp libm bound.
+    """
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                curve,
+                pcurve,
+                surface,
+                parameter_box,
+                first,
+                last,
+            )
+        ) as budget:
+            return certify_curve_surface(
+                curve,
+                pcurve,
+                surface,
+                parameter_box,
+                first,
+                last,
+                point=point,
+                tolerance=tolerance,
+                maximum_intervals=maximum_intervals,
+                endpoint_roots=endpoint_roots,
+                preparations=preparations,
+                budget=budget,
+            )
+    if not np.isfinite(tolerance) or tolerance < 0.0 or maximum_intervals < 1:
+        raise ValueError(
+            f"CurveSurfaceCorrespondence.controls must have nonnegative tolerance and positive interval budget; got tolerance={tolerance}, maximum_intervals={maximum_intervals}"
+        )
+    match (curve, pcurve, surface):
+        case (PlacedCurve(), _, PlacedSurface()):
+            if not same_source_pose(curve, surface):
+                return CurveSurfaceCorrespondence.unproved(((first, last),))
+            rotation = np.asarray(curve.rotation)
+            scale = placed_deviation_bound(rotation, 1.0)
+            original = certify_curve_surface(
+                curve.definition,
+                pcurve,
+                surface.definition,
+                parameter_box,
+                first,
+                last,
+                point=point,
+                tolerance=tolerance / scale,
+                maximum_intervals=maximum_intervals,
+                endpoint_roots=endpoint_roots,
+                preparations=preparations,
+                budget=budget,
+            )
+            return original.rescale(rotation)
+        case (IntersectionCurve(), IntersectionPCurve(), _) if _coupled_definition(
+            curve, pcurve, surface
+        ):
+            curve.bounding_box(
+                first,
+                last,
+                endpoint_roots=endpoint_roots,
+                preparations=preparations,
+                budget=budget,
+            )
+            pcurve.enclosure(
+                first,
+                last,
+                endpoint_roots=endpoint_roots,
+                preparations=preparations,
+                budget=budget,
+            )
+            return CurveSurfaceCorrespondence.identity()
+        case (IntersectionCurve(), _, _) | (_, IntersectionPCurve(), _):
+            return CurveSurfaceCorrespondence.unproved(((first, last),))
+        case (
+            (AbstractCurve() | None) as native_curve,
+            AbstractCurve() as native_pcurve,
+            _,
+        ):
+            return _certify_native_curve_surface(
+                native_curve,
+                native_pcurve,
+                surface,
+                parameter_box,
+                first,
+                last,
+                point,
+                tolerance,
+                maximum_intervals,
+                preparations,
+                budget,
+            )
+        case _:
+            raise TypeError(
+                "certify_curve_surface.carriers must satisfy the declared source families; "
+                f"got {type(curve).__name__}, {type(pcurve).__name__}"
+            )
 
 
 def _bisected_interval(
@@ -766,9 +739,12 @@ def _residual_interval_bounds(
     point: np.ndarray,
     curve_segments: tuple[CurvePiece[AbstractCurve], ...],
     parameter_segments: tuple[CurvePiece[AbstractCurve], ...],
-    patches: tuple[SurfacePiece, ...],
+    patches: tuple[SurfacePiece[AbstractSurfacePatch], ...],
     cache: dict[tuple[int, int, int], _PreparedCorrespondence],
     /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> dict[tuple[float, float], float | None]:
     """Mean-value/Taylor residual bounds of closed intervals; None without support.
 
@@ -776,7 +752,7 @@ def _residual_interval_bounds(
     enclosed as one batch. Interval programs act row by row on fixed-capacity
     chunks, so each row is enclosed exactly as it would be alone.
     """
-    bounds: dict[tuple[float, float], float | None] = {}
+    bounds: dict[tuple[float, float], float] = {}
     groups: dict[tuple[int, int, int], list[tuple[float, float]]] = {}
     for start, end in intervals:
         midpoint = 0.5 * (start + end)
@@ -790,14 +766,15 @@ def _residual_interval_bounds(
                 item for item in curve_segments if item.lower <= midpoint <= item.upper
             )
         )
-        uv_box = parameter_piece.evaluator.bounding_box(start, end)
+        uv_box = parameter_piece.evaluator.bounding_box(
+            start, end, preparations=preparations, budget=budget
+        )
         possible = [
             patch
             for patch in patches
             if np.all(uv_box[1] >= patch.lower) and np.all(uv_box[0] <= patch.upper)
         ]
         if not possible:
-            bounds[start, end] = None
             continue
         bounds[start, end] = 0.0
         for patch in possible:
@@ -823,7 +800,9 @@ def _residual_interval_bounds(
         centers = np.asarray(
             [[0.5 * (start + end)] for start, end in members], dtype=np.float64
         )
-        low, high = prepared.value.evaluate(centers, centers)
+        low, high = evaluate_interval(
+            prepared.value, centers, centers, budget=budget, preparations=preparations
+        )
         derivative_low, derivative_high = prepared.derivative.evaluate(starts, ends)
         center_low, center_high = prepared.derivative.evaluate(centers, centers)
         second_low, second_high = prepared.second_derivative.evaluate(starts, ends)
@@ -852,20 +831,18 @@ def _residual_interval_bounds(
                 magnitude + np.nextafter(linear_error + second_error, np.inf), np.inf
             )
             previous = bounds[start, end]
-            if previous is None:
-                raise RuntimeError("A supported residual interval lost its bound.")
             bounds[start, end] = max(
-                previous, _norm_upper(np.minimum(error, taylor_error))
+                previous, norm_upper(np.minimum(error, taylor_error))
             )
-    return bounds
+    return {interval: bounds.get(interval) for interval in intervals}
 
 
-# ------------------------------------------------ exact carrier parameter maps
+# ------------------------------------------------ carrier parameter maps
 
 
-type ExactParameter = Fraction | _PeriodOffset
+type ExactParameter = Fraction | PeriodOffset
 
-# (cos, sin) of k quarter turns: the only phases whose frame rotation is exact.
+# (cos, sin) of k quarter turns: frame rotations using only rational arithmetic.
 _QUARTER_TURNS: tuple[tuple[Fraction, Fraction], ...] = (
     (Fraction(1), Fraction(0)),
     (Fraction(0), Fraction(1)),
@@ -874,6 +851,7 @@ _QUARTER_TURNS: tuple[tuple[Fraction, Fraction], ...] = (
 )
 
 
+@checked
 def exact_parameter_parts(value: ExactParameter, /) -> tuple[Fraction, Fraction]:
     """``(rational, turns)`` of ``rational + turns * 2*pi``."""
     return (
@@ -883,23 +861,23 @@ def exact_parameter_parts(value: ExactParameter, /) -> tuple[Fraction, Fraction]
     )
 
 
+@checked
 def exact_parameter_affine(
     value: ExactParameter, scale: Fraction, offset: ExactParameter, /
 ) -> ExactParameter:
     """``scale * value + offset`` in Q + Q*(2*pi), canonicalized to a rational when possible."""
     rational, turns = exact_parameter_parts(value)
     offset_rational, offset_turns = exact_parameter_parts(offset)
-    return _period_offset(
-        rational * scale + offset_rational, turns * scale + offset_turns
-    )
+    return period_offset(rational * scale + offset_rational, turns * scale + offset_turns)
 
 
+@checked
 def exact_parameter_sign(value: ExactParameter, /) -> int | None:
-    """Exact sign; ``None`` only when the directed 2*pi enclosure cannot decide it."""
+    """Return the sign, or None if the directed 2*pi enclosure cannot decide it."""
     rational, turns = exact_parameter_parts(value)
     if not turns:
         return (rational > 0) - (rational < 0)
-    lower, upper = _period_scalar_bounds(value)
+    lower, upper = period_scalar_bounds(value)
     if float(lower) > 0.0:
         return 1
     if float(upper) < 0.0:
@@ -909,7 +887,7 @@ def exact_parameter_sign(value: ExactParameter, /) -> int | None:
 
 @dataclass(frozen=True, slots=True)
 class CurveParameterMap:
-    """Exact carrier identity ``first(scale * s + offset) == second(s)`` for every ``s``.
+    """Prove carrier identity ``first(scale * s + offset) == second(s)`` for every ``s``.
 
     ``offset`` lies in Q + Q*(2*pi); a transcendental phase is never rationalized,
     and parameterization equality alone never implies a world-image identity.
@@ -921,10 +899,12 @@ class CurveParameterMap:
     def __post_init__(self) -> None:
         if not isinstance(self.scale, Fraction) or not self.scale:
             raise ValueError(
-                "A carrier parameter map needs a nonzero exact rational scale."
+                f"CurveParameterMap.scale must be a nonzero rational scale; got {self.scale!r}"
             )
-        if not isinstance(self.offset, (Fraction, _PeriodOffset)):
-            raise TypeError("A carrier parameter offset must be exact in Q + Q*(2*pi).")
+        if not isinstance(self.offset, (Fraction, PeriodOffset)):
+            raise TypeError(
+                f"CurveParameterMap.offset must belong to Q + Q*(2*pi); got {self.offset!r}"
+            )
 
     def apply(self, value: ExactParameter, /) -> ExactParameter:
         return exact_parameter_affine(value, self.scale, self.offset)
@@ -936,15 +916,8 @@ class CurveParameterMap:
         )
 
 
-def _exact_vector(values: Array | np.ndarray, /) -> tuple[Fraction, ...]:
-    return tuple(
-        Fraction(float(value))
-        for value in np.asarray(values, dtype=np.float64).reshape(-1)
-    )
-
-
 def _binary_vector(values: tuple[Fraction, ...], /) -> np.ndarray | None:
-    """Binary64 values only when every exact coefficient is represented without rounding."""
+    """Return binary64 values only when every coefficient is represented without rounding."""
     floats = np.asarray([float(value) for value in values], dtype=np.float64)
     if not np.all(np.isfinite(floats)) or any(
         Fraction(float(number)) != value
@@ -957,21 +930,23 @@ def _binary_vector(values: tuple[Fraction, ...], /) -> np.ndarray | None:
 def _space_line(
     curve: AbstractCurve | IntersectionCurve, /
 ) -> tuple[tuple[Fraction, ...], tuple[Fraction, ...]] | None:
-    if not isinstance(curve, (LineCurve, BSplineCurve)):
-        return None
-    return _affine_curve_coefficients(
-        curve, np.zeros((curve.ambient_dimension,), dtype=np.float64)
-    )
+    match curve:
+        case LineCurve() | BSplineCurve():
+            return affine_curve_coefficients(
+                curve, np.zeros((curve.ambient_dimension,), dtype=np.float64)
+            )
+        case _:
+            return None
 
 
 def _circle_frame(
     curve: CircleCurve, /
 ) -> tuple[tuple[Fraction, ...], Fraction, tuple[Fraction, ...], tuple[Fraction, ...]]:
     return (
-        _exact_vector(curve.center),
+        rational_vector(np.asarray(curve.center, dtype=np.float64).reshape(-1)),
         Fraction(float(curve.radius)),
-        _exact_vector(curve.first_axis),
-        _exact_vector(curve.second_axis),
+        rational_vector(np.asarray(curve.first_axis, dtype=np.float64).reshape(-1)),
+        rational_vector(np.asarray(curve.second_axis, dtype=np.float64).reshape(-1)),
     )
 
 
@@ -980,14 +955,14 @@ def _projective(vector: tuple[Fraction, ...], /) -> tuple[Fraction, ...] | None:
     return None if pivot is None else tuple(value / vector[pivot] for value in vector)
 
 
+@checked
 def curve_support_key(curve: AbstractCurve | IntersectionCurve, /) -> tuple[object, ...]:
-    """Exact world-image support key: equal keys are necessary for a carrier map.
+    """Return a world-image support key necessary for a carrier map.
 
-    Lines use their exact projective direction and pivot-plane point; circles
-    use exact center, radius and projective plane normal. Every other family is
-    keyed by its complete carrier payload, so only identical sources compare.
+    Lines use rational projective directions and pivot-plane points; circles
+    use rational centers, radii and projective plane normals. Every other family is
+    keyed by its carrier payload, so only identical sources compare.
     """
-    from ._model import _carrier_payload
 
     line = _space_line(curve)
     pivot = (
@@ -1016,7 +991,7 @@ def curve_support_key(curve: AbstractCurve | IntersectionCurve, /) -> tuple[obje
             first[0] * second[1] - first[1] * second[0],
         )
         return ("circle", center, radius, _projective(normal))
-    return ("carrier", canonical_fingerprint(_carrier_payload(curve)))
+    return ("carrier", canonical_fingerprint(carrier_owner.carrier_payload(curve)))
 
 
 def _line_map(
@@ -1043,7 +1018,7 @@ def _line_map(
 
 
 def _circle_map(first: CircleCurve, second: CircleCurve, /) -> CurveParameterMap | None:
-    """``second(s) == first(sigma*s + k*pi/2)`` by exact frame algebra, or None."""
+    """Return a rational frame proof of ``second(s) == first(sigma*s + k*pi/2)``."""
     center_a, radius_a, cosine_a, sine_a = _circle_frame(first)
     center_b, radius_b, cosine_b, sine_b = _circle_frame(second)
     if center_a != center_b or radius_a != radius_b:
@@ -1059,44 +1034,51 @@ def _circle_map(first: CircleCurve, second: CircleCurve, /) -> CurveParameterMap
         for sigma in (Fraction(1), Fraction(-1)):
             if sine_b == tuple(sigma * value for value in rotated):
                 return CurveParameterMap(
-                    sigma, _period_offset(Fraction(0), Fraction(quarter, 4))
+                    sigma, period_offset(Fraction(0), Fraction(quarter, 4))
                 )
     return None
 
 
+@checked
 def prove_curve_correspondence(
     first: AbstractCurve | IntersectionCurve,
     second: AbstractCurve | IntersectionCurve,
     /,
 ) -> CurveParameterMap | None:
-    """Prove ``first(scale*s + offset) == second(s)`` from exact source coefficients.
+    """Prove ``first(scale*s + offset) == second(s)`` from source coefficients.
 
     Identical carrier payloads are the identity. Lines (including degree-one
-    rational splines) use exact affine coefficients; circles use exact center,
+    rational splines) use rational affine coefficients; circles use rational centers,
     radius and quarter-turn/reflection frame algebra. A coincident support
     whose parameter map is not exactly representable returns None.
     """
-    from ._model import _carrier_payload
 
     if first.ambient_dimension != second.ambient_dimension:
         return None
-    if canonical_fingerprint(_carrier_payload(first)) == canonical_fingerprint(
-        _carrier_payload(second)
-    ):
+    if canonical_fingerprint(
+        carrier_owner.carrier_payload(first)
+    ) == canonical_fingerprint(carrier_owner.carrier_payload(second)):
         return CurveParameterMap(Fraction(1), Fraction(0))
     lines = _space_line(first), _space_line(second)
     if lines[0] is not None and lines[1] is not None:
         return _line_map(lines[0], lines[1])
-    if isinstance(first, CircleCurve) and isinstance(second, CircleCurve):
-        return _circle_map(first, second)
-    return None
+    match (first, second):
+        case (CircleCurve() as first_circle, CircleCurve() as second_circle):
+            return _circle_map(first_circle, second_circle)
+        case _:
+            return None
 
 
 def _reparameterized_spline(
     curve: BSplineCurve, scale: Fraction, offset: Fraction, /
 ) -> BSplineCurve | None:
     knots = _binary_vector(
-        tuple((knot - offset) / scale for knot in _exact_vector(curve.knots))
+        tuple(
+            (knot - offset) / scale
+            for knot in rational_vector(
+                np.asarray(curve.knots, dtype=np.float64).reshape(-1)
+            )
+        )
     )
     if knots is None:
         return None
@@ -1125,16 +1107,17 @@ def _reparameterized_circle(
     return CircleCurve(np.asarray(curve.center), cosine_axis, sine_axis, curve.radius)
 
 
+@checked
 def reparameterize_pcurve(
     curve: AbstractCurve | IntersectionPCurve,
     parameter_map: CurveParameterMap,
     /,
 ) -> AbstractCurve | IntersectionPCurve | None:
-    """The same exact family evaluating ``curve(scale*t + offset)``, or None.
+    """Return the same family evaluating ``curve(scale*t + offset)``, or None.
 
     No carrier is refitted: line origins/directions, spline knots and circle
     quarter-turn frames are transported only when every binary64 coefficient is
-    exact. Affine and periodic UV operations keep their original gauge.
+    representable without rounding. Affine and periodic UV operations keep their source gauge.
     """
     scale, offset = parameter_map.scale, parameter_map.offset
     if scale == 1 and offset == 0:
@@ -1167,8 +1150,10 @@ def reparameterize_pcurve(
             if not isinstance(offset, Fraction):
                 return None
             origin, direction = (
-                _exact_vector(curve.origin),
-                _exact_vector(curve.direction),
+                rational_vector(np.asarray(curve.origin, dtype=np.float64).reshape(-1)),
+                rational_vector(
+                    np.asarray(curve.direction, dtype=np.float64).reshape(-1)
+                ),
             )
             moved = _binary_vector(
                 tuple(a + offset * d for a, d in zip(origin, direction, strict=True))

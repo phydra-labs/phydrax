@@ -42,6 +42,7 @@ from phydrax.interfacial_transport import AdsorptionKinetics
 from phydrax.linalg import DiagonalLinearOperator
 from phydrax.metrix import RegularLevelSetManifold
 from phydrax.solver import coupling as cpl
+from phydrax.units import METER
 from tests.unit.solver.coupling._cases import triangle_mesh
 
 
@@ -116,7 +117,9 @@ def _surface() -> cpl.MeshfreeComponent:
         surface,
         native,
         surface.prepare_field_reconstruction(
-            support_geometry=Rectangle((0.5, 0.5), (1.0, 1.0)).compile()
+            support_geometry=Rectangle((0.5, 0.5), (1.0, 1.0)).compile(
+                coordinate_unit=METER
+            )
         ),
         surface.measures,
         name="surface",

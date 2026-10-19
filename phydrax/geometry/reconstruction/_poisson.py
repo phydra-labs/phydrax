@@ -66,29 +66,29 @@ PoissonDiscretization: TypeAlias = Literal["octree", "regular"]
 width only around the samples, with hanging-node constraints; ``regular``
 solves on the full regular grid of the finest width."""
 
-_CORNERS = np.asarray(tuple(itertools.product((0, 1), repeat=3)), dtype=np.int64)
-_CORNER_BITS = _CORNERS @ np.asarray((4, 2, 1), dtype=np.int64)
-# Two-point Gauss-Legendre quadrature is exact for the per-axis quadratic
-# products of trilinear shape functions and their derivatives.
+CORNERS = np.asarray(tuple(itertools.product((0, 1), repeat=3)), dtype=np.int64)
+_CORNER_BITS = CORNERS @ np.asarray((4, 2, 1), dtype=np.int64)
+# Two-point Gauss-Legendre quadrature integrates per-axis polynomial degrees
+# through three, including the quadratic trilinear shape-function products.
 _GAUSS = 0.5 + np.asarray((-0.5, 0.5), dtype=np.float64) / np.sqrt(3.0)
 _SOLVER_RELATIVE_TOLERANCE = 1.0e-8
 _LEVEL_SET_CLEARANCE = 1.0e-4
-_SOLVER_STEPS_PER_GRID_EXTENT = 16
+SOLVER_STEPS_PER_GRID_EXTENT = 16
 _POINT_POLICY = BVHBuildPolicy(leaf_size=16)
 
 
-def _shape_values(local: np.ndarray, /) -> np.ndarray:
+def shape_values(local: np.ndarray, /) -> np.ndarray:
     """Trilinear shape values ``(..., 8)`` at unit-cube coordinates ``(..., 3)``."""
 
-    factors = np.where(_CORNERS == 1, local[..., None, :], 1.0 - local[..., None, :])
+    factors = np.where(CORNERS == 1, local[..., None, :], 1.0 - local[..., None, :])
     return np.prod(factors, axis=-1)
 
 
 def _shape_gradients(local: np.ndarray, /) -> np.ndarray:
     """Unit-cube shape gradients ``(..., 8, 3)`` at coordinates ``(..., 3)``."""
 
-    factors = np.where(_CORNERS == 1, local[..., None, :], 1.0 - local[..., None, :])
-    signs = np.where(_CORNERS == 1, 1.0, -1.0)
+    factors = np.where(CORNERS == 1, local[..., None, :], 1.0 - local[..., None, :])
+    signs = np.where(CORNERS == 1, 1.0, -1.0)
     gradients = []
     for axis in range(3):
         others = [other for other in range(3) if other != axis]
@@ -105,7 +105,7 @@ def _reference_element() -> tuple[np.ndarray, np.ndarray]:
 
     nodes = np.asarray(tuple(itertools.product(_GAUSS, repeat=3)), dtype=np.float64)
     weight = 1.0 / nodes.shape[0]
-    values = _shape_values(nodes)
+    values = shape_values(nodes)
     gradients = _shape_gradients(nodes)
     stiffness = weight * np.asarray(
         ein.contract("qae,qbe->ab", gradients, gradients), dtype=np.float64
@@ -116,7 +116,7 @@ def _reference_element() -> tuple[np.ndarray, np.ndarray]:
     return stiffness, splat
 
 
-_STIFFNESS, _SPLAT_DIVERGENCE = _reference_element()
+REFERENCE_STIFFNESS, _SPLAT_DIVERGENCE = _reference_element()
 
 
 def _freudenthal_tetrahedra() -> np.ndarray:
@@ -205,7 +205,7 @@ class PoissonSolveEvidence:
 class SampledSurfaceDeviation:
     """Sampled two-sided deviation between samples and an extracted surface.
 
-    ``sample_to_surface_*`` are exact Euclidean distances from the retained
+    ``sample_to_surface_*`` are Euclidean point-to-triangle distances from the retained
     samples to the extracted triangles; ``surface_to_sample_max`` is the largest
     distance from an extracted vertex to its nearest sample. This is sampled
     evidence, not a continuous Hausdorff certificate.
@@ -221,7 +221,7 @@ class TetrahedralField:
     """Piecewise-linear indicator minus its iso-value on conforming tetrahedra.
 
     Only tetrahedra of cells whose values change sign are retained; vertex
-    values are exact functions of the finite-element nodal values, so shared
+    values are fixed functions of the finite-element nodal values, so shared
     faces carry identical vertices and values.
     """
 
@@ -275,8 +275,8 @@ class _Grid:
         scaled = (points - self.origin) / self.spacing
         upper = np.asarray(self.shape, dtype=np.int64) - 2
         lower = np.clip(np.floor(scaled).astype(np.int64), 0, upper)
-        corners = self.node_index(lower[:, None, :] + _CORNERS[None, :, :])
-        return corners, _shape_values(scaled - lower)
+        corners = self.node_index(lower[:, None, :] + CORNERS[None, :, :])
+        return corners, shape_values(scaled - lower)
 
 
 def sample_areas(neighbor_distances: np.ndarray, /) -> np.ndarray:
@@ -289,7 +289,7 @@ def sample_areas(neighbor_distances: np.ndarray, /) -> np.ndarray:
     radius = neighbor_distances[:, -1]
     if np.any(radius <= 0.0):
         raise ValueError(
-            "Sample density is undefined where more than neighborhood_size samples coincide."
+            "PoissonReconstruction.sample_density must have positive k-neighbor disk radius; got more than neighborhood_size coincident samples"
         )
     return np.pi * radius**2 / (neighbor_distances.shape[1] + 1)
 
@@ -303,8 +303,7 @@ def _grid(
     nodes = int(np.prod(shape))
     if nodes > maximum_nodes:
         raise ValueError(
-            f"Poisson grid needs {nodes} nodes, above maximum_grid_nodes={maximum_nodes}; "
-            "increase sample_spacing or the node budget."
+            f"PoissonReconstruction.grid_nodes must not exceed maximum_grid_nodes={maximum_nodes}; got {nodes}"
         )
     return _Grid(lower, spacing, (int(shape[0]), int(shape[1]), int(shape[2])))
 
@@ -323,9 +322,9 @@ def _operator_entries(
     """
 
     size = grid.size
-    cells = grid.node_index(grid.cells()[:, None, :] + _CORNERS[None, :, :])
+    cells = grid.node_index(grid.cells()[:, None, :] + CORNERS[None, :, :])
     stencil = np.zeros((size, 27), dtype=np.float64)
-    difference = _CORNERS[None, :, :] - _CORNERS[:, None, :] + 1
+    difference = CORNERS[None, :, :] - CORNERS[:, None, :] + 1
     slot = (difference[..., 0] * 3 + difference[..., 1]) * 3 + difference[..., 2]
     for first in range(8):
         for second in range(8):
@@ -333,7 +332,7 @@ def _operator_entries(
             stencil[:, column] += np.bincount(
                 cells[:, first],
                 weights=np.full(
-                    (cells.shape[0],), grid.spacing * _STIFFNESS[first, second]
+                    (cells.shape[0],), grid.spacing * REFERENCE_STIFFNESS[first, second]
                 ),
                 minlength=size,
             )
@@ -458,9 +457,9 @@ def _regular_field(grid: _Grid, field: np.ndarray, /) -> TetrahedralField:
 
     inside = field.reshape(grid.shape) < 0.0
     cells = grid.cells()
-    corner_inside = inside[tuple((cells[:, None, :] + _CORNERS[None, :, :]).T)].T
+    corner_inside = inside[tuple((cells[:, None, :] + CORNERS[None, :, :]).T)].T
     mixed = np.any(corner_inside, axis=1) & ~np.all(corner_inside, axis=1)
-    nodes = grid.node_index(cells[mixed][:, None, :] + _CORNERS[None, :, :])
+    nodes = grid.node_index(cells[mixed][:, None, :] + CORNERS[None, :, :])
     used, tetrahedra = np.unique(
         nodes[:, _TETRAHEDRA].reshape((-1,)), return_inverse=True
     )
@@ -488,7 +487,7 @@ def solve_regular_poisson(
     rows, columns, values = _operator_entries(
         grid, corners, weights, screening / spacing * areas
     )
-    cell_nodes = grid.node_index(grid.cells()[:, None, :] + _CORNERS[None, :, :])
+    cell_nodes = grid.node_index(grid.cells()[:, None, :] + CORNERS[None, :, :])
     field = splat_field(corners, weights, areas[:, None] * normals, grid.size)
     rhs = cell_divergence(
         cell_nodes,
@@ -502,7 +501,7 @@ def solve_regular_poisson(
         columns,
         values,
         rhs,
-        _SOLVER_STEPS_PER_GRID_EXTENT * max(grid.shape),
+        SOLVER_STEPS_PER_GRID_EXTENT * max(grid.shape),
     )
     sampled = np.sum(record.values[corners] * weights, axis=1)
     iso, spread = iso_statistics(sampled, areas)
@@ -590,7 +589,7 @@ def extract_indicator_surface(
 def sampled_surface_deviation(
     points: np.ndarray, vertices: np.ndarray, faces: np.ndarray, /
 ) -> SampledSurfaceDeviation:
-    """Exact sample-to-triangle and vertex-to-nearest-sample distances."""
+    """Return Euclidean sample-to-triangle and vertex-to-nearest-sample distances."""
 
     triangles = TriangleBVH(TriangleMesh(vertices, faces))
     sample_distance = np.asarray(triangles.query(points).distance, dtype=np.float64)
@@ -602,7 +601,7 @@ def sampled_surface_deviation(
 
 
 def nearest_sample_distance(points: np.ndarray, queries: np.ndarray, /) -> np.ndarray:
-    """Exact Euclidean distance from every query to its nearest sample."""
+    """Return the Euclidean distance from every query to its nearest sample."""
 
     samples = prepare_bvh(points, points, policy=_POINT_POLICY, dtype=jnp.float64)
     nearest = bvh_nearest_items(samples, queries, k=1, query_batch_capacity=256)

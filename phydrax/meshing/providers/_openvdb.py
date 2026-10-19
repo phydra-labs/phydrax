@@ -11,6 +11,16 @@ import equinox as eqx
 import numpy as np
 from numpy.typing import NDArray
 
+from phydrax.meshing._contracts import (
+    MeshingDerivativeMode,
+    MeshingExecutionMode,
+    MeshingOperation,
+    MeshingProviderInfo,
+    MeshingSourceKind,
+    SurfaceMeshingSpec,
+)
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from ..._fingerprint import canonical_fingerprint
 from ..._identity import SemanticProvenance
 from ..._physical import SpatialCoordinateContract
@@ -21,16 +31,6 @@ from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...typing import checked
 from .._audit import CellMeshAuditPolicy
 from .._canonical import certify_cell_mesh
-from .._contracts import (
-    MeshingDerivativeMode,
-    MeshingExecutionMode,
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingOperation,
-    MeshingProviderInfo,
-    MeshingSourceKind,
-    SurfaceMeshingSpec,
-)
 from .._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
 from .._trace import (
     MeshingStageKind,

@@ -11,35 +11,38 @@ from typing import Any
 
 import numpy as np
 
-from ...discretization import CellMesh
-from ...discretization._periodic_topology import PeriodicIsometryGroup
+import phydrax.discretization as cell_mesh_owner
+from phydrax.discretization import PeriodicIsometryGroup
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from ...geometry.brep import BRepModel
-from .._contracts import MeshingFailure, MeshingFailureCategory
+from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import checked
 from .._controls import ProtectedFeature
 from .._trace import MeshingStageKind
-from ._gmsh_elements import _evaluate_element_maps, _local_connectivity
-from ._gmsh_evidence import _connectivity_face_rows, _EvidenceSection
+from ._gmsh_elements import evaluate_element_maps, local_connectivity
+from ._gmsh_evidence import connectivity_face_rows, EvidenceSection
 from ._gmsh_import import (
-    _match_entities,
-    _resolve_entities,
-    _scope_samples,
-    _source_scale,
+    match_entities,
+    resolve_entities,
+    scope_samples,
+    source_scale,
 )
 
 
-def _set_periodic(gmsh: Any, plan: Any, shape: Any, /) -> Any:
+def set_periodic(gmsh: Any, plan: Any, shape: Any, /) -> Any:
     records = []
     slaves_used = set()
     for constraint in plan.specification.periodic_constraints:
         dimension = constraint.source_scope.entity_dimension
-        masters = _resolve_entities(gmsh, plan.source, constraint.source_scope)
-        candidates = _resolve_entities(gmsh, plan.source, constraint.target_scope)
+        masters = resolve_entities(gmsh, plan.source, constraint.source_scope)
+        candidates = resolve_entities(gmsh, plan.source, constraint.target_scope)
         transform = np.asarray(constraint.transform)
-        samples = _scope_samples(plan.source, constraint.source_scope)
+        samples = scope_samples(plan.source, constraint.source_scope)
         transformed = tuple(
             points @ transform[:3, :3].T + transform[:3, 3] for points in samples
         )
-        slaves = _match_entities(
+        slaves = match_entities(
             gmsh, dimension, transformed, candidates, constraint.tolerance
         )
         if set(masters) & set(slaves) or any(
@@ -47,7 +50,10 @@ def _set_periodic(gmsh: Any, plan: Any, shape: Any, /) -> Any:
         ):
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "Periodic self-pairs and multiply constrained slave entities are unsupported.",
+                (
+                    "gmsh.set_periodic must use disjoint source/target pairs and uniquely constrained slaves; got "
+                    + "Periodic self-pairs and multiply constrained slave entities are unsupported."
+                ),
             )
         gmsh.model.mesh.setPeriodic(
             dimension, list(slaves), list(masters), transform.reshape(-1).tolist()
@@ -63,12 +69,29 @@ def _verify_bound_orbit_cycles(
     tolerance: float,
     /,
 ) -> int:
-    """Validate node-bound isometry cycles, including finite fixed-point stabilizers."""
+    """Validate node-bound isometry cycles, including finite fixed-point stabilizers.
 
-    adjacency: dict[int, list[tuple[int, np.ndarray]]] = {}
+    Reverse edges apply native solves to the current frame rather than retaining
+    explicit inverse transforms.
+    """
+
+    plan = SmallLinearSolvePlan(4)
+
+    def pullback(matrix: np.ndarray, frame: np.ndarray, /) -> np.ndarray:
+        solved = solve_small_linear(plan, matrix, frame)
+        if not bool(np.asarray(solved.successful)):
+            raise ValueError(
+                "gmsh.verify_bound_orbit_cycles.frame must yield a successful native solve; got "
+                f"status={np.asarray(solved.status)}, "
+                f"condition={np.asarray(solved.condition_estimate)}, "
+                f"residual={np.asarray(solved.residual_norm)}."
+            )
+        return np.asarray(solved.value)
+
+    adjacency: dict[int, list[tuple[int, np.ndarray, bool]]] = {}
     for master, slave, transform in pairs:
-        adjacency.setdefault(master, []).append((slave, transform))
-        adjacency.setdefault(slave, []).append((master, np.linalg.inv(transform)))
+        adjacency.setdefault(master, []).append((slave, transform, False))
+        adjacency.setdefault(slave, []).append((master, transform, True))
     frames: dict[int, np.ndarray] = {}
     stabilizers = 0
     for root in adjacency:
@@ -77,13 +100,17 @@ def _verify_bound_orbit_cycles(
         frames[root] = np.eye(4)
         queue = [root]
         for current in queue:
-            for target, transform in adjacency[current]:
-                candidate = transform @ frames[current]
+            for target, transform, reverse in adjacency[current]:
+                candidate = (
+                    pullback(transform, frames[current])
+                    if reverse
+                    else transform @ frames[current]
+                )
                 if target not in frames:
                     frames[target] = candidate
                     queue.append(target)
                     continue
-                cycle = np.linalg.inv(frames[target]) @ candidate
+                cycle = pullback(frames[target], candidate)
                 if np.max(np.abs(cycle - np.eye(4))) <= tolerance:
                     continue
                 # A rotation axis may end on the paired boundaries: its node
@@ -91,20 +118,26 @@ def _verify_bound_orbit_cycles(
                 homogeneous = np.append(coordinates[root], 1.0)
                 if np.linalg.norm((cycle @ homogeneous - homogeneous)[:3]) > tolerance:
                     raise ValueError(
-                        "A bound periodic node orbit has a conflicting transformation cycle."
+                        (
+                            "gmsh.verify_bound_orbit_cycles must close periodic node orbits without conflicting transformations or translational holonomy; got "
+                            + "A bound periodic node orbit has a conflicting transformation cycle."
+                        )
                     )
                 group = PeriodicIsometryGroup(cycle[None], tolerance=tolerance)
                 if group.orders[0] == 0:
                     raise ValueError(
-                        "A periodic cycle has nonzero translational holonomy."
+                        (
+                            "gmsh.verify_bound_orbit_cycles must close periodic node orbits without conflicting transformations or translational holonomy; got "
+                            + "A periodic cycle has nonzero translational holonomy."
+                        )
                     )
                 stabilizers += 1
     return stabilizers
 
 
-def _audit_periodic(
+def audit_periodic(
     gmsh: Any, records: Any, node_tags: Any, points: Any, /
-) -> _EvidenceSection:
+) -> EvidenceSection:
     requested = []
     achieved = []
     bound_pairs: list[tuple[int, int, np.ndarray]] = []
@@ -120,7 +153,10 @@ def _audit_periodic(
                 for other in transforms[first + 1 :]:
                     if np.max(np.abs(transform @ other - other @ transform)) > threshold:
                         raise ValueError(
-                            "Periodic boundary transformations have a conflicting composed cycle."
+                            (
+                                "gmsh.audit_periodic must publish bijective high-order node correspondence within the requested tolerance; got "
+                                + "Periodic boundary transformations have a conflicting composed cycle."
+                            )
                         )
         except ValueError as error:
             raise MeshingFailure(
@@ -160,11 +196,14 @@ def _audit_periodic(
             ):
                 raise MeshingFailure(
                     MeshingFailureCategory.COMPLIANCE_FAILED,
-                    "Gmsh periodic correspondence is not a complete high-order node bijection.",
+                    (
+                        "gmsh.audit_periodic must publish bijective high-order node correspondence within the requested tolerance; got "
+                        + "Gmsh periodic correspondence is not a high-order node bijection."
+                    ),
                     stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
                 )
-            slave_points = points[_local_connectivity(node_tags, slave_nodes)]
-            master_points = points[_local_connectivity(node_tags, master_nodes)]
+            slave_points = points[local_connectivity(node_tags, slave_nodes)]
+            master_points = points[local_connectivity(node_tags, master_nodes)]
             mapped = master_points @ transform[:3, :3].T + transform[:3, 3]
             residual = max(
                 residual,
@@ -178,7 +217,10 @@ def _audit_periodic(
         if residual > constraint.tolerance:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "Periodic node residual exceeds the exact requested tolerance.",
+                (
+                    "gmsh.audit_periodic must publish bijective high-order node correspondence within the requested tolerance; got "
+                    + "Periodic node residual exceeds the requested tolerance."
+                ),
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         key = f"periodic:{constraint.constraint_id}"
@@ -205,7 +247,7 @@ def _audit_periodic(
             stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
         ) from error
     achieved.append(("periodic:fixed_point_cycle_count", float(stabilizers)))
-    return _EvidenceSection(tuple(requested), tuple(achieved))
+    return EvidenceSection(tuple(requested), tuple(achieved))
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,14 +297,20 @@ def _embedding_host(
         if len(hosts) > 1:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "A free protected entity lies in more than one host entity.",
+                (
+                    "gmsh.embedding_host must resolve exactly one meshed host entity; got "
+                    + "A free protected entity lies in more than one host entity."
+                ),
                 stage=MeshingStageKind.CONTROL_RESOLUTION.value,
             )
         if hosts:
             return host_dimension, hosts[0]
     raise MeshingFailure(
         MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-        "A free protected entity lies in no meshed host entity.",
+        (
+            "gmsh.embedding_host must resolve exactly one meshed host entity; got "
+            + "A free protected entity lies in no meshed host entity."
+        ),
         stage=MeshingStageKind.CONTROL_RESOLUTION.value,
     )
 
@@ -276,7 +324,8 @@ def _free_entities(gmsh: Any, top_dimension: int, /) -> set[tuple[int, int]]:
     }
 
 
-def _apply_protected_features(
+@checked
+def apply_protected_features(
     gmsh: Any,
     source: BRepModel,
     shape: Any,
@@ -290,13 +339,13 @@ def _apply_protected_features(
     protection request gives them meshing semantics.
     """
     top_dimension = specification.target.topological_dimension
-    tolerance = 1.0e-7 * _source_scale(source)
+    tolerance = 1.0e-7 * source_scale(source)
     free = _free_entities(gmsh, top_dimension)
     records = []
     embeddings: dict[tuple[int, int, int], list[int]] = {}
     for feature in specification.protected_features:
         dimension = feature.scope.entity_dimension
-        tags = _resolve_entities(gmsh, source, feature.scope)
+        tags = resolve_entities(gmsh, source, feature.scope)
         embedded = 0
         for tag in tags:
             if (dimension, tag) not in free:
@@ -304,7 +353,10 @@ def _apply_protected_features(
             if not embedding_allowed:
                 raise MeshingFailure(
                     MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "Free protected entities cannot be embedded on strict semantic, swept, or periodic paths.",
+                    (
+                        "gmsh.apply_protected_features must embed free entities only on an unconstrained nonsemantic route; got "
+                        + "Free protected entities cannot be embedded on strict semantic, swept, or periodic paths."
+                    ),
                     stage=MeshingStageKind.CONTROL_RESOLUTION.value,
                 )
             host_dimension, host = _embedding_host(
@@ -338,13 +390,15 @@ def _entity_elements(gmsh: Any, dimension: int, tag: int, /) -> Any:
         )
 
 
-def _mesh_entity_rows(mesh: CellMesh, dimension: int, /) -> set[tuple[int, ...]]:
+def _mesh_entity_rows(
+    mesh: cell_mesh_owner.CellMesh, dimension: int, /
+) -> set[tuple[int, ...]]:
     if dimension == 1:
         # ty: ignore[unresolved-attribute]
         rows = np.asarray(mesh.connectivity.edges, dtype=np.int64)
     else:
         # ty: ignore[invalid-argument-type]
-        rows = _connectivity_face_rows(mesh.connectivity)
+        rows = connectivity_face_rows(mesh.connectivity)
     return {tuple(sorted(int(value) for value in row)) for row in rows}
 
 
@@ -360,11 +414,14 @@ def _protected_deviation(
 ) -> tuple[float, int]:
     if dimension == 0:
         nodes, _, _ = gmsh.model.mesh.getNodes(0, tag)
-        local = _local_connectivity(node_tags, np.asarray(nodes, dtype=np.int64))
+        local = local_connectivity(node_tags, np.asarray(nodes, dtype=np.int64))
         if local.size != 1 or source_to_corner[local[0]] < 0:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "A protected point is not one canonical mesh vertex.",
+                (
+                    "gmsh.protected_deviation must represent every protected CAD entity by generated mesh entities; got "
+                    + "A protected point is not one mesh vertex."
+                ),
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         target = np.asarray(gmsh.model.getValue(0, tag, []), dtype=np.float64)
@@ -372,7 +429,7 @@ def _protected_deviation(
     deviation = 0.0
     count = 0
     for element_type, nodes, corners in _entity_elements(gmsh, dimension, tag):
-        local = _local_connectivity(node_tags, nodes)
+        local = local_connectivity(node_tags, nodes)
         canonical = source_to_corner[local[:, :corners]]
         if np.any(canonical < 0) or any(
             tuple(sorted(int(value) for value in row)) not in mesh_rows
@@ -380,7 +437,10 @@ def _protected_deviation(
         ):
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "A protected CAD entity is not represented by canonical mesh entities.",
+                (
+                    "gmsh.protected_deviation must represent every protected CAD entity by generated mesh entities; got "
+                    + "A protected CAD entity is not represented by mesh entities."
+                ),
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         # Interior samples of Gmsh's own element maps, in Gmsh reference coordinates.
@@ -389,7 +449,7 @@ def _protected_deviation(
             if dimension == 1
             else np.full((1, 2), 1.0 / 3.0, dtype=np.float64)
         )
-        samples = _evaluate_element_maps(
+        samples = evaluate_element_maps(
             gmsh, element_type, points[local], reference
         ).reshape((-1, 3))
         closest, _ = gmsh.model.getClosestPoint(dimension, tag, samples.reshape(-1))
@@ -401,22 +461,26 @@ def _protected_deviation(
     if not count:
         raise MeshingFailure(
             MeshingFailureCategory.COMPLIANCE_FAILED,
-            "A protected CAD entity generated no mesh entities.",
+            (
+                "gmsh.protected_deviation must represent every protected CAD entity by generated mesh entities; got "
+                + "A protected CAD entity generated no mesh entities."
+            ),
             stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
         )
     return deviation, count
 
 
-def _audit_protected_features(
+@checked
+def audit_protected_features(
     gmsh: Any,
     records: tuple[_ProtectedEntities, ...],
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     node_tags: np.ndarray,
     points: np.ndarray,
     source_to_corner: np.ndarray,
     tolerance: float,
     /,
-) -> _EvidenceSection:
+) -> EvidenceSection:
     requested = []
     achieved = []
     issues = []
@@ -453,4 +517,4 @@ def _audit_protected_features(
         )
         if feature.hard and deviation > feature.maximum_deviation + tolerance:
             issues.append(f"protected_deviation:{feature.feature_id}")
-    return _EvidenceSection(tuple(requested), tuple(achieved), tuple(issues))
+    return EvidenceSection(tuple(requested), tuple(achieved), tuple(issues))

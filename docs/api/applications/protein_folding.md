@@ -13,7 +13,9 @@ distinguishes conceptual references from licensed data, parameters, and weights.
 
 ## Public layout
 
-```python executable
+Expected standard output: none.
+
+```python {.executable}
 from phydrax.applications import protein_folding as protein
 
 construct = protein.ProteinConstruct(("A",), ("NLYIQWLKDGGPSSGRPPPS",))

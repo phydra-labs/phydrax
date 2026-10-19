@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def test_spatial_primitives_preserve_analytic_volume() -> None:
@@ -29,7 +30,7 @@ def test_spatial_primitives_preserve_analytic_volume() -> None:
                 phx.geometry.Sphere(
                     center=(0.0, 0.0, 0.0),
                     radius=sphere_radius,
-                ).compile()
+                ).compile(coordinate_unit=METER)
             ),
             (4 / 3) * np.pi * sphere_radius**3,
             0.05,
@@ -40,7 +41,7 @@ def test_spatial_primitives_preserve_analytic_volume() -> None:
                 phx.geometry.Ellipsoid(
                     center=(0.0, 0.0, 0.0),
                     radii=ellipsoid_radii,
-                ).compile()
+                ).compile(coordinate_unit=METER)
             ),
             (4 / 3) * np.pi * np.prod(ellipsoid_radii),
             0.05,
@@ -48,7 +49,9 @@ def test_spatial_primitives_preserve_analytic_volume() -> None:
         (
             "box",
             phx.domain.GeometryDomain(
-                phx.geometry.Box((0.0, 0.0, 0.0), box_dimensions).compile()
+                phx.geometry.Box((0.0, 0.0, 0.0), box_dimensions).compile(
+                    coordinate_unit=METER
+                )
             ),
             np.prod(box_dimensions),
             0.05,
@@ -59,7 +62,7 @@ def test_spatial_primitives_preserve_analytic_volume() -> None:
                 phx.geometry.Cube(
                     center=(0.0, 0.0, 0.0),
                     side=cube_side,
-                ).compile()
+                ).compile(coordinate_unit=METER)
             ),
             cube_side**3,
             0.05,
@@ -71,7 +74,7 @@ def test_spatial_primitives_preserve_analytic_volume() -> None:
                     (0.0, 0.0, 0.0),
                     (0.0, 0.0, cylinder_height),
                     cylinder_radius,
-                ).compile()
+                ).compile(coordinate_unit=METER)
             ),
             np.pi * cylinder_radius**2 * cylinder_height,
             0.05,
@@ -83,7 +86,7 @@ def test_spatial_primitives_preserve_analytic_volume() -> None:
                     base_center=(0.0, 0.0, 0.0),
                     axis=(0.0, 0.0, cone_height),
                     radius0=cone_radius,
-                ).compile()
+                ).compile(coordinate_unit=METER)
             ),
             (1 / 3) * np.pi * cone_radius**2 * cone_height,
             0.05,
@@ -96,7 +99,7 @@ def test_spatial_primitives_preserve_analytic_volume() -> None:
                     axis=(0.0, 0.0, frustum_height),
                     radius0=frustum_radius0,
                     radius1=frustum_radius1,
-                ).compile()
+                ).compile(coordinate_unit=METER)
             ),
             (1 / 3)
             * np.pi
@@ -115,7 +118,7 @@ def test_spatial_primitives_preserve_analytic_volume() -> None:
                     center=(0.0, 0.0, 0.0),
                     inner_radius=inner_radius,
                     outer_radius=outer_radius,
-                ).compile()
+                ).compile(coordinate_unit=METER)
             ),
             2 * np.pi**2 * major_radius * minor_radius**2,
             0.1,
@@ -127,7 +130,7 @@ def test_spatial_primitives_preserve_analytic_volume() -> None:
                     (0.0, 0.0, 0.0),
                     wedge_extents,
                     wedge_top,
-                ).compile()
+                ).compile(coordinate_unit=METER)
             ),
             0.5 * wedge_extents[1] * wedge_extents[2] * (wedge_extents[0] + wedge_top),
             0.05,
@@ -139,7 +142,9 @@ def test_spatial_primitives_preserve_analytic_volume() -> None:
 
 def test_boundary_normals_sphere() -> None:
     s = phx.domain.GeometryDomain(
-        phx.geometry.Sphere(center=(0.0, 0.0, 0.0), radius=1.0).compile()
+        phx.geometry.Sphere(center=(0.0, 0.0, 0.0), radius=1.0).compile(
+            coordinate_unit=METER
+        )
     )
 
     pts = jnp.array(

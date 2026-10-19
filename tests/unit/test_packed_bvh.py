@@ -279,7 +279,7 @@ def test_packed_bvh_scenario_3() -> None:
 
     assert np.stack(strict, axis=1).tolist() == [[0, 0], [1, 1], [2, 2]]
     assert np.stack(padded, axis=1).tolist() == [[0, 0], [0, 1], [1, 0], [1, 1], [2, 2]]
-    with pytest.raises(ValueError, match="include_touching"):
+    with pytest.raises(ValueError, match=r"_validate_host_pair_arguments\.tolerances"):
         bvh_overlap_pairs_host(bvh, bvh, absolute_tolerance=1.0e-3)
 
 
@@ -445,7 +445,7 @@ def test_host_minimum_refusal_publishes_no_partial_objective(refusal: str) -> No
 
 
 def _affine_source_cover_case(dimension: int) -> tuple[Any, np.ndarray, np.ndarray]:
-    from phydrax.geometry._mesh_certificates import ParametricCurveBoundarySource
+    from phydrax.geometry._source_fidelity import ParametricCurveBoundarySource
     from phydrax.geometry.brep._patches import LineCurve
 
     if dimension == 2:
@@ -482,19 +482,15 @@ def _affine_source_cover_case(dimension: int) -> tuple[Any, np.ndarray, np.ndarr
 def test_affine_source_cover_matches_exhaustive_and_independent_physical_distance(
     dimension: int,
 ) -> None:
-    from phydrax.geometry._mesh_certificates import (
-        _EmbeddingState,
-        _point_simplex_distances,
-        _source_to_mesh,
-        MeshCertificateLimits,
-    )
+    from phydrax.geometry._embedding_state import EmbeddingState, MeshCertificateLimits
+    from phydrax.geometry._source_fidelity import point_simplex_distances, source_to_mesh
 
     source, coordinates, items = _affine_source_cover_case(dimension)
     limits = MeshCertificateLimits()
     samples = source.boundary_samples(limits.maximum_source_samples)
     assert samples.complete and samples.semantics == "certified"
     exhaustive = np.min(
-        _point_simplex_distances(samples.points, coordinates[items]), axis=1
+        point_simplex_distances(samples.points, coordinates[items]), axis=1
     )
     coordinate = samples.points[:, dimension - 1]
     physical = np.minimum(coordinate, (0.5 if dimension == 2 else 0.35) - coordinate)
@@ -512,8 +508,19 @@ def test_affine_source_cover_matches_exhaustive_and_independent_physical_distanc
         float(np.max(upper_bounds)),
         float(np.max(lower_bounds)),
     )
-    state = _EmbeddingState([], [])
-    actual = _source_to_mesh(state, source, coordinates, items, 0.3, limits)
+    state = EmbeddingState([], [])
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    with coordinate_reference_budget(
+        limits,
+        queries_upper=min(
+            limits.maximum_distance_evaluations,
+            3 * items.shape[0] * samples.points.shape[0],
+        ),
+    ) as budget:
+        actual = source_to_mesh(
+            state, source, coordinates, items, 0.3, limits, budget=budget
+        )
     assert actual[0] == "certified" and actual[3] == samples.points.shape[0]
     np.testing.assert_allclose(
         actual[1:3], (expected_upper, expected_lower), rtol=0.0, atol=128 * epsilon
@@ -545,18 +552,26 @@ def test_affine_source_cover_refuses_original_resources_without_changing_source(
     finding: str,
 ) -> None:
     from phydrax._fingerprint import array_tree_fingerprint
-    from phydrax.geometry._mesh_certificates import (
-        _EmbeddingState,
-        _source_to_mesh,
-        MeshCertificateLimits,
-    )
+    from phydrax.geometry._embedding_state import EmbeddingState, MeshCertificateLimits
+    from phydrax.geometry._source_fidelity import source_to_mesh
 
     source, coordinates, items = _affine_source_cover_case(3)
     original = array_tree_fingerprint((source, coordinates, items))
-    state = _EmbeddingState([], [])
-    actual = _source_to_mesh(
-        state, source, coordinates, items, 0.3, MeshCertificateLimits(**override)
-    )
+    state = EmbeddingState([], [])
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    limits = MeshCertificateLimits(**override)
+    samples = source.boundary_samples(limits.maximum_source_samples)
+    with coordinate_reference_budget(
+        limits,
+        queries_upper=min(
+            limits.maximum_distance_evaluations,
+            3 * items.shape[0] * samples.points.shape[0],
+        ),
+    ) as budget:
+        actual = source_to_mesh(
+            state, source, coordinates, items, 0.3, limits, budget=budget
+        )
     assert np.isinf(actual[1]) and actual[2] == 0.0
     assert len(state.findings) == 1 and state.findings[0].check == finding
     assert state.findings[0].status == "unresolved"

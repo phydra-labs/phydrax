@@ -23,6 +23,7 @@ from phydrax.discretization.lattice_boltzmann._geometry_sensitivity import (
     LatticeBoltzmannGeometrySensitivityMargins,
     LatticeBoltzmannGeometrySensitivityPolicy,
 )
+from phydrax.units import METER
 
 
 def _discretization(shape: Any = (8, 8)) -> Any:
@@ -462,7 +463,7 @@ def test_lattice_boltzmann_geometry_expansion_scenario_3() -> None:
     np.testing.assert_allclose(result.evidence.free_stream_residual, 0.0, atol=1e-14)
     np.testing.assert_array_equal(result.populations, populations)
     discretization = _discretization((32, 32))
-    geometry = phx.geometry.Circle((0.5, 0.5), 0.2).compile()
+    geometry = phx.geometry.Circle((0.5, 0.5), 0.2).compile(coordinate_unit=METER)
     prepared = phx.discretization.prepare_lattice_boltzmann_link_geometry(
         discretization,
         geometry,

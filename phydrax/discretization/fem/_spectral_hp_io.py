@@ -8,6 +8,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +18,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 import phydrax.ein as ein
+from phydrax.discretization._reference_cell_types import CellBlock
 
 from ..._array_archive import read_array_archive, write_array_archive
 from ..._external_resource import open_bounded_resource, ResourceLimits
@@ -32,12 +34,16 @@ from .._cell_complex import (
     TetrahedralConnectivity,
 )
 from .._cell_geometry import CellGeometrySpec
-from .._cell_mesh import CellBlock, CellMesh
+from .._cell_mesh import CellMesh
 from .._cell_ordering import MESHIO_CELL_TYPES, reference_node_permutation
 from .._hexahedral import HexahedralConnectivity
 from ._hp_runtime import FiniteElementHPEpoch
 from ._mortar import FiniteElementMortarMetricData, FiniteElementMortarPlan
 from ._reference import lagrange_element
+
+
+if TYPE_CHECKING:
+    import meshio
 
 
 class PersistentSemanticCache(StrictModule, NonTrainableState):
@@ -57,7 +63,9 @@ class PersistentSemanticCache(StrictModule, NonTrainableState):
     ) -> Path:
         identifier = str(semantic_id)
         if not identifier:
-            raise ValueError("Semantic cache identity must be non-empty.")
+            raise ValueError(
+                "PersistentSemanticCache.semantic_id must be nonempty; got an empty identifier"
+            )
         path = Path(self.directory) / f"{identifier}.phxcache"
         payload = {str(name): np.asarray(value) for name, value in arrays.items()}
         write_array_archive(
@@ -79,7 +87,9 @@ class PersistentSemanticCache(StrictModule, NonTrainableState):
             or manifest.get("semantic_id") != str(semantic_id)
             or not isinstance(manifest.get("metadata"), dict)
         ):
-            raise ValueError("Persistent semantic cache identity is invalid.")
+            raise ValueError(
+                "PersistentSemanticCache.manifest must bind the requested identity and metadata; got incompatible cache metadata"
+            )
         arrays = {name: jnp.asarray(value) for name, value in payload.items()}
         return arrays, dict(manifest["metadata"])
 
@@ -110,7 +120,9 @@ class FusedTensorTransfer(StrictModule, NonTrainableState):
     def __init__(self, factors: Sequence[ArrayLike], /) -> None:
         factors_ = tuple(jnp.asarray(value) for value in factors)
         if not factors_ or any(value.ndim != 2 for value in factors_):
-            raise ValueError("Fused tensor transfers require rank-2 axis factors.")
+            raise ValueError(
+                "FusedTensorTransfer.factors must contain rank-2 axis factors; got empty or incompatible factors"
+            )
         self.factors = factors_
 
     def apply(self, values: ArrayLike, /) -> Array:
@@ -143,13 +155,15 @@ class HPMixedPrecisionPolicy(StrictModule, NonTrainableState):
             for value in (storage_dtype, compute_dtype, accumulation_dtype)
         )
         if any(not np.issubdtype(value, np.inexact) for value in dtypes):
-            raise ValueError("hp mixed precision requires inexact dtypes.")
+            raise ValueError(
+                "HPMixedPrecisionPolicy.dtypes must be inexact; got a non-inexact dtype"
+            )
         if (
             dtypes[2].itemsize < dtypes[1].itemsize
             or dtypes[1].itemsize < dtypes[0].itemsize
         ):
             raise ValueError(
-                "hp precision must not narrow from storage to compute to accumulation."
+                "HPMixedPrecisionPolicy.dtypes must retain precision from storage through compute to accumulation; got narrowing dtypes"
             )
         self.storage_dtype, self.compute_dtype, self.accumulation_dtype = tuple(
             value.name for value in dtypes
@@ -173,11 +187,15 @@ class HPWorksetMemoryPlan(StrictModule, NonTrainableState):
         components = int(component_count)
         budget = int(maximum_bytes)
         if not widths or min(widths) <= 0 or components <= 0 or budget <= 0:
-            raise ValueError("Workset width, components, or memory budget is invalid.")
+            raise ValueError(
+                "HPWorksetMemoryPlan.widths_components_budget must be nonempty and positive; got invalid widths, components, or budget"
+            )
         entity_bytes = sum(widths) * components * np.dtype(dtype).itemsize
         capacity = budget // entity_bytes
         if capacity < 1:
-            raise ValueError("Memory budget cannot hold one hp workset entity.")
+            raise ValueError(
+                "HPWorksetMemoryPlan.maximum_bytes must hold at least one entity; got an insufficient memory budget"
+            )
         self.entity_bytes = entity_bytes
         self.capacity = capacity
         self.planned_bytes = capacity * entity_bytes
@@ -207,12 +225,16 @@ def write_adaptive_vtk(
     if point_values is not None:
         values = np.asarray(point_values)
         if values.shape not in ((points.shape[0],), (points.shape[0], 1)):
-            raise ValueError("Adaptive VTK point values must be scalar point data.")
+            raise ValueError(
+                "write_adaptive_vtk.point_values must be scalar point data; got incompatible shape"
+            )
         point_data["field"] = values.reshape((points.shape[0],))
     destination = Path(path).expanduser().absolute()
     profile = resolve_mesh_file_profile(destination, None, direction="write")
     if profile.profile_id not in {"vtk", "vtu"}:
-        raise ValueError("Adaptive VTK export requires .vtk or .vtu.")
+        raise ValueError(
+            "write_adaptive_vtk.path must use .vtk or .vtu; got an unsupported export profile"
+        )
     target = meshio.Mesh(points, cells, point_data=point_data)
     with TemporaryDirectory(prefix="phydrax-adaptive-vtk-") as temporary:
         staged = Path(temporary) / destination.name
@@ -224,7 +246,9 @@ def write_adaptive_vtk(
         ):
             decoded_points = decoded_points[:, : points.shape[1]]
         if not np.array_equal(decoded_points, points):
-            raise ValueError("Adaptive VTK codec changed point coordinates.")
+            raise ValueError(
+                "write_adaptive_vtk.codec.points must preserve point coordinates; got different decoded points"
+            )
         payload = staged.read_bytes()
     publish_bytes(
         destination,
@@ -308,7 +332,7 @@ def _canonical_source_metadata(
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
         raise TypeError(
-            "Finite-element source metadata must contain portable deterministic values."
+            "FiniteElementMeshImportReport.source_metadata must contain portable deterministic values; got an unsupported metadata object"
         )
 
     return tuple(
@@ -326,7 +350,9 @@ def _entity_counts(
     items = values.items() if isinstance(values, Mapping) else values
     normalized = tuple(sorted((str(name), int(count)) for name, count in items))
     if any(not name or count < 0 for name, count in normalized):
-        raise ValueError("Import entity counts must be named and non-negative.")
+        raise ValueError(
+            "FiniteElementMeshImportReport.entity_counts must have names and nonnegative counts; got invalid names or counts"
+        )
     return normalized
 
 
@@ -351,7 +377,9 @@ def _named_group(
     for group_name, entities in groups:
         if group_name == requested:
             return entities
-    raise ValueError(f"Unknown imported {kind} group {requested!r}.")
+    raise ValueError(
+        f"FiniteElementMeshImport.group_name must name an imported {kind} group; got {requested!r}"
+    )
 
 
 class FiniteElementMeshImportReport(StrictModule, NonTrainableState):
@@ -415,7 +443,9 @@ class FiniteElementMeshImportReport(StrictModule, NonTrainableState):
             or any(not value for value in (*volumes, *boundaries, *losses_))
             or any(not key for key, _value in metadata)
         ):
-            raise ValueError("Finite-element mesh import report is inconsistent.")
+            raise ValueError(
+                "FiniteElementMeshImportReport.fields must describe matching blocks, orders, and nonempty named metadata; got inconsistent fields"
+            )
         source_by_name = dict(source_counts)
         imported_by_name = dict(imported_counts)
         dropped_by_name = dict(dropped_counts)
@@ -428,7 +458,7 @@ class FiniteElementMeshImportReport(StrictModule, NonTrainableState):
             for name in count_names
         ) or (any(dropped_by_name.values()) and not losses_):
             raise ValueError(
-                "Finite-element import entity loss accounting is inconsistent."
+                "FiniteElementMeshImportReport.entity_counts must balance imported and dropped entities with loss evidence; got inconsistent loss accounting"
             )
         self.block_names = names
         self.cell_kinds = kinds
@@ -492,12 +522,16 @@ class FiniteElementMeshImport(StrictModule, NonTrainableState):
             or report.volume_names != tuple(name for name, _entities in volumes)
             or report.boundary_names != tuple(name for name, _entities in boundaries)
         ):
-            raise ValueError("Imported entity groups do not match the import report.")
+            raise ValueError(
+                "FiniteElementMeshImport.groups must match the import report; got different group or block metadata"
+            )
         if any(
             not name or not entities or len(set(entities)) != len(entities)
             for name, entities in (*volumes, *boundaries)
         ):
-            raise ValueError("Imported entity groups must be nonempty and unique.")
+            raise ValueError(
+                "FiniteElementMeshImport.groups must be named, nonempty, and unique; got invalid group entries"
+            )
         cell_count = sum(block.cell_count for block in mesh.blocks)
         facet_count = mesh.topology.entity_sets[mesh.topological_dimension - 1].count
         if any(
@@ -505,13 +539,17 @@ class FiniteElementMeshImport(StrictModule, NonTrainableState):
             for _name, entities in volumes
             for value in entities
         ):
-            raise ValueError("Imported volume group contains an invalid cell index.")
+            raise ValueError(
+                "FiniteElementMeshImport.volume_groups must reference mesh cells; got an invalid cell index"
+            )
         if any(
             value < 0 or value >= facet_count
             for _name, entities in boundaries
             for value in entities
         ):
-            raise ValueError("Imported boundary group contains an invalid facet index.")
+            raise ValueError(
+                "FiniteElementMeshImport.boundary_groups must reference mesh facets; got an invalid facet index"
+            )
         self.mesh = mesh
         self.coordinate_spec = coordinate_spec
         self.volume_groups = volumes
@@ -550,61 +588,40 @@ def _geometry_permutation(cell_type: str, cell_kind: str, order: int, /) -> np.n
     return reference_node_permutation(cell_type, target)
 
 
-def read_finite_element_mesh(
-    path: str | Path,
-    /,
-    *,
-    trusted_root: str | Path | None = None,
-    maximum_file_bytes: int = 4 * 1024 * 1024 * 1024,
-    file_profile: str | None = None,
-) -> FiniteElementMeshImport:
-    import meshio
+class _ImportedVolumeGeometry(StrictModule):
+    mesh: CellMesh
+    coordinate_spec: CellGeometrySpec
+    points: np.ndarray
+    volume_blocks: tuple[tuple[int, meshio.CellBlock], ...]
+    compact: dict[int, int]
+    volume_routes: dict[int, np.ndarray]
 
-    source_path = Path(path).expanduser().absolute()
-    root = source_path.parent if trusted_root is None else Path(trusted_root)
-    profile = resolve_mesh_file_profile(
-        source_path,
-        file_profile,
-        direction="read",
-    )
-    if profile.carrier != "single-file":
-        raise ValueError("Finite-element mesh import requires a single-file profile.")
-    with (
-        open_bounded_resource(
-            source_path,
-            trusted_root=root,
-            limits=ResourceLimits(
-                maximum_file_bytes,
-                64,
-                100_000_000,
-                1_000_000,
-                1024,
-            ),
-        ) as resource,
-        TemporaryDirectory(prefix="phydrax-fe-mesh-read-") as temporary,
-    ):
-        staged = Path(temporary) / source_path.name
-        with staged.open("wb") as output:
-            while chunk := resource.stream.read(1024 * 1024):
-                output.write(chunk)
-        source = meshio.read(staged, file_format=profile.meshio_format)
-        source_manifest_id = resource.manifest.manifest_id
-    # The shared meshio table also lists interval cells; finite-element volume
-    # import admits only two- and three-dimensional cell kinds.
-    volume_blocks = [
+
+class _ImportedEntityGroups(StrictModule):
+    volumes: dict[str, tuple[int, ...]]
+    boundaries: dict[str, tuple[int, ...]]
+    selected_facet_count: int = eqx.field(static=True)
+
+
+def _prepare_imported_volume_geometry(source: meshio.Mesh, /) -> _ImportedVolumeGeometry:
+    volume_blocks = tuple(
         (source_index, cell_block)
         for source_index, cell_block in enumerate(source.cells)
         if cell_block.type in MESHIO_CELL_TYPES
         and MESHIO_CELL_TYPES[cell_block.type][0] in _VOLUME_CELL_DIMENSIONS
-    ]
+    )
     if not volume_blocks:
-        raise ValueError("Mesh contains no supported finite-element volume cells.")
+        raise ValueError(
+            "read_finite_element_mesh.source.cells must contain supported volume cells; got no supported volume cells"
+        )
     topological_dimensions = {
         _VOLUME_CELL_DIMENSIONS[MESHIO_CELL_TYPES[block.type][0]]
         for _index, block in volume_blocks
     }
     if len(topological_dimensions) != 1:
-        raise ValueError("Imported volume blocks must share one topological dimension.")
+        raise ValueError(
+            "read_finite_element_mesh.source.cells must share one volume dimension; got mixed topological dimensions"
+        )
     topological_dimension = topological_dimensions.pop()
     points = np.asarray(source.points, dtype=np.float64)
     ambient_dimension = points.shape[1]
@@ -613,7 +630,6 @@ def read_finite_element_mesh(
     ):
         ambient_dimension -= 1
     points = points[:, :ambient_dimension]
-
     corner_ids = sorted(
         {
             int(value)
@@ -624,7 +640,6 @@ def read_finite_element_mesh(
         }
     )
     compact = {value: index for index, value in enumerate(corner_ids)}
-    mesh_coordinates = points[corner_ids]
     blocks = []
     coordinate_elements = {}
     coordinate_routes = {}
@@ -641,59 +656,61 @@ def read_finite_element_mesh(
         global_ids = np.arange(next_cell_id, next_cell_id + data.shape[0], dtype=np.int64)
         volume_routes[source_index] = global_ids
         next_cell_id += data.shape[0]
-        blocks.append(
-            CellBlock(
-                name,
-                cell_kind,
-                corners,
-                global_ids=global_ids,
-            )
-        )
-        element = lagrange_element(cell_kind, order)
+        blocks.append(CellBlock(name, cell_kind, corners, global_ids=global_ids))
+        coordinate_elements[name] = lagrange_element(cell_kind, order)
         permutation = _geometry_permutation(cell_block.type, cell_kind, order)
-        coordinate_elements[name] = element
         coordinate_routes[name] = data[:, permutation]
-    mesh = CellMesh(mesh_coordinates, tuple(blocks))
-    coordinate_spec = CellGeometrySpec(
-        coordinate_elements,
-        coordinate_routes,
-        points,
+    mesh = CellMesh(points[corner_ids], tuple(blocks))
+    coordinate_spec = CellGeometrySpec(coordinate_elements, coordinate_routes, points)
+    return _ImportedVolumeGeometry(
+        mesh, coordinate_spec, points, volume_blocks, compact, volume_routes
     )
 
-    connectivity = mesh.connectivity
-    if topological_dimension == 2:
-        # CellMesh builds polygonal connectivity for every two-dimensional mesh.
-        if not (isinstance(connectivity, PolygonalConnectivity)):
-            raise RuntimeError(
-                "Internal invariant failed: isinstance(connectivity, PolygonalConnectivity)."
+
+def _imported_facet_lookup(mesh: CellMesh, /) -> dict[tuple[int, ...], int]:
+    match mesh.connectivity:
+        case PolygonalConnectivity() as connectivity:
+            facet_vertices = np.asarray(connectivity.edges)
+        case PolyhedralConnectivity() as connectivity:
+            offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int32)
+            values = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
+            return {
+                tuple(
+                    sorted(int(value) for value in values[int(start) : int(stop)])
+                ): index
+                for index, (start, stop) in enumerate(
+                    zip(offsets[:-1], offsets[1:], strict=True)
+                )
+            }
+        case TetrahedralConnectivity() | HexahedralConnectivity() as connectivity:
+            facet_vertices = np.asarray(connectivity.faces)
+        case _:
+            raise TypeError(
+                "FiniteElementMeshImport.mesh.connectivity must provide volume facets; "
+                f"got {type(mesh.connectivity).__name__}"
             )
-        facet_vertices = np.asarray(connectivity.edges)
-        facets_by_key = {
-            tuple(sorted(int(value) for value in vertices)): index
-            for index, vertices in enumerate(facet_vertices)
-        }
-    elif isinstance(connectivity, PolyhedralConnectivity):
-        offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int32)
-        values = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
-        facets_by_key = {
-            tuple(sorted(int(value) for value in values[int(start) : int(stop)])): index
-            for index, (start, stop) in enumerate(
-                zip(offsets[:-1], offsets[1:], strict=True)
-            )
-        }
-    else:
-        # Other three-dimensional CellMesh connectivity is tetrahedral or hexahedral.
-        if not (
-            isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity))
-        ):
-            raise RuntimeError(
-                "Internal invariant failed: isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity))."
-            )
-        facet_vertices = np.asarray(connectivity.faces)
-        facets_by_key = {
-            tuple(sorted(int(value) for value in vertices)): index
-            for index, vertices in enumerate(facet_vertices)
-        }
+    return {
+        tuple(sorted(int(value) for value in vertices)): index
+        for index, vertices in enumerate(facet_vertices)
+    }
+
+
+def _imported_boundary_arity(dimension: int, cell_type: str, /) -> int:
+    match dimension, cell_type:
+        case 2, "line" | "line3":
+            return 2
+        case 3, "triangle" | "triangle6":
+            return 3
+        case 3, "quad" | "quad9":
+            return 4
+        case _:
+            return 0
+
+
+def _prepare_imported_entity_groups(
+    source: meshio.Mesh, geometry: _ImportedVolumeGeometry, /
+) -> _ImportedEntityGroups:
+    facets_by_key = _imported_facet_lookup(geometry.mesh)
     volume_groups: dict[str, set[int]] = {}
     boundary_groups: dict[str, set[int]] = {}
     selected_source_facets: set[tuple[int, int]] = set()
@@ -705,58 +722,64 @@ def read_finite_element_mesh(
             if selected is None or len(selected) == 0:
                 continue
             selected_indices = np.asarray(selected, dtype=np.int32)
-            if source_index in volume_routes:
+            if source_index in geometry.volume_routes:
                 selected_volumes.update(
-                    int(value) for value in volume_routes[source_index][selected_indices]
+                    int(value)
+                    for value in geometry.volume_routes[source_index][selected_indices]
                 )
                 continue
             cell_block = source.cells[source_index]
-            boundary_arity = (
-                2
-                if topological_dimension == 2 and cell_block.type in ("line", "line3")
-                else 3
-                if topological_dimension == 3
-                and cell_block.type in ("triangle", "triangle6")
-                else 4
-                if topological_dimension == 3 and cell_block.type in ("quad", "quad9")
-                else 0
+            boundary_arity = _imported_boundary_arity(
+                geometry.mesh.topological_dimension, cell_block.type
             )
             if boundary_arity == 0:
                 continue
             for selected_index in selected_indices:
                 row = np.asarray(cell_block.data)[int(selected_index)]
                 source_vertices = tuple(row[:boundary_arity])
-                if any(value not in compact for value in source_vertices):
-                    raise ValueError("Boundary group references a non-volume vertex.")
+                if any(value not in geometry.compact for value in source_vertices):
+                    raise ValueError(
+                        "read_finite_element_mesh.source.boundary_groups must reference volume vertices; got a non-volume vertex"
+                    )
                 compact_vertices = tuple(
-                    sorted(compact[value] for value in source_vertices)
+                    sorted(geometry.compact[value] for value in source_vertices)
                 )
                 if compact_vertices not in facets_by_key:
-                    raise ValueError("Boundary group references a non-volume facet.")
+                    raise ValueError(
+                        "read_finite_element_mesh.source.boundary_groups must reference volume facets; got a non-volume facet"
+                    )
                 selected_facets.add(facets_by_key[compact_vertices])
                 selected_source_facets.add((source_index, int(selected_index)))
-    normalized_volumes = {
-        name: tuple(sorted(values)) for name, values in volume_groups.items() if values
-    }
-    normalized_boundaries = {
-        name: tuple(sorted(values)) for name, values in boundary_groups.items() if values
-    }
-
-    source_volume_count = sum(
-        np.asarray(block.data).shape[0] for _index, block in volume_blocks
+    return _ImportedEntityGroups(
+        {name: tuple(sorted(values)) for name, values in volume_groups.items() if values},
+        {
+            name: tuple(sorted(values))
+            for name, values in boundary_groups.items()
+            if values
+        },
+        len(selected_source_facets),
     )
-    source_facet_count = 0
-    for cell_block in source.cells:
-        is_facet = (
-            topological_dimension == 2 and cell_block.type in ("line", "line3")
-        ) or (
-            topological_dimension == 3
-            and cell_block.type in ("triangle", "triangle6", "quad", "quad9")
-        )
-        if is_facet:
-            source_facet_count += np.asarray(cell_block.data).shape[0]
+
+
+def _prepare_imported_mesh_report(
+    source: meshio.Mesh,
+    geometry: _ImportedVolumeGeometry,
+    groups: _ImportedEntityGroups,
+    source_path: Path,
+    source_format: str,
+    source_manifest_id: str,
+    /,
+) -> FiniteElementMeshImportReport:
+    source_volume_count = sum(
+        np.asarray(block.data).shape[0] for _index, block in geometry.volume_blocks
+    )
+    source_facet_count = sum(
+        np.asarray(block.data).shape[0]
+        for block in source.cells
+        if _imported_boundary_arity(geometry.mesh.topological_dimension, block.type)
+    )
     source_cell_count = sum(np.asarray(block.data).shape[0] for block in source.cells)
-    imported_facet_count = len(selected_source_facets)
+    imported_facet_count = groups.selected_facet_count
     other_cell_count = source_cell_count - source_volume_count - source_facet_count
     dropped_facet_count = source_facet_count - imported_facet_count
     losses = []
@@ -764,6 +787,7 @@ def read_finite_element_mesh(
         losses.append(f"dropped_ungrouped_facet_cells:{dropped_facet_count}")
     if other_cell_count:
         losses.append(f"dropped_unsupported_cells:{other_cell_count}")
+    ambient_dimension = geometry.points.shape[1]
     if ambient_dimension != np.asarray(source.points).shape[1]:
         losses.append(
             f"dropped_zero_coordinate_axes:{np.asarray(source.points).shape[1] - ambient_dimension}"
@@ -785,16 +809,17 @@ def read_finite_element_mesh(
         "point_set_names": tuple(sorted(str(value) for value in source.point_sets)),
         "point_data_names": tuple(sorted(str(value) for value in source.point_data)),
         "cell_data_names": tuple(sorted(str(value) for value in source.cell_data)),
+        "resource_manifest_id": source_manifest_id,
     }
-    metadata["resource_manifest_id"] = source_manifest_id
+    points = geometry.points.shape[0]
     source_counts = {
-        "points": points.shape[0],
+        "points": points,
         "volume_cells": source_volume_count,
         "facet_cells": source_facet_count,
         "other_cells": other_cell_count,
     }
     imported_counts = {
-        "points": points.shape[0],
+        "points": points,
         "volume_cells": source_volume_count,
         "facet_cells": imported_facet_count,
         "other_cells": 0,
@@ -805,27 +830,79 @@ def read_finite_element_mesh(
         "facet_cells": dropped_facet_count,
         "other_cells": other_cell_count,
     }
-    report = FiniteElementMeshImportReport(
-        tuple(block.name for block in blocks),
-        tuple(block.cell_kind for block in blocks),
-        tuple(MESHIO_CELL_TYPES[block.type][1] for _index, block in volume_blocks),
-        tuple(normalized_boundaries),
-        points.shape[0],
-        volume_names=tuple(normalized_volumes),
+    return FiniteElementMeshImportReport(
+        tuple(block.name for block in geometry.mesh.blocks),
+        tuple(block.cell_kind for block in geometry.mesh.blocks),
+        tuple(
+            MESHIO_CELL_TYPES[block.type][1] for _index, block in geometry.volume_blocks
+        ),
+        tuple(groups.boundaries),
+        points,
+        volume_names=tuple(groups.volumes),
         source_path=str(source_path),
-        source_format=profile.profile_id,
+        source_format=source_format,
         source_metadata=metadata,
         losses=losses,
         source_entity_counts=source_counts,
         imported_entity_counts=imported_counts,
         dropped_entity_counts=dropped_counts,
     )
+
+
+def read_finite_element_mesh(
+    path: str | Path,
+    /,
+    *,
+    trusted_root: str | Path | None = None,
+    maximum_file_bytes: int = 4 * 1024 * 1024 * 1024,
+    file_profile: str | None = None,
+) -> FiniteElementMeshImport:
+    """Read finite-element topology, coordinate DOFs, groups, and import-loss evidence."""
+    # Meshio is optional; load it only at the mesh-file provider boundary.
+    import meshio
+
+    source_path = Path(path).expanduser().absolute()
+    root = source_path.parent if trusted_root is None else Path(trusted_root)
+    profile = resolve_mesh_file_profile(
+        source_path,
+        file_profile,
+        direction="read",
+    )
+    if profile.carrier != "single-file":
+        raise ValueError(
+            "read_finite_element_mesh.file_profile must be single-file; got a different carrier"
+        )
+    with (
+        open_bounded_resource(
+            source_path,
+            trusted_root=root,
+            limits=ResourceLimits(
+                maximum_file_bytes,
+                64,
+                100_000_000,
+                1_000_000,
+                1024,
+            ),
+        ) as resource,
+        TemporaryDirectory(prefix="phydrax-fe-mesh-read-") as temporary,
+    ):
+        staged = Path(temporary) / source_path.name
+        with staged.open("wb") as output:
+            while chunk := resource.stream.read(1024 * 1024):
+                output.write(chunk)
+        source = meshio.read(staged, file_format=profile.meshio_format)
+        source_manifest_id = resource.manifest.manifest_id
+    geometry = _prepare_imported_volume_geometry(source)
+    groups = _prepare_imported_entity_groups(source, geometry)
+    report = _prepare_imported_mesh_report(
+        source, geometry, groups, source_path, profile.profile_id, source_manifest_id
+    )
     return FiniteElementMeshImport(
-        mesh,
-        coordinate_spec,
-        normalized_boundaries,
+        geometry.mesh,
+        geometry.coordinate_spec,
+        groups.boundaries,
         report,
-        volume_groups=normalized_volumes,
+        volume_groups=groups.volumes,
     )
 
 

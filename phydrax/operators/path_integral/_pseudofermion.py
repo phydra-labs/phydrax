@@ -18,7 +18,7 @@ from jaxtyping import PyTree
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg._certificates import SpectralInterval
-from ...linalg._operators import _materialize_by_basis, AbstractLinearOperator
+from ...linalg._operators import AbstractLinearOperator, materialize_by_basis
 from ...linalg._policies import FailurePolicy
 from ...linalg._properties import OperatorCapabilities, OperatorProperties
 from ...linalg._rational_functions import (
@@ -87,7 +87,7 @@ class _DiracNormalOperator(AbstractLinearOperator):
         return self.mv(vector)
 
     def _materialize(self, /) -> Array:
-        return _materialize_by_basis(self)
+        return materialize_by_basis(self)
 
 
 def dirac_normal_operator(

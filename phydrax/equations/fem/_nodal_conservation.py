@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 
 import phydrax.ein as ein
 import phydrax.linalg as la
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
 
 from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
@@ -46,8 +47,7 @@ from ...discretization.fem._geometry_quality import (
 from ...discretization.fem._mortar import (
     serial_finite_element_mortar_plan,
 )
-from ...discretization.fem._reference import FiniteElementSpec
-from ...discretization.fem._reference_operator import _map_edge_rule, _map_face_rule
+from ...discretization.fem._reference_operator import map_edge_rule, map_face_rule
 from ...discretization.finite_volume._riemann import (
     AbstractArbitraryNormalNumericalFluxPlan,
 )
@@ -795,7 +795,7 @@ def _hybrid_boundary_routes(
             physical_gradients = basis_gradients
         elif dimension == 2:
             data = reference_rule_data(ReferenceIntervalRule(axis_rule))
-            points, weights, normals = _map_edge_rule(
+            points, weights, normals = map_edge_rule(
                 block.cell_kind, int(local_facet), data
             )
             # ty: ignore[unresolved-attribute]
@@ -823,7 +823,7 @@ def _hybrid_boundary_routes(
                 else ReferenceQuadrilateralRule(axis_rule)
             )
             data = reference_rule_data(rule)
-            points, weights, normals = _map_face_rule(
+            points, weights, normals = map_face_rule(
                 block.cell_kind, int(local_facet), data
             )
             # ty: ignore[unresolved-attribute]
@@ -918,7 +918,7 @@ def _three_dimensional_interface_routes(
             else ReferenceQuadrilateralRule(axis_rule)
         )
         data = reference_rule_data(rule)
-        owner_points, weights, owner_normals = _map_face_rule(
+        owner_points, weights, owner_normals = map_face_rule(
             owner_block_data.cell_kind, int(owner_local), data
         )
         if arity == 3:
@@ -1130,7 +1130,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         if discretization.mesh.topological_dimension != system.dimension:
             raise ValueError("Nodal DG mesh and system dimensions must match.")
         field_name = discretization.field_spaces[0].name
-        field_index = discretization._field_index(field_name)
+        field_index = discretization.field_index(field_name)
         elements = discretization.elements[field_index]
         dof_map = discretization.dof_maps[field_index]
         if (

@@ -10,6 +10,7 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Interval1d, SampleLayout, TimeInterval
 from phydrax.operators.differential import dt_n, partial_t
+from phydrax.units import METER
 
 
 def test_temporal_derivative_values_shapes_broadcasting_and_metadata(
@@ -45,7 +46,7 @@ def test_temporal_derivative_values_shapes_broadcasting_and_metadata(
     assert partial_t(annotated).metadata == annotated.metadata
 
     space = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     spacetime = space @ time
 

@@ -4,7 +4,7 @@
 The generic transfer (``_transfer.py``) owns constraints, solves and audits.
 This module owns only what is specific to a hypersurface support: moment
 coordinates are the projections of route offsets onto each target point's
-tangent plane, built from the authoritative target normals, and the support's
+tangent plane, built from the target normals, and the support's
 departure from those tangent planes is reported.
 """
 
@@ -21,8 +21,8 @@ from ..._strict import StrictModule
 from ...linalg import LinearSolvePolicy
 from ...optim import ConvexSolvePolicy
 from ...sparse import EdgeRelation, RowRelation
-from .._transfer import TransferGeometryBinding
 from ...typing import checked, Dim, Float64
+from .._transfer import TransferGeometryBinding
 from ._stencils import PreparedLocalStencils
 from ._transfer import (
     PointTransferPlan,
@@ -71,11 +71,11 @@ def _tangent_frames(normals: np.ndarray, /) -> np.ndarray:
 class SurfaceTransferPlan(StrictModule):
     """Declared point transfer between two samplings of one hypersurface.
 
-    ``target_normals`` are the authoritative unit normals of the target points
+    ``target_normals`` are the unit normals of the target points
     (curves in 2-D, sheets in 3-D). Declared moments are imposed in the target
     tangent coordinates; ``normal_departure`` is the largest ratio
     ``|offset . n| / |offset|`` of the support, i.e. how far the routes leave
-    the tangent planes where the moment coordinates are exact.
+    the tangent planes in which moment constraints are imposed.
     """
 
     __strict_contract__ = True
@@ -85,6 +85,7 @@ class SurfaceTransferPlan(StrictModule):
     ]
     normal_departure: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relation: EdgeRelation | RowRelation,
@@ -113,10 +114,12 @@ class SurfaceTransferPlan(StrictModule):
             or not np.allclose(np.linalg.norm(normals, axis=1), 1.0, rtol=0, atol=1e-10)
         ):
             raise ValueError(
-                "target_normals must be finite unit (points, ambient) normals."
+                f"SurfaceTransferPlan.target_normals must be finite unit (points, ambient) normals; got {normals.shape!r}"
             )
         if shift.ndim < 2 or shift.shape[-1] != normals.shape[1]:
-            raise ValueError("Route offsets must share the normals' ambient dimension.")
+            raise ValueError(
+                f"SurfaceTransferPlan.offsets must share the normals' ambient dimension; got {shift.shape!r}"
+            )
         frames = _tangent_frames(normals)
         plan = PointTransferPlan(
             relation,
@@ -135,11 +138,15 @@ class SurfaceTransferPlan(StrictModule):
             geometry=geometry,
         )
         rows = np.asarray(plan.routes.rows)
-        edge = (
-            relation
-            if isinstance(relation, EdgeRelation)
-            else relation.as_edge_relation()
-        )
+        match relation:
+            case EdgeRelation():
+                edge = relation
+            case RowRelation():
+                edge = relation.as_edge_relation()
+            case _:
+                raise TypeError(
+                    f"SurfaceTransferPlan.relation must be EdgeRelation or RowRelation; got {type(relation).__name__}"
+                )
         valid = np.asarray(edge.valid).reshape(-1)
         routes = shift.reshape(-1, shift.shape[-1])[valid]
         lengths = np.linalg.norm(routes, axis=1)

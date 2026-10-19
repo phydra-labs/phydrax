@@ -5,137 +5,78 @@
 from __future__ import annotations
 
 import json
-import os
-import socket
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any, Literal
 
 import jax
 import numpy as np
 import pytest
-from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization._cell_geometry import (
-    CellGeometrySpec,
     RestrictedCellGeometryElement,
 )
 from phydrax.discretization._cell_mesh import CellMesh
-from phydrax.discretization.fem._reference import FiniteElementSpec
-from phydrax.geometry._mesh_certificates import PiecewiseLinearDomain
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
+from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.lifecycle._chunk_repository import RepositoryCorruptionError
 from phydrax.lifecycle._distributed_checkpoint import (
     assemble_distributed_checkpoint_from_repository,
     publish_process_meshing_checkpoint,
     restore_meshing_checkpoint,
 )
-from phydrax.lifecycle._meshing_source_families import NativeGenerationSource
 from phydrax.lifecycle._models import CheckpointManifest
-from phydrax.lifecycle._repository import (
-    HPCFilesystemProfile,
-    ObjectNotFoundError,
-    POSIXArtifactRepository,
-    POSIXRepositoryPolicy,
-)
 from phydrax.lifecycle._restart_topology import (
-    MeshingCheckpointState,
     TopologyRestartPolicy,
-    TopologyRestartRelation,
 )
-from phydrax.meshing._assembly import MeshPart
-from phydrax.meshing._audit import CellMeshAuditReport
-from phydrax.meshing._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
+from phydrax.meshing._contracts import VolumeMeshingSpec
+from phydrax.meshing._mesh_part import MeshPart
 from phydrax.meshing._result import CellMeshingResult
-from phydrax.meshing.providers._native_options import (
-    NativeMeshingOptions,
-    NativeMeshingRoute,
-)
 from phydrax.meshing.providers._native_sources import (
     NativePlcSource,
     NativePolyhedralSource,
 )
+from phydrax.units import METER
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.distributed_meshing.restart import run_restart_workers
+from tests._support.distributed_meshing.restart_builders import (
+    build_repository,
+    checkpoint_state,
+    native_source_arrays,
+    native_source_closure,
+    native_source_state,
+    restart_relation,
+    scientific_arrays,
+)
+from tests._support.native_family_generation import native_family_generation
 
 
-def _repository(
-    path: Path,
-    *,
-    maximum_chunk_bytes: int = 64,
-    maximum_metadata_bytes: int = 64 * 1024,
-) -> POSIXArtifactRepository:
-    profile = HPCFilesystemProfile(
-        "posix.meshing-restart",
-        "local-posix",
-        atomic_rename_same_filesystem=True,
-        file_fsync=True,
-        directory_fsync=True,
-        advisory_locking=True,
-        attempt_private_staging=True,
-    )
-    return POSIXArtifactRepository(
-        path,
-        POSIXRepositoryPolicy(
-            profile,
-            maximum_chunk_bytes=maximum_chunk_bytes,
-            maximum_metadata_bytes=maximum_metadata_bytes,
-        ),
-    )
+# Empirical `test_native_source_registry_roundtrip_requeries_and_recertifies`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+RESTORED_SPHERE_DISTANCE_ATOL = 1e-12
+# Empirical `test_restored_native_root_reestablishes_source_theorem`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+RESTORED_SPATIAL_ROOT_POINT_ATOL = 1e-12
+# Empirical `test_native_brep_compiled_source_restores_and_reprepares_actual_queries`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+RESTORED_BREP_CLOSEST_POINT_ATOL = 1e-9
+# Empirical `test_native_family_durable_restart_prepares_finite_volume`: matched max |delta|=1.11022e-16; joint allowance fraction=1.11021e-09, margin=100%.
+RESTORED_POLYHEDRAL_VOLUME_SUM_ATOL = 1e-12
+# Empirical `test_native_family_durable_restart_reconstructs_volume_field`: matched max |delta|=1.77636e-15; joint allowance fraction=4.08105e-09, margin=100%.
+RESTORED_VOLUME_AFFINE_FIELD_ATOL = 2e-10
+# Empirical `test_native_family_durable_restart_evaluates_intrinsic_surface_field`: matched max |delta|=8.88178e-16; joint allowance fraction=1.91061e-09, margin=100%.
+RESTORED_SURFACE_AFFINE_FIELD_ATOL = 2e-10
+# Empirical `test_implicit_association_transfer_archive_restores_current_source_authority`: matched max |delta|=9.99201e-16; joint allowance fraction=0.0999201, margin=90.008%.
+RESTORED_ANALYTIC_PROFILE_DISTANCE_ATOL = 1e-14
 
 
-def _state() -> MeshingCheckpointState:
-    return MeshingCheckpointState(
-        source_topology_id="source-topology",
-        source_geometry_id="source-geometry",
-        topology_id="accepted-topology",
-        geometry_id="accepted-geometry",
-        result_id="accepted-result",
-        source_revision_id="source-revision",
-        coordinate_contract_id="affine-triangle-coordinates",
-        lineage_id="accepted-lineage",
-        epoch_id="accepted-epoch",
-        evidence_id="collective-evidence",
-        transfer_id="accepted-transfer",
-        request_id="meshing-request",
-        mesh_epoch=7,
-        array_roles=(
-            ("vertex_ids", "entity-ids"),
-            ("coordinates", "geometry"),
-            ("cell_vertex_ids", "topology"),
-            ("parent_ids", "lineage"),
-            ("accepted_epochs", "epoch"),
-            ("certificate_verdicts", "evidence"),
-            ("material_inventory", "state"),
-        ),
-    )
-
-
-def _scientific_arrays() -> dict[str, np.ndarray]:
-    # Nonconsecutive IDs make accidental reuse of old local slots observable.
-    return {
-        "vertex_ids": np.asarray([101, 509, 1003, 2401], dtype=np.int64),
-        "coordinates": np.asarray(
-            [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float64
-        ),
-        "cell_vertex_ids": np.asarray(
-            [[101, 509, 1003], [509, 2401, 1003]], dtype=np.int64
-        ),
-        "parent_ids": np.asarray(
-            [[101, 11], [509, 11], [1003, 23], [2401, 23]], dtype=np.int64
-        ),
-        "accepted_epochs": np.asarray([6, 7], dtype=np.int64),
-        "certificate_verdicts": np.asarray([1, 1], dtype=np.uint8),
-        "material_inventory": np.asarray([2.0, 3.0, 5.0, 7.0], dtype=np.float64),
-    }
-
-
-def _relation() -> TopologyRestartRelation:
-    return TopologyRestartRelation(
-        canonical_fingerprint({"placement": "source"}),
-        canonical_fingerprint({"placement": "destination"}),
-        "bitwise",
-    )
+def _assert_restored_scientific_arrays(record: dict[str, Any]) -> None:
+    arrays = record["arrays"]
+    assert tuple(arrays) == tuple(name for name, _ in checkpoint_state().array_roles)
+    for evidence in arrays.values():
+        assert evidence["logical_jax_array"]
+        assert len(evidence["shards"]) == 1
+        for shard in evidence["shards"]:
+            np.testing.assert_array_equal(shard["actual"], shard["expected"])
 
 
 def test_process_publication_changed_placement_preserves_scientific_state(
@@ -151,10 +92,10 @@ def test_process_publication_changed_placement_preserves_scientific_state(
         Mesh(np.asarray(devices[::-1], dtype=np.object_), ("owner",)),
         PartitionSpec("owner"),
     )
-    state = _state()
-    reference = _scientific_arrays()
+    state = checkpoint_state()
+    reference = scientific_arrays()
     arrays = {name: jax.device_put(value, source) for name, value in reference.items()}
-    repository = _repository(tmp_path / "checkpoint")
+    repository = build_repository(tmp_path / "checkpoint")
     publication = publish_process_meshing_checkpoint(
         repository,
         "mesh-accepted",
@@ -174,14 +115,17 @@ def test_process_publication_changed_placement_preserves_scientific_state(
         "source-execution",
         expected_process_count=1,
     )
-    restored_state, restored, admission = restore_meshing_checkpoint(
+    checkpoint = restore_meshing_checkpoint(
         repository,
         manifest,
         {name: destination for name in arrays},
-        _relation(),
+        restart_relation(),
         TopologyRestartPolicy(allow_topology_change=True),
         expected_state_id=state.checkpoint_state_id,
     )
+    restored_state = checkpoint.state
+    restored = checkpoint.arrays
+    admission = checkpoint.admission
     assert admission.admitted
     assert restored_state.to_payload() == state.to_payload()
     for name, expected in reference.items():
@@ -201,14 +145,14 @@ def test_process_publication_changed_placement_preserves_scientific_state(
 
 
 def test_meshing_checkpoint_refuses_execution_cache_publication(tmp_path: Path) -> None:
-    arrays = {name: jax.device_put(value) for name, value in _scientific_arrays().items()}
+    arrays = {name: jax.device_put(value) for name, value in scientific_arrays().items()}
     arrays["compiled_cache"] = jax.device_put(np.asarray([1], dtype=np.int32))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"publication\.arrays"):
         publish_process_meshing_checkpoint(
-            _repository(tmp_path / "checkpoint"),
+            build_repository(tmp_path / "checkpoint"),
             "mesh-accepted",
             "source-execution",
-            _state(),
+            checkpoint_state(),
             arrays,
             analysis_plan_id="mesh-analysis",
             numeric_revision_id="accepted-revision",
@@ -217,9 +161,9 @@ def test_meshing_checkpoint_refuses_execution_cache_publication(tmp_path: Path) 
 
 
 def test_meshing_restart_refuses_unqualified_changed_placement(tmp_path: Path) -> None:
-    arrays = {name: jax.device_put(value) for name, value in _scientific_arrays().items()}
-    repository = _repository(tmp_path / "checkpoint")
-    state = _state()
+    arrays = {name: jax.device_put(value) for name, value in scientific_arrays().items()}
+    repository = build_repository(tmp_path / "checkpoint")
+    state = checkpoint_state()
     publish_process_meshing_checkpoint(
         repository,
         "mesh-accepted",
@@ -238,21 +182,21 @@ def test_meshing_restart_refuses_unqualified_changed_placement(tmp_path: Path) -
         "source-execution",
         expected_process_count=1,
     )
-    with pytest.raises(ValueError, match="Topology-changing restart is disabled"):
+    with pytest.raises(ValueError, match=r"restore_plan\.admission"):
         restore_meshing_checkpoint(
             repository,
             manifest,
             {name: value.sharding for name, value in arrays.items()},
-            _relation(),
+            restart_relation(),
             TopologyRestartPolicy(allow_topology_change=False),
             expected_state_id=state.checkpoint_state_id,
         )
 
 
 def test_meshing_restart_rejects_scientific_record_substitution(tmp_path: Path) -> None:
-    arrays = {name: jax.device_put(value) for name, value in _scientific_arrays().items()}
-    repository = _repository(tmp_path / "checkpoint")
-    state = _state()
+    arrays = {name: jax.device_put(value) for name, value in scientific_arrays().items()}
+    repository = build_repository(tmp_path / "checkpoint")
+    state = checkpoint_state()
     publish_process_meshing_checkpoint(
         repository,
         "mesh-accepted",
@@ -271,12 +215,15 @@ def test_meshing_restart_rejects_scientific_record_substitution(tmp_path: Path) 
         "source-execution",
         expected_process_count=1,
     )
-    with pytest.raises(RepositoryCorruptionError, match="scientific binding changed"):
+    with pytest.raises(
+        RepositoryCorruptionError,
+        match=r"checkpoint_state\.checkpoint_state_id",
+    ):
         restore_meshing_checkpoint(
             repository,
             manifest,
             {name: value.sharding for name, value in arrays.items()},
-            _relation(),
+            restart_relation(),
             TopologyRestartPolicy(allow_topology_change=True),
             expected_state_id=canonical_fingerprint({"different": "accepted-state"}),
         )
@@ -290,11 +237,10 @@ def test_meshing_restart_keeps_exact_shard_coverage_validation(tmp_path: Path) -
         Mesh(np.asarray(devices, dtype=np.object_), ("owner",)), PartitionSpec("owner")
     )
     arrays = {
-        name: jax.device_put(value, source)
-        for name, value in _scientific_arrays().items()
+        name: jax.device_put(value, source) for name, value in scientific_arrays().items()
     }
-    repository = _repository(tmp_path / "checkpoint")
-    state = _state()
+    repository = build_repository(tmp_path / "checkpoint")
+    state = checkpoint_state()
     publish_process_meshing_checkpoint(
         repository,
         "mesh-accepted",
@@ -330,232 +276,15 @@ def test_meshing_restart_keeps_exact_shard_coverage_validation(tmp_path: Path) -
         ),
         complete=True,
     )
-    with pytest.raises(RepositoryCorruptionError, match="covers"):
+    with pytest.raises(RepositoryCorruptionError, match=r"checkpoint\.array\.coverage"):
         restore_meshing_checkpoint(
             repository,
             incomplete,
             {name: source for name in arrays},
-            _relation(),
+            restart_relation(),
             TopologyRestartPolicy(allow_topology_change=True),
             expected_state_id=state.checkpoint_state_id,
         )
-
-
-def _multiprocess_restart_worker(
-    process_index: int,
-    repository_root: str,
-) -> None:
-    devices = tuple(jax.devices())
-    source = NamedSharding(
-        Mesh(np.asarray(devices, dtype=np.object_), ("owner",)), PartitionSpec("owner")
-    )
-    destination = NamedSharding(
-        Mesh(np.asarray(devices[::-1], dtype=np.object_), ("owner",)),
-        PartitionSpec("owner"),
-    )
-    reference = _scientific_arrays()
-    arrays = {
-        name: jax.make_array_from_process_local_data(
-            source,
-            value[
-                process_index * (value.shape[0] // 2) : (process_index + 1)
-                * (value.shape[0] // 2)
-            ],
-            global_shape=value.shape,
-        )
-        for name, value in reference.items()
-    }
-    if any(array.is_fully_addressable for array in arrays.values()):
-        raise RuntimeError("The distributed scenario requires nonaddressable arrays.")
-    repository = _repository(Path(repository_root))
-    state = _state()
-    publication = publish_process_meshing_checkpoint(
-        repository,
-        "mesh-accepted",
-        "source-execution",
-        state,
-        arrays,
-        analysis_plan_id="mesh-analysis",
-        numeric_revision_id="accepted-revision",
-        writer_id=f"process-writer-{process_index}",
-    )
-    multihost_utils.sync_global_devices("meshing-checkpoint-published")
-    manifest = assemble_distributed_checkpoint_from_repository(
-        repository,
-        "mesh-accepted",
-        "mesh-analysis",
-        "accepted-revision",
-        "source-execution",
-        expected_process_count=2,
-    )
-    restored_state, restored, admission = restore_meshing_checkpoint(
-        repository,
-        manifest,
-        {name: destination for name in arrays},
-        _relation(),
-        TopologyRestartPolicy(allow_topology_change=True),
-        expected_state_id=state.checkpoint_state_id,
-    )
-    if restored_state.to_payload() != state.to_payload() or not admission.admitted:
-        raise RuntimeError("Accepted scientific binding or restart admission changed.")
-    for name, expected in reference.items():
-        value = restored[name]
-        if not isinstance(value, jax.Array):
-            raise TypeError("Accepted scientific arrays must retain logical JAX storage.")
-        for shard in value.addressable_shards:
-            np.testing.assert_array_equal(np.asarray(shard.data), expected[shard.index])
-    restored_ids = restored["vertex_ids"]
-    if not isinstance(restored_ids, jax.Array):
-        raise TypeError("Stable IDs must retain logical JAX storage.")
-    print(
-        json.dumps(
-            {
-                "process_index": publication.process_index,
-                "local_ids": np.asarray(restored_ids.addressable_shards[0].data).tolist(),
-                "mesh_epoch": restored_state.mesh_epoch,
-            }
-        ),
-        flush=True,
-    )
-    jax.distributed.shutdown()
-
-
-def _run_meshing_restart_workers(
-    tmp_path: Path,
-    worker_name: str,
-    worker_arguments: tuple[str, ...] = (),
-) -> list[dict[str, object]]:
-    repository_root = tmp_path / "multiprocess-repository"
-    # Provision shared repository root before concurrent writers open it.
-    repository_root.mkdir()
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        coordinator = f"127.0.0.1:{listener.getsockname()[1]}"
-    environment = dict(
-        os.environ,
-        JAX_PLATFORMS="cpu",
-        JAX_ENABLE_X64="true",
-        XLA_FLAGS="--xla_force_host_platform_device_count=1",
-        PHYDRAX_CPU_COLLECTIVES="gloo",
-    )
-    root = Path(__file__).parents[3]
-    script = (
-        "import runpy, sys, jax; "
-        "jax.distributed.initialize(coordinator_address=sys.argv[4], "
-        "num_processes=2, process_id=int(sys.argv[3]), local_device_ids=[0]); "
-        "worker = runpy.run_path(sys.argv[1])[sys.argv[2]]; "
-        "worker(int(sys.argv[3]), sys.argv[5], *sys.argv[6:])"
-    )
-    processes = [
-        subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                script,
-                str(Path(__file__).resolve()),
-                worker_name,
-                str(index),
-                coordinator,
-                str(repository_root),
-                *worker_arguments,
-            ],
-            cwd=root,
-            env=environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        for index in range(2)
-    ]
-    results: list[dict[str, object]] = []
-    try:
-        for process in processes:
-            stdout, stderr = process.communicate(timeout=120)
-            assert process.returncode == 0, stderr
-            results.append(json.loads(stdout))
-    finally:
-        for process in processes:
-            if process.poll() is None:
-                process.kill()
-                process.wait()
-    return results
-
-
-def _multiprocess_rejected_checkpoint_worker(
-    process_index: int,
-    repository_root: str,
-    fault: Literal["roles", "metadata"],
-) -> None:
-    devices = tuple(jax.devices())
-    placement = NamedSharding(
-        Mesh(np.asarray(devices, dtype=np.object_), ("owner",)), PartitionSpec("owner")
-    )
-    reference = _scientific_arrays()
-    arrays = {
-        name: jax.make_array_from_process_local_data(
-            placement,
-            value[
-                process_index * (value.shape[0] // 2) : (process_index + 1)
-                * (value.shape[0] // 2)
-            ],
-            global_shape=value.shape,
-        )
-        for name, value in reference.items()
-    }
-    state = _state()
-    if process_index == 1:
-        if fault == "roles":
-            arrays.pop("material_inventory")
-        else:
-            payload = state.to_payload()
-            payload["result_id"] = "different-accepted-scientific-result"
-            state = MeshingCheckpointState.from_payload(payload)
-    repository = _repository(Path(repository_root))
-    published = False
-    try:
-        publish_process_meshing_checkpoint(
-            repository,
-            "mesh-rejected",
-            "source-execution",
-            state,
-            arrays,
-            analysis_plan_id="mesh-analysis",
-            numeric_revision_id="accepted-revision",
-            writer_id=f"process-writer-{process_index}",
-        )
-        published = True
-    except ValueError:
-        if fault != "roles" or process_index != 1:
-            raise
-    multihost_utils.sync_global_devices("meshing-checkpoint-local-refusal")
-    try:
-        assemble_distributed_checkpoint_from_repository(
-            repository,
-            "mesh-rejected",
-            "mesh-analysis",
-            "accepted-revision",
-            "source-execution",
-            expected_process_count=2,
-        )
-    except (ObjectNotFoundError, RepositoryCorruptionError) as error:
-        expected = ObjectNotFoundError if fault == "roles" else RepositoryCorruptionError
-        if type(error) is not expected:
-            raise
-    else:
-        raise RuntimeError(
-            "A partial or scientifically incoherent checkpoint was accepted."
-        )
-    print(
-        json.dumps(
-            {
-                "process_index": process_index,
-                "local_published": published,
-                "complete_manifest_returned": False,
-            }
-        ),
-        flush=True,
-    )
-    jax.distributed.shutdown()
 
 
 @pytest.mark.parametrize(
@@ -568,21 +297,25 @@ def test_process_local_failure_cannot_commit_complete_mesh_checkpoint(
     fault: Literal["roles", "metadata"],
     published: tuple[bool, bool],
 ) -> None:
-    results = _run_meshing_restart_workers(
-        tmp_path,
-        "_multiprocess_rejected_checkpoint_worker",
-        (fault,),
-    )
+    results = run_restart_workers(tmp_path, "rejected_checkpoint", (fault,))
     assert results == [
         {
             "process_index": 0,
             "local_published": published[0],
             "complete_manifest_returned": False,
+            "publication_error": None,
+            "assembly_error": (
+                "ObjectNotFoundError" if fault == "roles" else "RepositoryCorruptionError"
+            ),
         },
         {
             "process_index": 1,
             "local_published": published[1],
             "complete_manifest_returned": False,
+            "publication_error": "ValueError" if fault == "roles" else None,
+            "assembly_error": (
+                "ObjectNotFoundError" if fault == "roles" else "RepositoryCorruptionError"
+            ),
         },
     ]
 
@@ -590,82 +323,22 @@ def test_process_local_failure_cannot_commit_complete_mesh_checkpoint(
 def test_nonaddressable_process_publication_restarts_on_different_owner(
     tmp_path: Path,
 ) -> None:
-    results = _run_meshing_restart_workers(tmp_path, "_multiprocess_restart_worker")
-    assert results == [
+    results = run_restart_workers(tmp_path, "process_checkpoint_restart")
+    assert [
+        {name: record[name] for name in ("process_index", "local_ids", "mesh_epoch")}
+        for record in results
+    ] == [
         {"process_index": 0, "local_ids": [1003, 2401], "mesh_epoch": 7},
         {"process_index": 1, "local_ids": [101, 509], "mesh_epoch": 7},
     ]
+    for record in results:
+        assert record["nonaddressable"]
+        assert record["admitted"]
+        assert record["state_preserved"]
+        _assert_restored_scientific_arrays(record)
 
 
 # SOURCE REGISTRY
-
-
-def _native_source_closure() -> tuple[
-    CellMesh, CellGeometrySpec, CellMeshAuditReport, dict[str, Any]
-]:
-    import phydrax as phx
-
-    points = np.asarray(
-        (
-            (1.0, 0.0, 0.0),
-            (-1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, -1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (0.0, 0.0, -1.0),
-        ),
-        dtype=np.float64,
-    )
-    faces = np.asarray(
-        (
-            (0, 2, 4),
-            (2, 1, 4),
-            (1, 3, 4),
-            (3, 0, 4),
-            (2, 0, 5),
-            (1, 2, 5),
-            (3, 1, 5),
-            (0, 3, 5),
-        ),
-        dtype=np.int32,
-    )
-    mesh = phx.discretization.CellMesh.from_triangles(points, faces)
-    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
-    audit = phx.meshing.audit_cell_mesh(mesh, geometry)
-    source = phx.geometry.ImplicitBoundarySource(
-        phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0, feature_id="restart-sphere").compile(),
-        source_id="restart-sphere",
-        spacing=0.2,
-    )
-    report = phx.meshing.certify_meshing_acceptance(
-        mesh,
-        geometry,
-        audit,
-        schedule=phx.meshing.MeshCertificationSchedule("surface"),
-        source=source,
-        fidelity_tolerance=0.8,
-    )
-    association = phx.meshing.GeometryAssociation(
-        phx.meshing.GeometryAssociationKind.IMPLICIT,
-        source.source_id,
-        source.source_revision,
-        mesh.entity_set(0).entity_set_id,
-        mesh.vertex_global_ids,
-        tuple("implicit-zero-set" for _ in points),
-        np.zeros((points.shape[0],), dtype=np.float64),
-        exact=True,
-    )
-    return (
-        mesh,
-        geometry,
-        audit,
-        {
-            "source": source,
-            "certification_inputs": report.request,
-            "report": report,
-            "associations": (association,),
-        },
-    )
 
 
 def test_native_source_registry_roundtrip_requeries_and_recertifies() -> None:
@@ -681,7 +354,7 @@ def test_native_source_registry_roundtrip_requeries_and_recertifies() -> None:
     )
 
     register_meshing_source_artifacts()
-    mesh, geometry, audit, closure = _native_source_closure()
+    mesh, geometry, audit, closure = native_source_closure()
     validate_meshing_source_closure(closure)
     recipe = model_structure_recipe(closure)
     arrays = model_recipe_array_values(closure, recipe, prefix="native-source")
@@ -692,7 +365,7 @@ def test_native_source_registry_roundtrip_requeries_and_recertifies() -> None:
         .boundary_distance(np.asarray([[2.0, 0.0, 0.0]], dtype=np.float64))
         .upper,
         [1.0],
-        atol=1e-12,
+        atol=RESTORED_SPHERE_DISTANCE_ATOL,
     )
     inputs = restored["certification_inputs"]
     renewed = phx.meshing.certify_meshing_acceptance(
@@ -709,7 +382,7 @@ def test_native_source_registry_roundtrip_requeries_and_recertifies() -> None:
     assert renewed.request.request_id == restored["report"].request.request_id
     assert renewed.fidelity is not None
     assert renewed.fidelity.status == "certified"
-    assert restored["associations"][0].source_occurrence_paths == ((),) * 6
+    assert restored["associations"][0].source_entities.occurrence_paths() == ((),) * 6
 
 
 def test_native_source_registry_refuses_explicit_callback() -> None:
@@ -718,7 +391,7 @@ def test_native_source_registry_refuses_explicit_callback() -> None:
     def callback() -> None:
         return None
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="source"):
         validate_meshing_source_closure({"source": callback})
 
 
@@ -731,7 +404,7 @@ def test_native_source_registry_refuses_numerical_substitution_under_cached_ids(
     )
 
     register_meshing_source_artifacts()
-    _, _, _, closure = _native_source_closure()
+    _, _, _, closure = native_source_closure()
     source = closure["source"]
     changed = eqx.tree_at(
         lambda value: value.geometry.state.values,
@@ -740,7 +413,7 @@ def test_native_source_registry_refuses_numerical_substitution_under_cached_ids(
     )
     assert changed.source_revision == source.source_revision
     closure["source"] = changed
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="stored_fields"):
         validate_meshing_source_closure(closure)
 
 
@@ -752,7 +425,7 @@ def test_native_curve_source_retains_plain_dataclass_coefficients() -> None:
         model_recipe_array_values,
         model_structure_recipe,
     )
-    from phydrax.geometry._mesh_certificates import ParametricCurveBoundarySource
+    from phydrax.geometry._source_fidelity import ParametricCurveBoundarySource
     from phydrax.geometry.brep._patches import BSplineCurve
     from phydrax.lifecycle._meshing_sources import (
         register_meshing_source_artifacts,
@@ -795,24 +468,25 @@ def test_native_curve_source_retains_plain_dataclass_coefficients() -> None:
     assert distance.lower[0] <= 1.0 <= distance.upper[0]
 
 
-def _native_occurrence_authority() -> tuple[Any, Any]:
+def _native_occurrence_authority(*, budget: CoordinateEnclosureBudget) -> tuple[Any, Any]:
     from phydrax.geometry.brep._constructors import (
-        _Builder,
-        _stage_extrusion,
+        Builder,
         PlanarProfile,
         ProfileLoop,
         ProfilePlane,
+        stage_extrusion,
     )
     from phydrax.geometry.brep._model import BRepGeometry, BRepOccurrence
 
-    builder = _Builder()
-    _stage_extrusion(
+    builder = Builder()
+    stage_extrusion(
         builder,
         PlanarProfile(
             ProfilePlane(),
             ProfileLoop.polygon(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
         ),
         np.asarray([0.0, 0.0, 1.0], dtype=np.float64),
+        budget=budget,
     )
     occurrence = BRepOccurrence(
         ("assembly", "placed-solid"),
@@ -848,15 +522,19 @@ def test_native_brep_source_retains_occurrence_qualified_association() -> None:
         model_recipe_array_values,
         model_structure_recipe,
     )
-    from phydrax.discretization._cell_mesh import CellBlock
+    from phydrax.discretization._reference_cell_types import CellBlock
     from phydrax.geometry.brep._projection_contracts import brep_entity_id
     from phydrax.lifecycle._meshing_sources import (
         register_meshing_source_artifacts,
         validate_meshing_source_closure,
     )
-    from phydrax.meshing._association import GeometryAssociation, GeometryAssociationKind
+    from phydrax.meshing._association_state import (
+        GeometryAssociation,
+        GeometryAssociationKind,
+    )
 
-    _, geometry = _native_occurrence_authority()
+    with coordinate_reference_budget() as budget:
+        _, geometry = _native_occurrence_authority(budget=budget)
     occurrence = geometry.occurrences[0]
     revision = geometry.geometry_id
     entity_id = brep_entity_id(revision, 1, 0, occurrence_path=occurrence.path)
@@ -895,7 +573,9 @@ def test_native_brep_source_retains_occurrence_qualified_association() -> None:
         arrays,
         prefix="placed-source",
     )
-    assert restored_association.source_occurrence_paths == (("assembly", "placed-solid"),)
+    assert restored_association.source_entities.occurrence_paths() == (
+        ("assembly", "placed-solid"),
+    )
     assert qualified == ((occurrence.path, 1, 0, entity_id),)
     first, last = restored.edge_ranges[0]
     midpoint = restored.curves[restored.edge_curves[0]].evaluate(
@@ -948,7 +628,9 @@ def test_restored_native_root_reestablishes_source_theorem() -> None:
     )
     validate_meshing_source_closure(restored)
     point, error, certified = restored.evaluate()
-    np.testing.assert_allclose(point, [0.0, 0.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(
+        point, [0.0, 0.0, 0.0], atol=RESTORED_SPATIAL_ROOT_POINT_ATOL
+    )
     assert certified and np.isfinite(error)
 
 
@@ -965,7 +647,7 @@ def test_native_root_refuses_cached_identity_with_changed_defining_ancestor() ->
         jnp.asarray([0.0, 0.0, 2.0], dtype=jnp.float64),
     )
     assert changed.root_id == root.root_id
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"CurveSurfaceIntersectionRoot\.parameter_box"):
         validate_meshing_source_closure(changed)
 
 
@@ -980,7 +662,8 @@ def _native_brep_compiled_source() -> Any:
     from phydrax.geometry.brep._model import BRepImportReport, BRepModel
     from phydrax.geometry.brep._source import BRepSource
 
-    builder, authority = _native_occurrence_authority()
+    with coordinate_reference_budget() as budget:
+        builder, authority = _native_occurrence_authority(budget=budget)
     topology = authority.topology()
     contract = SpatialCoordinateContract.si()
     policy = BRepTessellationPolicy(
@@ -1048,7 +731,7 @@ def _native_brep_compiled_source() -> Any:
         report=report,
         geometry=authority,
     )
-    return BRepSource(model).compile()
+    return BRepSource(model).compile(coordinate_unit=METER)
 
 
 def test_native_brep_compiled_source_restores_and_reprepares_actual_queries() -> None:
@@ -1078,7 +761,9 @@ def test_native_brep_compiled_source_restores_and_reprepares_actual_queries() ->
     points = np.asarray([[3.2, 4.3, 5.4], [5.0, 4.3, 5.4]], dtype=np.float64)
     np.testing.assert_array_equal(query.contains(points).inside, [True, False])
     closest = query.closest_point(points[1:])
-    np.testing.assert_allclose(closest.points, [[4.0, 4.3, 5.4]], atol=1e-9)
+    np.testing.assert_allclose(
+        closest.points, [[4.0, 4.3, 5.4]], atol=RESTORED_BREP_CLOSEST_POINT_ATOL
+    )
     assert query.occurrences[0].path == ("assembly", "placed-solid")
 
 
@@ -1090,7 +775,7 @@ def test_durable_native_source_archive_requeries_and_recertifies(tmp_path: Path)
         write_meshing_source_closure,
     )
 
-    mesh, geometry, audit, records = _native_source_closure()
+    mesh, geometry, audit, records = native_source_closure()
     limits = ArrayArchiveLimits(max_members=512, max_manifest_nesting=64)
     receipt = write_meshing_source_closure(
         tmp_path / "source.zip", records, limits=limits
@@ -1105,7 +790,7 @@ def test_durable_native_source_archive_requeries_and_recertifies(tmp_path: Path)
         .boundary_distance(np.asarray([[2.0, 0.0, 0.0]], dtype=np.float64))
         .upper,
         [1.0],
-        atol=1e-12,
+        atol=RESTORED_SPHERE_DISTANCE_ATOL,
     )
     renewed = recertify_restored_meshing_source(
         restored["certification_inputs"],
@@ -1131,7 +816,7 @@ def test_durable_source_archive_refuses_different_scientific_content(
         write_meshing_source_closure,
     )
 
-    _, _, _, records = _native_source_closure()
+    _, _, _, records = native_source_closure()
     limits = ArrayArchiveLimits(max_members=512, max_manifest_nesting=64)
     receipt = write_meshing_source_closure(
         tmp_path / "source.zip", records, limits=limits
@@ -1147,437 +832,17 @@ def test_durable_source_archive_refuses_different_scientific_content(
 # SOURCE CHECKPOINT ------------------------------------------------------------
 
 
-def _native_source_state(
-    closure: dict[str, Any],
-    *,
-    source_array_bindings: dict[str, str] | None = None,
-    source_logical_arrays: dict[str, jax.Array] | None = None,
-) -> MeshingCheckpointState:
-    payload = _state().to_payload()
-    inputs = closure["certification_inputs"]
-    payload.update(
-        topology_id=inputs.topology_id,
-        geometry_id=inputs.geometry_id,
-        source_revision_id=inputs.source_revision or payload["source_revision_id"],
-        source_closure=closure,
-        source_owner_index=jax.process_index(),
-        source_array_bindings=source_array_bindings,
-        source_logical_arrays=source_logical_arrays,
-    )
-    return MeshingCheckpointState(**payload)
-
-
-def _native_source_arrays(mesh: Any, mesh_epoch: int) -> dict[str, np.ndarray]:
-    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    cell_ids = np.asarray(mesh.blocks[0].global_ids, dtype=np.int64)
-    return {
-        "vertex_ids": vertex_ids,
-        "coordinates": np.asarray(mesh.coordinates),
-        "cell_vertex_ids": vertex_ids[np.asarray(mesh.blocks[0].vertices)],
-        "parent_ids": np.stack((vertex_ids, vertex_ids), axis=-1),
-        "accepted_epochs": np.full(cell_ids.shape, mesh_epoch, dtype=np.int64),
-        "certificate_verdicts": np.ones(cell_ids.shape, dtype=np.uint8),
-        "material_inventory": np.arange(1, len(vertex_ids) + 1, dtype=np.float64),
-    }
-
-
-def test_native_source_checkpoint_changed_placement_requeries_and_recertifies(
-    tmp_path: Path,
-) -> None:
-    import phydrax as phx
-    from phydrax._model._structure import (
-        model_from_logical_array_recipe,
-        model_recipe_array_inventory,
-        model_recipe_array_values,
-    )
-
-    devices = tuple(jax.local_devices()[:2])
-    if len(devices) != 2:
-        pytest.skip("Source checkpoint placement scenario requires two local devices.")
-    mesh, geometry, audit, closure = _native_source_closure()
-    state = _native_source_state(closure)
-    source = NamedSharding(
-        Mesh(np.asarray(devices, dtype=np.object_), ("owner",)), PartitionSpec("owner")
-    )
-    destination = NamedSharding(
-        Mesh(np.asarray(devices[::-1], dtype=np.object_), ("owner",)),
-        PartitionSpec("owner"),
-    )
-    replicated = NamedSharding(
-        Mesh(np.asarray(devices[::-1], dtype=np.object_), ("owner",)), PartitionSpec()
-    )
-    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    reference = _native_source_arrays(mesh, state.mesh_epoch)
-    arrays = {name: jax.device_put(value, source) for name, value in reference.items()}
-    assert state.source_recipe_json is not None
-    recipe = json.loads(state.source_recipe_json)
-    inventory = model_recipe_array_inventory(recipe, prefix="source-record")
-    shardings = {name: destination for name in arrays}
-    for entry in inventory:
-        if entry.backend != "numpy":
-            shardings[state.source_array_name(entry.name)] = (
-                destination if entry.shape and entry.shape[0] % 2 == 0 else replicated
-            )
-    repository = _repository(
-        tmp_path / "native-source-checkpoint",
-        maximum_chunk_bytes=16 * 1024,
-        maximum_metadata_bytes=1024 * 1024,
-    )
-    publish_process_meshing_checkpoint(
-        repository,
-        "native-source",
-        "source-execution",
-        state,
-        arrays,
-        analysis_plan_id="source-analysis",
-        numeric_revision_id="source-revision",
-        writer_id="source-writer",
-    )
-    manifest = assemble_distributed_checkpoint_from_repository(
-        repository,
-        "native-source",
-        "source-analysis",
-        "source-revision",
-        "source-execution",
-        expected_process_count=1,
-    )
-    restored_state, restored_arrays, admission = restore_meshing_checkpoint(
-        repository,
-        manifest,
-        shardings,
-        _relation(),
-        TopologyRestartPolicy(allow_topology_change=True),
-        expected_state_id=state.checkpoint_state_id,
-    )
-    assert admission.admitted
-    assert restored_state.source_closure_id == state.source_closure_id
-    assert restored_state.to_payload() == state.to_payload()
-    restored = restored_state.source_closure
-    assert restored is not None
-    inputs = restored["certification_inputs"]
-    report = restored["report"]
-    assert report.request.request_id == inputs.request_id
-    assert restored_state.request_id == _state().request_id
-    assert restored_state.evidence_id == _state().evidence_id
-    assert inputs.source_revision == state.source_revision_id
-    assert inputs.fidelity_tolerance == closure["certification_inputs"].fidelity_tolerance
-    np.testing.assert_allclose(
-        np.asarray(
-            inputs.source.boundary_distance(
-                np.asarray(((2.0, 0.0, 0.0),), dtype=np.float64)
-            ).upper
-        ),
-        np.asarray((1.0,), dtype=np.float64),
-    )
-    renewed = phx.meshing.certify_meshing_acceptance(
-        mesh,
-        geometry,
-        audit,
-        schedule=inputs.schedule,
-        domain=inputs.domain,
-        source=inputs.source,
-        cell_regions=inputs.cell_regions,
-        fidelity_tolerance=inputs.fidelity_tolerance,
-        fidelity_sample_order=inputs.fidelity_sample_order,
-        limits=inputs.limits,
-        junction_vertices=inputs.junction_vertices,
-    )
-    renewed.require_passed()
-    assert renewed.report_id == report.report_id
-    for old, new in zip(closure["associations"], restored["associations"], strict=True):
-        assert new.source_occurrence_paths == old.source_occurrence_paths
-        assert new.source_entity_ids == old.source_entity_ids
-        np.testing.assert_array_equal(
-            np.asarray(new.target_global_ids), np.asarray(old.target_global_ids)
-        )
-    for name, expected in reference.items():
-        np.testing.assert_array_equal(np.asarray(restored_arrays[name]), expected)
-    assert np.sum(np.asarray(restored_arrays["material_inventory"])) == np.sum(
-        reference["material_inventory"]
-    )
-    restored_ids = restored_arrays["vertex_ids"]
-    assert isinstance(restored_ids, jax.Array)
-    np.testing.assert_array_equal(
-        np.asarray(
-            next(
-                shard.data
-                for shard in restored_ids.addressable_shards
-                if shard.device == devices[0]
-            )
-        ),
-        vertex_ids[len(vertex_ids) // 2 :],
-    )
-    for entry in inventory:
-        value = restored_arrays[state.source_array_name(entry.name)]
-        if entry.backend == "numpy":
-            assert isinstance(value, np.ndarray) and not value.flags.writeable
-
-    with pytest.raises(RepositoryCorruptionError, match="scientific binding"):
-        restore_meshing_checkpoint(
-            repository,
-            manifest,
-            shardings,
-            _relation(),
-            TopologyRestartPolicy(allow_topology_change=True),
-            expected_state_id=canonical_fingerprint({"substitute": "source"}),
-        )
-    source_shard = next(
-        shard
-        for shard in manifest.shards
-        if "source-record:" in dict(shard.metadata)["array_path"]
-    )
-    incomplete = CheckpointManifest(
-        manifest.checkpoint_id,
-        manifest.analysis_plan_id,
-        manifest.numeric_revision_id,
-        manifest.execution_plan_id,
-        tuple(
-            shard for shard in manifest.shards if shard.shard_id != source_shard.shard_id
-        ),
-        complete=True,
-    )
-    with pytest.raises(RepositoryCorruptionError):
-        restore_meshing_checkpoint(
-            repository,
-            incomplete,
-            shardings,
-            _relation(),
-            TopologyRestartPolicy(allow_topology_change=True),
-            expected_state_id=state.checkpoint_state_id,
-        )
-    substituted_values = model_recipe_array_values(
-        closure, recipe, prefix="source-record"
-    )
-    numerical = next(
-        entry
-        for entry in inventory
-        if np.issubdtype(np.dtype(entry.dtype), np.floating) and np.prod(entry.shape) > 0
-    )
-    original = substituted_values[numerical.name]
-    substituted_values[numerical.name] = original + np.asarray(
-        0.125, dtype=original.dtype
-    )
-    substituted_closure = model_from_logical_array_recipe(
-        recipe, substituted_values, prefix="source-record"
-    )
-    with pytest.raises(ValueError):
-        MeshingCheckpointState.from_payload(
-            state.to_payload(), source_closure=substituted_closure
-        )
-
-
-def _multiprocess_source_restart_worker(
-    process_index: int,
-    repository_root: str,
-) -> None:
-    import phydrax as phx
-    from phydrax._model._structure import (
-        model_from_logical_array_recipe,
-        model_recipe_array_inventory,
-        model_recipe_array_values,
-        model_structure_recipe,
-    )
-    from phydrax.lifecycle._meshing_sources import register_meshing_source_artifacts
-
-    devices = tuple(jax.devices())
-    source = NamedSharding(
-        Mesh(np.asarray(devices, dtype=np.object_), ("owner",)), PartitionSpec("owner")
-    )
-    destination = NamedSharding(
-        Mesh(np.asarray(devices[::-1], dtype=np.object_), ("owner",)),
-        PartitionSpec("owner"),
-    )
-    replicated_source = NamedSharding(source.mesh, PartitionSpec())
-    replicated_destination = NamedSharding(destination.mesh, PartitionSpec())
-    mesh, geometry, audit, local_closure = _native_source_closure()
-    register_meshing_source_artifacts()
-    recipe = model_structure_recipe(local_closure)
-    inventory = model_recipe_array_inventory(recipe, prefix="source-record")
-    source_values = model_recipe_array_values(
-        local_closure, recipe, prefix="source-record"
-    )
-    destination_shardings: dict[str, NamedSharding] = {}
-    source_bindings: dict[str, str] = {}
-    logical_bank: dict[str, jax.Array] = {}
-    destination_by_alias: dict[str, NamedSharding] = {}
-    for entry in inventory:
-        if entry.backend == "numpy":
-            continue
-        value = np.asarray(source_values[entry.name])
-        partitioned = bool(entry.shape) and entry.shape[0] % 2 == 0
-        local_value = (
-            value[
-                process_index * (entry.shape[0] // 2) : (process_index + 1)
-                * (entry.shape[0] // 2)
-            ]
-            if partitioned
-            else value
-        )
-        logical = jax.make_array_from_process_local_data(
-            source if partitioned else replicated_source,
-            local_value,
-            global_shape=entry.shape,
-        )
-        source_values[entry.name] = logical
-        alias = f"source/{entry.path}"
-        source_bindings[entry.name] = alias
-        logical_bank[alias] = logical
-        destination_by_alias[alias] = (
-            destination if partitioned else replicated_destination
-        )
-    closure = model_from_logical_array_recipe(
-        recipe, source_values, prefix="source-record"
-    )
-    state = _native_source_state(
-        closure, source_array_bindings=source_bindings, source_logical_arrays=logical_bank
-    )
-    destination_shardings.update(
-        {
-            state.source_array_name(entry.name): destination_by_alias[
-                source_bindings[entry.name]
-            ]
-            for entry in inventory
-            if entry.backend != "numpy"
-        }
-    )
-    trusted_ids = multihost_utils.process_allgather(
-        np.frombuffer(bytes.fromhex(state.checkpoint_state_id), dtype=np.uint8),
-        tiled=False,
-    )
-    expected_ids = {
-        owner: np.asarray(identifier).tobytes().hex()
-        for owner, identifier in enumerate(np.asarray(trusted_ids))
-    }
-    reference = _native_source_arrays(mesh, state.mesh_epoch)
-    arrays = {
-        name: jax.make_array_from_process_local_data(
-            source,
-            value[
-                process_index * (value.shape[0] // 2) : (process_index + 1)
-                * (value.shape[0] // 2)
-            ],
-            global_shape=value.shape,
-        )
-        for name, value in reference.items()
-    }
-    if any(array.is_fully_addressable for array in arrays.values()):
-        raise RuntimeError(
-            "Source checkpoint requires actual nonaddressable accepted state."
-        )
-    for name in arrays:
-        destination_shardings[name] = destination
-    repository = _repository(
-        Path(repository_root),
-        maximum_chunk_bytes=16 * 1024,
-        maximum_metadata_bytes=1024 * 1024,
-    )
-    publish_process_meshing_checkpoint(
-        repository,
-        "native-source",
-        "source-execution",
-        state,
-        arrays,
-        analysis_plan_id="source-analysis",
-        numeric_revision_id="source-revision",
-        writer_id=f"source-writer-{process_index}",
-    )
-    multihost_utils.sync_global_devices("native-source-checkpoint-published")
-    manifest = assemble_distributed_checkpoint_from_repository(
-        repository,
-        "native-source",
-        "source-analysis",
-        "source-revision",
-        "source-execution",
-        expected_process_count=2,
-    )
-    restored_state, restored, admission = restore_meshing_checkpoint(
-        repository,
-        manifest,
-        destination_shardings,
-        _relation(),
-        TopologyRestartPolicy(allow_topology_change=True),
-        expected_state_id=expected_ids,
-        source_owner_index=process_index,
-    )
-    if (
-        not admission.admitted
-        or restored_state.source_closure_id != state.source_closure_id
-    ):
-        raise RuntimeError("Source scientific binding or restart admission changed.")
-    if tuple(
-        owner.source_owner_index for owner in restored_state.source_owner_states
-    ) != (0, 1):
-        raise RuntimeError("Cold source restoration lost an exact original owner record.")
-    if {
-        owner.source_owner_index: owner.checkpoint_state_id
-        for owner in restored_state.source_owner_states
-    } != expected_ids:
-        raise RuntimeError("Cold source restoration changed a committed owner identity.")
-    for owner in restored_state.source_owner_states:
-        if owner.source_closure is None:
-            raise RuntimeError(
-                "Cold source owner bank retained metadata but lost actual records."
-            )
-    retained = restored_state.source_closure
-    if retained is None:
-        raise RuntimeError("Actual native source records were not restored.")
-    inputs = retained["certification_inputs"]
-    np.testing.assert_allclose(
-        np.asarray(
-            inputs.source.boundary_distance(
-                np.asarray(((2.0, 0.0, 0.0),), dtype=np.float64)
-            ).upper
-        ),
-        np.asarray((1.0,), dtype=np.float64),
-    )
-    renewed = phx.meshing.certify_meshing_acceptance(
-        mesh,
-        geometry,
-        audit,
-        schedule=inputs.schedule,
-        source=inputs.source,
-        domain=inputs.domain,
-        cell_regions=inputs.cell_regions,
-        fidelity_tolerance=inputs.fidelity_tolerance,
-        fidelity_sample_order=inputs.fidelity_sample_order,
-        limits=inputs.limits,
-        junction_vertices=inputs.junction_vertices,
-    )
-    renewed.require_passed()
-    if renewed.report_id != retained["report"].report_id:
-        raise RuntimeError("Restored native source recertification changed.")
-    for name, expected in reference.items():
-        value = restored[name]
-        if not isinstance(value, jax.Array):
-            raise TypeError(
-                "Accepted numerical state must retain its logical JAX backend."
-            )
-        for shard in value.addressable_shards:
-            np.testing.assert_array_equal(np.asarray(shard.data), expected[shard.index])
-    restored_ids = restored["vertex_ids"]
-    if not isinstance(restored_ids, jax.Array):
-        raise TypeError("Restored stable IDs must be a logical JAX array.")
-    print(
-        json.dumps(
-            {
-                "process_index": process_index,
-                "local_ids": np.asarray(restored_ids.addressable_shards[0].data).tolist(),
-                "mesh_epoch": restored_state.mesh_epoch,
-                "source_recertified": renewed.passed,
-            }
-        ),
-        flush=True,
-    )
-    jax.distributed.shutdown()
-
-
 def test_nonaddressable_native_source_checkpoint_restores_and_recertifies(
     tmp_path: Path,
 ) -> None:
-    results = _run_meshing_restart_workers(
-        tmp_path, "_multiprocess_source_restart_worker"
-    )
-    assert results == [
+    results = run_restart_workers(tmp_path, "native_source_checkpoint_restart")
+    assert [
+        {
+            name: record[name]
+            for name in ("process_index", "local_ids", "mesh_epoch", "source_recertified")
+        }
+        for record in results
+    ] == [
         {
             "process_index": 0,
             "local_ids": [3, 4, 5],
@@ -1591,6 +856,17 @@ def test_nonaddressable_native_source_checkpoint_restores_and_recertifies(
             "source_recertified": True,
         },
     ]
+    for record in results:
+        assert record["nonaddressable"]
+        assert record["admitted"]
+        assert record["source_closure_id_preserved"]
+        assert record["source_owner_indices"] == [0, 1]
+        assert record["source_owner_state_ids"] == record["expected_owner_state_ids"]
+        assert record["owner_closures_retained"]
+        assert record["source_restored"]
+        np.testing.assert_allclose(record["boundary_distance"], [1.0])
+        assert record["report_id_preserved"]
+        _assert_restored_scientific_arrays(record)
 
 
 def test_native_numpy_source_checkpoint_restores_immutable_authored_coefficients(
@@ -1598,7 +874,7 @@ def test_native_numpy_source_checkpoint_restores_immutable_authored_coefficients
 ) -> None:
     import phydrax as phx
     from phydrax._model._structure import model_recipe_array_inventory
-    from phydrax.geometry._mesh_certificates import PiecewiseLinearDomain
+    from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 
     points = np.asarray(
         ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), dtype=np.float64
@@ -1636,8 +912,8 @@ def test_native_numpy_source_checkpoint_restores_immutable_authored_coefficients
         "report": report,
         "associations": (),
     }
-    state = _native_source_state(closure)
-    reference = _native_source_arrays(mesh, state.mesh_epoch)
+    state = native_source_state(closure)
+    reference = native_source_arrays(mesh, state.mesh_epoch)
     arrays = {name: jax.device_put(value) for name, value in reference.items()}
     assert state.source_recipe_json is not None
     inventory = model_recipe_array_inventory(
@@ -1654,7 +930,7 @@ def test_native_numpy_source_checkpoint_restores_immutable_authored_coefficients
             if entry.backend != "numpy"
         }
     )
-    repository = _repository(
+    repository = build_repository(
         tmp_path / "native-domain-checkpoint",
         maximum_chunk_bytes=16 * 1024,
         maximum_metadata_bytes=1024 * 1024,
@@ -1677,14 +953,17 @@ def test_native_numpy_source_checkpoint_restores_immutable_authored_coefficients
         "domain-execution",
         expected_process_count=1,
     )
-    restored_state, restored_arrays, admission = restore_meshing_checkpoint(
+    checkpoint = restore_meshing_checkpoint(
         repository,
         manifest,
         shardings,
-        _relation(),
+        restart_relation(),
         TopologyRestartPolicy(allow_topology_change=True),
         expected_state_id=state.checkpoint_state_id,
     )
+    restored_state = checkpoint.state
+    restored_arrays = checkpoint.arrays
+    admission = checkpoint.admission
     assert admission.admitted
     restored = restored_state.source_closure
     assert restored is not None
@@ -1727,10 +1006,10 @@ def test_native_projection_source_checkpoint_preserves_raw_evidence_and_recertif
 ) -> None:
     import phydrax as phx
     from phydrax._model._structure import model_recipe_array_inventory
-    from phydrax.geometry._mesh_certificates import ImplicitProjectionBoundarySource
+    from phydrax.geometry._source_fidelity import ImplicitProjectionBoundarySource
     from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
 
-    mesh, geometry, audit, original = _native_source_closure()
+    mesh, geometry, audit, original = native_source_closure()
     profile = AnalyticImplicitProfile(
         original["source"].geometry,
         phx.SpatialCoordinateContract.si(),
@@ -1753,8 +1032,8 @@ def test_native_projection_source_checkpoint_preserves_raw_evidence_and_recertif
         "report": report,
         "associations": (),
     }
-    state = _native_source_state(closure)
-    reference = _native_source_arrays(mesh, state.mesh_epoch)
+    state = native_source_state(closure)
+    reference = native_source_arrays(mesh, state.mesh_epoch)
     arrays = {name: jax.device_put(value) for name, value in reference.items()}
     assert state.source_recipe_json is not None
     inventory = model_recipe_array_inventory(
@@ -1769,7 +1048,7 @@ def test_native_projection_source_checkpoint_preserves_raw_evidence_and_recertif
             if entry.backend != "numpy"
         }
     )
-    repository = _repository(
+    repository = build_repository(
         tmp_path / "native-projection-checkpoint",
         maximum_chunk_bytes=16 * 1024,
         maximum_metadata_bytes=1024 * 1024,
@@ -1792,14 +1071,17 @@ def test_native_projection_source_checkpoint_preserves_raw_evidence_and_recertif
         "projection-execution",
         expected_process_count=1,
     )
-    restored_state, restored_arrays, admission = restore_meshing_checkpoint(
+    checkpoint = restore_meshing_checkpoint(
         repository,
         manifest,
         shardings,
-        _relation(),
+        restart_relation(),
         TopologyRestartPolicy(allow_topology_change=True),
         expected_state_id=state.checkpoint_state_id,
     )
+    restored_state = checkpoint.state
+    restored_arrays = checkpoint.arrays
+    admission = checkpoint.admission
     assert admission.admitted
     restored = restored_state.source_closure
     assert restored is not None
@@ -1849,213 +1131,15 @@ def test_native_projection_source_checkpoint_preserves_raw_evidence_and_recertif
 # NATIVE FAMILY ---------------------------------------------------------------
 
 
-def _native_family_generation(
-    family: str,
-) -> tuple[
-    MeshPart,
-    NativeGenerationSource,
-    SurfaceMeshingSpec | VolumeMeshingSpec,
-    NativeMeshingOptions,
-]:
-    import phydrax as phx
-    from phydrax.discretization._cell_geometry import coordinate_lagrange_element
-    from phydrax.discretization._reference_cell import reference_cell_topology
-    from phydrax.geometry._mapped_reference_domain import MappedReferenceDomain
-    from phydrax.geometry._mesh_certificates import ParametricCurveBoundarySource
-    from phydrax.geometry.brep._patches import LineCurve
-    from phydrax.meshing._volume_generation import declared_plc_domain
-
-    m = phx.meshing
-    source: NativeGenerationSource
-    specification: SurfaceMeshingSpec | VolumeMeshingSpec
-    if family == "structured":
-        boundaries = tuple(
-            m.TransfiniteCurveControl(LineCurve(origin, direction), name, (0.0, 1.0), 2)
-            for name, origin, direction in (
-                ("left", (0.0, 0.0), (0.0, 1.0)),
-                ("right", (1.0, 0.0), (0.0, 1.0)),
-                ("bottom", (0.0, 0.0), (1.0, 0.0)),
-                ("top", (0.0, 1.0), (1.0, 0.0)),
-            )
-        )
-        block = m.TransfiniteBlock("square", boundaries)
-        query = ParametricCurveBoundarySource(
-            tuple(control.curve for control in boundaries),
-            tuple(control.parameter_range for control in boundaries),
-            source_id="restart-structured",
-            source_revision="r1",
-        )
-        source = m.NativeStructuredSource(
-            (block,),
-            (),
-            query.source_id,
-            query.source_revision,
-            fidelity_source=query,
-            maximum_deviation=0.08,
-        )
-        scope = m.MeshingScope(
-            source.source_id,
-            source.source_revision,
-            m.MeshingEntityKind.GEOMETRY,
-            2,
-            "square-domain",
-            np.asarray((0,), dtype=np.int64),
-        )
-        specification = m.SurfaceMeshingSpec(
-            m.CellMeshingTarget(2, 2, m.CellFamilyPolicy(required=("quadrilateral",))),
-            scope,
-            planar_embedding=phx.geometry.PlanarEmbedding(
-                (0.0, 0.0, 0.0),
-                (1.0, 0.0, 0.0),
-                (0.0, 1.0, 0.0),
-                (0.0, 0.0, 1.0),
-            ),
-            size_controls=(
-                m.UniformSizeControl(scope, 0.5, strength=m.SizeControlStrength.SOFT),
-            ),
-        )
-        options = m.NativeMeshingOptions("structured_transfinite")
-    elif family == "surface":
-        from examples._native_surface_sources import cylinder_sheet
-
-        source = m.NativeSurfaceSource(cylinder_sheet().domain)
-        scope = m.MeshingScope(
-            source.source_id,
-            source.source_revision,
-            m.MeshingEntityKind.GEOMETRY,
-            2,
-            source.domain.entity_set_id(2),
-            np.asarray((0,), dtype=np.int64),
-        )
-        specification = m.SurfaceMeshingSpec(
-            m.CellMeshingTarget(2, 3, m.CellFamilyPolicy(required=("triangle",))),
-            scope,
-            size_controls=(
-                m.UniformSizeControl(scope, 0.5, strength=m.SizeControlStrength.SOFT),
-            ),
-        )
-        options = m.NativeMeshingOptions("parametric_surface")
-    else:
-        kind = "tetrahedron" if family == "plc" else "hexahedron"
-        topology = reference_cell_topology(kind)
-        corners = np.asarray(topology.vertices, dtype=np.float64)
-        loops = topology.entities[2]
-        complex_ = m.PiecewiseLinearComplex(
-            corners,
-            loops,
-            np.arange(len(loops), dtype=np.int64),
-            np.tile(np.asarray((-1, 0), dtype=np.int64), (len(loops), 1)),
-            ("material",),
-        )
-        reference_source = m.NativePlcSource(complex_, "restart-reference", "r1")
-        source = reference_source
-        if family == "mapped":
-            mesh = phx.discretization.CellMesh(
-                corners,
-                (phx.discretization.CellBlock("root", kind, np.arange(8)[None]),),
-                numeric_version="r1",
-            )
-            element = coordinate_lagrange_element(kind, 2)
-            nodes = np.asarray(element.reference_nodes)
-            physical = nodes.copy()
-            physical[:, 2] += 0.125 * nodes[:, 0] ** 2 * nodes[:, 1]
-            geometry = CellGeometrySpec(
-                {"root": element}, {"root": np.arange(len(nodes))[None]}, physical
-            )
-            domain = MappedReferenceDomain(
-                declared_plc_domain(complex_, reference_source.source_id),
-                mesh,
-                geometry,
-                np.asarray((0,), dtype=np.int64),
-                source_id="restart-curved",
-                source_revision="q2-r1",
-            )
-            source = m.NativeMappedHexSource(reference_source, domain)
-            scope = m.MeshingScope(
-                source.source_id,
-                source.source_revision,
-                m.MeshingEntityKind.GEOMETRY,
-                2,
-                domain.entity_set_id(2),
-                mesh.entity_set(2).entity_ids,
-            )
-        else:
-            if family == "polyhedral":
-                source = m.NativePolyhedralSource(
-                    complex_,
-                    "restart-power",
-                    "r1",
-                    sites=np.asarray(
-                        (
-                            (0.25, 0.25, 0.25),
-                            (0.75, 0.25, 0.25),
-                            (0.25, 0.75, 0.25),
-                            (0.25, 0.25, 0.75),
-                        )
-                    ),
-                    weights=np.asarray((0.03125, -0.015625, 0.0625, 0.0)),
-                )
-            scope = m.MeshingScope(
-                source.source_id,
-                source.source_revision,
-                m.MeshingEntityKind.GEOMETRY,
-                2,
-                "source-facets",
-                np.arange(len(loops), dtype=np.int64),
-            )
-        cell_kind = {
-            "plc": "tetrahedron",
-            "polyhedral": "polyhedron",
-            "mapped": "hexahedron",
-        }[family]
-        fill = {
-            "plc": m.VolumeFillStrategy.SIMPLEX,
-            "polyhedral": m.VolumeFillStrategy.POLYHEDRAL,
-            "mapped": m.VolumeFillStrategy.MULTIZONE,
-        }[family]
-        specification = m.VolumeMeshingSpec(
-            m.CellMeshingTarget(
-                3,
-                3,
-                m.CellFamilyPolicy(required=(cell_kind,)),
-                geometry_order=2 if family == "mapped" else 1,
-            ),
-            scope,
-            fill,
-            size_controls=(
-                m.UniformSizeControl(
-                    scope,
-                    0.5 if family == "mapped" else 10.0,
-                    strength=m.SizeControlStrength.SOFT,
-                ),
-            ),
-        )
-        routes: dict[str, NativeMeshingRoute] = {
-            "plc": "plc_tetrahedral",
-            "polyhedral": "plc_restricted_power",
-            "mapped": "mapped_balanced_grid_hex",
-        }
-        options = m.NativeMeshingOptions(routes[family])
-    result = (
-        m.NativeMeshingProvider(options)
-        .plan(
-            source,
-            specification,
-            coordinate_contract=phx.SpatialCoordinateContract.si(),
-        )
-        .execute()
-    )
-    return m.MeshPart("generation", result), source, specification, options
-
-
-@pytest.mark.parametrize(
-    "family", ("plc", "structured", "mapped", "polyhedral", "surface")
+@pytest.fixture(
+    scope="module", params=("plc", "structured", "mapped", "polyhedral", "surface")
 )
-def test_native_family_durable_restart_requeries_recertifies_and_prepares(
-    tmp_path: Path,
-    family: str,
-) -> None:
-    import phydrax as phx
+def durable_native_family(
+    tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
+) -> tuple[Any, ...]:
+    family = request.param
+    tmp_path = tmp_path_factory.mktemp(family)
     from phydrax._array_archive import ArrayArchiveLimits
     from phydrax.lifecycle._meshing_sources import (
         read_meshing_source_closure,
@@ -2063,7 +1147,7 @@ def test_native_family_durable_restart_requeries_recertifies_and_prepares(
         write_meshing_source_closure,
     )
 
-    part, source, specification, options = _native_family_generation(family)
+    part, source, specification, options = native_family_generation(family)
     original_carrier = part.carrier
     assert isinstance(original_carrier, CellMeshingResult)
     report = original_carrier.certification
@@ -2095,11 +1179,24 @@ def test_native_family_durable_restart_requeries_recertifies_and_prepares(
         result.audit,
         archive_limits=limits,
     )
+    return family, source, original_carrier, report, restored, result, renewed
+
+
+def test_native_family_durable_restart_recertifies(
+    durable_native_family: tuple[Any, ...],
+) -> None:
+    _, _, _, report, restored, result, renewed = durable_native_family
     assert renewed.report_id == report.report_id
     assert (
         restored["generation_specification"].specification_id
         == result.compliance.specification_id
     )
+
+
+def test_native_family_durable_restart_requeries_source(
+    durable_native_family: tuple[Any, ...],
+) -> None:
+    _, source, _, report, _, _, renewed = durable_native_family
     if renewed.request.source is not None:
         source_query = renewed.request.source
         probe = np.full((1, source_query.ambient_dimension), 3.0, dtype=np.float64)
@@ -2111,7 +1208,7 @@ def test_native_family_durable_restart_requeries_recertifies_and_prepares(
         np.testing.assert_array_equal(restored_distance.upper, original_distance.upper)
     else:
         # PLC has an independently authored oriented domain, not an invented
-        # implicit/planar distance query. Fresh coverage uses its actual facets.
+        # implicit/planar distance query. Fresh coverage uses its declared facets.
         assert renewed.coverage is not None
         assert isinstance(renewed.request.domain, PiecewiseLinearDomain)
         assert isinstance(source, (NativePlcSource, NativePolyhedralSource))
@@ -2119,108 +1216,144 @@ def test_native_family_durable_restart_requeries_recertifies_and_prepares(
         np.testing.assert_array_equal(
             renewed.request.domain.vertices, source.complex.vertices
         )
-    if family == "polyhedral":
-        assert isinstance(source, NativePolyhedralSource)
-        from phydrax.discretization.finite_volume._polyhedral import (
-            prepare_polyhedral_finite_volume_geometry,
-        )
 
-        fv = prepare_polyhedral_finite_volume_geometry(result.mesh)
-        np.testing.assert_allclose(np.sum(fv.cell_volumes), 1.0, atol=1e-12)
+
+@pytest.mark.parametrize("durable_native_family", ("polyhedral",), indirect=True)
+def test_native_family_durable_restart_prepares_finite_volume(
+    durable_native_family: tuple[Any, ...],
+) -> None:
+    from phydrax.discretization.finite_volume._polyhedral import (
+        prepare_polyhedral_finite_volume_geometry,
+    )
+
+    _, source, original_carrier, _, restored, result, _ = durable_native_family
+    assert isinstance(source, NativePolyhedralSource)
+    fv = prepare_polyhedral_finite_volume_geometry(result.mesh)
+    np.testing.assert_allclose(
+        np.sum(fv.cell_volumes), 1.0, atol=RESTORED_POLYHEDRAL_VOLUME_SUM_ATOL
+    )
+    np.testing.assert_array_equal(restored["generation_source"].weights, source.weights)
+    assert not restored["generation_source"].weights.flags.writeable
+    connectivity = result.mesh.connectivity
+    original = original_carrier.mesh.connectivity
+    for name in (
+        "face_vertex_offsets",
+        "face_vertex_values",
+        "cell_face_values",
+        "cell_face_sign_values",
+    ):
         np.testing.assert_array_equal(
-            restored["generation_source"].weights, source.weights
+            getattr(connectivity, name), getattr(original, name)
         )
-        assert not restored["generation_source"].weights.flags.writeable
-        connectivity = result.mesh.connectivity
-        original = original_carrier.mesh.connectivity
-        for name in (
-            "face_vertex_offsets",
-            "face_vertex_values",
-            "cell_face_values",
-            "cell_face_sign_values",
-        ):
-            np.testing.assert_array_equal(
-                getattr(connectivity, name), getattr(original, name)
-            )
-    else:
-        degree = 2 if family == "mapped" else 1
-        field = phx.discretization.FiniteElementFieldSpec(
+
+
+@pytest.fixture(scope="module")
+def durable_native_field(durable_native_family: tuple[Any, ...]) -> tuple[Any, ...]:
+    import phydrax as phx
+
+    family, _, _, _, _, result, _ = durable_native_family
+    # Mapped Q2 coordinates require a Q2 field; the remaining carriers are P1.
+    degree = {"mapped": 2, "plc": 1, "structured": 1, "surface": 1}[family]
+    field = phx.discretization.FiniteElementFieldSpec(
+        "u",
+        {
+            block.name: phx.discretization.lagrange_element(block.cell_kind, degree)
+            for block in result.mesh.blocks
+        },
+    )
+    space = phx.discretization.FiniteElementPlan(
+        result.mesh, field, coordinate_spec=result.geometry
+    ).prepare()
+    nodes = np.asarray(space.dof_maps[0].dof_coordinates)
+    weights = np.arange(1, nodes.shape[1] + 1, dtype=np.float64)
+    return result, space, weights, 2.0 + nodes @ weights
+
+
+@pytest.mark.parametrize(
+    "durable_native_family", ("plc", "structured", "mapped"), indirect=True
+)
+def test_native_family_durable_restart_reconstructs_volume_field(
+    durable_native_field: tuple[Any, ...],
+) -> None:
+    from phydrax.discretization.fem._point_interpolation import (
+        prepare_finite_element_field_reconstruction,
+    )
+
+    result, space, weights, coefficients = durable_native_field
+    for block in result.mesh.blocks:
+        sites = np.mean(
+            np.asarray(result.mesh.coordinates)[np.asarray(block.vertices)], axis=1
+        )
+        query = prepare_finite_element_field_reconstruction(
+            space,
             "u",
-            {
-                block.name: phx.discretization.lagrange_element(block.cell_kind, degree)
-                for block in result.mesh.blocks
-            },
-        )
-        space = phx.discretization.FiniteElementPlan(
-            result.mesh, field, coordinate_spec=result.geometry
-        ).prepare()
-        nodes = np.asarray(space.dof_maps[0].dof_coordinates)
-        from phydrax.discretization.fem._point_interpolation import (
-            prepare_finite_element_field_reconstruction,
+            block_name=block.name,
+        ).evaluate(coefficients, sites)
+        np.testing.assert_allclose(
+            query.values, 2.0 + sites @ weights, atol=RESTORED_VOLUME_AFFINE_FIELD_ATOL
         )
 
-        weights = np.arange(1, nodes.shape[1] + 1, dtype=np.float64)
-        coefficients = 2.0 + nodes @ weights
-        for index, block in enumerate(result.mesh.blocks):
-            if result.mesh.ambient_dimension != result.mesh.topological_dimension:
-                # Embedded surface FE owns intrinsic charts, not a Cartesian
-                # volume-support reconstruction or a projected planar region.
-                from phydrax.discretization._reference_cell import reference_cell_topology
 
-                reference = np.mean(
-                    np.asarray(reference_cell_topology(block.cell_kind).vertices), axis=0
-                )[None]
-                local = space.evaluate_block_geometry(
-                    "u",
-                    index,
-                    space.default_runtime.coordinates,
-                    reference,
-                    np.ones((1,)),
-                )
-                values = np.einsum(
-                    "ql,cl->cq",
-                    np.asarray(local.basis_values),
-                    coefficients[np.asarray(space.dof_maps[0].cell_dofs[index])],
-                )
-                np.testing.assert_allclose(
-                    values, 2.0 + np.asarray(local.physical_points) @ weights, atol=2e-10
-                )
-            else:
-                sites = np.mean(
-                    np.asarray(result.mesh.coordinates)[np.asarray(block.vertices)],
-                    axis=1,
-                )
-                query = prepare_finite_element_field_reconstruction(
-                    space,
-                    "u",
-                    block_name=block.name,
-                ).evaluate(coefficients, sites)
-                np.testing.assert_allclose(
-                    query.values, 2.0 + sites @ weights, atol=2e-10
-                )
-        if family == "mapped":
-            assert result.geometry.restriction_source is not None
-            np.testing.assert_array_equal(
-                result.geometry.coordinates, original_carrier.geometry.coordinates
-            )
+@pytest.mark.parametrize("durable_native_family", ("surface",), indirect=True)
+def test_native_family_durable_restart_evaluates_intrinsic_surface_field(
+    durable_native_field: tuple[Any, ...],
+) -> None:
+    from phydrax.discretization._reference_cell import reference_cell_topology
+
+    result, space, weights, coefficients = durable_native_field
+    for index, block in enumerate(result.mesh.blocks):
+        reference = np.mean(
+            np.asarray(reference_cell_topology(block.cell_kind).vertices), axis=0
+        )[None]
+        local = space.evaluate_block_geometry(
+            "u",
+            index,
+            space.default_runtime.coordinates,
+            reference,
+            np.ones((1,)),
+        )
+        values = np.einsum(
+            "ql,cl->cq",
+            np.asarray(local.basis_values),
+            coefficients[np.asarray(space.dof_maps[0].cell_dofs[index])],
+        )
+        np.testing.assert_allclose(
+            values,
+            2.0 + np.asarray(local.physical_points) @ weights,
+            atol=RESTORED_SURFACE_AFFINE_FIELD_ATOL,
+        )
+
+
+@pytest.mark.parametrize("durable_native_family", ("mapped",), indirect=True)
+def test_native_family_durable_restart_preserves_mapped_coordinate_source(
+    durable_native_family: tuple[Any, ...],
+) -> None:
+    _, _, original_carrier, _, _, result, _ = durable_native_family
+    assert result.geometry.restriction_source is not None
+    np.testing.assert_array_equal(
+        result.geometry.coordinates, original_carrier.geometry.coordinates
+    )
 
 
 def test_native_family_refuses_changed_source_power_weights_and_hard_request() -> None:
     import equinox as eqx
 
     from phydrax._array_archive import ArrayArchiveLimits
-    from phydrax.lifecycle._meshing_source_families import validate_registered_native_part
     from phydrax.lifecycle._meshing_sources import (
         register_meshing_source_artifacts,
         validate_meshing_source_closure,
+        validate_registered_native_part,
     )
 
     register_meshing_source_artifacts()
-    part, source, specification, options = _native_family_generation("polyhedral")
+    part, source, specification, options = native_family_generation("polyhedral")
     assert isinstance(source, NativePolyhedralSource)
     assert isinstance(specification, VolumeMeshingSpec)
     forged = eqx.tree_at(lambda value: value.weights, source, source.weights + 0.1)
-    with pytest.raises(ValueError, match="freshly certified native source authority"):
+    with pytest.raises(
+        ValueError,
+        match=r"NativePolyhedralSource\.binding_id",
+    ):
         validate_meshing_source_closure(forged)
     import phydrax as phx
 
@@ -2236,9 +1369,7 @@ def test_native_family_refuses_changed_source_power_weights_and_hard_request() -
             ),
         ),
     )
-    with pytest.raises(
-        ValueError, match="hard generation request|actual authored source|source revision"
-    ):
+    with pytest.raises(ValueError, match=r"source_closure\.generation_options"):
         validate_registered_native_part(
             part, source, altered, options, limits=ArrayArchiveLimits()
         )
@@ -2247,14 +1378,14 @@ def test_native_family_refuses_changed_source_power_weights_and_hard_request() -
 def test_native_family_refuses_changed_original_algorithm_schedule() -> None:
     import phydrax as phx
     from phydrax._array_archive import ArrayArchiveLimits
-    from phydrax.lifecycle._meshing_source_families import validate_registered_native_part
+    from phydrax.lifecycle._meshing_sources import validate_registered_native_part
 
-    part, source, specification, _ = _native_family_generation("mapped")
+    part, source, specification, _ = native_family_generation("mapped")
     options = phx.meshing.NativeMeshingOptions(
         "mapped_balanced_grid_hex",
         grid_schedule=phx.meshing.NativeHexGridSchedule("balanced_grid", maximum_depth=9),
     )
-    with pytest.raises(ValueError, match="original source-bound generation plan"):
+    with pytest.raises(ValueError, match=r"source_closure\.generation_options"):
         validate_registered_native_part(
             part,
             source,
@@ -2282,9 +1413,9 @@ def test_native_whole_carrier_restart_preserves_exact_maps_faces_and_queries(
     part: MeshPart
 
     if carrier_kind == "mixed-q2":
-        from tests.unit.meshing.test_native_overset_fields import _mapped_source
+        from tests._support.overset_mapped_sources import mapped_source
 
-        part = _mapped_source(("hexahedron", "prism"))
+        part = mapped_source(("hexahedron", "prism"))
     else:
         box, tet = (
             reference_cell_topology(kind) for kind in ("hexahedron", "tetrahedron")
@@ -2316,8 +1447,8 @@ def test_native_whole_carrier_restart_preserves_exact_maps_faces_and_queries(
     limits = ArrayArchiveLimits(
         max_members=4096, max_manifest_nesting=128, max_manifest_bytes=1 << 26
     )
-    # These are actual represented carriers, not fabricated original provider
-    # requests. Source-free carrier certification is an honest separate role.
+    # These represented carriers are distinct from provider
+    # requests. Source-free carrier certification has a separate role.
     receipt = write_meshing_source_closure(
         tmp_path / f"{carrier_kind}.zip", part, limits=limits
     )
@@ -2373,7 +1504,7 @@ def test_native_whole_carrier_restart_preserves_exact_maps_faces_and_queries(
             np.testing.assert_allclose(
                 evaluated.values,
                 2.0 + points[:, 0] - 3.0 * points[:, 1] + 0.5 * points[:, 2],
-                atol=2e-10,
+                atol=RESTORED_VOLUME_AFFINE_FIELD_ATOL,
             )
         for element in result.geometry.elements:
             assert isinstance(element, (FiniteElementSpec, RestrictedCellGeometryElement))
@@ -2387,7 +1518,9 @@ def test_native_whole_carrier_restart_preserves_exact_maps_faces_and_queries(
         )
 
         fv = prepare_polyhedral_finite_volume_geometry(result.mesh)
-        np.testing.assert_allclose(np.sum(fv.cell_volumes), 7.0 / 6.0, atol=1e-12)
+        np.testing.assert_allclose(
+            np.sum(fv.cell_volumes), 7.0 / 6.0, atol=RESTORED_POLYHEDRAL_VOLUME_SUM_ATOL
+        )
         location = PreparedPolyhedralCellLocator(result.mesh).locate(
             np.asarray(((0.5, 0.5, 0.5), (2.25, 0.25, 0.25))),
         )
@@ -2411,662 +1544,6 @@ def test_native_whole_carrier_restart_preserves_exact_maps_faces_and_queries(
             )
 
 
-# FIELD DECLARATIONS: physical owners survive a cold native source restart.
-@pytest.mark.parametrize(
-    "field_kind",
-    (
-        "mapped-scalar",
-        "mapped-vector",
-        "rt",
-        "bdm2",
-        "nedelec",
-        "nedelec1",
-        "fv-scalar",
-        "fv-euler-history",
-    ),
-)
-def test_cold_native_physical_field_declarations_reprepare_exact_owners(
-    tmp_path: Path,
-    field_kind: str,
-) -> None:
-    from dataclasses import replace
-    from math import prod
-
-    import jax.numpy as jnp
-
-    import phydrax as phx
-    from phydrax._array_archive import ArrayArchiveLimits
-    from phydrax._differentiation import BranchDifferentiationPolicy
-    from phydrax._frozendict import frozendict
-    from phydrax.discretization import FiniteElementDiscretization
-    from phydrax.discretization._conservation_boundary import ExtrapolationBoundary
-    from phydrax.discretization._views import FieldTracePolicy
-    from phydrax.discretization.fem import form_element
-    from phydrax.discretization.fem._generic import FiniteElementFieldSpec
-    from phydrax.discretization.fem._point_interpolation import (
-        prepare_finite_element_field_reconstruction,
-    )
-    from phydrax.discretization.fem._precision import FiniteElementPrecisionPolicy
-    from phydrax.discretization.finite_volume import (
-        PiecewiseConstantReconstruction,
-        UnstructuredFiniteVolumeDiscretization,
-        UnstructuredFiniteVolumePlan,
-    )
-    from phydrax.discretization.finite_volume._riemann import RusanovFluxPlan
-    from phydrax.equations._hyperbolic_systems import EulerSystem
-    from phydrax.lifecycle._meshing_field_records import (
-        MeshingFieldDeclaration,
-        MeshingFieldStateRole,
-        prepare_meshing_field_dynamics,
-        prepare_meshing_field_index_binding,
-        prepare_meshing_field_owner,
-    )
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        recertify_restored_meshing_source,
-        validate_meshing_source_closure,
-        write_meshing_source_closure,
-    )
-    from phydrax.linalg import ArraySpace
-    from phydrax.meshing._overset import (
-        OversetPartSpec,
-        OversetPolicy,
-        prepare_overset_connectivity,
-    )
-    from phydrax.meshing._result import CellMeshingResult
-
-    family = (
-        "mapped"
-        if field_kind.startswith("mapped")
-        else "polyhedral"
-        if field_kind.startswith("fv")
-        else "plc"
-    )
-    part, source, specification, options = _native_family_generation(family)
-    carrier = part.carrier
-    assert isinstance(carrier, CellMeshingResult)
-    wall = OversetPartSpec(part.name)
-    companion = phx.meshing.MeshPart("companion", carrier)
-    companion_wall = OversetPartSpec(companion.name)
-    registration = prepare_overset_connectivity(
-        phx.meshing.MeshAssembly((part, companion)),
-        (wall, companion_wall),
-        policy=OversetPolicy(fringe_layers=1),
-    ).registration()
-    fields = {}
-    name = "physical"
-    finite_element_fields: tuple[FiniteElementFieldSpec, ...] = ()
-    precision_policy: FiniteElementPrecisionPolicy | None = None
-    finite_volume_field_name: str | None = None
-    finite_volume_component_names: tuple[str, ...] = ()
-    coordinate_policy: str | None = None
-    reconstruction_policy: PiecewiseConstantReconstruction | None = None
-    reconstruction_policy_id: str | None = None
-    system: EulerSystem | None = None
-    flux_policy: RusanovFluxPlan | None = None
-    boundary_policies: frozendict[str, ExtrapolationBoundary] = frozendict()
-    if field_kind.startswith("fv"):
-        system = (
-            phx.equations.EulerSystem(
-                3, material=phx.equations.IdealGasMaterial(1.67, 287.0)
-            )
-            if field_kind.endswith("history")
-            else None
-        )
-        components = system.component_names if system is not None else ("temperature",)
-        original = UnstructuredFiniteVolumePlan.from_cell_mesh(
-            carrier.mesh,
-            field_name=name,
-            component_names=components,
-        ).prepare(numeric_version="accepted-7")
-        assert isinstance(original, UnstructuredFiniteVolumeDiscretization)
-        fv_original = original
-        owner = "finite_volume"
-        finite_volume_field_name = name
-        finite_volume_component_names = components
-        coordinate_policy = "represented-polyhedral"
-        reconstruction_policy = PiecewiseConstantReconstruction()
-        reconstruction_policy_id = reconstruction_policy.plan_id
-        coefficient_space = original.field_spaces[0].vector_space
-        assert isinstance(coefficient_space, ArraySpace)
-        shape = coefficient_space.shape
-        coefficients = np.arange(prod(shape), dtype=np.float64).reshape(shape) + 2.0
-        if system is not None:
-            primitive = np.tile(
-                np.asarray((1.0, 0.0, 0.0, 0.0, 1.0)), (original.cell_count, 1)
-            )
-            primitive[:, 0] += 0.1 * np.asarray(fv_original.cell_centers)[:, 0]
-            coefficients = np.asarray(
-                system.primitive_to_conserved(jnp.asarray(primitive))
-            ).copy()
-            flux_policy = RusanovFluxPlan()
-            boundary_policies = frozendict(
-                {
-                    patch: ExtrapolationBoundary()
-                    for patch in original.boundary_patch_names
-                }
-            )
-        maximum_order = 0
-    else:
-        if field_kind == "rt":
-            element = form_element("tetrahedron", 2, 1, twist="twisted", proxy="flux")
-        elif field_kind == "bdm2":
-            element = form_element(
-                "tetrahedron", 2, 2, family="full", twist="twisted", proxy="flux"
-            )
-        elif field_kind.startswith("nedelec"):
-            element = form_element(
-                "tetrahedron",
-                1,
-                2 if field_kind == "nedelec1" else 1,
-                proxy="circulation",
-            )
-        else:
-            element = phx.discretization.lagrange_element("hexahedron", 2)
-        field = phx.discretization.FiniteElementFieldSpec(
-            name,
-            {block.name: element for block in carrier.mesh.blocks},
-            component_shape=(2,) if field_kind == "mapped-vector" else (),
-        )
-        precision = FiniteElementPrecisionPolicy()
-        original = phx.discretization.FiniteElementPlan(
-            carrier.mesh,
-            field,
-            coordinate_spec=carrier.geometry,
-            precision_policy=precision,
-        ).prepare(numeric_version="accepted-7")
-        owner = "finite_element"
-        finite_element_fields = (field,)
-        precision_policy = precision
-        coefficient_space = original.field_spaces[0].vector_space
-        assert isinstance(coefficient_space, ArraySpace)
-        shape = coefficient_space.shape
-        coefficients = (
-            np.arange(prod(shape), dtype=np.float64).reshape(shape) * 0.125 + 1.0
-        )
-        maximum_order = 1
-    coefficients.flags.writeable = False
-    fields["physical-coefficients"] = coefficients
-    coefficient_binding = prepare_meshing_field_index_binding(
-        carrier,
-        "mesh/cell_ids"
-        if field_kind.startswith("fv")
-        else "field/global_coefficient_ids",
-        field_space=original.field_spaces[0],
-    )
-    roles = [
-        MeshingFieldStateRole(
-            "physical-coefficients",
-            name,
-            "coefficients",
-            shape,
-            coefficients.dtype,
-            7,
-            index_binding=coefficient_binding,
-        )
-    ]
-    history_policy = "none"
-    if field_kind == "mapped-scalar":
-        assert isinstance(original, FiniteElementDiscretization)
-        boundary_values = np.asarray(original.dof_maps[0].dof_coordinates) @ np.asarray(
-            (1.0, 2.0, 3.0)
-        )
-        boundary_mask = np.asarray(original.dof_maps[0].boundary_dof_mask).copy()
-        boundary_values.flags.writeable = boundary_mask.flags.writeable = False
-        fields["essential-values"] = boundary_values
-        fields["essential-mask"] = boundary_mask
-        roles.extend(
-            (
-                MeshingFieldStateRole(
-                    "essential-values",
-                    name,
-                    "boundary-values",
-                    boundary_values.shape,
-                    boundary_values.dtype,
-                    7,
-                    index_binding=coefficient_binding,
-                ),
-                MeshingFieldStateRole(
-                    "essential-mask",
-                    name,
-                    "boundary-mask",
-                    boundary_mask.shape,
-                    boundary_mask.dtype,
-                    7,
-                    index_binding=coefficient_binding,
-                ),
-            )
-        )
-    if field_kind.endswith("history"):
-        if not isinstance(original, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError(
-                "Material-history restart requires finite-volume cell centers."
-            )
-        fraction = 0.2 + 0.1 * np.asarray(original.cell_centers)[:, 0]
-        history = np.column_stack((fraction, 1.0 - fraction))
-        history.flags.writeable = False
-        fields["material-history"] = history
-        fields["state-epoch"] = np.asarray(7, dtype=np.int64)
-        roles.extend(
-            (
-                MeshingFieldStateRole(
-                    "material-history",
-                    name,
-                    "material-history",
-                    history.shape,
-                    history.dtype,
-                    7,
-                    (phx.units.ONE,),
-                    index_binding=prepare_meshing_field_index_binding(
-                        carrier, "mesh/cell_ids"
-                    ),
-                ),
-                MeshingFieldStateRole(
-                    "state-epoch", name, "state-epoch", (), np.dtype("int64"), 7
-                ),
-            )
-        )
-        history_policy = "material-history"
-    units = (phx.units.KELVIN,)
-    if field_kind == "fv-euler-history":
-        density_unit = phx.units.derived_unit(
-            "kg/m^3", ((phx.units.KILOGRAM, 1), (phx.units.METER, -3))
-        )
-        momentum_unit = phx.units.derived_unit(
-            "kg/(m^2*s)",
-            ((phx.units.KILOGRAM, 1), (phx.units.METER, -2), (phx.units.SECOND, -1)),
-        )
-        units = (
-            density_unit,
-            momentum_unit,
-            momentum_unit,
-            momentum_unit,
-            phx.units.PASCAL,
-        )
-    declaration = MeshingFieldDeclaration(
-        part_name=part.name,
-        topology_id=carrier.mesh.topology_id,
-        geometry_layout_id=carrier.geometry.geometry_layout_id,
-        field_space_ids=frozendict({name: original.field_spaces[0].field_space_id}),
-        value_units=frozendict({name: units}),
-        maximum_derivative_orders=frozendict({name: maximum_order}),
-        branch_policy=BranchDifferentiationPolicy.SMOOTH,
-        trace_policy=FieldTracePolicy("cell-sided"),
-        state_roles=tuple(roles),
-        history_policy=history_policy,
-        numeric_version="accepted-7",
-        source_wall_policy=wall,
-        owner=owner,
-        finite_element_fields=finite_element_fields,
-        precision_policy=precision_policy,
-        finite_volume_field_name=finite_volume_field_name,
-        finite_volume_component_names=finite_volume_component_names,
-        finite_volume_coordinate_policy=coordinate_policy,
-        reconstruction_policy=reconstruction_policy,
-        reconstruction_policy_id=reconstruction_policy_id,
-        finite_volume_system=system,
-        finite_volume_flux_policy=flux_policy,
-        finite_volume_boundaries=boundary_policies,
-    )
-    companion_roles = tuple(
-        replace(role, entry_name=f"companion/{role.entry_name}") for role in roles
-    )
-    companion_declaration = replace(
-        declaration,
-        part_name=companion.name,
-        source_wall_policy=companion_wall,
-        state_roles=companion_roles,
-    )
-    fields.update(
-        {f"companion/{key}": value.copy() for key, value in tuple(fields.items())}
-    )
-    report = carrier.certification
-    assert report is not None
-    closure = {
-        "certification_inputs": report.request,
-        "report": report,
-        "associations": carrier.associations,
-        "registration": registration,
-        "generation_sources": {part.name: source, companion.name: source},
-        "primary_generation_part": part.name,
-        "generation_specifications": {
-            part.name: specification,
-            companion.name: specification,
-        },
-        "generation_options": {part.name: options, companion.name: options},
-        "field_declarations": {
-            part.name: declaration,
-            companion.name: companion_declaration,
-        },
-        "accepted_data": {"fields": fields},
-    }
-    limits = ArrayArchiveLimits(
-        max_members=8192, max_manifest_nesting=128, max_manifest_bytes=1 << 26
-    )
-    if field_kind.endswith("history"):
-        corrupted = dict(fields)
-        corrupted["state-epoch"] = np.asarray(8, dtype=np.int64)
-        with pytest.raises(ValueError, match="state epoch"):
-            validate_meshing_source_closure(
-                {**closure, "accepted_data": {"fields": corrupted}},
-                limits=limits,
-            )
-    receipt = write_meshing_source_closure(
-        tmp_path / f"{field_kind}.zip", closure, limits=limits
-    )
-    restored = read_meshing_source_closure(
-        receipt.path, expected_content_id=receipt.content_id, limits=limits
-    )
-    cold_registration = restored["registration"].prepare()
-    cold_registration.require_complete()
-    cold_carrier = cold_registration.assembly.part(part.name).carrier
-    assert isinstance(cold_carrier, CellMeshingResult)
-    fresh_report = recertify_restored_meshing_source(
-        restored["certification_inputs"],
-        cold_carrier.mesh,
-        cold_carrier.geometry,
-        cold_carrier.audit,
-        archive_limits=limits,
-    )
-    assert fresh_report.report_id == report.report_id
-    cold_declaration = restored["field_declarations"][part.name]
-    prepared, policy = prepare_meshing_field_owner(cold_declaration, cold_carrier)
-    actual_coefficients = restored["accepted_data"]["fields"]["physical-coefficients"]
-    np.testing.assert_array_equal(actual_coefficients, coefficients)
-    assert not actual_coefficients.flags.writeable
-    assert (
-        cold_declaration.value_units[name][0].unit_id
-        == declaration.value_units[name][0].unit_id
-    )
-    if field_kind.startswith("fv"):
-        assert isinstance(original, UnstructuredFiniteVolumeDiscretization)
-        assert isinstance(prepared, UnstructuredFiniteVolumeDiscretization)
-        np.testing.assert_array_equal(prepared.cell_global_ids, original.cell_global_ids)
-        np.testing.assert_allclose(
-            np.sum(
-                np.asarray(prepared.cell_volumes)[:, None] * actual_coefficients, axis=0
-            ),
-            np.sum(np.asarray(original.cell_volumes)[:, None] * coefficients, axis=0),
-            atol=1e-13,
-        )
-        assert type(policy) is PiecewiseConstantReconstruction
-        from phydrax.discretization.finite_volume import CellPolynomialReconstructionPlan
-
-        with pytest.raises(ValueError, match="reconstruction family"):
-            replace(
-                cold_declaration,
-                reconstruction_policy=CellPolynomialReconstructionPlan(1),
-            )
-        if field_kind.endswith("history"):
-            np.testing.assert_array_equal(
-                restored["accepted_data"]["fields"]["material-history"],
-                fields["material-history"],
-            )
-            assert int(restored["accepted_data"]["fields"]["state-epoch"]) == 7
-            history_role = next(
-                role
-                for role in cold_declaration.state_roles
-                if role.role == "material-history"
-            )
-            history_binding = history_role.index_binding
-            assert history_binding is not None
-            reordered_bank = replace(
-                history_binding,
-                index_values=np.asarray(history_binding.index_values)[::-1].copy(),
-            )
-            wrong_roles = tuple(
-                replace(role, index_binding=reordered_bank)
-                if role is history_role
-                else role
-                for role in cold_declaration.state_roles
-            )
-            with pytest.raises(ValueError, match="row identity/order"):
-                prepare_meshing_field_owner(
-                    replace(cold_declaration, state_roles=wrong_roles), cold_carrier
-                )
-            dynamics = prepare_meshing_field_dynamics(cold_declaration, cold_carrier)
-            original_dynamics = prepare_meshing_field_dynamics(declaration, carrier)
-            cold_rate = np.asarray(dynamics(0.0, actual_coefficients))
-            original_rate = np.asarray(original_dynamics(0.0, coefficients))
-            np.testing.assert_allclose(cold_rate, original_rate, atol=1e-13)
-            volumes = np.asarray(prepared.cell_volumes)
-            np.testing.assert_allclose(np.sum(volumes * cold_rate[:, 0]), 0.0, atol=1e-13)
-            np.testing.assert_allclose(
-                np.sum(volumes * cold_rate[:, -1]), 0.0, atol=1e-13
-            )
-            next_state = actual_coefficients + 1e-3 * cold_rate
-            restored_system = cold_declaration.finite_volume_system
-            assert isinstance(restored_system, EulerSystem)
-            assert bool(np.all(restored_system.admissible(next_state)))
-            np.testing.assert_allclose(
-                np.sum(volumes[:, None] * next_state[:, (0, -1)], axis=0),
-                np.sum(volumes[:, None] * actual_coefficients[:, (0, -1)], axis=0),
-                atol=1e-13,
-            )
-    else:
-        assert isinstance(original, FiniteElementDiscretization)
-        assert isinstance(prepared, FiniteElementDiscretization)
-        for block in carrier.mesh.blocks:
-            sites = np.mean(
-                np.asarray(carrier.mesh.coordinates)[np.asarray(block.vertices)], axis=1
-            )
-            before = prepare_finite_element_field_reconstruction(
-                original, name, block_name=block.name
-            )
-            after = prepare_finite_element_field_reconstruction(
-                prepared, name, block_name=block.name
-            )
-            np.testing.assert_allclose(
-                after.evaluate(actual_coefficients, sites).values,
-                before.evaluate(coefficients, sites).values,
-                atol=1e-12,
-            )
-            derivative = (1, 0, 0)
-            np.testing.assert_allclose(
-                after.derivative(actual_coefficients, sites, derivative).values,
-                before.derivative(coefficients, sites, derivative).values,
-                atol=1e-12,
-            )
-        wrong = phx.discretization.FiniteElementFieldSpec(
-            name,
-            {
-                block.name: phx.discretization.lagrange_element(block.cell_kind, 1)
-                for block in cold_carrier.mesh.blocks
-            },
-        )
-        with pytest.raises(ValueError):
-            prepare_meshing_field_owner(
-                replace(cold_declaration, finite_element_fields=(wrong,)), cold_carrier
-            )
-        if field_kind == "mapped-scalar":
-
-            def harmonic(points: jax.Array, /) -> jax.Array:
-                return points @ jnp.asarray((1.0, 2.0, 3.0))
-
-            form = phx.equations.FiniteElementForm(
-                "cold-physical-diffusion",
-                name,
-                (phx.equations.DiffusionAction(name, 1.0),),
-            )
-            problem = phx.equations.compile_finite_element_problem(
-                form,
-                prepared,
-                constraint=phx.discretization.dirichlet_constraint(
-                    prepared,
-                    name,
-                    boundary_mask=restored["accepted_data"]["fields"]["essential-mask"],
-                ),
-                dirichlet_values=restored["accepted_data"]["fields"]["essential-values"],
-            )
-            operator, rhs = problem.linear_system()
-            solved = phx.linalg.solve(
-                operator,
-                rhs,
-                policy=phx.linalg.LinearSolvePolicy(
-                    tolerance=phx.linalg.TolerancePolicy(relative=1e-12, absolute=1e-13),
-                ),
-            )
-            assert bool(jnp.all(solved.successful))
-            np.testing.assert_allclose(
-                problem.expand(solved.value),
-                harmonic(prepared.dof_maps[0].dof_coordinates),
-                atol=1e-10,
-            )
-
-
-def test_single_native_part_physical_archive_reprepares_without_registration(
-    tmp_path: Path,
-) -> None:
-    from dataclasses import replace
-
-    import phydrax as phx
-    from phydrax._array_archive import ArrayArchiveLimits
-    from phydrax._differentiation import BranchDifferentiationPolicy
-    from phydrax._frozendict import frozendict
-    from phydrax.discretization._views import FieldTracePolicy
-    from phydrax.discretization.fem._generic import (
-        FiniteElementFieldSpec,
-        FiniteElementPlan,
-    )
-    from phydrax.discretization.fem._precision import FiniteElementPrecisionPolicy
-    from phydrax.discretization.fem._reference import lagrange_element
-    from phydrax.lifecycle._meshing_field_records import (
-        MeshingFieldDeclaration,
-        MeshingFieldStateRole,
-        prepare_meshing_field_index_binding,
-        prepare_meshing_field_owner,
-        validate_meshing_field_declarations,
-    )
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        write_meshing_source_closure,
-    )
-
-    part, source, specification, options = _native_family_generation("plc")
-    carrier = part.carrier
-    assert isinstance(carrier, phx.meshing.CellMeshingResult)
-    field = FiniteElementFieldSpec("temperature", lagrange_element("tetrahedron", 1))
-    precision = FiniteElementPrecisionPolicy()
-    original = FiniteElementPlan(
-        carrier.mesh,
-        (field,),
-        coordinate_spec=carrier.geometry,
-        precision_policy=precision,
-    ).prepare(numeric_version="accepted-7")
-    coefficient_space = original.field_spaces[0].vector_space
-    assert isinstance(coefficient_space, phx.linalg.ArraySpace)
-    shape = coefficient_space.shape
-    coefficients = np.full(shape, 42.0, dtype=np.float64)
-    history = np.full(shape, 37.0, dtype=np.float64)
-    coefficient_binding = prepare_meshing_field_index_binding(
-        carrier, "mesh/vertex_ids", field_space=original.field_spaces[0]
-    )
-    history_binding = prepare_meshing_field_index_binding(carrier, "mesh/vertex_ids")
-    roles = (
-        MeshingFieldStateRole(
-            "temperature",
-            "temperature",
-            "coefficients",
-            shape,
-            np.dtype(np.float64),
-            7,
-            index_binding=coefficient_binding,
-        ),
-        MeshingFieldStateRole(
-            "material-temperature",
-            "temperature",
-            "material-history",
-            shape,
-            np.dtype(np.float64),
-            7,
-            value_units=(phx.units.KELVIN,),
-            index_binding=history_binding,
-        ),
-        MeshingFieldStateRole(
-            "accepted-epoch", "temperature", "state-epoch", (), np.dtype(np.int64), 7
-        ),
-    )
-    declaration = MeshingFieldDeclaration(
-        part_name=part.name,
-        owner="finite_element",
-        topology_id=carrier.mesh.topology_id,
-        geometry_layout_id=carrier.geometry.geometry_layout_id,
-        field_space_ids=frozendict(
-            {"temperature": original.field_spaces[0].field_space_id}
-        ),
-        value_units=frozendict({"temperature": (phx.units.KELVIN,)}),
-        maximum_derivative_orders=frozendict({"temperature": 1}),
-        branch_policy=BranchDifferentiationPolicy.SMOOTH,
-        trace_policy=FieldTracePolicy("cell-sided"),
-        state_roles=roles,
-        history_policy="material-history",
-        numeric_version="accepted-7",
-        finite_element_fields=(field,),
-        precision_policy=precision,
-    )
-    report = carrier.certification
-    assert report is not None
-    closure = {
-        "certification_inputs": report.request,
-        "report": report,
-        "associations": carrier.associations,
-        "generation_part": part,
-        "generation_source": source,
-        "generation_specification": specification,
-        "generation_options": options,
-        "field_declarations": {part.name: declaration},
-        "accepted_data": {
-            "fields": {
-                "temperature": coefficients,
-                "material-temperature": history,
-                "accepted-epoch": np.asarray(7, dtype=np.int64),
-            }
-        },
-    }
-    validate_meshing_field_declarations(closure)
-    limits = ArrayArchiveLimits(
-        max_members=8192, max_manifest_nesting=128, max_manifest_bytes=1 << 26
-    )
-    receipt = write_meshing_source_closure(
-        tmp_path / "native-physical.zip", closure, limits=limits
-    )
-    restored = read_meshing_source_closure(
-        receipt.path, expected_content_id=receipt.content_id, limits=limits
-    )
-    assert "registration" not in restored
-    prepared, _ = prepare_meshing_field_owner(
-        restored["field_declarations"][part.name], restored["generation_part"].carrier
-    )
-    assert (
-        prepared.field_spaces[0].field_space_id == original.field_spaces[0].field_space_id
-    )
-    np.testing.assert_array_equal(
-        restored["accepted_data"]["fields"]["temperature"], coefficients
-    )
-    np.testing.assert_array_equal(
-        restored["accepted_data"]["fields"]["material-temperature"], history
-    )
-    assert int(np.asarray(restored["accepted_data"]["fields"]["accepted-epoch"])) == 7
-    stale = dict(restored)
-    stale["field_declarations"] = {
-        part.name: replace(
-            restored["field_declarations"][part.name],
-            topology_id="other-accepted-topology",
-        )
-    }
-    with pytest.raises(ValueError):
-        validate_meshing_field_declarations(stale)
-    wrong_epoch = dict(restored)
-    wrong_epoch["accepted_data"] = {
-        "fields": {
-            **restored["accepted_data"]["fields"],
-            "accepted-epoch": np.asarray(8, dtype=np.int64),
-        }
-    }
-    with pytest.raises(ValueError):
-        validate_meshing_field_declarations(wrong_epoch)
-
-
 def _implicit_association_transfer() -> Any:
     import phydrax as phx
     from phydrax.geometry.implicit._analytic_profile import AnalyticImplicitProfile
@@ -3074,7 +1551,7 @@ def _implicit_association_transfer() -> Any:
 
     geometry = phx.geometry.Sphere(
         (0.0, 0.0, 0.0), 0.371, feature_id="archive-sphere"
-    ).compile()
+    ).compile(coordinate_unit=METER)
     profile = AnalyticImplicitProfile(
         geometry, phx.SpatialCoordinateContract.si(), cover_radius=0.05
     )
@@ -3106,7 +1583,7 @@ def test_implicit_association_transfer_archive_restores_current_source_authority
         restored.profile.boundary_distance(points).upper,
         (0.371, 0.0, 0.629),
         rtol=0.0,
-        atol=1.0e-14,
+        atol=RESTORED_ANALYTIC_PROFILE_DISTANCE_ATOL,
     )
 
 
@@ -3153,7 +1630,7 @@ def test_source_archive_refuses_malformed_manifest_before_reading_members(
         case "unknown-type":
             root["type"] = "unregistered:source"
         case "extra-item":
-            # An authority entry no registered source field owns.
+            # An entry no registered source field owns.
             root["items"].append(0)
         case "array-rank" | "array-extent":
             array = next(node for node in recipe["nodes"] if node["kind"] == "array")
@@ -3166,7 +1643,9 @@ def test_source_archive_refuses_malformed_manifest_before_reading_members(
             first_bank = next(iter(manifest["arrays"].values()))
             first_bank["dtype"] = "uint8" if first_bank["dtype"] != "uint8" else "float64"
         case _:
-            raise AssertionError(f"Uncovered manifest malformation {malformation!r}.")
+            raise AssertionError(
+                f"fixture.malformation must name a manifest corruption; got {malformation!r}"
+            )
     manifest["recipe"] = json.dumps(recipe, separators=(",", ":"), sort_keys=True)
     members["manifest.json"] = json.dumps(manifest, indent=2, sort_keys=True).encode(
         "utf-8"
@@ -3186,3 +1665,124 @@ def test_source_archive_refuses_malformed_manifest_before_reading_members(
     )
     with pytest.raises(ArrayArchiveCorruptionError, match=expected):
         read_meshing_source_closure(receipt.path, expected_content_id=receipt.content_id)
+
+
+def test_plc_restart_reprepares_with_canonical_limits_and_fresh_scope_ownership(
+    tmp_path: Path,
+) -> None:
+    from phydrax._array_archive import ArrayArchiveLimits
+    from phydrax._meshcore import meshcore_available, MeshcoreStatus, NativeExecutionScope
+    from phydrax.lifecycle._meshing_sources import (
+        read_meshing_source_closure,
+        write_meshing_source_closure,
+    )
+    from phydrax.meshing._native_preparation import native_preparation_ledger
+    from phydrax.meshing._volume_generation import prepare_plc_source
+
+    if not meshcore_available():
+        pytest.skip("native meshcore library is unavailable")
+    part, source, specification, options = native_family_generation("plc")
+    assert isinstance(source, NativePlcSource)
+    assert isinstance(specification, VolumeMeshingSpec)
+    assert isinstance(part.carrier, CellMeshingResult)
+    report = part.carrier.certification
+    assert report is not None
+    archive_limits = ArrayArchiveLimits(
+        max_members=4096, max_manifest_nesting=128, max_manifest_bytes=1 << 26
+    )
+    receipt = write_meshing_source_closure(
+        tmp_path / "scoped-plc",
+        {
+            "certification_inputs": report.request,
+            "report": report,
+            "associations": part.carrier.associations,
+            "generation_part": part,
+            "generation_source": source,
+            "generation_specification": specification,
+            "generation_options": options,
+        },
+        limits=archive_limits,
+    )
+    restored = read_meshing_source_closure(
+        receipt.path,
+        expected_content_id=receipt.content_id,
+        limits=archive_limits,
+    )
+    restored_source = restored["generation_source"]
+    restored_specification = restored["generation_specification"]
+    assert isinstance(restored_source, NativePlcSource)
+    assert isinstance(restored_specification, VolumeMeshingSpec)
+    assert restored_source.source_id == source.source_id
+    assert restored_source.source_revision == source.source_revision
+    assert restored_source.complex.complex_id == source.complex.complex_id
+    assert restored_specification.specification_id == specification.specification_id
+    assert restored_specification.limits.limits_id == specification.limits.limits_id
+    limits = specification.limits
+    lowered = limits.native_limits()
+    assert (
+        lowered.maximum_work_units,
+        lowered.maximum_geometry_queries,
+        lowered.maximum_cavity_cells,
+        lowered.maximum_managed_bytes,
+        lowered.maximum_seconds,
+    ) == (
+        limits.maximum_work_units,
+        limits.maximum_geometry_queries,
+        limits.maximum_cavity_cells,
+        limits.maximum_scratch_bytes,
+        limits.maximum_wall_seconds,
+    )
+    predecessor = NativeExecutionScope(lowered)
+    with predecessor, predecessor.host_workspace():
+        original_preparation = prepare_plc_source(
+            source.complex,
+            source.source_id,
+            source.source_revision,
+            part.carrier.coordinate_contract,
+            limits=limits,
+            scope=predecessor,
+        )
+        original_ledger = native_preparation_ledger(predecessor)
+        original_ledger.remember_live(predecessor, original_preparation)
+        assert original_ledger.live_contains(original_preparation)
+        assert predecessor.remaining().remaining_work_units < limits.maximum_work_units
+    assert predecessor.completed_evidence().status is MeshcoreStatus.OK
+    assert not original_ledger.live_contains(original_preparation)
+
+    successor = NativeExecutionScope(restored_specification.limits.native_limits())
+    with successor, successor.host_workspace():
+        restored_ledger = native_preparation_ledger(successor)
+        assert restored_ledger is not original_ledger
+        assert not restored_ledger.live_contains(original_preparation)
+        renewed = prepare_plc_source(
+            restored_source.complex,
+            restored_source.source_id,
+            restored_source.source_revision,
+            part.carrier.coordinate_contract,
+            limits=restored_specification.limits,
+            scope=successor,
+        )
+        assert renewed is not original_preparation
+        assert renewed.prepared_id == original_preparation.prepared_id
+        assert (
+            renewed.association_transfer.transfer_id
+            == original_preparation.association_transfer.transfer_id
+        )
+        np.testing.assert_array_equal(
+            renewed.input_polygons, original_preparation.input_polygons
+        )
+        np.testing.assert_array_equal(
+            renewed.association_transfer.triangle_vertices,
+            original_preparation.association_transfer.triangle_vertices,
+        )
+        restored_ledger.remember_live(successor, renewed)
+        assert restored_ledger.live_contains(renewed)
+        assert not restored_ledger.live_contains(original_preparation)
+        assert (
+            successor.remaining().remaining_work_units
+            < restored_specification.limits.maximum_work_units
+        )
+        assert successor.parent is None
+    assert successor.completed_evidence().status is MeshcoreStatus.OK
+    assert not restored_ledger.live_contains(renewed)
+    assert predecessor.limits is lowered

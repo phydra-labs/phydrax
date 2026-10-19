@@ -8,11 +8,12 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.differential import hessian
+from phydrax.units import METER
 
 
 def _square() -> phx.domain.GeometryDomain:
     return phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
 

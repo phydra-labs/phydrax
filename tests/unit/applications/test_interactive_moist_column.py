@@ -361,14 +361,12 @@ def test_state_precision_survives_mixed_parameter_precision_and_native_scan() ->
             for leaf in jax.tree.leaves(native.final_state):
                 if eqx.is_inexact_array(leaf):
                     assert leaf.dtype == jnp.dtype(dtype)
-            # ty: ignore[no-matching-overload]
             np.testing.assert_allclose(
                 native.final_state.internal_energy,
                 final.internal_energy,
                 rtol=16 * jnp.finfo(dtype).eps,
                 atol=0.0,
             )
-            # ty: ignore[no-matching-overload]
             np.testing.assert_allclose(
                 native.final_state.slab.energy,
                 final.slab.energy,

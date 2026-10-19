@@ -8,8 +8,8 @@ A cover is a finite set of closed axis-aligned boxes with interval enclosures of
 the field value and of every gradient component. Covers record where their
 bounds come from: ``user_supplied`` bounds are trusted input, while
 ``lipschitz_enclosure`` and ``interval_arithmetic`` bounds were established by
-Phydrax routines from the owning geometry. Completeness (the boxes tile the
-declared domain) is decided exactly on the binary64 box corners.
+Phydrax routines from the geometry. Tiling of the declared domain is decided
+with rational arithmetic on the binary64 box corners.
 
 Topology premises are checked per box, never asserted by name:
 
@@ -18,7 +18,7 @@ Topology premises are checked per box, never asserted by name:
   (implicit function theorem).
 - ``small_normal_variation``: additionally the gradient enclosure ``G(B)`` of
   every box meeting the zero set satisfies ``0 not in <G(B), G(B)>`` (the
-  Plantinga-Vegter premise under which their subdivision extraction is
+  Plantinga-Vegter hypothesis under which their subdivision extraction is
   isotopic to the zero set).
 - ``directional_monotone``: every box meeting the zero set has a directional
   derivative enclosure along one supplied direction excluding zero, so the
@@ -30,7 +30,7 @@ Topology premises are checked per box, never asserted by name:
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import final, Literal, TypeAlias
+from typing import assert_never, final, Literal, Self, TypeAlias
 
 import equinox as eqx
 import jax
@@ -44,7 +44,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
 from ..discretization._topology import CellComplexTopology
-from ..typing import Dim, HostBool, HostFloat64, parse, Scope
+from ..typing import checked, Dim, HostBool, HostFloat64, parse, Scope
 from ._contracts import CompiledGeometry
 
 
@@ -68,17 +68,19 @@ class _CoverDirectionDim(Dim):
     """Directions with directional-derivative enclosures (possibly none)."""
 
 
+@checked
 def implicit_state_id(geometry: CompiledGeometry, /) -> str:
-    """Canonical identity of a compiled geometry's kernel type and design state."""
+    """Return the fingerprint of a compiled kernel type and design state."""
 
-    if not isinstance(geometry, CompiledGeometry):
-        raise TypeError("geometry must be CompiledGeometry.")
     return canonical_fingerprint(
         {
             "kind": "implicit-geometry-state",
             "kernel": type(geometry.kernel).__qualname__,
             "state": array_tree_fingerprint(
-                [np.asarray(leaf) for leaf in jax.tree_util.tree_leaves(geometry.state)]
+                [
+                    np.asarray(leaf)
+                    for leaf in jax.tree_util.tree_leaves(jax.device_get(geometry.state))
+                ]
             ),
         }
     )
@@ -97,10 +99,10 @@ def _exact_volume(lower: np.ndarray, upper: np.ndarray, /) -> Fraction:
 def _cover_completeness(
     boxes: np.ndarray, domain: np.ndarray, /
 ) -> tuple[bool, int, float]:
-    """Exact tiling test: containment, interior disjointness and volume sum.
+    """Test tiling through containment, interior disjointness and rational volume sums.
 
-    Returns ``(complete, overlapping_pairs, uncovered_volume)``. Contained boxes
-    with pairwise disjoint interiors whose exact volumes sum to the domain
+    Returns the tiling flag, overlapping-pair count, and uncovered volume. Contained boxes
+    with pairwise disjoint interiors whose rational volumes sum to the domain
     volume cover the closed domain.
     """
 
@@ -144,8 +146,9 @@ def _directional_bounds(
         return np.empty((0, dimension), dtype=np.float64), empty, empty.copy()
     if not all(supplied):
         raise ValueError(
-            "directions, directional_lower and directional_upper go together."
+            f"CertifiedImplicitCover.directional_bounds must supply directions and both interval endpoints together; got {supplied}"
         )
+    directions, lower, upper = jax.device_get((directions, lower, upper))
     scope = Scope()
     values = parse(
         np.asarray(directions, dtype=np.float64),
@@ -166,13 +169,21 @@ def _directional_bounds(
         scope=scope,
     )
     if values.shape[1] != dimension or low.shape[0] != box_count:
-        raise ValueError("Directional bounds must follow the cover boxes and dimension.")
+        raise ValueError(
+            f"CertifiedImplicitCover.directional_bounds must follow {box_count} boxes and dimension {dimension}; got {values.shape}, {low.shape}"
+        )
     if not (np.all(np.isfinite(values)) and np.all(np.isfinite(low))):
-        raise ValueError("Directional bounds must be finite.")
+        raise ValueError(
+            "CertifiedImplicitCover.directional_bounds must be finite; got nonfinite directions or lower bounds"
+        )
     if not np.all(np.isfinite(high)) or not np.all(low <= high):
-        raise ValueError("Directional bounds must be finite ordered intervals.")
+        raise ValueError(
+            "CertifiedImplicitCover.directional_bounds must be finite ordered intervals; got nonfinite or reversed upper bounds"
+        )
     if np.any(np.all(values == 0.0, axis=1)):
-        raise ValueError("Directions must be nonzero.")
+        raise ValueError(
+            "CertifiedImplicitCover.directions must be nonzero; got a zero direction"
+        )
     return values, low, high
 
 
@@ -181,8 +192,8 @@ class CertifiedImplicitCover(StrictModule, NonTrainableState):
     """Boxwise sign and regular-value evidence bound to one source state and domain.
 
     ``value_lower``/``value_upper`` enclose the field and ``gradient_lower``/
-    ``gradient_upper`` every gradient component over each closed box. ``complete``
-    holds when the boxes exactly tile ``domain`` (lower/upper corners);
+    ``gradient_upper`` every gradient component over each closed box. The tiling
+    flag holds when the boxes tile ``domain`` (lower/upper corners);
     ``certified`` additionally requires every box meeting the zero set to be
     regular. ``bound_origin`` distinguishes trusted user bounds from bounds
     established by Phydrax routines; public construction always records
@@ -231,6 +242,11 @@ class CertifiedImplicitCover(StrictModule, NonTrainableState):
         directional_upper: ArrayLike | None = None,
         _bound_origin: ImplicitBoundOrigin = "user_supplied",
     ) -> None:
+        boxes, value_lower, value_upper, gradient_lower, gradient_upper, domain = (
+            jax.device_get(
+                (boxes, value_lower, value_upper, gradient_lower, gradient_upper, domain)
+            )
+        )
         scope = Scope()
         boxes_ = parse(
             np.asarray(boxes, dtype=np.float64),
@@ -273,11 +289,17 @@ class CertifiedImplicitCover(StrictModule, NonTrainableState):
         state = canonical_identifier(state_id, "state_id")
         values = (boxes_, lower, upper, gradient_low, gradient_high, domain_)
         if not all(np.all(np.isfinite(value)) for value in values):
-            raise ValueError("Implicit cover bounds must be finite.")
+            raise ValueError(
+                "CertifiedImplicitCover.bounds must be finite; got nonfinite bounds"
+            )
         if not np.all(boxes_[:, 0] < boxes_[:, 1]) or not np.all(domain_[0] < domain_[1]):
-            raise ValueError("Implicit cover boxes require strict lower/upper bounds.")
+            raise ValueError(
+                "CertifiedImplicitCover.boxes must have strict lower/upper bounds; got nonpositive extent"
+            )
         if not np.all(lower <= upper) or not np.all(gradient_low <= gradient_high):
-            raise ValueError("Implicit value/gradient bounds are inconsistent.")
+            raise ValueError(
+                "CertifiedImplicitCover.bounds must be ordered intervals; got reversed value or gradient bounds"
+            )
         complete, overlaps, uncovered = _cover_completeness(boxes_, domain_)
         directions_, directional_low, directional_high = _directional_bounds(
             boxes_.shape[0],
@@ -325,6 +347,29 @@ class CertifiedImplicitCover(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[Self], value: CertifiedImplicitCover, /) -> Self:
+        """Revalidate retained enclosure bounds with their recorded provenance.
+
+        Derived tiling, regularity, and identity fields are recomputed by the
+        constructor; the archive admission boundary compares them with storage.
+        """
+        return cls(
+            value.boxes,
+            value.value_lower,
+            value.value_upper,
+            value.gradient_lower,
+            value.gradient_upper,
+            domain=value.domain,
+            source_id=value.source_id,
+            state_id=value.state_id,
+            directions=value.directions,
+            directional_lower=value.directional_lower,
+            directional_upper=value.directional_upper,
+            _bound_origin=value.bound_origin,
+        )
+
     @property
     def established(self) -> bool:
         return self.bound_origin != "user_supplied"
@@ -333,10 +378,12 @@ class CertifiedImplicitCover(StrictModule, NonTrainableState):
         """Refuse use of this cover for another source or design state."""
 
         if source_id != self.source_id or state_id != self.state_id:
-            raise ValueError("Implicit cover is stale for this source or state.")
+            raise ValueError(
+                f"CertifiedImplicitCover.binding must match source/state {(self.source_id, self.state_id)}; got {(source_id, state_id)}"
+            )
 
 
-def _established_implicit_cover(
+def established_implicit_cover(
     boxes: ArrayLike,
     value_lower: ArrayLike,
     value_upper: ArrayLike,
@@ -370,6 +417,7 @@ def _established_implicit_cover(
     )
 
 
+@checked
 def establish_implicit_cover(
     geometry: CompiledGeometry,
     boxes: ArrayLike,
@@ -378,27 +426,26 @@ def establish_implicit_cover(
     domain: ArrayLike,
     source_id: str,
 ) -> CertifiedImplicitCover:
-    """Establish value and gradient enclosures from the owner's Lipschitz bound.
+    """Establish value and gradient enclosures from the field's Lipschitz bound.
 
-    Requires a reliable field certificate with owner-established Lipschitz and
-    evaluation-error bounds ``L`` and ``e``. Each box gets
+    Requires a reliable field certificate with representation-derived Lipschitz
+    and evaluation-error bounds ``L`` and ``e``. Each box gets
     ``phi(center) +- (L r + e)`` for half-diagonal ``r`` and the gradient
     enclosure ``[-L, L]`` per component, which is valid but never regular:
     regular-value premises need sharper gradient enclosures (for example from
     interval arithmetic).
     """
 
-    if not isinstance(geometry, CompiledGeometry):
-        raise TypeError("geometry must be CompiledGeometry.")
     certificate = geometry.field_certificate
     if not certificate.bounds_established or certificate.validity_region != "all_space":
         raise ValueError(
-            "Lipschitz enclosures need owner-established global Lipschitz and "
-            "evaluation-error bounds."
+            f"establish_implicit_cover.geometry must establish global Lipschitz and evaluation-error bounds; got {certificate!r}"
         )
-    boxes_ = np.asarray(boxes, dtype=np.float64)
+    boxes_ = np.asarray(jax.device_get(boxes), dtype=np.float64)
     if boxes_.ndim != 3 or boxes_.shape[1] != 2:
-        raise ValueError("Implicit cover boxes require shape (box, 2, dimension).")
+        raise ValueError(
+            f"establish_implicit_cover.boxes must have shape (box, 2, dimension); got {boxes_.shape}"
+        )
     lipschitz = float(certificate.lipschitz_upper_bound or 0.0)
     error = float(certificate.evaluation_error or 0.0)
     center = 0.5 * (boxes_[:, 0] + boxes_[:, 1])
@@ -407,11 +454,11 @@ def establish_implicit_cover(
     # covers that displacement and the rounding of the enclosure itself.
     width = (lipschitz * radius + error) * (1.0 + 64.0 * np.finfo(np.float64).eps)
     value = np.asarray(
-        geometry.boundary_field(jnp.asarray(center, dtype=jnp.float64)),
+        jax.device_get(geometry.boundary_field(jnp.asarray(center, dtype=jnp.float64))),
         dtype=np.float64,
     ).reshape(-1)
     gradient = np.full(center.shape, lipschitz)
-    return _established_implicit_cover(
+    return established_implicit_cover(
         boxes_,
         value - width,
         value + width,
@@ -441,18 +488,18 @@ def _premise_boxes(
             monotone = (cover.directional_lower > 0.0) | (cover.directional_upper < 0.0)
             return ~cover.intersects | np.any(monotone, axis=1)
         case _:
-            raise ValueError(f"Unknown implicit topology premise {premise!r}.")
+            assert_never(premise)
 
 
 @final
 class CertifiedImplicitTopology(StrictModule, NonTrainableState):
-    """Finite topology extracted from one cover with its checked premise.
+    """Record topology extracted from one cover under a checked hypothesis.
 
-    ``premise_boxes`` marks boxes satisfying the premise. ``certified`` requires
-    a complete cover and the premise on every box; ``established`` states that
-    the cover's bounds were established by Phydrax rather than supplied. The
-    extraction routine that produced ``topology`` owns the claim that it used
-    this cover under this premise.
+    ``premise_boxes`` marks boxes satisfying the selected hypothesis.
+    ``certified`` requires a tiling cover and that hypothesis on every box;
+    ``established`` states that Phydrax established the cover's bounds. The
+    extraction routine that produced ``topology`` must have used this cover
+    under the selected hypothesis.
     """
 
     __strict_contract__ = True
@@ -466,6 +513,7 @@ class CertifiedImplicitTopology(StrictModule, NonTrainableState):
     established: bool = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cover: CertifiedImplicitCover,
@@ -474,10 +522,6 @@ class CertifiedImplicitTopology(StrictModule, NonTrainableState):
         *,
         premise: ImplicitTopologyPremise,
     ) -> None:
-        if not isinstance(cover, CertifiedImplicitCover):
-            raise TypeError("cover must be CertifiedImplicitCover.")
-        if not isinstance(topology, CellComplexTopology):
-            raise TypeError("topology must be CellComplexTopology.")
         premise_ = parse(premise, ImplicitTopologyPremise, "premise")
         satisfied = np.asarray(_premise_boxes(cover, premise_), dtype=np.bool_)
         self.cover = cover

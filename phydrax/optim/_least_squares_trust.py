@@ -259,6 +259,7 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
     def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
         return state.metrics
 
+    # Invariant: trial commit precedes radius, budget, and final-status decisions.
     @checked
     def solve(
         self,
@@ -271,7 +272,7 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
     ) -> LeastSquaresResult:
         if problem.trial_policy is not None:
             raise ValueError(
-                "This trust-region method does not implement an identified trial policy."
+                f"DoglegLeastSquares.problem.trial_policy must be None; got {type(problem.trial_policy).__name__}."
             )
         self.precision.validate_tolerance(termination.absolute_optimality)
         parameters = self.precision.state(

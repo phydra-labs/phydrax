@@ -2,24 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Independent collective acceptance of authored-patch native initial surfaces.
+"""Certify authored-patch native initial surfaces collectively.
 
-The premise is the actual source domain and generated owner rows, never an
-accepted serial mesh or a fictitious subdivision predecessor. Local chart and
-trim coverage are established by the geometry owner; cross-owner contacts use
-bounded candidate packets and exact native predicates. Canonical content stays
-on the existing sharded logical-array substrate.
-
-This route does not implement within-patch distributed CDT/cavity ownership or
-distributed PLC segment/facet recovery. Those are separate missing primitives.
+Chart and trim coverage use the source domain and generated partition rows.
+Cross-partition contacts use bounded candidate packets and native predicates;
+logical content remains on the sharded array substrate.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from functools import partial
 from itertools import combinations
-from typing import Literal, TYPE_CHECKING
+from typing import assert_never, final, Literal
 
 import equinox as eqx
 import jax
@@ -30,47 +24,56 @@ from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from numpy.typing import NDArray
 
+import phydrax.discretization._cell_geometry as _dependency_phydrax_discretization__cell_geometry
+import phydrax.discretization._cell_geometry as _owner_phydrax_discretization__cell_geometry
+import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._cell_mesh as _owner_phydrax_discretization__cell_mesh
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.discretization._coordinate_enclosure as _owner_phydrax_discretization__coordinate_enclosure
+import phydrax.geometry._domain_boundary as domain_boundary_owner
+import phydrax.geometry._embedding_state as _dependency_phydrax_geometry__embedding_state
+import phydrax.geometry._global_embedding as global_embedding_owner
+import phydrax.geometry._meshing_domain as _dependency_phydrax_geometry__meshing_domain
+import phydrax.geometry._source_fidelity as source_fidelity_owner
+import phydrax.meshing._audit as _owner_phydrax_meshing__audit
+import phydrax.meshing._audit_topology as _dependency_phydrax_meshing__audit_topology
+import phydrax.meshing._collective_organization as _owner_phydrax_meshing__collective_organization
+import phydrax.meshing._contracts as _dependency_phydrax_meshing__contracts
+import phydrax.meshing._contracts as _owner_phydrax_meshing__contracts
+import phydrax.meshing._device_adaptation as _dependency_phydrax_meshing__device_adaptation
+import phydrax.meshing._device_generation as _dependency_phydrax_meshing__device_generation
+import phydrax.meshing._distributed_generation as _dependency_phydrax_meshing__distributed_generation
+import phydrax.meshing._domain as _dependency_phydrax_meshing__domain
+import phydrax.meshing._entity_keys as entity_keys_owner
+import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
+import phydrax.meshing._metric as _dependency_phydrax_meshing__metric
+import phydrax.meshing._organization as _owner_phydrax_meshing__organization
+import phydrax.meshing._organization_records as _dependency_phydrax_meshing__organization
+import phydrax.meshing._publication_lowering as _owner_phydrax_meshing__publication_lowering
+import phydrax.meshing._result as _owner_phydrax_meshing__result
+import phydrax.meshing._scope as _owner_phydrax_meshing__scope
+import phydrax.meshing._surface_construction as surface_construction_owner
+import phydrax.meshing._trace as _owner_phydrax_meshing__trace
+import phydrax.meshing.providers._native_schedules as _dependency_phydrax_meshing_providers__native_schedules
+import phydrax.meshing.providers._native_sources as _dependency_phydrax_meshing_providers__native_sources
+import phydrax.meshing.providers._native_surface_association as surface_association_owner
+
 from .._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
     logical_array_value_collection_digest,
 )
+from .._meshcore import MeshcoreError, NativeExecutionScope
 from .._physical import SpatialCoordinateContract
+from .._resource_ticket import HostBatchTicket
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellBlock, CellGeometrySpec, CellMesh
-from ..discretization._cell_geometry import CellGeometryStorageProjection
-from ..discretization._cell_geometry_validity import certify_cell_geometry_validity
-from ..geometry._mesh_certificates import (
-    certify_global_embedding,
-    certify_source_fidelity,
-    MeshCertificateLimits,
-)
-from ..geometry._meshing_domain import MeshingDomainBoundarySource, PatchCurveUse
-from ._audit_topology import _triangle_pairs_intersect
-from ._contracts import (
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingProviderInfo,
-    SurfaceMeshingSpec,
-)
-from ._device_adaptation import _canonical_rows, _key_positions
-from ._device_generation import DeviceGenerationLayout
-from ._distributed_generation import (
-    _consensus,
-    DistributedSurfaceConstruction,
-    PreparedDistributedSurfaceGeneration,
-)
-from ._domain import CompiledSurfaceDomain
-from ._metric import interpolate_mesh_metric, metric_edge_lengths
-from ._organization import MeshLabel, MeshPatch, RegionBoundaryEvidence
+from ..typing import checked
+from ._collective_failure import collective_failure_barrier, collective_failure_decision
+from ._compliance_failure import compliance_failure
 from ._result import AbstractCollectiveMeshTheorem
-from ._surface_generation import SurfaceConstruction
-from .providers._native_options import NativeSurfaceSchedule
-from .providers._native_sources import NativeSurfaceSource
 
-
-if TYPE_CHECKING:
-    from ._result import CellMeshingResult
 
 _CHECKS = (
     "authored_source_binding",
@@ -85,27 +88,203 @@ _CHECKS = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class _LocalProof:
-    certificate_ids: tuple[str, ...]
+import phydrax._identity as _owner_phydrax__identity
+
+
+@final
+class _LocalProof(StrictModule):
+    certificate_ids: tuple[str, ...] = eqx.field(static=True)
     patch_checks: NDArray[np.bool_]
 
 
-def _failure(message: str, /) -> MeshingFailure:
-    return MeshingFailure(
-        MeshingFailureCategory.COMPLIANCE_FAILED,
-        message,
-        stage="distributed-initial-certification",
+@final
+class _InitialOwnerProof(StrictModule):
+    local: _LocalProof
+    sharding: NamedSharding = eqx.field(static=True)
+
+
+@final
+class _InitialContent(StrictModule):
+    arrays: dict[str, Array]
+    keys: tuple[Array, ...]
+    identifiers: tuple[Array, ...]
+    owners: tuple[Array, ...]
+    counts: tuple[int, ...] = eqx.field(static=True)
+    topology_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    coordinate_geometry_id: str = eqx.field(static=True)
+    checks: Array
+
+
+@final
+class _InitialContactProof(StrictModule):
+    checks: Array
+    verdict: Array
+    summary: NDArray[np.bool_]
+    raw_findings: Array
+    pairs: int = eqx.field(static=True)
+
+
+@final
+class _InitialIdentity(StrictModule):
+    organization_id: str = eqx.field(static=True)
+    content_id: str = eqx.field(static=True)
+    source_evidence_id: str = eqx.field(static=True)
+    mesh_id: str = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+
+@final
+class _InitialOwnerRejection(StrictModule):
+    failure: _leaf_phydrax_meshing__failures.MeshingFailure
+
+
+@final
+class _ContactFindings(StrictModule):
+    rows: tuple[tuple[int, int, int], ...] = eqx.field(static=True)
+    tested: int = eqx.field(static=True)
+
+
+def _remote_contact_findings(
+    points: NDArray[np.float64],
+    ids: NDArray[np.int64],
+    cell_ids: NDArray[np.int64],
+    lower: NDArray[np.float64],
+    upper: NDArray[np.float64],
+    remote_points: NDArray[np.float64],
+    remote_ids: NDArray[np.int64],
+    capacity: int,
+    tested: int,
+    maximum_candidate_pairs: int,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    /,
+) -> _ContactFindings:
+    findings: list[tuple[int, int, int]] = []
+    for packet_index in range(remote_points.shape[0]):
+        triangle = remote_points[packet_index, :, :]
+        identities = remote_ids[packet_index, :]
+        if identities[3] < 0:
+            continue
+        candidates = np.flatnonzero(
+            np.all(lower <= np.max(triangle, axis=0), axis=1)
+            & np.all(upper >= np.min(triangle, axis=0), axis=1)
+        )
+        tested += candidates.size
+        if tested > maximum_candidate_pairs:
+            findings.append((-1, -1, 2))
+            continue
+        for start in range(0, candidates.size, capacity):
+            batch = candidates[start : start + capacity]
+            joined_ids = np.concatenate((ids[batch].reshape(-1), identities[:3]))
+            unique, inverse = np.unique(joined_ids, return_inverse=True)
+            coordinates = np.empty((unique.size, 3), dtype=np.float64)
+            coordinates[inverse] = np.concatenate(
+                (points[batch].reshape((-1, 3)), triangle)
+            )
+            a = inverse[: 3 * batch.size].reshape((-1, 3))
+            b = np.broadcast_to(inverse[-3:], a.shape)
+            hit, certain = (
+                _dependency_phydrax_meshing__audit_topology.triangle_pairs_intersect(
+                    coordinates, a, b, budget=budget
+                )
+            )
+            for cell, intersects, decided in zip(
+                cell_ids[batch], hit, certain, strict=True
+            ):
+                if intersects or not decided:
+                    findings.append((int(cell), int(identities[3]), 1 if decided else 2))
+    return _ContactFindings(tuple(findings), tested)
+
+
+@final
+class _CollectiveSourcePayload(StrictModule):
+    """Bind source declarations, physical controls, and retained collective content."""
+
+    source: str = eqx.field(static=True)
+    revision: str = eqx.field(static=True)
+    compiled: str = eqx.field(static=True)
+    specification: str = eqx.field(static=True)
+    limits: str = eqx.field(static=True)
+    physical_angles: NDArray[np.float64]
+    content: str = eqx.field(static=True)
+    organization: str = eqx.field(static=True)
+
+    def fingerprint(self) -> str:
+        return canonical_fingerprint(
+            {
+                "kind": "collective-initial-source-theorem",
+                "source": self.source,
+                "revision": self.revision,
+                "compiled": self.compiled,
+                "specification": self.specification,
+                "limits": self.limits,
+                "physical_angles": array_tree_fingerprint(self.physical_angles),
+                "content": self.content,
+                "organization": self.organization,
+            }
+        )
+
+
+_INITIAL_ORGANIZATION_KEYS = (
+    "initial/source_dimensions",
+    "initial/source_indices",
+    "initial/source_parameters",
+    "initial/cell_patches",
+    "initial/edge_curves",
+)
+
+
+@final
+class _CornerSourceBinding(StrictModule):
+    rows: NDArray[np.int64]
+
+
+@final
+class _CurveSourceBinding(StrictModule):
+    rows: NDArray[np.int64]
+
+
+@final
+class _PatchSourceBinding(StrictModule):
+    rows: NDArray[np.int64]
+
+
+@final
+class _SourceBindingRows(StrictModule):
+    local_patches: np.ndarray
+    vertex_count: int = eqx.field(static=True)
+
+
+def _collective_source_payload(
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    specification: _dependency_phydrax_meshing__contracts.SurfaceMeshingSpec,
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
+    minimum_angle: float,
+    maximum_normal_angle: float,
+    content_id: str,
+    organization_id: str,
+    /,
+) -> _CollectiveSourcePayload:
+    return _CollectiveSourcePayload(
+        compiled.domain.source_id,
+        compiled.domain.source_revision,
+        compiled.compiled_id,
+        specification.specification_id,
+        limits.limits_id,
+        np.asarray((minimum_angle, maximum_normal_angle), dtype=np.float64),
+        content_id,
+        organization_id,
     )
 
 
-def _source_binding(
-    prepared: PreparedDistributedSurfaceGeneration | InitialCollectiveMeshEvidence,
-    generated: DistributedSurfaceConstruction,
+def _source_binding_contract(
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+    | InitialCollectiveMeshEvidence,
+    generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
     /,
     *,
     partition_index: int | None = None,
-) -> None:
+) -> _SourceBindingRows | None:
     domain = prepared.compiled.domain
     target = prepared.specification.target
     families = target.cell_families
@@ -117,8 +296,9 @@ def _source_binding(
         or families.allowed_transitions
         or families.allow_mixed
     ):
-        raise _failure(
-            "Initial parametric publication requires its declared affine triangle source contract."
+        raise compliance_failure(
+            "initial.target must declare affine surface triangles; got incompatible target semantics",
+            stage="distributed-initial-certification",
         )
     if (
         generated.source_id != domain.source_id
@@ -126,16 +306,20 @@ def _source_binding(
         or generated.specification_id != prepared.specification.specification_id
         or prepared.compiled.specification_id != generated.specification_id
     ):
-        raise _failure(
-            "Generated initial rows are not bound to the original source and specification."
+        raise compliance_failure(
+            "initial.source_binding must match the source revision and specification; got different identities",
+            stage="distributed-initial-certification",
         )
     construction = generated.construction
     part = jax.process_index() if partition_index is None else partition_index
     local_patches = prepared.compiled.patches[prepared.patch_owners == part]
     if construction is None:
         if local_patches.size or generated.vertex_ids.size or generated.cell_ids.size:
-            raise _failure("An authored patch owner has no actual generated rows.")
-        return
+            raise compliance_failure(
+                "initial.construction must contain the assigned patch rows; got missing construction",
+                stage="distributed-initial-certification",
+            )
+        return None
     nv, nc = construction.vertices.shape[0], construction.triangles.shape[0]
     if (
         generated.vertex_ids.shape != (nv,)
@@ -153,9 +337,19 @@ def _source_binding(
         or construction.triangle_parameters.shape != (nc, 3, 2)
         or not np.array_equal(np.unique(construction.triangle_patches), local_patches)
     ):
-        raise _failure(
-            "Initial generated IDs, chart rows, or authored patch ownership are incomplete."
+        raise compliance_failure(
+            "initial.generated_rows must have unique in-range IDs and assigned patch incidence; got inconsistent rows",
+            stage="distributed-initial-certification",
         )
+    return _SourceBindingRows(local_patches, nv)
+
+
+def _validate_source_charts(
+    construction: surface_construction_owner.SurfaceConstruction,
+    binding: _SourceBindingRows,
+    /,
+) -> _SourceBindingRows:
+    local_patches = binding.local_patches
     for (
         patch,
         charts,
@@ -169,7 +363,10 @@ def _source_binding(
         restriction_parameters,
     ) in construction.chart_triangulations:
         if patch not in local_patches:
-            raise _failure("A generated chart belongs to another authored patch owner.")
+            raise compliance_failure(
+                "initial.chart.patch must belong to this partition; got an unassigned patch",
+                stage="distributed-initial-certification",
+            )
         if (
             charts.ndim != 2
             or charts.shape[1] != 2
@@ -179,8 +376,9 @@ def _source_binding(
             or np.any(cells < 0)
             or np.any(cells >= charts.shape[0])
         ):
-            raise _failure(
-                "A generated source chart has invalid physical/chart incidence."
+            raise compliance_failure(
+                "initial.chart.incidence must align chart coordinates, points, and triangle indices; got invalid incidence",
+                stage="distributed-initial-certification",
             )
         if (
             restriction_required.shape != (charts.shape[0],)
@@ -189,9 +387,71 @@ def _source_binding(
             or restriction_edges.shape != (restriction_vertices.size, 2)
             or restriction_parameters.shape != (restriction_vertices.size, 2)
         ):
-            raise _failure(
-                "A generated source chart lost rational restriction authority."
+            raise compliance_failure(
+                "initial.chart.restrictions must align vertices, edges, and parameters; got inconsistent restriction rows",
+                stage="distributed-initial-certification",
             )
+    return binding
+
+
+def _curve_binding_coordinates(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    construction: surface_construction_owner.SurfaceConstruction,
+    binding: _CurveSourceBinding,
+    /,
+) -> NDArray[np.float64]:
+    rows = binding.rows
+    indices = construction.vertex_source_indices
+    parameters = construction.vertex_parameters
+    normalized = np.empty((rows.size, 1), dtype=np.float64)
+    for curve in np.unique(indices[rows]).tolist():
+        selected = np.flatnonzero(indices[rows] == curve)
+        owner_patch, owner_loop, owner_position = domain.curve_owners[curve]
+        use = domain.patches[owner_patch].loops[owner_loop][owner_position]
+        match use:
+            case _dependency_phydrax_geometry__meshing_domain.PatchCurveUse():
+                normalized[selected, 0] = (parameters[rows[selected], 0] - use.first) / (
+                    use.last - use.first
+                )
+            case _:
+                raise compliance_failure(
+                    "initial.curve.use must be PatchCurveUse; got a different patch loop entry",
+                    stage="distributed-initial-certification",
+                )
+    if np.any(~np.isfinite(normalized)) or np.any(
+        (normalized <= 0.0) | (normalized >= 1.0)
+    ):
+        raise compliance_failure(
+            "initial.curve.parameters must be finite and strictly interior; got invalid normalized parameters",
+            stage="distributed-initial-certification",
+        )
+    return np.asarray(
+        domain.curve_atlas.map(
+            jnp.asarray(indices[rows], dtype=jnp.int32),
+            jnp.asarray(normalized, dtype=jnp.float64),
+        ),
+        dtype=np.float64,
+    ).reshape((-1, 3))
+
+
+def _source_binding(
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+    | InitialCollectiveMeshEvidence,
+    generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+    /,
+    *,
+    partition_index: int | None = None,
+) -> None:
+    binding = _source_binding_contract(
+        prepared, generated, partition_index=partition_index
+    )
+    construction = generated.construction
+    if binding is None or construction is None:
+        return
+    binding = _validate_source_charts(construction, binding)
+    domain = prepared.compiled.domain
+    nv = binding.vertex_count
+    local_patches = binding.local_patches
     dimensions = construction.vertex_source_dimensions
     indices = construction.vertex_source_indices
     parameters = construction.vertex_parameters
@@ -202,71 +462,62 @@ def _source_binding(
         or np.any(dimensions < 0)
         or np.any(dimensions > 2)
     ):
-        raise _failure("Initial vertex source-stratum facts are incomplete.")
-    for degree in range(3):
-        rows = np.flatnonzero(dimensions == degree)
-        upper = (domain.corner_points.shape[0], len(domain.curves), len(domain.patches))[
-            degree
-        ]
+        raise compliance_failure(
+            "initial.vertex.strata must align source dimensions, indices, and parameters; got inconsistent rows",
+            stage="distributed-initial-certification",
+        )
+    strata = (
+        _CornerSourceBinding(np.flatnonzero(dimensions == 0)),
+        _CurveSourceBinding(np.flatnonzero(dimensions == 1)),
+        _PatchSourceBinding(np.flatnonzero(dimensions == 2)),
+    )
+    bounds = (domain.corner_points.shape[0], len(domain.curves), len(domain.patches))
+    for stratum, upper in zip(strata, bounds, strict=True):
+        rows = stratum.rows
         if np.any(indices[rows] < 0) or np.any(indices[rows] >= upper):
-            raise _failure(
-                "Initial vertex source-stratum identities are outside their authored domain."
+            raise compliance_failure(
+                "initial.vertex.source_indices must lie within the declared stratum; got out-of-range indices",
+                stage="distributed-initial-certification",
             )
-        if degree == 0:
-            exact = domain.corner_points[indices[rows]]
-        elif degree == 1:
-            normalized = np.empty((rows.size, 1), dtype=np.float64)
-            for curve in np.unique(indices[rows]).tolist():
-                selected = np.flatnonzero(indices[rows] == curve)
-                owner_patch, owner_loop, owner_position = domain.curve_owners[curve]
-                use = domain.patches[owner_patch].loops[owner_loop][owner_position]
-                if not isinstance(use, PatchCurveUse):
-                    raise _failure(
-                        "Initial curve facts require their actual authored curve owner."
+        match stratum:
+            case _CornerSourceBinding():
+                exact = domain.corner_points[indices[rows]]
+            case _CurveSourceBinding():
+                exact = _curve_binding_coordinates(domain, construction, stratum)
+            case _PatchSourceBinding():
+                if np.any(~np.isfinite(parameters[rows])) or not np.all(
+                    np.isin(indices[rows], local_patches)
+                ):
+                    raise compliance_failure(
+                        "initial.patch.vertices must have finite parameters on assigned patches; got invalid patch rows",
+                        stage="distributed-initial-certification",
                     )
-                normalized[selected, 0] = (parameters[rows[selected], 0] - use.first) / (
-                    use.last - use.first
-                )
-            if np.any(~np.isfinite(normalized)) or np.any(
-                (normalized <= 0.0) | (normalized >= 1.0)
-            ):
-                raise _failure(
-                    "Initial curve interiors have invalid authored parameters."
-                )
-            exact = np.asarray(
-                domain.curve_atlas.map(
-                    jnp.asarray(indices[rows], dtype=jnp.int32),
-                    jnp.asarray(normalized, dtype=jnp.float64),
-                ),
-                dtype=np.float64,
-            ).reshape((-1, 3))
-        else:
-            if np.any(~np.isfinite(parameters[rows])) or not np.all(
-                np.isin(indices[rows], local_patches)
-            ):
-                raise _failure(
-                    "Initial patch vertices do not belong to their actual owner charts."
-                )
-            exact = domain.evaluate(indices[rows], parameters[rows])
+                exact = domain.evaluate(indices[rows], parameters[rows])
+            case _:
+                assert_never(stratum)
         if not np.allclose(
             construction.vertices[rows],
             exact,
             rtol=0.0,
             atol=128 * np.finfo(np.float64).eps * domain.scale,
         ):
-            raise _failure(
-                "Initial vertex coordinates do not reproduce their authored source-stratum facts."
+            raise compliance_failure(
+                "initial.vertex.coordinates must reproduce source-stratum coordinates; got discrepancies beyond the rounding bound",
+                stage="distributed-initial-certification",
             )
 
 
 def _physical_controls(
-    prepared: PreparedDistributedSurfaceGeneration | InitialCollectiveMeshEvidence,
-    construction: SurfaceConstruction,
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+    | InitialCollectiveMeshEvidence,
+    construction: surface_construction_owner.SurfaceConstruction,
     minimum_angle: float,
     maximum_normal_angle: float,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> None:
-    """Recompute physical quantities from source charts and actual coordinates."""
+    """Recompute physical quantities from source charts and generated coordinates."""
     compiled, domain = prepared.compiled, prepared.compiled.domain
     points = construction.vertices[construction.triangles]
     charts = construction.triangle_parameters
@@ -278,18 +529,28 @@ def _physical_controls(
     metric = compiled.source_sizing.metric
     if metric is not None:
         values, _ = metric.sample(
-            construction.vertices, prepared.specification.limits.maximum_work_units
+            construction.vertices,
+            prepared.specification.limits.maximum_work_units,
+            budget=budget,
         )
         edges = construction.triangles[:, np.asarray(((0, 1), (1, 2), (2, 0)))].reshape(
             (-1, 2)
         )
         bound = metric.control.maximum_metric_edge_length or 1.0
         if np.any(
-            np.asarray(metric_edge_lengths(values, construction.vertices, edges)) > bound
+            np.asarray(
+                _dependency_phydrax_meshing__metric.metric_edge_lengths(
+                    values, construction.vertices, edges
+                )
+            )
+            > bound
         ):
-            raise _failure("Initial physical metric edge bound is not satisfied.")
+            raise compliance_failure(
+                "initial.metric.edges must satisfy the physical metric bound; got overlong edges",
+                stage="distributed-initial-certification",
+            )
         mean = np.asarray(
-            interpolate_mesh_metric(
+            _dependency_phydrax_meshing__metric.interpolate_mesh_metric(
                 values[construction.triangles],
                 np.full(construction.triangles.shape, 1.0 / 3.0, dtype=np.float64),
             )
@@ -306,13 +567,18 @@ def _physical_controls(
         np.arccos(np.clip(cosine, -1.0, 1.0))
         < minimum_angle - 256 * np.finfo(np.float64).eps
     ):
-        raise _failure("Initial physical minimum-angle control is not satisfied.")
+        raise compliance_failure(
+            "initial.minimum_angle must satisfy the physical angle control; got smaller angles",
+            stage="distributed-initial-certification",
+        )
     for patch in np.unique(construction.triangle_patches).tolist():
         rows = np.flatnonzero(construction.triangle_patches == patch)
         uv = charts[rows]
         center = np.mean(uv, axis=1)
         source_center = domain.evaluate(np.full(rows.size, patch, dtype=np.int64), center)
-        sizes = compiled.source_sizing.evaluate(domain, patch, center, source_center)
+        sizes = compiled.source_sizing.evaluate(
+            domain, patch, center, source_center, budget=budget
+        )
         midpoint_uv = 0.5 * (np.roll(uv, -1, axis=1) + np.roll(uv, -2, axis=1))
         midpoint = domain.evaluate(
             np.full(3 * rows.size, patch, dtype=np.int64), midpoint_uv.reshape((-1, 2))
@@ -325,7 +591,10 @@ def _physical_controls(
             midpoint - ends_b, axis=2
         )
         if np.any(lengths > sizes[:, None] * (1.0 + 1.0e-9)):
-            raise _failure("Initial physical source sizing control is not satisfied.")
+            raise compliance_failure(
+                "initial.sizing.edges must satisfy source sizing controls; got overlong edges",
+                stage="distributed-initial-certification",
+            )
         normals, regular = domain.oriented_normals(
             np.full(rows.size, patch, dtype=np.int64), center
         )
@@ -333,8 +602,9 @@ def _physical_controls(
             points[rows, 1] - points[rows, 0], points[rows, 2] - points[rows, 0]
         )
         if np.any(~regular) or np.any(np.sum(face * normals, axis=1) <= 0.0):
-            raise _failure(
-                "Initial physical cells do not preserve their authored source orientation."
+            raise compliance_failure(
+                "initial.cells.orientation must agree with regular source normals; got irregular or reversed cells",
+                stage="distributed-initial-certification",
             )
         requested = min(
             maximum_normal_angle,
@@ -343,15 +613,19 @@ def _physical_controls(
         if np.isfinite(requested) and np.any(
             domain.normal_turn_bounds(patch, uv) > requested
         ):
-            raise _failure("Initial continuous normal-turn control is not satisfied.")
+            raise compliance_failure(
+                "initial.normal_turn must satisfy the continuous angle control; got excessive turning",
+                stage="distributed-initial-certification",
+            )
 
 
 def _source_feature_controls(
-    prepared: PreparedDistributedSurfaceGeneration | InitialCollectiveMeshEvidence,
-    construction: SurfaceConstruction,
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+    | InitialCollectiveMeshEvidence,
+    construction: surface_construction_owner.SurfaceConstruction,
     /,
 ) -> None:
-    """Independently certify the actual native parameter chains of source curves."""
+    """Certify the native parameter chains of source curves."""
     compiled, domain = prepared.compiled, prepared.compiled.domain
     for curve, parameters in construction.curve_parameters:
         if (
@@ -362,13 +636,15 @@ def _source_feature_controls(
             or np.any(~np.isfinite(parameters))
             or np.any(np.diff(parameters) <= 0.0)
         ):
-            raise _failure(
-                "Initial source feature chains alter their authored parameter coverage."
+            raise compliance_failure(
+                "initial.feature.parameters must cover the declared curve interval in order; got invalid chains",
+                stage="distributed-initial-certification",
             )
         rows = np.flatnonzero(construction.curve_edge_curves == curve)
         if rows.size != parameters.size - 1:
-            raise _failure(
-                "Initial source feature chains omit or duplicate actual edge segments."
+            raise compliance_failure(
+                "initial.feature.edges must contain one edge per parameter interval; got inconsistent edge counts",
+                stage="distributed-initial-certification",
             )
         points = np.array(
             domain.curve_atlas.map(
@@ -388,34 +664,39 @@ def _source_feature_controls(
         if not np.allclose(
             actual, expected, rtol=0.0, atol=128 * np.finfo(np.float64).eps * domain.scale
         ):
-            raise _failure(
-                "Initial feature edge incidence differs from its actual authored curve chain."
+            raise compliance_failure(
+                "initial.feature.incidence must reproduce the source curve chain; got different endpoint coordinates",
+                stage="distributed-initial-certification",
             )
         row = np.searchsorted(compiled.curves, curve)
         if np.any(
             np.linalg.norm(actual[:, 1] - actual[:, 0], axis=1)
             > compiled.curve_sizes[row] * (1.0 + 1.0e-9)
         ):
-            raise _failure(
-                "Initial feature edges violate their original physical source sizing control."
+            raise compliance_failure(
+                "initial.feature.sizing must satisfy the physical source control; got overlong feature edges",
+                stage="distributed-initial-certification",
             )
         if np.any(
             domain.curve_interpolation_bounds(curve, parameters)
             > compiled.curve_deviations[row]
         ):
-            raise _failure(
-                "Initial feature edges lack their requested continuous source fidelity bound."
+            raise compliance_failure(
+                "initial.feature.fidelity must satisfy the requested interpolation bound; got excessive curve deviation",
+                stage="distributed-initial-certification",
             )
 
 
 def _local_proof(
-    prepared: PreparedDistributedSurfaceGeneration | InitialCollectiveMeshEvidence,
-    generated: DistributedSurfaceConstruction,
-    limits: MeshCertificateLimits,
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration
+    | InitialCollectiveMeshEvidence,
+    generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
     minimum_angle: float,
     maximum_normal_angle: float,
     /,
     *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
     partition_index: int | None = None,
 ) -> _LocalProof:
     _source_binding(prepared, generated, partition_index=partition_index)
@@ -435,12 +716,17 @@ def _local_proof(
         ),
         vertex_global_ids=generated.vertex_ids,
     )
-    geometry = CellGeometrySpec.affine(mesh)
-    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
-    embedding = certify_global_embedding(mesh, geometry, validity, limits=limits)
+    geometry = CellGeometrySpec.affine(mesh, budget=budget)
+    validity = _dependency_phydrax_discretization__cell_geometry_validity.certify_cell_geometry_validity(
+        geometry, mesh=mesh, budget=budget
+    )
+    embedding = global_embedding_owner.certify_global_embedding(
+        mesh, geometry, validity, limits=limits, budget=budget
+    )
     if embedding.status != "certified":
-        raise _failure(
-            "Initial owner physical embedding has violated or unresolved geometry predicates."
+        raise compliance_failure(
+            "initial.owner.embedding must be certified; got violated or unresolved geometry predicates",
+            stage="distributed-initial-certification",
         )
     certificates = [validity.certificate_id, embedding.certificate_id]
     for patch in np.unique(construction.triangle_patches).tolist():
@@ -457,18 +743,19 @@ def _local_proof(
             ),
             vertex_global_ids=generated.vertex_ids,
         )
-        patch_geometry = CellGeometrySpec.affine(patch_mesh)
-        source = MeshingDomainBoundarySource(
+        patch_geometry = CellGeometrySpec.affine(patch_mesh, budget=budget)
+        source = domain_boundary_owner.MeshingDomainBoundarySource(
             prepared.compiled.domain,
             (patch,),
             chart_triangulations=tuple(
                 value for value in construction.chart_triangulations if value[0] == patch
             ),
         )
-        cover = source.boundary_chart_cover(limits.maximum_source_samples)
+        cover = source.boundary_chart_cover(limits.maximum_source_samples, budget=budget)
         if not cover.complete or cover.semantics != "certified":
-            raise _failure(
-                "Initial chart chain does not independently cover the authored source trims."
+            raise compliance_failure(
+                "initial.chart.coverage must certify the declared source trims; got uncertified or missing coverage",
+                stage="distributed-initial-certification",
             )
         tolerance = float(
             prepared.compiled.patch_deviations[
@@ -482,23 +769,31 @@ def _local_proof(
                 float(np.max(cover.deviation_bounds, initial=0.0))
                 + 1024 * np.finfo(np.float64).eps * prepared.compiled.domain.scale
             )
-        fidelity = certify_source_fidelity(
-            patch_mesh, patch_geometry, source, tolerance=tolerance, limits=limits
+        fidelity = source_fidelity_owner.certify_source_fidelity(
+            patch_mesh,
+            patch_geometry,
+            source,
+            tolerance=tolerance,
+            limits=limits,
+            budget=budget,
         )
         if fidelity.status != "certified":
-            raise _failure(
-                "Initial cells lack continuous two-sided fidelity to their actual authored source."
+            raise compliance_failure(
+                "initial.cells.fidelity must certify two-sided source fidelity; got an uncertified bound",
+                stage="distributed-initial-certification",
             )
         certificates.extend((cover.cover_id, fidelity.certificate_id))
         patch_checks[np.searchsorted(prepared.compiled.patches, patch)] = True
     _source_feature_controls(prepared, construction)
-    _physical_controls(prepared, construction, minimum_angle, maximum_normal_angle)
+    _physical_controls(
+        prepared, construction, minimum_angle, maximum_normal_angle, budget=budget
+    )
     return _LocalProof(tuple(certificates), patch_checks)
 
 
 def _logical_initial_content(
-    prepared: PreparedDistributedSurfaceGeneration,
-    generated: DistributedSurfaceConstruction,
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
+    generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
     local: _LocalProof,
     sharding: NamedSharding,
     /,
@@ -512,7 +807,7 @@ def _logical_initial_content(
     str,
     Array,
 ]:
-    """Establish canonical source facts from bounded actual owner rows."""
+    """Order source-stratum facts from bounded partition rows."""
     construction = generated.construction
     vertex_capacity, cell_capacity = (
         prepared.layout.vertex_capacity,
@@ -534,8 +829,16 @@ def _logical_initial_content(
     cell_ids = _global_rows(generated.cell_ids, cell_capacity, sharding, -1)
     raw_corners = _global_rows(corners, cell_capacity, sharding, -1)
     ranks = jnp.repeat(jnp.arange(jax.process_count(), dtype=jnp.int32), cell_capacity)
-    cell_keys, cell_order, nc = _canonical_rows(cell_ids[:, None], cell_ids >= 0)
-    vertex_keys, vertex_order, nv = _canonical_rows(vertex_ids[:, None], vertex_ids >= 0)
+    cell_keys, cell_order, nc = (
+        _dependency_phydrax_meshing__device_adaptation.canonical_rows(
+            cell_ids[:, None], cell_ids >= 0
+        )
+    )
+    vertex_keys, vertex_order, nv = (
+        _dependency_phydrax_meshing__device_adaptation.canonical_rows(
+            vertex_ids[:, None], vertex_ids >= 0
+        )
+    )
     ordered = jnp.argsort(
         jnp.where(vertex_ids >= 0, vertex_ids, jnp.iinfo(jnp.int64).max), stable=True
     )
@@ -575,16 +878,31 @@ def _logical_initial_content(
         "cell_owners": ranks[cell_order],
     }
     fields = (
-        ("source_dimensions", "vertex_source_dimensions", np.int64, -1),
-        ("source_indices", "vertex_source_indices", np.int64, -1),
-        ("source_parameters", "vertex_parameters", np.float64, 0),
+        (
+            "source_dimensions",
+            None if construction is None else construction.vertex_source_dimensions,
+            np.int64,
+            -1,
+        ),
+        (
+            "source_indices",
+            None if construction is None else construction.vertex_source_indices,
+            np.int64,
+            -1,
+        ),
+        (
+            "source_parameters",
+            None if construction is None else construction.vertex_parameters,
+            np.float64,
+            0,
+        ),
     )
-    for name, attribute, dtype, fill in fields:
+    for name, source, dtype, fill in fields:
         shape = (0, 2) if name == "source_parameters" else (0,)
         value = (
             np.empty(shape, dtype=dtype)
-            if construction is None
-            else np.asarray(getattr(construction, attribute), dtype=dtype)
+            if source is None
+            else np.asarray(source, dtype=dtype)
         )
         bank = _global_rows(value, vertex_capacity, sharding, fill)
         arrays[f"initial/{name}"] = bank[vertex_order]
@@ -594,13 +912,25 @@ def _logical_initial_content(
         if equal.ndim == 2:
             equal = jnp.all(equal, axis=1)
         shared &= jnp.all(~duplicate | equal)
-    for name in (
-        "patches",
-        "charts",
-        "parameters",
-        "deviations",
-        "deviation_bounds",
-        "normal_bounds",
+    for name, source in (
+        ("patches", None if construction is None else construction.triangle_patches),
+        ("charts", None if construction is None else construction.triangle_charts),
+        (
+            "parameters",
+            None if construction is None else construction.triangle_parameters,
+        ),
+        (
+            "deviations",
+            None if construction is None else construction.triangle_deviations,
+        ),
+        (
+            "deviation_bounds",
+            None if construction is None else construction.triangle_deviation_bounds,
+        ),
+        (
+            "normal_bounds",
+            None if construction is None else construction.triangle_normal_bounds,
+        ),
     ):
         shape = (
             (0, 3, 2) if name == "parameters" else (0, 2) if name == "charts" else (0,)
@@ -608,8 +938,8 @@ def _logical_initial_content(
         dtype = np.int64 if name == "patches" else np.float64
         value = (
             np.empty(shape, dtype=dtype)
-            if construction is None
-            else np.asarray(getattr(construction, f"triangle_{name}"), dtype=dtype)
+            if source is None
+            else np.asarray(source, dtype=dtype)
         )
         arrays[f"initial/cell_{name}"] = _global_rows(
             value, cell_capacity, sharding, -1 if name == "patches" else 0
@@ -617,14 +947,18 @@ def _logical_initial_content(
     edge_columns = np.asarray(((0, 1), (0, 2), (1, 2)), dtype=np.int32)
     edge_rows = jnp.sort(canonical_corners[:, edge_columns], axis=2).reshape((-1, 2))
     edge_valid = jnp.repeat(jnp.arange(cell_keys.shape[0]) < nc, 3)
-    edge_keys, edge_order, ne = _canonical_rows(edge_rows, edge_valid)
+    edge_keys, edge_order, ne = (
+        _dependency_phydrax_meshing__device_adaptation.canonical_rows(
+            edge_rows, edge_valid
+        )
+    )
     edge_ids = jnp.where(
         jnp.arange(edge_keys.shape[0]) < ne,
         jnp.arange(edge_keys.shape[0], dtype=jnp.int64),
         -1,
     )
     edge_owners = jnp.repeat(ranks[cell_order], 3)[edge_order]
-    positions = _key_positions(
+    positions = entity_keys_owner.key_positions(
         jnp.where(edge_keys >= 0, edge_keys, jnp.iinfo(jnp.int64).max), edge_rows
     )
     incidence = (
@@ -653,8 +987,12 @@ def _logical_initial_content(
     )
     curve_keys = _global_rows(curve_edges, 3 * cell_capacity, sharding, -1)
     curve_values = _global_rows(curves, 3 * cell_capacity, sharding, -1)
-    curve_table, curve_order, curve_count = _canonical_rows(curve_keys, curve_values >= 0)
-    curve_positions = _key_positions(
+    curve_table, curve_order, curve_count = (
+        _dependency_phydrax_meshing__device_adaptation.canonical_rows(
+            curve_keys, curve_values >= 0
+        )
+    )
+    curve_positions = entity_keys_owner.key_positions(
         jnp.where(curve_table >= 0, curve_table, jnp.iinfo(jnp.int64).max), edge_keys
     )
     edge_curves = jnp.where(
@@ -676,7 +1014,7 @@ def _logical_initial_content(
         edge_curves >= 0, jnp.asarray(uses)[jnp.maximum(edge_curves, 0)], 2
     )
     reciprocal = jnp.all((jnp.arange(edge_ids.shape[0]) >= ne) | (incidence == expected))
-    curve_rows = _key_positions(
+    curve_rows = entity_keys_owner.key_positions(
         jnp.where(edge_keys >= 0, edge_keys, jnp.iinfo(jnp.int64).max), curve_table
     )
     reciprocal &= jnp.all(
@@ -691,12 +1029,17 @@ def _logical_initial_content(
             "initial/edge_physical": incidence == 1,
         }
     )
-    for name in ("deviations", "deviation_bounds"):
-        value = (
-            np.empty((0,), dtype=np.float64)
-            if construction is None
-            else getattr(construction, f"curve_edge_{name}")
-        )
+    for name, source in (
+        (
+            "deviations",
+            None if construction is None else construction.curve_edge_deviations,
+        ),
+        (
+            "deviation_bounds",
+            None if construction is None else construction.curve_edge_deviation_bounds,
+        ),
+    ):
+        value = np.empty((0,), dtype=np.float64) if source is None else source
         bank = _global_rows(value, 3 * cell_capacity, sharding)
         arrays[f"initial/edge_{name}"] = bank[
             curve_order[jnp.maximum(curve_positions, 0)]
@@ -753,13 +1096,15 @@ def _logical_initial_content(
             "geometry/routes/surface": canonical_corners,
         }
     )
-    from ..discretization._cell_geometry import coordinate_lagrange_element
-    from ..discretization._coordinate_enclosure import coordinate_source_signature
 
-    element = coordinate_lagrange_element("triangle", 1)
+    element = _owner_phydrax_discretization__cell_geometry.coordinate_lagrange_element(
+        "triangle", 1
+    )
     basis_id = canonical_fingerprint(
         {
-            "signature": coordinate_source_signature(element),
+            "signature": _owner_phydrax_discretization__coordinate_enclosure.coordinate_source_signature(
+                element
+            ),
             "arrays": array_tree_fingerprint(element),
         }
     )
@@ -797,7 +1142,7 @@ def _logical_initial_content(
 def _initial_coordinate_geometry_id(
     arrays: dict[str, Array], counts: tuple[int, ...], topology_id: str, /
 ) -> str:
-    """Bind the actual affine coordinate basis, coefficient IDs, values and routes."""
+    """Bind the affine coordinate basis, coefficient IDs, values, and routes."""
     shapes = {
         "geometry/coordinate_ids": (counts[0],),
         "geometry/coordinates": (counts[0], 3),
@@ -887,13 +1232,50 @@ _INITIAL_INPUT_FIELDS = (
 )
 
 
+def _initial_input_values(
+    construction: surface_construction_owner.SurfaceConstruction | None,
+    /,
+) -> tuple[np.ndarray, ...]:
+    """Return replay inputs in the retained field order with explicit source access."""
+    if construction is None:
+        return tuple(
+            np.empty((0, *tail), dtype=dtype) for _, dtype, tail in _INITIAL_INPUT_FIELDS
+        )
+    values = (
+        construction.vertices,
+        construction.vertex_source_dimensions,
+        construction.vertex_source_indices,
+        construction.vertex_parameters,
+        construction.chart_restriction_vertices,
+        construction.chart_restriction_edges,
+        construction.chart_restriction_endpoint_parameters,
+        construction.chart_restriction_parameters,
+        construction.triangles,
+        construction.triangle_patches,
+        construction.triangle_charts,
+        construction.triangle_parameters,
+        construction.triangle_deviations,
+        construction.triangle_deviation_bounds,
+        construction.triangle_normal_bounds,
+        construction.curve_edges,
+        construction.curve_edge_curves,
+        construction.curve_edge_deviations,
+        construction.curve_edge_deviation_bounds,
+        construction.unresolved,
+    )
+    return tuple(
+        np.asarray(value, dtype=dtype)
+        for value, (_, dtype, _) in zip(values, _INITIAL_INPUT_FIELDS, strict=True)
+    )
+
+
 def _retain_initial_inputs(
-    prepared: PreparedDistributedSurfaceGeneration,
-    generated: DistributedSurfaceConstruction,
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
+    generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
     sharding: NamedSharding,
     /,
 ) -> dict[str, Array]:
-    """Retain actual native chart/trim premises for independent cold replay."""
+    """Retain native chart and trim inputs for cold replay."""
     construction = generated.construction
     parts = prepared.partition_count
     result: dict[str, Array] = {}
@@ -910,12 +1292,9 @@ def _retain_initial_inputs(
             sharding, np.asarray((value.shape[0],), dtype=np.int64), (parts,)
         )
 
-    for name, dtype, tail in _INITIAL_INPUT_FIELDS:
-        value = (
-            np.empty((0, *tail), dtype=dtype)
-            if construction is None
-            else np.asarray(getattr(construction, name), dtype=dtype)
-        )
+    for (name, _, _), value in zip(
+        _INITIAL_INPUT_FIELDS, _initial_input_values(construction), strict=True
+    ):
         retain(name, value)
     retain("vertex_ids", generated.vertex_ids)
     retain("vertex_owners", generated.vertex_owners)
@@ -999,7 +1378,10 @@ def _global_rows(
     /,
 ) -> Array:
     if local.shape[0] > capacity:
-        raise _failure("Initial certificate rows exceed their native reserved capacity.")
+        raise compliance_failure(
+            "initial.rows must fit the reserved capacity; got excess rows",
+            stage="distributed-initial-certification",
+        )
     padded = np.full((capacity, *local.shape[1:]), fill, dtype=local.dtype)
     padded[: local.shape[0]] = local
     return jax.make_array_from_process_local_data(
@@ -1034,11 +1416,13 @@ def _exchange(
 
 
 def _cross_owner_contacts(
-    generated: DistributedSurfaceConstruction,
-    limits: MeshCertificateLimits,
+    generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
     maximum_scratch_bytes: int,
     sharding: NamedSharding,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[NDArray[np.int64], int]:
     construction = generated.construction
     points = (
@@ -1060,11 +1444,12 @@ def _cross_owner_contacts(
     )
     boxes = np.asarray(multihost_utils.process_allgather(box, tiled=False))
     # Packets have distinct int64 identity and binary64 coordinate channels.
-    # No ID is encoded as a float (large scientific IDs retain exact identity).
+    # Separate integer channels preserve IDs above the binary64 integer precision limit.
     capacity = min(256, maximum_scratch_bytes // (4 * (9 * 8 + 4 * 8)))
     if capacity < 1:
-        raise _failure(
-            "Initial intersection candidate packet exceeds the scratch budget."
+        raise compliance_failure(
+            "initial.contact_packet must fit at least one candidate within the scratch budget; got zero capacity",
+            stage="distributed-initial-certification",
         )
     findings: list[tuple[int, int, int]] = []
     tested = 0
@@ -1098,46 +1483,36 @@ def _cross_owner_contacts(
             remote_ids = _exchange(identity_packet, first, second, sharding)
             if rank != first:
                 continue
-            for triangle, identities in zip(remote_points, remote_ids, strict=True):
-                if identities[3] < 0:
-                    continue
-                candidates = np.flatnonzero(
-                    np.all(lower <= np.max(triangle, axis=0), axis=1)
-                    & np.all(upper >= np.min(triangle, axis=0), axis=1)
-                )
-                tested += candidates.size
-                if tested > limits.maximum_candidate_pairs:
-                    findings.append((-1, -1, 2))
-                    continue
-                for start in range(0, candidates.size, capacity):
-                    batch = candidates[start : start + capacity]
-                    joined_ids = np.concatenate((ids[batch].reshape(-1), identities[:3]))
-                    unique, inverse = np.unique(joined_ids, return_inverse=True)
-                    coordinates = np.empty((unique.size, 3), dtype=np.float64)
-                    coordinates[inverse] = np.concatenate(
-                        (points[batch].reshape((-1, 3)), triangle)
-                    )
-                    a = inverse[: 3 * batch.size].reshape((-1, 3))
-                    b = np.broadcast_to(inverse[-3:], a.shape)
-                    hit, certain = _triangle_pairs_intersect(coordinates, a, b)
-                    for cell, intersects, decided in zip(
-                        generated.cell_ids[batch], hit, certain, strict=True
-                    ):
-                        if intersects or not decided:
-                            findings.append(
-                                (int(cell), int(identities[3]), 1 if decided else 2)
-                            )
+            packet = _remote_contact_findings(
+                points,
+                ids,
+                generated.cell_ids,
+                lower,
+                upper,
+                remote_points,
+                remote_ids,
+                capacity,
+                tested,
+                limits.maximum_candidate_pairs,
+                budget,
+            )
+            findings.extend(packet.rows)
+            tested = packet.tested
     return np.asarray(findings, dtype=np.int64).reshape((-1, 3)), tested
 
 
 class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableState):
-    """Consumed independent source theorem and complete canonical initial content."""
+    """Certify source binding and retain collective initial mesh content."""
 
-    compiled: CompiledSurfaceDomain
-    specification: SurfaceMeshingSpec
-    authored_source: NativeSurfaceSource
-    schedule: NativeSurfaceSchedule
-    layout: DeviceGenerationLayout
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain
+    specification: _dependency_phydrax_meshing__contracts.SurfaceMeshingSpec
+    authored_source: (
+        _dependency_phydrax_meshing_providers__native_sources.NativeSurfaceSource
+    )
+    schedule: (
+        _dependency_phydrax_meshing_providers__native_schedules.NativeSurfaceSchedule
+    )
+    layout: _dependency_phydrax_meshing__device_generation.DeviceGenerationLayout
     patch_owners: NDArray[np.int32] = eqx.field(static=True)
     cell_kind: Literal["triangle"] = eqx.field(static=True)
     partition_checks: Array
@@ -1158,36 +1533,120 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
     evidence_id: str = eqx.field(static=True)
     minimum_angle: float = eqx.field(static=True)
     maximum_normal_angle: float = eqx.field(static=True)
-    limits: MeshCertificateLimits
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
     content_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        prepared: PreparedDistributedSurfaceGeneration,
-        generated: DistributedSurfaceConstruction,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
         /,
         *,
-        limits: MeshCertificateLimits | None = None,
+        limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+        | None = None,
         minimum_angle: float,
         maximum_normal_angle: float = np.inf,
     ) -> None:
-        limits_ = MeshCertificateLimits() if limits is None else limits
-        if not isinstance(
-            prepared, PreparedDistributedSurfaceGeneration
-        ) or not isinstance(generated, DistributedSurfaceConstruction):
-            raise TypeError(
-                "Initial certification consumes actual native prepared source and generated rows."
+        limits_ = (
+            _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits()
+            if limits is None
+            else limits
+        )
+        with NativeExecutionScope(limits_.native_limits()) as scope:
+            ticket = scope.batch(0)
+            ticket.settle()
+            budget = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits_.maximum_work_units,
+                maximum_memory_bytes=limits_.maximum_scratch_bytes,
             )
-        if not isinstance(limits_, MeshCertificateLimits):
-            raise TypeError("limits must be MeshCertificateLimits.")
+            with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+                self._initialize(
+                    prepared,
+                    generated,
+                    limits_=limits_,
+                    minimum_angle=minimum_angle,
+                    maximum_normal_angle=maximum_normal_angle,
+                    scope=scope,
+                    budget=budget,
+                )
+
+    def _attempt_local_proof(
+        self,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        limits_: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
+        minimum_angle: float,
+        maximum_normal_angle: float,
+        scope: NativeExecutionScope,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+        /,
+    ) -> _LocalProof | _InitialOwnerRejection:
+        try:
+            with budget.measurement():
+                remaining = scope.remaining()
+                ticket = scope.batch(
+                    min(
+                        limits_.maximum_work_units - budget.work_units,
+                        remaining.remaining_work_units,
+                    ),
+                    queries_upper=min(
+                        limits_.maximum_distance_evaluations,
+                        remaining.remaining_geometry_queries,
+                    ),
+                    bytes_upper=min(
+                        limits_.maximum_scratch_bytes, remaining.remaining_managed_bytes
+                    ),
+                )
+                with budget.bind_ticket(ticket), ticket.native_target():
+                    return _local_proof(
+                        prepared,
+                        generated,
+                        limits_,
+                        minimum_angle,
+                        maximum_normal_angle,
+                        budget=budget,
+                    )
+        except (
+            MeshcoreError,
+            _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError,
+        ) as error:
+            return _InitialOwnerRejection(
+                _dependency_phydrax_meshing__distributed_generation.initial_owner_failure(
+                    error, "distributed-initial-certification"
+                )
+            )
+        except _leaf_phydrax_meshing__failures.MeshingFailure as error:
+            return _InitialOwnerRejection(error)
+        except ValueError as error:
+            return _InitialOwnerRejection(
+                compliance_failure(str(error), stage="distributed-initial-certification")
+            )
+
+    def _certify_local_owners(
+        self,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        limits_: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
+        minimum_angle: float,
+        maximum_normal_angle: float,
+        scope: NativeExecutionScope,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+        /,
+    ) -> _InitialOwnerProof:
         if (
             not np.isfinite(minimum_angle)
             or minimum_angle < 0.0
             or minimum_angle >= np.pi / 3.0
         ):
-            raise ValueError("minimum_angle must lie in [0, pi/3).")
+            raise ValueError(
+                f"initial.minimum_angle must be finite and lie in [0, pi/3); got {minimum_angle}"
+            )
         if np.isnan(maximum_normal_angle) or maximum_normal_angle <= 0.0:
-            raise ValueError("maximum_normal_angle must be positive.")
+            raise ValueError(
+                f"initial.maximum_normal_angle must be positive and not NaN; got {maximum_normal_angle}"
+            )
         binding = canonical_fingerprint(
             (
                 prepared.compiled.compiled_id,
@@ -1212,39 +1671,62 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
             )
         )
         if np.any(bindings != bindings[0]):
-            raise _failure(
-                "Initial theorem owners disagree on their source, controls, limits, or common publication capacities."
+            raise compliance_failure(
+                "initial.owner_bindings must agree on source, controls, limits, and capacities; got different fingerprints",
+                stage="distributed-initial-certification",
             )
-        local = _LocalProof((), np.zeros(prepared.compiled.patches.shape, dtype=np.bool_))
-        failure = None
-        try:
-            local = _local_proof(
-                prepared, generated, limits_, minimum_angle, maximum_normal_angle
-            )
-        except (ValueError, MeshingFailure) as error:
-            failure = error if isinstance(error, MeshingFailure) else _failure(str(error))
-        sharding = _placement()
-        categories = tuple(MeshingFailureCategory)
-        code = 0 if failure is None else categories.index(failure.category) + 1
-        rejected = np.asarray(
-            multihost_utils.process_allgather(np.int32(code), tiled=False)
+        attempt = self._attempt_local_proof(
+            prepared,
+            generated,
+            limits_,
+            minimum_angle,
+            maximum_normal_angle,
+            scope,
+            budget,
         )
-        if np.any(rejected):
+        sharding = _placement()
+        match attempt:
+            case _LocalProof():
+                local_category = None
+            case _InitialOwnerRejection():
+                local_category = attempt.failure.category
+            case _:
+                assert_never(attempt)
+        decision = collective_failure_decision(local_category)
+        if decision.category is not None:
             rejected_codes = jax.make_array_from_process_local_data(
-                sharding, np.asarray((code,), dtype=np.int32), (jax.process_count(),)
+                sharding,
+                np.asarray((decision.code,), dtype=np.int32),
+                (jax.process_count(),),
             )
             raw_cells = _global_rows(
                 generated.cell_ids, prepared.layout.cell_capacity, sharding, -1
             )
-            raise MeshingFailure(
-                categories[int(np.min(rejected[rejected > 0])) - 1],
-                "An owner rejected the independent initial source theorem; no part was published.",
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                decision.category,
+                "initial.owner_checks must pass on every partition; got a rejected source certification",
                 stage="distributed-initial-certification",
                 logical_findings=(
                     ("initial/failed_owner_category", rejected_codes),
                     ("initial/rejected_cell_ids", raw_cells),
                 ),
             )
+        match attempt:
+            case _LocalProof():
+                return _InitialOwnerProof(attempt, sharding)
+            case _InitialOwnerRejection():
+                raise attempt.failure
+            case _:
+                assert_never(attempt)
+
+    def _prepare_collective_content(
+        self,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        owner: _InitialOwnerProof,
+        /,
+    ) -> _InitialContent:
+        local, sharding = owner.local, owner.sharding
         arrays, keys, identifiers, owners, counts, topology_id, geometry_id, checks = (
             _logical_initial_content(prepared, generated, local, sharding)
         )
@@ -1267,9 +1749,9 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
         )
         exceeded = tuple(name for name, measured, maximum in quotas if measured > maximum)
         if exceeded:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Initial canonical construction exceeds global request quotas: "
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "initial.resources must remain within global request quotas; got exceeded quotas: "
                 + ", ".join(exceeded),
                 stage="distributed-initial-resources",
                 requested=tuple((name, float(maximum)) for name, _, maximum in quotas),
@@ -1278,11 +1760,73 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
         coordinate_geometry_id = _initial_coordinate_geometry_id(
             arrays, counts, topology_id
         )
-        findings, pairs = _cross_owner_contacts(
-            generated,
-            limits_,
-            prepared.specification.limits.maximum_scratch_bytes,
-            sharding,
+        return _InitialContent(
+            arrays,
+            keys,
+            identifiers,
+            owners,
+            counts,
+            topology_id,
+            geometry_id,
+            coordinate_geometry_id,
+            checks,
+        )
+
+    def _certify_collective_contacts(
+        self,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        limits_: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
+        content: _InitialContent,
+        owner: _InitialOwnerProof,
+        scope: NativeExecutionScope,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+        /,
+    ) -> _InitialContactProof:
+        sharding, checks = owner.sharding, content.checks
+        try:
+            with budget.measurement():
+                remaining = scope.remaining()
+                ticket = scope.batch(
+                    min(
+                        limits_.maximum_work_units - budget.work_units,
+                        remaining.remaining_work_units,
+                    ),
+                    queries_upper=min(
+                        limits_.maximum_distance_evaluations,
+                        remaining.remaining_geometry_queries,
+                    ),
+                    bytes_upper=min(
+                        limits_.maximum_scratch_bytes, remaining.remaining_managed_bytes
+                    ),
+                )
+                with budget.bind_ticket(ticket), ticket.native_target():
+                    findings, pairs = _cross_owner_contacts(
+                        generated,
+                        limits_,
+                        prepared.specification.limits.maximum_scratch_bytes,
+                        sharding,
+                        budget=budget,
+                    )
+        except (
+            MeshcoreError,
+            _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError,
+        ) as error:
+            failure = (
+                _dependency_phydrax_meshing__distributed_generation.initial_owner_failure(
+                    error, "distributed-initial-contacts"
+                )
+            )
+            collective_failure_barrier(
+                failure,
+                message="An owner rejected initial native construction; no generated part was published.",
+                stage="distributed-initial-commit",
+            )
+            raise failure from error
+        collective_failure_barrier(
+            None,
+            message="An owner rejected initial native construction; no generated part was published.",
+            stage="distributed-initial-commit",
         )
         cross = np.asarray(
             multihost_utils.process_allgather(
@@ -1310,9 +1854,9 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
         )
         raw_findings = _global_rows(findings, finding_capacity, sharding, -1)
         if not np.all(summary):
-            raise MeshingFailure(
-                MeshingFailureCategory.COMPLIANCE_FAILED,
-                "Initial collective theorem failed: "
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+                "initial.collective_checks must pass; got failed checks: "
                 + ", ".join(
                     name
                     for name, passed in zip(_CHECKS, summary, strict=True)
@@ -1324,6 +1868,25 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
                     ("initial/partition_checks", checks),
                 ),
             )
+        return _InitialContactProof(checks, verdict, summary, raw_findings, pairs)
+
+    def _retain_collective_content(
+        self,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        limits_: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
+        minimum_angle: float,
+        maximum_normal_angle: float,
+        content: _InitialContent,
+        owner: _InitialOwnerProof,
+        contact: _InitialContactProof,
+        /,
+    ) -> _InitialIdentity:
+        arrays, counts = content.arrays, content.counts
+        topology_id, geometry_id = content.topology_id, content.geometry_id
+        local, sharding = owner.local, owner.sharding
+        checks, summary = contact.checks, contact.summary
+        raw_findings, pairs = contact.raw_findings, contact.pairs
         arrays["initial/cross_owner_findings"] = raw_findings
         arrays["initial/partition_checks"] = checks
         arrays["initial/intersection_pairs"] = jax.make_array_from_process_local_data(
@@ -1353,26 +1916,21 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
             parts=jax.process_count(),
         )
         if not bool(jax.device_get(fits)):
-            raise _failure(
-                "Initial publication closure exceeds its declared fixed capacity."
+            raise compliance_failure(
+                "initial.closure must fit the declared fixed capacity; got excess closure rows",
+                stage="distributed-initial-certification",
             )
         arrays.update(
             {name: jax.device_put(value, sharding) for name, value in closures.items()}
         )
-        from ._collective_organization import initial_organization_membership
 
-        arrays.update(
-            initial_organization_membership(
-                prepared.compiled, prepared.specification, arrays, counts
-            )
+        membership = _owner_phydrax_meshing__collective_organization.initial_organization_membership(
+            prepared.compiled, prepared.specification, arrays, counts
         )
-        organization_names = tuple(
-            name
-            for name in arrays
-            if name.startswith("initial/source_")
-            or name.startswith("initial/cell_patches")
-            or name.startswith("initial/edge_curves")
-            or name.startswith("organization/")
+        arrays.update(membership)
+        organization_names = (
+            *_INITIAL_ORGANIZATION_KEYS,
+            *(name for name, _ in membership),
         )
         organization_id = canonical_fingerprint(
             {
@@ -1385,21 +1943,15 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
             }
         )
         content_id = logical_array_value_collection_digest(arrays)
-        source_evidence_id = canonical_fingerprint(
-            {
-                "kind": "collective-initial-source-theorem",
-                "source": prepared.compiled.domain.source_id,
-                "revision": prepared.compiled.domain.source_revision,
-                "compiled": prepared.compiled.compiled_id,
-                "specification": prepared.specification.specification_id,
-                "limits": limits_.limits_id,
-                "physical_angles": array_tree_fingerprint(
-                    np.asarray((minimum_angle, maximum_normal_angle), dtype=np.float64)
-                ),
-                "content": content_id,
-                "organization": organization_id,
-            }
-        )
+        source_evidence_id = _collective_source_payload(
+            prepared.compiled,
+            prepared.specification,
+            limits_,
+            minimum_angle,
+            maximum_normal_angle,
+            content_id,
+            organization_id,
+        ).fingerprint()
         mesh_id = canonical_fingerprint(
             {"kind": "cell-mesh", "topology": topology_id, "geometry": geometry_id}
         )
@@ -1412,38 +1964,82 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
                 "checks": list(zip(_CHECKS, summary.tolist(), strict=True)),
             }
         )
+        return _InitialIdentity(
+            organization_id, content_id, source_evidence_id, mesh_id, evidence_id
+        )
+
+    def _initialize(
+        self,
+        prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
+        generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+        /,
+        *,
+        limits_: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
+        minimum_angle: float,
+        maximum_normal_angle: float,
+        scope: NativeExecutionScope,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> None:
+        owner = self._certify_local_owners(
+            prepared,
+            generated,
+            limits_,
+            minimum_angle,
+            maximum_normal_angle,
+            scope,
+            budget,
+        )
+        content = self._prepare_collective_content(prepared, generated, owner)
+        contact = self._certify_collective_contacts(
+            prepared, generated, limits_, content, owner, scope, budget
+        )
+        identity = self._retain_collective_content(
+            prepared,
+            generated,
+            limits_,
+            minimum_angle,
+            maximum_normal_angle,
+            content,
+            owner,
+            contact,
+        )
         self.compiled = prepared.compiled
         self.specification = prepared.specification
-        self.partition_checks = checks
-        self.global_checks = verdict
-        self.logical_arrays = tuple(sorted(arrays.items()))
-        self.entity_keys = keys
-        self.entity_ids = identifiers
-        self.entity_owners = owners
-        self.global_entity_counts = counts
-        self.topology_id = topology_id
-        self.geometry_id = geometry_id
-        self.coordinate_geometry_id = coordinate_geometry_id
-        self.global_organization_id = organization_id
-        self.source_evidence_id = source_evidence_id
-        self.mesh_id = mesh_id
+        self.partition_checks = contact.checks
+        self.global_checks = contact.verdict
+        self.logical_arrays = tuple(sorted(content.arrays.items()))
+        self.entity_keys = content.keys
+        self.entity_ids = content.identifiers
+        self.entity_owners = content.owners
+        self.global_entity_counts = content.counts
+        self.topology_id = content.topology_id
+        self.geometry_id = content.geometry_id
+        self.coordinate_geometry_id = content.coordinate_geometry_id
+        self.global_organization_id = identity.organization_id
+        self.source_evidence_id = identity.source_evidence_id
+        self.mesh_id = identity.mesh_id
         self.partition_count = jax.process_count()
         self.checks = _CHECKS
-        self.evidence_id = evidence_id
+        self.evidence_id = identity.evidence_id
         self.minimum_angle = minimum_angle
         self.maximum_normal_angle = maximum_normal_angle
         self.cell_kind = "triangle"
         self.limits = limits_
-        self.content_id = content_id
-        self.authored_source = NativeSurfaceSource(prepared.compiled.domain)
+        self.content_id = identity.content_id
+        self.authored_source = (
+            _dependency_phydrax_meshing_providers__native_sources.NativeSurfaceSource(
+                prepared.compiled.domain
+            )
+        )
         self.schedule = prepared.schedule
         self.layout = prepared.layout
         self.patch_owners = prepared.patch_owners
 
     def require_passed(self) -> None:
         if not bool(jax.device_get(jnp.all(self.global_checks))):
-            raise _failure(
-                "Initial collective evidence contains a rejected global verdict."
+            raise compliance_failure(
+                "initial.global_checks must pass; got a rejected verdict",
+                stage="distributed-initial-certification",
             )
 
     def require_current(self) -> None:
@@ -1453,8 +2049,9 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
             logical_array_value_collection_digest(dict(self.logical_arrays))
             != self.content_id
         ):
-            raise _failure(
-                "Initial collective source theorem numerical content was changed."
+            raise compliance_failure(
+                "initial.content_id must match retained numerical content; got a different digest",
+                stage="distributed-initial-certification",
             )
         if (
             _initial_coordinate_geometry_id(
@@ -1462,59 +2059,56 @@ class InitialCollectiveMeshEvidence(AbstractCollectiveMeshTheorem, NonTrainableS
             )
             != self.coordinate_geometry_id
         ):
-            raise _failure(
-                "Initial coordinate-map authority differs from its actual basis and coefficient banks."
+            raise compliance_failure(
+                "initial.coordinate_geometry_id must match the basis and coefficient banks; got a different fingerprint",
+                stage="distributed-initial-certification",
             )
-        expected = canonical_fingerprint(
-            {
-                "kind": "collective-initial-source-theorem",
-                "source": self.compiled.domain.source_id,
-                "revision": self.compiled.domain.source_revision,
-                "compiled": self.compiled.compiled_id,
-                "specification": self.specification.specification_id,
-                "limits": self.limits.limits_id,
-                "physical_angles": array_tree_fingerprint(
-                    np.asarray(
-                        (self.minimum_angle, self.maximum_normal_angle), dtype=np.float64
-                    )
-                ),
-                "content": self.content_id,
-                "organization": self.global_organization_id,
-            }
-        )
+        expected = _collective_source_payload(
+            self.compiled,
+            self.specification,
+            self.limits,
+            self.minimum_angle,
+            self.maximum_normal_angle,
+            self.content_id,
+            self.global_organization_id,
+        ).fingerprint()
         if expected != self.source_evidence_id:
-            raise _failure(
-                "Initial theorem differs from its original authored domain and physical controls."
+            raise compliance_failure(
+                "initial.source_evidence_id must match the domain and physical controls; got a different fingerprint",
+                stage="distributed-initial-certification",
             )
 
 
+@checked
 def restore_initial_construction(
     evidence: InitialCollectiveMeshEvidence,
     partition_index: int,
     /,
-) -> DistributedSurfaceConstruction:
-    """Restore the original numerical premises, never a target or accepted flag."""
-    from ._publication_lowering import _addressable
+) -> _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction:
+    """Restore the numerical source inputs used by initial certification."""
 
-    if not isinstance(evidence, InitialCollectiveMeshEvidence):
-        raise TypeError(
-            "Initial input restoration requires its actual independent source theorem."
-        )
     if not 0 <= partition_index < evidence.partition_count:
         raise ValueError(
-            "Initial input partition is outside the retained source placement."
+            f"initial.partition_index must lie in the retained process group; got {partition_index}"
         )
     banks = dict(evidence.logical_arrays)
 
     def local(name: str) -> np.ndarray:
-        return np.asarray(jax.device_get(_addressable(banks[name], partition_index)))
+        return np.asarray(
+            jax.device_get(
+                _owner_phydrax_meshing__publication_lowering.addressable(
+                    banks[name], partition_index
+                )
+            )
+        )
 
     def rows(name: str) -> np.ndarray:
         count = int(local(f"initial/input_count/{name}"))
         values = local(f"initial/input/{name}")
         if not 0 <= count <= values.shape[0]:
-            raise _failure(
-                "Retained initial input counts exceed their actual numerical packet."
+            raise compliance_failure(
+                f"initial.input_count must lie within packet {name!r}; got {count}",
+                stage="distributed-initial-certification",
             )
         return values[:count]
 
@@ -1545,7 +2139,7 @@ def restore_initial_construction(
             values = rows(f"curve/{curve}")
             if values.shape[0]:
                 curves.append((curve, values))
-        construction = SurfaceConstruction(
+        construction = surface_construction_owner.SurfaceConstruction(
             **arrays,
             chart_triangulations=tuple(charts),
             curve_parameters=tuple(curves),
@@ -1558,7 +2152,7 @@ def restore_initial_construction(
             work_units=int(metadata[5]),
             incomplete_refinement=bool(metadata[6]),
         )
-    return DistributedSurfaceConstruction(
+    return _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction(
         construction,
         rows("vertex_ids"),
         rows("vertex_owners"),
@@ -1579,11 +2173,9 @@ def restore_initial_construction(
 def _lower_initial_mesh(
     evidence: InitialCollectiveMeshEvidence,
     receipts: dict[str, np.ndarray],
-    geometry_projection: CellGeometryStorageProjection,
+    geometry_projection: _dependency_phydrax_discretization__cell_geometry.CellGeometryStorageProjection,
     /,
 ) -> CellMesh:
-    from ..discretization._cell_mesh import CellMeshStorage
-    from ._topology_edit import entity_keys, key_rows
 
     valid = receipts["entity/0/valid"]
     vertex_ids = receipts["entity/0/ids"][valid]
@@ -1608,19 +2200,22 @@ def _lower_initial_mesh(
         positions = (
             np.empty((0,), dtype=np.int64)
             if probe is None
-            else key_rows(
-                receipts[f"entity/{degree}/keys"][mask], entity_keys(probe, degree)
+            else entity_keys_owner.key_rows(
+                receipts[f"entity/{degree}/keys"][mask],
+                entity_keys_owner.entity_keys(probe, degree),
             )
         )
         identifiers.append(receipts[f"entity/{degree}/ids"][mask][positions])
         owners.append(receipts[f"entity/{degree}/owners"][mask][positions])
     edge_mask = receipts["entity/1/valid"]
     receipt_edge_keys = receipts["entity/1/keys"][edge_mask]
-    edge_keys = receipt_edge_keys if probe is None else entity_keys(probe, 1)
+    edge_keys = (
+        receipt_edge_keys if probe is None else entity_keys_owner.entity_keys(probe, 1)
+    )
     positions = (
         np.empty((0,), dtype=np.int64)
         if probe is None
-        else key_rows(receipt_edge_keys, edge_keys)
+        else entity_keys_owner.key_rows(receipt_edge_keys, edge_keys)
     )
     physical = receipts["initial/edge_physical"][edge_mask][positions]
     facets = np.sort(
@@ -1629,11 +2224,13 @@ def _lower_initial_mesh(
     facet_rows = (
         np.empty((0, 3), dtype=np.int64)
         if facets.shape[0] == 0
-        else key_rows(edge_keys, facets.reshape((-1, 2))).reshape((-1, 3))
+        else entity_keys_owner.key_rows(edge_keys, facets.reshape((-1, 2))).reshape(
+            (-1, 3)
+        )
     )
     edge_incidence = np.bincount(facet_rows.reshape(-1), minlength=physical.size)
     complete = np.all((edge_incidence[facet_rows] == 2) | physical[facet_rows], axis=1)
-    storage = CellMeshStorage(
+    storage = _owner_phydrax_discretization__cell_mesh.CellMeshStorage(
         evidence.global_entity_counts,
         identifiers,
         owners,
@@ -1665,16 +2262,17 @@ def _lower_initial_mesh(
 def _lower_initial_construction(
     mesh: CellMesh,
     receipts: dict[str, np.ndarray],
-    generated: DistributedSurfaceConstruction,
+    generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
     minimum_angle: float,
     /,
-) -> SurfaceConstruction:
-    from ._topology_edit import key_rows
+) -> surface_construction_owner.SurfaceConstruction:
 
     vertex_mask, cell_mask = receipts["entity/0/valid"], receipts["entity/2/valid"]
     vertices = np.asarray(mesh.vertex_global_ids)
-    order = key_rows(receipts["entity/0/ids"][vertex_mask, None], vertices[:, None])
-    cell_order = key_rows(
+    order = entity_keys_owner.key_rows(
+        receipts["entity/0/ids"][vertex_mask, None], vertices[:, None]
+    )
+    cell_order = entity_keys_owner.key_rows(
         receipts["entity/2/ids"][cell_mask, None],
         np.asarray(mesh.blocks[0].global_ids)[:, None],
     )
@@ -1697,7 +2295,7 @@ def _lower_initial_construction(
         ).astype(np.int64)
         restriction_endpoint_parameters = original.chart_restriction_endpoint_parameters
         restriction_parameters = original.chart_restriction_parameters
-    return SurfaceConstruction(
+    return surface_construction_owner.SurfaceConstruction(
         vertices=np.asarray(mesh.coordinates),
         vertex_source_dimensions=receipts["initial/source_dimensions"][vertex_mask][
             order
@@ -1742,12 +2340,11 @@ def _lower_initial_construction(
 def _initial_region_boundaries(
     evidence: InitialCollectiveMeshEvidence,
     mesh: CellMesh,
-    patches: tuple[MeshPatch, ...],
-    labels: tuple[MeshLabel, ...],
+    patches: tuple[_dependency_phydrax_meshing__organization.MeshPatch, ...],
+    labels: tuple[_dependency_phydrax_meshing__organization.MeshLabel, ...],
     /,
-) -> tuple[RegionBoundaryEvidence, ...]:
+) -> tuple[_dependency_phydrax_meshing__organization.RegionBoundaryEvidence, ...]:
     """Bind authored region sides to the final globally scoped patch identities."""
-    from ._scope import MeshingEntityKind, MeshingScope
 
     domain, specification = evidence.compiled.domain, evidence.specification
     result = []
@@ -1784,18 +2381,18 @@ def _initial_region_boundaries(
         selected = tuple(label for label in labels if label.name == name)
         if len(selected) != 1:
             raise ValueError(
-                "Initial source region lacks its unique complete logical boundary label."
+                "initial.region.boundary must have one logical boundary label; got a different label count"
             )
-        scope = MeshingScope(
+        scope = _owner_phydrax_meshing__scope.MeshingScope(
             domain.source_id,
             domain.source_revision,
-            MeshingEntityKind.GEOMETRY,
+            _owner_phydrax_meshing__scope.MeshingEntityKind.GEOMETRY,
             3,
             domain.entity_set_id(3),
             np.asarray((domain.scope_indices(3)[region],), dtype=np.int64),
         )
         result.append(
-            RegionBoundaryEvidence(
+            _dependency_phydrax_meshing__organization.RegionBoundaryEvidence(
                 mesh,
                 scope,
                 identifier,
@@ -1809,42 +2406,26 @@ def _initial_region_boundaries(
     return tuple(result)
 
 
+@checked
 def publish_distributed_surface_initial(
-    prepared: PreparedDistributedSurfaceGeneration,
-    generated: DistributedSurfaceConstruction,
-    source: NativeSurfaceSource,
+    prepared: _dependency_phydrax_meshing__distributed_generation.PreparedDistributedSurfaceGeneration,
+    generated: _dependency_phydrax_meshing__distributed_generation.DistributedSurfaceConstruction,
+    source: _dependency_phydrax_meshing_providers__native_sources.NativeSurfaceSource,
     coordinate_contract: SpatialCoordinateContract,
-    provider: MeshingProviderInfo,
+    provider: _dependency_phydrax_meshing__contracts.MeshingProviderInfo,
     /,
     *,
     minimum_angle: float,
     maximum_normal_angle: float = np.inf,
-    limits: MeshCertificateLimits | None = None,
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+    | None = None,
     plan_id: str | None = None,
-) -> CellMeshingResult:
+) -> _owner_phydrax_meshing__result.CellMeshingResult:
     """Accept the authored source theorem before lowering any result constructor."""
-    from .._identity import SemanticProvenance
-    from ._audit import audit_cell_mesh, CellMeshAuditPolicy
-    from ._contracts import MeshingDerivativeMode, MeshingExecutionMode
-    from ._organization import lower_mesh_organization, prepare_mesh_organization_scopes
-    from ._publication_lowering import PreparedPublicationLowering
-    from ._result import (
-        CellMeshingResult,
-        CollectiveMeshStorageBinding,
-        MeshingComplianceReport,
-        MeshingRuntimeInfo,
-    )
-    from ._trace import (
-        MeshingStageKind,
-        MeshingStageReport,
-        MeshingStageStatus,
-        MeshingTrace,
-    )
-    from .providers._native_surface import _associations
 
     if source.domain.domain_id != prepared.compiled.domain.domain_id:
         raise ValueError(
-            "Initial publication source differs from the actual compiled geometry."
+            "initial.publication.source must match the compiled domain; got a different domain identity"
         )
     evidence = InitialCollectiveMeshEvidence(
         prepared,
@@ -1853,14 +2434,14 @@ def publish_distributed_surface_initial(
         maximum_normal_angle=maximum_normal_angle,
         limits=limits,
     )
-    projection = PreparedPublicationLowering(
+    projection = _owner_phydrax_meshing__publication_lowering.PreparedPublicationLowering(
         None, evidence, None, vertex_capacity=prepared.layout.vertex_capacity
     ).execute()
     projection.require_source(evidence.logical_arrays)
-    storage_binding = CollectiveMeshStorageBinding(
+    storage_binding = _owner_phydrax_meshing__result.CollectiveMeshStorageBinding(
         evidence, evidence.logical_arrays, evidence.global_entity_counts
     )
-    scopes = prepare_mesh_organization_scopes(
+    scopes = _owner_phydrax_meshing__organization.prepare_mesh_organization_scopes(
         evidence, evidence, projection, evidence.compiled.domain.source_revision
     )
     receipts = {
@@ -1878,7 +2459,7 @@ def publish_distributed_surface_initial(
         )
     )
     quality_target = prepared.specification.quality_target
-    compliance = MeshingComplianceReport(
+    compliance = _owner_phydrax_meshing__result.MeshingComplianceReport(
         prepared.specification.specification_id,
         requested=()
         if quality_target is None
@@ -1890,22 +2471,40 @@ def publish_distributed_surface_initial(
     try:
         mesh = _lower_initial_mesh(evidence, receipts, projection.geometry)
         if mesh.storage is None:
-            raise ValueError("Initial publication lost its actual logical storage.")
+            raise ValueError("initial.mesh.storage must retain logical storage; got None")
         geometry = mesh.storage.restore_geometry()
         associations = ()
         if np.any(receipts["closure/cell_valid"]):
             construction = _lower_initial_construction(
                 mesh, receipts, generated, minimum_angle
             )
-            associations, _, _ = _associations(source, mesh, construction)
-        patches, zones, labels, attributes = lower_mesh_organization(
-            evidence, mesh, dict(evidence.logical_arrays), scope_projections=scopes
+            association_limits = prepared.specification.limits
+            ticket = HostBatchTicket(
+                association_limits.maximum_work_units,
+                queries_upper=association_limits.maximum_geometry_queries,
+                bytes_upper=association_limits.maximum_scratch_bytes,
+            )
+            association_budget = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=association_limits.maximum_work_units,
+                maximum_memory_bytes=association_limits.maximum_scratch_bytes,
+            )
+            with ticket, association_budget.measurement(), association_budget.activate():
+                associations, _, _ = surface_association_owner.associations(
+                    source, mesh, construction, budget=association_budget
+                )
+        patches, zones, labels, attributes = (
+            _owner_phydrax_meshing__organization.lower_mesh_organization(
+                evidence, mesh, dict(evidence.logical_arrays), scope_projections=scopes
+            )
         )
         region_boundaries = _initial_region_boundaries(evidence, mesh, patches, labels)
-        audit = audit_cell_mesh(
+        audit = _owner_phydrax_meshing__audit.audit_cell_mesh(
             mesh,
             geometry,
-            policy=CellMeshAuditPolicy(require_complete_association=True),
+            policy=_owner_phydrax_meshing__audit.CellMeshAuditPolicy(
+                require_complete_association=True
+            ),
             patches=patches,
             labels=labels,
             zones=zones,
@@ -1914,11 +2513,11 @@ def publish_distributed_surface_initial(
         )
         audit.require_passed()
         audit.require_decided()
-        trace = MeshingTrace(
+        trace = _owner_phydrax_meshing__trace.MeshingTrace(
             (
-                MeshingStageReport(
-                    MeshingStageKind.SURFACE_MESHING,
-                    MeshingStageStatus.PASSED,
+                _owner_phydrax_meshing__trace.MeshingStageReport(
+                    _owner_phydrax_meshing__trace.MeshingStageKind.SURFACE_MESHING,
+                    _owner_phydrax_meshing__trace.MeshingStageStatus.PASSED,
                     input_ids=(
                         prepared.compiled.compiled_id,
                         prepared.specification.specification_id,
@@ -1927,7 +2526,7 @@ def publish_distributed_surface_initial(
                 ),
             )
         )
-        result = CellMeshingResult(
+        result = _owner_phydrax_meshing__result.CellMeshingResult(
             mesh,
             geometry,
             coordinate_contract,
@@ -1936,10 +2535,10 @@ def publish_distributed_surface_initial(
             compliance,
             trace,
             provider,
-            MeshingRuntimeInfo(
+            _owner_phydrax_meshing__result.MeshingRuntimeInfo(
                 provider.provider_id,
                 provider.version,
-                MeshingExecutionMode.IN_PROCESS,
+                _owner_phydrax_meshing__contracts.MeshingExecutionMode.IN_PROCESS,
                 deterministic=True,
                 enforced_limits=(
                     "source_theorem",
@@ -1947,8 +2546,8 @@ def publish_distributed_surface_initial(
                     "fixed_capacity_closure",
                 ),
             ),
-            MeshingDerivativeMode.NONDIFFERENTIABLE,
-            SemanticProvenance(
+            _owner_phydrax_meshing__contracts.MeshingDerivativeMode.NONDIFFERENTIABLE,
+            _owner_phydrax__identity.SemanticProvenance(
                 {
                     "kind": "native-distributed-initial-publication",
                     "source": source.binding_id,
@@ -1966,12 +2565,29 @@ def publish_distributed_surface_initial(
             scope_projections=scopes,
             storage_binding=storage_binding,
         )
-    except (ValueError, MeshingFailure) as error:
-        failure = error if isinstance(error, MeshingFailure) else _failure(str(error))
-    _consensus(failure)
+    except (
+        MeshcoreError,
+        _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError,
+    ) as error:
+        failure = (
+            _dependency_phydrax_meshing__distributed_generation.initial_owner_failure(
+                error, "distributed-initial-publication"
+            )
+        )
+    except _leaf_phydrax_meshing__failures.MeshingFailure as error:
+        failure = error
+    except ValueError as error:
+        failure = compliance_failure(
+            str(error), stage="distributed-initial-certification"
+        )
+    collective_failure_barrier(
+        failure,
+        message="An owner rejected initial native construction; no generated part was published.",
+        stage="distributed-initial-commit",
+    )
     if result is None:
         raise ValueError(
-            "Successful initial publication must produce an actual result on every owner."
+            "initial.publication.result must be present on every partition; got None"
         )
     return result
 

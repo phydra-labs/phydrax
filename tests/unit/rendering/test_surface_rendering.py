@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.geometry.surface import SurfaceMetadata, SurfaceModel
 
 
 def _surface() -> Any:
@@ -24,13 +25,13 @@ def _surface() -> Any:
         coordinate_system="cartesian-world",
         reference_frame="world",
     )
-    metadata = phx.geometry.surface.SurfaceMetadata(
+    metadata = SurfaceMetadata(
         source_id="tetrahedron",
         source_revision="1",
         coordinate_contract=contract,
         provenance=("synthetic",),
     )
-    model = phx.geometry.surface.SurfaceModel.from_triangles(
+    model = SurfaceModel.from_triangles(
         vertices,
         triangles,
         metadata,

@@ -340,6 +340,13 @@ and `method="gaussian_bilaplacian"` selects the proved Gaussian fourth moment.
 signed finite differential sums; its policy size must equal the compact
 scientific term population.
 
+PDE IR divergence accepts a declared vector or pseudovector matching the spatial
+coordinate size. On a one-dimensional coordinate, scalar divergence is the
+ordinary derivative. This does not identify a scalar with a one-component
+vector: field and `PDEParameter` representations remain explicit, and parameter
+representation defaults to `"scalar"` rather than being inferred from component
+counts.
+
 Maximal pure/mixed chains, gradient-of-Laplacian components, and nested
 Laplacians are extracted from existing PDE IR and differentiated at the original
 operand before randomization. Coefficients inside derivatives remain inside;

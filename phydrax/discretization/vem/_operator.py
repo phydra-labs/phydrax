@@ -16,6 +16,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, FunctionLinearOperator, OperatorProperties
 from ...sparse import RelationAccumulation, scatter_local
+from ...typing import checked, parse
 
 
 class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
@@ -30,6 +31,7 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
     properties: OperatorProperties
     operator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coefficient_maps: tuple[ArrayLike, ...],
@@ -39,7 +41,7 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
         global_size: int,
         /,
         *,
-        accumulation: str = "fast",
+        accumulation: RelationAccumulation = "fast",
         properties: OperatorProperties | None = None,
         operator_id: str | None = None,
     ) -> None:
@@ -50,30 +52,44 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
         if not coefficients or not (
             len(coefficients) == len(polynomials) == len(stabilizations) == len(routes)
         ):
-            raise ValueError("VEM operator buckets must be nonempty and aligned.")
+            raise ValueError(
+                f"FactorizedVirtualElementOperator.buckets must be nonempty and aligned; got coefficients={len(coefficients)}, polynomials={len(polynomials)}, stabilizations={len(stabilizations)}, routes={len(routes)}"
+            )
         for coefficient, polynomial, stabilization, route in zip(
             coefficients, polynomials, stabilizations, routes, strict=True
         ):
             if coefficient.ndim != 3 or polynomial.ndim != 3 or stabilization.ndim != 3:
-                raise ValueError("VEM factor buckets must be rank-three arrays.")
+                raise ValueError(
+                    f"FactorizedVirtualElementOperator.factors must be rank-three arrays; got coefficient={coefficient.shape}, polynomial={polynomial.shape}, stabilization={stabilization.shape}"
+                )
             if coefficient.shape[0] != route.shape[0]:
-                raise ValueError("VEM coefficient maps and gathers must share cells.")
+                raise ValueError(
+                    f"FactorizedVirtualElementOperator.gathers must share coefficient cells; got coefficients={coefficient.shape[0]}, gathers={route.shape[0]}"
+                )
             if (
                 coefficient.shape[1] != polynomial.shape[1]
                 or polynomial.shape[1] != polynomial.shape[2]
             ):
-                raise ValueError("VEM polynomial factor dimensions are incompatible.")
+                raise ValueError(
+                    f"FactorizedVirtualElementOperator.polynomial_matrices must be square with matching coefficient dimension; got coefficient={coefficient.shape}, polynomial={polynomial.shape}"
+                )
             if coefficient.shape[2] != route.shape[1] or stabilization.shape[1:] != (
                 route.shape[1],
                 route.shape[1],
             ):
-                raise ValueError("VEM local factors do not match gather width.")
-        accumulation_ = str(accumulation)
-        if accumulation_ not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown VEM accumulation policy.")
+                raise ValueError(
+                    f"FactorizedVirtualElementOperator.local_factors must match gather width; got coefficient={coefficient.shape}, stabilization={stabilization.shape}, gather={route.shape}"
+                )
+        accumulation_ = parse(
+            accumulation,
+            RelationAccumulation,
+            "FactorizedVirtualElementOperator.accumulation",
+        )
         size = int(global_size)
         if size <= 0:
-            raise ValueError("VEM global size must be positive.")
+            raise ValueError(
+                f"FactorizedVirtualElementOperator.global_size must be positive; got {size}"
+            )
         properties_ = OperatorProperties() if properties is None else properties
         self.coefficient_maps = coefficients
         self.polynomial_matrices = polynomials
@@ -98,7 +114,9 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
     def mv(self, value: ArrayLike, /) -> Array:
         state = jnp.asarray(value)
         if state.shape != (self.global_size,):
-            raise ValueError("VEM operator input has incompatible shape.")
+            raise ValueError(
+                f"FactorizedVirtualElementOperator.value must match global size; got shape={state.shape}, global_size={self.global_size}"
+            )
         result = jnp.zeros_like(state)
         for coefficient, polynomial, stabilization, gather in zip(
             self.coefficient_maps,
@@ -123,7 +141,9 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
     def transpose_mv(self, value: ArrayLike, /) -> Array:
         state = jnp.asarray(value)
         if state.shape != (self.global_size,):
-            raise ValueError("VEM operator input has incompatible shape.")
+            raise ValueError(
+                f"FactorizedVirtualElementOperator.value must match global size; got shape={state.shape}, global_size={self.global_size}"
+            )
         result = jnp.zeros_like(state)
         for coefficient, polynomial, stabilization, gather in zip(
             self.coefficient_maps,

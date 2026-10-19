@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import polars as pl
 
 import phydrax as phx
 from benchmarks._io import atomic_write, write_json_atomic
@@ -336,6 +335,9 @@ def save_operator_uq_artifacts(
     """Write the separate operator-UQ JSON artifact and evaluation table."""
     if not isinstance(suite, OperatorUQBenchmarkSuite):
         raise TypeError("suite must be an OperatorUQBenchmarkSuite.")
+    # Admit optional Polars only when serializing operator-UQ Parquet artifacts.
+    import polars as pl
+
     root = Path(directory)
     root.mkdir(parents=True, exist_ok=True)
     json_path = root / "operator_uq_benchmarks.json"

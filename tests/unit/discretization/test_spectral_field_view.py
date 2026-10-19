@@ -15,6 +15,7 @@ import phydrax as phx
 from phydrax import config as pxconfig
 from phydrax.discretization import DiscreteFieldFunctionView, FieldQueryStatus
 from phydrax.discretization.spectral import prepare_spectral_field_reconstruction
+from phydrax.units import METER
 
 
 pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
@@ -194,9 +195,9 @@ def test_spectral_field_view_scenario_2() -> None:
     )
     field = _view(reconstruction, coefficients).as_domain_function()
 
-    with pytest.raises(ValueError, match="maximum_derivative_order=1"):
+    with pytest.raises(ValueError, match=r"maximum_derivative_order.*above 1"):
         reconstruction.derivative(coefficients, _POINTS, (1, 1))
-    with pytest.raises(ValueError, match="maximum_derivative_order=1"):
+    with pytest.raises(ValueError, match=r"maximum_derivative_order.*above 1"):
         phx.operators.partial_n(field, var="x", axis=1, order=2)
     space, coefficients = _mixed()
     reconstruction = prepare_spectral_field_reconstruction(space)
@@ -247,9 +248,15 @@ def test_spectral_field_view_scenario_3() -> None:
     points = jnp.asarray(((0.5, 0.0), (0.5, 1.2)))
     cotangent = jnp.asarray((1.0, 1.0))
 
-    with pytest.raises(ValueError, match=r"Invalid points \[1\].*OUTSIDE_SUPPORT"):
+    with pytest.raises(
+        ValueError,
+        match=r"DiscreteFieldFunctionView\.query.*invalid indices \[1\].*OUTSIDE_SUPPORT",
+    ):
         reconstruction.transpose(points, cotangent)
-    with pytest.raises(ValueError, match=r"Invalid points \[1\].*OUTSIDE_SUPPORT"):
+    with pytest.raises(
+        ValueError,
+        match=r"DiscreteFieldFunctionView\.query.*invalid indices \[1\].*OUTSIDE_SUPPORT",
+    ):
         reconstruction.duality_evidence(coefficients, points, cotangent)
     with pytest.raises(Exception, match="invalid"):
         eqx.filter_jit(reconstruction.transpose)(points, cotangent).block_until_ready()
@@ -270,15 +277,17 @@ def test_spectral_field_view_scenario_3() -> None:
         values, jnp.stack((expected, 2.0 * expected), -1), atol=1e-13
     )
     space, coefficients = _mixed()
-    box = phx.geometry.Orthotope((0.5, 0.0), (1.0, 2.0), feature_id="user-box").compile()
+    box = phx.geometry.Orthotope((0.5, 0.0), (1.0, 2.0), feature_id="user-box").compile(
+        coordinate_unit=METER
+    )
     reconstruction = prepare_spectral_field_reconstruction(space, support_geometry=box)
     view = _view(reconstruction, coefficients)
     np.testing.assert_allclose(
         view.query(_POINTS).values, space.evaluate(coefficients, _POINTS), atol=1e-13
     )
 
-    shrunk = phx.geometry.Orthotope((0.5, 0.0), (1.0, 1.5)).compile()
-    with pytest.raises(ValueError, match="reconstruction box"):
+    shrunk = phx.geometry.Orthotope((0.5, 0.0), (1.0, 1.5)).compile(coordinate_unit=METER)
+    with pytest.raises(ValueError, match=r"tensor_box_support\.support_geometry\.bounds"):
         prepare_spectral_field_reconstruction(space, support_geometry=shrunk)
 
 

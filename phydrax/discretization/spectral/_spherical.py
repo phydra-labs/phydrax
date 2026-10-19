@@ -29,7 +29,7 @@ from ...linalg import (
     FunctionLinearOperator,
     OperatorProperties,
 )
-from ...linalg._spaces import _coordinate_dtype
+from ...linalg._spaces import coordinate_dtype
 from ...typing import checked, parse
 from .._core import (
     DiscretizationCapability,
@@ -497,7 +497,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
             signs,
             valid_mask=self.layout.valid_mask,
             component_shape=component_shape,
-            coefficient_dtype=_coordinate_dtype(self.modal_space.vector_space),
+            coefficient_dtype=coordinate_dtype(self.modal_space.vector_space),
             layout_id=self.layout.layout_id,
             reality_tolerance=reality_tolerance,
             maximum_coordinate_size=maximum_coordinate_size,

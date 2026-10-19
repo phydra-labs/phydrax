@@ -183,6 +183,8 @@ class FELTimeDependentLedger(StrictModule):
     ``defect = beam_energy_change + field_energy_change + diffraction_loss +
     exit_energy + wake_loss + space_charge_loss`` vanishes for an exact
     integration; ``relative_defect`` divides it by the total exchanged energy.
+    The beam change sums particlewise Lorentz-factor differences before
+    conversion to energy, avoiding cancellation between total beam energies.
     ``space_charge_loss`` is minus the kinetic energy space charge gave the
     beam (its electrostatic field energy is not tracked; the internal field
     exerts no net force, so the sum stays small).
@@ -1208,7 +1210,13 @@ class FELTimeDependentPlan(StrictModule, NonTrainableState):
         beam_scale = slices.currents * rest / (charge * core.loading.particle_count)
         beam_power = beam_scale[None, :] * history.beam_energy_sum
         pulse_energy = jnp.sum(history.power, axis=1) * slot_time
-        beam_change = jnp.sum(beam_power[-1] - beam_power[0]) * slot_time
+        beam_change = (
+            jnp.sum(
+                beam_scale
+                * jnp.sum(final.lorentz_factors - loaded.lorentz_factors, axis=1)
+            )
+            * slot_time
+        )
         initial_beam = jnp.sum(beam_power[0]) * slot_time
         ledger = self._ledger(
             slices,

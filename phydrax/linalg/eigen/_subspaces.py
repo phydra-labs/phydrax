@@ -23,7 +23,7 @@ from ...typing import parse
 from .._materialization import MaterializationPolicy, materialize
 from .._operators import AbstractLinearOperator
 from .._policies import FailurePolicy
-from .._spaces import _coordinate_dtype
+from .._spaces import coordinate_dtype
 from ._schur import SchurEigenproblem
 
 
@@ -940,9 +940,9 @@ def _sylvester_separation(
 
 def _subspace_cost(problem: SchurEigenproblem, /) -> SpectralSubspaceCostEstimate:
     dimension = problem.operator.source.size
-    input_itemsize = _coordinate_dtype(problem.operator.source).itemsize
+    input_itemsize = coordinate_dtype(problem.operator.source).itemsize
     output_itemsize = jnp.result_type(
-        _coordinate_dtype(problem.operator.source), jnp.complex64
+        coordinate_dtype(problem.operator.source), jnp.complex64
     ).itemsize
     entries = dimension * dimension
     input_bytes = entries * input_itemsize

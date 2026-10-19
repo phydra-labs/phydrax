@@ -8,7 +8,7 @@ A physical query point is mapped back to the patch parameter box by a pure-JAX
 Newton inversion of the runtime NURBS map, seeded from host-prepared samples
 of every integration-overlay cell. The located parameters select the overlay
 cells containing the point (two or more on a knot line) and each candidate is
-evaluated on its own spline pieces, so one-sided limits are exact. Values use
+evaluated on its own spline pieces, retaining the one-sided limits. Values use
 the field's rational basis; first physical derivatives solve the transposed
 geometry Jacobian against the parameter gradients. Side traces evaluate the
 same pieces at facet rule points of the owner cell's local facet with the
@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import product
 from math import isfinite, prod
-from typing import assert_never, final, TYPE_CHECKING
+from typing import assert_never, final
 
 import equinox as eqx
 import jax
@@ -31,13 +31,21 @@ from jax import Array
 
 import phydrax.ein as ein
 
+from ... import geometry as geometry_owner
 from ..._differentiation import DerivativeRegularity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model._ports import ValuePort
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import ArraySpace, SmallLinearSolvePlan, solve_small_linear
-from ...typing import parse
+from ...linalg import (
+    ArraySpace,
+    DenseLinearOperator,
+    FactorizationPolicy,
+    factorize,
+    SmallLinearSolvePlan,
+    solve_small_linear,
+)
+from ...typing import checked, parse
 from .._integration_domain import IntegrationDomain
 from .._reference_cell import FacetShape
 from .._side_actions import (
@@ -66,10 +74,6 @@ from ._actions import (
 from ._basis import TensorSplineBasisSpec
 from ._geometry import IsogeometricRuntimeData
 from ._plan import PreparedIsogeometricDiscretization
-
-
-if TYPE_CHECKING:
-    from ...geometry import CompiledGeometry
 
 
 _FACET_SHAPES: dict[int, FacetShape] = {1: "point", 2: "edge", 3: "quadrilateral"}
@@ -115,9 +119,7 @@ def _require_volume_patch(
 ) -> None:
     if runtime.control_points.shape[-1] != discretization.basis.parametric_dimension:
         raise ValueError(
-            "IGA field queries and side traces require a patch whose ambient and "
-            "parametric dimensions agree; embedded manifold patches have no unique "
-            "inverse map or facet normal."
+            f"prepare_isogeometric_field_reconstruction.dimensions must have matching ambient and parametric dimensions; got ambient={runtime.control_points.shape[-1]}, parametric={discretization.basis.parametric_dimension}"
         )
 
 
@@ -216,7 +218,7 @@ def _facet_evaluation(
     rule: FacetTraceRule,
     /,
 ) -> _FacetEvaluation:
-    """Evaluate the side cells' local facets at the owner-canonical rule points.
+    """Evaluate the side cells' local facets at shared rule points.
 
     Local entity `2 a + s` is the facet of constant parameter axis `a` at the
     cell's lower (`s = 0`) or upper (`s = 1`) break. Tangential axes keep
@@ -276,7 +278,9 @@ def _facet_evaluation(
         SmallLinearSolvePlan(dimension), jnp.swapaxes(jacobian, -1, -2), covector
     )
     if not bool(jnp.all(solve.successful)):
-        raise ValueError("The IGA geometry Jacobian is singular at a facet site.")
+        raise ValueError(
+            "IsogeometricFieldReconstructionKernel.jacobian must pass native facet solve admission; got failed small solve at a facet site"
+        )
     gradient = np.asarray(solve.value, dtype=np.float64)
     normals = gradient / np.linalg.norm(gradient, axis=-1, keepdims=True)
     jacobian_ = np.asarray(jacobian, dtype=np.float64).reshape(
@@ -317,6 +321,12 @@ class _IsogeometricRoute(StrictModule):
     weights: Array
 
 
+class _IsogeometricCandidateWeights(StrictModule):
+    rows: Array
+    weights: Array
+    successful: Array
+
+
 @final
 class IsogeometricFieldReconstructionKernel(
     AbstractFieldReconstructionKernel, NonTrainableState
@@ -354,6 +364,7 @@ class IsogeometricFieldReconstructionKernel(
     coordinate_scale: float = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         discretization: PreparedIsogeometricDiscretization,
@@ -366,16 +377,26 @@ class IsogeometricFieldReconstructionKernel(
         seeds_per_axis: int,
     ) -> None:
         if isinstance(newton_iterations, bool) or not isinstance(newton_iterations, int):
-            raise TypeError("newton_iterations must be an int.")
+            raise TypeError(
+                f"IsogeometricFieldReconstructionKernel.newton_iterations must be an int; got {newton_iterations!r}"
+            )
         if newton_iterations < 1:
-            raise ValueError("newton_iterations must be positive.")
+            raise ValueError(
+                f"IsogeometricFieldReconstructionKernel.newton_iterations must be positive; got {newton_iterations}"
+            )
         if isinstance(seeds_per_axis, bool) or not isinstance(seeds_per_axis, int):
-            raise TypeError("seeds_per_axis must be an int.")
+            raise TypeError(
+                f"IsogeometricFieldReconstructionKernel.seeds_per_axis must be an int; got {seeds_per_axis!r}"
+            )
         if seeds_per_axis < 1:
-            raise ValueError("seeds_per_axis must be positive.")
+            raise ValueError(
+                f"IsogeometricFieldReconstructionKernel.seeds_per_axis must be positive; got {seeds_per_axis}"
+            )
         tolerance = float(location_tolerance)
         if not isfinite(tolerance) or tolerance <= 0.0:
-            raise ValueError("location_tolerance must be finite and positive.")
+            raise ValueError(
+                f"IsogeometricFieldReconstructionKernel.location_tolerance must be finite and positive; got {tolerance}"
+            )
         _require_volume_patch(discretization, runtime)
         field = discretization.fields[field_index]
         breaks = discretization.overlay_breaks
@@ -392,7 +413,9 @@ class IsogeometricFieldReconstructionKernel(
             np.max(np.ptp(control_points.reshape((-1, control_points.shape[-1])), axis=0))
         )
         if not isfinite(scale) or scale <= 0.0:
-            raise ValueError("The IGA patch has no positive coordinate extent.")
+            raise ValueError(
+                f"IsogeometricFieldReconstructionKernel.coordinate_extent must be finite and positive; got {scale}"
+            )
         offsets = (np.arange(seeds_per_axis, dtype=np.float64) + 0.5) / seeds_per_axis
         seeds = []
         for cell in np.ndindex(overlay_shape):
@@ -467,21 +490,46 @@ class IsogeometricFieldReconstructionKernel(
         """Located parameters, pointwise status, and Jacobian condition numbers."""
         finite = jnp.all(jnp.isfinite(points), axis=-1)
         safe = jnp.where(finite[:, None], points, self.seed_points[0])
-        distance = jnp.sum((safe[:, None, :] - self.seed_points[None]) ** 2, axis=-1)
-        start = self.seed_parameters[jnp.argmin(distance, axis=1)]
+
+        def nearest_seed(point: Array, /) -> Array:
+            distance = jnp.sum((point[None, :] - self.seed_points) ** 2, axis=-1)
+            return self.seed_parameters[jnp.argmin(distance)]
+
+        # Bound the nearest-seed working set to one query instead of retaining
+        # the Cartesian product of all queries and prepared seeds.
+        start = jax.lax.map(nearest_seed, safe)
         plan = SmallLinearSolvePlan(self._dimension)
 
-        def step(_: Array, parameters: Array) -> Array:
+        # This fixed projected locator retains clipping and its authored sweep
+        # count. Native local roots use admissibility line searches and forbid
+        # clipping, so their update and derivative contracts differ. Native
+        # small-solve and spectral failures still reach the query status.
+        def step(_: int | Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
+            parameters, successful = state
             mapped, jacobian = self._map(parameters)
             solve = solve_small_linear(plan, jacobian, safe - mapped)
             delta = jnp.where(solve.successful[:, None], solve.value, 0.0)
-            return jnp.clip(parameters + delta, self.lower, self.upper)
+            return (
+                jnp.clip(parameters + delta, self.lower, self.upper),
+                successful & solve.successful,
+            )
 
-        parameters = jax.lax.fori_loop(0, self.newton_iterations, step, start)
+        parameters, solve_successful = jax.lax.fori_loop(
+            0, self.newton_iterations, step, (start, jnp.ones_like(finite))
+        )
         mapped, jacobian = self._map(parameters)
         residual = jnp.linalg.norm(safe - mapped, axis=-1)
-        singular = jnp.linalg.svd(jacobian, compute_uv=False)
-        condition = singular[:, 0] / singular[:, -1]
+        # DenseLinearOperator keeps query axes as operator batches and the
+        # trailing physical/parameter axes as Euclidean matrix events.
+        spectrum = factorize(DenseLinearOperator(jacobian), FactorizationPolicy("svd"))
+        singular = spectrum.singular_values()
+        spectral_successful = jnp.all(jnp.isfinite(singular), axis=-1) & (
+            spectrum.rank() == self._dimension
+        )
+        numerical_successful = solve_successful & spectral_successful
+        condition = jnp.where(
+            numerical_successful, singular[:, 0] / singular[:, -1], jnp.inf
+        )
         tolerance = _PARAMETER_TOLERANCE * (self.upper - self.lower)
         on_box = jnp.any(
             (parameters <= self.lower + tolerance)
@@ -552,7 +600,7 @@ class IsogeometricFieldReconstructionKernel(
 
     def _candidate_weights(
         self, parameters: Array, intervals: Array, axis: int | None, /
-    ) -> tuple[Array, Array]:
+    ) -> _IsogeometricCandidateWeights:
         count, candidates, dimension = intervals.shape
         flat_parameters = jnp.repeat(parameters, candidates, axis=0)
         flat_intervals = intervals.reshape((count * candidates, dimension))
@@ -568,6 +616,7 @@ class IsogeometricFieldReconstructionKernel(
         )
         if axis is None:
             weights = values
+            successful = jnp.ones((flat_parameters.shape[0],), dtype=jnp.bool_)
         else:
             geometry_spans = jnp.stack(
                 [
@@ -589,10 +638,12 @@ class IsogeometricFieldReconstructionKernel(
                 jnp.swapaxes(gradients, -1, -2),
             )
             weights = physical.value[:, axis, :]
+            successful = physical.successful
         local = values.shape[-1]
-        return (
+        return _IsogeometricCandidateWeights(
             rows.reshape((count, candidates, local)),
             weights.reshape((count, candidates, local)),
+            successful.reshape((count, candidates)),
         )
 
     def locate(
@@ -618,14 +669,23 @@ class IsogeometricFieldReconstructionKernel(
         if side is not None and side.cell_mask is not None:
             accepted = accepted & side.cell_mask[cells]
         count = jnp.sum(accepted, axis=1, dtype=jnp.int32)
-        rows, weights = self._candidate_weights(parameters, intervals, axis)
+        candidate_weights = self._candidate_weights(parameters, intervals, axis)
+        failed_derivative = jnp.any(accepted & ~candidate_weights.successful, axis=1)
+        status = jnp.where(
+            (status == int(FieldQueryStatus.VALID)) & failed_derivative,
+            int(FieldQueryStatus.ILL_CONDITIONED),
+            status,
+        )
+        condition = jnp.where(failed_derivative, jnp.inf, condition)
         if side is not None and side.side == "average":
             share = accepted / jnp.maximum(count, 1)[:, None]
         else:
             first = jnp.argmax(accepted, axis=1)
             share = (jnp.arange(accepted.shape[1])[None, :] == first[:, None]) & accepted
         route = _IsogeometricRoute(
-            rows, weights * share.astype(weights.dtype)[:, :, None]
+            candidate_weights.rows,
+            candidate_weights.weights
+            * share.astype(candidate_weights.weights.dtype)[:, :, None],
         )
         valid = status == int(FieldQueryStatus.VALID)
         side_status = int(
@@ -677,25 +737,28 @@ class IsogeometricFieldReconstructionKernel(
     ) -> tuple[np.ndarray | None, np.ndarray]:
         status, cells_, distinct_ = _compiled_containing(self, jnp.asarray(sites))
         if np.any(np.asarray(status) != int(FieldQueryStatus.VALID)):
-            raise ValueError("Every trace site must lie in the IGA patch.")
+            raise ValueError(
+                "IsogeometricFieldReconstructionKernel.sites must lie in the IGA patch; got unlocated trace sites"
+            )
         cells, distinct = np.asarray(cells_), np.asarray(distinct_)
         containing = np.where(distinct, cells, -1)
         if side == "average":
             if cell_ids is not None:
-                raise ValueError("Average traces combine every containing cell.")
+                raise ValueError(
+                    "IsogeometricFieldReconstructionKernel.cell_ids must be None for average traces; got explicit cells"
+                )
             return None, np.full(sites.shape[0], -1, dtype=np.int32)
         if cell_ids is None:
             single = np.sum(distinct, axis=1) == 1
             if side != "owner" or not np.all(single):
                 raise ValueError(
-                    f"{side!r} traces at sites shared by several overlay cells (or "
-                    "without a neighbor cell) require explicit cell_ids."
+                    f"IsogeometricFieldReconstructionKernel.cell_ids must explicitly select containing cells for shared sites or neighbor traces; got side={side!r}, cell_ids=None"
                 )
             site_cells = np.max(containing, axis=1).astype(np.int32)
         else:
             if np.any(np.all(containing != cell_ids[:, None], axis=1)):
                 raise ValueError(
-                    "cell_ids must name an overlay cell containing each trace site."
+                    "IsogeometricFieldReconstructionKernel.cell_ids must name overlay cells containing their trace sites; got mismatched cells"
                 )
             site_cells = cell_ids
         mask = np.zeros((self.cell_count,), dtype=np.bool_)
@@ -705,8 +768,7 @@ class IsogeometricFieldReconstructionKernel(
             np.max(np.where(resolved, cells, -1), axis=1) != site_cells
         ):
             raise ValueError(
-                "The side cells do not resolve every trace site to exactly its "
-                "declared overlay cell; the side region is ambiguous."
+                "IsogeometricFieldReconstructionKernel.cell_ids must resolve each site to its declared overlay cell; got an ambiguous side region"
             )
         return mask, site_cells
 
@@ -760,19 +822,18 @@ def _support_geometry(
     discretization: PreparedIsogeometricDiscretization,
     kernel: IsogeometricFieldReconstructionKernel,
     runtime: IsogeometricRuntimeData,
-    support_geometry: CompiledGeometry | None,
+    support_geometry: geometry_owner.CompiledGeometry | None,
     /,
     *,
     feature_id: str,
     tolerance: float,
-) -> CompiledGeometry:
+) -> geometry_owner.CompiledGeometry:
     """Derived box of an axis-aligned affine patch, or an evidenced explicit region.
 
     An explicit region is admitted when the patch boundary sites lie on its
     boundary, interior seeds lie strictly inside it, and (when it declares an
     interior measure) its measure equals the patch measure.
     """
-    from ...geometry import CompiledGeometry, GeometryCapability, GeometryKind
 
     dimension = discretization.basis.parametric_dimension
     affine = _affine_map(discretization.basis, runtime)
@@ -781,10 +842,22 @@ def _support_geometry(
         if np.max(np.abs(linear - np.diag(np.diag(linear)))) <= _AFFINE_TOLERANCE * (
             max(float(np.max(np.abs(linear))), 1.0)
         ):
-            corners = (
-                np.stack([np.asarray(kernel.lower), np.asarray(kernel.upper)]) @ linear
-                + affine[dimension]
+            # The fit classifies the patch, but its translation has roundoff.
+            # Derive bounds from the spline's mapped parameter corners instead
+            # of publishing the fitted coefficients as geometry.
+            parameter_corners = np.asarray(
+                tuple(
+                    product(
+                        *(
+                            (values[0], values[-1])
+                            for values in discretization.overlay_breaks
+                        )
+                    )
+                ),
+                dtype=np.float64,
             )
+            mapped_corners, _ = kernel._map(jnp.asarray(parameter_corners))
+            corners = np.asarray(jax.device_get(mapped_corners), dtype=np.float64)
             return tensor_box_support_geometry(
                 np.min(corners, axis=0),
                 np.max(corners, axis=0),
@@ -794,15 +867,16 @@ def _support_geometry(
             )
     if support_geometry is None:
         raise ValueError(
-            "The support region of a curved or non-box IGA patch is not derived; pass "
-            "an explicit support_geometry covered by the patch."
+            "prepare_isogeometric_field_reconstruction.support_geometry must be explicit for curved or non-box patches; got None"
         )
-    if not isinstance(support_geometry, CompiledGeometry):
-        raise TypeError("support_geometry must be a CompiledGeometry or None.")
-    if support_geometry.kind is not GeometryKind.REGION:
-        raise ValueError("support_geometry must be a region geometry.")
+    if support_geometry.kind is not geometry_owner.GeometryKind.REGION:
+        raise ValueError(
+            f"prepare_isogeometric_field_reconstruction.support_geometry must be a region; got kind={support_geometry.kind}"
+        )
     if support_geometry.ambient_dimension != dimension:
-        raise ValueError("support_geometry dimension must equal the patch dimension.")
+        raise ValueError(
+            f"prepare_isogeometric_field_reconstruction.support_geometry must match patch dimension; got ambient={support_geometry.ambient_dimension}, patch={dimension}"
+        )
     domain = discretization.exterior_facet_domain
     boundary = _facet_evaluation(
         discretization,
@@ -816,27 +890,34 @@ def _support_geometry(
     limit = tolerance * kernel.coordinate_scale
     boundary_field = np.asarray(support_geometry.boundary_field(jnp.asarray(boundary)))
     if np.any(np.abs(boundary_field) > limit):
-        raise ValueError("The IGA patch boundary does not lie on the support boundary.")
+        raise ValueError(
+            f"prepare_isogeometric_field_reconstruction.support_geometry must contain the patch boundary on its boundary; got boundary residual above {limit}"
+        )
     interior_field = np.asarray(support_geometry.boundary_field(kernel.seed_points))
     if np.any(interior_field >= 0.0):
-        raise ValueError("The IGA patch interior leaves the support geometry.")
-    if support_geometry.has_capability(GeometryCapability.INTERIOR_MEASURE):
+        raise ValueError(
+            "prepare_isogeometric_field_reconstruction.support_geometry must contain the patch interior; got nonnegative interior field values"
+        )
+    if support_geometry.has_capability(
+        geometry_owner.GeometryCapability.INTERIOR_MEASURE
+    ):
         patch = _patch_measure(kernel, 2 * max(discretization.basis.degrees) + 4)
         measure = float(np.asarray(support_geometry.measure))
         if abs(measure - patch) > tolerance * max(1.0, measure):
             raise ValueError(
-                "The IGA patch measure differs from the support geometry measure."
+                f"prepare_isogeometric_field_reconstruction.support_geometry must match patch measure; got support={measure}, patch={patch}"
             )
     return support_geometry
 
 
+@checked
 def prepare_isogeometric_field_reconstruction(
     discretization: PreparedIsogeometricDiscretization,
     field_name: str,
     /,
     *,
     runtime: IsogeometricRuntimeData | None = None,
-    support_geometry: CompiledGeometry | None = None,
+    support_geometry: geometry_owner.CompiledGeometry | None = None,
     value_port: ValuePort | None = None,
     support_tolerance: float = 1.0e-9,
     newton_iterations: int = 32,
@@ -854,14 +935,14 @@ def prepare_isogeometric_field_reconstruction(
     patch measure. Regularity is `C^k` across interior knot lines, `k` the
     smallest field or geometry continuity there, with polynomial pieces for
     polynomial fields on affine patches and smooth rational pieces otherwise.
-    Values and first physical derivatives are exact.
+    Values and first physical derivatives use the field's rational spline basis.
     """
-    if not isinstance(discretization, PreparedIsogeometricDiscretization):
-        raise TypeError("discretization must be a PreparedIsogeometricDiscretization.")
     limit = float(support_tolerance)
     if not isfinite(limit) or limit < 0.0:
-        raise ValueError("support_tolerance must be finite and non-negative.")
-    field_index = discretization._field_index(field_name)
+        raise ValueError(
+            f"prepare_isogeometric_field_reconstruction.support_tolerance must be finite and non-negative; got {limit}"
+        )
+    field_index = discretization.field_index(field_name)
     realized = _realized_runtime(discretization, runtime)
     kernel = IsogeometricFieldReconstructionKernel(
         discretization,
@@ -921,10 +1002,10 @@ def prepare_isogeometric_field_reconstruction(
         if value_port is None
         else value_port
     )
-    if not isinstance(port, ValuePort):
-        raise TypeError("value_port must be a ValuePort or None.")
     if port.event_shape != components:
-        raise ValueError("value_port event_shape must equal the IGA component shape.")
+        raise ValueError(
+            f"prepare_isogeometric_field_reconstruction.value_port.event_shape must match the IGA components; got port={port.event_shape}, components={components}"
+        )
     return PreparedFieldReconstruction(
         kernel,
         support_geometry=geometry,
@@ -963,7 +1044,7 @@ def _require_own_facet_domain(
         )
     ):
         raise ValueError(
-            "The facet domain was not produced by this isogeometric discretization."
+            "prepare_isogeometric_side_trace.domain must match this discretization facet routes; got foreign or mismatched routes"
         )
 
 
@@ -1002,7 +1083,9 @@ def _trace_route(
             weights = basis[..., None, None] * projector[:, :, None]
             value_shape = (dimension,)
         case "conormal-flux":
-            raise ValueError("Conormal fluxes are not geometric trace routes.")
+            raise ValueError(
+                "prepare_isogeometric_side_trace.quantity must be a geometric trace; got conormal-flux"
+            )
         case _:
             assert_never(quantity)
     return SideGatherRoute(
@@ -1015,6 +1098,7 @@ def _trace_route(
     )
 
 
+@checked
 def prepare_isogeometric_side_trace(
     discretization: PreparedIsogeometricDiscretization,
     field_name: str,
@@ -1026,7 +1110,7 @@ def prepare_isogeometric_side_trace(
     side: FieldTraceSide = "owner",
     runtime: IsogeometricRuntimeData | None = None,
 ) -> PreparedTraceAction:
-    """Prepare the exact trace of one IGA field on selected patch facets.
+    """Prepare the trace of one IGA field on selected patch facets.
 
     Facets are the patch boundary faces (`exterior_facet`) or the interior knot
     faces between integration-overlay cells (`interior_facet`) of this
@@ -1042,15 +1126,9 @@ def prepare_isogeometric_side_trace(
     the outward normal. Each facet gathers only its side cell's local spline
     functions.
     """
-    if not isinstance(discretization, PreparedIsogeometricDiscretization):
-        raise TypeError("discretization must be a PreparedIsogeometricDiscretization.")
-    if not isinstance(rule, FacetTraceRule):
-        raise TypeError("rule must be a FacetTraceRule.")
-    if not isinstance(domain, IntegrationDomain):
-        raise TypeError("domain must be an IntegrationDomain.")
     quantity = parse(quantity, SideTraceQuantity, "quantity")
     side = parse(side, FieldTraceSide, "side")
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     field = discretization.fields[field_index]
     realized = _realized_runtime(discretization, runtime)
     _require_volume_patch(discretization, realized)
@@ -1061,27 +1139,31 @@ def prepare_isogeometric_side_trace(
         case "normal" | "tangential":
             if field.component_shape != (dimension,):
                 raise ValueError(
-                    f"{quantity!r} traces require a vector field with component "
-                    f"shape ({dimension},)."
+                    f"prepare_isogeometric_side_trace.field.component_shape must describe a vector field of dimension {dimension}; got shape={field.component_shape}, quantity={quantity!r}"
                 )
             if quantity == "tangential" and dimension not in _TANGENTIAL_DIMENSIONS:
-                raise ValueError("Tangential traces require two or three dimensions.")
+                raise ValueError(
+                    f"prepare_isogeometric_side_trace.dimension must be two or three for tangential traces; got {dimension}"
+                )
         case "conormal-flux":
             raise ValueError(
-                "Conormal fluxes are published by compiled physics owners through "
-                "prepare_conormal_flux, not by the discretization."
+                "prepare_isogeometric_side_trace.quantity must select a geometric trace; got conormal-flux requiring prepare_conormal_flux"
             )
         case _:
             assert_never(quantity)
     if domain.entity_indices.size == 0:
-        raise ValueError("A side trace requires at least one selected facet.")
+        raise ValueError(
+            "prepare_isogeometric_side_trace.domain must have at least one selected facet; got empty domain"
+        )
     match domain.kind:
         case "exterior_facet":
             _require_own_facet_domain(domain, discretization.exterior_facet_domain)
         case "interior_facet":
             _require_own_facet_domain(domain, discretization.interior_facet_domain)
         case _:
-            raise ValueError("Side traces act on exterior or interior facet domains.")
+            raise ValueError(
+                f"prepare_isogeometric_side_trace.domain.kind must be exterior_facet or interior_facet; got {domain.kind!r}"
+            )
     owner_cells = np.asarray(domain.owner_cells, dtype=np.int32)
     owner_local = np.asarray(domain.owner_local_entities, dtype=np.int32)
     match side:
@@ -1090,14 +1172,13 @@ def prepare_isogeometric_side_trace(
         case "neighbor":
             if domain.kind != "interior_facet":
                 raise ValueError(
-                    "Exterior facets have no neighbor side; trace the owner side."
+                    f"prepare_isogeometric_side_trace.side must be owner for exterior facets; got side={side!r}, domain={domain.kind}"
                 )
             side_cells = np.asarray(domain.neighbor_cells, dtype=np.int32)
             side_local = np.asarray(domain.neighbor_local_entities, dtype=np.int32)
         case "average":
             raise ValueError(
-                "Average side traces are not prepared; compose the owner and "
-                "neighbor traces of the interior facets instead."
+                "prepare_isogeometric_side_trace.side must select a one-sided trace; got average requiring owner and neighbor composition"
             )
         case _:
             assert_never(side)
@@ -1123,8 +1204,7 @@ def prepare_isogeometric_side_trace(
         )
         if np.max(np.abs(owner.sites - evaluation.sites)) > 1.0e-10 * scale:
             raise ValueError(
-                "Owner and neighbor embeddings of the facet sites disagree; the "
-                "geometry is not continuous across the selected knot faces."
+                "prepare_isogeometric_side_trace.runtime must have continuous geometry across selected knot faces; got disagreeing owner and neighbor facet sites"
             )
         sites, measure = owner.sites, owner.weights
     polynomial_trace = _uniform(weights)
@@ -1141,7 +1221,9 @@ def prepare_isogeometric_side_trace(
     shape = _FACET_SHAPES[dimension]
     space = discretization.field_spaces[field_index].vector_space
     if not isinstance(space, ArraySpace):
-        raise TypeError("Isogeometric field coefficients are array valued.")
+        raise TypeError(
+            "prepare_isogeometric_side_trace.field_space must be ArraySpace; got non-array coefficient space"
+        )
     magnitude = np.abs(evaluation.basis)
     nonzero = np.max(magnitude, axis=1) > _SUPPORT_TOLERANCE * np.max(magnitude)
     descriptor = SideActionDescriptor(

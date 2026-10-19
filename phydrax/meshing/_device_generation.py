@@ -2,18 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Process-local hybrid generation stages over native prepared simplex seeds.
+"""Select device candidates and commit process-local native simplex refinement.
 
-The accelerator selects a bounded batch; it does not recover a PLC or query
-CAD. Surface insertion uses native constrained reconnection. Tetra insertion
-uses interior centroid stars, preserving every existing face and region. This
-is a conforming size-refinement stage, not a Delaunay or sliver-removal claim.
-No topology is published before the explicit exact host transaction barrier.
+Surface insertion uses native constrained reconnection. Tetra insertion uses
+interior centroid stars, preserving every existing face and region. This
+size-refinement stage preserves the seed's PLC and source geometry; the host
+transaction resolves exact predicates before publishing topology.
 """
 
 from __future__ import annotations
 
 from enum import IntEnum
+from math import inf
 from typing import final
 
 import equinox as eqx
@@ -24,13 +24,22 @@ from jax import Array
 from numpy.typing import NDArray
 
 from .._geometry_predicates import orient2d, orient3d, PredicateMode, PredicateSign
-from .._meshcore import exact_orient2d, exact_orient3d, MeshcoreStatus, surface_reconnect
+from .._meshcore import (
+    exact_orient2d,
+    exact_orient3d,
+    MeshcoreStatus,
+    NativeExecutionLimits,
+    NativeExecutionScope,
+    surface_reconnect,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer, positive_integer
 from ..discretization._adaptive_simplex import (
     masked_simplex_facet_neighbors,
     MaskedSimplexMesh,
 )
+from ..typing import checked
 
 
 class DeviceGenerationStatus(IntEnum):
@@ -40,12 +49,13 @@ class DeviceGenerationStatus(IntEnum):
     INVALID_GEOMETRY = 3
 
 
-def _positive(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
-        raise TypeError(f"{name} must be an integer.")
-    if value < 1 or value > np.iinfo(np.int32).max // 8:
-        raise ValueError(f"{name} must be positive and addressable by int32.")
-    return int(value)
+def _addressable_capacity(value: int, name: str, /) -> int:
+    result = positive_integer(value, f"DeviceGenerationLayout.{name}")
+    if result > np.iinfo(np.int32).max // 8:
+        raise ValueError(
+            f"DeviceGenerationLayout.{name} must be positive and addressable by int32; got {result}."
+        )
+    return result
 
 
 @final
@@ -65,16 +75,33 @@ class DeviceGenerationLayout(StrictModule, NonTrainableState):
         candidate_capacity: int,
         maximum_work_units: int,
     ) -> None:
-        vertices = _positive(vertex_capacity, "vertex_capacity")
-        cells = _positive(cell_capacity, "cell_capacity")
-        candidates = _positive(candidate_capacity, "candidate_capacity")
-        work = _positive(maximum_work_units, "maximum_work_units")
+        vertices = _addressable_capacity(vertex_capacity, "vertex_capacity")
+        cells = _addressable_capacity(cell_capacity, "cell_capacity")
+        candidates = _addressable_capacity(candidate_capacity, "candidate_capacity")
+        work = _addressable_capacity(maximum_work_units, "maximum_work_units")
         if candidates > cells:
-            raise ValueError("candidate_capacity must not exceed cell_capacity.")
+            raise ValueError(
+                f"DeviceGenerationLayout.candidate_capacity must not exceed cell_capacity; got {candidates} > {cells}."
+            )
         self.vertex_capacity = vertices
         self.cell_capacity = cells
         self.candidate_capacity = candidates
         self.maximum_work_units = work
+
+    def native_limits(self) -> NativeExecutionLimits:
+        """Lower the existing work and topology capacities without adding controls.
+
+        This policy has no query, managed-storage, or wall-time limit; those
+        transport fields retain the native addressable maximum and infinity.
+        """
+        addressable = int(np.iinfo(np.uint64).max)
+        return NativeExecutionLimits(
+            self.maximum_work_units,
+            addressable,
+            self.cell_capacity,
+            addressable,
+            inf,
+        )
 
 
 @final
@@ -83,8 +110,8 @@ class PreparedDeviceGeneration(StrictModule, NonTrainableState):
 
     ``charts`` are meaningful only for surfaces. ``constrained`` flags the
     opposite edge of a triangle. Cell classes are region identities, not slots.
-    All numerical data here belongs to the owning process; this API does not
-    accept a distributed, non-fully-addressable mesh.
+    Numerical data belongs to one process and must be fully addressable at the
+    host transaction boundary.
     """
 
     layout: DeviceGenerationLayout
@@ -140,6 +167,28 @@ def _pad(values: NDArray, capacity: int, fill: int | float | bool, /) -> NDArray
     return result
 
 
+@final
+class _GenerationSeed(StrictModule):
+    """Host seed after capacity, identity, and connectivity admission."""
+
+    points: NDArray[np.float64]
+    cells: NDArray[np.int32]
+    vertex_ids: NDArray[np.int64]
+    cell_ids: NDArray[np.int64]
+    cell_classes: NDArray[np.int64]
+    target_sizes: NDArray[np.float64]
+
+
+@final
+class _GenerationSurface(StrictModule):
+    """Chart metadata after seed orientation admission by exact predicates."""
+
+    charts: NDArray[np.float64]
+    normals: NDArray[np.float64]
+    constrained: NDArray[np.bool_]
+
+
+@checked
 def prepare_device_generation(
     layout: DeviceGenerationLayout,
     /,
@@ -154,9 +203,37 @@ def prepare_device_generation(
     normals: NDArray[np.float64] | None = None,
     constrained: NDArray[np.bool_] | None = None,
 ) -> PreparedDeviceGeneration:
-    """Prepare native surface/PLC seed data, never recovering identity from geometry."""
-    if not isinstance(layout, DeviceGenerationLayout):
-        raise TypeError("layout must be DeviceGenerationLayout.")
+    """Prepare native seed arrays under the declared layout allowance."""
+    with NativeExecutionScope(layout.native_limits()):
+        seed = _admit_generation_seed(
+            layout, points, cells, vertex_ids, cell_ids, cell_classes, target_sizes
+        )
+        surface = _admit_generation_surface(seed, charts, normals, constrained)
+        return _pack(
+            layout,
+            seed.points,
+            seed.cells,
+            seed.vertex_ids,
+            seed.cell_ids,
+            seed.cell_classes,
+            seed.target_sizes,
+            surface.charts,
+            surface.normals,
+            surface.constrained,
+        )
+
+
+def _admit_generation_seed(
+    layout: DeviceGenerationLayout,
+    points: NDArray[np.float64],
+    cells: NDArray[np.int32],
+    vertex_ids: NDArray[np.int64],
+    cell_ids: NDArray[np.int64],
+    cell_classes: NDArray[np.int64],
+    target_sizes: NDArray[np.float64],
+    /,
+) -> _GenerationSeed:
+    """Admit host seed capacities, metadata identities, and cell references."""
     arrays = (points, cells, vertex_ids, cell_ids, cell_classes, target_sizes)
     dtypes = (np.float64, np.int32, np.int64, np.int64, np.int64, np.float64)
     if any(
@@ -164,7 +241,7 @@ def prepare_device_generation(
         for a, t in zip(arrays, dtypes, strict=True)
     ):
         raise TypeError(
-            "Prepared native arrays must be NumPy arrays with explicit canonical dtypes."
+            "prepare_device_generation.arrays must be NumPy arrays with explicit dtypes; got incompatible array kinds or dtypes."
         )
     if (
         points.ndim != 2
@@ -173,31 +250,37 @@ def prepare_device_generation(
         or cells.shape[1] not in (3, 4)
     ):
         raise ValueError(
-            "Expected physical (vertices, 3) points and triangle/tetrahedron rows."
+            f"prepare_device_generation.points_cells must have physical (vertices, 3) points and triangle/tetrahedron rows; got {points.shape}, {cells.shape}."
         )
     nv, nc = points.shape[0], cells.shape[0]
     if not nv or not nc or nv > layout.vertex_capacity or nc > layout.cell_capacity:
-        raise ValueError("Native seed arrays exceed the capacity bucket or are empty.")
+        raise ValueError(
+            f"prepare_device_generation.capacity must admit nonempty seed arrays; got {nv} vertices and {nc} cells."
+        )
     if (
         vertex_ids.shape != (nv,)
         or cell_ids.shape != (nc,)
         or cell_classes.shape != (nc,)
         or target_sizes.shape != (nc,)
     ):
-        raise ValueError("Native seed metadata must align with its vertex/cell rows.")
+        raise ValueError(
+            "prepare_device_generation.metadata must align with its vertex/cell rows; got incompatible metadata shapes."
+        )
     if (
         np.any(vertex_ids < 0)
         or np.any(cell_ids < 0)
         or np.any(np.diff(vertex_ids) <= 0)
         or np.any(np.diff(cell_ids) <= 0)
     ):
-        raise ValueError("Native seed IDs must be nonnegative and strictly increasing.")
+        raise ValueError(
+            "prepare_device_generation.ids must be nonnegative and strictly increasing; got negative or unordered IDs."
+        )
     if (
         np.max(vertex_ids) == np.iinfo(np.int64).max
         or np.max(cell_ids) == np.iinfo(np.int64).max
     ):
         raise ValueError(
-            "Native seed IDs leave no room for deterministic new identities."
+            "prepare_device_generation.ids must leave room for deterministic new identities; got an int64 maximum ID."
         )
     if (
         not np.all(np.isfinite(points))
@@ -205,18 +288,35 @@ def prepare_device_generation(
         or np.any(target_sizes <= 0)
     ):
         raise ValueError(
-            "Coordinates must be finite and target sizes finite and positive."
+            "prepare_device_generation.coordinates_sizes must be finite with positive target sizes; got nonfinite coordinates or nonpositive/nonfinite sizes."
         )
     if (
         np.any(cells < 0)
         or np.any(cells >= nv)
         or np.any(np.diff(np.sort(cells, axis=1), axis=1) == 0)
     ):
-        raise ValueError("Cells must reference distinct in-range vertex slots.")
+        raise ValueError(
+            "prepare_device_generation.cells must reference distinct in-range vertex slots; got repeated or out-of-range slots."
+        )
+    return _GenerationSeed(
+        points, cells, vertex_ids, cell_ids, cell_classes, target_sizes
+    )
+
+
+def _admit_generation_surface(
+    seed: _GenerationSeed,
+    charts: NDArray[np.float64] | None,
+    normals: NDArray[np.float64] | None,
+    constrained: NDArray[np.bool_] | None,
+    /,
+) -> _GenerationSurface:
+    """Admit chart metadata and resolve seed orientation before packing."""
+    points, cells = seed.points, seed.cells
+    nv = points.shape[0]
     if cells.shape[1] == 3:
         if charts is None or normals is None or constrained is None:
             raise ValueError(
-                "Surface seeds require native charts, normals and constrained edges."
+                "prepare_device_generation.surface must supply charts, normals and constrained edges; got missing surface metadata."
             )
         if (
             charts.shape != (nv, 2)
@@ -227,34 +327,29 @@ def prepare_device_generation(
             or constrained.dtype != np.bool_
         ):
             raise TypeError(
-                "Surface chart/normal/constraint arrays have incompatible contracts."
+                "prepare_device_generation.surface must have float64 charts/normals and boolean constraints aligned with the seed; got incompatible contracts."
             )
         if not np.all(np.isfinite(charts)) or not np.all(np.isfinite(normals)):
-            raise ValueError("Surface charts and normals must be finite.")
+            raise ValueError(
+                "prepare_device_generation.surface must have finite charts and normals; got nonfinite values."
+            )
         corners = charts[cells]
         signs = exact_orient2d(corners[:, 0], corners[:, 1], corners[:, 2])
     else:
         if charts is not None or normals is not None or constrained is not None:
-            raise ValueError("Tetrahedral seeds do not carry surface chart data.")
+            raise ValueError(
+                "prepare_device_generation.surface must be absent for tetrahedral seeds; got surface chart data."
+            )
         charts = np.zeros((nv, 2), dtype=np.float64)
         normals = np.zeros((nv, 3), dtype=np.float64)
         constrained = np.zeros(cells.shape, dtype=np.bool_)
         corners = points[cells]
         signs = exact_orient3d(corners[:, 0], corners[:, 1], corners[:, 2], corners[:, 3])
     if np.any(signs != PredicateSign.POSITIVE):
-        raise ValueError("Native seed cells must have exactly positive orientation.")
-    return _pack(
-        layout,
-        points,
-        cells,
-        vertex_ids,
-        cell_ids,
-        cell_classes,
-        target_sizes,
-        charts,
-        normals,
-        constrained,
-    )
+        raise ValueError(
+            "prepare_device_generation.orientation must be positive under exact predicates; got nonpositive seed cells."
+        )
+    return _GenerationSurface(charts, normals, constrained)
 
 
 def _pack(
@@ -270,7 +365,7 @@ def _pack(
     constrained: NDArray[np.bool_],
     /,
 ) -> PreparedDeviceGeneration:
-    """Pack already validated transaction arrays without redoing exact work."""
+    """Pad admitted transaction arrays and construct the device mesh."""
     nv, nc = points.shape[0], cells.shape[0]
     vc, cc = layout.vertex_capacity, layout.cell_capacity
     rows = jnp.asarray(_pad(cells, cc, 0))
@@ -358,22 +453,23 @@ _compiled_candidates = eqx.filter_jit(_candidates)
 
 
 def _check_prepared(prepared: PreparedDeviceGeneration, /) -> None:
-    if not isinstance(prepared, PreparedDeviceGeneration):
-        raise TypeError("prepared must be PreparedDeviceGeneration.")
     if (
         prepared.mesh.vertex_capacity != prepared.layout.vertex_capacity
         or prepared.mesh.cell_capacity != prepared.layout.cell_capacity
     ):
-        raise ValueError("Prepared topology does not belong to its capacity bucket.")
+        raise ValueError(
+            "PreparedDeviceGeneration.mesh must belong to its capacity bucket; got incompatible topology capacities."
+        )
     if any(
         isinstance(leaf, Array) and not leaf.is_fully_addressable
         for leaf in jax.tree_util.tree_leaves(prepared)
     ):
         raise ValueError(
-            "Generation barriers require process-local, fully addressable arrays."
+            "PreparedDeviceGeneration.arrays must be process-local and fully addressable; got non-addressable arrays."
         )
 
 
+@checked
 def evaluate_device_generation_candidates(
     prepared: PreparedDeviceGeneration, /
 ) -> DeviceGenerationCandidates:
@@ -390,6 +486,7 @@ def _bytes(tree: StrictModule, /) -> int:
     )
 
 
+@checked
 def execute_device_generation_round(
     prepared: PreparedDeviceGeneration,
     /,
@@ -399,22 +496,41 @@ def execute_device_generation_round(
     surface_geometry_queries: int = 0,
     candidates: DeviceGenerationCandidates | None = None,
 ) -> DeviceGenerationUpdate:
-    """Exact process-local barrier, native topology stage, then atomic publication.
+    """Execute one bounded generation round under its layout allowance."""
+    with NativeExecutionScope(prepared.layout.native_limits()) as scope:
+        return _execute_device_generation_round(
+            prepared,
+            surface_points=surface_points,
+            surface_normals=surface_normals,
+            surface_geometry_queries=surface_geometry_queries,
+            candidates=candidates,
+            scope=scope,
+        )
 
-    Surface geometry is evaluated by the provider in ONE bounded batch at the
-    returned candidate charts; pass arrays of the complete candidate capacity.
-    Report the provider's actual query count in ``surface_geometry_queries``;
-    precomputed geometry performs zero queries here. A failed
-    stage returns the identical source preparation. This does not gather any
-    remote mesh, but the local mesh and candidate buffers cross to the host.
+
+def _execute_device_generation_round(
+    prepared: PreparedDeviceGeneration,
+    /,
+    *,
+    surface_points: NDArray[np.float64] | None = None,
+    surface_normals: NDArray[np.float64] | None = None,
+    surface_geometry_queries: int = 0,
+    candidates: DeviceGenerationCandidates | None = None,
+    scope: NativeExecutionScope,
+) -> DeviceGenerationUpdate:
+    """Resolve host predicates, update native topology, and publish atomically.
+
+    The provider evaluates surface geometry in one bounded batch at the candidate
+    charts; input arrays cover the candidate capacity. ``surface_geometry_queries``
+    reports its query count, with zero for precomputed geometry.
+    A failed stage returns the identical source preparation. The local mesh and
+    candidate buffers cross to the host; remote mesh data is not gathered.
     """
     _check_prepared(prepared)
-    if isinstance(surface_geometry_queries, bool) or not isinstance(
-        surface_geometry_queries, (int, np.integer)
-    ):
-        raise TypeError("surface_geometry_queries must be an integer.")
-    if surface_geometry_queries < 0:
-        raise ValueError("surface_geometry_queries must be nonnegative.")
+    surface_geometry_queries = nonnegative_integer(
+        surface_geometry_queries,
+        "execute_device_generation_round.surface_geometry_queries",
+    )
     batch = (
         evaluate_device_generation_candidates(prepared)
         if candidates is None
@@ -427,8 +543,10 @@ def execute_device_generation_round(
         or batch.charts.shape != (expected, 2)
         or batch.signs.shape != (prepared.layout.cell_capacity,)
     ):
-        raise ValueError("Candidates do not belong to the prepared capacity bucket.")
-    # One explicit transfer of this owning process's bounded transaction data.
+        raise ValueError(
+            "execute_device_generation_round.candidates must belong to the prepared capacity bucket; got incompatible candidate shapes."
+        )
+    # One explicit transfer of this process's bounded transaction data.
     host, candidate = jax.device_get((prepared, batch))
     transferred = _bytes(prepared) + _bytes(batch)
     count = int(np.asarray(candidate.count))
@@ -442,6 +560,7 @@ def execute_device_generation_round(
             candidate,
             surface_points,
             surface_normals,
+            scope=scope,
         )
     queries = int(surface_geometry_queries)
     evidence = DeviceGenerationEvidence(
@@ -469,21 +588,21 @@ def _initial_surface_signs(charts: Array, /) -> Array:
     ).signs
 
 
+@checked
 def certify_device_surface_initial(
     layout: DeviceGenerationLayout,
     vertices: NDArray[np.float64],
     triangle_charts: NDArray[np.float64],
     expected_signs: NDArray[np.int32],
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> DeviceGenerationEvidence:
     """Resolve bounded initial chart predicates before collective publication.
 
-    Native constrained construction owns physical/source fidelity. This stage
-    owns the filtered-device/exact-host orientation barrier, not another
-    triangulation or an all-device construction claim.
+    Native constrained construction checks physical/source fidelity. This stage
+    resolves filtered device predicates with exact predicates at the host barrier.
     """
-    if not isinstance(layout, DeviceGenerationLayout):
-        raise TypeError("layout must be DeviceGenerationLayout.")
     if (
         vertices.dtype != np.float64
         or vertices.ndim != 2
@@ -494,14 +613,20 @@ def certify_device_surface_initial(
         or expected_signs.dtype != np.int32
         or expected_signs.shape != (triangle_charts.shape[0],)
     ):
-        raise ValueError("Initial surface arrays have incompatible canonical contracts.")
+        raise ValueError(
+            "certify_device_surface_initial.arrays must have aligned float64 coordinates/charts and int32 signs; got incompatible contracts."
+        )
     if not np.all(np.isfinite(vertices)) or not np.all(np.isfinite(triangle_charts)):
-        raise ValueError("Initial surface coordinates and charts must be finite.")
+        raise ValueError(
+            "certify_device_surface_initial.coordinates_charts must be finite; got nonfinite values."
+        )
     if np.any(
         (expected_signs != PredicateSign.POSITIVE)
         & (expected_signs != PredicateSign.NEGATIVE)
     ):
-        raise ValueError("Each initial triangle requires its authored chart winding.")
+        raise ValueError(
+            "certify_device_surface_initial.expected_signs must supply each authored chart winding; got a sign other than positive or negative."
+        )
     count = triangle_charts.shape[0]
     status = DeviceGenerationStatus.COMPLETE
     if vertices.shape[0] > layout.vertex_capacity or count > layout.cell_capacity:
@@ -560,7 +685,7 @@ def _surface_cell_ids(
     keys = np.sort(vertex_ids[source_rows], axis=1)
     if source_ids.shape != (keys.shape[0],):
         raise ValueError(
-            "Scientific source cell IDs must match their exact source connectivity rows."
+            "execute_device_generation_round.cell_ids must match their source connectivity rows; got misaligned IDs."
         )
     lookup = {
         tuple(keys[index, column] for column in range(keys.shape[1])): source_ids[index]
@@ -584,14 +709,23 @@ def _surface_cell_ids(
     return identifiers
 
 
-def _host_round(
-    source: PreparedDeviceGeneration,
-    host: PreparedDeviceGeneration,
-    candidate: DeviceGenerationCandidates,
-    surface_points: NDArray[np.float64] | None,
-    surface_normals: NDArray[np.float64] | None,
-    /,
-) -> tuple[PreparedDeviceGeneration, DeviceGenerationStatus, int, int, int, int]:
+@final
+class _HostRoundSeed(StrictModule):
+    """Live host rows and candidate slots admitted for one transaction."""
+
+    points: NDArray[np.float64]
+    rows: NDArray[np.int32]
+    vertex_ids: NDArray[np.int64]
+    cell_ids: NDArray[np.int64]
+    classes: NDArray[np.int64]
+    sizes: NDArray[np.float64]
+    hints: NDArray[np.int32]
+    cell_live: NDArray[np.bool_]
+
+
+def _admit_host_round(
+    host: PreparedDeviceGeneration, candidate: DeviceGenerationCandidates, /
+) -> _HostRoundSeed:
     mesh = host.mesh
     vertex_live = np.asarray(mesh.vertex_active)
     cell_live = np.asarray(mesh.cell_active)
@@ -612,7 +746,9 @@ def _host_round(
             active_slots[np.minimum(hints, active_slots.size - 1)], selected
         )
     ):
-        raise ValueError("Candidates must reference distinct active source cell slots.")
+        raise ValueError(
+            "execute_device_generation_round.candidates must reference distinct active source cell slots; got repeated or inactive slots."
+        )
     live_candidates = np.asarray(candidate.active)
     tolerance = 16 * np.finfo(np.float64).eps * max(1.0, float(np.max(np.abs(points))))
     if not np.allclose(
@@ -626,7 +762,30 @@ def _host_round(
         rtol=16 * np.finfo(np.float64).eps,
         atol=tolerance,
     ):
-        raise ValueError("Candidate coordinates do not belong to the prepared source.")
+        raise ValueError(
+            "execute_device_generation_round.candidates must belong to the prepared source; got inconsistent candidate coordinates."
+        )
+    return _HostRoundSeed(
+        points, rows, vertex_ids, cell_ids, classes, sizes, hints, cell_live
+    )
+
+
+def _host_round(
+    source: PreparedDeviceGeneration,
+    host: PreparedDeviceGeneration,
+    candidate: DeviceGenerationCandidates,
+    surface_points: NDArray[np.float64] | None,
+    surface_normals: NDArray[np.float64] | None,
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> tuple[PreparedDeviceGeneration, DeviceGenerationStatus, int, int, int, int]:
+    seed = _admit_host_round(host, candidate)
+    points, rows = seed.points, seed.rows
+    vertex_ids, cell_ids = seed.vertex_ids, seed.cell_ids
+    classes, sizes = seed.classes, seed.sizes
+    hints, cell_live = seed.hints, seed.cell_live
+    nv = points.shape[0]
     count = hints.size
     layout = source.layout
     width = rows.shape[1]
@@ -638,7 +797,7 @@ def _host_round(
         or np.max(cell_ids) > np.iinfo(np.int64).max - width * count - rows.shape[0]
     ):
         return source, DeviceGenerationStatus.CAPACITY_EXCEEDED, 0, 0, 0, 0
-    # Resolve uncertain SOURCE decisions in one exact batch before topology.
+    # Resolve uncertain source decisions in one exact predicate batch before topology.
     unresolved = np.asarray(candidate.signs)[cell_live] == PredicateSign.UNCERTAIN
     exact = int(np.sum(unresolved))
     reserved_exact_work = exact + created_bound
@@ -659,11 +818,11 @@ def _host_round(
     if width == 3:
         if not np.all(classes == classes[0]) or not np.all(sizes == sizes[0]):
             raise ValueError(
-                "Surface reconnection requires one patch region and uniform target size."
+                "execute_device_generation_round.surface must have one patch region and uniform target size; got differing classes or sizes."
             )
         if surface_points is None or surface_normals is None:
             raise ValueError(
-                "Surface candidates require one explicit batched geometry evaluation."
+                "execute_device_generation_round.surface must supply one explicit batched geometry evaluation; got missing points or normals."
             )
         shape = (layout.candidate_capacity, 3)
         if (
@@ -673,17 +832,19 @@ def _host_round(
             or surface_normals.dtype != np.float64
         ):
             raise TypeError(
-                "Surface geometry arrays must be float64 candidate-capacity arrays."
+                "execute_device_generation_round.surface must be float64 candidate-capacity arrays; got incompatible geometry shapes or dtypes."
             )
         if not np.all(np.isfinite(surface_points)) or not np.all(
             np.isfinite(surface_normals)
         ):
-            raise ValueError("Surface candidate geometry must be finite.")
+            raise ValueError(
+                "execute_device_generation_round.surface must be finite; got nonfinite candidate geometry."
+            )
         live = np.asarray(candidate.active)
         new_points = surface_points[live]
         new_charts = np.asarray(candidate.charts)[live]
         new_normals = surface_normals[live]
-        result, flags_out, issued, statuses, counters = surface_reconnect(
+        native = surface_reconnect(
             np.asarray(host.charts)[:nv],
             points,
             np.asarray(host.normals)[:nv],
@@ -699,8 +860,13 @@ def _host_round(
             work_limit=layout.maximum_work_units - reserved_exact_work,
             insert_edges=None,
         )
-        work = int(counters[4])
-        if counters[5] or np.any(statuses == MeshcoreStatus.CAPACITY_EXCEEDED):
+        result = native.triangles
+        flags_out = native.constrained
+        issued = native.vertex_ids
+        statuses = native.item_status
+        counters = native.counters
+        work = counters.work
+        if counters.exhausted or np.any(statuses == MeshcoreStatus.CAPACITY_EXCEEDED):
             return source, DeviceGenerationStatus.WORK_LIMIT, exact, work, 0, 0
         accepted = issued >= 0
         if not np.any(accepted):
@@ -759,7 +925,9 @@ def _host_round(
         normals_out = np.zeros(points_out.shape, dtype=np.float64)
         flags_out = np.zeros(result.shape, dtype=np.bool_)
     if charts_out is None or normals_out is None or flags_out is None:
-        raise RuntimeError("Topology stage did not produce its surface metadata.")
+        raise RuntimeError(
+            "execute_device_generation_round.topology must produce its surface metadata; got absent chart, normal, or constraint arrays."
+        )
     target = _pack(
         layout,
         points_out,

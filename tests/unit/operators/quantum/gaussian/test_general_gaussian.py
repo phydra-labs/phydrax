@@ -1,7 +1,9 @@
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -38,8 +40,8 @@ def test_general_gaussian_scenario_1() -> None:
         gaussian.GaussianShellPlan(
             11,
             angular,
-            [0.7],
-            [1.0],
+            np.asarray([0.7], dtype=np.float64),
+            np.asarray([1.0], dtype=np.float64),
             representation=gaussian.GaussianShellRepresentation.REAL_SPHERICAL,
         )
         for angular in range(4)
@@ -55,7 +57,14 @@ def test_general_gaussian_scenario_1() -> None:
     structure, system = _system([1], [[0.0, 0.0, 0.0]], [17])
     gaussian = phx.operators.quantum.gaussian
     basis = gaussian.GaussianBasisPlan(
-        [gaussian.GaussianShellPlan(17, 1, [0.8, 0.25], [0.7, 0.3])],
+        [
+            gaussian.GaussianShellPlan(
+                17,
+                1,
+                np.asarray([0.8, 0.25], dtype=np.float64),
+                np.asarray([0.7, 0.3], dtype=np.float64),
+            )
+        ],
         source_id="p-gradient",
     ).prepare(system)
     point = np.asarray([[0.2, -0.1, 0.3]])
@@ -76,7 +85,14 @@ def test_general_gaussian_scenario_2() -> None:
     structure, system = _system([1], [[0.0, 0.0, 0.0]], [23])
     gaussian = phx.operators.quantum.gaussian
     basis = gaussian.GaussianBasisPlan(
-        [gaussian.GaussianShellPlan(23, 1, [0.6], [1.0])],
+        [
+            gaussian.GaussianShellPlan(
+                23,
+                1,
+                np.asarray([0.6], dtype=np.float64),
+                np.asarray([1.0], dtype=np.float64),
+            )
+        ],
         source_id="p-factorization",
     ).prepare(system)
     eri = gaussian.electron_repulsion_tensor(basis, structure.positions)
@@ -137,3 +153,22 @@ def test_general_gaussian_scenario_2() -> None:
 
     assert ecp.center_index == 0
     assert ecp.plan.core_electron_count == 2
+
+
+@pytest.mark.strict_jax
+def test_contracted_integral_accepts_weak_integer_coordinates() -> None:
+    _, system = _system([1], np.zeros((1, 3), dtype=np.float64), [11])
+    gaussian = phx.operators.quantum.gaussian
+    basis = gaussian.GaussianBasisPlan.from_contracted_s(
+        [11],
+        np.ones((1, 1), dtype=np.float64),
+        np.ones((1, 1), dtype=np.float64),
+        source_id="normalized-unit-exponent-s-orbital",
+    ).prepare(system)
+    # Omitting dtype deliberately requests JAX's weak scalar conversion contract.
+    positions = jnp.broadcast_to(jnp.asarray(0), (1, 3))
+    integral = gaussian.contracted_electron_repulsion_element(
+        basis, positions, 0, 0, 0, 0
+    )
+    # The normalized unit-exponent s-orbital Coulomb integral is 2 / sqrt(pi).
+    np.testing.assert_allclose(integral, 2.0 / np.sqrt(np.pi), rtol=2.0e-12, atol=2.0e-14)

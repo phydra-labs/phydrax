@@ -3,6 +3,8 @@
 #
 
 
+from dataclasses import dataclass
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -18,10 +20,32 @@ from phydrax.discretization.iga._basis import (
 )
 from phydrax.discretization.iga._geometry import NURBSGeometryState
 from phydrax.discretization.iga._plan import IsogeometricPlan
-from phydrax.discretization.iga._transfer import prepare_tensor_transfer
+from phydrax.discretization.iga._transfer import prepare_tensor_transfer, TransferPlan
 from phydrax.geometry.brep._constructors import reversed_bspline
 from phydrax.geometry.brep._patches import BSplineCurve, BSplineSurfacePatch
 from phydrax.linalg import ArraySpace
+
+
+# Empirical float64 acceptance bound for spline transfer fixtures at d2dfcb941.
+_SPLINE_TRANSFER_TOLERANCE = 1.0e-12
+
+
+# Empirical `test_native_rational_source_transfer_preserves_map_and_derivatives`: matched max |delta|=1.11022e-16; joint allowance fraction=5.92985e-05, margin=99.9941%.
+_RATIONAL_MAP_VALUES_ATOL = 1e-12
+# Empirical `test_native_rational_source_transfer_preserves_map_and_derivatives`: matched max |delta|=1.11022e-16; joint allowance fraction=5.92985e-05, margin=99.9941%.
+_RATIONAL_MAP_VALUES_RTOL = 1e-12
+# Empirical `test_native_rational_source_transfer_preserves_map_and_derivatives`: matched max |delta|=5.55112e-17; joint allowance fraction=5.27575e-05, margin=99.9947%.
+_RATIONAL_MAP_JVP_ATOL = 1e-12
+# Empirical `test_native_rational_source_transfer_preserves_map_and_derivatives`: matched max |delta|=5.55112e-17; joint allowance fraction=5.27575e-05, margin=99.9947%.
+_RATIONAL_MAP_JVP_RTOL = 1e-12
+# Empirical `test_native_rational_source_transfer_preserves_map_and_derivatives`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_RATIONAL_WEIGHT_TRANSFER_ATOL = 1e-12
+# Empirical `test_native_rational_source_transfer_preserves_map_and_derivatives`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_RATIONAL_WEIGHT_TRANSFER_RTOL = 1e-12
+# Empirical `test_native_rational_source_transfer_preserves_map_and_derivatives`: matched max |delta|=7.10543e-15; joint allowance fraction=0.000384047, margin=99.9616%.
+_RATIONAL_MAP_PULLBACK_ATOL = 1e-12
+# Empirical `test_native_rational_source_transfer_preserves_map_and_derivatives`: matched max |delta|=7.10543e-15; joint allowance fraction=0.000384047, margin=99.9616%.
+_RATIONAL_MAP_PULLBACK_RTOL = 1e-12
 
 
 def _field(basis: TensorSplineBasisSpec) -> DiscreteFieldSpace:
@@ -129,8 +153,15 @@ def test_native_rational_source_transfer_preserves_map_and_derivatives(
     )
     old_values, old_jvp = jax.jvp(original, arguments, tangents)
     new_values, new_jvp = jax.jvp(refined, arguments, tangents)
-    np.testing.assert_allclose(new_values, old_values, atol=1e-12, rtol=1e-12)
-    np.testing.assert_allclose(new_jvp, old_jvp, atol=1e-12, rtol=1e-12)
+    np.testing.assert_allclose(
+        new_values,
+        old_values,
+        atol=_RATIONAL_MAP_VALUES_ATOL,
+        rtol=_RATIONAL_MAP_VALUES_RTOL,
+    )
+    np.testing.assert_allclose(
+        new_jvp, old_jvp, atol=_RATIONAL_MAP_JVP_ATOL, rtol=_RATIONAL_MAP_JVP_RTOL
+    )
     _, old_pullback = jax.vjp(original, *arguments)
     _, new_pullback = jax.vjp(refined, *arguments)
     cotangent = jnp.arange(old_values.size, dtype=old_values.dtype).reshape(
@@ -139,10 +170,18 @@ def test_native_rational_source_transfer_preserves_map_and_derivatives(
     for actual, expected in zip(
         new_pullback(cotangent), old_pullback(cotangent), strict=True
     ):
-        np.testing.assert_allclose(actual, expected, atol=1e-12, rtol=1e-12)
+        np.testing.assert_allclose(
+            actual,
+            expected,
+            atol=_RATIONAL_MAP_PULLBACK_ATOL,
+            rtol=_RATIONAL_MAP_PULLBACK_RTOL,
+        )
     target_geometry = transfer.apply_geometry(bound.geometry)
     np.testing.assert_allclose(
-        target_geometry.weights, transfer.apply(source.weights), atol=1e-12, rtol=1e-12
+        target_geometry.weights,
+        transfer.apply(source.weights),
+        atol=_RATIONAL_WEIGHT_TRANSFER_ATOL,
+        rtol=_RATIONAL_WEIGHT_TRANSFER_RTOL,
     )
     field, field_weights = transfer.apply_rational_payload(
         source.control_points, source.weights
@@ -207,22 +246,42 @@ def test_projected_transfer_refuses_rational_geometry_preservation() -> None:
     geometry = NURBSGeometryState(
         grid.greville_abscissae[:, None], jnp.asarray((2.0, 3.0, 4.0))
     )
-    with pytest.raises(ValueError, match="exact qualified transfer"):
+    with pytest.raises(ValueError, match="TransferPlan.apply_geometry.geometry"):
         transfer.apply_geometry(geometry)
-    with pytest.raises(ValueError, match="exact transfer"):
+    with pytest.raises(
+        ValueError, match="TransferPlan.apply_rational_payload.coefficients"
+    ):
         transfer.apply_rational_payload(geometry.control_points, geometry.weights)
-    with pytest.raises(ValueError, match="exact tensor transfer"):
+    with pytest.raises(ValueError, match="TransferPlan.bind_numeric.source_revision"):
         transfer.bind_numeric(revision, revision)
 
 
-@pytest.mark.filterwarnings("error:A JAX array is being set as static:UserWarning")
-@pytest.mark.parametrize("elevate", (False, True))
-@pytest.mark.parametrize("reverse", (False, True))
-def test_original_native_ellipse_source_reuses_prepared_transfer(
-    elevate: bool, reverse: bool
-) -> None:
-    # Same authoritative quadratic, repeated-knot profile used by the native
-    # extrusion/revolution construction corpus; no sampled spline surrogate.
+@dataclass(frozen=True)
+class _EllipseTransferCase:
+    curve: BSplineCurve
+    source: BSplineCurve
+    source_plan: IsogeometricPlan
+    target_grid: BSplineGrid
+    target_basis: TensorSplineBasisSpec
+    source_revision: NumericRevision
+    target_revision: NumericRevision
+    transfer: TransferPlan
+    parameters: jax.Array
+    reference_parameters: jax.Array
+    source_values: jax.Array
+    geometry: NURBSGeometryState
+    target: BSplineCurve
+
+
+@eqx.filter_jit
+def _apply_prepared_geometry(
+    prepared: TransferPlan, state: NURBSGeometryState
+) -> NURBSGeometryState:
+    return prepared.apply_geometry(state)
+
+
+def _ellipse_transfer_case(elevate: bool, reverse: bool) -> _EllipseTransferCase:
+    """Prepare the quadratic ellipse fixture's tensor transfer and numeric bindings."""
     curve = BSplineCurve(
         jnp.asarray(
             (
@@ -292,16 +351,7 @@ def test_original_native_ellipse_source_reuses_prepared_transfer(
     )
     parameters = jnp.linspace(*source.parameter_domain, 33)
     source_values = source.evaluate(parameters)
-    np.testing.assert_allclose(
-        (source_values[:, 0] - 3.0) ** 2 + (source_values[:, 1] / 0.5) ** 2,
-        jnp.ones(parameters.shape),
-        atol=1e-12,
-        rtol=1e-12,
-    )
-    apply_prepared = eqx.filter_jit(
-        lambda prepared, state: prepared.apply_geometry(state)
-    )
-    geometry = apply_prepared(transfer, source_plan.geometry)
+    geometry = _apply_prepared_geometry(transfer, source_plan.geometry)
     target_revision = NumericRevision(
         "target",
         {
@@ -314,16 +364,74 @@ def test_original_native_ellipse_source_reuses_prepared_transfer(
     target = BSplineCurve(
         geometry.control_points, geometry.weights, target_grid.knots, target_degree
     )
-    np.testing.assert_allclose(
-        target.evaluate(parameters), source.evaluate(parameters), atol=1e-12, rtol=1e-12
+    reference_parameters = -parameters if reverse else parameters
+    return _EllipseTransferCase(
+        curve,
+        source,
+        source_plan,
+        target_grid,
+        target_basis,
+        source_revision,
+        target_revision,
+        transfer,
+        parameters,
+        reference_parameters,
+        source_values,
+        geometry,
+        target,
     )
-    if reverse:
-        np.testing.assert_allclose(
-            source.evaluate(parameters),
-            curve.evaluate(-parameters),
-            atol=1e-12,
-            rtol=1e-12,
-        )
+
+
+@pytest.fixture(
+    scope="module",
+    params=[
+        pytest.param((False, False), id="refine-forward"),
+        pytest.param((True, False), id="elevate-forward"),
+        pytest.param((False, True), id="refine-reversed"),
+        pytest.param((True, True), id="elevate-reversed"),
+    ],
+)
+def ellipse_case(request: pytest.FixtureRequest) -> _EllipseTransferCase:
+    elevate, reverse = request.param
+    return _ellipse_transfer_case(elevate, reverse)
+
+
+@pytest.mark.filterwarnings("error:A JAX array is being set as static:UserWarning")
+def test_native_ellipse_tensor_transfer_preserves_curve(
+    ellipse_case: _EllipseTransferCase,
+) -> None:
+    source_values = ellipse_case.source_values
+    parameters = ellipse_case.parameters
+    np.testing.assert_allclose(
+        (source_values[:, 0] - 3.0) ** 2 + (source_values[:, 1] / 0.5) ** 2,
+        jnp.ones(parameters.shape),
+        atol=_SPLINE_TRANSFER_TOLERANCE,
+        rtol=_SPLINE_TRANSFER_TOLERANCE,
+    )
+    np.testing.assert_allclose(
+        ellipse_case.target.evaluate(parameters),
+        ellipse_case.source.evaluate(parameters),
+        atol=_SPLINE_TRANSFER_TOLERANCE,
+        rtol=_SPLINE_TRANSFER_TOLERANCE,
+    )
+    np.testing.assert_allclose(
+        source_values,
+        ellipse_case.curve.evaluate(ellipse_case.reference_parameters),
+        atol=_SPLINE_TRANSFER_TOLERANCE,
+        rtol=_SPLINE_TRANSFER_TOLERANCE,
+    )
+
+
+@pytest.mark.filterwarnings("error:A JAX array is being set as static:UserWarning")
+def test_native_ellipse_tensor_transfer_preserves_design_derivatives(
+    ellipse_case: _EllipseTransferCase,
+) -> None:
+    source = ellipse_case.source
+    transfer = ellipse_case.transfer
+    target_grid = ellipse_case.target_grid
+    target_degree = target_grid.degree
+    parameters = ellipse_case.parameters
+    source_values = ellipse_case.source_values
 
     def source_design_values(design: jax.Array) -> jax.Array:
         points = source.control_points * design[:2] + design[2:4]
@@ -344,24 +452,48 @@ def test_original_native_ellipse_source_reuses_prepared_transfer(
     direction = jnp.asarray((0.125, -0.25, 0.0625, -0.125, 0.25))
     _, source_jvp = jax.jvp(source_design_values, (design,), (direction,))
     _, target_jvp = jax.jvp(target_design_values, (design,), (direction,))
-    np.testing.assert_allclose(target_jvp, source_jvp, atol=1e-12, rtol=1e-12)
+    np.testing.assert_allclose(
+        target_jvp,
+        source_jvp,
+        atol=_SPLINE_TRANSFER_TOLERANCE,
+        rtol=_SPLINE_TRANSFER_TOLERANCE,
+    )
     _, source_vjp = jax.vjp(source_design_values, design)
     _, target_vjp = jax.vjp(target_design_values, design)
     cotangent = jnp.ones(source_values.shape)
     np.testing.assert_allclose(
-        target_vjp(cotangent)[0], source_vjp(cotangent)[0], atol=1e-12, rtol=1e-12
+        target_vjp(cotangent)[0],
+        source_vjp(cotangent)[0],
+        atol=_SPLINE_TRANSFER_TOLERANCE,
+        rtol=_SPLINE_TRANSFER_TOLERANCE,
     )
     np.testing.assert_allclose(
         jnp.vdot(target_jvp, cotangent),
         jnp.vdot(direction, target_vjp(cotangent)[0]),
-        atol=1e-12,
-        rtol=1e-12,
+        atol=_SPLINE_TRANSFER_TOLERANCE,
+        rtol=_SPLINE_TRANSFER_TOLERANCE,
     )
+
+
+@pytest.mark.filterwarnings("error:A JAX array is being set as static:UserWarning")
+def test_native_ellipse_numeric_refresh_preserves_operator_archive(
+    ellipse_case: _EllipseTransferCase,
+) -> None:
+    source = ellipse_case.source
+    transfer = ellipse_case.transfer
+    target_grid = ellipse_case.target_grid
+    target_degree = target_grid.degree
+    parameters = ellipse_case.parameters
+    source_plan = ellipse_case.source_plan
+    target_basis = ellipse_case.target_basis
+    source_revision = ellipse_case.source_revision
+    target_revision = ellipse_case.target_revision
+    geometry = ellipse_case.geometry
     edited = NURBSGeometryState(
         source.control_points.at[1, 1].add(0.125),
         source.weights.at[1].multiply(1.125),
     )
-    edited_geometry = apply_prepared(transfer, edited)
+    edited_geometry = _apply_prepared_geometry(transfer, edited)
     edited_source = BSplineCurve(
         edited.control_points, edited.weights, source.knots, source.degree
     )
@@ -374,8 +506,8 @@ def test_original_native_ellipse_source_reuses_prepared_transfer(
     np.testing.assert_allclose(
         edited_target.evaluate(parameters),
         edited_source.evaluate(parameters),
-        atol=1e-12,
-        rtol=1e-12,
+        atol=_SPLINE_TRANSFER_TOLERANCE,
+        rtol=_SPLINE_TRANSFER_TOLERANCE,
     )
     edited_revision = NumericRevision(
         "profile",
@@ -393,7 +525,7 @@ def test_original_native_ellipse_source_reuses_prepared_transfer(
         source_revision=edited_revision,
         target_revision=target_revision,
     )
-    with pytest.raises(ValueError, match="invalidated"):
+    with pytest.raises(ValueError, match="TransferPlan.require_valid_for.source_plan_id"):
         transfer.require_valid_for(
             source_plan_id=source_plan.plan_id,
             target_plan_id="target",
@@ -431,5 +563,8 @@ def test_original_native_ellipse_source_reuses_prepared_transfer(
     assert manifest["source_content_id"] == source_revision.content_id
     assert manifest["target_content_id"] == target_revision.content_id
     np.testing.assert_allclose(
-        archive["P_axis_000"] @ source.weights, geometry.weights, atol=1e-12, rtol=1e-12
+        archive["P_axis_000"] @ source.weights,
+        geometry.weights,
+        atol=_SPLINE_TRANSFER_TOLERANCE,
+        rtol=_SPLINE_TRANSFER_TOLERANCE,
     )

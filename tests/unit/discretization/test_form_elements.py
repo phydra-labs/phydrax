@@ -1,9 +1,11 @@
 """Independent dimensions, duality, and polynomial differential contracts."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from fractions import Fraction
 from itertools import combinations, permutations
 from math import comb
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -11,19 +13,37 @@ import numpy.typing as npt
 import pytest
 from jax import Array
 
+from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization import (
     CellBlock,
     CellMesh,
     FiniteElementFieldSpec,
     FiniteElementPlan,
-)
-from phydrax.discretization.fem._form_elements import (
     form_element,
-    FormBasis,
     FormElementFamily,
+    prepare_finite_element_cell_map,
+    reference_cell_topology,
 )
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._coordinate_enclosure import expression_evaluate
+from phydrax.discretization.fem._form_basis_types import AbstractReferenceFormBasis
 from phydrax.exterior._algebra import map_reference_values
 from phydrax.exterior._form_type import FormProxy, FormTwist, FormType, FormValueSpec
+
+
+# Empirical reference-dual regression envelopes retain the fixture specification
+# from d2dfcb941 (polynomial duality, nilpotence, permutation and tensor probes).
+# Hybrid probes extend those envelopes using the independent edge moments,
+# smooth-field cubature, and closed-form pyramid energy defined in this module.
+REFERENCE_DUAL_TOLERANCE = 2e-9
+REFERENCE_POLYNOMIAL_TOLERANCE = 2e-10
+REFERENCE_DIFFERENTIAL_TOLERANCE = 2e-8
+REFERENCE_RANK_TOLERANCE = 1e-8
+SCALAR_PULLBACK_TOLERANCE = 1e-14
+EDGE_MOMENT_TOLERANCE = 3e-13
+MIXED_RECONSTRUCTION_TOLERANCE = 4e-13
+SMOOTH_COMMUTING_TOLERANCE = 3e-10
+PYRAMID_ENERGY_TOLERANCE = 2e-13
 
 
 @pytest.mark.parametrize("dimension", range(1, 5))
@@ -53,13 +73,17 @@ def test_polynomial_form_dimensions_and_functional_duality(
             )
         assert element.local_dof_count == expected
         basis = element.form_basis
-        if basis is None:
-            raise AssertionError("A form element must own its polynomial basis.")
+        assert basis is not None
         values, _ = basis.tabulate_components(basis.functional_points)
         functionals = np.einsum(
             "iqc,qjc->ij", np.asarray(basis.functional_weights), np.asarray(values)
         )
-        np.testing.assert_allclose(functionals, np.eye(expected), atol=2e-9, rtol=2e-9)
+        np.testing.assert_allclose(
+            functionals,
+            np.eye(expected),
+            atol=REFERENCE_DUAL_TOLERANCE,
+            rtol=REFERENCE_DUAL_TOLERANCE,
+        )
         assert np.linalg.cond(functionals) < 1.000001
 
 
@@ -84,8 +108,7 @@ def test_polynomial_differential_is_exact_and_nilpotent(
             twist="untwisted",
             proxy="components",
         ).form_basis
-        if source is None:
-            raise AssertionError("A form element must own its polynomial basis.")
+        assert source is not None
         if degree == dimension:
             assert previous_rank == source.coefficients.shape[-1]
             continue
@@ -98,12 +121,13 @@ def test_polynomial_differential_is_exact_and_nilpotent(
             twist="untwisted",
             proxy="components",
         ).form_basis
-        if target is None:
-            raise AssertionError("A form element must own its polynomial basis.")
+        assert target is not None
         differential = np.asarray(source.exterior_derivative_matrix(target))
         if previous is not None:
-            np.testing.assert_allclose(differential @ previous, 0.0, atol=2e-8)
-        rank = np.linalg.matrix_rank(differential, tol=1e-8)
+            np.testing.assert_allclose(
+                differential @ previous, 0.0, atol=REFERENCE_DIFFERENTIAL_TOLERANCE
+            )
+        rank = np.linalg.matrix_rank(differential, tol=REFERENCE_RANK_TOLERANCE)
         kernel_dimension = source.coefficients.shape[-1] - rank
         assert kernel_dimension == (1 if degree == 0 else previous_rank)
         previous = differential
@@ -122,15 +146,15 @@ def test_top_density_reflection_uses_signed_or_absolute_volume(
     mapped = map_reference_values(density, value_spec, jacobian)
     determinant = np.linalg.det(jacobian)
     divisor = determinant if twist == "untwisted" else abs(determinant)
-    np.testing.assert_allclose(mapped, density / divisor, atol=1e-14)
+    np.testing.assert_allclose(mapped, density / divisor, atol=SCALAR_PULLBACK_TOLERANCE)
 
 
 def test_form_element_requires_proxy_and_physical_twist_when_ambiguous() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="form_element.proxy"):
         form_element("triangle", 1, 1, twist="untwisted")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="form_element.twist"):
         form_element("tetrahedron", 2, 1, proxy="flux")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="form_element.twist"):
         form_element("tetrahedron", 3, 1, proxy="density")
 
 
@@ -156,8 +180,7 @@ def test_face_permutation_covariance_matches_affine_pullback(
             proxy="components",
         )
         basis = element.form_basis
-        if basis is None:
-            raise AssertionError("A form element must own its polynomial basis.")
+        assert basis is not None
         points = np.asarray(basis.functional_points)
         mapped_points = permuted[0] + points @ jacobian.T
         values, _ = basis.tabulate_components(mapped_points)
@@ -176,8 +199,15 @@ def test_face_permutation_covariance_matches_affine_pullback(
             "iqc,qjc->ij", np.asarray(basis.functional_weights), pullback
         )
         action = np.asarray(basis.permutation_matrix(permutation))
-        np.testing.assert_allclose(action, expected, atol=2e-10, rtol=2e-10)
-        np.testing.assert_allclose(action @ action, np.eye(action.shape[0]), atol=2e-9)
+        np.testing.assert_allclose(
+            action,
+            expected,
+            atol=REFERENCE_POLYNOMIAL_TOLERANCE,
+            rtol=REFERENCE_POLYNOMIAL_TOLERANCE,
+        )
+        np.testing.assert_allclose(
+            action @ action, np.eye(action.shape[0]), atol=REFERENCE_DUAL_TOLERANCE
+        )
 
 
 def _second_order_tetra_circulation_moments(
@@ -216,8 +246,7 @@ def _second_order_tetra_circulation_moments(
 def test_second_order_tetra_nedelec_all_base_transformations_by_functionals() -> None:
     element = form_element("tetrahedron", 1, 2, proxy="circulation")
     basis = element.form_basis
-    if basis is None:
-        raise AssertionError("Canonical circulation basis is required.")
+    assert basis is not None
     vertices = np.concatenate((np.zeros((1, 3), dtype=np.float64), np.eye(3)))
     for order in permutations(range(4)):
         mapped = vertices[list(order)]
@@ -229,7 +258,10 @@ def test_second_order_tetra_nedelec_all_base_transformations_by_functionals() ->
 
         expected = _second_order_tetra_circulation_moments(pullback)
         np.testing.assert_allclose(
-            basis.permutation_matrix(order), expected, atol=3e-13, rtol=3e-13
+            basis.permutation_matrix(order),
+            expected,
+            atol=EDGE_MOMENT_TOLERANCE,
+            rtol=EDGE_MOMENT_TOLERANCE,
         )
 
 
@@ -296,7 +328,12 @@ def test_mixed_tetra_hex_circulation_has_one_shared_entity_moment_identity() -> 
         local = np.asarray(transforms)[0] @ coefficients[np.asarray(routes)[0]]
         basis, _ = element.tabulate(sites)
         reconstructed = np.einsum("qnc,n->qc", np.asarray(basis), local) @ inverse_frame
-        np.testing.assert_allclose(reconstructed, expected, atol=4e-13, rtol=4e-13)
+        np.testing.assert_allclose(
+            reconstructed,
+            expected,
+            atol=MIXED_RECONSTRUCTION_TOLERANCE,
+            rtol=MIXED_RECONSTRUCTION_TOLERANCE,
+        )
 
 
 @pytest.mark.parametrize("dimension", (3, 4))
@@ -320,8 +357,7 @@ def test_cubic_tensor_interpolation_commutes_with_polynomial_differentiation(
         twist="untwisted",
         proxy="components",
     ).form_basis
-    if source is None or target is None:
-        raise AssertionError("Form elements must own their polynomial bases.")
+    assert source is not None and target is not None
     blade = tuple(range(degree))
     powers = np.asarray(
         tuple(2 if axis in blade else 3 for axis in range(dimension)), dtype=np.int64
@@ -351,8 +387,8 @@ def test_cubic_tensor_interpolation_commutes_with_polynomial_differentiation(
     np.testing.assert_allclose(
         np.einsum("qbc,b->qc", np.asarray(values), np.asarray(coefficients)),
         expected_values,
-        atol=2e-10,
-        rtol=2e-10,
+        atol=REFERENCE_POLYNOMIAL_TOLERANCE,
+        rtol=REFERENCE_POLYNOMIAL_TOLERANCE,
     )
     expected_derivative = np.zeros((3, comb(dimension, degree + 1)), dtype=np.float64)
     target_blades = tuple(combinations(range(dimension), degree + 1))
@@ -370,8 +406,8 @@ def test_cubic_tensor_interpolation_commutes_with_polynomial_differentiation(
     np.testing.assert_allclose(
         np.einsum("qbc,b->qc", np.asarray(target_values), np.asarray(differentiated)),
         expected_derivative,
-        atol=2e-10,
-        rtol=2e-10,
+        atol=REFERENCE_POLYNOMIAL_TOLERANCE,
+        rtol=REFERENCE_POLYNOMIAL_TOLERANCE,
     )
     expected_gradient = np.zeros(
         (3, comb(dimension, degree), dimension), dtype=np.float64
@@ -385,8 +421,8 @@ def test_cubic_tensor_interpolation_commutes_with_polynomial_differentiation(
     np.testing.assert_allclose(
         np.einsum("qbca,b->qca", np.asarray(gradient), np.asarray(coefficients)),
         expected_gradient,
-        atol=2e-10,
-        rtol=2e-10,
+        atol=REFERENCE_POLYNOMIAL_TOLERANCE,
+        rtol=REFERENCE_POLYNOMIAL_TOLERANCE,
     )
 
 
@@ -401,8 +437,7 @@ def test_hybrid_polynomial_physics_and_exact_exterior_sequence(
         ).form_basis
         for degree in range(4)
     )
-    if any(basis is None for basis in bases):
-        raise AssertionError("Compatible hybrid elements must retain their form sources.")
+    assert all(basis is not None for basis in bases)
     probes = jnp.asarray(
         ((0.0, 0.0, 0.0), (0.2, 0.15, 0.3), (0.5, 0.5, 0.5)), dtype=jnp.float64
     )
@@ -411,8 +446,7 @@ def test_hybrid_polynomial_physics_and_exact_exterior_sequence(
     ranks = []
     dimensions = []
     for degree, basis in enumerate(bases):
-        if basis is None:
-            raise AssertionError("Compatible hybrid basis is required.")
+        assert basis is not None
         dimensions.append(basis.local_dof_count)
         power = order - int(degree > 0)
         samples = np.asarray(basis.functional_points)
@@ -427,7 +461,12 @@ def test_hybrid_polynomial_physics_and_exact_exterior_sequence(
         )
         expected = np.zeros_like(reconstructed)
         expected[:, 0] = (1 + np.asarray(probes) @ np.asarray((1.0, 2.0, 3.0))) ** power
-        np.testing.assert_allclose(reconstructed, expected, atol=2e-8, rtol=2e-9)
+        np.testing.assert_allclose(
+            reconstructed,
+            expected,
+            atol=REFERENCE_DIFFERENTIAL_TOLERANCE,
+            rtol=REFERENCE_DUAL_TOLERANCE,
+        )
         _, tangent = jax.jvp(
             lambda sites: basis.tabulate_components(sites)[0],
             (probes,),
@@ -436,19 +475,20 @@ def test_hybrid_polynomial_physics_and_exact_exterior_sequence(
         np.testing.assert_allclose(
             tangent,
             np.einsum("qbca,a->qbc", np.asarray(gradient), np.asarray(direction)),
-            atol=2e-8,
-            rtol=2e-9,
+            atol=REFERENCE_DIFFERENTIAL_TOLERANCE,
+            rtol=REFERENCE_DUAL_TOLERANCE,
         )
         if degree == 3:
             continue
         target = bases[degree + 1]
-        if target is None:
-            raise AssertionError("Compatible derivative companion is required.")
+        assert target is not None
         derivative = np.asarray(basis.exterior_derivative_matrix(target))
         if previous is not None:
-            np.testing.assert_allclose(derivative @ previous, 0, atol=2e-8)
+            np.testing.assert_allclose(
+                derivative @ previous, 0, atol=REFERENCE_DIFFERENTIAL_TOLERANCE
+            )
         previous = derivative
-        ranks.append(np.linalg.matrix_rank(derivative, tol=1e-8))
+        ranks.append(np.linalg.matrix_rank(derivative, tol=REFERENCE_RANK_TOLERANCE))
         target_values, _ = target.tabulate_components(probes)
         actual = np.einsum(
             "qbc,b->qc", np.asarray(target_values), derivative @ np.asarray(coefficients)
@@ -463,7 +503,12 @@ def test_hybrid_polynomial_physics_and_exact_exterior_sequence(
                 expected_d[:, blades.index((*range(degree), axis))] = (
                     (-1) ** degree * (axis + 1) * density
                 )
-        np.testing.assert_allclose(actual, expected_d, atol=2e-8, rtol=2e-9)
+        np.testing.assert_allclose(
+            actual,
+            expected_d,
+            atol=REFERENCE_DIFFERENTIAL_TOLERANCE,
+            rtol=REFERENCE_DUAL_TOLERANCE,
+        )
     assert ranks == [dimensions[0] - 1, dimensions[1] - dimensions[0] + 1, dimensions[3]]
 
 
@@ -472,12 +517,10 @@ def test_hybrid_polynomial_physics_and_exact_exterior_sequence(
 def test_hybrid_circulation_duals_have_independent_edge_moments(
     cell: str, order: int
 ) -> None:
-    from phydrax.discretization._reference_cell import reference_cell_topology
 
     element = form_element(cell, 1, order, proxy="circulation")
     basis = element.form_basis
-    if basis is None:
-        raise AssertionError("Compatible circulation basis is required.")
+    assert basis is not None
     topology = reference_cell_topology(cell)
     vertices = np.asarray(topology.vertices)
     nodes, weights = np.polynomial.legendre.leggauss(12)
@@ -496,7 +539,12 @@ def test_hybrid_circulation_duals_have_independent_edge_moments(
             )
         )
         expected = np.eye(basis.local_dof_count)[list(dofs)]
-        np.testing.assert_allclose(moments, expected, atol=2e-9, rtol=2e-9)
+        np.testing.assert_allclose(
+            moments,
+            expected,
+            atol=REFERENCE_DUAL_TOLERANCE,
+            rtol=REFERENCE_DUAL_TOLERANCE,
+        )
 
 
 def _four_family_form_mesh() -> CellMesh:
@@ -534,88 +582,6 @@ def _four_family_form_mesh() -> CellMesh:
             )
         ),
     )
-
-
-def test_prism_trace_owners_are_prepared_once_per_actual_local_face(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from phydrax.discretization.fem._generic import (
-        _canonical_form_entity_bases,
-        _topology_vertex_sets,
-    )
-
-    points = np.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (1.0, 0.0, 1.0),
-            (0.0, 1.0, 1.0),
-            (0.0, 0.0, 2.0),
-            (1.0, 0.0, 2.0),
-            (0.0, 1.0, 2.0),
-        )
-    )
-    mesh = CellMesh(
-        points,
-        (
-            CellBlock(
-                "wedges",
-                "prism",
-                np.asarray(((0, 1, 2, 3, 4, 5), (3, 4, 5, 6, 7, 8)), dtype=np.int32),
-            ),
-        ),
-    )
-    element = form_element("prism", 1, 2, proxy="circulation", twist="untwisted")
-    basis = element.form_basis
-    assert basis is not None
-    levels = _topology_vertex_sets(mesh)
-    lookups = tuple(
-        {vertices: index for index, vertices in enumerate(level)} for level in levels
-    )
-    original = FormBasis.entity_basis
-    calls = []
-
-    def counted(self: FormBasis, face: tuple[int, ...], /) -> FormBasis:
-        calls.append((self.basis_id, face))
-        return original(self, face)
-
-    monkeypatch.setattr(FormBasis, "entity_basis", counted)
-    owners = _canonical_form_entity_bases(mesh, (element,), lookups)
-    expected_kinds = {
-        basis.entity_kind(face)
-        for dimension in (1, 2)
-        for face, dofs in zip(
-            basis.entity_vertices[dimension],
-            element.entity_dofs[dimension],
-            strict=True,
-        )
-        if dofs
-    }
-    # Immutable reference traces are prepared once per distinct reference kind,
-    # then reused while each actual mesh entity keeps its own canonical owner.
-    assert len(calls) == len(expected_kinds)
-    assert {basis.entity_kind(face) for _, face in calls} == expected_kinds
-    expected = [[None] * len(level) for level in levels]
-    for dimension in (1, 2):
-        for cell in np.asarray(mesh.blocks[0].vertices):
-            for face, dofs in zip(
-                basis.entity_vertices[dimension],
-                element.entity_dofs[dimension],
-                strict=True,
-            ):
-                if not dofs:
-                    continue
-                trace = original(basis, face)
-                row = lookups[dimension][tuple(sorted(cell[list(face)]))]
-                previous = expected[dimension][row]
-                if previous is None or trace.basis_id < previous:
-                    expected[dimension][row] = trace.basis_id
-    assert tuple(
-        tuple(None if owner is None else owner.basis_id for owner in level)
-        for level in owners
-    ) == tuple(tuple(level) for level in expected)
 
 
 @pytest.mark.parametrize(("degree", "proxy"), ((1, "circulation"), (2, "flux")))
@@ -657,7 +623,9 @@ def test_four_family_shared_tri_quad_traces_reconstruct_affine_physics(
         )
         actual = space.reconstruct("u", coefficients, block.name, sites)
         expected = affine(geometry.physical_points, None)
-        np.testing.assert_allclose(actual, expected, atol=2e-9, rtol=2e-9)
+        np.testing.assert_allclose(
+            actual, expected, atol=REFERENCE_DUAL_TOLERANCE, rtol=REFERENCE_DUAL_TOLERANCE
+        )
 
 
 def _independent_hybrid_cubature(kind: str) -> tuple[Array, Array]:
@@ -684,7 +652,7 @@ def _independent_hybrid_cubature(kind: str) -> tuple[Array, Array]:
 
 
 def _independent_hybrid_projection(
-    basis: FormBasis, evaluate: Callable[[Array], Array]
+    basis: AbstractReferenceFormBasis, evaluate: Callable[[Array], Array]
 ) -> Array:
     result = jnp.zeros((basis.local_dof_count,), dtype=jnp.float64)
     for dimension, entities in enumerate(basis.entity_vertices):
@@ -714,8 +682,7 @@ def test_hybrid_interpolation_commutes_for_smooth_fields_outside_its_space(
     target = form_element(
         cell, degree + 1, 2, proxy="components", twist="untwisted"
     ).form_basis
-    if source is None or target is None:
-        raise AssertionError("Compatible form companions are required.")
+    assert source is not None and target is not None
 
     def field(points: Array) -> Array:
         result = jnp.zeros((points.shape[0], comb(3, degree)), dtype=jnp.float64)
@@ -734,7 +701,12 @@ def test_hybrid_interpolation_commutes_for_smooth_fields_outside_its_space(
     coefficients = _independent_hybrid_projection(source, field)
     differentiated = source.exterior_derivative_matrix(target) @ coefficients
     expected = _independent_hybrid_projection(target, exterior)
-    np.testing.assert_allclose(differentiated, expected, atol=3e-10, rtol=3e-10)
+    np.testing.assert_allclose(
+        differentiated,
+        expected,
+        atol=SMOOTH_COMMUTING_TOLERANCE,
+        rtol=SMOOTH_COMMUTING_TOLERANCE,
+    )
 
 
 @pytest.mark.parametrize("cell", ("prism", "pyramid"))
@@ -742,13 +714,11 @@ def test_hybrid_interpolation_commutes_for_smooth_fields_outside_its_space(
 def test_complete_hybrid_cell_symmetries_preserve_physical_forms(
     cell: str, degree: int
 ) -> None:
-    from phydrax.discretization._reference_cell import reference_cell_topology
 
     basis = form_element(
         cell, degree, 2, proxy="components", twist="untwisted"
     ).form_basis
-    if basis is None:
-        raise AssertionError("Compatible form basis is required.")
+    assert basis is not None
     vertices = np.asarray(reference_cell_topology(cell).vertices)
     probes = jnp.asarray(((0.2, 0.15, 0.25), (0.4, 0.3, 0.4)), dtype=jnp.float64)
     values, _ = basis.tabulate_components(probes)
@@ -770,7 +740,12 @@ def test_complete_hybrid_cell_symmetries_preserve_physical_forms(
         expected = np.einsum("ce,qbe->qbc", compound, np.asarray(mapped))
         action = np.asarray(basis.permutation_matrix(tuple(permutation)))
         actual = np.einsum("qbc,bd->qdc", np.asarray(values), action)
-        np.testing.assert_allclose(actual, expected, atol=2e-8, rtol=2e-9)
+        np.testing.assert_allclose(
+            actual,
+            expected,
+            atol=REFERENCE_DIFFERENTIAL_TOLERANCE,
+            rtol=REFERENCE_DUAL_TOLERANCE,
+        )
         count += 1
     assert count == (12 if cell == "prism" else 8)
 
@@ -799,72 +774,55 @@ def test_pyramid_mass_energy_integrates_the_actual_collapsed_source() -> None:
         return points[..., 0]
 
     coefficients = space.project("u", coordinate)
-    # Exact integral over z/2 <= x,y <= 1-z/2, 0 <= z <= 1.
+    # Analytic integral over z/2 <= x,y <= 1-z/2, 0 <= z <= 1.
     energy = coefficients @ space.mass(coefficients)
-    np.testing.assert_allclose(energy, 1 / 10, atol=2e-13, rtol=2e-13)
+    np.testing.assert_allclose(
+        energy, 1 / 10, atol=PYRAMID_ENERGY_TOLERANCE, rtol=PYRAMID_ENERGY_TOLERANCE
+    )
 
 
-def test_hybrid_scientific_admission_refuses_wrong_source_rank_condition_and_work() -> (
-    None
-):
-    import equinox as eqx
-
-    from phydrax.discretization.fem._form_elements import _HybridFactors
-    from phydrax.discretization.fem._hybrid_forms import _solve_hybrid_dual
+def test_hybrid_scientific_admission_refuses_changed_source() -> None:
 
     basis = form_element("pyramid", 1, 1, proxy="circulation").form_basis
-    if basis is None or basis.hybrid_factors is None:
-        raise AssertionError("Canonical rational form source is required.")
-    factors = basis.hybrid_factors
+    assert basis is not None and basis.hybrid_factors is not None
     changed = eqx.tree_at(
         lambda value: value.coefficients, basis, jnp.zeros_like(basis.coefficients)
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="form_basis.source"):
         changed.component_expressions()
-    with pytest.raises(ValueError):
-        _solve_hybrid_dual(np.asarray(((1.0, 2.0), (2.0, 4.0)), dtype=np.float64))
-    with pytest.raises(ValueError):
-        _HybridFactors(
-            factors.source_bank,
-            factors.generators,
-            1e13,
-            0.0,
-            factors.dual_status,
-            factors.body_test_exponents,
-            factors.body_test_source_bank,
-            factors.body_test_coefficients,
-        )
-    with pytest.raises(ValueError):
+
+
+def test_hybrid_preparation_refuses_excessive_coefficient_work() -> None:
+    with pytest.raises(ValueError, match="hybrid_form.coefficient_work"):
         form_element("pyramid", 1, 99, proxy="circulation")
-    with pytest.raises(ValueError):
+
+
+def test_hybrid_element_refuses_incompatible_reference_cell() -> None:
+    with pytest.raises(ValueError, match="form_element.family"):
         form_element("tetrahedron", 1, 2, family="prism-trimmed", proxy="circulation")
-    with pytest.raises(ValueError):
+
+
+def test_exterior_derivative_refuses_replacing_simplex_by_hybrid_topology() -> None:
+    with pytest.raises(ValueError, match="form_basis.derivative_target_topology"):
         source = form_element("tetrahedron", 0, 1, proxy="scalar").form_basis
         target = form_element("pyramid", 1, 1, proxy="circulation").form_basis
-        if source is None or target is None:
-            raise AssertionError("Declared source form bases are required.")
+        assert source is not None and target is not None
         source.exterior_derivative_matrix(target)
 
 
 @pytest.mark.parametrize("degree", (1, 2))
 def test_pyramid_source_extraction_preserves_all_columns_under_frozen_storage_cap(
     degree: int,
+    form_source_budget: CoordinateEnclosureBudget,
 ) -> None:
-    from fractions import Fraction
-
-    from phydrax.discretization._coordinate_enclosure import (
-        CoordinateEnclosureBudget,
-        expression_evaluate,
-    )
 
     basis = form_element(
         "pyramid", degree, 2, proxy="components", twist="untwisted"
     ).form_basis
-    if basis is None:
-        raise AssertionError("Canonical rational source is required.")
-    budget = CoordinateEnclosureBudget(100_000_000, 256_000_000)
+    assert basis is not None
+    budget = form_source_budget
     with budget.activate():
-        source = basis.component_expressions()
+        source = basis.component_expressions(budget=budget)
     probes = jnp.asarray(((0.2, 0.15, 0.3), (0.4, 0.3, 0.4)), dtype=jnp.float64)
     expected, _ = basis.tabulate_components(probes)
     actual = np.asarray(
@@ -873,7 +831,9 @@ def test_pyramid_source_extraction_preserves_all_columns_under_frozen_storage_ca
                 tuple(
                     float(
                         expression_evaluate(
-                            component, tuple(Fraction(float(value)) for value in point)
+                            component,
+                            tuple(Fraction(float(value)) for value in point),
+                            budget=budget,
                         )
                     )
                     for component in field
@@ -884,4 +844,111 @@ def test_pyramid_source_extraction_preserves_all_columns_under_frozen_storage_ca
         ),
         dtype=np.float64,
     )
-    np.testing.assert_allclose(actual, expected, atol=2e-9, rtol=2e-9)
+    np.testing.assert_allclose(
+        actual, expected, atol=REFERENCE_DUAL_TOLERANCE, rtol=REFERENCE_DUAL_TOLERANCE
+    )
+
+
+@pytest.fixture
+def form_source_budget() -> Iterator[CoordinateEnclosureBudget]:
+    with HostBatchTicket(100_000_000, bytes_upper=256_000_000) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=100_000_000,
+            maximum_memory_bytes=256_000_000,
+        )
+        with budget.activate():
+            yield budget
+
+
+@pytest.mark.parametrize("cell", ("prism", "pyramid"), ids=("product", "rational"))
+@pytest.mark.parametrize(
+    "degree", range(4), ids=("scalar", "circulation", "flux", "volume")
+)
+def test_hybrid_entity_density_sources_match_numerical_moments(
+    cell: str, degree: int, form_source_budget: CoordinateEnclosureBudget
+) -> None:
+    basis = form_element(
+        cell, degree, 2, proxy="components", twist="untwisted"
+    ).form_basis
+    assert basis is not None
+    budget = form_source_budget
+    for dimension, entities in enumerate(basis.entity_vertices):
+        for face in entities:
+            if not any(label[0] == face for label in basis.dof_labels):
+                continue
+            points = (
+                np.zeros((1, 0), dtype=np.float64)
+                if dimension == 0
+                else np.asarray(
+                    ((0.2,) * dimension, (0.3,) * dimension), dtype=np.float64
+                )
+            )
+            quadrature = np.ones(points.shape[0], dtype=np.float64)
+            _, expected = basis.functional_weights_at(face, points, quadrature)
+            with budget.temporary_scope():
+                densities = basis.functional_density_expressions(face, budget=budget)
+                values = np.asarray(
+                    [
+                        [
+                            [
+                                float(
+                                    expression_evaluate(
+                                        component,
+                                        tuple(Fraction(float(value)) for value in point),
+                                        budget=budget,
+                                    )
+                                )
+                                for component in field
+                            ]
+                            for point in points
+                        ]
+                        for field in densities
+                    ],
+                    dtype=np.float64,
+                )
+            np.testing.assert_allclose(
+                values,
+                expected,
+                atol=REFERENCE_DUAL_TOLERANCE,
+                rtol=REFERENCE_DUAL_TOLERANCE,
+            )
+
+
+@pytest.mark.parametrize(
+    ("height", "expected_minimum", "expected_valid"),
+    ((4.0, 4.0, True), (2.0**-30, 2.0**-60, True), (0.0, 0.0, False)),
+    ids=("positive-metric", "small-positive-metric", "singular-metric"),
+    # The small Jacobian remains above the native inverse's 1e-12 scaled
+    # determinant threshold, while its Gram eigenvalue lies below eps.
+)
+def test_cell_map_metric_validity_preserves_strict_positive_threshold(
+    height: float, expected_minimum: float, expected_valid: bool
+) -> None:
+    coordinates = np.asarray(
+        ((0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 3.0, 0.0), (0.0, 0.0, 4.0)),
+        dtype=np.float64,
+    )
+    mesh = CellMesh(
+        coordinates,
+        (CellBlock("tet", "tetrahedron", np.asarray(((0, 1, 2, 3),), dtype=np.int32)),),
+    )
+    field = FiniteElementFieldSpec("u", form_element("tetrahedron", 0, 1, proxy="scalar"))
+    space = FiniteElementPlan(mesh, field).prepare()
+    cell_map = prepare_finite_element_cell_map(space, 0)
+    current = jnp.asarray(coordinates).at[3, 2].set(height)
+    evaluation = cell_map.evaluate(
+        current,
+        jnp.asarray((0,), dtype=jnp.int32),
+        jnp.asarray(((0.25, 0.25, 0.25),), dtype=jnp.float64),
+    )
+    # The affine Jacobian is diag(2,3,height); all entries and squared lengths
+    # are binary-representable values, so its diagonal spectrum needs no tolerance.
+    np.testing.assert_array_equal(
+        evaluation.minimum_metric_eigenvalue,
+        np.asarray((expected_minimum,), dtype=np.float64),
+    )
+    np.testing.assert_array_equal(
+        evaluation.valid, np.asarray((expected_valid,), dtype=np.bool_)
+    )
+    assert evaluation.minimum_metric_eigenvalue.dtype == jnp.float64

@@ -13,11 +13,11 @@ component invisible to every sampled vertex remains covered by pending work.
 
 Native primal/dual incidence, expansion-bounded circumcenters and hull ray
 enclosures support batched certified source root queries. Nominal sphere and
-full ring-torus profiles additionally admit actual primal restriction, protected
+full ring-torus profiles additionally admit primal restriction, protected
 native region flood and tetrahedral quality refinement. Publication independently
 checks approximate-domain coverage, global embedding and degree-one continuous
 source projection within the established reach tube. The distinct adaptive
-extraction route accepts general sound scalar enclosures only after complete
+extraction route accepts general sound scalar enclosures only after
 regular topology discovery, independently bracketed cycle roots, native PLC
 coverage and continuous two-sided source bounds. It does not infer signed
 distance, reach, hidden-component absence or material interfaces from samples.
@@ -25,6 +25,8 @@ distance, reach, hidden-component absence or material interfaces from samples.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from enum import IntEnum, StrEnum
 from time import monotonic
@@ -36,72 +38,96 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
+import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.geometry._certified_implicit as _dependency_phydrax_geometry__certified_implicit
+import phydrax.geometry._contracts as _dependency_phydrax_geometry__contracts
+import phydrax.geometry._domain_coverage as domain_coverage_owner
+import phydrax.geometry._source_fidelity as source_fidelity_owner
+import phydrax.geometry.implicit._adaptive_discovery as _dependency_phydrax_geometry_implicit__adaptive_discovery
+import phydrax.geometry.implicit._analytic_profile as _dependency_phydrax_geometry_implicit__analytic_profile
+import phydrax.geometry.implicit._enclosure as _owner_phydrax_geometry_implicit__enclosure
+import phydrax.geometry.implicit._projection_cover as implicit_projection_owner
+import phydrax.meshing._association_state as association_state_owner
+import phydrax.meshing._audit as _owner_phydrax_meshing__audit
+import phydrax.meshing._canonical as _dependency_phydrax_meshing__canonical
+import phydrax.meshing._certification_schedule as _leaf_phydrax_meshing__certification_schedule
+import phydrax.meshing._contracts as _dependency_phydrax_meshing__contracts
+import phydrax.meshing._controls as _dependency_phydrax_meshing__controls
+import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
+import phydrax.meshing._organization_records as _dependency_phydrax_meshing__organization
+import phydrax.meshing._plc_source as plc_source_owner
+import phydrax.meshing._result as _dependency_phydrax_meshing__result
+import phydrax.meshing._scope as _dependency_phydrax_meshing__scope
+import phydrax.meshing._sizing as _dependency_phydrax_meshing__sizing
+import phydrax.meshing._trace as _dependency_phydrax_meshing__trace
+import phydrax.meshing._volume_generation as _dependency_phydrax_meshing__volume_generation
+import phydrax.meshing._volume_generation as _owner_phydrax_meshing__volume_generation
+import phydrax.meshing.providers._native_publication as _owner_phydrax_meshing_providers__native_publication
+import phydrax.meshing.providers._native_route_checks as native_route_checks_owner
+import phydrax.meshing.providers._native_volume as _owner_phydrax_meshing_providers__native_volume
+from phydrax.meshing.providers._native_route_policy import NativePublicationPolicy
+
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import (
-    charge_native_geometry_queries,
-    current_native_execution_budget,
     exact_orient3d,
     IncrementalDelaunay3D,
     MeshcoreStatus,
-    NativeExecutionBudget,
+    NativeExecutionScope,
+    NativeHostStorageWorkspace,
     restricted_centers_3d,
     restricted_dual_3d,
     restricted_rays_3d,
-    TET_MESH_EXUDE_COUNTERS,
-    TET_MESH_IMPROVE_COUNTERS,
-    TET_MESH_REFINE_COUNTERS,
     TetMesh3D,
+    TetMeshExudeCounters,
+    TetMeshImproveCounters,
+    TetMeshRefineCounters,
     TetMeshRun,
-    TRIANGULATION_3D_STATISTICS,
+    Triangulation3DStatistics,
 )
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer, positive_integer
 from ..discretization import CellMesh, TetrahedralConnectivity
-from ..discretization._cell_geometry_validity import CellValidityPolicy
-from ..geometry._certified_implicit import implicit_state_id
-from ..geometry._contracts import CompiledGeometry
-from ..geometry._mesh_certificates import (
-    ImplicitProjectionBoundarySource,
-    PiecewiseLinearDomain,
-)
-from ..geometry.implicit._adaptive_discovery import (
-    AdaptiveImplicitBoundarySource,
-    AdaptiveImplicitSurface,
-    discover_adaptive_implicit_surface,
-    ImplicitVolumeClass,
-    ImplicitVolumeQuery,
-)
-from ..geometry.implicit._analytic_profile import (
-    AnalyticBoundaryCoverCapacityError,
-    AnalyticImplicitProfile,
-)
 from ..geometry.implicit._policy import AdaptiveImplicitSurfacePolicy
 from ..geometry.simplicial._topology import TriangleTopology
-from ._association import GeometryAssociation, GeometryAssociationKind
-from ._canonical import canonicalize_cell_mesh
-from ._contracts import (
-    MeshingDerivativeMode,
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingProviderInfo,
-    VolumeFillStrategy,
-    VolumeMeshingSpec,
-)
-from ._controls import FeatureKind
+from ..typing import checked
 from ._measurements import (
     measure_phase,
     NativeMeshingPhaseRecorder,
     phase_started,
     record_elapsed,
 )
-from ._organization import MeshPatch, MeshZone, MeshZoneRole, RegionRole
-from ._result import CellMeshingResult, MeshingComplianceReport
-from ._scope import MeshingEntityKind, MeshingScope
-from ._sizing import resolve_size_controls, SizeFieldDomain, UniformSizeControl
-from ._trace import MeshingStageKind, MeshingStageReport, MeshingStageStatus
-from ._volume_generation import exude_native_volume, NativeVolumeSchedule
+
+
+@contextmanager
+@checked
+def implicit_source_budget(
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    queries_upper: int,
+) -> Iterator[
+    _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+]:
+    """Reserve a host source phase and settle its ticket before native execution."""
+    remaining = scope.remaining()
+    ticket = scope.batch(
+        min(limits.maximum_work_units, remaining.remaining_work_units),
+        queries_upper=queries_upper,
+        bytes_upper=min(limits.maximum_scratch_bytes, remaining.remaining_managed_bytes),
+    )
+    with ticket:
+        budget = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        with budget.activate():
+            yield budget
 
 
 class ImplicitVolumeWorkStop(StrEnum):
@@ -116,7 +142,7 @@ class ImplicitVolumeWorkStop(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ImplicitVolumeDomainWorkset:
-    """Complete box carrier with source enclosures and explicit pending cells.
+    """Retain a box carrier, source enclosures, and pending cells.
 
     ``classes`` are whole-cell classifications, not material labels. Unqueried
     cells have bounds [-inf, inf] and ``queried=False``. ``inside_tetrahedra``
@@ -125,16 +151,16 @@ class ImplicitVolumeDomainWorkset:
     this preparation. The coverage statement is only relative to query.domain,
     not a claim that the source has no components outside that declared box.
 
-    Standalone preparation enforces vertex, cell, cavity, insertion work and
-    source-query bounds. An actual ambient native scope additionally owns
-    native initialization, managed storage and within-native deadlines.
+    Preparation enforces vertex, cell, cavity, insertion work and source-query
+    bounds through an explicit native scope, including native initialization,
+    managed storage and within-native deadlines.
     Unmanaged host/device/compiler work, storage and nonpreemptible phases
     remain explicit; this carrier is never eligible for publication by itself.
     """
 
-    query: ImplicitVolumeQuery
-    specification: VolumeMeshingSpec
-    schedule: NativeVolumeSchedule
+    query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec
+    schedule: _dependency_phydrax_meshing__volume_generation.NativeVolumeSchedule
     points: np.ndarray
     tetrahedra: np.ndarray
     box_lower: np.ndarray
@@ -154,25 +180,41 @@ class ImplicitVolumeDomainWorkset:
     @property
     def inside_tetrahedra(self) -> np.ndarray:
         """Rows whose entire physical tetrahedron is strictly inside."""
-        return np.flatnonzero(self.classes == int(ImplicitVolumeClass.INSIDE))
+        return np.flatnonzero(
+            self.classes
+            == int(
+                _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeClass.INSIDE
+            )
+        )
 
     @property
     def unresolved_tetrahedra(self) -> np.ndarray:
         """All potentially intersected cells, including unqueried cells."""
-        return np.flatnonzero(self.classes == int(ImplicitVolumeClass.UNKNOWN))
+        return np.flatnonzero(
+            self.classes
+            == int(
+                _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeClass.UNKNOWN
+            )
+        )
 
+    @checked
     def require_current(
-        self, query: ImplicitVolumeQuery, specification: VolumeMeshingSpec, /
+        self,
+        query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery,
+        specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+        /,
     ) -> None:
         """Refuse reuse after source state, domain or physical controls change."""
         if _input_id(query, specification, self.schedule) != self.input_id:
-            raise ValueError("Implicit volume workset source or request is stale.")
+            raise ValueError(
+                f"ImplicitVolumeDomainWorkset.input_id must match the source and request; got stale input_id={self.input_id!r}"
+            )
 
 
 def _input_id(
-    query: ImplicitVolumeQuery,
-    specification: VolumeMeshingSpec,
-    schedule: NativeVolumeSchedule,
+    query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    schedule: _dependency_phydrax_meshing__volume_generation.NativeVolumeSchedule,
     /,
 ) -> str:
     return canonical_fingerprint(
@@ -189,30 +231,40 @@ def _input_id(
 
 
 def _classify(
-    query: ImplicitVolumeQuery,
+    query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery,
     points: np.ndarray,
     cells: np.ndarray,
     budget: int,
     /,
+    *,
+    scope: NativeExecutionScope,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     count = min(cells.shape[0], budget)
-    execution = current_native_execution_budget()
-    if execution is not None:
-        execution.charge()
-        if count > execution.remaining().remaining_geometry_queries:
-            # The actual source batch cannot fit: refuse before its host banks.
-            execution.charge(geometry_queries=count)
     vertices = points[cells]
     lower = np.min(vertices, axis=1)
     upper = np.max(vertices, axis=1)
-    classes = np.full(cells.shape[0], int(ImplicitVolumeClass.UNKNOWN), dtype=np.int64)
+    classes = np.full(
+        cells.shape[0],
+        int(
+            _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeClass.UNKNOWN
+        ),
+        dtype=np.int64,
+    )
     value_lower = np.full(cells.shape[0], -np.inf, dtype=np.float64)
     value_upper = np.full(cells.shape[0], np.inf, dtype=np.float64)
     queried = np.arange(cells.shape[0], dtype=np.int64) < count
     if count:
-        result = query.classify_boxes(lower[:count], upper[:count])
+        with implicit_source_budget(
+            limits, scope=scope, queries_upper=2 * count
+        ) as source_budget:
+            result = query.classify_boxes(
+                lower[:count], upper[:count], budget=source_budget
+            )
         if not result.certified:
-            raise ValueError("Implicit domain work requires rigorous value enclosures.")
+            raise ValueError(
+                "prepare_implicit_volume_domain.query must provide certified value enclosures; got certified=False"
+            )
         classes[:count] = result.classes
         value_lower[:count] = result.value_lower
         value_upper[:count] = result.value_upper
@@ -220,9 +272,9 @@ def _classify(
 
 
 def _publish_workset(
-    query: ImplicitVolumeQuery,
-    specification: VolumeMeshingSpec,
-    schedule: NativeVolumeSchedule,
+    query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    schedule: _dependency_phydrax_meshing__volume_generation.NativeVolumeSchedule,
     points: np.ndarray,
     cells: np.ndarray,
     classification: tuple[
@@ -231,7 +283,7 @@ def _publish_workset(
     stop: ImplicitVolumeWorkStop,
     queries: int,
     rounds: int,
-    statistics: np.ndarray,
+    statistics: Triangulation3DStatistics,
     /,
 ) -> ImplicitVolumeDomainWorkset:
     input_id = _input_id(query, specification, schedule)
@@ -258,11 +310,6 @@ def _publish_workset(
         "maximum_work_units:unmetered_host_device_compiler",
         "maximum_wall_seconds:nonpreemptible_host_device_compiler",
     )
-    if current_native_execution_budget() is None:
-        unenforced += (
-            "maximum_work_units:native_initialization",
-            "maximum_wall_seconds:within_native_batch",
-        )
     return ImplicitVolumeDomainWorkset(
         query,
         specification,
@@ -271,21 +318,21 @@ def _publish_workset(
         stop,
         queries,
         rounds,
-        tuple(
-            (name, int(value))
-            for name, value in zip(TRIANGULATION_3D_STATISTICS, statistics, strict=True)
-        ),
+        statistics.items(),
         unenforced,
         input_id,
         workset_id,
     )
 
 
+@checked
 def prepare_implicit_volume_domain(
-    query: ImplicitVolumeQuery,
-    specification: VolumeMeshingSpec,
-    schedule: NativeVolumeSchedule,
+    query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    schedule: _dependency_phydrax_meshing__volume_generation.NativeVolumeSchedule,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> ImplicitVolumeDomainWorkset:
     """Refine a full-box native Delaunay workset using whole-cell intervals.
 
@@ -295,22 +342,20 @@ def prepare_implicit_volume_domain(
     implicit volume result without separately establishing restricted-boundary,
     source-domain coverage, feature and material-control obligations.
     """
-    if not isinstance(query, ImplicitVolumeQuery):
-        raise TypeError("query must be ImplicitVolumeQuery.")
-    if not isinstance(specification, VolumeMeshingSpec):
-        raise TypeError("specification must be VolumeMeshingSpec.")
-    if not isinstance(schedule, NativeVolumeSchedule):
-        raise TypeError("schedule must be NativeVolumeSchedule.")
     if not query.certified:
-        raise ValueError("Implicit domain work requires rigorous value enclosures.")
+        raise ValueError(
+            "prepare_implicit_volume_domain.query must provide certified value enclosures; got certified=False"
+        )
     domain = np.asarray(query.domain, dtype=np.float64)
     if not np.all(np.isfinite(domain)) or np.any(domain[0] >= domain[1]):
-        raise ValueError("Implicit volume domain requires a finite positive box.")
+        raise ValueError(
+            f"prepare_implicit_volume_domain.query.domain must be a finite positive box; got {domain!r}"
+        )
     limits = specification.limits
     if limits.maximum_vertices < 8 or limits.maximum_cells < 6:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Implicit full-enclosure initialization requires eight vertices and six cells.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "implicit_volume.initialization must admit at least eight vertices and six cells; got insufficient initialization capacity",
             stage="implicit_domain_preparation",
         )
     corners = np.asarray(
@@ -327,7 +372,7 @@ def prepare_implicit_volume_domain(
         dtype=np.int64,
     )
     points = np.where(corners, domain[1], domain[0])
-    started = monotonic()
+    started = scope.operation_started
     state = IncrementalDelaunay3D(
         points,
         max_vertices=limits.maximum_vertices,
@@ -339,14 +384,24 @@ def prepare_implicit_volume_domain(
     stop = ImplicitVolumeWorkStop.REFINEMENT_LIMIT
     try:
         while True:
-            points, cells, _, _, _ = state.finalize()
+            snapshot = state.finalize()
+            points = snapshot.points
+            cells = snapshot.cells
             statistics = state.statistics()
             classification = _classify(
-                query, points, cells, limits.maximum_geometry_queries - queries
+                query,
+                points,
+                cells,
+                limits.maximum_geometry_queries - queries,
+                scope=scope,
+                limits=limits,
             )
             queries += int(np.count_nonzero(classification[5]))
             unknown = np.flatnonzero(
-                classification[2] == int(ImplicitVolumeClass.UNKNOWN)
+                classification[2]
+                == int(
+                    _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeClass.UNKNOWN
+                )
             )
             if not unknown.size:
                 stop = ImplicitVolumeWorkStop.ALL_CLASSIFIED
@@ -359,7 +414,10 @@ def prepare_implicit_volume_domain(
             if monotonic() - started >= limits.maximum_wall_seconds:
                 stop = ImplicitVolumeWorkStop.WALL_LIMIT
                 break
-            remaining_work = limits.maximum_work_units - int(statistics[7])
+            remaining_work = min(
+                limits.maximum_work_units - statistics.work,
+                scope.remaining().remaining_work_units,
+            )
             if remaining_work <= 0:
                 stop = ImplicitVolumeWorkStop.WORK_LIMIT
                 break
@@ -374,11 +432,18 @@ def prepare_implicit_volume_domain(
             rounds += 1
             if np.any(status != int(MeshcoreStatus.OK)):
                 stop = ImplicitVolumeWorkStop.NATIVE_REFUSAL
-                # Reclassify the actual partially committed snapshot.
-                points, cells, _, _, _ = state.finalize()
+                # Reclassify the partially committed snapshot before reporting refusal.
+                snapshot = state.finalize()
+                points = snapshot.points
+                cells = snapshot.cells
                 statistics = state.statistics()
                 classification = _classify(
-                    query, points, cells, limits.maximum_geometry_queries - queries
+                    query,
+                    points,
+                    cells,
+                    limits.maximum_geometry_queries - queries,
+                    scope=scope,
+                    limits=limits,
                 )
                 queries += int(np.count_nonzero(classification[5]))
                 break
@@ -415,8 +480,8 @@ class ImplicitDualRootWorkset:
     supplied endpoint bounds. Each such line contains exactly one source root.
     EXCLUDED intervals have a value enclosure excluding zero. All other
     intervals remain UNRESOLVED, including tangencies and resource exhaustion.
-    A caller using exact-center bounds can certify finite-dual roots; it must
-    independently establish that those bounds enclose the actual dual ends.
+    A caller using center-enclosure bounds can certify finite-dual roots; it must
+    independently establish that those bounds enclose the dual endpoints.
     """
 
     endpoints: np.ndarray
@@ -474,19 +539,23 @@ def _length_upper(displacement: np.ndarray, /) -> np.ndarray:
 
 
 def _dual_interval_bounds(
-    query: ImplicitVolumeQuery,
+    query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery,
     endpoint_bounds: np.ndarray,
     segments: np.ndarray,
     parameters: np.ndarray,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
 ]:
     lower, upper, direction_lower, direction_upper = _line_boxes(
         endpoint_bounds, segments, parameters
     )
-    box = query.bounds.boxes(np.min(lower, axis=1), np.max(upper, axis=1))
-    point_bounds = query.classify_boxes(lower.reshape((-1, 3)), upper.reshape((-1, 3)))
+    box = query.bounds.boxes(np.min(lower, axis=1), np.max(upper, axis=1), budget=budget)
+    point_bounds = query.classify_boxes(
+        lower.reshape((-1, 3)), upper.reshape((-1, 3)), budget=budget
+    )
     endpoint_lower = np.asarray(point_bounds.value_lower).reshape((-1, 2))
     endpoint_upper = np.asarray(point_bounds.value_upper).reshape((-1, 2))
     products = np.stack(
@@ -512,7 +581,7 @@ def _dual_interval_bounds(
         derivative_upper.fill(np.inf)
     regular = (derivative_lower > 0.0) | (derivative_upper < 0.0)
     # Axis boxes lose the correlation of an oblique dual's coordinates. When
-    # its complete directional derivative has one strict sign, all field
+    # its enclosed directional derivative has one strict sign, all field
     # values lie between the enclosed endpoint values for every allowed dual.
     # This is a source interval proof, not sign sampling or empty-box inference.
     value_lower = np.where(
@@ -539,19 +608,21 @@ def _dual_interval_bounds(
 
 
 def _merge_dual_root_runs(
-    query: ImplicitVolumeQuery,
+    query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery,
     enclosures: np.ndarray,
     arrays: tuple[np.ndarray, ...],
     spatial_tolerance: float,
     remaining_queries: int,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[tuple[np.ndarray, ...], int, bool]:
     """Prove roots jointly across shared uncertain subdivision endpoints.
 
     A root exactly on a bisection plane need not have a strictly signed value
     at that plane. Adjacent unresolved pieces are joined and re-enclosed;
     strict outer signs and a monotone derivative establish the same unique
-    root without requiring a pointwise exact-zero assertion.
+    root without requiring a pointwise zero-value assertion.
     """
     segments, parameters, classes = arrays[:3]
     candidates: list[tuple[int, int]] = []
@@ -580,7 +651,7 @@ def _merge_dual_root_runs(
         [(parameters[start, 0], parameters[end - 1, 1]) for start, end in chosen],
         dtype=np.float64,
     )
-    bounds = _dual_interval_bounds(query, enclosures, ids, spans)
+    bounds = _dual_interval_bounds(query, enclosures, ids, spans, budget=budget)
     value_low, value_high, derivative_low, derivative_high, low, high, width = bounds
     regular = (derivative_low > 0.0) | (derivative_high < 0.0)
     crossing = ((high[:, 0] < 0.0) & (low[:, 1] > 0.0)) | (
@@ -608,8 +679,9 @@ def _merge_dual_root_runs(
     return tuple(value[order] for value in result), 3 * count, count < len(candidates)
 
 
+@checked
 def isolate_implicit_dual_roots(
-    query: ImplicitVolumeQuery,
+    query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery,
     endpoints: ArrayLike,
     /,
     *,
@@ -617,33 +689,68 @@ def isolate_implicit_dual_roots(
     maximum_depth: int,
     maximum_geometry_queries: int,
     endpoint_bounds: ArrayLike | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None = None,
+) -> ImplicitDualRootWorkset:
+    """Bound roots on numerical duals under an explicit or host-owned ticket."""
+
+    limits = _dependency_phydrax_meshing__contracts.MeshingLimits()
+    with _owner_phydrax_geometry_implicit__enclosure.query_budget(
+        budget,
+        work_upper=limits.maximum_work_units,
+        queries_upper=2 * maximum_geometry_queries,
+        bytes_upper=limits.maximum_scratch_bytes,
+    ) as source_budget:
+        return _isolate_implicit_dual_roots(
+            query,
+            endpoints,
+            spatial_tolerance=spatial_tolerance,
+            maximum_depth=maximum_depth,
+            maximum_geometry_queries=maximum_geometry_queries,
+            endpoint_bounds=endpoint_bounds,
+            budget=source_budget,
+        )
+
+
+def _isolate_implicit_dual_roots(
+    query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery,
+    endpoints: ArrayLike,
+    /,
+    *,
+    spatial_tolerance: float,
+    maximum_depth: int,
+    maximum_geometry_queries: int,
+    endpoint_bounds: ArrayLike | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> ImplicitDualRootWorkset:
     """Bound roots on all numerical duals, without sampled-empty exclusions.
 
     Every split replaces one interval with its two closed children; terminal
     intervals cover [0,1] for every input segment, even on exhausted budgets.
-    No singular, exact-zero or multiple-root interval is silently discarded.
+    Singular, zero-valued and multiple-root intervals remain in the partition.
     """
-    if not isinstance(query, ImplicitVolumeQuery):
-        raise TypeError("query must be ImplicitVolumeQuery.")
     if not query.certified:
-        raise ValueError("Dual root isolation requires rigorous value enclosures.")
+        raise ValueError(
+            "isolate_implicit_dual_roots.query must provide certified value enclosures; got certified=False"
+        )
     points = np.asarray(endpoints, dtype=np.float64)
     if points.ndim != 3 or points.shape[1:] != (2, 3) or not np.all(np.isfinite(points)):
-        raise ValueError("endpoints must be finite with shape (segments, 2, 3).")
+        raise ValueError(
+            f"isolate_implicit_dual_roots.endpoints must be finite with shape (segments, 2, 3); got shape={points.shape}"
+        )
     if not np.isfinite(spatial_tolerance) or spatial_tolerance <= 0.0:
-        raise ValueError("spatial_tolerance must be positive and finite.")
+        raise ValueError(
+            f"isolate_implicit_dual_roots.spatial_tolerance must be positive and finite; got {spatial_tolerance!r}"
+        )
     for value, name in (
         (maximum_depth, "maximum_depth"),
         (maximum_geometry_queries, "maximum_geometry_queries"),
     ):
-        if isinstance(value, (bool, np.bool_)) or not isinstance(
-            value, (int, np.integer)
-        ):
-            raise TypeError(f"{name} must be an integer.")
-        minimum = 0 if name == "maximum_geometry_queries" else 1
-        if value < minimum:
-            raise ValueError(f"{name} must be at least {minimum}.")
+        value = (
+            nonnegative_integer
+            if name == "maximum_geometry_queries"
+            else positive_integer
+        )(value, name)
     enclosures = (
         np.stack((points, points), axis=2)
         if endpoint_bounds is None
@@ -657,7 +764,7 @@ def isolate_implicit_dual_roots(
         or np.any(points > enclosures[:, :, 1])
     ):
         raise ValueError(
-            "endpoint_bounds must be finite enclosing (segments, 2, 2, 3) intervals."
+            f"isolate_implicit_dual_roots.endpoint_bounds must be finite enclosing (segments, 2, 2, 3) intervals; got shape={enclosures.shape}"
         )
     segments = np.arange(points.shape[0], dtype=np.int64)
     parameters = np.tile(np.asarray((0.0, 1.0), dtype=np.float64), (segments.size, 1))
@@ -691,7 +798,9 @@ def isolate_implicit_dual_roots(
         if not count:
             break
         segments, parameters, depth = segments[:count], parameters[:count], depth[:count]
-        bounds = _dual_interval_bounds(query, enclosures, segments, parameters)
+        bounds = _dual_interval_bounds(
+            query, enclosures, segments, parameters, budget=budget
+        )
         queries += 3 * count
         value_lower, value_upper, derivative_lower, derivative_upper, low, high, width = (
             bounds
@@ -745,7 +854,12 @@ def isolate_implicit_dual_roots(
     order = np.lexsort((arrays[1][:, 0], arrays[0]))
     arrays = tuple(value[order] for value in arrays)
     arrays, merge_queries, merge_exhausted = _merge_dual_root_runs(
-        query, enclosures, arrays, spatial_tolerance, maximum_geometry_queries - queries
+        query,
+        enclosures,
+        arrays,
+        spatial_tolerance,
+        maximum_geometry_queries - queries,
+        budget=budget,
     )
     queries += merge_queries
     exhausted |= merge_exhausted
@@ -792,12 +906,11 @@ class ImplicitRestrictedQueryWorkset:
 
     Every failed/unknown query remains in ``unresolved_facets``. Hull rays use
     rigorous finite ray covers, not numerical clipping or guessed endpoints.
-    This is not a restricted surface or volume mesh; complete facet coverage
-    cannot be claimed while any query obligation remains. The domain workset
-    retains the exact physical request and all its unapplied controls.
+    Facet coverage remains unresolved while any query obligation remains.
+    The domain workset retains the physical request and unapplied controls.
     ``work_units`` sums measured native phase counters only; it does not
     assign cell/ray/query counts a fabricated instruction cost. Source query
-    cardinalities remain in ``geometry_queries``. The original ambient
+    cardinalities remain in ``geometry_queries``. The ambient
     execution owner, when present, enforces the cumulative allowance.
     """
 
@@ -821,6 +934,7 @@ class ImplicitRestrictedQueryWorkset:
     workset_id: str
 
 
+@checked
 def prepare_implicit_restricted_queries(
     domain: ImplicitVolumeDomainWorkset,
     /,
@@ -828,43 +942,43 @@ def prepare_implicit_restricted_queries(
     spatial_tolerance: float,
     maximum_depth: int,
     additional_work_units: int = 0,
+    scope: NativeExecutionScope,
 ) -> ImplicitRestrictedQueryWorkset:
-    """Recompute exact dual incidence and all dual/source root enclosures.
+    """Recompute dual incidence and dual/source root enclosures.
 
     Native transactional insertion is owned by domain preparation. This phase
     snapshots its current triangulation, certifies finite Voronoi endpoints
     with expansion-based rational bounds, encloses hull rays through the domain
     exit and executes batched interval roots.
-    Numeric clipping never establishes absence of an exact dual/source root.
+    Root exclusion requires a source enclosure rather than clipping.
     """
-    if not isinstance(domain, ImplicitVolumeDomainWorkset):
-        raise TypeError("domain must be ImplicitVolumeDomainWorkset.")
     domain.require_current(domain.query, domain.specification)
     limits = domain.specification.limits
     if additional_work_units < 0:
-        raise ValueError("additional_work_units must be nonnegative.")
+        raise ValueError(
+            f"prepare_implicit_restricted_queries.additional_work_units must be nonnegative; got {additional_work_units!r}"
+        )
     spent = dict(domain.native_statistics)["work"] + additional_work_units
-    execution = current_native_execution_budget()
-    if execution is not None:
-        execution.charge()
-    remaining = (
-        limits.maximum_work_units - spent
-        if execution is None
-        else execution.remaining().remaining_work_units
-    )
+    remaining = scope.remaining().remaining_work_units
     if remaining <= 0:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Implicit dual preparation has no remaining native work budget.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "implicit_volume.dual_preparation must have remaining native work budget; got no remaining work",
             stage="implicit_restricted_queries",
         )
-    facets, cells, endpoints, kinds, status, counters = restricted_dual_3d(
+    native = restricted_dual_3d(
         domain.points,
         domain.tetrahedra,
         domain.query.domain,
         limits.maximum_faces,
         remaining,
     )
+    facets = native.facets
+    cells = native.incident
+    endpoints = native.endpoints
+    kinds = native.kinds
+    status = native.item_status
+    counters = native.counters
     center_bounds, center_status = restricted_centers_3d(domain.points, domain.tetrahedra)
     ray_facets = np.flatnonzero(cells[:, 1] < 0)
     ray_bounds, ray_kinds, ray_status = restricted_rays_3d(
@@ -887,19 +1001,20 @@ def prepare_implicit_restricted_queries(
     all_bounds[ray_facets] = ray_bounds
     endpoint_bounds = all_bounds[eligible]
     representative = 0.5 * endpoint_bounds[:, :, 0] + 0.5 * endpoint_bounds[:, :, 1]
-    roots = isolate_implicit_dual_roots(
-        domain.query,
-        representative,
-        spatial_tolerance=spatial_tolerance,
-        maximum_depth=maximum_depth,
-        maximum_geometry_queries=min(
-            limits.maximum_geometry_queries - domain.geometry_queries,
-            limits.maximum_geometry_queries - domain.geometry_queries
-            if execution is None
-            else execution.remaining().remaining_geometry_queries,
-        ),
-        endpoint_bounds=endpoint_bounds,
+    query_upper = min(
+        limits.maximum_geometry_queries - domain.geometry_queries,
+        scope.remaining().remaining_geometry_queries,
     )
+    with implicit_source_budget(limits, scope=scope, queries_upper=query_upper) as budget:
+        roots = isolate_implicit_dual_roots(
+            domain.query,
+            representative,
+            spatial_tolerance=spatial_tolerance,
+            maximum_depth=maximum_depth,
+            maximum_geometry_queries=query_upper,
+            endpoint_bounds=endpoint_bounds,
+            budget=budget,
+        )
     pending = roots.classes == int(ImplicitDualIntervalClass.UNRESOLVED)
     unresolved = np.union1d(
         np.flatnonzero(~eligible & ~excluded), root_facets[roots.segment_ids[pending]]
@@ -945,7 +1060,7 @@ def prepare_implicit_restricted_queries(
         root_facets,
         roots,
         unresolved,
-        spent + int(counters[0]),
+        spent + counters.work_units,
         domain.geometry_queries + roots.geometry_queries,
         identity,
     )
@@ -982,9 +1097,13 @@ def _restricted_root_sites(
 
 
 def _boundary_normal_bounds(
-    query: ImplicitVolumeQuery, triangles: np.ndarray, /
+    query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery,
+    triangles: np.ndarray,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Enclose exact oriented primal normals dotted with source gradients."""
+    """Enclose the dot product of oriented primal normals and source gradients."""
     edge_low = np.nextafter(triangles[:, 1:] - triangles[:, :1], -np.inf)
     edge_high = np.nextafter(triangles[:, 1:] - triangles[:, :1], np.inf)
 
@@ -1026,7 +1145,9 @@ def _boundary_normal_bounds(
         )
         normal_low[:, axis] = np.nextafter(low_first - high_second, -np.inf)
         normal_high[:, axis] = np.nextafter(high_first - low_second, np.inf)
-    bounds = query.bounds.boxes(np.min(triangles, axis=1), np.max(triangles, axis=1))
+    bounds = query.bounds.boxes(
+        np.min(triangles, axis=1), np.max(triangles, axis=1), budget=budget
+    )
     lower = np.zeros(triangles.shape[0], dtype=np.float64)
     upper = np.zeros(triangles.shape[0], dtype=np.float64)
     for axis in range(3):
@@ -1041,74 +1162,101 @@ def _boundary_normal_bounds(
     return lower, upper
 
 
+@checked
 def assemble_restricted_implicit_topology(
     state: IncrementalDelaunay3D,
     work: ImplicitRestrictedQueryWorkset,
     /,
     *,
     record_phase: NativeMeshingPhaseRecorder | None = None,
+    source_deviation_upper: float | None = None,
+    scope: NativeExecutionScope,
 ) -> RestrictedImplicitTopology:
-    """Protect actual restricted primal faces and flood their two sides natively.
+    """Protect restricted primal faces and flood their two sides natively.
 
-    Whole-cell source enclosures outside the actual certified boundary-field
-    band provide interior/exterior witnesses. Cells in that allowed approximation
+    Whole-cell source enclosures outside the certified boundary-field band
+    identify interior and exterior seed cells. Cells in the approximation
     band follow the protected primal complex, never a centroid label. Independent
     degree-one source projection and approximate-domain coverage are mandatory
     before publication. Every restricted facet must separate the
     two regions, and every enclosed inside/outside cell must agree with it.
     """
     if work.unresolved_facets.size:
-        raise MeshingFailure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            "Restricted dual/source intersections remain unresolved.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+            "implicit_volume.dual_roots must resolve every dual/source intersection; got unresolved intersections",
             stage="implicit_restricted_topology",
             entity_ids=tuple(int(value) for value in work.unresolved_facets),
         )
-    points, cells, _, _, _ = state.finalize()
+    snapshot = state.finalize()
+    points = snapshot.points
+    cells = snapshot.cells
     if not np.array_equal(points, work.domain.points) or not np.array_equal(
         cells, work.domain.tetrahedra
     ):
-        raise ValueError("Restricted query workset binds another triangulation snapshot.")
+        raise ValueError(
+            f"assemble_restricted_implicit_topology.work must bind the triangulation snapshot; got workset_id={work.workset_id!r} with changed points or cells"
+        )
     _, _, counts = _restricted_root_sites(work)
     if np.any(counts > 1):
-        raise MeshingFailure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            "A dual intersects the source more than once; native site refinement is required.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+            "implicit_volume.dual_roots must isolate at most one source intersection per dual; got multiple intersections requiring native refinement",
             stage="implicit_restricted_topology",
         )
     selected = np.flatnonzero(counts == 1)
     if not selected.size:
-        raise MeshingFailure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            "No restricted boundary exists; complete domain work is not certified empty.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+            "implicit_volume.restricted_boundary must exist unless domain work certifies an empty source; got missing boundary without empty-source certification",
             stage="implicit_restricted_topology",
         )
     with measure_phase(record_phase, "boundary_recovery"):
         constrained = state.constrain_facets(work.facets[selected], selected)
     if np.any(constrained != int(MeshcoreStatus.OK)):
-        raise MeshingFailure(
-            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            "Native restriction could not protect every queried primal facet.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            "implicit_volume.restricted_facets must protect every queried primal facet; got unprotected queried facets",
             stage="implicit_restricted_topology",
         )
     triangles = points[work.facets[selected]]
-    boundary_values = work.domain.query.classify_boxes(
-        np.min(triangles, axis=1), np.max(triangles, axis=1)
-    )
+    with implicit_source_budget(
+        work.domain.specification.limits,
+        scope=scope,
+        queries_upper=2 * triangles.shape[0],
+    ) as budget:
+        boundary_values = work.domain.query.classify_boxes(
+            np.min(triangles, axis=1),
+            np.max(triangles, axis=1),
+            budget=budget,
+        )
     if not boundary_values.certified:
         raise ValueError(
-            "Restricted source consistency requires rigorous boundary intervals."
+            "assemble_restricted_implicit_topology.boundary_values must provide certified boundary intervals; got certified=False"
         )
-    field_band = float(
+    box_band = float(
         np.max(
             np.maximum(
                 np.abs(boundary_values.value_lower), np.abs(boundary_values.value_upper)
             )
         )
     )
-    # Exact source membership and affine approximation membership can differ
-    # inside this measured band. Never alter the original source classes or
-    # forgive a contradiction beyond it; the projection proof establishes the
+    # Reference subdivision certifies the same unchanged physical facets,
+    # rather than their larger axis boxes, before the protected-complex flood.
+    if source_deviation_upper is not None and (
+        not np.isfinite(source_deviation_upper) or source_deviation_upper < 0.0
+    ):
+        raise ValueError(
+            f"implicit_volume.source_deviation_upper must be a finite nonnegative facet bound; got {source_deviation_upper!r}"
+        )
+    field_band = (
+        box_band
+        if source_deviation_upper is None
+        else min(box_band, source_deviation_upper)
+    )
+    # Source membership and affine approximation membership can differ
+    # inside this measured band. Keep the source classes unchanged and refuse
+    # contradictions beyond it; the projection proof establishes the
     # continuous correspondence needed for the declared approximation.
     inside = np.flatnonzero(work.domain.value_upper < -field_band)
     outside = np.flatnonzero(work.domain.value_lower > field_band)
@@ -1119,44 +1267,54 @@ def assemble_restricted_implicit_topology(
         exterior = np.mean(points[cells[outside[0]]], axis=0)
     else:
         # A hull-adjacent tetrahedron's axis box can touch the source even
-        # when its interior witness point is well outside. A certified point
+        # when its enclosed interior point is well outside. A certified point
         # seed drives the protected-complex flood; it never labels the cell
         # or establishes cell conformity from a centroid sign.
         hull_cells = np.unique(work.incident_cells[work.incident_cells[:, 1] < 0, 0])
         candidates = np.mean(points[cells[hull_cells]], axis=1)
-        source_points = work.domain.query.classify_boxes(candidates, candidates)
+        with implicit_source_budget(
+            work.domain.specification.limits,
+            scope=scope,
+            queries_upper=2 * candidates.shape[0],
+        ) as budget:
+            source_points = work.domain.query.classify_boxes(
+                candidates, candidates, budget=budget
+            )
         exterior_rows = np.flatnonzero(source_points.value_lower > field_band)
         if not exterior_rows.size:
-            raise MeshingFailure(
-                MeshingFailureCategory.COMPLIANCE_FAILED,
-                "No source-enclosed exterior flood witness lies beyond the certified boundary band.",
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+                "implicit_volume.flood.exterior must have a source-enclosed exterior cell beyond the certified boundary band; got no exterior cell beyond the band",
                 stage="implicit_restricted_topology",
             )
         exterior = candidates[exterior_rows[0]]
     if not witness_points:
-        raise MeshingFailure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            "A source-enclosed interior cell beyond the measured approximation band is required.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+            "implicit_volume.flood.interior must have a source-enclosed interior cell beyond the measured approximation band; got no interior cell beyond the band",
             stage="implicit_restricted_topology",
         )
     witnesses = np.stack((witness_points[0], exterior))
     with measure_phase(record_phase, "region_classification"):
         status = state.label_regions(witnesses, np.asarray((0, 1), dtype=np.int32))
     if np.any(status != int(MeshcoreStatus.OK)):
-        raise MeshingFailure(
-            MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-            "Restricted facets do not separate source-enclosed interior and exterior witnesses.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.REGION_RESOLUTION_FAILED,
+            "implicit_volume.restricted_facets must separate source-enclosed interior and exterior cells; got nonseparating facets",
             stage="implicit_restricted_topology",
         )
-    points, cells, _, _, regions = state.finalize()
+    snapshot = state.finalize()
+    points = snapshot.points
+    cells = snapshot.cells
+    regions = snapshot.cell_regions
     if (
         np.any(regions < 0)
         or np.any(regions[inside] != 0)
         or np.any(regions[outside] != 1)
     ):
-        raise MeshingFailure(
-            MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-            "Native restricted flood contradicts complete source enclosures beyond the certified boundary band.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.REGION_RESOLUTION_FAILED,
+            "implicit_volume.flood must agree with source enclosures beyond the certified boundary band; got contradictory region assignments",
             stage="implicit_restricted_topology",
         )
     owners = work.incident_cells[selected]
@@ -1165,9 +1323,9 @@ def assemble_restricted_implicit_topology(
         owners[:, 1] >= 0, regions[np.maximum(owners[:, 1], 0)] == 0, False
     )
     if np.any(first_inside == second_inside):
-        raise MeshingFailure(
-            MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-            "A restricted primal facet does not separate the declared source regions.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.REGION_RESOLUTION_FAILED,
+            "implicit_volume.restricted_facets must separate the declared source regions; got nonseparating primal facet",
             stage="implicit_restricted_topology",
         )
     boundary = work.facets[selected].copy()
@@ -1192,9 +1350,9 @@ def assemble_restricted_implicit_topology(
     result_boundary = reindex[boundary]
     topology = TriangleTopology(result_boundary, num_vertices=result_points.shape[0])
     if not topology.watertight:
-        raise MeshingFailure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            "Restricted primal facets do not form a closed oriented manifold.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+            "implicit_volume.restricted_facets must form a closed oriented manifold; got failed manifold closure or orientation",
             stage="implicit_restricted_topology",
         )
     identity = canonical_fingerprint(
@@ -1220,28 +1378,35 @@ def assemble_restricted_implicit_topology(
     )
 
 
+class ImplicitVolumeSeedKind(StrEnum):
+    SPHERE_RADIAL_CONES = "sphere_radial_cones"
+    SOURCE_ATLAS_COVER = "source_atlas_cover"
+
+
 @dataclass(frozen=True, slots=True)
 class PreparedImplicitVolume:
-    """Qualified regular analytic source and exact physical request binding."""
+    """Bind a certified regular analytic source to a physical volume request."""
 
-    profile: AnalyticImplicitProfile
-    query: ImplicitVolumeQuery
-    specification: VolumeMeshingSpec
-    schedule: NativeVolumeSchedule
+    profile: (
+        _dependency_phydrax_geometry_implicit__analytic_profile.AnalyticImplicitProfile
+    )
+    query: _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec
+    schedule: _dependency_phydrax_meshing__volume_generation.NativeVolumeSchedule
     target_size: float
     fidelity_tolerance: float
     seed_cover_radius: float
+    seed_kind: ImplicitVolumeSeedKind
     geometry_query_charge: int
     size_resolution_id: str
     prepared_id: str
 
 
+@checked
 def implicit_volume_support_issues(
-    specification: VolumeMeshingSpec, /
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec, /
 ) -> tuple[str, ...]:
     """Unsupported controls are refused, not omitted from a positive profile."""
-    if not isinstance(specification, VolumeMeshingSpec):
-        raise TypeError("specification must be VolumeMeshingSpec.")
     issues: list[str] = []
     target = specification.target
     families = target.cell_families
@@ -1254,23 +1419,34 @@ def implicit_volume_support_issues(
         or families.allowed_transitions
     ):
         issues.append("conforming affine tetrahedral targets")
-    if specification.fill_strategy is not VolumeFillStrategy.SIMPLEX:
+    if (
+        specification.fill_strategy
+        is not _dependency_phydrax_meshing__contracts.VolumeFillStrategy.SIMPLEX
+    ):
         issues.append("the simplex fill strategy")
     scope = specification.boundary_scope
     if scope.entity_dimension != 2 or not np.array_equal(scope.entity_ids, [0]):
-        issues.append("the complete implicit-zero-set boundary entity")
+        issues.append(
+            "the implicit-zero-set boundary entity covering every source component"
+        )
     for control in specification.size_controls:
-        if not isinstance(control, UniformSizeControl):
-            issues.append("nonuniform native restricted-domain sizing")
-        elif not np.array_equal(control.scope.entity_ids, scope.entity_ids):
-            issues.append("uniform controls on the entire implicit boundary")
+        match control:
+            case _dependency_phydrax_meshing__sizing.UniformSizeControl():
+                if not np.array_equal(control.scope.entity_ids, scope.entity_ids):
+                    issues.append("uniform controls on the entire implicit boundary")
+            case _:
+                issues.append("nonuniform native restricted-domain sizing")
     for feature in specification.protected_features:
-        if feature.feature_kind is not FeatureKind.SURFACE or not np.array_equal(
-            feature.scope.entity_ids, scope.entity_ids
+        if (
+            feature.feature_kind
+            is not _dependency_phydrax_meshing__controls.FeatureKind.SURFACE
+            or not np.array_equal(feature.scope.entity_ids, scope.entity_ids)
         ):
             issues.append("sharp-feature/material-junction protected cavity execution")
         elif feature.hard and feature.maximum_deviation == 0.0:
-            issues.append("exact curved geometry represented by affine boundary facets")
+            issues.append(
+                "zero-deviation curved geometry represented by affine boundary facets"
+            )
     if len(specification.region_controls) > 1:
         issues.append("multiple material regions on a single regular analytic source")
     for control in specification.region_controls:
@@ -1283,7 +1459,7 @@ def implicit_volume_support_issues(
     if specification.hole_seeds:
         issues.append("additional void components not present in the source profile")
     if specification.layer_controls:
-        issues.append("boundary layers through the owning layer-core route")
+        issues.append("boundary layers through the layer-core route")
     if specification.periodic_constraints:
         issues.append(
             "periodic restricted-domain construction through the quotient owner"
@@ -1291,147 +1467,307 @@ def implicit_volume_support_issues(
     return tuple(sorted(set(issues)))
 
 
+@checked
 def prepare_restricted_implicit_volume(
-    geometry: CompiledGeometry,
+    geometry: _dependency_phydrax_geometry__contracts.CompiledGeometry,
     domain: ArrayLike,
-    specification: VolumeMeshingSpec,
-    schedule: NativeVolumeSchedule,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    schedule: _dependency_phydrax_meshing__volume_generation.NativeVolumeSchedule,
     coordinate_contract: SpatialCoordinateContract,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> PreparedImplicitVolume:
     """Prepare the certified analytic profile without extracting or filling a PLC."""
     issues = implicit_volume_support_issues(specification)
     if issues:
-        raise MeshingFailure(
-            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "; ".join(issues),
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            f"implicit_volume.specification must contain supported controls; got unsupported controls={issues!r}",
             stage="implicit_volume_preparation",
         )
-    if not isinstance(schedule, NativeVolumeSchedule):
-        raise TypeError("schedule must be NativeVolumeSchedule.")
     _implicit_region_metadata(specification)
     if specification.limits.maximum_geometry_queries < 3:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Analytic source preparation requires three bounded geometry requests.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "implicit_volume.preparation must admit three bounded geometry requests; got insufficient geometry query capacity",
             stage="implicit_volume_preparation",
         )
-    profile = AnalyticImplicitProfile(
-        geometry,
-        coordinate_contract,
-        source_id=specification.boundary_scope.source_id,
-        source_revision=specification.boundary_scope.source_revision,
-    )
-    profile.require_bound(geometry, coordinate_contract)
-    box = np.asarray(domain, dtype=np.float64)
-    if (
-        box.shape != (2, 3)
-        or not np.all(np.isfinite(box))
-        or np.any(box[0] > profile.boundary_bounds[0])
-        or np.any(box[1] < profile.boundary_bounds[1])
-    ):
-        raise MeshingFailure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "The finite volume query domain must enclose the complete source boundary.",
-            stage="implicit_volume_preparation",
+    with implicit_source_budget(
+        specification.limits,
+        scope=scope,
+        queries_upper=5 + 2 * len(specification.region_seeds),
+    ) as budget:
+        profile = _dependency_phydrax_geometry_implicit__analytic_profile.AnalyticImplicitProfile(
+            geometry,
+            coordinate_contract,
+            source_id=specification.boundary_scope.source_id,
+            source_revision=specification.boundary_scope.source_revision,
+            budget=budget,
         )
-    # The physical source is unchanged. A buffered computational hull avoids
-    # truncating true Voronoi rays at a source/domain tangency; the original
-    # declared enclosure remains separately bound in prepared_id.
-    margin = profile.reach_lower / 16.0
-    carrier = np.stack(
-        (
-            np.nextafter(box[0] - margin, -np.inf),
-            np.nextafter(box[1] + margin, np.inf),
-        )
-    )
-    enclosures = profile.field_bounds.boxes(carrier[:1], carrier[1:])
-    query = ImplicitVolumeQuery(
-        profile.field_bounds,
-        carrier[:1],
-        carrier[1:],
-        enclosures.value_lower,
-        enclosures.value_upper,
-        np.asarray((0,), dtype=np.int64),
-        carrier,
-        maximum_level=1,
-    )
-    charge_native_geometry_queries(1)
-    point = np.asarray(
-        geometry.boundary_atlas.map(
-            jnp.asarray((0,), dtype=jnp.int32),
-            jnp.asarray(((0.25, 0.25),), dtype=jnp.float64),
-        ),
-        dtype=np.float64,
-    )
-    field, resolution = resolve_size_controls(
-        specification.size_controls,
-        point,
-        np.asarray((0,), dtype=np.int64),
-        SizeFieldDomain.EUCLIDEAN_VOLUME,
-        combination=specification.size_combination,
-    )
-    size = float(np.asarray(field.values)[0])
-    tolerance = profile.tube_radius
-    for feature in specification.protected_features:
-        if feature.hard:
-            tolerance = min(tolerance, feature.maximum_deviation)
-    seed_queries = len(specification.region_seeds)
-    if seed_queries + 3 > specification.limits.maximum_geometry_queries:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Declared material seed queries exceed the geometry budget.",
-            stage="implicit_volume_preparation",
-        )
-    if seed_queries:
-        seed_points = np.stack(
-            tuple(np.asarray(seed.point) for seed in specification.region_seeds)
-        )
-        if seed_points.shape[1:] != (3,):
-            raise ValueError(
-                "Analytic volume region seeds require three physical coordinates."
-            )
-        seed_classes = query.classify_boxes(seed_points, seed_points)
-        if np.any(seed_classes.classes != int(ImplicitVolumeClass.INSIDE)):
-            raise MeshingFailure(
-                MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-                "A declared material seed is not source-enclosed strictly inside the analytic body.",
+        profile.require_bound(geometry, coordinate_contract, budget=budget)
+        box = np.asarray(domain, dtype=np.float64)
+        if (
+            box.shape != (2, 3)
+            or not np.all(np.isfinite(box))
+            or np.any(box[0] > profile.boundary_bounds[0])
+            or np.any(box[1] < profile.boundary_bounds[1])
+        ):
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SOURCE,
+                "implicit_volume.query.domain must enclose every source boundary component; got source boundary outside the query domain",
                 stage="implicit_volume_preparation",
             )
-    cover = min(
-        0.5 * size,
-        0.25 * profile.reach_lower,
-        0.5 * np.sqrt(profile.reach_lower * tolerance),
-    )
-    identity = canonical_fingerprint(
-        {
-            "kind": "prepared-restricted-implicit-volume",
-            "profile": profile.profile_id,
-            "domain_query": query.query_id,
-            "domain": array_tree_fingerprint(box),
-            "specification": specification.specification_id,
-            "schedule": schedule.schedule_id,
-            "sizing": resolution.report_id,
-            "fidelity": tolerance,
-            "seed_cover": cover,
-        }
-    )
-    return PreparedImplicitVolume(
-        profile,
-        query,
-        specification,
-        schedule,
-        size,
-        tolerance,
-        float(cover),
-        3 + seed_queries,
-        resolution.report_id,
-        identity,
-    )
+        # The physical source is unchanged. A buffered computational hull avoids
+        # truncating Voronoi rays at a source/domain tangency; the
+        # declared enclosure remains separately bound in prepared_id.
+        margin = profile.reach_lower / 16.0
+        carrier = np.stack(
+            (
+                np.nextafter(box[0] - margin, -np.inf),
+                np.nextafter(box[1] + margin, np.inf),
+            )
+        )
+        enclosures = profile.field_bounds.boxes(carrier[:1], carrier[1:], budget=budget)
+        query = (
+            _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeQuery(
+                profile.field_bounds,
+                carrier[:1],
+                carrier[1:],
+                enclosures.value_lower,
+                enclosures.value_upper,
+                np.asarray((0,), dtype=np.int64),
+                carrier,
+                maximum_level=1,
+            )
+        )
+        budget.ticket.consume(geometry_queries=1)
+        point = np.asarray(
+            geometry.boundary_atlas.map(
+                jnp.asarray((0,), dtype=jnp.int32),
+                jnp.asarray(((0.25, 0.25),), dtype=jnp.float64),
+            ),
+            dtype=np.float64,
+        )
+        field, resolution = _dependency_phydrax_meshing__sizing.resolve_size_controls(
+            specification.size_controls,
+            point,
+            np.asarray((0,), dtype=np.int64),
+            _dependency_phydrax_meshing__sizing.SizeFieldDomain.EUCLIDEAN_VOLUME,
+            combination=specification.size_combination,
+        )
+        size = float(np.asarray(field.values)[0])
+        tolerance = profile.tube_radius
+        for feature in specification.protected_features:
+            if feature.hard:
+                tolerance = min(tolerance, feature.maximum_deviation)
+        seed_queries = len(specification.region_seeds)
+        if seed_queries + 3 > specification.limits.maximum_geometry_queries:
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "implicit_volume.region_seeds must fit the geometry query budget; got material seed query capacity exhausted",
+                stage="implicit_volume_preparation",
+            )
+        if seed_queries:
+            seed_points = np.stack(
+                tuple(np.asarray(seed.point) for seed in specification.region_seeds)
+            )
+            if seed_points.shape[1:] != (3,):
+                raise ValueError(
+                    f"prepare_restricted_implicit_volume.region_seeds must have three physical coordinates; got shape={seed_points.shape}"
+                )
+            seed_classes = query.classify_boxes(seed_points, seed_points, budget=budget)
+            if np.any(
+                seed_classes.classes
+                != int(
+                    _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeClass.INSIDE
+                )
+            ):
+                raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.REGION_RESOLUTION_FAILED,
+                    "implicit_volume.region_seeds must be source-enclosed strictly inside the analytic body; got noninterior material seed",
+                    stage="implicit_volume_preparation",
+                )
+        # Sampling is numerical preparation, not the source-fidelity proof.
+        # Whole facets are certified against the authored tolerance below;
+        # their fixed boundary survives subsequent volume improvement.
+        cover = (
+            min(size, profile.reach_lower)
+            if profile.family == "sphere"
+            else min(
+                0.5 * size,
+                0.25 * profile.reach_lower,
+                0.5 * np.sqrt(profile.reach_lower * tolerance),
+            )
+        )
+        seed_kind = (
+            ImplicitVolumeSeedKind.SPHERE_RADIAL_CONES
+            if profile.family == "sphere"
+            else ImplicitVolumeSeedKind.SOURCE_ATLAS_COVER
+        )
+        identity = canonical_fingerprint(
+            {
+                "kind": "prepared-restricted-implicit-volume",
+                "profile": profile.profile_id,
+                "domain_query": query.query_id,
+                "domain": array_tree_fingerprint(box),
+                "specification": specification.specification_id,
+                "schedule": schedule.schedule_id,
+                "sizing": resolution.report_id,
+                "fidelity": tolerance,
+                "seed_kind": seed_kind.value,
+                "seed_cover": cover,
+            }
+        )
+        return PreparedImplicitVolume(
+            profile,
+            query,
+            specification,
+            schedule,
+            size,
+            tolerance,
+            float(cover),
+            seed_kind,
+            3 + seed_queries,
+            resolution.report_id,
+            identity,
+        )
 
 
-def _implicit_seed_sites(prepared: PreparedImplicitVolume, /) -> tuple[np.ndarray, int]:
-    """A complete source atlas cover plus source-enclosed interior lattice sites."""
+def _sphere_seed_sites(
+    prepared: PreparedImplicitVolume,
+    maximum_samples: int,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, float]:
+    """Choose on-source sites by cone fidelity and the requested cover scale.
+
+    Integer frequencies avoid the forced factor-of-two resolution jump of
+    midpoint subdivision. Facet-wide intervals and the final degree-one
+    projection still independently decide source acceptance.
+    """
+    from ..geometry._domain_numerics import (
+        interval_vector_norm,
+        sphere_radial_degree_one,
+    )
+    from ..geometry._interval_enclosure import (
+        interval_add,
+        interval_multiply,
+        interval_subtract,
+    )
+    from ..geometry._sphere_material_atlas import sphere_radial_triangle_bounds
+    from ..geometry.multiregion_surface._seeding import sphere_direction_lattice
+
+    profile = prepared.profile
+    ratio = profile.radius / prepared.seed_cover_radius
+    if not np.isfinite(ratio) or ratio > maximum_samples:
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "implicit_volume.sphere_seeds cannot admit the requested source resolution",
+            stage="implicit_volume_seeding",
+            requested=(("seed_cover_radius", prepared.seed_cover_radius),),
+            achieved=(("maximum_source_sites", float(maximum_samples)),),
+        )
+    frequency = max(1, int(np.ceil(ratio)))
+    while True:
+        vertices, faces = 10 * frequency**2 + 2, 20 * frequency**2
+        if vertices > maximum_samples:
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "implicit_volume.sphere_seeds must fit the remaining source-site allowance",
+                stage="implicit_volume_seeding",
+                requested=(("source_sites", float(vertices)),),
+                achieved=(("maximum_source_sites", float(maximum_samples)),),
+            )
+        with budget.temporary_scope():
+            # Positions, oriented faces, incidence, stable IDs, construction
+            # copies, and outward cone preparations coexist in this phase.
+            budget.reserve(
+                10 * (frequency + 1) * (frequency + 2) + 3 * faces,
+                1024 * (vertices + faces),
+            )
+            directions, triangles = sphere_direction_lattice(frequency)
+            floor, ceiling = np.inf, 0.0
+            for face in triangles:
+                bound = sphere_radial_triangle_bounds(directions[face], budget=budget)
+                if bound is None:
+                    raise RuntimeError(
+                        f"implicit_volume.sphere_seed_cones must be nondegenerate; got no cone bound at frequency {frequency}"
+                    )
+                floor, ceiling = min(floor, bound[1]), max(ceiling, bound[2])
+            with budget.ticket.native_target():
+                degree_one = sphere_radial_degree_one(
+                    (np.zeros((3,), dtype=np.float64), 1.0, 1.0),
+                    directions,
+                    triangles,
+                    budget=budget,
+                )
+            if not degree_one:
+                raise RuntimeError(
+                    f"implicit_volume.sphere_seed_cones must cover the source with degree one; got no degree-one cover at frequency {frequency}"
+                )
+            edges = native_route_checks_owner.unique_edges(triangles, "triangle")
+            diameter = float(
+                np.max(
+                    _length_upper(
+                        np.nextafter(
+                            np.abs(directions[edges[:, 1]] - directions[edges[:, 0]]),
+                            np.inf,
+                        )
+                    )
+                )
+            )
+            radial_error = np.nextafter(max(1.0 - floor, ceiling - 1.0), np.inf)
+            points = profile.center + profile.radius * directions
+            radius = np.asarray(profile.radius, dtype=np.float64)
+            exact_points = interval_add(
+                interval_multiply((directions, directions), (radius, radius)),
+                (profile.center, profile.center),
+            )
+            difference = interval_subtract((points, points), exact_points)
+            realization = float(
+                np.max(
+                    interval_vector_norm(
+                        (
+                            np.asarray(difference[0], dtype=np.float64),
+                            np.asarray(difference[1], dtype=np.float64),
+                        )
+                    )[1]
+                )
+            )
+            error = np.nextafter(
+                np.nextafter(profile.radius * radial_error, np.inf) + realization,
+                np.inf,
+            )
+            # For every convex triangle point y, some corner v satisfies
+            # |y-v|² <= sum_i lambda_i|y-v_i|² <= diameter²/3.
+            # The rational degree-one cone cover extends this to the whole sphere.
+            chord_cover = np.nextafter(
+                diameter / np.nextafter(np.sqrt(3.0), -np.inf), np.inf
+            )
+            cover = np.nextafter(
+                np.nextafter(
+                    profile.radius * np.nextafter(chord_cover + radial_error, np.inf),
+                    np.inf,
+                )
+                + realization,
+                np.inf,
+            )
+            if (
+                error <= prepared.fidelity_tolerance
+                and cover <= prepared.seed_cover_radius
+            ):
+                realized = profile.boundary_distance(points, budget=budget)
+                if np.max(realized.upper) <= prepared.fidelity_tolerance:
+                    return points, float(cover)
+        frequency += 1
+
+
+def _implicit_seed_sites(
+    prepared: PreparedImplicitVolume, /, *, scope: NativeExecutionScope
+) -> tuple[np.ndarray, int, tuple[tuple[str, float], ...]]:
+    """Return source-controlled boundary proposals and enclosed interior sites."""
     query = prepared.query
     profile = prepared.profile
     limits = prepared.specification.limits
@@ -1444,13 +1780,7 @@ def _implicit_seed_sites(prepared: PreparedImplicitVolume, /) -> tuple[np.ndarra
     )
     lattice_count = int(np.prod(counts))
     queries = prepared.geometry_query_charge
-    execution = current_native_execution_budget()
-    if execution is None:
-        raise RuntimeError(
-            "Implicit seeding requires its actual active execution budget."
-        )
-    execution.charge()
-    allowance = execution.remaining()
+    allowance = scope.remaining()
     if (
         lattice_count + 8 >= limits.maximum_vertices
         or lattice_count
@@ -1460,9 +1790,9 @@ def _implicit_seed_sites(prepared: PreparedImplicitVolume, /) -> tuple[np.ndarra
         )
         or lattice_count * 128 > limits.maximum_scratch_bytes
     ):
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "The analytic interior work lattice exceeds its vertex/query/scratch budget.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "implicit_volume.interior_lattice must fit vertex, query and scratch budgets; got interior lattice capacity exhausted",
             stage="implicit_volume_seeding",
         )
     axes = tuple(
@@ -1475,45 +1805,91 @@ def _implicit_seed_sites(prepared: PreparedImplicitVolume, /) -> tuple[np.ndarra
     lattice = np.stack(
         [axis.reshape((-1,)) for axis in np.meshgrid(*axes, indexing="ij")], axis=1
     )
-    classification = query.classify_boxes(lattice, lattice)
+    with implicit_source_budget(
+        limits, scope=scope, queries_upper=2 * lattice_count
+    ) as budget:
+        classification = query.classify_boxes(lattice, lattice, budget=budget)
     queries += lattice_count
-    interior = lattice[classification.classes == int(ImplicitVolumeClass.INSIDE)]
+    interior = lattice[
+        classification.classes
+        == int(
+            _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeClass.INSIDE
+        )
+    ]
     cover_budget = min(
         limits.maximum_vertices - interior.shape[0] - 8,
         min(
             limits.maximum_geometry_queries - queries,
-            execution.remaining().remaining_geometry_queries,
+            scope.remaining().remaining_geometry_queries,
         )
         // 3,
         limits.maximum_scratch_bytes // 512,
     )
     if cover_budget < 4:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "The complete source-boundary cover has no remaining bounded capacity.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "implicit_volume.source_cover must have sufficient remaining capacity; got source-boundary cover capacity exhausted",
             stage="implicit_volume_seeding",
         )
-    before_cover = execution.remaining().remaining_geometry_queries
+    before_cover = scope.remaining().remaining_geometry_queries
     try:
-        cover = profile.boundary_cover(prepared.seed_cover_radius, cover_budget)
-    except AnalyticBoundaryCoverCapacityError as error:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+        with implicit_source_budget(
+            limits,
+            scope=scope,
+            queries_upper=min(
+                limits.maximum_geometry_queries - queries,
+                scope.remaining().remaining_geometry_queries,
+            ),
+        ) as budget:
+            with budget.measurement():
+                match prepared.seed_kind:
+                    case ImplicitVolumeSeedKind.SPHERE_RADIAL_CONES:
+                        boundary_points, boundary_cover_radius = _sphere_seed_sites(
+                            prepared, cover_budget, budget=budget
+                        )
+                    case ImplicitVolumeSeedKind.SOURCE_ATLAS_COVER:
+                        cover = profile.boundary_cover(
+                            prepared.seed_cover_radius, cover_budget, budget=budget
+                        )
+                        if not cover.complete or cover.semantics != "certified":
+                            raise ValueError(
+                                f"implicit_volume.source_cover must cover the source with certified bounds; got covered={cover.complete}, semantics={cover.semantics!r}"
+                            )
+                        if np.max(cover.point_error) > prepared.fidelity_tolerance:
+                            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                                _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+                                "implicit_volume.boundary_seeds must respect source fidelity",
+                                stage="implicit_volume_seeding",
+                            )
+                        boundary_points = cover.points
+                        boundary_cover_radius = float(np.max(cover.covering_radius))
+                    case _:
+                        raise ValueError(
+                            f"implicit_volume.seed_kind must select supported source preparation; got {prepared.seed_kind!r}"
+                        )
+    except _dependency_phydrax_geometry_implicit__analytic_profile.AnalyticBoundaryCoverCapacityError as error:
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
             str(error),
             stage="implicit_volume_seeding",
             requested=(("cover_radius", error.requested_radius),),
             achieved=(("cover_radius", error.achieved_radius),),
         ) from error
-    if not cover.complete or cover.semantics != "certified":
-        raise ValueError(
-            "Analytic volume seeding requires an established complete source cover."
-        )
-    if np.max(cover.point_error) >= 0.25 * prepared.fidelity_tolerance:
-        raise MeshingFailure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            "Boundary seed realization error exceeds the source-fidelity budget.",
-            stage="implicit_volume_seeding",
-        )
+    inside_sites = interior.shape[0]
+    # AnalyticImplicitProfile admits nominal signed-distance kernels only.
+    # A body site farther from the whole source than its certified site cover
+    # cannot own a source Voronoi region. Refinement fills the protected body
+    # afterward, without creating accidental near-boundary source strata.
+    if prepared.seed_kind is ImplicitVolumeSeedKind.SPHERE_RADIAL_CONES:
+        interior = lattice[
+            (
+                classification.classes
+                == int(
+                    _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeClass.INSIDE
+                )
+            )
+            & (classification.value_upper < -boundary_cover_radius)
+        ]
     corners = np.asarray(
         (
             (0, 0, 0),
@@ -1528,13 +1904,21 @@ def _implicit_seed_sites(prepared: PreparedImplicitVolume, /) -> tuple[np.ndarra
         dtype=np.int64,
     )
     hull = np.where(corners, query.domain[1], query.domain[0])
-    queries += before_cover - execution.remaining().remaining_geometry_queries
-    return np.concatenate((hull, cover.points, interior)), queries
+    queries += before_cover - scope.remaining().remaining_geometry_queries
+    statistics = (
+        ("body_candidates", float(lattice_count)),
+        ("body_outside", float(lattice_count - inside_sites)),
+        ("body_retained", float(interior.shape[0])),
+        ("body_source_separation_refused", float(inside_sites - interior.shape[0])),
+        ("boundary_cover_radius", boundary_cover_radius),
+        ("boundary_sites", float(boundary_points.shape[0])),
+    )
+    return np.concatenate((hull, boundary_points, interior)), queries, statistics
 
 
 def _implicit_region_metadata(
-    specification: VolumeMeshingSpec, /
-) -> tuple[str, str | None, RegionRole | None]:
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec, /
+) -> tuple[str, str | None, _dependency_phydrax_meshing__organization.RegionRole | None]:
     controls = specification.region_controls
     seeds = specification.region_seeds
     name = (
@@ -1550,9 +1934,9 @@ def _implicit_region_metadata(
         (seed.region_name, seed.material_id, seed.role) != (name, material, role)
         for seed in seeds
     ):
-        raise MeshingFailure(
-            MeshingFailureCategory.CONTROL_CONFLICT,
-            "The regular analytic source has one interior region; seed/control material identities conflict.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+            "implicit_volume.region_controls must agree with the single analytic interior region; got conflicting seed or control material identities",
             stage="implicit_volume_preparation",
         )
     for patch in specification.patch_controls:
@@ -1563,58 +1947,129 @@ def _implicit_region_metadata(
             )
             or patch.adjacent_region_names != (name,)
         ):
-            raise MeshingFailure(
-                MeshingFailureCategory.CONTROL_CONFLICT,
-                "An analytic boundary patch must name the complete source boundary and its single interior region.",
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+                "implicit_volume.patch_controls must name every source boundary component and its single interior region; got incompatible patch scope or region identity",
                 stage="implicit_volume_preparation",
             )
     return name, material, role
+
+
+def _restricted_facet_deviation(
+    profile: _dependency_phydrax_geometry_implicit__analytic_profile.AnalyticImplicitProfile,
+    points: np.ndarray,
+    facets: np.ndarray,
+    box_deviation: np.ndarray,
+    diameter: np.ndarray,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Bound the triangle itself, not unrelated points in its axis box.
+
+    Signed distance is one-Lipschitz, so vertex error plus diameter first
+    establishes containment in the profile's certified Hessian tube. For
+    barycentric weights, the Taylor remainder is at most
+    H/2 * sum(i<j, lambda_i*lambda_j*edge_ij**2) <= H*diameter**2/6.
+    Keep the box enclosure whenever that tube condition is not established.
+    """
+    used, inverse = np.unique(facets, return_inverse=True)
+    lower, upper = profile.field_bounds.point_values(points[used], budget=budget)
+    vertex_error = np.maximum(np.abs(lower), np.abs(upper))
+    error = np.max(vertex_error[inverse.reshape(facets.shape)], axis=1)
+    in_tube = np.nextafter(error + diameter, np.inf) < profile.tube_radius
+    squared = np.nextafter(diameter * diameter, np.inf)
+    remainder = np.nextafter(profile.hessian_upper * squared, np.inf)
+    remainder = np.nextafter(remainder / 6.0, np.inf)
+    interpolation = np.nextafter(error + remainder, np.inf)
+    return np.where(in_tube, np.minimum(box_deviation, interpolation), box_deviation)
 
 
 def _restricted_facet_quality(
     prepared: PreparedImplicitVolume,
     work: ImplicitRestrictedQueryWorkset,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> tuple[np.ndarray, float, int]:
-    """Flag true restricted facets needing source/size/normal refinement."""
+    """Flag true restricted facets whose continuous source proof is unresolved."""
     _, _, counts = _restricted_root_sites(work)
     selected = np.flatnonzero(counts == 1)
     bad = np.flatnonzero(counts > 1)
     if not selected.size:
         return np.union1d(bad, work.unresolved_facets), np.inf, 0
     triangles = work.domain.points[work.facets[selected]]
-    remaining = (
-        prepared.specification.limits.maximum_geometry_queries - work.geometry_queries
+    remaining = min(
+        prepared.specification.limits.maximum_geometry_queries - work.geometry_queries,
+        scope.remaining().remaining_geometry_queries,
     )
-    if remaining < 2 * selected.size:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Restricted primal-facet source and normal queries exceed the geometry budget.",
+    selected_facets = work.facets[selected]
+    vertex_queries = np.unique(selected_facets).size
+    query_upper = 4 * selected.size + vertex_queries
+    if remaining < query_upper:
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "implicit_volume.facet_queries must fit the geometry query budget; got facet source and normal query capacity exhausted",
             stage="implicit_restricted_refinement",
         )
-    bounds = prepared.query.bounds.boxes(
-        np.min(triangles, axis=1), np.max(triangles, axis=1)
-    )
-    deviation = np.maximum(np.abs(bounds.value_lower), np.abs(bounds.value_upper))
-    low, high = _boundary_normal_bounds(prepared.query, triangles)
-    orientable = (low > 0.0) | (high < 0.0)
-    diameter = np.maximum.reduce(
-        tuple(
-            _length_upper(triangles[:, first] - triangles[:, second])
-            for first, second in ((0, 1), (1, 2), (2, 0))
+    before_queries = scope.remaining().remaining_geometry_queries
+    with implicit_source_budget(
+        prepared.specification.limits, scope=scope, queries_upper=remaining
+    ) as budget:
+        bounds = prepared.query.bounds.boxes(
+            np.min(triangles, axis=1), np.max(triangles, axis=1), budget=budget
         )
-    )
-    maximum_size = min(prepared.target_size, prepared.fidelity_tolerance)
-    failed = (
-        ~orientable
-        | (deviation >= 0.25 * prepared.fidelity_tolerance)
-        | (diameter > maximum_size)
-    )
+        low, high = _boundary_normal_bounds(prepared.query, triangles, budget=budget)
+        box_deviation = np.maximum(np.abs(bounds.value_lower), np.abs(bounds.value_upper))
+        diameter = np.maximum.reduce(
+            tuple(
+                _length_upper(
+                    np.nextafter(
+                        np.abs(triangles[:, first] - triangles[:, second]), np.inf
+                    )
+                )
+                for first, second in ((0, 1), (1, 2), (2, 0))
+            )
+        )
+        deviation = _restricted_facet_deviation(
+            prepared.profile,
+            work.domain.points,
+            selected_facets,
+            box_deviation,
+            diameter,
+            budget=budget,
+        )
+        orientable = (low > 0.0) | (high < 0.0)
+        unresolved = ~orientable | (deviation > prepared.fidelity_tolerance)
+        if np.any(unresolved):
+            candidates = triangles[unresolved].copy()
+            reverse = (low + high)[unresolved] < 0.0
+            candidates[reverse] = candidates[reverse, ::-1]
+            certificate = _owner_phydrax_meshing_providers__native_publication.NativeCertificationRequest(
+                _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule(
+                    "volume_implicit"
+                ),
+                prepared.profile.source_id,
+                prepared.profile.source_revision,
+                prepared.specification.limits,
+            )
+            continuous, normals, _ = (
+                implicit_projection_owner.implicit_facet_projection_bounds(
+                    candidates,
+                    prepared.profile,
+                    prepared.fidelity_tolerance,
+                    certificate.certificate_limits,
+                    budget=budget,
+                )
+            )
+            deviation[unresolved] = continuous
+            orientable[unresolved] = normals
+    failed = ~orientable | (deviation > prepared.fidelity_tolerance)
     bad = np.union1d(bad, selected[failed])
     return (
         np.union1d(bad, work.unresolved_facets),
         float(np.max(deviation)),
-        2 * selected.size,
+        before_queries - scope.remaining().remaining_geometry_queries,
     )
 
 
@@ -1622,6 +2077,8 @@ def _restricted_closed_profile(
     prepared: PreparedImplicitVolume,
     work: ImplicitRestrictedQueryWorkset,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> bool:
     """Check closed oriented source topology before any native protection edit."""
     _, _, counts = _restricted_root_sites(work)
@@ -1629,7 +2086,10 @@ def _restricted_closed_profile(
     if not selected.size or np.any(counts > 1) or work.unresolved_facets.size:
         return False
     triangles = work.domain.points[work.facets[selected]]
-    low, high = _boundary_normal_bounds(prepared.query, triangles)
+    with implicit_source_budget(
+        prepared.specification.limits, scope=scope, queries_upper=2 * selected.size
+    ) as budget:
+        low, high = _boundary_normal_bounds(prepared.query, triangles, budget=budget)
     if np.any((low <= 0.0) & (high >= 0.0)):
         return False
     faces = work.facets[selected].copy()
@@ -1642,9 +2102,9 @@ def _restricted_closed_profile(
     used = np.unique(faces)
     reindex = np.full(work.domain.points.shape[0], -1, dtype=np.int64)
     reindex[used] = np.arange(used.size, dtype=np.int64)
-    # Primal geometry comes from exact native positive tetrahedra. This phase
-    # owns combinatorial closure, not TriangleMesh's approximate area filter.
-    # Actual coordinate validity and shape are independently audited later.
+    # Primal geometry comes from positively oriented native tetrahedra.
+    # This phase checks combinatorial closure; later audits check coordinate
+    # validity and shape independently of TriangleMesh's area filter.
     topology = TriangleTopology(reindex[faces], num_vertices=used.size)
     return (
         topology.num_face_components == prepared.profile.component_count
@@ -1656,15 +2116,14 @@ def _restricted_closed_profile(
 def _protected_insertion_batch(points: np.ndarray, radii: np.ndarray, /) -> np.ndarray:
     """Schedule separated empty-ball candidates from one triangulation epoch.
 
-    Adjacent old duals can request practically the same surface site. Native
-    insertion is sequential: after the first edit, their old empty-ball
-    premises are obsolete. Defer conflicting candidates and recompute their
-    actual duals next round, rather than constructing slivers between duplicate
-    requests or repairing/welding the accepted mesh afterward.
+    Adjacent duals can request the same surface site. Native insertion changes
+    the triangulation after the first edit, invalidating its previous empty-ball
+    guarantees. Require each accepted site to lie outside every other
+    accepted site's entire empty ball, and recompute deferred duals next round.
     """
     if points.shape[0] < 2:
         return points
-    protection = 0.25 * radii
+    protection = radii
     hierarchy = prepare_bvh(
         np.nextafter(points - protection[:, None], -np.inf),
         np.nextafter(points + protection[:, None], np.inf),
@@ -1699,22 +2158,27 @@ def _construct_implicit_restriction(
     /,
     *,
     record_phase: NativeMeshingPhaseRecorder | None,
-    operation_started: float | None,
-) -> tuple[RestrictedImplicitTopology, ImplicitRestrictedQueryWorkset, int, int, float]:
+    scope: NativeExecutionScope,
+) -> tuple[
+    RestrictedImplicitTopology,
+    ImplicitRestrictedQueryWorkset,
+    int,
+    int,
+    float,
+    tuple[tuple[str, float], ...],
+]:
     """Native Delaunay site refinement followed by protected primal-region flood."""
-    from ._volume_generation import native_volume_checkpoint
 
     profile = prepared.profile
-    profile.require_bound(profile.geometry, profile.coordinate_contract)
-    limits = prepared.specification.limits
-    started = operation_started
-    execution = current_native_execution_budget()
-    if execution is None:
-        raise RuntimeError(
-            "Implicit restriction requires its actual active execution budget."
+    with implicit_source_budget(
+        prepared.specification.limits, scope=scope, queries_upper=1
+    ) as budget:
+        profile.require_bound(
+            profile.geometry, profile.coordinate_contract, budget=budget
         )
+    limits = prepared.specification.limits
     with measure_phase(record_phase, "source_preparation"):
-        sites, queries = _implicit_seed_sites(prepared)
+        sites, queries, seed_statistics = _implicit_seed_sites(prepared, scope=scope)
     with measure_phase(record_phase, "regular_triangulation"):
         state = IncrementalDelaunay3D(
             sites,
@@ -1725,16 +2189,22 @@ def _construct_implicit_restriction(
     extra_work = 0
     try:
         for round_ in range(prepared.schedule.refinement_rounds + 1):
-            native_volume_checkpoint(
+            _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
                 limits,
-                MeshingStageKind.VOLUME_FILL,
-                operation_started=started,
-                execution_budget=execution,
+                _dependency_phydrax_meshing__trace.MeshingStageKind.VOLUME_FILL,
+                scope=scope,
             )
-            points, cells, _, _, _ = state.finalize()
+            snapshot = state.finalize()
+            points = snapshot.points
+            cells = snapshot.cells
             statistics = state.statistics()
             classification = _classify(
-                prepared.query, points, cells, limits.maximum_geometry_queries - queries
+                prepared.query,
+                points,
+                cells,
+                limits.maximum_geometry_queries - queries,
+                scope=scope,
+                limits=limits,
             )
             queries += int(np.count_nonzero(classification[5]))
             domain = _publish_workset(
@@ -1754,37 +2224,43 @@ def _construct_implicit_restriction(
                 spatial_tolerance=prepared.fidelity_tolerance * 1.0e-3,
                 maximum_depth=32,
                 additional_work_units=extra_work,
+                scope=scope,
             )
             queries = work.geometry_queries
-            extra_work = work.work_units - int(statistics[7])
-            bad, deviation, facet_queries = _restricted_facet_quality(prepared, work)
+            extra_work = work.work_units - statistics.work
+            bad, deviation, facet_queries = _restricted_facet_quality(
+                prepared, work, scope=scope
+            )
             queries += facet_queries
             if not bad.size:
-                before_closure = execution.remaining().remaining_geometry_queries
-                closed = _restricted_closed_profile(prepared, work)
-                queries += (
-                    before_closure - execution.remaining().remaining_geometry_queries
-                )
+                before_closure = scope.remaining().remaining_geometry_queries
+                closed = _restricted_closed_profile(prepared, work, scope=scope)
+                queries += before_closure - scope.remaining().remaining_geometry_queries
                 if closed:
                     topology = assemble_restricted_implicit_topology(
-                        state, work, record_phase=record_phase
+                        state,
+                        work,
+                        record_phase=record_phase,
+                        source_deviation_upper=deviation,
+                        scope=scope,
                     )
-                    region_work = int(state.statistics()[7]) - int(statistics[7])
+                    region_work = state.statistics().work - statistics.work
                     return (
                         topology,
                         work,
                         work.work_units + region_work,
                         queries,
                         deviation,
+                        seed_statistics,
                     )
                 # All dual proofs remain meaningful, but not a source-bound
-                # manifold yet. Refine their actual source roots, not PLC faces.
+                # manifold yet. Refine their source roots rather than PLC faces.
                 _, _, counts = _restricted_root_sites(work)
                 bad = np.flatnonzero(counts > 0)
             if round_ == prepared.schedule.refinement_rounds:
-                raise MeshingFailure(
-                    MeshingFailureCategory.COMPLIANCE_FAILED,
-                    "Restricted primal/source conformity remains unresolved after the native refinement budget.",
+                raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+                    "implicit_volume.refinement must certify primal/source conformity within the native refinement budget; got unresolved conformity after refinement",
                     stage="implicit_restricted_refinement",
                     entity_ids=tuple(int(value) for value in bad),
                     requested=(("source_fidelity", prepared.fidelity_tolerance),),
@@ -1804,7 +2280,7 @@ def _construct_implicit_restriction(
             unresolved_cells = work.domain.unresolved_tetrahedra
             if work.unresolved_facets.size or not additions.size:
                 # Interval uncertainty is never discarded: subdivide the full
-                # covering carrier near the exact unresolved dual incidences.
+                # covering carrier near the unresolved dual incidences.
                 owners = work.incident_cells[work.unresolved_facets].reshape((-1,))
                 pending = np.unique(owners[owners >= 0])
                 if not pending.size:
@@ -1817,55 +2293,72 @@ def _construct_implicit_restriction(
                 additions = np.concatenate((additions, centers))
                 addition_radii = np.concatenate((addition_radii, center_radii))
             additions = _protected_insertion_batch(additions, addition_radii)
-            remaining_vertices = limits.maximum_vertices - points.shape[0]
+            remaining_vertices = limits.maximum_vertices - statistics.vertex_ids
             if additions.shape[0] > remaining_vertices or not additions.shape[0]:
-                raise MeshingFailure(
-                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                    "Restricted-domain insertion cannot fit its complete next site batch.",
+                raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "implicit_volume.insertion must admit the next site batch; got insufficient insertion capacity",
                     stage="implicit_restricted_refinement",
                 )
-            before = int(statistics[1])
+            before = statistics.live_vertices
             started_insertion = phase_started(record_phase)
             _, status = state.insert(
                 additions,
-                work_limit=execution.remaining().remaining_work_units,
+                work_limit=scope.remaining().remaining_work_units,
             )
             after = state.statistics()
             record_elapsed(
                 record_phase,
                 "site_refinement",
                 started_insertion,
-                work_units=int(after[7]) - int(statistics[7]),
+                work_units=after.work - statistics.work,
             )
-            if np.any(status != int(MeshcoreStatus.OK)) or int(after[1]) <= before:
-                raise MeshingFailure(
-                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                    "Native restricted-domain insertion was refused or made no geometric progress.",
+            if np.any(status != int(MeshcoreStatus.OK)) or after.live_vertices <= before:
+                raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "implicit_volume.insertion must be admitted and make geometric progress; got refused or nonprogressing insertion",
                     stage="implicit_restricted_refinement",
                     checkpoint_id=work.workset_id,
+                    entity_ids=tuple(
+                        int(value)
+                        for value in np.flatnonzero(status != int(MeshcoreStatus.OK))
+                    ),
+                    requested=(("insertion_sites", additions.shape[0]),),
+                    achieved=(
+                        ("inserted_vertices", after.live_vertices - before),
+                        (
+                            "refused_sites",
+                            np.count_nonzero(status != int(MeshcoreStatus.OK)),
+                        ),
+                        ("live_vertices", after.live_vertices),
+                        ("finite_cells", after.finite_cells),
+                        ("insertion_work_units", after.work - statistics.work),
+                    ),
                 )
-        raise RuntimeError("Restricted refinement did not return or report its budget.")
+        raise RuntimeError(
+            "generate_restricted_implicit_volume.refinement must return a result or report budget refusal; got no terminal result"
+        )
     finally:
         state.close()
 
 
 @dataclass(frozen=True, slots=True)
 class ImplicitVolumeConstruction:
-    """Actual native restricted-domain tetrahedra, geometry and phase evidence.
+    """Retain native restricted-domain tetrahedra, geometry and phase evidence.
 
     ``exudation`` is the schedule's explicit weighted stage run (``None`` when
     disabled) and ``exudation_weights`` its accepted weights per published vertex.
     """
 
     mesh: CellMesh
-    domain: PiecewiseLinearDomain
+    domain: domain_coverage_owner.PiecewiseLinearDomain
     cell_regions: np.ndarray
-    zones: tuple[MeshZone, ...]
-    patches: tuple[MeshPatch, ...]
-    associations: tuple[GeometryAssociation, ...]
-    stages: tuple[MeshingStageReport, ...]
-    refinement: TetMeshRun
-    improvement: TetMeshRun
+    zones: tuple[_dependency_phydrax_meshing__organization.MeshZone, ...]
+    patches: tuple[_dependency_phydrax_meshing__organization.MeshPatch, ...]
+    associations: tuple[association_state_owner.GeometryAssociation, ...]
+    stages: tuple[_dependency_phydrax_meshing__trace.MeshingStageReport, ...]
+    refinement: TetMeshRun[TetMeshRefineCounters]
+    improvement: TetMeshRun[TetMeshImproveCounters]
     minimum_dihedral: float
     maximum_radius_edge: float
     source_deviation_upper: float
@@ -1873,8 +2366,9 @@ class ImplicitVolumeConstruction:
     geometry_query_charge: int
     restricted_topology_id: str
     restricted_query_id: str
-    exudation: TetMeshRun | None = None
+    exudation: TetMeshRun[TetMeshExudeCounters] | None = None
     exudation_weights: np.ndarray | None = None
+    seed_statistics: tuple[tuple[str, float], ...] = ()
 
 
 def _improve_implicit_volume(
@@ -1883,40 +2377,32 @@ def _improve_implicit_volume(
     work_units: int,
     /,
     *,
-    validity_policy: CellValidityPolicy,
+    validity_policy: _dependency_phydrax_discretization__cell_geometry_validity.CellValidityPolicy,
     record_phase: NativeMeshingPhaseRecorder | None,
-    operation_started: float | None,
+    scope: NativeExecutionScope,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
     np.ndarray,
-    TetMeshRun,
-    TetMeshRun,
-    TetMeshRun | None,
+    TetMeshRun[TetMeshRefineCounters],
+    TetMeshRun[TetMeshImproveCounters],
+    TetMeshRun[TetMeshExudeCounters] | None,
     np.ndarray | None,
     float,
     float,
     int,
 ]:
-    """Run the owning native tetrahedral quality machinery on the restricted body."""
-    from ._volume_generation import native_volume_checkpoint
-    from .providers._native_publication import unique_edges
+    """Run native tetrahedral quality refinement and improvement on the restricted body."""
 
-    execution = current_native_execution_budget()
-    if execution is None:
-        raise RuntimeError(
-            "Implicit quality requires its actual active execution budget."
-        )
-
-    native_volume_checkpoint(
+    _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
         prepared.specification.limits,
-        MeshingStageKind.OPTIMIZATION,
-        operation_started=operation_started,
+        _dependency_phydrax_meshing__trace.MeshingStageKind.OPTIMIZATION,
+        scope=scope,
     )
 
     limits = prepared.specification.limits
     boundary = topology.boundary_facets
-    edges = unique_edges(boundary, "triangle")
+    edges = native_route_checks_owner.unique_edges(boundary, "triangle")
     with measure_phase(record_phase, "native_preparation"):
         state = TetMesh3D(
             topology.points,
@@ -1932,8 +2418,10 @@ def _improve_implicit_volume(
         )
     try:
         start = phase_started(record_phase)
-        native_volume_checkpoint(
-            limits, MeshingStageKind.OPTIMIZATION, operation_started=operation_started
+        _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
+            limits,
+            _dependency_phydrax_meshing__trace.MeshingStageKind.OPTIMIZATION,
+            scope=scope,
         )
         refinement = state.refine(
             radius_edge_bound=prepared.schedule.radius_edge_bound,
@@ -1941,53 +2429,56 @@ def _improve_implicit_volume(
                 topology.points.shape[0], prepared.target_size, dtype=np.float64
             ),
             max_insertions=limits.maximum_vertices - topology.points.shape[0],
-            work_limit=execution.remaining().remaining_work_units,
+            work_limit=scope.remaining().remaining_work_units,
         )
-        refinement_work = int(
-            refinement.counters[TET_MESH_REFINE_COUNTERS.index("work_units")]
-        )
+        refinement_work = refinement.counters.work_units
         record_elapsed(record_phase, "refinement", start, work_units=refinement_work)
         work_units += refinement_work
         if (
             refinement.status == MeshcoreStatus.CAPACITY_EXCEEDED
             or work_units >= limits.maximum_work_units
         ):
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Restricted tetrahedral quality refinement exhausted its native capacity.",
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "implicit_volume.quality_refinement must fit native capacity; got quality refinement capacity exhausted",
                 stage="implicit_volume_quality",
             )
         start = phase_started(record_phase)
-        native_volume_checkpoint(
-            limits, MeshingStageKind.OPTIMIZATION, operation_started=operation_started
+        _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
+            limits,
+            _dependency_phydrax_meshing__trace.MeshingStageKind.OPTIMIZATION,
+            scope=scope,
         )
         improvement = state.improve(
             min_dihedral_degrees=prepared.schedule.minimum_dihedral_degrees,
             minimum_relative_determinant=validity_policy.relative_determinant_floor,
             max_passes=prepared.schedule.improvement_passes,
-            work_limit=execution.remaining().remaining_work_units,
+            work_limit=scope.remaining().remaining_work_units,
         )
-        improvement_work = int(
-            improvement.counters[TET_MESH_IMPROVE_COUNTERS.index("work_units")]
-        )
+        improvement_work = improvement.counters.work_units
         record_elapsed(record_phase, "improvement", start, work_units=improvement_work)
         work_units += improvement_work
         if improvement.status == MeshcoreStatus.CAPACITY_EXCEEDED:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Restricted tetrahedral improvement exhausted its native capacity.",
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "implicit_volume.improvement must fit native capacity; got tetrahedral improvement capacity exhausted",
                 stage="implicit_volume_quality",
             )
-        exudation, weights, work_units = exude_native_volume(
-            state,
-            prepared.schedule,
-            limits,
-            work_units,
-            validity_policy=validity_policy,
-            record_phase=record_phase,
+        exudation, weights, work_units = (
+            _dependency_phydrax_meshing__volume_generation.exude_native_volume(
+                state,
+                prepared.schedule,
+                limits,
+                work_units,
+                validity_policy=validity_policy,
+                record_phase=record_phase,
+                scope=scope,
+            )
         )
-        native_volume_checkpoint(
-            limits, MeshingStageKind.OPTIMIZATION, operation_started=operation_started
+        _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
+            limits,
+            _dependency_phydrax_meshing__trace.MeshingStageKind.OPTIMIZATION,
+            scope=scope,
         )
         arrays = state.arrays()
         quality = state.quality(sliver_degrees=prepared.schedule.minimum_dihedral_degrees)
@@ -2012,34 +2503,46 @@ def _improve_implicit_volume(
 
 def _implicit_organization(
     mesh: CellMesh,
-    specification: VolumeMeshingSpec,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
     source_deviation: float,
     source_id: str,
     source_revision: str,
     /,
-) -> tuple[tuple[MeshZone, ...], tuple[MeshPatch, ...], tuple[GeometryAssociation, ...]]:
+) -> tuple[
+    tuple[_dependency_phydrax_meshing__organization.MeshZone, ...],
+    tuple[_dependency_phydrax_meshing__organization.MeshPatch, ...],
+    tuple[association_state_owner.GeometryAssociation, ...],
+]:
     connectivity = mesh.connectivity
-    if not isinstance(connectivity, TetrahedralConnectivity):
-        raise TypeError("Implicit publication requires tetrahedral connectivity.")
-    name, material, role = _implicit_region_metadata(specification)
+    match connectivity:
+        case TetrahedralConnectivity():
+            name, material, role = _implicit_region_metadata(specification)
+        case _:
+            raise TypeError(
+                f"execute_restricted_implicit_volume.mesh.connectivity must be TetrahedralConnectivity; got {type(connectivity).__name__}"
+            )
     cells = mesh.entity_set(3)
-    scope = MeshingScope(
+    scope = _dependency_phydrax_meshing__scope.MeshingScope(
         mesh.mesh_id,
         mesh.numeric_version,
-        MeshingEntityKind.MESH,
+        _dependency_phydrax_meshing__scope.MeshingEntityKind.MESH,
         3,
         cells.entity_set_id,
         cells.entity_ids,
     )
-    zone = MeshZone(
-        name, MeshZoneRole.REGION, scope, material_id=material, region_role=role
+    zone = _dependency_phydrax_meshing__organization.MeshZone(
+        name,
+        _dependency_phydrax_meshing__organization.MeshZoneRole.REGION,
+        scope,
+        material_id=material,
+        region_role=role,
     )
     faces = mesh.entity_set(2)
     identifiers = np.asarray(faces.entity_ids)[np.asarray(connectivity.boundary_faces)]
-    boundary_scope = MeshingScope(
+    boundary_scope = _dependency_phydrax_meshing__scope.MeshingScope(
         mesh.mesh_id,
         mesh.numeric_version,
-        MeshingEntityKind.MESH,
+        _dependency_phydrax_meshing__scope.MeshingEntityKind.MESH,
         2,
         faces.entity_set_id,
         identifiers,
@@ -2048,11 +2551,13 @@ def _implicit_organization(
         "implicit-boundary",
     )
     patches = tuple(
-        MeshPatch(patch_name, boundary_scope, adjacent_zone_ids=(zone.zone_id,))
+        _dependency_phydrax_meshing__organization.MeshPatch(
+            patch_name, boundary_scope, adjacent_zone_ids=(zone.zone_id,)
+        )
         for patch_name in patch_names
     )
-    association = GeometryAssociation(
-        GeometryAssociationKind.IMPLICIT,
+    association = association_state_owner.GeometryAssociation(
+        association_state_owner.GeometryAssociationKind.IMPLICIT,
         source_id,
         source_revision,
         faces.entity_set_id,
@@ -2067,64 +2572,23 @@ def _implicit_organization(
     return (zone,), patches, (association,)
 
 
+@checked
 def generate_restricted_implicit_volume(
     prepared: PreparedImplicitVolume,
     /,
     *,
-    validity_policy: CellValidityPolicy,
+    validity_policy: _dependency_phydrax_discretization__cell_geometry_validity.CellValidityPolicy,
     record_phase: NativeMeshingPhaseRecorder | None = None,
-    execution_budget: NativeExecutionBudget | None = None,
-    operation_started: float | None = None,
+    scope: NativeExecutionScope,
 ) -> ImplicitVolumeConstruction:
-    """Construct an actual restricted-Delaunay body, never an extracted PLC fill.
+    """Construct the restricted-Delaunay body under an explicit request scope."""
 
-    ``validity_policy`` is the publishing audit's cell validity policy; native
-    improvement repairs or reports every cell below its determinant floor.
-    """
-    from ._volume_generation import (
-        _native_volume_operation_started,
-        native_volume_execution_budget,
-    )
-
-    if not isinstance(prepared, PreparedImplicitVolume):
-        raise TypeError("prepared must be PreparedImplicitVolume.")
-    if not isinstance(validity_policy, CellValidityPolicy):
-        raise TypeError("validity_policy must be CellValidityPolicy.")
-    active = current_native_execution_budget()
-    if execution_budget is not None and execution_budget is not active:
-        raise RuntimeError("Implicit generation must borrow the actual active budget.")
-    started = _native_volume_operation_started(operation_started)
-    if active is None and started is None:
-        started = monotonic()
-    with native_volume_execution_budget(
-        prepared.specification.limits,
-        operation_started=started,
-        source_geometry_queries=prepared.geometry_query_charge,
-    ) as execution:
-        return _generate_restricted_implicit_volume_bound(
+    topology, work, spent, queries, deviation, seed_statistics = (
+        _construct_implicit_restriction(
             prepared,
-            validity_policy=validity_policy,
             record_phase=record_phase,
-            execution_budget=execution,
-            operation_started=started,
+            scope=scope,
         )
-
-
-def _generate_restricted_implicit_volume_bound(
-    prepared: PreparedImplicitVolume,
-    /,
-    *,
-    validity_policy: CellValidityPolicy,
-    record_phase: NativeMeshingPhaseRecorder | None,
-    execution_budget: NativeExecutionBudget,
-    operation_started: float | None,
-) -> ImplicitVolumeConstruction:
-    from ._volume_generation import native_volume_checkpoint
-
-    topology, work, spent, queries, deviation = _construct_implicit_restriction(
-        prepared,
-        record_phase=record_phase,
-        operation_started=operation_started,
     )
     (
         points,
@@ -2143,22 +2607,21 @@ def _generate_restricted_implicit_volume_bound(
         spent,
         validity_policy=validity_policy,
         record_phase=record_phase,
-        operation_started=operation_started,
+        scope=scope,
     )
     with measure_phase(record_phase, "publication"):
-        native_volume_checkpoint(
+        _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
             prepared.specification.limits,
-            MeshingStageKind.CANONICALIZATION,
-            operation_started=operation_started,
-            execution_budget=execution_budget,
+            _dependency_phydrax_meshing__trace.MeshingStageKind.CANONICALIZATION,
+            scope=scope,
         )
-        mesh = canonicalize_cell_mesh(
+        mesh = _dependency_phydrax_meshing__canonical.canonicalize_cell_mesh(
             CellMesh.from_tetrahedra(
                 points, cells, numeric_version=prepared.profile.source_revision
             )
         )
         name, _, _ = _implicit_region_metadata(prepared.specification)
-        domain = PiecewiseLinearDomain(
+        domain = domain_coverage_owner.PiecewiseLinearDomain(
             points,
             boundary,
             np.tile(np.asarray((0, -1), dtype=np.int64), (boundary.shape[0], 1)),
@@ -2174,34 +2637,34 @@ def _generate_restricted_implicit_volume_bound(
             prepared.profile.source_revision,
         )
     stages = (
-        MeshingStageReport(
-            MeshingStageKind.SOURCE_INSPECTION,
-            MeshingStageStatus.PASSED,
+        _dependency_phydrax_meshing__trace.MeshingStageReport(
+            _dependency_phydrax_meshing__trace.MeshingStageKind.SOURCE_INSPECTION,
+            _dependency_phydrax_meshing__trace.MeshingStageStatus.PASSED,
             input_ids=(prepared.prepared_id,),
             output_ids=(prepared.profile.profile_id, prepared.size_resolution_id),
         ),
-        MeshingStageReport(
-            MeshingStageKind.VOLUME_FILL,
-            MeshingStageStatus.PASSED,
+        _dependency_phydrax_meshing__trace.MeshingStageReport(
+            _dependency_phydrax_meshing__trace.MeshingStageKind.VOLUME_FILL,
+            _dependency_phydrax_meshing__trace.MeshingStageStatus.PASSED,
             input_ids=(work.workset_id,),
             output_ids=(topology.topology_id, domain.domain_id),
             created_count=topology.tetrahedra.shape[0],
         ),
-        MeshingStageReport(
-            MeshingStageKind.OPTIMIZATION,
-            MeshingStageStatus.PASSED
+        _dependency_phydrax_meshing__trace.MeshingStageReport(
+            _dependency_phydrax_meshing__trace.MeshingStageKind.OPTIMIZATION,
+            _dependency_phydrax_meshing__trace.MeshingStageStatus.PASSED
             if refinement.status == improvement.status == MeshcoreStatus.OK
             and (exudation is None or exudation.status == MeshcoreStatus.OK)
-            else MeshingStageStatus.WARNING,
+            else _dependency_phydrax_meshing__trace.MeshingStageStatus.WARNING,
             input_ids=(topology.topology_id,),
             output_ids=(mesh.mesh_id,),
             created_count=mesh.blocks[0].cell_count,
         ),
     )
-    native_volume_checkpoint(
+    _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
         prepared.specification.limits,
-        MeshingStageKind.CANONICALIZATION,
-        operation_started=operation_started,
+        _dependency_phydrax_meshing__trace.MeshingStageKind.CANONICALIZATION,
+        scope=scope,
     )
     return ImplicitVolumeConstruction(
         mesh,
@@ -2222,6 +2685,7 @@ def _generate_restricted_implicit_volume_bound(
         work.workset_id,
         exudation=exudation,
         exudation_weights=exudation_weights,
+        seed_statistics=seed_statistics,
     )
 
 
@@ -2229,16 +2693,19 @@ def _implicit_volume_compliance(
     construction: ImplicitVolumeConstruction,
     prepared: PreparedImplicitVolume,
     /,
-) -> MeshingComplianceReport:
-    from .providers._native_publication import edge_size_evidence, uniform_size_compliance
+) -> _dependency_phydrax_meshing__result.MeshingComplianceReport:
 
     connectivity = construction.mesh.connectivity
-    if not isinstance(connectivity, TetrahedralConnectivity):
-        raise TypeError("Implicit size compliance requires tetrahedral connectivity.")
-    lengths, growth = edge_size_evidence(
-        np.asarray(construction.mesh.coordinates),
-        np.asarray(connectivity.edges)[np.asarray(connectivity.boundary_edges)],
-    )
+    match connectivity:
+        case TetrahedralConnectivity():
+            lengths, growth = native_route_checks_owner.edge_size_evidence(
+                np.asarray(construction.mesh.coordinates),
+                np.asarray(connectivity.edges)[np.asarray(connectivity.boundary_edges)],
+            )
+        case _:
+            raise TypeError(
+                f"execute_restricted_implicit_volume.mesh.connectivity must be TetrahedralConnectivity; got {type(connectivity).__name__}"
+            )
     requested: list[tuple[str, float]] = [
         ("source_fidelity", prepared.fidelity_tolerance),
         ("refinement:radius_edge_bound", prepared.schedule.radius_edge_bound),
@@ -2256,16 +2723,24 @@ def _implicit_volume_compliance(
         ("improvement:minimum_dihedral_degrees", construction.minimum_dihedral),
         ("native:known_phase_work_units", float(construction.work_units)),
         ("source:geometry_queries", float(construction.geometry_query_charge)),
+        *(
+            (f"source_seeding:{name}", value)
+            for name, value in construction.seed_statistics
+        ),
     ]
     issues: list[str] = []
     for control in prepared.specification.size_controls:
-        if not isinstance(control, UniformSizeControl):
-            raise TypeError(
-                "Prepared restricted volume contains an unsupported size field."
-            )
-        request, actual, failed = uniform_size_compliance(
-            control, prepared.specification.size_compliance, lengths, growth
-        )
+        match control:
+            case _dependency_phydrax_meshing__sizing.UniformSizeControl():
+                request, actual, failed = (
+                    native_route_checks_owner.uniform_size_compliance(
+                        control, prepared.specification.size_compliance, lengths, growth
+                    )
+                )
+            case _:
+                raise TypeError(
+                    f"execute_restricted_implicit_volume.size_controls must contain UniformSizeControl values; got {type(control).__name__}"
+                )
         requested.extend(request)
         achieved.extend(actual)
         issues.extend(failed)
@@ -2278,7 +2753,7 @@ def _implicit_volume_compliance(
             and construction.source_deviation_upper > feature.maximum_deviation
         ):
             issues.append(f"protected_deviation:{feature.feature_id}")
-    return MeshingComplianceReport(
+    return _dependency_phydrax_meshing__result.MeshingComplianceReport(
         prepared.specification.specification_id,
         issues=tuple(issues),
         requested=tuple(requested),
@@ -2286,118 +2761,57 @@ def _implicit_volume_compliance(
     )
 
 
+@checked
 def execute_restricted_implicit_volume(
-    geometry: CompiledGeometry,
-    specification: VolumeMeshingSpec,
+    geometry: _dependency_phydrax_geometry__contracts.CompiledGeometry,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
     prepared: PreparedImplicitVolume,
     coordinate_contract: SpatialCoordinateContract,
-    provider: MeshingProviderInfo,
+    provider: _dependency_phydrax_meshing__contracts.MeshingProviderInfo,
     plan_id: str,
     /,
     *,
     record_phase: NativeMeshingPhaseRecorder | None = None,
-    execution_budget: NativeExecutionBudget | None = None,
-    operation_started: float | None = None,
-) -> CellMeshingResult:
-    """Certify and publish qualified analytic restricted-Delaunay generation."""
-    from ._volume_generation import (
-        _native_volume_operation_started,
-        native_volume_execution_budget,
-    )
-    from .providers._native_publication import bind_native_execution_result
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
+) -> _dependency_phydrax_meshing__result.CellMeshingResult:
+    """Certify and publish analytic restricted-Delaunay generation."""
 
-    prepared.profile.require_bound(geometry, coordinate_contract)
+    with implicit_source_budget(
+        specification.limits, scope=scope, queries_upper=1
+    ) as budget:
+        prepared.profile.require_bound(geometry, coordinate_contract, budget=budget)
     if specification.specification_id != prepared.specification.specification_id:
-        raise ValueError("The prepared restricted volume binds another physical request.")
-    active = current_native_execution_budget()
-    if execution_budget is not None and execution_budget is not active:
-        raise RuntimeError("Implicit publication must borrow the actual active budget.")
-    started = _native_volume_operation_started(operation_started)
-    if active is None and started is None:
-        started = monotonic()
-    with native_volume_execution_budget(
-        specification.limits,
-        operation_started=started,
-        source_geometry_queries=prepared.geometry_query_charge,
-    ) as execution:
-        result = _execute_restricted_implicit_volume_bound(
-            geometry,
-            specification,
-            prepared,
-            coordinate_contract,
-            provider,
-            plan_id,
-            record_phase=record_phase,
-            execution_budget=execution,
-            operation_started=started,
+        raise ValueError(
+            f"execute_restricted_implicit_volume.prepared.specification must bind the physical request; got prepared_id={prepared.specification.specification_id!r}, requested_id={specification.specification_id!r}"
         )
-    if active is not None:
-        return result
-    evidence = execution.evidence
-    if evidence is None:
-        raise RuntimeError(
-            "Implicit publication lost its completed original execution evidence."
-        )
-    if started is None:
-        raise RuntimeError("Owning implicit publication lost its original host clock.")
-    return bind_native_execution_result(
-        result,
-        evidence,
-        specification.limits,
-        started,
-        source_geometry_queries=prepared.geometry_query_charge,
-    )
-
-
-def _execute_restricted_implicit_volume_bound(
-    geometry: CompiledGeometry,
-    specification: VolumeMeshingSpec,
-    prepared: PreparedImplicitVolume,
-    coordinate_contract: SpatialCoordinateContract,
-    provider: MeshingProviderInfo,
-    plan_id: str,
-    /,
-    *,
-    record_phase: NativeMeshingPhaseRecorder | None,
-    execution_budget: NativeExecutionBudget,
-    operation_started: float | None,
-) -> CellMeshingResult:
-    from ._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
-    from ._certification import MeshCertificationSchedule
-    from ._volume_generation import native_volume_checkpoint
-    from .providers._native_publication import (
-        NativeCertificationRequest,
-        publish_native_result,
-        simplex_entity_limits,
-    )
 
     # The native determinant-floor repair and the publication audit share one policy.
-    audit_policy = CellMeshAuditPolicy(
+    audit_policy = _owner_phydrax_meshing__audit.CellMeshAuditPolicy(
         require_complete_association=True,
-        watertight_boundary=CellMeshAuditDisposition.REJECT,
+        watertight_boundary=_owner_phydrax_meshing__audit.CellMeshAuditDisposition.REJECT,
     )
     construction = generate_restricted_implicit_volume(
         prepared,
         validity_policy=audit_policy.validity_policy,
         record_phase=record_phase,
-        execution_budget=execution_budget,
-        operation_started=operation_started,
+        scope=scope,
     )
-    simplex_entity_limits(
+    native_route_checks_owner.simplex_entity_limits(
         np.asarray(construction.mesh.coordinates),
         np.asarray(construction.mesh.blocks[0].vertices),
         specification.limits,
-        MeshingStageKind.VOLUME_FILL,
+        _dependency_phydrax_meshing__trace.MeshingStageKind.VOLUME_FILL,
         cell_kind=construction.mesh.blocks[0].cell_kind,
     )
     with measure_phase(record_phase, "compliance"):
-        native_volume_checkpoint(
+        _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
             specification.limits,
-            MeshingStageKind.SPECIFICATION_COMPLIANCE,
-            operation_started=operation_started,
+            _dependency_phydrax_meshing__trace.MeshingStageKind.SPECIFICATION_COMPLIANCE,
+            scope=scope,
         )
         compliance = _implicit_volume_compliance(construction, prepared)
-    return publish_native_result(
+    return _owner_phydrax_meshing_providers__native_publication.publish_native_result(
         construction.mesh,
         coordinate_contract,
         compliance,
@@ -2407,6 +2821,7 @@ def _execute_restricted_implicit_volume_bound(
             "kind": "native-restricted-implicit-volume",
             "route": "implicit_restricted_delaunay",
             "plan": plan_id,
+            "specification": specification.specification_id,
             "source_profile": prepared.profile.profile_id,
             "prepared": prepared.prepared_id,
             "source_state": prepared.profile.state_id,
@@ -2418,20 +2833,8 @@ def _execute_restricted_implicit_volume_bound(
             "source_fidelity_tolerance": prepared.fidelity_tolerance,
             "refinement_status": construction.refinement.status.name,
             "improvement_status": construction.improvement.status.name,
-            "refinement_counters": tuple(
-                zip(
-                    TET_MESH_REFINE_COUNTERS,
-                    construction.refinement.counters.tolist(),
-                    strict=True,
-                )
-            ),
-            "improvement_counters": tuple(
-                zip(
-                    TET_MESH_IMPROVE_COUNTERS,
-                    construction.improvement.counters.tolist(),
-                    strict=True,
-                )
-            ),
+            "refinement_counters": construction.refinement.counters.items(),
+            "improvement_counters": construction.improvement.counters.items(),
             "exudation_status": (
                 None
                 if construction.exudation is None
@@ -2439,57 +2842,64 @@ def _execute_restricted_implicit_volume_bound(
             ),
             "exudation_counters": ()
             if construction.exudation is None
-            else tuple(
-                zip(
-                    TET_MESH_EXUDE_COUNTERS,
-                    construction.exudation.counters.tolist(),
-                    strict=True,
-                )
-            ),
+            else construction.exudation.counters.items(),
         },
-        NativeCertificationRequest(
-            MeshCertificationSchedule("volume_implicit"),
+        _owner_phydrax_meshing_providers__native_publication.NativeCertificationRequest(
+            _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule(
+                "volume_implicit"
+            ),
             prepared.profile.source_id,
             prepared.profile.source_revision,
             specification.limits,
             domain=construction.domain,
             cell_regions=construction.cell_regions,
-            fidelity_source=ImplicitProjectionBoundarySource(prepared.profile),
+            fidelity_source=source_fidelity_owner.ImplicitProjectionBoundarySource(
+                prepared.profile
+            ),
             fidelity_tolerance=prepared.fidelity_tolerance,
         ),
-        audit_policy=audit_policy,
-        derivative_mode=MeshingDerivativeMode.NONDIFFERENTIABLE,
-        enforced_limits=(
-            "vertices",
-            "edges",
-            "faces",
-            "cells",
-            "connectivity_entries",
-            "data_bytes",
-            "work_units:native_and_metered_host",
-            "wall_seconds:native_and_host_boundaries",
-            "geometry_queries:native_and_source_batches",
-            "cavity_cells:native",
-            "scratch_bytes:managed_native_and_bounded_host",
+        policy=NativePublicationPolicy(
+            audit_policy,
+            _dependency_phydrax_meshing__contracts.MeshingDerivativeMode.NONDIFFERENTIABLE,
+            (
+                "vertices",
+                "edges",
+                "faces",
+                "cells",
+                "connectivity_entries",
+                "data_bytes",
+                "work_units:native_and_metered_host",
+                "wall_seconds:native_and_host_boundaries",
+                "geometry_queries:native_and_source_batches",
+                "cavity_cells:native",
+                "scratch_bytes:managed_native_and_bounded_host",
+            ),
+            (
+                "scratch_bytes:unmanaged_host_device_compiler",
+                "work_units:unmetered_host_device_compiler",
+                "wall_seconds:nonpreemptible_host_device_compiler",
+            ),
         ),
-        unenforced_limits=(
-            "scratch_bytes:unmanaged_host_device_compiler",
-            "work_units:unmetered_host_device_compiler",
-            "wall_seconds:nonpreemptible_host_device_compiler",
+        organization=_owner_phydrax_meshing_providers__native_publication.NativePublicationOrganization(
+            patches=construction.patches,
+            zones=construction.zones,
+            associations=construction.associations,
         ),
-        patches=construction.patches,
-        zones=construction.zones,
-        associations=construction.associations,
-        record_phase=record_phase,
-        operation_started=operation_started,
+        execution=_owner_phydrax_meshing_providers__native_publication.NativePublicationExecution(
+            scope, workspace, record_phase, None
+        ),
     )
 
 
-def _adaptive_source_state_id(geometry: CompiledGeometry, /) -> str:
+def _adaptive_source_state_id(
+    geometry: _dependency_phydrax_geometry__contracts.CompiledGeometry, /
+) -> str:
     return canonical_fingerprint(
         {
             "kind": "adaptive-implicit-source-state",
-            "state": implicit_state_id(geometry),
+            "state": _dependency_phydrax_geometry__certified_implicit.implicit_state_id(
+                geometry
+            ),
             "kernel_structure": str(jax.tree_util.tree_structure(geometry.kernel)),
             "kernel_data": array_tree_fingerprint(geometry.kernel),
         }
@@ -2498,12 +2908,14 @@ def _adaptive_source_state_id(geometry: CompiledGeometry, /) -> str:
 
 @final
 class PreparedAdaptiveImplicitVolume(StrictModule, NonTrainableState):
-    """Certified adaptive zero set and its exact extracted constrained carrier."""
+    """Bind a certified adaptive zero set to its extracted constrained carrier."""
 
-    geometry: CompiledGeometry
-    surface: AdaptiveImplicitSurface
-    schedule: NativeVolumeSchedule
-    specification: VolumeMeshingSpec
+    geometry: _dependency_phydrax_geometry__contracts.CompiledGeometry
+    surface: (
+        _dependency_phydrax_geometry_implicit__adaptive_discovery.AdaptiveImplicitSurface
+    )
+    schedule: _dependency_phydrax_meshing__volume_generation.NativeVolumeSchedule
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec
     coordinate_contract: SpatialCoordinateContract
     source_state_id: str = eqx.field(static=True)
     surface_numeric_id: str = eqx.field(static=True)
@@ -2516,12 +2928,13 @@ class PreparedAdaptiveImplicitVolume(StrictModule, NonTrainableState):
     preparation_seconds: float = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        geometry: CompiledGeometry,
-        surface: AdaptiveImplicitSurface,
-        specification: VolumeMeshingSpec,
-        schedule: NativeVolumeSchedule,
+        geometry: _dependency_phydrax_geometry__contracts.CompiledGeometry,
+        surface: _dependency_phydrax_geometry_implicit__adaptive_discovery.AdaptiveImplicitSurface,
+        specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+        schedule: _dependency_phydrax_meshing__volume_generation.NativeVolumeSchedule,
         source_revision: str,
         fidelity_tolerance: float,
         geometry_queries: int,
@@ -2530,7 +2943,9 @@ class PreparedAdaptiveImplicitVolume(StrictModule, NonTrainableState):
         coordinate_contract: SpatialCoordinateContract,
         /,
     ) -> None:
-        AdaptiveImplicitBoundarySource(geometry, surface, source_revision)
+        _dependency_phydrax_geometry_implicit__adaptive_discovery.AdaptiveImplicitBoundarySource(
+            geometry, surface, source_revision
+        )
         self.geometry, self.surface, self.schedule = geometry, surface, schedule
         self.coordinate_contract = coordinate_contract
         self.specification = specification
@@ -2561,8 +2976,9 @@ class PreparedAdaptiveImplicitVolume(StrictModule, NonTrainableState):
         )
 
 
+@checked
 def adaptive_implicit_volume_support_issues(
-    specification: VolumeMeshingSpec, /
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec, /
 ) -> tuple[str, ...]:
     """Controls representable by one certified scalar negative-domain source."""
     issues = list(implicit_volume_support_issues(specification))
@@ -2575,24 +2991,29 @@ def adaptive_implicit_volume_support_issues(
         if patch.scope.entity_dimension != 2 or not np.array_equal(
             patch.scope.entity_ids, [0]
         ):
-            issues.append("patch scopes bound to the complete scalar zero set")
+            issues.append("patch scopes covering every component of the scalar zero set")
     return tuple(sorted(set(issues)))
 
 
-def _classify_adaptive_volume_seeds(
-    surface: AdaptiveImplicitSurface,
-    specification: VolumeMeshingSpec,
+@checked
+def classify_adaptive_volume_seeds(
+    surface: _dependency_phydrax_geometry_implicit__adaptive_discovery.AdaptiveImplicitSurface,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
     queries: int,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> int:
-    """Admit authoritative point queries after genuine certified source discovery."""
+    """Classify region and hole seeds after certified source discovery."""
     if not surface.evidence.certified or not surface.volume.certified:
-        raise ValueError("Adaptive seed classification requires a certified source.")
+        raise ValueError(
+            f"classify_adaptive_volume_seeds.surface must have certified surface and volume evidence; got surface_certified={surface.evidence.certified!r}, volume_certified={surface.volume.certified!r}"
+        )
     seed_queries = len(specification.region_seeds) + len(specification.hole_seeds)
     if queries + seed_queries >= specification.limits.maximum_geometry_queries:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Adaptive seed classification consumes the geometry query budget.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "implicit_volume.adaptive_seeds must fit the geometry query budget; got adaptive seed query capacity exhausted",
             stage="implicit_volume_preparation",
             achieved=(
                 ("geometry_queries", queries),
@@ -2600,51 +3021,68 @@ def _classify_adaptive_volume_seeds(
             ),
         )
     for seed, expected in (
-        *((seed, ImplicitVolumeClass.INSIDE) for seed in specification.region_seeds),
-        *((seed, ImplicitVolumeClass.OUTSIDE) for seed in specification.hole_seeds),
+        *(
+            (
+                seed,
+                _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeClass.INSIDE,
+            )
+            for seed in specification.region_seeds
+        ),
+        *(
+            (
+                seed,
+                _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeClass.OUTSIDE,
+            )
+            for seed in specification.hole_seeds
+        ),
     ):
         point = np.asarray(seed.point, dtype=np.float64).reshape((1, 3))
-        lower, upper = surface.volume.bounds.point_values(point)
+        lower, upper = surface.volume.bounds.point_values(point, budget=budget)
         admitted = (
-            upper[0] < 0.0 if expected is ImplicitVolumeClass.INSIDE else lower[0] > 0.0
+            upper[0] < 0.0
+            if expected
+            is _dependency_phydrax_geometry_implicit__adaptive_discovery.ImplicitVolumeClass.INSIDE
+            else lower[0] > 0.0
         )
         if not admitted:
-            raise MeshingFailure(
-                MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-                "A declared region or hole seed contradicts the certified scalar source.",
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.REGION_RESOLUTION_FAILED,
+                "implicit_volume.adaptive_seeds must agree with the certified scalar source; got contradictory region or hole seed",
                 stage="implicit_volume_preparation",
             )
     return queries + seed_queries
 
 
+@checked
 def prepare_adaptive_implicit_volume(
-    geometry: CompiledGeometry,
+    geometry: _dependency_phydrax_geometry__contracts.CompiledGeometry,
     domain: ArrayLike,
-    specification: VolumeMeshingSpec,
-    schedule: NativeVolumeSchedule,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    schedule: _dependency_phydrax_meshing__volume_generation.NativeVolumeSchedule,
     policy: AdaptiveImplicitSurfacePolicy,
     source_revision: str,
     coordinate_contract: SpatialCoordinateContract,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> PreparedAdaptiveImplicitVolume:
     """Discover every possible component before recovering the bounded PLC."""
-    from .providers._native_publication import check_deadline, simplex_entity_limits
 
     issues = adaptive_implicit_volume_support_issues(specification)
     if issues:
-        raise MeshingFailure(
-            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "; ".join(issues),
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            f"implicit_volume.specification must contain supported controls; got unsupported controls={issues!r}",
             stage="implicit_volume_preparation",
         )
     _implicit_region_metadata(specification)
     if policy.enclosure == "sampled" or policy.allow_approximate_zero_set:
         raise ValueError(
-            "Implicit volume publication requires sound exact-zero-set enclosures."
+            f"prepare_adaptive_implicit_volume.policy must provide certified zero-set enclosures without approximate-zero-set admission; got enclosure={policy.enclosure!r}, allow_approximate_zero_set={policy.allow_approximate_zero_set!r}"
         )
     limits = specification.limits
     started = monotonic()
-    # Bound the complete host tree and native predicates before discovery.
+    # Bound the host tree and native predicates before discovery.
     # Each leaf can own 82 entity queries and their directional enclosures,
     # integer incidence, sorting and extraction buffers simultaneously.
     box_capacity = min(
@@ -2653,9 +3091,9 @@ def prepare_adaptive_implicit_volume(
         limits.maximum_data_bytes // 2048,
     )
     if box_capacity < 1 << (3 * policy.initial_level):
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "The initial adaptive cover exceeds its scratch/data/work capacity.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "implicit_volume.adaptive_cover must fit scratch, retained-data and work capacity; got initial adaptive cover capacity exhausted",
             stage="implicit_volume_preparation",
         )
     bounded = replace(
@@ -2673,14 +3111,22 @@ def prepare_adaptive_implicit_volume(
             policy.maximum_intersection_pairs, limits.maximum_scratch_bytes // 128
         ),
     )
-    surface = discover_adaptive_implicit_surface(
-        geometry,
-        domain=domain,
-        policy=bounded,
-        source_id=specification.boundary_scope.source_id,
-        maximum_root_solves=limits.maximum_work_units,
+    with implicit_source_budget(
+        specification.limits, scope=scope, queries_upper=limits.maximum_geometry_queries
+    ) as budget:
+        surface = _dependency_phydrax_geometry_implicit__adaptive_discovery.discover_adaptive_implicit_surface(
+            geometry,
+            domain=domain,
+            policy=bounded,
+            source_id=specification.boundary_scope.source_id,
+            maximum_root_solves=limits.maximum_work_units,
+            budget=budget,
+        )
+    _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
+        limits,
+        _dependency_phydrax_meshing__trace.MeshingStageKind.SOURCE_INSPECTION,
+        scope=scope,
     )
-    check_deadline(started, limits, MeshingStageKind.SOURCE_INSPECTION)
     evidence = surface.evidence
     if (
         not evidence.certified
@@ -2688,9 +3134,9 @@ def prepare_adaptive_implicit_volume(
         or surface.mesh is None
         or surface.topology is None
     ):
-        raise MeshingFailure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            "The adaptive source retains unresolved, singular, hidden or unclosed zero-set components.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+            "implicit_volume.adaptive_source must certify regular closed zero-set components; got unresolved, singular, hidden or unclosed components",
             stage="implicit_volume_preparation",
             checkpoint_id=evidence.evidence_id,
             entity_ids=tuple(range(evidence.unresolved_count)),
@@ -2712,8 +3158,12 @@ def prepare_adaptive_implicit_volume(
         )
     points = np.asarray(surface.mesh.vertices, dtype=np.float64)
     faces = np.asarray(surface.mesh.faces, dtype=np.int64)
-    simplex_entity_limits(
-        points, faces, limits, MeshingStageKind.SOURCE_INSPECTION, cell_kind="triangle"
+    native_route_checks_owner.simplex_entity_limits(
+        points,
+        faces,
+        limits,
+        _dependency_phydrax_meshing__trace.MeshingStageKind.SOURCE_INSPECTION,
+        cell_kind="triangle",
     )
     # Recompute existence, not merely a nominal rigorous flag: the 3x3x3
     # lattice contains every endpoint of a balanced leaf's minimal edge.
@@ -2737,26 +3187,33 @@ def prepare_adaptive_implicit_volume(
     )
     queries += witness_points.shape[0] * witness_points.shape[1]
     if queries >= limits.maximum_geometry_queries:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Adaptive cycle-root existence checks exceed the geometry query budget.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "implicit_volume.cycle_roots must fit the geometry query budget; got cycle-root query capacity exhausted",
             stage="implicit_volume_preparation",
         )
-    lower, upper = surface.volume.bounds.point_values(witness_points.reshape((-1, 3)))
+    with implicit_source_budget(
+        specification.limits,
+        scope=scope,
+        queries_upper=witness_points.shape[0] * witness_points.shape[1],
+    ) as budget:
+        lower, upper = surface.volume.bounds.point_values(
+            witness_points.reshape((-1, 3)), budget=budget
+        )
     negative = np.any(upper.reshape((-1, 27)) < 0.0, axis=1)
     positive = np.any(lower.reshape((-1, 27)) > 0.0, axis=1)
     if not np.all(negative & positive):
-        raise MeshingFailure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            "An adaptive cycle has no independently source-enclosed root bracket.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+            "implicit_volume.cycle_roots must have independently source-enclosed root brackets; got unbracketed adaptive cycle",
             stage="implicit_volume_preparation",
             entity_ids=tuple(np.flatnonzero(~(negative & positive)).tolist()),
         )
     source_work = evidence.root_solves
     if source_work >= limits.maximum_work_units:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Complete adaptive discovery consumes the native construction work budget.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "implicit_volume.adaptive_discovery must leave sufficient work for native construction; got native construction work capacity exhausted",
             stage="implicit_volume_preparation",
         )
     tolerance = min(
@@ -2769,10 +3226,21 @@ def prepare_adaptive_implicit_volume(
     )
     if tolerance <= 0.0:
         raise ValueError(
-            "Affine implicit boundary publication needs a positive source-fidelity tolerance."
+            f"prepare_adaptive_implicit_volume.fidelity_tolerance must be positive for affine boundary publication; got {tolerance!r}"
         )
-    queries = _classify_adaptive_volume_seeds(surface, specification, queries)
-    check_deadline(started, limits, MeshingStageKind.SOURCE_INSPECTION)
+    with implicit_source_budget(
+        specification.limits,
+        scope=scope,
+        queries_upper=len(specification.region_seeds) + len(specification.hole_seeds),
+    ) as budget:
+        queries = classify_adaptive_volume_seeds(
+            surface, specification, queries, budget=budget
+        )
+    _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
+        limits,
+        _dependency_phydrax_meshing__trace.MeshingStageKind.SOURCE_INSPECTION,
+        scope=scope,
+    )
     return PreparedAdaptiveImplicitVolume(
         geometry,
         surface,
@@ -2787,108 +3255,21 @@ def prepare_adaptive_implicit_volume(
     )
 
 
+@checked
 def execute_adaptive_implicit_volume(
-    geometry: CompiledGeometry,
-    specification: VolumeMeshingSpec,
+    geometry: _dependency_phydrax_geometry__contracts.CompiledGeometry,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
     prepared: PreparedAdaptiveImplicitVolume,
     coordinate_contract: SpatialCoordinateContract,
-    provider: MeshingProviderInfo,
+    provider: _dependency_phydrax_meshing__contracts.MeshingProviderInfo,
     plan_id: str,
     /,
     *,
     record_phase: NativeMeshingPhaseRecorder | None = None,
-    execution_budget: NativeExecutionBudget | None = None,
-    operation_started: float | None = None,
-) -> CellMeshingResult:
-    """Keep construction, independent queries and publication inside one allowance."""
-    from ._volume_generation import (
-        _native_volume_operation_started,
-        native_volume_execution_budget,
-    )
-    from .providers._native_publication import bind_native_execution_result
-
-    active = current_native_execution_budget()
-    if execution_budget is not None and execution_budget is not active:
-        raise RuntimeError(
-            "Adaptive implicit publication must borrow the actual active budget."
-        )
-    execution_budget = active
-    started = _native_volume_operation_started(operation_started)
-    if active is None and started is None:
-        started = monotonic() - prepared.preparation_seconds
-
-    if execution_budget is not None:
-        return _execute_adaptive_implicit_volume_bound(
-            geometry,
-            specification,
-            prepared,
-            coordinate_contract,
-            provider,
-            plan_id,
-            execution_budget=execution_budget,
-            record_phase=record_phase,
-            operation_started=started,
-        )
-    with native_volume_execution_budget(
-        specification.limits,
-        source_work_units=prepared.source_work_units,
-        source_geometry_queries=prepared.geometry_queries,
-        operation_started=started,
-    ) as budget:
-        result = _execute_adaptive_implicit_volume_bound(
-            geometry,
-            specification,
-            prepared,
-            coordinate_contract,
-            provider,
-            plan_id,
-            execution_budget=budget,
-            record_phase=record_phase,
-            operation_started=started,
-        )
-    evidence = budget.evidence
-    if evidence is None:
-        raise RuntimeError("Adaptive publication lost its original execution evidence.")
-    if started is None:
-        raise RuntimeError("Owning adaptive publication lost its original host clock.")
-    return bind_native_execution_result(
-        result,
-        evidence,
-        specification.limits,
-        started,
-        source_work_units=prepared.source_work_units,
-        source_geometry_queries=prepared.geometry_queries,
-        preparation_seconds=prepared.preparation_seconds,
-    )
-
-
-def _execute_adaptive_implicit_volume_bound(
-    geometry: CompiledGeometry,
-    specification: VolumeMeshingSpec,
-    prepared: PreparedAdaptiveImplicitVolume,
-    coordinate_contract: SpatialCoordinateContract,
-    provider: MeshingProviderInfo,
-    plan_id: str,
-    /,
-    *,
-    record_phase: NativeMeshingPhaseRecorder | None = None,
-    execution_budget: NativeExecutionBudget,
-    operation_started: float | None,
-) -> CellMeshingResult:
-    """Fill the actual extracted source and independently certify continuous fidelity."""
-    from ._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
-    from ._certification import MeshCertificationSchedule
-    from ._volume_generation import (
-        declared_plc_domain,
-        generate_plc_volume,
-        native_volume_checkpoint,
-        PiecewiseLinearComplex,
-    )
-    from .providers._native_publication import (
-        NativeCertificationRequest,
-        publish_native_result,
-    )
-    from .providers._native_volume import _volume_compliance
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
+) -> _dependency_phydrax_meshing__result.CellMeshingResult:
+    """Fill the extracted source and certify continuous fidelity independently."""
 
     if (
         _adaptive_source_state_id(geometry) != prepared.source_state_id
@@ -2897,12 +3278,15 @@ def _execute_adaptive_implicit_volume_bound(
         != prepared.surface_numeric_id
         or coordinate_contract.spatial_id != prepared.coordinate_contract.spatial_id
     ):
-        raise ValueError("Prepared adaptive implicit source or specification is stale.")
+        raise ValueError(
+            f"execute_adaptive_implicit_volume.prepared must bind the current source, specification and coordinate contract; got stale prepared_id={prepared.prepared_id!r}"
+        )
     surface = prepared.surface
     if surface.mesh is None:
-        raise RuntimeError("A prepared certified implicit source lost its boundary.")
-    started = operation_started
-    source = AdaptiveImplicitBoundarySource(
+        raise RuntimeError(
+            "execute_adaptive_implicit_volume.prepared.surface.mesh must retain the certified boundary; got None"
+        )
+    source = _dependency_phydrax_geometry_implicit__adaptive_discovery.AdaptiveImplicitBoundarySource(
         geometry,
         surface,
         prepared.source_revision,
@@ -2911,7 +3295,7 @@ def _execute_adaptive_implicit_volume_bound(
     )
     faces = np.asarray(surface.mesh.faces, dtype=np.int64)
     name, _, _ = _implicit_region_metadata(specification)
-    complex_ = PiecewiseLinearComplex(
+    complex_ = plc_source_owner.PiecewiseLinearComplex(
         surface.mesh.vertices,
         tuple(face for face in faces),
         np.zeros(faces.shape[0], dtype=np.int64),
@@ -2919,11 +3303,11 @@ def _execute_adaptive_implicit_volume_bound(
         (name,),
         boundary="conforming",
     )
-    audit_policy = CellMeshAuditPolicy(
+    audit_policy = _owner_phydrax_meshing__audit.CellMeshAuditPolicy(
         require_complete_association=True,
-        watertight_boundary=CellMeshAuditDisposition.REJECT,
+        watertight_boundary=_owner_phydrax_meshing__audit.CellMeshAuditDisposition.REJECT,
     )
-    construction = generate_plc_volume(
+    construction = _owner_phydrax_meshing__volume_generation.generate_plc_volume(
         complex_,
         specification,
         prepared.schedule,
@@ -2933,20 +3317,18 @@ def _execute_adaptive_implicit_volume_bound(
         input_id=prepared.prepared_id,
         record_phase=record_phase,
         source_work_units=prepared.source_work_units,
-        operation_started=started,
-        execution_budget=execution_budget,
-        source_geometry_queries=prepared.geometry_queries,
+        scope=scope,
     )
     points = np.asarray(construction.mesh.coordinates, dtype=np.float64)
     cells = np.asarray(construction.mesh.blocks[0].vertices, dtype=np.int64)
-    compliance = _volume_compliance(
+    compliance = _owner_phydrax_meshing_providers__native_volume.volume_compliance(
         specification, prepared.schedule, construction, points, cells
     )
     protected_quantities = {
         f"protected:{feature.feature_id}:maximum_deviation"
         for feature in specification.protected_features
     }
-    compliance = MeshingComplianceReport(
+    compliance = _dependency_phydrax_meshing__result.MeshingComplianceReport(
         specification.specification_id,
         issues=compliance.issues,
         requested=compliance.requested,
@@ -2962,10 +3344,12 @@ def _execute_adaptive_implicit_volume_bound(
         prepared.source_id,
         prepared.source_revision,
     )
-    native_volume_checkpoint(
-        specification.limits, MeshingStageKind.CERTIFICATION, operation_started=started
+    _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
+        specification.limits,
+        _dependency_phydrax_meshing__trace.MeshingStageKind.CERTIFICATION,
+        scope=scope,
     )
-    result = publish_native_result(
+    result = _owner_phydrax_meshing_providers__native_publication.publish_native_result(
         construction.mesh,
         coordinate_contract,
         compliance,
@@ -2983,46 +3367,53 @@ def _execute_adaptive_implicit_volume_bound(
             if surface.topology is not None
             else "",
         },
-        NativeCertificationRequest(
-            MeshCertificationSchedule("volume_implicit"),
+        _owner_phydrax_meshing_providers__native_publication.NativeCertificationRequest(
+            _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule(
+                "volume_implicit"
+            ),
             prepared.source_id,
             prepared.source_revision,
             specification.limits,
-            domain=declared_plc_domain(complex_, prepared.source_id),
+            domain=_owner_phydrax_meshing__volume_generation.declared_plc_domain(
+                complex_, prepared.source_id
+            ),
             cell_regions=construction.cell_regions,
             fidelity_source=source,
             fidelity_tolerance=prepared.fidelity_tolerance,
         ),
-        audit_policy=audit_policy,
-        derivative_mode=MeshingDerivativeMode.NONDIFFERENTIABLE,
-        enforced_limits=(
-            "vertices",
-            "edges",
-            "faces",
-            "cells",
-            "connectivity_entries",
-            "data_bytes",
-            "scratch_bytes:managed_native_and_bounded_host",
-            "work_units:native_and_metered_host",
-            "wall_seconds:native_and_host_boundaries",
-            "geometry_queries:native_and_source_batches",
-            "cavity_cells:native",
+        policy=NativePublicationPolicy(
+            audit_policy,
+            _dependency_phydrax_meshing__contracts.MeshingDerivativeMode.NONDIFFERENTIABLE,
+            (
+                "vertices",
+                "edges",
+                "faces",
+                "cells",
+                "connectivity_entries",
+                "data_bytes",
+                "scratch_bytes:managed_native_and_bounded_host",
+                "work_units:native_and_metered_host",
+                "wall_seconds:native_and_host_boundaries",
+                "geometry_queries:native_and_source_batches",
+                "cavity_cells:native",
+            ),
+            (
+                "scratch_bytes:unmanaged_host_device_compiler",
+                "work_units:unmetered_host_device_compiler",
+                "wall_seconds:nonpreemptible_host_device_compiler",
+            ),
         ),
-        unenforced_limits=(
-            "scratch_bytes:unmanaged_host_device_compiler",
-            "work_units:unmetered_host_device_compiler",
-            "wall_seconds:nonpreemptible_host_device_compiler",
+        organization=_owner_phydrax_meshing_providers__native_publication.NativePublicationOrganization(
+            patches=patches, zones=zones, associations=associations
         ),
-        zones=zones,
-        patches=patches,
-        associations=associations,
-        record_phase=record_phase,
-        operation_started=started,
+        execution=_owner_phydrax_meshing_providers__native_publication.NativePublicationExecution(
+            scope, workspace, record_phase, None
+        ),
     )
-    native_volume_checkpoint(
+    _owner_phydrax_meshing__volume_generation.native_volume_checkpoint(
         specification.limits,
-        MeshingStageKind.SPECIFICATION_COMPLIANCE,
-        operation_started=started,
+        _dependency_phydrax_meshing__trace.MeshingStageKind.SPECIFICATION_COMPLIANCE,
+        scope=scope,
     )
     return result
 

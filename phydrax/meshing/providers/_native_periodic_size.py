@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Exact rank-statistic proposals on free quotient roots; publication is independent.
+"""Target rank-statistic proposals on free quotient roots; publication is independent.
 
 A hard zero-tolerance quantile is met only by edges whose *published* float
 length equals the target exactly. The proposal therefore has three owners:
@@ -10,16 +10,16 @@ length equals the target exactly. The proposal therefore has three owners:
    edge towards the target from below (``length <= target``) under positive
    normalized cell areas and bounded root moves. Its extreme point makes many
    upper constraints active at once.
-2. Native primal-dual KKT polishing enforces the retained exact-rank equalities
-   and the original area, inactive-edge, minimum-size and move bounds as hard
-   constraints, with the original mean-length objective. Finite AL termination
+2. Native primal-dual KKT polishing enforces the retained target-rank equalities
+   and the area, inactive-edge, minimum-size and move bounds as hard
+   constraints, with the mean-length objective. Finite AL termination
    is not an active-cardinality certificate.
-3. Conflict-directed exact placement moves each free root through a bounded
+3. Conflict-directed representable placement moves each free root through a bounded
    representable neighborhood until every kept edge rounds to the target with
    the publication's lift and length arithmetic, without any other edge
    exceeding it. A root has at most two kept edges to earlier roots, so it is a
    circle intersection, a circle slide or a free point; conflicts back-jump to
-   the latest placed root that actually constrains it.
+   the latest placed root that constrains it.
 
 Protected roots (explicit corners and native constrained-segment incidence)
 never move. Orbit identity is preserved because only quotient representatives
@@ -29,9 +29,9 @@ move; cell connectivity and lattice shifts are unchanged.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from contextlib import nullcontext
-from dataclasses import dataclass
-from typing import NamedTuple
+from contextlib import ExitStack
+from heapq import heapify, heappop, heappush
+from typing import final, NamedTuple
 
 import equinox as eqx
 import jax
@@ -39,14 +39,23 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from phydrax.geometry._rational import dyadic_integers
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+from phydrax.meshing._sizing import size_statistic_quantile, SizeStatistic
+
 from ..._bounds import Bounds
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._meshcore import current_native_execution_budget
-from ...geometry._mesh_certificates import _dyadic_integers
+from ..._meshcore import (
+    NativeBatchTicket,
+    NativeExecutionScope,
+    NativeHostStorageWorkspace,
+)
+from ..._strict import StrictModule
 from ...linalg import (
     AbstractLinearOperator,
     ArraySpace,
     BlockSpace,
+    coordinate_dtype,
     FunctionLinearOperator,
     JacobiPreconditionerBuilder,
     LinearResourceLimitError,
@@ -60,40 +69,35 @@ from ...linalg import (
     prepare_sparse_factorization,
     SparseAssemblyPlan,
     SparseAssemblyPolicy,
+    SparseFactorizationPlan,
     SparseFactorizationPolicy,
     SparseFactorizationPreconditionerBuilder,
     TolerancePolicy,
 )
-from ...linalg._spaces import _coordinate_dtype
-from ...linalg._sparse_factorizations import SparseFactorizationPlan
 from ...optim import (
+    AbstractPrimalDualKKTSetup,
     AugmentedLagrangian,
+    constraint_layout,
+    ConstraintLayout,
     MinimizationProblem,
     minimize,
     NonlinearConstraint,
     OptimizationTermination,
-    ProjectedLBFGS,
-)
-from ...optim._nonlinear_constraints import (
-    _constraint_layout,
-    _ConstraintLayout,
-)
-from ...optim._primal_dual import (
-    AbstractPrimalDualKKTSetup,
     PrimalDualEvidence,
     PrimalDualKKTSetupResult,
     PrimalDualNewtonKrylov,
+    ProjectedLBFGS,
 )
 from ...sparse import EdgeRelation, SparseCoordinateOperator
-from .._contracts import MeshingFailure, MeshingFailureCategory
+from ...typing import checked
 
 
 # Normalized (target-squared) cell area kept by the continuous solve. It is far
-# above placement perturbations, so exact placement cannot invert a cell.
+# above placement perturbations, so representable placement cannot invert a cell.
 _AREA_MARGIN = 2.0**-10
 # Normalized length gap identifying an upper constraint as active.
 _ACTIVE_GAP = 2.0**-20
-# Relative strict margin of demoted active edges; exact placement moves roots by
+# Relative strict margin of demoted active edges; representable placement moves roots by
 # at most ``_SLIDES * _SLIDE_STEP`` target lengths, far below this margin.
 _DEMOTION = 2.0**-30
 _SLIDE_STEP = 2.0**-44
@@ -181,7 +185,7 @@ class _PolishDerivativeArgs(NamedTuple):
 
 
 def _polish_derivative_source(
-    args: _PolishArgs, layout: _ConstraintLayout, /
+    args: _PolishArgs, layout: ConstraintLayout, /
 ) -> _PolishDerivativeSource:
     return _PolishDerivativeSource(
         args,
@@ -204,7 +208,7 @@ def _same_derivative_source(
     ):
         if first.shape != second.shape or first.dtype != second.dtype:
             raise ValueError(
-                "Periodic derivative source changed its original field signature."
+                "periodic.derivative_source.fields must retain the prepared shapes and dtypes; got a changed field signature"
             )
         if jnp.issubdtype(first.dtype, jnp.floating):
             bits = np.dtype(f"u{first.dtype.itemsize}")
@@ -216,7 +220,7 @@ def _same_derivative_source(
 
 def _polish_derivative_args(
     args: _PolishArgs,
-    layout: _ConstraintLayout,
+    layout: ConstraintLayout,
     equality_multipliers: Array,
     inequality_multipliers: Array,
     /,
@@ -312,7 +316,7 @@ def _prepare_local_derivative_state(
         source,
         (source.equality_multipliers, source.inequality_multipliers),
     )
-    # Exactly the original mutable-edge mean objective, not a squared norm.
+    # Exactly the mutable-edge mean objective, not a squared norm.
     weights = weights.at[: args.mutable_edges.size].add(
         -jnp.reciprocal(jnp.sum(args.size.mutable).astype(parameters.dtype)),
     )
@@ -377,7 +381,7 @@ def _local_constraint_vjp(
 
 
 def _local_cell_hessian_force(weights: Array, tangent: Array, /) -> Array:
-    # Exact oriented cross-product minors; no dense6x6 zero arithmetic.
+    # Oriented cross-product minors avoid dense 6x6 zero products.
     differences = jnp.stack(
         (
             tangent[:, 1] - tangent[:, 2],
@@ -505,15 +509,23 @@ def _local_kkt_mv(
 def _local_constraint_state(
     operator: AbstractLinearOperator, /
 ) -> _PeriodicLocalDerivativeState:
-    if not isinstance(operator, FunctionLinearOperator):
-        raise TypeError("Local derivative action lost its original source owner.")
-    action = operator.function
-    if not isinstance(action, eqx.Partial) or action.func is not _local_constraint_mv:
-        raise TypeError("Local derivative action lost its original source owner.")
-    return action.args[0]
+    match operator:
+        case FunctionLinearOperator(function=eqx.Partial() as action):
+            if action.func is _local_constraint_mv:
+                match action.args:
+                    case (_PeriodicLocalDerivativeState() as state,):
+                        return state
+            raise TypeError(
+                "periodic.derivative_operator must retain its prepared local action; got a different operator or action"
+            )
+        case _:
+            raise TypeError(
+                "periodic.derivative_operator must retain its prepared local action; got a different operator or action"
+            )
 
 
-class _PeriodicKKTAssemblyData(NamedTuple):
+@final
+class _PeriodicKKTAssemblyData(StrictModule):
     template: SparseCoordinateOperator
     edge_indices: Array
     edge_signs: Array
@@ -558,38 +570,23 @@ def _assemble_local_kkt(
     return eqx.tree_at(lambda item: item.coefficients, data.template, values)
 
 
-def _prepare_kkt_assembly_data(
-    source: _PolishDerivativeSource,
-    edge_positions: np.ndarray,
-    cell_positions: np.ndarray,
-    source_id: str,
-    maximum_bytes: int,
-    /,
-) -> _PeriodicKKTAssemblyData:
-    dimension = 2 * source.polish.size.free.size
-    equality_rows = np.asarray(source.equality_indices)
-    equalities = equality_rows.size
-    if np.any(equality_rows >= edge_positions.shape[0]):
-        raise ValueError(
-            "The original periodic equalities must retain their actual mutable-edge rows."
-        )
-    contribution_upper = (
-        dimension
-        + 16 * edge_positions.shape[0]
-        + 36 * cell_positions.shape[0]
-        + 8 * equalities
-        + equalities
-    )
-    if 64 * contribution_upper > maximum_bytes:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Actual sparse KKT incidence exceeds the original scratch allowance.",
-            requested=(("kkt_incidence_bytes", 64 * contribution_upper),),
-            achieved=(("remaining_bytes", maximum_bytes),),
-        )
-    rows, columns = list(range(dimension)), list(range(dimension))
-    edge_indices, edge_signs, cell_indices, cell_minors = [], [], [], []
-    equality_indices, equality_signs = [], []
+@final
+class _KKTContributions(StrictModule):
+    """Retain ordered sparse contributions for one physical incidence family."""
+
+    rows: np.ndarray
+    columns: np.ndarray
+    indices: np.ndarray
+    coefficients: np.ndarray
+
+
+def _edge_kkt_contributions(
+    edge_positions: np.ndarray, dimension: int, /
+) -> _KKTContributions:
+    rows: list[int] = []
+    columns: list[int] = []
+    edge_indices: list[tuple[int, int, int]] = []
+    edge_signs: list[int] = []
     for index, endpoints in enumerate(edge_positions):
         for first, sign_first in ((int(endpoints[0]), -1), (int(endpoints[1]), 1)):
             for second, sign_second in ((int(endpoints[0]), -1), (int(endpoints[1]), 1)):
@@ -601,6 +598,21 @@ def _prepare_kkt_assembly_data(
                         columns.append(2 * second + axis_second)
                         edge_indices.append((index, axis_first, axis_second))
                         edge_signs.append(sign_first * sign_second)
+    return _KKTContributions(
+        np.asarray(rows, dtype=np.int32),
+        np.asarray(columns, dtype=np.int32),
+        np.asarray(edge_indices, dtype=np.int32).reshape((-1, 3)),
+        np.asarray(edge_signs, dtype=np.int32),
+    )
+
+
+def _cell_kkt_contributions(
+    cell_positions: np.ndarray, dimension: int, /
+) -> _KKTContributions:
+    rows: list[int] = []
+    columns: list[int] = []
+    cell_indices: list[tuple[int, int, int]] = []
+    cell_minors: list[int] = []
     for index, roots in enumerate(cell_positions):
         for first, root_first in enumerate(roots):
             for second, root_second in enumerate(roots):
@@ -621,6 +633,21 @@ def _prepare_kkt_assembly_data(
                             (index, 2 * first + axis_first, 2 * second + axis_second)
                         )
                         cell_minors.append(orientation * (axis_second - axis_first))
+    return _KKTContributions(
+        np.asarray(rows, dtype=np.int32),
+        np.asarray(columns, dtype=np.int32),
+        np.asarray(cell_indices, dtype=np.int32).reshape((-1, 3)),
+        np.asarray(cell_minors, dtype=np.int32),
+    )
+
+
+def _equality_kkt_contributions(
+    edge_positions: np.ndarray, equality_rows: np.ndarray, dimension: int, /
+) -> _KKTContributions:
+    rows: list[int] = []
+    columns: list[int] = []
+    equality_indices: list[tuple[int, int]] = []
+    equality_signs: list[int] = []
     for row, edge in enumerate(equality_rows):
         for root, sign in (
             (int(edge_positions[edge, 0]), -1),
@@ -633,8 +660,54 @@ def _prepare_kkt_assembly_data(
                 columns.extend((2 * root + axis, dimension + row))
                 equality_indices.extend(((int(edge), axis), (int(edge), axis)))
                 equality_signs.extend((sign, sign))
-    rows.extend(range(dimension, dimension + equalities))
-    columns.extend(range(dimension, dimension + equalities))
+    return _KKTContributions(
+        np.asarray(rows, dtype=np.int32),
+        np.asarray(columns, dtype=np.int32),
+        np.asarray(equality_indices, dtype=np.int32).reshape((-1, 2)),
+        np.asarray(equality_signs, dtype=np.int32),
+    )
+
+
+def _prepare_kkt_assembly_data(
+    source: _PolishDerivativeSource,
+    edge_positions: np.ndarray,
+    cell_positions: np.ndarray,
+    source_id: str,
+    maximum_bytes: int,
+    /,
+) -> _PeriodicKKTAssemblyData:
+    dimension = 2 * source.polish.size.free.size
+    equality_rows = np.asarray(source.equality_indices)
+    equalities = equality_rows.size
+    if np.any(equality_rows >= edge_positions.shape[0]):
+        raise ValueError(
+            "periodic.kkt.equalities must retain their mutable-edge rows; got an out-of-range equality row"
+        )
+    contribution_upper = (
+        dimension
+        + 16 * edge_positions.shape[0]
+        + 36 * cell_positions.shape[0]
+        + 8 * equalities
+        + equalities
+    )
+    if 64 * contribution_upper > maximum_bytes:
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "periodic.kkt.incidence must fit the remaining scratch allowance; got a request beyond the allowance",
+            requested=(("kkt_incidence_bytes", 64 * contribution_upper),),
+            achieved=(("remaining_bytes", maximum_bytes),),
+        )
+    edge = _edge_kkt_contributions(edge_positions, dimension)
+    cell = _cell_kkt_contributions(cell_positions, dimension)
+    equality = _equality_kkt_contributions(edge_positions, equality_rows, dimension)
+    primal_diagonal = np.arange(dimension, dtype=np.int32)
+    equality_diagonal = np.arange(dimension, dimension + equalities, dtype=np.int32)
+    rows = np.concatenate(
+        (primal_diagonal, edge.rows, cell.rows, equality.rows, equality_diagonal)
+    )
+    columns = np.concatenate(
+        (primal_diagonal, edge.columns, cell.columns, equality.columns, equality_diagonal)
+    )
     space = BlockSpace(
         (
             ArraySpace((dimension,), dtype=jnp.float64),
@@ -648,7 +721,7 @@ def _prepare_kkt_assembly_data(
             source_size=space.size,
             target_size=space.size,
         ),
-        jnp.zeros(len(rows), dtype=jnp.float64),
+        jax.device_put(np.zeros(rows.size, dtype=np.float64)),
         source=space,
         target=space,
         properties=OperatorProperties(
@@ -658,17 +731,18 @@ def _prepare_kkt_assembly_data(
     )
     return _PeriodicKKTAssemblyData(
         template,
-        jnp.asarray(np.asarray(edge_indices, dtype=np.int32).reshape((-1, 3))),
-        jnp.asarray(edge_signs, dtype=jnp.int32),
-        jnp.asarray(np.asarray(cell_indices, dtype=np.int32).reshape((-1, 3))),
-        jnp.asarray(cell_minors, dtype=jnp.int32),
-        jnp.asarray(np.asarray(equality_indices, dtype=np.int32).reshape((-1, 2))),
-        jnp.asarray(equality_signs, dtype=jnp.int32),
+        jax.device_put(edge.indices),
+        jax.device_put(edge.coefficients),
+        jax.device_put(cell.indices),
+        jax.device_put(cell.coefficients),
+        jax.device_put(equality.indices),
+        jax.device_put(equality.coefficients),
     )
 
 
+@final
 class _PeriodicSparseKKTSetup(AbstractPrimalDualKKTSetup):
-    """Actual current sparse saddle coefficients for native LU congruence."""
+    """Prepare sparse saddle coefficients for native LU congruence."""
 
     root_ids: Array
     kept_edge_keys: Array
@@ -681,10 +755,11 @@ class _PeriodicSparseKKTSetup(AbstractPrimalDualKKTSetup):
     cell_positions: Array
     local_derivative_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        root_ids: np.ndarray,
-        kept_edge_keys: np.ndarray,
+        root_ids: Array,
+        kept_edge_keys: Array,
         kkt_assembly: _PeriodicKKTAssemblyData,
         assembly_plan: SparseAssemblyPlan,
         source_binding_id: str,
@@ -697,10 +772,10 @@ class _PeriodicSparseKKTSetup(AbstractPrimalDualKKTSetup):
     ) -> None:
         if not source_binding_id or not operator_id:
             raise ValueError(
-                "Sparse KKT preparation requires explicit scientific source identity."
+                "periodic.kkt.identity must have nonempty source and operator IDs; got an empty ID"
             )
-        self.root_ids = jnp.asarray(root_ids, dtype=jnp.int64)
-        self.kept_edge_keys = jnp.asarray(kept_edge_keys, dtype=jnp.int64)
+        self.root_ids = root_ids
+        self.kept_edge_keys = kept_edge_keys
         self.kkt_assembly = kkt_assembly
         self.assembly_plan = assembly_plan
         self.source_binding_id = source_binding_id
@@ -712,19 +787,19 @@ class _PeriodicSparseKKTSetup(AbstractPrimalDualKKTSetup):
 
     @property
     def primal_space(self) -> ArraySpace:
-        space = self.kkt_assembly.template.source
-        if not isinstance(space, BlockSpace) or not isinstance(
-            space.spaces[0], ArraySpace
-        ):
-            raise TypeError(
-                "Periodic source must retain its original primal block space."
-            )
-        return space.spaces[0]
+        match self.kkt_assembly.template.source:
+            case BlockSpace(spaces=(ArraySpace() as primal, *_)):
+                return primal
+            case _:
+                raise TypeError(
+                    "periodic.kkt.primal_space must be the prepared ArraySpace primal block; got a different space kind"
+                )
 
+    @checked
     def prepare_derivatives(
         self,
         problem: MinimizationProblem,
-        layout: _ConstraintLayout,
+        layout: ConstraintLayout,
         args: _PolishArgs,
         primal: Array,
         equality_multipliers: Array,
@@ -733,7 +808,7 @@ class _PeriodicSparseKKTSetup(AbstractPrimalDualKKTSetup):
     ) -> tuple[AbstractLinearOperator, AbstractLinearOperator]:
         if problem.problem_id != "periodic-quotient-size-hard-polish":
             raise ValueError(
-                "Periodic local derivatives require their original hard problem."
+                "periodic.kkt.problem must bind the periodic hard-polish problem; got a different problem ID"
             )
         primal = eqx.error_if(
             primal,
@@ -741,7 +816,7 @@ class _PeriodicSparseKKTSetup(AbstractPrimalDualKKTSetup):
                 self.derivative_source,
                 _polish_derivative_source(args, layout),
             ),
-            "Periodic exact derivative source fields changed their original scientific binding.",
+            "periodic.derivative_source must match its prepared scientific binding; got changed source fields",
         )
         current = _polish_derivative_args(
             args, layout, equality_multipliers, inequality_multipliers
@@ -779,6 +854,7 @@ class _PeriodicSparseKKTSetup(AbstractPrimalDualKKTSetup):
         )
         return constraint, hessian
 
+    @checked
     def prepare_kkt_operator(
         self,
         derivative: AbstractLinearOperator,
@@ -864,6 +940,7 @@ class _PeriodicSparseKKTSetup(AbstractPrimalDualKKTSetup):
             + self.assembly_plan.cost.numeric_workspace_bytes
         )
 
+    @checked
     def prepare(
         self,
         derivative: AbstractLinearOperator,
@@ -877,21 +954,39 @@ class _PeriodicSparseKKTSetup(AbstractPrimalDualKKTSetup):
     ) -> PrimalDualKKTSetupResult:
         if not derivative.source.compatible(self.primal_space):
             raise ValueError(
-                "Current KKT primal coordinates changed their prepared scientific space."
+                "periodic.kkt.primal_space must match the prepared primal coordinates; got an incompatible space"
             )
-        if not isinstance(kkt_operator, FunctionLinearOperator):
-            raise TypeError(
-                "Native KKT assembly requires the actual current local saddle owner."
-            )
-        action = kkt_operator.function
-        if not isinstance(action, eqx.Partial) or action.func is not _local_kkt_mv:
-            raise TypeError("Native KKT assembly lost its actual current source blocks.")
-        raw = _assemble_local_kkt(self.kkt_assembly, action.args[0])
-        assembled = prepare_sparse_assembly(self.assembly_plan, raw).operator
-        if not isinstance(assembled, SparseCoordinateOperator):
-            raise TypeError(
-                "Native KKT assembly must retain canonical sparse coordinates."
-            )
+        match kkt_operator:
+            case FunctionLinearOperator():
+                action = kkt_operator.function
+            case _:
+                raise TypeError(
+                    "periodic.kkt.operator must be the current local saddle FunctionLinearOperator; got a different operator kind"
+                )
+        match action:
+            case eqx.Partial():
+                if action.func is not _local_kkt_mv:
+                    raise TypeError(
+                        "periodic.kkt.action must retain the current local saddle blocks; got a different action"
+                    )
+            case _:
+                raise TypeError(
+                    "periodic.kkt.action must retain the current local saddle blocks; got a different action"
+                )
+        match action.args:
+            case (_PeriodicLocalKKTState() as current,):
+                raw = _assemble_local_kkt(self.kkt_assembly, current)
+            case _:
+                raise TypeError(
+                    "periodic.kkt.action must retain the current local saddle blocks; got a different action"
+                )
+        match prepare_sparse_assembly(self.assembly_plan, raw).operator:
+            case SparseCoordinateOperator() as assembled:
+                pass
+            case _:
+                raise TypeError(
+                    "periodic.kkt.assembly must retain SparseCoordinateOperator coordinates; got a different operator kind"
+                )
         status = jnp.where(
             jnp.all(jnp.isfinite(assembled.coefficients)),
             int(LinearSolveStatus.SUCCESS),
@@ -916,7 +1011,7 @@ def _prepare_polish_derivatives(
     maximum_bytes: int,
     /,
 ) -> tuple[_PolishDerivativeSource, Array, Array, str, int]:
-    """Retain original canonical roles and compact physical-root incidence."""
+    """Retain constraint roles and compact physical-root incidence."""
     dimension = 2 * free.size
     cells = np.asarray(args.size.cells)
     mutable_edges = np.flatnonzero(mutable)
@@ -925,7 +1020,7 @@ def _prepare_polish_derivatives(
     if preparation_upper > maximum_work or storage_upper > maximum_bytes:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Local derivative incidence exceeds the original remaining allowance.",
+            "periodic.derivative_incidence.resources must fit the remaining work and storage allowances; got a request beyond the allowances",
             requested=(
                 ("derivative_work", preparation_upper),
                 ("derivative_bytes", storage_upper),
@@ -935,9 +1030,9 @@ def _prepare_polish_derivatives(
                 ("remaining_bytes", maximum_bytes),
             ),
         )
-    point = jnp.zeros((free.size, 2), dtype=jnp.float64)
+    point = jax.device_put(np.zeros((free.size, 2), dtype=np.float64))
     problem = _polish_problem(mutable_edges, kept, float(np.asarray(args.size.minimum)))
-    layout = _constraint_layout(problem, point, args)
+    layout = constraint_layout(problem, point, args)
     position = {int(root): index for index, root in enumerate(free)}
     edge_positions = np.asarray(
         [
@@ -973,8 +1068,8 @@ def _prepare_polish_derivatives(
     )
     return (
         source,
-        jnp.asarray(edge_positions),
-        jnp.asarray(cell_positions),
+        jax.device_put(edge_positions),
+        jax.device_put(cell_positions),
         identity,
         preparation_upper,
     )
@@ -991,20 +1086,20 @@ def _prepare_polish_method(
     args: _PolishArgs,
     /,
 ) -> tuple[PrimalDualNewtonKrylov, int]:
-    """Prepare actual sparse saddle support and native LU congruence before JIT."""
+    """Prepare sparse saddle support and native LU congruence before JIT."""
     if not source_binding_id:
         raise ValueError(
-            "Hard KKT preparation requires the actual source binding identity."
+            "periodic.kkt.source_binding_id must be nonempty; got an empty source binding ID"
         )
     if maximum_work <= 0 or maximum_bytes <= 0:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Hard KKT preparation has no original remaining work/storage allowance.",
+            "periodic.kkt.resources must have positive remaining work and storage allowances; got an exhausted allowance",
         )
     equality_edges = np.flatnonzero(kept)
     if np.any(kept & ~mutable):
         raise ValueError(
-            "Every retained equality must be an actual mutable quotient edge."
+            "periodic.kkt.equalities must name mutable quotient edges; got an immutable equality edge"
         )
     (
         derivative_source,
@@ -1059,7 +1154,7 @@ def _prepare_polish_method(
     if remaining_work <= 0:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Actual sparse saddle preparation exceeds the original remaining work allowance.",
+            "periodic.kkt.preparation.work must fit the remaining work allowance; got a symbolic request beyond the allowance",
             achieved=(("sparse_saddle_symbolic_work_upper", assembly_work),),
         )
     prototype = SparseCoordinateOperator(
@@ -1069,7 +1164,7 @@ def _prepare_polish_method(
             source_size=kkt_data.template.source.size,
             target_size=kkt_data.template.target.size,
         ),
-        jnp.zeros(assembly.nnz, dtype=jnp.float64),
+        jax.device_put(np.zeros(assembly.nnz, dtype=np.float64)),
         source=kkt_data.template.source,
         target=kkt_data.template.target,
         properties=assembly.properties,
@@ -1090,8 +1185,8 @@ def _prepare_polish_method(
         form="lu-congruence",
     )
     setup = _PeriodicSparseKKTSetup(
-        free,
-        edges[equality_edges],
+        jax.device_put(np.asarray(free, dtype=np.int64)),
+        jax.device_put(np.asarray(edges[equality_edges], dtype=np.int64)),
         kkt_data,
         assembly,
         source_binding_id,
@@ -1183,8 +1278,8 @@ def _polish_areas(parameters: Array, args: _PolishArgs, /) -> Array:
 def _polish_problem(
     mutable: np.ndarray, kept: np.ndarray, minimum: float, /
 ) -> MinimizationProblem:
-    # Each row is an actual mutable quotient-edge owner. Exact kept rows have
-    # equal bounds; all other rows retain both original size inequalities.
+    # Each row is an mutable quotient-edge owner. Kept target rows have
+    # equal bounds; all other rows retain both size inequalities.
     return MinimizationProblem(
         _polish_objective,
         bounds=Bounds(-1.0, 1.0),
@@ -1279,11 +1374,13 @@ def _solve_polish(
         diagnostics.gradient_evaluations + diagnostics.hvp_evaluations
     )
     actions += diagnostics.jvp_evaluations + diagnostics.vjp_evaluations
-    evidence = result.method_evidence
-    if not isinstance(evidence, PrimalDualEvidence):
-        raise TypeError(
-            "Native hard polishing must retain its actual primal-dual KKT evidence."
-        )
+    match result.method_evidence:
+        case PrimalDualEvidence() as evidence:
+            pass
+        case _:
+            raise TypeError(
+                "periodic.polish.evidence must be PrimalDualEvidence; got missing or incompatible method evidence"
+            )
     return _SolveRecord(
         result.parameters,
         result.status,
@@ -1339,7 +1436,7 @@ def quotient_edge_lengths(
 def _positive_scientific_cells(
     points: np.ndarray, cells: np.ndarray, shifts: np.ndarray, vectors: np.ndarray, /
 ) -> bool:
-    packed, _ = _dyadic_integers(np.concatenate((points, vectors)))
+    packed, _ = dyadic_integers(np.concatenate((points, vectors)))
     corners = packed[: points.shape[0]][cells] + shifts @ packed[points.shape[0] :]
     first, second = corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
     return bool(np.all(first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0] > 0))
@@ -1349,16 +1446,16 @@ def _required_exact_edges(
     lengths: np.ndarray,
     immutable: np.ndarray,
     target: float,
-    statistics: tuple[str, ...],
+    statistics: tuple[SizeStatistic, ...],
     /,
 ) -> int | None:
     """Mutable target-length edges needed when every mutable edge is at most the target.
 
     Every sorted position between the lowest and highest requested rank must
-    hold the exact target; immutable over-target edges must fit above them.
+    hold the target value; immutable over-target edges must fit above them.
     """
     count = lengths.size
-    ranks = [{"p50": 0.5, "p95": 0.95}[name] * (count - 1) for name in statistics]
+    ranks = [size_statistic_quantile(name) * (count - 1) for name in statistics]
     lowest, highest = int(np.floor(min(ranks))), int(np.ceil(max(ranks)))
     fixed = lengths[immutable]
     if np.count_nonzero(fixed > target) > count - 1 - highest:
@@ -1366,6 +1463,66 @@ def _required_exact_edges(
     mutable = count - fixed.size
     required = mutable + np.count_nonzero(fixed < target) - lowest
     return max(int(required), 0) if required <= mutable else None
+
+
+def _fixed_rank_feasible(
+    lengths: np.ndarray,
+    fixed: np.ndarray,
+    target: float,
+    quantiles: tuple[float, ...],
+    /,
+) -> bool:
+    """Necessary fixed-edge condition under the unmodified floating reducer.
+
+    When the requested rank intervals are separated, equal quantiles force
+    their intervening sorted rows to the common target. Replacing every free
+    row by that target is therefore an outward feasibility bank, including
+    interpolation that rounds to the target from an adjacent endpoint.
+    This is not a certificate that any geometric placement exists.
+    """
+    ranks = [quantile * (lengths.size - 1) for quantile in quantiles]
+    if np.ceil(min(ranks)) > np.floor(max(ranks)):
+        return True
+    optimistic = np.where(fixed, lengths, target)
+    return bool(np.all(np.quantile(optimistic, quantiles) == target))
+
+
+def _rank_window_quantiles(
+    total_count: int,
+    unchanged: np.ndarray,
+    candidates: np.ndarray,
+    quantiles: tuple[float, ...],
+    charge: Callable[[int], None],
+    /,
+) -> np.ndarray:
+    """Evaluate the full linear quantiles from a proved local rank window.
+
+    With ``k`` replaced edges, an unchanged row at global rank ``r`` can only
+    come from base ranks ``r-k`` through ``r``. All earlier unchanged rows
+    precede the requested rank, regardless of the replacement values. Retain
+    those windows and every changed row, then use NumPy's unmodified two-value
+    quantile interpolation for the full-bank fractional rank.
+    """
+    changed, proposals = candidates.shape
+    values = []
+    for quantile in quantiles:
+        rank = quantile * (total_count - 1)
+        lower, upper = int(np.floor(rank)), int(np.ceil(rank))
+        start = max(0, lower - changed)
+        stop = min(unchanged.size, upper + 1)
+        rows = stop - start + changed
+        charge(4 * proposals * (rows + 2) * (max(1, rows.bit_length()) + 2))
+        window = np.concatenate(
+            (
+                np.broadcast_to(unchanged[start:stop, None], (stop - start, proposals)),
+                candidates,
+            ),
+            axis=0,
+        )
+        selected = np.partition(window, (lower - start, upper - start), axis=0)
+        pair = np.stack((selected[lower - start], selected[upper - start]))
+        values.append(np.quantile(pair, rank - lower, axis=0))
+    return np.stack(values)
 
 
 def _placement_order(
@@ -1388,8 +1545,8 @@ def _placement_order(
     order: list[int] = []
     # A newly placed root is the only owner that can add predecessors. Keep
     # those incidence lists instead of rescanning every remaining root's whole
-    # adjacency at every placement. Selection below retains the original root
-    # tie order and the original (closeness, edge) ordering.
+    # adjacency at every placement. Selection below retains the root
+    # tie order and the (closeness, edge) ordering.
     backs = {
         root: [
             edge
@@ -1398,17 +1555,17 @@ def _placement_order(
         ]
         for root in remaining
     }
-    while remaining:
-        # Prefer two actual predecessors to three or more: they constrain the
-        # same two-dimensional placement without unnecessarily demoting edges.
-        position = max(
-            range(len(remaining)),
-            key=lambda index: (
-                min(len(backs[remaining[index]]), 2),
-                -len(backs[remaining[index]]),
-            ),
-        )
-        root = remaining.pop(position)
+    # Priorities retain the stable ascending root tie break of the former
+    # scan. Predecessor counts only increase, so an obsolete heap entry is
+    # identified by its count without a separate generation bank.
+    priorities = [
+        (-min(len(backs[root]), 2), len(backs[root]), root) for root in remaining
+    ]
+    heapify(priorities)
+    while priorities:
+        _, predecessors, root = heappop(priorities)
+        if placed[root] or predecessors != len(backs[root]):
+            continue
         selected = sorted(backs.pop(root), key=lambda edge: (closeness[edge], edge))[:2]
         kept[selected] = True
         placed[root] = True
@@ -1417,6 +1574,8 @@ def _placement_order(
             other = int(edges[edge, 1] if edges[edge, 0] == root else edges[edge, 0])
             if not placed[other]:
                 backs[other].append(edge)
+                count = len(backs[other])
+                heappush(priorities, (-min(count, 2), count, other))
     return order, kept
 
 
@@ -1428,16 +1587,20 @@ def _rank_placement_edges(
     protected: np.ndarray,
     required: int,
     /,
+    *,
+    admit_bank: Callable[[int], None] | None = None,
 ) -> tuple[list[int], np.ndarray, np.ndarray]:
-    """Select a realizable exact-rank bank, not an optimizer stopping tolerance.
+    """Select a realizable target-rank bank, not an optimizer stopping tolerance.
 
     A finite AL termination can leave required upper constraints just below the
-    target. Rank those actual mutable constraints by distance, then enlarge the
-    polish bank until its two-predecessor graph can realize the exact requested
+    target. Rank those mutable constraints by distance, then enlarge the
+    polish bank until its two-predecessor graph can realize the requested
     cardinality. LM and representable placement still own all numerical proof.
     """
     closeness = np.abs(normalized - 1.0)
     active = mutable & (normalized >= 1.0 - _ACTIVE_GAP)
+    if admit_bank is not None:
+        admit_bank(int(np.count_nonzero(active)))
     order, kept = _placement_order(free, edges, active, closeness, protected)
     if np.count_nonzero(kept) >= required:
         return order, active, kept
@@ -1445,6 +1608,8 @@ def _rank_placement_edges(
     ranked = candidates[np.lexsort((candidates, closeness[candidates]))]
     for edge in ranked:
         active[edge] = True
+        if admit_bank is not None:
+            admit_bank(int(np.count_nonzero(active)))
         order, kept = _placement_order(free, edges, active, closeness, protected)
         if np.count_nonzero(kept) >= required:
             break
@@ -1467,9 +1632,14 @@ class _ExactPlacement:
         maximum_work: int,
         check: Callable[[], None],
         /,
+        *,
+        edge_lower: np.ndarray | None = None,
+        edge_upper: np.ndarray | None = None,
     ) -> None:
         self.points, self.edges, self.protected = points, edges, protected
         self.kept, self.target, self.minimum = kept, target, minimum
+        self.edge_lower = edge_lower
+        self.edge_upper = edge_upper
         self.lift = lifts.astype(np.float64) @ vectors
         self.relative = (edges[:, 2:] - lifts[edges[:, 1]] + lifts[edges[:, 0]]) @ vectors
         self.coordinates = points + self.lift
@@ -1485,6 +1655,9 @@ class _ExactPlacement:
         self.maximum_work, self.check = maximum_work, check
         self.work = 0
         self.nodes = 0
+        self.rank_quantiles: tuple[float, ...] = ()
+        self.rank_error = np.inf
+        self.rank_exact = False
 
     def _other(self, edge: int, root: int, /) -> int:
         first, second = (int(value) for value in self.edges[edge, :2])
@@ -1552,16 +1725,11 @@ class _ExactPlacement:
         y = np.broadcast_to(values[:, None, :, 1], (len(targets), len(axes), len(axes)))
         return np.stack((x, y), axis=-1).reshape((-1, 2))
 
-    def _admissible(self, root: int, representatives: np.ndarray, /) -> np.ndarray:
-        constrained = [
-            edge for edge in self.incident[root] if self.placed[self._other(edge, root)]
-        ]
-        # One unit per candidate lift plus one per candidate edge length.
-        cost = representatives.shape[0] * (len(constrained) + 1)
+    def _spend(self, cost: int, /) -> None:
         if self.work + cost > self.maximum_work:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Exact periodic size placement exceeds its original work budget.",
+                "periodic.placement.work must fit the remaining work budget; got a candidate request beyond the budget",
                 requested=(("remaining_work", self.maximum_work),),
                 achieved=(
                     ("placement_work", self.work),
@@ -1570,6 +1738,19 @@ class _ExactPlacement:
                 ),
             )
         self.work += cost
+
+    def _admissible(
+        self,
+        root: int,
+        representatives: np.ndarray,
+        /,
+        *,
+        record_lengths: list[np.ndarray] | None = None,
+    ) -> np.ndarray:
+        constrained = [
+            edge for edge in self.incident[root] if self.placed[self._other(edge, root)]
+        ]
+        self._spend(representatives.shape[0] * (len(constrained) + 1))
         lifted = representatives + self.lift[root]
         valid = np.ones(lifted.shape[0], dtype=np.bool_)
         for edge in constrained:
@@ -1579,10 +1760,14 @@ class _ExactPlacement:
             else:
                 delta = lifted - self.coordinates[other] + self.relative[edge]
             length = np.linalg.norm(delta, axis=1)
+            if record_lengths is not None:
+                record_lengths.append(length)
             if self.kept[edge]:
                 valid &= length == self.target
             else:
-                valid &= (length <= self.target) & (length >= self.minimum)
+                lower = self.minimum if self.edge_lower is None else self.edge_lower[edge]
+                upper = self.target if self.edge_upper is None else self.edge_upper[edge]
+                valid &= (length <= upper) & (length >= lower)
         return valid
 
     def _candidates(self, root: int, /) -> Iterator[np.ndarray]:
@@ -1630,6 +1815,188 @@ class _ExactPlacement:
                 if later > jump:
                     domains[later] = None
             index = jump
+        return True
+
+    def _local_circle(
+        self,
+        root: int,
+        edge: int,
+        lengths: np.ndarray,
+        unchanged: np.ndarray,
+        below: int,
+        above: int,
+        allowed_above: int,
+        lowest: int,
+        anchor: int | None,
+        /,
+    ) -> tuple[int, int] | None:
+        incident = self.incident[root]
+        self._spend(8 * len(incident) + 2)
+        old_below = int(np.count_nonzero(lengths[incident] < self.target))
+        old_above = int(np.count_nonzero(lengths[incident] > self.target))
+        self.placed[root] = False
+        self.kept[edge] = True
+        if anchor is not None:
+            self.kept[anchor] = True
+        try:
+            targets = self._targets(root)
+            batch = [value for _, value in zip(range(_BATCH), targets, strict=False)]
+            if not batch:
+                return None
+            self.check()
+            grid = self._grid(root, batch)
+            bank: list[np.ndarray] = []
+            valid = self._admissible(root, grid, record_lengths=bank)
+            self._spend(4 * grid.shape[0] * (len(incident) + 1))
+            values = np.stack(bank)
+            candidate_below = (
+                below - old_below + np.count_nonzero(values < self.target, axis=0)
+            )
+            candidate_above = (
+                above - old_above + np.count_nonzero(values > self.target, axis=0)
+            )
+            unmatched = candidate_below + candidate_above
+            deficit = np.maximum(0, candidate_below - lowest) + np.maximum(
+                0, candidate_above - allowed_above
+            )
+            previous_deficit = max(0, below - lowest) + max(0, above - allowed_above)
+            # One representative can repair only its incident edges. Permit a
+            # monotone unresolved tail while the existing strict merit improves;
+            # final admission still requires both unmodified quantile targets.
+            valid &= candidate_above <= max(above, allowed_above)
+            valid &= (
+                np.max(np.abs(grid + self.lift[root] - self.base[root]), axis=1)
+                <= _SLIDES * _SLIDE_STEP * self.target
+            )
+            choices = np.flatnonzero(valid)
+            if not choices.size:
+                return None
+            measured = _rank_window_quantiles(
+                lengths.size,
+                unchanged,
+                values[:, choices],
+                self.rank_quantiles,
+                self._spend,
+            )
+            errors = np.sum(((measured - self.target) / self.target) ** 2, axis=0)
+            improves = (
+                (errors < self.rank_error)
+                | ((errors == self.rank_error) & (deficit[choices] < previous_deficit))
+                | (
+                    (errors == self.rank_error)
+                    & (deficit[choices] == previous_deficit)
+                    & (unmatched[choices] < below + above)
+                )
+            )
+            selected = np.flatnonzero(improves)
+            if not selected.size:
+                return None
+            selected_index = min(
+                selected,
+                key=lambda index: (
+                    errors[index],
+                    deficit[choices[index]],
+                    unmatched[choices[index]],
+                    candidate_below[choices[index]],
+                    candidate_above[choices[index]],
+                    index,
+                ),
+            )
+            chosen = choices[selected_index]
+            self.points[root] = grid[chosen]
+            self.coordinates[root] = grid[chosen] + self.lift[root]
+            lengths[incident] = values[:, chosen]
+            self.nodes += 1
+            self.rank_error = float(errors[selected_index])
+            self.rank_exact = bool(np.all(measured[:, selected_index] == self.target))
+            return int(candidate_below[chosen]), int(candidate_above[chosen])
+        finally:
+            self.placed[root] = True
+            self.kept[edge] = False
+            if anchor is not None:
+                self.kept[anchor] = False
+
+    def search_local_ranks(
+        self,
+        lengths: np.ndarray,
+        lowest: int,
+        highest: int,
+        /,
+        *,
+        statistics: tuple[SizeStatistic, ...],
+    ) -> bool:
+        """Correct target-rank ties with the common circle/representable owner."""
+        below = int(np.count_nonzero(lengths < self.target))
+        above = int(np.count_nonzero(lengths > self.target))
+        allowed_above = lengths.size - 1 - highest
+        self.placed[:] = True
+        self.rank_quantiles = tuple(size_statistic_quantile(name) for name in statistics)
+        measured = np.quantile(lengths, self.rank_quantiles)
+        self.rank_error = float(np.sum(((measured - self.target) / self.target) ** 2))
+        self.rank_exact = bool(np.all(measured == self.target))
+        while not self.rank_exact:
+            self._spend(lengths.size * (max(1, lengths.size.bit_length()) + 1))
+            closeness = np.abs(lengths - self.target)
+            measured = np.quantile(lengths, self.rank_quantiles)
+            unchanged_banks: dict[int, np.ndarray] = {}
+            priority = ((lengths < self.target) & np.any(measured < self.target)) | (
+                (lengths > self.target) & np.any(measured > self.target)
+            )
+            order = np.lexsort(
+                (np.arange(lengths.size, dtype=np.int64), closeness, ~priority)
+            )
+            changed = False
+            for edge in order:
+                limit = self.target * _ACTIVE_GAP
+                if not 0.0 < closeness[edge] <= limit:
+                    continue
+                roots = sorted(
+                    (int(value) for value in self.edges[edge, :2]),
+                    key=lambda root: (
+                        float(np.max(np.abs(np.spacing(self.points[root])))),
+                        root,
+                    ),
+                )
+                for root in roots:
+                    if self.protected[root] or self.edges[edge, 0] == self.edges[edge, 1]:
+                        continue
+                    if root not in unchanged_banks:
+                        self._spend(
+                            4 * lengths.size * (max(1, lengths.size.bit_length()) + 2)
+                        )
+                        mask = np.ones(lengths.size, dtype=np.bool_)
+                        mask[self.incident[root]] = False
+                        bank = np.sort(lengths[mask], kind="stable")
+                        bank.setflags(write=False)
+                        unchanged_banks[root] = bank
+                    anchors: list[int | None] = [
+                        candidate
+                        for candidate in self.incident[root]
+                        if candidate != edge and lengths[candidate] == self.target
+                    ]
+                    anchors.append(None)
+                    for anchor in anchors:
+                        found = self._local_circle(
+                            root,
+                            int(edge),
+                            lengths,
+                            unchanged_banks[root],
+                            below,
+                            above,
+                            allowed_above,
+                            lowest,
+                            anchor,
+                        )
+                        if found is not None:
+                            below, above = found
+                            changed = True
+                            break
+                    if changed:
+                        break
+                if changed:
+                    break
+            if not changed:
+                return False
         return True
 
 
@@ -1692,8 +2059,8 @@ class PeriodicSizeRecord(NamedTuple):
     polish: PeriodicPolishRecord | None
 
 
-@dataclass(frozen=True, slots=True)
-class PeriodicSizeProposal:
+@final
+class PeriodicSizeProposal(StrictModule):
     points: np.ndarray | None
     work_units: int
     method_id: str
@@ -1706,6 +2073,35 @@ class PeriodicSizeProposal:
     kept_exact_edges: int
     placement_nodes: int
     polish: PeriodicPolishRecord | None
+
+    @checked
+    def __init__(
+        self,
+        points: np.ndarray | None,
+        work_units: int,
+        method_id: str,
+        status: int,
+        iterations: int,
+        value_evaluations: int,
+        reported_actions: int,
+        polish_status: int,
+        required_exact_edges: int,
+        kept_exact_edges: int,
+        placement_nodes: int,
+        polish: PeriodicPolishRecord | None,
+    ) -> None:
+        self.points, self.work_units, self.method_id = points, work_units, method_id
+        self.status, self.iterations = status, iterations
+        self.value_evaluations, self.reported_actions = (
+            value_evaluations,
+            reported_actions,
+        )
+        self.polish_status = polish_status
+        self.required_exact_edges, self.kept_exact_edges = (
+            required_exact_edges,
+            kept_exact_edges,
+        )
+        self.placement_nodes, self.polish = placement_nodes, polish
 
     @property
     def record(self) -> PeriodicSizeRecord:
@@ -1743,7 +2139,7 @@ def _polish_record(
     evidence = result.evidence
     if evidence is None:
         raise ValueError(
-            "Executed hard polishing requires its actual KKT solve evidence."
+            "periodic.polish.evidence must contain KKT solve evidence; got no evidence"
         )
     preconditioning = method.linear_policy.preconditioning
     builder = None if preconditioning is None else preconditioning.builder
@@ -1791,7 +2187,7 @@ def _polish_sparse_owners(
     preconditioning = method.linear_policy.preconditioning
     if not isinstance(setup, _PeriodicSparseKKTSetup) or preconditioning is None:
         raise TypeError(
-            "Sparse hard polishing requires its actual prepared setup and policy."
+            "periodic.polish.preparation must retain the sparse setup and preconditioning policy; got an absent or different setup"
         )
     builder = preconditioning.builder
     if (
@@ -1799,12 +2195,12 @@ def _polish_sparse_owners(
         or builder.form != "lu-congruence"
     ):
         raise TypeError(
-            "Sparse hard polishing requires its actual native LU congruence builder."
+            "periodic.polish.preconditioner must be the prepared LU congruence builder; got a different builder or form"
         )
     plan = builder.prepared_plan
     if plan is None:
         raise ValueError(
-            "The actual native saddle plan must be prepared before execution admission."
+            "periodic.polish.factor_plan must be prepared before execution admission; got no prepared plan"
         )
     return setup, plan
 
@@ -1819,7 +2215,13 @@ def _polish_work_bounds(
     method: PrimalDualNewtonKrylov,
     /,
 ) -> tuple[tuple[str, int], ...]:
-    """Disjoint worst-case phases of the actual prepared hard algorithm."""
+    """Disjoint worst-case phases, excluding symbolically empty pivot windows.
+
+    Numeric factors still refresh at every current saddle: geometry,
+    multipliers and barrier weights change their values. Only the immutable
+    lower-column support earns the skipped rank-one updates; neither observed
+    early termination nor a prior factor action earns reusable solve work.
+    """
     inequalities = cells + 2 * (mutable - equalities) + 2 * dimension
     kkt_dimension = dimension + equalities
     nonlinear_work = edges + mutable + 4 * cells + points
@@ -1836,17 +2238,14 @@ def _polish_work_bounds(
     )
     solve_work = plan.lu_congruence_solve_work_units_upper_for(
         setup.kkt_assembly.template.coefficients.dtype,
-        _coordinate_dtype(setup.primal_space),
+        coordinate_dtype(setup.primal_space),
     )
-    factor_work = (
-        16
-        * plan.shape[0]
-        * (
-            plan.row_width * max(1, plan.column_width)
-            + plan.row_width
-            + plan.column_width
-            + 1
-        )
+    # Empty strictly-lower columns bypass the numeric rank-one window. Keep
+    # scalar/pivot and row work for every pivot, including those skipped columns.
+    active_columns = int(np.count_nonzero(np.diff(np.asarray(plan.column_offsets))))
+    factor_work = 16 * (
+        active_columns * (plan.row_width * max(1, plan.column_width) + plan.column_width)
+        + plan.shape[0] * (plan.row_width + 1)
     )
     return (
         (
@@ -1884,41 +2283,40 @@ def _polish_work_bounds(
     )
 
 
-def _rank_placement_work_bound(
+def _placement_order_work_bound(
     sites: int,
     edges: int,
     free: int,
     mutable: int,
     /,
 ) -> int:
-    """Admit every bank candidate and every incremental incidence traversal."""
+    """Bound one admitted predecessor bank and its priority-heap traversal."""
     # Each call builds incidence once, initializes predecessor lists once and
-    # updates them once per placed endpoint. Root max/pop selection totals at
-    # most free**2 visits/moves. Sorting selected predecessor banks collectively
-    # touches at most mutable entries, with the original exact key ordering.
+    # updates them once per placed endpoint. The priority heap contains at most
+    # free + 2*mutable entries; each entry is pushed and popped at most once.
+    # Selected predecessor sorts collectively touch at most mutable entries.
     ordering = 4 * (
         2 * edges
         + sites
         + 6 * mutable
-        + free * free
-        + free * max(1, free.bit_length())
+        + 2 * (free + 2 * mutable) * max(1, (free + 2 * mutable).bit_length())
         + 4 * free
         + mutable * max(1, mutable.bit_length())
     )
-    return (mutable + 1) * ordering + 4 * edges * (max(1, edges.bit_length()) + 2)
+    return ordering
 
 
 def _proposal_scratch_bound(points: int, edges: int, cells: int, /) -> int:
     """Conservative live numerical, prepared-action and host-graph storage."""
     dimension = 2 * points
     # Before selecting the bank, every edge can be a mutable row and every
-    # selected row can be an equality. Bounds are on the same original pool.
+    # selected row can be an equality. Bounds are on the same pool.
     kkt_dimension = dimension + edges
     inequalities = cells + 2 * edges + 2 * dimension
     coefficients = 64 * (2 * edges + 3 * cells + dimension)
     state = 32 * (kkt_dimension + inequalities + dimension)
-    # Local coefficients, a canonical metric column and Jacobi inverse coexist
-    # with the original Newton/Krylov state, never a dense derivative bank.
+    # Local coefficients, a prepared metric column and Jacobi inverse coexist
+    # with the Newton/Krylov state, never a dense derivative bank.
     metric = 4 * dimension + 3 * inequalities + 4 * edges + 2 * kkt_dimension
     source = 24 * points + 16 * (edges + 3 * cells)
     grid = 16 * _BATCH * (2 * _GRID_RADIUS + 1) ** 2
@@ -1930,17 +2328,27 @@ def _proposal_scratch_bound(points: int, edges: int, cells: int, /) -> int:
 class _Charge:
     """Admitted conservative host/device work of one proposal."""
 
-    def __init__(self, maximum_work: int, /) -> None:
+    def __init__(
+        self, maximum_work: int, stack: ExitStack, /, *, scope: NativeExecutionScope
+    ) -> None:
         self.maximum_work = maximum_work
         self.work = 0
-        self.budget = current_native_execution_budget()
+        self.scope, self.stack = scope, stack
+        self.ticket: NativeBatchTicket | None = None
         self.phases: dict[str, int] = {}
 
-    def admit(self, bound: int, achieved: tuple[tuple[str, float], ...], /) -> None:
+    def admit(
+        self,
+        bound: int,
+        achieved: tuple[tuple[str, float], ...],
+        /,
+        *,
+        reserve: bool = True,
+    ) -> None:
         if self.work + bound > self.maximum_work:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Periodic size proposal exceeds its original work envelope.",
+                "periodic.proposal.work must fit the remaining work envelope; got a phase request beyond the envelope",
                 requested=(("remaining_work", self.maximum_work),),
                 achieved=(
                     ("proposal_work", self.work),
@@ -1953,16 +2361,650 @@ class _Charge:
                     *achieved,
                 ),
             )
-        if self.budget is not None:
-            self.budget.admit_work_bound(bound)
+        if self.ticket is not None:
+            self.ticket.settle()
+            self.ticket = None
+        if reserve:
+            self.ticket = self.stack.enter_context(self.scope.batch(bound))
 
     def charge(self, work: int, phase: str, /) -> None:
         self.work += work
         self.phases[phase] = self.phases.get(phase, 0) + work
-        if self.budget is not None:
-            self.budget.charge(work=work)
+        if self.ticket is None:
+            raise RuntimeError(
+                "periodic.proposal.ticket must be admitted before consumption; got no stage ticket"
+            )
+        self.ticket.consume(work)
 
 
+@final
+class _RelocationDomain(StrictModule):
+    """Bind the quotient geometry and hard placement bounds for one proposal."""
+
+    points: np.ndarray
+    edges: np.ndarray
+    cells: np.ndarray
+    shifts: np.ndarray
+    vectors: np.ndarray
+    protected: np.ndarray
+    target: float
+    minimum_size: float
+    maximum_size: float
+
+
+@final
+class _RelocationPreparation(StrictModule):
+    """Retain free-root routes, publication lifts, and immutable rank evidence."""
+
+    domain: _RelocationDomain
+    free: np.ndarray
+    immutable: np.ndarray
+    lifts: np.ndarray
+    required: int | None
+    action_work: int
+    eligible: bool
+
+
+@final
+class _ExtremePhase(StrictModule):
+    """Carry the continuous size solve and its materialized admissibility data."""
+
+    args: _SizeArgs
+    result: _SolveRecord
+    normalized: np.ndarray
+    areas: np.ndarray
+    edge_offsets: np.ndarray
+    cell_offsets: np.ndarray
+
+
+@final
+class _RankPhase(StrictModule):
+    """Retain a deterministic predecessor order and the selected equality bank."""
+
+    order: list[int]
+    kept: np.ndarray
+
+
+@final
+class _PolishPreparation(StrictModule):
+    """Retain the admitted sparse hard method and compiled-cache storage bound."""
+
+    args: _PolishArgs
+    method: PrimalDualNewtonKrylov
+    problem: MinimizationProblem
+    work_bound: int
+    cache_bytes_upper: int
+    goals: np.ndarray
+
+
+@final
+class _PolishPhase(StrictModule):
+    """Carry the hard solve, diagnostics, and host placement coordinates."""
+
+    result: _SolveRecord
+    record: PeriodicPolishRecord
+    parameters: np.ndarray
+    admitted: bool
+
+
+@final
+class _PlacementPhase(StrictModule):
+    """Carry the independently certified representable proposal and search work."""
+
+    points: np.ndarray | None
+    nodes: int
+
+
+@final
+class _HostRelocationMetrics(StrictModule):
+    """Carry host edge lengths and cell areas for the prepared quotient state."""
+
+    normalized: np.ndarray
+    areas: np.ndarray
+
+
+def _host_relocation_metrics(
+    prepared: _RelocationPreparation,
+    parameters: np.ndarray,
+    /,
+    *,
+    edge_offsets: np.ndarray,
+    cell_offsets: np.ndarray,
+) -> _HostRelocationMetrics:
+    """Evaluate the size kernel's formulas on materialized solver parameters."""
+    domain = prepared.domain
+    points = domain.points.copy()
+    points[prepared.free] += domain.target * parameters
+    delta = points[domain.edges[:, 1]] - points[domain.edges[:, 0]] + edge_offsets
+    lengths = np.sqrt(np.sum(delta * delta, axis=1)) / domain.target
+    normalized = np.where(~prepared.immutable, lengths, 0.0)
+    corners = (points[domain.cells] + cell_offsets) / domain.target
+    first, second = corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
+    areas = first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0]
+    return _HostRelocationMetrics(normalized, areas)
+
+
+def _prepare_relocation_domain(
+    domain: _RelocationDomain, statistics: tuple[SizeStatistic, ...], /
+) -> _RelocationPreparation:
+    points, edges, cells = domain.points, domain.edges, domain.cells
+    shifts, vectors, protected = domain.shifts, domain.vectors, domain.protected
+    target, minimum_size, maximum_size = (
+        domain.target,
+        domain.minimum_size,
+        domain.maximum_size,
+    )
+    free = np.flatnonzero(~protected)
+    immutable = np.all(protected[edges[:, :2]], axis=1) | (edges[:, 0] == edges[:, 1])
+    lifts = periodic_reference_lifts(cells, shifts, points.shape[0])
+    lengths = quotient_edge_lengths(points, edges, lifts, vectors)
+    required = _required_exact_edges(lengths, immutable, target, statistics)
+    dimension = 2 * free.size
+    action_work = edges.shape[0] + 4 * cells.shape[0] + dimension
+    eligible = not (
+        free.size == 0
+        or required is None
+        or np.any(lengths[immutable] > maximum_size)
+        or np.any(lengths[immutable] < minimum_size)
+    )
+    return _RelocationPreparation(
+        domain, free, immutable, lifts, required, action_work, eligible
+    )
+
+
+def _execute_extreme_phase(
+    prepared: _RelocationPreparation,
+    charge: _Charge,
+    sites: tuple[tuple[str, float], ...],
+    check: Callable[[], None],
+    /,
+) -> _ExtremePhase:
+    domain = prepared.domain
+    points, edges, cells = domain.points, domain.edges, domain.cells
+    shifts, vectors = domain.shifts, domain.vectors
+    target, minimum_size = domain.target, domain.minimum_size
+    free, immutable = prepared.free, prepared.immutable
+    action_work = prepared.action_work
+    # A projected line search can finish its bounded batch beyond the nominal
+    # evaluation cutoff. Include each outer batch and the final certificates.
+    extreme_evaluations = (
+        _EXTREME_EVALUATIONS
+        + _EXTREME_METHOD.maximum_outer_steps
+        * (_EXTREME_INNER_METHOD.line_search.maximum_steps + 2)
+        + 2
+    )
+    extreme_bound = (
+        4 * extreme_evaluations + 3 * (_EXTREME_METHOD.maximum_outer_steps + 1)
+    ) * action_work
+    charge.admit(extreme_bound, sites)
+    edge_offsets = edges[:, 2:] @ vectors
+    cell_offsets = shifts @ vectors
+    args = _SizeArgs(
+        jax.device_put(points),
+        jax.device_put(np.asarray(free, dtype=np.int32)),
+        jax.device_put(np.asarray(edges[:, :2], dtype=np.int32)),
+        jax.device_put(edge_offsets),
+        jax.device_put(np.asarray(cells, dtype=np.int32)),
+        jax.device_put(cell_offsets),
+        jax.device_put(np.asarray(target, dtype=np.float64)),
+        jax.device_put(~immutable),
+        jax.device_put(np.asarray(minimum_size / target, dtype=np.float64)),
+    )
+    # Diagnostics report partial optimization counts. Charge the admitted
+    # bound rather than treating partial totals as the work performed.
+    charge.charge(extreme_bound, "extreme")
+    extreme = _solve_extreme(jax.device_put(_seed(points, free, vectors)), args)
+    check()
+
+    parameters = np.asarray(jax.device_get(extreme.parameters))
+    metrics = _host_relocation_metrics(
+        prepared, parameters, edge_offsets=edge_offsets, cell_offsets=cell_offsets
+    )
+    return _ExtremePhase(
+        args, extreme, metrics.normalized, metrics.areas, edge_offsets, cell_offsets
+    )
+
+
+def _prepare_relocation_rank(
+    prepared: _RelocationPreparation,
+    extreme: _ExtremePhase,
+    needed: int,
+    charge: _Charge,
+    sites: tuple[tuple[str, float], ...],
+    /,
+) -> _RankPhase:
+    domain = prepared.domain
+    points, edges, protected = domain.points, domain.edges, domain.protected
+    free, immutable = prepared.free, prepared.immutable
+    normalized = extreme.normalized
+    mutable = ~immutable
+    # Rank preparation is reserved once, then each executed bank is admitted
+    # independently. Unexecuted enlargement banks never consume proposal work.
+    # All charges remain proved host bounds, not partial optimizer diagnostics.
+    rank_bound = 4 * edges.shape[0] * (max(1, edges.shape[0].bit_length()) + 2)
+    charge.admit(rank_bound, sites)
+    charge.charge(rank_bound, "rank_selection")
+
+    def admit_bank(active_edges: int) -> None:
+        bound = _placement_order_work_bound(
+            points.shape[0], edges.shape[0], free.size, active_edges
+        )
+        charge.admit(bound, sites)
+        charge.charge(bound, "rank_graph")
+
+    order, _, kept = _rank_placement_edges(
+        free, edges, normalized, mutable, protected, needed, admit_bank=admit_bank
+    )
+    return _RankPhase(order, kept)
+
+
+def _prepare_relocation_polish(
+    prepared: _RelocationPreparation,
+    extreme: _ExtremePhase,
+    rank: _RankPhase,
+    charge: _Charge,
+    sites: tuple[tuple[str, float], ...],
+    source_binding_id: str,
+    maximum_scratch_bytes: int,
+    workspace: NativeHostStorageWorkspace,
+    /,
+) -> _PolishPreparation:
+    domain = prepared.domain
+    points, edges, cells = domain.points, domain.edges, domain.cells
+    target, minimum_size = domain.target, domain.minimum_size
+    free = prepared.free
+    kept, mutable, args = rank.kept, ~prepared.immutable, extreme.args
+    dimension, maximum_work = 2 * free.size, charge.maximum_work
+    goals = np.where(kept, 1.0, 1.0 - 2.0 * _DEMOTION)
+    mutable_edges = np.flatnonzero(mutable)
+    polish_args = _PolishArgs(
+        args,
+        jax.device_put(kept),
+        jax.device_put(goals),
+        jax.device_put(np.asarray(mutable_edges, dtype=np.int32)),
+    )
+    remaining_work = maximum_work - charge.work
+    # Native symbolic owners enforce the same remaining limits
+    # before growing their incidence, product and factor patterns.
+    charge.admit(remaining_work, sites, reserve=False)
+    try:
+        method, symbolic_work_upper = _prepare_polish_method(
+            source_binding_id,
+            free,
+            edges,
+            kept,
+            mutable,
+            remaining_work,
+            maximum_scratch_bytes,
+            polish_args,
+        )
+    except LinearResourceLimitError as error:
+        observed = (
+            ("resource_request", error.requested),
+            ("completed_proposal_work", charge.work),
+            ("kept_native_quotient_equalities", int(np.count_nonzero(kept))),
+            ("free_native_roots", free.size),
+        )
+        extra = tuple(
+            (name, value)
+            for name, value in (
+                ("resource_completed", error.completed),
+                ("sparse_symbolic_work", error.symbolic_work),
+                ("sparse_storage_bytes_upper", error.storage_bytes_upper),
+            )
+            if value is not None
+        )
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            str(error),
+            requested=((f"{error.resource}:limit", error.limit),),
+            achieved=(*observed, *extra),
+        ) from error
+    charge.admit(symbolic_work_upper, sites)
+    charge.charge(symbolic_work_upper, "sparse_symbolic")
+    workspace.retain_owner(method)
+    workspace.set_bound(
+        workspace.bound
+        - (256 * edges.shape[0] ** 2 + 512 * (2 * points.shape[0] + edges.shape[0]))
+    )
+    polish_phases = _polish_work_bounds(
+        points.size,
+        edges.shape[0],
+        cells.shape[0],
+        dimension,
+        mutable_edges.size,
+        int(np.count_nonzero(kept)),
+        method,
+    )
+    polish_bound = sum(work for _, work in polish_phases)
+    charge.admit(
+        polish_bound,
+        (
+            *sites,
+            *((f"polish_work_upper:{name}", work) for name, work in polish_phases),
+        ),
+    )
+    problem = _polish_problem(mutable_edges, kept, minimum_size / target)
+    setup, factor_plan = _polish_sparse_owners(method)
+    itemsize = setup.kkt_assembly.template.coefficients.dtype.itemsize
+    cache_logical_upper = (
+        factor_plan.numeric_substitution_storage_bytes_upper(itemsize)
+        + factor_plan.numeric_substitution_refresh_workspace_bytes_upper(itemsize)
+        + factor_plan.lu_congruence_storage_bytes_upper(itemsize)
+        + factor_plan.lu_congruence_refresh_workspace_bytes_upper(itemsize)
+        + setup.derivative_workspace_bytes_upper(itemsize)
+    )
+    return _PolishPreparation(
+        polish_args, method, problem, polish_bound, cache_logical_upper, goals
+    )
+
+
+def _execute_relocation_polish(
+    prepared: _RelocationPreparation,
+    extreme: _ExtremePhase,
+    rank: _RankPhase,
+    polish: _PolishPreparation,
+    charge: _Charge,
+    check: Callable[[], None],
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> _PolishPhase:
+    kept, goals = rank.kept, polish.goals
+    mutable = ~prepared.immutable
+    target, minimum_size = prepared.domain.target, prepared.domain.minimum_size
+    # Compiled cache owners are not host-observable. Reserve both refresh
+    # epochs and preparation temporaries in the same pool until
+    # the existing result materialization completes; no callback/new sync
+    # and no device-measured or host-owner claim.
+    with scope.host_workspace() as cache_workspace:
+        cache_workspace.set_bound(polish.cache_bytes_upper)
+        charge.charge(polish.work_bound, "hard_solve")
+        polished = _solve_polish(
+            extreme.result.parameters,
+            polish.args,
+            polish.problem,
+            polish.method,
+        )
+        polish_record = _polish_record(polished, polish.method)
+    check()
+    parameters = np.asarray(jax.device_get(polished.parameters))
+    metrics = _host_relocation_metrics(
+        prepared,
+        parameters,
+        edge_offsets=extreme.edge_offsets,
+        cell_offsets=extreme.cell_offsets,
+    )
+    normalized, areas = metrics.normalized, metrics.areas
+    admitted = bool(
+        np.all(np.isfinite(normalized))
+        and np.max(np.abs(normalized - goals)[kept], initial=0.0) <= _DEMOTION / 4.0
+        and np.max(normalized[mutable & ~kept], initial=0.0) <= 1.0 - _DEMOTION
+        and np.min(areas) > 0.5 * _AREA_MARGIN
+        and np.min(normalized[mutable], initial=np.inf) >= minimum_size / target
+        and np.max(np.abs(parameters), initial=0.0) <= 1.0
+    )
+    return _PolishPhase(polished, polish_record, parameters, admitted)
+
+
+def _place_relocated_sites(
+    prepared: _RelocationPreparation,
+    rank: _RankPhase,
+    polished: _PolishPhase,
+    needed: int,
+    charge: _Charge,
+    sites: tuple[tuple[str, float], ...],
+    check: Callable[[], None],
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> _PlacementPhase:
+    domain = prepared.domain
+    points, edges, cells = domain.points, domain.edges, domain.cells
+    shifts, vectors, protected = domain.shifts, domain.vectors, domain.protected
+    target, minimum_size = domain.target, domain.minimum_size
+    free, lifts, mutable = prepared.free, prepared.lifts, ~prepared.immutable
+    kept, order = rank.kept, rank.order
+    maximum_work, action_work = charge.maximum_work, prepared.action_work
+    if charge.ticket is not None:
+        charge.ticket.settle()
+        charge.ticket = None
+    relocated = scope.allocate_host_array(points.shape, np.float64)
+    relocated[...] = points
+    relocated[free] += target * np.asarray(polished.parameters, dtype=np.float64)
+    charge.admit(maximum_work - charge.work, sites)
+    placement = _ExactPlacement(
+        relocated,
+        edges,
+        lifts,
+        vectors,
+        protected,
+        kept,
+        target,
+        minimum_size,
+        maximum_work - charge.work,
+        check,
+    )
+    try:
+        found = placement.search(order)
+    finally:
+        charge.charge(placement.work, "exact_placement")
+    candidate = placement.points if found else None
+    if candidate is not None:
+        certification_bound = 8 * action_work
+        charge.admit(certification_bound, sites)
+        charge.charge(certification_bound, "certification")
+        moves = np.abs(candidate[free] - points[free])
+        final = quotient_edge_lengths(candidate, edges, lifts, vectors)
+        if (
+            np.any(moves > target)
+            or not np.array_equal(candidate[protected], points[protected])
+            or np.any(final[mutable] > target)
+            or np.any(final[mutable] < minimum_size)
+            or np.count_nonzero(final[mutable] == target) < needed
+            or not _positive_scientific_cells(candidate, cells, shifts, vectors)
+        ):
+            candidate = None
+    return _PlacementPhase(candidate, placement.nodes)
+
+
+def _relocation_proposal(
+    points: np.ndarray | None,
+    work: int,
+    extreme: _SolveRecord | None,
+    needed: int,
+    polish_status: int,
+    kept: int,
+    nodes: int,
+    polish: PeriodicPolishRecord | None = None,
+) -> PeriodicSizeProposal:
+    return PeriodicSizeProposal(
+        points,
+        work,
+        _EXTREME_METHOD.method_id,
+        -1 if extreme is None else int(extreme.status),
+        0 if extreme is None else int(extreme.iterations),
+        0 if extreme is None else int(extreme.value_evaluations),
+        0 if extreme is None else int(extreme.actions),
+        polish_status,
+        needed,
+        kept,
+        nodes,
+        polish,
+    )
+
+
+def propose_periodic_rank_placement(
+    points: np.ndarray,
+    edges: np.ndarray,
+    cells: np.ndarray,
+    shifts: np.ndarray,
+    vectors: np.ndarray,
+    protected: np.ndarray,
+    target: float,
+    statistics: tuple[SizeStatistic, ...],
+    maximum_work: int,
+    maximum_scratch_bytes: int,
+    check: Callable[[], None],
+    /,
+    *,
+    scope: NativeExecutionScope,
+    maximum_size: float = np.inf,
+    minimum_size: float = 0.0,
+) -> PeriodicSizeProposal:
+    """Finish a representable target-rank continuation without a KKT solve.
+
+    Tail edges retain their admitted bounds. Protected roots remain fixed and
+    every returned candidate must meet the frozen quantile targets and pass
+    the positive-cell certificate; nonlocal geometric searches are not used.
+    """
+    sites, edge_count, cell_count = points.shape[0], edges.shape[0], cells.shape[0]
+    maximum_work = min(maximum_work, scope.remaining().remaining_work_units)
+    scratch = (
+        8 * (32 * sites + 24 * edge_count + 8 * cell_count)
+        + 128 * (sites + edge_count)
+        + 64 * sites * sites
+    )
+    available = min(maximum_scratch_bytes, scope.remaining().remaining_managed_bytes)
+    if scratch > available:
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "periodic.rank_placement.scratch must fit the remaining scratch envelope; got an unadmitted placement bank",
+            requested=(("remaining_scratch_bytes", available),),
+            achieved=(("placement_scratch_bound", scratch),),
+        )
+    method_id = canonical_fingerprint({"kind": "periodic-representable-rank-placement"})
+    work, needed, kept_count, nodes = 0, -1, 0, 0
+    candidate: np.ndarray | None = None
+    with scope.host_workspace() as workspace:
+        workspace.set_bound(scratch)
+        preparation = 8 * (sites + edge_count + cell_count) + (
+            8 * len(statistics) * edge_count * max(1, edge_count.bit_length())
+        )
+        with scope.batch(min(preparation, maximum_work)) as ticket:
+            if preparation > maximum_work:
+                ticket.refuse(preparation)
+            ticket.consume(preparation)
+            work += preparation
+            lifts = periodic_reference_lifts(cells, shifts, sites)
+            lengths = quotient_edge_lengths(points, edges, lifts, vectors)
+            fixed = np.all(protected[edges[:, :2]], axis=1) | (edges[:, 0] == edges[:, 1])
+            ranks = [
+                size_statistic_quantile(name) * (edge_count - 1) for name in statistics
+            ]
+            lowest, highest = int(np.floor(min(ranks))), int(np.ceil(max(ranks)))
+            fixed_lengths = lengths[fixed]
+            eligible = _fixed_rank_feasible(
+                lengths,
+                fixed,
+                target,
+                tuple(size_statistic_quantile(name) for name in statistics),
+            )
+            needed = max(
+                0, highest - lowest + 1 - int(np.count_nonzero(fixed_lengths == target))
+            )
+            measured = tuple(
+                float(np.quantile(lengths, size_statistic_quantile(name)))
+                for name in statistics
+            )
+            near = all(abs(value - target) <= target * _ACTIVE_GAP for value in measured)
+            free = np.flatnonzero(~protected)
+            incidence = np.bincount(edges[:, :2].reshape(-1), minlength=sites)
+            maximum_incident = int(np.max(incidence, initial=0))
+        if eligible and near and free.size and np.all(lengths <= maximum_size):
+            rank_scratch = (
+                16 * _BATCH * (2 * _GRID_RADIUS + 1) ** 2 * (4 * maximum_incident + 24)
+            )
+            if scratch + rank_scratch > available:
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "periodic.rank_placement.ranks must fit the remaining scratch envelope; got an unadmitted local rank bank",
+                    requested=(("remaining_scratch_bytes", available),),
+                    achieved=(("placement_scratch_bound", scratch + rank_scratch),),
+                )
+            scratch += rank_scratch
+            workspace.set_bound(scratch)
+            move_bound = _SLIDES * _SLIDE_STEP * target
+            tail = lengths > target * (1.0 + _ACTIVE_GAP)
+            lower = np.where(
+                tail,
+                np.maximum(
+                    target * (1.0 + _ACTIVE_GAP / 2.0), lengths - 4.0 * move_bound
+                ),
+                minimum_size,
+            )
+            upper = np.minimum(
+                maximum_size,
+                np.where(tail, lengths + 4.0 * move_bound, target + 4.0 * move_bound),
+            )
+            relocated = scope.allocate_host_array(points.shape, np.float64)
+            relocated[...] = points
+            placement = _ExactPlacement(
+                relocated,
+                edges,
+                lifts,
+                vectors,
+                protected,
+                np.zeros(edge_count, dtype=np.bool_),
+                target,
+                minimum_size,
+                maximum_work - work,
+                check,
+                edge_lower=lower,
+                edge_upper=upper,
+            )
+            with scope.batch(maximum_work - work) as ticket:
+                try:
+                    found = placement.search_local_ranks(
+                        lengths, lowest, highest, statistics=statistics
+                    )
+                finally:
+                    ticket.consume(placement.work)
+                    work += placement.work
+            nodes = placement.nodes
+            kept_count = int(np.count_nonzero(lengths[~fixed] == target))
+            if found:
+                certification = 8 * (sites + edge_count + cell_count) + (
+                    4 * len(statistics) * edge_count * max(1, edge_count.bit_length())
+                )
+                with scope.batch(min(certification, maximum_work - work)) as ticket:
+                    if certification > maximum_work - work:
+                        ticket.refuse(certification)
+                    ticket.consume(certification)
+                    work += certification
+                    final = quotient_edge_lengths(relocated, edges, lifts, vectors)
+                    final_statistics = tuple(
+                        float(np.quantile(final, size_statistic_quantile(name)))
+                        for name in statistics
+                    )
+                    admitted = (
+                        np.max(np.abs(relocated - points), initial=0.0) <= move_bound
+                        and np.array_equal(relocated[protected], points[protected])
+                        and np.all(final >= minimum_size)
+                        and np.all(final <= maximum_size)
+                        and all(value == target for value in final_statistics)
+                        and _positive_scientific_cells(relocated, cells, shifts, vectors)
+                    )
+                kept_count = int(np.count_nonzero(final[~fixed] == target))
+                if admitted:
+                    candidate = relocated
+    return PeriodicSizeProposal(
+        candidate,
+        work,
+        method_id,
+        -1,
+        0,
+        0,
+        0,
+        -1,
+        needed,
+        kept_count,
+        nodes,
+        None,
+    )
+
+
+@checked
 def propose_periodic_site_relocation(
     points: np.ndarray,
     edges: np.ndarray,
@@ -1971,28 +3013,26 @@ def propose_periodic_site_relocation(
     vectors: np.ndarray,
     protected: np.ndarray,
     target: float,
-    statistics: tuple[str, ...],
+    statistics: tuple[SizeStatistic, ...],
     maximum_work: int,
     maximum_scratch_bytes: int,
     check: Callable[[], None],
     /,
     *,
     source_binding_id: str,
+    scope: NativeExecutionScope,
     maximum_size: float = np.inf,
     minimum_size: float = 0.0,
 ) -> PeriodicSizeProposal:
-    """Exact-statistic relocation of unprotected roots, or ``points=None`` with status."""
+    """Target-statistic relocation of unprotected roots, or ``points=None`` with status."""
     scratch = _proposal_scratch_bound(points.shape[0], edges.shape[0], cells.shape[0])
-    budget = current_native_execution_budget()
-    available_scratch = maximum_scratch_bytes
-    if budget is not None:
-        available_scratch = min(
-            available_scratch, budget.remaining().remaining_scratch_bytes
-        )
+    available_scratch = min(
+        maximum_scratch_bytes, scope.remaining().remaining_managed_bytes
+    )
     if scratch > available_scratch:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Periodic size proposal exceeds its original scratch envelope.",
+            "periodic.proposal.scratch must fit the remaining scratch envelope; got a proposal request beyond the envelope",
             requested=(
                 ("maximum_scratch_bytes", maximum_scratch_bytes),
                 ("remaining_scratch_bytes", available_scratch),
@@ -2002,287 +3042,93 @@ def propose_periodic_site_relocation(
                 ("free_sites", float(protected.size - np.count_nonzero(protected))),
             ),
         )
-    with budget.host_workspace() if budget is not None else nullcontext() as workspace:
-        if workspace is not None:
-            workspace.set_bound(scratch)
-        free = np.flatnonzero(~protected)
-        immutable = np.all(protected[edges[:, :2]], axis=1) | (edges[:, 0] == edges[:, 1])
-        lifts = periodic_reference_lifts(cells, shifts, points.shape[0])
-        lengths = quotient_edge_lengths(points, edges, lifts, vectors)
-        required = _required_exact_edges(lengths, immutable, target, statistics)
-        dimension = 2 * free.size
-        action_work = edges.shape[0] + 4 * cells.shape[0] + dimension
-        if (
-            free.size == 0
-            or required is None
-            or np.any(lengths[immutable] > maximum_size)
-            or np.any(lengths[immutable] < minimum_size)
-        ):
-            return PeriodicSizeProposal(
+    with ExitStack() as stack, scope.host_workspace() as workspace:
+        workspace.set_bound(scratch)
+        prepared = _prepare_relocation_domain(
+            _RelocationDomain(
+                points,
+                edges,
+                cells,
+                shifts,
+                vectors,
+                protected,
+                target,
+                minimum_size,
+                maximum_size,
+            ),
+            statistics,
+        )
+        if not prepared.eligible or prepared.required is None:
+            return _relocation_proposal(
                 None,
                 0,
-                _EXTREME_METHOD.method_id,
+                None,
+                -1 if prepared.required is None else prepared.required,
                 -1,
                 0,
                 0,
-                0,
-                -1,
-                -1 if required is None else required,
-                0,
-                0,
-                None,
             )
-        needed = required
-        charge = _Charge(maximum_work)
+        needed = prepared.required
+        charge = _Charge(maximum_work, stack, scope=scope)
         sites = (
             ("quotient_sites", float(points.shape[0])),
-            ("free_sites", float(free.size)),
+            ("free_sites", float(prepared.free.size)),
         )
-        # A projected line search can finish its bounded batch beyond the nominal
-        # evaluation cutoff. Include each outer batch and the final certificates.
-        extreme_evaluations = (
-            _EXTREME_EVALUATIONS
-            + _EXTREME_METHOD.maximum_outer_steps
-            * (_EXTREME_INNER_METHOD.line_search.maximum_steps + 2)
-            + 2
+        extreme = _execute_extreme_phase(prepared, charge, sites, check)
+        if not (
+            np.all(np.isfinite(extreme.normalized))
+            and np.max(extreme.normalized) <= 1.0 + _ACTIVE_GAP
+            and np.min(extreme.areas) > 0.5 * _AREA_MARGIN
+        ):
+            return _relocation_proposal(
+                None, charge.work, extreme.result, needed, -1, 0, 0
+            )
+        rank = _prepare_relocation_rank(prepared, extreme, needed, charge, sites)
+        kept = int(np.count_nonzero(rank.kept))
+        if kept < needed:
+            return _relocation_proposal(
+                None, charge.work, extreme.result, needed, -1, kept, 0
+            )
+        polish_preparation = _prepare_relocation_polish(
+            prepared,
+            extreme,
+            rank,
+            charge,
+            sites,
+            source_binding_id,
+            maximum_scratch_bytes,
+            workspace,
         )
-        extreme_bound = (
-            4 * extreme_evaluations + 3 * (_EXTREME_METHOD.maximum_outer_steps + 1)
-        ) * action_work
-        charge.admit(extreme_bound, sites)
-        args = _SizeArgs(
-            jnp.asarray(points),
-            jnp.asarray(free, dtype=jnp.int32),
-            jnp.asarray(edges[:, :2], dtype=jnp.int32),
-            jnp.asarray(edges[:, 2:] @ vectors),
-            jnp.asarray(cells, dtype=jnp.int32),
-            jnp.asarray(shifts @ vectors),
-            jnp.asarray(target, dtype=jnp.float64),
-            jnp.asarray(~immutable),
-            jnp.asarray(minimum_size / target, dtype=jnp.float64),
+        polished = _execute_relocation_polish(
+            prepared,
+            extreme,
+            rank,
+            polish_preparation,
+            charge,
+            check,
+            scope=scope,
         )
-        # Canonical optimization counts explicitly remain incomplete. Charge the
-        # admitted bound instead of misrepresenting their partial totals as complete.
-        charge.charge(extreme_bound, "extreme")
-        extreme = _solve_extreme(jnp.asarray(_seed(points, free, vectors)), args)
-        check()
-
-        def refused(
-            polish_status: int,
-            kept: int,
-            nodes: int,
-            /,
-            *,
-            polish: PeriodicPolishRecord | None = None,
-        ) -> PeriodicSizeProposal:
-            return PeriodicSizeProposal(
+        if not polished.admitted:
+            return _relocation_proposal(
                 None,
                 charge.work,
-                _EXTREME_METHOD.method_id,
-                int(extreme.status),
-                int(extreme.iterations),
-                int(extreme.value_evaluations),
-                int(extreme.actions),
-                polish_status,
+                extreme.result,
                 needed,
+                int(polished.result.status),
                 kept,
-                nodes,
-                polish,
-            )
-
-        normalized = np.asarray(_mutable_lengths(extreme.parameters, args))
-        areas = np.asarray(_cell_areas(extreme.parameters, args))
-        if not (
-            np.all(np.isfinite(normalized))
-            and np.max(normalized) <= 1.0 + _ACTIVE_GAP
-            and np.min(areas) > 0.5 * _AREA_MARGIN
-        ):
-            return refused(-1, 0, 0)
-        mutable = ~immutable
-        # Each candidate can prepare one bounded host predecessor graph. Include
-        # incident traversal, rank selection and root ordering before preparation;
-        # this admission does not use incomplete device diagnostic counters.
-        rank_bound = _rank_placement_work_bound(
-            points.shape[0],
-            edges.shape[0],
-            int(free.size),
-            int(np.count_nonzero(mutable)),
-        )
-        charge.admit(rank_bound, sites)
-        charge.charge(rank_bound, "rank_graph")
-        order, _, kept = _rank_placement_edges(
-            free, edges, normalized, mutable, protected, needed
-        )
-        if np.count_nonzero(kept) < needed:
-            return refused(-1, int(np.count_nonzero(kept)), 0)
-        goals = np.where(kept, 1.0, 1.0 - 2.0 * _DEMOTION)
-        mutable_edges = np.flatnonzero(mutable)
-        polish_args = _PolishArgs(
-            args,
-            jnp.asarray(kept),
-            jnp.asarray(goals),
-            jnp.asarray(mutable_edges, dtype=jnp.int32),
-        )
-        remaining_work = maximum_work - charge.work
-        # Native symbolic owners enforce the same original remaining limits
-        # before growing their incidence, product and factor patterns.
-        charge.admit(remaining_work, sites)
-        try:
-            method, symbolic_work_upper = _prepare_polish_method(
-                source_binding_id,
-                free,
-                edges,
-                kept,
-                mutable,
-                remaining_work,
-                maximum_scratch_bytes,
-                polish_args,
-            )
-        except LinearResourceLimitError as error:
-            observed = (
-                ("resource_request", error.requested),
-                ("completed_proposal_work", charge.work),
-                ("kept_native_quotient_equalities", int(np.count_nonzero(kept))),
-                ("free_native_roots", free.size),
-            )
-            extra = tuple(
-                (name, value)
-                for name, value in (
-                    ("resource_completed", error.completed),
-                    ("sparse_symbolic_work", error.symbolic_work),
-                    ("sparse_storage_bytes_upper", error.storage_bytes_upper),
-                )
-                if value is not None
-            )
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                str(error),
-                requested=((f"{error.resource}:limit", error.limit),),
-                achieved=(*observed, *extra),
-            ) from error
-        charge.admit(symbolic_work_upper, sites)
-        charge.charge(symbolic_work_upper, "sparse_symbolic")
-        if workspace is not None:
-            workspace.retain_owner(method)
-            workspace.set_bound(
-                workspace.bound
-                - (
-                    256 * edges.shape[0] ** 2
-                    + 512 * (2 * points.shape[0] + edges.shape[0])
-                )
-            )
-        polish_phases = _polish_work_bounds(
-            points.size,
-            edges.shape[0],
-            cells.shape[0],
-            dimension,
-            mutable_edges.size,
-            int(np.count_nonzero(kept)),
-            method,
-        )
-        polish_bound = sum(work for _, work in polish_phases)
-        charge.admit(
-            polish_bound,
-            (
-                *sites,
-                *((f"polish_work_upper:{name}", work) for name, work in polish_phases),
-            ),
-        )
-        problem = _polish_problem(mutable_edges, kept, minimum_size / target)
-        setup, factor_plan = _polish_sparse_owners(method)
-        itemsize = setup.kkt_assembly.template.coefficients.dtype.itemsize
-        cache_logical_upper = (
-            factor_plan.numeric_substitution_storage_bytes_upper(itemsize)
-            + factor_plan.numeric_substitution_refresh_workspace_bytes_upper(itemsize)
-            + factor_plan.lu_congruence_storage_bytes_upper(itemsize)
-            + factor_plan.lu_congruence_refresh_workspace_bytes_upper(itemsize)
-            + setup.derivative_workspace_bytes_upper(itemsize)
-        )
-        # Compiled cache owners are not host-observable. Reserve both refresh
-        # epochs and preparation temporaries in the same original pool until
-        # the existing result materialization completes; no callback/new sync
-        # and no device-measured or actual host-owner claim.
-        with (
-            budget.host_workspace()
-            if budget is not None
-            else nullcontext() as cache_workspace
-        ):
-            if cache_workspace is not None:
-                cache_workspace.set_bound(cache_logical_upper)
-            charge.charge(polish_bound, "hard_solve")
-            polished = _solve_polish(
-                extreme.parameters,
-                polish_args,
-                problem,
-                method,
-            )
-            polish_record = _polish_record(polished, method)
-        check()
-        normalized = np.asarray(_mutable_lengths(polished.parameters, args))
-        areas = np.asarray(_cell_areas(polished.parameters, args))
-        if not (
-            np.all(np.isfinite(normalized))
-            and np.max(np.abs(normalized - goals)[kept], initial=0.0) <= _DEMOTION / 4.0
-            and np.max(normalized[mutable & ~kept], initial=0.0) <= 1.0 - _DEMOTION
-            and np.min(areas) > 0.5 * _AREA_MARGIN
-            and np.min(normalized[mutable], initial=np.inf) >= minimum_size / target
-            and np.max(np.abs(np.asarray(polished.parameters)), initial=0.0) <= 1.0
-        ):
-            return refused(
-                int(polished.status),
-                int(np.count_nonzero(kept)),
                 0,
-                polish=polish_record,
+                polished.record,
             )
-        if budget is None:
-            relocated = points.copy()
-        else:
-            relocated = budget.allocate_host_array(points.shape, np.float64)
-            relocated[...] = points
-        relocated[free] += target * np.asarray(polished.parameters, dtype=np.float64)
-        placement = _ExactPlacement(
-            relocated,
-            edges,
-            lifts,
-            vectors,
-            protected,
-            kept,
-            target,
-            minimum_size,
-            maximum_work - charge.work,
-            check,
+        placement = _place_relocated_sites(
+            prepared, rank, polished, needed, charge, sites, check, scope=scope
         )
-        try:
-            found = placement.search(order)
-        finally:
-            charge.charge(placement.work, "exact_placement")
-        candidate = placement.points if found else None
-        if candidate is not None:
-            certification_bound = 8 * action_work
-            charge.admit(certification_bound, sites)
-            charge.charge(certification_bound, "certification")
-            moves = np.abs(candidate[free] - points[free])
-            final = quotient_edge_lengths(candidate, edges, lifts, vectors)
-            if (
-                np.any(moves > target)
-                or not np.array_equal(candidate[protected], points[protected])
-                or np.any(final[mutable] > target)
-                or np.any(final[mutable] < minimum_size)
-                or np.count_nonzero(final[mutable] == target) < needed
-                or not _positive_scientific_cells(candidate, cells, shifts, vectors)
-            ):
-                candidate = None
-        return PeriodicSizeProposal(
-            candidate,
+        return _relocation_proposal(
+            placement.points,
             charge.work,
-            _EXTREME_METHOD.method_id,
-            int(extreme.status),
-            int(extreme.iterations),
-            int(extreme.value_evaluations),
-            int(extreme.actions),
-            int(polished.status),
+            extreme.result,
             needed,
-            int(np.count_nonzero(kept)),
+            int(polished.result.status),
+            kept,
             placement.nodes,
-            polish_record,
+            polished.record,
         )

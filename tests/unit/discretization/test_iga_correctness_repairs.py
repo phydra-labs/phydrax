@@ -38,7 +38,7 @@ from phydrax.discretization.iga._tspline import (
 )
 
 
-class _LineMap(phx.geometry.BoundaryMap):
+class _LineMap(phx.geometry.AbstractBoundaryMap):
     @property
     def num_charts(self) -> int:
         return 1

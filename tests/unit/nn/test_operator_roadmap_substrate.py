@@ -788,8 +788,13 @@ def test_pde_parameter_representation_is_declared_identity() -> None:
     # A one-component vector is a declaration, never a component-count inference.
     vector, scalar = problem("vector"), problem("scalar")
     assert phx.equations.infer_expression_type(velocity.divergence("x"), vector).is_scalar
-    with pytest.raises(ValueError, match="vector-valued"):
-        phx.equations.infer_expression_type(velocity.divergence("x"), scalar)
+    assert phx.equations.infer_expression_type(velocity.divergence("x"), scalar).is_scalar
+    assert (
+        phx.equations.infer_expression_type(velocity, vector).representation == "vector"
+    )
+    assert (
+        phx.equations.infer_expression_type(velocity, scalar).representation == "scalar"
+    )
     payload = json.loads(pde_ir_to_json(vector))
     assert payload["parameters"][0]["representation"] == "vector"
     assert pde_ir_from_json(pde_ir_to_json(vector)) == vector
@@ -803,7 +808,7 @@ def test_pde_parameter_representation_is_declared_identity() -> None:
     del payload["parameters"][0]["representation"]
     with pytest.raises(ValueError, match="representation"):
         phx.equations.pde_ir_from_dict(payload)
-    with pytest.raises(ValueError, match="exactly one component"):
+    with pytest.raises(ValueError, match=r"PDEParameter\.components"):
         phx.equations.PDEParameter("b", components=2)
     with pytest.raises(ValueError, match="representation"):
         # ty: ignore[invalid-argument-type]

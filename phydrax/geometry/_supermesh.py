@@ -22,33 +22,40 @@ interchange in three certified phases:
    vertices, in batches with a bounded working set, and the moments (optionally
    simplex partitions) are summed per cell pair.
 
-Nothing is repaired: uncertified cells, unresolved predicates, native item
+Uncertified cells, unresolved predicates, native item
 failures, coverage gaps, double coverage, and resource refusals are reported
 through :class:`CommonRefinementStatus` with evidence.
 """
 
 from __future__ import annotations
 
+import math
+from contextlib import nullcontext
 from enum import IntEnum, StrEnum
-from typing import Any, NamedTuple, TYPE_CHECKING
+from typing import NamedTuple
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from .. import _meshcore
+import phydrax._meshcore as meshcore_owner
+import phydrax.discretization._cell_complex as cell_complex_owner
+
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._geometry_predicates import orient2d, orient3d, PredicateMode
+from .._geometry_predicates import orient2d_host, orient3d_host, PredicateMode
+from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_integer
+from ..discretization._cell_geometry import CellGeometrySpec
+from ..discretization._cell_mesh import CellMesh
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._reference_cell_types import CellBlock, PolyhedralBlock
 from ..ein import contract
-
-
-if TYPE_CHECKING:
-    from ..discretization._cell_geometry import CellGeometrySpec
-    from ..discretization._cell_mesh import CellMesh
+from ..typing import checked, parse
 
 
 # Narrow-phase working set per native batch (inputs plus outputs).
@@ -74,7 +81,7 @@ class CommonRefinementStatus(IntEnum):
 
 
 class CommonRefinementCoverage(StrEnum):
-    """Which cell sets must be covered completely by the other mesh.
+    """Select which cell sets the overlap partition must cover.
 
     Over-coverage (double coverage) fails for every requirement.
     """
@@ -83,14 +90,6 @@ class CommonRefinementCoverage(StrEnum):
     TARGET = "target"
     SOURCE = "source"
     PARTIAL = "partial"
-
-
-def _limit(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
-        raise TypeError(f"{name} must be an integer.")
-    if value < 1:
-        raise ValueError(f"{name} must be positive.")
-    return int(value)
 
 
 class CommonRefinementPolicy(StrictModule):
@@ -108,7 +107,8 @@ class CommonRefinementPolicy(StrictModule):
     ``maximum_accepted_pairs`` bounds positive-measure entries, and
     ``maximum_memory_bytes`` bounds the retained artifact plus the narrow-phase
     working set.  ``second_moments`` fills the overlap second moments and
-    ``overlap_simplices`` retains the exact simplex partition of every overlap.
+    ``overlap_simplices`` retains the entire simplex partition of every overlap,
+    with intersection classifications determined by exact predicates.
     """
 
     predicate_mode: PredicateMode = eqx.field(static=True)
@@ -135,25 +135,31 @@ class CommonRefinementPolicy(StrictModule):
         second_moments: bool = False,
         overlap_simplices: bool = False,
     ) -> None:
-        if not isinstance(predicate_mode, PredicateMode):
-            raise TypeError("predicate_mode must be a PredicateMode.")
+        predicate_mode = parse(
+            predicate_mode, PredicateMode, "CommonRefinementPolicy.predicate_mode"
+        )
         if predicate_mode is PredicateMode.FILTERED_DEVICE:
             raise ValueError(
-                "Common refinement certifies on the host: use FILTERED or EXACT."
+                "CommonRefinementPolicy.predicate_mode must be FILTERED or EXACT for host certification; got FILTERED_DEVICE."
             )
-        if not isinstance(coverage, CommonRefinementCoverage):
-            raise TypeError("coverage must be a CommonRefinementCoverage.")
+        coverage = parse(
+            coverage, CommonRefinementCoverage, "CommonRefinementPolicy.coverage"
+        )
         if not isinstance(second_moments, bool) or not isinstance(
             overlap_simplices, bool
         ):
-            raise TypeError("second_moments and overlap_simplices must be bools.")
+            raise TypeError(
+                "CommonRefinementPolicy.moment_flags must be bools; got a different scalar kind."
+            )
         tolerance = float(coverage_tolerance)
         if not np.isfinite(tolerance) or not 0.0 <= tolerance < 1.0:
-            raise ValueError("coverage_tolerance must be finite and in [0, 1).")
-        candidates = _limit(maximum_candidate_pairs, "maximum_candidate_pairs")
-        accepted = _limit(maximum_accepted_pairs, "maximum_accepted_pairs")
-        memory = _limit(maximum_memory_bytes, "maximum_memory_bytes")
-        exact_work = _limit(maximum_exact_work, "maximum_exact_work")
+            raise ValueError(
+                f"CommonRefinementPolicy.coverage_tolerance must be finite and in [0, 1); got {tolerance}."
+            )
+        candidates = positive_integer(maximum_candidate_pairs, "maximum_candidate_pairs")
+        accepted = positive_integer(maximum_accepted_pairs, "maximum_accepted_pairs")
+        memory = positive_integer(maximum_memory_bytes, "maximum_memory_bytes")
+        exact_work = positive_integer(maximum_exact_work, "maximum_exact_work")
         self.predicate_mode = predicate_mode
         self.coverage = coverage
         self.coverage_tolerance = tolerance
@@ -176,6 +182,16 @@ class CommonRefinementPolicy(StrictModule):
                 "second_moments": second_moments,
                 "overlap_simplices": overlap_simplices,
             }
+        )
+
+    def native_limits(self) -> meshcore_owner.NativeExecutionLimits:
+        """Lower maximum_exact_work and managed-storage allowances; queries consume work."""
+        return meshcore_owner.NativeExecutionLimits(
+            self.maximum_exact_work,
+            self.maximum_exact_work,
+            0,
+            self.maximum_memory_bytes,
+            math.inf,
         )
 
 
@@ -209,6 +225,7 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
     working_bytes: int = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -220,12 +237,11 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
         target_measures: np.ndarray,
         source_tolerances: np.ndarray,
         target_tolerances: np.ndarray,
-        counts: _Counts,
+        counts: Counts,
         retained_bytes: int,
         working_bytes: int,
     ) -> None:
-        if not isinstance(status, CommonRefinementStatus):
-            raise TypeError("status must be a CommonRefinementStatus.")
+        status = parse(status, CommonRefinementStatus, "CommonRefinementEvidence.status")
         source_defects = np.asarray(source_coverage_defects, dtype=np.float64)
         target_defects = np.asarray(target_coverage_defects, dtype=np.float64)
         if (
@@ -234,15 +250,17 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
             or source_tolerances.shape != source_measures.shape
             or target_tolerances.shape != target_measures.shape
         ):
-            raise ValueError("Coverage defects must align with the cell measures.")
+            raise ValueError(
+                "CommonRefinementEvidence.coverage_arrays must align with the cell measures; got incompatible shapes."
+            )
         source_tolerance = np.asarray(source_tolerances, dtype=np.float64)
         target_tolerance = np.asarray(target_tolerances, dtype=np.float64)
         self.status = status
         self.reason = str(reason)
-        self.source_coverage_defects = jnp.asarray(source_defects)
-        self.target_coverage_defects = jnp.asarray(target_defects)
-        self.source_coverage_tolerances = jnp.asarray(source_tolerance)
-        self.target_coverage_tolerances = jnp.asarray(target_tolerance)
+        self.source_coverage_defects = jax.device_put(np.asarray(source_defects))
+        self.target_coverage_defects = jax.device_put(np.asarray(target_defects))
+        self.source_coverage_tolerances = jax.device_put(np.asarray(source_tolerance))
+        self.target_coverage_tolerances = jax.device_put(np.asarray(target_tolerance))
         self.source_gap_count = int(np.sum(-source_defects > source_tolerance))
         self.target_gap_count = int(np.sum(-target_defects > target_tolerance))
         self.source_double_count = int(np.sum(source_defects > source_tolerance))
@@ -272,6 +290,48 @@ class CommonRefinementEvidence(StrictModule, NonTrainableState):
                 "retained_bytes": self.retained_bytes,
                 "working_bytes": self.working_bytes,
             }
+        )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[CommonRefinementEvidence],
+        value: CommonRefinementEvidence,
+        /,
+        *,
+        source_measures: Array,
+        target_measures: Array,
+    ) -> CommonRefinementEvidence:
+        """Rebuild evidence with the measures retained by its refinement owner.
+
+        Stored tolerances and execution counts are constructor inputs, while gap
+        counts, relative defects, and the evidence identity are recomputed.
+        Registered replay authenticates every reconstructed stored field.
+        """
+        if type(value) is not cls:
+            raise TypeError(
+                "CommonRefinementEvidence.from_stored_fields.value must have the registered evidence type; "
+                f"got {type(value).__name__}."
+            )
+        return cls(
+            status=value.status,
+            reason=value.reason,
+            source_coverage_defects=np.asarray(value.source_coverage_defects),
+            target_coverage_defects=np.asarray(value.target_coverage_defects),
+            source_measures=np.asarray(source_measures),
+            target_measures=np.asarray(target_measures),
+            source_tolerances=np.asarray(value.source_coverage_tolerances),
+            target_tolerances=np.asarray(value.target_coverage_tolerances),
+            counts=Counts(
+                value.candidate_pair_count,
+                value.accepted_pair_count,
+                value.piece_pair_count,
+                value.uncertain_predicate_count,
+                value.invalid_cell_count,
+                value.intersection_failure_count,
+            ),
+            retained_bytes=value.retained_bytes,
+            working_bytes=value.working_bytes,
         )
 
 
@@ -327,22 +387,19 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
     evidence: CommonRefinementEvidence
     refinement_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
-        source: _Decomposition,
-        target: _Decomposition,
-        entries: _Entries,
+        source: Decomposition,
+        target: Decomposition,
+        entries: Entries,
         identities: tuple[str, str, str, str],
         policy: CommonRefinementPolicy,
         evidence: CommonRefinementEvidence,
         geometry_ids: tuple[str, str] | None = None,
         volume_error_bounds: np.ndarray | None = None,
     ) -> None:
-        if not isinstance(policy, CommonRefinementPolicy) or not isinstance(
-            evidence, CommonRefinementEvidence
-        ):
-            raise TypeError("policy and evidence must be common-refinement types.")
         dimension = source.first_moments.shape[1]
         count = entries.volumes.shape[0]
         offsets = np.zeros((target.cell_count + 1,), dtype=np.int32)
@@ -356,37 +413,49 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
             or entries.first_moments.shape != (count, dimension)
             or np.any(np.diff(entries.target_cells) < 0)
         ):
-            raise ValueError("Common-refinement entries must be target-grouped CSR.")
+            raise ValueError(
+                "PreparedCommonRefinement.entries must be target-grouped CSR; got incompatible arrays or row ordering."
+            )
         self.status = evidence.status
         self.dimension = dimension
         self.source_cell_count = source.cell_count
         self.target_cell_count = target.cell_count
-        self.target_offsets = jnp.asarray(offsets)
-        self.target_cells = jnp.asarray(entries.target_cells, dtype=jnp.int32)
-        self.source_cells = jnp.asarray(entries.source_cells, dtype=jnp.int32)
-        self.volumes = jnp.asarray(entries.volumes, dtype=jnp.float64)
-        self.first_moments = jnp.asarray(entries.first_moments, dtype=jnp.float64)
+        self.target_offsets = jax.device_put(np.asarray(offsets))
+        self.target_cells = jax.device_put(
+            np.asarray(entries.target_cells, dtype=np.int32)
+        )
+        self.source_cells = jax.device_put(
+            np.asarray(entries.source_cells, dtype=np.int32)
+        )
+        self.volumes = jax.device_put(np.asarray(entries.volumes, dtype=np.float64))
+        self.first_moments = jax.device_put(
+            np.asarray(entries.first_moments, dtype=np.float64)
+        )
         self.second_moments = (
             None
             if entries.second_moments is None
-            else jnp.asarray(entries.second_moments, dtype=jnp.float64)
+            else jax.device_put(np.asarray(entries.second_moments, dtype=np.float64))
         )
         self.simplex_offsets = (
             None
             if entries.simplex_offsets is None
-            else jnp.asarray(entries.simplex_offsets, dtype=jnp.int32)
+            else jax.device_put(np.asarray(entries.simplex_offsets, dtype=np.int32))
         )
         self.simplices = (
             None
             if entries.simplices is None
-            else jnp.asarray(entries.simplices, dtype=jnp.float64)
+            else jax.device_put(np.asarray(entries.simplices, dtype=np.float64))
         )
-        self.source_measures = jnp.asarray(source.measures)
-        self.source_first_moments = jnp.asarray(source.first_moments)
-        self.target_measures = jnp.asarray(target.measures)
-        self.target_first_moments = jnp.asarray(target.first_moments)
-        self.source_cell_global_ids = jnp.asarray(source.global_ids, dtype=jnp.int64)
-        self.target_cell_global_ids = jnp.asarray(target.global_ids, dtype=jnp.int64)
+        self.source_measures = jax.device_put(np.asarray(source.measures))
+        self.source_first_moments = jax.device_put(np.asarray(source.first_moments))
+        self.target_measures = jax.device_put(np.asarray(target.measures))
+        self.target_first_moments = jax.device_put(np.asarray(target.first_moments))
+        self.source_cell_global_ids = jax.device_put(
+            np.asarray(source.global_ids, dtype=np.int64)
+        )
+        self.target_cell_global_ids = jax.device_put(
+            np.asarray(target.global_ids, dtype=np.int64)
+        )
         (
             self.source_mesh_id,
             self.target_mesh_id,
@@ -407,9 +476,11 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
             or not np.all(np.isfinite(errors))
         ):
             raise ValueError(
-                "Common-refinement publication errors must align with overlap entries."
+                "PreparedCommonRefinement.volume_error_bounds must be finite, nonnegative, and align with overlap entries; got incompatible bounds."
             )
-        self.volume_error_bounds = None if errors is None else jnp.asarray(errors)
+        self.volume_error_bounds = (
+            None if errors is None else jax.device_put(np.asarray(errors))
+        )
         self.policy = policy
         self.evidence = evidence
         self.refinement_id = canonical_fingerprint(
@@ -429,6 +500,55 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[PreparedCommonRefinement],
+        value: PreparedCommonRefinement,
+        /,
+        *,
+        source_mesh: CellMesh,
+        target_mesh: CellMesh,
+        source_geometry: CellGeometrySpec | None = None,
+        target_geometry: CellGeometrySpec | None = None,
+    ) -> PreparedCommonRefinement:
+        """Repeat certification from retained meshes and coordinate geometry owners.
+
+        Decompositions and overlap entries are derived construction inputs, not
+        recoverable from the stored measures or array shapes. Registered replay
+        authenticates every result field, including coverage and resource
+        evidence, against the stored refinement.
+        """
+        if type(value) is not cls:
+            raise TypeError(
+                "PreparedCommonRefinement.from_stored_fields.value must have the registered refinement type; "
+                f"got {type(value).__name__}."
+            )
+        if (
+            source_mesh.mesh_id != value.source_mesh_id
+            or target_mesh.mesh_id != value.target_mesh_id
+            or source_mesh.topology_id != value.source_topology_id
+            or target_mesh.topology_id != value.target_topology_id
+        ):
+            raise ValueError(
+                "PreparedCommonRefinement.meshes must retain its source and target identities; got different mesh bindings."
+            )
+        if source_geometry is None and value.source_geometry_id != source_mesh.mesh_id:
+            raise ValueError(
+                "PreparedCommonRefinement.source_geometry must retain its declared construction input; got missing geometry."
+            )
+        if target_geometry is None and value.target_geometry_id != target_mesh.mesh_id:
+            raise ValueError(
+                "PreparedCommonRefinement.target_geometry must retain its declared construction input; got missing geometry."
+            )
+        return prepare_common_refinement(
+            source_mesh,
+            target_mesh,
+            policy=value.policy,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+        )
+
     @property
     def succeeded(self) -> bool:
         return self.status is CommonRefinementStatus.SUCCESS
@@ -441,7 +561,7 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
 # ---------------------------------------------------------------- host records
 
 
-class _Counts(NamedTuple):
+class Counts(NamedTuple):
     candidates: int
     accepted: int
     piece_pairs: int
@@ -450,7 +570,7 @@ class _Counts(NamedTuple):
     failures: int
 
 
-class _Decomposition(NamedTuple):
+class Decomposition(NamedTuple):
     """Certified convex pieces of every cell of one mesh (host arrays)."""
 
     cell_count: int
@@ -467,7 +587,7 @@ class _Decomposition(NamedTuple):
     uncertain: int
 
 
-class _Entries(NamedTuple):
+class Entries(NamedTuple):
     target_cells: np.ndarray
     source_cells: np.ndarray
     volumes: np.ndarray
@@ -488,15 +608,17 @@ class _PieceSigns(NamedTuple):
 def _orientation(points: tuple[np.ndarray, ...], mode: PredicateMode, /) -> _PieceSigns:
     match len(points):
         case 3:
-            result = orient2d(*points, mode=mode)
+            result = orient2d_host(*points, mode=mode)
         case 4:
-            result = orient3d(*points, mode=mode)
+            result = orient3d_host(*points, mode=mode)
         case _:
-            raise ValueError("Orientation needs three or four points.")
+            raise ValueError(
+                f"CommonRefinement.orientation_points must contain three or four points; got {len(points)}."
+            )
     return _PieceSigns(np.asarray(result.signs), np.asarray(result.certain))
 
 
-def _cone_decomposition(
+def cone_decomposition(
     coordinates: np.ndarray,
     facets: np.ndarray,
     facet_valid: np.ndarray,
@@ -516,7 +638,7 @@ def _cone_decomposition(
     apex = np.full((cells,), -1, dtype=np.int64)
     keep = np.zeros(facets.shape[:2], dtype=np.bool_)
     uncertain_seen = np.zeros((cells,), dtype=np.bool_)
-    unresolved = np.arange(cells)
+    unresolved = np.arange(cells, dtype=np.int64)
     # Bounded static loop over the candidate width (cell vertex count).
     for column in range(candidates.shape[1]):
         if unresolved.size == 0:
@@ -564,7 +686,7 @@ def _polygon_moments(
     """Unsigned area and first moment of padded convex polygons ``(P, K, 2)``."""
 
     width = vertices.shape[1]
-    slots = np.arange(width)
+    slots = np.arange(width, dtype=np.int64)
     present = slots[None, :] < counts[:, None]
     origin = np.sum(np.where(present[..., None], vertices, 0.0), axis=1) / counts[
         :, None
@@ -625,11 +747,11 @@ def _polygon_block_pieces(
     negative = np.any(known & (turns.signs == -1), axis=1)
     undecided = np.any(~known, axis=1)
     convex = (positive ^ negative) & ~undecided
-    rows = np.arange(count)
+    rows = np.arange(count, dtype=np.int64)
     whole = rows[convex]
     concave = rows[~convex]
     edges = np.stack((cells[concave], np.roll(cells[concave], -1, axis=1)), axis=2)
-    apex, keep, invalid, uncertain = _cone_decomposition(
+    apex, keep, invalid, uncertain = cone_decomposition(
         coordinates,
         edges,
         np.ones(edges.shape[:2], dtype=np.bool_),
@@ -669,15 +791,13 @@ def _polygon_block_pieces(
 def _standard_face_triangles(cells: np.ndarray, kind: str, /) -> np.ndarray:
     """Oriented face triangles ``(n, T, 3)`` of standard volume cells."""
 
-    from ..discretization._cell_complex import _POLYHEDRAL_FACE_ROUTES
-
     triangles = []
-    for route in _POLYHEDRAL_FACE_ROUTES[kind]:
+    for route in cell_complex_owner.POLYHEDRAL_FACE_ROUTES[kind]:
         loops = cells[:, route]
         size = len(route)
         start = np.argmin(loops, axis=1)
         rotated = np.take_along_axis(
-            loops, (start[:, None] + np.arange(size)) % size, axis=1
+            loops, (start[:, None] + np.arange(size, dtype=np.int64)) % size, axis=1
         )
         triangles.append(
             np.stack(
@@ -692,8 +812,12 @@ def _standard_face_triangles(cells: np.ndarray, kind: str, /) -> np.ndarray:
     return np.concatenate(triangles, axis=1)
 
 
-def _polyhedral_face_triangles(
-    connectivity: Any, first_cell: int, cell_count: int, /
+@checked
+def polyhedral_face_triangles(
+    connectivity: cell_complex_owner.PolyhedralConnectivity,
+    first_cell: int,
+    cell_count: int,
+    /,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Cell-oriented face triangles of explicit polyhedra from packed incidence."""
 
@@ -705,19 +829,21 @@ def _polyhedral_face_triangles(
     faces = np.asarray(connectivity.cell_face_values, dtype=np.int64)[begin:end]
     signs = np.asarray(connectivity.cell_face_sign_values)[begin:end]
     owner = np.repeat(
-        np.arange(cell_count),
+        np.arange(cell_count, dtype=np.int64),
         np.diff(cell_face_offsets[first_cell : first_cell + cell_count + 1]),
     )
     sizes = face_offsets[faces + 1] - face_offsets[faces]
     starts = face_offsets[faces]
-    incidence = np.repeat(np.arange(faces.size), sizes)
-    local = np.arange(incidence.size) - np.repeat(np.cumsum(sizes) - sizes, sizes)
+    incidence = np.repeat(np.arange(faces.size, dtype=np.int64), sizes)
+    local = np.arange(incidence.size, dtype=np.int64) - np.repeat(
+        np.cumsum(sizes) - sizes, sizes
+    )
     values = face_values[starts[incidence] + local]
     smallest = np.minimum.reduceat(values, np.cumsum(sizes) - sizes)
     anchor = local[values == smallest[incidence]]
-    triangle_incidence = np.repeat(np.arange(faces.size), sizes - 2)
+    triangle_incidence = np.repeat(np.arange(faces.size, dtype=np.int64), sizes - 2)
     step = (
-        np.arange(triangle_incidence.size)
+        np.arange(triangle_incidence.size, dtype=np.int64)
         - np.repeat(np.cumsum(sizes - 2) - (sizes - 2), sizes - 2)
         + 1
     )
@@ -726,7 +852,7 @@ def _polyhedral_face_triangles(
     origin = starts[triangle_incidence]
     corner = anchor[triangle_incidence]
 
-    def vertex(offset: Any) -> Any:
+    def vertex(offset: np.ndarray) -> np.ndarray:
         return face_values[origin + (corner + direction * offset) % size]
 
     triangles = np.stack(
@@ -735,7 +861,7 @@ def _polyhedral_face_triangles(
     triangle_cells = owner[triangle_incidence]
     per_cell = np.bincount(triangle_cells, minlength=cell_count)
     width = int(np.max(per_cell))
-    slot = np.arange(triangle_cells.size) - np.repeat(
+    slot = np.arange(triangle_cells.size, dtype=np.int64) - np.repeat(
         np.cumsum(per_cell) - per_cell, per_cell
     )
     padded = np.zeros((cell_count, width, 3), dtype=np.int64)
@@ -756,7 +882,7 @@ def _volume_block_pieces(
 ) -> _BlockPieces:
     ordered = np.sort(np.where(vertex_valid, cells, np.iinfo(np.int64).max), axis=1)
     candidate_valid = ordered != np.iinfo(np.int64).max
-    apex, keep, invalid, uncertain = _cone_decomposition(
+    apex, keep, invalid, uncertain = cone_decomposition(
         coordinates,
         triangles,
         triangle_valid,
@@ -770,7 +896,12 @@ def _volume_block_pieces(
 
 
 def _block_pieces(
-    mesh: CellMesh, block: Any, first_cell: int, coordinates: np.ndarray, mode: Any, /
+    mesh: CellMesh,
+    block: CellBlock | PolyhedralBlock,
+    first_cell: int,
+    coordinates: np.ndarray,
+    mode: PredicateMode,
+    /,
 ) -> _BlockPieces:
     cells = np.asarray(block.vertices, dtype=np.int64)
     match block.cell_kind:
@@ -780,23 +911,27 @@ def _block_pieces(
             triangles = _standard_face_triangles(cells, block.cell_kind)
             triangle_valid = np.ones(triangles.shape[:2], dtype=np.bool_)
         case "polyhedron":
-            from ..discretization._cell_complex import PolyhedralConnectivity
-
-            if not isinstance(mesh.connectivity, PolyhedralConnectivity):
-                raise ValueError("Polyhedral blocks require polyhedral connectivity.")
+            if not isinstance(
+                mesh.connectivity, cell_complex_owner.PolyhedralConnectivity
+            ):
+                raise ValueError(
+                    "CommonRefinement.connectivity must be polyhedral for polyhedral blocks; got a different connectivity kind."
+                )
             identifiers = np.asarray(mesh.connectivity.cell_global_ids, dtype=np.int64)
             if not np.array_equal(
                 identifiers[first_cell : first_cell + block.cell_count],
                 np.asarray(block.global_ids, dtype=np.int64),
             ):
                 raise ValueError(
-                    "Polyhedral connectivity cells must follow the mesh block order."
+                    "CommonRefinement.connectivity.cell_global_ids must follow the mesh block order; got different identifiers."
                 )
-            triangles, triangle_valid = _polyhedral_face_triangles(
+            triangles, triangle_valid = polyhedral_face_triangles(
                 mesh.connectivity, first_cell, block.cell_count
             )
         case _:
-            raise ValueError(f"Unsupported cell kind {block.cell_kind!r}.")
+            raise ValueError(
+                f"CommonRefinement.cell_kind must support convex decomposition; got {block.cell_kind!r}."
+            )
     return _volume_block_pieces(
         coordinates,
         cells,
@@ -807,8 +942,8 @@ def _block_pieces(
     )
 
 
-def _decompose(mesh: CellMesh, mode: PredicateMode, /) -> _Decomposition:
-    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
+def _decompose(mesh: CellMesh, mode: PredicateMode, /) -> Decomposition:
+    coordinates = np.asarray(jax.device_get(mesh.coordinates), dtype=np.float64)
     dimension = mesh.topological_dimension
     cell_parts, vertex_parts, count_parts = [], [], []
     minima, maxima, invalid, uncertain, identifiers = [], [], [], [], []
@@ -856,7 +991,7 @@ def _decompose(mesh: CellMesh, mode: PredicateMode, /) -> _Decomposition:
         ],
         axis=1,
     )
-    return _Decomposition(
+    return Decomposition(
         cell_count=cell_count,
         global_ids=np.concatenate(identifiers),
         pieces=pieces,
@@ -872,8 +1007,8 @@ def _decompose(mesh: CellMesh, mode: PredicateMode, /) -> _Decomposition:
 
 
 def _outside_exact_domain(mesh: CellMesh, /) -> bool:
-    minimum, maximum = _meshcore.meshcore_exact_domain()
-    magnitude = np.abs(np.asarray(mesh.coordinates, dtype=np.float64))
+    minimum, maximum = meshcore_owner.meshcore_exact_domain()
+    magnitude = np.abs(np.asarray(jax.device_get(mesh.coordinates), dtype=np.float64))
     nonzero = magnitude[magnitude != 0.0]
     return bool(
         np.any(nonzero < np.ldexp(1.0, minimum))
@@ -885,7 +1020,7 @@ def _outside_exact_domain(mesh: CellMesh, /) -> bool:
 
 
 def _candidate_pairs(
-    source: _Decomposition, target: _Decomposition, limit: int, /
+    source: Decomposition, target: Decomposition, limit: int, /
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """All positive-extent box overlaps sorted by (target, source); None if refused."""
 
@@ -911,18 +1046,22 @@ def _candidate_pairs(
 # ---------------------------------------------------------------- narrow phase
 
 
-class _Batch(NamedTuple):
+class _SimplexPartition(StrictModule):
+    simplices: np.ndarray
+    counts: np.ndarray
+
+
+class _Batch(StrictModule):
     pair: np.ndarray
     volume: np.ndarray
     moment: np.ndarray
     status: np.ndarray
-    simplices: np.ndarray | None
-    simplex_counts: np.ndarray | None
+    partition: _SimplexPartition | None
 
 
 def _clip_batch(
-    source: _Decomposition,
-    target: _Decomposition,
+    source: Decomposition,
+    target: Decomposition,
     target_cells: np.ndarray,
     source_cells: np.ndarray,
     simplices: bool,
@@ -933,34 +1072,51 @@ def _clip_batch(
     source_counts = np.diff(source.piece_offsets)[source_cells]
     target_counts = np.diff(target.piece_offsets)[target_cells]
     per_pair = source_counts * target_counts
-    pair = np.repeat(np.arange(target_cells.size), per_pair)
-    local = np.arange(pair.size) - np.repeat(np.cumsum(per_pair) - per_pair, per_pair)
+    pair = np.repeat(np.arange(target_cells.size, dtype=np.int64), per_pair)
+    local = np.arange(pair.size, dtype=np.int64) - np.repeat(
+        np.cumsum(per_pair) - per_pair, per_pair
+    )
     source_piece = source.piece_offsets[source_cells][pair] + local // target_counts[pair]
     target_piece = target.piece_offsets[target_cells][pair] + local % target_counts[pair]
-    if source.piece_counts is None:
-        first = source.pieces[source_piece]
-        second = target.pieces[target_piece]
-        if simplices:
-            parts, counts, volume, moment, status = (
-                _meshcore.tetrahedron_intersection_simplices(first, second)
+    match (source.piece_counts, target.piece_counts):
+        case (None, None):
+            first = source.pieces[source_piece]
+            second = target.pieces[target_piece]
+            if simplices:
+                native = meshcore_owner.tetrahedron_intersection_simplices(first, second)
+                return _Batch(
+                    pair,
+                    native.volume,
+                    native.first_moment,
+                    native.status,
+                    _SimplexPartition(native.simplices, native.simplex_counts),
+                )
+            volume, moment, status = meshcore_owner.tetrahedron_intersection_moments(
+                first, second
             )
-            return _Batch(pair, volume, moment, status, parts, counts)
-        volume, moment, status = _meshcore.tetrahedron_intersection_moments(first, second)
-        return _Batch(pair, volume, moment, status, None, None)
-    arguments = (
-        source.pieces[source_piece],
-        source.piece_counts[source_piece],
-        target.pieces[target_piece],
-        # ty: ignore[not-subscriptable]
-        target.piece_counts[target_piece],
-    )
+            return _Batch(pair, volume, moment, status, None)
+        case (np.ndarray() as source_counts, np.ndarray() as target_counts):
+            arguments = (
+                source.pieces[source_piece],
+                source_counts[source_piece],
+                target.pieces[target_piece],
+                target_counts[target_piece],
+            )
+        case _:
+            raise ValueError(
+                "CommonRefinement.piece_counts must describe matching decomposition dimensions; got different banks."
+            )
     if simplices:
-        parts, counts, volume, moment, status = _meshcore.polygon_intersection_simplices(
-            *arguments
+        native = meshcore_owner.polygon_intersection_simplices(*arguments)
+        return _Batch(
+            pair,
+            native.area,
+            native.first_moment,
+            native.status,
+            _SimplexPartition(native.simplices, native.simplex_counts),
         )
-        return _Batch(pair, volume, moment, status, parts, counts)
-    volume, moment, status = _meshcore.polygon_intersection_moments(*arguments)
-    return _Batch(pair, volume, moment, status, None, None)
+    volume, moment, status = meshcore_owner.polygon_intersection_moments(*arguments)
+    return _Batch(pair, volume, moment, status, None)
 
 
 def _simplex_second_moments(simplices: np.ndarray, /) -> np.ndarray:
@@ -981,7 +1137,9 @@ def _simplex_second_moments(simplices: np.ndarray, /) -> np.ndarray:
             )
             scale = measure / 20.0
         case _:
-            raise ValueError("Simplex second moments need dimension 2 or 3.")
+            raise ValueError(
+                f"CommonRefinement.simplex_dimension must be 2 or 3; got {dimension}."
+            )
     total = np.sum(simplices, axis=1)
     products = contract("skd,ske->sde", simplices, simplices) + contract(
         "sd,se->sde", total, total
@@ -989,21 +1147,22 @@ def _simplex_second_moments(simplices: np.ndarray, /) -> np.ndarray:
     return scale[:, None, None] * products
 
 
-class _BatchResult(NamedTuple):
+class _BatchResult(StrictModule):
     keep: np.ndarray
     volumes: np.ndarray
     moments: np.ndarray
     second: np.ndarray | None
-    simplex_counts: np.ndarray | None
-    simplices: np.ndarray | None
-    uncertain: int
-    failures: int
+    partition: _SimplexPartition | None
+    uncertain: int = eqx.field(static=True)
+    failures: int = eqx.field(static=True)
 
 
-def _reduce_batch(batch: _Batch, pair_count: int, policy: Any, dimension: int, /) -> Any:
-    failed = batch.status != int(_meshcore.MeshcoreStatus.OK)
-    outside = (batch.status == int(_meshcore.MeshcoreStatus.RANGE_ERROR)) | (
-        batch.status == int(_meshcore.MeshcoreStatus.NONFINITE_INPUT)
+def _reduce_batch(
+    batch: _Batch, pair_count: int, policy: CommonRefinementPolicy, dimension: int, /
+) -> _BatchResult:
+    failed = batch.status != int(meshcore_owner.MeshcoreStatus.OK)
+    outside = (batch.status == int(meshcore_owner.MeshcoreStatus.RANGE_ERROR)) | (
+        batch.status == int(meshcore_owner.MeshcoreStatus.NONFINITE_INPUT)
     )
     volumes = np.bincount(batch.pair, weights=batch.volume, minlength=pair_count)
     moments = np.stack(
@@ -1015,14 +1174,13 @@ def _reduce_batch(batch: _Batch, pair_count: int, policy: Any, dimension: int, /
     )
     keep = volumes > 0.0
     second = None
-    kept_simplices = None
-    kept_counts = None
-    if batch.simplices is not None:
-        slots = np.arange(batch.simplices.shape[1])
-        # ty: ignore[not-subscriptable]
-        present = slots[None, :] < batch.simplex_counts[:, None]
+    kept_partition = None
+    partition = batch.partition
+    if partition is not None:
+        slots = np.arange(partition.simplices.shape[1], dtype=np.int64)
+        present = slots[None, :] < partition.counts[:, None]
         simplex_pair = np.broadcast_to(batch.pair[:, None], present.shape)[present]
-        flat = batch.simplices[present]
+        flat = partition.simplices[present]
         if policy.second_moments:
             products = _simplex_second_moments(flat).reshape(
                 (flat.shape[0], dimension * dimension)
@@ -1038,23 +1196,23 @@ def _reduce_batch(batch: _Batch, pair_count: int, policy: Any, dimension: int, /
             ).reshape((pair_count, dimension, dimension))[keep]
         if policy.overlap_simplices:
             retained = keep[simplex_pair]
-            kept_simplices = flat[retained]
-            kept_counts = np.bincount(simplex_pair, minlength=pair_count)[keep]
+            kept_partition = _SimplexPartition(
+                flat[retained], np.bincount(simplex_pair, minlength=pair_count)[keep]
+            )
     return _BatchResult(
         keep,
         volumes[keep],
         moments[keep],
         second,
-        kept_counts,
-        kept_simplices,
+        kept_partition,
         int(np.sum(outside)),
         int(np.sum(failed & ~outside)),
     )
 
 
 def _batch_bounds(
-    source: _Decomposition,
-    target: _Decomposition,
+    source: Decomposition,
+    target: Decomposition,
     target_cells: np.ndarray,
     source_cells: np.ndarray,
     pair_bytes: int,
@@ -1068,14 +1226,16 @@ def _batch_bounds(
     )
     cumulative = np.cumsum(per_pair * pair_bytes)
     capacity = max(_BATCH_BYTES, pair_bytes)
-    marks = np.arange(capacity, cumulative[-1] if cumulative.size else 0, capacity)
+    marks = np.arange(
+        capacity, cumulative[-1] if cumulative.size else 0, capacity, dtype=np.int64
+    )
     bounds = np.searchsorted(cumulative, marks, side="right")
     return np.unique(np.concatenate(([0], bounds, [target_cells.size])))
 
 
 def _piece_pair_bytes(
-    source: _Decomposition, target: _Decomposition, policy: Any, /
-) -> Any:
+    source: Decomposition, target: Decomposition, policy: CommonRefinementPolicy, /
+) -> int:
     simplices = policy.second_moments or policy.overlap_simplices
     if source.piece_counts is None:
         inputs = 2 * 12 * 8
@@ -1091,8 +1251,8 @@ def _piece_pair_bytes(
 
 
 class _NarrowResult(NamedTuple):
-    entries: _Entries | None
-    counts: _Counts
+    entries: Entries | None
+    counts: Counts
     retained_bytes: int
     working_bytes: int
 
@@ -1103,15 +1263,14 @@ def _entries_bytes(parts: list[_BatchResult], dimension: int, /) -> int:
         total += part.volumes.size * (4 + 4 + 8 + 8 * dimension)
         if part.second is not None:
             total += part.second.nbytes
-        if part.simplices is not None:
-            # ty: ignore[unresolved-attribute]
-            total += part.simplices.nbytes + 4 * part.simplex_counts.size
+        if part.partition is not None:
+            total += part.partition.simplices.nbytes + 4 * part.partition.counts.size
     return total
 
 
 def _narrow_phase(
-    source: _Decomposition,
-    target: _Decomposition,
+    source: Decomposition,
+    target: Decomposition,
     target_cells: np.ndarray,
     source_cells: np.ndarray,
     policy: CommonRefinementPolicy,
@@ -1139,34 +1298,50 @@ def _narrow_phase(
         uncertain += result.uncertain
         failures += result.failures
         retained = _entries_bytes(parts, dimension)
-        counts = _Counts(target_cells.size, accepted, piece_pairs, uncertain, 0, failures)
+        counts = Counts(target_cells.size, accepted, piece_pairs, uncertain, 0, failures)
         if (
             accepted > policy.maximum_accepted_pairs
             or retained + working > policy.maximum_memory_bytes
         ):
             return _NarrowResult(None, counts, retained, working)
-    counts = _Counts(target_cells.size, accepted, piece_pairs, uncertain, 0, failures)
+    counts = Counts(target_cells.size, accepted, piece_pairs, uncertain, 0, failures)
     selected = np.concatenate(kept_pairs) if kept_pairs else np.empty((0,), np.int64)
-    entries = _Entries(
+    entries = Entries(
         target_cells=target_cells[selected],
         source_cells=source_cells[selected],
         volumes=_joined([part.volumes for part in parts], (0,)),
         first_moments=_joined([part.moments for part in parts], (0, dimension)),
         second_moments=(
-            # ty: ignore[invalid-argument-type]
-            _joined([part.second for part in parts], (0, dimension, dimension))
+            _joined(
+                [part.second for part in parts if part.second is not None],
+                (0, dimension, dimension),
+            )
             if policy.second_moments
             else None
         ),
         simplex_offsets=(
-            # ty: ignore[invalid-argument-type]
-            _offsets(_joined([part.simplex_counts for part in parts], (0,)))
+            _offsets(
+                _joined(
+                    [
+                        part.partition.counts
+                        for part in parts
+                        if part.partition is not None
+                    ],
+                    (0,),
+                )
+            )
             if policy.overlap_simplices
             else None
         ),
         simplices=(
-            # ty: ignore[invalid-argument-type]
-            _joined([part.simplices for part in parts], (0, dimension + 1, dimension))
+            _joined(
+                [
+                    part.partition.simplices
+                    for part in parts
+                    if part.partition is not None
+                ],
+                (0, dimension + 1, dimension),
+            )
             if policy.overlap_simplices
             else None
         ),
@@ -1189,9 +1364,9 @@ def _offsets(counts: np.ndarray, /) -> np.ndarray:
 # ---------------------------------------------------------------- assembly
 
 
-def _empty_entries(dimension: int, policy: CommonRefinementPolicy, /) -> _Entries:
+def _empty_entries(dimension: int, policy: CommonRefinementPolicy, /) -> Entries:
     index = np.empty((0,), dtype=np.int64)
-    return _Entries(
+    return Entries(
         target_cells=index,
         source_cells=index.copy(),
         volumes=np.empty((0,), dtype=np.float64),
@@ -1213,7 +1388,7 @@ def _empty_entries(dimension: int, policy: CommonRefinementPolicy, /) -> _Entrie
 
 
 def _coverage_tolerances(
-    part: _Decomposition, policy: CommonRefinementPolicy, /
+    part: Decomposition, policy: CommonRefinementPolicy, /
 ) -> np.ndarray:
     diameter = np.sqrt(np.sum((part.bbox_max - part.bbox_min) ** 2, axis=1))
     dimension = part.bbox_min.shape[1]
@@ -1248,7 +1423,9 @@ def _coverage_status(
         case CommonRefinementCoverage.PARTIAL:
             gap = False
         case _:
-            raise ValueError(f"Unsupported coverage requirement {policy.coverage!r}.")
+            raise ValueError(
+                f"CommonRefinementPolicy.coverage must be a supported coverage requirement; got {policy.coverage!r}."
+            )
     if gap:
         return (
             CommonRefinementStatus.COVERAGE_GAP,
@@ -1257,29 +1434,28 @@ def _coverage_status(
     return CommonRefinementStatus.SUCCESS, "certified common refinement"
 
 
-def _validate_meshes(source: Any, target: Any, policy: Any, /) -> None:
-    from ..discretization._cell_mesh import CellMesh
+def _validate_meshes(
+    source: CellMesh, target: CellMesh, policy: CommonRefinementPolicy, /
+) -> None:
 
-    if not isinstance(source, CellMesh) or not isinstance(target, CellMesh):
-        raise TypeError("source and target must be CellMesh instances.")
-    if not isinstance(policy, CommonRefinementPolicy):
-        raise TypeError("policy must be a CommonRefinementPolicy.")
     dimension = source.topological_dimension
     if dimension not in (2, 3):
-        raise ValueError("Common refinement supports two- and three-dimensional cells.")
+        raise ValueError(
+            f"CommonRefinement.topological_dimension must be 2 or 3; got {dimension}."
+        )
     if (
         target.topological_dimension != dimension
         or source.ambient_dimension != dimension
         or target.ambient_dimension != dimension
     ):
         raise ValueError(
-            "Source and target must share one topological dimension equal to their "
-            "ambient dimension."
+            "CommonRefinement.mesh_dimensions must share one topological dimension "
+            "equal to the ambient dimension; got incompatible source and target dimensions."
         )
 
 
 def _decomposition_failure(
-    outside: bool, counts: _Counts, /
+    outside: bool, counts: Counts, /
 ) -> tuple[CommonRefinementStatus, str] | None:
     if outside:
         return (
@@ -1299,6 +1475,7 @@ def _decomposition_failure(
     return None
 
 
+@checked
 def prepare_common_refinement(
     source: CellMesh,
     target: CellMesh,
@@ -1307,6 +1484,8 @@ def prepare_common_refinement(
     policy: CommonRefinementPolicy = CommonRefinementPolicy(),
     source_geometry: CellGeometrySpec | None = None,
     target_geometry: CellGeometrySpec | None = None,
+    scope: meshcore_owner.NativeExecutionScope | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> PreparedCommonRefinement:
     """Certify the common refinement of two cell meshes of one dimension.
 
@@ -1315,14 +1494,79 @@ def prepare_common_refinement(
     with empty entries when the narrow phase could not run.
     """
 
+    # _exact_power_refinement consumes these policy and result declarations; import after they load.
+    import phydrax.geometry._exact_power_refinement as exact_power_refinement_owner
+
     _validate_meshes(source, target, policy)
     if source_geometry is not None or target_geometry is not None:
-        from ._exact_power_refinement import prepare_exact_power_refinement
-
-        return prepare_exact_power_refinement(
-            source, target, source_geometry, target_geometry, policy
+        if budget is not None and not budget.ticket.settled:
+            with budget.activate():
+                return exact_power_refinement_owner.prepare_exact_power_refinement(
+                    source,
+                    target,
+                    source_geometry,
+                    target_geometry,
+                    policy,
+                    budget=budget,
+                )
+        if scope is None:
+            ticket = HostBatchTicket(
+                policy.maximum_exact_work,
+                queries_upper=policy.maximum_candidate_pairs,
+                bytes_upper=policy.maximum_memory_bytes,
+            )
+        else:
+            remaining = scope.remaining()
+            ticket = scope.batch(
+                min(policy.maximum_exact_work, remaining.remaining_work_units),
+                queries_upper=min(
+                    policy.maximum_candidate_pairs, remaining.remaining_geometry_queries
+                ),
+                bytes_upper=min(
+                    policy.maximum_memory_bytes, remaining.remaining_managed_bytes
+                ),
+            )
+        if budget is not None:
+            with budget.bind_ticket(ticket):
+                return exact_power_refinement_owner.prepare_exact_power_refinement(
+                    source,
+                    target,
+                    source_geometry,
+                    target_geometry,
+                    policy,
+                    budget=budget,
+                )
+        view = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=policy.maximum_exact_work,
+            maximum_memory_bytes=policy.maximum_memory_bytes,
         )
-    _meshcore.load_meshcore()
+        with ticket, view.activate():
+            return exact_power_refinement_owner.prepare_exact_power_refinement(
+                source, target, source_geometry, target_geometry, policy, budget=view
+            )
+    with (
+        meshcore_owner.NativeExecutionScope(policy.native_limits())
+        if scope is None
+        else nullcontext(scope)
+    ) as execution:
+        return prepare_common_refinement_active(
+            source, target, policy=policy, scope=execution
+        )
+
+
+@checked
+def prepare_common_refinement_active(
+    source: CellMesh,
+    target: CellMesh,
+    /,
+    *,
+    policy: CommonRefinementPolicy,
+    scope: meshcore_owner.NativeExecutionScope,
+) -> PreparedCommonRefinement:
+    """Prepare native intersections under the request's explicit execution scope."""
+    _validate_meshes(source, target, policy)
+    meshcore_owner.load_meshcore()
     identities = (
         source.mesh_id,
         target.mesh_id,
@@ -1330,8 +1574,8 @@ def prepare_common_refinement(
         target.topology_id,
     )
     outside = _outside_exact_domain(source) or _outside_exact_domain(target)
-    # Outside the exact domain native predicates refuse the call; the filter
-    # still yields the evidence measures while the status fails closed.
+    # Outside the supported coordinate-exponent range, native predicates refuse;
+    # the filter still yields evidence measures while the status fails closed.
     mode = PredicateMode.FILTERED if outside else policy.predicate_mode
     first = _decompose(source, mode)
     second = _decompose(target, mode)
@@ -1340,7 +1584,7 @@ def prepare_common_refinement(
         for part in (first, second)
         for array in (part.pieces, part.piece_offsets, part.bbox_min, part.bbox_max)
     )
-    counts = _Counts(
+    counts = Counts(
         0, 0, 0, first.uncertain + second.uncertain, first.invalid + second.invalid, 0
     )
     failure = _decomposition_failure(outside, counts)
@@ -1407,10 +1651,10 @@ def prepare_common_refinement(
 
 
 def _prepared(
-    source: _Decomposition,
-    target: _Decomposition,
-    entries: _Entries | None,
-    counts: _Counts,
+    source: Decomposition,
+    target: Decomposition,
+    entries: Entries | None,
+    counts: Counts,
     status: CommonRefinementStatus | None,
     reason: str,
     identities: tuple[str, str, str, str],

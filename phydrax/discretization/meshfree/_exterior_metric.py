@@ -94,7 +94,7 @@ from ...optim import (
     ZeroCone,
 )
 from ...sparse import EdgeRelation, SparseCoordinateOperator
-from ...sparse._linear import _SparseStoragePlan
+from ...sparse._linear import SparseStoragePlan
 from ...typing import Bool, Dim, Float64, Int32, parse, Scalar
 from ._metric_multilevel import metric_jet_transfers
 
@@ -435,7 +435,7 @@ def _coordinate_operator(
     values: Array,
     source: ArraySpace,
     target: ArraySpace,
-    storage: _SparseStoragePlan,
+    storage: SparseStoragePlan,
     *,
     symmetric: bool = False,
     positive: bool = False,
@@ -555,11 +555,11 @@ class PreparedMeshfreeMetric(StrictModule):
     geometry: MeshfreeMetricGeometry | None
     preconditioner_levels: tuple[int, ...] = eqx.field(static=True)
     conic_relation: EdgeRelation
-    conic_storage: _SparseStoragePlan
+    conic_storage: SparseStoragePlan
     conic_source: ArraySpace
     conic_target: ArraySpace
     objective_relation: EdgeRelation
-    objective_storage: _SparseStoragePlan
+    objective_storage: SparseStoragePlan
     conic_prepared: PreparedConvexProgram | None
     row_nodes: Int32[_MomentRowDim]
     row_moments: Int32[_MomentRowDim]
@@ -771,7 +771,7 @@ class PreparedMeshfreeMetric(StrictModule):
             source_size=variables,
             target_size=equalities + edges,
         )
-        conic_storage = _SparseStoragePlan(conic_relation)
+        conic_storage = SparseStoragePlan(conic_relation)
         conic_source = ArraySpace(
             (variables,),
             dtype=jnp.float64,
@@ -788,7 +788,7 @@ class PreparedMeshfreeMetric(StrictModule):
             source_size=variables,
             target_size=variables,
         )
-        objective_storage = _SparseStoragePlan(objective_relation)
+        objective_storage = SparseStoragePlan(objective_relation)
         conic_prepared: PreparedConvexProgram | None = None
         if policy.sign == "nonnegative":
             initial_values = jnp.asarray(coefficients[conic_routes], dtype=jnp.float64)

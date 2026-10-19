@@ -28,10 +28,10 @@ from ..linalg import (
 )
 from ..linalg._operators import _validate_properties
 from ..linalg._spaces import (
-    _coordinate_dtype,
     _coordinate_pairing_weights,
     _has_diagonal_pairing,
     _has_euclidean_pairing,
+    coordinate_dtype,
 )
 from ..typing import checked, parse, PRNGKey
 from ._coloring import (
@@ -204,7 +204,7 @@ class SparseDerivativePlan(StrictModule):
         argument_structure, argument_specs = _argument_signature(arguments_)
         scale = (
             jnp.ones(
-                coloring.pattern.relation.route_shape, dtype=_coordinate_dtype(target)
+                coloring.pattern.relation.route_shape, dtype=coordinate_dtype(target)
             )
             if coefficient_scale is None
             else jnp.asarray(coefficient_scale)
@@ -232,7 +232,7 @@ class SparseDerivativePlan(StrictModule):
             jnp.zeros(
                 coloring.pattern.relation.route_shape,
                 dtype=(
-                    _coordinate_dtype(target)
+                    coordinate_dtype(target)
                     if precision.coefficient is None
                     else jnp.dtype(precision.coefficient)
                 ),
@@ -437,8 +437,8 @@ def compile_sparse_jacobian(
     point_ = source.validate(point)
     if complex_semantics not in (None, "holomorphic", "real-frechet"):
         raise ValueError("complex_semantics must be holomorphic or real-frechet.")
-    source_complex = jnp.issubdtype(_coordinate_dtype(source), jnp.complexfloating)
-    target_complex = jnp.issubdtype(_coordinate_dtype(target), jnp.complexfloating)
+    source_complex = jnp.issubdtype(coordinate_dtype(source), jnp.complexfloating)
+    target_complex = jnp.issubdtype(coordinate_dtype(target), jnp.complexfloating)
     if source_coordinates is not None:
         if source_coordinates.source_space.space_id != source.space_id:
             raise ValueError("Source coordinate map does not match source space.")
@@ -541,7 +541,7 @@ def compile_sparse_hessian(
     else:
         execution_space = space
         execution_point = point_
-    if jnp.issubdtype(_coordinate_dtype(execution_space), jnp.complexfloating):
+    if jnp.issubdtype(coordinate_dtype(execution_space), jnp.complexfloating):
         raise ValueError("Complex Hessians require an explicit real-coordinate map.")
     if contract_.kind == "riesz":
         if not _has_diagonal_pairing(execution_space):
@@ -714,8 +714,8 @@ def _resolved_precision(
     selected = SparseDerivativePrecisionPolicy() if policy is None else policy
     if not isinstance(selected, SparseDerivativePrecisionPolicy):
         raise TypeError("precision must be a SparseDerivativePrecisionPolicy or None.")
-    source_dtype = precision_dtype_name(_coordinate_dtype(source))
-    target_dtype = precision_dtype_name(_coordinate_dtype(target))
+    source_dtype = precision_dtype_name(coordinate_dtype(source))
+    target_dtype = precision_dtype_name(coordinate_dtype(target))
     source_seed = source_dtype if selected.source_seed is None else selected.source_seed
     target_cotangent = (
         target_dtype if selected.target_cotangent is None else selected.target_cotangent
@@ -788,7 +788,7 @@ def _compile_sparse_derivative(
             )
         if not jnp.issubdtype(output.dtype, jnp.inexact):
             raise TypeError("Sparse Jacobian outputs must use an inexact dtype.")
-        if output.dtype != _coordinate_dtype(target):
+        if output.dtype != coordinate_dtype(target):
             raise TypeError(
                 "Sparse Jacobian output dtype must match the declared target space."
             )

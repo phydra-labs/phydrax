@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, cast, NoReturn
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -12,21 +12,19 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from .. import lifecycle as lifecycle_owner
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
 from ..linalg import AbstractLinearOperator
 from ..typing import checked
+from ._distributed_preparation import owner_local_host_array
 from ._transfer import FieldTransfer
 
 
-if TYPE_CHECKING:
-    from ..lifecycle import CompositionEntry, CompositionTransport
-
-
 class TopologyEpoch(StrictModule, NonTrainableState):
-    """Canonical identity of one realized geometry/topology/partition epoch."""
+    """identity of one realized geometry/topology/partition epoch."""
 
     index: int = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
@@ -43,13 +41,17 @@ class TopologyEpoch(StrictModule, NonTrainableState):
             or int(index) < 0
             or int(index) > np.iinfo(np.int32).max
         ):
-            raise ValueError("Topology epoch index must be a nonnegative int32 value.")
+            raise ValueError(
+                "TopologyEpoch.index must be a nonnegative int32 value; got an invalid index"
+            )
         identities = (geometry_id, topology_id, partition_id)
         if any(
             not isinstance(value, str) or not value or value != value.strip()
             for value in identities
         ):
-            raise ValueError("Topology epoch identities must be canonical identifiers.")
+            raise ValueError(
+                "TopologyEpoch.identities must contain nonempty trimmed identifiers; got invalid geometry, topology, or partition identity"
+            )
         index_ = int(index)
         self.index = index_
         self.geometry_id = geometry_id
@@ -60,7 +62,7 @@ class TopologyEpoch(StrictModule, NonTrainableState):
         )
 
     def to_archive_record(self) -> dict[str, Any]:
-        """Return the complete canonical JSON record for this epoch."""
+        """Return this epoch's JSON record and identity."""
 
         return {
             "index": self.index,
@@ -72,7 +74,7 @@ class TopologyEpoch(StrictModule, NonTrainableState):
 
     @classmethod
     def from_archive_record(cls, record: dict[str, Any], /) -> TopologyEpoch:
-        """Strictly reconstruct an epoch and verify its canonical identity."""
+        """Reconstruct an epoch and verify its retained identity."""
 
         fields = frozenset(
             (
@@ -84,10 +86,14 @@ class TopologyEpoch(StrictModule, NonTrainableState):
             )
         )
         if not isinstance(record, dict) or set(record) != fields:
-            raise ValueError("Topology epoch archive fields changed.")
+            raise ValueError(
+                "TopologyEpoch.archive must contain the declared epoch fields; got a different field set"
+            )
         expected = record["epoch_id"]
         if not isinstance(expected, str) or not expected or expected != expected.strip():
-            raise ValueError("epoch_id must be a nonempty canonical identifier.")
+            raise ValueError(
+                "TopologyEpoch.archive.epoch_id must be a nonempty trimmed identifier; got an invalid identity"
+            )
         epoch = cls(
             record["index"],
             record["geometry_id"],
@@ -95,7 +101,9 @@ class TopologyEpoch(StrictModule, NonTrainableState):
             record["partition_id"],
         )
         if epoch.epoch_id != expected:
-            raise ValueError("Topology epoch archive identity changed.")
+            raise ValueError(
+                "TopologyEpoch.archive.epoch_id must match the reconstructed epoch; got a different identity"
+            )
         return epoch
 
 
@@ -105,20 +113,22 @@ def _require_epoch_binding(
     """Admit only the scientific endpoints owned by the prepared field action."""
     binding = transfer.geometry
     if binding is None:
-        raise ValueError("An epoch transition requires actual topology/geometry binding.")
+        raise ValueError(
+            "epoch_transition.transfer.geometry must bind topology and geometry endpoints; got None"
+        )
     if (
         source.topology_id != binding.source_topology_id
         or target.topology_id != binding.target_topology_id
     ):
         raise ValueError(
-            "Epoch topology identities do not match the prepared field transfer."
+            "epoch_transition.endpoints.topology_id must match the prepared field transfer; got mismatched topology identities"
         )
     if (
         source.geometry_id != binding.source_geometry_id
         or target.geometry_id != binding.target_geometry_id
     ):
         raise ValueError(
-            "Epoch geometry identities do not match the prepared field transfer."
+            "epoch_transition.endpoints.geometry_id must match the prepared field transfer; got mismatched geometry identities"
         )
 
 
@@ -167,7 +177,7 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
     ``measure_defect_bound`` is the owner-certified bound, per source DOF and in
     measure units, on ``|P^T target_measures - source_measures|`` of the
     transfer ``P``; the content of a field ``v`` then changes by at most
-    ``sum(bound * |v|)`` beyond roundoff. ``None`` certifies exact conservation
+    ``sum(bound * |v|)`` beyond roundoff. ``None`` certifies conservation
     (only roundoff remains), as for nested or exactly normalized transfers.
 
     Values remain differentiable across the frozen transfer: ``pullback`` is
@@ -198,7 +208,7 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
     ) -> None:
         if target.index != source.index + 1 or source.epoch_id == target.epoch_id:
             raise ValueError(
-                "Topology transitions must connect consecutive distinct epochs."
+                "TopologyEpochTransition.endpoints must connect consecutive distinct epochs; got invalid epoch indices or equal identities"
             )
         if (
             not transfer.properties.conservative
@@ -208,10 +218,10 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
             or transfer.hilbert_adjoint_operator is None
         ):
             raise ValueError(
-                "Topology transfer needs conservative dual/adjoint pairs and nondifferentiable geometry."
+                "TopologyEpochTransition.transfer must retain conservative dual/adjoint pairs and nondifferentiable geometry; got incompatible transfer properties or missing reverse operators"
             )
-        source_measure = np.asarray(source_measures, dtype=np.float64)
-        target_measure = np.asarray(target_measures, dtype=np.float64)
+        source_measure = owner_local_host_array(source_measures, dtype=np.float64)
+        target_measure = owner_local_host_array(target_measures, dtype=np.float64)
         if (
             source_measure.shape != (transfer.primal_operator.source.size,)
             or target_measure.shape != (transfer.primal_operator.target.size,)
@@ -221,20 +231,20 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
             or np.any(target_measure <= 0)
         ):
             raise ValueError(
-                "Topology transfer measures must match positive scalar spaces."
+                "TopologyEpochTransition.measures must match positive scalar spaces with finite values; got incompatible measures"
             )
         defect_bound = (
             np.zeros_like(source_measure)
             if measure_defect_bound is None
             else np.broadcast_to(
-                np.asarray(measure_defect_bound, dtype=np.float64),
+                owner_local_host_array(measure_defect_bound, dtype=np.float64),
                 source_measure.shape,
             )
         )
         if np.any(~np.isfinite(defect_bound)) or np.any(defect_bound < 0.0):
             raise ValueError(
-                "measure_defect_bound must be finite, nonnegative, and one per source "
-                "DOF."
+                "TopologyEpochTransition.measure_defect_bound must be finite, nonnegative, "
+                "and one per source DOF; got invalid defect bounds"
             )
         _require_epoch_binding(source, target, transfer)
         self.source, self.target, self.transfer = source, target, transfer
@@ -260,7 +270,9 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
         source_space = self.transfer.primal_operator.source
         target_space = self.transfer.primal_operator.target
         if flat.shape != (source_space.size,):
-            raise ValueError("Topology transition field does not match source space.")
+            raise ValueError(
+                "TopologyEpochTransition.values must match the source space; got incompatible field size"
+            )
         result = target_space.flatten(
             self.transfer.primal_operator.mv(source_space.unflatten(flat))
         )
@@ -270,7 +282,7 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
         # Roundoff of both content sums scales with the transported magnitudes
         # themselves (a unit floor would admit relative errors of 1e-5 for SI
         # content such as liquid volumes of 1e-9 m^3); the certified measure
-        # defect adds its exact action bound on this field.
+        # defect adds its certified action bound on this field.
         finfo = jnp.finfo(jnp.real(result).dtype)
         magnitude = jnp.vdot(self.source_measures, jnp.abs(flat)) + jnp.vdot(
             self.target_measures, jnp.abs(result)
@@ -290,32 +302,41 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
             jnp.asarray(True),
         )
 
-    def _reverse(
-        self, operator: AbstractLinearOperator | None, value: ArrayLike
-    ) -> Array:
-        if operator is None:
-            raise RuntimeError("Topology transition lost a required reverse operator.")
+    # Constructor admission requires both reverse operators on the immutable transfer.
+    def _reverse(self, operator: AbstractLinearOperator, value: ArrayLike) -> Array:
         flat = jnp.asarray(value).reshape(-1)
         if flat.shape != (operator.source.size,):
-            raise ValueError("Topology transition cotangent does not match target space.")
+            raise ValueError(
+                "TopologyEpochTransition.target_values must match the reverse operator source space; got incompatible target size"
+            )
         return operator.target.flatten(operator.mv(operator.source.unflatten(flat)))
 
     def pullback(self, target_cotangent: ArrayLike, /) -> Array:
         """Coordinate dual ``P^T w``: the VJP of ``apply`` for a target covector."""
-        return self._reverse(self.transfer.dual_pullback_operator, target_cotangent)
+        return self._reverse(
+            cast(AbstractLinearOperator, self.transfer.dual_pullback_operator),
+            target_cotangent,
+        )
 
     def adjoint(self, target_value: ArrayLike, /) -> Array:
         """Hilbert adjoint ``P^*`` in the field-space pairings of both epochs."""
-        return self._reverse(self.transfer.hilbert_adjoint_operator, target_value)
-
-    def require_differentiable_topology(self) -> None:
-        raise ValueError(
-            "Topology selection is nondifferentiable; differentiate only within one fixed epoch."
+        return self._reverse(
+            cast(AbstractLinearOperator, self.transfer.hilbert_adjoint_operator),
+            target_value,
         )
 
+    def require_differentiable_topology(self) -> NoReturn:
+        raise ValueError(
+            "epoch_transition.topology must remain fixed during differentiation; got nondifferentiable topology selection"
+        )
+
+    @checked
     def composition_transport(
-        self, source: CompositionEntry, target: CompositionEntry, /
-    ) -> CompositionTransport:
+        self,
+        source: lifecycle_owner.CompositionEntry,
+        target: lifecycle_owner.CompositionEntry,
+        /,
+    ) -> lifecycle_owner.CompositionTransport:
         """Physical-remap evidence of this transition for one composition state entry.
 
         `source` holds state on this transition's source epoch and `target` the
@@ -326,25 +347,22 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
         """
 
         # Lazy: the lifecycle package sits above the discretization owners.
-        from ..lifecycle import CompositionEntry, CompositionTransport
 
-        if not isinstance(source, CompositionEntry) or not isinstance(
-            target, CompositionEntry
-        ):
-            raise TypeError("Composition transports bind CompositionEntry values.")
         if (
             source.structure_id != self.source.epoch_id
             or target.structure_id != self.target.epoch_id
         ):
             raise ValueError(
-                "Composition entries do not live on this transition's topology epochs."
+                "epoch_transition.composition_entries must bind the source and target topology epochs; got incompatible structure IDs"
             )
         result = self.apply(source.value)
         staged = jnp.asarray(target.value).reshape(-1)
         if staged.shape != result.values.shape:
-            raise ValueError("Staged target does not match the target field space.")
+            raise ValueError(
+                "epoch_transition.target.value must match the target field space; got incompatible staged field size"
+            )
         image = _staged_image_matches(staged, result.values)
-        return CompositionTransport(
+        return lifecycle_owner.CompositionTransport(
             "physical-remap",
             (source.entry_id,),
             (target,),
@@ -386,6 +404,7 @@ class FieldEpochTransition(StrictModule, NonTrainableState):
     evidence_passed: bool = eqx.field(static=True)
     transition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: TopologyEpoch,
@@ -396,16 +415,16 @@ class FieldEpochTransition(StrictModule, NonTrainableState):
         evidence_passed: bool,
         evidence_id: str,
     ) -> None:
-        if not isinstance(source, TopologyEpoch) or not isinstance(target, TopologyEpoch):
-            raise TypeError("Field transition endpoints must be TopologyEpoch values.")
+
         if target.index != source.index + 1 or source.epoch_id == target.epoch_id:
             raise ValueError(
-                "Field transitions must connect consecutive distinct epochs."
+                "FieldEpochTransition.endpoints must connect consecutive distinct epochs; got invalid epoch indices or equal identities"
             )
-        if not isinstance(transfer, FieldTransfer):
-            raise TypeError("Field transition requires FieldTransfer.")
+
         if not isinstance(evidence_passed, bool):
-            raise TypeError("evidence_passed must be an explicit host bool.")
+            raise TypeError(
+                "FieldEpochTransition.evidence_passed must be an explicit host bool; got a different value kind"
+            )
         properties = transfer.properties
         if (
             properties.semantics == "unspecified"
@@ -415,9 +434,9 @@ class FieldEpochTransition(StrictModule, NonTrainableState):
             or transfer.dual_pullback_operator is None
         ):
             raise ValueError(
-                "A field epoch transition needs declared non-conservative semantics, "
-                "dual/adjoint operators, and nondifferentiable geometry; conservative "
-                "transfers form a TopologyEpochTransition."
+                "FieldEpochTransition.transfer must declare non-conservative semantics, "
+                "dual/adjoint operators, and nondifferentiable geometry; got incompatible "
+                "transfer properties or missing reverse operators"
             )
         evidence = canonical_identifier(evidence_id, "evidence_id")
         _require_epoch_binding(source, target, transfer)
@@ -439,7 +458,9 @@ class FieldEpochTransition(StrictModule, NonTrainableState):
         source_space = self.transfer.primal_operator.source
         target_space = self.transfer.primal_operator.target
         if flat.shape != (source_space.size,):
-            raise ValueError("Field transition values do not match the source space.")
+            raise ValueError(
+                "FieldEpochTransition.values must match the source space; got incompatible field size"
+            )
         result = target_space.flatten(
             self.transfer.primal_operator.mv(source_space.unflatten(flat))
         )
@@ -450,21 +471,25 @@ class FieldEpochTransition(StrictModule, NonTrainableState):
         """Pull a target cotangent back through the declared Hilbert adjoint."""
 
         flat = jnp.asarray(target_cotangent).reshape(-1)
-        adjoint = self.transfer.hilbert_adjoint_operator
-        if adjoint is None:
-            raise RuntimeError("Field transition lost its required Hilbert adjoint.")
+        adjoint = cast(AbstractLinearOperator, self.transfer.hilbert_adjoint_operator)
         if flat.shape != (adjoint.source.size,):
-            raise ValueError("Field transition cotangent does not match target space.")
+            raise ValueError(
+                "FieldEpochTransition.target_cotangent must match the target space; got incompatible cotangent size"
+            )
         return adjoint.target.flatten(adjoint.mv(adjoint.source.unflatten(flat)))
 
-    def require_differentiable_topology(self) -> None:
+    def require_differentiable_topology(self) -> NoReturn:
         raise ValueError(
-            "Topology selection is nondifferentiable; differentiate only within one fixed epoch."
+            "epoch_transition.topology must remain fixed during differentiation; got nondifferentiable topology selection"
         )
 
+    @checked
     def composition_transport(
-        self, source: CompositionEntry, target: CompositionEntry, /
-    ) -> CompositionTransport:
+        self,
+        source: lifecycle_owner.CompositionEntry,
+        target: lifecycle_owner.CompositionEntry,
+        /,
+    ) -> lifecycle_owner.CompositionTransport:
         """Physical-remap evidence of this transition for one composition state entry.
 
         Entry structure identities are the epoch IDs. The transport reports no
@@ -474,25 +499,22 @@ class FieldEpochTransition(StrictModule, NonTrainableState):
         """
 
         # Lazy: the lifecycle package sits above the discretization owners.
-        from ..lifecycle import CompositionEntry, CompositionTransport
 
-        if not isinstance(source, CompositionEntry) or not isinstance(
-            target, CompositionEntry
-        ):
-            raise TypeError("Composition transports bind CompositionEntry values.")
         if (
             source.structure_id != self.source.epoch_id
             or target.structure_id != self.target.epoch_id
         ):
             raise ValueError(
-                "Composition entries do not live on this transition's topology epochs."
+                "epoch_transition.composition_entries must bind the source and target topology epochs; got incompatible structure IDs"
             )
         result = self.apply(source.value)
         staged = jnp.asarray(target.value).reshape(-1)
         if staged.shape != result.values.shape:
-            raise ValueError("Staged target does not match the target field space.")
+            raise ValueError(
+                "epoch_transition.target.value must match the target field space; got incompatible staged field size"
+            )
         image = _staged_image_matches(staged, result.values)
-        return CompositionTransport(
+        return lifecycle_owner.CompositionTransport(
             "physical-remap",
             (source.entry_id,),
             (target,),

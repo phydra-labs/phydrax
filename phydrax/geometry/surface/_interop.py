@@ -19,10 +19,16 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
+import phydrax.geometry.brep._constructors as constructors_owner
+import phydrax.interchange._cad as cad_owner
+import phydrax.interchange._iges as iges_owner
+import phydrax.interchange._step as step_owner
+
 from ..._external_resource import BoundedResource, read_bounded_resource, ResourceLimits
 from ..._physical import SpatialCoordinateContract
 from ..._publication import publish_bytes
 from ..._validation import positive_integer
+from ...typing import checked, parse
 from ...units import (
     CENTIMETER,
     conversion_factor,
@@ -36,7 +42,7 @@ from ...units import (
     UnitDefinition,
 )
 from ._contracts import SurfaceMetadata
-from ._model import _surface_connectivity, SurfaceModel
+from ._model import surface_connectivity, SurfaceModel
 
 
 class SurfaceFileFormat(str, Enum):
@@ -52,7 +58,7 @@ class SurfaceFileFormat(str, Enum):
 
 
 class SurfaceFieldAssociation(str, Enum):
-    """Portable association of numeric data with authoritative entities."""
+    "Associate portable numeric data with surface entities."
 
     POINT = "point"
     CELL = "cell"
@@ -132,10 +138,10 @@ _RESERVED_PREFIXES = (
 
 
 def _length_unit(value: UnitDefinition, /) -> UnitDefinition:
-    if not isinstance(value, UnitDefinition):
-        raise TypeError("Length units must be UnitDefinition values.")
     if value.dimension != LENGTH:
-        raise ValueError("Surface units must have length dimension.")
+        raise ValueError(
+            f"surface_interop.length_unit must have length dimension; got {value.dimension!r}"
+        )
     return value
 
 
@@ -144,13 +150,9 @@ def _unit_from_symbol(value: str, /) -> UnitDefinition:
     if symbol not in _LENGTH_UNITS:
         supported = ", ".join(_LENGTH_UNITS)
         raise SurfaceDataCorruptionError(
-            f"Unsupported embedded length unit {value!r}; expected one of {supported}."
+            f"surface_interop.length_unit must name an embedded unit from {supported}; got {value!r}"
         )
     return _LENGTH_UNITS[symbol]
-
-
-def _positive_capacity(name: str, value: int, /) -> int:
-    return positive_integer(value, name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,35 +176,38 @@ class SurfaceImportPolicy:
     cad_maximum_occurrences: int = 4096
 
     def __post_init__(self) -> None:
+        if not isinstance(self.source_length_unit, UnitDefinition):
+            raise TypeError(
+                f"SurfaceImportPolicy.source_length_unit must be UnitDefinition; got {type(self.source_length_unit).__name__}"
+            )
         object.__setattr__(
             self, "source_length_unit", _length_unit(self.source_length_unit)
         )
-        if not isinstance(self.orientation, SurfaceOrientationPolicy):
-            raise TypeError("orientation must be SurfaceOrientationPolicy.")
+        parse(self.orientation, SurfaceOrientationPolicy, "orientation")
         object.__setattr__(
             self,
             "maximum_file_bytes",
-            _positive_capacity("maximum_file_bytes", self.maximum_file_bytes),
+            positive_integer(self.maximum_file_bytes, "maximum_file_bytes"),
         )
         object.__setattr__(
             self,
             "maximum_data_bytes",
-            _positive_capacity("maximum_data_bytes", self.maximum_data_bytes),
+            positive_integer(self.maximum_data_bytes, "maximum_data_bytes"),
         )
         object.__setattr__(
             self,
             "maximum_vertices",
-            _positive_capacity("maximum_vertices", self.maximum_vertices),
+            positive_integer(self.maximum_vertices, "maximum_vertices"),
         )
         object.__setattr__(
             self,
             "maximum_cells",
-            _positive_capacity("maximum_cells", self.maximum_cells),
+            positive_integer(self.maximum_cells, "maximum_cells"),
         )
         object.__setattr__(
             self,
             "maximum_fields",
-            _positive_capacity("maximum_fields", self.maximum_fields),
+            positive_integer(self.maximum_fields, "maximum_fields"),
         )
         for name in (
             "cad_maximum_entities",
@@ -210,22 +215,26 @@ class SurfaceImportPolicy:
             "cad_maximum_depth",
             "cad_maximum_occurrences",
         ):
-            object.__setattr__(self, name, _positive_capacity(name, getattr(self, name)))
+            object.__setattr__(self, name, positive_integer(getattr(self, name), name))
         object.__setattr__(
             self,
             "cad_trim_samples_per_edge",
-            _positive_capacity(
-                "cad_trim_samples_per_edge", self.cad_trim_samples_per_edge
-            ),
+            positive_integer(self.cad_trim_samples_per_edge, "cad_trim_samples_per_edge"),
         )
         if self.cad_trim_samples_per_edge < 3:
-            raise ValueError("cad_trim_samples_per_edge must be at least three.")
+            raise ValueError(
+                f"SurfaceImportPolicy.cad_trim_samples_per_edge must be at least three; got {self.cad_trim_samples_per_edge!r}"
+            )
         linear = float(self.cad_linear_deflection_in_source_units)
         angular = float(self.cad_angular_deflection)
         if not np.isfinite(linear) or linear <= 0.0:
-            raise ValueError("cad_linear_deflection_in_source_units must be positive.")
+            raise ValueError(
+                f"SurfaceImportPolicy.cad_linear_deflection_in_source_units must be finite and positive; got {linear!r}"
+            )
         if not np.isfinite(angular) or not 0.0 < angular < np.pi:
-            raise ValueError("cad_angular_deflection must be positive and below pi.")
+            raise ValueError(
+                f"SurfaceImportPolicy.cad_angular_deflection must be finite and strictly between zero and pi; got {angular!r}"
+            )
         object.__setattr__(self, "cad_linear_deflection_in_source_units", linear)
         object.__setattr__(self, "cad_angular_deflection", angular)
 
@@ -244,33 +253,37 @@ class SurfaceExportPolicy:
     maximum_fields: int = 256
 
     def __post_init__(self) -> None:
+        if not isinstance(self.target_length_unit, UnitDefinition):
+            raise TypeError(
+                f"SurfaceExportPolicy.target_length_unit must be UnitDefinition; got {type(self.target_length_unit).__name__}"
+            )
         object.__setattr__(
             self, "target_length_unit", _length_unit(self.target_length_unit)
         )
         object.__setattr__(
             self,
             "maximum_file_bytes",
-            _positive_capacity("maximum_file_bytes", self.maximum_file_bytes),
+            positive_integer(self.maximum_file_bytes, "maximum_file_bytes"),
         )
         object.__setattr__(
             self,
             "maximum_data_bytes",
-            _positive_capacity("maximum_data_bytes", self.maximum_data_bytes),
+            positive_integer(self.maximum_data_bytes, "maximum_data_bytes"),
         )
         object.__setattr__(
             self,
             "maximum_vertices",
-            _positive_capacity("maximum_vertices", self.maximum_vertices),
+            positive_integer(self.maximum_vertices, "maximum_vertices"),
         )
         object.__setattr__(
             self,
             "maximum_cells",
-            _positive_capacity("maximum_cells", self.maximum_cells),
+            positive_integer(self.maximum_cells, "maximum_cells"),
         )
         object.__setattr__(
             self,
             "maximum_fields",
-            _positive_capacity("maximum_fields", self.maximum_fields),
+            positive_integer(self.maximum_fields, "maximum_fields"),
         )
 
 
@@ -290,20 +303,27 @@ class PortableSurfaceField:
     ) -> None:
         name_ = str(name)
         if not name_:
-            raise ValueError("Portable surface field names must be non-empty.")
+            raise ValueError(f"PortableSurfaceField.name must be nonempty; got {name_!r}")
         if name_ in _RESERVED_EXACT or name_.startswith(_RESERVED_PREFIXES):
-            raise ValueError(f"Portable surface field name {name_!r} is reserved.")
-        if not isinstance(association, SurfaceFieldAssociation):
-            raise TypeError("association must be SurfaceFieldAssociation.")
+            raise ValueError(
+                f"PortableSurfaceField.name must avoid reserved metadata names and prefixes; got {name_!r}"
+            )
+        association = parse(
+            association, SurfaceFieldAssociation, "PortableSurfaceField.association"
+        )
         array = np.array(values, copy=True)
         if array.ndim == 0 or array.shape[0] == 0:
-            raise ValueError("Portable field values require one non-empty entity axis.")
+            raise ValueError(
+                f"PortableSurfaceField.values must have a nonempty entity axis; got shape={array.shape}"
+            )
         if array.dtype.kind not in "biuf":
             raise TypeError(
-                "Portable fields must contain real numeric or boolean values."
+                f"PortableSurfaceField.values must contain real numeric or boolean data; got dtype={array.dtype}"
             )
         if array.dtype.kind == "f" and not np.all(np.isfinite(array)):
-            raise ValueError("Portable floating-point fields must be finite.")
+            raise ValueError(
+                f"PortableSurfaceField.values must contain finite floating-point data; got nonfinite values with shape={array.shape}"
+            )
         array.setflags(write=False)
         object.__setattr__(self, "name", name_)
         object.__setattr__(self, "association", association)
@@ -346,7 +366,7 @@ class SurfaceInteropReport:
 
 @dataclass(frozen=True, slots=True)
 class SurfaceImportResult:
-    """Authoritative SI SurfaceModel plus retained portable interchange evidence."""
+    "Retain an SI SurfaceModel and portable interchange evidence."
 
     model: SurfaceModel
     fields: tuple[PortableSurfaceField, ...]
@@ -372,7 +392,7 @@ def _decode_text(value: str, /) -> str:
         return base64.urlsafe_b64decode(value + padding).decode("utf-8")
     except (ValueError, UnicodeDecodeError) as error:
         raise SurfaceDataCorruptionError(
-            "Invalid encoded PHYDRAX metadata field."
+            f"surface_interop.metadata must use valid encoded text; got invalid encoded value {value!r}"
         ) from error
 
 
@@ -380,13 +400,11 @@ def _resolve_format(
     path: Path, requested: SurfaceFileFormat | None, /
 ) -> SurfaceFileFormat:
     if requested is not None:
-        if not isinstance(requested, SurfaceFileFormat):
-            raise TypeError("file_format must be SurfaceFileFormat or None.")
-        return requested
+        return parse(requested, SurfaceFileFormat, "file_format")
     suffix = path.suffix.lower()
     if suffix not in _EXTENSION_FORMAT:
         raise SurfaceUnsupportedFormatError(
-            f"Cannot infer a supported surface format from extension {suffix!r}."
+            f"surface_interop.file_format must be supplied or inferred from a supported extension; got extension={suffix!r}"
         )
     return _EXTENSION_FORMAT[suffix]
 
@@ -394,7 +412,7 @@ def _resolve_format(
 def _require_module(module: str, purpose: str, /) -> ModuleType:
     if find_spec(module) is None:
         raise SurfaceProviderUnavailableError(
-            f"{purpose} requires installed provider module {module!r}."
+            f"surface_interop.provider must be installed for the requested operation; got module={module!r}, operation={purpose!r}"
         )
     return import_module(module)
 
@@ -405,7 +423,7 @@ def _preflight_file(path: Path, maximum_file_bytes: int, /) -> int:
     size = path.stat().st_size
     if size > maximum_file_bytes:
         raise SurfaceResourceLimitError(
-            f"Surface file has {size} bytes, exceeding limit {maximum_file_bytes}."
+            f"surface_interop.maximum_file_bytes must admit the source file; got bytes={size}, limit={maximum_file_bytes}"
         )
     return size
 
@@ -441,19 +459,19 @@ def _triangle_blocks(mesh: Any, /) -> tuple[tuple[int, ...], np.ndarray]:
     if unsupported:
         names = ", ".join(unsupported)
         raise SurfaceDataCorruptionError(
-            f"Surface import refuses implicit linearization or triangulation of two-dimensional cell types: {names}."
+            f"surface_import.cell_types must use linear triangles for two-dimensional cells; got unsupported={names}"
         )
     indices = tuple(
         index for index, block in enumerate(mesh.cells) if block.type == "triangle"
     )
     if not indices:
         raise SurfaceDataCorruptionError(
-            "Surface artifact contains no linear triangle cells."
+            "surface_import.cells must include linear triangle cells; got no triangle blocks"
         )
     faces = np.concatenate(tuple(np.asarray(mesh.cells[index].data) for index in indices))
     if faces.ndim != 2 or faces.shape[1] != 3:
         raise SurfaceDataCorruptionError(
-            "Triangle connectivity must have shape (cells, 3)."
+            f"surface_import.triangles must have shape (cells,3); got shape={faces.shape}"
         )
     return indices, faces
 
@@ -461,14 +479,20 @@ def _triangle_blocks(mesh: Any, /) -> tuple[tuple[int, ...], np.ndarray]:
 def _integer_ids(value: ArrayLike, count: int, name: str, /) -> np.ndarray:
     raw = np.asarray(value)
     if raw.shape != (count,) or raw.dtype.kind not in "iuf":
-        raise SurfaceDataCorruptionError(f"{name} must be one numeric scalar per entity.")
+        raise SurfaceDataCorruptionError(
+            f"surface_import.global_ids must contain one numeric scalar per entity; got field={name!r}, shape={raw.shape}, dtype={raw.dtype}, entities={count}"
+        )
     if raw.dtype.kind == "f" and (
         not np.all(np.isfinite(raw)) or not np.array_equal(raw, np.floor(raw))
     ):
-        raise SurfaceDataCorruptionError(f"{name} contains non-integral values.")
+        raise SurfaceDataCorruptionError(
+            f"surface_import.global_ids must contain finite integral values; got field={name!r}, dtype={raw.dtype}"
+        )
     ids = raw.astype(np.int64)
     if np.any(ids < 0) or np.unique(ids).size != ids.size:
-        raise SurfaceDataCorruptionError(f"{name} must contain unique non-negative IDs.")
+        raise SurfaceDataCorruptionError(
+            f"surface_import.global_ids must contain unique nonnegative identifiers; got field={name!r}, entries={ids.size}"
+        )
     return ids
 
 
@@ -479,7 +503,9 @@ def _cell_data(
         return None
     values = mesh.cell_data[name]
     if len(values) != len(mesh.cells):
-        raise SurfaceDataCorruptionError(f"Cell field {name!r} is not block-aligned.")
+        raise SurfaceDataCorruptionError(
+            f"surface_import.cell_data must align with the cell blocks; got field={name!r}, blocks={len(values)}, expected={len(mesh.cells)}"
+        )
     return np.concatenate(tuple(np.asarray(values[index]) for index in block_indices))
 
 
@@ -496,7 +522,7 @@ def _decode_single_marker(
         return None
     if len(matches) != 1 or not _marker_values_valid(point_data[matches[0]], point_count):
         raise SurfaceDataCorruptionError(
-            f"Contradictory metadata markers for {prefix!r}."
+            f"surface_import.metadata must contain one valid marker per metadata key; got prefix={prefix!r}, markers={matches!r}"
         )
     return _decode_text(matches[0][len(prefix) :])
 
@@ -508,11 +534,15 @@ def _decode_provenance(
     result = []
     for name in matches:
         if not _marker_values_valid(point_data[name], point_count):
-            raise SurfaceDataCorruptionError("Malformed provenance marker values.")
+            raise SurfaceDataCorruptionError(
+                f"surface_import.provenance must contain valid marker values; got marker={name!r}, point_count={point_count}"
+            )
         suffix = name[len(_META_PROVENANCE) :]
         separator = suffix.find("__")
         if separator <= 0 or not suffix[:separator].isdigit():
-            raise SurfaceDataCorruptionError("Malformed provenance marker name.")
+            raise SurfaceDataCorruptionError(
+                f"surface_import.provenance must encode a numeric marker index followed by text; got marker={name!r}"
+            )
         result.append(_decode_text(suffix[separator + 2 :]))
     return tuple(result)
 
@@ -527,14 +557,18 @@ def _decode_tags(
         for row, name in enumerate(markers):
             values = _cell_data(mesh, name, block_indices)
             if values is None or values.shape != (cell_count,):
-                raise SurfaceDataCorruptionError("Cell tag marker is not cell-aligned.")
+                raise SurfaceDataCorruptionError(
+                    f"surface_import.cell_tags must align one tag marker per cell; got marker={name!r}, cells={cell_count}"
+                )
             if not np.all((values == 0) | (values == 1)):
-                raise SurfaceDataCorruptionError("Cell tag markers must be zero or one.")
+                raise SurfaceDataCorruptionError(
+                    f"surface_import.cell_tags must use zero or one marker values; got marker={name!r}"
+                )
             active[row] = values.astype("bool")
             decoded.append(_decode_text(name[len(_TAG_PREFIX) :]))
         if not np.all(np.sum(active, axis=0) == 1):
             raise SurfaceDataCorruptionError(
-                "Each cell requires exactly one encoded tag."
+                f"surface_import.cell_tags must encode exactly one active tag per cell; got marker_count={len(markers)}, cells={cell_count}"
             )
         tags = tuple(decoded[int(index)] for index in np.argmax(active, axis=0))
         return tags, True
@@ -581,7 +615,7 @@ def _portable_fields(
         array = np.asarray(value)
         if array.shape[0] != point_count:
             raise SurfaceDataCorruptionError(
-                f"Point field {name!r} is not point-aligned."
+                f"surface_import.point_fields must align with the point count; got field={name!r}, rows={array.shape[0]}, points={point_count}"
             )
         fields.append(PortableSurfaceField(name, SurfaceFieldAssociation.POINT, array))
     for name in mesh.cell_data:
@@ -589,15 +623,17 @@ def _portable_fields(
             continue
         array = _cell_data(mesh, name, block_indices)
         if array is None or array.shape[0] != cell_count:
-            raise SurfaceDataCorruptionError(f"Cell field {name!r} is not cell-aligned.")
+            raise SurfaceDataCorruptionError(
+                f"surface_import.cell_fields must align with the cell count; got field={name!r}, cells={cell_count}, data_present={array is not None}"
+            )
         fields.append(PortableSurfaceField(name, SurfaceFieldAssociation.CELL, array))
     if len(fields) > maximum_fields:
         raise SurfaceResourceLimitError(
-            f"Surface artifact contains {len(fields)} fields, exceeding limit {maximum_fields}."
+            f"surface_import.maximum_fields must admit the decoded portable fields; got fields={len(fields)}, limit={maximum_fields}"
         )
     if len({(field.association, field.name) for field in fields}) != len(fields):
         raise SurfaceDataCorruptionError(
-            "Portable field association/name pairs must be unique."
+            f"surface_import.fields must have unique association and name pairs; got pairs={tuple((field.association, field.name) for field in fields)!r}"
         )
     return tuple(fields)
 
@@ -607,7 +643,7 @@ def _loss_permission(losses: Sequence[str], allowed: bool, /) -> tuple[str, ...]
     if normalized and not allowed:
         details = ", ".join(normalized)
         raise SurfaceLossyOperationError(
-            f"Surface operation would be lossy ({details}); set allow_lossy=True explicitly."
+            f"surface_interop.allow_lossy must be true for a lossy operation; got allow_lossy={allowed!r}, losses={details}"
         )
     return normalized
 
@@ -625,22 +661,24 @@ def _import_meshio_surface(
         mesh = meshio.read(source, file_format=_meshio_file_format(file_format, source))
     except meshio.ReadError as error:
         raise SurfaceDataCorruptionError(
-            f"Provider could not parse {file_format.value} surface artifact {source}."
+            f"surface_import.artifact must be parseable by its provider and format; got format={file_format.value}, path={source}"
         ) from error
     points = np.asarray(mesh.points)
     if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
-        raise SurfaceDataCorruptionError("Surface points must have shape (vertices, 3).")
+        raise SurfaceDataCorruptionError(
+            f"surface_import.points must have shape (vertices,3) with at least one vertex; got shape={points.shape}"
+        )
     block_indices, faces = _triangle_blocks(mesh)
     point_count = points.shape[0]
     cell_count = faces.shape[0]
     if point_count > policy.maximum_vertices or cell_count > policy.maximum_cells:
         raise SurfaceResourceLimitError(
-            "Surface entity counts exceed the import policy capacities."
+            f"surface_import.entity_counts must fit policy capacities; got vertices={point_count}/{policy.maximum_vertices}, cells={cell_count}/{policy.maximum_cells}"
         )
     payload_bytes = _array_payload_bytes(mesh)
     if payload_bytes > policy.maximum_data_bytes:
         raise SurfaceResourceLimitError(
-            f"Decoded surface payload has {payload_bytes} bytes, exceeding limit {policy.maximum_data_bytes}."
+            f"surface_import.maximum_data_bytes must admit the decoded payload; got bytes={payload_bytes}, limit={policy.maximum_data_bytes}"
         )
 
     embedded_unit = _decode_single_marker(mesh.point_data, _UNIT_PREFIX, point_count)
@@ -649,7 +687,7 @@ def _import_meshio_surface(
         and _unit_from_symbol(embedded_unit).unit_id != policy.source_length_unit.unit_id
     ):
         raise SurfaceDataCorruptionError(
-            "Explicit source_length_unit contradicts the artifact unit marker."
+            f"SurfaceImportPolicy.source_length_unit must agree with the embedded artifact unit; got requested={policy.source_length_unit.unit_id!r}, embedded={embedded_unit!r}"
         )
     source_marker = _decode_single_marker(mesh.point_data, _META_SOURCE, point_count)
     revision_marker = _decode_single_marker(mesh.point_data, _META_REVISION, point_count)
@@ -759,15 +797,11 @@ def _import_cad_surface(
     policy: SurfaceImportPolicy,
     /,
 ) -> SurfaceImportResult:
-    from ...interchange._cad import CadImportPolicy
-    from ...interchange._iges import decode_iges_resource
-    from ...interchange._step import decode_step_resource
-    from ..brep._constructors import BRepTessellationPolicy
 
-    cad_policy = CadImportPolicy(
+    cad_policy = cad_owner.CadImportPolicy(
         SpatialCoordinateContract(policy.source_length_unit),
         resource.manifest.limits,
-        tessellation=BRepTessellationPolicy(
+        tessellation=constructors_owner.BRepTessellationPolicy(
             linear_deflection=policy.cad_linear_deflection_in_source_units,
             angular_deflection=policy.cad_angular_deflection,
             trim_samples_per_edge=policy.cad_trim_samples_per_edge,
@@ -777,22 +811,26 @@ def _import_cad_surface(
     )
     match file_format:
         case SurfaceFileFormat.STEP:
-            imported = decode_step_resource(resource, cad_policy)
+            imported = step_owner.decode_step_resource(resource, cad_policy)
         case SurfaceFileFormat.IGES:
-            imported = decode_iges_resource(resource, cad_policy)
+            imported = iges_owner.decode_iges_resource(resource, cad_policy)
         case _:
-            raise SurfaceUnsupportedFormatError("CAD surfaces require STEP or IGES.")
+            raise SurfaceUnsupportedFormatError(
+                f"surface_import.file_format must be STEP or IGES for CAD surfaces; got {file_format!r}"
+            )
     cad_model = imported.model
     artifact_digest = resource.manifest.content_sha256
     points = np.asarray(cad_model.mesh_vertices)
     faces = np.asarray(cad_model.mesh_faces)
     if points.shape[0] > policy.maximum_vertices or faces.shape[0] > policy.maximum_cells:
         raise SurfaceResourceLimitError(
-            "CAD tessellation exceeds surface entity capacities."
+            f"surface_import.entity_counts must admit CAD tessellation; got vertices={points.shape[0]}/{policy.maximum_vertices}, cells={faces.shape[0]}/{policy.maximum_cells}"
         )
     payload_bytes = points.nbytes + faces.nbytes
     if payload_bytes > policy.maximum_data_bytes:
-        raise SurfaceResourceLimitError("CAD tessellation exceeds decoded data capacity.")
+        raise SurfaceResourceLimitError(
+            f"surface_import.maximum_data_bytes must admit CAD tessellation; got bytes={payload_bytes}, limit={policy.maximum_data_bytes}"
+        )
     losses = _loss_permission(
         (
             "cad_exact_geometry_tessellated_for_authoritative_cell_mesh",
@@ -850,6 +888,7 @@ def _import_cad_surface(
     return SurfaceImportResult(model, (), report, cad_model)
 
 
+@checked
 def import_surface(
     path: str | Path,
     policy: SurfaceImportPolicy,
@@ -857,10 +896,8 @@ def import_surface(
     *,
     file_format: SurfaceFileFormat | None = None,
 ) -> SurfaceImportResult:
-    """Import a surface to authoritative SI coordinates without healing or welding."""
+    "Import a surface into SI coordinates, preserving vertex and face incidence."
 
-    if not isinstance(policy, SurfaceImportPolicy):
-        raise TypeError("policy must be SurfaceImportPolicy.")
     source = Path(path).expanduser().absolute()
     format_ = _resolve_format(source, file_format)
     cad_format = format_ in (SurfaceFileFormat.STEP, SurfaceFileFormat.IGES)
@@ -902,11 +939,17 @@ def _validate_export_fields(
 ) -> tuple[PortableSurfaceField, ...]:
     values = tuple(fields)
     if len(values) > maximum_fields:
-        raise SurfaceResourceLimitError("Portable field count exceeds export capacity.")
+        raise SurfaceResourceLimitError(
+            f"surface_export.maximum_fields must admit the portable fields; got fields={len(values)}, limit={maximum_fields}"
+        )
     if not all(isinstance(field, PortableSurfaceField) for field in values):
-        raise TypeError("fields must contain PortableSurfaceField values.")
+        raise TypeError(
+            f"surface_export.fields must contain PortableSurfaceField values; got field_types={tuple(type(field).__name__ for field in values)!r}"
+        )
     if len({(field.association, field.name) for field in values}) != len(values):
-        raise ValueError("Portable field association/name pairs must be unique.")
+        raise ValueError(
+            f"surface_export.fields must have unique association and name pairs; got pairs={tuple((field.association, field.name) for field in values)!r}"
+        )
     for field in values:
         expected = (
             point_count
@@ -915,7 +958,7 @@ def _validate_export_fields(
         )
         if field.values.shape[0] != expected:
             raise ValueError(
-                f"Field {field.name!r} has {field.values.shape[0]} entities; expected {expected}."
+                f"surface_export.fields must align with their point or cell association; got field={field.name!r}, entities={field.values.shape[0]}, expected={expected}"
             )
     return values
 
@@ -950,7 +993,7 @@ def _meshio_export_mesh(
     source_unit = model.metadata.coordinate_contract.length_unit
     scale = float(conversion_factor(source_unit, target_unit))
     points = np.asarray(model.mesh.coordinates, dtype=np.float64) * scale
-    faces = np.asarray(_surface_connectivity(model.mesh).cell_vertices, dtype=np.int32)[
+    faces = np.asarray(surface_connectivity(model.mesh).cell_vertices, dtype=np.int32)[
         :, :3
     ]
     point_data = {}
@@ -993,6 +1036,7 @@ def _meshio_export_mesh(
     )
 
 
+@checked
 def export_surface(
     path: str | Path,
     model: SurfaceModel,
@@ -1002,19 +1046,14 @@ def export_surface(
     file_format: SurfaceFileFormat | None = None,
     fields: Sequence[PortableSurfaceField] = (),
 ) -> SurfaceExportResult:
-    """Export an authoritative SurfaceModel without implicit geometry changes."""
+    "Export a SurfaceModel, preserving its geometry and interchange policy."
 
-    if not isinstance(model, SurfaceModel):
-        raise TypeError("model must be SurfaceModel.")
-    if not isinstance(policy, SurfaceExportPolicy):
-        raise TypeError("policy must be SurfaceExportPolicy.")
     destination = Path(path).expanduser().resolve()
     format_ = _resolve_format(destination, file_format)
     if format_ in (SurfaceFileFormat.STEP, SurfaceFileFormat.IGES):
         _require_module("OCP", f"{format_.value} CAD export")
         raise SurfaceUnsupportedFormatError(
-            "The existing OCCT/BRep substrate provides direct STEP/IGES import but no "
-            "real SurfaceModel STEP/IGES writer; no fallback mesh export is permitted."
+            f"surface_export.file_format must have a SurfaceModel writer; got unsupported format={format_.value}"
         )
     meshio = _require_module("meshio", f"{format_.value} surface export")
     if (
@@ -1022,12 +1061,14 @@ def export_surface(
         != policy.target_length_unit.reference_system_id
     ):
         raise SurfaceInteropError(
-            "Surface export requires source and target units in one reference system."
+            f"surface_export.length_units must share a reference system; got source={model.metadata.coordinate_contract.length_unit.reference_system_id!r}, target={policy.target_length_unit.reference_system_id!r}"
         )
     point_count = model.mesh.coordinates.shape[0]
     cell_count = int(model.mesh.connectivity.cell_count)
     if point_count > policy.maximum_vertices or cell_count > policy.maximum_cells:
-        raise SurfaceResourceLimitError("Surface entity counts exceed export capacities.")
+        raise SurfaceResourceLimitError(
+            f"surface_export.entity_counts must fit policy capacities; got vertices={point_count}/{policy.maximum_vertices}, cells={cell_count}/{policy.maximum_cells}"
+        )
     fields_ = _validate_export_fields(
         fields,
         point_count,
@@ -1061,7 +1102,7 @@ def export_surface(
     payload_bytes = _array_payload_bytes(mesh)
     if payload_bytes > policy.maximum_data_bytes:
         raise SurfaceResourceLimitError(
-            f"Export payload has {payload_bytes} bytes, exceeding limit {policy.maximum_data_bytes}."
+            f"surface_export.maximum_data_bytes must admit the encoded payload; got bytes={payload_bytes}, limit={policy.maximum_data_bytes}"
         )
     write_format = _meshio_file_format(format_, destination)
     with TemporaryDirectory(prefix="phydrax-surface-write-") as temporary:
@@ -1079,10 +1120,12 @@ def export_surface(
                 meshio.write(staged, mesh, file_format=write_format)
         except meshio.WriteError as error:
             raise SurfaceInteropError(
-                f"Provider could not write {format_.value} surface artifact {destination}."
+                f"surface_export.artifact must be writable by its provider and format; got format={format_.value}, path={destination}"
             ) from error
         if staged.stat().st_size > policy.maximum_file_bytes:
-            raise SurfaceResourceLimitError("Surface export exceeds its file byte limit.")
+            raise SurfaceResourceLimitError(
+                f"surface_export.maximum_file_bytes must admit the staged export; got oversized staged_file={staged.name!r}, limit={policy.maximum_file_bytes}"
+            )
         decoded = meshio.read(staged, file_format=write_format)
         _, decoded_faces = _triangle_blocks(decoded)
         _, expected_faces = _triangle_blocks(mesh)
@@ -1090,7 +1133,7 @@ def export_surface(
             np.asarray(decoded.points), np.asarray(mesh.points)
         ) or not np.array_equal(decoded_faces, expected_faces):
             raise SurfaceDataCorruptionError(
-                "Surface codec changed coordinates or triangle connectivity."
+                f"surface_export.codec must preserve coordinates and triangle connectivity; got format={format_.value}, path={destination}"
             )
         digest = _artifact_digest(staged)
         encoded = staged.read_bytes()

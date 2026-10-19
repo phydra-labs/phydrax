@@ -6,26 +6,32 @@ from __future__ import annotations
 from collections.abc import Mapping
 from importlib.metadata import version
 from importlib.util import find_spec
+from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike
 
-from ..._identity import SemanticProvenance
-from ...discretization import CellMesh
-from ...geometry.surface import SurfaceBooleanOperation, SurfaceMetadata, SurfaceModel
-from ...linalg import SmallLinearSolvePlan, solve_small_linear
-from .._association import GeometryAssociation, GeometryAssociationKind
-from .._canonical import canonicalize_cell_mesh, certify_cell_mesh
-from .._contracts import (
+import phydrax.discretization as cell_mesh_owner
+from phydrax.meshing._association_state import (
+    GeometryAssociation,
+    GeometryAssociationKind,
+)
+from phydrax.meshing._contracts import (
     MeshingDerivativeMode,
     MeshingExecutionMode,
-    MeshingFailure,
-    MeshingFailureCategory,
     MeshingOperation,
     MeshingProviderInfo,
     MeshingSourceKind,
 )
-from .._organization import MeshAttribute, MeshAttributeRole
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
+from ..._identity import SemanticProvenance
+from ..._strict import StrictModule
+from ...geometry.surface import SurfaceBooleanOperation, SurfaceMetadata, SurfaceModel
+from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import parse
+from .._canonical import canonicalize_cell_mesh, certify_cell_mesh
+from .._organization_records import MeshAttribute, MeshAttributeRole
 from .._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
 from .._scope import MeshingEntityKind, MeshingScope
 from .._trace import (
@@ -51,23 +57,33 @@ def _validate_operands(
     operation: SurfaceBooleanOperation,
     /,
 ) -> None:
+    # Variadic tuples are static-only: arity/member admission precedes metadata access.
     if not isinstance(operands, tuple) or len(operands) < 2:
-        raise TypeError("Boolean operands must be a tuple of at least two surfaces.")
+        raise TypeError(
+            f"manifold.operands must be a tuple of at least two surfaces; got {type(operands).__name__}"
+        )
     if not all(isinstance(surface, SurfaceModel) for surface in operands):
-        raise TypeError("Boolean operands must be SurfaceModel values.")
-    if not isinstance(operation, SurfaceBooleanOperation):
-        raise TypeError("operation must be SurfaceBooleanOperation.")
+        raise TypeError(
+            "manifold.operands must contain SurfaceModel values; got a different member kind"
+        )
+    parse(operation, SurfaceBooleanOperation, "operation")
     spatial = operands[0].metadata.coordinate_contract.spatial_id
     if any(
         surface.metadata.coordinate_contract.spatial_id != spatial for surface in operands
     ):
         raise ValueError(
-            "Boolean operands require identical spatial coordinate contracts."
+            (
+                "manifold.validate_operands must provide at least two SurfaceModel operands with matching spatial contracts and supported lineage; got "
+                + "Boolean operands require identical spatial coordinate contracts."
+            )
         )
     if any(surface.selections or surface.interfaces for surface in operands):
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
-            "Boolean selection/interface transfer requires explicit lineage lowering.",
+            (
+                "manifold.validate_operands must provide at least two SurfaceModel operands with matching spatial contracts and supported lineage; got "
+                + "Boolean selection/interface transfer requires explicit lineage lowering."
+            ),
         )
 
 
@@ -78,18 +94,28 @@ def _vertex_property_columns(
 ) -> tuple[tuple[str, ...], tuple[tuple[int, ...], ...], tuple[np.ndarray, ...]]:
     """Validate named per-vertex operand properties into backend column blocks."""
 
+    # Mapping annotations are static-only; property columns require mapping operations.
     if not isinstance(vertex_properties, Mapping):
-        raise TypeError("vertex_properties must map names to per-operand arrays.")
+        raise TypeError(
+            (
+                "manifold.vertex_property_columns must bind unique named finite vertex channels with one array per operand and a shared component shape; got "
+                + "vertex_properties must map names to per-operand arrays."
+            )
+        )
     names = tuple(sorted(str(name).strip() for name in vertex_properties))
     if any(not name for name in names) or len(set(names)) != len(names):
-        raise ValueError("Vertex property names must be unique and non-empty.")
+        raise ValueError(
+            f"manifold.vertex_properties.names must be unique and nonempty; got {names!r}"
+        )
     blocks: list[list[np.ndarray]] = [[] for _ in operands]
     shapes: list[tuple[int, ...]] = []
     for name, values in sorted(
         (str(name).strip(), values) for name, values in vertex_properties.items()
     ):
         if not isinstance(values, tuple) or len(values) != len(operands):
-            raise ValueError(f"Vertex property {name!r} needs one array per operand.")
+            raise ValueError(
+                f"manifold.vertex_properties must bind one array per operand; got {name!r}: {type(values).__name__} for {len(operands)} operands"
+            )
         arrays = tuple(np.asarray(value, dtype=np.float64) for value in values)
         component_shape = arrays[0].shape[1:]
         for surface, array, block in zip(operands, arrays, blocks, strict=True):
@@ -99,8 +125,10 @@ def _vertex_property_columns(
                 or not np.all(np.isfinite(array))
             ):
                 raise ValueError(
-                    f"Vertex property {name!r} must be finite with one row per "
-                    "operand vertex and one component shape."
+                    (
+                        "manifold.vertex_property_columns must bind unique named finite vertex channels with one array per operand and a shared component shape; got "
+                        + f"Vertex property {name!r} must be finite with one row per operand vertex and one component shape."
+                    )
                 )
             block.append(array.reshape((array.shape[0], -1)))
         shapes.append(component_shape)
@@ -136,7 +164,10 @@ def _barycentric_interpolation(
     if not np.all(np.asarray(solved.successful)):
         raise MeshingFailure(
             MeshingFailureCategory.LINEAGE_FAILED,
-            "Property transfer evidence requires nondegenerate source faces.",
+            (
+                "manifold.barycentric_interpolation must use nondegenerate source triangles; got "
+                + "Property transfer evidence requires nondegenerate source faces."
+            ),
         )
     weights = np.asarray(solved.value)
     return (
@@ -144,6 +175,24 @@ def _barycentric_interpolation(
         + weights[:, :1] * corner_values[:, 1]
         + weights[:, 1:] * corner_values[:, 2]
     )
+
+
+class _BooleanOperands(StrictModule):
+    names: tuple[str, ...]
+    shapes: tuple[tuple[int, ...], ...]
+    property_columns: tuple[np.ndarray, ...]
+    original_id: int
+    input_faces: tuple[np.ndarray, ...]
+    solids: tuple[Any, ...]
+
+
+class _BooleanCarrier(StrictModule):
+    property_vertices: np.ndarray
+    property_faces: np.ndarray
+    source_indices: np.ndarray
+    source_faces: np.ndarray
+    used: np.ndarray
+    geometric_faces: np.ndarray
 
 
 class ManifoldProvider:
@@ -188,16 +237,53 @@ class ManifoldProvider:
         if find_spec("manifold3d") is None:
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-                "Manifold booleans require the optional 'meshing-manifold' "
-                "dependency group.",
+                (
+                    "manifold.execute must load the optional meshing-manifold dependency and finish the selected boolean without backend errors; got "
+                    + "Manifold booleans require the optional 'meshing-manifold' dependency group."
+                ),
             )
         import manifold3d
 
+        prepared = self._prepare_operands(
+            manifold3d, operands, operation, vertex_properties
+        )
+        match operation:
+            case SurfaceBooleanOperation.UNION:
+                kind = manifold3d.OpType.Add
+            case SurfaceBooleanOperation.DIFFERENCE:
+                kind = manifold3d.OpType.Subtract
+            case SurfaceBooleanOperation.INTERSECTION:
+                kind = manifold3d.OpType.Intersect
+            case _:
+                raise ValueError(
+                    (
+                        "manifold.execute must load the optional meshing-manifold dependency and finish the selected boolean without backend errors; got "
+                        + f"Unsupported boolean operation {operation!r}."
+                    )
+                )
+        solid = manifold3d.Manifold.batch_boolean(prepared.solids, kind)
+        if solid.status() != manifold3d.Error.NoError:
+            raise MeshingFailure(
+                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                (
+                    "manifold.execute must load the optional meshing-manifold dependency and finish the selected boolean without backend errors; got "
+                    + f"Manifold boolean failed: {solid.status().name}."
+                ),
+            )
+        carrier = self._convert_carrier(solid, operands, prepared)
+        return self._publish_boolean(operands, operation, prepared, carrier)
+
+    @staticmethod
+    def _prepare_operands(
+        manifold3d: Any,
+        operands: tuple[SurfaceModel, ...],
+        operation: SurfaceBooleanOperation,
+        vertex_properties: Mapping[str, tuple[ArrayLike, ...]] | None,
+    ) -> _BooleanOperands:
         _validate_operands(operands, operation)
         names, shapes, property_columns = _vertex_property_columns(
             operands, {} if vertex_properties is None else vertex_properties
         )
-        contract = operands[0].metadata.coordinate_contract
         original_id = manifold3d.Manifold.reserve_ids(len(operands))
         input_faces = tuple(_surface_faces(surface) for surface in operands)
         solids = []
@@ -221,31 +307,38 @@ class ManifoldProvider:
             if solid.status() != manifold3d.Error.NoError:
                 raise MeshingFailure(
                     MeshingFailureCategory.INVALID_SOURCE,
-                    f"Manifold rejected the input surface: {solid.status().name}.",
+                    (
+                        "manifold.prepare_operands must admit each source surface without backend errors; got "
+                        + f"Manifold rejected the input surface: {solid.status().name}."
+                    ),
                 )
             solids.append(solid)
-        match operation:
-            case SurfaceBooleanOperation.UNION:
-                kind = manifold3d.OpType.Add
-            case SurfaceBooleanOperation.DIFFERENCE:
-                kind = manifold3d.OpType.Subtract
-            case SurfaceBooleanOperation.INTERSECTION:
-                kind = manifold3d.OpType.Intersect
-            case _:
-                raise ValueError(f"Unsupported boolean operation {operation!r}.")
-        solid = manifold3d.Manifold.batch_boolean(solids, kind)
-        if solid.status() != manifold3d.Error.NoError:
-            raise MeshingFailure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                f"Manifold boolean failed: {solid.status().name}.",
-            )
+        return _BooleanOperands(
+            names,
+            shapes,
+            property_columns,
+            original_id,
+            input_faces,
+            tuple(solids),
+        )
+
+    @staticmethod
+    def _convert_carrier(
+        solid: Any,
+        operands: tuple[SurfaceModel, ...],
+        prepared: _BooleanOperands,
+    ) -> _BooleanCarrier:
+        original_id, input_faces = prepared.original_id, prepared.input_faces
         arrays = solid.to_mesh64()
         property_vertices = np.asarray(arrays.vert_properties, dtype=np.float64)
         property_faces = np.asarray(arrays.tri_verts, dtype=np.int64)
         if not len(property_faces):
             raise MeshingFailure(
                 MeshingFailureCategory.CONVERSION_FAILED,
-                "Boolean result is empty; no nonempty cell carrier can be produced.",
+                (
+                    "manifold.convert_carrier must publish a nonempty triangle carrier with valid source-face runs; got "
+                    + "Boolean result is empty; no nonempty cell carrier can be produced."
+                ),
             )
         run_offsets = np.asarray(arrays.run_index, dtype=np.int64) // 3
         source_indices = np.repeat(
@@ -267,7 +360,10 @@ class ManifoldProvider:
         ):
             raise MeshingFailure(
                 MeshingFailureCategory.LINEAGE_FAILED,
-                "Invalid Manifold source-face runs.",
+                (
+                    "manifold.convert_carrier must publish a nonempty triangle carrier with valid source-face runs; got "
+                    + "Invalid Manifold source-face runs."
+                ),
             )
         # Property channels split vertices along cuts; merge them back into one
         # geometric vertex per position for the manifold carrier.
@@ -277,6 +373,31 @@ class ManifoldProvider:
         )
         used, geometric_faces = np.unique(canonical[property_faces], return_inverse=True)
         geometric_faces = geometric_faces.reshape(property_faces.shape)
+        return _BooleanCarrier(
+            property_vertices,
+            property_faces,
+            source_indices,
+            source_faces,
+            used,
+            geometric_faces,
+        )
+
+    def _publish_boolean(
+        self,
+        operands: tuple[SurfaceModel, ...],
+        operation: SurfaceBooleanOperation,
+        prepared: _BooleanOperands,
+        carrier: _BooleanCarrier,
+    ) -> CellMeshingResult:
+        contract = operands[0].metadata.coordinate_contract
+        names, shapes = prepared.names, prepared.shapes
+        input_faces, property_columns = prepared.input_faces, prepared.property_columns
+        property_vertices, property_faces = (
+            carrier.property_vertices,
+            carrier.property_faces,
+        )
+        source_indices, source_faces = carrier.source_indices, carrier.source_faces
+        used, geometric_faces = carrier.used, carrier.geometric_faces
         provenance_payload: dict[str, object] = {
             "kind": "surface-boolean",
             "operation": operation.value,
@@ -436,8 +557,10 @@ class ManifoldProvider:
             if not np.isfinite(residual) or residual > _PROPERTY_TRANSFER_TOLERANCE:
                 raise MeshingFailure(
                     MeshingFailureCategory.LINEAGE_FAILED,
-                    f"Manifold vertex property {name!r} is not barycentric on its "
-                    f"reported source face (relative residual {residual}).",
+                    (
+                        "manifold.property_transfer must retain source-face barycentric values within the relative interpolation tolerance; got "
+                        + f"Manifold vertex property {name!r} is not barycentric on its reported source face (relative residual {residual})."
+                    ),
                 )
             results.append(
                 (
@@ -449,7 +572,7 @@ class ManifoldProvider:
 
     @staticmethod
     def _property_attributes(
-        mesh: CellMesh,
+        mesh: cell_mesh_owner.CellMesh,
         boundary: SurfaceModel,
         names: tuple[str, ...],
         transfer: tuple[tuple[np.ndarray, float], ...],
@@ -481,7 +604,7 @@ class ManifoldProvider:
     def _associations(
         operands: tuple[SurfaceModel, ...],
         input_faces: tuple[np.ndarray, ...],
-        mesh: CellMesh,
+        mesh: cell_mesh_owner.CellMesh,
         boundary: SurfaceModel,
         geometric_faces: np.ndarray,
         source_indices: np.ndarray,

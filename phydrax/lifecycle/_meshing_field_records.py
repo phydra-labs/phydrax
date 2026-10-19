@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Explicit physical field declarations for canonical native restart recipes.
+"""Declare physical field semantics for native restart recipes.
 
 Only primitive declarations and accepted arrays cross this boundary. Preparation
 is performed by the existing FE/FV owners against the restored accepted carrier.
@@ -9,23 +9,41 @@ is performed by the existing FE/FV owners against the restored accepted carrier.
 
 from __future__ import annotations
 
+import dataclasses
+import json
+from abc import abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, replace
 from itertools import product
 from math import prod
-from typing import Any, cast
+from os import getpid
+from typing import Any, assert_never, cast, final, Literal, Self
 
 import equinox as eqx
 import jax
+import jax.numpy as jnp
 import numpy as np
+from jax.experimental import multihost_utils
 from jax.sharding import NamedSharding, PartitionSpec
 
+from phydrax.discretization.fem._reference_types import (
+    AbstractStoredFiniteElementTabulator,
+    FiniteElementSpec,
+    FiniteElementTabulator,
+)
+
+from .._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS, validate_json_nesting
 from .._differentiation import BranchDifferentiationPolicy
 from .._fingerprint import canonical_fingerprint, logical_array_value_collection_digest
 from .._frozendict import frozendict
+from .._model._artifacts import ArtifactValueCodec, register_artifact_value_codec
+from .._model._structure import model_recipe_array_values, model_structure_recipe
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._adaptive_simplex import AdaptiveSimplexParts
+from ..discretization._cell_complex import PolyhedralConnectivity
+from ..discretization._cell_geometry import CoordinateTabulator
+from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._conservation_boundary import ExtrapolationBoundary
 from ..discretization._spaces import (
     DiscreteFieldSpace,
@@ -34,11 +52,11 @@ from ..discretization._spaces import (
 )
 from ..discretization._views import FieldTracePolicy
 from ..discretization.fem._form_elements import (
-    _HybridFactors,
-    _ProxyTabulator,
-    _TensorFactors,
     form_element,
     FormBasis,
+    HybridFactors,
+    ProxyTabulator,
+    TensorFactors,
 )
 from ..discretization.fem._generic import (
     FiniteElementDiscretization,
@@ -46,11 +64,12 @@ from ..discretization.fem._generic import (
     FiniteElementPlan,
 )
 from ..discretization.fem._high_order import ReferenceNodalFamily, SimplexNodalFamily
+from ..discretization.fem._hybrid_reference import HybridReferenceFamily
 from ..discretization.fem._precision import FiniteElementPrecisionPolicy
-from ..discretization.fem._reference import _FiniteElementTabulator, FiniteElementSpec
-from ..discretization.fem._spectral_hp_completion import HybridReferenceFamily
+from ..discretization.fem._reference import discontinuous_element, lagrange_element
 from ..discretization.finite_volume._cell_polynomial import (
     CellPolynomialReconstructionPlan,
+    PreparedCellPolynomialReconstruction,
 )
 from ..discretization.finite_volume._physical_boundaries import SlipWallBoundary
 from ..discretization.finite_volume._reconstruction import PiecewiseConstantReconstruction
@@ -59,19 +78,37 @@ from ..discretization.finite_volume._unstructured import (
     UnstructuredFiniteVolumeDiscretization,
     UnstructuredFiniteVolumePlan,
 )
+from ..discretization.finite_volume._unstructured_dynamics import (
+    PreparedUnstructuredFiniteVolumeDynamics,
+    UnstructuredFiniteVolumeBoundarySet,
+    UnstructuredFiniteVolumeMethodPlan,
+)
 from ..discretization.finite_volume._unstructured_weno import (
+    PreparedUnstructuredWENOZReconstruction,
     UnstructuredWENOZReconstructionPlan,
 )
 from ..equations._hyperbolic_systems import EulerSystem
 from ..equations._materials import IdealGasMaterial
 from ..exterior._form_type import FormType, FormValueSpec
-from ..linalg import ArraySpace
+from ..linalg._spaces import ArraySpace
 from ..meshing._adaptation import MeshAdaptationResult
+from ..meshing._entity_keys import key_rows
+from ..meshing._initial_certification import InitialCollectiveMeshEvidence
+from ..meshing._mesh_part import MeshPart
 from ..meshing._overset import OversetPartSpec, OversetRegistration
-from ..meshing._restart_distribution import SimplexRestartRepack
-from ..meshing._result import CellMeshingResult
+from ..meshing._restart_distribution import (
+    SimplexRestartRepack,
+    SimplexRestartRepackProof,
+    validate_simplex_restart_repack,
+)
+from ..meshing._result import CellMeshingResult, require_original_meshing_source
 from ..meshing._scope import MeshingEntityKind, MeshingScope
-from ..units import DimensionSignature, UnitDefinition
+from ..sparse._ops import gather_routes
+from ..sparse._relation import RowRelation
+from ..typing import checked, parse
+from ..units._dimension import DimensionSignature
+from ..units._unit import UnitDefinition
+from ._meshing_source_records import content_equal, register_meshing_source_types
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +118,14 @@ class MeshingCoefficientIdentityBank:
     field_space_id: str
     rows: tuple[tuple[int, tuple[int, ...], str], ...]
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[Self], value: MeshingCoefficientIdentityBank, /
+    ) -> Self:
+        """Reconstruct and validate the stored coefficient identities."""
+        return cls(value.field_space_id, value.rows)
+
     def __post_init__(self) -> None:
         if (
             type(self.field_space_id) is not str
@@ -88,11 +133,11 @@ class MeshingCoefficientIdentityBank:
             or self.field_space_id != self.field_space_id.strip()
         ):
             raise ValueError(
-                "Coefficient identities require their exact owning field-space identity."
+                "MeshingCoefficientIdentityBank.field_space_id must be a nonempty trimmed identity; got invalid identity"
             )
         if type(self.rows) is not tuple:
             raise TypeError(
-                "Coefficient identity rows must be immutable ordered metadata."
+                "MeshingCoefficientIdentityBank.rows must be an immutable tuple; got mutable metadata"
             )
         coordinates, identifiers = set(), set()
         previous = None
@@ -109,7 +154,7 @@ class MeshingCoefficientIdentityBank:
                 or row[2] != row[2].strip()
             ):
                 raise ValueError(
-                    "Coefficient identity rows require exact ordinals, components and stored IDs."
+                    "MeshingCoefficientIdentityBank.rows must contain nonnegative ordinals/components and trimmed IDs; got malformed row"
                 )
             coordinate = row[:2]
             if (
@@ -118,7 +163,7 @@ class MeshingCoefficientIdentityBank:
                 or (previous is not None and coordinate <= previous)
             ):
                 raise ValueError(
-                    "Coefficient identities must retain unique rows and IDs in their actual canonical order."
+                    "MeshingCoefficientIdentityBank.rows must have unique ordered coordinates and IDs; got duplicate or unordered row"
                 )
             record = GlobalCoefficientId(
                 self.field_space_id, row[0], row[1], coefficient_id=row[2]
@@ -130,32 +175,28 @@ class MeshingCoefficientIdentityBank:
                 record.coefficient_id,
             ) != (self.field_space_id, *row):
                 raise ValueError(
-                    "Coefficient identity metadata changed its actual constructor values."
+                    "MeshingCoefficientIdentityBank.rows must preserve coefficient identity inputs; got changed constructor values"
                 )
             coordinates.add(coordinate)
             identifiers.add(row[2])
             previous = coordinate
 
+    @checked
     def require_field_space(self, space: DiscreteFieldSpace, /) -> None:
         self.__post_init__()
-        if type(space) is not DiscreteFieldSpace:
-            raise TypeError(
-                "Coefficient identity banks require their actual discrete field-space owner."
-            )
         expected = tuple(
             (value.ordinal, value.component, value.coefficient_id)
             for value in _coefficient_id_records(space)
         )
         if self.field_space_id != space.field_space_id or self.rows != expected:
             raise ValueError(
-                "Coefficient identities are missing, reordered, or foreign to their complete owning field space."
+                "MeshingCoefficientIdentityBank.rows must match the field space in order; got missing, reordered, or foreign identities"
             )
 
 
 def _encode_coefficient_identity_bank(
     bank: MeshingCoefficientIdentityBank,
 ) -> Mapping[str, Any]:
-    import json
 
     bank.__post_init__()
     return {
@@ -169,20 +210,17 @@ def _encode_coefficient_identity_bank(
 def _decode_coefficient_identity_bank(
     payload: Mapping[str, Any],
 ) -> MeshingCoefficientIdentityBank:
-    import json
-
-    from .._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS, validate_json_nesting
 
     if set(payload) != {"field_space_id", "rows_json"} or any(
         type(payload[name]) is not str for name in payload
     ):
         raise ValueError(
-            "Coefficient identity wire data requires its exact registered field set."
+            "MeshingCoefficientIdentityBank.payload must contain field_space_id and rows_json strings; got invalid fields"
         )
     text = payload["rows_json"]
     if len(text.encode("utf-8")) > DEFAULT_ARRAY_ARCHIVE_LIMITS.max_manifest_bytes:
         raise ValueError(
-            "Coefficient identity wire data exceeds the original manifest byte limit."
+            "MeshingCoefficientIdentityBank.rows_json must fit the manifest byte limit; got oversized wire data"
         )
     validate_json_nesting(text, DEFAULT_ARRAY_ARCHIVE_LIMITS.max_manifest_nesting)
     values = json.loads(text)
@@ -191,7 +229,7 @@ def _decode_coefficient_identity_bank(
         for row in values
     ):
         raise ValueError(
-            "Coefficient identity wire rows require exact ordinal/component/ID records."
+            "MeshingCoefficientIdentityBank.rows_json must encode ordinal/component/ID rows; got malformed wire records"
         )
     bank = MeshingCoefficientIdentityBank(
         payload["field_space_id"],
@@ -199,13 +237,12 @@ def _decode_coefficient_identity_bank(
     )
     if _encode_coefficient_identity_bank(bank) != dict(payload):
         raise ValueError(
-            "Coefficient identity wire data is not its exact canonical encoding."
+            "MeshingCoefficientIdentityBank.payload must use deterministic encoding; got a differing re-encoding"
         )
     return bank
 
 
 def _register_coefficient_identity_bank_codec() -> None:
-    from .._model._artifacts import ArtifactValueCodec, register_artifact_value_codec
 
     register_artifact_value_codec(
         ArtifactValueCodec(
@@ -217,16 +254,24 @@ def _register_coefficient_identity_bank_codec() -> None:
     )
 
 
+type MeshingFieldIndexBank = Literal[
+    "field/global_coefficient_ids",
+    "mesh/vertex_ids",
+    "mesh/cell_ids",
+    "epoch/vertex_ids",
+    "epoch/cell_ids",
+]
+
+
 @dataclass(frozen=True, kw_only=True)
 class MeshingFieldIndexBinding:
-    """Exact row meaning from a real field space, mesh entity set or raw epoch.
+    """Bind field, mesh-entity, or raw-epoch rows to scientific identities.
 
-    Raw epoch banks include allocated retired records and explicit padding.
-    They are not coefficient vectors. ``index_values`` retains the original
-    bank order; a mesh scope describes membership, never a guessed row order.
+    Raw epoch banks include retired records and padding. ``index_values``
+    retains bank order; a mesh scope describes membership.
     """
 
-    bank_name: str
+    bank_name: MeshingFieldIndexBank
     source_result_id: str
     source_topology_id: str
     source_geometry_id: str
@@ -238,17 +283,19 @@ class MeshingFieldIndexBinding:
     field_space_id: str | None = None
     coefficient_bank: MeshingCoefficientIdentityBank | None = None
 
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[Self], value: MeshingFieldIndexBinding, /) -> Self:
+        """Reconstruct and validate the stored index binding."""
+        return cls(
+            **{
+                member.name: getattr(value, member.name)
+                for member in dataclasses.fields(value)
+            }
+        )
+
     def __post_init__(self) -> None:
-        if self.bank_name not in (
-            "field/global_coefficient_ids",
-            "mesh/vertex_ids",
-            "mesh/cell_ids",
-            "epoch/vertex_ids",
-            "epoch/cell_ids",
-        ):
-            raise ValueError(
-                "Physical rows require an explicitly supported owning index bank."
-            )
+        parse(self.bank_name, MeshingFieldIndexBank, "MeshingFieldIndexBinding.bank_name")
         if any(
             type(value) is not str or not value or value != value.strip()
             for value in (
@@ -258,17 +305,19 @@ class MeshingFieldIndexBinding:
             )
         ):
             raise ValueError(
-                "Physical row banks require original source/result/geometry identities."
+                "MeshingFieldIndexBinding.source_result_id must be trimmed and accompany nonempty trimmed topology and geometry IDs; got invalid source identities"
             )
         if not isinstance(
             self.index_values, (jax.Array, np.ndarray)
         ) or self.index_values.dtype != np.dtype("int64"):
-            raise TypeError("Physical row identity banks must retain exact int64 arrays.")
+            raise TypeError(
+                "MeshingFieldIndexBinding.index_values must be an int64 array; got incompatible values"
+            )
         raw = self.bank_name.startswith("epoch/")
         axes = (0, 1) if raw else (0,)
         if self.index_axes != axes or self.index_values.ndim != len(axes):
             raise ValueError(
-                "Physical row axes must be the exact declared mesh or native raw-bank axes."
+                "MeshingFieldIndexBinding.index_axes must match mesh or raw-bank rank; got incompatible axes"
             )
         if raw and (
             not self.source_evidence_id
@@ -276,37 +325,39 @@ class MeshingFieldIndexBinding:
             or self.scope is not None
         ):
             raise ValueError(
-                "Allocated raw histories require actual native evidence and epoch authority."
+                "MeshingFieldIndexBinding.source_evidence_id must bind a native source_epoch_id without a compact scope; got incompatible raw binding"
             )
         if self.bank_name.startswith("mesh/") and type(self.scope) is not MeshingScope:
-            raise TypeError("Mesh row banks require their real owning entity scope.")
+            raise TypeError(
+                "MeshingFieldIndexBinding.scope must be a MeshingScope for mesh rows; got missing or invalid scope"
+            )
         if (
             self.bank_name == "field/global_coefficient_ids"
             and self.field_space_id is None
         ):
             raise ValueError(
-                "Coefficient ordinals require their actual owning field space."
+                "MeshingFieldIndexBinding.field_space_id must be declared for coefficient ordinals; got missing identity"
             )
         if self.field_space_id is not None and (
             type(self.field_space_id) is not str or not self.field_space_id
         ):
             raise ValueError(
-                "Coefficient bindings require a canonical field-space identity."
+                "MeshingFieldIndexBinding.field_space_id must be nonempty; got invalid identity"
             )
         if self.field_space_id is None:
             if self.coefficient_bank is not None:
                 raise ValueError(
-                    "A history/entity bank cannot claim undeclared coefficient identities."
+                    "MeshingFieldIndexBinding.coefficient_bank must be absent without field_space_id; got undeclared coefficient identities"
                 )
         elif type(self.coefficient_bank) is not MeshingCoefficientIdentityBank:
             raise TypeError(
-                "Coefficient identities require their exact immutable scientific bank."
+                "MeshingFieldIndexBinding.coefficient_bank must be a MeshingCoefficientIdentityBank; got missing or invalid bank"
             )
         else:
             self.coefficient_bank.__post_init__()
             if self.coefficient_bank.field_space_id != self.field_space_id:
                 raise ValueError(
-                    "Coefficient identity bank belongs to another actual field space."
+                    "MeshingFieldIndexBinding.coefficient_bank.field_space_id must match field_space_id; got foreign bank"
                 )
 
 
@@ -315,11 +366,13 @@ def _coefficient_id_records(
 ) -> tuple[GlobalCoefficientId, ...]:
     if not isinstance(space.vector_space, ArraySpace):
         raise TypeError(
-            "Physical coefficient banks require the existing explicit ArraySpace owner."
+            "DiscreteFieldSpace.vector_space must be an ArraySpace for coefficient rows; got unsupported space"
         )
     shape = space.vector_space.shape
     if not shape:
-        raise ValueError("A physical field space must declare its coefficient-row axis.")
+        raise ValueError(
+            "DiscreteFieldSpace.vector_space.shape must have a coefficient-row axis; got scalar space"
+        )
     components = tuple(product(*(range(size) for size in shape[1:])))
     return tuple(
         GlobalCoefficientId(space.field_space_id, ordinal, component)
@@ -328,18 +381,18 @@ def _coefficient_id_records(
     )
 
 
+@checked
 def prepare_meshing_field_index_binding(
     carrier: CellMeshingResult,
-    bank_name: str,
+    bank_name: MeshingFieldIndexBank,
     /,
     *,
     field_space: DiscreteFieldSpace | None = None,
 ) -> MeshingFieldIndexBinding:
-    """Bind rows to the actual source bank, not a payload's shape or row order."""
-    if type(carrier) is not CellMeshingResult:
-        raise TypeError(
-            "Physical index binding requires the actual accepted CellMeshingResult."
-        )
+    """Bind rows to the source bank by scientific row identity."""
+    bank_name = parse(
+        bank_name, MeshingFieldIndexBank, "prepare_meshing_field_index_binding.bank_name"
+    )
     mesh = carrier.mesh
     evidence = carrier.collective_evidence
     evidence_id = None if evidence is None else evidence.evidence_id
@@ -352,53 +405,58 @@ def prepare_meshing_field_index_binding(
         else logical_array_value_collection_digest({"epoch/clocks": clocks})
     )
     scope = None
-    if bank_name == "field/global_coefficient_ids":
-        if field_space is None or not isinstance(field_space.vector_space, ArraySpace):
-            raise TypeError(
-                "Coefficient-bank authoring requires its actual prepared DiscreteFieldSpace."
-            )
-        values = np.arange(field_space.vector_space.shape[0], dtype=np.int64)
-        values.flags.writeable = False
-    elif bank_name in ("mesh/vertex_ids", "mesh/cell_ids"):
-        degree = 0 if bank_name == "mesh/vertex_ids" else mesh.topological_dimension
-        entity_set = mesh.entity_set(degree)
-        values = mesh.vertex_global_ids if degree == 0 else entity_set.entity_ids
-        scope = MeshingScope(
-            mesh.mesh_id,
-            mesh.numeric_version,
-            MeshingEntityKind.MESH,
-            degree,
-            entity_set.entity_set_id,
-            entity_set.entity_ids,
-        )
-        if field_space is not None:
-            layout = field_space.layout
-            if (
-                not isinstance(layout, EntityDofLayout)
-                or layout.entity_set_id != entity_set.entity_set_id
-                or layout.dofs_per_entity != 1
-                or layout.entity_count != values.shape[0]
+    match bank_name:
+        case "field/global_coefficient_ids":
+            if field_space is None or not isinstance(
+                field_space.vector_space, ArraySpace
             ):
-                raise ValueError(
-                    "Entity-backed coefficients must retain their actual one-DOF entity layout."
+                raise TypeError(
+                    "prepare_meshing_field_index_binding.field_space must declare an ArraySpace; got missing or incompatible field space"
                 )
-    elif bank_name in ("epoch/vertex_ids", "epoch/cell_ids"):
-        if evidence is None:
-            raise ValueError(
-                "Allocated histories require their actual retained native collective source."
+            values = np.arange(field_space.vector_space.shape[0], dtype=np.int64)
+            values.flags.writeable = False
+        case "mesh/vertex_ids" | "mesh/cell_ids":
+            degree = 0 if bank_name == "mesh/vertex_ids" else mesh.topological_dimension
+            entity_set = mesh.entity_set(degree)
+            values = mesh.vertex_global_ids if degree == 0 else entity_set.entity_ids
+            scope = MeshingScope(
+                mesh.mesh_id,
+                mesh.numeric_version,
+                MeshingEntityKind.MESH,
+                degree,
+                entity_set.entity_set_id,
+                entity_set.entity_ids,
             )
-        bank = dict(evidence.logical_arrays).get(bank_name)
-        if bank is None or clocks is None:
+            if field_space is not None:
+                layout = field_space.layout
+                if (
+                    not isinstance(layout, EntityDofLayout)
+                    or layout.entity_set_id != entity_set.entity_set_id
+                    or layout.dofs_per_entity != 1
+                    or layout.entity_count != values.shape[0]
+                ):
+                    raise ValueError(
+                        "prepare_meshing_field_index_binding.field_space.dof_layout must bind one DOF per entity; got incompatible layout"
+                    )
+        case "epoch/vertex_ids" | "epoch/cell_ids":
+            if evidence is None:
+                raise ValueError(
+                    "prepare_meshing_field_index_binding.carrier.collective_evidence must bind raw history; got missing evidence"
+                )
+            bank = dict(evidence.logical_arrays).get(bank_name)
+            if bank is None or clocks is None:
+                raise ValueError(
+                    "prepare_meshing_field_index_binding.carrier.collective_evidence must retain raw index and clock banks; got missing bank"
+                )
+            if field_space is not None:
+                raise ValueError(
+                    "prepare_meshing_field_index_binding.field_space must be absent for raw epochs; got coefficient field space"
+                )
+            values = bank
+        case _:
             raise ValueError(
-                "Native history authority lacks its exact raw index/clock bank."
+                "prepare_meshing_field_index_binding.bank_name must select a supported bank; got unsupported selector"
             )
-        if field_space is not None:
-            raise ValueError(
-                "An allocated raw epoch bank is not a prepared coefficient field space."
-            )
-        values = bank
-    else:
-        raise ValueError("Unknown physical source-index bank.")
     return MeshingFieldIndexBinding(
         bank_name=bank_name,
         source_result_id=carrier.result_id,
@@ -433,6 +491,7 @@ def _same_index_bank(
     )
 
 
+@checked
 def validate_meshing_field_index_binding(
     role: MeshingFieldStateRole,
     carrier: CellMeshingResult,
@@ -446,7 +505,9 @@ def validate_meshing_field_index_binding(
         return
     binding = role.index_binding
     if binding is None:
-        raise ValueError("Physical rows have no source-index authority.")
+        raise ValueError(
+            "MeshingFieldStateRole.index_binding must declare row identities; got missing binding"
+        )
     expected = prepare_meshing_field_index_binding(
         carrier, binding.bank_name, field_space=field_space
     )
@@ -462,20 +523,20 @@ def validate_meshing_field_index_binding(
     )
     if any(getattr(binding, name) != getattr(expected, name) for name in identity_fields):
         raise ValueError(
-            "Physical row binding differs from its actual source/epoch/geometry/field-space authority."
+            "MeshingFieldStateRole.index_binding must match source, epoch, geometry and field space; got incompatible identity"
         )
     if not _same_index_bank(binding.index_values, expected.index_values):
         raise ValueError(
-            "Physical row identity/order differs from the actual source-index bank."
+            "MeshingFieldStateRole.index_binding.index_values must match source row identity/order; got changed rows"
         )
     if binding.coefficient_bank != expected.coefficient_bank:
         raise ValueError(
-            "Physical coefficients lost their complete original ordered field-space identities."
+            "MeshingFieldStateRole.index_binding.coefficient_bank must retain ordered field-space identities; got changed bank"
         )
     if expected.scope is None:
         if binding.scope is not None:
             raise ValueError(
-                "Raw/DOF ordinals cannot claim an unrelated compact mesh scope."
+                "MeshingFieldStateRole.index_binding.scope must be absent for raw or DOF ordinals; got compact scope"
             )
     elif binding.scope is None or (
         binding.scope.source_id != expected.scope.source_id
@@ -486,9 +547,12 @@ def validate_meshing_field_index_binding(
         or binding.scope.scope_id != expected.scope.scope_id
         or not _same_index_bank(binding.scope.entity_ids, expected.scope.entity_ids)
     ):
-        raise ValueError("Physical entity rows lost their exact owning mesh scope.")
+        raise ValueError(
+            "MeshingFieldStateRole.index_binding.scope must match the source mesh scope; got changed entity membership"
+        )
 
 
+@checked
 def project_meshing_field_history(
     source_role: MeshingFieldStateRole,
     source_values: jax.Array | np.ndarray,
@@ -500,16 +564,12 @@ def project_meshing_field_history(
     field_space: DiscreteFieldSpace | None = None,
     index_source: CellMeshingResult | None = None,
 ) -> jax.Array | np.ndarray:
-    """Join compact transferred values to actual raw rows by scientific IDs.
+    """Join compact transferred values to raw rows by scientific IDs.
 
-    Only active raw rows are updated. Allocated inactive/retired/removal rows
-    retain the supplied original indexed baseline. Missing active IDs refuse.
-    Local raw shards are processed without gathering a complete global bank.
+    Only active raw rows are updated. Inactive and retired rows retain the
+    supplied indexed baseline. Missing active IDs refuse. Local shards are
+    processed without gathering the global bank.
     """
-    import jax.numpy as jnp
-
-    from ..meshing._topology_edit import key_rows
-    from ..sparse import gather_routes, RowRelation
 
     source_role.__post_init__()
     raw_role.__post_init__()
@@ -526,11 +586,11 @@ def project_meshing_field_history(
         )
     ):
         raise ValueError(
-            "History projection requires an explicit compact-entity to allocated-epoch bank pair."
+            "project_meshing_field_history.index_binding must pair compact entities with allocated epochs; got incompatible banks"
         )
     if raw_role.role not in ("stage-history", "material-history"):
         raise ValueError(
-            "Allocated projection targets must be actual history, not coefficient vectors."
+            "project_meshing_field_history.raw_role.role must be a history role; got coefficient or unsupported role"
         )
     if (
         source_role.field_name != raw_role.field_name
@@ -538,7 +598,7 @@ def project_meshing_field_history(
         or source_role.value_units != raw_role.value_units
     ):
         raise ValueError(
-            "History projection cannot relabel field, physical units or accepted state epoch."
+            "project_meshing_field_history.raw_role must preserve field, units and state epoch; got changed semantics"
         )
     validate_meshing_field_index_binding(source_role, carrier, field_space=field_space)
     raw_source = carrier if index_source is None else index_source
@@ -548,7 +608,7 @@ def project_meshing_field_history(
         or source_values.dtype != source_role.dtype
     ):
         raise ValueError(
-            "Transferred compact values differ from their original declared physical schema."
+            "project_meshing_field_history.source_values must match the declared shape and dtype; got incompatible schema"
         )
     if (
         raw_baseline.shape != raw_role.shape
@@ -556,27 +616,27 @@ def project_meshing_field_history(
         or source_values.dtype != raw_role.dtype
     ):
         raise ValueError(
-            "Raw history baseline must retain its actual payload schema and dtype."
+            "project_meshing_field_history.raw_baseline must match the raw role shape and dtype; got incompatible schema"
         )
     if source_role.shape[1:] != raw_role.shape[2:]:
         raise ValueError(
-            "Compact and raw history component axes must retain the same declared value semantics."
+            "project_meshing_field_history.raw_role.shape must preserve compact component axes; got incompatible components"
         )
     if (
         isinstance(compact.index_values, jax.Array)
         and not compact.index_values.is_fully_addressable
     ):
         raise ValueError(
-            "Compact history projection requires an actual owner-local identity workset."
+            "project_meshing_field_history.source_role.index_binding.index_values must be addressable; got nonaddressable identity bank"
         )
     if isinstance(source_values, jax.Array) and not source_values.is_fully_addressable:
         raise ValueError(
-            "Compact history values must belong to the actual addressable owner workset."
+            "project_meshing_field_history.source_values must be addressable; got nonaddressable values"
         )
     evidence = raw_source.collective_evidence
     if evidence is None:
         raise ValueError(
-            "Raw history projection requires its actual native source evidence."
+            "project_meshing_field_history.index_source.collective_evidence must retain native raw banks; got missing evidence"
         )
     active_name = (
         "epoch/vertex_active"
@@ -590,12 +650,12 @@ def project_meshing_field_history(
         or active.shape != raw.index_values.shape
     ):
         raise ValueError(
-            "Native history projection lacks its actual raw active-row mask."
+            "project_meshing_field_history.active_mask must match the raw bank; got missing or incompatible mask"
         )
     ids = np.asarray(compact.index_values)
     if np.any(ids < 0) or np.unique(ids).size != ids.size:
         raise ValueError(
-            "Compact history IDs must be distinct actual scientific entities."
+            "project_meshing_field_history.compact_ids must be distinct nonnegative identities; got invalid or duplicate IDs"
         )
 
     def local(
@@ -607,12 +667,12 @@ def project_meshing_field_history(
         live = np.asarray(active_block)
         if np.any(live & (queries < 0)):
             raise ValueError(
-                "An active raw history row has no allocated scientific identity."
+                "project_meshing_field_history.raw_ids must be nonnegative for active rows; got missing identity"
             )
         rows = key_rows(ids[:, None], queries.reshape(-1, 1)).reshape(queries.shape)
         if np.any(live & (rows < 0)):
             raise ValueError(
-                "An active raw history ID is absent from its actual transferred compact field."
+                "project_meshing_field_history.compact_ids must contain active raw IDs; got missing transferred identity"
             )
         if ids.size == 0:
             return jnp.asarray(baseline)
@@ -634,16 +694,16 @@ def project_meshing_field_history(
             and not raw.index_values.is_fully_addressable
         ):
             raise ValueError(
-                "A host baseline cannot stand in for a nonaddressable raw bank."
+                "project_meshing_field_history.raw_baseline must match raw-bank addressability; got host baseline with nonaddressable identities"
             )
         if not active.is_fully_addressable:
             raise ValueError(
-                "A host baseline requires its actual addressable native mask."
+                "project_meshing_field_history.active_mask must be addressable with a host baseline; got nonaddressable mask"
             )
         return np.asarray(local(raw.index_values, active, raw_baseline))
     if not isinstance(raw.index_values, jax.Array):
         raise TypeError(
-            "Distributed raw history requires the existing JAX source-index bank."
+            "project_meshing_field_history.raw_ids must be a JAX array for distributed history; got host identities"
         )
     id_shards = {shard.device: shard for shard in raw.index_values.addressable_shards}
     active_shards = {shard.device: shard for shard in active.addressable_shards}
@@ -660,7 +720,7 @@ def project_meshing_field_history(
             or active_shard.index != index_shard.index
         ):
             raise ValueError(
-                "Raw history payload, identities and active mask require the same actual owner-local axes."
+                "project_meshing_field_history.raw_baseline must share owner-local axes with raw IDs and the active mask; got incompatible shards"
             )
         results.append(
             jax.device_put(
@@ -672,6 +732,17 @@ def project_meshing_field_history(
     )
 
 
+def _require_history_repack(
+    receipt: SimplexRestartRepack,
+    proof: SimplexRestartRepackProof | None,
+) -> None:
+    if proof is None:
+        validate_simplex_restart_repack(receipt, receipt.requested_target_owners)
+    else:
+        proof.require_receipt(receipt)
+
+
+@checked
 def rebind_meshing_field_history(
     role: MeshingFieldStateRole,
     source_values: jax.Array | np.ndarray,
@@ -680,32 +751,37 @@ def rebind_meshing_field_history(
     /,
     *,
     history_index: int,
+    proof: SimplexRestartRepackProof | None = None,
 ) -> tuple[MeshingFieldStateRole, jax.Array]:
-    """Rebind actual raw history through the existing exact native repack proof.
+    """Rebind raw history through a native repack.
 
-    ``history_index`` is the explicitly authored cell/vertex payload tuple slot,
-    not a slot guessed from a value shape, name or order. The existing receipt
-    replays every saved-location, authority, retired record and payload value.
+    ``history_index`` selects an authored cell/vertex payload slot. The repack
+    validates saved locations, owner assignments, retired records and values.
+    A supplied proof authenticates the same immutable source, layout, placement,
+    and every numerical binding without repeating all-rank validation.
     """
-    from ..meshing._restart_distribution import validate_simplex_restart_repack
 
     role.__post_init__()
     binding = role.index_binding
     if role.role not in ("material-history", "stage-history") or binding is None:
         raise ValueError(
-            "Only explicitly indexed native history can be rebound through a forest receipt."
+            "rebind_meshing_field_history.role must declare indexed native history; got unsupported role or missing binding"
         )
     if binding.bank_name not in ("epoch/vertex_ids", "epoch/cell_ids"):
-        raise ValueError("Forest history rebind requires its actual allocated raw bank.")
+        raise ValueError(
+            "rebind_meshing_field_history.role.index_binding.bank_name must select an allocated epoch bank; got compact or unsupported bank"
+        )
     if type(history_index) is not int or history_index < 0:
         raise ValueError(
-            "A forest history transfer requires its explicit payload tuple index."
+            "rebind_meshing_field_history.history_index must be a nonnegative integer; got invalid payload index"
         )
     source = receipt.source_result
     if source is None:
-        raise ValueError("History repack lacks its actual accepted scientific source.")
+        raise ValueError(
+            "rebind_meshing_field_history.receipt.source_result must retain the accepted source; got missing source"
+        )
     validate_meshing_field_index_binding(role, source)
-    validate_simplex_restart_repack(receipt, receipt.requested_target_owners)
+    _require_history_repack(receipt, proof)
     if binding.bank_name == "epoch/vertex_ids":
         saved, transferred = receipt.saved_vertex_history, receipt.vertex_history
         old_ids, new_ids = (
@@ -720,13 +796,13 @@ def rebind_meshing_field_history(
         )
     if history_index >= len(saved) or history_index >= len(transferred):
         raise ValueError(
-            "The authored history slot is absent from its actual repack receipt."
+            "rebind_meshing_field_history.history_index must select retained and transferred payload slots; got absent slot"
         )
     if not _same_index_bank(binding.index_values, old_ids) or not _same_index_bank(
         source_values, saved[history_index]
     ):
         raise ValueError(
-            "History/source rows differ from the exact saved indexed payload."
+            "rebind_meshing_field_history.source_values must match the saved payload and index_binding; got changed rows"
         )
     values = transferred[history_index]
     if (
@@ -735,18 +811,19 @@ def rebind_meshing_field_history(
         or values.dtype != role.dtype
     ):
         raise ValueError(
-            "History transfer changed the original scientific payload dtype or source schema."
+            "rebind_meshing_field_history.transferred_values must preserve dtype and component schema; got incompatible payload"
         )
     target_binding = prepare_meshing_field_index_binding(target, binding.bank_name)
     if not _same_index_bank(target_binding.index_values, new_ids):
         raise ValueError(
-            "Repacked history rows do not belong to the actual accepted target bank."
+            "rebind_meshing_field_history.target.index_binding must match repacked IDs; got foreign target bank"
         )
     rebound = replace(role, shape=values.shape, index_binding=target_binding)
     validate_meshing_field_index_binding(rebound, target)
     return rebound, values
 
 
+@checked
 def recover_meshing_field_history(
     raw_role: MeshingFieldStateRole,
     raw_values: jax.Array | np.ndarray,
@@ -757,18 +834,15 @@ def recover_meshing_field_history(
     *,
     history_index: int,
     field_space: DiscreteFieldSpace | None = None,
+    proof: SimplexRestartRepackProof | None = None,
 ) -> jax.Array | np.ndarray:
-    """Recover compact field rows from a proven repack's authoritative raw IDs.
+    """Recover compact field rows from a repack's owner-assigned raw IDs.
 
-    The existing numerical receipt owns which raw record is authoritative.
-    Ghost duplicates, inactive capacity and row positions cannot substitute for
-    that owner bank. Cold consumers inspect only addressable native records.
+    Owner assignments distinguish ghost duplicates and inactive capacity.
+    Cold consumers inspect only addressable native records.
+    A supplied proof authenticates retained numerical bindings locally; without
+    it, repack validation runs before field recovery.
     """
-    import jax.numpy as jnp
-
-    from ..meshing._restart_distribution import validate_simplex_restart_repack
-    from ..meshing._topology_edit import key_rows
-    from ..sparse import gather_routes, RowRelation
 
     raw_role.__post_init__()
     compact_role.__post_init__()
@@ -783,7 +857,7 @@ def recover_meshing_field_history(
         )
     ):
         raise ValueError(
-            "Cold history recovery requires the exact allocated-to-compact entity bank pair."
+            "recover_meshing_field_history.index_binding must pair allocated epochs with compact entities; got incompatible banks"
         )
     if (
         raw_role.field_name != compact_role.field_name
@@ -791,13 +865,13 @@ def recover_meshing_field_history(
         or raw_role.value_units != compact_role.value_units
     ):
         raise ValueError(
-            "Cold history recovery cannot relabel the physical field, units or accepted epoch."
+            "recover_meshing_field_history.compact_role must preserve field, units and epoch; got changed semantics"
         )
     if type(history_index) is not int or history_index < 0:
         raise ValueError(
-            "Cold history recovery requires its explicit repack payload tuple slot."
+            "recover_meshing_field_history.history_index must be a nonnegative integer; got invalid payload slot"
         )
-    validate_simplex_restart_repack(receipt, receipt.requested_target_owners)
+    _require_history_repack(receipt, proof)
     validate_meshing_field_index_binding(raw_role, target)
     validate_meshing_field_index_binding(compact_role, target, field_space=field_space)
     if raw.bank_name == "epoch/vertex_ids":
@@ -816,14 +890,14 @@ def recover_meshing_field_history(
         raw_values, payloads[history_index]
     ):
         raise ValueError(
-            "Cold history values differ from their exact proven native payload slot."
+            "recover_meshing_field_history.raw_values must match the retained payload slot; got differing values"
         )
     if (
         not _same_index_bank(raw.index_values, receipt_ids)
         or owners.shape != receipt_ids.shape
     ):
         raise ValueError(
-            "Cold history identity/authority differs from the actual repacked native bank."
+            "recover_meshing_field_history.raw_role.index_binding must match repacked IDs and epoch; got incompatible binding"
         )
     if (
         raw_values.shape != raw_role.shape
@@ -832,7 +906,7 @@ def recover_meshing_field_history(
         or raw_role.shape[2:] != compact_role.shape[1:]
     ):
         raise ValueError(
-            "Cold compact recovery changed the original physical payload schema or dtype."
+            "recover_meshing_field_history.raw_values must preserve the compact role dtype and component schema; got incompatible payload"
         )
     arrays = (receipt_ids, owners, raw_values)
     if any(
@@ -849,7 +923,7 @@ def recover_meshing_field_history(
         )
         if result.shape != compact_role.shape:
             raise ValueError(
-                "Owner-local recovery differs from the declared compact physical rows."
+                "recover_meshing_field_history.result.shape must match compact_role.shape; got incompatible rows"
             )
         return result
     if (
@@ -857,7 +931,7 @@ def recover_meshing_field_history(
         and not compact.index_values.is_fully_addressable
     ):
         raise ValueError(
-            "Compact physical rows must be this process's addressable entity bank."
+            "recover_meshing_field_history.compact_ids must be addressable by this process; got nonaddressable entity bank"
         )
     identifiers, authority = np.asarray(receipt_ids), np.asarray(owners)
     selected = (identifiers >= 0) & (
@@ -865,23 +939,42 @@ def recover_meshing_field_history(
     )
     owner_ids = identifiers[selected]
     if np.unique(owner_ids).size != owner_ids.size:
-        raise ValueError("Repacked history has duplicate authoritative scientific IDs.")
+        raise ValueError(
+            "recover_meshing_field_history.owner_ids must be unique; got duplicate scientific IDs"
+        )
     queries = np.asarray(compact.index_values)
     rows = key_rows(owner_ids[:, None], queries[:, None])
     if np.any(rows < 0):
         raise ValueError(
-            "A compact scientific field ID is absent from the authoritative raw history."
+            "recover_meshing_field_history.owner_ids must contain compact IDs; got missing history identity"
         )
     if rows.size == 0:
         result = jnp.empty(compact_role.shape, dtype=compact_role.dtype)
     else:
         source_rows = np.flatnonzero(selected.reshape(-1))[rows]
-        relation = RowRelation(source_rows[:, None], source_size=identifiers.size)
-        flattened = jnp.asarray(raw_values).reshape(
-            (identifiers.size, *raw_role.shape[2:])
-        )
-        result = jnp.squeeze(gather_routes(relation, flattened), axis=1)
+        result = _history_payload_rows(jnp.asarray(raw_values), source_rows)
     return np.asarray(result) if isinstance(raw_values, np.ndarray) else result
+
+
+@jax.jit
+def _history_payload_rows(values: jax.Array, rows: jax.Array | np.ndarray) -> jax.Array:
+    """Transport immutable payload bytes before crossing the partition axis."""
+    if jnp.issubdtype(values.dtype, jnp.complexfloating):
+        return jax.lax.complex(
+            _history_payload_component_rows(values.real, rows),
+            _history_payload_component_rows(values.imag, rows),
+        )
+    return _history_payload_component_rows(values, rows)
+
+
+def _history_payload_component_rows(
+    values: jax.Array, rows: jax.Array | np.ndarray
+) -> jax.Array:
+    payload_shape = values.shape[2:]
+    packed = values.reshape((*values.shape[:2], prod(payload_shape))).view(jnp.uint8)
+    flattened = packed.reshape((prod(values.shape[:2]), packed.shape[-1]))
+    selected = flattened[rows]
+    return selected.view(values.dtype).reshape((rows.shape[0], *payload_shape))
 
 
 _SENTINEL = np.iinfo(np.int64).max
@@ -895,8 +988,7 @@ def _ring_recovery(
     values: jax.Array,
     queries: jax.Array,
 ) -> tuple[jax.Array, jax.Array]:
-    """Circulate bounded query packets; each raw part answers only its authority."""
-    import jax.numpy as jnp
+    """Circulate bounded query packets between raw-part owners."""
 
     axis = parts.axis_name
     ring = tuple(
@@ -958,51 +1050,70 @@ def _owner_local_recovery(
     queries: np.ndarray,
     /,
 ) -> jax.Array:
-    """Recover this process's compact rows from authoritative records on every owner.
+    """Recover this process's compact rows from records on each owner.
 
-    Only fixed-capacity query packets circulate between neighboring owners; the
-    single host scalar exchange agrees on that capacity. Every compact ID must
-    be answered by exactly one authoritative raw record.
+    Fixed-capacity query packets circulate between neighbors. One host scalar
+    exchange agrees on capacity. Every compact ID needs one owner record.
     """
-    from jax.experimental import multihost_utils
 
+    parts = receipt.execution_parts()
     shards = values.addressable_shards
     if len(shards) != 1 or queries.ndim != 1 or queries.dtype != np.int64:
         raise ValueError(
-            "Owner-local recovery requires one addressable raw part and its int64 compact IDs."
+            "recover_meshing_field_history.queries must be int64 compact IDs for one addressable raw part; got incompatible workset"
         )
     capacity = int(
         np.max(multihost_utils.process_allgather(np.int64(max(queries.shape[0], 1))))
     )
     packet = np.full((1, capacity), -1, dtype=np.int64)
     packet[0, : queries.shape[0]] = queries
-    placement = NamedSharding(receipt.parts.mesh, PartitionSpec(receipt.parts.axis_name))
+    placement = NamedSharding(parts.mesh, PartitionSpec(parts.axis_name))
     distributed = jax.make_array_from_process_local_data(
-        placement, packet, (receipt.parts.part_count, capacity)
+        placement, packet, (parts.part_count, capacity)
     )
-    answer, found = _ring_recovery(
-        receipt.parts, identifiers, owners, values, distributed
-    )
+    answer, found = _ring_recovery(parts, identifiers, owners, values, distributed)
     local_found = np.asarray(found.addressable_shards[0].data)[0, : queries.shape[0]]
     if np.any(local_found != 1):
         raise ValueError(
-            "A compact scientific field ID lacks exactly one authoritative raw history record."
+            "recover_meshing_field_history.queries must have one owner record each; got absent or duplicate history identity"
         )
     return answer.addressable_shards[0].data[0, : queries.shape[0]]
 
 
+type MeshingFieldStateKind = Literal[
+    "coefficients",
+    "material-history",
+    "stage-history",
+    "state-epoch",
+    "boundary-values",
+    "boundary-mask",
+    "trace-values",
+]
+
+
 @dataclass(frozen=True)
 class MeshingFieldStateRole:
-    """An authored accepted-array role, never inferred from coefficient shape."""
+    """Bind an accepted-array role to a field, schema, and state epoch."""
 
     entry_name: str
     field_name: str
-    role: str
+    role: MeshingFieldStateKind
     shape: tuple[int, ...]
     dtype: np.dtype
     state_epoch: int
     value_units: tuple[UnitDefinition, ...] | None = None
     index_binding: MeshingFieldIndexBinding | None = None
+
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[Self], value: MeshingFieldStateRole, /) -> Self:
+        """Reconstruct and validate the stored state role."""
+        return cls(
+            **{
+                member.name: getattr(value, member.name)
+                for member in dataclasses.fields(value)
+            }
+        )
 
     def __post_init__(self) -> None:
         if any(
@@ -1010,35 +1121,32 @@ class MeshingFieldStateRole:
             for name in (self.entry_name, self.field_name)
         ):
             raise ValueError(
-                "State roles require explicit entry and physical field names."
+                "MeshingFieldStateRole.entry_name must be nonempty and paired with a trimmed field_name; got invalid name"
             )
-        if self.role not in (
-            "coefficients",
-            "material-history",
-            "stage-history",
-            "state-epoch",
-            "boundary-values",
-            "boundary-mask",
-            "trace-values",
-        ):
-            raise ValueError("Unknown physical field state role.")
+        parse(self.role, MeshingFieldStateKind, "MeshingFieldStateRole.role")
         if type(self.shape) is not tuple or any(
             type(n) is not int or n < 0 for n in self.shape
         ):
-            raise ValueError("State roles require an explicit nonnegative array shape.")
+            raise ValueError(
+                "MeshingFieldStateRole.shape must be a tuple of nonnegative extents; got invalid shape"
+            )
         if not isinstance(self.dtype, np.dtype) or self.dtype.hasobject:
-            raise TypeError("State roles require an exact nonobject NumPy dtype.")
+            raise TypeError(
+                "MeshingFieldStateRole.dtype must be a nonobject NumPy dtype; got incompatible dtype"
+            )
         if type(self.state_epoch) is not int or self.state_epoch < 0:
-            raise ValueError("State roles require an explicit accepted state epoch.")
+            raise ValueError(
+                "MeshingFieldStateRole.state_epoch must be a nonnegative integer; got invalid epoch"
+            )
         if self.role == "state-epoch" and (
             self.shape != () or self.dtype.kind not in "iu"
         ):
             raise ValueError(
-                "Accepted epoch state requires an exact scalar integer array."
+                "MeshingFieldStateRole.shape must describe a scalar epoch with integer dtype; got incompatible schema"
             )
         if self.role == "boundary-mask" and self.dtype != np.dtype("bool"):
             raise ValueError(
-                "Essential boundary selection requires an exact boolean mask."
+                "MeshingFieldStateRole.dtype must be boolean for boundary-mask; got incompatible dtype"
             )
         if self.value_units is not None and (
             type(self.value_units) is not tuple
@@ -1046,16 +1154,16 @@ class MeshingFieldStateRole:
             or any(type(unit) is not UnitDefinition for unit in self.value_units)
         ):
             raise TypeError(
-                "Array role units require exact immutable physical unit owners."
+                "MeshingFieldStateRole.value_units must be an immutable nonempty tuple of units; got incompatible units"
             )
         if self.role == "material-history" and self.value_units is None:
             raise ValueError(
-                "Material history requires its own explicit units, not inferred state units."
+                "MeshingFieldStateRole.value_units must declare material-history units; got missing units"
             )
         if self.role != "state-epoch":
             if type(self.index_binding) is not MeshingFieldIndexBinding:
                 raise ValueError(
-                    "Every physical value/history row requires its explicit owning index-bank binding."
+                    "MeshingFieldStateRole.index_binding must declare indexed values or history; got missing binding"
                 )
             prefix = tuple(
                 self.shape[axis]
@@ -1064,33 +1172,35 @@ class MeshingFieldStateRole:
             )
             if prefix != self.index_binding.index_values.shape:
                 raise ValueError(
-                    "Physical payload axes differ from their declared row/entity bank."
+                    "MeshingFieldStateRole.shape must match index-bank axes; got incompatible payload axes"
                 )
             if self.role in ("coefficients", "boundary-values", "boundary-mask") and (
                 self.index_binding.bank_name.startswith("epoch/")
                 or self.index_binding.field_space_id is None
             ):
                 raise ValueError(
-                    "Allocated raw banks are not compact physical coefficient or essential-boundary vectors."
+                    "MeshingFieldStateRole.index_binding must use compact coefficient identities for coefficients and essential boundaries; got raw or unbound rows"
                 )
         elif self.index_binding is not None:
-            raise ValueError("A scalar state epoch is not an indexed physical row bank.")
+            raise ValueError(
+                "MeshingFieldStateRole.index_binding must be absent for state-epoch; got indexed scalar"
+            )
 
 
-@dataclass(frozen=True, kw_only=True)
-class MeshingFieldDeclaration:
-    """One actual accepted carrier's complete FE or FV physical declaration.
+type MeshingFieldHistoryPolicy = Literal[
+    "none", "accepted-state", "material-history", "multistep"
+]
+type MeshingFiniteVolumeCoordinatePolicy = Literal[
+    "accepted-map", "represented-polyhedral"
+]
 
-    Units, derivatives, traces, accepted-state roles and original owner inputs
-    are explicit. ``field_space_ids`` binds the freshly prepared family and DOF
-    layout, including global coefficient identities, to the accepted carrier.
-    The carrier may be a real generation part, a collective accepted result, or
-    a registered assembly part. A standalone declaration never fabricates an
-    overset registration to obtain physical authority.
-    """
+
+class MeshingFieldDeclaration(StrictModule, NonTrainableState):
+    """Bind physical field semantics and accepted state to one carrier."""
+
+    __strict_abstract__ = True
 
     part_name: str
-    owner: str
     topology_id: str
     geometry_layout_id: str
     field_space_ids: frozendict[str, str]
@@ -1099,20 +1209,441 @@ class MeshingFieldDeclaration:
     branch_policy: BranchDifferentiationPolicy
     trace_policy: FieldTracePolicy
     state_roles: tuple[MeshingFieldStateRole, ...]
-    history_policy: str
+    history_policy: MeshingFieldHistoryPolicy
     numeric_version: str
-    finite_element_fields: tuple[FiniteElementFieldSpec, ...] = ()
-    precision_policy: FiniteElementPrecisionPolicy | None = None
-    finite_volume_field_name: str | None = None
-    finite_volume_component_names: tuple[str, ...] = ()
-    finite_volume_coordinate_policy: str | None = None
+    source_wall_policy: eqx.AbstractVar[OversetPartSpec | None]
+
+    @property
+    @abstractmethod
+    def owner(self) -> Literal["finite_element", "finite_volume"]:
+        """Return the physical preparation owner."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def __post_init__(self) -> None:
+        """Validate declaration inputs and state bindings."""
+        raise NotImplementedError
+
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[Self], value: MeshingFieldDeclaration, /) -> Self:
+        """Reconstruct stored inputs through the declaration constructor."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"{cls.__name__}.from_stored_fields.value must have the registered declaration type; got {type(value).__name__}"
+            )
+        expected = {member.name for member in dataclasses.fields(cls)}
+        if set(vars(value)) != expected:
+            raise ValueError(
+                f"{cls.__name__}.from_stored_fields.value must retain the declared field set; got {sorted(vars(value))!r}"
+            )
+        return cls(
+            **{
+                member.name: getattr(value, member.name)
+                for member in dataclasses.fields(value)
+                if member.init
+            }
+        )
+
+
+class _FieldSemantics(StrictModule):
+    names: tuple[str, ...]
+    widths: frozendict[str, int]
+    derivative_ceilings: frozendict[str, int]
+
+
+def _validate_declaration_identity(declaration: MeshingFieldDeclaration, /) -> None:
+    for name, value in (
+        ("part_name", declaration.part_name),
+        ("topology_id", declaration.topology_id),
+        ("geometry_layout_id", declaration.geometry_layout_id),
+        ("numeric_version", declaration.numeric_version),
+    ):
+        if type(value) is not str or not value.strip():
+            raise ValueError(
+                f"MeshingFieldDeclaration.{name} must be a nonempty identity; got {value!r}"
+            )
+
+
+def _validate_field_component_semantics(
+    declaration: MeshingFieldDeclaration, name: str, width: int, ceiling: int, /
+) -> None:
+    units = declaration.value_units[name]
+    if (
+        type(units) is not tuple
+        or len(units) not in (1, width)
+        or any(type(unit) is not UnitDefinition for unit in units)
+    ):
+        raise ValueError(
+            f"MeshingFieldDeclaration.value_units.{name} must declare scalar or component units; got {units!r}"
+        )
+    order = declaration.maximum_derivative_orders[name]
+    if type(order) is not int or order < 0:
+        raise ValueError(
+            f"MeshingFieldDeclaration.maximum_derivative_orders.{name} must be nonnegative; got {order!r}"
+        )
+    match declaration:
+        case MeshingFiniteElementFieldDeclaration():
+            if order > ceiling:
+                raise ValueError(
+                    f"MeshingFieldDeclaration.maximum_derivative_orders.{name} must not exceed reconstruction degree {ceiling}; got {order}"
+                )
+        case MeshingFiniteVolumeFieldDeclaration():
+            # FV degree refusal precedes reconstruction branch/options validation.
+            pass
+        case _:
+            raise TypeError(
+                "MeshingFieldDeclaration.owner must select FE or FV component semantics; got unsupported declaration"
+            )
+
+
+def _validate_field_semantics(
+    declaration: MeshingFieldDeclaration, semantics: _FieldSemantics, /
+) -> None:
+    names = semantics.names
+    if len(set(names)) != len(names):
+        raise ValueError(
+            f"MeshingFieldDeclaration.fields must have unique names; got {names!r}"
+        )
+    for name, mapping in (
+        ("field_space_ids", declaration.field_space_ids),
+        ("value_units", declaration.value_units),
+        ("maximum_derivative_orders", declaration.maximum_derivative_orders),
+    ):
+        if type(mapping) is not frozendict or set(mapping) != set(names):
+            raise ValueError(
+                f"MeshingFieldDeclaration.{name} must be immutable and keyed by {names!r}; got {mapping!r}"
+            )
+    if any(
+        type(value) is not str or not value
+        for value in declaration.field_space_ids.values()
+    ):
+        raise ValueError(
+            f"MeshingFieldDeclaration.field_space_ids must contain nonempty identities; got {declaration.field_space_ids!r}"
+        )
+    for name in names:
+        _validate_field_component_semantics(
+            declaration, name, semantics.widths[name], semantics.derivative_ceilings[name]
+        )
+    if (
+        type(declaration.branch_policy) is not BranchDifferentiationPolicy
+        or type(declaration.trace_policy) is not FieldTracePolicy
+    ):
+        raise TypeError(
+            "MeshingFieldDeclaration.branch_policy must be a derivative policy paired with a typed trace_policy; got invalid policy"
+        )
+
+
+def _validate_declaration_roles(
+    declaration: MeshingFieldDeclaration, names: tuple[str, ...], /
+) -> None:
+    parse(
+        declaration.history_policy,
+        MeshingFieldHistoryPolicy,
+        "MeshingFieldDeclaration.history_policy",
+    )
+    roles = declaration.state_roles
+    if type(roles) is not tuple or any(
+        type(role) is not MeshingFieldStateRole for role in roles
+    ):
+        raise TypeError(
+            "MeshingFieldDeclaration.state_roles must be immutable field state records; got invalid roles"
+        )
+    if any(role.field_name not in names for role in roles):
+        raise ValueError(
+            f"MeshingFieldDeclaration.state_roles must bind declared fields {names!r}; got undeclared field"
+        )
+    if len({role.entry_name for role in roles}) != len(roles):
+        raise ValueError(
+            "MeshingFieldDeclaration.state_roles must have unique entry names; got duplicate entry"
+        )
+    coefficient_names = [role.field_name for role in roles if role.role == "coefficients"]
+    if sorted(coefficient_names) != sorted(names):
+        raise ValueError(
+            f"MeshingFieldDeclaration.state_roles must have one coefficient role per field; got {coefficient_names!r}"
+        )
+    boundary_values = {
+        role.field_name for role in roles if role.role == "boundary-values"
+    }
+    boundary_masks = {role.field_name for role in roles if role.role == "boundary-mask"}
+    if boundary_values != boundary_masks:
+        raise ValueError(
+            "MeshingFieldDeclaration.state_roles must pair boundary masks and values; got unpaired roles"
+        )
+    _validate_declaration_history(declaration, roles)
+
+
+def _validate_declaration_history(
+    declaration: MeshingFieldDeclaration, roles: tuple[MeshingFieldStateRole, ...], /
+) -> None:
+    histories = [
+        role
+        for role in roles
+        if role.role in ("material-history", "stage-history", "state-epoch")
+    ]
+    match declaration.history_policy:
+        case "none":
+            if histories:
+                raise ValueError(
+                    "MeshingFieldDeclaration.history_policy must permit retained history; got 'none' with history roles"
+                )
+        case "accepted-state" | "multistep":
+            if not histories:
+                raise ValueError(
+                    "MeshingFieldDeclaration.state_roles must include history or epoch roles; got none"
+                )
+        case "material-history":
+            if not any(role.role == "material-history" for role in histories):
+                raise ValueError(
+                    "MeshingFieldDeclaration.state_roles must include material history; got none"
+                )
+        case _:
+            raise ValueError(
+                f"MeshingFieldDeclaration.history_policy must select a supported policy; got {declaration.history_policy!r}"
+            )
+    if len({role.state_epoch for role in roles}) != 1:
+        raise ValueError(
+            "MeshingFieldDeclaration.state_roles must bind one state epoch; got multiple epochs"
+        )
+    wall = declaration.source_wall_policy
+    if wall is not None and (
+        type(wall) is not OversetPartSpec or wall.part_name != declaration.part_name
+    ):
+        raise ValueError(
+            "MeshingFieldDeclaration.source_wall_policy must bind this part; got foreign wall policy"
+        )
+
+
+def _validate_field_elements(
+    fields: tuple[FiniteElementFieldSpec, ...], /
+) -> _FieldSemantics:
+    for field in fields:
+        for element in field.elements:
+            if element.form_basis is not None:
+                if (
+                    type(element.form_basis) is not FormBasis
+                    or type(element.tabulator) is not ProxyTabulator
+                ):
+                    raise TypeError(
+                        "MeshingFiniteElementFieldDeclaration.elements must pair form basis and proxy tabulator; got invalid pair"
+                    )
+            elif type(element.tabulator) is ProxyTabulator:
+                raise TypeError(
+                    "MeshingFiniteElementFieldDeclaration.elements must declare the proxy form basis; got missing basis"
+                )
+            elif element.tabulator is None:
+                if element.family not in ("Lagrange", "DiscontinuousLagrange"):
+                    raise ValueError(
+                        f"MeshingFiniteElementFieldDeclaration.elements must use a registered basis family; got {element.family!r}"
+                    )
+            elif type(element.tabulator) not in (
+                FiniteElementTabulator,
+                CoordinateTabulator,
+            ):
+                raise TypeError(
+                    "MeshingFiniteElementFieldDeclaration.elements must retain portable tabulators; got unresolved callback"
+                )
+    return _FieldSemantics(
+        tuple(field.name for field in fields),
+        frozendict(
+            {
+                field.name: prod(field.component_shape)
+                * prod(field.elements[0].value_shape)
+                for field in fields
+            }
+        ),
+        frozendict(
+            {
+                field.name: min(
+                    min(element.degree, 1) if element.mapping == "identity" else 1
+                    for element in field.elements
+                )
+                for field in fields
+            }
+        ),
+    )
+
+
+@final
+class MeshingFiniteElementFieldDeclaration(MeshingFieldDeclaration):
+    """Declare finite-element fields, precision, and accepted state."""
+
+    finite_element_fields: tuple[FiniteElementFieldSpec, ...]
+    precision_policy: FiniteElementPrecisionPolicy
+    source_wall_policy: OversetPartSpec | None = None
+
+    @property
+    def owner(self) -> Literal["finite_element"]:
+        return "finite_element"
+
+    @checked
+    def __post_init__(self: MeshingFiniteElementFieldDeclaration) -> None:
+        _validate_declaration_identity(self)
+        if (
+            type(self.finite_element_fields) is not tuple
+            or not self.finite_element_fields
+            or any(
+                type(field) is not FiniteElementFieldSpec
+                for field in self.finite_element_fields
+            )
+            or type(self.precision_policy) is not FiniteElementPrecisionPolicy
+        ):
+            raise ValueError(
+                "MeshingFiniteElementFieldDeclaration.finite_element_fields must declare field specs with a precision_policy; got invalid inputs"
+            )
+        semantics = _validate_field_elements(self.finite_element_fields)
+        _validate_field_semantics(self, semantics)
+        _validate_declaration_roles(self, semantics.names)
+
+
+class _FiniteVolumeNames(StrictModule):
+    name: str
+    width: int
+
+
+def _validate_finite_volume_names(
+    declaration: MeshingFiniteVolumeFieldDeclaration, /
+) -> _FiniteVolumeNames:
+    name = declaration.finite_volume_field_name
+    components = declaration.finite_volume_component_names
+    if (
+        type(name) is not str
+        or not name
+        or type(components) is not tuple
+        or not components
+        or any(
+            type(component) is not str or not component or component != component.strip()
+            for component in components
+        )
+    ):
+        raise ValueError(
+            "MeshingFiniteVolumeFieldDeclaration.finite_volume_field_name must declare a field with named components; got invalid names"
+        )
+    return _FiniteVolumeNames(name, len(components))
+
+
+def _validate_finite_volume_reconstruction(
+    declaration: MeshingFiniteVolumeFieldDeclaration, /
+) -> _FieldSemantics:
+    names = _validate_finite_volume_names(declaration)
+    name = names.name
+    parse(
+        declaration.finite_volume_coordinate_policy,
+        MeshingFiniteVolumeCoordinatePolicy,
+        "MeshingFiniteVolumeFieldDeclaration.finite_volume_coordinate_policy",
+    )
+    policy = declaration.reconstruction_policy
+    match policy:
+        case PiecewiseConstantReconstruction():
+            ceiling, branch, options = 0, BranchDifferentiationPolicy.SMOOTH, set()
+        case CellPolynomialReconstructionPlan():
+            ceiling, branch, options = (
+                policy.degree,
+                BranchDifferentiationPolicy.SMOOTH,
+                {"stencil_direction"},
+            )
+        case UnstructuredWENOZReconstructionPlan():
+            ceiling, branch, options = (
+                policy.degree,
+                BranchDifferentiationPolicy.BRANCHWISE,
+                set(),
+            )
+        case _:
+            raise TypeError(
+                "MeshingFiniteVolumeFieldDeclaration.reconstruction_policy must be an unprepared native policy; got invalid owner"
+            )
+    if declaration.reconstruction_policy_id != policy.plan_id:
+        raise ValueError(
+            f"MeshingFiniteVolumeFieldDeclaration.reconstruction_policy_id must equal {policy.plan_id!r}; got {declaration.reconstruction_policy_id!r}"
+        )
+    order = declaration.maximum_derivative_orders.get(name, -1)
+    if order > ceiling:
+        raise ValueError(
+            f"MeshingFieldDeclaration.maximum_derivative_orders.{name} must not exceed reconstruction degree {ceiling}; got {order}"
+        )
+    if declaration.branch_policy != branch:
+        raise ValueError(
+            f"MeshingFiniteVolumeFieldDeclaration.branch_policy must equal {branch!r}; got {declaration.branch_policy!r}"
+        )
+    if (
+        type(declaration.reconstruction_options) is not frozendict
+        or set(declaration.reconstruction_options) - options
+    ):
+        raise ValueError(
+            f"MeshingFiniteVolumeFieldDeclaration.reconstruction_options must select {options!r}; got {declaration.reconstruction_options!r}"
+        )
+    return _FieldSemantics(
+        (name,), frozendict({name: names.width}), frozendict({name: ceiling})
+    )
+
+
+def _validate_finite_volume_dynamics(
+    declaration: MeshingFiniteVolumeFieldDeclaration, /
+) -> None:
+    allowed = {
+        "boundary_face_groups",
+        "neighborhood_complete",
+        "physical_boundary_faces",
+        "closure_evidence_id",
+    }
+    if (
+        type(declaration.finite_volume_options) is not frozendict
+        or set(declaration.finite_volume_options) - allowed
+    ):
+        raise ValueError(
+            f"MeshingFiniteVolumeFieldDeclaration.finite_volume_options must select preparation inputs {allowed!r}; got {declaration.finite_volume_options!r}"
+        )
+    capacity = declaration.finite_volume_owned_face_capacity
+    if capacity is not None and (type(capacity) is not int or capacity < 0):
+        raise ValueError(
+            f"MeshingFiniteVolumeFieldDeclaration.finite_volume_owned_face_capacity must be nonnegative; got {capacity!r}"
+        )
+    if len(set(declaration.finite_volume_component_names)) != len(
+        declaration.finite_volume_component_names
+    ):
+        raise ValueError(
+            "MeshingFiniteVolumeFieldDeclaration.finite_volume_component_names must be unique; got duplicate component"
+        )
+    if type(declaration.finite_volume_boundaries) is not frozendict:
+        raise TypeError(
+            "MeshingFiniteVolumeFieldDeclaration.finite_volume_boundaries must be immutable; got mutable boundaries"
+        )
+    if declaration.finite_volume_system is not None:
+        if (
+            type(declaration.finite_volume_system) is not EulerSystem
+            or type(declaration.finite_volume_flux_policy) is not RusanovFluxPlan
+            or declaration.finite_volume_component_names
+            != declaration.finite_volume_system.component_names
+            or any(
+                type(value) not in (ExtrapolationBoundary, SlipWallBoundary)
+                for value in declaration.finite_volume_boundaries.values()
+            )
+        ):
+            raise ValueError(
+                "MeshingFiniteVolumeFieldDeclaration.finite_volume_system must bind matching components, flux, and boundaries; got incompatible Euler inputs"
+            )
+    elif (
+        declaration.finite_volume_flux_policy is not None
+        or declaration.finite_volume_boundaries
+    ):
+        raise ValueError(
+            "MeshingFiniteVolumeFieldDeclaration.finite_volume_system must be declared for dynamics policies; got no system"
+        )
+
+
+@final
+class MeshingFiniteVolumeFieldDeclaration(MeshingFieldDeclaration):
+    """Declare finite-volume reconstruction, dynamics, and accepted state."""
+
+    finite_volume_field_name: str
+    finite_volume_component_names: tuple[str, ...]
+    finite_volume_coordinate_policy: MeshingFiniteVolumeCoordinatePolicy
     reconstruction_policy: (
         PiecewiseConstantReconstruction
         | CellPolynomialReconstructionPlan
         | UnstructuredWENOZReconstructionPlan
-        | None
-    ) = None
-    reconstruction_policy_id: str | None = None
+    )
+    reconstruction_policy_id: str
     reconstruction_options: frozendict[str, Any] = frozendict()
     finite_volume_options: frozendict[str, Any] = frozendict()
     finite_volume_owned_face_capacity: int | None = None
@@ -1123,327 +1654,21 @@ class MeshingFieldDeclaration:
     ] = frozendict()
     source_wall_policy: OversetPartSpec | None = None
 
-    def __post_init__(self) -> None:
-        if any(
-            type(x) is not str or not x.strip()
-            for x in (
-                self.part_name,
-                self.topology_id,
-                self.geometry_layout_id,
-                self.numeric_version,
-            )
-        ):
-            raise ValueError(
-                "Field declarations require exact part, topology, geometry and numeric identities."
-            )
-        if self.owner == "finite_element":
-            if (
-                not self.finite_element_fields
-                or type(self.finite_element_fields) is not tuple
-                or any(
-                    type(x) is not FiniteElementFieldSpec
-                    for x in self.finite_element_fields
-                )
-                or type(self.precision_policy) is not FiniteElementPrecisionPolicy
-                or self.finite_volume_field_name is not None
-                or self.finite_volume_component_names
-                or self.reconstruction_policy is not None
-                or self.finite_volume_options
-                or self.reconstruction_options
-                or self.finite_volume_owned_face_capacity is not None
-                or self.finite_volume_system is not None
-                or self.finite_volume_flux_policy is not None
-                or self.finite_volume_boundaries
-                or self.finite_volume_coordinate_policy is not None
-                or self.reconstruction_policy_id is not None
-            ):
-                raise ValueError(
-                    "FE declarations require actual field specs and precision, without FV inputs."
-                )
-            from ..discretization._cell_geometry import _CoordinateTabulator
+    @property
+    def owner(self) -> Literal["finite_volume"]:
+        return "finite_volume"
 
-            for field in self.finite_element_fields:
-                for element in field.elements:
-                    if element.form_basis is not None:
-                        if (
-                            type(element.form_basis) is not FormBasis
-                            or type(element.tabulator) is not _ProxyTabulator
-                        ):
-                            raise TypeError(
-                                "Form fields require their exact immutable basis and proxy tabulator."
-                            )
-                    elif type(element.tabulator) is _ProxyTabulator:
-                        raise TypeError(
-                            "A form proxy tabulator requires its declared immutable form basis."
-                        )
-                    elif element.tabulator is None:
-                        if element.family not in ("Lagrange", "DiscontinuousLagrange"):
-                            raise ValueError(
-                                "FE fields require an exact registered native basis family, not a degree-based fallback."
-                            )
-                    elif type(element.tabulator) not in (
-                        _FiniteElementTabulator,
-                        _CoordinateTabulator,
-                    ):
-                        raise TypeError(
-                            "FE declarations cannot retain unresolved basis callbacks or live templates."
-                        )
-            names = tuple(x.name for x in self.finite_element_fields)
-            widths = {
-                x.name: prod(x.component_shape) * prod(x.elements[0].value_shape)
-                for x in self.finite_element_fields
-            }
-        elif self.owner == "finite_volume":
-            if (
-                self.finite_element_fields
-                or self.precision_policy is not None
-                or type(self.finite_volume_field_name) is not str
-                or not self.finite_volume_field_name
-                or type(self.finite_volume_component_names) is not tuple
-                or not self.finite_volume_component_names
-                or any(
-                    type(name) is not str or not name or name != name.strip()
-                    for name in self.finite_volume_component_names
-                )
-                or type(self.reconstruction_policy)
-                not in (
-                    PiecewiseConstantReconstruction,
-                    CellPolynomialReconstructionPlan,
-                    UnstructuredWENOZReconstructionPlan,
-                )
-            ):
-                raise ValueError(
-                    "FV declarations require explicit field, components and an unprepared reconstruction policy."
-                )
-            if self.finite_volume_coordinate_policy not in (
-                "accepted-map",
-                "represented-polyhedral",
-            ):
-                raise ValueError(
-                    "FV coordinates require an explicit accepted-map or represented-polyhedral policy."
-                )
-            policy = self.reconstruction_policy
-            if policy is None:
-                raise ValueError(
-                    "FV declarations require an unprepared reconstruction policy."
-                )
-            if self.reconstruction_policy_id != policy.plan_id:
-                raise ValueError(
-                    "FV reconstruction family differs from its original scientific policy binding."
-                )
-            if isinstance(policy, PiecewiseConstantReconstruction):
-                ceiling = 0
-            elif isinstance(
-                policy,
-                (CellPolynomialReconstructionPlan, UnstructuredWENOZReconstructionPlan),
-            ):
-                ceiling = policy.degree
-            else:
-                raise TypeError(
-                    "FV declarations require an exact native reconstruction policy owner."
-                )
-            if (
-                self.maximum_derivative_orders.get(self.finite_volume_field_name, -1)
-                > ceiling
-            ):
-                raise ValueError(
-                    "FV derivative declaration exceeds its actual reconstruction family."
-                )
-            expected_branch = (
-                BranchDifferentiationPolicy.BRANCHWISE
-                if type(self.reconstruction_policy) is UnstructuredWENOZReconstructionPlan
-                else BranchDifferentiationPolicy.SMOOTH
-            )
-            if self.branch_policy != expected_branch:
-                raise ValueError(
-                    "FV derivative branch semantics differ from the actual reconstruction owner."
-                )
-            allowed_reconstruction = (
-                {"stencil_direction"}
-                if type(self.reconstruction_policy) is CellPolynomialReconstructionPlan
-                else set()
-            )
-            if (
-                type(self.reconstruction_options) is not frozendict
-                or set(self.reconstruction_options) - allowed_reconstruction
-            ):
-                raise ValueError(
-                    "FV reconstruction options must retain only the original unprepared owner's inputs."
-                )
-            names = (self.finite_volume_field_name,)
-            widths = {
-                self.finite_volume_field_name: len(self.finite_volume_component_names)
-            }
-            allowed = {
-                "boundary_face_groups",
-                "neighborhood_complete",
-                "physical_boundary_faces",
-                "closure_evidence_id",
-            }
-            if (
-                type(self.finite_volume_options) is not frozendict
-                or set(self.finite_volume_options) - allowed
-            ):
-                raise ValueError(
-                    "FV options must retain only original owning preparation inputs."
-                )
-            if self.finite_volume_owned_face_capacity is not None and (
-                type(self.finite_volume_owned_face_capacity) is not int
-                or self.finite_volume_owned_face_capacity < 0
-            ):
-                raise ValueError(
-                    "FV face execution capacity must retain an explicit nonnegative integer."
-                )
-            if len(set(self.finite_volume_component_names)) != len(
-                self.finite_volume_component_names
-            ):
-                raise ValueError("FV physical components must be uniquely declared.")
-            if type(self.finite_volume_boundaries) is not frozendict:
-                raise TypeError(
-                    "Physical FV boundary policies must be immutable owning declarations."
-                )
-            if self.finite_volume_system is not None:
-                if (
-                    type(self.finite_volume_system) is not EulerSystem
-                    or type(self.finite_volume_flux_policy) is not RusanovFluxPlan
-                    or self.finite_volume_component_names
-                    != self.finite_volume_system.component_names
-                    or any(
-                        type(value) not in (ExtrapolationBoundary, SlipWallBoundary)
-                        for value in self.finite_volume_boundaries.values()
-                    )
-                ):
-                    raise ValueError(
-                        "Euler continuation requires its actual system, flux and every physical boundary owner."
-                    )
-            elif (
-                self.finite_volume_flux_policy is not None
-                or self.finite_volume_boundaries
-            ):
-                raise ValueError(
-                    "FV physical dynamics policies require their explicit owning system."
-                )
-        else:
-            raise ValueError("Unknown registered physical field owner.")
-        if len(set(names)) != len(names):
-            raise ValueError("Physical field names must be unique per registration part.")
-        for mapping in (
-            self.field_space_ids,
-            self.value_units,
-            self.maximum_derivative_orders,
-        ):
-            if type(mapping) is not frozendict or set(mapping) != set(names):
-                raise ValueError(
-                    "Physical semantics must be explicitly keyed by every declared field."
-                )
-        if any(
-            type(value) is not str or not value for value in self.field_space_ids.values()
-        ):
-            raise ValueError(
-                "Every physical field requires its original scientific field-space binding."
-            )
-        for name in names:
-            units = self.value_units[name]
-            if (
-                type(units) is not tuple
-                or len(units) not in (1, widths[name])
-                or any(type(unit) is not UnitDefinition for unit in units)
-            ):
-                raise ValueError(
-                    "Field units must be explicit for the scalar or every physical component."
-                )
-            order = self.maximum_derivative_orders[name]
-            if type(order) is not int or order < 0:
-                raise ValueError(
-                    "Coordinate derivative orders must be explicitly nonnegative."
-                )
-            if self.owner == "finite_element":
-                field = next(
-                    field for field in self.finite_element_fields if field.name == name
-                )
-                ceiling = min(
-                    min(element.degree, 1) if element.mapping == "identity" else 1
-                    for element in field.elements
-                )
-                if order > ceiling:
-                    raise ValueError(
-                        "FE derivative declaration exceeds its actual coordinate reconstruction owner."
-                    )
-        if (
-            type(self.branch_policy) is not BranchDifferentiationPolicy
-            or type(self.trace_policy) is not FieldTracePolicy
-        ):
-            raise TypeError(
-                "Field derivative and trace semantics require their canonical owners."
-            )
-        if self.history_policy not in (
-            "none",
-            "accepted-state",
-            "material-history",
-            "multistep",
-        ):
-            raise ValueError("Unknown accepted field history policy.")
-        if type(self.state_roles) is not tuple or any(
-            type(role) is not MeshingFieldStateRole for role in self.state_roles
-        ):
-            raise TypeError(
-                "Accepted state roles must be exact immutable physical records."
-            )
-        if any(role.field_name not in names for role in self.state_roles):
-            raise ValueError("State roles must bind declared physical fields.")
-        if len({role.entry_name for role in self.state_roles}) != len(self.state_roles):
-            raise ValueError("Accepted field state entries must have unique roles.")
-        coefficient_names = [
-            role.field_name for role in self.state_roles if role.role == "coefficients"
-        ]
-        if sorted(coefficient_names) != sorted(names):
-            raise ValueError(
-                "Every declared field requires exactly one explicit coefficient role."
-            )
-        boundary_values = {
-            role.field_name for role in self.state_roles if role.role == "boundary-values"
-        }
-        boundary_masks = {
-            role.field_name for role in self.state_roles if role.role == "boundary-mask"
-        }
-        if boundary_values != boundary_masks:
-            raise ValueError(
-                "Essential boundary declarations require both actual masks and physical values."
-            )
-        histories = [
-            role
-            for role in self.state_roles
-            if role.role in ("material-history", "stage-history", "state-epoch")
-        ]
-        if self.history_policy == "none" and histories:
-            raise ValueError(
-                "A history-free field cannot retain undeclared history state."
-            )
-        if self.history_policy != "none" and not histories:
-            raise ValueError(
-                "Stateful field policies require their actual history or epoch roles."
-            )
-        if self.history_policy == "material-history" and not any(
-            role.role == "material-history" for role in histories
-        ):
-            raise ValueError(
-                "Material history policy requires its actual material history array."
-            )
-        if len({role.state_epoch for role in self.state_roles}) != 1:
-            raise ValueError(
-                "A field declaration must bind one atomic accepted state epoch."
-            )
-        if self.source_wall_policy is not None and (
-            type(self.source_wall_policy) is not OversetPartSpec
-            or self.source_wall_policy.part_name != self.part_name
-        ):
-            raise ValueError(
-                "Source-wall policy must retain this part's owning original declaration."
-            )
+    @checked
+    def __post_init__(self: MeshingFiniteVolumeFieldDeclaration) -> None:
+        _validate_declaration_identity(self)
+        semantics = _validate_finite_volume_reconstruction(self)
+        _validate_finite_volume_dynamics(self)
+        _validate_field_semantics(self, semantics)
+        _validate_declaration_roles(self, semantics.names)
 
 
 class MeshingAcceptedEpoch(StrictModule, NonTrainableState):
-    """One actual accepted carrier and all of its primitive physical owners."""
+    """Retain an accepted carrier, physical declarations, and state arrays."""
 
     carrier: CellMeshingResult
     declarations: tuple[MeshingFieldDeclaration, ...]
@@ -1451,6 +1676,15 @@ class MeshingAcceptedEpoch(StrictModule, NonTrainableState):
     transition: MeshAdaptationResult | None
     epoch_id: str = eqx.field(static=True)
 
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[Self], value: MeshingAcceptedEpoch, /) -> Self:
+        """Rebuild the accepted epoch and recompute its identity."""
+        return cls(
+            value.carrier, value.declarations, value.fields, transition=value.transition
+        )
+
+    @checked
     def __init__(
         self,
         carrier: CellMeshingResult,
@@ -1460,22 +1694,24 @@ class MeshingAcceptedEpoch(StrictModule, NonTrainableState):
         *,
         transition: MeshAdaptationResult | None = None,
     ) -> None:
-        if type(carrier) is not CellMeshingResult:
-            raise TypeError("An accepted epoch requires its actual certified carrier.")
         if (
             type(declarations) is not tuple
             or not declarations
             or any(
-                type(declaration) is not MeshingFieldDeclaration
+                type(declaration)
+                not in (
+                    MeshingFiniteElementFieldDeclaration,
+                    MeshingFiniteVolumeFieldDeclaration,
+                )
                 for declaration in declarations
             )
         ):
             raise TypeError(
-                "An accepted epoch requires complete exact physical declarations."
+                "MeshingAcceptedEpoch.declarations must be a nonempty tuple of concrete field declarations; got invalid declarations"
             )
         if len({declaration.part_name for declaration in declarations}) != 1:
             raise ValueError(
-                "All accepted epoch physical owners must bind the same actual carrier name."
+                "MeshingAcceptedEpoch.declarations.part_name must bind one carrier name; got differing names"
             )
         if not isinstance(fields, Mapping) or any(
             type(name) is not str
@@ -1483,20 +1719,15 @@ class MeshingAcceptedEpoch(StrictModule, NonTrainableState):
             or not isinstance(value, (jax.Array, np.ndarray))
             for name, value in fields.items()
         ):
-            raise TypeError("Accepted epoch fields require exact named numerical banks.")
-        if transition is not None and type(transition) is not MeshAdaptationResult:
             raise TypeError(
-                "Accepted epoch transitions require their actual native adaptation."
+                "MeshingAcceptedEpoch.fields must map nonempty names to numerical arrays; got invalid banks"
             )
         if transition is not None:
-            from .._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
-            from ._meshing_sources import _native_authority_equal
-
-            if not _native_authority_equal(
+            if not content_equal(
                 transition.target, carrier, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS
             ):
                 raise ValueError(
-                    "Accepted epoch carrier differs from its actual transition target."
+                    "MeshingAcceptedEpoch.carrier must match transition.target; got differing carrier"
                 )
         self.carrier = carrier
         self.declarations = declarations
@@ -1510,11 +1741,7 @@ class MeshingAcceptedEpoch(StrictModule, NonTrainableState):
         self.epoch_id = self._identity()
 
     def _identity(self) -> str:
-        from .._model._structure import model_recipe_array_values, model_structure_recipe
-        from ..discretization._cell_geometry_validity import cell_geometry_id
-        from ._meshing_sources import register_meshing_source_artifacts
-
-        register_meshing_source_artifacts()
+        register_meshing_source_types()
         recipe = model_structure_recipe(self.declarations)
         arrays = model_recipe_array_values(
             self.declarations, recipe, prefix="declarations"
@@ -1539,25 +1766,19 @@ class MeshingAcceptedEpoch(StrictModule, NonTrainableState):
 def validate_meshing_accepted_epochs(
     records: Mapping[str, Any], /
 ) -> tuple[MeshingAcceptedEpoch, ...]:
-    """Authenticate one ordered history against its actual original generation."""
-    from .._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
-    from ..meshing._assembly import MeshPart
-    from ._meshing_sources import _native_authority_equal
+    """Authenticate an ordered field history against its generation and transitions."""
 
     accepted = records.get("accepted_data")
     target = records.get("accepted_target")
     if not isinstance(accepted, Mapping) or "accepted_epochs" not in accepted:
         if isinstance(accepted, Mapping) and "neurofluid_transport" in accepted:
-            from ._meshing_sources import _validate_neurofluid_transport_role
-
-            _validate_neurofluid_transport_role(records)
             return ()
         if target is not None and not (
             isinstance(accepted, Mapping)
             and ("adaptation_results" in accepted or "adaptation_event" in accepted)
         ):
             raise ValueError(
-                "An accepted target requires its actual complete accepted history."
+                "MeshingSourceClosure.accepted_target must retain accepted history; got missing history"
             )
         return ()
     epochs = accepted["accepted_epochs"]
@@ -1567,60 +1788,63 @@ def validate_meshing_accepted_epochs(
         or any(type(epoch) is not MeshingAcceptedEpoch for epoch in epochs)
     ):
         raise TypeError(
-            "Accepted epochs require one nonempty ordered tuple of exact owning records."
+            "accepted_data.accepted_epochs must be a nonempty ordered tuple of MeshingAcceptedEpoch records; got invalid epochs"
         )
     epochs_ = cast(tuple[MeshingAcceptedEpoch, ...], epochs)
-    generation = records.get("generation_part")
-    if (
-        type(generation) is not MeshPart
-        or type(generation.carrier) is not CellMeshingResult
-    ):
-        raise TypeError("Accepted epochs require their actual original generation part.")
+    if records.get("generation_part") is not None:
+        raise ValueError(
+            "accepted_data.accepted_epochs must own generation without generation_part; got duplicate generation"
+        )
+    if not epochs_[0].declarations:
+        raise ValueError(
+            "accepted_data.accepted_epochs must bind an initial part name; got absent declarations"
+        )
+    generation = MeshPart(epochs_[0].declarations[0].part_name, epochs_[0].carrier)
     if any(
         declaration.part_name != generation.name
         for epoch in epochs_
         for declaration in epoch.declarations
     ):
         raise ValueError(
-            "Accepted epoch field owners must retain their actual original part name."
+            "accepted_data.accepted_epochs.declarations.part_name must preserve the initial part; got differing part name"
         )
-    if epochs_[0].transition is not None or not _native_authority_equal(
+    if epochs_[0].transition is not None or not content_equal(
         epochs_[0].carrier,
         generation.carrier,
         limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
     ):
         raise ValueError(
-            "The initial accepted epoch must be the actual original generation."
+            "accepted_data.accepted_epochs must start at generation without a transition; got incompatible initial epoch"
         )
     for previous, epoch in zip(epochs_, epochs_[1:], strict=False):
         transition = epoch.transition
         if (
             transition is None
-            or not _native_authority_equal(
+            or not content_equal(
                 transition.source,
                 previous.carrier,
                 limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
             )
-            or not _native_authority_equal(
+            or not content_equal(
                 transition.target,
                 epoch.carrier,
                 limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
             )
         ):
             raise ValueError(
-                "Accepted epoch transition changes its preceding actual source or current target."
+                "accepted_data.accepted_epochs.transition must bind preceding source and current target; got incompatible transition"
             )
-    if type(target) is not CellMeshingResult or not _native_authority_equal(
+    if type(target) is not CellMeshingResult or not content_equal(
         target,
         epochs_[-1].carrier,
         limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
     ):
         raise ValueError(
-            "The accepted target must be the exact final carrier of its authenticated epoch chain."
+            "MeshingSourceClosure.accepted_target must match the final accepted epoch carrier; got differing target"
         )
     if "adaptation_results" in accepted:
         raise ValueError(
-            "Accepted epochs are the sole history; retain transitions on their actual epochs."
+            "accepted_data.adaptation_results must be absent when accepted_epochs retain transitions; got duplicate history"
         )
     return epochs_
 
@@ -1634,18 +1858,30 @@ def _validate_field_owner_banks(
     registration: OversetRegistration | None = None,
     require_complete: bool = True,
 ) -> None:
-    """Apply the same actual physical ownership law to each declared owner."""
+    """Validate physical ownership and schemas of accepted state banks."""
     declared_entries: set[str] = set()
     for declaration, carrier in owners:
         prepared, reconstruction = prepare_meshing_field_owner(
             declaration, carrier, index_source=index_source
         )
-        if declaration.finite_volume_system is not None:
-            _prepare_field_dynamics(declaration, prepared, reconstruction)
+        match declaration:
+            case MeshingFiniteVolumeFieldDeclaration() if (
+                declaration.finite_volume_system is not None
+            ):
+                _prepare_field_dynamics(declaration, prepared, reconstruction)
+            case (
+                MeshingFiniteElementFieldDeclaration()
+                | MeshingFiniteVolumeFieldDeclaration()
+            ):
+                pass
+            case _:
+                raise TypeError(
+                    "MeshingFieldDeclaration.owner must select FE or FV state; got unsupported declaration"
+                )
         if declaration.source_wall_policy is not None:
             if registration is None:
                 raise ValueError(
-                    "A source-wall declaration requires its actual owning registration."
+                    "MeshingFieldDeclaration.source_wall_policy must bind an OversetRegistration; got missing registration"
                 )
             specs = {spec.part_name: spec for spec in registration.specs}
             if (
@@ -1653,7 +1889,7 @@ def _validate_field_owner_banks(
                 != specs[declaration.part_name].spec_id
             ):
                 raise ValueError(
-                    "Stored physical source-wall policy differs from registration authority."
+                    "MeshingFieldDeclaration.source_wall_policy must match registration.specs; got differing policy"
                 )
         for role in declaration.state_roles:
             value = arrays.get(role.entry_name)
@@ -1663,34 +1899,35 @@ def _validate_field_owner_banks(
                 or value.dtype != role.dtype
             ):
                 raise ValueError(
-                    "Accepted physical field array differs from its declared role, shape or dtype."
+                    "MeshingFieldStateRole.array must match the declared shape and dtype; got incompatible array"
                 )
             if role.entry_name in declared_entries:
                 raise ValueError(
-                    "A primitive accepted array cannot belong to two physical field owners."
+                    "MeshingFieldStateRole.entry_name must have one field owner; got duplicate array ownership"
                 )
             declared_entries.add(role.entry_name)
             if role.role == "state-epoch" and (
                 value.shape != () or int(np.asarray(value)) != role.state_epoch
             ):
                 raise ValueError(
-                    "Accepted state epoch array differs from its atomic physical state binding."
+                    "MeshingFieldStateRole.state_epoch must match the accepted state epoch array; got differing epoch"
                 )
     if require_complete and set(arrays) != declared_entries:
         raise ValueError(
-            "Every primitive physical state array requires its original explicit owner role."
+            "MeshingFieldDeclaration.state_roles must cover every accepted array; got undeclared array"
         )
 
 
 def meshing_field_artifact_types() -> tuple[tuple[str, tuple[type, ...]], ...]:
-    """Admission groups for the one canonical artifact registry, not a decoder."""
+    """Return native field artifact admission groups."""
     _register_coefficient_identity_bank_codec()
     return (
         (
             "phydrax.lifecycle",
             (
                 MeshingAcceptedEpoch,
-                MeshingFieldDeclaration,
+                MeshingFiniteElementFieldDeclaration,
+                MeshingFiniteVolumeFieldDeclaration,
                 MeshingFieldStateRole,
                 MeshingFieldIndexBinding,
                 MeshingCoefficientIdentityBank,
@@ -1701,11 +1938,11 @@ def meshing_field_artifact_types() -> tuple[tuple[str, tuple[type, ...]], ...]:
             (
                 FiniteElementFieldSpec,
                 FiniteElementPrecisionPolicy,
-                _FiniteElementTabulator,
+                FiniteElementTabulator,
                 FormBasis,
-                _ProxyTabulator,
-                _TensorFactors,
-                _HybridFactors,
+                ProxyTabulator,
+                TensorFactors,
+                HybridFactors,
                 ReferenceNodalFamily,
                 SimplexNodalFamily,
                 HybridReferenceFamily,
@@ -1725,229 +1962,285 @@ def meshing_field_artifact_types() -> tuple[tuple[str, tuple[type, ...]], ...]:
     )
 
 
-def rebuild_meshing_field_record(value: Any, /) -> Any | None:
-    """Reconstruct authored inputs so the root owner checks all derived fields."""
-    if type(value) is MeshingCoefficientIdentityBank:
-        return MeshingCoefficientIdentityBank(value.field_space_id, value.rows)
-    if type(value) is MeshingAcceptedEpoch:
-        return MeshingAcceptedEpoch(
-            value.carrier, value.declarations, value.fields, transition=value.transition
-        )
-    if type(value) in (
-        MeshingFieldDeclaration,
-        MeshingFieldStateRole,
-        MeshingFieldIndexBinding,
-    ):
-        return type(value)(
-            **{member.name: getattr(value, member.name) for member in fields(value)}
-        )
-    if type(value) is GlobalCoefficientId:
-        return GlobalCoefficientId(value.field_space_id, value.ordinal, value.component)
-    if type(value) is DimensionSignature:
-        return DimensionSignature(value._fraction_terms())
-    if type(value) is UnitDefinition:
-        return UnitDefinition(
-            value.symbol,
-            value.dimension,
-            value.reference_system_id,
-            (value.scale_numerator, value.scale_denominator),
-        )
-    if type(value) is EulerSystem:
-        return EulerSystem(value.dimension, material=value.material)
-    if type(value) is IdealGasMaterial:
-        return IdealGasMaterial(
-            value.gamma,
-            value.gas_constant,
-            density_floor=value.density_floor,
-            pressure_floor=value.pressure_floor,
-        )
-    if type(value) is RusanovFluxPlan:
-        return RusanovFluxPlan(smooth_epsilon=value.smooth_epsilon)
-    if type(value) is ExtrapolationBoundary:
-        return ExtrapolationBoundary()
-    if type(value) is SlipWallBoundary:
-        return SlipWallBoundary()
-    if type(value) is FiniteElementFieldSpec:
-        if not value.block_names:
-            return FiniteElementFieldSpec(
-                value.name, value.elements[0], component_shape=value.component_shape
-            )
-        if all(
-            element.element_id == value.elements[0].element_id
-            for element in value.elements
+def _rebuild_finite_element(value: FiniteElementSpec, /) -> FiniteElementSpec | None:
+    tabulator = value.tabulator
+    if value.form_basis is not None:
+        if (
+            type(value.form_basis) is not FormBasis
+            or type(tabulator) is not ProxyTabulator
         ):
-            return FiniteElementFieldSpec(
-                value.name,
-                value.elements[0],
-                block_names=value.block_names,
-                component_shape=value.component_shape,
+            raise TypeError(
+                "FiniteElementSpec.form_basis must pair a form basis with its proxy tabulator; got invalid pair"
             )
+        basis = value.form_basis
+        return form_element(
+            value.cell_kind,
+            basis.form_degree,
+            basis.order,
+            family=basis.family,
+            twist=basis.twist,
+            proxy=value.value_spec.proxy,
+        )
+    match tabulator:
+        case ProxyTabulator():
+            raise TypeError(
+                "FiniteElementSpec.form_basis must declare the proxy basis; got missing basis"
+            )
+        case FiniteElementTabulator():
+            match tabulator.source:
+                case FiniteElementSpec() as base:
+                    if value.family not in (
+                        "DiscontinuousLagrange",
+                        "DiscontinuousTensorProductLagrange",
+                    ):
+                        raise ValueError(
+                            f"FiniteElementSpec.family must retain the discontinuous scalar family; got {value.family!r}"
+                        )
+                    if base.value_shape or base.mapping != "identity":
+                        raise ValueError(
+                            "FiniteElementSpec.tabulator.source must be identity-mapped scalar; got incompatible basis"
+                        )
+                    entities: list[tuple[tuple[int, ...], ...]] = [
+                        tuple(() for _ in dimension) for dimension in base.entity_dofs
+                    ]
+                    entities[-1] = (tuple(range(base.local_dof_count)),)
+                    return FiniteElementSpec(
+                        value.family,
+                        base.cell_kind,
+                        base.degree,
+                        base.reference_nodes,
+                        tuple(entities),
+                        value_spec=base.value_spec,
+                        continuity="discontinuous",
+                        representation=base.representation,
+                        tabulator=FiniteElementTabulator(base, "tabulate"),
+                        tabulator_id=f"discontinuous:{base.element_id}",
+                    )
+                case AbstractStoredFiniteElementTabulator() as source:
+                    return source.finite_element_from_stored_fields()
+                case _:
+                    raise TypeError(
+                        "FiniteElementSpec.tabulator.source must support stored element reconstruction; got unsupported source"
+                    )
+        case None:
+            match value.family:
+                case "Lagrange":
+                    return lagrange_element(value.cell_kind, value.degree)
+                case "DiscontinuousLagrange":
+                    return discontinuous_element(value.cell_kind, value.degree)
+                case _:
+                    return None
+        case _:
+            return None
+
+
+def _rebuild_field_spec(value: FiniteElementFieldSpec, /) -> FiniteElementFieldSpec:
+    if not value.block_names:
+        return FiniteElementFieldSpec(
+            value.name, value.elements[0], component_shape=value.component_shape
+        )
+    if all(
+        element.element_id == value.elements[0].element_id for element in value.elements
+    ):
         return FiniteElementFieldSpec(
             value.name,
-            dict(zip(value.block_names, value.elements, strict=True)),
+            value.elements[0],
+            block_names=value.block_names,
             component_shape=value.component_shape,
         )
-    if type(value) is FiniteElementSpec:
-        from ..discretization.fem import _reference
+    return FiniteElementFieldSpec(
+        value.name,
+        dict(zip(value.block_names, value.elements, strict=True)),
+        component_shape=value.component_shape,
+    )
 
-        tabulator = value.tabulator
-        if value.form_basis is not None:
-            if (
-                type(value.form_basis) is not FormBasis
-                or type(tabulator) is not _ProxyTabulator
-            ):
-                raise TypeError(
-                    "Form elements require their exact immutable basis and proxy tabulator."
-                )
-            basis = value.form_basis
-            return form_element(
+
+def _rebuild_form_proxy(value: ProxyTabulator, /) -> ProxyTabulator:
+    if type(value.basis) is not FormBasis or type(value.value_spec) is not FormValueSpec:
+        raise TypeError(
+            "ProxyTabulator.basis must pair an immutable form basis with its value_spec; got invalid records"
+        )
+    form = value.value_spec.form_type
+    if (
+        (form.dimension, form.degree, form.twist)
+        != (value.basis.dimension, value.basis.form_degree, value.basis.twist)
+        or form.ambient_dimension != form.dimension
+        or form.fiber_shape
+    ):
+        raise ValueError(
+            "ProxyTabulator.value_spec must match its basis form type; got incompatible form"
+        )
+    return ProxyTabulator(value.basis, value.value_spec)
+
+
+def rebuild_meshing_field_record(value: Any, /) -> Any | None:
+    """Reconstruct field inputs through their validation boundaries."""
+    match value:
+        case MeshingCoefficientIdentityBank():
+            return MeshingCoefficientIdentityBank.from_stored_fields(value)
+        case MeshingAcceptedEpoch():
+            return MeshingAcceptedEpoch.from_stored_fields(value)
+        case (
+            MeshingFiniteElementFieldDeclaration() | MeshingFiniteVolumeFieldDeclaration()
+        ):
+            return type(value).from_stored_fields(value)
+        case MeshingFieldStateRole() | MeshingFieldIndexBinding():
+            return type(value).from_stored_fields(value)
+        case GlobalCoefficientId():
+            return GlobalCoefficientId(
+                value.field_space_id, value.ordinal, value.component
+            )
+        case DimensionSignature():
+            return DimensionSignature.from_stored_fields(value)
+        case UnitDefinition():
+            return UnitDefinition.from_stored_fields(value)
+        case EulerSystem():
+            return EulerSystem(value.dimension, material=value.material)
+        case IdealGasMaterial():
+            return IdealGasMaterial(
+                value.gamma,
+                value.gas_constant,
+                density_floor=value.density_floor,
+                pressure_floor=value.pressure_floor,
+            )
+        case RusanovFluxPlan():
+            return RusanovFluxPlan(smooth_epsilon=value.smooth_epsilon)
+        case ExtrapolationBoundary():
+            return ExtrapolationBoundary()
+        case SlipWallBoundary():
+            return SlipWallBoundary()
+        case FiniteElementFieldSpec():
+            return _rebuild_field_spec(value)
+        case FiniteElementSpec():
+            return _rebuild_finite_element(value)
+        case ReferenceNodalFamily():
+            return ReferenceNodalFamily(
+                value.cell_kind, value.orders, node_set=value.node_set
+            )
+        case SimplexNodalFamily():
+            return SimplexNodalFamily(value.cell_kind, value.order)
+        case HybridReferenceFamily():
+            return HybridReferenceFamily(
                 value.cell_kind,
-                basis.form_degree,
-                basis.order,
-                family=basis.family,
-                twist=basis.twist,
-                proxy=value.value_spec.proxy,
+                value.orders if value.cell_kind == "prism" else value.degree,
             )
-        if type(tabulator) is _ProxyTabulator:
-            raise TypeError(
-                "A form proxy tabulator requires its declared immutable form basis."
+        case FiniteElementTabulator():
+            return FiniteElementTabulator(value.source, value.method)
+        case FormBasis():
+            return FormBasis(
+                value.dimension, value.form_degree, value.order, value.family, value.twist
             )
-        if type(tabulator) is _FiniteElementTabulator:
-            if type(tabulator.source) is FiniteElementSpec:
-                base = tabulator.source
-                if value.family not in (
-                    "DiscontinuousLagrange",
-                    "DiscontinuousTensorProductLagrange",
-                ):
-                    raise ValueError(
-                        "A cell-local scalar basis must retain its actual discontinuous family."
-                    )
-                if base.value_shape or base.mapping != "identity":
-                    raise ValueError(
-                        "Discontinuous scalar fields require their actual identity-mapped base."
-                    )
-                entities: list[tuple[tuple[int, ...], ...]] = [
-                    tuple(() for _ in dimension) for dimension in base.entity_dofs
-                ]
-                entities[-1] = (tuple(range(base.local_dof_count)),)
-                return FiniteElementSpec(
-                    value.family,
-                    base.cell_kind,
-                    base.degree,
-                    base.reference_nodes,
-                    tuple(entities),
-                    value_spec=base.value_spec,
-                    continuity="discontinuous",
-                    representation=base.representation,
-                    tabulator=_FiniteElementTabulator(base, "tabulate"),
-                    tabulator_id=f"discontinuous:{base.element_id}",
-                )
-            return tabulator.source.finite_element()
-        if tabulator is None:
-            if value.family == "Lagrange":
-                return _reference.lagrange_element(value.cell_kind, value.degree)
-            if value.family == "DiscontinuousLagrange":
-                return _reference.discontinuous_element(value.cell_kind, value.degree)
-        return None
-    if type(value) is ReferenceNodalFamily:
-        return ReferenceNodalFamily(
-            value.cell_kind, value.orders, node_set=value.node_set
-        )
-    if type(value) is SimplexNodalFamily:
-        return SimplexNodalFamily(value.cell_kind, value.order)
-    if type(value) is HybridReferenceFamily:
-        return HybridReferenceFamily(
-            value.cell_kind, value.orders if value.cell_kind == "prism" else value.degree
-        )
-    if type(value) is _FiniteElementTabulator:
-        return _FiniteElementTabulator(value.source, value.method)
-    if type(value) is FormBasis:
-        return FormBasis(
-            value.dimension, value.form_degree, value.order, value.family, value.twist
-        )
-    if type(value) is _ProxyTabulator:
-        if (
-            type(value.basis) is not FormBasis
-            or type(value.value_spec) is not FormValueSpec
-        ):
-            raise TypeError(
-                "A portable form proxy requires its exact immutable basis and value spec."
+        case ProxyTabulator():
+            return _rebuild_form_proxy(value)
+        case FormType():
+            return FormType(
+                value.dimension,
+                value.degree,
+                twist=value.twist,
+                fiber_shape=value.fiber_shape,
+                ambient_dimension=value.ambient_dimension,
             )
-        form = value.value_spec.form_type
-        if (
-            (form.dimension, form.degree, form.twist)
-            != (value.basis.dimension, value.basis.form_degree, value.basis.twist)
-            or form.ambient_dimension != form.dimension
-            or form.fiber_shape
-        ):
+        case FormValueSpec():
+            return FormValueSpec(value.form_type, proxy=value.proxy)
+        case PiecewiseConstantReconstruction():
+            return PiecewiseConstantReconstruction()
+        case FiniteElementPrecisionPolicy():
+            return FiniteElementPrecisionPolicy(
+                storage_dtype=value.storage_dtype,
+                geometry_dtype=value.geometry_dtype,
+                evaluation_dtype=value.evaluation_dtype,
+                accumulation_dtype=value.accumulation_dtype,
+                output_dtype=value.output_dtype,
+                compensated_accumulation=value.compensated_accumulation,
+            )
+        case CellPolynomialReconstructionPlan():
+            return CellPolynomialReconstructionPlan(
+                value.degree,
+                weight_power=value.weight_power,
+                oversampling=value.oversampling,
+                rcond=value.rcond,
+                condition_limit=value.condition_limit,
+            )
+        case UnstructuredWENOZReconstructionPlan():
+            return UnstructuredWENOZReconstructionPlan(
+                value.degree,
+                weight_power=value.weight_power,
+                oversampling=value.oversampling,
+                linear_weights=value.linear_weights,
+                epsilon=value.epsilon,
+                power=value.power,
+                limiter=value.limiter,
+            )
+        case FieldTracePolicy():
+            return FieldTracePolicy(value.kind, sides=value.sides)
+        case _:
+            return None
+
+
+type MeshingFieldReconstruction = (
+    PiecewiseConstantReconstruction
+    | PreparedCellPolynomialReconstruction
+    | PreparedUnstructuredWENOZReconstruction
+)
+
+
+class _PreparedFieldOwner(StrictModule):
+    owner: UnstructuredFiniteVolumeDiscretization
+    reconstruction: MeshingFieldReconstruction
+
+
+def _prepare_finite_volume_field(
+    declaration: MeshingFiniteVolumeFieldDeclaration, carrier: Any, /
+) -> _PreparedFieldOwner:
+    mesh, geometry = carrier.mesh, carrier.geometry
+    if declaration.finite_volume_coordinate_policy == "represented-polyhedral":
+        if type(mesh.connectivity) is not PolyhedralConnectivity:
             raise ValueError(
-                "A portable form proxy must retain its actual basis form type."
+                "MeshingFiniteVolumeFieldDeclaration.finite_volume_coordinate_policy must bind polyhedral incidence; got incompatible connectivity"
             )
-        return _ProxyTabulator(value.basis, value.value_spec)
-    if type(value) is FormType:
-        return FormType(
-            value.dimension,
-            value.degree,
-            twist=value.twist,
-            fiber_shape=value.fiber_shape,
-            ambient_dimension=value.ambient_dimension,
-        )
-    if type(value) is FormValueSpec:
-        return FormValueSpec(value.form_type, proxy=value.proxy)
-    if type(value) is PiecewiseConstantReconstruction:
-        return PiecewiseConstantReconstruction()
-    if type(value) is FiniteElementPrecisionPolicy:
-        return FiniteElementPrecisionPolicy(
-            **{
-                name: getattr(value, name)
-                for name in (
-                    "storage_dtype",
-                    "geometry_dtype",
-                    "evaluation_dtype",
-                    "accumulation_dtype",
-                    "output_dtype",
-                    "compensated_accumulation",
-                )
-            }
-        )
-    if type(value) is CellPolynomialReconstructionPlan:
-        return CellPolynomialReconstructionPlan(
-            value.degree,
-            **{
-                name: getattr(value, name)
-                for name in ("weight_power", "oversampling", "rcond", "condition_limit")
-            },
-        )
-    if type(value) is UnstructuredWENOZReconstructionPlan:
-        return UnstructuredWENOZReconstructionPlan(
-            value.degree,
-            **{
-                name: getattr(value, name)
-                for name in (
-                    "weight_power",
-                    "oversampling",
-                    "linear_weights",
-                    "epsilon",
-                    "power",
-                    "limiter",
-                )
-            },
-        )
-    if type(value) is FieldTracePolicy:
-        return FieldTracePolicy(value.kind, sides=value.sides)
-    return None
+    prepared = UnstructuredFiniteVolumePlan.from_cell_mesh(
+        mesh,
+        field_name=declaration.finite_volume_field_name,
+        component_names=declaration.finite_volume_component_names,
+        **declaration.finite_volume_options,
+    ).prepare(
+        numeric_version=declaration.numeric_version,
+        owned_face_capacity=declaration.finite_volume_owned_face_capacity,
+        cell_geometry=geometry
+        if declaration.finite_volume_coordinate_policy == "accepted-map"
+        else None,
+    )
+    match declaration.reconstruction_policy:
+        case PiecewiseConstantReconstruction() as policy:
+            reconstruction = policy
+        case CellPolynomialReconstructionPlan() as policy:
+            reconstruction = policy.prepare(
+                prepared, **declaration.reconstruction_options
+            )
+        case UnstructuredWENOZReconstructionPlan() as policy:
+            reconstruction = policy.prepare(prepared)
+        case _:
+            raise TypeError(
+                "MeshingFiniteVolumeFieldDeclaration.reconstruction_policy must be a native reconstruction owner; got unsupported policy"
+            )
+    return _PreparedFieldOwner(prepared, reconstruction)
 
 
+type _PreparedMeshingFieldOwner = tuple[
+    FiniteElementDiscretization | UnstructuredFiniteVolumeDiscretization,
+    MeshingFieldReconstruction | None,
+]
+
+
+@checked
 def prepare_meshing_field_owner(
     declaration: MeshingFieldDeclaration,
     carrier: Any,
     /,
     *,
     index_source: CellMeshingResult | None = None,
-) -> tuple[
-    FiniteElementDiscretization | UnstructuredFiniteVolumeDiscretization, Any | None
-]:
-    """Prepare the actual owner from accepted mesh/geometry, without live templates."""
+) -> _PreparedMeshingFieldOwner:
+    """Prepare physical fields from the accepted mesh and geometry."""
     declaration.__post_init__()
     mesh, geometry = carrier.mesh, carrier.geometry
     if (
@@ -1955,63 +2248,53 @@ def prepare_meshing_field_owner(
         or geometry.geometry_layout_id != declaration.geometry_layout_id
     ):
         raise ValueError(
-            "Stored physical declaration belongs to another accepted carrier."
+            "MeshingFieldDeclaration.topology_id must match the accepted carrier topology and geometry_layout_id; got foreign identities"
         )
-    prepared: FiniteElementDiscretization | UnstructuredFiniteVolumeDiscretization
-    if declaration.owner == "finite_element":
-        prepared = FiniteElementPlan(
-            mesh,
-            declaration.finite_element_fields,
-            coordinate_spec=geometry,
-            precision_policy=declaration.precision_policy,
-        ).prepare(numeric_version=declaration.numeric_version)
-        reconstruction = None
-    else:
-        field_name = declaration.finite_volume_field_name
-        if field_name is None:
-            raise ValueError(
-                "FV preparation requires its explicitly declared field name."
-            )
-        if declaration.finite_volume_coordinate_policy == "represented-polyhedral":
-            from ..discretization._cell_complex import PolyhedralConnectivity
+    from . import _meshing_sources as source_owner
 
-            if type(mesh.connectivity) is not PolyhedralConnectivity:
-                raise ValueError(
-                    "Represented polyhedral FV coordinates require actual polyhedral incidence."
-                )
-        prepared = UnstructuredFiniteVolumePlan.from_cell_mesh(
-            mesh,
-            field_name=field_name,
-            component_names=declaration.finite_volume_component_names,
-            **declaration.finite_volume_options,
-        ).prepare(
-            numeric_version=declaration.numeric_version,
-            owned_face_capacity=declaration.finite_volume_owned_face_capacity,
-            cell_geometry=geometry
-            if declaration.finite_volume_coordinate_policy == "accepted-map"
-            else None,
+    scope = source_owner._source_owner_reconstruction_scope.get()
+    key = None
+    if scope is not None and scope.process_id == getpid():
+        source_owner.register_meshing_source_artifacts()
+        key = source_owner._source_owner_reconstruction_key(
+            (declaration, carrier, index_source),
+            scope.archive_limits,
+            None,
+            prepare_meshing_field_owner,
+            scope,
         )
-        policy = declaration.reconstruction_policy
-        if isinstance(policy, PiecewiseConstantReconstruction):
-            reconstruction = policy
-        elif isinstance(policy, CellPolynomialReconstructionPlan):
-            reconstruction = policy.prepare(
-                prepared, **declaration.reconstruction_options
-            )
-        elif isinstance(policy, UnstructuredWENOZReconstructionPlan):
-            reconstruction = policy.prepare(prepared)
-        else:
-            raise TypeError(
-                "FV preparation requires an exact native reconstruction policy owner."
-            )
-    if isinstance(prepared, FiniteElementDiscretization):
-        physical_spaces = prepared.field_spaces
+    retained = None if key is None or scope is None else scope.field_owners.get(key)
+    prepared: FiniteElementDiscretization | UnstructuredFiniteVolumeDiscretization
+    if retained is not None:
+        prepared, reconstruction = retained
     else:
-        physical_spaces = (prepared.cell_space,)
+        match declaration:
+            case MeshingFiniteElementFieldDeclaration():
+                prepared = FiniteElementPlan(
+                    mesh,
+                    declaration.finite_element_fields,
+                    coordinate_spec=geometry,
+                    precision_policy=declaration.precision_policy,
+                ).prepare(numeric_version=declaration.numeric_version)
+                reconstruction = None
+            case MeshingFiniteVolumeFieldDeclaration():
+                fv = _prepare_finite_volume_field(declaration, carrier)
+                prepared, reconstruction = fv.owner, fv.reconstruction
+            case _:
+                raise TypeError(
+                    "MeshingFieldDeclaration.owner must select finite-element or finite-volume preparation; got unsupported declaration"
+                )
+    match prepared:
+        case FiniteElementDiscretization():
+            physical_spaces = prepared.field_spaces
+        case UnstructuredFiniteVolumeDiscretization():
+            physical_spaces = (prepared.cell_space,)
+        case _:
+            assert_never(prepared)
     actual = {space.name: space.field_space_id for space in physical_spaces}
     if actual != dict(declaration.field_space_ids):
         raise ValueError(
-            "Fresh physical field family or global coefficient layout differs from its scientific binding."
+            "MeshingFieldDeclaration.field_space_ids must match freshly prepared field layouts; got differing identities"
         )
     spaces = {space.name: space for space in physical_spaces}
     for role in declaration.state_roles:
@@ -2032,43 +2315,40 @@ def prepare_meshing_field_owner(
             vector_space = spaces[role.field_name].vector_space
             if not isinstance(vector_space, ArraySpace):
                 raise TypeError(
-                    "Accepted field coefficients require their actual array coefficient space."
+                    "MeshingFieldStateRole.field_space.vector_space must be an ArraySpace; got incompatible space"
                 )
             expected = vector_space.shape
             if role.shape != expected:
                 raise ValueError(
-                    "Explicit accepted coefficients do not match the freshly prepared field layout."
+                    "MeshingFieldStateRole.shape must match the prepared coefficient layout; got incompatible shape"
                 )
         elif role.role == "boundary-mask":
             if not isinstance(prepared, FiniteElementDiscretization):
                 raise ValueError(
-                    "FV physical boundaries require original face groups, not an FE essential mask."
+                    "MeshingFieldStateRole.role must use FV face policies for FV boundaries; got FE boundary mask"
                 )
-            dof_map = prepared.dof_maps[prepared._field_index(role.field_name)]
+            dof_map = prepared.dof_maps[prepared.field_index(role.field_name)]
             if role.shape != (dof_map.global_dof_count,):
                 raise ValueError(
-                    "Stored essential boundary mask differs from the actual FE coefficient ownership."
+                    "MeshingFieldStateRole.shape must match FE boundary coefficient ownership; got incompatible mask"
                 )
+    if key is not None and scope is not None:
+        scope.constructors[id(prepare_meshing_field_owner)] = prepare_meshing_field_owner
+        scope.field_owners[key] = (prepared, reconstruction)
     return prepared, reconstruction
 
 
 def _prepare_field_dynamics(
-    declaration: MeshingFieldDeclaration, prepared: Any, reconstruction: Any, /
-) -> Any:
-    from ..discretization.finite_volume._unstructured_dynamics import (
-        PreparedUnstructuredFiniteVolumeDynamics,
-        UnstructuredFiniteVolumeBoundarySet,
-        UnstructuredFiniteVolumeMethodPlan,
-    )
+    declaration: MeshingFiniteVolumeFieldDeclaration,
+    prepared: Any,
+    reconstruction: Any,
+    /,
+) -> PreparedUnstructuredFiniteVolumeDynamics:
 
     flux_policy = declaration.finite_volume_flux_policy
-    if (
-        declaration.owner != "finite_volume"
-        or declaration.finite_volume_system is None
-        or flux_policy is None
-    ):
+    if declaration.finite_volume_system is None or flux_policy is None:
         raise ValueError(
-            "Physical continuation requires an explicit stored FV system declaration."
+            "MeshingFiniteVolumeFieldDeclaration.finite_volume_system must declare dynamics with a flux policy; got missing system or flux"
         )
     boundaries = UnstructuredFiniteVolumeBoundarySet(
         prepared.boundary_patch_names,
@@ -2082,16 +2362,137 @@ def _prepare_field_dynamics(
     )
 
 
+@checked
 def prepare_meshing_field_dynamics(
-    declaration: MeshingFieldDeclaration, carrier: Any, /
-) -> Any:
-    """Rebuild actual physical FV dynamics from stored system/flux/wall policies."""
+    declaration: MeshingFiniteVolumeFieldDeclaration, carrier: Any, /
+) -> PreparedUnstructuredFiniteVolumeDynamics:
+    """Prepare FV dynamics from stored system, flux, and wall policies."""
     prepared, reconstruction = prepare_meshing_field_owner(declaration, carrier)
     return _prepare_field_dynamics(declaration, prepared, reconstruction)
 
 
+class _FieldCarriers(StrictModule):
+    carriers: frozendict[str, Any]
+    index_source: CellMeshingResult | None
+    registration: OversetRegistration | None
+
+
+def _collective_field_carriers(
+    target: CellMeshingResult,
+    generation: MeshPart | None,
+    declarations: Mapping[str, Any],
+    /,
+) -> _FieldCarriers:
+    if target.mesh.storage is None:
+        raise TypeError(
+            "field_declarations.collective_target must retain owner-local storage; got dense result"
+        )
+    original = require_original_meshing_source(target)
+    if generation is None:
+        if len(declarations) != 1:
+            raise ValueError(
+                f"MeshingSourceClosure.field_declarations must have one owner for a collective result; got {len(declarations)}"
+            )
+        return _FieldCarriers(
+            frozendict({next(iter(declarations)): target}), target, None
+        )
+    match generation.carrier:
+        case CellMeshingResult() as generation_carrier:
+            pass
+        case _:
+            raise TypeError(
+                "field_declarations.generation_part.carrier must be a CellMeshingResult; got incompatible carrier"
+            )
+    match original:
+        case CellMeshingResult():
+            if original.result_id != generation_carrier.result_id:
+                raise ValueError(
+                    "field_declarations.generation_part must bind the collective source; got foreign generation"
+                )
+        case InitialCollectiveMeshEvidence():
+            initial = generation_carrier.collective_evidence
+            if (
+                not isinstance(initial, InitialCollectiveMeshEvidence)
+                or initial.evidence_id != original.evidence_id
+                or generation_carrier.mesh.mesh_id != original.mesh_id
+            ):
+                raise ValueError(
+                    "field_declarations.generation_part must bind initial collective evidence; got foreign evidence"
+                )
+        case _:
+            raise TypeError(
+                "field_declarations.collective_target must retain a native source; got unsupported source"
+            )
+    return _FieldCarriers(frozendict({generation.name: target}), target, None)
+
+
+def _collect_field_carriers(
+    records: Mapping[str, Any], declarations: Mapping[str, Any], /
+) -> _FieldCarriers:
+    registration = records.get("registration")
+    if registration is not None:
+        match registration:
+            case OversetRegistration():
+                return _FieldCarriers(
+                    frozendict(
+                        {part.name: part.carrier for part in registration.assembly.parts}
+                    ),
+                    None,
+                    registration,
+                )
+            case _:
+                raise TypeError(
+                    "field_declarations.registration must be an OversetRegistration; got unsupported record"
+                )
+    target = records.get("collective_target")
+    accepted_target = records.get("accepted_target")
+    generation = records.get("generation_part")
+    if generation is not None and type(generation) is not MeshPart:
+        raise TypeError(
+            "field_declarations.generation_part must be a MeshPart; got unsupported record"
+        )
+    if target is not None and accepted_target is not None:
+        raise ValueError(
+            "MeshingSourceClosure.field_declarations must select one accepted target; got serial and collective targets"
+        )
+    if target is not None:
+        match target:
+            case CellMeshingResult():
+                return _collective_field_carriers(target, generation, declarations)
+            case _:
+                raise TypeError(
+                    "field_declarations.collective_target must be a CellMeshingResult; got unsupported record"
+                )
+    if accepted_target is not None:
+        if (
+            type(accepted_target) is not CellMeshingResult
+            or accepted_target.mesh.storage is not None
+        ):
+            raise TypeError(
+                "field_declarations.accepted_target must be a dense CellMeshingResult; got incompatible target"
+            )
+        if generation is not None:
+            raise ValueError(
+                "field_declarations.generation_part must be absent for an adapted serial target; got duplicate generation"
+            )
+        if len(declarations) != 1:
+            raise ValueError(
+                f"MeshingSourceClosure.field_declarations must have one owner for a serial result; got {len(declarations)}"
+            )
+        return _FieldCarriers(
+            frozendict({next(iter(declarations)): accepted_target}), accepted_target, None
+        )
+    if generation is not None:
+        return _FieldCarriers(
+            frozendict({generation.name: generation.carrier}), None, None
+        )
+    raise ValueError(
+        "MeshingSourceClosure.field_declarations must bind an accepted result or registration; got no carrier"
+    )
+
+
 def validate_meshing_field_declarations(records: Mapping[str, Any], /) -> None:
-    """Bind every stored array to its actual accepted carrier and physical owner."""
+    """Validate accepted arrays against their declared carrier and field schemas."""
     accepted = records.get("accepted_data")
     declarations = records.get("field_declarations")
     epochs = validate_meshing_accepted_epochs(records)
@@ -2100,122 +2501,53 @@ def validate_meshing_field_declarations(records: Mapping[str, Any], /) -> None:
             isinstance(accepted, Mapping) and "fields" in accepted
         ):
             raise ValueError(
-                "Accepted epochs own their complete declarations and banks; do not retain a second final-field owner."
+                "MeshingSourceClosure.field_declarations must be absent when accepted_epochs retain declarations and banks; got duplicate final-field owner"
             )
         return
     if declarations is None:
         if isinstance(accepted, Mapping) and "fields" in accepted:
             raise ValueError(
-                "Accepted physical fields require explicit canonical root field_declarations."
+                "MeshingSourceClosure.field_declarations must bind accepted physical fields; got missing declarations"
             )
         return
-    from ..meshing._assembly import MeshPart
-    from ..meshing._initial_certification import InitialCollectiveMeshEvidence
-    from ..meshing._result import CellMeshingResult, require_original_meshing_source
 
     if not isinstance(declarations, Mapping):
-        raise TypeError("Physical field declarations must be an explicit owning mapping.")
-    registration = records.get("registration")
-    index_source: CellMeshingResult | None = None
-    if registration is not None:
-        if type(registration) is not OversetRegistration:
-            raise TypeError(
-                "Physical registration must be the exact owning registration."
-            )
-        carriers = {part.name: part.carrier for part in registration.assembly.parts}
-    else:
-        target = records.get("collective_target")
-        accepted_target = records.get("accepted_target")
-        generation = records.get("generation_part")
-        if generation is not None and type(generation) is not MeshPart:
-            raise TypeError("Generation field authority must retain its actual MeshPart.")
-        if target is not None and accepted_target is not None:
-            raise ValueError("Physical fields must select one accepted target authority.")
-        if target is not None:
-            if type(target) is not CellMeshingResult or target.mesh.storage is None:
-                raise TypeError(
-                    "Collective fields require the actual accepted owner-local result."
-                )
-            index_source = target
-            original = require_original_meshing_source(target)
-            if generation is not None:
-                if isinstance(original, CellMeshingResult):
-                    if original.result_id != generation.carrier.result_id:
-                        raise ValueError(
-                            "Collective physical fields retain another original generation part."
-                        )
-                elif isinstance(original, InitialCollectiveMeshEvidence):
-                    initial = generation.carrier.collective_evidence
-                    if (
-                        not isinstance(initial, InitialCollectiveMeshEvidence)
-                        or initial.evidence_id != original.evidence_id
-                        or generation.carrier.mesh.mesh_id != original.mesh_id
-                    ):
-                        raise ValueError(
-                            "Collective physical fields retain another authored initial source theorem."
-                        )
-                else:
-                    raise TypeError(
-                        "Collective physical source must retain its exact native source owner."
-                    )
-                carriers = {generation.name: target}
-            else:
-                if len(declarations) != 1:
-                    raise ValueError(
-                        "One accepted result requires one explicit physical owner declaration."
-                    )
-                carriers = {next(iter(declarations)): target}
-        elif accepted_target is not None:
-            if (
-                type(accepted_target) is not CellMeshingResult
-                or accepted_target.mesh.storage is not None
-            ):
-                raise TypeError(
-                    "Accepted serial fields require their actual dense CellMeshingResult."
-                )
-            if generation is not None:
-                raise ValueError(
-                    "Accepted serial fields must not relabel an adapted target as generation."
-                )
-            if len(declarations) != 1:
-                raise ValueError(
-                    "One accepted serial result requires one physical owner declaration."
-                )
-            index_source = accepted_target
-            carriers = {next(iter(declarations)): accepted_target}
-        elif generation is not None:
-            carriers = {generation.name: generation.carrier}
-        else:
-            raise ValueError(
-                "Physical field declarations require an actual accepted result or registration."
-            )
+        raise TypeError(
+            "MeshingSourceClosure.field_declarations must be a mapping of named declarations; got incompatible container"
+        )
+    collected = _collect_field_carriers(records, declarations)
+    carriers = collected.carriers
     if set(declarations) != set(carriers):
         raise ValueError(
-            "Physical fields must declare every actual owning carrier exactly once."
+            "MeshingSourceClosure.field_declarations must name each accepted carrier once; got differing carrier keys"
         )
     if not isinstance(accepted, Mapping):
         raise ValueError(
-            "Physical field declarations require their accepted primitive state arrays."
+            "field_declarations.accepted_data must retain state arrays; got missing or incompatible data"
         )
     arrays = accepted.get("fields", accepted)
     if not isinstance(arrays, Mapping):
         raise ValueError(
-            "Accepted physical fields must retain their explicitly named array roles."
+            "field_declarations.accepted_data.fields must be a mapping of arrays; got incompatible container"
         )
     owners: list[tuple[MeshingFieldDeclaration, Any]] = []
     for name, declaration in declarations.items():
         if (
-            type(declaration) is not MeshingFieldDeclaration
+            type(declaration)
+            not in (
+                MeshingFiniteElementFieldDeclaration,
+                MeshingFiniteVolumeFieldDeclaration,
+            )
             or declaration.part_name != name
         ):
             raise ValueError(
-                "Physical field keys require exact matching owning declarations."
+                "MeshingSourceClosure.field_declarations must map part names to matching concrete declarations; got incompatible record"
             )
         owners.append((declaration, carriers[name]))
     _validate_field_owner_banks(
         tuple(owners),
         arrays,
-        index_source=index_source,
-        registration=registration,
+        index_source=collected.index_source,
+        registration=collected.registration,
         require_complete="fields" in accepted,
     )

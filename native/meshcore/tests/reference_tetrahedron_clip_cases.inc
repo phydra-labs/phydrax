@@ -24,10 +24,26 @@ struct ReferenceTetraCutFixture {
   int32_t run(int64_t scratch = 1 << 20, int64_t limit = 100000) {
     vertices = faces = 0;
     work = 0;
-    return phx_mc_clip_reference_tetrahedron_exact(
-        words.data(), words.size(), offsets.data(), signs.data(), scratch, limit,
-        16, 10, 48, supports.data(), incidence.data(), face_offsets.data(),
-        face_planes.data(), face_vertices.data(), &vertices, &faces, &work);
+    const phx_mc_clip_reference_tetrahedron_exact_request request{
+        .words = words.data(),
+        .word_count = static_cast<int64_t>(words.size()),
+        .offsets = offsets.data(),
+        .signs = signs.data(),
+        .scratch_limit = scratch,
+        .work_limit = limit,
+        .vertex_capacity = 16,
+        .face_capacity = 10,
+        .entry_capacity = 48,
+        .supporting_planes = supports.data(),
+        .incident_planes = incidence.data(),
+        .face_offsets = face_offsets.data(),
+        .face_planes = face_planes.data(),
+        .face_vertices = face_vertices.data(),
+        .vertex_count = &vertices,
+        .face_count = &faces,
+        .work_units = &work,
+    };
+    return phx_mc_clip_reference_tetrahedron_exact(&request);
   }
 };
 
@@ -120,13 +136,33 @@ void test_exact_reference_tetrahedron_and_corner_closure() {
   std::vector<int64_t> hexes(8 * fixture.vertices), parents(fixture.vertices);
   int64_t count = 0, work = 0, witness[4];
   auto run = [&](int64_t capacity, int64_t scratch, int64_t work_limit) {
-    return phx_mc_polyhedron_corner_hexes(
-        fixture.vertices, edges.size()/2, fixture.faces, 1,
-        face_vertices.size(), fixture.faces, fixture.vertices,
-        edges.data(), face_offsets.data(), face_vertices.data(), cell_faces, face_ids.data(),
-        cell_vertices, vertex_ids.data(), orientations.data(),
-        fixture.vertices + edges.size()/2 + fixture.faces + 1, capacity, scratch, work_limit,
-        hexes.data(), parents.data(), &count, witness, &work);
+    const phx_mc_polyhedron_corner_hexes_request request{
+        .nv = fixture.vertices,
+        .ne = static_cast<int64_t>(edges.size()/2),
+        .nf = fixture.faces,
+        .nc = 1,
+        .face_entries = static_cast<int64_t>(face_vertices.size()),
+        .cell_face_entries = fixture.faces,
+        .corner_entries = fixture.vertices,
+        .edges = edges.data(),
+        .face_offsets = face_offsets.data(),
+        .face_vertices = face_vertices.data(),
+        .cell_offsets = cell_faces,
+        .cell_faces = face_ids.data(),
+        .vertex_offsets = cell_vertices,
+        .cell_vertices = vertex_ids.data(),
+        .corner_orientations = orientations.data(),
+        .vertex_count = static_cast<int64_t>(fixture.vertices + edges.size()/2 + fixture.faces + 1),
+        .hex_capacity = capacity,
+        .scratch_limit = scratch,
+        .work_limit = work_limit,
+        .hexes = hexes.data(),
+        .parent_cells = parents.data(),
+        .hex_count = &count,
+        .witness = witness,
+        .work_units = &work,
+    };
+    return phx_mc_polyhedron_corner_hexes(&request);
   };
   PHX_CHECK(run(fixture.vertices, 1 << 20, 100000) == PHX_MC_OK && count == 10);
   for (auto parent : parents) PHX_CHECK(parent == 0);

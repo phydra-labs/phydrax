@@ -1,11 +1,16 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from fractions import Fraction
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import pytest
 
+import phydrax as phx
+from phydrax._meshcore import MeshcoreError, MeshcoreStatus
+from phydrax._model._structure import model_from_structure_recipe, model_structure_recipe
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.discretization._cell_complex import (
     PolyhedralConnectivity,
@@ -14,19 +19,40 @@ from phydrax.discretization._cell_complex import (
 from phydrax.discretization._cell_geometry import (
     CellGeometrySpec,
     coordinate_lagrange_element,
+    PolynomialComposedCellGeometryElement,
     RestrictedCellGeometryElement,
+    SplineCellGeometryElement,
 )
 from phydrax.discretization._cell_geometry_transfer import (
-    CellGeometryTransitionError,
     reconstruct_parametric_surface_cell_geometry,
     transition_nested_cell_geometry,
 )
+from phydrax.discretization._cell_geometry_transition_types import (
+    CellGeometryTransitionError,
+    NestedReferenceWitnesses,
+)
+from phydrax.discretization._chart_reconstruction import SurfaceGeometryReconstruction
+from phydrax.discretization._coordinate_enclosure import (
+    add,
+    axes,
+    constant,
+    coordinate_expressions,
+    expression_compose,
+    expression_parts,
+    scale,
+)
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization.fem import FiniteElementSpec
+from phydrax.geometry._surface_source_support import (
+    prepare_surface_source_root_atlas,
+    SurfaceSourceRootAtlas,
+)
+from phydrax.lifecycle import register_meshing_source_artifacts
 from phydrax.lifecycle._meshing_sources import (
     read_meshing_source_closure,
     write_meshing_source_closure,
 )
+from phydrax.meshing._curving import straight_geometry
 from phydrax.meshing._mixed_adaptation import (
     adapt_mixed_mesh,
     MixedAdaptationEvidence,
@@ -34,51 +60,39 @@ from phydrax.meshing._mixed_adaptation import (
     MixedLayerColumns,
     MixedTemplateClosureError,
 )
-from phydrax.meshing._topology_edit import assemble_topology_edit
+from phydrax.meshing._periodic import periodic_vertex_orbit_witness
+from phydrax.meshing._topology_edit import assemble_topology_edit, build_mesh
+from phydrax.meshing.qualification import sphere_surface
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.mapped_cells import curved_volume
+from tests._support.mixed_adaptation import (
+    periodic_template_source,
+    red_shared_face_source,
+)
+from tests._support.recipes import recipe_field_position
 
 
-def _curved_cell(kind: str) -> tuple[CellMesh, CellGeometrySpec]:
-    corners = np.asarray(reference_cell_topology(kind).vertices, dtype=np.float64)
-    corners[:, 1] += (
-        0.05
-        * corners[:, 0]
-        * (1 - corners[:, 0] if corners.shape[1] == 2 else corners[:, 2])
-    )
-    mesh = CellMesh(
-        corners,
-        (
-            CellBlock(
-                "volume",
-                kind,
-                np.arange(corners.shape[0], dtype=np.int32)[None],
-                global_ids=np.asarray([17], dtype=np.int64),
-            ),
-        ),
-        vertex_global_ids=np.arange(100, 100 + corners.shape[0], dtype=np.int64),
-    )
-    element = coordinate_lagrange_element(kind, 2)
-    nodes = np.asarray(element.reference_nodes, dtype=np.float64).copy()
-    nodes[:, 1] += (
-        0.05 * nodes[:, 0] * (1 - nodes[:, 0] if nodes.shape[1] == 2 else nodes[:, 2])
-    )
-    geometry = CellGeometrySpec(
-        {"volume": element},
-        {"volume": np.arange(nodes.shape[0], dtype=np.int32)[None]},
-        nodes,
-    )
-    return mesh, geometry
+# Retained regression envelopes from this module's pre-remediation quadratic
+# pullback/unit-sphere checks and the independent 4/3 hex-pyramid measure check.
+# These acceptance values are unchanged; they are not resource or fidelity inputs.
+COORDINATE_REGRESSION_ABS = 2e-14
+MEASURE_REGRESSION_ABS = 1e-11
+# Retained envelope from the unit-sphere, degree-two reconstruction probes on
+# the authored 0.1-radian chart; distinct from its caller's fidelity allowance.
+SPHERE_RECONSTRUCTION_REGRESSION_BOUND = 2e-4
 
 
 @pytest.mark.parametrize(
     "kind", ["quadrilateral", "hexahedron", "prism", "pyramid", "tetrahedron"]
 )
 def test_curved_template_restriction_and_complete_parent_restore(kind: str) -> None:
-    source, geometry = _curved_cell(kind)
+    source, geometry = curved_volume(kind)
     before = np.asarray(geometry.coordinates).copy()
     refined = adapt_mixed_mesh(source, refine_cell_ids=np.asarray([17], dtype=np.int64))
-    target, _, stencil = assemble_topology_edit(
-        source, refined.edit, numeric_version="refined"
-    )
+    with coordinate_reference_budget() as budget:
+        target, _, stencil = assemble_topology_edit(
+            source, refined.edit, numeric_version="refined", budget=budget
+        )
     transition = transition_nested_cell_geometry(
         source,
         geometry,
@@ -92,17 +106,20 @@ def test_curved_template_restriction_and_complete_parent_restore(kind: str) -> N
         :, : source.topological_dimension
     ]
     assert refined.edit.refinement is not None
-    witnesses = dict(
-        zip(
-            refined.edit.refinement.fine_cell_ids,
-            refined.edit.refinement.fine_reference_vertices,
-            strict=True,
-        )
+    fine_ids = np.asarray(refined.edit.refinement.fine_cell_ids, dtype=np.int64)
+    reference_vertices = np.asarray(
+        refined.edit.refinement.fine_reference_vertices, dtype=np.float64
     )
+    assert reference_vertices.ndim == 3
+    assert reference_vertices.shape[0] == fine_ids.size
+    witnesses = {
+        int(fine_ids[index]): reference_vertices[index, :, :]
+        for index in range(fine_ids.size)
+    }
     reference = np.asarray(reference_cell_topology(kind).vertices, dtype=np.float64)
-    # Children are exact restrictions of the source basis, never child nodal
-    # interpolants: the parent element and its coefficients are retained
-    # bitwise, and only the affine child reference action is new.
+    # Children restrict the source basis rather than interpolate child nodal data:
+    # the parent element and its coefficients are retained bitwise, and only
+    # the affine child reference action is new.
     np.testing.assert_array_equal(np.asarray(transition.geometry.coordinates), before)
     for block, element, route in zip(
         target.blocks,
@@ -132,7 +149,7 @@ def test_curved_template_restriction_and_complete_parent_restore(kind: str) -> N
             * parent[:, 0]
             * (1 - parent[:, 0] if parent.shape[1] == 2 else parent[:, 2])
         )
-        assert np.allclose(result, expected, rtol=0, atol=2e-14)
+        assert np.allclose(result, expected, rtol=0, atol=COORDINATE_REGRESSION_ABS)
     source_ids = np.concatenate([np.asarray(block.global_ids) for block in target.blocks])
     coarse = adapt_mixed_mesh(
         target,
@@ -140,9 +157,10 @@ def test_curved_template_restriction_and_complete_parent_restore(kind: str) -> N
         coarsen_cell_ids=source_ids,
         hierarchy=refined.hierarchy,
     )
-    restored, _, _ = assemble_topology_edit(
-        target, coarse.edit, numeric_version="restored"
-    )
+    with coordinate_reference_budget() as budget:
+        restored, _, _ = assemble_topology_edit(
+            target, coarse.edit, numeric_version="restored", budget=budget
+        )
     restored_map = transition_nested_cell_geometry(
         target,
         transition.geometry,
@@ -161,7 +179,7 @@ def test_curved_template_restriction_and_complete_parent_restore(kind: str) -> N
 
 
 def test_hard_first_interval_allows_tangential_but_forbids_axial_change() -> None:
-    mesh, _ = _curved_cell("prism")
+    mesh, _ = curved_volume("prism")
     columns = MixedLayerColumns(
         np.asarray([17], dtype=np.int64),
         np.asarray([4], dtype=np.int64),
@@ -182,7 +200,7 @@ def test_hard_first_interval_allows_tangential_but_forbids_axial_change() -> Non
 def test_archived_layer_hierarchy_restores_parent_and_first_interval(
     tmp_path: Path,
 ) -> None:
-    source, _ = _curved_cell("prism")
+    source, _ = curved_volume("prism")
     columns = MixedLayerColumns(
         np.asarray([17], dtype=np.int64),
         np.asarray([4], dtype=np.int64),
@@ -195,16 +213,19 @@ def test_archived_layer_hierarchy_restores_parent_and_first_interval(
         refine_cell_ids=np.asarray([17], dtype=np.int64),
         layer_columns=columns,
     )
-    fine, _, _ = assemble_topology_edit(
-        source, refined.edit, numeric_version="archive-fine"
-    )
+    with coordinate_reference_budget() as budget:
+        fine, _, _ = assemble_topology_edit(
+            source, refined.edit, numeric_version="archive-fine", budget=budget
+        )
     archive = tmp_path / "layer-hierarchy"
     receipt = write_meshing_source_closure(archive, refined.hierarchy)
     hierarchy = read_meshing_source_closure(
         archive, expected_content_id=receipt.content_id
     )
     if not isinstance(hierarchy, MixedAdaptationHierarchy):
-        raise TypeError("The restored hierarchy lost its owning type.")
+        raise TypeError(
+            f"mixed_adaptation_test.hierarchy must be MixedAdaptationHierarchy; got {type(hierarchy).__name__}"
+        )
     fine_ids = np.concatenate([np.asarray(block.global_ids) for block in fine.blocks])
     coarse = adapt_mixed_mesh(
         fine,
@@ -212,9 +233,10 @@ def test_archived_layer_hierarchy_restores_parent_and_first_interval(
         coarsen_cell_ids=fine_ids,
         hierarchy=hierarchy,
     )
-    target, _, _ = assemble_topology_edit(
-        fine, coarse.edit, numeric_version="archive-coarse"
-    )
+    with coordinate_reference_budget() as budget:
+        target, _, _ = assemble_topology_edit(
+            fine, coarse.edit, numeric_version="archive-coarse", budget=budget
+        )
     np.testing.assert_array_equal(
         target.blocks[0].global_ids, source.blocks[0].global_ids
     )
@@ -226,7 +248,9 @@ def test_archived_layer_hierarchy_restores_parent_and_first_interval(
         hierarchy=coarse.hierarchy,
     )
     if repeated.edit.refinement is None:
-        raise ValueError("The restored layer failed to produce its refinement witnesses.")
+        raise ValueError(
+            "mixed_adaptation_test.refinement must contain repeated layer reference corners; got None"
+        )
     corners = repeated.edit.refinement.fine_reference_vertices[:, :6]
     assert np.all(np.min(corners[..., 2], axis=1) == 0)
     assert np.all(np.max(corners[..., 2], axis=1) == 1)
@@ -258,9 +282,10 @@ def test_layer_column_coarsening_rejects_partial_interval_cohort(failure: str) -
     refined = adapt_mixed_mesh(
         source, refine_cell_ids=np.asarray([17]), layer_columns=columns
     )
-    fine, _, _ = assemble_topology_edit(
-        source, refined.edit, numeric_version="column-fine"
-    )
+    with coordinate_reference_budget() as budget:
+        fine, _, _ = assemble_topology_edit(
+            source, refined.edit, numeric_version="column-fine", budget=budget
+        )
     first, second = refined.hierarchy.records
     first_ids = np.asarray(first.child_ids, dtype=np.int64)
     all_ids = np.concatenate((first_ids, np.asarray(second.child_ids, dtype=np.int64)))
@@ -285,9 +310,10 @@ def test_layer_column_coarsening_rejects_partial_interval_cohort(failure: str) -
         if failure == "protected"
         else None,
     )
-    retained, _, _ = assemble_topology_edit(
-        fine, outcome.edit, numeric_version="column-retained"
-    )
+    with coordinate_reference_budget() as budget:
+        retained, _, _ = assemble_topology_edit(
+            fine, outcome.edit, numeric_version="column-retained", budget=budget
+        )
     assert not outcome.evidence.coarsened_cell_ids.size
     np.testing.assert_array_equal(
         outcome.evidence.rejected_coarsening_ids, np.sort(marks)
@@ -299,9 +325,10 @@ def test_layer_column_coarsening_rejects_partial_interval_cohort(failure: str) -
         coarsen_cell_ids=all_ids,
         hierarchy=refined.hierarchy,
     )
-    restored, _, _ = assemble_topology_edit(
-        fine, complete.edit, numeric_version="column-restored"
-    )
+    with coordinate_reference_budget() as budget:
+        restored, _, _ = assemble_topology_edit(
+            fine, complete.edit, numeric_version="column-restored", budget=budget
+        )
     assert restored.topology_id == source.topology_id
     assert complete.hierarchy.layer_columns is not None
     np.testing.assert_array_equal(
@@ -310,7 +337,7 @@ def test_layer_column_coarsening_rejects_partial_interval_cohort(failure: str) -
 
 
 def test_explicit_first_interval_schedule_revision_is_evidenced() -> None:
-    mesh, _ = _curved_cell("prism")
+    mesh, _ = curved_volume("prism")
     columns = MixedLayerColumns(
         np.asarray([17], dtype=np.int64),
         np.asarray([4], dtype=np.int64),
@@ -330,10 +357,13 @@ def test_explicit_first_interval_schedule_revision_is_evidenced() -> None:
 
 
 def test_incomplete_siblings_and_protected_refinement_preserve_source() -> None:
-    mesh, _ = _curved_cell("hexahedron")
+    mesh, _ = curved_volume("hexahedron")
     before = np.asarray(mesh.coordinates).copy()
     outcome = adapt_mixed_mesh(mesh, refine_cell_ids=np.asarray([17], dtype=np.int64))
-    target, _, _ = assemble_topology_edit(mesh, outcome.edit, numeric_version="refined")
+    with coordinate_reference_budget() as budget:
+        target, _, _ = assemble_topology_edit(
+            mesh, outcome.edit, numeric_version="refined", budget=budget
+        )
     marked = np.asarray([target.blocks[0].global_ids[0]], dtype=np.int64)
     incomplete = adapt_mixed_mesh(
         target,
@@ -342,7 +372,9 @@ def test_incomplete_siblings_and_protected_refinement_preserve_source() -> None:
         hierarchy=outcome.hierarchy,
     )
     assert np.array_equal(incomplete.evidence.rejected_coarsening_ids, marked)
-    with pytest.raises(MixedTemplateClosureError, match="protected"):
+    with pytest.raises(
+        MixedTemplateClosureError, match=r"mixed_adaptation\.protected_cell_ids"
+    ):
         adapt_mixed_mesh(
             mesh,
             refine_cell_ids=np.asarray([17], dtype=np.int64),
@@ -388,7 +420,10 @@ def test_hex_pyramid_shared_quadrilateral_has_complete_oriented_closure() -> Non
         offset += nodes.shape[0]
     geometry = CellGeometrySpec(elements, routes, np.concatenate(coefficients))
     outcome = adapt_mixed_mesh(mesh, refine_cell_ids=np.asarray([10], dtype=np.int64))
-    target, _, _ = assemble_topology_edit(mesh, outcome.edit, numeric_version="closed")
+    with coordinate_reference_budget() as budget:
+        target, _, _ = assemble_topology_edit(
+            mesh, outcome.edit, numeric_version="closed", budget=budget
+        )
     restriction = transition_nested_cell_geometry(
         mesh,
         geometry,
@@ -397,7 +432,9 @@ def test_hex_pyramid_shared_quadrilateral_has_complete_oriented_closure() -> Non
         refinement=outcome.edit.refinement,
     )
     assert restriction.evidence.exact
-    assert restriction.evidence.target_measure == pytest.approx(4.0 / 3.0, abs=1e-11)
+    assert restriction.evidence.target_measure == pytest.approx(
+        4.0 / 3.0, abs=MEASURE_REGRESSION_ABS
+    )
     connectivity = target.connectivity
     assert isinstance(connectivity, PolyhedralConnectivity)
     offsets = np.asarray(connectivity.face_vertex_offsets)
@@ -424,7 +461,10 @@ def test_hex_pyramid_shared_quadrilateral_has_complete_oriented_closure() -> Non
         coarsen_cell_ids=fine_ids,
         hierarchy=outcome.hierarchy,
     )
-    restored, _, _ = assemble_topology_edit(target, coarse.edit, numeric_version="coarse")
+    with coordinate_reference_budget() as budget:
+        restored, _, _ = assemble_topology_edit(
+            target, coarse.edit, numeric_version="coarse", budget=budget
+        )
     assert set(
         int(value) for block in restored.blocks for value in np.asarray(block.global_ids)
     ) == {10, 11}
@@ -442,101 +482,26 @@ def test_hex_pyramid_shared_quadrilateral_has_complete_oriented_closure() -> Non
     )
 
 
-def _red_shared_face_source(
-    mixed: bool, permuted: bool
-) -> tuple[CellMesh, CellGeometrySpec]:
-    from phydrax.meshing._canonical import canonicalize_cell_mesh
-
-    if mixed:
-        points = np.concatenate(
-            (
-                np.asarray(reference_cell_topology("prism").vertices, dtype=np.float64),
-                np.asarray(((0.0, 0.0, 2.0),), dtype=np.float64),
-            )
-        )
-        blocks = (
-            CellBlock(
-                "prism",
-                "prism",
-                np.arange(6, dtype=np.int32)[None],
-                global_ids=np.asarray((11,), dtype=np.int64),
-            ),
-            CellBlock(
-                "cap",
-                "tetrahedron",
-                np.asarray(((3, 4, 5, 6),), dtype=np.int32),
-                global_ids=np.asarray((37,), dtype=np.int64),
-            ),
-        )
-    else:
-        points = np.asarray(
-            (
-                (0.0, 0.0, 0.0),
-                (1.0, 0.0, 0.0),
-                (0.0, 1.0, 0.0),
-                (0.0, 0.0, 1.0),
-                (0.0, 0.0, -1.0),
-            ),
-            dtype=np.float64,
-        )
-        cells = ((1, 2, 0, 3), (2, 1, 0, 4)) if permuted else ((0, 1, 2, 3), (0, 2, 1, 4))
-        blocks = (
-            CellBlock(
-                "tets",
-                "tetrahedron",
-                np.asarray(cells, dtype=np.int32),
-                global_ids=np.asarray((11, 37), dtype=np.int64),
-            ),
-        )
-    original = points.copy()
-    points[:, 1] += points[:, 0] * points[:, 2] / 16
-    mesh = CellMesh(
-        points,
-        blocks,
-        vertex_global_ids=np.asarray((103, 71, 509, 211, 13, 17, 401), dtype=np.int64)[
-            : points.shape[0]
-        ],
-    )
-    mesh = canonicalize_cell_mesh(mesh)
-    elements, routes, coefficients = {}, {}, []
-    cursor = 0
-    for block in mesh.blocks:
-        element = coordinate_lagrange_element(block.cell_kind, 2)
-        nodes = np.asarray(element.reference_nodes, dtype=np.float64)
-        local = []
-        for row in np.asarray(block.vertices):
-            corners = original[row]
-            matrix = (
-                (corners[1:] - corners[0])
-                if block.cell_kind == "tetrahedron"
-                else np.stack(
-                    (
-                        corners[1] - corners[0],
-                        corners[2] - corners[0],
-                        corners[3] - corners[0],
-                    )
-                )
-            )
-            values = nodes @ matrix + corners[0]
-            values[:, 1] += values[:, 0] * values[:, 2] / 16
-            local.append(np.arange(cursor, cursor + nodes.shape[0], dtype=np.int32))
-            coefficients.append(values)
-            cursor += nodes.shape[0]
-        elements[block.name] = element
-        routes[block.name] = np.stack(local)
-    return mesh, CellGeometrySpec(elements, routes, np.concatenate(coefficients))
+class _RedLifecycle(NamedTuple):
+    mixed: bool
+    mesh: CellMesh
+    source: phx.meshing.CellMeshingResult
+    policy: phx.meshing.MeshAdaptationPolicy
+    refined: phx.meshing.MeshAdaptationResult
 
 
-@pytest.mark.parametrize(
-    ("mixed", "permuted"), ((False, False), (False, True), (True, False))
+@pytest.fixture(
+    scope="module",
+    params=[
+        pytest.param((False, False), id="tetrahedra"),
+        pytest.param((False, True), id="permuted-tetrahedra"),
+        pytest.param((True, False), id="prism-tetrahedron"),
+    ],
 )
-def test_red_tetrahedral_shared_face_and_mixed_interface_lifecycle(
-    mixed: bool, permuted: bool
-) -> None:
-    import phydrax as phx
-
+def red_lifecycle(request: pytest.FixtureRequest) -> _RedLifecycle:
+    mixed, permuted = request.param
     M = phx.meshing
-    mesh, geometry = _red_shared_face_source(mixed, permuted)
+    mesh, geometry = red_shared_face_source(mixed, permuted)
     source = M.certify_cell_mesh(
         mesh, phx.SpatialCoordinateContract.si(), geometry=geometry
     )
@@ -549,14 +514,35 @@ def test_red_tetrahedral_shared_face_and_mixed_interface_lifecycle(
             policy=policy,
         )
     )
+    return _RedLifecycle(mixed, mesh, source, policy, refined)
 
+
+def _assert_red_refinement_cell_count(mesh: CellMesh) -> None:
+    assert mesh.entity_set(3).count == 16
+
+
+def test_red_lifecycle_guard_rejects_unrefined_source(
+    red_lifecycle: _RedLifecycle,
+) -> None:
+    # A valid source is nevertheless a wrong output for the refinement builder.
+    with pytest.raises(AssertionError):
+        _assert_red_refinement_cell_count(red_lifecycle.source.mesh)
+
+
+def test_red_tetrahedral_refinement_evidence(red_lifecycle: _RedLifecycle) -> None:
+    M = phx.meshing
+    source, refined = red_lifecycle.source, red_lifecycle.refined
+    limits = red_lifecycle.policy.limits
     assert refined.status is M.MeshAdaptationStatus.COMPLETE
     assert source.audit.passed and refined.target.audit.passed
     assert isinstance(refined.evidence, MixedAdaptationEvidence)
     assert 0 < refined.evidence.work_units <= limits.maximum_work_units
     execution = refined.evidence.execution_evidence
     assert execution is not None
-    assert int(np.asarray(execution.work)[0]) >= refined.evidence.work_units
+    assert (
+        int(np.asarray(execution.work_counters.construction_work))
+        >= refined.evidence.work_units
+    )
     assert int(np.asarray(execution.host_storage_peak_bytes_upper)) > 0
     assert (
         int(np.asarray(execution.host_storage_peak_bytes_upper))
@@ -573,7 +559,12 @@ def test_red_tetrahedral_shared_face_and_mixed_interface_lifecycle(
     assert isinstance(refined.hierarchy, MixedAdaptationHierarchy)
     assert all(len(record.child_ids) == 8 for record in refined.hierarchy.records)
     fine = refined.target.mesh
-    assert fine.entity_set(3).count == 16
+    _assert_red_refinement_cell_count(fine)
+
+
+def test_red_tetrahedral_shared_face_closure(red_lifecycle: _RedLifecycle) -> None:
+    mixed = red_lifecycle.mixed
+    fine = red_lifecycle.refined.target.mesh
     connectivity = fine.connectivity
     if isinstance(connectivity, TetrahedralConnectivity):
         rows = np.asarray(connectivity.faces)
@@ -592,7 +583,7 @@ def test_red_tetrahedral_shared_face_and_mixed_interface_lifecycle(
         )
     else:
         raise TypeError(
-            "The red mixed consumer lost canonical triangular face incidence."
+            f"mixed_adaptation_test.connectivity must have triangular face incidence; got {type(connectivity).__name__}"
         )
     height = 1.0 if mixed else 0.0
     shared = np.all(np.asarray(fine.coordinates)[rows, 2] == height, axis=1)
@@ -603,9 +594,14 @@ def test_red_tetrahedral_shared_face_and_mixed_interface_lifecycle(
         triangular = np.diff(np.asarray(connectivity.face_vertex_offsets)) == 3
         assert np.all(np.asarray(connectivity.face_neighbor)[triangular][shared] >= 0)
 
+
+def test_red_tetrahedral_diagonal_identity(red_lifecycle: _RedLifecycle) -> None:
+    mesh, refined = red_lifecycle.mesh, red_lifecycle.refined
+    fine = refined.target.mesh
+    assert isinstance(refined.hierarchy, MixedAdaptationHierarchy)
     # Consume real central-child connectivity. Its common edge must be the
     # lexicographically first pair of opposite source midpoint-edge identities,
-    # even when the original local tetrahedron numbering is permuted.
+    # even when the source local tetrahedron numbering is permuted.
     fine_cells = {
         int(identifier): np.asarray(fine.vertex_global_ids)[row]
         for block in fine.blocks
@@ -649,13 +645,13 @@ def test_red_tetrahedral_shared_face_and_mixed_interface_lifecycle(
         assert len(central) == 4
         diagonal = set.intersection(*central)
         assert len(diagonal) == 2
-        # Pull back the independently authored shear to compare the actual
-        # midpoint construction in the original affine reference partition.
+        # Pull back the authored shear to compare the generated midpoint
+        # construction in the source affine reference partition.
         actual_points = [fine_positions[identifier].copy() for identifier in diagonal]
         for point in actual_points:
             point[1] -= point[0] * point[2] / 16
-        # Source midpoint carriers of a curved edge need their exact pullback,
-        # not the average of already curved endpoint coordinates.
+        # Curved-edge midpoint coordinates require the source pullback, not
+        # the average of the curved endpoint coordinates.
         expected_points = []
         for first, second in expected_keys:
             ends = [source_positions[identifier].copy() for identifier in (first, second)]
@@ -666,6 +662,16 @@ def test_red_tetrahedral_shared_face_and_mixed_interface_lifecycle(
             tuple(point) for point in expected_points
         )
 
+
+def test_red_tetrahedral_parent_restoration(red_lifecycle: _RedLifecycle) -> None:
+    M = phx.meshing
+    source, refined, policy = (
+        red_lifecycle.source,
+        red_lifecycle.refined,
+        red_lifecycle.policy,
+    )
+    fine = refined.target.mesh
+    assert isinstance(refined.hierarchy, MixedAdaptationHierarchy)
     children = np.concatenate([np.asarray(block.global_ids) for block in fine.blocks])
     coarse = M.execute_mesh_adaptation(
         M.prepare_mesh_adaptation(
@@ -699,28 +705,35 @@ def test_red_tetrahedral_shared_face_and_mixed_interface_lifecycle(
     np.testing.assert_array_equal(coarse.target.mesh.coordinates, source.mesh.coordinates)
 
 
-@pytest.mark.parametrize("resource", ("cells", "work"))
-def test_red_tetrahedral_original_resource_refusal_leaves_source_unchanged(
-    resource: str,
+@pytest.mark.parametrize(
+    ("maximum_cells", "maximum_work_units", "field"),
+    [
+        pytest.param(15, 20_000_000, r"mixed_adaptation\.maximum_cells", id="cells"),
+        pytest.param(100_000, 1, r"mixed_adaptation\.maximum_work_units", id="work"),
+    ],
+)
+def test_red_tetrahedral_resource_refusal_leaves_source_unchanged(
+    maximum_cells: int,
+    maximum_work_units: int,
+    field: str,
 ) -> None:
-    mesh, _ = _red_shared_face_source(False, False)
+    mesh, _ = red_shared_face_source(False, False)
     coordinates = np.asarray(mesh.coordinates).copy()
     topology_id = mesh.topology_id
-    with pytest.raises(MixedTemplateClosureError, match="budget"):
+    with pytest.raises(MixedTemplateClosureError, match=field):
         adapt_mixed_mesh(
             mesh,
             refine_cell_ids=np.asarray((11, 37), dtype=np.int64),
-            maximum_cells=15 if resource == "cells" else 100_000,
-            maximum_work_units=1 if resource == "work" else 20_000_000,
+            maximum_cells=maximum_cells,
+            maximum_work_units=maximum_work_units,
         )
     assert mesh.topology_id == topology_id
     np.testing.assert_array_equal(mesh.coordinates, coordinates)
 
 
 def test_red_tetrahedral_original_host_scratch_refusal_leaves_source_unchanged() -> None:
-    from phydrax._meshcore import MeshcoreError, MeshcoreStatus
 
-    mesh, _ = _red_shared_face_source(False, False)
+    mesh, _ = red_shared_face_source(False, False)
     coordinates = np.asarray(mesh.coordinates).copy()
     topology_id = mesh.topology_id
     with pytest.raises(MeshcoreError) as caught:
@@ -732,78 +745,10 @@ def test_red_tetrahedral_original_host_scratch_refusal_leaves_source_unchanged()
             maximum_scratch_bytes=1,
         )
     assert caught.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
-    assert caught.value.memory_evidence is not None
-    assert caught.value.memory_evidence.shape == (6,)
+    assert caught.value.memory_counters is not None
+    assert caught.value.memory_counters.limit_bytes == 1
     assert mesh.topology_id == topology_id
     np.testing.assert_array_equal(mesh.coordinates, coordinates)
-
-
-def _periodic_template_source(
-    kind: str, rotated: bool
-) -> tuple[CellMesh, CellGeometrySpec]:
-    from phydrax.discretization import (
-        PeriodicCell,
-        PeriodicIsometryGroup,
-        PeriodicMeshTopology,
-    )
-
-    points = np.asarray(reference_cell_topology(kind).vertices, dtype=np.float64)
-    identification: PeriodicCell | PeriodicIsometryGroup
-    if rotated:
-        generator = np.eye(4, dtype=np.float64)
-        generator[:2, :2] = ((0, -1), (1, 0))
-        identification = PeriodicIsometryGroup(generator[None])
-        if kind == "pyramid":
-            points[4, :2] = 0
-        roots = {
-            "tetrahedron": (0, 1, 1, 3),
-            "prism": (0, 1, 1, 3, 4, 4),
-            "hexahedron": (0, 1, 2, 1, 4, 5, 6, 5),
-            "pyramid": (0, 1, 2, 1, 4),
-        }[kind]
-        shifts = np.asarray(
-            [int(index != root) for index, root in enumerate(roots)], dtype=np.int32
-        )[:, None]
-    else:
-        identification = PeriodicCell(np.eye(points.shape[1], dtype=np.float64))
-        roots = (0,) * points.shape[0]
-        shifts = points.astype(np.int32)
-    block = CellBlock(
-        "periodic",
-        kind,
-        np.arange(points.shape[0], dtype=np.int32)[None],
-        global_ids=np.asarray([17], dtype=np.int64),
-    )
-    mesh = CellMesh(
-        points,
-        (block,),
-        vertex_global_ids=np.arange(100, 100 + points.shape[0], dtype=np.int64),
-    )
-    periodic = PeriodicMeshTopology(
-        mesh, identification, np.asarray(roots, dtype=np.int32), shifts
-    )
-    mesh = CellMesh(
-        points,
-        (block,),
-        vertex_global_ids=mesh.vertex_global_ids,
-        periodic_topology=periodic,
-    )
-    element = coordinate_lagrange_element(kind, 3)
-    nodes = np.asarray(element.reference_nodes, dtype=np.float64).copy()
-    if rotated:
-        if kind == "pyramid":
-            nodes[:, :2] -= nodes[:, 2, None] / 2
-        nodes[:, :2] *= 1 + 0.03 * nodes[:, 2, None] * (1 - nodes[:, 2, None])
-    elif kind == "hexahedron":
-        nodes[:, 2] += 0.03 * np.prod(nodes * (1 - nodes), axis=1)
-    else:
-        nodes[:, 1] += 0.03 * np.prod(nodes * (1 - nodes), axis=1)
-    geometry = CellGeometrySpec(
-        {"periodic": element},
-        {"periodic": np.arange(nodes.shape[0], dtype=np.int32)[None]},
-        nodes,
-    )
-    return mesh, geometry
 
 
 @pytest.mark.parametrize(
@@ -828,9 +773,12 @@ def _periodic_template_source(
 def test_periodic_mixed_exact_source_and_scientific_topology_roundtrip(
     kind: str, rotated: bool
 ) -> None:
-    source, geometry = _periodic_template_source(kind, rotated)
+    source, geometry = periodic_template_source(kind, rotated)
     refined = adapt_mixed_mesh(source, refine_cell_ids=np.asarray([17], dtype=np.int64))
-    fine, _, _ = assemble_topology_edit(source, refined.edit, numeric_version="fine")
+    with coordinate_reference_budget() as budget:
+        fine, _, _ = assemble_topology_edit(
+            source, refined.edit, numeric_version="fine", budget=budget
+        )
     restricted = transition_nested_cell_geometry(
         source,
         geometry,
@@ -855,9 +803,10 @@ def test_periodic_mixed_exact_source_and_scientific_topology_roundtrip(
         coarsen_cell_ids=ids,
         hierarchy=refined.hierarchy,
     )
-    restored, _, _ = assemble_topology_edit(
-        fine, coarsened.edit, numeric_version="restored"
-    )
+    with coordinate_reference_budget() as budget:
+        restored, _, _ = assemble_topology_edit(
+            fine, coarsened.edit, numeric_version="restored", budget=budget
+        )
     restoration = transition_nested_cell_geometry(
         fine,
         restricted.geometry,
@@ -888,13 +837,18 @@ def test_periodic_mixed_exact_source_and_scientific_topology_roundtrip(
     ("partial-family", "work", "wrong-cycle", "stale-source-orbit", "stale-allocation"),
 )
 def test_periodic_mixed_refusal_retains_the_source_epoch(failure: str) -> None:
-    source, _ = _periodic_template_source("hexahedron", False)
+    source, _ = periodic_template_source("hexahedron", False)
     refined = adapt_mixed_mesh(source, refine_cell_ids=np.asarray([17], dtype=np.int64))
-    fine, _, _ = assemble_topology_edit(source, refined.edit, numeric_version="fine")
+    with coordinate_reference_budget() as budget:
+        fine, _, _ = assemble_topology_edit(
+            source, refined.edit, numeric_version="fine", budget=budget
+        )
     before = np.asarray(fine.coordinates).copy()
     identity = fine.topology_id
     if failure == "partial-family":
-        with pytest.raises(MixedTemplateClosureError, match="complete"):
+        with pytest.raises(
+            MixedTemplateClosureError, match=r"mixed_adaptation\.coarsen_cell_ids"
+        ):
             adapt_mixed_mesh(
                 fine,
                 refine_cell_ids=np.zeros(0, dtype=np.int64),
@@ -904,7 +858,9 @@ def test_periodic_mixed_refusal_retains_the_source_epoch(failure: str) -> None:
                 hierarchy=refined.hierarchy,
             )
     elif failure == "work":
-        with pytest.raises(MixedTemplateClosureError, match="work budget"):
+        with pytest.raises(
+            MixedTemplateClosureError, match=r"mixed_adaptation\.maximum_work_units"
+        ):
             adapt_mixed_mesh(
                 fine,
                 refine_cell_ids=np.asarray(
@@ -921,8 +877,13 @@ def test_periodic_mixed_refusal_retains_the_source_epoch(failure: str) -> None:
         invalid_edit = refined.edit._replace(
             periodic_orbits=witness._replace(vertex_shifts=shifts)
         )
-        with pytest.raises(ValueError, match="representative|image|lift|shift"):
-            assemble_topology_edit(source, invalid_edit, numeric_version="invalid")
+        with (
+            coordinate_reference_budget() as budget,
+            pytest.raises(ValueError, match=r"PeriodicMeshTopology\.vertex_shifts"),
+        ):
+            assemble_topology_edit(
+                source, invalid_edit, numeric_version="invalid", budget=budget
+            )
     elif failure == "stale-source-orbit":
         record = refined.hierarchy.records[0]
         invalid_record = record._replace(
@@ -935,7 +896,8 @@ def test_periodic_mixed_refusal_retains_the_source_epoch(failure: str) -> None:
             quotient_entities=refined.hierarchy.quotient_entities,
         )
         with pytest.raises(
-            MixedTemplateClosureError, match="source-corner orbits changed"
+            MixedTemplateClosureError,
+            match=r"mixed_adaptation\.hierarchy\.periodic_roots",
         ):
             adapt_mixed_mesh(
                 fine,
@@ -954,7 +916,7 @@ def test_periodic_mixed_refusal_retains_the_source_epoch(failure: str) -> None:
             next_vertex_id=refined.hierarchy.next_vertex_id,
             quotient_entities=(invalid_bank, *banks[1:]),
         )
-        with pytest.raises(ValueError, match="allocation cursor"):
+        with pytest.raises(ValueError, match=r"allocate_periodic_identity_banks\.target"):
             adapt_mixed_mesh(
                 fine,
                 refine_cell_ids=np.zeros(0, dtype=np.int64),
@@ -968,10 +930,9 @@ def test_periodic_mixed_refusal_retains_the_source_epoch(failure: str) -> None:
 
 
 def test_inverse_periodic_mixed_coarsening_retains_explicit_hard_vertex_scope() -> None:
-    import phydrax as phx
 
     M = phx.meshing
-    mesh, _ = _periodic_template_source("hexahedron", False)
+    mesh, _ = periodic_template_source("hexahedron", False)
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     refinement = M.execute_mesh_adaptation(
         M.prepare_mesh_adaptation(
@@ -1003,16 +964,21 @@ def test_inverse_periodic_mixed_coarsening_retains_explicit_hard_vertex_scope() 
         ),
     )
     before = np.asarray(fine.mesh.coordinates).copy()
-    with pytest.raises(MixedTemplateClosureError, match="complete"):
+    with pytest.raises(
+        MixedTemplateClosureError, match=r"mixed_adaptation\.coarsen_cell_ids"
+    ):
         M.execute_mesh_adaptation(prepared)
     np.testing.assert_array_equal(fine.mesh.coordinates, before)
     assert fine.mesh.topology_id == refinement.target.mesh.topology_id
 
 
 def test_periodic_mixed_retired_identities_are_not_reused_after_restore() -> None:
-    source, _ = _periodic_template_source("hexahedron", False)
+    source, _ = periodic_template_source("hexahedron", False)
     first = adapt_mixed_mesh(source, refine_cell_ids=np.asarray([17], dtype=np.int64))
-    fine, _, _ = assemble_topology_edit(source, first.edit, numeric_version="fine")
+    with coordinate_reference_budget() as budget:
+        fine, _, _ = assemble_topology_edit(
+            source, first.edit, numeric_version="fine", budget=budget
+        )
     fine_ids = np.concatenate([np.asarray(block.global_ids) for block in fine.blocks])
     coarsened = adapt_mixed_mesh(
         fine,
@@ -1020,15 +986,19 @@ def test_periodic_mixed_retired_identities_are_not_reused_after_restore() -> Non
         coarsen_cell_ids=fine_ids,
         hierarchy=first.hierarchy,
     )
-    restored, _, _ = assemble_topology_edit(
-        fine, coarsened.edit, numeric_version="restored"
-    )
+    with coordinate_reference_budget() as budget:
+        restored, _, _ = assemble_topology_edit(
+            fine, coarsened.edit, numeric_version="restored", budget=budget
+        )
     second = adapt_mixed_mesh(
         restored,
         refine_cell_ids=np.asarray([17], dtype=np.int64),
         hierarchy=coarsened.hierarchy,
     )
-    again, _, _ = assemble_topology_edit(restored, second.edit, numeric_version="again")
+    with coordinate_reference_budget() as budget:
+        again, _, _ = assemble_topology_edit(
+            restored, second.edit, numeric_version="again", budget=budget
+        )
     repeated_ids = np.concatenate(
         [np.asarray(block.global_ids) for block in again.blocks]
     )
@@ -1054,19 +1024,18 @@ def test_periodic_mixed_retired_identities_are_not_reused_after_restore() -> Non
 
 @pytest.mark.parametrize("variant", ("valid-chain", "bare-advanced-bank", "forged-prior"))
 def test_periodic_staged_allocation_requires_the_real_prior_chain(variant: str) -> None:
-    from phydrax.meshing._periodic import periodic_vertex_orbit_witness
-    from phydrax.meshing._topology_edit import _build_mesh
 
-    source, _ = _periodic_template_source("quadrilateral", False)
+    source, _ = periodic_template_source("quadrilateral", False)
     original_coordinates = np.asarray(source.coordinates).copy()
     first = adapt_mixed_mesh(source, refine_cell_ids=np.asarray([17], dtype=np.int64))
-    previous, _, _ = assemble_topology_edit(
-        source, first.edit, numeric_version="first-stage"
-    )
+    with coordinate_reference_budget() as budget:
+        previous, _, _ = assemble_topology_edit(
+            source, first.edit, numeric_version="first-stage", budget=budget
+        )
     first_witness = first.edit.periodic_orbits
     assert first_witness is not None
     # A different legal source partition retires the first stage's born entities.
-    # Fresh vertex/cell IDs come from its actual high-water, not currently live IDs.
+    # Fresh vertex/cell IDs use its allocator high-water rather than live IDs.
     candidate = adapt_mixed_mesh(
         source,
         refine_cell_ids=np.asarray([17], dtype=np.int64),
@@ -1078,41 +1047,53 @@ def test_periodic_staged_allocation_requires_the_real_prior_chain(variant: str) 
     )
     raw = candidate.edit.periodic_orbits
     assert raw is not None
-    plain = _build_mesh(candidate.edit, "second-stage", None)
-    witness = periodic_vertex_orbit_witness(
-        source,
-        plain,
-        raw.vertex_representative_ids,
-        raw.vertex_shifts,
-        None,
-        retained_quotient_entities=first_witness.quotient_entities,
-        allocation_prior=(previous, first_witness),
-    )
+    with coordinate_reference_budget() as budget:
+        plain = build_mesh(candidate.edit, "second-stage", None, budget=budget)
+        witness = periodic_vertex_orbit_witness(
+            source,
+            plain,
+            raw.vertex_representative_ids,
+            raw.vertex_shifts,
+            None,
+            retained_quotient_entities=first_witness.quotient_entities,
+            allocation_prior=(previous, first_witness),
+            budget=budget,
+        )
     if variant == "bare-advanced-bank":
         invalid = witness._replace(allocation_prior=None)
-        with pytest.raises(ValueError, match="allocation cursor"):
+        with (
+            coordinate_reference_budget() as budget,
+            pytest.raises(ValueError, match=r"allocate_periodic_identity_banks\.target"),
+        ):
             assemble_topology_edit(
                 source,
                 candidate.edit._replace(periodic_orbits=invalid),
                 numeric_version="refused",
+                budget=budget,
             )
     elif variant == "forged-prior":
         banks = first_witness.quotient_entities
         forged_bank = banks[0]._replace(allocator_next_id=banks[0].allocator_next_id + 1)
         forged = first_witness._replace(quotient_entities=(forged_bank, *banks[1:]))
         invalid = witness._replace(allocation_prior=(previous, forged))
-        with pytest.raises(ValueError, match="allocator high-water"):
+        with (
+            coordinate_reference_budget() as budget,
+            pytest.raises(ValueError, match=r"bind_periodic_target\.source"),
+        ):
             assemble_topology_edit(
                 source,
                 candidate.edit._replace(periodic_orbits=invalid),
                 numeric_version="refused",
+                budget=budget,
             )
     else:
-        target, _, _ = assemble_topology_edit(
-            source,
-            candidate.edit._replace(periodic_orbits=witness),
-            numeric_version="second-stage",
-        )
+        with coordinate_reference_budget() as budget:
+            target, _, _ = assemble_topology_edit(
+                source,
+                candidate.edit._replace(periodic_orbits=witness),
+                numeric_version="second-stage",
+                budget=budget,
+            )
         old = dict(
             zip(
                 first_witness.quotient_entities[0].entity_keys,
@@ -1141,21 +1122,25 @@ def test_periodic_staged_allocation_requires_the_real_prior_chain(variant: str) 
         )
         third_raw = third.edit.periodic_orbits
         assert third_raw is not None
-        third_plain = _build_mesh(third.edit, "third-stage", None)
-        third_witness = periodic_vertex_orbit_witness(
-            source,
-            third_plain,
-            third_raw.vertex_representative_ids,
-            third_raw.vertex_shifts,
-            None,
-            retained_quotient_entities=witness.quotient_entities,
-            allocation_prior=(target, witness),
-        )
-        final, _, _ = assemble_topology_edit(
-            source,
-            third.edit._replace(periodic_orbits=third_witness),
-            numeric_version="third-stage",
-        )
+        with coordinate_reference_budget() as budget:
+            third_plain = build_mesh(third.edit, "third-stage", None, budget=budget)
+            third_witness = periodic_vertex_orbit_witness(
+                source,
+                third_plain,
+                third_raw.vertex_representative_ids,
+                third_raw.vertex_shifts,
+                None,
+                retained_quotient_entities=witness.quotient_entities,
+                allocation_prior=(target, witness),
+                budget=budget,
+            )
+        with coordinate_reference_budget() as budget:
+            final, _, _ = assemble_topology_edit(
+                source,
+                third.edit._replace(periodic_orbits=third_witness),
+                numeric_version="third-stage",
+                budget=budget,
+            )
         final_periodic = final.periodic_topology
         assert final_periodic is not None
         final_bank = third_witness.quotient_entities[0]
@@ -1171,10 +1156,8 @@ def test_periodic_staged_allocation_requires_the_real_prior_chain(variant: str) 
 
 
 def test_nonnested_surface_reconstruction_preserves_degree_and_hard_fidelity() -> None:
-    from examples._native_surface_sources import sphere
-    from phydrax.meshing._curving import _straight_geometry
 
-    domain = sphere().domain
+    domain = sphere_surface().domain
     uv = np.asarray([[0, 0], [0.1, 0], [0.1, 0.1], [0, 0.1]], dtype=np.float64)
     points = domain.evaluate(np.zeros(4, dtype=np.int32), uv)
     source = CellMesh.from_triangles(
@@ -1186,8 +1169,8 @@ def test_nonnested_surface_reconstruction_preserves_degree_and_hard_fidelity() -
     target = CellMesh.from_triangles(
         points, cells, cell_global_ids=np.asarray([20, 21], dtype=np.int64)
     )
-    geometry = _straight_geometry(source, 2)
-    layout = _straight_geometry(target, 2)
+    geometry = straight_geometry(source, 2)
+    layout = straight_geometry(target, 2)
     before = np.asarray(geometry.coordinates).copy()
     result = reconstruct_parametric_surface_cell_geometry(
         source,
@@ -1208,7 +1191,9 @@ def test_nonnested_surface_reconstruction_preserves_degree_and_hard_fidelity() -
         assert element.degree == 2
     assert not result.exact
     np.testing.assert_allclose(
-        np.linalg.norm(np.asarray(result.geometry.coordinates), axis=1), 1.0, atol=2e-14
+        np.linalg.norm(np.asarray(result.geometry.coordinates), axis=1),
+        1.0,
+        atol=COORDINATE_REGRESSION_ABS,
     )
     probes = np.asarray([[0.2, 0.2], [0.5, 0.1], [0.3, 0.3]], dtype=np.float64)
     element = result.geometry.elements[0]
@@ -1230,9 +1215,11 @@ def test_nonnested_surface_reconstruction_preserves_degree_and_hard_fidelity() -
             )
         )
         error = np.max(np.linalg.norm(mapped - expected, axis=1))
-        assert error < 2e-4
+        assert error < SPHERE_RECONSTRUCTION_REGRESSION_BOUND
         assert error <= np.asarray(result.fidelity_bounds)[cell]
-    with pytest.raises(CellGeometryTransitionError, match="fidelity"):
+    with pytest.raises(
+        CellGeometryTransitionError, match=r"surface_reconstruction\.fidelity"
+    ):
         reconstruct_parametric_surface_cell_geometry(
             source,
             geometry,
@@ -1250,25 +1237,18 @@ def test_nonnested_surface_reconstruction_preserves_degree_and_hard_fidelity() -
     assert np.array_equal(np.asarray(geometry.coordinates), before)
 
 
-def test_retained_rational_reconstruction_uses_continuous_source_expressions() -> None:
-    from fractions import Fraction
+class _RationalReconstruction(NamedTuple):
+    atlas: SurfaceSourceRootAtlas
+    target: CellMesh
+    result: SurfaceGeometryReconstruction
+    domain: phx.geometry.MeshingDomain
+    uv: np.ndarray
+    cells: np.ndarray
+    ids: np.ndarray
 
-    import phydrax as phx
-    from phydrax.discretization._cell_geometry import (
-        PolynomialComposedCellGeometryElement,
-        SplineCellGeometryElement,
-    )
-    from phydrax.discretization._coordinate_enclosure import (
-        add,
-        axes,
-        constant,
-        coordinate_expressions,
-        expression_compose,
-        expression_parts,
-        scale,
-    )
-    from phydrax.geometry._surface_source_support import prepare_surface_source_root_atlas
 
+@pytest.fixture(scope="module")
+def rational_reconstruction() -> _RationalReconstruction:
     patch = phx.geometry.BSplineSurfacePatch(
         np.asarray(
             (((0.0, 0.0, 0.0), (0.0, 1.0, 0.05)), ((1.0, 0.0, 0.1), (1.0, 1.0, 0.2)))
@@ -1322,6 +1302,17 @@ def test_retained_rational_reconstruction_uses_continuous_source_expressions() -
         maximum_fidelity=0.0,
         source_atlas=atlas,
     )
+    return _RationalReconstruction(atlas, target, result, domain, uv, cells, ids)
+
+
+def test_retained_rational_reconstruction_preserves_source_identity(
+    rational_reconstruction: _RationalReconstruction,
+) -> None:
+    atlas, target, result = (
+        rational_reconstruction.atlas,
+        rational_reconstruction.target,
+        rational_reconstruction.result,
+    )
     np.testing.assert_array_equal(
         result.target_mesh.vertex_global_ids, target.vertex_global_ids
     )
@@ -1329,45 +1320,87 @@ def test_retained_rational_reconstruction_uses_continuous_source_expressions() -
         np.asarray(result.geometry.coordinates).view(np.uint64),
         np.asarray(atlas.geometry.coordinates).view(np.uint64),
     )
+
+
+def test_retained_rational_reconstruction_uses_continuous_source_expressions(
+    rational_reconstruction: _RationalReconstruction,
+) -> None:
+    atlas, result = rational_reconstruction.atlas, rational_reconstruction.result
+    uv, cells = rational_reconstruction.uv, rational_reconstruction.cells
     root = atlas.geometry.elements[0]
     assert isinstance(root, SplineCellGeometryElement)
-    source = coordinate_expressions(root, np.asarray(atlas.geometry.coordinates))
-    assert source is not None
-    variables = axes(2)
-    for row, element in enumerate(result.geometry.elements):
-        assert isinstance(element, PolynomialComposedCellGeometryElement)
-        assert element.source_element.element_id == root.element_id
-        arguments = tuple(
-            add(
-                constant(Fraction(float(uv[cells[row, 0], axis])), 2),
+    with coordinate_reference_budget() as budget:
+        source = coordinate_expressions(
+            root, np.asarray(atlas.geometry.coordinates), budget=budget
+        )
+        assert source is not None
+        variables = axes(2, budget=budget)
+        for row, element in enumerate(result.geometry.elements):
+            assert isinstance(element, PolynomialComposedCellGeometryElement)
+            assert element.source_element.element_id == root.element_id
+            arguments = tuple(
                 add(
-                    scale(
-                        variables[0],
-                        Fraction(
-                            float(uv[cells[row, 1], axis] - uv[cells[row, 0], axis])
+                    constant(Fraction(float(uv[cells[row, 0], axis])), 2, budget=budget),
+                    add(
+                        scale(
+                            variables[0],
+                            Fraction(
+                                float(uv[cells[row, 1], axis] - uv[cells[row, 0], axis])
+                            ),
+                            budget=budget,
                         ),
-                    ),
-                    scale(
-                        variables[1],
-                        Fraction(
-                            float(uv[cells[row, 2], axis] - uv[cells[row, 0], axis])
+                        scale(
+                            variables[1],
+                            Fraction(
+                                float(uv[cells[row, 2], axis] - uv[cells[row, 0], axis])
+                            ),
+                            budget=budget,
                         ),
+                        budget=budget,
                     ),
-                ),
+                    budget=budget,
+                )
+                for axis in range(2)
             )
-            for axis in range(2)
-        )
-        actual = coordinate_expressions(element, np.asarray(result.geometry.coordinates))
-        assert actual is not None
-        assert tuple(expression_parts(value, 2) for value in actual) == tuple(
-            expression_parts(expression_compose(value, arguments), 2) for value in source
-        )
+            actual = coordinate_expressions(
+                element, np.asarray(result.geometry.coordinates), budget=budget
+            )
+            assert actual is not None
+            assert tuple(
+                expression_parts(value, 2, budget=budget) for value in actual
+            ) == tuple(
+                expression_parts(
+                    expression_compose(value, arguments, budget=budget), 2, budget=budget
+                )
+                for value in source
+            )
+
+
+def test_retained_rational_reconstruction_reports_fidelity_and_work(
+    rational_reconstruction: _RationalReconstruction,
+) -> None:
+    result = rational_reconstruction.result
     np.testing.assert_array_equal(result.fidelity_bounds, np.zeros(2))
     assert (
         result.evaluation_count > 24
-    )  # Includes actual coefficient work, not just chart bookkeeping.
+    )  # Includes coefficient arithmetic in addition to chart bookkeeping.
     assert result.node_owner_cells is None and result.node_owner_locals is None
-    with pytest.raises(ValueError, match="retained original source atlas"):
+
+
+def test_retained_rational_reconstruction_requires_source_atlas(
+    rational_reconstruction: _RationalReconstruction,
+) -> None:
+    atlas, target, domain = (
+        rational_reconstruction.atlas,
+        rational_reconstruction.target,
+        rational_reconstruction.domain,
+    )
+    ids, uv, cells = (
+        rational_reconstruction.ids,
+        rational_reconstruction.uv,
+        rational_reconstruction.cells,
+    )
+    with pytest.raises(ValueError, match=r"surface_reconstruction\.source_atlas"):
         reconstruct_parametric_surface_cell_geometry(
             atlas.mesh,
             atlas.geometry,
@@ -1384,115 +1417,56 @@ def test_retained_rational_reconstruction_uses_continuous_source_expressions() -
         )
 
 
-def test_native_material_pieces_preserve_nonrepresentable_exact_partitions() -> None:
-    from fractions import Fraction
-
-    from phydrax.discretization._surface_chart_deformation import (
-        _material_point,
-        _prepare_exact_material_pieces,
+def _assert_rational_fem_consumer(state: _RationalReconstruction) -> None:
+    field = phx.discretization.FiniteElementFieldSpec(
+        "u", phx.discretization.lagrange_element("triangle", 1)
     )
-
-    zero = Fraction(0)
-    a, b, c, d = (
-        (zero, zero),
-        (Fraction(1, 3), zero),
-        (Fraction(1, 3), Fraction(1, 7)),
-        (zero, Fraction(1, 7)),
-    )
-    source, target = ((a, b, c), (a, c, d)), ((a, b, d), (b, c, d))
-    pieces, work, pairs, retained = _prepare_exact_material_pieces(
-        source,
-        target,
-        np.asarray((17, 91), dtype=np.int64),
-        np.asarray((53, 211), dtype=np.int64),
-        16,
-        1_000_000,
-        64 * 1024**2,
-    )
-    assert pieces and work > 0 and pairs > 0 and retained > 0
-    old_areas, new_areas = [zero, zero], [zero, zero]
-    for piece in pieces:
-        old_areas[piece.source_row] += piece.source_reference_area
-        new_areas[piece.target_row] += piece.target_reference_area
-        assert tuple(
-            _material_point(source[piece.source_row], point)
-            for point in piece.exact_source_reference_vertices
-        ) == tuple(
-            _material_point(target[piece.target_row], point)
-            for point in piece.exact_target_reference_vertices
-        )
-        assert piece.source_cell_global_id == (17, 91)[piece.source_row]
-        assert piece.target_cell_global_id == (53, 211)[piece.target_row]
-    assert old_areas == new_areas == [Fraction(1, 2), Fraction(1, 2)]
-    assert (
-        Fraction(float(b[0])) != b[0]
-    )  # Native topology retained the original rational value.
-
-
-def test_native_material_partition_refuses_a_real_gap() -> None:
-    from fractions import Fraction
-
-    from phydrax.discretization._surface_chart_deformation import (
-        _prepare_exact_material_pieces,
-    )
-
-    source = (
+    space = phx.discretization.FiniteElementPlan(
+        state.result.target_mesh, field, coordinate_spec=state.result.geometry
+    ).prepare()
+    # Closed-form rational bilinear Bernstein map, from the four authored
+    # control points/weights, independent of spline tabulation or expressions.
+    controls = np.asarray(
         (
-            (Fraction(0), Fraction(0)),
-            (Fraction(1), Fraction(0)),
-            (Fraction(0), Fraction(1)),
+            ((0.0, 0.0, 0.0), (0.0, 1.0, 0.05)),
+            ((1.0, 0.0, 0.1), (1.0, 1.0, 0.2)),
         ),
-    )
-    target = (
-        (
-            (Fraction(0), Fraction(0)),
-            (Fraction(1, 2), Fraction(0)),
-            (Fraction(0), Fraction(1, 2)),
-        ),
-    )
-    with pytest.raises(ValueError, match="gap or double cover"):
-        _prepare_exact_material_pieces(
-            source,
-            target,
-            np.asarray((17,), dtype=np.int64),
-            np.asarray((53,), dtype=np.int64),
-            4,
-            1_000_000,
-            64 * 1024**2,
+        dtype=np.float64,
+    ).reshape((4, 3))
+    weights = np.asarray((1.0, 0.9, 1.1, 1.0), dtype=np.float64)
+    geometries = space.evaluate_geometry("u", state.result.geometry.coordinates)
+    # The two triangles are published as separate chart-composed blocks.
+    assert len(geometries) == 2
+    for row, block in enumerate(geometries):
+        reference = np.asarray(block.reference_points)
+        corners = state.uv[state.cells[row]]
+        uv = corners[0] + reference @ (corners[1:] - corners[0])
+        u, v = uv.T
+        basis = np.column_stack(((1 - u) * (1 - v), (1 - u) * v, u * (1 - v), u * v))
+        rational = basis * weights
+        expected = rational @ controls / np.sum(rational, axis=1)[:, None]
+        np.testing.assert_allclose(
+            np.asarray(block.physical_points)[0],
+            expected,
+            atol=COORDINATE_REGRESSION_ABS,
+            rtol=0,
         )
 
 
-def test_native_material_embedding_rejects_balanced_gap_and_double_cover() -> None:
-    from fractions import Fraction
+def test_retained_rational_reconstruction_is_consumed_by_public_fem(
+    rational_reconstruction: _RationalReconstruction,
+) -> None:
+    _assert_rational_fem_consumer(rational_reconstruction)
 
-    from phydrax.discretization._surface_chart_deformation import (
-        _prepare_exact_material_pieces,
-    )
 
-    source = (
-        (
-            (Fraction(0), Fraction(0)),
-            (Fraction(1), Fraction(0)),
-            (Fraction(0), Fraction(1)),
-        ),
+def test_rational_reconstruction_guard_rejects_changed_chart(
+    rational_reconstruction: _RationalReconstruction,
+) -> None:
+    corrupted = rational_reconstruction._replace(
+        uv=rational_reconstruction.uv + np.asarray((0.125, 0.0), dtype=np.float64)
     )
-    half = (
-        (Fraction(0), Fraction(0)),
-        (Fraction(1), Fraction(0)),
-        (Fraction(0), Fraction(1, 2)),
-    )
-    # Net material area matches the source, but one half is doubled and the
-    # other is absent. Matching total/piece reference areas alone is not proof.
-    with pytest.raises(ValueError, match="gap or double cover"):
-        _prepare_exact_material_pieces(
-            source,
-            (half, half),
-            np.asarray((17,), dtype=np.int64),
-            np.asarray((53, 211), dtype=np.int64),
-            16,
-            1_000_000,
-            64 * 1024**2,
-        )
+    with pytest.raises(AssertionError):
+        _assert_rational_fem_consumer(corrupted)
 
 
 @pytest.mark.parametrize("scope", ["complete", "incomplete", "unknown", "changed-class"])
@@ -1512,9 +1486,10 @@ def test_mixed_coarsening_authenticates_unchanged_source_cells(
         ),
     )
     refined = adapt_mixed_mesh(source, refine_cell_ids=np.asarray([17], dtype=np.int64))
-    fine, _, _ = assemble_topology_edit(
-        source, refined.edit, numeric_version="identity-fine"
-    )
+    with coordinate_reference_budget() as budget:
+        fine, _, _ = assemble_topology_edit(
+            source, refined.edit, numeric_version="identity-fine", budget=budget
+        )
     receipt = write_meshing_source_closure(
         tmp_path / "identity-hierarchy", refined.hierarchy
     )
@@ -1564,9 +1539,10 @@ def test_mixed_coarsening_authenticates_unchanged_source_cells(
         outcome.evidence.coarsened_cell_ids,
         np.zeros(0, dtype=np.int64) if scope == "incomplete" else np.sort(children),
     )
-    target, _, _ = assemble_topology_edit(
-        fine, outcome.edit, numeric_version="identity-coarse"
-    )
+    with coordinate_reference_budget() as budget:
+        target, _, _ = assemble_topology_edit(
+            fine, outcome.edit, numeric_version="identity-coarse", budget=budget
+        )
     if scope == "complete":
         assert target.topology_id == source.topology_id
     elif scope == "incomplete":
@@ -1574,12 +1550,14 @@ def test_mixed_coarsening_authenticates_unchanged_source_cells(
 
 
 def test_quad_parent_restore_keeps_independent_reference_corner_banks() -> None:
-    from phydrax.discretization._cell_geometry_transfer import NestedReferenceWitnesses
 
-    source, geometry = _curved_cell("quadrilateral")
+    source, geometry = curved_volume("quadrilateral")
     original = np.asarray(geometry.coordinates).view(np.uint64).copy()
     refined = adapt_mixed_mesh(source, refine_cell_ids=np.asarray((17,), dtype=np.int64))
-    fine, _, _ = assemble_topology_edit(source, refined.edit, numeric_version="refined")
+    with coordinate_reference_budget() as budget:
+        fine, _, _ = assemble_topology_edit(
+            source, refined.edit, numeric_version="refined", budget=budget
+        )
     fine_geometry = transition_nested_cell_geometry(
         source,
         geometry,
@@ -1594,11 +1572,14 @@ def test_quad_parent_restore_keeps_independent_reference_corner_banks() -> None:
         coarsen_cell_ids=ids,
         hierarchy=refined.hierarchy,
     )
-    restored, _, _ = assemble_topology_edit(fine, coarse.edit, numeric_version="restored")
+    with coordinate_reference_budget() as budget:
+        restored, _, _ = assemble_topology_edit(
+            fine, coarse.edit, numeric_version="restored", budget=budget
+        )
     assert coarse.edit.coarsening is not None
     witness = coarse.edit.coarsening
-    # Four actual fine quadrilateral corners are independent of the generic
-    # target parent-bank capacity. No source coefficient or SCI row is changed.
+    # Four fine quadrilateral corners are independent of the target parent-bank
+    # capacity. Source coefficients and SCI rows remain unchanged.
     corners = len(reference_cell_topology("quadrilateral").vertices)
     actual = NestedReferenceWitnesses(
         witness.fine_cell_ids,
@@ -1619,3 +1600,96 @@ def test_quad_parent_restore_keeps_independent_reference_corner_banks() -> None:
     np.testing.assert_array_equal(
         np.asarray(transition.geometry.coordinates).view(np.uint64), original
     )
+
+
+@pytest.fixture
+def stored_columns() -> MixedLayerColumns:
+    register_meshing_source_artifacts()
+    return MixedLayerColumns([17, 18], [4, 4], [0, 1], axial_refinement=True)
+
+
+@pytest.fixture
+def stored_hierarchy(stored_columns: MixedLayerColumns) -> MixedAdaptationHierarchy:
+    return MixedAdaptationHierarchy(
+        next_cell_id=19,
+        next_vertex_id=108,
+        layer_columns=stored_columns,
+        identity_cells=((17, "volume", "prism", (100, 101, 102, 103, 104, 105), 0),),
+    )
+
+
+def test_layer_columns_stored_fields_preserve_ancestry_and_identity(
+    stored_columns: MixedLayerColumns,
+) -> None:
+    restored = MixedLayerColumns.from_stored_fields(stored_columns)
+    assert restored is not stored_columns
+    assert restored.cell_ids == stored_columns.cell_ids
+    assert restored.column_ids == stored_columns.column_ids
+    assert restored.interval_indices == stored_columns.interval_indices
+    assert restored.hard_first_thickness == stored_columns.hard_first_thickness
+    assert restored.axial_refinement == stored_columns.axial_refinement
+    assert restored.allow_schedule_change == stored_columns.allow_schedule_change
+    assert restored.columns_id == stored_columns.columns_id
+
+
+def test_layer_columns_stored_fields_refuse_negative_interval(
+    stored_columns: MixedLayerColumns,
+) -> None:
+    recipe = model_structure_recipe(stored_columns)
+    recipe["items"][recipe_field_position(recipe, "interval_indices")] = (
+        model_structure_recipe((-1, 1))
+    )
+    malformed = model_from_structure_recipe(recipe)
+    with pytest.raises(ValueError, match=r"MixedLayerColumns\.ancestry"):
+        MixedLayerColumns.from_stored_fields(malformed)
+
+
+def test_layer_columns_stored_fields_refuse_forged_identity(
+    stored_columns: MixedLayerColumns,
+) -> None:
+    recipe = model_structure_recipe(stored_columns)
+    recipe["items"][recipe_field_position(recipe, "columns_id")] = model_structure_recipe(
+        "forged"
+    )
+    malformed = model_from_structure_recipe(recipe)
+    with pytest.raises(ValueError, match=r"MixedLayerColumns\.columns_id"):
+        MixedLayerColumns.from_stored_fields(malformed)
+
+
+def test_mixed_hierarchy_stored_fields_preserve_allocator_and_identity(
+    stored_hierarchy: MixedAdaptationHierarchy,
+) -> None:
+    restored = MixedAdaptationHierarchy.from_stored_fields(stored_hierarchy)
+    assert restored is not stored_hierarchy
+    assert restored.records == stored_hierarchy.records
+    assert restored.next_cell_id == stored_hierarchy.next_cell_id
+    assert restored.next_vertex_id == stored_hierarchy.next_vertex_id
+    assert restored.retired_entities == stored_hierarchy.retired_entities
+    assert restored.quotient_entities == stored_hierarchy.quotient_entities
+    assert restored.layer_columns is stored_hierarchy.layer_columns
+    assert restored.identity_cells == stored_hierarchy.identity_cells
+    assert restored.hierarchy_id == stored_hierarchy.hierarchy_id
+
+
+def test_mixed_hierarchy_stored_fields_refuse_negative_allocator(
+    stored_hierarchy: MixedAdaptationHierarchy,
+) -> None:
+    recipe = model_structure_recipe(stored_hierarchy)
+    recipe["items"][recipe_field_position(recipe, "next_cell_id")] = (
+        model_structure_recipe(-1)
+    )
+    malformed = model_from_structure_recipe(recipe)
+    with pytest.raises(ValueError, match=r"MixedAdaptationHierarchy\.next_ids"):
+        MixedAdaptationHierarchy.from_stored_fields(malformed)
+
+
+def test_mixed_hierarchy_stored_fields_refuse_forged_identity(
+    stored_hierarchy: MixedAdaptationHierarchy,
+) -> None:
+    recipe = model_structure_recipe(stored_hierarchy)
+    recipe["items"][recipe_field_position(recipe, "hierarchy_id")] = (
+        model_structure_recipe("forged")
+    )
+    malformed = model_from_structure_recipe(recipe)
+    with pytest.raises(ValueError, match=r"MixedAdaptationHierarchy\.hierarchy_id"):
+        MixedAdaptationHierarchy.from_stored_fields(malformed)

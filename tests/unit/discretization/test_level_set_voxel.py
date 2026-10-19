@@ -26,6 +26,7 @@ from phydrax.geometry import (
     VoxelGeometrySamplingPlan,
     ZeroSetAccuracy,
 )
+from phydrax.units import METER
 
 
 def _grid(
@@ -211,7 +212,7 @@ def test_certificate_downgrades_without_strengthening_source_sign(
     sign: SignReliability,
 ) -> None:
     source = replace(
-        Sphere((0.0, 0.0, 0.0), 0.5).compile().field_certificate,
+        Sphere((0.0, 0.0, 0.0), 0.5).compile(coordinate_unit=METER).field_certificate,
         sign_reliability=sign,
         topology_identity="analytic-sphere-region",
     )
@@ -230,7 +231,10 @@ def test_certificate_downgrades_without_strengthening_source_sign(
     assert certificate.lipschitz_upper_bound is None
     assert certificate.evaluation_error is None
     assert certificate.topology_identity is None
-    with pytest.raises(ValueError, match="globally reliable exact signed-distance"):
+    with pytest.raises(
+        ValueError,
+        match=r"ExactSDFEnclosureCertificate\.field must describe a globally reliable signed distance",
+    ):
         ExactSDFEnclosureCertificate(certificate)
 
 
@@ -240,7 +244,9 @@ def test_certificate_downgrades_without_strengthening_source_sign(
 def test_level_set_sampling_preserves_existing_samples_and_enclosure(
     enclosed: bool,
 ) -> None:
-    geometry = Sphere((0.0, 4.0, 0.5), 0.9, feature_id="voxel-level-set").compile()
+    geometry = Sphere((0.0, 4.0, 0.5), 0.9, feature_id="voxel-level-set").compile(
+        coordinate_unit=METER
+    )
     grid = _grid()
     enclosure = (
         ExactSDFEnclosureCertificate(geometry.field_certificate) if enclosed else None
@@ -276,8 +282,12 @@ def test_level_set_sampling_preserves_existing_samples_and_enclosure(
 
 
 def test_level_set_sampling_retains_enclosure_owner_refusal() -> None:
-    owner = Sphere((0.0, 4.0, 0.5), 0.9, feature_id="enclosure-owner").compile()
-    unrelated = Sphere((0.0, 4.0, 0.5), 0.9, feature_id="unrelated-owner").compile()
+    owner = Sphere((0.0, 4.0, 0.5), 0.9, feature_id="enclosure-owner").compile(
+        coordinate_unit=METER
+    )
+    unrelated = Sphere((0.0, 4.0, 0.5), 0.9, feature_id="unrelated-owner").compile(
+        coordinate_unit=METER
+    )
     plan = VoxelGeometrySamplingPlan(
         _grid(),
         enclosure=ExactSDFEnclosureCertificate(owner.field_certificate),

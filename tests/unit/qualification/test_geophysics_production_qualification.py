@@ -333,7 +333,7 @@ def test_distributed_operator_topology_transfer_and_physics_preconditioners_are_
             [0.0, 0.0, -1.0, -1.0, 2.0],
         ]
     )
-    halo = phx.discretization.DistributedHaloPlan(
+    halo = phx.discretization.DistributedHaloPlan.from_global(
         # ty: ignore[invalid-argument-type]
         [0, 0, 0, 1, 1],
         # ty: ignore[invalid-argument-type]

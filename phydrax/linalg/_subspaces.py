@@ -18,7 +18,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..typing import checked, parse
 from ._certificates import KernelCertificate
-from ._spaces import _coordinate_dtype, AbstractVectorSpace
+from ._spaces import AbstractVectorSpace, coordinate_dtype
 
 
 CompatibilityMode: TypeAlias = Literal["error", "project"]
@@ -80,7 +80,7 @@ class LinearSubspace(StrictModule):
             )
         if not jnp.issubdtype(basis_.dtype, jnp.inexact):
             raise TypeError("Subspace basis must use an inexact dtype.")
-        if basis_.dtype != _coordinate_dtype(space):
+        if basis_.dtype != coordinate_dtype(space):
             raise TypeError("Subspace basis dtype must match its coordinate space.")
         batch_shape = tuple(basis_.shape[:-2])
         capacity = basis_.shape[-1]
@@ -168,7 +168,7 @@ class LinearSubspace(StrictModule):
             raise ValueError(
                 "Projection coordinates must be shared or match batch_shape + (space.size,)."
             )
-        if value.dtype != _coordinate_dtype(self.space):
+        if value.dtype != coordinate_dtype(self.space):
             raise TypeError("Projection coordinate dtype must match the subspace space.")
         if self.capacity == 0:
             return jnp.zeros_like(value)

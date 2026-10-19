@@ -137,7 +137,7 @@ def certify_least_squares_physical(
         raise TypeError("problem must be NonlinearLeastSquaresProblem.")
     if problem.trial_policy is not None:
         raise ValueError(
-            "A smooth normal-gradient certificate cannot certify a nonsmooth trial policy."
+            f"least_squares_certificate.problem.trial_policy must be None for a smooth normal-gradient certificate; got {type(problem.trial_policy).__name__}."
         )
     if not isinstance(termination, OptimizationTermination):
         raise TypeError("termination must be OptimizationTermination.")

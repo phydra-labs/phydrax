@@ -21,6 +21,7 @@ from phydrax.operators.integral import (
     spatial_integral,
     time_convolution,
 )
+from phydrax.units import METER
 
 
 def _interval_rule(count: Any, lower: Any = 0.0, upper: Any = 1.0) -> Any:
@@ -185,7 +186,7 @@ def test_integral_ops_scenario_2() -> None:
 
     assert jnp.allclose(jnp.asarray(operator(points).data), 0.5, atol=1e-12)
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     function = DomainFunction(domain=domain, deps=(), func=jnp.array(2.5))
     radius = 0.4
@@ -220,7 +221,7 @@ def test_local_integral_zero_and_linear_symmetry() -> None:
     assert jnp.max(jnp.abs(values)) < 1e-12
 
     square = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @square.Function("x")

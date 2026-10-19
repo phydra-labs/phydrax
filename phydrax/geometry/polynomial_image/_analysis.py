@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import math
-from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -25,7 +24,7 @@ from ...linalg.svd import (
     SVDSolvePolicy,
     SVDSolveResult,
 )
-from ...typing import checked
+from ...typing import checked, PRNGKey
 from ._contracts import (
     EvidenceDisposition,
     JacobianRankEvidence,
@@ -73,11 +72,17 @@ class PolynomialImageAnalysisPolicy(StrictModule, NonTrainableState):
         absolute = float(heldout_absolute_tolerance)
         relative = float(heldout_relative_tolerance)
         if not math.isfinite(rank_tolerance) or rank_tolerance <= 0.0:
-            raise ValueError("rank_relative_tolerance must be finite and positive.")
+            raise ValueError(
+                f"PolynomialImageAnalysisPolicy.rank_relative_tolerance must be finite and positive; got {rank_tolerance!r}"
+            )
         if not math.isfinite(ambiguity) or ambiguity <= 1.0:
-            raise ValueError("rank_ambiguity_factor must be finite and greater than one.")
+            raise ValueError(
+                f"PolynomialImageAnalysisPolicy.rank_ambiguity_factor must be finite and greater than one; got {ambiguity!r}"
+            )
         if any(not math.isfinite(value) or value < 0.0 for value in (absolute, relative)):
-            raise ValueError("Held-out tolerances must be finite and non-negative.")
+            raise ValueError(
+                f"PolynomialImageAnalysisPolicy.heldout_tolerances must be finite and nonnegative; got {(absolute, relative)}"
+            )
         limits = tuple(
             (
                 maximum_samples,
@@ -87,7 +92,9 @@ class PolynomialImageAnalysisPolicy(StrictModule, NonTrainableState):
             )
         )
         if any(value <= 0 for value in limits):
-            raise ValueError("Image-analysis resource limits must be positive.")
+            raise ValueError(
+                f"PolynomialImageAnalysisPolicy.resource_limits must be positive; got {limits!r}"
+            )
         self.rank_relative_tolerance = rank_tolerance
         self.rank_ambiguity_factor = ambiguity
         self.heldout_absolute_tolerance = absolute
@@ -141,42 +148,55 @@ class PolynomialImageAnalysisPlan(StrictModule, NonTrainableState):
         heldout_source_samples: ArrayLike | None = None,
         discovery_sample_count: int = 64,
         heldout_sample_count: int = 16,
-        key: ArrayLike | None = None,
+        key: PRNGKey | None = None,
         lower_bounds: ArrayLike | float = -1.0,
         upper_bounds: ArrayLike | float = 1.0,
         policy: PolynomialImageAnalysisPolicy | None = None,
     ) -> None:
         if target_support.target_dimension != polynomial_map.target_dimension:
-            raise ValueError("Target monomials and polynomial map dimensions differ.")
+            raise ValueError(
+                f"PolynomialImageAnalysisPlan.target_support must match map target dimension {polynomial_map.target_dimension}; got {target_support.target_dimension}"
+            )
         if target_support.variable_labels != polynomial_map.target_labels:
-            raise ValueError("Target monomial labels must match map coordinate labels.")
+            raise ValueError(
+                f"PolynomialImageAnalysisPlan.target_support must match map coordinate labels {polynomial_map.target_labels!r}; got {target_support.variable_labels!r}"
+            )
         policy_ = PolynomialImageAnalysisPolicy() if policy is None else policy
-        if not isinstance(policy_, PolynomialImageAnalysisPolicy):
-            raise TypeError("policy must be a PolynomialImageAnalysisPolicy.")
         dimension = polynomial_map.source_dimension
         key_data = np.zeros((2,), dtype=np.uint32)
         if source_samples is None:
             if key is None:
-                raise ValueError("Affine source sampling requires an explicit PRNG key.")
+                raise ValueError(
+                    "PolynomialImageAnalysisPlan.key must be supplied for affine source sampling; got None"
+                )
+            implementation = str(jr.key_impl(key))
+            if implementation != "threefry2x32":
+                raise ValueError(
+                    "PolynomialImageAnalysisPlan.key must use threefry2x32; "
+                    f"got {implementation}"
+                )
             key_data = np.asarray(jr.key_data(key), dtype=np.uint32)
             if key_data.shape != (2,):
-                raise ValueError("Affine source PRNG key must contain one key.")
+                raise ValueError(
+                    f"PolynomialImageAnalysisPlan.key must contain one affine source PRNG key; got key-data shape {key_data.shape}"
+                )
             if any(
                 group.geometry != "affine"
                 for group in polynomial_map.system.support.groups
             ):
                 raise ValueError(
-                    "PRNG source sampling requires affine variable groups; "
-                    "supply explicit source samples for other source geometries."
+                    "PolynomialImageAnalysisPlan.source_geometry must use affine variable groups for PRNG sampling; got nonaffine groups requiring explicit source samples"
                 )
             if heldout_source_samples is not None:
                 raise ValueError(
-                    "heldout_source_samples requires explicit source_samples."
+                    "PolynomialImageAnalysisPlan.heldout_source_samples must accompany explicit source_samples; got held-out samples without explicit source samples"
                 )
             discovery_count = int(discovery_sample_count)
             heldout_count = int(heldout_sample_count)
             if discovery_count < 0 or heldout_count < 0:
-                raise ValueError("Affine sample counts must be non-negative.")
+                raise ValueError(
+                    f"PolynomialImageAnalysisPlan.sample_counts must be nonnegative; got {(discovery_count, heldout_count)}"
+                )
             lower = np.broadcast_to(
                 np.asarray(lower_bounds, dtype=np.float64), (dimension,)
             ).copy()
@@ -188,16 +208,20 @@ class PolynomialImageAnalysisPlan(StrictModule, NonTrainableState):
                 or not np.all(np.isfinite(upper))
                 or np.any(lower >= upper)
             ):
-                raise ValueError("Affine sample bounds must be finite and increasing.")
+                raise ValueError(
+                    "PolynomialImageAnalysisPlan.sample_bounds must be finite and increasing; got nonfinite or nonincreasing bounds"
+                )
             explicit = np.zeros((0, dimension), dtype=np.float64)
             explicit_heldout = np.zeros((0, dimension), dtype=np.float64)
             kind = SourceSampleKind.AFFINE_PRNG
         else:
             if key is not None:
-                raise ValueError("A PRNG key is invalid with explicit source samples.")
+                raise ValueError(
+                    "PolynomialImageAnalysisPlan.key must be absent with explicit source samples; got a supplied PRNG key"
+                )
             if heldout_source_samples is None:
                 raise ValueError(
-                    "Explicit source samples require explicit held-out samples."
+                    "PolynomialImageAnalysisPlan.heldout_source_samples must be supplied with explicit source samples; got None"
                 )
             explicit = np.asarray(source_samples)
             explicit_heldout = np.asarray(heldout_source_samples)
@@ -208,7 +232,7 @@ class PolynomialImageAnalysisPlan(StrictModule, NonTrainableState):
                 or explicit_heldout.shape[1] != dimension
             ):
                 raise ValueError(
-                    "Explicit source points must have shape (samples, source_dimension)."
+                    f"PolynomialImageAnalysisPlan.source_samples must have shape (samples, {dimension}) for discovery and held-out sets; got {(explicit.shape, explicit_heldout.shape)}"
                 )
             if not np.issubdtype(explicit.dtype, np.inexact):
                 explicit = explicit.astype("float64")
@@ -295,10 +319,14 @@ class PreparedPolynomialImageAnalysis(StrictModule, NonTrainableState):
             plan.heldout_sample_count,
             polynomial_map.source_dimension,
         ):
-            raise ValueError("Prepared polynomial-image samples have wrong shapes.")
+            raise ValueError(
+                f"PreparedPolynomialImageAnalysis.samples must match plan counts and source dimension; got shapes {(source.shape, heldout.shape)}"
+            )
         version = jnp.asarray(numeric_version, dtype=jnp.int32).reshape(())
         if int(np.asarray(version)) < 0:
-            raise ValueError("numeric_version must be non-negative.")
+            raise ValueError(
+                "PreparedPolynomialImageAnalysis.numeric_version must be nonnegative; got a negative value"
+            )
         self.plan = plan
         self.polynomial_map = polynomial_map
         self.source_points = source
@@ -323,24 +351,13 @@ class PreparedPolynomialImageAnalysis(StrictModule, NonTrainableState):
         return refresh_polynomial_image_analysis(self, polynomial_map)
 
 
-def plan_polynomial_image_analysis(
-    polynomial_map: SparsePolynomialMap,
-    target_support: TargetMonomialSupport,
-    /,
-    **kwargs: Any,
-) -> PolynomialImageAnalysisPlan:
-    """Create a fixed-support image-analysis plan."""
-
-    return PolynomialImageAnalysisPlan(polynomial_map, target_support, **kwargs)
-
-
 def _sample_affine(plan: PolynomialImageAnalysisPlan) -> tuple[Array, Array]:
     dtype = jnp.real(
         jnp.zeros((), dtype=plan.polynomial_map.system.coefficients.dtype)
     ).dtype
     lower = plan.lower_bounds.astype(dtype)
     upper = plan.upper_bounds.astype(dtype)
-    root = plan.root_key_data
+    root = jr.wrap_key_data(plan.root_key_data, impl="threefry2x32")
     discovery_key = jr.fold_in(root, 0)
     heldout_key = jr.fold_in(root, 1)
     discovery = jr.uniform(
@@ -440,7 +457,8 @@ def _svd(
             resources=SVDResourcePolicy(
                 preparation_bytes=policy.maximum_svd_bytes,
                 workspace_bytes=policy.maximum_svd_bytes,
-                # Materialize every column, then certify both actions per mode.
+                # The dense spectrum probes every column once and verifies
+                # each retained pair with one forward and one adjoint action.
                 operator_matvecs=columns + 2 * count,
             ),
         ),
@@ -544,7 +562,9 @@ def _jacobian_rank_evidence(
         )
         singular = np.asarray(decomposition.singular_values)
         if singular.shape != (mode_count,):
-            raise RuntimeError("Jacobian SVD returned an unexpected singular spectrum.")
+            raise RuntimeError(
+                f"PolynomialImageAnalysis.jacobian_spectrum must have shape ({mode_count},); got {singular.shape}"
+            )
         lower, upper, low_cutoff, high_cutoff = _rank_bounds(
             singular,
             policy.rank_relative_tolerance,
@@ -605,7 +625,9 @@ def _canonical_nullspace_basis(
         np.flatnonzero(np.abs(basis[row]) > tolerance) for row in range(basis.shape[0])
     )
     if any(indices.size == 0 for indices in nonzero):
-        raise RuntimeError("Nullspace normalization lost an independent basis row.")
+        raise RuntimeError(
+            "PolynomialImageAnalysis.nullspace_basis must retain every independent row after normalization; got an empty row"
+        )
     order = sorted(
         range(basis.shape[0]),
         key=lambda row: (
@@ -777,19 +799,24 @@ def _analyze(
     )
 
 
+@checked
 def prepare_polynomial_image_analysis(
     plan: PolynomialImageAnalysisPlan,
     /,
 ) -> PreparedPolynomialImageAnalysis:
     """Freeze source samples and execute one bounded numerical discovery pass."""
 
-    if not isinstance(plan, PolynomialImageAnalysisPlan):
-        raise TypeError("plan must be a PolynomialImageAnalysisPlan.")
-    if plan.source_kind is SourceSampleKind.AFFINE_PRNG:
-        source, heldout = _sample_affine(plan)
-    else:
-        source = plan.explicit_source_points
-        heldout = plan.explicit_heldout_source_points
+    match plan.source_kind:
+        case SourceSampleKind.AFFINE_PRNG:
+            source, heldout = _sample_affine(plan)
+        case SourceSampleKind.EXPLICIT:
+            source = plan.explicit_source_points
+            heldout = plan.explicit_heldout_source_points
+        case _:
+            raise ValueError(
+                "PolynomialImageAnalysisPlan.source_kind must name a supported source; "
+                f"got {plan.source_kind!r}"
+            )
     result = _analyze(plan, plan.polynomial_map, source, heldout)
     return PreparedPolynomialImageAnalysis(
         plan,
@@ -800,6 +827,7 @@ def prepare_polynomial_image_analysis(
     )
 
 
+@checked
 def refresh_polynomial_image_analysis(
     prepared: PreparedPolynomialImageAnalysis,
     polynomial_map: SparsePolynomialMap,
@@ -807,17 +835,17 @@ def refresh_polynomial_image_analysis(
 ) -> PreparedPolynomialImageAnalysis:
     """Refresh numerical evidence while preserving fixed supports and samples."""
 
-    if not isinstance(prepared, PreparedPolynomialImageAnalysis):
-        raise TypeError("prepared must be PreparedPolynomialImageAnalysis.")
-    if not isinstance(polynomial_map, SparsePolynomialMap):
-        raise TypeError("polynomial_map must be SparsePolynomialMap.")
     if (
         polynomial_map.system.coefficients.dtype
         != prepared.polynomial_map.system.coefficients.dtype
     ):
-        raise ValueError("Polynomial-image refresh must preserve coefficient dtype.")
+        raise ValueError(
+            f"refresh_polynomial_image_analysis.coefficients must preserve dtype {prepared.polynomial_map.system.coefficients.dtype}; got {polynomial_map.system.coefficients.dtype}"
+        )
     if polynomial_map.system.support.support_id != prepared.plan.map_support_id:
-        raise ValueError("Polynomial-image refresh must preserve map support.")
+        raise ValueError(
+            f"refresh_polynomial_image_analysis.map_support must preserve support id {prepared.plan.map_support_id!r}; got {polynomial_map.system.support.support_id!r}"
+        )
     result = _analyze(
         prepared.plan,
         polynomial_map,
@@ -838,7 +866,6 @@ __all__ = [
     "PolynomialImageAnalysisPlan",
     "PolynomialImageAnalysisPolicy",
     "PreparedPolynomialImageAnalysis",
-    "plan_polynomial_image_analysis",
     "prepare_polynomial_image_analysis",
     "refresh_polynomial_image_analysis",
 ]

@@ -453,31 +453,34 @@ def test_moved_overset_correction_uses_stage_faces_and_grid_velocity() -> None:
     shifted_dynamics = runtime.dynamics.with_sliding_coupling(
         coupling_plan.sliding.coupling(0.2)
     )
-    moved_block, _, _ = runtime.dynamics._overset_correction(
+    moved_block = runtime.dynamics._overset_correction(
         initial.cell_average(),
         result.ale.geometry.stage_2,
         None,
-    )
+    ).block
     zero_grid_metrics = eqx.tree_at(
         lambda metrics: metrics.face_blocks[0].quadrature_grid_normal_velocity,
         result.ale.geometry.stage_2,
         jnp.zeros_like(moved.quadrature_grid_normal_velocity),
     )
-    zero_grid_block, _, _ = runtime.dynamics._overset_correction(
+    zero_grid_block = runtime.dynamics._overset_correction(
         initial.cell_average(),
         zero_grid_metrics,
         None,
-    )
+    ).block
     assert moved_block is not None and zero_grid_block is not None
     assert not np.allclose(
         np.asarray(moved_block.flux_rate),
         np.asarray(zero_grid_block.flux_rate),
     )
-    shifted_block, shifted_speed, shifted_measures = shifted_dynamics._overset_correction(
+    shifted_correction = shifted_dynamics._overset_correction(
         initial.cell_average(),
         result.ale.geometry.stage_2,
         None,
     )
+    shifted_block = shifted_correction.block
+    shifted_speed = shifted_correction.signal_speed
+    shifted_measures = shifted_correction.route_measures
     assert shifted_block is not None
     np.testing.assert_array_equal(
         np.unique(np.asarray(shifted_block.owner_cells)),
@@ -496,11 +499,11 @@ def test_moved_overset_correction_uses_stage_faces_and_grid_velocity() -> None:
     assert np.all(np.asarray(shifted_measures) > 0.0)
 
     def shifted_mass_objective(value: Any) -> Any:
-        block, _, _ = shifted_dynamics._overset_correction(
+        block = shifted_dynamics._overset_correction(
             value,
             result.ale.geometry.stage_2,
             None,
-        )
+        ).block
         assert block is not None
         return jnp.sum(block.flux_rate[:, 0] ** 2)
 

@@ -19,10 +19,10 @@ from .._fingerprint import canonical_fingerprint
 from ..typing import checked
 from ._pairings import DiagonalPairing
 from ._spaces import (
-    _coordinate_dtype,
     _has_diagonal_pairing,
     AbstractVectorSpace,
     ArraySpace,
+    coordinate_dtype,
     PyTreeSpace,
 )
 
@@ -45,7 +45,7 @@ class TensorProductSpace(AbstractVectorSpace):
             isinstance(factor, AbstractVectorSpace) for factor in factors_
         ):
             raise TypeError("factors must contain AbstractVectorSpace values.")
-        dtypes = {_coordinate_dtype(factor) for factor in factors_}
+        dtypes = {coordinate_dtype(factor) for factor in factors_}
         if len(dtypes) != 1:
             raise TypeError("Tensor-product factors must share one coordinate dtype.")
         metric = jnp.asarray([1.0], dtype=next(iter(dtypes)).type)
@@ -56,7 +56,7 @@ class TensorProductSpace(AbstractVectorSpace):
                 raise TypeError(
                     "TensorProductSpace requires coordinate-diagonal factor pairings."
                 )
-            ones = jnp.ones((factor.size,), dtype=_coordinate_dtype(factor))
+            ones = jnp.ones((factor.size,), dtype=coordinate_dtype(factor))
             factor_metric = jnp.real(factor.flatten(factor.riesz(factor.unflatten(ones))))
             metric = jnp.kron(metric, factor_metric)
         shape = tuple(factor.size for factor in factors_)

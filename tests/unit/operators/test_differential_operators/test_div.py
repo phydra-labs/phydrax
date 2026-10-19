@@ -9,6 +9,7 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Interval1d, TimeInterval
 from phydrax.operators.differential import div, div_tensor
+from phydrax.units import METER
 
 
 pytestmark = [pytest.mark.strict_jax, pytest.mark.filterwarnings("error")]
@@ -16,7 +17,7 @@ pytestmark = [pytest.mark.strict_jax, pytest.mark.filterwarnings("error")]
 
 def _square() -> phx.domain.GeometryDomain:
     return phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
 

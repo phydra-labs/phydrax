@@ -31,7 +31,7 @@ from ._shifted import (
     ShiftedSolveStatus,
     solve_shifted,
 )
-from ._spaces import _coordinate_dtype
+from ._spaces import coordinate_dtype
 
 
 class RationalFunctionStatus(IntEnum):
@@ -554,7 +554,7 @@ def _rational_cost(
     polynomial_matvecs = function.polynomial_degree
     shifted_cost = shifted_plan.cost
     output_itemsize = jnp.result_type(
-        _coordinate_dtype(operator.source), function.poles.dtype
+        coordinate_dtype(operator.source), function.poles.dtype
     ).itemsize
     vector_bytes = operator.source.size * output_itemsize
     retained = shifted_cost.total_storage_bytes

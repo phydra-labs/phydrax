@@ -502,6 +502,7 @@ class ExternalRadiationScoreResult:
         if self.report.status not in (
             AdapterStatus.LOSSLESS,
             AdapterStatus.DECLARED_LOSS,
+            AdapterStatus.REPAIRED,
         ):
             raise ValueError("External score adapter report is not admissible.")
         object.__setattr__(self, "values", values)

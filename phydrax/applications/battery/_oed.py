@@ -112,7 +112,7 @@ class BatteryOEDModelContract(StrictModule, NonTrainableState):
         )
         # Scientific evidence precedes the gates that cite it. This subject binds
         # model/provider/support without a circular reference to the released
-        # profile ID; contract_id below retains that exact gate-content identity.
+        # profile ID; contract_id below retains that gate-content identity.
         release_subject_id = canonical_fingerprint(
             {
                 "kind": "battery-oed-release-subject",

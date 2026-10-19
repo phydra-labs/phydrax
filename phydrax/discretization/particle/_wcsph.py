@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, TYPE_CHECKING
+from typing import Any, assert_never, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -72,6 +72,25 @@ if TYPE_CHECKING:
 ExternalParticleAcceleration = Callable[[Array, Array, Array, Array, Any], ArrayLike]
 
 
+@runtime_checkable
+class _WCSPHMaterial(Protocol):
+    """Density-based material closure required by WCSPH execution."""
+
+    @property
+    def material_id(self) -> str: ...
+
+    @property
+    def reference_density(self) -> float: ...
+
+    def pressure(self, density: Array, /) -> Array: ...
+
+    def sound_speed(self, density: Array, /) -> Array: ...
+
+    def specific_internal_energy(self, density: Array, /) -> Array: ...
+
+    def admissible(self, density: Array, /) -> Array: ...
+
+
 class WeaklyCompressibleSPHMethodPlan(StrictModule, NonTrainableState):
     """First-order fixed-h weakly compressible SPH method."""
 
@@ -110,36 +129,30 @@ class WeaklyCompressibleSPHMethodPlan(StrictModule, NonTrainableState):
         name: str = "weakly-compressible-sph",
         method_id: str | None = None,
     ) -> None:
-        if physical_viscosity is not None and not isinstance(
-            physical_viscosity, MorrisViscosityPlan
-        ):
-            raise TypeError("physical_viscosity must be a MorrisViscosityPlan or None.")
-        if artificial_viscosity is not None and not isinstance(
-            artificial_viscosity, MonaghanArtificialViscosityPlan
-        ):
-            raise TypeError(
-                "artificial_viscosity must be a MonaghanArtificialViscosityPlan or None."
-            )
-        if density_diffusion is not None and not isinstance(
-            density_diffusion, AbstractSPHDensityDiffusionPlan
-        ):
-            raise TypeError(
-                "density_diffusion must be an SPH density-diffusion plan or None."
-            )
-        if density_diffusion is not None and not isinstance(
-            density, ContinuityDensityPlan
-        ):
-            raise ValueError("Density diffusion requires ContinuityDensityPlan.")
+        if density_diffusion is not None:
+            match density:
+                case ContinuityDensityPlan():
+                    pass
+                case _:
+                    raise ValueError(
+                        "WeaklyCompressibleSPHMethodPlan.density must use ContinuityDensityPlan with density diffusion; got another density plan"
+                    )
         if free_surface_pressure is not None and free_surface_detection is None:
-            raise ValueError("free_surface_pressure requires free_surface_detection.")
+            raise ValueError(
+                "WeaklyCompressibleSPHMethodPlan.free_surface_detection must be supplied with free_surface_pressure; got None"
+            )
         smoothing = float(smoothing_length)
         coefficients = tuple(
             float(value) for value in (acoustic_cfl, force_cfl, viscous_cfl)
         )
         if not np.isfinite(smoothing) or smoothing <= 0.0:
-            raise ValueError("smoothing_length must be finite and positive.")
+            raise ValueError(
+                f"WeaklyCompressibleSPHMethodPlan.smoothing_length must be finite and positive; got {smoothing}"
+            )
         if any(not np.isfinite(value) or value <= 0.0 for value in coefficients):
-            raise ValueError("WCSPH CFL coefficients must be finite and positive.")
+            raise ValueError(
+                f"WeaklyCompressibleSPHMethodPlan.cfl_coefficients must be finite and positive; got {coefficients}"
+            )
         key = DiscretizationKey(
             name,
             DiscretizationRole.RESIDUAL,
@@ -253,12 +266,12 @@ class _WeaklyCompressibleSPHEvaluation(StrictModule):
 
 
 class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
-    """Prepared first-order WCSPH drift with complete balance evidence."""
+    """Evaluate first-order WCSPH drift and its balance evidence."""
 
     particles: ParticleDiscretization
     neighborhood: AbstractPreparedParticleNeighborhood
     method: WeaklyCompressibleSPHMethodPlan
-    material: Any
+    material: _WCSPHMaterial
     external_acceleration: ExternalParticleAcceleration | None
     external_acceleration_id: str | None = eqx.field(static=True)
     execution: ParticleExecutionPolicy
@@ -274,7 +287,7 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
         particles: ParticleDiscretization,
         neighborhood: AbstractPreparedParticleNeighborhood,
         method: WeaklyCompressibleSPHMethodPlan,
-        material: Any,
+        material: _WCSPHMaterial,
         /,
         *,
         execution: ParticleExecutionPolicy | None = None,
@@ -284,16 +297,20 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
     ) -> None:
         if neighborhood.particle_discretization_id != particles.prepared_id:
             raise ValueError(
-                "Particle neighborhood was prepared for a different support."
+                f"PreparedWeaklyCompressibleSPHDynamics.neighborhood must match particle support; got neighborhood={neighborhood.particle_discretization_id}, particles={particles.prepared_id}"
             )
         if method.kernel.dimension != particles.ambient_dimension:
-            raise ValueError("SPH kernel dimension does not match particle support.")
-        if external_acceleration is not None and not callable(external_acceleration):
-            raise TypeError("external_acceleration must be callable or None.")
+            raise ValueError(
+                f"PreparedWeaklyCompressibleSPHDynamics.method.kernel must match particle dimension; got kernel={method.kernel.dimension}, particles={particles.ambient_dimension}"
+            )
         if external_acceleration is None and external_acceleration_id is not None:
-            raise ValueError("external_acceleration_id requires external acceleration.")
+            raise ValueError(
+                f"PreparedWeaklyCompressibleSPHDynamics.external_acceleration must be supplied with its ID; got None with ID={external_acceleration_id!r}"
+            )
         if external_acceleration is not None and not external_acceleration_id:
-            raise ValueError("External acceleration requires a stable non-empty ID.")
+            raise ValueError(
+                f"PreparedWeaklyCompressibleSPHDynamics.external_acceleration_id must be stable and non-empty with acceleration; got {external_acceleration_id!r}"
+            )
         execution_ = (
             ParticleExecutionPolicy(realization=neighborhood.backend)
             if execution is None
@@ -302,7 +319,7 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
         precision_ = ParticlePrecisionPolicy() if precision is None else precision
         if execution_.realization != neighborhood.backend:
             raise ValueError(
-                "Particle execution realization does not match the prepared neighborhood backend."
+                f"PreparedWeaklyCompressibleSPHDynamics.execution must match the prepared neighborhood backend; got realization={execution_.realization}, backend={neighborhood.backend}"
             )
         state_layout = WeaklyCompressibleSPHStateLayout(
             particles, density_evolved=method.density.density_evolved
@@ -402,7 +419,9 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
             )
         )
         if acceleration.shape != position.shape:
-            raise ValueError("external_acceleration must match particle position shape.")
+            raise ValueError(
+                f"PreparedWeaklyCompressibleSPHDynamics.external_acceleration must match particle position shape; got acceleration={acceleration.shape}, positions={position.shape}"
+            )
         active = self.particles.active_mask[:, None]
         acceleration = eqx.error_if(
             acceleration,
@@ -571,36 +590,41 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
         external = self._external_acceleration(time, position, velocity, density, args)
         density_rate = None
         density_diffusion = None
-        if isinstance(self.method.density, ContinuityDensityPlan):
-            density_rate = sph_continuity_density_rate(
-                self.particles.safe_masses,
-                velocity,
-                neighborhood.pair_relation,
-                geometry,
-                physical_pairs,
-                self.method.kernel,
-                self.method.smoothing_length,
-                particle_count=self.particles.capacity,
-                execution=self.execution,
-                precision=self.precision,
-            )
-            if self.method.density_diffusion is not None:
-                density_diffusion = sph_density_diffusion_rate(
-                    self.method.density_diffusion,
-                    self.particles,
-                    density,
-                    sound_speed,
+        match self.method.density:
+            case ContinuityDensityPlan():
+                density_rate = sph_continuity_density_rate(
+                    self.particles.safe_masses,
+                    velocity,
                     neighborhood.pair_relation,
                     geometry,
                     physical_pairs,
                     self.method.kernel,
                     self.method.smoothing_length,
-                    self.execution,
-                    free_surface_weight=None
-                    if surface is None
-                    else surface.smooth_weight,
+                    particle_count=self.particles.capacity,
+                    execution=self.execution,
+                    precision=self.precision,
                 )
-                density_rate = density_rate + density_diffusion.rate
+                if self.method.density_diffusion is not None:
+                    density_diffusion = sph_density_diffusion_rate(
+                        self.method.density_diffusion,
+                        self.particles,
+                        density,
+                        sound_speed,
+                        neighborhood.pair_relation,
+                        geometry,
+                        physical_pairs,
+                        self.method.kernel,
+                        self.method.smoothing_length,
+                        self.execution,
+                        free_surface_weight=None
+                        if surface is None
+                        else surface.smooth_weight,
+                    )
+                    density_rate = density_rate + density_diffusion.rate
+            case AbstractSPHDensityPlan():
+                pass
+            case unknown:
+                assert_never(unknown)
         return _WeaklyCompressibleSPHEvaluation(
             position,
             velocity,
@@ -662,15 +686,19 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
     @staticmethod
     def _angular_sum(position: Array, vector: Array, /) -> Array:
         dimension = position.shape[-1]
-        if dimension == 1:
-            return jnp.zeros((), dtype=position.dtype)
-        if dimension == 2:
-            return compensated_sum(
-                position[:, 0] * vector[:, 1] - position[:, 1] * vector[:, 0]
-            )
-        if dimension == 3:
-            return compensated_sum(jnp.cross(position, vector), axis=0)
-        raise ValueError("Angular diagnostics support dimensions 1, 2, and 3.")
+        match dimension:
+            case 1:
+                return jnp.zeros((), dtype=position.dtype)
+            case 2:
+                return compensated_sum(
+                    position[:, 0] * vector[:, 1] - position[:, 1] * vector[:, 0]
+                )
+            case 3:
+                return compensated_sum(jnp.cross(position, vector), axis=0)
+            case _:
+                raise ValueError(
+                    f"PreparedWeaklyCompressibleSPHDynamics.angular_dimension must be 1, 2, or 3; got {dimension}"
+                )
 
     def diagnostics(
         self,

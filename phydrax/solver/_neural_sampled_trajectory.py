@@ -375,8 +375,11 @@ def _connected_rate_statistics(
         acceptance_rate=samples.acceptance_rate,
         divergent=jnp.zeros(samples.log_target.shape, dtype=jnp.bool_),
     )
-    rates = jnp.mean(values, axis=(0, 1))
-    variances = jnp.var(values, axis=(0, 1), ddof=1)
+    # Shift before reduction so a constant observable retains exactly zero variance.
+    reference = values[0, 0]
+    deviations = values - reference
+    rates = reference + jnp.mean(deviations, axis=(0, 1))
+    variances = jnp.var(deviations, axis=(0, 1), ddof=1)
     nominal = jnp.asarray(values.shape[0] * values.shape[1], dtype=jnp.float64)
     measured_ess = diagnostics.bulk_ess["jump-rates"]
     effective_sample_size = jnp.where(variances == 0.0, nominal, measured_ess)

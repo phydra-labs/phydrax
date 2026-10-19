@@ -11,13 +11,15 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
+
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...exterior._algebra import map_reference_values
 from ...exterior._form_type import FormType, FormValueSpec
-from ...typing import Dim, Float, Int32
+from ...typing import checked, Dim, Float, Int32
 from .._simplicial_locator import (
     AbstractCellLocator,
     CellLocationStatus,
@@ -30,7 +32,6 @@ from .._views import (
     FieldSideBinding,
     FieldTraceSide,
 )
-from ._reference import FiniteElementSpec
 
 
 class FormCellDim(Dim):
@@ -73,6 +74,7 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
     global_dof_count: int = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         locator: AbstractCellLocator,
@@ -84,22 +86,20 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
         global_dof_count: int,
         field_space_id: str,
     ) -> None:
-        if not isinstance(locator, AbstractCellLocator) or not isinstance(
-            element, FiniteElementSpec
-        ):
-            raise TypeError(
-                "Form reconstruction requires a cell locator and form element."
-            )
         if element.form_basis is None:
             raise ValueError(
-                "Form reconstruction requires canonical polynomial form metadata."
+                "form_reconstruction.element.form_basis must provide form metadata; got None"
             )
         routes, transforms = jnp.asarray(cell_dofs), jnp.asarray(cell_transforms)
         expected = (locator.cell_map.cell_count, element.local_dof_count)
         if routes.shape != expected or transforms.shape != (*expected, expected[1]):
-            raise ValueError("Form cell routes/transforms have incompatible shapes.")
+            raise ValueError(
+                "form_reconstruction.cell_routes must align with cell transforms and local DOFs; got incompatible shapes"
+            )
         if global_dof_count < 1 or not field_space_id:
-            raise ValueError("Form reconstruction requires nonempty scientific identity.")
+            raise ValueError(
+                "form_reconstruction.identity must include a positive DOF count and field-space ID; got an empty identity"
+            )
         form = element.value_spec.form_type
         physical_type = FormType(
             form.dimension,
@@ -154,7 +154,7 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
         order = sum(derivative)
         if order > 1:
             raise ValueError(
-                "Prepared form reconstruction supports values and first derivatives."
+                "form_reconstruction.derivative_order must be zero or one; got a higher derivative order"
             )
         location = self.locator.locate(
             points, cell_mask=None if side is None else side.cell_mask
@@ -230,21 +230,27 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
     ) -> tuple[np.ndarray | None, np.ndarray]:
         location = self.locator.locate(jnp.asarray(sites))
         if np.any(np.asarray(location.status) != int(CellLocationStatus.LOCATED)):
-            raise ValueError("Every form trace site must lie in the FE support.")
+            raise ValueError(
+                "form_reconstruction.trace_sites must lie in the FE support; got an unlocated site"
+            )
         containing = np.asarray(location.candidate_cells)
         if side == "average":
             if cell_ids is not None:
-                raise ValueError("Average form traces combine all containing cells.")
+                raise ValueError(
+                    "form_reconstruction.cell_ids must be absent for average traces; got explicit cell IDs"
+                )
             return None, np.full(sites.shape[0], -1, dtype=np.int32)
         if cell_ids is None:
             if side != "owner" or np.any(np.sum(containing >= 0, axis=1) != 1):
                 raise ValueError(
-                    "Shared form trace sites require explicit side cell_ids."
+                    "form_reconstruction.cell_ids must resolve shared trace sites; got no explicit side IDs"
                 )
             selected = np.max(containing, axis=1).astype(np.int32)
         else:
             if np.any(np.all(containing != cell_ids[:, None], axis=1)):
-                raise ValueError("Trace cell_ids must contain their declared sites.")
+                raise ValueError(
+                    "form_reconstruction.cell_ids must contain their declared sites; got a noncontaining cell"
+                )
             selected = cell_ids
         mask = np.zeros((self.cell_count,), dtype=np.bool_)
         mask[selected] = True
@@ -252,7 +258,9 @@ class FormFieldReconstructionKernel(AbstractFieldReconstructionKernel, NonTraina
         if np.any(np.asarray(resolved.candidate_count) != 1) or np.any(
             np.asarray(resolved.cell_ids) != selected
         ):
-            raise ValueError("The declared form trace side remains ambiguous.")
+            raise ValueError(
+                "form_reconstruction.trace_side must resolve each site to one cell; got ambiguous sites"
+            )
         return mask, selected
 
 

@@ -2,55 +2,75 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Source-bound nonsingular material maps of actual full-sphere physical cells.
+"""Prepare nonsingular full-sphere material maps bound to physical cells.
 
-A radial cell map is a view of its original SpherePatch (and authored placement),
-not a replacement sphere or a lat/long ghost-cell correspondence. Its reference
-triangle is the actual physical cell's canonical reference triangle. Exact
-projective coefficient actions retain original binary direction coefficients;
-runtime floating evaluation and physical coordinate fidelity are separate.
+The reference triangle follows physical-cell corner ordering. Projective
+actions retain binary direction coefficients as rational numbers; runtime
+evaluation and coordinate-map fidelity have separate evidence.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import assert_never
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+import phydrax._host_storage as host_storage_owner
+import phydrax._meshcore as meshcore_owner
+import phydrax.discretization._cell_geometry_validity as cell_geometry_validity_owner
+import phydrax.discretization._coordinate_enclosure as coordinate_enclosure_owner
+import phydrax.geometry._embedding_state as embedding_state_owner
+
+# The public meshing module resolves result classes after atlas/transfer imports.
+import phydrax.meshing as meshing_owner
+import phydrax.meshing._association_state as association_state_owner
+from phydrax.geometry._rational import fraction_endpoint, rational_vector
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
+from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization._coordinate_enclosure import CoordinateEnclosureBudget, Expression
+from ..discretization._cell_geometry import CellGeometryElement, CellGeometrySpec
+from ..discretization._cell_mesh import CellMesh
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    reserve_polynomial,
+)
+from ..discretization._coordinate_enclosure import Expression
+from ..discretization._exact_algebraic_geometry import rational_coefficient
 from ..linalg._small_batched import (
+    exact_cofactor_determinant_2,
+    exact_cofactor_determinant_3,
+    exact_small_linear_action_bounds,
     prepare_exact_small_linear_actions,
     SmallLinearSolvePlan,
     solve_small_linear,
 )
-from ..typing import ConvertibleToArray
+from ..typing import checked, ConvertibleToArray
 from ._atlas import AbstractBoundaryMap
+from ._domain_numerics import (
+    full_sphere_frame,
+    gram_spectrum_bounds,
+    interval_vector_cross,
+    interval_vector_norm,
+    matrix_norm_upper,
+    sphere_radial_degree_one,
+)
 from ._interval_enclosure import (
     interval_add,
     interval_divide,
     interval_multiply,
     interval_subtract,
 )
-from ._meshing_domain import (
-    _full_sphere_frame,
-    _gram_spectrum_bounds,
-    _interval_vector_cross,
-    _interval_vector_norm,
-    _matrix_norm_upper,
-    _sphere_radial_degree_one,
-    MeshingDomain,
-    PatchCurveUse,
-    PatchPoleUse,
-)
+from ._meshing_domain import MeshingDomain, PatchCurveUse, PatchPoleUse
 from .brep._patches import (
     AbstractSurfacePatch,
     sphere_source_equivalence,
@@ -59,24 +79,62 @@ from .brep._patches import (
 from .brep._placed import PlacedSurface, source_transform_bounds
 
 
-if TYPE_CHECKING:
-    from ..discretization._cell_geometry import CellGeometrySpec
-    from ..discretization._cell_mesh import CellMesh
-    from ..meshing._result import CellMeshingResult
-
-
 type _RationalRows = tuple[tuple[Fraction, ...], ...]
 type _CornerToken = tuple[int, int, tuple[str, ...], tuple[Fraction, ...]]
 
 
-def _fraction_rows(values: np.ndarray) -> _RationalRows:
-    return tuple(tuple(Fraction(float(value)) for value in row) for row in values)
+def _sphere_material_query_upper(
+    patches: np.ndarray,
+    dimensions: np.ndarray,
+    indices: np.ndarray,
+    parameters: np.ndarray,
+    occurrence_paths: tuple[tuple[tuple[str, ...], ...], ...],
+    /,
+) -> int:
+    """Distinct source directions queried by the material-corner cache."""
+    return len(
+        {
+            (
+                int(patches[row]),
+                int(dimensions[row, corner]),
+                occurrence_paths[row][corner],
+                int(indices[row, corner]),
+                tuple(
+                    float(value)
+                    for value in parameters[row, corner, : int(dimensions[row, corner])]
+                ),
+            )
+            for row in range(patches.size)
+            for corner in range(3)
+        }
+    )
 
 
-def _float_enclosure(value: Fraction) -> tuple[float, float]:
+@dataclass(frozen=True, slots=True, eq=False)
+class _SphereMaterialStrata:
+    patches: np.ndarray
+    dimensions: np.ndarray
+    indices: np.ndarray
+    parameters: np.ndarray
+    occurrence_paths: tuple[tuple[tuple[str, ...], ...], ...]
+    entity_ids: tuple[tuple[str, ...], ...]
+
+    def queries_upper(self) -> int:
+        return _sphere_material_query_upper(
+            self.patches,
+            self.dimensions,
+            self.indices,
+            self.parameters,
+            self.occurrence_paths,
+        )
+
+
+def float_enclosure(value: Fraction) -> tuple[float, float]:
     center = float(value)
     if not np.isfinite(center):
-        raise ValueError("A projective coefficient exceeds finite binary64 evaluation.")
+        raise ValueError(
+            "sphere_projective.coefficient must fit finite binary64; got overflow"
+        )
     exact = Fraction(center)
     return (
         float(np.nextafter(center, -np.inf)) if exact > value else center,
@@ -84,17 +142,27 @@ def _float_enclosure(value: Fraction) -> tuple[float, float]:
     )
 
 
-def _source_image_enclosure(
-    source: AbstractSurfacePatch, directions: np.ndarray
+@checked
+def source_image_enclosure(
+    source: AbstractSurfacePatch,
+    directions: np.ndarray,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray]:
-    operation = source.definition if isinstance(source, PlacedSurface) else source
-    equivalence = sphere_source_equivalence(operation)
+    match source:
+        case PlacedSurface():
+            operation = source.definition
+        case AbstractSurfacePatch():
+            operation = source
+        case invalid:
+            assert_never(invalid)
+    equivalence = sphere_source_equivalence(operation, budget=budget)
     if equivalence is None:
         raise TypeError(
-            "Radial material maps require a proved original sphere source expression."
+            "sphere_material.source must have sphere-equivalence evidence; got unsupported expression"
         )
     definition, exact_radius = equivalence
-    lower, upper = _interval_vector_norm((directions, directions))
+    lower, upper = interval_vector_norm((directions, directions))
     normalized = interval_divide(
         (directions, directions), (lower[..., None], upper[..., None])
     )
@@ -105,23 +173,33 @@ def _source_image_enclosure(
             np.asarray(definition.axis),
         )
     )
-    low, high = source_transform_bounds(basis, normalized[0].T, normalized[1].T)
-    radius_lower, radius_upper = _float_enclosure(exact_radius)
+    low, high = source_transform_bounds(
+        basis, np.asarray(normalized[0]).T, np.asarray(normalized[1]).T
+    )
+    radius_lower, radius_upper = float_enclosure(exact_radius)
     low, high = interval_multiply(
         (low.T, high.T), (np.asarray(radius_lower), np.asarray(radius_upper))
     )
     center = np.asarray(definition.center)
     low, high = interval_add((low, high), (center, center))
-    if isinstance(source, PlacedSurface):
-        low, high = source_transform_bounds(np.asarray(source.rotation), low.T, high.T)
-        translation = np.asarray(source.translation)
-        low, high = interval_add((low.T, high.T), (translation, translation))
-    return low, high
+    low, high = np.asarray(low), np.asarray(high)
+    match source:
+        case PlacedSurface():
+            low, high = source_transform_bounds(
+                np.asarray(source.rotation), low.T, high.T
+            )
+            translation = np.asarray(source.translation)
+            low, high = interval_add((low.T, high.T), (translation, translation))
+        case AbstractSurfacePatch():
+            pass
+        case invalid:
+            assert_never(invalid)
+    return np.asarray(low), np.asarray(high)
 
 
 @dataclass(frozen=True, slots=True)
 class SphereProjectiveTriangleBounds:
-    """Exact denominator and signed reference-Jacobian bounds on one real piece."""
+    """Store denominator and signed reference-Jacobian bounds on one triangle."""
 
     denominator_lower: Fraction
     denominator_upper: Fraction
@@ -129,13 +207,35 @@ class SphereProjectiveTriangleBounds:
     jacobian_upper: Fraction
 
 
-class SphereProjectiveReferenceMap(StrictModule, NonTrainableState):
-    """Exact affine homogeneous coefficients with a genuine rational quotient.
+@contextmanager
+def _sphere_action_request(
+    matrix: _RationalRows,
+    right: _RationalRows,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> Iterator[CoordinateEnclosureBudget]:
+    """Bind a rational source-target coefficient action to its structural bound."""
+    if budget is not None:
+        with budget.activate():
+            yield budget
+        return
+    work_upper, bytes_upper = exact_small_linear_action_bounds(matrix, right)
+    ticket = HostBatchTicket(work_upper, bytes_upper=bytes_upper)
+    owner = CoordinateEnclosureBudget(
+        ticket,
+        maximum_work_units=work_upper,
+        maximum_memory_bytes=bytes_upper,
+    )
+    with ticket, owner.activate():
+        yield owner
 
-    The input is an actual source cell reference, not rounded gnomonic vertices.
-    Three homogeneous barycentric target coordinates are nonnegative target
-    cone halfplanes. Their sum is the target reference denominator. Native
-    overlap must retain exact Fraction constructions before claiming coverage.
+
+class SphereProjectiveReferenceMap(StrictModule, NonTrainableState):
+    """Map source-cell references to target-cell rational coordinates.
+
+    Homogeneous barycentric coordinates define target cone halfplanes; their
+    sum is the reference denominator. Coverage uses Fraction constructions.
     """
 
     source_atlas_id: str = eqx.field(static=True)
@@ -152,6 +252,7 @@ class SphereProjectiveReferenceMap(StrictModule, NonTrainableState):
     coefficient_upper: Array
     map_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: SphereMaterialCellAtlas,
@@ -160,7 +261,7 @@ class SphereProjectiveReferenceMap(StrictModule, NonTrainableState):
         target_cell_global_id: int,
         /,
         *,
-        coordinate_budget: CoordinateEnclosureBudget | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         source.require_bound(
             source.domain,
@@ -194,113 +295,128 @@ class SphereProjectiveReferenceMap(StrictModule, NonTrainableState):
             target.occurrence_paths[target_row],
         ):
             raise ValueError(
-                "Projective material correspondence cannot merge source occurrences or revisions."
+                "sphere_projective.source_identity must match across cells; got different occurrence or revision"
             )
-        source_corners = _fraction_rows(np.asarray(source.directions)[source_row])
-        target_matrix = _fraction_rows(np.asarray(target.directions)[target_row].T)
-        target_tokens = {
-            token: column for column, token in enumerate(target.corner_tokens[target_row])
-        }
-        shared = tuple(
-            target_tokens.get(token) for token in source.corner_tokens[source_row]
+        source_corners = tuple(
+            rational_vector(row) for row in np.asarray(source.directions)[source_row]
         )
-        corner_actions: list[tuple[Fraction, ...] | None] = [None, None, None]
-        unknown = []
-        for column, target_column in enumerate(shared):
-            if target_column is None:
-                unknown.append(column)
-                continue
-            # Only original stratum/occurrence/parameter tokens identify this
-            # source point. Equal mesh-local IDs or positions are not authority.
-            if source_corners[column] != tuple(
-                row[target_column] for row in target_matrix
-            ):
-                raise ValueError(
-                    "One authoritative sphere source point has inconsistent direction realizations."
+        target_matrix = tuple(
+            rational_vector(row) for row in np.asarray(target.directions)[target_row].T
+        )
+        with _sphere_action_request(
+            target_matrix, tuple(zip(*source_corners, strict=True)), budget=budget
+        ) as budget:
+            with budget.temporary_scope():
+                target_tokens = {
+                    token: column
+                    for column, token in enumerate(target.corner_tokens[target_row])
+                }
+                shared = tuple(
+                    target_tokens.get(token) for token in source.corner_tokens[source_row]
                 )
-            corner_actions[column] = tuple(
-                Fraction(int(axis == target_column)) for axis in range(3)
-            )
-        determinant = target.exact_determinants[target_row]
-        action_id = None
-        if unknown:
-            right = tuple(
-                tuple(source_corners[column][axis] for column in unknown)
-                for axis in range(3)
-            )
-            prepared = prepare_exact_small_linear_actions(
-                target_matrix, right, coordinate_budget=coordinate_budget
-            )
-            if prepared.actions is None:
-                raise ValueError(
-                    "The target material reference has no exact nonsingular coefficient action."
+                corner_actions: dict[int, tuple[Fraction, ...]] = {}
+                unknown = []
+                for column, target_column in enumerate(shared):
+                    if target_column is None:
+                        unknown.append(column)
+                        continue
+                    # Source stratum, occurrence and parameter tokens identify a point.
+                    if source_corners[column] != tuple(
+                        row[target_column] for row in target_matrix
+                    ):
+                        raise ValueError(
+                            "sphere_projective.direction must agree for equal source tokens; got inconsistent realizations"
+                        )
+                    corner_actions[column] = tuple(
+                        Fraction(int(axis == target_column)) for axis in range(3)
+                    )
+                determinant = target.exact_determinants[target_row]
+                action_id = None
+                if unknown:
+                    right = tuple(
+                        tuple(source_corners[column][axis] for column in unknown)
+                        for axis in range(3)
+                    )
+                    prepared = prepare_exact_small_linear_actions(
+                        target_matrix, right, budget=budget
+                    )
+                    if prepared.actions is None:
+                        raise ValueError(
+                            "sphere_projective.target_reference must have rank three; got singular coefficient action"
+                        )
+                    determinant, action_id = prepared.determinant, prepared.input_id
+                    for slot, column in enumerate(unknown):
+                        corner_actions[column] = tuple(
+                            row[slot] for row in prepared.actions
+                        )
+                columns = tuple(corner_actions[column] for column in range(3))
+                coefficients = tuple(
+                    (
+                        columns[0][axis],
+                        columns[1][axis] - columns[0][axis],
+                        columns[2][axis] - columns[0][axis],
+                    )
+                    for axis in range(3)
                 )
-            determinant, action_id = prepared.determinant, prepared.input_id
-            for slot, column in enumerate(unknown):
-                corner_actions[column] = tuple(row[slot] for row in prepared.actions)
-        columns: list[tuple[Fraction, ...]] = []
-        for action in corner_actions:
-            if action is None:
-                raise RuntimeError(
-                    "A sphere projective map omitted its actual source coefficient column."
+                self.source_atlas_id, self.target_atlas_id = (
+                    source.atlas_id,
+                    target.atlas_id,
                 )
-            columns.append(action)
-        coefficients = tuple(
-            (
-                columns[0][axis],
-                columns[1][axis] - columns[0][axis],
-                columns[2][axis] - columns[0][axis],
+                self.source_cell_global_id, self.target_cell_global_id = (
+                    source_cell_global_id,
+                    target_cell_global_id,
+                )
+                self.geometry_entity_id, self.occurrence_path = (
+                    source.geometry_entity_ids[source_row],
+                    source.occurrence_paths[source_row],
+                )
+                self.exact_coefficients = coefficients
+                self.exact_denominator = tuple(
+                    sum((row[column] for row in coefficients), Fraction(0))
+                    for column in range(3)
+                )
+                self.orientation_ratio = (
+                    source.exact_determinants[source_row] / determinant
+                )
+                enclosures = tuple(
+                    tuple(float_enclosure(value) for value in row) for row in coefficients
+                )
+                self.coefficients = jnp.asarray(
+                    [[float(value) for value in row] for row in coefficients]
+                )
+                self.coefficient_lower = jnp.asarray(
+                    [[value[0] for value in row] for row in enclosures]
+                )
+                self.coefficient_upper = jnp.asarray(
+                    [[value[1] for value in row] for row in enclosures]
+                )
+                self.map_id = canonical_fingerprint(
+                    {
+                        "kind": "sphere-projective-reference-map",
+                        "source": source.atlas_id,
+                        "target": target.atlas_id,
+                        "source_cell": source_cell_global_id,
+                        "target_cell": target_cell_global_id,
+                        "actions": action_id,
+                        "shared_source_corners": tuple(
+                            (column, target_column)
+                            for column, target_column in enumerate(shared)
+                            if target_column is not None
+                        ),
+                    }
+                )
+
+            _, storage_upper, _, _ = host_storage_owner.retained_host_storage_profile(
+                self, {}, meshcore_owner.is_native_host_buffer
             )
-            for axis in range(3)
-        )
-        self.source_atlas_id, self.target_atlas_id = source.atlas_id, target.atlas_id
-        self.source_cell_global_id, self.target_cell_global_id = (
-            source_cell_global_id,
-            target_cell_global_id,
-        )
-        self.geometry_entity_id, self.occurrence_path = (
-            source.geometry_entity_ids[source_row],
-            source.occurrence_paths[source_row],
-        )
-        self.exact_coefficients = coefficients
-        self.exact_denominator = tuple(
-            sum((row[column] for row in coefficients), Fraction(0)) for column in range(3)
-        )
-        self.orientation_ratio = source.exact_determinants[source_row] / determinant
-        enclosures = tuple(
-            tuple(_float_enclosure(value) for value in row) for row in coefficients
-        )
-        self.coefficients = jnp.asarray(
-            [[float(value) for value in row] for row in coefficients]
-        )
-        self.coefficient_lower = jnp.asarray(
-            [[value[0] for value in row] for row in enclosures]
-        )
-        self.coefficient_upper = jnp.asarray(
-            [[value[1] for value in row] for row in enclosures]
-        )
-        self.map_id = canonical_fingerprint(
-            {
-                "kind": "sphere-projective-reference-map",
-                "source": source.atlas_id,
-                "target": target.atlas_id,
-                "source_cell": source_cell_global_id,
-                "target_cell": target_cell_global_id,
-                "actions": action_id,
-                "shared_source_corners": tuple(
-                    (column, target_column)
-                    for column, target_column in enumerate(shared)
-                    if target_column is not None
-                ),
-            }
-        )
+            budget.reserve(0, storage_upper)
 
     def _require_representatives(self) -> None:
         expected = np.asarray(
             [[float(value) for value in row] for row in self.exact_coefficients]
         )
         enclosures = tuple(
-            tuple(_float_enclosure(value) for value in row)
+            tuple(float_enclosure(value) for value in row)
             for row in self.exact_coefficients
         )
         lower = np.asarray([[value[0] for value in row] for row in enclosures])
@@ -316,15 +432,25 @@ class SphereProjectiveReferenceMap(StrictModule, NonTrainableState):
             or not np.array_equal(np.asarray(self.coefficient_upper), upper)
         ):
             raise ValueError(
-                "Projective numerical representatives no longer match their authoritative exact coefficients."
+                "sphere_projective.coefficients must match their rational representatives; got changed values"
             )
 
+    @checked
     def require_bound(
-        self, source: SphereMaterialCellAtlas, target: SphereMaterialCellAtlas, /
+        self,
+        source: SphereMaterialCellAtlas,
+        target: SphereMaterialCellAtlas,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         self._require_representatives()
         expected = SphereProjectiveReferenceMap(
-            source, self.source_cell_global_id, target, self.target_cell_global_id
+            source,
+            self.source_cell_global_id,
+            target,
+            self.target_cell_global_id,
+            budget=budget,
         )
         if (
             self.source_atlas_id,
@@ -346,7 +472,7 @@ class SphereProjectiveReferenceMap(StrictModule, NonTrainableState):
             expected.map_id,
         ):
             raise ValueError(
-                "Projective reference map is stale for the original source/target cell expressions."
+                "sphere_projective.binding must match both cell expressions; got stale binding"
             )
 
     def homogeneous(self, reference: Array, /) -> Array:
@@ -361,16 +487,14 @@ class SphereProjectiveReferenceMap(StrictModule, NonTrainableState):
         return coordinates[..., 1:] / jnp.sum(coordinates, axis=-1)[..., None]
 
     def reference_expressions(self) -> tuple[Expression, Expression]:
-        """Exact target reference coordinates in the actual source reference.
+        """Return target rational coordinates in the source-cell reference.
 
-        These are rational arguments, not the affine interpolation of mapped
-        corners. Denominator/Jacobian admissibility remains with the retained
+        Denominator and Jacobian admissibility follow from the retained
         projective piece certificate.
         """
-        from ..discretization._coordinate_enclosure import Polynomial, RationalPolynomial
 
         self._require_representatives()
-        denominator: Polynomial = {
+        denominator: coordinate_enclosure_owner.Polynomial = {
             index: value
             for index, value in zip(
                 ((0, 0), (1, 0), (0, 1)), self.exact_denominator, strict=True
@@ -379,12 +503,14 @@ class SphereProjectiveReferenceMap(StrictModule, NonTrainableState):
         }
         coordinates: list[Expression] = []
         for row in self.exact_coefficients[1:]:
-            numerator: Polynomial = {
+            numerator: coordinate_enclosure_owner.Polynomial = {
                 index: value
                 for index, value in zip(((0, 0), (1, 0), (0, 1)), row, strict=True)
                 if value
             }
-            coordinates.append(RationalPolynomial(numerator, denominator))
+            coordinates.append(
+                coordinate_enclosure_owner.RationalPolynomial(numerator, denominator)
+            )
         return coordinates[0], coordinates[1]
 
     def differential(self, reference: Array, /) -> Array:
@@ -403,20 +529,20 @@ class SphereProjectiveReferenceMap(StrictModule, NonTrainableState):
     def certify_triangle(
         self, vertices: _RationalRows, /
     ) -> SphereProjectiveTriangleBounds:
-        """Bound the complete exact constructed triangle, not three sampled values."""
+        """Bound denominator and Jacobian over the rational reference triangle."""
         self._require_representatives()
         if len(vertices) != 3 or any(
             len(point) != 2 or any(not isinstance(value, Fraction) for value in point)
             for point in vertices
         ):
             raise TypeError(
-                "Projective piece vertices must retain exact rational constructions."
+                "sphere_projective.vertices must contain three pairs of Fraction coordinates; got another representation"
             )
         values = []
         for point in vertices:
             if point[0] < 0 or point[1] < 0 or point[0] + point[1] > 1:
                 raise ValueError(
-                    "A correspondence piece leaves its actual source reference triangle."
+                    "sphere_projective.vertices must lie in the source reference triangle; got exterior coordinate"
                 )
             homogeneous = tuple(
                 row[0] + row[1] * point[0] + row[2] * point[1]
@@ -424,13 +550,13 @@ class SphereProjectiveReferenceMap(StrictModule, NonTrainableState):
             )
             if any(value < 0 for value in homogeneous):
                 raise ValueError(
-                    "A correspondence piece leaves its actual target direction cone."
+                    "sphere_projective.vertices must lie in the target direction cone; got negative barycentric coordinate"
                 )
             values.append(sum(homogeneous, Fraction(0)))
         lower, upper = min(values), max(values)
         if lower <= 0 or self.orientation_ratio <= 0:
             raise ValueError(
-                "Projective reference correspondence is singular or orientation reversing."
+                "sphere_projective.reference must have positive denominator and orientation; got singular or reversed map"
             )
         return SphereProjectiveTriangleBounds(
             lower,
@@ -448,7 +574,7 @@ class SphereMaterialInverse(StrictModule):
 
 
 class _AbstractSphereMaterialAtlasData(StrictModule, NonTrainableState):
-    """Private derived data; it is not an admitted material-map owner."""
+    """Store the prepared material arrays and their source-bound evidence."""
 
     domain: eqx.AbstractVar[MeshingDomain]
     source_mesh: CellMesh
@@ -496,16 +622,16 @@ class _PreparedSphereMaterialData(_AbstractSphereMaterialAtlasData):
 
 
 class SphereMaterialCellAtlas(_AbstractSphereMaterialAtlasData, AbstractBoundaryMap):
-    """Complete nonsingular source atlas of actual scientific physical cells.
+    """Prepare a nonsingular full-sphere atlas of physical cells.
 
-    Admission derives all numerical representatives, whole-cell bounds and
-    coverage from the original source and original coordinate map. Cached
-    positive statuses or material arrays are never constructor inputs.
+    Source strata establish coverage; coordinate-map enclosures establish
+    whole-cell fidelity. Preparation binds the material arrays and evidence.
     """
 
     domain: MeshingDomain
     atlas_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         domain: MeshingDomain,
@@ -521,31 +647,90 @@ class SphereMaterialCellAtlas(_AbstractSphereMaterialAtlasData, AbstractBoundary
         corner_source_occurrence_paths: tuple[tuple[tuple[str, ...], ...], ...],
         corner_source_entity_ids: tuple[tuple[str, ...], ...],
         maximum_fidelity: float,
-        maximum_cells: int = 100_000,
-        maximum_work_units: int = 10_000_000,
+        maximum_cells: int = 100000,
+        maximum_work_units: int = 10000000,
         maximum_coordinate_memory_bytes: int = 256 * 1024**2,
-        coordinate_budget: CoordinateEnclosureBudget | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
-        data = _prepare_sphere_material_data(
-            domain,
-            mesh,
-            geometry,
-            coordinate_contract,
-            cell_patches=cell_patches,
-            corner_source_dimensions=corner_source_dimensions,
-            corner_source_indices=corner_source_indices,
-            corner_source_parameters=corner_source_parameters,
-            corner_source_occurrence_paths=corner_source_occurrence_paths,
-            corner_source_entity_ids=corner_source_entity_ids,
-            maximum_fidelity=maximum_fidelity,
-            maximum_cells=maximum_cells,
+
+        limits = embedding_state_owner.MeshCertificateLimits(
             maximum_work_units=maximum_work_units,
-            maximum_coordinate_memory_bytes=maximum_coordinate_memory_bytes,
-            coordinate_budget=coordinate_budget,
+            maximum_scratch_bytes=maximum_coordinate_memory_bytes,
+            maximum_distance_evaluations=maximum_work_units,
         )
-        for field in fields(data):
-            setattr(self, field.name, getattr(data, field.name))
-        self.atlas_id = _sphere_material_identity(self)
+        with embedding_state_owner.coordinate_certificate_request(
+            limits, budget=budget
+        ) as budget:
+            request = _SphereMaterialRequest(
+                cell_patches,
+                corner_source_dimensions,
+                corner_source_indices,
+                corner_source_parameters,
+                corner_source_occurrence_paths,
+                corner_source_entity_ids,
+                maximum_fidelity,
+                maximum_cells,
+                maximum_work_units,
+            )
+            data = _prepare_sphere_material_data(
+                domain, mesh, geometry, coordinate_contract, request, budget=budget
+            )
+            self.domain = data.domain
+            self.source_mesh = data.source_mesh
+            self.source_geometry = data.source_geometry
+            self.coordinate_contract = data.coordinate_contract
+            self.cell_global_ids = data.cell_global_ids
+            self.physical_rows = data.physical_rows
+            self.patches = data.patches
+            self.physical_corner_global_ids = data.physical_corner_global_ids
+            self.directions = data.directions
+            self.centers = data.centers
+            self.axes = data.axes
+            self.radii = data.radii
+            self.radius_terms = data.radius_terms
+            self.rotations = data.rotations
+            self.translations = data.translations
+            self.source_slots = data.source_slots
+            self.hemisphere_lower = data.hemisphere_lower
+            self.direction_norm_upper = data.direction_norm_upper
+            self.jacobian_lower = data.jacobian_lower
+            self.normalization_chord_bounds = data.normalization_chord_bounds
+            self.hessian_bounds = data.hessian_bounds
+            self.source_polynomial_chord_bounds = data.source_polynomial_chord_bounds
+            self.source_corner_enclosure_bounds = data.source_corner_enclosure_bounds
+            self.source_fidelity_bounds = data.source_fidelity_bounds
+            self.coordinate_preparation_work_units = (
+                data.coordinate_preparation_work_units
+            )
+            self.coordinate_retained_basis_bytes = data.coordinate_retained_basis_bytes
+            self.coordinate_storage_upper_bytes = data.coordinate_storage_upper_bytes
+            self.inverse_plan = data.inverse_plan
+            self.geometry_entity_ids = data.geometry_entity_ids
+            self.occurrence_paths = data.occurrence_paths
+            self.corner_tokens = data.corner_tokens
+            self.exact_determinants = data.exact_determinants
+            self.source_geometry_id = data.source_geometry_id
+            self.source_topology_id = data.source_topology_id
+            self.source_id = data.source_id
+            self.source_revision = data.source_revision
+            self.domain_id = data.domain_id
+            self.coverage_status = data.coverage_status
+            self.work_units = data.work_units
+            self.atlas_id = _sphere_material_identity(self)
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[SphereMaterialCellAtlas], value: SphereMaterialCellAtlas, /
+    ) -> SphereMaterialCellAtlas:
+        """Authenticate stored material maps using their retained source context."""
+        value.require_bound(
+            value.domain,
+            value.source_mesh,
+            value.source_geometry,
+            value.coordinate_contract,
+        )
+        return value
 
     @property
     def num_charts(self) -> int:
@@ -611,7 +796,11 @@ class SphereMaterialCellAtlas(_AbstractSphereMaterialAtlasData, AbstractBoundary
         )
 
     def inverse(self, chart_indices: Array, points: Array, /) -> SphereMaterialInverse:
-        """Radial inverse with native solve status, not an off-source membership certificate."""
+        """Return radial inverse coordinates and native solve diagnostics.
+
+        Successful solves provide radial coordinates; source membership has
+        separate geometric evidence.
+        """
         slot = self.source_slots[chart_indices]
         plan = self.inverse_plan
         placement = solve_small_linear(
@@ -644,6 +833,7 @@ class SphereMaterialCellAtlas(_AbstractSphereMaterialAtlasData, AbstractBoundary
             success,
         )
 
+    @checked
     def require_bound(
         self,
         domain: MeshingDomain,
@@ -652,13 +842,12 @@ class SphereMaterialCellAtlas(_AbstractSphereMaterialAtlasData, AbstractBoundary
         coordinate_contract: SpatialCoordinateContract,
         /,
     ) -> None:
-        from ..discretization._cell_geometry_validity import cell_geometry_id
 
         if (
-            domain.domain_id,
+            domain.content_domain_id(),
             mesh.mesh_id,
             mesh.topology_id,
-            cell_geometry_id(geometry),
+            cell_geometry_validity_owner.cell_geometry_id(geometry),
             coordinate_contract.spatial_id,
         ) != (
             self.domain_id,
@@ -668,11 +857,11 @@ class SphereMaterialCellAtlas(_AbstractSphereMaterialAtlasData, AbstractBoundary
             self.coordinate_contract.spatial_id,
         ):
             raise ValueError(
-                "Sphere material atlas is stale for its source, cells, coordinate map or units."
+                "sphere_material.binding must match source, cells, coordinate map and units; got stale binding"
             )
         if _sphere_material_identity(self) != self.atlas_id:
             raise ValueError(
-                "Sphere material maps or proof evidence have changed since preparation."
+                "sphere_material.atlas_id must match material maps and evidence; got changed content"
             )
         if (
             self.coverage_status != "certified"
@@ -680,14 +869,16 @@ class SphereMaterialCellAtlas(_AbstractSphereMaterialAtlasData, AbstractBoundary
             or np.any(np.asarray(self.jacobian_lower) <= 0)
         ):
             raise ValueError(
-                "Sphere material atlas lacks complete nonsingular reference coverage."
+                "sphere_material.coverage must be certified with positive hemisphere and Jacobian bounds; got incomplete or singular coverage"
             )
 
     def cell_row(self, cell_global_id: int, /) -> int:
         ids = np.asarray(self.cell_global_ids)
         row = int(np.searchsorted(ids, cell_global_id))
         if row == ids.size or int(ids[row]) != cell_global_id:
-            raise ValueError("The material atlas has no such scientific physical cell.")
+            raise ValueError(
+                "sphere_material.cell_global_id must identify a prepared cell; got absent identifier"
+            )
         return row
 
     def projective_reference_map(
@@ -697,15 +888,15 @@ class SphereMaterialCellAtlas(_AbstractSphereMaterialAtlasData, AbstractBoundary
         target_cell_global_id: int,
         /,
         *,
-        coordinate_budget: CoordinateEnclosureBudget | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> SphereProjectiveReferenceMap:
-        """Exact target-cone halfplanes and target rational reference on an old cell."""
+        """Return target-cone halfplanes and target coordinates on a source cell."""
         return SphereProjectiveReferenceMap(
             self,
             source_cell_global_id,
             target,
             target_cell_global_id,
-            coordinate_budget=coordinate_budget,
+            budget=budget,
         )
 
 
@@ -772,23 +963,28 @@ def _sphere_material_identity(atlas: SphereMaterialCellAtlas, /) -> str:
     )
 
 
-def _corner_direction(
+def corner_direction(
     domain: MeshingDomain, patch: int, dimension: int, index: int, parameters: np.ndarray
 ) -> tuple[np.ndarray, _CornerToken]:
     path = domain.source_occurrences[dimension][index]
     source_index = domain.source_indices[dimension][index]
     if dimension == 0:
-        poles = [
-            use
-            for loop in domain.patches[patch].loops
-            for use in loop
-            if isinstance(use, PatchPoleUse) and use.corner == index
-        ]
+        poles: list[PatchPoleUse] = []
+        for loop in domain.patches[patch].loops:
+            for use in loop:
+                match use:
+                    case PatchPoleUse():
+                        if use.corner == index:
+                            poles.append(use)
+                    case PatchCurveUse():
+                        pass
+                    case invalid:
+                        assert_never(invalid)
         if not poles or any(
             (use.start[1] > 0) != (poles[0].start[1] > 0) for use in poles
         ):
             raise ValueError(
-                "A sphere corner must be an explicitly authored pole of this occurrence."
+                "sphere_material.corner must identify a consistent pole use; got absent or inconsistent pole"
             )
         return np.asarray((0.0, 0.0, 1.0 if poles[0].start[1] > 0 else -1.0)), (
             0,
@@ -800,13 +996,20 @@ def _corner_direction(
         owner, loop, position = map(int, domain.curve_owners[index])
         if owner != patch or not np.isfinite(parameters[0]):
             raise ValueError(
-                "A sphere seam must retain its actual owning curve parameter and occurrence."
+                "sphere_material.seam must retain its curve owner and finite parameter; got different owner or invalid parameter"
             )
         use = domain.patches[owner].loops[loop][position]
-        if not isinstance(use, PatchCurveUse) or not min(
-            use.first, use.last
-        ) <= parameters[0] <= max(use.first, use.last):
-            raise ValueError("A sphere seam parameter leaves its authored source use.")
+        match use:
+            case PatchCurveUse() if (
+                min(use.first, use.last) <= parameters[0] <= max(use.first, use.last)
+            ):
+                pass
+            case PatchCurveUse() | PatchPoleUse():
+                raise ValueError(
+                    "sphere_material.seam_parameter must lie in its declared curve use; got exterior parameter"
+                )
+            case invalid:
+                assert_never(invalid)
         uv = np.asarray(
             use.pcurve.evaluate(jnp.asarray(parameters[0], dtype=jnp.float64))
         ).reshape((2,))
@@ -814,13 +1017,13 @@ def _corner_direction(
     elif dimension == 2:
         if index != patch or not np.all(np.isfinite(parameters)):
             raise ValueError(
-                "A sphere interior corner must retain its named source-face parameters."
+                "sphere_material.interior_corner must retain its face and finite parameters; got different face or invalid parameters"
             )
         uv = parameters
         token = (2, source_index, path, tuple(Fraction(float(value)) for value in uv))
     else:
         raise ValueError(
-            "Sphere material corners require actual source dimensions zero through two."
+            "sphere_material.corner_dimension must lie between zero and two; got unsupported dimension"
         )
     domain.patches[patch].surface.validate_parameter_box(np.stack((uv, uv)))
     longitude, latitude = uv
@@ -833,56 +1036,79 @@ def _corner_direction(
     ), token
 
 
-def _prepare_sphere_material_data(
-    domain: MeshingDomain,
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
-    coordinate_contract: SpatialCoordinateContract,
-    /,
-    *,
-    cell_patches: ConvertibleToArray,
-    corner_source_dimensions: ConvertibleToArray,
-    corner_source_indices: ConvertibleToArray,
-    corner_source_parameters: ConvertibleToArray,
-    corner_source_occurrence_paths: tuple[tuple[tuple[str, ...], ...], ...],
-    corner_source_entity_ids: tuple[tuple[str, ...], ...],
-    maximum_fidelity: float,
-    maximum_cells: int = 100_000,
-    maximum_work_units: int = 10_000_000,
-    maximum_coordinate_memory_bytes: int = 256 * 1024**2,
-    coordinate_budget: CoordinateEnclosureBudget | None = None,
-) -> _PreparedSphereMaterialData:
-    """Prepare complete regular material maps from retained accepted source strata."""
-    from .._meshcore import charge_native_geometry_queries
-    from ..discretization._cell_geometry_validity import cell_geometry_id
-    from ..discretization._coordinate_enclosure import (
-        add,
-        axes,
-        constant,
-        coordinate_corner_images,
-        coordinate_enclosure_budget,
-        coordinate_expressions,
-        expression_add,
-        expression_bernstein_coefficients,
-        expression_scale,
-        outward,
-        prepared_coordinate_source_bank,
-        scale,
-    )
+class _SphereMaterialRequest(StrictModule):
+    cell_patches: ConvertibleToArray
+    corner_source_dimensions: ConvertibleToArray
+    corner_source_indices: ConvertibleToArray
+    corner_source_parameters: ConvertibleToArray
+    corner_source_occurrence_paths: tuple[tuple[tuple[str, ...], ...], ...]
+    corner_source_entity_ids: tuple[tuple[str, ...], ...]
+    maximum_fidelity: float
+    maximum_cells: int
+    maximum_work_units: int
 
-    if not isinstance(domain, MeshingDomain) or not isinstance(
-        coordinate_contract, SpatialCoordinateContract
-    ):
-        raise TypeError(
-            "Sphere atlas preparation requires authoritative source and spatial coordinate owners."
-        )
+
+class _SphereMaterialInputs(StrictModule):
+    ids: np.ndarray
+    cells: np.ndarray
+    patches: np.ndarray
+    dimensions: np.ndarray
+    indices: np.ndarray
+    parameters: np.ndarray
+    lookup: tuple[dict[tuple[tuple[str, ...], int], int], ...]
+
+
+class _SphereDirections(StrictModule):
+    rays: np.ndarray
+    tokens: tuple[tuple[_CornerToken, ...], ...]
+    active_patches: tuple[int, ...]
+
+
+class _SphereSources(StrictModule):
+    centers: np.ndarray
+    axes: np.ndarray
+    radii: np.ndarray
+    rotations: np.ndarray
+    translations: np.ndarray
+    norms: tuple[float, ...]
+    singulars: tuple[float, ...]
+    radial_coefficients: np.ndarray
+
+
+class _SphereRadialBounds(StrictModule):
+    hemisphere: np.ndarray
+    maximum_norm: np.ndarray
+    determinants: tuple[Fraction, ...]
+    jacobian: np.ndarray
+    normalization: np.ndarray
+    hessians: np.ndarray
+    slots: dict[int, int]
+
+
+class _SphereCoordinateBounds(StrictModule):
+    polynomial: np.ndarray
+    corners: np.ndarray
+
+
+def _sphere_material_inputs(
+    domain: MeshingDomain, mesh: CellMesh, request: _SphereMaterialRequest, /
+) -> _SphereMaterialInputs:
+    cell_patches = request.cell_patches
+    corner_source_dimensions = request.corner_source_dimensions
+    corner_source_indices = request.corner_source_indices
+    corner_source_parameters = request.corner_source_parameters
+    corner_source_occurrence_paths = request.corner_source_occurrence_paths
+    corner_source_entity_ids = request.corner_source_entity_ids
+    maximum_cells = request.maximum_cells
+    maximum_work_units = request.maximum_work_units
+    maximum_fidelity = request.maximum_fidelity
     if (
         any(block.cell_kind != "triangle" for block in mesh.blocks)
         or mesh.topological_dimension != 2
         or mesh.ambient_dimension != 3
     ):
         raise ValueError(
-            "Sphere material atlas requires actual physical triangle cells in three dimensions."
+            "sphere_material.mesh must contain two-dimensional triangles in three dimensions; got another cell family or dimension"
         )
     ids = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
@@ -899,7 +1125,7 @@ def _prepare_sphere_material_data(
         or maximum_fidelity < 0
     ):
         raise ValueError(
-            "Sphere material atlas exceeds its cell budget or has invalid fidelity/work limits."
+            "sphere_material.limits must admit nonempty cells, positive work and finite nonnegative fidelity; got invalid limits"
         )
     patches = np.asarray(cell_patches)
     dimensions, indices = (
@@ -917,7 +1143,7 @@ def _prepare_sphere_material_data(
         or parameters.shape != (count, 3, 2)
     ):
         raise ValueError(
-            "Sphere material strata must follow actual physical-cell canonical corner ordering."
+            "sphere_material.strata must match cell and corner shapes with integer indices; got incompatible arrays"
         )
     if (
         np.any(patches < 0)
@@ -930,7 +1156,7 @@ def _prepare_sphere_material_data(
         )
     ):
         raise ValueError(
-            "Sphere material occurrence/entity evidence must align with physical cells."
+            "sphere_material.source_metadata must align with three corners of every cell; got incompatible paths or entities"
         )
     lookup = tuple(
         {
@@ -941,36 +1167,39 @@ def _prepare_sphere_material_data(
             domain.source_occurrences, domain.source_indices, strict=True
         )
     )
-    ledger = (
-        coordinate_enclosure_budget(maximum_work_units, maximum_coordinate_memory_bytes)
-        if coordinate_budget is None
-        else coordinate_budget
+    return _SphereMaterialInputs(
+        ids, cells, patches, dimensions, indices, parameters, lookup
     )
-    if not isinstance(ledger, CoordinateEnclosureBudget):
-        raise TypeError(
-            "coordinate_budget must be the original CoordinateEnclosureBudget."
-        )
-    initial_work = ledger.work_units
-    ledger.reserve(0, count * 4096)
-    rays = np.empty((count, 3, 3), dtype=np.float64)
-    tokens: list[tuple[_CornerToken, ...]] = []
-    direction_cache: dict[
-        tuple[int, int, int, tuple[float, ...]], tuple[np.ndarray, _CornerToken]
-    ] = {}
-    active_patches = sorted(set(map(int, patches)))
-    for patch in active_patches:
-        if _full_sphere_frame(domain, patch) is None:
-            raise ValueError(
-                "This material atlas requires an authored complete sphere, not a trimmed or inferred cap."
-            )
+
+
+def _sphere_material_directions(
+    domain: MeshingDomain,
+    inputs: _SphereMaterialInputs,
+    request: _SphereMaterialRequest,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _SphereDirections:
+    count = inputs.ids.size
+    patches, dimensions, indices, parameters, lookup = (
+        inputs.patches,
+        inputs.dimensions,
+        inputs.indices,
+        inputs.parameters,
+        inputs.lookup,
+    )
+    corner_source_occurrence_paths = request.corner_source_occurrence_paths
+    corner_source_entity_ids = request.corner_source_entity_ids
+    ledger = budget
+
+    direction_keys: list[tuple[int, int, int, tuple[float, ...]]] = []
     for row in range(count):
-        members = []
         for corner in range(3):
             dimension = int(dimensions[row, corner])
             path = corner_source_occurrence_paths[row][corner]
             if not 0 <= dimension <= 2:
                 raise ValueError(
-                    "Sphere corner source dimensions must be declared zero-through-two strata."
+                    "sphere_material.corner_dimension must lie between zero and two; got unsupported stratum"
                 )
             index = lookup[dimension].get((path, int(indices[row, corner])))
             if (
@@ -979,25 +1208,59 @@ def _prepare_sphere_material_data(
                 != corner_source_entity_ids[row][corner]
             ):
                 raise ValueError(
-                    "Sphere material corner metadata is stale for its authoritative source entity."
+                    "sphere_material.corner_metadata must match the domain entity and occurrence; got stale metadata"
                 )
             parameter_key = tuple(
                 float(value) for value in parameters[row, corner, :dimension]
             )
-            key = (int(patches[row]), dimension, index, parameter_key)
-            prepared_direction = direction_cache.get(key)
-            if prepared_direction is None:
-                charge_native_geometry_queries(1)
-                prepared_direction = _corner_direction(
-                    domain, int(patches[row]), dimension, index, parameters[row, corner]
-                )
-                direction_cache[key] = prepared_direction
-            ray, token = prepared_direction
-            rays[row, corner] = ray
-            members.append(token)
-        tokens.append(tuple(members))
-    # Explicit source tokens establish equivalence; equality of geometric
-    # directions below is verification, never the source-incidence authority.
+            direction_keys.append((int(patches[row]), dimension, index, parameter_key))
+    # Each distinct source stratum/parameter is queried once by the direction cache.
+    queries_upper = _sphere_material_query_upper(
+        patches, dimensions, indices, parameters, corner_source_occurrence_paths
+    )
+    if queries_upper > ledger.ticket.remaining_geometry_queries:
+        ledger.ticket.refuse(0, queries_upper=queries_upper)
+    ledger.reserve(0, count * 4096)
+    rays = np.empty((count, 3, 3), dtype=np.float64)
+    tokens: list[tuple[_CornerToken, ...]] = []
+    direction_cache: dict[
+        tuple[int, int, int, tuple[float, ...]], tuple[np.ndarray, _CornerToken]
+    ] = {}
+    active_patches = sorted(set(map(int, patches)))
+    for patch in active_patches:
+        if full_sphere_frame(domain, patch, budget=budget) is None:
+            raise ValueError(
+                "sphere_material.patch must define a full sphere; got a trimmed or unsupported patch"
+            )
+    with ledger.ticket.batch(0, queries_upper=queries_upper) as queries:
+        for row in range(count):
+            members = []
+            for corner in range(3):
+                key = direction_keys[3 * row + corner]
+                prepared_direction = direction_cache.get(key)
+                if prepared_direction is None:
+                    queries.consume(geometry_queries=1)
+                    prepared_direction = corner_direction(
+                        domain, key[0], key[1], key[2], parameters[row, corner]
+                    )
+                    direction_cache[key] = prepared_direction
+                ray, token = prepared_direction
+                rays[row, corner] = ray
+                members.append(token)
+            tokens.append(tuple(members))
+    return _SphereDirections(rays, tuple(tokens), tuple(active_patches))
+
+
+def _certify_sphere_material_coverage(
+    inputs: _SphereMaterialInputs, directions: _SphereDirections, /
+) -> None:
+    patches = inputs.patches
+    rays, tokens, active_patches = (
+        directions.rays,
+        directions.tokens,
+        directions.active_patches,
+    )
+    # Source tokens establish incidence; matching direction realizations verify it.
     for patch in active_patches:
         rows = np.flatnonzero(patches == patch)
         values: dict[_CornerToken, np.ndarray] = {}
@@ -1007,7 +1270,7 @@ def _prepare_sphere_material_data(
                 previous = values.setdefault(token, rays[row, corner])
                 if not np.array_equal(previous, rays[row, corner]):
                     raise ValueError(
-                        "One authored source point has inconsistent material direction realizations."
+                        "sphere_material.direction must agree for equal source tokens; got inconsistent realizations"
                     )
             for first, second in ((0, 1), (1, 2), (2, 0)):
                 edge = (tokens[row][first], tokens[row][second])
@@ -1018,14 +1281,23 @@ def _prepare_sphere_material_data(
                     chain[edge] = chain.get(edge, 0) + 1
         if any(chain.values()):
             raise ValueError(
-                "Actual physical material cells leave an authored source-edge chain uncovered."
+                "sphere_material.edge_chain must cancel by source tokens; got uncovered edges"
             )
         flat = rays[rows].reshape((-1, 3))
         local_cells = np.arange(flat.shape[0], dtype=np.int64).reshape((-1, 3))
-        if not _sphere_radial_degree_one((np.zeros(3), 1.0, 1.0), flat, local_cells):
+        if not sphere_radial_degree_one((np.zeros(3), 1.0, 1.0), flat, local_cells):
             raise ValueError(
-                "Actual sphere material cells lack exact closed radial degree-one coverage."
+                "sphere_material.radial_chain must have degree one; got failed coverage proof"
             )
+
+
+def _sphere_material_sources(
+    domain: MeshingDomain,
+    active_patches: tuple[int, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _SphereSources:
     centers, source_axes, radii, rotations, translations, norms, singulars = (
         [],
         [],
@@ -1038,11 +1310,17 @@ def _prepare_sphere_material_data(
     radial_terms: list[tuple[Fraction, ...]] = []
     for patch in active_patches:
         source = domain.patches[patch].surface
-        operation = source.definition if isinstance(source, PlacedSurface) else source
-        equivalence = sphere_source_radius_terms(operation)
+        match source:
+            case PlacedSurface():
+                operation = source.definition
+            case AbstractSurfacePatch():
+                operation = source
+            case invalid:
+                assert_never(invalid)
+        equivalence = sphere_source_radius_terms(operation, budget=budget)
         if equivalence is None:
             raise TypeError(
-                "A material source must retain a proved original sphere/offset expression."
+                "sphere_material.source must have sphere-radius expression evidence; got unsupported expression"
             )
         definition, terms = equivalence
         exact_radius = sum(terms, Fraction(0))
@@ -1054,27 +1332,26 @@ def _prepare_sphere_material_data(
                 np.asarray(definition.axis),
             )
         )
-        rotation = (
-            np.asarray(source.rotation)
-            if isinstance(source, PlacedSurface)
-            else np.eye(3)
-        )
-        translation = (
-            np.asarray(source.translation)
-            if isinstance(source, PlacedSurface)
-            else np.zeros(3)
-        )
-        low, _ = _gram_spectrum_bounds(basis)
-        pose_low, _ = _gram_spectrum_bounds(rotation)
+        match source:
+            case PlacedSurface():
+                rotation = np.asarray(source.rotation)
+                translation = np.asarray(source.translation)
+            case AbstractSurfacePatch():
+                rotation = np.eye(3, dtype=np.float64)
+                translation = np.zeros(3, dtype=np.float64)
+            case invalid:
+                assert_never(invalid)
+        low, _ = gram_spectrum_bounds(basis)
+        pose_low, _ = gram_spectrum_bounds(rotation)
         radius = float(exact_radius)
         centers.append(np.asarray(definition.center))
         source_axes.append(basis)
         radii.append(radius)
         rotations.append(rotation)
         translations.append(translation)
-        norms.append(_sphere_radial_source_norm(source))
+        norms.append(sphere_radial_source_norm(source, budget=budget))
         singulars.append(
-            _float_enclosure(
+            float_enclosure(
                 abs(exact_radius)
                 * Fraction(float(np.nextafter(np.sqrt(low), -np.inf)))
                 * Fraction(float(np.nextafter(np.sqrt(pose_low), -np.inf))),
@@ -1088,6 +1365,31 @@ def _prepare_sphere_material_data(
         ],
         dtype=np.float64,
     )
+    return _SphereSources(
+        np.asarray(centers),
+        np.asarray(source_axes),
+        np.asarray(radii),
+        np.asarray(rotations),
+        np.asarray(translations),
+        tuple(norms),
+        tuple(singulars),
+        radial_coefficients,
+    )
+
+
+def _sphere_material_radial_bounds(
+    domain: MeshingDomain,
+    inputs: _SphereMaterialInputs,
+    directions: _SphereDirections,
+    sources: _SphereSources,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _SphereRadialBounds:
+    count, patches = inputs.ids.size, inputs.patches
+    rays, active_patches = directions.rays, directions.active_patches
+    norms, singulars = sources.norms, sources.singulars
+    ledger = budget
     hemisphere, maximum_norm, determinants, jacobian, normalization, hessians = (
         [],
         [],
@@ -1098,17 +1400,17 @@ def _prepare_sphere_material_data(
     )
     slots = {patch: slot for slot, patch in enumerate(active_patches)}
     for row in range(count):
-        radial = _sphere_radial_triangle_bounds(rays[row], ledger)
+        radial = sphere_radial_triangle_bounds(rays[row], budget=budget)
         if radial is None:
             raise ValueError(
-                "The complete sphere reference triangle lacks a positive hemisphere enclosure."
+                "sphere_material.reference_triangle must have a positive hemisphere bound; got failed enclosure"
             )
         determinant, floor, ceiling, unit_error = radial
         ledger.retain_basis((determinant,))
         sign = -1 if domain.patches[int(patches[row])].reversed else 1
         if determinant * sign <= 0:
             raise ValueError(
-                "Sphere material reference reverses its authored source orientation."
+                "sphere_material.reference_orientation must agree with the source patch; got reversed determinant"
             )
         first = interval_subtract(
             (rays[row, 1], rays[row, 1]), (rays[row, 0], rays[row, 0])
@@ -1116,15 +1418,17 @@ def _prepare_sphere_material_data(
         second = interval_subtract(
             (rays[row, 2], rays[row, 2]), (rays[row, 0], rays[row, 0])
         )
+        first = (np.asarray(first[0]), np.asarray(first[1]))
+        second = (np.asarray(second[0]), np.asarray(second[1]))
         slot = slots[int(patches[row])]
         radial_defect = max(1 - Fraction(floor), Fraction(ceiling) - 1, Fraction(0))
-        chord = _float_enclosure(Fraction(norms[slot]) * (radial_defect + unit_error))[1]
-        jacobian_floor = _float_enclosure(
+        chord = float_enclosure(Fraction(norms[slot]) * (radial_defect + unit_error))[1]
+        jacobian_floor = float_enclosure(
             Fraction(singulars[slot]) ** 2 * abs(determinant) / Fraction(ceiling) ** 3
         )[0]
         first_norm, second_norm = (
-            float(_interval_vector_norm(first)[1]),
-            float(_interval_vector_norm(second)[1]),
+            float(interval_vector_norm(first)[1]),
+            float(interval_vector_norm(second)[1]),
         )
         factor = Fraction(6) * Fraction(norms[slot]) / Fraction(floor) ** 2
         hemisphere.append(floor)
@@ -1134,92 +1438,245 @@ def _prepare_sphere_material_data(
         normalization.append(chord)
         hessians.append(
             (
-                _float_enclosure(factor * Fraction(first_norm) ** 2)[1],
-                _float_enclosure(factor * Fraction(first_norm) * Fraction(second_norm))[
-                    1
-                ],
-                _float_enclosure(factor * Fraction(second_norm) ** 2)[1],
+                float_enclosure(factor * Fraction(first_norm) ** 2)[1],
+                float_enclosure(factor * Fraction(first_norm) * Fraction(second_norm))[1],
+                float_enclosure(factor * Fraction(second_norm) ** 2)[1],
             )
         )
+    return _SphereRadialBounds(
+        np.asarray(hemisphere),
+        np.asarray(maximum_norm),
+        tuple(determinants),
+        np.asarray(jacobian),
+        np.asarray(normalization),
+        np.asarray(hessians),
+        slots,
+    )
+
+
+class _SphereCoordinateCellBounds(StrictModule):
+    polynomial: float
+    corners: float
+
+
+def _sphere_polynomial_chord_defect(
+    expressions: tuple[Expression, ...],
+    points: _RationalRows,
+    variables: tuple[coordinate_enclosure_owner.Polynomial, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> Fraction:
+    """Bound the coordinate-map difference from its affine corner chord."""
+    defect = Fraction(0)
+    for component, expression in enumerate(expressions):
+        corner_values = tuple(point[component] for point in points)
+        chord = coordinate_enclosure_owner.add(
+            coordinate_enclosure_owner.constant(corner_values[0], 2, budget=budget),
+            coordinate_enclosure_owner.add(
+                coordinate_enclosure_owner.scale(
+                    variables[0],
+                    corner_values[1] - corner_values[0],
+                    budget=budget,
+                ),
+                coordinate_enclosure_owner.scale(
+                    variables[1],
+                    corner_values[2] - corner_values[0],
+                    budget=budget,
+                ),
+                budget=budget,
+            ),
+            budget=budget,
+        )
+        defect += max(
+            abs(rational_coefficient(value, role="sphere_material.chord_defect"))
+            for value in coordinate_enclosure_owner.expression_bernstein_coefficients(
+                coordinate_enclosure_owner.expression_add(
+                    expression,
+                    coordinate_enclosure_owner.expression_scale(chord, -1, budget=budget),
+                    budget=budget,
+                ),
+                "simplex",
+                2,
+                budget=budget,
+            )
+        )
+    return defect
+
+
+def _sphere_coordinate_cell_bounds(
+    domain: MeshingDomain,
+    patch: int,
+    rays: np.ndarray,
+    element: CellGeometryElement,
+    coefficients: _RationalRows,
+    variables: tuple[coordinate_enclosure_owner.Polynomial, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _SphereCoordinateCellBounds:
+    """Enclose one coordinate map's chord defect and source-corner deviation."""
+    points = coordinate_enclosure_owner.affine_simplex_corner_images(
+        element, coefficients, budget=budget
+    )
+    if points is not None:
+        points = tuple(
+            tuple(
+                rational_coefficient(value, role="sphere_material.corner_image")
+                for value in point
+            )
+            for point in points
+        )
+        # The full admitted source basis is affine, not merely its corner
+        # samples. Its map is exactly its chord, so no defect expansion is needed.
+        defect = Fraction(0)
+    else:
+        expressions = coordinate_enclosure_owner.coordinate_expressions(
+            element, coefficients, budget=budget
+        )
+        if expressions is None:
+            raise ValueError(
+                "sphere_material.coordinate_map must provide rational expressions; got unavailable enclosure"
+            )
+        points = coordinate_enclosure_owner.coordinate_corner_images(
+            element, coefficients, budget=budget
+        )
+        if points is None:
+            raise ValueError(
+                "sphere_material.coordinate_map must provide rational corner images; got unavailable enclosure"
+            )
+        points = tuple(
+            tuple(
+                rational_coefficient(value, role="sphere_material.corner_image")
+                for value in point
+            )
+            for point in points
+        )
+        defect = _sphere_polynomial_chord_defect(
+            expressions, points, variables, budget=budget
+        )
+    source = domain.patches[patch].surface
+    match source:
+        case PlacedSurface():
+            operation = source.definition
+        case AbstractSurfacePatch():
+            operation = source
+        case invalid:
+            assert_never(invalid)
+    if sphere_source_equivalence(operation, budget=budget) is None:
+        raise TypeError(
+            "sphere_material.source must retain sphere-equivalence evidence; got unsupported operation"
+        )
+    low, high = source_image_enclosure(source, rays, budget=budget)
+    error = max(
+        sum(
+            (
+                max(
+                    abs(value - Fraction(float(low[corner, component]))),
+                    abs(value - Fraction(float(high[corner, component]))),
+                )
+                for component, value in enumerate(point)
+            ),
+            Fraction(0),
+        )
+        for corner, point in enumerate(points)
+    )
+    return _SphereCoordinateCellBounds(
+        fraction_endpoint(defect, upper=True, saturate=True),
+        fraction_endpoint(error, upper=True, saturate=True),
+    )
+
+
+def _sphere_material_coordinate_bounds(
+    domain: MeshingDomain,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    inputs: _SphereMaterialInputs,
+    directions: _SphereDirections,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _SphereCoordinateBounds:
+    patches, rays = inputs.patches, directions.rays
+    ledger = budget
     elements, routes, coordinate_values = geometry.resolve(mesh)
-    # The caller's original ledger remains the sole cumulative coefficient owner.
+    # The request ledger owns cumulative coefficient work.
     ledger.reserve(
         0,
         coordinate_values.size * np.dtype(np.float64).itemsize
         + sum(route.size * np.dtype(np.int64).itemsize for route in routes),
     )
     with ledger.activate():
-        coordinate_bank = prepared_coordinate_source_bank(geometry)
+        coordinate_bank = geometry.rational_source_coordinates(budget=budget)
     polynomial_bounds, corner_bounds = [], []
     offset = 0
     with ledger.activate():
-        variables = axes(2)
+        variables = coordinate_enclosure_owner.axes(2, budget=budget)
         for element, route in zip(elements, routes, strict=True):
             for local in np.asarray(route, dtype=np.int64):
                 with ledger.temporary_scope():
                     ledger.reserve(local.size * 3)
-                    expressions = coordinate_expressions(
-                        element, tuple(coordinate_bank[int(index)] for index in local)
+                    bounds = _sphere_coordinate_cell_bounds(
+                        domain,
+                        int(patches[offset]),
+                        rays[offset],
+                        element,
+                        tuple(coordinate_bank[int(index)] for index in local),
+                        variables,
+                        budget=budget,
                     )
-                    if expressions is None:
-                        raise ValueError(
-                            "The actual coordinate owner has no exact full-map enclosure."
-                        )
-                    points = coordinate_corner_images(
-                        element, tuple(coordinate_bank[int(index)] for index in local)
-                    )
-                    if points is None:
-                        raise ValueError(
-                            "The actual coordinate owner has no exact full-source corner enclosure."
-                        )
-                    defect = Fraction(0)
-                    for component, expression in enumerate(expressions):
-                        corner_values = tuple(point[component] for point in points)
-                        chord = add(
-                            constant(corner_values[0], 2),
-                            add(
-                                scale(variables[0], corner_values[1] - corner_values[0]),
-                                scale(variables[1], corner_values[2] - corner_values[0]),
-                            ),
-                        )
-                        defect += max(
-                            abs(value)
-                            for value in expression_bernstein_coefficients(
-                                expression_add(expression, expression_scale(chord, -1)),
-                                "simplex",
-                                2,
-                            )
-                        )
-                    source = domain.patches[int(patches[offset])].surface
-                    if (
-                        sphere_source_equivalence(
-                            source.definition
-                            if isinstance(source, PlacedSurface)
-                            else source
-                        )
-                        is None
-                    ):
-                        raise TypeError(
-                            "A material source lost its original sphere-operation proof."
-                        )
-                    low, high = _source_image_enclosure(source, rays[offset])
-                    error = max(
-                        sum(
-                            (
-                                max(
-                                    abs(value - Fraction(float(low[corner, component]))),
-                                    abs(value - Fraction(float(high[corner, component]))),
-                                )
-                                for component, value in enumerate(point)
-                            ),
-                            Fraction(0),
-                        )
-                        for corner, point in enumerate(points)
-                    )
-                    polynomial_bounds.append(outward(defect, np.inf))
-                    corner_bounds.append(outward(error, np.inf))
+                    polynomial_bounds.append(bounds.polynomial)
+                    corner_bounds.append(bounds.corners)
                     offset += 1
-    work = ledger.work_units - initial_work
+    return _SphereCoordinateBounds(
+        np.asarray(polynomial_bounds), np.asarray(corner_bounds)
+    )
+
+
+def _prepare_sphere_material_data(
+    domain: MeshingDomain,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    coordinate_contract: SpatialCoordinateContract,
+    request: _SphereMaterialRequest,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _PreparedSphereMaterialData:
+    """Prepare source strata, certify coverage and enclose each material map."""
+    inputs = _sphere_material_inputs(domain, mesh, request)
+    measurement = budget.current_measurement
+    directions = _sphere_material_directions(domain, inputs, request, budget=budget)
+    _certify_sphere_material_coverage(inputs, directions)
+    sources = _sphere_material_sources(domain, directions.active_patches, budget=budget)
+    radial = _sphere_material_radial_bounds(
+        domain, inputs, directions, sources, budget=budget
+    )
+    coordinates = _sphere_material_coordinate_bounds(
+        domain, mesh, geometry, inputs, directions, budget=budget
+    )
+    ids, cells, patches = inputs.ids, inputs.cells, inputs.patches
+    rays, tokens = directions.rays, directions.tokens
+    centers, source_axes, radii = sources.centers, sources.axes, sources.radii
+    rotations, translations, radial_coefficients = (
+        sources.rotations,
+        sources.translations,
+        sources.radial_coefficients,
+    )
+    hemisphere, maximum_norm, determinants = (
+        radial.hemisphere,
+        radial.maximum_norm,
+        radial.determinants,
+    )
+    jacobian, normalization, hessians, slots = (
+        radial.jacobian,
+        radial.normalization,
+        radial.hessians,
+        radial.slots,
+    )
+    polynomial_bounds, corner_bounds = coordinates.polynomial, coordinates.corners
+    maximum_fidelity = request.maximum_fidelity
+    work = measurement.work_units
     fidelity = np.nextafter(
         np.asarray(polynomial_bounds)
         + np.asarray(corner_bounds)
@@ -1232,10 +1689,10 @@ def _prepare_sphere_material_data(
         or np.any(np.asarray(jacobian) <= 0)
     ):
         raise ValueError(
-            "The actual old map misses the requested whole-cell radial source fidelity or regularity."
+            "sphere_material.coordinate_map must satisfy fidelity and positive Jacobian bounds; got excessive deviation or failed regularity"
         )
     order = np.argsort(ids, kind="stable")
-    geometry_id = cell_geometry_id(geometry)
+    geometry_id = cell_geometry_validity_owner.cell_geometry_id(geometry)
     entity_ids = tuple(domain.entity_id(2, int(patch)) for patch in patches[order])
     paths = tuple(domain.source_occurrences[2][int(patch)] for patch in patches[order])
     return _PreparedSphereMaterialData(
@@ -1270,8 +1727,8 @@ def _prepare_sphere_material_data(
         geometry_entity_ids=entity_ids,
         occurrence_paths=paths,
         coordinate_preparation_work_units=work,
-        coordinate_retained_basis_bytes=ledger.retained_basis_bytes,
-        coordinate_storage_upper_bytes=ledger.peak_bytes_upper,
+        coordinate_retained_basis_bytes=measurement.retained_basis_bytes,
+        coordinate_storage_upper_bytes=measurement.peak_bytes_upper,
         inverse_plan=SmallLinearSolvePlan(3),
         corner_tokens=tuple(tokens[row] for row in order),
         exact_determinants=tuple(determinants[row] for row in order),
@@ -1285,58 +1742,10 @@ def _prepare_sphere_material_data(
     )
 
 
-def prepare_sphere_material_atlas(
-    domain: MeshingDomain,
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
-    coordinate_contract: SpatialCoordinateContract,
-    /,
-    *,
-    cell_patches: ConvertibleToArray,
-    corner_source_dimensions: ConvertibleToArray,
-    corner_source_indices: ConvertibleToArray,
-    corner_source_parameters: ConvertibleToArray,
-    corner_source_occurrence_paths: tuple[tuple[tuple[str, ...], ...], ...],
-    corner_source_entity_ids: tuple[tuple[str, ...], ...],
-    maximum_fidelity: float,
-    maximum_cells: int = 100_000,
-    maximum_work_units: int = 10_000_000,
-    maximum_coordinate_memory_bytes: int = 256 * 1024**2,
-    coordinate_budget: CoordinateEnclosureBudget | None = None,
-) -> SphereMaterialCellAtlas:
-    """Admit a material owner only through actual source-bound preparation."""
-    return SphereMaterialCellAtlas(
-        domain,
-        mesh,
-        geometry,
-        coordinate_contract,
-        cell_patches=cell_patches,
-        corner_source_dimensions=corner_source_dimensions,
-        corner_source_indices=corner_source_indices,
-        corner_source_parameters=corner_source_parameters,
-        corner_source_occurrence_paths=corner_source_occurrence_paths,
-        corner_source_entity_ids=corner_source_entity_ids,
-        maximum_fidelity=maximum_fidelity,
-        maximum_cells=maximum_cells,
-        maximum_work_units=maximum_work_units,
-        maximum_coordinate_memory_bytes=maximum_coordinate_memory_bytes,
-        coordinate_budget=coordinate_budget,
-    )
-
-
-def sphere_material_atlas_from_result(
-    domain: MeshingDomain,
-    result: CellMeshingResult,
-    /,
-    *,
-    maximum_fidelity: float,
-    maximum_cells: int = 100_000,
-    maximum_work_units: int = 10_000_000,
-    maximum_coordinate_memory_bytes: int = 256 * 1024**2,
-    coordinate_budget: CoordinateEnclosureBudget | None = None,
-) -> SphereMaterialCellAtlas:
-    """Consume genuine accepted publication metadata; never parse entity-ID strings."""
-    from ..meshing._association import GeometryAssociationKind
+def sphere_material_strata(
+    domain: MeshingDomain, result: meshing_owner.CellMeshingResult, /
+) -> _SphereMaterialStrata:
+    """Validated source strata of accepted physical material-cell corners."""
 
     if (
         not result.audit.passed
@@ -1344,14 +1753,17 @@ def sphere_material_atlas_from_result(
         or not result.certification.passed
     ):
         raise ValueError(
-            "Sphere material preparation requires a decided accepted physical publication."
+            "sphere_material.result must have passing audit and certification; got unaccepted publication"
         )
     vertex_set, face_set = result.mesh.entity_set(0), result.mesh.entity_set(2)
     associations = [
         value
         for value in result.associations
         if value.association_kind
-        in (GeometryAssociationKind.SURFACE, GeometryAssociationKind.BREP)
+        in (
+            association_state_owner.GeometryAssociationKind.SURFACE,
+            association_state_owner.GeometryAssociationKind.BREP,
+        )
         and value.source_id == domain.source_id
         and value.source_revision == domain.source_revision
     ]
@@ -1378,7 +1790,7 @@ def sphere_material_atlas_from_result(
         or not np.all(np.asarray(face.resolved))
     ):
         raise ValueError(
-            "Accepted sphere cells and vertices lack complete declared source strata."
+            "sphere_material.result.associations must resolve every cell and vertex; got missing source strata"
         )
     vertex_rows = vertex.target_rows(
         np.asarray(result.mesh.vertex_global_ids, dtype=np.int64)
@@ -1399,40 +1811,67 @@ def sphere_material_atlas_from_result(
     patches = []
     for row in face_rows:
         patch = lookup.get(
-            (face.source_occurrence_paths[row], int(np.asarray(face.source_indices)[row]))
+            (
+                face.source_entities.occurrence_path(row),
+                int(np.asarray(face.source_indices)[row]),
+            )
         )
         if (
             patch is None
             or int(np.asarray(face.source_dimensions)[row]) != 2
-            or face.source_entity_ids[row] != domain.entity_id(2, patch)
+            or face.source_entities.entity_id(row) != domain.entity_id(2, patch)
         ):
             raise ValueError(
-                "Accepted sphere cell identity is stale for its authoritative source occurrence."
+                "sphere_material.result.cell_identity must match its domain face and occurrence; got stale metadata"
             )
         patches.append(patch)
     corner_rows = vertex_rows[cells]
-    return prepare_sphere_material_atlas(
+    return _SphereMaterialStrata(
+        patches=np.asarray(patches, dtype=np.int64),
+        dimensions=np.asarray(vertex.source_dimensions)[corner_rows],
+        indices=np.asarray(vertex.source_indices)[corner_rows],
+        parameters=np.asarray(vertex.parameters)[corner_rows],
+        occurrence_paths=tuple(
+            tuple(vertex.source_entities.occurrence_path(row) for row in corners)
+            for corners in corner_rows
+        ),
+        entity_ids=tuple(
+            tuple(vertex.source_entities.entity_id(row) for row in corners)
+            for corners in corner_rows
+        ),
+    )
+
+
+@checked
+def sphere_material_atlas_from_result(
+    domain: MeshingDomain,
+    result: meshing_owner.CellMeshingResult,
+    /,
+    *,
+    maximum_fidelity: float,
+    maximum_cells: int = 100_000,
+    maximum_work_units: int = 10_000_000,
+    maximum_coordinate_memory_bytes: int = 256 * 1024**2,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> SphereMaterialCellAtlas:
+    """Prepare a material atlas from accepted cell and vertex source strata."""
+    strata = sphere_material_strata(domain, result)
+    return SphereMaterialCellAtlas(
         domain,
         result.mesh,
         result.geometry,
         result.coordinate_contract,
-        cell_patches=np.asarray(patches, dtype=np.int64),
-        corner_source_dimensions=np.asarray(vertex.source_dimensions)[corner_rows],
-        corner_source_indices=np.asarray(vertex.source_indices)[corner_rows],
-        corner_source_parameters=np.asarray(vertex.parameters)[corner_rows],
-        corner_source_occurrence_paths=tuple(
-            tuple(vertex.source_occurrence_paths[row] for row in corners)
-            for corners in corner_rows
-        ),
-        corner_source_entity_ids=tuple(
-            tuple(vertex.source_entity_ids[row] for row in corners)
-            for corners in corner_rows
-        ),
+        cell_patches=strata.patches,
+        corner_source_dimensions=strata.dimensions,
+        corner_source_indices=strata.indices,
+        corner_source_parameters=strata.parameters,
+        corner_source_occurrence_paths=strata.occurrence_paths,
+        corner_source_entity_ids=strata.entity_ids,
         maximum_fidelity=maximum_fidelity,
         maximum_cells=maximum_cells,
         maximum_work_units=maximum_work_units,
         maximum_coordinate_memory_bytes=maximum_coordinate_memory_bytes,
-        coordinate_budget=coordinate_budget,
+        budget=budget,
     )
 
 
@@ -1441,24 +1880,50 @@ __all__ = [
     "SphereMaterialInverse",
     "SphereProjectiveReferenceMap",
     "SphereProjectiveTriangleBounds",
-    "prepare_sphere_material_atlas",
     "sphere_material_atlas_from_result",
 ]
 
 
-def _sphere_radial_triangle_bounds(
-    directions: np.ndarray,
-    coordinate_budget: CoordinateEnclosureBudget,
-    /,
-) -> tuple[Fraction, float, float, Fraction] | None:
-    """The complete real cone/hemisphere enclosure shared by admission and edits."""
-    coordinate_budget.reserve(9)
-    matrix = _fraction_rows(directions.T)
-    with coordinate_budget.temporary_scope():
-        prepared = prepare_exact_small_linear_actions(
-            matrix, ((), (), ()), coordinate_budget=coordinate_budget
+def sphere_cone_cofactors(
+    matrix: _RationalRows, /, *, budget: CoordinateEnclosureBudget
+) -> _RationalRows:
+    """Prepare the three rational source-cone numerator actions."""
+    reserve_polynomial(27, 27, 0, 4 * (1024 + 1075) + 2, budget=budget)
+    corners = tuple(
+        tuple(matrix[axis][corner] for axis in range(3)) for corner in range(3)
+    )
+    return tuple(
+        (
+            exact_cofactor_determinant_2((first[1], first[2]), (second[1], second[2])),
+            exact_cofactor_determinant_2((first[2], first[0]), (second[2], second[0])),
+            exact_cofactor_determinant_2((first[0], first[1]), (second[0], second[1])),
         )
-    if not prepared.successful:
+        for first, second in (
+            (corners[1], corners[2]),
+            (corners[2], corners[0]),
+            (corners[0], corners[1]),
+        )
+    )
+
+
+def sphere_radial_triangle_bounds(
+    directions: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+) -> tuple[Fraction, float, float, Fraction] | None:
+    """Return radial cone and hemisphere bounds for a reference triangle."""
+    budget.reserve(9)
+    matrix = tuple(rational_vector(row) for row in directions.T)
+    with budget.temporary_scope():
+        # Only the scalar determinant is needed: fourteen arithmetic visits
+        # and at most eighteen expanded input occurrences. Finite binary64
+        # fractions use at most 1024 numerator and 1075 denominator bits;
+        # that format bound avoids an unused second coefficient traversal.
+        reserve_polynomial(14, 14, 0, 18 * (1024 + 1075) + 4, budget=budget)
+        determinant = exact_cofactor_determinant_3(
+            (matrix[0][0], matrix[0][1], matrix[0][2]),
+            (matrix[1][0], matrix[1][1], matrix[1][2]),
+            (matrix[2][0], matrix[2][1], matrix[2][2]),
+        )
+    if determinant == 0:
         return None
     first = interval_subtract(
         (directions[1], directions[1]), (directions[0], directions[0])
@@ -1466,11 +1931,13 @@ def _sphere_radial_triangle_bounds(
     second = interval_subtract(
         (directions[2], directions[2]), (directions[0], directions[0])
     )
-    normal_upper = float(_interval_vector_norm(_interval_vector_cross(first, second))[1])
+    first = (np.asarray(first[0]), np.asarray(first[1]))
+    second = (np.asarray(second[0]), np.asarray(second[1]))
+    normal_upper = float(interval_vector_norm(interval_vector_cross(first, second))[1])
     if normal_upper <= 0:
         return None
-    floor = _float_enclosure(abs(prepared.determinant) / Fraction(normal_upper))[0]
-    lows, highs = _interval_vector_norm((directions, directions))
+    floor = float_enclosure(abs(determinant) / Fraction(normal_upper))[0]
+    lows, highs = interval_vector_norm((directions, directions))
     ceiling = float(np.max(highs))
     if floor <= 0 or not np.isfinite(ceiling):
         return None
@@ -1481,16 +1948,25 @@ def _sphere_radial_triangle_bounds(
         ),
         default=Fraction(0),
     )
-    return prepared.determinant, floor, ceiling, unit_error
+    return determinant, floor, ceiling, unit_error
 
 
-def _sphere_radial_source_norm(source: AbstractSurfacePatch, /) -> float:
-    """Original source/placement norm used by the owning normalization bound."""
-    operation = source.definition if isinstance(source, PlacedSurface) else source
-    equivalence = sphere_source_radius_terms(operation)
+@checked
+def sphere_radial_source_norm(
+    source: AbstractSurfacePatch, /, *, budget: CoordinateEnclosureBudget
+) -> float:
+    """Return the source and placement norm for normalization bounds."""
+    match source:
+        case PlacedSurface():
+            operation = source.definition
+        case AbstractSurfacePatch():
+            operation = source
+        case invalid:
+            assert_never(invalid)
+    equivalence = sphere_source_radius_terms(operation, budget=budget)
     if equivalence is None:
         raise TypeError(
-            "Sphere normalization requires its original sphere/offset source."
+            "sphere_material.normalization.source must have sphere-radius expression evidence; got unsupported source"
         )
     definition, terms = equivalence
     basis = np.column_stack(
@@ -1500,13 +1976,15 @@ def _sphere_radial_source_norm(source: AbstractSurfacePatch, /) -> float:
             np.asarray(definition.axis),
         )
     )
-    rotation = (
-        np.asarray(source.rotation)
-        if isinstance(source, PlacedSurface)
-        else np.eye(3, dtype=np.float64)
-    )
-    return _float_enclosure(
+    match source:
+        case PlacedSurface():
+            rotation = np.asarray(source.rotation)
+        case AbstractSurfacePatch():
+            rotation = np.eye(3, dtype=np.float64)
+        case invalid:
+            assert_never(invalid)
+    return float_enclosure(
         abs(sum(terms, Fraction(0)))
-        * Fraction(_matrix_norm_upper(basis))
-        * Fraction(_matrix_norm_upper(rotation))
+        * Fraction(matrix_norm_upper(basis))
+        * Fraction(matrix_norm_upper(rotation))
     )[1]

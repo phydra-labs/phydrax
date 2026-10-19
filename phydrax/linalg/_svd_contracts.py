@@ -32,7 +32,7 @@ from ._operators import AbstractLinearOperator
 from ._policies import FailurePolicy, RankPolicy
 from ._randomized import ProbeRefresh
 from ._singular_subspaces import SingularSubspaceResponse
-from ._spaces import _coordinate_dtype
+from ._spaces import coordinate_dtype
 
 
 class SVDSourceDim(Dim):
@@ -76,8 +76,8 @@ class SVDProblem(StrictModule):
         if operator.batch_shape:
             raise ValueError("SVDProblem requires an unbatched operator.")
         source_dtype, target_dtype = (
-            _coordinate_dtype(operator.source),
-            _coordinate_dtype(operator.target),
+            coordinate_dtype(operator.source),
+            coordinate_dtype(operator.target),
         )
         if source_dtype != target_dtype or not np.issubdtype(source_dtype, np.inexact):
             raise TypeError(

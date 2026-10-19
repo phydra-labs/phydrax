@@ -5,7 +5,7 @@
 
 Closure compares oriented *subfaces*, not just split-edge masks. A finite-domain
 constraint solve selects compatible templates across every affected interface.
-The candidate and hierarchy are immutable until canonical adaptation accepts them.
+The candidate and hierarchy are immutable until the adaptation transaction accepts them.
 Column inversion uses current physical-column membership, not a census inferred
 from possibly incomplete sibling records. Only authenticated unchanged SCI cells
 are excluded from that cohort; unknown or incompatible intervals retain the fine mesh.
@@ -14,45 +14,35 @@ are excluded from that cohort; unknown or incompatible intervals retain the fine
 from __future__ import annotations
 
 import sys
-from contextlib import AbstractContextManager, nullcontext
 from fractions import Fraction
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
+import phydrax._meshcore as _owner_phydrax__meshcore
+import phydrax.discretization._cell_geometry_transition_types as transition_types_owner
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.meshing._entity_keys as entity_keys_owner
+import phydrax.meshing._lineage_records as _dependency_phydrax_meshing__lineage
+import phydrax.meshing._periodic as _dependency_phydrax_meshing__periodic
+import phydrax.meshing._topology_edit as _dependency_phydrax_meshing__topology_edit
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import (
-    current_native_execution_budget,
-    current_native_host_workspace,
-    NativeExecutionBudget,
-)
+from .._meshcore import NativeBatchTicket, NativeExecutionScope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_integer
 from ..discretization import CellBlock, CellMesh
-from ..discretization._cell_geometry_transfer import NestedReferenceWitnesses
 from ..discretization._reference_cell import (
     facet_orientation_between,
     reference_cell_topology,
 )
+from ..geometry._rational import rational_vector
+from ..typing import checked, ConvertibleToArray
 from ._contracts import MeshingLimits
-from ._lineage import EntityLineageKind
 from ._measurements import NativeExecutionRecord
-from ._periodic import (
-    ConstructionPointKey,
-    PeriodicConstructionOrbits,
-    PeriodicConstructionPointKey,
-)
-from ._topology_edit import (
-    CellTopologyEdit,
-    entity_keys,
-    EntityRelations,
-    PeriodicEntityIdentityBank,
-    PrescribedEntityIds,
-    SharedFaceWitnesses,
-    TopologyEditBlock,
-)
 
 
 class MixedLayerColumns(StrictModule, NonTrainableState):
@@ -72,9 +62,9 @@ class MixedLayerColumns(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        cell_ids: ArrayLike,
-        column_ids: ArrayLike,
-        interval_indices: ArrayLike,
+        cell_ids: ConvertibleToArray,
+        column_ids: ConvertibleToArray,
+        interval_indices: ConvertibleToArray,
         *,
         hard_first_thickness: bool = True,
         axial_refinement: bool = False,
@@ -93,13 +83,15 @@ class MixedLayerColumns(StrictModule, NonTrainableState):
             or np.unique(ids).size != ids.size
         ):
             raise ValueError(
-                "Layer ancestry requires unique IDs and nonnegative aligned column/interval arrays."
+                "MixedLayerColumns.ancestry must contain unique cell IDs and aligned nonnegative columns and intervals; got invalid arrays"
             )
         if any(
             not isinstance(flag, (bool, np.bool_))
             for flag in (hard_first_thickness, axial_refinement, allow_schedule_change)
         ):
-            raise TypeError("Layer refinement permissions must be bools.")
+            raise TypeError(
+                "MixedLayerColumns.permissions must be bool values; got an invalid flag"
+            )
         order = np.argsort(ids, kind="stable")
         ids, columns, intervals = ids[order], columns[order], intervals[order]
         self.cell_ids = tuple(int(value) for value in ids)
@@ -120,8 +112,30 @@ class MixedLayerColumns(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(cls, value: MixedLayerColumns, /) -> Self:
+        """Rebuild layer ancestry through its input validation and fingerprint."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"MixedLayerColumns.value must have type {cls.__name__} without subclass substitution; got {type(value).__name__}"
+            )
+        rebuilt = cls(
+            value.cell_ids,
+            value.column_ids,
+            value.interval_indices,
+            hard_first_thickness=value.hard_first_thickness,
+            axial_refinement=value.axial_refinement,
+            allow_schedule_change=value.allow_schedule_change,
+        )
+        if rebuilt.columns_id != value.columns_id:
+            raise ValueError(
+                f"MixedLayerColumns.columns_id must match rebuilt ancestry; got {value.columns_id}"
+            )
+        return rebuilt
 
-class _Sibling(NamedTuple):
+
+class Sibling(NamedTuple):
     parent_id: int
     block_name: str
     cell_kind: str
@@ -138,49 +152,61 @@ class _Sibling(NamedTuple):
 class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
     """Persistent template siblings, parent scientific identities and classes."""
 
-    records: tuple[_Sibling, ...] = eqx.field(static=True)
+    records: tuple[Sibling, ...] = eqx.field(static=True)
     next_cell_id: int = eqx.field(static=True)
     next_vertex_id: int = eqx.field(static=True)
     hierarchy_id: str = eqx.field(static=True)
     retired_entities: tuple[tuple[int, tuple[int, ...], int], ...] = eqx.field(
         static=True
     )
-    quotient_entities: tuple[PeriodicEntityIdentityBank, ...] = eqx.field(static=True)
+    quotient_entities: tuple[
+        _dependency_phydrax_meshing__topology_edit.PeriodicEntityIdentityBank, ...
+    ] = eqx.field(static=True)
     identity_cells: tuple[tuple[int, str, str, tuple[int, ...], int], ...] = eqx.field(
         static=True
     )
     layer_columns: MixedLayerColumns | None
 
+    @checked
     def __init__(
         self,
-        records: tuple[_Sibling, ...] = (),
+        records: tuple[Sibling, ...] = (),
         *,
         next_cell_id: int = 0,
         next_vertex_id: int = 0,
         retired_entities: tuple[tuple[int, tuple[int, ...], int], ...] = (),
-        quotient_entities: tuple[PeriodicEntityIdentityBank, ...] = (),
+        quotient_entities: tuple[
+            _dependency_phydrax_meshing__topology_edit.PeriodicEntityIdentityBank, ...
+        ] = (),
         layer_columns: MixedLayerColumns | None = None,
         identity_cells: tuple[tuple[int, str, str, tuple[int, ...], int], ...] = (),
     ) -> None:
         if next_cell_id < 0 or next_vertex_id < 0:
-            raise ValueError("Next scientific identities must be nonnegative.")
+            raise ValueError(
+                "MixedAdaptationHierarchy.next_ids must be nonnegative; got a negative allocator identity"
+            )
         if len({record.parent_id for record in records}) != len(records):
-            raise ValueError("Template parent IDs must be unique.")
+            raise ValueError(
+                "MixedAdaptationHierarchy.records must have unique parent IDs; got duplicate parents"
+            )
         ordered = tuple(sorted(records, key=lambda record: record.parent_id))
-        self.records = ordered
-        self.next_cell_id = next_cell_id
-        self.next_vertex_id = next_vertex_id
-        self.retired_entities = tuple(sorted(retired_entities))
-        self.quotient_entities = quotient_entities
-        self.layer_columns = layer_columns
+        retired = tuple(sorted(retired_entities))
         if len({row[0] for row in identity_cells}) != len(identity_cells):
-            raise ValueError("Identity-template scientific cell IDs must be unique.")
+            raise ValueError(
+                "MixedAdaptationHierarchy.identity_cells must have unique cell IDs; got duplicate IDs"
+            )
         if {row[0] for row in identity_cells} & {
             child for record in ordered for child in record.child_ids
         }:
             raise ValueError(
-                "Identity-template cells cannot also be recorded refinement siblings."
+                "MixedAdaptationHierarchy.identity_cells must exclude refinement siblings; got overlapping IDs"
             )
+        self.records = ordered
+        self.next_cell_id = next_cell_id
+        self.next_vertex_id = next_vertex_id
+        self.retired_entities = retired
+        self.quotient_entities = quotient_entities
+        self.layer_columns = layer_columns
         self.identity_cells = tuple(sorted(identity_cells))
         self.hierarchy_id = canonical_fingerprint(
             {
@@ -196,6 +222,29 @@ class MixedAdaptationHierarchy(StrictModule, NonTrainableState):
                 "identity_cells": self.identity_cells,
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(cls, value: MixedAdaptationHierarchy, /) -> Self:
+        """Rebuild hierarchy state through its constructor validation."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"MixedAdaptationHierarchy.value must have type {cls.__name__} without subclass substitution; got {type(value).__name__}"
+            )
+        rebuilt = cls(
+            value.records,
+            next_cell_id=value.next_cell_id,
+            next_vertex_id=value.next_vertex_id,
+            retired_entities=value.retired_entities,
+            quotient_entities=value.quotient_entities,
+            layer_columns=value.layer_columns,
+            identity_cells=value.identity_cells,
+        )
+        if rebuilt.hierarchy_id != value.hierarchy_id:
+            raise ValueError(
+                f"MixedAdaptationHierarchy.hierarchy_id must match rebuilt state; got {value.hierarchy_id}"
+            )
+        return rebuilt
 
 
 class MixedAdaptationEvidence(NamedTuple):
@@ -215,8 +264,8 @@ class MixedAdaptationEvidence(NamedTuple):
             None
             if record is None
             else (
-                record.work,
-                record.memory,
+                record.work_counters,
+                record.memory_counters,
                 record.status,
                 record.host_storage_live_bytes_upper,
                 record.host_storage_peak_bytes_upper,
@@ -245,7 +294,7 @@ class MixedAdaptationEvidence(NamedTuple):
 
 
 class MixedAdaptationOutcome(NamedTuple):
-    edit: CellTopologyEdit
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit
     hierarchy: MixedAdaptationHierarchy
     evidence: MixedAdaptationEvidence
 
@@ -264,10 +313,19 @@ def _reference(kind: str) -> np.ndarray:
     return np.asarray(reference_cell_topology(kind).vertices, dtype=np.float64)
 
 
-def _templates(kind: str, axial: bool) -> tuple[_Template, ...]:
-    from .._meshcore import mixed_refinement_templates
+def _templates(
+    kind: str,
+    axial: bool,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ticket: NativeBatchTicket,
+) -> tuple[_Template, ...]:
 
-    references = mixed_refinement_templates(kind, axial=axial)
+    with ticket.native_target():
+        references = _owner_phydrax__meshcore.mixed_refinement_templates(
+            kind, axial=axial
+        )
     order = list(range(len(references)))
     diagonals: dict[int, tuple[tuple[int, int], tuple[int, int]]] = {}
     if kind == "tetrahedron":
@@ -296,12 +354,9 @@ def _templates(kind: str, axial: bool) -> tuple[_Template, ...]:
 
 
 def _interior_diagonal_key(
-    template: _Template, vertices: np.ndarray
+    diagonal: tuple[tuple[int, int], tuple[int, int]], vertices: np.ndarray
 ) -> tuple[tuple[int, ...], ...]:
-    """Canonical opposite midpoint-edge identities, independent of local numbering."""
-    diagonal = template.interior_diagonal
-    if diagonal is None:
-        raise RuntimeError("A red tetrahedral template lost its interior diagonal.")
+    """Return lexicographically ordered opposite midpoint-edge identities."""
     return tuple(
         sorted(
             tuple(sorted((int(vertices[first]), int(vertices[second]))))
@@ -311,14 +366,24 @@ def _interior_diagonal_key(
 
 
 type _FaceSignature = tuple[
-    tuple[ConstructionPointKey | PeriodicConstructionPointKey, ...], ...
+    tuple[
+        _dependency_phydrax_meshing__periodic.ConstructionPointKey
+        | _dependency_phydrax_meshing__periodic.PeriodicConstructionPointKey,
+        ...,
+    ],
+    ...,
 ]
 
 
 def _point_keys(
-    kind: str, ids: np.ndarray, points: np.ndarray
-) -> tuple[ConstructionPointKey, ...]:
-    """Construction identities use exact reference fractions, not rounded weights."""
+    kind: str,
+    ids: np.ndarray,
+    points: np.ndarray,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[_dependency_phydrax_meshing__periodic.ConstructionPointKey, ...]:
+    """Build construction identities from rational reference fractions."""
     if kind == "triangle":
         topology = reference_cell_topology(kind)
         if (
@@ -331,9 +396,9 @@ def _point_keys(
             or np.any(np.sum(points, axis=1) > 1.0)
         ):
             raise ValueError(
-                "Triangle construction keys require complete canonical simplex reference corners."
+                "mixed_adaptation.reference_corners must contain every simplex corner; got an incomplete corner set"
             )
-    # Admit exact keys using input-derived Fraction bit/storage bounds.
+    # Admit rational keys using input-derived Fraction bit/storage bounds.
     bits = max(
         (
             abs(first).bit_length() + second.bit_length()
@@ -349,18 +414,20 @@ def _point_keys(
     digits = (
         occurrences * bits + sys.int_info.bits_per_digit - 1
     ) // sys.int_info.bits_per_digit
-    fraction = sys.getsizeof(Fraction(0)) + 2 * (
-        sys.getsizeof(0) + digits * sys.int_info.sizeof_digit
+    fraction = 96 + 2 * (32 + digits * sys.int_info.sizeof_digit)
+    integer = max(
+        ((32 + (abs(int(value)).bit_length() + 7) // 8) for value in ids), default=32
     )
-    integer = max((sys.getsizeof(int(value)) for value in ids), default=sys.getsizeof(0))
-    key_bytes = sys.getsizeof(()) + ids.size * (
-        3 * np.dtype(np.intp).itemsize + sys.getsizeof(()) + integer + fraction
+    key_bytes = 64 + ids.size * (3 * np.dtype(np.intp).itemsize + 64 + integer + fraction)
+    _reserve_host_storage(
+        points.shape[0] * (key_bytes + fraction * points.shape[1]),
+        scope=scope,
+        budget=budget,
     )
-    _reserve_host_storage(points.shape[0] * (key_bytes + fraction * points.shape[1]))
     result = []
     corners = reference_cell_topology(kind).vertices
     for point in points:
-        values = tuple(Fraction(float(value)) for value in point)
+        values = rational_vector(point)
         x, y = values[:2]
         if kind == "quadrilateral":
             weights = ((1 - x) * (1 - y), x * (1 - y), x * y, (1 - x) * y)
@@ -396,7 +463,9 @@ def _point_keys(
                     z,
                 )
             else:
-                raise ValueError("Unsupported mixed corner map.")
+                raise ValueError(
+                    "mixed_adaptation.cell_kind must have a supported corner map; got an unsupported reference basis"
+                )
         result.append(
             tuple(
                 sorted(
@@ -410,9 +479,12 @@ def _point_keys(
 
 
 def _periodic_facet_signatures(
-    orbits: PeriodicConstructionOrbits,
-    cell: _Cell,
+    orbits: _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits,
+    cell: Cell,
     template: _Template,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[_FaceSignature, ...]:
     topology = reference_cell_topology(cell.kind)
     facets = topology.entities[topology.dimension - 1]
@@ -421,9 +493,13 @@ def _periodic_facet_signatures(
         orbits.face(cell.vertices[np.asarray(local, dtype=np.int32)])[1]
         for local in facets
     ]
-    faces: list[list[tuple[PeriodicConstructionPointKey, ...]]] = [[] for _ in facets]
+    faces: list[
+        list[
+            tuple[_dependency_phydrax_meshing__periodic.PeriodicConstructionPointKey, ...]
+        ]
+    ] = [[] for _ in facets]
     for child in template.children:
-        points = _point_keys(cell.kind, cell.vertices, child)
+        points = _point_keys(cell.kind, cell.vertices, child, scope=scope, budget=budget)
         for face in facets:
             keys = tuple(points[index] for index in face)
             vertices = {identifier for key in keys for identifier, _ in key}
@@ -438,15 +514,22 @@ def _periodic_facet_signatures(
 
 
 def _facet_signatures(
-    kind: str, ids: np.ndarray, template: _Template
+    kind: str,
+    ids: np.ndarray,
+    template: _Template,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[_FaceSignature, ...]:
-    """Canonical child subfaces lying on each parent facet, in facet order."""
+    """Return sorted child subfaces on each parent facet, in facet order."""
     topology = reference_cell_topology(kind)
     facets = topology.entities[topology.dimension - 1]
     supports = [set(int(ids[index]) for index in facet) for facet in facets]
-    faces: list[list[tuple[ConstructionPointKey, ...]]] = [[] for _ in facets]
+    faces: list[
+        list[tuple[_dependency_phydrax_meshing__periodic.ConstructionPointKey, ...]]
+    ] = [[] for _ in facets]
     for child in template.children:
-        points = _point_keys(kind, ids, child)
+        points = _point_keys(kind, ids, child, scope=scope, budget=budget)
         for face in facets:
             keys = tuple(points[index] for index in face)
             vertices = {identifier for key in keys for identifier, _ in key}
@@ -456,7 +539,7 @@ def _facet_signatures(
     return tuple(tuple(sorted(values)) for values in faces)
 
 
-class _Cell(NamedTuple):
+class Cell(NamedTuple):
     identifier: int
     name: str
     kind: str
@@ -464,35 +547,58 @@ class _Cell(NamedTuple):
     cell_class: int
 
 
+class _MixedClosure(StrictModule):
+    chosen: list[_Template]
+    steps: int
+    work: int
+
+
 def _closure(
-    cells: list[_Cell],
+    cells: list[Cell],
     domains: list[list[_Template]],
     maximum_steps: int,
     maximum_work_units: int,
-    orbits: PeriodicConstructionOrbits | None = None,
-) -> tuple[list[_Template], int, int]:
-    # The chosen table is retained by the caller; only actual closure indices,
-    # lazy signatures and live backtracking copies live in this workspace.
-    native = current_native_execution_budget()
-    workspace = nullcontext() if native is None else native.host_workspace()
-    with workspace:
-        return _solve_closure(cells, domains, maximum_steps, maximum_work_units, orbits)
+    orbits: _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits
+    | None = None,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _MixedClosure:
+    """Solve one host closure stage on the supplied native ticket."""
+    # The chosen table is retained by the caller; only closure indices,
+    # lazy signatures, and live backtracking copies occupy this workspace.
+    with budget.temporary_scope():
+        return _solve_closure(
+            cells,
+            domains,
+            maximum_steps,
+            maximum_work_units,
+            orbits,
+            scope=scope,
+            budget=budget,
+        )
 
 
-def _solve_closure(
-    cells: list[_Cell],
-    domains: list[list[_Template]],
-    maximum_steps: int,
-    maximum_work_units: int,
-    orbits: PeriodicConstructionOrbits | None,
-) -> tuple[list[_Template], int, int]:
+class _ClosureInterfaces(StrictModule):
+    interfaces: list[list[tuple[int, int]]]
+
+
+def _prepare_closure_interfaces(
+    cells: list[Cell],
+    orbits: _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits | None,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _ClosureInterfaces:
     faces: dict[
-        tuple[int, ...] | PeriodicConstructionPointKey, list[tuple[int, int]]
+        tuple[int, ...]
+        | _dependency_phydrax_meshing__periodic.PeriodicConstructionPointKey,
+        list[tuple[int, int]],
     ] = {}
     for index, cell in enumerate(cells):
         topology = reference_cell_topology(cell.kind)
         for facet, local in enumerate(topology.entities[topology.dimension - 1]):
-            _reserve_host_storage(256 + 64 * len(local))
+            _reserve_host_storage(256 + 64 * len(local), scope=scope, budget=budget)
             corners = cell.vertices[np.asarray(local, dtype=np.int32)]
             key = (
                 tuple(sorted(int(value) for value in corners))
@@ -501,65 +607,116 @@ def _solve_closure(
             )
             faces.setdefault(key, []).append((index, facet))
     if any(len(owners) > 2 for owners in faces.values()):
-        raise MixedTemplateClosureError("Source has a nonmanifold shared face.")
-    _reserve_host_storage(sys.getsizeof([]) + 2 * len(faces) * np.dtype(np.intp).itemsize)
+        raise MixedTemplateClosureError(
+            "mixed_adaptation.mesh must have manifold shared faces; got a face with more than two owners"
+        )
+    _reserve_host_storage(
+        64 + 2 * len(faces) * np.dtype(np.intp).itemsize, scope=scope, budget=budget
+    )
     interfaces = [owners for owners in faces.values() if len(owners) == 2]
+    return _ClosureInterfaces(interfaces)
+
+
+class _ClosureSignature(StrictModule):
+    value: tuple[_FaceSignature, ...]
+    work: int
+
+
+def _prepare_closure_signature(
+    cell: Cell,
+    template: _Template,
+    work: int,
+    maximum_work_units: int,
+    orbits: _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits | None,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _ClosureSignature:
+    work += template.children.shape[0] * len(
+        reference_cell_topology(cell.kind).entities[
+            reference_cell_topology(cell.kind).dimension - 1
+        ]
+    )
+    if work > maximum_work_units:
+        raise MixedTemplateClosureError(
+            "mixed_adaptation.maximum_work_units must admit signature preparation; got a work budget refusal"
+        )
+    budget.reserve(
+        template.children.shape[0]
+        * len(
+            reference_cell_topology(cell.kind).entities[
+                reference_cell_topology(cell.kind).dimension - 1
+            ]
+        )
+    )
+    _reserve_host_storage(
+        256
+        + 64
+        * template.children.shape[0]
+        * len(
+            reference_cell_topology(cell.kind).entities[
+                reference_cell_topology(cell.kind).dimension - 1
+            ]
+        ),
+        scope=scope,
+        budget=budget,
+    )
+    value = (
+        _facet_signatures(cell.kind, cell.vertices, template, scope=scope, budget=budget)
+        if orbits is None
+        else _periodic_facet_signatures(
+            orbits, cell, template, scope=scope, budget=budget
+        )
+    )
+    return _ClosureSignature(value, work)
+
+
+# Recursive closure shares lazy signatures, monotone work/step charges, and ordered branch rollback as one invariant.
+def _solve_closure(
+    cells: list[Cell],
+    domains: list[list[_Template]],
+    maximum_steps: int,
+    maximum_work_units: int,
+    orbits: _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits | None,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _MixedClosure:
+    interfaces = _prepare_closure_interfaces(
+        cells, orbits, scope=scope, budget=budget
+    ).interfaces
     signatures: dict[tuple[int, int], tuple[_FaceSignature, ...]] = {}
     steps, work = 0, 0
 
     def signature(index: int, candidate: int, facet: int, /) -> _FaceSignature:
-        # Signatures are evaluated only for candidates the solve actually compares;
-        # each evaluation is charged children x facets before it runs.
         nonlocal work
         if (index, candidate) not in signatures:
-            cell, template = cells[index], domains[index][candidate]
-            work += template.children.shape[0] * len(
-                reference_cell_topology(cell.kind).entities[
-                    reference_cell_topology(cell.kind).dimension - 1
-                ]
+            prepared = _prepare_closure_signature(
+                cells[index],
+                domains[index][candidate],
+                work,
+                maximum_work_units,
+                orbits,
+                scope=scope,
+                budget=budget,
             )
-            if work > maximum_work_units:
-                raise MixedTemplateClosureError(
-                    "Mixed signature preparation exhausted its work budget."
-                )
-            _charge_host_work(
-                template.children.shape[0]
-                * len(
-                    reference_cell_topology(cell.kind).entities[
-                        reference_cell_topology(cell.kind).dimension - 1
-                    ]
-                )
-            )
-            _reserve_host_storage(
-                256
-                + 64
-                * template.children.shape[0]
-                * len(
-                    reference_cell_topology(cell.kind).entities[
-                        reference_cell_topology(cell.kind).dimension - 1
-                    ]
-                )
-            )
-            signatures[index, candidate] = (
-                _facet_signatures(cell.kind, cell.vertices, template)
-                if orbits is None
-                else _periodic_facet_signatures(orbits, cell, template)
-            )
+            work = prepared.work
+            signatures[index, candidate] = prepared.value
         return signatures[index, candidate][facet]
 
     def preferred_assignment(choices: list[list[int]]) -> list[int] | None:
         nonlocal work
         _reserve_host_storage(
-            sys.getsizeof([]) + 2 * len(choices) * np.dtype(np.intp).itemsize
+            64 + 2 * len(choices) * np.dtype(np.intp).itemsize, scope=scope, budget=budget
         )
         preferred = [values[0] for values in choices]
         for (left, lf), (right, rf) in interfaces:
             work += 2
             if work > maximum_work_units:
                 raise MixedTemplateClosureError(
-                    "Mixed face closure exhausted its work budget."
+                    "mixed_adaptation.maximum_work_units must admit face closure; got a work budget refusal"
                 )
-            _charge_host_work(2)
+            budget.reserve(2)
             if signature(left, preferred[left], lf) != signature(
                 right, preferred[right], rf
             ):
@@ -576,22 +733,25 @@ def _solve_closure(
             steps += 1
             if steps > maximum_steps:
                 raise MixedTemplateClosureError(
-                    "Mixed face closure exhausted its iteration budget."
+                    "mixed_adaptation.maximum_closure_steps must admit face closure; got an iteration budget refusal"
                 )
+            budget.ticket.checkpoint()
             changed = False
             for (left, lf), (right, rf) in interfaces:
                 work += len(choices[left]) + len(choices[right])
                 if work > maximum_work_units:
                     raise MixedTemplateClosureError(
-                        "Mixed face closure exhausted its work budget."
+                        "mixed_adaptation.maximum_work_units must admit face closure; got a work budget refusal"
                     )
-                _charge_host_work(len(choices[left]) + len(choices[right]))
+                budget.reserve(len(choices[left]) + len(choices[right]))
                 for first, ff, second, sf in (
                     (left, lf, right, rf),
                     (right, rf, left, lf),
                 ):
                     _reserve_host_storage(
-                        256 + 64 * (len(choices[first]) + len(choices[second]))
+                        256 + 64 * (len(choices[first]) + len(choices[second])),
+                        scope=scope,
+                        budget=budget,
                     )
                     allowed = {signature(second, value, sf) for value in choices[second]}
                     retained = [
@@ -614,43 +774,46 @@ def _solve_closure(
             return [values[0] for values in choices]
         for candidate in choices[unresolved]:
             branch_bytes = (
-                sys.getsizeof([])
+                64
                 + 2 * len(choices) * np.dtype(np.intp).itemsize
-                + sum(sys.getsizeof(values) for values in choices)
+                + sum((64 + 16 * len(values)) for values in choices)
             )
-            _reserve_host_storage(branch_bytes)
+            _reserve_host_storage(branch_bytes, scope=scope, budget=budget)
             branch = [values.copy() for values in choices]
             branch[unresolved] = [candidate]
             try:
                 result = solve(branch)
             finally:
                 del branch
-                _release_host_storage(branch_bytes)
+                budget.release_temporary_storage(branch_bytes)
             if result is not None:
                 return result
         return None
 
     _reserve_host_storage(
-        sys.getsizeof([])
+        64
         + 2 * len(domains) * np.dtype(np.intp).itemsize
         + sum(
-            sys.getsizeof([])
-            + 2 * len(values) * np.dtype(np.intp).itemsize
-            + len(values) * sys.getsizeof(0)
+            64 + 2 * len(values) * np.dtype(np.intp).itemsize + len(values) * 32
             for values in domains
-        )
+        ),
+        scope=scope,
+        budget=budget,
     )
     result = solve([list(range(len(values))) for values in domains])
     if result is None:
         raise MixedTemplateClosureError(
-            "No family-preserving template matches all oriented shared-face subdivisions."
+            "mixed_adaptation.templates must match oriented shared-face subdivisions; got no compatible family-preserving assignment"
         )
-    return [domains[index][value] for index, value in enumerate(result)], steps, work
+    return _MixedClosure(
+        [domains[index][value] for index, value in enumerate(result)], steps, work
+    )
 
 
 def _shared_faces(
-    blocks: tuple[TopologyEditBlock, ...], vertex_ids: np.ndarray
-) -> SharedFaceWitnesses:
+    blocks: tuple[_dependency_phydrax_meshing__topology_edit.TopologyEditBlock, ...],
+    vertex_ids: np.ndarray,
+) -> _dependency_phydrax_meshing__topology_edit.SharedFaceWitnesses:
     owners: dict[tuple[int, ...], list[tuple[int, int, tuple[int, ...]]]] = {}
     for block in blocks:
         for identifier, row in zip(block.cell_ids, block.cells, strict=True):
@@ -665,7 +828,7 @@ def _shared_faces(
     for index, (left, right) in enumerate(paired):
         action = facet_orientation_between(left[2], right[2])
         permutations[index, : len(action.permutation)] = action.permutation
-    return SharedFaceWitnesses(
+    return _dependency_phydrax_meshing__topology_edit.SharedFaceWitnesses(
         np.asarray([value[0][0] for value in paired], dtype=np.int64),
         np.asarray([value[0][1] for value in paired], dtype=np.int32),
         np.asarray([value[1][0] for value in paired], dtype=np.int64),
@@ -674,8 +837,8 @@ def _shared_faces(
     )
 
 
-class _CoarsenPatch(NamedTuple):
-    restored: list[_Cell]
+class CoarsenPatch(StrictModule):
+    restored: list[Cell]
     removed: set[int]
     fine: list[int]
     parents: list[int]
@@ -683,23 +846,28 @@ class _CoarsenPatch(NamedTuple):
     source_support: dict[int, set[int]]
 
 
-def _coarsen_patch(
-    cells: list[_Cell],
-    records: tuple[_Sibling, ...],
+class _CoarsenCandidates(StrictModule):
+    active: dict[int, Cell]
+    candidates: list[tuple[Sibling, set[int]]]
+
+
+def _admit_coarsen_candidates(
+    cells: list[Cell],
+    records: tuple[Sibling, ...],
     marks: set[int],
     protected: set[int],
     blocked: set[int],
-    vertex_ids: np.ndarray,
-    orbits: PeriodicConstructionOrbits | None = None,
+    orbits: _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits | None,
     *,
-    column_members: dict[int, set[int]],
-    unchanged: set[int],
-) -> _CoarsenPatch:
-    """Close complete sibling patches jointly, including shared face siblings."""
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _CoarsenCandidates:
     active = {cell.identifier: cell for cell in cells}
     candidates = []
     for record in records:
-        _reserve_host_storage(sys.getsizeof(set()) + 64 * len(record.child_ids))
+        _reserve_host_storage(
+            256 + 64 * len(record.child_ids), scope=scope, budget=budget
+        )
         # A physical column is one refinement/coarsening cohort, even when its
         # intervals do not share a face (for example, separate material blocks).
         # Every live column interval participates unless its unchanged SCI
@@ -718,7 +886,7 @@ def _coarsen_patch(
                 record.periodic_shifts
             ) != len(record.parent_vertices):
                 raise MixedTemplateClosureError(
-                    "Periodic siblings lack their recorded source-corner orbits."
+                    "mixed_adaptation.hierarchy.periodic_roots must align with parent corners; got missing orbit data"
                 )
             for vertex, root, shift in zip(
                 record.parent_vertices,
@@ -732,13 +900,86 @@ def _coarsen_patch(
                     or not np.array_equal(orbits.vertices[vertex][1], shift)
                 ):
                     raise MixedTemplateClosureError(
-                        "Periodic sibling source-corner orbits changed since refinement."
+                        "mixed_adaptation.hierarchy.periodic_roots must retain source-corner orbits; got changed orbit data"
                     )
         discarded = set(
             int(value) for child in siblings for value in active[child].vertices
         ) - set(record.parent_vertices)
         if not discarded & protected:
             candidates.append((record, discarded))
+    return _CoarsenCandidates(active, candidates)
+
+
+def _restore_coarsen_candidates(
+    active: dict[int, Cell],
+    candidates: list[tuple[Sibling, set[int]]],
+    vertex_ids: np.ndarray,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> CoarsenPatch:
+    restored, removed = [], set()
+    fine, parents, references = [], [], []
+    source_support = {int(identifier): {int(identifier)} for identifier in vertex_ids}
+    for record, _ in candidates:
+        restored.append(
+            Cell(
+                record.parent_id,
+                record.block_name,
+                record.cell_kind,
+                np.asarray(record.parent_vertices, dtype=np.int64),
+                record.cell_class,
+            )
+        )
+        removed.update(record.child_ids)
+        for child, reference in zip(record.child_ids, record.references, strict=True):
+            corners = np.asarray(reference, dtype=np.float64)
+            for identifier, key in zip(
+                active[child].vertices,
+                _point_keys(
+                    record.cell_kind,
+                    np.asarray(record.parent_vertices, dtype=np.int64),
+                    corners,
+                    scope=scope,
+                    budget=budget,
+                ),
+                strict=True,
+            ):
+                source_support[int(identifier)] = {vertex for vertex, _ in key}
+            fine.append(child)
+            parents.append(record.parent_id)
+            references.append(corners)
+    return CoarsenPatch(restored, removed, fine, parents, references, source_support)
+
+
+@checked
+def coarsen_patch(
+    cells: list[Cell],
+    records: tuple[Sibling, ...],
+    marks: set[int],
+    protected: set[int],
+    blocked: set[int],
+    vertex_ids: np.ndarray,
+    orbits: _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits
+    | None = None,
+    *,
+    column_members: dict[int, set[int]],
+    unchanged: set[int],
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> CoarsenPatch:
+    """Restore sibling patches jointly across shared faces and physical columns."""
+    admitted = _admit_coarsen_candidates(
+        cells,
+        records,
+        marks,
+        protected,
+        blocked,
+        orbits,
+        scope=scope,
+        budget=budget,
+    )
+    candidates = admitted.candidates
     changed = True
     column_children = {
         column: members - unchanged for column, members in column_members.items()
@@ -750,7 +991,9 @@ def _coarsen_patch(
             * (
                 sum(len(record.child_ids) for record, _ in candidates)
                 + sum(cell.vertices.size for cell in cells)
-            )
+            ),
+            scope=scope,
+            budget=budget,
         )
         removed_candidates = {
             identifier for record, _ in candidates for identifier in record.child_ids
@@ -789,36 +1032,13 @@ def _coarsen_patch(
         ]
         changed = len(retained) != len(candidates)
         candidates = retained
-    restored, removed = [], set()
-    fine, parents, references = [], [], []
-    source_support = {int(identifier): {int(identifier)} for identifier in vertex_ids}
-    for record, _ in candidates:
-        restored.append(
-            _Cell(
-                record.parent_id,
-                record.block_name,
-                record.cell_kind,
-                np.asarray(record.parent_vertices, dtype=np.int64),
-                record.cell_class,
-            )
-        )
-        removed.update(record.child_ids)
-        for child, reference in zip(record.child_ids, record.references, strict=True):
-            corners = np.asarray(reference, dtype=np.float64)
-            for identifier, key in zip(
-                active[child].vertices,
-                _point_keys(
-                    record.cell_kind,
-                    np.asarray(record.parent_vertices, dtype=np.int64),
-                    corners,
-                ),
-                strict=True,
-            ):
-                source_support[int(identifier)] = {vertex for vertex, _ in key}
-            fine.append(child)
-            parents.append(record.parent_id)
-            references.append(corners)
-    return _CoarsenPatch(restored, removed, fine, parents, references, source_support)
+    return _restore_coarsen_candidates(
+        admitted.active,
+        candidates,
+        vertex_ids,
+        scope=scope,
+        budget=budget,
+    )
 
 
 def _protected_entity_keys(
@@ -828,27 +1048,36 @@ def _protected_entity_keys(
     if array.size == 0:
         return set()
     if array.ndim != 2 or not np.issubdtype(array.dtype, np.integer):
-        raise ValueError("Protected subdivision keys must be integer vertex-ID rows.")
+        raise ValueError(
+            "mixed_adaptation.protected_entity_keys must contain integer vertex-ID rows; got an incompatible array"
+        )
     keys = {tuple(sorted(int(value) for value in row if value >= 0)) for row in array}
     available = {
         tuple(int(value) for value in row if value >= 0)
-        for row in entity_keys(mesh, dimension)
+        for row in entity_keys_owner.entity_keys(mesh, dimension)
     }
     if not keys.issubset(available):
-        raise ValueError("Protected subdivision keys must name current source entities.")
+        raise ValueError(
+            "mixed_adaptation.protected_entity_keys must name current source entities; got unknown keys"
+        )
     return keys
 
 
 def _permitted_subdivision(
-    cell: _Cell,
+    cell: Cell,
     template: _Template,
     edges: set[tuple[int, ...]],
     faces: set[tuple[int, ...]],
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> bool:
     if not edges and not faces:
         return True
     for child in template.children:
-        for key in _point_keys(cell.kind, cell.vertices, child):
+        for key in _point_keys(
+            cell.kind, cell.vertices, child, scope=scope, budget=budget
+        ):
             if len(key) == 2 and tuple(identifier for identifier, _ in key) in edges:
                 return False
     if faces:
@@ -859,36 +1088,41 @@ def _permitted_subdivision(
             if tuple(sorted(int(cell.vertices[index]) for index in local)) in faces
         ]
         if protected:
-            candidate = _facet_signatures(cell.kind, cell.vertices, template)
+            candidate = _facet_signatures(
+                cell.kind, cell.vertices, template, scope=scope, budget=budget
+            )
             identity = _facet_signatures(
                 cell.kind,
                 cell.vertices,
                 _Template("identity", _reference(cell.kind)[None], None),
+                scope=scope,
+                budget=budget,
             )
             if any(candidate[facet] != identity[facet] for facet in protected):
                 return False
     return True
 
 
-def _reserve_host_storage(amount: int, /) -> None:
-    """Admit this owner's next bounded Python allocation before it grows."""
-    workspace = current_native_host_workspace()
-    if workspace is not None:
-        workspace.set_bound(workspace.bound + amount)
+def _reserve_host_storage(
+    amount: int,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> None:
+    """Count declared live host storage locally before allocation."""
+
+    retained = budget.storage_ticket
+    baseline = 0 if retained is None else retained.bytes_upper
+    proposed = max(
+        0, budget.retained_basis_bytes + budget.temporary_bytes_upper + amount - baseline
+    )
+    if proposed > budget.ticket.bytes_upper:
+        budget.ticket.refuse(0, bytes_upper=proposed)
+    budget.reserve(0, amount)
 
 
-def _release_host_storage(amount: int, /) -> None:
-    workspace = current_native_host_workspace()
-    if workspace is not None:
-        workspace.set_bound(workspace.bound - amount)
-
-
-def _charge_host_work(amount: int, /) -> None:
-    native = current_native_execution_budget()
-    if native is not None:
-        native.charge(work=amount)
-
-
+@checked
 def adapt_mixed_mesh(
     mesh: CellMesh,
     *,
@@ -906,49 +1140,37 @@ def adapt_mixed_mesh(
     maximum_work_units: int = 1 << 26,
     maximum_scratch_bytes: int = MeshingLimits().maximum_scratch_bytes,
 ) -> MixedAdaptationOutcome:
-    """Build an edit under its one original native work/wall/host-storage owner."""
-    defaults = MeshingLimits()
-    native = current_native_execution_budget()
-    scope: AbstractContextManager[NativeExecutionBudget]
+    """Build a mixed edit within its explicit native request allowance."""
     if (
         isinstance(maximum_scratch_bytes, bool)
         or not isinstance(maximum_scratch_bytes, (int, np.integer))
         or maximum_scratch_bytes < 0
     ):
         raise ValueError(
-            "Mixed scratch storage requires a nonnegative explicit integer bound."
+            "mixed_adaptation.maximum_scratch_bytes must be a nonnegative integer; got an invalid bound"
         )
-    owned_scope = native is None or maximum_scratch_bytes < native._limits[3]
-    if native is None:
-        scope = NativeExecutionBudget(
-            max_work=maximum_work_units,
-            max_geometry_queries=defaults.maximum_geometry_queries,
-            max_cavity_cells=defaults.maximum_cavity_cells,
-            max_scratch_bytes=maximum_scratch_bytes,
-            max_wall_seconds=defaults.maximum_wall_seconds,
-        )
-    elif owned_scope:
-        remaining = native.remaining()
-        scope = NativeExecutionBudget(
-            max_work=min(maximum_work_units, remaining.remaining_work_units),
-            max_geometry_queries=remaining.remaining_geometry_queries,
-            max_cavity_cells=remaining.maximum_cavity_cells,
-            max_scratch_bytes=min(
-                maximum_scratch_bytes, remaining.remaining_scratch_bytes
+    limits = MeshingLimits(
+        maximum_work_units=maximum_work_units,
+        maximum_scratch_bytes=maximum_scratch_bytes,
+    )
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        remaining = scope.remaining()
+        ticket = scope.batch(
+            min(maximum_work_units, remaining.remaining_work_units),
+            queries_upper=min(
+                limits.maximum_geometry_queries, remaining.remaining_geometry_queries
             ),
-            max_wall_seconds=remaining.remaining_wall_seconds,
+            cavity_upper=min(
+                limits.maximum_cavity_cells, remaining.remaining_cavity_cells
+            ),
+            bytes_upper=min(maximum_scratch_bytes, remaining.remaining_managed_bytes),
         )
-    else:
-        scope = nullcontext(native)
-    with scope as budget:
-        if budget is None:
-            raise RuntimeError("Mixed adaptation lost its native resource owner.")
-        workspace = (
-            nullcontext(current_native_host_workspace())
-            if current_native_host_workspace() is not None
-            else budget.host_workspace()
+        budget = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=maximum_work_units,
+            maximum_memory_bytes=maximum_scratch_bytes,
         )
-        with workspace:
+        with ticket, budget.activate(), budget.temporary_scope():
             outcome = _adapt_mixed_mesh(
                 mesh,
                 refine_cell_ids=refine_cell_ids,
@@ -963,85 +1185,211 @@ def adapt_mixed_mesh(
                 maximum_cells=maximum_cells,
                 maximum_closure_steps=maximum_closure_steps,
                 maximum_work_units=maximum_work_units,
+                scope=scope,
+                budget=budget,
+                ticket=ticket,
             )
-    if owned_scope:
-        if budget.evidence is None:
-            raise RuntimeError(
-                "Standalone mixed adaptation lacks its ended original resource evidence."
-            )
-        outcome = outcome._replace(
-            evidence=outcome.evidence._replace(
-                execution_evidence=NativeExecutionRecord(budget.evidence)
-            )
+    return outcome._replace(
+        evidence=outcome.evidence._replace(
+            execution_evidence=NativeExecutionRecord(scope.completed_evidence())
         )
-    return outcome
+    )
 
 
-def _adapt_mixed_mesh(
-    mesh: CellMesh,
-    *,
-    refine_cell_ids: ArrayLike,
-    coarsen_cell_ids: ArrayLike | None,
-    hierarchy: MixedAdaptationHierarchy | None,
-    cell_classes: ArrayLike | None,
-    protected_vertex_ids: ArrayLike | None,
-    protected_cell_ids: ArrayLike | None,
-    protected_edge_keys: ArrayLike | None,
-    protected_face_keys: ArrayLike | None,
-    layer_columns: MixedLayerColumns | None,
-    maximum_cells: int,
-    maximum_closure_steps: int,
-    maximum_work_units: int,
-) -> MixedAdaptationOutcome:
-    """Build one complete mixed edit; canonical adaptation owns acceptance/rollback."""
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("Mixed adaptation requires a CellMesh.")
+class _MixedRequest(StrictModule):
+    mesh: CellMesh
+    refine_cell_ids: ArrayLike
+    coarsen_cell_ids: ArrayLike | None
+    hierarchy: MixedAdaptationHierarchy | None
+    cell_classes: ArrayLike | None
+    protected_vertex_ids: ArrayLike | None
+    protected_cell_ids: ArrayLike | None
+    protected_edge_keys: ArrayLike | None
+    protected_face_keys: ArrayLike | None
+    layer_columns: MixedLayerColumns | None
+    maximum_cells: int
+    maximum_closure_steps: int
+    maximum_work_units: int
+
+
+class _MixedControls(StrictModule):
+    dimension: int
+    layer_columns: MixedLayerColumns | None
+    maximum_cells: int
+    maximum_closure_steps: int
+    maximum_work_units: int
+
+
+class _MixedSource(StrictModule):
+    vertex_ids: np.ndarray
+    orbits: _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits | None
+    edges: set[tuple[int, ...]]
+    faces: set[tuple[int, ...]]
+    protected_boundary_vertices: set[int]
+    coarsen_cell_ids: ArrayLike
+    protected_vertex_ids: ArrayLike
+    protected_cell_ids: ArrayLike
+
+
+class _MixedMarks(StrictModule):
+    ids: np.ndarray
+    refine: set[int]
+    requested_refine: set[int]
+    coarsen: set[int]
+    protected: set[int]
+    blocked: set[int]
+    cells: list[Cell]
+    records: tuple[Sibling, ...]
+
+
+class _MixedAncestry(StrictModule):
+    sibling_ids: set[int]
+    identity_bank: set[tuple[int, str, str, tuple[int, ...], int]]
+    unchanged_marks: set[int]
+    intervals: dict[int, int]
+    columns: dict[int, int]
+    identity_work: int
+    column_members: dict[int, set[int]]
+    unchanged: set[int]
+
+
+class _MixedCoarsening(StrictModule):
+    removed: set[int]
+    restored_ids: set[int]
+    coarsening_fine: list[int]
+    coarsening_parent: list[int]
+    coarsening_reference: list[np.ndarray]
+    source_support: dict[int, set[int]]
+    working: list[Cell]
+
+
+class _MixedDomains(StrictModule):
+    domains: list[list[_Template]]
+
+
+class _MixedChildren(StrictModule):
+    next_cell: int
+    next_vertex: int
+    points: dict[_dependency_phydrax_meshing__periodic.ConstructionPointKey, int]
+    stencils: dict[int, _dependency_phydrax_meshing__periodic.ConstructionPointKey]
+    coordinates: dict[int, np.ndarray]
+    target: dict[str, list[tuple[int, np.ndarray]]]
+    target_kinds: dict[str, str]
+    refinements: list[int]
+    parents: list[int]
+    references: list[np.ndarray]
+    new_records: list[Sibling]
+    refined: list[int]
+    relation_sources: list[int]
+    relation_targets: list[int]
+    relation_kinds: list[int]
+    next_columns: dict[int, int]
+    next_intervals: dict[int, int]
+    successor_identities: list[tuple[int, str, str, tuple[int, ...], int]]
+
+
+class _MixedAllocation(StrictModule):
+    next_cell: int
+    next_vertex: int
+
+
+class _MixedTopology(StrictModule):
+    used: np.ndarray
+    blocks: tuple[_dependency_phydrax_meshing__topology_edit.TopologyEditBlock, ...]
+    sources: np.ndarray
+    weights: np.ndarray
+    target_coordinates: np.ndarray
+    probe: CellMesh
+    periodic_witness: (
+        _dependency_phydrax_meshing__topology_edit.PeriodicVertexOrbitWitness | None
+    )
+    prescribed: list[_dependency_phydrax_meshing__topology_edit.PrescribedEntityIds]
+    retired: dict[tuple[int, tuple[int, ...]], int]
+
+
+class _MixedRelations(StrictModule):
+    relations: list[_dependency_phydrax_meshing__topology_edit.EntityRelations]
+
+
+class _MixedPublication(StrictModule):
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit
+    successor: MixedAdaptationHierarchy
+    evidence: MixedAdaptationEvidence
+
+
+def _validate_mixed_controls(
+    request: _MixedRequest,
+) -> _MixedControls:
+    mesh = request.mesh
+    hierarchy = request.hierarchy
+    layer_columns = request.layer_columns
+    maximum_cells = request.maximum_cells
+    maximum_closure_steps = request.maximum_closure_steps
+    maximum_work_units = request.maximum_work_units
     dimension = mesh.topological_dimension
     if dimension == 2:
         if any(
             block.cell_kind != "quadrilateral" for block in mesh.blocks
         ) or mesh.ambient_dimension not in (2, 3):
             raise ValueError(
-                "Two-dimensional mixed adaptation requires quadrilateral cells in 2D or 3D."
+                "mixed_adaptation.mesh must contain quadrilaterals with ambient dimension 2 or 3; got an incompatible surface mesh"
             )
         if layer_columns is not None:
             raise ValueError(
-                "Layer-column axial semantics are defined only for three-dimensional mixed cells."
+                "mixed_adaptation.layer_columns must accompany three-dimensional cells; got a surface mesh"
             )
     elif dimension != 3 or mesh.ambient_dimension != 3:
         raise ValueError(
-            "Mixed volume adaptation requires three-dimensional coordinates."
+            "mixed_adaptation.mesh must have topological and ambient dimension 3; got an incompatible volume mesh"
         )
-    if hierarchy is not None and not isinstance(hierarchy, MixedAdaptationHierarchy):
-        raise TypeError("hierarchy must be MixedAdaptationHierarchy or None.")
     if layer_columns is None and hierarchy is not None:
         layer_columns = hierarchy.layer_columns
-    if layer_columns is not None and not isinstance(layer_columns, MixedLayerColumns):
-        raise TypeError("layer_columns must be MixedLayerColumns or None.")
-    if any(
-        isinstance(value, bool) or not isinstance(value, (int, np.integer))
-        for value in (maximum_cells, maximum_closure_steps, maximum_work_units)
-    ):
-        raise TypeError("Mixed adaptation budgets must be integers.")
-    if maximum_cells < 1 or maximum_closure_steps < 1 or maximum_work_units < 1:
-        raise ValueError("Mixed adaptation budgets must be positive.")
+    maximum_cells = positive_integer(maximum_cells, "maximum_cells")
+    maximum_closure_steps = positive_integer(
+        maximum_closure_steps, "maximum_closure_steps"
+    )
+    maximum_work_units = positive_integer(maximum_work_units, "maximum_work_units")
+    return _MixedControls(
+        dimension=dimension,
+        layer_columns=layer_columns,
+        maximum_cells=maximum_cells,
+        maximum_closure_steps=maximum_closure_steps,
+        maximum_work_units=maximum_work_units,
+    )
+
+
+def _prepare_mixed_source(
+    request: _MixedRequest,
+    controls: _MixedControls,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _MixedSource:
+    mesh = request.mesh
+    coarsen_cell_ids = request.coarsen_cell_ids
+    protected_vertex_ids = request.protected_vertex_ids
+    protected_cell_ids = request.protected_cell_ids
+    protected_edge_keys = request.protected_edge_keys
+    protected_face_keys = request.protected_face_keys
+    dimension = controls.dimension
     _reserve_host_storage(
-        sys.getsizeof({}) * 12
-        + sys.getsizeof([]) * 20
+        256 * 12
+        + 64 * 20
         + sum(
             block.vertices.size * 8
             + block.cell_count
-            * (sys.getsizeof(()) + len(_Cell._fields) * np.dtype(np.intp).itemsize + 256)
+            * (64 + len(Cell._fields) * np.dtype(np.intp).itemsize + 256)
             for block in mesh.blocks
         )
         + mesh.coordinates.shape[0]
         * (
-            sys.getsizeof(set())
-            + 5 * sys.getsizeof(0)
-            + 3 * sys.getsizeof(())
+            256
+            + 5 * 32
+            + 3 * 64
             + 3 * 128
             + mesh.ambient_dimension * np.dtype(np.float64).itemsize
         ),
+        scope=scope,
+        budget=budget,
     )
     empty_ids = np.zeros((0,), dtype=np.int64)
     coarsen_cell_ids = empty_ids if coarsen_cell_ids is None else coarsen_cell_ids
@@ -1056,10 +1404,16 @@ def _adapt_mixed_mesh(
         empty_ids if protected_face_keys is None else protected_face_keys
     )
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    orbits = None if mesh.periodic_topology is None else PeriodicConstructionOrbits(mesh)
+    orbits = (
+        None
+        if mesh.periodic_topology is None
+        else _dependency_phydrax_meshing__periodic.PeriodicConstructionOrbits(mesh)
+    )
     edges = _protected_entity_keys(mesh, protected_edge_keys, 1)
     if dimension != 3 and np.asarray(protected_face_keys).size:
-        raise ValueError("Protected face signatures are defined only for volume cells.")
+        raise ValueError(
+            "mixed_adaptation.protected_face_keys must accompany volume cells; got face keys on a surface mesh"
+        )
     faces = (
         _protected_entity_keys(mesh, protected_face_keys, 2) if dimension == 3 else set()
     )
@@ -1068,7 +1422,7 @@ def _adapt_mixed_mesh(
             if protected_keys:
                 keys = [
                     tuple(int(value) for value in row if value >= 0)
-                    for row in entity_keys(mesh, degree)
+                    for row in entity_keys_owner.entity_keys(mesh, degree)
                 ]
                 selected = {
                     orbits.face(np.asarray(key, dtype=np.int64))[0]
@@ -1082,6 +1436,32 @@ def _adapt_mixed_mesh(
     protected_boundary_vertices = {
         identifier for key in edges | faces for identifier in key
     }
+    return _MixedSource(
+        vertex_ids=vertex_ids,
+        orbits=orbits,
+        edges=edges,
+        faces=faces,
+        protected_boundary_vertices=protected_boundary_vertices,
+        coarsen_cell_ids=coarsen_cell_ids,
+        protected_vertex_ids=protected_vertex_ids,
+        protected_cell_ids=protected_cell_ids,
+    )
+
+
+def _admit_mixed_marks(
+    request: _MixedRequest,
+    source: _MixedSource,
+) -> _MixedMarks:
+    mesh = request.mesh
+    refine_cell_ids = request.refine_cell_ids
+    coarsen_cell_ids = source.coarsen_cell_ids
+    hierarchy = request.hierarchy
+    cell_classes = request.cell_classes
+    protected_vertex_ids = source.protected_vertex_ids
+    protected_cell_ids = source.protected_cell_ids
+    vertex_ids = source.vertex_ids
+    orbits = source.orbits
+    protected_boundary_vertices = source.protected_boundary_vertices
     ids = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
     )
@@ -1091,7 +1471,9 @@ def _adapt_mixed_mesh(
         else np.asarray(cell_classes, dtype=np.int64)
     )
     if classes.shape != ids.shape:
-        raise ValueError("cell_classes must align with concatenated source cells.")
+        raise ValueError(
+            "mixed_adaptation.cell_classes must align with concatenated source cells; got incompatible rows"
+        )
     refine = set(
         int(value) for value in np.asarray(refine_cell_ids, dtype=np.int64).reshape(-1)
     )
@@ -1101,7 +1483,7 @@ def _adapt_mixed_mesh(
     )
     if refine & coarsen or not (refine | coarsen).issubset(set(ids)):
         raise ValueError(
-            "Refinement/coarsening marks must be disjoint current cell identities."
+            "mixed_adaptation.cell_ids must contain disjoint current refinement and coarsening marks; got overlapping or unknown IDs"
         )
     protected = set(
         int(value)
@@ -1119,9 +1501,13 @@ def _adapt_mixed_mesh(
             if root in protected_roots
         )
     if not blocked.issubset(set(ids)):
-        raise ValueError("Protected mixed cell IDs must name current cells.")
+        raise ValueError(
+            "mixed_adaptation.protected_cell_ids must name current cells; got unknown IDs"
+        )
     if refine & blocked:
-        raise MixedTemplateClosureError("Marked refinement intersects a protected cell.")
+        raise MixedTemplateClosureError(
+            "mixed_adaptation.protected_cell_ids must avoid marked refinement; got a protected marked cell"
+        )
     cells = []
     offset = 0
     for block in mesh.blocks:
@@ -1129,7 +1515,7 @@ def _adapt_mixed_mesh(
             np.asarray(block.vertices), np.asarray(block.global_ids), strict=True
         ):
             cells.append(
-                _Cell(
+                Cell(
                     int(identifier),
                     block.name,
                     block.cell_kind,
@@ -1140,6 +1526,32 @@ def _adapt_mixed_mesh(
             offset += 1
     cells.sort(key=lambda cell: cell.identifier)
     records = () if hierarchy is None else hierarchy.records
+    return _MixedMarks(
+        ids=ids,
+        refine=refine,
+        requested_refine=requested_refine,
+        coarsen=coarsen,
+        protected=protected,
+        blocked=blocked,
+        cells=cells,
+        records=records,
+    )
+
+
+def _admit_mixed_ancestry(
+    request: _MixedRequest,
+    controls: _MixedControls,
+    marks: _MixedMarks,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _MixedAncestry:
+    hierarchy = request.hierarchy
+    layer_columns = controls.layer_columns
+    maximum_work_units = controls.maximum_work_units
+    ids = marks.ids
+    coarsen = marks.coarsen
+    cells = marks.cells
+    records = marks.records
     _reserve_host_storage(
         256
         + 128
@@ -1147,7 +1559,9 @@ def _adapt_mixed_mesh(
             sum(len(record.child_ids) for record in records)
             + (0 if hierarchy is None else len(hierarchy.identity_cells))
             + len(cells)
-        )
+        ),
+        scope=scope,
+        budget=budget,
     )
     sibling_ids = {child for record in records for child in record.child_ids}
     identity_bank = set(() if hierarchy is None else hierarchy.identity_cells)
@@ -1166,9 +1580,11 @@ def _adapt_mixed_mesh(
     }
     unchanged_marks = unchanged & coarsen
     _reserve_host_storage(
-        3 * sys.getsizeof({})
+        3 * 256
         + (0 if layer_columns is None else len(layer_columns.cell_ids))
-        * (2 * sys.getsizeof(set()) + 6 * sys.getsizeof(0) + 192)
+        * (2 * 256 + 6 * 32 + 192),
+        scope=scope,
+        budget=budget,
     )
     intervals = (
         {}
@@ -1183,7 +1599,9 @@ def _adapt_mixed_mesh(
         else dict(zip(layer_columns.cell_ids, layer_columns.column_ids, strict=True))
     )
     if not set(columns).issubset(set(ids)):
-        raise ValueError("Layer-column identities must name current source cells.")
+        raise ValueError(
+            "mixed_adaptation.layer_columns.cell_ids must name current source cells; got unknown IDs"
+        )
     column_members: dict[int, set[int]] = {}
     for identifier, column in columns.items():
         column_members.setdefault(int(column), set()).add(int(identifier))
@@ -1196,10 +1614,42 @@ def _adapt_mixed_mesh(
     )
     if identity_work > maximum_work_units:
         raise MixedTemplateClosureError(
-            "Mixed source identity admission exhausted its work budget."
+            "mixed_adaptation.maximum_work_units must admit source identities; got a work budget refusal"
         )
-    _charge_host_work(identity_work)
-    patch = _coarsen_patch(
+    budget.reserve(identity_work)
+    return _MixedAncestry(
+        sibling_ids=sibling_ids,
+        identity_bank=identity_bank,
+        unchanged_marks=unchanged_marks,
+        intervals=intervals,
+        columns=columns,
+        identity_work=identity_work,
+        column_members=column_members,
+        unchanged=unchanged,
+    )
+
+
+def _prepare_mixed_coarsening(
+    source: _MixedSource,
+    marks: _MixedMarks,
+    ancestry: _MixedAncestry,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _MixedCoarsening:
+    vertex_ids = source.vertex_ids
+    orbits = source.orbits
+    refine = marks.refine
+    coarsen = marks.coarsen
+    protected = marks.protected
+    blocked = marks.blocked
+    cells = marks.cells
+    records = marks.records
+    unchanged_marks = ancestry.unchanged_marks
+    intervals = ancestry.intervals
+    columns = ancestry.columns
+    column_members = ancestry.column_members
+    unchanged = ancestry.unchanged
+    patch = coarsen_patch(
         cells,
         records,
         coarsen,
@@ -1209,11 +1659,13 @@ def _adapt_mixed_mesh(
         orbits,
         column_members=column_members,
         unchanged=unchanged,
+        scope=scope,
+        budget=budget,
     )
     restored, removed = patch.restored, patch.removed
     if orbits is not None and coarsen - removed - unchanged_marks:
         raise MixedTemplateClosureError(
-            "Periodic coarsening requires complete compatible sibling and facet orbits."
+            "mixed_adaptation.coarsen_cell_ids must cover compatible sibling and facet orbits; got an incomplete or protected orbit"
         )
     restored_ids = {cell.identifier for cell in restored}
     coarsening_fine, coarsening_parent, coarsening_reference = (
@@ -1240,16 +1692,46 @@ def _adapt_mixed_mesh(
     )
     if refine & removed:
         raise MixedTemplateClosureError(
-            "Layer-column refinement conflicts with a marked sibling coarsening."
+            "mixed_adaptation.layer_columns must separate refinement and coarsening cohorts; got a conflicting column"
         )
     if refine & blocked:
         raise MixedTemplateClosureError(
-            "Layer-column closure intersects a protected cell."
+            "mixed_adaptation.protected_cell_ids must avoid layer-column closure; got a protected closure cell"
         )
+    return _MixedCoarsening(
+        removed=removed,
+        restored_ids=restored_ids,
+        coarsening_fine=coarsening_fine,
+        coarsening_parent=coarsening_parent,
+        coarsening_reference=coarsening_reference,
+        source_support=source_support,
+        working=working,
+    )
+
+
+def _prepare_mixed_domains(
+    controls: _MixedControls,
+    source: _MixedSource,
+    marks: _MixedMarks,
+    ancestry: _MixedAncestry,
+    coarsening: _MixedCoarsening,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ticket: NativeBatchTicket,
+) -> _MixedDomains:
+    layer_columns = controls.layer_columns
+    dimension = controls.dimension
+    edges = source.edges
+    faces = source.faces
+    refine = marks.refine
+    blocked = marks.blocked
+    intervals = ancestry.intervals
+    restored_ids = coarsening.restored_ids
+    working = coarsening.working
     domains = []
     tables: dict[tuple[str, bool], tuple[_Template, ...]] = {}
     for cell in working:
-        _reserve_host_storage(256)
+        _reserve_host_storage(256, scope=scope, budget=budget)
         axial = dimension == 3 and (
             cell.identifier not in intervals
             or (layer_columns is not None and layer_columns.axial_refinement)
@@ -1263,24 +1745,30 @@ def _adapt_mixed_mesh(
         ):
             axial = False
         if (cell.kind, axial) not in tables:
-            tables[cell.kind, axial] = _templates(cell.kind, axial)
+            tables[cell.kind, axial] = _templates(
+                cell.kind, axial, scope=scope, budget=budget, ticket=ticket
+            )
             _reserve_host_storage(
                 sum(
-                    sys.getsizeof(template) + sys.getsizeof(template.children)
+                    256 + template.children.nbytes
                     for template in tables[cell.kind, axial]
-                )
+                ),
+                scope=scope,
+                budget=budget,
             )
         templates = list(tables[cell.kind, axial])
-        red = [
-            template for template in templates if template.interior_diagonal is not None
-        ]
+        red: list[tuple[_Template, tuple[tuple[int, int], tuple[int, int]]]] = []
+        for template in templates:
+            diagonal = template.interior_diagonal
+            if diagonal is not None:
+                red.append((template, diagonal))
         if red:
             selected = red[
                 min(
-                    (_interior_diagonal_key(template, cell.vertices), index)
-                    for index, template in enumerate(red)
+                    (_interior_diagonal_key(diagonal, cell.vertices), index)
+                    for index, (_, diagonal) in enumerate(red)
                 )[1]
-            ]
+            ][0]
             templates = [
                 template
                 for template in templates
@@ -1295,35 +1783,83 @@ def _adapt_mixed_mesh(
         templates = [
             template
             for template in templates
-            if _permitted_subdivision(cell, template, edges, faces)
+            if _permitted_subdivision(
+                cell, template, edges, faces, scope=scope, budget=budget
+            )
         ]
         if not templates:
             raise MixedTemplateClosureError(
-                "Marked refinement cannot preserve protected edge/face subdivision signatures."
+                "mixed_adaptation.refine_cell_ids must preserve protected edge and face signatures; got no permitted template"
             )
         domains.append(templates)
     _reserve_host_storage(
-        sys.getsizeof([]) + 2 * len(working) * np.dtype(np.intp).itemsize
+        64 + 2 * len(working) * np.dtype(np.intp).itemsize, scope=scope, budget=budget
     )
-    chosen, steps, work = _closure(
+    return _MixedDomains(
+        domains=domains,
+    )
+
+
+def _execute_mixed_closure(
+    controls: _MixedControls,
+    source: _MixedSource,
+    ancestry: _MixedAncestry,
+    coarsening: _MixedCoarsening,
+    prepared_domains: _MixedDomains,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _MixedClosure:
+    maximum_cells = controls.maximum_cells
+    maximum_closure_steps = controls.maximum_closure_steps
+    maximum_work_units = controls.maximum_work_units
+    orbits = source.orbits
+    identity_work = ancestry.identity_work
+    working = coarsening.working
+    domains = prepared_domains.domains
+    selection = _closure(
         working,
         domains,
         maximum_closure_steps,
         maximum_work_units - identity_work,
         orbits,
+        scope=scope,
+        budget=budget,
     )
+    chosen, steps, work = selection.chosen, selection.steps, selection.work
     work += identity_work
     work += sum(template.children.size for template in chosen)
     if work > maximum_work_units:
         raise MixedTemplateClosureError(
-            "Mixed child construction exhausted its work budget."
+            "mixed_adaptation.maximum_work_units must admit child construction; got a work budget refusal"
         )
-    _charge_host_work(sum(template.children.size for template in chosen))
+    budget.reserve(sum(template.children.size for template in chosen))
     count = sum(template.children.shape[0] for template in chosen)
     if count > maximum_cells:
         raise MixedTemplateClosureError(
-            "Mixed refinement exceeds its target cell budget."
+            "mixed_adaptation.maximum_cells must admit every child cell; got a target cell budget refusal"
         )
+    return _MixedClosure(
+        chosen=chosen,
+        steps=steps,
+        work=work,
+    )
+
+
+def _prepare_mixed_children(
+    request: _MixedRequest,
+    source: _MixedSource,
+    marks: _MixedMarks,
+    coarsening: _MixedCoarsening,
+    closure: _MixedClosure,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _MixedChildren:
+    mesh = request.mesh
+    hierarchy = request.hierarchy
+    vertex_ids = source.vertex_ids
+    ids = marks.ids
+    working = coarsening.working
+    chosen = closure.chosen
     next_cell = max(
         int(np.max(ids, initial=-1)) + 1,
         0 if hierarchy is None else hierarchy.next_cell_id,
@@ -1336,21 +1872,22 @@ def _adapt_mixed_mesh(
         sum(
             template.children.shape[0]
             * (
-                template.children.shape[1]
-                * (np.dtype(np.int64).itemsize + 3 * sys.getsizeof(0.0))
-                + sys.getsizeof(())
-                + len(_Sibling._fields) * np.dtype(np.intp).itemsize
+                template.children.shape[1] * (np.dtype(np.int64).itemsize + 3 * 32)
+                + 64
+                + len(Sibling._fields) * np.dtype(np.intp).itemsize
                 + 512
-                + sys.getsizeof(cell.name)
-                + sys.getsizeof(template.name)
+                + (64 + 4 * len(cell.name))
+                + (64 + 4 * len(template.name))
             )
             for cell, template in zip(working, chosen, strict=True)
         ),
+        scope=scope,
+        budget=budget,
     )
-    points: dict[ConstructionPointKey, int] = {
+    points: dict[_dependency_phydrax_meshing__periodic.ConstructionPointKey, int] = {
         ((int(identifier), Fraction(1)),): int(identifier) for identifier in vertex_ids
     }
-    stencils: dict[int, ConstructionPointKey] = {
+    stencils: dict[int, _dependency_phydrax_meshing__periodic.ConstructionPointKey] = {
         int(identifier): ((int(identifier), Fraction(1)),) for identifier in vertex_ids
     }
     coordinates = {
@@ -1363,110 +1900,278 @@ def _adapt_mixed_mesh(
     relation_sources, relation_targets, relation_kinds = [], [], []
     next_columns, next_intervals = {}, {}
     successor_identities = []
-    for cell, template in zip(working, chosen, strict=True):
-        signature = (
-            cell.identifier,
-            cell.name,
-            cell.kind,
-            tuple(int(value) for value in cell.vertices),
-            cell.cell_class,
+    return _MixedChildren(
+        next_cell=next_cell,
+        next_vertex=next_vertex,
+        points=points,
+        stencils=stencils,
+        coordinates=coordinates,
+        target=target,
+        target_kinds=target_kinds,
+        refinements=refinements,
+        parents=parents,
+        references=references,
+        new_records=new_records,
+        refined=refined,
+        relation_sources=relation_sources,
+        relation_targets=relation_targets,
+        relation_kinds=relation_kinds,
+        next_columns=next_columns,
+        next_intervals=next_intervals,
+        successor_identities=successor_identities,
+    )
+
+
+def _construct_mixed_vertices(
+    mesh: CellMesh,
+    children: _MixedChildren,
+    cell: Cell,
+    reference: np.ndarray,
+    next_vertex: int,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[list[int], int]:
+    """Issue construction-point identities and their ordered coordinate stencils."""
+    child = []
+    for key in _point_keys(
+        cell.kind, cell.vertices, reference, scope=scope, budget=budget
+    ):
+        if key not in children.points:
+            _reserve_host_storage(
+                512 + len(key) * 64 + mesh.ambient_dimension * 8,
+                scope=scope,
+                budget=budget,
+            )
+            children.points[key] = next_vertex
+            children.stencils[next_vertex] = key
+            children.coordinates[next_vertex] = sum(
+                float(weight) * children.coordinates[identifier]
+                for identifier, weight in key
+            )
+            next_vertex += 1
+        child.append(children.points[key])
+    return child, next_vertex
+
+
+# Vertex issuance owns stencil reduction order; cell publication retains sibling and scientific identity order.
+def _construct_mixed_cell(
+    request: _MixedRequest,
+    source: _MixedSource,
+    ancestry: _MixedAncestry,
+    coarsening: _MixedCoarsening,
+    children: _MixedChildren,
+    allocation: _MixedAllocation,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    cell: Cell,
+    template: _Template,
+) -> _MixedAllocation:
+    mesh = request.mesh
+    hierarchy = request.hierarchy
+    orbits = source.orbits
+    sibling_ids = ancestry.sibling_ids
+    identity_bank = ancestry.identity_bank
+    intervals = ancestry.intervals
+    columns = ancestry.columns
+    restored_ids = coarsening.restored_ids
+    next_cell = allocation.next_cell
+    next_vertex = allocation.next_vertex
+    target = children.target
+    target_kinds = children.target_kinds
+    refinements = children.refinements
+    parents = children.parents
+    references = children.references
+    new_records = children.new_records
+    refined = children.refined
+    relation_sources = children.relation_sources
+    relation_targets = children.relation_targets
+    relation_kinds = children.relation_kinds
+    next_columns = children.next_columns
+    next_intervals = children.next_intervals
+    successor_identities = children.successor_identities
+    signature = (
+        cell.identifier,
+        cell.name,
+        cell.kind,
+        tuple(int(value) for value in cell.vertices),
+        cell.cell_class,
+    )
+    if (
+        template.name == "identity"
+        and cell.identifier not in sibling_ids
+        and (
+            hierarchy is None
+            or cell.identifier in restored_ids
+            or signature in identity_bank
         )
-        if (
-            template.name == "identity"
-            and cell.identifier not in sibling_ids
-            and (
-                hierarchy is None
-                or cell.identifier in restored_ids
-                or signature in identity_bank
-            )
-        ):
-            successor_identities.append(signature)
-        child_ids = []
-        for child_slot, reference in enumerate(template.children):
-            child = []
-            for key in _point_keys(cell.kind, cell.vertices, reference):
-                if key not in points:
-                    _reserve_host_storage(
-                        512 + len(key) * 64 + mesh.ambient_dimension * 8
-                    )
-                    points[key] = next_vertex
-                    stencils[next_vertex] = key
-                    coordinates[next_vertex] = sum(
-                        float(weight) * coordinates[identifier]
-                        for identifier, weight in key
-                    )
-                    next_vertex += 1
-                child.append(points[key])
-            identifier = cell.identifier if template.name == "identity" else next_cell
-            if template.name != "identity":
-                next_cell += 1
-            child_ids.append(identifier)
-            if cell.identifier in columns:
-                next_columns[identifier] = columns[cell.identifier]
-                next_intervals[identifier] = intervals[cell.identifier]
-            name = (
-                cell.name
-                if template.name == "identity"
-                else f"{cell.name}:{template.name}:{child_slot}"
-            )
-            target.setdefault(name, []).append(
-                (identifier, np.asarray(child, dtype=np.int64))
-            )
-            target_kinds[name] = cell.kind
-            if cell.identifier not in restored_ids:
-                refinements.append(identifier)
-                parents.append(cell.identifier)
-                references.append(reference)
-                relation_sources.append(cell.identifier)
-                relation_targets.append(identifier)
-                relation_kinds.append(
-                    int(
-                        EntityLineageKind.PRESERVED
-                        if template.name == "identity"
-                        else EntityLineageKind.REFINED_FROM
-                    )
-                )
+    ):
+        successor_identities.append(signature)
+    child_ids = []
+    for child_slot, reference in enumerate(template.children):
+        child, next_vertex = _construct_mixed_vertices(
+            mesh,
+            children,
+            cell,
+            reference,
+            next_vertex,
+            scope=scope,
+            budget=budget,
+        )
+        identifier = cell.identifier if template.name == "identity" else next_cell
         if template.name != "identity":
-            refined.append(cell.identifier)
-            parent_roots = (
-                ()
-                if orbits is None
-                else tuple(orbits.vertices[int(vertex)][0] for vertex in cell.vertices)
-            )
-            parent_shifts = (
-                ()
-                if orbits is None
-                else tuple(
-                    tuple(int(value) for value in orbits.vertices[int(vertex)][1])
-                    for vertex in cell.vertices
+            next_cell += 1
+        child_ids.append(identifier)
+        if cell.identifier in columns:
+            next_columns[identifier] = columns[cell.identifier]
+            next_intervals[identifier] = intervals[cell.identifier]
+        name = (
+            cell.name
+            if template.name == "identity"
+            else f"{cell.name}:{template.name}:{child_slot}"
+        )
+        target.setdefault(name, []).append(
+            (identifier, np.asarray(child, dtype=np.int64))
+        )
+        target_kinds[name] = cell.kind
+        if cell.identifier not in restored_ids:
+            refinements.append(identifier)
+            parents.append(cell.identifier)
+            references.append(reference)
+            relation_sources.append(cell.identifier)
+            relation_targets.append(identifier)
+            relation_kinds.append(
+                int(
+                    _dependency_phydrax_meshing__lineage.EntityLineageKind.PRESERVED
+                    if template.name == "identity"
+                    else _dependency_phydrax_meshing__lineage.EntityLineageKind.REFINED_FROM
                 )
             )
-            new_records.append(
-                _Sibling(
-                    cell.identifier,
-                    cell.name,
-                    cell.kind,
-                    tuple(int(value) for value in cell.vertices),
-                    tuple(child_ids),
-                    tuple(
-                        tuple(tuple(float(value) for value in row) for row in child)
-                        for child in template.children
+    if template.name != "identity":
+        refined.append(cell.identifier)
+        parent_roots = (
+            ()
+            if orbits is None
+            else tuple(orbits.vertices[int(vertex)][0] for vertex in cell.vertices)
+        )
+        parent_shifts = (
+            ()
+            if orbits is None
+            else tuple(
+                tuple(int(value) for value in orbits.vertices[int(vertex)][1])
+                for vertex in cell.vertices
+            )
+        )
+        new_records.append(
+            Sibling(
+                cell.identifier,
+                cell.name,
+                cell.kind,
+                tuple(int(value) for value in cell.vertices),
+                tuple(child_ids),
+                tuple(
+                    tuple(tuple(float(value) for value in row) for row in child)
+                    for child in template.children
+                ),
+                cell.cell_class,
+                columns.get(cell.identifier),
+                intervals.get(cell.identifier),
+                parent_roots,
+                parent_shifts,
+            )
+        )
+    return _MixedAllocation(
+        next_cell=next_cell,
+        next_vertex=next_vertex,
+    )
+
+
+class _MixedEntityIdentities(StrictModule):
+    prescribed: list[_dependency_phydrax_meshing__topology_edit.PrescribedEntityIds]
+    retired: dict[tuple[int, tuple[int, ...]], int]
+
+
+def _recover_mixed_entity_identities(
+    request: _MixedRequest,
+    controls: _MixedControls,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _MixedEntityIdentities:
+    mesh, hierarchy, dimension = request.mesh, request.hierarchy, controls.dimension
+    prescribed = []
+    retired = (
+        {}
+        if hierarchy is None
+        else {
+            (dimension, key): identifier
+            for dimension, key, identifier in hierarchy.retired_entities
+        }
+    )
+    for degree in range(1, dimension):
+        current_keys = entity_keys_owner.entity_keys(mesh, degree)
+        current_ids = np.asarray(mesh.entity_set(degree).entity_ids, dtype=np.int64)
+        _reserve_host_storage(
+            current_keys.size * (64 + 3 * np.dtype(np.int64).itemsize),
+            scope=scope,
+            budget=budget,
+        )
+        for key, identifier in zip(current_keys, current_ids, strict=True):
+            retired[(degree, tuple(int(value) for value in key))] = int(identifier)
+        current_set = {tuple(int(value) for value in key) for key in current_keys}
+        restored_keys = [
+            (key, identifier)
+            for (level, key), identifier in retired.items()
+            if level == degree and key not in current_set
+        ]
+        if restored_keys:
+            prescribed.append(
+                _dependency_phydrax_meshing__topology_edit.PrescribedEntityIds(
+                    degree,
+                    np.asarray([key for key, _ in restored_keys], dtype=np.int64),
+                    np.asarray(
+                        [identifier for _, identifier in restored_keys], dtype=np.int64
                     ),
-                    cell.cell_class,
-                    columns.get(cell.identifier),
-                    intervals.get(cell.identifier),
-                    parent_roots,
-                    parent_shifts,
                 )
             )
+    return _MixedEntityIdentities(prescribed, retired)
+
+
+def _prepare_mixed_topology(
+    request: _MixedRequest,
+    controls: _MixedControls,
+    source: _MixedSource,
+    coarsening: _MixedCoarsening,
+    children: _MixedChildren,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ticket: NativeBatchTicket,
+) -> _MixedTopology:
+    mesh = request.mesh
+    hierarchy = request.hierarchy
+    vertex_ids = source.vertex_ids
+    orbits = source.orbits
+    coarsening_fine = coarsening.coarsening_fine
+    coarsening_parent = coarsening.coarsening_parent
+    stencils = children.stencils
+    coordinates = children.coordinates
+    target = children.target
+    target_kinds = children.target_kinds
+    relation_sources = children.relation_sources
+    relation_targets = children.relation_targets
+    relation_kinds = children.relation_kinds
     for child, parent in zip(coarsening_fine, coarsening_parent, strict=True):
         relation_sources.append(child)
         relation_targets.append(parent)
-        relation_kinds.append(int(EntityLineageKind.COARSENED_INTO))
+        relation_kinds.append(
+            int(_dependency_phydrax_meshing__lineage.EntityLineageKind.COARSENED_INTO)
+        )
     corner_slots = sum(row.size for values in target.values() for _, row in values)
     _reserve_host_storage(
         corner_slots * (3 * np.dtype(np.int64).itemsize + 128)
         + sum(len(values) for values in target.values()) * 128,
+        scope=scope,
+        budget=budget,
     )
     used_vertices = {
         int(value) for block in target.values() for _, row in block for value in row
@@ -1475,7 +2180,7 @@ def _adapt_mixed_mesh(
     # Dense scientific vertex order is an authored control. Retain every
     # surviving source row in that order; append only newly allocated identities
     # in allocator order. All same-family templates retain their parent corners,
-    # so nested/partial inverse epochs recover the original rows inductively.
+    # so nested/partial inverse epochs recover the source rows inductively.
     used = np.asarray(
         [int(identifier) for identifier in vertex_ids if int(identifier) in used_vertices]
         + sorted(used_vertices - original_vertices),
@@ -1484,7 +2189,7 @@ def _adapt_mixed_mesh(
     local = {int(identifier): index for index, identifier in enumerate(used)}
     source_kinds = {block.name: block.cell_kind for block in mesh.blocks}
     blocks = tuple(
-        TopologyEditBlock(
+        _dependency_phydrax_meshing__topology_edit.TopologyEditBlock(
             name,
             target_kinds[name],
             source_kinds.get(name),
@@ -1498,32 +2203,39 @@ def _adapt_mixed_mesh(
     width = max(len(stencils[int(identifier)]) for identifier in used)
     _reserve_host_storage(
         used.size * width * (np.dtype(np.int64).itemsize + np.dtype(np.float64).itemsize)
-        + used.size * mesh.ambient_dimension * np.dtype(np.float64).itemsize
+        + used.size * mesh.ambient_dimension * np.dtype(np.float64).itemsize,
+        scope=scope,
+        budget=budget,
     )
     sources = np.full((used.size, width), -1, dtype=np.int64)
     weights = np.zeros((used.size, width), dtype=np.float64)
     for index, identifier in enumerate(used):
-        for slot, (source, weight) in enumerate(stencils[int(identifier)]):
-            sources[index, slot], weights[index, slot] = source, weight
+        for slot, (source_id, weight) in enumerate(stencils[int(identifier)]):
+            sources[index, slot], weights[index, slot] = source_id, weight
     target_coordinates = np.stack([coordinates[int(identifier)] for identifier in used])
-    # The canonical connectivity owner materializes bounded edge/face routes and
-    # sorting workspaces from these actual child occurrences, not all pairs.
+    # Connectivity preparation uses bounded edge/face routes and sorting
+    # workspaces from child occurrences rather than all entity pairs.
     entity_occurrences = sum(
         block.cells.shape[0]
         * sum(len(row) for row in reference_cell_topology(block.cell_kind).entities[1:-1])
         for block in blocks
     )
     _reserve_host_storage(
-        entity_occurrences * (12 * np.dtype(np.int64).itemsize + 2 * sys.getsizeof(()))
+        entity_occurrences * (12 * np.dtype(np.int64).itemsize + 2 * 64),
+        scope=scope,
+        budget=budget,
     )
-    probe = CellMesh(
-        target_coordinates,
-        tuple(
-            CellBlock(block.name, block.cell_kind, block.cells, global_ids=block.cell_ids)
-            for block in blocks
-        ),
-        vertex_global_ids=used,
-    )
+    with ticket.native_target():
+        probe = CellMesh(
+            target_coordinates,
+            tuple(
+                CellBlock(
+                    block.name, block.cell_kind, block.cells, global_ids=block.cell_ids
+                )
+                for block in blocks
+            ),
+            vertex_global_ids=used,
+        )
     periodic_witness = (
         None
         if orbits is None
@@ -1532,45 +2244,50 @@ def _adapt_mixed_mesh(
             probe,
             stencils,
             () if hierarchy is None else hierarchy.quotient_entities,
+            budget=budget,
         )
     )
-    prescribed = []
-    retired = (
-        {}
-        if hierarchy is None
-        else {
-            (dimension, key): identifier
-            for dimension, key, identifier in hierarchy.retired_entities
-        }
+    identities = _recover_mixed_entity_identities(
+        request, controls, scope=scope, budget=budget
     )
-    for degree in range(1, dimension):
-        current_keys = entity_keys(mesh, degree)
-        current_ids = np.asarray(mesh.entity_set(degree).entity_ids, dtype=np.int64)
-        _reserve_host_storage(current_keys.size * (64 + 3 * np.dtype(np.int64).itemsize))
-        for key, identifier in zip(current_keys, current_ids, strict=True):
-            retired[(degree, tuple(int(value) for value in key))] = int(identifier)
-        current_set = {tuple(int(value) for value in key) for key in current_keys}
-        restored_keys = [
-            (key, identifier)
-            for (level, key), identifier in retired.items()
-            if level == degree and key not in current_set
-        ]
-        if restored_keys:
-            prescribed.append(
-                PrescribedEntityIds(
-                    degree,
-                    np.asarray([key for key, _ in restored_keys], dtype=np.int64),
-                    np.asarray(
-                        [identifier for _, identifier in restored_keys], dtype=np.int64
-                    ),
-                )
-            )
+    prescribed, retired = identities.prescribed, identities.retired
+    return _MixedTopology(
+        used=used,
+        blocks=blocks,
+        sources=sources,
+        weights=weights,
+        target_coordinates=target_coordinates,
+        probe=probe,
+        periodic_witness=periodic_witness,
+        prescribed=prescribed,
+        retired=retired,
+    )
+
+
+# Paired indexed emission preserves source-row order, duplicate support matches, and interleaved resource charges.
+def _prepare_mixed_relations(
+    request: _MixedRequest,
+    controls: _MixedControls,
+    coarsening: _MixedCoarsening,
+    children: _MixedChildren,
+    topology: _MixedTopology,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _MixedRelations:
+    mesh = request.mesh
+    dimension = controls.dimension
+    source_support = coarsening.source_support
+    stencils = children.stencils
+    relation_sources = children.relation_sources
+    relation_targets = children.relation_targets
+    relation_kinds = children.relation_kinds
+    probe = topology.probe
     relations = []
     for degree in range(dimension + 1):
-        keys = entity_keys(mesh, degree)
+        keys = entity_keys_owner.entity_keys(mesh, degree)
         if degree == dimension:
             relations.append(
-                EntityRelations(
+                _dependency_phydrax_meshing__topology_edit.EntityRelations(
                     degree,
                     np.asarray(relation_sources, dtype=np.int64)[:, None],
                     np.asarray(relation_targets, dtype=np.int64)[:, None],
@@ -1578,14 +2295,15 @@ def _adapt_mixed_mesh(
                 )
             )
         else:
-            target_keys = entity_keys(probe, degree)
+            target_keys = entity_keys_owner.entity_keys(probe, degree)
             inherited_source, inherited_target, inherited_kinds = [], [], []
             if 0 < degree < dimension:
-                # Index source entities by one vertex every admissible witness must
-                # contain, preserving source-row order within each target entity.
+                # Index source entities by a required support vertex, preserving
+                # source-row order within each target entity.
                 _reserve_host_storage(
-                    keys.shape[0] * (2 * sys.getsizeof(set()) + 128)
-                    + keys.size * (sys.getsizeof(0) + 64)
+                    keys.shape[0] * (2 * 256 + 128) + keys.size * (32 + 64),
+                    scope=scope,
+                    budget=budget,
                 )
                 source_sets = [
                     {int(value) for value in key if value >= 0} for key in keys
@@ -1615,11 +2333,17 @@ def _adapt_mixed_mesh(
                             and active_target != source_sets[row]
                         ):
                             _reserve_host_storage(
-                                128 + 2 * keys.shape[1] * np.dtype(np.int64).itemsize
+                                128 + 2 * keys.shape[1] * np.dtype(np.int64).itemsize,
+                                scope=scope,
+                                budget=budget,
                             )
                             inherited_source.append(keys[row])
                             inherited_target.append(target_key)
-                            inherited_kinds.append(int(EntityLineageKind.REFINED_FROM))
+                            inherited_kinds.append(
+                                int(
+                                    _dependency_phydrax_meshing__lineage.EntityLineageKind.REFINED_FROM
+                                )
+                            )
                     for row in sorted(
                         row
                         for vertex in active_target
@@ -1630,13 +2354,19 @@ def _adapt_mixed_mesh(
                             and active_target != source_sets[row]
                         ):
                             _reserve_host_storage(
-                                128 + 2 * keys.shape[1] * np.dtype(np.int64).itemsize
+                                128 + 2 * keys.shape[1] * np.dtype(np.int64).itemsize,
+                                scope=scope,
+                                budget=budget,
                             )
                             inherited_source.append(keys[row])
                             inherited_target.append(target_key)
-                            inherited_kinds.append(int(EntityLineageKind.COARSENED_INTO))
+                            inherited_kinds.append(
+                                int(
+                                    _dependency_phydrax_meshing__lineage.EntityLineageKind.COARSENED_INTO
+                                )
+                            )
             relations.append(
-                EntityRelations(
+                _dependency_phydrax_meshing__topology_edit.EntityRelations(
                     degree,
                     np.asarray(inherited_source, dtype=np.int64).reshape(
                         (-1, keys.shape[1])
@@ -1647,10 +2377,63 @@ def _adapt_mixed_mesh(
                     np.asarray(inherited_kinds, dtype=np.int32),
                 )
             )
+    return _MixedRelations(
+        relations=relations,
+    )
+
+
+def _publish_mixed_edit(
+    controls: _MixedControls,
+    marks: _MixedMarks,
+    ancestry: _MixedAncestry,
+    coarsening: _MixedCoarsening,
+    closure: _MixedClosure,
+    children: _MixedChildren,
+    allocation: _MixedAllocation,
+    topology: _MixedTopology,
+    lineage: _MixedRelations,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _MixedPublication:
+    layer_columns = controls.layer_columns
+    dimension = controls.dimension
+    requested_refine = marks.requested_refine
+    coarsen = marks.coarsen
+    records = marks.records
+    unchanged_marks = ancestry.unchanged_marks
+    intervals = ancestry.intervals
+    removed = coarsening.removed
+    restored_ids = coarsening.restored_ids
+    coarsening_fine = coarsening.coarsening_fine
+    coarsening_parent = coarsening.coarsening_parent
+    coarsening_reference = coarsening.coarsening_reference
+    working = coarsening.working
+    chosen = closure.chosen
+    steps = closure.steps
+    work = closure.work
+    next_cell = allocation.next_cell
+    next_vertex = allocation.next_vertex
+    refinements = children.refinements
+    parents = children.parents
+    references = children.references
+    new_records = children.new_records
+    refined = children.refined
+    next_columns = children.next_columns
+    next_intervals = children.next_intervals
+    successor_identities = children.successor_identities
+    used = topology.used
+    blocks = topology.blocks
+    sources = topology.sources
+    weights = topology.weights
+    target_coordinates = topology.target_coordinates
+    periodic_witness = topology.periodic_witness
+    prescribed = topology.prescribed
+    retired = topology.retired
+    relations = lineage.relations
 
     def witnesses(
         fine: list[int], coarse: list[int], vertices: list[np.ndarray]
-    ) -> NestedReferenceWitnesses | None:
+    ) -> transition_types_owner.NestedReferenceWitnesses | None:
         if not fine:
             return None
         corner_count = max(row.shape[0] for row in vertices)
@@ -1659,22 +2442,26 @@ def _adapt_mixed_mesh(
             * (
                 corner_count * dimension * np.dtype(np.float64).itemsize
                 + 2 * np.dtype(np.int64).itemsize
-            )
+            ),
+            scope=scope,
+            budget=budget,
         )
         padded = np.zeros((len(fine), corner_count, dimension), dtype=np.float64)
         for index, row in enumerate(vertices):
             padded[index, : row.shape[0]] = row
-        return NestedReferenceWitnesses(
+        return transition_types_owner.NestedReferenceWitnesses(
             np.asarray(fine, dtype=np.int64), np.asarray(coarse, dtype=np.int64), padded
         )
 
     refinement = witnesses(refinements, parents, references)
-    coarsening = witnesses(coarsening_fine, coarsening_parent, coarsening_reference)
-    edit = CellTopologyEdit(
+    coarsening_witness = witnesses(
+        coarsening_fine, coarsening_parent, coarsening_reference
+    )
+    edit = _dependency_phydrax_meshing__topology_edit.CellTopologyEdit(
         "nested_adaptation"
-        if coarsening is not None and refinement is not None
+        if coarsening_witness is not None and refinement is not None
         else "nested_coarsening"
-        if coarsening is not None
+        if coarsening_witness is not None
         else "nested_refinement",
         target_coordinates,
         used,
@@ -1686,7 +2473,7 @@ def _adapt_mixed_mesh(
         prescribed_entity_ids=tuple(prescribed),
         shared_faces=_shared_faces(blocks, used),
         refinement=refinement,
-        coarsening=coarsening,
+        coarsening=coarsening_witness,
         periodic_orbits=periodic_witness,
     )
     retained = tuple(record for record in records if record.parent_id not in restored_ids)
@@ -1742,4 +2529,95 @@ def _adapt_mixed_mesh(
         work,
         None,
     )
-    return MixedAdaptationOutcome(edit, successor, evidence)
+    return _MixedPublication(
+        edit=edit,
+        successor=successor,
+        evidence=evidence,
+    )
+
+
+def _adapt_mixed_mesh(
+    mesh: CellMesh,
+    *,
+    refine_cell_ids: ArrayLike,
+    coarsen_cell_ids: ArrayLike | None,
+    hierarchy: MixedAdaptationHierarchy | None,
+    cell_classes: ArrayLike | None,
+    protected_vertex_ids: ArrayLike | None,
+    protected_cell_ids: ArrayLike | None,
+    protected_edge_keys: ArrayLike | None,
+    protected_face_keys: ArrayLike | None,
+    layer_columns: MixedLayerColumns | None,
+    maximum_cells: int,
+    maximum_closure_steps: int,
+    maximum_work_units: int,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ticket: NativeBatchTicket,
+) -> MixedAdaptationOutcome:
+    """Build a mixed candidate through admission, execution, and publication phases."""
+    request = _MixedRequest(
+        mesh=mesh,
+        refine_cell_ids=refine_cell_ids,
+        coarsen_cell_ids=coarsen_cell_ids,
+        hierarchy=hierarchy,
+        cell_classes=cell_classes,
+        protected_vertex_ids=protected_vertex_ids,
+        protected_cell_ids=protected_cell_ids,
+        protected_edge_keys=protected_edge_keys,
+        protected_face_keys=protected_face_keys,
+        layer_columns=layer_columns,
+        maximum_cells=maximum_cells,
+        maximum_closure_steps=maximum_closure_steps,
+        maximum_work_units=maximum_work_units,
+    )
+    controls = _validate_mixed_controls(request)
+    source = _prepare_mixed_source(request, controls, scope, budget)
+    marks = _admit_mixed_marks(request, source)
+    ancestry = _admit_mixed_ancestry(request, controls, marks, scope, budget)
+    coarsening = _prepare_mixed_coarsening(source, marks, ancestry, scope, budget)
+    domains = _prepare_mixed_domains(
+        controls, source, marks, ancestry, coarsening, scope, budget, ticket
+    )
+    closure = _execute_mixed_closure(
+        controls, source, ancestry, coarsening, domains, scope, budget
+    )
+    children = _prepare_mixed_children(
+        request, source, marks, coarsening, closure, scope, budget
+    )
+    allocation = _MixedAllocation(children.next_cell, children.next_vertex)
+    for cell, template in zip(coarsening.working, closure.chosen, strict=True):
+        allocation = _construct_mixed_cell(
+            request,
+            source,
+            ancestry,
+            coarsening,
+            children,
+            allocation,
+            scope,
+            budget,
+            cell,
+            template,
+        )
+    topology = _prepare_mixed_topology(
+        request, controls, source, coarsening, children, scope, budget, ticket
+    )
+    relations = _prepare_mixed_relations(
+        request, controls, coarsening, children, topology, scope, budget
+    )
+    publication = _publish_mixed_edit(
+        controls,
+        marks,
+        ancestry,
+        coarsening,
+        closure,
+        children,
+        allocation,
+        topology,
+        relations,
+        scope,
+        budget,
+    )
+    return MixedAdaptationOutcome(
+        publication.edit, publication.successor, publication.evidence
+    )

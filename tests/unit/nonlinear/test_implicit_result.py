@@ -11,7 +11,7 @@ import phydrax as phx
 import phydrax.linalg as la
 import phydrax.nonlinear as nl
 from phydrax.sparse import EdgeRelation, SparseCoordinateOperator
-from phydrax.sparse._linear import _SparseStoragePlan
+from phydrax.sparse._linear import SparseStoragePlan
 
 
 def _termination(*, maximum_steps: Any = 20) -> Any:
@@ -372,8 +372,8 @@ def test_sparse_derivative_setups_preserve_factorization_storage() -> None:
     targets = np.asarray([0, 1, 2, 0, 1, 2], dtype=np.int32)
     relation = EdgeRelation(sources, targets, source_size=size, target_size=size)
     transposed_relation = relation.transpose()
-    storage_plan = _SparseStoragePlan(relation)
-    transposed_storage_plan = _SparseStoragePlan(transposed_relation)
+    storage_plan = SparseStoragePlan(relation)
+    transposed_storage_plan = SparseStoragePlan(transposed_relation)
     space = la.ArraySpace((size,), dtype=jnp.float64)
     coefficients = jnp.asarray([2.0, 3.0, 4.0, -0.2, 0.3, 0.4], dtype=jnp.float64)
     dense = np.asarray([[2.0, -0.2, 0.0], [0.0, 3.0, 0.3], [0.4, 0.0, 4.0]])

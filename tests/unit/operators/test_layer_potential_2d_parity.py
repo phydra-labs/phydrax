@@ -8,10 +8,11 @@ from typing import Any
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _circle_panelization() -> Any:
-    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     return phx.operators.BoundaryPanelization2D(
         geometry.boundary_atlas,
         panels_per_chart=8,

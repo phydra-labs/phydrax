@@ -13,6 +13,7 @@ import pytest
 import phydrax as phx
 from phydrax.domain import Boundary
 from phydrax.enforcement import enforce_dirichlet
+from phydrax.units import METER
 
 
 def test_geometry2d_sdf_signs_and_boundary() -> None:
@@ -30,7 +31,9 @@ def test_geometry2d_sdf_signs_and_boundary() -> None:
     m = meshio.Mesh(points=pts, cells=[("triangle", faces)])
 
     geom = phx.domain.GeometryDomain(
-        phx.geometry.planar_region_from_source(m, recenter=False).compile()
+        phx.geometry.planar_region_from_source(m, recenter=False).compile(
+            coordinate_unit=METER
+        )
     )
 
     inside = jnp.array([[0.0, 0.0]], dtype="float64")
@@ -53,7 +56,7 @@ def test_geometry2d_sdf_signs_and_boundary() -> None:
 
 def test_dense_curved_mesh_adf_has_only_the_geometric_zero_set() -> None:
     geometry = phx.domain.GeometryDomain(
-        phx.geometry.Ellipse((0.0, 0.0), (1.25, 0.7)).compile()
+        phx.geometry.Ellipse((0.0, 0.0), (1.25, 0.7)).compile(coordinate_unit=METER)
     )
     theta = jnp.linspace(0.0, 2.0 * jnp.pi, 96, endpoint=False)
     normalized_radii = jnp.asarray([0.75, 1.1, 1.3, 1.5])
@@ -89,7 +92,7 @@ def _scaled_square(scale: float) -> phx.domain.GeometryDomain:
         phx.geometry.planar_region_from_source(
             meshio.Mesh(points=points, cells=[("triangle", faces)]),
             recenter=False,
-        ).compile()
+        ).compile(coordinate_unit=METER)
     )
 
 

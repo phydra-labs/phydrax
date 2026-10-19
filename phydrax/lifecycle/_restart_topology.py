@@ -5,9 +5,8 @@
 from __future__ import annotations
 
 import hashlib
-import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -16,9 +15,21 @@ from .._array_archive import ArrayArchiveLimits, DEFAULT_ARRAY_ARCHIVE_LIMITS
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_finite_float, nonnegative_integer, positive_integer
 from ..qualification._registry import SupportTuple
 from ..typing import checked, parse
-from ._chunk_repository import _digest, _identifier, RepositoryCorruptionError
+from ._chunk_repository import digest, identifier, RepositoryCorruptionError
+from ._meshing_checkpoint_binding import (
+    admit_meshing_source_logical_arrays,
+    AdmittedMeshingSourceArrays,
+    authenticate_meshing_source_publication,
+    MeshingArrayRole,
+    source_array_name,
+)
+from ._meshing_sources import (
+    MeshingSourceClosure,
+    validate_meshing_source_checkpoint_references,
+)
 
 
 RestartClass: TypeAlias = Literal["bitwise", "tolerance", "unsupported"]
@@ -27,19 +38,6 @@ ChunkRangeReader: TypeAlias = Callable[["CanonicalRestartChunk", int, int], byte
 DestinationShardWriter: TypeAlias = Callable[["DestinationShard", int, bytes], None]
 
 
-MeshingArrayRole: TypeAlias = Literal[
-    "entity-ids",
-    "geometry",
-    "topology",
-    "lineage",
-    "epoch",
-    "evidence",
-    "state",
-    "constraints",
-    "allocator",
-    "source-record",
-    "pending-work",
-]
 _MESHING_REFERENCE_NAMES = (
     "source_topology_id",
     "source_geometry_id",
@@ -68,10 +66,10 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
     Array names identify decomposition-neutral logical arrays supplied separately
     to the addressable-shard publisher. Incidences and lineage refer to stable
     scientific IDs; neither former rank numbers nor prepared local slots define
-    their identity. ``source_closure`` retains actual owning certification inputs,
-    the accepted report, associations and native authoring records admitted by the
-    owning source-closure validator. Its canonical recipe and complete numerical
-    content digest bind every authored field to the same accepted state. Source
+    their identity. ``source_closure`` retains certification inputs, the accepted
+    report, associations, and native authoring records admitted by the source
+    validator. Its recipe and numerical content digest bind every authored field
+    to the same accepted state. Source
     numerical roles are declared automatically; scientific archive limits remain
     explicit admission controls, not checkpoint identity fields.
     """
@@ -99,9 +97,10 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
     source_array_bindings: tuple[tuple[str, str], ...] = eqx.field(static=True)
     source_logical_array_names: tuple[str, ...] = eqx.field(static=True)
     source_logical_content_digest: str | None = eqx.field(static=True)
-    source_logical_arrays: Mapping[str, jax.Array] | None
+    source_logical_arrays: AdmittedMeshingSourceArrays | None
     source_owner_states: tuple[MeshingCheckpointState, ...]
 
+    @checked
     def __init__(
         self,
         *,
@@ -131,6 +130,8 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
         limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
         maximum_source_chunk_bytes: int = 1 << 20,
     ) -> None:
+        if isinstance(source_closure, MeshingSourceClosure):
+            source_closure = source_closure.to_records()
         required_references = {
             "topology_id": topology_id,
             "geometry_id": geometry_id,
@@ -142,7 +143,7 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
             "request_id": request_id,
         }
         required_references = {
-            name: _identifier(value, name) for name, value in required_references.items()
+            name: identifier(value, name) for name, value in required_references.items()
         }
         optional_references = {
             "source_topology_id": source_topology_id,
@@ -151,17 +152,11 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
             "transfer_id": transfer_id,
         }
         optional_references = {
-            name: None if value is None else _identifier(value, name)
+            name: None if value is None else identifier(value, name)
             for name, value in optional_references.items()
         }
         references = {**required_references, **optional_references}
-        if type(mesh_epoch) is not int or mesh_epoch < 0:
-            raise ValueError("mesh_epoch must be a non-negative integer.")
-        from ._distributed_checkpoint import (
-            _admit_meshing_source_logical_arrays,
-            _prepare_meshing_source_binding,
-            _validate_meshing_source_references,
-        )
+        mesh_epoch = nonnegative_integer(mesh_epoch, "mesh_epoch")
 
         owner_index = (
             (
@@ -172,20 +167,12 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
             if source_owner_index is None
             else source_owner_index
         )
-        if type(owner_index) is not int or owner_index < 0:
-            raise ValueError("source_owner_index must be a non-negative integer.")
-        source_logical_arrays = _admit_meshing_source_logical_arrays(
+        owner_index = nonnegative_integer(owner_index, "source_owner_index")
+        source_logical_arrays = admit_meshing_source_logical_arrays(
             source_logical_arrays, maximum_chunk_bytes=maximum_source_chunk_bytes
         )
         bindings = {} if source_array_bindings is None else dict(source_array_bindings)
-        (
-            source_recipe_json,
-            source_content_digest,
-            source_roles,
-            logical_names,
-            logical_digest,
-            source_logical_arrays,
-        ) = _prepare_meshing_source_binding(
+        binding = authenticate_meshing_source_publication(
             source_closure,
             source_recipe_json,
             source_content_digest,
@@ -197,10 +184,17 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
             limits=limits,
             maximum_chunk_bytes=maximum_source_chunk_bytes,
         )
+        source_recipe_json = binding.recipe_json
+        source_content_digest = binding.content_digest
+        source_roles = binding.array_roles
+        logical_names = binding.logical_array_names
+        logical_digest = binding.logical_content_digest
+        source_logical_arrays = binding.logical_arrays
         owner_states = tuple(source_owner_states)
         if any(type(state) is not MeshingCheckpointState for state in owner_states):
             raise TypeError(
-                "source_owner_states must contain exact meshing checkpoint states."
+                "checkpoint_state.source_owner_states must contain MeshingCheckpointState values; "
+                f"got types {tuple(type(state).__name__ for state in owner_states)}"
             )
         if owner_states and (
             tuple(state.source_owner_index for state in owner_states)
@@ -208,10 +202,11 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
             or any(state.source_owner_states for state in owner_states)
         ):
             raise ValueError(
-                "Source owner records must cover original owners exactly once."
+                "checkpoint_state.source_owner_states must cover source owners once without nested banks; "
+                f"got owner indices {tuple(state.source_owner_index for state in owner_states)}"
             )
         if source_closure is not None:
-            _validate_meshing_source_references(source_closure, references)
+            validate_meshing_source_checkpoint_references(source_closure, references)
         source_closure_id = (
             None
             if source_recipe_json is None
@@ -227,20 +222,25 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
             if {item for item in supplied_roles if item[1] == "source-record"} != set(
                 source_roles
             ):
-                raise ValueError("Source record roles must exactly match their recipe.")
+                raise ValueError(
+                    "checkpoint_state.array_roles must match the source recipe roles; "
+                    f"got {tuple(item for item in supplied_roles if item[1] == 'source-record')}"
+                )
         else:
             supplied_roles += source_roles
         roles = tuple(
             sorted(
                 (
-                    _identifier(name, "array name"),
+                    identifier(name, "array name"),
                     parse(role, MeshingArrayRole, "array role"),
                 )
                 for name, role in supplied_roles
             )
         )
         if len({name for name, _ in roles}) != len(roles):
-            raise ValueError("Meshing checkpoint array names must be unique.")
+            raise ValueError(
+                "checkpoint_state.array_roles must declare unique array names; got duplicate array names"
+            )
         required_roles = _REQUIRED_MESHING_ROLES | (
             {"lineage"} if optional_references["lineage_id"] is not None else set()
         )
@@ -251,7 +251,9 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
         if has_declared_state:
             required_roles |= {"state"}
         if not required_roles.issubset(role for _, role in roles):
-            raise ValueError("Meshing checkpoint lacks required scientific array roles.")
+            raise ValueError(
+                "checkpoint_state.array_roles must include the required scientific roles; got missing scientific array roles"
+            )
         self.source_topology_id = optional_references["source_topology_id"]
         self.source_geometry_id = optional_references["source_geometry_id"]
         self.topology_id = required_references["topology_id"]
@@ -317,14 +319,14 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
         }
 
     def source_array_name(self, recipe_name: str, /) -> str:
-        """Return the exact checkpoint path binding for one canonical source leaf."""
-        from ._distributed_checkpoint import _source_array_name
+        """Return the checkpoint path binding for one source recipe leaf."""
 
-        return _source_array_name(
+        return source_array_name(
             recipe_name, self.source_owner_index, dict(self.source_array_bindings)
         )
 
     @classmethod
+    @checked
     def from_payload(
         cls,
         payload: Mapping[str, Any],
@@ -348,14 +350,17 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
             "source_logical_array_names",
             "source_logical_content_digest",
         }:
-            raise ValueError("Meshing checkpoint metadata fields are invalid.")
+            raise ValueError(
+                "checkpoint_payload.fields must match the declared checkpoint metadata keys; got invalid metadata fields"
+            )
         if any(
             not isinstance(payload[name], str)
             and not (name in _OPTIONAL_MESHING_REFERENCE_NAMES and payload[name] is None)
             for name in _MESHING_REFERENCE_NAMES
         ):
             raise TypeError(
-                "Meshing checkpoint references require strings or owning typed absence."
+                "payload.references must contain strings or None for optional IDs; "
+                "got incompatible reference values"
             )
         roles = payload["array_roles"]
         if not isinstance(roles, list) or any(
@@ -365,7 +370,9 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
             or not isinstance(item[1], str)
             for item in roles
         ):
-            raise TypeError("Meshing checkpoint array roles are invalid.")
+            raise TypeError(
+                "checkpoint_payload.array_roles must contain string name-role pairs; got invalid array roles"
+            )
         bindings = payload["source_array_bindings"]
         if (
             not isinstance(bindings, list)
@@ -378,12 +385,16 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
             )
             or len({item[0] for item in bindings}) != len(bindings)
         ):
-            raise ValueError("Meshing checkpoint source array bindings are invalid.")
+            raise ValueError(
+                "checkpoint_payload.source_array_bindings must contain unique string name-alias pairs; got invalid source array bindings"
+            )
         logical_names = payload["source_logical_array_names"]
         if not isinstance(logical_names, list) or any(
             not isinstance(name, str) for name in logical_names
         ):
-            raise ValueError("Meshing checkpoint source logical names are invalid.")
+            raise ValueError(
+                "checkpoint_payload.source_logical_array_names must contain strings; got invalid logical names"
+            )
         return cls(
             source_topology_id=payload["source_topology_id"],
             source_geometry_id=payload["source_geometry_id"],
@@ -417,7 +428,7 @@ class MeshingCheckpointState(StrictModule, NonTrainableState):
 
 
 class TopologyRestartRelation(StrictModule, NonTrainableState):
-    """Exact source/target support relation and restart-equivalence class."""
+    """Bind source/target support and the restart-equivalence class."""
 
     source_support_tuple_id: str = eqx.field(static=True)
     target_support_tuple_id: str = eqx.field(static=True)
@@ -441,17 +452,25 @@ class TopologyRestartRelation(StrictModule, NonTrainableState):
         source_id = _support_id(source, "source")
         target_id = _support_id(target, "target")
         restart_class = parse(restart_class, RestartClass, "restart_class")
-        absolute = _finite_nonnegative(absolute_tolerance, "absolute_tolerance")
-        relative = _finite_nonnegative(relative_tolerance, "relative_tolerance")
+        absolute = nonnegative_finite_float(absolute_tolerance, "absolute_tolerance")
+        relative = nonnegative_finite_float(relative_tolerance, "relative_tolerance")
         reason_ = str(reason).strip()
         if restart_class == "bitwise" and (absolute != 0.0 or relative != 0.0):
-            raise ValueError("Bitwise restart relations cannot declare tolerances.")
+            raise ValueError(
+                "restart_relation.tolerances must be zero for bitwise restart; got nonzero tolerances"
+            )
         if restart_class == "tolerance" and absolute == 0.0 and relative == 0.0:
-            raise ValueError("Tolerance restart relations require a positive tolerance.")
+            raise ValueError(
+                "restart_relation.tolerances must include a positive value for tolerance restart; got zero tolerances"
+            )
         if restart_class == "unsupported" and not reason_:
-            raise ValueError("Unsupported restart relations require an explicit reason.")
+            raise ValueError(
+                "restart_relation.reason must describe unsupported restart; got an empty reason"
+            )
         if len(reason_.encode("utf-8")) > 4096:
-            raise ValueError("Restart relation reasons must be at most 4096 bytes.")
+            raise ValueError(
+                "restart_relation.reason must fit within 4096 UTF-8 bytes; got an over-limit reason"
+            )
         self.source_support_tuple_id = source_id
         self.target_support_tuple_id = target_id
         self.restart_class = restart_class
@@ -472,7 +491,7 @@ class TopologyRestartRelation(StrictModule, NonTrainableState):
 
 
 class TopologyRestartPolicy(StrictModule, NonTrainableState):
-    """Fail-closed admission policy for exact and topology-changing restarts."""
+    """Define fail-closed admission for same-topology and changed-topology restarts."""
 
     allow_topology_change: bool = eqx.field(static=True)
     allow_tolerance_restart: bool = eqx.field(static=True)
@@ -489,14 +508,16 @@ class TopologyRestartPolicy(StrictModule, NonTrainableState):
         maximum_absolute_tolerance: float = 0.0,
         maximum_relative_tolerance: float = 0.0,
     ) -> None:
-        absolute = _finite_nonnegative(
+        absolute = nonnegative_finite_float(
             maximum_absolute_tolerance, "maximum_absolute_tolerance"
         )
-        relative = _finite_nonnegative(
+        relative = nonnegative_finite_float(
             maximum_relative_tolerance, "maximum_relative_tolerance"
         )
         if not allow_tolerance_restart and (absolute != 0.0 or relative != 0.0):
-            raise ValueError("A bitwise-only restart policy cannot declare tolerances.")
+            raise ValueError(
+                "restart_policy.tolerances must be zero when tolerance restart is disabled; got nonzero tolerances"
+            )
         self.allow_topology_change = bool(allow_topology_change)
         self.allow_tolerance_restart = bool(allow_tolerance_restart)
         self.maximum_absolute_tolerance = absolute
@@ -529,11 +550,13 @@ class RestartAdmission(StrictModule, NonTrainableState):
         reason: str,
         /,
     ) -> None:
-        relation = _digest(relation_id, "relation_id")
-        policy = _digest(policy_id, "policy_id")
+        relation = digest(relation_id, "relation_id")
+        policy = digest(policy_id, "policy_id")
         reason_ = str(reason).strip()
         if not reason_:
-            raise ValueError("Restart admission requires an explicit reason.")
+            raise ValueError(
+                "restart_admission.reason must explain the decision; got an empty reason"
+            )
         self.relation_id = relation
         self.policy_id = policy
         self.admitted = bool(admitted)
@@ -550,7 +573,7 @@ class RestartAdmission(StrictModule, NonTrainableState):
 
 
 class CanonicalRestartChunk(StrictModule, NonTrainableState):
-    """One decomposition-neutral canonical byte interval."""
+    """Bind a decomposition-neutral byte interval to its content digest."""
 
     logical_name: str = eqx.field(static=True)
     canonical_offset: int = eqx.field(static=True)
@@ -569,15 +592,15 @@ class CanonicalRestartChunk(StrictModule, NonTrainableState):
         *,
         payload_class: PayloadClass = "restart-state",
     ) -> None:
-        logical = _identifier(logical_name, "logical_name")
-        offset = _nonnegative(canonical_offset, "canonical_offset")
-        count = _positive(byte_count, "byte_count")
-        digest = _digest(payload_sha256, "payload_sha256")
+        logical = identifier(logical_name, "logical_name")
+        offset = nonnegative_integer(canonical_offset, "canonical_offset")
+        count = positive_integer(byte_count, "byte_count")
+        payload_digest = digest(payload_sha256, "payload_sha256")
         payload_class = parse(payload_class, PayloadClass, "payload_class")
         self.logical_name = logical
         self.canonical_offset = offset
         self.byte_count = count
-        self.payload_sha256 = digest
+        self.payload_sha256 = payload_digest
         self.payload_class = payload_class
         self.chunk_id = canonical_fingerprint(
             {
@@ -585,14 +608,14 @@ class CanonicalRestartChunk(StrictModule, NonTrainableState):
                 "logical_name": logical,
                 "canonical_offset": offset,
                 "byte_count": count,
-                "payload_sha256": digest,
+                "payload_sha256": payload_digest,
                 "payload_class": payload_class,
             }
         )
 
 
 class DestinationShard(StrictModule, NonTrainableState):
-    """One destination-owned canonical interval restored without global gather."""
+    """Describe one destination-owned interval restored without global gather."""
 
     shard_id: str = eqx.field(static=True)
     logical_name: str = eqx.field(static=True)
@@ -608,10 +631,10 @@ class DestinationShard(StrictModule, NonTrainableState):
         byte_count: int,
         /,
     ) -> None:
-        shard = _identifier(shard_id, "shard_id")
-        logical = _identifier(logical_name, "logical_name")
-        offset = _nonnegative(canonical_offset, "canonical_offset")
-        count = _positive(byte_count, "byte_count")
+        shard = identifier(shard_id, "shard_id")
+        logical = identifier(logical_name, "logical_name")
+        offset = nonnegative_integer(canonical_offset, "canonical_offset")
+        count = positive_integer(byte_count, "byte_count")
         self.shard_id = shard
         self.logical_name = logical
         self.canonical_offset = offset
@@ -628,7 +651,7 @@ class DestinationShard(StrictModule, NonTrainableState):
 
 
 class RestartChunkMapping(StrictModule, NonTrainableState):
-    """Direct range transfer from one canonical source chunk to a target shard."""
+    """Describe a source-chunk range transfer to a destination shard."""
 
     source_chunk_id: str = eqx.field(static=True)
     source_offset: int = eqx.field(static=True)
@@ -646,11 +669,11 @@ class RestartChunkMapping(StrictModule, NonTrainableState):
         byte_count: int,
         /,
     ) -> None:
-        source = _digest(source_chunk_id, "source_chunk_id")
-        source_offset_ = _nonnegative(source_offset, "source_offset")
-        target = _identifier(target_shard_id, "target_shard_id")
-        target_offset_ = _nonnegative(target_offset, "target_offset")
-        count = _positive(byte_count, "byte_count")
+        source = digest(source_chunk_id, "source_chunk_id")
+        source_offset_ = nonnegative_integer(source_offset, "source_offset")
+        target = identifier(target_shard_id, "target_shard_id")
+        target_offset_ = nonnegative_integer(target_offset, "target_offset")
+        count = positive_integer(byte_count, "byte_count")
         self.source_chunk_id = source
         self.source_offset = source_offset_
         self.target_shard_id = target
@@ -690,7 +713,9 @@ class DirectRestorePlan(StrictModule, NonTrainableState):
         /,
     ) -> None:
         if admission.relation_id != relation.relation_id or not admission.admitted:
-            raise ValueError("Direct restore requires an admitted matching relation.")
+            raise ValueError(
+                "restore_plan.admission must admit the matching relation; got a refused or mismatched relation"
+            )
         sources = tuple(
             sorted(
                 tuple(source_chunks),
@@ -725,21 +750,33 @@ class DirectRestorePlan(StrictModule, NonTrainableState):
         if not sources or any(
             not isinstance(item, CanonicalRestartChunk) for item in sources
         ):
-            raise TypeError("Direct restore requires typed source chunks.")
+            raise TypeError(
+                "restore_plan.source_chunks must contain typed source chunks; got empty or mistyped source chunks"
+            )
         if any(item.payload_class != "restart-state" for item in sources):
-            raise ValueError("Execution-cache chunks cannot enter a restore plan.")
+            raise ValueError(
+                "restore_plan.source_chunks must contain restart-state payloads only; got execution-cache chunks"
+            )
         if not destinations or any(
             not isinstance(item, DestinationShard) for item in destinations
         ):
-            raise TypeError("Direct restore requires typed destination shards.")
+            raise TypeError(
+                "restore_plan.destination_shards must contain typed destination shards; got empty or mistyped destination shards"
+            )
         if not mappings_ or any(
             not isinstance(item, RestartChunkMapping) for item in mappings_
         ):
-            raise TypeError("Direct restore requires typed chunk mappings.")
+            raise TypeError(
+                "restore_plan.mappings must contain typed chunk mappings; got empty or mistyped chunk mappings"
+            )
         if len({item.chunk_id for item in sources}) != len(sources):
-            raise ValueError("Source chunk IDs must be unique.")
+            raise ValueError(
+                "restore_plan.source_chunks must declare unique chunk IDs; got duplicate source chunk IDs"
+            )
         if len({item.shard_id for item in destinations}) != len(destinations):
-            raise ValueError("Destination shard IDs must be unique.")
+            raise ValueError(
+                "restore_plan.destination_shards must declare unique shard IDs; got duplicate destination shard IDs"
+            )
         _validate_canonical_partition(sources, "source chunks")
         _validate_canonical_partition(destinations, "destination shards")
         _validate_mappings(sources, destinations, mappings_)
@@ -763,7 +800,7 @@ class DirectRestorePlan(StrictModule, NonTrainableState):
 
 
 class RestartExecutionReport(StrictModule, NonTrainableState):
-    """Immutable account of a completed direct restore execution."""
+    """Report the transferred bytes and restored shards of a direct restore."""
 
     plan_id: str = eqx.field(static=True)
     restored_shard_ids: tuple[str, ...] = eqx.field(static=True)
@@ -779,14 +816,16 @@ class RestartExecutionReport(StrictModule, NonTrainableState):
         transfer_count: int,
         /,
     ) -> None:
-        plan = _digest(plan_id, "plan_id")
+        plan = digest(plan_id, "plan_id")
         shards = tuple(
-            _identifier(item, "restored shard ID") for item in restored_shard_ids
+            identifier(item, "restored shard ID") for item in restored_shard_ids
         )
         if len(set(shards)) != len(shards):
-            raise ValueError("Restored shard IDs must be unique.")
-        transferred = _nonnegative(transferred_bytes, "transferred_bytes")
-        count = _nonnegative(transfer_count, "transfer_count")
+            raise ValueError(
+                "restart_report.restored_shard_ids must be unique; got duplicate restored shard IDs"
+            )
+        transferred = nonnegative_integer(transferred_bytes, "transferred_bytes")
+        count = nonnegative_integer(transfer_count, "transfer_count")
         self.plan_id = plan
         self.restored_shard_ids = shards
         self.transferred_bytes = transferred
@@ -802,41 +841,45 @@ class RestartExecutionReport(StrictModule, NonTrainableState):
         )
 
 
+@checked
 def admit_topology_restart(
     relation: TopologyRestartRelation,
     policy: TopologyRestartPolicy,
     /,
 ) -> RestartAdmission:
-    """Apply exact fail-closed same/topology-change restart admission."""
-    if not isinstance(relation, TopologyRestartRelation) or not isinstance(
-        policy, TopologyRestartPolicy
-    ):
-        raise TypeError("Restart admission requires a relation and policy.")
+    """Apply fail-closed same-topology or topology-change restart admission."""
     same = relation.source_support_tuple_id == relation.target_support_tuple_id
     admitted: bool
     reason: str
-    if relation.restart_class == "unsupported":
-        admitted = False
-        reason = relation.reason
-    elif not same and not policy.allow_topology_change:
-        admitted = False
-        reason = "Topology-changing restart is disabled by policy."
-    elif relation.restart_class == "tolerance" and not policy.allow_tolerance_restart:
-        admitted = False
-        reason = "Tolerance-class restart is disabled by policy."
-    elif (
-        relation.absolute_tolerance > policy.maximum_absolute_tolerance
-        or relation.relative_tolerance > policy.maximum_relative_tolerance
-    ):
-        admitted = False
-        reason = "Restart relation exceeds the admitted tolerance envelope."
-    else:
-        admitted = True
-        reason = (
-            "Exact support tuple restart admitted."
-            if same
-            else "Qualified topology-change restart admitted."
-        )
+    match relation.restart_class:
+        case "unsupported":
+            admitted = False
+            reason = relation.reason
+        case "bitwise" | "tolerance":
+            if not same and not policy.allow_topology_change:
+                admitted = False
+                reason = "Topology-changing restart is disabled by policy."
+            elif (
+                relation.restart_class == "tolerance"
+                and not policy.allow_tolerance_restart
+            ):
+                admitted = False
+                reason = "Tolerance-class restart is disabled by policy."
+            elif (
+                relation.absolute_tolerance > policy.maximum_absolute_tolerance
+                or relation.relative_tolerance > policy.maximum_relative_tolerance
+            ):
+                admitted = False
+                reason = "Restart relation exceeds the admitted tolerance envelope."
+            else:
+                admitted = True
+                reason = (
+                    "Exact support tuple restart admitted."
+                    if same
+                    else "Qualified topology-change restart admitted."
+                )
+        case _ as invalid:
+            assert_never(invalid)
     return RestartAdmission(relation.relation_id, policy.policy_id, admitted, reason)
 
 
@@ -845,11 +888,15 @@ def canonical_chunk_mapping(
     destination_shards: Sequence[DestinationShard],
     /,
 ) -> tuple[RestartChunkMapping, ...]:
-    """Map intersections of canonical intervals directly into destination shards."""
+    """Map intersecting byte intervals directly into destination shards."""
     if not all(isinstance(item, CanonicalRestartChunk) for item in source_chunks):
-        raise TypeError("source_chunks must contain CanonicalRestartChunk values.")
+        raise TypeError(
+            "restore_inputs.source_chunks must contain CanonicalRestartChunk values; got mistyped source chunks"
+        )
     if not all(isinstance(item, DestinationShard) for item in destination_shards):
-        raise TypeError("destination_shards must contain DestinationShard values.")
+        raise TypeError(
+            "restore_inputs.destination_shards must contain DestinationShard values; got mistyped destination shards"
+        )
     sources = tuple(
         sorted(
             (item for item in source_chunks if item.payload_class == "restart-state"),
@@ -887,6 +934,7 @@ def canonical_chunk_mapping(
     return tuple(mappings)
 
 
+@checked
 def prepare_direct_restore(
     relation: TopologyRestartRelation,
     policy: TopologyRestartPolicy,
@@ -894,10 +942,12 @@ def prepare_direct_restore(
     destination_shards: Sequence[DestinationShard],
     /,
 ) -> DirectRestorePlan:
-    """Admit and prepare a canonical, cache-excluding direct restore plan."""
+    """Admit a direct restore plan excluding execution-cache inputs."""
     admission = admit_topology_restart(relation, policy)
     if not admission.admitted:
-        raise ValueError(f"Topology restart is not admitted: {admission.reason}")
+        raise ValueError(
+            f"restore_plan.admission must admit the topology restart; got {admission.reason}"
+        )
     state_chunks = tuple(
         item for item in source_chunks if item.payload_class == "restart-state"
     )
@@ -907,6 +957,7 @@ def prepare_direct_restore(
     )
 
 
+@checked
 def execute_direct_restore(
     plan: DirectRestorePlan,
     read_range: ChunkRangeReader,
@@ -914,15 +965,13 @@ def execute_direct_restore(
     /,
 ) -> RestartExecutionReport:
     """Execute bounded segment transfers directly into each destination shard."""
-    if not isinstance(plan, DirectRestorePlan):
-        raise TypeError("plan must be DirectRestorePlan.")
     mappings_by_source: dict[str, list[RestartChunkMapping]] = {}
     for mapping in plan.mappings:
         mappings_by_source.setdefault(mapping.source_chunk_id, []).append(mapping)
     destinations = {item.shard_id: item for item in plan.destination_shards}
     transferred = 0
     for source in plan.source_chunks:
-        digest = hashlib.sha256()
+        payload_hasher = hashlib.sha256()
         for mapping in sorted(
             mappings_by_source[source.chunk_id],
             key=lambda item: item.source_offset,
@@ -931,14 +980,14 @@ def execute_direct_restore(
             payload = read_range(source, mapping.source_offset, mapping.byte_count)
             if not isinstance(payload, bytes) or len(payload) != mapping.byte_count:
                 raise RepositoryCorruptionError(
-                    "Restart range reader returned an invalid bounded payload."
+                    "restore_reader.payload must be bytes matching the requested range length; got an invalid bounded payload"
                 )
-            digest.update(payload)
+            payload_hasher.update(payload)
             write_range(destination, mapping.target_offset, payload)
             transferred += mapping.byte_count
-        if digest.hexdigest() != source.payload_sha256:
+        if payload_hasher.hexdigest() != source.payload_sha256:
             raise RepositoryCorruptionError(
-                f"Restart chunk {source.chunk_id!r} checksum failed."
+                f"restore_source.payload_sha256 must match the transferred content; got checksum failed for chunk {source.chunk_id!r}"
             )
     return RestartExecutionReport(
         plan.plan_id,
@@ -954,7 +1003,9 @@ def _validate_canonical_partition(
     /,
 ) -> None:
     if not records:
-        raise ValueError(f"Canonical {label} cannot be empty.")
+        raise ValueError(
+            f"restore_partition.records must contain byte intervals; got no {label} records"
+        )
     logical_names = sorted({item.logical_name for item in records})
     for logical_name in logical_names:
         matching = tuple(item for item in records if item.logical_name == logical_name)
@@ -963,7 +1014,7 @@ def _validate_canonical_partition(
             if item.canonical_offset != expected:
                 relation = "overlap" if item.canonical_offset < expected else "hole"
                 raise ValueError(
-                    f"Canonical {label} for {logical_name!r} contain a {relation}."
+                    f"restore_partition.byte_intervals must partition each logical stream; got a {relation} in {label} for {logical_name!r}"
                 )
             expected += item.byte_count
 
@@ -977,25 +1028,37 @@ def _validate_mappings(
     source_by_id = {item.chunk_id: item for item in sources}
     destination_by_id = {item.shard_id: item for item in destinations}
     if len({item.mapping_id for item in mappings}) != len(mappings):
-        raise ValueError("Restart mapping IDs must be unique.")
+        raise ValueError(
+            "restore_plan.mappings must declare unique mapping IDs; got duplicate mapping IDs"
+        )
     for mapping in mappings:
         source = source_by_id.get(mapping.source_chunk_id)
         destination = destination_by_id.get(mapping.target_shard_id)
         if source is None or destination is None:
-            raise ValueError("Restart mapping references an unknown chunk or shard.")
+            raise ValueError(
+                "restore_mapping.references must identify declared source chunks and destination shards; got an unknown chunk or shard"
+            )
         if source.payload_class != "restart-state":
-            raise ValueError("Restart mapping references execution-cache content.")
+            raise ValueError(
+                "restore_mapping.source_chunk must reference restart-state content; got execution-cache content"
+            )
         if mapping.source_offset + mapping.byte_count > source.byte_count:
-            raise ValueError("Restart mapping exceeds its source chunk.")
+            raise ValueError(
+                "restore_mapping.source_range must fit inside its source chunk; got a source range overflow"
+            )
         if mapping.target_offset + mapping.byte_count > destination.byte_count:
-            raise ValueError("Restart mapping exceeds its destination shard.")
+            raise ValueError(
+                "restore_mapping.target_range must fit inside its destination shard; got a destination range overflow"
+            )
         source_canonical = source.canonical_offset + mapping.source_offset
         target_canonical = destination.canonical_offset + mapping.target_offset
         if (
             source.logical_name != destination.logical_name
             or source_canonical != target_canonical
         ):
-            raise ValueError("Restart mapping changes canonical payload coordinates.")
+            raise ValueError(
+                "restore_mapping.payload_coordinates must agree between source and target; got different offsets"
+            )
     for destination in destinations:
         matching = tuple(
             sorted(
@@ -1012,12 +1075,12 @@ def _validate_mappings(
             if mapping.target_offset != expected:
                 relation = "overlap" if mapping.target_offset < expected else "hole"
                 raise ValueError(
-                    f"Restart mappings for shard {destination.shard_id!r} contain a {relation}."
+                    f"restore_mapping.target_ranges must partition each destination; got a {relation} for shard {destination.shard_id!r}"
                 )
             expected += mapping.byte_count
         if expected != destination.byte_count:
             raise ValueError(
-                f"Restart mappings for shard {destination.shard_id!r} contain a hole."
+                f"restore_mapping.target_ranges must cover the destination byte count; got a hole for shard {destination.shard_id!r}"
             )
     for source in sources:
         matching = tuple(
@@ -1031,42 +1094,25 @@ def _validate_mappings(
             if mapping.source_offset != expected:
                 relation = "overlap" if mapping.source_offset < expected else "hole"
                 raise ValueError(
-                    f"Restart mappings for chunk {source.chunk_id!r} contain a {relation}."
+                    f"restore_mapping.source_ranges must partition each source; got a {relation} for chunk {source.chunk_id!r}"
                 )
             expected += mapping.byte_count
         if expected != source.byte_count:
             raise ValueError(
-                f"Restart mappings for chunk {source.chunk_id!r} contain a hole."
+                f"restore_mapping.source_ranges must cover the source byte count; got a hole for chunk {source.chunk_id!r}"
             )
 
 
 def _support_id(value: SupportTuple | str, name: str, /) -> str:
-    if isinstance(value, SupportTuple):
-        return value.support_tuple_id
-    if isinstance(value, str):
-        return _digest(value, f"{name}_support_tuple_id")
-    raise TypeError(f"{name} must be SupportTuple or a support-tuple ID.")
-
-
-def _finite_nonnegative(value: float, name: str, /) -> float:
-    normalized = float(value)
-    if not math.isfinite(normalized) or normalized < 0.0:
-        raise ValueError(f"{name} must be finite and nonnegative.")
-    return normalized
-
-
-def _positive(value: int, name: str, /) -> int:
-    normalized = int(value)
-    if normalized <= 0:
-        raise ValueError(f"{name} must be positive.")
-    return normalized
-
-
-def _nonnegative(value: int, name: str, /) -> int:
-    normalized = int(value)
-    if normalized < 0:
-        raise ValueError(f"{name} must be nonnegative.")
-    return normalized
+    match value:
+        case SupportTuple():
+            return value.support_tuple_id
+        case str():
+            return digest(value, f"{name}_support_tuple_id")
+        case _:
+            raise TypeError(
+                f"restart_relation.{name} must be SupportTuple or a support-tuple ID; got {type(value).__name__}"
+            )
 
 
 __all__ = [
@@ -1080,7 +1126,6 @@ __all__ = [
     "RestartChunkMapping",
     "RestartClass",
     "RestartExecutionReport",
-    "MeshingArrayRole",
     "MeshingCheckpointState",
     "TopologyRestartPolicy",
     "TopologyRestartRelation",

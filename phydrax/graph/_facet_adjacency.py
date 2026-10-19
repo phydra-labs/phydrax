@@ -13,20 +13,23 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .._validation import canonical_identifier
+from .._validation import canonical_identifier, nonnegative_integer
 from ..discretization.fem._generic import FiniteElementDiscretization
 from ..discretization.finite_volume._unstructured import (
     UnstructuredFiniteVolumeDiscretization,
 )
 from ..sparse._relation import EdgeRelation
+from ..typing import checked
 
 
 def _integer_routes(name: str, value: ArrayLike, /) -> np.ndarray:
     array = np.asarray(value)
     if array.dtype.kind not in "iu":
-        raise TypeError(f"{name} must be an integer array.")
+        raise TypeError(
+            f"FacetAdjacency.{name} must be an integer array; got dtype {array.dtype}"
+        )
     if array.ndim != 1:
-        raise ValueError(f"{name} must be rank-1.")
+        raise ValueError(f"FacetAdjacency.{name} must be rank-1; got shape {array.shape}")
     return array.astype(np.int32)
 
 
@@ -72,7 +75,9 @@ class FacetAdjacency(StrictModule, NonTrainableState):
         neighbors = _integer_routes("neighbor_cells", neighbor_cells)
         route_shape = facets.shape
         if owners.shape != route_shape or neighbors.shape != route_shape:
-            raise ValueError("Facet ids, owner cells, and neighbor cells must align.")
+            raise ValueError(
+                "FacetAdjacency.routes must align facet IDs, owner cells and neighbor cells; got mismatched shapes"
+            )
         active = (
             np.ones(route_shape, dtype=np.bool_)
             if active_mask is None
@@ -80,22 +85,26 @@ class FacetAdjacency(StrictModule, NonTrainableState):
         )
         if active.dtype.kind != "b" or active.shape != route_shape:
             raise ValueError(
-                "active_mask must be a boolean array with one entry per facet."
+                "FacetAdjacency.active_mask must be a boolean array with one entry per facet; got invalid mask dtype or shape"
             )
-        count = int(cell_count)
-        if count < 0:
-            raise ValueError("cell_count must be non-negative.")
+        count = nonnegative_integer(cell_count, "FacetAdjacency.cell_count")
         if np.any(facets < 0) or np.unique(facets).size != facets.size:
-            raise ValueError("Facet ids must be unique non-negative entity indices.")
+            raise ValueError(
+                "FacetAdjacency.facet_ids must be unique nonnegative entity indices; got invalid facet IDs"
+            )
         if np.any((owners < 0) | (owners >= count)):
-            raise ValueError(f"Owner cells must lie in [0, {count}).")
+            raise ValueError(
+                f"FacetAdjacency.owner_cells must lie in [0, {count}); got out-of-range owners"
+            )
         if np.any((neighbors < -1) | (neighbors >= count)):
             raise ValueError(
-                f"Neighbor cells must lie in [0, {count}) or use the boundary sentinel -1."
+                f"FacetAdjacency.neighbor_cells must lie in [0, {count}) or use boundary sentinel -1; got out-of-range neighbors"
             )
         valid = active & (neighbors >= 0)
         if np.any(valid & (neighbors == owners)):
-            raise ValueError("An interior facet cannot connect a cell to itself.")
+            raise ValueError(
+                "FacetAdjacency.neighbor_cells must differ from owner cells on interior facets; got a self route"
+            )
         cell_set = canonical_identifier(cell_entity_set_id, "cell_entity_set_id")
         facet_set = canonical_identifier(facet_entity_set_id, "facet_entity_set_id")
         order = np.argsort(facets[valid], kind="stable")
@@ -124,6 +133,7 @@ class FacetAdjacency(StrictModule, NonTrainableState):
         )
 
 
+@checked
 def facet_adjacency(
     discretization: UnstructuredFiniteVolumeDiscretization | FiniteElementDiscretization,
     /,
@@ -160,8 +170,8 @@ def facet_adjacency(
             )
         case _:
             raise TypeError(
-                "facet_adjacency requires an UnstructuredFiniteVolumeDiscretization "
-                "or FiniteElementDiscretization."
+                "facet_adjacency.discretization must be an UnstructuredFiniteVolumeDiscretization "
+                "or FiniteElementDiscretization; got unsupported discretization"
             )
 
 

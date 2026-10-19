@@ -935,7 +935,7 @@ def _validate_discretization(
         raise ValueError("Production phase-field execution requires float64 precision.")
     if not discretization.mesh.blocks:
         raise ValueError("Production phase-field execution requires cell blocks.")
-    indices = tuple(discretization._field_index(name) for name in field_names)
+    indices = tuple(discretization.field_index(name) for name in field_names)
     supported_cells = {
         "triangle",
         "quadrilateral",

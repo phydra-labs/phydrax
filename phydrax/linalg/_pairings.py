@@ -10,15 +10,26 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
+from jax.core import Tracer
+from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 
 
+def _pairing_array(value: ArrayLike, /) -> Array:
+    if isinstance(value, Array):
+        return value
+    if isinstance(value, Tracer):
+        return jnp.asarray(value)
+    return jax.device_put(np.asarray(value))
+
+
 def _arrays(value: PyTree[Any], name: str, /) -> PyTree[Array]:
-    arrays = jax.tree.map(jnp.asarray, value)
+    arrays = jax.tree.map(_pairing_array, value)
     leaves = jax.tree.leaves(arrays)
     if not leaves:
         raise ValueError(f"{name} must contain at least one array leaf.")
@@ -102,22 +113,31 @@ class EuclideanPairing(AbstractPairing):
         return _arrays(covector, "covector")
 
 
+@eqx.filter_jit
+def _validated_diagonal_weight(value: Array, /) -> Array:
+    """Runtime admission kernel in the weight bank's capacity bucket."""
+    return eqx.error_if(
+        value,
+        jnp.any(~jnp.isfinite(value) | (jnp.real(value) <= 0) | (jnp.imag(value) != 0)),
+        "Diagonal pairing weights must be finite, positive, and real-valued.",
+    )
+
+
+def _admit_diagonal_weight(value: Array, /) -> Array:
+    if isinstance(value, Tracer) or not value.is_fully_addressable:
+        return _validated_diagonal_weight(value)
+    host = np.asarray(value)
+    invalid = np.any(~np.isfinite(host) | (np.real(host) <= 0) | (np.imag(host) != 0))
+    return _validated_diagonal_weight(value) if invalid else value
+
+
 class DiagonalPairing(AbstractPairing):
     """Positive diagonal pairing with the same PyTree structure as its vectors."""
 
     weights: PyTree[Array]
 
     def __init__(self, weights: PyTree[Any], /, *, pairing_id: str | None = None) -> None:
-        values = jax.tree.map(
-            lambda value: eqx.error_if(
-                value,
-                jnp.any(
-                    ~jnp.isfinite(value) | (jnp.real(value) <= 0) | (jnp.imag(value) != 0)
-                ),
-                "Diagonal pairing weights must be finite, positive, and real-valued.",
-            ),
-            _arrays(weights, "weights"),
-        )
+        values = jax.tree.map(_admit_diagonal_weight, _arrays(weights, "weights"))
         if pairing_id is None:
             identifier = canonical_fingerprint(
                 {

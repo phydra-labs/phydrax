@@ -9,16 +9,20 @@ import math
 from collections.abc import Sequence
 from fractions import Fraction
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.geometry.brep import OffsetSurface, TorusPatch
 from phydrax.geometry.brep._intersection import (
     BranchRootEndpoint,
     CurveSurfaceIntersectionRoot,
     intersect_trim_curves,
     NativePeriodEndpoint,
+    original_curve_surface_root_preparation,
     TrimIntersectionRoot,
     TrimRootEndpoint,
 )
@@ -26,7 +30,10 @@ from phydrax.geometry.brep._intersection_curve import (
     AffinePCurve,
     decode_geometry,
     encode_geometry,
+    original_trim_intersection_preparation,
+    PeriodicPCurve,
 )
+from phydrax.geometry.brep._patches import SurfaceIsoparametricCurve
 
 
 geometry = phx.geometry
@@ -86,7 +93,7 @@ def test_line_circle_transversal_points_are_certified() -> None:
         geometry.CurveRange(line, 0.0, 4.0), geometry.CurveRange(circle)
     )
     assert result.complete
-    assert [point.kind for point in result.points] == ["transversal"] * 2
+    assert [point.kind for point in result.points] == ["crossing"] * 2
     xs = sorted(point.point[0] for point in result.points)
     np.testing.assert_allclose(xs, [-math.sqrt(0.91), math.sqrt(0.91)], atol=1e-12)
     for point in result.points:
@@ -103,7 +110,7 @@ def test_trim_endpoint_intersection_retains_exact_source_root() -> None:
     )
     result = intersect_trim_curves(first, second)
     assert result.complete
-    assert [point.kind for point in result.points] == ["transversal"]
+    assert [point.kind for point in result.points] == ["crossing"]
     point = result.points[0]
     root = TrimIntersectionRoot(
         first,
@@ -138,9 +145,9 @@ def test_curve_owned_phase_roundtrip_retains_exact_source_authority() -> None:
         atol=1.0e-15,
         rtol=0.0,
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="NativePeriodEndpoint.axis"):
         NativePeriodEndpoint(circle, None, 0)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="NativePeriodEndpoint.curve"):
         NativePeriodEndpoint(geometry.LineCurve((0.0, 0.0), (1.0, 0.0)))
 
 
@@ -179,27 +186,30 @@ def test_spatial_root_lift_retains_source_endpoint_and_refuses_unrelated_pcurve(
     assert (
         isinstance(restored, TrimRootEndpoint) and restored.root.root_id == root.root_id
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="TrimRootEndpoint.source_pcurve"):
         TrimRootEndpoint(
             root,
             "first",
             source_pcurve=geometry.LineCurve((0.0, 0.1), (1.0, 0.0)),
             source_surface=source,
         )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="TrimRootEndpoint.source_lift"):
         TrimRootEndpoint(root, "first", source_pcurve=pcurve)
 
-    from phydrax.geometry.brep import _intersection as root_owner
-
-    with root_owner.original_curve_surface_root_preparation((endpoint, restored)):
-        np.testing.assert_array_equal(segment.enclosure(0.0, 0.0), (lower, upper))
+    with original_curve_surface_root_preparation((endpoint, restored)) as preparations:
+        np.testing.assert_array_equal(
+            segment.enclosure(0.0, 0.0, preparations=preparations), (lower, upper)
+        )
         restored_segment = geometry.CurveTrimSegment(
             pcurve,
             restored.parameter,
             1.0,
             first_root=restored,
+            preparations=preparations,
         )
-        restored_lower, restored_upper = restored_segment.enclosure(0.0, 0.0)
+        restored_lower, restored_upper = restored_segment.enclosure(
+            0.0, 0.0, preparations=preparations
+        )
         assert np.all(restored_lower <= (0.3, 0.0))
         assert np.all(np.asarray((0.3, 0.0)) <= restored_upper)
     np.testing.assert_array_equal(segment.enclosure(0.0, 0.0), (lower, upper))
@@ -250,11 +260,11 @@ def test_rooted_branch_enclosure_authorizes_only_source_endpoint_uncertainty() -
         branch.evaluate(np.asarray((0.0, 0.1), dtype=np.float64)).first_parameters
     )
     assert np.all(lower <= parameters) and np.all(parameters <= upper)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="IntersectionCurve.endpoints"):
         geometry.CurveTrimSegment(coupled, outside, 0.1)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="IntersectionCurve.endpoints"):
         branch.bounding_box(outside, 0.1)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="IntersectionCurve.rooted_range"):
         branch.bounding_box(-0.01, 0.1, endpoint_roots=(endpoint, None))
 
 
@@ -264,7 +274,7 @@ def test_tangent_line_circle_reports_tangent_contact() -> None:
     result = geometry.intersect_curve_ranges(
         geometry.CurveRange(line, 0.0, 4.0), geometry.CurveRange(circle)
     )
-    assert [point.kind for point in result.points] == ["tangent"]
+    assert [point.kind for point in result.points] == ["tangent_point"]
     np.testing.assert_allclose(result.points[0].point, [0.0, 1.0], atol=1e-7)
 
 
@@ -274,7 +284,7 @@ def test_line_sphere_curve_region_points() -> None:
         geometry.CurveRange(line, 0.0, 4.0), _sphere([0.0, 0.0, 0.0])
     )
     assert result.complete
-    assert [point.kind for point in result.points] == ["transversal"] * 2
+    assert [point.kind for point in result.points] == ["crossing"] * 2
     xs = sorted(point.point[0] for point in result.points)
     root = math.sqrt(1.0 - 0.05)
     np.testing.assert_allclose(xs, [-root, root], atol=1e-12)
@@ -327,7 +337,7 @@ def test_sphere_sphere_external_tangency_is_tangent_point() -> None:
     )
     assert result.complete
     assert result.curves == ()
-    assert [point.kind for point in result.points] == ["tangent"]
+    assert [point.kind for point in result.points] == ["tangent_point"]
     np.testing.assert_allclose(result.points[0].point, [0.0, 1.0, 0.0], atol=1e-12)
     assert result.points[0].gap_bound <= 1e-12
 
@@ -337,17 +347,16 @@ def test_orthogonal_equal_cylinders_meet_at_singular_junctions() -> None:
     second = _cylinder([0, 1, 0], [0, 0, 1], [1, 0, 0], 1.0, 2.0)
     result = geometry.intersect_surface_regions(first, second)
     singular = sorted(
-        (point for point in result.points if point.kind == "singular"),
+        (point for point in result.points if point.kind == "singular_point"),
         key=lambda point: point.point[1],
     )
     assert len(singular) == 2
     np.testing.assert_allclose(singular[0].point, [0.0, -1.0, 0.0], atol=1e-12)
     np.testing.assert_allclose(singular[1].point, [0.0, 1.0, 0.0], atol=1e-12)
     assert len(result.curves) == 4
+    assert [point.branch_count for point in singular] == [4, 4]
     for curve in result.curves:
         assert curve.fully_certified
-        assert not result.complete
-        assert any(region.reason == "singular" for region in result.unresolved)
         assert (curve.start_kind, curve.end_kind) == ("singular", "singular")
         points = _assert_on_both(first, second, curve)
         # Steinmetz branches lie on the planes z = x or z = -x.
@@ -470,7 +479,7 @@ def test_polygon_trim_domain_keeps_affine_semantics() -> None:
 def test_curve_trim_loop_refuses_open_chain() -> None:
     circle = geometry.CircleCurve([0.0, 0.0], [1.0, 0.0], [0.0, 1.0], 1.0)
     half = geometry.CurveTrimSegment(circle, 0.0, PI)
-    with pytest.raises(ValueError, match="not closed"):
+    with pytest.raises(ValueError, match="CurveTrimLoop.curves"):
         geometry.CurveTrimLoop([half], tolerance=1e-3)
 
 
@@ -513,11 +522,9 @@ def test_rational_surface_intersection_binds_to_original_patch() -> None:
 
 
 def test_rational_spline_branch_differentiates_through_live_source_leaves() -> None:
-    import equinox as eqx
-    import jax
 
     # Biquadratic rational sheet with an interior u knot: the branch crosses
-    # two Bernstein pieces, each pinned to its canonical knot span.
+    # two Bernstein pieces, each pinned to its source knot span.
     heights = [[0.0, 0.1, 0.0], [0.2, 0.3, 0.1], [0.1, 0.4, 0.2], [0.0, 0.2, 0.1]]
     xs, ys = (0.0, 0.3, 0.7, 1.0), (0.0, 0.5, 1.0)
     points = [[[x, y, heights[i][j]] for j, y in enumerate(ys)] for i, x in enumerate(xs)]
@@ -539,7 +546,7 @@ def test_rational_spline_branch_differentiates_through_live_source_leaves() -> N
     parameters = jnp.linspace(0.0, float(curve.num_charts), 9)
 
     # Eager evaluation is certified against the host Bernstein enclosures and
-    # lies on the original rational source and the plane.
+    # lies on the rational source sheet and the plane.
     eager = curve.evaluate(parameters)
     np.testing.assert_allclose(
         patch.evaluate(eager.first_parameters), eager.point, rtol=0.0, atol=1e-11
@@ -608,7 +615,9 @@ def test_rational_spline_branch_differentiates_through_live_source_leaves() -> N
         == geometry.IntersectionCurve.from_payload(curve.payload()).branch_id
     )
     revised = eqx.tree_at(lambda value: value.first.patch, curve, shifted[0])
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match=r"IntersectionCurve\.(chart_certificate|chart_bounds|branch_id)"
+    ):
         geometry.IntersectionCurve.from_payload(revised.payload())
 
     # Merging the interior knot into a domain end changes span topology: the
@@ -627,7 +636,6 @@ def test_rational_spline_branch_differentiates_through_live_source_leaves() -> N
 
 
 def test_source_extraction_bounds_cover_exact_knot_insertions() -> None:
-    from fractions import Fraction
 
     curve = geometry.BSplineCurve(
         [[0.1, 0.2], [0.7, 0.9], [1.2, -0.4], [2.3, 0.1]],
@@ -677,7 +685,7 @@ def test_intersection_pcurve_subarcs_refine_and_reverse() -> None:
 def test_unclosed_exact_trim_is_not_closed_by_chord_tolerance() -> None:
     line = geometry.LineCurve([0, 0], [1, 0])
     segment = geometry.CurveTrimSegment(line, 0, 0.01)
-    with pytest.raises(ValueError, match="not closed"):
+    with pytest.raises(ValueError, match="CurveTrimLoop.curves"):
         geometry.CurveTrimLoop([segment], tolerance=0.1)
 
 
@@ -692,7 +700,6 @@ def test_rational_denominator_failure_is_explicit() -> None:
 
 @pytest.mark.parametrize("mutation", ["dtype", "shape", "unknown", "missing", "nan"])
 def test_exact_geometry_decoder_rejects_malformed_support(mutation: str) -> None:
-    from phydrax.geometry.brep._intersection_curve import decode_geometry, encode_geometry
 
     payload = encode_geometry(geometry.LineCurve([0, 0], [1, 0]))
     if mutation == "dtype":
@@ -705,7 +712,7 @@ def test_exact_geometry_decoder_rejects_malformed_support(mutation: str) -> None
         del payload["fields"]["direction"]
     else:
         payload["fields"]["origin"]["hex"][0] = "nan"
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"geometry\."):
         decode_geometry(payload)
 
 
@@ -715,7 +722,7 @@ def test_near_tangent_circle_does_not_prune_two_real_roots() -> None:
     result = geometry.intersect_curve_ranges(
         geometry.CurveRange(line, 0, 4), geometry.CurveRange(circle)
     )
-    regular = [point for point in result.points if point.kind == "transversal"]
+    regular = [point for point in result.points if point.kind == "crossing"]
     assert len(regular) == 2
     assert regular[0].point[0] * regular[1].point[0] < 0
 
@@ -730,7 +737,6 @@ def test_c0_spline_hessian_does_not_claim_global_zero_curvature() -> None:
 
 
 def test_offset_sphere_retains_exact_operation_and_source_jets() -> None:
-    from phydrax.geometry.brep._patches import OffsetSurface
 
     sphere = _sphere([0, 0, 0]).patch
     offset = OffsetSurface(sphere, 0.25)
@@ -751,7 +757,6 @@ def test_offset_sphere_retains_exact_operation_and_source_jets() -> None:
 
 
 def test_nonclamped_source_bezier_bounds_preserve_original_domain() -> None:
-    from fractions import Fraction
 
     curve = geometry.BSplineCurve(
         [[0.1, 0.2], [0.7, 0.9], [1.2, -0.4], [2.3, 0.1]],
@@ -794,12 +799,6 @@ def test_trim_box_membership_never_uses_center_alone() -> None:
 
 
 def test_native_period_endpoint_closes_seam_without_reinterpreting_binary_tau() -> None:
-    from phydrax.geometry.brep._intersection import NativePeriodEndpoint
-    from phydrax.geometry.brep._intersection_curve import (
-        decode_geometry,
-        encode_geometry,
-        PeriodicPCurve,
-    )
 
     patch = _sphere([0, 0, 0]).patch
     horizontal = geometry.LineCurve([0, 0], [1, 0])
@@ -817,22 +816,15 @@ def test_native_period_endpoint_closes_seam_without_reinterpreting_binary_tau() 
     restored = decode_geometry(encode_geometry(exact))
     assert restored.shares_endpoint(right)
     lower, upper = restored.carrier_parameter_enclosure(1, 1)
-    from fractions import Fraction
 
     mathematical_tau = Fraction("6.28318530717958647692528676655900576839433879875021")
     assert Fraction(float(lower)) <= mathematical_tau <= Fraction(float(upper))
     other_source = geometry.LineCurve([0, 1], [1, 0])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="CurveTrimSegment.endpoint_root"):
         geometry.CurveTrimSegment(other_source, 0, endpoint.parameter, last_root=endpoint)
 
 
 def test_native_period_endpoint_reads_only_derived_isoline_period_as_tau() -> None:
-    from phydrax.geometry.brep._intersection import NativePeriodEndpoint
-    from phydrax.geometry.brep._patches import (
-        OffsetSurface,
-        SurfaceIsoparametricCurve,
-        TorusPatch,
-    )
 
     torus = OffsetSurface(
         TorusPatch([0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], 2.0, 0.5), 0.125
@@ -840,18 +832,15 @@ def test_native_period_endpoint_reads_only_derived_isoline_period_as_tau() -> No
     derived = SurfaceIsoparametricCurve(torus, 1, 0.0)
     for turns in (0, 1):
         assert NativePeriodEndpoint(derived, torus, 0, turns=turns).turns == turns
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="NativePeriodEndpoint.parameter"):
         NativePeriodEndpoint(derived, torus, 0, turns=2)
     literal = SurfaceIsoparametricCurve(torus, 1, 0.0, parameter_range=(0.0, math.tau))
     NativePeriodEndpoint(literal, torus, 0, turns=0)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="NativePeriodEndpoint.parameter"):
         NativePeriodEndpoint(literal, torus, 0, turns=1)
 
 
 def test_native_period_circle_endpoint_preserves_true_quarter_turns() -> None:
-    from fractions import Fraction
-
-    from phydrax.geometry.brep._intersection import NativePeriodEndpoint
 
     patch = _sphere([0, 0, 0]).patch
     circle = geometry.CircleCurve([0, 0], [1, 0], [0, 1], 1)
@@ -873,7 +862,7 @@ def test_native_period_circle_endpoint_preserves_true_quarter_turns() -> None:
     arc = geometry.CurveTrimSegment(circle, 0, quarter.parameter, last_root=quarter)
     tangent = geometry.CurveTrimSegment(geometry.LineCurve([0, 1], [-1, 0]), 0, 1)
     assert arc.shares_endpoint(tangent)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="NativePeriodEndpoint.axis"):
         NativePeriodEndpoint(circle, patch, 1)
 
 
@@ -900,7 +889,7 @@ def test_unclamped_degree_multiplicity_trim_endpoint_retains_exact_source_join()
         geometry.LineCurve([1.0, 0.0], [0.0, 1.0]), 0.0, 1.0
     )
     assert closed.shares_endpoint(tangent)
-    # A numerically tiny authored gap is still a distinct exact source point.
+    # An authored gap remains a distinct source point regardless of its size.
     separated = controls.copy()
     separated[-1, 0] = np.nextafter(separated[-1, 0], np.inf)
     open_source = geometry.BSplineCurve(separated, weights, knots, 2)
@@ -949,9 +938,6 @@ def test_active_trim_endpoint_uses_knot_run_not_exterior_control_bank(
 def test_repeated_original_intersection_trim_bounds_preserve_affine_source_wrapper() -> (
     None
 ):
-    from phydrax.geometry.brep._intersection_curve import (
-        original_trim_intersection_preparation,
-    )
 
     first = _plane((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
     second = _plane((0.0, 0.5, -0.5), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
@@ -965,10 +951,12 @@ def test_repeated_original_intersection_trim_bounds_preserve_affine_source_wrapp
     interval = (0.1, 0.9)
     expected_box = trim.enclosure(*interval)
     expected_jet = trim.derivative_bounds(*interval)
-    with original_trim_intersection_preparation((trim,)):
+    with original_trim_intersection_preparation((trim,)) as preparations:
         for _ in range(3):
-            np.testing.assert_array_equal(trim.enclosure(*interval), expected_box)
-            actual = trim.derivative_bounds(*interval)
+            np.testing.assert_array_equal(
+                trim.enclosure(*interval, preparations=preparations), expected_box
+            )
+            actual = trim.derivative_bounds(*interval, preparations=preparations)
             np.testing.assert_array_equal(actual[0], expected_jet[0])
             np.testing.assert_array_equal(actual[1], expected_jet[1])
     np.testing.assert_array_equal(trim.enclosure(*interval), expected_box)

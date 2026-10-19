@@ -1,18 +1,17 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Compatible polynomial, product, and rational differential-form elements.
 
-Simplex/tensor cells admit their canonical n-D references; named prism and
-pyramid cells own product and rational complexes with exact entity moments.
+Simplex/tensor cells use their n-D reference charts; named prism and
+pyramid cells provide product and rational complexes with entity moments.
 All component axes follow the exterior owner's lexicographic blade convention.
 """
 
 from __future__ import annotations
 
 from fractions import Fraction
-from functools import lru_cache
 from itertools import combinations, product
 from math import comb, factorial, prod
-from typing import final, Literal, NamedTuple
+from typing import final, NamedTuple
 
 import equinox as eqx
 import jax
@@ -22,6 +21,11 @@ import numpy.typing as npt
 from jax import Array
 from jax.typing import ArrayLike
 
+import phydrax.discretization.fem._hybrid_charts as hybrid_charts_owner
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
+from phydrax.linalg._exact import solve_exact
+
+from ... import linalg as linalg_owner
 from ..._fingerprint import canonical_fingerprint
 from ..._host_table_cache import host_table_cache
 from ..._polynomial._cubature import simplex_rule_data, tensor_product_rule_data
@@ -29,24 +33,33 @@ from ..._polynomial._orthogonal import (
     standard_series_derivative_coefficients,
     standard_vandermonde,
 )
+from ..._resource_ticket import HostBatchTicket
 from ..._strict import StrictModule
 from ...ein import contract
+from ...exterior import _algebra as algebra_owner
 from ...exterior._form_type import FormProxy, FormTwist, FormType, FormValueSpec
-from ...typing import parse
-from .._coordinate_enclosure import Expression
+from ...typing import checked, parse
+from .. import _coordinate_enclosure as coordinate_enclosure_owner
+from .._coordinate_budget import CoordinateEnclosureBudget
 from .._reference_cell import reference_cell_topology
-from ._reference import FiniteElementSpec
+from . import (
+    _form_expressions as form_expressions_owner,
+    _hybrid_forms as hybrid_forms_owner,
+)
+from ._form_basis_types import (
+    AbstractReferenceFormBasis,
+    AbstractReferenceHybridFactors,
+    AbstractReferenceTensorFactors,
+    DofLabel,
+    FormElementFamily,
+)
 
 
-type FormElementFamily = Literal[
-    "trimmed", "full", "tensor-trimmed", "prism-trimmed", "pyramid-trimmed"
-]
-type DofLabel = tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]
-type _Polynomial = dict[tuple[int, ...], float]
-type _HostArray = npt.NDArray[np.float64]
+type FormPolynomial = dict[tuple[int, ...], float]
+type HostFormArray = npt.NDArray[np.float64]
 
 
-def _compositions(total: int, length: int) -> tuple[tuple[int, ...], ...]:
+def form_compositions(total: int, length: int) -> tuple[tuple[int, ...], ...]:
     if length == 0:
         return ((),) if total == 0 else ()
     if length == 1:
@@ -54,16 +67,20 @@ def _compositions(total: int, length: int) -> tuple[tuple[int, ...], ...]:
     return tuple(
         (first, *rest)
         for first in range(total + 1)
-        for rest in _compositions(total - first, length - 1)
+        for rest in form_compositions(total - first, length - 1)
     )
 
 
-def _exponents(n: int, r: int) -> tuple[tuple[int, ...], ...]:
-    return tuple(alpha for degree in range(r + 1) for alpha in _compositions(degree, n))
+def form_exponents(n: int, r: int) -> tuple[tuple[int, ...], ...]:
+    return tuple(
+        alpha for degree in range(r + 1) for alpha in form_compositions(degree, n)
+    )
 
 
-def _multiply(left: _Polynomial, right: _Polynomial) -> _Polynomial:
-    result: _Polynomial = {}
+def multiply_form_polynomials(
+    left: FormPolynomial, right: FormPolynomial
+) -> FormPolynomial:
+    result: FormPolynomial = {}
     for alpha, a in left.items():
         for beta, b in right.items():
             gamma = tuple(x + y for x, y in zip(alpha, beta, strict=True))
@@ -71,27 +88,31 @@ def _multiply(left: _Polynomial, right: _Polynomial) -> _Polynomial:
     return result
 
 
-def _power(poly: _Polynomial, degree: int, n: int) -> _Polynomial:
-    result: _Polynomial = {(0,) * n: 1.0}
+def power_form_polynomial(poly: FormPolynomial, degree: int, n: int) -> FormPolynomial:
+    result: FormPolynomial = {(0,) * n: 1.0}
     for _ in range(degree):
-        result = _multiply(result, poly)
+        result = multiply_form_polynomials(result, poly)
     return result
 
 
-def _barycentric(n: int) -> tuple[_Polynomial, ...]:
+def _barycentric(n: int) -> tuple[FormPolynomial, ...]:
     zero = (0,) * n
     axes = tuple(tuple(int(i == j) for i in range(n)) for j in range(n))
     return ({zero: 1.0, **{axis: -1.0 for axis in axes}}, *({axis: 1.0} for axis in axes))
 
 
-def _barycentric_product(alpha: tuple[int, ...], n: int) -> _Polynomial:
-    result: _Polynomial = {(0,) * n: 1.0}
+def _barycentric_product(alpha: tuple[int, ...], n: int) -> FormPolynomial:
+    result: FormPolynomial = {(0,) * n: 1.0}
     for exponent, coordinate in zip(alpha, _barycentric(n), strict=True):
-        result = _multiply(result, _power(coordinate, exponent, n))
+        result = multiply_form_polynomials(
+            result, power_form_polynomial(coordinate, exponent, n)
+        )
     return result
 
 
-def _minor(matrix: _HostArray, rows: tuple[int, ...], columns: tuple[int, ...]) -> float:
+def form_minor(
+    matrix: HostFormArray, rows: tuple[int, ...], columns: tuple[int, ...]
+) -> float:
     if not rows:
         return 1.0
     return float(np.linalg.det(matrix[np.ix_(rows, columns)]))
@@ -105,11 +126,11 @@ def _full_generators(
     r: int,
     exponents: tuple[tuple[int, ...], ...],
     blades: tuple[tuple[int, ...], ...],
-) -> tuple[list[_HostArray], list[_GeneratorLabel]]:
+) -> tuple[list[HostFormArray], list[_GeneratorLabel]]:
     positions = {alpha: index for index, alpha in enumerate(exponents)}
-    generators: list[_HostArray] = []
+    generators: list[HostFormArray] = []
     labels: list[_GeneratorLabel] = []
-    for alpha in _compositions(r, n + 1):
+    for alpha in form_compositions(r, n + 1):
         scalar = _barycentric_product(alpha, n)
         for component, blade in enumerate(blades):
             coeff = np.zeros((len(exponents), len(blades)), dtype=np.float64)
@@ -127,16 +148,18 @@ def _whitney_generator(
     sigma: tuple[int, ...],
     exponents: tuple[tuple[int, ...], ...],
     blades: tuple[tuple[int, ...], ...],
-    gradients: _HostArray,
-) -> _HostArray:
+    gradients: HostFormArray,
+) -> HostFormArray:
     positions = {exponent: index for index, exponent in enumerate(exponents)}
     coeff = np.zeros((len(exponents), len(blades)), dtype=np.float64)
     scalar = _barycentric_product(alpha, n)
     for position, vertex in enumerate(sigma):
         other = tuple(v for v in sigma if v != vertex)
-        polynomial = _multiply(scalar, _barycentric(n)[vertex])
+        polynomial = multiply_form_polynomials(scalar, _barycentric(n)[vertex])
         for component, blade in enumerate(blades):
-            factor = factorial(k) * (-1.0) ** position * _minor(gradients, other, blade)
+            factor = (
+                factorial(k) * (-1.0) ** position * form_minor(gradients, other, blade)
+            )
             for exponent, value in polynomial.items():
                 coeff[positions[exponent], component] += factor * value
     return coeff
@@ -148,12 +171,12 @@ def _trimmed_generators(
     r: int,
     exponents: tuple[tuple[int, ...], ...],
     blades: tuple[tuple[int, ...], ...],
-) -> tuple[list[_HostArray], list[_GeneratorLabel]]:
+) -> tuple[list[HostFormArray], list[_GeneratorLabel]]:
     gradients = np.concatenate((-np.ones((1, n)), np.eye(n)), axis=0)
-    generators: list[_HostArray] = []
+    generators: list[HostFormArray] = []
     labels: list[_GeneratorLabel] = []
     for sigma in combinations(range(n + 1), k + 1):
-        for alpha in _compositions(r - 1, n + 1):
+        for alpha in form_compositions(r - 1, n + 1):
             if any(alpha[i] for i in range(sigma[0])):
                 continue
             generators.append(
@@ -163,11 +186,11 @@ def _trimmed_generators(
     return generators, labels
 
 
-def _generators(
+def form_generators(
     n: int, k: int, r: int, trimmed: bool
-) -> tuple[tuple[tuple[int, ...], ...], _HostArray, tuple[_GeneratorLabel, ...]]:
+) -> tuple[tuple[tuple[int, ...], ...], HostFormArray, tuple[_GeneratorLabel, ...]]:
     """Independent Bernstein--Whitney generators, or full polynomial generators."""
-    exponents = _exponents(n, max(r, 0))
+    exponents = form_exponents(n, max(r, 0))
     blades = tuple(combinations(range(n), k))
     if not trimmed or k == 0:
         generators, labels = _full_generators(n, r, exponents, blades)
@@ -181,14 +204,16 @@ def _generators(
     return exponents, coefficients, tuple(labels)
 
 
-def _monomials(points: _HostArray, exponents: tuple[tuple[int, ...], ...]) -> _HostArray:
+def form_monomials(
+    points: HostFormArray, exponents: tuple[tuple[int, ...], ...]
+) -> HostFormArray:
     powers = np.asarray(exponents, dtype=np.int64).reshape(
         len(exponents), points.shape[1]
     )
     return np.prod(points[:, None, :] ** powers[None, :, :], axis=-1)
 
 
-def _simplex_quadrature(n: int, degree: int) -> tuple[_HostArray, _HostArray]:
+def simplex_form_quadrature(n: int, degree: int) -> tuple[HostFormArray, HostFormArray]:
     if n == 0:
         return np.zeros((1, 0), dtype=np.float64), np.ones(1, dtype=np.float64)
     rule = simplex_rule_data(n, degree)
@@ -197,60 +222,62 @@ def _simplex_quadrature(n: int, degree: int) -> tuple[_HostArray, _HostArray]:
     )
 
 
-def _wedge_sign(left: tuple[int, ...], right: tuple[int, ...]) -> int:
+def form_wedge_sign(left: tuple[int, ...], right: tuple[int, ...]) -> int:
     return (-1) ** sum(a > b for a in left for b in right)
 
 
-def _integral(poly: _Polynomial, n: int) -> float:
+def _integral(poly: FormPolynomial, n: int) -> float:
     return sum(
         value * prod(factorial(a) for a in alpha) / factorial(n + sum(alpha))
         for alpha, value in poly.items()
     )
 
 
-def _substitute(
-    alpha: tuple[int, ...], origin: _HostArray, jacobian: _HostArray
-) -> _Polynomial:
+def substitute_form_polynomial(
+    alpha: tuple[int, ...], origin: HostFormArray, jacobian: HostFormArray
+) -> FormPolynomial:
     m = jacobian.shape[1]
-    result: _Polynomial = {(0,) * m: 1.0}
+    result: FormPolynomial = {(0,) * m: 1.0}
     for axis, degree in enumerate(alpha):
-        affine: _Polynomial = {(0,) * m: float(origin[axis])}
+        affine: FormPolynomial = {(0,) * m: float(origin[axis])}
         for coordinate in range(m):
             key = tuple(int(i == coordinate) for i in range(m))
             affine[key] = float(jacobian[axis, coordinate])
-        result = _multiply(result, _power(affine, degree, m))
+        result = multiply_form_polynomials(
+            result, power_form_polynomial(affine, degree, m)
+        )
     return result
 
 
-class _Prepared(NamedTuple):
+class PreparedForm(NamedTuple):
     exponents: tuple[tuple[int, ...], ...]
-    generators: _HostArray
+    generators: HostFormArray
     labels: tuple[DofLabel, ...]
     entities: tuple[tuple[tuple[int, ...], ...], ...]
-    points: _HostArray
-    weights: _HostArray
-    moments: _HostArray
-    nodes: _HostArray
+    points: HostFormArray
+    weights: HostFormArray
+    moments: HostFormArray
+    nodes: HostFormArray
 
 
-class _EntityMoments(NamedTuple):
+class EntityFormMoments(NamedTuple):
     labels: tuple[DofLabel, ...]
-    points: _HostArray
-    weights: _HostArray
-    moments: _HostArray
-    nodes: _HostArray
+    points: HostFormArray
+    weights: HostFormArray
+    moments: HostFormArray
+    nodes: HostFormArray
 
 
 class _SimplexTests(NamedTuple):
     exponents: tuple[tuple[int, ...], ...]
-    coefficients: _HostArray
+    coefficients: HostFormArray
     labels: tuple[_GeneratorLabel, ...]
-    points: _HostArray
-    quadrature: _HostArray
-    values: _HostArray
+    points: HostFormArray
+    quadrature: HostFormArray
+    values: HostFormArray
 
 
-def _immutable_prepared(prepared: _Prepared, /) -> _Prepared:
+def _immutable_prepared(prepared: PreparedForm, /) -> PreparedForm:
     """Freeze cached host reference arrays before publishing the signature."""
     for value in prepared:
         if isinstance(value, np.ndarray):
@@ -258,12 +285,12 @@ def _immutable_prepared(prepared: _Prepared, /) -> _Prepared:
     return prepared
 
 
-def _finish_prepared(
+def finish_form_preparation(
     exponents: tuple[tuple[int, ...], ...],
-    generators: _HostArray,
+    generators: HostFormArray,
     entities: tuple[tuple[tuple[int, ...], ...], ...],
-    blocks: list[_EntityMoments],
-) -> _Prepared:
+    blocks: list[EntityFormMoments],
+) -> PreparedForm:
     labels = tuple(label for block in blocks for label in block.labels)
     total = sum(block.points.shape[0] for block in blocks)
     weights = np.zeros((len(labels), total, generators.shape[1]), dtype=np.float64)
@@ -274,7 +301,7 @@ def _finish_prepared(
         row += rows
         column += columns
     return _immutable_prepared(
-        _Prepared(
+        PreparedForm(
             exponents,
             generators,
             labels,
@@ -291,10 +318,10 @@ def _constant_simplex_prepared(
     n: int,
     blades: tuple[tuple[int, ...], ...],
     exponents: tuple[tuple[int, ...], ...],
-    generators: _HostArray,
+    generators: HostFormArray,
     entities: tuple[tuple[tuple[int, ...], ...], ...],
-) -> _Prepared:
-    q, quadrature = _simplex_quadrature(n, 0)
+) -> PreparedForm:
+    q, quadrature = simplex_form_quadrature(n, 0)
     count = len(blades)
     weights = np.zeros((count, q.shape[0], count), dtype=np.float64)
     moments = np.zeros((count, 1, count), dtype=np.float64)
@@ -306,7 +333,7 @@ def _constant_simplex_prepared(
         for blade in blades
     )
     return _immutable_prepared(
-        _Prepared(
+        PreparedForm(
             exponents,
             generators,
             labels,
@@ -319,35 +346,38 @@ def _constant_simplex_prepared(
     )
 
 
-def _simplex_tests(
+def simplex_form_tests(
     m: int, k: int, r: int, family: FormElementFamily
 ) -> _SimplexTests | None:
     degree = r + k - m - (1 if family == "trimmed" else 0)
     if degree < 0 or (family == "full" and degree == 0 and m != k):
         return None
-    exponents, coefficients, labels = _generators(m, m - k, degree, family == "full")
+    exponents, coefficients, labels = form_generators(m, m - k, degree, family == "full")
     if coefficients.shape[-1] == 0:
         return None
-    points, quadrature = _simplex_quadrature(m, r + degree)
-    values = np.einsum("qm,mcd->qdc", _monomials(points, exponents), coefficients)
+    points, quadrature = simplex_form_quadrature(m, r + degree)
+    values = np.einsum("qm,mcd->qdc", form_monomials(points, exponents), coefficients)
     return _SimplexTests(exponents, coefficients, labels, points, quadrature, values)
 
 
-def _simplex_pairing(
-    jacobian: _HostArray, n: int, k: int
-) -> tuple[_HostArray, _HostArray]:
+def simplex_form_pairing(
+    jacobian: HostFormArray, n: int, k: int
+) -> tuple[HostFormArray, HostFormArray]:
     m = jacobian.shape[1]
     blades = tuple(combinations(range(n), k))
     local_blades = tuple(combinations(range(m), k))
     dual_blades = tuple(combinations(range(m), m - k))
     pullback = np.asarray(
-        [[_minor(jacobian, blade, local) for blade in blades] for local in local_blades],
+        [
+            [form_minor(jacobian, blade, local) for blade in blades]
+            for local in local_blades
+        ],
         dtype=np.float64,
     )
     wedge = np.asarray(
         [
             [
-                _wedge_sign(local, dual) if set(local).isdisjoint(dual) else 0
+                form_wedge_sign(local, dual) if set(local).isdisjoint(dual) else 0
                 for dual in dual_blades
             ]
             for local in local_blades
@@ -357,7 +387,9 @@ def _simplex_pairing(
     return pullback, wedge
 
 
-def _simplex_test_polynomials(tests: _SimplexTests, test: int) -> tuple[_Polynomial, ...]:
+def simplex_test_polynomials(
+    tests: _SimplexTests, test: int
+) -> tuple[FormPolynomial, ...]:
     return tuple(
         {
             a: float(tests.coefficients[index, component, test])
@@ -370,17 +402,19 @@ def _simplex_test_polynomials(tests: _SimplexTests, test: int) -> tuple[_Polynom
 
 def _simplex_moment_row(
     exponents: tuple[tuple[int, ...], ...],
-    test_polynomials: tuple[_Polynomial, ...],
-    origin: _HostArray,
-    jacobian: _HostArray,
-    pullback: _HostArray,
-    wedge: _HostArray,
-) -> _HostArray:
+    test_polynomials: tuple[FormPolynomial, ...],
+    origin: HostFormArray,
+    jacobian: HostFormArray,
+    pullback: HostFormArray,
+    wedge: HostFormArray,
+) -> HostFormArray:
     row = np.zeros((len(exponents), pullback.shape[1]), dtype=np.float64)
     for monomial, exponent in enumerate(exponents):
-        pulled = _substitute(exponent, origin, jacobian)
+        pulled = substitute_form_polynomial(exponent, origin, jacobian)
         for dual_component, test_poly in enumerate(test_polynomials):
-            integral = _integral(_multiply(pulled, test_poly), jacobian.shape[1])
+            integral = _integral(
+                multiply_form_polynomials(pulled, test_poly), jacobian.shape[1]
+            )
             for local_component in range(pullback.shape[0]):
                 sign = wedge[local_component, dual_component]
                 if sign != 0:
@@ -392,13 +426,13 @@ def _simplex_entity_moments(
     n: int,
     k: int,
     face: tuple[int, ...],
-    vertices: _HostArray,
+    vertices: HostFormArray,
     exponents: tuple[tuple[int, ...], ...],
     tests: _SimplexTests,
-) -> _EntityMoments:
+) -> EntityFormMoments:
     origin = vertices[face[0]]
     jacobian = (vertices[list(face[1:])] - origin).T
-    pullback, wedge = _simplex_pairing(jacobian, n, k)
+    pullback, wedge = simplex_form_pairing(jacobian, n, k)
     weights = np.einsum(
         "qdt,lt,lc,q->dqc", tests.values, wedge, pullback, tests.quadrature
     )
@@ -409,7 +443,7 @@ def _simplex_entity_moments(
         [
             _simplex_moment_row(
                 exponents,
-                _simplex_test_polynomials(tests, test),
+                simplex_test_polynomials(tests, test),
                 origin,
                 jacobian,
                 pullback,
@@ -419,27 +453,27 @@ def _simplex_entity_moments(
         ]
     )
     nodes = np.stack([vertices[list(face)].mean(axis=0) for _ in tests.labels])
-    return _EntityMoments(
+    return EntityFormMoments(
         labels, origin[None, :] + tests.points @ jacobian.T, weights, moments, nodes
     )
 
 
-@lru_cache(maxsize=64)
-def _prepare_simplex(n: int, k: int, r: int, family: FormElementFamily) -> _Prepared:
-    exponents, generators, _ = _generators(n, k, r, family == "trimmed")
+@host_table_cache(max_entries=256, max_bytes=16777216)
+def _prepare_simplex(n: int, k: int, r: int, family: FormElementFamily) -> PreparedForm:
+    exponents, generators, _ = form_generators(n, k, r, family == "trimmed")
     blades = tuple(combinations(range(n), k))
     entities = tuple(tuple(combinations(range(n + 1), m + 1)) for m in range(n + 1))
     vertices = np.concatenate((np.zeros((1, n)), np.eye(n)), axis=0)
     if family == "full" and r == 0:
         return _constant_simplex_prepared(n, blades, exponents, generators, entities)
-    blocks: list[_EntityMoments] = []
+    blocks: list[EntityFormMoments] = []
     for m in range(k, n + 1):
-        tests = _simplex_tests(m, k, r, family)
+        tests = simplex_form_tests(m, k, r, family)
         if tests is None:
             continue
         for face in entities[m]:
             blocks.append(_simplex_entity_moments(n, k, face, vertices, exponents, tests))
-    return _finish_prepared(exponents, generators, entities, blocks)
+    return finish_form_preparation(exponents, generators, entities, blocks)
 
 
 def _tensor_vertices(n: int) -> tuple[tuple[int, ...], ...]:
@@ -475,13 +509,15 @@ def _tensor_entities(n: int) -> tuple[tuple[tuple[int, ...], ...], ...]:
 
 
 class _TensorInterval(NamedTuple):
-    zero: _HostArray
-    one: _HostArray
-    zero_monomials: _HostArray
-    one_monomials: _HostArray
+    zero: HostFormArray
+    one: HostFormArray
+    zero_monomials: HostFormArray
+    one_monomials: HostFormArray
 
 
-def _solve_reference_moments(moments: _HostArray, rhs: _HostArray, /) -> _HostArray:
+def _solve_reference_moments(
+    moments: HostFormArray, rhs: HostFormArray, /
+) -> HostFormArray:
     """Solve one immutable host reference dual without compiler startup."""
     if (
         moments.ndim != 2
@@ -490,7 +526,7 @@ def _solve_reference_moments(moments: _HostArray, rhs: _HostArray, /) -> _HostAr
         or rhs.shape[0] != moments.shape[0]
     ):
         raise ValueError(
-            "Reference moment solve requires a square matrix and aligned RHS."
+            "reference_moments.system must have a square matrix and aligned RHS; got incompatible shapes"
         )
     spectrum = np.linalg.svd(moments, compute_uv=False)
     if (
@@ -498,17 +534,21 @@ def _solve_reference_moments(moments: _HostArray, rhs: _HostArray, /) -> _HostAr
         or not np.all(np.isfinite(spectrum))
         or spectrum[-1] <= np.finfo(np.float64).eps * spectrum[0] * moments.shape[0]
     ):
-        raise ValueError("Reference moments are not numerically unisolvent.")
+        raise ValueError(
+            "reference_moments.spectrum must establish unisolvence within the condition bound; got failed rank or conditioning evidence"
+        )
     result = np.linalg.solve(moments, rhs)
     if not np.all(np.isfinite(result)):
-        raise ValueError("Reference moment solve produced non-finite coefficients.")
+        raise ValueError(
+            "reference_moments.solution must be finite; got non-finite coefficients"
+        )
     return result
 
 
 @host_table_cache(max_entries=256, max_bytes=1048576)
 def _tensor_interval(r: int) -> _TensorInterval:
     """Admit reusable interval duals, never a global tensor Vandermonde."""
-    q, quadrature = _tensor_quadrature(1, r + 1)
+    q, quadrature = tensor_form_quadrature(1, r + 1)
     x = q[:, 0]
     legendre = np.polynomial.legendre.legvander(2.0 * x - 1.0, r - 1)
     zero_values = np.column_stack(
@@ -524,7 +564,7 @@ def _tensor_interval(r: int) -> _TensorInterval:
         rhs[:, 0] = -interior_moments[:, 0]
         rhs[:, r] = -interior_moments[:, 1]
         rhs[:, 1:r] = np.eye(r - 1, dtype=np.float64)
-        # Endpoint traces stay exact: only the bubble block needs a solve.
+        # Endpoint traces remain fixed: only the bubble block needs a solve.
         zero[2:] = _solve_reference_moments(interior_moments[:, 2:], rhs)
     one_moments = np.stack(
         tuple((quadrature * x**alpha) @ legendre for alpha in range(r))
@@ -555,14 +595,14 @@ def _tensor_interval(r: int) -> _TensorInterval:
     return _TensorInterval(zero, one, zero_monomials, one_monomials)
 
 
-@lru_cache(maxsize=32)
+@host_table_cache(max_entries=256, max_bytes=4194304)
 def _tensor_coefficients(
     n: int,
     r: int,
     exponents: tuple[tuple[int, ...], ...],
     labels: tuple[DofLabel, ...],
     blades: tuple[tuple[int, ...], ...],
-) -> _HostArray:
+) -> HostFormArray:
     interval = _tensor_interval(r)
     coefficients = np.zeros((len(exponents), len(blades), len(labels)), dtype=np.float64)
     powers = np.asarray(exponents, dtype=np.int64)
@@ -581,7 +621,7 @@ def _tensor_coefficients(
 @host_table_cache(max_entries=256, max_bytes=16777216)
 def _tensor_derivative(
     r: int, source: tuple[DofLabel, ...], target: tuple[DofLabel, ...]
-) -> _HostArray:
+) -> HostFormArray:
     """Tensor Stokes map: endpoint traces minus monomial test derivatives."""
     positions = {(blade, index): dof for dof, (_, index, blade) in enumerate(target)}
     result = np.zeros((len(target), len(source)), dtype=np.float64)
@@ -606,7 +646,7 @@ def _tensor_derivative(
     return result
 
 
-def _tensor_quadrature(m: int, r: int) -> tuple[_HostArray, _HostArray]:
+def tensor_form_quadrature(m: int, r: int) -> tuple[HostFormArray, HostFormArray]:
     if m == 0:
         return np.zeros((1, 0), dtype=np.float64), np.ones(1, dtype=np.float64)
     rule = tensor_product_rule_data(m, r, family="gauss")
@@ -617,7 +657,7 @@ def _tensor_quadrature(m: int, r: int) -> tuple[_HostArray, _HostArray]:
 
 def _tensor_entity_chart(
     n: int, face: tuple[int, ...]
-) -> tuple[tuple[int, ...], _HostArray, _HostArray]:
+) -> tuple[tuple[int, ...], HostFormArray, HostFormArray]:
     vertices = _tensor_vertices(n)
     free = tuple(axis for axis in range(n) if len({vertices[v][axis] for v in face}) > 1)
     origin = np.asarray(vertices[face[0]], dtype=np.float64)
@@ -631,7 +671,7 @@ def _tensor_test_index(
     alpha: tuple[int, ...],
     free: tuple[int, ...],
     blade: tuple[int, ...],
-    origin: _HostArray,
+    origin: HostFormArray,
 ) -> tuple[int, ...]:
     return tuple(
         alpha[free.index(axis)] + int(axis not in blade)
@@ -645,10 +685,10 @@ def _tensor_moment_row(
     exponents: tuple[tuple[int, ...], ...],
     alpha: tuple[int, ...],
     free: tuple[int, ...],
-    origin: _HostArray,
+    origin: HostFormArray,
     component: int,
     component_count: int,
-) -> _HostArray:
+) -> HostFormArray:
     row = np.zeros((len(exponents), component_count), dtype=np.float64)
     for monomial, exponent in enumerate(exponents):
         integral = 1.0
@@ -668,16 +708,16 @@ def _tensor_entity_moments(
     face: tuple[int, ...],
     exponents: tuple[tuple[int, ...], ...],
     blades: tuple[tuple[int, ...], ...],
-    q: _HostArray,
-    quadrature: _HostArray,
-) -> _EntityMoments | None:
+    q: HostFormArray,
+    quadrature: HostFormArray,
+) -> EntityFormMoments | None:
     free, origin, _ = _tensor_entity_chart(n, face)
     points = np.broadcast_to(origin, (q.shape[0], n)).copy()
     points[:, list(free)] = q
     labels: list[DofLabel] = []
-    nodes: list[_HostArray] = []
-    blocks: list[_HostArray] = []
-    rows: list[_HostArray] = []
+    nodes: list[HostFormArray] = []
+    blocks: list[HostFormArray] = []
+    rows: list[HostFormArray] = []
     for component, blade in enumerate(blades):
         if not set(blade).issubset(free):
             continue
@@ -695,37 +735,37 @@ def _tensor_entity_moments(
             )
     if not blocks:
         return None
-    return _EntityMoments(
+    return EntityFormMoments(
         tuple(labels), points, np.stack(blocks), np.stack(rows), np.stack(nodes)
     )
 
 
-@lru_cache(maxsize=32)
-def _prepare_tensor(n: int, k: int, r: int) -> _Prepared:
+@host_table_cache(max_entries=256, max_bytes=16777216)
+def _prepare_tensor(n: int, k: int, r: int) -> PreparedForm:
     blades = tuple(combinations(range(n), k))
     exponents = tuple(product(range(r + 1), repeat=n))
     entities = _tensor_entities(n)
     # Only the component extent is used while assembling the moment functionals.
     generators = np.zeros((len(exponents), len(blades), 0), dtype=np.float64)
-    blocks: list[_EntityMoments] = []
+    blocks: list[EntityFormMoments] = []
     for m, level in enumerate(entities):
         if m < k:
             continue
-        q, quadrature = _tensor_quadrature(m, r)
+        q, quadrature = tensor_form_quadrature(m, r)
         for face in level:
             block = _tensor_entity_moments(n, r, face, exponents, blades, q, quadrature)
             if block is not None:
                 blocks.append(block)
-    return _finish_prepared(exponents, generators, entities, blocks)
+    return finish_form_preparation(exponents, generators, entities, blocks)
 
 
-def _entity_dof_indices(
+def entity_dof_indices(
     labels: tuple[DofLabel, ...], face: tuple[int, ...]
 ) -> tuple[int, ...]:
     return tuple(i for i, label in enumerate(labels) if label[0] == face)
 
 
-def _interior_dof_indices(
+def interior_dof_indices(
     labels: tuple[DofLabel, ...], vertex_count: int
 ) -> tuple[int, ...]:
     return tuple(i for i, label in enumerate(labels) if len(label[0]) == vertex_count)
@@ -747,24 +787,25 @@ def _canonical_entity_ids(
     return tuple(ids[local_coordinates.index(vertex)] for vertex in _tensor_vertices(m))
 
 
-def _form_reference_vertices(n: int, family: FormElementFamily) -> _HostArray:
+def form_reference_vertices(n: int, family: FormElementFamily) -> HostFormArray:
     if family == "tensor-trimmed":
         return np.asarray(_tensor_vertices(n), dtype=np.float64)
     if family in ("prism-trimmed", "pyramid-trimmed"):
-        from ._hybrid_forms import hybrid_kind
-
         return np.asarray(
-            reference_cell_topology(hybrid_kind(family)).vertices, dtype=np.float64
+            reference_cell_topology(hybrid_charts_owner.hybrid_kind(family)).vertices,
+            dtype=np.float64,
         )
     return np.concatenate((np.zeros((1, n)), np.eye(n)), axis=0)
 
 
 def _vertex_permutation_affine(
-    reference: _HostArray,
+    reference: HostFormArray,
     vertices: tuple[int, ...],
-) -> tuple[_HostArray, _HostArray]:
+) -> tuple[HostFormArray, HostFormArray]:
     if tuple(sorted(vertices)) != tuple(range(reference.shape[0])):
-        raise ValueError("vertices must be a permutation of reference vertex indices.")
+        raise ValueError(
+            "form_basis.vertices must permute reference vertex indices; got an invalid permutation"
+        )
     n = reference.shape[1]
     images = reference[list(vertices)]
     origin = images[0]
@@ -774,14 +815,12 @@ def _vertex_permutation_affine(
         neighbors = tuple(coordinates.index(axis) for axis in axes)
         jacobian = (images[list(neighbors)] - origin).T
     else:
-        from .._coordinate_enclosure import _solve_exact
-
         candidates = tuple(combinations(range(1, len(reference)), n))
         neighbors = next(
             (
                 indices
                 for indices in candidates
-                if _minor(
+                if form_minor(
                     (reference[list(indices)] - reference[0]).T,
                     tuple(range(n)),
                     tuple(range(n)),
@@ -791,7 +830,9 @@ def _vertex_permutation_affine(
             None,
         )
         if neighbors is None:
-            raise ValueError("Reference vertices do not span an affine cell chart.")
+            raise ValueError(
+                "form_basis.reference_vertices must span an affine cell chart; got no spanning neighbors"
+            )
         source = [
             [
                 Fraction(float(reference[index, axis] - reference[0, axis]))
@@ -803,19 +844,24 @@ def _vertex_permutation_affine(
             [Fraction(float(images[index, axis] - images[0, axis])) for axis in range(n)]
             for index in neighbors
         ]
-        jacobian = np.asarray(_solve_exact(source, rhs), dtype=np.float64).T
+        jacobian = np.asarray(solve_exact(source, rhs), dtype=np.float64).T
         origin = images[0] - jacobian @ reference[0]
     if not np.array_equal(reference @ jacobian.T + origin, images):
-        raise ValueError("Tensor vertex permutation must be an affine cube symmetry.")
+        raise ValueError(
+            "form_basis.vertex_permutation must be an affine cube symmetry; got a non-affine permutation"
+        )
     return origin, jacobian
 
 
-def _form_pullback_matrix(
-    n: int, k: int, jacobian: _HostArray, twist: FormTwist
-) -> _HostArray:
+def form_pullback_matrix(
+    n: int, k: int, jacobian: HostFormArray, twist: FormTwist
+) -> HostFormArray:
     blades = tuple(combinations(range(n), k))
     matrix = np.asarray(
-        [[_minor(jacobian, source, target) for source in blades] for target in blades],
+        [
+            [form_minor(jacobian, source, target) for source in blades]
+            for target in blades
+        ],
         dtype=np.float64,
     )
     if twist == "twisted":
@@ -825,22 +871,22 @@ def _form_pullback_matrix(
 
 def _substitute_coefficients(
     exponents: tuple[tuple[int, ...], ...],
-    coefficients: _HostArray,
-    origin: _HostArray,
-    jacobian: _HostArray,
-) -> _HostArray:
+    coefficients: HostFormArray,
+    origin: HostFormArray,
+    jacobian: HostFormArray,
+) -> HostFormArray:
     transformed = np.zeros_like(coefficients)
     lookup = {alpha: index for index, alpha in enumerate(exponents)}
     for monomial, alpha in enumerate(exponents):
-        for exponent, factor in _substitute(alpha, origin, jacobian).items():
+        for exponent, factor in substitute_form_polynomial(
+            alpha, origin, jacobian
+        ).items():
             if factor != 0.0:
                 transformed[lookup[exponent]] += factor * coefficients[monomial]
     return transformed
 
 
-def _blade_derivative_terms(
-    n: int, k: int, axis: int
-) -> tuple[tuple[int, int, int], ...]:
+def blade_derivative_terms(n: int, k: int, axis: int) -> tuple[tuple[int, int, int], ...]:
     target_blades = tuple(combinations(range(n), k + 1))
     terms: list[tuple[int, int, int]] = []
     for component, blade in enumerate(combinations(range(n), k)):
@@ -866,26 +912,24 @@ def _polynomial_derivative_terms(
             lower = tuple(value - int(i == axis) for i, value in enumerate(alpha))
             if lower not in lookup:
                 raise ValueError(
-                    "Target polynomial degree cannot represent the exterior derivative."
+                    "form_basis.target_exponents must represent the exterior derivative; got missing polynomial support"
                 )
-            for component, output, sign in _blade_derivative_terms(n, k, axis):
+            for component, output, sign in blade_derivative_terms(n, k, axis):
                 terms.append((index, component, lookup[lower], output, sign * degree))
     return tuple(terms)
 
 
-def _form_entity_chart(
+def form_entity_chart(
     n: int,
     family: FormElementFamily,
     face: tuple[int, ...],
-) -> tuple[tuple[int, ...], _HostArray, _HostArray]:
+) -> tuple[tuple[int, ...], HostFormArray, HostFormArray]:
     if family == "tensor-trimmed":
         return _tensor_entity_chart(n, face)
     if family in ("prism-trimmed", "pyramid-trimmed"):
-        from ._hybrid_forms import entity_chart
-
-        origin, jacobian = entity_chart(family, face)
+        origin, jacobian = hybrid_charts_owner.entity_chart(family, face)
         return (), origin, jacobian
-    vertices = _form_reference_vertices(n, family)
+    vertices = form_reference_vertices(n, family)
     return (), vertices[face[0]], (vertices[list(face[1:])] - vertices[face[0]]).T
 
 
@@ -922,15 +966,15 @@ def _simplex_density_weights(
     family: FormElementFamily,
     points: Array,
     quadrature: Array,
-    jacobian: _HostArray,
+    jacobian: HostFormArray,
 ) -> Array:
     m = points.shape[1]
     degree = r + k - m - int(family == "trimmed")
-    exponents, tests, _ = _generators(m, m - k, degree, family == "full")
+    exponents, tests, _ = form_generators(m, m - k, degree, family == "full")
     powers = jnp.asarray(exponents, dtype=jnp.int32).reshape(len(exponents), m)
     monomials = jnp.prod(points[:, None, :] ** powers[None, :, :], axis=-1)
     test_values = contract("qm,mct->qtc", monomials, jnp.asarray(tests))
-    pullback, wedge = _simplex_pairing(jacobian, n, k)
+    pullback, wedge = simplex_form_pairing(jacobian, n, k)
     return contract(
         "qdt,lt,lc,q->dqc",
         test_values,
@@ -941,8 +985,8 @@ def _simplex_density_weights(
 
 
 @final
-class _TensorFactors(StrictModule):
-    """Interval modal duals and canonical product/component routes."""
+class TensorFactors(AbstractReferenceTensorFactors):
+    """Store interval modal duals and product/component routes."""
 
     order: int = eqx.field(static=True)
     zero: Array
@@ -1033,8 +1077,8 @@ class _TensorFactors(StrictModule):
 
 
 @final
-class _HybridFactors(StrictModule):
-    """Exact immutable generator source with deliberate numerical runtime leaves."""
+class HybridFactors(AbstractReferenceHybridFactors):
+    """Store rational generator sources and numerical runtime leaves."""
 
     source_bank: tuple[tuple[Fraction, ...], ...] = eqx.field(static=True)
     generators: Array
@@ -1057,7 +1101,6 @@ class _HybridFactors(StrictModule):
         body_test_source_bank: tuple[tuple[Fraction, ...], ...],
         body_test_coefficients: ArrayLike,
     ) -> None:
-        from ...linalg import LinearSolveStatus
 
         generators_ = jnp.asarray(generators)
         if (
@@ -1066,27 +1109,29 @@ class _HybridFactors(StrictModule):
             or len(source_bank) != generators_.shape[0] * generators_.shape[1]
         ):
             raise ValueError(
-                "Hybrid generator source and numerical component axes disagree."
+                "hybrid_factors.generators must align source rows and component axes; got incompatible shapes"
             )
         if (
             any(len(row) != generators_.shape[-1] for row in source_bank)
             or not np.isfinite(condition)
             or condition > 1e12
         ):
-            raise ValueError("Hybrid generator source is incomplete or ill conditioned.")
+            raise ValueError(
+                f"hybrid_factors.source_bank must cover generators with condition <= 1e12; got condition {condition}"
+            )
         expected = np.asarray(source_bank, dtype=np.float64).reshape(generators_.shape)
         if not np.array_equal(np.asarray(generators_), expected):
             raise ValueError(
-                "Hybrid numerical generators must be the rounding of their exact source."
+                "hybrid_factors.generators must match the rounded rational source bank; got different coefficients"
             )
         status = jnp.asarray(solve_status, dtype=jnp.int32)
         if (
             not np.isfinite(solve_error)
             or solve_error < 0
-            or np.any(np.asarray(status) != int(LinearSolveStatus.SUCCESS))
+            or np.any(np.asarray(status) != int(linalg_owner.LinearSolveStatus.SUCCESS))
         ):
             raise ValueError(
-                "Hybrid native entity dual solve did not succeed with finite error evidence."
+                "hybrid_factors.dual_evidence must report success and finite nonnegative error; got failed solve evidence"
             )
         tests = jnp.asarray(body_test_coefficients, dtype=generators_.dtype)
         if (
@@ -1097,14 +1142,14 @@ class _HybridFactors(StrictModule):
             or any(len(row) != tests.shape[2] for row in body_test_source_bank)
         ):
             raise ValueError(
-                "Hybrid moment tests require complete polynomial and form-component identities."
+                "hybrid_factors.body_tests must align polynomial and form-component axes; got incompatible shapes or source rows"
             )
         expected_tests = np.asarray(body_test_source_bank, dtype=np.float64).reshape(
             tests.shape
         )
         if not np.array_equal(np.asarray(tests), expected_tests):
             raise ValueError(
-                "Hybrid numerical moment tests no longer match their exact source."
+                "hybrid_factors.body_tests must match the rounded rational source bank; got different coefficients"
             )
         self.source_bank = source_bank
         self.generators = generators_
@@ -1117,14 +1162,14 @@ class _HybridFactors(StrictModule):
         self.body_test_coefficients = tests
 
 
-@lru_cache(maxsize=96)
+@host_table_cache(max_entries=256, max_bytes=33554432)
 def _polynomial_form_preparation(
     dimension: int,
     form_degree: int,
     order: int,
     family: FormElementFamily,
     /,
-) -> tuple[_Prepared, _HostArray]:
+) -> tuple[PreparedForm, HostFormArray]:
     prepared = (
         _prepare_tensor(dimension, form_degree, order)
         if family == "tensor-trimmed"
@@ -1142,7 +1187,7 @@ def _polynomial_form_preparation(
         matrix = np.einsum("dmc,mcb->db", prepared.moments, prepared.generators)
         if matrix.shape[0] != matrix.shape[1]:
             raise ValueError(
-                "Polynomial generators and entity functionals disagree in dimension."
+                "form_basis.generators must match the entity-functional dimension; got different dimensions"
             )
         flat = prepared.generators.reshape(-1, matrix.shape[0])
         coefficients = _solve_reference_moments(matrix.T, flat.T).T.reshape(
@@ -1163,8 +1208,8 @@ def _entity_form_basis(
 
 
 @final
-class FormBasis(StrictModule):
-    """A complete canonical moment-dual polynomial, product, or rational form basis."""
+class FormBasis(AbstractReferenceFormBasis):
+    """Provide a moment-dual polynomial, product, or rational form basis."""
 
     dimension: int = eqx.field(static=True)
     form_degree: int = eqx.field(static=True)
@@ -1175,14 +1220,15 @@ class FormBasis(StrictModule):
     dof_labels: tuple[DofLabel, ...] = eqx.field(static=True)
     entity_vertices: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
     coefficients: Array
-    tensor_factors: _TensorFactors | None
-    hybrid_factors: _HybridFactors | None
+    tensor_factors: TensorFactors | None
+    hybrid_factors: HybridFactors | None
     functional_points: Array
     functional_weights: Array
     functional_moments: Array
     reference_nodes: Array
     basis_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         dimension: int,
@@ -1191,24 +1237,30 @@ class FormBasis(StrictModule):
         family: FormElementFamily,
         twist: FormTwist,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         family_ = parse(family, FormElementFamily, "family")
         twist_ = parse(twist, FormTwist, "twist")
         if dimension < 1 or not 0 <= form_degree <= dimension:
-            raise ValueError("Require dimension >= 1 and 0 <= form_degree <= dimension.")
+            raise ValueError(
+                "form_basis.dimension_and_degree must satisfy dimension >= 1 and 0 <= degree <= dimension; got an invalid dimension or degree"
+            )
         if order < (0 if family_ == "full" else 1):
             raise ValueError(
-                "Full forms require order >= 0; trimmed forms require order >= 1."
+                "form_basis.order must be nonnegative for full forms and positive for trimmed forms; got a lower order"
             )
         if family_ in ("prism-trimmed", "pyramid-trimmed"):
-            from ._hybrid_forms import prepare_hybrid
-
             if dimension != 3:
-                raise ValueError("Hybrid compatible forms require dimension three.")
-            hybrid = prepare_hybrid(family_, form_degree, order)
+                raise ValueError(
+                    "form_basis.dimension must be three for hybrid forms; got a different dimension"
+                )
+            hybrid = hybrid_forms_owner.prepare_hybrid(
+                family_, form_degree, order, budget=budget
+            )
             prepared, coefficients = hybrid.prepared, hybrid.coefficients
             tensor_factors = None
-            hybrid_factors = _HybridFactors(
+            hybrid_factors = HybridFactors(
                 hybrid.source_bank,
                 prepared.generators,
                 hybrid.condition,
@@ -1224,7 +1276,7 @@ class FormBasis(StrictModule):
                 dimension, form_degree, order, family_
             )
             tensor_factors = (
-                _TensorFactors(dimension, form_degree, order, prepared.labels)
+                TensorFactors(dimension, form_degree, order, prepared.labels)
                 if family_ == "tensor-trimmed"
                 else None
             )
@@ -1278,11 +1330,11 @@ class FormBasis(StrictModule):
     def tabulate_components(self, points: ArrayLike, /) -> tuple[Array, Array]:
         points_ = jnp.asarray(points, dtype=self.coefficients.dtype)
         if points_.ndim != 2 or points_.shape[1] != self.dimension:
-            raise ValueError("Points must have shape (point_count, dimension).")
+            raise ValueError(
+                "form_basis.points must have shape (point_count, dimension); got an incompatible shape"
+            )
         if self.hybrid_factors is not None:
-            from ._hybrid_forms import tabulate_hybrid
-
-            values, gradients = tabulate_hybrid(
+            values, gradients = hybrid_forms_owner.tabulate_hybrid(
                 points_,
                 self.hybrid_factors.generators,
                 self.exponents,
@@ -1343,18 +1395,18 @@ class FormBasis(StrictModule):
         )
         if values_.shape[:2] != expected:
             raise ValueError(
-                "Interpolation samples must have shape (functional_points, components, ...)."
+                "form_basis.interpolation_samples must have shape (functional_points, components, ...); got incompatible leading axes"
             )
         return contract("dqc,qc...->d...", self.functional_weights, values_)
 
     def entity_kind(self, face: tuple[int, ...], /) -> str:
         """Return the scientific reference topology of a declared entity."""
         if not any(face in level for level in self.entity_vertices):
-            raise ValueError("Use a declared reference entity and its vertex ordering.")
+            raise ValueError(
+                "form_basis.entity_vertices must use a declared entity and its vertex ordering; got an undeclared ordering"
+            )
         if self.family in ("prism-trimmed", "pyramid-trimmed"):
-            from ._hybrid_forms import entity_kind
-
-            return entity_kind(self.family, face)
+            return hybrid_charts_owner.entity_kind(self.family, face)
         dimension = next(
             index for index, level in enumerate(self.entity_vertices) if face in level
         )
@@ -1364,7 +1416,9 @@ class FormBasis(StrictModule):
             else f"simplex:{dimension}"
         )
 
-    def entity_basis(self, face: tuple[int, ...], /) -> FormBasis:
+    def entity_basis(
+        self, face: tuple[int, ...], /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> FormBasis:
         """Own the oriented trace induced by the cell/entity incidence.
 
         An ambient twisted codimension-one form receives its coorientation from
@@ -1373,9 +1427,9 @@ class FormBasis(StrictModule):
         erase the shared-facet incidence sign already carried by the face order.
         """
         if self.family in ("prism-trimmed", "pyramid-trimmed"):
-            from ._hybrid_forms import trace_basis
-
-            return trace_basis(self.family, self.form_degree, self.order, face)
+            return hybrid_charts_owner.trace_basis(
+                self.family, self.form_degree, self.order, face, budget=budget
+            )
         dimension = reference_cell_topology(self.entity_kind(face)).dimension
         return _entity_form_basis(
             dimension,
@@ -1384,23 +1438,65 @@ class FormBasis(StrictModule):
             self.family,
         )
 
-    def component_expressions(self, /) -> tuple[tuple[Expression, ...], ...]:
+    def component_expressions(
+        self, /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> tuple[tuple[coordinate_enclosure_owner.Expression, ...], ...]:
         """Host source expressions in physical reference component axes.
 
         Rows are local basis DOFs, columns are increasing differential-form
-        blades. Rational sources retain their actual collapsed denominators.
+        blades. Rational sources retain their collapsed denominators.
         """
-        from ._form_expressions import component_expressions
 
-        return component_expressions(self)
+        if budget is not None:
+            return form_expressions_owner.component_expressions(self, budget=budget)
+        estimate = coordinate_enclosure_owner.coordinate_estimate_bank(
+            tuple(
+                value
+                for row in form_expressions_owner.component_expression_estimates(self)
+                for value in row
+            )
+        )
+        with HostBatchTicket(
+            estimate.work_upper, bytes_upper=estimate.bytes_upper
+        ) as ticket:
+            ledger = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=estimate.work_upper,
+                maximum_memory_bytes=estimate.bytes_upper,
+            )
+            with ledger.activate():
+                return form_expressions_owner.component_expressions(self, budget=ledger)
 
     def functional_density_expressions(
-        self, face: tuple[int, ...], /
-    ) -> tuple[tuple[Expression, ...], ...]:
+        self, face: tuple[int, ...], /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> tuple[tuple[coordinate_enclosure_owner.Expression, ...], ...]:
         """Host moment densities in the declared entity chart and ambient blades."""
-        from ._form_expressions import functional_density_expressions
 
-        return functional_density_expressions(self, face)
+        if budget is not None:
+            return form_expressions_owner.functional_density_expressions(
+                self, face, budget=budget
+            )
+        estimate = coordinate_enclosure_owner.coordinate_estimate_bank(
+            tuple(
+                value
+                for row in form_expressions_owner.functional_density_expression_estimates(
+                    self, face
+                )
+                for value in row
+            )
+        )
+        with HostBatchTicket(
+            estimate.work_upper, bytes_upper=estimate.bytes_upper
+        ) as ticket:
+            ledger = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=estimate.work_upper,
+                maximum_memory_bytes=estimate.bytes_upper,
+            )
+            with ledger.activate():
+                return form_expressions_owner.functional_density_expressions(
+                    self, face, budget=ledger
+                )
 
     def functional_weights_at(
         self,
@@ -1418,14 +1514,16 @@ class FormBasis(StrictModule):
         Rows belonging to other entities are identically zero.
         """
         if not any(entity_vertices in level for level in self.entity_vertices):
-            raise ValueError("Use a declared reference entity and its vertex ordering.")
+            raise ValueError(
+                "form_basis.entity_vertices must use a declared entity and its vertex ordering; got an undeclared ordering"
+            )
         points = jnp.asarray(entity_points, dtype=self.coefficients.dtype)
         quadrature = jnp.asarray(quadrature_weights, dtype=self.coefficients.dtype)
         if self.family in ("prism-trimmed", "pyramid-trimmed"):
-            from ._hybrid_forms import functional_weights_at
-
-            return functional_weights_at(self, entity_vertices, points, quadrature)
-        free, origin, jacobian = _form_entity_chart(
+            return hybrid_forms_owner.functional_weights_at(
+                self, entity_vertices, points, quadrature
+            )
+        free, origin, jacobian = form_entity_chart(
             self.dimension, self.family, entity_vertices
         )
         if (
@@ -1434,11 +1532,11 @@ class FormBasis(StrictModule):
             or quadrature.shape != (points.shape[0],)
         ):
             raise ValueError(
-                "Entity cubature requires points(q,entity_dimension) and weights(q)."
+                "form_basis.cubature must align points(q,entity_dimension) and weights(q); got incompatible shapes"
             )
         reference_points = jnp.asarray(origin)[None, :] + points @ jnp.asarray(jacobian.T)
         blades = tuple(combinations(range(self.dimension), self.form_degree))
-        indices = _entity_dof_indices(self.dof_labels, entity_vertices)
+        indices = entity_dof_indices(self.dof_labels, entity_vertices)
         result = jnp.zeros(
             (self.local_dof_count, points.shape[0], len(blades)), dtype=points.dtype
         )
@@ -1462,28 +1560,29 @@ class FormBasis(StrictModule):
             )
         return reference_points, result.at[jnp.asarray(indices)].set(block)
 
-    def exterior_derivative_matrix(self, target: FormBasis, /) -> Array:
+    @checked
+    def exterior_derivative_matrix(self, target: AbstractReferenceFormBasis, /) -> Array:
         if (target.dimension, target.form_degree, target.twist) != (
             self.dimension,
             self.form_degree + 1,
             self.twist,
         ):
             raise ValueError(
-                "Exterior derivative target must have next degree, same dimension and twist."
+                "form_basis.derivative_target must have next degree and matching dimension and twist; got incompatible form metadata"
             )
         if self.hybrid_factors is None and target.hybrid_factors is not None:
             raise ValueError(
-                "Exterior differentiation cannot replace a source reference topology by a hybrid topology."
+                "form_basis.derivative_target_topology must retain the source reference topology; got a hybrid replacement"
             )
         if self.family in ("prism-trimmed", "pyramid-trimmed"):
             if target.family != self.family or target.order < self.order:
                 raise ValueError(
-                    "Hybrid exterior derivatives require the same family and containing order."
+                    "form_basis.derivative_target must have the same hybrid family and containing order; got incompatible family or order"
                 )
             factors = self.hybrid_factors
             if factors is None:
                 raise ValueError(
-                    "Hybrid exterior differentiation requires its source generator owner."
+                    "form_basis.hybrid_factors must provide derivative generators; got None"
                 )
             terms = _polynomial_derivative_terms(
                 self.exponents, target.exponents, self.dimension, self.form_degree
@@ -1507,10 +1606,12 @@ class FormBasis(StrictModule):
             return action @ self.coefficients
         minimum_order = self.order - int(target.family == "full")
         if (target.family == "tensor-trimmed") != (self.family == "tensor-trimmed"):
-            raise ValueError("Tensor and simplicial derivative spaces cannot be mixed.")
+            raise ValueError(
+                "form_basis.derivative_target_family must use the source cell family; got mixed tensor and simplex spaces"
+            )
         if target.order < minimum_order:
             raise ValueError(
-                "Target family/order does not contain the exterior derivative."
+                "form_basis.derivative_target_order must contain the exterior derivative; got a lower order"
             )
         if self.tensor_factors is not None:
             if target.order == self.order:
@@ -1528,7 +1629,7 @@ class FormBasis(StrictModule):
                 dtype=gradient.dtype,
             )
             for axis in range(self.dimension):
-                for component, output, sign in _blade_derivative_terms(
+                for component, output, sign in blade_derivative_terms(
                     self.dimension, self.form_degree, axis
                 ):
                     exterior = exterior.at[:, :, output].add(
@@ -1556,13 +1657,13 @@ class FormBasis(StrictModule):
     def permutation_matrix(self, vertices: tuple[int, ...], /) -> Array:
         """Return local moments of pullback under v_i -> v_vertices[i].
 
-        Local coefficients = matrix @ canonical coefficients. Twisted forms
+        Local coefficients = matrix @ global-chart coefficients. Twisted forms
         include the orientation-character multiplier. Tensor permutations must
         describe an affine cube symmetry, not an arbitrary vertex relabeling.
         """
-        reference = _form_reference_vertices(self.dimension, self.family)
+        reference = form_reference_vertices(self.dimension, self.family)
         origin, jacobian = _vertex_permutation_affine(reference, vertices)
-        pullback = _form_pullback_matrix(
+        pullback = form_pullback_matrix(
             self.dimension, self.form_degree, jacobian, self.twist
         )
         if self.tensor_factors is not None or self.family in (
@@ -1586,9 +1687,7 @@ class FormBasis(StrictModule):
     ) -> tuple[int, ...]:
         """Map local vertices to a deterministic, geometrically legal chart."""
         if self.family in ("prism-trimmed", "pyramid-trimmed"):
-            from ._hybrid_forms import canonical_permutation
-
-            return canonical_permutation(self.family, global_vertices)
+            return hybrid_forms_owner.canonical_permutation(self.family, global_vertices)
         if self.family != "tensor-trimmed":
             ordered = tuple(sorted(global_vertices))
             return tuple(ordered.index(vertex) for vertex in global_vertices)
@@ -1601,17 +1700,19 @@ class FormBasis(StrictModule):
         global_vertices: tuple[int, ...],
         /,
         *,
-        entity_bases: tuple[tuple[FormBasis | None, ...], ...] | None = None,
+        entity_bases: tuple[tuple[AbstractReferenceFormBasis | None, ...], ...]
+        | None = None,
     ) -> Array:
-        """Map independently canonical entity moments to local element moments.
+        """Map shared entity moments to local element moments.
 
-        Columns retain local entity-block positions; each block's columns are
-        interpreted in its globally canonical entity chart. Unlike a whole-cell
-        permutation, this assembly transform does not move entity blocks.
+        Columns retain local entity-block positions and use their global entity
+        chart. The assembly transform preserves entity-block positions.
         """
-        expected = len(_form_reference_vertices(self.dimension, self.family))
+        expected = len(form_reference_vertices(self.dimension, self.family))
         if len(global_vertices) != expected or len(set(global_vertices)) != expected:
-            raise ValueError("Provide one distinct global identifier per local vertex.")
+            raise ValueError(
+                "form_basis.global_vertices must provide one distinct ID per local vertex; got duplicate IDs or a different count"
+            )
         if entity_bases is not None and (
             len(entity_bases) != len(self.entity_vertices)
             or any(
@@ -1621,13 +1722,15 @@ class FormBasis(StrictModule):
                 )
             )
         ):
-            raise ValueError("Canonical moment owners must identify every local entity.")
+            raise ValueError(
+                "form_basis.entity_bases must identify every local entity; got incompatible entity counts"
+            )
         result = jnp.zeros(
             (self.local_dof_count, self.local_dof_count), dtype=self.coefficients.dtype
         )
         for m, level in enumerate(self.entity_vertices):
             for entity_index, face in enumerate(level):
-                indices = _entity_dof_indices(self.dof_labels, face)
+                indices = entity_dof_indices(self.dof_labels, face)
                 if indices:
                     block = self._entity_moment_transform(
                         m,
@@ -1647,7 +1750,7 @@ class FormBasis(StrictModule):
         face: tuple[int, ...],
         count: int,
         global_vertices: tuple[int, ...],
-        canonical: FormBasis | None,
+        canonical: AbstractReferenceFormBasis | None,
     ) -> Array:
         if m == 0 or (self.family == "full" and self.order == 0):
             return jnp.eye(count, dtype=self.coefficients.dtype)
@@ -1656,10 +1759,12 @@ class FormBasis(StrictModule):
             # shared entity may replace that chart by coincident array width.
             return jnp.eye(count, dtype=self.coefficients.dtype)
         entity = self.entity_basis(face)
-        reference = _form_reference_vertices(entity.dimension, entity.family)
-        interior = _interior_dof_indices(entity.dof_labels, len(reference))
+        reference = form_reference_vertices(entity.dimension, entity.family)
+        interior = interior_dof_indices(entity.dof_labels, len(reference))
         if len(interior) != count:
-            raise ValueError("Entity moment block dimensions disagree.")
+            raise ValueError(
+                "form_basis.entity_moments must match the declared block width; got different dimensions"
+            )
         if self.family in ("prism-trimmed", "pyramid-trimmed"):
             ids = tuple(global_vertices[index] for index in face)
         else:
@@ -1673,8 +1778,8 @@ class FormBasis(StrictModule):
 
 
 def _entity_basis_change(
-    local: FormBasis,
-    canonical: FormBasis,
+    local: AbstractReferenceFormBasis,
+    canonical: AbstractReferenceFormBasis,
     ids: tuple[int, ...],
     interior: tuple[int, ...],
 ) -> Array:
@@ -1685,21 +1790,23 @@ def _entity_basis_change(
         canonical.twist,
     ):
         raise ValueError(
-            "Shared form entities require the same scientific form identity."
+            "form_basis.shared_entities must have matching dimension, degree, and twist; got different form identities"
         )
-    reference = _form_reference_vertices(local.dimension, local.family)
-    canonical_reference = _form_reference_vertices(canonical.dimension, canonical.family)
+    reference = form_reference_vertices(local.dimension, local.family)
+    canonical_reference = form_reference_vertices(canonical.dimension, canonical.family)
     if not np.array_equal(reference, canonical_reference):
         raise ValueError(
-            "Shared form entity moments require the same reference topology."
+            "form_basis.shared_entities must have the same reference topology; got different reference vertices"
         )
-    canonical_interior = _interior_dof_indices(canonical.dof_labels, len(reference))
+    canonical_interior = interior_dof_indices(canonical.dof_labels, len(reference))
     if len(canonical_interior) != len(interior):
-        raise ValueError("Shared form entities require equal interior moment spaces.")
+        raise ValueError(
+            "form_basis.shared_entities must have equal interior moment dimensions; got different dimensions"
+        )
     origin, jacobian = _vertex_permutation_affine(
         reference, canonical.canonical_permutation(ids)
     )
-    pullback = _form_pullback_matrix(
+    pullback = form_pullback_matrix(
         local.dimension, local.form_degree, jacobian, local.twist
     )
     original = np.asarray(
@@ -1717,7 +1824,7 @@ def _entity_basis_change(
         if index not in positions:
             if np.any(coefficient != 0):
                 raise ValueError(
-                    "Shared entity form spaces have different polynomial support."
+                    "form_basis.shared_entities must have matching polynomial support; got a nonzero coefficient outside local support"
                 )
         else:
             coefficients[positions[index]] = coefficient
@@ -1733,7 +1840,7 @@ def _entity_basis_change(
         or spectrum[0] / spectrum[-1] > 1e12
     ):
         raise ValueError(
-            "Shared entity moment transformation is singular or ill conditioned."
+            "form_basis.entity_transformation must have full rank and condition at most 1e12; got failed rank or conditioning evidence"
         )
     boundary = [
         index
@@ -1744,7 +1851,7 @@ def _entity_basis_change(
         256 * np.finfo(np.float64).eps * max(float(np.max(np.abs(block), initial=0)), 1.0)
     ):
         raise ValueError(
-            "Entity moment conversion mixes independently owned boundary coordinates."
+            "form_basis.entity_transformation must preserve independent boundary coordinates; got boundary-interior mixing"
         )
     return jnp.asarray(block)
 
@@ -1756,7 +1863,9 @@ def _canonical_cube_permutation(
     if len(coordinates) != len(global_vertices) or len(set(global_vertices)) != len(
         global_vertices
     ):
-        raise ValueError("Cube chart requires distinct global vertices.")
+        raise ValueError(
+            "form_basis.global_vertices must identify distinct cube vertices; got duplicate IDs or a different count"
+        )
     origin_index = min(range(len(global_vertices)), key=global_vertices.__getitem__)
     origin = coordinates[origin_index]
     neighbors = tuple(
@@ -1781,27 +1890,29 @@ def _canonical_cube_permutation(
 
 
 @final
-class _ProxyTabulator(StrictModule):
-    basis: FormBasis
+class ProxyTabulator(StrictModule):
+    basis: AbstractReferenceFormBasis
     value_spec: FormValueSpec = eqx.field(static=True)
 
-    def __init__(self, basis: FormBasis, value_spec: FormValueSpec, /) -> None:
+    @checked
+    def __init__(
+        self, basis: AbstractReferenceFormBasis, value_spec: FormValueSpec, /
+    ) -> None:
         self.basis = basis
         self.value_spec = value_spec
 
     def __call__(self, points: Array, /) -> tuple[Array, Array]:
-        from ...exterior._algebra import form_to_vector
 
         values, gradients = self.basis.tabulate_components(points)
-        converted = form_to_vector(values, self.value_spec)
+        converted = algebra_owner.form_to_vector(values, self.value_spec)
 
         def convert_gradient(components: Array) -> Array:
-            return form_to_vector(components, self.value_spec)
+            return algebra_owner.form_to_vector(components, self.value_spec)
 
         return converted, jax.vmap(convert_gradient, in_axes=-1, out_axes=-1)(gradients)
 
 
-def _admit_form_cell(
+def admit_form_cell(
     cell_kind: str, family: FormElementFamily
 ) -> tuple[int, FormElementFamily]:
     dimension = reference_cell_topology(cell_kind).dimension
@@ -1812,7 +1923,7 @@ def _admit_form_cell(
             family_ = "prism-trimmed" if cell_kind == "prism" else "pyramid-trimmed"
         if family_ != expected:
             raise ValueError(
-                f"{cell_kind.capitalize()} cells require family={expected!r}."
+                f"form_element.family must be {expected!r} for cell_kind {cell_kind!r}; got {family_!r}"
             )
         return dimension, family_
     tensor = cell_kind in ("quadrilateral", "hexahedron") or cell_kind.startswith(
@@ -1825,22 +1936,28 @@ def _admit_form_cell(
     ) or cell_kind.startswith("simplex:")
     if not simplex and not tensor:
         raise ValueError(
-            "Form elements require a simplex or tensor-product reference cell."
+            "form_element.cell_kind must identify a simplex or tensor-product cell; got an unsupported cell kind"
         )
     if tensor and family_ != "tensor-trimmed":
-        raise ValueError("Tensor cells require family='tensor-trimmed'.")
+        raise ValueError(
+            "form_element.family must be tensor-trimmed for tensor cells; got a different family"
+        )
     if simplex and cell_kind != "interval" and family_ == "tensor-trimmed":
-        raise ValueError("Tensor-trimmed forms require a tensor cell or interval.")
+        raise ValueError(
+            "form_element.cell_kind must be a tensor cell or interval for tensor-trimmed forms; got an incompatible cell kind"
+        )
     if family_ in ("prism-trimmed", "pyramid-trimmed"):
         raise ValueError(
-            "Hybrid form families require their declared prism or pyramid reference cell."
+            f"form_element.family must match cell_kind {cell_kind!r}; got {family_!r}"
         )
     return dimension, family_
 
 
 def _default_form_proxy(n: int, k: int) -> FormProxy:
     if n == 1 or (n == 2 and k == 1):
-        raise ValueError("This form degree requires an explicit proxy.")
+        raise ValueError(
+            f"form_element.proxy must be explicit for dimension {n} and degree {k}; got None"
+        )
     if k == 0:
         return "scalar"
     if k == n:
@@ -1859,18 +1976,23 @@ def _form_value_spec(
         _default_form_proxy(n, k) if proxy is None else proxy, FormProxy, "proxy"
     )
     if twist is None and proxy_ in ("flux", "density"):
-        raise ValueError("Physical flux and density elements require explicit twist.")
+        raise ValueError(
+            f"form_element.twist must be explicit for proxy {proxy_!r}; got None"
+        )
     twist_ = "untwisted" if twist is None else parse(twist, FormTwist, "twist")
     return FormValueSpec(FormType(n, k, twist=twist_), proxy=proxy_)
 
 
-def _form_entity_dofs(basis: FormBasis) -> tuple[tuple[tuple[int, ...], ...], ...]:
+def _form_entity_dofs(
+    basis: AbstractReferenceFormBasis,
+) -> tuple[tuple[tuple[int, ...], ...], ...]:
     return tuple(
-        tuple(_entity_dof_indices(basis.dof_labels, face) for face in level)
+        tuple(entity_dof_indices(basis.dof_labels, face) for face in level)
         for level in basis.entity_vertices
     )
 
 
+@checked
 def form_element(
     cell_kind: str,
     form_degree: int,
@@ -1880,6 +2002,7 @@ def form_element(
     family: FormElementFamily = "trimmed",
     twist: FormTwist | None = None,
     proxy: FormProxy | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> FiniteElementSpec:
     """Construct simplex, tensor, prism-product, or rational-pyramid FEEC forms.
 
@@ -1889,9 +2012,11 @@ def form_element(
     Flux and density proxies require explicit twist. In ambiguous degrees
     (one-dimensional cells and degree one in two dimensions), proxy is required.
     """
-    n, family_ = _admit_form_cell(cell_kind, family)
+    n, family_ = admit_form_cell(cell_kind, family)
     value_spec = _form_value_spec(n, form_degree, twist, proxy)
-    basis = FormBasis(n, form_degree, order, family_, value_spec.form_type.twist)
+    basis = FormBasis(
+        n, form_degree, order, family_, value_spec.form_type.twist, budget=budget
+    )
     return FiniteElementSpec(
         family_,
         cell_kind,
@@ -1903,10 +2028,10 @@ def form_element(
         representation="rational_moment"
         if family_ == "pyramid-trimmed"
         else "polynomial_moment",
-        tabulator=_ProxyTabulator(basis, value_spec),
+        tabulator=ProxyTabulator(basis, value_spec),
         tabulator_id=basis.basis_id,
         form_basis=basis,
     )
 
 
-__all__ = ["DofLabel", "FormBasis", "FormElementFamily", "form_element"]
+__all__ = ["FormBasis", "form_element"]

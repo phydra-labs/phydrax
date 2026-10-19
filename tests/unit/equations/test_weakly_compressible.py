@@ -102,7 +102,13 @@ def test_wc_sph_contracts() -> None:
         phx.equations.compile_weakly_compressible_sph_problem(
             problem, particles, method, neighborhood=too_short
         )
-    with pytest.raises(ValueError, match="does not match"):
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"PreparedWeaklyCompressibleSPHDynamics\.execution must match "
+            "the prepared neighborhood backend"
+        ),
+    ):
         phx.equations.compile_weakly_compressible_sph_problem(
             problem,
             particles,

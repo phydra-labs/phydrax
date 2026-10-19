@@ -4,29 +4,12 @@
 execution, and topology transitions. Solvers consume the resulting native
 carriers; they do not own external meshing sessions.
 
-## Evidence vocabulary and current closure state
+## Evidence and resource limits
 
-Native meshing capability is reported in four separate lanes:
-
-- **implemented** means that the named source/request/route exists and is
-  admitted by its public contract;
-- **tested** means that the named focused checks ran successfully;
-- **qualified** requires a retained, route-bound campaign artifact with its
-  source, policy, runtime, tolerance, and resource identities; and
-- **released** requires the separate authenticated release decision.
-
-A safe refusal, a passing unit test, an optional-provider result, or a generated
-catalog entry does not promote the next lane. The W02--W15 labels below are
-implementation-workstream identifiers, not API or persistence schema versions.
-
-| Workstream surface | Implemented/current test evidence | Qualification boundary |
-| --- | --- | --- |
-| W02 curve/planar/surface, W03 PLC volume, W05 imperfect-surface envelopes, W06 periodic combinations, W10 structured/quad/hex, W11 polyhedral, W12 lifecycle/distribution, W13 overset, W14 solver/design | Public implementation is present and the final focused owner checks reported clean. W05 exercised sheet, dirty, disconnected, and marked-adaptation envelope workflows under the unchanged 20,000,000-work request. W06 additionally exercised rotational-volume H(div)-3, mixed rotation/screw H1/H(div)/H(curl), and installed-Gmsh periodic STEP routes under unchanged limits. | No final W15 qualification or release artifact is inferred from those checks. Exact admitted combinations are the generated capability profiles; their Cartesian product is not supported. |
-| W04 implicit/image/multimaterial | The current focused matrix is 83/83. | This is test evidence, not a retained final qualification campaign. |
-| W07 native CAD | Native source-only `realize=False` import, three-circle OCP loft preservation, BRep topology/volume, cavity/shared-shell, unattached-edge, periodic-rational, surface-array, and scaled-oblique cases passed 16 targeted checks; the isolated loft route completed in 64.08 seconds. The overlapping-sphere partition publishes a real 0.001-policy mesh whose collapsed-pole radial splits retain exact rational chart coordinates, and the curved-void realization meets its 0.001 deviation through per-source-interval trim ribbons that are refined locally. | This is focused implementation/test evidence, not a final W15 qualification artifact. BRep text refuses implicit curved branches rather than fabricating them. Complete STEP/IGES entity coverage, every intersection curve, singular arrangements, and the independent writer campaign remain separate gates. |
-| W08 metric/remesh | The focused surface-metric matrix is 32/32 and the tetrahedral-metric matrix is 40/40. Rational-trim archive/continuation and curved-sphere smokes passed, as did the 12 canonical positional archive-recipe checks. Dense accepted adapted targets reopen through the existing `accepted_target` role, bound to certification input, report, associations, and one canonical source-to-target lineage event; unchanged zero-displacement whole targets reuse certified endpoint measures. | This is focused implementation/test evidence, not a final W15 qualification artifact. It does not admit approximate carrier/source substitution, relaxed size, quality, fidelity, or resource limits, or generic topology generation. |
-| W09 boundary layers/high order | Native advancing layers, immutable-cap core fill, and bounded high-order paths are implemented. The corrected exact-x-orbit source `curved-periodic-narrow-gap-exact-x-orbits` (revision `2afa0d24…`, source digest `059b334c…`) passed the complete unchanged 120-second gate; the final two repeats took 106.2345 and 108.5906 seconds (process walls 111.40 and 113.67 seconds). H(div) commuting/continuity defects were about `1e-14`, FV defects zero, and PDE defects about `1e-15`. | This is focused route qualification, not final W15/release evidence. The original ADVANCING period-x=1 source remains an immutable negative case: its authored top trace has exact x residuals `-101121/2361183241434822606848` and `-6620711477/77371252455336267181195264`. No tolerance increase, snapping, or source rewrite converts that original case into a positive. |
-| W15 corpus/tooling/release | The bounded tooling/corpus checker matrix is 46/46. | Final qualification and benchmark artifacts have not been produced. The like-for-like performance and authenticated leadership/release gates remain open and no superiority claim is made. |
+The capability catalog lists admitted source, route, cell-family, geometry-order,
+control, and execution combinations. Choose one listed combination when preparing
+a request. Qualification records bind that request to its source, policy, runtime,
+and resource identities; release decisions are recorded separately.
 
 Every source-facing tolerance has one owner and one physical meaning. Predicate
 filters certify signs or return unresolved; source-fidelity bounds measure
@@ -39,6 +22,42 @@ are hard preflight/commit bounds; exhaustion returns typed evidence and leaves
 the accepted mesh unchanged. Periodic support requires an exact declared
 isometry and quotient-orbit data—nearby coordinates or post-hoc node matching
 never create periodic topology.
+
+High-level PLC generation checks that `maximum_vertices` can retain the input
+vertex prefix before calling native recovery. An insufficient allowance produces
+`RESOURCE_EXHAUSTED` at source inspection with provider code `vertex_budget`.
+The evidence includes `required_vertices` and `available_vertices`; the source
+is unchanged and no candidate mesh is published.
+
+### Qualification outcomes that are not passes
+
+Declared-capacity work, storage, or recipe refusals remain typed resource
+limitations under the unchanged request. They include planar-hole-feature at
+resolution four, PLC material-cavity, surface-PDE at resolution four,
+polyhedral lifecycle at resolution two, stretched-L polyhedral lifecycle,
+dual-quad and dual-hex family lifecycles, swept-hex family lifecycle, and hybrid
+lifecycle. The skew-material-feature periodic lifecycle retains both capacity
+and deadline limitations.
+
+Whole-workflow deadline failures remain typed timeout limitations, not
+successful scientific qualification. They include skew-lattice periodic
+lifecycle at resolutions four and eight, swept-hex family lifecycle,
+surface-envelope lifecycle, distributed lifecycle, and the concave-hybrid and
+annulus corpus cases. A longer diagnostic continuation does not replace an
+original deadline failure or qualify the original request; it may itself refuse
+at the declared work or storage limit. Approved limitations do not relax
+geometry, quality, resource, or recipe requirements.
+
+The installed native unit-square lifecycle request at resolution four with
+`DEVICE_BISECTION` and `REJECT` retains an incompatible-label outcome. A
+lower-resolution distributed run or a uniform-refinement corpus case is not a
+substitute for that request.
+
+Adapted surface-envelope results retain authenticated repair evidence, and the
+surface-envelope lifecycle passes adapted acceptance and its next solve.
+Envelope result structure recipes exceed the default archive manifest bound, so
+the accepted-epoch checkpoint and cold continuation refuse as an archive-size
+limitation. This is not a completed lifecycle qualification.
 
 ### Native package identity
 
@@ -53,12 +72,6 @@ library. Qualification runtime records therefore distinguish `source_digest`,
 have the same source and ABI identities but a different binary digest; neither
 identity is qualification or performance evidence.
 
-The retained integration receipt identifies source digest `96982a2a…` and ABI
-digest `01d7a8cf…`. The resolver-installed wheel has binary digest `ca26383c…`;
-the independently configured isolated build has binary digest `48b55b54…`.
-Those binaries share the recorded source/ABI contract but are distinct build
-artifacts. The binary difference is not a numerical difference, qualification,
-or performance result.
 
 `PHYDRAX_MESHCORE_LIBRARY` explicitly selects a shared library. Otherwise the
 loader resolves the installed `phydrax_meshcore` distribution. A missing
@@ -108,24 +121,9 @@ evidence and prints a JSON summary:
 - [`examples/meshing_omega_h.py`](https://github.com/phydra-labs/phydrax/blob/main/examples/meshing_omega_h.py):
   serial or MPI metric adaptation through the persistent Omega_h worker.
 
-The following repository integration recipes deliberately exercise
-qualification-only source/archive helpers in addition to public numerical
-facades; their existence does not make those helpers public API:
-
-- `native_quad_hex_meshing.py` covers affine dual quad/hex and separately
-  declared mapped balanced/frame-grid cases. Its relaxed positive size policy
-  is not a pass of the original zero-tolerance request.
-- `curved_native_transfer.py` covers a curved nested edit, learned marking
-  proposal, physical state transfer, independent reanalysis, and fixed-epoch
-  JVP/VJP checks without claiming learned superiority.
-- `hp_metric_order_adaptation.py` reports bounded h/p/metric trials and ordered
-  timing samples. Shared process peak RSS is not candidate allocation cost.
-- `tools/native_moving_overset.py` covers interpolation and separately
-  conservative transfer through motion, rebind, PDE update, and a temporary
-  durable restart.
-- `tools/layer_core_lifecycle_continuation.py` is a consumer of an existing
-  content-addressed layer/core source archive; it requires the archive path and
-  expected content ID and is not a standalone generator.
+The examples also cover mapped quad/hex generation, curved state transfer, and
+h/p/metric adaptation. Their summaries retain the requested policy and observed
+evidence, so callers can compare achieved quantities with their own requirements.
 
 The code blocks of this guide form one sequence: later blocks reuse the
 `result` certified in the first.
@@ -383,12 +381,36 @@ the scalar source's single `implicit-zero-set` boundary; `MAPPED_REFERENCE`
 associations name the exact image entities of an authored reference mesh.
 Neither is relabeled as a B-Rep or piecewise-linear approximation.
 
+Source identity metadata is stored once in an immutable
+`GeometryAssociationSourceBank`, exposed as `association.source_entities`.
+Its ordered row routes preserve source IDs, roles and occurrence paths without
+putting that metadata on the device. Use `entity_id(row)`, `role(row)` and
+`occurrence_path(row)` for a row, or `entity_ids()`, `roles()` and
+`occurrence_paths()` for ordered batches. The old stored row fields are removed;
+constructor row inputs are unchanged. An absent role declaration remains
+distinct from explicitly declared per-row roles. Semantic association IDs retain
+the complete original row identity; storage, PyTree and recipe structure change.
+Archives encode the bank as explicit identity, role-value and occurrence-path
+columns with its ordered row routes. This lossless representation avoids
+repeating typed recipe wrappers for every identity; all source labels and
+optional-role distinctions remain authenticated. The bank API, numerical leaves
+and semantic association IDs are unchanged, while recipe and archive content
+identities change.
+
 Indexed `SURFACE` associations retain authored corner/curve/patch dimensions,
 64-bit definition indices, and declared occurrence paths in their identity.
 Index meaning belongs to the source domain's authoritative tables; it is not
 inferred by parsing an entity ID or matching a physical coordinate. A surface
 association cannot name a volume-region stratum. Source coverage charts and
 physical-cell material correspondence remain separate evidence.
+
+Composed PLC split eligibility uses exact edge-chart half-points and whole-edge
+source witnesses, rather than rejecting a valid split because its rounded
+midpoint falls off a source stratum. Explicit protection scopes, collapsed
+representatives and hard layer schedules remain constraints. Removing such
+rounded-membership false protections can admit more parents into a conforming
+mixed-template closure under the same marks; its intermediate cell count is
+not a minimal-refinement contract.
 
 `PlcAssociationTransfer.source_vertices` is the authoritative source bank, not
 the triangulated support domain's vertex array. A support domain may contain
@@ -524,6 +546,51 @@ rederives local and global inventories (and validates an explicit projection
 when present); missing or ambiguous owning revisions refuse checkpoint
 publication rather than trusting stored scope inventories.
 
+Registered stored-record replay gives an owner's `from_stored_fields` hook
+priority over its constructor and authenticates every rebuilt field bitwise.
+Constructor context comes from the retained closure: oriented incidence uses
+its actual lower and upper entity sets, periodic topology uses its lifted
+carrier, and a surface audit uses the policy retained by its
+`SurfaceRealization`. Missing bindings and changed identities are refusals;
+validity flags and equal array shapes never establish ownership.
+
+`GeometryAssociation.from_stored_fields(..., budget=budget)` admits reconstruction
+work and buffer bounds against the supplied execution budget. Newly rebuilt
+association storage remains in that request's retained-owner lifetime after
+temporary replay buffers are released. Nested scratch release does not uncharge
+live returned associations; the record format and identities are unchanged.
+
+Stored implicit projection coverage rebuilds its facet and rational-fiber
+evidence banks through their owner constructors, using the actual retained
+`ImplicitProjectionBoundarySource.profile` from the certification request.
+Its explicit `profile_id` and source ID/revision must match that profile before
+replay; every rebuilt field, including raw arrays, status, and evidence ID, is
+authenticated bitwise. Conflicting retained profiles with the same profile ID
+refuse. Source-family labels, centers, radii, validity flags, and equal array
+shapes never supply a profile. `AnalyticImplicitProfile` replays its constructor
+with its retained geometry, spatial coordinate contract, tube and cover radii,
+and source identifiers.
+
+Nested and coarsened mesh transitions replay their complete ordered reference
+witness banks. Common-refinement evidence uses its owner's retained cell
+measures, while overlap entries are re-certified from the actual retained
+source and target meshes and coordinate geometries. Replay authenticates
+unchanged coverage, evidence, and refinement IDs. Native layer/core audit
+renewal uses the same publication policy as generation, including complete
+source-association admission for both affine and mapped sources.
+
+Distributed association replay is a collective restore boundary. Every
+process visits the records and their leaves in the same order. Non-fully
+addressable leaves are byte-admitted against the archive limits before
+gathering a host view for owner validation. Replay authenticates static
+metadata, shapes, dtypes, and numerical content, then retains the original
+distributed leaves and placement rather than returning gathered arrays.
+Association replay uses the declared kind to supply absent indexed constructor
+inputs for curve and mapped-reference records. Their stored `-1` index banks
+are still authenticated bitwise against the constructor's output; altered
+sentinels or forged indexed rows refuse. This does not relax the constructor's
+prohibition on indexed inputs for either representation.
+
 Native envelope source closures retain the original `RawTriangleSoup` or
 declared `SurfaceModel`, explicit wrapping permissions, repaired realization,
 preserved volume carrier and directed repair evidence. Cold restoration
@@ -549,8 +616,8 @@ size controls, regions, patches, layers, and periodic constraints are explicit.
 A control's presence in the native contract does not imply every provider can
 honor it. Provider preflight rejects unsupported combinations before work.
 
-`NativeMeshingOptions` accepts this closed selector set; strings not listed here
-are not aliases:
+`NativeMeshingOptions.route` selects one of the following source/output
+combinations:
 
 | Route | Exact admitted source/output boundary |
 | --- | --- |
@@ -576,9 +643,9 @@ are not aliases:
 | `mapped_balanced_grid_hex` | exact mapped reference PLC plus balanced-grid schedule → preserved mapped hexahedra |
 | `mapped_frame_grid_hex` | exact mapped reference PLC plus frame-grid schedule → preserved mapped hexahedra |
 
-Each row still requires its route-specific source, control, certification, and
-resource admission. In particular, affine, mapped, periodic, material, layer,
-and high-order rows do not compose merely because each appears independently.
+The source type, controls, certification schedule, and resource limits jointly
+determine admission for each row. To combine periodicity, materials, layers, or
+mapped/high-order geometry, select a catalog entry that includes the combination.
 
 ### Typing and structural contracts
 
@@ -838,19 +905,789 @@ revision-bound binding:
   interval evaluation of the chart's second-derivative program; charts without
   interval rules report sampled evidence.
 
-Every route returns a `CellMeshingResult` only after the audit and
-specification compliance pass; otherwise `MeshingFailure.evidence` reports the
-stage, entities and requested-versus-achieved quantities.
-Requested and achieved quantity banks remain independent named evidence;
-diagnostic comparison joins only actual matching keys, never positional pairs
-or fabricated zero values. Reports and exceptions retain the complete banks.
-`MeshCertificateFinding.observations` is a separate immutable bank of unique
-nonnegative integer scientific facts. Report keys preserve its
-`observation:` prefix; resource requested/achieved banks retain actual
-resource limits, requests and completed counts. Scientific SCI/action
-observations are not reclassified resource counters or a global embedding
-certificate. A surfaced original budget failure does not become a successful
-route because its diagnostic is now complete.
+### Runnable native routes
+
+Run these examples from the repository root with meshcore installed. The blocks
+share the setup below and execute in page order; each checks its result and
+prints nothing. Small authored sources keep the examples focused on admission
+and publication. The larger source constructors imported from `examples` are
+the same public-API recipes used by the accompanying PDE workflows.
+
+```python {.executable}
+import jax.numpy as jnp
+import numpy as np
+import phydrax as phx
+
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
+M = phx.meshing
+G = phx.geometry
+D = phx.discretization
+si = phx.SpatialCoordinateContract.si()
+embedding = G.PlanarEmbedding(
+    (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)
+)
+
+def geometry_scope(
+    source_id: str, revision: str, dimension: int,
+    entity_set_id: str, indices: np.ndarray,
+) -> M.MeshingScope:
+    return M.MeshingScope(
+        source_id, revision, M.MeshingEntityKind.GEOMETRY,
+        dimension, entity_set_id, indices,
+    )
+
+def assert_published(result: M.CellMeshingResult) -> None:
+    assert result.audit.passed
+    assert result.certification is not None
+    assert result.certification.passed
+    assert result.trace.binding is not None
+    assert sum(block.cell_count for block in result.mesh.blocks) > 0
+```
+
+#### Planar triangles and dual quadrilaterals
+
+`NativePlanarSource` binds oriented loops to a revision. The target family
+selects triangles for constrained Delaunay or quadrilaterals for the dual route;
+`planar_embedding` supplies the physical plane.
+
+```python {.executable}
+region = G.PlanarMeshRegion(
+    np.asarray(((0, 0), (1, 0), (1, 1), (0, 1)), dtype=np.float64),
+    ((0, 1, 2, 3),), feature_id="guide-square",
+)
+planar_source = M.NativePlanarSource(region, "square-r1")
+planar_scope = geometry_scope(
+    planar_source.source_id, planar_source.source_revision, 2,
+    "square-region", np.asarray((0,), dtype=np.int64),
+)
+for route, family in (
+    ("planar_constrained_delaunay", "triangle"),
+    ("planar_dual_quad", "quadrilateral"),
+):
+    spec = M.SurfaceMeshingSpec(
+        M.CellMeshingTarget(2, 2, M.CellFamilyPolicy(required=(family,))),
+        planar_scope, planar_embedding=embedding,
+        size_controls=(M.UniformSizeControl(
+            planar_scope, 0.5, strength=M.SizeControlStrength.SOFT,
+        ),),
+    )
+    provider = M.NativeMeshingProvider(M.NativeMeshingOptions(route))
+    result = provider.plan(planar_source, spec, coordinate_contract=si).execute()
+    assert_published(result)
+    assert {block.cell_kind for block in result.mesh.blocks} == {family}
+    assert np.all(np.asarray(result.mesh.coordinates) >= 0.0)
+    assert np.all(np.asarray(result.mesh.coordinates) <= 1.0)
+```
+
+#### Arc-length curve network
+
+`CurveJunction` identifies the shared endpoint of the three source branches.
+The size density determines interval spacing along each branch.
+
+```python {.executable}
+segments = G.SegmentMesh(
+    jnp.asarray(((0, 0), (1, 0), (0, 1), (-1, 0)), dtype=jnp.float64),
+    jnp.asarray(((0, 1), (0, 2), (0, 3)), dtype=jnp.int32),
+    source_id="guide-tee",
+)
+curve_source = M.NativeCurveSource(segments, "tee-r1")
+curve_scope = geometry_scope(
+    curve_source.source_id, curve_source.source_revision, 1,
+    "tee-edges", np.arange(3, dtype=np.int64),
+)
+curve_spec = M.CurveMeshingSpec(
+    M.CellMeshingTarget(1, 2, M.CellFamilyPolicy(required=("interval",))),
+    curve_scope,
+    junctions=(M.CurveJunction(
+        "hub", ((0, "start"), (1, "start"), (2, "start")),
+    ),),
+    size_controls=(M.UniformSizeControl(
+        curve_scope, 0.25, strength=M.SizeControlStrength.SOFT,
+    ),),
+)
+curve_result = M.NativeMeshingProvider(
+    M.NativeMeshingOptions("curve_arc_length")
+).plan(curve_source, curve_spec, coordinate_contract=si).execute()
+assert_published(curve_result)
+curve_points = np.asarray(curve_result.mesh.coordinates)
+curve_cells = np.asarray(curve_result.mesh.blocks[0].vertices)
+degree = np.bincount(curve_cells.reshape(-1), minlength=curve_points.shape[0])
+assert np.count_nonzero(degree == 3) == 1
+assert np.array_equal(curve_points[np.flatnonzero(degree == 3)[0]], (0, 0))
+```
+
+#### Parametric surface
+
+The sphere recipe authors the patch, seam, poles, and enclosed region before
+meshing. `NativeSurfaceSource` retains that domain for association and fidelity
+certification.
+
+```python {.executable}
+from examples.native_surface_meshing import sphere
+
+sphere_domain = sphere()
+surface_source = M.NativeSurfaceSource(sphere_domain)
+surface_scope = geometry_scope(
+    surface_source.source_id, surface_source.source_revision, 2,
+    sphere_domain.entity_set_id(2),
+    np.asarray(sphere_domain.source_indices[2], dtype=np.int64),
+)
+surface_spec = M.SurfaceMeshingSpec(
+    M.CellMeshingTarget(2, 3, M.CellFamilyPolicy(required=("triangle",))),
+    surface_scope,
+    size_controls=(M.UniformSizeControl(
+        surface_scope, 0.5, strength=M.SizeControlStrength.SOFT,
+    ),),
+)
+surface_result = M.NativeMeshingProvider(
+    M.NativeMeshingOptions("parametric_surface")
+).plan(surface_source, surface_spec, coordinate_contract=si).execute()
+assert_published(surface_result)
+np.testing.assert_allclose(
+    np.linalg.norm(np.asarray(surface_result.mesh.coordinates), axis=1),
+    1.0, rtol=0.0, atol=1e-12,
+)
+```
+
+#### Implicit surface: fixed and adaptive discovery
+
+`ImplicitSurfacePolicy` retains a fixed discovery route for differentiable
+realization. `AdaptiveImplicitSurfacePolicy` refines its discovery octree and
+publishes a nondifferentiable route. The same source box and soft target size
+can be used for both policies.
+
+```python {.executable}
+implicit_geometry = G.Sphere(
+    (0, 0, 0), 0.75, feature_id="guide-sphere",
+).compile(coordinate_unit=phx.units.METER)
+implicit_grid = D.TensorGridPlan(
+    tuple(D.UniformAxisSpec(9) for _ in range(3)),
+    axis_names=("x", "y", "z"),
+).prepare(jnp.asarray(((-1.4, -1.4, -1.4), (1.4, 1.4, 1.4)), dtype=jnp.float64))
+implicit_source = M.NativeImplicitSource(
+    implicit_geometry, implicit_grid, "guide-sphere", "sphere-r1",
+)
+implicit_scope = geometry_scope(
+    implicit_source.source_id, implicit_source.source_revision, 2,
+    "sphere-boundary", np.asarray((0,), dtype=np.int64),
+)
+implicit_surface_spec = M.SurfaceMeshingSpec(
+    M.CellMeshingTarget(2, 3, M.CellFamilyPolicy(required=("triangle",))),
+    implicit_scope,
+    size_controls=(M.UniformSizeControl(
+        implicit_scope, 0.3, strength=M.SizeControlStrength.SOFT,
+    ),),
+    protected_features=(M.ProtectedFeature(
+        implicit_scope, M.FeatureKind.SURFACE, maximum_deviation=0.2,
+    ),),
+)
+for policy, mode in (
+    (G.ImplicitSurfacePolicy(
+        projection=G.ImplicitProjectionPolicy(trust_fraction=0.45),
+        maximum_intersection_pairs=500_000,
+    ), M.MeshingDerivativeMode.FIXED_ROUTE_PIECEWISE),
+    (G.AdaptiveImplicitSurfacePolicy(maximum_level=6),
+     M.MeshingDerivativeMode.NONDIFFERENTIABLE),
+):
+    implicit_result = M.NativeMeshingProvider(M.NativeMeshingOptions(
+        "implicit_surface", implicit_policy=policy,
+    )).plan(implicit_source, implicit_surface_spec, coordinate_contract=si).execute()
+    assert_published(implicit_result)
+    assert implicit_result.derivative_mode is mode
+    assert implicit_result.certification.fidelity is not None
+    assert implicit_result.certification.fidelity.mesh_to_source_upper <= 0.2
+```
+
+#### Implicit tetrahedra: analytic restricted and general adaptive sources
+
+The restricted route establishes reach and distance bounds from an analytic
+sphere. The adaptive route accepts an enclosure-complete scalar program; the
+union below deliberately retains a general scalar source representation.
+Both return tetrahedra with certified source coverage.
+
+```python {.executable}
+volume_grid = D.TensorGridPlan(
+    tuple(D.UniformAxisSpec(5) for _ in range(3)),
+    axis_names=("x", "y", "z"),
+).prepare(jnp.asarray(((-1.2, -1.2, -1.2), (1.2, 1.2, 1.2)), dtype=jnp.float64))
+analytic_geometry = G.Sphere((0, 0, 0), 0.371).compile(
+    coordinate_unit=phx.units.METER,
+)
+primitive = G.Ellipsoid((0.0123, 0.0037, -0.0102), (0.35, 0.28, 0.23))
+general_geometry = (primitive | primitive).compile(coordinate_unit=phx.units.METER)
+general_grid = D.TensorGridPlan(
+    tuple(D.UniformAxisSpec(5) for _ in range(3)),
+    axis_names=("x", "y", "z"),
+).prepare(jnp.asarray(((-0.8, -0.6, -0.6), (0.8, 0.6, 0.6)), dtype=jnp.float64))
+for geometry, grid, options in (
+    (analytic_geometry, volume_grid,
+     M.NativeMeshingOptions("implicit_restricted_delaunay")),
+    (general_geometry, general_grid, M.NativeMeshingOptions(
+        "implicit_adaptive_tetrahedral",
+        implicit_policy=G.AdaptiveImplicitSurfacePolicy(
+            initial_level=2, minimum_surface_level=3, maximum_level=9,
+        ),
+        volume_schedule=M.NativeVolumeSchedule(
+            refinement_rounds=1, improvement_passes=1, metric_optimization_passes=1,
+        ),
+    )),
+):
+    source = M.NativeImplicitSource(geometry, grid, "guide-implicit-volume", "volume-r1")
+    scope = geometry_scope(
+        source.source_id, source.source_revision, 2,
+        "zero-set", np.asarray((0,), dtype=np.int64),
+    )
+    spec = M.VolumeMeshingSpec(
+        M.CellMeshingTarget(3, 3, M.CellFamilyPolicy(required=("tetrahedron",))),
+        scope, M.VolumeFillStrategy.SIMPLEX,
+        size_controls=(M.UniformSizeControl(
+            scope, 0.2, strength=M.SizeControlStrength.SOFT,
+        ),),
+    )
+    result = M.NativeMeshingProvider(options).plan(
+        source, spec, coordinate_contract=si,
+    ).execute()
+    assert_published(result)
+    assert result.certification.coverage is not None
+    assert result.certification.coverage.status == "certified"
+    assert result.certification.fidelity is not None
+    assert result.certification.fidelity.status == "certified"
+    corners = np.asarray(result.mesh.coordinates)[np.asarray(result.mesh.blocks[0].vertices)]
+    assert np.all(np.linalg.det(corners[:, 1:] - corners[:, :1]) > 0.0)
+```
+
+#### PLC tetrahedra, dual hexes, hex-dominant and affine grid hexes
+
+The outward loops below independently author the unit cube. Facet incidence
+`(-1, 0)` places the exterior on the positive side and the solid on the negative
+side. The mixed-family policy permits pyramids and tetrahedra around the
+hex-dominant core. Pure-hex routes require hexahedra throughout.
+
+```python {.executable}
+cube_vertices = np.asarray(
+    [[(row >> axis) & 1 for axis in range(3)] for row in range(8)],
+    dtype=np.float64,
+)
+cube_loops = (
+    (0, 2, 3, 1), (4, 5, 7, 6), (0, 1, 5, 4),
+    (2, 6, 7, 3), (0, 4, 6, 2), (1, 3, 7, 5),
+)
+cube = M.PiecewiseLinearComplex(
+    cube_vertices, cube_loops, np.zeros(6, dtype=np.int64),
+    np.asarray(((-1, 0),), dtype=np.int64), ("solid",),
+)
+plc_source = M.NativePlcSource(cube, "guide-cube", "cube-r1")
+plc_scope = geometry_scope(
+    plc_source.source_id, plc_source.source_revision, 2,
+    "cube-facets", np.arange(cube.facet_count, dtype=np.int64),
+)
+for route, family, fill in (
+    ("plc_tetrahedral", "tetrahedron", M.VolumeFillStrategy.SIMPLEX),
+    ("plc_dual_hex", "hexahedron", M.VolumeFillStrategy.MULTIZONE),
+    ("plc_hex_dominant", "hexahedron", M.VolumeFillStrategy.HEX_DOMINANT_SIMPLEX_TRANSITION),
+    ("plc_balanced_grid_hex", "hexahedron", M.VolumeFillStrategy.MULTIZONE),
+    ("plc_frame_grid_hex", "hexahedron", M.VolumeFillStrategy.MULTIZONE),
+):
+    families = M.CellFamilyPolicy(
+        required=(family,),
+        allowed_transitions=("pyramid", "tetrahedron")
+        if route == "plc_hex_dominant" else (),
+        allow_mixed=route == "plc_hex_dominant",
+    )
+    spec = M.VolumeMeshingSpec(
+        M.CellMeshingTarget(3, 3, families), plc_scope, fill,
+        size_controls=(M.UniformSizeControl(
+            plc_scope, 1.0, strength=M.SizeControlStrength.SOFT,
+        ),),
+    )
+    result = M.NativeMeshingProvider(M.NativeMeshingOptions(route)).plan(
+        plc_source, spec, coordinate_contract=si,
+    ).execute()
+    assert_published(result)
+    assert family in {block.cell_kind for block in result.mesh.blocks}
+    assert result.certification.coverage is not None
+    assert result.certification.coverage.status == "certified"
+```
+
+#### Restricted power polyhedra
+
+Sites and weights are source data. The two equal-weight sites split the cube
+at `x = 0.5`; the PLC restricts the power cells to the authored solid.
+
+```python {.executable}
+power_source = M.NativePolyhedralSource(
+    cube, "guide-power-cube", "power-r1",
+    sites=np.asarray(((0.25, 0.5, 0.5), (0.75, 0.5, 0.5)), dtype=np.float64),
+    weights=np.zeros(2, dtype=np.float64),
+)
+power_scope = geometry_scope(
+    power_source.source_id, power_source.source_revision, 2,
+    "power-facets", np.arange(cube.facet_count, dtype=np.int64),
+)
+power_spec = M.VolumeMeshingSpec(
+    M.CellMeshingTarget(3, 3, M.CellFamilyPolicy(required=("polyhedron",))),
+    power_scope, M.VolumeFillStrategy.POLYHEDRAL,
+    size_controls=(M.UniformSizeControl(
+        power_scope, 10.0, strength=M.SizeControlStrength.SOFT,
+    ),),
+)
+power_result = M.NativeMeshingProvider(
+    M.NativeMeshingOptions("plc_restricted_power")
+).plan(power_source, power_spec, coordinate_contract=si).execute()
+assert_published(power_result)
+assert {block.cell_kind for block in power_result.mesh.blocks} == {"polyhedron"}
+assert sum(block.cell_count for block in power_result.mesh.blocks) == 2
+```
+
+#### Mapped balanced and frame grids
+
+The constructor authors independent polynomial root charts and their reference
+PLC. `geometry_order=2` requests their preserved curved realization.
+
+```python {.executable}
+from phydrax.meshing.qualification import curved_occupied_source
+
+mapped_source = curved_occupied_source({(0, 0, 0)}, curvature=0.125)
+mapped_domain = mapped_source.domain
+mapped_scope = geometry_scope(
+    mapped_source.source_id, mapped_source.source_revision, 2,
+    mapped_domain.entity_set_id(2),
+    np.asarray(mapped_domain.reference_mesh.topology.entities(2).entity_ids),
+)
+mapped_spec = M.VolumeMeshingSpec(
+    M.CellMeshingTarget(
+        3, 3, M.CellFamilyPolicy(required=("hexahedron",)), geometry_order=2,
+    ),
+    mapped_scope, M.VolumeFillStrategy.MULTIZONE,
+    size_controls=(M.UniformSizeControl(
+        mapped_scope, 0.5, maximum_size=0.6, strength=M.SizeControlStrength.HARD,
+    ),),
+    size_compliance=M.SizeCompliancePolicy(relative_tolerance=0.5),
+)
+for route in ("mapped_balanced_grid_hex", "mapped_frame_grid_hex"):
+    result = M.NativeMeshingProvider(M.NativeMeshingOptions(route)).plan(
+        mapped_source, mapped_spec, coordinate_contract=si,
+    ).execute()
+    assert_published(result)
+    assert result.geometry is not None
+    assert {block.cell_kind for block in result.mesh.blocks} == {"hexahedron"}
+    assert result.certification.fidelity is not None
+    assert result.certification.fidelity.status == "certified"
+```
+
+#### Structured transfinite blocks
+
+The rectangle constructor supplies four oriented line controls with equal
+interval counts. The independently authored boundary query binds the block
+construction to source geometry.
+
+```python {.executable}
+from examples.native_multiblock_meshing import rectangle
+
+boundary_curves = (
+    G.LineCurve((0, 0), (0, 1)), G.LineCurve((1, 0), (0, 1)),
+    G.LineCurve((0, 0), (1, 0)), G.LineCurve((0, 1), (1, 0)),
+)
+boundary_revision = str(phx.array_tree_fingerprint(boundary_curves)["sha256"])
+boundary_query = G.ParametricCurveBoundarySource(
+    boundary_curves, ((0.0, 1.0),) * 4,
+    source_id="guide-structured-square", source_revision=boundary_revision,
+    covering_radius=0.01,
+)
+structured_source = M.NativeStructuredSource(
+    (rectangle("square", 0.0, 1.0, 2),), (),
+    boundary_query.source_id, boundary_revision,
+    fidelity_source=boundary_query, maximum_deviation=0.08,
+)
+structured_scope = geometry_scope(
+    structured_source.source_id, structured_source.source_revision, 2,
+    "square-domain", np.asarray((0,), dtype=np.int64),
+)
+structured_spec = M.SurfaceMeshingSpec(
+    M.CellMeshingTarget(2, 2, M.CellFamilyPolicy(required=("quadrilateral",))),
+    structured_scope, planar_embedding=embedding,
+    size_controls=(M.UniformSizeControl(
+        structured_scope, 0.5, strength=M.SizeControlStrength.SOFT,
+    ),),
+)
+structured_result = M.NativeMeshingProvider(
+    M.NativeMeshingOptions("structured_transfinite")
+).plan(structured_source, structured_spec, coordinate_contract=si).execute()
+assert_published(structured_result)
+assert structured_result.mesh.blocks[0].cell_count == 4
+```
+
+#### Extrusion sweep
+
+The profile and physical station thicknesses define the extrusion. The source
+box query and triangulated domain are authored independently of the sweep.
+
+```python {.executable}
+box_geometry = G.Box(
+    (0.5, 0.5, 0.5), (1, 1, 1), feature_id="guide-sweep-box",
+).compile(coordinate_unit=phx.units.METER)
+box_query = G.ImplicitBoundarySource(
+    box_geometry, source_id="guide-sweep-box", spacing=0.025,
+)
+cube_triangles = np.asarray(
+    [triangle for a, b, c, d in cube_loops
+     for triangle in ((a, b, c), (a, c, d))], dtype=np.int64,
+)
+box_domain = G.PiecewiseLinearDomain(
+    cube_vertices, cube_triangles,
+    np.tile(np.asarray((0, -1), dtype=np.int64), (12, 1)),
+    ("solid",), source_id="guide-sweep-box",
+)
+profile = M.generate_structured_block(rectangle("profile", 0.0, 1.0, 2)).mesh
+sweep_control = M.SweepControl(
+    M.SweepMapKind.EXTRUSION,
+    M.LayerSchedule(np.asarray((0.25, 0.75), dtype=np.float64)),
+    "guide-box-extrusion",
+)
+sweep_source = M.NativeSweepSource(
+    profile, sweep_control, box_query.source_id, box_query.source_revision,
+    fidelity_source=box_query, maximum_deviation=0.2, domain=box_domain,
+)
+sweep_scope = geometry_scope(
+    sweep_source.source_id, sweep_source.source_revision, 2,
+    "box-boundary", np.arange(12, dtype=np.int64),
+)
+sweep_spec = M.VolumeMeshingSpec(
+    M.CellMeshingTarget(3, 3, M.CellFamilyPolicy(required=("hexahedron",))),
+    sweep_scope, M.VolumeFillStrategy.SWEEP,
+    size_controls=(M.UniformSizeControl(
+        sweep_scope, 0.5, strength=M.SizeControlStrength.SOFT,
+    ),),
+)
+sweep_result = M.NativeMeshingProvider(M.NativeMeshingOptions("sweep")).plan(
+    sweep_source, sweep_spec, coordinate_contract=si,
+).execute()
+assert_published(sweep_result)
+assert sweep_result.mesh.blocks[0].cell_count == 8
+assert np.array_equal(
+    np.unique(np.asarray(sweep_result.mesh.coordinates)[:, 2]), (0.0, 0.25, 1.0),
+)
+```
+
+#### Translational periodic Delaunay
+
+`PeriodicPointOrbits` supplies quotient points and the translation lattice.
+The result carries the quotient topology used by periodic consumers.
+
+```python {.executable}
+axis = np.arange(3, dtype=np.float64) / 3.0
+periodic_points = np.stack(np.meshgrid(axis, axis, indexing="ij"), axis=-1).reshape(-1, 2)
+periodic_source = M.NativePeriodicSource(
+    M.PeriodicPointOrbits(periodic_points, D.PeriodicCell(np.eye(2, dtype=np.float64))),
+    "guide-torus", "torus-r1",
+)
+periodic_scope = geometry_scope(
+    periodic_source.source_id, periodic_source.source_revision, 2,
+    "regions", np.asarray((0,), dtype=np.int64),
+)
+periodic_spec = M.SurfaceMeshingSpec(
+    M.CellMeshingTarget(2, 2, M.CellFamilyPolicy(required=("triangle",))),
+    periodic_scope, planar_embedding=embedding,
+    size_controls=(M.UniformSizeControl(
+        periodic_scope, 0.25, maximum_size=0.35, strength=M.SizeControlStrength.SOFT,
+    ),),
+)
+periodic_result = M.NativeMeshingProvider(
+    M.NativeMeshingOptions("periodic_delaunay")
+).plan(periodic_source, periodic_spec, coordinate_contract=si).execute()
+assert_published(periodic_result)
+np.testing.assert_allclose(
+    dict(periodic_result.compliance.achieved)["periodic:quotient_measure"],
+    1.0, rtol=0.0, atol=1e-12,
+)
+```
+
+#### Image-material tetrahedra
+
+This synthetic two-voxel image declares categorical labels, their material
+ontology, allowed adjacency, and a millimeter-valued image affine. The outer
+box describes the occupied-cell extent independently of the extracted
+interface. The source coordinate contract owns the physical units.
+
+```python {.executable}
+import hashlib
+from itertools import product
+
+labels_array = np.asarray((((1,),), ((2,),)), dtype=np.int16)
+image_contract = phx.SpatialCoordinateContract(
+    phx.units.MILLIMETER, coordinate_system="cartesian-lps", reference_frame="patient",
+)
+image_affine = phx.imaging.ImageIndexAffine(
+    np.eye(4, dtype=np.float64), "guide-voxels", image_contract,
+    phx.imaging.ImageAxisConvention.LPS,
+)
+label_bytes = labels_array.tobytes()
+manifest = phx.qualification.ReferenceArtifactManifest(
+    "guide-synthetic-labels", checksum_algorithm="sha256",
+    checksum=hashlib.sha256(label_bytes).hexdigest(), size_bytes=len(label_bytes),
+    license_id="synthetic", commercial_use_permitted=True,
+    redistribution_permitted=True, training_use_permitted=True,
+    export_permitted=True, export_classification="public",
+    nondimensionalization={"length": 1.0}, uncertainty={"value": 0.0},
+    lineage_ids=("guide-synthetic",),
+)
+asset = phx.imaging.MedicalImageAsset(
+    "guide-labels", "segmentation", labels_array, image_affine,
+    phx.imaging.ImageFieldSpec.named(
+        "segmentation", phx.units.ONE, phx.measurement.ValueKind.CATEGORICAL,
+    ),
+    phx.imaging.DeidentificationEvidence(
+        "guide-deid", "synthetic-subject", "synthetic-protocol", True, True, True,
+    ),
+    (manifest,),
+    phx.measurement.DerivationRecord(
+        phx.measurement.DataOrigin.SYNTHETIC,
+        phx.measurement.DataStage.RECONSTRUCTED,
+        transformation_id="guide-synthetic-compartment",
+    ),
+)
+ontology = phx.imaging.LabelOntology(
+    "guide-ontology", "synthetic", "1",
+    tuple(phx.imaging.LabelDefinition(value, f"label:{value}", f"Material {value}")
+          for value in (1, 2)),
+)
+labels = phx.imaging.LabelVolume(asset, ontology)
+definitions = (
+    G.CompartmentDefinition(
+        "region:1", ("label:1",), "material", allowed_neighbor_ids=("region:2",),
+    ),
+    G.CompartmentDefinition(
+        "region:2", ("label:2",), "material", allowed_neighbor_ids=("region:1",),
+    ),
+)
+interfaces = (G.CompartmentInterfaceDefinition(
+    "interface:1:2", "region:1", "region:2", "exchange", required=False,
+),)
+compartments = phx.imaging.build_compartment_complex(labels, definitions, interfaces)
+image_corners = np.asarray(tuple(product((0, 1), repeat=3)), dtype=np.float64)
+image_corners = image_corners * np.asarray(labels_array.shape, dtype=np.float64) - 0.5
+image_faces = np.asarray((
+    (0, 1, 3), (0, 3, 2), (4, 7, 5), (4, 6, 7),
+    (0, 5, 1), (0, 4, 5), (2, 7, 6), (2, 3, 7),
+    (0, 6, 4), (0, 2, 6), (1, 7, 3), (1, 5, 7),
+), dtype=np.int64)
+image_outer = G.SurfaceModel.from_triangles(
+    image_affine.index_to_world(image_corners), image_faces,
+    G.SurfaceMetadata(
+        source_id="guide-image-outer", source_revision=labels.label_volume_id,
+        coordinate_contract=image_contract, provenance=("synthetic",),
+    ),
+)
+image_source = G.CompartmentMeshingSource(
+    labels, compartments, image_outer,
+    phx.imaging.extract_compartment_surfaces(labels, compartments),
+)
+image_scope = geometry_scope(
+    image_source.source_id, image_source.source_revision, 2,
+    f"{image_source.source_id}:boundary", np.asarray((0,), dtype=np.int64),
+)
+image_spec = M.VolumeMeshingSpec(
+    M.CellMeshingTarget(3, 3, M.CellFamilyPolicy(required=("tetrahedron",))),
+    image_scope, M.VolumeFillStrategy.SIMPLEX,
+    size_controls=(M.UniformSizeControl(
+        image_scope, 3.0, strength=M.SizeControlStrength.SOFT,
+    ),),
+)
+image_result = M.NativeMeshingProvider(
+    M.NativeMeshingOptions("image_material_tetrahedral")
+).plan(image_source, image_spec, coordinate_contract=image_contract).execute()
+assert_published(image_result)
+assert image_result.region_evidence is not None
+assert set(image_result.region_evidence.cell_region_ids) == {"region:1", "region:2"}
+assert image_result.region_evidence.adjacency_pairs == (("region:1", "region:2"),)
+```
+
+#### Repaired surface-envelope tetrahedra
+
+`wrap_surface_envelope` prepares a closed offset around an open triangle.
+Topology change and feature rounding are explicit permissions. The resulting
+source binds meshing to the repaired envelope, while its evidence retains the
+two directed deviation bounds to the input soup.
+
+```python {.executable}
+soup = M.RawTriangleSoup(
+    np.asarray(((0, 0, 0), (0.2, 0, 0), (0, 0.2, 0)), dtype=np.float64),
+    np.asarray(((0, 1, 2),), dtype=np.int64),
+    G.SurfaceMetadata(
+        source_id="guide-sheet", source_revision="scan-r1",
+        coordinate_contract=si, provenance=("synthetic-open-sheet",),
+    ),
+    feature_edges=np.asarray(((0, 1),), dtype=np.int64),
+)
+envelope = M.wrap_surface_envelope(soup, M.SurfaceEnvelopePolicy(
+    offset=0.263, maximum_deviation=0.55, spacing=0.11, certificate_spacing=0.05,
+    feature_permission=M.EnvelopeFeaturePermission.ALLOW_ROUNDING,
+    topology_permission=M.EnvelopeTopologyPermission.ALLOW_CHANGE,
+    max_samples=100_000, max_work_units=10_000_000,
+    max_vertices=10_000, max_triangles=20_000,
+))
+envelope_source = M.NativeSurfaceEnvelopeSource(envelope, "solid")
+envelope_scope = geometry_scope(
+    envelope_source.source_id, envelope_source.source_revision, 2,
+    "envelope-facets",
+    np.arange(envelope_source.plc_source.complex.facet_count, dtype=np.int64),
+)
+envelope_spec = M.VolumeMeshingSpec(
+    M.CellMeshingTarget(3, 3, M.CellFamilyPolicy(required=("tetrahedron",))),
+    envelope_scope, M.VolumeFillStrategy.SIMPLEX,
+    size_controls=(M.UniformSizeControl(
+        envelope_scope, 2.0, strength=M.SizeControlStrength.SOFT,
+    ),),
+    limits=M.MeshingLimits(
+        maximum_vertices=20_000, maximum_cells=100_000,
+        maximum_work_units=20_000_000, maximum_wall_seconds=3600.0,
+        maximum_scratch_bytes=8_000_000_000,
+    ),
+)
+envelope_result = M.NativeMeshingProvider(
+    M.NativeMeshingOptions("surface_envelope_tetrahedral")
+).plan(envelope_source, envelope_spec, coordinate_contract=si).execute()
+assert_published(envelope_result)
+assert envelope.evidence.source_topology.boundary_edges == 3
+assert envelope.evidence.repaired_topology.boundary_edges == 0
+assert envelope.evidence.source_to_repaired_upper <= 0.55
+assert envelope.evidence.repaired_to_source_upper <= 0.55
+```
+
+#### Advancing layers with a fixed core
+
+The wall grows two physical layers. The cap's exact vertex IDs and triangles
+bind the core PLC to those accepted layers. Its fixed boundary keeps the cap
+unchanged during tetrahedral core construction; publication retains both
+prisms and tetrahedra.
+
+```python {.executable}
+wall = D.CellMesh(
+    np.asarray(((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)), dtype=np.float64),
+    (D.CellBlock(
+        "wall", "triangle", np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64),
+    ),),
+)
+wall_entities = wall.entity_set(2)
+wall_scope = M.MeshingScope(
+    wall.mesh_id, wall.numeric_version, M.MeshingEntityKind.MESH, 2,
+    wall_entities.entity_set_id, wall_entities.entity_ids,
+)
+layer_control = M.BoundaryLayerControl(
+    wall_scope, M.LayerSchedule.geometric(2, 0.1, growth_rate=1.0),
+    route=M.BoundaryLayerRoute.ADVANCING,
+)
+layers = M.prepare_boundary_layers(wall, layer_control)
+assert layers.cap is not None
+cap_triangles = np.concatenate(
+    [np.asarray(block.vertices, dtype=np.int64) for block in layers.cap.blocks],
+)
+cap_points = np.asarray(layers.cap.coordinates, dtype=np.float64)
+upper_points = cap_points.copy()
+upper_points[:, 2] = 1.0
+outer_triangles = np.asarray((
+    (4, 5, 6), (4, 6, 7), (0, 5, 4), (0, 1, 5), (1, 6, 5),
+    (1, 2, 6), (2, 7, 6), (2, 3, 7), (3, 4, 7), (3, 0, 4),
+), dtype=np.int64)
+core = M.PiecewiseLinearComplex(
+    np.concatenate((cap_points, upper_points)),
+    tuple(np.concatenate((cap_triangles, outer_triangles))),
+    np.concatenate((
+        np.zeros(cap_triangles.shape[0], dtype=np.int64),
+        np.ones(outer_triangles.shape[0], dtype=np.int64),
+    )),
+    np.asarray(((0, -1), (-1, 0)), dtype=np.int64), ("fluid",), boundary="fixed",
+)
+layer_source = M.NativeLayerCoreSource(
+    layers, core, "guide-layered-square", "layers-r1",
+    vertex_layer_ids=np.concatenate((
+        np.asarray(layers.cap_vertices, dtype=np.int64),
+        np.full(4, -1, dtype=np.int64),
+    )),
+    cap_polygon_ids=np.arange(cap_triangles.shape[0], dtype=np.int64),
+    layer_regions=np.zeros(
+        sum(block.cell_count for block in layers.mesh.blocks), dtype=np.int64,
+    ),
+    region_ids=("fluid",), core_region_map=np.asarray((0,), dtype=np.int64),
+)
+layer_scope = geometry_scope(
+    layer_source.source_id, layer_source.source_revision, 2,
+    "layered-core-facets", np.arange(core.facet_count, dtype=np.int64),
+)
+layer_spec = M.VolumeMeshingSpec(
+    M.CellMeshingTarget(3, 3, M.CellFamilyPolicy(
+        required=("prism", "tetrahedron"), allow_mixed=True,
+    )),
+    layer_scope, M.VolumeFillStrategy.SIMPLEX,
+    size_controls=(M.UniformSizeControl(
+        layer_scope, 2.0, strength=M.SizeControlStrength.SOFT,
+    ),),
+)
+layer_result = M.NativeMeshingProvider(M.NativeMeshingOptions("layer_core")).plan(
+    layer_source, layer_spec, coordinate_contract=si,
+).execute()
+assert_published(layer_result)
+assert {block.cell_kind for block in layer_result.mesh.blocks} == {"prism", "tetrahedron"}
+np.testing.assert_allclose(layers.evidence.column_thicknesses, 0.1, rtol=1e-12)
+```
+
+#### Evidence and refusals
+
+The successful planar example can also run in an explicit native session.
+`MeshingExecutionPolicy.parallelism` requests the worker count and defaults to
+one. Native sessions admit deterministic parallel execution. An outer
+`ResourceRequest.cpu_cores`, when supplied, is the admission ceiling for that
+request. The specification's limits continue to govern scientific construction.
+The native parallel substrate is Phydrax-owned and deterministic, with no OpenMP
+runtime. `MeshingExecutionPolicy.parallelism` is the sole public meshing thread
+request; the outer CPU-core allowance does not independently request workers.
+
+```python {.executable}
+parallel_provider = M.NativeMeshingProvider(
+    M.NativeMeshingOptions("planar_constrained_delaunay")
+)
+parallel_spec = M.SurfaceMeshingSpec(
+    M.CellMeshingTarget(2, 2, M.CellFamilyPolicy(required=("triangle",))),
+    planar_scope, planar_embedding=embedding,
+    size_controls=(M.UniformSizeControl(
+        planar_scope, 0.5, strength=M.SizeControlStrength.SOFT,
+    ),),
+)
+parallel_plan = parallel_provider.plan(planar_source, parallel_spec, coordinate_contract=si)
+with parallel_provider.open_session(
+    M.MeshingExecutionPolicy(parallelism=2, deterministic=True)
+) as session:
+    parallel_result = session.execute(parallel_plan)
+assert_published(parallel_result)
+assert parallel_result.runtime.deterministic
+
+limited_spec = M.SurfaceMeshingSpec(
+    implicit_surface_spec.target, implicit_scope,
+    size_controls=implicit_surface_spec.size_controls,
+    limits=M.MeshingLimits(maximum_vertices=3),
+)
+try:
+    M.NativeMeshingProvider(M.NativeMeshingOptions(
+        "implicit_surface", implicit_policy=G.ImplicitSurfacePolicy(),
+    )).plan(implicit_source, limited_spec, coordinate_contract=si)
+except M.MeshingFailure as failure:
+    assert failure.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
+    assert dict(failure.evidence.requested)["maximum_vertices"] == 3.0
+else:
+    raise AssertionError("The three-vertex allowance must refuse sphere preparation.")
+```
+
+Successful publication returns a `CellMeshingResult` with passed audit,
+compliance, and certification reports. On refusal, `MeshingFailure.category`
+identifies the failure class and `MeshingFailure.evidence` identifies the stage,
+entities, and measured quantities. `requested` and `achieved` are independent
+named banks: compare entries by matching keys, and retain unmatched entries as
+additional evidence. Reports and exceptions preserve both complete banks.
+`MeshCertificateFinding.observations` holds immutable, unique, nonnegative
+integer scientific facts. Their report keys start with `observation:`;
+resource-bank keys describe limits, requests, and completed counts. Use the
+scientific certificate for embedding or coverage and the resource bank for
+admission and consumption.
 
 Native source-bound surface refinement names the selected edge by its actual
 endpoint rows. Its paired cavity replaces both adjacent triangles together,
@@ -862,37 +1699,37 @@ tolerance or fitted source is introduced. A stale, constrained or illegal edge
 request refuses unchanged; any later interior-point retry is a separate,
 explicit generic request.
 
-**Native host scratch ownership.** `NativeExecutionBudget` retains one original
-CPU-native allowance across nested scopes; a nested scope cannot renew work,
-geometry-query, cavity, scratch-byte, or deadline admission. Its scratch cap
-bounds native managed allocations together with explicitly reserved,
-conservative Python-owned storage bounds; it does not measure process resident
-memory.
+**Native host scratch ownership.** `MeshingLimits.native_limits()` supplies the
+root `NativeExecutionScope` allowance. Preparation, generation, and publication
+share its remaining work, geometry-query, cavity, managed-byte, and deadline
+budgets through nested scopes. Each phase reserves its complete upper bound in
+one batch ticket, counts local work, and settles actual consumption on exit.
+An upper bound larger than the remaining allowance produces a refusal before
+the phase starts. Managed-byte admission includes native allocations and
+explicit shape-derived bounds for Python-owned storage; process resident memory
+is a separate measurement.
 
-For an end-to-end route, preparation, generation and publication must retain
-that same original root budget. Owning source-fidelity/coverage queries are
-charged as source operations, separately from native primitive-query telemetry;
-primitive counts cannot stand in for those charges. Execution phase records
-describe only the phase actually measured, not Python construction, compilation
-or a process-wide peak. An allocator-level contract alone is not evidence that
-every public route has completed this lifecycle integration.
+Source-fidelity and coverage operations debit the source-query allowance.
+Native primitive-query telemetry records a different operation class. Read
+execution-phase measurements with their phase labels; compilation, Python
+construction, and process-wide peaks have separate owners and measurements.
+`result.runtime.enforced_limits` names the limits enforced on that execution,
+and `unenforced_limits` names declarations for which the route supplies no
+enforcement.
 
-An ended source-preparation receipt is imported once through an actual child
-scope; an already active root is borrowed, not restarted. Prior source duration
-is an ancestor admission debit separate from the parent's raw elapsed clock.
-Retained child `consumer_evidence` describes the original child and is not an
-additional additive charge. Scoped source/child/parent checks exercise this
-distinction and preserve unchanged scientific sources. They do not promote
-unenforced public volume/envelope declarations or establish the original
-full-volume acceptance campaign.
+An ended source-preparation receipt enters the consumer graph once through a
+child scope. A currently active root supplies the shared allowance directly.
+Prior source duration debits ancestor admission separately from the parent's
+raw elapsed clock. A child's retained `consumer_evidence` refers to that same
+historical consumption, so sum charges through the graph's ownership edges
+rather than counting each retained reference again.
 
-`NativeExecutionRecord.to_record()` validates and serializes the actual nested
-preparation/consumer graph, retaining shared historical nodes instead of
-reconstructing counters from a snapshot. Its strict JSON record leaves the
-owning objects unchanged. Qualification result records carry these receipts
-along with exact runtime enforced/unenforced limit sets; a missing receipt
-remains absent, not a fabricated zero-work result. Receipt interchange alone
-does not certify the scientific mesh or make an unenforced limit enforced.
+`NativeExecutionRecord.to_record()` validates and serializes the nested
+preparation/consumer graph, preserving shared historical nodes and leaving the
+owning objects unchanged. Qualification records include these receipts and the
+runtime enforced/unenforced limit sets. An absent receipt denotes unavailable
+execution evidence. Mesh certification records scientific acceptance; the
+receipt records resource consumption and admission.
 
 An owning host consumer opts into the same allocator through
 `execution.allocate_host_array(shape, dtype)`. This returns an uninitialized,
@@ -1383,34 +2220,36 @@ packets along prepared neighbor routes until conformity closes; bounded
 distributed ordering assigns stable IDs without gathering global candidate
 tables. A resource, protected-edge, or geometry failure rejects every part.
 
-`commit_partitioned_adaptive_simplex` returns an ordered tuple of
-`MeshAdaptationResult` values for this process's addressable partitions, rather
-than one host-global mesh. Each target is a canonical `CellMesh` with owned
-cells and an actually expanded neighbor closure. Its storage descriptor binds
-global counts, stable per-degree IDs and ownership, canonical logical arrays,
-and consumed collective subdivision evidence. Scientific identity excludes
-capacity padding and placement; checkpoint leaves retain the actual masked
-epoch and owner-local bisection forest. Exact uncertain orientation work stays
-on the owning process, and any local resolution failure rejects publication
-collectively. Dense export is an explicit bounded operation, not a prerequisite.
+`commit_partitioned_adaptive_simplex` returns a `PartitionedMeshAdaptationResult`.
+Its `local_results` tuple holds the `MeshAdaptationResult` values of this
+process's addressable partitions; its `identity` is a `CollectiveMeshIdentity`
+whose `target_topology_id`, `lineage_id` and `hierarchy_id` equal those of serial
+adaptation of the same scientific source and marks. Each target is a canonical
+`CellMesh` with owned cells, an expanded neighbor and complete-family ghost
+closure, stable global IDs, source coefficient banks and the consumed collective
+subdivision evidence. Capacity padding and device placement do not enter
+scientific identity. Compare host numerical data by gathering owned rows in
+stable-ID order; dense export is an explicit bounded operation.
 
-The admitted publication route requires a globally certified simplex source
-without outstanding organization or periodic obligations, and exactly
-representable binary64 dyadic geometry restrictions. Native exact predicate
-batches reject rounded midpoints that cannot carry the recorded one-half
-reference witnesses. Globally logical composed/restricted geometry for general
-unrepresentable affine midpoints is not implemented; this is an explicit
-missing capability, not an affine-complete certification claim. Refinement and
-complete-family coarsening are admitted within the same prepared source epoch.
-The route publishes
-P1 constant/linear-preserving interpolation and concrete topology transitions
-for `CompositionRebind`; it does not assert globally conservative field/history
-remapping. Owner-local FE preparation consumes owned cell contributions and
-certified vertex halos. FV preparation additionally requires the retained
-physical-boundary and neighborhood-completeness witnesses and enough actual
-closure for its stencil. Curved/organized
-publication, cross-epoch forest preparation, and complete-family ownership
-migration are separate unsupported gates, not implicit serial gather fallbacks.
+An audited `certify_cell_mesh` source is admitted once preparation certifies its
+native global embedding and validates the mesh, map and audit bindings. A source
+that passes local cell checks but overlaps globally is refused during
+preparation, and declared PLC coverage obligations still require their
+domain-coverage theorem. Geometry restrictions must be exactly representable
+binary64 dyadic charts: native exact predicate batches reject rounded midpoints
+that cannot carry the recorded one-half reference witnesses, and general
+unrepresentable affine midpoints are not supported. Refinement and
+complete-family coarsening are admitted within one prepared source epoch. When
+inherited ownership exceeds `maximum_imbalance`, the commit executes a
+replayable native ownership proposal and a bounded complete-forest migration,
+keeps the original source lineage and admits only the measured balanced result;
+the target's collective evidence retains `rebalance_proposal` and `migration`.
+The route publishes P1 constant/linear-preserving interpolation and concrete
+topology transitions for `CompositionRebind`; it does not assert globally
+conservative field or history remapping. Owner-local FE preparation consumes
+owned cell contributions and certified vertex halos; FV preparation also
+requires the retained physical-boundary and neighborhood-completeness witnesses
+and enough closure for its stencil.
 
 Initial parametric surfaces also have a source-first, authored-patch ownership
 path: shared source-curve parameter packets are agreed before each owner's
@@ -1855,16 +2694,6 @@ Exact ordinate comparisons may reject a segment that cannot contact the point
 or cross its winding ray before determinant arithmetic; all original segment
 visits remain charged, and boundary endpoints retain their exact predicates.
 
-The unchanged original native overset routine (resolution 4, capacity 20000,
-three solver repetitions, two motion steps, wall/donor/overlap pair limits
-500000) passed its 120-second whole-lifecycle gate in 105.2898 seconds.
-Both motions exercised exact rollback, accepted state transfer and continued
-Poisson solves; the native source/request/physical-field checkpoint was restored
-without serialized prepared caches, and restart continuation matched the
-uninterrupted solve exactly. Its measured residual/boundary error was
-`9.3925e-14` against `0.05`; this is not an analytic L2 error, a conservation
-claim for moving FE interpolation, or completion of the full adversarial corpus.
-
 ### Interface attachments
 
 `MeshInterfaceAttachment(part, scope, association, geometry_entity_ids,
@@ -1965,7 +2794,10 @@ algebraic and transfer contributions; field p-order does not imply geometry
 fidelity. `RouteFeasibility` names actual family/geometry/field layouts, compiler
 admission, geometry/topology certificates and complete composition dispositions.
 `MeasuredAdaptationCost` records observed preparation, compilation, solve,
-transfer, independent reanalysis and decision time plus measured peak memory.
+transfer, independent reanalysis and decision time plus observed process-lifetime
+RSS high-water evidence. This is not an exact trial peak or a certified upper
+bound: an observation above the memory budget refuses the route, but a lower
+observation does not certify that unobserved memory stayed within that budget.
 It is not a predicted price or proof that repeated local edits attain tolerance.
 Failed alternatives count toward the campaign wall budget.
 `SolverAwareDecision(..., observed_campaign_seconds=...)` accepts the actual
@@ -1975,12 +2807,12 @@ omitting it uses that priced sum. Exceeding `maximum_wall_seconds` refuses all
 candidates. No selected route means target failure, even if mesh quality
 improved.
 
-The existing `examples/hp_metric_order_adaptation.py` exposes two bounded
-physical workflows (run with `JAX_ENABLE_X64=1`):
+`tools/meshing_qualification/scenarios/hp_metric_order_adaptation.py` exposes two
+bounded physical workflows (run with `JAX_ENABLE_X64=1`):
 
 ```sh
-python examples/hp_metric_order_adaptation.py --p-degree 3 --with-history
-python examples/hp_metric_order_adaptation.py --metric
+python -m tools.meshing_qualification.scenarios.hp_metric_order_adaptation --p-degree 3 --with-history
+python -m tools.meshing_qualification.scenarios.hp_metric_order_adaptation --metric
 ```
 
 The first transports named physical history fields through h/p trials; the
@@ -2271,6 +3103,44 @@ application, quality or geometry evaluation) carries the compiler measurements.
 Layout decode is explicit because its parser dependency is optional, and
 `provider-worker` (cold launch versus persistent session) needs a real provider
 worker; without one it returns a `missing-dependency` record.
+
+Two cases measure process startup and native batch parallelism:
+
+```sh
+python -m tools.meshing_benchmarks --case fresh-imports --resolution 1 --repeats 5
+python -m tools.meshing_benchmarks --case parallel-batches --resolution 1 2 4 --repeats 5
+```
+
+`fresh-imports` starts a new interpreter for each sample of
+`tools.meshing_qualification` and `phydrax.meshing`. Import duration and complete
+child-launch duration are separate; a cached import is not a warm sample.
+`parallel-batches` maps each resolution to `10,000 × resolution` input items.
+It compares one and eight native threads, plus up to 32 threads when the CPU
+affinity permits, and requires identical result bits and non-timing execution
+evidence before reporting speedup.
+
+For lifecycle benchmarks, `--repeats` counts isolated cold attempts;
+`--benchmark-warm-repeats` sets solver repetitions within each attempt and
+defaults to five. For example:
+
+```sh
+python -m tools.meshing_benchmarks --case native-cad-lifecycle --cad-format step \
+  --resolution 4 --capacity 20000 --timeout 120 --target-error 0.05 \
+  --adaptation-rounds 1 --repeats 3 --benchmark-warm-repeats 5
+```
+
+Default microcase timing runs without compiler or accounting instrumentation.
+Run a separate process with `PHYDRAX_MESHING_ACCOUNTING_DIAGNOSTICS=1` for
+compiler and accounting evidence; its timing is diagnostic, not headline
+performance. Unmeasured compiler fields in the clean run are `None`, not zero.
+Keep scientific qualification commands and their declared repetitions unchanged.
+
+In qualification and lifecycle benchmark workflows, `--timeout` is the
+whole-workflow deadline measured from the workflow start. Each stage runs under
+the remaining allowance, and nested native calls take the smaller of their own
+limit and that remainder. An exhausted deadline ends the workflow with typed
+timeout evidence (elapsed time and the effective deadline) rather than letting
+later stages overrun.
 
 `--case native-family-lifecycle --family-case <name>` selects a canonical
 native family requirement; the parser derives its choices from that requirement

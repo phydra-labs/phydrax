@@ -30,9 +30,16 @@
 // triangulation is all of it.  Otherwise the margin doubles, and a round whose
 // image count exceeds the budget is refused with evidence.
 #pragma once
+#include "counter_records.hpp"
+#include "phydrax_meshcore.h"
+#include "bounded_memory.hpp"
 
 #include <cstdint>
+#include <array>
 #include <vector>
+
+// The original covering-image Delaunay storage uses ordinary allocation and
+// image/cell limits. Incremental refinement uses owned, managed buffers.
 
 namespace phx::mc {
 
@@ -49,29 +56,29 @@ struct PeriodicDelaunayInput {
 };
 
 // Evidence slots; see PHX_MC_PERIODIC_EVIDENCE in phydrax_meshcore.h.
-enum PeriodicEvidenceSlot : int {
-  kPeriodicRounds = 0,
-  kPeriodicMargin = 1,
-  kPeriodicImages = 2,
-  kPeriodicUncertified = 3,
-  kPeriodicRequiredMargin = 4,
-  kPeriodicFiniteCells = 5,
-  kPeriodicExactEvaluations = 6,
-  kPeriodicPerturbedDecisions = 7,
-  kPeriodicExhaustedLimit = 8,
-  kPeriodicDuplicatePoint = 9,
-  kPeriodicEvidenceCount = 10,
-};
 
 struct PeriodicDelaunayResult {
   int dimension = 0;
   std::vector<int32_t> vertices;  // (T, d + 1) representatives
   std::vector<int32_t> shifts;    // (T, d + 1, d) image shifts of the anchored lift
-  double evidence[kPeriodicEvidenceCount] = {};
+  PeriodicEvidence evidence;
 };
 
 // Returns a phx_mc_status.  The evidence is filled on every return after the
 // arguments are accepted; cells are published only on PHX_MC_OK.
 int32_t periodic_delaunay(const PeriodicDelaunayInput& input, PeriodicDelaunayResult& result);
+
+// The C request's banks are borrowed only during this call. Refinement retains
+// one quotient owner across all candidate steps; its published banks are owned.
+struct PeriodicRefinementResult {
+  NativeVector<double> points;
+  NativeVector<int32_t> vertices;
+  NativeVector<int32_t> shifts;
+};
+
+int32_t periodic_refine_2d(
+    const phx_mc_periodic_refinement_input& input,
+    std::array<uint64_t, PHX_MC_PERIODIC_REFINEMENT_COUNTERS>& counters,
+    PeriodicRefinementResult& result);
 
 }  // namespace phx::mc

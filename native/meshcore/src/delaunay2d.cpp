@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "capi_guard.hpp"
+#include "counter_records.hpp"
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "triangulation2d.hpp"
@@ -16,16 +17,18 @@ namespace {
 struct EvidenceWriter {
   const phx::mc::PlanarBudget& budget;
   const phx::mc::MemoryBudgetWindow& window;
-  uint64_t* work;
-  uint64_t* memory;
-  ~EvidenceWriter() {
-    if (work != nullptr) {
-      const auto values = budget.evidence();
-      std::copy(values.begin(), values.end(), work);
+  phx::mc::PlanarCounters& work;
+  phx::mc::ManagedMemory& memory;
+  bool observe_work;
+  bool observe_memory;
+  ~EvidenceWriter() noexcept {
+    if (observe_work) {
+      const auto slots = budget.evidence();
+      work = phx::mc::PlanarCounters::from_slots(slots.data());
     }
-    if (memory != nullptr) {
-      const auto values = window.evidence();
-      std::copy(values.begin(), values.end(), memory);
+    if (observe_memory) {
+      const auto slots = window.evidence();
+      memory = phx::mc::ManagedMemory::from_slots(slots.data());
     }
   }
 };
@@ -34,12 +37,10 @@ int32_t triangulate_2d(int64_t point_count, const double* points, const double* 
                        bool weighted, int64_t max_triangles, int64_t max_cavity_cells,
                        int64_t max_work, int64_t max_scratch_bytes,
                        uint64_t* work_evidence, uint64_t* memory_evidence, phx_mc_mesh** mesh) {
-  if (work_evidence != nullptr) {
-    std::fill_n(work_evidence, 9, uint64_t{0});
-  }
-  if (memory_evidence != nullptr) {
-    std::fill_n(memory_evidence, 6, uint64_t{0});
-  }
+  phx::mc::PlanarCounters work_state;
+  phx::mc::ManagedMemory memory_state;
+  phx::mc::CounterPublisher memory_publisher{memory_state, memory_evidence};
+  phx::mc::CounterPublisher work_publisher{work_state, work_evidence};
   if (mesh == nullptr) {
     return PHX_MC_INVALID_ARGUMENT;
   }
@@ -53,9 +54,10 @@ int32_t triangulate_2d(int64_t point_count, const double* points, const double* 
   phx::mc::MemoryBudgetWindow window(static_cast<std::size_t>(max_scratch_bytes));
   phx::mc::MemoryScope scope(window.owner());
   phx::mc::PlanarBudget budget(max_cavity_cells, max_work, window.owner());
-  EvidenceWriter evidence{budget, window, work_evidence, memory_evidence};
+  EvidenceWriter evidence{budget, window, work_state, memory_state,
+                          work_evidence != nullptr, memory_evidence != nullptr};
   int32_t status = phx::mc::validate_points(points, point_count, 2, weights,
-                                            phx::mc::charge_planar_work, &budget);
+                                            [&budget] { budget.charge(); });
   if (status != PHX_MC_OK) {
     return status;
   }
@@ -81,7 +83,7 @@ int32_t triangulate_2d(int64_t point_count, const double* points, const double* 
   budget.charge(static_cast<std::uint64_t>(point_count));
   result->points.assign(points, points + 2 * point_count);
   triangulation.finite_cells(result->cells);
-  phx::mc::canonicalize_cells(*result, phx::mc::charge_planar_work, &budget);
+  phx::mc::canonicalize_cells(*result, [&budget] { budget.charge(); });
   *mesh = result.release();
   return PHX_MC_OK;
 }

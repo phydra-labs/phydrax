@@ -16,6 +16,7 @@ import pytest
 
 import phydrax as phx
 import phydrax.solver.functional_decomposition._export as decomposition_export
+from phydrax.domain._function import TrainableConstCallable
 
 
 def _fixed_penalty(condition: Any, count: Any = 8) -> Any:
@@ -238,7 +239,12 @@ def test_functional_decomposition_advanced_scenario_2() -> None:
     result = phx.solver.dense_local_curvature_step(solver, subspace)
 
     assert result.accepted
-    assert abs(float(result.functions["u"].func.value)) < 1.0e-4
+    parameter = result.functions["u"].func
+    if not isinstance(parameter, TrainableConstCallable):
+        raise RuntimeError(
+            "curvature result parameter must be a trainable constant; got another callable"
+        )
+    assert abs(float(parameter.value)) < 1.0e-4
     assert result.approximation == "exact-local-dense-hessian"
     domain = phx.domain.Interval1d(0.0, 1.0)
     coordinates = jnp.linspace(0.0, 1.0, 9)
@@ -604,8 +610,12 @@ def test_aitken_relaxes_complete_sweep(sweep: Any) -> None:
             rtol=1e-12,
             atol=1e-12,
         )
-        np.testing.assert_allclose(result.state.previous_increment, increment)
-        assert float(result.state.omega) == pytest.approx(omega)
+        relaxed_increment = result.state.previous_increment
+        relaxed_omega = result.state.omega
+        if relaxed_increment is None or relaxed_omega is None:
+            raise AssertionError("Aitken sweep must retain its increment and omega.")
+        np.testing.assert_allclose(relaxed_increment, increment)
+        assert float(relaxed_omega) == pytest.approx(omega)
         assert result.state.completed_sweeps == step + 1
         assert eqx.tree_equal(result.state.functions, raw.state.functions)
         state = result.state
@@ -677,7 +687,10 @@ def test_aitken_refuses_heterogeneous_trace_quantities() -> None:
     partial = phx.solver.solve_functional_decomposition(
         prepared, optax.sgd(0.1), max_sweeps=1
     )
-    exchange = partial.state.trace_state.exchanges[1]
+    trace_state = partial.state.trace_state
+    if trace_state is None:
+        raise AssertionError("A broken Schwarz sweep must retain its trace state.")
+    exchange = trace_state.exchanges[1]
     incompatible = phx.solver.TraceExchangeState(
         pairing_id=exchange.pairing_id,
         points=exchange.points,
@@ -688,7 +701,7 @@ def test_aitken_refuses_heterogeneous_trace_quantities() -> None:
         quantity_id="flux",
     )
     traces = phx.solver.SchwarzTraceState(
-        (partial.state.trace_state.exchanges[0], incompatible), sweep=1
+        (trace_state.exchanges[0], incompatible), sweep=1
     )
     state = eqx.tree_at(lambda value: value.trace_state, partial.state, traces)
     with pytest.raises(ValueError, match="quantity"):

@@ -91,7 +91,7 @@ from .meshfree._boundary import (
 )
 from .meshfree._stencils import LocalStencilPolicy, LocalStencilReport
 from .spatial import MortonAddressPlan
-from .spatial._morton import _domain_point_coordinates
+from .spatial._morton import domain_point_coordinates
 
 
 if TYPE_CHECKING:
@@ -218,7 +218,7 @@ def _bound_seam(
     threshold = float(tolerance)
     if not np.isfinite(threshold) or threshold < 0.0:
         raise ValueError("seam_tolerance must be finite and nonnegative.")
-    axes, _, _ = _domain_point_coordinates(identification.domain, coordinates)
+    axes, _, _ = domain_point_coordinates(identification.domain, coordinates)
     coordinate = (identification.label, identification.component)
     if coordinate not in axes:
         raise ValueError(f"Identified coordinate {coordinate!r} is not a point axis.")

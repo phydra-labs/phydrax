@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 particles = phx.discretization.ParticleSetPlan(
@@ -26,7 +27,7 @@ materials = phx.equations.DEMMaterialTable(
     jnp.asarray([[0.5]]),
 )
 barrier = phx.discretization.ImplicitDEMBarrier(
-    phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(),
+    phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER),
     phx.discretization.DEMBarrierSide.INTERIOR,
     0,
     barrier_id="settling-container",

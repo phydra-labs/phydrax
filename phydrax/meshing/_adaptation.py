@@ -2,12 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Typed mesh-adaptation requests, explicit routes, and certified transitions.
+"""Typed mesh-adaptation requests, declared routes, and certified transitions.
 
-`prepare_mesh_adaptation` binds one request to one certified source result under
-one explicit `MeshAdaptationRoute` and resolves protection and organization into
-route constraints. `execute_mesh_adaptation` runs exactly that route (there is no
-automatic provider fallback) and returns the certified target with its complete
+`prepare_mesh_adaptation` binds a request to a certified source result under
+`MeshAdaptationRoute` and resolves protection and organization constraints.
+`execute_mesh_adaptation` executes that route and returns the certified target,
 lineage, available nodal transfer or geometric common refinement, route evidence,
 and compliance.
 """
@@ -16,56 +15,124 @@ from __future__ import annotations
 
 import dataclasses
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from enum import StrEnum
 from fractions import Fraction
-from typing import Any, assert_never, final, NamedTuple, TYPE_CHECKING, TypeAlias
+from typing import Any, assert_never, final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
-import jax.numpy as jnp
+import jax
 import numpy as np
 from jax import Array
 from numpy.typing import ArrayLike, NDArray
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._geometry_predicates import PredicateMode, resolve_host_predicate_mode
-from .._meshcore import MeshcoreError, MeshcoreStatus, NativeExecutionBudget
+import phydrax._geometry_predicates as _dependency_phydrax__geometry_predicates
+import phydrax.discretization._adaptive_simplex as _dependency_phydrax_discretization__adaptive_simplex
+import phydrax.discretization._cell_geometry as _dependency_phydrax_discretization__cell_geometry
+import phydrax.discretization._cell_geometry as _owner_phydrax_discretization__cell_geometry
+import phydrax.discretization._cell_geometry_predecessor as cell_predecessor_owner
+import phydrax.discretization._cell_geometry_transfer as _dependency_phydrax_discretization__cell_geometry_transfer
+import phydrax.discretization._cell_geometry_transfer as _owner_phydrax_discretization__cell_geometry_transfer
+import phydrax.discretization._cell_geometry_transition_types as transition_types_owner
+import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._cell_geometry_validity as _owner_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.discretization._coordinate_enclosure as _owner_phydrax_discretization__coordinate_enclosure
+import phydrax.discretization._exact_plc_geometry as _dependency_phydrax_discretization__exact_plc_geometry
+import phydrax.discretization._exact_power_geometry as _dependency_phydrax_discretization__exact_power_geometry
+import phydrax.discretization._exact_rational_geometry as exact_rational_geometry_owner
+import phydrax.discretization._reference_cell as _owner_phydrax_discretization__reference_cell
+import phydrax.discretization._source_geometry_realization as source_realization_owner
+import phydrax.discretization._sphere_chart_records as _owner_phydrax_discretization__sphere_chart_deformation
+import phydrax.discretization._surface_chart_records as _dependency_phydrax_discretization__surface_chart_deformation
+import phydrax.discretization._surface_chart_records as _owner_phydrax_discretization__surface_chart_deformation
+import phydrax.discretization.fem._reference_types as _owner_phydrax_discretization_fem__reference_types
+import phydrax.geometry._embedding_state as _dependency_phydrax_geometry__embedding_state
+import phydrax.geometry._global_embedding as global_embedding_owner
+import phydrax.geometry._mesh_certificates as _dependency_phydrax_geometry__mesh_certificates
+import phydrax.geometry._source_fidelity as source_fidelity_owner
+import phydrax.geometry._sphere_material_atlas as _owner_phydrax_geometry__sphere_material_atlas
+import phydrax.geometry._supermesh as _dependency_phydrax_geometry__supermesh
+import phydrax.geometry._surface_source_support as _owner_phydrax_geometry__surface_source_support
+import phydrax.geometry.brep._patches as _owner_phydrax_geometry_brep__patches
+import phydrax.geometry.brep._placed as _owner_phydrax_geometry_brep__placed
+import phydrax.meshing._association as _dependency_phydrax_meshing__association
+import phydrax.meshing._association_composition as _dependency_phydrax_meshing__association_composition
+import phydrax.meshing._association_state as association_state_owner
+import phydrax.meshing._audit as _dependency_phydrax_meshing__audit
+import phydrax.meshing._bisection as _dependency_phydrax_meshing__bisection
+import phydrax.meshing._bisection_kernel_host as bisection_kernel_owner
+import phydrax.meshing._canonical as _dependency_phydrax_meshing__canonical
+import phydrax.meshing._certification as _owner_phydrax_meshing__certification
+import phydrax.meshing._certification_inputs as _dependency_phydrax_meshing__certification_inputs
+import phydrax.meshing._compartments as _owner_phydrax_meshing__compartments
+import phydrax.meshing._contracts as _dependency_phydrax_meshing__contracts
+import phydrax.meshing._curving as _dependency_phydrax_meshing__curving
+import phydrax.meshing._device_adaptation as _owner_phydrax_meshing__device_adaptation
+import phydrax.meshing._device_metric as _owner_phydrax_meshing__device_metric
+import phydrax.meshing._distribution as _dependency_phydrax_meshing__distribution
+import phydrax.meshing._entity_keys as entity_keys_owner
+import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
+import phydrax.meshing._geometry_realization as _owner_phydrax_meshing__geometry_realization
+import phydrax.meshing._implicit_association_transfer as _dependency_phydrax_meshing__implicit_association_transfer
+import phydrax.meshing._layer_core as _owner_phydrax_meshing__layer_core
+import phydrax.meshing._level_set as _owner_phydrax_meshing__level_set
+import phydrax.meshing._lineage as _dependency_phydrax_meshing__lineage
+import phydrax.meshing._lineage_records as _dependency_phydrax_meshing__lineage_records
+import phydrax.meshing._local_metric as _dependency_phydrax_meshing__local_metric
+import phydrax.meshing._mesh_part as mesh_part_owner
+import phydrax.meshing._metric as _dependency_phydrax_meshing__metric
+import phydrax.meshing._mixed_adaptation as _dependency_phydrax_meshing__mixed_adaptation
+import phydrax.meshing._organization_records as _dependency_phydrax_meshing__organization
+import phydrax.meshing._organization_records as _owner_phydrax_meshing__organization
+import phydrax.meshing._periodic as _owner_phydrax_meshing__periodic
+import phydrax.meshing._plc_mapped_support as plc_mapped_support_owner
+import phydrax.meshing._polyhedral_adaptation as _dependency_phydrax_meshing__polyhedral_adaptation
+import phydrax.meshing._polyhedral_generation as _dependency_phydrax_meshing__polyhedral_generation
+import phydrax.meshing._result as _dependency_phydrax_meshing__result
+import phydrax.meshing._scope as _dependency_phydrax_meshing__scope
+import phydrax.meshing._surface_association_transfer as _owner_phydrax_meshing__surface_association_transfer
+import phydrax.meshing._surface_boundary_sources as surface_boundary_sources_owner
+import phydrax.meshing._surface_metric as _dependency_phydrax_meshing__surface_metric
+import phydrax.meshing._surface_metric as _owner_phydrax_meshing__surface_metric
+import phydrax.meshing._surface_metric_controller as _owner_phydrax_meshing__surface_metric_controller
+import phydrax.meshing._tetra_metric as _dependency_phydrax_meshing__tetra_metric
+import phydrax.meshing._topology_edit as _dependency_phydrax_meshing__topology_edit
+import phydrax.meshing._topology_edit as _owner_phydrax_meshing__topology_edit
+import phydrax.meshing.providers._mmg as _dependency_phydrax_meshing_providers__mmg
+import phydrax.meshing.providers._native_periodic as _dependency_phydrax_meshing_providers__native_periodic
+import phydrax.meshing.providers._omega_h as _dependency_phydrax_meshing_providers__omega_h
+from phydrax.discretization._reference_cell_types import CellGeometryElement
+from phydrax.meshing._host_banks import (
+    check_marked_source,
+    closure_rows,
+    edge_classes,
+    membership,
+    mesh_cell_classes,
+    mesh_cell_ids,
+    organization_scopes,
+    row_classes,
+    selected_rows,
+)
+
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    tree_content_equal,
+)
+from .._meshcore import (
+    MeshcoreError,
+    MeshcoreStatus,
+    NativeExecutionLimits,
+    NativeExecutionScope,
+)
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_integer
 from ..discretization import CellGeometrySpec, CellMesh
-from ..discretization._adaptive_simplex import AdaptiveSimplexPolicy
-from ..discretization._cell_geometry import (
-    _require_scalar_coordinate_element,
-    CellGeometryElement,
-)
-from ..discretization._cell_geometry_transfer import (
-    cell_geometry_vertex_measures,
-    CellGeometryTransition,
-    CellGeometryTransitionPolicy,
-    is_affine_cell_geometry,
-    nested_geometry_degree,
-    NestedReferenceWitnesses,
-    SourceGeometryRealization,
-    transition_nested_cell_geometry,
-)
-from ..discretization._cell_geometry_validity import (
-    cell_geometry_id,
-    CellValidityCertificate,
-)
-from ..discretization._coordinate_enclosure import (
-    CoordinateEnclosureBudget,
-    CoordinateEnclosureResourceError,
-)
-from ..discretization._exact_plc_geometry import (
-    ExactPlcCellGeometryConvexSource,
-    ExactPlcCellGeometrySource,
-)
-from ..discretization._exact_power_geometry import (
-    ExactPowerCellGeometryLinearActionSource,
-    ExactPowerCellGeometryRestrictionSource,
-    ExactPowerCellGeometrySource,
-)
-from ..discretization._surface_chart_deformation import SurfaceChartResourceError
+from ..discretization._exact_algebraic_geometry import ExactAlgebraicCellGeometrySource
 from ..discretization.fem import (
     balanced_hp_refinement_ids,
     coarsen_tensor_hp_cells,
@@ -77,140 +144,50 @@ from ..discretization.fem import (
     hp_active_cell_mesh,
     refine_tensor_hp_cells,
 )
-from ..geometry._mesh_certificates import (
-    GlobalEmbeddingCertificate,
-    MeshCertificateBinding,
-    MeshCertificateLimits,
-    SourceFidelityCertificate,
-)
-from ..geometry._supermesh import CommonRefinementPolicy, PreparedCommonRefinement
+from ..geometry._rational import rational_vector
+from ..geometry.surface import SurfaceModel
 from ..linalg import determinant_small_linear, SmallLinearSolvePlan
-from ..typing import checked
-from ._assembly import MeshPart
-from ._association import (
-    BRepAssociationTransfer,
-    GeometryAssociation,
-    MappedReferenceAssociationTransfer,
-    PlcAssociationTransfer,
-    SurfaceAssociationTransfer,
-)
-from ._association_composition import ComposedAssociationTransfer
-from ._audit import _required_audit_policy, CellMeshAuditPolicy
-from ._bisection import (
-    BisectionCompatibility,
-    BisectionEvidence,
-    BisectionHierarchy,
-    BisectionUniformRefinement,
-    execute_bisection,
-)
-from ._canonical import canonicalize_cell_mesh, certify_cell_mesh
-from ._certification_inputs import MeshCertificationInputs
-from ._contracts import MeshingFailure, MeshingFailureCategory, MeshingLimits
-from ._curving import (
-    _straight_geometry,
-    CurvedGeometryEvidence,
-    HighOrderCurvingResult,
-    HighOrderCurvingStatus,
-)
+from ..typing import checked, parse
+from ._bisection import BisectionCompatibility, BisectionEvidence, BisectionHierarchy
+from ._curving import CurvedGeometryEvidence
 from ._device_metric import DeviceMetricEvidence
-from ._distribution import (
-    MeshDistribution,
-    MeshDistributionTransition,
-    MeshPartitionPolicy,
-    prepare_distribution_transition,
-)
-from ._implicit_association_transfer import ImplicitAssociationTransfer
-from ._level_set import LevelSetEvidence, LevelSetMeshAdaptation
-from ._lineage import (
-    CellMeshTransition,
-    EntityLineage,
-    EntityLineageKind,
-    inherit_mesh_organization,
-    inherit_scope,
-    MeshLineage,
-    MeshTransitionKind,
-    VertexInterpolationStencil,
-)
-from ._local_metric import execute_local_metric_adaptation, LocalMetricEvidence
-from ._measurements import NativeExecutionRecord
-from ._metric import MeshMetricField
-from ._mixed_adaptation import (
-    adapt_mixed_mesh,
-    MixedAdaptationEvidence,
-    MixedAdaptationHierarchy,
-    MixedAdaptationOutcome,
-    MixedLayerColumns,
-)
-from ._organization import (
-    MeshAttribute,
-    MeshLabel,
-    MeshPatch,
-    MeshZone,
-    RegionBoundaryEvidence,
-)
-from ._periodic import PeriodicRefinement
-from ._polyhedral_adaptation import (
-    adapt_polyhedral_mesh,
-    PolyhedralAdaptationEvidence,
-    PolyhedralAdaptationOperation,
-    PolyhedralMeshAdaptation,
-    regenerated_polyhedral_associations,
-    regenerated_polyhedral_relations,
-)
-from ._polyhedral_generation import PolyhedralConstruction
-from ._result import CellMeshingResult, CollectiveMeshEvidence, MeshingComplianceReport
-from ._scope import MeshingEntityKind, MeshingScope, resolve_mesh_scope
-from ._surface_metric import SphereMetricOutcome, SurfaceMetricOutcome
-from ._tetra_metric import (
-    execute_tetra_metric_adaptation,
-    MetricRemeshingCriterion,
-    MetricRemeshingEvidence,
-    MetricRemeshingStatus,
-)
-from ._topology_edit import (
-    assemble_topology_edit,
-    CellTopologyEdit,
-    entity_keys,
-    key_rows,
-)
-from ._trace import MeshingStageKind
-from .providers._mmg import MmgAdaptationResult, MmgOptions, MmgProvider
-from .providers._native_periodic import PeriodicAssociationTransfer
-from .providers._omega_h import OmegaHAdaptationResult, OmegaHOptions, OmegaHProvider
+from ._local_metric import LocalMetricEvidence
+from ._measurements import NativeExecutionImports, NativeExecutionRecord
+from ._native_preparation import native_preparation_ledger
+from ._tetra_metric import MetricRemeshingEvidence
+from ._volume_generation import require_native_preparation_allowance
+from .providers._mmg import MmgAdaptationResult
+from .providers._omega_h import OmegaHAdaptationResult
 
 
 if TYPE_CHECKING:
-    from ..discretization._cell_geometry import (
-        BarycentricCellGeometryElement,
-        PolynomialComposedCellGeometryElement,
-    )
+    from phydrax.discretization._surface_chart_records import SurfaceChartWitness
+
     from ..discretization._coordinate_enclosure import CoordinateSourceBank
-    from ..discretization._surface_chart_deformation import SurfaceChartWitness
-    from ..discretization.fem._reference import FiniteElementSpec
     from ._surface_association_transfer import PreparedSurfaceCurveWitness
 
 
-type _FullP1Element = (
-    FiniteElementSpec
-    | BarycentricCellGeometryElement
-    | PolynomialComposedCellGeometryElement
+type FullP1Element = (
+    _owner_phydrax_discretization_fem__reference_types.FiniteElementSpec
+    | _owner_phydrax_discretization__cell_geometry.BarycentricCellGeometryElement
+    | _owner_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement
 )
 type _FullP1OriginalCell = tuple[
     str | None,
-    _FullP1Element,
+    FullP1Element,
     NDArray[np.int32],
     NDArray[np.int64],
     int,
 ]
 type _FullP1SourceCell = tuple[
-    _FullP1Element,
+    FullP1Element,
     NDArray[np.int64],
     NDArray[np.int32],
     int,
     NDArray[np.int64],
     str | None,
     int,
-    _FullP1Element,
+    FullP1Element,
 ]
 type _UniformRationalActions = dict[int, tuple[int, tuple[tuple[Fraction, ...], ...]]]
 
@@ -281,8 +258,8 @@ _DEVICE_ROUTES = frozenset(
 type MeshAdaptationHierarchy = (
     BisectionHierarchy
     | FiniteElementHPEpoch
-    | MixedAdaptationHierarchy
-    | PeriodicRefinement
+    | _dependency_phydrax_meshing__mixed_adaptation.MixedAdaptationHierarchy
+    | _owner_phydrax_meshing__periodic.PeriodicRefinement
     | None
 )
 
@@ -292,25 +269,23 @@ def _identifier_vector(values: ArrayLike, name: str, /) -> np.ndarray:
     if identifiers.size == 0:
         return np.empty((0,), dtype=np.int64)
     if identifiers.ndim != 1 or not np.issubdtype(identifiers.dtype, np.integer):
-        raise TypeError(f"{name} must be one integer vector.")
+        raise TypeError(
+            f"MeshAdaptation.cell_ids must be one integer vector; got {f'name={name}, shape={identifiers.shape}, dtype={identifiers.dtype}'!r}"
+        )
     identifiers = identifiers.astype(np.int64, copy=False)
     if np.any(identifiers < 0) or np.unique(identifiers).size != identifiers.size:
-        raise ValueError(f"{name} must be unique and non-negative.")
+        raise ValueError(
+            f"MeshAdaptation.cell_ids must be unique and non-negative; got {f'name={name}, count={identifiers.size}'!r}"
+        )
     return np.sort(identifiers)
 
 
 def _flag(value: bool, name: str, /) -> bool:
     if not isinstance(value, (bool, np.bool_)):
-        raise TypeError(f"{name} must be a bool.")
+        raise TypeError(
+            f"MeshAdaptationPolicy.relocation must be a bool; got {f'name={name}, kind={type(value).__name__}'!r}"
+        )
     return bool(value)
-
-
-def _count(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
-        raise TypeError(f"{name} must be an integer.")
-    if value < 1:
-        raise ValueError(f"{name} must be positive.")
-    return int(value)
 
 
 @final
@@ -328,9 +303,10 @@ class MarkedMeshAdaptation(StrictModule, NonTrainableState):
     refine_cell_ids: Array
     coarsen_cell_ids: Array
     hierarchy: MeshAdaptationHierarchy
-    layer_columns: MixedLayerColumns | None
+    layer_columns: _dependency_phydrax_meshing__mixed_adaptation.MixedLayerColumns | None
     request_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         refine_cell_ids: ArrayLike = (),
@@ -338,29 +314,26 @@ class MarkedMeshAdaptation(StrictModule, NonTrainableState):
         /,
         *,
         hierarchy: MeshAdaptationHierarchy = None,
-        layer_columns: MixedLayerColumns | None = None,
+        layer_columns: _dependency_phydrax_meshing__mixed_adaptation.MixedLayerColumns
+        | None = None,
     ) -> None:
         refine = _identifier_vector(refine_cell_ids, "refine_cell_ids")
         coarsen = _identifier_vector(coarsen_cell_ids, "coarsen_cell_ids")
         if np.intersect1d(refine, coarsen).size:
-            raise ValueError("A cell cannot be marked for refinement and coarsening.")
-        if hierarchy is not None and not isinstance(
-            hierarchy,
-            (
-                BisectionHierarchy,
-                FiniteElementHPEpoch,
-                MixedAdaptationHierarchy,
-                PeriodicRefinement,
-            ),
-        ):
-            raise TypeError(
-                "hierarchy must be BisectionHierarchy, FiniteElementHPEpoch, "
-                "MixedAdaptationHierarchy, PeriodicRefinement, or None."
+            raise ValueError(
+                f"MarkedMeshAdaptation.cell_ids must not mark a cell for both refinement and coarsening; got {f'refine_count={refine.size}, coarsen_count={coarsen.size}'!r}"
             )
-        if layer_columns is not None and not isinstance(layer_columns, MixedLayerColumns):
-            raise TypeError("layer_columns must be MixedLayerColumns or None.")
-        self.refine_cell_ids = jnp.asarray(refine)
-        self.coarsen_cell_ids = jnp.asarray(coarsen)
+        _host_refine_cell_ids = np.asarray(refine)
+        _host_coarsen_cell_ids = np.asarray(coarsen)
+        (
+            self.refine_cell_ids,
+            self.coarsen_cell_ids,
+        ) = jax.device_put(
+            (
+                _host_refine_cell_ids,
+                _host_coarsen_cell_ids,
+            )
+        )
         self.hierarchy = hierarchy
         self.layer_columns = layer_columns
         self.request_id = canonical_fingerprint(
@@ -380,24 +353,18 @@ class MarkedMeshAdaptation(StrictModule, NonTrainableState):
 class MetricMeshAdaptation(StrictModule, NonTrainableState):
     """Adapt toward a unit mesh of one vertex metric bound to the source vertices."""
 
-    metric: MeshMetricField
+    metric: _dependency_phydrax_meshing__metric.MeshMetricField
     coordinate_contract: SpatialCoordinateContract | None
     request_id: str = eqx.field(static=True)
 
     @checked
     def __init__(
         self,
-        metric: MeshMetricField,
+        metric: _dependency_phydrax_meshing__metric.MeshMetricField,
         /,
         *,
         coordinate_contract: SpatialCoordinateContract | None = None,
     ) -> None:
-        if coordinate_contract is not None and not isinstance(
-            coordinate_contract, SpatialCoordinateContract
-        ):
-            raise TypeError(
-                "coordinate_contract must be SpatialCoordinateContract or None."
-            )
         self.metric = metric
         self.coordinate_contract = coordinate_contract
         self.request_id = canonical_fingerprint(
@@ -415,24 +382,18 @@ class MetricMeshAdaptation(StrictModule, NonTrainableState):
 class RelocationMeshAdaptation(StrictModule, NonTrainableState):
     """Move vertices toward one vertex metric without changing the topology."""
 
-    metric: MeshMetricField
+    metric: _dependency_phydrax_meshing__metric.MeshMetricField
     coordinate_contract: SpatialCoordinateContract | None
     request_id: str = eqx.field(static=True)
 
     @checked
     def __init__(
         self,
-        metric: MeshMetricField,
+        metric: _dependency_phydrax_meshing__metric.MeshMetricField,
         /,
         *,
         coordinate_contract: SpatialCoordinateContract | None = None,
     ) -> None:
-        if coordinate_contract is not None and not isinstance(
-            coordinate_contract, SpatialCoordinateContract
-        ):
-            raise TypeError(
-                "coordinate_contract must be SpatialCoordinateContract or None."
-            )
         self.metric = metric
         self.coordinate_contract = coordinate_contract
         self.request_id = canonical_fingerprint(
@@ -448,38 +409,41 @@ class RelocationMeshAdaptation(StrictModule, NonTrainableState):
 
 @final
 class GeometryRealizationMeshAdaptation(StrictModule, NonTrainableState):
-    """Trusted source-realized coordinate-order candidate on a declared material complex.
+    """Source-realized coordinate-order candidate on a material complex.
 
-    Retained topology does not imply retained physical support. The actual
-    curving certificates and quantitative old/new measure correspondence are
-    required separately from the prior source-fidelity certificate.
+    Retained topology does not imply retained physical support. Curving
+    certificates and quantitative old/new measure correspondence are required
+    separately from the prior source-fidelity certificate.
     """
 
-    source: CellMeshingResult
-    realization: HighOrderCurvingResult
-    source_fidelity: SourceFidelityCertificate
-    geometry_realization: SourceGeometryRealization
-    certificate_limits: MeshCertificateLimits
+    source: _dependency_phydrax_meshing__result.CellMeshingResult
+    realization: _dependency_phydrax_meshing__curving.HighOrderCurvingResult
+    source_fidelity: source_fidelity_owner.SourceFidelityCertificate
+    geometry_realization: source_realization_owner.SourceGeometryRealization
+    certificate_limits: (
+        _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+    )
     source_result_id: str = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
 
     @checked
     def __init__(
         self,
-        source: CellMeshingResult,
-        realization: HighOrderCurvingResult,
-        source_fidelity: SourceFidelityCertificate,
-        geometry_realization: SourceGeometryRealization,
-        certificate_limits: MeshCertificateLimits,
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
+        realization: _dependency_phydrax_meshing__curving.HighOrderCurvingResult,
+        source_fidelity: source_fidelity_owner.SourceFidelityCertificate,
+        geometry_realization: source_realization_owner.SourceGeometryRealization,
+        certificate_limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
         /,
     ) -> None:
         geometry_realization.require_current()
         if (
-            realization.status is not HighOrderCurvingStatus.CURVED
+            realization.status
+            is not _dependency_phydrax_meshing__curving.HighOrderCurvingStatus.CURVED
             or not realization.evidence.accepted
         ):
             raise ValueError(
-                "Geometry realization requires an actually accepted curving product."
+                f"GeometryRealizationMeshAdaptation.realization must contain an accepted curving product; got {(realization.status.name, realization.evidence.accepted)!r}"
             )
         target_fidelity = realization.evidence.fidelity
         if (
@@ -488,7 +452,7 @@ class GeometryRealizationMeshAdaptation(StrictModule, NonTrainableState):
             or source_fidelity.status != "certified"
         ):
             raise ValueError(
-                "Both coordinate epochs require continuous source-fidelity certificates."
+                f"GeometryRealizationMeshAdaptation.certification must retain continuous fidelity for both coordinate epochs; got {(source_fidelity.status, target_fidelity.status if target_fidelity is not None else None)!r}"
             )
         source_fidelity.binding.require(source.mesh, source.geometry)
         target_fidelity.binding.require(source.mesh, realization.geometry)
@@ -497,7 +461,7 @@ class GeometryRealizationMeshAdaptation(StrictModule, NonTrainableState):
             source_fidelity.binding.source_revision,
         ) != (target_fidelity.binding.source_id, target_fidelity.binding.source_revision):
             raise ValueError(
-                "Coordinate-order realization must retain the original scientific source."
+                f"GeometryRealizationMeshAdaptation.source must retain scientific source provenance across coordinate order; got {source.result_id!r}"
             )
         for certificate in (
             source_fidelity,
@@ -507,7 +471,7 @@ class GeometryRealizationMeshAdaptation(StrictModule, NonTrainableState):
         ):
             if certificate.binding.limits_id != certificate_limits.limits_id:
                 raise ValueError(
-                    "Realization must retain the actual budgets of every source certificate."
+                    f"GeometryRealizationMeshAdaptation.limits must retain every source-certificate budget; got {source.result_id!r}"
                 )
         geometry_realization.source_embedding.binding.require(
             source.mesh, source.geometry
@@ -520,27 +484,37 @@ class GeometryRealizationMeshAdaptation(StrictModule, NonTrainableState):
             transition.evidence.kind != "source_realization"
             or transition.source_topology_id != source.mesh.topology_id
             or transition.target_topology_id != source.mesh.topology_id
-            or transition.source_geometry_id != cell_geometry_id(source.geometry)
-            or transition.target_geometry_id != cell_geometry_id(realization.geometry)
+            or transition.source_geometry_id
+            != _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                source.geometry
+            )
+            or transition.target_geometry_id
+            != _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                realization.geometry
+            )
         ):
             raise ValueError(
-                "The material correspondence must bind the actual old and realized maps."
+                f"GeometryRealizationMeshAdaptation.geometry_realization must bind the old and realized coordinate maps; got {(transition.source_geometry_id, transition.target_geometry_id)!r}"
             )
         old_elements = source.geometry.resolve(source.mesh)[0]
         new_elements = realization.geometry.resolve(source.mesh)[0]
         old_orders = tuple(
-            _require_scalar_coordinate_element(value, "Source realization").degree
+            _dependency_phydrax_discretization__cell_geometry.require_scalar_coordinate_element(
+                value, "Source realization"
+            ).degree
             for value in old_elements
         )
         new_orders = tuple(
-            _require_scalar_coordinate_element(value, "Source realization").degree
+            _dependency_phydrax_discretization__cell_geometry.require_scalar_coordinate_element(
+                value, "Source realization"
+            ).degree
             for value in new_elements
         )
         if any(
             new < old for old, new in zip(old_orders, new_orders, strict=True)
         ) or not any(new > old for old, new in zip(old_orders, new_orders, strict=True)):
             raise ValueError(
-                "Geometry-order realization must actually increase coordinate order."
+                f"GeometryRealizationMeshAdaptation.realization must increase coordinate order; got {(old_orders, new_orders)!r}"
             )
         self.source = source
         self.realization = realization
@@ -559,12 +533,12 @@ class GeometryRealizationMeshAdaptation(StrictModule, NonTrainableState):
         )
 
 
-MeshAdaptationRequest: TypeAlias = (
+type MeshAdaptationRequest = (
     MarkedMeshAdaptation
     | MetricMeshAdaptation
     | RelocationMeshAdaptation
-    | LevelSetMeshAdaptation
-    | PolyhedralMeshAdaptation
+    | _owner_phydrax_meshing__level_set.LevelSetMeshAdaptation
+    | _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralMeshAdaptation
     | GeometryRealizationMeshAdaptation
 )
 
@@ -576,51 +550,77 @@ def _hierarchy_id(
     match hierarchy:
         case None:
             return None
-        case BisectionHierarchy() | MixedAdaptationHierarchy():
+        case (
+            BisectionHierarchy()
+            | _dependency_phydrax_meshing__mixed_adaptation.MixedAdaptationHierarchy()
+        ):
             return hierarchy.hierarchy_id
         case FiniteElementHPEpoch():
             return hierarchy.epoch_id
-        case PeriodicRefinement():
+        case _owner_phydrax_meshing__periodic.PeriodicRefinement():
             return hierarchy.refinement_id
         case invalid:
             assert_never(invalid)
 
 
-def _provider_options_record(options: MmgOptions | OmegaHOptions | None, /) -> Any:
+def _provider_options_record(
+    options: _dependency_phydrax_meshing_providers__mmg.MmgOptions
+    | _dependency_phydrax_meshing_providers__omega_h.OmegaHOptions
+    | None,
+    /,
+) -> Any:
     match options:
         case None:
             return None
-        case MmgOptions():
+        case _dependency_phydrax_meshing_providers__mmg.MmgOptions():
             return {"mmg": dataclasses.asdict(options)}
-        case OmegaHOptions():
+        case _dependency_phydrax_meshing_providers__omega_h.OmegaHOptions():
             return {"omega_h": options.worker_record()}
         case _:
-            raise TypeError("provider_options must be MmgOptions or OmegaHOptions.")
+            raise TypeError(
+                f"MeshAdaptationPolicy.provider_options must be MmgOptions or OmegaHOptions; got {type(options).__name__!r}"
+            )
 
 
 def _check_provider(
     route: MeshAdaptationRoute,
-    provider: MmgProvider | OmegaHProvider | None,
-    options: MmgOptions | OmegaHOptions | None,
-    protected: tuple[MeshingScope, ...],
-    distribution: MeshDistribution | None,
+    provider: _dependency_phydrax_meshing_providers__mmg.MmgProvider
+    | _dependency_phydrax_meshing_providers__omega_h.OmegaHProvider
+    | None,
+    options: _dependency_phydrax_meshing_providers__mmg.MmgOptions
+    | _dependency_phydrax_meshing_providers__omega_h.OmegaHOptions
+    | None,
+    protected: tuple[_dependency_phydrax_meshing__scope.MeshingScope, ...],
+    distribution: _dependency_phydrax_meshing__distribution.MeshDistribution | None,
     /,
 ) -> None:
     match route:
         case MeshAdaptationRoute.MMG:
-            if not isinstance(provider, MmgProvider) or not isinstance(
-                options, (MmgOptions, type(None))
-            ):
-                raise TypeError("The MMG route requires an MmgProvider and MmgOptions.")
+            match (provider, options):
+                case (
+                    _dependency_phydrax_meshing_providers__mmg.MmgProvider(),
+                    _dependency_phydrax_meshing_providers__mmg.MmgOptions() | None,
+                ):
+                    pass
+                case _:
+                    raise TypeError(
+                        f"MeshAdaptationPolicy.provider must provide an MmgProvider with MmgOptions for MMG; got {(type(provider).__name__, type(options).__name__)!r}"
+                    )
         case MeshAdaptationRoute.OMEGA_H:
-            if not isinstance(provider, OmegaHProvider) or not isinstance(
-                options, (OmegaHOptions, type(None))
-            ):
-                raise TypeError(
-                    "The OMEGA_H route requires an OmegaHProvider and OmegaHOptions."
-                )
+            match (provider, options):
+                case (
+                    _dependency_phydrax_meshing_providers__omega_h.OmegaHProvider(),
+                    _dependency_phydrax_meshing_providers__omega_h.OmegaHOptions() | None,
+                ):
+                    pass
+                case _:
+                    raise TypeError(
+                        f"MeshAdaptationPolicy.provider must provide an OmegaHProvider with OmegaHOptions for OMEGA_H; got {(type(provider).__name__, type(options).__name__)!r}"
+                    )
             if protected:
-                raise ValueError("Omega_h adaptation cannot pin protected scopes.")
+                raise ValueError(
+                    f"MeshAdaptationPolicy.protected_scopes must be empty for Omega_h adaptation; got {len(protected)!r}"
+                )
         case (
             MeshAdaptationRoute.NATIVE_BISECTION
             | MeshAdaptationRoute.NATIVE_METRIC_2D
@@ -635,7 +635,9 @@ def _check_provider(
             | MeshAdaptationRoute.HP
         ):
             if provider is not None or options is not None:
-                raise ValueError("Native routes take no provider or provider options.")
+                raise ValueError(
+                    f"MeshAdaptationPolicy.provider must be absent along with provider options on native routes; got {(type(provider).__name__, type(options).__name__)!r}"
+                )
         case invalid:
             assert_never(invalid)
     if distribution is not None and route in (
@@ -643,26 +645,39 @@ def _check_provider(
         MeshAdaptationRoute.OMEGA_H,
     ):
         raise ValueError(
-            "Provider remeshing has unknown lineage; it cannot carry a distribution."
+            f"MeshAdaptationPolicy.distribution must be absent for provider remeshing with unknown lineage; got {type(distribution).__name__!r}"
         )
 
 
 def _resolved_predicate_mode(
-    route: MeshAdaptationRoute, mode: PredicateMode | None, /
-) -> PredicateMode:
+    route: MeshAdaptationRoute,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode | None,
+    /,
+) -> _dependency_phydrax__geometry_predicates.PredicateMode:
     """EXACT for host routes and FILTERED_DEVICE for device routes unless given."""
 
     device = route in _DEVICE_ROUTES
     if mode is None:
-        return PredicateMode.FILTERED_DEVICE if device else PredicateMode.EXACT
-    if not isinstance(mode, PredicateMode):
-        raise TypeError("predicate_mode must be PredicateMode or None.")
-    if route is MeshAdaptationRoute.NATIVE_METRIC_3D and mode is not PredicateMode.EXACT:
-        raise ValueError("NATIVE_METRIC_3D implements exact native predicates only.")
-    if device != (mode is PredicateMode.FILTERED_DEVICE):
+        return (
+            _dependency_phydrax__geometry_predicates.PredicateMode.FILTERED_DEVICE
+            if device
+            else _dependency_phydrax__geometry_predicates.PredicateMode.EXACT
+        )
+    mode = parse(
+        mode, _dependency_phydrax__geometry_predicates.PredicateMode, "predicate_mode"
+    )
+    if (
+        route is MeshAdaptationRoute.NATIVE_METRIC_3D
+        and mode is not _dependency_phydrax__geometry_predicates.PredicateMode.EXACT
+    ):
         raise ValueError(
-            "Device routes evaluate FILTERED_DEVICE predicates; host routes require "
-            "FILTERED or EXACT predicates."
+            f"MeshAdaptationPolicy.predicate_mode must select exact predicates for NATIVE_METRIC_3D; got {mode.name!r}"
+        )
+    if device != (
+        mode is _dependency_phydrax__geometry_predicates.PredicateMode.FILTERED_DEVICE
+    ):
+        raise ValueError(
+            f"MeshAdaptationPolicy.predicate_mode must select PredicateMode.FILTERED_DEVICE on device routes and PredicateMode.FILTERED or PredicateMode.EXACT on host routes; got {mode.name!r}"
         )
     return mode
 
@@ -698,157 +713,176 @@ class MeshAdaptationPolicy(StrictModule, NonTrainableState):
     """
 
     route: MeshAdaptationRoute = eqx.field(static=True)
-    protected_scopes: tuple[MeshingScope, ...]
+    protected_scopes: tuple[_dependency_phydrax_meshing__scope.MeshingScope, ...]
     compatibility: BisectionCompatibility = eqx.field(static=True)
-    predicate_mode: PredicateMode = eqx.field(static=True)
+    predicate_mode: _dependency_phydrax__geometry_predicates.PredicateMode = eqx.field(
+        static=True
+    )
     maximum_passes: int = eqx.field(static=True)
     maximum_closure_iterations: int = eqx.field(static=True)
     relocation: bool = eqx.field(static=True)
-    limits: MeshingLimits
-    audit_policy: CellMeshAuditPolicy
-    device_policy: AdaptiveSimplexPolicy | None
-    provider: MmgProvider | OmegaHProvider | None = eqx.field(static=True)
-    provider_options: MmgOptions | OmegaHOptions | None
-    distribution: MeshDistribution | None
-    partition_policy: MeshPartitionPolicy | None
-    association_transfer: (
-        BRepAssociationTransfer
-        | PlcAssociationTransfer
-        | ComposedAssociationTransfer
-        | SurfaceAssociationTransfer
-        | MappedReferenceAssociationTransfer
-        | ImplicitAssociationTransfer
-        | PeriodicAssociationTransfer
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits
+    audit_policy: _dependency_phydrax_meshing__audit.CellMeshAuditPolicy
+    device_policy: (
+        _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexPolicy | None
+    )
+    provider: (
+        _dependency_phydrax_meshing_providers__mmg.MmgProvider
+        | _dependency_phydrax_meshing_providers__omega_h.OmegaHProvider
+        | None
+    ) = eqx.field(static=True)
+    provider_options: (
+        _dependency_phydrax_meshing_providers__mmg.MmgOptions
+        | _dependency_phydrax_meshing_providers__omega_h.OmegaHOptions
         | None
     )
-    geometry_transition: CellGeometryTransitionPolicy
+    distribution: _dependency_phydrax_meshing__distribution.MeshDistribution | None
+    partition_policy: _dependency_phydrax_meshing__distribution.MeshPartitionPolicy | None
+    association_transfer: (
+        _dependency_phydrax_meshing__association.BRepAssociationTransfer
+        | _dependency_phydrax_meshing__association.PlcAssociationTransfer
+        | _dependency_phydrax_meshing__association_composition.ComposedAssociationTransfer
+        | _dependency_phydrax_meshing__association.SurfaceAssociationTransfer
+        | _dependency_phydrax_meshing__association.MappedReferenceAssociationTransfer
+        | _dependency_phydrax_meshing__implicit_association_transfer.ImplicitAssociationTransfer
+        | _dependency_phydrax_meshing_providers__native_periodic.PeriodicAssociationTransfer
+        | None
+    )
+    geometry_transition: transition_types_owner.CellGeometryTransitionPolicy
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         route: MeshAdaptationRoute,
         /,
         *,
-        protected_scopes: tuple[MeshingScope, ...] = (),
+        protected_scopes: tuple[
+            _dependency_phydrax_meshing__scope.MeshingScope, ...
+        ] = (),
         compatibility: BisectionCompatibility = BisectionCompatibility.REJECT,
-        predicate_mode: PredicateMode | None = None,
+        predicate_mode: _dependency_phydrax__geometry_predicates.PredicateMode
+        | None = None,
         maximum_passes: int = 16,
         maximum_closure_iterations: int = 256,
         relocation: bool = True,
-        limits: MeshingLimits | None = None,
-        audit_policy: CellMeshAuditPolicy | None = None,
-        device_policy: AdaptiveSimplexPolicy | None = None,
-        provider: MmgProvider | OmegaHProvider | None = None,
-        provider_options: MmgOptions | OmegaHOptions | None = None,
-        distribution: MeshDistribution | None = None,
-        partition_policy: MeshPartitionPolicy | None = None,
-        association_transfer: BRepAssociationTransfer
-        | PlcAssociationTransfer
-        | ComposedAssociationTransfer
-        | SurfaceAssociationTransfer
-        | MappedReferenceAssociationTransfer
-        | ImplicitAssociationTransfer
-        | PeriodicAssociationTransfer
+        limits: _dependency_phydrax_meshing__contracts.MeshingLimits | None = None,
+        audit_policy: _dependency_phydrax_meshing__audit.CellMeshAuditPolicy
         | None = None,
-        geometry_transition: CellGeometryTransitionPolicy | None = None,
+        device_policy: _dependency_phydrax_discretization__adaptive_simplex.AdaptiveSimplexPolicy
+        | None = None,
+        provider: _dependency_phydrax_meshing_providers__mmg.MmgProvider
+        | _dependency_phydrax_meshing_providers__omega_h.OmegaHProvider
+        | None = None,
+        provider_options: _dependency_phydrax_meshing_providers__mmg.MmgOptions
+        | _dependency_phydrax_meshing_providers__omega_h.OmegaHOptions
+        | None = None,
+        distribution: _dependency_phydrax_meshing__distribution.MeshDistribution
+        | None = None,
+        partition_policy: _dependency_phydrax_meshing__distribution.MeshPartitionPolicy
+        | None = None,
+        association_transfer: _dependency_phydrax_meshing__association.BRepAssociationTransfer
+        | _dependency_phydrax_meshing__association.PlcAssociationTransfer
+        | _dependency_phydrax_meshing__association_composition.ComposedAssociationTransfer
+        | _dependency_phydrax_meshing__association.SurfaceAssociationTransfer
+        | _dependency_phydrax_meshing__association.MappedReferenceAssociationTransfer
+        | _dependency_phydrax_meshing__implicit_association_transfer.ImplicitAssociationTransfer
+        | _dependency_phydrax_meshing_providers__native_periodic.PeriodicAssociationTransfer
+        | None = None,
+        geometry_transition: transition_types_owner.CellGeometryTransitionPolicy
+        | None = None,
     ) -> None:
-        if not isinstance(route, MeshAdaptationRoute):
-            raise TypeError("route must be MeshAdaptationRoute.")
+        route = parse(route, MeshAdaptationRoute, "route")
         protected = tuple(protected_scopes)
-        if not all(isinstance(scope, MeshingScope) for scope in protected):
-            raise TypeError("protected_scopes must contain MeshingScope values.")
-        if not isinstance(compatibility, BisectionCompatibility):
-            raise TypeError("compatibility must be BisectionCompatibility.")
+        if not all(
+            isinstance(scope, _dependency_phydrax_meshing__scope.MeshingScope)
+            for scope in protected
+        ):
+            raise TypeError(
+                f"MeshAdaptationPolicy.protected_scopes must contain MeshingScope values; got {tuple((type(item).__name__ for item in protected))!r}"
+            )
+        compatibility = parse(compatibility, BisectionCompatibility, "compatibility")
         mode = _resolved_predicate_mode(route, predicate_mode)
         if (route in _DEVICE_ROUTES) != (device_policy is not None):
-            raise ValueError("device_policy is required by, and only by, device routes.")
+            raise ValueError(
+                f"MeshAdaptationPolicy.device_policy must be supplied on device routes and absent on host routes; got {(route.name, device_policy is not None)!r}"
+            )
         if (
             route is MeshAdaptationRoute.DEVICE_BISECTION
             and compatibility is BisectionCompatibility.CONFORMING_CLOSURE
         ):
             raise ValueError(
-                "Device bisection closes matching-condition labels only; "
-                "CONFORMING_CLOSURE is executed by NATIVE_BISECTION."
+                f"MeshAdaptationPolicy.compatibility must select matching-condition closure on DEVICE_BISECTION; CONFORMING_CLOSURE is executed by NATIVE_BISECTION; got {compatibility.name!r}"
             )
-        if device_policy is not None and not isinstance(
-            device_policy, AdaptiveSimplexPolicy
-        ):
-            raise TypeError("device_policy must be AdaptiveSimplexPolicy or None.")
-        passes = _count(maximum_passes, "maximum_passes")
-        closure = _count(maximum_closure_iterations, "maximum_closure_iterations")
+        passes = positive_integer(maximum_passes, "maximum_passes")
+        closure = positive_integer(
+            maximum_closure_iterations, "maximum_closure_iterations"
+        )
         relocate = _flag(relocation, "relocation")
-        limits_ = MeshingLimits() if limits is None else limits
-        audit = CellMeshAuditPolicy() if audit_policy is None else audit_policy
-        if not isinstance(limits_, MeshingLimits):
-            raise TypeError("limits must be MeshingLimits or None.")
-        if not isinstance(audit, CellMeshAuditPolicy):
-            raise TypeError("audit_policy must be CellMeshAuditPolicy or None.")
+        limits_ = (
+            _dependency_phydrax_meshing__contracts.MeshingLimits()
+            if limits is None
+            else limits
+        )
+        audit = (
+            _dependency_phydrax_meshing__audit.CellMeshAuditPolicy()
+            if audit_policy is None
+            else audit_policy
+        )
         if (distribution is None) != (partition_policy is None):
-            raise ValueError("distribution and partition_policy are supplied together.")
-        if distribution is not None and (
-            not isinstance(distribution, MeshDistribution)
-            or not isinstance(partition_policy, MeshPartitionPolicy)
-        ):
-            raise TypeError(
-                "distribution must be MeshDistribution with a MeshPartitionPolicy."
+            raise ValueError(
+                f"MeshAdaptationPolicy.distribution must be supplied together with partition_policy; got {(distribution is not None, partition_policy is not None)!r}"
             )
         if association_transfer is not None:
-            if not isinstance(
-                association_transfer,
-                (
-                    BRepAssociationTransfer,
-                    PlcAssociationTransfer,
-                    ComposedAssociationTransfer,
-                    SurfaceAssociationTransfer,
-                    MappedReferenceAssociationTransfer,
-                    ImplicitAssociationTransfer,
-                    PeriodicAssociationTransfer,
-                ),
-            ):
-                raise TypeError(
-                    "association_transfer must be BRepAssociationTransfer, "
-                    "PlcAssociationTransfer, ComposedAssociationTransfer, SurfaceAssociationTransfer, MappedReferenceAssociationTransfer, ImplicitAssociationTransfer, PeriodicAssociationTransfer, or None."
-                )
             if route is MeshAdaptationRoute.HP:
-                raise ValueError("HP adaptation cannot carry geometry associations.")
-            if isinstance(association_transfer, MappedReferenceAssociationTransfer) and (
+                raise ValueError(
+                    f"MeshAdaptationPolicy.association_transfer must be absent for HP adaptation; got {type(association_transfer).__name__!r}"
+                )
+            if isinstance(
+                association_transfer,
+                _dependency_phydrax_meshing__association.MappedReferenceAssociationTransfer,
+            ) and (
                 route is not MeshAdaptationRoute.NATIVE_MIXED or distribution is not None
             ):
                 raise ValueError(
-                    "Exact mapped-root association transport requires the host nested mixed-family route."
+                    f"MeshAdaptationPolicy.association_transfer must use the host nested mixed-family route for mapped or composed sources; got {(route.name, distribution is not None)!r}"
                 )
-            if isinstance(association_transfer, ComposedAssociationTransfer) and (
+            if isinstance(
+                association_transfer,
+                _dependency_phydrax_meshing__association_composition.ComposedAssociationTransfer,
+            ) and (
                 route is not MeshAdaptationRoute.NATIVE_MIXED or distribution is not None
             ):
                 raise ValueError(
-                    "Exact composed-source association transport requires the host nested mixed-family route."
+                    f"MeshAdaptationPolicy.association_transfer must use the host nested mixed-family route for mapped or composed sources; got {(route.name, distribution is not None)!r}"
                 )
-            if isinstance(association_transfer, ImplicitAssociationTransfer) and (
+            if isinstance(
+                association_transfer,
+                _dependency_phydrax_meshing__implicit_association_transfer.ImplicitAssociationTransfer,
+            ) and (
                 route
                 not in (
                     MeshAdaptationRoute.NATIVE_BISECTION,
                     MeshAdaptationRoute.DEVICE_BISECTION,
+                    MeshAdaptationRoute.NATIVE_METRIC_3D,
                 )
                 or distribution is not None
             ):
                 raise ValueError(
-                    "Implicit surface source transport requires its native nested surface route."
+                    f"MeshAdaptationPolicy.association_transfer must use a native nested or tetrahedral metric route for implicit sources; got {(route.name, distribution is not None)!r}"
                 )
-            if isinstance(association_transfer, PeriodicAssociationTransfer) and (
-                route is not MeshAdaptationRoute.NATIVE_BISECTION
-            ):
+            if isinstance(
+                association_transfer,
+                _dependency_phydrax_meshing_providers__native_periodic.PeriodicAssociationTransfer,
+            ) and (route is not MeshAdaptationRoute.NATIVE_BISECTION):
                 raise ValueError(
-                    "Periodic original-source renewal requires the host nested quotient route."
+                    f"MeshAdaptationPolicy.association_transfer must use the host nested quotient route for periodic sources; got {route.name!r}"
                 )
         transition = (
-            CellGeometryTransitionPolicy()
+            transition_types_owner.CellGeometryTransitionPolicy()
             if geometry_transition is None
             else geometry_transition
         )
-        if not isinstance(transition, CellGeometryTransitionPolicy):
-            raise TypeError(
-                "geometry_transition must be CellGeometryTransitionPolicy or None."
-            )
         _check_provider(route, provider, provider_options, protected, distribution)
         self.route = route
         self.protected_scopes = protected
@@ -910,178 +944,134 @@ class _AdaptationConstraints(NamedTuple):
     metric_values: np.ndarray
 
 
-def _selected_rows(mesh: CellMesh, scope: MeshingScope, /) -> np.ndarray:
-    return np.flatnonzero(np.asarray(resolve_mesh_scope(mesh, scope).mask))
-
-
-def _closure_rows(
-    mesh: CellMesh, dimension: int, rows: np.ndarray, target: int, /
+def _metric_rows(
+    mesh: CellMesh, metric: _dependency_phydrax_meshing__metric.MeshMetricField, /
 ) -> np.ndarray:
-    """Rows of the dimension-``target`` entities in the closure of selected rows."""
-
-    for degree in range(dimension, target, -1):
-        relation = mesh.topology.incidences[degree - 1].relation
-        valid = np.asarray(relation.valid) & np.isin(
-            np.asarray(relation.target_indices), rows
-        )
-        rows = np.unique(np.asarray(relation.source_indices)[valid])
-    return rows
-
-
-def _organization_scopes(source: CellMeshingResult, /) -> tuple[MeshingScope, ...]:
-    return tuple(
-        value.scope for value in (*source.patches, *source.zones, *source.labels)
-    )
-
-
-def _membership(
-    mesh: CellMesh, scopes: tuple[MeshingScope, ...], dimension: int, /
-) -> np.ndarray:
-    columns = [
-        np.asarray(resolve_mesh_scope(mesh, scope).mask, dtype=np.bool_)
-        for scope in scopes
-        if scope.entity_dimension == dimension
-    ]
-    count = mesh.entity_set(dimension).count
-    if not columns:
-        return np.zeros((count, 0), dtype=np.bool_)
-    return np.stack(columns, axis=1)
-
-
-def _row_classes(rows: np.ndarray, /) -> np.ndarray:
-    _, inverse = np.unique(rows, axis=0, return_inverse=True)
-    return inverse.reshape((-1,)).astype(np.int64)
-
-
-def _cell_classes(
-    mesh: CellMesh,
-    scopes: tuple[MeshingScope, ...],
-    /,
-    *,
-    family_identity: bool = False,
-    scientific_block_rows: np.ndarray | None = None,
-) -> np.ndarray:
-    """Organization classes; mixed templates retain family, not coordinate-block identity."""
-
-    dimension = mesh.topological_dimension
-    families = {
-        kind: index
-        for index, kind in enumerate(sorted({b.cell_kind for b in mesh.blocks}))
-    }
-    block_ids = np.concatenate(
-        [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
-    )
-    block_rows = (
-        scientific_block_rows
-        if scientific_block_rows is not None
-        else np.concatenate(
-            [
-                np.full(
-                    (block.cell_count,),
-                    families[block.cell_kind] if family_identity else index,
-                    dtype=np.int64,
-                )
-                for index, block in enumerate(mesh.blocks)
-            ]
-        )
-    )
-    cells = key_rows(block_ids[:, None], entity_keys(mesh, dimension))
-    return _row_classes(
-        np.column_stack(
-            (block_rows[cells], _membership(mesh, scopes, dimension).astype(np.int64))
-        )
-    )
-
-
-def _edge_classes(
-    mesh: CellMesh, scopes: tuple[MeshingScope, ...], cell_classes: np.ndarray, /
-) -> np.ndarray:
-    """Planar feature classes: 0 for free interior edges, positive otherwise.
-
-    Boundary edges, region interfaces, and edges of any edge organization are
-    features; distinct incident region pairs or memberships are distinct classes.
-    """
-
-    count = mesh.entity_set(1).count
-    relation = mesh.topology.incidences[1].relation
-    valid = np.asarray(relation.valid, dtype=np.bool_)
-    edges = np.asarray(relation.source_indices)[valid]
-    cells = cell_classes[np.asarray(relation.target_indices)[valid]]
-    incident = np.bincount(edges, minlength=count)
-    low = np.full((count,), np.iinfo(np.int64).max, dtype=np.int64)
-    high = np.full((count,), -1, dtype=np.int64)
-    np.minimum.at(low, edges, cells)
-    np.maximum.at(high, edges, cells)
-    member = _membership(mesh, scopes, 1)
-    feature = (incident != 2) | (low != high) | np.any(member, axis=1)
-    classes = np.zeros((count,), dtype=np.int64)
-    if np.any(feature):
-        keys = np.column_stack(
-            (incident == 1, low, high, member.astype(np.int64))
-        ).astype(np.int64)
-        classes[feature] = 1 + _row_classes(keys[feature])
-    return classes
-
-
-def _metric_rows(mesh: CellMesh, metric: MeshMetricField, /) -> np.ndarray:
     scope = metric.scope
     vertices = mesh.entity_set(0)
     if (
-        scope.entity_kind is not MeshingEntityKind.MESH
+        scope.entity_kind is not _dependency_phydrax_meshing__scope.MeshingEntityKind.MESH
         or scope.entity_dimension != 0
         or scope.source_id != mesh.mesh_id
         or scope.source_revision != mesh.numeric_version
         or scope.entity_set_id != vertices.entity_set_id
     ):
-        raise ValueError("The adaptation metric must be bound to the source vertices.")
+        raise ValueError(
+            f"MeshMetricField.scope must be bound to the source vertices; got {scope.scope_id!r}"
+        )
     identifiers = np.asarray(scope.entity_ids, dtype=np.int64)
-    rows = key_rows(
+    rows = entity_keys_owner.key_rows(
         identifiers[:, None],
         np.asarray(mesh.vertex_global_ids, dtype=np.int64)[:, None],
     )
     if identifiers.size != rows.size or np.any(rows < 0):
-        raise ValueError("The adaptation metric must cover every source vertex.")
+        raise ValueError(
+            f"MeshMetricField.scope must cover every source vertex; got {(identifiers.size, rows.size)!r}"
+        )
     values = np.asarray(metric.values, dtype=np.float64)[rows]
     if values.shape[1:] != (mesh.ambient_dimension, mesh.ambient_dimension):
-        raise ValueError("The adaptation metric must match the ambient dimension.")
+        raise ValueError(
+            f"MeshMetricField.values must match the ambient dimension; got {f'shape={values.shape}, ambient_dimension={mesh.ambient_dimension}'!r}"
+        )
     return values
 
 
-def _uniform_scientific_block_rows(
-    source: CellMeshingResult,
-    hierarchy: BisectionHierarchy,
-    limits: MeshingLimits,
+@contextmanager
+@checked
+def adaptation_phase(
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
     /,
+) -> Iterator[
+    _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+]:
+    if not budget.ticket.settled:
+        yield budget
+        return
+    remaining = scope.remaining()
+    ticket = scope.batch(
+        min(budget.maximum_work_units, remaining.remaining_work_units),
+        queries_upper=remaining.remaining_geometry_queries,
+        bytes_upper=min(budget.maximum_memory_bytes, remaining.remaining_managed_bytes),
+        cavity_upper=remaining.remaining_cavity_cells,
+    )
+    with budget.bind_ticket(ticket), ticket.native_target():
+        yield budget
+
+
+def _adaptation_charge(
+    work: int,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> None:
+
+    ticket = budget.ticket
+    if work > ticket.remaining_work_units:
+        ticket.refuse(
+            ticket.work_units + work,
+            queries_upper=ticket.geometry_queries,
+            bytes_upper=ticket.managed_bytes,
+            cavity_upper=ticket.cavity_cells,
+        )
+    ticket.consume(work)
+
+
+def _adaptation_cavity(
+    count: int,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> None:
+    ticket = budget.ticket
+    if count > ticket.cavity_upper:
+        ticket.refuse(
+            ticket.work_units,
+            queries_upper=ticket.geometry_queries,
+            bytes_upper=ticket.managed_bytes,
+            cavity_upper=count,
+        )
+    ticket.consume(cavity_cells=count)
+
+
+def _uniform_scientific_block_rows(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    hierarchy: BisectionHierarchy,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> np.ndarray:
-    from .._meshcore import current_native_execution_budget
-    from ._bisection import _uniform_charge
 
     lineage = hierarchy.uniform_refinement
     if lineage is None:
         raise ValueError(
-            "Uniform scientific block lookup requires its actual original source owner."
+            f"BisectionHierarchy.uniform_refinement must retain its scientific source owner; got {hierarchy.hierarchy_id!r}"
         )
     original = lineage.source
     origin = source.geometry.restriction_source
     if (
         origin is None
-        or origin.source_geometry_id != cell_geometry_id(original.geometry)
+        or origin.source_geometry_id
+        != _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+            original.geometry
+        )
         or origin.source_topology_id != original.mesh.topology_id
     ):
         raise ValueError(
-            "Uniform scientific classes lost their original source geometry owner."
+            f"BisectionUniformRefinement.source_geometry must match its captured geometry owner; got {source.geometry.geometry_layout_id!r}"
         )
     count = sum(block.cell_count for block in source.mesh.blocks)
     original_count = sum(block.cell_count for block in original.mesh.blocks)
     storage = (count + original_count) * 256
     if storage > limits.maximum_scratch_bytes:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Scientific block preparation exceeds the original host storage allowance.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            f"MeshAdaptationPolicy.limits must cover scientific block preparation storage; got {f'required_bytes={storage}, maximum_scratch_bytes={limits.maximum_scratch_bytes}'!r}",
             stage="scientific-class-preparation",
         )
-    if current_native_execution_budget() is not None:
-        _uniform_charge(count + original_count, storage)
+    _adaptation_charge(count + original_count, budget=budget)
+    budget.reserve(0, storage)
     root_blocks = {
         int(identifier): block_index
         for block_index, block in enumerate(original.mesh.blocks)
@@ -1094,7 +1084,7 @@ def _uniform_scientific_block_rows(
             int(parent) not in root_blocks for parent in parents
         ):
             raise ValueError(
-                "A presentation block has no explicitly owned original scientific cell route."
+                f"BisectionUniformRefinement.block_routes must declare a scientific cell route for each presentation block; got {block.name!r}"
             )
         rows.append(
             np.asarray([root_blocks[int(parent)] for parent in parents], dtype=np.int64)
@@ -1103,12 +1093,11 @@ def _uniform_scientific_block_rows(
 
 
 def _uniform_class_declarations_match(
-    original: CellMeshingResult,
-    current: CellMeshingResult,
+    original: _dependency_phydrax_meshing__result.CellMeshingResult,
+    current: _dependency_phydrax_meshing__result.CellMeshingResult,
     degree: int,
     /,
 ) -> bool:
-    from ._organization import _organization_definition_id
 
     if len(original.zones) != len(current.zones):
         return False
@@ -1131,12 +1120,12 @@ def _uniform_class_declarations_match(
             return False
         for before, after in zip(expected, actual, strict=True):
             match before:
-                case MeshPatch():
-                    if not isinstance(after, MeshPatch) or any(
-                        value not in zone_ids for value in before.adjacent_zone_ids
-                    ):
+                case _dependency_phydrax_meshing__organization.MeshPatch():
+                    if not isinstance(
+                        after, _dependency_phydrax_meshing__organization.MeshPatch
+                    ) or any(value not in zone_ids for value in before.adjacent_zone_ids):
                         return False
-                    witness = MeshPatch(
+                    witness = _dependency_phydrax_meshing__organization.MeshPatch(
                         before.name,
                         after.scope,
                         connected=before.connected,
@@ -1145,39 +1134,47 @@ def _uniform_class_declarations_match(
                         ),
                         source_adjacent_region_ids=before.source_adjacent_region_ids,
                     )
-                case MeshZone():
-                    if not isinstance(after, MeshZone):
+                case _dependency_phydrax_meshing__organization.MeshZone():
+                    if not isinstance(
+                        after, _dependency_phydrax_meshing__organization.MeshZone
+                    ):
                         return False
-                    witness = MeshZone(
+                    witness = _dependency_phydrax_meshing__organization.MeshZone(
                         before.name,
                         before.role,
                         after.scope,
                         material_id=before.material_id,
                         region_role=before.region_role,
                     )
-                case MeshLabel():
-                    if not isinstance(after, MeshLabel):
+                case _dependency_phydrax_meshing__organization.MeshLabel():
+                    if not isinstance(
+                        after, _dependency_phydrax_meshing__organization.MeshLabel
+                    ):
                         return False
-                    witness = MeshLabel(before.name, after.scope)
+                    witness = _dependency_phydrax_meshing__organization.MeshLabel(
+                        before.name, after.scope
+                    )
                 case _:
                     raise TypeError(
-                        "Uniform scientific classes require canonical organization declarations."
+                        f"MeshAdaptation.source.organization must retain canonical ordering of scientific class declarations; got {before!r}"
                     )
-            if _organization_definition_id(witness) != _organization_definition_id(after):
+            if _owner_phydrax_meshing__organization.organization_definition_id(
+                witness
+            ) != _owner_phydrax_meshing__organization.organization_definition_id(after):
                 return False
     return True
 
 
 def _uniform_cell_scientific_classes(
-    source: CellMeshingResult,
-    uniform: BisectionUniformRefinement,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    uniform: _dependency_phydrax_meshing__bisection.BisectionUniformRefinement,
     current_classes: np.ndarray,
     /,
 ) -> np.ndarray:
     """Keep captured class identities on unchanged, explicitly rooted occurrences."""
     if source.geometry.restriction_source is None:
         raise ValueError(
-            "Scientific cell classes require their actual original source routes."
+            f"BisectionUniformRefinement.source must retain scientific cell routes; got {source.result_id!r}"
         )
     original = uniform.source
     parent_classes = dict(
@@ -1206,16 +1203,18 @@ def _uniform_cell_scientific_classes(
     original_ids = np.asarray(
         original.mesh.entity_set(original.mesh.topological_dimension).entity_ids
     )
-    original_rows = key_rows(original_ids[:, None], roots[:, None])
+    original_rows = entity_keys_owner.key_rows(original_ids[:, None], roots[:, None])
     if np.any(original_rows < 0) or any(
         int(root) not in parent_classes for root in roots
     ):
-        raise ValueError("A scientific class occurrence has an unowned original parent.")
-    before = _membership(
-        original.mesh, _organization_scopes(original), original.mesh.topological_dimension
+        raise ValueError(
+            f"BisectionUniformRefinement.parent_cell_ids must declare every scientific class parent; got roots={roots.tolist()!r}"
+        )
+    before = membership(
+        original.mesh, organization_scopes(original), original.mesh.topological_dimension
     )
-    after = _membership(
-        source.mesh, _organization_scopes(source), source.mesh.topological_dimension
+    after = membership(
+        source.mesh, organization_scopes(source), source.mesh.topological_dimension
     )
     changed = (
         np.ones(roots.shape, dtype=np.bool_)
@@ -1238,31 +1237,24 @@ def _uniform_cell_scientific_classes(
     )
 
 
-def _resolve_constraints(
-    source: CellMeshingResult,
+@final
+class _ScientificConstraints(StrictModule):
+    """Scientific block rows and the admitted source uniform lineage."""
+
+    block_rows: np.ndarray | None
+    uniform: _dependency_phydrax_meshing__bisection.BisectionUniformRefinement | None
+
+
+def _scientific_constraints(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
     request: MeshAdaptationRequest,
     policy: MeshAdaptationPolicy,
     /,
-) -> _AdaptationConstraints:
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> _ScientificConstraints:
     mesh = source.mesh
-    dimension = mesh.topological_dimension
-    edge_count = mesh.entity_set(1).count
-    protected_edges = np.zeros((edge_count,), dtype=np.bool_)
-    fixed = np.zeros((mesh.coordinates.shape[0],), dtype=np.bool_)
-    for scope in policy.protected_scopes:
-        if (
-            policy.route is MeshAdaptationRoute.NATIVE_SURFACE_METRIC
-            and scope.entity_dimension == dimension
-        ):
-            # A protected surface owns continuous fidelity, not frozen in-surface
-            # topology. Its declared curves/corners remain protected below.
-            continue
-        rows = _selected_rows(mesh, scope)
-        if scope.entity_dimension >= 1:
-            protected_edges[_closure_rows(mesh, scope.entity_dimension, rows, 1)] = True
-        fixed[_closure_rows(mesh, scope.entity_dimension, rows, 0)] = True
-    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    organization = _organization_scopes(source)
     uniform_hierarchy = (
         request.hierarchy
         if policy.route
@@ -1275,7 +1267,9 @@ def _resolve_constraints(
     scientific_blocks = (
         None
         if uniform_hierarchy is None
-        else _uniform_scientific_block_rows(source, uniform_hierarchy, policy.limits)
+        else _uniform_scientific_block_rows(
+            source, uniform_hierarchy, policy.limits, budget=budget
+        )
     )
     if (
         uniform_hierarchy is None
@@ -1285,13 +1279,13 @@ def _resolve_constraints(
         and isinstance(request.hierarchy, BisectionHierarchy)
     ):
         authority_ids = np.asarray(request.hierarchy.scientific_cell_ids, dtype=np.int64)
-        active_ids = _cell_ids(mesh)
+        active_ids = mesh_cell_ids(mesh)
         rows = np.searchsorted(authority_ids, active_ids)
         if np.any(rows >= authority_ids.size) or not np.array_equal(
             authority_ids[rows], active_ids
         ):
             raise ValueError(
-                "The bisection hierarchy omits active scientific block authority."
+                f"BisectionHierarchy.scientific_cell_ids must include every active scientific cell; got {active_ids.size!r}"
             )
         scientific_blocks = np.asarray(
             request.hierarchy.scientific_block_ids, dtype=np.int32
@@ -1300,42 +1294,62 @@ def _resolve_constraints(
         policy.route
         in (MeshAdaptationRoute.NATIVE_BISECTION, MeshAdaptationRoute.DEVICE_BISECTION)
         and isinstance(request, MarkedMeshAdaptation)
-        and isinstance(request.hierarchy, PeriodicRefinement)
+        and isinstance(
+            request.hierarchy, _owner_phydrax_meshing__periodic.PeriodicRefinement
+        )
         and source.geometry.restriction_source is not None
     ):
-        from ._periodic import _periodic_scientific_block_rows
-
-        scientific_blocks = _periodic_scientific_block_rows(
-            source,
-            request.hierarchy,
-            limits=policy.limits,
-        )
-    cell_classes = _cell_classes(
-        mesh,
-        organization,
-        family_identity=policy.route
-        in (
-            MeshAdaptationRoute.NATIVE_MIXED,
-            MeshAdaptationRoute.NATIVE_POLYHEDRAL,
-            MeshAdaptationRoute.NATIVE_SURFACE_METRIC,
-        ),
-        scientific_block_rows=scientific_blocks,
-    )
-    if source.attributes:
-        from ._layer_core import layer_interval_classes
-
-        block_rows = key_rows(_cell_ids(mesh)[:, None], entity_keys(mesh, dimension))
-        cell_classes = _row_classes(
-            np.column_stack((cell_classes, layer_interval_classes(source)[block_rows]))
-        )
-    facet_classes = _row_classes(
-        np.column_stack(
-            (
-                np.zeros((mesh.entity_set(dimension - 1).count,), dtype=np.int64),
-                _membership(mesh, organization, dimension - 1).astype(np.int64),
+        scientific_blocks = (
+            _owner_phydrax_meshing__periodic.periodic_scientific_block_rows(
+                source,
+                request.hierarchy,
+                limits=policy.limits,
+                scope=scope,
+                budget=budget,
             )
         )
+    return _ScientificConstraints(
+        scientific_blocks,
+        None if uniform_hierarchy is None else uniform_hierarchy.uniform_refinement,
     )
+
+
+@final
+class _AssociationConstraints(StrictModule):
+    """Source-stratum classes resolved with protected host masks."""
+
+    cell_classes: np.ndarray
+    facet_classes: np.ndarray
+    edge_codes: np.ndarray
+
+
+@final
+class _RouteSourcePreparation(StrictModule):
+    """Source proofs earned once within the route's live preparation budget."""
+
+    plc_proofs: list[plc_mapped_support_owner.MappedPlcSupport]
+    periodic_proofs: list[
+        _dependency_phydrax_meshing_providers__native_periodic._PeriodicSourceAssociationPreparation
+    ]
+
+
+def _association_constraints(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    request: MeshAdaptationRequest,
+    policy: MeshAdaptationPolicy,
+    cell_classes: np.ndarray,
+    facet_classes: np.ndarray,
+    protected_edges: np.ndarray,
+    fixed: np.ndarray,
+    /,
+    *,
+    source_preparation: _RouteSourcePreparation,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> _AssociationConstraints:
+    mesh = source.mesh
+    dimension = mesh.topological_dimension
+    edge_count = mesh.entity_set(1).count
     edge_codes = np.zeros((edge_count,), dtype=np.int64)
     transfer = policy.association_transfer
     midpoint_required = policy.route in (
@@ -1344,16 +1358,19 @@ def _resolve_constraints(
         MeshAdaptationRoute.NATIVE_MIXED,
     )
     if policy.route is MeshAdaptationRoute.NATIVE_MIXED:
-        if not isinstance(request, MarkedMeshAdaptation):
-            raise TypeError(
-                "Mixed source constraints require marked template adaptation."
-            )
-        # Inverse complete-family restoration uses existing parent vertices;
+        match request:
+            case MarkedMeshAdaptation():
+                pass
+            case _:
+                raise TypeError(
+                    f"MeshAdaptation.request must provide marked mixed-template adaptation with its mixed hierarchy; got {type(request).__name__!r}"
+                )
+        # Inverse full-family restoration uses existing parent vertices;
         # a future split midpoint is not a hard constraint on discarded children.
         midpoint_required = request.refine_cell_ids.size > 0
     if transfer is not None and source.associations:
         match transfer:
-            case BRepAssociationTransfer():
+            case _dependency_phydrax_meshing__association.BRepAssociationTransfer():
                 classes = transfer.classes(source)
                 codes = tuple(
                     np.where(
@@ -1365,38 +1382,152 @@ def _resolve_constraints(
                     )
                     for level in classes
                 )
-            case PlcAssociationTransfer() | ComposedAssociationTransfer():
-                classes = transfer.classes(source)
-                codes = tuple(level.codes for level in classes)
-                protected_edges |= transfer.protected_edges(
-                    source,
-                    midpoint_required=midpoint_required,
+            case _dependency_phydrax_meshing__association.PlcAssociationTransfer():
+                classes = transfer.classes(
+                    source, _prepared_source=source_preparation.plc_proofs, budget=budget
                 )
-            case (
-                MappedReferenceAssociationTransfer()
-                | ImplicitAssociationTransfer()
-                | PeriodicAssociationTransfer()
-            ):
-                classes = transfer.classes(source)
-                codes = tuple(level.codes for level in classes)
-            case SurfaceAssociationTransfer():
-                classes = transfer.classes(source)
                 codes = tuple(level.codes for level in classes)
                 protected_edges |= transfer.protected_edges(
                     source,
                     midpoint_required=midpoint_required,
+                    _classes=classes,
+                    budget=budget,
+                )
+            case _dependency_phydrax_meshing__association_composition.ComposedAssociationTransfer():
+                composed_contexts: list[
+                    _dependency_phydrax_meshing__association.PlcBankContext
+                ] = []
+                classes = transfer.classes(
+                    source, budget=budget, _prepared_contexts=composed_contexts
+                )
+                codes = tuple(level.codes for level in classes)
+                protected_edges |= transfer.protected_edges(
+                    source,
+                    midpoint_required=midpoint_required,
+                    _classes=classes,
+                    _prepared_contexts=composed_contexts,
+                    budget=budget,
+                )
+            case _dependency_phydrax_meshing__association.MappedReferenceAssociationTransfer():
+                classes = transfer.classes(source, budget=budget)
+                codes = tuple(level.codes for level in classes)
+            case _dependency_phydrax_meshing__implicit_association_transfer.ImplicitAssociationTransfer():
+                classes = transfer.classes(source)
+                codes = tuple(level.codes for level in classes)
+            case _dependency_phydrax_meshing_providers__native_periodic.PeriodicAssociationTransfer():
+                classes = transfer.classes(
+                    source,
+                    scope=scope,
+                    budget=budget,
+                    _prepared_source=source_preparation.periodic_proofs,
+                )
+                codes = tuple(level.codes for level in classes)
+            case _dependency_phydrax_meshing__association.SurfaceAssociationTransfer():
+                classes = transfer.classes(source, budget=budget)
+                codes = tuple(level.codes for level in classes)
+                protected_edges |= transfer.protected_edges(
+                    source,
+                    midpoint_required=midpoint_required,
+                    budget=budget,
                 )
             case invalid:
                 assert_never(invalid)
         fixed |= classes[0].dimensions == 0
         protected_edges |= ~classes[1].resolved
-        cell_classes = _row_classes(np.column_stack((cell_classes, codes[dimension])))
-        facet_classes = _row_classes(
+        cell_classes = row_classes(np.column_stack((cell_classes, codes[dimension])))
+        facet_classes = row_classes(
             np.column_stack((facet_classes, codes[dimension - 1]))
         )
         edge_codes = np.where(classes[1].dimensions < dimension, 1 + codes[1], 0)
+    return _AssociationConstraints(cell_classes, facet_classes, edge_codes)
+
+
+def _resolve_constraints(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    request: MeshAdaptationRequest,
+    policy: MeshAdaptationPolicy,
+    /,
+    *,
+    source_preparation: _RouteSourcePreparation,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> _AdaptationConstraints:
+    mesh = source.mesh
+    dimension = mesh.topological_dimension
+    edge_count = mesh.entity_set(1).count
+    protected_edges = np.zeros((edge_count,), dtype=np.bool_)
+    fixed = np.zeros((mesh.coordinates.shape[0],), dtype=np.bool_)
+    for protected_scope in policy.protected_scopes:
+        if (
+            policy.route is MeshAdaptationRoute.NATIVE_SURFACE_METRIC
+            and protected_scope.entity_dimension == dimension
+        ):
+            # A protected surface owns continuous fidelity, not frozen in-surface
+            # topology. Its declared curves/corners remain protected below.
+            continue
+        rows = selected_rows(mesh, protected_scope)
+        if protected_scope.entity_dimension >= 1:
+            protected_edges[
+                closure_rows(mesh, protected_scope.entity_dimension, rows, 1)
+            ] = True
+        fixed[closure_rows(mesh, protected_scope.entity_dimension, rows, 0)] = True
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    organization = organization_scopes(source)
+    science = _scientific_constraints(source, request, policy, budget=budget, scope=scope)
+    scientific_blocks = science.block_rows
+    cell_classes = mesh_cell_classes(
+        mesh,
+        organization,
+        family_identity=policy.route
+        in (
+            MeshAdaptationRoute.NATIVE_MIXED,
+            MeshAdaptationRoute.NATIVE_POLYHEDRAL,
+            MeshAdaptationRoute.NATIVE_SURFACE_METRIC,
+        ),
+        scientific_block_rows=scientific_blocks,
+    )
+    if source.attributes:
+        block_rows = entity_keys_owner.key_rows(
+            mesh_cell_ids(mesh)[:, None],
+            entity_keys_owner.entity_keys(mesh, dimension),
+        )
+        cell_classes = row_classes(
+            np.column_stack(
+                (
+                    cell_classes,
+                    _owner_phydrax_meshing__layer_core.layer_interval_classes(source)[
+                        block_rows
+                    ],
+                )
+            )
+        )
+    facet_classes = row_classes(
+        np.column_stack(
+            (
+                np.zeros((mesh.entity_set(dimension - 1).count,), dtype=np.int64),
+                membership(mesh, organization, dimension - 1).astype(np.int64),
+            )
+        )
+    )
+    association = _association_constraints(
+        source,
+        request,
+        policy,
+        cell_classes,
+        facet_classes,
+        protected_edges,
+        fixed,
+        budget=budget,
+        scope=scope,
+        source_preparation=source_preparation,
+    )
+    cell_classes, facet_classes, edge_codes = (
+        association.cell_classes,
+        association.facet_classes,
+        association.edge_codes,
+    )
     protected_vertex_ids = vertex_ids[fixed]
-    fixed |= np.any(_membership(mesh, organization, 0), axis=1)
+    fixed |= np.any(membership(mesh, organization, 0), axis=1)
     surface = mesh.topological_dimension == 2
     metric = (
         _metric_rows(mesh, request.metric)
@@ -1405,16 +1536,14 @@ def _resolve_constraints(
             (0, mesh.ambient_dimension, mesh.ambient_dimension), dtype=np.float64
         )
     )
-    if uniform_hierarchy is not None:
-        local_uniform = uniform_hierarchy.uniform_refinement
-        if local_uniform is None:
-            raise RuntimeError(
-                "Scientific class preparation lost its admitted original source owner."
-            )
+    local_uniform = science.uniform
+    if local_uniform is not None:
         uniform = local_uniform
         collective = source.collective_evidence
         if (
-            isinstance(collective, CollectiveMeshEvidence)
+            isinstance(
+                collective, _dependency_phydrax_meshing__result.CollectiveMeshEvidence
+            )
             and collective.uniform_refinement is not None
         ):
             collective_uniform = collective.uniform_refinement
@@ -1423,27 +1552,26 @@ def _resolve_constraints(
                 or collective_uniform.source.result_id != local_uniform.source.result_id
             ):
                 raise ValueError(
-                    "Collective scientific classes require the same genuine original "
-                    "uniform source."
+                    f"MeshAdaptation.collective_uniform_refinement must retain the same source and dimension as local uniform lineage; got {(collective_uniform.dimension, collective_uniform.source.result_id)!r}"
                 )
             uniform = collective_uniform
         cell_classes = _uniform_cell_scientific_classes(source, uniform, cell_classes)
         if not _uniform_class_declarations_match(uniform.source, source, dimension - 1):
             facet_classes += int(np.max(np.asarray(uniform.parent_facet_classes))) + 1
     return _AdaptationConstraints(
-        protected_edge_keys=entity_keys(mesh, 1)[protected_edges],
+        protected_edge_keys=entity_keys_owner.entity_keys(mesh, 1)[protected_edges],
         protected_edge_mask=protected_edges,
         protected_vertex_ids=protected_vertex_ids,
         fixed_vertex_mask=fixed,
         cell_classes=cell_classes,
         facet_classes=facet_classes,
         edge_classes=(
-            _feature_classes(_edge_classes(mesh, organization, cell_classes), edge_codes)
+            _feature_classes(edge_classes(mesh, organization, cell_classes), edge_codes)
             if surface
             else _feature_classes(
                 np.where(
-                    np.any(_membership(mesh, organization, 1), axis=1),
-                    1 + _row_classes(_membership(mesh, organization, 1)),
+                    np.any(membership(mesh, organization, 1), axis=1),
+                    1 + row_classes(membership(mesh, organization, 1)),
                     0,
                 ),
                 edge_codes,
@@ -1458,17 +1586,17 @@ def _feature_classes(classes: np.ndarray, cad_codes: np.ndarray, /) -> np.ndarra
     feature = (classes > 0) | (cad_codes > 0)
     result = np.zeros(classes.shape, dtype=np.int64)
     if np.any(feature):
-        result[feature] = 1 + _row_classes(np.column_stack((classes, cad_codes))[feature])
+        result[feature] = 1 + row_classes(np.column_stack((classes, cad_codes))[feature])
     return result
 
 
-def _cell_ids(mesh: CellMesh, /) -> np.ndarray:
-    return np.concatenate(
-        [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
-    )
-
-
-def _require_affine_geometry(source: CellMeshingResult, /) -> None:
+@checked
+def require_affine_geometry(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> None:
     """Refuse sources whose coordinate map is not the mesh's affine carrier.
 
     Routes without a geometry transition publish affine successors; a curved or
@@ -1476,89 +1604,410 @@ def _require_affine_geometry(source: CellMeshingResult, /) -> None:
     any work.
     """
 
-    if not is_affine_cell_geometry(source.mesh, source.geometry):
+    if not _dependency_phydrax_discretization__cell_geometry_transfer.is_affine_cell_geometry(
+        source.mesh, source.geometry, budget=budget
+    ):
         raise ValueError(
-            "This adaptation route has no geometry transition for a non-affine "
-            "source CellGeometrySpec, so its coordinate map would be lost; nested "
-            "simplex and mixed routes carry their supported coordinate maps."
+            f"MeshAdaptation.source_geometry must be affine when the route has no geometry transition for non-affine sources; got {source.geometry.geometry_layout_id!r}"
         )
 
 
 def _require_native_source(
-    source: CellMeshingResult,
-    transfer: BRepAssociationTransfer
-    | PlcAssociationTransfer
-    | ComposedAssociationTransfer
-    | SurfaceAssociationTransfer
-    | MappedReferenceAssociationTransfer
-    | ImplicitAssociationTransfer
-    | PeriodicAssociationTransfer
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    transfer: _dependency_phydrax_meshing__association.BRepAssociationTransfer
+    | _dependency_phydrax_meshing__association.PlcAssociationTransfer
+    | _dependency_phydrax_meshing__association_composition.ComposedAssociationTransfer
+    | _dependency_phydrax_meshing__association.SurfaceAssociationTransfer
+    | _dependency_phydrax_meshing__association.MappedReferenceAssociationTransfer
+    | _dependency_phydrax_meshing__implicit_association_transfer.ImplicitAssociationTransfer
+    | _dependency_phydrax_meshing_providers__native_periodic.PeriodicAssociationTransfer
     | None,
     /,
     *,
     nested: bool,
     plc_ancestry: bool = False,
+    source_preparation: _RouteSourcePreparation,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
 ) -> None:
     """Admit a native source; nested routes carry their supported coordinate maps."""
 
     if nested:
-        nested_geometry_degree(source.mesh, source.geometry)
+        _dependency_phydrax_discretization__cell_geometry_transfer.nested_geometry_degree(
+            source.mesh, source.geometry, budget=budget
+        )
     else:
         match source.geometry.exact_source:
             case (
-                ExactPowerCellGeometrySource()
-                | ExactPowerCellGeometryRestrictionSource()
-                | ExactPowerCellGeometryLinearActionSource() as power
+                _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometrySource()
+                | _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometryRestrictionSource()
+                | _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometryLinearActionSource() as power
             ):
-                power.prepare(source.geometry.coordinates)
-            case ExactPlcCellGeometrySource() | ExactPlcCellGeometryConvexSource() as plc:
+                power.prepare(source.geometry.coordinates, budget=budget)
+            case (
+                _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometrySource()
+                | _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometryConvexSource() as plc
+            ):
                 if not plc_ancestry:
                     raise ValueError(
-                        "This adaptation route has no transition carrying exact PLC source ancestry."
+                        f"MeshAdaptation.geometry_transition must carry PLC source ancestry on this route; got {source.result_id!r}"
                     )
-                plc.prepare(source.geometry.coordinates)
+                plc.prepare(source.geometry.coordinates, budget=budget)
+            case ExactAlgebraicCellGeometrySource():
+                raise ValueError(
+                    "MeshAdaptation.geometry_transition must carry algebraic source ancestry through a nested transition; got a nonnested route"
+                )
+            case exact_rational_geometry_owner.ExactRationalCellGeometrySource():
+                raise ValueError(
+                    "MeshAdaptation.geometry_transition must carry exact rational source ancestry through a nested transition; got a nonnested route"
+                )
             case None:
-                _require_affine_geometry(source)
+                require_affine_geometry(source, budget=budget)
             case invalid:
                 assert_never(invalid)
     if source.boundary is not None and not isinstance(
-        transfer, ImplicitAssociationTransfer
+        transfer,
+        _dependency_phydrax_meshing__implicit_association_transfer.ImplicitAssociationTransfer,
     ):
-        raise ValueError("Native adaptation requires an explicit boundary-model remap.")
+        raise ValueError(
+            f"MeshAdaptationPolicy.association_transfer must provide a boundary-model remap; got {type(transfer).__name__!r}"
+        )
     if source.attributes:
-        from ._layer_core import validate_layer_index_attributes
-
-        validate_layer_index_attributes(source)
-    if source.associations or isinstance(transfer, ImplicitAssociationTransfer):
+        _owner_phydrax_meshing__layer_core.validate_layer_index_attributes(source)
+    if source.associations or isinstance(
+        transfer,
+        _dependency_phydrax_meshing__implicit_association_transfer.ImplicitAssociationTransfer,
+    ):
         if transfer is None:
             raise ValueError(
-                "Geometry associations require the policy's association_transfer."
+                f"MeshAdaptationPolicy.association_transfer must be supplied for geometry associations; got {type(transfer).__name__!r}"
             )
-        transfer.source_associations(source)
+        match transfer:
+            case (
+                _dependency_phydrax_meshing__association.BRepAssociationTransfer()
+                | _dependency_phydrax_meshing__implicit_association_transfer.ImplicitAssociationTransfer()
+            ):
+                transfer.source_associations(source)
+            case _dependency_phydrax_meshing_providers__native_periodic.PeriodicAssociationTransfer():
+                transfer.source_associations(
+                    source,
+                    scope=scope,
+                    budget=budget,
+                    _prepared_source=source_preparation.periodic_proofs,
+                )
+            case _dependency_phydrax_meshing__association.PlcAssociationTransfer():
+                transfer.source_associations(
+                    source, _prepared_source=source_preparation.plc_proofs, budget=budget
+                )
+            case (
+                _dependency_phydrax_meshing__association_composition.ComposedAssociationTransfer()
+                | _dependency_phydrax_meshing__association.SurfaceAssociationTransfer()
+                | _dependency_phydrax_meshing__association.MappedReferenceAssociationTransfer()
+            ):
+                transfer.source_associations(source, budget=budget)
+            case invalid:
+                assert_never(invalid)
     if not source.coordinate_contract.is_orthonormal_cartesian:
-        raise ValueError("Native adaptation requires an orthonormal Cartesian frame.")
+        raise ValueError(
+            f"CellMeshingResult.coordinate_contract must be an orthonormal Cartesian frame; got {source.coordinate_contract.spatial_id!r}"
+        )
 
 
-def _check_marked_source(
-    source: CellMeshingResult, request: MarkedMeshAdaptation, /
-) -> None:
-    identifiers = _cell_ids(source.mesh)
-    marked = np.concatenate(
-        (np.asarray(request.refine_cell_ids), np.asarray(request.coarsen_cell_ids))
-    )
-    if not np.all(np.isin(marked, identifiers)):
-        raise ValueError("Marked cell IDs are not cells of the source mesh.")
-    if request.layer_columns is not None and not np.all(
-        np.isin(request.layer_columns.cell_ids, identifiers)
-    ):
-        raise ValueError("Layer column cell IDs must belong to the current source mesh.")
-
-
-def _check_route_request(
-    source: CellMeshingResult,
+def _validate_polyhedral_route(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
     request: MeshAdaptationRequest,
     policy: MeshAdaptationPolicy,
     /,
+    *,
+    source_preparation: _RouteSourcePreparation,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> None:
+    mesh = source.mesh
+    match request:
+        case _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralMeshAdaptation():
+            pass
+        case _:
+            raise TypeError(
+                f"MeshAdaptation.request must provide PolyhedralMeshAdaptation for NATIVE_POLYHEDRAL; got {type(request).__name__!r}"
+            )
+    if {block.cell_kind for block in mesh.blocks} != {
+        "polyhedron"
+    } or mesh.ambient_dimension != 3:
+        raise ValueError(
+            f"MeshAdaptation.source_mesh must contain packed 3D polyhedral cells for NATIVE_POLYHEDRAL; got {f'kinds={sorted((block.cell_kind for block in mesh.blocks))}, ambient_dimension={mesh.ambient_dimension}'!r}"
+        )
+    if mesh.periodic_topology is not None:
+        raise ValueError(
+            f"MeshAdaptation.source_mesh.periodic_topology must be absent until periodic face/site closure is implemented; got {mesh.periodic_topology is not None!r}"
+        )
+    regenerated = (
+        request.operation
+        is _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralAdaptationOperation.REGENERATE
+    )
+    if (
+        regenerated
+        and any(item.entity_dimension < 3 for item in organization_scopes(source))
+        and not source.associations
+    ):
+        raise ValueError(
+            f"MeshAdaptation.source.associations must cover organized regeneration source strata; got {len(source.associations)!r}"
+        )
+    if source.attributes or policy.distribution is not None:
+        raise ValueError(
+            f"MeshAdaptation.source must omit polyhedral attributes and distribution without a common-refinement transition; got {f'attributes={len(source.attributes)}, distribution={policy.distribution is not None}'!r}"
+        )
+    if regenerated and (source.associations or source.geometry.exact_source is not None):
+        _validate_polyhedral_regeneration_source(source, policy, budget=budget)
+    else:
+        _require_native_source(
+            source,
+            policy.association_transfer,
+            nested=False,
+            budget=budget,
+            scope=scope,
+            source_preparation=source_preparation,
+        )
+
+
+def _validate_polyhedral_regeneration_source(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    policy: MeshAdaptationPolicy,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> None:
+    if source.geometry.exact_source is None:
+        require_affine_geometry(source, budget=budget)
+    else:
+        source.geometry.exact_source.prepare(source.geometry.coordinates, budget=budget)
+    if (
+        source.boundary is not None
+        or not source.coordinate_contract.is_orthonormal_cartesian
+    ):
+        raise ValueError(
+            f"MeshAdaptation.source must provide a Cartesian PLC source for regeneration; got {source.result_id!r}"
+        )
+    if policy.association_transfer is not None:
+        raise ValueError(
+            f"MeshAdaptationPolicy.association_transfer must be absent when regeneration derives source-carrier associations; got {type(policy.association_transfer).__name__!r}"
+        )
+
+
+def _validate_surface_route(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    request: MeshAdaptationRequest,
+    policy: MeshAdaptationPolicy,
+    /,
+    *,
+    source_preparation: _RouteSourcePreparation,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> None:
+    match request:
+        case MetricMeshAdaptation() | RelocationMeshAdaptation():
+            pass
+        case _:
+            raise TypeError(
+                f"MeshAdaptation.request must provide a metric or relocation request for NATIVE_SURFACE_METRIC; got {type(request).__name__!r}"
+            )
+    mesh = source.mesh
+    if {block.cell_kind for block in mesh.blocks} != {
+        "triangle"
+    } or mesh.ambient_dimension != 3:
+        raise ValueError(
+            f"MeshAdaptation.source_mesh must contain embedded triangle blocks for NATIVE_SURFACE_METRIC; got {f'ambient_dimension={mesh.ambient_dimension}'!r}"
+        )
+    if (
+        request.coordinate_contract is None
+        or request.coordinate_contract.spatial_id != source.coordinate_contract.spatial_id
+    ):
+        raise ValueError(
+            f"MeshAdaptation.request.coordinate_contract must declare the source physical coordinate frame; got {(request.coordinate_contract.spatial_id if request.coordinate_contract is not None else None)!r}"
+        )
+    match policy.association_transfer:
+        case (
+            _dependency_phydrax_meshing__association.SurfaceAssociationTransfer() as transfer
+        ):
+            pass
+        case _:
+            raise ValueError(
+                f"MeshAdaptationPolicy.association_transfer must provide parametric source support for NATIVE_SURFACE_METRIC; got {type(policy.association_transfer).__name__!r}"
+            )
+    if policy.geometry_transition.reconstruction != "bounded_chart_deformation":
+        raise ValueError(
+            f"MeshAdaptationPolicy.geometry_transition.reconstruction must select bounded_chart_deformation for NATIVE_SURFACE_METRIC; got {policy.geometry_transition.reconstruction!r}"
+        )
+    if (
+        source.certification is None
+        or not source.certification.passed
+        or source.certification.request.fidelity_tolerance is None
+    ):
+        raise ValueError(
+            f"MeshAdaptation.source.certification must accept continuous source fidelity before surface adaptation; got {source.certification is not None!r}"
+        )
+    _require_native_source(
+        source,
+        transfer,
+        nested=True,
+        budget=budget,
+        scope=scope,
+        source_preparation=source_preparation,
+    )
+    _owner_phydrax_meshing__surface_association_transfer.source_associations(
+        transfer.support, source, budget=budget
+    )
+
+
+def _validate_bisection_route(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    request: MeshAdaptationRequest,
+    policy: MeshAdaptationPolicy,
+    /,
+    *,
+    source_preparation: _RouteSourcePreparation,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> None:
+    mesh = source.mesh
+    kinds = {block.cell_kind for block in mesh.blocks}
+    match request:
+        case MarkedMeshAdaptation():
+            pass
+        case _:
+            raise TypeError(
+                f"MeshAdaptation.request must provide marked bisection adaptation; got {type(request).__name__!r}"
+            )
+    if kinds != {"triangle"} and kinds != {"tetrahedron"}:
+        raise ValueError(
+            f"MeshAdaptation.source_mesh must contain triangle or tetrahedron blocks for bisection; got {sorted(kinds)!r}"
+        )
+    if mesh.periodic_topology is None:
+        if not isinstance(request.hierarchy, (BisectionHierarchy, type(None))):
+            raise TypeError(
+                f"MeshAdaptation.request.hierarchy must provide a bisection hierarchy for a nonperiodic source; got {type(request.hierarchy).__name__!r}"
+            )
+    elif policy.route is MeshAdaptationRoute.DEVICE_BISECTION:
+        raise ValueError(
+            f"MeshAdaptationPolicy.route must select host bisection for periodic orbit transactions; got {policy.route.name!r}"
+        )
+    elif policy.compatibility is BisectionCompatibility.CONFORMING_CLOSURE:
+        raise ValueError(
+            f"MeshAdaptationPolicy.compatibility must avoid CONFORMING_CLOSURE for periodic orbit bisection; got {policy.compatibility.name!r}"
+        )
+    _require_native_source(
+        source,
+        policy.association_transfer,
+        nested=True,
+        budget=budget,
+        scope=scope,
+        source_preparation=source_preparation,
+    )
+    check_marked_source(source, request)
+
+
+def _validate_mixed_route(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    request: MeshAdaptationRequest,
+    policy: MeshAdaptationPolicy,
+    /,
+    *,
+    source_preparation: _RouteSourcePreparation,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> None:
+    mesh = source.mesh
+    kinds = {block.cell_kind for block in mesh.blocks}
+    match request:
+        case MarkedMeshAdaptation(
+            hierarchy=_dependency_phydrax_meshing__mixed_adaptation.MixedAdaptationHierarchy()
+            | None
+        ):
+            pass
+        case _:
+            raise TypeError(
+                f"MeshAdaptation.request must provide marked mixed-template adaptation with its mixed hierarchy; got {type(request).__name__!r}"
+            )
+    match (mesh.topological_dimension, mesh.ambient_dimension):
+        case (2, 2):
+            if kinds != {"quadrilateral"}:
+                raise ValueError(
+                    f"MeshAdaptation.source_mesh must contain quadrilateral blocks for planar NATIVE_MIXED; got {sorted(kinds)!r}"
+                )
+            if request.layer_columns is not None:
+                raise ValueError(
+                    f"MeshAdaptation.request.layer_columns must be absent for planar quad adaptation; got {request.layer_columns is not None!r}"
+                )
+        case (3, 3):
+            if not kinds <= {"tetrahedron", "hexahedron", "prism", "pyramid"}:
+                raise ValueError(
+                    f"MeshAdaptation.source_mesh must contain tetrahedron, hexahedron, prism, or pyramid blocks for 3D NATIVE_MIXED; got {sorted(kinds)!r}"
+                )
+        case _:
+            raise ValueError(
+                f"MeshAdaptation.source_mesh must contain certified planar quads or supported 3D cells for NATIVE_MIXED; got {(mesh.topological_dimension, mesh.ambient_dimension)!r}"
+            )
+    _require_native_source(
+        source,
+        policy.association_transfer,
+        nested=True,
+        budget=budget,
+        scope=scope,
+        source_preparation=source_preparation,
+    )
+    check_marked_source(source, request)
+
+
+def _validate_hp_route(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    request: MeshAdaptationRequest,
+    policy: MeshAdaptationPolicy,
+    /,
+    *,
+    source_preparation: _RouteSourcePreparation,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> None:
+    mesh = source.mesh
+    match request:
+        case MarkedMeshAdaptation(hierarchy=FiniteElementHPEpoch() as epoch):
+            pass
+        case _:
+            raise TypeError(
+                f"MeshAdaptation.request must provide a marked request with its hp epoch; got {type(request).__name__!r}"
+            )
+    if epoch.mesh.mesh_id != mesh.mesh_id:
+        raise ValueError(
+            f"MeshAdaptation.request.hierarchy must describe the source mesh revision; got {epoch.mesh.mesh_id!r}"
+        )
+    if request.refine_cell_ids.size and request.coarsen_cell_ids.size:
+        raise ValueError(
+            f"MeshAdaptation.request must either refine or coarsen in one HP adaptation; got {f'refine_count={request.refine_cell_ids.size}, coarsen_count={request.coarsen_cell_ids.size}'!r}"
+        )
+    if source.patches or source.zones or source.labels:
+        raise ValueError(
+            f"MeshAdaptation.source must omit organization for HP adaptation; got {f'patches={len(source.patches)}, zones={len(source.zones)}, labels={len(source.labels)}'!r}"
+        )
+    _require_native_source(
+        source,
+        None,
+        nested=False,
+        budget=budget,
+        scope=scope,
+        source_preparation=source_preparation,
+    )
+    check_marked_source(source, request)
+
+
+def _check_route_request(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    request: MeshAdaptationRequest,
+    policy: MeshAdaptationPolicy,
+    /,
+    *,
+    source_preparation: _RouteSourcePreparation,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
 ) -> None:
     mesh = source.mesh
     kinds = {block.cell_kind for block in mesh.blocks}
@@ -1567,280 +2016,276 @@ def _check_route_request(
         and request.layer_columns is not None
         and policy.route is not MeshAdaptationRoute.NATIVE_MIXED
     ):
-        raise ValueError("Layer columns are admitted only by NATIVE_MIXED.")
+        raise ValueError(
+            f"MeshAdaptationPolicy.route must select NATIVE_MIXED when layer columns are supplied; got {policy.route.name!r}"
+        )
     match policy.route:
         case MeshAdaptationRoute.NATIVE_BISECTION | MeshAdaptationRoute.DEVICE_BISECTION:
-            if not isinstance(request, MarkedMeshAdaptation):
-                raise TypeError(
-                    f"{policy.route.name} requires a marked bisection request."
-                )
-            if kinds != {"triangle"} and kinds != {"tetrahedron"}:
-                raise ValueError("Bisection requires triangle or tetrahedron blocks.")
-            if mesh.periodic_topology is None:
-                if not isinstance(request.hierarchy, (BisectionHierarchy, type(None))):
-                    raise TypeError(
-                        "Nonperiodic bisection requires its bisection hierarchy."
-                    )
-            elif policy.route is MeshAdaptationRoute.DEVICE_BISECTION:
-                raise ValueError(
-                    "Periodic orbit transactions are implemented on the host route."
-                )
-            elif policy.compatibility is BisectionCompatibility.CONFORMING_CLOSURE:
-                raise ValueError(
-                    "Periodic orbit bisection owns its quotient closure and consumes no "
-                    "Maubach labels; CONFORMING_CLOSURE applies to nonperiodic sources."
-                )
-            _require_native_source(source, policy.association_transfer, nested=True)
-            _check_marked_source(source, request)
+            _validate_bisection_route(
+                source,
+                request,
+                policy,
+                budget=budget,
+                scope=scope,
+                source_preparation=source_preparation,
+            )
         case MeshAdaptationRoute.NATIVE_MIXED:
-            if not isinstance(request, MarkedMeshAdaptation) or not isinstance(
-                request.hierarchy, (MixedAdaptationHierarchy, type(None))
-            ):
-                raise TypeError("NATIVE_MIXED requires marked mixed-template adaptation.")
-            match (mesh.topological_dimension, mesh.ambient_dimension):
-                case (2, 2):
-                    if kinds != {"quadrilateral"}:
-                        raise ValueError(
-                            "NATIVE_MIXED in 2D requires quadrilateral blocks."
-                        )
-                    if request.layer_columns is not None:
-                        raise ValueError(
-                            "Planar quad adaptation has no axial layer columns."
-                        )
-                case (3, 3):
-                    if not kinds <= {"tetrahedron", "hexahedron", "prism", "pyramid"}:
-                        raise ValueError(
-                            "NATIVE_MIXED in 3D requires tetrahedron, hexahedron, prism, or pyramid blocks."
-                        )
-                case _:
-                    raise ValueError(
-                        "NATIVE_MIXED requires certified planar quads or supported 3D cells."
-                    )
-            _require_native_source(source, policy.association_transfer, nested=True)
-            _check_marked_source(source, request)
+            _validate_mixed_route(
+                source,
+                request,
+                policy,
+                budget=budget,
+                scope=scope,
+                source_preparation=source_preparation,
+            )
         case MeshAdaptationRoute.NATIVE_GEOMETRY_REALIZATION:
-            if not isinstance(request, GeometryRealizationMeshAdaptation):
-                raise TypeError(
-                    "NATIVE_GEOMETRY_REALIZATION requires GeometryRealizationMeshAdaptation."
-                )
-            from ._geometry_realization import validate_geometry_realization_adaptation
+            match request:
+                case GeometryRealizationMeshAdaptation():
+                    pass
+                case _:
+                    raise TypeError(
+                        f"MeshAdaptation.request must provide GeometryRealizationMeshAdaptation for NATIVE_GEOMETRY_REALIZATION; got {type(request).__name__!r}"
+                    )
 
-            validate_geometry_realization_adaptation(source, request, policy)
+            _owner_phydrax_meshing__geometry_realization.validate_geometry_realization_adaptation(
+                source, request, policy
+            )
         case MeshAdaptationRoute.NATIVE_POLYHEDRAL:
-            if not isinstance(request, PolyhedralMeshAdaptation):
-                raise TypeError("NATIVE_POLYHEDRAL requires PolyhedralMeshAdaptation.")
-            if kinds != {"polyhedron"} or mesh.ambient_dimension != 3:
-                raise ValueError("NATIVE_POLYHEDRAL requires packed 3D polyhedral cells.")
-            if mesh.periodic_topology is not None:
-                raise ValueError(
-                    "NATIVE_POLYHEDRAL requires implemented periodic face/site closure."
-                )
-            regenerated = request.operation is PolyhedralAdaptationOperation.REGENERATE
-            if (
-                regenerated
-                and any(
-                    scope.entity_dimension < 3 for scope in _organization_scopes(source)
-                )
-                and not source.associations
-            ):
-                raise ValueError(
-                    "Organized regeneration requires authoritative source-stratum associations."
-                )
-            if source.attributes or policy.distribution is not None:
-                raise ValueError(
-                    "Polyhedral attributes and distribution require an explicit "
-                    "common-refinement transition."
-                )
-            if regenerated and (
-                source.associations or source.geometry.exact_source is not None
-            ):
-                if source.geometry.exact_source is None:
-                    _require_affine_geometry(source)
-                else:
-                    source.geometry.exact_source.prepare(source.geometry.coordinates)
-                if (
-                    source.boundary is not None
-                    or not source.coordinate_contract.is_orthonormal_cartesian
-                ):
-                    raise ValueError(
-                        "Polyhedral regeneration requires its represented Cartesian PLC source."
-                    )
-                if policy.association_transfer is not None:
-                    raise ValueError(
-                        "Polyhedral regeneration derives associations from its source carrier, not a projection transfer."
-                    )
-            else:
-                _require_native_source(source, policy.association_transfer, nested=False)
+            _validate_polyhedral_route(
+                source,
+                request,
+                policy,
+                budget=budget,
+                scope=scope,
+                source_preparation=source_preparation,
+            )
         case MeshAdaptationRoute.NATIVE_METRIC_2D | MeshAdaptationRoute.DEVICE_METRIC_2D:
-            if not isinstance(request, (MetricMeshAdaptation, RelocationMeshAdaptation)):
-                raise TypeError(
-                    f"{policy.route.name} requires a metric or relocation request."
-                )
+            match request:
+                case MetricMeshAdaptation() | RelocationMeshAdaptation():
+                    pass
+                case _:
+                    raise TypeError(
+                        f"MeshAdaptation.request must provide a metric or relocation request; got {type(request).__name__!r}"
+                    )
             if kinds != {"triangle"} or mesh.ambient_dimension != 2:
-                raise ValueError(f"{policy.route.name} requires planar triangle blocks.")
-            _require_native_source(source, policy.association_transfer, nested=False)
-        case MeshAdaptationRoute.NATIVE_METRIC_3D:
-            if not isinstance(request, (MetricMeshAdaptation, RelocationMeshAdaptation)):
-                raise TypeError(
-                    "NATIVE_METRIC_3D requires a metric or relocation request."
-                )
-            if kinds != {"tetrahedron"} or mesh.ambient_dimension != 3:
-                raise ValueError("NATIVE_METRIC_3D requires tetrahedron blocks in 3D.")
-            if mesh.periodic_topology is not None:
                 raise ValueError(
-                    "NATIVE_METRIC_3D requires an orbit-synchronized transaction "
-                    "for periodic source topology."
+                    f"MeshAdaptation.source_mesh must contain planar triangle blocks for the requested metric route; got {(sorted(kinds), mesh.ambient_dimension)!r}"
                 )
             _require_native_source(
-                source, policy.association_transfer, nested=False, plc_ancestry=True
+                source,
+                policy.association_transfer,
+                nested=False,
+                budget=budget,
+                scope=scope,
+                source_preparation=source_preparation,
+            )
+        case MeshAdaptationRoute.NATIVE_METRIC_3D:
+            match request:
+                case MetricMeshAdaptation() | RelocationMeshAdaptation():
+                    pass
+                case _:
+                    raise TypeError(
+                        f"MeshAdaptation.request must provide a metric or relocation request; got {type(request).__name__!r}"
+                    )
+            if kinds != {"tetrahedron"} or mesh.ambient_dimension != 3:
+                raise ValueError(
+                    f"MeshAdaptation.source_mesh must contain tetrahedron blocks in 3D for NATIVE_METRIC_3D; got {(sorted(kinds), mesh.ambient_dimension)!r}"
+                )
+            if mesh.periodic_topology is not None:
+                raise ValueError(
+                    f"MeshAdaptation.source_mesh.periodic_topology must be absent without an orbit-synchronized 3D metric transaction; got {mesh.periodic_topology is not None!r}"
+                )
+            _require_native_source(
+                source,
+                policy.association_transfer,
+                nested=False,
+                plc_ancestry=True,
+                budget=budget,
+                scope=scope,
+                source_preparation=source_preparation,
             )
         case MeshAdaptationRoute.NATIVE_SURFACE_METRIC:
-            from ._surface_association_transfer import source_associations
-
-            if not isinstance(request, (MetricMeshAdaptation, RelocationMeshAdaptation)):
-                raise TypeError(
-                    "NATIVE_SURFACE_METRIC requires a metric or relocation request."
-                )
-            if kinds != {"triangle"} or mesh.ambient_dimension != 3:
-                raise ValueError(
-                    "NATIVE_SURFACE_METRIC requires embedded triangle blocks."
-                )
-            if (
-                request.coordinate_contract is None
-                or request.coordinate_contract.spatial_id
-                != source.coordinate_contract.spatial_id
-            ):
-                raise ValueError(
-                    "The surface metric must declare the exact source physical coordinate frame."
-                )
-            if not isinstance(policy.association_transfer, SurfaceAssociationTransfer):
-                raise ValueError(
-                    "NATIVE_SURFACE_METRIC requires original parametric source support."
-                )
-            if policy.geometry_transition.reconstruction != "bounded_chart_deformation":
-                raise ValueError(
-                    "NATIVE_SURFACE_METRIC requires bounded_chart_deformation geometry policy."
-                )
-            if (
-                source.certification is None
-                or not source.certification.passed
-                or source.certification.request.fidelity_tolerance is None
-            ):
-                raise ValueError(
-                    "NATIVE_SURFACE_METRIC requires accepted original continuous source fidelity."
-                )
-            _require_native_source(source, policy.association_transfer, nested=True)
-            source_associations(policy.association_transfer.support, source)
+            _validate_surface_route(
+                source,
+                request,
+                policy,
+                budget=budget,
+                scope=scope,
+                source_preparation=source_preparation,
+            )
         case MeshAdaptationRoute.NATIVE_LEVEL_SET:
-            if not isinstance(request, LevelSetMeshAdaptation):
-                raise TypeError("NATIVE_LEVEL_SET requires LevelSetMeshAdaptation.")
+            match request:
+                case _owner_phydrax_meshing__level_set.LevelSetMeshAdaptation():
+                    pass
+                case _:
+                    raise TypeError(
+                        f"MeshAdaptation.request must provide LevelSetMeshAdaptation for NATIVE_LEVEL_SET; got {type(request).__name__!r}"
+                    )
             if kinds != {"tetrahedron"} or mesh.ambient_dimension != 3:
-                raise ValueError("NATIVE_LEVEL_SET requires tetrahedron blocks in 3D.")
-            _require_native_source(source, policy.association_transfer, nested=False)
+                raise ValueError(
+                    f"MeshAdaptation.source_mesh must contain tetrahedron blocks in 3D for NATIVE_LEVEL_SET; got {(sorted(kinds), mesh.ambient_dimension)!r}"
+                )
+            _require_native_source(
+                source,
+                policy.association_transfer,
+                nested=False,
+                budget=budget,
+                scope=scope,
+                source_preparation=source_preparation,
+            )
         case MeshAdaptationRoute.MMG | MeshAdaptationRoute.OMEGA_H:
-            if not isinstance(request, MetricMeshAdaptation):
-                raise TypeError("Provider routes require a metric request.")
-            _require_affine_geometry(source)
+            match request:
+                case MetricMeshAdaptation():
+                    pass
+                case _:
+                    raise TypeError(
+                        f"MeshAdaptation.request must provide a metric request for provider remeshing; got {type(request).__name__!r}"
+                    )
+            require_affine_geometry(source, budget=budget)
             if source.region_evidence is not None:
                 raise ValueError(
-                    "Provider remeshing has unknown lineage and cannot carry region evidence."
+                    f"MeshAdaptation.source.region_evidence must be absent when provider remeshing has unknown lineage; got {source.region_evidence is not None!r}"
                 )
             if isinstance(
                 policy.association_transfer,
-                (PlcAssociationTransfer, ComposedAssociationTransfer),
+                (
+                    _dependency_phydrax_meshing__association.PlcAssociationTransfer,
+                    _dependency_phydrax_meshing__association_composition.ComposedAssociationTransfer,
+                ),
             ):
                 raise ValueError(
-                    "PLC source transfer requires actual topology lineage; "
-                    "provider rederivation is unsupported."
+                    f"MeshAdaptationPolicy.association_transfer must use topology lineage rather than provider rederivation for PLC or surface sources; got {type(policy.association_transfer).__name__!r}"
                 )
-            if isinstance(policy.association_transfer, SurfaceAssociationTransfer):
+            if isinstance(
+                policy.association_transfer,
+                _dependency_phydrax_meshing__association.SurfaceAssociationTransfer,
+            ):
                 raise ValueError(
-                    "Parametric surface source transfer requires actual topology lineage; "
-                    "provider rederivation is unsupported."
+                    f"MeshAdaptationPolicy.association_transfer must use topology lineage rather than provider rederivation for PLC or surface sources; got {type(policy.association_transfer).__name__!r}"
                 )
         case MeshAdaptationRoute.HP:
-            if not isinstance(request, MarkedMeshAdaptation) or not isinstance(
-                request.hierarchy, FiniteElementHPEpoch
-            ):
-                raise TypeError("HP requires a marked request with its hp epoch.")
-            if request.hierarchy.mesh.mesh_id != mesh.mesh_id:
-                raise ValueError(
-                    "The hp epoch must describe the exact source mesh revision."
-                )
-            if request.refine_cell_ids.size and request.coarsen_cell_ids.size:
-                raise ValueError("One HP adaptation either refines or coarsens.")
-            if source.patches or source.zones or source.labels:
-                raise ValueError("HP adaptation cannot inherit mesh organization.")
-            _require_native_source(source, None, nested=False)
-            _check_marked_source(source, request)
+            _validate_hp_route(
+                source,
+                request,
+                policy,
+                budget=budget,
+                scope=scope,
+                source_preparation=source_preparation,
+            )
         case invalid:
             assert_never(invalid)
 
 
+def _prepared_adaptation_identity(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    request: MeshAdaptationRequest,
+    policy: MeshAdaptationPolicy,
+    /,
+) -> str:
+    payload: dict[str, object] = {
+        "kind": "prepared-mesh-adaptation",
+        "source": source.result_id,
+        "request": request.request_id,
+        "policy": policy.policy_id,
+    }
+    if source.mesh.storage is None and policy.route in (
+        MeshAdaptationRoute.NATIVE_BISECTION,
+        MeshAdaptationRoute.NATIVE_MIXED,
+    ):
+        payload["source_certificates"] = (
+            cell_predecessor_owner.cell_certificate_source_content_id(
+                source.mesh,
+                source.geometry,
+                source.audit.validity,
+                None if source.certification is None else source.certification.embedding,
+            )
+        )
+    return canonical_fingerprint(payload)
+
+
 @final
 class PreparedMeshAdaptation(StrictModule, NonTrainableState):
-    """One request bound to one exact source revision under one policy."""
+    """Bind a request to a source revision under one policy."""
 
-    source: CellMeshingResult
+    source: _dependency_phydrax_meshing__result.CellMeshingResult
     request: MeshAdaptationRequest
     policy: MeshAdaptationPolicy
     constraints: _AdaptationConstraints
     prepared_id: str = eqx.field(static=True)
+    periodic_source_proofs: tuple[
+        _dependency_phydrax_meshing_providers__native_periodic._PeriodicSourceAssociationPreparation,
+        ...,
+    ]
+    periodic_source_receipt: (
+        _dependency_phydrax_meshing_providers__native_periodic._PeriodicSourceAssociationReceipt
+        | None
+    )
 
+    @checked
     def __init__(
         self,
-        source: CellMeshingResult,
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
         request: MeshAdaptationRequest,
         policy: MeshAdaptationPolicy,
         constraints: _AdaptationConstraints,
         /,
+        *,
+        periodic_source_proofs: tuple[
+            _dependency_phydrax_meshing_providers__native_periodic._PeriodicSourceAssociationPreparation,
+            ...,
+        ] = (),
+        periodic_source_receipt: _dependency_phydrax_meshing_providers__native_periodic._PeriodicSourceAssociationReceipt
+        | None = None,
     ) -> None:
         self.source = source
         self.request = request
         self.policy = policy
         self.constraints = constraints
-        self.prepared_id = canonical_fingerprint(
-            {
-                "kind": "prepared-mesh-adaptation",
-                "source": source.result_id,
-                "request": request.request_id,
-                "policy": policy.policy_id,
-            }
+        self.prepared_id = _prepared_adaptation_identity(source, request, policy)
+        self.periodic_source_proofs = periodic_source_proofs
+        self.periodic_source_receipt = periodic_source_receipt
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[PreparedMeshAdaptation], value: PreparedMeshAdaptation, /
+    ) -> PreparedMeshAdaptation:
+        """Authenticate retained preparation without repeating charged native work."""
+        _validate_prepared_constraint_bindings(value)
+        rebuilt = cls(
+            value.source,
+            value.request,
+            value.policy,
+            value.constraints,
+            periodic_source_proofs=value.periodic_source_proofs,
+            periodic_source_receipt=value.periodic_source_receipt,
         )
+        for member in dataclasses.fields(value):
+            if not tree_content_equal(
+                getattr(rebuilt, member.name), getattr(value, member.name)
+            ):
+                raise ValueError(
+                    f"PreparedMeshAdaptation.{member.name} must match retained preparation; got changed stored content"
+                )
+        return rebuilt
 
 
-def prepare_mesh_adaptation(
-    source: CellMeshingResult,
-    request: MeshAdaptationRequest,
-    /,
-    *,
-    policy: MeshAdaptationPolicy,
-) -> PreparedMeshAdaptation:
-    """Validate the route/request pairing and resolve protection and organization."""
-
-    if not isinstance(source, CellMeshingResult):
-        raise TypeError("source must be CellMeshingResult.")
-    if not isinstance(
-        request,
-        (
-            MarkedMeshAdaptation,
-            MetricMeshAdaptation,
-            RelocationMeshAdaptation,
-            LevelSetMeshAdaptation,
-            PolyhedralMeshAdaptation,
-            GeometryRealizationMeshAdaptation,
-        ),
-    ):
-        raise TypeError("request must be a typed mesh-adaptation request.")
-    if not isinstance(policy, MeshAdaptationPolicy):
-        raise TypeError("policy must be MeshAdaptationPolicy.")
-    source.audit.require_passed()
-    _check_route_request(source, request, policy)
-    if policy.distribution is not None:
-        policy.distribution.require_current(
-            MeshPart(policy.distribution.part.name, source)
-        )
-    match policy.route:
+def _validate_prepared_constraint_bindings(value: PreparedMeshAdaptation, /) -> None:
+    """Validate stored host constraints against retained topology and metric inputs."""
+    mesh = value.source.mesh
+    constraints = value.constraints
+    match value.policy.route:
+        case (
+            MeshAdaptationRoute.MMG
+            | MeshAdaptationRoute.OMEGA_H
+            | MeshAdaptationRoute.HP
+            | MeshAdaptationRoute.NATIVE_GEOMETRY_REALIZATION
+        ):
+            if not tree_content_equal(constraints, _empty_constraints(mesh)):
+                raise ValueError(
+                    "PreparedMeshAdaptation.constraints must match the empty route binding; got different stored arrays"
+                )
+            return
         case (
             MeshAdaptationRoute.NATIVE_BISECTION
             | MeshAdaptationRoute.NATIVE_METRIC_2D
@@ -1852,31 +2297,166 @@ def prepare_mesh_adaptation(
             | MeshAdaptationRoute.DEVICE_BISECTION
             | MeshAdaptationRoute.DEVICE_METRIC_2D
         ):
-            constraints = _resolve_constraints(source, request, policy)
-        case (
-            MeshAdaptationRoute.MMG
-            | MeshAdaptationRoute.OMEGA_H
-            | MeshAdaptationRoute.HP
-            | MeshAdaptationRoute.NATIVE_GEOMETRY_REALIZATION
-        ):
-            for scope in policy.protected_scopes:
-                resolve_mesh_scope(source.mesh, scope)
-            constraints = _empty_constraints(source.mesh)
+            pass
         case invalid:
             assert_never(invalid)
-    prepared = PreparedMeshAdaptation(source, request, policy, constraints)
-    if policy.route is MeshAdaptationRoute.NATIVE_LEVEL_SET:
-        from ._level_set import validate_level_set_adaptation
-
-        validate_level_set_adaptation(prepared)
-    if (
-        policy.route is MeshAdaptationRoute.NATIVE_BISECTION
-        and source.mesh.periodic_topology is not None
+    dimension = mesh.topological_dimension
+    edge_count = mesh.entity_set(1).count
+    vertex_count = mesh.coordinates.shape[0]
+    for name, shape, dtype in (
+        ("protected_edge_mask", (edge_count,), np.dtype(np.bool_)),
+        ("fixed_vertex_mask", (vertex_count,), np.dtype(np.bool_)),
+        ("cell_classes", (mesh.entity_set(dimension).count,), np.dtype(np.int64)),
+        ("facet_classes", (mesh.entity_set(dimension - 1).count,), np.dtype(np.int64)),
+        ("edge_classes", (edge_count,), np.dtype(np.int64)),
     ):
-        from ._periodic import validate_periodic_bisection
+        array = getattr(constraints, name)
+        if (
+            not isinstance(array, np.ndarray)
+            or array.shape != shape
+            or array.dtype != dtype
+        ):
+            raise ValueError(
+                f"PreparedMeshAdaptation.constraints.{name} must match source shape {shape} and dtype {dtype}; got incompatible stored array"
+            )
+        if dtype == np.dtype(np.int64) and np.any(array < 0):
+            raise ValueError(
+                f"PreparedMeshAdaptation.constraints.{name} must contain nonnegative class identities; got negative values"
+            )
+    expected_edges = entity_keys_owner.entity_keys(mesh, 1)[
+        constraints.protected_edge_mask
+    ]
+    if not tree_content_equal(constraints.protected_edge_keys, expected_edges):
+        raise ValueError(
+            "PreparedMeshAdaptation.constraints.protected_edge_keys must match the source edge mask; got changed keys"
+        )
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    selected = np.isin(vertex_ids, constraints.protected_vertex_ids)
+    if not tree_content_equal(
+        constraints.protected_vertex_ids, vertex_ids[selected]
+    ) or np.any(selected & ~constraints.fixed_vertex_mask):
+        raise ValueError(
+            "PreparedMeshAdaptation.constraints.protected_vertex_ids must select fixed source vertices in source order; got incompatible IDs or mask"
+        )
+    metric = (
+        _metric_rows(mesh, value.request.metric)
+        if isinstance(value.request, (MetricMeshAdaptation, RelocationMeshAdaptation))
+        else np.zeros(
+            (0, mesh.ambient_dimension, mesh.ambient_dimension), dtype=np.float64
+        )
+    )
+    if not tree_content_equal(constraints.metric_values, metric):
+        raise ValueError(
+            "PreparedMeshAdaptation.constraints.metric_values must match the retained metric request; got changed values"
+        )
 
-        validate_periodic_bisection(prepared)
-    return prepared
+
+@checked
+def prepare_mesh_adaptation(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    request: MeshAdaptationRequest,
+    /,
+    *,
+    policy: MeshAdaptationPolicy,
+) -> PreparedMeshAdaptation:
+    """Validate the route/request pairing and resolve protection and organization."""
+    # Lazy: wrapping uses native volume generation.
+    from ._surface_envelope import _surface_envelope_repair_payload
+
+    limits = policy.limits
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        initial = scope.batch(0)
+        budget = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        initial.settle()
+        with budget.retained_storage(lambda amount: scope.batch(0, bytes_upper=amount)):
+            with adaptation_phase(scope, budget):
+                with _surface_envelope_repair_payload(source, budget=budget):
+                    source.audit.require_passed()
+                source_preparation = _RouteSourcePreparation([], [])
+                _check_route_request(
+                    source,
+                    request,
+                    policy,
+                    budget=budget,
+                    scope=scope,
+                    source_preparation=source_preparation,
+                )
+                if policy.distribution is not None:
+                    policy.distribution.require_current(
+                        mesh_part_owner.MeshPart(policy.distribution.part.name, source)
+                    )
+                match policy.route:
+                    case (
+                        MeshAdaptationRoute.NATIVE_BISECTION
+                        | MeshAdaptationRoute.NATIVE_METRIC_2D
+                        | MeshAdaptationRoute.NATIVE_METRIC_3D
+                        | MeshAdaptationRoute.NATIVE_SURFACE_METRIC
+                        | MeshAdaptationRoute.NATIVE_LEVEL_SET
+                        | MeshAdaptationRoute.NATIVE_MIXED
+                        | MeshAdaptationRoute.NATIVE_POLYHEDRAL
+                        | MeshAdaptationRoute.DEVICE_BISECTION
+                        | MeshAdaptationRoute.DEVICE_METRIC_2D
+                    ):
+                        constraints = _resolve_constraints(
+                            source,
+                            request,
+                            policy,
+                            budget=budget,
+                            scope=scope,
+                            source_preparation=source_preparation,
+                        )
+                    case (
+                        MeshAdaptationRoute.MMG
+                        | MeshAdaptationRoute.OMEGA_H
+                        | MeshAdaptationRoute.HP
+                        | MeshAdaptationRoute.NATIVE_GEOMETRY_REALIZATION
+                    ):
+                        for protected_scope in policy.protected_scopes:
+                            _dependency_phydrax_meshing__scope.resolve_mesh_scope(
+                                source.mesh, protected_scope
+                            )
+                        constraints = _empty_constraints(source.mesh)
+                    case invalid:
+                        assert_never(invalid)
+                prepared = PreparedMeshAdaptation(
+                    source,
+                    request,
+                    policy,
+                    constraints,
+                    periodic_source_proofs=tuple(source_preparation.periodic_proofs),
+                )
+                if policy.route is MeshAdaptationRoute.NATIVE_LEVEL_SET:
+                    _owner_phydrax_meshing__level_set.validate_level_set_adaptation(
+                        prepared, budget=budget
+                    )
+                if (
+                    policy.route is MeshAdaptationRoute.NATIVE_BISECTION
+                    and source.mesh.periodic_topology is not None
+                ):
+                    _owner_phydrax_meshing__periodic.validate_periodic_bisection(
+                        prepared, budget=budget
+                    )
+        checked_at = time.monotonic()
+        expires_at = checked_at + scope.remaining().remaining_seconds
+    if not prepared.periodic_source_proofs:
+        return prepared
+    receipt = _dependency_phydrax_meshing_providers__native_periodic._PeriodicSourceAssociationReceipt(
+        prepared.periodic_source_proofs,
+        NativeExecutionRecord(scope.completed_evidence(), owner_id=prepared.prepared_id),
+        expires_at,
+    )
+    return PreparedMeshAdaptation(
+        source,
+        request,
+        policy,
+        constraints,
+        periodic_source_proofs=prepared.periodic_source_proofs,
+        periodic_source_receipt=receipt,
+    )
 
 
 def _empty_constraints(mesh: CellMesh, /) -> _AdaptationConstraints:
@@ -1893,14 +2473,14 @@ def _empty_constraints(mesh: CellMesh, /) -> _AdaptationConstraints:
     )
 
 
-MeshAdaptationEvidence: TypeAlias = (
+type MeshAdaptationEvidence = (
     BisectionEvidence
     | LocalMetricEvidence
     | DeviceMetricEvidence
     | MetricRemeshingEvidence
-    | LevelSetEvidence
-    | MixedAdaptationEvidence
-    | PolyhedralAdaptationEvidence
+    | _owner_phydrax_meshing__level_set.LevelSetEvidence
+    | _dependency_phydrax_meshing__mixed_adaptation.MixedAdaptationEvidence
+    | _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralAdaptationEvidence
     | CurvedGeometryEvidence
     | MmgAdaptationResult
     | OmegaHAdaptationResult
@@ -1917,9 +2497,9 @@ def _evidence_id(evidence: MeshAdaptationEvidence | None, /) -> str | None:
             | LocalMetricEvidence()
             | DeviceMetricEvidence()
             | MetricRemeshingEvidence()
-            | LevelSetEvidence()
-            | MixedAdaptationEvidence()
-            | PolyhedralAdaptationEvidence()
+            | _owner_phydrax_meshing__level_set.LevelSetEvidence()
+            | _dependency_phydrax_meshing__mixed_adaptation.MixedAdaptationEvidence()
+            | _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralAdaptationEvidence()
             | CurvedGeometryEvidence()
         ):
             return evidence.evidence_id
@@ -1935,48 +2515,54 @@ def _evidence_id(evidence: MeshAdaptationEvidence | None, /) -> str | None:
 
 @final
 class MeshAdaptationResult(StrictModule, NonTrainableState):
-    """Certified target of one executed adaptation with lineage and evidence.
+    """Certified adaptation target with lineage and execution evidence.
 
-    ``transition``, ``lineage``, ``stencil``, and ``transfer`` are absent when
-    the certified target remains the exact source. That source-preserving result
-    is ``UNCHANGED`` only when no requested work was refused and no convergence
-    criterion remains unmet; it may instead be ``PARTIAL``, ``STALLED``, or
-    ``PASS_LIMIT`` or ``RESOURCE_LIMIT``. Provider routes and nonnested polyhedral
-    vertices without interpolation ancestry have no nodal stencil or transfer.
-    ``transfer`` maps source vertex values to target vertex values when that
-    compatibility map exists; ``common_refinement`` carries the independently
-    certified geometric transfer of polyhedral cells. ``request`` is the exact
-    executed request, not inferred from route or target shape. ``metric`` is
-    target-bound, ``hierarchy`` continues marked adaptation, and elapsed wall time
-    is evidence outside ``result_id``.
+    A source-preserving result omits transition, lineage, stencil, and transfer.
+    Its status is UNCHANGED only if work was not refused and all convergence
+    criteria are met; otherwise PARTIAL, STALLED, PASS_LIMIT, or RESOURCE_LIMIT
+    report the unmet contract. Provider routes and nonnested polyhedral vertices
+    without interpolation ancestry have no nodal stencil or transfer.
+    The transfer maps source vertex values to target vertices when ancestry
+    supports that map. The common refinement carries certified geometric
+    transfer of polyhedral cells. The request records the executed transaction,
+    the metric is target-bound, and hierarchy continues marked adaptation.
+    Elapsed wall time is evidence outside result_id.
     """
 
     status: MeshAdaptationStatus = eqx.field(static=True)
     route: MeshAdaptationRoute = eqx.field(static=True)
     request: MeshAdaptationRequest
     policy: MeshAdaptationPolicy
-    source: CellMeshingResult
-    target: CellMeshingResult
-    transition: CellMeshTransition | None
-    lineage: MeshLineage | None
-    stencil: VertexInterpolationStencil | None
+    source: _dependency_phydrax_meshing__result.CellMeshingResult
+    target: _dependency_phydrax_meshing__result.CellMeshingResult
+    transition: _dependency_phydrax_meshing__lineage.CellMeshTransition | None
+    lineage: _dependency_phydrax_meshing__lineage_records.MeshLineage | None
+    stencil: (
+        _dependency_phydrax_meshing__lineage_records.VertexInterpolationStencil | None
+    )
     transfer: FiniteElementTopologyTransfer | None
-    metric: MeshMetricField | None
-    compliance: MeshingComplianceReport
+    metric: _dependency_phydrax_meshing__metric.MeshMetricField | None
+    compliance: _dependency_phydrax_meshing__result.MeshingComplianceReport
     evidence: MeshAdaptationEvidence | None
-    common_refinement: PreparedCommonRefinement | None
+    common_refinement: (
+        _dependency_phydrax_geometry__supermesh.PreparedCommonRefinement | None
+    )
     hierarchy: MeshAdaptationHierarchy
-    distribution: MeshDistributionTransition | None
+    distribution: (
+        _dependency_phydrax_meshing__distribution.MeshDistributionTransition | None
+    )
     elapsed_seconds: float = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         prepared: PreparedMeshAdaptation,
-        outcome: _RouteOutcome,
-        compliance: MeshingComplianceReport,
-        distribution: MeshDistributionTransition | None,
+        outcome: RouteOutcome,
+        compliance: _dependency_phydrax_meshing__result.MeshingComplianceReport,
+        distribution: _dependency_phydrax_meshing__distribution.MeshDistributionTransition
+        | None,
         elapsed_seconds: float,
         /,
     ) -> None:
@@ -1989,18 +2575,24 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
         )
         if source_preserved != absent:
             raise ValueError(
-                "A source-preserving adaptation has no transition or transfer evidence."
+                f"MeshAdaptationResult.transition must omit transition and transfer evidence when the source is preserved; got {(source_preserved, absent)!r}"
             )
         if outcome.status is MeshAdaptationStatus.UNCHANGED and not source_preserved:
-            raise ValueError("UNCHANGED must preserve the exact source result.")
+            raise ValueError(
+                f"MeshAdaptationResult.status must preserve the source result for UNCHANGED; got {outcome.target.result_id!r}"
+            )
         if outcome.transition is not None:
             if outcome.lineage is None:
-                raise ValueError("An adaptation transition requires its exact lineage.")
+                raise ValueError(
+                    f"MeshAdaptationResult.transition must retain its lineage; got {outcome.lineage!r}"
+                )
             if (
                 outcome.transition.target.result_id != outcome.target.result_id
                 or outcome.transition.lineage.lineage_id != outcome.lineage.lineage_id
             ):
-                raise ValueError("The transition must describe the certified target.")
+                raise ValueError(
+                    f"MeshAdaptationResult.transition must describe the certified target and its lineage; got {outcome.transition.target.result_id!r}"
+                )
         common = outcome.common_refinement
         if common is not None and (
             common.source_mesh_id != prepared.source.mesh.mesh_id
@@ -2009,7 +2601,7 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
             or common.target_topology_id != outcome.target.mesh.topology_id
         ):
             raise ValueError(
-                "Common refinement must bind the exact source and accepted target."
+                f"MeshAdaptationResult.common_refinement must bind the source and accepted target; got {(common.source_mesh_id, common.target_mesh_id)!r}"
             )
         self.status = outcome.status
         self.route = prepared.policy.route
@@ -2054,8 +2646,55 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[MeshAdaptationResult], value: MeshAdaptationResult, /
+    ) -> MeshAdaptationResult:
+        """Bind retained accepted transitions without executing another adaptation."""
+        collective = value.target.collective_evidence
+        match collective:
+            case _dependency_phydrax_meshing__result.CollectiveMeshEvidence(
+                preparation=prepared
+            ):
+                pass
+            case _:
+                prepared = prepare_mesh_adaptation(
+                    value.source, value.request, policy=value.policy
+                )
+        if prepared.prepared_id != value.prepared_id:
+            raise ValueError(
+                f"MeshAdaptationResult.prepared_id must match retained preparation; got {value.prepared_id!r}"
+            )
+        if value.route is not prepared.policy.route:
+            raise ValueError(
+                f"MeshAdaptationResult.route must match retained policy; got {value.route!r}"
+            )
+        outcome = RouteOutcome(
+            value.status,
+            value.target,
+            value.transition,
+            value.lineage,
+            value.stencil,
+            value.transfer,
+            value.metric,
+            value.evidence,
+            value.hierarchy,
+            value.common_refinement,
+        )
+        rebuilt = cls(
+            prepared, outcome, value.compliance, value.distribution, value.elapsed_seconds
+        )
+        if rebuilt.result_id != value.result_id:
+            raise ValueError(
+                f"MeshAdaptationResult.result_id must match retained transition; got {value.result_id!r}"
+            )
+        return rebuilt
+
     @property
-    def geometry_transition(self) -> CellGeometryTransition | None:
+    def geometry_transition(
+        self,
+    ) -> transition_types_owner.CellGeometryTransition | None:
         """How a non-affine source coordinate map reached the target, if any."""
 
         return None if self.transition is None else self.transition.geometry_transition
@@ -2063,21 +2702,22 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
     def _parent_ids(self) -> np.ndarray:
         transition = self.transition
         if transition is None or transition.parent_cell_ids is None:
-            raise ValueError("This adaptation has no nested parent witnesses.")
+            raise ValueError(
+                f"MeshAdaptationResult.transition must provide nested parent maps; got {self.route.name!r}"
+            )
         parents = np.asarray(transition.parent_cell_ids, dtype=np.int64)
         if np.any(parents < 0):
             raise ValueError(
-                "Coarsened target cells span several source cells and have no parent."
+                f"MeshAdaptationResult.transition must provide a single parent for each target cell; got {self.route.name!r}"
             )
         return parents
 
     @property
     def parent_cells(self) -> np.ndarray:
-        """Source cell row (concatenated block order) containing each target cell.
+        """Return the source row containing each target cell, in concatenated block order.
 
-        Target cells follow concatenated block order; this is the ``parent_cells``
-        witness of `prepare_nested_field_transfer`. Refused without a nested
-        refinement lineage or when a target cell was coarsened.
+        These are the parent_cells input to prepare_nested_field_transfer.
+        Refuse when refinement lineage is absent or a target cell was coarsened.
         """
 
         parents = self._parent_ids()
@@ -2094,30 +2734,28 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
         self._parent_ids()
         transition = self.transition
         if transition is None or transition.parent_reference_vertices is None:
-            raise ValueError("This adaptation has no nested parent witnesses.")
+            raise ValueError(
+                f"MeshAdaptationResult.transition must provide nested parent maps; got {self.route.name!r}"
+            )
         return np.asarray(transition.parent_reference_vertices, dtype=np.float64)
 
     @property
-    def coarsening_witnesses(self) -> NestedReferenceWitnesses | None:
-        """Owning fine-to-coarse charts, never inferred from geometric coincidence."""
+    def coarsening_witnesses(
+        self,
+    ) -> transition_types_owner.NestedReferenceWitnesses | None:
+        """Return retained fine-to-coarse charts from the coarsening transition."""
         transition = self.transition
         if transition is None:
             return None
         if (
             self.route is MeshAdaptationRoute.NATIVE_BISECTION
             and self.source.mesh.periodic_topology is not None
-            and transition.transition_kind is MeshTransitionKind.COARSEN
+            and transition.transition_kind
+            is _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.COARSEN
         ):
-            from ._periodic import periodic_coarsening_witnesses
-
-            return periodic_coarsening_witnesses(self)
+            return _owner_phydrax_meshing__periodic.periodic_coarsening_witnesses(self)
         if transition.coarsened_cell_ids is not None:
-            if (
-                transition.coarsened_into_ids is None
-                or transition.coarsened_reference_vertices is None
-            ):
-                raise RuntimeError("Coarsening transition lost its complete witness.")
-            return NestedReferenceWitnesses(
+            return transition_types_owner.NestedReferenceWitnesses(
                 np.asarray(transition.coarsened_cell_ids, dtype=np.int64),
                 np.asarray(transition.coarsened_into_ids, dtype=np.int64),
                 np.asarray(transition.coarsened_reference_vertices, dtype=np.float64),
@@ -2125,35 +2763,40 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
         geometry = transition.geometry_transition
         if geometry is None or geometry.coarsened_cell_ids.shape[0] == 0:
             return None
-        return NestedReferenceWitnesses(
+        return transition_types_owner.NestedReferenceWitnesses(
             np.asarray(geometry.coarsened_cell_ids, dtype=np.int64),
             np.asarray(geometry.coarsened_into_ids, dtype=np.int64),
             np.asarray(geometry.coarsened_reference_vertices, dtype=np.float64),
         )
 
 
-class _RouteOutcome(NamedTuple):
+class RouteOutcome(NamedTuple):
     status: MeshAdaptationStatus
-    target: CellMeshingResult
-    transition: CellMeshTransition | None
-    lineage: MeshLineage | None
-    stencil: VertexInterpolationStencil | None
+    target: _dependency_phydrax_meshing__result.CellMeshingResult
+    transition: _dependency_phydrax_meshing__lineage.CellMeshTransition | None
+    lineage: _dependency_phydrax_meshing__lineage_records.MeshLineage | None
+    stencil: (
+        _dependency_phydrax_meshing__lineage_records.VertexInterpolationStencil | None
+    )
     transfer: FiniteElementTopologyTransfer | None
-    metric: MeshMetricField | None
+    metric: _dependency_phydrax_meshing__metric.MeshMetricField | None
     evidence: MeshAdaptationEvidence | None
     hierarchy: MeshAdaptationHierarchy
-    common_refinement: PreparedCommonRefinement | None = None
+    common_refinement: (
+        _dependency_phydrax_geometry__supermesh.PreparedCommonRefinement | None
+    ) = None
 
 
-def _unchanged(
+@checked
+def unchanged(
     prepared: PreparedMeshAdaptation,
     evidence: MeshAdaptationEvidence | None,
     hierarchy: MeshAdaptationHierarchy,
     /,
     *,
     status: MeshAdaptationStatus = MeshAdaptationStatus.UNCHANGED,
-) -> _RouteOutcome:
-    return _RouteOutcome(
+) -> RouteOutcome:
+    return RouteOutcome(
         status, prepared.source, None, None, None, None, None, evidence, hierarchy
     )
 
@@ -2186,16 +2829,23 @@ def _p1_vertex_measures(mesh: CellMesh, /) -> np.ndarray:
 
 
 class _NativeTarget(NamedTuple):
-    target: CellMeshingResult
-    transition: CellMeshTransition
-    lineage: MeshLineage
-    stencil: VertexInterpolationStencil | None
+    target: _dependency_phydrax_meshing__result.CellMeshingResult
+    transition: _dependency_phydrax_meshing__lineage.CellMeshTransition
+    lineage: _dependency_phydrax_meshing__lineage_records.MeshLineage
+    stencil: (
+        _dependency_phydrax_meshing__lineage_records.VertexInterpolationStencil | None
+    )
     transfer: FiniteElementTopologyTransfer | None
 
 
 def _geometry_transition(
-    prepared: PreparedMeshAdaptation, edit: CellTopologyEdit, mesh: CellMesh, /
-) -> CellGeometryTransition | None:
+    prepared: PreparedMeshAdaptation,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    mesh: CellMesh,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> transition_types_owner.CellGeometryTransition | None:
     """Target coordinate map of a non-affine source through a nested edit.
 
     Simplex corner carriers keep publishing their affine successor. Mixed corner
@@ -2223,17 +2873,21 @@ def _geometry_transition(
             pass
         case "local_reconnection" | "relocation":
             raise ValueError(
-                "A non-nested edit cannot carry a non-affine source coordinate map."
+                f"MeshAdaptation.geometry_transition must have nested ancestry for a non-affine source coordinate map; got {prepared.policy.route.name!r}"
             )
         case operation:
             assert_never(operation)
-    degree = nested_geometry_degree(source.mesh, source.geometry)
+    degree = (
+        _dependency_phydrax_discretization__cell_geometry_transfer.nested_geometry_degree(
+            source.mesh, source.geometry, budget=budget
+        )
+    )
     layout = (
         CellGeometrySpec.affine(mesh)
         if mixed or degree == 1
-        else _straight_geometry(mesh, degree)
+        else _dependency_phydrax_meshing__curving.straight_geometry(mesh, degree)
     )
-    return transition_nested_cell_geometry(
+    return _dependency_phydrax_discretization__cell_geometry_transfer.transition_nested_cell_geometry(
         source.mesh,
         source.geometry,
         mesh,
@@ -2241,19 +2895,21 @@ def _geometry_transition(
         refinement=edit.refinement,
         coarsening=edit.coarsening,
         policy=prepared.policy.geometry_transition,
+        budget=budget,
     )
 
 
-def _region_boundary_transition(
-    source: CellMeshingResult,
+@checked
+def region_boundary_transition(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
     mesh: CellMesh,
-    lineage: MeshLineage,
-    patches: tuple[MeshPatch, ...],
-    zones: tuple[MeshZone, ...],
-    labels: tuple[MeshLabel, ...],
+    lineage: _dependency_phydrax_meshing__lineage_records.MeshLineage,
+    patches: tuple[_dependency_phydrax_meshing__organization.MeshPatch, ...],
+    zones: tuple[_dependency_phydrax_meshing__organization.MeshZone, ...],
+    labels: tuple[_dependency_phydrax_meshing__organization.MeshLabel, ...],
     /,
-) -> tuple[RegionBoundaryEvidence, ...]:
-    """Rebind source-volume controls by canonical declaration and lineage IDs."""
+) -> tuple[_dependency_phydrax_meshing__organization.RegionBoundaryEvidence, ...]:
+    """Rebind source-volume controls by declaration and lineage IDs."""
     if not source.region_boundary_evidence:
         return ()
     for evidence in source.region_boundary_evidence:
@@ -2261,28 +2917,36 @@ def _region_boundary_transition(
     target_zone_ids = {zone.zone_id for zone in zones}
     zone_ids: dict[str, str] = {}
     for zone in source.zones:
-        expected_zone = MeshZone(
+        expected_zone = _dependency_phydrax_meshing__organization.MeshZone(
             zone.name,
             zone.role,
-            inherit_scope(zone.scope, lineage, mesh, zone.name),
+            _dependency_phydrax_meshing__lineage.inherit_scope(
+                zone.scope, lineage, mesh, zone.name
+            ),
             material_id=zone.material_id,
             region_role=zone.region_role,
         )
         if expected_zone.zone_id not in target_zone_ids:
-            raise ValueError("A source region-boundary zone has no canonical successor.")
+            raise ValueError(
+                f"RegionBoundaryEvidence.zone must have a lineage successor; got {zone.zone_id!r}"
+            )
         zone_ids[zone.zone_id] = expected_zone.zone_id
     target_labels = {label.label_id: label for label in labels}
-    inherited_labels: dict[str, MeshLabel] = {}
+    inherited_labels: dict[str, _dependency_phydrax_meshing__organization.MeshLabel] = {}
     for evidence in source.region_boundary_evidence:
         original_label = evidence.boundary_label
         if original_label.label_id in inherited_labels:
             continue
-        expected_label = MeshLabel(
+        expected_label = _dependency_phydrax_meshing__organization.MeshLabel(
             original_label.name,
-            inherit_scope(original_label.scope, lineage, mesh, original_label.name),
+            _dependency_phydrax_meshing__lineage.inherit_scope(
+                original_label.scope, lineage, mesh, original_label.name
+            ),
         )
         if expected_label.label_id not in target_labels:
-            raise ValueError("A source region-boundary label has no canonical successor.")
+            raise ValueError(
+                f"RegionBoundaryEvidence.label must have a lineage successor; got {original_label.label_id!r}"
+            )
         inherited_labels[original_label.label_id] = target_labels[expected_label.label_id]
     source_patches = {patch.patch_id: patch for patch in source.patches}
     target_patch_ids = {patch.patch_id for patch in patches}
@@ -2292,9 +2956,11 @@ def _region_boundary_transition(
             if identifier in patch_ids:
                 continue
             original_patch = source_patches[identifier]
-            expected_patch = MeshPatch(
+            expected_patch = _dependency_phydrax_meshing__organization.MeshPatch(
                 original_patch.name,
-                inherit_scope(original_patch.scope, lineage, mesh, original_patch.name),
+                _dependency_phydrax_meshing__lineage.inherit_scope(
+                    original_patch.scope, lineage, mesh, original_patch.name
+                ),
                 connected=original_patch.connected,
                 adjacent_zone_ids=tuple(
                     zone_ids[value] for value in original_patch.adjacent_zone_ids
@@ -2303,11 +2969,11 @@ def _region_boundary_transition(
             )
             if expected_patch.patch_id not in target_patch_ids:
                 raise ValueError(
-                    "A source region-boundary patch has no canonical successor."
+                    f"RegionBoundaryEvidence.patch must have a lineage successor; got {identifier!r}"
                 )
             patch_ids[identifier] = expected_patch.patch_id
     renewed = tuple(
-        RegionBoundaryEvidence(
+        _dependency_phydrax_meshing__organization.RegionBoundaryEvidence(
             mesh,
             evidence.source_scope,
             evidence.source_region_id,
@@ -2334,8 +3000,7 @@ def _binary_parent_geometry_element(
     hierarchy: BisectionHierarchy,
     /,
 ) -> CellGeometryElement:
-    """Recover an actual retained parent action through authored binary halves."""
-    from ..discretization._cell_geometry import BarycentricCellGeometryElement
+    """Recover a retained parent action through authored binary halves."""
 
     records = {
         int(parent): index
@@ -2353,10 +3018,13 @@ def _binary_parent_geometry_element(
         if (
             source_id in visited
             or source_id not in predecessors
-            or not isinstance(element, BarycentricCellGeometryElement)
+            or not isinstance(
+                element,
+                _owner_phydrax_discretization__cell_geometry.BarycentricCellGeometryElement,
+            )
         ):
             raise ValueError(
-                "A coarsened P1 cell lost its actual retained binary parent action."
+                f"MeshAdaptation.geometry.parent_action must retain a binary parent action for coarsening; got {source_id!r}"
             )
         visited.add(source_id)
         parent = predecessors[source_id]
@@ -2372,56 +3040,28 @@ def _binary_parent_geometry_element(
                 positions = np.flatnonzero(parent_corners == identifier)
                 if positions.size != 1:
                     raise ValueError(
-                        "A binary coefficient action has foreign scientific parent support."
+                        f"MeshAdaptation.geometry.parent_support must use the declared binary coefficient parent support; got {source_id!r}"
                     )
                 expected[row, positions[0]] = 0.5 if vertex == midpoint else 1.0
         if not np.array_equal(np.asarray(element.barycentric_weights), expected):
             raise ValueError(
-                "A coarsened P1 cell changed its authored binary coefficient action."
+                f"MeshAdaptation.geometry.parent_action must preserve the authored binary coefficient action; got {source_id!r}"
             )
         element, corners, source_id = element.source_element, parent_corners, parent
     return element
 
 
-def _full_p1_source_cells(
-    source: CellMeshingResult,
+def _original_full_p1_cells(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
     authority_mesh: CellMesh,
     authority_geometry: CellGeometrySpec,
-    elements: tuple[CellGeometryElement, ...],
-    routes: tuple[Array, ...],
+    original_elements: tuple[CellGeometryElement, ...],
+    original_routes: tuple[Array, ...],
     /,
     *,
     direct_authority: bool,
-    restored_authority: bool = False,
-) -> tuple[
-    dict[int, _FullP1SourceCell],
-    dict[int, _FullP1OriginalCell],
-    Array,
-    CoordinateSourceBank,
-]:
-    """Authenticate coefficient columns and original scientific cell owners.
-
-    A root's presentation owner is its explicitly retained authored source
-    block: the authority block itself for an authored/direct authority, or the
-    authority restriction record's ``block_source_blocks`` entry. ``None`` marks
-    a root whose authored owner block was never retained.
-    """
-    from ..discretization._cell_geometry import (
-        _require_full_p1_source,
-        BarycentricCellGeometryElement,
-        PolynomialComposedCellGeometryElement,
-    )
-    from ..discretization._coordinate_enclosure import prepared_coordinate_source_bank
-
+) -> dict[int, _FullP1OriginalCell]:
     origin = source.geometry.restriction_source
-    original_elements, original_routes, bank = authority_geometry.resolve(authority_mesh)
-    original_bank = prepared_coordinate_source_bank(authority_geometry)
-    current_bank = (
-        original_bank
-        if source.geometry.coordinates is authority_geometry.coordinates
-        and source.geometry.exact_source is authority_geometry.exact_source
-        else prepared_coordinate_source_bank(source.geometry)
-    )
     original_cells: dict[int, _FullP1OriginalCell] = {}
     restriction = authority_geometry.restriction_source
     retained_owners = None if restriction is None else restriction.block_source_blocks
@@ -2431,7 +3071,9 @@ def _full_p1_source_cells(
         original_routes,
         strict=True,
     ):
-        root = _require_full_p1_source(original_element)
+        root = _owner_phydrax_discretization__cell_geometry.require_full_p1_source(
+            original_element
+        )
         root_name: str | None = (
             original_block.name if direct_authority or origin is None else None
         )
@@ -2440,12 +3082,14 @@ def _full_p1_source_cells(
             while isinstance(
                 root,
                 (
-                    BarycentricCellGeometryElement,
-                    PolynomialComposedCellGeometryElement,
+                    _owner_phydrax_discretization__cell_geometry.BarycentricCellGeometryElement,
+                    _owner_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement,
                 ),
             ):
                 root = root.source_element
-            root = _require_full_p1_source(root)
+            root = _owner_phydrax_discretization__cell_geometry.require_full_p1_source(
+                root
+            )
         for original_row, identifier in enumerate(original_block.global_ids):
             root_identifier = (
                 int(identifier)
@@ -2472,32 +3116,95 @@ def _full_p1_source_cells(
                 np.asarray(root_corners, dtype=np.int64),
                 original_row,
             )
+    return original_cells
+
+
+def _full_p1_source_cells(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    authority_mesh: CellMesh,
+    authority_geometry: CellGeometrySpec,
+    elements: tuple[CellGeometryElement, ...],
+    routes: tuple[Array, ...],
+    /,
+    *,
+    direct_authority: bool,
+    restored_authority: bool = False,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[
+    dict[int, _FullP1SourceCell],
+    dict[int, _FullP1OriginalCell],
+    Array,
+    CoordinateSourceBank,
+]:
+    """Authenticate coefficient columns and retained scientific cell owners.
+
+    A root presentation belongs to its retained authored source block: the
+    supplied block for a direct source, or the restriction record's
+    block_source_blocks entry. None denotes a block owner that was not retained.
+    """
+
+    origin = source.geometry.restriction_source
+    original_elements, original_routes, bank = authority_geometry.resolve(
+        authority_mesh, budget=budget
+    )
+    original_bank = _owner_phydrax_discretization__coordinate_enclosure.prepared_coordinate_source_bank(
+        authority_geometry, budget=budget
+    )
+    current_bank = (
+        original_bank
+        if source.geometry.coordinates is authority_geometry.coordinates
+        and source.geometry.exact_source is authority_geometry.exact_source
+        else _owner_phydrax_discretization__coordinate_enclosure.prepared_coordinate_source_bank(
+            source.geometry, budget=budget
+        )
+    )
+    original_cells = _original_full_p1_cells(
+        source,
+        authority_mesh,
+        authority_geometry,
+        original_elements,
+        original_routes,
+        direct_authority=direct_authority,
+    )
     if (
         direct_authority
         and not restored_authority
         and origin is not None
         and (
-            origin.source_geometry_id != cell_geometry_id(authority_geometry)
+            origin.source_geometry_id
+            != _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                authority_geometry
+            )
             or origin.source_topology_id != authority_mesh.topology_id
         )
     ):
         raise ValueError(
-            "Full P1 actions lost their explicitly retained scientific source owner."
+            f"MeshAdaptation.source_geometry.restriction_source must retain the declared scientific source owner for full P1 actions; got {source.geometry.geometry_layout_id!r}"
         )
     source_cells: dict[int, _FullP1SourceCell] = {}
     for block, element, route in zip(source.mesh.blocks, elements, routes, strict=True):
-        if isinstance(element, PolynomialComposedCellGeometryElement):
+        if isinstance(
+            element,
+            _owner_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement,
+        ):
             root: CellGeometryElement = element
-            while isinstance(root, PolynomialComposedCellGeometryElement):
+            while isinstance(
+                root,
+                _owner_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement,
+            ):
                 root = root.source_element
-            _require_full_p1_source(root)
+            _owner_phydrax_discretization__cell_geometry.require_full_p1_source(root)
             if element.degree != 1 or element.cell_kind not in (
                 "triangle",
                 "tetrahedron",
             ):
-                raise ValueError("Exact full P1 charts must remain affine simplex maps.")
+                raise ValueError(
+                    f"MeshAdaptation.geometry.chart must remain an affine simplex map for full P1 actions; got {(element.cell_kind, element.degree)!r}"
+                )
         else:
-            element = _require_full_p1_source(element)
+            element = _owner_phydrax_discretization__cell_geometry.require_full_p1_source(
+                element
+            )
         for cell_index, (cell, vertices, coefficients) in enumerate(
             zip(block.global_ids, block.vertices, route, strict=True)
         ):
@@ -2513,20 +3220,20 @@ def _full_p1_source_cells(
             )
             if ancestor not in original_cells:
                 raise ValueError(
-                    "Full P1 action has an undeclared original scientific cell."
+                    f"MeshAdaptation.geometry.parent_cell must declare the scientific source cell; got {ancestor!r}"
                 )
             root_name, original_root, original_route, original_corners, original_row = (
                 original_cells[ancestor]
             )
             if not np.array_equal(corners, original_corners):
                 raise ValueError(
-                    "Full P1 action changed its original scientific corner columns."
+                    f"MeshAdaptation.geometry.parent_corners must preserve the scientific corner columns; got {ancestor!r}"
                 )
             if tuple(current_bank[int(index)] for index in coefficients) != tuple(
                 original_bank[int(index)] for index in original_route
             ):
                 raise ValueError(
-                    "Full P1 action changed its original scientific coefficient bank or route columns."
+                    f"MeshAdaptation.geometry.coefficients must preserve the scientific coefficient bank and route columns; got {ancestor!r}"
                 )
             source_cells[int(cell)] = (
                 element,
@@ -2541,16 +3248,15 @@ def _full_p1_source_cells(
     return source_cells, original_cells, bank, original_bank
 
 
-def _uniform_rational_p1_chart(
-    source_element: _FullP1Element,
+@checked
+def uniform_rational_p1_chart(
+    source_element: FullP1Element,
     barycentric_weights: tuple[tuple[Fraction, ...], ...],
     /,
-) -> _FullP1Element:
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> FullP1Element:
     """Encode one uniform-plus-binary action as an exact rational chart."""
-    from ..discretization._cell_geometry import (
-        coordinate_lagrange_element,
-        PolynomialComposedCellGeometryElement,
-    )
 
     width = source_element.local_dof_count
     dimension = source_element.topological_dimension
@@ -2562,7 +3268,7 @@ def _uniform_rational_p1_chart(
         or any(sum(row, Fraction(0)) != 1 for row in barycentric_weights)
     ):
         raise ValueError(
-            "A uniform rational chart requires complete simplex barycentric rows."
+            f"MeshAdaptation.rational_chart must contain simplex barycentric rows; got {barycentric_weights!r}"
         )
     numerators = np.asarray(
         [
@@ -2578,24 +3284,31 @@ def _uniform_rational_p1_chart(
         ],
         dtype=object,
     )
-    return PolynomialComposedCellGeometryElement(
+    return _owner_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement(
         source_element,
-        coordinate_lagrange_element(source_element.cell_kind, 1),
+        _owner_phydrax_discretization__cell_geometry.coordinate_lagrange_element(
+            source_element.cell_kind, 1
+        ),
         numerators,
         denominators,
+        budget=budget,
     )
 
 
-def _apply_full_p1_action(
-    source_element: _FullP1Element, action: ArrayLike, /
-) -> _FullP1Element:
-    """Compose an exact affine simplex action with either supported P1 owner."""
-    from ..discretization._cell_geometry import (
-        BarycentricCellGeometryElement,
-        PolynomialComposedCellGeometryElement,
-    )
+@checked
+def apply_full_p1_action(
+    source_element: FullP1Element,
+    action: ArrayLike,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> FullP1Element:
+    """Compose an affine simplex action in exact arithmetic with a supported P1 owner."""
 
-    if isinstance(source_element, PolynomialComposedCellGeometryElement):
+    if isinstance(
+        source_element,
+        _owner_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement,
+    ):
         values = np.asarray(action)
         exact = tuple(
             tuple(
@@ -2604,20 +3317,23 @@ def _apply_full_p1_action(
             )
             for row in values
         )
-        return _uniform_rational_p1_chart(source_element, exact)
-    return BarycentricCellGeometryElement(source_element, np.asarray(action))
+        return uniform_rational_p1_chart(source_element, exact, budget=budget)
+    return _owner_phydrax_discretization__cell_geometry.BarycentricCellGeometryElement(
+        source_element, np.asarray(action)
+    )
 
 
-def _uniform_exact_target_actions(
-    uniform: BisectionUniformRefinement,
-    hierarchy: BisectionHierarchy,
-    edit: CellTopologyEdit,
-    parents: dict[int, int],
-    /,
-) -> _UniformRationalActions:
-    """Compose canonical subset rows and binary midpoint records exactly once."""
-    from ._topology_edit import TopologyEditBlock
+@final
+class _UniformSourceActions(StrictModule):
+    """Rational vertex actions and scientific roots authenticated from uniform rows."""
 
+    vertex_actions: dict[tuple[int, int], tuple[Fraction, ...]]
+    cell_roots: dict[int, int]
+
+
+def _uniform_source_actions(
+    uniform: _dependency_phydrax_meshing__bisection.BisectionUniformRefinement, /
+) -> _UniformSourceActions:
     arrays = uniform.host_arrays()
     width = uniform.dimension + 1
     vertex_actions: dict[tuple[int, int], tuple[Fraction, ...]] = {}
@@ -2644,14 +3360,14 @@ def _uniform_exact_target_actions(
                 support = np.flatnonzero(raw_)
                 if support.size == 0:
                     raise ValueError(
-                        "A uniform source vertex has no barycentric support."
+                        f"MeshAdaptation.geometry.vertex_action must provide barycentric support for uniform source vertices; got {int(vertex)!r}"
                     )
                 expected = 1.0 / support.size
                 if not np.all(raw_[support] == expected) or np.any(
                     np.delete(raw_, support) != 0.0
                 ):
                     raise ValueError(
-                        "Uniform source vertices changed their canonical subset action."
+                        f"MeshAdaptation.geometry.vertex_action must preserve the declared subset action of uniform source vertices; got {int(vertex)!r}"
                     )
                 exact = tuple(
                     Fraction(1, int(support.size)) if source in support else Fraction(0)
@@ -2661,8 +3377,22 @@ def _uniform_exact_target_actions(
                 previous = vertex_actions.setdefault(key, exact)
                 if previous != exact:
                     raise ValueError(
-                        "Uniform siblings disagree on an exact source vertex action."
+                        f"MeshAdaptation.geometry.vertex_action must agree across uniform siblings; got {int(vertex)!r}"
                     )
+    return _UniformSourceActions(vertex_actions, cell_roots)
+
+
+def _uniform_exact_target_actions(
+    uniform: _dependency_phydrax_meshing__bisection.BisectionUniformRefinement,
+    hierarchy: BisectionHierarchy,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    parents: dict[int, int],
+    /,
+) -> _UniformRationalActions:
+    """Compose subset rows and binary midpoint records once per source action."""
+
+    source_actions = _uniform_source_actions(uniform)
+    vertex_actions, cell_roots = source_actions.vertex_actions, source_actions.cell_roots
 
     records = sorted(
         zip(
@@ -2677,12 +3407,14 @@ def _uniform_exact_target_actions(
     for parent, ordered, tag, children, midpoint in records:
         root = cell_roots.get(parent)
         if root is None:
-            raise ValueError("A binary refinement record has no uniform scientific root.")
+            raise ValueError(
+                f"MeshAdaptation.geometry.uniform_root must declare a scientific root for every binary refinement record; got {parent!r}"
+            )
         first = vertex_actions.get((root, int(ordered[0])))
         second = vertex_actions.get((root, int(ordered[tag])))
         if first is None or second is None:
             raise ValueError(
-                "A binary refinement midpoint lost its exact endpoint actions."
+                f"MeshAdaptation.geometry.midpoint_action must retain consistent endpoint actions across binary refinement records; got {midpoint!r}"
             )
         exact = tuple(
             (left + right) / 2 for left, right in zip(first, second, strict=True)
@@ -2691,20 +3423,20 @@ def _uniform_exact_target_actions(
         previous = vertex_actions.setdefault(key, exact)
         if previous != exact:
             raise ValueError(
-                "Binary refinement records disagree on an exact midpoint action."
+                f"MeshAdaptation.geometry.midpoint_action must retain consistent endpoint actions across binary refinement records; got {midpoint!r}"
             )
         for child in children:
             known = cell_roots.setdefault(int(child), root)
             if known != root:
                 raise ValueError(
-                    "Binary refinement descendants disagree on their uniform root."
+                    f"MeshAdaptation.geometry.uniform_root must agree across binary refinement descendants; got {int(child)!r}"
                 )
 
     result: _UniformRationalActions = {}
     for block in edit.blocks:
-        if not isinstance(block, TopologyEditBlock):
+        if not isinstance(block, _owner_phydrax_meshing__topology_edit.TopologyEditBlock):
             raise ValueError(
-                "Uniform rational actions require fixed-family simplex blocks."
+                f"MeshAdaptation.edit.blocks must contain fixed-family simplex blocks for uniform rational actions; got {type(block).__name__!r}"
             )
         for identifier, row in zip(block.cell_ids, block.cells, strict=True):
             target = int(identifier)
@@ -2712,53 +3444,99 @@ def _uniform_exact_target_actions(
             root = cell_roots.get(target, cell_roots.get(predecessor, predecessor))
             known = cell_roots.get(target, root)
             if known != root:
-                raise ValueError("A target cell changed its uniform scientific parent.")
+                raise ValueError(
+                    f"MeshAdaptation.geometry.parent_cell must preserve the uniform scientific parent; got {int(identifier)!r}"
+                )
             vertices = edit.vertex_global_ids[np.asarray(row, dtype=np.int64)]
             action = tuple(vertex_actions[(root, int(vertex))] for vertex in vertices)
             result[target] = root, action
     return result
 
 
+def _periodic_full_p1_parent_elements(
+    hierarchy: MeshAdaptationHierarchy,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    /,
+    *,
+    carrier: bool,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> dict[int, CellGeometryElement]:
+    """Retain immediate-parent charts independently of scientific root columns."""
+    if (
+        not isinstance(hierarchy, _owner_phydrax_meshing__periodic.PeriodicRefinement)
+        or edit.coarsening is None
+    ):
+        return {}
+    geometry = hierarchy.source_geometry
+    if carrier:
+        retained = geometry.restriction_source
+        geometry = (
+            CellGeometrySpec.affine(hierarchy.source, budget=budget)
+            if retained is None or retained.carrier_geometry is None
+            else retained.carrier_geometry
+        )
+    elements, _, _ = geometry.resolve(hierarchy.source, budget=budget)
+    selected = set(int(identifier) for identifier in edit.coarsening.coarse_cell_ids)
+    return {
+        int(identifier): element
+        for block, element in zip(hierarchy.source.blocks, elements, strict=True)
+        for identifier in block.global_ids
+        if int(identifier) in selected
+    }
+
+
 def _full_p1_target_element(
     source_cell: _FullP1SourceCell,
     original_cells: dict[int, _FullP1OriginalCell],
-    edit: CellTopologyEdit,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
     identifier: int,
     row: NDArray[np.int32],
     parent: dict[int, int],
     direct_authority: bool,
-    uniform: BisectionUniformRefinement | None,
+    uniform: _dependency_phydrax_meshing__bisection.BisectionUniformRefinement | None,
     hierarchy: BisectionHierarchy | None,
     uniform_actions: _UniformRationalActions | None,
+    periodic_parents: dict[int, CellGeometryElement],
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
 ) -> CellGeometryElement:
-    """Recover retained parent actions or author one actual incoming action."""
+    """Recover a retained parent action or author the incoming coefficient action."""
 
     current_element, current_corners = source_cell[:2]
-    if edit.coarsening is not None and identifier in np.asarray(
-        edit.coarsening.coarse_cell_ids
+    if (
+        edit.coarsening is not None
+        and parent.get(identifier, identifier) != identifier
+        and identifier in np.asarray(edit.coarsening.coarse_cell_ids)
     ):
+        if identifier in periodic_parents:
+            return periodic_parents[identifier]
         if direct_authority and identifier in original_cells:
             return original_cells[identifier][1]
         if uniform_actions is not None and identifier in uniform_actions:
             root, action = uniform_actions[identifier]
             if source_cell[3] != root or root not in original_cells:
                 raise ValueError(
-                    "A uniform rational chart changed its scientific parent cell."
+                    f"MeshAdaptation.geometry.rational_chart must preserve the scientific parent cell; got {identifier!r}"
                 )
-            return _uniform_rational_p1_chart(original_cells[root][1], action)
+            return uniform_rational_p1_chart(
+                original_cells[root][1], action, budget=budget
+            )
         if uniform is not None and hierarchy is not None:
-            from ._bisection import _uniform_binary_chart
-
-            root_index, child_index, steps = _uniform_binary_chart(identifier, hierarchy)
+            root_index, child_index, steps = bisection_kernel_owner.uniform_binary_chart(
+                identifier, hierarchy, scope=scope, budget=budget
+            )
             root_identifier = int(np.asarray(uniform.parent_ids)[root_index])
             element = original_cells[root_identifier][1]
             if child_index is not None:
-                element = _apply_full_p1_action(
-                    element, uniform.barycentric_weights[root_index, child_index]
+                element = apply_full_p1_action(
+                    element,
+                    uniform.barycentric_weights[root_index, child_index],
+                    budget=budget,
                 )
             for step in steps:
-                element = _apply_full_p1_action(element, step)
+                element = apply_full_p1_action(element, step, budget=budget)
             return element
         if hierarchy is not None:
             return _binary_parent_geometry_element(
@@ -2769,15 +3547,15 @@ def _full_p1_target_element(
                 hierarchy,
             )
         raise ValueError(
-            "A coarsened coefficient action lacks its actual scientific parent chart."
+            f"MeshAdaptation.geometry.parent_chart must retain the scientific parent chart of a coarsened coefficient action; got {identifier!r}"
         )
     if uniform_actions is not None and identifier in uniform_actions:
         root, action = uniform_actions[identifier]
         if source_cell[3] != root or root not in original_cells:
             raise ValueError(
-                "A uniform rational chart changed its scientific parent cell."
+                f"MeshAdaptation.geometry.rational_chart must preserve the scientific parent cell; got {identifier!r}"
             )
-        return _uniform_rational_p1_chart(original_cells[root][1], action)
+        return uniform_rational_p1_chart(original_cells[root][1], action, budget=budget)
     action = np.zeros(
         (current_element.local_dof_count, current_element.local_dof_count),
         dtype=np.float64,
@@ -2793,7 +3571,7 @@ def _full_p1_target_element(
                 matches = np.flatnonzero(current_corners == support)
                 if matches.size != 1:
                     raise ValueError(
-                        "A full P1 action has foreign scientific parent corner support."
+                        f"MeshAdaptation.geometry.parent_support must use the declared full P1 parent corner support; got {identifier!r}"
                     )
                 action[corner, matches[0]] += weight
     return (
@@ -2801,17 +3579,16 @@ def _full_p1_target_element(
         if np.array_equal(
             action, np.eye(current_element.local_dof_count, dtype=np.float64)
         )
-        else _apply_full_p1_action(current_element, action)
+        else apply_full_p1_action(current_element, action, budget=budget)
     )
 
 
 def _whole_source_inverse_edit(
     original: CellMesh,
-    edit: CellTopologyEdit,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
     /,
-) -> CellTopologyEdit | None:
-    """Restore only complete original scientific parent incidence."""
-    from ._topology_edit import TopologyEditBlock
+) -> _dependency_phydrax_meshing__topology_edit.CellTopologyEdit | None:
+    """Restore full source scientific parent incidence."""
 
     original_ids = np.concatenate(
         tuple(np.asarray(block.global_ids) for block in original.blocks)
@@ -2821,8 +3598,10 @@ def _whole_source_inverse_edit(
         return None
     actual_cells = {}
     for block in edit.blocks:
-        if not isinstance(block, TopologyEditBlock):
-            raise ValueError("A whole source inverse requires original simplex cells.")
+        if not isinstance(block, _owner_phydrax_meshing__topology_edit.TopologyEditBlock):
+            raise ValueError(
+                f"MeshAdaptation.edit.blocks must contain source simplex cells for a whole-source inverse; got {type(block).__name__!r}"
+            )
         for identifier, row in zip(block.cell_ids, block.cells, strict=True):
             actual_cells[int(identifier)] = (
                 block.cell_kind,
@@ -2838,13 +3617,13 @@ def _whole_source_inverse_edit(
     }
     if actual_cells != expected_cells:
         raise ValueError(
-            "A whole source inverse changed original scientific parent incidence."
+            f"MeshAdaptation.geometry.parent_incidence must preserve scientific parent incidence in a source inverse; got {original.mesh_id!r}"
         )
     positions = {
         int(identifier): index for index, identifier in enumerate(edit.vertex_global_ids)
     }
     blocks = tuple(
-        TopologyEditBlock(
+        _owner_phydrax_meshing__topology_edit.TopologyEditBlock(
             block.name,
             block.cell_kind,
             None,
@@ -2862,125 +3641,120 @@ def _whole_source_inverse_edit(
     return edit._replace(blocks=blocks)
 
 
-def _full_p1_edit_geometry(
-    prepared: PreparedMeshAdaptation,
-    edit: CellTopologyEdit,
+@final
+class _FullP1EditSource(StrictModule):
+    """Authenticated source coefficient owners and retained refinement provenance."""
+
+    source_cells: dict[int, _FullP1SourceCell]
+    original_cells: dict[int, _FullP1OriginalCell]
+    bank: Array
+    original_bank: (
+        _owner_phydrax_discretization__coordinate_enclosure.CoordinateSourceBank
+    )
+    authority_geometry: CellGeometrySpec
+    direct_authority: bool
+    uniform: _dependency_phydrax_meshing__bisection.BisectionUniformRefinement | None
+    hierarchy: MeshAdaptationHierarchy
+
+
+@final
+class _FullP1EditTarget(StrictModule):
+    """Reblocked target topology and its coefficient geometry."""
+
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit
+    geometry: CellGeometrySpec
+
+
+def _full_p1_target_coordinates(
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    source_mesh: CellMesh,
+    groups: dict[
+        str,
+        tuple[
+            _owner_phydrax_meshing__topology_edit.TopologyEditBlock,
+            list[np.ndarray],
+            list[np.int64],
+        ],
+    ],
+    geometry_elements: dict[str, CellGeometryElement],
+    geometry_routes: dict[str, list[np.ndarray]],
+    original_bank: _owner_phydrax_discretization__coordinate_enclosure.CoordinateSourceBank,
     /,
     *,
-    bisection_hierarchy: BisectionHierarchy | None = None,
-) -> tuple[CellTopologyEdit, CellGeometrySpec | None]:
-    """Group actual full coefficient actions before topology/lineage binding."""
-    from ..discretization._cell_geometry import (
-        BarycentricCellGeometryElement,
-        CellGeometryRestrictionSource,
-        coordinate_lagrange_element,
-        PolynomialComposedCellGeometryElement,
-    )
-    from ..discretization._cell_geometry_validity import cell_geometry_id
-    from ..discretization._coordinate_enclosure import (
-        coordinate_corner_images,
-        rounded_point,
-    )
-    from ._topology_edit import TopologyEditBlock
-
-    if prepared.policy.route not in (
-        MeshAdaptationRoute.NATIVE_BISECTION,
-        MeshAdaptationRoute.DEVICE_BISECTION,
-    ):
-        return edit, None
-    source = prepared.source
-    request = prepared.request
-    request_hierarchy = (
-        request.hierarchy if isinstance(request, MarkedMeshAdaptation) else None
-    )
-    hierarchy = (
-        bisection_hierarchy
-        if bisection_hierarchy is not None
-        and (
-            bisection_hierarchy.uniform_refinement is not None
-            or request_hierarchy is None
-        )
-        else request_hierarchy
-    )
-    uniform = (
-        hierarchy.uniform_refinement
-        if isinstance(hierarchy, BisectionHierarchy)
-        else None
-    )
-    periodic = hierarchy if isinstance(hierarchy, PeriodicRefinement) else None
-    elements, routes, bank = source.geometry.resolve(source.mesh)
-    origin = source.geometry.restriction_source
-    from ..discretization._coordinate_enclosure import coordinate_source_signature
-    from ..discretization.fem._reference import FiniteElementSpec
-
-    if not all(
-        isinstance(
-            element,
-            (
-                BarycentricCellGeometryElement,
-                PolynomialComposedCellGeometryElement,
-            ),
-        )
-        or isinstance(element, FiniteElementSpec)
-        and element.cell_kind in ("triangle", "tetrahedron")
-        and coordinate_source_signature(element)
-        == coordinate_source_signature(coordinate_lagrange_element(element.cell_kind, 1))
-        for element in elements
-    ):
-        return edit, None
-    authority_mesh = (
-        uniform.source.mesh
-        if uniform is not None
-        else periodic.source
-        if periodic is not None
-        else source.mesh
-    )
-    authority_geometry = (
-        uniform.source.geometry
-        if uniform is not None
-        else periodic.source_geometry
-        if periodic is not None
-        else source.geometry
-    )
-    restored_authority = (
-        origin is not None
-        and origin.source_topology_id == source.mesh.topology_id
-        and all(isinstance(element, FiniteElementSpec) for element in elements)
-    )
-    direct_authority = uniform is not None or periodic is not None or restored_authority
-    source_cells, original_cells, bank, original_bank = _full_p1_source_cells(
-        source,
-        authority_mesh,
-        authority_geometry,
-        elements,
-        routes,
-        direct_authority=direct_authority,
-        restored_authority=restored_authority,
-    )
-    if direct_authority:
-        restored = _whole_source_inverse_edit(authority_mesh, edit)
-        if restored is not None:
-            return restored, authority_geometry
-    parent = (
-        {}
-        if edit.refinement is None
-        else dict(
-            zip(
-                np.asarray(edit.refinement.fine_cell_ids).tolist(),
-                np.asarray(edit.refinement.coarse_cell_ids).tolist(),
-                strict=True,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> np.ndarray:
+    coordinates = np.array(edit.coordinates, dtype=np.float64, copy=True)
+    source_ids = np.asarray(source_mesh.vertex_global_ids, dtype=np.int64)
+    retained = np.isin(edit.vertex_global_ids, source_ids)
+    order = np.argsort(source_ids, kind="stable")
+    positions = order[
+        np.searchsorted(source_ids[order], edit.vertex_global_ids[retained])
+    ]
+    coordinates[retained] = np.asarray(source_mesh.coordinates)[positions]
+    images = {}
+    for name, (_, rows, _) in groups.items():
+        for row, route in zip(rows, geometry_routes[name], strict=True):
+            corners = _owner_phydrax_discretization__coordinate_enclosure.coordinate_corner_images(
+                geometry_elements[name],
+                tuple(original_bank[int(index)] for index in route),
+                budget=budget,
             )
-        )
+            if corners is None:
+                raise ValueError(
+                    f"MeshAdaptation.geometry.corner_images must provide physical corner images for full P1 coefficient actions; got {name!r}"
+                )
+            for vertex, image in zip(row, corners, strict=True):
+                if int(vertex) in images and images[int(vertex)] != image:
+                    raise ValueError(
+                        f"MeshAdaptation.geometry.corner_images must agree on each shared vertex across incident full P1 actions; got {int(vertex)!r}"
+                    )
+                images[int(vertex)] = image
+                if not retained[vertex]:
+                    coordinates[vertex] = (
+                        _owner_phydrax_discretization__coordinate_enclosure.rounded_point(
+                            image
+                        )
+                    )
+    return coordinates
+
+
+@final
+class _FullP1Groups(StrictModule):
+    """Target rows grouped by coefficient action with aligned source provenance."""
+
+    groups: dict[
+        str,
+        tuple[
+            _owner_phydrax_meshing__topology_edit.TopologyEditBlock,
+            list[np.ndarray],
+            list[np.int64],
+        ],
+    ]
+    geometry_elements: dict[str, CellGeometryElement]
+    geometry_routes: dict[str, list[np.ndarray]]
+    source_parent_ids: dict[str, list[int]]
+    source_parent_vertices: dict[str, list[np.ndarray]]
+    owner_blocks: dict[str, str | None]
+
+
+def _group_full_p1_actions(
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    phase: _FullP1EditSource,
+    parent: dict[int, int],
+    uniform_actions: _UniformRationalActions | None,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> _FullP1Groups:
+    source_cells, original_cells = phase.source_cells, phase.original_cells
+    direct_authority, uniform, hierarchy = (
+        phase.direct_authority,
+        phase.uniform,
+        phase.hierarchy,
     )
-    if edit.coarsening is not None:
-        for child, target in zip(
-            edit.coarsening.fine_cell_ids, edit.coarsening.coarse_cell_ids, strict=True
-        ):
-            parent.setdefault(int(target), int(child))
-    uniform_actions = (
-        _uniform_exact_target_actions(uniform, hierarchy, edit, parent)
-        if uniform is not None and isinstance(hierarchy, BisectionHierarchy)
-        else None
+    periodic_parents = _periodic_full_p1_parent_elements(
+        hierarchy, edit, carrier=False, budget=budget
     )
     groups = {}
     geometry_elements = {}
@@ -2989,8 +3763,10 @@ def _full_p1_edit_geometry(
     source_parent_vertices = {}
     owner_blocks: dict[str, str | None] = {}
     for block in edit.blocks:
-        if not isinstance(block, TopologyEditBlock):
-            raise ValueError("Full P1 actions require actual fixed-family simplex edits.")
+        if not isinstance(block, _owner_phydrax_meshing__topology_edit.TopologyEditBlock):
+            raise ValueError(
+                f"MeshAdaptation.edit.blocks must contain fixed-family simplex edits for full P1 actions; got {type(block).__name__!r}"
+            )
         for identifier, row in zip(block.cell_ids, block.cells, strict=True):
             source_cell = source_cells[parent.get(int(identifier), int(identifier))]
             _, _, coefficients, ancestor, corners, root_name, _, original_root = (
@@ -3007,6 +3783,9 @@ def _full_p1_edit_geometry(
                 uniform,
                 hierarchy if isinstance(hierarchy, BisectionHierarchy) else None,
                 uniform_actions,
+                periodic_parents,
+                budget=budget,
+                scope=scope,
             )
             presentation_root = (
                 f"source-cell/{ancestor}" if root_name is None else root_name
@@ -3035,8 +3814,237 @@ def _full_p1_edit_geometry(
         source_parent_vertices[name] = [
             source_parent_vertices[name][index] for index in order
         ]
+    return _FullP1Groups(
+        groups,
+        geometry_elements,
+        geometry_routes,
+        source_parent_ids,
+        source_parent_vertices,
+        owner_blocks,
+    )
+
+
+@final
+class _FullP1CarrierSource(StrictModule):
+    geometry: CellGeometrySpec
+    cells: dict[int, _FullP1SourceCell]
+    roots: dict[int, _FullP1OriginalCell]
+    geometry_id: str = eqx.field(static=True)
+    topology_id: str = eqx.field(static=True)
+
+
+def _carrier_p1_element(element: CellGeometryElement, /) -> FullP1Element:
+    match element:
+        case (
+            _owner_phydrax_discretization_fem__reference_types.FiniteElementSpec()
+            | _owner_phydrax_discretization__cell_geometry.BarycentricCellGeometryElement()
+            | _owner_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement() as result
+        ):
+            return result
+        case _:
+            raise ValueError(
+                "MeshAdaptation.carrier_geometry.elements must describe affine P1 cells; got another source family"
+            )
+
+
+def _prepare_full_p1_carrier_source(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _FullP1CarrierSource:
+    retained = source.geometry.restriction_source
+    geometry = (
+        CellGeometrySpec.affine(source.mesh, budget=budget)
+        if retained is None or retained.carrier_geometry is None
+        else retained.carrier_geometry
+    )
+    elements, routes, _ = geometry.resolve(source.mesh, budget=budget)
+    origin = geometry.restriction_source
+    source_ids = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+    cells: dict[int, _FullP1SourceCell] = {}
+    roots: dict[int, _FullP1OriginalCell] = {}
+    for block, raw_element, route in zip(
+        source.mesh.blocks, elements, routes, strict=True
+    ):
+        element = _carrier_p1_element(raw_element)
+        root = element
+        while isinstance(
+            root,
+            (
+                _owner_phydrax_discretization__cell_geometry.BarycentricCellGeometryElement,
+                _owner_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement,
+            ),
+        ):
+            root = _carrier_p1_element(root.source_element)
+        for row, identifier in enumerate(np.asarray(block.global_ids)):
+            ancestor = (
+                int(identifier)
+                if origin is None
+                else int(np.asarray(origin.block_parent_cell_ids[block.name])[row])
+            )
+            corners = (
+                source_ids[np.asarray(block.vertices)[row]]
+                if origin is None
+                else np.asarray(origin.block_parent_vertex_ids[block.name])[row]
+            )
+            owner = (
+                block.name
+                if origin is None
+                else (
+                    None
+                    if origin.block_source_blocks is None
+                    else origin.block_source_blocks[block.name]
+                )
+            )
+            coefficients = np.asarray(np.asarray(route)[row], dtype=np.int32)
+            corners = np.asarray(corners, dtype=np.int64)
+            roots[ancestor] = (owner, root, coefficients, corners, row)
+            cells[int(identifier)] = (
+                element,
+                source_ids[np.asarray(block.vertices)[row]],
+                coefficients,
+                ancestor,
+                corners,
+                owner,
+                row,
+                root,
+            )
+    return _FullP1CarrierSource(
+        geometry,
+        cells,
+        roots,
+        _owner_phydrax_discretization__cell_geometry_validity.cell_geometry_id(geometry)
+        if origin is None
+        else origin.source_geometry_id,
+        source.mesh.topology_id if origin is None else origin.source_topology_id,
+    )
+
+
+def _full_p1_carrier_geometry(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    phase: _FullP1EditSource,
+    grouped: _FullP1Groups,
+    parent: dict[int, int],
+    uniform_actions: _UniformRationalActions | None,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> CellGeometrySpec:
+    carrier = _prepare_full_p1_carrier_source(source, budget=budget)
+    periodic_parents = _periodic_full_p1_parent_elements(
+        phase.hierarchy, edit, carrier=True, budget=budget
+    )
+    elements: dict[str, CellGeometryElement] = {}
+    routes: dict[str, list[np.ndarray]] = {}
+    ancestors: dict[str, list[int]] = {}
+    corners: dict[str, list[np.ndarray]] = {}
+    owners: dict[str, str] = {}
+    for name, (_, rows, identifiers) in grouped.groups.items():
+        routes[name], ancestors[name], corners[name] = [], [], []
+        for row, identifier in zip(rows, identifiers, strict=True):
+            current = carrier.cells[parent.get(int(identifier), int(identifier))]
+            element = _full_p1_target_element(
+                current,
+                carrier.roots,
+                edit,
+                int(identifier),
+                row,
+                parent,
+                phase.direct_authority,
+                phase.uniform,
+                phase.hierarchy
+                if isinstance(phase.hierarchy, BisectionHierarchy)
+                else None,
+                uniform_actions,
+                periodic_parents,
+                budget=budget,
+                scope=scope,
+            )
+            prior = elements.setdefault(name, element)
+            if not tree_content_equal(prior, element):
+                raise ValueError(
+                    "MeshAdaptation.carrier_geometry.elements must agree within each source-action block; got inconsistent affine actions"
+                )
+            routes[name].append(current[2])
+            ancestors[name].append(current[3])
+            corners[name].append(current[4])
+            if current[5] is not None:
+                owners[name] = current[5]
+    return CellGeometrySpec(
+        elements,
+        {name: np.asarray(values, dtype=np.int32) for name, values in routes.items()},
+        carrier.geometry.coordinates,
+        restriction_source=_owner_phydrax_discretization__cell_geometry.CellGeometryRestrictionSource(
+            carrier.geometry_id,
+            carrier.topology_id,
+            {
+                name: np.asarray(values, dtype=np.int64)
+                for name, values in ancestors.items()
+            },
+            {
+                name: np.asarray(values, dtype=np.int64)
+                for name, values in corners.items()
+            },
+            block_source_blocks=owners if len(owners) == len(elements) else None,
+        ),
+    )
+
+
+def _assemble_full_p1_target(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    phase: _FullP1EditSource,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> _FullP1EditTarget:
+    bank = phase.bank
+    authority_geometry, uniform, hierarchy = (
+        phase.authority_geometry,
+        phase.uniform,
+        phase.hierarchy,
+    )
+    origin = source.geometry.restriction_source
+    parent = (
+        {}
+        if edit.refinement is None
+        else dict(
+            zip(
+                np.asarray(edit.refinement.fine_cell_ids).tolist(),
+                np.asarray(edit.refinement.coarse_cell_ids).tolist(),
+                strict=True,
+            )
+        )
+    )
+    if edit.coarsening is not None:
+        for child, target in zip(
+            edit.coarsening.fine_cell_ids, edit.coarsening.coarse_cell_ids, strict=True
+        ):
+            parent.setdefault(int(target), int(child))
+    uniform_actions = (
+        _uniform_exact_target_actions(uniform, hierarchy, edit, parent)
+        if uniform is not None and isinstance(hierarchy, BisectionHierarchy)
+        else None
+    )
+    grouped = _group_full_p1_actions(
+        edit, phase, parent, uniform_actions, budget=budget, scope=scope
+    )
+    groups, geometry_elements, geometry_routes = (
+        grouped.groups,
+        grouped.geometry_elements,
+        grouped.geometry_routes,
+    )
+    source_parent_ids, source_parent_vertices, owner_blocks = (
+        grouped.source_parent_ids,
+        grouped.source_parent_vertices,
+        grouped.owner_blocks,
+    )
     blocks = tuple(
-        TopologyEditBlock(
+        _owner_phydrax_meshing__topology_edit.TopologyEditBlock(
             name,
             original.cell_kind,
             None,
@@ -3045,15 +4053,51 @@ def _full_p1_edit_geometry(
         )
         for name, (original, rows, ids) in sorted(groups.items())
     )
+    target_routes = {
+        name: np.asarray(values, dtype=np.int32)
+        for name, values in geometry_routes.items()
+    }
+    exact_source = authority_geometry.exact_source
+    if isinstance(
+        exact_source,
+        (
+            exact_rational_geometry_owner.ExactRationalCellGeometrySource,
+            ExactAlgebraicCellGeometrySource,
+        ),
+    ):
+        used = np.arange(bank.shape[0], dtype=np.int64)
+        exact_source = exact_source.reindexed(
+            used, geometry_elements, target_routes, budget=budget
+        )
+    declared_source = isinstance(
+        exact_source,
+        (
+            exact_rational_geometry_owner.ExactRationalCellGeometrySource,
+            ExactAlgebraicCellGeometrySource,
+        ),
+    )
+    carrier_geometry = (
+        None
+        if declared_source
+        else _full_p1_carrier_geometry(
+            source,
+            edit,
+            phase,
+            grouped,
+            parent,
+            uniform_actions,
+            budget=budget,
+            scope=scope,
+        )
+    )
     geometry = CellGeometrySpec(
         geometry_elements,
-        {
-            name: np.asarray(values, dtype=np.int32)
-            for name, values in geometry_routes.items()
-        },
+        target_routes,
         bank,
-        restriction_source=CellGeometryRestrictionSource(
-            cell_geometry_id(source.geometry)
+        restriction_source=_owner_phydrax_discretization__cell_geometry.CellGeometryRestrictionSource(
+            _owner_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                source.geometry
+            )
             if origin is None
             else origin.source_geometry_id,
             source.mesh.topology_id if origin is None else origin.source_topology_id,
@@ -3068,40 +4112,196 @@ def _full_p1_edit_geometry(
             block_source_blocks=None
             if any(owner is None for owner in owner_blocks.values())
             else {name: owner for name, owner in owner_blocks.items() if owner},
+            carrier_publication="source_image"
+            if declared_source
+            else "published_affine_roots",
+            carrier_geometry=carrier_geometry,
         ),
-        exact_source=authority_geometry.exact_source,
+        exact_source=exact_source,
         periodic_source=authority_geometry.periodic_source,
+        budget=budget,
     )
-    coordinates = np.array(edit.coordinates, dtype=np.float64, copy=True)
-    images = {}
-    for name, (_, rows, _) in groups.items():
-        for row, route in zip(rows, geometry_routes[name], strict=True):
-            corners = coordinate_corner_images(
-                geometry_elements[name],
-                tuple(original_bank[int(index)] for index in route),
+    coordinate_geometry = geometry if carrier_geometry is None else carrier_geometry
+    coordinate_bank = (
+        phase.original_bank
+        if carrier_geometry is None
+        else _owner_phydrax_discretization__cell_geometry.prepared_published_affine_root_bank(
+            carrier_geometry, budget=budget
+        )
+    )
+    coordinates = _full_p1_target_coordinates(
+        edit,
+        source.mesh,
+        groups,
+        dict(
+            zip(
+                coordinate_geometry.block_names,
+                coordinate_geometry.elements,
+                strict=True,
             )
-            if corners is None:
-                raise ValueError(
-                    "The full P1 coefficient action lost its exact physical corner images."
-                )
-            for vertex, image in zip(row, corners, strict=True):
-                if int(vertex) in images and images[int(vertex)] != image:
-                    raise ValueError(
-                        "Incident full P1 coefficient actions disagree on an exact shared vertex."
-                    )
-                images[int(vertex)] = image
-                coordinates[vertex] = rounded_point(image)
-    return edit._replace(blocks=blocks, coordinates=coordinates), geometry
+        ),
+        {
+            name: list(np.asarray(route))
+            for name, route in zip(
+                coordinate_geometry.block_names,
+                coordinate_geometry.geometry_dofs,
+                strict=True,
+            )
+        },
+        coordinate_bank,
+        budget=budget,
+    )
+    return _FullP1EditTarget(
+        edit._replace(blocks=blocks, coordinates=coordinates), geometry
+    )
+
+
+def _full_p1_edit_geometry(
+    prepared: PreparedMeshAdaptation,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    /,
+    *,
+    bisection_hierarchy: BisectionHierarchy | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> tuple[
+    _dependency_phydrax_meshing__topology_edit.CellTopologyEdit, CellGeometrySpec | None
+]:
+    """Group coefficient actions before topology and lineage binding."""
+
+    if prepared.policy.route not in (
+        MeshAdaptationRoute.NATIVE_BISECTION,
+        MeshAdaptationRoute.DEVICE_BISECTION,
+    ):
+        return edit, None
+    source = prepared.source
+    request = prepared.request
+    request_hierarchy = (
+        request.hierarchy if isinstance(request, MarkedMeshAdaptation) else None
+    )
+    hierarchy = (
+        bisection_hierarchy
+        if bisection_hierarchy is not None
+        and (
+            bisection_hierarchy.uniform_refinement is not None
+            or request_hierarchy is None
+        )
+        else request_hierarchy
+    )
+    uniform = (
+        hierarchy.uniform_refinement
+        if isinstance(hierarchy, BisectionHierarchy)
+        else None
+    )
+    periodic = (
+        hierarchy
+        if isinstance(hierarchy, _owner_phydrax_meshing__periodic.PeriodicRefinement)
+        else None
+    )
+    elements, routes, bank = source.geometry.resolve(source.mesh, budget=budget)
+    origin = source.geometry.restriction_source
+
+    if not all(
+        isinstance(
+            element,
+            (
+                _owner_phydrax_discretization__cell_geometry.BarycentricCellGeometryElement,
+                _owner_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement,
+            ),
+        )
+        or isinstance(
+            element, _owner_phydrax_discretization_fem__reference_types.FiniteElementSpec
+        )
+        and element.cell_kind in ("triangle", "tetrahedron")
+        and _owner_phydrax_discretization__coordinate_enclosure.coordinate_source_signature(
+            element
+        )
+        == _owner_phydrax_discretization__coordinate_enclosure.coordinate_source_signature(
+            _owner_phydrax_discretization__cell_geometry.coordinate_lagrange_element(
+                element.cell_kind, 1
+            )
+        )
+        for element in elements
+    ):
+        return edit, None
+    # Restriction columns bind the root source; coarsening charts bind the
+    # immediate parent retained separately by the incoming periodic history.
+    authority_periodic = periodic
+    while (
+        authority_periodic is not None
+        and authority_periodic.previous is not None
+        and origin is not None
+        and (
+            origin.source_geometry_id
+            != _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                authority_periodic.source_geometry
+            )
+            or origin.source_topology_id != authority_periodic.source.topology_id
+        )
+    ):
+        authority_periodic = authority_periodic.previous
+    authority_mesh = (
+        uniform.source.mesh
+        if uniform is not None
+        else authority_periodic.source
+        if authority_periodic is not None
+        else source.mesh
+    )
+    authority_geometry = (
+        uniform.source.geometry
+        if uniform is not None
+        else authority_periodic.source_geometry
+        if authority_periodic is not None
+        else source.geometry
+    )
+    restored_authority = (
+        origin is not None
+        and origin.source_topology_id == source.mesh.topology_id
+        and all(
+            isinstance(
+                element,
+                _owner_phydrax_discretization_fem__reference_types.FiniteElementSpec,
+            )
+            for element in elements
+        )
+    )
+    direct_authority = uniform is not None or periodic is not None or restored_authority
+    source_cells, original_cells, bank, original_bank = _full_p1_source_cells(
+        source,
+        authority_mesh,
+        authority_geometry,
+        elements,
+        routes,
+        direct_authority=direct_authority,
+        restored_authority=restored_authority,
+        budget=budget,
+    )
+    if direct_authority:
+        restored = _whole_source_inverse_edit(authority_mesh, edit)
+        if restored is not None:
+            return restored, authority_geometry
+    phase = _FullP1EditSource(
+        source_cells,
+        original_cells,
+        bank,
+        original_bank,
+        authority_geometry,
+        direct_authority,
+        uniform,
+        hierarchy,
+    )
+    target = _assemble_full_p1_target(source, edit, phase, budget=budget, scope=scope)
+    return target.edit, target.geometry
 
 
 def _complete_coarsening_witnesses(
     source: CellMesh,
     target: CellMesh,
-    lineage: MeshLineage,
-    witnesses: NestedReferenceWitnesses | None,
+    lineage: _dependency_phydrax_meshing__lineage_records.MeshLineage,
+    witnesses: transition_types_owner.NestedReferenceWitnesses | None,
     /,
-) -> NestedReferenceWitnesses | None:
-    """Complete a pure coarsening chart bank with exact preserved-cell identities."""
+) -> transition_types_owner.NestedReferenceWitnesses | None:
+    """Fill a pure coarsening chart bank with preserved-cell identity maps."""
 
     if witnesses is None or np.asarray(witnesses.fine_cell_ids).size == 0:
         return None
@@ -3110,8 +4310,12 @@ def _complete_coarsening_witnesses(
     relation_sources = np.asarray(cells.source_global_ids, dtype=np.int64)
     relation_targets = np.asarray(cells.target_global_ids, dtype=np.int64)
     relation_kinds = np.asarray(cells.relation_kinds, dtype=np.int32)
-    preserved = relation_kinds == int(EntityLineageKind.PRESERVED)
-    coarsened = relation_kinds == int(EntityLineageKind.COARSENED_INTO)
+    preserved = relation_kinds == int(
+        _dependency_phydrax_meshing__lineage_records.EntityLineageKind.PRESERVED
+    )
+    coarsened = relation_kinds == int(
+        _dependency_phydrax_meshing__lineage_records.EntityLineageKind.COARSENED_INTO
+    )
     if (
         not np.all(preserved | coarsened)
         or np.asarray(cells.created_target_ids).size
@@ -3134,8 +4338,11 @@ def _complete_coarsening_witnesses(
         for block in target.blocks
         for identifier, vertices in zip(block.global_ids, block.vertices, strict=True)
     }
-    from ..discretization._reference_cell import reference_cell_topology
 
+    fine = np.asarray(witnesses.fine_cell_ids, dtype=np.int64)
+    coarse = np.asarray(witnesses.coarse_cell_ids, dtype=np.int64)
+    reference = np.asarray(witnesses.fine_reference_vertices, dtype=np.float64)
+    represented = {int(identifier): row for row, identifier in enumerate(fine)}
     identity_sources: list[int] = []
     identity_targets: list[int] = []
     identity_vertices: list[np.ndarray] = []
@@ -3146,14 +4353,26 @@ def _complete_coarsening_witnesses(
         target_cell = target_cells.get(int(target_id))
         if source_cell is None or source_cell != target_cell:
             return None
+        vertices = np.asarray(
+            _owner_phydrax_discretization__reference_cell.reference_cell_topology(
+                source_cell[0]
+            ).vertices,
+            dtype=np.float64,
+        )
+        if int(source_id) in represented:
+            row = represented[int(source_id)]
+            if (
+                coarse[row] != target_id
+                or not np.array_equal(reference[row, : vertices.shape[0]], vertices)
+                or np.any(reference[row, vertices.shape[0] :] != 0.0)
+            ):
+                raise ValueError(
+                    f"MeshAdaptation.coarsening.preserved_cell must retain its identity reference chart; got {int(source_id)!r}"
+                )
+            continue
         identity_sources.append(int(source_id))
         identity_targets.append(int(target_id))
-        identity_vertices.append(
-            np.asarray(reference_cell_topology(source_cell[0]).vertices, dtype=np.float64)
-        )
-    fine = np.asarray(witnesses.fine_cell_ids, dtype=np.int64)
-    coarse = np.asarray(witnesses.coarse_cell_ids, dtype=np.int64)
-    reference = np.asarray(witnesses.fine_reference_vertices, dtype=np.float64)
+        identity_vertices.append(vertices)
     width = max(
         reference.shape[1],
         max((vertices.shape[0] for vertices in identity_vertices), default=0),
@@ -3173,12 +4392,16 @@ def _complete_coarsening_witnesses(
         target_cells
     ):
         return None
-    return NestedReferenceWitnesses(fine, coarse, reference)
+    return transition_types_owner.NestedReferenceWitnesses(fine, coarse, reference)
 
 
 def _adaptation_certification_inputs(
-    source: CellMeshingResult, limits: MeshingLimits, /
-) -> MeshCertificationInputs | None:
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs | None:
     """Rebind target certification work/storage to the adaptation policy ledger."""
 
     if source.certification is None:
@@ -3186,19 +4409,21 @@ def _adaptation_certification_inputs(
 
     retained = source.certification.request
     original = retained.limits
-    certificate_limits = MeshCertificateLimits(
-        maximum_candidate_pairs=original.maximum_candidate_pairs,
-        maximum_ray_tests=original.maximum_ray_tests,
-        maximum_source_samples=original.maximum_source_samples,
-        maximum_distance_evaluations=original.maximum_distance_evaluations,
-        maximum_subdivision_depth=original.maximum_subdivision_depth,
-        maximum_subdivision_pieces=original.maximum_subdivision_pieces,
-        maximum_bernstein_nodes=original.maximum_bernstein_nodes,
-        maximum_periodic_images=original.maximum_periodic_images,
-        maximum_work_units=limits.maximum_work_units,
-        maximum_scratch_bytes=limits.maximum_scratch_bytes,
+    certificate_limits = (
+        _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits(
+            maximum_candidate_pairs=original.maximum_candidate_pairs,
+            maximum_ray_tests=original.maximum_ray_tests,
+            maximum_source_samples=original.maximum_source_samples,
+            maximum_distance_evaluations=original.maximum_distance_evaluations,
+            maximum_subdivision_depth=original.maximum_subdivision_depth,
+            maximum_subdivision_pieces=original.maximum_subdivision_pieces,
+            maximum_bernstein_nodes=original.maximum_bernstein_nodes,
+            maximum_periodic_images=original.maximum_periodic_images,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_scratch_bytes=limits.maximum_scratch_bytes,
+        )
     )
-    return MeshCertificationInputs(
+    return _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs(
         source.mesh,
         source.geometry,
         retained.schedule,
@@ -3210,212 +4435,302 @@ def _adaptation_certification_inputs(
         limits=certificate_limits,
         junction_vertices=retained.junction_vertices,
         scoped_fidelity=retained.scoped_fidelity,
+        budget=budget,
     )
 
 
-def _finalize_native(
+@final
+class _NativeGeometry(StrictModule):
+    """Topology and coordinate proof at the native publication boundary."""
+
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit
+    mesh: CellMesh
+    lineage: _dependency_phydrax_meshing__lineage_records.MeshLineage
+    stencil: (
+        _dependency_phydrax_meshing__lineage_records.VertexInterpolationStencil | None
+    )
+    geometry: CellGeometrySpec
+    geometry_transition: transition_types_owner.CellGeometryTransition | None
+    audit_prepared_validity: (
+        _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate
+        | None
+    )
+    metric_prepared_embedding: global_embedding_owner.GlobalEmbeddingCertificate | None
+    metric_prepared_fidelity: source_fidelity_owner.SourceFidelityCertificate | None
+
+
+@final
+class _RetainedSurfaceFidelity(StrictModule):
+    """Authenticated restriction fidelity with the limits that admitted it."""
+
+    fidelity: source_fidelity_owner.SourceFidelityCertificate
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+
+
+def _retained_surface_fidelity(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult, /
+) -> _RetainedSurfaceFidelity | None:
+    if source.certification is not None and isinstance(
+        source.certification.request.source,
+        _owner_phydrax_geometry__surface_source_support.SurfaceNativeRestrictionBoundarySource,
+    ):
+        retained_source = source.certification.request.source
+        retained_source.require_current()
+        restriction = source.geometry.restriction_source
+        if (
+            restriction is None
+            or retained_source.mesh.mesh_id != source.mesh.mesh_id
+            or _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                retained_source.geometry
+            )
+            != _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                source.geometry
+            )
+            or retained_source.support.root_geometry_id != restriction.source_geometry_id
+            or retained_source.support.root_topology_id != restriction.source_topology_id
+        ):
+            raise ValueError(
+                f"MeshAdaptation.source_geometry.restriction_source must match retained source-fidelity provenance; got {source.geometry.geometry_layout_id!r}"
+            )
+        prepared_source_fidelity = source.certification.fidelity
+        if prepared_source_fidelity is None:
+            raise ValueError(
+                f"MeshAdaptation.source.certification.fidelity must contain restriction fidelity evidence; got {source.result_id!r}"
+            )
+        return _RetainedSurfaceFidelity(
+            prepared_source_fidelity, source.certification.request.limits
+        )
+    return None
+
+
+@final
+class _SurfaceGeometry(StrictModule):
+    """Accepted chart transition with its target lineage and retained certificates."""
+
+    mesh: CellMesh
+    lineage: _dependency_phydrax_meshing__lineage_records.MeshLineage
+    geometry_transition: transition_types_owner.CellGeometryTransition
+    audit_prepared_validity: (
+        _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate
+        | None
+    )
+    metric_prepared_embedding: global_embedding_owner.GlobalEmbeddingCertificate | None
+    metric_prepared_fidelity: source_fidelity_owner.SourceFidelityCertificate | None
+
+
+def _prepare_uv_geometry(
     prepared: PreparedMeshAdaptation,
-    edit: CellTopologyEdit,
-    kind: MeshTransitionKind,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    mesh: CellMesh,
+    surface_metric_outcome: _dependency_phydrax_meshing__surface_metric.SurfaceMetricOutcome,
+    surface_transfer: _dependency_phydrax_meshing__association.SurfaceAssociationTransfer,
     /,
     *,
-    conservative: bool,
-    common_refinement: PreparedCommonRefinement | None = None,
-    polyhedral_construction: PolyhedralConstruction | None = None,
-    polyhedral_geometry: CellGeometrySpec | None = None,
-    surface_metric_outcome: SurfaceMetricOutcome | SphereMetricOutcome | None = None,
-    plc_source: ExactPlcCellGeometrySource
-    | ExactPlcCellGeometryConvexSource
-    | None = None,
-    surface_curve_witness: PreparedSurfaceCurveWitness | None = None,
-    bisection_hierarchy: BisectionHierarchy | None = None,
-) -> _NativeTarget:
-    """Assemble, transition geometry, inherit organization, certify, bind transfer.
+    surface_curve_witness: PreparedSurfaceCurveWitness | None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> _SurfaceGeometry:
+    source = prepared.source
+    metric_prepared_fidelity: source_fidelity_owner.SourceFidelityCertificate | None = (
+        None
+    )
+    witness = _owner_phydrax_meshing__surface_metric.prepare_surface_metric_source(
+        source, surface_transfer, budget=budget
+    )
+    _, material_root_witness = _surface_material_epoch(source, witness)
+    if surface_curve_witness is None:
+        raise TypeError(
+            f"MeshAdaptation.surface_curve_witness must bind source curves for UV reconstruction; got {surface_curve_witness!r}"
+        )
+    retained_fidelity = _retained_surface_fidelity(source)
+    prepared_source_fidelity = (
+        None if retained_fidelity is None else retained_fidelity.fidelity
+    )
+    prepared_source_certificates = None
+    if source.certification is not None and source.certification.embedding is not None:
+        prepared_source_certificates = (
+            source.audit.validity,
+            source.certification.embedding,
+        )
+    chart_transition = (
+        _owner_phydrax_meshing__surface_metric.prepare_policy_surface_metric_transition(
+            source,
+            mesh,
+            surface_metric_outcome,
+            surface_transfer,
+            prepared.policy,
+            witness,
+            maximum_fidelity=_surface_fidelity_limit(source),
+            curve_witness=surface_curve_witness,
+            material_root_witness=material_root_witness,
+            prepared_source_fidelity=prepared_source_fidelity,
+            prepared_source_certificates=prepared_source_certificates,
+            scope=scope,
+            budget=budget,
+        )
+    )
+    audit_prepared_validity = chart_transition.deformation.target_validity
+    metric_prepared_embedding = chart_transition.deformation.target_embedding
+    geometry_transition = chart_transition.transition
+    mesh = chart_transition.target_mesh
+    target_fidelity_bound = float(
+        np.max(
+            np.asarray(chart_transition.deformation.target_fidelity_bounds),
+            initial=0.0,
+        )
+    )
+    if (
+        retained_fidelity is not None
+        and chart_transition.deformation.target_domain_coverage == "certified"
+    ):
+        prepared_source_fidelity = retained_fidelity.fidelity
+        if target_fidelity_bound > prepared_source_fidelity.tolerance:
+            raise ValueError(
+                f"MeshAdaptation.target.fidelity_bound must not exceed the source tolerance; got {target_fidelity_bound!r}"
+            )
+        fidelity_binding = (
+            _dependency_phydrax_geometry__mesh_certificates.MeshCertificateBinding(
+                mesh,
+                geometry_transition.geometry,
+                retained_fidelity.fidelity.binding.coordinate_scope,
+                retained_fidelity.limits,
+                source_id=surface_transfer.support.domain.source_id,
+                source_revision=surface_transfer.support.domain.source_revision,
+            )
+        )
+        metric_prepared_fidelity = source_fidelity_owner.SourceFidelityCertificate(
+            fidelity_binding,
+            (),
+            tolerance=prepared_source_fidelity.tolerance,
+            sample_order=prepared_source_fidelity.sample_order,
+            bounds=source_fidelity_owner.SourceFidelityBounds(
+                semantics=("certified", "certified"),
+                mesh_to_source=(target_fidelity_bound, 0.0),
+                source_to_mesh=(target_fidelity_bound, 0.0),
+                sample_counts=(
+                    mesh.entity_set(mesh.topological_dimension).count,
+                    surface_transfer.support.root_cell_ids.shape[0],
+                ),
+            ),
+        )
+    lineage = _owner_phydrax_meshing__periodic.metric_target_lineage(
+        source.mesh, edit, mesh, scope=scope, budget=budget
+    )
+    return _SurfaceGeometry(
+        mesh,
+        lineage,
+        geometry_transition,
+        audit_prepared_validity,
+        metric_prepared_embedding,
+        metric_prepared_fidelity,
+    )
 
-    A non-affine source map is carried by the accepted geometry transition: its
-    target corners become the mesh coordinates and the complete successor
-    `CellGeometrySpec` is certified. A nodal compatibility map retains constants;
-    supported conservative simplex transfers use actual mapped hat measures.
-    Nonnested polyhedral cell transfer is certified geometric common refinement,
-    not an invented nodal parent map.
 
-    This host commit boundary keeps source restoration, organization renewal,
-    certification, and transfer binding in their required failure order. Numerical
-    execution remains with each owning substrate; no intermediate target escapes.
-    """
-
+def _prepare_native_geometry(
+    prepared: PreparedMeshAdaptation,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    /,
+    *,
+    numeric_version: str,
+    surface_metric_outcome: _dependency_phydrax_meshing__surface_metric.SurfaceMetricOutcome
+    | _dependency_phydrax_meshing__surface_metric.SphereMetricOutcome
+    | None,
+    plc_source: _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometrySource
+    | _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometryConvexSource
+    | None,
+    polyhedral_geometry: CellGeometrySpec | None,
+    surface_curve_witness: PreparedSurfaceCurveWitness | None,
+    bisection_hierarchy: BisectionHierarchy | None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> _NativeGeometry:
     source = prepared.source
     periodic_surface = (
         surface_metric_outcome.periodic_stage
-        if isinstance(surface_metric_outcome, SurfaceMetricOutcome)
+        if isinstance(
+            surface_metric_outcome,
+            _dependency_phydrax_meshing__surface_metric.SurfaceMetricOutcome,
+        )
         else None
-    )
-    numeric_version = (
-        surface_metric_outcome.target_mesh.numeric_version
-        if isinstance(surface_metric_outcome, SphereMetricOutcome)
-        else periodic_surface.target_mesh.numeric_version
-        if periodic_surface is not None
-        else f"adaptation:{prepared.prepared_id}"
     )
     edit, coefficient_geometry = _full_p1_edit_geometry(
         prepared,
         edit,
         bisection_hierarchy=bisection_hierarchy,
+        budget=budget,
+        scope=scope,
     )
-    mesh, lineage, stencil = assemble_topology_edit(
-        source.mesh, edit, numeric_version=numeric_version
+    mesh, lineage, stencil = (
+        _dependency_phydrax_meshing__topology_edit.assemble_topology_edit(
+            source.mesh, edit, numeric_version=numeric_version, budget=budget
+        )
     )
-    audit_prepared_validity: CellValidityCertificate | None = None
-    metric_prepared_embedding: GlobalEmbeddingCertificate | None = None
-    metric_prepared_fidelity: SourceFidelityCertificate | None = None
+    audit_prepared_validity: (
+        _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate
+        | None
+    ) = None
+    metric_prepared_embedding: (
+        global_embedding_owner.GlobalEmbeddingCertificate | None
+    ) = None
+    metric_prepared_fidelity: source_fidelity_owner.SourceFidelityCertificate | None = (
+        None
+    )
     if surface_metric_outcome is not None:
-        from ..geometry._surface_source_support import (
-            SurfaceNativeRestrictionBoundarySource,
-            SurfaceSourceRootAtlas,
-        )
-        from ._periodic import metric_target_lineage
-        from ._surface_metric import (
-            _surface_metric_source_cover,
-            prepare_surface_metric_geometry_transition,
-            prepare_surface_metric_source,
-        )
-
         surface_transfer = prepared.policy.association_transfer
-        if not isinstance(surface_transfer, SurfaceAssociationTransfer):
-            raise TypeError(
-                "Surface reconstruction requires its original source transfer."
-            )
-        if isinstance(surface_metric_outcome, SphereMetricOutcome):
-            from ..discretization._cell_geometry_transfer import (
-                transition_chart_deformed_cell_geometry,
-            )
-
-            actual = surface_metric_outcome
-            mesh = actual.target_mesh
-            lineage = metric_target_lineage(source.mesh, edit, mesh)
-            geometry_transition = transition_chart_deformed_cell_geometry(
-                source.mesh,
-                source.geometry,
-                mesh,
-                actual.reconstruction,
-                actual.deformation,
-                policy=prepared.policy.geometry_transition,
-            )
-            audit_prepared_validity = actual.reconstruction.target_validity
-        elif periodic_surface is not None:
-            mesh = periodic_surface.target_mesh
-            lineage = metric_target_lineage(source.mesh, edit, mesh)
-            geometry_transition = periodic_surface.geometry_stage.geometry_transition
-        else:
-            witness = prepare_surface_metric_source(source, surface_transfer)
-            _, material_root_witness = _surface_material_epoch(source, witness)
-            if surface_curve_witness is None:
+        match surface_transfer:
+            case _dependency_phydrax_meshing__association.SurfaceAssociationTransfer():
+                pass
+            case _:
                 raise TypeError(
-                    "UV reconstruction requires its actual source curve witness."
+                    f"MeshAdaptationPolicy.association_transfer must provide source support for surface reconstruction; got {type(surface_transfer).__name__!r}"
                 )
-            prepared_source_fidelity = None
-            if source.certification is not None and isinstance(
-                source.certification.request.source,
-                SurfaceNativeRestrictionBoundarySource,
+        match surface_metric_outcome:
+            case (
+                _dependency_phydrax_meshing__surface_metric.SphereMetricOutcome() as actual
             ):
-                retained_source = source.certification.request.source
-                retained_source.require_current()
-                restriction = source.geometry.restriction_source
-                if (
-                    restriction is None
-                    or retained_source.mesh.mesh_id != source.mesh.mesh_id
-                    or cell_geometry_id(retained_source.geometry)
-                    != cell_geometry_id(source.geometry)
-                    or retained_source.support.root_geometry_id
-                    != restriction.source_geometry_id
-                    or retained_source.support.root_topology_id
-                    != restriction.source_topology_id
-                ):
-                    raise ValueError(
-                        "Prepared exact source fidelity has stale restriction authority."
-                    )
-                prepared_source_fidelity = source.certification.fidelity
-                if prepared_source_fidelity is None:
-                    raise ValueError(
-                        "Prepared exact source restriction lacks fidelity evidence."
-                    )
-            prepared_source_certificates = None
-            if (
-                source.certification is not None
-                and source.certification.embedding is not None
-            ):
-                prepared_source_certificates = (
-                    source.audit.validity,
-                    source.certification.embedding,
+                mesh = actual.target_mesh
+                lineage = _owner_phydrax_meshing__periodic.metric_target_lineage(
+                    source.mesh, edit, mesh, scope=scope, budget=budget
                 )
-            chart_transition = prepare_surface_metric_geometry_transition(
-                source.mesh,
-                source.geometry,
-                mesh,
-                surface_metric_outcome,
-                surface_transfer.support.domain,
-                witness,
-                maximum_fidelity=_surface_fidelity_limit(source),
-                policy=prepared.policy.geometry_transition,
-                maximum_candidate_pairs=prepared.policy.limits.maximum_geometry_queries,
-                maximum_memory_bytes=prepared.policy.limits.maximum_scratch_bytes,
-                certificate_limits=source.certification.request.limits
-                if source.certification is not None
-                else None,
-                validity_policy=prepared.policy.audit_policy.validity_policy,
-                source_chart_cover=_surface_metric_source_cover(source),
-                source_atlas=surface_transfer.support.original
-                if isinstance(surface_transfer.support.original, SurfaceSourceRootAtlas)
-                else None,
-                curve_witness=surface_curve_witness,
-                material_root_witness=material_root_witness,
-                prepared_source_fidelity=prepared_source_fidelity,
-                prepared_source_certificates=prepared_source_certificates,
-            )
-            audit_prepared_validity = chart_transition.deformation.target_validity
-            metric_prepared_embedding = chart_transition.deformation.target_embedding
-            geometry_transition = chart_transition.transition
-            mesh = chart_transition.target_mesh
-            target_fidelity_bound = float(
-                np.max(
-                    np.asarray(chart_transition.deformation.target_fidelity_bounds),
-                    initial=0.0,
-                )
-            )
-            if (
-                prepared_source_fidelity is not None
-                and chart_transition.deformation.target_domain_coverage == "certified"
-            ):
-                if target_fidelity_bound > prepared_source_fidelity.tolerance:
-                    raise ValueError(
-                        "Prepared target source fidelity exceeds its original tolerance."
-                    )
-                if source.certification is None:
-                    raise RuntimeError(
-                        "Exact surface fidelity reuse lost source certification."
-                    )
-                fidelity_binding = MeshCertificateBinding(
+                geometry_transition = _owner_phydrax_discretization__cell_geometry_transfer.transition_chart_deformed_cell_geometry(
+                    source.mesh,
+                    source.geometry,
                     mesh,
-                    geometry_transition.geometry,
-                    prepared_source_fidelity.binding.coordinate_scope,
-                    source.certification.request.limits,
-                    source_id=surface_transfer.support.domain.source_id,
-                    source_revision=surface_transfer.support.domain.source_revision,
+                    actual.reconstruction,
+                    actual.deformation,
+                    policy=prepared.policy.geometry_transition,
                 )
-                metric_prepared_fidelity = SourceFidelityCertificate(
-                    fidelity_binding,
-                    (),
-                    tolerance=prepared_source_fidelity.tolerance,
-                    semantics=("certified", "certified"),
-                    mesh_to_source=(target_fidelity_bound, 0.0),
-                    source_to_mesh=(target_fidelity_bound, 0.0),
-                    sample_order=prepared_source_fidelity.sample_order,
-                    sample_counts=(
-                        mesh.entity_set(mesh.topological_dimension).count,
-                        surface_transfer.support.root_cell_ids.shape[0],
-                    ),
-                )
-            lineage = metric_target_lineage(source.mesh, edit, mesh)
+                audit_prepared_validity = actual.reconstruction.target_validity
+            case _dependency_phydrax_meshing__surface_metric.SurfaceMetricOutcome():
+                if periodic_surface is not None:
+                    mesh = periodic_surface.target_mesh
+                    lineage = _owner_phydrax_meshing__periodic.metric_target_lineage(
+                        source.mesh, edit, mesh, scope=scope, budget=budget
+                    )
+                    geometry_transition = (
+                        periodic_surface.geometry_stage.geometry_transition
+                    )
+                else:
+                    uv = _prepare_uv_geometry(
+                        prepared,
+                        edit,
+                        mesh,
+                        surface_metric_outcome,
+                        surface_transfer,
+                        surface_curve_witness=surface_curve_witness,
+                        budget=budget,
+                        scope=scope,
+                    )
+                    mesh, lineage, geometry_transition = (
+                        uv.mesh,
+                        uv.lineage,
+                        uv.geometry_transition,
+                    )
+                    audit_prepared_validity = uv.audit_prepared_validity
+                    metric_prepared_embedding = uv.metric_prepared_embedding
+                    metric_prepared_fidelity = uv.metric_prepared_fidelity
+            case invalid:
+                assert_never(invalid)
         geometry = geometry_transition.geometry
     elif plc_source is not None:
         geometry_transition = None
@@ -3426,14 +4741,22 @@ def _finalize_native(
             case None:
                 geometry = CellGeometrySpec.affine(mesh)
             case (
-                ExactPowerCellGeometrySource()
-                | ExactPowerCellGeometryRestrictionSource()
-                | ExactPowerCellGeometryLinearActionSource() as power_source
+                _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometrySource()
+                | _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometryRestrictionSource()
+                | _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometryLinearActionSource() as power_source
             ):
                 geometry = CellGeometrySpec.power(mesh, power_source)
-            case ExactPlcCellGeometrySource() | ExactPlcCellGeometryConvexSource():
+            case ExactAlgebraicCellGeometrySource():
                 raise ValueError(
-                    "Polyhedral adaptation cannot republish an exact PLC source on polyhedra."
+                    "MeshAdaptation.polyhedral_geometry.exact_source must use a power-polyhedron source; got an algebraic nodal source"
+                )
+            case (
+                _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometrySource()
+                | _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometryConvexSource()
+                | exact_rational_geometry_owner.ExactRationalCellGeometrySource()
+            ):
+                raise ValueError(
+                    f"MeshAdaptation.polyhedral_geometry.exact_source must not republish PLC geometry on polyhedra; got {type(polyhedral_geometry.exact_source).__name__!r}"
                 )
             case invalid:
                 assert_never(invalid)
@@ -3441,7 +4764,7 @@ def _finalize_native(
         geometry_transition = (
             None
             if coefficient_geometry is not None
-            else _geometry_transition(prepared, edit, mesh)
+            else _geometry_transition(prepared, edit, mesh, budget=budget)
         )
         geometry = (
             coefficient_geometry
@@ -3455,66 +4778,126 @@ def _finalize_native(
             geometry_transition.vertex_coordinates, numeric_version=numeric_version
         )
         geometry = geometry_transition.geometry
-    patches, zones, labels = inherit_mesh_organization(source, mesh, lineage)
-    if prepared.policy.route is MeshAdaptationRoute.NATIVE_LEVEL_SET:
-        from ._level_set import level_set_organization
-
-        patches, zones, labels = level_set_organization(
-            prepared, mesh, patches, zones, labels, edit
-        )
-    region_boundary_evidence = _region_boundary_transition(
-        source, mesh, lineage, patches, zones, labels
+    return _NativeGeometry(
+        edit,
+        mesh,
+        lineage,
+        stencil,
+        geometry,
+        geometry_transition,
+        audit_prepared_validity,
+        metric_prepared_embedding,
+        metric_prepared_fidelity,
     )
-    region_evidence = None
-    if source.region_evidence is not None:
-        from ._compartments import revalidate_region_evidence
 
-        renewal = revalidate_region_evidence(
-            source,
+
+@final
+class _NativePublication(StrictModule):
+    """Inherited scientific declarations and source proofs for target certification."""
+
+    associations: tuple[association_state_owner.GeometryAssociation, ...]
+    attributes: tuple[_dependency_phydrax_meshing__organization.MeshAttribute, ...]
+    boundary: SurfaceModel | None
+    certification_inputs: (
+        _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs | None
+    )
+    prepared_volume: (
+        _owner_phydrax_meshing__certification.MeshCertificationPreparedEvidence | None
+    )
+
+
+@final
+class _PreparedAssociations(StrictModule):
+    """Propagated source associations and their optional volume proof."""
+
+    associations: tuple[association_state_owner.GeometryAssociation, ...]
+    volume: _owner_phydrax_meshing__certification.MeshCertificationPreparedEvidence | None
+
+
+def _propagate_plc_associations(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    association_transfer: _dependency_phydrax_meshing__association.PlcAssociationTransfer
+    | _dependency_phydrax_meshing__association_composition.ComposedAssociationTransfer,
+    phase: _NativeGeometry,
+    certification_inputs: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs
+    | None,
+    certification_cell_regions: np.ndarray | None,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _PreparedAssociations:
+    mesh, lineage, geometry = phase.mesh, phase.lineage, phase.geometry
+    certification_prepared = None
+    target_evidence: (
+        list[_owner_phydrax_meshing__certification.MeshCertificationPreparedEvidence]
+        | None
+    ) = None
+    target_request = None
+    if (
+        isinstance(
+            association_transfer,
+            _dependency_phydrax_meshing__association_composition.ComposedAssociationTransfer,
+        )
+        or association_transfer.domain.ambient_dimension == 3
+    ) and certification_inputs is not None:
+        target_request = certification_inputs.transition_request(
             mesh,
             geometry,
-            zones,
-            patches,
             lineage=lineage,
-            common_refinement=common_refinement,
-            limits=prepared.policy.limits,
+            cell_regions=certification_cell_regions,
+            budget=budget,
         )
-        zones, patches, region_evidence = (
-            renewal.zones,
-            renewal.patches,
-            renewal.region_evidence,
-        )
-    certification_inputs = _adaptation_certification_inputs(
-        source, prepared.policy.limits
+        target_evidence = []
+    associations = association_transfer.propagate(
+        source,
+        lineage,
+        mesh,
+        geometry=geometry,
+        _certification_request=target_request,
+        _prepared_target=target_evidence,
+        budget=budget,
     )
-    certification_cell_regions: np.ndarray | None = None
-    if (
-        certification_inputs is not None
-        and certification_inputs.cell_regions is not None
-        and region_evidence is not None
-    ):
-        domain = certification_inputs.domain
-        if domain is None or domain.domain_id != region_evidence.domain.domain_id:
+    if target_evidence is not None:
+        if len(target_evidence) != 1:
             raise ValueError(
-                "Region renewal and certification must bind the same authoritative domain."
+                f"MeshAdaptation.associations.prepared_target must publish one coherent target proof; got {len(target_evidence)!r}"
             )
-        region_rows = {region: row for row, region in enumerate(domain.region_ids)}
-        certification_cell_regions = np.asarray(
-            [region_rows[region] for region in region_evidence.cell_region_ids],
-            dtype=np.int64,
-        )
-    if polyhedral_construction is not None:
-        certification_cell_regions = polyhedral_construction.cell_regions
+        certification_prepared = target_evidence[0]
+    return _PreparedAssociations(associations, certification_prepared)
+
+
+def _prepare_native_publication(
+    prepared: PreparedMeshAdaptation,
+    phase: _NativeGeometry,
+    certification_inputs: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs
+    | None,
+    certification_cell_regions: np.ndarray | None,
+    /,
+    *,
+    polyhedral_construction: _dependency_phydrax_meshing__polyhedral_generation.PolyhedralConstruction
+    | None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> _NativePublication:
+    source = prepared.source
+    mesh, lineage, geometry, geometry_transition = (
+        phase.mesh,
+        phase.lineage,
+        phase.geometry,
+        phase.geometry_transition,
+    )
     association_transfer = prepared.policy.association_transfer
-    associations: tuple[GeometryAssociation, ...] = ()
+    associations: tuple[association_state_owner.GeometryAssociation, ...] = ()
     certification_prepared = None
-    certification_prepared_embedding = metric_prepared_embedding
     if polyhedral_construction is not None and source.associations:
-        if not isinstance(prepared.request, PolyhedralMeshAdaptation):
+        if not isinstance(
+            prepared.request,
+            _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralMeshAdaptation,
+        ):
             raise TypeError(
-                "Construction-derived associations require a polyhedral request."
+                f"MeshAdaptation.request must provide a polyhedral request for construction-derived associations; got {type(prepared.request).__name__!r}"
             )
-        associations = regenerated_polyhedral_associations(
+        associations = _dependency_phydrax_meshing__polyhedral_adaptation.regenerated_polyhedral_associations(
             source,
             prepared.request,
             polyhedral_construction,
@@ -3522,39 +4905,25 @@ def _finalize_native(
         )
     elif source.associations:
         match association_transfer:
-            case BRepAssociationTransfer():
+            case _dependency_phydrax_meshing__association.BRepAssociationTransfer():
                 associations = association_transfer.propagate(source, lineage, mesh)
-            case PlcAssociationTransfer() | ComposedAssociationTransfer():
-                from ._certification import MeshCertificationPreparedEvidence
-
-                target_evidence: list[MeshCertificationPreparedEvidence] | None = None
-                target_request = None
-                if (
-                    isinstance(association_transfer, ComposedAssociationTransfer)
-                    or association_transfer.domain.ambient_dimension == 3
-                ) and certification_inputs is not None:
-                    target_request = certification_inputs._transition_request(
-                        mesh,
-                        geometry,
-                        lineage=lineage,
-                        cell_regions=certification_cell_regions,
-                    )
-                    target_evidence = []
-                associations = association_transfer.propagate(
+            case (
+                _dependency_phydrax_meshing__association.PlcAssociationTransfer()
+                | _dependency_phydrax_meshing__association_composition.ComposedAssociationTransfer()
+            ):
+                propagated = _propagate_plc_associations(
                     source,
-                    lineage,
-                    mesh,
-                    geometry=geometry,
-                    _certification_request=target_request,
-                    _prepared_target=target_evidence,
+                    association_transfer,
+                    phase,
+                    certification_inputs,
+                    certification_cell_regions,
+                    budget=budget,
                 )
-                if target_evidence is not None:
-                    if len(target_evidence) != 1:
-                        raise ValueError(
-                            "PLC propagation must publish one coherent target proof."
-                        )
-                    certification_prepared = target_evidence[0]
-            case SurfaceAssociationTransfer():
+                associations, certification_prepared = (
+                    propagated.associations,
+                    propagated.volume,
+                )
+            case _dependency_phydrax_meshing__association.SurfaceAssociationTransfer():
                 associations = association_transfer.propagate(
                     source,
                     lineage,
@@ -3563,32 +4932,54 @@ def _finalize_native(
                     deformation=None
                     if geometry_transition is None
                     else geometry_transition.chart_deformation,
+                    budget=budget,
                 )
-            case (
-                MappedReferenceAssociationTransfer()
-                | ImplicitAssociationTransfer()
-                | PeriodicAssociationTransfer()
-            ):
+            case _dependency_phydrax_meshing__association.MappedReferenceAssociationTransfer():
+                associations = association_transfer.propagate(
+                    source, lineage, mesh, geometry=geometry, budget=budget
+                )
+            case _dependency_phydrax_meshing__implicit_association_transfer.ImplicitAssociationTransfer():
                 associations = association_transfer.propagate(
                     source, lineage, mesh, geometry=geometry
                 )
+            case _dependency_phydrax_meshing_providers__native_periodic.PeriodicAssociationTransfer():
+                associations = association_transfer.propagate(
+                    source,
+                    lineage,
+                    mesh,
+                    geometry=geometry,
+                    scope=scope,
+                    budget=budget,
+                    _prepared_source=prepared.periodic_source_proofs,
+                )
             case None:
-                raise ValueError("Associated native source requires an owning transfer.")
+                raise ValueError(
+                    f"MeshAdaptationPolicy.association_transfer must be supplied for associated native publication; got {association_transfer!r}"
+                )
             case invalid:
                 assert_never(invalid)
-    attributes: tuple[MeshAttribute, ...] = ()
+    attributes: tuple[_dependency_phydrax_meshing__organization.MeshAttribute, ...] = ()
     if source.attributes:
-        from ._layer_core import remap_layer_index_attribute
-
-        attributes = remap_layer_index_attribute(source, lineage, mesh)
+        attributes = _owner_phydrax_meshing__layer_core.remap_layer_index_attribute(
+            source, lineage, mesh
+        )
     if (
-        isinstance(association_transfer, SurfaceAssociationTransfer)
+        isinstance(
+            association_transfer,
+            (
+                _dependency_phydrax_meshing__association.SurfaceAssociationTransfer,
+                _dependency_phydrax_meshing__association.BRepAssociationTransfer,
+            ),
+        )
         and certification_inputs is not None
     ):
-        from ._surface_association_transfer import successor_certification_inputs
-
-        certification_inputs = successor_certification_inputs(
-            association_transfer.support,
+        certification_inputs = _owner_phydrax_meshing__surface_association_transfer.successor_certification_inputs(
+            association_transfer.support
+            if isinstance(
+                association_transfer,
+                _dependency_phydrax_meshing__association.SurfaceAssociationTransfer,
+            )
+            else None,
             source,
             certification_inputs,
             lineage,
@@ -3597,73 +4988,53 @@ def _finalize_native(
             deformation=None
             if geometry_transition is None
             else geometry_transition.chart_deformation,
+            budget=budget,
         )
     boundary = None
     if source.boundary is not None:
-        if not isinstance(association_transfer, ImplicitAssociationTransfer):
+        if not isinstance(
+            association_transfer,
+            _dependency_phydrax_meshing__implicit_association_transfer.ImplicitAssociationTransfer,
+        ):
             raise ValueError(
-                "Native boundary publication lacks its owning source-model remap."
+                f"MeshAdaptationPolicy.association_transfer must remap the boundary source model for publication; got {type(association_transfer).__name__!r}"
             )
         boundary = association_transfer.remap_boundary(
             source, lineage, mesh, geometry=geometry
         )
-    # Supplying the geometry also refuses a successor canonicalization would reorder.
-    target = certify_cell_mesh(
-        mesh,
-        source.coordinate_contract,
-        geometry=geometry,
-        audit_policy=(
-            prepared.policy.audit_policy
-            if certification_inputs is None
-            else _required_audit_policy(
-                prepared.policy.audit_policy,
-                certification_inputs.schedule.required_audit_checks,
-            )
-        ),
-        boundary=boundary,
-        patches=patches,
-        zones=zones,
-        labels=labels,
-        attributes=attributes,
-        associations=associations,
-        region_evidence=region_evidence,
-        region_boundary_evidence=region_boundary_evidence,
-        certification_inputs=certification_inputs,
-        lineage=None if certification_inputs is None else lineage,
-        certification_cell_regions=certification_cell_regions,
-        certification_prepared=certification_prepared,
-        certification_prepared_embedding=certification_prepared_embedding,
-        certification_prepared_fidelity=metric_prepared_fidelity,
-        audit_prepared_validity=audit_prepared_validity,
-        surface_source=source.surface_source,
+    return _NativePublication(
+        associations, attributes, boundary, certification_inputs, certification_prepared
     )
-    transition = CellMeshTransition(
-        source.mesh.mesh_id,
-        source.mesh.topology_id,
-        target,
-        lineage,
-        kind,
-        vertex_stencil=stencil,
-        geometry_transition=geometry_transition,
-        parents=edit.refinement,
-        coarsening=_complete_coarsening_witnesses(
-            source.mesh, target.mesh, lineage, edit.coarsening
-        ),
-    )
+
+
+def _bind_native_transfer(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    target: _dependency_phydrax_meshing__result.CellMeshingResult,
+    phase: _NativeGeometry,
+    /,
+    *,
+    conservative: bool,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> FiniteElementTopologyTransfer | None:
+    stencil, geometry_transition = phase.stencil, phase.geometry_transition
     affine = geometry_transition is None
     source_measures = None
     target_measures = None
     if conservative:
         if stencil is None:
             raise ValueError(
-                "Conservative vertex transfer requires an exact vertex stencil."
+                f"MeshAdaptation.transfer.stencil must be supplied for conservative vertex transfer; got {stencil!r}"
             )
         if affine:
             source_measures = _p1_vertex_measures(source.mesh)
             target_measures = _p1_vertex_measures(target.mesh)
         else:
-            source_measures = cell_geometry_vertex_measures(source.mesh, source.geometry)
-            target_measures = cell_geometry_vertex_measures(target.mesh, target.geometry)
+            source_measures = _dependency_phydrax_discretization__cell_geometry_transfer.cell_geometry_vertex_measures(
+                source.mesh, source.geometry, budget=budget
+            )
+            target_measures = _dependency_phydrax_discretization__cell_geometry_transfer.cell_geometry_vertex_measures(
+                target.mesh, target.geometry, budget=budget
+            )
     transfer = (
         None
         if stencil is None
@@ -3679,53 +5050,318 @@ def _finalize_native(
             target_measures=target_measures,
         )
     )
-    return _NativeTarget(target, transition, lineage, stencil, transfer)
+    return transfer
 
 
-def _execute_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
-    from .._meshcore import current_native_execution_budget, NativeExecutionBudget
-    from ._measurements import NativeExecutionRecord
-
-    if current_native_execution_budget() is not None:
-        return _run_bisection_route(prepared)
-    limits = prepared.policy.limits
-    with NativeExecutionBudget(
-        max_work=limits.maximum_work_units,
-        max_geometry_queries=limits.maximum_geometry_queries,
-        max_cavity_cells=limits.maximum_cavity_cells,
-        max_scratch_bytes=limits.maximum_scratch_bytes,
-        max_wall_seconds=limits.maximum_wall_seconds,
-    ) as budget:
-        with budget.host_workspace():
-            outcome = _run_bisection_route(prepared)
-    if budget.evidence is None:
-        raise RuntimeError(
-            "Native bisection publication requires its actual ended execution scope."
+def _inherited_native_certificates(
+    prepared: PreparedMeshAdaptation,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    certification_inputs: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs
+    | None,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> tuple[
+    _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate
+    | None,
+    global_embedding_owner.GlobalEmbeddingCertificate | None,
+]:
+    source = prepared.source
+    receipt = source.execution_evidence
+    validity_policy = prepared.policy.audit_policy.validity_policy
+    if (
+        prepared.policy.route
+        not in (
+            MeshAdaptationRoute.NATIVE_BISECTION,
+            MeshAdaptationRoute.NATIVE_MIXED,
         )
-    target = outcome.target.with_execution_evidence(
-        NativeExecutionRecord(budget.evidence, owner_id=prepared.prepared_id),
-    )
-    return outcome._replace(target=target)
-
-
-def _run_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
-    if prepared.source.mesh.periodic_topology is not None:
-        from ._periodic import _execute_periodic_bisection_route
-
-        return _execute_periodic_bisection_route(prepared)
-    request = prepared.request
-    if not isinstance(request, MarkedMeshAdaptation) or not isinstance(
-        request.hierarchy, (BisectionHierarchy, type(None))
+        or source.mesh.storage is not None
+        or mesh.storage is not None
+        or receipt is None
+        or not source.audit.validity.all_certified
+        or source.audit.validity.policy_id != validity_policy.policy_id
     ):
-        raise TypeError("A bisection route requires a marked bisection request.")
+        return None, None
+    old_ids = np.concatenate(
+        [np.asarray(block.global_ids) for block in source.mesh.blocks]
+    )
+    new_ids = np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks])
+    if not np.intersect1d(old_ids, new_ids).size:
+        return None, None
+    predecessor = cell_predecessor_owner.prepare_cell_geometry_predecessor(
+        source.mesh,
+        source.geometry,
+        source.audit.validity,
+        None if source.certification is None else source.certification.embedding,
+        mesh,
+        geometry,
+        budget=budget,
+    )
+    if not any(row >= 0 for row in predecessor.source_rows):
+        return None, None
+    native_preparation_ledger(scope).import_receipt(scope, receipt)
+    validity = _dependency_phydrax_discretization__cell_geometry_validity.certify_cell_geometry_validity(
+        geometry,
+        mesh=mesh,
+        policy=validity_policy,
+        predecessor=predecessor,
+        budget=budget,
+    )
+    embedding = (
+        None
+        if certification_inputs is None or predecessor.source_embedding is None
+        else global_embedding_owner.certify_global_embedding(
+            mesh,
+            geometry,
+            validity,
+            limits=certification_inputs.limits,
+            junction_vertices=certification_inputs.junction_vertices,
+            predecessor=predecessor,
+            budget=budget,
+        )
+    )
+    return validity, embedding
+
+
+@checked
+def finalize_native(
+    prepared: PreparedMeshAdaptation,
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit,
+    kind: _dependency_phydrax_meshing__lineage_records.MeshTransitionKind,
+    /,
+    *,
+    conservative: bool,
+    common_refinement: _dependency_phydrax_geometry__supermesh.PreparedCommonRefinement
+    | None = None,
+    polyhedral_construction: _dependency_phydrax_meshing__polyhedral_generation.PolyhedralConstruction
+    | None = None,
+    polyhedral_geometry: CellGeometrySpec | None = None,
+    surface_metric_outcome: _dependency_phydrax_meshing__surface_metric.SurfaceMetricOutcome
+    | _dependency_phydrax_meshing__surface_metric.SphereMetricOutcome
+    | None = None,
+    plc_source: _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometrySource
+    | _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometryConvexSource
+    | None = None,
+    surface_curve_witness: _owner_phydrax_meshing__surface_association_transfer.PreparedSurfaceCurveWitness
+    | None = None,
+    bisection_hierarchy: BisectionHierarchy | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> _NativeTarget:
+    """Publish the native target, geometry transition, lineage, and nodal transfer.
+
+    Non-affine source maps are carried by the accepted geometry transition;
+    target corners become mesh coordinates and the successor CellGeometrySpec
+    is certified. Conservative simplex transfers use mapped hat measures.
+    Nonnested polyhedral cell transfer uses certified geometric common refinement.
+    Source restoration, organization renewal, certification, and transfer binding
+    retain their required failure order. No intermediate target escapes.
+    """
+
+    with adaptation_phase(scope, budget):
+        source = prepared.source
+        periodic_surface = (
+            surface_metric_outcome.periodic_stage
+            if isinstance(
+                surface_metric_outcome,
+                _dependency_phydrax_meshing__surface_metric.SurfaceMetricOutcome,
+            )
+            else None
+        )
+        numeric_version = (
+            surface_metric_outcome.target_mesh.numeric_version
+            if isinstance(
+                surface_metric_outcome,
+                _dependency_phydrax_meshing__surface_metric.SphereMetricOutcome,
+            )
+            else periodic_surface.target_mesh.numeric_version
+            if periodic_surface is not None
+            else f"adaptation:{prepared.prepared_id}"
+        )
+        phase = _prepare_native_geometry(
+            prepared,
+            edit,
+            numeric_version=numeric_version,
+            surface_metric_outcome=surface_metric_outcome,
+            plc_source=plc_source,
+            polyhedral_geometry=polyhedral_geometry,
+            surface_curve_witness=surface_curve_witness,
+            bisection_hierarchy=bisection_hierarchy,
+            budget=budget,
+            scope=scope,
+        )
+        edit, mesh, lineage, stencil = (
+            phase.edit,
+            phase.mesh,
+            phase.lineage,
+            phase.stencil,
+        )
+        geometry, geometry_transition = phase.geometry, phase.geometry_transition
+        audit_prepared_validity = phase.audit_prepared_validity
+        metric_prepared_embedding = phase.metric_prepared_embedding
+        metric_prepared_fidelity = phase.metric_prepared_fidelity
+        patches, zones, labels = (
+            _dependency_phydrax_meshing__lineage.inherit_mesh_organization(
+                source, mesh, lineage
+            )
+        )
+        if prepared.policy.route is MeshAdaptationRoute.NATIVE_LEVEL_SET:
+            patches, zones, labels = (
+                _owner_phydrax_meshing__level_set.level_set_organization(
+                    prepared, mesh, patches, zones, labels, edit
+                )
+            )
+        region_boundary_evidence = region_boundary_transition(
+            source, mesh, lineage, patches, zones, labels
+        )
+        region_evidence = None
+        if source.region_evidence is not None:
+            renewal = _owner_phydrax_meshing__compartments.revalidate_region_evidence(
+                source,
+                mesh,
+                geometry,
+                zones,
+                patches,
+                lineage=lineage,
+                common_refinement=common_refinement,
+                limits=prepared.policy.limits,
+            )
+            zones, patches, region_evidence = (
+                renewal.zones,
+                renewal.patches,
+                renewal.region_evidence,
+            )
+        certification_inputs = _adaptation_certification_inputs(
+            source, prepared.policy.limits, budget=budget
+        )
+        certification_cell_regions: np.ndarray | None = None
+        if (
+            certification_inputs is not None
+            and certification_inputs.cell_regions is not None
+            and region_evidence is not None
+        ):
+            domain = certification_inputs.domain
+            if domain is None or domain.domain_id != region_evidence.domain.domain_id:
+                raise ValueError(
+                    f"MeshAdaptation.target.certification.domain must match the region-renewal domain; got {(domain.domain_id if domain is not None else None)!r}"
+                )
+            region_rows = {region: row for row, region in enumerate(domain.region_ids)}
+            certification_cell_regions = np.asarray(
+                [region_rows[region] for region in region_evidence.cell_region_ids],
+                dtype=np.int64,
+            )
+        if polyhedral_construction is not None:
+            certification_cell_regions = polyhedral_construction.cell_regions
+        publication = _prepare_native_publication(
+            prepared,
+            phase,
+            certification_inputs,
+            certification_cell_regions,
+            polyhedral_construction=polyhedral_construction,
+            budget=budget,
+            scope=scope,
+        )
+        certification_inputs = publication.certification_inputs
+        if publication.prepared_volume is None and audit_prepared_validity is None:
+            inherited_validity, inherited_embedding = _inherited_native_certificates(
+                prepared,
+                mesh,
+                geometry,
+                certification_inputs,
+                budget=budget,
+                scope=scope,
+            )
+            audit_prepared_validity = inherited_validity
+            if metric_prepared_embedding is None:
+                metric_prepared_embedding = inherited_embedding
+        certification_prepared = (
+            _owner_phydrax_meshing__certification.PreparedVolumeAcceptance(
+                publication.prepared_volume, metric_prepared_fidelity
+            )
+            if publication.prepared_volume is not None
+            else _owner_phydrax_meshing__certification.PreparedBoundaryAcceptance(
+                metric_prepared_embedding, metric_prepared_fidelity
+            )
+            if metric_prepared_embedding is not None
+            or metric_prepared_fidelity is not None
+            else None
+        )
+        # Supplying the geometry also refuses a successor canonicalization would reorder.
+        target = _dependency_phydrax_meshing__canonical.certify_cell_mesh(
+            mesh,
+            source.coordinate_contract,
+            geometry=geometry,
+            audit_policy=prepared.policy.audit_policy,
+            boundary=publication.boundary,
+            patches=patches,
+            zones=zones,
+            labels=labels,
+            attributes=publication.attributes,
+            associations=publication.associations,
+            region_evidence=region_evidence,
+            region_boundary_evidence=region_boundary_evidence,
+            certification_inputs=certification_inputs,
+            lineage=None if certification_inputs is None else lineage,
+            certification_cell_regions=certification_cell_regions,
+            certification_prepared=certification_prepared,
+            audit_prepared_validity=audit_prepared_validity,
+            surface_source=source.surface_source,
+            budget=budget,
+        )
+        # Lazy: the envelope owner also uses native volume generation.
+        from ._surface_envelope import _carry_surface_envelope_repair
+
+        target = _carry_surface_envelope_repair(source, target, budget=budget)
+        transition = _dependency_phydrax_meshing__lineage.CellMeshTransition(
+            source.mesh.mesh_id,
+            source.mesh.topology_id,
+            target,
+            lineage,
+            kind,
+            vertex_stencil=stencil,
+            geometry_transition=geometry_transition,
+            parents=edit.refinement,
+            coarsening=_complete_coarsening_witnesses(
+                source.mesh, target.mesh, lineage, edit.coarsening
+            ),
+        )
+        transfer = _bind_native_transfer(
+            source, target, phase, conservative=conservative, budget=budget
+        )
+        return _NativeTarget(target, transition, lineage, stencil, transfer)
+
+
+def _run_bisection_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> RouteOutcome:
+    if prepared.source.mesh.periodic_topology is not None:
+        return _owner_phydrax_meshing__periodic.execute_periodic_bisection_route(
+            prepared, scope=scope, budget=budget
+        )
+    request = prepared.request
+    match request:
+        case MarkedMeshAdaptation(
+            hierarchy=(BisectionHierarchy() | None) as bisection_hierarchy
+        ):
+            pass
+        case _:
+            raise TypeError(
+                f"MeshAdaptation.request must provide marked bisection adaptation; got {type(request).__name__!r}"
+            )
     policy = prepared.policy
     constraints = prepared.constraints
-    outcome = execute_bisection(
+    outcome = _dependency_phydrax_meshing__bisection.execute_bisection(
         prepared.source.mesh,
         np.asarray(request.refine_cell_ids, dtype=np.int64),
         np.asarray(request.coarsen_cell_ids, dtype=np.int64),
         source_result=prepared.source,
-        hierarchy=request.hierarchy,
+        hierarchy=bisection_hierarchy,
         compatibility=policy.compatibility,
         protected_edges=constraints.protected_edge_keys,
         protected_vertices=constraints.protected_vertex_ids,
@@ -3748,7 +5384,7 @@ def _run_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         or np.asarray(evidence.rejected_coarsening_ids).size > 0
     )
     if not refined and not coarsened:
-        return _unchanged(
+        return unchanged(
             prepared,
             evidence,
             outcome.hierarchy,
@@ -3758,22 +5394,25 @@ def _run_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
         )
     match (refined, coarsened):
         case (True, False):
-            kind = MeshTransitionKind.REFINE
+            kind = _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REFINE
         case (False, True):
-            kind = MeshTransitionKind.COARSEN
+            kind = _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.COARSEN
         case _:
-            kind = MeshTransitionKind.REMESH
-    native = _finalize_native(
+            kind = _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REMESH
+    native = finalize_native(
         prepared,
         outcome.edit,
         kind,
         conservative=not coarsened,
         bisection_hierarchy=outcome.hierarchy,
+        scope=scope,
+        budget=budget,
     )
-    from ._bisection import _rebind_bisection_presentation_blocks
 
-    hierarchy = _rebind_bisection_presentation_blocks(outcome.hierarchy, native.target)
-    return _RouteOutcome(
+    hierarchy = bisection_kernel_owner.rebind_bisection_presentation_blocks(
+        outcome.hierarchy, native.target, scope=scope, budget=budget
+    )
+    return RouteOutcome(
         MeshAdaptationStatus.PARTIAL if partial else MeshAdaptationStatus.COMPLETE,
         native.target,
         native.transition,
@@ -3786,17 +5425,21 @@ def _run_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     )
 
 
-def _target_metric(
-    metric: MeshMetricField, target: CellMesh, values: np.ndarray, /
-) -> MeshMetricField:
+@checked
+def target_metric(
+    metric: _dependency_phydrax_meshing__metric.MeshMetricField,
+    target: CellMesh,
+    values: np.ndarray,
+    /,
+) -> _dependency_phydrax_meshing__metric.MeshMetricField:
     vertices = target.entity_set(0)
     identifiers = np.asarray(target.vertex_global_ids, dtype=np.int64)
     order = np.argsort(identifiers, kind="stable")
-    return MeshMetricField(
-        MeshingScope(
+    return _dependency_phydrax_meshing__metric.MeshMetricField(
+        _dependency_phydrax_meshing__scope.MeshingScope(
             target.mesh_id,
             target.numeric_version,
-            MeshingEntityKind.MESH,
+            _dependency_phydrax_meshing__scope.MeshingEntityKind.MESH,
             0,
             vertices.entity_set_id,
             identifiers,
@@ -3808,7 +5451,8 @@ def _target_metric(
     )
 
 
-def _metric_status(
+@checked
+def metric_status(
     evidence: LocalMetricEvidence | DeviceMetricEvidence, topology: bool, /
 ) -> MeshAdaptationStatus:
     if not topology:
@@ -3825,105 +5469,88 @@ def _metric_status(
     return MeshAdaptationStatus.PASS_LIMIT
 
 
-def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
-    request = prepared.request
-    if not isinstance(request, (MetricMeshAdaptation, RelocationMeshAdaptation)):
-        raise TypeError("A native metric route requires a metric or relocation request.")
-    policy = prepared.policy
-    constraints = prepared.constraints
-    topology = isinstance(request, MetricMeshAdaptation)
-    outcome = execute_local_metric_adaptation(
-        prepared.source.mesh,
-        constraints.metric_values,
-        cell_classes=constraints.cell_classes,
-        edge_classes=constraints.edge_classes,
-        protected_edges=constraints.protected_edge_mask,
-        fixed_vertices=constraints.fixed_vertex_mask,
-        predicate_mode=resolve_host_predicate_mode(policy.predicate_mode),
-        maximum_passes=policy.maximum_passes,
-        topology_operations=topology,
-        relocation=policy.relocation,
-    )
-    evidence = outcome.evidence
-    status = _metric_status(evidence, topology)
-    applied = evidence.splits + evidence.collapses + evidence.flips + evidence.relocations
-    if applied == 0:
-        # Preserve the exact source while retaining whether the request was
-        # already satisfied, stalled, or exhausted its pass budget.
-        return _unchanged(prepared, evidence, None, status=status)
-    native = _finalize_native(
-        prepared, outcome.edit, MeshTransitionKind.REMESH, conservative=False
-    )
-    return _RouteOutcome(
-        status,
-        native.target,
-        native.transition,
-        native.lineage,
-        native.stencil,
-        native.transfer,
-        _target_metric(request.metric, native.target.mesh, outcome.metric),
-        evidence,
-        None,
-    )
-
-
-def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
-    from .._meshcore import current_native_execution_budget
-    from ..discretization._coordinate_enclosure import _COORDINATE_BUDGET
-    from ._volume_generation import native_volume_execution_budget
-
-    if current_native_execution_budget() is None:
-        with native_volume_execution_budget(
-            prepared.policy.limits,
-            stage=MeshingStageKind.OPTIMIZATION,
-        ) as budget:
-            outcome = _execute_tetra_metric_route(prepared)
-        if budget.evidence is None or not isinstance(
-            outcome.evidence, MetricRemeshingEvidence
-        ):
-            raise RuntimeError(
-                "A tetrahedral metric epoch lacks its actual ended execution evidence."
-            )
-        record = NativeExecutionRecord(budget.evidence, owner_id=prepared.prepared_id)
-        evidence = eqx.tree_at(
-            lambda value: value.execution_evidence,
-            outcome.evidence,
-            record,
-            is_leaf=lambda value: value is None,
-        )
-        return outcome._replace(evidence=evidence)
-    if _COORDINATE_BUDGET.get() is None:
-        limits = prepared.policy.limits
-        ledger = CoordinateEnclosureBudget(
-            limits.maximum_work_units, limits.maximum_scratch_bytes
-        )
-        try:
-            with ledger.activate():
-                outcome = _execute_tetra_metric_route(prepared)
-                ledger.charge_native_work(
-                    ledger.work_units - ledger.native_charged_work_units
+def _execute_metric_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> RouteOutcome:
+    with adaptation_phase(scope, budget):
+        request = prepared.request
+        match request:
+            case MetricMeshAdaptation() | RelocationMeshAdaptation():
+                pass
+            case _:
+                raise TypeError(
+                    f"MeshAdaptation.request must provide a metric or relocation request; got {type(request).__name__!r}"
                 )
-                return outcome
-        except CoordinateEnclosureResourceError as error:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Exact tetrahedral source preparation exhausted the original operation allowance.",
-                stage=MeshingStageKind.OPTIMIZATION.value,
-                requested=(
-                    ("maximum_work_units", limits.maximum_work_units),
-                    ("maximum_scratch_bytes", limits.maximum_scratch_bytes),
-                ),
-                achieved=(
-                    ("coordinate_work_units", ledger.work_units),
-                    ("coordinate_peak_bytes_upper", ledger.peak_bytes_upper),
-                ),
-            ) from error
+        policy = prepared.policy
+        constraints = prepared.constraints
+        topology = isinstance(request, MetricMeshAdaptation)
+        outcome = _dependency_phydrax_meshing__local_metric.execute_local_metric_adaptation(
+            prepared.source.mesh,
+            constraints.metric_values,
+            cell_classes=constraints.cell_classes,
+            edge_classes=constraints.edge_classes,
+            protected_edges=constraints.protected_edge_mask,
+            fixed_vertices=constraints.fixed_vertex_mask,
+            predicate_mode=_dependency_phydrax__geometry_predicates.resolve_host_predicate_mode(
+                policy.predicate_mode
+            ),
+            maximum_passes=policy.maximum_passes,
+            topology_operations=topology,
+            relocation=policy.relocation,
+            budget=budget,
+        )
+        evidence = outcome.evidence
+        status = metric_status(evidence, topology)
+        applied = (
+            evidence.splits + evidence.collapses + evidence.flips + evidence.relocations
+        )
+        if applied == 0:
+            # Preserve the source result while retaining whether the request was
+            # already satisfied, stalled, or exhausted its pass budget.
+            return unchanged(prepared, evidence, None, status=status)
+        native = finalize_native(
+            prepared,
+            outcome.edit,
+            _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REMESH,
+            conservative=False,
+            scope=scope,
+            budget=budget,
+        )
+        return RouteOutcome(
+            status,
+            native.target,
+            native.transition,
+            native.lineage,
+            native.stencil,
+            native.transfer,
+            target_metric(request.metric, native.target.mesh, outcome.metric),
+            evidence,
+            None,
+        )
+
+
+def _execute_tetra_metric_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> RouteOutcome:
     request = prepared.request
-    if not isinstance(request, (MetricMeshAdaptation, RelocationMeshAdaptation)):
-        raise TypeError("A native metric route requires a metric or relocation request.")
+    match request:
+        case MetricMeshAdaptation() | RelocationMeshAdaptation():
+            pass
+        case _:
+            raise TypeError(
+                f"MeshAdaptation.request must provide a metric or relocation request; got {type(request).__name__!r}"
+            )
     policy = prepared.policy
     constraints = prepared.constraints
-    outcome = execute_tetra_metric_adaptation(
+    outcome = _dependency_phydrax_meshing__tetra_metric.execute_tetra_metric_adaptation(
         prepared.source.mesh,
         constraints.metric_values,
         source_geometry=prepared.source.geometry,
@@ -3942,67 +5569,75 @@ def _execute_tetra_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOu
         maximum_location_pairs=policy.limits.maximum_geometry_queries,
         maximum_cavity_cells=policy.limits.maximum_cavity_cells,
         maximum_scratch_bytes=policy.limits.maximum_scratch_bytes,
+        scope=scope,
+        budget=budget,
     )
     evidence = outcome.evidence
     match evidence.status:
-        case MetricRemeshingStatus.COMPLETE:
+        case _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus.COMPLETE:
             status = MeshAdaptationStatus.COMPLETE
-        case MetricRemeshingStatus.STALLED:
+        case _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus.STALLED:
             status = MeshAdaptationStatus.STALLED
-        case MetricRemeshingStatus.PASS_LIMIT:
+        case _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus.PASS_LIMIT:
             status = MeshAdaptationStatus.PASS_LIMIT
-        case MetricRemeshingStatus.RESOURCE_LIMIT:
+        case (
+            _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus.RESOURCE_LIMIT
+        ):
             status = MeshAdaptationStatus.RESOURCE_LIMIT
         case invalid:
             assert_never(invalid)
     applied = evidence.splits + evidence.collapses + evidence.flips + evidence.relocations
     if applied == 0:
-        return _unchanged(prepared, evidence, None, status=status)
-    native = _finalize_native(
+        return unchanged(prepared, evidence, None, status=status)
+    native = finalize_native(
         prepared,
         outcome.edit,
-        MeshTransitionKind.REMESH,
+        _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REMESH,
         conservative=False,
         plc_source=outcome.exact_source,
+        scope=scope,
+        budget=budget,
     )
-    return _RouteOutcome(
+    return RouteOutcome(
         status,
         native.target,
         native.transition,
         native.lineage,
         native.stencil,
         native.transfer,
-        _target_metric(request.metric, native.target.mesh, outcome.metric),
+        target_metric(request.metric, native.target.mesh, outcome.metric),
         evidence,
         None,
     )
 
 
-def _surface_fidelity_limit(source: CellMeshingResult, /) -> float:
+def _surface_fidelity_limit(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult, /
+) -> float:
     certificate = source.certification
     if certificate is None or certificate.request.fidelity_tolerance is None:
         raise ValueError(
-            "Surface adaptation must retain its original continuous fidelity bound."
+            f"MeshAdaptation.source.certification must retain continuous source fidelity; got {source.result_id!r}"
         )
     return certificate.request.fidelity_tolerance
 
 
 def _surface_material_epoch(
-    source: CellMeshingResult,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
     witness: SurfaceChartWitness,
     /,
 ) -> tuple[NDArray[np.object_] | None, SurfaceChartWitness]:
-    """Retain exact material anchors and the original admitted chart authority."""
-    from ..discretization._surface_chart_deformation import (
-        PreparedSurfaceChartDeformation,
-    )
-    from ._surface_association_transfer import SurfaceChartBoundarySource
+    """Retain material anchors and the admitted source chart provenance."""
 
     retained = (
         source.certification.request.source if source.certification is not None else None
     )
-    if isinstance(retained, SurfaceChartBoundarySource) and isinstance(
-        retained.deformation, PreparedSurfaceChartDeformation
+    if isinstance(
+        retained,
+        surface_boundary_sources_owner.SurfaceChartBoundarySource,
+    ) and isinstance(
+        retained.deformation,
+        _owner_phydrax_discretization__surface_chart_deformation.PreparedSurfaceChartDeformation,
     ):
         retained.require_current()
         retained.deformation.require_bound(
@@ -4018,230 +5653,259 @@ def _surface_material_epoch(
     return None, witness
 
 
-def _execute_surface_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
-    from ..discretization._sphere_chart_deformation import PreparedSphereChartDeformation
-    from ..geometry._sphere_material_atlas import sphere_material_atlas_from_result
-    from ..geometry.brep._patches import sphere_source_radius_terms
-    from ..geometry.brep._placed import PlacedSurface
-    from ._surface_association_transfer import (
-        prepare_surface_curve_witness,
-        SurfaceChartBoundarySource,
-    )
-    from ._surface_metric import (
-        execute_sphere_metric_adaptation,
-        execute_surface_metric_adaptation,
-        prepare_surface_metric_source,
-    )
-    from ._surface_metric_controller import _SurfaceMetricController
+@final
+class _SurfaceCandidate(StrictModule):
+    """Metric candidate and the curve evidence needed for target reconstruction."""
 
-    request, policy = prepared.request, prepared.policy
-    transfer = policy.association_transfer
-    if not isinstance(
-        request, (MetricMeshAdaptation, RelocationMeshAdaptation)
-    ) or not isinstance(transfer, SurfaceAssociationTransfer):
-        raise TypeError(
-            "The surface metric route requires its admitted request and source support."
-        )
-    source = prepared.source
-    domain = transfer.support.domain
-    patches = np.unique(transfer.classes(source)[2].indices)
-    sphere = True
-    for patch in patches:
-        surface = domain.patches[int(patch)].surface
-        operation = surface.definition if isinstance(surface, PlacedSurface) else surface
-        if sphere_source_radius_terms(operation) is None:
-            sphere = False
-            break
-    constraints = prepared.constraints
-    coordinate_budget = CoordinateEnclosureBudget(
-        policy.limits.maximum_work_units, policy.limits.maximum_scratch_bytes
+    outcome: (
+        _dependency_phydrax_meshing__surface_metric.SurfaceMetricOutcome
+        | _dependency_phydrax_meshing__surface_metric.SphereMetricOutcome
     )
-    refusal: (
-        MeshcoreError
-        | CoordinateEnclosureResourceError
-        | SurfaceChartResourceError
+    curve_witness: (
+        _owner_phydrax_meshing__surface_association_transfer.PreparedSurfaceCurveWitness
         | None
-    ) = None
-    outcome: _RouteOutcome | None = None
-    curve_witness: PreparedSurfaceCurveWitness | None = None
-    with coordinate_budget.activate():
-        try:
-            if sphere:
-                retained = (
-                    source.certification.request.source
-                    if source.certification is not None
-                    else None
-                )
-                if isinstance(retained, SurfaceChartBoundarySource) and isinstance(
-                    retained.deformation, PreparedSphereChartDeformation
-                ):
-                    retained.require_current()
-                    atlas = retained.deformation.target_atlas
-                else:
-                    atlas = sphere_material_atlas_from_result(
-                        domain,
-                        source,
-                        maximum_fidelity=_surface_fidelity_limit(source),
-                        maximum_cells=policy.limits.maximum_cells,
-                        maximum_work_units=policy.limits.maximum_work_units,
-                        maximum_coordinate_memory_bytes=policy.limits.maximum_scratch_bytes,
-                        coordinate_budget=coordinate_budget,
-                    )
-                produced = execute_sphere_metric_adaptation(
-                    source,
-                    constraints.metric_values,
-                    domain,
-                    atlas,
-                    transfer,
-                    policy=policy,
-                    coordinate_contract=source.coordinate_contract,
-                    maximum_fidelity=_surface_fidelity_limit(source),
-                    topology_operations=isinstance(request, MetricMeshAdaptation),
-                    relocation=policy.relocation,
-                    coordinate_budget=coordinate_budget,
-                )
-            else:
-                witness = prepare_surface_metric_source(source, transfer)
-                material_charts, material_root_witness = _surface_material_epoch(
-                    source, witness
-                )
-                curve_witness = prepare_surface_curve_witness(transfer.support, source)
-                controller = (
-                    _SurfaceMetricController(
-                        source,
-                        transfer,
-                        policy,
-                        coordinate_budget,
-                        witness,
-                        _surface_fidelity_limit(source),
-                        material_root_witness,
-                    )
-                    if source.mesh.periodic_topology is not None
-                    else None
-                )
-                produced = execute_surface_metric_adaptation(
-                    source.mesh,
-                    constraints.metric_values,
-                    domain,
-                    source_id=domain.source_id,
-                    source_revision=domain.source_revision,
-                    cell_patches=witness.patches,
-                    cell_charts=witness.charts,
-                    cell_classes=constraints.cell_classes,
-                    edge_classes=constraints.edge_classes,
-                    protected_edges=constraints.protected_edge_mask,
-                    fixed_vertices=constraints.fixed_vertex_mask,
-                    maximum_fidelity=_surface_fidelity_limit(source),
-                    maximum_passes=policy.maximum_passes,
-                    topology_operations=isinstance(request, MetricMeshAdaptation),
-                    relocation=policy.relocation,
-                    maximum_vertices=policy.limits.maximum_vertices,
-                    maximum_cells=policy.limits.maximum_cells,
-                    maximum_operations=policy.limits.maximum_work_units,
-                    maximum_arc_work_units=policy.limits.maximum_work_units,
-                    maximum_location_pairs=policy.limits.maximum_geometry_queries,
-                    controller=controller,
-                    source_material_charts=material_charts,
-                    curve_witness=curve_witness,
-                )
-            evidence = produced.evidence
-            status = MeshAdaptationStatus(evidence.status.value)
-            if (
-                evidence.status is MetricRemeshingStatus.RESOURCE_LIMIT
-                or evidence.splits
-                + evidence.collapses
-                + evidence.flips
-                + evidence.relocations
-                == 0
+    )
+
+
+def _run_sphere_metric_candidate(
+    prepared: PreparedMeshAdaptation,
+    request: MetricMeshAdaptation | RelocationMeshAdaptation,
+    transfer: _dependency_phydrax_meshing__association.SurfaceAssociationTransfer,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> _SurfaceCandidate:
+    source, policy, constraints = prepared.source, prepared.policy, prepared.constraints
+    domain = transfer.support.domain
+    retained = (
+        source.certification.request.source if source.certification is not None else None
+    )
+    if isinstance(
+        retained,
+        surface_boundary_sources_owner.SurfaceChartBoundarySource,
+    ) and isinstance(
+        retained.deformation,
+        _owner_phydrax_discretization__sphere_chart_deformation.PreparedSphereChartDeformation,
+    ):
+        retained.require_current()
+        atlas = retained.deformation.target_atlas
+    else:
+        atlas = _owner_phydrax_geometry__sphere_material_atlas.sphere_material_atlas_from_result(
+            domain,
+            source,
+            maximum_fidelity=_surface_fidelity_limit(source),
+            maximum_cells=policy.limits.maximum_cells,
+            maximum_work_units=policy.limits.maximum_work_units,
+            maximum_coordinate_memory_bytes=policy.limits.maximum_scratch_bytes,
+            budget=budget,
+        )
+    produced = _owner_phydrax_meshing__surface_metric.execute_sphere_metric_adaptation(
+        source,
+        constraints.metric_values,
+        domain,
+        atlas,
+        transfer,
+        policy=policy,
+        coordinate_contract=source.coordinate_contract,
+        maximum_fidelity=_surface_fidelity_limit(source),
+        topology_operations=isinstance(request, MetricMeshAdaptation),
+        relocation=policy.relocation,
+        budget=budget,
+        scope=scope,
+    )
+    return _SurfaceCandidate(produced, None)
+
+
+def _run_surface_metric_candidate(
+    prepared: PreparedMeshAdaptation,
+    request: MetricMeshAdaptation | RelocationMeshAdaptation,
+    transfer: _dependency_phydrax_meshing__association.SurfaceAssociationTransfer,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> _SurfaceCandidate:
+    source, policy, constraints = prepared.source, prepared.policy, prepared.constraints
+    domain = transfer.support.domain
+    witness = _owner_phydrax_meshing__surface_metric.prepare_surface_metric_source(
+        source, transfer, budget=budget
+    )
+    material_charts, material_root_witness = _surface_material_epoch(source, witness)
+    curve_witness = _owner_phydrax_meshing__surface_association_transfer.prepare_surface_curve_witness(
+        transfer.support, source, budget=budget
+    )
+    controller = (
+        _owner_phydrax_meshing__surface_metric_controller.SurfaceMetricController(
+            source,
+            transfer,
+            policy,
+            budget,
+            witness,
+            _surface_fidelity_limit(source),
+            material_root_witness,
+            scope=scope,
+        )
+        if source.mesh.periodic_topology is not None
+        else None
+    )
+    produced = _owner_phydrax_meshing__surface_metric.execute_surface_metric_adaptation(
+        source.mesh,
+        constraints.metric_values,
+        domain,
+        source_id=domain.source_id,
+        source_revision=domain.source_revision,
+        cell_patches=witness.patches,
+        cell_charts=witness.charts,
+        cell_classes=constraints.cell_classes,
+        edge_classes=constraints.edge_classes,
+        protected_edges=constraints.protected_edge_mask,
+        fixed_vertices=constraints.fixed_vertex_mask,
+        maximum_fidelity=_surface_fidelity_limit(source),
+        maximum_passes=policy.maximum_passes,
+        topology_operations=isinstance(request, MetricMeshAdaptation),
+        relocation=policy.relocation,
+        maximum_vertices=policy.limits.maximum_vertices,
+        maximum_cells=policy.limits.maximum_cells,
+        maximum_operations=policy.limits.maximum_work_units,
+        maximum_arc_work_units=policy.limits.maximum_work_units,
+        maximum_location_pairs=policy.limits.maximum_geometry_queries,
+        controller=controller,
+        source_material_charts=material_charts,
+        curve_witness=curve_witness,
+        scope=scope,
+        budget=budget,
+    )
+    return _SurfaceCandidate(produced, curve_witness)
+
+
+def _execute_surface_metric_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> RouteOutcome:
+    with adaptation_phase(scope, budget):
+        request, policy = prepared.request, prepared.policy
+        transfer = policy.association_transfer
+        match (request, transfer):
+            case (
+                MetricMeshAdaptation() | RelocationMeshAdaptation(),
+                _dependency_phydrax_meshing__association.SurfaceAssociationTransfer(),
             ):
-                outcome = _unchanged(prepared, evidence, None, status=status)
-            else:
-                native = _finalize_native(
-                    prepared,
-                    produced.edit,
-                    MeshTransitionKind.REMESH,
-                    conservative=False,
-                    surface_metric_outcome=produced,
-                    surface_curve_witness=curve_witness,
+                pass
+            case _:
+                raise TypeError(
+                    f"MeshAdaptation.request must provide an admitted metric request and surface source support; got {(type(request).__name__, type(transfer).__name__)!r}"
                 )
-                outcome = _RouteOutcome(
-                    status,
-                    native.target,
-                    native.transition,
-                    native.lineage,
-                    native.stencil,
-                    native.transfer,
-                    _target_metric(request.metric, native.target.mesh, produced.metric),
-                    evidence,
-                    None,
-                )
-        except (
-            MeshcoreError,
-            CoordinateEnclosureResourceError,
-            SurfaceChartResourceError,
-        ) as error:
-            if (
-                isinstance(error, MeshcoreError)
-                and error.status not in _NATIVE_RESOURCE_STATUSES
-            ):
-                _charge_remaining_after_failure(coordinate_budget, error)
-                raise
-            refusal = error
-        except Exception as error:
-            _charge_remaining_after_failure(coordinate_budget, error)
-            raise
-        # Actual host visits are charged once to the original native scope. An
-        # overrun at this final debit refuses even a staged successor.
-        try:
-            coordinate_budget.charge_native_work(
-                coordinate_budget.work_units - coordinate_budget.native_charged_work_units
+        source = prepared.source
+        domain = transfer.support.domain
+        patches = np.unique(transfer.classes(source, budget=budget)[2].indices)
+        sphere = True
+        for patch in patches:
+            surface = domain.patches[int(patch)].surface
+            operation = (
+                surface.definition
+                if isinstance(surface, _owner_phydrax_geometry_brep__placed.PlacedSurface)
+                else surface
             )
-        except MeshcoreError as error:
-            if error.status not in _NATIVE_RESOURCE_STATUSES:
-                raise
-            refusal = error if refusal is None else refusal
-    if refusal is not None:
-        return _unchanged(
-            prepared,
-            _surface_resource_refusal(prepared, coordinate_budget, refusal),
-            None,
-            status=MeshAdaptationStatus.RESOURCE_LIMIT,
-        )
-    if outcome is None:
-        raise RuntimeError(
-            "The surface metric route ended without an outcome or an actual refusal."
-        )
-    return outcome
+            if (
+                _owner_phydrax_geometry_brep__patches.sphere_source_radius_terms(
+                    operation, budget=budget
+                )
+                is None
+            ):
+                sphere = False
+                break
+        try:
+            with budget.measurement(), budget.activate():
+                if sphere:
+                    candidate = _run_sphere_metric_candidate(
+                        prepared, request, transfer, budget=budget, scope=scope
+                    )
+                else:
+                    candidate = _run_surface_metric_candidate(
+                        prepared, request, transfer, budget=budget, scope=scope
+                    )
+                produced, curve_witness = candidate.outcome, candidate.curve_witness
+                evidence = produced.evidence
+                status = MeshAdaptationStatus(evidence.status.value)
+                if (
+                    evidence.status
+                    is _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus.RESOURCE_LIMIT
+                    or evidence.splits
+                    + evidence.collapses
+                    + evidence.flips
+                    + evidence.relocations
+                    == 0
+                ):
+                    outcome = unchanged(prepared, evidence, None, status=status)
+                else:
+                    match produced:
+                        case _dependency_phydrax_meshing__surface_metric.SurfaceMetricOutcome():
+                            target_edit = produced.geometry.edit
+                        case _dependency_phydrax_meshing__surface_metric.SphereMetricOutcome():
+                            target_edit = produced.edit
+                        case invalid:
+                            assert_never(invalid)
+                    native = finalize_native(
+                        prepared,
+                        target_edit,
+                        _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REMESH,
+                        conservative=False,
+                        surface_metric_outcome=produced,
+                        surface_curve_witness=curve_witness,
+                        scope=scope,
+                        budget=budget,
+                    )
+                    outcome = RouteOutcome(
+                        status,
+                        native.target,
+                        native.transition,
+                        native.lineage,
+                        native.stencil,
+                        native.transfer,
+                        target_metric(
+                            request.metric, native.target.mesh, produced.metric
+                        ),
+                        evidence,
+                        None,
+                    )
+            return outcome
+        except (
+            _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError,
+            _dependency_phydrax_discretization__surface_chart_deformation.SurfaceChartResourceError,
+        ) as error:
+            return unchanged(
+                prepared,
+                _surface_resource_refusal(prepared, budget, error),
+                None,
+                status=MeshAdaptationStatus.RESOURCE_LIMIT,
+            )
 
 
 _NATIVE_RESOURCE_STATUSES = (MeshcoreStatus.CAPACITY_EXCEEDED, MeshcoreStatus.TIMEOUT)
 
 
-def _charge_remaining_after_failure(
-    budget: CoordinateEnclosureBudget, error: Exception, /
-) -> None:
-    """Debit actual visits before a genuine failure propagates; never mask it."""
-    try:
-        budget.charge_native_work(budget.work_units - budget.native_charged_work_units)
-    except MeshcoreError as charge_error:
-        error.add_note(f"Remaining coordinate work was not charged: {charge_error}")
-
-
 def _surface_resource_refusal(
     prepared: PreparedMeshAdaptation,
-    budget: CoordinateEnclosureBudget,
-    error: MeshcoreError | CoordinateEnclosureResourceError | SurfaceChartResourceError,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    error: MeshcoreError
+    | _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError
+    | _dependency_phydrax_discretization__surface_chart_deformation.SurfaceChartResourceError,
     /,
 ) -> MetricRemeshingEvidence:
     """Bounded RESOURCE_LIMIT evidence; the accepted source remains the target."""
     certification = prepared.source.certification
     if certification is None or certification.fidelity is None:
         raise ValueError(
-            "A refused surface epoch must retain its accepted source fidelity."
+            f"MeshAdaptation.source.certification must retain continuous fidelity for the accepted source; got {prepared.source.result_id!r}"
         )
     limits = prepared.policy.limits
     requested = (
         ("maximum_work_units", float(limits.maximum_work_units)),
+        ("maximum_geometry_queries", float(limits.maximum_geometry_queries)),
         ("maximum_scratch_bytes", float(limits.maximum_scratch_bytes)),
     )
     achieved = (
@@ -4249,7 +5913,25 @@ def _surface_resource_refusal(
         ("native_charged_coordinate_work_units", float(budget.native_charged_work_units)),
         ("coordinate_peak_bytes_upper", float(budget.peak_bytes_upper)),
     )
-    if isinstance(error, SurfaceChartResourceError):
+    if isinstance(error, MeshcoreError):
+        if error.batch_requested_upper is not None:
+            requested += tuple(
+                (f"native_batch:requested_{name}", float(value))
+                for name, value in zip(
+                    ("work_units", "geometry_queries", "cavity_cells", "managed_bytes"),
+                    error.batch_requested_upper,
+                    strict=True,
+                )
+            )
+        if error.batch_refusal_evidence is not None:
+            achieved += tuple(
+                (f"native_batch:refusal:{index}", float(value))
+                for index, value in enumerate(error.batch_refusal_evidence)
+            )
+    if isinstance(
+        error,
+        _dependency_phydrax_discretization__surface_chart_deformation.SurfaceChartResourceError,
+    ):
         requested += tuple(
             (name, float(limit)) for name, _, limit in error.resource_counts
         )
@@ -4257,7 +5939,7 @@ def _surface_resource_refusal(
             (name, float(completed)) for name, completed, _ in error.resource_counts
         )
     return MetricRemeshingEvidence(
-        MetricRemeshingStatus.RESOURCE_LIMIT,
+        _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus.RESOURCE_LIMIT,
         passes=0,
         counts=(0, 0, 0, 0),
         rejected_operations=0,
@@ -4266,9 +5948,9 @@ def _surface_resource_refusal(
         quality=np.zeros((0,), dtype=np.float64),
         maximum_fidelity_bound=certification.fidelity.mesh_to_source_upper,
         criterion=(
-            MetricRemeshingCriterion.UNIT_MESH
+            _dependency_phydrax_meshing__tetra_metric.MetricRemeshingCriterion.UNIT_MESH
             if isinstance(prepared.request, MetricMeshAdaptation)
-            else MetricRemeshingCriterion.RELOCATION_FIXED_POINT
+            else _dependency_phydrax_meshing__tetra_metric.MetricRemeshingCriterion.RELOCATION_FIXED_POINT
         ),
         native_work_units=0,
         resource_message=str(error),
@@ -4277,21 +5959,32 @@ def _surface_resource_refusal(
     )
 
 
-def _prepare_mixed_route(prepared: PreparedMeshAdaptation, /) -> MixedAdaptationOutcome:
+def _prepare_mixed_route(
+    prepared: PreparedMeshAdaptation, /, *, scope: NativeExecutionScope
+) -> _dependency_phydrax_meshing__mixed_adaptation.MixedAdaptationOutcome:
     request = prepared.request
-    if not isinstance(request, MarkedMeshAdaptation) or not isinstance(
-        request.hierarchy, (MixedAdaptationHierarchy, type(None))
-    ):
-        raise TypeError("NATIVE_MIXED requires marked mixed-template adaptation.")
+    match request:
+        case MarkedMeshAdaptation(
+            hierarchy=(
+                _dependency_phydrax_meshing__mixed_adaptation.MixedAdaptationHierarchy()
+                | None
+            ) as mixed_hierarchy
+        ):
+            pass
+        case _:
+            raise TypeError(
+                f"MeshAdaptation.request must provide marked mixed-template adaptation with its mixed hierarchy; got {type(request).__name__!r}"
+            )
     source = prepared.source.mesh
-    rows = key_rows(
-        entity_keys(source, source.topological_dimension), _cell_ids(source)[:, None]
+    rows = entity_keys_owner.key_rows(
+        entity_keys_owner.entity_keys(source, source.topological_dimension),
+        mesh_cell_ids(source)[:, None],
     )
     cell_ids = np.asarray(
         source.entity_set(source.topological_dimension).entity_ids, dtype=np.int64
     )
     protected_cells = [
-        cell_ids[_selected_rows(source, scope)]
+        cell_ids[selected_rows(source, scope)]
         for scope in prepared.policy.protected_scopes
         if scope.entity_dimension == source.topological_dimension
     ]
@@ -4302,20 +5995,23 @@ def _prepare_mixed_route(prepared: PreparedMeshAdaptation, /) -> MixedAdaptation
     )
     protected_face_keys = np.zeros((0, 0), dtype=np.int64)
     if source.topological_dimension == 3:
-        face_keys = entity_keys(source, 2)
+        face_keys = entity_keys_owner.entity_keys(source, 2)
         protected_faces = np.zeros((face_keys.shape[0],), dtype=np.bool_)
-        for scope in prepared.policy.protected_scopes:
-            if scope.entity_dimension >= 2:
-                face_rows = _closure_rows(
-                    source, scope.entity_dimension, _selected_rows(source, scope), 2
+        for protected_scope in prepared.policy.protected_scopes:
+            if protected_scope.entity_dimension >= 2:
+                face_rows = closure_rows(
+                    source,
+                    protected_scope.entity_dimension,
+                    selected_rows(source, protected_scope),
+                    2,
                 )
                 protected_faces[face_rows] = True
         protected_face_keys = face_keys[protected_faces]
-    outcome = adapt_mixed_mesh(
+    outcome = _dependency_phydrax_meshing__mixed_adaptation.adapt_mixed_mesh(
         source,
         refine_cell_ids=request.refine_cell_ids,
         coarsen_cell_ids=request.coarsen_cell_ids,
-        hierarchy=request.hierarchy,
+        hierarchy=mixed_hierarchy,
         cell_classes=prepared.constraints.cell_classes[rows],
         protected_vertex_ids=prepared.constraints.protected_vertex_ids,
         protected_cell_ids=protected_cell_ids,
@@ -4331,14 +6027,19 @@ def _prepare_mixed_route(prepared: PreparedMeshAdaptation, /) -> MixedAdaptation
 
 
 def _finalize_mixed_route(
-    prepared: PreparedMeshAdaptation, outcome: MixedAdaptationOutcome, /
-) -> _RouteOutcome:
+    prepared: PreparedMeshAdaptation,
+    outcome: _dependency_phydrax_meshing__mixed_adaptation.MixedAdaptationOutcome,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> RouteOutcome:
     evidence = outcome.evidence
     partial = evidence.rejected_coarsening_ids.size > 0
     refined = evidence.refined_cell_ids.size > 0
     coarsened = evidence.coarsened_cell_ids.size > 0
     if not refined and not coarsened:
-        return _unchanged(
+        return unchanged(
             prepared,
             evidence,
             outcome.hierarchy,
@@ -4348,13 +6049,15 @@ def _finalize_mixed_route(
         )
     match (refined, coarsened):
         case (True, False):
-            kind = MeshTransitionKind.REFINE
+            kind = _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REFINE
         case (False, True):
-            kind = MeshTransitionKind.COARSEN
+            kind = _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.COARSEN
         case _:
-            kind = MeshTransitionKind.REMESH
-    native = _finalize_native(prepared, outcome.edit, kind, conservative=False)
-    return _RouteOutcome(
+            kind = _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REMESH
+    native = finalize_native(
+        prepared, outcome.edit, kind, conservative=False, scope=scope, budget=budget
+    )
+    return RouteOutcome(
         MeshAdaptationStatus.PARTIAL if partial else MeshAdaptationStatus.COMPLETE,
         native.target,
         native.transition,
@@ -4368,24 +6071,28 @@ def _finalize_mixed_route(
 
 
 def _polyhedral_touched_cells(
-    source: CellMeshingResult,
-    request: PolyhedralMeshAdaptation,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    request: _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralMeshAdaptation,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> frozenset[int]:
-    """Actual original-cell workset of a host split/agglomeration proposal."""
-    from fractions import Fraction
+    """Return the source-cell workset of a host split or agglomeration proposal."""
 
-    if request.operation is PolyhedralAdaptationOperation.AGGLOMERATE:
+    if (
+        request.operation
+        is _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralAdaptationOperation.AGGLOMERATE
+    ):
         return frozenset(
             identifier for group in request.agglomerations for identifier in group
         )
-    if request.operation is not PolyhedralAdaptationOperation.PLANE_SPLIT:
+    if (
+        request.operation
+        is not _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralAdaptationOperation.PLANE_SPLIT
+    ):
         return frozenset()
-    coordinates = source.geometry.source_coordinates()
-    planes = tuple(
-        tuple(Fraction(float(value)) for value in row)
-        for row in np.asarray(request.planes)
-    )
+    coordinates = source.geometry.source_coordinates(budget=budget)
+    planes = tuple(rational_vector(row) for row in np.asarray(request.planes))
     touched = set()
     for block in source.mesh.blocks:
         vertices, valid = np.asarray(block.vertices), np.asarray(block.vertex_valid)
@@ -4410,31 +6117,43 @@ def _polyhedral_touched_cells(
     return frozenset(touched)
 
 
-def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_polyhedral_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> RouteOutcome:
     request = prepared.request
-    if not isinstance(request, PolyhedralMeshAdaptation):
-        raise TypeError("NATIVE_POLYHEDRAL requires PolyhedralMeshAdaptation.")
-    from .._meshcore import current_native_execution_budget
-    from ._volume_generation import native_volume_execution_budget
-
-    execution = current_native_execution_budget()
-    if execution is None:
-        with native_volume_execution_budget(prepared.policy.limits):
-            return _execute_polyhedral_route(prepared)
-    touched = _polyhedral_touched_cells(prepared.source, request)
-    execution.admit_cavity(len(touched))
+    match request:
+        case _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralMeshAdaptation():
+            pass
+        case _:
+            raise TypeError(
+                f"MeshAdaptation.request must provide PolyhedralMeshAdaptation for NATIVE_POLYHEDRAL; got {type(request).__name__!r}"
+            )
+    with adaptation_phase(scope, budget):
+        touched = _polyhedral_touched_cells(prepared.source, request, budget=budget)
+    with adaptation_phase(scope, budget):
+        _adaptation_cavity(len(touched), budget=budget)
     source = prepared.source.mesh
-    rows = key_rows(entity_keys(source, 3), _cell_ids(source)[:, None])
-    face_keys = entity_keys(source, 2)
+    rows = entity_keys_owner.key_rows(
+        entity_keys_owner.entity_keys(source, 3),
+        mesh_cell_ids(source)[:, None],
+    )
+    face_keys = entity_keys_owner.entity_keys(source, 2)
     protected_faces = np.any(
         np.isin(face_keys, prepared.constraints.protected_vertex_ids), axis=1
     )
-    if request.operation is PolyhedralAdaptationOperation.AGGLOMERATE:
+    if (
+        request.operation
+        is _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralAdaptationOperation.AGGLOMERATE
+    ):
         protected_faces |= np.any(
-            _membership(source, _organization_scopes(prepared.source), 2), axis=1
+            membership(source, organization_scopes(prepared.source), 2), axis=1
         )
     limits = prepared.policy.limits
-    outcome = adapt_polyhedral_mesh(
+    outcome = _dependency_phydrax_meshing__polyhedral_adaptation.adapt_polyhedral_mesh(
         source,
         request,
         cell_classes=prepared.constraints.cell_classes[rows],
@@ -4450,29 +6169,37 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
             else "native-polyhedral"
         ),
         numeric_version=f"adaptation:{prepared.prepared_id}",
-        common_refinement_policy=CommonRefinementPolicy(
-            predicate_mode=resolve_host_predicate_mode(prepared.policy.predicate_mode),
+        common_refinement_policy=_dependency_phydrax_geometry__supermesh.CommonRefinementPolicy(
+            predicate_mode=_dependency_phydrax__geometry_predicates.resolve_host_predicate_mode(
+                prepared.policy.predicate_mode
+            ),
             maximum_candidate_pairs=limits.maximum_geometry_queries,
             maximum_accepted_pairs=limits.maximum_work_units,
             maximum_memory_bytes=limits.maximum_scratch_bytes,
             maximum_exact_work=limits.maximum_work_units,
             overlap_simplices=True,
         ),
+        scope=scope,
+        budget=budget,
     )
     edit = outcome.edit
     if outcome.construction is not None and prepared.source.associations:
-        candidate, _, _ = assemble_topology_edit(
-            source,
-            edit,
-            numeric_version=f"adaptation:{prepared.prepared_id}",
-        )
-        associations = regenerated_polyhedral_associations(
+        with adaptation_phase(scope, budget):
+            candidate, _, _ = (
+                _dependency_phydrax_meshing__topology_edit.assemble_topology_edit(
+                    source,
+                    edit,
+                    numeric_version=f"adaptation:{prepared.prepared_id}",
+                    budget=budget,
+                )
+            )
+        associations = _dependency_phydrax_meshing__polyhedral_adaptation.regenerated_polyhedral_associations(
             prepared.source,
             request,
             outcome.construction,
             candidate,
         )
-        edit = regenerated_polyhedral_relations(
+        edit = _dependency_phydrax_meshing__polyhedral_adaptation.regenerated_polyhedral_relations(
             prepared.source,
             candidate,
             edit,
@@ -4480,17 +6207,19 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
             limits.maximum_work_units,
             maximum_geometry_queries=limits.maximum_geometry_queries,
             target_geometry=outcome.geometry,
+            scope=scope,
+            budget=budget,
         )
     match request.operation:
-        case PolyhedralAdaptationOperation.PLANE_SPLIT:
-            kind = MeshTransitionKind.REFINE
-        case PolyhedralAdaptationOperation.AGGLOMERATE:
-            kind = MeshTransitionKind.COARSEN
-        case PolyhedralAdaptationOperation.REGENERATE:
-            kind = MeshTransitionKind.REMESH
+        case _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralAdaptationOperation.PLANE_SPLIT:
+            kind = _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REFINE
+        case _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralAdaptationOperation.AGGLOMERATE:
+            kind = _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.COARSEN
+        case _dependency_phydrax_meshing__polyhedral_adaptation.PolyhedralAdaptationOperation.REGENERATE:
+            kind = _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REMESH
         case invalid:
             assert_never(invalid)
-    native = _finalize_native(
+    native = finalize_native(
         prepared,
         edit,
         kind,
@@ -4498,8 +6227,10 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
         common_refinement=outcome.common_refinement,
         polyhedral_construction=outcome.construction,
         polyhedral_geometry=outcome.geometry,
+        scope=scope,
+        budget=budget,
     )
-    return _RouteOutcome(
+    return RouteOutcome(
         MeshAdaptationStatus.COMPLETE,
         native.target,
         native.transition,
@@ -4513,7 +6244,9 @@ def _execute_polyhedral_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutc
     )
 
 
-def _unknown_lineage(source: CellMesh, target: CellMesh, /) -> MeshLineage:
+def _unknown_lineage(
+    source: CellMesh, target: CellMesh, /
+) -> _dependency_phydrax_meshing__lineage_records.MeshLineage:
     """Provider remeshing: every target entity created, every source entity deleted."""
 
     records = []
@@ -4522,7 +6255,7 @@ def _unknown_lineage(source: CellMesh, target: CellMesh, /) -> MeshLineage:
         target_entities = target.entity_set(dimension)
         empty = np.zeros((0,), dtype=np.int64)
         records.append(
-            EntityLineage(
+            _dependency_phydrax_meshing__lineage_records.EntityLineage(
                 dimension,
                 source_entities.entity_set_id,
                 target_entities.entity_set_id,
@@ -4533,26 +6266,28 @@ def _unknown_lineage(source: CellMesh, target: CellMesh, /) -> MeshLineage:
                 deleted_source_ids=np.sort(np.asarray(source_entities.entity_ids)),
             )
         )
-    return MeshLineage(source.topology_id, target.topology_id, tuple(records))
+    return _dependency_phydrax_meshing__lineage_records.MeshLineage(
+        source.topology_id, target.topology_id, tuple(records)
+    )
 
 
 def _provider_outcome(
     prepared: PreparedMeshAdaptation,
-    target: CellMeshingResult,
-    metric: MeshMetricField | None,
+    target: _dependency_phydrax_meshing__result.CellMeshingResult,
+    metric: _dependency_phydrax_meshing__metric.MeshMetricField | None,
     evidence: MmgAdaptationResult | OmegaHAdaptationResult,
     /,
-) -> _RouteOutcome:
+) -> RouteOutcome:
     source = prepared.source
     lineage = _unknown_lineage(source.mesh, target.mesh)
-    transition = CellMeshTransition(
+    transition = _dependency_phydrax_meshing__lineage.CellMeshTransition(
         source.mesh.mesh_id,
         source.mesh.topology_id,
         target,
         lineage,
-        MeshTransitionKind.REMESH,
+        _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REMESH,
     )
-    return _RouteOutcome(
+    return RouteOutcome(
         MeshAdaptationStatus.COMPLETE,
         target,
         transition,
@@ -4565,26 +6300,45 @@ def _provider_outcome(
     )
 
 
-def _execute_mmg_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_mmg_route(prepared: PreparedMeshAdaptation, /) -> RouteOutcome:
     policy = prepared.policy
     transfer = policy.association_transfer
-    if isinstance(transfer, (PlcAssociationTransfer, ComposedAssociationTransfer)):
-        raise ValueError("Provider routes cannot rederive represented PLC associations.")
-    if isinstance(transfer, SurfaceAssociationTransfer):
+    if isinstance(
+        transfer,
+        (
+            _dependency_phydrax_meshing__association.PlcAssociationTransfer,
+            _dependency_phydrax_meshing__association_composition.ComposedAssociationTransfer,
+        ),
+    ):
         raise ValueError(
-            "Provider routes cannot rederive parametric surface associations."
+            f"MeshAdaptationPolicy.association_transfer must be absent for provider rederivation of represented PLC associations; got {type(transfer).__name__!r}"
         )
-    if isinstance(transfer, MappedReferenceAssociationTransfer):
+    if isinstance(
+        transfer, _dependency_phydrax_meshing__association.SurfaceAssociationTransfer
+    ):
         raise ValueError(
-            "Provider routes cannot rederive original mapped-root associations."
+            f"MeshAdaptationPolicy.association_transfer must be absent for provider rederivation of parametric surface associations; got {type(transfer).__name__!r}"
         )
-    if isinstance(transfer, ImplicitAssociationTransfer):
+    if isinstance(
+        transfer,
+        _dependency_phydrax_meshing__association.MappedReferenceAssociationTransfer,
+    ):
         raise ValueError(
-            "Provider routes cannot replace original implicit-source authority."
+            f"MeshAdaptationPolicy.association_transfer must be absent for provider rederivation of mapped-root associations; got {type(transfer).__name__!r}"
         )
-    if isinstance(transfer, PeriodicAssociationTransfer):
+    if isinstance(
+        transfer,
+        _dependency_phydrax_meshing__implicit_association_transfer.ImplicitAssociationTransfer,
+    ):
         raise ValueError(
-            "Provider routes cannot replace original periodic-source authority."
+            f"MeshAdaptationPolicy.association_transfer must be absent for provider replacement of implicit source provenance; got {type(transfer).__name__!r}"
+        )
+    if isinstance(
+        transfer,
+        _dependency_phydrax_meshing_providers__native_periodic.PeriodicAssociationTransfer,
+    ):
+        raise ValueError(
+            f"MeshAdaptationPolicy.association_transfer must be absent for provider replacement of periodic source provenance; got {type(transfer).__name__!r}"
         )
     provider = policy.provider
     # ty: ignore[unresolved-attribute]
@@ -4605,26 +6359,45 @@ def _execute_mmg_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     return _provider_outcome(prepared, result.mesh, result.metric, result)
 
 
-def _execute_omega_h_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
+def _execute_omega_h_route(prepared: PreparedMeshAdaptation, /) -> RouteOutcome:
     policy = prepared.policy
     transfer = policy.association_transfer
-    if isinstance(transfer, (PlcAssociationTransfer, ComposedAssociationTransfer)):
-        raise ValueError("Provider routes cannot rederive represented PLC associations.")
-    if isinstance(transfer, SurfaceAssociationTransfer):
+    if isinstance(
+        transfer,
+        (
+            _dependency_phydrax_meshing__association.PlcAssociationTransfer,
+            _dependency_phydrax_meshing__association_composition.ComposedAssociationTransfer,
+        ),
+    ):
         raise ValueError(
-            "Provider routes cannot rederive parametric surface associations."
+            f"MeshAdaptationPolicy.association_transfer must be absent for provider rederivation of represented PLC associations; got {type(transfer).__name__!r}"
         )
-    if isinstance(transfer, MappedReferenceAssociationTransfer):
+    if isinstance(
+        transfer, _dependency_phydrax_meshing__association.SurfaceAssociationTransfer
+    ):
         raise ValueError(
-            "Provider routes cannot rederive original mapped-root associations."
+            f"MeshAdaptationPolicy.association_transfer must be absent for provider rederivation of parametric surface associations; got {type(transfer).__name__!r}"
         )
-    if isinstance(transfer, ImplicitAssociationTransfer):
+    if isinstance(
+        transfer,
+        _dependency_phydrax_meshing__association.MappedReferenceAssociationTransfer,
+    ):
         raise ValueError(
-            "Provider routes cannot replace original implicit-source authority."
+            f"MeshAdaptationPolicy.association_transfer must be absent for provider rederivation of mapped-root associations; got {type(transfer).__name__!r}"
         )
-    if isinstance(transfer, PeriodicAssociationTransfer):
+    if isinstance(
+        transfer,
+        _dependency_phydrax_meshing__implicit_association_transfer.ImplicitAssociationTransfer,
+    ):
         raise ValueError(
-            "Provider routes cannot replace original periodic-source authority."
+            f"MeshAdaptationPolicy.association_transfer must be absent for provider replacement of implicit source provenance; got {type(transfer).__name__!r}"
+        )
+    if isinstance(
+        transfer,
+        _dependency_phydrax_meshing_providers__native_periodic.PeriodicAssociationTransfer,
+    ):
+        raise ValueError(
+            f"MeshAdaptationPolicy.association_transfer must be absent for provider replacement of periodic source provenance; got {type(transfer).__name__!r}"
         )
     # ty: ignore[unresolved-attribute]
     result = policy.provider.execute(
@@ -4641,42 +6414,49 @@ def _execute_omega_h_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome
     )
     # ty: ignore[unresolved-attribute]
     if result.target is None:
-        raise ValueError("A serial Omega_h adaptation must return its target.")
+        raise ValueError(
+            f"OmegaHAdaptationResult.target must contain the serial adapted mesh; got {type(result).__name__!r}"
+        )
     # ty: ignore[unresolved-attribute]
     return _provider_outcome(prepared, result.target, result.metric, result)
 
 
+@checked
 def project_hp_lineage(
     source: FiniteElementHPEpoch,
     target: FiniteElementHPEpoch,
     lineage: FiniteElementHPLineage,
     /,
-) -> MeshLineage:
+) -> _dependency_phydrax_meshing__lineage_records.MeshLineage:
     """Project fixed-capacity hp slot lineage onto the epochs' active cell meshes."""
 
-    if not isinstance(source, FiniteElementHPEpoch) or not isinstance(
-        target, FiniteElementHPEpoch
-    ):
-        raise TypeError("source and target must be FiniteElementHPEpoch.")
-    if not isinstance(lineage, FiniteElementHPLineage):
-        raise TypeError("lineage must be FiniteElementHPLineage.")
     if (
         lineage.source_topology_id != source.topology.topology_id
         or lineage.target_topology_id != target.topology.topology_id
     ):
-        raise ValueError("hp lineage endpoints do not match the supplied epochs.")
+        raise ValueError(
+            f"FiniteElementHPLineage.endpoints must match the supplied epochs; got {(lineage.source_topology_id, lineage.target_topology_id)!r}"
+        )
     valid = np.asarray(lineage.valid, dtype=np.bool_)
     source_slots = np.asarray(lineage.source_slots, dtype=np.int32)[valid]
     target_slots = np.asarray(lineage.target_slots, dtype=np.int32)[valid]
     source_ids = np.asarray(source.topology.cell_global_ids, dtype=np.int64)[source_slots]
     target_ids = np.asarray(target.topology.cell_global_ids, dtype=np.int64)[target_slots]
-    kinds = np.full(source_ids.shape, int(EntityLineageKind.PRESERVED), dtype=np.int32)
+    kinds = np.full(
+        source_ids.shape,
+        int(_dependency_phydrax_meshing__lineage_records.EntityLineageKind.PRESERVED),
+        dtype=np.int32,
+    )
     refinement = np.asarray(lineage.relation_mask("refinement"), dtype=np.bool_)[valid]
     coarsening = np.asarray(lineage.relation_mask("coarsening"), dtype=np.bool_)[valid]
-    kinds[refinement] = int(EntityLineageKind.REFINED_FROM)
-    kinds[coarsening] = int(EntityLineageKind.COARSENED_INTO)
+    kinds[refinement] = int(
+        _dependency_phydrax_meshing__lineage_records.EntityLineageKind.REFINED_FROM
+    )
+    kinds[coarsening] = int(
+        _dependency_phydrax_meshing__lineage_records.EntityLineageKind.COARSENED_INTO
+    )
     dimension = source.mesh.topological_dimension
-    entities = EntityLineage(
+    entities = _dependency_phydrax_meshing__lineage_records.EntityLineage(
         dimension,
         source.mesh.entity_set(dimension).entity_set_id,
         target.mesh.entity_set(dimension).entity_set_id,
@@ -4684,11 +6464,13 @@ def project_hp_lineage(
         target_ids,
         kinds,
     )
-    return MeshLineage(source.mesh.topology_id, target.mesh.topology_id, (entities,))
+    return _dependency_phydrax_meshing__lineage_records.MeshLineage(
+        source.mesh.topology_id, target.mesh.topology_id, (entities,)
+    )
 
 
 def _complete_hp_parents(epoch: FiniteElementHPEpoch, marked: np.ndarray, /) -> Any:
-    """Parents whose complete active leaf family is marked for coarsening."""
+    """Return parents whose full active leaf family is marked for coarsening."""
 
     topology = epoch.topology
     identifiers = np.asarray(topology.cell_global_ids, dtype=np.int64)
@@ -4707,79 +6489,91 @@ def _complete_hp_parents(epoch: FiniteElementHPEpoch, marked: np.ndarray, /) -> 
     return identifiers[chosen]
 
 
-def _execute_hp_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
-    request = prepared.request
-    # ty: ignore[unresolved-attribute]
-    epoch = request.hierarchy
-    source = prepared.source
-    # ty: ignore[unresolved-attribute]
-    refine = np.asarray(request.refine_cell_ids, dtype=np.int64)
-    # ty: ignore[unresolved-attribute]
-    coarsen = np.asarray(request.coarsen_cell_ids, dtype=np.int64)
-    if refine.size:
+def _execute_hp_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
+) -> RouteOutcome:
+    with adaptation_phase(scope, budget):
+        request = prepared.request
         # ty: ignore[unresolved-attribute]
-        closed, _ = balanced_hp_refinement_ids(epoch.topology, epoch.interfaces, refine)
-        result = refine_tensor_hp_cells(
+        epoch = request.hierarchy
+        source = prepared.source
+        # ty: ignore[unresolved-attribute]
+        refine = np.asarray(request.refine_cell_ids, dtype=np.int64)
+        # ty: ignore[unresolved-attribute]
+        coarsen = np.asarray(request.coarsen_cell_ids, dtype=np.int64)
+        if refine.size:
             # ty: ignore[unresolved-attribute]
-            epoch.topology,
+            closed, _ = balanced_hp_refinement_ids(
+                epoch.topology, epoch.interfaces, refine
+            )
+            result = refine_tensor_hp_cells(
+                # ty: ignore[unresolved-attribute]
+                epoch.topology,
+                # ty: ignore[unresolved-attribute]
+                epoch.geometry,
+                np.asarray(closed, dtype=np.int64),
+            )
+            kind = _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.REFINE
+            partial = False
+        else:
+            # ty: ignore[invalid-argument-type]
+            parents = _complete_hp_parents(epoch, coarsen)
+            if parents.size == 0:
+                return unchanged(prepared, None, epoch)
             # ty: ignore[unresolved-attribute]
-            epoch.geometry,
-            np.asarray(closed, dtype=np.int64),
+            result = coarsen_tensor_hp_cells(epoch.topology, epoch.geometry, parents)
+            kind = _dependency_phydrax_meshing__lineage_records.MeshTransitionKind.COARSEN
+            covered = np.asarray(result.lineage.source_slots)[
+                np.asarray(result.lineage.relation_mask("coarsening"), dtype=np.bool_)
+            ]
+            partial = covered.size != coarsen.size
+        mesh = _dependency_phydrax_meshing__canonical.canonicalize_cell_mesh(
+            hp_active_cell_mesh(
+                result.topology,
+                result.geometry,
+                numeric_version=f"adaptation:{prepared.prepared_id}",
+            )[0],
+            budget=budget,
         )
-        kind = MeshTransitionKind.REFINE
-        partial = False
-    else:
-        # ty: ignore[invalid-argument-type]
-        parents = _complete_hp_parents(epoch, coarsen)
-        if parents.size == 0:
-            return _unchanged(prepared, None, epoch)
-        # ty: ignore[unresolved-attribute]
-        result = coarsen_tensor_hp_cells(epoch.topology, epoch.geometry, parents)
-        kind = MeshTransitionKind.COARSEN
-        covered = np.asarray(result.lineage.source_slots)[
-            np.asarray(result.lineage.relation_mask("coarsening"), dtype=np.bool_)
-        ]
-        partial = covered.size != coarsen.size
-    mesh = canonicalize_cell_mesh(
-        hp_active_cell_mesh(
+        target = _dependency_phydrax_meshing__canonical.certify_cell_mesh(
+            mesh,
+            source.coordinate_contract,
+            geometry=CellGeometrySpec.affine(mesh),
+            audit_policy=prepared.policy.audit_policy,
+            budget=budget,
+        )
+        target_epoch = FiniteElementHPEpoch(
+            target.mesh,
             result.topology,
             result.geometry,
-            numeric_version=f"adaptation:{prepared.prepared_id}",
-        )[0]
-    )
-    target = certify_cell_mesh(
-        mesh,
-        source.coordinate_contract,
-        geometry=CellGeometrySpec.affine(mesh),
-        audit_policy=prepared.policy.audit_policy,
-    )
-    target_epoch = FiniteElementHPEpoch(
-        target.mesh,
-        result.topology,
-        result.geometry,
-        finite_element_hp_interface_plan(result.topology, result.geometry),
-    )
-    # ty: ignore[invalid-argument-type]
-    lineage = project_hp_lineage(epoch, target_epoch, result.lineage)
-    transition = CellMeshTransition(
-        source.mesh.mesh_id, source.mesh.topology_id, target, lineage, kind
-    )
-    return _RouteOutcome(
-        MeshAdaptationStatus.PARTIAL if partial else MeshAdaptationStatus.COMPLETE,
-        target,
-        transition,
-        lineage,
-        None,
-        None,
-        None,
-        result,
-        target_epoch,
-    )
+            finite_element_hp_interface_plan(result.topology, result.geometry),
+        )
+        # ty: ignore[invalid-argument-type]
+        lineage = project_hp_lineage(epoch, target_epoch, result.lineage)
+        transition = _dependency_phydrax_meshing__lineage.CellMeshTransition(
+            source.mesh.mesh_id, source.mesh.topology_id, target, lineage, kind
+        )
+        return RouteOutcome(
+            MeshAdaptationStatus.PARTIAL if partial else MeshAdaptationStatus.COMPLETE,
+            target,
+            transition,
+            lineage,
+            None,
+            None,
+            None,
+            result,
+            target_epoch,
+        )
 
 
-def _compliance(
-    prepared: PreparedMeshAdaptation, outcome: _RouteOutcome, elapsed: float, /
-) -> MeshingComplianceReport:
+@checked
+def compliance(
+    prepared: PreparedMeshAdaptation, outcome: RouteOutcome, elapsed: float, /
+) -> _dependency_phydrax_meshing__result.MeshingComplianceReport:
     limits = prepared.policy.limits
     audit = outcome.target.audit
     observations = (
@@ -4802,7 +6596,12 @@ def _compliance(
     achieved = tuple((name, float(actual)) for name, actual, _ in observations)
     evidence = outcome.evidence
     if isinstance(evidence, MetricRemeshingEvidence):
-        requested += (("minimum_metric_quality", 0.05),)
+        quality_floor = (
+            0.05
+            if evidence.metric_quality_floor is None
+            else evidence.metric_quality_floor
+        )
+        requested += (("minimum_metric_quality", quality_floor),)
         achieved += (
             ("minimum_metric_quality", evidence.minimum_metric_quality),
             ("out_of_range_edges", float(evidence.out_of_range_edges)),
@@ -4811,7 +6610,7 @@ def _compliance(
         if evidence.execution_evidence is not None:
             record = evidence.execution_evidence
             work, queries = (
-                float(np.asarray(record.work)[0]),
+                float(np.asarray(record.work_counters.construction_work)),
                 float(np.asarray(record.externally_charged_geometry_queries)),
             )
             requested += (
@@ -4846,15 +6645,18 @@ def _compliance(
             achieved += (("certified_metric_arcs_out_of_range", arc_failures),)
             if arc_failures:
                 issues += ("source_metric_arc_goal",)
-        if evidence.minimum_metric_quality < 0.05:
+        if evidence.minimum_metric_quality < quality_floor:
             issues += ("minimum_metric_quality",)
         if isinstance(prepared.request, MetricMeshAdaptation):
             requested += (("out_of_range_edges", 0.0),)
             if evidence.out_of_range_edges:
                 issues += ("metric_unit_mesh",)
-        if evidence.status is MetricRemeshingStatus.RESOURCE_LIMIT:
+        if (
+            evidence.status
+            is _dependency_phydrax_meshing__tetra_metric.MetricRemeshingStatus.RESOURCE_LIMIT
+        ):
             issues += ("native_metric_resource_limit",)
-    return MeshingComplianceReport(
+    return _dependency_phydrax_meshing__result.MeshingComplianceReport(
         f"mesh-adaptation:{prepared.prepared_id}",
         issues=issues,
         requested=requested,
@@ -4862,169 +6664,260 @@ def _compliance(
     )
 
 
-def _adaptation_result(
-    prepared: PreparedMeshAdaptation, outcome: _RouteOutcome, started: float, /
+@checked
+def adaptation_result(
+    prepared: PreparedMeshAdaptation, outcome: RouteOutcome, started: float, /
 ) -> MeshAdaptationResult:
     """Carry the distribution through the lineage, measure compliance, and bind."""
 
     policy = prepared.policy
     distribution = None
     if policy.distribution is not None and outcome.transition is not None:
-        distribution = prepare_distribution_transition(
-            policy.distribution,
-            MeshPart(policy.distribution.part.name, outcome.target),
-            # ty: ignore[invalid-argument-type]
-            outcome.lineage,
-            # ty: ignore[invalid-argument-type]
-            policy=policy.partition_policy,
+        distribution = (
+            _dependency_phydrax_meshing__distribution.prepare_distribution_transition(
+                policy.distribution,
+                mesh_part_owner.MeshPart(policy.distribution.part.name, outcome.target),
+                # ty: ignore[invalid-argument-type]
+                outcome.lineage,
+                # ty: ignore[invalid-argument-type]
+                policy=policy.partition_policy,
+            )
         )
     elapsed = time.monotonic() - started
     return MeshAdaptationResult(
         prepared,
         outcome,
-        _compliance(prepared, outcome, elapsed),
+        compliance(prepared, outcome, elapsed),
         distribution,
         elapsed,
     )
 
 
-def execute_mesh_adaptation(prepared: PreparedMeshAdaptation, /) -> MeshAdaptationResult:
+def _execute_mesh_routes(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> RouteOutcome | MeshAdaptationResult:
     """Execute exactly the prepared route and certify its target."""
 
-    if not isinstance(prepared, PreparedMeshAdaptation):
-        raise TypeError("prepared must be PreparedMeshAdaptation.")
-    started = time.monotonic()
     match prepared.policy.route:
         case MeshAdaptationRoute.NATIVE_BISECTION:
-            outcome = _execute_bisection_route(prepared)
+            outcome = _run_bisection_route(prepared, budget=budget, scope=scope)
         case MeshAdaptationRoute.NATIVE_METRIC_2D:
-            outcome = _execute_metric_route(prepared)
+            outcome = _execute_metric_route(prepared, budget=budget, scope=scope)
         case MeshAdaptationRoute.NATIVE_METRIC_3D:
-            outcome = _execute_tetra_metric_route(prepared)
+            outcome = _execute_tetra_metric_route(prepared, budget=budget, scope=scope)
         case MeshAdaptationRoute.NATIVE_SURFACE_METRIC:
-            limits = prepared.policy.limits
-            budget = NativeExecutionBudget(
-                max_work=limits.maximum_work_units,
-                max_geometry_queries=limits.maximum_geometry_queries,
-                max_cavity_cells=limits.maximum_cavity_cells,
-                max_scratch_bytes=limits.maximum_scratch_bytes,
-                max_wall_seconds=limits.maximum_wall_seconds,
-            )
-            surface_outcome: _RouteOutcome | None = None
-            try:
-                with budget:
-                    surface_outcome = _execute_surface_metric_route(prepared)
-            except MeshcoreError as error:
-                if (
-                    error.status not in _NATIVE_RESOURCE_STATUSES
-                    or surface_outcome is None
-                    or surface_outcome.status is not MeshAdaptationStatus.RESOURCE_LIMIT
-                ):
-                    raise
-                # The route already rolled back the actual refusing stage.
-                # Keep the sticky ended status and counters in its record;
-                # do not turn the scope-end refusal into another exception.
-            if surface_outcome is None:
-                raise RuntimeError(
-                    "A surface metric epoch ended without its actual outcome."
-                )
-            outcome = surface_outcome
-            if budget.evidence is None or not isinstance(
-                outcome.evidence, MetricRemeshingEvidence
-            ):
-                raise RuntimeError(
-                    "A surface metric epoch lacks its actual ended execution evidence."
-                )
-            record = NativeExecutionRecord(budget.evidence, owner_id=prepared.prepared_id)
-            evidence = eqx.tree_at(
-                lambda value: value.execution_evidence,
-                outcome.evidence,
-                record,
-                is_leaf=lambda value: value is None,
-            )
-            outcome = outcome._replace(evidence=evidence)
+            outcome = _execute_surface_metric_route(prepared, scope=scope, budget=budget)
         case MeshAdaptationRoute.NATIVE_LEVEL_SET:
-            from ._level_set import execute_level_set_route
-
-            outcome = execute_level_set_route(prepared)
-        case MeshAdaptationRoute.NATIVE_MIXED:
-            limits = prepared.policy.limits
-            with NativeExecutionBudget(
-                max_work=limits.maximum_work_units,
-                max_geometry_queries=limits.maximum_geometry_queries,
-                max_cavity_cells=limits.maximum_cavity_cells,
-                max_scratch_bytes=limits.maximum_scratch_bytes,
-                max_wall_seconds=limits.maximum_wall_seconds,
-            ) as budget:
-                with budget.host_workspace():
-                    produced = _prepare_mixed_route(prepared)
-            if budget.evidence is None:
-                raise RuntimeError(
-                    "A mixed epoch lacks its actual ended original execution evidence."
-                )
-            produced = produced._replace(
-                evidence=produced.evidence._replace(
-                    execution_evidence=NativeExecutionRecord(
-                        budget.evidence,
-                        owner_id=prepared.prepared_id,
-                    )
-                )
+            outcome = _owner_phydrax_meshing__level_set.execute_level_set_route(
+                prepared, scope=scope, budget=budget
             )
-            outcome = _finalize_mixed_route(prepared, produced)
+        case MeshAdaptationRoute.NATIVE_MIXED:
+            produced = _prepare_mixed_route(prepared, scope=scope)
+            outcome = _finalize_mixed_route(
+                prepared, produced, scope=scope, budget=budget
+            )
         case MeshAdaptationRoute.NATIVE_POLYHEDRAL:
-            outcome = _execute_polyhedral_route(prepared)
+            outcome = _execute_polyhedral_route(prepared, budget=budget, scope=scope)
         case MeshAdaptationRoute.NATIVE_GEOMETRY_REALIZATION:
-            from ._geometry_realization import execute_geometry_realization_route
-
-            outcome = execute_geometry_realization_route(prepared)
+            outcome = _owner_phydrax_meshing__geometry_realization.execute_geometry_realization_route(
+                prepared
+            )
         case MeshAdaptationRoute.DEVICE_BISECTION:
             # Lazy: the device epoch module builds on this module's result types.
-            from ._device_adaptation import (
-                _execute_device_bisection_route,
-                execute_partitioned_mesh_adaptation,
-                prepare_partitioned_mesh_adaptation,
-            )
 
             storage = prepared.source.mesh.storage
             if storage is not None:
-                results = execute_partitioned_mesh_adaptation(
-                    prepare_partitioned_mesh_adaptation(prepared),
+                results = _owner_phydrax_meshing__device_adaptation.execute_partitioned_mesh_adaptation(
+                    _owner_phydrax_meshing__device_adaptation.prepare_partitioned_mesh_adaptation(
+                        prepared
+                    ),
                 )
-                for result in results:
+                for result in results.local_results:
                     target_storage = result.target.mesh.storage
                     if target_storage is not None and (
                         target_storage.partition_index == storage.partition_index
                     ):
                         return result
                 raise RuntimeError(
-                    "Distributed adaptation did not publish the source's addressable partition."
+                    f"MeshAdaptation.target.storage must publish the source addressable partition; got {storage.partition_index!r}"
                 )
-            outcome = _execute_device_bisection_route(prepared)
+            outcome = (
+                _owner_phydrax_meshing__device_adaptation.execute_device_bisection_route(
+                    prepared, scope=scope, budget=budget
+                )
+            )
         case MeshAdaptationRoute.DEVICE_METRIC_2D:
-            from ._device_metric import _execute_device_metric_route
-
-            outcome = _execute_device_metric_route(prepared)
+            outcome = _owner_phydrax_meshing__device_metric.execute_device_metric_route(
+                prepared, scope=scope, budget=budget
+            )
         case MeshAdaptationRoute.MMG:
             outcome = _execute_mmg_route(prepared)
         case MeshAdaptationRoute.OMEGA_H:
             outcome = _execute_omega_h_route(prepared)
         case MeshAdaptationRoute.HP:
-            outcome = _execute_hp_route(prepared)
+            outcome = _execute_hp_route(prepared, budget=budget, scope=scope)
         case invalid:
             assert_never(invalid)
-    return _adaptation_result(prepared, outcome, started)
+    return outcome
+
+
+def _periodic_preparation_execution_limits(
+    prepared: PreparedMeshAdaptation, /
+) -> tuple[NativeExecutionLimits, NativeExecutionRecord | None]:
+    limits = prepared.policy.limits
+    source_receipt = prepared.periodic_source_receipt
+    preparation = None if source_receipt is None else source_receipt.evidence
+    native_limits = limits.native_limits()
+    if source_receipt is not None:
+        preparation = source_receipt.evidence
+        preparation.require_valid()
+        if preparation.owner_id != prepared.prepared_id:
+            raise ValueError(
+                "PreparedMeshAdaptation.periodic_source_receipt must bind its preparation identity; got evidence for another preparation"
+            )
+        require_native_preparation_allowance(limits, preparation)
+        # Debit the policy's ended phase before the live deadline is intersected
+        # with the caller's wall deadline. Importing elapsed into that shorter
+        # deadline would charge the same preparation interval twice.
+        native_limits = dataclasses.replace(
+            native_limits,
+            maximum_work_units=native_limits.maximum_work_units
+            - int(np.asarray(preparation.total_work_units)),
+            maximum_geometry_queries=native_limits.maximum_geometry_queries
+            - int(np.asarray(preparation.total_geometry_queries)),
+            maximum_seconds=max(
+                0.0,
+                min(
+                    native_limits.maximum_seconds
+                    - float(np.asarray(preparation.total_elapsed_seconds)),
+                    source_receipt.expires_at - time.monotonic(),
+                ),
+            ),
+        )
+    return native_limits, preparation
+
+
+def _admit_periodic_source_proofs(
+    prepared: PreparedMeshAdaptation, scope: NativeExecutionScope, /
+) -> None:
+    source_receipt = prepared.periodic_source_receipt
+    if source_receipt is None or len(source_receipt.proofs) != len(
+        prepared.periodic_source_proofs
+    ):
+        return
+    for proof, earned in zip(
+        prepared.periodic_source_proofs, source_receipt.proofs, strict=True
+    ):
+        if proof is earned:
+            native_preparation_ledger(scope).remember_live(scope, proof)
+
+
+@checked
+def execute_mesh_adaptation(prepared: PreparedMeshAdaptation, /) -> MeshAdaptationResult:
+    """Execute the prepared route under its declared native request limits."""
+    if prepared.prepared_id != _prepared_adaptation_identity(
+        prepared.source, prepared.request, prepared.policy
+    ):
+        raise ValueError(
+            "PreparedMeshAdaptation.prepared_id must authenticate its source certificate payload; got changed source evidence"
+        )
+    started = time.monotonic()
+    limits = prepared.policy.limits
+    native_limits, preparation = _periodic_preparation_execution_limits(prepared)
+    scope = NativeExecutionScope(native_limits)
+    budget: (
+        _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+        | None
+    ) = None
+    outcome: RouteOutcome | MeshAdaptationResult | None = None
+    imports: NativeExecutionImports | None = None
+    try:
+        with scope:
+            initial = scope.batch(0)
+            budget = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
+                initial,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            initial.settle()
+            _admit_periodic_source_proofs(prepared, scope)
+            with (
+                budget.measurement(),
+                budget.retained_storage(
+                    lambda amount: scope.batch(0, bytes_upper=amount)
+                ),
+            ):
+                outcome = _execute_mesh_routes(prepared, scope=scope, budget=budget)
+            imports = NativeExecutionImports(scope)
+    except MeshcoreError as error:
+        if (
+            prepared.policy.route is not MeshAdaptationRoute.NATIVE_SURFACE_METRIC
+            or error.status not in _NATIVE_RESOURCE_STATUSES
+            or budget is None
+        ):
+            raise
+        if outcome is None:
+            outcome = unchanged(
+                prepared,
+                _surface_resource_refusal(prepared, budget, error),
+                None,
+                status=MeshAdaptationStatus.RESOURCE_LIMIT,
+            )
+        else:
+            match outcome:
+                case RouteOutcome(status=MeshAdaptationStatus.RESOURCE_LIMIT):
+                    pass
+                case _:
+                    raise
+    if outcome is None:
+        raise RuntimeError(
+            f"MeshAdaptation.execution must retain an ended execution outcome and resource evidence; got {outcome is not None!r}"
+        )
+    match outcome:
+        case MeshAdaptationResult():
+            return outcome
+        case RouteOutcome():
+            pass
+    record = NativeExecutionRecord(
+        scope.completed_evidence(),
+        owner_id=prepared.prepared_id,
+        imports=imports,
+        preparation_evidence=preparation,
+    )
+    match outcome.evidence:
+        case MetricRemeshingEvidence() as metric_evidence:
+            evidence = eqx.tree_at(
+                lambda value: value.execution_evidence,
+                metric_evidence,
+                record,
+                is_leaf=lambda value: value is None,
+            )
+            outcome = outcome._replace(evidence=evidence)
+        case (
+            _dependency_phydrax_meshing__mixed_adaptation.MixedAdaptationEvidence() as mixed_evidence
+        ):
+            outcome = outcome._replace(
+                evidence=mixed_evidence._replace(execution_evidence=record)
+            )
+        case _:
+            pass
+    if prepared.policy.route is MeshAdaptationRoute.NATIVE_BISECTION:
+        outcome = outcome._replace(target=outcome.target.with_execution_evidence(record))
+    return adaptation_result(prepared, outcome, started)
 
 
 __all__ = [
     "GeometryRealizationMeshAdaptation",
-    "LevelSetMeshAdaptation",
     "MarkedMeshAdaptation",
     "MeshAdaptationPolicy",
     "MeshAdaptationResult",
     "MeshAdaptationRoute",
     "MeshAdaptationStatus",
     "MetricMeshAdaptation",
-    "PolyhedralMeshAdaptation",
     "PreparedMeshAdaptation",
     "RelocationMeshAdaptation",
     "execute_mesh_adaptation",

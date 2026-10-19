@@ -69,8 +69,8 @@ def test_fem_semantic_scopes_scenario_1() -> None:
     np.testing.assert_array_equal(selection.mask, (False, True))
     assert selection.entity_set_id == mesh.entity_set(2).entity_set_id
     for overrides, message in (
-        ({"source_id": "another-mesh"}, "another mesh source"),
-        ({"source_revision": "stale-revision"}, "another mesh revision"),
+        ({"source_id": "another-mesh"}, r"MeshingScope\.source_id"),
+        ({"source_revision": "stale-revision"}, r"MeshingScope\.source_revision"),
         (
             {"entity_kind": phx.meshing.MeshingEntityKind.GEOMETRY},
             "mesh entities",
@@ -145,5 +145,7 @@ def test_entity_selection_to_dofs_rejects_high_order_fields() -> None:
     discretization = _discretization(mesh, degree=2)
     selection = phx.meshing.resolve_mesh_scope(mesh, _scope(mesh, 2, (0,)))
 
-    with pytest.raises(ValueError, match="only vertex-associated P1"):
+    with pytest.raises(
+        ValueError, match=r"FiniteElementDiscretization\.entity_selection\.field"
+    ):
         discretization.dof_indices("u", selection)

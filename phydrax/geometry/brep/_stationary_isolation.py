@@ -6,60 +6,69 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import final
 
 import jax.numpy as jnp
 import numpy as np
 
+from ..._strict import StrictModule
+from ..._validation import positive_integer
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked
 from .._atlas import CurveTrimLoop, TrimDomain
-from .._interval_enclosure import interval_add, interval_multiply, interval_subtract
-from ._intersection import _krawczyk, RootEndpoint
+from .._interval_enclosure import interval_add, interval_dot, interval_subtract
+from .._rational import rational_cross, rational_dot, rational_vector
+from ._coordinate_request import coordinate_source_request
+from ._intersection import RootEndpoint
 from ._intersection_curve import IntersectionCurve, IntersectionPCurve
-from ._model import BRepCurve, BRepModel
+from ._intersection_kernel import krawczyk
+from ._interval_source import evaluate_interval
+from ._model import BRepCurve, BRepGeometry, BRepModel, BRepPCurve
 from ._patches import CircleCurve, PlanePatch, SpherePatch
+from ._query_types import FaceCertificate
+from ._request_preparations import TrimRequestPreparations
 from ._root_bindings import surface_chart_regular
-
-
-if TYPE_CHECKING:
-    from ._query import _FaceCertificate
-
-
-def _dot(
-    first: tuple[np.ndarray, np.ndarray], second: tuple[np.ndarray, np.ndarray], /
-) -> tuple[np.ndarray, np.ndarray]:
-    products = interval_multiply(first, second)
-    lower = np.asarray(0.0, dtype=np.float64)
-    upper = np.asarray(0.0, dtype=np.float64)
-    for low, high in zip(products[0], products[1], strict=True):
-        lower, upper = interval_add((lower, upper), (low, high))
-    return lower, upper
 
 
 def source_distance_bounds(box: np.ndarray, point: np.ndarray, /) -> tuple[float, float]:
     gap = interval_subtract((box[0], box[1]), (point, point))
-    low = np.maximum(np.maximum(gap[0], -gap[1]), 0.0)
-    high = np.maximum(np.abs(gap[0]), np.abs(gap[1]))
-    first = _dot((low, low), (low, low))[0]
-    second = _dot((high, high), (high, high))[1]
+    gap_lower = np.asarray(gap[0], dtype=np.float64)
+    gap_upper = np.asarray(gap[1], dtype=np.float64)
+    low = np.maximum(np.maximum(gap_lower, -gap_upper), 0.0)
+    high = np.maximum(np.abs(gap_lower), np.abs(gap_upper))
+    first = interval_dot((low, low), (low, low))[0]
+    second = interval_dot((high, high), (high, high))[1]
     return max(0.0, float(np.nextafter(np.sqrt(max(0.0, float(first))), -np.inf))), float(
         np.nextafter(np.sqrt(max(0.0, float(second))), np.inf)
     )
 
 
-def _trim_position(domain: TrimDomain, box: np.ndarray, depth: int, /) -> int:
-    """Whole-box interior/exterior, or undecided when a source boundary meets it."""
+def _trim_position(
+    domain: TrimDomain,
+    box: np.ndarray,
+    depth: int,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> int:
+    """Classify a whole box, leaving boundary intersections undecided."""
     for loop in domain.loops:
-        if not isinstance(loop, CurveTrimLoop):
-            raise ValueError(
-                "Stationary discovery requires authoritative native trim curves."
-            )
-        lower = np.concatenate((loop.arc_lower, loop.junction_lower))
-        upper = np.concatenate((loop.arc_upper, loop.junction_upper))
-        if np.any(np.all((upper >= box[0]) & (lower <= box[1]), axis=1)):
-            return 0
-    result = domain.classify((0.5 * (box[0] + box[1]))[None], maximum_depth=depth)
+        match loop:
+            case CurveTrimLoop():
+                pass
+            case _:
+                raise ValueError(
+                    f"isolation.trim_domain.loops must contain native curve loops; got {type(loop).__name__}"
+                )
+    result = domain.classify_boxes(
+        box[None],
+        maximum_depth=depth,
+        preparations=preparations,
+        budget=budget,
+    )
     if not result.resolved[0]:
         return 0
     return 1 if result.inside[0] else -1
@@ -95,7 +104,7 @@ class ClosestStationaryIsolation:
 
 @dataclass(frozen=True, slots=True)
 class _FaceIntervals:
-    certificate: _FaceCertificate
+    certificate: FaceCertificate
     point: np.ndarray
     jacobian: bool
 
@@ -112,7 +121,7 @@ class _FaceIntervals:
 
 @dataclass(frozen=True, slots=True)
 class _FaceEquation:
-    certificate: _FaceCertificate
+    certificate: FaceCertificate
     point: np.ndarray
 
     @property
@@ -123,8 +132,17 @@ class _FaceEquation:
     def jacobian(self) -> _FaceIntervals:
         return _FaceIntervals(self.certificate, self.point, True)
 
-    def point_jacobians(self, points: np.ndarray, /) -> np.ndarray:
-        lower, upper = self.jacobian.evaluate(points, points)
+    def point_jacobians(
+        self,
+        points: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+        preparations: TrimRequestPreparations | None = None,
+    ) -> np.ndarray:
+        lower, upper = evaluate_interval(
+            self.jacobian, points, points, budget=budget, preparations=preparations
+        )
         return 0.5 * (lower + upper)
 
 
@@ -135,41 +153,52 @@ class _EdgeIntervals:
     jacobian: bool
     endpoint_roots: tuple[RootEndpoint | None, RootEndpoint | None]
 
-    def evaluate(
-        self, lower: np.ndarray, upper: np.ndarray, /
+    def evaluate_scope(
+        self,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+        preparations: TrimRequestPreparations | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         lows, highs = [], []
         for first, last in zip(lower[:, 0], upper[:, 0], strict=True):
-            if isinstance(self.curve, IntersectionCurve):
-                box = self.curve.bounding_box(
-                    float(first), float(last), endpoint_roots=self.endpoint_roots
-                )
-                tangent = self.curve.derivative_bounds(
-                    float(first),
-                    float(last),
-                    order=1,
-                    endpoint_roots=self.endpoint_roots,
-                )
-            else:
-                box = self.curve.bounding_box(float(first), float(last))
-                tangent = self.curve.derivative_bounds(float(first), float(last), order=1)
+            box = _edge_box(
+                self.curve,
+                float(first),
+                float(last),
+                self.endpoint_roots,
+                preparations=preparations,
+                budget=budget,
+            )
+            tangent = _edge_derivative_bounds(
+                self.curve,
+                float(first),
+                float(last),
+                self.endpoint_roots,
+                order=1,
+                budget=budget,
+                preparations=preparations,
+            )
             gap = interval_subtract((box[0], box[1]), (self.point, self.point))
             if self.jacobian:
-                acceleration = (
-                    self.curve.derivative_bounds(
-                        float(first),
-                        float(last),
-                        order=2,
-                        endpoint_roots=self.endpoint_roots,
-                    )
-                    if isinstance(self.curve, IntersectionCurve)
-                    else self.curve.derivative_bounds(float(first), float(last), order=2)
+                acceleration = _edge_derivative_bounds(
+                    self.curve,
+                    float(first),
+                    float(last),
+                    self.endpoint_roots,
+                    order=2,
+                    budget=budget,
+                    preparations=preparations,
                 )
-                result = interval_add(_dot(tangent, tangent), _dot(gap, acceleration))
+                result = interval_add(
+                    interval_dot(tangent, tangent), interval_dot(gap, acceleration)
+                )
                 lows.append([[result[0]]])
                 highs.append([[result[1]]])
             else:
-                result = _dot(gap, tangent)
+                result = interval_dot(gap, tangent)
                 lows.append([result[0]])
                 highs.append([result[1]])
         return np.asarray(lows, dtype=np.float64), np.asarray(highs, dtype=np.float64)
@@ -189,38 +218,43 @@ class _EdgeEquation:
     def jacobian(self) -> _EdgeIntervals:
         return _EdgeIntervals(self.curve, self.point, True, self.endpoint_roots)
 
-    def point_jacobians(self, points: np.ndarray, /) -> np.ndarray:
-        lower, upper = self.jacobian.evaluate(points, points)
+    def point_jacobians(
+        self,
+        points: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+        preparations: TrimRequestPreparations | None = None,
+    ) -> np.ndarray:
+        lower, upper = evaluate_interval(
+            self.jacobian, points, points, budget=budget, preparations=preparations
+        )
         return 0.5 * (lower + upper)
 
 
 def _circle_continuum(curve: CircleCurve, point: np.ndarray, /) -> bool:
-    first = tuple(Fraction(float(value)) for value in np.asarray(curve.first_axis))
-    second = tuple(Fraction(float(value)) for value in np.asarray(curve.second_axis))
+    first = rational_vector(np.asarray(curve.first_axis))
+    second = rational_vector(np.asarray(curve.second_axis))
     delta = tuple(
-        Fraction(float(value)) - Fraction(float(center))
-        for value, center in zip(point, np.asarray(curve.center), strict=True)
+        value - center
+        for value, center in zip(
+            rational_vector(point), rational_vector(np.asarray(curve.center)), strict=True
+        )
     )
-    aa = sum((value * value for value in first), Fraction(0))
-    bb = sum((value * value for value in second), Fraction(0))
-    ab = sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
-    da = sum((a * b for a, b in zip(delta, first, strict=True)), Fraction(0))
-    db = sum((a * b for a, b in zip(delta, second, strict=True)), Fraction(0))
+    aa = rational_dot(first, first)
+    bb = rational_dot(second, second)
+    ab = rational_dot(first, second)
+    da = rational_dot(delta, first)
+    db = rational_dot(delta, second)
     return aa > 0 and aa == bb and ab == 0 and da == 0 and db == 0
 
 
 def _sphere_squared_radius(patch: SpherePatch, /) -> Fraction | None:
     axes = tuple(
-        tuple(Fraction(float(value)) for value in np.asarray(axis))
+        rational_vector(np.asarray(axis))
         for axis in (patch.first_axis, patch.second_axis, patch.axis)
     )
-    gram = tuple(
-        tuple(
-            sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
-            for second in axes
-        )
-        for first in axes
-    )
+    gram = tuple(tuple(rational_dot(first, second) for second in axes) for first in axes)
     if (
         gram[0][0] <= 0
         or any(gram[index][index] != gram[0][0] for index in range(3))
@@ -231,37 +265,36 @@ def _sphere_squared_radius(patch: SpherePatch, /) -> Fraction | None:
 
 
 def _branch_continuum(curve: IntersectionCurve, point: np.ndarray, /) -> bool:
-    """Exact constant squared distance implied by the actual generating equations."""
-    first, second = curve.first.patch, curve.second.patch
-    if not isinstance(first, SpherePatch):
-        first, second = second, first
-    if not isinstance(first, SpherePatch):
-        return False
-    radius = _sphere_squared_radius(first)
+    """Test constant squared distance from the branch's generating equations."""
+    match (curve.first.patch, curve.second.patch):
+        case (SpherePatch() as first, second) | (second, SpherePatch() as first):
+            radius = _sphere_squared_radius(first)
+        case _:
+            return False
     if radius is None:
         return False
-    center = tuple(Fraction(float(value)) for value in np.asarray(first.center))
+    center = rational_vector(np.asarray(first.center))
     delta = tuple(
-        Fraction(float(value)) - origin
-        for value, origin in zip(point, center, strict=True)
+        value - origin
+        for value, origin in zip(rational_vector(point), center, strict=True)
     )
-    if isinstance(second, SpherePatch):
-        if _sphere_squared_radius(second) is None:
+    match second:
+        case SpherePatch():
+            if _sphere_squared_radius(second) is None:
+                return False
+            normal = tuple(
+                value - origin
+                for value, origin in zip(
+                    rational_vector(np.asarray(second.center)), center, strict=True
+                )
+            )
+        case PlanePatch():
+            normal = rational_cross(
+                rational_vector(np.asarray(second.first_axis)),
+                rational_vector(np.asarray(second.second_axis)),
+            )
+        case _:
             return False
-        normal = tuple(
-            Fraction(float(value)) - origin
-            for value, origin in zip(np.asarray(second.center), center, strict=True)
-        )
-    elif isinstance(second, PlanePatch):
-        a = tuple(Fraction(float(value)) for value in np.asarray(second.first_axis))
-        b = tuple(Fraction(float(value)) for value in np.asarray(second.second_axis))
-        normal = (
-            a[1] * b[2] - a[2] * b[1],
-            a[2] * b[0] - a[0] * b[2],
-            a[0] * b[1] - a[1] * b[0],
-        )
-    else:
-        return False
     nonzero = next((index for index, value in enumerate(normal) if value != 0), None)
     if nonzero is None:
         return False
@@ -272,23 +305,32 @@ def _branch_continuum(curve: IntersectionCurve, point: np.ndarray, /) -> bool:
     )
 
 
+class StationaryEnclosureError(RuntimeError):
+    """A certified contraction or source-unique root has contradictory enclosures."""
+
+
 def _tighten_root(
     equation: _FaceEquation | _EdgeEquation,
     box: np.ndarray,
     tolerance: float,
     maximum: int,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> tuple[np.ndarray, int]:
     used = 0
     while used < maximum and np.max(box[1] - box[0]) > tolerance:
-        result = _krawczyk(equation, box[0][None], box[1][None])
+        result = krawczyk(
+            equation, box[0][None], box[1][None], budget=budget, preparations=preparations
+        )
         used += 1
         following = np.stack(
             (np.maximum(box[0], result.lower[0]), np.minimum(box[1], result.upper[0]))
         )
         if np.any(following[0] > following[1]):
-            raise RuntimeError(
-                "A certified stationary root lost its enclosing source box."
+            raise StationaryEnclosureError(
+                "stationary_root.parameter_box must enclose the certified root; got an empty contraction"
             )
         if np.all(following == box):
             break
@@ -296,72 +338,42 @@ def _tighten_root(
     return box, used
 
 
-def isolate_closest_stationary(
-    model: BRepModel,
-    point: np.ndarray,
-    /,
-    *,
-    certificates: tuple[_FaceCertificate, ...],
-    trim_domains: tuple[TrimDomain, ...],
-    distance_upper: float,
-    tolerance: float,
-    parameter_tolerance: float,
-    max_boxes: int,
-    max_depth: int,
-    faces: tuple[int, ...] | None = None,
-) -> ClosestStationaryIsolation:
-    """Discover every possibly minimizing source root, or expose incomplete work.
+@final
+class _IsolationContext(StrictModule):
+    model: BRepModel
+    geometry: BRepGeometry
+    point: np.ndarray
+    trim_domains: tuple[TrimDomain, ...]
+    distance_upper: float
+    tolerance: float
+    parameter_tolerance: float
+    max_boxes: int
+    max_depth: int
+    preparations: TrimRequestPreparations
+    budget: CoordinateEnclosureBudget
 
-    Interior faces, all authored trim edges and explicit source vertices are
-    searched separately. Spatial proximity never merges root identities.
-    Degenerate stationary sets and boxes meeting an undecided trim or knot wall
-    remain unresolved, rather than borrowing numerical seed multiplicity.
-    """
-    if not isinstance(model, BRepModel) or model.geometry is None:
-        raise ValueError("Stationary discovery requires an exact native BRepModel.")
-    point = np.asarray(point, dtype=np.float64)
-    if point.shape != (3,) or not np.all(np.isfinite(point)):
-        raise ValueError("A source closest-point query requires one finite 3-vector.")
-    if (
-        not np.isfinite(distance_upper)
-        or distance_upper < 0.0
-        or not np.isfinite(tolerance)
-        or tolerance <= 0.0
-    ):
-        raise ValueError(
-            "A source isolation requires finite distance and positive tolerance bounds."
-        )
-    if not np.isfinite(parameter_tolerance) or parameter_tolerance <= 0.0:
-        raise ValueError("A source isolation requires a positive parameter tolerance.")
-    if len(trim_domains) != len(model.patches):
-        raise ValueError(
-            "Stationary trim domains must align with the exact source faces."
-        )
-    if (
-        type(max_boxes) is not int
-        or type(max_depth) is not int
-        or max_boxes <= 0
-        or max_depth <= 0
-    ):
-        raise ValueError("Stationary isolation requires positive integer work limits.")
-    selected = tuple(range(len(model.patches))) if faces is None else faces
-    if not selected or any(
-        type(face) is not int or not 0 <= face < len(model.patches) for face in selected
-    ):
-        raise ValueError("Stationary isolation faces must index the exact source model.")
-    geometry = model.geometry
-    roots: list[StationaryRoot] = []
-    root_families: list[tuple[int, int, int] | None] = []
-    root_domains: list[np.ndarray | None] = []
-    processed = unresolved = 0
-    floor = np.inf
 
-    def undecided(count: int, lower: float) -> None:
-        nonlocal unresolved, floor
-        unresolved += count
-        floor = min(floor, max(0.0, lower))
+@final
+class _RetainedRoot(StrictModule):
+    root: StationaryRoot
+    family: tuple[int, int, int] | None
+    proof_domain: np.ndarray | None
+
+
+@dataclass
+class _IsolationWork:
+    context: _IsolationContext
+    retained: list[_RetainedRoot] = field(default_factory=list)
+    processed: int = 0
+    unresolved: int = 0
+    floor: float = np.inf
+
+    def undecided(self, count: int, lower: float) -> None:
+        self.unresolved += count
+        self.floor = min(self.floor, max(0.0, lower))
 
     def retain(
+        self,
         face: int,
         dimension: int,
         entity: int,
@@ -373,43 +385,24 @@ def isolate_closest_stationary(
         family: tuple[int, int, int] | None = None,
         proof_domain: np.ndarray | None = None,
     ) -> None:
-        nonlocal processed
-        low, high = source_distance_bounds(point_box, point)
-        if low > distance_upper + tolerance:
+        context = self.context
+        low, high = source_distance_bounds(point_box, context.point)
+        if low > context.distance_upper + context.tolerance:
             return
         if equation is not None and family is not None:
-            for index, previous in enumerate(roots):
-                if root_families[index] != family:
+            for index, retained in enumerate(self.retained):
+                previous = retained.root
+                if retained.family != family:
                     continue
                 if np.any(previous.parameter_box[1] < parameter_box[0]) or np.any(
                     parameter_box[1] < previous.parameter_box[0]
                 ):
                     continue
-                previous_domain = root_domains[index]
-                contained = (
-                    previous_domain is not None
-                    and np.all(parameter_box[0] >= previous_domain[0])
-                    and np.all(parameter_box[1] <= previous_domain[1])
-                ) or (
-                    proof_domain is not None
-                    and np.all(previous.parameter_box[0] >= proof_domain[0])
-                    and np.all(previous.parameter_box[1] <= proof_domain[1])
-                )
-                if not contained:
-                    if processed >= max_boxes:
-                        undecided(1, low)
-                        break
-                    union = np.stack(
-                        (
-                            np.minimum(previous.parameter_box[0], parameter_box[0]),
-                            np.maximum(previous.parameter_box[1], parameter_box[1]),
-                        )
-                    )
-                    proof = _krawczyk(equation, union[0][None], union[1][None])
-                    processed += 1
-                    if not proof.certified[0]:
-                        undecided(1, low)
-                        break
+                previous_domain = retained.proof_domain
+                if not _certify_root_union(
+                    retained, parameter_box, proof_domain, equation, low, self
+                ):
+                    break
                 parameters = np.stack(
                     (
                         np.maximum(previous.parameter_box[0], parameter_box[0]),
@@ -423,111 +416,391 @@ def isolate_closest_stationary(
                     )
                 )
                 if np.any(parameters[0] > parameters[1]) or np.any(points[0] > points[1]):
-                    raise RuntimeError(
-                        "Source-unique stationary roots have contradictory enclosures."
+                    raise StationaryEnclosureError(
+                        "stationary_root.enclosures must agree for a source-unique root; got disjoint enclosures"
                     )
-                low, high = source_distance_bounds(points, point)
-                roots[index] = StationaryRoot(
+                low, high = source_distance_bounds(points, context.point)
+                root = StationaryRoot(
                     face, dimension, entity, parameters, points, low, high, continuum
                 )
+                self.retained[index] = _RetainedRoot(root, family, previous_domain)
                 return
-        roots.append(
-            StationaryRoot(
-                face, dimension, entity, parameter_box, point_box, low, high, continuum
+        root = StationaryRoot(
+            face, dimension, entity, parameter_box, point_box, low, high, continuum
+        )
+        self.retained.append(_RetainedRoot(root, family, proof_domain))
+
+
+def _certify_root_union(
+    retained: _RetainedRoot,
+    parameter_box: np.ndarray,
+    proof_domain: np.ndarray | None,
+    equation: _FaceEquation | _EdgeEquation,
+    lower_distance: float,
+    work: _IsolationWork,
+    /,
+) -> bool:
+    previous = retained.root
+    previous_domain = retained.proof_domain
+    contained = (
+        previous_domain is not None
+        and np.all(parameter_box[0] >= previous_domain[0])
+        and np.all(parameter_box[1] <= previous_domain[1])
+    ) or (
+        proof_domain is not None
+        and np.all(previous.parameter_box[0] >= proof_domain[0])
+        and np.all(previous.parameter_box[1] <= proof_domain[1])
+    )
+    if contained:
+        return True
+    context = work.context
+    if work.processed >= context.max_boxes:
+        work.undecided(1, lower_distance)
+        return False
+    union = np.stack(
+        (
+            np.minimum(previous.parameter_box[0], parameter_box[0]),
+            np.maximum(previous.parameter_box[1], parameter_box[1]),
+        )
+    )
+    proof = krawczyk(
+        equation,
+        union[0][None],
+        union[1][None],
+        budget=context.budget,
+        preparations=context.preparations,
+    )
+    work.processed += 1
+    if not proof.certified[0]:
+        work.undecided(1, lower_distance)
+        return False
+    return True
+
+
+@final
+class _FaceStratum(StrictModule):
+    certificate: FaceCertificate
+    equation: _FaceEquation
+    initial: np.ndarray
+
+
+@final
+class _EdgeStratum(StrictModule):
+    face: int
+    edge: int
+    equation: _EdgeEquation
+    endpoints: np.ndarray
+    initial: np.ndarray
+
+
+def _edge_box(
+    curve: BRepCurve,
+    first: float,
+    last: float,
+    endpoint_roots: tuple[RootEndpoint | None, RootEndpoint | None],
+    /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    match curve:
+        case IntersectionCurve():
+            return curve.bounding_box(
+                first,
+                last,
+                endpoint_roots=endpoint_roots,
+                preparations=preparations,
+                budget=budget,
             )
-        )
-        root_families.append(family)
-        root_domains.append(proof_domain)
+        case _:
+            return curve.bounding_box(
+                first, last, preparations=preparations, budget=budget
+            )
 
-    for certificate in certificates:
-        source_face = certificate.face
-        if source_face not in selected:
+
+def _stratum_box(
+    stratum: _FaceStratum | _EdgeStratum,
+    box: np.ndarray,
+    context: _IsolationContext,
+    /,
+) -> np.ndarray:
+    match stratum:
+        case _FaceStratum():
+            return context.model.patches[stratum.certificate.face].bounding_box(
+                box, preparations=context.preparations, budget=context.budget
+            )
+        case _EdgeStratum():
+            return _edge_box(
+                stratum.equation.curve,
+                float(box[0, 0]),
+                float(box[1, 0]),
+                stratum.equation.endpoint_roots,
+                preparations=context.preparations,
+                budget=context.budget,
+            )
+
+
+def _stratum_bound(
+    stratum: _FaceStratum | _EdgeStratum,
+    box: np.ndarray,
+    context: _IsolationContext,
+    /,
+) -> float:
+    match stratum:
+        case _FaceStratum():
+            return stratum.certificate.bound(
+                box,
+                context.point,
+                budget=context.budget,
+                preparations=context.preparations,
+            )
+        case _EdgeStratum():
+            return source_distance_bounds(
+                _stratum_box(stratum, box, context), context.point
+            )[0]
+
+
+def _stratum_position(
+    stratum: _FaceStratum | _EdgeStratum,
+    box: np.ndarray,
+    context: _IsolationContext,
+    /,
+) -> int:
+    match stratum:
+        case _FaceStratum():
+            return _trim_position(
+                context.trim_domains[stratum.certificate.face],
+                box,
+                context.max_depth,
+                preparations=context.preparations,
+                budget=context.budget,
+            )
+        case _EdgeStratum():
+            return int(
+                box[0, 0] > stratum.endpoints[0, 1]
+                and box[1, 0] < stratum.endpoints[1, 0]
+            )
+
+
+def _retain_stratum_root(
+    stratum: _FaceStratum | _EdgeStratum,
+    root_box: np.ndarray,
+    proof_domain: np.ndarray,
+    work: _IsolationWork,
+    /,
+) -> None:
+    match stratum:
+        case _FaceStratum():
+            face = stratum.certificate.face
+            dimension, entity = 2, face
+            family = (2, face, stratum.certificate.piece_index)
+        case _EdgeStratum():
+            face, dimension, entity = stratum.face, 1, stratum.edge
+            phase = (
+                int(np.floor(root_box[0, 0]))
+                if isinstance(stratum.equation.curve, IntersectionCurve)
+                else -1
+            )
+            family = (1, entity, phase)
+    work.retain(
+        face,
+        dimension,
+        entity,
+        root_box,
+        _stratum_box(stratum, root_box, work.context),
+        equation=stratum.equation,
+        family=family,
+        proof_domain=proof_domain,
+    )
+
+
+def _edge_derivative_bounds(
+    curve: BRepCurve,
+    first: float,
+    last: float,
+    endpoint_roots: tuple[RootEndpoint | None, RootEndpoint | None],
+    /,
+    *,
+    order: int,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    match curve:
+        case IntersectionCurve():
+            return curve.derivative_bounds(
+                first,
+                last,
+                order=order,
+                endpoint_roots=endpoint_roots,
+                budget=budget,
+                preparations=preparations,
+            )
+        case _:
+            return curve.derivative_bounds(
+                first, last, order=order, budget=budget, preparations=preparations
+            )
+
+
+class _BoxSubdivision(StrictModule):
+    first: np.ndarray
+    last: np.ndarray
+
+
+def _split_stationary_box(
+    box: np.ndarray, initial: np.ndarray, /
+) -> _BoxSubdivision | None:
+    axis = (
+        0
+        if box.shape[1] == 1
+        else int(np.argmax((box[1] - box[0]) / (initial[1] - initial[0])))
+    )
+    middle = 0.5 * (box[0, axis] + box[1, axis])
+    if not box[0, axis] < middle < box[1, axis]:
+        return None
+    first, last = box.copy(), box.copy()
+    overlap = (box[1, axis] - box[0, axis]) / 16.0
+    first[1, axis] = min(box[1, axis], float(np.nextafter(middle + overlap, np.inf)))
+    last[0, axis] = max(box[0, axis], float(np.nextafter(middle - overlap, -np.inf)))
+    return _BoxSubdivision(first, last)
+
+
+def _search_stratum(
+    stratum: _FaceStratum | _EdgeStratum,
+    queue: list[tuple[np.ndarray, int]],
+    work: _IsolationWork,
+    /,
+) -> None:
+    """Subdivide one smooth stationary equation without merging source identities."""
+    context = work.context
+    equation = stratum.equation
+    while queue:
+        box, depth = queue.pop()
+        if work.processed >= context.max_boxes:
+            work.undecided(
+                len(queue) + 1,
+                min(
+                    _stratum_bound(stratum, item, context)
+                    for item, _ in ((box, depth), *queue)
+                ),
+            )
+            break
+        work.processed += 1
+        if (
+            _stratum_bound(stratum, box, context)
+            > context.distance_upper + context.tolerance
+        ):
             continue
-        patch = model.patches[source_face]
-        domain = trim_domains[source_face]
-        initial = np.asarray((certificate.lower, certificate.upper), dtype=np.float64)
-        if certificate.bound(initial, point) > distance_upper + tolerance:
+        match stratum:
+            case _FaceStratum() if _stratum_position(stratum, box, context) < 0:
+                continue
+            case _:
+                pass
+        low, high = evaluate_interval(
+            equation.value,
+            box[0][None],
+            box[1][None],
+            budget=context.budget,
+            preparations=context.preparations,
+        )
+        if np.any((low[0] > 0.0) | (high[0] < 0.0)):
             continue
-        if not patch.is_c1_on(np.asarray(model.parameter_bounds)[source_face, :, :]):
-            # A nonsmooth source span wall is itself a constrained stratum.
-            # It is not an ordinary smooth stationary equation.
-            undecided(1, certificate.bound(initial, point))
+        result = krawczyk(
+            equation,
+            box[0][None],
+            box[1][None],
+            budget=context.budget,
+            preparations=context.preparations,
+        )
+        if result.excluded[0]:
             continue
-        equation = _FaceEquation(certificate, point)
-        queue = [(initial, 0)]
-        while queue:
-            box, depth = queue.pop()
-            if processed >= max_boxes:
-                undecided(
-                    len(queue) + 1,
-                    min(
-                        certificate.bound(item, point)
-                        for item, _ in ((box, depth), *queue)
-                    ),
-                )
-                break
-            processed += 1
-            if (
-                certificate.bound(box, point) > distance_upper + tolerance
-                or _trim_position(domain, box, max_depth) < 0
+        if result.certified[0]:
+            root_box = np.stack(
+                (np.maximum(box[0], result.lower[0]), np.minimum(box[1], result.upper[0]))
+            )
+            root_box, used = _tighten_root(
+                equation,
+                root_box,
+                context.parameter_tolerance,
+                min(context.max_depth, context.max_boxes - work.processed),
+                budget=context.budget,
+                preparations=context.preparations,
+            )
+            work.processed += used
+            position = _stratum_position(stratum, root_box, context)
+            if position > 0:
+                _retain_stratum_root(stratum, root_box, box, work)
+                continue
+            if position < 0:
+                continue
+        match stratum:
+            case _EdgeStratum() if box[1, 0] - box[
+                0, 0
+            ] <= context.parameter_tolerance and (
+                box[0, 0] <= stratum.endpoints[0, 1]
+                or box[1, 0] >= stratum.endpoints[1, 0]
             ):
+                # At query resolution the endpoint belongs to its separately retained vertex.
                 continue
-            low, high = equation.value.evaluate(box[0][None], box[1][None])
-            if np.any((low[0] > 0.0) | (high[0] < 0.0)):
-                continue
-            result = _krawczyk(equation, box[0][None], box[1][None])
-            if result.excluded[0]:
-                continue
-            if result.certified[0]:
-                root_box = np.stack(
-                    (
-                        np.maximum(box[0], result.lower[0]),
-                        np.minimum(box[1], result.upper[0]),
-                    )
-                )
-                root_box, used = _tighten_root(
-                    equation,
-                    root_box,
-                    parameter_tolerance,
-                    min(max_depth, max_boxes - processed),
-                )
-                processed += used
-                position = _trim_position(domain, root_box, max_depth)
-                if position > 0:
-                    retain(
-                        source_face,
-                        2,
-                        source_face,
-                        root_box,
-                        patch.bounding_box(root_box),
-                        equation=equation,
-                        family=(2, source_face, certificate.piece_index),
-                        proof_domain=box,
-                    )
-                    continue
-                if position < 0:
-                    continue
-            if depth >= max_depth:
-                undecided(1, certificate.bound(box, point))
-                continue
-            widths = (box[1] - box[0]) / (initial[1] - initial[0])
-            axis = int(np.argmax(widths))
-            middle = 0.5 * (box[0, axis] + box[1, axis])
-            if not box[0, axis] < middle < box[1, axis]:
-                undecided(1, certificate.bound(box, point))
-                continue
-            a, b = box.copy(), box.copy()
-            overlap = (box[1, axis] - box[0, axis]) / 16.0
-            a[1, axis] = min(box[1, axis], float(np.nextafter(middle + overlap, np.inf)))
-            b[0, axis] = max(box[0, axis], float(np.nextafter(middle - overlap, -np.inf)))
-            queue.extend(((b, depth + 1), (a, depth + 1)))
+            case _:
+                pass
+        if depth >= context.max_depth:
+            work.undecided(1, _stratum_bound(stratum, box, context))
+            continue
+        split = _split_stationary_box(box, stratum.initial)
+        if split is None:
+            work.undecided(1, _stratum_bound(stratum, box, context))
+            continue
+        queue.extend(((split.last, depth + 1), (split.first, depth + 1)))
 
-    owners = {
-        edge: min(face for face in selected if edge in model.topology.face_edges[face])
-        for edge in sorted(
-            {edge for face in selected for edge in model.topology.face_edges[face]}
+
+def _search_faces(
+    certificates: tuple[FaceCertificate, ...],
+    selected: tuple[int, ...],
+    work: _IsolationWork,
+    /,
+) -> None:
+    context = work.context
+    for certificate in certificates:
+        face = certificate.face
+        if face not in selected:
+            continue
+        initial = np.asarray((certificate.lower, certificate.upper), dtype=np.float64)
+        if (
+            certificate.bound(
+                initial,
+                context.point,
+                budget=context.budget,
+                preparations=context.preparations,
+            )
+            > context.distance_upper + context.tolerance
+        ):
+            continue
+        patch = context.model.patches[face]
+        if not patch.is_c1_on(
+            np.asarray(context.model.parameter_bounds)[face, :, :],
+            preparations=context.preparations,
+            budget=context.budget,
+        ):
+            # Nonsmooth span walls are constrained strata, not smooth stationary equations.
+            work.undecided(
+                1,
+                certificate.bound(
+                    initial,
+                    context.point,
+                    budget=context.budget,
+                    preparations=context.preparations,
+                ),
+            )
+            continue
+        stratum = _FaceStratum(
+            certificate, _FaceEquation(certificate, context.point), initial
         )
-    }
+        _search_stratum(stratum, [(initial, 0)], work)
+
+
+def _retain_vertices(owners: dict[int, int], work: _IsolationWork, /) -> None:
+    context = work.context
+    geometry = context.geometry
     vertices = sorted(
         {vertex for edge in owners for vertex in geometry.edge_vertices[edge]}
     )
@@ -541,59 +814,75 @@ def isolate_closest_stationary(
                 )
             )
             if root is None
-            else root.point_enclosure()
+            else root.point_enclosure(
+                preparations=context.preparations, budget=context.budget
+            )
         )
         face = min(
             owners[edge] for edge in owners if vertex in geometry.edge_vertices[edge]
         )
-        retain(face, 0, vertex, np.empty((2, 0), dtype=np.float64), box)
-    for edge, face in owners.items():
-        carrier_index = geometry.edge_curves[edge]
-        if carrier_index < 0:
-            continue
-        curve = geometry.curves[carrier_index]
-        if isinstance(curve, IntersectionCurve) and not curve.fully_certified:
-            undecided(
-                1,
-                source_distance_bounds(
-                    curve.bounding_box(0.0, float(curve.num_charts)), point
-                )[0],
-            )
-            continue
-        endpoints = geometry.edge_parameter_enclosure(edge)
-        first, last = float(endpoints[0, 0]), float(endpoints[1, 1])
+        work.retain(face, 0, vertex, np.empty((2, 0), dtype=np.float64), box)
 
-        def source_box(start: float, stop: float, /) -> np.ndarray:
-            if isinstance(curve, IntersectionCurve):
-                return curve.bounding_box(
-                    start, stop, endpoint_roots=geometry.edge_endpoint_roots[edge]
-                )
-            return curve.bounding_box(start, stop)
 
-        if (
-            isinstance(curve, CircleCurve)
-            and _circle_continuum(curve, point)
-            or isinstance(curve, IntersectionCurve)
-            and _branch_continuum(curve, point)
-        ):
-            lower, upper = float(endpoints[0, 1]), float(endpoints[1, 0])
-            if lower >= upper:
-                undecided(1, source_distance_bounds(source_box(first, last), point)[0])
-                continue
-            parameter = 0.5 * (lower + upper)
-            retain(
-                face,
-                1,
-                edge,
-                np.asarray([[parameter], [parameter]], dtype=np.float64),
-                source_box(parameter, parameter),
-                continuum=True,
-            )
-            continue
-        equation = _EdgeEquation(curve, point, geometry.edge_endpoint_roots[edge])
-        if isinstance(curve, IntersectionCurve):
-            # The native atlas parameter changes chart scale at each integer.
-            # A single smooth stationarity equation cannot cross that change.
+def _prepare_edge(edge: int, face: int, work: _IsolationWork, /) -> _EdgeStratum | None:
+    context = work.context
+    geometry = context.geometry
+    carrier_index = geometry.edge_curves[edge]
+    if carrier_index < 0:
+        return None
+    curve = geometry.curves[carrier_index]
+    if isinstance(curve, IntersectionCurve) and not curve.fully_certified:
+        work.undecided(
+            1,
+            source_distance_bounds(
+                curve.bounding_box(
+                    0.0,
+                    float(curve.num_charts),
+                    preparations=context.preparations,
+                    budget=context.budget,
+                ),
+                context.point,
+            )[0],
+        )
+        return None
+    endpoints = geometry.edge_parameter_enclosure(
+        edge, preparations=context.preparations, budget=context.budget
+    )
+    first, last = float(endpoints[0, 0]), float(endpoints[1, 1])
+    initial = np.asarray([[first], [last]], dtype=np.float64)
+    equation = _EdgeEquation(curve, context.point, geometry.edge_endpoint_roots[edge])
+    stratum = _EdgeStratum(face, edge, equation, endpoints, initial)
+    if (
+        isinstance(curve, CircleCurve)
+        and _circle_continuum(curve, context.point)
+        or isinstance(curve, IntersectionCurve)
+        and _branch_continuum(curve, context.point)
+    ):
+        lower, upper = float(endpoints[0, 1]), float(endpoints[1, 0])
+        if lower >= upper:
+            work.undecided(1, _stratum_bound(stratum, initial, context))
+            return None
+        parameter = 0.5 * (lower + upper)
+        box = np.asarray([[parameter], [parameter]], dtype=np.float64)
+        work.retain(
+            face, 1, edge, box, _stratum_box(stratum, box, context), continuum=True
+        )
+        return None
+    if not isinstance(curve, IntersectionCurve) and not curve.is_c1_on(
+        first, last, preparations=context.preparations, budget=context.budget
+    ):
+        bound = _stratum_bound(stratum, initial, context)
+        if bound <= context.distance_upper + context.tolerance:
+            work.undecided(1, bound)
+        return None
+    return stratum
+
+
+def _edge_queue(stratum: _EdgeStratum, /) -> list[tuple[np.ndarray, int]]:
+    match stratum.equation.curve:
+        case IntersectionCurve() as curve:
+            first, last = float(stratum.initial[0, 0]), float(stratum.initial[1, 0])
+            # Integer boundaries change chart scale and cannot share a smooth equation.
             breaks = sorted(
                 {
                     first,
@@ -605,125 +894,167 @@ def isolate_closest_stationary(
                     ),
                 }
             )
-            queue = [
+            return [
                 (np.asarray([[start], [stop]], dtype=np.float64), 0)
                 for start, stop in zip(breaks[:-1], breaks[1:], strict=True)
             ]
-        else:
-            if not curve.is_c1_on(first, last):
-                bound = source_distance_bounds(source_box(first, last), point)[0]
-                if bound <= distance_upper + tolerance:
-                    undecided(1, bound)
-                continue
-            queue = [(np.asarray([[first], [last]], dtype=np.float64), 0)]
-        while queue:
-            box, depth = queue.pop()
-            if processed >= max_boxes:
-                undecided(
-                    len(queue) + 1,
-                    min(
-                        source_distance_bounds(
-                            source_box(float(item[0, 0]), float(item[1, 0])), point
-                        )[0]
-                        for item, _ in ((box, depth), *queue)
-                    ),
-                )
-                break
-            processed += 1
-            if (
-                source_distance_bounds(
-                    source_box(float(box[0, 0]), float(box[1, 0])), point
-                )[0]
-                > distance_upper + tolerance
-            ):
-                continue
-            low, high = equation.value.evaluate(box[0][None], box[1][None])
-            if low[0, 0] > 0.0 or high[0, 0] < 0.0:
-                continue
-            result = _krawczyk(equation, box[0][None], box[1][None])
-            if result.excluded[0]:
-                continue
-            if result.certified[0]:
-                root_box = np.stack(
-                    (
-                        np.maximum(box[0], result.lower[0]),
-                        np.minimum(box[1], result.upper[0]),
-                    )
-                )
-                root_box, used = _tighten_root(
-                    equation,
-                    root_box,
-                    parameter_tolerance,
-                    min(max_depth, max_boxes - processed),
-                )
-                processed += used
-                if root_box[0, 0] > endpoints[0, 1] and root_box[1, 0] < endpoints[1, 0]:
-                    phase = (
-                        int(np.floor(root_box[0, 0]))
-                        if isinstance(curve, IntersectionCurve)
-                        else -1
-                    )
-                    retain(
-                        face,
-                        1,
-                        edge,
-                        root_box,
-                        source_box(float(root_box[0, 0]), float(root_box[1, 0])),
-                        equation=equation,
-                        family=(1, edge, phase),
-                        proof_domain=box,
-                    )
-                    continue
-            if box[1, 0] - box[0, 0] <= parameter_tolerance and (
-                box[0, 0] <= endpoints[0, 1] or box[1, 0] >= endpoints[1, 0]
-            ):
-                # Within query parameter resolution of an authored endpoint,
-                # the stratum is that endpoint's vertex, retained separately.
-                continue
-            if depth >= max_depth:
-                undecided(
-                    1,
-                    source_distance_bounds(
-                        source_box(float(box[0, 0]), float(box[1, 0])), point
-                    )[0],
-                )
-                continue
-            middle = 0.5 * (box[0, 0] + box[1, 0])
-            if not box[0, 0] < middle < box[1, 0]:
-                undecided(
-                    1,
-                    source_distance_bounds(
-                        source_box(float(box[0, 0]), float(box[1, 0])), point
-                    )[0],
-                )
-                continue
-            overlap = (box[1, 0] - box[0, 0]) / 16.0
-            lower = max(box[0, 0], float(np.nextafter(middle - overlap, -np.inf)))
-            upper = min(box[1, 0], float(np.nextafter(middle + overlap, np.inf)))
-            queue.extend(
-                (
-                    (np.asarray([[lower], [box[1, 0]]], dtype=np.float64), depth + 1),
-                    (np.asarray([[box[0, 0]], [upper]], dtype=np.float64), depth + 1),
-                )
+        case _:
+            return [(stratum.initial, 0)]
+
+
+@checked
+def isolate_closest_stationary(
+    model: BRepModel,
+    point: np.ndarray,
+    /,
+    *,
+    certificates: tuple[FaceCertificate, ...],
+    trim_domains: tuple[TrimDomain, ...],
+    distance_upper: float,
+    tolerance: float,
+    parameter_tolerance: float,
+    max_boxes: int,
+    max_depth: int,
+    faces: tuple[int, ...] | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> ClosestStationaryIsolation:
+    """Discover minimizing source roots and bound all unresolved strata.
+
+    Face interiors, trim edges, and vertices retain separate identities.
+    Degenerate sets and undecided trim or knot walls contribute to the
+    unresolved distance floor.
+    """
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request((model, point)) as budget:
+            return isolate_closest_stationary(
+                model,
+                point,
+                certificates=certificates,
+                trim_domains=trim_domains,
+                distance_upper=distance_upper,
+                tolerance=tolerance,
+                parameter_tolerance=parameter_tolerance,
+                max_boxes=max_boxes,
+                max_depth=max_depth,
+                faces=faces,
+                preparations=preparations,
+                budget=budget,
             )
+    geometry = model.geometry
+    if geometry is None:
+        raise ValueError(
+            "isolation.model.geometry must contain native geometry; got None"
+        )
+    point = np.asarray(point, dtype=np.float64)
+    if point.shape != (3,) or not np.all(np.isfinite(point)):
+        raise ValueError(
+            f"isolation.point must be a finite 3-vector; got shape {point.shape}"
+        )
+    if (
+        not np.isfinite(distance_upper)
+        or distance_upper < 0.0
+        or not np.isfinite(tolerance)
+        or tolerance <= 0.0
+    ):
+        raise ValueError(
+            "isolation.bounds must be finite with nonnegative distance_upper and positive tolerance; "
+            f"got {distance_upper!r}/{tolerance!r}"
+        )
+    if not np.isfinite(parameter_tolerance) or parameter_tolerance <= 0.0:
+        raise ValueError(
+            f"isolation.parameter_tolerance must be finite and positive; got {parameter_tolerance!r}"
+        )
+    if len(trim_domains) != len(model.patches):
+        raise ValueError(
+            f"isolation.trim_domains must align with source faces; got {len(trim_domains)} domains for {len(model.patches)} faces"
+        )
+    # Builtin work limits exclude booleans and NumPy scalar metadata.
+    if type(max_boxes) is not int or type(max_depth) is not int:
+        raise ValueError(
+            f"isolation.work_limits must be positive Python integers for max_boxes and max_depth; got {max_boxes!r}/{max_depth!r}"
+        )
+    max_boxes = positive_integer(max_boxes, "isolation.max_boxes")
+    max_depth = positive_integer(max_depth, "isolation.max_depth")
+    selected = tuple(range(len(model.patches))) if faces is None else faces
+    if not selected or any(
+        type(face) is not int or not 0 <= face < len(model.patches) for face in selected
+    ):
+        raise ValueError(f"isolation.faces must index source faces; got {selected!r}")
+    context = _IsolationContext(
+        model,
+        geometry,
+        point,
+        trim_domains,
+        distance_upper,
+        tolerance,
+        parameter_tolerance,
+        max_boxes,
+        max_depth,
+        preparations,
+        budget,
+    )
+    work = _IsolationWork(context)
+    _search_faces(certificates, selected, work)
+    owners = {
+        edge: min(face for face in selected if edge in model.topology.face_edges[face])
+        for edge in sorted(
+            {edge for face in selected for edge in model.topology.face_edges[face]}
+        )
+    }
+    _retain_vertices(owners, work)
+    for edge, face in owners.items():
+        stratum = _prepare_edge(edge, face, work)
+        if stratum is not None:
+            _search_stratum(stratum, _edge_queue(stratum), work)
     return ClosestStationaryIsolation(
-        tuple(roots), unresolved == 0, processed, unresolved, floor
+        tuple(retained.root for retained in work.retained),
+        work.unresolved == 0,
+        work.processed,
+        work.unresolved,
+        work.floor,
     )
 
 
+@checked
 def source_closure_upper(
-    model: BRepModel, point: np.ndarray, faces: tuple[int, ...], /
+    model: BRepModel,
+    point: np.ndarray,
+    faces: tuple[int, ...],
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> float:
-    """A feasible distance upper bound from authored, strictly interior edge phases."""
+    """Return a feasible distance upper bound from strictly interior edge phases."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                model,
+                point,
+                faces,
+            )
+        ) as budget:
+            return source_closure_upper(
+                model, point, faces, preparations=preparations, budget=budget
+            )
     geometry = model.geometry
     if geometry is None:
-        raise ValueError("A closure distance requires exact native geometry.")
+        raise ValueError(
+            "source_closure.model.geometry must contain native geometry; got None"
+        )
     upper = np.inf
     for face in faces:
         for loop in geometry.face_loops[face]:
             for coedge in loop:
                 edge = geometry.coedge_edges[coedge]
-                endpoints = geometry.edge_parameter_enclosure(edge)
+                endpoints = geometry.edge_parameter_enclosure(
+                    edge, preparations=preparations, budget=budget
+                )
                 first, last = float(endpoints[0, 1]), float(endpoints[1, 0])
                 if first >= last:
                     continue
@@ -732,24 +1063,86 @@ def source_closure_upper(
                 # A coupled branch p-curve encloses single parameters directly;
                 # its range validator admits only nondegenerate subranges.
                 uv = (
-                    pcurve.enclosure(parameter, parameter)
+                    pcurve.enclosure(
+                        parameter, parameter, preparations=preparations, budget=budget
+                    )
                     if isinstance(pcurve, IntersectionPCurve)
-                    else pcurve.bounding_box(parameter, parameter)
+                    else pcurve.bounding_box(
+                        parameter, parameter, preparations=preparations, budget=budget
+                    )
                 )
-                box = model.patches[face].bounding_box(uv)
+                box = model.patches[face].bounding_box(
+                    uv, preparations=preparations, budget=budget
+                )
                 upper = min(upper, source_distance_bounds(box, point)[1])
     return float(upper)
 
 
+@final
+class StationaryRootRepresentative(StrictModule):
+    """Realized point, chart parameters, and retained enclosure errors of one root."""
+
+    point: np.ndarray
+    uv: np.ndarray
+    uv_error: float
+    point_error: float
+    edge: int
+    parameter: float
+    regular: bool
+
+
+def _pcurve_box(
+    pcurve: BRepPCurve,
+    first: float,
+    last: float,
+    endpoint_roots: tuple[RootEndpoint | None, RootEndpoint | None],
+    /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    match pcurve:
+        case IntersectionPCurve():
+            return pcurve.bounding_box(
+                first,
+                last,
+                endpoint_roots=endpoint_roots,
+                preparations=preparations,
+                budget=budget,
+            )
+        case _:
+            return pcurve.bounding_box(
+                first, last, preparations=preparations, budget=budget
+            )
+
+
+@checked
 def stationary_root_representative(
     model: BRepModel,
     root: StationaryRoot,
     /,
-) -> tuple[np.ndarray, np.ndarray, float, float, int, float, bool]:
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> StationaryRootRepresentative:
     """Realize a source root while retaining its UV and physical error enclosure."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                model,
+                root,
+            )
+        ) as budget:
+            return stationary_root_representative(
+                model, root, preparations=preparations, budget=budget
+            )
     geometry = model.geometry
     if geometry is None:
-        raise ValueError("A stationary representative requires exact native geometry.")
+        raise ValueError(
+            "stationary_representative.model.geometry must contain native geometry; got None"
+        )
     edge = -1
     parameter = np.nan
     correspondence = 0.0
@@ -770,13 +1163,16 @@ def stationary_root_representative(
             )
             parameter = float(0.5 * (root.parameter_box[0, 0] + root.parameter_box[1, 0]))
             source = geometry.curves[geometry.edge_curves[edge]]
-            if isinstance(source, IntersectionCurve):
-                realization = source.evaluate(jnp.asarray(parameter, dtype=jnp.float64))
-                point = np.asarray(realization.point)
-            else:
-                point = np.asarray(
-                    source.evaluate(jnp.asarray(parameter, dtype=jnp.float64))
-                )
+            match source:
+                case IntersectionCurve():
+                    realization = source.evaluate(
+                        jnp.asarray(parameter, dtype=jnp.float64)
+                    )
+                    point = np.asarray(realization.point)
+                case _:
+                    point = np.asarray(
+                        source.evaluate(jnp.asarray(parameter, dtype=jnp.float64))
+                    )
             parameter_lower, parameter_upper = (
                 float(root.parameter_box[0, 0]),
                 float(root.parameter_box[1, 0]),
@@ -795,7 +1191,9 @@ def stationary_root_representative(
                     geometry.edge_ranges[edge, endpoint]
                 )
             else:
-                parameter_lower, parameter_upper = binding.parameter_enclosure()
+                parameter_lower, parameter_upper = binding.parameter_enclosure(
+                    preparations=preparations, budget=budget
+                )
             parameter = 0.5 * (parameter_lower + parameter_upper)
             binding_root = geometry.vertex_roots[root.entity]
             if binding_root is None:
@@ -804,23 +1202,34 @@ def stationary_root_representative(
                 point, _, certified = binding_root.evaluate()
                 if not certified:
                     raise ValueError(
-                        "A source vertex realization lost its root certificate."
+                        "stationary_representative.vertex must retain its root certificate; got an uncertified realization"
                     )
         else:
             raise ValueError(
-                "A stationary root dimension must identify a source vertex, edge or face."
+                f"stationary_root.dimension must identify a vertex, edge, or face; got {root.dimension!r}"
             )
         pcurve = geometry.pcurves[coedge]
-        uv_box = (
-            pcurve.bounding_box(
-                parameter_lower,
-                parameter_upper,
-                endpoint_roots=geometry.coedge_endpoint_roots[coedge],
-            )
-            if isinstance(pcurve, IntersectionPCurve)
-            else pcurve.bounding_box(parameter_lower, parameter_upper)
+        uv_box = _pcurve_box(
+            pcurve,
+            parameter_lower,
+            parameter_upper,
+            geometry.coedge_endpoint_roots[coedge],
+            preparations=preparations,
+            budget=budget,
         )
-        uv = np.asarray(pcurve.evaluate(jnp.asarray(parameter, dtype=jnp.float64)))
+        match pcurve:
+            case IntersectionPCurve():
+                uv = np.asarray(
+                    pcurve.evaluate(
+                        jnp.asarray(parameter, dtype=jnp.float64),
+                        preparations=preparations,
+                        budget=budget,
+                    )
+                )
+            case _:
+                uv = np.asarray(
+                    pcurve.evaluate(jnp.asarray(parameter, dtype=jnp.float64))
+                )
         correspondence = float(model.coedge_deviation_bounds[coedge])
     uv_error = float(np.max(np.maximum(np.abs(uv_box[0] - uv), np.abs(uv_box[1] - uv))))
     point_error = float(
@@ -834,24 +1243,48 @@ def stationary_root_representative(
             np.inf,
         )
     )
-    return (
+    return StationaryRootRepresentative(
         point,
         uv,
         uv_error,
         point_error,
         edge,
         parameter,
-        surface_chart_regular(model.patches[root.face], uv_box),
+        surface_chart_regular(
+            model.patches[root.face], uv_box, preparations=preparations, budget=budget
+        ),
     )
 
 
-def stationary_root_fidelity(model: BRepModel, root: StationaryRoot, /) -> float:
-    """Bound only the curve/vertex support discrepancy of this actual stratum."""
+@checked
+def stationary_root_fidelity(
+    model: BRepModel,
+    root: StationaryRoot,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> float:
+    """Bound the curve or vertex support discrepancy of the root stratum."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                model,
+                root,
+            )
+        ) as budget:
+            return stationary_root_fidelity(
+                model, root, preparations=preparations, budget=budget
+            )
     if root.dimension == 2:
         return 0.0
     geometry = model.geometry
     if geometry is None:
-        raise ValueError("Stationary source fidelity requires exact native geometry.")
+        raise ValueError(
+            "stationary_fidelity.model.geometry must contain native geometry; got None"
+        )
     error = 0.0
     for loop in geometry.face_loops[root.face]:
         for coedge in loop:
@@ -868,17 +1301,18 @@ def stationary_root_fidelity(model: BRepModel, root: StationaryRoot, /) -> float
             endpoint = 0 if geometry.edge_vertices[edge][0] == root.entity else 1
             parameter = float(geometry.edge_ranges[edge, endpoint])
             pcurve = geometry.pcurves[coedge]
-            uv = (
-                pcurve.bounding_box(
-                    parameter,
-                    parameter,
-                    endpoint_roots=geometry.coedge_endpoint_roots[coedge],
-                )
-                if isinstance(pcurve, IntersectionPCurve)
-                else pcurve.bounding_box(parameter, parameter)
+            uv = _pcurve_box(
+                pcurve,
+                parameter,
+                parameter,
+                geometry.coedge_endpoint_roots[coedge],
+                preparations=preparations,
+                budget=budget,
             )
             point = np.asarray(geometry.vertex_points[root.entity])
-            support = model.patches[root.face].bounding_box(uv)
+            support = model.patches[root.face].bounding_box(
+                uv, preparations=preparations, budget=budget
+            )
             discrepancy = interval_subtract((support[0], support[1]), (point, point))
             error = max(
                 error,

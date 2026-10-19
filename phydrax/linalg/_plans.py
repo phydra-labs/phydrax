@@ -70,9 +70,9 @@ from ._problems import (
 )
 from ._properties import LinearCapabilityError
 from ._spaces import (
-    _coordinate_dtype,
     _has_diagonal_pairing,
     _has_euclidean_pairing,
+    coordinate_dtype,
     RHSLayout,
 )
 from ._sparse_contract import AbstractSparseLinearOperator
@@ -317,6 +317,18 @@ def plan(
     rhs_layout: RHSLayout | None = None,
 ) -> LinearSolvePlan:
     """Select the first feasible candidate in deterministic capability order."""
+    return _plan(problem, policy, rhs_layout=rhs_layout, require_resources=True)
+
+
+def _plan(
+    problem: AbstractLinearProblem,
+    policy: LinearSolvePolicy | None = None,
+    /,
+    *,
+    rhs_layout: RHSLayout | None = None,
+    require_resources: bool,
+) -> LinearSolvePlan:
+    """Select a capability-valid plan, optionally retaining resource refusal for execution."""
     if not isinstance(problem, AbstractLinearProblem):
         raise TypeError("problem must be an AbstractLinearProblem.")
     policy_ = LinearSolvePolicy() if policy is None else policy
@@ -361,11 +373,12 @@ def plan(
         reason,
         sparse_lu_analysis,
     )
-    _require_selected_resources(
-        selected_estimate,
-        policy_,
-        1 if rhs_layout is None else rhs_layout.size,
-    )
+    if require_resources:
+        _require_selected_resources(
+            selected_estimate,
+            policy_,
+            1 if rhs_layout is None else rhs_layout.size,
+        )
     estimates = tuple(_rejected_estimate(entry) for entry in rejected) + (
         selected_estimate,
     )
@@ -454,22 +467,22 @@ def _validate_precision_policy(
 
     rejection = "MixedPrecisionPolicy is capability-rejected"
     if isinstance(method, SparseLDLT):
-        coordinate_dtype = _coordinate_dtype(problem.operator.source)
+        stored_dtype = coordinate_dtype(problem.operator.source)
         requested_operator = (
-            coordinate_dtype
+            stored_dtype
             if precision.operator_dtype is None
             else jnp.dtype(precision.operator_dtype)
         )
         factorization_dtype = (
-            coordinate_dtype
+            stored_dtype
             if precision.factorization_dtype is None
             else jnp.dtype(precision.factorization_dtype)
         )
-        if requested_operator != coordinate_dtype:
+        if requested_operator != stored_dtype:
             raise LinearCapabilityError(
                 f"{rejection}: operator_dtype must match stored sparse coordinates."
             )
-        if factorization_dtype != coordinate_dtype:
+        if factorization_dtype != stored_dtype:
             raise LinearCapabilityError(
                 f"{rejection}: Spineax cuDSS currently requires factorization_dtype to match stored sparse coordinates."
             )
@@ -497,27 +510,27 @@ def _validate_precision_policy(
             raise LinearCapabilityError(
                 f"{rejection}: iterative mixed precision requires a native Krylov provider."
             )
-        coordinate_dtype = _coordinate_dtype(problem.operator.source)
+        stored_dtype = coordinate_dtype(problem.operator.source)
         requested_operator = (
-            coordinate_dtype
+            stored_dtype
             if precision.operator_dtype is None
             else jnp.dtype(precision.operator_dtype)
         )
         residual_dtype = (
-            coordinate_dtype
+            stored_dtype
             if precision.residual_dtype is None
             else jnp.dtype(precision.residual_dtype)
         )
         accumulation_dtype = (
-            coordinate_dtype
+            stored_dtype
             if precision.accumulation_dtype is None
             else jnp.dtype(precision.accumulation_dtype)
         )
-        if requested_operator != coordinate_dtype:
+        if requested_operator != stored_dtype:
             raise LinearCapabilityError(
                 f"{rejection}: operator_dtype must match stored coordinates."
             )
-        if residual_dtype != coordinate_dtype or accumulation_dtype != coordinate_dtype:
+        if residual_dtype != stored_dtype or accumulation_dtype != stored_dtype:
             raise LinearCapabilityError(
                 f"{rejection}: native Krylov residual and accumulation must remain in the stored coordinate precision."
             )
@@ -536,9 +549,9 @@ def _validate_precision_policy(
                 )
             krylov_dtype = jnp.dtype(precision.krylov_dtype)
             same_kind = jnp.issubdtype(
-                coordinate_dtype, jnp.complexfloating
+                stored_dtype, jnp.complexfloating
             ) == jnp.issubdtype(krylov_dtype, jnp.complexfloating)
-            if not same_kind or krylov_dtype.itemsize > coordinate_dtype.itemsize:
+            if not same_kind or krylov_dtype.itemsize > stored_dtype.itemsize:
                 raise LinearCapabilityError(
                     f"{rejection}: Krylov dtype must have the coordinate kind and no greater precision."
                 )
@@ -549,9 +562,9 @@ def _validate_precision_policy(
                 )
             preconditioner_dtype = jnp.dtype(precision.preconditioner_dtype)
             same_kind = jnp.issubdtype(
-                coordinate_dtype, jnp.complexfloating
+                stored_dtype, jnp.complexfloating
             ) == jnp.issubdtype(preconditioner_dtype, jnp.complexfloating)
-            if not same_kind or preconditioner_dtype.itemsize > coordinate_dtype.itemsize:
+            if not same_kind or preconditioner_dtype.itemsize > stored_dtype.itemsize:
                 raise LinearCapabilityError(
                     f"{rejection}: preconditioner dtype must have the coordinate kind and no greater precision."
                 )
@@ -1510,7 +1523,7 @@ def _structured_factorization_bytes(
     operator: AbstractLinearOperator,
     /,
 ) -> int:
-    itemsize = _coordinate_dtype(operator.source).itemsize
+    itemsize = coordinate_dtype(operator.source).itemsize
     if isinstance(operator, BlockDiagonalLinearOperator):
         return sum(_structured_factorization_bytes(block) for block in operator.blocks)
     if isinstance(operator, KroneckerLinearOperator):
@@ -1566,7 +1579,7 @@ def _structured_factorization_bytes(
         real_itemsize = (
             max(1, itemsize // 2)
             if jnp.issubdtype(
-                _coordinate_dtype(operator.source),
+                coordinate_dtype(operator.source),
                 jnp.complexfloating,
             )
             else itemsize
@@ -1595,7 +1608,7 @@ def _structured_solve_workspace_bytes(
     operator: AbstractLinearOperator,
     /,
 ) -> int:
-    itemsize = _coordinate_dtype(operator.source).itemsize
+    itemsize = coordinate_dtype(operator.source).itemsize
     if _bordered_base(operator) is not None:
         # Includes the larger transpose/adjoint reconstruction and pairing path.
         return 8 * operator.source.size * itemsize
@@ -1614,7 +1627,7 @@ def _structured_solve_workspace_bytes(
 def _structured_preparation_extra_bytes(operator: AbstractLinearOperator, /) -> int:
     bordered = _bordered_base(operator)
     if bordered is not None:
-        return (bordered.border.size + bordered.upper.size) * _coordinate_dtype(
+        return (bordered.border.size + bordered.upper.size) * coordinate_dtype(
             operator.source
         ).itemsize
     if isinstance(operator, BlockDiagonalLinearOperator):
@@ -1657,7 +1670,7 @@ def _structured_candidate_fits(
     if policy.rank.require_full_rank and not _certifies_full_rank(operator):
         return False, "full-rank execution lacks a full-rank certificate"
     materialized_entries = _structured_dense_entries(operator)
-    itemsize = _coordinate_dtype(operator.source).itemsize
+    itemsize = coordinate_dtype(operator.source).itemsize
     materialized_bytes = materialized_entries * itemsize
     factor_bytes = _structured_factorization_bytes(operator)
     if materialized_entries > policy.materialization.max_entries:
@@ -1695,7 +1708,7 @@ def _dense_candidate_fits(
         rows += problem.regularizer.target.size
         if not problem.regularizer.capabilities.materialize:
             return False, "regularizer does not declare materialization"
-    itemsize = _coordinate_dtype(operator.source).itemsize
+    itemsize = coordinate_dtype(operator.source).itemsize
     factorization_itemsize = (
         itemsize
         if not isinstance(method, DenseLU)
@@ -1785,7 +1798,7 @@ def _selected_estimate(
     rows, columns = problem.operator.target.size, problem.operator.source.size
     if isinstance(problem, LeastSquaresProblem) and problem.regularizer is not None:
         rows += problem.regularizer.target.size
-    itemsize = _coordinate_dtype(problem.operator.source).itemsize
+    itemsize = coordinate_dtype(problem.operator.source).itemsize
     factorization_itemsize = (
         itemsize
         if policy.precision is None or policy.precision.factorization_dtype is None
@@ -2094,7 +2107,7 @@ def _recycling_krylov_bytes(
     # pinv/eig promote real inputs to complex values. Eight square work arrays
     # conservatively cover Gram, coupling, pseudoinverse, harmonic, and spectral
     # workspaces; the rectangular term covers selected Ritz coefficients.
-    dtype = _coordinate_dtype(problem.operator.source)
+    dtype = coordinate_dtype(problem.operator.source)
     spectral_itemsize = (
         dtype.itemsize
         if jnp.issubdtype(dtype, jnp.complexfloating)
@@ -2167,7 +2180,7 @@ def _recycling_state_bytes(
     if recycling is None:
         return 0
     operator = problem.operator
-    itemsize = _coordinate_dtype(operator.source).itemsize
+    itemsize = coordinate_dtype(operator.source).itemsize
     basis_bytes = (
         (operator.source.size + operator.target.size) * recycling.capacity * itemsize
     )
@@ -2175,13 +2188,13 @@ def _recycling_state_bytes(
     return int(basis_bytes + scalar_bytes)
 
 
-def _require_selected_resources(
+def _selected_resource_requirements(
     estimate: LinearCostEstimate,
     policy: LinearSolvePolicy,
     rhs_count: int = 1,
     /,
-) -> None:
-    checks = (
+) -> tuple[tuple[str, int, int], ...]:
+    return (
         (
             "factorization",
             estimate.factorization_bytes,
@@ -2219,7 +2232,17 @@ def _require_selected_resources(
             policy.resources.recycling_state_bytes,
         ),
     )
-    for name, required, available in checks:
+
+
+def _require_selected_resources(
+    estimate: LinearCostEstimate,
+    policy: LinearSolvePolicy,
+    rhs_count: int = 1,
+    /,
+) -> None:
+    for name, required, available in _selected_resource_requirements(
+        estimate, policy, rhs_count
+    ):
         if required > available:
             raise ValueError(
                 f"Selected {estimate.method} requires {required} {name} bytes, exceeding the policy budget {available}."

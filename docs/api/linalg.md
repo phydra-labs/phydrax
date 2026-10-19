@@ -37,6 +37,36 @@ contract holds for this solve: implicit contracts require convergence (the same
 evidence that guards the returned value's derivative), unrolled contracts
 require finite arithmetic, and a stopped contract is never valid.
 
+## Aggregate-equation-preserving solves
+
+`solve_aggregate(problem, rhs, aggregate, policy=...)` eliminates the equation
+`aggregate.T @ A @ x = aggregate.T @ rhs` before solving the remaining equations.
+Dynamic, matrix-free `OrthogonalHyperplaneConstraint` charts supply orthonormal
+source and target complements; no dense nullspace basis or Jacobian is formed.
+This is an equivalent block elimination, not a projection of an approximate
+solution or a correction to its reported gradient. A one-dimensional problem
+uses the native scalar solve rather than a zero-dimensional Krylov iteration.
+
+The route accepts real, unbatched one-dimensional Euclidean array spaces without
+a nullspace policy. Right-hand sides and aggregate rows accept `ArrayLike`
+through the space's existing shape and dtype validation. Nonzero finite rows
+use scaled normalization; invalid charts retain explicit failure evidence.
+Implicit differentiation uses the independent Krylov derivative contract.
+The original full-system residual thresholds and solver controls still apply.
+
+`AggregateLinearSolveResult` exposes full residual norm and threshold, aggregate
+residual, chart validity, status, and the native solve record in `reduced`.
+Rank and conditioning describe that executed reduced operator, or the full
+scalar operator for a one-dimensional problem; they are not promoted to
+unsupported full-system claims. Resource refusal in status mode is explicitly
+unexecuted and retains the measured requirement and allowance.
+
+::: phydrax.linalg.solve_aggregate
+
+::: phydrax.linalg.AggregateLinearSolveResult
+
+::: phydrax.linalg.OrthogonalHyperplaneConstraint
+
 ## Certified banded spectral brackets
 
 The native certificate substrate never materializes a dense matrix. Scalar bands
@@ -422,7 +452,11 @@ Rectangular rank certificates retain the complete certified operator and numeric
 pairing PyTree as `revision_operator`; exact leaf equality binds a certificate
 to its numeric revision. A single probe image is not a revision certificate.
 Minimum-norm derivative columns require the true constraint residual or an
-independent retained-spectrum bound resolving the out-of-range action. Finite
+independent retained-spectrum bound resolving the out-of-range action. Cotangents
+are audited without first projecting away their out-of-range components; forward
+compatibility alone does not certify the adjoint action. An unavailable rank
+certificate leaves an unresolved cotangent undefined (NaN, or an error under
+`FailurePolicy("error")`), while exact null residuals remain admissible. Finite
 stagnation alone is not derivative acceptance. Native DenseSVD factors can supply
 that spectrum without a second decomposition.
 
@@ -501,9 +535,10 @@ admitted only with fixed-rank evidence: the factorization of a `DenseSVD` route,
 or a matching `MinimumNormProblem(A, rank_certificate=...)` on iterative routes.
 Otherwise `result.derivative_regular` and `derivative_valid` are false and the
 operator derivative is refused (NaN, or an error under `FailurePolicy("error")`).
-The right-hand-side derivative (`"rhs-only"`) needs no rank evidence. Implicit
-tangents and cotangents apply the pseudoinverse through zero-start LSMR, never a
-KKT matrix or global nullspace. Undamped `DenseSVD` solves of a
+The right-hand-side derivative (`"rhs-only"`) needs no fixed-rank evidence, but
+each pseudoinverse action still must meet the derivative residual contract above.
+Implicit tangents and cotangents apply the pseudoinverse through zero-start LSMR,
+never a KKT matrix or global nullspace. Undamped `DenseSVD` solves of a
 `LeastSquaresProblem` follow the same rule: their `"mathematical"` derivative is
 the exact fixed-rank tangent of the weighted pseudoinverse, including its
 nullspace term, and is refused unless the factorization's singular-value gap
@@ -1700,7 +1735,11 @@ supplied transpose actions are the same callable object and both spaces are
 the same owner object. Distinct callables or distinct space owners retain
 independent conversion and shape validation, including shape-polymorphic
 actions. No equality-by-dimension or inferred self-adjointness is used; dynamic
-captures and application effects remain visible.
+captures and application effects remain visible. Constructor admission uses each
+vector space's tree, shape, and dtype validation, just like action application;
+JAX scalar weak typing does not distinguish coordinate spaces. Prepared JVP/VJP
+actions therefore accept weakly typed scalar primals without changing their
+numerical values or promoting a mismatched coordinate dtype.
 
 ## Matrix-free Krylov, block methods, and recycling
 

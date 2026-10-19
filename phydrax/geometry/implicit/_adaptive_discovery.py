@@ -14,7 +14,7 @@ With rigorous enclosures the final octree certifies a regular CW decomposition
 of the zero set ``S``:
 
 - every minimal edge either excludes zero or is monotone along its axis, so its
-  endpoint signs give its exact root count (zero or one);
+  endpoint signs give its root count (zero or one);
 - every minimal face either excludes zero, or is monotone along an in-plane axis
   (no closed loop) with zero or two boundary crossings (at most one arc);
 - every leaf meeting ``S`` is monotone along some axis, so ``S`` in the leaf is a
@@ -25,7 +25,7 @@ Dual contouring then places one vertex per (leaf, cycle), one polygon per
 crossing minimal edge, and one dual edge per face arc: the mesh is the dual cell
 complex of that decomposition and is homeomorphic to ``S``. Level transitions
 are crack free because polygons are generated from minimal edges shared by all
-incident leaves. Exact-zero vertices are resolved by the symbolic perturbation
+incident leaves. Zero-equality vertices are resolved by the symbolic perturbation
 ``f + eta`` with ``eta -> 0+`` (a zero vertex counts as outside) and are counted
 in the evidence. Failed checks refine the incident leaves within the level and
 budget limits; whatever remains is reported as unresolved boxes, never dropped.
@@ -37,7 +37,7 @@ import math
 from dataclasses import dataclass
 from enum import IntEnum
 from functools import partial
-from typing import final, Literal
+from typing import final, Literal, Self
 
 import equinox as eqx
 import jax
@@ -48,11 +48,16 @@ from jax import Array
 from jax.typing import ArrayLike
 from scipy.sparse.csgraph import connected_components
 
+from phydrax.geometry._source_boundary_records import (
+    SourceBoundaryDistance,
+    SourceBoundarySamples,
+)
+
 from ..._bvh import bvh_overlap_pairs_host, prepare_bvh
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._meshcore import charge_native_geometry_queries
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
 from ...discretization.spatial._level_octree import refined_octree_leaves
 from ...discretization.spatial._morton import (
     morton_decode_integer_host,
@@ -60,32 +65,33 @@ from ...discretization.spatial._morton import (
     MortonAddressPlan,
 )
 from ...ein import contract
-from ...typing import Dim, HostFloat64, HostInt64, parse, Scope
+from ...typing import checked, Dim, HostFloat64, HostInt64, parse, Scope
 from .._certificate import SignReliability, ZeroSetAccuracy
 from .._certified_implicit import (
-    _established_implicit_cover,
     CertifiedImplicitCover,
     CertifiedImplicitTopology,
     establish_implicit_cover,
+    established_implicit_cover,
     implicit_state_id,
 )
 from .._contracts import CompiledGeometry, GeometryKind
-from .._mesh_certificates import SourceBoundaryDistance, SourceBoundarySamples
 from ..simplicial import TriangleMesh
 from ._discovery import (
-    _CORNER_OFFSETS,
-    _EDGE_AXIS,
-    _EDGE_LOWER,
-    _INCIDENT_CELL_OFFSETS,
-    _isolate_roots,
-    _qef_vertices,
+    CORNER_OFFSETS,
+    EDGE_AXIS,
+    EDGE_LOWER,
+    INCIDENT_CELL_OFFSETS,
+    isolate_roots,
+    qef_vertices,
 )
 from ._enclosure import (
-    _AbstractFieldBounds,
-    _BoxBounds,
-    _field_bounds,
+    AbstractFieldBounds,
+    BoxBounds,
+    consume_queries,
     DISCOVERY_DIRECTIONS,
     ENCLOSURE_ROUNDING_MODEL,
+    field_bounds,
+    query_budget,
 )
 from ._policy import (
     AdaptiveImplicitBoxIssue,
@@ -94,8 +100,8 @@ from ._policy import (
     ImplicitDiscoveryAccuracy,
     ImplicitDiscoveryEnclosure,
 )
-from ._projection import _field_and_gradient
-from ._realization import _triangles_intersect
+from ._projection import field_and_gradient
+from ._realization import triangles_intersect
 
 
 _DEFAULT_ADAPTIVE_POLICY = AdaptiveImplicitSurfacePolicy()
@@ -181,7 +187,7 @@ class _Leaves:
 
 
 class _NormalFiberMacrochartUnresolved(ValueError):
-    """A candidate union lacks complete regular normal-fiber premises."""
+    """normal_fiber_union must establish continuous regular normal fibers; got an unproved candidate union"""
 
 
 def _normal_half_edge_keys(
@@ -202,7 +208,7 @@ def _normal_half_edge_keys(
 
 @final
 class ImplicitNormalFiberMacrochart(StrictModule, NonTrainableState):
-    """Complete regular graph across two incident discovery leaves.
+    """Exhaustive regular graph across two incident discovery leaves.
 
     Opposite signs on the two *outer* normal faces and a uniform derivative
     sign establish one source root on every normal fiber. The internal face
@@ -211,7 +217,7 @@ class ImplicitNormalFiberMacrochart(StrictModule, NonTrainableState):
     """
 
     __strict_contract__ = True
-    bounds: _AbstractFieldBounds
+    bounds: AbstractFieldBounds
     domain: HostFloat64[Literal[2], Literal[3]]
     integer_lower: HostInt64[Literal[3]]
     macro_box: HostFloat64[Literal[2], Literal[3]]
@@ -232,7 +238,7 @@ class ImplicitNormalFiberMacrochart(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        bounds: _AbstractFieldBounds,
+        bounds: AbstractFieldBounds,
         domain: ArrayLike,
         maximum_level: int,
         source_id: str,
@@ -241,6 +247,8 @@ class ImplicitNormalFiberMacrochart(StrictModule, NonTrainableState):
         integer_size: int,
         face_key: int,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         box = parse(
             np.array(domain, dtype=np.float64, copy=True),
@@ -261,17 +269,17 @@ class ImplicitNormalFiberMacrochart(StrictModule, NonTrainableState):
             or np.any(box[0] >= box[1])
         ):
             raise ValueError(
-                "A normal-fiber macrochart requires valid axis, dyadic size and domain."
+                f"ImplicitNormalFiberMacrochart.configuration must have a valid axis, level, dyadic size and finite ordered domain; got axis={normal_axis}, level={maximum_level}, size={integer_size}, domain={box.tolist()}"
             )
         resolution = 1 << maximum_level
         extent = integer_size * (np.ones(3, dtype=np.int64) + _UNITS[normal_axis])
         if np.any(lower < 0) or np.any(lower + extent > resolution):
             raise ValueError(
-                "A normal-fiber macrochart must lie inside the declared carrier."
+                f"ImplicitNormalFiberMacrochart.bounds must lie inside the carrier; got lower={lower.tolist()}, extent={extent.tolist()}, resolution={resolution}"
             )
         if not bounds.continuity_rigorous or not bounds.gradient_rigorous:
             raise _NormalFiberMacrochartUnresolved(
-                "The source has no established continuous regular graph premises."
+                "macrochart.source must establish a continuous regular graph; got an unproved field enclosure"
             )
         spacing = (box[1] - box[0]) / resolution
 
@@ -288,7 +296,7 @@ class ImplicitNormalFiberMacrochart(StrictModule, NonTrainableState):
         )[0]
         if face_key != expected:
             raise ValueError(
-                "A macrochart must retain its exact owning internal-face key."
+                "macrochart.face_key must identify its internal face; got a mismatched key"
             )
         outer_lower = np.repeat(macro[:1], 2, axis=0)
         outer_upper = np.repeat(macro[1:], 2, axis=0)
@@ -297,12 +305,13 @@ class ImplicitNormalFiberMacrochart(StrictModule, NonTrainableState):
         result = bounds.boxes(
             np.concatenate((macro[:1], outer_lower)),
             np.concatenate((macro[1:], outer_upper)),
+            budget=budget,
         )
         plane = _PLANE_AXES[normal_axis]
         offsets = np.asarray(((0, 0), (0, 1), (1, 0), (1, 1)), dtype=np.int64)
         middle_integer = np.repeat(face_integer[None], 4, axis=0)
         middle_integer[:, plane] += offsets * integer_size
-        _, middle_upper = bounds.point_values(coordinates(middle_integer))
+        _, middle_upper = bounds.point_values(coordinates(middle_integer), budget=budget)
         derivative_lower = result.directional_lower[0, normal_axis]
         derivative_upper = result.directional_upper[0, normal_axis]
         increasing = derivative_lower > 0.0
@@ -316,7 +325,7 @@ class ImplicitNormalFiberMacrochart(StrictModule, NonTrainableState):
             or not np.all(np.isfinite(result.directional_upper[0]))
         ):
             raise _NormalFiberMacrochartUnresolved(
-                "The complete macrochart lacks a uniform outer-face source bracket."
+                "ImplicitNormalFiberMacrochart.outer_faces must establish a uniform finite source bracket; got unproved endpoint separation or derivative bounds"
             )
         halves = _normal_half_edge_keys(lower, integer_size, normal_axis, resolution + 1)
         middle_negative = middle_upper < 0.0
@@ -388,7 +397,8 @@ class ImplicitNormalFiberMacrochart(StrictModule, NonTrainableState):
 class _Work:
     """Mutable host working state of one discovery; never published."""
 
-    bounds: _AbstractFieldBounds
+    bounds: AbstractFieldBounds
+    budget: CoordinateEnclosureBudget
     policy: AdaptiveImplicitSurfacePolicy
     address: MortonAddressPlan
     lower: np.ndarray
@@ -399,7 +409,7 @@ class _Work:
     box_evaluations: int
     point_evaluations: int
     isolation_exhausted: bool
-    leaf_bounds: dict[int, tuple[np.ndarray, _BoxBounds]]
+    leaf_bounds: dict[int, tuple[np.ndarray, BoxBounds]]
     vertex_keys: np.ndarray
     vertex_signs: np.ndarray
     vertex_zero: np.ndarray
@@ -419,7 +429,7 @@ class _Work:
             self.lower + integer.astype(np.float64) * self.spacing,
         )
 
-    def evaluate_boxes(self, lower: np.ndarray, upper: np.ndarray) -> _BoxBounds:
+    def evaluate_boxes(self, lower: np.ndarray, upper: np.ndarray) -> BoxBounds:
         # Each box costs its enclosure and its center (mean-value form).
         remaining = (
             self.policy.maximum_evaluations
@@ -429,11 +439,11 @@ class _Work:
         count = min(lower.shape[0], max(0, remaining // 2))
         self.box_evaluations += 2 * count
         if count == lower.shape[0]:
-            return self.bounds.boxes(lower, upper)
+            return self.bounds.boxes(lower, upper, budget=self.budget)
         self.isolation_exhausted = True
         missing = lower.shape[0] - count
         directions = DISCOVERY_DIRECTIONS.shape[0]
-        unknown = _BoxBounds(
+        unknown = BoxBounds(
             np.full(missing, -np.inf, dtype=np.float64),
             np.full(missing, np.inf, dtype=np.float64),
             np.full((missing, directions), -np.inf, dtype=np.float64),
@@ -441,11 +451,11 @@ class _Work:
         )
         if not count:
             return unknown
-        fresh = self.bounds.boxes(lower[:count], upper[:count])
+        fresh = self.bounds.boxes(lower[:count], upper[:count], budget=self.budget)
         return _merged(fresh, unknown, np.arange(lower.shape[0], dtype=np.int64))
 
     def point_signs(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Signs with the zero-as-outside perturbation and exact-zero flags."""
+        """Signs with the zero-as-outside perturbation and zero-equality flags."""
         remaining = (
             self.policy.maximum_evaluations
             - self.box_evaluations
@@ -456,7 +466,9 @@ class _Work:
         lower = np.full(points.shape[0], -np.inf, dtype=np.float64)
         upper = np.full(points.shape[0], np.inf, dtype=np.float64)
         if count:
-            lower[:count], upper[:count] = self.bounds.point_values(points[:count])
+            lower[:count], upper[:count] = self.bounds.point_values(
+                points[:count], budget=self.budget
+            )
         if count < points.shape[0]:
             self.isolation_exhausted = True
         negative = upper < 0.0
@@ -488,9 +500,9 @@ def _locate(work: _Work, leaves: _Leaves, cells: np.ndarray) -> np.ndarray:
     return np.where(inside, slot, -1).astype(np.int64)
 
 
-def _empty_bounds() -> _BoxBounds:
+def _empty_bounds() -> BoxBounds:
     directions = DISCOVERY_DIRECTIONS.shape[0]
-    return _BoxBounds(
+    return BoxBounds(
         np.zeros((0,)),
         np.zeros((0,)),
         np.zeros((0, directions)),
@@ -498,8 +510,8 @@ def _empty_bounds() -> _BoxBounds:
     )
 
 
-def _merged(first: _BoxBounds, second: _BoxBounds, order: np.ndarray) -> _BoxBounds:
-    return _BoxBounds(
+def _merged(first: BoxBounds, second: BoxBounds, order: np.ndarray) -> BoxBounds:
+    return BoxBounds(
         np.concatenate((first.value_lower, second.value_lower))[order],
         np.concatenate((first.value_upper, second.value_upper))[order],
         np.concatenate((first.directional_lower, second.directional_lower))[order],
@@ -507,8 +519,8 @@ def _merged(first: _BoxBounds, second: _BoxBounds, order: np.ndarray) -> _BoxBou
     )
 
 
-def _rows(bounds: _BoxBounds, rows: np.ndarray) -> _BoxBounds:
-    return _BoxBounds(
+def _rows(bounds: BoxBounds, rows: np.ndarray) -> BoxBounds:
+    return BoxBounds(
         bounds.value_lower[rows],
         bounds.value_upper[rows],
         bounds.directional_lower[rows],
@@ -516,10 +528,10 @@ def _rows(bounds: _BoxBounds, rows: np.ndarray) -> _BoxBounds:
     )
 
 
-def _leaf_bounds(work: _Work, leaves: _Leaves) -> _BoxBounds:
+def _leaf_bounds(work: _Work, leaves: _Leaves) -> BoxBounds:
     """Bounds of every leaf, evaluating only leaves new to this discovery."""
     order = np.lexsort((leaves.prefixes, leaves.levels))
-    parts: list[_BoxBounds] = []
+    parts: list[BoxBounds] = []
     for level in np.unique(leaves.levels).tolist():
         prefixes = np.sort(leaves.prefixes[leaves.levels == level])
         known, bounds = work.leaf_bounds.get(
@@ -541,7 +553,7 @@ def _leaf_bounds(work: _Work, leaves: _Leaves) -> _BoxBounds:
             work.leaf_bounds[level] = (known, bounds)
         position, _ = _lookup(known, prefixes)
         parts.append(_rows(bounds, position))
-    stacked = _BoxBounds(
+    stacked = BoxBounds(
         np.concatenate([part.value_lower for part in parts]),
         np.concatenate([part.value_upper for part in parts]),
         np.concatenate([part.directional_lower for part in parts]),
@@ -583,7 +595,7 @@ class _Faces:
 @dataclass(frozen=True, slots=True)
 class _Analysis:
     leaves: _Leaves
-    bounds: _BoxBounds
+    bounds: BoxBounds
     excluded: np.ndarray
     monotone: np.ndarray
     edges: _Edges
@@ -599,11 +611,11 @@ class _Analysis:
 
 
 def _vertex_table(
-    work: _Work, leaves: _Leaves, bounds: _BoxBounds, excluded: np.ndarray
+    work: _Work, leaves: _Leaves, bounds: BoxBounds, excluded: np.ndarray
 ) -> None:
     """Extend the vertex sign cache with every leaf corner of the tree."""
     corners = (
-        leaves.corners[:, None, :] + _CORNER_OFFSETS[None] * leaves.sizes[:, None, None]
+        leaves.corners[:, None, :] + CORNER_OFFSETS[None] * leaves.sizes[:, None, None]
     )
     keys = _vertex_keys(corners, work.modulus)
     unique = np.unique(keys)
@@ -670,8 +682,8 @@ def _minimal_edges(
     work: _Work, leaves: _Leaves, excluded: np.ndarray, monotone: np.ndarray
 ) -> _Edges:
     size = leaves.sizes[:, None]
-    start = leaves.corners[:, None, :] + _EDGE_LOWER[None] * size[..., None]
-    axis = np.broadcast_to(_EDGE_AXIS[None], start.shape[:2])
+    start = leaves.corners[:, None, :] + EDGE_LOWER[None] * size[..., None]
+    axis = np.broadcast_to(EDGE_AXIS[None], start.shape[:2])
     length = np.broadcast_to(size, start.shape[:2])
     half = length // 2
     middle = start + _UNITS[axis] * half[..., None]
@@ -692,12 +704,14 @@ def _minimal_edges(
     start_sign, start_present = _vertex_sign(work, start_)
     end_sign, end_present = _vertex_sign(work, end)
     if not (np.all(start_present) and np.all(end_present)):
-        raise RuntimeError("A minimal octree edge lost an endpoint vertex.")
+        raise RuntimeError(
+            "MinimalOctreeEdge.endpoints must reference retained vertices; got an absent endpoint"
+        )
     start_vertex, _ = _lookup(work.vertex_keys, _vertex_keys(start_, work.modulus))
     end_vertex, _ = _lookup(work.vertex_keys, _vertex_keys(end, work.modulus))
     probes = (
         start_[:, None, :]
-        + _INCIDENT_CELL_OFFSETS[axis_]
+        + INCIDENT_CELL_OFFSETS[axis_]
         + _UNITS[axis_][:, None, :] * (length_ // 2)[:, None, None]
     )
     incident = _locate(work, leaves, probes)
@@ -917,7 +931,7 @@ def _normal_macrocharts(
     edges: _Edges,
     /,
 ) -> tuple[ImplicitNormalFiberMacrochart, ...]:
-    """Join a pending internal face only under a complete bounded graph proof."""
+    """Join a pending internal face only under a exhaustive bounded graph proof."""
     if not work.bounds.continuity_rigorous:
         return ()
     candidates = np.flatnonzero(
@@ -964,6 +978,7 @@ def _normal_macrocharts(
                     lower,
                     width,
                     key,
+                    budget=work.budget,
                 )
             except _NormalFiberMacrochartUnresolved:
                 work.box_evaluations += 6
@@ -1017,7 +1032,9 @@ def _minimal_faces(
     )
     segment_edge, found = _lookup(edges.keys, segment_keys)
     if np.any(crossing & ~found):
-        raise RuntimeError("A crossing face segment is not a minimal octree edge.")
+        raise RuntimeError(
+            "MinimalOctreeFace.crossing_segments must reference minimal octree edges; got unrepresented crossing segments"
+        )
     probe = (
         lower_
         + (_UNITS[_PLANE_AXES[normal_][:, 0]] + _UNITS[_PLANE_AXES[normal_][:, 1]])
@@ -1188,7 +1205,9 @@ def _link_cycles(
     nodes, inverse = np.unique(np.concatenate((first, second)), return_inverse=True)
     degree = np.bincount(inverse, minlength=nodes.size)
     if np.any(degree != 2):
-        raise RuntimeError("An octree leaf boundary produced an open zero-set link.")
+        raise RuntimeError(
+            f"OctreeLeaf.zero_set_link must have degree two at every boundary node; got degrees {np.unique(degree).tolist()}"
+        )
     adjacency = sp.csr_matrix(
         (
             np.ones((total,), dtype=np.int8),
@@ -1209,7 +1228,7 @@ def _link_cycles(
     return nodes, node_edge, node_cycle, cycle_leaf, cycles
 
 
-def _flatness(work: _Work, leaves: _Leaves, bounds: _BoxBounds) -> np.ndarray:
+def _flatness(work: _Work, leaves: _Leaves, bounds: BoxBounds) -> np.ndarray:
     """Leaf diagonal times the direction spread of the gradient enclosure."""
     with np.errstate(divide="ignore", invalid="ignore"):
         middle = 0.5 * (bounds.gradient_lower + bounds.gradient_upper)
@@ -1430,12 +1449,16 @@ def _anchors(
         # ITP brackets by sign; align float samples with the perturbed signs.
         return np.where(signs < 0, np.minimum(values, -tiny), np.maximum(values, 0.0))
 
-    lower_values = consistent(work.bounds.field_values(lower_points), start_sign)
-    upper_values = consistent(work.bounds.field_values(upper_points), end_sign)
+    lower_values = consistent(
+        work.bounds.field_values(lower_points, budget=work.budget), start_sign
+    )
+    upper_values = consistent(
+        work.bounds.field_values(upper_points, budget=work.budget), end_sign
+    )
     # The fixed solver bound is charged before its one device batch. Endpoint
     # samples are charged by their owner; this covers the root/first-jet batch.
-    charge_native_geometry_queries(56 * active.size, work_units=active.size)
-    roots, residuals = _isolate_roots(
+    consume_queries(work.budget, 56 * active.size, work_units=active.size)
+    isolation = isolate_roots(
         geometry.kernel,
         geometry.state,
         jnp.asarray(lower_points),
@@ -1444,8 +1467,10 @@ def _anchors(
         jnp.asarray(upper_values),
         jnp.asarray(work.policy.root_tolerance, dtype=jnp.float64),
     )
-    roots_ = np.asarray(roots, dtype=np.float64)
-    _, gradients = _field_and_gradient(
+    isolation.require_converged()
+    residuals = isolation.residuals
+    roots_ = np.asarray(isolation.points, dtype=np.float64)
+    _, gradients = field_and_gradient(
         geometry.kernel, geometry.state, jnp.asarray(roots_)
     )
     gradients_ = np.asarray(gradients, dtype=np.float64)
@@ -1474,7 +1499,9 @@ def _polygon_triangles(
     same = polygon == np.roll(polygon, -1, axis=1)
     distinct = 4 - np.sum(same, axis=1)
     if np.any(distinct < 3):
-        raise RuntimeError("A dual polygon collapsed below three octree leaves.")
+        raise RuntimeError(
+            f"DualPolygon.leaves must contain at least three distinct incident leaves; got minimum {np.min(distinct)}"
+        )
     triangle_rows = np.flatnonzero(distinct == 3)
     keep = np.argsort(same[triangle_rows], axis=1, kind="stable")[:, :3]
     keep = np.sort(keep, axis=1)
@@ -1554,7 +1581,7 @@ def _intersections(
 
 @partial(jax.jit, static_argnames=("tolerance",))
 def _intersecting_pairs(first: Array, second: Array, *, tolerance: float) -> Array:
-    return jax.vmap(lambda one, two: _triangles_intersect(one, two, tolerance))(
+    return jax.vmap(lambda one, two: triangles_intersect(one, two, tolerance))(
         first, second
     )
 
@@ -1616,7 +1643,9 @@ def _extract(work: _Work, geometry: CompiledGeometry, analysis: _Analysis) -> _E
     edge_anchor[active] = np.arange(active.size)
     node_anchor = edge_anchor[analysis.node_edge]
     if np.any(node_anchor < 0):
-        raise RuntimeError("A leaf cycle references a non-crossing edge.")
+        raise RuntimeError(
+            "LeafCycle.anchors must reference crossing edges; got absent anchor indices"
+        )
     cycle_count = analysis.cycle_leaf.shape[0]
     order = np.lexsort((node_anchor, analysis.node_cycle))
     grouped_cycle = analysis.node_cycle[order]
@@ -1631,7 +1660,7 @@ def _extract(work: _Work, geometry: CompiledGeometry, analysis: _Analysis) -> _E
     anchor_mask[grouped_cycle, slot] = True
     cycle_boxes = _source_cycle_boxes(work, analysis)
     cell_lower, cell_upper = cycle_boxes[:, 0], cycle_boxes[:, 1]
-    vertices, _ = _qef_vertices(
+    vertices, _ = qef_vertices(
         anchors,
         normals,
         anchor_indices,
@@ -1647,7 +1676,9 @@ def _extract(work: _Work, geometry: CompiledGeometry, analysis: _Analysis) -> _E
     probe_keys = edges.incident[active] * edges.keys.shape[0] + active[:, None]
     position, found = _lookup(node_keys[node_order], probe_keys)
     if not np.all(found):
-        raise RuntimeError("A crossing edge is missing from an incident leaf cycle.")
+        raise RuntimeError(
+            "LeafCycle.crossing_edges must cover every incident crossing edge; got missing incidences"
+        )
     polygon = analysis.node_cycle[node_order][position]
     # The incident-cell order turns positively about +axis; the outward normal
     # points from the inside endpoint toward the outside endpoint.
@@ -1656,8 +1687,8 @@ def _extract(work: _Work, geometry: CompiledGeometry, analysis: _Analysis) -> _E
     faces, dual_edges = _polygon_triangles(polygon, vertices)
     if faces.shape[0] > policy.maximum_faces:
         raise ValueError(
-            f"Adaptive implicit surface requires {faces.shape[0]} faces; "
-            f"maximum_faces is {policy.maximum_faces}."
+            f"AdaptiveImplicitDiscovery.faces must fit maximum_faces {policy.maximum_faces}; "
+            f"got {faces.shape[0]}"
         )
     status = 0
     if not _closed_manifold(faces, vertices.shape[0]):
@@ -1672,7 +1703,9 @@ def _extract(work: _Work, geometry: CompiledGeometry, analysis: _Analysis) -> _E
     checked, free = (False, False) if status else _intersections(vertices, faces, policy)
     if checked and not free:
         status |= int(AdaptiveImplicitSurfaceStatus.SELF_INTERSECTION)
-    vertex_residual = float(np.max(np.abs(work.bounds.field_values(vertices))))
+    vertex_residual = float(
+        np.max(np.abs(work.bounds.field_values(vertices, budget=work.budget)))
+    )
     feature = _features(normals, anchor_indices, anchor_mask, policy.feature_angle)
     feature_edges = dual_edges[feature[dual_edges[:, 0]] & feature[dual_edges[:, 1]]]
     return _Extraction(
@@ -1765,7 +1798,7 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
 
     __strict_contract__ = True
 
-    bounds: _AbstractFieldBounds
+    bounds: AbstractFieldBounds
     leaf_lower: HostFloat64[_LeafDim, Literal[3]]
     leaf_upper: HostFloat64[_LeafDim, Literal[3]]
     leaf_classes: HostInt64[_LeafDim]
@@ -1777,9 +1810,10 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
     certified: bool = eqx.field(static=True)
     query_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        bounds: _AbstractFieldBounds,
+        bounds: AbstractFieldBounds,
         leaf_lower: ArrayLike,
         leaf_upper: ArrayLike,
         leaf_value_lower: ArrayLike,
@@ -1790,8 +1824,6 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
         *,
         maximum_level: int,
     ) -> None:
-        if not isinstance(bounds, _AbstractFieldBounds):
-            raise TypeError("bounds must be implicit field bounds.")
         scope = Scope()
         lower = parse(
             np.asarray(leaf_lower, dtype=np.float64),
@@ -1849,7 +1881,24 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
             }
         )
 
-    def classify_points(self, points: ArrayLike, /) -> ImplicitVolumeClassification:
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[Self], value: ImplicitVolumeQuery, /) -> Self:
+        """Rebuild volume queries from the retained bounds and octree leaves."""
+        return cls(
+            value.bounds,
+            value.leaf_lower,
+            value.leaf_upper,
+            value.leaf_value_lower,
+            value.leaf_value_upper,
+            value.leaf_code_starts,
+            value.domain,
+            maximum_level=value.maximum_level,
+        )
+
+    def classify_points(
+        self, points: ArrayLike, /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> ImplicitVolumeClassification:
         """Classify points; excluded leaves answer without field evaluation."""
         points_ = parse(
             np.asarray(points, dtype=np.float64),
@@ -1857,7 +1906,9 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
             "points",
         )
         if not np.all(np.isfinite(points_)):
-            raise ValueError("points must be finite.")
+            raise ValueError(
+                "ImplicitVolumeQuery.points must be finite; got nonfinite coordinates"
+            )
         resolution = 1 << self.maximum_level
         extent = self.domain[1] - self.domain[0]
         cells = np.floor((points_ - self.domain[0]) / extent * resolution).astype(
@@ -1876,7 +1927,7 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
         value_upper = np.where(known, self.leaf_value_upper[np.maximum(leaf, 0)], 0.0)
         pending = np.flatnonzero(~known)
         if pending.size:
-            lower, upper = self.bounds.point_values(points_[pending])
+            lower, upper = self.bounds.point_values(points_[pending], budget=budget)
             value_lower[pending] = lower
             value_upper[pending] = upper
         return ImplicitVolumeClassification(
@@ -1887,7 +1938,12 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
         )
 
     def classify_boxes(
-        self, lower: ArrayLike, upper: ArrayLike, /
+        self,
+        lower: ArrayLike,
+        upper: ArrayLike,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> ImplicitVolumeClassification:
         """Classify axis-aligned boxes by their value enclosures."""
         scope = Scope()
@@ -1906,8 +1962,10 @@ class ImplicitVolumeQuery(StrictModule, NonTrainableState):
         if not (np.all(np.isfinite(lower_)) and np.all(np.isfinite(upper_))) or np.any(
             lower_ > upper_
         ):
-            raise ValueError("Query boxes require finite lower <= upper corners.")
-        bounds = self.bounds.boxes(lower_, upper_)
+            raise ValueError(
+                "ImplicitVolumeQuery.boxes must have finite lower <= upper corners; got nonfinite or reversed bounds"
+            )
+        bounds = self.bounds.boxes(lower_, upper_, budget=budget)
         return ImplicitVolumeClassification(
             _classes(bounds.value_lower, bounds.value_upper),
             bounds.value_lower,
@@ -2034,6 +2092,38 @@ class AdaptiveImplicitSurfaceEvidence(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[Self], value: AdaptiveImplicitSurfaceEvidence, /
+    ) -> Self:
+        """Revalidate stored discovery quantities and recompute their evidence ID."""
+        return cls(
+            value.unresolved_boxes,
+            value.unresolved_issues,
+            accuracy=value.accuracy,
+            enclosure=value.enclosure,
+            status=value.status,
+            leaf_count=value.leaf_count,
+            surface_leaf_count=value.surface_leaf_count,
+            singular_leaf_count=value.singular_leaf_count,
+            maximum_level_reached=value.maximum_level_reached,
+            refinement_rounds=value.refinement_rounds,
+            box_evaluations=value.box_evaluations,
+            point_evaluations=value.point_evaluations,
+            extraction_evaluations=value.extraction_evaluations,
+            zero_vertex_count=value.zero_vertex_count,
+            zero_gradient_anchor_count=value.zero_gradient_anchor_count,
+            feature_vertex_count=value.feature_vertex_count,
+            maximum_anchor_residual=value.maximum_anchor_residual,
+            maximum_vertex_residual=value.maximum_vertex_residual,
+            maximum_surface_box_diagonal=value.maximum_surface_box_diagonal,
+            maximum_flatness_bound=value.maximum_flatness_bound,
+            intersection_checked=value.intersection_checked,
+            intersection_free=value.intersection_free,
+            root_solves=value.root_solves,
+        )
+
     @property
     def certified(self) -> bool:
         return self.accuracy == "certified"
@@ -2073,6 +2163,7 @@ class AdaptiveImplicitSurface(StrictModule, NonTrainableState):
     policy: AdaptiveImplicitSurfacePolicy = eqx.field(static=True)
     root_solve_capacity: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: TriangleMesh | None,
@@ -2090,12 +2181,10 @@ class AdaptiveImplicitSurface(StrictModule, NonTrainableState):
         policy: AdaptiveImplicitSurfacePolicy,
         root_solve_capacity: int,
     ) -> None:
-        if mesh is not None and not isinstance(mesh, TriangleMesh):
-            raise TypeError("mesh must be a TriangleMesh or None.")
-        if not isinstance(evidence, AdaptiveImplicitSurfaceEvidence):
-            raise TypeError("evidence must be AdaptiveImplicitSurfaceEvidence.")
         if topology is not None and (mesh is None or cover is None):
-            raise ValueError("A certified topology requires a mesh and a cover.")
+            raise ValueError(
+                "AdaptiveImplicitSurface.topology must bind a mesh and cover; got a missing mesh or cover"
+            )
         self.mesh = mesh
         self.evidence = evidence
         self.cover = cover
@@ -2117,10 +2206,12 @@ class AdaptiveImplicitSurface(StrictModule, NonTrainableState):
             witness_boxes[:, 0] > witness_boxes[:, 1]
         ):
             raise ValueError(
-                "Cycle-root witness boxes require finite lower <= upper bounds."
+                "AdaptiveImplicitSurface.boundary_witness_boxes must have finite lower <= upper bounds; got nonfinite or reversed bounds"
             )
         if mesh is not None and witness_boxes.shape[0] != mesh.vertices.shape[0]:
-            raise ValueError("Cycle-root witness boxes must name every extracted vertex.")
+            raise ValueError(
+                f"AdaptiveImplicitSurface.boundary_witness_boxes must name every extracted vertex; got {witness_boxes.shape[0]} boxes for {mesh.vertices.shape[0]} vertices"
+            )
         witness_boxes.setflags(write=False)
         self.boundary_witness_boxes = witness_boxes
         self.macrocharts = macrocharts
@@ -2131,13 +2222,31 @@ class AdaptiveImplicitSurface(StrictModule, NonTrainableState):
         )
         self.source_id = str(source_id)
 
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[Self], value: AdaptiveImplicitSurface, /) -> Self:
+        """Rediscover the retained source under its stored policy and root capacity."""
+        rebuilt = discover_adaptive_implicit_surface(
+            value.geometry,
+            domain=value.volume.domain,
+            policy=value.policy,
+            source_id=value.source_id,
+            maximum_root_solves=value.root_solve_capacity,
+        )
+        if not isinstance(rebuilt, cls):
+            raise TypeError(
+                "AdaptiveImplicitSurface.restore.result must match the registered type; "
+                f"got {type(rebuilt).__name__}"
+            )
+        return rebuilt
+
 
 @final
 class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
     """Continuous zero-set bounds from an exhaustive cover and root witnesses.
 
     Possible-zero boxes enclose every boundary point. A cycle's box contains a
-    certified sign-changing edge, so it contains an actual zero even when the
+    certified sign-changing edge, so it contains a zero even when the
     extracted QEF vertex is not on the zero set. No reach or signed-distance
     interpretation is inferred from the scalar field.
     """
@@ -2162,7 +2271,7 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
     ) -> None:
         if surface.cover is None or surface.topology is None or surface.mesh is None:
             raise ValueError(
-                "Adaptive boundary queries require a certified complete extraction."
+                "AdaptiveImplicitBoundarySource.surface must retain an established mesh, cover and topology; got a missing prerequisite"
             )
         surface.cover.require_bound(surface.source_id, implicit_state_id(geometry))
         if (
@@ -2171,11 +2280,11 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
             or not surface.topology.established
         ):
             raise ValueError(
-                "Adaptive boundary queries require independently established whole-source premises."
+                "adaptive_boundary.source must establish whole-source continuity and topology; got an unsupported enclosure"
             )
         if maximum_distance_pairs < 1 or maximum_scratch_bytes < 256:
             raise ValueError(
-                "Adaptive boundary distance work and scratch budgets must be positive."
+                f"AdaptiveImplicitBoundarySource.budgets must have positive distance pairs and at least 256 scratch bytes; got {maximum_distance_pairs} pairs and {maximum_scratch_bytes} bytes"
             )
         if (
             not surface.evidence.certified
@@ -2184,7 +2293,7 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
             or surface.boundary_witness_boxes.shape[0] != surface.mesh.vertices.shape[0]
         ):
             raise ValueError(
-                "Adaptive boundary queries require complete cycle-root witnesses."
+                "AdaptiveImplicitBoundarySource.surface must be certified and intersection-free with one root enclosure per vertex; got unresolved or unrepresented root enclosures"
             )
         self.geometry = geometry
         self.surface = surface
@@ -2194,6 +2303,20 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
         self.maximum_distance_pairs = maximum_distance_pairs
         self.maximum_scratch_bytes = maximum_scratch_bytes
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[Self], value: AdaptiveImplicitBoundarySource, /
+    ) -> Self:
+        """Rebind the retained surface, source revision, and distance-query limits."""
+        return cls(
+            value.geometry,
+            value.surface,
+            value.source_revision,
+            maximum_distance_pairs=value.maximum_distance_pairs,
+            maximum_scratch_bytes=value.maximum_scratch_bytes,
+        )
+
     @property
     def ambient_dimension(self) -> int:
         return 3
@@ -2201,20 +2324,30 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
     def _boxes(self) -> tuple[np.ndarray, np.ndarray]:
         cover = self.surface.cover
         if cover is None:
-            raise RuntimeError("A certified adaptive source lost its enclosure cover.")
+            raise RuntimeError(
+                "AdaptiveImplicitBoundarySource.cover must retain its enclosure cover; got None"
+            )
         cover.require_bound(self.source_id, implicit_state_id(self.geometry))
         if (
             canonical_fingerprint(array_tree_fingerprint(self.surface))
             != self.surface_numeric_id
         ):
             raise ValueError(
-                "Adaptive boundary source enclosures or cycle witnesses are stale."
+                "AdaptiveImplicitBoundarySource.surface_numeric_id must match retained enclosures and root boxes; got changed numerical content"
             )
         possible = (cover.value_lower <= 0.0) & (cover.value_upper >= 0.0)
         return np.asarray(cover.boxes)[possible], self.surface.boundary_witness_boxes
 
-    def boundary_distance(self, points: np.ndarray, /) -> SourceBoundaryDistance:
-        charge_native_geometry_queries(points.shape[0])
+    def boundary_distance(
+        self, points: np.ndarray, /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> SourceBoundaryDistance:
+        with query_budget(budget, work_upper=0, queries_upper=points.shape[0]) as query:
+            consume_queries(query, points.shape[0])
+            return self._boundary_distance(points, budget=query)
+
+    def _boundary_distance(
+        self, points: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+    ) -> SourceBoundaryDistance:
         carrier_bytes = (
             self.surface.volume.leaf_lower.shape[0] * 64 + points.shape[0] * 64
         )
@@ -2278,7 +2411,9 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
                 nearest[:] = np.minimum(nearest, np.min(distance, axis=1))
         return SourceBoundaryDistance(lower, upper, "certified")
 
-    def boundary_samples(self, maximum_samples: int, /) -> SourceBoundarySamples:
+    def boundary_samples(
+        self, maximum_samples: int, /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> SourceBoundarySamples:
         if self.surface.volume.leaf_lower.shape[0] * 256 > self.maximum_scratch_bytes:
             return SourceBoundarySamples(
                 np.empty((0, 3), dtype=np.float64),
@@ -2308,9 +2443,9 @@ class AdaptiveImplicitBoundarySource(StrictModule, NonTrainableState):
         radius = np.nextafter(
             np.sqrt(np.nextafter(np.sum(squared, axis=1), np.inf)), np.inf
         )
-        # Some possible-zero boxes can be empty; actual cycle witnesses bound
-        # their centers' error instead of treating an interval overlap as a root.
-        error = self.boundary_distance(centers).upper
+        # A cycle's sign-changing edge bounds its center-to-boundary distance;
+        # interval overlap alone establishes only a possible-zero box.
+        error = self.boundary_distance(centers, budget=budget).upper
         return SourceBoundarySamples(centers, radius, error, "certified", complete=True)
 
 
@@ -2324,55 +2459,60 @@ def _validate(
     policy: AdaptiveImplicitSurfacePolicy,
     source_id: str,
 ) -> None:
-    if not isinstance(geometry, CompiledGeometry):
-        raise TypeError("geometry must be CompiledGeometry.")
-    if not isinstance(policy, AdaptiveImplicitSurfacePolicy):
-        raise TypeError("policy must be AdaptiveImplicitSurfacePolicy.")
     if not isinstance(source_id, str) or not source_id:
-        raise ValueError("source_id must be a non-empty string.")
+        raise ValueError(
+            f"AdaptiveImplicitDiscovery.source_id must be a non-empty string; got {source_id!r}"
+        )
     if (
         geometry.ambient_dimension != _DIMENSION
         or geometry.kind is not GeometryKind.REGION
     ):
         raise ValueError(
-            "Adaptive implicit discovery requires a three-dimensional region."
+            f"AdaptiveImplicitDiscovery.geometry must be a three-dimensional region; got dimension {geometry.ambient_dimension} and kind {geometry.kind}"
         )
     if not np.all(np.isfinite(domain)) or np.any(domain[1] <= domain[0]):
-        raise ValueError("domain must hold finite lower < upper corners.")
+        raise ValueError(
+            f"AdaptiveImplicitDiscovery.domain must hold finite lower < upper corners; got {domain.tolist()}"
+        )
     initial = 1 << (_DIMENSION * policy.initial_level)
     if initial > policy.maximum_boxes:
         raise ValueError(
-            f"initial_level {policy.initial_level} needs {initial} boxes; "
-            f"maximum_boxes is {policy.maximum_boxes}."
+            f"AdaptiveImplicitDiscovery.initial_level must fit maximum_boxes {policy.maximum_boxes}; "
+            f"got {initial} required boxes at level {policy.initial_level}"
         )
     if _EVALUATIONS_PER_NEW_LEAF * initial > policy.maximum_evaluations:
         raise ValueError(
-            f"initial_level {policy.initial_level} can need "
-            f"{_EVALUATIONS_PER_NEW_LEAF * initial} evaluations; "
-            f"maximum_evaluations is {policy.maximum_evaluations}."
+            f"AdaptiveImplicitDiscovery.initial_level must fit maximum_evaluations {policy.maximum_evaluations}; "
+            f"got {_EVALUATIONS_PER_NEW_LEAF * initial} required evaluations at level {policy.initial_level}"
         )
     if not bool(np.asarray(geometry.validity().accepted)):
-        raise ValueError("Adaptive implicit discovery geometry must be valid.")
+        raise ValueError(
+            "AdaptiveImplicitDiscovery.geometry must have accepted validity evidence; got a rejected state"
+        )
     certificate = geometry.field_certificate
     if certificate.sign_reliability is SignReliability.UNRELIABLE:
-        raise ValueError("Adaptive implicit discovery requires a meaningful field sign.")
+        raise ValueError(
+            f"AdaptiveImplicitDiscovery.field.sign_reliability must be reliable or heuristic; got {certificate.sign_reliability.value}"
+        )
     if (
         certificate.sign_reliability is not SignReliability.RELIABLE
         and policy.enclosure != "sampled"
     ):
         raise ValueError(
-            "Enclosed discovery requires a reliable field sign; the source certifies "
-            f"{certificate.sign_reliability.value!r} sign, so select the 'sampled' enclosure."
+            f"AdaptiveImplicitDiscovery.field.sign_reliability must be reliable for enclosure {policy.enclosure}; "
+            f"got {certificate.sign_reliability.value}"
         )
     if (
         certificate.zero_set_accuracy is ZeroSetAccuracy.APPROXIMATE
         and not policy.allow_approximate_zero_set
     ):
-        raise ValueError("Approximate zero sets require explicit policy approval.")
+        raise ValueError(
+            "ImplicitDiscovery.policy.allow_approximate_zero_set must permit approximate zero sets; got an approximate source with approval disabled"
+        )
 
 
 def _accuracy(
-    bounds: _AbstractFieldBounds,
+    bounds: AbstractFieldBounds,
     unresolved: bool,
     status: int,
     extraction: _Extraction,
@@ -2393,15 +2533,18 @@ def _accuracy(
 
 
 def _new_work(
-    bounds: _AbstractFieldBounds,
+    bounds: AbstractFieldBounds,
     policy: AdaptiveImplicitSurfacePolicy,
     domain: np.ndarray,
     source_id: str,
     maximum_root_solves: int,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> _Work:
     depth = policy.maximum_level
     return _Work(
         bounds=bounds,
+        budget=budget,
         policy=policy,
         address=MortonAddressPlan(tuple(domain[0]), tuple(domain[1]), depth),
         lower=domain[0].copy(),
@@ -2426,8 +2569,8 @@ def _new_work(
 
 def _cover(
     geometry: CompiledGeometry,
-    bounds: _AbstractFieldBounds,
-    leaf_bounds: _BoxBounds,
+    bounds: AbstractFieldBounds,
+    leaf_bounds: BoxBounds,
     boxes: np.ndarray,
     domain: np.ndarray,
     source_id: str,
@@ -2442,7 +2585,7 @@ def _cover(
             def finite(values: np.ndarray) -> np.ndarray:
                 return np.clip(values, -largest, largest)
 
-            return _established_implicit_cover(
+            return established_implicit_cover(
                 boxes,
                 finite(leaf_bounds.value_lower),
                 finite(leaf_bounds.value_upper),
@@ -2464,7 +2607,7 @@ def _cover(
             return None
         case _:
             raise ValueError(
-                f"Unknown implicit discovery enclosure {bounds.enclosure!r}."
+                f"ImplicitDiscovery.enclosure must select a supported enclosure; got {bounds.enclosure!r}"
             )
 
 
@@ -2516,6 +2659,7 @@ def _evidence(
     )
 
 
+@checked
 def discover_adaptive_implicit_surface(
     geometry: CompiledGeometry,
     /,
@@ -2524,6 +2668,7 @@ def discover_adaptive_implicit_surface(
     policy: AdaptiveImplicitSurfacePolicy = _DEFAULT_ADAPTIVE_POLICY,
     source_id: str,
     maximum_root_solves: int | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> AdaptiveImplicitSurface:
     """Discover the zero set of an implicit region by adaptive octree refinement.
 
@@ -2535,11 +2680,48 @@ def discover_adaptive_implicit_surface(
     result is not differentiable; derivatives belong to a fixed-topology route
     such as `discover_implicit_surface` plans.
     """
+    # Non-interval boxes cost at most ten queries for each two evaluations
+    # charged by the existing discovery policy. Root extraction is included
+    # in maximum_evaluations and root work is bounded by maximum_root_solves.
+    root_upper = (
+        policy.maximum_evaluations if maximum_root_solves is None else maximum_root_solves
+    )
+    if isinstance(root_upper, bool) or not isinstance(root_upper, int) or root_upper < 0:
+        raise ValueError(
+            "AdaptiveImplicitDiscovery.maximum_root_solves must be a nonnegative integer; got an invalid capacity"
+        )
+    with query_budget(
+        budget,
+        work_upper=root_upper,
+        queries_upper=5 * policy.maximum_evaluations,
+    ) as query:
+        return _discover_adaptive_implicit_surface(
+            geometry,
+            domain=domain,
+            policy=policy,
+            source_id=source_id,
+            maximum_root_solves=maximum_root_solves,
+            budget=query,
+        )
+
+
+def _discover_adaptive_implicit_surface(
+    geometry: CompiledGeometry,
+    /,
+    *,
+    domain: ArrayLike,
+    policy: AdaptiveImplicitSurfacePolicy,
+    source_id: str,
+    maximum_root_solves: int | None,
+    budget: CoordinateEnclosureBudget,
+) -> AdaptiveImplicitSurface:
     domain_ = np.asarray(domain, dtype=np.float64)
     if domain_.shape != (2, _DIMENSION):
-        raise ValueError("domain must have shape (2, 3).")
+        raise ValueError(
+            f"AdaptiveImplicitDiscovery.domain must have shape (2, 3); got {domain_.shape}"
+        )
     _validate(geometry, domain_, policy, source_id)
-    bounds = _field_bounds(geometry, policy.enclosure)
+    bounds = field_bounds(geometry, policy.enclosure)
     root_capacity = (
         policy.maximum_evaluations if maximum_root_solves is None else maximum_root_solves
     )
@@ -2548,8 +2730,10 @@ def discover_adaptive_implicit_surface(
         or not isinstance(root_capacity, int)
         or root_capacity < 0
     ):
-        raise ValueError("maximum_root_solves must be a nonnegative integer.")
-    work = _new_work(bounds, policy, domain_, source_id, root_capacity)
+        raise ValueError(
+            "AdaptiveImplicitDiscovery.maximum_root_solves must be a nonnegative integer; got an invalid capacity"
+        )
+    work = _new_work(bounds, policy, domain_, source_id, root_capacity, budget=budget)
     analysis, status, rounds = _refine(work)
     if work.isolation_exhausted:
         status |= int(AdaptiveImplicitSurfaceStatus.EVALUATION_BUDGET_EXHAUSTED)

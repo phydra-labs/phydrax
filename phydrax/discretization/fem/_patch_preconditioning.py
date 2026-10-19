@@ -111,7 +111,7 @@ def one_ring_patch_plan(
 ) -> FiniteElementPatchPlan:
     if not isinstance(discretization, FiniteElementDiscretization):
         raise TypeError("discretization must be FiniteElementDiscretization.")
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     dof_map = discretization.dof_maps[field_index]
     cell_count = sum(block.cell_count for block in discretization.mesh.blocks)
     block_by_cell = []

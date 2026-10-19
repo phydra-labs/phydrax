@@ -27,6 +27,7 @@ from phydrax.discretization.lattice_boltzmann._interfacial import (
 )
 from phydrax.equations._materials import IdealGasMaterial
 from phydrax.equations._transport_closures import ConstantTransport
+from phydrax.units import METER
 from tools.lattice_boltzmann_qualification import _d3q19_case, _shear_decay_case
 
 
@@ -80,7 +81,7 @@ def _boundary_geometry_case() -> Any:
     ).prepare()
     prepared = phx.discretization.prepare_lattice_boltzmann_link_geometry(
         discretization,
-        phx.geometry.Circle((0.5, 0.5), 0.2).compile(),
+        phx.geometry.Circle((0.5, 0.5), 0.2).compile(coordinate_unit=METER),
         body_name="circle",
     )
     coordinates = jnp.asarray(((0.0, 0.0), (0.0, 0.5), (0.0, 1.0)))

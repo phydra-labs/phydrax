@@ -758,7 +758,7 @@ class CrystalPlasticityRoute(StrictModule, NonTrainableState):
         field = str(field_name)
         if not field:
             raise ValueError("CPFEM route field_name must be non-empty.")
-        field_index = discretization._field_index(field)
+        field_index = discretization.field_index(field)
         if (
             discretization.mesh.topological_dimension != 3
             or discretization.mesh.ambient_dimension != 3
@@ -1046,7 +1046,7 @@ def cpfem_equilibrium_form(
     dt = _finite_scalar(step_size, "CPFEM step_size")
     if bool(dt <= 0.0):
         raise ValueError("CPFEM step_size must be positive.")
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     actions = []
 
     for model, orientation, domain, site, block_name, rule, material_id in zip(

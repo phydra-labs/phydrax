@@ -33,8 +33,10 @@ same JAX-safe `CompiledGeometry` contract. `GeometryDomain` then adds the labele
 domain algebra used by fields, components, sampling, and integration:
 
 ```python
+from phydrax.units import METER
+
 source = phx.geometry.Square(center=(0.0, 0.0), side=2.0)
-geometry = source.compile()
+geometry = source.compile(coordinate_unit=METER)
 space = phx.domain.GeometryDomain(geometry, label="x")
 ```
 
@@ -66,8 +68,8 @@ retained. The canonical replacements are:
 
 | Previous API | Canonical API |
 | --- | --- |
-| `phx.domain.Square(...)` and other 2D/3D constructors | `phx.domain.GeometryDomain(phx.geometry.Square(...).compile())` |
-| `Geometry2DFromCAD(...)` / `Geometry3DFromCAD(...)` | `planar_region_from_source(...)`, `mesh_region_from_source(...)`, or `BRep(...)`, then `GeometryDomain(source.compile())` |
+| `phx.domain.Square(...)` and other 2D/3D constructors | `phx.domain.GeometryDomain(phx.geometry.Square(...).compile(coordinate_unit=METER))` |
+| `Geometry2DFromCAD(...)` / `Geometry3DFromCAD(...)` | `planar_region_from_source(...)`, `mesh_region_from_source(...)`, or `BRep(...)`, then `GeometryDomain(source.compile(coordinate_unit=METER))` |
 | Point-cloud, DEM, or LiDAR geometry constructors | Use `reconstruct_point_region(...)` for generic Cartesian points, `reconstruct_lidar_region(...)` for a lineage-bearing `LidarPointProduct`, or `reconstruct_dem_region(...)` for terrain |
 | `ProductStructure(...)` | `SampleLayout(...)` |
 | `component.sample(n, structure=layout, sampler=design)` | `component.sample(PointSampling(n, layout=layout, design=design))` |
@@ -665,8 +667,10 @@ separately in `coord_geometry_weight_by_label`; integrals multiply both. Request
 deterministic subcell estimate with `TensorGridPlan(..., cut_cell_order=k)`:
 
 ```python
+from phydrax.units import METER
+
 cad = phx.domain.GeometryDomain(
-    phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile()
+    phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile(coordinate_unit=METER)
 )
 grid = phx.discretization.TensorGridPlan(
     (
@@ -771,10 +775,13 @@ For multi-dimensional momentum, relabel a 2D/3D geometry:
 
 ```python
 import phydrax as phx
+from phydrax.units import METER
 
-x = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
+x = phx.domain.GeometryDomain(
+    phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
+)
 p = phx.domain.GeometryDomain(
-    phx.geometry.Square(center=(0.0, 0.0), side=6.0).compile(),
+    phx.geometry.Square(center=(0.0, 0.0), side=6.0).compile(coordinate_unit=METER),
     label="p",
 )
 phase = x @ p

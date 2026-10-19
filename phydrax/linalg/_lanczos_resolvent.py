@@ -13,7 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
-from ._spaces import _coordinate_dtype
+from ._spaces import coordinate_dtype
 from ._spectral import _orthogonality_is_acceptable, _successful_krylov_status
 from .krylov import KrylovBreakdownStatus, PreparedKrylovProjection
 
@@ -274,7 +274,7 @@ def _projection_is_usable(
         & (decomposition.effective_dimension > 0)
         & _orthogonality_is_acceptable(
             decomposition.orthogonality_error,
-            _coordinate_dtype(projection.operator.source),
+            coordinate_dtype(projection.operator.source),
         )
         & jnp.isfinite(decomposition.residual_norm)
         & jnp.all(jnp.isfinite(projection.initial_coordinates))
@@ -349,7 +349,7 @@ def _validated_inputs(
             raise TypeError("terminal_resolvent must contain real or complex numbers.")
 
     dtype = jnp.result_type(
-        _coordinate_dtype(projection.operator.source),
+        coordinate_dtype(projection.operator.source),
         values.dtype,
         terminal.dtype,
     )

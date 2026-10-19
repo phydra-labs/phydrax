@@ -60,18 +60,11 @@ from ..._validation import (
     positive_integer,
 )
 from ...typing import checked
-from ._edits import (
-    _CCDLeg,
-    _Edit,
-    _neighbors,
-    _new_edit,
-    _star,
-    _WorkingMesh,
-)
+from ._edits import _CCDLeg, _neighbors, _new_edit, _star, Edit, WorkingMesh
 from ._events import SurfaceEventKind, SurfaceEventStatus
 from ._geometry import PreparedMultiRegionSurface
 from ._state import MultiRegionSurfaceState
-from ._topology import _host_incidence
+from ._topology import host_incidence
 from ._validation import _edge_wedges, _region_components
 
 
@@ -397,7 +390,7 @@ def _sheet_components(
     film outline when it is such an interior edge or a Plateau junction (three
     or more films), never a wire border.
     """
-    incidence = _host_incidence(faces, labels, vertex_count)
+    incidence = host_incidence(faces, labels, vertex_count)
     valence = np.sum(incidence.edge_faces >= 0, axis=1)
     width = incidence.edge_faces.shape[1]
     first = incidence.edge_faces[:, 0]
@@ -747,7 +740,7 @@ def propose_merges(
 
 
 def _collapse_star(
-    mesh: _WorkingMesh, vertices: Sequence[int], point: int, /
+    mesh: WorkingMesh, vertices: Sequence[int], point: int, /
 ) -> tuple[list[int], list[list[int]], list[list[int]], list[tuple[int, ...]]]:
     """Faces of the star of ``vertices`` reattached to one provisional ``point``.
 
@@ -792,7 +785,7 @@ def _fans(rows: Sequence[Sequence[int]], point: int, /) -> tuple[np.ndarray, int
 
 
 def _stage_leg(
-    mesh: _WorkingMesh,
+    mesh: WorkingMesh,
     rows: Sequence[Sequence[int]],
     points: dict[int, np.ndarray],
     start_override: dict[int, np.ndarray],
@@ -824,7 +817,7 @@ def _stage_leg(
 
 
 def _collapse_leg(
-    mesh: _WorkingMesh, vertices: Sequence[int], point: np.ndarray, /
+    mesh: WorkingMesh, vertices: Sequence[int], point: np.ndarray, /
 ) -> _CCDLeg:
     """Source-topology leg: every collapsing vertex moves to ``point``."""
     star = _star(mesh, vertices)
@@ -870,13 +863,15 @@ def _directed(row: Sequence[int], first: int, second: int, /) -> bool:
     return row[(position + 1) % 3] == second
 
 
-def _t1_edit(
-    mesh: _WorkingMesh, proposal: T1PopProposal, film: Sequence[int], /
-) -> _Edit | SurfaceEventStatus:
-    topology = mesh.topology
-    if not all(region in topology.region_ids for region in proposal.region_ids):
-        return SurfaceEventStatus.SUPPORT_INVALID
-    upper, lower = (topology.region_index(region) for region in proposal.region_ids)
+def _t1_film_status(
+    mesh: WorkingMesh,
+    proposal: T1PopProposal,
+    film: Sequence[int],
+    upper: int,
+    lower: int,
+    /,
+) -> SurfaceEventStatus | None:
+    """Require a movable two-region film before charging its diameter certificate."""
     film_set = set(film)
     film_faces = [
         face
@@ -895,13 +890,76 @@ def _t1_edit(
     )
     match certificate:
         case _DiameterCertificate.BELOW:
-            pass
+            return None
         case _DiameterCertificate.NOT_BELOW:
             return SurfaceEventStatus.NOT_TRIGGERED
         case _DiameterCertificate.CAPACITY_EXCEEDED:
             return SurfaceEventStatus.CERTIFICATE_CAPACITY_EXCEEDED
         case _:
             assert_never(certificate)
+
+
+def _t1_split_mixed_fan(
+    mesh: WorkingMesh,
+    rows: list[list[int]],
+    labels: list[list[int]],
+    members: Sequence[int],
+    point: int,
+    corner: np.ndarray,
+    axis: np.ndarray,
+    spokes_d: set[int],
+    spokes_e: set[int],
+    new_rows: list[list[int]],
+    extra_rows: list[list[int]],
+    extra_labels: list[list[int]],
+    /,
+) -> SurfaceEventStatus | None:
+    """Split one ordered mixed-region fan and retain its oriented bridge label."""
+    vertex_d, vertex_e = point, point + 1
+    path = _fan_path(rows, members, point)
+    if path is None:
+        return SurfaceEventStatus.FAN_STRUCTURE_INVALID
+    order, chain = path
+    if chain[0] in spokes_e and chain[-1] in spokes_d:
+        order, chain = order[::-1], chain[::-1]
+    if not (chain[0] in spokes_d and chain[-1] in spokes_e):
+        return SurfaceEventStatus.FAN_STRUCTURE_INVALID
+    tilt = [
+        abs(float(np.dot(mesh.positions[v] - corner, axis)))
+        / max(float(np.linalg.norm(mesh.positions[v] - corner)), 1e-300)
+        for v in chain
+    ]
+    split = min(
+        (
+            (value, int(mesh.vertex_ids[vertex]), index)
+            for index, (value, vertex) in enumerate(zip(tilt, chain, strict=True))
+        )
+    )[2]
+    for position, face in enumerate(order):
+        owner = vertex_d if position < split else vertex_e
+        new_rows[face] = [owner if v == point else v for v in rows[face]]
+    spoke = chain[split]
+    reference = order[split - 1] if split >= 1 else order[0]
+    owner = vertex_d if split >= 1 else vertex_e
+    other = vertex_e if split >= 1 else vertex_d
+    if _directed(new_rows[reference], owner, spoke):
+        extra_rows.append([spoke, owner, other])
+    else:
+        extra_rows.append([owner, spoke, other])
+    extra_labels.append(labels[reference])
+    return None
+
+
+def t1_edit(
+    mesh: WorkingMesh, proposal: T1PopProposal, film: Sequence[int], /
+) -> Edit | SurfaceEventStatus:
+    topology = mesh.topology
+    if not all(region in topology.region_ids for region in proposal.region_ids):
+        return SurfaceEventStatus.SUPPORT_INVALID
+    upper, lower = (topology.region_index(region) for region in proposal.region_ids)
+    status = _t1_film_status(mesh, proposal, film, upper, lower)
+    if status is not None:
+        return status
     corner = np.mean(mesh.positions[list(film)], axis=0)
     point = mesh.vertex_count
     removed, rows, labels, parents = _collapse_star(mesh, film, point)
@@ -940,37 +998,22 @@ def _t1_edit(
     for i in mixed:
         pair_groups.setdefault((min(label_sets[i]), max(label_sets[i])), []).append(i)
     for members in pair_groups.values():
-        path = _fan_path(rows, members, point)
-        if path is None:
-            return SurfaceEventStatus.FAN_STRUCTURE_INVALID
-        order, chain = path
-        if chain[0] in spokes_e and chain[-1] in spokes_d:
-            order, chain = order[::-1], chain[::-1]
-        if not (chain[0] in spokes_d and chain[-1] in spokes_e):
-            return SurfaceEventStatus.FAN_STRUCTURE_INVALID
-        tilt = [
-            abs(float(np.dot(mesh.positions[v] - corner, axis)))
-            / max(float(np.linalg.norm(mesh.positions[v] - corner)), 1e-300)
-            for v in chain
-        ]
-        split = min(
-            (
-                (value, int(mesh.vertex_ids[vertex]), index)
-                for index, (value, vertex) in enumerate(zip(tilt, chain, strict=True))
-            )
-        )[2]
-        for position, face in enumerate(order):
-            owner = vertex_d if position < split else vertex_e
-            new_rows[face] = [owner if v == point else v for v in rows[face]]
-        spoke = chain[split]
-        reference = order[split - 1] if split >= 1 else order[0]
-        owner = vertex_d if split >= 1 else vertex_e
-        other = vertex_e if split >= 1 else vertex_d
-        if _directed(new_rows[reference], owner, spoke):
-            extra_rows.append([spoke, owner, other])
-        else:
-            extra_rows.append([owner, spoke, other])
-        extra_labels.append(labels[reference])
+        status = _t1_split_mixed_fan(
+            mesh,
+            rows,
+            labels,
+            members,
+            point,
+            corner,
+            axis,
+            spokes_d,
+            spokes_e,
+            new_rows,
+            extra_rows,
+            extra_labels,
+        )
+        if status is not None:
+            return status
     positions = {vertex_d: corner + half * axis, vertex_e: corner - half * axis}
     stage = _stage_leg(
         mesh,
@@ -992,9 +1035,9 @@ def _t1_edit(
     )
 
 
-def _pinch_edit(
-    mesh: _WorkingMesh, proposal: PinchProposal, loop: Sequence[int], /
-) -> _Edit | SurfaceEventStatus:
+def pinch_edit(
+    mesh: WorkingMesh, proposal: PinchProposal, loop: Sequence[int], /
+) -> Edit | SurfaceEventStatus:
     first, second, third = loop
     faces = {tuple(sorted(mesh.faces[f].tolist())) for f in _star(mesh, loop).tolist()}
     edges_present = all(
@@ -1063,9 +1106,9 @@ def _pinch_edit(
     )
 
 
-def _merge_edit(
-    mesh: _WorkingMesh, proposal: MergeProposal, faces: Sequence[int], /
-) -> _Edit | SurfaceEventStatus:
+def merge_edit(
+    mesh: WorkingMesh, proposal: MergeProposal, faces: Sequence[int], /
+) -> Edit | SurfaceEventStatus:
     one, other = faces
     topology = mesh.topology
     policy = proposal.policy
@@ -1164,7 +1207,7 @@ def _merge_edit(
 # ------------------------------------------------------------- region split
 
 
-def _label_components(
+def label_components(
     points: np.ndarray,
     faces: np.ndarray,
     labels: np.ndarray,
@@ -1174,7 +1217,7 @@ def _label_components(
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Component counts per region and the component of every face side."""
-    incidence = _host_incidence(faces, labels, points.shape[0])
+    incidence = host_incidence(faces, labels, points.shape[0])
     wedges = _edge_wedges(
         incidence.edges,
         incidence.edge_faces,

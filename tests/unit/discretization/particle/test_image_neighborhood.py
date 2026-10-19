@@ -730,11 +730,11 @@ def test_host_lattice_coordinates_and_reach_match_dense_reference(
     np.testing.assert_allclose(_host_reach(vectors[None]), reach[None], rtol=1e-9)
     singular = vectors.copy()
     singular[-1] = 0.0
-    with pytest.raises(ValueError, match="full row rank"):
+    with pytest.raises(ValueError, match=r"PeriodicCell\.vectors"):
         PeriodicCell(singular, periodic_axes=(False,) * rank)
-    with pytest.raises(ValueError, match="rank deficient"):
+    with pytest.raises(ValueError, match=r"PeriodicCell\.cell_vectors"):
         cell.image_stencil(1.3, maximum_image_count=1, cell_vectors=singular)
-    with pytest.raises(ValueError, match="rank deficient"):
+    with pytest.raises(ValueError, match=r"_host_reach\.reference_vectors"):
         _host_reach(singular[None])
 
 

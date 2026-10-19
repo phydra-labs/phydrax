@@ -243,6 +243,14 @@ operators and coincide with a raw transpose only under the corresponding
 identity pairings. Every connected mesh component must be anchored. Natural
 boundary data remains a weak-form term.
 
+A nonempty Dirichlet set may constrain every field DOF. In that case the same
+constraint map has a zero-dimensional reduced space and expands its empty state
+to the prescribed finite-element lift; the canonical linear solver retains its
+status, rank, residual, and iteration evidence, including unavailable rank or
+conditioning rather than invented certificates. This is a unique discrete state,
+not evidence that the prescribed lift accurately solves the continuum PDE.
+Physical-error and qualification targets still apply without modification.
+
 ## Solvers and execution
 
 A compiled affine form provides `linear_system()` and explicit nullspace policy.
@@ -383,6 +391,14 @@ full-cell orientation bundle: the relative multiplier is the product of the
 source and target full-chart Jacobian signs, each proved nonzero over the
 whole simplex. Entity orientation alone does not establish this bundle; a
 reversed source chart uses the physical absolute-determinant flux law.
+
+Mapped scalar DG projection integrates each local mass or mixed form in its own
+polynomial-preparation scope. Consumed products and coefficient memos are
+released before the next local form; numerical forms, outward errors, retained
+source preparations and cumulative work evidence remain available. Storage
+limits therefore bound live preparation rather than all previously consumed
+local polynomial expansions.
+
 `FiniteElementFieldTransfer.epoch_transition(...)` returns a
 content-ledger `TopologyEpochTransition` for conservative transfers with positive
 DOF measures and a `FieldEpochTransition` otherwise; both expose the

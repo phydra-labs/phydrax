@@ -15,165 +15,98 @@ distinct and carry their failing entities and requested/achieved quantities.
 
 from __future__ import annotations
 
-from typing import assert_never, final, Literal, TypeAlias
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import final
 
 import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.geometry._domain_coverage as domain_coverage_owner
+import phydrax.geometry._embedding_state as _dependency_phydrax_geometry__embedding_state
+import phydrax.geometry._global_embedding as global_embedding_owner
+import phydrax.geometry._mapped_reference_domain as _dependency_phydrax_geometry__mapped_reference_domain
+import phydrax.geometry._mesh_certificates as _dependency_phydrax_geometry__mesh_certificates
+import phydrax.geometry._source_boundary_records as source_boundary_records_owner
+import phydrax.geometry._source_fidelity as source_fidelity_owner
+import phydrax.meshing._audit as _dependency_phydrax_meshing__audit
+import phydrax.meshing._certification_inputs as _dependency_phydrax_meshing__certification_inputs
+import phydrax.meshing._certification_schedule as _leaf_phydrax_meshing__certification_schedule
+import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
+import phydrax.meshing._trace as _dependency_phydrax_meshing__trace
+from phydrax.meshing._failures import MeshingFailure
+
+from .._fingerprint import (
+    array_tree_fingerprint,
+    canonical_fingerprint,
+    tree_content_equal,
+)
+from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh
-from ..discretization._cell_geometry_validity import (
-    cell_geometry_id,
-    CellValidityCertificate,
-    CellValidityStatus,
-)
-from ..geometry._mapped_reference_domain import MappedReferenceDomain
-from ..geometry._mesh_certificates import (
-    certify_domain_coverage,
-    certify_global_embedding,
-    certify_source_fidelity,
-    DomainCoverageCertificate,
-    GlobalEmbeddingCertificate,
-    MeshCertificateEntityKind,
-    MeshCertificateLimits,
-    MeshCertificateStatus,
-    PiecewiseLinearDomain,
-    SourceBoundaryQuery,
-    SourceFidelityCertificate,
-)
-from ..typing import parse
-from ._audit import CellMeshAuditReport
-from ._certification_inputs import MeshCertificationInputs
-from ._contracts import MeshingFailure, MeshingFailureCategory
-from ._trace import (
-    MeshingDiagnostic,
-    MeshingDiagnosticSeverity,
-    MeshingStageKind,
-    MeshingStageReport,
-    MeshingStageStatus,
-)
+from ..typing import checked, parse
 
-
-MeshCertificationCheck: TypeAlias = Literal[
-    "cell_validity",
-    "topology",
-    "quality",
-    "global_embedding",
-    "domain_coverage",
-    "source_fidelity",
-]
-MeshCertificationRoute: TypeAlias = Literal[
-    "volume_plc",
-    "volume_implicit",
-    "volume_layer",
-    "mapped_volume",
-    "surface",
-    "curve",
-    "periodic",
-]
 
 _QUALITY_ISSUES = ("minimum_measure", "minimum_mean_ratio", "maximum_aspect_ratio")
 _VALIDITY_NAMES = ("invalid_geometry", "unresolved_geometry_validity")
 _LARGEST = float(np.finfo(np.float64).max)
 
 
-def _route_checks(
-    route: MeshCertificationRoute, /
-) -> tuple[tuple[MeshCertificationCheck, ...], tuple[str, ...]]:
-    """Required certificates and audit checks that may not be skipped."""
-
-    common: tuple[MeshCertificationCheck, ...] = (
-        "cell_validity",
-        "topology",
-        "quality",
-        "global_embedding",
-    )
-    welded = ("coincident_vertices", "collapsed_cells", "duplicate_cells")
-    manifold = (
-        "nonmanifold_facets",
-        "nonmanifold_edges",
-        "nonmanifold_vertices",
-        "inconsistent_orientation",
-        "self_intersection",
-    )
-    match route:
-        case "volume_plc":
-            return (*common, "domain_coverage"), (*welded, *manifold, "open_boundary")
-        case "volume_implicit" | "volume_layer" | "mapped_volume":
-            return (
-                (*common, "domain_coverage", "source_fidelity"),
-                (*welded, *manifold, "open_boundary"),
-            )
-        case "surface":
-            # Surfaces may be intentionally open; closure is not applicable.
-            return (*common, "source_fidelity"), (*welded, *manifold)
-        case "curve":
-            return common, (*welded, "inconsistent_orientation")
-        case "periodic":
-            return common, (*welded, *manifold)
-        case _:
-            assert_never(route)
-
-
-@final
-class MeshCertificationSchedule(StrictModule, NonTrainableState):
-    """Checks a route must certify and audit checks it may not skip."""
-
-    route: MeshCertificationRoute = eqx.field(static=True)
-    required_checks: tuple[MeshCertificationCheck, ...] = eqx.field(static=True)
-    required_audit_checks: tuple[str, ...] = eqx.field(static=True)
-    schedule_id: str = eqx.field(static=True)
-
-    def __init__(self, route: MeshCertificationRoute, /) -> None:
-        route_ = parse(route, MeshCertificationRoute, "route")
-        required, audit_checks = _route_checks(route_)
-        self.route = route_
-        self.required_checks = required
-        self.required_audit_checks = audit_checks
-        self.schedule_id = canonical_fingerprint(
-            {
-                "kind": "mesh-certification-schedule",
-                "route": route_,
-                "required": required,
-                "audit_checks": audit_checks,
-            }
-        )
-
-
 @final
 class MeshCertificationOutcome(StrictModule, NonTrainableState):
     """Status of one scheduled check with its evidence and failing entities."""
 
-    check: MeshCertificationCheck = eqx.field(static=True)
-    status: MeshCertificateStatus = eqx.field(static=True)
+    check: _leaf_phydrax_meshing__certification_schedule.MeshCertificationCheck = (
+        eqx.field(static=True)
+    )
+    status: _dependency_phydrax_geometry__mesh_certificates.MeshCertificateStatus = (
+        eqx.field(static=True)
+    )
     evidence_id: str = eqx.field(static=True)
     reasons: tuple[str, ...] = eqx.field(static=True)
-    entity_kind: MeshCertificateEntityKind = eqx.field(static=True)
+    entity_kind: _dependency_phydrax_geometry__embedding_state.MeshCertificateEntityKind = eqx.field(
+        static=True
+    )
     entity_ids: tuple[int, ...] = eqx.field(static=True)
     outcome_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        check: MeshCertificationCheck,
-        status: MeshCertificateStatus,
+        check: _leaf_phydrax_meshing__certification_schedule.MeshCertificationCheck,
+        status: _dependency_phydrax_geometry__mesh_certificates.MeshCertificateStatus,
         evidence_id: str,
         /,
         *,
         reasons: tuple[str, ...] = (),
-        entity_kind: MeshCertificateEntityKind = "mesh",
+        entity_kind: _dependency_phydrax_geometry__embedding_state.MeshCertificateEntityKind = "mesh",
         entity_ids: tuple[int, ...] = (),
     ) -> None:
-        self.check = parse(check, MeshCertificationCheck, "check")
-        self.status = parse(status, MeshCertificateStatus, "status")
+        self.check = parse(
+            check,
+            _leaf_phydrax_meshing__certification_schedule.MeshCertificationCheck,
+            "check",
+        )
+        self.status = parse(
+            status,
+            _dependency_phydrax_geometry__mesh_certificates.MeshCertificateStatus,
+            "status",
+        )
         self.evidence_id = str(evidence_id)
         self.reasons = tuple(dict.fromkeys(str(value) for value in reasons))
-        self.entity_kind = parse(entity_kind, MeshCertificateEntityKind, "entity_kind")
+        self.entity_kind = parse(
+            entity_kind,
+            _dependency_phydrax_geometry__embedding_state.MeshCertificateEntityKind,
+            "entity_kind",
+        )
         self.entity_ids = tuple(sorted({int(value) for value in entity_ids}))
         if (self.status == "certified") != (not self.reasons):
-            raise ValueError("Only non-certified outcomes carry reasons.")
+            raise ValueError(
+                f"MeshCertificationOutcome.reasons must be empty exactly when status is certified; got status={self.status!r}, reasons={self.reasons!r}"
+            )
         self.outcome_id = canonical_fingerprint(
             {
                 "kind": "mesh-certification-outcome",
@@ -195,67 +128,74 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
     ``requested``/``achieved`` follow the ``MeshingComplianceReport``
     convention for coverage measures and fidelity deviations.
 
-    ``scoped_fidelity`` retains each full original-stratum/target-trace proof
+    ``scoped_fidelity`` retains each source-stratum/target-trace proof
     independently of whole-boundary fidelity and domain coverage. The retained
-    request binds source query scope, actual global facet IDs, and physical
-    tolerance; every scoped verdict participates in acceptance and report
-    identity. Renewal uses exact facet lineage rather than reusing old bounds.
+    request binds source query scope, global facet IDs, and physical tolerance;
+    every scoped verdict participates in acceptance and report identity.
+    Renewal maps facet lineage rather than reusing old bounds.
     """
 
-    schedule: MeshCertificationSchedule
-    request: MeshCertificationInputs
+    schedule: _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule
+    request: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs
     mesh_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     geometry_id: str = eqx.field(static=True)
     geometry_layout_id: str = eqx.field(static=True)
     audit_report_id: str = eqx.field(static=True)
-    embedding: GlobalEmbeddingCertificate | None
-    coverage: DomainCoverageCertificate | None
-    fidelity: SourceFidelityCertificate | None
-    scoped_fidelity: tuple[SourceFidelityCertificate, ...]
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate | None
+    coverage: domain_coverage_owner.DomainCoverageCertificate | None
+    fidelity: source_fidelity_owner.SourceFidelityCertificate | None
+    scoped_fidelity: tuple[source_fidelity_owner.SourceFidelityCertificate, ...]
     outcomes: tuple[MeshCertificationOutcome, ...]
     requested: tuple[tuple[str, float], ...] = eqx.field(static=True)
     achieved: tuple[tuple[str, float], ...] = eqx.field(static=True)
     passed: bool = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        schedule: MeshCertificationSchedule,
+        schedule: _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule,
         mesh: CellMesh,
         geometry: CellGeometrySpec,
-        audit: CellMeshAuditReport,
+        audit: _dependency_phydrax_meshing__audit.CellMeshAuditReport,
         outcomes: tuple[MeshCertificationOutcome, ...],
         /,
         *,
-        embedding: GlobalEmbeddingCertificate | None,
-        coverage: DomainCoverageCertificate | None,
-        fidelity: SourceFidelityCertificate | None,
-        request: MeshCertificationInputs,
-        scoped_fidelity: tuple[SourceFidelityCertificate, ...] = (),
+        embedding: global_embedding_owner.GlobalEmbeddingCertificate | None,
+        coverage: domain_coverage_owner.DomainCoverageCertificate | None,
+        fidelity: source_fidelity_owner.SourceFidelityCertificate | None,
+        request: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs,
+        scoped_fidelity: tuple[source_fidelity_owner.SourceFidelityCertificate, ...] = (),
     ) -> None:
-        if not isinstance(request, MeshCertificationInputs):
-            raise TypeError("request must be MeshCertificationInputs.")
         if (
             request.mesh_id != mesh.mesh_id
-            or request.geometry_id != cell_geometry_id(geometry)
+            or request.geometry_id
+            != _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                geometry
+            )
             or request.schedule.schedule_id != schedule.schedule_id
         ):
             raise ValueError(
-                "Certification request must bind actual mesh, geometry and schedule."
+                f"MeshCertificationReport.request must bind mesh, geometry and schedule; got request_id={request.request_id!r}"
             )
         if {outcome.check for outcome in outcomes} != set(schedule.required_checks):
-            raise ValueError("Certification outcomes must cover the required checks.")
+            raise ValueError(
+                f"MeshCertificationReport.outcomes must cover the required checks; got {tuple(outcome.check for outcome in outcomes)!r}"
+            )
         if len(scoped_fidelity) != len(request.scoped_fidelity):
             raise ValueError(
-                "Scoped fidelity evidence must cover every exact retained source/target request."
+                f"MeshCertificationReport.scoped_fidelity must cover every retained source/target request; got {len(scoped_fidelity)} certificates for {len(request.scoped_fidelity)} requests"
             )
         for certificate, (query, identifiers, tolerance) in zip(
             scoped_fidelity, request.scoped_fidelity, strict=True
         ):
-            if not isinstance(certificate, SourceFidelityCertificate):
+            if not isinstance(
+                certificate,
+                source_fidelity_owner.SourceFidelityCertificate,
+            ):
                 raise TypeError(
-                    "Scoped fidelity must retain owning numerical proof records."
+                    f"MeshCertificationReport.scoped_fidelity must contain SourceFidelityCertificate records; got {type(certificate).__name__}"
                 )
             certificate.binding.require(mesh, geometry)
             if (
@@ -267,12 +207,12 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 != (query.source_id, query.source_revision)
             ):
                 raise ValueError(
-                    "Scoped fidelity evidence binds another source stratum, target trace, or physical error request."
+                    f"MeshCertificationReport.scoped_fidelity must bind its source stratum, target trace and physical tolerance; got certificate_id={certificate.certificate_id!r}"
                 )
             expected = _certificate_outcome("source_fidelity", certificate)
             if not any(value.outcome_id == expected.outcome_id for value in outcomes):
                 raise ValueError(
-                    "Scoped numerical proof status must reach an actual certification outcome."
+                    f"MeshCertificationReport.outcomes must retain scoped fidelity status; got certificate status={certificate.status!r}"
                 )
         requested: list[tuple[str, float]] = []
         achieved: list[tuple[str, float]] = []
@@ -314,7 +254,11 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         self.request = request
         self.mesh_id = mesh.mesh_id
         self.topology_id = mesh.topology_id
-        self.geometry_id = cell_geometry_id(geometry)
+        self.geometry_id = (
+            _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                geometry
+            )
+        )
         self.geometry_layout_id = geometry.geometry_layout_id
         self.audit_report_id = audit.report_id
         self.embedding = embedding
@@ -337,7 +281,7 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
                 "scoped_fidelity": tuple(
                     certificate.certificate_id for certificate in scoped_fidelity
                 ),
-                # Unresolved fidelity bounds are inf; exact float reprs carry them.
+                # repr preserves infinite fidelity bounds in the fingerprint payload.
                 "requested": [(name, repr(value)) for name, value in self.requested],
                 "achieved": [(name, repr(value)) for name, value in self.achieved],
             }
@@ -353,11 +297,13 @@ class MeshCertificationReport(StrictModule, NonTrainableState):
         failing = self.failing_outcomes
         if not failing:
             return
-        raise _MeshCertificationReportFailure(self)
+        raise MeshCertificationReportFailure(self)
 
 
 def _require_audit(
-    schedule: MeshCertificationSchedule, audit: CellMeshAuditReport, /
+    schedule: _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule,
+    audit: _dependency_phydrax_meshing__audit.CellMeshAuditReport,
+    /,
 ) -> None:
     missing = tuple(
         name
@@ -366,15 +312,20 @@ def _require_audit(
     )
     if missing:
         raise ValueError(
-            f"Route {schedule.route!r} may not skip audit checks: " + ", ".join(missing)
+            f"certify_meshing_acceptance.audit must evaluate required route checks; got missing checks={missing!r}"
         )
 
 
-def _validity_outcome(audit: CellMeshAuditReport, /) -> MeshCertificationOutcome:
+def _validity_outcome(
+    audit: _dependency_phydrax_meshing__audit.CellMeshAuditReport, /
+) -> MeshCertificationOutcome:
     validity = audit.validity
     status = np.asarray(validity.status)
     failing = dict(audit.failing_cells)
-    if np.any(status == CellValidityStatus.INVALID):
+    if np.any(
+        status
+        == _dependency_phydrax_discretization__cell_geometry_validity.CellValidityStatus.INVALID
+    ):
         return MeshCertificationOutcome(
             "cell_validity",
             "violated",
@@ -383,7 +334,10 @@ def _validity_outcome(audit: CellMeshAuditReport, /) -> MeshCertificationOutcome
             entity_kind="cell",
             entity_ids=failing["invalid_geometry"],
         )
-    if np.any(status == CellValidityStatus.UNRESOLVED):
+    if np.any(
+        status
+        == _dependency_phydrax_discretization__cell_geometry_validity.CellValidityStatus.UNRESOLVED
+    ):
         return MeshCertificationOutcome(
             "cell_validity",
             "unresolved",
@@ -397,7 +351,9 @@ def _validity_outcome(audit: CellMeshAuditReport, /) -> MeshCertificationOutcome
 
 
 def _topology_outcome(
-    audit: CellMeshAuditReport, excused: tuple[str, ...], /
+    audit: _dependency_phydrax_meshing__audit.CellMeshAuditReport,
+    excused: tuple[str, ...],
+    /,
 ) -> MeshCertificationOutcome:
     counted = tuple(
         name
@@ -426,7 +382,9 @@ def _topology_outcome(
     return MeshCertificationOutcome("topology", "certified", audit.report_id)
 
 
-def _quality_outcome(audit: CellMeshAuditReport, /) -> MeshCertificationOutcome:
+def _quality_outcome(
+    audit: _dependency_phydrax_meshing__audit.CellMeshAuditReport, /
+) -> MeshCertificationOutcome:
     failing = tuple(name for name in audit.issues if name in _QUALITY_ISSUES)
     if failing:
         return MeshCertificationOutcome(
@@ -441,10 +399,10 @@ def _quality_outcome(audit: CellMeshAuditReport, /) -> MeshCertificationOutcome:
 
 
 def _certificate_outcome(
-    check: MeshCertificationCheck,
-    certificate: GlobalEmbeddingCertificate
-    | DomainCoverageCertificate
-    | SourceFidelityCertificate,
+    check: _leaf_phydrax_meshing__certification_schedule.MeshCertificationCheck,
+    certificate: global_embedding_owner.GlobalEmbeddingCertificate
+    | domain_coverage_owner.DomainCoverageCertificate
+    | source_fidelity_owner.SourceFidelityCertificate,
     /,
 ) -> MeshCertificationOutcome:
     if certificate.status == "certified":
@@ -453,7 +411,9 @@ def _certificate_outcome(
         value for value in certificate.findings if value.status == certificate.status
     )
     kinds = {value.entity_kind for value in relevant}
-    kind: MeshCertificateEntityKind = kinds.pop() if len(kinds) == 1 else "mesh"
+    kind: _dependency_phydrax_geometry__embedding_state.MeshCertificateEntityKind = (
+        kinds.pop() if len(kinds) == 1 else "mesh"
+    )
     return MeshCertificationOutcome(
         check,
         certificate.status,
@@ -471,15 +431,15 @@ def _certificate_outcome(
 
 def _certificate_finding_quantities(
     certificates: tuple[
-        GlobalEmbeddingCertificate
-        | DomainCoverageCertificate
-        | SourceFidelityCertificate
+        global_embedding_owner.GlobalEmbeddingCertificate
+        | domain_coverage_owner.DomainCoverageCertificate
+        | source_fidelity_owner.SourceFidelityCertificate
         | None,
         ...,
     ],
     /,
 ) -> tuple[tuple[tuple[str, int], ...], tuple[tuple[str, int], ...]]:
-    """Preserve the owning certificate/finding/resource names without reinterpretation."""
+    """Return stored finding quantities and named native batch counter values."""
     requested: dict[str, int] = {}
     achieved: dict[str, int] = {}
     for certificate in certificates:
@@ -490,6 +450,7 @@ def _certificate_finding_quantities(
                 not finding.requested
                 and not finding.achieved
                 and not finding.observations
+                and finding.native_refusal is None
             ):
                 continue
             prefix = (
@@ -513,12 +474,52 @@ def _certificate_finding_quantities(
                 for key, value in finding.observations
                 if np.isfinite(value)
             )
+            refusal = finding.native_refusal
+            if refusal is None:
+                continue
+            native_prefix = f"{prefix}:native_batch"
+            achieved[f"{native_prefix}:status"] = int(refusal.status)
+            dimensions = (
+                "work_units",
+                "geometry_queries",
+                "cavity_cells",
+                "managed_bytes",
+            )
+            if refusal.requested_upper is not None:
+                requested.update(
+                    (f"{native_prefix}:requested_{name}", value)
+                    for name, value in zip(
+                        dimensions, refusal.requested_upper, strict=True
+                    )
+                )
+            if refusal.admitted_upper is not None:
+                achieved.update(
+                    (f"{native_prefix}:admitted_{name}", value)
+                    for name, value in zip(
+                        dimensions, refusal.admitted_upper, strict=True
+                    )
+                )
+            if refusal.root_receipt is not None:
+                receipt_names = (
+                    *(f"remaining_{name}" for name in dimensions),
+                    "consumed_work_units",
+                    "consumed_geometry_queries",
+                    "peak_cavity_cells",
+                    "peak_managed_bytes",
+                )
+                achieved.update(
+                    (f"{native_prefix}:{name}", value)
+                    for name, value in zip(
+                        receipt_names, refusal.root_receipt, strict=True
+                    )
+                )
     return tuple(sorted(requested.items())), tuple(sorted(achieved.items()))
 
 
-class _MeshCertificationReportFailure(MeshingFailure):
-    """Public failure quantities backed by the complete actual failing report."""
+class MeshCertificationReportFailure(MeshingFailure):
+    """Report failure quantities from the failing certification report."""
 
+    @checked
     def __init__(self, report: MeshCertificationReport, /) -> None:
         self.report = report
         self.unbounded_quantities = tuple(
@@ -540,13 +541,37 @@ class _MeshCertificationReportFailure(MeshingFailure):
         requested.update(finding_requested)
         achieved.update(finding_achieved)
         failing = report.failing_outcomes
+        blocking_unresolved = {
+            outcome.evidence_id for outcome in failing if outcome.status == "unresolved"
+        }
+        resource_unresolved = any(
+            finding.status == "unresolved"
+            and (finding.native_refusal is not None or finding.resource is not None)
+            for certificate in (
+                report.embedding,
+                report.coverage,
+                report.fidelity,
+                *report.scoped_fidelity,
+            )
+            if certificate is not None
+            and certificate.certificate_id in blocking_unresolved
+            for finding in certificate.findings
+        )
+        category = _leaf_phydrax_meshing__failures.MeshingFailureCategory.AUDIT_FAILED
+        if resource_unresolved and not any(
+            outcome.status == "violated" for outcome in failing
+        ):
+            category = (
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED
+            )
         super().__init__(
-            MeshingFailureCategory.AUDIT_FAILED,
-            "; ".join(
+            category,
+            "MeshCertificationReport.outcomes must all be certified; got "
+            + "; ".join(
                 f"{value.check} {value.status}: {', '.join(value.reasons)}"
                 for value in failing
             ),
-            stage=MeshingStageKind.CERTIFICATION.value,
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.CERTIFICATION.value,
             entity_ids=tuple(
                 identifier
                 for value in failing
@@ -558,20 +583,22 @@ class _MeshCertificationReportFailure(MeshingFailure):
         )
 
 
-class _MeshCertificationPremiseFailure(MeshingFailure):
-    """Negative computed premises, never a partial positive prepared artifact."""
+class MeshCertificationPremiseFailure(MeshingFailure):
+    """Describe failed volume-preparation checks and their quantities."""
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
         geometry: CellGeometrySpec,
-        request: MeshCertificationInputs,
-        validity: CellValidityCertificate,
-        embedding: GlobalEmbeddingCertificate,
-        coverage: DomainCoverageCertificate,
+        request: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs,
+        validity: _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate,
+        embedding: global_embedding_owner.GlobalEmbeddingCertificate,
+        coverage: domain_coverage_owner.DomainCoverageCertificate,
         /,
+        *,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
     ) -> None:
-        from ..discretization._coordinate_enclosure import _COORDINATE_BUDGET
 
         self.mesh = mesh
         self.geometry = geometry
@@ -579,7 +606,7 @@ class _MeshCertificationPremiseFailure(MeshingFailure):
         self.validity = validity
         self.embedding = embedding
         self.coverage = coverage
-        self.ledger = _COORDINATE_BUDGET.get()
+        self.ledger = budget
         requested, achieved = _certificate_finding_quantities((embedding, coverage))
         requested = (
             *requested,
@@ -617,13 +644,13 @@ class _MeshCertificationPremiseFailure(MeshingFailure):
                 if measured is None or not np.isfinite(measured)
             ),
         )
-        # The exact optional measures, bounds, SCI and reference source data
-        # remain in the owning coverage/geometry above, not reconstructed here.
+        # Optional measures, bounds, SCI and reference source data stay in
+        # coverage and geometry rather than this failure summary.
         outcome = _certificate_outcome("domain_coverage", coverage)
         super().__init__(
-            MeshingFailureCategory.AUDIT_FAILED,
-            f"domain_coverage {coverage.status}: {', '.join(outcome.reasons)}",
-            stage=MeshingStageKind.CERTIFICATION.value,
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.AUDIT_FAILED,
+            f"MeshCertificationPreparedEvidence.coverage must be certified; got domain_coverage {coverage.status}: {', '.join(outcome.reasons)}",
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.CERTIFICATION.value,
             provider_code=coverage.certificate_id,
             entity_ids=tuple(
                 identifier
@@ -636,150 +663,217 @@ class _MeshCertificationPremiseFailure(MeshingFailure):
         )
 
 
+@contextmanager
+def _certificate_budget(
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits | None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+    /,
+) -> Iterator[
+    _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+]:
+    """Reuse explicit request accounting or settle one standalone host request."""
+    if budget is not None:
+        with budget.activate():
+            yield budget
+        return
+    limits_ = (
+        _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits()
+        if limits is None
+        else limits
+    )
+    with HostBatchTicket(
+        limits_.maximum_work_units,
+        queries_upper=limits_.maximum_candidate_pairs + limits_.maximum_ray_tests,
+        bytes_upper=limits_.maximum_scratch_bytes,
+    ) as ticket:
+        ledger = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=limits_.maximum_work_units,
+            maximum_memory_bytes=limits_.maximum_scratch_bytes,
+        )
+        with ledger.activate():
+            yield ledger
+
+
 @final
 class MeshCertificationPreparedEvidence(StrictModule, NonTrainableState):
-    """Positive volume premises computed once under an exact owning request.
+    """Prepare volume coverage and embedding under one source request.
 
-    Construction performs actual labelled coverage, not adoption of an external
-    coverage flag: that certificate alone does not bind the cell-region vector.
-    Publication reuses these same certificates and their actual work counters.
+    Coverage binds the cell-region assignments as well as the declared domain.
+    Publication reuses these certificates and their measured work counters.
     Fidelity, topology and quality remain independently evaluated by acceptance.
     """
 
-    request: MeshCertificationInputs
-    validity: CellValidityCertificate
-    embedding: GlobalEmbeddingCertificate
-    coverage: DomainCoverageCertificate
+    request: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs
+    validity: (
+        _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate
+    )
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate
+    coverage: domain_coverage_owner.DomainCoverageCertificate
     mesh_arrays_id: str = eqx.field(static=True)
     validity_arrays_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
         geometry: CellGeometrySpec,
-        validity: CellValidityCertificate,
+        validity: _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate,
         /,
         *,
-        schedule: MeshCertificationSchedule,
-        domain: PiecewiseLinearDomain | MappedReferenceDomain,
+        schedule: _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule,
+        domain: domain_coverage_owner.PiecewiseLinearDomain
+        | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
         cell_regions: ArrayLike,
-        embedding: GlobalEmbeddingCertificate | None = None,
-        limits: MeshCertificateLimits | None = None,
-        source: SourceBoundaryQuery | None = None,
+        embedding: global_embedding_owner.GlobalEmbeddingCertificate | None = None,
+        limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+        | None = None,
+        source: source_boundary_records_owner.SourceBoundaryQuery | None = None,
         fidelity_tolerance: float | None = None,
         fidelity_sample_order: int = 4,
-        scoped_fidelity: tuple[tuple[SourceBoundaryQuery, ArrayLike, float], ...] = (),
+        scoped_fidelity: tuple[
+            tuple[
+                source_boundary_records_owner.SourceBoundaryQuery,
+                ArrayLike,
+                float,
+            ],
+            ...,
+        ] = (),
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+        | None = None,
     ) -> None:
-        if not isinstance(schedule, MeshCertificationSchedule):
-            raise TypeError("schedule must be MeshCertificationSchedule.")
         if "domain_coverage" not in schedule.required_checks:
             raise ValueError(
-                "Prepared volume premises require scheduled domain coverage."
+                f"MeshCertificationPreparedEvidence.schedule must require domain coverage; got route={schedule.route!r}"
             )
         if domain is None or cell_regions is None:
-            raise ValueError("Prepared coverage requires both domain and cell_regions.")
+            raise ValueError(
+                "MeshCertificationPreparedEvidence.coverage must supply both domain and cell_regions; got missing coverage inputs"
+            )
         if (source is None) != (fidelity_tolerance is None) or (source is not None) != (
             "source_fidelity" in schedule.required_checks
         ):
             raise ValueError(
-                "Prepared evidence requires exactly the schedule's source inputs."
+                f"MeshCertificationPreparedEvidence.source must supply exactly the schedule's source inputs; got route={schedule.route!r}, source_present={source is not None}, tolerance={fidelity_tolerance!r}"
             )
-        request = MeshCertificationInputs(
-            mesh,
-            geometry,
-            schedule,
-            domain=domain,
-            cell_regions=cell_regions,
-            source=source,
-            fidelity_tolerance=fidelity_tolerance,
-            fidelity_sample_order=fidelity_sample_order,
-            limits=limits,
-            scoped_fidelity=scoped_fidelity,
-        )
-        request.validate_source_integrity()
-        if not isinstance(validity, CellValidityCertificate):
-            raise TypeError("validity must be CellValidityCertificate.")
-        validity.require_bound(geometry, mesh=mesh)
-        if (
-            not validity.all_certified
-            or not np.all(
-                np.asarray(validity.status) == CellValidityStatus.CERTIFIED_VALID
-            )
-            or validity.status.shape[0]
-            != sum(block.vertices.shape[0] for block in mesh.blocks)
-        ):
-            raise ValueError("Prepared validity must be wholly positive and complete.")
-        embedding_ = (
-            certify_global_embedding(
+        request = (
+            _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs(
                 mesh,
                 geometry,
-                validity,
+                schedule,
+                domain=domain,
+                cell_regions=cell_regions,
+                source=source,
+                fidelity_tolerance=fidelity_tolerance,
+                fidelity_sample_order=fidelity_sample_order,
+                limits=limits,
+                scoped_fidelity=scoped_fidelity,
+                budget=budget,
+            )
+        )
+        with _certificate_budget(request.limits, budget) as budget:
+            request.validate_source_integrity(budget=budget)
+            validity.require_bound(geometry, mesh=mesh)
+            if (
+                not validity.all_certified
+                or not np.all(
+                    np.asarray(validity.status)
+                    == _dependency_phydrax_discretization__cell_geometry_validity.CellValidityStatus.CERTIFIED_VALID
+                )
+                or validity.status.shape[0]
+                != sum(block.vertices.shape[0] for block in mesh.blocks)
+            ):
+                raise ValueError(
+                    f"MeshCertificationPreparedEvidence.validity must certify all mesh cells; got all_certified={validity.all_certified!r}, status_count={validity.status.shape[0]}"
+                )
+            embedding_ = (
+                global_embedding_owner.certify_global_embedding(
+                    mesh,
+                    geometry,
+                    validity,
+                    limits=request.limits,
+                    budget=budget,
+                )
+                if embedding is None
+                else embedding
+            )
+            require_prepared_embedding(
+                mesh, geometry, validity, embedding_, request.limits
+            )
+            if request.domain is None or request.cell_regions is None:
+                raise ValueError(
+                    "MeshCertificationPreparedEvidence.request must retain domain and cell_regions; got missing coverage inputs"
+                )
+            coverage = domain_coverage_owner.certify_domain_coverage(
+                mesh,
+                geometry,
+                request.domain,
+                request.cell_regions,
+                embedding=embedding_,
                 limits=request.limits,
+                budget=budget,
             )
-            if embedding is None
-            else embedding
-        )
-        _require_prepared_embedding(mesh, geometry, validity, embedding_, request.limits)
-        assert request.domain is not None and request.cell_regions is not None
-        coverage = certify_domain_coverage(
-            mesh,
-            geometry,
-            request.domain,
-            request.cell_regions,
-            embedding=embedding_,
-            limits=request.limits,
-        )
-        if coverage.status != "certified" or coverage.findings:
-            raise _MeshCertificationPremiseFailure(
-                mesh, geometry, request, validity, embedding_, coverage
+            if coverage.status != "certified" or coverage.findings:
+                raise MeshCertificationPremiseFailure(
+                    mesh, geometry, request, validity, embedding_, coverage, budget=budget
+                )
+            _require_prepared_coverage(coverage, request.limits)
+            self.request = request
+            self.validity = validity
+            self.embedding = embedding_
+            self.coverage = coverage
+            self.mesh_arrays_id = canonical_fingerprint(array_tree_fingerprint(mesh))
+            self.validity_arrays_id = canonical_fingerprint(
+                array_tree_fingerprint(validity)
             )
-        _require_prepared_coverage(coverage, request.limits)
-        self.request = request
-        self.validity = validity
-        self.embedding = embedding_
-        self.coverage = coverage
-        self.mesh_arrays_id = canonical_fingerprint(array_tree_fingerprint(mesh))
-        self.validity_arrays_id = canonical_fingerprint(array_tree_fingerprint(validity))
-        self.evidence_id = canonical_fingerprint(
-            {
-                "kind": "mesh-certification-prepared-evidence",
-                "request": request.request_id,
-                "validity": validity.certificate_id,
-                "embedding": embedding_.certificate_id,
-                "coverage": coverage.certificate_id,
-                "mesh_arrays": self.mesh_arrays_id,
-                "validity_arrays": self.validity_arrays_id,
-            }
-        )
+            self.evidence_id = canonical_fingerprint(
+                {
+                    "kind": "mesh-certification-prepared-evidence",
+                    "request": request.request_id,
+                    "validity": validity.certificate_id,
+                    "embedding": embedding_.certificate_id,
+                    "coverage": coverage.certificate_id,
+                    "mesh_arrays": self.mesh_arrays_id,
+                    "validity_arrays": self.validity_arrays_id,
+                }
+            )
 
+    @checked
     def require(
         self,
         mesh: CellMesh,
         geometry: CellGeometrySpec,
-        request: MeshCertificationInputs,
+        request: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs,
         /,
+        *,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+        | None = None,
     ) -> None:
-        """Refuse stale, foreign, incomplete or differently governed premises."""
-        self.request.validate_source_integrity()
-        if request.request_id != self.request.request_id or not bool(
-            eqx.tree_equal(request, self.request, typematch=True)
+        """Validate retained volume evidence against the request and target bindings."""
+        self.request.validate_source_integrity(budget=budget)
+        if request.request_id != self.request.request_id or not tree_content_equal(
+            request, self.request
         ):
             raise ValueError(
-                "Prepared evidence differs from the actual acceptance request."
+                f"MeshCertificationPreparedEvidence.request must match the acceptance request; got prepared_id={self.request.request_id!r}, acceptance_id={request.request_id!r}"
             )
         self.validity.require_bound(geometry, mesh=mesh)
         if (
             not self.validity.all_certified
             or not np.all(
-                np.asarray(self.validity.status) == CellValidityStatus.CERTIFIED_VALID
+                np.asarray(self.validity.status)
+                == _dependency_phydrax_discretization__cell_geometry_validity.CellValidityStatus.CERTIFIED_VALID
             )
             or canonical_fingerprint(array_tree_fingerprint(mesh)) != self.mesh_arrays_id
             or canonical_fingerprint(array_tree_fingerprint(self.validity))
             != self.validity_arrays_id
         ):
-            raise ValueError("Prepared mesh or validity numerical evidence changed.")
-        _require_prepared_embedding(
+            raise ValueError(
+                "MeshCertificationPreparedEvidence.bindings must retain mesh, geometry and validity values; got changed numerical evidence"
+            )
+        require_prepared_embedding(
             mesh,
             geometry,
             self.validity,
@@ -787,8 +881,13 @@ class MeshCertificationPreparedEvidence(StrictModule, NonTrainableState):
             request.limits,
         )
         coverage = self.coverage
-        if not isinstance(coverage, DomainCoverageCertificate):
-            raise TypeError("Prepared coverage must be DomainCoverageCertificate.")
+        if not isinstance(
+            coverage,
+            domain_coverage_owner.DomainCoverageCertificate,
+        ):
+            raise TypeError(
+                f"MeshCertificationPreparedEvidence.coverage must be DomainCoverageCertificate; got {type(coverage).__name__}"
+            )
         coverage.binding.require(mesh, geometry)
         _require_prepared_coverage(coverage, request.limits)
         domain = request.domain
@@ -805,28 +904,34 @@ class MeshCertificationPreparedEvidence(StrictModule, NonTrainableState):
             or coverage.source_facet_count != domain.facets.shape[0]
             or coverage.covered_source_facet_count != coverage.source_facet_count
         ):
-            raise ValueError("Prepared coverage has incomplete or foreign premises.")
-        rebuilt = DomainCoverageCertificate(
+            raise ValueError(
+                f"MeshCertificationPreparedEvidence.coverage must bind the governed domain and region assignments; got certificate_id={coverage.certificate_id!r}"
+            )
+        rebuilt = domain_coverage_owner.DomainCoverageCertificate(
             coverage.binding,
             coverage.embedding_certificate_id,
             domain,
             coverage.findings,
-            requested_region_measures=coverage.requested_region_measures,
-            achieved_region_measures=coverage.achieved_region_measures,
-            requested_region_measure_bounds=coverage.requested_region_measure_bounds,
-            achieved_region_measure_bounds=coverage.achieved_region_measure_bounds,
-            integration_error_bounds=coverage.integration_error_bounds,
-            covered_source_facet_count=coverage.covered_source_facet_count,
-            facet_source_overlaps=coverage.facet_source_overlaps,
-            premise_certificate_ids=coverage.premise_certificate_ids,
-            candidate_pair_count=coverage.candidate_pair_count,
-            subdivision_piece_count=coverage.subdivision_piece_count,
-            maximum_subdivision_depth_reached=coverage.maximum_subdivision_depth_reached,
-            source_expression_work_units=coverage.source_expression_work_units,
-            source_expression_required_work_units=(
-                coverage.source_expression_required_work_units
+            measures=domain_coverage_owner.CoverageMeasures(
+                coverage.requested_region_measures,
+                coverage.achieved_region_measures,
+                coverage.requested_region_measure_bounds,
+                coverage.achieved_region_measure_bounds,
+                coverage.integration_error_bounds,
             ),
-            source_expression_peak_bytes=coverage.source_expression_peak_bytes,
+            evidence=domain_coverage_owner.CoverageEvidence(
+                coverage.covered_source_facet_count,
+                coverage.facet_source_overlaps,
+                coverage.premise_certificate_ids,
+                coverage.candidate_pair_count,
+                coverage.subdivision_piece_count,
+                coverage.maximum_subdivision_depth_reached,
+            ),
+            expression_work=domain_coverage_owner.CoverageExpressionWork(
+                coverage.source_expression_work_units,
+                coverage.source_expression_required_work_units,
+                coverage.source_expression_peak_bytes,
+            ),
         )
         identity = canonical_fingerprint(
             {
@@ -839,22 +944,21 @@ class MeshCertificationPreparedEvidence(StrictModule, NonTrainableState):
                 "validity_arrays": self.validity_arrays_id,
             }
         )
-        if (
-            not bool(eqx.tree_equal(coverage, rebuilt, typematch=True))
-            or identity != self.evidence_id
-        ):
+        if not tree_content_equal(coverage, rebuilt) or identity != self.evidence_id:
             raise ValueError(
-                "Prepared evidence differs from its numerical proof records."
+                f"MeshCertificationPreparedEvidence.evidence_id must match its numerical proof records; got {self.evidence_id!r}"
             )
 
 
 def _require_prepared_coverage(
-    coverage: DomainCoverageCertificate,
-    limits: MeshCertificateLimits,
+    coverage: domain_coverage_owner.DomainCoverageCertificate,
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
     /,
 ) -> None:
     if coverage.status != "certified" or coverage.findings:
-        raise ValueError("Prepared domain coverage must be wholly positive.")
+        raise ValueError(
+            f"MeshCertificationPreparedEvidence.coverage must be certified without findings; got status={coverage.status!r}, finding_count={len(coverage.findings)}"
+        )
     for measured, bounds, error in zip(
         coverage.achieved_region_measures,
         coverage.achieved_region_measure_bounds,
@@ -870,7 +974,7 @@ def _require_prepared_coverage(
             or not np.isfinite(error)
         ):
             raise ValueError(
-                "Prepared coverage requires actual bounded region-measure evidence."
+                f"MeshCertificationPreparedEvidence.coverage.measures must contain finite measurements, bounds and errors; got measurement={measured!r}, bounds={bounds!r}, error={error!r}"
             )
     if (
         min(
@@ -891,18 +995,21 @@ def _require_prepared_coverage(
             and coverage.source_expression_peak_bytes > limits.maximum_scratch_bytes
         )
     ):
-        raise ValueError("Prepared coverage exceeds its actual requested work limits.")
+        raise ValueError(
+            f"MeshCertificationPreparedEvidence.coverage.work must fit requested limits; got candidate_pairs={coverage.candidate_pair_count}, subdivision_pieces={coverage.subdivision_piece_count}, subdivision_depth={coverage.maximum_subdivision_depth_reached}"
+        )
 
 
-def _require_prepared_embedding(
+@checked
+def require_prepared_embedding(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
-    validity: CellValidityCertificate,
-    embedding: GlobalEmbeddingCertificate,
-    limits: MeshCertificateLimits,
+    validity: _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate,
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate,
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits,
     /,
 ) -> None:
-    rebuilt_validity = CellValidityCertificate(
+    rebuilt_validity = _dependency_phydrax_discretization__cell_geometry_validity.CellValidityCertificate(
         validity.status,
         validity.determinant_lower,
         validity.determinant_upper,
@@ -923,24 +1030,22 @@ def _require_prepared_embedding(
         ).tolist()
     )
     if (
-        not bool(eqx.tree_equal(validity, rebuilt_validity, typematch=True))
+        not tree_content_equal(validity, rebuilt_validity)
         or validity.block_names != tuple(block.name for block in mesh.blocks)
         or validity.block_offsets != expected_offsets
         or validity.unsupported_block_names
         or validity.unresolved_reasons
     ):
         raise ValueError(
-            "Prepared validity differs from its complete numerical proof records."
+            f"MeshCertificationPreparedEvidence.validity must match its numerical proof records; got certificate_id={validity.certificate_id!r}"
         )
-    if not isinstance(embedding, GlobalEmbeddingCertificate):
-        raise TypeError("embedding must be GlobalEmbeddingCertificate.")
     embedding.binding.require(mesh, geometry)
     if (
         embedding.binding.source_id is not None
         or embedding.binding.source_revision is not None
     ):
         raise ValueError(
-            "Prepared global embedding must bind mesh geometry, not a foreign source."
+            f"MeshCertificationPreparedEvidence.embedding must bind mesh geometry; got source_id={embedding.binding.source_id!r}"
         )
     checks = set(embedding.evaluated_checks)
     complete = {"cell_validity"}
@@ -998,26 +1103,15 @@ def _require_prepared_embedding(
         or embedding.subdivision_piece_count > limits.maximum_subdivision_pieces
     ):
         raise ValueError(
-            "Prepared embedding has incomplete, foreign or insufficient premises."
+            f"MeshCertificationPreparedEvidence.embedding must contain sufficient governed evidence; got certificate_id={embedding.certificate_id!r}"
         )
-    rebuilt = GlobalEmbeddingCertificate(
-        embedding.binding,
-        embedding.validity_certificate_id,
-        embedding.findings,
-        embedding.evaluated_checks,
-        cell_count=embedding.cell_count,
-        boundary_facet_count=embedding.boundary_facet_count,
-        shell_count=embedding.shell_count,
-        candidate_pair_count=embedding.candidate_pair_count,
-        ray_test_count=embedding.ray_test_count,
-        subdivision_piece_count=embedding.subdivision_piece_count,
-        periodic_image_count=embedding.periodic_image_count,
-        source_expression_work_units=embedding.source_expression_work_units,
-        source_expression_peak_bytes=embedding.source_expression_peak_bytes,
-        boundary_degree=embedding.boundary_degree,
+    rebuilt = global_embedding_owner.GlobalEmbeddingCertificate.from_stored_fields(
+        embedding
     )
-    if not bool(eqx.tree_equal(embedding, rebuilt, typematch=True)):
-        raise ValueError("Prepared embedding differs from its numerical proof records.")
+    if not tree_content_equal(embedding, rebuilt):
+        raise ValueError(
+            f"MeshCertificationPreparedEvidence.embedding must match its numerical proof records; got certificate_id={embedding.certificate_id!r}"
+        )
 
 
 def _junction_excuses(mesh: CellMesh, junction_vertices: ArrayLike, /) -> tuple[str, ...]:
@@ -1038,101 +1132,106 @@ def _junction_excuses(mesh: CellMesh, junction_vertices: ArrayLike, /) -> tuple[
     return ("nonmanifold_facets", "nonmanifold_vertices")
 
 
-def certify_meshing_acceptance(
+@final
+class _AcceptanceInputs(StrictModule, NonTrainableState):
+    """Retain invocation inputs across spatial and fidelity certification phases."""
+
+    schedule: _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule
+    domain: (
+        domain_coverage_owner.PiecewiseLinearDomain
+        | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain
+        | None
+    )
+    cell_regions: ArrayLike | None
+    source: source_boundary_records_owner.SourceBoundaryQuery | None
+    fidelity_tolerance: float | None
+    fidelity_sample_order: int
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits | None
+    junction_vertices: ArrayLike | None
+    scoped_fidelity: tuple[
+        tuple[
+            source_boundary_records_owner.SourceBoundaryQuery,
+            ArrayLike,
+            float,
+        ],
+        ...,
+    ]
+    budget: (
+        _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+        | None
+    )
+
+
+@final
+class _SpatialAcceptanceEvidence(StrictModule, NonTrainableState):
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate
+    coverage: domain_coverage_owner.DomainCoverageCertificate | None
+    request: (
+        _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs | None
+    )
+
+
+def _certify_spatial_acceptance(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
-    audit: CellMeshAuditReport,
-    /,
-    *,
-    schedule: MeshCertificationSchedule,
-    domain: PiecewiseLinearDomain | MappedReferenceDomain | None = None,
-    cell_regions: ArrayLike | None = None,
-    source: SourceBoundaryQuery | None = None,
-    fidelity_tolerance: float | None = None,
-    fidelity_sample_order: int = 4,
-    limits: MeshCertificateLimits | None = None,
-    junction_vertices: ArrayLike | None = None,
-    prepared: MeshCertificationPreparedEvidence | None = None,
-    prepared_embedding: GlobalEmbeddingCertificate | None = None,
-    prepared_fidelity: SourceFidelityCertificate | None = None,
-    scoped_fidelity: tuple[tuple[SourceBoundaryQuery, ArrayLike, float], ...] = (),
-) -> MeshCertificationReport:
-    """Run the route's acceptance schedule and return its bound report.
-
-    ``audit`` must be the audit of ``mesh`` with ``geometry`` and must have
-    evaluated every closure/topology check the route may not skip. PLC volume
-    routes need ``domain`` and ``cell_regions``; implicit volume and surface
-    routes need ``source`` and ``fidelity_tolerance``. Inputs a route does not
-    use are refused rather than ignored. ``junction_vertices`` (curve route
-    only) declares the vertex global ids of curve-network junctions, the only
-    vertices where more than two intervals may meet.
-    ``prepared`` is positive volume evidence from the owning preparation API;
-    mismatched bindings are refused, never silently recertified.
-    """
-
-    if not isinstance(schedule, MeshCertificationSchedule):
-        raise TypeError("schedule must be MeshCertificationSchedule.")
-    if not isinstance(audit, CellMeshAuditReport):
-        raise TypeError("audit must be CellMeshAuditReport.")
-    if (
-        audit.mesh_id != mesh.mesh_id
-        or audit.geometry_id != cell_geometry_id(geometry)
-        or audit.geometry_layout_id != geometry.geometry_layout_id
-    ):
-        raise ValueError("The audit must be bound to this mesh and geometry.")
-    _require_audit(schedule, audit)
-    required = schedule.required_checks
+    audit: _dependency_phydrax_meshing__audit.CellMeshAuditReport,
+    inputs: _AcceptanceInputs,
+    volume: MeshCertificationPreparedEvidence | None,
+    prepared_embedding: global_embedding_owner.GlobalEmbeddingCertificate | None,
+) -> _SpatialAcceptanceEvidence:
+    schedule = inputs.schedule
+    domain = inputs.domain
+    cell_regions = inputs.cell_regions
+    source = inputs.source
+    fidelity_tolerance = inputs.fidelity_tolerance
+    fidelity_sample_order = inputs.fidelity_sample_order
+    limits = inputs.limits
+    junction_vertices = inputs.junction_vertices
+    scoped_fidelity = inputs.scoped_fidelity
+    budget = inputs.budget
     coverage_inputs = domain is not None or cell_regions is not None
-    fidelity_inputs = source is not None or fidelity_tolerance is not None
-    if coverage_inputs != ("domain_coverage" in required) or fidelity_inputs != (
-        "source_fidelity" in required
-    ):
-        raise ValueError(
-            f"Route {schedule.route!r} requires exactly the inputs of its checks."
-        )
-    excused: tuple[str, ...] = ()
-    if junction_vertices is not None:
-        if schedule.route != "curve":
-            raise ValueError("junction_vertices are declared on the curve route only.")
-        excused = _junction_excuses(mesh, junction_vertices)
     request = None
-    if prepared is not None and prepared_embedding is not None:
-        raise ValueError(
-            "Whole prepared evidence and a separate embedding are mutually exclusive."
+    if volume is not None:
+        request = (
+            _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs(
+                mesh,
+                geometry,
+                schedule,
+                domain=domain,
+                cell_regions=cell_regions,
+                source=source,
+                fidelity_tolerance=fidelity_tolerance,
+                fidelity_sample_order=fidelity_sample_order,
+                limits=limits,
+                junction_vertices=junction_vertices,
+                scoped_fidelity=scoped_fidelity,
+                budget=budget,
+            )
         )
-    if prepared is not None:
-        if not isinstance(prepared, MeshCertificationPreparedEvidence):
-            raise TypeError("prepared must be MeshCertificationPreparedEvidence or None.")
-        request = MeshCertificationInputs(
-            mesh,
-            geometry,
-            schedule,
-            domain=domain,
-            cell_regions=cell_regions,
-            source=source,
-            fidelity_tolerance=fidelity_tolerance,
-            fidelity_sample_order=fidelity_sample_order,
-            limits=limits,
-            junction_vertices=junction_vertices,
-            scoped_fidelity=scoped_fidelity,
-        )
-        prepared.require(mesh, geometry, request)
-        if not bool(eqx.tree_equal(audit.validity, prepared.validity, typematch=True)):
-            raise ValueError("The audit must use the exact prepared validity premise.")
-        embedding = prepared.embedding
-        coverage = prepared.coverage
+        volume.require(mesh, geometry, request, budget=budget)
+        if not tree_content_equal(audit.validity, volume.validity):
+            raise ValueError(
+                f"certify_meshing_acceptance.audit.validity must use the prepared validity certificate; got audit_id={audit.validity.certificate_id!r}, prepared_id={volume.validity.certificate_id!r}"
+            )
+        embedding = volume.embedding
+        coverage = volume.coverage
     else:
         if prepared_embedding is None:
-            embedding = certify_global_embedding(
+            embedding = global_embedding_owner.certify_global_embedding(
                 mesh,
                 geometry,
                 audit.validity,
                 limits=limits,
                 junction_vertices=junction_vertices,
+                budget=budget,
             )
         else:
             prepared_embedding.binding.require(mesh, geometry)
-            expected_limits = MeshCertificateLimits() if limits is None else limits
+            expected_limits = (
+                _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits()
+                if limits is None
+                else limits
+            )
             if (
                 prepared_embedding.status != "certified"
                 or prepared_embedding.validity_certificate_id
@@ -1140,31 +1239,65 @@ def certify_meshing_acceptance(
                 or prepared_embedding.binding.limits_id != expected_limits.limits_id
             ):
                 raise ValueError(
-                    "Prepared embedding is stale, unresolved, or differently governed."
+                    f"certify_meshing_acceptance.prepared.embedding must be current, certified and governed by the requested limits; got status={prepared_embedding.status!r}, limits_id={prepared_embedding.binding.limits_id!r}"
                 )
             embedding = prepared_embedding
         coverage = None
         if domain is not None and cell_regions is not None:
-            coverage = certify_domain_coverage(
+            coverage = domain_coverage_owner.certify_domain_coverage(
                 mesh,
                 geometry,
                 domain,
                 cell_regions,
                 embedding=embedding,
                 limits=limits,
+                budget=budget,
             )
         elif coverage_inputs:
-            raise ValueError("Domain coverage needs both domain and cell_regions.")
+            raise ValueError(
+                "certify_meshing_acceptance.domain_coverage must supply both domain and cell_regions; got missing coverage inputs"
+            )
+    return _SpatialAcceptanceEvidence(embedding, coverage, request)
+
+
+@final
+class _FidelityAcceptanceEvidence(StrictModule, NonTrainableState):
+    fidelity: source_fidelity_owner.SourceFidelityCertificate | None
+    request: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs
+    scoped_certificates: tuple[source_fidelity_owner.SourceFidelityCertificate, ...]
+
+
+def _certify_fidelity_acceptance(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    inputs: _AcceptanceInputs,
+    request: _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs
+    | None,
+    prepared_fidelity: source_fidelity_owner.SourceFidelityCertificate | None,
+) -> _FidelityAcceptanceEvidence:
+    schedule = inputs.schedule
+    domain = inputs.domain
+    cell_regions = inputs.cell_regions
+    source = inputs.source
+    fidelity_tolerance = inputs.fidelity_tolerance
+    fidelity_sample_order = inputs.fidelity_sample_order
+    limits = inputs.limits
+    junction_vertices = inputs.junction_vertices
+    scoped_fidelity = inputs.scoped_fidelity
+    budget = inputs.budget
+    required = schedule.required_checks
+    fidelity_inputs = source is not None or fidelity_tolerance is not None
     fidelity = None
     if source is not None and fidelity_tolerance is not None:
         if prepared_fidelity is None:
-            fidelity = certify_source_fidelity(
+            fidelity = source_fidelity_owner.certify_source_fidelity(
                 mesh,
                 geometry,
                 source,
                 tolerance=fidelity_tolerance,
                 sample_order=fidelity_sample_order,
                 limits=limits,
+                budget=budget,
             )
         else:
             prepared_fidelity.binding.require(mesh, geometry)
@@ -1177,31 +1310,36 @@ def certify_meshing_acceptance(
                 or prepared_fidelity.source_to_mesh_semantics != "certified"
             ):
                 raise ValueError(
-                    "Prepared fidelity is stale, unresolved, or differently governed."
+                    f"certify_meshing_acceptance.prepared.fidelity must be current, certified and governed by the requested source and tolerance; got status={prepared_fidelity.status!r}, tolerance={prepared_fidelity.tolerance!r}"
                 )
             fidelity = prepared_fidelity
     elif fidelity_inputs:
-        raise ValueError("Source fidelity needs both source and fidelity_tolerance.")
+        raise ValueError(
+            "certify_meshing_acceptance.source_fidelity must supply both source and fidelity_tolerance; got missing fidelity inputs"
+        )
     if scoped_fidelity and "source_fidelity" not in required:
         raise ValueError(
-            "Scoped original-source checks require independent whole-source fidelity acceptance."
+            f"certify_meshing_acceptance.scoped_fidelity must also schedule whole-source fidelity acceptance; got route={schedule.route!r}"
         )
     if request is None:
-        request = MeshCertificationInputs(
-            mesh,
-            geometry,
-            schedule,
-            domain=domain,
-            cell_regions=cell_regions,
-            source=source,
-            fidelity_tolerance=fidelity_tolerance,
-            fidelity_sample_order=fidelity_sample_order,
-            limits=limits,
-            junction_vertices=junction_vertices,
-            scoped_fidelity=scoped_fidelity,
+        request = (
+            _dependency_phydrax_meshing__certification_inputs.MeshCertificationInputs(
+                mesh,
+                geometry,
+                schedule,
+                domain=domain,
+                cell_regions=cell_regions,
+                source=source,
+                fidelity_tolerance=fidelity_tolerance,
+                fidelity_sample_order=fidelity_sample_order,
+                limits=limits,
+                junction_vertices=junction_vertices,
+                scoped_fidelity=scoped_fidelity,
+                budget=budget,
+            )
         )
     scoped_certificates = tuple(
-        certify_source_fidelity(
+        source_fidelity_owner.certify_source_fidelity(
             mesh,
             geometry,
             query,
@@ -1209,58 +1347,218 @@ def certify_meshing_acceptance(
             sample_order=fidelity_sample_order,
             limits=limits,
             target_facet_ids=identifiers,
+            budget=budget,
         )
         for query, identifiers, tolerance in request.scoped_fidelity
     )
-    outcomes = []
-    for check in required:
-        match check:
-            case "cell_validity":
-                outcomes.append(_validity_outcome(audit))
-            case "topology":
-                outcomes.append(_topology_outcome(audit, excused))
-            case "quality":
-                outcomes.append(_quality_outcome(audit))
-            case "global_embedding":
-                outcomes.append(_certificate_outcome(check, embedding))
-            case "domain_coverage" if coverage is not None:
-                outcomes.append(_certificate_outcome(check, coverage))
-            case "source_fidelity" if fidelity is not None:
-                outcomes.append(_certificate_outcome(check, fidelity))
+    return _FidelityAcceptanceEvidence(fidelity, request, scoped_certificates)
+
+
+@final
+class PreparedVolumeAcceptance(StrictModule, NonTrainableState):
+    """Retain prepared volume evidence and optional source fidelity."""
+
+    volume: MeshCertificationPreparedEvidence
+    fidelity: source_fidelity_owner.SourceFidelityCertificate | None = None
+
+    @checked
+    def __init__(
+        self,
+        volume: MeshCertificationPreparedEvidence,
+        fidelity: source_fidelity_owner.SourceFidelityCertificate | None = None,
+    ) -> None:
+        self.volume = volume
+        self.fidelity = fidelity
+
+
+@final
+class PreparedBoundaryAcceptance(StrictModule, NonTrainableState):
+    """Retain independently prepared embedding and source fidelity."""
+
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate | None = None
+    fidelity: source_fidelity_owner.SourceFidelityCertificate | None = None
+
+    @checked
+    def __init__(
+        self,
+        embedding: global_embedding_owner.GlobalEmbeddingCertificate | None = None,
+        fidelity: source_fidelity_owner.SourceFidelityCertificate | None = None,
+    ) -> None:
+        self.embedding = embedding
+        self.fidelity = fidelity
+
+
+type PreparedMeshingAcceptance = PreparedVolumeAcceptance | PreparedBoundaryAcceptance
+
+
+@checked
+def certify_meshing_acceptance(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    audit: _dependency_phydrax_meshing__audit.CellMeshAuditReport,
+    /,
+    *,
+    schedule: _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule,
+    domain: domain_coverage_owner.PiecewiseLinearDomain
+    | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain
+    | None = None,
+    cell_regions: ArrayLike | None = None,
+    source: source_boundary_records_owner.SourceBoundaryQuery | None = None,
+    fidelity_tolerance: float | None = None,
+    fidelity_sample_order: int = 4,
+    limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+    | None = None,
+    junction_vertices: ArrayLike | None = None,
+    prepared: PreparedMeshingAcceptance | None = None,
+    scoped_fidelity: tuple[
+        tuple[
+            source_boundary_records_owner.SourceBoundaryQuery,
+            ArrayLike,
+            float,
+        ],
+        ...,
+    ] = (),
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None = None,
+) -> MeshCertificationReport:
+    """Run the route's acceptance schedule and return its bound report.
+
+    ``audit`` must be the audit of ``mesh`` with ``geometry`` and must have
+    evaluated every closure/topology check the route may not skip. PLC volume
+    routes need ``domain`` and ``cell_regions``; implicit volume and surface
+    routes need ``source`` and ``fidelity_tolerance``. Inputs a route does not
+    use are refused rather than ignored. ``junction_vertices`` (curve route
+    only) declares the vertex global ids of curve-network junctions, the only
+    vertices where more than two intervals may meet.
+    ``prepared`` selects ``PreparedVolumeAcceptance`` for volume evidence or
+    ``PreparedBoundaryAcceptance`` for independently prepared embedding. Both
+    variants may retain source fidelity; volume evidence cannot select a second
+    embedding. Acceptance validates each retained binding before reusing it.
+    """
+
+    with _certificate_budget(limits, budget) as budget:
+        match prepared:
+            case PreparedVolumeAcceptance(volume=volume, fidelity=prepared_fidelity):
+                prepared_embedding = None
+            case PreparedBoundaryAcceptance(
+                embedding=prepared_embedding, fidelity=prepared_fidelity
+            ):
+                volume = None
+            case None:
+                volume = None
+                prepared_embedding = None
+                prepared_fidelity = None
             case _:
-                raise RuntimeError(f"Scheduled check {check!r} has no evidence.")
-    outcomes.extend(
-        _certificate_outcome("source_fidelity", certificate)
-        for certificate in scoped_certificates
-    )
-    return MeshCertificationReport(
-        schedule,
-        mesh,
-        geometry,
-        audit,
-        tuple(outcomes),
-        embedding=embedding,
-        coverage=coverage,
-        fidelity=fidelity,
-        request=request,
-        scoped_fidelity=scoped_certificates,
-    )
+                raise TypeError(
+                    "certify_meshing_acceptance.prepared must contain prepared acceptance evidence; got unsupported variant"
+                )
+        if (
+            audit.mesh_id != mesh.mesh_id
+            or audit.geometry_id
+            != _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                geometry
+            )
+            or audit.geometry_layout_id != geometry.geometry_layout_id
+        ):
+            raise ValueError(
+                f"certify_meshing_acceptance.audit must bind the mesh and geometry; got audit_mesh_id={audit.mesh_id!r}, audit_geometry_id={audit.geometry_id!r}"
+            )
+        _require_audit(schedule, audit)
+        required = schedule.required_checks
+        coverage_inputs = domain is not None or cell_regions is not None
+        fidelity_inputs = source is not None or fidelity_tolerance is not None
+        if coverage_inputs != ("domain_coverage" in required) or fidelity_inputs != (
+            "source_fidelity" in required
+        ):
+            raise ValueError(
+                f"certify_meshing_acceptance.inputs must supply exactly the inputs of its checks; got route={schedule.route!r}, coverage_inputs={coverage_inputs!r}, fidelity_inputs={fidelity_inputs!r}"
+            )
+        excused: tuple[str, ...] = ()
+        if junction_vertices is not None:
+            if schedule.route != "curve":
+                raise ValueError(
+                    f"certify_meshing_acceptance.junction_vertices must be declared only on the curve route; got route={schedule.route!r}"
+                )
+            excused = _junction_excuses(mesh, junction_vertices)
+        request = None
+        inputs = _AcceptanceInputs(
+            schedule,
+            domain,
+            cell_regions,
+            source,
+            fidelity_tolerance,
+            fidelity_sample_order,
+            limits,
+            junction_vertices,
+            scoped_fidelity,
+            budget,
+        )
+        spatial = _certify_spatial_acceptance(
+            mesh, geometry, audit, inputs, volume, prepared_embedding
+        )
+        embedding, coverage, request = (
+            spatial.embedding,
+            spatial.coverage,
+            spatial.request,
+        )
+        fidelity_phase = _certify_fidelity_acceptance(
+            mesh, geometry, inputs, request, prepared_fidelity
+        )
+        fidelity = fidelity_phase.fidelity
+        request = fidelity_phase.request
+        scoped_certificates = fidelity_phase.scoped_certificates
+        outcomes = []
+        for check in required:
+            match check:
+                case "cell_validity":
+                    outcomes.append(_validity_outcome(audit))
+                case "topology":
+                    outcomes.append(_topology_outcome(audit, excused))
+                case "quality":
+                    outcomes.append(_quality_outcome(audit))
+                case "global_embedding":
+                    outcomes.append(_certificate_outcome(check, embedding))
+                case "domain_coverage" if coverage is not None:
+                    outcomes.append(_certificate_outcome(check, coverage))
+                case "source_fidelity" if fidelity is not None:
+                    outcomes.append(_certificate_outcome(check, fidelity))
+                case _:
+                    raise RuntimeError(
+                        f"certify_meshing_acceptance.evidence must cover the scheduled check; got check={check!r} without evidence"
+                    )
+        outcomes.extend(
+            _certificate_outcome("source_fidelity", certificate)
+            for certificate in scoped_certificates
+        )
+        return MeshCertificationReport(
+            schedule,
+            mesh,
+            geometry,
+            audit,
+            tuple(outcomes),
+            embedding=embedding,
+            coverage=coverage,
+            fidelity=fidelity,
+            request=request,
+            scoped_fidelity=scoped_certificates,
+        )
 
 
-def acceptance_stage_report(report: MeshCertificationReport, /) -> MeshingStageReport:
+@checked
+def acceptance_stage_report(
+    report: MeshCertificationReport, /
+) -> _dependency_phydrax_meshing__trace.MeshingStageReport:
     """Trace stage of one certification report with failing-entity diagnostics."""
 
-    if not isinstance(report, MeshCertificationReport):
-        raise TypeError("report must be MeshCertificationReport.")
     achieved = dict(report.achieved)
     diagnostics = tuple(
-        MeshingDiagnostic(
-            MeshingDiagnosticSeverity.ERROR,
+        _dependency_phydrax_meshing__trace.MeshingDiagnostic(
+            _dependency_phydrax_meshing__trace.MeshingDiagnosticSeverity.ERROR,
             f"{outcome.check} {outcome.status}: {', '.join(outcome.reasons)}",
-            failure_category=MeshingFailureCategory.AUDIT_FAILED,
+            failure_category=_leaf_phydrax_meshing__failures.MeshingFailureCategory.AUDIT_FAILED,
             entity_ids=outcome.entity_ids,
-            # An unresolved bound is unbounded (inf); diagnostics carry it as
-            # the largest finite float, the report keeps the exact value.
+            # Diagnostics saturate an infinite bound at the largest finite
+            # float; the retained report preserves the infinite bound.
             quantities=tuple(
                 (name, wanted, min(achieved[name], _LARGEST))
                 for name, wanted in report.requested
@@ -1271,19 +1569,19 @@ def acceptance_stage_report(report: MeshCertificationReport, /) -> MeshingStageR
     )
     statuses = {outcome.status for outcome in report.failing_outcomes}
     status = (
-        MeshingStageStatus.FAILED
+        _dependency_phydrax_meshing__trace.MeshingStageStatus.FAILED
         if "violated" in statuses
-        else MeshingStageStatus.UNRESOLVED
+        else _dependency_phydrax_meshing__trace.MeshingStageStatus.UNRESOLVED
         if statuses
-        else MeshingStageStatus.PASSED
+        else _dependency_phydrax_meshing__trace.MeshingStageStatus.PASSED
     )
     certificates = tuple(
         value.certificate_id
         for value in (report.embedding, report.coverage, report.fidelity)
         if value is not None
     )
-    return MeshingStageReport(
-        MeshingStageKind.CERTIFICATION,
+    return _dependency_phydrax_meshing__trace.MeshingStageReport(
+        _dependency_phydrax_meshing__trace.MeshingStageKind.CERTIFICATION,
         status,
         input_ids=(report.mesh_id, report.geometry_id, report.audit_report_id),
         output_ids=(report.report_id, *certificates),
@@ -1292,13 +1590,12 @@ def acceptance_stage_report(report: MeshCertificationReport, /) -> MeshingStageR
 
 
 __all__ = [
-    "MeshCertificationCheck",
-    "MeshCertificationInputs",
     "MeshCertificationOutcome",
     "MeshCertificationPreparedEvidence",
     "MeshCertificationReport",
-    "MeshCertificationRoute",
-    "MeshCertificationSchedule",
+    "PreparedBoundaryAcceptance",
+    "PreparedMeshingAcceptance",
+    "PreparedVolumeAcceptance",
     "acceptance_stage_report",
     "certify_meshing_acceptance",
 ]

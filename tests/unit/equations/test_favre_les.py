@@ -14,8 +14,9 @@ import pytest
 from phydrax.applications.compressible_flow._qualification import (
     ManufacturedViscousNSPlan,
 )
-from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.discretization._conservation_boundary import ExtrapolationBoundary
+from phydrax.discretization._reference_cell_types import CellBlock
 from phydrax.discretization.fem._boundary import FiniteElementBoundarySet
 from phydrax.discretization.fem._generic import (
     FiniteElementFieldSpec,

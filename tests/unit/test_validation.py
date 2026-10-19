@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from phydrax._validation import (
+    bounded_integer,
     canonical_identifier,
     nonnegative_integer,
     optional_identifier,
@@ -54,3 +55,19 @@ def test_integer_validators_refuse_booleans_and_nonintegral_values() -> None:
                 validate(wrong_kind, "count")
         with pytest.raises(ValueError):
             validate(smallest - 1, "count")
+
+
+@pytest.mark.parametrize("value", (-2, -1, 0, np.int64(1), 2, 3, True, 1.0))
+def test_bounded_integer_enforces_inclusive_nonboolean_bounds(value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        with pytest.raises(TypeError, match="count must be an integer"):
+            bounded_integer(value, "count", lower=-1, upper=2)
+    elif -1 <= value <= 2:
+        result = bounded_integer(value, "count", lower=-1, upper=2)
+        assert result == value
+        assert type(result) is int
+    else:
+        with pytest.raises(
+            ValueError, match=rf"count must lie in \[-1, 2\]; got {value}\."
+        ):
+            bounded_integer(value, "count", lower=-1, upper=2)

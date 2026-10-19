@@ -17,46 +17,65 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
-from time import monotonic
-from typing import final, TypedDict
+from typing import final
 
 import equinox as eqx
 import numpy as np
 
+import phydrax.discretization as cell_complex_owner
+import phydrax.discretization as cell_geometry_owner
+import phydrax.discretization as cell_mesh_owner
+from phydrax.meshing._association_state import (
+    entity_rows,
+    GeometryAssociation,
+    target_dimension,
+)
+from phydrax.meshing._certification_schedule import MeshCertificationSchedule
+from phydrax.meshing._host_banks import entities
+from phydrax.meshing.providers._native_route_policy import publication_policy
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._meshcore import NativeExecutionScope, NativeHostStorageWorkspace
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization import CellGeometrySpec, CellMesh, PolygonalConnectivity
-from ...geometry._meshing_domain import (
-    MeshingDomain,
-    MeshingDomainBoundarySource,
-    PatchCurveUse,
-)
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...discretization._mapped_geometry_measure import prepare_mapped_edge_arc_length
+from ...discretization._reference_cell import reference_cell_topology
+from ...geometry._domain_boundary import MeshingDomainBoundarySource
+from ...geometry._meshing_domain import MeshingDomain, PatchCurveUse, PatchPoleUse
 from ...geometry._surface_source_support import (
     prepare_surface_source_root_atlas,
     PreparedSurfaceSourceSupport,
+    restrict_surface_source_atlas_geometry,
     SurfaceNativeRestrictionBoundarySource,
+    SurfaceRestrictionRows,
     SurfaceSourceCharts,
     SurfaceSourceRootAtlas,
 )
-from .._association import GeometryAssociation, GeometryAssociationKind
+from ...geometry.brep._patches import BSplineSurfacePatch, LineCurve
+from ...typing import checked
 from .._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
 from .._canonical import canonicalize_cell_mesh
-from .._certification import MeshCertificationSchedule
 from .._contracts import (
     CellFamilyPolicy,
     CellMeshingTarget,
-    MeshingDerivativeMode,
     MeshingProviderInfo,
     SurfaceMeshingSpec,
 )
 from .._controls import FeatureKind
-from .._distributed_generation import PreparedDistributedSurfaceGeneration
+from .._distributed_generation import (
+    execute_distributed_surface_initial,
+    PreparedDistributedSurfaceGeneration,
+)
 from .._domain import compile_surface_domain, CompiledSurfaceDomain, surface_domain_issues
-from .._measurements import NativeMeshingPhaseRecorder, phase_started, record_elapsed
+from .._dual_extraction import (
+    DualExtraction,
+)
+from .._initial_certification import publish_distributed_surface_initial
+from .._measurements import measure_phase, NativeMeshingPhaseRecorder
 from .._metric import metric_edge_lengths, metric_simplex_quality
-from .._organization import (
+from .._organization_records import (
     MeshLabel,
     MeshPatch,
     MeshZone,
@@ -64,11 +83,11 @@ from .._organization import (
     RegionBoundaryEvidence,
 )
 from .._quad_generation import (
-    DualExtraction,
     extract_surface_quads,
     prepare_surface_cross_field,
     remap_dual_metadata,
 )
+from .._quality import evaluate_cell_quality
 from .._result import CellMeshingResult, MeshingComplianceReport
 from .._scope import MeshingEntityKind, MeshingScope
 from .._sizing import (
@@ -77,7 +96,8 @@ from .._sizing import (
     SizeControlStrength,
     UniformSizeControl,
 )
-from .._surface_generation import generate_surface, SurfaceConstruction
+from .._surface_construction import SurfaceConstruction
+from .._surface_generation import generate_surface
 from .._trace import (
     MeshingDiagnostic,
     MeshingDiagnosticSeverity,
@@ -85,21 +105,31 @@ from .._trace import (
     MeshingStageReport,
     MeshingStageStatus,
 )
-from ._native_options import NativeSurfaceSchedule
+from . import _native_sources as sources_owner
 from ._native_publication import (
-    check_deadline,
-    edge_size_evidence,
+    coordinate_budget,
+    coordinate_phase,
     NativeCertificationRequest,
+    NativePublicationExecution,
+    NativePublicationOrganization,
     publish_native_result,
+)
+from ._native_route_checks import (
+    check_deadline,
+    edge_growth_evidence,
+    edge_size_evidence,
     simplex_entity_limits,
     uniform_size_compliance,
     unique_edges,
 )
-from ._native_sources import NativeSurfaceSource
+from ._native_route_metadata import mesh_entity_scope
+from ._native_schedules import NativeSurfaceSchedule
+from ._native_surface_association import associations, simplex_rows
 
 
+@checked
 def parametric_surface_support_issues(
-    source: NativeSurfaceSource, specification: SurfaceMeshingSpec, /
+    source: sources_owner.NativeSurfaceSource, specification: SurfaceMeshingSpec, /
 ) -> list[str]:
     """Physical requests of one surface specification this route cannot enforce."""
 
@@ -108,20 +138,16 @@ def parametric_surface_support_issues(
     families = target.cell_families
     kinds = set((*families.required, *families.preferred))
     if kinds == {"quadrilateral"}:
-        from ...geometry.brep._patches import BSplineSurfacePatch, LineCurve
-
         selected = source.domain.resolve_indices(
             2, np.asarray(specification.scope.entity_ids)
         )
         for patch in selected.tolist():
             surface = source.domain.patches[patch]
             if not isinstance(surface.surface, BSplineSurfacePatch):
-                unsupported.append(
-                    "original rational spline patch maps for exact source quads"
-                )
+                unsupported.append("rational spline patch maps for source quads")
             if surface.reversed:
                 unsupported.append(
-                    "positive source-UV orientation for exact source quad extraction"
+                    "positive source-UV orientation for source quad extraction"
                 )
             if any(
                 not isinstance(use, PatchCurveUse)
@@ -129,9 +155,7 @@ def parametric_surface_support_issues(
                 for loop in surface.loops
                 for use in loop
             ):
-                unsupported.append(
-                    "original affine UV trim coedges for exact source quad coverage"
-                )
+                unsupported.append("affine UV trim coedges for source quad coverage")
         if target.ambient_dimension != 3:
             unsupported.append("surface quads in ambient dimension three")
     elif kinds == {"triangle"}:
@@ -161,28 +185,26 @@ class PreparedParametricSurface(StrictModule, NonTrainableState):
     minimum_angle: float = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        source: NativeSurfaceSource,
+        source: sources_owner.NativeSurfaceSource,
         specification: SurfaceMeshingSpec,
         schedule: NativeSurfaceSchedule,
         /,
         *,
         initial_partition: PreparedDistributedSurfaceGeneration | None = None,
+        scope: NativeExecutionScope,
     ) -> None:
-        if not isinstance(schedule, NativeSurfaceSchedule):
-            raise TypeError("schedule must be NativeSurfaceSchedule.")
-        compiled = compile_surface_domain(source.domain, specification)
+        budget = coordinate_budget(specification.limits)
+        with coordinate_phase(scope, specification.limits, budget):
+            compiled = compile_surface_domain(source.domain, specification, budget=budget)
         aim = math.radians(schedule.quality_angle_degrees)
         quality = specification.quality_target
         if quality is not None:
             aim = max(aim, quality.minimum_angle)
         generation = initial_partition
         if generation is not None:
-            if not isinstance(generation, PreparedDistributedSurfaceGeneration):
-                raise TypeError(
-                    "initial_partition must be actual prepared distributed surface generation."
-                )
             generation.__post_init__()
             if (
                 generation.compiled.compiled_id != compiled.compiled_id
@@ -191,7 +213,7 @@ class PreparedParametricSurface(StrictModule, NonTrainableState):
                 or generation.schedule.schedule_id != schedule.schedule_id
             ):
                 raise ValueError(
-                    "Initial partition does not bind this exact native source, specification, and schedule."
+                    "initial_partition.binding must match source, specification, and schedule; got a different binding"
                 )
         self.compiled = compiled
         self.schedule = schedule
@@ -219,7 +241,8 @@ class PreparedParametricSurface(StrictModule, NonTrainableState):
         )
 
 
-def _closed(compiled: CompiledSurfaceDomain, /) -> bool:
+@checked
+def closed(compiled: CompiledSurfaceDomain, /) -> bool:
     """Whether every curve of the selected patches is used exactly twice."""
 
     domain = compiled.domain
@@ -227,8 +250,15 @@ def _closed(compiled: CompiledSurfaceDomain, /) -> bool:
     for patch in compiled.patches.tolist():
         for loop in domain.patches[patch].loops:
             for use in loop:
-                if isinstance(use, PatchCurveUse):
-                    counts[use.curve] += 1
+                match use:
+                    case PatchCurveUse():
+                        counts[use.curve] += 1
+                    case PatchPoleUse():
+                        pass
+                    case _:
+                        raise TypeError(
+                            "compiled.domain.loops must contain curve or pole uses; got an unsupported use"
+                        )
     return all(count == 2 for count in counts.values())
 
 
@@ -239,20 +269,20 @@ def _patch_edges(construction: SurfaceConstruction, patches: np.ndarray, /) -> n
     )
 
 
-def _compliance(
-    specification: SurfaceMeshingSpec,
-    construction: SurfaceConstruction,
+@final
+class _SurfaceControlSource(StrictModule):
+    entities: np.ndarray
+    dimension: int
+
+
+def _resolve_surface_control(
+    control: UniformSizeControl | CurvatureSizeControl | ProximitySizeControl,
     domain: MeshingDomain,
-    compiled: CompiledSurfaceDomain,
     /,
-) -> MeshingComplianceReport:
-    vertices = construction.vertices
-    requested: list[tuple[str, float]] = []
-    achieved: list[tuple[str, float]] = []
-    issues: list[str] = []
-    for control in specification.size_controls:
-        if isinstance(control, ProximitySizeControl):
-            entities = np.unique(
+) -> _SurfaceControlSource:
+    match control:
+        case ProximitySizeControl():
+            source_entities = np.unique(
                 np.concatenate(
                     (
                         domain.resolve_indices(
@@ -270,45 +300,81 @@ def _compliance(
                     )
                 )
             )
-        else:
-            entities = domain.resolve_indices(
+            dimension = 2
+        case UniformSizeControl() | CurvatureSizeControl():
+            source_entities = domain.resolve_indices(
                 control.scope.entity_dimension,
                 np.asarray(control.scope.global_entity_ids, dtype=np.int64),
             )
             if control.scope.entity_dimension == 3:
-                entities = np.unique(
+                source_entities = np.unique(
                     np.asarray(
                         [
                             patch
-                            for region in entities.tolist()
+                            for region in source_entities.tolist()
                             for patch, _ in domain.regions[region].boundary
                         ],
                         dtype=np.int64,
                     )
                 )
-        if isinstance(control, UniformSizeControl):
-            edges = (
-                construction.curve_edges[
-                    np.isin(construction.curve_edge_curves, entities)
-                ]
-                if control.scope.entity_dimension == 1
-                else _patch_edges(construction, entities)
+            dimension = control.scope.entity_dimension
+        case _:
+            raise TypeError(
+                f"specification.size_controls must contain supported controls; got {type(control).__name__}"
             )
-            lengths, growth = edge_size_evidence(vertices, edges)
-            control_requested, control_achieved, control_issues = uniform_size_compliance(
-                control, specification.size_compliance, lengths, growth
-            )
-            requested.extend(control_requested)
-            achieved.extend(control_achieved)
-            issues.extend(control_issues)
-            continue
+    return _SurfaceControlSource(source_entities, dimension)
+
+
+def _triangle_size_compliance(
+    specification: SurfaceMeshingSpec,
+    construction: SurfaceConstruction,
+    domain: MeshingDomain,
+    compiled: CompiledSurfaceDomain,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> _SurfaceControlCompliance:
+    vertices = construction.vertices
+    requested: list[tuple[str, float]] = []
+    achieved: list[tuple[str, float]] = []
+    issues: list[str] = []
+    for control in specification.size_controls:
+        source_entities = _resolve_surface_control(control, domain).entities
+        match control:
+            case UniformSizeControl():
+                edges = (
+                    construction.curve_edges[
+                        np.isin(construction.curve_edge_curves, source_entities)
+                    ]
+                    if control.scope.entity_dimension == 1
+                    else _patch_edges(construction, source_entities)
+                )
+                lengths, growth = edge_size_evidence(vertices, edges)
+                control_requested, control_achieved, control_issues = (
+                    uniform_size_compliance(
+                        control, specification.size_compliance, lengths, growth
+                    )
+                )
+                requested.extend(control_requested)
+                achieved.extend(control_achieved)
+                issues.extend(control_issues)
+                continue
+            case CurvatureSizeControl() | ProximitySizeControl():
+                pass
+            case _:
+                raise TypeError(
+                    f"specification.size_controls must contain supported controls; got {type(control).__name__}"
+                )
         key = f"source_size:{control.control_id}"
         ratios = []
-        for patch in entities.tolist():
+        for patch in source_entities.tolist():
             selected = construction.triangle_patches == patch
             charts = np.mean(construction.triangle_parameters[selected], axis=1)
-            points = domain.evaluate(np.full((charts.shape[0],), patch), charts)
-            sizes = compiled.source_sizing.evaluate(domain, patch, charts, points)
+            points = domain.evaluate(
+                np.full((charts.shape[0],), patch), charts, budget=budget
+            )
+            sizes = compiled.source_sizing.evaluate(
+                domain, patch, charts, points, budget=budget
+            )
             corners = vertices[construction.triangles[selected]]
             lengths = np.linalg.norm(
                 np.roll(corners, -1, axis=1) - np.roll(corners, -2, axis=1), axis=2
@@ -322,18 +388,47 @@ def _compliance(
             and maximum_ratio > 1 + specification.size_compliance.relative_tolerance
         ):
             issues.append(key)
-        if isinstance(control, CurvatureSizeControl):
-            values = construction.triangle_normal_bounds[
-                np.isin(construction.triangle_patches, entities)
-            ]
-            normal_bound = float(np.max(values, initial=0.0))
-            requested.append((f"{key}:normal_angle", control.normal_angle))
-            achieved.append((f"{key}:normal_angle", normal_bound))
-            if (
-                control.strength is SizeControlStrength.HARD
-                and normal_bound > control.normal_angle
-            ):
-                issues.append(f"{key}:normal_angle")
+        match control:
+            case CurvatureSizeControl():
+                values = construction.triangle_normal_bounds[
+                    np.isin(construction.triangle_patches, source_entities)
+                ]
+                normal_bound = float(np.max(values, initial=0.0))
+                requested.append((f"{key}:normal_angle", control.normal_angle))
+                achieved.append((f"{key}:normal_angle", normal_bound))
+                if (
+                    control.strength is SizeControlStrength.HARD
+                    and normal_bound > control.normal_angle
+                ):
+                    issues.append(f"{key}:normal_angle")
+            case ProximitySizeControl():
+                pass
+            case _:
+                raise TypeError(
+                    f"specification.size_controls must contain curvature or proximity controls; got {type(control).__name__}"
+                )
+    return _SurfaceControlCompliance(tuple(requested), tuple(achieved), tuple(issues))
+
+
+def _compliance(
+    specification: SurfaceMeshingSpec,
+    construction: SurfaceConstruction,
+    domain: MeshingDomain,
+    compiled: CompiledSurfaceDomain,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> MeshingComplianceReport:
+    vertices = construction.vertices
+    requested: list[tuple[str, float]] = []
+    achieved: list[tuple[str, float]] = []
+    issues: list[str] = []
+    controls = _triangle_size_compliance(
+        specification, construction, domain, compiled, budget
+    )
+    requested.extend(controls.requested)
+    achieved.extend(controls.achieved)
+    issues.extend(controls.issues)
     quality = specification.quality_target
     achieved.append(("minimum_angle", construction.minimum_angle))
     if quality is not None:
@@ -341,25 +436,25 @@ def _compliance(
         if quality.hard and construction.minimum_angle < quality.minimum_angle:
             issues.append(f"minimum_angle:{quality.target_id}")
     for feature in specification.protected_features:
-        entities = domain.resolve_indices(
+        source_entities = domain.resolve_indices(
             feature.scope.entity_dimension,
             np.asarray(feature.scope.global_entity_ids, dtype=np.int64),
         )
         match feature.feature_kind:
             case FeatureKind.SURFACE:
                 values = construction.triangle_deviation_bounds[
-                    np.isin(construction.triangle_patches, entities)
+                    np.isin(construction.triangle_patches, source_entities)
                 ]
             case FeatureKind.CURVE:
                 values = construction.curve_edge_deviation_bounds[
-                    np.isin(construction.curve_edge_curves, entities)
+                    np.isin(construction.curve_edge_curves, source_entities)
                 ]
             case FeatureKind.CORNER:
-                # Corners are exact vertices of every construction.
+                # Corners are source vertices of every construction.
                 values = np.zeros((1,), dtype=np.float64)
             case _:
                 raise TypeError(
-                    "Admitted protected features are corners/curves/surfaces."
+                    "specification.protected_features must contain corners, curves, or surfaces; got an unsupported feature"
                 )
         key = f"protected:{feature.feature_id}:maximum_deviation"
         deviation = float(np.max(values, initial=0.0))
@@ -383,7 +478,9 @@ def _compliance(
     metric = compiled.source_sizing.metric
     if metric is not None:
         values, work = metric.sample(
-            vertices, specification.limits.maximum_work_units - construction.work_units
+            vertices,
+            specification.limits.maximum_work_units - construction.work_units,
+            budget=budget,
         )
         edges = unique_edges(construction.triangles, "triangle")
         lengths = np.asarray(
@@ -412,175 +509,8 @@ def _compliance(
     )
 
 
-def _rows(canonical: np.ndarray, pairs: np.ndarray, /) -> np.ndarray:
-    """Rows of ``canonical`` simplices (any vertex order) matching ``pairs``."""
-
-    keys = {key: row for row, key in enumerate(map(tuple, np.sort(canonical, axis=1)))}
-    return np.asarray(
-        [keys[key] for key in map(tuple, np.sort(pairs, axis=1).tolist())],
-        dtype=np.int64,
-    )
-
-
-class _SourceMetadata(TypedDict):
-    source_dimensions: np.ndarray
-    source_indices: np.ndarray
-    source_occurrence_paths: tuple[tuple[str, ...], ...]
-
-
-def _source_metadata(
-    domain: MeshingDomain, dimensions: np.ndarray, indices: np.ndarray, /
-) -> _SourceMetadata:
-    """Retain authored strata for both analytic and native B-Rep publications."""
-    return {
-        "source_dimensions": dimensions,
-        "source_indices": np.asarray(
-            [
-                domain.source_indices[int(dimension)][int(index)]
-                for dimension, index in zip(dimensions, indices, strict=True)
-            ],
-            dtype=np.int64,
-        ),
-        "source_occurrence_paths": tuple(
-            domain.source_occurrences[int(dimension)][int(index)]
-            for dimension, index in zip(dimensions, indices, strict=True)
-        ),
-    }
-
-
-def _associations(
-    source: NativeSurfaceSource,
-    mesh: CellMesh,
-    construction: SurfaceConstruction,
-    /,
-) -> tuple[tuple[GeometryAssociation, ...], tuple[MeshPatch, ...], tuple[MeshLabel, ...]]:
-    domain = source.domain
-    revision = source.source_revision
-    kind = (
-        GeometryAssociationKind.BREP
-        if domain.source_kinds == ("vertex", "edge", "face")
-        else GeometryAssociationKind.SURFACE
-    )
-    points = np.asarray(mesh.coordinates, dtype=np.float64)
-    face_set = mesh.entity_set(2)
-    faces = np.concatenate(
-        tuple(np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks)
-    )
-    rows = _rows(construction.triangles, faces)
-    patches = construction.triangle_patches[rows]
-    charts = construction.triangle_charts[rows]
-    normals, _ = domain.oriented_normals(patches, charts)
-    flat = np.cross(
-        points[faces[:, 1]] - points[faces[:, 0]],
-        points[faces[:, 2]] - points[faces[:, 0]],
-    )
-    face_ids = np.asarray(face_set.entity_ids, dtype=np.int64)
-    face_association = GeometryAssociation(
-        kind,
-        source.source_id,
-        revision,
-        face_set.entity_set_id,
-        face_ids,
-        tuple(domain.entity_id(2, patch) for patch in patches.tolist()),
-        construction.triangle_deviations[rows],
-        exact=False,
-        parameters=charts,
-        orientations=np.sign(np.sum(flat * normals, axis=1)).astype(np.int8),
-        **_source_metadata(domain, np.full(patches.shape, 2, dtype=np.int8), patches),
-    )
-    edge_set = mesh.entity_set(1)
-    # ty: ignore[unresolved-attribute]
-    canonical_edges = np.asarray(mesh.connectivity.edges, dtype=np.int64)
-    edge_rows = _rows(canonical_edges, construction.curve_edges)
-    edge_ids = np.asarray(edge_set.entity_ids, dtype=np.int64)[edge_rows]
-    order = np.argsort(edge_ids, kind="stable")
-    edge_ids = edge_ids[order]
-    curves = construction.curve_edge_curves[order]
-    along = construction.curve_edges[order]
-    canonical = canonical_edges[edge_rows[order]]
-    tangent = points[along[:, 1]] - points[along[:, 0]]
-    sense = np.ones(curves.shape, dtype=np.int8)
-    if kind is GeometryAssociationKind.BREP:
-        for row, curve in enumerate(curves):
-            patch, loop, position = domain.curve_owners[curve]
-            use = domain.patches[patch].loops[loop][position]
-            sense[row] = np.sign(use.last - use.first)
-    edge_association = GeometryAssociation(
-        kind,
-        source.source_id,
-        revision,
-        edge_set.entity_set_id,
-        edge_ids,
-        tuple(domain.entity_id(1, curve) for curve in curves.tolist()),
-        construction.curve_edge_deviations[order],
-        exact=False,
-        orientations=np.sign(
-            np.sum((points[canonical[:, 1]] - points[canonical[:, 0]]) * tangent, axis=1)
-        ).astype(np.int8)
-        * sense,
-        **_source_metadata(domain, np.full(curves.shape, 1, dtype=np.int8), curves),
-    )
-
-    def scope(
-        dimension: int, entity_set_id: str, selected: np.ndarray, /
-    ) -> MeshingScope:
-        return MeshingScope(
-            mesh.mesh_id,
-            mesh.numeric_version,
-            MeshingEntityKind.MESH,
-            dimension,
-            entity_set_id,
-            np.sort(selected),
-        )
-
-    surface_patches = tuple(
-        MeshPatch(
-            f"surface:{patch}",
-            scope(2, face_set.entity_set_id, face_ids[patches == patch]),
-        )
-        for patch in np.unique(patches).tolist()
-    )
-    curve_labels = tuple(
-        MeshLabel(
-            f"curve:{curve}",
-            scope(1, edge_set.entity_set_id, edge_ids[curves == curve]),
-        )
-        for curve in np.unique(curves).tolist()
-    )
-    vertex_set = mesh.entity_set(0)
-    vertex_ids = np.asarray(vertex_set.entity_ids, dtype=np.int64)
-    vertex_association = GeometryAssociation(
-        kind,
-        source.source_id,
-        revision,
-        vertex_set.entity_set_id,
-        vertex_ids,
-        tuple(
-            domain.entity_id(int(dimension), int(index))
-            for dimension, index in zip(
-                construction.vertex_source_dimensions,
-                construction.vertex_source_indices,
-                strict=True,
-            )
-        ),
-        np.zeros((vertex_ids.size,)),
-        parameters=construction.vertex_parameters,
-        exact=kind is not GeometryAssociationKind.BREP,
-        **_source_metadata(
-            domain,
-            construction.vertex_source_dimensions,
-            construction.vertex_source_indices,
-        ),
-    )
-    return (
-        (face_association, edge_association, vertex_association),
-        surface_patches,
-        curve_labels,
-    )
-
-
 def _certification_request(
-    source: NativeSurfaceSource,
+    source: sources_owner.NativeSurfaceSource,
     specification: SurfaceMeshingSpec,
     compiled: CompiledSurfaceDomain,
     construction: SurfaceConstruction,
@@ -589,7 +519,7 @@ def _certification_request(
     """Independent global embedding and continuous two-sided source acceptance.
 
     The source owner independently verifies the full oriented chart chain,
-    including collapsed pole triangles and exact trim ribbons, and recomputes
+    including collapsed pole triangles and trim ribbons, and recomputes
     Taylor bounds. Nodal residuals alone never certify this request.
     """
 
@@ -609,39 +539,35 @@ def _certification_request(
     )
 
 
-def _surface_semantics(
+@final
+class _SurfaceFaceSemantics(StrictModule):
+    patches: tuple[MeshPatch, ...]
+    zones: tuple[MeshZone, ...]
+    face_ids: np.ndarray
+    source_patches: np.ndarray
+
+
+@final
+class _SurfaceCurveSemantics(StrictModule):
+    patches: tuple[MeshPatch, ...]
+
+
+def _surface_face_semantics(
     domain: MeshingDomain,
     specification: SurfaceMeshingSpec,
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     construction: SurfaceConstruction,
-    labels: tuple[MeshLabel, ...],
     /,
-) -> tuple[
-    tuple[MeshPatch, ...],
-    tuple[MeshLabel, ...],
-    tuple[MeshZone, ...],
-    tuple[RegionBoundaryEvidence, ...],
-]:
-    """Lower authored source incidence; region boundaries may overlap."""
+) -> _SurfaceFaceSemantics:
     face_set = mesh.entity_set(2)
     face_ids = np.asarray(face_set.entity_ids, dtype=np.int64)
-    rows = _rows(
+    rows = simplex_rows(
         construction.triangles,
         np.concatenate(
             tuple(np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks)
         ),
     )
     source_patches = construction.triangle_patches[rows]
-
-    def target_scope(selected: np.ndarray, /) -> MeshingScope:
-        return MeshingScope(
-            mesh.mesh_id,
-            mesh.numeric_version,
-            MeshingEntityKind.MESH,
-            2,
-            face_set.entity_set_id,
-            selected,
-        )
 
     patches: list[MeshPatch] = []
     for patch in np.unique(source_patches).tolist():
@@ -664,7 +590,7 @@ def _surface_semantics(
             patches.append(
                 MeshPatch(
                     name,
-                    target_scope(face_ids[source_patches == patch]),
+                    mesh_entity_scope(mesh, 2, face_ids[source_patches == patch]),
                     source_adjacent_region_ids=None
                     if source_pair == (None, None)
                     else source_pair,
@@ -674,7 +600,9 @@ def _surface_semantics(
         MeshZone(
             control.region_name,
             MeshZoneRole.REGION,
-            target_scope(
+            mesh_entity_scope(
+                mesh,
+                2,
                 face_ids[
                     np.isin(
                         source_patches,
@@ -682,7 +610,7 @@ def _surface_semantics(
                             2, np.asarray(control.scope.global_entity_ids, dtype=np.int64)
                         ),
                     )
-                ]
+                ],
             ),
             material_id=control.material_id,
             region_role=control.role,
@@ -690,19 +618,35 @@ def _surface_semantics(
         for control in specification.region_controls
         if control.scope.entity_dimension == 2
     )
+
+    return _SurfaceFaceSemantics(tuple(patches), zones, face_ids, source_patches)
+
+
+def _surface_curve_semantics(
+    domain: MeshingDomain,
+    specification: SurfaceMeshingSpec,
+    mesh: cell_mesh_owner.CellMesh,
+    construction: SurfaceConstruction,
+    faces: _SurfaceFaceSemantics,
+    /,
+) -> _SurfaceCurveSemantics:
+    patches = list(faces.patches)
+    zones = faces.zones
     curve_controls = tuple(
         control
         for control in specification.patch_controls
         if control.scope.entity_dimension == 1
     )
     if curve_controls:
-        connectivity = mesh.connectivity
-        if not isinstance(connectivity, PolygonalConnectivity):
-            raise TypeError(
-                "Surface curve patches require canonical surface edge incidence."
-            )
+        match mesh.connectivity:
+            case cell_complex_owner.PolygonalConnectivity() as connectivity:
+                pass
+            case _:
+                raise TypeError(
+                    "mesh.connectivity must be PolygonalConnectivity for curve patches; got another incidence type"
+                )
         edge_set = mesh.entity_set(1)
-        edge_rows = _rows(
+        edge_rows = simplex_rows(
             np.asarray(connectivity.edges, dtype=np.int64), construction.curve_edges
         )
         edge_ids = np.asarray(edge_set.entity_ids, dtype=np.int64)[edge_rows]
@@ -745,6 +689,21 @@ def _surface_semantics(
                     adjacent_zone_ids=adjacent_zones,
                 )
             )
+
+    return _SurfaceCurveSemantics(tuple(patches))
+
+
+def _surface_region_semantics(
+    domain: MeshingDomain,
+    specification: SurfaceMeshingSpec,
+    mesh: cell_mesh_owner.CellMesh,
+    labels: tuple[MeshLabel, ...],
+    faces: _SurfaceFaceSemantics,
+    curves: _SurfaceCurveSemantics,
+    /,
+) -> NativePublicationOrganization:
+    face_ids, source_patches = faces.face_ids, faces.source_patches
+    patches, zones = curves.patches, faces.zones
     boundary_labels = list(labels)
     evidence: list[RegionBoundaryEvidence] = []
     for region, source_region in enumerate(domain.regions):
@@ -782,7 +741,9 @@ def _surface_semantics(
             if control.scope.global_entity_ids.shape[0] == 1
             else f"{control.region_name}:{identifier}"
         )
-        label = MeshLabel(name, target_scope(face_ids[np.isin(source_patches, boundary)]))
+        label = MeshLabel(
+            name, mesh_entity_scope(mesh, 2, face_ids[np.isin(source_patches, boundary)])
+        )
         boundary_labels.append(label)
         scope = MeshingScope(
             domain.source_id,
@@ -804,7 +765,27 @@ def _surface_semantics(
                 sides,
             )
         )
-    return tuple(patches), tuple(boundary_labels), zones, tuple(evidence)
+
+    return NativePublicationOrganization(
+        patches=tuple(patches),
+        labels=tuple(boundary_labels),
+        zones=zones,
+        region_boundary_evidence=tuple(evidence),
+    )
+
+
+def _surface_semantics(
+    domain: MeshingDomain,
+    specification: SurfaceMeshingSpec,
+    mesh: cell_mesh_owner.CellMesh,
+    construction: SurfaceConstruction,
+    labels: tuple[MeshLabel, ...],
+    /,
+) -> NativePublicationOrganization:
+    """Lower source incidence into overlapping patches and region boundaries."""
+    faces = _surface_face_semantics(domain, specification, mesh, construction)
+    curves = _surface_curve_semantics(domain, specification, mesh, construction, faces)
+    return _surface_region_semantics(domain, specification, mesh, labels, faces, curves)
 
 
 def _quad_decomposition_specification(
@@ -833,11 +814,11 @@ def _original_triangle_maps(
     /,
     *,
     maximum_support_queries: int,
-) -> tuple[CellMesh, CellGeometrySpec]:
-    """Pass native topology to the geometry-owned exact source restriction."""
-    from ...geometry._surface_source_support import restrict_surface_source_atlas_geometry
+    budget: CoordinateEnclosureBudget,
+) -> tuple[cell_mesh_owner.CellMesh, cell_geometry_owner.CellGeometrySpec]:
+    """Pass native topology to the geometry-owned source restriction."""
 
-    target = CellMesh.from_triangles(
+    target = cell_mesh_owner.CellMesh.from_triangles(
         construction.vertices,
         construction.triangles,
         numeric_version=atlas.domain.source_revision,
@@ -848,6 +829,7 @@ def _original_triangle_maps(
         construction.triangle_patches,
         construction.triangle_parameters,
         maximum_support_queries=maximum_support_queries,
+        budget=budget,
     )
 
 
@@ -856,16 +838,17 @@ def _quad_associations(
     support: PreparedSurfaceSourceSupport,
     associations: tuple[GeometryAssociation, ...],
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[GeometryAssociation, ...]:
-    """Keep topology strata and rebuild actual original UV/curve parameters."""
-    from ...geometry.brep._patches import LineCurve
-    from .._association import _entity_rows, _target_dimension
-    from .._quad_generation import _entities
+    """Keep topology strata and rebuild source UV/curve parameters."""
 
     geometry = extraction.geometry
     if geometry is None:
-        raise ValueError("Original source quads require their exact coordinate maps.")
-    proof = support.prove_native_restrictions(extraction.mesh, geometry)
+        raise ValueError(
+            "extraction.geometry must contain source coordinate maps; got None"
+        )
+    proof = support.prove_native_restrictions(extraction.mesh, geometry, budget=budget)
     uv: dict[tuple[int, int], tuple[Fraction, Fraction]] = {}
     for patch, ids, charts in zip(
         proof.patches.tolist(), proof.vertex_ids, proof.source_corners, strict=True
@@ -874,7 +857,7 @@ def _quad_associations(
             key = (patch, identifier)
             if key in uv and uv[key] != point:
                 raise ValueError(
-                    "Current source charts disagree on original UV vertex identity."
+                    "source_charts.vertex_parameters must agree across chart uses; got conflicting UV coordinates"
                 )
             uv[key] = point
     _, _, _, inherited = remap_dual_metadata(
@@ -882,24 +865,22 @@ def _quad_associations(
     )
     outputs = []
     for association in inherited:
-        dimension = _target_dimension(extraction.mesh, association)
-        rows = _entity_rows(
+        dimension = target_dimension(extraction.mesh, association)
+        rows = entity_rows(
             extraction.mesh, dimension, np.asarray(association.target_global_ids)
         )
-        vertices = _entities(extraction.mesh, dimension)[rows]
+        vertices = entities(extraction.mesh, dimension)[rows]
         parameters = np.zeros((rows.size, 2), dtype=np.float64)
         for row, (source_dimension, index, path, values) in enumerate(
             zip(
                 np.asarray(association.source_dimensions).tolist(),
                 np.asarray(association.source_indices).tolist(),
-                association.source_occurrence_paths,
+                association.source_entities.occurrence_paths(),
                 vertices.tolist(),
                 strict=True,
             )
         ):
-            source_row = support._domain_row(
-                support.domain, source_dimension, index, path
-            )
+            source_row = support.domain_row(support.domain, source_dimension, index, path)
             if source_dimension == 0:
                 continue
             if source_dimension == 2:
@@ -923,7 +904,7 @@ def _quad_associations(
                     use.pcurve, LineCurve
                 ):
                     raise ValueError(
-                        "Exact source curve parameters require their original affine UV coedge."
+                        "source_charts.curve_parameters must bind an affine UV coedge; got another trim representation"
                     )
                 origin = tuple(
                     Fraction(float(value)) for value in np.asarray(use.pcurve.origin)
@@ -949,7 +930,7 @@ def _quad_associations(
                 association.source_revision,
                 association.target_entity_set_id,
                 association.target_global_ids,
-                association.source_entity_ids,
+                association.source_entities.entity_ids(),
                 np.full((rows.size,), rounding, dtype=np.float64),
                 parameters=parameters,
                 resolved=association.resolved,
@@ -958,30 +939,30 @@ def _quad_associations(
                 orientations=association.orientations,
                 source_dimensions=association.source_dimensions,
                 source_indices=association.source_indices,
-                source_entity_roles=association.source_entity_roles,
-                source_occurrence_paths=association.source_occurrence_paths,
+                source_entity_roles=association.source_entities.roles(),
+                source_occurrence_paths=association.source_entities.occurrence_paths(),
             )
         )
     return tuple(outputs)
 
 
-def _quad_edge_evidence(
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
+@checked
+def quad_edge_evidence(
+    mesh: cell_mesh_owner.CellMesh,
+    geometry: cell_geometry_owner.CellGeometrySpec,
     specification: SurfaceMeshingSpec,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Certified physical arc lengths of actual coordinate-map edges."""
-    from ...discretization._cell_geometry_transfer import _prepare_mapped_edge_arc_length
-    from ...discretization._reference_cell import reference_cell_topology
-    from .._quad_generation import _entities
+    """Certified physical arc lengths of coordinate-map edges."""
 
-    edges = _entities(mesh, 1)
+    edges = entities(mesh, 1)
     lookup = {tuple(sorted(pair)): row for row, pair in enumerate(edges.tolist())}
     value = np.full(edges.shape[0], np.nan, dtype=np.float64)
     lower, upper = value.copy(), value.copy()
-    elements, routes, _ = geometry.resolve(mesh)
-    coefficients = geometry.source_coordinates()
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
+    coefficients = geometry.source_coordinates(budget=budget)
     topology = reference_cell_topology("quadrilateral")
     points = tuple(tuple(Fraction(float(x)) for x in row) for row in topology.vertices)
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
@@ -993,13 +974,14 @@ def _quad_edge_evidence(
                 row = lookup[tuple(sorted((vertices[first], vertices[last])))]
                 if np.isfinite(value[row]):
                     continue
-                enclosure = _prepare_mapped_edge_arc_length(
-                    element, local, points[first], points[last]
+                enclosure = prepare_mapped_edge_arc_length(
+                    element, local, points[first], points[last], budget=budget
                 ).integrate(
                     absolute_tolerance=1e-12,
                     relative_tolerance=1e-12,
                     maximum_work=specification.limits.maximum_work_units,
                     maximum_subcells=min(specification.limits.maximum_cells, 10000),
+                    budget=budget,
                 )
                 value[row], lower[row], upper[row] = (
                     enclosure.value,
@@ -1009,25 +991,49 @@ def _quad_edge_evidence(
     return edges, value, lower, upper
 
 
-def _quad_compliance(
+@final
+class _QuadComplianceEvidence(StrictModule):
+    edges: np.ndarray
+    lengths: np.ndarray
+    lower: np.ndarray
+    upper: np.ndarray
+    proof: SurfaceRestrictionRows
+    edge_patches: dict[tuple[int, int], set[int]]
+    curve_rows: dict[int, int]
+
+
+@final
+class _QuadControlScope(StrictModule):
+    entities: np.ndarray
+    dimension: int
+    rows: np.ndarray
+
+
+@final
+class _SurfaceControlCompliance(StrictModule):
+    requested: tuple[tuple[str, float], ...]
+    achieved: tuple[tuple[str, float], ...]
+    issues: tuple[str, ...]
+
+
+def _prepare_quad_compliance(
     specification: SurfaceMeshingSpec,
-    construction: SurfaceConstruction,
     extraction: DualExtraction,
     support: PreparedSurfaceSourceSupport,
-    compiled: CompiledSurfaceDomain,
     associations: tuple[GeometryAssociation, ...],
+    budget: CoordinateEnclosureBudget,
     /,
-) -> MeshingComplianceReport:
-    from .._association import _entity_rows, _target_dimension
-    from .._quality import evaluate_cell_quality
-    from ._native_publication import edge_growth_evidence
-
+) -> _QuadComplianceEvidence:
     geometry = extraction.geometry
     if geometry is None:
-        raise ValueError("Exact source quad compliance requires actual mapped geometry.")
+        raise ValueError(
+            "extraction.geometry must contain mapped coordinate geometry; got None"
+        )
     mesh, domain = extraction.mesh, support.domain
-    edges, lengths, lower, upper = _quad_edge_evidence(mesh, geometry, specification)
-    proof = support.prove_native_restrictions(mesh, geometry)
+    edges, lengths, lower, upper = quad_edge_evidence(
+        mesh, geometry, specification, budget=budget
+    )
+    proof = support.prove_native_restrictions(mesh, geometry, budget=budget)
     edge_patches: dict[tuple[int, int], set[int]] = {
         tuple(sorted(edge)): set() for edge in edges.tolist()
     }
@@ -1040,137 +1046,208 @@ def _quad_compliance(
             edge_patches[tuple(sorted((vertices[first], vertices[last])))].add(patch)
     curve_rows: dict[int, int] = {}
     for association in associations:
-        if _target_dimension(mesh, association) != 1:
+        if target_dimension(mesh, association) != 1:
             continue
-        rows = _entity_rows(mesh, 1, np.asarray(association.target_global_ids))
+        rows = entity_rows(mesh, 1, np.asarray(association.target_global_ids))
         for row, dimension, index, path in zip(
             rows.tolist(),
             np.asarray(association.source_dimensions).tolist(),
             np.asarray(association.source_indices).tolist(),
-            association.source_occurrence_paths,
+            association.source_entities.occurrence_paths(),
             strict=True,
         ):
             if dimension == 1:
-                curve_rows[row] = support._domain_row(domain, dimension, index, path)
-    requested, achieved, issues = [], [], []
-    for control in specification.size_controls:
-        if isinstance(control, ProximitySizeControl):
-            entities = np.unique(
-                np.concatenate(
-                    (
-                        domain.resolve_indices(
-                            2, np.asarray(control.source_scope.global_entity_ids)
-                        ),
-                        domain.resolve_indices(
-                            2, np.asarray(control.target_scope.global_entity_ids)
-                        ),
-                    )
+                curve_rows[row] = support.domain_row(domain, dimension, index, path)
+
+    return _QuadComplianceEvidence(
+        edges, lengths, lower, upper, proof, edge_patches, curve_rows
+    )
+
+
+def _quad_control_scope(
+    control: UniformSizeControl | CurvatureSizeControl | ProximitySizeControl,
+    domain: MeshingDomain,
+    evidence: _QuadComplianceEvidence,
+    /,
+) -> _QuadControlScope:
+    edges, edge_patches, curve_rows = (
+        evidence.edges,
+        evidence.edge_patches,
+        evidence.curve_rows,
+    )
+    source = _resolve_surface_control(control, domain)
+    source_entities, entity_dimension = source.entities, source.dimension
+    rows = np.asarray(
+        [
+            row
+            for row, edge in enumerate(edges.tolist())
+            if (
+                curve_rows.get(row) in source_entities
+                if entity_dimension == 1
+                else bool(
+                    edge_patches[tuple(sorted(edge))] & set(source_entities.tolist())
                 )
             )
-        else:
-            entities = domain.resolve_indices(
-                control.scope.entity_dimension,
-                np.asarray(control.scope.global_entity_ids),
-            )
-            if control.scope.entity_dimension == 3:
-                entities = np.unique(
-                    np.asarray(
-                        [
-                            patch
-                            for region in entities.tolist()
-                            for patch, _ in domain.regions[region].boundary
-                        ],
-                        dtype=np.int64,
-                    )
-                )
-        entity_dimension = (
-            2
-            if isinstance(control, ProximitySizeControl)
-            else control.scope.entity_dimension
-        )
-        rows = np.asarray(
+        ],
+        dtype=np.int64,
+    )
+
+    return _QuadControlScope(source_entities, entity_dimension, rows)
+
+
+def _quad_source_control_compliance(
+    control: CurvatureSizeControl | ProximitySizeControl,
+    specification: SurfaceMeshingSpec,
+    construction: SurfaceConstruction,
+    domain: MeshingDomain,
+    compiled: CompiledSurfaceDomain,
+    evidence: _QuadComplianceEvidence,
+    selected: _QuadControlScope,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> _SurfaceControlCompliance:
+    source_entities, entity_dimension = selected.entities, selected.dimension
+    edges, upper, proof, edge_patches = (
+        evidence.edges,
+        evidence.upper,
+        evidence.proof,
+        evidence.edge_patches,
+    )
+    requested: list[tuple[str, float]] = []
+    achieved: list[tuple[str, float]] = []
+    issues: list[str] = []
+    if entity_dimension == 1:
+        source_entities = np.asarray(
             [
-                row
-                for row, edge in enumerate(edges.tolist())
-                if (
-                    curve_rows.get(row) in entities
-                    if entity_dimension == 1
-                    else bool(edge_patches[tuple(sorted(edge))] & set(entities.tolist()))
-                )
+                patch
+                for patch in range(len(domain.patches))
+                if set(domain.patch_curves(patch).tolist())
+                & set(source_entities.tolist())
             ],
             dtype=np.int64,
         )
-        if isinstance(control, UniformSizeControl):
-            growth = edge_growth_evidence(
-                np.concatenate((lower[rows], upper[rows])),
-                np.concatenate((edges[rows], edges[rows])),
-                mesh.coordinates.shape[0],
-            )
-            req, act, failed = uniform_size_compliance(
-                control, specification.size_compliance, lengths[rows], growth
-            )
-            for endpoint in (lower[rows], upper[rows]):
-                _, _, endpoint_failed = uniform_size_compliance(
-                    control, specification.size_compliance, endpoint, growth
-                )
-                failed.extend(endpoint_failed)
-            requested.extend(req)
-            achieved.extend(act)
-            issues.extend(failed)
-        else:
-            if entity_dimension == 1:
-                entities = np.asarray(
-                    [
-                        patch
-                        for patch in range(len(domain.patches))
-                        if set(domain.patch_curves(patch).tolist())
-                        & set(entities.tolist())
+    maximum = 0.0
+    for patch in source_entities.tolist():
+        selected = proof.patches == patch
+        uv = np.mean(np.asarray(proof.source_corners, dtype=np.float64)[selected], axis=1)
+        sizes = compiled.source_sizing.evaluate(
+            domain,
+            patch,
+            uv,
+            domain.evaluate(np.full(uv.shape[0], patch), uv, budget=budget),
+            budget=budget,
+        )
+        patch_edges = [
+            row
+            for row, edge in enumerate(edges.tolist())
+            if patch in edge_patches[tuple(sorted(edge))]
+        ]
+        maximum = max(
+            maximum,
+            float(np.max(upper[patch_edges], initial=0.0)) / float(np.min(sizes)),
+        )
+    key = f"source_size:{control.control_id}"
+    requested.append((f"{key}:maximum_local_edge_ratio", 1.0))
+    achieved.append((f"{key}:maximum_local_edge_ratio", maximum))
+    if (
+        control.strength is SizeControlStrength.HARD
+        and maximum > 1.0 + specification.size_compliance.relative_tolerance
+    ):
+        issues.append(key)
+    match control:
+        case CurvatureSizeControl():
+            normal = float(
+                np.max(
+                    construction.triangle_normal_bounds[
+                        np.isin(construction.triangle_patches, source_entities)
                     ],
-                    dtype=np.int64,
+                    initial=0.0,
                 )
-            maximum = 0.0
-            for patch in entities.tolist():
-                selected = proof.patches == patch
-                uv = np.mean(
-                    np.asarray(proof.source_corners, dtype=np.float64)[selected], axis=1
-                )
-                sizes = compiled.source_sizing.evaluate(
-                    domain, patch, uv, domain.evaluate(np.full(uv.shape[0], patch), uv)
-                )
-                patch_edges = [
-                    row
-                    for row, edge in enumerate(edges.tolist())
-                    if patch in edge_patches[tuple(sorted(edge))]
-                ]
-                maximum = max(
-                    maximum,
-                    float(np.max(upper[patch_edges], initial=0.0)) / float(np.min(sizes)),
-                )
-            key = f"source_size:{control.control_id}"
-            requested.append((f"{key}:maximum_local_edge_ratio", 1.0))
-            achieved.append((f"{key}:maximum_local_edge_ratio", maximum))
+            )
+            requested.append((f"{key}:normal_angle", control.normal_angle))
+            achieved.append((f"{key}:normal_angle", normal))
             if (
                 control.strength is SizeControlStrength.HARD
-                and maximum > 1.0 + specification.size_compliance.relative_tolerance
+                and normal > control.normal_angle
             ):
-                issues.append(key)
-            if isinstance(control, CurvatureSizeControl):
-                normal = float(
-                    np.max(
-                        construction.triangle_normal_bounds[
-                            np.isin(construction.triangle_patches, entities)
-                        ],
-                        initial=0.0,
-                    )
+                issues.append(f"{key}:normal_angle")
+        case ProximitySizeControl():
+            pass
+        case _:
+            raise TypeError(
+                f"specification.size_controls must contain curvature or proximity controls; got {type(control).__name__}"
+            )
+
+    return _SurfaceControlCompliance(tuple(requested), tuple(achieved), tuple(issues))
+
+
+def _quad_compliance(
+    specification: SurfaceMeshingSpec,
+    construction: SurfaceConstruction,
+    extraction: DualExtraction,
+    support: PreparedSurfaceSourceSupport,
+    compiled: CompiledSurfaceDomain,
+    associations: tuple[GeometryAssociation, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> MeshingComplianceReport:
+    evidence = _prepare_quad_compliance(
+        specification, extraction, support, associations, budget
+    )
+    mesh, domain = extraction.mesh, support.domain
+    edges, lengths, lower, upper = (
+        evidence.edges,
+        evidence.lengths,
+        evidence.lower,
+        evidence.upper,
+    )
+    requested: list[tuple[str, float]] = []
+    achieved: list[tuple[str, float]] = []
+    issues: list[str] = []
+    for control in specification.size_controls:
+        selected = _quad_control_scope(control, domain, evidence)
+        rows = selected.rows
+        match control:
+            case UniformSizeControl():
+                growth = edge_growth_evidence(
+                    np.concatenate((lower[rows], upper[rows])),
+                    np.concatenate((edges[rows], edges[rows])),
+                    mesh.coordinates.shape[0],
                 )
-                requested.append((f"{key}:normal_angle", control.normal_angle))
-                achieved.append((f"{key}:normal_angle", normal))
-                if (
-                    control.strength is SizeControlStrength.HARD
-                    and normal > control.normal_angle
-                ):
-                    issues.append(f"{key}:normal_angle")
-    angle = float(np.min(np.asarray(evaluate_cell_quality(mesh).minimum_angle)))
+                req, act, failed = uniform_size_compliance(
+                    control, specification.size_compliance, lengths[rows], growth
+                )
+                for endpoint in (lower[rows], upper[rows]):
+                    _, _, endpoint_failed = uniform_size_compliance(
+                        control, specification.size_compliance, endpoint, growth
+                    )
+                    failed.extend(endpoint_failed)
+                requested.extend(req)
+                achieved.extend(act)
+                issues.extend(failed)
+
+            case CurvatureSizeControl() | ProximitySizeControl():
+                compliance = _quad_source_control_compliance(
+                    control,
+                    specification,
+                    construction,
+                    domain,
+                    compiled,
+                    evidence,
+                    selected,
+                    budget,
+                )
+                requested.extend(compliance.requested)
+                achieved.extend(compliance.achieved)
+                issues.extend(compliance.issues)
+            case _:
+                raise TypeError(
+                    f"specification.size_controls must contain supported controls; got {type(control).__name__}"
+                )
+    angle = float(
+        np.min(np.asarray(evaluate_cell_quality(mesh, budget=budget).minimum_angle))
+    )
     achieved.extend(
         (
             ("minimum_angle", angle),
@@ -1196,7 +1273,7 @@ def _quad_compliance(
 
 
 def _execute_exact_source_quads(
-    source: NativeSurfaceSource,
+    source: sources_owner.NativeSurfaceSource,
     specification: SurfaceMeshingSpec,
     prepared: PreparedParametricSurface,
     coordinate_contract: SpatialCoordinateContract,
@@ -1205,244 +1282,224 @@ def _execute_exact_source_quads(
     /,
     *,
     record_phase: NativeMeshingPhaseRecorder | None,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
-    from .._quad_generation import _entities
-
-    started = monotonic()
-    limits = specification.limits
-    atlas = prepare_surface_source_root_atlas(
-        source.domain,
-        tuple(prepared.compiled.patches.tolist()),
-        coordinate_contract,
-        maximum_support_queries=limits.maximum_geometry_queries,
-    )
-    original = MeshingDomainBoundarySource(
-        source.domain, tuple(prepared.compiled.patches.tolist())
-    )
-    support = PreparedSurfaceSourceSupport(
-        source.domain,
-        atlas,
-        atlas.root_parameters,
-        original,
-        maximum_support_queries=limits.maximum_geometry_queries,
-    )
-    decomp = compile_surface_domain(
-        source.domain, _quad_decomposition_specification(specification)
-    )
-    construction = generate_surface(
-        decomp,
-        prepared.schedule,
-        limits,
-        math.radians(prepared.schedule.quality_angle_degrees),
-        started,
-        required_minimum_angle=0.0,
-        size_compliance=specification.size_compliance,
-        record_phase=record_phase,
-    )
-    scaffold, source_geometry = _original_triangle_maps(
-        construction,
-        atlas,
-        maximum_support_queries=limits.maximum_geometry_queries,
-    )
-    source_associations, _, labels = _associations(source, scaffold, construction)
-    patches, labels, zones, region_boundaries = _surface_semantics(
-        source.domain, specification, scaffold, construction, labels
-    )
-    edges = _entities(scaffold, 1)
-    lookup = {tuple(sorted(pair)): row for row, pair in enumerate(edges.tolist())}
-    features = np.asarray(
-        [lookup[tuple(sorted(pair))] for pair in construction.curve_edges.tolist()],
-        dtype=np.int64,
-    )
-    field = prepare_surface_cross_field(
-        scaffold,
-        source_geometry=source_geometry,
-        feature_edges=features,
-        record_phase=record_phase,
-    )
-    extraction = extract_surface_quads(
-        scaffold, limits, source_geometry=source_geometry, cross_field=field
-    )
-    geometry = extraction.geometry
-    if geometry is None:
-        raise ValueError(
-            "Exact original source quad extraction lost its coordinate maps."
+    budget = coordinate_budget(specification.limits)
+    with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+        started = scope.operation_started
+        limits = specification.limits
+        with coordinate_phase(scope, specification.limits, budget):
+            atlas = prepare_surface_source_root_atlas(
+                source.domain,
+                tuple(prepared.compiled.patches.tolist()),
+                coordinate_contract,
+                maximum_support_queries=limits.maximum_geometry_queries,
+                budget=budget,
+            )
+        original = MeshingDomainBoundarySource(
+            source.domain, tuple(prepared.compiled.patches.tolist())
         )
-    source_labels = labels
-    zones, patches, labels, _ = remap_dual_metadata(
-        extraction, zones=zones, patches=patches, labels=labels
-    )
-    label_map = {
-        old.label_id: new for old, new in zip(source_labels, labels, strict=True)
-    }
-    region_boundaries = tuple(
-        RegionBoundaryEvidence(
+        support = PreparedSurfaceSourceSupport(
+            source.domain,
+            atlas,
+            atlas.root_parameters,
+            original,
+            maximum_support_queries=limits.maximum_geometry_queries,
+        )
+        with coordinate_phase(scope, specification.limits, budget):
+            decomp = compile_surface_domain(
+                source.domain,
+                _quad_decomposition_specification(specification),
+                budget=budget,
+            )
+        construction = generate_surface(
+            decomp,
+            prepared.schedule,
+            limits,
+            math.radians(prepared.schedule.quality_angle_degrees),
+            required_minimum_angle=0.0,
+            size_compliance=specification.size_compliance,
+            record_phase=record_phase,
+            scope=scope,
+            budget=budget,
+        )
+        with coordinate_phase(scope, specification.limits, budget):
+            scaffold, source_geometry = _original_triangle_maps(
+                construction,
+                atlas,
+                maximum_support_queries=limits.maximum_geometry_queries,
+                budget=budget,
+            )
+        with coordinate_phase(scope, specification.limits, budget):
+            source_associations, _, labels = associations(
+                source, scaffold, construction, budget=budget
+            )
+        semantics = _surface_semantics(
+            source.domain, specification, scaffold, construction, labels
+        )
+        patches, labels, zones, region_boundaries = (
+            semantics.patches,
+            semantics.labels,
+            semantics.zones,
+            semantics.region_boundary_evidence,
+        )
+        edges = entities(scaffold, 1)
+        lookup = {tuple(sorted(pair)): row for row, pair in enumerate(edges.tolist())}
+        features = np.asarray(
+            [lookup[tuple(sorted(pair))] for pair in construction.curve_edges.tolist()],
+            dtype=np.int64,
+        )
+        field = prepare_surface_cross_field(
+            scaffold,
+            source_geometry=source_geometry,
+            feature_edges=features,
+            record_phase=record_phase,
+            scope=scope,
+            budget=budget,
+        )
+        extraction = extract_surface_quads(
+            scaffold,
+            limits,
+            source_geometry=source_geometry,
+            cross_field=field,
+            scope=scope,
+            budget=budget,
+        )
+        geometry = extraction.geometry
+        if geometry is None:
+            raise ValueError(
+                "extraction.geometry must contain source coordinate maps; got None"
+            )
+        source_labels = labels
+        zones, patches, labels, _ = remap_dual_metadata(
+            extraction, zones=zones, patches=patches, labels=labels
+        )
+        label_map = {
+            old.label_id: new for old, new in zip(source_labels, labels, strict=True)
+        }
+        region_boundaries = tuple(
+            RegionBoundaryEvidence(
+                extraction.mesh,
+                evidence.source_scope,
+                evidence.source_region_id,
+                evidence.control_id,
+                evidence.material_id,
+                evidence.role,
+                label_map[evidence.boundary_label.label_id],
+                evidence.patch_sides,
+            )
+            for evidence in region_boundaries
+        )
+        with coordinate_phase(scope, specification.limits, budget):
+            local_associations = _quad_associations(
+                extraction, support, source_associations, budget=budget
+            )
+        with coordinate_phase(scope, specification.limits, budget):
+            compliance = _quad_compliance(
+                specification,
+                construction,
+                extraction,
+                support,
+                prepared.compiled,
+                local_associations,
+                budget=budget,
+            )
+        boundary = SurfaceNativeRestrictionBoundarySource(
+            original, support, extraction.mesh, geometry
+        )
+        finite = prepared.compiled.patch_deviations[
+            np.isfinite(prepared.compiled.patch_deviations)
+        ]
+        tolerance = (
+            float(np.min(finite))
+            if finite.size
+            else float(np.min(prepared.compiled.patch_sizes))
+        )
+        request = NativeCertificationRequest(
+            MeshCertificationSchedule("surface"),
+            source.source_id,
+            source.source_revision,
+            limits,
+            fidelity_source=boundary,
+            fidelity_tolerance=tolerance,
+        )
+        check_deadline(started, limits, MeshingStageKind.GEOMETRY_AUDIT)
+        result = publish_native_result(
             extraction.mesh,
-            evidence.source_scope,
-            evidence.source_region_id,
-            evidence.control_id,
-            evidence.material_id,
-            evidence.role,
-            label_map[evidence.boundary_label.label_id],
-            evidence.patch_sides,
-        )
-        for evidence in region_boundaries
-    )
-    associations = _quad_associations(extraction, support, source_associations)
-    compliance = _quad_compliance(
-        specification, construction, extraction, support, prepared.compiled, associations
-    )
-    boundary = SurfaceNativeRestrictionBoundarySource(
-        original, support, extraction.mesh, geometry
-    )
-    finite = prepared.compiled.patch_deviations[
-        np.isfinite(prepared.compiled.patch_deviations)
-    ]
-    tolerance = (
-        float(np.min(finite))
-        if finite.size
-        else float(np.min(prepared.compiled.patch_sizes))
-    )
-    request = NativeCertificationRequest(
-        MeshCertificationSchedule("surface"),
-        source.source_id,
-        source.source_revision,
-        limits,
-        fidelity_source=boundary,
-        fidelity_tolerance=tolerance,
-    )
-    check_deadline(started, limits, MeshingStageKind.GEOMETRY_AUDIT)
-    result = publish_native_result(
-        extraction.mesh,
-        coordinate_contract,
-        compliance,
-        (
-            MeshingStageReport(
-                MeshingStageKind.SURFACE_MESHING,
-                MeshingStageStatus.PASSED,
-                input_ids=(source.binding_id, atlas.atlas_id),
-                output_ids=(extraction.mesh.mesh_id,),
-                created_count=extraction.mesh.entity_set(2).count,
+            coordinate_contract,
+            compliance,
+            (
+                MeshingStageReport(
+                    MeshingStageKind.SURFACE_MESHING,
+                    MeshingStageStatus.PASSED,
+                    input_ids=(source.binding_id, atlas.atlas_id),
+                    output_ids=(extraction.mesh.mesh_id,),
+                    created_count=extraction.mesh.entity_set(2).count,
+                ),
             ),
-        ),
-        provider,
-        {
-            "kind": "native-parametric-source-quads",
-            "source": source.binding_id,
-            "plan": plan_id,
-            "specification": specification.specification_id,
-        },
-        request,
-        geometry=geometry,
-        audit_policy=CellMeshAuditPolicy(
-            require_complete_association=True,
-            watertight_boundary=CellMeshAuditDisposition.REJECT
-            if _closed(prepared.compiled)
-            else CellMeshAuditDisposition.SKIP,
-        ),
-        derivative_mode=MeshingDerivativeMode.NONDIFFERENTIABLE,
-        enforced_limits=(
-            "vertices",
-            "edges",
-            "faces",
-            "cells",
-            "connectivity_entries",
-            "wall_seconds",
-        ),
-        unenforced_limits=(
-            "work_units",
-            "geometry_queries",
-            "scratch_bytes",
-            "cavity_cells",
-        ),
-        patches=patches,
-        zones=zones,
-        labels=labels,
-        associations=associations,
-        region_boundary_evidence=region_boundaries,
-        record_phase=record_phase,
-    )
-    return result
+            provider,
+            {
+                "kind": "native-parametric-source-quads",
+                "source": source.binding_id,
+                "plan": plan_id,
+                "specification": specification.specification_id,
+            },
+            request,
+            policy=publication_policy(
+                "source_quads",
+                audit_policy=CellMeshAuditPolicy(
+                    require_complete_association=True,
+                    watertight_boundary=CellMeshAuditDisposition.REJECT
+                    if closed(prepared.compiled)
+                    else CellMeshAuditDisposition.SKIP,
+                ),
+            ),
+            organization=NativePublicationOrganization(
+                patches=patches,
+                zones=zones,
+                labels=labels,
+                associations=local_associations,
+                region_boundary_evidence=region_boundaries,
+            ),
+            execution=NativePublicationExecution(scope, workspace, record_phase, budget),
+            geometry=geometry,
+        )
+        return result
 
 
-def execute_parametric_surface_route(
-    source: NativeSurfaceSource,
+@final
+class _SurfaceTopology(StrictModule):
+    mesh: cell_mesh_owner.CellMesh
+    geometry: cell_geometry_owner.CellGeometrySpec
+    atlas: SurfaceSourceRootAtlas | None
+
+
+@final
+class _SurfaceSourcePublication(StrictModule):
+    charts: SurfaceSourceCharts
+    certification: NativeCertificationRequest
+
+
+@final
+class _SurfaceStages(StrictModule):
+    stages: tuple[MeshingStageReport, ...]
+
+
+def _prepare_surface_topology(
+    source: sources_owner.NativeSurfaceSource,
     specification: SurfaceMeshingSpec,
     prepared: PreparedParametricSurface,
+    construction: SurfaceConstruction,
     coordinate_contract: SpatialCoordinateContract,
-    provider: MeshingProviderInfo,
-    plan_id: str,
+    execution: NativePublicationExecution,
+    budget: CoordinateEnclosureBudget,
     /,
-    *,
-    record_phase: NativeMeshingPhaseRecorder | None = None,
-) -> CellMeshingResult:
-    """Generate, associate, check, audit and publish one parametric surface."""
-
-    started = monotonic()
-    limits = specification.limits
+) -> _SurfaceTopology:
     compiled = prepared.compiled
-    if compiled.domain.domain_id != source.domain.domain_id:
-        raise ValueError("The prepared constraints are bound to another domain revision.")
-    if compiled.specification_id != specification.specification_id:
-        raise ValueError("The prepared source controls bind another physical request.")
-    if set(
-        (
-            *specification.target.cell_families.required,
-            *specification.target.cell_families.preferred,
-        )
-    ) == {"quadrilateral"}:
-        if prepared.generation is not None:
-            raise ValueError(
-                "Exact original source quad publication requires its serial source chart extraction."
-            )
-        return _execute_exact_source_quads(
-            source,
-            specification,
-            prepared,
-            coordinate_contract,
-            provider,
-            plan_id,
-            record_phase=record_phase,
-        )
-    if prepared.generation is not None:
-        from .._distributed_generation import execute_distributed_surface_initial
-        from .._initial_certification import publish_distributed_surface_initial
-
-        phase_start = phase_started(record_phase)
-        generated = execute_distributed_surface_initial(
-            prepared.generation, minimum_angle=prepared.minimum_angle
-        )
-        record_elapsed(record_phase, "construction", phase_start)
-        quality = specification.quality_target
-        required_angle = (
-            0.0 if quality is None or not quality.hard else quality.minimum_angle
-        )
-        phase_start = phase_started(record_phase)
-        result = publish_distributed_surface_initial(
-            prepared.generation,
-            generated,
-            source,
-            coordinate_contract,
-            provider,
-            minimum_angle=required_angle,
-            plan_id=plan_id,
-        )
-        record_elapsed(record_phase, "certification", phase_start)
-        return result
-    quality = specification.quality_target
-    required_angle = 0.0 if quality is None or not quality.hard else quality.minimum_angle
-    phase_start = phase_started(record_phase)
-    construction = generate_surface(
-        compiled,
-        prepared.schedule,
-        limits,
-        prepared.minimum_angle,
-        started,
-        record_phase=record_phase,
-        required_minimum_angle=required_angle,
-        size_compliance=specification.size_compliance,
-    )
-    record_elapsed(record_phase, "construction", phase_start)
+    limits = specification.limits
+    scope = execution.scope
+    record_phase = execution.record_phase
     triangles = construction.triangles.astype(np.int32)
     simplex_entity_limits(
         construction.vertices,
@@ -1451,118 +1508,78 @@ def execute_parametric_surface_route(
         MeshingStageKind.SURFACE_MESHING,
         cell_kind="triangle",
     )
-    phase_start = phase_started(record_phase)
-    from ...geometry.brep._patches import BSplineSurfacePatch
-
-    exact_source = all(
-        isinstance(source.domain.patches[int(patch)].surface, BSplineSurfacePatch)
-        for patch in compiled.patches
-    )
-    atlas: SurfaceSourceRootAtlas | None = None
-    if exact_source:
-        atlas = prepare_surface_source_root_atlas(
-            source.domain,
-            tuple(compiled.patches.tolist()),
-            coordinate_contract,
-            maximum_support_queries=limits.maximum_geometry_queries,
+    with measure_phase(record_phase, "topology_construction"):
+        exact_source = all(
+            isinstance(source.domain.patches[int(patch)].surface, BSplineSurfacePatch)
+            for patch in compiled.patches
         )
-        mesh, geometry = _original_triangle_maps(
-            construction,
-            atlas,
-            maximum_support_queries=limits.maximum_geometry_queries,
-        )
-    else:
-        mesh = canonicalize_cell_mesh(
-            CellMesh.from_triangles(
-                construction.vertices,
-                triangles,
-                numeric_version=source.source_revision,
-            )
-        )
-        geometry = CellGeometrySpec.affine(mesh)
-    record_elapsed(record_phase, "topology_construction", phase_start)
-    phase_start = phase_started(record_phase)
-    associations, patches, labels = _associations(source, mesh, construction)
-    patches, labels, zones, region_boundaries = _surface_semantics(
-        source.domain, specification, mesh, construction, labels
-    )
-    record_elapsed(record_phase, "geometry_association", phase_start)
-    phase_start = phase_started(record_phase)
-    compliance = _compliance(specification, construction, source.domain, compiled)
-    record_elapsed(record_phase, "compliance", phase_start)
-    check_deadline(started, limits, MeshingStageKind.GEOMETRY_AUDIT)
-    construction_stages = (
-        MeshingStageReport(
-            MeshingStageKind.SOURCE_INSPECTION,
-            MeshingStageStatus.PASSED,
-            input_ids=(source.binding_id,),
-            output_ids=(prepared.prepared_id,),
-        ),
-        MeshingStageReport(
-            MeshingStageKind.SURFACE_MESHING,
-            MeshingStageStatus.WARNING
-            if construction.incomplete_refinement
-            else MeshingStageStatus.PASSED,
-            input_ids=(prepared.prepared_id,),
-            output_ids=(mesh.mesh_id,),
-            created_count=triangles.shape[0],
-            diagnostics=(
-                MeshingDiagnostic(
-                    MeshingDiagnosticSeverity.WARNING,
-                    "Physical bounds were met, but bounded refinement did not meet its soft shape aim.",
-                    provider_code="surface_refinement_incomplete",
-                    quantities=(
-                        (
-                            "refinement_rounds",
-                            float(prepared.schedule.maximum_rounds),
-                            float(construction.rounds),
-                        ),
+        atlas: SurfaceSourceRootAtlas | None = None
+        if exact_source:
+            with coordinate_phase(scope, specification.limits, budget):
+                atlas = prepare_surface_source_root_atlas(
+                    source.domain,
+                    tuple(compiled.patches.tolist()),
+                    coordinate_contract,
+                    maximum_support_queries=limits.maximum_geometry_queries,
+                    budget=budget,
+                )
+            with coordinate_phase(scope, specification.limits, budget):
+                mesh, geometry = _original_triangle_maps(
+                    construction,
+                    atlas,
+                    maximum_support_queries=limits.maximum_geometry_queries,
+                    budget=budget,
+                )
+        else:
+            with coordinate_phase(scope, specification.limits, budget):
+                mesh = canonicalize_cell_mesh(
+                    cell_mesh_owner.CellMesh.from_triangles(
+                        construction.vertices,
+                        triangles,
+                        numeric_version=source.source_revision,
                     ),
-                ),
-            )
-            if construction.incomplete_refinement
-            else (),
-        ),
-    )
-    watertight = (
-        CellMeshAuditDisposition.REJECT
-        if _closed(compiled)
-        else CellMeshAuditDisposition.SKIP
-    )
-    from ..._meshcore import (
-        current_native_execution_budget,
-        current_native_host_workspace,
-    )
-    from .._association import _entity_rows
+                    budget=budget,
+                )
+            geometry = cell_geometry_owner.CellGeometrySpec.affine(mesh)
+    return _SurfaceTopology(mesh, geometry, atlas)
 
+
+def _prepare_surface_publication(
+    source: sources_owner.NativeSurfaceSource,
+    specification: SurfaceMeshingSpec,
+    prepared: PreparedParametricSurface,
+    construction: SurfaceConstruction,
+    topology: _SurfaceTopology,
+    coordinate_contract: SpatialCoordinateContract,
+    local_associations: tuple[GeometryAssociation, ...],
+    execution: NativePublicationExecution,
+    /,
+) -> _SurfaceSourcePublication:
+    compiled = prepared.compiled
+    limits = specification.limits
+    mesh, geometry, atlas = topology.mesh, topology.geometry, topology.atlas
+    scope, workspace = execution.scope, execution.workspace
     faces = np.concatenate(
         tuple(np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks)
     )
-    rows = _rows(construction.triangles, faces)
+    rows = simplex_rows(construction.triangles, faces)
     order = np.argsort(
-        _entity_rows(
+        entity_rows(
             mesh,
             2,
             np.concatenate(tuple(np.asarray(block.global_ids) for block in mesh.blocks)),
         ),
         kind="stable",
     )
-    budget = current_native_execution_budget()
-    if budget is None:
-        raise RuntimeError(
-            "Native surface source retention requires its original active execution allowance."
-        )
-    parameters = budget.allocate_host_array((faces.shape[0], 3, 2), np.float64)
-    root_patches = budget.allocate_host_array((faces.shape[0],), np.int64)
+    parameters = scope.allocate_host_array((faces.shape[0], 3, 2), np.float64)
+    root_patches = scope.allocate_host_array((faces.shape[0],), np.int64)
     for output, index in enumerate(order.tolist()):
         row = rows[index]
         root_patches[output] = construction.triangle_patches[row]
         for slot, vertex in enumerate(faces[index].tolist()):
             local = int(np.flatnonzero(construction.triangles[row] == vertex)[0])
             parameters[output, slot] = construction.triangle_parameters[row, local]
-    if exact_source:
-        if atlas is None:
-            raise RuntimeError("Exact spline surface publication lost its root atlas.")
+    if atlas is not None:
         root_boundary = MeshingDomainBoundarySource(
             source.domain,
             tuple(compiled.patches.tolist()),
@@ -1606,13 +1623,115 @@ def execute_parametric_surface_route(
         coordinate_contract,
         parameters,
         root_patches,
-        associations,
+        local_associations,
         root_boundary,
         maximum_support_queries=limits.maximum_geometry_queries,
     )
-    workspace = current_native_host_workspace()
     if workspace is not None:
         workspace.retain_owner(source_charts)
+    return _SurfaceSourcePublication(source_charts, certification_request)
+
+
+def _surface_construction_stages(
+    source: sources_owner.NativeSurfaceSource,
+    prepared: PreparedParametricSurface,
+    construction: SurfaceConstruction,
+    mesh: cell_mesh_owner.CellMesh,
+    /,
+) -> _SurfaceStages:
+    triangles = construction.triangles
+    construction_stages = (
+        MeshingStageReport(
+            MeshingStageKind.SOURCE_INSPECTION,
+            MeshingStageStatus.PASSED,
+            input_ids=(source.binding_id,),
+            output_ids=(prepared.prepared_id,),
+        ),
+        MeshingStageReport(
+            MeshingStageKind.SURFACE_MESHING,
+            MeshingStageStatus.WARNING
+            if construction.incomplete_refinement
+            else MeshingStageStatus.PASSED,
+            input_ids=(prepared.prepared_id,),
+            output_ids=(mesh.mesh_id,),
+            created_count=triangles.shape[0],
+            diagnostics=(
+                MeshingDiagnostic(
+                    MeshingDiagnosticSeverity.WARNING,
+                    "Physical bounds were met, but bounded refinement did not meet its soft shape aim.",
+                    provider_code="surface_refinement_incomplete",
+                    quantities=(
+                        (
+                            "refinement_rounds",
+                            float(prepared.schedule.maximum_rounds),
+                            float(construction.rounds),
+                        ),
+                    ),
+                ),
+            )
+            if construction.incomplete_refinement
+            else (),
+        ),
+    )
+    return _SurfaceStages(construction_stages)
+
+
+@final
+class _SurfacePublished(StrictModule):
+    result: CellMeshingResult
+
+
+def _publish_parametric_surface(
+    source: sources_owner.NativeSurfaceSource,
+    specification: SurfaceMeshingSpec,
+    prepared: PreparedParametricSurface,
+    coordinate_contract: SpatialCoordinateContract,
+    provider: MeshingProviderInfo,
+    plan_id: str,
+    execution: NativePublicationExecution,
+    construction: SurfaceConstruction,
+    topology: _SurfaceTopology,
+    compliance: MeshingComplianceReport,
+    organization: NativePublicationOrganization,
+    /,
+) -> _SurfacePublished:
+    scope, workspace, record_phase, budget = (
+        execution.scope,
+        execution.workspace,
+        execution.record_phase,
+        execution.budget,
+    )
+    started, limits, compiled = (
+        scope.operation_started,
+        specification.limits,
+        prepared.compiled,
+    )
+    mesh, geometry = topology.mesh, topology.geometry
+    patches, labels, zones = organization.patches, organization.labels, organization.zones
+    region_boundaries, local_associations = (
+        organization.region_boundary_evidence,
+        organization.associations,
+    )
+    check_deadline(started, limits, MeshingStageKind.GEOMETRY_AUDIT)
+    construction_stages = _surface_construction_stages(
+        source, prepared, construction, mesh
+    ).stages
+    watertight = (
+        CellMeshAuditDisposition.REJECT
+        if closed(compiled)
+        else CellMeshAuditDisposition.SKIP
+    )
+
+    publication = _prepare_surface_publication(
+        source,
+        specification,
+        prepared,
+        construction,
+        topology,
+        coordinate_contract,
+        local_associations,
+        execution,
+    )
     result = publish_native_result(
         mesh,
         coordinate_contract,
@@ -1627,35 +1746,161 @@ def execute_parametric_surface_route(
             "plan": plan_id,
             "specification": specification.specification_id,
         },
-        certification_request,
-        audit_policy=CellMeshAuditPolicy(
-            require_complete_association=True, watertight_boundary=watertight
+        publication.certification,
+        policy=publication_policy(
+            "parametric_surface",
+            audit_policy=CellMeshAuditPolicy(
+                require_complete_association=True, watertight_boundary=watertight
+            ),
         ),
-        derivative_mode=MeshingDerivativeMode.NONDIFFERENTIABLE,
-        enforced_limits=(
-            "vertices",
-            "edges",
-            "faces",
-            "cells",
-            "connectivity_entries",
-            "data_bytes",
-            "work_units",
-            "geometry_queries",
-            "wall_seconds",
-            "cavity_cells",
-            "scratch_bytes",
+        organization=NativePublicationOrganization(
+            patches=patches,
+            zones=zones,
+            labels=labels,
+            associations=local_associations,
+            region_boundary_evidence=region_boundaries,
+            surface_source=publication.charts,
         ),
-        unenforced_limits=(),
-        patches=patches,
-        zones=zones,
-        region_boundary_evidence=region_boundaries,
-        labels=labels,
-        associations=associations,
-        record_phase=record_phase,
+        execution=NativePublicationExecution(scope, workspace, record_phase, budget),
         geometry=geometry,
-        surface_source=source_charts,
     )
-    return result
+    return _SurfacePublished(result)
+
+
+@checked
+def execute_parametric_surface_route(
+    source: sources_owner.NativeSurfaceSource,
+    specification: SurfaceMeshingSpec,
+    prepared: PreparedParametricSurface,
+    coordinate_contract: SpatialCoordinateContract,
+    provider: MeshingProviderInfo,
+    plan_id: str,
+    /,
+    *,
+    record_phase: NativeMeshingPhaseRecorder | None = None,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
+) -> CellMeshingResult:
+    """Generate, associate, check, audit and publish one parametric surface."""
+    budget = coordinate_budget(specification.limits)
+    with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+        limits = specification.limits
+        execution = NativePublicationExecution(scope, workspace, record_phase, budget)
+        compiled = prepared.compiled
+        if compiled.domain.domain_id != source.domain.domain_id:
+            raise ValueError(
+                "prepared.compiled.domain must match source.domain; got a different domain revision"
+            )
+        if compiled.specification_id != specification.specification_id:
+            raise ValueError(
+                "prepared.compiled.specification_id must match specification.specification_id; got another request"
+            )
+        if set(
+            (
+                *specification.target.cell_families.required,
+                *specification.target.cell_families.preferred,
+            )
+        ) == {"quadrilateral"}:
+            if prepared.generation is not None:
+                raise ValueError(
+                    "prepared.generation must be None for source quad extraction; got distributed generation"
+                )
+            return _execute_exact_source_quads(
+                source,
+                specification,
+                prepared,
+                coordinate_contract,
+                provider,
+                plan_id,
+                record_phase=record_phase,
+                scope=scope,
+                workspace=workspace,
+            )
+        if prepared.generation is not None:
+            with measure_phase(record_phase, "construction"):
+                generated = execute_distributed_surface_initial(
+                    prepared.generation, minimum_angle=prepared.minimum_angle
+                )
+            quality = specification.quality_target
+            required_angle = (
+                0.0 if quality is None or not quality.hard else quality.minimum_angle
+            )
+            with measure_phase(record_phase, "certification"):
+                result = publish_distributed_surface_initial(
+                    prepared.generation,
+                    generated,
+                    source,
+                    coordinate_contract,
+                    provider,
+                    minimum_angle=required_angle,
+                    plan_id=plan_id,
+                )
+            return result
+        quality = specification.quality_target
+        required_angle = (
+            0.0 if quality is None or not quality.hard else quality.minimum_angle
+        )
+        with measure_phase(record_phase, "construction"):
+            construction = generate_surface(
+                compiled,
+                prepared.schedule,
+                limits,
+                prepared.minimum_angle,
+                record_phase=record_phase,
+                required_minimum_angle=required_angle,
+                size_compliance=specification.size_compliance,
+                scope=scope,
+                budget=budget,
+            )
+        topology = _prepare_surface_topology(
+            source,
+            specification,
+            prepared,
+            construction,
+            coordinate_contract,
+            execution,
+            budget,
+        )
+        mesh = topology.mesh
+        with measure_phase(record_phase, "geometry_association"):
+            with coordinate_phase(scope, specification.limits, budget):
+                local_associations, patches, labels = associations(
+                    source, mesh, construction, budget=budget
+                )
+            semantics = _surface_semantics(
+                source.domain, specification, mesh, construction, labels
+            )
+            patches, labels, zones, region_boundaries = (
+                semantics.patches,
+                semantics.labels,
+                semantics.zones,
+                semantics.region_boundary_evidence,
+            )
+        with measure_phase(record_phase, "compliance"):
+            with coordinate_phase(scope, specification.limits, budget):
+                compliance = _compliance(
+                    specification, construction, source.domain, compiled, budget=budget
+                )
+        organization = NativePublicationOrganization(
+            patches=patches,
+            labels=labels,
+            zones=zones,
+            region_boundary_evidence=region_boundaries,
+            associations=local_associations,
+        )
+        return _publish_parametric_surface(
+            source,
+            specification,
+            prepared,
+            coordinate_contract,
+            provider,
+            plan_id,
+            execution,
+            construction,
+            topology,
+            compliance,
+            organization,
+        ).result
 
 
 __all__ = [

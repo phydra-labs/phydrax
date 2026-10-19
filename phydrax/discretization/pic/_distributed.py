@@ -92,7 +92,7 @@ def _plane_halo(
             right = right % cells
         keep = (right < cells) & (right != left)
         pairs.append(np.stack((left[keep], right[keep]), axis=1))
-    return DistributedHaloPlan(owner, np.concatenate(pairs, axis=0), parts)
+    return DistributedHaloPlan.from_global(owner, np.concatenate(pairs, axis=0), parts)
 
 
 def _axis_tuple(

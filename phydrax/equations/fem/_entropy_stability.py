@@ -15,11 +15,11 @@ from jax import Array
 from jax.typing import ArrayLike
 
 import phydrax.ein as ein
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization.fem._reference import FiniteElementSpec
 from ...discretization.finite_volume._riemann import (
     AbstractSymmetricTwoPointFluxPlan,
 )
@@ -257,17 +257,17 @@ def prepare_entropy_reference_operator(
         )
     )
     from ...discretization.fem._reference_operator import (
-        _map_edge_rule,
-        _map_face_rule,
+        map_edge_rule,
+        map_face_rule,
     )
 
     boundary = jnp.zeros_like(weak)
     for facet, rule in enumerate(facet_rules):
         data = reference_rule_data(rule)
         points, weights, normals = (
-            _map_edge_rule(element.cell_kind, facet, data)
+            map_edge_rule(element.cell_kind, facet, data)
             if element.topological_dimension == 2
-            else _map_face_rule(element.cell_kind, facet, data)
+            else map_face_rule(element.cell_kind, facet, data)
         )
         trace = element.tabulate(points)[0]
         boundary = boundary + jnp.stack(

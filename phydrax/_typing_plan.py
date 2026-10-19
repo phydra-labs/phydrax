@@ -39,7 +39,12 @@ from typing import (
 
 import jax
 import numpy as np
-from typing_extensions import evaluate_forward_ref, get_annotations, is_protocol
+from typing_extensions import (
+    evaluate_forward_ref,
+    get_annotations,
+    is_protocol,
+    is_typeddict,
+)
 
 from ._dtype_names import dtype_matches, DTypeRule
 from ._typing_forms import (
@@ -390,9 +395,11 @@ def _nominal_input_class(form: object, /) -> type | None:
         or cls is jax.Array
         or issubclass(cls, Enum)
         or is_protocol(cls)
+        or is_typeddict(cls)
     ):
         # NumPy and JAX array/dtype annotations describe conversion inputs; Enum
-        # selectors are parsed by their owner; protocols are structural.
+        # selectors are parsed by their owner; protocols and TypedDicts are
+        # structural (a TypedDict refuses isinstance checks by construction).
         return None
     return cls
 
@@ -684,24 +691,21 @@ def _check_array(
         return Violation(
             "type", f"{path}: symbolic extents are unsupported; got {shape}."
         ), value
-    violation = _check_terms(tensor.shape, shape, scope, path)
+    # The dtype is part of the value's kind: a wrong dtype is a type violation
+    # whatever the shape, so it is checked before ranks and extents bind.
     target = effective_dtype(contract)
-    if (
-        violation is None
-        and tensor.dtype is not None
-        and (
-            value.dtype != target
-            if target is not None
-            else not dtype_matches(tensor.dtype, value.dtype)
-        )
+    if tensor.dtype is not None and (
+        value.dtype != target
+        if target is not None
+        else not dtype_matches(tensor.dtype, value.dtype)
     ):
         label = target.name if target is not None else tensor.dtype.label
-        violation = Violation(
+        return Violation(
             "type",
             f"{path}: expected {tensor.label} with dtype {label}; "
             f"got {_describe_array(value.dtype, shape)}.",
-        )
-    return violation, value
+        ), value
+    return _check_terms(tensor.shape, shape, scope, path), value
 
 
 def _check_key(value: object, path: str, /) -> _Outcome:

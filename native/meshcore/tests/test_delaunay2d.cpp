@@ -43,11 +43,11 @@ Result collect(int32_t status, phx_mc_mesh* mesh) {
   result.points.resize(static_cast<std::size_t>(2 * phx_mc_mesh_point_count(mesh)));
   result.cells.resize(static_cast<std::size_t>(3 * phx_mc_mesh_cell_count(mesh)));
   result.vertex_map.resize(static_cast<std::size_t>(phx_mc_mesh_input_point_count(mesh)));
-  phx_mc_mesh_copy_points(mesh, result.points.data());
-  phx_mc_mesh_copy_cells(mesh, result.cells.data());
-  phx_mc_mesh_copy_vertex_map(mesh, result.vertex_map.data());
+  PHX_CHECK(phx_mc_mesh_copy_points(mesh, result.points.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_cells(mesh, result.cells.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_vertex_map(mesh, result.vertex_map.data()) == PHX_MC_OK);
   std::vector<int32_t> segments(result.cells.size());
-  phx_mc_mesh_copy_cell_constraints(mesh, segments.data());
+  PHX_CHECK(phx_mc_mesh_copy_cell_constraints(mesh, segments.data()) == PHX_MC_OK);
   PHX_CHECK(std::all_of(segments.begin(), segments.end(), [](int32_t s) { return s == -1; }));
   phx_mc_mesh_free(mesh);
   return result;
@@ -365,7 +365,7 @@ void test_performance() {
 void test_native_budget_boundaries() {
   const std::vector<double> points = random_points(80, 19);
   const std::vector<double> original = points;
-  uint64_t work[9] = {}, memory[6] = {};
+  uint64_t work[PHX_MC_PLANAR_COUNTERS] = {}, memory[6] = {};
   phx_mc_mesh* mesh = nullptr;
   auto run = [&](int64_t cavity, int64_t units, int64_t bytes) {
     return phx_mc_delaunay_2d(80, points.data(), INT64_MAX, cavity, units, bytes,
@@ -373,20 +373,20 @@ void test_native_budget_boundaries() {
   };
   PHX_CHECK(run(INT64_MAX, INT64_MAX, INT64_MAX) == PHX_MC_OK);
   const Result baseline = collect(PHX_MC_OK, mesh);
-  const int64_t exact_work = static_cast<int64_t>(work[0]);
-  const int64_t exact_cavity = static_cast<int64_t>(work[6]);
-  const int64_t exact_bytes = static_cast<int64_t>(memory[2]);
-  PHX_CHECK(work[1] > 0 && work[2] > 0 && work[3] == 0);
-  PHX_CHECK(work[4] == 80 && work[5] == 0);
+  const int64_t exact_work = static_cast<int64_t>(work[PHX_MC_PLANAR_WORK_UNITS]);
+  const int64_t exact_cavity = static_cast<int64_t>(work[PHX_MC_PLANAR_PEAK_CAVITY_CELLS]);
+  const int64_t exact_bytes = static_cast<int64_t>(memory[PHX_MC_MEMORY_PEAK_BYTES]);
+  PHX_CHECK(work[PHX_MC_PLANAR_ORIENT_REQUESTS] > 0 && work[PHX_MC_PLANAR_INCIRCLE_REQUESTS] > 0 && work[PHX_MC_PLANAR_POWER_REQUESTS] == 0);
+  PHX_CHECK(work[PHX_MC_PLANAR_INSERTIONS] == 80 && work[PHX_MC_PLANAR_FLIPS] == 0);
   PHX_CHECK(run(exact_cavity, exact_work, exact_bytes) == PHX_MC_OK);
   const Result bounded = collect(PHX_MC_OK, mesh);
   PHX_CHECK(bounded.cells == baseline.cells && bounded.vertex_map == baseline.vertex_map);
   PHX_CHECK(run(exact_cavity, exact_work - 1, exact_bytes) == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(mesh == nullptr && work[7] == 1 && memory[1] == 0);
+  PHX_CHECK(mesh == nullptr && work[PHX_MC_PLANAR_WORK_REFUSALS] == 1 && memory[PHX_MC_MEMORY_LIVE_BYTES] == 0);
   PHX_CHECK(run(exact_cavity - 1, INT64_MAX, INT64_MAX) == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(mesh == nullptr && work[8] == 1 && work[6] > static_cast<uint64_t>(exact_cavity - 1));
+  PHX_CHECK(mesh == nullptr && work[PHX_MC_PLANAR_CAVITY_REFUSALS] == 1 && work[PHX_MC_PLANAR_PEAK_CAVITY_CELLS] > static_cast<uint64_t>(exact_cavity - 1));
   PHX_CHECK(run(INT64_MAX, INT64_MAX, exact_bytes - 1) == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(mesh == nullptr && memory[5] == 1 && memory[1] == 0);
+  PHX_CHECK(mesh == nullptr && memory[PHX_MC_MEMORY_REFUSALS] == 1 && memory[PHX_MC_MEMORY_LIVE_BYTES] == 0);
   PHX_CHECK(run(0, INT64_MAX, INT64_MAX) == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(run(INT64_MAX, 0, INT64_MAX) == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(run(INT64_MAX, INT64_MAX, 0) == PHX_MC_CAPACITY_EXCEEDED);
@@ -398,7 +398,7 @@ void test_native_budget_boundaries() {
                               INT64_MAX, INT64_MAX, INT64_MAX, work, memory, &mesh) == PHX_MC_OK);
   const Result weighted = collect(PHX_MC_OK, mesh);
   PHX_CHECK(weighted.cells == baseline.cells);
-  PHX_CHECK(work[2] == 0 && work[3] > 0);
+  PHX_CHECK(work[PHX_MC_PLANAR_INCIRCLE_REQUESTS] == 0 && work[PHX_MC_PLANAR_POWER_REQUESTS] > 0);
 
   // A nested pointset call cannot escape an ancestor byte envelope, and its
   // evidence must exclude the ancestor's retained buffers and historical peak.
@@ -413,14 +413,14 @@ void test_native_budget_boundaries() {
     const std::size_t limited_total = retained_bytes + static_cast<std::size_t>(exact_bytes - 1);
     PHX_CHECK(ancestor->set_limit(limited_total));
     PHX_CHECK(run(INT64_MAX, INT64_MAX, INT64_MAX) == PHX_MC_CAPACITY_EXCEEDED);
-    PHX_CHECK(mesh == nullptr && memory[5] == 1 && memory[1] == 0);
-    PHX_CHECK(memory[0] == static_cast<uint64_t>(exact_bytes - 1));
-    PHX_CHECK(memory[2] <= memory[0]);
+    PHX_CHECK(mesh == nullptr && memory[PHX_MC_MEMORY_REFUSALS] == 1 && memory[PHX_MC_MEMORY_LIVE_BYTES] == 0);
+    PHX_CHECK(memory[PHX_MC_MEMORY_LIMIT_BYTES] == static_cast<uint64_t>(exact_bytes - 1));
+    PHX_CHECK(memory[PHX_MC_MEMORY_PEAK_BYTES] <= memory[PHX_MC_MEMORY_LIMIT_BYTES]);
     PHX_CHECK(ancestor->live_bytes() == retained_bytes);
     PHX_CHECK(ancestor->limit_bytes() == limited_total);
     PHX_CHECK(ancestor->set_limit(retained_bytes + static_cast<std::size_t>(exact_bytes)));
     PHX_CHECK(run(INT64_MAX, INT64_MAX, INT64_MAX) == PHX_MC_OK);
-    PHX_CHECK(memory[2] == static_cast<uint64_t>(exact_bytes));
+    PHX_CHECK(memory[PHX_MC_MEMORY_PEAK_BYTES] == static_cast<uint64_t>(exact_bytes));
   }
   // Output survives the creating scope and retains the shared allocation owner.
   const Result nested = collect(PHX_MC_OK, mesh);

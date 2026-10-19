@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Exact affine reference charts, retaining the original coordinate source."""
+"""Construct affine reference charts with rational arithmetic and retained source coefficients."""
 
 from __future__ import annotations
 
@@ -10,11 +10,12 @@ from fractions import Fraction
 
 import numpy as np
 
-from .._meshcore import charge_native_geometry_queries
-from ..discretization._coordinate_enclosure import _solve_exact
+from phydrax.linalg._exact import solve_exact
+
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization.fem import FiniteElementSpec
-from ._quad_generation import _family_host_array
+from ..typing import checked
 
 
 def affine_reference_root_frame(
@@ -22,7 +23,7 @@ def affine_reference_root_frame(
     root_kind: str,
     /,
 ) -> tuple[list[list[Fraction]], tuple[Fraction, ...]]:
-    """Validate the original exact affine chart, including every root corner."""
+    """Validate the source affine chart equations at every root corner."""
     match root_kind:
         case "tetrahedron" | "prism":
             axes = (1, 2, 3)
@@ -30,12 +31,12 @@ def affine_reference_root_frame(
             axes = (1, 3, 4)
         case _:
             raise ValueError(
-                "Reference composition requires an affine tetrahedron, prism, or hexahedron root."
+                f"ReferenceRootComposition.root_kind must be tetrahedron, prism, or hexahedron; got {root_kind!r}"
             )
     topology = reference_cell_topology(root_kind)
     if root.shape != (len(topology.vertices), 3) or not np.all(np.isfinite(root)):
         raise ValueError(
-            "Reference composition requires every finite original three-dimensional root corner."
+            f"ReferenceRootComposition.root must contain finite three-dimensional corners; got shape {root.shape!r}, expected {(len(topology.vertices), 3)!r}, finite {bool(np.all(np.isfinite(root)))}"
         )
     origin = tuple(Fraction(float(value)) for value in root[0])
     matrix = [
@@ -53,23 +54,26 @@ def affine_reference_root_frame(
             for axis in range(3)
         ):
             raise ValueError(
-                "The independently declared reference root is not exactly affine."
+                f"ReferenceRootComposition.root must satisfy its affine corner equations; got point {point!r} at reference corner {corner!r}"
             )
     return matrix, origin
 
 
+@checked
 def exact_reference_chart_controls(
     target: np.ndarray,
     root: np.ndarray,
     root_kind: str,
     chart: FiniteElementSpec,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Solve the actual affine reference root exactly, never a physical inverse.
+    """Solve the affine reference chart with rational arithmetic.
 
-    Corner containment proves whole-cell containment because the canonical
-    degree-one target shape functions are nonnegative on their reference cell.
-    Original source coefficients are not fitted, rounded, or reconstructed.
+    Corner containment proves whole-cell containment because degree-one target
+    shape functions are nonnegative on the reference cell. The chart retains
+    source coefficients without fitting or rounding them.
     """
     target_topology = reference_cell_topology(chart.cell_kind)
     if (
@@ -79,15 +83,19 @@ def exact_reference_chart_controls(
         or not np.all(np.isfinite(target))
     ):
         raise ValueError(
-            "Reference composition requires complete finite three-dimensional linear corner charts."
+            f"ReferenceRootComposition.target must contain finite degree-one three-dimensional corners; got shape {target.shape!r}, degree {chart.degree}, kind {chart.cell_kind!r}, finite {bool(np.all(np.isfinite(target)))}"
         )
     matrix, origin = affine_reference_root_frame(root, root_kind)
     right = [
         [Fraction(float(point[axis])) - origin[axis] for point in target]
         for axis in range(3)
     ]
-    charge_native_geometry_queries(1, work_units=1)
-    coordinates = _solve_exact(matrix, right)
+
+    ticket = budget.ticket
+    if ticket.remaining_work_units < 1 or ticket.remaining_geometry_queries < 1:
+        ticket.refuse(1, queries_upper=1)
+    ticket.consume(1, geometry_queries=1)
+    coordinates = solve_exact(matrix, right)
     for corner in zip(*coordinates, strict=True):
         if any(value < 0 or value > 1 for value in corner):
             return None
@@ -102,12 +110,23 @@ def exact_reference_chart_controls(
         for value in axis
     )
     dtype = np.int64 if bounded else np.object_
-    numerators = _family_host_array((chart.local_dof_count, 3), dtype)
-    denominators = _family_host_array(numerators.shape, dtype)
+    entries = chart.local_dof_count * 3
+    storage_upper = 2 * entries * np.dtype(dtype).itemsize
+    if not bounded:
+        storage_upper += sum(
+            64
+            + (abs(value.numerator).bit_length() + value.denominator.bit_length() + 7)
+            // 8
+            for axis in coordinates
+            for value in axis
+        )
+    budget.reserve(0, storage_upper)
+    numerators = np.empty((chart.local_dof_count, 3), dtype=dtype)
+    denominators = np.empty(numerators.shape, dtype=dtype)
     for corner, dofs in enumerate(chart.entity_dofs[0]):
         if len(dofs) != 1:
             raise ValueError(
-                "A canonical linear reference chart must have one DOF per corner."
+                f"ReferenceRootComposition.chart.entity_dofs must assign one DOF to each corner; got corner {corner}, DOFs {dofs!r}"
             )
         for axis in range(3):
             value = coordinates[axis][corner]

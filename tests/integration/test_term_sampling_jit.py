@@ -24,6 +24,7 @@ from phydrax.domain import (
     TimeInterval,
 )
 from phydrax.terms import RandomizedMomentPenalty, ResidualPenalty
+from phydrax.units import METER
 
 
 class _KeyConsumingResidual(BatchEvaluator):
@@ -201,7 +202,7 @@ def test_geometry_domain_point_and_grid_sampling_share_constraint_contract() -> 
             center=(0.0, 0.0),
             side=2.0,
             feature_id="domain-substrate-integration",
-        ).compile()
+        ).compile(coordinate_unit=METER)
     )
     domain = geometry @ phx.domain.TimeInterval(0.0, 1.0)
     component = domain.component()

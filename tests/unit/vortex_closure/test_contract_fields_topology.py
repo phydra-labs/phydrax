@@ -56,7 +56,7 @@ def test_contract_fields_topology_scenario_1() -> None:
     assert rosenhead.vorticity[0] > 0.0
     assert bool(singular.finite & rosenhead.finite)
     plan = phx.operators.PeriodicVortexEwaldPlan(
-        (1.0, 1.0),
+        jnp.asarray((1.0, 1.0), dtype=jnp.float64),
         splitting_parameter=6.0,
         real_image_radius=2,
         reciprocal_mode_radius=5,
@@ -75,6 +75,8 @@ def test_contract_fields_topology_scenario_1() -> None:
         source_indices=jnp.arange(2),
     )
     result = plan.evaluate(source, target)
+    if result.velocity is None:
+        raise RuntimeError("result.velocity must be present for the request; got None")
 
     np.testing.assert_allclose(result.velocity[0], result.velocity[1], atol=1e-8)
     assert result.diagnostics.backend_diagnostics.compatibility_residual < 1e-12
@@ -93,7 +95,7 @@ def test_contract_fields_topology_scenario_2() -> None:
     first = plan.insert(
         state,
         journal,
-        (0.0, 0.0),
+        jnp.asarray((0.0, 0.0), dtype=jnp.float64),
         1.0,
         0.2,
         0.5,
@@ -102,7 +104,7 @@ def test_contract_fields_topology_scenario_2() -> None:
         first.accepted,
         first.journal,
         0,
-        (0.1, 0.0),
+        jnp.asarray((0.1, 0.0), dtype=jnp.float64),
     )
     third = plan.merge(
         second.accepted,
@@ -153,8 +155,8 @@ def test_contract_fields_topology_scenario_2() -> None:
     target = phx.discretization.VortexTargetState(targets)
     fmm = phx.operators.VortexFMMPlan(
         position,
-        (-1.0, -1.0),
-        (1.0, 1.0),
+        jnp.asarray((-1.0, -1.0), dtype=jnp.float64),
+        jnp.asarray((1.0, 1.0), dtype=jnp.float64),
         depth=2,
         expansion_order=1,
         leaf_capacity=4,
@@ -173,6 +175,8 @@ def test_contract_fields_topology_scenario_2() -> None:
     )
     fmm_result = fmm.evaluate(source, target)
     direct_result = direct.evaluate(source, target)
+    if fmm_result.velocity is None or direct_result.velocity is None:
+        raise RuntimeError("velocity results must be present for the request; got None")
 
     np.testing.assert_allclose(
         fmm_result.velocity,
@@ -210,8 +214,8 @@ def test_contract_fields_topology_scenario_2() -> None:
     )
     fmm = phx.operators.VortexFMMPlan(
         position,
-        (-1.0, -1.0),
-        (1.0, 1.0),
+        jnp.asarray((-1.0, -1.0), dtype=jnp.float64),
+        jnp.asarray((1.0, 1.0), dtype=jnp.float64),
         depth=6,
         expansion_order=1,
         leaf_capacity=4,
@@ -232,6 +236,8 @@ def test_contract_fields_topology_scenario_2() -> None:
     fmm_result = fmm.evaluate(source, target, request=request)
     direct_result = direct.evaluate(source, target, request=request)
     evidence = fmm_result.diagnostics.backend_diagnostics
+    if fmm_result.velocity is None or direct_result.velocity is None:
+        raise RuntimeError("velocity results must be present for the request; got None")
 
     assert bool(fmm_result.successful)
     assert int(evidence.m2l_count) > 0
@@ -271,8 +277,8 @@ def test_contract_fields_topology_scenario_3() -> None:
     )
     fmm = phx.operators.VortexFMMPlan(
         position,
-        (-1.0, -1.0, -1.0),
-        (1.0, 1.0, 1.0),
+        jnp.asarray((-1.0, -1.0, -1.0), dtype=jnp.float64),
+        jnp.asarray((1.0, 1.0, 1.0), dtype=jnp.float64),
         depth=2,
         expansion_order=1,
         leaf_capacity=4,
@@ -292,6 +298,8 @@ def test_contract_fields_topology_scenario_3() -> None:
     )
     fmm_result = fmm.evaluate(source, target)
     direct_result = direct.evaluate(source, target)
+    if fmm_result.velocity is None or direct_result.velocity is None:
+        raise RuntimeError("velocity results must be present for the request; got None")
 
     np.testing.assert_allclose(
         fmm_result.velocity,
@@ -325,8 +333,8 @@ def test_contract_fields_topology_scenario_3() -> None:
     target = phx.discretization.VortexTargetState(targets)
     plane = phx.operators.VortexFMMPlan(
         source_position,
-        (-1.0, -1.0, -1.0),
-        (1.0, 1.0, 1.0),
+        jnp.asarray((-1.0, -1.0, -1.0), dtype=jnp.float64),
+        jnp.asarray((1.0, 1.0, 1.0), dtype=jnp.float64),
         reference_targets=targets,
         depth=2,
         expansion_order=1,
@@ -357,6 +365,8 @@ def test_contract_fields_topology_scenario_3() -> None:
     )
     result = plane.evaluate(source, target, request=request)
     reference = direct.evaluate(source, target, request=request)
+    if result.velocity is None or reference.velocity is None:
+        raise RuntimeError("velocity results must be present for the request; got None")
     np.testing.assert_allclose(result.velocity, reference.velocity, rtol=0.35, atol=1e-3)
     assert result.velocity_gradient is not None
     assert result.diagnostics.backend_diagnostics.execution == "plane_dual"
@@ -407,9 +417,11 @@ def test_contract_fields_topology_scenario_3() -> None:
     omega = jnp.zeros((count, count)).at[count // 2, count // 2].set(1.0)
     free = phx.operators.FreeSpaceVortexFFTPlan(
         (count, count),
-        (0.0, 0.0),
-        (1.0, 1.0),
+        jnp.asarray((0.0, 0.0), dtype=jnp.float64),
+        jnp.asarray((1.0, 1.0), dtype=jnp.float64),
     ).evaluate(omega)
+    if p3m.velocity is None:
+        raise RuntimeError("p3m.velocity must be present for the request; got None")
 
     assert jnp.all(jnp.isfinite(p3m.velocity))
     assert p3m.diagnostics.backend_diagnostics.near_pair_count > 0
@@ -450,9 +462,11 @@ def test_dynamic_core_rvpm_is_part_of_packed_dynamics() -> None:
     rate_unpacked = compiled.dynamics.state_layout.unpack(rate)
 
     assert compiled.dynamics.state_layout.dynamic_core
-    # ty: ignore[no-matching-overload]
+    if unpacked.core_radius is None or rate_unpacked.core_radius is None:
+        raise RuntimeError(
+            "dynamic core radii must be present in packed dynamics; got None"
+        )
     np.testing.assert_allclose(unpacked.core_radius, 0.2)
-    # ty: ignore[invalid-argument-type]
     assert jnp.all(jnp.isfinite(rate_unpacked.core_radius))
 
 

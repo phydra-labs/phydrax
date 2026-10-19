@@ -12,6 +12,7 @@ import numpy as np
 import opt_einsum as oe
 import pytest
 from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax as phx
 from phydrax.discretization.fem._high_order import (
@@ -584,4 +585,35 @@ def test_runtime_linearization_transpose_matches_forward_action(
         jnp.dot(direction, operator.transpose_mv(covector)),
         rtol=1.0e-12,
         atol=1.0e-12,
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        0.0,
+        -0.0,
+        3,
+        np.float32(0.25),
+        np.asarray((0.0, -0.0, 1.5), dtype=np.float64),
+        np.asarray((1, 2, 3), dtype=np.int32),
+    ),
+    ids=("float", "signed-zero", "integer", "numpy-scalar", "float-bank", "integer-bank"),
+)
+def test_coefficient_host_admission_preserves_identity_without_compiles(
+    value: ArrayLike,
+) -> None:
+    from tools.compile_counter import CompileCounter
+
+    reference_value = jnp.asarray(value)
+    reference = phx.equations.coefficient(reference_value)
+    with CompileCounter() as compiler:
+        admitted = phx.equations.coefficient(value)
+    assert compiler.count == 0
+    assert admitted.coefficient_id == reference.coefficient_id
+    assert admitted.layout_id == reference.layout_id
+    assert admitted.value.dtype == reference.value.dtype
+    assert admitted.value.weak_type == reference.value.weak_type
+    np.testing.assert_array_equal(
+        np.asarray(admitted.value).tobytes(), np.asarray(reference.value).tobytes()
     )

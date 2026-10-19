@@ -6,10 +6,25 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.meshing._assembly import MeshAssembly, MeshPart
+from phydrax._array_archive import ArrayArchiveLimits
+from phydrax.lifecycle import read_meshing_source_closure, write_meshing_source_closure
+from phydrax.meshing import (
+    ContactCoupling,
+    MeshAssembly,
+    MeshingEntityKind,
+    MeshingScope,
+    MeshPart,
+)
 
 
-def test_assembly_contracts() -> None:
+# Empirical `test_contact_assembly_archive_preserves_custom_tolerance_and_physical_force`: matched max |delta|=1.77636e-15; joint allowance fraction=0.0296059, margin=97.0394%.
+CONTACT_ARCHIVE_FORCE_RTOL = 1e-14
+# Empirical `test_contact_assembly_archive_preserves_custom_tolerance_and_physical_force`: matched max |delta|=1.77636e-15; joint allowance fraction=0.0296059, margin=97.0394%.
+CONTACT_ARCHIVE_FORCE_ATOL = 1e-14
+
+
+@pytest.fixture(scope="module")
+def assembly_parts() -> tuple[MeshPart, ...]:
     contract = phx.SpatialCoordinateContract.si()
     tensor = phx.discretization.TensorGridPlan(
         (
@@ -32,59 +47,100 @@ def test_assembly_contracts() -> None:
         MeshPart(name, carrier, coordinate_contract=contract)
         for name, carrier in (("grid", tensor), ("cloud", cloud), ("spline", spline))
     )
-    assembly = MeshAssembly(parts)
-    assert assembly.assembly_id == MeshAssembly(tuple(reversed(parts))).assembly_id
+    return parts
+
+
+def test_assembly_identity_is_independent_of_part_order(
+    assembly_parts: tuple[MeshPart, ...],
+) -> None:
+    assert (
+        MeshAssembly(assembly_parts).assembly_id
+        == MeshAssembly(tuple(reversed(assembly_parts))).assembly_id
+    )
+
+
+def test_assembly_retains_declared_carrier_families_and_point_selection(
+    assembly_parts: tuple[MeshPart, ...],
+) -> None:
+    assembly = MeshAssembly(assembly_parts)
+    iga = phx.discretization.iga
     assert isinstance(
         assembly.part("grid").carrier, phx.discretization.PreparedTensorGrid
     )
     assert isinstance(assembly.part("cloud").carrier, phx.discretization.PointCloudPlan)
     assert isinstance(assembly.part("spline").carrier, iga.IsogeometricPlan)
+    points = np.asarray(
+        [(x, y) for x in (0.0, 0.5, 1.0) for y in (0.0, 0.5, 1.0)],
+        dtype=np.float64,
+    )
     np.testing.assert_allclose(
-        # ty: ignore[invalid-argument-type]
-        assembly.part("cloud").point_coordinates(parts[1].scope(0, [2, 4])),
+        assembly.part("cloud").point_coordinates(
+            assembly_parts[1].scope(0, np.asarray([2, 4], dtype=np.int64))
+        ),
         points[[2, 4]],
     )
-    # ty: ignore[invalid-argument-type]
-    spline_scope = parts[2].scope(2, [0])
+
+
+def test_spline_part_scope_refuses_changed_geometry(
+    assembly_parts: tuple[MeshPart, ...],
+) -> None:
+    iga = phx.discretization.iga
+    spline = assembly_parts[2].carrier
+    assert isinstance(spline, iga.IsogeometricPlan)
+    spline_scope = assembly_parts[2].scope(2, np.asarray([0], dtype=np.int64))
     changed_geometry = iga.NURBSGeometryState(
         spline.geometry.control_points * 2, spline.geometry.weights
     )
     changed_spline = eqx.tree_at(lambda value: value.geometry, spline, changed_geometry)
-    changed_part = MeshPart("spline", changed_spline, coordinate_contract=contract)
+    changed_part = MeshPart(
+        "spline",
+        changed_spline,
+        coordinate_contract=assembly_parts[2].coordinate_contract,
+    )
     assert changed_spline.plan_id == spline.plan_id
-    with pytest.raises(ValueError, match="stale"):
+    with pytest.raises(ValueError, match=r"MeshPart\.scope"):
         changed_part.require_scope(spline_scope)
-    with pytest.raises(ValueError, match="coefficient vertices"):
-        # ty: ignore[invalid-argument-type]
-        parts[2].scope(0, [0])
+
+
+def test_spline_part_refuses_unsupported_entity_dimension(
+    assembly_parts: tuple[MeshPart, ...],
+) -> None:
+    with pytest.raises(ValueError, match=r"MeshPart\.entity_dimension"):
+        assembly_parts[2].scope(0, np.asarray([0], dtype=np.int64))
+
+
+@pytest.fixture(scope="module")
+def fluid_part() -> MeshPart:
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(4),), axis_names=("x",)
     ).prepare(jnp.asarray([[0.0], [1.0]]))
-    part = MeshPart("fluid", grid, coordinate_contract=phx.SpatialCoordinateContract.si())
-    with pytest.raises(ValueError, match="unique name"):
-        MeshAssembly((part, part))
+    return MeshPart("fluid", grid, coordinate_contract=phx.SpatialCoordinateContract.si())
+
+
+def test_assembly_refuses_duplicate_part_names(fluid_part: MeshPart) -> None:
+    with pytest.raises(ValueError, match=r"MeshAssembly\.parts"):
+        MeshAssembly((fluid_part, fluid_part))
+
+
+def test_assembly_refuses_incompatible_reference_frames(fluid_part: MeshPart) -> None:
     other = MeshPart(
         "solid",
-        grid,
+        fluid_part.carrier,
         coordinate_contract=phx.SpatialCoordinateContract(
             phx.SpatialCoordinateContract.si().length_unit, reference_frame="body"
         ),
     )
-    with pytest.raises(ValueError, match="coordinate contract"):
-        MeshAssembly((part, other))
-    with pytest.raises(ValueError, match="unknown or inactive"):
-        # ty: ignore[invalid-argument-type]
-        part.scope(1, [9])
+    with pytest.raises(ValueError, match=r"MeshAssembly\.parts"):
+        MeshAssembly((fluid_part, other))
 
 
-def test_point_assembly_archive_preserves_normal_bits_and_rejects_stale_science(
-    tmp_path: Path,
-) -> None:
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        write_meshing_source_closure,
-    )
+def test_part_scope_refuses_out_of_range_entity(fluid_part: MeshPart) -> None:
+    with pytest.raises(ValueError, match=r"MeshPart\.scope"):
+        fluid_part.scope(1, np.asarray([9], dtype=np.int64))
 
+
+@pytest.fixture(scope="module")
+def point_assembly() -> MeshAssembly:
     points = np.asarray(
         [(x, y, z) for x in (0.0, 1.0) for y in (0.0, 1.0) for z in (0.0, 0.5, 1.0)],
         dtype=np.float64,
@@ -100,7 +156,7 @@ def test_point_assembly_archive_preserves_normal_bits_and_rejects_stale_science(
         boundary_normals=normals,
         neighbors=12,
     )
-    assembly = MeshAssembly(
+    return MeshAssembly(
         (
             MeshPart(
                 "cloud",
@@ -109,6 +165,15 @@ def test_point_assembly_archive_preserves_normal_bits_and_rejects_stale_science(
             ),
         )
     )
+
+
+def test_point_assembly_archive_preserves_normal_bits(
+    tmp_path: Path,
+    point_assembly: MeshAssembly,
+) -> None:
+    assembly = point_assembly
+    plan = assembly.part("cloud").carrier
+    assert isinstance(plan, phx.discretization.PointCloudPlan)
     receipt = write_meshing_source_closure(tmp_path / "points.zip", assembly)
     restored = read_meshing_source_closure(
         receipt.path, expected_content_id=receipt.content_id
@@ -122,6 +187,14 @@ def test_point_assembly_archive_preserves_normal_bits_and_rejects_stale_science(
     )
     assert carrier.plan_id == plan.plan_id
 
+
+def test_point_assembly_archive_refuses_stale_normals(
+    tmp_path: Path,
+    point_assembly: MeshAssembly,
+) -> None:
+    assembly = point_assembly
+    plan = assembly.part("cloud").carrier
+    assert isinstance(plan, phx.discretization.PointCloudPlan)
     changed_normals = plan.boundary_normals.at[0, 0].set(
         np.nextafter(np.asarray(plan.boundary_normals)[0, 0], np.float64(np.inf)),
     )
@@ -137,19 +210,12 @@ def test_point_assembly_archive_preserves_normal_bits_and_rejects_stale_science(
             ),
         )
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"PointCloudPlan\.plan_id"):
         write_meshing_source_closure(tmp_path / "corrupted-points.zip", corrupted)
 
 
-def test_contact_assembly_archive_preserves_custom_tolerance_and_physical_force(
-    tmp_path: Path,
-) -> None:
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        write_meshing_source_closure,
-    )
-    from phydrax.meshing._coupling import ContactCoupling
-
+@pytest.fixture(scope="module")
+def contact_assembly() -> MeshAssembly:
     plan = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(2),),
         axis_names=("x",),
@@ -174,7 +240,16 @@ def test_contact_assembly_archive_preserves_custom_tolerance_and_physical_force(
         np.asarray(((1.000001,),), dtype=np.float64),
         tolerance=1e-4,
     )
-    assembly = MeshAssembly((source, target), couplings=(coupling,))
+    return MeshAssembly((source, target), couplings=(coupling,))
+
+
+def test_contact_assembly_archive_preserves_custom_tolerance_and_physical_force(
+    tmp_path: Path,
+    contact_assembly: MeshAssembly,
+) -> None:
+    assembly = contact_assembly
+    coupling = assembly.couplings[0]
+    assert isinstance(coupling, ContactCoupling)
     receipt = write_meshing_source_closure(tmp_path / "contact.zip", assembly)
     restored = read_meshing_source_closure(
         receipt.path, expected_content_id=receipt.content_id
@@ -190,18 +265,81 @@ def test_contact_assembly_archive_preserves_custom_tolerance_and_physical_force(
         10.0,
     )
     expected = np.asarray(((10.0 * 0.5000005 * 1.000001,),), dtype=np.float64)
-    np.testing.assert_allclose(right, expected, rtol=1e-14, atol=1e-14)
+    np.testing.assert_allclose(
+        right, expected, rtol=CONTACT_ARCHIVE_FORCE_RTOL, atol=CONTACT_ARCHIVE_FORCE_ATOL
+    )
     np.testing.assert_array_equal(left, -right)
 
 
-def test_spline_assembly_archive_preserves_nonuniform_gauge_and_refuses_stale_geometry(
-    tmp_path: Path,
+def test_contact_stored_fields_preserve_retained_endpoint_revisions(
+    contact_assembly: MeshAssembly,
 ) -> None:
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        write_meshing_source_closure,
+    coupling = contact_assembly.couplings[0]
+    assert isinstance(coupling, ContactCoupling)
+    rebuilt = ContactCoupling.from_stored_fields(
+        coupling,
+        source=contact_assembly.part("source"),
+        target=contact_assembly.part("target"),
     )
+    assert rebuilt.coupling_id == coupling.coupling_id
+    assert rebuilt.tolerance == 1e-4
+    for name in ("source_rows", "normals", "reference_gap"):
+        expected = np.asarray(getattr(coupling, name))
+        actual = np.asarray(getattr(rebuilt, name))
+        np.testing.assert_array_equal(actual.view(np.uint8), expected.view(np.uint8))
 
+
+def test_contact_stored_fields_refuse_changed_reference_gap_bit(
+    contact_assembly: MeshAssembly,
+) -> None:
+    coupling = contact_assembly.couplings[0]
+    assert isinstance(coupling, ContactCoupling)
+    changed = np.nextafter(np.asarray(coupling.reference_gap)[0], np.float64(np.inf))
+    faulty = eqx.tree_at(
+        lambda value: value.reference_gap,
+        coupling,
+        coupling.reference_gap.at[0].set(changed),
+    )
+    with pytest.raises(ValueError, match=r"ContactCoupling\.stored_fields"):
+        ContactCoupling.from_stored_fields(
+            faulty,
+            source=contact_assembly.part("source"),
+            target=contact_assembly.part("target"),
+        )
+
+
+def test_contact_stored_fields_refuse_changed_normal_bit(
+    contact_assembly: MeshAssembly,
+) -> None:
+    coupling = contact_assembly.couplings[0]
+    assert isinstance(coupling, ContactCoupling)
+    changed = np.nextafter(np.asarray(coupling.normals)[0, 0], np.float64(np.inf))
+    faulty = eqx.tree_at(
+        lambda value: value.normals, coupling, coupling.normals.at[0, 0].set(changed)
+    )
+    with pytest.raises(ValueError, match=r"ContactCoupling\.stored_fields"):
+        ContactCoupling.from_stored_fields(
+            faulty,
+            source=contact_assembly.part("source"),
+            target=contact_assembly.part("target"),
+        )
+
+
+def test_contact_stored_fields_refuse_foreign_endpoint_revision(
+    contact_assembly: MeshAssembly,
+) -> None:
+    coupling = contact_assembly.couplings[0]
+    assert isinstance(coupling, ContactCoupling)
+    with pytest.raises(ValueError, match=r"MeshPart\.scope"):
+        ContactCoupling.from_stored_fields(
+            coupling,
+            source=contact_assembly.part("target"),
+            target=contact_assembly.part("source"),
+        )
+
+
+@pytest.fixture(scope="module")
+def spline_assembly() -> MeshAssembly:
     iga = phx.discretization.iga
     axis = iga.BSplineGrid.open_uniform(2, 1)
     x, y = jnp.meshgrid(axis.greville_abscissae, axis.greville_abscissae, indexing="ij")
@@ -226,19 +364,38 @@ def test_spline_assembly_archive_preserves_nonuniform_gauge_and_refuses_stale_ge
         np.asarray(spline.geometry.weights).view(np.uint64),
         np.asarray(weights).view(np.uint64),
     )
+    return assembly
+
+
+def test_spline_assembly_archive_preserves_nonuniform_gauge(
+    tmp_path: Path,
+    spline_assembly: MeshAssembly,
+) -> None:
+    assembly = spline_assembly
+    part = assembly.part("spline")
+    spline = part.carrier
+    assert isinstance(spline, phx.discretization.iga.IsogeometricPlan)
     receipt = write_meshing_source_closure(tmp_path / "spline.zip", assembly)
     restored = read_meshing_source_closure(
         receipt.path, expected_content_id=receipt.content_id
     )
     assert isinstance(restored, MeshAssembly)
     actual = restored.part("spline").carrier
-    assert isinstance(actual, iga.IsogeometricPlan)
+    assert isinstance(actual, phx.discretization.iga.IsogeometricPlan)
     np.testing.assert_array_equal(
         np.asarray(actual.geometry.weights).view(np.uint64),
         np.asarray(spline.geometry.weights).view(np.uint64),
     )
     assert restored.part("spline").part_id == part.part_id
 
+
+def test_spline_assembly_archive_refuses_stale_geometry(
+    tmp_path: Path,
+    spline_assembly: MeshAssembly,
+) -> None:
+    part = spline_assembly.part("spline")
+    spline = part.carrier
+    assert isinstance(spline, phx.discretization.iga.IsogeometricPlan)
     changed_weights = spline.geometry.weights.at[0, 0].set(
         np.nextafter(np.asarray(spline.geometry.weights)[0, 0], np.float64(np.inf)),
     )
@@ -246,22 +403,14 @@ def test_spline_assembly_archive_preserves_nonuniform_gauge_and_refuses_stale_ge
         lambda value: value.geometry.weights, spline, changed_weights
     )
     stale_part = eqx.tree_at(lambda value: value.carrier, part, changed_spline)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"stored_fields\.MeshPart"):
         write_meshing_source_closure(
             tmp_path / "stale-spline.zip", MeshAssembly((stale_part,))
         )
 
 
-def test_mesh_backed_scope_checkpoint_preserves_inventory_and_refuses_missing_revision(
-    tmp_path: Path,
-) -> None:
-    from phydrax._array_archive import ArrayArchiveLimits
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        write_meshing_source_closure,
-    )
-    from phydrax.meshing._scope import MeshingEntityKind, MeshingScope
-
+@pytest.fixture(scope="module")
+def mesh_scope_state() -> tuple[phx.discretization.CellMesh, MeshingScope]:
     mesh = phx.discretization.CellMesh(
         np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
         (
@@ -280,6 +429,14 @@ def test_mesh_backed_scope_checkpoint_preserves_inventory_and_refuses_missing_re
         np.asarray(edges.entity_ids)[:2],
         local_mesh=mesh,
     )
+    return mesh, scope
+
+
+def test_mesh_backed_scope_checkpoint_preserves_inventory(
+    tmp_path: Path,
+    mesh_scope_state: tuple[phx.discretization.CellMesh, MeshingScope],
+) -> None:
+    mesh, scope = mesh_scope_state
     limits = ArrayArchiveLimits(max_members=4096, max_manifest_nesting=128)
     receipt = write_meshing_source_closure(
         tmp_path / "mesh-scope.zip", (mesh, scope), limits=limits
@@ -296,11 +453,19 @@ def test_mesh_backed_scope_checkpoint_preserves_inventory_and_refuses_missing_re
     np.testing.assert_array_equal(
         restored_scope.lower(restored_mesh).entity_ids, scope.entity_ids
     )
+
+
+def test_mesh_backed_scope_checkpoint_refuses_missing_revision(
+    tmp_path: Path,
+    mesh_scope_state: tuple[phx.discretization.CellMesh, MeshingScope],
+) -> None:
+    mesh, scope = mesh_scope_state
+    limits = ArrayArchiveLimits(max_members=4096, max_manifest_nesting=128)
     changed = mesh.with_coordinates(
         mesh.coordinates + jnp.asarray([0.125, 0.0]),
         numeric_version="changed-scope-owner",
     )
-    with pytest.raises(ValueError, match="authenticated local constructor context"):
+    with pytest.raises(ValueError, match=r"MeshingScope\.local_mesh"):
         write_meshing_source_closure(
             tmp_path / "stale-mesh-scope.zip", (changed, scope), limits=limits
         )

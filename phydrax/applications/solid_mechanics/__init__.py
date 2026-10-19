@@ -590,7 +590,9 @@ _LAZY_ROD_CONTACT_PLANT = frozenset(
 
 def __getattr__(name: str) -> Any:
     if name not in _LAZY_ROD_CONTACT_PLANT:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        raise AttributeError(
+            f"{__name__}.name must identify an exported attribute; got {name!r}"
+        )
     value = getattr(import_module("._rod_contact_plant", __package__), name)
     globals()[name] = value
     return value

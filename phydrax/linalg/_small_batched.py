@@ -4,15 +4,19 @@
 
 from __future__ import annotations
 
+import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Literal, TYPE_CHECKING
+from types import ModuleType
+from typing import Literal, overload, Protocol, Self, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.core import Tracer
 from jax.typing import ArrayLike
 
 from phydrax.ein import contract
@@ -20,10 +24,171 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
+from ._hermitian_spectral import (
+    fraction_matrix_profile,
+    fraction_storage_upper,
+    reserve_fraction_work,
+)
+
+
+type _SmallArray = Array | np.ndarray
+
+
+type _NumpyCofactorValue = np.ndarray | np.number | int | Fraction
+type _CofactorValue = Array | _NumpyCofactorValue
+
+
+class _CofactorArithmetic(Protocol):
+    """Homogeneous scalar/array algebra used by the direct cofactor formula."""
+
+    def __mul__(self, other: Self, /) -> Self: ...
+
+    def __sub__(self, other: Self, /) -> Self: ...
+
+    def __add__(self, other: Self, /) -> Self: ...
+
+
+def _cofactor_2_terms[T: _CofactorArithmetic](a: T, b: T, c: T, d: T, /) -> T:
+    return a * d - b * c
+
+
+def _cofactor_3_terms[T: _CofactorArithmetic](component: Callable[[int, int], T], /) -> T:
+    # Repeat scalar indexing at each authored occurrence so AD accumulation
+    # retains the authored gather/scatter graph as well as the primal term order.
+    return (
+        component(0, 0)
+        * (component(1, 1) * component(2, 2) - component(1, 2) * component(2, 1))
+        - component(0, 1)
+        * (component(1, 0) * component(2, 2) - component(1, 2) * component(2, 0))
+        + component(0, 2)
+        * (component(1, 0) * component(2, 1) - component(1, 1) * component(2, 0))
+    )
+
+
+@overload
+def cofactor_determinant(matrix: Array, /) -> Array: ...
+
+
+@overload
+def cofactor_determinant(matrix: np.ndarray, /) -> _NumpyCofactorValue: ...
+
+
+def cofactor_determinant(matrix: _SmallArray, /) -> _CofactorValue:
+    """Evaluate the unscaled square-matrix cofactor expansion in fixed term order.
+
+    NumPy inputs return arrays with batch axes and scalars without them; JAX
+    inputs return JAX arrays. Integer/Fraction arithmetic is unrounded absent
+    overflow; floating arithmetic rounds as the written formula. Scalar indexing
+    retains the authored differentiation accumulation graph.
+    """
+    match matrix.shape[-1]:
+        case 1:
+            return matrix[..., 0, 0]
+        case 2:
+            return _cofactor_2_terms(
+                matrix[..., 0, 0], matrix[..., 0, 1], matrix[..., 1, 0], matrix[..., 1, 1]
+            )
+        case 3:
+
+            def component(row: int, column: int) -> _SmallArray:
+                return matrix[..., row, column]
+
+            return _cofactor_3_terms(component)
+        case _:
+            raise ValueError(
+                "cofactor_determinant.matrix.shape must have trailing dimension 1, 2, or 3; got "
+                + str(matrix.shape[-1])
+            )
+
+
+@overload
+def cofactor_determinant_2(u: Array, v: Array, /) -> Array: ...
+
+
+@overload
+def cofactor_determinant_2(u: np.ndarray, v: np.ndarray, /) -> _NumpyCofactorValue: ...
+
+
+def cofactor_determinant_2(
+    u: Array | np.ndarray, v: Array | np.ndarray, /
+) -> _CofactorValue:
+    """Evaluate the unscaled 2-D cofactor expansion in fixed term order.
+
+    NumPy inputs return arrays with batch axes and scalars without them; JAX
+    inputs return JAX arrays. Integer/Fraction arithmetic is unrounded absent
+    overflow; floating arithmetic rounds as the written formula.
+    """
+    return _cofactor_2_terms(u[..., 0], u[..., 1], v[..., 0], v[..., 1])
+
+
+@overload
+def cofactor_determinant_3(u: Array, v: Array, w: Array, /) -> Array: ...
+
+
+@overload
+def cofactor_determinant_3(
+    u: np.ndarray, v: np.ndarray, w: np.ndarray, /
+) -> _NumpyCofactorValue: ...
+
+
+def cofactor_determinant_3(
+    u: Array | np.ndarray, v: Array | np.ndarray, w: Array | np.ndarray, /
+) -> _CofactorValue:
+    """Evaluate the unscaled 3-D cofactor expansion in fixed term order.
+
+    NumPy inputs return arrays with batch axes and scalars without them; JAX
+    inputs return JAX arrays. Integer/Fraction arithmetic is unrounded absent
+    overflow; floating arithmetic rounds as the written formula.
+    """
+    rows = (u, v, w)
+
+    def component(row: int, column: int) -> _CofactorValue:
+        return rows[row][..., column]
+
+    return _cofactor_3_terms(component)
+
+
+def exact_cofactor_determinant_2(
+    u: tuple[Fraction, Fraction], v: tuple[Fraction, Fraction], /
+) -> Fraction:
+    """Return the rational 2-D cofactor determinant without conversion or charges."""
+    return u[0] * v[1] - u[1] * v[0]
+
+
+def exact_cofactor_determinant_3(
+    u: tuple[Fraction, Fraction, Fraction],
+    v: tuple[Fraction, Fraction, Fraction],
+    w: tuple[Fraction, Fraction, Fraction],
+    /,
+) -> Fraction:
+    """Return the rational scalar cofactor determinant without conversion or charges."""
+    rows = (u, v, w)
+
+    def component(row: int, column: int) -> Fraction:
+        return rows[row][column]
+
+    return _cofactor_3_terms(component)
+
+
+def _small_product(xp: ModuleType, left: _SmallArray, right: _SmallArray) -> _SmallArray:
+    if xp is np:
+        # The contracted axis is bounded by the tiny-system plan. Explicit
+        # accumulation makes the host recipe independent of BLAS thread policy.
+        product = left[..., :, 0, None] * right[..., None, 0, :]
+        for column in range(1, left.shape[-1]):
+            product = product + left[..., :, column, None] * right[..., None, column, :]
+        return product
+    return contract("...ij,...jk->...ik", left, right)
+
+
+def _small_array(xp: ModuleType, value: ArrayLike, /) -> _SmallArray:
+    array = xp.asarray(value)
+    return array.astype(jax.typeof(array).dtype, copy=False) if xp is np else array
 
 
 if TYPE_CHECKING:
-    from ..discretization._coordinate_enclosure import CoordinateEnclosureBudget
+    from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 
 
 class SmallLinearSolvePlan(StrictModule, NonTrainableState):
@@ -44,11 +209,21 @@ class SmallLinearSolvePlan(StrictModule, NonTrainableState):
     ) -> None:
         dimension_ = int(dimension)
         if dimension_ not in (1, 2, 3, 4):
-            raise ValueError("SmallLinearSolvePlan supports dimensions 1 through 4.")
+            raise ValueError(
+                f"SmallLinearSolvePlan.dimension must be 1 through 4; got {dimension_}"
+            )
         if singular_tolerance <= 0.0 or maximum_condition <= 1.0:
-            raise ValueError("Small linear solve tolerances are invalid.")
+            raise ValueError(
+                "SmallLinearSolvePlan.tolerances must have singular_tolerance > 0 "
+                "and maximum_condition > 1; got "
+                f"singular_tolerance={singular_tolerance!r}, "
+                f"maximum_condition={maximum_condition!r}"
+            )
         if refinement_iterations < 0:
-            raise ValueError("refinement_iterations must be non-negative.")
+            raise ValueError(
+                "SmallLinearSolvePlan.refinement_iterations must be non-negative; "
+                f"got {refinement_iterations!r}"
+            )
         self.dimension = dimension_
         self.singular_tolerance = float(singular_tolerance)
         self.maximum_condition = float(maximum_condition)
@@ -75,28 +250,24 @@ class SmallLinearSolveResult(StrictModule):
     status: Array
 
 
-def _lu_factor_four(matrix: Array, /) -> tuple[Array, Array, Array]:
+def _lu_factor_four(
+    matrix: _SmallArray, xp: ModuleType, /
+) -> tuple[_SmallArray, _SmallArray, _SmallArray]:
     """Factor scaled 4-by-4 batches with deterministic partial pivoting."""
     factors = matrix
     batch_shape = matrix.shape[:-2]
-    identity = jnp.broadcast_to(jnp.eye(4, dtype=matrix.dtype), matrix.shape)
-    permutation = jnp.broadcast_to(
-        identity,
-        batch_shape + (4, 4),
-    )
-    parity = jnp.ones(batch_shape, dtype=matrix.real.dtype)
-    row_indices = jnp.arange(4, dtype=jnp.int32)
+    identity = xp.broadcast_to(xp.eye(4, dtype=matrix.dtype), matrix.shape)
+    permutation = identity
+    parity = xp.ones(batch_shape, dtype=matrix.real.dtype)
+    row_indices = xp.arange(4, dtype=xp.int32)
     for column in range(3):
-        pivot = column + jnp.argmax(
-            jnp.abs(factors[..., column:, column]),
-            axis=-1,
+        pivot = column + xp.argmax(xp.abs(factors[..., column:, column]), axis=-1)
+        column_row = identity[..., column, :]
+        pivot_row = (
+            (row_indices == pivot[..., None]).astype(matrix.dtype)
+            if xp is np
+            else jax.nn.one_hot(pivot, 4, dtype=matrix.dtype)
         )
-        column_row = jax.nn.one_hot(
-            jnp.full(batch_shape, column, dtype=jnp.int32),
-            4,
-            dtype=matrix.dtype,
-        )
-        pivot_row = jax.nn.one_hot(pivot, 4, dtype=matrix.dtype)
         swap = (
             identity
             - column_row[..., :, None] * column_row[..., None, :]
@@ -104,108 +275,100 @@ def _lu_factor_four(matrix: Array, /) -> tuple[Array, Array, Array]:
             + column_row[..., :, None] * pivot_row[..., None, :]
             + pivot_row[..., :, None] * column_row[..., None, :]
         )
-        factors = contract("...ij,...jk->...ik", swap, factors)
-        permutation = contract("...ij,...jk->...ik", swap, permutation)
-        parity = parity * jnp.where(pivot == column, 1.0, -1.0)
+        factors = _small_product(xp, swap, factors)
+        permutation = _small_product(xp, swap, permutation)
+        parity = parity * xp.where(pivot == column, 1.0, -1.0)
         pivot_value = factors[..., column, column]
-        safe_pivot = jnp.where(jnp.abs(pivot_value) > 0.0, pivot_value, 1.0)
+        safe_pivot = xp.where(xp.abs(pivot_value) > 0.0, pivot_value, 1.0)
         multipliers = factors[..., :, column] / safe_pivot[..., None]
-        active_rows = jnp.broadcast_to(row_indices > column, batch_shape + (4,))
-        multipliers = jnp.where(active_rows, multipliers, 0.0)
+        active_rows = xp.broadcast_to(row_indices > column, batch_shape + (4,))
+        multipliers = xp.where(active_rows, multipliers, 0.0)
         update = multipliers[..., :, None] * factors[..., None, column, :]
         active_trailing = active_rows[..., :, None] & active_rows[..., None, :]
-        factors = factors - jnp.where(active_trailing, update, 0.0)
-        factors = factors.at[..., :, column].set(
-            jnp.where(active_rows, multipliers, factors[..., :, column])
-        )
-    determinant = parity.astype(matrix.dtype) * jnp.prod(
-        jnp.diagonal(factors, axis1=-2, axis2=-1),
-        axis=-1,
+        factors = factors - xp.where(active_trailing, update, 0.0)
+        column_values = xp.where(active_rows, multipliers, factors[..., :, column])
+        if xp is np:
+            factors[..., :, column] = column_values
+        else:
+            factors = factors.at[..., :, column].set(column_values)
+    determinant = parity.astype(matrix.dtype) * xp.prod(
+        xp.diagonal(factors, axis1=-2, axis2=-1), axis=-1
     )
     return factors, permutation, determinant
 
 
-def _lu_solve_four(factors: Array, permutation: Array, right: Array, /) -> Array:
+def _lu_solve_four(
+    factors: _SmallArray, permutation: _SmallArray, right: _SmallArray, xp: ModuleType, /
+) -> _SmallArray:
     """Solve a factored 4-by-4 batch for one or more right-hand sides."""
-    permuted = contract("...ij,...jk->...ik", permutation, right)
-    lower_solution = jnp.zeros_like(permuted)
+    permuted = _small_product(xp, permutation, right)
+    lower_solution = xp.zeros_like(permuted)
     for row in range(4):
-        contribution = jnp.sum(
-            factors[..., row, :, None] * lower_solution,
-            axis=-2,
-        )
+        contribution = xp.sum(factors[..., row, :, None] * lower_solution, axis=-2)
         value = permuted[..., row, :] - contribution
-        lower_solution = lower_solution.at[..., row, :].set(value)
-    solution = jnp.zeros_like(permuted)
+        if xp is np:
+            lower_solution[..., row, :] = value
+        else:
+            lower_solution = lower_solution.at[..., row, :].set(value)
+    solution = xp.zeros_like(permuted)
     for row in range(3, -1, -1):
-        contribution = jnp.sum(
-            factors[..., row, :, None] * solution,
-            axis=-2,
-        )
+        contribution = xp.sum(factors[..., row, :, None] * solution, axis=-2)
         pivot = factors[..., row, row]
-        safe_pivot = jnp.where(jnp.abs(pivot) > 0.0, pivot, 1.0)
+        safe_pivot = xp.where(xp.abs(pivot) > 0.0, pivot, 1.0)
         value = (lower_solution[..., row, :] - contribution) / safe_pivot[..., None]
-        solution = solution.at[..., row, :].set(value)
+        if xp is np:
+            solution[..., row, :] = value
+        else:
+            solution = solution.at[..., row, :].set(value)
     return solution
 
 
-def _inverse(matrix: Array, dimension: int, /) -> tuple[Array, Array]:
+def _inverse(
+    matrix: _SmallArray, dimension: int, xp: ModuleType, /
+) -> tuple[_SmallArray, _SmallArray]:
     if dimension == 1:
         determinant = matrix[..., 0, 0]
-        inverse = (1.0 / jnp.where(determinant != 0.0, determinant, 1.0))[..., None, None]
+        inverse = (1.0 / xp.where(determinant != 0.0, determinant, 1.0))[..., None, None]
         return inverse, determinant
     if dimension == 2:
-        a = matrix[..., 0, 0]
-        b = matrix[..., 0, 1]
-        c = matrix[..., 1, 0]
-        d = matrix[..., 1, 1]
+        a, b = matrix[..., 0, 0], matrix[..., 0, 1]
+        c, d = matrix[..., 1, 0], matrix[..., 1, 1]
         determinant = a * d - b * c
-        adjugate = jnp.stack((d, -b, -c, a), axis=-1).reshape(matrix.shape)
-        return adjugate / jnp.where(determinant != 0.0, determinant, 1.0)[
+        adjugate = xp.stack((d, -b, -c, a), axis=-1).reshape(matrix.shape)
+        return adjugate / xp.where(determinant != 0.0, determinant, 1.0)[
             ..., None, None
         ], determinant
     if dimension == 3:
-        first = matrix[..., 0, :]
-        second = matrix[..., 1, :]
-        third = matrix[..., 2, :]
-        cofactor_rows = jnp.stack(
-            (
-                jnp.cross(second, third),
-                jnp.cross(third, first),
-                jnp.cross(first, second),
-            ),
+        first, second, third = matrix[..., 0, :], matrix[..., 1, :], matrix[..., 2, :]
+        cofactor_rows = xp.stack(
+            (xp.cross(second, third), xp.cross(third, first), xp.cross(first, second)),
             axis=-2,
         )
-        determinant = jnp.sum(first * cofactor_rows[..., 0, :], axis=-1)
+        determinant = xp.sum(first * cofactor_rows[..., 0, :], axis=-1)
         inverse = (
-            jnp.swapaxes(cofactor_rows, -1, -2)
-            / jnp.where(determinant != 0.0, determinant, 1.0)[..., None, None]
+            xp.swapaxes(cofactor_rows, -1, -2)
+            / xp.where(determinant != 0.0, determinant, 1.0)[..., None, None]
         )
         return inverse, determinant
-    factors, permutation, determinant = _lu_factor_four(matrix)
-    identity = jnp.broadcast_to(
-        jnp.eye(4, dtype=matrix.dtype),
-        matrix.shape,
-    )
-    return _lu_solve_four(factors, permutation, identity), determinant
+    factors, permutation, determinant = _lu_factor_four(matrix, xp)
+    identity = xp.broadcast_to(xp.eye(4, dtype=matrix.dtype), matrix.shape)
+    return _lu_solve_four(factors, permutation, identity, xp), determinant
 
 
-def determinant_small_linear(
-    plan: SmallLinearSolvePlan,
-    matrix: ArrayLike,
-    /,
-) -> Array:
-    """Evaluate a scaled batched determinant for one-to-four dimensional matrices."""
-    if not isinstance(plan, SmallLinearSolvePlan):
-        raise TypeError("plan must be a SmallLinearSolvePlan.")
-    value = jnp.asarray(matrix)
-    if not jnp.issubdtype(value.dtype, jnp.inexact):
-        value = value.astype("float64")
+def _determinant_kernel(
+    plan: SmallLinearSolvePlan, matrix: ArrayLike, xp: ModuleType, /
+) -> _SmallArray:
+    value = _small_array(xp, matrix)
+    if not jax.dtypes.issubdtype(value.dtype, jnp.inexact):
+        value = value.astype(jax.dtypes.canonicalize_dtype(np.float64))
     dimension = plan.dimension
     if value.shape[-2:] != (dimension, dimension):
-        raise ValueError("Small matrix shape does not match the plan dimension.")
-    scale = jnp.max(jnp.abs(value), axis=(-2, -1))
-    safe_scale = jnp.where(scale > 0.0, scale, 1.0).astype(value.dtype)
+        raise ValueError(
+            f"determinant_small_linear.matrix.shape must end in {(dimension, dimension)}; "
+            f"got {value.shape}"
+        )
+    scale = xp.max(xp.abs(value), axis=(-2, -1))
+    safe_scale = xp.where(scale > 0.0, scale, 1.0).astype(value.dtype)
     scaled = value / safe_scale[..., None, None]
     if dimension == 1:
         determinant = scaled[..., 0, 0]
@@ -214,113 +377,101 @@ def determinant_small_linear(
             scaled[..., 0, 0] * scaled[..., 1, 1] - scaled[..., 0, 1] * scaled[..., 1, 0]
         )
     elif dimension == 3:
-        determinant = jnp.sum(
-            scaled[..., 0, :] * jnp.cross(scaled[..., 1, :], scaled[..., 2, :]),
-            axis=-1,
+        determinant = xp.sum(
+            scaled[..., 0, :] * xp.cross(scaled[..., 1, :], scaled[..., 2, :]), axis=-1
         )
     else:
-        _, _, determinant = _lu_factor_four(scaled)
+        _, _, determinant = _lu_factor_four(scaled, xp)
     return determinant * safe_scale**dimension
 
 
-def solve_small_linear(
+def _solve_kernel(
     plan: SmallLinearSolvePlan,
     matrix: ArrayLike,
     right_hand_side: ArrayLike,
+    xp: ModuleType,
     /,
-) -> SmallLinearSolveResult:
-    matrix_ = jnp.asarray(matrix)
-    if not jnp.issubdtype(matrix_.dtype, jnp.inexact):
-        matrix_ = matrix_.astype("float64")
-    right = jnp.asarray(right_hand_side)
-    dtype = np.result_type(matrix_.dtype, right.dtype)
-    matrix_, right = matrix_.astype(dtype), right.astype(dtype)
+) -> tuple[_SmallArray, ...]:
+    matrix_ = _small_array(xp, matrix)
+    if not jax.dtypes.issubdtype(matrix_.dtype, jnp.inexact):
+        matrix_ = matrix_.astype(jax.dtypes.canonicalize_dtype(np.float64))
+    right = _small_array(xp, right_hand_side)
+    dtype = jax.dtypes.canonicalize_dtype(np.result_type(matrix_.dtype, right.dtype))
+    matrix_, right = matrix_.astype(dtype, copy=False), right.astype(dtype, copy=False)
     dimension = plan.dimension
     if matrix_.shape[-2:] != (dimension, dimension):
-        raise ValueError("Small matrix shape does not match the plan dimension.")
+        raise ValueError(
+            f"solve_small_linear.matrix.shape must end in {(dimension, dimension)}; "
+            f"got {matrix_.shape}"
+        )
     vector_rhs = right.shape == matrix_.shape[:-1]
     if vector_rhs:
         right = right[..., :, None]
     if right.shape[:-2] != matrix_.shape[:-2] or right.shape[-2] != dimension:
-        raise ValueError("Small linear right-hand side shape is incompatible.")
-    scale = jnp.max(jnp.abs(matrix_), axis=(-2, -1))
-    safe_scale = jnp.where(scale > 0.0, scale, 1.0)
+        raise ValueError(
+            "solve_small_linear.right_hand_side.shape must have batch shape "
+            f"{matrix_.shape[:-2]} and row dimension {dimension}; got {right.shape}"
+        )
+    scale = xp.max(xp.abs(matrix_), axis=(-2, -1))
+    safe_scale = xp.where(scale > 0.0, scale, 1.0)
     field_scale = safe_scale.astype(matrix_.dtype)
     scaled_matrix = matrix_ / field_scale[..., None, None]
     if dimension == 4:
-        factors, permutation, scaled_determinant = _lu_factor_four(scaled_matrix)
-        identity = jnp.broadcast_to(
-            jnp.eye(4, dtype=matrix_.dtype),
-            matrix_.shape,
-        )
-        scaled_inverse = _lu_solve_four(factors, permutation, identity)
+        factors, permutation, scaled_determinant = _lu_factor_four(scaled_matrix, xp)
+        identity = xp.broadcast_to(xp.eye(4, dtype=matrix_.dtype), matrix_.shape)
+        scaled_inverse = _lu_solve_four(factors, permutation, identity, xp)
         value = _lu_solve_four(
-            factors,
-            permutation,
-            right / field_scale[..., None, None],
+            factors, permutation, right / field_scale[..., None, None], xp
         )
     else:
-        scaled_inverse, scaled_determinant = _inverse(scaled_matrix, dimension)
-        value = contract(
-            "...ij,...jk->...ik",
-            scaled_inverse / field_scale[..., None, None],
-            right,
-        )
+        scaled_inverse, scaled_determinant = _inverse(scaled_matrix, dimension, xp)
+        value = _small_product(xp, scaled_inverse / field_scale[..., None, None], right)
     inverse = scaled_inverse / field_scale[..., None, None]
     determinant = scaled_determinant * field_scale**dimension
-    dtype_tolerance = float(dimension) * jnp.finfo(matrix_.real.dtype).eps
-    singular_tolerance = jnp.maximum(
-        jnp.asarray(plan.singular_tolerance, dtype=matrix_.real.dtype),
-        jnp.asarray(dtype_tolerance, dtype=matrix_.real.dtype),
+    dtype_tolerance = float(dimension) * jax.dtypes.finfo(matrix_.real.dtype).eps
+    singular_tolerance = xp.maximum(
+        xp.asarray(plan.singular_tolerance, dtype=matrix_.real.dtype),
+        xp.asarray(dtype_tolerance, dtype=matrix_.real.dtype),
     )
-    nonsingular = jnp.abs(scaled_determinant) > singular_tolerance
-    refinement_count = jnp.zeros(determinant.shape, dtype=jnp.int32)
+    nonsingular = xp.abs(scaled_determinant) > singular_tolerance
+    refinement_count = xp.zeros(determinant.shape, dtype=xp.int32)
     for _ in range(plan.refinement_iterations):
-        residual = right - contract("...ij,...jk->...ik", matrix_, value)
+        residual = right - _small_product(xp, matrix_, value)
         correction = (
             _lu_solve_four(
-                factors,
-                permutation,
-                residual / field_scale[..., None, None],
+                factors, permutation, residual / field_scale[..., None, None], xp
             )
             if dimension == 4
-            else contract("...ij,...jk->...ik", inverse, residual)
+            else _small_product(xp, inverse, residual)
         )
         candidate = value + correction
-        candidate_residual = right - contract(
-            "...ij,...jk->...ik",
-            matrix_,
-            candidate,
-        )
-        residual_size = jnp.sum(jnp.abs(residual) ** 2, axis=(-2, -1))
-        candidate_size = jnp.sum(
-            jnp.abs(candidate_residual) ** 2,
-            axis=(-2, -1),
-        )
+        candidate_residual = right - _small_product(xp, matrix_, candidate)
+        residual_size = xp.sum(xp.abs(residual) ** 2, axis=(-2, -1))
+        candidate_size = xp.sum(xp.abs(candidate_residual) ** 2, axis=(-2, -1))
         apply = (
             nonsingular
-            & jnp.all(jnp.isfinite(correction), axis=(-2, -1))
+            & xp.all(xp.isfinite(correction), axis=(-2, -1))
             & (candidate_size < residual_size)
         )
-        value = jnp.where(apply[..., None, None], candidate, value)
-        refinement_count = refinement_count + apply.astype(jnp.int32)
-    residual = right - contract("...ij,...jk->...ik", matrix_, value)
-    residual_norm = jnp.sqrt(jnp.sum(jnp.abs(residual) ** 2, axis=(-2, -1)))
-    matrix_norm = jnp.max(jnp.sum(jnp.abs(matrix_), axis=-1), axis=-1)
-    inverse_norm = jnp.max(jnp.sum(jnp.abs(inverse), axis=-1), axis=-1)
+        value = xp.where(apply[..., None, None], candidate, value)
+        refinement_count = refinement_count + apply.astype(xp.int32)
+    residual = right - _small_product(xp, matrix_, value)
+    residual_norm = xp.sqrt(xp.sum(xp.abs(residual) ** 2, axis=(-2, -1)))
+    matrix_norm = xp.max(xp.sum(xp.abs(matrix_), axis=-1), axis=-1)
+    inverse_norm = xp.max(xp.sum(xp.abs(inverse), axis=-1), axis=-1)
     condition = matrix_norm * inverse_norm
     finite = (
-        jnp.all(jnp.isfinite(matrix_), axis=(-2, -1))
-        & jnp.all(jnp.isfinite(right), axis=(-2, -1))
-        & jnp.all(jnp.isfinite(value), axis=(-2, -1))
+        xp.all(xp.isfinite(matrix_), axis=(-2, -1))
+        & xp.all(xp.isfinite(right), axis=(-2, -1))
+        & xp.all(xp.isfinite(value), axis=(-2, -1))
     )
     successful = nonsingular & finite & (condition <= plan.maximum_condition)
-    rank = jnp.where(successful, dimension, 0).astype(jnp.int32)
-    status = jnp.where(successful, 0, jnp.where(nonsingular, 2, 1)).astype(jnp.int32)
-    value = jnp.where(successful[..., None, None], value, 0.0)
+    rank = xp.where(successful, dimension, 0).astype(xp.int32)
+    status = xp.where(successful, 0, xp.where(nonsingular, 2, 1)).astype(xp.int32)
+    value = xp.where(successful[..., None, None], value, 0.0)
     if vector_rhs:
         value = value[..., 0]
-    return SmallLinearSolveResult(
+    return (
         value,
         determinant,
         rank,
@@ -332,28 +483,79 @@ def solve_small_linear(
     )
 
 
+_determinant_device = eqx.filter_jit(_determinant_kernel)
+_solve_device = eqx.filter_jit(_solve_kernel)
+
+
+def _small_namespace(*values: ArrayLike) -> ModuleType:
+    for value in values:
+        match value:
+            case Array() | Tracer():
+                return jnp
+            case np.ndarray() | np.generic():
+                # Extension dtypes require JAX's rounding and promotion rules;
+                # validate their capability from metadata before transferring.
+                if value.dtype.kind == "V":
+                    jax.typeof(value)
+                    return jnp
+            case _:
+                continue
+    return np
+
+
+@checked
+def determinant_small_linear(plan: SmallLinearSolvePlan, matrix: ArrayLike, /) -> Array:
+    """Evaluate a scaled batched determinant using the input's numerical backend."""
+    xp = _small_namespace(matrix)
+    kernel = _determinant_kernel if xp is np else _determinant_device
+    if xp is jnp:
+        matrix = jax.device_put(matrix)
+    return jax.device_put(kernel(plan, matrix, xp))
+
+
+@checked
+def solve_small_linear(
+    plan: SmallLinearSolvePlan, matrix: ArrayLike, right_hand_side: ArrayLike, /
+) -> SmallLinearSolveResult:
+    """Solve tiny batches with one plan and paired host/device numerical kernels."""
+    xp = _small_namespace(matrix, right_hand_side)
+    kernel = _solve_kernel if xp is np else _solve_device
+    if xp is jnp:
+        matrix = jax.device_put(matrix)
+        right_hand_side = jax.device_put(right_hand_side)
+    values = kernel(plan, matrix, right_hand_side, xp)
+    return SmallLinearSolveResult(*(jax.device_put(value) for value in values))
+
+
 def inverse_small_linear(
     plan: SmallLinearSolvePlan,
     matrix: ArrayLike,
     /,
 ) -> SmallLinearSolveResult:
     """Materialize a batched 1x1 through 4x4 inverse with solve evidence."""
-    value = jnp.asarray(matrix)
+    match matrix:
+        case np.ndarray() | np.generic():
+            xp = np
+        case _:
+            xp = _small_namespace(matrix)
+    value = xp.asarray(matrix)
     dimension = plan.dimension
     if value.shape[-2:] != (dimension, dimension):
-        raise ValueError("Small matrix shape does not match the plan dimension.")
-    identity = jnp.broadcast_to(jnp.eye(dimension, dtype=value.dtype), value.shape)
+        raise ValueError(
+            f"inverse_small_linear.matrix.shape must end in {(dimension, dimension)}; "
+            f"got {value.shape}"
+        )
+    identity = xp.broadcast_to(xp.eye(dimension, dtype=value.dtype), value.shape)
     return solve_small_linear(plan, value, identity)
 
 
 @dataclass(frozen=True, slots=True)
 class ExactSmallLinearActions:
-    """Host exact coefficient actions, not an approximate inverse certificate.
+    """Store coefficient actions solved in rational arithmetic on the host.
 
-    The requested right-hand-side columns are solved in rational arithmetic
-    from their original binary64 coefficients. A singular preparation retains
-    rank/status and has no actions; no zero solution or rounded surrogate is
-    published. Runtime floating evaluation remains separately rounded.
+    The requested right-hand-side columns are solved from their binary64
+    coefficients. A singular preparation retains rank/status and has no
+    actions. Runtime floating evaluation remains separately rounded.
     """
 
     actions: tuple[tuple[Fraction, ...], ...] | None
@@ -368,92 +570,105 @@ class ExactSmallLinearActions:
         return self.status == "exact"
 
 
-def prepare_exact_small_linear_actions(
+def _exact_small_shape(
     matrix: tuple[tuple[Fraction, ...], ...],
     right: tuple[tuple[Fraction, ...], ...],
     /,
-    *,
-    coordinate_budget: CoordinateEnclosureBudget | None = None,
-) -> ExactSmallLinearActions:
-    """Prepare exact requested coefficient actions for one 1–4 dimensional system.
-
-    This host preparation owns the elimination; geometry consumers request
-    concrete projective coefficient columns. A dimension-by-zero right bank
-    requests only determinant/rank evidence, without a discarded coefficient
-    solve or a generic inverse.
-    """
+) -> tuple[int, int]:
     dimension = len(matrix)
     if dimension not in (1, 2, 3, 4) or any(len(row) != dimension for row in matrix):
         raise ValueError(
-            "Exact small actions require a square dimension-one-through-four matrix."
+            "prepare_exact_small_linear_actions.matrix.shape must be square with "
+            f"dimension 1 through 4; got row lengths {tuple(map(len, matrix))}"
         )
     if len(right) != dimension or any(len(row) != len(right[0]) for row in right):
         raise ValueError(
-            "Exact small right-hand-side columns must align with the matrix."
+            "prepare_exact_small_linear_actions.right.shape must have "
+            f"{dimension} equally sized rows; got row lengths {tuple(map(len, right))}"
         )
     if any(not isinstance(value, Fraction) for row in (*matrix, *right) for value in row):
         raise TypeError(
-            "Exact coefficient preparation requires original Fraction coefficients."
+            "prepare_exact_small_linear_actions.coefficients must be Fraction values; "
+            f"got {next(type(value).__name__ for row in (*matrix, *right) for value in row if not isinstance(value, Fraction))}"
         )
-    count = len(right[0])
-    if coordinate_budget is not None:
-        import math
+    return dimension, len(right[0])
 
-        from ..discretization._coordinate_enclosure import CoordinateEnclosureBudget
-        from ._hermitian_spectral import _fraction_matrix_profile, _reserve_fraction_work
 
-        if not isinstance(coordinate_budget, CoordinateEnclosureBudget):
-            raise TypeError(
-                "Exact small actions require the supplied original coordinate ledger."
-            )
-        # Elimination visits at most T lower entries, twice sum(k**2)
-        # trailing entries, and 2*T*C RHS terms. Back substitution adds
-        # 2*T*C+n*C; the original-system check adds 2*n*n*C.
-        triangular = dimension * (dimension - 1) // 2
-        work_upper = (
-            triangular
-            + dimension * (dimension - 1) * (2 * dimension - 1) // 3
-            + count * (4 * triangular + dimension + 2 * dimension * dimension)
-        )
-        terms = dimension * (dimension + count)
-        coordinate_budget.admit_work_bound(work_upper + 2 * terms)
-        numerator_bits, denominator_bits = _fraction_matrix_profile(
-            (matrix, right), coordinate_budget
-        )
-        _reserve_fraction_work(coordinate_budget, 0, 4, terms * denominator_bits + 1)
-        coordinate_budget.reserve(terms)
-        common = 1
-        for bank in (matrix, right):
-            for row in bank:
-                for value in row:
-                    common = math.lcm(common, value.denominator)
-        height = numerator_bits + common.bit_length() + 1
-        # Clearing this ACTUAL common denominator bounds every integer input.
-        # Gaussian entries are ratios of minors of order <= n. Products and
-        # the <= n remainder additions therefore fit 16*n*height+64 bits.
-        # Eight copies cover factors/RHS/actions, arithmetic temporaries,
-        # identity serialization and all mutable/immutable row containers.
-        _reserve_fraction_work(
-            coordinate_budget,
-            0,
-            8 * dimension * (dimension + count) + 16,
-            16 * dimension * height + 64,
-        )
-    identity = canonical_fingerprint(
-        {
-            "kind": "exact-small-linear-actions",
-            "matrix": tuple(
-                tuple((value.numerator, value.denominator) for value in row)
-                for row in matrix
-            ),
-            "right": tuple(
-                tuple((value.numerator, value.denominator) for value in row)
-                for row in right
-            ),
-        }
+def _exact_action_work_upper(dimension: int, count: int, /) -> int:
+    triangular = dimension * (dimension - 1) // 2
+    return (
+        triangular
+        + dimension * (dimension - 1) * (2 * dimension - 1) // 3
+        + count * (4 * triangular + dimension + 2 * dimension * dimension)
     )
-    factors = [list(row) for row in matrix]
-    rhs = [list(row) for row in right]
+
+
+def exact_small_linear_action_bounds(
+    matrix: tuple[tuple[Fraction, ...], ...],
+    right: tuple[tuple[Fraction, ...], ...],
+    /,
+) -> tuple[int, int]:
+    """Bound rational elimination visits and live bytes from the input coefficients."""
+    dimension, count = _exact_small_shape(matrix, right)
+    terms = dimension * (dimension + count)
+    numerator_bits, denominator_bits = fraction_matrix_profile((matrix, right), None)
+    common = 1
+    for bank in (matrix, right):
+        for row in bank:
+            for value in row:
+                common = math.lcm(common, value.denominator)
+    height = numerator_bits + common.bit_length() + 1
+    storage = fraction_storage_upper(4, terms * denominator_bits + 1)
+    storage += fraction_storage_upper(
+        8 * dimension * (dimension + count) + 16,
+        16 * dimension * height + 64,
+    )
+    return _exact_action_work_upper(dimension, count) + 2 * terms, storage
+
+
+def _admit_exact_action_work(
+    matrix: tuple[tuple[Fraction, ...], ...],
+    right: tuple[tuple[Fraction, ...], ...],
+    dimension: int,
+    count: int,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> None:
+    """Admit elimination visits and live rational storage before allocating banks."""
+    # Elimination visits at most T lower entries, twice sum(k**2)
+    # trailing entries, and 2*T*C RHS terms. Back substitution adds
+    # 2*T*C+n*C; checking against the input system adds 2*n*n*C.
+    work_upper = _exact_action_work_upper(dimension, count)
+    terms = dimension * (dimension + count)
+    budget.admit_work_bound(work_upper + 2 * terms)
+    numerator_bits, denominator_bits = fraction_matrix_profile((matrix, right), budget)
+    reserve_fraction_work(budget, 0, 4, terms * denominator_bits + 1)
+    budget.reserve(terms)
+    common = 1
+    for bank in (matrix, right):
+        for row in bank:
+            for value in row:
+                common = math.lcm(common, value.denominator)
+    height = numerator_bits + common.bit_length() + 1
+    # Clearing the common denominator bounds every integer input. Gaussian
+    # entries are ratios of minors of order <= n; products and remainders fit
+    # 16*n*height+64 bits. Eight copies cover the live row and action banks.
+    reserve_fraction_work(
+        budget,
+        0,
+        8 * dimension * (dimension + count) + 16,
+        16 * dimension * height + 64,
+    )
+
+
+def _exact_action_elimination(
+    factors: list[list[Fraction]],
+    rhs: list[list[Fraction]],
+    dimension: int,
+    count: int,
+    /,
+) -> tuple[Fraction, int, int, int]:
+    """Eliminate both banks in first-nonzero pivot order, counting rational operations."""
     determinant, parity, rank, work = Fraction(1), 1, 0, 0
     for column in range(dimension):
         pivot = next(
@@ -480,12 +695,18 @@ def prepare_exact_small_linear_actions(
                 rhs[row][action] -= multiplier * rhs[rank][action]
                 work += 2
         rank += 1
-    if rank != dimension:
-        if coordinate_budget is not None:
-            coordinate_budget.reserve(work)
-        return ExactSmallLinearActions(
-            None, Fraction(0), rank, "singular", work, identity
-        )
+    return determinant, parity, rank, work
+
+
+def _exact_action_substitution(
+    factors: list[list[Fraction]],
+    rhs: list[list[Fraction]],
+    dimension: int,
+    count: int,
+    work: int,
+    /,
+) -> tuple[tuple[tuple[Fraction, ...], ...], int]:
+    """Solve the full-rank triangular banks in reverse row order."""
     values = [[Fraction(0) for _ in range(count)] for _ in range(dimension)]
     for row in range(dimension - 1, -1, -1):
         for action in range(count):
@@ -495,7 +716,19 @@ def prepare_exact_small_linear_actions(
                 work += 2
             values[row][action] = remainder / factors[row][row]
             work += 1
-    actions = tuple(tuple(row) for row in values)
+    return tuple(tuple(row) for row in values), work
+
+
+def _confirm_exact_actions(
+    matrix: tuple[tuple[Fraction, ...], ...],
+    right: tuple[tuple[Fraction, ...], ...],
+    actions: tuple[tuple[Fraction, ...], ...],
+    dimension: int,
+    count: int,
+    work: int,
+    /,
+) -> int:
+    """Confirm each action against the input system before charging work."""
     for row in range(dimension):
         for action in range(count):
             if (
@@ -509,11 +742,57 @@ def prepare_exact_small_linear_actions(
                 != right[row][action]
             ):
                 raise RuntimeError(
-                    "Exact small coefficient actions failed their original system."
+                    "prepare_exact_small_linear_actions.actions must satisfy "
+                    f"matrix @ actions == right at row {row}, column {action}; "
+                    f"got action column {tuple(actions[column][action] for column in range(dimension))!r} "
+                    f"for right coefficient {right[row][action]!r}"
                 )
             work += 2 * dimension
-    if coordinate_budget is not None:
-        coordinate_budget.reserve(work)
+    return work
+
+
+def prepare_exact_small_linear_actions(
+    matrix: tuple[tuple[Fraction, ...], ...],
+    right: tuple[tuple[Fraction, ...], ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> ExactSmallLinearActions:
+    """Prepare requested rational coefficient actions for one 1–4 dimensional system.
+
+    This host preparation owns the elimination; geometry consumers request
+    concrete projective coefficient columns. A dimension-by-zero right bank
+    requests only determinant/rank evidence, without a discarded coefficient
+    solve or a generic inverse.
+    """
+    dimension, count = _exact_small_shape(matrix, right)
+    _admit_exact_action_work(matrix, right, dimension, count, budget)
+    identity = canonical_fingerprint(
+        {
+            "kind": "exact-small-linear-actions",
+            "matrix": tuple(
+                tuple((value.numerator, value.denominator) for value in row)
+                for row in matrix
+            ),
+            "right": tuple(
+                tuple((value.numerator, value.denominator) for value in row)
+                for row in right
+            ),
+        }
+    )
+    factors = [list(row) for row in matrix]
+    rhs = [list(row) for row in right]
+    determinant, parity, rank, work = _exact_action_elimination(
+        factors, rhs, dimension, count
+    )
+    if rank != dimension:
+        budget.reserve(work)
+        return ExactSmallLinearActions(
+            None, Fraction(0), rank, "singular", work, identity
+        )
+    actions, work = _exact_action_substitution(factors, rhs, dimension, count, work)
+    work = _confirm_exact_actions(matrix, right, actions, dimension, count, work)
+    budget.reserve(work)
     return ExactSmallLinearActions(
         actions, determinant * parity, rank, "exact", work, identity
     )
@@ -527,4 +806,8 @@ __all__ = [
     "solve_small_linear",
     "ExactSmallLinearActions",
     "prepare_exact_small_linear_actions",
+    "cofactor_determinant_2",
+    "cofactor_determinant_3",
+    "cofactor_determinant",
+    "exact_cofactor_determinant_3",
 ]

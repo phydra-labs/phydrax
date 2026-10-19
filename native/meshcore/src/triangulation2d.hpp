@@ -73,6 +73,14 @@ struct PlanarBudget {
       ++work_refusals;
       throw std::bad_alloc();
     }
+    // The local limit is checked first; an admitted unit must also debit the
+    // active request/target before either counter or topology is advanced.
+    try {
+      native_execution_charge(static_cast<int64_t>(units));
+    } catch (const ExecutionRefusal& refusal) {
+      if (refusal.status == PHX_MC_CAPACITY_EXCEEDED) ++work_refusals;
+      throw;
+    }
     work_units += units;
   }
   void cavity(std::uint64_t cells) const {
@@ -115,9 +123,6 @@ struct PlanarBudget {
   }
 };
 
-inline void charge_planar_work(void* context) {
-  static_cast<PlanarBudget*>(context)->charge();
-}
 
 class Triangulation2D {
  public:
@@ -150,7 +155,8 @@ class Triangulation2D {
     return tri.v[0] == vertex ? 0 : tri.v[1] == vertex ? 1 : tri.v[2] == vertex ? 2 : -1;
   }
 
-  // Index k of the edge u -> w in triangle t (v[k+1] == u, v[k+2] == w), or -1.
+  // Index k of the edge u -> w in triangle t (v[k+1] == u, v[k+2] == w). Every
+  // caller indexes with the result, so a missing edge is an adjacency defect.
   int edge_index(int32_t t, int32_t u, int32_t w) const {
     const Triangle2D& tri = triangles[t];
     for (int k = 0; k < 3; ++k) {
@@ -158,7 +164,7 @@ class Triangulation2D {
         return k;
       }
     }
-    return -1;
+    throw std::logic_error("triangulation2d: inconsistent adjacency");
   }
 
   // Reserve every array before allocating/releasing a batch of triangle slots.
@@ -232,9 +238,6 @@ class Triangulation2D {
   void link_edge(int32_t t, int32_t u, int32_t w, int32_t nb) {
     const int k = edge_index(t, u, w);
     const int j = edge_index(nb, w, u);
-    if (k < 0 || j < 0) {
-      throw std::logic_error("triangulation2d: inconsistent adjacency");
-    }
     triangles[t].n[k] = nb;
     triangles[nb].n[j] = t;
   }
@@ -554,12 +557,12 @@ inline int32_t build_delaunay_2d(Triangulation2D& triangulation, const double* p
   triangulation.max_finite_cells = max_triangles;
   const NativeVector<int32_t> representatives =
       deduplicate_points(points, point_count, 2, weights, vertex_map,
-                          charge_planar_work, &triangulation.budget);
+                          [&] { triangulation.budget.charge(); });
   if (representatives.size() < 3) {
     return PHX_MC_DEGENERATE_INPUT;
   }
   const NativeVector<int32_t> order = brio_hilbert_order(
-      points, 2, representatives, charge_planar_work, &triangulation.budget);
+      points, 2, representatives, [&] { triangulation.budget.charge(); });
   const int32_t a = order[0];
   int32_t b = order[1];
   std::size_t third = 2;

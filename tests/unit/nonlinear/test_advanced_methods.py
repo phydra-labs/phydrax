@@ -12,7 +12,7 @@ import pytest
 
 import phydrax as phx
 from phydrax.sparse import EdgeRelation, SparseCoordinateOperator
-from phydrax.sparse._linear import _SparseStoragePlan
+from phydrax.sparse._linear import SparseStoragePlan
 
 
 la = phx.linalg
@@ -249,7 +249,7 @@ def test_jitted_explicit_sparse_newton_refreshes_factor_preconditioner() -> None
         source_size=size,
         target_size=size,
     )
-    storage_plan = _SparseStoragePlan(relation)
+    storage_plan = SparseStoragePlan(relation)
     space = la.ArraySpace((size,), dtype=jnp.float64)
 
     def residual(state: jax.Array, rhs: jax.Array) -> jax.Array:

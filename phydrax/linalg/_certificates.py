@@ -17,7 +17,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..typing import checked, parse
 from ._operators import AbstractLinearOperator, adjoint
-from ._spaces import _coordinate_dtype
+from ._spaces import coordinate_dtype
 
 
 CertificateEvidence: TypeAlias = Literal["construction", "verified", "asserted"]
@@ -208,8 +208,8 @@ class SpectralInterval(StrictModule):
         evidence: CertificateEvidence = "asserted",
         scope: CertificateScope = "numerical",
     ) -> None:
-        coordinate_dtype = _coordinate_dtype(operator.source)
-        real_dtype = jnp.empty((), dtype=coordinate_dtype).real.dtype
+        stored_dtype = coordinate_dtype(operator.source)
+        real_dtype = jnp.empty((), dtype=stored_dtype).real.dtype
         lower_ = jnp.asarray(lower, dtype=real_dtype)
         upper_ = jnp.asarray(upper, dtype=real_dtype)
         if lower_.shape != () or upper_.shape != ():
@@ -280,8 +280,8 @@ class StabilityLowerBound(StrictModule):
         evidence: CertificateEvidence = "asserted",
         scope: CertificateScope = "numerical",
     ) -> None:
-        coordinate_dtype = _coordinate_dtype(operator.source)
-        real_dtype = jnp.empty((), dtype=coordinate_dtype).real.dtype
+        stored_dtype = coordinate_dtype(operator.source)
+        real_dtype = jnp.empty((), dtype=stored_dtype).real.dtype
         bound = jnp.asarray(lower_bound, dtype=real_dtype)
         if bound.shape != ():
             raise ValueError("Stability lower bound must be scalar.")

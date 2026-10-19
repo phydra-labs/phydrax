@@ -9,6 +9,7 @@ import dataclasses
 import enum
 import functools
 import hashlib
+import json
 import sys
 from collections.abc import Mapping, Sequence
 from inspect import getclosurevars
@@ -24,6 +25,7 @@ from jax.extend import core as jax_core
 from ._fingerprint import canonical_fingerprint, canonical_json
 from ._strict import StrictModule
 from ._trainable import _global_reads, _hidden_arrays
+from .typing import checked
 
 
 RecordInput = Mapping[str, Any] | Sequence[tuple[str, Any]]
@@ -1275,6 +1277,46 @@ class SemanticProvenance(StrictModule):
                 "resource_ids": [list(record) for record in resources],
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[SemanticProvenance], value: SemanticProvenance, /
+    ) -> SemanticProvenance:
+        """Authenticate the retained semantic payload and resource IDs."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"SemanticProvenance.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        payload = json.loads(value.content_json)
+        _static_payload(payload, "SemanticProvenance.content")
+        if canonical_json(payload) != value.content_json:
+            raise ValueError(
+                f"SemanticProvenance.content_json must use the deterministic canonical_json encoding; got {value.content_json!r}."
+            )
+        resources = tuple(
+            (name, _identifier(identifier, f"resource_ids[{name!r}]"))
+            for name, identifier in _named_records(value.resource_ids, "resource_ids")
+        )
+        content_id = canonical_fingerprint(
+            {"kind": "semantic-content", "payload": payload}
+        )
+        semantic_id = canonical_fingerprint(
+            {
+                "kind": "semantic-provenance",
+                "content_id": content_id,
+                "resource_ids": [list(record) for record in resources],
+            }
+        )
+        if (
+            content_id != value.content_id
+            or resources != value.resource_ids
+            or semantic_id != value.semantic_id
+        ):
+            raise ValueError(
+                f"SemanticProvenance.semantic_id must match its content and resources; got {value.semantic_id!r}."
+            )
+        return value
 
 
 class NumericRevision(StrictModule):

@@ -6,40 +6,37 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 
-from ..discretization import CellMesh, PeriodicCell
-from ..discretization._periodic_topology import (
-    _fixed_generators,
-    _identification_orders,
-    _oriented_forms,
-    _reduced,
-    PeriodicMeshTopology,
-    validate_periodic_vertex_orbits,
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.discretization._periodic_topology as _dependency_phydrax_discretization__periodic_topology
+import phydrax.meshing._layer_core_resources as _dependency_phydrax_meshing__layer_core_resources
+import phydrax.meshing.providers._native_sources as sources_owner
+from phydrax.discretization._periodic_exact import (
+    identification_orders,
+    reduce_periodic_exponents,
 )
-from ._layer_core_resources import LayerCoreSourceWork
 
-
-if TYPE_CHECKING:
-    from ._contracts import VolumeMeshingSpec
-    from .providers._native_sources import NativeLayerCoreSource
+from ..discretization import CellMesh, PeriodicCell
+from ..typing import checked
+from ._contracts import VolumeMeshingSpec
 
 
 def _require_seams(
-    source: NativeLayerCoreSource,
+    source: sources_owner.NativeLayerCoreSource,
     polygons: np.ndarray,
     roots: np.ndarray,
     shifts: np.ndarray,
-    work: LayerCoreSourceWork,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> None:
     periodic = source.layers.mesh.periodic_topology
     pairs = source.core_seam_polygon_pairs
     if periodic is None or pairs is None:
         raise ValueError(
-            "Periodic core construction requires retained layer identification and seam anatomy."
+            "NativeLayerCoreSource.core_seam_polygon_pairs must provide retained layer identification and seam anatomy; got missing or incompatible retained layer identification and seam anatomy"
         )
     work.charge(pairs.size)
     if (
@@ -49,21 +46,25 @@ def _require_seams(
         or np.any(pairs >= polygons.shape[0])
     ):
         raise ValueError(
-            "Core seam polygon pairs must index two exact PLC triangles per seam."
+            "NativeLayerCoreSource.core_seam_polygon_pairs must index two PLC triangles per seam; got incompatible Core seam polygon pairs"
         )
     if (
         np.unique(pairs).size != pairs.size
         or np.intersect1d(pairs, source.cap_polygon_ids).size
     ):
         raise ValueError(
-            "Seam triangles must be distinct remaining PLC polygons, not cap triangles."
+            "NativeLayerCoreSource.core_seam_polygon_pairs must be distinct remaining PLC polygons, not cap triangles; got incompatible Seam triangles"
         )
-    orders = _identification_orders(periodic.cell)
+    orders = identification_orders(periodic.cell)
     work.charge(source.complex.vertices.shape[0] * periodic.cell.rank)
-    fixed = _fixed_generators(periodic.cell, source.complex.vertices, roots)
+    fixed = _dependency_phydrax_discretization__periodic_topology.fixed_generators(
+        periodic.cell, source.complex.vertices, roots, budget=budget
+    )
     work.charge(polygons.size)
-    keys, signs, anchors = _oriented_forms(
-        roots[polygons], shifts[polygons], fixed[polygons], orders
+    keys, signs, anchors = (
+        _dependency_phydrax_discretization__periodic_topology.oriented_forms(
+            roots[polygons], shifts[polygons], fixed[polygons], orders
+        )
     )
     groups: dict[tuple[int, ...], list[int]] = {}
     for index, key in enumerate(keys):
@@ -73,36 +74,40 @@ def _require_seams(
     declared = {tuple(sorted(pair.tolist())) for pair in pairs}
     if repeated != declared:
         raise ValueError(
-            "Explicit seam anatomy must cover every paired polygon orbit with equivariant boundary triangulation."
+            "NativeLayerCoreSource.core_seam_polygon_pairs must cover every paired polygon orbit with equivariant boundary triangulation; got incompatible Explicit seam anatomy"
         )
     complex_ = source.complex
     for first, second in pairs:
         work.charge(1)
-        delta = _reduced(anchors[second] - anchors[first], orders)
+        delta = reduce_periodic_exponents(anchors[second] - anchors[first], orders)
         if signs[first] * signs[second] != -1 or not np.any(delta):
             raise ValueError(
-                "A seam pair must retain a unique opposite oriented facet permutation and nontrivial group image."
+                "NativeLayerCoreSource.core_seam_polygon_pairs must retain a unique opposite oriented facet permutation and nontrivial group image; got incompatible seam pair"
             )
         work.charge(1)
         incidence = complex_.facet_regions[complex_.polygon_facets[[first, second]]]
         if np.any(np.count_nonzero(incidence >= 0, axis=1) != 1):
-            raise ValueError("Seam strata must be external core facets.")
+            raise ValueError(
+                "NativeLayerCoreSource.core_seam_polygon_pairs must be external core facets; got incompatible Seam strata"
+            )
         # Opposite exterior normals retain the same occupied PLC side on both copies.
         work.charge(1)
         if not np.array_equal(incidence[0], incidence[1]):
             raise ValueError(
-                "Periodic seam facets must preserve authoritative material incidence and orientation."
+                "NativeLayerCoreSource.core_seam_polygon_pairs must preserve declared material incidence and orientation; got incompatible Periodic seam facets"
             )
 
 
+@checked
 def prepare_core_periodic(
-    source: NativeLayerCoreSource,
+    source: sources_owner.NativeLayerCoreSource,
     mapping: np.ndarray,
     polygons: np.ndarray,
     points: np.ndarray,
     /,
     *,
-    work: LayerCoreSourceWork,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Compile all boundary orbits before native fill; never search generated nodes."""
     periodic = source.layers.mesh.periodic_topology
@@ -111,21 +116,24 @@ def prepare_core_periodic(
     if periodic is None:
         if supplied is not None:
             raise ValueError(
-                "Core periodic ancestry requires a periodic accepted layer realization."
+                "NativeLayerCoreSource.core_vertex_representatives must provide a periodic accepted layer realization; got missing or incompatible a periodic accepted layer realization"
             )
         return None
     if supplied is None or exponents is None:
         raise ValueError(
-            "Periodic layers require source-authored core vertex orbits and explicit seam anatomy before fill."
+            "NativeLayerCoreSource.core_vertex_representatives must provide source-authored core vertex orbits and explicit seam anatomy before fill; got missing or incompatible source-authored core vertex orbits and explicit seam anatomy before fill"
         )
     work.charge(source.complex.vertices.shape[0])
-    roots, shifts = validate_periodic_vertex_orbits(
-        source.complex.vertices,
-        periodic.cell,
-        supplied,
-        exponents,
+    roots, shifts = (
+        _dependency_phydrax_discretization__periodic_topology.validate_periodic_vertex_orbits(
+            source.complex.vertices,
+            periodic.cell,
+            supplied,
+            exponents,
+            budget=budget,
+        )
     )
-    _require_seams(source, polygons, roots, shifts, work)
+    _require_seams(source, polygons, roots, shifts, work, budget=budget)
     count = source.layers.mesh.coordinates.shape[0]
     layer_roots = np.asarray(periodic.vertex_representatives, dtype=np.int64)
     layer_shifts = np.asarray(periodic.vertex_shifts, dtype=np.int64)
@@ -133,7 +141,7 @@ def prepare_core_periodic(
     combined_shifts = np.zeros((points.shape[0], periodic.cell.rank), dtype=np.int64)
     combined_roots[:count] = layer_roots
     combined_shifts[:count] = layer_shifts
-    orders = _identification_orders(periodic.cell)
+    orders = identification_orders(periodic.cell)
     member_order = np.argsort(roots, kind="stable")
     boundaries = np.concatenate(
         (
@@ -151,31 +159,41 @@ def prepare_core_periodic(
             work.charge(shared.size)
             layer_rows = source.vertex_layer_ids[shared]
             target_root = int(layer_roots[layer_rows[0]])
-            offsets = _reduced(layer_shifts[layer_rows] - shifts[shared], orders)
+            offsets = reduce_periodic_exponents(
+                layer_shifts[layer_rows] - shifts[shared], orders
+            )
             if np.any(layer_roots[layer_rows] != target_root) or np.any(
                 offsets != offsets[0]
             ):
                 raise ValueError(
-                    "Core/cap periodic cycles disagree with exact retained layer construction ancestry."
+                    "NativeLayerCoreSource.core_vertex_representatives must retain source-authored core/cap vertex orbits and seam ancestry; got core/cap periodic cycles disagree with retained layer construction ancestry"
                 )
             offset = offsets[0]
         else:
             target_root = int(mapping[root])
             offset = np.zeros(periodic.cell.rank, dtype=np.int64)
         combined_roots[mapping[members]] = target_root
-        combined_shifts[mapping[members]] = _reduced(shifts[members] + offset, orders)
+        combined_shifts[mapping[members]] = reduce_periodic_exponents(
+            shifts[members] + offset, orders
+        )
     work.charge(points.shape[0])
-    return validate_periodic_vertex_orbits(
-        points, periodic.cell, combined_roots, combined_shifts
+    return _dependency_phydrax_discretization__periodic_topology.validate_periodic_vertex_orbits(
+        points,
+        periodic.cell,
+        combined_roots,
+        combined_shifts,
+        budget=budget,
     )
 
 
+@checked
 def core_periodic_constraint_evidence(
-    source: NativeLayerCoreSource,
+    source: sources_owner.NativeLayerCoreSource,
     specification: VolumeMeshingSpec,
     /,
     *,
-    work: LayerCoreSourceWork,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[tuple[tuple[str, float], ...], tuple[tuple[str, float], ...]]:
     """Bind requested source face pairs to the pre-authored seam permutations."""
     if not specification.periodic_constraints:
@@ -185,19 +203,23 @@ def core_periodic_constraint_evidence(
     roots, shifts = source.core_vertex_representatives, source.core_vertex_shifts
     if periodic is None or pairs is None or roots is None or shifts is None:
         raise ValueError(
-            "Periodic controls require complete source-authored core seam ancestry."
+            "VolumeMeshingSpec.periodic_constraints must provide full source-authored core seam ancestry; got missing or incompatible full source-authored core seam ancestry"
         )
     complex_ = source.complex
     polygons = complex_.polygon_vertices.reshape(-1, 3)
     owners = complex_.polygon_facets
     if source.core_facet_source_ids is not None:
         owners = source.core_facet_source_ids[owners]
-    orders = _identification_orders(periodic.cell)
+    orders = identification_orders(periodic.cell)
     work.charge(complex_.vertices.shape[0] * periodic.cell.rank)
-    fixed = _fixed_generators(periodic.cell, complex_.vertices, roots)
+    fixed = _dependency_phydrax_discretization__periodic_topology.fixed_generators(
+        periodic.cell, complex_.vertices, roots, budget=budget
+    )
     work.charge(polygons.size)
-    _, signs, anchors = _oriented_forms(
-        roots[polygons], shifts[polygons], fixed[polygons], orders
+    _, signs, anchors = (
+        _dependency_phydrax_discretization__periodic_topology.oriented_forms(
+            roots[polygons], shifts[polygons], fixed[polygons], orders
+        )
     )
     requested: list[tuple[str, float]] = []
     achieved: list[tuple[str, float]] = []
@@ -207,14 +229,14 @@ def core_periodic_constraint_evidence(
             or constraint.source_entity_ids is None
         ):
             raise ValueError(
-                "Core periodic controls must bind explicit original face pairs."
+                "VolumeMeshingSpec.periodic_constraints must bind explicit source face pairs; got incompatible Core periodic controls"
             )
         if (
             constraint.source_scope.source_id,
             constraint.source_scope.source_revision,
         ) != (source.source_id, source.source_revision):
             raise ValueError(
-                "Core periodic controls must bind the authoritative source revision."
+                "VolumeMeshingSpec.periodic_constraints must bind the declared source revision; got incompatible Core periodic controls"
             )
         residual = 0.0
         covered: set[int] = set()
@@ -231,7 +253,7 @@ def core_periodic_constraint_evidence(
             )
             if not a_indices.size or a_indices.size != b_indices.size or sign != -1:
                 raise ValueError(
-                    "Periodic face controls must retain complete opposite oriented seam triangulations."
+                    "VolumeMeshingSpec.periodic_constraints must retain full opposite oriented seam triangulations; got incompatible Periodic face controls"
                 )
             selected = [
                 (int(a), int(b)) if owners[a] == first else (int(b), int(a))
@@ -242,20 +264,23 @@ def core_periodic_constraint_evidence(
                 b for _, b in selected
             } != set(b_indices.tolist()):
                 raise ValueError(
-                    "Requested periodic faces are not exhaustively paired by source-authored seam anatomy."
+                    "VolumeMeshingSpec.periodic_constraints must bind source face pairs, revision, orientation, and group transforms; got requested periodic faces are not exhaustively paired by source-authored seam anatomy"
                 )
             for a_index, b_index in selected:
                 work.charge(1)
                 if signs[a_index] * signs[b_index] != sign:
                     raise ValueError(
-                        "Requested periodic face contradicts its construction permutation."
+                        "VolumeMeshingSpec.periodic_constraints must bind source face pairs, revision, orientation, and group transforms; got requested periodic face contradicts its construction permutation"
                     )
-                delta = _reduced(anchors[b_index] - anchors[a_index], orders)
-                if isinstance(periodic.cell, PeriodicCell):
-                    expected = np.eye(4, dtype=np.float64)
-                    expected[:3, 3] = np.asarray(periodic.cell.vectors) @ delta
-                else:
-                    expected = periodic.cell.element(delta)
+                delta = reduce_periodic_exponents(
+                    anchors[b_index] - anchors[a_index], orders
+                )
+                match periodic.cell:
+                    case PeriodicCell():
+                        expected = np.eye(4, dtype=np.float64)
+                        expected[:3, 3] = np.asarray(periodic.cell.vectors) @ delta
+                    case _:
+                        expected = periodic.cell.element(delta)
                 residual = max(
                     residual,
                     float(np.max(np.abs(expected - np.asarray(constraint.transform)))),
@@ -263,7 +288,7 @@ def core_periodic_constraint_evidence(
                 covered.update((a_index, b_index))
         if residual > constraint.tolerance:
             raise ValueError(
-                "Periodic control transform contradicts the source-authored seam cycle."
+                "VolumeMeshingSpec.periodic_constraints must bind source face pairs, revision, orientation, and group transforms; got periodic control transform contradicts the source-authored seam cycle"
             )
         requested.append(
             (f"periodic:{constraint.constraint_id}:tolerance", constraint.tolerance)
@@ -280,18 +305,21 @@ def core_periodic_constraint_evidence(
     return tuple(requested), tuple(achieved)
 
 
+@checked
 def bind_core_periodic(
-    source: NativeLayerCoreSource,
+    source: sources_owner.NativeLayerCoreSource,
     mesh: CellMesh,
     ancestry: tuple[np.ndarray, np.ndarray] | None,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> CellMesh:
     if ancestry is None:
         return mesh
     periodic = source.layers.mesh.periodic_topology
     if periodic is None:
         raise ValueError(
-            "Compiled periodic core ancestry lost its accepted identification."
+            "NativeLayerCoreSource.layers must retain the accepted periodic identification; got compiled periodic core ancestry lost its accepted identification"
         )
     roots, shifts = ancestry
     # Fixed PLC recovery forbids boundary Steiner vertices. Generated points
@@ -301,7 +329,9 @@ def bind_core_periodic(
     shifts = np.concatenate(
         (shifts, np.zeros((extra, periodic.cell.rank), dtype=np.int64))
     )
-    topology = PeriodicMeshTopology(mesh, periodic.cell, roots, shifts)
+    topology = _dependency_phydrax_discretization__periodic_topology.PeriodicMeshTopology(
+        mesh, periodic.cell, roots, shifts, budget=budget
+    )
     return CellMesh(
         mesh.coordinates,
         mesh.blocks,

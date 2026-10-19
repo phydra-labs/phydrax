@@ -491,3 +491,49 @@ def test_shared_scenario_balance_price_uses_combined_probability() -> None:
     np.testing.assert_allclose(
         solution.prices.marginal_cost[0].values, (3, 5, 3, 7), atol=2e-5
     )
+
+
+def test_zero_load_commitment_relaxation_has_audited_optimum() -> None:
+    from phydrax.optim import solve_prepared_convex_program
+
+    spec = ep.EnergySystem(
+        ep.Chronology((ep.Horizon("day", (1, 1)),)),
+        (ep.Carrier("electricity"),),
+        (ep.BalancePoint("bus", "electricity"),),
+        sources=(
+            ep.Source(
+                "plant",
+                "bus",
+                0,
+                marginal_cost=1,
+                minimum_fraction=0.5,
+                commitment=True,
+                startup_cost=2,
+            ),
+            ep.Source("backup", "bus", 5, marginal_cost=20),
+        ),
+        demands=(ep.Demand("load", "bus", (0, 1)),),
+        investments=(
+            ep.Investment(
+                "build",
+                "plant",
+                "power",
+                0,
+                10,
+                10,
+                maximum=2,
+                minimum_build=1,
+                fixed_build_cost=3,
+            ),
+        ),
+    )
+    compiled = ep.compile_energy_system(spec, exact=True)
+    result = solve_prepared_convex_program(compiled.prepared).result
+
+    # The zero-load balance forces both nonnegative first-period flows to zero.
+    # It must not put the infeasible-start slack variables on the cone boundary.
+    assert result.successful, (result.status, result.kkt_residual_norm)
+    assert result.kkt_residual_norm <= result.tolerance
+    # The relaxation needs build >= flow / 2 and total startup >= flow / 2.
+    # Thus its lower bound is 3.5 * plant + 20 * backup, attained at plant = 1.
+    np.testing.assert_allclose(result.objective, 3.5, atol=result.tolerance, rtol=0)

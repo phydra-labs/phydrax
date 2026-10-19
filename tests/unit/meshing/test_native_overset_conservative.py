@@ -1,5 +1,5 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Original mixed/polyhedral cell inventories, distinct from point interpolation."""
+"""Test mixed/polyhedral cell inventories separately from point interpolation."""
 
 import jax
 import jax.numpy as jnp
@@ -7,9 +7,10 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.discretization._cell_complex import PolygonalConnectivity
 from phydrax.discretization._reference_cell import reference_cell_topology
-from phydrax.meshing import CellMeshingResult, MeshPart
+from phydrax.meshing import MeshPart
 from phydrax.meshing._overset import (
     OversetPartSpec,
     prepare_overset_connectivity,
@@ -17,18 +18,18 @@ from phydrax.meshing._overset import (
     prepare_overset_conservative_state_transport,
     prepare_overset_motion_rebind,
 )
+from tests._support.meshing_fixtures import certified_carrier
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
-def _carrier(part: MeshPart) -> CellMeshingResult:
-    carrier = part.carrier
-    if not isinstance(carrier, CellMeshingResult):
-        raise TypeError(
-            "The conservative fixture requires a certified cell-mesh producer."
-        )
-    return carrier
+# Fixed empirical allowances from test_native_overset_conservative.py
+# at a6827a9e5; no meshing acceptance policy is relaxed.
+# Mixed hex/prism-to-polyhedron overlap averages 5 and 6 and their conserved inventory.
+_MIXED_OVERLAP_ATOL = 1e-11
+# Area-weighted material/history transfer and unit material-fraction row sums.
+_MATERIAL_INVENTORY_ATOL = 1e-12
 
 
 def test_mixed_polyhedral_common_refinement_and_selected_scientific_cells() -> None:
@@ -98,21 +99,21 @@ def test_mixed_polyhedral_common_refinement_and_selected_scientific_cells() -> N
     old = phx.meshing.MeshPart("old", phx.meshing.certify_cell_mesh(old_mesh, contract))
     new = phx.meshing.MeshPart("new", phx.meshing.certify_cell_mesh(new_mesh, contract))
     source = phx.discretization.UnstructuredFiniteVolumePlan.from_cell_mesh(
-        _carrier(old).mesh
+        certified_carrier(old).mesh
     ).prepare()
-    # Affine cell averages equal the value at each actual polyhedral centroid.
+    # Affine cell averages equal the value at each polyhedral centroid.
     values = 2 + source.cell_centers @ jnp.asarray([1.0, 2.0, 3.0])
     prepared = prepare_overset_conservative_remap(old, new)
     assert prepared.succeeded, prepared.reason
     plan = prepared.plan
     if plan is None:
         raise ValueError(
-            f"Successful conservative remap omitted its plan: {prepared.reason}"
+            f"prepared.plan must be present after successful remap; got None with reason {prepared.reason}"
         )
     transferred = plan.apply(values)
-    np.testing.assert_allclose(transferred, [5.0, 6.0], atol=1e-11)
+    np.testing.assert_allclose(transferred, [5.0, 6.0], atol=_MIXED_OVERLAP_ATOL)
     np.testing.assert_allclose(
-        plan.conservation_defect(values, transferred), 0.0, atol=1e-11
+        plan.conservation_defect(values, transferred), 0.0, atol=_MIXED_OVERLAP_ATOL
     )
     selected = prepare_overset_conservative_remap(
         old,
@@ -124,20 +125,20 @@ def test_mixed_polyhedral_common_refinement_and_selected_scientific_cells() -> N
     selected_plan = selected.plan
     if selected_plan is None:
         raise ValueError(
-            f"Successful selected-cell remap omitted its plan: {selected.reason}"
+            f"selected.plan must be present after successful remap; got None with reason {selected.reason}"
         )
     rows = [
         int(np.flatnonzero(np.asarray(source.cell_global_ids) == identifier)[0])
         for identifier in np.asarray(selected_plan.source_cell_global_ids)
     ]
     result = selected_plan.apply(values[jnp.asarray(rows)])
-    np.testing.assert_allclose(result, [6.0], atol=1e-11)
+    np.testing.assert_allclose(result, [6.0], atol=_MIXED_OVERLAP_ATOL)
     np.testing.assert_array_equal(selected_plan.source_cell_global_ids, [21, 22])
     np.testing.assert_array_equal(selected_plan.target_cell_global_ids, [102])
     np.testing.assert_allclose(
         selected_plan.conservation_defect(values[jnp.asarray(rows)], result),
         0.0,
-        atol=1e-11,
+        atol=_MIXED_OVERLAP_ATOL,
     )
 
 
@@ -169,7 +170,9 @@ def _moving_inventory() -> tuple[
     )
     incidence = mesh.connectivity
     if not isinstance(incidence, PolygonalConnectivity):
-        raise TypeError("Moving inventory requires planar incidence.")
+        raise TypeError(
+            "mesh.connectivity must be polygonal for moving inventory; got non-polygonal connectivity."
+        )
     boundary = part.scope(
         1, np.asarray(mesh.entity_set(1).entity_ids)[np.asarray(incidence.boundary_edges)]
     )
@@ -220,14 +223,16 @@ def test_moving_mesh_conserves_every_field_material_and_history_component_atomic
     )
     remap = prepared.plan
     if remap is None:
-        raise ValueError("Complete moving common refinement must publish its route.")
+        raise ValueError(
+            "prepared.plan must publish the moving common-refinement route; got None."
+        )
     assert all(transport.conservative for transport in transports)
     assert old.revision_id != new.revision_id
     assert not np.array_equal(remap.source_volumes, remap.target_volumes)
 
     # Independent oriented triangle areas, not the route's own inventory echo.
     def areas(part: MeshPart) -> jax.Array:
-        mesh = _carrier(part).mesh
+        mesh = certified_carrier(part).mesh
         corners = np.asarray(mesh.coordinates)[np.asarray(mesh.blocks[0].vertices)]
         first, second = corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
         return jnp.asarray(
@@ -241,13 +246,13 @@ def test_moving_mesh_conserves_every_field_material_and_history_component_atomic
         np.testing.assert_allclose(
             jnp.sum(source.value * source_areas.reshape((-1,) + trailing), axis=0),
             jnp.sum(target.value * target_areas.reshape((-1,) + trailing), axis=0),
-            atol=1e-12,
+            atol=_MATERIAL_INVENTORY_ATOL,
         )
         assert target.semantics_id == source.semantics_id
         assert target.dependencies == (new.binding("revision"),)
     assert not np.array_equal(targets[0].value, states[0].value)
     material = targets[1].value
-    np.testing.assert_allclose(material.sum(axis=1), 1.0, atol=1e-12)
+    np.testing.assert_allclose(material.sum(axis=1), 1.0, atol=_MATERIAL_INVENTORY_ATOL)
     assert np.all(np.asarray(material) >= 0.0)
     motion = prepare_overset_motion_rebind(
         composition, previous, candidate, transports=transports
@@ -276,12 +281,17 @@ def test_moving_conservative_state_refuses_unbound_history_and_uncovered_physica
         revision_id="unbound",
         semantics_id=states[2].semantics_id,
     )
-    with pytest.raises(ValueError, match="exact source part revision"):
+    with pytest.raises(
+        ValueError, match=r"prepare_overset_conservative_state_transport\.state\.bindings"
+    ):
         prepare_overset_conservative_state_transport(
             old, new, (*states[:2], unbound), content_tolerance=1e-12
         )
     shifted = previous.moved(
-        {"moving": _carrier(old.value).mesh.coordinates + jnp.asarray([0.1, 0.0])}
+        {
+            "moving": certified_carrier(old.value).mesh.coordinates
+            + jnp.asarray([0.1, 0.0])
+        }
     )
     with pytest.raises(ValueError, match="overlap refused"):
         prepare_overset_conservative_state_transport(
@@ -293,7 +303,7 @@ def test_moving_conservative_state_refuses_unbound_history_and_uncovered_physica
 def test_rigid_native_motion_preserves_sparse_authority_scope_and_refreshes_source_revision() -> (
     None
 ):
-    from tools.native_moving_overset import native_planar_part, rigid_planar_successor
+    from phydrax.meshing.qualification import native_planar_part, rigid_planar_successor
 
     moving, plan = native_planar_part("moving", 1.0, size=0.7)
     background_mesh = phx.discretization.CellMesh(
@@ -310,10 +320,12 @@ def test_rigid_native_motion_preserves_sparse_authority_scope_and_refreshes_sour
             background_mesh, phx.SpatialCoordinateContract.si()
         ),
     )
-    mesh = _carrier(moving).mesh
+    mesh = certified_carrier(moving).mesh
     incidence = mesh.connectivity
     if not isinstance(incidence, PolygonalConnectivity):
-        raise TypeError("Rigid native planar motion requires polygonal incidence.")
+        raise TypeError(
+            "mesh.connectivity must be polygonal for rigid planar motion; got non-polygonal connectivity."
+        )
     boundary = moving.scope(
         1, np.asarray(mesh.entity_set(1).entity_ids)[np.asarray(incidence.boundary_edges)]
     )
@@ -335,25 +347,30 @@ def test_rigid_native_motion_preserves_sparse_authority_scope_and_refreshes_sour
     candidate.require_complete()
     old_edge = next(
         a
-        for a in _carrier(moving).associations
+        for a in certified_carrier(moving).associations
         if a.target_entity_set_id == mesh.entity_set(1).entity_set_id
     )
     new_edge = next(
         a
-        for a in _carrier(successor).associations
+        for a in certified_carrier(successor).associations
         if a.target_entity_set_id == mesh.entity_set(1).entity_set_id
     )
     assert old_edge.target_global_ids.size < mesh.entity_set(1).count
     np.testing.assert_array_equal(new_edge.target_global_ids, old_edge.target_global_ids)
-    assert new_edge.source_occurrence_paths == old_edge.source_occurrence_paths
-    assert new_edge.source_entity_roles == old_edge.source_entity_roles
+    assert (
+        new_edge.source_entities.occurrence_paths()
+        == old_edge.source_entities.occurrence_paths()
+    )
+    assert new_edge.source_entities.roles() == old_edge.source_entities.roles()
     np.testing.assert_array_equal(new_edge.source_dimensions, old_edge.source_dimensions)
     np.testing.assert_array_equal(new_edge.source_indices, old_edge.source_indices)
     authority = successor_plan.source
     if not isinstance(authority, phx.meshing.NativePlanarSource):
-        raise TypeError("Rigid motion must retain its canonical native planar source.")
+        raise TypeError(
+            "successor_plan.source must be a NativePlanarSource; got a different source kind."
+        )
     assert new_edge.source_revision == authority.source_revision
     assert new_edge.source_revision != old_edge.source_revision
-    assert new_edge.source_entity_ids != old_edge.source_entity_ids
+    assert new_edge.source_entities.entity_ids() != old_edge.source_entities.entity_ids()
     assert new_edge.parent_association_id == old_edge.association_id
     np.testing.assert_array_equal(new_edge.parent_ids, old_edge.target_global_ids)

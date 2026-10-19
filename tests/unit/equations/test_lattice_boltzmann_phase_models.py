@@ -76,7 +76,6 @@ def test_lattice_boltzmann_phase_models_scenario_1() -> None:
     parameters = ColorGradientLBMRuntimeParameters(0.01, tension)
     state = compiled.initialize_state(jnp.stack((red, blue)), jnp.zeros((2,)), parameters)
 
-    # ty: ignore[invalid-argument-type]
     result = compiled.dynamics.step_detailed(0, 0.0, state, 0.01, parameters)
     assert result.candidate_state.color_populations.shape == (
         2,
@@ -90,7 +89,6 @@ def test_lattice_boltzmann_phase_models_scenario_1() -> None:
     assert result.diagnostics.recoloring.population_closure_defect <= 1e-11
     assert result.diagnostics.recoloring.momentum_closure_defect <= 1e-11
 
-    # ty: ignore[invalid-argument-type]
     rejected = compiled.dynamics.step_detailed(0, 0.0, state, 0.02, parameters)
     assert not bool(rejected.successful)
     np.testing.assert_array_equal(

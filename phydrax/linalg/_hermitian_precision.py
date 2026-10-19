@@ -8,7 +8,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import Array
+import numpy as np
+from jax import Array, typeof
+from jax.core import Tracer
 from jax.typing import ArrayLike
 
 from .._dtype_names import (
@@ -156,7 +158,11 @@ class HermitianPrecisionPolicy(StrictModule, NonTrainableState):
         return self._cast(value, self.output_dtype)
 
     def evidence_for(self, value: Any, /) -> PrecisionEvidenceEnvelope:
-        observed = precision_dtype_name(jnp.asarray(value).dtype)
+        match value:
+            case Array() | Tracer() | np.ndarray() | np.generic():
+                observed = precision_dtype_name(typeof(value).dtype)
+            case _:
+                observed = precision_dtype_name(typeof(np.asarray(value)).dtype)
         compute = _effective_dtype(self.compute_dtype, observed)
         factorization = _effective_dtype(self.factorization_dtype, compute)
         accumulation = _effective_dtype(self.accumulation_dtype, factorization)

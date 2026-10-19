@@ -12,6 +12,7 @@ from typing import Literal
 
 
 MeshCarrier = Literal["single-file", "resource-set"]
+MeshFileCarrier = MeshCarrier
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +110,7 @@ def resolve_mesh_file_profile(
 
 __all__ = [
     "MeshCarrier",
+    "MeshFileCarrier",
     "MeshFileProfile",
     "mesh_file_profiles",
     "resolve_mesh_file_profile",

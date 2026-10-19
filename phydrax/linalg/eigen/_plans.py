@@ -13,7 +13,7 @@ from ..._strict import StrictModule
 from ...typing import checked
 from .._materialization import MaterializationPolicy
 from .._preconditioning import PreconditionerPlan
-from .._spaces import _coordinate_dtype
+from .._spaces import coordinate_dtype
 from ._policies import (
     AutoEigenMethod,
     DenseEigh,
@@ -379,8 +379,8 @@ def _validate_problem_certificates(problem: EigenproblemLike, /) -> None:
         raise ValueError("Eigen plans require an operator endomorphism.")
     if not operator.properties.certifies("self_adjoint"):
         raise ValueError("Eigen plans require certified operator self-adjointness.")
-    coordinate_dtype = _coordinate_dtype(operator.source)
-    if not np.issubdtype(coordinate_dtype, np.inexact) or coordinate_dtype.itemsize < 4:
+    stored_dtype = coordinate_dtype(operator.source)
+    if not np.issubdtype(stored_dtype, np.inexact) or stored_dtype.itemsize < 4:
         raise TypeError(
             "Native eigen solves require float32/complex64 or wider coordinates; "
             "lower-precision projected eigendecompositions are unsupported."
@@ -407,7 +407,7 @@ def _validate_initial_basis(
         return
     if basis.shape[0] != problem.dimension:
         raise ValueError("initial_basis row count must equal the problem dimension.")
-    if np.dtype(basis.dtype) != _coordinate_dtype(problem.operator.source):
+    if np.dtype(basis.dtype) != coordinate_dtype(problem.operator.source):
         raise TypeError("initial_basis dtype must match the problem coordinate dtype.")
 
 
@@ -422,7 +422,7 @@ def _make_preconditioner_plan(
     if preconditioning.side not in ("auto", "left"):
         raise ValueError("Eigen solves only support left/automatic preconditioning.")
     byte_budget = policy.resources.preconditioner_bytes
-    itemsize = np.dtype(_coordinate_dtype(problem.operator.source)).itemsize
+    itemsize = np.dtype(coordinate_dtype(problem.operator.source)).itemsize
     materialization = MaterializationPolicy(
         max_entries=max(1, byte_budget // itemsize),
         max_bytes=max(1, byte_budget),
@@ -562,7 +562,7 @@ def _dense_cost_estimate(
     structural_reason: str | None,
 ) -> EigenCostEstimate:
     n = problem.dimension
-    itemsize = _coordinate_dtype(problem.operator.source).itemsize
+    itemsize = coordinate_dtype(problem.operator.source).itemsize
     batch_count = int(np.prod(problem.batch_shape)) if problem.batch_shape else 1
     matrix_entries = batch_count * n * n
     matrix_bytes = matrix_entries * itemsize
@@ -628,7 +628,7 @@ def _cost_estimate(
     structural_reason: str | None,
 ) -> EigenCostEstimate:
     n = problem.dimension
-    itemsize = _coordinate_dtype(problem.operator.source).itemsize
+    itemsize = coordinate_dtype(problem.operator.source).itemsize
     constraint_capacity = (
         0 if problem.constraints is None else problem.constraints.capacity
     )

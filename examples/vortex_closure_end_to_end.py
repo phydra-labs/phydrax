@@ -17,8 +17,8 @@ source = phx.discretization.VortexSourceState(
 target = phx.discretization.VortexTargetState(jnp.asarray(((0.9, 0.9), (-0.9, -0.9))))
 fmm = phx.operators.VortexFMMPlan(
     position,
-    (-1.0, -1.0),
-    (1.0, 1.0),
+    jnp.asarray((-1.0, -1.0), dtype=jnp.float64),
+    jnp.asarray((1.0, 1.0), dtype=jnp.float64),
     depth=2,
     expansion_order=1,
     leaf_capacity=4,
@@ -30,6 +30,14 @@ fmm = phx.operators.VortexFMMPlan(
 field = fmm.evaluate(source, target)
 
 population_plan = phx.discretization.VortexPopulationPlan(6, 2)
+if source.core_radius is None:
+    raise RuntimeError(
+        "source.core_radius must be present for population initialization; got None"
+    )
+if source.volume is None:
+    raise RuntimeError(
+        "source.volume must be present for population initialization; got None"
+    )
 population, journal = population_plan.initialize(
     jnp.pad(position, ((0, 2), (0, 0))),
     jnp.pad(source.strength, (0, 2)),
@@ -37,7 +45,9 @@ population, journal = population_plan.initialize(
     jnp.pad(source.volume, (0, 2), constant_values=1.0),
     active_mask=jnp.asarray((True, True, True, True, False, False)),
 )
-split = population_plan.split(population, journal, 0, (0.02, 0.0))
+split = population_plan.split(
+    population, journal, 0, jnp.asarray((0.02, 0.0), dtype=jnp.float64)
+)
 if not bool(field.successful & split.successful):
     raise RuntimeError("Vortex field evaluation or population split failed")
 

@@ -37,11 +37,8 @@ from .._contracts import (
 from .._cubature import CubatureAtlas, CubatureComponent
 from .._triangulation import DelaunayTriangulation
 from .._validity import GeometryValidityEvidence, representation_validity
-from ..design._schema import _ParameterCollector, DesignState
-from ..simplicial._io import (
-    _canonical_triangle_arrays,
-    planar_region_from_triangles,
-)
+from ..design._schema import DesignState, ParameterCollector
+from ..simplicial._io import canonical_triangle_arrays, planar_region_from_triangles
 from ..simplicial._regions import MeshRegion, PlanarMeshRegion, TriangleSurface
 from ..simplicial._topology import TriangleTopology
 from ._normals import (
@@ -150,7 +147,7 @@ class ReconstructedGeometrySource(GeometrySource):
         self.source = source
         self.report = report
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         return _ReconstructedGeometryKernel(self.source._compile(context), self.report)
 
 
@@ -196,25 +193,35 @@ class _ReconstructedGeometryKernel(GeometryKernel):
 
     def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         if not isinstance(self.child, ClosestPointProvider):
-            raise TypeError("Reconstructed child lacks a closest-point provider.")
+            raise TypeError(
+                f"ReconstructedGeometryKernel.child must provide closest-point queries; got {type(self.child).__name__}"
+            )
         result = self.child.closest_point(state, points)
         if not isinstance(result, ClosestPointResult):
-            raise TypeError("Child closest-point query returned an invalid result.")
+            raise TypeError(
+                f"ReconstructedGeometryKernel.closest_point_result must be a ClosestPointResult; got {type(result).__name__}"
+            )
         return result
 
     def contact_curvature(
         self, state: DesignState, points: Array, /
     ) -> ContactCurvatureResult:
         if not isinstance(self.child, ContactCurvatureProvider):
-            raise TypeError("Reconstructed child lacks a contact-curvature provider.")
+            raise TypeError(
+                f"ReconstructedGeometryKernel.child must provide contact-curvature queries; got {type(self.child).__name__}"
+            )
         result = self.child.contact_curvature(state, points)
         if not isinstance(result, ContactCurvatureResult):
-            raise TypeError("Child contact-curvature query returned an invalid result.")
+            raise TypeError(
+                f"ReconstructedGeometryKernel.contact_curvature_result must be a ContactCurvatureResult; got {type(result).__name__}"
+            )
         return result
 
     def support_map(self, state: DesignState, directions: Array, /) -> Array:
         if not isinstance(self.child, SupportMapProvider):
-            raise TypeError("Reconstructed child lacks a support-map provider.")
+            raise TypeError(
+                f"ReconstructedGeometryKernel.child must provide support-map queries; got {type(self.child).__name__}"
+            )
         return self.child.support_map(state, directions)
 
     def bounds(self, state: DesignState, /) -> Array:
@@ -263,11 +270,13 @@ class _ReconstructedGeometryKernel(GeometryKernel):
 
     def seam_residual(self, state: DesignState, /) -> Array:
         if not isinstance(self.child, SeamDiagnosticsProvider):
-            raise TypeError("Reconstructed child lacks a seam-diagnostics provider.")
+            raise TypeError(
+                f"ReconstructedGeometryKernel.child must provide seam diagnostics; got {type(self.child).__name__}"
+            )
         return self.child.seam_residual(state)
 
 
-def _point_digest(points: np.ndarray) -> str:
+def point_digest(points: np.ndarray) -> str:
     canonical = np.ascontiguousarray(points, dtype=np.float64)
     return hashlib.sha256(canonical.tobytes()).hexdigest()
 
@@ -275,12 +284,16 @@ def _point_digest(points: np.ndarray) -> str:
 def _validated_points(points: ArrayLike, dimension: int) -> np.ndarray:
     values = np.asarray(points, dtype=np.float64)
     if values.ndim != 2 or values.shape[1] < dimension:
-        raise ValueError(f"points must have shape (num_points, >= {dimension}).")
+        raise ValueError(
+            f"Reconstruction.points must have shape (num_points, >= {dimension}); got {values.shape}"
+        )
     values = values[:, :dimension]
     if values.shape[0] < dimension + 1:
-        raise ValueError("The point cloud has too few points for reconstruction.")
+        raise ValueError(
+            f"Reconstruction.points must contain at least {dimension + 1} samples; got {values.shape[0]}"
+        )
     if not np.all(np.isfinite(values)):
-        raise ValueError("Reconstruction points must all be finite.")
+        raise ValueError("Reconstruction.points must be finite; got nonfinite samples")
     return values
 
 
@@ -309,8 +322,10 @@ def _planar_triangulation(
     retained = np.sort(retained)
     vertices = points[retained]
     if vertices.shape[0] < 3:
-        raise ValueError("Planar reconstruction retained fewer than three points.")
-    # Exact native Delaunay: counterclockwise triangles, cocircular ties resolved
+        raise ValueError(
+            f"PlanarReconstruction.vertices must retain at least three points; got {vertices.shape[0]}"
+        )
+    # Native Delaunay uses exact predicates: counterclockwise triangles, cocircular ties resolved
     # by index-ordered symbolic perturbation of the retained (distinct) points.
     faces = np.array(DelaunayTriangulation(vertices).simplices, dtype=np.int32)
     if alpha > 0.0:
@@ -326,7 +341,9 @@ def _planar_triangulation(
         radius = first * second * third / np.maximum(2.0 * doubled_area, 1.0e-300)
         faces = faces[radius <= alpha]
     if faces.shape[0] == 0:
-        raise ValueError("Planar reconstruction produced no retained triangles.")
+        raise ValueError(
+            "PlanarReconstruction.faces must retain at least one triangle; got no triangles"
+        )
     return vertices, faces, retained
 
 
@@ -334,7 +351,7 @@ def _clean_surface_mesh(
     vertices: np.ndarray,
     faces: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, TriangleTopology]:
-    vertices_, faces_ = _canonical_triangle_arrays(vertices, faces)
+    vertices_, faces_ = canonical_triangle_arrays(vertices, faces)
     # ty: ignore[invalid-argument-type]
     topology = TriangleTopology(faces_, num_vertices=vertices_.shape[0])
     return vertices_, faces_, topology
@@ -355,14 +372,16 @@ def reconstruct_planar_region(
     """Reconstruct one planar region and report every host-side approximation.
 
     Points merged by ``tolerance`` (relative to the point extent) are
-    triangulated by the exact native Delaunay kernel; ``alpha > 0`` removes
+    triangulated by the native Delaunay kernel using exact predicates; ``alpha > 0`` removes
     triangles whose circumradius exceeds ``alpha`` before the oriented boundary
     loops are recovered.
     """
 
     points_ = _validated_points(points, 2)
     if alpha < 0.0 or tolerance < 0.0:
-        raise ValueError("alpha and tolerance must be non-negative.")
+        raise ValueError(
+            f"reconstruct_planar_region.options must have nonnegative alpha and tolerance; got {(alpha, tolerance)}"
+        )
     vertices_2d, faces, _ = _planar_triangulation(
         points_,
         tolerance=float(tolerance),
@@ -385,7 +404,7 @@ def reconstruct_planar_region(
     report = ReconstructionReport(
         source_kind="planar_point_cloud",
         algorithm="native_delaunay_2d_native_boundary",
-        input_digest=_point_digest(points_),
+        input_digest=point_digest(points_),
         input_points=points_.shape[0],
         retained_points=points_.shape[0],
         output_vertices=vertices.shape[0],
@@ -492,7 +511,8 @@ def _clean_or_fail(
             points, request, vertices.shape[0], faces.shape[0], str(error)
         )
         raise ReconstructionFailure(
-            "Surface reconstruction produced invalid triangle topology.", report
+            f"SurfaceReconstruction.topology must be valid triangle topology; got {error}",
+            report,
         ) from error
 
 
@@ -526,7 +546,7 @@ def _surface_source(
     )
     if not report.watertight:
         raise ReconstructionFailure(
-            "Surface reconstruction did not produce a watertight consistently wound solid.",
+            "SurfaceReconstruction.topology must describe a watertight consistently wound solid; got invalid solid topology",
             report,
         )
     # ty: ignore[invalid-argument-type]
@@ -591,8 +611,6 @@ def _poisson_request(
     discretization: PoissonDiscretization,
     robustness: ReconstructionRobustness,
 ) -> _PoissonRequest:
-    if not isinstance(robustness, ReconstructionRobustness):
-        raise TypeError("robustness must be ReconstructionRobustness.")
     return _PoissonRequest(
         normals=normals,
         normal_orientation=parse(
@@ -640,7 +658,9 @@ def _without_outliers(
     if normals is not None:
         supplied = np.asarray(normals, dtype=np.float64)
         if supplied.shape != points.shape:
-            raise ValueError("normals must have shape (num_points, 3).")
+            raise ValueError(
+                f"SurfaceReconstruction.normals must have shape {points.shape}; got {supplied.shape}"
+            )
         normals = supplied[retained]
     warnings = request.warnings
     if evidence.removed_indices:
@@ -651,7 +671,7 @@ def _without_outliers(
         )
     if np.count_nonzero(retained) <= options.neighborhood_size:
         raise ReconstructionFailure(
-            "Statistical outlier removal retained too few samples.",
+            f"SurfaceReconstruction.outlier_filter must retain more than {options.neighborhood_size} samples; got insufficient retained samples",
             _failure_report(
                 points[retained],
                 replace(request, outlier_evidence=evidence),
@@ -745,12 +765,12 @@ def _poisson_surface(
     )
     if not indicator.evidence.solver_converged:
         raise ReconstructionFailure(
-            "Screened Poisson solve did not converge.",
+            f"SurfaceReconstruction.poisson_solve must converge; got {indicator.evidence.solver_message}",
             _failure_report(points, request, 0, 0, indicator.evidence.solver_message),
         )
     if fit.unresolved_components:
         raise ReconstructionFailure(
-            "Sample components are not fit by the reconstructed level set.",
+            f"SurfaceReconstruction.component_fit must fit every sample component to the reconstructed level set; got unresolved components {fit.unresolved_components!r}",
             _failure_report(
                 points,
                 request,
@@ -795,7 +815,7 @@ def _poisson_source(
         case "refuse":
             if surface.coverage.unsupported_triangles:
                 raise ReconstructionFailure(
-                    "Incomplete sampling leaves surface unsupported by samples.",
+                    f"SurfaceReconstruction.coverage must support every triangle under the refuse policy; got {surface.coverage.unsupported_triangles} unsupported triangles",
                     _failure_report(
                         surface.points,
                         surface.request,
@@ -815,6 +835,7 @@ def _poisson_source(
     )
 
 
+@checked
 def reconstruct_surface_region(
     points: ArrayLike,
     *,
@@ -861,7 +882,7 @@ def reconstruct_surface_region(
     request = _SurfaceRequest(
         source_kind="surface_point_cloud",
         algorithm="native_screened_poisson",
-        input_digest=_point_digest(points_),
+        input_digest=point_digest(points_),
         recenter=recenter,
         parameters=_parameter_records(
             normals="supplied" if normals is not None else "estimated",
@@ -885,11 +906,8 @@ class TrimmedSurfaceReconstruction(StrictModule):
     surface: TriangleSurface
     report: ReconstructionReport = eqx.field(static=True)
 
+    @checked
     def __init__(self, surface: TriangleSurface, report: ReconstructionReport) -> None:
-        if not isinstance(surface, TriangleSurface):
-            raise TypeError("surface must be TriangleSurface.")
-        if not isinstance(report, ReconstructionReport):
-            raise TypeError("report must be ReconstructionReport.")
         self.surface = surface
         self.report = report
 
@@ -931,7 +949,7 @@ def reconstruct_trimmed_surface(
     request = _SurfaceRequest(
         source_kind="surface_point_cloud",
         algorithm="native_screened_poisson_density_trimmed",
-        input_digest=_point_digest(points_),
+        input_digest=point_digest(points_),
         recenter=recenter,
         parameters=_parameter_records(
             normals="supplied" if normals is not None else "estimated",
@@ -944,7 +962,7 @@ def reconstruct_trimmed_surface(
     kept = surface.faces[~surface.unsupported]
     if kept.shape[0] == 0:
         raise ReconstructionFailure(
-            "Density trimming removed every reconstructed triangle.",
+            "SurfaceReconstruction.density_trim must retain at least one triangle; got no triangles",
             _failure_report(
                 surface.points,
                 surface.request,
@@ -995,13 +1013,17 @@ def _terrain_points(
             else np.asarray(y, dtype=np.float64)
         )
         if x_values.shape != (columns,) or y_values.shape != (rows,):
-            raise ValueError("x and y coordinate vectors must match the height grid.")
+            raise ValueError(
+                f"TerrainReconstruction.coordinates must match height grid shape {(rows, columns)}; got vector shapes {(x_values.shape, y_values.shape)}"
+            )
         x_grid, y_grid = np.meshgrid(x_values, y_values)
         points = np.column_stack((x_grid.ravel(), y_grid.ravel(), values.ravel()))
     else:
         points = _validated_points(values, 3)
     if not np.all(np.isfinite(points)):
-        raise ValueError("Terrain samples must all be finite.")
+        raise ValueError(
+            "TerrainReconstruction.points must be finite; got nonfinite samples"
+        )
     return points
 
 
@@ -1026,7 +1048,7 @@ def reconstruct_dem_region(
     points = _terrain_points(points_or_grid, x=x, y=y)
     if alpha < 0.0 or tolerance < 0.0 or extrude_depth <= 0.0:
         raise ValueError(
-            "alpha/tolerance must be non-negative and extrude_depth positive."
+            f"reconstruct_dem_region.options must have nonnegative alpha/tolerance and positive extrude_depth; got {(alpha, tolerance, extrude_depth)}"
         )
     planar_vertices, top_faces, retained_indices = _planar_triangulation(
         points[:, :2],
@@ -1058,7 +1080,7 @@ def reconstruct_dem_region(
     request = _SurfaceRequest(
         source_kind="digital_elevation_model",
         algorithm="native_delaunay_2d_capped_extrusion",
-        input_digest=_point_digest(points),
+        input_digest=point_digest(points),
         recenter=recenter,
         parameters=_parameter_records(
             alpha=float(alpha),
@@ -1073,6 +1095,7 @@ def reconstruct_dem_region(
     )
 
 
+@checked
 def reconstruct_point_region(
     points: ArrayLike,
     *,
@@ -1113,7 +1136,9 @@ def reconstruct_point_region(
     if roi is not None:
         x_min, x_max, y_min, y_max, z_min, z_max = map(float, roi)
         if not (x_min < x_max and y_min < y_max and z_min < z_max):
-            raise ValueError("roi minima must be strictly below maxima.")
+            raise ValueError(
+                f"LidarReconstruction.roi must have minima strictly below maxima; got {roi!r}"
+            )
         mask = (
             (retained[:, 0] >= x_min)
             & (retained[:, 0] <= x_max)
@@ -1125,18 +1150,22 @@ def reconstruct_point_region(
         retained = retained[mask]
     if voxel_size is not None:
         if voxel_size <= 0.0:
-            raise ValueError("voxel_size must be positive when provided.")
+            raise ValueError(
+                f"LidarReconstruction.voxel_size must be positive when provided; got {voxel_size!r}"
+            )
         voxel = np.floor(retained / float(voxel_size)).astype(np.int64)
         _, indices = np.unique(voxel, axis=0, return_index=True)
         retained = retained[np.sort(indices)]
     if retained.shape[0] < 4:
-        raise ValueError("LiDAR filtering retained too few points for reconstruction.")
+        raise ValueError(
+            f"LidarReconstruction.points must retain at least four samples after filtering; got {retained.shape[0]}"
+        )
     if retained.shape[0] < original.shape[0] / 10:
         warnings.append("Filtering retained fewer than ten percent of input points.")
     request = _SurfaceRequest(
         source_kind="point_cloud",
         algorithm="voxel_filter_then_native_screened_poisson",
-        input_digest=_point_digest(original),
+        input_digest=point_digest(original),
         recenter=recenter,
         parameters=_parameter_records(
             roi=roi, voxel_size=voxel_size, **_poisson_parameters(options)
@@ -1149,6 +1178,7 @@ def reconstruct_point_region(
     return _poisson_source(retained, request, options)
 
 
+@checked
 def reconstruct_lidar_region(
     product: LidarPointProduct,
     *,
@@ -1164,8 +1194,6 @@ def reconstruct_lidar_region(
     feature_id: str | None = None,
 ) -> ReconstructedGeometrySource:
     """Reconstruct valid derived LiDAR points while retaining acquisition lineage."""
-    if not isinstance(product, LidarPointProduct):
-        raise TypeError("product must be LidarPointProduct.")
     active = np.asarray(product.support.active_mask, dtype=np.bool_)
     return reconstruct_point_region(
         np.asarray(product.support.points)[active],

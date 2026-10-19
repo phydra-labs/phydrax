@@ -9,26 +9,26 @@ from itertools import combinations
 from typing import final
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax.discretization._topology_rows import (
+    has_duplicate_rows,
+    row_order,
+    row_run_starts,
+)
+
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation
-from ._topology import (
-    _has_duplicate_rows,
-    _row_order,
-    _row_run_starts,
-    CellComplexTopology,
-    EntitySet,
-    EntitySubset,
-    OrientedIncidence,
-)
+from ..typing import checked, ConvertibleToArray
+from ._topology import CellComplexTopology, EntitySet, EntitySubset, OrientedIncidence
 
 
-def _first_appearance_groups(rows: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+def first_appearance_groups(rows: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     """Group equal integer rows and number the groups by first appearance.
 
     Returns the group of every row and, per group, the increasing index of the
@@ -36,8 +36,8 @@ def _first_appearance_groups(rows: np.ndarray, /) -> tuple[np.ndarray, np.ndarra
     to a sequential dictionary scan over the rows.
     """
 
-    order = _row_order(rows)
-    starts = _row_run_starts(rows[order])
+    order = row_order(rows)
+    starts = row_run_starts(rows[order])
     first = order[starts]
     ranking = np.argsort(first)
     run_groups = np.empty((first.size,), dtype=np.int64)
@@ -47,7 +47,7 @@ def _first_appearance_groups(rows: np.ndarray, /) -> tuple[np.ndarray, np.ndarra
     return groups, first[ranking]
 
 
-def _variable_row_ranks(offsets: np.ndarray, values: np.ndarray, /) -> np.ndarray:
+def variable_row_ranks(offsets: np.ndarray, values: np.ndarray, /) -> np.ndarray:
     """Rank CSR integer rows in lexicographic tuple order.
 
     Equal rows share one rank and a row precedes every longer row it prefixes,
@@ -67,7 +67,7 @@ def _variable_row_ranks(offsets: np.ndarray, values: np.ndarray, /) -> np.ndarra
         present = lengths[active] > depth
         column = np.full((active.size,), exhausted, dtype=np.int64)
         column[present] = values[offsets[active[present]] + depth]
-        order = _row_order(np.stack((ranks[active], column), axis=1))
+        order = row_order(np.stack((ranks[active], column), axis=1))
         active = active[order]
         column = column[order]
         tied = ranks[active]
@@ -89,7 +89,7 @@ def _variable_row_ranks(offsets: np.ndarray, values: np.ndarray, /) -> np.ndarra
 
 def _validated_cells(
     name: str,
-    value: ArrayLike | None,
+    value: ConvertibleToArray | None,
     arity: int,
     vertex_count: int,
     /,
@@ -98,14 +98,22 @@ def _validated_cells(
         return np.empty((0, arity), dtype=np.int32)
     cells = np.asarray(value, dtype=np.int32)
     if cells.ndim != 2 or cells.shape[1] != arity:
-        raise ValueError(f"{name} must have shape (n, {arity}).")
+        raise ValueError(
+            f"cell_connectivity.{name} must have shape (n, {arity}); got {cells.shape}."
+        )
     if np.any(cells < 0) or np.any(cells >= vertex_count):
-        raise ValueError(f"{name} index vertices outside the declared vertex set.")
+        raise ValueError(
+            f"cell_connectivity.{name} must index the declared vertex set; got {cells.shape}."
+        )
     ordered = np.sort(cells, axis=1)
     if np.any(ordered[:, 1:] == ordered[:, :-1]):
-        raise ValueError(f"{name} must contain distinct vertices per cell.")
-    if _has_duplicate_rows(ordered):
-        raise ValueError(f"{name} contains duplicate cells.")
+        raise ValueError(
+            f"cell_connectivity.{name} must contain distinct vertices per cell; got {cells.shape}."
+        )
+    if has_duplicate_rows(ordered):
+        raise ValueError(
+            f"cell_connectivity.{name} must contain no duplicate cells; got {cells.shape}."
+        )
     return cells
 
 
@@ -121,15 +129,19 @@ def _resolved_entity_ids(
         else np.asarray(value, dtype=np.int64)
     )
     if identifiers.shape != (count,):
-        raise ValueError(f"{name} must have shape {(count,)}.")
+        raise ValueError(
+            f"cell_connectivity.{name} must have shape {(count,)}; got {identifiers.shape}."
+        )
     if np.any(identifiers < 0) or np.unique(identifiers).size != count:
-        raise ValueError(f"{name} must contain unique non-negative IDs.")
+        raise ValueError(
+            f"cell_connectivity.{name} must contain unique nonnegative IDs; got {identifiers.shape}."
+        )
     return identifiers
 
 
-def _canonical_entity_ids(keys: np.ndarray, /) -> np.ndarray:
+def canonical_entity_ids(keys: np.ndarray, /) -> np.ndarray:
     if keys.ndim != 2:
-        raise ValueError("Canonical entity keys must be rank-2.")
+        raise ValueError(f"canonical_entity_ids.keys must be rank two; got {keys.shape}.")
     order = np.lexsort(tuple(keys[:, axis] for axis in range(keys.shape[1] - 1, -1, -1)))
     identifiers = np.empty((keys.shape[0],), dtype=np.int64)
     identifiers[order] = np.arange(keys.shape[0], dtype=np.int64)
@@ -137,7 +149,7 @@ def _canonical_entity_ids(keys: np.ndarray, /) -> np.ndarray:
 
 
 class IntervalConnectivity(StrictModule, NonTrainableState):
-    """Canonical vertex incidence for one-dimensional interval cells."""
+    """Vertex incidence for one-dimensional interval cells."""
 
     cell_vertices: Array
     vertex_cell_counts: Array
@@ -177,14 +189,15 @@ def interval_cell_complex(
     vertex_global_ids: ArrayLike | None = None,
     cell_global_ids: ArrayLike | None = None,
 ) -> CellComplexTopology:
-    return _interval_complex(
+    return interval_complex(
         interval_connectivity(intervals, vertex_count),
         vertex_global_ids=vertex_global_ids,
         cell_global_ids=cell_global_ids,
     )
 
 
-def _interval_complex(
+@checked
+def interval_complex(
     connectivity: IntervalConnectivity,
     /,
     *,
@@ -225,7 +238,7 @@ def _interval_complex(
 
 
 class PolygonalConnectivity(StrictModule, NonTrainableState):
-    """Canonical edge incidence for mixed two-dimensional polygonal cells."""
+    """Edge incidence for mixed two-dimensional polygonal cells."""
 
     edges: Array
     cell_vertices: Array
@@ -248,7 +261,7 @@ class PolygonalConnectivity(StrictModule, NonTrainableState):
 
 
 class TetrahedralConnectivity(StrictModule, NonTrainableState):
-    """Canonical vertex/edge/face incidence for tetrahedral cells."""
+    """Vertex/edge/face incidence for tetrahedral cells."""
 
     edges: Array
     faces: Array
@@ -265,7 +278,7 @@ class TetrahedralConnectivity(StrictModule, NonTrainableState):
 
 
 class PolyhedralConnectivity(StrictModule, NonTrainableState):
-    """Canonical packed oriented incidence for mixed or face-defined polyhedra."""
+    """Packed oriented incidence for mixed or face-defined polyhedra."""
 
     edges: Array
     face_vertex_offsets: Array
@@ -319,7 +332,7 @@ class PolyhedralWorksets(StrictModule, NonTrainableState):
     allocated_entries: int = eqx.field(static=True)
 
 
-def _dense_rows(
+def dense_rows(
     offsets: np.ndarray,
     values: np.ndarray,
     width: int,
@@ -331,6 +344,7 @@ def _dense_rows(
     return dense
 
 
+@checked
 def prepare_polyhedral_worksets(
     connectivity: PolyhedralConnectivity,
     /,
@@ -343,11 +357,11 @@ def prepare_polyhedral_worksets(
     worksets. Capacity is checked before allocating any dense row arrays.
     """
 
-    if not isinstance(connectivity, PolyhedralConnectivity):
-        raise TypeError("connectivity must be PolyhedralConnectivity.")
     limit = int(maximum_entries)
     if limit <= 0:
-        raise ValueError("maximum_entries must be positive.")
+        raise ValueError(
+            f"prepare_polyhedral_worksets.maximum_entries must be positive; got {limit}."
+        )
     face_offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int32)
     face_edge_offsets = np.asarray(connectivity.face_edge_offsets, dtype=np.int32)
     cell_offsets = np.asarray(connectivity.cell_face_offsets, dtype=np.int32)
@@ -368,61 +382,61 @@ def prepare_polyhedral_worksets(
     )
     if entries > limit:
         raise PolyhedralWorksetLimitError(
-            f"Dense polyhedral worksets require {entries} entries; limit is {limit}."
+            f"prepare_polyhedral_worksets.maximum_entries must cover the dense workset entry count {entries}; got {limit}."
         )
     return PolyhedralWorksets(
-        face_vertices=jnp.asarray(
-            _dense_rows(
+        face_vertices=jax.device_put(
+            dense_rows(
                 face_offsets,
                 np.asarray(connectivity.face_vertex_values, dtype=np.int32),
                 face_width,
             )
         ),
-        face_vertex_valid=jnp.asarray(
+        face_vertex_valid=jax.device_put(
             np.arange(face_width)[None, :] < face_widths[:, None]
         ),
-        face_edges=jnp.asarray(
-            _dense_rows(
+        face_edges=jax.device_put(
+            dense_rows(
                 face_edge_offsets,
                 np.asarray(connectivity.face_edge_values, dtype=np.int32),
                 edge_width,
             )
         ),
-        face_edge_signs=jnp.asarray(
-            _dense_rows(
+        face_edge_signs=jax.device_put(
+            dense_rows(
                 face_edge_offsets,
                 np.asarray(connectivity.face_edge_sign_values),
                 edge_width,
             )
         ),
-        face_edge_valid=jnp.asarray(
+        face_edge_valid=jax.device_put(
             np.arange(edge_width)[None, :] < edge_widths[:, None]
         ),
-        cell_faces=jnp.asarray(
-            _dense_rows(
+        cell_faces=jax.device_put(
+            dense_rows(
                 cell_offsets,
                 np.asarray(connectivity.cell_face_values, dtype=np.int32),
                 cell_width,
             )
         ),
-        cell_face_signs=jnp.asarray(
-            _dense_rows(
+        cell_face_signs=jax.device_put(
+            dense_rows(
                 cell_offsets,
                 np.asarray(connectivity.cell_face_sign_values),
                 cell_width,
             )
         ),
-        cell_face_valid=jnp.asarray(
+        cell_face_valid=jax.device_put(
             np.arange(cell_width)[None, :] < cell_widths[:, None]
         ),
-        cell_vertices=jnp.asarray(
-            _dense_rows(
+        cell_vertices=jax.device_put(
+            dense_rows(
                 vertex_offsets,
                 np.asarray(connectivity.cell_vertex_values, dtype=np.int32),
                 vertex_width,
             )
         ),
-        cell_vertex_valid=jnp.asarray(
+        cell_vertex_valid=jax.device_put(
             np.arange(vertex_width)[None, :] < vertex_widths[:, None]
         ),
         allocated_entries=entries,
@@ -441,14 +455,18 @@ def polygonal_connectivity(
 
     vertices = int(vertex_count)
     if vertices <= 0:
-        raise ValueError("vertex_count must be positive.")
+        raise ValueError(
+            f"cell_connectivity.vertex_count must be positive; got {vertex_count}."
+        )
     triangle_cells = _validated_cells("triangles", triangles, 3, vertices)
     quadrilateral_cells = _validated_cells("quadrilaterals", quadrilaterals, 4, vertices)
     polygon_cells = []
     for index, values in enumerate(polygons):
         array = np.asarray(values, dtype=np.int32)
         if array.ndim != 2 or array.shape[1] < 3:
-            raise ValueError(f"polygon block {index} must have shape (n, arity >= 3).")
+            raise ValueError(
+                f"polygonal_connectivity.polygons must contain rank-two blocks with arity at least three; got {(index, array.shape)}."
+            )
         polygon_cells.append(
             _validated_cells(
                 f"polygon block {index}",
@@ -459,14 +477,18 @@ def polygonal_connectivity(
         )
     blocks = (triangle_cells, quadrilateral_cells, *polygon_cells)
     if sum(block.shape[0] for block in blocks) == 0:
-        raise ValueError("At least one polygonal cell is required.")
+        raise ValueError(
+            f"polygonal_connectivity.cells must contain at least one polygonal cell; got {sum(block.shape[0] for block in blocks)}."
+        )
     for arity in sorted({block.shape[1] for block in blocks}):
         same_arity = tuple(block for block in blocks if block.shape[1] == arity)
         # `_validated_cells` already rejects duplicates inside one block.
-        if len(same_arity) > 1 and _has_duplicate_rows(
+        if len(same_arity) > 1 and has_duplicate_rows(
             np.sort(np.concatenate(same_arity, axis=0), axis=1)
         ):
-            raise ValueError("Polygonal connectivity contains duplicate cells.")
+            raise ValueError(
+                f"polygonal_connectivity.cells must contain no duplicate cells; got {arity}."
+            )
 
     capacity = max(4, *(block.shape[1] for block in blocks))
     cell_count = sum(block.shape[0] for block in blocks)
@@ -488,14 +510,18 @@ def polygonal_connectivity(
     starts = cell_vertices[cell_valid]
     stops = np.take_along_axis(cell_vertices, following, axis=1)[cell_valid]
     side_keys = np.stack((np.minimum(starts, stops), np.maximum(starts, stops)), axis=1)
-    side_edges, first_sides = _first_appearance_groups(side_keys)
+    side_edges, first_sides = first_appearance_groups(side_keys)
     side_signs = np.where(starts < stops, 1.0, -1.0)
     counts = np.bincount(side_edges, minlength=first_sides.size).astype(np.int32)
     if np.any(counts > 2):
-        raise ValueError("Polygonal cells must be edge-manifold.")
+        raise ValueError(
+            f"polygonal_connectivity.cells must be edge-manifold; got {counts}."
+        )
     orientation = np.bincount(side_edges, weights=side_signs, minlength=first_sides.size)
     if np.any((counts == 2) & (np.abs(orientation) == 2.0)):
-        raise ValueError("Shared polygon edges must have opposite orientation.")
+        raise ValueError(
+            f"polygonal_connectivity.cells must give shared edges opposite orientation; got {orientation}."
+        )
 
     edges = side_keys[first_sides]
     cell_edges = np.zeros((cell_count, capacity), dtype=np.int32)
@@ -506,16 +532,16 @@ def polygonal_connectivity(
     boundary_vertices = np.zeros((vertices,), dtype=np.bool_)
     boundary_vertices[edges[boundary_edges].reshape((-1,))] = True
     return PolygonalConnectivity(
-        edges=jnp.asarray(edges),
-        cell_vertices=jnp.asarray(cell_vertices),
-        cell_vertex_valid=jnp.asarray(cell_valid),
-        cell_kinds=jnp.asarray(cell_kinds),
-        cell_edges=jnp.asarray(cell_edges),
-        cell_edge_signs=jnp.asarray(cell_signs),
-        cell_edge_valid=jnp.asarray(cell_valid),
-        edge_cell_counts=jnp.asarray(counts),
-        boundary_edges=jnp.asarray(boundary_edges),
-        boundary_vertices=jnp.asarray(boundary_vertices),
+        edges=jax.device_put(edges),
+        cell_vertices=jax.device_put(cell_vertices),
+        cell_vertex_valid=jax.device_put(cell_valid),
+        cell_kinds=jax.device_put(cell_kinds),
+        cell_edges=jax.device_put(cell_edges),
+        cell_edge_signs=jax.device_put(cell_signs),
+        cell_edge_valid=jax.device_put(cell_valid),
+        edge_cell_counts=jax.device_put(counts),
+        boundary_edges=jax.device_put(boundary_edges),
+        boundary_vertices=jax.device_put(boundary_vertices),
         vertex_count=vertices,
         triangle_count=triangle_cells.shape[0],
         quadrilateral_count=quadrilateral_cells.shape[0],
@@ -534,7 +560,7 @@ def polygonal_cell_complex(
     edge_global_ids: ArrayLike | None = None,
     cell_global_ids: ArrayLike | None = None,
 ) -> CellComplexTopology:
-    return _polygonal_complex(
+    return polygonal_complex(
         polygonal_connectivity(
             triangles,
             quadrilaterals,
@@ -547,7 +573,8 @@ def polygonal_cell_complex(
     )
 
 
-def _polygonal_complex(
+@checked
+def polygonal_complex(
     connectivity: PolygonalConnectivity,
     /,
     *,
@@ -567,7 +594,7 @@ def _polygonal_complex(
     )
     edge_keys = np.sort(vertex_ids[edges], axis=1)
     edge_ids_global = (
-        _canonical_entity_ids(edge_keys)
+        canonical_entity_ids(edge_keys)
         if edge_global_ids is None
         else _resolved_entity_ids("edge_global_ids", edge_global_ids, edges.shape[0])
     )
@@ -635,7 +662,7 @@ def _csr_offsets(counts: np.ndarray, /) -> np.ndarray:
     return offsets
 
 
-_POLYHEDRAL_FACE_ROUTES = {
+POLYHEDRAL_FACE_ROUTES = {
     "tetrahedron": ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)),
     "hexahedron": (
         (0, 3, 2, 1),
@@ -670,18 +697,27 @@ _POLYHEDRAL_CELL_ARITIES = {
 
 # Face-loop defects in the order one sequential scan checks a loop.
 _POLYHEDRAL_LOOP_DEFECTS = (
-    "Polyhedral faces must be one-dimensional loops.",
-    "Polyhedral faces index undeclared vertices.",
-    "Each polyhedral face loop must be simple.",
-    "A polyhedral cell cannot repeat a face.",
+    "polyhedral_connectivity.cells.face_loops must be rank-one loops with at least three vertices; got incompatible loop rank or arity.",
+    "polyhedral_connectivity.cells.face_vertices must index declared vertices; got an undeclared vertex.",
+    "polyhedral_connectivity.cells.face_simplicity must be simple; got repeated face vertices.",
+    "polyhedral_connectivity.cells.faces must be unique per cell; got a repeated face loop.",
 )
 
 
+class _PolyhedralFaceLoops(StrictModule):
+    """Ordered host loop occurrences before face grouping and shell validation."""
+
+    cell_face_counts: np.ndarray
+    loop_lengths: np.ndarray
+    explicit_loops: np.ndarray
+    loop_values: np.ndarray
+
+
 def _polyhedral_face_loops(
-    cells: Sequence[Sequence[ArrayLike] | tuple[str, ArrayLike]],
+    cells: Sequence[Sequence[ConvertibleToArray] | tuple[str, ConvertibleToArray]],
     vertex_count: int,
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> _PolyhedralFaceLoops:
     """Flatten standard cells and explicit face loops into ordered loop occurrences.
 
     Returns per-cell face counts, per-loop lengths, the explicit-loop mask, and
@@ -703,8 +739,10 @@ def _polyhedral_face_loops(
             continue
         kind_value, values = entry
         kind = str(kind_value)
-        if kind not in _POLYHEDRAL_FACE_ROUTES:
-            raise ValueError(f"Unsupported polyhedral cell kind {kind!r}.")
+        if kind not in POLYHEDRAL_FACE_ROUTES:
+            raise ValueError(
+                f"polyhedral_connectivity.cell_kind must select a supported standard volume cell; got {kind!r}."
+            )
         standard[index] = (
             kind,
             _validated_cells(kind, values, _POLYHEDRAL_CELL_ARITIES[kind], vertex_count),
@@ -716,7 +754,7 @@ def _polyhedral_face_loops(
     for index in range(len(entries)):
         if index in standard:
             kind, block = standard[index]
-            routes = _POLYHEDRAL_FACE_ROUTES[kind]
+            routes = POLYHEDRAL_FACE_ROUTES[kind]
             face_counts.append(np.full((block.shape[0],), len(routes), dtype=np.int64))
             loop_lengths.append(
                 np.tile(
@@ -741,7 +779,7 @@ def _polyhedral_face_loops(
         loop_values.extend(
             loop for loop, length in zip(loops, lengths, strict=True) if length > 0
         )
-    return (
+    return _PolyhedralFaceLoops(
         np.concatenate(face_counts) if face_counts else np.empty((0,), np.int64),
         np.concatenate(loop_lengths) if loop_lengths else np.empty((0,), np.int64),
         np.concatenate(explicit_loops) if explicit_loops else np.empty((0,), np.bool_),
@@ -756,11 +794,11 @@ def _canonical_face_loops(
     positions: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return canonical loop vertices and loop orientation signs.
+    """Return minimum-vertex-anchored loop rows and orientation signs.
 
     Each loop starts at its first smallest vertex and runs toward the smaller of
     that vertex's two neighbors, which is the lexicographically smaller of its
-    two traversals from there. A loop and its reverse share one canonical loop
+    two traversals from there. A loop and its reverse share one normalized loop
     with opposite signs.
     """
 
@@ -787,7 +825,7 @@ def _canonical_face_loops(
 def _canonical_loop_faces(
     offsets: np.ndarray, canonical: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Group equal canonical loops into faces numbered by first appearance.
+    """Group equal normalized loops into faces numbered by first appearance.
 
     Loops of different lengths never coincide, so every distinct length groups
     as one dense block; returns each loop's face and each face's first loop.
@@ -798,9 +836,9 @@ def _canonical_loop_faces(
     for length in np.unique(lengths):
         loops = np.flatnonzero(lengths == length)
         rows = canonical[offsets[loops][:, None] + np.arange(length)]
-        groups, first = _first_appearance_groups(rows)
+        groups, first = first_appearance_groups(rows)
         representatives[loops] = loops[first][groups]
-    return _first_appearance_groups(representatives[:, None])
+    return first_appearance_groups(representatives[:, None])
 
 
 def _cell_vertex_rows(
@@ -809,8 +847,8 @@ def _cell_vertex_rows(
     """Return per-cell distinct vertex counts and their sorted packed values."""
 
     pairs = np.stack((entry_cells, values), axis=1)
-    ordered = pairs[_row_order(pairs)]
-    distinct = ordered[_row_run_starts(ordered)]
+    ordered = pairs[row_order(pairs)]
+    distinct = ordered[row_run_starts(ordered)]
     return (
         np.bincount(distinct[:, 0], minlength=cell_count),
         distinct[:, 1].astype(np.int32),
@@ -835,11 +873,11 @@ def _polyhedral_loop_defects(
     # Validated standard blocks already reference distinct vertices.
     checked = explicit[entry_loops]
     pairs = np.stack((entry_loops[checked], values[checked]), axis=1)
-    ordered = pairs[_row_order(pairs)]
+    ordered = pairs[row_order(pairs)]
     repeated_vertices = np.all(ordered[1:] == ordered[:-1], axis=1)
     non_simple = np.bincount(ordered[1:, 0][repeated_vertices], minlength=count) > 0
     faces = np.stack((loop_cells, loop_faces), axis=1)
-    order = _row_order(faces)
+    order = row_order(faces)
     ordered_faces = faces[order]
     repeated_faces = np.zeros((count,), dtype=np.bool_)
     repeated_faces[order[1:][np.all(ordered_faces[1:] == ordered_faces[:-1], axis=1)]] = (
@@ -869,8 +907,8 @@ def _open_shell_cells(
         (loop_cells[entry_loops], np.minimum(values, stops), np.maximum(values, stops)),
         axis=1,
     )
-    order = _row_order(sides)
-    first = np.flatnonzero(_row_run_starts(sides[order]))
+    order = row_order(sides)
+    first = np.flatnonzero(row_run_starts(sides[order]))
     run_lengths = np.diff(np.append(first, order.size))
     second = np.minimum(first + 1, order.size - 1)
     opposed = (run_lengths == 2) & (values[order[first]] != values[order[second]])
@@ -902,17 +940,17 @@ def _first_polyhedral_cell_defect(
         return None
     cell = np.argmax(defective)
     if cell_face_counts[cell] < 4:
-        return "A polyhedral cell requires at least four faces."
+        return f"polyhedral_connectivity.cells.face_count must be at least four; got {cell_face_counts[cell]}."
     if face_defects[cell]:
         loop = np.argmax(defective_loops & (loop_cells == cell))
         return _POLYHEDRAL_LOOP_DEFECTS[loop_codes[loop] - 1]
     if cell_vertex_counts[cell] < 4:
-        return "A polyhedral cell requires at least four vertices."
-    return "Polyhedral face loops must form one closed oriented two-manifold."
+        return f"polyhedral_connectivity.cells.vertex_count must be at least four; got {cell_vertex_counts[cell]}."
+    return f"polyhedral_connectivity.cells.shell must form one closed oriented two-manifold; got an open or inconsistently oriented shell for cell {cell}."
 
 
 def polyhedral_connectivity(
-    cells: Sequence[Sequence[ArrayLike] | tuple[str, ArrayLike]],
+    cells: Sequence[Sequence[ConvertibleToArray] | tuple[str, ConvertibleToArray]],
     vertex_count: int,
     /,
     *,
@@ -921,17 +959,21 @@ def polyhedral_connectivity(
     face_global_ids: ArrayLike | None = None,
     cell_global_ids: ArrayLike | None = None,
 ) -> PolyhedralConnectivity:
-    """Build exact oriented incidence from standard cells or explicit face loops."""
+    """Build oriented incidence from standard cells or explicit face loops."""
 
     vertices = int(vertex_count)
     if vertices <= 0:
-        raise ValueError("vertex_count must be positive.")
-    cell_face_counts, loop_lengths, explicit_loops, loop_values = _polyhedral_face_loops(
-        cells, vertices
-    )
+        raise ValueError(
+            f"cell_connectivity.vertex_count must be positive; got {vertex_count}."
+        )
+    loops = _polyhedral_face_loops(cells, vertices)
+    cell_face_counts, loop_lengths = loops.cell_face_counts, loops.loop_lengths
+    explicit_loops, loop_values = loops.explicit_loops, loops.loop_values
     cell_count = cell_face_counts.size
     if cell_count == 0:
-        raise ValueError("At least one polyhedral cell is required.")
+        raise ValueError(
+            f"polyhedral_connectivity.cells must contain at least one polyhedral cell; got {cell_count}."
+        )
     vertex_ids = _resolved_entity_ids("vertex_global_ids", vertex_global_ids, vertices)
     cell_ids = _resolved_entity_ids("cell_global_ids", cell_global_ids, cell_count)
 
@@ -978,13 +1020,17 @@ def polyhedral_connectivity(
     face_count = face_loops.size
     counts = np.bincount(loop_faces, minlength=face_count).astype(np.int32)
     if np.any(counts > 2):
-        raise ValueError("Polyhedral cells must be face-manifold.")
+        raise ValueError(
+            f"polyhedral_connectivity.cells must be face-manifold; got {counts}."
+        )
     cell_face_sign_values = loop_signs.astype(np.float64)
     orientation = np.bincount(
         loop_faces, weights=cell_face_sign_values, minlength=face_count
     )
     if np.any((counts == 2) & (np.abs(orientation) == 2.0)):
-        raise ValueError("Shared polyhedral faces must have opposite orientation.")
+        raise ValueError(
+            f"polyhedral_connectivity.cells must give shared faces opposite orientation; got {orientation}."
+        )
 
     face_sizes = loop_sizes[face_loops]
     face_vertex_offsets = _csr_offsets(face_sizes)
@@ -1006,7 +1052,7 @@ def polyhedral_connectivity(
         ),
         axis=1,
     )
-    face_edge_groups, edge_sides = _first_appearance_groups(side_keys)
+    face_edge_groups, edge_sides = first_appearance_groups(side_keys)
     edges = side_keys[edge_sides]
     face_edge_values = face_edge_groups.astype(np.int32)
     face_edge_sign_values = np.where(face_vertex_values < following, 1.0, -1.0)
@@ -1034,45 +1080,43 @@ def polyhedral_connectivity(
     boundary_vertices[face_vertex_values[boundary_sides]] = True
 
     edge_ids = (
-        _canonical_entity_ids(np.sort(vertex_ids[edges], axis=1))
+        canonical_entity_ids(np.sort(vertex_ids[edges], axis=1))
         if edge_global_ids is None
         else _resolved_entity_ids("edge_global_ids", edge_global_ids, edges.shape[0])
     )
     global_vertices = vertex_ids[face_vertex_values]
     face_keys = global_vertices[
-        _row_order(np.stack((face_entries, global_vertices), axis=1))
+        row_order(np.stack((face_entries, global_vertices), axis=1))
     ]
     face_ids = (
-        _canonical_entity_ids(
-            _variable_row_ranks(face_vertex_offsets, face_keys)[:, None]
-        )
+        canonical_entity_ids(variable_row_ranks(face_vertex_offsets, face_keys)[:, None])
         if face_global_ids is None
         else _resolved_entity_ids("face_global_ids", face_global_ids, face_count)
     )
     return PolyhedralConnectivity(
-        edges=jnp.asarray(edges),
-        face_vertex_offsets=jnp.asarray(face_vertex_offsets),
-        face_vertex_values=jnp.asarray(face_vertex_values),
-        face_edge_offsets=jnp.asarray(face_vertex_offsets),
-        face_edge_values=jnp.asarray(face_edge_values),
-        face_edge_sign_values=jnp.asarray(face_edge_sign_values),
-        cell_face_offsets=jnp.asarray(cell_face_offsets),
-        cell_face_values=jnp.asarray(loop_faces.astype(np.int32)),
-        cell_face_sign_values=jnp.asarray(cell_face_sign_values),
-        cell_vertex_offsets=jnp.asarray(_csr_offsets(cell_vertex_counts)),
-        cell_vertex_values=jnp.asarray(cell_vertex_values),
-        face_owner=jnp.asarray(owner),
-        face_neighbor=jnp.asarray(neighbor),
-        face_owner_local=jnp.asarray(owner_local),
-        face_neighbor_local=jnp.asarray(neighbor_local),
-        face_cell_counts=jnp.asarray(counts),
-        boundary_vertices=jnp.asarray(boundary_vertices),
-        boundary_edges=jnp.asarray(boundary_edges),
-        boundary_faces=jnp.asarray(boundary_faces),
-        vertex_global_ids=jnp.asarray(vertex_ids),
-        edge_global_ids=jnp.asarray(edge_ids),
-        face_global_ids=jnp.asarray(face_ids),
-        cell_global_ids=jnp.asarray(cell_ids),
+        edges=jax.device_put(edges),
+        face_vertex_offsets=jax.device_put(face_vertex_offsets),
+        face_vertex_values=jax.device_put(face_vertex_values),
+        face_edge_offsets=jax.device_put(face_vertex_offsets),
+        face_edge_values=jax.device_put(face_edge_values),
+        face_edge_sign_values=jax.device_put(face_edge_sign_values),
+        cell_face_offsets=jax.device_put(cell_face_offsets),
+        cell_face_values=jax.device_put(loop_faces.astype(np.int32)),
+        cell_face_sign_values=jax.device_put(cell_face_sign_values),
+        cell_vertex_offsets=jax.device_put(_csr_offsets(cell_vertex_counts)),
+        cell_vertex_values=jax.device_put(cell_vertex_values),
+        face_owner=jax.device_put(owner),
+        face_neighbor=jax.device_put(neighbor),
+        face_owner_local=jax.device_put(owner_local),
+        face_neighbor_local=jax.device_put(neighbor_local),
+        face_cell_counts=jax.device_put(counts),
+        boundary_vertices=jax.device_put(boundary_vertices),
+        boundary_edges=jax.device_put(boundary_edges),
+        boundary_faces=jax.device_put(boundary_faces),
+        vertex_global_ids=jax.device_put(vertex_ids),
+        edge_global_ids=jax.device_put(edge_ids),
+        face_global_ids=jax.device_put(face_ids),
+        cell_global_ids=jax.device_put(cell_ids),
         vertex_count=vertices,
         edge_count=edges.shape[0],
         face_count=face_count,
@@ -1099,29 +1143,32 @@ def polyhedral_cell_complex(
 ) -> CellComplexTopology:
     """Build the validated 0→1→2→3 complex for polyhedral cells."""
 
-    if isinstance(value, PolyhedralConnectivity):
-        if (
-            vertex_count is not None
-            or vertex_global_ids is not None
-            or edge_global_ids is not None
-            or face_global_ids is not None
-            or cell_global_ids is not None
-        ):
-            raise ValueError(
-                "Connectivity-backed polyhedral topology already owns its entity IDs."
+    match value:
+        case PolyhedralConnectivity():
+            if (
+                vertex_count is not None
+                or vertex_global_ids is not None
+                or edge_global_ids is not None
+                or face_global_ids is not None
+                or cell_global_ids is not None
+            ):
+                raise ValueError(
+                    f"polyhedral_cell_complex.entity_ids must be omitted for connectivity-backed construction; got {(vertex_count, vertex_global_ids is not None, edge_global_ids is not None, face_global_ids is not None, cell_global_ids is not None)}."
+                )
+            connectivity = value
+        case _:
+            if vertex_count is None:
+                raise TypeError(
+                    f"polyhedral_cell_complex.vertex_count must be supplied for cell definitions; got {vertex_count}."
+                )
+            connectivity = polyhedral_connectivity(
+                value,
+                vertex_count,
+                vertex_global_ids=vertex_global_ids,
+                edge_global_ids=edge_global_ids,
+                face_global_ids=face_global_ids,
+                cell_global_ids=cell_global_ids,
             )
-        connectivity = value
-    else:
-        if vertex_count is None:
-            raise TypeError("vertex_count is required for polyhedral cell definitions.")
-        connectivity = polyhedral_connectivity(
-            value,
-            vertex_count,
-            vertex_global_ids=vertex_global_ids,
-            edge_global_ids=edge_global_ids,
-            face_global_ids=face_global_ids,
-            cell_global_ids=cell_global_ids,
-        )
     edges = np.asarray(connectivity.edges, dtype=np.int32)
     face_edges = np.asarray(connectivity.face_edge_values, dtype=np.int32)
     face_edge_counts = np.diff(np.asarray(connectivity.face_edge_offsets, dtype=np.int32))
@@ -1212,36 +1259,44 @@ def tetrahedral_connectivity(
     vertex_count: int,
     /,
 ) -> TetrahedralConnectivity:
-    """Build canonical oriented connectivity for an affine tetrahedral mesh."""
+    """Build oriented connectivity for an affine tetrahedral mesh."""
 
     vertices = int(vertex_count)
     if vertices <= 0:
-        raise ValueError("vertex_count must be positive.")
+        raise ValueError(
+            f"cell_connectivity.vertex_count must be positive; got {vertex_count}."
+        )
     cells = _validated_cells("tetrahedra", tetrahedra, 4, vertices)
     if cells.shape[0] == 0:
-        raise ValueError("At least one tetrahedral cell is required.")
+        raise ValueError(
+            f"tetrahedral_connectivity.tetrahedra must contain at least one cell; got {cells.shape[0]}."
+        )
 
     # Local faces enumerate (cell, local face) in scan order, so first-appearance
     # numbering matches a sequential traversal of the cells.
-    oriented = cells[:, np.asarray(_POLYHEDRAL_FACE_ROUTES["tetrahedron"])].reshape(
+    oriented = cells[:, np.asarray(POLYHEDRAL_FACE_ROUTES["tetrahedron"])].reshape(
         (-1, 3)
     )
     first, second, third = oriented.T
     inversions = (first > second).astype(np.int8) + (first > third) + (second > third)
     side_signs = np.where(inversions % 2 == 1, -1.0, 1.0)
     side_keys = np.sort(oriented, axis=1)
-    side_faces, face_sides = _first_appearance_groups(side_keys)
+    side_faces, face_sides = first_appearance_groups(side_keys)
     counts = np.bincount(side_faces, minlength=face_sides.size).astype(np.int32)
     if np.any(counts > 2):
-        raise ValueError("Tetrahedral cells must be face-manifold.")
+        raise ValueError(
+            f"tetrahedral_connectivity.tetrahedra must be face-manifold; got {counts}."
+        )
     orientation = np.bincount(side_faces, weights=side_signs, minlength=counts.size)
     if np.any((counts == 2) & (np.abs(orientation) == 2.0)):
-        raise ValueError("Shared tetrahedral faces must have opposite orientation.")
+        raise ValueError(
+            f"tetrahedral_connectivity.tetrahedra must give shared faces opposite orientation; got {orientation}."
+        )
 
     faces = side_keys[face_sides]
     # A face contributes its edges (0, 1), (0, 2), (1, 2) when first seen.
     face_edge_keys = faces[:, np.asarray(((0, 1), (0, 2), (1, 2)))].reshape((-1, 2))
-    edge_groups, edge_keys = _first_appearance_groups(face_edge_keys)
+    edge_groups, edge_keys = first_appearance_groups(face_edge_keys)
     edges = face_edge_keys[edge_keys]
     # The boundary (1, 2), (2, 0), (0, 1) of a sorted face has signs (+, -, +).
     face_edges = edge_groups.reshape((-1, 3))[:, ::-1].astype(np.int32)
@@ -1281,7 +1336,7 @@ def tetrahedral_cell_complex(
 ) -> CellComplexTopology:
     """Build the validated 0→1→2→3 complex for tetrahedral cells."""
 
-    return _tetrahedral_complex(
+    return tetrahedral_complex(
         tetrahedral_connectivity(tetrahedra, vertex_count),
         vertex_global_ids=vertex_global_ids,
         edge_global_ids=edge_global_ids,
@@ -1290,7 +1345,8 @@ def tetrahedral_cell_complex(
     )
 
 
-def _tetrahedral_complex(
+@checked
+def tetrahedral_complex(
     connectivity: TetrahedralConnectivity,
     /,
     *,
@@ -1309,12 +1365,12 @@ def _tetrahedral_complex(
     )
     cell_ids_global = _resolved_entity_ids("cell_global_ids", cell_global_ids, cell_count)
     edge_ids_global = (
-        _canonical_entity_ids(np.sort(vertex_ids[edges], axis=1))
+        canonical_entity_ids(np.sort(vertex_ids[edges], axis=1))
         if edge_global_ids is None
         else _resolved_entity_ids("edge_global_ids", edge_global_ids, edges.shape[0])
     )
     face_ids_global = (
-        _canonical_entity_ids(np.sort(vertex_ids[faces], axis=1))
+        canonical_entity_ids(np.sort(vertex_ids[faces], axis=1))
         if face_global_ids is None
         else _resolved_entity_ids("face_global_ids", face_global_ids, faces.shape[0])
     )
@@ -1401,21 +1457,31 @@ def simplicial_cell_complex(
     """
     levels = tuple(np.asarray(level) for level in simplices)
     if not levels:
-        raise ValueError("simplices must supply at least the vertex degree.")
+        raise ValueError(
+            f"simplicial_cell_complex.simplices must supply at least the vertex degree; got {len(levels)}."
+        )
     for degree, level in enumerate(levels):
         if level.ndim != 2 or level.shape[1] != degree + 1:
-            raise ValueError(f"simplices[{degree}] must have {degree + 1} columns.")
+            raise ValueError(
+                f"simplicial_cell_complex.simplices must have {degree + 1} columns at degree {degree}; got {level.shape}."
+            )
         if not np.issubdtype(level.dtype, np.integer):
-            raise TypeError("Simplex vertices must be integers.")
+            raise TypeError(
+                f"simplicial_cell_complex.simplices must contain integer vertex indices; got {level.dtype}."
+            )
         if np.any(level < 0) or np.any(level[:, 1:] <= level[:, :-1]):
-            raise ValueError("Simplex vertices must be nonnegative and increasing.")
-        if _has_duplicate_rows(level):
-            raise ValueError("Each simplex must appear exactly once per degree.")
+            raise ValueError(
+                f"simplicial_cell_complex.simplices must contain nonnegative and increasing vertex indices; got {(degree, level.shape)}."
+            )
+        if has_duplicate_rows(level):
+            raise ValueError(
+                f"simplicial_cell_complex.simplices must contain each simplex once per degree; got {(degree, level.shape)}."
+            )
     entities = tuple(
         EntitySet(
             f"simplicial_{degree}_cells",
             degree,
-            level[:, 0] if degree == 0 else _canonical_entity_ids(level),
+            level[:, 0] if degree == 0 else canonical_entity_ids(level),
         )
         for degree, level in enumerate(levels)
     )
@@ -1432,7 +1498,9 @@ def simplicial_cell_complex(
         lookup[groups[: lower.shape[0]]] = np.arange(lower.shape[0], dtype=np.int32)
         source = lookup[groups[lower.shape[0] :]]
         if np.any(source < 0):
-            raise ValueError("Simplex family must be face closed.")
+            raise ValueError(
+                f"simplicial_cell_complex.simplices must be face closed; got {degree}."
+            )
         target = np.repeat(np.arange(upper.shape[0], dtype=np.int32), degree + 1)
         signs = np.tile(np.where(positions % 2, -1.0, 1.0), upper.shape[0])
         relation = EdgeRelation(
@@ -1446,6 +1514,7 @@ def simplicial_cell_complex(
     return CellComplexTopology(entities, incidences, topology_id=topology_id)
 
 
+@checked
 def simplicial_cell_geometry(
     topology: CellComplexTopology, /
 ) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
@@ -1454,8 +1523,6 @@ def simplicial_cell_geometry(
     Vertex indices index the degree-zero coordinate array, not entity IDs.
     Nonsimplicial cells and inconsistent incidence are refused explicitly.
     """
-    if not isinstance(topology, CellComplexTopology):
-        raise TypeError("Simplex geometry requires CellComplexTopology.")
     rows: list[np.ndarray] = [
         np.arange(topology.entity_sets[0].count, dtype=np.int32)[:, None]
     ]
@@ -1475,7 +1542,9 @@ def simplicial_cell_geometry(
             coefficients[order],
         )
         if np.any(np.bincount(targets, minlength=count) != degree + 1):
-            raise ValueError("Every degree-k simplex must have k+1 distinct faces.")
+            raise ValueError(
+                f"simplicial_cell_geometry.topology must give every degree-{degree} simplex {degree + 1} distinct faces; got {np.bincount(targets, minlength=count)}."
+            )
         faces = sources.reshape((count, degree + 1))
         boundary = coefficients.reshape((count, degree + 1))
         cell_rows = np.empty((count, degree + 1), dtype=np.int32)
@@ -1483,14 +1552,18 @@ def simplicial_cell_geometry(
         for cell in range(count):
             vertices = np.unique(rows[degree - 1][faces[cell]])
             if vertices.shape != (degree + 1,):
-                raise ValueError("Simplex incidence must span k+1 distinct vertices.")
+                raise ValueError(
+                    f"simplicial_cell_geometry.topology must span {degree + 1} distinct vertices per simplex; got {vertices.shape}."
+                )
             cell_rows[cell] = vertices
             induced: list[float] = []
             removed_vertices: list[int] = []
             for face, coefficient in zip(faces[cell], boundary[cell], strict=True):
                 removed = np.flatnonzero(~np.isin(vertices, rows[degree - 1][face]))
                 if removed.size != 1:
-                    raise ValueError("Simplex faces must omit exactly one vertex.")
+                    raise ValueError(
+                        f"simplicial_cell_geometry.topology must omit one vertex per simplex face; got {removed.size}."
+                    )
                 position = int(removed[0])
                 removed_vertices.append(position)
                 induced.append(
@@ -1498,7 +1571,9 @@ def simplicial_cell_geometry(
                     * (-1.0 if position % 2 else 1.0)
                 )
             if len(set(removed_vertices)) != degree + 1 or len(set(induced)) != 1:
-                raise ValueError("Simplex boundary orientations are inconsistent.")
+                raise ValueError(
+                    f"simplicial_cell_geometry.topology must have consistent boundary orientations; got {(removed_vertices, induced)}."
+                )
             cell_signs[cell] = induced[0]
         rows.append(cell_rows)
         orientations.append(cell_signs)
@@ -1597,7 +1672,9 @@ def cubical_cell_complex(
     if len(periodic_axes) != len(point_counts) or any(
         not isinstance(value, bool) for value in periodic_axes
     ):
-        raise ValueError("periodic must contain one Boolean per axis.")
+        raise ValueError(
+            f"cubical_cell_complex.periodic must contain one boolean per axis; got {periodic_axes!r}."
+        )
     if not point_counts or any(
         not isinstance(count, int)
         or isinstance(count, bool)
@@ -1605,7 +1682,7 @@ def cubical_cell_complex(
         for count, wraps in zip(point_counts, periodic_axes, strict=True)
     ):
         raise ValueError(
-            "Point counts must be positive, and nonperiodic counts at least two."
+            f"cubical_cell_complex.shape must have positive counts with nonperiodic counts at least two; got {point_counts!r}."
         )
     dimension = len(point_counts)
     orientations = tuple(

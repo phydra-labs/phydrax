@@ -6,7 +6,7 @@
 
 `compile_surface_domain` resolves the scopes of one `SurfaceMeshingSpec`
 (size controls, protected features) against the corner/curve/surface strata of
-a `MeshingDomain` by exact identity: scope source, revision, entity set and
+a `MeshingDomain` by declared identity: scope source, revision, entity set and
 entity indices. It never infers identity from coordinates or names. The result
 is the protected constraint complex (every corner and every boundary curve of
 the selected patches, shared by all patches that use it), per-stratum size and
@@ -16,6 +16,7 @@ curves are discretized once.
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from typing import final
 
 import equinox as eqx
@@ -23,47 +24,47 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax.meshing._contracts import (
+    CellFamilyPolicy,
+    CellMeshingTarget,
+    CurveEnd,
+    CurveJunction,
+    CurveMeshingSpec,
+    SurfaceMeshingSpec,
+)
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from .._bvh import bvh_nearest_items, bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import (
-    charge_native_geometry_queries,
     MeshcoreStatus,
     point_triangle_locations,
 )
+from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..geometry._meshing_domain import (
-    _cross_interval,
-    MeshingDomain,
-    MeshingDomainBoundarySource,
-    PatchCurveUse,
-    PatchPoleUse,
-)
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..geometry._domain_boundary import MeshingDomainBoundarySource
+from ..geometry._domain_numerics import cross_interval
+from ..geometry._meshing_domain import MeshingDomain, PatchCurveUse, PatchPoleUse
 from ..geometry.brep._intersection_curve import (
     original_trim_intersection_preparation,
 )
 from ..geometry.brep._patches import PlanePatch, surface_differential
 from ..geometry.brep._placed import PlacedSurface
 from ..linalg import HermitianSpectrum, SmallLinearSolvePlan, solve_small_linear
-from ._contracts import (
-    CellFamilyPolicy,
-    CellMeshingTarget,
-    CurveEnd,
-    CurveJunction,
-    CurveMeshingSpec,
-    MeshingFailure,
-    MeshingFailureCategory,
-    SurfaceMeshingSpec,
-)
+from ..typing import checked
 from ._controls import (
     BackgroundMetricControl,
     BackgroundMetricMode,
     FeatureKind,
+    PatchControl,
     ProtectedFeature,
 )
 from ._metric import interpolate_mesh_metric
 from ._scope import MeshingEntityKind, MeshingScope
 from ._sizing import (
+    control_scopes,
     CurvatureSizeControl,
     ProximitySizeControl,
     resolve_size_controls,
@@ -73,7 +74,7 @@ from ._sizing import (
     SourceProximityGapEvidence,
     UniformSizeControl,
 )
-from ._tetra_metric import _locate_stencil
+from ._tetra_metric import locate_stencil
 from ._trace import MeshingStageKind
 
 
@@ -92,7 +93,7 @@ def _resolved(domain: MeshingDomain, scope: MeshingScope, /) -> np.ndarray:
     if np.setdiff1d(identifiers, domain.scope_indices(scope.entity_dimension)).size:
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-            "Scope names entities absent from the authoritative source stratum.",
+            "MeshingScope.entity_ids must select declared source strata; got entities absent from the source stratum.",
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
             provider_code="unknown_source_entity",
         )
@@ -103,7 +104,7 @@ def _feature_issues(
     domain: MeshingDomain, specification: SurfaceMeshingSpec, patches: np.ndarray, /
 ) -> list[str]:
     """Require protected source entities to survive the selected construction."""
-    curves, corners = _selected_strata(domain, patches)
+    curves, corners = selected_strata(domain, patches)
     selected = {0: corners, 1: curves, 2: patches}
     dimensions = {FeatureKind.CORNER: 0, FeatureKind.CURVE: 1, FeatureKind.SURFACE: 2}
     issues: list[str] = []
@@ -116,7 +117,7 @@ def _feature_issues(
             )
             continue
         if not _binds(domain, scope):
-            issues.append("protected features bound to authoritative source strata")
+            issues.append("protected features bound to source strata")
             continue
         identifiers = np.asarray(scope.global_entity_ids, dtype=np.int64)
         if np.setdiff1d(identifiers, domain.scope_indices(dimension)).size:
@@ -132,10 +133,11 @@ def _feature_issues(
     return issues
 
 
+@checked
 def surface_domain_issues(
     domain: MeshingDomain, specification: SurfaceMeshingSpec, /
 ) -> list[str]:
-    """Requests of one surface specification the compiled domain cannot resolve."""
+    """Return surface requests that cannot be resolved against the domain."""
 
     unsupported: list[str] = []
     scope = specification.scope
@@ -150,13 +152,9 @@ def surface_domain_issues(
             _feature_issues(domain, specification, _resolved(domain, scope))
         )
     for control in specification.size_controls:
-        scopes = (
-            (control.source_scope, control.target_scope)
-            if isinstance(control, ProximitySizeControl)
-            else (control.scope,)
-        )
+        scopes = control_scopes(control)
         if any(not _binds(domain, bound) for bound in scopes):
-            unsupported.append("size controls bound to authoritative source strata")
+            unsupported.append("size controls bound to source strata")
         elif any(
             np.setdiff1d(
                 np.asarray(bound.global_entity_ids, dtype=np.int64),
@@ -164,12 +162,18 @@ def surface_domain_issues(
             ).size
             for bound in scopes
         ):
-            unsupported.append("size controls on existing authoritative source entities")
-        if isinstance(control, UniformSizeControl):
-            if control.scope.entity_dimension not in (1, 2, 3):
-                unsupported.append("uniform sizing on curves, patches or regions")
-        elif any(bound.entity_dimension != 2 for bound in scopes):
-            unsupported.append("curvature/proximity sizing on source patches")
+            unsupported.append("size controls on declared source entities")
+        match control:
+            case UniformSizeControl():
+                if control.scope.entity_dimension not in (1, 2, 3):
+                    unsupported.append("uniform sizing on curves, patches or regions")
+            case CurvatureSizeControl() | ProximitySizeControl():
+                if any(bound.entity_dimension != 2 for bound in scopes):
+                    unsupported.append("curvature/proximity sizing on source patches")
+            case _:
+                raise TypeError(
+                    f"SurfaceMeshingSpec.size_controls must contain supported sizing controls; got {type(control).__name__}."
+                )
     for feature in specification.protected_features:
         if feature.feature_kind is FeatureKind.MATERIAL_INTERFACE:
             unsupported.append("material-interface protected features")
@@ -179,24 +183,22 @@ def surface_domain_issues(
         if control.scope.entity_dimension not in (2, 3) or not _binds(
             domain, control.scope
         ):
-            unsupported.append("region controls bound to authoritative source regions")
+            unsupported.append("region controls bound to source regions")
         elif np.setdiff1d(
             np.asarray(control.scope.global_entity_ids, dtype=np.int64),
             domain.scope_indices(control.scope.entity_dimension),
         ).size:
-            unsupported.append(
-                "region controls on existing authoritative source entities"
-            )
+            unsupported.append("region controls on declared source entities")
     for control in specification.patch_controls:
         if control.scope.entity_dimension not in (1, 2) or not _binds(
             domain, control.scope
         ):
-            unsupported.append("patch controls bound to authoritative source patches")
+            unsupported.append("patch controls bound to source patches")
         elif np.setdiff1d(
             np.asarray(control.scope.global_entity_ids, dtype=np.int64),
             domain.scope_indices(control.scope.entity_dimension),
         ).size:
-            unsupported.append("patch controls on existing authoritative source entities")
+            unsupported.append("patch controls on declared source entities")
     if specification.periodic_constraints:
         unsupported.append("periodic constraints")
     if specification.layer_controls:
@@ -221,57 +223,61 @@ def _surface_controls(
 ) -> tuple[SizeControl, ...]:
     controls: list[SizeControl] = []
     for control in specification.size_controls:
-        scopes = (
-            (control.source_scope, control.target_scope)
-            if isinstance(control, ProximitySizeControl)
-            else (control.scope,)
-        )
+        scopes = control_scopes(control)
         for scope in scopes:
             if not _binds(domain, scope):
                 raise _stale(domain, scope)
             _resolved(domain, scope)
-        if (
-            isinstance(control, UniformSizeControl)
-            and control.scope.entity_dimension == 3
-        ):
-            patches = np.unique(
-                np.asarray(
-                    [
-                        patch
-                        for region in _resolved(domain, control.scope).tolist()
-                        for patch, _ in domain.regions[region].boundary
-                    ],
-                    dtype=np.int64,
+        match control:
+            case UniformSizeControl() if control.scope.entity_dimension == 3:
+                patches = np.unique(
+                    np.asarray(
+                        [
+                            patch
+                            for region in _resolved(domain, control.scope).tolist()
+                            for patch, _ in domain.regions[region].boundary
+                        ],
+                        dtype=np.int64,
+                    )
                 )
-            )
-            controls.append(
-                UniformSizeControl(
-                    _surface_scope(domain, patches),
-                    control.target_size,
-                    minimum_size=control.minimum_size,
-                    maximum_size=control.maximum_size,
-                    maximum_growth_rate=control.maximum_growth_rate,
-                    strength=control.strength,
-                    priority=control.priority,
+                controls.append(
+                    UniformSizeControl(
+                        _surface_scope(domain, patches),
+                        control.target_size,
+                        minimum_size=control.minimum_size,
+                        maximum_size=control.maximum_size,
+                        maximum_growth_rate=control.maximum_growth_rate,
+                        strength=control.strength,
+                        priority=control.priority,
+                    )
                 )
-            )
-        elif all(scope.entity_dimension == 2 for scope in scopes):
-            controls.append(control)
+            case UniformSizeControl() | CurvatureSizeControl() | ProximitySizeControl():
+                if all(scope.entity_dimension == 2 for scope in scopes):
+                    controls.append(control)
+            case _:
+                raise TypeError(
+                    f"SurfaceMeshingSpec.size_controls must contain supported sizing controls; got {type(control).__name__}."
+                )
     return tuple(controls)
 
 
 def _curvature_samples(
-    domain: MeshingDomain, patches: np.ndarray, charts: np.ndarray, /
+    domain: MeshingDomain,
+    patches: np.ndarray,
+    charts: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> np.ndarray:
-    """Principal source curvature with native Gram whitening and solve evidence."""
+    """Return principal source curvature using native Gram whitening and solves."""
     result = np.empty((patches.size,), dtype=np.float64)
     for patch in np.unique(patches).tolist():
         selected = patches == patch
         surface = domain.patches[patch].surface
         parameters = jnp.asarray(charts[selected], dtype=jnp.float64)
-        charge_native_geometry_queries(parameters.shape[0])
+        budget.reserve_geometry_queries(parameters.shape[0])
         first = surface_differential(surface, parameters)
-        charge_native_geometry_queries(parameters.shape[0])
+        budget.reserve_geometry_queries(parameters.shape[0])
         second = jax.vmap(jax.jacfwd(jax.jacfwd(surface.evaluate)))(parameters)
         normal = jnp.cross(first[..., :, 0], first[..., :, 1])
         normal /= jnp.linalg.norm(normal, axis=-1, keepdims=True)
@@ -279,7 +285,9 @@ def _curvature_samples(
         form = HermitianSpectrum(jnp.sum(second * normal[..., :, None, None], axis=-3))
         valid = np.asarray(gram.valid & form.valid & (gram.minimum_eigenvalue > 0))
         if not np.all(valid):
-            raise ValueError("Curvature sizing needs regular source samples.")
+            raise ValueError(
+                "SourceSurfaceSizing.curvature_samples must be regular; got samples without regular Gram evidence."
+            )
         root = (
             gram.eigenvectors * jnp.sqrt(gram.eigenvalues)[..., None, :]
         ) @ jnp.swapaxes(gram.eigenvectors, -1, -2)
@@ -287,18 +295,22 @@ def _curvature_samples(
         left = solve_small_linear(plan, root, form.matrix)
         right = solve_small_linear(plan, root, jnp.swapaxes(left.value, -1, -2))
         if not np.all(np.asarray(left.successful & right.successful)):
-            raise ValueError("Source curvature Gram whitening did not converge.")
+            raise ValueError(
+                "SourceSurfaceSizing.curvature_solve must converge for Gram whitening; got an unsuccessful native solve."
+            )
         shape = right.value
         spectrum = HermitianSpectrum(0.5 * (shape + jnp.swapaxes(shape, -1, -2)))
         if not np.all(np.asarray(spectrum.valid)):
-            raise ValueError("Source principal-curvature spectrum is unresolved.")
+            raise ValueError(
+                "SourceSurfaceSizing.curvature_spectrum must have valid native evidence; got an unresolved principal-curvature spectrum."
+            )
         result[selected] = np.asarray(jnp.max(jnp.abs(spectrum.eigenvalues), axis=-1))
     return result
 
 
 @final
 class SourceSurfaceMetric(StrictModule, NonTrainableState):
-    """One exact background revision and prepared native affine simplex locator."""
+    """Prepare an affine simplex locator bound to one background metric revision."""
 
     control: BackgroundMetricControl
     tree: PackedBVH
@@ -311,20 +323,21 @@ class SourceSurfaceMetric(StrictModule, NonTrainableState):
     minimum_directional_size: float = eqx.field(static=True)
     maximum_directional_size: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, control: BackgroundMetricControl, maximum_pairs: int, scratch: int, /
     ) -> None:
         mesh = control.mesh
         if mesh.topological_dimension not in (2, 3) or mesh.ambient_dimension != 3:
             raise ValueError(
-                "Surface background metrics require an ambient-3 affine simplex cover."
+                f"SourceSurfaceMetric.control.mesh must provide an ambient-3 affine simplex cover; got topological_dimension={mesh.topological_dimension}, ambient_dimension={mesh.ambient_dimension}."
             )
         count = sum(block.vertices.shape[0] for block in mesh.blocks)
         required = 4096 * count + 1024 * mesh.coordinates.shape[0]
         if required > scratch:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Prepared source metric locator exceeds scratch capacity.",
+                f"SourceSurfaceMetric.scratch must cover prepared locator storage; got required={required}, capacity={scratch}.",
                 stage=MeshingStageKind.SOURCE_INSPECTION.value,
                 requested=(("maximum_scratch_bytes", scratch),),
                 achieved=(("scratch_bytes", required),),
@@ -334,9 +347,11 @@ class SourceSurfaceMetric(StrictModule, NonTrainableState):
         )
         corners = np.asarray(mesh.coordinates, dtype=np.float64)[cells]
         values = control.vertex_metrics
-        evidence = HermitianSpectrum(jnp.asarray(values, dtype=jnp.float64))
+        evidence = HermitianSpectrum(jax.device_put(np.asarray(values, dtype=np.float64)))
         if not np.all(np.asarray(evidence.valid & (evidence.minimum_eigenvalue > 0))):
-            raise ValueError("Prepared source metrics need native SPD evidence.")
+            raise ValueError(
+                "SourceSurfaceMetric.control.metric must have native SPD evidence; got invalid or nonpositive spectrum evidence."
+            )
         eigenvalues = np.asarray(evidence.eigenvalues)
         match control.mode:
             case BackgroundMetricMode.ANISOTROPIC:
@@ -346,7 +361,9 @@ class SourceSurfaceMetric(StrictModule, NonTrainableState):
                     eigenvalues[:, -1, None, None] * np.eye(3, dtype=np.float64)[None]
                 )
             case _:
-                raise ValueError("Unknown source background metric mode.")
+                raise ValueError(
+                    f"SourceSurfaceMetric.control.mode must be a supported BackgroundMetricMode; got {control.mode!r}."
+                )
         self.control = control
         self.tree = prepare_bvh(
             np.min(corners, axis=1), np.max(corners, axis=1), dtype=jnp.float64
@@ -362,17 +379,25 @@ class SourceSurfaceMetric(StrictModule, NonTrainableState):
         self.minimum_directional_size = float(1 / np.sqrt(np.max(eigenvalues)))
         self.maximum_directional_size = float(1 / np.sqrt(np.min(eigenvalues)))
 
-    def sample(self, points: np.ndarray, maximum_pairs: int, /) -> tuple[np.ndarray, int]:
+    def sample(
+        self,
+        points: np.ndarray,
+        maximum_pairs: int,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[np.ndarray, int]:
         if points.shape[0] == 0:
             return np.empty((0, 3, 3), dtype=np.float64), 0
         work: list[int] = [0]
         if self.control.mesh.topological_dimension == 3:
-            identifiers, weights, valid = _locate_stencil(
+            identifiers, weights, valid = locate_stencil(
                 self.control.mesh,
                 points,
                 min(maximum_pairs, self.maximum_pairs),
                 prepared_bvh=self.tree,
                 work_counter=work,
+                budget=budget,
             )
         else:
             identifiers, weights, valid = self._triangle_stencil(
@@ -380,7 +405,7 @@ class SourceSurfaceMetric(StrictModule, NonTrainableState):
             )
         if not np.all(valid):
             raise ValueError(
-                "Source metric query lacks complete native source-cell coverage."
+                "SourceSurfaceMetric.query must have native source-cell coverage; got uncovered query points."
             )
         order = np.argsort(self.vertex_ids)
         rows = order[np.searchsorted(self.vertex_ids[order], identifiers)]
@@ -403,7 +428,7 @@ class SourceSurfaceMetric(StrictModule, NonTrainableState):
             if work[0] > maximum_pairs:
                 raise MeshingFailure(
                     MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                    "Source surface metric point location exceeds its pair budget.",
+                    "SourceSurfaceMetric.point_location must satisfy its pair budget; got excessive source/query pairs.",
                     stage=MeshingStageKind.SURFACE_MESHING.value,
                     requested=(("maximum_location_pairs", maximum_pairs),),
                     achieved=(("location_pairs", work[0]),),
@@ -451,7 +476,7 @@ class SourceSurfaceMetric(StrictModule, NonTrainableState):
         if not np.all(covered):
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "Source background triangles do not exactly cover the requested physical points.",
+                "SourceSurfaceMetric.triangles must cover the requested physical points; got uncovered points.",
                 stage=MeshingStageKind.SURFACE_MESHING.value,
                 achieved=(("uncovered_points", int(np.sum(~covered))),),
             )
@@ -463,7 +488,7 @@ class SourceSurfaceMetric(StrictModule, NonTrainableState):
 
 @final
 class SourcePatchNeighborhood(StrictModule, NonTrainableState):
-    """Prepared source interval cover; boxes are only outward source enclosures."""
+    """Prepare a source interval cover using outward spatial enclosures."""
 
     tree: PackedBVH
     plane_point_bounds: np.ndarray
@@ -474,7 +499,10 @@ class SourcePatchNeighborhood(StrictModule, NonTrainableState):
     planar: bool = eqx.field(static=True)
     geometry_queries: int = eqx.field(static=True)
 
-    def __init__(self, domain: MeshingDomain, patch: int, /) -> None:
+    @checked
+    def __init__(
+        self, domain: MeshingDomain, patch: int, /, *, budget: CoordinateEnclosureBudget
+    ) -> None:
         surface = domain.patches[patch].surface
         bounds = []
         curve_bound_queries = 0
@@ -483,9 +511,9 @@ class SourcePatchNeighborhood(StrictModule, NonTrainableState):
                 match use:
                     case PatchCurveUse():
                         first, last = sorted((use.first, use.last))
-                        charge_native_geometry_queries(1)
+                        budget.reserve_geometry_queries(1)
                         curve_bound_queries += 1
-                        bounds.append(use.pcurve.bounding_box(first, last))
+                        bounds.append(use.pcurve.bounding_box(first, last, budget=budget))
                     case PatchPoleUse():
                         coordinates = np.asarray((use.start, use.end), dtype=np.float64)
                         bounds.append(
@@ -511,13 +539,15 @@ class SourcePatchNeighborhood(StrictModule, NonTrainableState):
             ],
             dtype=np.float64,
         )
-        charge_native_geometry_queries(boxes.shape[0])
-        spatial = np.asarray([surface.bounding_box(cell) for cell in boxes])
+        budget.reserve_geometry_queries(boxes.shape[0])
+        spatial = np.asarray(
+            [surface.bounding_box(cell, budget=budget) for cell in boxes]
+        )
         normal_boxes = []
         for cell in boxes:
-            charge_native_geometry_queries(1)
-            low, high = surface.derivative_bounds(cell, order=1)
-            normal_low, normal_high = _cross_interval(
+            budget.reserve_geometry_queries(1)
+            low, high = surface.derivative_bounds(cell, order=1, budget=budget)
+            normal_low, normal_high = cross_interval(
                 low[:, 0], high[:, 0], low[:, 1], high[:, 1]
             )
             normal_boxes.append(
@@ -527,15 +557,19 @@ class SourcePatchNeighborhood(StrictModule, NonTrainableState):
             )
         centers = np.mean(box, axis=0)[None]
         normals, regular = domain.oriented_normals(
-            np.asarray((patch,), dtype=np.int64), centers
+            np.asarray((patch,), dtype=np.int64), centers, budget=budget
         )
         definition = surface.definition if isinstance(surface, PlacedSurface) else surface
         planar = isinstance(definition, PlanePatch)
         if planar and not regular[0]:
-            raise ValueError("A proximity source plane must be regular.")
+            raise ValueError(
+                "SourcePatchNeighborhood.surface must be regular for a proximity source plane; got an irregular plane sample."
+            )
         self.tree = prepare_bvh(spatial[:, 0], spatial[:, 1], dtype=jnp.float64)
-        charge_native_geometry_queries(1)
-        self.plane_point_bounds = surface.bounding_box(np.concatenate((centers, centers)))
+        budget.reserve_geometry_queries(1)
+        self.plane_point_bounds = surface.bounding_box(
+            np.concatenate((centers, centers)), budget=budget
+        )
         self.normal_lower = np.min(np.asarray(normal_boxes)[:, 0], axis=0)
         self.normal_upper = np.max(np.asarray(normal_boxes)[:, 1], axis=0)
         self.patch, self.domain_id, self.planar = patch, domain.domain_id, planar
@@ -615,7 +649,7 @@ def _source_gap_evidence(
         )
         if not source_only.size or not target_only.size:
             raise ValueError(
-                "Proximity source scopes must contain distinct authoritative patches."
+                "ProximitySizeControl.source_scope must contain patches distinct from target_scope; got no distinct source or target patches."
             )
         lower = np.full((points.shape[0],), np.inf)
         complete = np.ones((points.shape[0],), dtype=np.bool_)
@@ -625,7 +659,7 @@ def _source_gap_evidence(
                 plan = lookup[patch]
                 if plan.domain_id != domain.domain_id:
                     raise ValueError(
-                        "Prepared proximity neighborhood binds another source revision."
+                        "SourcePatchNeighborhood.domain_id must bind the queried source revision; got a neighborhood from another revision."
                     )
                 gap, decided = plan.lower_gaps(
                     points[rows], normals[rows], control.opposite_normals_only
@@ -640,7 +674,7 @@ def _source_gap_evidence(
 
 @final
 class SourceSurfaceSizing(StrictModule, NonTrainableState):
-    """Revision-bound source samples for the canonical sizing resolver."""
+    """Prepare revision-bound source samples for the sizing resolver."""
 
     controls: tuple[SizeControl, ...]
     patches: np.ndarray
@@ -653,8 +687,14 @@ class SourceSurfaceSizing(StrictModule, NonTrainableState):
     metric: SourceSurfaceMetric | None
     neighborhoods: tuple[SourcePatchNeighborhood, ...]
 
+    @checked
     def __init__(
-        self, domain: MeshingDomain, specification: SurfaceMeshingSpec, /
+        self,
+        domain: MeshingDomain,
+        specification: SurfaceMeshingSpec,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
     ) -> None:
         controls = _surface_controls(domain, specification)
         background = specification.background_metric
@@ -693,7 +733,9 @@ class SourceSurfaceSizing(StrictModule, NonTrainableState):
             else np.empty((0,), dtype=np.int64)
         )
         if not selected.size:
-            raise ValueError("Every meshed surface needs a source size control.")
+            raise ValueError(
+                "SourceSurfaceSizing.controls must cover every meshed surface; got no selected source patches."
+            )
         boundary_source = MeshingDomainBoundarySource(
             domain,
             tuple(selected.tolist()),
@@ -734,7 +776,7 @@ class SourceSurfaceSizing(StrictModule, NonTrainableState):
         ):
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Source sizing preparation exceeds its scratch or query capacity.",
+                "SourceSurfaceSizing.preparation must satisfy scratch and query capacity; got an excessive preparation bound.",
                 stage=MeshingStageKind.SOURCE_INSPECTION.value,
                 requested=(
                     ("maximum_scratch_bytes", limits.maximum_scratch_bytes),
@@ -743,10 +785,11 @@ class SourceSurfaceSizing(StrictModule, NonTrainableState):
                 achieved=(("scratch_bytes", scratch), ("geometry_queries", queries)),
             )
         neighborhoods = tuple(
-            SourcePatchNeighborhood(domain, patch) for patch in proximity_patches.tolist()
+            SourcePatchNeighborhood(domain, patch, budget=budget)
+            for patch in proximity_patches.tolist()
         )
         # Candidates include authored boundary chains; interior points are
-        # retained only after exact classification against the original trims.
+        # retained only after classification against the source trims.
         trim_curves = tuple(
             trim
             for patch in selected.tolist()
@@ -755,9 +798,11 @@ class SourceSurfaceSizing(StrictModule, NonTrainableState):
             for trim in (use.trim_curve,)
             if trim is not None
         )
-        with original_trim_intersection_preparation(trim_curves):
-            patches, charts, points, _, _ = boundary_source._grid()
-        normals, regular = domain.oriented_normals(patches, charts)
+        with original_trim_intersection_preparation(trim_curves) as preparations:
+            patches, charts, points, _, _ = boundary_source._grid(
+                budget=budget, preparations=preparations
+            )
+        normals, regular = domain.oriented_normals(patches, charts, budget=budget)
         evaluated_samples = patches.size
         patches, charts, points, normals = (
             patches[regular],
@@ -766,7 +811,7 @@ class SourceSurfaceSizing(StrictModule, NonTrainableState):
             normals[regular],
         )
         curvature = (
-            _curvature_samples(domain, patches, charts)
+            _curvature_samples(domain, patches, charts, budget=budget)
             if any(isinstance(control, CurvatureSizeControl) for control in controls)
             else np.zeros((patches.size,), dtype=np.float64)
         )
@@ -799,8 +844,16 @@ class SourceSurfaceSizing(StrictModule, NonTrainableState):
         self.metric = metric
         self.neighborhoods = neighborhoods
 
+    @checked
     def evaluate(
-        self, domain: MeshingDomain, patch: int, charts: np.ndarray, points: np.ndarray, /
+        self,
+        domain: MeshingDomain,
+        patch: int,
+        charts: np.ndarray,
+        points: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
     ) -> np.ndarray:
         count = points.shape[0]
         if count == 0:
@@ -811,11 +864,15 @@ class SourceSurfaceSizing(StrictModule, NonTrainableState):
             )
         patches = np.concatenate((self.patches, np.full((count,), patch, dtype=np.int64)))
         identifiers = np.asarray(domain.scope_indices(2), dtype=np.int64)[patches]
-        normals, regular = domain.oriented_normals(np.full((count,), patch), charts)
+        normals, regular = domain.oriented_normals(
+            np.full((count,), patch), charts, budget=budget
+        )
         if not np.all(regular):
-            raise ValueError("Local source sizing requires regular chart points.")
+            raise ValueError(
+                "SourceSurfaceSizing.charts must have regular chart points; got irregular source samples."
+            )
         curvature = (
-            _curvature_samples(domain, np.full((count,), patch), charts)
+            _curvature_samples(domain, np.full((count,), patch), charts, budget=budget)
             if any(isinstance(control, CurvatureSizeControl) for control in self.controls)
             else np.zeros((count,), dtype=np.float64)
         )
@@ -840,7 +897,7 @@ class SourceSurfaceSizing(StrictModule, NonTrainableState):
 
 @final
 class CompiledSurfaceDomain(StrictModule, NonTrainableState):
-    """Protected constraints and size/fidelity worksets of one surface request.
+    """Store protected constraints and size/fidelity worksets for one surface request.
 
     ``patches``, ``curves`` and ``corners`` are the selected surfaces and the
     curves/corners bounding them, sorted. ``patch_sizes``/``curve_sizes`` are
@@ -864,6 +921,7 @@ class CompiledSurfaceDomain(StrictModule, NonTrainableState):
     specification_id: str = eqx.field(static=True)
     compiled_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         domain: MeshingDomain,
@@ -880,10 +938,6 @@ class CompiledSurfaceDomain(StrictModule, NonTrainableState):
         specification_id: str,
         /,
     ) -> None:
-        if not isinstance(domain, MeshingDomain):
-            raise TypeError("domain must be MeshingDomain.")
-        if not isinstance(curve_request, CurveMeshingSpec):
-            raise TypeError("curve_request must be CurveMeshingSpec.")
         self.domain = domain
         self.patches = np.asarray(patches, dtype=np.int64)
         self.curves = np.asarray(curves, dtype=np.int64)
@@ -926,14 +980,15 @@ class CompiledSurfaceDomain(StrictModule, NonTrainableState):
 def _stale(domain: MeshingDomain, scope: MeshingScope, /) -> MeshingFailure:
     return MeshingFailure(
         MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-        f"Scope {scope.scope_id} does not bind meshing domain {domain.source_id!r} "
-        f"at revision {domain.source_revision!r}.",
+        f"MeshingScope.binding must select meshing domain {domain.source_id!r} "
+        f"at revision {domain.source_revision!r}; got scope_id={scope.scope_id!r}.",
         stage=MeshingStageKind.SOURCE_INSPECTION.value,
         provider_code="stale_scope",
     )
 
 
-def _selected_strata(
+@checked
+def selected_strata(
     domain: MeshingDomain, patches: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
     curves = np.unique(
@@ -970,7 +1025,9 @@ def _size_worksets(
     for patch in patches.tolist():
         values = sizing.sizes[sizing.patches == patch]
         if not values.size:
-            raise ValueError("Every selected patch needs resolved source sizing.")
+            raise ValueError(
+                "SourceSurfaceSizing.patch_sizes must resolve every selected patch; got a patch without source sizing samples."
+            )
         patch_sizes[patch] = np.max(values)
         bounded = domain.patch_curves(patch)
         curve_sizes[bounded] = np.minimum(curve_sizes[bounded], np.min(values))
@@ -1020,90 +1077,131 @@ def _size_worksets(
             )
             if np.any(curve_sizes[affected] < control.minimum_size):
                 raise ValueError(
-                    "Shared source curves contradict an active hard minimum size."
+                    "SizeControl.minimum_size must be satisfied on shared source curves; got resolved curve sizes below an active hard minimum size."
                 )
     return patch_sizes[patches], curve_sizes[curves]
 
 
-def _semantic_controls(
-    domain: MeshingDomain, specification: SurfaceMeshingSpec, patches: np.ndarray, /
-) -> None:
+def _control_entities(
+    domain: MeshingDomain, scope: MeshingScope, dimensions: tuple[int, ...]
+) -> np.ndarray:
+    """Resolve a control after admitting its stratum and source binding."""
+    if scope.entity_dimension not in dimensions or not _binds(domain, scope):
+        raise _stale(domain, scope)
+    return _resolved(domain, scope)
+
+
+@final
+class _SemanticRegions(StrictModule, NonTrainableState):
+    names: dict[int, str]
+    surface_names: dict[int, str]
+
+
+def _semantic_regions(
+    domain: MeshingDomain, specification: SurfaceMeshingSpec, patches: np.ndarray
+) -> _SemanticRegions:
     names = {region: source.name for region, source in enumerate(domain.regions)}
     bindings: dict[int, str] = {}
     surface_bindings: dict[int, str] = {}
     surface_names: dict[int, str] = {}
     for control in specification.region_controls:
-        if control.scope.entity_dimension not in (2, 3) or not _binds(
-            domain, control.scope
-        ):
-            raise _stale(domain, control.scope)
-        if control.scope.entity_dimension == 2:
-            for patch in _resolved(domain, control.scope).tolist():
-                if (
-                    patch in surface_bindings
-                    and surface_bindings[patch] != control.control_id
-                ):
-                    raise ValueError("Exclusive surface-region controls overlap.")
-                surface_bindings[patch] = control.control_id
-                surface_names[patch] = control.region_name
-                if not control.meshing_enabled and patch in patches:
-                    raise ValueError("A selected surface region is disabled for meshing.")
-            continue
-        for region in _resolved(domain, control.scope).tolist():
-            if region in bindings and bindings[region] != control.control_id:
-                raise ValueError(
-                    "One authoritative region cannot carry contradictory controls."
-                )
-            bindings[region] = control.control_id
-            names[region] = control.region_name
-            if not control.meshing_enabled and any(
-                patch in patches for patch, _ in domain.regions[region].boundary
+        selected = _control_entities(domain, control.scope, (2, 3))
+        surface = control.scope.entity_dimension == 2
+        entity_bindings = surface_bindings if surface else bindings
+        entity_names = surface_names if surface else names
+        for entity in selected.tolist():
+            if (
+                entity in entity_bindings
+                and entity_bindings[entity] != control.control_id
             ):
-                raise ValueError("Selected surfaces bound a region disabled for meshing.")
+                raise ValueError(
+                    "SurfaceMeshingSpec.region_controls.scope must be exclusive; got overlapping surface-region controls."
+                    if surface
+                    else "SurfaceMeshingSpec.region_controls.scope must have one control per region; got conflicting controls."
+                )
+            entity_bindings[entity] = control.control_id
+            entity_names[entity] = control.region_name
+            if control.meshing_enabled:
+                continue
+            if surface:
+                if entity in patches:
+                    raise ValueError(
+                        "SurfaceMeshingSpec.region_controls.meshing_enabled must permit selected surfaces; got a selected surface region disabled for meshing."
+                    )
+            elif any(patch in patches for patch, _ in domain.regions[entity].boundary):
+                raise ValueError(
+                    "SurfaceMeshingSpec.region_controls.meshing_enabled must permit regions bounded by selected surfaces; got a region disabled for meshing."
+                )
+    return _SemanticRegions(names, surface_names)
+
+
+def _semantic_controls(
+    domain: MeshingDomain, specification: SurfaceMeshingSpec, patches: np.ndarray, /
+) -> None:
+    regions = _semantic_regions(domain, specification, patches)
     for control in specification.patch_controls:
-        if control.scope.entity_dimension not in (1, 2) or not _binds(
-            domain, control.scope
-        ):
-            raise _stale(domain, control.scope)
-        selected = _resolved(domain, control.scope)
-        if control.scope.entity_dimension == 1:
-            selected_curves, _ = _selected_strata(domain, patches)
-            if control.required and np.setdiff1d(selected, selected_curves).size:
-                raise ValueError(
-                    "A required curve patch lies outside the selected surfaces."
-                )
-            for curve in selected.tolist():
-                adjacent_patches = {
-                    patch for patch, _ in domain.curve_uses(curve) if patch in patches
-                }
-                if not adjacent_patches.issubset(surface_names):
-                    raise ValueError(
-                        "Curve patch controls require authored adjacent surface-region controls."
-                    )
-                adjacent = tuple(
-                    sorted({surface_names[patch] for patch in adjacent_patches})
-                )
-                if adjacent != control.adjacent_region_names:
-                    raise ValueError(
-                        "A curve patch contradicts authoritative adjacent surface regions."
-                    )
-            continue
-        if control.required and np.setdiff1d(selected, patches).size:
+        selected = _control_entities(domain, control.scope, (1, 2))
+        match control.scope.entity_dimension:
+            case 1:
+                _require_curve_patch(domain, control, selected, patches, regions)
+            case 2:
+                _require_surface_patch(domain, control, selected, patches, regions)
+            case _:
+                raise _stale(domain, control.scope)
+
+
+def _require_curve_patch(
+    domain: MeshingDomain,
+    control: PatchControl,
+    selected: np.ndarray,
+    patches: np.ndarray,
+    regions: _SemanticRegions,
+) -> None:
+    selected_curves, _ = selected_strata(domain, patches)
+    if control.required and np.setdiff1d(selected, selected_curves).size:
+        raise ValueError(
+            "SurfaceMeshingSpec.patch_controls.scope must lie within selected surfaces for a required curve patch; got a curve patch outside the selected surfaces."
+        )
+    for curve in selected.tolist():
+        adjacent_patches = {
+            patch for patch, _ in domain.curve_uses(curve) if patch in patches
+        }
+        if not adjacent_patches.issubset(regions.surface_names):
             raise ValueError(
-                "A required source patch control lies outside the surface selection."
+                "SurfaceMeshingSpec.patch_controls.scope must have authored adjacent surface-region controls; got adjacent surfaces without region controls."
             )
-        for patch in selected.tolist():
-            adjacent = tuple(
-                sorted(
-                    names[int(region)]
-                    for region in domain.patch_regions[patch]
-                    if region >= 0
-                )
+        adjacent = tuple(
+            sorted({regions.surface_names[patch] for patch in adjacent_patches})
+        )
+        if adjacent != control.adjacent_region_names:
+            raise ValueError(
+                "SurfaceMeshingSpec.patch_controls.adjacent_region_names must match adjacent surface regions; got conflicting names."
             )
-            if adjacent != control.adjacent_region_names:
-                raise ValueError(
-                    "Patch controls must match authoritative source-region incidence."
-                )
+
+
+def _require_surface_patch(
+    domain: MeshingDomain,
+    control: PatchControl,
+    selected: np.ndarray,
+    patches: np.ndarray,
+    regions: _SemanticRegions,
+) -> None:
+    if control.required and np.setdiff1d(selected, patches).size:
+        raise ValueError(
+            "SurfaceMeshingSpec.patch_controls.scope must lie within the surface selection when required; got a required source patch outside the selection."
+        )
+    for patch in selected.tolist():
+        adjacent = tuple(
+            sorted(
+                regions.names[int(region)]
+                for region in domain.patch_regions[patch]
+                if region >= 0
+            )
+        )
+        if adjacent != control.adjacent_region_names:
+            raise ValueError(
+                "SurfaceMeshingSpec.patch_controls.adjacent_region_names must match source-region incidence; got conflicting names."
+            )
 
 
 def _deviation_worksets(
@@ -1126,17 +1224,20 @@ def _deviation_worksets(
             case 1:
                 curve_bounds[entities] = np.minimum(curve_bounds[entities], bound)
             case 0:
-                # Corners are exact mesh vertices of every construction.
+                # Every construction retains corners as mesh vertices.
                 pass
             case _:
-                raise ValueError("Protected features scope corners, curves or surfaces.")
+                raise ValueError(
+                    f"ProtectedFeature.scope.entity_dimension must select corners, curves or surfaces; got {feature.scope.entity_dimension}."
+                )
     for patch in patches.tolist():
         bounded = domain.patch_curves(patch)
         curve_bounds[bounded] = np.minimum(curve_bounds[bounded], patch_bounds[patch])
     return patch_bounds[patches], curve_bounds[curves]
 
 
-def _curve_request(
+@checked
+def curve_request(
     domain: MeshingDomain,
     specification: SurfaceMeshingSpec,
     curves: np.ndarray,
@@ -1144,7 +1245,7 @@ def _curve_request(
     curve_deviations: np.ndarray,
     /,
 ) -> CurveMeshingSpec:
-    """Curve request whose junctions are the domain corners joining curve ends."""
+    """Build a curve request with domain-corner junctions joining curve ends."""
 
     def scope(selected: np.ndarray, /) -> MeshingScope:
         return MeshingScope(
@@ -1191,8 +1292,13 @@ def _curve_request(
     )
 
 
+@checked
 def compile_surface_domain(
-    domain: MeshingDomain, specification: SurfaceMeshingSpec, /
+    domain: MeshingDomain,
+    specification: SurfaceMeshingSpec,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> CompiledSurfaceDomain:
     """Resolve one admitted surface request against the domain's strata.
 
@@ -1200,16 +1306,12 @@ def compile_surface_domain(
     refused with ``SCOPE_RESOLUTION_FAILED`` before any work.
     """
 
-    if not isinstance(domain, MeshingDomain):
-        raise TypeError("domain must be MeshingDomain.")
-    if not isinstance(specification, SurfaceMeshingSpec):
-        raise TypeError("specification must be SurfaceMeshingSpec.")
     scope = specification.scope
     if scope.entity_dimension != 2 or not _binds(domain, scope):
         raise _stale(domain, scope)
     patches = np.unique(_resolved(domain, scope))
     _semantic_controls(domain, specification, patches)
-    curves, corners = _selected_strata(domain, patches)
+    curves, corners = selected_strata(domain, patches)
     for feature in specification.protected_features:
         if not _binds(domain, feature.scope):
             raise _stale(domain, feature.scope)
@@ -1217,39 +1319,57 @@ def compile_surface_domain(
     if feature_issues:
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-            "; ".join(feature_issues),
+            "SurfaceMeshingSpec.protected_features must be represented by selected source strata; got "
+            + "; ".join(feature_issues),
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
             provider_code="protected_source_scope",
         )
-    sizing = SourceSurfaceSizing(domain, specification)
-    patch_sizes, curve_sizes = _size_worksets(
-        domain, specification, patches, curves, sizing
-    )
-    normal_angles = np.full((patches.size,), np.inf)
-    for control in sizing.controls:
-        if isinstance(control, CurvatureSizeControl):
-            selected = np.isin(patches, _resolved(domain, control.scope))
-            normal_angles[selected] = np.minimum(
-                normal_angles[selected], control.normal_angle
+    with ExitStack() as resources:
+        if budget is None:
+            limits = specification.limits
+            ticket = HostBatchTicket(
+                limits.maximum_work_units,
+                queries_upper=limits.maximum_geometry_queries,
+                bytes_upper=limits.maximum_scratch_bytes,
             )
-    patch_deviations, curve_deviations = _deviation_worksets(
-        domain, specification, patches, curves
-    )
-    request = _curve_request(domain, specification, curves, curve_sizes, curve_deviations)
-    return CompiledSurfaceDomain(
-        domain,
-        patches,
-        curves,
-        corners,
-        patch_sizes,
-        curve_sizes,
-        patch_deviations,
-        curve_deviations,
-        request,
-        sizing,
-        normal_angles,
-        specification.specification_id,
-    )
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            resources.enter_context(ticket)
+            resources.enter_context(budget.activate())
+        sizing = SourceSurfaceSizing(domain, specification, budget=budget)
+        patch_sizes, curve_sizes = _size_worksets(
+            domain, specification, patches, curves, sizing
+        )
+        normal_angles = np.full((patches.size,), np.inf)
+        for control in sizing.controls:
+            if isinstance(control, CurvatureSizeControl):
+                selected = np.isin(patches, _resolved(domain, control.scope))
+                normal_angles[selected] = np.minimum(
+                    normal_angles[selected], control.normal_angle
+                )
+        patch_deviations, curve_deviations = _deviation_worksets(
+            domain, specification, patches, curves
+        )
+        request = curve_request(
+            domain, specification, curves, curve_sizes, curve_deviations
+        )
+        return CompiledSurfaceDomain(
+            domain,
+            patches,
+            curves,
+            corners,
+            patch_sizes,
+            curve_sizes,
+            patch_deviations,
+            curve_deviations,
+            request,
+            sizing,
+            normal_angles,
+            specification.specification_id,
+        )
 
 
 __all__ = [

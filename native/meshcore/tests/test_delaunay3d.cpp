@@ -76,12 +76,12 @@ Result run(const std::vector<double>& points, const std::vector<double>* weights
   result.input_point_count = phx_mc_mesh_input_point_count(mesh);
   PHX_CHECK(result.input_point_count == count);
   std::vector<double> copied(points.size());
-  phx_mc_mesh_copy_points(mesh, copied.data());
+  PHX_CHECK(phx_mc_mesh_copy_points(mesh, copied.data()) == PHX_MC_OK);
   PHX_CHECK(copied == points);
   result.cells.resize(static_cast<std::size_t>(4 * phx_mc_mesh_cell_count(mesh)));
-  phx_mc_mesh_copy_cells(mesh, result.cells.data());
+  PHX_CHECK(phx_mc_mesh_copy_cells(mesh, result.cells.data()) == PHX_MC_OK);
   result.vertex_map.resize(static_cast<std::size_t>(count));
-  phx_mc_mesh_copy_vertex_map(mesh, result.vertex_map.data());
+  PHX_CHECK(phx_mc_mesh_copy_vertex_map(mesh, result.vertex_map.data()) == PHX_MC_OK);
   phx_mc_mesh_free(mesh);
   return result;
 }

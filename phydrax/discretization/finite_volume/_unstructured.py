@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import Any, final, TYPE_CHECKING
+import sys
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager, nullcontext
+from typing import assert_never, final, NamedTuple
 
 import equinox as eqx
 import jax
@@ -15,62 +16,69 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+import phydrax.discretization._mapped_geometry_measure as mapped_measure_owner
+import phydrax.discretization.fem._reference_rules as reference_rules_owner
 import phydrax.ein as ein
+from phydrax.discretization._reference_cell_types import CellBlock
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._jax_config import x64_enabled
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
 from ...ein import contract
-from ...geometry._mesh_certificates import GlobalEmbeddingCertificate
+from ...geometry._global_embedding import GlobalEmbeddingCertificate
 from ...linalg import ArraySpace, DiagonalPairing
 from ...sparse import EdgeRelation, SparseLinearMap
 from ...typing import checked
+from .. import (
+    _cell_geometry as imported_cell_geometry,
+    _reference_cell as imported_reference_cell,
+)
 from .._adaptive_simplex import MaskedSimplexMesh
 from .._cell_complex import (
+    IntervalConnectivity,
     polygonal_connectivity,
     PolygonalConnectivity,
     PolyhedralConnectivity,
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
-from .._cell_geometry import CellGeometrySpec
+from .._cell_geometry import (
+    cell_geometry_preparation_bounds,
+    cell_geometry_preparation_query_upper,
+    CellGeometrySpec,
+    owned_coordinate_preparation,
+)
 from .._cell_geometry_validity import cell_geometry_id
-from .._cell_mesh import CellBlock, CellMesh
+from .._cell_mesh import CellMesh, SimplicialConnectivity
 from .._conservation_ledger import (
     ConservationStageFluxRateBlock,
     ConservationStageLedger,
 )
+from .._coordinate_budget import CoordinateEnclosureBudget
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
     DiscretizationRole,
     PreparationReport,
 )
-from .._exact_power_geometry import (
-    ExactPowerCellGeometryLinearActionSource,
-    ExactPowerCellGeometryRestrictionSource,
-    ExactPowerCellGeometrySource,
-)
 from .._hexahedral import HexahedralConnectivity
 from .._integration_domain import IntegrationDomain
 from .._lifecycle import (
     AbstractDiscretizationPlan,
-    AbstractPreparedDiscretization,
     validate_prepared_metadata,
 )
 from .._measure import DiscreteMeasure
 from .._side_actions import FacetTraceRule, PreparedTraceAction, SideTraceQuantity
 from .._spaces import DiscreteFieldSpace, EntityDofLayout
 from .._support import DiscreteSupport
-from .._topology import CellComplexTopology, EntitySelection
+from .._topology import CellComplexTopology, EntitySelection, EntitySet
 from .._views import FieldTraceSide
+from . import _polyhedral as imported_polyhedral, _side_trace as imported_side_trace
+from ._coordinate_source import has_power_source
 from ._geometry_protocol import FiniteVolumeFaceBlock
-from ._structured import _component_names
-
-
-if TYPE_CHECKING:
-    from ._side_trace import FiniteVolumeFaceReconstruction, PreparedNonlinearFaceTrace
+from ._structured import normalize_component_names
+from ._unstructured_types import AbstractUnstructuredFiniteVolumeDiscretization
 
 
 Connectivity = (
@@ -80,7 +88,7 @@ Connectivity = (
     | PolyhedralConnectivity
 )
 
-_TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC = (
+TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC = (
     (0.445948490915965, 0.445948490915965, 0.108103018168070),
     (0.445948490915965, 0.108103018168070, 0.445948490915965),
     (0.108103018168070, 0.445948490915965, 0.445948490915965),
@@ -104,14 +112,22 @@ def _stable_global_ids(name: str, value: ArrayLike | None, count: int, /) -> np.
     else:
         raw = np.asarray(value)
         if raw.shape != (count,) or raw.dtype.kind not in "iu":
-            raise ValueError(f"{name} must contain one integer ID per entity.")
+            raise ValueError(
+                f"UnstructuredFiniteVolumePlan.{name} must contain one integer ID per entity; got shape {raw.shape!r} and dtype {raw.dtype}."
+            )
         if raw.dtype.kind == "u" and np.any(raw > np.iinfo(np.int64).max):
-            raise ValueError(f"{name} must be representable as signed int64.")
+            raise ValueError(
+                f"UnstructuredFiniteVolumePlan.{name} must be representable as signed int64; got values above the signed range."
+            )
         identifiers = raw.astype(np.int64, copy=False)
     if np.any(identifiers < 0) or np.unique(identifiers).size != count:
-        raise ValueError(f"{name} must contain unique nonnegative IDs.")
+        raise ValueError(
+            f"UnstructuredFiniteVolumePlan.{name} must contain unique nonnegative IDs; got negative or repeated IDs."
+        )
     if not x64_enabled() and np.any(identifiers > np.iinfo(np.int32).max):
-        raise ValueError(f"{name} must fit signed int32 when JAX x64 is disabled.")
+        raise ValueError(
+            f"UnstructuredFiniteVolumePlan.{name} must fit signed int32 when JAX x64 is disabled; got IDs outside the active signed range."
+        )
     return identifiers
 
 
@@ -131,7 +147,9 @@ def _normalized_triangles(vertices: np.ndarray, cells: np.ndarray, /) -> np.ndar
     if np.any(~np.isfinite(signed_twice_area)) or np.any(
         np.abs(signed_twice_area) <= tolerance
     ):
-        raise ValueError("Triangle cells must have positive finite nonzero area.")
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.triangles must have finite nonzero area; got a degenerate or nonfinite cell."
+        )
     normalized = cells.copy()
     reverse = signed_twice_area < 0.0
     normalized[reverse, 1], normalized[reverse, 2] = (
@@ -139,11 +157,13 @@ def _normalized_triangles(vertices: np.ndarray, cells: np.ndarray, /) -> np.ndar
         normalized[reverse, 1].copy(),
     )
     if np.unique(np.sort(normalized, axis=1), axis=0).shape[0] != normalized.shape[0]:
-        raise ValueError("Triangle cells contain duplicates.")
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.triangles must contain unique vertex sets; got duplicate cells."
+        )
     return normalized
 
 
-def _quadrilateral_shape_data(points: np.ndarray, /) -> Any:
+def _quadrilateral_shape_data(points: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     xi = points[:, 0]
     eta = points[:, 1]
     shape = 0.25 * np.stack(
@@ -306,7 +326,9 @@ def _normalized_quadrilaterals(vertices: np.ndarray, cells: np.ndarray, /) -> np
     if np.any(~np.isfinite(signed_twice_area)) or np.any(
         np.abs(signed_twice_area) <= tolerance
     ):
-        raise ValueError("Quadrilateral cells must have nonzero finite signed area.")
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.quadrilaterals must have finite nonzero signed area; got a degenerate or nonfinite cell."
+        )
     reverse = signed_twice_area < 0.0
     normalized[reverse] = normalized[reverse][:, [0, 3, 2, 1]]
     points = vertices[normalized]
@@ -315,7 +337,9 @@ def _normalized_quadrilaterals(vertices: np.ndarray, cells: np.ndarray, /) -> np
         np.roll(points, -2, axis=1) - np.roll(points, -1, axis=1),
     )
     if np.any(turns <= tolerance[:, None]):
-        raise ValueError("Quadrilateral cells must be simple and strictly convex.")
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.quadrilaterals must be simple and strictly convex; got a crossed or nonconvex cell."
+        )
     reference = np.asarray(
         [
             (-1.0, -1.0),
@@ -331,9 +355,13 @@ def _normalized_quadrilaterals(vertices: np.ndarray, cells: np.ndarray, /) -> np
     determinant = _quadrilateral_jacobian_determinants(vertices, normalized, reference)
     jacobian_tolerance = tolerance[:, None] / 4.0
     if np.any(~np.isfinite(determinant)) or np.any(determinant <= jacobian_tolerance):
-        raise ValueError("Quadrilateral bilinear maps require positive finite Jacobians.")
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.quadrilaterals must have positive finite bilinear Jacobians; got an invalid cell map."
+        )
     if np.unique(np.sort(normalized, axis=1), axis=0).shape[0] != normalized.shape[0]:
-        raise ValueError("Quadrilateral cells contain duplicates.")
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.quadrilaterals must contain unique vertex sets; got duplicate cells."
+        )
     return normalized
 
 
@@ -353,7 +381,9 @@ def _normalized_tetrahedra(vertices: np.ndarray, cells: np.ndarray, /) -> np.nda
     scale = np.max(np.linalg.norm(points - points[:, :1], axis=-1), axis=1)
     tolerance = 128.0 * np.finfo(np.float64).eps * scale**3
     if np.any(~np.isfinite(determinant)) or np.any(np.abs(determinant) <= tolerance):
-        raise ValueError("Tetrahedral cells must have nonzero finite volume.")
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.tetrahedra must have finite nonzero volume; got a degenerate or nonfinite cell."
+        )
     normalized = cells.copy()
     reverse = determinant < 0.0
     normalized[reverse, 1], normalized[reverse, 2] = (
@@ -361,40 +391,42 @@ def _normalized_tetrahedra(vertices: np.ndarray, cells: np.ndarray, /) -> np.nda
         normalized[reverse, 1].copy(),
     )
     if np.unique(np.sort(normalized, axis=1), axis=0).shape[0] != normalized.shape[0]:
-        raise ValueError("Tetrahedral cells contain duplicates.")
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.tetrahedra must contain unique vertex sets; got duplicate cells."
+        )
     return normalized
 
 
-def _owner_neighbor(connectivity: Connectivity, cell_count: int, /) -> Any:
-    if isinstance(connectivity, PolygonalConnectivity):
-        cell_faces = np.asarray(connectivity.cell_edges, dtype=np.int32)
-        cell_signs = np.asarray(connectivity.cell_edge_signs)
-        valid = np.asarray(connectivity.cell_edge_valid, dtype=np.bool_)
-        face_count = connectivity.edges.shape[0]
-    elif isinstance(connectivity, TetrahedralConnectivity):
-        cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int32)
-        cell_signs = np.asarray(connectivity.cell_face_signs)
-        valid = np.ones(cell_faces.shape, dtype=np.bool_)
-        face_count = connectivity.faces.shape[0]
-    elif isinstance(connectivity, PolyhedralConnectivity):
-        cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int32)
-        cell_signs = np.asarray(connectivity.cell_face_sign_values)
-        cell_ids = np.repeat(
-            np.arange(cell_count, dtype=np.int32),
-            np.diff(np.asarray(connectivity.cell_face_offsets, dtype=np.int32)),
-        )
-        owner = np.asarray(connectivity.face_owner, dtype=np.int32)
-        neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int32)
-        owner_sign = np.zeros((connectivity.face_count,), dtype=np.float64)
-        for cell, face, sign in zip(cell_ids, cell_faces, cell_signs, strict=True):
-            if owner[int(face)] == int(cell):
-                owner_sign[int(face)] = float(sign)
-        return owner, neighbor, owner_sign
-    else:
-        cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int32)
-        cell_signs = np.asarray(connectivity.cell_face_signs)
-        valid = np.ones(cell_faces.shape, dtype=np.bool_)
-        face_count = connectivity.faces.shape[0]
+def _owner_neighbor(
+    connectivity: Connectivity, cell_count: int, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    match connectivity:
+        case PolygonalConnectivity():
+            cell_faces = np.asarray(connectivity.cell_edges, dtype=np.int32)
+            cell_signs = np.asarray(connectivity.cell_edge_signs)
+            valid = np.asarray(connectivity.cell_edge_valid, dtype=np.bool_)
+            face_count = connectivity.edges.shape[0]
+        case TetrahedralConnectivity() | HexahedralConnectivity():
+            cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int32)
+            cell_signs = np.asarray(connectivity.cell_face_signs)
+            valid = np.ones(cell_faces.shape, dtype=np.bool_)
+            face_count = connectivity.faces.shape[0]
+        case PolyhedralConnectivity():
+            cell_faces = np.asarray(connectivity.cell_face_values, dtype=np.int32)
+            cell_signs = np.asarray(connectivity.cell_face_sign_values)
+            cell_ids = np.repeat(
+                np.arange(cell_count, dtype=np.int32),
+                np.diff(np.asarray(connectivity.cell_face_offsets, dtype=np.int32)),
+            )
+            owner = np.asarray(connectivity.face_owner, dtype=np.int32)
+            neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int32)
+            owner_sign = np.zeros((connectivity.face_count,), dtype=np.float64)
+            for cell, face, sign in zip(cell_ids, cell_faces, cell_signs, strict=True):
+                if owner[int(face)] == int(cell):
+                    owner_sign[int(face)] = float(sign)
+            return owner, neighbor, owner_sign
+        case _:
+            assert_never(connectivity)
     owner = np.full((face_count,), -1, dtype=np.int32)
     neighbor = np.full((face_count,), -1, dtype=np.int32)
     owner_sign = np.zeros((face_count,), dtype=np.float64)
@@ -410,15 +442,17 @@ def _owner_neighbor(connectivity: Connectivity, cell_count: int, /) -> Any:
             else:
                 if neighbor[face] >= 0:
                     raise ValueError(
-                        "Unstructured cells must be codimension-one manifold."
+                        "UnstructuredFiniteVolumePlan.connectivity must be codimension-one manifold; got more than two cells on a face."
                     )
                 if sign == owner_sign[face]:
                     raise ValueError(
-                        "Shared faces must have opposite incidence orientation."
+                        "UnstructuredFiniteVolumePlan.connectivity must orient shared face incidences oppositely; got matching signs."
                     )
                 neighbor[face] = cell
     if np.any(owner < 0):
-        raise ValueError("Every unstructured face must have an owner cell.")
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.connectivity must assign an owner to every face; got an unowned face."
+        )
     return owner, neighbor, owner_sign
 
 
@@ -468,7 +502,7 @@ def _polygon_geometry(
     owner: ArrayLike,
     owner_sign: ArrayLike,
     /,
-) -> Any:
+) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
     points = jnp.asarray(vertices)
     triangle_cells = jnp.asarray(triangles, dtype=jnp.int32)
     quadrilateral_cells = jnp.asarray(quadrilaterals, dtype=jnp.int32)
@@ -554,11 +588,11 @@ def _polygon_geometry(
 def _tetrahedral_geometry(
     vertices: ArrayLike,
     tetrahedra: ArrayLike,
-    connectivity: TetrahedralConnectivity,
+    connectivity: TetrahedralConnectivity | HexahedralConnectivity,
     owner: ArrayLike,
     owner_sign: ArrayLike,
     /,
-) -> Any:
+) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
     points = jnp.asarray(vertices)
     cells = jnp.asarray(tetrahedra, dtype=jnp.int32)
     cell_points = points[cells]
@@ -589,9 +623,7 @@ def _tetrahedral_geometry(
         .at[cell_ids.reshape((-1,))]
         .add((cell_signs[..., None] * canonical_area[cell_faces]).reshape((-1, 3)))
     )
-    barycentric = jnp.asarray(
-        _TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC, dtype=points.dtype
-    )
+    barycentric = jnp.asarray(TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC, dtype=points.dtype)
     normalized_weights = jnp.asarray(
         _TETRAHEDRAL_FACE_QUADRATURE_NORMALIZED_WEIGHTS, dtype=points.dtype
     )
@@ -609,6 +641,7 @@ def _tetrahedral_geometry(
     )
 
 
+@checked
 def evaluate_unstructured_fv_geometry(
     vertices: ArrayLike,
     triangles: ArrayLike,
@@ -618,35 +651,104 @@ def evaluate_unstructured_fv_geometry(
     owner: ArrayLike,
     owner_sign: ArrayLike,
     /,
-) -> Any:
-    """Evaluate owner-oriented geometry for one prepared cell complex."""
+) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+    """Evaluate owner-oriented corner geometry for a polygonal or simplex complex."""
+    match connectivity:
+        case PolygonalConnectivity():
+            return _polygon_geometry(
+                vertices, triangles, quadrilaterals, connectivity, owner, owner_sign
+            )
+        case TetrahedralConnectivity() | HexahedralConnectivity():
+            return _tetrahedral_geometry(
+                vertices, tetrahedra, connectivity, owner, owner_sign
+            )
+        case PolyhedralConnectivity():
+            raise TypeError(
+                "evaluate_unstructured_fv_geometry.connectivity must support corner simplex geometry; got polyhedral connectivity."
+            )
+        case _:
+            assert_never(connectivity)
 
-    if isinstance(connectivity, PolygonalConnectivity):
-        return _polygon_geometry(
-            vertices,
-            triangles,
-            quadrilaterals,
-            connectivity,
-            owner,
-            owner_sign,
-        )
-    # ty: ignore[invalid-argument-type]
-    return _tetrahedral_geometry(vertices, tetrahedra, connectivity, owner, owner_sign)
+
+@contextmanager
+def _fv_preparation_budget(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec | None,
+    budget: CoordinateEnclosureBudget | None,
+    /,
+) -> Iterator[CoordinateEnclosureBudget]:
+    if budget is not None:
+        yield budget
+        return
+    match geometry:
+        case CellGeometrySpec():
+            # These are the certified-measure owner's preceding standalone maxima,
+            # not meshing limits. Source preparations count queries independently.
+            work = 100_000_000
+            memory = sys.maxsize
+            queries = cell_geometry_preparation_query_upper(geometry) * (work + 1)
+        case None:
+            match mesh.connectivity:
+                case PolyhedralConnectivity():
+                    work, memory, queries = (
+                        imported_polyhedral.polyhedral_finite_volume_preparation_bounds(
+                            mesh, maximum_workset_entries=100_000_000
+                        )
+                    )
+                case (
+                    IntervalConnectivity()
+                    | PolygonalConnectivity()
+                    | TetrahedralConnectivity()
+                    | HexahedralConnectivity()
+                    | SimplicialConnectivity()
+                ):
+                    work, memory, queries = 0, 0, 0
+                case invalid_connectivity:
+                    assert_never(invalid_connectivity)
+        case _:
+            assert_never(geometry)
+    with owned_coordinate_preparation(
+        work, memory, maximum_geometry_queries=queries
+    ) as owner:
+        yield owner
+
+
+class _MappedFiniteVolumeGeometry(NamedTuple):
+    """Mapped geometry and certified measure evidence in kernel return order."""
+
+    cell_volumes: Array
+    cell_centers: Array
+    face_centers: Array
+    area_vectors: Array
+    face_measures: Array
+    closure: Array
+    face_quadrature_points: Array
+    face_quadrature_weights: Array
+    cell_quadrature_points: Array
+    cell_quadrature_weights: Array
+    cell_quadrature_valid: Array
+    volume_errors: Array
+    volume_exact: bool
 
 
 def _mapped_fv_geometry(
-    mesh: CellMesh, geometry: CellGeometrySpec, owner: np.ndarray, /
-) -> tuple[Any, ...]:
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    owner: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _MappedFiniteVolumeGeometry:
     """Evaluate the represented coordinate map; cell measures have certified bounds."""
-    from .._cell_geometry import _require_scalar_coordinate_element
-    from .._cell_geometry_transfer import _certified_cell_measures
-    from .._reference_cell import reference_cell_topology
-    from ..fem._generic import _degree_aware_reference_rule
 
-    volumes, errors, exact = _certified_cell_measures(mesh, geometry)
-    elements, routes, coordinates = geometry.resolve(mesh)
+    volumes, errors, exact = mapped_measure_owner.certified_cell_measures(
+        mesh, geometry, budget=budget
+    )
+    elements, routes, coordinates = geometry.resolve(mesh, budget=budget)
     elements = tuple(
-        _require_scalar_coordinate_element(element, "Mapped FV geometry")
+        imported_cell_geometry.require_scalar_coordinate_element(
+            element, "Mapped FV geometry"
+        )
         for element in elements
     )
     coefficients = np.asarray(coordinates, dtype=np.float64)
@@ -656,8 +758,10 @@ def _mapped_fv_geometry(
     cell_points, cell_weights, centers = [], [], []
     degree = max(9 * element.degree for element in elements)
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
-        reference = reference_cell_topology(block.cell_kind)
-        xi, weights = _degree_aware_reference_rule(block.cell_kind, degree)
+        reference = imported_reference_cell.reference_cell_topology(block.cell_kind)
+        xi, weights = reference_rules_owner.degree_aware_reference_rule(
+            block.cell_kind, degree
+        )
         values, gradients = element.tabulate(xi)
         values, gradients = np.asarray(values), np.asarray(gradients)
         for vertices, dofs in zip(
@@ -674,7 +778,7 @@ def _mapped_fv_geometry(
             measure_weights = np.asarray(weights) * density
             if np.any(~np.isfinite(measure_weights)) or np.any(measure_weights <= 0):
                 raise ValueError(
-                    "Mapped FV quadrature requires positive finite densities."
+                    "UnstructuredFiniteVolumeDiscretization.cell_quadrature_weights must have positive finite mapped densities; got a nonpositive or nonfinite weight."
                 )
             cell_points.append(points)
             cell_weights.append(measure_weights)
@@ -683,25 +787,19 @@ def _mapped_fv_geometry(
                 / np.sum(measure_weights)
             )
             cells.append((vertices, reference, element, local))
-    connectivity = mesh.connectivity
-    if not isinstance(
-        connectivity,
-        (
-            PolygonalConnectivity,
-            TetrahedralConnectivity,
-            HexahedralConnectivity,
-            PolyhedralConnectivity,
-        ),
-    ):
-        raise TypeError("Mapped FV requires polygonal or polyhedral cell connectivity.")
-    if isinstance(connectivity, PolyhedralConnectivity):
-        offsets = np.asarray(connectivity.face_vertex_offsets)
-        indices = np.asarray(connectivity.face_vertex_values)
-        faces = [indices[offsets[f] : offsets[f + 1]] for f in range(owner.size)]
-    elif isinstance(connectivity, PolygonalConnectivity):
-        faces = list(np.asarray(connectivity.edges))
-    else:
-        faces = list(np.asarray(connectivity.faces))
+    match mesh.connectivity:
+        case PolyhedralConnectivity() as connectivity:
+            offsets = np.asarray(connectivity.face_vertex_offsets)
+            indices = np.asarray(connectivity.face_vertex_values)
+            faces = [indices[offsets[f] : offsets[f + 1]] for f in range(owner.size)]
+        case PolygonalConnectivity() as connectivity:
+            faces = list(np.asarray(connectivity.edges))
+        case (TetrahedralConnectivity() | HexahedralConnectivity()) as connectivity:
+            faces = list(np.asarray(connectivity.faces))
+        case _:
+            raise TypeError(
+                "UnstructuredFiniteVolumePlan.connectivity must be polygonal or volumetric; got unsupported connectivity."
+            )
     face_points, face_weights, face_centers, area_vectors = [], [], [], []
     closure = np.zeros((len(cells), ambient), dtype=np.float64)
     for face, cell in zip(faces, owner, strict=True):
@@ -713,18 +811,20 @@ def _mapped_fv_geometry(
         )
         corners = np.asarray(reference.vertices)[list(facet)]
         if len(facet) == 2:
-            uv, w = _degree_aware_reference_rule("interval", degree)
+            uv, w = reference_rules_owner.degree_aware_reference_rule("interval", degree)
             xi = corners[0] + np.asarray(uv)[:, :1] * (corners[1] - corners[0])
             tangent = np.broadcast_to((corners[1] - corners[0])[:, None], (len(w), 2, 1))
         elif len(facet) == 3:
-            uv, w = _degree_aware_reference_rule("triangle", degree)
+            uv, w = reference_rules_owner.degree_aware_reference_rule("triangle", degree)
             tangent = np.broadcast_to(
                 np.stack((corners[1] - corners[0], corners[2] - corners[0]), axis=1),
                 (len(w), 3, 2),
             )
             xi = corners[0] + np.asarray(uv) @ tangent[0].T
         else:
-            uv, w = _degree_aware_reference_rule("quadrilateral", degree)
+            uv, w = reference_rules_owner.degree_aware_reference_rule(
+                "quadrilateral", degree
+            )
             u, v = np.asarray(uv).T
             shape = np.stack(((1 - u) * (1 - v), u * (1 - v), u * v, (1 - u) * v), axis=1)
             xi = shape @ corners
@@ -786,7 +886,7 @@ def _mapped_fv_geometry(
 
     cp, cw, cv = padded(cell_points, cell_weights)
     fp, fw, _ = padded(face_points, face_weights)
-    return (
+    return _MappedFiniteVolumeGeometry(
         jnp.asarray(volumes),
         jnp.asarray(centers),
         jnp.asarray(face_centers),
@@ -848,7 +948,9 @@ def _masked_cell_geometry(
             volumes, centers = _tetrahedron_measures(cell_points)
             area_vectors = _triangle_area_vectors(facet_points)
         case _:
-            raise ValueError("Masked FV geometry holds triangles or tetrahedra.")
+            raise ValueError(
+                "MaskedFiniteVolumeGeometry.mesh must contain triangles or tetrahedra; got another simplex dimension."
+            )
     face_count = mesh.cell_capacity * (dimension + 1)
     return (
         volumes,
@@ -902,7 +1004,7 @@ class MaskedFiniteVolumeGeometry(StrictModule):
         """Evaluate the geometry of ``mesh``; see `evaluate_masked_fv_geometry`."""
         if mesh.ambient_dimension != mesh.dimension:
             raise ValueError(
-                "Masked FV geometry requires triangles in 2-D or tetrahedra in 3-D."
+                "MaskedFiniteVolumeGeometry.mesh must be full-dimensional triangles or tetrahedra; got an embedded simplex."
             )
         width = mesh.dimension + 1
         face_count = mesh.cell_capacity * width
@@ -995,12 +1097,12 @@ class MaskedFiniteVolumeGeometry(StrictModule):
 
 @final
 class MaskedFiniteVolumeConservation(StrictModule):
-    """Exact content-rate balance of one masked finite-volume evaluation.
+    """certified content-rate balance of one masked finite-volume evaluation.
 
     ``ledger`` is the repository `ConservationStageLedger` over the capacity
     half-facet routes (route identity: the capacity signature). The compensated
     sums obey ``net_cell_sum = source_sum - boundary_outward_sum + frame_exchange_sum``.
-    Reciprocal vector fluxes are carried into their owning physical cell frames;
+    Reciprocal vector fluxes are carried into their bound physical cell frames;
     ``residual`` is the round-off defect of this bundle-valued balance.
     Inactive cells and routes contribute exactly zero to every sum.
     """
@@ -1028,17 +1130,20 @@ class MaskedFiniteVolumeConservation(StrictModule):
 def _routed_face_flux(
     geometry: MaskedFiniteVolumeGeometry, face_flux: ArrayLike, /
 ) -> Array:
-    if not isinstance(geometry, MaskedFiniteVolumeGeometry):
-        raise TypeError("geometry must be a MaskedFiniteVolumeGeometry.")
     flux = jnp.asarray(face_flux)
     if not jnp.issubdtype(flux.dtype, jnp.floating):
-        raise TypeError("face_flux must have a floating dtype.")
+        raise TypeError(
+            "masked_fv_flux_divergence.face_flux must have a floating dtype; got a nonfloating array."
+        )
     if flux.ndim == 0 or flux.shape[0] != geometry.face_capacity:
-        raise ValueError("face_flux must begin with the half-facet route capacity.")
+        raise ValueError(
+            "masked_fv_flux_divergence.face_flux must begin with the half-facet route capacity; got an incompatible shape."
+        )
     return flux
 
 
 @eqx.filter_jit
+@checked
 def evaluate_masked_fv_geometry(mesh: MaskedSimplexMesh, /) -> MaskedFiniteVolumeGeometry:
     """Compiled finite-volume geometry of a `MaskedSimplexMesh`.
 
@@ -1049,6 +1154,7 @@ def evaluate_masked_fv_geometry(mesh: MaskedSimplexMesh, /) -> MaskedFiniteVolum
 
 
 @eqx.filter_jit
+@checked
 def masked_fv_flux_divergence(
     geometry: MaskedFiniteVolumeGeometry, face_flux: ArrayLike, /
 ) -> Array:
@@ -1077,13 +1183,14 @@ def masked_fv_flux_divergence(
 
 
 @eqx.filter_jit
+@checked
 def evaluate_masked_fv_conservation(
     geometry: MaskedFiniteVolumeGeometry,
     face_flux: ArrayLike,
     source_rate: ArrayLike,
     /,
 ) -> MaskedFiniteVolumeConservation:
-    """Compiled exact conservation ledger of one masked finite-volume evaluation.
+    """Compiled certified conservation ledger of one masked finite-volume evaluation.
 
     ``face_flux`` follows `masked_fv_flux_divergence`; ``source_rate`` has shape
     ``(cell_capacity, ...)``, holds integrated cell source rates, and must be
@@ -1127,8 +1234,8 @@ class UnstructuredFiniteVolumeQualityReport(StrictModule):
     worst_cell: Array
 
 
-@dataclass(frozen=True, slots=True)
-class _PreparedUnstructuredFiniteVolumeData:
+@final
+class _PreparedUnstructuredFiniteVolumeData(StrictModule):
     mesh: CellMesh
     vertices: Array
     triangles: Array
@@ -1136,18 +1243,411 @@ class _PreparedUnstructuredFiniteVolumeData:
     tetrahedra: Array
     vertex_global_ids: Array
     cell_global_ids: Array
-    cell_dimension: int
+    cell_dimension: int = eqx.field(static=True)
     face_active: Array
-    closure_evidence_id: str
-    patch_names: tuple[str, ...]
+    closure_evidence_id: str = eqx.field(static=True)
+    patch_names: tuple[str, ...] = eqx.field(static=True)
     patch_faces: tuple[Array, ...]
-    field_name: str
-    component_names: tuple[str, ...]
-    topology_id: str
-    geometry_id: str
+    field_name: str = eqx.field(static=True)
+    component_names: tuple[str, ...] = eqx.field(static=True)
+    topology_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
     key: DiscretizationKey
-    capabilities: tuple[DiscretizationCapability, ...]
-    plan_id: str
+    capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+
+@final
+class _DirectFiniteVolumeMesh(StrictModule):
+    points: np.ndarray
+    triangles: np.ndarray
+    quadrilaterals: np.ndarray
+    tetrahedra: np.ndarray
+    connectivity: Connectivity
+    dimension: int = eqx.field(static=True)
+    face_vertices: np.ndarray
+    boundary_mask: np.ndarray
+
+
+@final
+class _FiniteVolumeBoundaryPatches(StrictModule):
+    names: tuple[str, ...] = eqx.field(static=True)
+    faces: tuple[np.ndarray, ...]
+
+
+def _prepare_direct_fv_connectivity(
+    vertices: ArrayLike | None,
+    triangles: ArrayLike | None,
+    quadrilaterals: ArrayLike | None,
+    tetrahedra: ArrayLike | None,
+    /,
+) -> _DirectFiniteVolumeMesh:
+    """Validate coordinates and normalize the direct simplex or polygon carrier."""
+    if vertices is None:
+        raise TypeError(
+            "UnstructuredFiniteVolumePlan.vertices must be supplied for direct construction; got None."
+        )
+    points = np.asarray(vertices, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] not in (2, 3):
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.vertices must have shape (n, 2) or (n, 3); got an incompatible shape."
+        )
+    if points.shape[0] < points.shape[1] + 1 or np.any(~np.isfinite(points)):
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.vertices must be finite and span a cell; got nonfinite or insufficient vertices."
+        )
+    triangle_cells = (
+        np.empty((0, 3), dtype=np.int32)
+        if triangles is None
+        else np.asarray(triangles, dtype=np.int32)
+    )
+    quadrilateral_cells = (
+        np.empty((0, 4), dtype=np.int32)
+        if quadrilaterals is None
+        else np.asarray(quadrilaterals, dtype=np.int32)
+    )
+    tetrahedral_cells = (
+        np.empty((0, 4), dtype=np.int32)
+        if tetrahedra is None
+        else np.asarray(tetrahedra, dtype=np.int32)
+    )
+    if points.shape[1] == 2:
+        if tetrahedral_cells.shape[0]:
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.tetrahedra must use three-dimensional vertices; got two-dimensional coordinates."
+            )
+        if triangle_cells.ndim != 2 or triangle_cells.shape[1] != 3:
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.triangles must have shape (n, 3); got an incompatible shape."
+            )
+        if quadrilateral_cells.ndim != 2 or quadrilateral_cells.shape[1] != 4:
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.quadrilaterals must have shape (n, 4); got an incompatible shape."
+            )
+        triangle_cells = _normalized_triangles(points, triangle_cells)
+        quadrilateral_cells = _normalized_quadrilaterals(points, quadrilateral_cells)
+        connectivity: Connectivity = polygonal_connectivity(
+            triangle_cells,
+            quadrilateral_cells,
+            points.shape[0],
+        )
+        dimension = 2
+        face_vertices = np.asarray(connectivity.edges, dtype=np.int32)
+        boundary_mask = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
+    else:
+        if triangle_cells.shape[0] or quadrilateral_cells.shape[0]:
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.cell_kinds must be tetrahedra for direct 3-D construction; got triangle or quadrilateral cells."
+            )
+        if tetrahedral_cells.ndim != 2 or tetrahedral_cells.shape[1] != 4:
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.tetrahedra must have shape (n, 4); got an incompatible shape."
+            )
+        tetrahedral_cells = _normalized_tetrahedra(points, tetrahedral_cells)
+        connectivity = tetrahedral_connectivity(tetrahedral_cells, points.shape[0])
+        dimension = 3
+        face_vertices = np.asarray(connectivity.faces, dtype=np.int32)
+        boundary_mask = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
+    return _DirectFiniteVolumeMesh(
+        points,
+        triangle_cells,
+        quadrilateral_cells,
+        tetrahedral_cells,
+        connectivity,
+        dimension,
+        face_vertices,
+        boundary_mask,
+    )
+
+
+def _prepare_direct_fv_boundary_patches(
+    face_vertices: np.ndarray,
+    boundary_mask: np.ndarray,
+    dimension: int,
+    boundary_patches: Mapping[str, ArrayLike] | None,
+    /,
+) -> _FiniteVolumeBoundaryPatches:
+    """Resolve physical patch rows and enforce a single partition of the boundary."""
+    patches = {} if boundary_patches is None else dict(boundary_patches)
+    if not patches:
+        patches = {"boundary": face_vertices[boundary_mask]}
+    names = tuple(sorted(str(name) for name in patches))
+    lookup = {
+        tuple(sorted(int(value) for value in face)): index
+        for index, face in enumerate(face_vertices.tolist())
+    }
+    assigned = np.zeros((face_vertices.shape[0],), dtype=np.int32)
+    normalized_patch_faces = []
+    face_arity = dimension
+    for name in names:
+        values = np.asarray(patches[name], dtype=np.int32)
+        if not name or values.ndim != 2 or values.shape[1] != face_arity:
+            raise ValueError(
+                f"UnstructuredFiniteVolumePlan.boundary_patches must have face shape (n, {face_arity}); got shape {values.shape!r}."
+            )
+        indices = []
+        for face in values:
+            key = tuple(sorted(int(vertex) for vertex in face))
+            if key not in lookup:
+                raise ValueError(
+                    f"UnstructuredFiniteVolumePlan.boundary_patches must name mesh faces; got missing face {key!r}."
+                )
+            face_index = lookup[key]
+            if not boundary_mask[face_index]:
+                raise ValueError(
+                    "UnstructuredFiniteVolumePlan.boundary_patches must contain boundary faces; got an interior face."
+                )
+            assigned[face_index] += 1
+            indices.append(face_index)
+        normalized_patch_faces.append(np.asarray(indices, dtype=np.int32))
+    if np.any(assigned[boundary_mask] != 1):
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.boundary_patches must partition every boundary face once; got a missing or repeated assignment."
+        )
+    return _FiniteVolumeBoundaryPatches(names, tuple(normalized_patch_faces))
+
+
+def _prepare_direct_fv_plan(
+    vertices: ArrayLike | None,
+    triangles: ArrayLike | None,
+    quadrilaterals: ArrayLike | None,
+    tetrahedra: ArrayLike | None,
+    vertex_global_ids: ArrayLike | None,
+    cell_global_ids: ArrayLike | None,
+    boundary_patches: Mapping[str, ArrayLike] | None,
+    field_name: str,
+    component_names: Sequence[str],
+    /,
+) -> _PreparedUnstructuredFiniteVolumeData:
+    """Prepare mesh identity and FV field metadata from a normalized carrier."""
+    carrier = _prepare_direct_fv_connectivity(
+        vertices, triangles, quadrilaterals, tetrahedra
+    )
+    points, connectivity, dimension = (
+        carrier.points,
+        carrier.connectivity,
+        carrier.dimension,
+    )
+    triangle_cells, quadrilateral_cells, tetrahedral_cells = (
+        carrier.triangles,
+        carrier.quadrilaterals,
+        carrier.tetrahedra,
+    )
+    face_vertices = carrier.face_vertices
+    cell_count = connectivity.cell_count
+    patches = _prepare_direct_fv_boundary_patches(
+        face_vertices, carrier.boundary_mask, dimension, boundary_patches
+    )
+    names, normalized_patch_faces = patches.names, patches.faces
+    field = str(field_name)
+    if not field:
+        raise ValueError(
+            "UnstructuredFiniteVolumePlan.field_name must be non-empty; got an empty name."
+        )
+    components = normalize_component_names(component_names)
+    vertex_ids = _stable_global_ids(
+        "vertex_global_ids", vertex_global_ids, points.shape[0]
+    )
+    cell_ids = _stable_global_ids("cell_global_ids", cell_global_ids, cell_count)
+    blocks = []
+    offset = 0
+    if triangle_cells.shape[0]:
+        count = triangle_cells.shape[0]
+        blocks.append(
+            CellBlock(
+                "triangles",
+                "triangle",
+                triangle_cells,
+                global_ids=cell_ids[offset : offset + count],
+            )
+        )
+        offset += count
+    if quadrilateral_cells.shape[0]:
+        count = quadrilateral_cells.shape[0]
+        blocks.append(
+            CellBlock(
+                "quadrilaterals",
+                "quadrilateral",
+                quadrilateral_cells,
+                global_ids=cell_ids[offset : offset + count],
+            )
+        )
+        offset += count
+    if tetrahedral_cells.shape[0]:
+        blocks.append(
+            CellBlock(
+                "tetrahedra",
+                "tetrahedron",
+                tetrahedral_cells,
+                global_ids=cell_ids,
+            )
+        )
+    mesh = CellMesh(
+        points,
+        blocks,
+        vertex_global_ids=vertex_ids,
+    )
+    topology_id = canonical_fingerprint(
+        {
+            "kind": "unstructured-finite-volume-topology",
+            "dimension": dimension,
+            "triangles": array_tree_fingerprint(triangle_cells),
+            "quadrilaterals": array_tree_fingerprint(quadrilateral_cells),
+            "tetrahedra": array_tree_fingerprint(tetrahedral_cells),
+            "vertex_global_ids": array_tree_fingerprint(vertex_ids),
+            "cell_global_ids": array_tree_fingerprint(cell_ids),
+            "patches": {
+                name: array_tree_fingerprint(value)
+                for name, value in zip(names, normalized_patch_faces, strict=True)
+            },
+            "field": field,
+            "components": list(components),
+        }
+    )
+    geometry_id = canonical_fingerprint(
+        {
+            "kind": "unstructured-finite-volume-geometry",
+            "topology": topology_id,
+            "vertices": array_tree_fingerprint(points),
+        }
+    )
+    capabilities = (
+        DiscretizationCapability.RECONSTRUCTION,
+        DiscretizationCapability.TRACE,
+        DiscretizationCapability.CONSERVATIVE_FLUX,
+        DiscretizationCapability.BOUNDARY_INTEGRAL,
+        DiscretizationCapability.MATRIX_FREE,
+        DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
+    )
+    global_id_dtype = jnp.int64 if x64_enabled() else jnp.int32
+    return _PreparedUnstructuredFiniteVolumeData(
+        mesh=mesh,
+        vertices=jnp.asarray(points),
+        triangles=jnp.asarray(triangle_cells),
+        quadrilaterals=jnp.asarray(quadrilateral_cells),
+        tetrahedra=jnp.asarray(tetrahedral_cells),
+        vertex_global_ids=jnp.asarray(vertex_ids, dtype=global_id_dtype),
+        cell_global_ids=jnp.asarray(cell_ids, dtype=global_id_dtype),
+        cell_dimension=dimension,
+        face_active=jnp.ones((face_vertices.shape[0],), dtype=jnp.bool_),
+        closure_evidence_id="",
+        patch_names=names,
+        patch_faces=tuple(jnp.asarray(value) for value in normalized_patch_faces),
+        field_name=field,
+        component_names=components,
+        topology_id=topology_id,
+        geometry_id=geometry_id,
+        key=DiscretizationKey("unstructured_finite_volume", DiscretizationRole.PHYSICAL),
+        capabilities=capabilities,
+        plan_id=canonical_fingerprint(
+            {
+                "kind": "unstructured-finite-volume-plan",
+                "topology": topology_id,
+                "geometry": geometry_id,
+            }
+        ),
+    )
+
+
+@final
+class _FiniteVolumeClosure(StrictModule):
+    face_active: np.ndarray
+    physical_boundary: np.ndarray
+
+
+def _prepare_fv_closure(
+    mesh: CellMesh,
+    connectivity: Connectivity,
+    face_owner: np.ndarray,
+    face_neighbor: np.ndarray,
+    face_active: np.ndarray,
+    neighborhood_complete: ArrayLike | None,
+    physical_boundary_faces: ArrayLike | None,
+    evidence: str,
+    /,
+) -> _FiniteVolumeClosure:
+    """Bind owned-facet execution to the storage neighborhood and physical boundary."""
+    storage = mesh.storage
+    dimension = mesh.topological_dimension
+    face_count = face_owner.size
+    if storage is not None and storage.partition_count > 1:
+        if not evidence or evidence != storage.evidence_id:
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.closure_evidence_id must match the storage evidence; got missing or different evidence."
+            )
+        complete = np.asarray(neighborhood_complete)
+        physical = np.asarray(physical_boundary_faces)
+        if complete.dtype != np.bool_ or complete.shape != (connectivity.cell_count,):
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.neighborhood_complete must be a boolean per cell; got an incompatible dtype or shape."
+            )
+        if physical.dtype != np.bool_ or physical.shape != (face_count,):
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.physical_boundary_faces must be a boolean per face; got an incompatible dtype or shape."
+            )
+        cell_owned = np.asarray(storage.entity_owned[dimension], dtype=np.bool_)
+        face_active &= np.asarray(storage.entity_owned[dimension - 1], dtype=np.bool_)
+        required = cell_owned.copy()
+        required[face_owner[face_active]] = True
+        required[face_neighbor[face_active & (face_neighbor >= 0)]] = True
+        if np.any(required & ~complete):
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.neighborhood_complete must cover every owned-facet endpoint; got an incomplete required neighborhood."
+            )
+        incident_owned = cell_owned[face_owner] | (
+            (face_neighbor >= 0) & cell_owned[np.maximum(face_neighbor, 0)]
+        )
+        if np.any(physical & (face_neighbor >= 0)) or np.any(
+            (face_neighbor < 0) & (incident_owned | face_active) & ~physical
+        ):
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.physical_boundary_faces must distinguish physical faces from the closure frontier; got an interior or unclassified required face."
+            )
+    else:
+        physical = face_neighbor < 0
+    return _FiniteVolumeClosure(face_active, physical)
+
+
+def _prepare_fv_boundary_groups(
+    physical: np.ndarray,
+    face_count: int,
+    boundary_face_groups: Mapping[str, ArrayLike] | None,
+    /,
+) -> _FiniteVolumeBoundaryPatches:
+    """Validate index-based groups against the physical boundary partition."""
+    boundary_faces = np.flatnonzero(physical).astype(np.int32)
+    if boundary_face_groups is None:
+        patch_names = ("boundary",)
+        patch_faces = (boundary_faces,)
+    else:
+        groups = {
+            str(name): np.asarray(indices, dtype=np.int32)
+            for name, indices in boundary_face_groups.items()
+        }
+        patch_names = tuple(sorted(groups))
+        if not patch_names or any(not name for name in patch_names):
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.boundary_face_groups must have non-empty names; got an empty name or group set."
+            )
+        patch_faces = tuple(groups[name] for name in patch_names)
+        assigned = np.zeros((face_count,), dtype=np.int32)
+        for indices in patch_faces:
+            if (
+                indices.ndim != 1
+                or np.any(indices < 0)
+                or np.any(indices >= face_count)
+                or np.unique(indices).size != indices.size
+                or np.any(~physical[indices])
+            ):
+                raise ValueError(
+                    "UnstructuredFiniteVolumePlan.boundary_face_groups must contain unique in-range physical boundary faces; got invalid face rows."
+                )
+            assigned[indices] += 1
+        if np.any(assigned[boundary_faces] != 1) or np.any(assigned[~physical] != 0):
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.boundary_face_groups must partition the physical boundary once; got a missing, repeated, or interior assignment."
+            )
+    return _FiniteVolumeBoundaryPatches(patch_names, patch_faces)
 
 
 class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
@@ -1174,6 +1674,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         vertices: ArrayLike | None,
@@ -1189,218 +1690,37 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         component_names: Sequence[str] = ("value",),
         _prepared: _PreparedUnstructuredFiniteVolumeData | None = None,
     ) -> None:
-        if _prepared is not None:
-            self.mesh = _prepared.mesh
-            self.vertices = _prepared.vertices
-            self.triangles = _prepared.triangles
-            self.quadrilaterals = _prepared.quadrilaterals
-            self.tetrahedra = _prepared.tetrahedra
-            self.vertex_global_ids = _prepared.vertex_global_ids
-            self.cell_global_ids = _prepared.cell_global_ids
-            self.cell_dimension = _prepared.cell_dimension
-            self.face_active = _prepared.face_active
-            self.closure_evidence_id = _prepared.closure_evidence_id
-            self.patch_names = _prepared.patch_names
-            self.patch_faces = _prepared.patch_faces
-            self.field_name = _prepared.field_name
-            self.component_names = _prepared.component_names
-            self.topology_id = _prepared.topology_id
-            self.geometry_id = _prepared.geometry_id
-            self.key = _prepared.key
-            self.capabilities = _prepared.capabilities
-            self.plan_id = _prepared.plan_id
-            return
-        if vertices is None:
-            raise TypeError("vertices must be supplied for direct construction.")
-        points = np.asarray(vertices, dtype=np.float64)
-        if points.ndim != 2 or points.shape[1] not in (2, 3):
-            raise ValueError("Unstructured FV vertices must have shape (n, 2) or (n, 3).")
-        if points.shape[0] < points.shape[1] + 1 or np.any(~np.isfinite(points)):
-            raise ValueError("Unstructured FV vertices must be finite and nonempty.")
-        triangle_cells = (
-            np.empty((0, 3), dtype=np.int32)
-            if triangles is None
-            else np.asarray(triangles, dtype=np.int32)
-        )
-        quadrilateral_cells = (
-            np.empty((0, 4), dtype=np.int32)
-            if quadrilaterals is None
-            else np.asarray(quadrilaterals, dtype=np.int32)
-        )
-        tetrahedral_cells = (
-            np.empty((0, 4), dtype=np.int32)
-            if tetrahedra is None
-            else np.asarray(tetrahedra, dtype=np.int32)
-        )
-        if points.shape[1] == 2:
-            if tetrahedral_cells.shape[0]:
-                raise ValueError("Tetrahedra require three-dimensional vertices.")
-            if triangle_cells.ndim != 2 or triangle_cells.shape[1] != 3:
-                raise ValueError("triangles must have shape (n, 3).")
-            if quadrilateral_cells.ndim != 2 or quadrilateral_cells.shape[1] != 4:
-                raise ValueError("quadrilaterals must have shape (n, 4).")
-            triangle_cells = _normalized_triangles(points, triangle_cells)
-            quadrilateral_cells = _normalized_quadrilaterals(points, quadrilateral_cells)
-            connectivity: Connectivity = polygonal_connectivity(
-                triangle_cells,
-                quadrilateral_cells,
-                points.shape[0],
+        if _prepared is None:
+            _prepared = _prepare_direct_fv_plan(
+                vertices,
+                triangles,
+                quadrilaterals,
+                tetrahedra,
+                vertex_global_ids,
+                cell_global_ids,
+                boundary_patches,
+                field_name,
+                component_names,
             )
-            dimension = 2
-            face_vertices = np.asarray(connectivity.edges, dtype=np.int32)
-            boundary_mask = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
-        else:
-            if triangle_cells.shape[0] or quadrilateral_cells.shape[0]:
-                raise ValueError(
-                    "Three-dimensional FV currently accepts tetrahedra only."
-                )
-            if tetrahedral_cells.ndim != 2 or tetrahedral_cells.shape[1] != 4:
-                raise ValueError("tetrahedra must have shape (n, 4).")
-            tetrahedral_cells = _normalized_tetrahedra(points, tetrahedral_cells)
-            connectivity = tetrahedral_connectivity(tetrahedral_cells, points.shape[0])
-            dimension = 3
-            face_vertices = np.asarray(connectivity.faces, dtype=np.int32)
-            boundary_mask = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
-        cell_count = connectivity.cell_count
-
-        patches = {} if boundary_patches is None else dict(boundary_patches)
-        if not patches:
-            patches = {"boundary": face_vertices[boundary_mask]}
-        names = tuple(sorted(str(name) for name in patches))
-        lookup = {
-            tuple(sorted(int(value) for value in face)): index
-            for index, face in enumerate(face_vertices.tolist())
-        }
-        assigned = np.zeros((face_vertices.shape[0],), dtype=np.int32)
-        normalized_patch_faces = []
-        face_arity = dimension
-        for name in names:
-            values = np.asarray(patches[name], dtype=np.int32)
-            if not name or values.ndim != 2 or values.shape[1] != face_arity:
-                raise ValueError(
-                    f"Boundary patch faces must have shape (n, {face_arity})."
-                )
-            indices = []
-            for face in values:
-                key = tuple(sorted(int(vertex) for vertex in face))
-                if key not in lookup:
-                    raise ValueError(f"Boundary patch face {key!r} is not in the mesh.")
-                face_index = lookup[key]
-                if not boundary_mask[face_index]:
-                    raise ValueError("Physical patches cannot contain interior faces.")
-                assigned[face_index] += 1
-                indices.append(face_index)
-            normalized_patch_faces.append(np.asarray(indices, dtype=np.int32))
-        if np.any(assigned[boundary_mask] != 1):
-            raise ValueError(
-                "Every unstructured boundary face requires exactly one patch."
-            )
-        field = str(field_name)
-        if not field:
-            raise ValueError("field_name must be non-empty.")
-        components = _component_names(component_names)
-        vertex_ids = _stable_global_ids(
-            "vertex_global_ids", vertex_global_ids, points.shape[0]
-        )
-        cell_ids = _stable_global_ids("cell_global_ids", cell_global_ids, cell_count)
-        blocks = []
-        offset = 0
-        if triangle_cells.shape[0]:
-            count = triangle_cells.shape[0]
-            blocks.append(
-                CellBlock(
-                    "triangles",
-                    "triangle",
-                    triangle_cells,
-                    global_ids=cell_ids[offset : offset + count],
-                )
-            )
-            offset += count
-        if quadrilateral_cells.shape[0]:
-            count = quadrilateral_cells.shape[0]
-            blocks.append(
-                CellBlock(
-                    "quadrilaterals",
-                    "quadrilateral",
-                    quadrilateral_cells,
-                    global_ids=cell_ids[offset : offset + count],
-                )
-            )
-            offset += count
-        if tetrahedral_cells.shape[0]:
-            blocks.append(
-                CellBlock(
-                    "tetrahedra",
-                    "tetrahedron",
-                    tetrahedral_cells,
-                    global_ids=cell_ids,
-                )
-            )
-        mesh = CellMesh(
-            points,
-            blocks,
-            vertex_global_ids=vertex_ids,
-        )
-        topology_id = canonical_fingerprint(
-            {
-                "kind": "unstructured-finite-volume-topology",
-                "dimension": dimension,
-                "triangles": array_tree_fingerprint(triangle_cells),
-                "quadrilaterals": array_tree_fingerprint(quadrilateral_cells),
-                "tetrahedra": array_tree_fingerprint(tetrahedral_cells),
-                "vertex_global_ids": array_tree_fingerprint(vertex_ids),
-                "cell_global_ids": array_tree_fingerprint(cell_ids),
-                "patches": {
-                    name: array_tree_fingerprint(value)
-                    for name, value in zip(names, normalized_patch_faces, strict=True)
-                },
-                "field": field,
-                "components": list(components),
-            }
-        )
-        geometry_id = canonical_fingerprint(
-            {
-                "kind": "unstructured-finite-volume-geometry",
-                "topology": topology_id,
-                "vertices": array_tree_fingerprint(points),
-            }
-        )
-        capabilities = (
-            DiscretizationCapability.RECONSTRUCTION,
-            DiscretizationCapability.TRACE,
-            DiscretizationCapability.CONSERVATIVE_FLUX,
-            DiscretizationCapability.BOUNDARY_INTEGRAL,
-            DiscretizationCapability.MATRIX_FREE,
-            DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
-        )
-        global_id_dtype = jnp.int64 if x64_enabled() else jnp.int32
-        self.mesh = mesh
-        self.vertices = jnp.asarray(points)
-        self.triangles = jnp.asarray(triangle_cells)
-        self.quadrilaterals = jnp.asarray(quadrilateral_cells)
-        self.tetrahedra = jnp.asarray(tetrahedral_cells)
-        self.vertex_global_ids = jnp.asarray(vertex_ids, dtype=global_id_dtype)
-        self.cell_global_ids = jnp.asarray(cell_ids, dtype=global_id_dtype)
-        self.cell_dimension = dimension
-        self.face_active = jnp.ones((face_vertices.shape[0],), dtype=jnp.bool_)
-        self.closure_evidence_id = ""
-        self.patch_names = names
-        self.patch_faces = tuple(jnp.asarray(value) for value in normalized_patch_faces)
-        self.field_name = field
-        self.component_names = components
-        self.topology_id = topology_id
-        self.geometry_id = geometry_id
-        self.key = DiscretizationKey(
-            "unstructured_finite_volume", DiscretizationRole.PHYSICAL
-        )
-        self.capabilities = capabilities
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "unstructured-finite-volume-plan",
-                "topology": topology_id,
-                "geometry": geometry_id,
-            }
-        )
+        self.mesh = _prepared.mesh
+        self.vertices = _prepared.vertices
+        self.triangles = _prepared.triangles
+        self.quadrilaterals = _prepared.quadrilaterals
+        self.tetrahedra = _prepared.tetrahedra
+        self.vertex_global_ids = _prepared.vertex_global_ids
+        self.cell_global_ids = _prepared.cell_global_ids
+        self.cell_dimension = _prepared.cell_dimension
+        self.face_active = _prepared.face_active
+        self.closure_evidence_id = _prepared.closure_evidence_id
+        self.patch_names = _prepared.patch_names
+        self.patch_faces = _prepared.patch_faces
+        self.field_name = _prepared.field_name
+        self.component_names = _prepared.component_names
+        self.topology_id = _prepared.topology_id
+        self.geometry_id = _prepared.geometry_id
+        self.key = _prepared.key
+        self.capabilities = _prepared.capabilities
+        self.plan_id = _prepared.plan_id
 
     @classmethod
     @checked
@@ -1417,34 +1737,43 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         closure_evidence_id: str | None = None,
         periodic_geometry: CellGeometrySpec | None = None,
         periodic_embedding: GlobalEmbeddingCertificate | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> "UnstructuredFiniteVolumePlan":
-        """Prepare the canonical local closure without reconstructing a mesh.
+        """Prepare a local closure without reconstructing a mesh.
 
-        Partitioned storage requires an evidence-bound complete neighborhood
+        Partitioned storage requires an evidence-bound full neighborhood
         for every owned cell and owned facet endpoint. Physical boundaries are
         explicit: the boundary of a ghost closure is not a physical boundary.
+
+        ``budget`` shares periodic coordinate-source preparation with the
+        enclosing request; it is not retained on the plan.
         """
         if periodic_geometry is not None and mesh.periodic_topology is None:
-            raise ValueError("periodic_geometry requires a periodic mesh.")
-        if not isinstance(
-            mesh.connectivity,
-            (
-                PolygonalConnectivity,
-                TetrahedralConnectivity,
-                HexahedralConnectivity,
-                PolyhedralConnectivity,
-            ),
-        ):
-            raise ValueError("CellMesh FV requires polygonal or volume connectivity.")
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.periodic_geometry must accompany periodic mesh topology; got a nonperiodic mesh."
+            )
+        match mesh.connectivity:
+            case (
+                PolygonalConnectivity()
+                | TetrahedralConnectivity()
+                | HexahedralConnectivity()
+                | PolyhedralConnectivity()
+            ) as connectivity:
+                pass
+            case _:
+                raise ValueError(
+                    "UnstructuredFiniteVolumePlan.connectivity must be polygonal or volumetric; got unsupported connectivity."
+                )
         if any(block.cell_kind == "polygon" for block in mesh.blocks):
             raise ValueError(
-                "CellMesh FV cell quadrature requires triangles or quadrilaterals."
+                "UnstructuredFiniteVolumePlan.cell_kinds must support cell quadrature; got a general polygon."
             )
         field = str(field_name)
         if not field:
-            raise ValueError("field_name must be non-empty.")
-        components = _component_names(component_names)
-        connectivity = mesh.connectivity
+            raise ValueError(
+                "UnstructuredFiniteVolumePlan.field_name must be non-empty; got an empty name."
+            )
+        components = normalize_component_names(component_names)
         dimension = mesh.topological_dimension
         cell_ids = np.asarray(mesh.topology.entity_sets[dimension].entity_ids)
         vertex_ids = np.asarray(mesh.vertex_global_ids)
@@ -1459,82 +1788,52 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             isinstance(connectivity, PolyhedralConnectivity)
             and mesh.periodic_topology is not None
         ):
-            from ._polyhedral import _periodic_polyhedral_faces
-
-            face_neighbor, quotient_active, _ = _periodic_polyhedral_faces(
-                mesh,
-                actual_geometry=periodic_geometry,
-                embedding=periodic_embedding,
+            authority = (
+                mesh.periodic_topology.actual_geometry
+                if periodic_geometry is None
+                else periodic_geometry
             )
+            if authority is None:
+                raise ValueError(
+                    "finite_volume_geometry.cell_geometry must bind the periodic source map; got no source geometry."
+                )
+            work, memory = cell_geometry_preparation_bounds(authority)
+            with (
+                nullcontext(budget)
+                if budget is not None
+                else owned_coordinate_preparation(
+                    work,
+                    memory,
+                    maximum_geometry_queries=cell_geometry_preparation_query_upper(
+                        authority
+                    ),
+                )
+            ) as owner_budget:
+                face_neighbor, quotient_active, _ = (
+                    imported_polyhedral.periodic_polyhedral_faces(
+                        mesh,
+                        actual_geometry=periodic_geometry,
+                        embedding=periodic_embedding,
+                        budget=owner_budget,
+                    )
+                )
             face_active &= quotient_active
         evidence = "" if closure_evidence_id is None else str(closure_evidence_id)
-        if partitioned:
-            if not evidence or evidence != storage.evidence_id:
-                raise ValueError(
-                    "Owner-local FV requires storage-bound closure evidence."
-                )
-            complete = np.asarray(neighborhood_complete)
-            physical = np.asarray(physical_boundary_faces)
-            if complete.dtype != np.bool_ or complete.shape != (connectivity.cell_count,):
-                raise ValueError(
-                    "Owner-local FV requires explicit cell neighborhood completeness."
-                )
-            if physical.dtype != np.bool_ or physical.shape != (face_count,):
-                raise ValueError(
-                    "Owner-local FV requires explicit physical boundary classification."
-                )
-            cell_owned = np.asarray(storage.entity_owned[dimension], dtype=np.bool_)
-            face_active &= np.asarray(storage.entity_owned[dimension - 1], dtype=np.bool_)
-            required = cell_owned.copy()
-            required[face_owner[face_active]] = True
-            required[face_neighbor[face_active & (face_neighbor >= 0)]] = True
-            if np.any(required & ~complete):
-                raise ValueError(
-                    "Owner-local FV has incomplete owned-facet neighborhoods."
-                )
-            incident_owned = cell_owned[face_owner] | (
-                (face_neighbor >= 0) & cell_owned[np.maximum(face_neighbor, 0)]
-            )
-            if np.any(physical & (face_neighbor >= 0)) or np.any(
-                (face_neighbor < 0) & (incident_owned | face_active) & ~physical
-            ):
-                raise ValueError(
-                    "Owner-local FV closure frontier cannot be a physical boundary."
-                )
-        else:
-            physical = face_neighbor < 0
-        boundary_faces = np.flatnonzero(physical).astype(np.int32)
-        if boundary_face_groups is None:
-            patch_names = ("boundary",)
-            patch_faces = (boundary_faces,)
-        else:
-            groups = {
-                str(name): np.asarray(indices, dtype=np.int32)
-                for name, indices in boundary_face_groups.items()
-            }
-            patch_names = tuple(sorted(groups))
-            if not patch_names or any(not name for name in patch_names):
-                raise ValueError(
-                    "Polyhedral boundary face-group names must be non-empty."
-                )
-            patch_faces = tuple(groups[name] for name in patch_names)
-            assigned = np.zeros((face_owner.size,), dtype=np.int32)
-            for indices in patch_faces:
-                if (
-                    indices.ndim != 1
-                    or np.any(indices < 0)
-                    or np.any(indices >= face_owner.size)
-                    or np.unique(indices).size != indices.size
-                    or np.any(~physical[indices])
-                ):
-                    raise ValueError(
-                        "Polyhedral boundary groups require unique in-range boundary faces."
-                    )
-                assigned[indices] += 1
-            if np.any(assigned[boundary_faces] != 1) or np.any(assigned[~physical] != 0):
-                raise ValueError(
-                    "Polyhedral boundary groups must partition every boundary face exactly."
-                )
+        closure = _prepare_fv_closure(
+            mesh,
+            connectivity,
+            face_owner,
+            face_neighbor,
+            face_active,
+            neighborhood_complete,
+            physical_boundary_faces,
+            evidence,
+        )
+        face_active = closure.face_active
+        patches = _prepare_fv_boundary_groups(
+            closure.physical_boundary, face_count, boundary_face_groups
+        )
+        patch_names, patch_faces = patches.names, patches.faces
         topology_id = canonical_fingerprint(
             {
                 "kind": "unstructured-finite-volume-topology",
@@ -1613,6 +1912,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         )
         return cls(None, _prepared=prepared)
 
+    @checked
     def prepare(
         self,
         /,
@@ -1621,22 +1921,27 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         owned_face_capacity: int | None = None,
         cell_geometry: CellGeometrySpec | None = None,
         periodic_embedding: GlobalEmbeddingCertificate | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> UnstructuredFiniteVolumeDiscretization:
         """Prepare local geometry with optional collectively agreed facet capacity.
 
         A supplied capacity bounds owned-face execution across unequal ranks.
         Padding slots are masked and do not perform numerical flux solves.
 
-        ``cell_geometry`` selects the actual represented coordinate map rather
+        ``cell_geometry`` selects the represented represented coordinate map rather
         than corner geometry. Its certified cell measures and absolute errors
         define cell-average pairings, integration metadata, and remap inventory.
         Cell/face quadrature evaluates that same map without rescaling weights.
         ``cell_quadrature_degree == 0`` makes no polynomial-exactness claim for
         general restricted rational coordinate maps.
-        Standalone native hexahedra default to their actual Q1 coordinate map,
-        restored from canonical storage when present, without a cell downgrade.
+        Standalone native hexahedra default to their represented Q1 coordinate map,
+        restored from prepared storage when present, without a cell downgrade.
         Bound nonnull coordinate sources are always restored for every supported
         topology, so omitting the keyword never selects their sampled corners.
+
+        ``budget`` shares source resolution, certified measures and periodic
+        quotient preparation with the enclosing request. Standalone mapped
+        preparation retains the certified-measure owner's work/storage limits.
         """
         return UnstructuredFiniteVolumeDiscretization(
             self,
@@ -1644,10 +1949,404 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             owned_face_capacity=owned_face_capacity,
             cell_geometry=cell_geometry,
             periodic_embedding=periodic_embedding,
+            budget=budget,
         )
 
 
-class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
+@final
+class _FiniteVolumeCoordinateGeometry(StrictModule):
+    connectivity: Connectivity
+    geometry_id: str = eqx.field(static=True)
+    owner: np.ndarray
+    neighbor: np.ndarray
+    owner_sign: np.ndarray
+    geometry: _MappedFiniteVolumeGeometry
+
+
+@final
+class _FiniteVolumeGeometryPhase(StrictModule):
+    coordinates: _FiniteVolumeCoordinateGeometry
+    cell_geometry: CellGeometrySpec | None
+    neighbor: np.ndarray
+    periodic_frame_maps: np.ndarray | None
+    quotient_active: np.ndarray | None
+
+
+@final
+class _FiniteVolumeMetadata(StrictModule):
+    support: DiscreteSupport
+    cell_space: DiscreteFieldSpace
+    face_space: DiscreteFieldSpace
+    face_entities: EntitySet
+    face_block: FiniteVolumeFaceBlock
+    preparation: PreparationReport
+    spaces: tuple[DiscreteFieldSpace, ...]
+    measures: tuple[DiscreteMeasure, ...]
+    capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
+
+
+def _corner_fv_geometry(
+    plan: UnstructuredFiniteVolumePlan,
+    connectivity: Connectivity,
+    owner: np.ndarray,
+    owner_sign: np.ndarray,
+    /,
+) -> _MappedFiniteVolumeGeometry:
+    """Evaluate corner geometry and require quadrature to reproduce cell measures."""
+    (
+        cell_volumes,
+        cell_centers,
+        face_centers,
+        area_vectors,
+        face_measures,
+        closure,
+        quadrature_points,
+        quadrature_weights,
+    ) = evaluate_unstructured_fv_geometry(
+        plan.vertices,
+        plan.triangles,
+        plan.quadrilaterals,
+        plan.tetrahedra,
+        connectivity,
+        owner,
+        owner_sign,
+    )
+    (
+        cell_quadrature_points,
+        cell_quadrature_weights,
+        cell_quadrature_valid,
+    ) = _cell_volume_quadrature(plan, connectivity)
+    quadrature_mass = jnp.sum(cell_quadrature_weights, axis=1)
+    quadrature_tolerance = (
+        256.0
+        * jnp.finfo(cell_quadrature_weights.dtype).eps
+        * jnp.maximum(jnp.abs(cell_volumes), 1.0)
+    )
+    cell_quadrature_weights = eqx.error_if(
+        cell_quadrature_weights,
+        jnp.any(jnp.abs(quadrature_mass - cell_volumes) > quadrature_tolerance),
+        "Unstructured cell quadrature must reproduce every cell measure.",
+    )
+    return _MappedFiniteVolumeGeometry(
+        cell_volumes,
+        cell_centers,
+        face_centers,
+        area_vectors,
+        face_measures,
+        closure,
+        quadrature_points,
+        quadrature_weights,
+        cell_quadrature_points,
+        cell_quadrature_weights,
+        cell_quadrature_valid,
+        jnp.zeros_like(cell_volumes),
+        False,
+    )
+
+
+def _evaluate_fv_coordinate_geometry(
+    plan: UnstructuredFiniteVolumePlan,
+    connectivity: Connectivity,
+    cell_geometry: CellGeometrySpec | None,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> _FiniteVolumeCoordinateGeometry:
+    """Dispatch mapped, polyhedral, and corner geometry without changing charge order."""
+    mesh, cell_count, geometry_id = plan.mesh, connectivity.cell_count, plan.geometry_id
+    if cell_geometry is not None and not (
+        all(block.cell_kind == "polyhedron" for block in mesh.blocks)
+        and has_power_source(cell_geometry)
+    ):
+        if mesh.topological_dimension != mesh.coordinates.shape[1] and not (
+            mesh.topological_dimension == 2 and mesh.coordinates.shape[1] == 3
+        ):
+            raise ValueError(
+                "UnstructuredFiniteVolumeDiscretization.cell_geometry must be full-dimensional or an embedded surface; got unsupported topological and ambient dimensions."
+            )
+        owner, neighbor, owner_sign = _owner_neighbor(connectivity, cell_count)
+        geometry = _mapped_fv_geometry(mesh, cell_geometry, owner, budget=budget)
+        geometry_id = canonical_fingerprint(
+            {
+                "kind": "mapped-unstructured-finite-volume-geometry",
+                "topology": plan.topology_id,
+                "coordinate_geometry": cell_geometry_id(cell_geometry),
+            }
+        )
+        return _FiniteVolumeCoordinateGeometry(
+            connectivity, geometry_id, owner, neighbor, owner_sign, geometry
+        )
+    match connectivity:
+        case PolyhedralConnectivity():
+            polyhedral = imported_polyhedral.prepare_polyhedral_finite_volume_geometry(
+                mesh,
+                cell_geometry=cell_geometry,
+                budget=budget,
+            )
+            if cell_geometry is not None:
+                _, volume_errors, volume_exact = (
+                    mapped_measure_owner.certified_cell_measures(
+                        mesh,
+                        cell_geometry,
+                        budget=budget,
+                    )
+                )
+                volume_errors = jnp.asarray(volume_errors)
+                geometry_id = polyhedral.geometry_id
+            owner, neighbor, owner_sign = _owner_neighbor(connectivity, cell_count)
+            cell_volumes = polyhedral.cell_volumes
+            cell_centers = polyhedral.cell_centers
+            face_centers = polyhedral.face_centers
+            area_vectors = jax.device_put(
+                np.asarray(owner_sign, dtype=polyhedral.face_area_vectors.dtype)[:, None]
+                * np.asarray(polyhedral.face_area_vectors)
+            )
+            face_measures = polyhedral.face_measures
+            host_closure = np.zeros(cell_centers.shape, dtype=cell_centers.dtype)
+            host_closure[:, 0] = np.asarray(polyhedral.closure_residual)
+            closure = jax.device_put(host_closure)
+            quadrature_points = polyhedral.face_quadrature_points
+            quadrature_weights = polyhedral.face_quadrature_weights
+            cell_quadrature_points = polyhedral.cell_quadrature_points
+            cell_quadrature_weights = polyhedral.cell_quadrature_weights
+            cell_quadrature_valid = polyhedral.cell_quadrature_valid
+            if cell_geometry is None:
+                volume_errors = jax.device_put(
+                    np.zeros(cell_volumes.shape, dtype=cell_volumes.dtype)
+                )
+                volume_exact = False
+            geometry = _MappedFiniteVolumeGeometry(
+                cell_volumes,
+                cell_centers,
+                face_centers,
+                area_vectors,
+                face_measures,
+                closure,
+                quadrature_points,
+                quadrature_weights,
+                cell_quadrature_points,
+                cell_quadrature_weights,
+                cell_quadrature_valid,
+                volume_errors,
+                volume_exact,
+            )
+        case (
+            PolygonalConnectivity() | TetrahedralConnectivity() | HexahedralConnectivity()
+        ):
+            owner, neighbor, owner_sign = _owner_neighbor(connectivity, cell_count)
+            geometry = _corner_fv_geometry(plan, connectivity, owner, owner_sign)
+        case _:
+            assert_never(connectivity)
+    return _FiniteVolumeCoordinateGeometry(
+        connectivity, geometry_id, owner, neighbor, owner_sign, geometry
+    )
+
+
+def _prepare_fv_geometry(
+    plan: UnstructuredFiniteVolumePlan,
+    cell_geometry: CellGeometrySpec | None,
+    periodic_embedding: GlobalEmbeddingCertificate | None,
+    budget: CoordinateEnclosureBudget | None,
+    /,
+) -> _FiniteVolumeGeometryPhase:
+    """Resolve coordinate-source evidence and prepare periodic neighbor frames in one budget."""
+    mesh = plan.mesh
+    periodic_frame_maps = None
+    quotient_active = None
+    if cell_geometry is None and mesh.periodic_topology is not None:
+        cell_geometry = mesh.periodic_topology.actual_geometry
+    match mesh.connectivity:
+        case (
+            PolygonalConnectivity()
+            | TetrahedralConnectivity()
+            | HexahedralConnectivity()
+            | PolyhedralConnectivity()
+        ) as connectivity:
+            pass
+        case _:
+            raise TypeError(
+                "UnstructuredFiniteVolumeDiscretization.connectivity must be polygonal or volumetric; got unsupported connectivity."
+            )
+    if cell_geometry is None and (
+        isinstance(connectivity, HexahedralConnectivity)
+        or (mesh.storage is not None and mesh.storage.local_geometry is not None)
+    ):
+        cell_geometry = (
+            CellGeometrySpec.affine(mesh, budget=budget)
+            if mesh.storage is None
+            else mesh.storage.restore_geometry(budget=budget)
+        )
+    with _fv_preparation_budget(mesh, cell_geometry, budget) as owner_budget:
+        coordinates = _evaluate_fv_coordinate_geometry(
+            plan, connectivity, cell_geometry, owner_budget
+        )
+        neighbor = coordinates.neighbor
+        if (
+            isinstance(connectivity, PolyhedralConnectivity)
+            and mesh.periodic_topology is not None
+        ):
+            neighbor, quotient_active, periodic_frame_maps = (
+                imported_polyhedral.periodic_polyhedral_faces(
+                    mesh,
+                    actual_geometry=cell_geometry,
+                    embedding=periodic_embedding,
+                    budget=owner_budget,
+                )
+            )
+    return _FiniteVolumeGeometryPhase(
+        coordinates, cell_geometry, neighbor, periodic_frame_maps, quotient_active
+    )
+
+
+def _prepare_fv_metadata(
+    plan: UnstructuredFiniteVolumePlan,
+    topology: CellComplexTopology,
+    points: np.ndarray,
+    cell_geometry: CellGeometrySpec | None,
+    cell_volumes: Array,
+    face_centers: Array,
+    area_vectors: Array,
+    face_measures: Array,
+    owner: np.ndarray,
+    neighbor: np.ndarray,
+    boundary_patch_ids: np.ndarray,
+    face_active: Array,
+    /,
+) -> _FiniteVolumeMetadata:
+    """Assemble support, paired field spaces, face routes, and preparation evidence."""
+    mesh = plan.mesh
+    cell_count, face_count = cell_volumes.size, owner.size
+    embedding_id = canonical_fingerprint(
+        {
+            "kind": "unstructured-fv-embedding",
+            "vertices": array_tree_fingerprint(points),
+            "coordinate_geometry": None
+            if cell_geometry is None
+            else cell_geometry_id(cell_geometry),
+        }
+    )
+    support = DiscreteSupport(topology, plan.cell_dimension, embedding_id)
+    components = len(plan.component_names)
+    cell_entities = topology.entity_sets[plan.cell_dimension]
+    face_entities = topology.entity_sets[plan.cell_dimension - 1]
+    cell_shape = (cell_count, components)
+    cell_space = DiscreteFieldSpace(
+        plan.field_name,
+        support.support_id,
+        EntityDofLayout(
+            cell_entities.entity_set_id,
+            cell_count,
+            cell_count,
+            component_shape=(components,),
+        ),
+        ArraySpace(
+            cell_shape,
+            pairing=DiagonalPairing(
+                jax.device_put(
+                    np.broadcast_to(np.asarray(cell_volumes)[:, None], cell_shape)
+                )
+            ),
+        ),
+        representation="cell_average",
+        conformity="discontinuous",
+        reconstruction_id=canonical_fingerprint(
+            {"kind": "unstructured-cell-average", "plan": plan.plan_id}
+        ),
+    )
+    face_shape = (face_count, components)
+    face_space = DiscreteFieldSpace(
+        f"{plan.field_name}_face_flux",
+        support.support_id,
+        EntityDofLayout(
+            face_entities.entity_set_id,
+            face_count,
+            face_count,
+            component_shape=(components,),
+        ),
+        ArraySpace(
+            face_shape,
+            pairing=DiagonalPairing(
+                jax.device_put(
+                    np.broadcast_to(np.asarray(face_measures)[:, None], face_shape)
+                )
+            ),
+        ),
+        representation="flux_moment",
+        conformity="Hdiv",
+        trace_space_id=cell_space.field_space_id,
+    )
+    face_block = FiniteVolumeFaceBlock(
+        face_ids=jax.device_put(np.arange(face_count, dtype=np.int32)),
+        owner_cells=jax.device_put(owner),
+        neighbor_cells=jax.device_put(neighbor),
+        boundary_patch_ids=jax.device_put(boundary_patch_ids),
+        face_centers=face_centers,
+        area_vectors=area_vectors,
+        face_measures=face_measures,
+        active_mask=face_active,
+        block_id=canonical_fingerprint(
+            {
+                "kind": "unstructured-face-block",
+                "plan": plan.plan_id,
+                "storage": None if mesh.storage is None else mesh.storage.storage_id,
+            }
+        ),
+    )
+    preparation = PreparationReport(
+        capabilities=plan.capabilities,
+        diagnostics=(
+            "cell measures are positive",
+            "face area vectors point outward from owners",
+            "cell face-vector closure is satisfied",
+            "boundary patches are complete",
+        ),
+        resource_counts={
+            "vertices": points.shape[0],
+            "faces": face_count,
+            "cells": cell_count,
+            "boundary_faces": int(np.sum(neighbor < 0)),
+            "active_faces": int(np.sum(np.asarray(face_active))),
+            "reciprocal_faces": int(np.sum(np.asarray(face_active) & (neighbor >= 0))),
+            "source_faces": mesh.topology.entity_sets[plan.cell_dimension - 1].count,
+        },
+    )
+    measure_metadata = (
+        DiscreteMeasure(
+            "unstructured_cell_measure",
+            support.support_id,
+            cell_entities.entity_set_id,
+            cell_volumes,
+        ),
+        DiscreteMeasure(
+            "unstructured_face_measure",
+            support.support_id,
+            face_entities.entity_set_id,
+            face_measures,
+        ),
+    )
+    spaces, measures, capabilities = validate_prepared_metadata(
+        key=plan.key,
+        support=support,
+        field_spaces=(cell_space, face_space),
+        measures=measure_metadata,
+        capabilities=plan.capabilities,
+        preparation=preparation,
+    )
+    return _FiniteVolumeMetadata(
+        support,
+        cell_space,
+        face_space,
+        face_entities,
+        face_block,
+        preparation,
+        spaces,
+        measures,
+        capabilities,
+    )
+
+
+class UnstructuredFiniteVolumeDiscretization(
+    AbstractUnstructuredFiniteVolumeDiscretization
+):
     mesh: CellMesh
     vertices: Array
     triangles: Array
@@ -1707,6 +2406,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     preparation: PreparationReport
     quality: UnstructuredFiniteVolumeQualityReport
 
+    # Geometry/metadata preparation is separate; ordered quotient projection and Strict publication preserve constructor failure order.
     @checked
     def __init__(
         self,
@@ -1717,167 +2417,45 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         owned_face_capacity: int | None = None,
         cell_geometry: CellGeometrySpec | None = None,
         periodic_embedding: GlobalEmbeddingCertificate | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         mesh = plan.mesh
         points = np.asarray(mesh.coordinates)
-        periodic_frame_maps = None
-        quotient_active = None
-        if cell_geometry is None and mesh.periodic_topology is not None:
-            cell_geometry = mesh.periodic_topology.actual_geometry
-        connectivity = mesh.connectivity
-        if not isinstance(
-            connectivity,
-            (
-                PolygonalConnectivity,
-                TetrahedralConnectivity,
-                HexahedralConnectivity,
-                PolyhedralConnectivity,
-            ),
-        ):
-            raise TypeError(
-                "Unstructured FV requires polygonal or polyhedral cell connectivity."
-            )
+        geometry_phase = _prepare_fv_geometry(
+            plan, cell_geometry, periodic_embedding, budget
+        )
+        coordinates = geometry_phase.coordinates
+        cell_geometry, connectivity = (
+            geometry_phase.cell_geometry,
+            coordinates.connectivity,
+        )
         topology = mesh.topology
-        cell_count = connectivity.cell_count
-        geometry_id = plan.geometry_id
-        if cell_geometry is None and (
-            isinstance(connectivity, HexahedralConnectivity)
-            or (mesh.storage is not None and mesh.storage.local_geometry is not None)
-        ):
-            cell_geometry = (
-                CellGeometrySpec.affine(mesh)
-                if mesh.storage is None
-                else mesh.storage.restore_geometry()
-            )
-        # Power sources own exact polyhedral FV geometry; PLC sources are mapped
-        # affine simplices over their exact source coordinates.
-        if cell_geometry is not None and not (
-            all(block.cell_kind == "polyhedron" for block in mesh.blocks)
-            and isinstance(
-                cell_geometry.exact_source,
-                (
-                    ExactPowerCellGeometrySource,
-                    ExactPowerCellGeometryRestrictionSource,
-                    ExactPowerCellGeometryLinearActionSource,
-                ),
-            )
-        ):
-            if mesh.topological_dimension != mesh.coordinates.shape[1] and not (
-                mesh.topological_dimension == 2 and mesh.coordinates.shape[1] == 3
-            ):
-                raise ValueError(
-                    "Mapped FV requires full-dimensional or embedded surface geometry."
-                )
-            owner, neighbor, owner_sign = _owner_neighbor(connectivity, cell_count)
-            face_count = owner.size
-            (
-                cell_volumes,
-                cell_centers,
-                face_centers,
-                area_vectors,
-                face_measures,
-                closure,
-                quadrature_points,
-                quadrature_weights,
-                cell_quadrature_points,
-                cell_quadrature_weights,
-                cell_quadrature_valid,
-                volume_errors,
-                volume_exact,
-            ) = _mapped_fv_geometry(mesh, cell_geometry, owner)
-            geometry_id = canonical_fingerprint(
-                {
-                    "kind": "mapped-unstructured-finite-volume-geometry",
-                    "topology": plan.topology_id,
-                    "coordinate_geometry": cell_geometry_id(cell_geometry),
-                }
-            )
-        elif isinstance(connectivity, PolyhedralConnectivity):
-            from ._polyhedral import prepare_polyhedral_finite_volume_geometry
-
-            polyhedral = prepare_polyhedral_finite_volume_geometry(
-                mesh, cell_geometry=cell_geometry
-            )
-            if cell_geometry is not None:
-                from .._cell_geometry_transfer import _certified_cell_measures
-
-                _, volume_errors, volume_exact = _certified_cell_measures(
-                    mesh, cell_geometry
-                )
-                volume_errors = jnp.asarray(volume_errors)
-                geometry_id = polyhedral.geometry_id
-            face_count = connectivity.face_owner.size
-            owner, neighbor, owner_sign = _owner_neighbor(connectivity, cell_count)
-            cell_volumes = polyhedral.cell_volumes
-            cell_centers = polyhedral.cell_centers
-            face_centers = polyhedral.face_centers
-            area_vectors = (
-                jnp.asarray(owner_sign, dtype=polyhedral.face_area_vectors.dtype)[:, None]
-                * polyhedral.face_area_vectors
-            )
-            face_measures = polyhedral.face_measures
-            closure = (
-                jnp.zeros_like(cell_centers).at[:, 0].set(polyhedral.closure_residual)
-            )
-            quadrature_points = polyhedral.face_quadrature_points
-            quadrature_weights = polyhedral.face_quadrature_weights
-            cell_quadrature_points = polyhedral.cell_quadrature_points
-            cell_quadrature_weights = polyhedral.cell_quadrature_weights
-            cell_quadrature_valid = polyhedral.cell_quadrature_valid
-        else:
-            if isinstance(connectivity, PolygonalConnectivity):
-                face_count = connectivity.edges.shape[0]
-            else:
-                face_count = connectivity.faces.shape[0]
-            owner, neighbor, owner_sign = _owner_neighbor(connectivity, cell_count)
-            (
-                cell_volumes,
-                cell_centers,
-                face_centers,
-                area_vectors,
-                face_measures,
-                closure,
-                quadrature_points,
-                quadrature_weights,
-            ) = evaluate_unstructured_fv_geometry(
-                plan.vertices,
-                plan.triangles,
-                plan.quadrilaterals,
-                plan.tetrahedra,
-                connectivity,
-                owner,
-                owner_sign,
-            )
-            (
-                cell_quadrature_points,
-                cell_quadrature_weights,
-                cell_quadrature_valid,
-            ) = _cell_volume_quadrature(plan, connectivity)
-            quadrature_mass = jnp.sum(cell_quadrature_weights, axis=1)
-            quadrature_tolerance = (
-                256.0
-                * jnp.finfo(cell_quadrature_weights.dtype).eps
-                * jnp.maximum(jnp.abs(cell_volumes), 1.0)
-            )
-            cell_quadrature_weights = eqx.error_if(
-                cell_quadrature_weights,
-                jnp.any(jnp.abs(quadrature_mass - cell_volumes) > quadrature_tolerance),
-                "Unstructured cell quadrature must reproduce every cell measure.",
-            )
-        if (
-            isinstance(connectivity, PolyhedralConnectivity)
-            and mesh.periodic_topology is not None
-        ):
-            from ._polyhedral import _periodic_polyhedral_faces
-
-            neighbor, quotient_active, periodic_frame_maps = _periodic_polyhedral_faces(
-                mesh,
-                actual_geometry=cell_geometry,
-                embedding=periodic_embedding,
-            )
-        if cell_geometry is None:
-            volume_errors = jnp.zeros_like(cell_volumes)
-            volume_exact = False
+        cell_count, face_count = connectivity.cell_count, coordinates.owner.size
+        geometry_id = coordinates.geometry_id
+        owner, neighbor, owner_sign = (
+            coordinates.owner,
+            geometry_phase.neighbor,
+            coordinates.owner_sign,
+        )
+        periodic_frame_maps, quotient_active = (
+            geometry_phase.periodic_frame_maps,
+            geometry_phase.quotient_active,
+        )
+        (
+            cell_volumes,
+            cell_centers,
+            face_centers,
+            area_vectors,
+            face_measures,
+            closure,
+            quadrature_points,
+            quadrature_weights,
+            cell_quadrature_points,
+            cell_quadrature_weights,
+            cell_quadrature_valid,
+            volume_errors,
+            volume_exact,
+        ) = coordinates.geometry
         boundary_patch_ids = np.full((face_count,), -1, dtype=np.int32)
         for patch_id, face_indices in enumerate(plan.patch_faces):
             boundary_patch_ids[np.asarray(face_indices, dtype=np.int32)] = patch_id
@@ -1910,7 +2488,9 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             start, stop = np.asarray(periodic.lifted_offsets)[degree : degree + 2]
             orbits = np.asarray(periodic.orbit_indices)[start:stop]
             if quotient_active is None:
-                raise RuntimeError("Periodic polyhedral FV lost its quotient face mask.")
+                raise RuntimeError(
+                    "UnstructuredFiniteVolumeDiscretization.quotient_active must identify the periodic face representatives; got None."
+                )
             source_face_indices = np.flatnonzero(quotient_active).astype(np.int32)
             source_face_indices = source_face_indices[
                 np.argsort(orbits[source_face_indices])
@@ -1918,7 +2498,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             topology = periodic.quotient
             if source_face_indices.size != topology.entity_sets[degree].count:
                 raise ValueError(
-                    "Periodic FV requires one SCI representative per quotient facet."
+                    "UnstructuredFiniteVolumeDiscretization.source_face_indices must contain one SCI representative per quotient facet; got an incompatible representative count."
                 )
             owner = owner[source_face_indices]
             neighbor = neighbor[source_face_indices]
@@ -1932,125 +2512,40 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             face_active = face_active[source_face_indices]
             frame_maps = frame_maps[source_face_indices]
             face_count = source_face_indices.size
-        embedding_id = canonical_fingerprint(
-            {
-                "kind": "unstructured-fv-embedding",
-                "vertices": array_tree_fingerprint(points),
-                "coordinate_geometry": None
-                if cell_geometry is None
-                else cell_geometry_id(cell_geometry),
-            }
+        metadata = _prepare_fv_metadata(
+            plan,
+            topology,
+            points,
+            cell_geometry,
+            cell_volumes,
+            face_centers,
+            area_vectors,
+            face_measures,
+            owner,
+            neighbor,
+            boundary_patch_ids,
+            face_active,
         )
-        support = DiscreteSupport(topology, plan.cell_dimension, embedding_id)
-        components = len(plan.component_names)
-        cell_entities = topology.entity_sets[plan.cell_dimension]
-        face_entities = topology.entity_sets[plan.cell_dimension - 1]
-        cell_shape = (cell_count, components)
-        cell_space = DiscreteFieldSpace(
-            plan.field_name,
-            support.support_id,
-            EntityDofLayout(
-                cell_entities.entity_set_id,
-                cell_count,
-                cell_count,
-                component_shape=(components,),
-            ),
-            ArraySpace(
-                cell_shape,
-                pairing=DiagonalPairing(
-                    jnp.broadcast_to(cell_volumes[:, None], cell_shape)
-                ),
-            ),
-            representation="cell_average",
-            conformity="discontinuous",
-            reconstruction_id=canonical_fingerprint(
-                {"kind": "unstructured-cell-average", "plan": plan.plan_id}
-            ),
+        support, cell_space, face_space = (
+            metadata.support,
+            metadata.cell_space,
+            metadata.face_space,
         )
-        face_shape = (face_count, components)
-        face_space = DiscreteFieldSpace(
-            f"{plan.field_name}_face_flux",
-            support.support_id,
-            EntityDofLayout(
-                face_entities.entity_set_id,
-                face_count,
-                face_count,
-                component_shape=(components,),
-            ),
-            ArraySpace(
-                face_shape,
-                pairing=DiagonalPairing(
-                    jnp.broadcast_to(face_measures[:, None], face_shape)
-                ),
-            ),
-            representation="flux_moment",
-            conformity="Hdiv",
-            trace_space_id=cell_space.field_space_id,
+        face_entities, face_block, preparation = (
+            metadata.face_entities,
+            metadata.face_block,
+            metadata.preparation,
         )
-        face_block = FiniteVolumeFaceBlock(
-            face_ids=jnp.arange(face_count, dtype=jnp.int32),
-            owner_cells=jnp.asarray(owner),
-            neighbor_cells=jnp.asarray(neighbor),
-            boundary_patch_ids=jnp.asarray(boundary_patch_ids),
-            face_centers=face_centers,
-            area_vectors=area_vectors,
-            face_measures=face_measures,
-            active_mask=face_active,
-            block_id=canonical_fingerprint(
-                {
-                    "kind": "unstructured-face-block",
-                    "plan": plan.plan_id,
-                    "storage": None if mesh.storage is None else mesh.storage.storage_id,
-                }
-            ),
-        )
-        preparation = PreparationReport(
-            capabilities=plan.capabilities,
-            diagnostics=(
-                "cell measures are positive",
-                "face area vectors point outward from owners",
-                "cell face-vector closure is satisfied",
-                "boundary patches are complete",
-            ),
-            resource_counts={
-                "vertices": points.shape[0],
-                "faces": face_count,
-                "cells": cell_count,
-                "boundary_faces": int(np.sum(neighbor < 0)),
-                "active_faces": int(np.sum(np.asarray(face_active))),
-                "reciprocal_faces": int(
-                    np.sum(np.asarray(face_active) & (neighbor >= 0))
-                ),
-                "source_faces": int(
-                    mesh.topology.entity_sets[plan.cell_dimension - 1].count
-                ),
-            },
-        )
-        measure_metadata = (
-            DiscreteMeasure(
-                "unstructured_cell_measure",
-                support.support_id,
-                cell_entities.entity_set_id,
-                cell_volumes,
-            ),
-            DiscreteMeasure(
-                "unstructured_face_measure",
-                support.support_id,
-                face_entities.entity_set_id,
-                face_measures,
-            ),
-        )
-        spaces, measures, capabilities = validate_prepared_metadata(
-            key=plan.key,
-            support=support,
-            field_spaces=(cell_space, face_space),
-            measures=measure_metadata,
-            capabilities=plan.capabilities,
-            preparation=preparation,
+        spaces, measures, capabilities = (
+            metadata.spaces,
+            metadata.measures,
+            metadata.capabilities,
         )
         version = str(numeric_version)
         if not version:
-            raise ValueError("numeric_version must be non-empty.")
+            raise ValueError(
+                "UnstructuredFiniteVolumeDiscretization.numeric_version must be non-empty; got an empty string."
+            )
         self.mesh = mesh
         self.cell_geometry = cell_geometry
         self.cell_volume_error_bounds = volume_errors
@@ -2083,7 +2578,9 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             or not isinstance(capacity, (int, np.integer))
             or capacity < owned_faces.size
         ):
-            raise ValueError("Owned-face capacity must cover every owned facet.")
+            raise ValueError(
+                "UnstructuredFiniteVolumeDiscretization.owned_face_capacity must be an integer covering every owned facet; got a noninteger or insufficient capacity."
+            )
         indices = np.zeros((capacity,), dtype=np.int32)
         indices[: owned_faces.size] = owned_faces
         self.owned_face_indices = jnp.asarray(indices, dtype=jnp.int32)
@@ -2191,6 +2688,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         normalization = (volume / raw_product) ** (1.0 / self.cell_dimension)
         return raw_widths * normalization[:, None]
 
+    @checked
     def integration_domain(
         self, kind: str, selection: EntitySelection | None = None, /
     ) -> IntegrationDomain:
@@ -2199,10 +2697,10 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         The owner of each face is the cell its stored area vector points out
         of; local facets index each cell's edge or face table.
         """
-        from ._side_trace import finite_volume_integration_domain
 
-        return finite_volume_integration_domain(self, kind, selection)
+        return imported_side_trace.finite_volume_integration_domain(self, kind, selection)
 
+    @checked
     def prepare_side_trace(
         self,
         field_name: str,
@@ -2212,22 +2710,21 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         rule: FacetTraceRule,
         quantity: SideTraceQuantity = "value",
         side: FieldTraceSide = "owner",
-        reconstruction: FiniteVolumeFaceReconstruction | None = None,
+        reconstruction: imported_side_trace.FiniteVolumeFaceReconstruction | None = None,
     ) -> PreparedTraceAction:
         """Prepare the cell-average or linear face state on selected faces.
 
         `reconstruction=None` publishes the side cell average at every site
         (`representation="cell-average"`); a
-        `PreparedCellPolynomialReconstruction` publishes the k-exact face state
+        `PreparedCellPolynomialReconstruction` publishes a degree-k polynomial face state
         (`"face-state"`, `trace_degree=k`) through a per-facet stencil route
-        with an exact transpose. Sites follow the owner's facet
+        with its algebraic transpose. Sites follow the owner's facet
         parametrization (edges or triangles) and are shared by both sides of an
         interior face; normals point out of the side cell. Polyhedral faces and
         nonlinear reconstructions are refused.
         """
-        from ._side_trace import prepare_finite_volume_side_trace
 
-        return prepare_finite_volume_side_trace(
+        return imported_side_trace.prepare_finite_volume_side_trace(
             self,
             field_name,
             domain,
@@ -2237,6 +2734,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             reconstruction=reconstruction,
         )
 
+    @checked
     def prepare_nonlinear_face_trace(
         self,
         field_name: str,
@@ -2244,14 +2742,13 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         /,
         *,
         rule: FacetTraceRule,
-        reconstruction: FiniteVolumeFaceReconstruction,
+        reconstruction: imported_side_trace.FiniteVolumeFaceReconstruction,
         quantity: SideTraceQuantity = "value",
         side: FieldTraceSide = "owner",
-    ) -> PreparedNonlinearFaceTrace:
+    ) -> imported_side_trace.PreparedNonlinearFaceTrace:
         """Prepare WENO-Z face states with a linearization at a supplied state."""
-        from ._side_trace import prepare_finite_volume_nonlinear_face_trace
 
-        return prepare_finite_volume_nonlinear_face_trace(
+        return imported_side_trace.prepare_finite_volume_nonlinear_face_trace(
             self,
             field_name,
             domain,
@@ -2262,11 +2759,12 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         )
 
 
-def _neighbor_centers_in_owner_frame(
+@checked
+def neighbor_centers_in_owner_frame(
     discretization: UnstructuredFiniteVolumeDiscretization,
     centers: Array,
 ) -> Array:
-    """Pull physical neighbor moments back through the prepared owning action."""
+    """Pull physical neighbor moments back through the prepared bound action."""
     maps = discretization.neighbor_frame_maps
     dimension = centers.shape[-1]
     neighbor = centers[jnp.maximum(discretization.neighbor_cells, 0)]
@@ -2278,92 +2776,117 @@ def _neighbor_centers_in_owner_frame(
 
 
 def _quality_report(
-    plan: Any,
-    connectivity: Any,
-    cell_volumes: Any,
-    cell_centers: Any,
-    area_vectors: Any,
-    face_measures: Any,
-    closure: Any,
-    owner: Any,
-    neighbor: Any,
-    maps: Any = None,
-) -> Any:
-    owner_ = jnp.asarray(owner, dtype=jnp.int32)
-    neighbor_ = jnp.asarray(neighbor, dtype=jnp.int32)
-    interior = (neighbor_ >= 0) & plan.face_active
-    neighbor_centers = cell_centers[jnp.maximum(neighbor_, 0)]
+    plan: UnstructuredFiniteVolumePlan,
+    connectivity: Connectivity,
+    cell_volumes: Array,
+    cell_centers: Array,
+    area_vectors: Array,
+    face_measures: Array,
+    closure: Array,
+    owner: np.ndarray,
+    neighbor: np.ndarray,
+    maps: np.ndarray | None = None,
+) -> UnstructuredFiniteVolumeQualityReport:
+    """Prepare host-side quality diagnostics from the represented FV geometry."""
+    (
+        points,
+        tetrahedra,
+        face_active,
+        volumes,
+        centers,
+        areas,
+        measures,
+        closure_vectors,
+        host_connectivity,
+    ) = jax.device_get(
+        (
+            plan.vertices,
+            plan.tetrahedra,
+            plan.face_active,
+            cell_volumes,
+            cell_centers,
+            area_vectors,
+            face_measures,
+            closure,
+            connectivity,
+        )
+    )
+    owner_ = np.asarray(owner, dtype=np.int32)
+    neighbor_ = np.asarray(neighbor, dtype=np.int32)
+    interior = (neighbor_ >= 0) & face_active
+    neighbor_centers = centers[np.maximum(neighbor_, 0)]
     if maps is not None:
-        dimension = cell_centers.shape[-1]
-        maps = jnp.asarray(maps)
-        neighbor_centers = contract(
+        dimension = centers.shape[-1]
+        neighbor_centers = np.einsum(
             "fji,fj->fi",
             maps[:, :dimension, :dimension],
             neighbor_centers - maps[:, :dimension, dimension],
         )
-    connector = neighbor_centers - cell_centers[owner_]
-    denominator = jnp.linalg.norm(connector, axis=-1) * face_measures
-    cosine = jnp.abs(jnp.sum(connector * area_vectors, axis=-1)) / jnp.where(
+    connector = neighbor_centers - centers[owner_]
+    denominator = np.linalg.norm(connector, axis=-1) * measures
+    cosine = np.abs(np.sum(connector * areas, axis=-1)) / np.where(
         denominator > 0.0, denominator, 1.0
     )
-    maximum_nonorthogonality = jnp.max(
-        jnp.where(
+    maximum_nonorthogonality = np.max(
+        np.where(
             interior,
-            jnp.degrees(jnp.arccos(jnp.clip(cosine, 0.0, 1.0))),
+            np.degrees(np.arccos(np.clip(cosine, 0.0, 1.0))),
             0.0,
         )
     )
-    points = jnp.asarray(plan.vertices)
-    if isinstance(connectivity, PolygonalConnectivity):
-        cell_edges = jnp.asarray(connectivity.cell_edges, dtype=jnp.int32)
-        valid = jnp.asarray(connectivity.cell_edge_valid)
-        lengths = jnp.linalg.norm(
-            points[jnp.asarray(connectivity.edges)[:, 1]]
-            - points[jnp.asarray(connectivity.edges)[:, 0]],
-            axis=-1,
-        )
-        cell_maximum = jnp.max(jnp.where(valid, lengths[cell_edges], 0.0), axis=1)
-        aspect = cell_maximum**2 / cell_volumes
-    elif isinstance(connectivity, TetrahedralConnectivity):
-        cells = jnp.asarray(plan.tetrahedra, dtype=jnp.int32)
-        cell_points = points[cells]
-        pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
-        edge_lengths = jnp.stack(
-            tuple(
-                jnp.linalg.norm(cell_points[:, right] - cell_points[:, left], axis=-1)
-                for left, right in pairs
-            ),
-            axis=1,
-        )
-        cell_faces = jnp.asarray(connectivity.cell_faces, dtype=jnp.int32)
-        maximum_face = jnp.max(face_measures[cell_faces], axis=1)
-        minimum_altitude = 3.0 * cell_volumes / maximum_face
-        aspect = jnp.max(edge_lengths, axis=1) / minimum_altitude
-    elif not isinstance(connectivity, PolyhedralConnectivity):
-        maximum_face_scale = jnp.max(
-            jnp.sqrt(face_measures[jnp.asarray(connectivity.cell_faces)]), axis=1
-        )
-        aspect = maximum_face_scale / jnp.cbrt(cell_volumes)
-    else:
-        cell_faces = jnp.asarray(connectivity.cell_face_values, dtype=jnp.int32)
-        counts = np.diff(np.asarray(connectivity.cell_face_offsets, dtype=np.int32))
-        cell_ids = jnp.asarray(
-            np.repeat(np.arange(connectivity.cell_count, dtype=np.int32), counts)
-        )
-        maximum_face_scale = jax.ops.segment_max(
-            jnp.sqrt(face_measures[cell_faces]),
-            cell_ids,
-            num_segments=connectivity.cell_count,
-        )
-        aspect = maximum_face_scale / jnp.cbrt(cell_volumes)
+    match connectivity:
+        case PolygonalConnectivity():
+            cell_edges = np.asarray(host_connectivity.cell_edges, dtype=np.int32)
+            valid = np.asarray(host_connectivity.cell_edge_valid)
+            edges = np.asarray(host_connectivity.edges)
+            lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=-1)
+            cell_maximum = np.max(np.where(valid, lengths[cell_edges], 0.0), axis=1)
+            aspect = cell_maximum**2 / volumes
+        case TetrahedralConnectivity():
+            cells = np.asarray(tetrahedra, dtype=np.int32)
+            cell_points = points[cells]
+            pairs = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+            edge_lengths = np.stack(
+                tuple(
+                    np.linalg.norm(cell_points[:, right] - cell_points[:, left], axis=-1)
+                    for left, right in pairs
+                ),
+                axis=1,
+            )
+            cell_faces = np.asarray(host_connectivity.cell_faces, dtype=np.int32)
+            maximum_face = np.max(measures[cell_faces], axis=1)
+            minimum_altitude = 3.0 * volumes / maximum_face
+            aspect = np.max(edge_lengths, axis=1) / minimum_altitude
+        case HexahedralConnectivity():
+            maximum_face_scale = np.max(
+                np.sqrt(measures[np.asarray(host_connectivity.cell_faces)]), axis=1
+            )
+            aspect = maximum_face_scale / np.cbrt(volumes)
+        case PolyhedralConnectivity():
+            cell_faces = np.asarray(host_connectivity.cell_face_values, dtype=np.int32)
+            counts = np.diff(
+                np.asarray(host_connectivity.cell_face_offsets, dtype=np.int32)
+            )
+            cell_ids = np.repeat(
+                np.arange(connectivity.cell_count, dtype=np.int32), counts
+            )
+            maximum_face_scale = np.full(
+                connectivity.cell_count, -np.inf, dtype=measures.dtype
+            )
+            np.maximum.at(maximum_face_scale, cell_ids, np.sqrt(measures[cell_faces]))
+            aspect = maximum_face_scale / np.cbrt(volumes)
+        case _:
+            assert_never(connectivity)
     return UnstructuredFiniteVolumeQualityReport(
-        minimum_cell_measure=jnp.min(cell_volumes),
-        maximum_cell_measure=jnp.max(cell_volumes),
-        minimum_face_measure=jnp.min(face_measures),
-        maximum_aspect_ratio=jnp.max(aspect),
-        maximum_nonorthogonality_degrees=maximum_nonorthogonality,
-        maximum_closure_residual=jnp.max(jnp.linalg.norm(closure, axis=-1)),
-        worst_cell=jnp.argmax(aspect),
+        minimum_cell_measure=jnp.asarray(np.min(volumes)),
+        maximum_cell_measure=jnp.asarray(np.max(volumes)),
+        minimum_face_measure=jnp.asarray(np.min(measures)),
+        maximum_aspect_ratio=jnp.asarray(np.max(aspect)),
+        maximum_nonorthogonality_degrees=jnp.asarray(maximum_nonorthogonality),
+        maximum_closure_residual=jnp.asarray(
+            np.max(np.linalg.norm(closure_vectors, axis=-1))
+        ),
+        worst_cell=jnp.asarray(np.argmax(aspect)),
     )
 
 

@@ -31,8 +31,8 @@ from .._interpolation import GatherStencil
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._distributed_field import (
-    _color_directed_pairs,
-    _exchange_owner_local_packets,
+    color_directed_pairs,
+    exchange_owner_local_packets,
     make_owner_local_field_array,
 )
 from ..discretization._field_query import PreparedFieldQuery
@@ -42,25 +42,29 @@ from ..discretization.fem._point_interpolation import (
 from ..discretization.finite_volume._field_view import (
     UnstructuredFiniteVolumeFieldReconstructionKernel,
 )
+from ..typing import checked
 from ._coupling import OversetCoupling
-from ._overset import PreparedOversetFieldTransfer
+from ._overset import OversetDonorPacket, PreparedOversetFieldTransfer
 
 
 def _query_scalar_stencil(query: PreparedFieldQuery, /) -> GatherStencil:
     if not query.complete or not query.coefficient_linear:
         raise ValueError(
-            "Owner-local overset requires complete coefficient-linear fixed queries."
+            "PreparedOwnerLocalOversetExchange.query must admit every requested point and be coefficient-linear; got an incomplete or nonlinear fixed query."
         )
     kernel = query.reconstruction.kernel
-    if isinstance(kernel, FiniteElementFieldReconstructionKernel):
-        return kernel.scalar_query_stencil(query.route)
-    if not isinstance(
-        kernel, UnstructuredFiniteVolumeFieldReconstructionKernel
-    ) or not isinstance(query.route, GatherStencil):
-        raise ValueError(
-            "This field owner has no bounded scalar coefficient-read stencil."
-        )
-    route = query.route
+    match kernel, query.route:
+        case FiniteElementFieldReconstructionKernel(), route:
+            return kernel.scalar_query_stencil(route)
+        case (
+            UnstructuredFiniteVolumeFieldReconstructionKernel(),
+            GatherStencil() as route,
+        ):
+            pass
+        case _:
+            raise ValueError(
+                "PreparedOwnerLocalOversetExchange.field_query must provide a bounded scalar coefficient-read stencil; got no bounded stencil for this field owner"
+            )
     components = prod(query.coefficient_shape[1:])
     indices = np.asarray(route.indices)
     weights = np.asarray(route.weights)
@@ -85,7 +89,7 @@ def _scalar_stencil(
     """Fold only the overlay's declared scientific value action into its route."""
     if coupling.field_query is None or coupling.field_query.query_id != query.query_id:
         raise ValueError(
-            "Sparse overset stencils must retain their canonical field overlay."
+            "PreparedOwnerLocalOversetExchange.coupling.field_query must retain the overlay with the same query ID; got a missing or stale field overlay"
         )
     stencil = _query_scalar_stencil(query)
     match coupling.value_action:
@@ -102,7 +106,7 @@ def _scalar_stencil(
             weights = np.asarray(stencil.weights).reshape(indices.shape)
             valid = np.asarray(stencil.valid).reshape(indices.shape)
             # The source-component axis expands only the local stencil width,
-            # never the donor's complete coefficient extent.
+            # never the donor's full coefficient extent.
             mixed_indices = np.broadcast_to(indices[:, None, :, :], shape)
             mixed_weights = rotation[None, :, :, None] * weights[:, None, :, :]
             mixed_valid = np.broadcast_to(valid[:, None, :, :], shape) & (
@@ -128,9 +132,30 @@ def _place(
 def _local(value: Array, /) -> np.ndarray:
     if len(value.addressable_shards) != 1:
         raise ValueError(
-            "Overset exchange requires exactly one process-local owner bucket."
+            "PreparedOwnerLocalOversetExchange.value.addressable_shards must contain one process-local owner bucket; got a shard count other than one"
         )
-    return np.asarray(value.addressable_shards[0].data)[0]
+    return np.asarray(jax.device_get(value.addressable_shards[0].data))[0]
+
+
+@final
+class _ExchangeCapacities(StrictModule, NonTrainableState):
+    """Collectively admitted sparse storage widths for one exchange epoch."""
+
+    owned: int = eqx.field(static=True)
+    support: int = eqx.field(static=True)
+    output: int = eqx.field(static=True)
+    route: int = eqx.field(static=True)
+    packet: int = eqx.field(static=True)
+
+
+@final
+class _RequestRoutes(StrictModule, NonTrainableState):
+    """Peer request routes resolved against stable locally owned coefficient IDs."""
+
+    send: np.ndarray
+    send_valid: np.ndarray
+    receive: np.ndarray
+    receive_valid: np.ndarray
 
 
 def _admit_capacities(
@@ -141,8 +166,8 @@ def _admit_capacities(
     devices: tuple[jax.Device, ...],
     axis: str,
     /,
-) -> tuple[int, ...]:
-    """Agree on the epoch and allocate only actual sparse-route maxima."""
+) -> _ExchangeCapacities:
+    """Agree on the epoch and allocate the sparse-route maxima."""
     digest = np.asarray(
         [int(identity[start : start + 7], 16) for start in range(0, 64, 7)],
         dtype=np.int32,
@@ -163,16 +188,27 @@ def _admit_capacities(
         out_specs=(PartitionSpec(), PartitionSpec()),
         check_vma=False,
     )(_place(sizes, rank, devices, axis), _place(digest, rank, devices, axis))
-    capacities = np.asarray(maxima)
-    if not bool(np.asarray(agreement)) or capacities[4] > bound:
+    # Collective outputs are replicated; read this process's replica, never a
+    # non-addressable global buffer or a global donor field.
+    capacities_host, agreement_host = jax.device_get(
+        (maxima.addressable_shards[0].data, agreement.addressable_shards[0].data)
+    )
+    capacities = np.asarray(capacities_host)
+    if not bool(np.asarray(agreement_host)) or capacities[4] > bound:
         raise ValueError(
-            "Collective overset epoch agreement or sparse request bound failed."
+            "PreparedOwnerLocalOversetExchange.epoch_agreement must hold and sparse request capacity must not exceed its bound; got epoch disagreement or capacity above the bound"
         )
-    return tuple(max(int(value), 1) for value in capacities)
+    return _ExchangeCapacities(
+        owned=max(int(capacities[0]), 1),
+        support=max(int(capacities[1]), 1),
+        output=max(int(capacities[2]), 1),
+        route=max(int(capacities[3]), 1),
+        packet=max(int(capacities[4]), 1),
+    )
 
 
 def _prepare_request_routes(
-    requests: list[tuple[tuple[int, int], ...]],
+    requests: tuple[tuple[tuple[int, int], ...], ...],
     support_lookup: dict[tuple[int, int], int],
     owned_lookup: dict[tuple[int, int], int],
     width: int,
@@ -181,7 +217,7 @@ def _prepare_request_routes(
     axis: str,
     permutations: tuple[tuple[tuple[int, int], ...], ...],
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> _RequestRoutes:
     """Resolve real peer stable-ID requests only against locally owned rows."""
     request_packet = np.full((len(permutations), width, 2), -1, dtype=np.int64)
     receive = np.zeros((len(permutations), width), dtype=np.int32)
@@ -193,7 +229,7 @@ def _prepare_request_routes(
             receive_valid[phase, column] = True
     mesh, spec = Mesh(np.asarray(devices, dtype=object), (axis,)), PartitionSpec(axis)
     incoming = _local(
-        _exchange_owner_local_packets(
+        exchange_owner_local_packets(
             _place(request_packet, rank, devices, axis),
             permutations,
             mesh,
@@ -222,26 +258,268 @@ def _prepare_request_routes(
         out_specs=PartitionSpec(),
         check_vma=False,
     )(_place(jnp.asarray(missing), rank, devices, axis))
-    if bool(np.asarray(failed)):
+    if bool(np.asarray(jax.device_get(failed.addressable_shards[0].data))):
         raise ValueError(
-            "A requested stable coefficient ID is absent from its actual donor owner."
+            "PreparedOwnerLocalOversetExchange.requested_coefficient_id must be present at its donor owner; got an absent stable coefficient ID"
         )
-    return send, send_valid, receive, receive_valid
+    return _RequestRoutes(send, send_valid, receive, receive_valid)
+
+
+type _FieldLayouts = dict[str, tuple[int, tuple[int, ...]]]
+type _ScalarKey = tuple[int, int]
+type _LocalStencil = tuple[OversetDonorPacket, PreparedFieldQuery, GatherStencil]
+
+
+@final
+class _ExchangeSupport(StrictModule, NonTrainableState):
+    """Local donor layout and only the coefficient support of local receptors."""
+
+    ids: dict[str, np.ndarray]
+    stencils: tuple[_LocalStencil, ...]
+    fields: _FieldLayouts = eqx.field(static=True)
+    owners: dict[str, int] = eqx.field(static=True)
+    owned_keys: tuple[_ScalarKey, ...] = eqx.field(static=True)
+    support: tuple[_ScalarKey, ...] = eqx.field(static=True)
+    donor_layouts: tuple[tuple[str, tuple[int, ...], int], ...] = eqx.field(static=True)
+
+
+def _prepare_exchange_support(
+    transfer: PreparedOversetFieldTransfer,
+    coefficient_ids: Mapping[str, ArrayLike],
+    rank: int,
+    parts: int,
+    /,
+) -> _ExchangeSupport:
+    names = transfer.donor_names
+    owners = {spec.part_name: spec.owner_rank for spec in transfer.connectivity.specs}
+    if any(not 0 <= owner < parts for owner in owners.values()):
+        raise ValueError(
+            "PreparedOwnerLocalOversetExchange.owners must index execution partitions in the range [0, parts); got an owner outside that range"
+        )
+    if any(
+        packet.donor_rank != owners[packet.donor_part]
+        or packet.receptor_rank != owners[packet.receptor_part]
+        for packet in transfer.packets
+    ):
+        raise ValueError(
+            "PreparedOwnerLocalOversetExchange.transfer.packets must match their registered donor and receptor owners; got a packet with a mismatched donor or receptor rank"
+        )
+    fields = {
+        name: (index, shape)
+        for index, (name, shape) in enumerate(
+            zip(names, transfer.coefficient_shapes, strict=True)
+        )
+    }
+    packets = tuple(
+        (packet, query, coupling)
+        for packet, query, coupling in zip(
+            transfer.packets, transfer.queries, transfer.field_couplings, strict=True
+        )
+        if packet.receptor_rank == rank
+    )
+    required_names = {name for name in names if owners[name] == rank} | {
+        packet.donor_part for packet, _, _ in packets
+    }
+    if set(coefficient_ids) != required_names:
+        raise ValueError(
+            "PreparedOwnerLocalOversetExchange.coefficient_ids must form the same name set as the local donor fields and local receptor-query support fields; got missing or extra field names"
+        )
+    ids = {}
+    for name in sorted(required_names):
+        values = np.asarray(coefficient_ids[name])
+        if (
+            values.shape != (prod(fields[name][1]),)
+            or not np.issubdtype(values.dtype, np.integer)
+            or np.any(values < 0)
+            or np.any(values > np.iinfo(np.int64).max)
+            or np.unique(values).size != values.size
+        ):
+            raise ValueError(
+                "PreparedOwnerLocalOversetExchange.coefficient_ids must contain one unique non-negative int64-encodable stable scalar ID per encoded coefficient in flattened order; got a shape mismatch, non-integer dtype, ID outside the non-negative int64 range, or duplicate ID"
+            )
+        ids[name] = values.astype(np.int64)
+    owned_keys, donor_layouts = [], []
+    for name in names:
+        if owners[name] == rank:
+            donor_layouts.append((name, fields[name][1], len(owned_keys)))
+            owned_keys.extend(
+                (fields[name][0], int(identifier)) for identifier in ids[name]
+            )
+    support_keys: set[_ScalarKey] = set()
+    stencils = []
+    for packet, query, coupling in packets:
+        stencil = _scalar_stencil(query, coupling)
+        rows, valid = np.asarray(stencil.indices), np.asarray(stencil.valid)
+        field = fields[packet.donor_part][0]
+        support_keys.update(
+            (field, int(ids[packet.donor_part][row])) for row in np.unique(rows[valid])
+        )
+        stencils.append((packet, query, stencil))
+    return _ExchangeSupport(
+        ids,
+        tuple(stencils),
+        fields,
+        owners,
+        tuple(owned_keys),
+        tuple(sorted(support_keys)),
+        tuple(donor_layouts),
+    )
+
+
+@final
+class _ExchangeRequests(StrictModule, NonTrainableState):
+    """Sparse request schedule, receptor layout and collective admission payload."""
+
+    local_sizes: np.ndarray
+    permutations: tuple[tuple[tuple[int, int], ...], ...] = eqx.field(static=True)
+    requests: tuple[tuple[_ScalarKey, ...], ...] = eqx.field(static=True)
+    receptor_layouts: tuple[tuple[str, tuple[int, ...], int], ...] = eqx.field(
+        static=True
+    )
+    receptor_offsets: dict[str, int] = eqx.field(static=True)
+    output_count: int = eqx.field(static=True)
+    identity: str = eqx.field(static=True)
+
+
+def _prepare_exchange_requests(
+    transfer: PreparedOversetFieldTransfer,
+    support: _ExchangeSupport,
+    rank: int,
+    parts: int,
+    axis: str,
+    bound: int,
+    /,
+) -> _ExchangeRequests:
+    requests = []
+    permutations = color_directed_pairs(
+        (packet.receptor_rank, packet.donor_rank)
+        for packet in transfer.packets
+        if packet.receptor_rank != packet.donor_rank
+    )
+    for phase in permutations:
+        outgoing = tuple(target for source, target in phase if source == rank)
+        requests.append(
+            tuple(
+                key
+                for key in support.support
+                if outgoing
+                and support.owners[transfer.donor_names[key[0]]] == outgoing[0]
+            )
+        )
+    receptor_layouts, output_count = [], 0
+    receptor_offsets = {}
+    for evidence, spec in zip(
+        transfer.receptors, transfer.connectivity.specs, strict=True
+    ):
+        if spec.owner_rank == rank:
+            shape = (evidence.receptor_ids.size, *transfer.value_shape)
+            receptor_layouts.append((evidence.part_name, shape, output_count))
+            receptor_offsets[evidence.part_name] = output_count
+            output_count += prod(shape)
+    local_sizes = np.asarray(
+        [
+            len(support.owned_keys),
+            len(support.support),
+            output_count,
+            max(
+                (stencil.indices.shape[1] for _, _, stencil in support.stencils),
+                default=1,
+            ),
+            max((len(request) for request in requests), default=0),
+        ],
+        dtype=np.int64,
+    )
+    identity = canonical_fingerprint(
+        {
+            "transfer": transfer.transfer_id,
+            "fields": support.fields,
+            "owners": support.owners,
+            "parts": parts,
+            "axis": axis,
+            "bound": bound,
+        }
+    )
+    return _ExchangeRequests(
+        local_sizes,
+        permutations,
+        tuple(requests),
+        tuple(receptor_layouts),
+        receptor_offsets,
+        output_count,
+        identity,
+    )
+
+
+@final
+class _LocalExchangeRoutes(StrictModule, NonTrainableState):
+    """Local direct reads and coefficient-linear receptor routes."""
+
+    direct: np.ndarray
+    direct_valid: np.ndarray
+    indices: np.ndarray
+    weights: np.ndarray
+
+
+def _prepare_local_exchange_routes(
+    transfer: PreparedOversetFieldTransfer,
+    support: _ExchangeSupport,
+    requests: _ExchangeRequests,
+    capacities: _ExchangeCapacities,
+    support_lookup: dict[_ScalarKey, int],
+    owned_lookup: dict[_ScalarKey, int],
+    /,
+) -> _LocalExchangeRoutes:
+    direct = np.zeros(capacities.support, dtype=np.int32)
+    direct_valid = np.zeros(capacities.support, dtype=np.bool_)
+    for row, key in enumerate(support.support):
+        if key in owned_lookup:
+            direct[row], direct_valid[row] = owned_lookup[key], True
+    indices = np.zeros((capacities.output, capacities.route), dtype=np.int32)
+    weights = np.zeros(indices.shape, dtype=np.float64)
+    output_covered = np.zeros(requests.output_count, dtype=np.bool_)
+    value_count = prod(transfer.value_shape)
+    for packet, query, stencil in support.stencils:
+        destinations = requests.receptor_offsets[packet.receptor_part] + (
+            np.asarray(packet.receptor_slots)[:, None] * value_count
+            + np.arange(value_count, dtype=np.int32)[None, :]
+        ).reshape(-1)
+        if np.any(output_covered[destinations]):
+            raise ValueError(
+                "PreparedOwnerLocalOversetExchange.fixed_routes.destinations must be disjoint across route assignments; got a receptor scalar assigned more than once"
+            )
+        output_covered[destinations] = True
+        field = support.fields[packet.donor_part][0]
+        route_indices, route_weights, valid = (
+            np.asarray(stencil.indices),
+            np.asarray(stencil.weights),
+            np.asarray(stencil.valid),
+        )
+        for output, column in zip(*np.nonzero(valid), strict=True):
+            indices[destinations[output], column] = support_lookup[
+                field, int(support.ids[packet.donor_part][route_indices[output, column]])
+            ]
+            weights[destinations[output], column] = route_weights[output, column]
+    if not np.all(output_covered):
+        raise ValueError(
+            "PreparedOwnerLocalOversetExchange.fixed_routes must cover every locally owned receptor scalar; got at least one uncovered receptor scalar"
+        )
+    return _LocalExchangeRoutes(direct, direct_valid, indices, weights)
 
 
 @final
 class PreparedOwnerLocalOversetExchange(StrictModule, NonTrainableState):
-    """Actual device-placed sparse support routes of one native overset epoch.
+    """Store device-placed sparse support routes for one native overset epoch.
 
-    One execution-group device owns each process/partition. ``coefficient_ids``
-    explicitly names each scalar coefficient in its actual FE/FV flattened
-    order, scoped by donor field and revision; numbering is never inferred from
-    geometry vertices. Supply IDs only for this rank's donor fields and the
-    fields referenced by its receptor queries. Dynamic calls accept only locally
-    owned donor arrays and return only locally owned receptor outputs.
+    Each process/partition is assigned to one execution-group device.
+    ``coefficient_ids`` explicitly names every scalar coefficient in FE/FV
+    flattened order, scoped by donor field and revision; coefficient numbering
+    is independent of geometry vertices. Supply IDs for this rank's donor fields
+    and for every field referenced by its receptor queries. Dynamic calls accept
+    donor arrays local to this rank and return receptor outputs local to this
+    rank.
 
-    Local geometry/query metadata may have been prepared serially. This API does
-    not claim distributed hole cutting or distributed donor search.
+    Local geometry/query metadata may have been prepared serially. Distributed
+    hole cutting and distributed donor search are outside this API's scope.
     """
 
     send_indices: Array
@@ -270,6 +548,7 @@ class PreparedOwnerLocalOversetExchange(StrictModule, NonTrainableState):
     transfer_id: str = eqx.field(static=True)
     exchange_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: PreparedOversetFieldTransfer,
@@ -291,186 +570,44 @@ class PreparedOwnerLocalOversetExchange(StrictModule, NonTrainableState):
             or tuple(device.process_index for device in devices) != tuple(range(parts))
         ):
             raise ValueError(
-                "Overset placement requires one actual execution-group device per process and a positive packet bound."
+                "PreparedOwnerLocalOversetExchange.placement must have a non-empty axis, a positive packet bound, and one execution-group device per process in process order; got an empty axis, non-positive bound, or device/process mismatch"
             )
-        names = transfer.donor_names
-        owners = {spec.part_name: spec.owner_rank for spec in transfer.connectivity.specs}
-        if any(not 0 <= owner < parts for owner in owners.values()):
-            raise ValueError(
-                "Donor/fringe packet ownership must bind actual execution partitions."
-            )
-        if any(
-            packet.donor_rank != owners[packet.donor_part]
-            or packet.receptor_rank != owners[packet.receptor_part]
-            for packet in transfer.packets
-        ):
-            raise ValueError(
-                "A donor packet disagrees with its registered donor/fringe owner."
-            )
-        fields = {
-            name: (index, shape)
-            for index, (name, shape) in enumerate(
-                zip(names, transfer.coefficient_shapes, strict=True)
-            )
-        }
-        packets = tuple(
-            (packet, query, coupling)
-            for packet, query, coupling in zip(
-                transfer.packets, transfer.queries, transfer.field_couplings, strict=True
-            )
-            if packet.receptor_rank == rank
+        support = _prepare_exchange_support(transfer, coefficient_ids, rank, parts)
+        owned_lookup = {key: row for row, key in enumerate(support.owned_keys)}
+        support_lookup = {key: row for row, key in enumerate(support.support)}
+        requests = _prepare_exchange_requests(transfer, support, rank, parts, axis, bound)
+        identity, permutations = requests.identity, requests.permutations
+        capacities = _admit_capacities(
+            requests.local_sizes, identity, bound, rank, devices, axis
         )
-        required_names = {name for name in names if owners[name] == rank} | {
-            packet.donor_part for packet, _, _ in packets
-        }
-        if set(coefficient_ids) != required_names:
-            raise ValueError(
-                "Stable coefficient IDs must cover exactly local donor fields and local receptor query support fields."
-            )
-        ids = {}
-        for name in sorted(required_names):
-            values = np.asarray(coefficient_ids[name])
-            if (
-                values.shape != (prod(fields[name][1]),)
-                or not np.issubdtype(values.dtype, np.integer)
-                or np.any(values < 0)
-                or np.any(values > np.iinfo(np.int64).max)
-                or np.unique(values).size != values.size
-            ):
-                raise ValueError(
-                    "Each field requires unique nonnegative int64 stable scalar IDs in exact flattened coefficient order."
-                )
-            ids[name] = values.astype(np.int64)
-        owned_keys, donor_layouts = [], []
-        for name in names:
-            if owners[name] == rank:
-                donor_layouts.append((name, fields[name][1], len(owned_keys)))
-                owned_keys.extend(
-                    (fields[name][0], int(identifier)) for identifier in ids[name]
-                )
-        owned_lookup = {key: row for row, key in enumerate(owned_keys)}
-        support_keys: set[tuple[int, int]] = set()
-        stencils = []
-        for packet, query, coupling in packets:
-            stencil = _scalar_stencil(query, coupling)
-            rows = np.asarray(stencil.indices)
-            valid = np.asarray(stencil.valid)
-            field = fields[packet.donor_part][0]
-            keys = {
-                (field, int(ids[packet.donor_part][row]))
-                for row in np.unique(rows[valid])
-            }
-            support_keys.update(keys)
-            stencils.append((packet, query, stencil))
-        support = tuple(sorted(support_keys))
-        support_lookup = {key: row for row, key in enumerate(support)}
-        requests = []
-        permutations = _color_directed_pairs(
-            (packet.receptor_rank, packet.donor_rank)
-            for packet in transfer.packets
-            if packet.receptor_rank != packet.donor_rank
-        )
-        for phase in permutations:
-            outgoing = tuple(target for source, target in phase if source == rank)
-            requests.append(
-                tuple(
-                    key
-                    for key in support
-                    if outgoing and owners[names[key[0]]] == outgoing[0]
-                )
-            )
-        receptor_layouts, output_count = [], 0
-        receptor_offsets = {}
-        for evidence, spec in zip(
-            transfer.receptors, transfer.connectivity.specs, strict=True
-        ):
-            if spec.owner_rank == rank:
-                shape = (evidence.receptor_ids.size, *transfer.value_shape)
-                receptor_layouts.append((evidence.part_name, shape, output_count))
-                receptor_offsets[evidence.part_name] = output_count
-                output_count += prod(shape)
-        local_sizes = np.asarray(
-            [
-                len(owned_keys),
-                len(support),
-                output_count,
-                max((stencil.indices.shape[1] for _, _, stencil in stencils), default=1),
-                max((len(request) for request in requests), default=0),
-            ],
-            dtype=np.int64,
-        )
-        identity = canonical_fingerprint(
-            {
-                "transfer": transfer.transfer_id,
-                "fields": fields,
-                "owners": owners,
-                "parts": parts,
-                "axis": axis,
-                "bound": bound,
-            }
-        )
-        owned_capacity, support_capacity, output_capacity, route_width, packet_width = (
-            _admit_capacities(local_sizes, identity, bound, rank, devices, axis)
-        )
-        send, send_valid, receive, receive_valid = _prepare_request_routes(
-            requests,
+        traffic = _prepare_request_routes(
+            requests.requests,
             support_lookup,
             owned_lookup,
-            packet_width,
+            capacities.packet,
             rank,
             devices,
             axis,
             permutations,
         )
-        direct = np.zeros(support_capacity, dtype=np.int32)
-        direct_valid = np.zeros(support_capacity, dtype=np.bool_)
-        for row, key in enumerate(support):
-            if key in owned_lookup:
-                direct[row], direct_valid[row] = owned_lookup[key], True
-        route_indices = np.zeros((output_capacity, route_width), dtype=np.int32)
-        route_weights = np.zeros(route_indices.shape, dtype=np.float64)
-        output_covered = np.zeros(output_count, dtype=np.bool_)
-        value_count = prod(transfer.value_shape)
-        for packet, query, stencil in stencils:
-            destinations = receptor_offsets[packet.receptor_part] + (
-                np.asarray(packet.receptor_slots)[:, None] * value_count
-                + np.arange(value_count, dtype=np.int32)[None, :]
-            ).reshape(-1)
-            if np.any(output_covered[destinations]):
-                raise ValueError(
-                    "Overset fixed routes assign a receptor scalar more than once."
-                )
-            output_covered[destinations] = True
-            field = fields[packet.donor_part][0]
-            indices, weights, valid = (
-                np.asarray(stencil.indices),
-                np.asarray(stencil.weights),
-                np.asarray(stencil.valid),
-            )
-            for output, column in zip(*np.nonzero(valid), strict=True):
-                route_indices[destinations[output], column] = support_lookup[
-                    field, int(ids[packet.donor_part][indices[output, column]])
-                ]
-                route_weights[destinations[output], column] = weights[output, column]
-        if not np.all(output_covered):
-            raise ValueError(
-                "Fixed donor routes must cover every locally owned receptor scalar."
-            )
+        local = _prepare_local_exchange_routes(
+            transfer, support, requests, capacities, support_lookup, owned_lookup
+        )
         self.send_indices, self.send_valid = (
-            _place(send, rank, devices, axis),
-            _place(send_valid, rank, devices, axis),
+            _place(traffic.send, rank, devices, axis),
+            _place(traffic.send_valid, rank, devices, axis),
         )
         self.receive_indices, self.receive_valid = (
-            _place(receive, rank, devices, axis),
-            _place(receive_valid, rank, devices, axis),
+            _place(traffic.receive, rank, devices, axis),
+            _place(traffic.receive_valid, rank, devices, axis),
         )
         self.direct_indices, self.direct_valid = (
-            _place(direct, rank, devices, axis),
-            _place(direct_valid, rank, devices, axis),
+            _place(local.direct, rank, devices, axis),
+            _place(local.direct_valid, rank, devices, axis),
         )
         self.route_indices, self.route_weights = (
-            _place(route_indices, rank, devices, axis),
-            _place(route_weights, rank, devices, axis),
+            _place(local.indices, rank, devices, axis),
+            _place(local.weights, rank, devices, axis),
         )
         self.permutations = tuple(
             tuple((target, source) for source, target in phase) for phase in permutations
@@ -478,37 +615,37 @@ class PreparedOwnerLocalOversetExchange(StrictModule, NonTrainableState):
         self.reverse_permutations = permutations
         self.devices, self.axis_name, self.partition_index = devices, axis, rank
         self.donor_layouts, self.receptor_layouts = (
-            tuple(donor_layouts),
-            tuple(receptor_layouts),
+            support.donor_layouts,
+            requests.receptor_layouts,
         )
         self.owned_capacity, self.support_capacity, self.output_capacity = (
-            owned_capacity,
-            support_capacity,
-            output_capacity,
+            capacities.owned,
+            capacities.support,
+            capacities.output,
         )
-        self.message_capacity = packet_width
+        self.message_capacity = capacities.packet
         self.requested_support_count, self.served_support_count = (
-            int(np.count_nonzero(receive_valid)),
-            int(np.count_nonzero(send_valid)),
+            int(np.count_nonzero(traffic.receive_valid)),
+            int(np.count_nonzero(traffic.send_valid)),
         )
         self.transfer_id = transfer.transfer_id
         self.exchange_id = canonical_fingerprint(
             {
                 "epoch": identity,
                 "rank": rank,
-                "owned": owned_keys,
-                "support": support,
-                "send": send,
-                "receive": receive,
-                "routes": route_indices,
-                "weights": route_weights,
+                "owned": list(support.owned_keys),
+                "support": support.support,
+                "send": traffic.send,
+                "receive": traffic.receive,
+                "routes": local.indices,
+                "weights": local.weights,
             }
         )
 
     def apply(self, coefficients: Mapping[str, ArrayLike], /) -> dict[str, Array]:
         """Request only fixed unique support values; return local fringe outputs."""
         values = self._pack(coefficients, self.donor_layouts, self.owned_capacity)
-        result = _owner_local_overset_action(self, values, False)
+        result = owner_local_overset_action(self, values, False)
         local = result.addressable_shards[0].data[0]
         return {
             name: local[offset : offset + prod(shape)].reshape(shape)
@@ -516,9 +653,9 @@ class PreparedOwnerLocalOversetExchange(StrictModule, NonTrainableState):
         }
 
     def transpose(self, cotangents: Mapping[str, ArrayLike], /) -> dict[str, Array]:
-        """Return exact fixed-route contributions to their real donor owners."""
+        """Return every fixed-route contribution to its donor process/partition."""
         values = self._pack(cotangents, self.receptor_layouts, self.output_capacity)
-        result = _owner_local_overset_action(self, values, True)
+        result = owner_local_overset_action(self, values, True)
         local = result.addressable_shards[0].data[0]
         return {
             name: local[offset : offset + prod(shape)].reshape(shape)
@@ -534,7 +671,7 @@ class PreparedOwnerLocalOversetExchange(StrictModule, NonTrainableState):
     ) -> Array:
         if set(values) != {name for name, _, _ in layouts}:
             raise ValueError(
-                "Dynamic overset values must name exactly this process's owned fields."
+                "PreparedOwnerLocalOversetExchange.values must name this process's owned fields with no additions or omissions; got missing or extra field names"
             )
         arrays = {name: jnp.asarray(value) for name, value in values.items()}
         dtype = jnp.result_type(jnp.float64, *(array.dtype for array in arrays.values()))
@@ -543,7 +680,7 @@ class PreparedOwnerLocalOversetExchange(StrictModule, NonTrainableState):
             array = arrays[name]
             if array.shape != shape or not array.is_fully_addressable:
                 raise ValueError(
-                    "Overset fields must retain their local owned shape and be process-addressable."
+                    "PreparedOwnerLocalOversetExchange.values must retain each field locally owned shape and be fully process-addressable; got a shape mismatch or a non-addressable array."
                 )
             if array.size:
                 pieces.append(array.reshape(-1).astype(dtype))
@@ -557,7 +694,7 @@ class PreparedOwnerLocalOversetExchange(StrictModule, NonTrainableState):
 
 
 @eqx.filter_jit
-def _owner_local_overset_action(
+def owner_local_overset_action(
     exchange: PreparedOwnerLocalOversetExchange,
     local: Array,
     transpose: bool,

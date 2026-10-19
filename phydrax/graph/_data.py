@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
+from phydrax._validation import nonnegative_integer
 
 from ..typing import checked
 from ._ir import batch_graphs, GraphIR, unbatch_graph
@@ -15,48 +19,65 @@ from ._kernels import segment_sum
 
 
 class Data(StrictModule):
-    """Ergonomic single-graph data container.
+    """Store one graph and its node count for conversion into ``GraphIR``.
 
-    This mirrors common `edge_index` workflows while preserving conversion into
-    the canonical `GraphIR` execution representation.
+    Without ``x`` or ``pos``, ``num_nodes`` is required, including for empty
+    graphs. Edges do not determine how many isolated nodes a graph contains.
     """
 
-    x: jnp.ndarray | None
-    edge_index: jnp.ndarray | None
-    edge_attr: jnp.ndarray | None
-    y: jnp.ndarray | None
-    pos: jnp.ndarray | None
-    batch: jnp.ndarray | None
-    ptr: jnp.ndarray | None
+    x: Array | None
+    edge_index: Array | None
+    edge_attr: Array | None
+    y: Array | None
+    pos: Array | None
+    batch: Array | None
+    ptr: Array | None
+    num_nodes: int = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        x: jnp.ndarray | None = None,
-        edge_index: jnp.ndarray | None = None,
-        edge_attr: jnp.ndarray | None = None,
-        y: jnp.ndarray | None = None,
-        pos: jnp.ndarray | None = None,
-        batch: jnp.ndarray | None = None,
-        ptr: jnp.ndarray | None = None,
+        x: ArrayLike | None = None,
+        edge_index: ArrayLike | None = None,
+        edge_attr: ArrayLike | None = None,
+        y: ArrayLike | None = None,
+        pos: ArrayLike | None = None,
+        batch: ArrayLike | None = None,
+        ptr: ArrayLike | None = None,
+        num_nodes: int | None = None,
     ) -> None:
-        self.x = None if x is None else jnp.asarray(x)
-        self.edge_index = None if edge_index is None else jnp.asarray(edge_index)
-        self.edge_attr = None if edge_attr is None else jnp.asarray(edge_attr)
-        self.y = None if y is None else jnp.asarray(y)
-        self.pos = None if pos is None else jnp.asarray(pos)
-        self.batch = None if batch is None else jnp.asarray(batch, dtype=jnp.int32)
-        self.ptr = None if ptr is None else jnp.asarray(ptr, dtype=jnp.int32)
-
-    @property
-    def num_nodes(self) -> int:
-        if self.x is not None:
-            return self.x.shape[0]
-        if self.pos is not None:
-            return self.pos.shape[0]
-        if self.edge_index is not None and self.edge_index.size > 0:
-            return int(jnp.max(self.edge_index)) + 1
-        return 0
+        nodes = None if x is None else jnp.asarray(x)
+        indices = None if edge_index is None else jnp.asarray(edge_index)
+        edges = None if edge_attr is None else jnp.asarray(edge_attr)
+        labels = None if y is None else jnp.asarray(y)
+        positions = None if pos is None else jnp.asarray(pos)
+        batches = None if batch is None else jnp.asarray(batch, dtype=jnp.int32)
+        pointers = None if ptr is None else jnp.asarray(ptr, dtype=jnp.int32)
+        node_array = nodes if nodes is not None else positions
+        if node_array is not None and node_array.ndim < 1:
+            raise ValueError(
+                f"Data.nodes must have a node axis; got shape {node_array.shape}"
+            )
+        if node_array is None and num_nodes is None:
+            raise ValueError("Data.num_nodes must be declared without x or pos; got None")
+        count = (
+            node_array.shape[0]
+            if num_nodes is None and node_array is not None
+            else nonnegative_integer(num_nodes, "Data.num_nodes")
+        )
+        for name, value in (("x", nodes), ("pos", positions)):
+            if value is not None and (value.ndim < 1 or value.shape[0] != count):
+                raise ValueError(
+                    f"Data.{name} must have {count} node rows; got shape {value.shape}"
+                )
+        self.num_nodes = count
+        self.x = nodes
+        self.edge_index = indices
+        self.edge_attr = edges
+        self.y = labels
+        self.pos = positions
+        self.batch = batches
+        self.ptr = pointers
 
     @property
     def num_edges(self) -> int:
@@ -83,9 +104,13 @@ class Data(StrictModule):
         else:
             edge_index = jnp.asarray(self.edge_index)
             if edge_index.ndim != 2 or edge_index.shape[0] != 2:
-                raise ValueError("`edge_index` must have shape (2, num_edges).")
+                raise ValueError(
+                    "Data.edge_index must have shape (2, num_edges); got invalid edge axes"
+                )
             if not jnp.issubdtype(edge_index.dtype, jnp.integer):
-                raise TypeError("`edge_index` must be integer dtype.")
+                raise TypeError(
+                    "Data.edge_index must have integer dtype; got noninteger edges"
+                )
             senders = edge_index[0].astype(jnp.int32)
             receivers = edge_index[1].astype(jnp.int32)
 
@@ -106,10 +131,13 @@ class Data(StrictModule):
         )
 
     @classmethod
+    @checked
     def from_graph_ir(cls, graph: GraphIR, /) -> "Data":
         graph.validate()
         if graph.num_graphs != 1:
-            raise ValueError("`Data.from_graph_ir` expects exactly one graph.")
+            raise ValueError(
+                "Data.from_graph_ir.graph must contain one graph; got multiple graphs"
+            )
         return cls(
             x=graph.nodes,
             edge_index=graph.edge_index,
@@ -118,6 +146,7 @@ class Data(StrictModule):
             pos=None,
             batch=None,
             ptr=None,
+            num_nodes=graph.num_nodes,
         )
 
 
@@ -131,31 +160,31 @@ class Batch(StrictModule):
         self.data = data
 
     @property
-    def x(self) -> jnp.ndarray | None:
+    def x(self) -> Array | None:
         return self.data.x
 
     @property
-    def edge_index(self) -> jnp.ndarray | None:
+    def edge_index(self) -> Array | None:
         return self.data.edge_index
 
     @property
-    def edge_attr(self) -> jnp.ndarray | None:
+    def edge_attr(self) -> Array | None:
         return self.data.edge_attr
 
     @property
-    def y(self) -> jnp.ndarray | None:
+    def y(self) -> Array | None:
         return self.data.y
 
     @property
-    def pos(self) -> jnp.ndarray | None:
+    def pos(self) -> Array | None:
         return self.data.pos
 
     @property
-    def batch(self) -> jnp.ndarray | None:
+    def batch(self) -> Array | None:
         return self.data.batch
 
     @property
-    def ptr(self) -> jnp.ndarray | None:
+    def ptr(self) -> Array | None:
         return self.data.ptr
 
     @property
@@ -186,6 +215,7 @@ class Batch(StrictModule):
                     pos=None,
                     batch=None,
                     ptr=None,
+                    num_nodes=0,
                 )
             )
 
@@ -226,6 +256,7 @@ class Batch(StrictModule):
                 pos=None,
                 batch=batch,
                 ptr=ptr,
+                num_nodes=batched.num_nodes,
             )
         )
 
@@ -244,6 +275,7 @@ class Batch(StrictModule):
                     edge_index=piece.edge_index,
                     edge_attr=piece.edges,
                     y=y,
+                    num_nodes=piece.num_nodes,
                 )
             )
         return out
@@ -263,14 +295,18 @@ class Batch(StrictModule):
         else:
             edge_index = jnp.asarray(self.edge_index, dtype=jnp.int32)
             if edge_index.ndim != 2 or edge_index.shape[0] != 2:
-                raise ValueError("`edge_index` must have shape (2, num_edges).")
+                raise ValueError(
+                    "Data.edge_index must have shape (2, num_edges); got invalid edge axes"
+                )
             senders = edge_index[0]
             receivers = edge_index[1]
 
         if self.ptr is not None:
             ptr = jnp.asarray(self.ptr, dtype=jnp.int32)
             if ptr.ndim != 1 or ptr.shape[0] < 2:
-                raise ValueError("`ptr` must be rank-1 with length >= 2.")
+                raise ValueError(
+                    "Batch.ptr must be rank-1 with length >= 2; got invalid pointer shape"
+                )
             n_node = ptr[1:] - ptr[:-1]
             n_graph = n_node.shape[0]
         elif self.batch is not None:

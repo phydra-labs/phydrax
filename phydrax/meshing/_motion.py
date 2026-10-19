@@ -19,48 +19,51 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import fields
+from contextlib import nullcontext
 from enum import StrEnum
+from typing import assert_never
 
 import equinox as eqx
-import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+import phydrax.discretization._cell_geometry as cell_geometry_owner
+import phydrax.discretization._cell_geometry_validity as cell_geometry_validity_owner
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._meshcore import NativeExecutionScope
+from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import (
-    CellGeometrySpec,
-    CellMesh,
-    CellValidityCertificate,
-    CellValidityPolicy,
-    certify_cell_geometry_validity,
-)
+from .._validation import nonnegative_finite_float, positive_finite_float
 from ..discretization._cell_geometry_transfer import (
     transition_displaced_cell_geometry,
 )
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..optim import OptimizationTermination
 from ..typing import checked
 from ._adaptation import (
-    _region_boundary_transition,
+    adaptation_phase,
     execute_mesh_adaptation,
     MeshAdaptationPolicy,
     MeshAdaptationResult,
     MetricMeshAdaptation,
     prepare_mesh_adaptation,
+    region_boundary_transition,
 )
 from ._association import (
-    _retain_association_scopes,
     BRepAssociationTransfer,
     MappedReferenceAssociationTransfer,
     PlcAssociationTransfer,
+    retain_association_scopes,
     SurfaceAssociationTransfer,
 )
 from ._association_composition import ComposedAssociationTransfer
 from ._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
 from ._canonical import certify_cell_mesh
+from ._compartments import revalidate_region_evidence
 from ._contracts import MeshingLimits
 from ._implicit_association_transfer import ImplicitAssociationTransfer
 from ._lineage import CellMeshTransition, identity_lineage, inherit_mesh_organization
@@ -88,19 +91,18 @@ class MeshMotionDecision(StrEnum):
 
 
 def _ratio(value: float, name: str, /) -> float:
-    number = float(value)
-    if not math.isfinite(number) or not 0.0 < number <= 1.0:
-        raise ValueError(f"{name} must lie in (0, 1].")
+    number = positive_finite_float(value, f"MeshMotionMonitorPolicy.{name}")
+    if number > 1.0:
+        raise ValueError(
+            f"{'MeshMotionMonitorPolicy.' + name} must lie in (0, 1]; got {number!r}."
+        )
     return number
 
 
 def _optional_fraction(value: float | None, name: str, /) -> float | None:
     if value is None:
         return None
-    number = float(value)
-    if not math.isfinite(number) or number <= 0.0:
-        raise ValueError(f"{name} must be positive and finite or None.")
-    return number
+    return positive_finite_float(value, f"MeshMotionMonitorPolicy.{name}")
 
 
 class MeshMotionMonitorPolicy(StrictModule, NonTrainableState):
@@ -131,9 +133,10 @@ class MeshMotionMonitorPolicy(StrictModule, NonTrainableState):
     relocation_objective: MeshQualityObjective = eqx.field(static=True)
     accept_valid_nonconverged_relocation: bool = eqx.field(static=True)
     relocation_termination: OptimizationTermination | None
-    validity: CellValidityPolicy
+    validity: cell_geometry_validity_owner.CellValidityPolicy
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -145,7 +148,7 @@ class MeshMotionMonitorPolicy(StrictModule, NonTrainableState):
         remesh_displacement_fraction: float | None = None,
         maximum_boundary_residual: float = 1.0e-8,
         relocation_objective: MeshQualityObjective = MeshQualityObjective.SHAPE,
-        validity: CellValidityPolicy | None = None,
+        validity: cell_geometry_validity_owner.CellValidityPolicy | None = None,
         relocation_termination: OptimizationTermination | None = None,
         accept_valid_nonconverged_relocation: bool = False,
     ) -> None:
@@ -162,33 +165,38 @@ class MeshMotionMonitorPolicy(StrictModule, NonTrainableState):
             remesh_displacement_fraction, "remesh_displacement_fraction"
         )
         if remesh_jacobian > relocation_jacobian or remesh_quality > relocation_quality:
-            raise ValueError("Remesh thresholds must not exceed relocation thresholds.")
+            raise ValueError(
+                "MeshMotionMonitorPolicy.remesh_jacobian_ratio must not exceed relocation_jacobian_ratio, and remesh_quality_ratio must not exceed relocation_quality_ratio; got a remesh threshold above its relocation threshold."
+            )
         if (
             relocation_displacement is not None
             and remesh_displacement is not None
             and remesh_displacement < relocation_displacement
         ):
             raise ValueError(
-                "remesh_displacement_fraction must not precede the relocation bound."
+                "MeshMotionMonitorPolicy.remesh_displacement_fraction must not be below relocation_displacement_fraction when both are set; got a remesh threshold below the relocation threshold."
             )
-        residual = float(maximum_boundary_residual)
-        if not math.isfinite(residual) or residual < 0.0:
-            raise ValueError("maximum_boundary_residual must be finite and non-negative.")
+        residual = nonnegative_finite_float(
+            maximum_boundary_residual,
+            "MeshMotionMonitorPolicy.maximum_boundary_residual",
+        )
         if not isinstance(relocation_objective, MeshQualityObjective):
-            raise TypeError("relocation_objective must be MeshQualityObjective.")
-        if relocation_objective is MeshQualityObjective.METRIC_ALIGNMENT:
-            raise ValueError("Relocation targets the reference shapes, not a metric.")
-        validity_ = CellValidityPolicy() if validity is None else validity
-        if not isinstance(validity_, CellValidityPolicy):
-            raise TypeError("validity must be CellValidityPolicy or None.")
-        if relocation_termination is not None and not isinstance(
-            relocation_termination, OptimizationTermination
-        ):
             raise TypeError(
-                "relocation_termination must be OptimizationTermination or None."
+                "MeshMotionMonitorPolicy.relocation_objective must be a MeshQualityObjective; got a non-MeshQualityObjective value."
             )
+        if relocation_objective is MeshQualityObjective.METRIC_ALIGNMENT:
+            raise ValueError(
+                "MeshMotionMonitorPolicy.relocation_objective must target reference shapes rather than metric alignment; got MeshQualityObjective.METRIC_ALIGNMENT."
+            )
+        validity_ = (
+            cell_geometry_validity_owner.CellValidityPolicy()
+            if validity is None
+            else validity
+        )
         if not isinstance(accept_valid_nonconverged_relocation, bool):
-            raise TypeError("accept_valid_nonconverged_relocation must be bool.")
+            raise TypeError(
+                "MeshMotionMonitorPolicy.accept_valid_nonconverged_relocation must be bool; got a non-bool value."
+            )
         self.relocation_jacobian_ratio = relocation_jacobian
         self.remesh_jacobian_ratio = remesh_jacobian
         self.relocation_quality_ratio = relocation_quality
@@ -234,7 +242,7 @@ class MeshMotionAssessment(StrictModule, NonTrainableState):
     """
 
     decision: MeshMotionDecision = eqx.field(static=True)
-    certificate: CellValidityCertificate | None
+    certificate: cell_geometry_validity_owner.CellValidityCertificate | None
     minimum_jacobian_ratio: float = eqx.field(static=True)
     minimum_quality_ratio: float = eqx.field(static=True)
     maximum_displacement_fraction: float = eqx.field(static=True)
@@ -242,10 +250,11 @@ class MeshMotionAssessment(StrictModule, NonTrainableState):
     reasons: tuple[str, ...] = eqx.field(static=True)
     assessment_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         decision: MeshMotionDecision,
-        certificate: CellValidityCertificate | None,
+        certificate: cell_geometry_validity_owner.CellValidityCertificate | None,
         /,
         *,
         minimum_jacobian_ratio: float,
@@ -284,9 +293,9 @@ class MeshMotionAssessment(StrictModule, NonTrainableState):
 class MeshMotionMonitor(StrictModule, NonTrainableState):
     """Reference certificate, quality, and size scale of one moving mesh."""
 
-    reference: CellMesh
+    reference: cell_mesh_owner.CellMesh
     policy: MeshMotionMonitorPolicy
-    reference_certificate: CellValidityCertificate
+    reference_certificate: cell_geometry_validity_owner.CellValidityCertificate
     reference_quality: Array
     length_scale: float = eqx.field(static=True)
     monitor_id: str = eqx.field(static=True)
@@ -294,25 +303,29 @@ class MeshMotionMonitor(StrictModule, NonTrainableState):
     @checked
     def __init__(
         self,
-        reference: CellMesh,
+        reference: cell_mesh_owner.CellMesh,
         /,
         *,
         policy: MeshMotionMonitorPolicy | None = None,
     ) -> None:
         policy_ = MeshMotionMonitorPolicy() if policy is None else policy
-        if not isinstance(policy_, MeshMotionMonitorPolicy):
-            raise TypeError("policy must be MeshMotionMonitorPolicy or None.")
         if reference.topological_dimension != reference.ambient_dimension:
-            raise ValueError("Mesh motion monitoring requires full-dimensional meshes.")
-        certificate = certify_cell_geometry_validity(reference, policy=policy_.validity)
+            raise ValueError(
+                "MeshMotionMonitor.reference must have equal topology and ambient dimensions; got topology and ambient dimensions that differ."
+            )
+        certificate = cell_geometry_validity_owner.certify_cell_geometry_validity(
+            reference, policy=policy_.validity
+        )
         if not certificate.all_certified:
-            raise ValueError("The reference mesh must be certified valid.")
+            raise ValueError(
+                "MeshMotionMonitor.reference must have every required validity predicate certified; got one or more uncertified predicates."
+            )
         quality = evaluate_cell_quality(reference)
         measures = np.asarray(quality.measures, dtype=np.float64)
         self.reference = reference
         self.policy = policy_
         self.reference_certificate = certificate
-        self.reference_quality = jnp.asarray(quality.mean_ratios)
+        self.reference_quality = quality.mean_ratios
         self.length_scale = float(
             np.min(measures ** (1.0 / reference.topological_dimension))
         )
@@ -324,7 +337,7 @@ class MeshMotionMonitor(StrictModule, NonTrainableState):
             }
         )
 
-    def moved_mesh(self, coordinates: ArrayLike, /) -> CellMesh:
+    def moved_mesh(self, coordinates: ArrayLike, /) -> cell_mesh_owner.CellMesh:
         """The reference topology at ``coordinates`` with a content-derived version."""
 
         points = np.asarray(coordinates, dtype=np.float64)
@@ -339,10 +352,14 @@ class MeshMotionMonitor(StrictModule, NonTrainableState):
 
         points = np.asarray(coordinates, dtype=np.float64)
         if points.shape != self.reference.coordinates.shape:
-            raise ValueError("coordinates must match the reference coordinate shape.")
+            raise ValueError(
+                "MeshMotionMonitor.coordinates must have the same shape as MeshMotionMonitor.reference.coordinates; got a mismatched coordinate shape."
+            )
         residual = float(boundary_residual)
         if math.isnan(residual) or residual < 0.0:
-            raise ValueError("boundary_residual must be non-negative.")
+            raise ValueError(
+                "MeshMotionMonitor.boundary_residual must be non-negative and not NaN; got NaN or a negative value."
+            )
         coordinates_id = array_tree_fingerprint(points)
         if not np.all(np.isfinite(points)):
             return MeshMotionAssessment(
@@ -357,7 +374,7 @@ class MeshMotionMonitor(StrictModule, NonTrainableState):
                 coordinates_id=coordinates_id,
             )
         policy = self.policy
-        certificate = certify_cell_geometry_validity(
+        certificate = cell_geometry_validity_owner.certify_cell_geometry_validity(
             self.moved_mesh(points), policy=policy.validity
         )
         jacobian = np.asarray(certificate.determinant_lower) / np.asarray(
@@ -452,6 +469,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
     transition: CellMeshTransition | None
     advance_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         decision: MeshMotionDecision,
@@ -465,11 +483,15 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
     ) -> None:
         remesh = decision is MeshMotionDecision.REMESH
         if (decision is MeshMotionDecision.REJECT) != (result is None):
-            raise ValueError("Exactly the rejected advances carry no result.")
+            raise ValueError(
+                "MeshMotionAdvance.result must be None if and only if MeshMotionAdvance.decision is REJECT; got a decision/result pairing that violates the rejection bijection."
+            )
         if remesh != (remesh_metric is not None) or (
             adaptation is not None and not remesh
         ):
-            raise ValueError("Only remesh advances carry a metric and an adaptation.")
+            raise ValueError(
+                "MeshMotionAdvance.remesh_metric must be present exactly for REMESH decisions, with adaptation absent for other decisions; got an inconsistent metric or adaptation state."
+            )
         self.decision = decision
         self.accepted = decision is not MeshMotionDecision.REJECT and (
             not remesh or (adaptation is not None and adaptation.status.converged)
@@ -496,7 +518,7 @@ class MeshMotionAdvance(StrictModule, NonTrainableState):
 
 
 def _reference_size_metric(
-    reference: CellMesh, candidate: CellMeshingResult, /
+    reference: cell_mesh_owner.CellMesh, candidate: CellMeshingResult, /
 ) -> MeshMetricField:
     """Isotropic metric restoring the reference cell size around every vertex."""
 
@@ -536,13 +558,13 @@ def _reference_size_metric(
     )
 
 
-def _boundary_mask(mesh: CellMesh, /) -> np.ndarray:
+def _boundary_mask(mesh: cell_mesh_owner.CellMesh, /) -> np.ndarray:
     return np.asarray(mesh.topology.entities(0).subset("boundary").mask, dtype=np.bool_)
 
 
 def _carried(
     source: CellMeshingResult,
-    moved: CellMesh,
+    moved: cell_mesh_owner.CellMesh,
     transfer: BRepAssociationTransfer
     | PlcAssociationTransfer
     | ComposedAssociationTransfer
@@ -555,46 +577,86 @@ def _carried(
     *,
     limits: MeshingLimits | None = None,
     audit_policy: CellMeshAuditPolicy | None = None,
+    scope: NativeExecutionScope | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> CellMeshingResult:
-    """Certify moved coordinates with the source's region evidence and geometry.
+    """Certify moved coordinates using the source's region evidence and geometry.
 
-    Patches, zones, and labels are rebound through the identity lineage;
-    B-Rep or PLC associations are re-derived for the moved coordinates by their
-    owning ``transfer``. Classification evidence is never copied. A curved
-    coordinate map moves with its vertices. Anything that cannot be carried
-    refuses the motion instead of being dropped.
+    Patches, zones, and labels are rebound through the identity lineage. B-Rep or PLC
+    associations are re-derived for the moved coordinates by their ``transfer``;
+    classification evidence is not copied. A curved coordinate map moves with its
+    vertices. The motion is refused if any requested entity cannot be carried.
     """
 
+    if isinstance(transfer, PeriodicAssociationTransfer):
+        if scope is None or budget is None:
+            raise RuntimeError(
+                "_carried.scope must be supplied together with budget for periodic motion; got a missing request resource."
+            )
+        phase = adaptation_phase(scope, budget)
+    else:
+        phase = nullcontext()
+    with phase:
+        return _carried_in_scope(
+            source,
+            moved,
+            transfer,
+            limits=limits,
+            audit_policy=audit_policy,
+            scope=scope,
+            budget=budget,
+        )
+
+
+def _carried_in_scope(
+    source: CellMeshingResult,
+    moved: cell_mesh_owner.CellMesh,
+    transfer: BRepAssociationTransfer
+    | PlcAssociationTransfer
+    | ComposedAssociationTransfer
+    | SurfaceAssociationTransfer
+    | MappedReferenceAssociationTransfer
+    | ImplicitAssociationTransfer
+    | PeriodicAssociationTransfer
+    | None,
+    /,
+    *,
+    limits: MeshingLimits | None,
+    audit_policy: CellMeshAuditPolicy | None,
+    scope: NativeExecutionScope | None,
+    budget: CoordinateEnclosureBudget | None,
+) -> CellMeshingResult:
     if source.attributes or (
         source.boundary is not None
         and not isinstance(transfer, ImplicitAssociationTransfer)
     ):
         raise ValueError(
-            "Mesh attributes and boundary models require their explicit owning remap."
+            "advance_mesh_motion.source must carry no mesh attributes and must pair any boundary model with ImplicitAssociationTransfer; got mesh attributes or a boundary model without ImplicitAssociationTransfer."
         )
     if source.associations and transfer is None:
         raise ValueError(
-            "Moving a mesh with geometry associations requires the adaptation "
-            "policy's association_transfer to revalidate them."
+            "advance_mesh_motion.association_transfer must revalidate retained geometry associations; got None"
         )
     lineage = identity_lineage(source.mesh, moved)
     patches, zones, labels = inherit_mesh_organization(source, moved, lineage)
     geometry = (
-        CellGeometrySpec.affine(moved)
+        cell_geometry_owner.CellGeometrySpec.affine(moved, budget=budget)
         if (
             source.geometry.exact_source is None
             and source.geometry.periodic_source is None
             and source.geometry.restriction_source is None
             and source.geometry.storage is None
             and source.geometry.geometry_layout_id
-            == CellGeometrySpec.affine(source.mesh).geometry_layout_id
+            == cell_geometry_owner.CellGeometrySpec.affine(
+                source.mesh, budget=budget
+            ).geometry_layout_id
             and np.array_equal(
                 np.asarray(source.geometry.coordinates),
                 np.asarray(source.mesh.coordinates),
             )
         )
         else transition_displaced_cell_geometry(
-            source.mesh, source.geometry, moved
+            source.mesh, source.geometry, moved, budget=budget
         ).geometry
     )
     boundary = (
@@ -611,14 +673,27 @@ def _carried(
         and "open_boundary" in certification_inputs.schedule.required_audit_checks
         and policy.watertight_boundary is CellMeshAuditDisposition.SKIP
     ):
-        inputs = {
-            member.name: getattr(policy, member.name)
-            for member in fields(policy)
-            if member.name != "policy_id"
-        }
-        inputs["watertight_boundary"] = CellMeshAuditDisposition.REJECT
-        policy = CellMeshAuditPolicy(**inputs)
-    region_boundary_evidence = _region_boundary_transition(
+        policy = CellMeshAuditPolicy(
+            unused_entities=policy.unused_entities,
+            require_complete_association=policy.require_complete_association,
+            minimum_measure=policy.minimum_measure,
+            minimum_mean_ratio=policy.minimum_mean_ratio,
+            maximum_aspect_ratio=policy.maximum_aspect_ratio,
+            maximum_connectivity_entries=policy.maximum_connectivity_entries,
+            coincident_vertices=policy.coincident_vertices,
+            coincident_vertex_tolerance=policy.coincident_vertex_tolerance,
+            maximum_coincidence_candidates=policy.maximum_coincidence_candidates,
+            maximum_intersection_candidates=policy.maximum_intersection_candidates,
+            duplicate_cells=policy.duplicate_cells,
+            nonmanifold=policy.nonmanifold,
+            inconsistent_orientation=policy.inconsistent_orientation,
+            watertight_boundary=CellMeshAuditDisposition.REJECT,
+            self_intersection=policy.self_intersection,
+            invalid_geometry=policy.invalid_geometry,
+            unresolved=policy.unresolved,
+            validity_policy=policy.validity_policy,
+        )
+    region_boundary_evidence = region_boundary_transition(
         source,
         moved,
         lineage,
@@ -628,11 +703,9 @@ def _carried(
     )
     region_evidence = None
     if source.region_evidence is not None:
-        from ._compartments import revalidate_region_evidence
-
         if limits is None:
             raise ValueError(
-                "Material-bearing motion requires its actual adaptation work limits."
+                "advance_mesh_motion.limits must be supplied for material-bearing motion; got no adaptation work limits."
             )
         renewal = revalidate_region_evidence(
             source,
@@ -641,9 +714,7 @@ def _carried(
             zones,
             patches,
             lineage=lineage,
-            certificate_limits=None
-            if certification_inputs is None
-            else certification_inputs.limits,
+            certificate_limits=source.region_evidence.certificate_limits,
             limits=limits,
         )
         zones, patches, region_evidence = (
@@ -653,22 +724,31 @@ def _carried(
         )
     if transfer is None or not source.associations:
         associations = ()
-    elif isinstance(
-        transfer,
-        (
-            PlcAssociationTransfer,
-            ComposedAssociationTransfer,
-            MappedReferenceAssociationTransfer,
-            ImplicitAssociationTransfer,
-            PeriodicAssociationTransfer,
-        ),
-    ):
-        associations = transfer.propagate(source, lineage, moved, geometry=geometry)
-    elif isinstance(transfer, SurfaceAssociationTransfer):
-        associations = transfer.propagate(source, lineage, moved, geometry=geometry)
     else:
-        associations = transfer.propagate(source, lineage, moved)
-    associations = _retain_association_scopes(source.associations, associations)
+        match transfer:
+            case PeriodicAssociationTransfer():
+                if scope is None or budget is None:
+                    raise RuntimeError(
+                        "_carried.scope must be supplied together with budget for periodic motion; got a missing request resource."
+                    )
+                associations = transfer.propagate(
+                    source, lineage, moved, geometry=geometry, scope=scope, budget=budget
+                )
+            case (
+                PlcAssociationTransfer()
+                | ComposedAssociationTransfer()
+                | MappedReferenceAssociationTransfer()
+                | ImplicitAssociationTransfer()
+                | SurfaceAssociationTransfer()
+            ):
+                associations = transfer.propagate(
+                    source, lineage, moved, geometry=geometry
+                )
+            case BRepAssociationTransfer():
+                associations = transfer.propagate(source, lineage, moved)
+            case _ as unknown:
+                assert_never(unknown)
+    associations = retain_association_scopes(source.associations, associations)
     return certify_cell_mesh(
         moved,
         source.coordinate_contract,
@@ -683,13 +763,14 @@ def _carried(
         region_boundary_evidence=region_boundary_evidence,
         certification_inputs=certification_inputs,
         lineage=None if certification_inputs is None else lineage,
+        budget=budget,
     )
 
 
 def _relocate(
     monitor: MeshMotionMonitor,
     source: CellMeshingResult,
-    moved: CellMesh,
+    moved: cell_mesh_owner.CellMesh,
     fixed: np.ndarray,
     numeric_version: str,
     /,
@@ -719,6 +800,7 @@ def _remesh(
     )
 
 
+@checked
 def advance_mesh_motion(
     monitor: MeshMotionMonitor,
     source: CellMeshingResult,
@@ -730,6 +812,60 @@ def advance_mesh_motion(
     fixed_vertices: ArrayLike | None = None,
     remesh_metric: Callable[[CellMeshingResult], MeshMetricField] | None = None,
     numeric_version: str = "mesh-motion",
+) -> MeshMotionAdvance:
+    """Advance motion while retaining the adaptation limits for periodic transfer."""
+    if adaptation_policy is None or not isinstance(
+        adaptation_policy.association_transfer, PeriodicAssociationTransfer
+    ):
+        return _advance_mesh_motion(
+            monitor,
+            source,
+            coordinates,
+            boundary_residual=boundary_residual,
+            adaptation_policy=adaptation_policy,
+            fixed_vertices=fixed_vertices,
+            remesh_metric=remesh_metric,
+            numeric_version=numeric_version,
+            scope=None,
+            budget=None,
+        )
+    limits = adaptation_policy.limits
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        initial = HostBatchTicket(0)
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        initial.settle()
+        with budget.retained_storage(lambda size: scope.batch(0, bytes_upper=size)):
+            return _advance_mesh_motion(
+                monitor,
+                source,
+                coordinates,
+                boundary_residual=boundary_residual,
+                adaptation_policy=adaptation_policy,
+                fixed_vertices=fixed_vertices,
+                remesh_metric=remesh_metric,
+                numeric_version=numeric_version,
+                scope=scope,
+                budget=budget,
+            )
+
+
+def _advance_mesh_motion(
+    monitor: MeshMotionMonitor,
+    source: CellMeshingResult,
+    coordinates: ArrayLike,
+    /,
+    *,
+    boundary_residual: float,
+    adaptation_policy: MeshAdaptationPolicy | None = None,
+    fixed_vertices: ArrayLike | None = None,
+    remesh_metric: Callable[[CellMeshingResult], MeshMetricField] | None = None,
+    numeric_version: str = "mesh-motion",
+    scope: NativeExecutionScope | None,
+    budget: CoordinateEnclosureBudget | None,
 ) -> MeshMotionAdvance:
     """Accept, relocate, remesh, or reject one moved coordinate proposal.
 
@@ -745,24 +881,24 @@ def advance_mesh_motion(
     moved with its vertices; evidence that cannot be carried refuses the advance.
     """
 
-    if not isinstance(monitor, MeshMotionMonitor):
-        raise TypeError("monitor must be MeshMotionMonitor.")
-    if not isinstance(source, CellMeshingResult):
-        raise TypeError("source must be CellMeshingResult.")
     if source.mesh.mesh_id != monitor.reference.mesh_id:
-        raise ValueError("source must be the certified result of the monitor reference.")
-    if remesh_metric is not None and not callable(remesh_metric):
-        raise TypeError("remesh_metric must be callable or None.")
+        raise ValueError(
+            "advance_mesh_motion.source.mesh.mesh_id must match advance_mesh_motion.monitor.reference.mesh_id; got a stale source for another mesh."
+        )
     version = str(numeric_version)
     if not version:
-        raise ValueError("numeric_version must be non-empty.")
+        raise ValueError(
+            "advance_mesh_motion.numeric_version must be non-empty; got an empty value."
+        )
     fixed = (
         _boundary_mask(source.mesh)
         if fixed_vertices is None
         else np.asarray(fixed_vertices, dtype=np.bool_)
     )
     if fixed.shape != (source.mesh.coordinates.shape[0],):
-        raise ValueError("fixed_vertices must mark every mesh vertex.")
+        raise ValueError(
+            "advance_mesh_motion.fixed_vertices must contain one marker for every source mesh vertex; got a shape that does not cover every source mesh vertex."
+        )
     transfer = (
         None if adaptation_policy is None else adaptation_policy.association_transfer
     )
@@ -783,12 +919,16 @@ def advance_mesh_motion(
                     transfer,
                     limits=limits,
                     audit_policy=audit_policy,
+                    scope=scope,
+                    budget=budget,
                 ),
             )
         case MeshMotionDecision.RELOCATE | MeshMotionDecision.REMESH:
             pass
         case decision:
-            raise ValueError(f"Unsupported mesh motion decision {decision!r}.")
+            raise ValueError(
+                f"advance_mesh_motion.decision must be a supported MeshMotionDecision; got {decision!r}."
+            )
     # Every crossing first tries fixed-topology relocation (untangling included);
     # only an accepted relocation (converged, or explicitly admitted valid
     # non-convergence) seeds the relocated assessment.
@@ -797,7 +937,9 @@ def advance_mesh_motion(
     if relocation.accepted:
         relocated_result = relocation.result
         if relocated_result is None:
-            raise RuntimeError("An accepted relocation must carry its certified result.")
+            raise RuntimeError(
+                "advance_mesh_motion.relocated_result must be present for an accepted relocation; got no certified relocation result."
+            )
         relocated = monitor.assess(
             relocation.coordinates, boundary_residual=boundary_residual
         )
@@ -812,6 +954,8 @@ def advance_mesh_motion(
                     transfer,
                     limits=limits,
                     audit_policy=audit_policy,
+                    scope=scope,
+                    budget=budget,
                 ),
                 relocation=relocation,
             )
@@ -821,11 +965,19 @@ def advance_mesh_motion(
             transfer,
             limits=limits,
             audit_policy=audit_policy,
+            scope=scope,
+            budget=budget,
         )
     # ty: ignore[unresolved-attribute]
     elif assessment.certificate.all_certified:
         candidate = _carried(
-            source, moved, transfer, limits=limits, audit_policy=audit_policy
+            source,
+            moved,
+            transfer,
+            limits=limits,
+            audit_policy=audit_policy,
+            scope=scope,
+            budget=budget,
         )
     else:
         # Untangling failed: an uncertified mesh cannot seed a remesh.
@@ -838,7 +990,9 @@ def advance_mesh_motion(
         else remesh_metric(candidate)
     )
     if not isinstance(metric, MeshMetricField):
-        raise TypeError("remesh_metric must return MeshMetricField.")
+        raise TypeError(
+            "advance_mesh_motion.remesh_metric must return MeshMetricField; got another metric result kind."
+        )
     if adaptation_policy is None:
         return MeshMotionAdvance(
             MeshMotionDecision.REMESH,

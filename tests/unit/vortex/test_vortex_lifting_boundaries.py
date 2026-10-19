@@ -96,8 +96,8 @@ def test_vortex_lifting_boundaries_scenario_2() -> None:
         jnp.linspace(-0.4, 0.4, geometry.length.size),
     )
     remesh = phx.discretization.ConservativeVortexRemeshPlan2D(
-        (-2.0, -2.0),
-        (2.0, 2.0),
+        jnp.asarray((-2.0, -2.0), dtype=jnp.float64),
+        jnp.asarray((2.0, 2.0), dtype=jnp.float64),
         (16, 16),
         0.15,
     ).apply(

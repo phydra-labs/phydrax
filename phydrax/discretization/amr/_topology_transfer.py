@@ -26,6 +26,7 @@ from ...linalg import (
     transpose,
 )
 from ...sparse import EdgeRelation, SparseCoordinateOperator
+from ...typing import checked
 from .._spaces import DiscreteFieldSpace, EntityDofLayout
 from .._topology_epoch import TopologyEpochTransition
 from .._transfer import FieldTransfer, TransferGeometryBinding, TransferProperties
@@ -43,32 +44,16 @@ class BlockFieldTopologyTransitionResult(StrictModule):
     result_id: str = eqx.field(static=True)
 
 
-class _CellReference(tuple):
-    __slots__ = ()
-
-    @property
-    def level(self) -> int:
-        return self[0]
-
-    @property
-    def slot(self) -> int:
-        return self[1]
-
-    @property
-    def local_flat(self) -> int:
-        return self[2]
-
-    @property
-    def start(self) -> tuple[int, ...]:
-        return self[3]
-
-    @property
-    def stop(self) -> tuple[int, ...]:
-        return self[4]
+class _CellReference(StrictModule):
+    level: int = eqx.field(static=True)
+    slot: int = eqx.field(static=True)
+    local_flat: int = eqx.field(static=True)
+    start: tuple[int, ...] = eqx.field(static=True)
+    stop: tuple[int, ...] = eqx.field(static=True)
 
 
 class BlockCellOverlapRoutes(StrictModule, NonTrainableState):
-    """Exact fixed-capacity overlap relation from source cells to target averages."""
+    """Algebraic fixed-capacity overlap relation from source cells to target averages."""
 
     relation: EdgeRelation
     weights: Array
@@ -103,10 +88,14 @@ class BlockCellOverlapRoutes(StrictModule, NonTrainableState):
             or np.any(~np.isfinite(weights))
             or np.any(weights < 0.0)
         ):
-            raise ValueError("Sparse AMR overlap routes are invalid.")
+            raise ValueError(
+                f"BlockCellOverlapRoutes.source_indices must have valid sparse amr overlap routes; got {target.shape!r}"
+            )
         row_width = np.bincount(target, minlength=target_count_)
         if np.any(row_width == 0):
-            raise ValueError("Every target AMR cell requires at least one source route.")
+            raise ValueError(
+                f"BlockCellOverlapRoutes.source_indices must provide at least one source route; got {type(source_indices).__name__}"
+            )
         self.relation = EdgeRelation(
             source,
             target,
@@ -225,18 +214,16 @@ def _cell_references(
                 stop = tuple(value + scale for value in start)
                 result.append(
                     _CellReference(
-                        (
-                            level,
-                            slot,
-                            int(
-                                np.ravel_multi_index(
-                                    local,
-                                    level_plan.block_shape,
-                                )
-                            ),
-                            start,
-                            stop,
-                        )
+                        level,
+                        slot,
+                        int(
+                            np.ravel_multi_index(
+                                local,
+                                level_plan.block_shape,
+                            )
+                        ),
+                        start,
+                        stop,
                     )
                 )
     return tuple(result)
@@ -270,7 +257,9 @@ def _overlap_routes(
 ) -> BlockCellOverlapRoutes:
     """Build nested overlap routes by ancestry, never source-by-target scanning."""
     if not source or not target:
-        raise ValueError("AMR overlap routes require non-empty source and target cells.")
+        raise ValueError(
+            f"topology_transfer.overlap_routes.source must provide non-empty source and target cells; got {type(source).__name__}"
+        )
     scales_ = tuple(scales)
     dimension = len(source[0].start)
     if (
@@ -282,12 +271,16 @@ def _overlap_routes(
         or any(value <= 0 for value in scales_)
         or any(scales_[level] % scales_[level + 1] for level in range(len(scales_) - 1))
     ):
-        raise ValueError("AMR overlap routes require a nested integer scale hierarchy.")
+        raise ValueError(
+            f"topology_transfer.overlap_routes.source must provide a nested integer scale hierarchy; got {type(source).__name__}"
+        )
     source_by_cell = {
         (cell.level, cell.start): index for index, cell in enumerate(source)
     }
     if len(source_by_cell) != len(source):
-        raise ValueError("AMR source leaf-cell keys must be unique.")
+        raise ValueError(
+            f"topology_transfer.overlap_routes.source must be unique; got {type(source).__name__}"
+        )
 
     def descendants(level: int, start: tuple[int, ...]) -> tuple[int, ...]:
         direct = source_by_cell.get((level, start))
@@ -295,7 +288,7 @@ def _overlap_routes(
             return (direct,)
         if level + 1 == len(scales_):
             raise ValueError(
-                "AMR source leaves do not provide complete nested target coverage."
+                f"topology_transfer.descendants.level must provide full nested target coverage; got {level!r}"
             )
         ratio = scales_[level] // scales_[level + 1]
         child_scale = scales_[level + 1]
@@ -341,7 +334,7 @@ def _overlap_routes(
             row_sum += overlap / target_volume
         if not np.isclose(row_sum, 1.0, rtol=0.0, atol=1.0e-14):
             raise ValueError(
-                "AMR topology cells do not provide complete nested coverage."
+                f"topology_transfer.overlap_routes.source must provide full nested coverage; got {type(source).__name__}"
             )
     return BlockCellOverlapRoutes(
         source_indices,
@@ -452,6 +445,7 @@ class BlockFieldTopologyTransition(StrictModule, NonTrainableState):
     target_local: Array
     transition_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: BlockHierarchyTopology,
@@ -462,20 +456,20 @@ class BlockFieldTopologyTransition(StrictModule, NonTrainableState):
         component_shape: Sequence[int] = (),
         dtype: DTypeLike = jnp.float64,
     ) -> None:
-        if not isinstance(source, BlockHierarchyTopology) or not isinstance(
-            target, BlockHierarchyTopology
-        ):
-            raise TypeError("Block field transitions require hierarchy topologies.")
         if source.plan.plan_id != target.plan.plan_id:
-            raise ValueError("Block field transitions cannot change hierarchy geometry.")
+            raise ValueError(
+                f"BlockFieldTopologyTransition.source must not change hierarchy geometry; got {type(source).__name__}"
+            )
         if target.epoch.index != source.epoch.index + 1:
             raise ValueError(
-                "Block field transitions require consecutive topology epochs."
+                f"BlockFieldTopologyTransition.target must provide consecutive topology epochs; got {type(target).__name__}"
             )
         name = str(field_name).strip()
         components = tuple(component_shape)
         if not name or any(size <= 0 for size in components):
-            raise ValueError("Field name and component shape must be valid.")
+            raise ValueError(
+                f"BlockFieldTopologyTransition.source must have a nonempty field name and nonnegative component extents; got {type(source).__name__}"
+            )
         source_leaf = _cell_references(source, leaves_only=True)
         target_leaf = _cell_references(target, leaves_only=True)
         target_storage = _cell_references(target, leaves_only=False)
@@ -498,7 +492,7 @@ class BlockFieldTopologyTransition(StrictModule, NonTrainableState):
             atol=1e-14,
         ):
             raise RuntimeError(
-                "AMR leaf-cell transition failed conservation qualification."
+                f"BlockFieldTopologyTransition.source must preserve the physical leaf-cell measure under the overlap routes; got {type(source).__name__}"
             )
         source_space = _field_space(
             source, name, len(source_leaf), source_measures, dtype
@@ -597,22 +591,22 @@ class BlockFieldTopologyTransition(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def apply(self, state: BlockHierarchyState, /) -> BlockFieldTopologyTransitionResult:
-        if not isinstance(state, BlockHierarchyState) or (
-            state.topology.epoch.epoch_id != self.source_topology.epoch.epoch_id
-        ):
+        if state.topology.epoch.epoch_id != self.source_topology.epoch.epoch_id:
             raise ValueError(
-                "AMR field transition state does not match its source epoch."
+                f"BlockFieldTopologyTransition.apply.state must match its source epoch; got {type(state).__name__}"
             )
-        if any(
-            level.values.shape[1 + len(level.plan.block_shape) :] != self.component_shape
-            for level in state.levels
-        ):
-            raise ValueError(
-                "AMR field payload components do not match transition field."
-            )
+        for level in state.levels:
+            if (
+                level.values.shape[1 + len(level.plan.block_shape) :]
+                != self.component_shape
+            ):
+                raise ValueError(
+                    f"BlockFieldTopologyTransition.apply.state must match transition field; got {level.values.shape!r}"
+                )
         component_count = prod(self.component_shape) if self.component_shape else 1
-        # One gather over the concatenated canonical level storage replaces the
+        # One gather over the concatenated deterministic level storage replaces the
         # per-leaf host loop; leaf rows are static route arrays.
         source_cells = np.asarray(
             [prod(level.plan.block_shape) for level in state.levels], dtype=np.int32

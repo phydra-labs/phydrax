@@ -2,19 +2,20 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native initial construction partitioned by authoritative constrained patches.
+"""Construct initial surface rows partitioned by authored constrained patches.
 
-Only authored source facts are replicated. Target chart CDT/cavity work resides
-on the patch owner; curves are constructed in their incident source closure and
-reconciled by neighbor packets before any target is exposed. This is not an
-unconstrained, spatially decomposed CDT or distributed PLC recovery algorithm.
+Authored source data is replicated. Target chart CDT/cavity work runs on the
+patch owner; incident owners reconcile source-curve packets before publishing
+any target rows.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
-from time import monotonic
+from typing import assert_never
 
 import equinox as eqx
 import jax
@@ -24,14 +25,22 @@ from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from numpy.typing import NDArray
 
+from phydrax.meshing._contracts import MeshingLimits, SurfaceMeshingSpec
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import MeshcoreError
-from ._contracts import (
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingLimits,
-    SurfaceMeshingSpec,
+from .._meshcore import MeshcoreError, MeshcoreStatus, NativeExecutionScope
+from .._strict import StrictModule
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
 )
+from ..typing import checked
+from . import (
+    _device_adaptation as device_adaptation_owner,
+    _surface_generation as surface_generation_owner,
+)
+from ._collective_failure import collective_failure_barrier
 from ._device_generation import (
     certify_device_surface_initial,
     DeviceGenerationEvidence,
@@ -39,15 +48,18 @@ from ._device_generation import (
     DeviceGenerationStatus,
 )
 from ._domain import (
-    _curve_request,
-    _selected_strata,
     compile_surface_domain,
     CompiledSurfaceDomain,
+    curve_request,
+    selected_strata,
 )
-from ._surface_generation import _curve_vertices, generate_surface, SurfaceConstruction
-from .providers._native_curve import _QueryLedger
-from .providers._native_options import NativeSurfaceSchedule
-from .providers._native_sources import NativeSurfaceSource
+from ._surface_construction import SurfaceConstruction
+from ._trace import MeshingStageKind
+from .providers import (
+    _native_curve as native_curve_owner,
+    _native_sources as native_sources_owner,
+)
+from .providers._native_schedules import NativeSurfaceSchedule
 
 
 type SurfaceBoundaryData = tuple[
@@ -73,27 +85,29 @@ class PreparedDistributedSurfaceGeneration:
             self.specification, SurfaceMeshingSpec
         ):
             raise TypeError(
-                "Initial surface generation requires typed compiled source and specification."
+                f"initial_generation.compiled must be CompiledSurfaceDomain with SurfaceMeshingSpec; got compiled={type(self.compiled).__name__}, specification={type(self.specification).__name__}"
             )
         if self.compiled.specification_id != self.specification.specification_id:
             raise ValueError(
-                "Compiled source controls do not belong to this specification."
+                f"initial_generation.compiled.specification_id must match specification.specification_id; got {self.compiled.specification_id!r} versus {self.specification.specification_id!r}"
             )
         if not isinstance(self.schedule, NativeSurfaceSchedule) or not isinstance(
             self.layout, DeviceGenerationLayout
         ):
             raise TypeError(
-                "Initial generation requires native schedule and device capacity layout."
+                f"initial_generation.schedule must pair NativeSurfaceSchedule with DeviceGenerationLayout; got schedule={type(self.schedule).__name__}, layout={type(self.layout).__name__}"
             )
         if not isinstance(self.patch_owners, np.ndarray):
-            raise TypeError("Patch owners must be an immutable host int32 vector.")
+            raise TypeError(
+                f"initial_generation.patch_owners must be a host int32 vector; got {type(self.patch_owners).__name__}"
+            )
         if (
             self.patch_owners.dtype != np.int32
             or self.patch_owners.shape != self.compiled.patches.shape
             or self.patch_owners.flags.writeable
         ):
             raise ValueError(
-                "Patch owners must be immutable int32 rows aligned with authoritative selected patches."
+                "initial_generation.patch_owners must be immutable int32 rows aligned with selected patches; got incompatible dtype, shape, or mutability"
             )
         if (
             isinstance(self.partition_count, bool)
@@ -101,25 +115,29 @@ class PreparedDistributedSurfaceGeneration:
             or self.partition_count != jax.process_count()
         ):
             raise ValueError(
-                "Initial preparation belongs to another actual process group."
+                "initial_generation.partition_count must match this process group; got incompatible owner count"
             )
         if np.any(self.patch_owners < 0) or np.any(
             self.patch_owners >= self.partition_count
         ):
-            raise ValueError("An authored patch owner is outside the process set.")
+            raise ValueError(
+                f"initial_generation.patch_owners must lie in [0, partition_count); got owners={self.patch_owners!r}, partition_count={self.partition_count}"
+            )
         if (
             isinstance(self.maximum_metadata_bytes, bool)
             or not isinstance(self.maximum_metadata_bytes, int)
             or self.maximum_metadata_bytes <= 0
         ):
-            raise ValueError("maximum_metadata_bytes must be a positive integer.")
+            raise ValueError(
+                f"initial_generation.maximum_metadata_bytes must be a positive integer; got {self.maximum_metadata_bytes!r}"
+            )
         required = self.partition_count * (
             8 * (self.compiled.curves.size + 2 * self.compiled.patches.size + 3) + 32
         )
         if required > self.maximum_metadata_bytes:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Initial source-stratum metadata exceeds its declared budget.",
+                f"initial_generation.maximum_metadata_bytes must cover source-stratum metadata; got required={required}, capacity={self.maximum_metadata_bytes}",
                 stage="distributed-initial-prepare",
             )
 
@@ -149,8 +167,9 @@ class DistributedSurfaceConstruction:
     specification_id: str
 
 
+@checked
 def prepare_distributed_surface_generation(
-    source: NativeSurfaceSource,
+    source: native_sources_owner.NativeSurfaceSource,
     specification: SurfaceMeshingSpec,
     schedule: NativeSurfaceSchedule,
     layout: DeviceGenerationLayout,
@@ -160,13 +179,11 @@ def prepare_distributed_surface_generation(
     maximum_metadata_bytes: int,
 ) -> PreparedDistributedSurfaceGeneration:
     """Bind ownership to authored patch identities before target generation."""
-    if not isinstance(source, NativeSurfaceSource):
-        raise TypeError(
-            "Distributed initial preparation requires its actual native surface source."
-        )
     compiled = compile_surface_domain(source.domain, specification)
     if not isinstance(patch_owners, np.ndarray):
-        raise TypeError("Patch owners must be a host int32 vector.")
+        raise TypeError(
+            f"initial_generation.patch_owners must be a host int32 vector; got {type(patch_owners).__name__}"
+        )
     owners = patch_owners.copy()
     owners.flags.writeable = False
     return PreparedDistributedSurfaceGeneration(
@@ -180,20 +197,21 @@ def prepare_distributed_surface_generation(
     )
 
 
-def _consensus(failure: MeshingFailure | None, /) -> None:
-    categories = tuple(MeshingFailureCategory)
-    code = 0 if failure is None else categories.index(failure.category) + 1
-    rejected = np.asarray(multihost_utils.process_allgather(np.int32(code), tiled=False))
-    rejected = rejected[rejected > 0]
-    if rejected.size:
-        category = categories[int(np.min(rejected)) - 1]
-        if failure is not None and failure.category is category:
-            raise failure
-        raise MeshingFailure(
-            category,
-            "An owner rejected initial native construction; no generated part was published.",
-            stage="distributed-initial-commit",
-        )
+@contextmanager
+def _initial_phase(stage: str, budget: CoordinateEnclosureBudget, /) -> Iterator[None]:
+    failure = None
+    try:
+        with budget.measurement():
+            yield
+    except MeshingFailure as error:
+        failure = error
+    except (MeshcoreError, ValueError) as error:
+        failure = initial_owner_failure(error, stage)
+    collective_failure_barrier(
+        failure,
+        message="An owner rejected initial native construction; no generated part was published.",
+        stage="distributed-initial-commit",
+    )
 
 
 def _local_compiled(
@@ -210,7 +228,7 @@ def _local_compiled(
     specification = eqx.tree_at(
         lambda value: value.limits, prepared.specification, limits
     )
-    request = _curve_request(
+    request = curve_request(
         original.domain,
         specification,
         curves,
@@ -233,15 +251,32 @@ def _local_compiled(
     )
 
 
-def _neighbor_curve_packets(
-    prepared: PreparedDistributedSurfaceGeneration,
-    local: CompiledSurfaceDomain | None,
-    boundary: SurfaceBoundaryData,
-    /,
-) -> tuple[SurfaceBoundaryData, NDArray[np.int64], int, int]:
-    """Use the stable curve owner's native boundary before any target CDT."""
+class _NeighborCurvePlan(StrictModule):
+    capacity: int = eqx.field(static=True)
+    pairs: tuple[tuple[int, int], ...] = eqx.field(static=True)
+    owners: dict[int, tuple[int, ...]] = eqx.field(static=True)
+    shared: NDArray[np.int64]
+
+
+class _CurveBoundaryPacket(StrictModule):
+    data: jax.Array
+    sharding: NamedSharding = eqx.field(static=True)
+    packet_bytes: int = eqx.field(static=True)
+
+
+class _AgreedCurveRows(StrictModule):
+    selected: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]]
+    transferred: int = eqx.field(static=True)
+
+
+class _ReconciledBoundary(StrictModule):
+    boundary: SurfaceBoundaryData
+
+
+def _prepare_neighbor_curve_plan(
+    prepared: PreparedDistributedSurfaceGeneration, /
+) -> _NeighborCurvePlan:
     compiled = prepared.compiled
-    vertices, parameters, identifiers, corner_ids = boundary
     capacities = np.asarray(
         multihost_utils.process_allgather(
             np.int64(prepared.layout.vertex_capacity), tiled=False
@@ -265,24 +300,37 @@ def _neighbor_curve_packets(
         curve_owners[curve] = owners
         if len(owners) > 1 and jax.process_index() in owners:
             shared.append(curve)
-        # One authoritative boundary packet reaches every incident owner.
+        # The curve owner's boundary packet reaches every incident owner.
         pairs.update((owners[0], other) for other in owners[1:])
-    if not pairs:
-        return boundary, np.asarray(shared, dtype=np.int64), 0, 0
+    return _NeighborCurvePlan(
+        capacity, tuple(sorted(pairs)), curve_owners, np.asarray(shared, dtype=np.int64)
+    )
+
+
+def _prepare_curve_boundary_packet(
+    prepared: PreparedDistributedSurfaceGeneration,
+    plan: _NeighborCurvePlan,
+    boundary: SurfaceBoundaryData,
+    /,
+) -> _CurveBoundaryPacket:
+    compiled, capacity = prepared.compiled, plan.capacity
+    vertices, parameters, identifiers, _ = boundary
     retained_boundary_bytes = (
         vertices.nbytes
         + sum(values.nbytes for values in parameters.values())
         + sum(ids.nbytes for ids in identifiers.values())
     )
-    _consensus(
+    collective_failure_barrier(
         MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Neighbor boundary worksets exceed the declared scratch budget.",
+            "initial_generation.neighbor_packets must fit maximum_scratch_bytes; got packet worksets and retained boundary exceeding the scratch allowance",
             stage="distributed-initial-constraints",
         )
         if 6 * capacity * 5 * np.dtype(np.float64).itemsize + retained_boundary_bytes
         > prepared.specification.limits.maximum_scratch_bytes
-        else None
+        else None,
+        message="An owner rejected initial native construction; no generated part was published.",
+        stage="distributed-initial-commit",
     )
     packet = np.full((capacity, 5), -1.0, dtype=np.float64)
     cursor = 0
@@ -290,7 +338,7 @@ def _neighbor_curve_packets(
         count = values.size
         if cursor + count > capacity:
             raise RuntimeError(
-                "Native source boundary exceeds its pre-reserved packet capacity."
+                f"initial_generation.curve_packet.capacity must cover retained boundary rows; got required={cursor + count}, capacity={capacity}"
             )
         packet[cursor : cursor + count, 0] = np.searchsorted(compiled.curves, curve)
         packet[cursor : cursor + count, 1] = values
@@ -306,6 +354,35 @@ def _neighbor_curve_packets(
     data = jax.make_array_from_process_local_data(
         sharding, packet[None], (jax.process_count(), *packet.shape)
     )
+    return _CurveBoundaryPacket(data, sharding, packet.nbytes)
+
+
+@eqx.filter_jit
+def _exchange_curve_packet(
+    data: jax.Array, sharding: NamedSharding, permutation: tuple[tuple[int, int], ...], /
+) -> jax.Array:
+    @partial(
+        jax.shard_map,
+        mesh=sharding.mesh,
+        in_specs=PartitionSpec("initial_owner"),
+        out_specs=PartitionSpec("initial_owner"),
+        check_vma=False,
+    )
+    def exchange(value: jax.Array) -> jax.Array:
+        return jax.lax.ppermute(value, "initial_owner", permutation)
+
+    return exchange(data)
+
+
+def _exchange_curve_boundary_packets(
+    compiled: CompiledSurfaceDomain,
+    plan: _NeighborCurvePlan,
+    packet: _CurveBoundaryPacket,
+    boundary: SurfaceBoundaryData,
+    /,
+) -> _AgreedCurveRows:
+    vertices, parameters, identifiers, _ = boundary
+    pairs, curve_owners = plan.pairs, plan.owners
     selected = {
         curve: (values, vertices[identifiers[curve]])
         for curve, values in parameters.items()
@@ -316,18 +393,9 @@ def _neighbor_curve_packets(
             (rank, second if rank == first else first if rank == second else rank)
             for rank in range(jax.process_count())
         )
-
-        @partial(
-            jax.shard_map,
-            mesh=sharding.mesh,
-            in_specs=PartitionSpec("initial_owner"),
-            out_specs=PartitionSpec("initial_owner"),
-            check_vma=False,
+        received_global = _exchange_curve_packet(
+            packet.data, packet.sharding, permutation
         )
-        def exchange(value: jax.Array) -> jax.Array:
-            return jax.lax.ppermute(value, "initial_owner", permutation)
-
-        received_global = jax.jit(exchange)(data)
         received = np.asarray(jax.device_get(received_global.addressable_shards[0].data))[
             0
         ]
@@ -343,18 +411,21 @@ def _neighbor_curve_packets(
                     or np.any(np.diff(rows[:, 1]) <= 0)
                 ):
                     raise RuntimeError(
-                        "An authoritative source curve packet has no complete ordered parameter interval."
+                        "initial_generation.curve_packet must span an increasing parameter interval from zero to one; got missing endpoints or unordered parameters"
                     )
                 selected[curve] = (rows[:, 1].copy(), rows[:, 2:].copy())
         if jax.process_index() in (first, second):
-            transferred += 2 * packet.nbytes
-    if local is None:
-        return (
-            boundary,
-            np.asarray(shared, dtype=np.int64),
-            sum(jax.process_index() in pair for pair in pairs),
-            transferred,
-        )
+            transferred += 2 * packet.packet_bytes
+    return _AgreedCurveRows(selected, transferred)
+
+
+def _assemble_curve_boundary(
+    compiled: CompiledSurfaceDomain,
+    local: CompiledSurfaceDomain,
+    agreement: _AgreedCurveRows,
+    /,
+) -> _ReconciledBoundary:
+    selected = agreement.selected
     coordinates = [compiled.domain.corner_points[local.corners]]
     corner_ids = {int(corner): row for row, corner in enumerate(local.corners)}
     count = local.corners.size
@@ -374,12 +445,28 @@ def _neighbor_curve_packets(
         coordinates.append(points[1:-1])
         count += interior
     agreed = (np.concatenate(coordinates), parameters, identifiers, corner_ids)
-    return (
-        agreed,
-        np.asarray(shared, dtype=np.int64),
-        sum(jax.process_index() in pair for pair in pairs),
-        transferred,
+    return _ReconciledBoundary(agreed)
+
+
+def _neighbor_curve_packets(
+    prepared: PreparedDistributedSurfaceGeneration,
+    local: CompiledSurfaceDomain | None,
+    boundary: SurfaceBoundaryData,
+    /,
+) -> tuple[SurfaceBoundaryData, NDArray[np.int64], int, int]:
+    """Use the stable curve owner's native boundary before any target CDT."""
+    plan = _prepare_neighbor_curve_plan(prepared)
+    if not plan.pairs:
+        return boundary, plan.shared, 0, 0
+    packet = _prepare_curve_boundary_packet(prepared, plan, boundary)
+    agreement = _exchange_curve_boundary_packets(
+        prepared.compiled, plan, packet, boundary
     )
+    packets = sum(jax.process_index() in pair for pair in plan.pairs)
+    if local is None:
+        return boundary, plan.shared, packets, agreement.transferred
+    agreed = _assemble_curve_boundary(prepared.compiled, local, agreement)
+    return agreed.boundary, plan.shared, packets, agreement.transferred
 
 
 def _canonical_ids(
@@ -420,7 +507,7 @@ def _canonical_ids(
     corners = dimensions == 0
     ids[corners] = np.searchsorted(compiled.corners, indices[corners])
     for row, patch in enumerate(compiled.patches.tolist()):
-        curves, patch_corners = _selected_strata(
+        curves, patch_corners = selected_strata(
             compiled.domain, np.asarray((patch,), dtype=np.int64)
         )
         incident = corners & np.isin(indices, patch_corners)
@@ -446,8 +533,14 @@ def _prepare_boundary(
     prepared: PreparedDistributedSurfaceGeneration,
     maximum_normal_angle: float,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[
-    CompiledSurfaceDomain | None, MeshingLimits, SurfaceBoundaryData, _QueryLedger
+    CompiledSurfaceDomain | None,
+    MeshingLimits,
+    SurfaceBoundaryData,
+    native_curve_owner.QueryLedger,
 ]:
     compiled, layout = prepared.compiled, prepared.layout
     original = prepared.specification.limits
@@ -464,11 +557,11 @@ def _prepare_boundary(
         maximum_scratch_bytes=original.maximum_scratch_bytes,
         maximum_wall_seconds=original.maximum_wall_seconds,
     )
-    ledger = _QueryLedger(limits)
+    ledger = native_curve_owner.QueryLedger(limits, budget=budget)
     local_patches = compiled.patches[prepared.patch_owners == jax.process_index()]
     if not local_patches.size:
         return None, limits, (np.empty((0, 3), dtype=np.float64), {}, {}, {}), ledger
-    curves, corners = _selected_strata(compiled.domain, local_patches)
+    curves, corners = selected_strata(compiled.domain, local_patches)
     local = _local_compiled(prepared, local_patches, curves, corners, limits)
     closure_patches = np.unique(
         np.asarray(
@@ -481,16 +574,34 @@ def _prepare_boundary(
             dtype=np.int64,
         )
     )
+    closure_patches = np.union1d(local_patches, closure_patches)
+    closure_curves, closure_corners = selected_strata(compiled.domain, closure_patches)
     closure = _local_compiled(
-        prepared, np.union1d(local_patches, closure_patches), curves, corners, limits
+        prepared, closure_patches, closure_curves, closure_corners, limits
     )
-    boundary = _curve_vertices(
-        closure, prepared.schedule, ledger, monotonic(), maximum_normal_angle
+    boundary = surface_generation_owner.curve_vertices(
+        closure,
+        prepared.schedule,
+        ledger,
+        scope.operation_started,
+        maximum_normal_angle,
+        scope=scope,
+        budget=budget,
     )
+    if not np.array_equal(closure_curves, curves):
+        points, parameters, identifiers, _ = boundary
+        agreement = _AgreedCurveRows(
+            {
+                curve: (parameters[curve], points[identifiers[curve]])
+                for curve in curves.tolist()
+            },
+            0,
+        )
+        boundary = _assemble_curve_boundary(compiled, local, agreement).boundary
     if boundary[0].shape[0] > limits.maximum_vertices:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Native incident source boundaries exceed the owner vertex capacity before target CDT.",
+            f"initial_generation.boundary.vertices must fit the owner vertex capacity before triangulation; got count={boundary[0].shape[0]}, capacity={limits.maximum_vertices}",
             stage="distributed-initial-boundary",
         )
     return local, limits, boundary, ledger
@@ -499,11 +610,13 @@ def _prepare_boundary(
 def _validate_boundary(
     compiled: CompiledSurfaceDomain,
     boundary: SurfaceBoundaryData,
-    ledger: _QueryLedger,
+    ledger: native_curve_owner.QueryLedger,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
-    """Bind received coordinates/ordering to exact authored curve evaluations."""
-    from ._trace import MeshingStageKind
+    """Bind received coordinates and ordering to authored curve evaluations."""
 
     points, parameters, identifiers, corners = boundary
     if (
@@ -514,7 +627,7 @@ def _validate_boundary(
     ):
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Agreed source boundary does not fit its exact local stratum/capacity closure.",
+            "initial_generation.boundary must cover local curves and corners within vertex capacity; got mismatched stratum keys or excessive boundary vertices",
             stage="distributed-initial-constraints",
         )
     used = list(corners.values())
@@ -526,7 +639,7 @@ def _validate_boundary(
     ):
         raise MeshingFailure(
             MeshingFailureCategory.COMPLIANCE_FAILED,
-            "Agreed corner coordinates do not preserve their authoritative source realization.",
+            "initial_generation.boundary.corners must match authored corner coordinates; got different source realization",
             stage="distributed-initial-constraints",
         )
     for row, curve in enumerate(compiled.curves.tolist()):
@@ -545,7 +658,7 @@ def _validate_boundary(
         ):
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "Agreed curve packet changes authored parameter/end-corner incidence.",
+                "initial_generation.boundary.curve_packet must retain increasing parameters, valid vertex IDs, and authored endpoint incidence; got invalid interval or incidence",
                 stage="distributed-initial-constraints",
             )
         used.extend(ids[1:-1].tolist())
@@ -560,7 +673,7 @@ def _validate_boundary(
         if not np.array_equal(points[ids[1:-1]], exact_points):
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "Neighbor coordinates do not reproduce the authoritative native curve evaluation.",
+                "initial_generation.boundary.curve_coordinates must match native curve evaluation at received parameters; got different interior coordinates",
                 stage="distributed-initial-constraints",
             )
         if np.any(
@@ -569,7 +682,7 @@ def _validate_boundary(
         ):
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "Agreed shared boundary misses its original physical size bound.",
+                "initial_generation.boundary.curve_edges must satisfy the requested physical size bound; got an edge exceeding the bound",
                 stage="distributed-initial-constraints",
             )
         if np.isfinite(compiled.curve_deviations[row]):
@@ -582,17 +695,18 @@ def _validate_boundary(
             ):
                 raise MeshingFailure(
                     MeshingFailureCategory.COMPLIANCE_FAILED,
-                    "Agreed shared boundary misses its original continuous source fidelity bound.",
+                    "initial_generation.boundary.curve_interpolation must satisfy the requested source-deviation bound; got an interpolation enclosure exceeding the bound",
                     stage="distributed-initial-constraints",
                 )
     if sorted(used) != list(range(points.shape[0])):
         raise MeshingFailure(
             MeshingFailureCategory.COMPLIANCE_FAILED,
-            "Agreed curve interiors/corners overlap or leave unused local identities.",
+            "initial_generation.boundary.vertex_ids must cover local vertices once; got overlapping curve interiors or unused vertices",
             stage="distributed-initial-constraints",
         )
 
 
+@checked
 def execute_distributed_surface_initial(
     prepared: PreparedDistributedSurfaceGeneration,
     /,
@@ -600,13 +714,124 @@ def execute_distributed_surface_initial(
     minimum_angle: float,
     maximum_normal_angle: float = np.inf,
 ) -> DistributedSurfaceConstruction:
-    """Construct owner patches, reconcile shared constraints, then release rows.
+    """Construct and collectively admit owner-local initial surface rows."""
 
-    A result publisher must still consume the full independent global domain,
-    embedding, source-association and organization proofs. These generated rows
-    are deliberately not masqueraded as an accepted bisection epoch.
-    """
+    limits = prepared.specification.limits
+    with (
+        NativeExecutionScope(limits.native_limits()) as scope,
+        device_adaptation_owner.device_coordinate_budget(limits, scope=scope) as budget,
+    ):
+        return _execute_distributed_surface_initial(
+            prepared,
+            minimum_angle=minimum_angle,
+            maximum_normal_angle=maximum_normal_angle,
+            scope=scope,
+            budget=budget,
+        )
+
+
+def initial_owner_failure(
+    error: MeshcoreError | ValueError, stage: str, /
+) -> MeshingFailure:
+    match error:
+        case MeshcoreError():
+            resource = error.status in (
+                MeshcoreStatus.CAPACITY_EXCEEDED,
+                MeshcoreStatus.TIMEOUT,
+            )
+        case CoordinateEnclosureResourceError():
+            resource = True
+        case ValueError():
+            resource = False
+        case value:
+            assert_never(value)
+    failure = MeshingFailure(
+        MeshingFailureCategory.RESOURCE_EXHAUSTED
+        if resource
+        else MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+        str(error),
+        stage=stage,
+    )
+    failure.__cause__ = error
+    return failure
+
+
+class _InitialOwnerConstruction(StrictModule):
+    construction: SurfaceConstruction | None
+    evidence: DeviceGenerationEvidence | None
+
+
+def _construct_local_surface_initial(
+    prepared: PreparedDistributedSurfaceGeneration,
+    local: CompiledSurfaceDomain | None,
+    boundary: SurfaceBoundaryData,
+    ledger: native_curve_owner.QueryLedger,
+    limits: MeshingLimits,
+    minimum_angle: float,
+    maximum_normal_angle: float,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> _InitialOwnerConstruction:
+    if local is None:
+        return _InitialOwnerConstruction(None, None)
     compiled, layout = prepared.compiled, prepared.layout
+    quality = prepared.specification.quality_target
+    construction = surface_generation_owner.generate_surface(
+        local,
+        prepared.schedule,
+        limits,
+        minimum_angle,
+        maximum_normal_angle=maximum_normal_angle,
+        prepared_boundary=boundary,
+        boundary_queries=ledger.queries,
+        boundary_work=ledger.work,
+        required_minimum_angle=(
+            quality.minimum_angle if quality is not None and quality.hard else 0.0
+        ),
+        size_compliance=prepared.specification.size_compliance,
+        scope=scope,
+        budget=budget,
+    )
+    signs = np.asarray(
+        [
+            (-1 if compiled.domain.patches[patch].reversed else 1)
+            for patch in construction.triangle_patches
+        ],
+        dtype=np.int32,
+    )
+    evidence = certify_device_surface_initial(
+        layout,
+        construction.vertices,
+        construction.triangle_parameters,
+        signs,
+        scope=scope,
+    )
+    if evidence.status is not DeviceGenerationStatus.COMPLETE:
+        category = (
+            MeshingFailureCategory.COMPLIANCE_FAILED
+            if evidence.status is DeviceGenerationStatus.INVALID_GEOMETRY
+            else MeshingFailureCategory.RESOURCE_EXHAUSTED
+        )
+        raise MeshingFailure(
+            category,
+            f"initial_generation.device_evidence.status must be COMPLETE; got {evidence.status}",
+            stage="distributed-initial-device",
+        )
+    return _InitialOwnerConstruction(construction, evidence)
+
+
+class _InitialInputBinding(StrictModule):
+    bindings: NDArray[np.uint8]
+
+
+def _bind_distributed_initial_inputs(
+    prepared: PreparedDistributedSurfaceGeneration,
+    minimum_angle: float,
+    maximum_normal_angle: float,
+    /,
+) -> _InitialInputBinding:
+    compiled = prepared.compiled
     binding = canonical_fingerprint(
         (
             compiled.compiled_id,
@@ -624,85 +849,79 @@ def execute_distributed_surface_initial(
         )
     )
     if np.any(bindings != bindings[0]):
-        raise ValueError("Processes disagree on authoritative initial-generation inputs.")
+        raise ValueError(
+            "initial_generation.inputs must agree across processes; got different source or control fingerprints"
+        )
+    return _InitialInputBinding(bindings)
+
+
+def _execute_distributed_surface_initial(
+    prepared: PreparedDistributedSurfaceGeneration,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+    minimum_angle: float,
+    maximum_normal_angle: float = np.inf,
+) -> DistributedSurfaceConstruction:
+    """Construct rows after shared-constraint and device admission.
+
+    Publication additionally requires independent global domain, embedding,
+    source-association, and organization proofs.
+    """
+    compiled = prepared.compiled
+    binding = _bind_distributed_initial_inputs(
+        prepared, minimum_angle, maximum_normal_angle
+    )
+    bindings = binding.bindings
     local = None
     limits = prepared.specification.limits
     boundary: SurfaceBoundaryData = (np.empty((0, 3), dtype=np.float64), {}, {}, {})
-    ledger = _QueryLedger(limits)
-    failure = None
-    try:
+    ledger = native_curve_owner.QueryLedger(limits, budget=budget)
+    with _initial_phase("distributed-initial-boundary", budget):
         local, limits, boundary, ledger = _prepare_boundary(
-            prepared, maximum_normal_angle
+            prepared, maximum_normal_angle, scope=scope, budget=budget
         )
-    except MeshingFailure as error:
-        failure = error
-    except (MeshcoreError, ValueError) as error:
-        failure = MeshingFailure(
-            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            str(error),
-            stage="distributed-initial-boundary",
-        )
-    _consensus(failure)
     boundary, shared, packets, neighbor_bytes = _neighbor_curve_packets(
         prepared, local, boundary
     )
-    failure = None
-    try:
+    with _initial_phase("distributed-initial-constraints", budget):
         if local is not None:
-            _validate_boundary(local, boundary, ledger)
-    except MeshingFailure as error:
-        failure = error
-    _consensus(failure)
-    construction = None
-    evidence = None
-    failure = None
-    try:
-        if local is not None:
-            quality = prepared.specification.quality_target
-            construction = generate_surface(
-                local,
-                prepared.schedule,
-                limits,
-                minimum_angle,
-                maximum_normal_angle=maximum_normal_angle,
-                prepared_boundary=boundary,
-                boundary_queries=ledger.queries,
-                boundary_work=ledger.work,
-                required_minimum_angle=(
-                    quality.minimum_angle if quality is not None and quality.hard else 0.0
+            remaining = scope.remaining()
+            ticket = scope.batch(
+                min(
+                    prepared.specification.limits.maximum_work_units - budget.work_units,
+                    remaining.remaining_work_units,
                 ),
-                size_compliance=prepared.specification.size_compliance,
+                queries_upper=min(
+                    prepared.specification.limits.maximum_geometry_queries,
+                    remaining.remaining_geometry_queries,
+                ),
+                bytes_upper=min(
+                    prepared.specification.limits.maximum_scratch_bytes,
+                    remaining.remaining_managed_bytes,
+                ),
+                cavity_upper=min(
+                    prepared.specification.limits.maximum_cavity_cells,
+                    remaining.remaining_cavity_cells,
+                ),
             )
-            signs = np.asarray(
-                [
-                    (-1 if compiled.domain.patches[patch].reversed else 1)
-                    for patch in construction.triangle_patches
-                ],
-                dtype=np.int32,
-            )
-            evidence = certify_device_surface_initial(
-                layout, construction.vertices, construction.triangle_parameters, signs
-            )
-            if evidence.status is not DeviceGenerationStatus.COMPLETE:
-                category = (
-                    MeshingFailureCategory.COMPLIANCE_FAILED
-                    if evidence.status is DeviceGenerationStatus.INVALID_GEOMETRY
-                    else MeshingFailureCategory.RESOURCE_EXHAUSTED
-                )
-                raise MeshingFailure(
-                    category,
-                    "Initial device predicate/capacity barrier rejected native owner rows.",
-                    stage="distributed-initial-device",
-                )
-    except MeshingFailure as error:
-        failure = error
-    except (MeshcoreError, ValueError) as error:
-        failure = MeshingFailure(
-            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            str(error),
-            stage="distributed-initial-construction",
+            with budget.bind_ticket(ticket), ticket.native_target():
+                _validate_boundary(local, boundary, ledger, scope=scope, budget=budget)
+    owner = _InitialOwnerConstruction(None, None)
+    with _initial_phase("distributed-initial-construction", budget):
+        owner = _construct_local_surface_initial(
+            prepared,
+            local,
+            boundary,
+            ledger,
+            limits,
+            minimum_angle,
+            maximum_normal_angle,
+            scope,
+            budget,
         )
-    _consensus(failure)
+    construction, evidence = owner.construction, owner.evidence
     local_counts = np.zeros(
         (compiled.curves.size + 2 * compiled.patches.size,), dtype=np.int64
     )
@@ -739,14 +958,16 @@ def execute_distributed_surface_initial(
         or np.sum(resources[:, 0]) > limits.maximum_geometry_queries
         or np.sum(resources[:, 1]) > limits.maximum_work_units
     )
-    _consensus(
+    collective_failure_barrier(
         MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Collective initial construction exceeds the unchanged global request budgets.",
+            "initial_generation.resources must fit global vertex, face, query, and work limits; got collective counts exceeding a request limit",
             stage="distributed-initial-resources",
         )
         if exhausted
-        else None
+        else None,
+        message="An owner rejected initial native construction; no generated part was published.",
+        stage="distributed-initial-commit",
     )
     return DistributedSurfaceConstruction(
         construction,

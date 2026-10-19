@@ -315,7 +315,7 @@ class ActiveGradientBankResult(StrictModule):
 def active_gradient_bank_work(
     parameter_size: int, active_bucket: int, equality_bucket: int, bank_capacity: int, /
 ) -> int:
-    """Conservative row-algebra units for one complete executed bank path."""
+    """Return conservative row-algebra units for one executed bank path."""
     a, k, d = active_bucket, equality_bucket, parameter_size
     return (
         18 * bank_capacity
@@ -327,6 +327,7 @@ def active_gradient_bank_work(
     )
 
 
+# Invariant: budget gates precede bank algebra; equality and A dispatch stay separate.
 def compose_active_gradient_bank(
     gradients: PyTree[Any],
     raw_improvement_targets: Array,
@@ -344,46 +345,66 @@ def compose_active_gradient_bank(
 
     Signed inequalities require strictly positive projections. Equalities
     retain the caller's numerical linear-solve threshold; scientific zero
-    tolerance remains with actual source residual/publication admission.
+    tolerance remains with source residual/publication admission.
     Raw targets prescribe ORIGINAL row-dot-direction progress, not unit-row
     margins. A compatible rank solve preserves their ratios; final seed-norm
     rescaling preserves achieved ratios, not absolute target magnitudes.
     Zero/rank failure only refuses this direction, never proves stationarity
-    or scientific infeasibility. Every complete bucket is admitted before
-    its gathers, Gram products or canonical economy rank factorization.
+    or scientific infeasibility. Every bucket is admitted before
+    its gathers, Gram products or economy rank factorization.
     """
     values = validate_real_inexact_tree(gradients, name="active gradient bank")
     leaves = jax.tree.leaves(values)
     if not leaves or any(leaf.ndim < 1 for leaf in leaves):
-        raise ValueError("A gradient bank requires nonempty leading-row arrays.")
+        raise ValueError(
+            f"compose_active_gradient_bank.gradients must contain nonempty leading-row arrays; got {[leaf.shape for leaf in leaves]!r}."
+        )
     capacity = leaves[0].shape[0]
     if capacity not in (4, 8, 16, 32):
-        raise ValueError("Gradient bank capacity must be 4, 8, 16, or 32.")
+        raise ValueError(
+            f"compose_active_gradient_bank.gradients.capacity must be 4, 8, 16, or 32; got {capacity!r}."
+        )
     if any(leaf.ndim < 1 or leaf.shape[0] != capacity for leaf in leaves):
-        raise ValueError("Every gradient leaf must have the same leading bank capacity.")
+        raise ValueError(
+            f"compose_active_gradient_bank.gradients must share leading capacity {capacity}; got {[leaf.shape for leaf in leaves]!r}."
+        )
     if inequality_active.shape != (capacity,) or equality_active.shape != (capacity,):
-        raise ValueError("Bank activity masks must match its leading capacity.")
+        raise ValueError(
+            f"compose_active_gradient_bank.activity_masks must have shape {(capacity,)!r}; got {(inequality_active.shape, equality_active.shape)!r}."
+        )
     if raw_improvement_targets.shape != (capacity,):
-        raise ValueError("Raw improvement targets must match the leading bank capacity.")
+        raise ValueError(
+            f"compose_active_gradient_bank.raw_improvement_targets must have shape {(capacity,)!r}; got {raw_improvement_targets.shape!r}."
+        )
     if raw_improvement_targets.dtype.kind != "f":
-        raise TypeError("Raw improvement targets must be real floating arrays.")
+        raise TypeError(
+            f"compose_active_gradient_bank.raw_improvement_targets must use a real floating dtype; got {raw_improvement_targets.dtype!r}."
+        )
     if inequality_active.dtype.kind != "b" or equality_active.dtype.kind != "b":
-        raise TypeError("Bank activity masks must be Boolean arrays.")
+        raise TypeError(
+            f"compose_active_gradient_bank.activity_masks must use Boolean dtypes; got {(inequality_active.dtype, equality_active.dtype)!r}."
+        )
     if (
         original_norm.ndim != 0
         or remaining_work.ndim != 0
         or remaining_work.dtype.kind != "i"
     ):
-        raise TypeError("Original norm and signed model-work allowance must be scalars.")
+        raise TypeError(
+            f"compose_active_gradient_bank.controls must contain scalar original_norm and signed integer scalar remaining_work; got {(original_norm.shape, remaining_work.shape, remaining_work.dtype)!r}."
+        )
     if not isinstance(rank_policy, RankPolicy):
-        raise TypeError("rank_policy must be a RankPolicy.")
+        raise TypeError(
+            f"compose_active_gradient_bank.rank_policy must be RankPolicy; got {type(rank_policy).__name__}."
+        )
     if (
         not np.isfinite(minimum_norm)
         or not np.isfinite(projection_tolerance)
         or minimum_norm < 0.0
         or projection_tolerance < 0.0
     ):
-        raise ValueError("Numerical norm and projection thresholds must be nonnegative.")
+        raise ValueError(
+            f"compose_active_gradient_bank.thresholds must be finite and nonnegative; got {(minimum_norm, projection_tolerance)!r}."
+        )
     parameter_size = sum(leaf.size // capacity for leaf in leaves)
     dtype = leaves[0].dtype
     scan_work = 12 * capacity
@@ -422,7 +443,7 @@ def compose_active_gradient_bank(
         equality_bucket: Array,
         prior_work: Array,
     ) -> ActiveGradientBankResult:
-        # Equality projection is complete before this independent A dispatch.
+        # Equality projection finishes before this independent A dispatch.
         post_work = (
             4 * a * parameter_size
             + 4 * capacity * parameter_size

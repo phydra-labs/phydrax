@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._validation import nonnegative_integer
 from ..linalg import (
     ArraySpace,
     DiagonalPairing,
@@ -24,6 +25,7 @@ from ..linalg import (
     PreparedLinearization,
 )
 from ..sparse import RowRelation
+from ..typing import checked
 from ._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -37,7 +39,7 @@ from ._support import DiscreteSupport
 from ._tensor import AbstractStrongFormDiscretization
 from ._topology import EntitySet, PointTopology
 from ._views import FieldQueryEvidence
-from .meshfree._neighbors import _integer, _points, MeshfreeNeighborhoodPlan
+from .meshfree._neighbors import MeshfreeNeighborhoodPlan, neighbor_points
 from .meshfree._stencils import (
     LocalStencilEvidence,
     LocalStencilPolicy,
@@ -100,6 +102,7 @@ class PointCloudPlan(StrictModule):
     target_chunk_size: int | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         points: ArrayLike,
@@ -116,28 +119,27 @@ class PointCloudPlan(StrictModule):
         maximum_candidates: int | None = None,
         target_chunk_size: int | None = None,
     ) -> None:
-        points_ = _points(points, "points", unique=True)
+        points_ = neighbor_points(points, "points", unique=True)
         weights = np.asarray(quadrature_weights, dtype=np.float64)
         if (
             weights.shape != points_.shape[:1]
             or np.any(~np.isfinite(weights))
             or np.any(weights <= 0.0)
         ):
-            raise ValueError("Point quadrature weights must be finite and positive.")
+            raise ValueError(
+                f"PointCloudPlan.quadrature_weights must be finite and positive with one entry per point; got {weights.shape}."
+            )
         policy = LocalStencilPolicy() if stencil is None else stencil
-        if not isinstance(policy, LocalStencilPolicy):
-            raise TypeError("stencil must be a LocalStencilPolicy.")
         if policy.polynomial_degree < 2:
             raise ValueError(
-                "Point-cloud strong derivatives require polynomial degree at least two."
+                f"PointCloudPlan.stencil.polynomial_degree must be at least two; got {policy.polynomial_degree}."
             )
         feature_count = math.comb(
             points_.shape[1] + policy.polynomial_degree, policy.polynomial_degree
         )
         if policy.support is not None and neighbors is None:
             raise ValueError(
-                "A smooth fixed-radius support needs an explicit candidate capacity "
-                "(neighbors)."
+                f"PointCloudPlan.neighbors must declare candidate capacity for smooth fixed-radius support; got {neighbors}."
             )
         count = (
             min(points_.shape[0], 2 * feature_count) if neighbors is None else neighbors
@@ -152,14 +154,18 @@ class PointCloudPlan(StrictModule):
             envelope=policy.support,
         )
         if neighborhood.neighbors < feature_count:
-            raise ValueError("neighbors must cover the polynomial basis.")
+            raise ValueError(
+                f"PointCloudPlan.neighbors must cover the polynomial basis; got {neighborhood.neighbors}."
+            )
         boundary = (
             np.zeros(points_.shape[0], dtype=np.bool_)
             if boundary_mask is None
             else np.asarray(boundary_mask)
         )
         if boundary.dtype != np.dtype(np.bool_) or boundary.shape != points_.shape[:1]:
-            raise ValueError("boundary_mask must be Boolean with shape (points,).")
+            raise ValueError(
+                f"PointCloudPlan.boundary_mask must be boolean with one entry per point; got {(boundary.shape, boundary.dtype)}."
+            )
         boundary = np.asarray(boundary, dtype=np.bool_)
         normals = (
             np.zeros_like(points_)
@@ -167,10 +173,14 @@ class PointCloudPlan(StrictModule):
             else np.asarray(boundary_normals, dtype=np.float64).copy()
         )
         if normals.shape != points_.shape or np.any(~np.isfinite(normals)):
-            raise ValueError("boundary_normals must be finite with point-cloud shape.")
+            raise ValueError(
+                f"PointCloudPlan.boundary_normals must be finite with point-cloud shape; got {normals.shape}."
+            )
         lengths = np.linalg.norm(normals[boundary], axis=1)
         if lengths.size and np.any(lengths <= 0.0):
-            raise ValueError("Boundary point normals must be nonzero.")
+            raise ValueError(
+                f"PointCloudPlan.boundary_normals must be nonzero on boundary points; got {lengths}."
+            )
         if lengths.size:
             normals[boundary] /= lengths[:, None]
         boundary_weights = (
@@ -186,7 +196,7 @@ class PointCloudPlan(StrictModule):
                 or np.any(boundary_weights[~boundary] != 0.0)
             ):
                 raise ValueError(
-                    "boundary_quadrature_weights must be positive on boundary points and zero elsewhere."
+                    f"PointCloudPlan.boundary_quadrature_weights must be positive on boundary points and zero elsewhere; got {boundary_weights.shape}."
                 )
         self.points = jnp.asarray(points_)
         self.quadrature_weights = jnp.asarray(weights)
@@ -215,21 +225,20 @@ class PointCloudPlan(StrictModule):
         return PreparedPointCloudDiscretization(self)
 
 
-def _require_point_cloud_plan_integrity(plan: PointCloudPlan, /) -> None:
-    """Validate exact retained science without normalizing stored normals again."""
-    if type(plan) is not PointCloudPlan:
-        raise TypeError("Point-cloud integrity requires its exact owning plan.")
+@checked
+def require_point_cloud_plan_integrity(plan: PointCloudPlan, /) -> None:
+    """Validate retained geometry, quadrature, and controls without renormalization."""
     banks = (plan.points, plan.quadrature_weights, plan.boundary_normals)
     if plan.boundary_quadrature_weights is not None:
         banks = (*banks, plan.boundary_quadrature_weights)
     if any(
-        not isinstance(bank, jax.Array) or not jnp.issubdtype(bank.dtype, jnp.floating)
+        not isinstance(bank, jax.Array) or not np.issubdtype(bank.dtype, np.floating)
         for bank in banks
     ):
         raise TypeError(
-            "Retained point geometry and quadrature require real inexact JAX banks."
+            f"require_point_cloud_plan_integrity.plan must retain floating JAX geometry and quadrature banks; got {tuple(type(bank).__name__ for bank in banks)}."
         )
-    points = _points(plan.points, "points", unique=True)
+    points = neighbor_points(plan.points, "points", unique=True)
     weights = np.asarray(plan.quadrature_weights, dtype=np.float64)
     boundary = np.asarray(plan.boundary_mask)
     normals = np.asarray(plan.boundary_normals, dtype=np.float64)
@@ -243,19 +252,25 @@ def _require_point_cloud_plan_integrity(plan: PointCloudPlan, /) -> None:
         or np.any(~np.isfinite(weights))
         or np.any(weights <= 0.0)
     ):
-        raise ValueError("Retained point quadrature weights must be finite and positive.")
+        raise ValueError(
+            f"PointCloudPlan.quadrature_weights must be finite and positive with one entry per point; got {weights.shape}."
+        )
     if boundary.dtype != np.dtype(np.bool_) or boundary.shape != points.shape[:1]:
         raise ValueError(
-            "Retained point boundary mask must be Boolean with shape (points,)."
+            f"PointCloudPlan.boundary_mask must be boolean with one entry per point; got {(boundary.shape, boundary.dtype)}."
         )
     if normals.shape != points.shape or np.any(~np.isfinite(normals)):
-        raise ValueError("Retained point normals must be finite with point-cloud shape.")
+        raise ValueError(
+            f"PointCloudPlan.boundary_normals must be finite with point-cloud shape; got {normals.shape}."
+        )
     lengths = np.linalg.norm(normals[boundary], axis=1)
     normalization_roundoff = (
-        8 * points.shape[1] * jnp.finfo(plan.boundary_normals.dtype).eps
+        8 * points.shape[1] * np.finfo(plan.boundary_normals.dtype).eps
     )
     if np.any(np.abs(lengths - 1.0) > normalization_roundoff):
-        raise ValueError("Retained point boundary normals are not unit-normalized.")
+        raise ValueError(
+            f"PointCloudPlan.boundary_normals must be unit-normalized within the normalization rounding bound; got {lengths}."
+        )
     if boundary_weights is not None and (
         boundary_weights.shape != points.shape[:1]
         or np.any(~np.isfinite(boundary_weights))
@@ -263,10 +278,12 @@ def _require_point_cloud_plan_integrity(plan: PointCloudPlan, /) -> None:
         or np.any(boundary_weights[~boundary] != 0.0)
     ):
         raise ValueError(
-            "Retained boundary quadrature must be positive only on boundary points."
+            f"PointCloudPlan.boundary_quadrature_weights must be positive on boundary points and zero elsewhere; got {boundary_weights.shape}."
         )
     if type(plan.stencil) is not LocalStencilPolicy:
-        raise TypeError("Retained point plan requires its exact owning stencil policy.")
+        raise TypeError(
+            "PointCloudPlan.stencil must be LocalStencilPolicy; got a different stored type."
+        )
     policy = LocalStencilPolicy(
         approximation=plan.stencil.approximation,
         polynomial_degree=plan.stencil.polynomial_degree,
@@ -281,7 +298,7 @@ def _require_point_cloud_plan_integrity(plan: PointCloudPlan, /) -> None:
     )
     if policy.polynomial_degree < 2:
         raise ValueError(
-            "Retained point-cloud derivatives require polynomial degree at least two."
+            f"PointCloudPlan.stencil.polynomial_degree must be at least two; got {policy.polynomial_degree}."
         )
     neighborhood = MeshfreeNeighborhoodPlan(
         points,
@@ -295,7 +312,9 @@ def _require_point_cloud_plan_integrity(plan: PointCloudPlan, /) -> None:
     if neighborhood.neighbors < math.comb(
         points.shape[1] + policy.polynomial_degree, policy.polynomial_degree
     ):
-        raise ValueError("Retained point neighbors do not cover the polynomial basis.")
+        raise ValueError(
+            f"PointCloudPlan.neighbors must cover the polynomial basis; got {neighborhood.neighbors}."
+        )
     identity = _point_cloud_plan_id(
         points,
         weights,
@@ -307,7 +326,7 @@ def _require_point_cloud_plan_integrity(plan: PointCloudPlan, /) -> None:
     )
     if identity != plan.plan_id:
         raise ValueError(
-            "Retained point plan differs from its actual scientific banks and controls."
+            "PointCloudPlan.plan_id must match its scientific banks and controls; got a different digest."
         )
 
 
@@ -339,6 +358,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
     preparation: PreparationReport
     trust_radius: Array
 
+    @checked
     def __init__(self, plan: PointCloudPlan, /) -> None:
         points = np.asarray(plan.points)
         count, dimension = points.shape
@@ -504,7 +524,9 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         """
         coordinates = jnp.asarray(points, dtype=self.coordinates.dtype)
         if coordinates.shape != self.coordinates.shape:
-            raise ValueError("Point-cloud refresh preserves point count and dimension.")
+            raise ValueError(
+                f"PreparedPointCloudDiscretization.refresh.points must preserve point count and dimension; got {coordinates.shape}."
+            )
         refreshed = refresh_local_stencils(self.stencils, coordinates, coordinates)
         stencils = refreshed.stencils
         derivative_weights = tuple(
@@ -543,7 +565,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
 
         The published map sends point coordinates to the refitted weights of
         every prepared derivative functional (``mixed_weights`` order) on the
-        frozen relation. Its JVP/VJP are genuine derivatives of that map with
+        frozen relation. Its JVP/VJP differentiate that map with
         per-row rank and conditioning evidence. A nearest-neighbor support is
         differentiable only strictly inside its selection gap; a smooth
         fixed-radius support across neighbors entering or leaving the radius
@@ -554,7 +576,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         coordinates = jnp.asarray(points, dtype=self.coordinates.dtype)
         if coordinates.shape != self.coordinates.shape:
             raise ValueError(
-                "Point-cloud sensitivity preserves point count and dimension."
+                f"PreparedPointCloudDiscretization.coordinate_sensitivity.points must preserve point count and dimension; got {coordinates.shape}."
             )
 
         def weights(
@@ -578,7 +600,9 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
     def _validate_state(self, state: ArrayLike, /) -> Array:
         value = jnp.asarray(state)
         if value.shape[:1] != self.state_shape:
-            raise ValueError("Point-cloud state must begin with point count.")
+            raise ValueError(
+                f"PreparedPointCloudDiscretization.state must begin with the prepared point count; got {value.shape}."
+            )
         return value
 
     def _selected_axes(
@@ -598,7 +622,9 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
             or len(set(selected)) != len(selected)
             or any(axis < 0 or axis >= self.spatial_dimension for axis in selected)
         ):
-            raise ValueError("Point-cloud axes must be unique valid spatial axes.")
+            raise ValueError(
+                f"PreparedPointCloudDiscretization.axes must be unique valid spatial axes; got {selected}."
+            )
         return selected
 
     def _apply_weights(self, state: Array, weights: Array, /) -> Array:
@@ -617,12 +643,14 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
     def mixed_partial_derivative(
         self, state: ArrayLike, /, *, multi_index: tuple[int, ...]
     ) -> Array:
-        index = tuple(_integer(order, "derivative order", 0) for order in multi_index)
+        index = tuple(
+            nonnegative_integer(order, "derivative order") for order in multi_index
+        )
         for prepared_index, weights in self.mixed_weights:
             if index == prepared_index:
                 return self._apply_weights(self._validate_state(state), weights)
         raise ValueError(
-            "Point-cloud mixed derivatives require a spatial multi-index of total order one/two."
+            f"PreparedPointCloudDiscretization.multi_index must select a prepared spatial derivative of total order one or two; got {index}."
         )
 
     def partial_derivative(
@@ -638,7 +666,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         order_ = int(order)
         if axis_ < 0 or axis_ >= self.spatial_dimension or order_ not in (1, 2):
             raise ValueError(
-                "Point-cloud derivatives support valid axes and orders one/two."
+                f"PreparedPointCloudDiscretization.partial_derivative.axis_order must select a valid spatial axis and order one or two; got {(axis_, order_)}."
             )
         return self._apply_weights(value, self.derivative_weights[axis_][order_ - 1])
 
@@ -655,7 +683,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         order_ = int(order)
         if axis_ < 0 or axis_ >= self.spatial_dimension or order_ not in (1, 2):
             raise ValueError(
-                "Point-cloud transpose derivatives support valid axes and orders one/two."
+                f"PreparedPointCloudDiscretization.transpose_partial_derivative.axis_order must select a valid spatial axis and order one or two; got {(axis_, order_)}."
             )
         weights = self.derivative_weights[axis_][order_ - 1]
         payload = value.shape[1:]
@@ -689,12 +717,14 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         dual: bool = False,
     ) -> Array:
         if dual:
-            raise ValueError("Point-cloud strong divergence has no certified dual route.")
+            raise ValueError(
+                f"PreparedPointCloudDiscretization.divergence.dual must be false for the strong-divergence route; got {dual}."
+            )
         value = jnp.asarray(state)
         selected = self._selected_axes(axes)
         if value.shape[-1] != len(selected):
             raise ValueError(
-                "Point-cloud divergence components must match selected axes."
+                f"PreparedPointCloudDiscretization.divergence.state must have one component per selected axis; got {value.shape}."
             )
         result = jnp.zeros(value.shape[:-1], dtype=value.dtype)
         for component, axis in enumerate(selected):
@@ -735,13 +765,15 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
     def unflatten(self, state: ArrayLike, /) -> Array:
         value = jnp.asarray(state)
         if value.size != self.state_shape[0]:
-            raise ValueError("Flattened point-cloud state has wrong size.")
+            raise ValueError(
+                f"PreparedPointCloudDiscretization.unflatten.state must match the prepared state size; got {value.size}."
+            )
         return value.reshape(self.state_shape)
 
     def laplacian_matrix(self) -> Array:
         if self.state_shape[0] > 4096:
             raise ValueError(
-                "Point-cloud Laplacian matrix exceeds dense analysis budget."
+                f"PreparedPointCloudDiscretization.laplacian_matrix.point_count must be at most 4096 for dense analysis; got {self.state_shape[0]}."
             )
         identity = jnp.eye(self.state_shape[0])
         return jax.vmap(self.laplacian, in_axes=1, out_axes=1)(identity)
@@ -749,8 +781,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
     def eigenpairs(self, *, rank: int | None = None) -> tuple[Array, Array]:
         del rank
         raise ValueError(
-            "Raw point-cloud Laplacians are not certified self-adjoint; use a "
-            "certified dissipative point operator for spectral analysis."
+            f"PreparedPointCloudDiscretization.eigenpairs.operator must have certified self-adjoint evidence for spectral analysis; got {'a raw point-cloud Laplacian'}."
         )
 
 

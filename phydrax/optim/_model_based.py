@@ -44,9 +44,9 @@ from ._iterative import (
 )
 from ._nonlinear_constraints import (
     _canonical_constraint_values,
-    _constraint_layout,
     _constraint_violation,
-    _ConstraintLayout,
+    constraint_layout,
+    ConstraintLayout,
 )
 
 
@@ -78,7 +78,7 @@ class _ValueEvaluator:
     precision: NonlinearPrecisionPolicy
     penalty: float
     maximum_evaluations: int | None
-    layout: _ConstraintLayout | None = None
+    layout: ConstraintLayout | None = None
     value_shapes: tuple[PyTree[jax.ShapeDtypeStruct], ...] | None = None
     objective_evaluations: int = 0
     constraint_evaluations: int = 0
@@ -117,12 +117,12 @@ class _ValueEvaluator:
         observed_shapes = tuple(shapes)
         if self.value_shapes is None:
             self.value_shapes = observed_shapes
-            self.layout = _constraint_layout(
+            self.layout = constraint_layout(
                 self.problem, parameters, self.args, value_shapes=observed_shapes
             )
         elif observed_shapes != self.value_shapes:
             raise ValueError(
-                "Constraint value structure, shape, and dtype must stay fixed."
+                f"_ValueEvaluator.value_shapes must remain {self.value_shapes!r}; got {observed_shapes!r}."
             )
         if self.problem.bounds is not None:
             values.append(coordinates)
@@ -132,7 +132,9 @@ class _ValueEvaluator:
             else jnp.empty((0,), dtype=coordinates.dtype)
         )
         if self.layout is None:
-            raise RuntimeError("Constraint layout was not prepared.")
+            raise RuntimeError(
+                f"_ValueEvaluator.layout must be prepared; got {self.layout!r}."
+            )
         equality, inequality = _canonical_constraint_values(self.layout, raw)
         feasibility = _constraint_violation(equality, inequality)
         merit = self.precision.decision(
@@ -197,7 +199,7 @@ def _initialize_model(
     initial = evaluator.evaluate(evaluator.template)
     if initial is None:
         raise RuntimeError(
-            "A positive evaluation allowance must admit the initial point."
+            f"_initialize_model.initial must be admitted by the evaluation allowance; got {initial!r}."
         )
     state = _ModelState(initial, radius)
     state.remember_feasible(initial, termination.absolute_optimality)
@@ -281,7 +283,9 @@ def _trial_iteration(
 ) -> OptimizationStatus:
     model = state.model
     if model is None:
-        raise RuntimeError("A trial requires a complete interpolation model.")
+        raise RuntimeError(
+            f"_ModelState.model must be prepared before a trial; got {model!r}."
+        )
     center = state.current.coordinates
     step = _model_step(model, center, state.radius, gradient, method)
     state.linear_solves += 1
@@ -553,7 +557,7 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
         center, unflatten = ravel_pytree(parameters)
         if center.size < 1 or center.size > self.maximum_dimension:
             raise ValueError(
-                "Model-based dimension must be positive and within maximum_dimension."
+                f"AbstractModelBasedTrustRegion.dimension must lie in [1, {self.maximum_dimension}]; got {center.size!r}."
             )
         evaluator = _ValueEvaluator(
             problem,
@@ -577,7 +581,7 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
             model = state.model
             if model is None:
                 raise RuntimeError(
-                    "Initialization did not produce an interpolation model."
+                    f"_ModelState.model must be prepared by initialization; got {model!r}."
                 )
             gradient = model.gradient(state.current.coordinates)
             optimality = self.precision.decision(

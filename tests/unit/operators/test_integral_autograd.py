@@ -18,6 +18,7 @@ from phydrax.operators.integral import (
     spatial_integral,
     time_convolution,
 )
+from phydrax.units import METER
 
 
 def _interval_rule(count: Any) -> Any:
@@ -40,7 +41,7 @@ def _square_rule(order: Any) -> Any:
 
 def test_fixed_integral_grad_has_finite_parameter_shape() -> None:
     geometry = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile(coordinate_unit=METER)
     )
     target = phx.integration.over(geometry.component())
     plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(16))
@@ -60,7 +61,7 @@ def test_sampled_boundary_integral_grad_has_finite_parameter_shape(
     sample_batch: Any,
 ) -> None:
     geometry = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile(coordinate_unit=METER)
     )
     component = geometry.component({"x": Boundary()})
     points = sample_batch(component, blocks=(("x",),), num_points=2048, key=1)
@@ -79,7 +80,7 @@ def test_sampled_boundary_integral_grad_has_finite_parameter_shape(
 
 def test_spatial_integral_grad_has_finite_parameter_shape() -> None:
     geometry = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile(coordinate_unit=METER)
     )
     quadrature = _square_rule(48)
 

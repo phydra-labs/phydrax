@@ -11,10 +11,11 @@ import pytest
 
 import phydrax as phx
 import phydrax.axes as cx
+from phydrax.units import METER
 
 
 def _circle_panelization(*, panels: Any = 8, order: Any = 8) -> Any:
-    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     return phx.operators.BoundaryPanelization2D(
         geometry.boundary_atlas,
         panels_per_chart=panels,
@@ -44,12 +45,12 @@ def test_panelization_contracts() -> None:
         (0.0, 0.0),
         1.0,
         feature_id="shared-layer-support",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     different_geometry = phx.geometry.Circle(
         (0.25, -0.1),
         1.2,
         feature_id="shared-layer-support",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     phx.operators.BoundaryPanelization2D(
         source_geometry.boundary_atlas,
         panels_per_chart=2,
@@ -70,7 +71,9 @@ def test_panelization_contracts() -> None:
         kind="double",
         density=jnp.ones((panelization.node_count,)),
     )
-    domain = phx.domain.GeometryDomain(phx.geometry.Circle((0.0, 0.0), 1.0).compile())
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
+    )
     field = domain.Model("x")(potential)
     certificate = phx.equations.trial_space_certificate(field)
     assert certificate.exactness == "algebraic"
@@ -120,7 +123,7 @@ def test_panelization_contracts() -> None:
         (0.0, 0.0),
         1.0,
         feature_id="different-layer-support",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     other_panelization = phx.operators.BoundaryPanelization2D(
         other_geometry.boundary_atlas,
         panels_per_chart=2,

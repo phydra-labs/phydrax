@@ -45,7 +45,7 @@ from ....linalg import (
     PreparedLinearSolve,
     solve as solve_linear_system,
 )
-from ....linalg._spaces import _coordinate_dtype
+from ....linalg._spaces import coordinate_dtype
 from ....typing import checked
 from ._reaction import PreparedReaction
 from ._regional_assignment import PreparedRegionalAssignment
@@ -337,7 +337,7 @@ class PhysicalMonodomainSpatialBinding(StrictModule, NonTrainableState):
             raise TypeError("diffusion must be a supported diffusion operator input.")
         if diffusion.operator.source.size != volumes.shape[0]:
             raise ValueError("Diffusion operator size must match node_volume_mm3.")
-        if _coordinate_dtype(diffusion.operator.source) != np.dtype(volumes.dtype):
+        if coordinate_dtype(diffusion.operator.source) != np.dtype(volumes.dtype):
             raise TypeError("Diffusion operator and node volumes must use one dtype.")
         label = None if binding_id is None else _identifier(binding_id, "binding_id")
         tensor_payload = (

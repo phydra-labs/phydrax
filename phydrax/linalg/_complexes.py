@@ -24,13 +24,13 @@ from ._incomplete_factorizations import SparseFactorizationPreconditionerBuilder
 from ._named_blocks import assemble_block_operator
 from ._operator_pairing import OperatorPairing
 from ._operators import (
-    _materialize_by_basis,
     AbstractLinearOperator,
     AdjointLinearOperator,
     BlockLinearOperator,
     DenseLinearOperator,
     DiagonalLinearOperator,
     IdentityLinearOperator,
+    materialize_by_basis,
 )
 from ._pairings import DiagonalPairing, EuclideanPairing
 from ._policies import LinearSolvePolicy, MINRES, TolerancePolicy
@@ -41,10 +41,10 @@ from ._problems import LinearSystem
 from ._properties import LinearCapabilityError, OperatorCapabilities, OperatorProperties
 from ._runtime import prepare, solve
 from ._spaces import (
-    _coordinate_dtype,
     AbstractVectorSpace,
     ArraySpace,
     BlockSpace,
+    coordinate_dtype,
     DualSpace,
     PyTreeSpace,
 )
@@ -81,7 +81,7 @@ def coordinate_space(space: AbstractVectorSpace, /) -> ArraySpace:
     """Euclidean coordinate endomorphism space, distinct from the paired primal."""
     return ArraySpace(
         (space.size,),
-        dtype=_coordinate_dtype(space),
+        dtype=coordinate_dtype(space),
         space_id=f"{space.space_id}:coordinates",
     )
 
@@ -301,7 +301,7 @@ def _probes(space: AbstractVectorSpace, key: PRNGKey, count: int, /) -> Array:
     parse(key, PRNGKey, "key")
     if count < 1:
         raise ValueError("probes must be positive.")
-    return jax.random.normal(key, (count, space.size), dtype=_coordinate_dtype(space))
+    return jax.random.normal(key, (count, space.size), dtype=coordinate_dtype(space))
 
 
 def complex_nilpotency_evidence(
@@ -383,7 +383,7 @@ class HodgeLaplacianOperator(AbstractLinearOperator):
         return jax.tree.map(jnp.conj, result)
 
     def _materialize(self, /) -> Array:
-        return _materialize_by_basis(self)
+        return materialize_by_basis(self)
 
 
 def hodge_laplacian(
@@ -423,7 +423,7 @@ class _CoordinateMassOperator(AbstractLinearOperator):
         return self.mv(vector)
 
     def _materialize(self, /) -> Array:
-        return _materialize_by_basis(self)
+        return materialize_by_basis(self)
 
     def _assemble_diagonal(self, /) -> Array:
         # Sequential probing retains O(n) scratch, never an n-by-n basis/mass.
@@ -817,7 +817,7 @@ def harmonic_subspace(
         return HarmonicSubspace(
             complex.complex_id,
             degree,
-            jnp.zeros((0, 0), dtype=_coordinate_dtype(space)),
+            jnp.zeros((0, 0), dtype=coordinate_dtype(space)),
             jnp.zeros((0,), dtype=jnp.float64),
             jnp.asarray(jnp.inf),
             zero,
@@ -868,7 +868,7 @@ def _check_harmonic(
     ):
         raise ValueError("Harmonic basis provenance/degree does not match the complex.")
     if jnp.iscomplexobj(harmonic.basis) and not np.issubdtype(
-        _coordinate_dtype(complex.space(degree)), np.complexfloating
+        coordinate_dtype(complex.space(degree)), np.complexfloating
     ):
         raise ValueError(
             "A complex harmonic basis requires complex Hilbert-coordinate spaces."
@@ -994,7 +994,7 @@ type _HodgeParts = tuple[
 
 
 def _needs_real_extension(space: AbstractVectorSpace, values: PyTree[Array], /) -> bool:
-    return not np.issubdtype(_coordinate_dtype(space), np.complexfloating) and any(
+    return not np.issubdtype(coordinate_dtype(space), np.complexfloating) and any(
         jnp.iscomplexobj(leaf) for leaf in jax.tree.leaves(values)
     )
 
@@ -1164,13 +1164,13 @@ def prepare_hodge_decomposition(
             diagonal_parts = []
             for name, block in zip(mixed_space.names, mixed_space.spaces, strict=True):
                 if name == "p":
-                    diagonal = jnp.ones((block.size,), dtype=_coordinate_dtype(block))
+                    diagonal = jnp.ones((block.size,), dtype=coordinate_dtype(block))
                 else:
                     k = degree - 2 if name == "sigma" else degree - 1
                     diagonal = assemble_diagonal(mass_form(complex, k))
                 diagonal_parts.append(jnp.real(diagonal))
             preconditioner = DiagonalPreconditioner(
-                jnp.concatenate(diagonal_parts).astype(_coordinate_dtype(mixed_space)),
+                jnp.concatenate(diagonal_parts).astype(coordinate_dtype(mixed_space)),
                 space=mixed_space,
                 positive_definite=True,
                 preconditioner_id=f"{complex.complex_id}:decomposition-preconditioner:{degree}",

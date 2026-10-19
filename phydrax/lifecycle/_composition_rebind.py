@@ -66,7 +66,7 @@ CompositionFacet: TypeAlias = Literal["structure", "revision", "semantics"]
 CompositionTransportKind: TypeAlias = Literal["physical-remap", "ownership-migration"]
 
 
-def _carries_state(role: CompositionRole, /) -> bool:
+def carries_state(role: CompositionRole, /) -> bool:
     """Whether entries of `role` hold state that may never be dropped or re-created.
 
     Derived artifacts are rebuilt by their owners from staged dependencies and
@@ -468,7 +468,7 @@ def _check_refresh(source: CompositionEntry, staged: CompositionEntry, /) -> Non
 def _check_reprepare(
     source: CompositionEntry | None, staged: CompositionEntry, /
 ) -> None:
-    if _carries_state(staged.role):
+    if carries_state(staged.role):
         raise ValueError(
             f"State entry {staged.entry_id!r} ({staged.role}) cannot be reprepared; "
             "state crosses a rebind only through an explicit owner transport."
@@ -486,7 +486,7 @@ def _check_transport(source: Composition, transport: CompositionTransport, /) ->
         transport.source_entry_ids, transport.source_structure_ids, strict=True
     ):
         entry = source.entry(entry_id)
-        if not _carries_state(entry.role):
+        if not carries_state(entry.role):
             raise ValueError(
                 f"Transport {transport.route_id!r} consumes derived artifact "
                 f"{entry_id!r}; derived artifacts are reprepared by their owners."
@@ -513,7 +513,7 @@ def _check_transport(source: Composition, transport: CompositionTransport, /) ->
 
 
 def _check_invalidation(entry: CompositionEntry, /) -> None:
-    if _carries_state(entry.role):
+    if carries_state(entry.role):
         raise ValueError(
             f"State entry {entry.entry_id!r} ({entry.role}) cannot be invalidated; "
             "unknown state needs an explicit owner transport or the rebind is refused."

@@ -51,7 +51,7 @@ def _integer(value: int, name: str, minimum: int = 1) -> int:
     return int(value)
 
 
-def _points(value: ArrayLike, name: str, *, unique: bool) -> np.ndarray:
+def neighbor_points(value: ArrayLike, name: str, *, unique: bool) -> np.ndarray:
     raw = np.asarray(value)
     if not np.issubdtype(raw.dtype, np.number) or np.issubdtype(
         raw.dtype, np.complexfloating
@@ -346,8 +346,12 @@ class MeshfreeNeighborhoodPlan(StrictModule):
     ) -> None:
         policy = _precision_policy(precision)
         geometry = np.dtype(policy.geometry_dtype)
-        source = _points(sources, "sources", unique=True)
-        target = source if targets is None else _points(targets, "targets", unique=False)
+        source = neighbor_points(sources, "sources", unique=True)
+        target = (
+            source
+            if targets is None
+            else neighbor_points(targets, "targets", unique=False)
+        )
         if target.shape[1] != source.shape[1]:
             raise ValueError("Source and target dimensions must match.")
         address_ = _resolved_address(address, source, target)
@@ -590,7 +594,7 @@ class MeshfreeEdgeRelationPlan(StrictModule):
         precision: MeshfreePrecisionPolicy | None = None,
     ) -> None:
         policy = _precision_policy(precision)
-        cloud = _points(points, "points", unique=True)
+        cloud = neighbor_points(points, "points", unique=True)
         address_ = _resolved_address(address, cloud)
         cloud = _cast_points(
             cloud, np.dtype(policy.geometry_dtype), "points", unique=True

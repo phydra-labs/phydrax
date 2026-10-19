@@ -22,6 +22,7 @@ from phydrax.discretization.particle._level_set import (
     PreparedLevelSetRigidShapeSet,
 )
 from phydrax.discretization.particle._rigid_body import RigidBodyKinematics
+from phydrax.units import METER
 
 
 pytestmark = pytest.mark.strict_jax
@@ -36,7 +37,9 @@ def grains() -> PreparedLevelSetRigidShapeSet:
     grid = phx.discretization.SparseVoxelGridPlan(
         address, brick_size=2, brick_capacity=512
     ).prepare(coordinates)
-    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 0.5, feature_id="grain").compile()
+    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 0.5, feature_id="grain").compile(
+        coordinate_unit=METER
+    )
     samples = phx.geometry.VoxelGeometrySamplingPlan(grid).sample_level_set(geometry)
     template = LevelSetShapeTemplatePlan(
         samples,

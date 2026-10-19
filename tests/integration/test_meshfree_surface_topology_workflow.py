@@ -47,7 +47,7 @@ def test_merge_epoch_consumes_lineage_and_matches_the_authority_state() -> None:
     assert bool(jnp.all(lineage.ccd_certified))
     assert receipt.published and receipt.failed == ()
     published = receipt.composition
-    # The meshfree concentration equals the authority's committed content per area.
+    # The meshfree concentration equals the committed surface content per area.
     np.testing.assert_allclose(
         published.value(ex.CURRENT),
         event.target.concentration(merged.state.sheet_fields[..., 0]),
@@ -102,7 +102,10 @@ def test_frozen_event_transfer_differentiates_values_but_not_selection() -> None
     )
     assert bool(transition.apply(values).value_derivative_available)
     assert not merged.evidence.derivative_available
-    with pytest.raises(ValueError, match="nondifferentiable"):
+    with pytest.raises(
+        ValueError,
+        match="must differentiate values only through frozen transfers or a fixed epoch",
+    ):
         receipt.require_differentiable_selection()
     with pytest.raises(ValueError, match="nondifferentiable"):
         transition.require_differentiable_topology()

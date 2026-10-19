@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "intersections.hpp"
+#include "geometry3.hpp"
 #include "plc3d.hpp"
 #include "predicates.hpp"
 #include "source_construction.hpp"
@@ -27,13 +28,12 @@
 namespace phx::mc {
 namespace {
 
-double squared(double x) { return x * x; }
 
 double distance(const double* a, const double* b) {
-  return std::sqrt(squared(a[0] - b[0]) + squared(a[1] - b[1]) + squared(a[2] - b[2]));
+  return std::sqrt(geometry::squared_distance(a, b));
 }
 
-double dot(const double* u, const double* v) { return u[0] * v[0] + u[1] * v[1] + u[2] * v[2]; }
+using geometry::dot;
 
 double point_segment_distance(const double* p, const double* a, const double* b) {
   const double ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
@@ -91,9 +91,6 @@ double point_triangle_distance(const double* p, const double* a, const double* b
   return distance(p, q);
 }
 
-bool in_domain(const double* p) {
-  return coordinate_in_domain(p[0]) && coordinate_in_domain(p[1]) && coordinate_in_domain(p[2]);
-}
 
 // Exact strict betweenness of a point already exactly collinear with (a, b).
 bool strictly_between(const double* a, const double* b, const double* p) {
@@ -279,7 +276,7 @@ bool exact_segment_point(const double* a, const double* b, double target, double
     for (int axis = 0; axis < 3; ++axis) {
       point[axis] = a[axis] + t * direction[axis];
     }
-    if (in_domain(point) && collinear3d(a, b, point) && strictly_between(a, b, point)) {
+    if (geometry::point_in_domain(point) && geometry::collinear(a, b, point) && strictly_between(a, b, point)) {
       return true;
     }
   }
@@ -297,7 +294,7 @@ bool exact_triangle_point(const double* a, const double* b, const double* c, dou
       point[axis] = a[axis] + t * ab[axis] + t * ac[axis];
     }
     int side = 0;
-    if (in_domain(point) && locate_on_triangle(point, triangle, side) == kFeatureInterior) {
+    if (geometry::point_in_domain(point) && locate_on_triangle(point, triangle, side) == kFeatureInterior) {
       return true;
     }
   }
@@ -345,8 +342,8 @@ double nearest_double(const Expansion& value) {
     x = next;
   }
   for (;;) {
-    const double down = std::nextafter(x, -std::numeric_limits<double>::infinity());
-    const double up = std::nextafter(x, std::numeric_limits<double>::infinity());
+    const double down = geometry::next_down(x);
+    const double up = geometry::next_up(x);
     const int below = closer(value, down, x);
     const int above = closer(value, up, x);
     if (below < 0 || (below == 0 && even_significand(down))) {
@@ -366,7 +363,7 @@ double outward_magnitude(const Expansion& value) {
   }
   double bound = std::fabs(magnitude.estimate());
   while ((Expansion(bound) - magnitude).sign() < 0) {
-    bound = std::nextafter(bound, std::numeric_limits<double>::infinity());
+    bound = geometry::next_up(bound);
   }
   return bound;
 }
@@ -390,14 +387,14 @@ double outward_distance(const double* position, const Expansion* point) {
     sum += ratio * ratio;
   }
   const double norm = scale * std::sqrt(sum) * (1.0 + 0x1p-49);
-  return std::nextafter(norm, std::numeric_limits<double>::infinity());
+  return geometry::next_up(norm);
 }
 
 bool on_source_entity(const double* const* corners, SourceStratum stratum,
                       const double* position) {
   switch (stratum) {
     case SourceStratum::kSegment: {
-      if (!collinear3d(corners[0], corners[1], position)) {
+      if (!geometry::collinear(corners[0], corners[1], position)) {
         return false;
       }
       for (int k = 0; k < 3; ++k) {
@@ -437,7 +434,7 @@ bool source_carrier(const double* const* corners, SourceStratum stratum,
   for (int k = 0; k < 3; ++k) {
     position[k] = nearest_double(point[k]);
   }
-  if (!in_domain(position)) {
+  if (!geometry::point_in_domain(position)) {
     return false;
   }
   deviation = on_source_entity(corners, stratum, position) ? 0.0

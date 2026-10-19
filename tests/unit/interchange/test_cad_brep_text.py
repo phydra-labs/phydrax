@@ -2,16 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native OCCT BRep text interchange: exact round trips, OCCT references, refusals.
+"""Exercise OCCT BRep text round trips, external references and refusals.
 
-OCCT (via OCP) is an independent reference only: it writes the external files
-the native reader must decode and reads the files the native writer emits.
-Volumes are compared with the native exact-geometry measure and OCCT's
-``BRepGProp``; tolerances reflect quadrature error, not interchange error.
+OCCT writes independent source files and reads native writer output.
+Volume references are closed forms or OCCT BRepGProp quadrature; carrier
+comparisons use explicit binary64 evaluation budgets. Written tolerances
+are compared as rationals with certified bounds, not sampled residuals.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 from typing import Literal, TypeVar
 
@@ -28,22 +30,22 @@ from phydrax.geometry._atlas import TrimDomain
 from phydrax.geometry.brep import (
     assemble_brep_model,
     brep_box,
-    brep_cylinder,
-    brep_extrusion,
-    brep_revolution,
-    brep_sphere,
-    brep_torus,
+    BRepEntityId,
+    BRepGapEvidence,
     BRepGeometry,
     BRepModel,
     BRepOccurrence,
+    BRepPartitionOperand,
+    BRepPartitionPlan,
+    BRepPartitionPolicy,
+    BRepPartitionRole,
     BRepTessellationPolicy,
+    certify_brep_gaps,
     HyperbolaCurve,
     OffsetCurve,
     ParabolaCurve,
-    PlanarProfile,
+    partition_brep,
     prepare_brep_query,
-    ProfileLoop,
-    ProfilePlane,
 )
 from phydrax.geometry.brep._intersection_curve import IntersectionCurve
 from phydrax.geometry.brep._model import BRepAssemblyContainer
@@ -59,6 +61,7 @@ from phydrax.interchange import (
     AdapterStatus,
     CadCurveFitPolicy,
     CadExportPolicy,
+    CadExportResult,
     CadImportPolicy,
     CadInterchangeError,
     decode_brep_text_bytes,
@@ -67,10 +70,20 @@ from phydrax.interchange import (
     save_brep_archive,
     write_brep_text,
 )
-from phydrax.interchange._cad import CadStage, recover_pcurve, StagedCoedge
-from phydrax.interchange._cad_carriers import RigidPlacement
+from phydrax.interchange._cad import CadStage, edge_range, recover_pcurve, StagedCoedge
+from phydrax.interchange._cad_carriers import place_curve, place_surface, RigidPlacement
 from phydrax.units import METER, MILLIMETER, UnitDefinition
-from tests._support.cad_models import native_intersection_cap, native_offset_plane
+from tests._support.cad_models import (
+    BREP_TEXT_SOLIDS,
+    BREP_TEXT_VOLUMES,
+    geometry_of,
+    native_brep_text_assembly,
+    native_brep_text_sheet,
+    native_intersection_cap,
+    native_offset_plane,
+    native_solid,
+    solid_volumes,
+)
 
 
 _CONTRACT = SpatialCoordinateContract(METER)
@@ -89,63 +102,45 @@ _OCCT_SPLINE_POLICY = CadImportPolicy(
     relative_geometric_tolerance=2.0e-6,
 )
 
+# Fixed query quadrature acceptance budgets against the closed forms above and
+# OCCT BRepGProp, retained from these analytic-solid and spline-loft fixtures.
+_SOLID_VOLUME_RTOL = 1.0e-6
+_LOFT_VOLUME_RTOL = 2.0e-5
+_DISK_AREA_RTOL = 2.0e-6
+_PLANAR_AREA_RTOL = 1.0e-12
+_OFFSET_AREA_RTOL = 1.0e-10
+# Binary64 evaluation budgets, in fixture length units: one scaled coordinate
+# product, conic/rational evaluations, mapped charts, nested surface lifts and
+# two-axis periodic spline expansion respectively. Values preserve prior limits.
+_UNIT_PRODUCT_ATOL = 1.0e-15
+_CARRIER_ATOL = 1.0e-14
+_MAPPED_CHART_ATOL = 1.0e-13
+_SURFACE_LIFT_ATOL = 1.0e-12
+_PERIODIC_SURFACE_ATOL = 1.0e-11
+# OCCT Precision::Confusion in the meter fixtures; fitting policies explicitly
+# request the same source deviation budget. The radial oracle allows two such
+# errors for the source/fit comparison, not a rewritten carrier tolerance.
+_CONSTRUCTION_TOLERANCE = 1.0e-7
+_FIT_TOLERANCE = 1.0e-7
+_FIT_RADIAL_ATOL = 2.0e-7
+
+_ISOLATED_VERTEX_SOURCE = (
+    "DBRep_DrawableShape\n\nCASCADE Topology V3, (c) Open Cascade\n"
+    "Locations 0\nCurve2ds 0\nCurves 0\nPolygon3D 0\nPolygonOnTriangulations 0\n"
+    "Surfaces 0\nTriangulations 0\nTShapes 1\n"
+    "Ve\n0.125\n1 2 3\n0 0\n0101101\n*\n\n+1 0\n"
+)
+
 
 _T = TypeVar("_T")
 
 
 def _require_type(value: object, expected: type[_T], /) -> _T:
     if not isinstance(value, expected):
-        raise TypeError(f"Expected {expected.__name__}, got {type(value).__name__}.")
+        raise TypeError(
+            f"_require_type.value must be {expected.__name__}; got {type(value).__name__}"
+        )
     return value
-
-
-def _geometry(model: BRepModel, /) -> BRepGeometry:
-    geometry = model.geometry
-    if geometry is None:
-        raise ValueError("This CAD fixture requires exact native geometry.")
-    return geometry
-
-
-def _plate() -> BRepModel:
-    profile = PlanarProfile(
-        ProfilePlane((-2.0, -2.0, 0.0)),
-        ProfileLoop.polygon(((0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0))),
-        (ProfileLoop.circle((2.0, 2.0), 0.5),),
-    )
-    return brep_extrusion(profile, (0.0, 0.0, 0.5), coordinate_contract=_CONTRACT)
-
-
-def _ring() -> BRepModel:
-    profile = PlanarProfile(
-        ProfilePlane((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
-        ProfileLoop.polygon(((1.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0))),
-    )
-    return brep_revolution(profile, (0.0, 0.0), (0.0, 1.0), coordinate_contract=_CONTRACT)
-
-
-_NATIVE = {
-    "box": lambda: brep_box(
-        (0.0, 0.0, 0.0), (1.0, 2.0, 3.0), coordinate_contract=_CONTRACT
-    ),
-    "cylinder": lambda: brep_cylinder(0.5, 2.0, coordinate_contract=_CONTRACT),
-    "sphere": lambda: brep_sphere(0.75, coordinate_contract=_CONTRACT),
-    "torus": lambda: brep_torus(2.0, 0.5, coordinate_contract=_CONTRACT),
-    "plate-with-hole": _plate,
-    "revolved-ring": _ring,
-}
-# Exact volumes of the native solids and of the OCCT-built references.
-_VOLUMES = {
-    "box": 6.0,
-    "cylinder": np.pi * 0.25 * 2.0,
-    "sphere": 4.0 / 3.0 * np.pi * 0.75**3,
-    "torus": 2.0 * np.pi**2 * 2.0 * 0.25,
-    "plate-with-hole": 8.0 - np.pi * 0.25 * 0.5,
-    "revolved-ring": np.pi * 3.0,
-}
-
-
-def _volume(model: BRepModel) -> float:
-    return float(prepare_brep_query(model).measures.solid_volumes[0])
 
 
 def _counts(model: BRepModel) -> tuple[int, int, int, int]:
@@ -153,50 +148,448 @@ def _counts(model: BRepModel) -> tuple[int, int, int, int]:
     return (
         topology.num_solids,
         topology.num_faces,
-        topology.num_edges - sum(_geometry(model).degenerate_edges),
+        topology.num_edges - sum(geometry_of(model).degenerate_edges),
         topology.num_vertices,
     )
 
 
-@pytest.mark.parametrize("name", sorted(_NATIVE))
+def _tshape_declarations(text: str) -> dict[int, tuple[str, int]]:
+    """Locate external topology declarations by OCCT's reverse record numbering."""
+    lines = text.splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("TShapes "))
+    records = [
+        (line, index + 1)
+        for index, line in enumerate(lines)
+        if index > start and line in ("Ve", "Ed", "Wi", "Fa", "Sh", "So", "Co")
+    ]
+    return {len(records) - index: record for index, record in enumerate(records)}
+
+
+def _written_tolerances(
+    text: str, provenance: tuple[tuple[str, str], ...]
+) -> dict[str, str]:
+    """Read raw decimal tolerance declarations through published entity provenance."""
+    lines = text.splitlines()
+    declarations = _tshape_declarations(text)
+    tolerances: dict[str, str] = {}
+    for label, external in provenance:
+        if not external.startswith("TShapes#"):
+            continue
+        kind, _ = label.split(":", 1)
+        if kind not in ("vertex", "edge", "face"):
+            continue
+        number = int(external.split(" ", 1)[0].removeprefix("TShapes#"))
+        record_kind, line = declarations[number]
+        tokens = lines[line].split()
+        tolerances[label] = tokens[1] if record_kind == "Fa" else tokens[0]
+    return tolerances
+
+
+def _require_outward_decimal(decimal: str, bound: float, label: str) -> None:
+    # One binary64 successor corrects downward 17-digit rounding; the corrected
+    # decimal can lie up to half an ulp above that successor. Two successors
+    # therefore enclose the decimal without admitting an inflated format floor.
+    written = Fraction(decimal)
+    upper = float(np.nextafter(np.nextafter(bound, np.inf), np.inf))
+    assert Fraction(bound) <= written <= Fraction(upper), label
+
+
+@pytest.mark.parametrize("kind", ("vertex", "edge", "face"))
+@pytest.mark.parametrize("name", ("box", "cylinder"), ids=("affine", "conic"))
+def test_writer_entity_tolerances_enclose_certified_gap_bounds(
+    name: str, kind: str, tmp_path: Path
+) -> None:
+    model = native_solid(name, catalog="brep-text")
+    gaps: BRepGapEvidence = certify_brep_gaps(model)
+    path = tmp_path / "bounded.brep"
+    exported = write_brep_text(model, path)
+    written = _written_tolerances(path.read_text(), exported.provenance)
+    entities: tuple[BRepEntityId, ...] = {
+        "vertex": model.vertex_ids,
+        "edge": model.edge_ids,
+        "face": model.face_ids,
+    }[kind]
+    assert entities
+    for entity in entities:
+        label = f"{entity.kind}:{entity.index}"
+        _require_outward_decimal(written[label], gaps.bound(entity), label)
+    assert dict(exported.report.target_profile.qualifiers)[
+        "entity-tolerance-evidence"
+    ] == ("certified-brep-gaps; outward decimal rounding")
+
+
+@pytest.mark.parametrize(
+    "source_unit", (METER, MILLIMETER), ids=("meters", "millimeters")
+)
+def test_reader_carries_source_tolerances_within_declared_model_limit_losslessly(
+    source_unit: UnitDefinition, tmp_path: Path
+) -> None:
+    path = tmp_path / "bounded-source.brep"
+    exported = write_brep_text(native_solid("box", catalog="brep-text"), path)
+    text = path.read_text()
+    lines = text.splitlines()
+    # The source explicitly declares a nanounit tolerance; it exceeds the
+    # affine fixture's measured gaps but remains below the imported model limit.
+    declared = 1.0e-9
+    declarations = _tshape_declarations(text)
+    for record_kind, line in declarations.values():
+        if record_kind not in ("Ve", "Ed", "Fa"):
+            continue
+        fields = lines[line].split()
+        fields[1 if record_kind == "Fa" else 0] = repr(declared)
+        lines[line] = " ".join(fields)
+    policy = CadImportPolicy(_CONTRACT, replace(_LIMITS, max_losses=0))
+    result = decode_brep_text_bytes(
+        ("\n".join(lines) + "\n").encode("ascii"),
+        policy,
+        source_length_unit=source_unit,
+    )
+    source = declared * float(source_unit.scale_to_reference)
+    gaps = certify_brep_gaps(result.model)
+    assert source <= result.model.report.curve_surface_tolerance
+    assert source > max(float(value) for value in gaps.upper_bounds)
+    assert result.source_tolerance == source
+    assert result.source_tolerances == tuple(
+        sorted(
+            (external, declared)
+            for label, external in exported.provenance
+            if label.split(":", 1)[0] in ("vertex", "edge", "face")
+        )
+    )
+    assert result.resource_manifest.observed_losses == 0
+    assert result.report.valid
+    assert result.report.status == AdapterStatus.LOSSLESS
+    assert result.report.losses == ()
+    evidence = result.tolerance_evidence
+    assert evidence is not None
+    assert evidence.model_id == result.model.model_id
+    assert evidence.declared_limit == result.model.report.curve_surface_tolerance
+    entities = (*result.model.vertex_ids, *result.model.edge_ids, *result.model.face_ids)
+    assert set(evidence.entities) == set(entities)
+    for entity, certified, supplied, carried in zip(
+        evidence.entities,
+        evidence.certified_bounds,
+        evidence.source_bounds,
+        evidence.upper_bounds,
+        strict=True,
+    ):
+        assert certified == gaps.bound(entity)
+        assert supplied == source
+        assert carried == max(gaps.bound(entity), source)
+
+
+@pytest.mark.parametrize("kind", ("vertex", "edge", "face"))
+@pytest.mark.parametrize(
+    "source_unit", (METER, MILLIMETER), ids=("meters", "millimeters")
+)
+@pytest.mark.parametrize("loss_limit", (0, 8), ids=("retained-only", "loss-budget"))
+def test_reader_declares_larger_source_entity_tolerances(
+    kind: str, source_unit: UnitDefinition, loss_limit: int, tmp_path: Path
+) -> None:
+    model = native_solid("box", catalog="brep-text")
+    path = tmp_path / "source.brep"
+    exported = write_brep_text(model, path)
+    text = path.read_text()
+    external = dict(exported.provenance)[f"{kind}:0"]
+    number = int(external.split(" ", 1)[0].removeprefix("TShapes#"))
+    record_kind, line = _tshape_declarations(text)[number]
+    lines = text.splitlines()
+    fields = lines[line].split()
+    # A source author explicitly declares two source length units of uncertainty;
+    # this is metadata, not an oracle tolerance or a geometry perturbation.
+    declared = 2.0
+    fields[1 if record_kind == "Fa" else 0] = repr(declared)
+    lines[line] = " ".join(fields)
+    policy = CadImportPolicy(_CONTRACT, replace(_LIMITS, max_losses=loss_limit))
+    damaged = "\n".join(lines) + "\n"
+    written = _written_tolerances(damaged, exported.provenance)
+    result = decode_brep_text_bytes(
+        damaged.encode("ascii"),
+        policy,
+        source_length_unit=source_unit,
+    )
+    factor = float(source_unit.scale_to_reference)
+    assert result.source_tolerance == declared * factor
+    assert result.source_tolerances == tuple(
+        sorted(
+            (external_reference, float(written[label]))
+            for label, external_reference in exported.provenance
+            if label in written
+        )
+    )
+    assert result.resource_manifest.observed_losses == 0
+    assert result.report.valid
+    assert result.report.status == AdapterStatus.DECLARED_LOSS
+    loss = next(
+        item for item in result.report.losses if item.path == f"source-tolerance:{kind}"
+    )
+    assert not loss.changes_interpretation
+    assert declared * factor > result.model.report.curve_surface_tolerance
+    assert f"{kind}:0" in loss.rationale
+    assert f"declared={declared * factor:.17g}" in loss.rationale
+    assert f"limit={result.model.report.curve_surface_tolerance:.17g}" in loss.rationale
+    assert dict(result.provenance)[f"{kind}:0"] == external
+    evidence = result.tolerance_evidence
+    assert evidence is not None
+    assert evidence.declared_limit == result.model.report.curve_surface_tolerance
+    entity = BRepEntityId(result.model.source_revision, kind, 0)
+    row = evidence.entities.index(entity)
+    assert evidence.source_bounds[row] == declared * factor
+    certified = evidence.certified_bounds[row]
+    assert certified is not None
+    assert evidence.upper_bounds[row] == max(certified, declared * factor)
+
+
+@pytest.mark.parametrize("loss_limit", (0, 8), ids=("refused-budget", "declared-loss"))
+def test_reader_declares_unrepresentable_converted_entity_tolerance(
+    loss_limit: int, tmp_path: Path
+) -> None:
+    path = tmp_path / "overflow-source.brep"
+    exported = write_brep_text(native_solid("box", catalog="brep-text"), path)
+    external = dict(exported.provenance)["vertex:0"]
+    number = int(external.split(" ", 1)[0].removeprefix("TShapes#"))
+    text = path.read_text()
+    _, line = _tshape_declarations(text)[number]
+    lines = text.splitlines()
+    fields = lines[line].split()
+    fields[0] = "1e308"
+    lines[line] = " ".join(fields)
+    data = ("\n".join(lines) + "\n").encode("ascii")
+    policy = CadImportPolicy(
+        SpatialCoordinateContract(MILLIMETER),
+        replace(_LIMITS, max_losses=loss_limit),
+    )
+    if loss_limit == 0:
+        with pytest.raises(CadInterchangeError) as refused:
+            decode_brep_text_bytes(data, policy, source_length_unit=METER)
+        assert refused.value.refusal.reason == "limit"
+        return
+    imported = decode_brep_text_bytes(data, policy, source_length_unit=METER)
+    assert imported.report.status == AdapterStatus.DECLARED_LOSS
+    assert dict(imported.source_tolerances)[external] == 1.0e308
+    assert imported.resource_manifest.observed_losses == 1
+    evidence = imported.tolerance_evidence
+    assert evidence is not None
+    row = evidence.entities.index(imported.model.vertex_ids[0])
+    assert evidence.source_bounds[row] is None
+    assert evidence.upper_bounds[row] == evidence.certified_bounds[row]
+    assert len(evidence.losses) == 1
+    loss = evidence.losses[0]
+    assert f"entity=vertex:0 ({external})" in loss.rationale
+    assert f"declared={1.0e308:.17g}" in loss.rationale
+    assert f"source-unit={METER.symbol} ({METER.unit_id})" in loss.rationale
+    assert f"limit={evidence.declared_limit:.17g}" in loss.rationale
+
+
+@pytest.mark.parametrize("kind", ("vertex", "edge", "face"))
+def test_reader_refuses_negative_source_tolerance(kind: str, tmp_path: Path) -> None:
+    path = tmp_path / "source.brep"
+    exported = write_brep_text(native_solid("box", catalog="brep-text"), path)
+    text = path.read_text()
+    external = dict(exported.provenance)[f"{kind}:0"]
+    number = int(external.split(" ", 1)[0].removeprefix("TShapes#"))
+    record_kind, line = _tshape_declarations(text)[number]
+    lines = text.splitlines()
+    fields = lines[line].split()
+    fields[1 if record_kind == "Fa" else 0] = "-1"
+    lines[line] = " ".join(fields)
+    with pytest.raises(CadInterchangeError) as refused:
+        _decode("\n".join(lines) + "\n")
+    assert refused.value.refusal.reason == "malformed"
+    assert refused.value.refusal.entity == external
+    assert f"{external}.tolerance" in refused.value.refusal.message
+    assert "must be nonnegative; got -1.0" in refused.value.refusal.message
+    assert " at byte " in refused.value.refusal.message
+
+
+def test_writer_refuses_missing_entity_gap_evidence_before_publication(
+    tmp_path: Path,
+) -> None:
+    stage = CadStage(1.0, None)
+    stage.vertex(np.asarray((0.0, 0.0, 0.0)), "isolated")
+    model = stage.publish(
+        coordinate_contract=_CONTRACT,
+        source_id="isolated",
+        source_format="native",
+        source_digest="0" * 64,
+        import_policy_id=_POLICY.policy_id,
+        tessellation=None,
+        default_occurrences=True,
+    )
+    assert certify_brep_gaps(model).entities == ()
+    path = tmp_path / "isolated.brep"
+    with pytest.raises(CadInterchangeError) as refused:
+        write_brep_text(model, path)
+    assert refused.value.refusal.reason == "inexact-export"
+    assert refused.value.refusal.entity == "vertex:0"
+    assert not path.exists()
+
+
+def test_reader_carries_unmeasured_vertex_declarations_within_model_limit() -> None:
+    policy = CadImportPolicy(_CONTRACT, replace(_LIMITS, max_losses=0))
+    # Unit extent gives the model a declared physical limit of 1e-8. A singleton
+    # has zero geometric extent and therefore a zero enforced model limit.
+    text = (
+        "DBRep_DrawableShape\n\nCASCADE Topology V3, (c) Open Cascade\n"
+        "Locations 0\nCurve2ds 0\nCurves 0\nPolygon3D 0\nPolygonOnTriangulations 0\n"
+        "Surfaces 0\nTriangulations 0\nTShapes 3\n"
+        "Ve\n1e-9\n1 2 3\n0 0\n0101101\n*\n"
+        "Ve\n1e-9\n2 2 3\n0 0\n0101101\n*\n"
+        "Co\n\n1100000\n+3 0 +2 0 *\n\n+1 0\n"
+    )
+    result = decode_brep_text_bytes(
+        text.encode("ascii"), policy, source_length_unit=METER
+    )
+    assert result.model.topology.num_vertices == 2
+    np.testing.assert_array_equal(
+        geometry_of(result.model).vertex_points, ((1, 2, 3), (2, 2, 3))
+    )
+    assert result.source_tolerances == (
+        ("TShapes#2 Ve", 1.0e-9),
+        ("TShapes#3 Ve", 1.0e-9),
+    )
+    assert result.source_tolerance == 1.0e-9
+    assert result.source_tolerance is not None
+    assert result.source_tolerance <= result.model.report.curve_surface_tolerance
+    assert certify_brep_gaps(result.model).entities == ()
+    assert result.resource_manifest.observed_losses == 0
+    assert result.report.valid
+    assert result.report.status == AdapterStatus.LOSSLESS
+    assert result.report.losses == ()
+    evidence = result.tolerance_evidence
+    assert evidence is not None
+    assert evidence.entities == result.model.vertex_ids
+    assert evidence.certified_bounds == (None, None)
+    assert evidence.source_bounds == (1.0e-9, 1.0e-9)
+    assert evidence.upper_bounds == (1.0e-9, 1.0e-9)
+
+
+def test_reader_preserves_isolated_vertex_with_above_limit_tolerance_loss() -> None:
+    text = _ISOLATED_VERTEX_SOURCE
+    result = decode_brep_text_bytes(
+        text.encode("ascii"), _POLICY, source_length_unit=METER
+    )
+    assert result.model.topology.num_vertices == 1
+    np.testing.assert_array_equal(geometry_of(result.model).vertex_points, ((1, 2, 3),))
+    assert result.source_tolerance == 0.125
+    assert result.report.valid
+    assert result.report.status == AdapterStatus.DECLARED_LOSS
+    loss = next(
+        item for item in result.report.losses if item.path == "source-tolerance:vertex"
+    )
+    assert result.source_tolerance is not None
+    assert result.source_tolerance > result.model.report.curve_surface_tolerance
+    assert "vertex:0" in loss.rationale
+    assert "declared=0.125" in loss.rationale
+    assert f"limit={result.model.report.curve_surface_tolerance:.17g}" in loss.rationale
+
+
+@pytest.mark.parametrize(
+    "source_unit", (METER, MILLIMETER), ids=("meters", "millimeters")
+)
+def test_reader_retains_unused_source_tolerances_without_semantic_loss_charge(
+    source_unit: UnitDefinition,
+) -> None:
+    policy = CadImportPolicy(_CONTRACT, replace(_LIMITS, max_losses=0))
+    text = _splice_once(
+        _ISOLATED_VERTEX_SOURCE,
+        "TShapes 1\n",
+        "TShapes 2\nVe\n0.25\n7 8 9\n0 0\n0101101\n*\n",
+    )
+    result = decode_brep_text_bytes(
+        text.encode("ascii"), policy, source_length_unit=source_unit
+    )
+    factor = float(source_unit.scale_to_reference)
+    assert result.model.topology.num_vertices == 1
+    np.testing.assert_array_equal(
+        geometry_of(result.model).vertex_points,
+        factor * np.asarray(((1.0, 2.0, 3.0),), dtype=np.float64),
+    )
+    assert result.source_tolerances == (
+        ("TShapes#1 Ve", 0.125),
+        ("TShapes#2 Ve", 0.25),
+    )
+    assert result.source_tolerance == 0.25 * factor
+    assert result.resource_manifest.observed_losses == 0
+    assert result.report.valid
+    assert result.report.status == AdapterStatus.DECLARED_LOSS
+    assert tuple(loss.path for loss in result.report.losses) == (
+        "source-tolerance:vertex",
+    )
+
+
+def test_reader_refuses_discarded_derived_fields_without_semantic_loss_budget() -> None:
+    policy = CadImportPolicy(_CONTRACT, replace(_LIMITS, max_losses=0))
+    text = _splice_once(
+        _ISOLATED_VERTEX_SOURCE, "Polygon3D 0\n", "Polygon3D 1\n1 0 0.125\n0 0 0\n"
+    )
+    with pytest.raises(CadInterchangeError) as refused:
+        decode_brep_text_bytes(text.encode("ascii"), policy, source_length_unit=METER)
+    assert refused.value.refusal.reason == "limit"
+    assert refused.value.refusal.entity == "resource"
+    assert "semantic-loss count" in refused.value.refusal.message
+
+
+def test_reader_charges_discarded_fields_but_retains_tolerance_diagnostics() -> None:
+    policy = CadImportPolicy(_CONTRACT, replace(_LIMITS, max_losses=1))
+    text = _splice_once(
+        _ISOLATED_VERTEX_SOURCE, "Polygon3D 0\n", "Polygon3D 1\n1 0 0.125\n0 0 0\n"
+    )
+    result = decode_brep_text_bytes(
+        text.encode("ascii"), policy, source_length_unit=METER
+    )
+    assert result.source_tolerances == (("TShapes#1 Ve", 0.125),)
+    assert result.resource_manifest.observed_losses == 1
+    assert {loss.path for loss in result.report.losses} == {
+        "Polygon3D",
+        "source-tolerance:vertex",
+    }
+    assert result.report.valid
+    assert result.report.status == AdapterStatus.DECLARED_LOSS
+
+
+@pytest.mark.parametrize("name", sorted(BREP_TEXT_SOLIDS))
 def test_native_models_round_trip_with_exact_identity(name: str, tmp_path: Path) -> None:
-    model = _NATIVE[name]()
+    model = native_solid(name, catalog="brep-text")
     write_brep_text(model, tmp_path / "model.brep")
     result = read_brep_text(
         tmp_path / "model.brep", _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
-    assert _geometry(result.model).geometry_id == _geometry(model).geometry_id
+    assert geometry_of(result.model).geometry_id == geometry_of(model).geometry_id
     assert np.array_equal(result.model.orientation, model.orientation)
-    assert result.coverage.pcurves_honored == len(_geometry(model).pcurves)
+    assert result.coverage.pcurves_honored == len(geometry_of(model).pcurves)
     assert result.coverage.pcurves_fitted == 0
     assert result.report.valid
-    assert _volume(result.model) == pytest.approx(_VOLUMES[name], rel=1.0e-6)
+    assert result.report.status == AdapterStatus.LOSSLESS
+    assert float(solid_volumes(result.model)[0]) == pytest.approx(
+        BREP_TEXT_VOLUMES[name], rel=_SOLID_VOLUME_RTOL
+    )
 
 
 def test_writer_output_is_deterministic(tmp_path: Path) -> None:
-    model = _NATIVE["torus"]()
+    model = native_solid("torus", catalog="brep-text")
     first = write_brep_text(model, tmp_path / "a.brep")
     second = write_brep_text(model, tmp_path / "b.brep")
     assert (tmp_path / "a.brep").read_bytes() == (tmp_path / "b.brep").read_bytes()
     assert first.receipt.content_sha256 == second.receipt.content_sha256
 
 
-def test_versions_share_one_model(tmp_path: Path) -> None:
-    model = _NATIVE["cylinder"]()
-    identities = set()
-    for version in ("V1", "V2", "V3"):
-        path = tmp_path / f"{version}.brep"
-        write_brep_text(model, path, version=version)
-        result = read_brep_text(
-            path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
-        )
-        assert result.schema == f"cascade-topology-{version}"
-        identities.add(_geometry(result.model).geometry_id)
-    assert identities == {_geometry(model).geometry_id}
+@pytest.mark.parametrize("version", ("V1", "V2", "V3"), ids=("V1", "V2", "V3"))
+def test_versions_share_one_model(
+    version: Literal["V1", "V2", "V3"], tmp_path: Path
+) -> None:
+    model = native_solid("cylinder", catalog="brep-text")
+    path = tmp_path / f"{version}.brep"
+    write_brep_text(model, path, version=version)
+    result = read_brep_text(
+        path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
+    )
+    assert result.schema == f"cascade-topology-{version}"
+    assert geometry_of(result.model).geometry_id == geometry_of(model).geometry_id
 
 
 def test_source_length_unit_is_converted_exactly(tmp_path: Path) -> None:
-    model = _NATIVE["box"]()
+    model = native_solid("box", catalog="brep-text")
     write_brep_text(model, tmp_path / "box.brep")
     result = read_brep_text(
         tmp_path / "box.brep",
@@ -205,35 +598,37 @@ def test_source_length_unit_is_converted_exactly(tmp_path: Path) -> None:
         source_length_unit=MILLIMETER,
     )
     assert result.source_length_unit_meters == pytest.approx(1.0e-3)
-    upper = np.max(np.asarray(_geometry(result.model).vertex_points), axis=0)
-    assert np.allclose(upper, (1.0e-3, 2.0e-3, 3.0e-3), rtol=0.0, atol=1.0e-15)
-    assert _volume(result.model) == pytest.approx(6.0e-9, rel=1.0e-6)
+    upper = np.max(np.asarray(geometry_of(result.model).vertex_points), axis=0)
+    assert np.allclose(upper, (1.0e-3, 2.0e-3, 3.0e-3), rtol=0.0, atol=_UNIT_PRODUCT_ATOL)
+    assert float(solid_volumes(result.model)[0]) == pytest.approx(
+        6.0e-9, rel=_SOLID_VOLUME_RTOL
+    )
     # Unit changes preserve supplied p-curves rather than refitting their shape.
-    for coedge, pcurve in enumerate(_geometry(result.model).pcurves):
-        edge = _geometry(result.model).coedge_edges[coedge]
-        first, last = np.asarray(_geometry(result.model).edge_ranges[edge])
+    for coedge, pcurve in enumerate(geometry_of(result.model).pcurves):
+        edge = geometry_of(result.model).coedge_edges[coedge]
+        first, last = np.asarray(geometry_of(result.model).edge_ranges[edge])
         parameters = np.linspace(float(first), float(last), 7)
         face = next(
             face
-            for face, loops in enumerate(_geometry(result.model).face_loops)
+            for face, loops in enumerate(geometry_of(result.model).face_loops)
             if any(coedge in loop for loop in loops)
         )
         on_surface = np.asarray(
             result.model.patches[face].evaluate(pcurve.evaluate(jnp.asarray(parameters)))
         )
-        carrier = _geometry(result.model).curves[
-            _geometry(result.model).edge_curves[edge]
+        carrier = geometry_of(result.model).curves[
+            geometry_of(result.model).edge_curves[edge]
         ]
         np.testing.assert_allclose(
             np.asarray(on_surface),
             np.asarray(carrier.evaluate(jnp.asarray(parameters))),
-            atol=1.0e-12,
+            atol=_SURFACE_LIFT_ATOL,
         )
 
 
 def test_placed_occurrences_round_trip(tmp_path: Path) -> None:
-    ring = _NATIVE["revolved-ring"]()
-    geometry = _geometry(ring)
+    ring = native_solid("revolved-ring", catalog="brep-text")
+    geometry = geometry_of(ring)
     rotation = ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
     placed = BRepOccurrence(
         ("solid0", "instance1"),
@@ -282,18 +677,32 @@ def test_placed_occurrences_round_trip(tmp_path: Path) -> None:
         trusted_root=tmp_path,
         source_length_unit=METER,
     )
-    assert _geometry(result.model).occurrences == (first, placed)
-    assert _geometry(result.model).assembly_containers == (
+    assert geometry_of(result.model).occurrences == (first, placed)
+    assert geometry_of(result.model).assembly_containers == (
         BRepAssemblyContainer(("model",), (first.path, placed.path)),
     )
-    assert _geometry(result.model).geometry_id == rebuilt.geometry_id
+    assert geometry_of(result.model).geometry_id == rebuilt.geometry_id
 
 
 # ------------------------------------------------------------ malformed input
 
 
+def _splice_once(text: str, needle: str, replacement: str) -> str:
+    """Refuse fixture drift before replacing one format declaration."""
+    assert text.count(needle) == 1, needle
+    return text.replace(needle, replacement, 1)
+
+
+@pytest.mark.parametrize(
+    "text", ("absent", "needle needle"), ids=("missing", "ambiguous")
+)
+def test_text_splice_refuses_missing_or_ambiguous_declaration(text: str) -> None:
+    with pytest.raises(AssertionError, match="needle"):
+        _splice_once(text, "needle", "replacement")
+
+
 def _valid_text(tmp_path: Path) -> str:
-    write_brep_text(_NATIVE["box"](), tmp_path / "box.brep")
+    write_brep_text(native_solid("box", catalog="brep-text"), tmp_path / "box.brep")
     return (tmp_path / "box.brep").read_text()
 
 
@@ -316,7 +725,8 @@ def test_truncated_file_is_refused(tmp_path: Path) -> None:
 
 def test_dangling_shape_reference_is_refused(tmp_path: Path) -> None:
     text = _valid_text(tmp_path)
-    head, _, _ = text.rpartition("+1 0")
+    head, marker, tail = text.rpartition("+1 0")
+    assert marker and tail == "\n"
     with pytest.raises(CadInterchangeError) as refused:
         _decode(head + "+999 0\n")
     assert refused.value.refusal.reason == "dangling-reference"
@@ -353,11 +763,14 @@ def test_entity_limit_is_enforced(tmp_path: Path) -> None:
 def test_nested_offset_operation_refuses_unknown_basis_record(tmp_path: Path) -> None:
     text = _valid_text(tmp_path)
     head, marker, tail = text.partition("Surfaces 6\n")
-    _, _, rest = tail.partition("\n")
+    assert text.count("Surfaces 6\n") == 1 and marker
+    surface, separator, rest = tail.partition("\n")
+    assert surface and separator
     with pytest.raises(CadInterchangeError) as refused:
         _decode(head + marker + "11 0.25\n6 0 0 1\n10\n" + rest)
     assert refused.value.refusal.reason == "malformed"
-    assert "Unknown curve type 10" in refused.value.refusal.message
+    assert "curve_kind" in refused.value.refusal.message
+    assert "got 10" in refused.value.refusal.message
 
 
 def test_unreferenced_exact_parabola_is_admitted(tmp_path: Path) -> None:
@@ -439,7 +852,7 @@ def _occt_volume(shape: object) -> float:
     return properties.Mass()
 
 
-@pytest.mark.parametrize("name", sorted(_NATIVE))
+@pytest.mark.parametrize("name", sorted(BREP_TEXT_SOLIDS))
 def test_occt_written_files_match_occt_topology_and_volume(
     name: str, tmp_path: Path
 ) -> None:
@@ -455,12 +868,14 @@ def test_occt_written_files_match_occt_topology_and_volume(
         tmp_path / "occt.brep", _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
     assert _counts(result.model) == _occt_counts(shape)
-    assert _volume(result.model) == pytest.approx(_occt_volume(shape), rel=1.0e-6)
+    assert float(solid_volumes(result.model)[0]) == pytest.approx(
+        _occt_volume(shape), rel=_SOLID_VOLUME_RTOL
+    )
     assert result.coverage.pcurves_fitted == 0
     assert "Triangulations" in {loss.path for loss in result.report.losses}
 
 
-@pytest.mark.parametrize("name", sorted(_NATIVE))
+@pytest.mark.parametrize("name", sorted(BREP_TEXT_SOLIDS))
 def test_occt_reads_native_files_as_valid_solids(name: str, tmp_path: Path) -> None:
     pytest.importorskip("OCP")
     from OCP.BRep import BRep_Builder
@@ -468,13 +883,15 @@ def test_occt_reads_native_files_as_valid_solids(name: str, tmp_path: Path) -> N
     from OCP.BRepTools import BRepTools
     from OCP.TopoDS import TopoDS_Shape
 
-    model = _NATIVE[name]()
+    model = native_solid(name, catalog="brep-text")
     write_brep_text(model, tmp_path / "native.brep")
     shape = TopoDS_Shape()
     assert BRepTools.Read_s(shape, str(tmp_path / "native.brep"), BRep_Builder())
     assert BRepCheck_Analyzer(shape).IsValid()
     assert _occt_counts(shape) == _counts(model)
-    assert _occt_volume(shape) == pytest.approx(_VOLUMES[name], rel=1.0e-6)
+    assert _occt_volume(shape) == pytest.approx(
+        BREP_TEXT_VOLUMES[name], rel=_SOLID_VOLUME_RTOL
+    )
 
 
 def test_occt_located_assembly_becomes_occurrences(tmp_path: Path) -> None:
@@ -503,7 +920,7 @@ def test_occt_located_assembly_becomes_occurrences(tmp_path: Path) -> None:
         trusted_root=tmp_path,
         source_length_unit=METER,
     )
-    occurrences = _geometry(result.model).occurrences
+    occurrences = geometry_of(result.model).occurrences
     assert [occurrence.path for occurrence in occurrences] == [
         ("solid0", "instance0"),
         ("solid0", "instance1"),
@@ -516,62 +933,12 @@ def test_occt_located_assembly_becomes_occurrences(tmp_path: Path) -> None:
             (0.0, 0.0, 1.0),
         )
     )
-    assert np.allclose(occurrences[1].rotation, expected, atol=1.0e-14)
-    assert np.allclose(occurrences[1].translation, (0.0, 0.0, 7.0), atol=1.0e-14)
-    assert _geometry(result.model).assembly_containers == (
+    assert np.allclose(occurrences[1].rotation, expected, atol=_CARRIER_ATOL)
+    assert np.allclose(occurrences[1].translation, (0.0, 0.0, 7.0), atol=_CARRIER_ATOL)
+    assert geometry_of(result.model).assembly_containers == (
         BRepAssemblyContainer(
             ("model",), tuple(occurrence.path for occurrence in occurrences)
         ),
-    )
-
-
-def _rational_sheet(*, free_edge: bool = False) -> BRepModel:
-    controls = np.asarray(
-        (((0.0, 0.0, 0.0), (0.0, 2.0, 0.0)), ((3.0, 0.0, 0.0), (3.0, 2.0, 1.0)))
-    )
-    weights = np.asarray(((1.0, 2.0), (3.0, 1.0)))
-    knots = np.asarray((0.0, 0.0, 1.0, 1.0))
-    patch = BSplineSurfacePatch(controls, weights, knots, knots, 1, 1)
-    stage = CadStage(3.0, None)
-    vertices = [
-        stage.vertex(controls[i, j], f"corner:{i}:{j}")
-        for i, j in ((0, 0), (1, 0), (1, 1), (0, 1))
-    ]
-    boundaries = (
-        (controls[:, 0], weights[:, 0], 0, 1, LineCurve((0.0, 0.0), (1.0, 0.0)), 1),
-        (controls[1, :], weights[1, :], 1, 2, LineCurve((1.0, 0.0), (0.0, 1.0)), 1),
-        (controls[:, 1], weights[:, 1], 3, 2, LineCurve((0.0, 1.0), (1.0, 0.0)), -1),
-        (controls[0, :], weights[0, :], 0, 3, LineCurve((0.0, 0.0), (0.0, 1.0)), -1),
-    )
-    loop = []
-    for index, (points, row_weights, start, end, pcurve, sense) in enumerate(boundaries):
-        edge = stage.edge(
-            BSplineCurve(points, row_weights, knots, 1),
-            vertices[start],
-            vertices[end],
-            f"edge:{index}",
-            parameter_range=(0.0, 1.0),
-        )
-        loop.append(StagedCoedge(edge, sense, pcurve, f"edge:{index}"))
-    stage.face(patch, [loop], 1, "bspline", "rational-sheet", outer_known=True)
-    if free_edge:
-        start = stage.vertex(np.asarray((5.0, 0.0, 0.0)), "free-start")
-        end = stage.vertex(np.asarray((5.0, 2.0, 0.0)), "free-end")
-        stage.edge(
-            LineCurve((5.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
-            start,
-            end,
-            "free-edge",
-            parameter_range=(0.0, 2.0),
-        )
-    return stage.publish(
-        coordinate_contract=_CONTRACT,
-        source_id="rational-sheet",
-        source_format="native",
-        source_digest="0" * 64,
-        import_policy_id=_POLICY.policy_id,
-        tessellation=None,
-        default_occurrences=True,
     )
 
 
@@ -579,7 +946,9 @@ def _rational_sheet(*, free_edge: bool = False) -> BRepModel:
 def test_rational_spline_sheet_preserves_carriers_and_pcurves(
     source_unit: UnitDefinition, tmp_path: Path
 ) -> None:
-    model = _rational_sheet()
+    model = native_brep_text_sheet(
+        _POLICY,
+    )
     path = tmp_path / "rational.brep"
     write_brep_text(model, path)
     result = read_brep_text(
@@ -590,7 +959,7 @@ def test_rational_spline_sheet_preserves_carriers_and_pcurves(
     np.testing.assert_allclose(
         np.asarray(result.model.patches[0].evaluate(jnp.asarray(uv))),
         np.asarray(factor * model.patches[0].evaluate(jnp.asarray(uv))),
-        atol=1.0e-14,
+        atol=_CARRIER_ATOL,
     )
     np.testing.assert_array_equal(
         np.asarray(_require_type(result.model.patches[0], BSplineSurfacePatch).weights),
@@ -598,7 +967,7 @@ def test_rational_spline_sheet_preserves_carriers_and_pcurves(
     )
     assert result.model.topology.num_faces == 1 and result.model.topology.num_edges == 4
     for actual, expected in zip(
-        _geometry(result.model).pcurves, _geometry(model).pcurves, strict=True
+        geometry_of(result.model).pcurves, geometry_of(model).pcurves, strict=True
     ):
         np.testing.assert_array_equal(
             np.asarray(actual.evaluate(jnp.asarray((0.0, 0.3, 1.0)))),
@@ -612,6 +981,8 @@ def test_inconsistent_supplied_pcurve_is_not_silently_recovered(tmp_path: Path) 
     count, separator, rest = tail.partition("\n")
     first, _, remaining = rest.partition("\n")
     fields = first.split()
+    assert marker and separator and first
+    assert fields[0] in ("1", "7")
     coordinate = 6 if fields[0] == "7" else 1
     fields[coordinate] = str(float(fields[coordinate]) + 10.0)
     damaged = head + marker + count + separator + " ".join(fields) + "\n" + remaining
@@ -628,7 +999,7 @@ def test_sample_invisible_curve_is_not_promoted_to_exact_pcurve() -> None:
         (np.asarray((1.0, 1.0, 2.0, 1.0, 1.0)), np.zeros(5), parameters), axis=1
     )
     curve = BSplineCurve(controls, np.ones(5), np.r_[0.0, parameters, 1.0], 1)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"recover_pcurve\.policy"):
         recover_pcurve(patch, curve, 0.0, 1.0, 1.0, None)
 
 
@@ -658,8 +1029,18 @@ def test_topological_reference_depth_is_bounded(tmp_path: Path) -> None:
 
 def test_expanded_knot_multiplicities_are_bounded(tmp_path: Path) -> None:
     path = tmp_path / "rational.brep"
-    write_brep_text(_rational_sheet(), path)
-    text = path.read_text().replace("0.0 2 1.0 2", "0.0 2000000000 1.0 2", 1)
+    write_brep_text(
+        native_brep_text_sheet(
+            _POLICY,
+        ),
+        path,
+    )
+    head, marker, tail = path.read_text().partition("Surfaces 1\n")
+    surface, separator, rest = tail.partition("\nTriangulations ")
+    needle = "0.0 2 1.0 2"
+    assert marker and separator and surface.count(needle) >= 1
+    damaged = surface.replace(needle, "0.0 2000000000 1.0 2", 1)
+    text = head + marker + damaged + separator + rest
     with pytest.raises(CadInterchangeError) as refused:
         _decode(text)
     assert refused.value.refusal.reason == "limit"
@@ -678,7 +1059,9 @@ def test_occt_produced_rational_surface_has_exact_native_pcurves(tmp_path: Path)
     from OCP.Geom import Geom_BSplineSurface
     from OCP.gp import gp_Pnt
 
-    native = _rational_sheet()
+    native = native_brep_text_sheet(
+        _POLICY,
+    )
     patch = _require_type(native.patches[0], BSplineSurfacePatch)
     poles = Array2_gp_Pnt(1, 2, 1, 2)
     weights = Array2_double(1, 2, 1, 2)
@@ -695,7 +1078,7 @@ def test_occt_produced_rational_surface_has_exact_native_pcurves(tmp_path: Path)
     surface = Geom_BSplineSurface(
         poles, weights, knots, knots, multiplicities, multiplicities, 1, 1
     )
-    face = BRepBuilderAPI_MakeFace(surface, 1.0e-7).Face()
+    face = BRepBuilderAPI_MakeFace(surface, _CONSTRUCTION_TOLERANCE).Face()
     path = tmp_path / "occt-rational.brep"
     BRepTools.Write_s(face, str(path))
     result = read_brep_text(
@@ -705,54 +1088,61 @@ def test_occt_produced_rational_surface_has_exact_native_pcurves(tmp_path: Path)
     np.testing.assert_allclose(
         np.asarray(result.model.patches[0].evaluate(jnp.asarray(uv))),
         np.asarray(patch.evaluate(jnp.asarray(uv))),
-        atol=1.0e-13,
+        atol=_MAPPED_CHART_ATOL,
     )
     assert result.model.topology.num_edges == 4
-    for coedge, pcurve in enumerate(_geometry(result.model).pcurves):
-        edge = _geometry(result.model).coedge_edges[coedge]
-        first, last = np.asarray(_geometry(result.model).edge_ranges[edge])
+    for coedge, pcurve in enumerate(geometry_of(result.model).pcurves):
+        edge = geometry_of(result.model).coedge_edges[coedge]
+        first, last = np.asarray(geometry_of(result.model).edge_ranges[edge])
         parameters = np.linspace(float(first), float(last), 11)
-        carrier = _geometry(result.model).curves[
-            _geometry(result.model).edge_curves[edge]
+        carrier = geometry_of(result.model).curves[
+            geometry_of(result.model).edge_curves[edge]
         ]
         np.testing.assert_allclose(
             np.asarray(
                 result.model.patches[0].evaluate(pcurve.evaluate(jnp.asarray(parameters)))
             ),
             np.asarray(carrier.evaluate(jnp.asarray(parameters))),
-            atol=1.0e-12,
+            atol=_SURFACE_LIFT_ATOL,
         )
 
 
 @pytest.mark.parametrize("name", ("sphere", "torus", "revolved-ring"))
 def test_unit_conversion_keeps_seams_and_pole_edges(name: str, tmp_path: Path) -> None:
-    model = _NATIVE[name]()
+    model = native_solid(name, catalog="brep-text")
     path = tmp_path / f"{name}.brep"
     write_brep_text(model, path)
     result = read_brep_text(
         path, _POLICY, trusted_root=tmp_path, source_length_unit=MILLIMETER
     )
-    assert _geometry(result.model).edge_curves == _geometry(model).edge_curves
-    assert _geometry(result.model).edge_vertices == _geometry(model).edge_vertices
-    assert _geometry(result.model).face_loops == _geometry(model).face_loops
+    assert geometry_of(result.model).edge_curves == geometry_of(model).edge_curves
+    assert geometry_of(result.model).edge_vertices == geometry_of(model).edge_vertices
+    assert geometry_of(result.model).face_loops == geometry_of(model).face_loops
     np.testing.assert_allclose(
-        np.asarray(_geometry(result.model).vertex_points),
-        np.asarray(1.0e-3 * np.asarray(_geometry(model).vertex_points)),
-        atol=1.0e-14,
+        np.asarray(geometry_of(result.model).vertex_points),
+        np.asarray(1.0e-3 * np.asarray(geometry_of(model).vertex_points)),
+        atol=_CARRIER_ATOL,
     )
-    assert _volume(result.model) == pytest.approx(_VOLUMES[name] * 1.0e-9, rel=1.0e-6)
+    assert float(solid_volumes(result.model)[0]) == pytest.approx(
+        BREP_TEXT_VOLUMES[name] * 1.0e-9, rel=_SOLID_VOLUME_RTOL
+    )
 
 
 def test_rectangular_surface_trim_is_not_discarded(tmp_path: Path) -> None:
     path = tmp_path / "sheet.brep"
-    write_brep_text(_rational_sheet(), path)
+    write_brep_text(
+        native_brep_text_sheet(
+            _POLICY,
+        ),
+        path,
+    )
     text = path.read_text()
-    admitted = text.replace("Surfaces 1\n", "Surfaces 1\n10 0 1 0 1\n", 1)
+    admitted = _splice_once(text, "Surfaces 1\n", "Surfaces 1\n10 0 1 0 1\n")
     result = decode_brep_text_bytes(
         admitted.encode("ascii"), _POLICY, source_length_unit=METER
     )
     assert result.model.topology.num_faces == 1
-    clipped = text.replace("Surfaces 1\n", "Surfaces 1\n10 0 0.5 0 1\n", 1)
+    clipped = _splice_once(text, "Surfaces 1\n", "Surfaces 1\n10 0 0.5 0 1\n")
     with pytest.raises(CadInterchangeError) as refused:
         _decode(clipped)
     assert refused.value.refusal.reason == "inconsistent-geometry"
@@ -769,29 +1159,21 @@ def test_explicit_pcurve_approximation_reports_observed_error() -> None:
         np.asarray(((0, 0, 0), (0.5, 0.5, 0), (1, 1, 1))),
         np.ones(3),
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"recover_pcurve\.policy"):
         recover_pcurve(patch, curve, 0.0, 1.0, 1.0, None)
     fitted = recover_pcurve(
-        patch, curve, 0.0, 1.0, 1.0, CadCurveFitPolicy(tolerance=1.0e-7)
+        patch, curve, 0.0, 1.0, 1.0, CadCurveFitPolicy(tolerance=_FIT_TOLERANCE)
     )
-    assert fitted.kind == "fitted" and fitted.error <= 1.0e-7
+    assert fitted.kind == "fitted" and fitted.error <= _FIT_TOLERANCE
     parameters = np.asarray((0.013, 0.273, 0.817))
     np.testing.assert_allclose(
         np.asarray(patch.evaluate(fitted.curve.evaluate(jnp.asarray(parameters)))),
         np.asarray(curve.evaluate(jnp.asarray(parameters))),
-        atol=1.0e-7,
+        atol=_FIT_TOLERANCE,
     )
 
 
 def test_shared_face_shell_incidences_preserve_opposite_senses(tmp_path: Path) -> None:
-    from phydrax.geometry.brep._partition import (
-        BRepPartitionOperand,
-        BRepPartitionPlan,
-        BRepPartitionPolicy,
-        BRepPartitionRole,
-        partition_brep,
-    )
-
     operands = tuple(
         BRepPartitionOperand(
             name,
@@ -809,7 +1191,7 @@ def test_shared_face_shell_incidences_preserve_opposite_senses(tmp_path: Path) -
         BRepPartitionPolicy(("left", "right")),
     )
     model = partition_brep(plan, destination=tmp_path / "shared.phx").model
-    geometry = _geometry(model)
+    geometry = geometry_of(model)
     shared = [
         face for face, solids in enumerate(model.topology.face_solids) if len(solids) == 2
     ]
@@ -820,13 +1202,13 @@ def test_shared_face_shell_incidences_preserve_opposite_senses(tmp_path: Path) -
         for shell, faces in enumerate(geometry.shell_faces)
         if face in faces
     )
-    assert signs == (1, -1) or signs == (-1, 1)
+    assert tuple(sorted(signs)) == (-1, 1)
     path = tmp_path / "shared.brep"
     write_brep_text(model, path)
     result = read_brep_text(
         path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
-    assert _geometry(result.model).geometry_id == geometry.geometry_id
+    assert geometry_of(result.model).geometry_id == geometry.geometry_id
 
 
 @pytest.mark.parametrize(
@@ -837,7 +1219,13 @@ def test_export_limits_refuse_before_publication(
 ) -> None:
     path = tmp_path / "limited.brep"
     with pytest.raises(CadInterchangeError) as refused:
-        write_brep_text(_rational_sheet(), path, policy=policy)
+        write_brep_text(
+            native_brep_text_sheet(
+                _POLICY,
+            ),
+            path,
+            policy=policy,
+        )
     assert refused.value.refusal.reason == "limit"
     assert not path.exists()
 
@@ -858,14 +1246,16 @@ def test_exact_empty_compound_round_trip_has_no_fake_occurrences(tmp_path: Path)
     result = read_brep_text(
         path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
-    assert _geometry(result.model).geometry_id == _geometry(model).geometry_id
+    assert geometry_of(result.model).geometry_id == geometry_of(model).geometry_id
     assert _counts(result.model) == (0, 0, 0, 0)
-    assert _geometry(result.model).occurrences == ()
+    assert geometry_of(result.model).occurrences == ()
     assert np.asarray(result.model.parameter_bounds).shape == (0, 2, 2)
 
 
-def test_export_honors_authoritative_trim_closure(tmp_path: Path) -> None:
-    model = _rational_sheet()
+def test_export_honors_declared_trim_closure(tmp_path: Path) -> None:
+    model = native_brep_text_sheet(
+        _POLICY,
+    )
     exact = eqx.tree_at(
         lambda value: value.trim_domains,
         model,
@@ -876,7 +1266,7 @@ def test_export_honors_authoritative_trim_closure(tmp_path: Path) -> None:
     result = read_brep_text(
         path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
-    assert _geometry(result.model).geometry_id == _geometry(model).geometry_id
+    assert geometry_of(result.model).geometry_id == geometry_of(model).geometry_id
     different = eqx.tree_at(
         lambda value: value.trim_domains,
         model,
@@ -889,19 +1279,21 @@ def test_export_honors_authoritative_trim_closure(tmp_path: Path) -> None:
 
 
 def test_free_edge_and_face_round_trip_without_dropping_geometry(tmp_path: Path) -> None:
-    model = _rational_sheet(free_edge=True)
+    model = native_brep_text_sheet(_POLICY, free_edge=True)
     path = tmp_path / "face-and-edge.brep"
     write_brep_text(model, path)
     result = read_brep_text(
         path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
-    assert _geometry(result.model).geometry_id == _geometry(model).geometry_id
+    assert geometry_of(result.model).geometry_id == geometry_of(model).geometry_id
     assert result.model.topology.num_faces == 1 and result.model.topology.num_edges == 5
     free = [
         index for index, faces in enumerate(result.model.topology.edge_faces) if not faces
     ]
     assert free == [4]
-    edge = _geometry(result.model).curves[_geometry(result.model).edge_curves[free[0]]]
+    edge = geometry_of(result.model).curves[
+        geometry_of(result.model).edge_curves[free[0]]
+    ]
     np.testing.assert_allclose(
         np.asarray(edge.evaluate(jnp.asarray((0.0, 0.3, 2.0)))),
         np.asarray(((5, 0, 0), (5, 0.3, 0), (5, 2, 0))),
@@ -935,8 +1327,8 @@ def test_occt_planar_face_compound_preserves_unattached_edge(tmp_path: Path) -> 
         index for index, faces in enumerate(result.model.topology.edge_faces) if not faces
     ]
     assert len(free) == 1
-    endpoints = np.asarray(_geometry(result.model).vertex_points)[
-        list(_geometry(result.model).edge_vertices[free[0]])
+    endpoints = np.asarray(geometry_of(result.model).vertex_points)[
+        list(geometry_of(result.model).edge_vertices[free[0]])
     ]
     np.testing.assert_allclose(endpoints, np.asarray(((5, 0, 0), (5, 3, 0))))
     exported = tmp_path / "round-trip.brep"
@@ -944,7 +1336,9 @@ def test_occt_planar_face_compound_preserves_unattached_edge(tmp_path: Path) -> 
     restored = read_brep_text(
         exported, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
-    assert _geometry(restored.model).geometry_id == _geometry(result.model).geometry_id
+    assert (
+        geometry_of(restored.model).geometry_id == geometry_of(result.model).geometry_id
+    )
 
 
 @pytest.mark.parametrize("periodic_axes", ((True, False), (False, True), (True, True)))
@@ -996,7 +1390,7 @@ def test_occt_periodic_rational_surface_unrolls_exactly(
         periodic_axes[0],
         periodic_axes[1],
     )
-    face = BRepBuilderAPI_MakeFace(surface, 1.0e-7).Face()
+    face = BRepBuilderAPI_MakeFace(surface, _CONSTRUCTION_TOLERANCE).Face()
     path = tmp_path / "periodic-surface.brep"
     BRepTools.Write_s(face, str(path))
     result = read_brep_text(
@@ -1016,7 +1410,7 @@ def test_occt_periodic_rational_surface_unrolls_exactly(
     np.testing.assert_allclose(
         np.asarray(result.model.patches[0].evaluate(jnp.asarray(uv))),
         np.asarray(expected),
-        atol=1.0e-11,
+        atol=_PERIODIC_SURFACE_ATOL,
     )
     assert result.model.topology.num_faces == 1
     assert result.coverage.pcurves_fitted == 0
@@ -1025,10 +1419,12 @@ def test_occt_periodic_rational_surface_unrolls_exactly(
     restored = read_brep_text(
         exported, _OCCT_SPLINE_POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
-    assert _geometry(restored.model).geometry_id == _geometry(result.model).geometry_id
+    assert (
+        geometry_of(restored.model).geometry_id == geometry_of(result.model).geometry_id
+    )
 
 
-def test_occt_periodic_rational_curve_keeps_original_pole_origin(tmp_path: Path) -> None:
+def test_occt_periodic_rational_curve_keeps_source_pole_origin(tmp_path: Path) -> None:
     pytest.importorskip("OCP")
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
     from OCP.BRepTools import BRepTools
@@ -1061,11 +1457,11 @@ def test_occt_periodic_rational_curve_keeps_original_pole_origin(tmp_path: Path)
     for parameter in parameters:
         point = curve.Value(float(parameter))
         expected.append((point.X(), point.Y(), point.Z()))
-    native = _geometry(result.model).curves[_geometry(result.model).edge_curves[0]]
+    native = geometry_of(result.model).curves[geometry_of(result.model).edge_curves[0]]
     np.testing.assert_allclose(
         np.asarray(native.evaluate(jnp.asarray(parameters))),
         np.asarray(expected),
-        atol=1.0e-12,
+        atol=_SURFACE_LIFT_ATOL,
     )
     assert result.model.topology.edge_faces == ((),)
 
@@ -1107,7 +1503,7 @@ def test_occt_surface_array_fixture_imports_native_exact_surface(tmp_path: Path)
     np.testing.assert_allclose(
         np.asarray(result.model.patches[0].evaluate(jnp.asarray(uv))),
         np.asarray(expected),
-        atol=1.0e-12,
+        atol=_SURFACE_LIFT_ATOL,
     )
 
 
@@ -1118,7 +1514,7 @@ def test_occt_three_circle_loft_preserves_spline_solid(tmp_path: Path) -> None:
     from OCP.BRepTools import BRepTools
     from OCP.gp import gp_Ax2, gp_Circ, gp_Dir, gp_Pnt
 
-    loft = BRepOffsetAPI_ThruSections(True, False, 1.0e-7)
+    loft = BRepOffsetAPI_ThruSections(True, False, _CONSTRUCTION_TOLERANCE)
     for center, radius in (
         ((0, 0, 0), 1.0),
         ((0.15, -0.05, 0.8), 1.25),
@@ -1139,7 +1535,9 @@ def test_occt_three_circle_loft_preserves_spline_solid(tmp_path: Path) -> None:
     assert result.model.mesh_faces.shape == (0, 3)
     assert any(isinstance(patch, BSplineSurfacePatch) for patch in result.model.patches)
     assert _counts(result.model) == _occt_counts(shape)
-    assert _volume(result.model) == pytest.approx(_occt_volume(shape), rel=2.0e-5)
+    assert float(solid_volumes(result.model)[0]) == pytest.approx(
+        _occt_volume(shape), rel=_LOFT_VOLUME_RTOL
+    )
 
 
 def _periodic_circle_text(*, last_multiplicity: int = 2) -> str:
@@ -1164,7 +1562,7 @@ def test_periodic_rational_circle_imports_without_occt_runtime(tmp_path: Path) -
         _POLICY,
         source_length_unit=METER,
     )
-    curve = _geometry(result.model).curves[0]
+    curve = geometry_of(result.model).curves[0]
     root_half = np.sqrt(0.5)
     parameters = np.asarray((0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4))
     expected = np.asarray(
@@ -1183,7 +1581,7 @@ def test_periodic_rational_circle_imports_without_occt_runtime(tmp_path: Path) -
     np.testing.assert_allclose(
         np.asarray(curve.evaluate(jnp.asarray(parameters))),
         np.asarray(expected),
-        atol=1.0e-14,
+        atol=_CARRIER_ATOL,
     )
     assert result.model.topology.num_edges == 1 and result.model.topology.num_faces == 0
     assert result.model.topology.edge_faces == ((),)
@@ -1192,7 +1590,9 @@ def test_periodic_rational_circle_imports_without_occt_runtime(tmp_path: Path) -
     restored = read_brep_text(
         path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
-    assert _geometry(restored.model).geometry_id == _geometry(result.model).geometry_id
+    assert (
+        geometry_of(restored.model).geometry_id == geometry_of(result.model).geometry_id
+    )
 
 
 def test_periodic_spline_rejects_mismatched_seam_multiplicities() -> None:
@@ -1217,8 +1617,10 @@ def test_occt_box_with_spherical_cavity_preserves_void_shell(tmp_path: Path) -> 
         path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
     assert _counts(result.model) == _occt_counts(shape)
-    assert len(_geometry(result.model).solid_shells[0]) == 2
-    assert _volume(result.model) == pytest.approx(64 - 4 * np.pi / 3, rel=1.0e-6)
+    assert len(geometry_of(result.model).solid_shells[0]) == 2
+    assert float(solid_volumes(result.model)[0]) == pytest.approx(
+        64 - 4 * np.pi / 3, rel=_SOLID_VOLUME_RTOL
+    )
 
 
 @pytest.mark.parametrize("source_unit", (METER, MILLIMETER))
@@ -1242,73 +1644,36 @@ def test_occt_split_boxes_preserve_shared_face_and_solid_incidence(
         path, _POLICY, trusted_root=tmp_path, source_length_unit=source_unit
     )
     assert result.model.topology.num_solids == 2
-    assert _geometry(result.model).assembly_containers == (
+    assert geometry_of(result.model).assembly_containers == (
         BRepAssemblyContainer(("model",), (("solid0",), ("solid1",))),
     )
     assert result.model.topology.num_faces == 11
-    shared = set(_geometry(result.model).shell_faces[0]) & set(
-        _geometry(result.model).shell_faces[1]
+    shared = set(geometry_of(result.model).shell_faces[0]) & set(
+        geometry_of(result.model).shell_faces[1]
     )
     assert len(shared) == 1
     face = next(iter(shared))
     senses = []
     for faces, signs in zip(
-        _geometry(result.model).shell_faces,
-        _geometry(result.model).shell_orientations,
+        geometry_of(result.model).shell_faces,
+        geometry_of(result.model).shell_orientations,
         strict=True,
     ):
         senses.append(signs[faces.index(face)])
-    assert senses[0] == -senses[1]
+    assert tuple(sorted(senses)) == (-1, 1)
     factor = 1.0 if source_unit is METER else 1.0e-3
     np.testing.assert_allclose(
         np.asarray(prepare_brep_query(result.model).measures.solid_volumes),
         np.asarray(np.asarray((factor**3, factor**3))),
-        rtol=1.0e-6,
+        rtol=_SOLID_VOLUME_RTOL,
     )
     exported = tmp_path / "shared-round-trip.brep"
     write_brep_text(result.model, exported)
     restored = read_brep_text(
         exported, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
-    assert _geometry(restored.model).geometry_id == _geometry(result.model).geometry_id
-
-
-def _with_assembly(
-    occurrences: tuple[BRepOccurrence, ...],
-    containers: tuple[BRepAssemblyContainer, ...],
-) -> BRepModel:
-    base = _NATIVE["box"]()
-    geometry = _geometry(base)
-    exact = BRepGeometry(
-        vertex_points=geometry.vertex_points,
-        curves=geometry.curves,
-        edge_curves=geometry.edge_curves,
-        edge_ranges=geometry.edge_ranges,
-        edge_vertices=geometry.edge_vertices,
-        pcurves=geometry.pcurves,
-        coedge_edges=geometry.coedge_edges,
-        coedge_senses=geometry.coedge_senses,
-        face_loops=geometry.face_loops,
-        shell_faces=geometry.shell_faces,
-        shell_orientations=geometry.shell_orientations,
-        solid_shells=geometry.solid_shells,
-        occurrences=occurrences,
-        assembly_containers=containers,
-        vertex_roots=geometry.vertex_roots,
-        edge_endpoint_roots=geometry.edge_endpoint_roots,
-        coedge_endpoint_roots=geometry.coedge_endpoint_roots,
-    )
-    return assemble_brep_model(
-        exact,
-        base.patches,
-        base.parameter_bounds,
-        base.orientation,
-        base.physical_tags,
-        coordinate_contract=_CONTRACT,
-        source_id="declared-assembly",
-        source_format="native",
-        source_digest=base.source_digest,
-        import_policy_id=base.import_policy_id,
+    assert (
+        geometry_of(restored.model).geometry_id == geometry_of(result.model).geometry_id
     )
 
 
@@ -1319,13 +1684,13 @@ def test_independent_instances_do_not_gain_inferred_container_from_paths_or_plac
         BRepOccurrence(("same-prefix", "first"), 0),
         BRepOccurrence(("same-prefix", "second"), 0),
     )
-    model = _with_assembly(occurrences, ())
+    model = native_brep_text_assembly(occurrences, ())
     path = tmp_path / "independent.brep"
     with pytest.raises(CadInterchangeError) as refused:
         write_brep_text(model, path)
     assert refused.value.refusal.reason == "inexact-export"
     assert not path.exists()
-    assert _geometry(model).assembly_containers == ()
+    assert geometry_of(model).assembly_containers == ()
 
 
 def test_arbitrary_occurrence_and_container_names_declare_normalization_loss(
@@ -1337,7 +1702,7 @@ def test_arbitrary_occurrence_and_container_names_declare_normalization_loss(
         translation=np.asarray((3.0, 0.0, 0.0)),
     )
     group = BRepAssemblyContainer(("scientific-group",), (occurrence.path,))
-    model = _with_assembly((occurrence,), (group,))
+    model = native_brep_text_assembly((occurrence,), (group,))
     path = tmp_path / "named.brep"
     exported = write_brep_text(model, path)
     assert exported.report.status == AdapterStatus.DECLARED_LOSS
@@ -1348,11 +1713,11 @@ def test_arbitrary_occurrence_and_container_names_declare_normalization_loss(
     restored = read_brep_text(
         path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     ).model
-    assert _geometry(restored).occurrences[0].translation == occurrence.translation
-    assert _geometry(restored).assembly_containers == (
+    assert geometry_of(restored).occurrences[0].translation == occurrence.translation
+    assert geometry_of(restored).assembly_containers == (
         BRepAssemblyContainer(("model",), (("solid0",),)),
     )
-    assert _geometry(restored).geometry_id != _geometry(model).geometry_id
+    assert geometry_of(restored).geometry_id != geometry_of(model).geometry_id
 
 
 def test_occt_nested_compound_membership_is_explicit_and_round_trips(
@@ -1392,9 +1757,9 @@ def test_occt_nested_compound_membership_is_explicit_and_round_trips(
             ("model", "container0"), (("solid0", "instance1"), ("solid0", "instance2"))
         ),
     )
-    assert _geometry(result.model).assembly_containers == expected
+    assert geometry_of(result.model).assembly_containers == expected
     assert tuple(
-        occurrence.translation for occurrence in _geometry(result.model).occurrences
+        occurrence.translation for occurrence in geometry_of(result.model).occurrences
     ) == (
         (0.0, 0.0, 0.0),
         (0.0, 0.0, 5.0),
@@ -1405,56 +1770,103 @@ def test_occt_nested_compound_membership_is_explicit_and_round_trips(
     restored = read_brep_text(
         round_trip, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
-    assert _geometry(restored.model).geometry_id == _geometry(result.model).geometry_id
+    assert (
+        geometry_of(restored.model).geometry_id == geometry_of(result.model).geometry_id
+    )
 
 
-def test_brep_substitutes_real_intersection_branch_only_under_explicit_policy(
-    tmp_path: Path,
-) -> None:
+@pytest.fixture(scope="module")
+def approximated_cap(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[BRepModel, Path, CadExportResult]:
     model = native_intersection_cap()
-    source_id = _geometry(model).geometry_id
-    branch = _require_type(_geometry(model).curves[0], IntersectionCurve)
-    with pytest.raises(CadInterchangeError) as exact:
-        write_brep_text(model, tmp_path / "exact-cap.brep")
-    assert exact.value.refusal.reason == "inexact-export"
     policy = CadExportPolicy(
         intersection_approximation=CadCurveFitPolicy(
-            tolerance=1.0e-7,
+            tolerance=_FIT_TOLERANCE,
             maximum_control_points=512,
             check_samples=1025,
         )
     )
-    path = tmp_path / "sampled-cap.brep"
-    exported = write_brep_text(model, path, policy=policy)
+    path = tmp_path_factory.mktemp("brep-cap") / "sampled-cap.brep"
+    return model, path, write_brep_text(model, path, policy=policy)
+
+
+def test_approximated_entity_tolerances_include_continuous_deviation(
+    approximated_cap: tuple[BRepModel, Path, CadExportResult],
+) -> None:
+    model, path, exported = approximated_cap
+    gaps: BRepGapEvidence = certify_brep_gaps(model)
+    written = _written_tolerances(path.read_text(), exported.provenance)
+    proof = exported.approximations[0].continuous_evidence
+    deviation = max(
+        proof.distance_bound,
+        proof.first_correspondence_bound,
+        proof.second_correspondence_bound,
+    )
+    geometry = geometry_of(model)
+    affected: set[BRepEntityId] = {
+        model.edge_ids[0],
+        *(model.vertex_ids[index] for index in geometry.edge_vertices[0]),
+        *(
+            model.face_ids[geometry.coedge_faces[index]]
+            for index, edge in enumerate(geometry.coedge_edges)
+            if edge == 0
+        ),
+    }
+    vertex_errors = dict(exported.approximations[0].source_vertex_error_bounds)
+    for entity in (*model.vertex_ids, *model.edge_ids, *model.face_ids):
+        bound = gaps.bound(entity)
+        if entity in affected:
+            entity_deviation = deviation
+            if entity.kind == "vertex" and entity.index in vertex_errors:
+                entity_deviation = float(
+                    np.nextafter(deviation + vertex_errors[entity.index], np.inf)
+                )
+            bound = float(np.nextafter(bound + entity_deviation, np.inf))
+        label = f"{entity.kind}:{entity.index}"
+        _require_outward_decimal(written[label], bound, label)
+
+
+def test_brep_substitutes_real_intersection_branch_only_under_explicit_policy(
+    tmp_path: Path,
+    approximated_cap: tuple[BRepModel, Path, CadExportResult],
+) -> None:
+    model, path, exported = approximated_cap
+    source_id = geometry_of(model).geometry_id
+    branch = _require_type(geometry_of(model).curves[0], IntersectionCurve)
+    with pytest.raises(CadInterchangeError) as exact:
+        write_brep_text(model, tmp_path / "exact-cap.brep")
+    assert exact.value.refusal.reason == "inexact-export"
     assert exported.report.status == AdapterStatus.DECLARED_LOSS
     assert tuple(
         approximation.branch_id for approximation in exported.approximations
     ) == (branch.branch_id,)
     restored = read_brep_text(
-        path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
+        path, _POLICY, trusted_root=path.parent, source_length_unit=METER
     ).model
-    restored_curve = _require_type(_geometry(restored).curves[0], BSplineCurve)
-    _require_type(_geometry(restored).pcurves[0], BSplineCurve)
+    restored_curve = _require_type(geometry_of(restored).curves[0], BSplineCurve)
+    _require_type(geometry_of(restored).pcurves[0], BSplineCurve)
     parameters = np.linspace(
         float(branch.parameter_interval[0]), float(branch.parameter_interval[1]), 129
     )
     points = np.asarray(restored_curve.evaluate(jnp.asarray(parameters)))
-    np.testing.assert_allclose(np.asarray(points[:, 2]), np.asarray(0.3), atol=1.0e-12)
+    np.testing.assert_allclose(
+        np.asarray(points[:, 2]), np.asarray(0.3), atol=_SURFACE_LIFT_ATOL
+    )
     np.testing.assert_allclose(
         np.asarray(np.linalg.norm(points[:, :2], axis=1)),
         np.asarray(np.sqrt(1.0 - 0.3**2)),
-        atol=2.0e-7,
+        atol=_FIT_RADIAL_ATOL,
     )
     np.testing.assert_array_equal(
-        np.asarray(_geometry(restored).edge_ranges),
-        np.asarray(_geometry(model).edge_ranges),
+        np.asarray(geometry_of(restored).edge_ranges),
+        np.asarray(geometry_of(model).edge_ranges),
     )
-    assert _geometry(restored).coedge_senses == _geometry(model).coedge_senses
+    assert geometry_of(restored).coedge_senses == geometry_of(model).coedge_senses
     assert float(prepare_brep_query(restored).measures.face_areas[0]) == pytest.approx(
-        np.pi * (1.0 - 0.3**2),
-        rel=2.0e-6,
+        np.pi * (1.0 - 0.3**2), rel=_DISK_AREA_RTOL
     )
-    assert _geometry(model).geometry_id == source_id
+    assert geometry_of(model).geometry_id == source_id
 
 
 def test_scaled_oblique_plane_chart_exports_exact_pcurve_geometry(tmp_path: Path) -> None:
@@ -1502,25 +1914,25 @@ def test_scaled_oblique_plane_chart_exports_exact_pcurve_geometry(tmp_path: Path
         32.0 * np.finfo(np.float64).eps * max(1.0, float(np.max(np.abs(points))))
     )
     np.testing.assert_allclose(
-        np.asarray(_geometry(restored).vertex_points),
+        np.asarray(geometry_of(restored).vertex_points),
         np.asarray(points),
         rtol=0.0,
         atol=roundoff_bound,
     )
-    for coedge, pcurve in enumerate(_geometry(restored).pcurves):
-        edge = _geometry(restored).coedge_edges[coedge]
-        first, last = np.asarray(_geometry(restored).edge_ranges[edge])
+    for coedge, pcurve in enumerate(geometry_of(restored).pcurves):
+        edge = geometry_of(restored).coedge_edges[coedge]
+        first, last = np.asarray(geometry_of(restored).edge_ranges[edge])
         parameters = first + np.asarray((0.17, 0.63, 0.94)) * (last - first)
-        carrier = _geometry(restored).curves[_geometry(restored).edge_curves[edge]]
+        carrier = geometry_of(restored).curves[geometry_of(restored).edge_curves[edge]]
         np.testing.assert_allclose(
             np.asarray(
                 restored.patches[0].evaluate(pcurve.evaluate(jnp.asarray(parameters)))
             ),
             np.asarray(carrier.evaluate(jnp.asarray(parameters))),
-            atol=1.0e-13,
+            atol=_MAPPED_CHART_ATOL,
         )
     assert float(prepare_brep_query(restored).measures.face_areas[0]) == pytest.approx(
-        6.0, rel=1.0e-12
+        6.0, rel=_PLANAR_AREA_RTOL
     )
 
 
@@ -1528,15 +1940,15 @@ def test_single_located_independent_root_keeps_placement_without_container(
     tmp_path: Path,
 ) -> None:
     occurrence = BRepOccurrence(("solid0",), 0, translation=np.asarray((4.0, 5.0, 6.0)))
-    model = _with_assembly((occurrence,), ())
+    model = native_brep_text_assembly((occurrence,), ())
     path = tmp_path / "located-root.brep"
     write_brep_text(model, path)
     restored = read_brep_text(
         path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     ).model
-    assert _geometry(restored).occurrences == (occurrence,)
-    assert _geometry(restored).assembly_containers == ()
-    assert _geometry(restored).geometry_id == _geometry(model).geometry_id
+    assert geometry_of(restored).occurrences == (occurrence,)
+    assert geometry_of(restored).assembly_containers == ()
+    assert geometry_of(restored).geometry_id == geometry_of(model).geometry_id
 
 
 @pytest.mark.parametrize("source_unit", (METER, MILLIMETER))
@@ -1557,17 +1969,15 @@ def test_exact_offset_operation_tree_round_trips_with_units(
     np.testing.assert_allclose(
         np.asarray(patch.evaluate(jnp.asarray(uv))),
         np.asarray(factor * np.asarray(((0.2, 0.7, 0.75), (1.7, 0.2, 0.75)))),
-        atol=1.0e-14,
+        atol=_CARRIER_ATOL,
     )
     assert result.model.topology.num_faces == 1 and result.model.topology.num_edges == 4
     assert float(
         prepare_brep_query(result.model).measures.face_areas[0]
-    ) == pytest.approx(2 * factor**2, rel=1.0e-10)
+    ) == pytest.approx(2 * factor**2, rel=_OFFSET_AREA_RTOL)
 
 
 def test_offset_placement_preserves_signed_normal_under_reflection() -> None:
-    from phydrax.interchange._cad_carriers import place_surface
-
     patch = OffsetSurface(PlanePatch((0, 0, 0.5), (1, 0, 0), (0, 1, 0)), 0.25)
     matrix = np.asarray(((-1, 0, 0, 3), (0, 1, 0, 2), (0, 0, 1, 1)), dtype=np.float64)
     placement = RigidPlacement.from_matrix(matrix, "reflection", reflection=True)
@@ -1578,7 +1988,9 @@ def test_offset_placement_preserves_signed_normal_under_reflection() -> None:
         + placement.translation
     )
     np.testing.assert_allclose(
-        np.asarray(placed.evaluate(jnp.asarray(uv))), np.asarray(expected), atol=1.0e-14
+        np.asarray(placed.evaluate(jnp.asarray(uv))),
+        np.asarray(expected),
+        atol=_CARRIER_ATOL,
     )
 
 
@@ -1628,7 +2040,7 @@ def test_independent_conic_and_offset_edge_retains_source_parameter_and_archive(
     assert imported.model.topology.num_edges == 1
     assert imported.model.topology.num_faces == 0
     assert imported.model.topology.edge_faces == ((),)
-    geometry = _geometry(imported.model)
+    geometry = geometry_of(imported.model)
     curve = geometry.curves[geometry.edge_curves[0]]
     expected_type = {
         "parabola": ParabolaCurve,
@@ -1641,7 +2053,7 @@ def test_independent_conic_and_offset_edge_retains_source_parameter_and_archive(
     parameters = np.asarray([-1.0, -0.3, 0.0, 0.6, 1.0], dtype=np.float64)
     expected = analytic(parameters) * factor
     values = curve.evaluate(jnp.asarray(parameters * parameter_factor))
-    np.testing.assert_allclose(values, expected, rtol=1e-14, atol=1e-14)
+    np.testing.assert_allclose(values, expected, rtol=_CARRIER_ATOL, atol=_CARRIER_ATOL)
     lower, upper = curve.derivative_bounds(-parameter_factor, parameter_factor)
     jets = jax.vmap(jax.jacfwd(curve.evaluate))(
         jnp.asarray(parameters * parameter_factor)
@@ -1652,20 +2064,20 @@ def test_independent_conic_and_offset_edge_retains_source_parameter_and_archive(
     reread = read_brep_text(
         path, _POLICY, trusted_root=tmp_path, source_length_unit=METER
     )
-    assert _geometry(reread.model).geometry_id == geometry.geometry_id
+    assert geometry_of(reread.model).geometry_id == geometry.geometry_id
     receipt = save_brep_archive(imported.model, tmp_path / "exact-edge.phx")
     restored = load_brep_archive(receipt.path)
     assert restored.model_id == imported.model.model_id == receipt.model_id
     assert restored.source_id == imported.model.source_id
     np.testing.assert_array_equal(
-        _geometry(restored)
+        geometry_of(restored)
         .curves[0]
         .evaluate(jnp.asarray(parameters * parameter_factor)),
         values,
     )
 
 
-def test_exact_offset_edge_distance_jvp_vjp_retains_basis_authority() -> None:
+def test_offset_edge_distance_jvp_vjp_retains_basis_parameters() -> None:
     source = OffsetCurve(ParabolaCurve((0, 0), (1, 0), (0, 1), 0.5), 0.25)
     parameter = jnp.asarray(0.4, dtype=jnp.float64)
 
@@ -1678,11 +2090,14 @@ def test_exact_offset_edge_distance_jvp_vjp_retains_basis_authority() -> None:
         moved, (source.distance,), (jnp.asarray(1.0, dtype=jnp.float64),)
     )
     expected = np.asarray([1.0, -0.4], dtype=np.float64) / np.sqrt(1.0 + 0.4**2)
-    np.testing.assert_allclose(tangent, expected, rtol=1e-14, atol=1e-14)
+    np.testing.assert_allclose(tangent, expected, rtol=_CARRIER_ATOL, atol=_CARRIER_ATOL)
     cotangent = jnp.asarray([0.3, -0.7], dtype=jnp.float64)
     _, pullback = jax.vjp(moved, source.distance)
     np.testing.assert_allclose(
-        pullback(cotangent)[0], expected @ np.asarray(cotangent), rtol=1e-14, atol=1e-14
+        pullback(cotangent)[0],
+        expected @ np.asarray(cotangent),
+        rtol=_CARRIER_ATOL,
+        atol=_CARRIER_ATOL,
     )
     assert eqx.tree_equal(source.base, ParabolaCurve((0, 0), (1, 0), (0, 1), 0.5))
 
@@ -1721,12 +2136,15 @@ def test_exact_conic_source_coefficients_remain_live_through_jit_jvp_and_vjp(
 
     _, tangent = jax.jvp(point, (coefficients,), (direction,))
     np.testing.assert_allclose(
-        tangent, jacobian @ np.asarray(direction), rtol=1e-14, atol=1e-14
+        tangent, jacobian @ np.asarray(direction), rtol=_CARRIER_ATOL, atol=_CARRIER_ATOL
     )
     cotangent = jnp.asarray([0.3, -0.7, 0.2], dtype=jnp.float64)
     _, pullback = jax.vjp(point, coefficients)
     np.testing.assert_allclose(
-        pullback(cotangent)[0], jacobian.T @ np.asarray(cotangent), rtol=1e-14, atol=1e-14
+        pullback(cotangent)[0],
+        jacobian.T @ np.asarray(cotangent),
+        rtol=_CARRIER_ATOL,
+        atol=_CARRIER_ATOL,
     )
 
     def evaluate(curve: ParabolaCurve | HyperbolaCurve, value: Array) -> Array:
@@ -1745,10 +2163,13 @@ def test_exact_conic_source_coefficients_remain_live_through_jit_jvp_and_vjp(
             dtype=np.float64,
         )
     np.testing.assert_allclose(
-        compiled(moved, parameter), expected, rtol=1e-14, atol=1e-14
+        compiled(moved, parameter), expected, rtol=_CARRIER_ATOL, atol=_CARRIER_ATOL
     )
     np.testing.assert_allclose(
-        compiled(source, parameter), source.evaluate(parameter), rtol=1e-14, atol=1e-14
+        compiled(source, parameter),
+        source.evaluate(parameter),
+        rtol=_CARRIER_ATOL,
+        atol=_CARRIER_ATOL,
     )
 
 
@@ -1758,8 +2179,6 @@ def test_exact_conic_and_offset_placement_preserves_source_parameter_jvp(
     kind: Literal["parabola", "hyperbola", "offset"],
     reflection: bool,
 ) -> None:
-    from phydrax.interchange._cad_carriers import place_curve
-
     source: ParabolaCurve | HyperbolaCurve | OffsetCurve
     if kind == "parabola":
         source = ParabolaCurve((0, 0, 0), (1, 0, 0), (0, 1, 0), 0.5)
@@ -1787,7 +2206,7 @@ def test_exact_conic_and_offset_placement_preserves_source_parameter_jvp(
         + placement.translation
     )
     np.testing.assert_allclose(
-        placed.evaluate(parameters), expected, rtol=1e-14, atol=1e-14
+        placed.evaluate(parameters), expected, rtol=_CARRIER_ATOL, atol=_CARRIER_ATOL
     )
     parameter = jnp.asarray(0.4, dtype=jnp.float64)
     _, original_jet = jax.jvp(source.evaluate, (parameter,), (jnp.ones_like(parameter),))
@@ -1795,8 +2214,8 @@ def test_exact_conic_and_offset_placement_preserves_source_parameter_jvp(
     np.testing.assert_allclose(
         placed_jet,
         np.asarray(original_jet) @ placement.rotation.T,
-        rtol=1e-14,
-        atol=1e-14,
+        rtol=_CARRIER_ATOL,
+        atol=_CARRIER_ATOL,
     )
 
 
@@ -1806,17 +2225,15 @@ def test_exact_conic_and_offset_placement_preserves_source_parameter_jvp(
 def test_bounded_closed_source_edge_admits_only_its_declared_domain_endpoints(
     foreign_vertex: bool,
 ) -> None:
-    from phydrax.interchange._cad import edge_range
-
     result = decode_brep_text_bytes(
         _periodic_circle_text().encode("ascii"),
         _POLICY,
         source_length_unit=METER,
     )
-    curve = _require_type(_geometry(result.model).curves[0], BSplineCurve)
+    curve = _require_type(geometry_of(result.model).curves[0], BSplineCurve)
     vertex = np.asarray((0, 1, 0) if foreign_vertex else (1, 0, 0), dtype=np.float64)
     if foreign_vertex:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"edge_range\.start"):
             edge_range(curve, vertex, vertex, True, 1.0e-10)
     else:
         assert edge_range(curve, vertex, vertex, True, 1.0e-10) == (0.0, 4.0)

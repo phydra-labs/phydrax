@@ -1,0 +1,186 @@
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+"""Declared host-owner storage bounds independent of native execution handles."""
+
+from __future__ import annotations
+
+import ctypes
+from collections.abc import Callable, Mapping
+from dataclasses import is_dataclass
+from enum import Enum
+from fractions import Fraction
+from pathlib import Path
+
+import numpy as np
+from jax import Array, Device
+from jax.extend.core import Jaxpr
+from jax.sharding import Mesh
+
+
+def declared_integer_storage_bytes(bit_length: int, /) -> int:
+    """Bound integer storage using the declared bit length and fixed metadata."""
+    if bit_length < 0:
+        raise ValueError(f"integer.bit_length must be nonnegative; got {bit_length}.")
+    return 128 + 4 * ((bit_length + 7) // 8)
+
+
+def declared_object_storage_bytes(value: object, /) -> int:
+    """Bound structural metadata without interpreter object-size introspection."""
+    match value:
+        case int():
+            return declared_integer_storage_bytes(value.bit_length())
+        case str():
+            return 256 + 4 * len(value)
+        case bytes() | bytearray():
+            return 256 + len(value)
+        case Mapping():
+            return 256 + 64 * len(value)
+        case tuple() | list() | set() | frozenset():
+            return 256 + 16 * len(value)
+        case np.generic():
+            return 256 + value.dtype.itemsize
+        case _:
+            return 256
+
+
+def retained_host_storage_profile(
+    value: object,
+    existing: Mapping[int, object],
+    native_buffer: Callable[[ctypes.Array], bool],
+    /,
+) -> tuple[dict[int, object], int, int, int]:
+    """Return new retained owners, declared bytes, logical JAX bytes and visits.
+
+    Views share their payload owner's bound. Fixed structural allowances and
+    integer bit lengths describe host storage; JAX bytes describe logical banks,
+    not device or compiler allocation. Native-backed payloads are excluded.
+    A cyclic retention graph or unsupported dynamic owner refuses explicitly.
+    ``existing`` owns previously profiled graphs with strong references;
+    identity alone without that retention lifetime cannot earn a profile reuse.
+    """
+    identifier = id(value)
+    if identifier in existing and existing[identifier] is value:
+        return {}, 0, 0, 0
+    # Model structure imports native capabilities; resolve that cycle only when
+    # the fully imported package requests host preparation.
+    from ._model._structure import _model_owner_children
+    from .exterior._form_type import FormType, FormValueSpec
+
+    pending: list[tuple[object, bool, bool]] = [(value, False, False)]
+    visiting: set[int] = set()
+    retained: dict[int, object] = {}
+    declared = 0
+    logical = 0
+    visits = 0
+    while pending:
+        owner, leaving, device_bank = pending.pop()
+        identifier = id(owner)
+        if leaving:
+            visiting.remove(identifier)
+            retained[identifier] = owner
+            continue
+        if (identifier in existing and existing[identifier] is owner) or (
+            identifier in retained and retained[identifier] is owner
+        ):
+            continue
+        if identifier in visiting:
+            raise ValueError(
+                f"retained_host_storage_profile.owner must form an acyclic graph; got revisited {type(owner).__qualname__}."
+            )
+        visits += 1
+        declared += declared_object_storage_bytes(owner)
+        children: tuple[object, ...] = ()
+        match owner:
+            case Mesh():
+                visiting.add(identifier)
+                pending.append((owner, True, False))
+                pending.append((owner.devices, False, True))
+                pending.append((owner.axis_names, False, False))
+                continue
+            case Device():
+                pass
+            case Jaxpr():
+                children = tuple(owner.consts)
+            case Array():
+                declared += owner.nbytes
+                logical += owner.nbytes
+            case np.ndarray():
+                if owner.dtype.hasobject:
+                    if not device_bank:
+                        raise TypeError(
+                            f"retained_host_storage_profile.owner.dtype must exclude objects outside Mesh device topology; got {owner.dtype}."
+                        )
+                    for device in owner.flat:
+                        match device:
+                            case Device():
+                                pending.append((device, False, False))
+                            case _:
+                                raise TypeError(
+                                    f"retained_host_storage_profile.device must be a JAX Device; got {type(device).__qualname__}."
+                                )
+                    declared += owner.nbytes if owner.base is None else 0
+                    if owner.base is not None:
+                        pending.append((owner.base, False, True))
+                elif owner.base is not None:
+                    children = (owner.base,)
+                else:
+                    declared += owner.nbytes
+            case memoryview():
+                children = (owner.obj,)
+            case ctypes.Array():
+                if not native_buffer(owner):
+                    declared += ctypes.sizeof(owner)
+            case Fraction():
+                children = (owner.numerator, owner.denominator)
+            case slice():
+                children = (owner.start, owner.stop, owner.step)
+            case Enum():
+                children = (owner.value, owner.name)
+            case np.generic():
+                if owner.dtype.hasobject:
+                    raise TypeError(
+                        f"retained_host_storage_profile.owner.dtype must exclude objects; got {owner.dtype}."
+                    )
+            case FormType():
+                children = (
+                    owner.dimension,
+                    owner.degree,
+                    owner.twist,
+                    owner.fiber_shape,
+                    owner.ambient_dimension,
+                    owner.form_type_id,
+                )
+            case FormValueSpec():
+                children = (owner.form_type, owner.proxy, owner.value_spec_id)
+            case _ if is_dataclass(owner) or isinstance(
+                owner, (Mapping, tuple, list, set, frozenset)
+            ):
+                children = tuple(_model_owner_children(owner))
+            case (
+                None
+                | str()
+                | bytes()
+                | bytearray()
+                | bool()
+                | int()
+                | float()
+                | complex()
+                | np.dtype()
+                | Path()
+                | type()
+            ):
+                pass
+            case _ if owner is Ellipsis:
+                pass
+            case _:
+                raise TypeError(
+                    f"retained_host_storage_profile.owner must have a supported storage representation; got {type(owner).__qualname__}."
+                )
+        if children:
+            visiting.add(identifier)
+            pending.append((owner, True, False))
+            pending.extend((child, False, False) for child in children)
+        else:
+            retained[identifier] = owner
+    return retained, declared, logical, visits

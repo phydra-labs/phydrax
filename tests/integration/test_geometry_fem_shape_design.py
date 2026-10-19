@@ -8,6 +8,7 @@ from typing import Any
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _problem_components() -> Any:
@@ -34,7 +35,7 @@ def _problem_components() -> Any:
         (0.0, 0.0),
         1.0,
         feature_id="circle",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     projection = phx.geometry.ImplicitPointProjectionPlan(
         geometry,
         coordinates[:4],

@@ -13,6 +13,7 @@ import trimesh
 
 import phydrax as phx
 from phydrax.enforcement._ansatz import _enforcement_weight_fn
+from phydrax.units import METER
 
 
 def test_enforcement_weight_fn_mesh_normals_jittable() -> None:
@@ -20,7 +21,7 @@ def test_enforcement_weight_fn_mesh_normals_jittable() -> None:
     geom = phx.domain.GeometryDomain(
         phx.geometry.mesh_region_from_source(
             (np.asarray(mesh.vertices), np.asarray(mesh.faces))
-        ).compile()
+        ).compile(coordinate_unit=METER)
     )
 
     def where(point: Any) -> Any:

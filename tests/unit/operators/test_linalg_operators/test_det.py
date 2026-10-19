@@ -6,14 +6,15 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.linalg import det
+from phydrax.units import METER
 
 
 def test_determinant_matches_exact_real_complex_spacetime_and_rank3_references() -> None:
     square = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     cube = phx.domain.GeometryDomain(
-        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     spacetime = square @ TimeInterval(0.0, 1.0)
 
@@ -72,7 +73,7 @@ def test_determinant_matches_exact_real_complex_spacetime_and_rank3_references()
 
 def test_determinant_preserves_metadata() -> None:
     square = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     function = square.Function("x")(lambda x: jnp.eye(2)).with_metadata(tag="keep")
     assert det(function).metadata == function.metadata

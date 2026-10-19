@@ -41,6 +41,7 @@ from .._validation import finite_real_scalar, positive_integer
 from ..exterior._form_type import FormValueSpec
 from ..linalg import ArraySpace, inverse_small_linear, SmallLinearSolvePlan
 from ..typing import checked, parse
+from ..units import METER
 from ._cell_complex import PolygonalConnectivity
 from ._cell_mesh import CellMesh
 from ._integration_domain import IntegrationDomain
@@ -660,7 +661,7 @@ def polygon_mesh_support_geometry(
         recenter=False,
         feature_id=f"polygon-mesh-support:{support_id}",
     )
-    return region.compile()
+    return region.compile(coordinate_unit=METER)
 
 
 def polygon_side_revision(runtime_id: str, coordinates: ArrayLike, /) -> str:

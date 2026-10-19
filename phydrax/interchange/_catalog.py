@@ -8,18 +8,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from .._mesh_file_profiles import mesh_file_profiles
 from ..typing import parse
 from ._report import AdapterFormatProfile
 
 
-FormatDirection: TypeAlias = Literal["read", "write", "append"]
+type FormatDirection = Literal["read", "write", "append"]
+
+_EXACT_CAD_GEOMETRY_CAPABILITIES = (
+    "exact-analytic-rational-geometry",
+    "oriented-brep-topology",
+)
 
 
 class CarrierKind(StrEnum):
-    """Physical carrier required by one exact file-format profile."""
+    """Physical carrier required by one declared file-format profile."""
 
     RESIDENT_FILE = "resident-file"
     SEEKABLE_FILE = "seekable-file"
@@ -44,9 +49,13 @@ class FormatCapability:
 
     def __post_init__(self) -> None:
         if not self.domain.strip():
-            raise ValueError("Format capability domain must be non-empty.")
+            raise ValueError(
+                f"FormatCapability.domain must be nonempty; got {self.domain!r}"
+            )
         if not self.directions or len(self.directions) != len(set(self.directions)):
-            raise ValueError("Format capability directions must be non-empty and unique.")
+            raise ValueError(
+                f"FormatCapability.directions must be nonempty and unique; got {self.directions!r}"
+            )
         object.__setattr__(
             self,
             "directions",
@@ -60,12 +69,16 @@ class FormatCapability:
             for extension in self.extensions
         ):
             raise ValueError(
-                "Format capability extensions must be unique lowercase suffixes."
+                f"FormatCapability.extensions must contain unique lowercase suffixes; got {self.extensions!r}"
             )
         if len(self.semantic_capabilities) != len(set(self.semantic_capabilities)):
-            raise ValueError("Format semantic capabilities must be unique.")
+            raise ValueError(
+                f"FormatCapability.semantic_capabilities must be unique; got {self.semantic_capabilities!r}"
+            )
         if len(self.known_losses) != len(set(self.known_losses)):
-            raise ValueError("Format known losses must be unique.")
+            raise ValueError(
+                f"FormatCapability.known_losses must be unique; got {self.known_losses!r}"
+            )
 
 
 def _capability(
@@ -557,6 +570,24 @@ _BASE_CAPABILITIES = tuple(
                 capabilities=("time-series", "hdf5-arrays"),
             ),
             _capability(
+                "dxf",
+                "cad",
+                (".dxf",),
+                CarrierKind.RESIDENT_FILE,
+                ("read", "write"),
+                revision="ascii-control-point-profile",
+                capabilities=(
+                    "planar-profiles",
+                    "exact-lines-arcs-and-bulges",
+                    "rational-conics",
+                    "control-point-splines",
+                    "explicit-units",
+                    "certified-loop-containment",
+                    "declared-junction-gaps",
+                ),
+                losses=("annotations-ignored-by-design",),
+            ),
+            _capability(
                 "step",
                 "cad",
                 (".step", ".stp"),
@@ -564,11 +595,11 @@ _BASE_CAPABILITIES = tuple(
                 ("read", "write"),
                 revision="iso-10303-21-ap203-ap214-ap242-native",
                 capabilities=(
-                    "exact-analytic-rational-geometry",
-                    "oriented-brep-topology",
+                    *_EXACT_CAD_GEOMETRY_CAPABILITIES,
                     "p-curves",
                     "explicit-units",
                     "assembly-occurrences",
+                    "entity-tolerance-evidence",
                 ),
                 losses=("intersection-curves-export-only-as-declared-approximation",),
             ),
@@ -580,8 +611,7 @@ _BASE_CAPABILITIES = tuple(
                 ("read", "write"),
                 revision="iges-5.3-brep-native",
                 capabilities=(
-                    "exact-analytic-rational-geometry",
-                    "oriented-brep-topology",
+                    *_EXACT_CAD_GEOMETRY_CAPABILITIES,
                     "trimmed-surfaces",
                     "explicit-units",
                     "p-curves",
@@ -1055,10 +1085,10 @@ _ADDITIONAL_CAPABILITIES = (
         ("read", "write"),
         revision="occt-cascade-topology-v1-v2-v3-native",
         capabilities=(
-            "exact-analytic-rational-geometry",
-            "oriented-brep-topology",
+            *_EXACT_CAD_GEOMETRY_CAPABILITIES,
             "p-curves",
             "locations-and-occurrences",
+            "entity-tolerance-evidence",
         ),
         losses=("derived-triangulations-dropped", "length-unit-declared-by-reader"),
     ),

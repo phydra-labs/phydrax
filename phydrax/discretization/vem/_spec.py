@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,10 +17,16 @@ from ..._polynomial._orthogonal import standard_vandermonde
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior._form_type import FormType, FormValueSpec
-from ...typing import checked
+from ...typing import checked, parse
 
 
-def _family_value_spec(family: str, /) -> FormValueSpec:
+VirtualElementFamily: TypeAlias = Literal[
+    "ConformingH1", "ConformingHdiv", "ConformingHcurl", "DiscontinuousL2"
+]
+VirtualElementTraceKind: TypeAlias = Literal["value", "normal", "tangential", "none"]
+
+
+def _family_value_spec(family: VirtualElementFamily, /) -> FormValueSpec:
     """Scientific values represented by the qualified planar VEM projectors."""
     match family:
         case "ConformingH1" | "DiscontinuousL2":
@@ -29,17 +36,14 @@ def _family_value_spec(family: str, /) -> FormValueSpec:
             return FormValueSpec(FormType(2, 1, twist="twisted"), proxy="flux")
         case "ConformingHcurl":
             return FormValueSpec(FormType(2, 1), proxy="circulation")
-        case _:
-            raise ValueError(
-                "Virtual-element family must be ConformingH1, ConformingHdiv, "
-                "ConformingHcurl, or DiscontinuousL2."
-            )
+        case unknown:
+            assert_never(unknown)
 
 
 class VirtualElementSpec(StrictModule, NonTrainableState):
     """One bounded virtual-element family specification."""
 
-    family: str = eqx.field(static=True)
+    family: VirtualElementFamily = eqx.field(static=True)
     degree: int = eqx.field(static=True)
     value_spec: FormValueSpec = eqx.field(static=True)
     enhanced: bool = eqx.field(static=True)
@@ -57,16 +61,18 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
     ) -> None:
         family_ = str(family)
         degree_ = int(degree)
+        family_ = parse(family_, VirtualElementFamily, "VirtualElementSpec.family")
         expected = _family_value_spec(family_)
         if value_spec.value_spec_id != expected.value_spec_id:
             raise ValueError(
-                f"{family_} requires the qualified planar {expected.proxy} form "
-                f"with twist={expected.form_type.twist!r}."
+                f"VirtualElementSpec.value_spec must match the planar {family_} {expected.proxy} form with twist={expected.form_type.twist!r}; got value_spec_id={value_spec.value_spec_id}"
             )
         if degree_ < 1:
-            raise ValueError("Virtual-element degree must be positive.")
+            raise ValueError(f"VirtualElementSpec.degree must be positive; got {degree_}")
         if not enhanced:
-            raise ValueError("Virtual-element spaces require enhanced projections.")
+            raise ValueError(
+                f"VirtualElementSpec.enhanced must enable enhanced projections; got {enhanced!r}"
+            )
         self.family = family_
         self.degree = degree_
         self.value_spec = value_spec
@@ -118,14 +124,18 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
         return self.edge_dofs_per_entity
 
     @property
-    def trace_kind(self) -> str:
-        if self.family == "ConformingH1":
-            return "value"
-        if self.family == "ConformingHdiv":
-            return "normal"
-        if self.family == "ConformingHcurl":
-            return "tangential"
-        return "none"
+    def trace_kind(self) -> VirtualElementTraceKind:
+        match self.family:
+            case "ConformingH1":
+                return "value"
+            case "ConformingHdiv":
+                return "normal"
+            case "ConformingHcurl":
+                return "tangential"
+            case "DiscontinuousL2":
+                return "none"
+            case unknown:
+                assert_never(unknown)
 
     @property
     def differential_kind(self) -> str:
@@ -138,14 +148,14 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
         return "none"
 
     def edge_trace_basis(self, coordinates: ArrayLike, /) -> Array:
-        """Tabulate the degree-`k` edge trace basis at canonical edge coordinates.
+        """Tabulate the degree-`k` edge trace basis at normalized edge coordinates.
 
         `coordinates` lie in `[-1, 1]` along an edge from its lower to its higher
         vertex index; the result has shape `(*coordinates.shape, k + 1)`. H1
         value traces use the Lagrange basis on the `k + 1` Gauss--Lobatto
         nodes (start vertex, interior edge DOFs, end vertex). H(div) normal and
         H(curl) tangential traces use the dual-scaled Legendre basis
-        `(2m + 1) P_m`, so the canonical trace is `sum_m (2m + 1) P_m d_m` for
+        `(2m + 1) P_m`, so the trace expansion is `sum_m (2m + 1) P_m d_m` for
         the Legendre moment DOFs `d_m`. Discontinuous L2 spaces have no trace.
         """
         from ...integration import GaussLobattoLegendreRule, interval_rule_data
@@ -166,16 +176,18 @@ class VirtualElementSpec(StrictModule, NonTrainableState):
                 basis = standard_vandermonde("legendre", flat, self.degree) * dual
             case "none":
                 raise ValueError(
-                    "Discontinuous L2 virtual elements have no boundary trace."
+                    "VirtualElementSpec.trace_kind must support boundary basis tabulation; got no boundary trace for DiscontinuousL2"
                 )
             case kind:
-                raise ValueError(f"Unknown virtual-element trace kind {kind!r}.")
+                assert_never(kind)
         return basis.reshape(values.shape + (self.degree + 1,))
 
     def local_dof_count(self, arity: int, /) -> int:
         arity_ = int(arity)
         if arity_ < 3:
-            raise ValueError("Virtual elements require polygon arity at least three.")
+            raise ValueError(
+                f"VirtualElementSpec.arity must be at least three for polygon DOFs; got {arity_}"
+            )
         return (
             self.vertex_dofs_per_entity * arity_
             + self.edge_dofs_per_entity * arity_
@@ -201,14 +213,20 @@ class VirtualElementFieldSpec(StrictModule, NonTrainableState):
         name_ = str(name)
         shape = tuple(component_shape)
         if not name_:
-            raise ValueError("Virtual-element field name must be non-empty.")
+            raise ValueError(
+                f"VirtualElementFieldSpec.name must be non-empty; got {name_!r}"
+            )
         if element.value_shape and shape:
-            raise ValueError("Declare vector values on the element or field, not both.")
+            raise ValueError(
+                f"VirtualElementFieldSpec.component_shape must not duplicate element vector values; got element_shape={element.value_shape}, component_shape={shape}"
+            )
         if any(value <= 0 for value in shape):
-            raise ValueError("Virtual-element field dimensions must be positive.")
+            raise ValueError(
+                f"VirtualElementFieldSpec.component_shape must have positive dimensions; got {shape}"
+            )
         if shape:
             raise NotImplementedError(
-                "Component-replicated virtual-element fields are not supported."
+                f"VirtualElementFieldSpec.component_shape must be empty for supported VEM fields; got {shape}"
             )
         self.name = name_
         self.element = element
@@ -248,6 +266,8 @@ def discontinuous_l2_virtual_element(degree: int, /) -> VirtualElementSpec:
 
 
 __all__ = [
+    "VirtualElementFamily",
+    "VirtualElementTraceKind",
     "VirtualElementFieldSpec",
     "VirtualElementSpec",
     "conforming_h1_virtual_element",

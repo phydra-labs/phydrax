@@ -2,49 +2,48 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native overset connectivity of a `MeshAssembly` and its moving registrations.
+"""Provide native overset connectivity for a `MeshAssembly` and its moving registrations.
 
-A prepared overset connectivity binds the certified cell parts of one assembly
-revision, their explicitly declared solid walls and overset (artificial) outer
-boundaries, and one donor-resolution policy. Preparation is host-side and runs
-in fixed phases:
+Prepared overset connectivity binds the certified cell parts of one assembly revision,
+their explicitly declared solid walls and overset (artificial) outer boundaries, and one
+donor-resolution policy. Preparation is host-side and runs in fixed phases:
 
-1. *Hole cutting.* Declared PLC walls use bounded BVH ray candidates and exact
-   crossing parity with symbolic perturbation, counting edge/vertex hits once.
-   When a native B-Rep query is registered, its authoritative membership and
-   explicit unresolved statuses own vertex classification instead. Contacts
-   are blanked and reported. Exact represented facet/cell crossings and enclosed
-   foreign wall vertices detect cut cells even without any enclosed mesh vertex;
-   these cells are blanked and reported as under-resolved cuts.
-2. *Fringe layers.* Unblanked vertices of blanked cells and the vertices of a
-   part's overset boundary seed fringe layer one; each further layer adds the
-   unclassified vertices of cells touching the previous layer. Fringe vertices
-   are receptors, cells with a receptor vertex are fringe cells and only cells
-   whose every vertex is active are donor-admissible, so donors never depend on
-   other receptors. A part's own wall vertices are protected: a wall vertex that
-   is not active is a reported conflict.
-3. *Donor resolution.* Receptors are located by the donor part's inverse cell
-   map restricted to admissible cells. Among containing donor parts the policy
-   decides deterministically (finest donor cell, then declared part priority,
-   then part name, then donor cell ID). A receptor without an admissible donor
-   is an orphan with its reason.
+1. *Hole cutting.* Declared PLC walls use bounded BVH ray candidates and crossing-parity
+predicates evaluated with encoded-coefficient arithmetic and symbolic perturbation,
+counting edge/vertex hits once. When a native B-Rep query is registered, its membership
+results and explicit unresolved statuses determine vertex classification instead.
+Contacts are blanked and reported. Represented facet/cell crossing predicates and
+enclosed foreign wall vertices detect cut cells even without any enclosed mesh vertex;
+these cells are blanked and reported as under-resolved cuts.
+2. *Fringe layers.* Unblanked vertices of blanked cells and the vertices of a part's
+overset boundary seed fringe layer one; each further layer adds the unclassified
+vertices of cells touching the previous layer. Fringe vertices are receptors, cells with
+a receptor vertex are fringe cells, and only cells whose every vertex is active are
+donor-admissible, so donors never depend on other receptors. A part's own wall vertices
+are protected: a wall vertex that is not active is a reported conflict.
+3. *Donor resolution.* Receptors are located by the donor part's inverse cell map
+restricted to admissible cells. Among containing donor parts the policy decides
+deterministically (finest donor cell, then declared part priority, then part name, then
+donor cell ID). A receptor without an admissible donor is an orphan with its reason.
 
-Interpolative transfer is built as `PreparedFieldQuery` routes on the donor
-field reconstruction (its pointwise evidence and exact transpose) and is never
-conservative. The conservative mode is a separate common-refinement remap of
-explicitly selected cell averages. Motion refits the wall hierarchies, repeats hole cutting
-and donor resolution, and commits a new registration epoch through
-`CompositionRebind` only when coverage and the state transfer of uncovered
-vertices pass; otherwise the previous composition is returned.
+Interpolative transfer is built as `PreparedFieldQuery` routes on the donor field
+reconstruction, retaining its pointwise evidence and algebraic transpose, and is never
+conservative. The conservative mode is a separate common-refinement remap of explicitly
+selected cell averages. Motion refits the wall hierarchies, repeats hole cutting and
+donor resolution, and commits a new registration epoch through `CompositionRebind` only
+when every requested receptor and protected wall vertex satisfies the coverage contract
+and the state transfer of uncovered vertices passes; otherwise the previous composition
+is returned.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from enum import IntEnum
 from fractions import Fraction
-from typing import assert_never, final, Literal, TYPE_CHECKING, TypeAlias
+from math import inf
+from typing import assert_never, final, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -52,6 +51,21 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+
+import phydrax.discretization._cell_geometry as cell_geometry_owner
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.discretization._field_query as field_query_owner
+import phydrax.discretization._reference_cell_types as reference_cell_types_owner
+import phydrax.discretization._simplicial_locator as simplicial_locator_owner
+import phydrax.discretization._views as views_owner
+import phydrax.discretization.finite_volume._automatic_remap as automatic_remap_owner
+import phydrax.discretization.finite_volume._remap_evidence as remap_evidence_owner
+import phydrax.discretization.finite_volume._unstructured as unstructured_owner
+import phydrax.geometry._contracts as contracts_owner
+import phydrax.geometry._supermesh as supermesh_owner
+from phydrax.discretization._reference_cell_types import CellGeometryElement
+from phydrax.geometry._rational import fraction_endpoint
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
 
 from .._bvh import (
     bvh_overlap_pair_blocks,
@@ -70,46 +84,41 @@ from .._geometry_predicates import (
     segment_intersections_2d,
 )
 from .._meshcore import (
-    current_native_execution_budget,
     MeshcoreError,
     MeshcoreStatus,
+    NativeExecutionLimits,
+    NativeExecutionScope,
     triangle_intersection_classes,
 )
+from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import (
-    AbstractCellLocator,
-    CellGeometrySpec,
-    CellLocationResult,
-    CellLocationStatus,
-    InterpolationTransposeEvidence,
-    prepare_unstructured_conservative_remap,
-    PreparedFieldQuery,
-    PreparedFieldReconstruction,
-    PreparedSimplicialCellLocator,
-    PreparedUnstructuredConservativeRemap,
-    SimplicialLocationPolicy,
-    UnstructuredFiniteVolumeDiscretization,
-    UnstructuredFiniteVolumePlan,
-)
 from ..discretization._cell_complex import (
     PolygonalConnectivity,
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
 from ..discretization._cell_geometry import (
-    CellGeometryElement,
+    cell_geometry_preparation_query_upper,
     CellVertexGeometryElement,
     RestrictedCellGeometryElement,
 )
-from ..discretization._coordinate_enclosure import outward
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._coordinate_enclosure import (
+    coordinate_polynomials,
+    polynomial_bounds,
+    restrict_coordinates,
+)
+from ..discretization._exact_plc_geometry import translated_plc_layout_matches
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._mapped_locator import PreparedMappedCellLocator
 from ..discretization._polyhedral_locator import PreparedPolyhedralCellLocator
+from ..discretization._reference_cell import reference_cell_topology
 from ..discretization._simplicial_locator import LocatedCellMap
 from ..discretization._view_support import (
-    _MappedCellBoundaryMap,
-    _MappedMeshSupportKernel,
+    mapped_mesh_support_query,
+    MappedCellBoundaryMap,
+    MappedMeshSupportKernel,
 )
 from ..discretization._views import transpose_duality_evidence
 from ..discretization.fem import (
@@ -122,15 +131,14 @@ from ..discretization.fem import (
     prepare_finite_element_field_reconstruction,
     PreparedFiniteElementCellMap,
 )
-from ..geometry import CommonRefinementPolicy, CompiledGeometry
-from ..geometry._interval_enclosure import interval_add, interval_multiply
-from ..geometry.brep._projection_contracts import BRepProjectionStatus
-from ..geometry.brep._query import (
-    BRepContainmentResult,
-    BRepQueryBudget,
-    BRepQueryResourceError,
-    PreparedBRepQuery,
+from ..discretization.finite_volume._field_view import (
+    UnstructuredFiniteVolumeFieldReconstructionKernel,
 )
+from ..discretization.finite_volume._triangle_fv import TriangleFiniteVolumeDiscretization
+from ..geometry._interval_enclosure import Interval, interval_add, interval_multiply
+from ..geometry.brep._projection_contracts import BRepProjectionStatus
+from ..geometry.brep._query import BRepContainmentResult, PreparedBRepQuery
+from ..geometry.brep._query_types import BRepQueryBudget, BRepQueryResourceError
 from ..lifecycle import (
     commit_composition_rebind,
     Composition,
@@ -140,34 +148,44 @@ from ..lifecycle import (
     CompositionTransport,
 )
 from ..linalg import SmallLinearSolvePlan, solve_small_linear
-from ..linalg._small_batched import prepare_exact_small_linear_actions
-from ..typing import parse
-from ._assembly import MeshAssembly, MeshPart
-from ._contracts import MeshingFailure, MeshingFailureCategory
+from ..linalg._small_batched import (
+    exact_small_linear_action_bounds,
+    prepare_exact_small_linear_actions,
+)
+from ..typing import checked, parse
+from ._assembly import MeshAssembly
 from ._coupling import (
-    _encoded_image_isometry,
     CouplingSearchEvidence,
     CouplingSearchStatus,
+    encoded_image_isometry,
     MeshCoupling,
     MeshCouplingKind,
     OversetCoupling,
     OversetValueAction,
 )
-from ._measurements import measure_phase, NativeMeshingPhaseRecorder
+from ._measurements import (
+    measure_phase,
+    NativeMeshingPhaseRecorder,
+    phase_started,
+    record_elapsed,
+)
+from ._mesh_part import MeshPart
+from ._organization_records import MeshAttribute, MeshLabel, MeshPatch, MeshZone
 from ._result import CellMeshingResult
 from ._scope import MeshingScope
 
 
 if TYPE_CHECKING:
-    from ._overset_exchange import PreparedOwnerLocalOversetExchange
+    from . import _overset_exchange as overset_exchange_owner
 
 
-OversetDonorPriority: TypeAlias = Literal["finest-donor", "part-priority"]
+type OversetDonorPriority = Literal["finest-donor", "part-priority"]
 
 _OWNER = "phydrax.meshing.overset"
 _CONNECTIVITY_ENTRY = "overset:connectivity"
 _SIMPLICES = {2: "triangle", 3: "tetrahedron"}
 _SEARCH_METHOD = "native-overset-authoritative-hole-cut-admissible-donor"
+_UNBOUNDED_EXECUTION_COUNTER = (1 << 64) - 1
 
 
 class OversetVertexStatus(IntEnum):
@@ -195,29 +213,29 @@ def _part_entry(name: str, /) -> str:
 
 @final
 class OversetPartSpec(StrictModule, NonTrainableState):
-    """Explicit overset role of one assembly part.
+    """Declare the overset role of one assembly part.
 
-    `wall` names the facets (dimension `d - 1`) of the part's closed solid wall:
-    it cuts holes in every other part and its vertices are protected in this
-    part. `boundary` names the facets of the part's overset (artificial) outer
-    boundary, whose vertices are receptors. Neither is inferred from names or
-    coordinates. `priority` breaks donor ties under the policy (larger wins) and
-    `owner_rank` is the execution rank that owns the part's donor packets.
-    `excluded` is a full-dimensional cell scope never admitted as a donor.
-    `solid_query` optionally owns authoritative native B-Rep or closed mapped
-    domain membership. Possible wall/cell contacts lacking an intersection
-    certificate are conservatively blanked and exposed as ambiguous cells.
-    Paired `image_rotation` and `image_translation` author one registered
-    support image, `x_world = R x_source + t`, for donors, receptors and walls.
-    The original certified source carrier, coordinate axes and stable entity
-    identities remain authoritative; this pose is not a periodic quotient.
+    `wall` names the facets (dimension `d - 1`) of the part's closed solid wall: it cuts
+    holes in every other part and its vertices are protected in this part. `boundary`
+    names the facets of the part's overset (artificial) outer boundary, whose vertices
+    are receptors. Neither is inferred from names or coordinates. `priority` breaks
+    donor ties under the policy (larger wins), and `owner_rank` is the execution rank
+    responsible for the part's donor packets.
+    `excluded` is a full-dimensional cell scope never admitted as a donor. `solid_query`
+    optionally supplies native B-Rep or closed mapped domain membership used for
+    classification. Possible wall/cell contacts lacking an intersection certificate are
+    conservatively blanked and exposed as ambiguous cells.
+    Paired `image_rotation` and `image_translation` define one registered support image,
+    `x_world = R x_source + t`, for donors, receptors and walls. The certified source
+    carrier, coordinate axes and stable entity identities remain the basis for
+    source-bound maps; this pose is not a periodic quotient.
     """
 
     part_name: str = eqx.field(static=True)
     wall: MeshingScope | None
     boundary: MeshingScope | None
     excluded: MeshingScope | None
-    solid_query: PreparedBRepQuery | CompiledGeometry | None
+    solid_query: PreparedBRepQuery | contracts_owner.CompiledGeometry | None
     image_rotation: Array | None
     image_translation: Array | None
     solid_index: int = eqx.field(static=True)
@@ -225,6 +243,7 @@ class OversetPartSpec(StrictModule, NonTrainableState):
     owner_rank: int = eqx.field(static=True)
     spec_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         part_name: str,
@@ -233,7 +252,7 @@ class OversetPartSpec(StrictModule, NonTrainableState):
         wall: MeshingScope | None = None,
         boundary: MeshingScope | None = None,
         excluded: MeshingScope | None = None,
-        solid_query: PreparedBRepQuery | CompiledGeometry | None = None,
+        solid_query: PreparedBRepQuery | contracts_owner.CompiledGeometry | None = None,
         solid_index: int = 0,
         priority: int = 0,
         owner_rank: int = 0,
@@ -242,54 +261,68 @@ class OversetPartSpec(StrictModule, NonTrainableState):
     ) -> None:
         name = str(part_name).strip()
         if not name:
-            raise ValueError("Overset part names must be non-empty.")
+            raise ValueError(
+                "OversetPartSpec.part_name must be non-empty; got an empty name."
+            )
         for scope, label in (
             (wall, "wall"),
             (boundary, "boundary"),
             (excluded, "excluded"),
         ):
-            if scope is not None and not isinstance(scope, MeshingScope):
-                raise TypeError(f"{label} must be a MeshingScope or None.")
             if scope is not None and scope.source_id != name:
-                raise ValueError(f"The {label} scope belongs to another part.")
-        if isinstance(priority, bool) or not isinstance(priority, int):
-            raise TypeError("priority must be an integer.")
-        if isinstance(owner_rank, bool) or not isinstance(owner_rank, int):
-            raise TypeError("owner_rank must be an integer.")
-        if owner_rank < 0:
-            raise ValueError("owner_rank must be non-negative.")
-        if solid_query is not None and not isinstance(
-            solid_query, (PreparedBRepQuery, CompiledGeometry)
-        ):
-            raise TypeError(
-                "solid_query must be native B-Rep or whole mapped-cell support."
-            )
-        if isinstance(solid_query, CompiledGeometry):
-            from ..discretization._view_support import _MappedMeshSupportKernel
-
-            if not isinstance(solid_query.kernel, _MappedMeshSupportKernel):
-                raise TypeError(
-                    "Compiled wall authority must retain whole mapped-cell support."
+                raise ValueError(
+                    f"{'OversetPartSpec.' + label + '.source_id'} must match part_name; got a scope for another part."
                 )
+        if isinstance(priority, bool) or not isinstance(priority, int):
+            raise TypeError(
+                "OversetPartSpec.priority must be an integer excluding bool; got a bool or non-integer value."
+            )
+        if isinstance(owner_rank, bool) or not isinstance(owner_rank, int):
+            raise TypeError(
+                "OversetPartSpec.owner_rank must be an integer excluding bool; got a bool or non-integer value."
+            )
+        if owner_rank < 0:
+            raise ValueError(
+                "OversetPartSpec.owner_rank must be non-negative; got a negative rank."
+            )
+        match solid_query:
+            case contracts_owner.CompiledGeometry(kernel=MappedMeshSupportKernel()):
+                pass
+            case contracts_owner.CompiledGeometry():
+                raise TypeError(
+                    "OversetPartSpec.solid_query.kernel must be MappedMeshSupportKernel with whole mapped-cell support; got another compiled wall kernel."
+                )
+            case PreparedBRepQuery() | None:
+                pass
+            case _ as unknown:
+                assert_never(unknown)
         if (
             isinstance(solid_index, bool)
             or not isinstance(solid_index, int)
             or solid_index < 0
         ):
-            raise ValueError("solid_index must be a nonnegative integer.")
-        if solid_query is not None and (
-            wall is None
-            or (
-                isinstance(solid_query, PreparedBRepQuery)
-                and solid_index >= len(solid_query.solid_faces)
-            )
-            or (isinstance(solid_query, CompiledGeometry) and solid_index != 0)
-        ):
             raise ValueError(
-                "A solid query needs its explicit protected wall and solid index."
+                "OversetPartSpec.solid_index must be a non-negative integer excluding bool; got a bool, non-integer, or negative value."
+            )
+        match solid_query:
+            case None:
+                invalid_solid_index = False
+            case PreparedBRepQuery():
+                invalid_solid_index = wall is None or solid_index >= len(
+                    solid_query.solid_faces
+                )
+            case contracts_owner.CompiledGeometry():
+                invalid_solid_index = wall is None or solid_index != 0
+            case _ as unknown:
+                assert_never(unknown)
+        if invalid_solid_index:
+            raise ValueError(
+                "OversetPartSpec.solid_query must pair with a protected wall and a solid_index supported by its query type; got a missing wall or unsupported solid index."
             )
         if (image_rotation is None) != (image_translation is None):
-            raise ValueError("A registered image requires both rotation and translation.")
+            raise ValueError(
+                "OversetPartSpec.image_rotation must be provided together with image_translation or both must be None; got only one image component."
+            )
         rotation, translation = None, None
         if image_rotation is not None and image_translation is not None:
             rotation = np.asarray(image_rotation, dtype=np.float64)
@@ -303,7 +336,7 @@ class OversetPartSpec(StrictModule, NonTrainableState):
                 or not np.all(np.isfinite(translation))
             ):
                 raise ValueError(
-                    "Registered images require finite planar or spatial isometries."
+                    "OversetPartSpec.image_rotation must be a finite 2D or 3D square matrix paired with an ambient-dimensional image_translation; got invalid ranks, shapes, dimensions, or coefficients."
                 )
             if not np.allclose(
                 rotation.T @ rotation,
@@ -311,14 +344,20 @@ class OversetPartSpec(StrictModule, NonTrainableState):
                 rtol=0,
                 atol=1e-12,
             ):
-                raise ValueError("A registered image must be an isometry.")
+                raise ValueError(
+                    "OversetPartSpec.image_rotation must satisfy the Euclidean Gram identity R.T @ R = I within absolute tolerance 1e-12; got coefficients that fail the isometry check."
+                )
         self.part_name = name
         self.wall = wall
         self.boundary = boundary
         self.excluded = excluded
         self.solid_query, self.solid_index = solid_query, solid_index
-        self.image_rotation = None if rotation is None else jnp.asarray(rotation)
-        self.image_translation = None if translation is None else jnp.asarray(translation)
+        self.image_rotation = (
+            None if rotation is None else jax.device_put(np.asarray(rotation))
+        )
+        self.image_translation = (
+            None if translation is None else jax.device_put(np.asarray(translation))
+        )
         self.priority = priority
         self.owner_rank = owner_rank
         self.spec_id = canonical_fingerprint(
@@ -339,20 +378,23 @@ class OversetPartSpec(StrictModule, NonTrainableState):
     @property
     def image_isometry_exact(self) -> bool:
         """Encoded Euclidean Gram proof; never a source/group equivalence claim."""
-        return self.image_rotation is None or _encoded_image_isometry(
+        return self.image_rotation is None or encoded_image_isometry(
             np.asarray(self.image_rotation)
         )
 
+    @checked
     def rebound(
         self,
         part: MeshPart,
         /,
         *,
-        solid_query: PreparedBRepQuery | CompiledGeometry | None = None,
+        solid_query: PreparedBRepQuery | contracts_owner.CompiledGeometry | None = None,
     ) -> OversetPartSpec:
         """Rebind the wall and boundary scopes to a moved revision of the part."""
-        if not isinstance(part, MeshPart) or part.name != self.part_name:
-            raise ValueError("A spec rebinds only to a revision of its own part.")
+        if part.name != self.part_name:
+            raise ValueError(
+                "OversetPartSpec.rebound.part.name must equal OversetPartSpec.part_name; got a revision of another part."
+            )
         return OversetPartSpec(
             self.part_name,
             wall=None
@@ -405,7 +447,7 @@ def _image_points(
     if not bool(np.asarray(solved.successful)):
         raise MeshingFailure(
             MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-            "The authored image pullback failed its native linear solve.",
+            "OversetPartSpec.image_rotation must yield a successful native pullback solve; got a failed linear solve.",
             stage="image-query",
             achieved=(
                 ("image_solve_status", float(np.asarray(solved.status))),
@@ -415,13 +457,19 @@ def _image_points(
     return np.asarray(solved.value).T.reshape(points.shape)
 
 
-def _relative_image_actions(
+def _relative_image_system(
     source: OversetPartSpec,
     target: OversetPartSpec,
     dimension: int,
     /,
-) -> tuple[tuple[Fraction, ...], ...] | None:
-    """Exact requested source-to-target actions of the authored binary64 maps."""
+) -> (
+    tuple[
+        tuple[tuple[Fraction, ...], ...],
+        tuple[tuple[Fraction, ...], ...],
+    ]
+    | None
+):
+    """Return the authored source-to-target coefficient system, or an identity."""
     if source.image_rotation is None and target.image_rotation is None:
         return None
     source_rotation = (
@@ -459,10 +507,27 @@ def _relative_image_actions(
         )
         for axis in range(dimension)
     )
-    solved = prepare_exact_small_linear_actions(matrix, right)
+    return matrix, right
+
+
+def _relative_image_actions(
+    source: OversetPartSpec,
+    target: OversetPartSpec,
+    dimension: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[tuple[Fraction, ...], ...] | None:
+    """Return every requested source-to-target action using encoded-coefficient arithmetic
+    on the authored binary64 maps.
+    """
+    system = _relative_image_system(source, target, dimension)
+    if system is None:
+        return None
+    solved = prepare_exact_small_linear_actions(*system, budget=budget)
     if not solved.successful or solved.actions is None:
         raise ValueError(
-            "A relative registered image must have an invertible authored coordinate map."
+            "_relative_image_actions.coordinate_map must be invertible; got an unsuccessful solve or missing actions."
         )
     return solved.actions
 
@@ -472,8 +537,10 @@ def _relative_image(
     target: OversetPartSpec,
     dimension: int,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray | None, np.ndarray | None]:
-    actions = _relative_image_actions(source, target, dimension)
+    actions = _relative_image_actions(source, target, dimension, budget=budget)
     if actions is None:
         return None, None
     values = np.asarray(
@@ -505,19 +572,31 @@ def _image_bounds(
     source: OversetPartSpec,
     target: OversetPartSpec,
     /,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Outward full-source bounds using exact encoded-map solve actions."""
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> Interval:
+    """Return outward bounds for the entire source using encoded-coefficient arithmetic for
+    encoded-map solve actions.
+    """
     dimension = lower.shape[-1]
-    actions = _relative_image_actions(source, target, dimension)
+    actions = _relative_image_actions(source, target, dimension, budget=budget)
     if actions is None:
         return lower, upper
     low, high = np.zeros_like(lower), np.zeros_like(upper)
     for source_axis in range(dimension):
         coefficient_low = np.asarray(
-            [outward(row[source_axis], -np.inf) for row in actions], dtype=np.float64
+            [
+                fraction_endpoint(row[source_axis], upper=False, saturate=True)
+                for row in actions
+            ],
+            dtype=np.float64,
         )
         coefficient_high = np.asarray(
-            [outward(row[source_axis], np.inf) for row in actions], dtype=np.float64
+            [
+                fraction_endpoint(row[source_axis], upper=True, saturate=True)
+                for row in actions
+            ],
+            dtype=np.float64,
         )
         term = interval_multiply(
             (coefficient_low, coefficient_high),
@@ -525,41 +604,47 @@ def _image_bounds(
         )
         low, high = interval_add((low, high), term)
     translation_low = np.asarray(
-        [outward(row[dimension], -np.inf) for row in actions], dtype=np.float64
+        [
+            fraction_endpoint(row[dimension], upper=False, saturate=True)
+            for row in actions
+        ],
+        dtype=np.float64,
     )
     translation_high = np.asarray(
-        [outward(row[dimension], np.inf) for row in actions], dtype=np.float64
+        [fraction_endpoint(row[dimension], upper=True, saturate=True) for row in actions],
+        dtype=np.float64,
     )
     return interval_add((low, high), (translation_low, translation_high))
 
 
 @final
 class OversetPolicy(StrictModule, NonTrainableState):
-    """Fringe depth, donor resolution and resource bounds of an overset assembly.
+    """Specify fringe depth, donor resolution and resource bounds for an overset assembly.
 
     `donor_priority="finest-donor"` prefers the containing donor cell of smallest
-    measure, then the larger part priority; `"part-priority"` reverses the first
-    two keys. Remaining ties are broken by part name and donor cell ID.
-    `maximum_wall_candidate_pairs` is one shared wall allowance for ray/facet,
-    cell/wall broad-phase pairs and authoritative B-Rep owner operations;
-    `maximum_donor_candidate_pairs` bounds worst-case prepared point/cell
-    routes across competing parts before allocation. Exhaustion never publishes
-    a partial classification or silently ignores an unresolved competitor.
+    measure, then the larger part priority; `"part-priority"` reverses the first two
+    keys. Remaining ties are broken by part name and donor cell ID.
+    `maximum_wall_candidate_pairs` is one shared wall allowance for ray/facet pairs,
+    cell/wall broad-phase pairs and native B-Rep membership-query operations;
+    `maximum_donor_candidate_pairs` bounds worst-case prepared point/cell routes across
+    competing parts before allocation. Exhaustion never publishes a partial
+    classification or silently ignores an unresolved competitor.
     """
 
     fringe_layers: int = eqx.field(static=True)
     donor_priority: OversetDonorPriority = eqx.field(static=True)
-    location_policy: SimplicialLocationPolicy | None
+    location_policy: simplicial_locator_owner.SimplicialLocationPolicy | None
     maximum_wall_candidate_pairs: int = eqx.field(static=True)
     maximum_donor_candidate_pairs: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
         fringe_layers: int = 2,
         donor_priority: OversetDonorPriority = "finest-donor",
-        location_policy: SimplicialLocationPolicy | None = None,
+        location_policy: simplicial_locator_owner.SimplicialLocationPolicy | None = None,
         maximum_wall_candidate_pairs: int = 50_000_000,
         maximum_donor_candidate_pairs: int = 50_000_000,
     ) -> None:
@@ -569,14 +654,14 @@ class OversetPolicy(StrictModule, NonTrainableState):
             (maximum_donor_candidate_pairs, "maximum_donor_candidate_pairs"),
         ):
             if isinstance(value, bool) or not isinstance(value, int):
-                raise TypeError(f"{label} must be an integer.")
+                raise TypeError(
+                    f"{'OversetPolicy.' + label} must be an integer excluding bool; got a bool or non-integer value."
+                )
             if value < 1:
-                raise ValueError(f"{label} must be positive.")
+                raise ValueError(
+                    f"{'OversetPolicy.' + label} must be an integer greater than zero; got a value below one."
+                )
         priority = parse(donor_priority, OversetDonorPriority, "donor_priority")
-        if location_policy is not None and not isinstance(
-            location_policy, SimplicialLocationPolicy
-        ):
-            raise TypeError("location_policy must be SimplicialLocationPolicy or None.")
         self.fringe_layers = fringe_layers
         self.donor_priority = priority
         self.location_policy = location_policy
@@ -595,20 +680,30 @@ class OversetPolicy(StrictModule, NonTrainableState):
             }
         )
 
+    def native_limits(self) -> NativeExecutionLimits:
+        """Preserve unbounded mechanical axes; pair limits remain domain-owned."""
+        return NativeExecutionLimits(
+            _UNBOUNDED_EXECUTION_COUNTER,
+            _UNBOUNDED_EXECUTION_COUNTER,
+            _UNBOUNDED_EXECUTION_COUNTER,
+            _UNBOUNDED_EXECUTION_COUNTER,
+            inf,
+        )
+
 
 # -------------------------------------------------------------------- evidence
 
 
 @final
 class OversetPartBlanking(StrictModule, NonTrainableState):
-    """Hole/fringe classification of one part in mesh row order.
+    """Store hole/fringe classification for one part in mesh row order.
 
-    `vertex_status`/`cell_status` hold `OversetVertexStatus`/`OversetCellStatus`
-    codes and `fringe_layer` the receptor layer (0 for non-receptors).
-    `wall_contact` marks authoritative boundary vertices (exact for PLC walls),
-    `ambiguous_cells` blanked cuts without an enclosed vertex, including possible
-    whole-source-box contacts lacking an intersection proof, and
-    `protected_conflict` own-wall vertices that are not active.
+    `vertex_status`/`cell_status` hold `OversetVertexStatus`/`OversetCellStatus` codes
+    and `fringe_layer` the receptor layer (0 for non-receptors). `wall_contact` marks
+    boundary vertices determined by the wall query, using certain on-wall predicates for
+    PLC walls; `ambiguous_cells` marks blanked cuts without an enclosed vertex,
+    including possible whole-source-box contacts lacking an intersection proof; and
+    `protected_conflict` marks own-wall vertices that are not active.
     """
 
     vertex_ids: Array
@@ -623,6 +718,7 @@ class OversetPartBlanking(StrictModule, NonTrainableState):
     part_id: str = eqx.field(static=True)
     blanking_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         part: MeshPart,
@@ -650,15 +746,17 @@ class OversetPartBlanking(StrictModule, NonTrainableState):
         if any(value.shape != vertex_ids.shape for value in arrays[:4]) or any(
             value.shape != cell_ids.shape for value in arrays[4:]
         ):
-            raise ValueError("Overset blanking must hold one record per vertex and cell.")
-        self.vertex_ids = jnp.asarray(vertex_ids)
-        self.vertex_status = jnp.asarray(arrays[0])
-        self.fringe_layer = jnp.asarray(arrays[1])
-        self.wall_contact = jnp.asarray(arrays[2])
-        self.protected_conflict = jnp.asarray(arrays[3])
-        self.cell_ids = jnp.asarray(cell_ids)
-        self.cell_status = jnp.asarray(arrays[4])
-        self.ambiguous_cells = jnp.asarray(arrays[5])
+            raise ValueError(
+                "OversetPartBlanking.records must hold one status record per vertex_id and cell_id; got a vertex or cell array shape mismatch."
+            )
+        self.vertex_ids = jax.device_put(np.asarray(vertex_ids))
+        self.vertex_status = jax.device_put(np.asarray(arrays[0]))
+        self.fringe_layer = jax.device_put(np.asarray(arrays[1]))
+        self.wall_contact = jax.device_put(np.asarray(arrays[2]))
+        self.protected_conflict = jax.device_put(np.asarray(arrays[3]))
+        self.cell_ids = jax.device_put(np.asarray(cell_ids))
+        self.cell_status = jax.device_put(np.asarray(arrays[4]))
+        self.ambiguous_cells = jax.device_put(np.asarray(arrays[5]))
         self.part_name = part.name
         self.part_id = part.part_id
         self.blanking_id = canonical_fingerprint(
@@ -672,14 +770,18 @@ class OversetPartBlanking(StrictModule, NonTrainableState):
     def vertex_ids_with(self, status: OversetVertexStatus, /) -> np.ndarray:
         """Stable IDs of the vertices with one status, in ascending order."""
         if not isinstance(status, OversetVertexStatus):
-            raise TypeError("status must be OversetVertexStatus.")
+            raise TypeError(
+                "OversetPartBlanking.vertex_ids_with.status must be OversetVertexStatus; got another status type."
+            )
         mask = np.asarray(self.vertex_status) == int(status)
         return np.sort(np.asarray(self.vertex_ids)[mask])
 
     def cell_ids_with(self, status: OversetCellStatus, /) -> np.ndarray:
         """Stable IDs of the cells with one status, in ascending order."""
         if not isinstance(status, OversetCellStatus):
-            raise TypeError("status must be OversetCellStatus.")
+            raise TypeError(
+                "OversetPartBlanking.cell_ids_with.status must be OversetCellStatus; got another status type."
+            )
         mask = np.asarray(self.cell_status) == int(status)
         return np.sort(np.asarray(self.cell_ids)[mask])
 
@@ -733,9 +835,13 @@ class OversetReceptorEvidence(StrictModule, NonTrainableState):
         )
         count = arrays[0].shape
         if len(count) != 1 or any(value.shape != count for value in arrays):
-            raise ValueError("Receptor evidence must hold one record per receptor.")
+            raise ValueError(
+                "OversetReceptorEvidence.records must hold one record per receptor_id; got inconsistent array lengths or a non-vector receptor ID array."
+            )
         if np.any(np.diff(arrays[0]) <= 0):
-            raise ValueError("Receptor evidence follows ascending stable IDs.")
+            raise ValueError(
+                "OversetReceptorEvidence.receptor_ids must be strictly ascending and unique; got a duplicate or descending stable ID."
+            )
         (
             self.receptor_ids,
             self.receptor_rows,
@@ -745,7 +851,7 @@ class OversetReceptorEvidence(StrictModule, NonTrainableState):
             self.candidate_parts,
             self.residuals,
             self.donor_measures,
-        ) = (jnp.asarray(value) for value in arrays)
+        ) = (jax.device_put(np.asarray(value)) for value in arrays)
         self.part_name = str(part_name)
         self.evidence_id = canonical_fingerprint(
             {
@@ -766,16 +872,16 @@ class OversetReceptorEvidence(StrictModule, NonTrainableState):
 
 @final
 class OversetDonorPacket(StrictModule, NonTrainableState):
-    """Receptors served by one actual donor block, keyed by scientific IDs.
+    """Describe receptors served by one donor block, keyed by scientific IDs.
 
     `receptor_slots` index the receptor evidence in ascending stable-ID order.
-    `donor_block` names the owning inverse chart and `donor_cell_rows` are local
-    to that block; `donor_cells` remain original scientific cell IDs. Actual
-    points, both part revisions, block identity and owner ranks bind the packet.
-    Geometry-only packets do not declare a synthetic interpolation family.
-    `points` are donor-source query sites, `target_points` are receptor sites in
-    the target's stored source chart, and `receptor_points` are registered-world
-    sites. `rotation`/`translation` map donor-source into target-source axes.
+    `donor_block` names the inverse chart used for the donor, and `donor_cell_rows` are
+    local to that block; `donor_cells` retain source scientific cell IDs. Query points,
+    both part revisions, block identity and owner ranks bind the packet. Geometry-only
+    packets do not declare a synthetic interpolation family.
+    `points` are donor-source query sites, `target_points` are receptor sites in the
+    target's stored source chart, and `receptor_points` are registered-world sites.
+    `rotation`/`translation` map donor-source into target-source axes.
     """
 
     receptor_ids: Array
@@ -796,6 +902,7 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
     donor_revision: str = eqx.field(static=True)
     packet_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         receptor_part: OversetPartSpec,
@@ -807,6 +914,7 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
         donor_cell_rows: np.ndarray,
         /,
         *,
+        budget: CoordinateEnclosureBudget,
         receptor_revision: str,
         donor_revision: str,
         donor_block: str,
@@ -829,7 +937,9 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
             or arrays[3].shape != (count,)
             or arrays[4].shape != (count,)
         ):
-            raise ValueError("A donor packet holds one record per served receptor.")
+            raise ValueError(
+                "OversetDonorPacket.records must contain at least one served receptor and one aligned record in every packet array; got an empty packet or mismatched array shape."
+            )
         if (
             np.any(np.diff(arrays[0]) <= 0)
             or np.any(np.diff(arrays[1]) <= 0)
@@ -842,7 +952,7 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
             or not donor_revision
         ):
             raise ValueError(
-                "Donor packets require sorted unique targets and exact finite revisions."
+                "OversetDonorPacket.identities must use ascending unique non-negative receptor and donor IDs, non-negative block and local IDs, finite points, and non-empty revision IDs; got an ordering, range, finiteness, or revision violation."
             )
         world = (
             _image_points(donor_part, arrays[2])
@@ -867,24 +977,31 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "Donor packets must bind donor, target and registered-world image points."
+                "OversetDonorPacket.points must have matching shapes and map donor and receptor coordinates to the same finite registered-world points within absolute tolerance 1e-10; got a shape, finiteness, or image-coordinate mismatch."
             )
         rotation, translation = _relative_image(
-            donor_part, receptor_part, arrays[2].shape[1]
+            donor_part, receptor_part, arrays[2].shape[1], budget=budget
         )
-        self.receptor_points, self.target_points = jnp.asarray(world), jnp.asarray(target)
-        self.rotation = None if rotation is None else jnp.asarray(rotation)
-        self.translation = None if translation is None else jnp.asarray(translation)
+        self.receptor_points, self.target_points = (
+            jax.device_put(np.asarray(world)),
+            jax.device_put(np.asarray(target)),
+        )
+        self.rotation = None if rotation is None else jax.device_put(np.asarray(rotation))
+        self.translation = (
+            None if translation is None else jax.device_put(np.asarray(translation))
+        )
         (
             self.receptor_ids,
             self.receptor_slots,
             self.points,
             self.donor_cells,
             self.donor_cell_rows,
-        ) = (jnp.asarray(value) for value in arrays)
+        ) = (jax.device_put(np.asarray(value)) for value in arrays)
         self.donor_block = str(donor_block)
         if not self.donor_block:
-            raise ValueError("A packet names its owning donor block.")
+            raise ValueError(
+                "OversetDonorPacket.donor_block must be non-empty; got an empty donor block name."
+            )
         self.receptor_part = receptor_part.part_name
         self.donor_part = donor_part.part_name
         self.receptor_rank = receptor_part.owner_rank
@@ -909,7 +1026,9 @@ class OversetDonorPacket(StrictModule, NonTrainableState):
 
 @final
 class _PartGeometry(StrictModule, NonTrainableState):
-    """Owning charts and complete coordinate-source boxes in original cell order."""
+    """Store source-bound charts and boxes enclosing every coordinate source in source cell
+    order.
+    """
 
     discretization: FiniteElementDiscretization | None
     locators: tuple[PreparedMappedCellLocator | PreparedPolyhedralCellLocator, ...]
@@ -928,7 +1047,9 @@ class _PartGeometry(StrictModule, NonTrainableState):
 
 
 class OversetConnectivityError(ValueError):
-    """An overset connectivity lacks complete coverage; see ``connectivity``."""
+    """Report that overset connectivity fails coverage for at least one requested entity;
+    see ``connectivity``.
+    """
 
     def __init__(
         self,
@@ -944,26 +1065,87 @@ class OversetConnectivityError(ValueError):
 
 
 # ------------------------------------------------------------ host preparation
-def _mapped_solid_kernel(query: CompiledGeometry, /) -> _MappedMeshSupportKernel:
+@contextmanager
+def _field_packet_coordinate_phase(
+    connectivity: OversetConnectivity, /
+) -> Iterator[CoordinateEnclosureBudget]:
+    """Bound every potential packet image solve from its authored coefficients."""
+    work_upper = bytes_upper = 0
+    for receptor, part in enumerate(connectivity.assembly.parts):
+        dimension = _cell_result(part).mesh.ambient_dimension
+        for donor, geometry in enumerate(connectivity.geometries):
+            if donor == receptor:
+                continue
+            system = _relative_image_system(
+                connectivity.specs[donor], connectivity.specs[receptor], dimension
+            )
+            if system is None:
+                continue
+            work, storage = exact_small_linear_action_bounds(*system)
+            repetitions = len(geometry.block_names)
+            work_upper += repetitions * work
+            bytes_upper += repetitions * storage
+    with HostBatchTicket(work_upper, bytes_upper=bytes_upper) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=work_upper,
+            maximum_memory_bytes=bytes_upper,
+        )
+        with budget.activate():
+            yield budget
+
+
+@contextmanager
+@checked
+def coordinate_phase(
+    *,
+    scope: NativeExecutionScope,
+    queries_upper: int = 0,
+    cavity_upper: int = 0,
+) -> Iterator[CoordinateEnclosureBudget]:
+    """Reserve the remaining source envelope and settle before native hierarchy work."""
+    allowance = scope.remaining()
+    with scope.batch(
+        allowance.remaining_work_units,
+        queries_upper=min(queries_upper, allowance.remaining_geometry_queries),
+        cavity_upper=min(cavity_upper, allowance.remaining_cavity_cells),
+        bytes_upper=allowance.remaining_managed_bytes,
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=_UNBOUNDED_EXECUTION_COUNTER,
+            maximum_memory_bytes=_UNBOUNDED_EXECUTION_COUNTER,
+        )
+        with budget.activate(), ticket.native_target():
+            yield budget
+
+
+def _mapped_solid_kernel(
+    query: contracts_owner.CompiledGeometry, /
+) -> MappedMeshSupportKernel:
     kernel = query.kernel
-    if not isinstance(kernel, _MappedMeshSupportKernel):
+    if not isinstance(kernel, MappedMeshSupportKernel):
         raise TypeError(
-            "Overset mapped solids require their whole source-bound cell support."
+            "_mapped_solid_kernel.kernel must be MappedMeshSupportKernel with whole source-bound cell support; got another kernel type."
         )
     return kernel
 
 
 def _represented_linear_element(element: CellGeometryElement, /) -> bool:
-    if isinstance(element, CellVertexGeometryElement):
-        return True
-    if isinstance(element, (FiniteElementSpec, RestrictedCellGeometryElement)):
-        return element.degree == 1
-    raise TypeError(
-        "Represented overset cell domains require canonical vertex or finite-element coordinate sources."
-    )
+    match element:
+        case CellVertexGeometryElement():
+            return True
+        case FiniteElementSpec() | RestrictedCellGeometryElement():
+            return element.degree == 1
+        case _:
+            raise TypeError(
+                "_represented_linear_element.element.coordinate_source must be vertex coordinates or a finite-element coordinate source; got an unsupported represented-domain source."
+            )
 
 
-def _solid_query_id(query: PreparedBRepQuery | CompiledGeometry | None, /) -> str | None:
+def _solid_query_id(
+    query: PreparedBRepQuery | contracts_owner.CompiledGeometry | None, /
+) -> str | None:
     if query is None:
         return None
     if isinstance(query, PreparedBRepQuery):
@@ -981,7 +1163,9 @@ def _solid_query_id(query: PreparedBRepQuery | CompiledGeometry | None, /) -> st
 def _cell_result(part: MeshPart, /) -> CellMeshingResult:
     carrier = part.carrier
     if not isinstance(carrier, CellMeshingResult):
-        raise TypeError("Native overset requires certified cell mesh parts.")
+        raise TypeError(
+            "_cell_result.carrier must be CellMeshingResult; got another carrier type."
+        )
     mesh = carrier.mesh
     mesh.require_dense("native overset connectivity")
     supported = {
@@ -997,14 +1181,16 @@ def _cell_result(part: MeshPart, /) -> CellMeshingResult:
         )
     ):
         raise ValueError(
-            "Native overset requires regular full-dimensional mapped or planar polyhedral cells."
+            "_cell_result.mesh must use supported regular full-dimensional mapped or planar polyhedral cells; got an unsupported dimension, codimension, or cell kind."
         )
     return carrier
 
 
 def _signs(result: PredicateResult, /) -> np.ndarray:
     if not bool(np.all(np.asarray(result.certain))):
-        raise RuntimeError("Exact orientation predicates left an uncertain sign.")
+        raise RuntimeError(
+            "_signs.result.certain must mark every orientation predicate certain; got at least one uncertain predicate."
+        )
     return np.asarray(result.signs, dtype=np.int8)
 
 
@@ -1012,43 +1198,48 @@ def _mode() -> PredicateMode:
     return resolve_host_predicate_mode(PredicateMode.EXACT)
 
 
-def _facet_rows(part: MeshPart, scope: MeshingScope, /) -> np.ndarray:
+@checked
+def facet_rows(part: MeshPart, scope: MeshingScope, /) -> np.ndarray:
     """Vertex rows of the declared boundary facets of one part."""
     part.require_scope(scope)
     mesh = _cell_result(part).mesh
     dimension = mesh.ambient_dimension
     if scope.entity_dimension != dimension - 1:
-        raise ValueError("Overset walls and boundaries are facet scopes.")
+        raise ValueError(
+            "facet_rows.scope.entity_dimension must equal dimension - 1; got a non-facet scope."
+        )
     identifiers = np.asarray(mesh.entity_set(dimension - 1).entity_ids)
     order = np.argsort(identifiers, kind="stable")
     rows = order[np.searchsorted(identifiers[order], np.asarray(scope.entity_ids))]
     connectivity = mesh.connectivity
-    if isinstance(connectivity, PolygonalConnectivity):
-        facets = np.asarray(connectivity.edges, dtype=np.int64)
-        boundary = np.asarray(connectivity.boundary_edges)
-    elif isinstance(connectivity, PolyhedralConnectivity):
-        offsets = np.asarray(connectivity.face_vertex_offsets)
-        values = np.asarray(connectivity.face_vertex_values)
-        loops = [values[offsets[row] : offsets[row + 1]] for row in rows]
-        boundary = np.asarray(connectivity.face_neighbor) < 0
-        if not np.all(boundary[rows]):
-            raise ValueError("Overset scopes must contain exterior mesh facets.")
-        width = max((len(loop) for loop in loops), default=0)
-        return np.asarray(
-            [np.pad(loop, (0, width - len(loop)), mode="edge") for loop in loops],
-            dtype=np.int64,
-        ).reshape((len(loops), width))
-    elif isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity)):
-        facets = np.asarray(connectivity.faces, dtype=np.int64)
-        boundary = np.asarray(connectivity.boundary_faces)
-    else:
-        raise TypeError(
-            "Overset facets require the owning polygonal or spatial cell incidence."
-        )
+    match connectivity:
+        case PolygonalConnectivity():
+            facets = np.asarray(connectivity.edges, dtype=np.int64)
+            boundary = np.asarray(connectivity.boundary_edges)
+        case PolyhedralConnectivity():
+            offsets = np.asarray(connectivity.face_vertex_offsets)
+            values = np.asarray(connectivity.face_vertex_values)
+            loops = [values[offsets[row] : offsets[row + 1]] for row in rows]
+            boundary = np.asarray(connectivity.face_neighbor) < 0
+            if not np.all(boundary[rows]):
+                raise ValueError(
+                    "facet_rows.scope must contain only exterior mesh facets; got at least one interior facet."
+                )
+            width = max((len(loop) for loop in loops), default=0)
+            return np.asarray(
+                [np.pad(loop, (0, width - len(loop)), mode="edge") for loop in loops],
+                dtype=np.int64,
+            ).reshape((len(loops), width))
+        case TetrahedralConnectivity() | HexahedralConnectivity():
+            facets = np.asarray(connectivity.faces, dtype=np.int64)
+            boundary = np.asarray(connectivity.boundary_faces)
+        case _:
+            raise TypeError(
+                "facet_rows.connectivity must provide polygonal or spatial facet incidence; got an unsupported incidence kind."
+            )
     if not np.all(boundary[rows]):
         raise ValueError(
-            f"Overset wall and boundary facets of {part.name!r} must be mesh "
-            "boundary facets."
+            f"facet_rows.scope must contain only mesh boundary facets for part {part.name!r}; got at least one interior facet."
         )
     return facets[rows]
 
@@ -1058,10 +1249,12 @@ def _facet_loops(facets: np.ndarray, /) -> tuple[np.ndarray, ...]:
 
 
 def _require_closed(facets: np.ndarray, name: str, /) -> None:
-    """A closed wall has two incident facets at every actual ridge."""
+    """Require a closed wall to have two incident facets at every represented ridge."""
     loops = _facet_loops(facets)
     if not loops:
-        raise ValueError(f"The overset wall of {name!r} is empty.")
+        raise ValueError(
+            f"_require_closed.facets must contain wall facets for {name!r}; got an empty wall."
+        )
     if len(loops[0]) == 2:
         ridges = np.concatenate(loops).reshape((-1, 1))
     else:
@@ -1071,7 +1264,9 @@ def _require_closed(facets: np.ndarray, name: str, /) -> None:
         )
     _, counts = np.unique(ridges, axis=0, return_counts=True)
     if np.any(counts != 2):
-        raise ValueError(f"The overset wall of {name!r} is not a closed surface.")
+        raise ValueError(
+            f"_require_closed.facets must form a closed wall for {name!r} with two incident facets per ridge; got an incidence count other than two."
+        )
 
 
 def _triangulate_loops(facets: np.ndarray, dimension: int, /) -> np.ndarray:
@@ -1088,20 +1283,18 @@ def _box_bounds(corners: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     return np.min(corners, axis=1), np.max(corners, axis=1)
 
 
-def _mapped_wall_bounds(query: CompiledGeometry, /) -> tuple[np.ndarray, np.ndarray]:
-    """Enclose complete actual atlas facets by exact source compositions."""
-    from ..discretization._coordinate_enclosure import (
-        coordinate_polynomials,
-        polynomial_bounds,
-        restrict_coordinates,
-    )
-    from ..discretization._reference_cell import reference_cell_topology
+def _mapped_wall_bounds(
+    query: contracts_owner.CompiledGeometry, /, *, budget: CoordinateEnclosureBudget
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose every represented atlas facet using encoded-coefficient arithmetic for
+    source-map compositions.
+    """
 
     kernel = _mapped_solid_kernel(query)
     mapping = kernel.atlas.mapping
-    if not isinstance(mapping, _MappedCellBoundaryMap):
+    if not isinstance(mapping, MappedCellBoundaryMap):
         raise TypeError(
-            "Mapped solid bounds require their canonical full-source facet map."
+            "_mapped_wall_bounds.mapping must be MappedCellBoundaryMap for the full source facets; got another mapping type."
         )
     cell_map = mapping.cell_map
     topology = reference_cell_topology(cell_map.coordinate_element.cell_kind)
@@ -1126,24 +1319,24 @@ def _mapped_wall_bounds(query: CompiledGeometry, /) -> tuple[np.ndarray, np.ndar
         )
         if int(cell) not in sources:
             sources[int(cell)] = coordinate_polynomials(
-                cell_map.coordinate_element, coordinates[routes[cell]]
+                cell_map.coordinate_element, coordinates[routes[cell]], budget=budget
             )
         source = sources[int(cell)]
         expressions = (
             None
             if source is None
             else restrict_coordinates(
-                source, cell_map.coordinate_element.cell_kind, origin, axes
+                source, cell_map.coordinate_element.cell_kind, origin, axes, budget=budget
             )
         )
         if expressions is None:
-            # Complete source cell bounds remain conservative for every facet.
+            # Whole-cell bounds conservatively enclose every incident facet.
             lower.append(np.asarray(kernel.locator.cell_lower)[cell])
             upper.append(np.asarray(kernel.locator.cell_upper)[cell])
         else:
             domain = "simplex" if len(vertices) in (2, 3) else "box"
             boxes = [
-                polynomial_bounds(value, domain, topology.dimension - 1)
+                polynomial_bounds(value, domain, topology.dimension - 1, budget=budget)
                 for value in expressions
             ]
             lower.append([box[0] for box in boxes])
@@ -1151,43 +1344,52 @@ def _mapped_wall_bounds(query: CompiledGeometry, /) -> tuple[np.ndarray, np.ndar
     return np.asarray(lower), np.asarray(upper)
 
 
-def _part_geometry(
-    part: MeshPart,
-    spec: OversetPartSpec,
-    policy: OversetPolicy,
-    previous: _PartGeometry | None,
-    /,
-) -> _PartGeometry:
-    result = _cell_result(part)
-    mesh = result.mesh
-    if spec.image_rotation is not None and spec.image_rotation.shape != (
-        mesh.ambient_dimension,
-        mesh.ambient_dimension,
-    ):
-        raise ValueError(
-            "The registered image must retain its source carrier's ambient coordinate axes."
-        )
-    polyhedral = any(block.cell_kind == "polyhedron" for block in mesh.blocks)
-    discretization = None
-    if polyhedral:
-        from ..discretization import CellMesh
+@final
+class _PartCharts(StrictModule, NonTrainableState):
+    """Prepared donor charts and host cell data in mesh block order."""
 
-        elements, _, _ = result.geometry.resolve(mesh)
-        if any(not _represented_linear_element(element) for element in elements):
-            raise ValueError(
-                "Face-defined polyhedral charts require actual planar vertex geometry."
-            )
-        connectivity = mesh.connectivity
-        if not isinstance(connectivity, PolyhedralConnectivity):
+    discretization: FiniteElementDiscretization | None
+    locators: tuple[PreparedMappedCellLocator | PreparedPolyhedralCellLocator, ...]
+    measures: np.ndarray
+    vertices: np.ndarray
+    affine: np.ndarray
+
+
+@final
+class _PartWall(StrictModule, NonTrainableState):
+    """Protected wall facets and its prepared or refit hierarchy."""
+
+    facets: Array | None
+    bvh: PackedBVH | None
+
+
+def _prepare_polyhedral_charts(
+    result: CellMeshingResult, policy: OversetPolicy, scope: NativeExecutionScope, /
+) -> _PartCharts:
+    mesh = result.mesh
+    elements, _, _ = result.geometry.resolve(mesh)
+    if any(not _represented_linear_element(element) for element in elements):
+        raise ValueError(
+            "_prepare_polyhedral_charts.elements must use represented planar vertex geometry; got at least one unrepresented or non-linear element."
+        )
+    connectivity = mesh.connectivity
+    match connectivity:
+        case PolyhedralConnectivity():
+            pass
+        case _:
             raise TypeError(
-                "Polyhedral donor charts require canonical polyhedral incidence."
+                "_prepare_polyhedral_charts.polyhedra.incidence must provide full polyhedral face incidence; got unavailable incidence."
             )
-        face_offsets = np.asarray(connectivity.face_vertex_offsets)
-        face_values = np.asarray(connectivity.face_vertex_values)
-        cell_offsets = np.asarray(connectivity.cell_face_offsets)
-        cell_faces = np.asarray(connectivity.cell_face_values)
-        cell_signs = np.asarray(connectivity.cell_face_sign_values)
-        charts, offset = [], 0
+    face_offsets = np.asarray(connectivity.face_vertex_offsets)
+    face_values = np.asarray(connectivity.face_vertex_values)
+    cell_offsets = np.asarray(connectivity.cell_face_offsets)
+    cell_faces = np.asarray(connectivity.cell_face_values)
+    cell_signs = np.asarray(connectivity.cell_face_sign_values)
+    charts, offset = [], 0
+    maximum_face_arity = int(np.max(np.diff(face_offsets), initial=0))
+    with coordinate_phase(
+        scope=scope, cavity_upper=max(1, 2 * maximum_face_arity + 4)
+    ) as budget:
         for block in mesh.blocks:
             loops = []
             for cell in range(offset, offset + block.cell_count):
@@ -1199,7 +1401,7 @@ def _part_geometry(
                     loop = face_values[face_offsets[face] : face_offsets[face + 1]]
                     faces.append(loop if sign > 0 else loop[::-1])
                 loops.append(tuple(faces))
-            chart_mesh = CellMesh.from_mixed_3d(
+            chart_mesh = cell_mesh_owner.CellMesh.from_mixed_3d(
                 mesh.coordinates,
                 (),
                 polyhedra={block.name: tuple(loops)},
@@ -1207,47 +1409,61 @@ def _part_geometry(
                 vertex_global_ids=mesh.vertex_global_ids,
             )
             charts.append(
-                PreparedPolyhedralCellLocator(chart_mesh, policy.location_policy)
+                PreparedPolyhedralCellLocator(
+                    chart_mesh, policy.location_policy, budget=budget
+                )
             )
             offset += block.cell_count
-        locators = tuple(charts)
-        measures = np.concatenate(
-            [np.asarray(locator.cell_map.cell_volumes) for locator in locators]
-        )
-        width = max(locator.cell_map.coordinate_dofs.shape[1] for locator in locators)
-        vertices = np.concatenate(
-            [
-                np.pad(
-                    np.asarray(locator.cell_map.coordinate_dofs),
-                    ((0, 0), (0, width - locator.cell_map.coordinate_dofs.shape[1])),
-                    mode="edge",
-                )
-                for locator in locators
-            ]
-        )
-        affine = np.ones(vertices.shape[0], dtype=np.bool_)
-    else:
-        elements = {
-            block.name: lagrange_element(block.cell_kind, 1) for block in mesh.blocks
-        }
-        discretization = FiniteElementPlan(
-            mesh,
-            (FiniteElementFieldSpec("state", elements),),
-            coordinate_spec=result.geometry,
-        ).prepare()
-        coordinates = discretization.default_runtime.coordinates
-        charts, measures_, affine_ = [], [], []
+    locators = tuple(charts)
+    measures = np.concatenate(
+        [np.asarray(locator.cell_map.cell_volumes) for locator in locators]
+    )
+    width = max(locator.cell_map.coordinate_dofs.shape[1] for locator in locators)
+    vertices = np.concatenate(
+        [
+            np.pad(
+                np.asarray(locator.cell_map.coordinate_dofs),
+                ((0, 0), (0, width - locator.cell_map.coordinate_dofs.shape[1])),
+                mode="edge",
+            )
+            for locator in locators
+        ]
+    )
+    return _PartCharts(
+        None, locators, measures, vertices, np.ones(vertices.shape[0], dtype=np.bool_)
+    )
+
+
+def _prepare_mapped_charts(
+    result: CellMeshingResult, policy: OversetPolicy, scope: NativeExecutionScope, /
+) -> _PartCharts:
+    mesh = result.mesh
+    elements = {block.name: lagrange_element(block.cell_kind, 1) for block in mesh.blocks}
+    discretization = FiniteElementPlan(
+        mesh,
+        (FiniteElementFieldSpec("state", elements),),
+        coordinate_spec=result.geometry,
+    ).prepare()
+    coordinates = discretization.default_runtime.coordinates
+    charts, measures, affine = [], [], []
+    queries_upper = cell_geometry_preparation_query_upper(result.geometry) * len(
+        mesh.blocks
+    )
+    with coordinate_phase(scope=scope, queries_upper=queries_upper) as budget:
         for block_index, block in enumerate(mesh.blocks):
             cell_map = PreparedFiniteElementCellMap(discretization, block_index)
-            location = policy.location_policy or SimplicialLocationPolicy(
-                min(block.cell_count, 64), 16, 1
+            location = (
+                policy.location_policy
+                or simplicial_locator_owner.SimplicialLocationPolicy(
+                    min(block.cell_count, 64), 16, 1
+                )
             )
-            charts.append(PreparedMappedCellLocator(cell_map, coordinates, location))
-            measures_.append(
+            charts.append(
+                PreparedMappedCellLocator(cell_map, coordinates, location, budget=budget)
+            )
+            measures.append(
                 np.asarray(discretization.block_geometries[0][block_index].measure)
             )
-            from ..discretization._reference_cell import reference_cell_topology
-
             planar = np.full(
                 block.cell_count,
                 cell_map.coordinate_element.degree == 1
@@ -1269,69 +1485,124 @@ def _part_geometry(
                                     corners[:, 2],
                                     corners[:, 3],
                                     mode=_mode(),
+                                    budget=budget,
                                 )
                             )
                             == 0
                         )
-            affine_.append(planar)
-        locators = tuple(charts)
-        measures = np.concatenate(measures_)
-        affine = np.concatenate(affine_)
-        width = max(block.vertices.shape[1] for block in mesh.blocks)
-        vertices = np.concatenate(
-            [
-                np.pad(
-                    np.asarray(block.vertices),
-                    ((0, 0), (0, width - block.vertices.shape[1])),
-                    mode="edge",
-                )
-                for block in mesh.blocks
-            ]
-        )
-    if spec.image_rotation is not None and not spec.image_isometry_exact:
-        matrix = tuple(
-            tuple(Fraction(float(value)) for value in row)
-            for row in np.asarray(spec.image_rotation)
-        )
-        metric_action = prepare_exact_small_linear_actions(matrix, matrix)
-        if not metric_action.successful:
-            raise ValueError(
-                "A registered support image must retain an invertible authored map."
+            affine.append(planar)
+    width = max(block.vertices.shape[1] for block in mesh.blocks)
+    vertices = np.concatenate(
+        [
+            np.pad(
+                np.asarray(block.vertices),
+                ((0, 0), (0, width - block.vertices.shape[1])),
+                mode="edge",
             )
-        scale = float(abs(metric_action.determinant))
-        if scale != 1.0:
-            measures = measures * scale
-    lower = np.concatenate([np.asarray(locator.cell_lower) for locator in locators])
-    upper = np.concatenate([np.asarray(locator.cell_upper) for locator in locators])
-    facets, bvh = None, None
-    if spec.wall is not None:
-        rows = _facet_rows(part, spec.wall)
-        _require_closed(rows, part.name)
-        if isinstance(spec.solid_query, PreparedBRepQuery):
-            bounds = np.asarray(spec.solid_query.bounds)
+            for block in mesh.blocks
+        ]
+    )
+    return _PartCharts(
+        discretization,
+        tuple(charts),
+        np.concatenate(measures),
+        vertices,
+        np.concatenate(affine),
+    )
+
+
+def _prepare_part_wall(
+    part: MeshPart,
+    mesh: cell_mesh_owner.CellMesh,
+    spec: OversetPartSpec,
+    charts: _PartCharts,
+    previous: _PartGeometry | None,
+    scope: NativeExecutionScope,
+    /,
+) -> _PartWall:
+    if spec.wall is None:
+        return _PartWall(None, None)
+    rows = facet_rows(part, spec.wall)
+    _require_closed(rows, part.name)
+    facets = None
+    match spec.solid_query:
+        case PreparedBRepQuery() as query:
+            bounds = np.asarray(query.bounds)
             wall_lower, wall_upper = bounds[0:1], bounds[1:2]
-        elif isinstance(spec.solid_query, CompiledGeometry):
-            wall_lower, wall_upper = _mapped_wall_bounds(spec.solid_query)
-        else:
-            if not polyhedral and not np.all(affine):
+        case contracts_owner.CompiledGeometry() as query:
+            with coordinate_phase(scope=scope) as budget:
+                wall_lower, wall_upper = _mapped_wall_bounds(query, budget=budget)
+        case None:
+            if charts.discretization is not None and not np.all(charts.affine):
                 raise ValueError(
-                    "A non-affine protected wall needs native B-Rep or closed mapped-domain authority."
+                    "_prepare_part_wall.wall_authority must be native B-Rep or a closed mapped domain for non-affine discretized charts; got a non-affine wall with only discretized chart geometry."
                 )
             corners = np.asarray(mesh.coordinates, dtype=np.float64)[
                 _triangulate_loops(rows, mesh.ambient_dimension)
             ]
             facets = jnp.asarray(corners)
             wall_lower, wall_upper = _box_bounds(corners)
-        reuse = (
-            previous is not None
-            and previous.wall_bvh is not None
-            and previous.wall_bvh.item_bbox_min.shape == wall_lower.shape
+        case _ as unknown:
+            assert_never(unknown)
+    previous_bvh = None if previous is None else previous.wall_bvh
+    bvh = (
+        refit_packed_bvh_bounds(previous_bvh, wall_lower, wall_upper)
+        if previous_bvh is not None
+        and previous_bvh.item_bbox_min.shape == wall_lower.shape
+        else prepare_bvh(wall_lower, wall_upper, dtype=jnp.float64)
+    )
+    return _PartWall(facets, bvh)
+
+
+@checked
+def part_geometry(
+    part: MeshPart,
+    spec: OversetPartSpec,
+    policy: OversetPolicy,
+    previous: _PartGeometry | None,
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> _PartGeometry:
+    result = _cell_result(part)
+    mesh = result.mesh
+    if spec.image_rotation is not None and spec.image_rotation.shape != (
+        mesh.ambient_dimension,
+        mesh.ambient_dimension,
+    ):
+        raise ValueError(
+            "part_geometry.spec.image_rotation must have one row and column per mesh ambient dimension; got a shape that changes the source carrier coordinate axes."
         )
-        bvh = (
-            refit_packed_bvh_bounds(previous.wall_bvh, wall_lower, wall_upper)
-            if reuse
-            else prepare_bvh(wall_lower, wall_upper, dtype=jnp.float64)
+    polyhedral = any(block.cell_kind == "polyhedron" for block in mesh.blocks)
+    charts = (
+        _prepare_polyhedral_charts(result, policy, scope)
+        if polyhedral
+        else _prepare_mapped_charts(result, policy, scope)
+    )
+    measures = charts.measures
+    if spec.image_rotation is not None and not spec.image_isometry_exact:
+        matrix = tuple(
+            tuple(Fraction(float(value)) for value in row)
+            for row in np.asarray(spec.image_rotation)
         )
+        with coordinate_phase(scope=scope) as budget:
+            metric_action = prepare_exact_small_linear_actions(
+                matrix, matrix, budget=budget
+            )
+        if not metric_action.successful:
+            raise ValueError(
+                "part_geometry.registered_support_image.coordinate_map must be invertible; got an unsuccessful metric action."
+            )
+        scale = float(abs(metric_action.determinant))
+        if scale != 1.0:
+            measures = measures * scale
+    lower = np.concatenate(
+        [np.asarray(locator.cell_lower) for locator in charts.locators]
+    )
+    upper = np.concatenate(
+        [np.asarray(locator.cell_upper) for locator in charts.locators]
+    )
+    wall = _prepare_part_wall(part, mesh, spec, charts, previous, scope)
     offsets = tuple(
         int(value)
         for value in np.concatenate(
@@ -1339,18 +1610,18 @@ def _part_geometry(
         )
     )
     return _PartGeometry(
-        discretization=discretization,
-        locators=locators,
+        discretization=charts.discretization,
+        locators=charts.locators,
         block_names=tuple(block.name for block in mesh.blocks),
         block_offsets=offsets,
         cell_measures=jnp.asarray(measures),
-        cell_vertices=jnp.asarray(vertices),
+        cell_vertices=jnp.asarray(charts.vertices),
         cell_lower=jnp.asarray(lower),
         cell_upper=jnp.asarray(upper),
-        affine_cells=jnp.asarray(affine),
+        affine_cells=jnp.asarray(charts.affine),
         cell_ids=jnp.concatenate([block.global_ids for block in mesh.blocks]),
-        wall_facets=facets,
-        wall_bvh=bvh,
+        wall_facets=wall.facets,
+        wall_bvh=wall.bvh,
         part_id=part.part_id,
         spec_id=spec.spec_id,
     )
@@ -1448,7 +1719,9 @@ def _wall_classification(
     budget: int,
     /,
 ) -> tuple[np.ndarray, np.ndarray, int]:
-    """Exact inside (odd crossing parity) and on-wall flags against one wall."""
+    """Return inside (odd crossing parity) and on-wall flags against one wall using certain
+    geometric predicates.
+    """
     count, dimension = points.shape
     inside = np.zeros(count, dtype=np.bool_)
     contact = np.zeros(count, dtype=np.bool_)
@@ -1467,7 +1740,7 @@ def _wall_classification(
         if total > budget:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Overset hole cutting exceeds maximum_wall_candidate_pairs.",
+                "OversetPolicy.maximum_wall_candidate_pairs must admit every hole-cut candidate pair; got a candidate count above the request bound.",
                 stage="hole-cut",
                 requested=(("maximum_wall_candidate_pairs", float(budget)),),
                 achieved=(("wall_candidate_pairs", float(total)),),
@@ -1486,8 +1759,8 @@ def _wall_classification(
     return inside, contact, total
 
 
-@dataclass(frozen=True, slots=True)
-class _Blanking:
+@final
+class _Blanking(StrictModule, NonTrainableState):
     vertex_status: np.ndarray
     fringe_layer: np.ndarray
     wall_contact: np.ndarray
@@ -1518,8 +1791,7 @@ def _fringe_layers(
 
 
 def _cell_boundary(part: MeshPart, /) -> tuple[np.ndarray, np.ndarray]:
-    """Actual planar boundary triangles/segments with original owning cell rows."""
-    from ..discretization._reference_cell import reference_cell_topology
+    """Return represented planar boundary triangles/segments with their source cell rows."""
 
     mesh = _cell_result(part).mesh
     connectivity = mesh.connectivity
@@ -1577,7 +1849,7 @@ def _cut_cells(
         if rows.size > budget[0]:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Overset wall/cell contacts exceed maximum_wall_candidate_pairs.",
+                "OversetPolicy.maximum_wall_candidate_pairs must admit every wall-cell contact pair; got a contact count above the remaining bound.",
                 stage="hole-cut",
             )
         budget[0] -= rows.size
@@ -1587,14 +1859,16 @@ def _cut_cells(
                 first[:, 0], first[:, 1], second[:, 0], second[:, 1], mode=_mode()
             )
             if not np.all(result.certain):
-                raise RuntimeError("Exact wall/cell contact left an uncertain decision.")
+                raise RuntimeError(
+                    "_cut_cells.result.certain must mark every wall/cell contact predicate certain; got at least one uncertain decision."
+                )
             contact = np.asarray(result.status) != 0
         else:
             classes, status = triangle_intersection_classes(first, second)
             if np.any(status != int(MeshcoreStatus.OK)):
                 raise MeshingFailure(
                     MeshingFailureCategory.INVALID_SOURCE,
-                    "Exact wall/cell contact could not classify its represented facets.",
+                    "overset_hole_cut.wall_contact must classify represented facets with successful native predicates; got a failed contact classification.",
                     stage="hole-cut",
                 )
             contact = classes != 0
@@ -1612,7 +1886,7 @@ def _possible_cuts(
         if rows.size > budget[0]:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Overset possible wall cuts exceed maximum_wall_candidate_pairs.",
+                "OversetPolicy.maximum_wall_candidate_pairs must admit every possible wall-cut candidate; got a candidate count above the remaining bound.",
                 stage="hole-cut",
             )
         budget[0] -= rows.size
@@ -1627,41 +1901,46 @@ def _bounded_brep_wall_membership(
     policy: OversetPolicy,
     remaining: list[int],
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> BRepContainmentResult:
-    """Share actual host wall work and any original active native allowance."""
-    execution = current_native_execution_budget()
-    allowance = None if execution is None else execution.remaining()
-    operations = (
-        remaining[0]
-        if allowance is None
-        else min(remaining[0], allowance.remaining_work_units)
-    )
-    point_limit = (
-        query.policy.maximum_points
-        if allowance is None
-        else min(
-            query.policy.maximum_points,
-            allowance.remaining_geometry_queries,
-        )
-    )
-    query_budget = BRepQueryBudget(
-        operations,
-        maximum_points=point_limit,
-        maximum_scratch_bytes=query.policy.maximum_scratch_bytes,
-    )
+    """Share measured host wall work with the explicit native request allowance."""
+    allowance = scope.remaining()
+    operations = min(remaining[0], allowance.remaining_work_units)
+    point_limit = min(query.policy.maximum_points, allowance.remaining_geometry_queries)
     try:
-        try:
-            if execution is not None and allowance is not None:
-                if allowance.status != MeshcoreStatus.OK:
-                    raise MeshcoreError(allowance.status, "execution_remaining")
-                execution.admit_work_bound(query_budget.maximum_operations)
-            result = query.contains(points, solid=solid, budget=query_budget)
-        finally:
-            remaining[0] -= query_budget.operations
-            if execution is not None and (query_budget.operations or query_budget.points):
-                execution.charge(
-                    work=query_budget.operations, geometry_queries=query_budget.points
-                )
+        if allowance.status != MeshcoreStatus.OK:
+            raise MeshcoreError(allowance.status, "execution_remaining")
+        with scope.batch(
+            allowance.remaining_work_units,
+            queries_upper=min(points.shape[0], point_limit),
+            bytes_upper=min(
+                query.policy.maximum_scratch_bytes,
+                allowance.remaining_managed_bytes,
+            ),
+        ) as ticket:
+            coordinate_budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=_UNBOUNDED_EXECUTION_COUNTER,
+                maximum_memory_bytes=_UNBOUNDED_EXECUTION_COUNTER,
+            )
+            query_budget = BRepQueryBudget(
+                operations,
+                maximum_points=point_limit,
+                maximum_scratch_bytes=query.policy.maximum_scratch_bytes,
+                ticket=ticket,
+                coordinate_budget=coordinate_budget,
+            )
+            with coordinate_budget.activate(), ticket.native_target():
+                try:
+                    result = query.contains(
+                        points,
+                        solid=solid,
+                        budget=query_budget,
+                        coordinate_budget=coordinate_budget,
+                    )
+                finally:
+                    remaining[0] -= query_budget.operations
     except BRepQueryResourceError as failure:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
@@ -1698,154 +1977,203 @@ def _bounded_brep_wall_membership(
     return result
 
 
-def _blank_part(
-    index: int,
-    parts: tuple[MeshPart, ...],
-    specs: tuple[OversetPartSpec, ...],
-    geometries: tuple[_PartGeometry, ...],
-    policy: OversetPolicy,
+@final
+class _ForeignWall(StrictModule, NonTrainableState):
+    """Wall geometry in the receptor chart and query points in the wall chart."""
+
+    facets: np.ndarray | None
+    hierarchy: PackedBVH
+    query_points: np.ndarray
+
+
+@final
+class _WallMembership(StrictModule, NonTrainableState):
+    """Resolved wall membership and contact masks in receptor vertex order."""
+
+    inside: np.ndarray
+    touching: np.ndarray
+
+
+@final
+class _WallCuts(StrictModule, NonTrainableState):
+    """Accumulated foreign-wall cut mask in receptor cell order."""
+
+    cells: np.ndarray
+
+
+def _prepare_foreign_wall(
+    source: OversetPartSpec,
+    target: OversetPartSpec,
+    geometry: _PartGeometry,
+    hierarchy: PackedBVH,
+    points: np.ndarray,
+    dimension: int,
+    scope: NativeExecutionScope,
+    /,
+) -> _ForeignWall:
+    facets = (
+        None
+        if geometry.wall_facets is None
+        else np.asarray(geometry.wall_facets, dtype=np.float64)
+    )
+    if source.image_rotation is not None or target.image_rotation is not None:
+        transformed_bounds: Interval | None = None
+        with coordinate_phase(scope=scope) as coordinate_budget:
+            rotation, translation = _relative_image(
+                source, target, dimension, budget=coordinate_budget
+            )
+            if rotation is not None and translation is not None:
+                if facets is not None:
+                    facets = _relative_points(source, target, facets)
+                transformed_bounds = _image_bounds(
+                    np.asarray(hierarchy.item_bbox_min),
+                    np.asarray(hierarchy.item_bbox_max),
+                    source,
+                    target,
+                    budget=coordinate_budget,
+                )
+        if transformed_bounds is not None:
+            hierarchy = prepare_bvh(*transformed_bounds, dtype=jnp.float64)
+    return _ForeignWall(facets, hierarchy, _relative_points(target, source, points))
+
+
+def _classify_discretized_wall(
+    geometry: _PartGeometry,
+    hierarchy: PackedBVH,
+    query_points: np.ndarray,
     budget: list[int],
     /,
-) -> _Blanking:
-    part, spec = parts[index], specs[index]
-    mesh = _cell_result(part).mesh
-    points = np.asarray(mesh.coordinates, dtype=np.float64)
-    cells = np.asarray(geometries[index].cell_vertices, dtype=np.int64)
-    hole = np.zeros(points.shape[0], dtype=np.bool_)
-    contact = np.zeros_like(hole)
-    cut = np.zeros(cells.shape[0], dtype=np.bool_)
-    for other, geometry in enumerate(geometries):
-        if other == index or geometry.wall_bvh is None:
-            continue
-        facets = (
-            None
-            if geometry.wall_facets is None
-            else np.asarray(geometry.wall_facets, dtype=np.float64)
+) -> _WallMembership:
+    if geometry.wall_facets is None:
+        raise ValueError(
+            "_blank_part.geometry.wall_facets must accompany an explicit PLC wall hierarchy; got no wall facets."
         )
-        rotation, translation = _relative_image(
-            specs[other], spec, mesh.ambient_dimension
-        )
-        wall_bvh = geometry.wall_bvh
-        if rotation is not None and translation is not None:
-            if facets is not None:
-                facets = _relative_points(specs[other], spec, facets)
-            lower, upper = _image_bounds(
-                np.asarray(wall_bvh.item_bbox_min),
-                np.asarray(wall_bvh.item_bbox_max),
-                specs[other],
-                spec,
-            )
-            wall_bvh = prepare_bvh(lower, upper, dtype=jnp.float64)
-        query_points = _relative_points(spec, specs[other], points)
-        query = specs[other].solid_query
-        if query is None:
-            if geometry.wall_facets is None:
-                raise ValueError(
-                    "An explicit PLC wall hierarchy requires its owning wall facets."
-                )
-            inside, touching, used = _wall_classification(
-                query_points,
-                np.asarray(geometry.wall_facets),
-                geometry.wall_bvh,
-                budget[0],
-            )
-            budget[0] -= used
-        elif isinstance(query, CompiledGeometry):
-            from ..discretization._view_support import mapped_mesh_support_query
+    inside, touching, used = _wall_classification(
+        query_points, np.asarray(geometry.wall_facets), hierarchy, budget[0]
+    )
+    budget[0] -= used
+    return _WallMembership(inside, touching)
 
-            classified = mapped_mesh_support_query(query, jnp.asarray(query_points))
-            resolved = np.asarray(classified.successful) & np.asarray(
-                classified.location.candidates_complete
-            )
-            if not np.all(resolved):
-                raise MeshingFailure(
-                    MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-                    "Whole mapped-domain wall membership is unresolved.",
-                    stage="hole-cut",
-                    entity_ids=tuple(
-                        int(value)
-                        for value in np.asarray(mesh.vertex_global_ids)[~resolved]
-                    ),
+
+def _classify_mapped_wall(
+    query: contracts_owner.CompiledGeometry,
+    query_points: np.ndarray,
+    vertex_ids: Array,
+    /,
+) -> _WallMembership:
+    classified = mapped_mesh_support_query(query, jnp.asarray(query_points))
+    resolved = np.asarray(classified.successful) & np.asarray(
+        classified.location.candidates_complete
+    )
+    if not np.all(resolved):
+        raise MeshingFailure(
+            MeshingFailureCategory.REGION_RESOLUTION_FAILED,
+            "overset_hole_cut.mapped_membership must resolve every queried point; got unresolved wall membership.",
+            stage="hole-cut",
+            entity_ids=tuple(int(value) for value in np.asarray(vertex_ids)[~resolved]),
+        )
+    inside = np.asarray(classified.inside)
+    # This margin describes the exterior boundary, not internal cell faces or
+    # Euclidean distance to the wall.
+    kernel = _mapped_solid_kernel(query)
+    margin = np.asarray(kernel.boundary_field(query.state, jnp.asarray(query_points)))
+    touching = inside & (np.abs(margin) <= kernel.locator.policy.reference_tolerance)
+    return _WallMembership(inside, touching)
+
+
+def _classify_brep_wall(
+    query: PreparedBRepQuery,
+    query_points: np.ndarray,
+    point_dimension: int,
+    vertex_ids: Array,
+    solid_index: int,
+    policy: OversetPolicy,
+    budget: list[int],
+    scope: NativeExecutionScope,
+    /,
+) -> _WallMembership:
+    if point_dimension != 3:
+        raise ValueError(
+            "_blank_part.mesh.ambient_dimension must be three for native B-Rep solid classification; got a non-3D part."
+        )
+    classified = _bounded_brep_wall_membership(
+        query, query_points, solid_index, policy, budget, scope=scope
+    )
+    exhausted = np.asarray(classified.resource_exhausted)
+    if np.any(exhausted):
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "overset_hole_cut.brep_membership must fit its source work bound; got exhausted query work.",
+            stage="hole-cut",
+            entity_ids=tuple(int(value) for value in np.asarray(vertex_ids)[exhausted]),
+            achieved=(
+                ("wall_work", float(policy.maximum_wall_candidate_pairs - budget[0])),
+            ),
+        )
+    touching = np.asarray(classified.distances) <= query.tolerances.classifier
+    resolved = np.asarray(classified.status) == int(BRepProjectionStatus.UNIQUE)
+    if np.any(~resolved & ~touching):
+        raise MeshingFailure(
+            MeshingFailureCategory.REGION_RESOLUTION_FAILED,
+            "overset_hole_cut.brep_membership must resolve every non-contact point; got unresolved hole classification.",
+            stage="hole-cut",
+            entity_ids=tuple(
+                int(value) for value in np.asarray(vertex_ids)[~resolved & ~touching]
+            ),
+        )
+    return _WallMembership(np.asarray(classified.inside), touching)
+
+
+def _accumulate_wall_cuts(
+    part: MeshPart,
+    geometry: _PartGeometry,
+    wall: _ForeignWall,
+    cut: np.ndarray,
+    budget: list[int],
+    scope: NativeExecutionScope,
+    /,
+) -> _WallCuts:
+    facets = wall.facets
+    if facets is not None:
+        corners = np.unique(facets.reshape((-1, facets.shape[-1])), axis=0)
+        with coordinate_phase(scope=scope) as coordinate_budget:
+            for block, locator in enumerate(geometry.locators):
+                located = _locate_part_points(
+                    locator, jnp.asarray(corners), budget=coordinate_budget
                 )
-            inside = np.asarray(classified.inside)
-            # The owner supplies an exterior-only reference margin, not a
-            # Euclidean distance and not an internal-cell zero set.
-            kernel = _mapped_solid_kernel(query)
-            margin = np.asarray(
-                kernel.boundary_field(query.state, jnp.asarray(query_points))
-            )
-            touching = inside & (
-                np.abs(margin) <= kernel.locator.policy.reference_tolerance
-            )
-        else:
-            if points.shape[1] != 3:
-                raise ValueError("Native B-Rep solid classification requires 3D parts.")
-            classified = _bounded_brep_wall_membership(
-                query,
-                query_points,
-                specs[other].solid_index,
-                policy,
-                budget,
-            )
-            exhausted = np.asarray(classified.resource_exhausted)
-            if np.any(exhausted):
-                raise MeshingFailure(
-                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                    "Native B-Rep membership exhausted its bounded source work.",
-                    stage="hole-cut",
-                    entity_ids=tuple(
-                        int(value)
-                        for value in np.asarray(mesh.vertex_global_ids)[exhausted]
-                    ),
-                    achieved=(
-                        (
-                            "wall_work",
-                            float(policy.maximum_wall_candidate_pairs - budget[0]),
-                        ),
-                    ),
-                )
-            touching = np.asarray(classified.distances) <= query.tolerances.classifier
-            resolved = np.asarray(classified.status) == int(BRepProjectionStatus.UNIQUE)
-            if np.any(~resolved & ~touching):
-                raise MeshingFailure(
-                    MeshingFailureCategory.REGION_RESOLUTION_FAILED,
-                    "Authoritative B-Rep hole classification is unresolved.",
-                    stage="hole-cut",
-                    entity_ids=tuple(
-                        int(value)
-                        for value in np.asarray(mesh.vertex_global_ids)[
-                            ~resolved & ~touching
-                        ]
-                    ),
-                )
-            inside = np.asarray(classified.inside)
-        hole |= inside | touching
-        contact |= touching
-        if facets is not None:
-            corners = np.unique(facets.reshape((-1, facets.shape[-1])), axis=0)
-            for block, locator in enumerate(geometries[index].locators):
-                located = locator.locate(jnp.asarray(corners))
                 containing = np.asarray(located.candidate_cells)
-                cut[
-                    containing[containing >= 0] + geometries[index].block_offsets[block]
-                ] = True
-            if np.all(np.asarray(geometries[index].affine_cells)):
-                cut |= _cut_cells(part, facets, wall_bvh, budget)
-            else:
-                cut |= _possible_cuts(geometries[index], wall_bvh, budget)
+                cut[containing[containing >= 0] + geometry.block_offsets[block]] = True
+        if np.all(np.asarray(geometry.affine_cells)):
+            cut |= _cut_cells(part, facets, wall.hierarchy, budget)
         else:
-            cut |= _possible_cuts(geometries[index], wall_bvh, budget)
+            cut |= _possible_cuts(geometry, wall.hierarchy, budget)
+    else:
+        cut |= _possible_cuts(geometry, wall.hierarchy, budget)
+    return _WallCuts(cut)
+
+
+def _finalize_blanking(
+    part: MeshPart,
+    spec: OversetPartSpec,
+    geometry: _PartGeometry,
+    policy: OversetPolicy,
+    cells: np.ndarray,
+    hole: np.ndarray,
+    contact: np.ndarray,
+    cut: np.ndarray,
+    /,
+) -> _Blanking:
     enclosing = np.any(hole[cells], axis=1)
     cell_hole = enclosing | cut
     if spec.excluded is not None:
-        identifiers = np.asarray(geometries[index].cell_ids)
+        identifiers = np.asarray(geometry.cell_ids)
         cell_hole |= np.isin(identifiers, np.asarray(spec.excluded.entity_ids))
     boundary = np.zeros_like(hole)
     if spec.boundary is not None:
-        boundary[_facet_rows(part, spec.boundary).reshape((-1,))] = True
+        boundary[facet_rows(part, spec.boundary).reshape((-1,))] = True
     protected = np.zeros_like(hole)
     if spec.wall is not None:
-        protected[_facet_rows(part, spec.wall).reshape((-1,))] = True
+        protected[facet_rows(part, spec.wall).reshape((-1,))] = True
     layer = _fringe_layers(cells, hole, cell_hole, boundary, policy.fringe_layers)
     layer[protected & ~hole] = 0
     vertex_status = np.select(
@@ -1868,11 +2196,74 @@ def _blank_part(
     )
 
 
+def _blank_part(
+    index: int,
+    parts: tuple[MeshPart, ...],
+    specs: tuple[OversetPartSpec, ...],
+    geometries: tuple[_PartGeometry, ...],
+    policy: OversetPolicy,
+    budget: list[int],
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> _Blanking:
+    part, spec = parts[index], specs[index]
+    mesh = _cell_result(part).mesh
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
+    cells = np.asarray(geometries[index].cell_vertices, dtype=np.int64)
+    hole = np.zeros(points.shape[0], dtype=np.bool_)
+    contact = np.zeros_like(hole)
+    cut = np.zeros(cells.shape[0], dtype=np.bool_)
+    for other, geometry in enumerate(geometries):
+        if other == index or geometry.wall_bvh is None:
+            continue
+        source_hierarchy = geometry.wall_bvh
+        wall = _prepare_foreign_wall(
+            specs[other],
+            spec,
+            geometry,
+            source_hierarchy,
+            points,
+            mesh.ambient_dimension,
+            scope,
+        )
+        match specs[other].solid_query:
+            case None:
+                membership = _classify_discretized_wall(
+                    geometry, source_hierarchy, wall.query_points, budget
+                )
+            case contracts_owner.CompiledGeometry() as query:
+                membership = _classify_mapped_wall(
+                    query, wall.query_points, mesh.vertex_global_ids
+                )
+            case PreparedBRepQuery() as query:
+                membership = _classify_brep_wall(
+                    query,
+                    wall.query_points,
+                    points.shape[1],
+                    mesh.vertex_global_ids,
+                    specs[other].solid_index,
+                    policy,
+                    budget,
+                    scope,
+                )
+            case _ as unknown:
+                assert_never(unknown)
+        hole |= membership.inside | membership.touching
+        contact |= membership.touching
+        cut = _accumulate_wall_cuts(
+            part, geometries[index], wall, cut, budget, scope
+        ).cells
+    return _finalize_blanking(
+        part, spec, geometries[index], policy, cells, hole, contact, cut
+    )
+
+
 # ------------------------------------------------------------ donor resolution
 
 
-@dataclass(frozen=True, slots=True)
-class _Donors:
+@final
+class _Donors(StrictModule, NonTrainableState):
     status: np.ndarray
     parts: np.ndarray
     cells: np.ndarray
@@ -1886,7 +2277,30 @@ def _admissible(blanking: OversetPartBlanking, /) -> Array:
     return jnp.asarray(blanking.cell_status) == int(OversetCellStatus.ACTIVE)
 
 
-def _resolve_donors(
+def _locate_part_points(
+    locator: PreparedMappedCellLocator | PreparedPolyhedralCellLocator,
+    points: Array,
+    /,
+    *,
+    cell_mask: Array | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> simplicial_locator_owner.CellLocationResult:
+    """Share native polyhedral query work; standalone FE queries keep their owner."""
+    match locator:
+        case PreparedPolyhedralCellLocator():
+            return locator.locate(
+                points,
+                cell_mask=cell_mask,
+                budget=budget if budget.ticket.native_accounting else None,
+            )
+        case PreparedMappedCellLocator():
+            return locator.locate(points, cell_mask=cell_mask)
+        case unknown:
+            assert_never(unknown)
+
+
+@checked
+def resolve_donors(
     points: np.ndarray,
     receptor_index: int,
     specs: tuple[OversetPartSpec, ...],
@@ -1894,6 +2308,8 @@ def _resolve_donors(
     admissible: tuple[Array, ...],
     policy: OversetPolicy,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> _Donors:
     """Deterministic admissible donor of every point among the other parts."""
     count, dimension = points.shape
@@ -1907,7 +2323,7 @@ def _resolve_donors(
     if capacity > policy.maximum_donor_candidate_pairs:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Overset donor preparation exceeds maximum_donor_candidate_pairs.",
+            "OversetPolicy.maximum_donor_candidate_pairs must admit the prepared point-cell route capacity; got a donor capacity above the request bound.",
             stage="donor-location",
             requested=(
                 (
@@ -1931,14 +2347,21 @@ def _resolve_donors(
         query = jnp.asarray(donor_points)
         for block, locator in enumerate(geometry.locators):
             start, stop = geometry.block_offsets[block : block + 2]
-            located = locator.locate(query, cell_mask=admissible[index][start:stop])
+            located = _locate_part_points(
+                locator, query, cell_mask=admissible[index][start:stop], budget=budget
+            )
             status = np.asarray(located.status)
             complete = np.asarray(located.candidates_complete)
-            found = (status == int(CellLocationStatus.LOCATED)) & complete
+            found = (
+                status == int(simplicial_locator_owner.CellLocationStatus.LOCATED)
+            ) & complete
             unresolved |= ~complete | (
-                ~found & (status != int(CellLocationStatus.OUTSIDE))
+                ~found
+                & (status != int(simplicial_locator_owner.CellLocationStatus.OUTSIDE))
             )
-            resource_exceeded |= status == int(CellLocationStatus.RESOURCE_EXCEEDED)
+            resource_exceeded |= status == int(
+                simplicial_locator_owner.CellLocationStatus.RESOURCE_EXCEEDED
+            )
             candidates = np.asarray(located.candidate_cells)
             valid = candidates >= 0
             safe = np.maximum(candidates, 0) + start
@@ -1965,11 +2388,22 @@ def _resolve_donors(
             cells[better, index] = flat[better]
             scale[better, index] = candidate_scale[better]
             reference = np.asarray(located.candidate_reference)[np.arange(count), slot]
-            selected = locator.cell_map.evaluate(
-                locator.coordinates,
-                jnp.asarray(np.maximum(rows, 0)),
-                jnp.asarray(reference),
-            )
+            match locator:
+                case PreparedPolyhedralCellLocator():
+                    selected = locator.cell_map.evaluate(
+                        locator.coordinates,
+                        jnp.asarray(np.maximum(rows, 0)),
+                        jnp.asarray(reference),
+                        budget=budget if budget.ticket.native_accounting else None,
+                    )
+                case PreparedMappedCellLocator():
+                    selected = locator.cell_map.evaluate(
+                        locator.coordinates,
+                        jnp.asarray(np.maximum(rows, 0)),
+                        jnp.asarray(reference),
+                    )
+                case unknown:
+                    assert_never(unknown)
             residual[better, index] = np.linalg.norm(
                 np.asarray(selected.physical_points)[better] - donor_points[better],
                 axis=1,
@@ -2028,16 +2462,24 @@ def _resolve_donors(
                 specs[receptor_index], specs[index], points[orphan]
             )
             for locator in geometry.locators:
-                located = locator.locate(jnp.asarray(donor_points))
+                located = _locate_part_points(
+                    locator, jnp.asarray(donor_points), budget=budget
+                )
                 complete = np.asarray(located.candidates_complete)
                 location_status = np.asarray(located.status)
-                blocked |= (location_status == int(CellLocationStatus.LOCATED)) & complete
+                blocked |= (
+                    location_status
+                    == int(simplicial_locator_owner.CellLocationStatus.LOCATED)
+                ) & complete
                 unresolved[orphan] |= ~complete | ~np.isin(
                     location_status,
-                    (int(CellLocationStatus.LOCATED), int(CellLocationStatus.OUTSIDE)),
+                    (
+                        int(simplicial_locator_owner.CellLocationStatus.LOCATED),
+                        int(simplicial_locator_owner.CellLocationStatus.OUTSIDE),
+                    ),
                 )
                 resource_exceeded[orphan] |= location_status == int(
-                    CellLocationStatus.RESOURCE_EXCEEDED
+                    simplicial_locator_owner.CellLocationStatus.RESOURCE_EXCEEDED
                 )
         status[orphan] = np.select(
             (resource_exceeded[orphan], unresolved[orphan], blocked),
@@ -2068,6 +2510,8 @@ def _receptor_evidence(
     policy: OversetPolicy,
     /,
     previous: tuple[OversetPartBlanking, ...] | None = None,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[OversetReceptorEvidence, _Donors]:
     mesh = _cell_result(parts[index]).mesh
     ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
@@ -2086,13 +2530,14 @@ def _receptor_evidence(
     rows = np.flatnonzero(receptor)
     rows = rows[np.argsort(ids[rows], kind="stable")]
     points = np.asarray(mesh.coordinates, dtype=np.float64)[rows]
-    donors = _resolve_donors(
+    donors = resolve_donors(
         points,
         index,
         specs,
         geometries,
         admissible,
         policy,
+        budget=budget,
     )
     cell_ids = [np.asarray(geometry.cell_ids, dtype=np.int64) for geometry in geometries]
     donor_cells = np.asarray(
@@ -2124,8 +2569,10 @@ def _donor_packets(
     evidence: OversetReceptorEvidence,
     donors: _Donors,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[OversetDonorPacket, ...]:
-    """One exact revision-bound packet per served donor block."""
+    """Return one source- and revision-bound packet per served donor block."""
     target_sites = np.asarray(_cell_result(parts[index]).mesh.coordinates)[
         np.asarray(evidence.receptor_rows)
     ]
@@ -2134,7 +2581,9 @@ def _donor_packets(
         evidence.receptor_ids.shape[0],
         _cell_result(parts[index]).mesh.ambient_dimension,
     ):
-        raise ValueError("Packet points follow receptor evidence order.")
+        raise ValueError(
+            "_donor_packets.sites must provide one ambient-coordinate point per receptor evidence ID; got a row-count or coordinate-dimension mismatch."
+        )
     packets = []
     for donor, geometry in enumerate(geometries):
         for block, name in enumerate(geometry.block_names):
@@ -2153,6 +2602,7 @@ def _donor_packets(
                         np.asarray(geometry.cell_ids)[donors.cells[slots]],
                         donors.cells[slots] - start,
                         donor_block=name,
+                        budget=budget,
                         receptor_revision=parts[index].part_id,
                         donor_revision=parts[donor].part_id,
                         receptor_points=sites[slots],
@@ -2171,12 +2621,16 @@ def _packets_and_overlays(
     evidence: OversetReceptorEvidence,
     donors: _Donors,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[list[OversetDonorPacket], list[OversetCoupling]]:
     """Donor packets and the published P1 vertex overlays of one receptor part."""
     receptor = parts[index]
     hole_ids = blanking[index].vertex_ids_with(OversetVertexStatus.HOLE)
     hole_scope = receptor.scope(0, hole_ids) if hole_ids.size else None
-    packets = list(_donor_packets(index, parts, specs, geometries, evidence, donors))
+    packets = list(
+        _donor_packets(index, parts, specs, geometries, evidence, donors, budget=budget)
+    )
     receptor_ids = np.asarray(evidence.receptor_ids)
     overlays = []
     for packet in packets:
@@ -2188,8 +2642,8 @@ def _packets_and_overlays(
         slots = np.asarray(packet.receptor_slots)
         donor_rows = np.asarray(packet.donor_cell_rows)
         flat = donor_rows + geometries[donor].block_offsets[block_index]
-        # Geometry registration never fabricates a vertex-P1 field for a mapped
-        # or polyhedral donor. Actual field binding owns those overlays.
+        # Registration publishes vertex-P1 overlays for linear simplex donors;
+        # field bindings publish mapped and polyhedral overlays.
         if packet.rotation is not None:
             continue
         if block.cell_kind not in _SIMPLICES.values() or not np.all(
@@ -2234,16 +2688,168 @@ def _packets_and_overlays(
 # ------------------------------------------------------------ connectivity
 
 
+type _OrganizationKey = tuple[
+    str,
+    str | None,
+    str | None,
+    str | None,
+    tuple[int, ...] | None,
+    int,
+    str,
+    tuple[int, ...],
+]
+
+
+def _organization_key(
+    item: MeshPatch | MeshZone | MeshLabel | MeshAttribute, /
+) -> _OrganizationKey:
+    match item:
+        case MeshPatch() | MeshLabel():
+            role, material, region, shape = None, None, None, None
+        case MeshZone():
+            role, material, region, shape = (
+                item.role,
+                item.material_id,
+                item.region_role,
+                None,
+            )
+        case MeshAttribute():
+            role, material, region, shape = item.role, None, None, item.component_shape
+        case _ as unknown:
+            assert_never(unknown)
+    return (
+        item.name,
+        role,
+        material,
+        region,
+        shape,
+        item.scope.entity_dimension,
+        item.scope.entity_set_id,
+        tuple(np.asarray(item.scope.entity_ids).tolist()),
+    )
+
+
+def _association_keys(
+    result: CellMeshingResult, /
+) -> set[tuple[str, str, str, tuple[int, ...]]]:
+    return {
+        (
+            item.association_kind,
+            item.source_id,
+            item.target_entity_set_id,
+            tuple(np.asarray(item.target_global_ids).tolist()),
+        )
+        for item in result.associations
+    }
+
+
+def _require_motion_carrier(
+    before: CellMeshingResult, after: CellMeshingResult, scope: NativeExecutionScope, /
+) -> None:
+    if before.mesh.topology_id != after.mesh.topology_id:
+        raise ValueError(
+            "_require_motion_carrier.after.mesh.topology_id must equal the predecessor topology_id and preserve every scientific entity ID; got a topology change."
+        )
+    if before.geometry.geometry_layout_id != after.geometry.geometry_layout_id:
+        with coordinate_phase(
+            scope=scope,
+            queries_upper=cell_geometry_preparation_query_upper(after.geometry),
+        ) as budget:
+            layout_matches = translated_plc_layout_matches(
+                before.geometry, after.geometry, budget=budget
+            )
+        if not layout_matches:
+            raise ValueError(
+                "_require_motion_carrier.after.geometry must retain the predecessor coordinate-element layout, permitting proved translated PLC layouts; got a layout mismatch."
+            )
+    if before.boundary is not None and after.boundary is None:
+        raise ValueError(
+            "_require_motion_carrier.after.boundary must retain the predecessor boundary model; got no boundary model."
+        )
+    if before.certification is not None and after.certification is None:
+        raise ValueError(
+            "_require_motion_carrier.after.certification must provide successor source, embedding, and coverage certificates; got no successor certification."
+        )
+    if before.region_evidence is not None and (
+        after.region_evidence is None
+        or before.region_evidence.cell_region_ids != after.region_evidence.cell_region_ids
+    ):
+        raise ValueError(
+            "_require_motion_carrier.after.region_evidence must preserve all predecessor cell_region_ids; got missing evidence or changed material regions."
+        )
+    if _association_keys(before) != _association_keys(after):
+        raise ValueError(
+            "_require_motion_carrier.after.associations must preserve predecessor association keys; got dropped or replaced associations."
+        )
+    for field, old_records, new_records in (
+        ("patches", before.patches, after.patches),
+        ("zones", before.zones, after.zones),
+        ("labels", before.labels, after.labels),
+        ("attributes", before.attributes, after.attributes),
+    ):
+        if {_organization_key(item) for item in old_records} != {
+            _organization_key(item) for item in new_records
+        }:
+            raise ValueError(
+                f"{'overset_motion.' + field} must preserve predecessor scope and semantic keys; got dropped or relabeled obligations."
+            )
+
+
+@final
+class _RegisteredSuccessor(StrictModule, NonTrainableState):
+    """Validated successor carrier and its revision-bound overset specification."""
+
+    part: MeshPart
+    spec: OversetPartSpec
+
+
+def _register_successor(
+    old: MeshPart,
+    part: MeshPart,
+    spec: OversetPartSpec,
+    query: PreparedBRepQuery | contracts_owner.CompiledGeometry | None,
+    scope: NativeExecutionScope,
+    /,
+) -> _RegisteredSuccessor:
+    if part.name != old.name:
+        raise ValueError(
+            "_register_successor.part.name must equal the registered predecessor part name; got a different part identity."
+        )
+    before, after = _cell_result(old), _cell_result(part)
+    _require_motion_carrier(before, after, scope)
+    if spec.solid_query is not None and part.part_id != old.part_id:
+        if spec.wall is None:
+            raise ValueError(
+                "_register_successor.spec.wall must retain an explicit protected wall scope for the registered solid; got no wall scope."
+            )
+        wall_rows = np.unique(facet_rows(old, spec.wall))
+        if not np.array_equal(
+            np.asarray(before.mesh.coordinates)[wall_rows],
+            np.asarray(after.mesh.coordinates)[wall_rows],
+        ) and (
+            query is None or _solid_query_id(query) == _solid_query_id(spec.solid_query)
+        ):
+            raise ValueError(
+                "_register_successor.query must change to the successor closed-solid query when protected-wall coordinates move; got no query or the predecessor query."
+            )
+    rebound = (
+        spec
+        if part.part_id == old.part_id and query is None
+        else spec.rebound(part, solid_query=query)
+    )
+    return _RegisteredSuccessor(part, rebound)
+
+
 @final
 class OversetConnectivity(StrictModule, NonTrainableState):
-    """One prepared registration epoch of native overset connectivity.
+    """Represent one prepared registration epoch of native overset connectivity.
 
-    `assembly` is the input assembly with one published `OversetCoupling`
-    overlay per (receptor part, donor part) pair, so generic assembly consumers
-    see the same receptor/hole/donor contract as any overset provider.
-    `complete` holds when no receptor is an orphan and no protected wall vertex
-    is blanked or a receptor; ambiguous contacts and cut cells are reported and
-    blanked conservatively.
+    `assembly` is the input assembly with one published `OversetCoupling` overlay per
+    (receptor part, donor part) pair, so generic assembly consumers see the same
+    receptor/hole/donor contract as any overset provider.
+    `OversetConnectivity.complete` holds when every receptor has a donor and every protected wall vertex is
+    active, neither blanked nor a receptor; ambiguous contacts and cut cells are
+    reported and blanked conservatively.
     """
 
     assembly: MeshAssembly
@@ -2262,6 +2868,7 @@ class OversetConnectivity(StrictModule, NonTrainableState):
     complete: bool = eqx.field(static=True)
     connectivity_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         assembly: MeshAssembly,
@@ -2284,13 +2891,15 @@ class OversetConnectivity(StrictModule, NonTrainableState):
             or tuple(item.part_name for item in receptors) != names
             or len(geometries) != len(names)
         ):
-            raise ValueError("Overset records must follow the assembly part order.")
+            raise ValueError(
+                "OversetConnectivity.records must align specs, blanking, receptors, and geometries with assembly part order; got a name-order or record-count mismatch."
+            )
         for part, mask, geometry in zip(
             assembly.parts, blanking, geometries, strict=True
         ):
             if mask.part_id != part.part_id or geometry.part_id != part.part_id:
                 raise ValueError(
-                    "Overset blanking and spatial evidence bind another part revision."
+                    "OversetConnectivity.blanking must bind corresponding assembly part IDs together with geometries; got records bound to another part revision."
                 )
         expected = {
             (item.part_name, int(identifier))
@@ -2307,17 +2916,21 @@ class OversetConnectivity(StrictModule, NonTrainableState):
                 source.part_id != packet.donor_revision
                 or target.part_id != packet.receptor_revision
             ):
-                raise ValueError("Donor packets bind stale geometry/part revisions.")
+                raise ValueError(
+                    "OversetConnectivity.packets must bind donor and receptor part revisions; got stale geometry or part revisions."
+                )
             keys = {
                 (packet.receptor_part, int(identifier))
                 for identifier in np.asarray(packet.receptor_ids)
             }
             if served.intersection(keys):
-                raise ValueError("A receptor must occur in exactly one donor packet.")
+                raise ValueError(
+                    "OversetConnectivity.packets must assign each receptor identity once; got a duplicate receptor across packets."
+                )
             served.update(keys)
         if served != expected:
             raise ValueError(
-                "Donor packets must cover exactly the found receptor identities."
+                "OversetConnectivity.donor_packets must cover every found receptor identity and no other identity; got missing or extra served identities."
             )
         self.assembly = assembly
         self.specs = specs
@@ -2357,7 +2970,9 @@ class OversetConnectivity(StrictModule, NonTrainableState):
     def part_index(self, name: str, /) -> int:
         names = tuple(spec.part_name for spec in self.specs)
         if name not in names:
-            raise KeyError(f"Unknown overset part {name!r}.")
+            raise KeyError(
+                f"OversetConnectivity.part_index.name must identify a registered overset part; got unknown part {name!r}."
+            )
         return names.index(name)
 
     def blanking_of(self, name: str, /) -> OversetPartBlanking:
@@ -2370,8 +2985,7 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         """Refuse a registration with orphan receptors or blanked protected walls."""
         if not self.complete:
             raise OversetConnectivityError(
-                f"Overset connectivity is incomplete: {self.orphan_count} orphan "
-                f"receptors, {self.conflict_count} protected wall conflicts.",
+                f"OversetConnectivity.status must have zero orphan receptors and protected-wall conflicts; got {self.orphan_count} orphan receptors and {self.conflict_count} protected wall conflicts.",
                 self,
             )
 
@@ -2380,8 +2994,9 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         coordinates: Mapping[str, ArrayLike],
         /,
         *,
-        geometry: Mapping[str, CellGeometrySpec] | None = None,
-        solid_queries: Mapping[str, PreparedBRepQuery | CompiledGeometry] | None = None,
+        geometry: Mapping[str, cell_geometry_owner.CellGeometrySpec] | None = None,
+        solid_queries: Mapping[str, PreparedBRepQuery | contracts_owner.CompiledGeometry]
+        | None = None,
         record_phase: NativeMeshingPhaseRecorder | None = None,
     ) -> OversetConnectivity:
         """Prepare the next registration epoch after moving named parts.
@@ -2393,16 +3008,24 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         is never reused.
         """
         if not isinstance(coordinates, Mapping) or not coordinates:
-            raise TypeError("coordinates must map moved part names to coordinates.")
+            raise TypeError(
+                "OversetConnectivity.moved.coordinates must be a non-empty mapping from moved part names to coordinates; got an empty or non-mapping value."
+            )
         names = tuple(spec.part_name for spec in self.specs)
         if any(name not in names for name in coordinates):
-            raise ValueError("Overset motion names parts outside the assembly.")
+            raise ValueError(
+                "OversetConnectivity.moved.coordinates.keys must be assembly part names; got at least one name outside the assembly."
+            )
         geometry_ = {} if geometry is None else dict(geometry)
         if not set(geometry_).issubset(coordinates):
-            raise ValueError("Successor coordinate maps must belong to moved parts.")
+            raise ValueError(
+                "OversetConnectivity.moved.geometry must name only moved parts; got a successor coordinate map for an unmoved part."
+            )
         solid_queries_ = {} if solid_queries is None else dict(solid_queries)
         if not set(solid_queries_).issubset(coordinates):
-            raise ValueError("Successor solid queries must belong to moved parts.")
+            raise ValueError(
+                "OversetConnectivity.moved.solid_queries must name only moved parts; got a successor solid query for an unmoved part."
+            )
         for spec in self.specs:
             if (
                 spec.solid_query is not None
@@ -2416,7 +3039,7 @@ class OversetConnectivity(StrictModule, NonTrainableState):
                 and spec.part_name not in solid_queries_
             ):
                 raise ValueError(
-                    "Moving an authoritative solid needs its successor B-Rep query."
+                    "OversetConnectivity.moved.solid_queries must provide a successor B-Rep query for every moved registered solid; got moved solid coordinates without a successor query."
                 )
         motion = canonical_fingerprint(
             {"kind": "overset-motion", "from": self.connectivity_id}
@@ -2440,12 +3063,14 @@ class OversetConnectivity(StrictModule, NonTrainableState):
             record_phase=record_phase,
         )
 
+    @checked
     def reregister(
         self,
         replacements: Mapping[str, MeshPart],
         /,
         *,
-        solid_queries: Mapping[str, PreparedBRepQuery | CompiledGeometry] | None = None,
+        solid_queries: Mapping[str, PreparedBRepQuery | contracts_owner.CompiledGeometry]
+        | None = None,
         couplings: tuple[MeshCoupling, ...] | None = None,
         record_phase: NativeMeshingPhaseRecorder | None = None,
     ) -> OversetConnectivity:
@@ -2456,124 +3081,62 @@ class OversetConnectivity(StrictModule, NonTrainableState):
         may disappear. Non-overset links that touch moved revisions must be
         explicitly reprepared by their owner and passed through ``couplings``.
         """
+
         if not isinstance(replacements, Mapping) or not replacements:
-            raise TypeError("replacements must map moved names to certified MeshParts.")
+            raise TypeError(
+                "OversetConnectivity.reregister.replacements must be a non-empty mapping from moved names to certified MeshPart revisions; got an empty or non-mapping value."
+            )
         names = tuple(part.name for part in self.assembly.parts)
         if not set(replacements).issubset(names):
-            raise ValueError("Moving registration names parts outside the assembly.")
+            raise ValueError(
+                "OversetConnectivity.reregister.replacements.keys must be assembly part names; got at least one name outside the assembly."
+            )
         queries = {} if solid_queries is None else dict(solid_queries)
         if not set(queries).issubset(replacements):
-            raise ValueError("Successor solid queries belong to explicitly moved parts.")
-        parts, specs = [], []
-        for old, spec in zip(self.assembly.parts, self.specs, strict=True):
-            part = replacements.get(old.name, old)
-            if not isinstance(part, MeshPart) or part.name != old.name:
-                raise ValueError("A successor must keep its registered part identity.")
-            before, after = _cell_result(old), _cell_result(part)
-            if before.mesh.topology_id != after.mesh.topology_id:
-                raise ValueError(
-                    "Motion preserves topology and every scientific entity ID."
-                )
-            if before.geometry.geometry_layout_id != after.geometry.geometry_layout_id:
-                raise ValueError(
-                    "Motion preserves the complete coordinate-element layout."
-                )
-            if before.boundary is not None and after.boundary is None:
-                raise ValueError("Motion cannot drop the authoritative boundary model.")
-            if before.certification is not None and after.certification is None:
-                raise ValueError(
-                    "Motion needs successor source/embedding/coverage certificates."
-                )
-            if before.region_evidence is not None and (
-                after.region_evidence is None
-                or before.region_evidence.cell_region_ids
-                != after.region_evidence.cell_region_ids
-            ):
-                raise ValueError(
-                    "Motion needs successor evidence preserving all material regions."
-                )
-            association_keys = lambda result: {
-                (
-                    item.association_kind,
-                    item.source_id,
-                    item.target_entity_set_id,
-                    tuple(np.asarray(item.target_global_ids).tolist()),
-                )
-                for item in result.associations
-            }
-            if association_keys(before) != association_keys(after):
-                raise ValueError(
-                    "Motion cannot drop or replace scientific geometry associations."
-                )
-            for field in ("patches", "zones", "labels", "attributes"):
-
-                def keys(result: CellMeshingResult) -> set[tuple[object, ...]]:
-                    return {
-                        (
-                            item.name,
-                            getattr(item, "role", None),
-                            getattr(item, "material_id", None),
-                            getattr(item, "region_role", None),
-                            getattr(item, "component_shape", None),
-                            item.scope.entity_dimension,
-                            item.scope.entity_set_id,
-                            tuple(np.asarray(item.scope.entity_ids).tolist()),
-                        )
-                        for item in getattr(result, field)
-                    }
-
-                if keys(before) != keys(after):
-                    raise ValueError(
-                        f"Motion cannot drop or relabel {field} obligations."
-                    )
-            query = queries.get(old.name)
-            if spec.solid_query is not None and part.part_id != old.part_id:
-                if spec.wall is None:
-                    raise ValueError(
-                        "An authoritative solid must retain its explicit protected wall scope."
-                    )
-                wall_rows = np.unique(_facet_rows(old, spec.wall))
-                if not np.array_equal(
-                    np.asarray(before.mesh.coordinates)[wall_rows],
-                    np.asarray(after.mesh.coordinates)[wall_rows],
-                ) and (
-                    query is None
-                    or _solid_query_id(query) == _solid_query_id(spec.solid_query)
-                ):
-                    raise ValueError(
-                        "Moving an authoritative wall needs its successor closed-solid query."
-                    )
-            parts.append(part)
-            specs.append(
-                spec
-                if part.part_id == old.part_id and query is None
-                else spec.rebound(part, solid_query=query)
-            )
-        retained = (
-            tuple(
-                link
-                for link in self.assembly.couplings
-                if not isinstance(link, OversetCoupling)
-            )
-            if couplings is None
-            else tuple(couplings)
-        )
-        if any(isinstance(link, OversetCoupling) for link in retained):
             raise ValueError(
-                "The moving registration publishes its own overset overlays."
+                "OversetConnectivity.reregister.queries.keys must be a subset of replacement names; got a successor solid query for a part without a replacement."
             )
-        # Validate all external geometry/coordinate contracts before native work.
-        assembly = MeshAssembly(tuple(parts), couplings=retained)
-        return _prepare(
-            assembly.parts,
-            assembly.couplings,
-            tuple(specs),
-            self.policy,
-            self.geometries,
-            epoch=self.epoch + 1,
-            predecessor_id=self.connectivity_id,
-            record_phase=record_phase,
-        )
+        with NativeExecutionScope(self.policy.native_limits()) as scope:
+            parts, specs = [], []
+            for old, spec in zip(self.assembly.parts, self.specs, strict=True):
+                part = replacements.get(old.name, old)
+                match part:
+                    case MeshPart():
+                        pass
+                    case _:
+                        raise ValueError(
+                            "_register_successor.part.name must equal the registered predecessor part name; got a different part identity."
+                        )
+                successor = _register_successor(
+                    old, part, spec, queries.get(old.name), scope
+                )
+                parts.append(successor.part)
+                specs.append(successor.spec)
+            retained = (
+                tuple(
+                    link
+                    for link in self.assembly.couplings
+                    if not isinstance(link, OversetCoupling)
+                )
+                if couplings is None
+                else tuple(couplings)
+            )
+            if any(isinstance(link, OversetCoupling) for link in retained):
+                raise ValueError(
+                    "OversetConnectivity.reregister.couplings must exclude OversetCoupling overlays; got a retained overset overlay."
+                )
+            assembly = MeshAssembly(tuple(parts), couplings=retained)
+            return _prepare(
+                assembly.parts,
+                assembly.couplings,
+                tuple(specs),
+                self.policy,
+                self.geometries,
+                scope=scope,
+                epoch=self.epoch + 1,
+                predecessor_id=self.connectivity_id,
+                record_phase=record_phase,
+            )
 
     def composition_entries(self) -> tuple[CompositionEntry, ...]:
         """Geometry/revision-bound entries to register in a running composition."""
@@ -2630,6 +3193,7 @@ def _prepare(
     previous: tuple[_PartGeometry, ...] | None,
     /,
     *,
+    scope: NativeExecutionScope,
     epoch: int,
     predecessor_id: str | None = None,
     record_phase: NativeMeshingPhaseRecorder | None = None,
@@ -2642,8 +3206,12 @@ def _prepare(
                 and previous[index].part_id == part.part_id
                 and previous[index].spec_id == spec.spec_id
             )
-            else _part_geometry(
-                part, spec, policy, None if previous is None else previous[index]
+            else part_geometry(
+                part,
+                spec,
+                policy,
+                None if previous is None else previous[index],
+                scope=scope,
             )
             for index, (part, spec) in enumerate(zip(parts, specs, strict=True))
         )
@@ -2653,7 +3221,9 @@ def _prepare(
         budget = [policy.maximum_wall_candidate_pairs]
         blanking_records = []
         for index, part in enumerate(parts):
-            values = _blank_part(index, parts, specs, geometries, policy, budget)
+            values = _blank_part(
+                index, parts, specs, geometries, policy, budget, scope=scope
+            )
             blanking_records.append(
                 OversetPartBlanking(
                     part,
@@ -2668,15 +3238,31 @@ def _prepare(
         blanking = tuple(blanking_records)
         if record_phase is not None:
             jax.block_until_ready(blanking)
-    with measure_phase(record_phase, "donor_location"):
+    with (
+        measure_phase(record_phase, "donor_location"),
+        coordinate_phase(scope=scope) as coordinate_budget,
+    ):
         receptors, packets, overlays = [], [], []
         for index in range(len(parts)):
             evidence, donors = _receptor_evidence(
-                index, parts, specs, geometries, blanking, policy
+                index,
+                parts,
+                specs,
+                geometries,
+                blanking,
+                policy,
+                budget=coordinate_budget,
             )
             receptors.append(evidence)
             part_packets, part_overlays = _packets_and_overlays(
-                index, parts, specs, blanking, geometries, evidence, donors
+                index,
+                parts,
+                specs,
+                blanking,
+                geometries,
+                evidence,
+                donors,
+                budget=coordinate_budget,
             )
             packets.extend(part_packets)
             overlays.extend(part_overlays)
@@ -2696,6 +3282,7 @@ def _prepare(
     )
 
 
+@checked
 def prepare_overset_connectivity(
     assembly: MeshAssembly,
     parts: tuple[OversetPartSpec, ...],
@@ -2711,20 +3298,22 @@ def prepare_overset_connectivity(
     publishes its own. Incomplete coverage is reported, not raised; call
     `require_complete` where the consumer's law needs every receptor served.
     """
-    if not isinstance(assembly, MeshAssembly):
-        raise TypeError("assembly must be MeshAssembly.")
     policy_ = OversetPolicy() if policy is None else policy
-    if not isinstance(policy_, OversetPolicy):
-        raise TypeError("policy must be OversetPolicy or None.")
     declared = tuple(parts)
     if not all(isinstance(spec, OversetPartSpec) for spec in declared):
-        raise TypeError("parts must contain OversetPartSpec values.")
+        raise TypeError(
+            "prepare_overset_connectivity.parts must contain only OversetPartSpec values; got at least one other value type."
+        )
     names = tuple(part.name for part in assembly.parts)
     if len(names) < 2:
-        raise ValueError("Overset connectivity requires at least two parts.")
+        raise ValueError(
+            "prepare_overset_connectivity.parts must contain at least two parts; got fewer than two declared parts."
+        )
     by_name = {spec.part_name: spec for spec in declared}
     if len(by_name) != len(declared) or set(by_name) != set(names):
-        raise ValueError("Declare the overset role of every assembly part exactly once.")
+        raise ValueError(
+            "prepare_overset_connectivity.parts must declare the overset role of every assembly part once; got missing, duplicate, or foreign part names."
+        )
     specs = tuple(by_name[name] for name in names)
     for spec, part in zip(specs, assembly.parts, strict=True):
         _cell_result(part)
@@ -2736,7 +3325,7 @@ def prepare_overset_connectivity(
             and spec.excluded.entity_dimension != part.intrinsic_dimension
         ):
             raise ValueError(
-                "Excluded donor regions must be full-dimensional cell scopes."
+                "prepare_overset_connectivity.spec.excluded.entity_dimension must equal part.intrinsic_dimension; got a non-cell excluded scope."
             )
         if (
             spec.wall is not None
@@ -2745,55 +3334,61 @@ def prepare_overset_connectivity(
                 np.asarray(spec.wall.entity_ids), np.asarray(spec.boundary.entity_ids)
             ).size
         ):
-            raise ValueError("Wall and overset boundary facets must be disjoint.")
+            raise ValueError(
+                "prepare_overset_connectivity.spec.wall must have facets disjoint from spec.boundary; got shared facet IDs."
+            )
     if any(isinstance(link, OversetCoupling) for link in assembly.couplings):
-        raise ValueError("The assembly already carries overset overlays.")
-    return _prepare(
-        assembly.parts,
-        assembly.couplings,
-        specs,
-        policy_,
-        None,
-        epoch=0,
-        record_phase=record_phase,
-    )
+        raise ValueError(
+            "prepare_overset_connectivity.assembly.couplings must be free of OversetCoupling overlays before preparation; got an existing overset overlay."
+        )
+    with NativeExecutionScope(policy_.native_limits()) as scope:
+        return _prepare(
+            assembly.parts,
+            assembly.couplings,
+            specs,
+            policy_,
+            None,
+            scope=scope,
+            epoch=0,
+            record_phase=record_phase,
+        )
 
 
 @final
-class _PacketLocator(AbstractCellLocator, NonTrainableState):
+class _PacketLocator(simplicial_locator_owner.AbstractCellLocator, NonTrainableState):
     """Retain the chosen donor side at the packet's fixed receptor points."""
 
     base: (
         PreparedMappedCellLocator
-        | PreparedSimplicialCellLocator
+        | simplicial_locator_owner.PreparedSimplicialCellLocator
         | PreparedPolyhedralCellLocator
     )
     points: Array
     selected_cells: Array
     cell_map: LocatedCellMap
     coordinates: Array
-    policy: SimplicialLocationPolicy
+    policy: simplicial_locator_owner.SimplicialLocationPolicy
     locator_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        base: AbstractCellLocator,
+        base: simplicial_locator_owner.AbstractCellLocator,
         packet: OversetDonorPacket,
         /,
         *,
         cell_offset: int = 0,
     ) -> None:
-        if not isinstance(
-            base,
-            (
-                PreparedMappedCellLocator,
-                PreparedSimplicialCellLocator,
-                PreparedPolyhedralCellLocator,
-            ),
-        ):
-            raise TypeError(
-                "Overset packets require their canonical source-bound cell locator."
-            )
+        match base:
+            case (
+                PreparedMappedCellLocator()
+                | simplicial_locator_owner.PreparedSimplicialCellLocator()
+                | PreparedPolyhedralCellLocator()
+            ):
+                pass
+            case _:
+                raise TypeError(
+                    "_PacketLocator.source_locator must be bound to the packet source cells; got an unsupported or unbound cell locator."
+                )
         self.base = base
         self.policy = base.policy
         self.points = packet.points
@@ -2809,30 +3404,34 @@ class _PacketLocator(AbstractCellLocator, NonTrainableState):
             }
         )
 
+    def support_cells(self, points: Array, /) -> Array:
+        """Return the packet's selected donor cells without repeating location."""
+        return self.selected_cells
+
     @property
     def canonical_locator(
         self,
     ) -> (
         PreparedMappedCellLocator
-        | PreparedSimplicialCellLocator
+        | simplicial_locator_owner.PreparedSimplicialCellLocator
         | PreparedPolyhedralCellLocator
     ):
         return self.base
 
     def locate(
         self, points: ArrayLike, /, *, cell_mask: ArrayLike | None = None
-    ) -> CellLocationResult:
+    ) -> simplicial_locator_owner.CellLocationResult:
         result = self.base.locate(points, cell_mask=cell_mask)
         # Support preparation queries other points. Only this packet's sites
-        # carry a donor-side selection; those sites must retain that exact side.
+        # carry a donor-side selection; those sites must retain the selected side.
         if not np.array_equal(np.asarray(points), np.asarray(self.points)):
             return result
         return self._select_packet_location(result)
 
     @eqx.filter_jit
     def _select_packet_location(
-        self, result: CellLocationResult, /
-    ) -> CellLocationResult:
+        self, result: simplicial_locator_owner.CellLocationResult, /
+    ) -> simplicial_locator_owner.CellLocationResult:
         """Apply this packet's already selected donor side as one numeric action."""
         accepted = result.candidate_cells == self.selected_cells[:, None]
         found = jnp.any(accepted, axis=1) & result.successful & result.candidates_complete
@@ -2842,9 +3441,13 @@ class _PacketLocator(AbstractCellLocator, NonTrainableState):
             self.coordinates, self.selected_cells, reference
         )
         barycentric = (
-            self.base._reference_weights(reference)
+            self.base.reference_weights(reference)
             if isinstance(
-                self.base, (PreparedMappedCellLocator, PreparedSimplicialCellLocator)
+                self.base,
+                (
+                    PreparedMappedCellLocator,
+                    simplicial_locator_owner.PreparedSimplicialCellLocator,
+                ),
             )
             else result.barycentric
         )
@@ -2873,9 +3476,11 @@ class _PacketLocator(AbstractCellLocator, NonTrainableState):
                 found.astype(jnp.int32),
                 jnp.where(
                     found,
-                    int(CellLocationStatus.LOCATED),
+                    int(simplicial_locator_owner.CellLocationStatus.LOCATED),
                     jnp.where(
-                        result.successful, int(CellLocationStatus.OUTSIDE), result.status
+                        result.successful,
+                        int(simplicial_locator_owner.CellLocationStatus.OUTSIDE),
+                        result.status,
                     ),
                 ),
                 found,
@@ -2886,27 +3491,320 @@ class _PacketLocator(AbstractCellLocator, NonTrainableState):
 
 
 @final
-class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
-    """Actual FE/FV field queries at sorted receptor IDs, never a vertex downgrade.
+class _FieldTargets(StrictModule, NonTrainableState):
+    """Receptor evidence and donor packets admitted for the field epoch."""
 
-    Coefficients follow each donor owner's full FE DOF or FV cell-average order,
-    not sorted support-scope IDs. Outputs follow this route's ``receptors``.
-    Signed high-order/Piola weights remain owned by the canonical field query.
-    ``transpose`` is available only for coefficient-linear owners, and is not
-    a conservation proof. FV requires an explicit owning reconstruction policy;
+    receptors: tuple[OversetReceptorEvidence, ...]
+    packets: tuple[OversetDonorPacket, ...]
+
+
+def _prepare_field_targets(
+    connectivity: OversetConnectivity, previous: OversetConnectivity | None, /
+) -> _FieldTargets:
+    receptors, packets = connectivity.receptors, connectivity.packets
+    if previous is None:
+        return _FieldTargets(receptors, packets)
+    if connectivity.predecessor_id != previous.connectivity_id:
+        raise ValueError(
+            "_prepare_field_targets.connectivity.predecessor_id must equal previous.connectivity_id; got a different predecessor."
+        )
+    records, donor_packets = [], []
+    parts = connectivity.assembly.parts
+    with _field_packet_coordinate_phase(connectivity) as budget:
+        for index in range(len(parts)):
+            evidence, donors = _receptor_evidence(
+                index,
+                parts,
+                connectivity.specs,
+                connectivity.geometries,
+                connectivity.blanking,
+                connectivity.policy,
+                previous.blanking,
+                budget=budget,
+            )
+            records.append(evidence)
+            donor_packets.extend(
+                _donor_packets(
+                    index,
+                    parts,
+                    connectivity.specs,
+                    connectivity.geometries,
+                    evidence,
+                    donors,
+                    budget=budget,
+                )
+            )
+    receptors, packets = tuple(records), tuple(donor_packets)
+    if any(item.orphan_ids.size for item in receptors):
+        raise OversetConnectivityError(
+            "_prepare_field_targets.receptors must give every requested motion-transfer point a valid old-state donor; got one or more orphan points.",
+            connectivity,
+            field_evidence=receptors,
+        )
+    return _FieldTargets(receptors, packets)
+
+
+@final
+class _DonorFieldBindings(StrictModule, NonTrainableState):
+    """Validated FE/FV reconstructions and their full coefficient layouts."""
+
+    reconstructions: dict[tuple[str, str], views_owner.PreparedFieldReconstruction]
+    layouts: dict[str, views_owner.PreparedFieldReconstruction]
+    names: tuple[str, ...] = eqx.field(static=True)
+    coefficient_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    value_shape: tuple[int, ...] = eqx.field(static=True)
+
+
+def _prepare_fe_donor(
+    connectivity: OversetConnectivity,
+    result: CellMeshingResult,
+    name: str,
+    binding: FiniteElementDiscretization,
+    field_name: str,
+    packets: tuple[OversetDonorPacket, ...],
+    /,
+) -> dict[tuple[str, str], views_owner.PreparedFieldReconstruction]:
+    if binding.mesh.mesh_id != result.mesh.mesh_id:
+        raise ValueError(
+            "overset_field_transfer.discretizations must bind the donor mesh revision; got a different FE mesh."
+        )
+    if (
+        binding.default_runtime.geometry_layout_id != result.geometry.geometry_layout_id
+        or not np.array_equal(
+            np.asarray(binding.default_runtime.coordinates),
+            np.asarray(result.geometry.coordinates),
+        )
+    ):
+        raise ValueError(
+            "overset_field_transfer.discretizations must bind the donor coordinate map; got a different FE geometry."
+        )
+    served_blocks = {
+        packet.donor_block for packet in packets if packet.donor_part == name
+    }
+    # Unused supplied fields still retain and validate their full layout.
+    if not served_blocks:
+        served_blocks = {binding.dof_maps[binding.field_index(field_name)].block_names[0]}
+    reconstructions = {}
+    for block in sorted(served_blocks):
+        block_index = binding.dof_maps[binding.field_index(field_name)].block_names.index(
+            block
+        )
+        cell_map = PreparedFiniteElementCellMap(binding, block_index)
+        locator = None
+        if isinstance(cell_map.coordinate_element, RestrictedCellGeometryElement):
+            geometry = connectivity.geometries[connectivity.part_index(name)]
+            policy = geometry.locators[geometry.block_names.index(block)].policy
+            locator = PreparedMappedCellLocator(
+                cell_map, binding.default_runtime.coordinates, policy
+            )
+        reconstructions[name, block] = prepare_finite_element_field_reconstruction(
+            binding,
+            field_name,
+            block_name=block,
+            locator=locator,
+            location_policy=connectivity.policy.location_policy,
+        )
+    return reconstructions
+
+
+def _require_fv_donor(
+    binding: views_owner.PreparedFieldReconstruction, result: CellMeshingResult, /
+) -> None:
+    match binding.kernel:
+        case UnstructuredFiniteVolumeFieldReconstructionKernel() as kernel:
+            pass
+        case _:
+            raise TypeError(
+                "overset_field_transfer.discretizations must retain an unstructured FV reconstruction kernel; got another kernel kind."
+            )
+    kernel.require_source_geometry(result.geometry)
+    match kernel.discretization:
+        case (
+            unstructured_owner.UnstructuredFiniteVolumeDiscretization() as discretization
+        ):
+            geometry = discretization.cell_geometry
+            coordinates = (
+                result.mesh.coordinates if geometry is None else geometry.coordinates
+            )
+        case TriangleFiniteVolumeDiscretization():
+            coordinates = result.mesh.coordinates
+        case _ as unknown:
+            assert_never(unknown)
+    if (
+        kernel.discretization.mesh.mesh_id != result.mesh.mesh_id
+        or kernel.locator.cell_map.cell_count
+        != sum(block.cell_count for block in result.mesh.blocks)
+        or not np.array_equal(
+            np.asarray(kernel.locator.coordinates), np.asarray(coordinates)
+        )
+    ):
+        raise ValueError(
+            "overset_field_transfer.discretizations must bind the donor mesh and coordinate revision; got a different FV geometry."
+        )
+
+
+def _prepare_donor_fields(
+    connectivity: OversetConnectivity,
+    discretizations: Mapping[
+        str, FiniteElementDiscretization | views_owner.PreparedFieldReconstruction
+    ],
+    field_name: str,
+    packets: tuple[OversetDonorPacket, ...],
+    /,
+) -> _DonorFieldBindings:
+    if not isinstance(discretizations, Mapping):
+        raise TypeError(
+            "_prepare_donor_fields.discretizations must map donor names to FE or FV field owners; got a non-mapping value."
+        )
+    names = tuple(sorted(discretizations))
+    required = {packet.donor_part for packet in packets}
+    if not required.issubset(names):
+        raise ValueError(
+            "overset_field_transfer.discretizations must bind every served donor; got missing field owners."
+        )
+    if not names:
+        raise ValueError(
+            "overset_field_transfer.discretizations must contain at least one donor field; got an empty mapping."
+        )
+    reconstructions, layouts = {}, {}
+    for name in names:
+        result = _cell_result(connectivity.assembly.part(name))
+        match discretizations[name]:
+            case FiniteElementDiscretization() as binding:
+                fields = _prepare_fe_donor(
+                    connectivity, result, name, binding, field_name, packets
+                )
+                reconstructions.update(fields)
+                layouts[name] = next(reversed(fields.values()))
+            case views_owner.PreparedFieldReconstruction() as binding:
+                _require_fv_donor(binding, result)
+                for block in result.mesh.blocks:
+                    reconstructions[name, block.name] = binding
+                layouts[name] = binding
+            case _:
+                raise TypeError(
+                    "overset_field_transfer.discretizations must contain FE discretizations or FV field reconstructions; got another donor owner kind."
+                )
+    shapes = tuple(layouts[name].coefficient_shape for name in names)
+    value_shapes = {owner.value_shape for owner in reconstructions.values()}
+    if len(value_shapes) != 1:
+        raise ValueError(
+            "overset_field_transfer.discretizations must share one component shape; got different donor value shapes."
+        )
+    return _DonorFieldBindings(
+        reconstructions, layouts, names, shapes, next(iter(value_shapes))
+    )
+
+
+@final
+class _PacketFieldRoute(StrictModule, NonTrainableState):
+    """One field query and the overlay carrying its source support evidence."""
+
+    query: field_query_owner.PreparedFieldQuery
+    coupling: OversetCoupling
+
+
+def _prepare_packet_field_route(
+    connectivity: OversetConnectivity,
+    previous: OversetConnectivity | None,
+    packet: OversetDonorPacket,
+    owner: views_owner.PreparedFieldReconstruction,
+    binding: FiniteElementDiscretization | views_owner.PreparedFieldReconstruction,
+    field_name: str,
+    action: OversetValueAction | None,
+    /,
+) -> _PacketFieldRoute:
+    kernel = owner.kernel
+    match kernel:
+        case (
+            FiniteElementFieldReconstructionKernel()
+            | UnstructuredFiniteVolumeFieldReconstructionKernel()
+        ):
+            pass
+        case _:
+            raise TypeError(
+                "overset_field_transfer.reconstruction must retain an FE or FV kernel; got another reconstruction kind."
+            )
+    donor = connectivity.assembly.part(packet.donor_part)
+    target = connectivity.assembly.part(packet.receptor_part)
+    donor_index = connectivity.part_index(packet.donor_part)
+    target_index = connectivity.part_index(packet.receptor_part)
+    geometry = connectivity.geometries[donor_index]
+    offset = (
+        geometry.block_offsets[geometry.block_names.index(packet.donor_block)]
+        if isinstance(kernel, UnstructuredFiniteVolumeFieldReconstructionKernel)
+        else 0
+    )
+    locator = _PacketLocator(kernel.locator, packet, cell_offset=offset)
+    admissible = np.array(_admissible(connectivity.blanking[donor_index]), copy=True)
+    if previous is not None:
+        admissible &= np.asarray(previous.blanking[donor_index].cell_status) != int(
+            OversetCellStatus.HOLE
+        )
+    match kernel:
+        case FiniteElementFieldReconstructionKernel():
+            match binding:
+                case FiniteElementDiscretization():
+                    pass
+                case _:
+                    raise TypeError(
+                        "overset_field_transfer.packet must retain its FE discretization; got another donor binding kind."
+                    )
+            reconstruction = prepare_finite_element_field_reconstruction(
+                binding,
+                field_name,
+                block_name=packet.donor_block,
+                locator=locator,
+                support_geometry=owner.support_geometry,
+            )
+            query = field_query_owner.PreparedFieldQuery(reconstruction, packet.points)
+            support_ids = np.unique(np.asarray(packet.donor_cells))
+        case UnstructuredFiniteVolumeFieldReconstructionKernel():
+            query = kernel.prepare_packet_query(
+                owner, locator, packet.points, jnp.asarray(admissible)
+            )
+            support_rows = kernel.query_support_rows(query)
+            support_ids = np.asarray(geometry.cell_ids)[support_rows]
+        case _ as unknown:
+            assert_never(unknown)
+    holes = connectivity.blanking[target_index].vertex_ids_with(OversetVertexStatus.HOLE)
+    coupling = OversetCoupling.from_field_query(
+        donor,
+        target,
+        donor.scope(donor.intrinsic_dimension, support_ids),
+        target.scope(0, packet.receptor_ids),
+        query,
+        hole_scope=target.scope(0, holes) if holes.size else None,
+        rotation=packet.rotation,
+        translation=packet.translation,
+        value_action="invariant" if action is None else action,
+        source_image_rotation=connectivity.specs[donor_index].image_rotation,
+        target_image_rotation=connectivity.specs[target_index].image_rotation,
+    )
+    return _PacketFieldRoute(query, coupling)
+
+
+@final
+class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
+    """Prepare FE/FV field queries at sorted receptor IDs.
+
+    Coefficients follow each donor owner's full FE DOF or FV cell-average order, not
+    sorted support-scope IDs. Outputs follow this route's ``receptors``. Signed
+    high-order/Piola weights remain defined by the source-bound field query.
+    ``transpose`` is available only for coefficient-linear owners and is not a
+    conservation proof. FV requires an explicit reconstruction policy from its owner;
     ``field_name`` selects FE fields, never an implicit replacement FV policy.
-    Supplying ``previous`` also fills newly uncovered vertices and excludes
-    predecessor holes. Coefficients must be the accepted predecessor or
-    material-attached state, including accepted field-filled fringe values;
-    ``CompositionTransport`` owns that fill obligation. Those coefficients
-    are interpreted on the candidate coordinate map. Every current FV
-    coefficient-read stencil must remain active, not hole/fringe state.
-    Image-bound fields require an explicit `value_action`: invariant components,
-    polar vectors under exact source isometries, or explicitly contravariant
-    components under numeric affine maps. Vector outputs are in each target's
-    original stored source chart; applying that target's image rotation yields
-    registered-world components. The donor field basis and source coordinate
-    certificate are never replaced by an image mesh.
+    Supplying ``previous`` also fills newly uncovered vertices and excludes predecessor
+    holes. Coefficients must be the accepted predecessor or material-attached state,
+    including accepted field-filled fringe values; ``CompositionTransport`` carries that
+    fill obligation. Those coefficients are interpreted on the candidate coordinate map.
+    Every current FV coefficient-read stencil must remain active, not hole/fringe state.
+    Image-bound fields require an explicit `value_action`: invariant components, polar
+    vectors under source isometries satisfying the Euclidean Gram identity `R^T R = I`
+    in encoded-coefficient arithmetic, or explicitly contravariant components under
+    numeric affine maps. Vector outputs are in each target's stored source chart;
+    applying that target's image rotation yields registered-world components. The donor
+    field basis and source coordinate certificate are never replaced by an image mesh.
     """
 
     connectivity: OversetConnectivity
@@ -2914,7 +3812,7 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
     receptors: tuple[OversetReceptorEvidence, ...]
     packets: tuple[OversetDonorPacket, ...]
     previous_id: str | None = eqx.field(static=True)
-    queries: tuple[PreparedFieldQuery, ...]
+    queries: tuple[field_query_owner.PreparedFieldQuery, ...]
     field_couplings: tuple[OversetCoupling, ...]
     donor_names: tuple[str, ...] = eqx.field(static=True)
     coefficient_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
@@ -2924,11 +3822,12 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
     value_action: OversetValueAction | None = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         connectivity: OversetConnectivity,
         discretizations: Mapping[
-            str, FiniteElementDiscretization | PreparedFieldReconstruction
+            str, FiniteElementDiscretization | views_owner.PreparedFieldReconstruction
         ],
         field_name: str,
         /,
@@ -2937,10 +3836,7 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
         record_phase: NativeMeshingPhaseRecorder | None = None,
         value_action: OversetValueAction | None = None,
     ) -> None:
-        from ._measurements import phase_started, record_elapsed
 
-        if record_phase is not None and not callable(record_phase):
-            raise TypeError("record_phase must be a phase recorder callable or None.")
         action = (
             None
             if value_action is None
@@ -2950,237 +3846,38 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
             spec.image_rotation is not None for spec in connectivity.specs
         ):
             raise ValueError(
-                "Image-bound fields require an explicit invariant, polar-vector or contravariant-vector value_action."
+                "PreparedOversetFieldTransfer.value_action must be explicitly invariant, polar-vector, or contravariant-vector for image-bound fields; got no value_action."
             )
         if action == "polar-vector" and any(
             not spec.image_isometry_exact for spec in connectivity.specs
         ):
             raise ValueError(
-                "Polar-vector fields require exact encoded source-image isometries; declare contravariant-vector for an affine map."
+                "PreparedOversetFieldTransfer.value_action must use polar-vector only when every image's encoded coefficients satisfy the Euclidean Gram identity; got a non-isometric affine image."
             )
         interpolation_started = phase_started(record_phase)
         connectivity.require_complete()
-        if previous is not None and not isinstance(previous, OversetConnectivity):
-            raise TypeError("previous must be an accepted OversetConnectivity or None.")
-        receptors, packets = connectivity.receptors, connectivity.packets
-        if previous is not None:
-            if connectivity.predecessor_id != previous.connectivity_id:
-                raise ValueError(
-                    "Motion interpolation must bind this registration's predecessor."
-                )
-            records, donor_packets = [], []
-            parts = connectivity.assembly.parts
-            for index, part in enumerate(parts):
-                evidence, donors = _receptor_evidence(
-                    index,
-                    parts,
-                    connectivity.specs,
-                    connectivity.geometries,
-                    connectivity.blanking,
-                    connectivity.policy,
-                    previous.blanking,
-                )
-                records.append(evidence)
-                donor_packets.extend(
-                    _donor_packets(
-                        index,
-                        parts,
-                        connectivity.specs,
-                        connectivity.geometries,
-                        evidence,
-                        donors,
-                    )
-                )
-            receptors, packets = tuple(records), tuple(donor_packets)
-            if any(item.orphan_ids.size for item in receptors):
-                raise OversetConnectivityError(
-                    "Motion field transfer has uncovered or receptor points without valid old-state donors.",
-                    connectivity,
-                    field_evidence=receptors,
-                )
-        from ..discretization.finite_volume._field_view import (
-            UnstructuredFiniteVolumeFieldReconstructionKernel,
-        )
-
-        if not isinstance(discretizations, Mapping):
-            raise TypeError(
-                "discretizations must map donors to actual FE or FV field owners."
-            )
-        names = tuple(sorted(discretizations))
-        required = {packet.donor_part for packet in packets}
-        if not required.issubset(names):
-            raise ValueError("Every served donor needs its actual field binding.")
-        if not names:
-            raise ValueError("At least one actual donor field must be supplied.")
-        reconstructions: dict[tuple[str, str], PreparedFieldReconstruction] = {}
-        layouts: dict[str, PreparedFieldReconstruction] = {}
-        for name in names:
-            result = _cell_result(connectivity.assembly.part(name))
-            binding = discretizations[name]
-            if isinstance(binding, FiniteElementDiscretization):
-                if binding.mesh.mesh_id != result.mesh.mesh_id:
-                    raise ValueError(
-                        "Donor FE fields are bound to another mesh revision."
-                    )
-                if (
-                    binding.default_runtime.geometry_layout_id
-                    != result.geometry.geometry_layout_id
-                    or not np.array_equal(
-                        np.asarray(binding.default_runtime.coordinates),
-                        np.asarray(result.geometry.coordinates),
-                    )
-                ):
-                    raise ValueError(
-                        "Donor FE fields are bound to another coordinate map."
-                    )
-                served_blocks = {
-                    packet.donor_block for packet in packets if packet.donor_part == name
-                }
-                # Unused supplied fields still retain and validate their real layout.
-                if not served_blocks:
-                    served_blocks = {
-                        binding.dof_maps[binding._field_index(field_name)].block_names[0]
-                    }
-
-                for block in sorted(served_blocks):
-                    block_index = binding.dof_maps[
-                        binding._field_index(field_name)
-                    ].block_names.index(block)
-                    cell_map = PreparedFiniteElementCellMap(binding, block_index)
-                    locator = None
-                    if isinstance(
-                        cell_map.coordinate_element, RestrictedCellGeometryElement
-                    ):
-                        geometry = connectivity.geometries[connectivity.part_index(name)]
-                        policy = geometry.locators[
-                            geometry.block_names.index(block)
-                        ].policy
-                        locator = PreparedMappedCellLocator(
-                            cell_map, binding.default_runtime.coordinates, policy
-                        )
-                    reconstruction = prepare_finite_element_field_reconstruction(
-                        binding,
-                        field_name,
-                        block_name=block,
-                        locator=locator,
-                        location_policy=connectivity.policy.location_policy,
-                    )
-                    reconstructions[name, block] = reconstruction
-                    layouts[name] = reconstruction
-            elif isinstance(binding, PreparedFieldReconstruction):
-                kernel = binding.kernel
-                if not isinstance(
-                    kernel, UnstructuredFiniteVolumeFieldReconstructionKernel
-                ):
-                    raise TypeError(
-                        "Explicit reconstruction must retain its owning unstructured FV operator."
-                    )
-                kernel.require_source_geometry(result.geometry)
-                owning_geometry = getattr(kernel.discretization, "cell_geometry", None)
-                coordinates = (
-                    result.mesh.coordinates
-                    if owning_geometry is None
-                    else owning_geometry.coordinates
-                )
-                if (
-                    kernel.discretization.mesh.mesh_id != result.mesh.mesh_id
-                    or kernel.locator.cell_map.cell_count
-                    != sum(block.cell_count for block in result.mesh.blocks)
-                    or not np.array_equal(
-                        np.asarray(kernel.locator.coordinates), np.asarray(coordinates)
-                    )
-                ):
-                    raise ValueError(
-                        "Donor FV fields are bound to another mesh/coordinate revision."
-                    )
-                for block in result.mesh.blocks:
-                    reconstructions[name, block.name] = binding
-                layouts[name] = binding
-            else:
-                raise TypeError(
-                    "Each donor needs a finite-element discretization or owning PreparedFieldReconstruction."
-                )
-        shapes = tuple(layouts[name].coefficient_shape for name in names)
-        value_shapes = {owner.value_shape for owner in reconstructions.values()}
-        if len(value_shapes) != 1:
-            raise ValueError("Overset donor fields must have one shared component shape.")
+        targets = _prepare_field_targets(connectivity, previous)
+        receptors, packets = targets.receptors, targets.packets
+        fields = _prepare_donor_fields(connectivity, discretizations, field_name, packets)
+        names, shapes = fields.names, fields.coefficient_shapes
         queries, overlays = [], []
         for packet in packets:
             key = packet.donor_part, packet.donor_block
-            if key not in reconstructions:
-                raise ValueError("The selected donor block has no actual field binding.")
-            owner = reconstructions[key]
-            kernel = owner.kernel
-            if not isinstance(
-                kernel,
-                (
-                    FiniteElementFieldReconstructionKernel,
-                    UnstructuredFiniteVolumeFieldReconstructionKernel,
-                ),
-            ):
-                raise TypeError(
-                    "Overset queries require the validated owning FE or FV reconstruction."
+            if key not in fields.reconstructions:
+                raise ValueError(
+                    "overset_field_transfer.donor_block must have a field binding; got an unbound selected block."
                 )
-            donor = connectivity.assembly.part(packet.donor_part)
-            target = connectivity.assembly.part(packet.receptor_part)
-            donor_index = connectivity.part_index(packet.donor_part)
-            target_index = connectivity.part_index(packet.receptor_part)
-            geometry = connectivity.geometries[donor_index]
-            offset = (
-                geometry.block_offsets[geometry.block_names.index(packet.donor_block)]
-                if isinstance(kernel, UnstructuredFiniteVolumeFieldReconstructionKernel)
-                else 0
+            route = _prepare_packet_field_route(
+                connectivity,
+                previous,
+                packet,
+                fields.reconstructions[key],
+                discretizations[packet.donor_part],
+                field_name,
+                action,
             )
-            locator = _PacketLocator(kernel.locator, packet, cell_offset=offset)
-            admissible = np.array(
-                _admissible(connectivity.blanking[donor_index]), copy=True
-            )
-            if previous is not None:
-                admissible &= np.asarray(
-                    previous.blanking[donor_index].cell_status
-                ) != int(OversetCellStatus.HOLE)
-            if isinstance(kernel, FiniteElementFieldReconstructionKernel):
-                binding = discretizations[packet.donor_part]
-                if not isinstance(binding, FiniteElementDiscretization):
-                    raise TypeError(
-                        "An FE packet must retain its actual finite-element discretization."
-                    )
-                reconstruction = prepare_finite_element_field_reconstruction(
-                    binding,
-                    field_name,
-                    block_name=packet.donor_block,
-                    locator=locator,
-                    support_geometry=owner.support_geometry,
-                )
-                query = PreparedFieldQuery(reconstruction, packet.points)
-                support_ids = np.unique(np.asarray(packet.donor_cells))
-            elif isinstance(kernel, UnstructuredFiniteVolumeFieldReconstructionKernel):
-                query = kernel.prepare_packet_query(
-                    owner, locator, packet.points, jnp.asarray(admissible)
-                )
-                support_rows = kernel.query_support_rows(query)
-                support_ids = np.asarray(connectivity.geometries[donor_index].cell_ids)[
-                    support_rows
-                ]
-            holes = connectivity.blanking[target_index].vertex_ids_with(
-                OversetVertexStatus.HOLE
-            )
-            overlays.append(
-                OversetCoupling.from_field_query(
-                    donor,
-                    target,
-                    donor.scope(donor.intrinsic_dimension, support_ids),
-                    target.scope(0, packet.receptor_ids),
-                    query,
-                    hole_scope=target.scope(0, holes) if holes.size else None,
-                    rotation=packet.rotation,
-                    translation=packet.translation,
-                    value_action="invariant" if action is None else action,
-                    source_image_rotation=connectivity.specs[donor_index].image_rotation,
-                    target_image_rotation=connectivity.specs[target_index].image_rotation,
-                )
-            )
-            queries.append(query)
+            queries.append(route.query)
+            overlays.append(route.coupling)
         self.assembly = MeshAssembly(
             connectivity.assembly.parts,
             couplings=(
@@ -3199,7 +3896,7 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
         self.field_couplings = tuple(overlays)
         self.donor_names = names
         self.coefficient_shapes = shapes
-        self.value_shape = next(iter(value_shapes))
+        self.value_shape = fields.value_shape
         self.field_name = str(field_name)
         self.conservative = False
         self.value_action = action
@@ -3212,14 +3909,11 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
                 "field": self.field_name,
                 "queries": [query.query_id for query in queries],
                 "actions": [coupling.coupling_id for coupling in overlays],
-                "spaces": [layouts[name].reconstruction_id for name in names],
+                "spaces": [fields.layouts[name].reconstruction_id for name in names],
             }
         )
         if record_phase is not None:
-            import jax
-
-            # Synchronize the actual prepared route/evidence outputs, not an
-            # asynchronous launch or unrelated source geometry/state arrays.
+            # Synchronize route/evidence outputs before recording preparation time.
             jax.block_until_ready(
                 tuple(
                     (query.route, query.evidence, query.admitted, query.points)
@@ -3232,17 +3926,21 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
 
     @property
     def coefficient_linear(self) -> bool:
-        """Whether every owning query admits an algebraic transpose."""
+        """Return whether every bound query admits an algebraic transpose."""
         return all(query.coefficient_linear for query in self.queries)
 
     def apply(self, coefficients: Mapping[str, ArrayLike], /) -> dict[str, Array]:
-        """Evaluate receptors in the actual FE/FV owner's full coefficient order."""
+        """Evaluate receptors using the FE/FV owner's full coefficient order."""
         if set(coefficients) != set(self.donor_names):
-            raise ValueError("Coefficients must name exactly the prepared donor fields.")
+            raise ValueError(
+                "PreparedOversetFieldTransfer.apply.coefficients.keys must equal the prepared donor_names; got missing or extra donor fields."
+            )
         arrays = {name: jnp.asarray(coefficients[name]) for name in self.donor_names}
         for name, shape in zip(self.donor_names, self.coefficient_shapes, strict=True):
             if arrays[name].shape != shape:
-                raise ValueError(f"Field {name!r} must have coefficient shape {shape}.")
+                raise ValueError(
+                    f"PreparedOversetFieldTransfer.coefficients must give field {name!r} shape {shape}; got a mismatched coefficient shape."
+                )
         dtype = jnp.result_type(*(array.dtype for array in arrays.values()))
         outputs = {
             evidence.part_name: jnp.zeros(
@@ -3259,21 +3957,26 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
         return outputs
 
     def transpose(self, cotangents: Mapping[str, ArrayLike], /) -> dict[str, Array]:
-        """Exact algebraic transpose for coefficient-linear FE/FV owners only."""
+        """Apply the algebraic transpose of the bound query operator for coefficient-linear
+        FE/FV owners only.
+        """
         if not self.coefficient_linear:
             raise ValueError(
-                "Nonlinear FV reconstruction has no global algebraic transpose; "
-                "linearize the owning PreparedFieldQuery at a supplied coefficient state."
+                "PreparedOversetFieldTransfer.transpose must use coefficient-linear reconstruction; got nonlinear FV reconstruction requiring PreparedFieldQuery linearization at a coefficient state"
             )
         if set(cotangents) != {item.part_name for item in self.receptors}:
-            raise ValueError("Cotangents must name every receptor part.")
+            raise ValueError(
+                "PreparedOversetFieldTransfer.transpose.cotangents.keys must name every receptor part and no other part; got missing or extra receptor names."
+            )
         arrays = {name: jnp.asarray(value) for name, value in cotangents.items()}
         for item in self.receptors:
             if arrays[item.part_name].shape != (
                 item.receptor_ids.size,
                 *self.value_shape,
             ):
-                raise ValueError("Receptor cotangents must follow sorted receptor IDs.")
+                raise ValueError(
+                    "PreparedOversetFieldTransfer.transpose.cotangents must have one value_shape record per sorted receptor ID; got a shape or receptor-order mismatch."
+                )
         dtype = jnp.result_type(*(array.dtype for array in arrays.values()))
         outputs = {
             name: jnp.zeros(shape, dtype=dtype)
@@ -3293,17 +3996,19 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
         *,
         axis_name: str = "parts",
         message_capacity: int,
-    ) -> PreparedOwnerLocalOversetExchange:
-        """Bind real sparse donor traffic to this fixed native query epoch.
+    ) -> overset_exchange_owner.PreparedOwnerLocalOversetExchange:
+        """Bind sparse donor traffic to this fixed native query epoch.
 
-        Explicit stable scalar coefficient IDs follow the actual flattened
-        FE/FV coefficient layout. The exchange accepts only process-local
-        owned fields and returns only process-local receptors; it does not
-        gather complete donor fields or claim distributed geometric search.
+        Explicit stable scalar coefficient IDs follow the flattened FE/FV coefficient
+        layout. The exchange accepts only process-local owned fields and returns only
+        process-local receptors; it does not gather entire donor fields or claim
+        distributed geometric search.
         """
-        from ._overset_exchange import PreparedOwnerLocalOversetExchange
 
-        return PreparedOwnerLocalOversetExchange(
+        # Lazy: _overset <-> _overset_exchange import cycle.
+        from . import _overset_exchange as overset_exchange_owner
+
+        return overset_exchange_owner.PreparedOwnerLocalOversetExchange(
             self,
             coefficient_ids,
             execution_group,
@@ -3318,7 +4023,7 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
         /,
         *,
         tolerance: float = 1e-10,
-    ) -> InterpolationTransposeEvidence:
+    ) -> views_owner.InterpolationTransposeEvidence:
         values, scattered = self.apply(coefficients), self.transpose(cotangents)
         return transpose_duality_evidence(
             jnp.concatenate([values[name].ravel() for name in sorted(values)]),
@@ -3333,10 +4038,11 @@ class PreparedOversetFieldTransfer(StrictModule, NonTrainableState):
         )
 
 
+@checked
 def prepare_overset_field_transfer(
     connectivity: OversetConnectivity,
     discretizations: Mapping[
-        str, FiniteElementDiscretization | PreparedFieldReconstruction
+        str, FiniteElementDiscretization | views_owner.PreparedFieldReconstruction
     ],
     field_name: str = "state",
     /,
@@ -3345,9 +4051,7 @@ def prepare_overset_field_transfer(
     record_phase: NativeMeshingPhaseRecorder | None = None,
     value_action: OversetValueAction | None = None,
 ) -> PreparedOversetFieldTransfer:
-    """Bind actual FE fields or explicit FV reconstruction owners and query overlays."""
-    if not isinstance(connectivity, OversetConnectivity):
-        raise TypeError("connectivity must be OversetConnectivity.")
+    """Bind FE fields or explicit FV reconstruction owners and query overlays."""
     return PreparedOversetFieldTransfer(
         connectivity,
         discretizations,
@@ -3358,6 +4062,126 @@ def prepare_overset_field_transfer(
     )
 
 
+@final
+class _OverlapDomain(StrictModule, NonTrainableState):
+    """Represented planar cell domain admitted for common refinement."""
+
+    mesh: cell_mesh_owner.CellMesh
+
+
+def _selected_polyhedral_loops(
+    connectivity: PolyhedralConnectivity, identifiers: np.ndarray, /
+) -> tuple[tuple[np.ndarray, ...], ...]:
+    cell_lookup = {
+        int(identifier): row
+        for row, identifier in enumerate(np.asarray(connectivity.cell_global_ids))
+    }
+    offsets, faces, signs = (
+        np.asarray(connectivity.cell_face_offsets),
+        np.asarray(connectivity.cell_face_values),
+        np.asarray(connectivity.cell_face_sign_values),
+    )
+    face_offsets, vertices = (
+        np.asarray(connectivity.face_vertex_offsets),
+        np.asarray(connectivity.face_vertex_values),
+    )
+    selected = []
+    for identifier in identifiers:
+        row = cell_lookup[int(identifier)]
+        loops = []
+        for face, sign in zip(
+            faces[offsets[row] : offsets[row + 1]],
+            signs[offsets[row] : offsets[row + 1]],
+            strict=True,
+        ):
+            loop = vertices[face_offsets[face] : face_offsets[face + 1]]
+            loops.append(loop if sign > 0 else loop[::-1])
+        selected.append(tuple(loops))
+    return tuple(selected)
+
+
+def _select_overlap_cells(
+    mesh: cell_mesh_owner.CellMesh, scope: MeshingScope, /
+) -> _OverlapDomain:
+    if scope.entity_dimension != mesh.topological_dimension:
+        raise ValueError(
+            "_select_overlap_cells.scope.entity_dimension must equal mesh.topological_dimension; got a non-cell scope."
+        )
+    chosen = set(np.asarray(scope.entity_ids).tolist())
+    fixed, polyhedra, poly_ids = [], {}, {}
+    for block in mesh.blocks:
+        mask = np.isin(np.asarray(block.global_ids), tuple(chosen))
+        if not np.any(mask):
+            continue
+        identifiers = np.asarray(block.global_ids)[mask]
+        if block.cell_kind != "polyhedron":
+            fixed.append(
+                reference_cell_types_owner.CellBlock(
+                    block.name,
+                    block.cell_kind,
+                    np.asarray(block.vertices)[mask],
+                    global_ids=identifiers,
+                )
+            )
+        else:
+            match mesh.connectivity:
+                case PolyhedralConnectivity() as connectivity:
+                    polyhedra[block.name] = _selected_polyhedral_loops(
+                        connectivity, identifiers
+                    )
+                case _:
+                    raise TypeError(
+                        "_select_overlap_cells.mesh.connectivity must provide PolyhedralConnectivity for selected polyhedral cells; got another incidence kind."
+                    )
+            poly_ids[block.name] = identifiers
+    if not fixed and not polyhedra:
+        raise ValueError(
+            "_select_overlap_cells.selection must contain at least one fixed or polyhedral cell; got no selected cells."
+        )
+    selected = (
+        cell_mesh_owner.CellMesh.from_mixed_3d(
+            mesh.coordinates,
+            tuple(fixed),
+            polyhedra=polyhedra,
+            vertex_global_ids=mesh.vertex_global_ids,
+            polyhedral_cell_global_ids=poly_ids,
+            numeric_version=mesh.numeric_version,
+        )
+        if mesh.ambient_dimension == 3
+        else cell_mesh_owner.CellMesh(
+            mesh.coordinates,
+            tuple(fixed),
+            vertex_global_ids=mesh.vertex_global_ids,
+            numeric_version=mesh.numeric_version,
+        )
+    )
+    return _OverlapDomain(selected)
+
+
+def _prepare_overlap_domain(
+    part: MeshPart, scope: MeshingScope | None, /
+) -> _OverlapDomain:
+    result = _cell_result(part)
+    mesh = result.mesh
+    elements, routes, coordinates = result.geometry.resolve(mesh)
+    if (
+        not np.array_equal(np.asarray(coordinates), np.asarray(mesh.coordinates))
+        or any(
+            not np.array_equal(np.asarray(route), np.asarray(block.vertices))
+            for route, block in zip(routes, mesh.blocks, strict=True)
+        )
+        or any(not _represented_linear_element(element) for element in elements)
+    ):
+        raise ValueError(
+            "_prepare_overlap_domain.domain must retain mesh coordinates, block vertex routes, and represented planar-face linear elements; got changed coordinates or incidence, or erased mapped geometry."
+        )
+    if scope is None:
+        return _OverlapDomain(mesh)
+    part.require_scope(scope)
+    return _select_overlap_cells(mesh, scope)
+
+
+@checked
 def prepare_overset_conservative_remap(
     source: MeshPart,
     target: MeshPart,
@@ -3365,115 +4189,24 @@ def prepare_overset_conservative_remap(
     *,
     source_cells: MeshingScope | None = None,
     target_cells: MeshingScope | None = None,
-    policy: CommonRefinementPolicy | None = None,
+    policy: supermesh_owner.CommonRefinementPolicy | None = None,
     record_phase: NativeMeshingPhaseRecorder | None = None,
-) -> PreparedUnstructuredConservativeRemap:
-    """Separate certified overlap remap of explicitly selected cell averages.
+) -> remap_evidence_owner.PreparedUnstructuredConservativeRemap:
+    """Prepare a separate certified overlap remap of explicitly selected cell averages.
 
-    Complete coverage is the default. Partial overlap requires an explicit
-    common-refinement policy and retains that owner's uncovered-content ledger;
+    Coverage of every requested cell is the default. Partial overlap requires an
+    explicit common-refinement policy and retains that owner's uncovered-content ledger;
     neither this route nor interpolation invents values in uncovered volume.
     """
 
-    def prepare(
-        part: MeshPart, scope: MeshingScope | None
-    ) -> UnstructuredFiniteVolumeDiscretization:
-        from ..discretization import CellBlock, CellMesh
-
-        result = _cell_result(part)
-        mesh = result.mesh
-        elements, routes, coordinates = result.geometry.resolve(mesh)
-        if (
-            not np.array_equal(np.asarray(coordinates), np.asarray(mesh.coordinates))
-            or any(
-                not np.array_equal(np.asarray(route), np.asarray(block.vertices))
-                for route, block in zip(routes, mesh.blocks, strict=True)
-            )
-            or any(not _represented_linear_element(element) for element in elements)
-        ):
-            raise ValueError(
-                "Certified overlap requires the actual represented planar-face cell domain, not erased mapped geometry."
-            )
-        if scope is not None:
-            part.require_scope(scope)
-            if scope.entity_dimension != mesh.topological_dimension:
-                raise ValueError("Conservative overlap selections must be cell scopes.")
-            chosen = set(np.asarray(scope.entity_ids).tolist())
-            fixed, polyhedra, poly_ids = [], {}, {}
-            for block in mesh.blocks:
-                mask = np.isin(np.asarray(block.global_ids), tuple(chosen))
-                if not np.any(mask):
-                    continue
-                identifiers = np.asarray(block.global_ids)[mask]
-                if block.cell_kind != "polyhedron":
-                    fixed.append(
-                        CellBlock(
-                            block.name,
-                            block.cell_kind,
-                            np.asarray(block.vertices)[mask],
-                            global_ids=identifiers,
-                        )
-                    )
-                else:
-                    connectivity = mesh.connectivity
-                    if not isinstance(connectivity, PolyhedralConnectivity):
-                        raise TypeError(
-                            "Selected polyhedral cells require their canonical full incidence."
-                        )
-                    cell_lookup = {
-                        int(identifier): row
-                        for row, identifier in enumerate(
-                            np.asarray(connectivity.cell_global_ids)
-                        )
-                    }
-                    offsets, faces, signs = (
-                        np.asarray(connectivity.cell_face_offsets),
-                        np.asarray(connectivity.cell_face_values),
-                        np.asarray(connectivity.cell_face_sign_values),
-                    )
-                    face_offsets, vertices = (
-                        np.asarray(connectivity.face_vertex_offsets),
-                        np.asarray(connectivity.face_vertex_values),
-                    )
-                    selected = []
-                    for identifier in identifiers:
-                        row = cell_lookup[int(identifier)]
-                        loops = []
-                        for face, sign in zip(
-                            faces[offsets[row] : offsets[row + 1]],
-                            signs[offsets[row] : offsets[row + 1]],
-                            strict=True,
-                        ):
-                            loop = vertices[face_offsets[face] : face_offsets[face + 1]]
-                            loops.append(loop if sign > 0 else loop[::-1])
-                        selected.append(loops)
-                    polyhedra[block.name], poly_ids[block.name] = selected, identifiers
-            if not fixed and not polyhedra:
-                raise ValueError("Conservative overlap selections must contain cells.")
-            if mesh.ambient_dimension == 3:
-                mesh = CellMesh.from_mixed_3d(
-                    mesh.coordinates,
-                    tuple(fixed),
-                    polyhedra=polyhedra,
-                    vertex_global_ids=mesh.vertex_global_ids,
-                    polyhedral_cell_global_ids=poly_ids,
-                    numeric_version=mesh.numeric_version,
-                )
-            else:
-                mesh = CellMesh(
-                    mesh.coordinates,
-                    tuple(fixed),
-                    vertex_global_ids=mesh.vertex_global_ids,
-                    numeric_version=mesh.numeric_version,
-                )
-        # The FV owner validates planarity/closure/star geometry; common
-        # refinement owns intersection and complete/partial coverage evidence.
-        return UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare()
-
     with measure_phase(record_phase, "common_refinement"):
-        remap = prepare_unstructured_conservative_remap(
-            prepare(source, source_cells),
-            prepare(target, target_cells),
+        remap = automatic_remap_owner.prepare_unstructured_conservative_remap(
+            unstructured_owner.UnstructuredFiniteVolumePlan.from_cell_mesh(
+                _prepare_overlap_domain(source, source_cells).mesh
+            ).prepare(),
+            unstructured_owner.UnstructuredFiniteVolumePlan.from_cell_mesh(
+                _prepare_overlap_domain(target, target_cells).mesh
+            ).prepare(),
             provenance="native-overset-certified-cell-overlap",
             policy=policy,
         )
@@ -3482,6 +4215,7 @@ def prepare_overset_conservative_remap(
     return remap
 
 
+@checked
 def prepare_overset_conservative_state_transport(
     source: CompositionEntry,
     target: CompositionEntry,
@@ -3489,29 +4223,35 @@ def prepare_overset_conservative_state_transport(
     /,
     *,
     content_tolerance: float,
-    policy: CommonRefinementPolicy | None = None,
+    policy: supermesh_owner.CommonRefinementPolicy | None = None,
     record_phase: NativeMeshingPhaseRecorder | None = None,
-) -> tuple[PreparedUnstructuredConservativeRemap, tuple[CompositionTransport, ...]]:
-    """Execute complete-overlap cell-average state transport for a moving part.
+) -> tuple[
+    remap_evidence_owner.PreparedUnstructuredConservativeRemap,
+    tuple[CompositionTransport, ...],
+]:
+    """Execute cell-average state transport with overlap covering every requested cell of a
+    moving part.
 
-    Physical fields, material densities and spatial history registers use the
-    same certified physical intersections, with separate inventory evidence for
-    every component. Categorical material labels are not cell-average fields.
-    The caller supplies topology entries and every state disposition explicitly.
-    Motion changing the represented domain needs an exterior-content ledger;
-    this complete-overlap route never invents incoming values or discards outflow.
+    Physical fields, material densities and spatial history registers use the same
+    certified physical intersections, with separate inventory evidence for every
+    component. Categorical material labels are not cell-average fields. The caller
+    supplies topology entries and every state disposition explicitly. Motion changing
+    the represented domain needs an exterior-content ledger; this full-overlap route
+    never invents incoming values or discards outflow.
     """
-    if not isinstance(source, CompositionEntry) or not isinstance(
-        target, CompositionEntry
-    ):
-        raise TypeError("Conservative motion requires explicit topology entries.")
     if source.role != "topology" or target.role != "topology":
-        raise ValueError("Conservative motion binds topology owner entries.")
+        raise ValueError(
+            "prepare_overset_conservative_state_transport.source.role must be topology together with target.role; got a non-topology endpoint role."
+        )
     if not isinstance(source.value, MeshPart) or not isinstance(target.value, MeshPart):
-        raise TypeError("Conservative motion topology entries must hold MeshParts.")
+        raise TypeError(
+            "prepare_overset_conservative_state_transport.source.value must hold MeshPart together with target.value; got a non-MeshPart endpoint value."
+        )
     old, new = source.value, target.value
     if old.name != new.name or source.entry_id != target.entry_id:
-        raise ValueError("Conservative motion preserves the registered part identity.")
+        raise ValueError(
+            "prepare_overset_conservative_state_transport.target must preserve the source part name and entry_id; got a changed registered part identity."
+        )
     if (
         source.structure_id != _cell_result(old).mesh.topology_id
         or target.structure_id != _cell_result(new).mesh.topology_id
@@ -3519,22 +4259,26 @@ def prepare_overset_conservative_state_transport(
         or target.revision_id != new.part_id
     ):
         raise ValueError(
-            "Conservative motion topology entries bind stale mesh identities."
+            "prepare_overset_conservative_state_transport.source must bind the source mesh topology and part revision, and target must bind its successor; got stale endpoint mesh identities."
         )
     tolerance = float(content_tolerance)
     if not np.isfinite(tolerance) or tolerance < 0:
-        raise ValueError("Conserved-content tolerance must be finite and nonnegative.")
+        raise ValueError(
+            "prepare_overset_conservative_state_transport.content_tolerance must be finite and non-negative; got a non-finite or negative value."
+        )
     if not states or any(not isinstance(state, CompositionEntry) for state in states):
         raise TypeError(
-            "Conservative motion requires explicit cell-average state entries."
+            "prepare_overset_conservative_state_transport.states must be a non-empty collection of CompositionEntry values; got no states or a non-CompositionEntry state."
         )
     for state in states:
         if state.role not in ("physical-state", "model-state", "history"):
             raise ValueError(
-                "Conservative cell averages must declare physical, material-model, or history state."
+                "prepare_overset_conservative_state_transport.state.role must be 'physical-state', 'model-state', or 'history'; got another state role."
             )
         if state.structure_id != source.structure_id:
-            raise ValueError("Cell-average state must bind the source cell topology.")
+            raise ValueError(
+                "prepare_overset_conservative_state_transport.state.structure_id must equal source.structure_id; got a state bound to different cell topology."
+            )
         bindings = [
             binding
             for binding in state.dependencies
@@ -3542,7 +4286,7 @@ def prepare_overset_conservative_state_transport(
         ]
         if len(bindings) != 1 or bindings[0].bound_id != source.revision_id:
             raise ValueError(
-                "Cell-average state must bind the exact source part revision."
+                "prepare_overset_conservative_state_transport.state.bindings must contain one binding whose bound_id equals source.revision_id; got zero, multiple, or stale revision bindings."
             )
     prepared = prepare_overset_conservative_remap(
         old,
@@ -3552,17 +4296,19 @@ def prepare_overset_conservative_state_transport(
     )
     remap = prepared.plan
     if not prepared.succeeded or remap is None:
-        raise ValueError(f"Moving conservative state overlap refused: {prepared.reason}")
+        raise ValueError(
+            f"prepare_overset_conservative_state_transport.overlap must succeed with a remap; got overlap refused: {prepared.reason}"
+        )
     if not remap.require_complete:
         raise ValueError(
-            "Moving conservative state requires complete overlap or an explicit exterior-content owner."
+            "prepare_overset_conservative_state_transport.remap must cover every requested cell or bind an exterior-content owner; got partial overlap without exterior-content ownership."
         )
     transports = []
     for state in states:
         values = jnp.asarray(state.value)
         if not jnp.issubdtype(values.dtype, jnp.floating):
             raise ValueError(
-                "Conservative state values must be real cell-average densities, not categorical labels."
+                "prepare_overset_conservative_state_transport.state.values.dtype must be floating for real cell-average densities; got a non-floating or categorical dtype."
             )
         output = remap.apply(values)
         successful = jnp.all(jnp.isfinite(values)) & jnp.all(jnp.isfinite(output))
@@ -3624,15 +4370,20 @@ class PreparedOversetMotion(StrictModule, NonTrainableState):
     rebind: CompositionRebind
 
     def commit(self, /, *, accepted_boundary: bool) -> CompositionRebindReceipt:
-        """Publish only complete coverage and successful owner state transports."""
+        """Publish only when every requested entity satisfies the coverage contract and
+        owner state transports succeed.
+        """
         if not isinstance(accepted_boundary, bool):
-            raise TypeError("accepted_boundary must be an explicit host bool decision.")
+            raise TypeError(
+                "PreparedOversetMotion.commit.accepted_boundary must be a host bool; got a non-bool decision."
+            )
         return commit_composition_rebind(
             self.rebind,
             accepted_boundary=accepted_boundary and self.candidate.complete,
         )
 
 
+@checked
 def prepare_overset_motion_rebind(
     composition: Composition,
     previous: OversetConnectivity,
@@ -3644,34 +4395,31 @@ def prepare_overset_motion_rebind(
     retain: tuple[str, ...] = (),
     invalidate: tuple[str, ...] = (),
 ) -> PreparedOversetMotion:
-    """Stage motion through CompositionRebind; never infer/drop/reset any state.
+    """Stage motion through CompositionRebind without inferring, dropping or resetting any
+    state.
 
     Physical, history, RNG, field, geometry-associated and solver-derived entries
-    outside the overset owner require their explicit caller dispositions. Stale
-    bindings or missing obligations fail at staging. Failed coverage or transport
-    returns the original composition object on commit.
+    outside the overset owner require their explicit caller dispositions. Stale bindings
+    or missing obligations fail at staging. Failed coverage or transport returns the
+    previous composition object on commit.
     """
-    if not isinstance(composition, Composition):
-        raise TypeError("composition must be Composition.")
-    if not isinstance(previous, OversetConnectivity) or not isinstance(
-        candidate, OversetConnectivity
-    ):
-        raise TypeError("Moving registrations must be OversetConnectivity values.")
     if (
         candidate.epoch != previous.epoch + 1
         or candidate.predecessor_id != previous.connectivity_id
     ):
         raise ValueError(
-            "Motion must advance exactly one epoch of this accepted registration."
+            "prepare_overset_motion_rebind.candidate must advance the previous epoch by one and name previous.connectivity_id as predecessor; got a skipped epoch or different predecessor."
         )
     if tuple(spec.part_name for spec in candidate.specs) != tuple(
         spec.part_name for spec in previous.specs
     ):
-        raise ValueError("Motion preserves every registered part identity.")
+        raise ValueError(
+            "prepare_overset_motion_rebind.candidate.specs must preserve every previous part_name in order; got changed or reordered registered part identities."
+        )
     for old, new in zip(previous.assembly.parts, candidate.assembly.parts, strict=True):
         if _cell_result(old).mesh.topology_id != _cell_result(new).mesh.topology_id:
             raise ValueError(
-                "Fixed-topology overset motion preserves all entity identities."
+                "prepare_overset_motion_rebind.new.mesh.topology_id must equal old.mesh.topology_id and preserve all entity identities; got changed topology."
             )
     old_entries, new_entries = (
         previous.composition_entries(),
@@ -3682,7 +4430,7 @@ def prepare_overset_motion_rebind(
         accepted = composition.entry(old.entry_id)
         if accepted.record_id != old.record_id:
             raise ValueError(
-                "The composition does not hold this accepted registration revision."
+                "prepare_overset_motion_rebind.accepted.record_id must equal old.record_id; got a composition entry for another registration revision."
             )
         if old.record_id == new.record_id:
             own_retain.append(old.entry_id)
@@ -3700,7 +4448,7 @@ def prepare_overset_motion_rebind(
 
 @final
 class OversetRegistration(StrictModule, NonTrainableState):
-    """Canonical immutable restart descriptor, excluding prepared spatial state."""
+    """Describe an immutable restart registration, excluding prepared spatial state."""
 
     assembly: MeshAssembly
     specs: tuple[OversetPartSpec, ...]
@@ -3716,18 +4464,20 @@ class OversetRegistration(StrictModule, NonTrainableState):
         record_phase: NativeMeshingPhaseRecorder | None = None,
     ) -> OversetConnectivity:
         """Rebuild and verify all blanking/donors against the persisted identity."""
-        result = _prepare(
-            self.assembly.parts,
-            self.assembly.couplings,
-            self.specs,
-            self.policy,
-            None,
-            epoch=self.epoch,
-            predecessor_id=self.predecessor_id,
-            record_phase=record_phase,
-        )
+        with NativeExecutionScope(self.policy.native_limits()) as scope:
+            result = _prepare(
+                self.assembly.parts,
+                self.assembly.couplings,
+                self.specs,
+                self.policy,
+                None,
+                scope=scope,
+                epoch=self.epoch,
+                predecessor_id=self.predecessor_id,
+                record_phase=record_phase,
+            )
         if result.connectivity_id != self.connectivity_id:
             raise ValueError(
-                "Restart inputs do not reproduce the registered connectivity."
+                "OversetRegistration.prepare.result.connectivity_id must equal OversetRegistration.connectivity_id; got a restart connectivity mismatch."
             )
         return result

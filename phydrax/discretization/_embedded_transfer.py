@@ -223,7 +223,7 @@ class PreparedEmbeddedMeasureTransfer(StrictModule):
         )
         coverage = jnp.mean(support_, axis=1)
         constant = self.average_constant()
-        constant_residual = jnp.max(jnp.abs(constant - 1.0))
+        constant_residual = jnp.max(jnp.abs(constant - 1.0), initial=0.0)
         source_probe = (
             jnp.arange(self.source_measures.shape[0], dtype=target.real.dtype) + 1.0
         )

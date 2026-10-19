@@ -166,6 +166,9 @@ estimators, deterministic unscrambled QMC, adaptive MLMC allocation, and
 unresolved limit truncation are not promoted to IID unbiased replicate means.
 Fixed controls or a genuinely independent IID calibration pilot can preserve
 that contract. Explicit plug-in remains available with unknown uncertainty.
+Product plans require every factor, recursively, to certify unbiased replicate
+means. A randomized sibling does not remove the bias of fixed quadrature or
+unscrambled QMC, so such products retain an unknown sampling design.
 
 Both randomized term families accept `IntegrationPrecisionPolicy`. Realization
 values are widened before event and ensemble reductions; U-statistic signs are

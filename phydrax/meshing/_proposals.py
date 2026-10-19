@@ -7,7 +7,8 @@ from __future__ import annotations
 import math
 import time
 from abc import abstractmethod
-from typing import Any, ClassVar, final, Literal, TypeAlias
+from collections.abc import Callable
+from typing import ClassVar, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -15,6 +16,19 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+
+import phydrax._model._component as _dependency_phydrax__model__component
+import phydrax._model._ports as _dependency_phydrax__model__ports
+import phydrax.meshing._adaptation as _dependency_phydrax_meshing__adaptation
+import phydrax.meshing._audit as _dependency_phydrax_meshing__audit
+import phydrax.meshing._contracts as _dependency_phydrax_meshing__contracts
+import phydrax.meshing._metric as _dependency_phydrax_meshing__metric
+import phydrax.meshing._mixed_adaptation as _dependency_phydrax_meshing__mixed_adaptation
+import phydrax.meshing._optimization as _dependency_phydrax_meshing__optimization
+import phydrax.meshing._quality as _dependency_phydrax_meshing__quality
+import phydrax.meshing._result as _dependency_phydrax_meshing__result
+import phydrax.meshing._scope as _dependency_phydrax_meshing__scope
+import phydrax.meshing._sizing as _dependency_phydrax_meshing__sizing
 
 from .._differentiation import ComponentAuthority
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -26,11 +40,10 @@ from .._model import (
     ModelPorts,
     PortMapping,
 )
-from .._model._component import bind_positional_component
-from .._model._ports import require_port_shapes
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import normalized_identifier
 from ..discretization import (
     CellGeometrySpec,
     CellMesh,
@@ -39,60 +52,36 @@ from ..discretization import (
     TetrahedralConnectivity,
 )
 from ..optim import OptimizationTermination
-from ..typing import checked, Dim, Float64, Identifier, Identifiers, parse
-from ._adaptation import (
-    execute_mesh_adaptation,
-    MarkedMeshAdaptation,
-    MeshAdaptationHierarchy,
-    MeshAdaptationPolicy,
-    MeshAdaptationResult,
-    MeshAdaptationRoute,
-    MetricMeshAdaptation,
-    prepare_mesh_adaptation,
+from ..typing import (
+    checked,
+    ConvertibleToArray,
+    Dim,
+    Float64,
+    Identifier,
+    Identifiers,
+    parse,
+    PRNGKey,
 )
-from ._audit import audit_cell_mesh, CellMeshAuditPolicy, CellMeshAuditReport
-from ._contracts import MeshingLimits
 from ._measurements import measure_phase, NativeMeshingPhaseRecorder
-from ._metric import (
-    _grade_scalar_sizes,
-    MeshMetricField,
-    MeshMetricSamples,
-    MetricGradationKind,
-    MetricGradationPolicy,
-    MetricNormalizationEvidence,
-    MetricNormalizationPolicy,
-    normalize_mesh_metric,
-)
-from ._mixed_adaptation import MixedLayerColumns
-from ._optimization import (
-    MeshOptimizationResult,
-    optimize_cell_mesh,
-    TargetMatrixOptimizationPlan,
-)
-from ._quality import evaluate_cell_quality
-from ._result import CellMeshingResult, MeshingComplianceReport
-from ._scope import MeshingEntityKind, MeshingScope
-from ._sizing import ResolvedSizeField, SizeFieldDomain
 
 
+@checked
 def mesh_proposal_scope(
-    source: CellMeshingResult,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
     dimension: int,
     entity_ids: ArrayLike | None = None,
     /,
-) -> MeshingScope:
-    """Bind proposal entities to the exact certified mesh and result revision.
+) -> _dependency_phydrax_meshing__scope.MeshingScope:
+    """Bind proposal entities to the certified mesh and result revision.
 
     Proposal values always follow the scope's sorted global-ID order, not the
     mesh's storage order. Omitting IDs selects all entities of the given degree.
     """
-    if not isinstance(source, CellMeshingResult):
-        raise TypeError("source must be CellMeshingResult.")
     entities = source.mesh.entity_set(dimension)
-    scope = MeshingScope(
+    scope = _dependency_phydrax_meshing__scope.MeshingScope(
         source.mesh.mesh_id,
         source.result_id,
-        MeshingEntityKind.MESH,
+        _dependency_phydrax_meshing__scope.MeshingEntityKind.MESH,
         dimension,
         entities.entity_set_id,
         entities.entity_ids if entity_ids is None else entity_ids,
@@ -101,22 +90,25 @@ def mesh_proposal_scope(
     return scope
 
 
-def _scope_rows(source: CellMeshingResult, scope: MeshingScope) -> np.ndarray:
-    if not isinstance(scope, MeshingScope):
-        raise TypeError("scope must be MeshingScope.")
+def _scope_rows(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    scope: _dependency_phydrax_meshing__scope.MeshingScope,
+) -> np.ndarray:
     mesh = source.mesh
     if (
-        scope.entity_kind is not MeshingEntityKind.MESH
+        scope.entity_kind is not _dependency_phydrax_meshing__scope.MeshingEntityKind.MESH
         or scope.source_id != mesh.mesh_id
         or scope.source_revision != source.result_id
         or scope.entity_dimension > mesh.topological_dimension
     ):
         raise ValueError(
-            "Proposal scope has a stale or incompatible mesh revision binding."
+            f"MeshProposal.scope must bind the current mesh revision and compatible mesh entities; got {(scope.source_id, mesh.mesh_id, scope.source_revision, source.result_id, scope.entity_kind, scope.entity_dimension)!r}"
         )
     entities = mesh.entity_set(scope.entity_dimension)
     if scope.entity_set_id != entities.entity_set_id:
-        raise ValueError("Proposal scope has a stale entity-set binding.")
+        raise ValueError(
+            f"MeshProposal.scope.entity_set_id must bind the current entity set; got {(scope.entity_set_id, entities.entity_set_id)!r}"
+        )
     identifiers = np.asarray(entities.entity_ids)
     requested = np.asarray(scope.entity_ids)
     order = np.argsort(identifiers)
@@ -124,55 +116,74 @@ def _scope_rows(source: CellMeshingResult, scope: MeshingScope) -> np.ndarray:
     if np.any(positions >= identifiers.size) or not np.array_equal(
         identifiers[order[np.minimum(positions, identifiers.size - 1)]], requested
     ):
-        raise ValueError("Proposal scope contains unknown entity IDs.")
+        raise ValueError(
+            f"MeshProposal.scope.entity_ids must contain only known source entity IDs; got {requested!r}"
+        )
     rows = order[positions]
     if not np.all(np.asarray(entities.active_mask)[rows]):
-        raise ValueError("Proposal scope contains inactive entities.")
+        raise ValueError(
+            f"MeshProposal.scope.entity_ids must contain only active source entities; got {requested!r}"
+        )
     return rows
 
 
 class _AbstractMeshProposal(StrictModule, NonTrainableState):
-    scope: MeshingScope
+    """Untrusted proposal values bound to one source scope.
+
+    ``proposer_id`` names the authoring proposer; ``evaluation_id`` names the
+    evaluation that produced the values (model, features, address and
+    realization) when a learned proposer made them, else ``None``.
+    """
+
+    scope: _dependency_phydrax_meshing__scope.MeshingScope
     values: Array
     coordinate_contract_id: str = eqx.field(static=True)
     proposer_id: str = eqx.field(static=True)
+    evaluation_id: str | None = eqx.field(static=True)
     proposal_id: str = eqx.field(static=True)
 
     @checked
     def __init__(
         self,
-        source: CellMeshingResult,
-        scope: MeshingScope,
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
+        scope: _dependency_phydrax_meshing__scope.MeshingScope,
         values: ArrayLike,
         *,
         dimension: int,
         value_shape: tuple[int, ...],
         proposer_id: str,
+        evaluation_id: str | None = None,
     ) -> None:
         _scope_rows(source, scope)
         if scope.entity_dimension != dimension:
-            raise ValueError("Proposal scope has the wrong entity dimension.")
+            raise ValueError(
+                f"MeshProposal.scope.entity_dimension must match the declared proposal entity dimension; got {(scope.entity_dimension, dimension)!r}"
+            )
         data = np.asarray(values, dtype=np.float64)
         if data.shape != (scope.entity_ids.size, *value_shape) or not np.all(
             np.isfinite(data)
         ):
             raise ValueError(
-                "Proposal values must be finite and aligned with the sorted scope IDs."
+                f"MeshProposal.values must be finite and align with sorted scope IDs; got {(data.shape, scope.entity_ids.size, value_shape, bool(np.all(np.isfinite(data))))!r}"
             )
-        proposer = str(proposer_id).strip()
-        if not proposer:
-            raise ValueError("proposer_id must be non-empty.")
         self.scope = scope
-        self.values = jnp.asarray(data)
+        _host_values = np.asarray(data)
+        (self.values,) = jax.device_put((_host_values,))
         self.coordinate_contract_id = source.coordinate_contract.spatial_id
-        self.proposer_id = proposer
+        self.proposer_id = normalized_identifier(proposer_id, "proposer_id")
+        self.evaluation_id = (
+            None
+            if evaluation_id is None
+            else normalized_identifier(evaluation_id, "evaluation_id")
+        )
         self.proposal_id = canonical_fingerprint(
             {
                 "kind": type(self).__name__,
                 "scope": scope.scope_id,
                 "values": array_tree_fingerprint(self.values),
                 "coordinate_contract": self.coordinate_contract_id,
-                "proposer": proposer,
+                "proposer": self.proposer_id,
+                "evaluation": self.evaluation_id,
             }
         )
 
@@ -182,12 +193,13 @@ class MeshMarkingProposal(_AbstractMeshProposal):
 
     def __init__(
         self,
-        source: CellMeshingResult,
-        scope: MeshingScope,
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
+        scope: _dependency_phydrax_meshing__scope.MeshingScope,
         scores: ArrayLike,
         /,
         *,
         proposer_id: str,
+        evaluation_id: str | None = None,
     ) -> None:
         super().__init__(
             source,
@@ -196,6 +208,7 @@ class MeshMarkingProposal(_AbstractMeshProposal):
             dimension=source.mesh.topological_dimension,
             value_shape=(),
             proposer_id=proposer_id,
+            evaluation_id=evaluation_id,
         )
 
 
@@ -204,15 +217,22 @@ class MeshSizeProposal(_AbstractMeshProposal):
 
     def __init__(
         self,
-        source: CellMeshingResult,
-        scope: MeshingScope,
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
+        scope: _dependency_phydrax_meshing__scope.MeshingScope,
         sizes: ArrayLike,
         /,
         *,
         proposer_id: str,
+        evaluation_id: str | None = None,
     ) -> None:
         super().__init__(
-            source, scope, sizes, dimension=0, value_shape=(), proposer_id=proposer_id
+            source,
+            scope,
+            sizes,
+            dimension=0,
+            value_shape=(),
+            proposer_id=proposer_id,
+            evaluation_id=evaluation_id,
         )
 
 
@@ -221,12 +241,13 @@ class MeshMetricProposal(_AbstractMeshProposal):
 
     def __init__(
         self,
-        source: CellMeshingResult,
-        scope: MeshingScope,
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
+        scope: _dependency_phydrax_meshing__scope.MeshingScope,
         metrics: ArrayLike,
         /,
         *,
         proposer_id: str,
+        evaluation_id: str | None = None,
     ) -> None:
         dimension = source.mesh.ambient_dimension
         super().__init__(
@@ -236,28 +257,28 @@ class MeshMetricProposal(_AbstractMeshProposal):
             dimension=0,
             value_shape=(dimension, dimension),
             proposer_id=proposer_id,
+            evaluation_id=evaluation_id,
         )
 
 
 class MeshCoordinateProposal(_AbstractMeshProposal):
     """Untrusted vertex targets in one explicit, unchanged coordinate contract."""
 
+    @checked
     def __init__(
         self,
-        source: CellMeshingResult,
-        scope: MeshingScope,
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
+        scope: _dependency_phydrax_meshing__scope.MeshingScope,
         coordinates: ArrayLike,
         coordinate_contract: SpatialCoordinateContract,
         /,
         *,
         proposer_id: str,
+        evaluation_id: str | None = None,
     ) -> None:
-        if (
-            not isinstance(coordinate_contract, SpatialCoordinateContract)
-            or coordinate_contract.spatial_id != source.coordinate_contract.spatial_id
-        ):
+        if coordinate_contract.spatial_id != source.coordinate_contract.spatial_id:
             raise ValueError(
-                "Coordinate proposals require the exact source coordinate contract."
+                f"MeshCoordinateProposal.coordinate_contract must match the source coordinate contract; got {(coordinate_contract.spatial_id, source.coordinate_contract.spatial_id)!r}"
             )
         super().__init__(
             source,
@@ -266,10 +287,11 @@ class MeshCoordinateProposal(_AbstractMeshProposal):
             dimension=0,
             value_shape=(source.mesh.ambient_dimension,),
             proposer_id=proposer_id,
+            evaluation_id=evaluation_id,
         )
 
 
-MeshProposal = (
+type MeshProposal = (
     MeshMarkingProposal | MeshSizeProposal | MeshMetricProposal | MeshCoordinateProposal
 )
 
@@ -277,7 +299,7 @@ MeshProposerKind: TypeAlias = Literal["marking", "size", "metric", "coordinate"]
 
 
 class _ProposalEntityDim(Dim):
-    """Entities of the exact proposal feature scope."""
+    """Entities of the proposal feature scope."""
 
 
 class _ProposalFeatureDim(Dim, minimum=1):
@@ -286,29 +308,28 @@ class _ProposalFeatureDim(Dim, minimum=1):
 
 @final
 class MeshProposalFeatures(StrictModule, NonTrainableState):
-    """Owner-identified feature columns bound to the exact result and entity scope."""
+    """Owner-identified feature columns bound to the result and entity scope."""
 
     __strict_contract__ = True
 
     values: Float64[_ProposalEntityDim, _ProposalFeatureDim]
-    scope: MeshingScope
+    scope: _dependency_phydrax_meshing__scope.MeshingScope
     source_result_id: Identifier = eqx.field(static=True)
     feature_ids: Identifiers[_ProposalFeatureDim] = eqx.field(static=True)
     feature_owner_id: Identifier = eqx.field(static=True)
     feature_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        source: CellMeshingResult,
-        scope: MeshingScope,
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
+        scope: _dependency_phydrax_meshing__scope.MeshingScope,
         values: ArrayLike,
         /,
         *,
         feature_ids: tuple[str, ...],
         feature_owner_id: str,
     ) -> None:
-        if not isinstance(source, CellMeshingResult):
-            raise TypeError("source must be CellMeshingResult.")
         _scope_rows(source, scope)
         data = np.asarray(values, dtype=np.float64)
         identifiers = tuple(feature_ids)
@@ -321,13 +342,14 @@ class MeshProposalFeatures(StrictModule, NonTrainableState):
             or not np.all(np.isfinite(data))
         ):
             raise ValueError(
-                "Features require finite scoped rows and unique scientific column IDs."
+                f"MeshProposalFeatures.values must contain finite scoped rows and unique nonempty scientific column IDs; got {(data.shape, scope.entity_ids.size, identifiers, bool(np.all(np.isfinite(data))))!r}"
             )
         if not isinstance(feature_owner_id, str) or not feature_owner_id:
             raise ValueError(
-                "feature_owner_id must identify the producing scientific owner."
+                f"MeshProposalFeatures.feature_owner_id must identify the producing scientific owner; got {feature_owner_id!r}"
             )
-        self.values, self.scope = jnp.asarray(data, dtype=jnp.float64), scope
+        _host_values, self.scope = np.asarray(data, dtype=np.float64), scope
+        (self.values,) = jax.device_put((_host_values,))
         self.source_result_id, self.feature_ids = source.result_id, identifiers
         self.feature_owner_id = feature_owner_id
         self.feature_id = canonical_fingerprint(
@@ -348,7 +370,7 @@ class AbstractMeshProposer(AbstractComponentSlot):
     The base is the neutral `DECISION` slot of mesh adaptation: a proposer
     decides where and how a certified mesh should adapt, but it never produces
     a mesh. `propose(source, features, scope=...)` returns one typed marking,
-    size, metric or coordinate proposal bound to the exact source revision; only
+    size, metric or coordinate proposal bound to the source revision; only
     `project_mesh_proposal` and `prepare_mesh_proposal` turn it into a trusted
     candidate, under a `MeshProposalSafetyPolicy` and native adaptation.
     `features` hold one row per scope entity in sorted global-ID order.
@@ -362,21 +384,25 @@ class AbstractMeshProposer(AbstractComponentSlot):
     @abstractmethod
     def propose(
         self,
-        source: CellMeshingResult,
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
         features: MeshProposalFeatures,
         /,
         *,
-        scope: MeshingScope | None = None,
+        scope: _dependency_phydrax_meshing__scope.MeshingScope | None = None,
     ) -> MeshProposal:
         raise NotImplementedError
 
 
-def _model_value_shape(size: Any, /) -> tuple[int, ...]:
-    if size == "scalar":
-        return ()
-    if isinstance(size, int):
-        return (int(size),)
-    return tuple(size)
+def _model_value_shape(
+    size: int | tuple[int, ...] | Literal["scalar"], /
+) -> tuple[int, ...]:
+    match size:
+        case "scalar":
+            return ()
+        case int():
+            return (size,)
+        case _:
+            return tuple(size)
 
 
 class LearnedMeshProposer(AbstractMeshProposer):
@@ -385,7 +411,7 @@ class LearnedMeshProposer(AbstractMeshProposer):
     The model maps one feature row to one proposal value: a marking score per
     cell (`kind="marking"`), a size per vertex (`"size"`), a square coordinate-axis
     metric tensor (`"metric"`), or a source-contract coordinate vector
-    (`"coordinate"`). Sizes are exact: `in_size` is the feature width and `out_size`
+    (`"coordinate"`). Declared sizes bind the model: `in_size` is the feature width and `out_size`
     produces the value shape; the model must use a pointwise flat binding.
     Deterministic evaluation uses no key; stochastic proposals use explicit,
     scientific entity addresses rather than batch positions. `evaluate(features)` is the differentiable
@@ -431,7 +457,9 @@ class LearnedMeshProposer(AbstractMeshProposer):
         match kind:
             case "marking" | "size":
                 if spatial_dimension is not None:
-                    raise ValueError("Scalar proposers do not take spatial_dimension.")
+                    raise ValueError(
+                        f"LearnedMeshProposer.spatial_dimension must be absent for scalar proposers; got {(kind, spatial_dimension)!r}"
+                    )
                 value_shape = ()
             case "metric" | "coordinate":
                 if (
@@ -440,7 +468,7 @@ class LearnedMeshProposer(AbstractMeshProposer):
                     or spatial_dimension <= 0
                 ):
                     raise ValueError(
-                        "Metric/coordinate proposers require positive spatial_dimension."
+                        f"LearnedMeshProposer.spatial_dimension must be a positive integer for metric or coordinate proposals; got {spatial_dimension!r}"
                     )
                 value_shape = (
                     (spatial_dimension, spatial_dimension)
@@ -448,25 +476,32 @@ class LearnedMeshProposer(AbstractMeshProposer):
                     else (spatial_dimension,)
                 )
             case _:
-                raise ValueError(f"Unknown mesh proposer kind {kind!r}.")
+                raise ValueError(
+                    f"LearnedMeshProposer.kind must select a supported proposal kind; got {kind!r}"
+                )
         binding = model.input_binding()
         if binding.batch_mode != "pointwise" or binding.input_mode != "flat":
-            raise ValueError("Learned mesh proposers require a pointwise flat binding.")
+            raise ValueError(
+                f"LearnedMeshProposer.model.input_binding must be pointwise and flat; got {(binding.batch_mode, binding.input_mode)!r}"
+            )
         if isinstance(model.in_size, bool) or not isinstance(model.in_size, int):
-            raise ValueError("Learned mesh proposer in_size must be the feature width.")
+            raise ValueError(
+                f"LearnedMeshProposer.model.in_size must be an integer feature width; got {model.in_size!r}"
+            )
         if _model_value_shape(model.out_size) != value_shape:
             raise ValueError(
-                f"Learned {kind} proposer out_size must produce shape {value_shape}; "
-                f"got {model.out_size!r}."
+                f"LearnedMeshProposer.model.out_size must produce the declared proposal value shape; got {(model.out_size, value_shape, kind)!r}"
             )
         identifier = str(proposer_id).strip()
         if not identifier:
-            raise ValueError("proposer_id must be non-empty.")
+            raise ValueError(
+                f"LearnedMeshProposer.proposer_id must be nonempty; got {proposer_id!r}"
+            )
         site = "LearnedMeshProposer"
-        owner_ports = require_port_shapes(
+        owner_ports = _dependency_phydrax__model__ports.require_port_shapes(
             ports, inputs=((model.in_size,),), outputs=(value_shape,), site=site
         )
-        bind_positional_component(
+        _dependency_phydrax__model__component.bind_positional_component(
             model, AbstractMeshProposer, owner_ports, port_mapping, site=site
         )
         self.model = model
@@ -507,19 +542,19 @@ class LearnedMeshProposer(AbstractMeshProposer):
         rows = jnp.asarray(features)
         if rows.ndim != 2 or rows.shape[1] != self.model.in_size:
             raise ValueError(
-                f"Proposer features must have shape (entities, {self.model.in_size}); "
-                f"got {rows.shape}."
+                f"LearnedMeshProposer.features must have rank two and the declared model feature width; got {(rows.shape, self.model.in_size)!r}"
             )
         binding = self.model.input_binding()
         return jax.vmap(
             lambda row: binding.call(self.model, row, key=None, iter_=None, kwargs={})
         )(rows)
 
+    @checked
     def evaluate_addressed(
         self,
         features: ArrayLike,
         entity_ids: ArrayLike,
-        key: Array,
+        key: PRNGKey,
         /,
         *,
         address_id: str,
@@ -533,13 +568,21 @@ class LearnedMeshProposer(AbstractMeshProposer):
         rows = jnp.asarray(features)
         identifiers = jnp.asarray(entity_ids)
         if rows.ndim != 2 or rows.shape[1] != self.model.in_size:
-            raise ValueError("Addressed features must match the model feature width.")
+            raise ValueError(
+                f"LearnedMeshProposer.features must have rank two and the declared model feature width; got {(rows.shape, self.model.in_size)!r}"
+            )
         if identifiers.ndim != 1 or identifiers.shape[0] != rows.shape[0]:
-            raise ValueError("Scientific entity IDs must align with feature rows.")
+            raise ValueError(
+                f"LearnedMeshProposer.entity_ids must have rank one and align with feature rows; got {(identifiers.shape, rows.shape)!r}"
+            )
         if identifiers.dtype != jnp.dtype("int64"):
-            raise ValueError("Scientific entity IDs require signed 64-bit storage.")
+            raise ValueError(
+                f"LearnedMeshProposer.entity_ids must use signed 64-bit storage; got {identifiers.dtype!r}"
+            )
         if not isinstance(address_id, str) or not address_id:
-            raise ValueError("address_id must identify the scientific evaluation.")
+            raise ValueError(
+                f"LearnedMeshProposer.address_id must identify the scientific evaluation; got {address_id!r}"
+            )
         digest = canonical_fingerprint(
             {"kind": "mesh-proposal-random-address", "address": address_id}
         )
@@ -564,21 +607,23 @@ class LearnedMeshProposer(AbstractMeshProposer):
     @checked
     def propose(
         self,
-        source: CellMeshingResult,
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
         features: MeshProposalFeatures,
         /,
         *,
-        scope: MeshingScope | None = None,
-        key: Array | None = None,
+        scope: _dependency_phydrax_meshing__scope.MeshingScope | None = None,
+        key: PRNGKey | None = None,
     ) -> MeshProposal:
         if features.source_result_id != source.result_id:
-            raise ValueError("Learned features have a stale source result revision.")
+            raise ValueError(
+                f"MeshProposalFeatures.source_result_id must bind the current source result revision; got {(features.source_result_id, source.result_id)!r}"
+            )
         if (
             self.spatial_dimension is not None
             and self.spatial_dimension != source.mesh.ambient_dimension
         ):
             raise ValueError(
-                "Proposer coordinate axes must match the source coordinate contract."
+                f"LearnedMeshProposer.spatial_dimension must match source coordinate axes; got {(self.spatial_dimension, source.mesh.ambient_dimension)!r}"
             )
         dimension = source.mesh.topological_dimension if self.kind == "marking" else 0
         scope_ = features.scope if scope is None else scope
@@ -588,13 +633,12 @@ class LearnedMeshProposer(AbstractMeshProposer):
             or scope_.entity_dimension != dimension
         ):
             raise ValueError(
-                "Learned feature scope does not match the requested proposal entities."
+                f"MeshProposalFeatures.scope must bind the requested proposal entities; got {(scope_.scope_id, features.scope.scope_id, scope_.entity_dimension, dimension)!r}"
             )
         rows = features.values
         if rows.ndim != 2 or rows.shape[0] != scope_.entity_ids.size:
             raise ValueError(
-                "Proposer features must hold one row per scope entity in sorted "
-                "global-ID order."
+                f"MeshProposalFeatures.values must hold one row per scope entity in sorted global-ID order; got {(rows.shape, scope_.entity_ids.size)!r}"
             )
         model_id = self.model_id
         address = canonical_fingerprint(
@@ -625,13 +669,27 @@ class LearnedMeshProposer(AbstractMeshProposer):
         match self.kind:
             case "marking":
                 return MeshMarkingProposal(
-                    source, scope_, values, proposer_id=evaluation_id
+                    source,
+                    scope_,
+                    values,
+                    proposer_id=self.proposer_id,
+                    evaluation_id=evaluation_id,
                 )
             case "size":
-                return MeshSizeProposal(source, scope_, values, proposer_id=evaluation_id)
+                return MeshSizeProposal(
+                    source,
+                    scope_,
+                    values,
+                    proposer_id=self.proposer_id,
+                    evaluation_id=evaluation_id,
+                )
             case "metric":
                 return MeshMetricProposal(
-                    source, scope_, values, proposer_id=evaluation_id
+                    source,
+                    scope_,
+                    values,
+                    proposer_id=self.proposer_id,
+                    evaluation_id=evaluation_id,
                 )
             case "coordinate":
                 return MeshCoordinateProposal(
@@ -639,10 +697,13 @@ class LearnedMeshProposer(AbstractMeshProposer):
                     scope_,
                     values,
                     source.coordinate_contract,
-                    proposer_id=evaluation_id,
+                    proposer_id=self.proposer_id,
+                    evaluation_id=evaluation_id,
                 )
             case _:
-                raise ValueError(f"Unknown mesh proposer kind {self.kind!r}.")
+                raise ValueError(
+                    f"LearnedMeshProposer.kind must select a supported proposal kind; got {self.kind!r}"
+                )
 
 
 class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
@@ -655,9 +716,9 @@ class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
     """
 
     source_result_id: str = eqx.field(static=True)
-    protected_scopes: tuple[MeshingScope, ...]
-    limits: MeshingLimits
-    audit_policy: CellMeshAuditPolicy
+    protected_scopes: tuple[_dependency_phydrax_meshing__scope.MeshingScope, ...]
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits
+    audit_policy: _dependency_phydrax_meshing__audit.CellMeshAuditPolicy
     coordinate_bounds: Array | None
     minimum_size: float = eqx.field(static=True)
     maximum_size: float = eqx.field(static=True)
@@ -671,15 +732,18 @@ class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
     @checked
     def __init__(
         self,
-        source: CellMeshingResult,
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
         /,
         *,
         minimum_size: float,
         maximum_size: float,
         maximum_displacement: float,
-        protected_scopes: tuple[MeshingScope, ...] = (),
-        limits: MeshingLimits | None = None,
-        audit_policy: CellMeshAuditPolicy | None = None,
+        protected_scopes: tuple[
+            _dependency_phydrax_meshing__scope.MeshingScope, ...
+        ] = (),
+        limits: _dependency_phydrax_meshing__contracts.MeshingLimits | None = None,
+        audit_policy: _dependency_phydrax_meshing__audit.CellMeshAuditPolicy
+        | None = None,
         coordinate_bounds: ArrayLike | None = None,
         maximum_anisotropy: float = 100.0,
         maximum_gradation: float = 1.3,
@@ -692,7 +756,9 @@ class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
         if not np.all(
             np.isfinite((minimum, maximum, anisotropy, gradation, displacement))
         ):
-            raise ValueError("Safety bounds must be finite.")
+            raise ValueError(
+                f"MeshProposalSafetyPolicy.bounds must be finite; got {(minimum, maximum, anisotropy, gradation, displacement)!r}"
+            )
         if (
             minimum <= 0
             or maximum < minimum
@@ -701,7 +767,7 @@ class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
             or displacement < 0
         ):
             raise ValueError(
-                "Invalid proposal size, anisotropy, gradation, or displacement bounds."
+                f"MeshProposalSafetyPolicy.bounds must have positive ordered sizes, anisotropy and gradation at least one, and nonnegative displacement; got {(minimum, maximum, anisotropy, gradation, displacement)!r}"
             )
         normal_floor = np.sqrt(np.finfo(np.float64).tiny)
         if (
@@ -709,26 +775,30 @@ class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
             or maximum > 1.0 / normal_floor
             or anisotropy > 1.0 / normal_floor
         ):
-            raise ValueError("Safety bounds must admit representable metric eigenvalues.")
+            raise ValueError(
+                f"MeshProposalSafetyPolicy.bounds must admit representable metric eigenvalues; got {(minimum, maximum, anisotropy, normal_floor)!r}"
+            )
         marked, iterations = (
             int(maximum_marked_cells),
             int(maximum_optimization_iterations),
         )
         if marked < 0 or iterations <= 0:
             raise ValueError(
-                "Mark capacity must be non-negative and optimization iterations positive."
+                f"MeshProposalSafetyPolicy.capacity must have nonnegative mark capacity and positive optimization iterations; got {(marked, iterations)!r}"
             )
         protected = tuple(protected_scopes)
         for scope in protected:
             _scope_rows(source, scope)
-        limits_ = MeshingLimits() if limits is None else limits
-        audit_ = CellMeshAuditPolicy() if audit_policy is None else audit_policy
-        if not isinstance(limits_, MeshingLimits) or not isinstance(
-            audit_, CellMeshAuditPolicy
-        ):
-            raise TypeError(
-                "Safety policy requires MeshingLimits and CellMeshAuditPolicy."
-            )
+        limits_ = (
+            _dependency_phydrax_meshing__contracts.MeshingLimits()
+            if limits is None
+            else limits
+        )
+        audit_ = (
+            _dependency_phydrax_meshing__audit.CellMeshAuditPolicy()
+            if audit_policy is None
+            else audit_policy
+        )
         bounds = (
             None
             if coordinate_bounds is None
@@ -741,17 +811,20 @@ class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
                 or np.any(bounds[0] > bounds[1])
             ):
                 raise ValueError(
-                    "coordinate_bounds must contain finite ordered lower/upper vectors."
+                    f"MeshProposalSafetyPolicy.coordinate_bounds must contain finite ordered lower and upper vectors; got {(bounds.shape, bounds, source.mesh.ambient_dimension)!r}"
                 )
             if np.any(source.mesh.coordinates < bounds[0]) or np.any(
                 source.mesh.coordinates > bounds[1]
             ):
-                raise ValueError("Source coordinates lie outside the safety bounds.")
+                raise ValueError(
+                    f"MeshProposalSafetyPolicy.coordinate_bounds must contain the source coordinates; got {(bounds, np.asarray(source.mesh.coordinates).min(axis=0), np.asarray(source.mesh.coordinates).max(axis=0))!r}"
+                )
         self.source_result_id = source.result_id
         self.protected_scopes = protected
         self.limits = limits_
         self.audit_policy = audit_
-        self.coordinate_bounds = None if bounds is None else jnp.asarray(bounds)
+        _host_coordinate_bounds = None if bounds is None else np.asarray(bounds)
+        (self.coordinate_bounds,) = jax.device_put((_host_coordinate_bounds,))
         self.minimum_size, self.maximum_size = minimum, maximum
         self.maximum_anisotropy, self.maximum_gradation = anisotropy, gradation
         self.maximum_displacement = displacement
@@ -791,7 +864,8 @@ def _entity_closure(
 
 
 def _protected_vertices(
-    source: CellMeshingResult, policy: MeshProposalSafetyPolicy
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    policy: MeshProposalSafetyPolicy,
 ) -> np.ndarray:
     fixed = np.zeros(source.mesh.coordinates.shape[0], dtype=np.bool_)
     for scope in policy.protected_scopes:
@@ -802,7 +876,7 @@ def _protected_vertices(
     return fixed
 
 
-def _payload_bytes(value: Any) -> int:
+def _payload_bytes(value: StrictModule | None) -> int:
     return sum(
         leaf.nbytes
         for leaf in jax.tree_util.tree_leaves(value)
@@ -810,7 +884,10 @@ def _payload_bytes(value: Any) -> int:
     )
 
 
-def _limit_issues(result: CellMeshingResult, limits: MeshingLimits) -> tuple[str, ...]:
+def _limit_issues(
+    result: _dependency_phydrax_meshing__result.CellMeshingResult,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+) -> tuple[str, ...]:
     counts = result.audit.entity_counts
     observations = (
         ("vertices", result.audit.vertex_count, limits.maximum_vertices),
@@ -829,62 +906,72 @@ def _limit_issues(result: CellMeshingResult, limits: MeshingLimits) -> tuple[str
     )
 
 
-def _check_binding(source: Any, proposal: Any, policy: Any) -> None:
-    if not isinstance(source, CellMeshingResult):
-        raise TypeError("source must be CellMeshingResult.")
-    if not isinstance(
-        proposal,
-        (
-            MeshMarkingProposal,
-            MeshSizeProposal,
-            MeshMetricProposal,
-            MeshCoordinateProposal,
-        ),
-    ):
-        raise TypeError("proposal must be a typed mesh proposal.")
-    if not isinstance(policy, MeshProposalSafetyPolicy):
-        raise TypeError("policy must be MeshProposalSafetyPolicy.")
+def _check_binding(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    proposal: MeshProposal,
+    policy: MeshProposalSafetyPolicy,
+) -> None:
     _scope_rows(source, proposal.scope)
     if policy.source_result_id != source.result_id:
-        raise ValueError("Safety policy has a stale result revision binding.")
+        raise ValueError(
+            f"MeshProposalSafetyPolicy.source_result_id must bind the current source result revision; got {(policy.source_result_id, source.result_id)!r}"
+        )
     if proposal.coordinate_contract_id != source.coordinate_contract.spatial_id:
-        raise ValueError("Proposal coordinate contract does not match the source.")
+        raise ValueError(
+            f"MeshProposal.coordinate_contract_id must match the source coordinate contract; got {(proposal.coordinate_contract_id, source.coordinate_contract.spatial_id)!r}"
+        )
     if source.coordinate_contract.coordinate_system != "cartesian":
-        raise ValueError("Native proposal routes require Cartesian coordinates.")
+        raise ValueError(
+            f"MeshProposal.source.coordinate_system must be Cartesian; got {source.coordinate_contract.coordinate_system!r}"
+        )
     source.audit.require_passed()
     if not source.compliance.passed or _limit_issues(source, policy.limits):
         raise ValueError(
-            "Source does not satisfy proposal compliance and capacity limits."
+            f"MeshProposal.source.compliance must satisfy proposal compliance and capacity limits; got {(source.compliance.issues, policy.limits.limits_id)!r}"
         )
     for scope in policy.protected_scopes:
         _scope_rows(source, scope)
 
 
-def _project_sizes(values: Any, points: Any, edges: Any, policy: Any) -> np.ndarray:
-    """Clamp to the size bounds, then grade exactly through the metric owner."""
+def _project_sizes(
+    values: np.ndarray,
+    points: np.ndarray,
+    edges: np.ndarray,
+    policy: MeshProposalSafetyPolicy,
+) -> np.ndarray:
+    """Clamp to the size bounds, then grade through the metric owner."""
     lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
-    graded, _, _ = _grade_scalar_sizes(
+    graded, _, _ = _dependency_phydrax_meshing__metric.grade_scalar_sizes(
         np.clip(values, policy.minimum_size, policy.maximum_size),
         edges,
         lengths,
         np.full((edges.shape[0],), policy.maximum_gradation),
-        MetricGradationKind.PHYSICAL,
+        _dependency_phydrax_meshing__metric.MetricGradationKind.PHYSICAL,
     )
     return graded
 
 
 def _project_metric(
-    scope: Any, raw: Any, points: Any, edges: Any, policy: Any
-) -> tuple[MeshMetricField, MetricNormalizationEvidence]:
+    scope: _dependency_phydrax_meshing__scope.MeshingScope,
+    raw: np.ndarray,
+    points: np.ndarray,
+    edges: np.ndarray,
+    policy: MeshProposalSafetyPolicy,
+) -> tuple[
+    _dependency_phydrax_meshing__metric.MeshMetricField,
+    _dependency_phydrax_meshing__metric.MetricNormalizationEvidence,
+]:
     # Untrusted tensors: the trusted policy explicitly requests symmetric-part
     # repair and indefinite projection, and the evidence reports both.
-    return normalize_mesh_metric(
-        MeshMetricSamples(scope, raw),
-        policy=MetricNormalizationPolicy(
+    return _dependency_phydrax_meshing__metric.normalize_mesh_metric(
+        _dependency_phydrax_meshing__metric.MeshMetricSamples(scope, raw),
+        policy=_dependency_phydrax_meshing__metric.MetricNormalizationPolicy(
             minimum_size=policy.minimum_size,
             maximum_size=policy.maximum_size,
             maximum_anisotropy=policy.maximum_anisotropy,
-            gradation=MetricGradationPolicy(policy.maximum_gradation),
+            gradation=_dependency_phydrax_meshing__metric.MetricGradationPolicy(
+                policy.maximum_gradation
+            ),
             symmetrize=True,
             project_indefinite=True,
         ),
@@ -893,14 +980,18 @@ def _project_metric(
     )
 
 
-def _coordinate_projector(source: Any, proposal: Any, policy: Any) -> Any:
+def _coordinate_projector(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    proposal: MeshCoordinateProposal,
+    policy: MeshProposalSafetyPolicy,
+) -> tuple[Array, Callable[[Array], Array]]:
     points = jnp.asarray(source.mesh.coordinates)
     movable = np.zeros(points.shape[0], dtype=np.bool_)
     movable[_scope_rows(source, proposal.scope)] = True
     fixed = jnp.asarray(~movable | _protected_vertices(source, policy))
     bounds = policy.coordinate_bounds
 
-    def project(values: Any) -> Any:
+    def project(values: Array) -> Array:
         if bounds is not None:
             values = jnp.clip(values, bounds[0], bounds[1])
         delta = values - points
@@ -915,7 +1006,10 @@ def _coordinate_projector(source: Any, proposal: Any, policy: Any) -> Any:
     return fixed, project
 
 
-def _optimization_bounds(source: Any, policy: Any) -> tuple[np.ndarray, np.ndarray]:
+def _optimization_bounds(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    policy: MeshProposalSafetyPolicy,
+) -> tuple[np.ndarray, np.ndarray]:
     points = np.asarray(source.mesh.coordinates)
     # A per-axis half-width r / sqrt(d) inscribes the box in the trust-region
     # ball, so box projection can never exceed maximum_displacement.
@@ -930,15 +1024,26 @@ def _optimization_bounds(source: Any, policy: Any) -> tuple[np.ndarray, np.ndarr
 
 
 def _safe_marks(
-    source: CellMeshingResult, scores: np.ndarray, policy: MeshProposalSafetyPolicy
-) -> np.ndarray:
-    """Highest positive scores, then global ID; exact closure belongs to the route."""
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    scores: np.ndarray,
+    policy: MeshProposalSafetyPolicy,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the selected and the protection-withheld cell IDs, both sorted.
+
+    Selection takes the highest positive scores, then global ID, within the
+    declared capacity. Positive-score cells in a protected cell scope are
+    withheld from the route and returned as evidence; closure belongs to
+    the route.
+    """
     cells = np.concatenate([np.asarray(block.global_ids) for block in source.mesh.blocks])
     order = np.lexsort((cells, -scores))
     eligible = scores > 0.0
+    protected = np.zeros_like(eligible)
     for scope in policy.protected_scopes:
         if scope.entity_dimension == source.mesh.topological_dimension:
-            eligible[_scope_rows(source, scope)] = False
+            protected[_scope_rows(source, scope)] = True
+    withheld = np.sort(cells[eligible & protected]).astype(np.int64, copy=False)
+    eligible &= ~protected
     capacity = min(
         policy.maximum_marked_cells,
         max(0, policy.limits.maximum_cells - source.audit.entity_counts[-1]),
@@ -964,36 +1069,58 @@ def _safe_marks(
             ),
         )
     selected = order[eligible[order]][:capacity]
-    return np.sort(cells[selected]).astype(np.int64, copy=False)
+    return np.sort(cells[selected]).astype(np.int64, copy=False), withheld
 
 
 class MeshProposalProjection(StrictModule, NonTrainableState):
-    """Projected proposal evidence; this is not a mesh or a certification."""
+    """Projected proposal evidence; this is not a mesh or a certification.
+
+    ``protected_cell_ids`` lists positive-score marks withheld from the route
+    because they lie in a protected cell scope.
+    """
 
     proposal: MeshProposal
     policy: MeshProposalSafetyPolicy
     marked_cell_ids: Array
-    size_field: ResolvedSizeField | None
-    metric: MeshMetricField | None
-    metric_evidence: MetricNormalizationEvidence | None
+    protected_cell_ids: Array
+    size_field: _dependency_phydrax_meshing__sizing.ResolvedSizeField | None
+    metric: _dependency_phydrax_meshing__metric.MeshMetricField | None
+    metric_evidence: (
+        _dependency_phydrax_meshing__metric.MetricNormalizationEvidence | None
+    )
     target_coordinates: Array | None
     projection_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        proposal: Any,
-        policy: Any,
-        marked_cell_ids: Any,
-        size_field: Any,
-        metric: Any,
-        target_coordinates: Any,
+        proposal: MeshProposal,
+        policy: MeshProposalSafetyPolicy,
+        marked_cell_ids: ArrayLike,
+        size_field: _dependency_phydrax_meshing__sizing.ResolvedSizeField | None,
+        metric: _dependency_phydrax_meshing__metric.MeshMetricField | None,
+        target_coordinates: Array | None,
         *,
-        metric_evidence: Any = None,
+        protected_cell_ids: ConvertibleToArray = (),
+        metric_evidence: _dependency_phydrax_meshing__metric.MetricNormalizationEvidence
+        | None = None,
     ) -> None:
         if (metric is None) != (metric_evidence is None):
-            raise ValueError("A projected metric requires its normalization evidence.")
+            raise ValueError(
+                f"MeshProposalProjection.metric_evidence must be present exactly when a projected metric is present; got {(metric is not None, metric_evidence is not None)!r}"
+            )
         self.proposal, self.policy = proposal, policy
-        self.marked_cell_ids = jnp.asarray(marked_cell_ids, dtype=jnp.int64)
+        _host_marked_cell_ids = np.asarray(marked_cell_ids, dtype=np.int64)
+        _host_protected_cell_ids = np.asarray(protected_cell_ids, dtype=np.int64)
+        (
+            self.marked_cell_ids,
+            self.protected_cell_ids,
+        ) = jax.device_put(
+            (
+                _host_marked_cell_ids,
+                _host_protected_cell_ids,
+            )
+        )
         self.size_field, self.metric = size_field, metric
         self.metric_evidence = metric_evidence
         self.target_coordinates = target_coordinates
@@ -1003,6 +1130,7 @@ class MeshProposalProjection(StrictModule, NonTrainableState):
                 "proposal": proposal.proposal_id,
                 "policy": policy.policy_id,
                 "marks": array_tree_fingerprint(self.marked_cell_ids),
+                "protected_marks": array_tree_fingerprint(self.protected_cell_ids),
                 "size": None if size_field is None else size_field.field_id,
                 "metric": None if metric is None else metric.metric_id,
                 "metric_evidence": None
@@ -1015,8 +1143,9 @@ class MeshProposalProjection(StrictModule, NonTrainableState):
         )
 
 
+@checked
 def project_mesh_proposal(
-    source: CellMeshingResult,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
     proposal: MeshProposal,
     policy: MeshProposalSafetyPolicy,
     /,
@@ -1033,61 +1162,85 @@ def project_mesh_proposal(
     rows = _scope_rows(source, proposal.scope)
     sizes, metric, metric_evidence, target = None, None, None, None
     marks = np.empty(0, dtype=np.int64)
-    if isinstance(proposal, MeshCoordinateProposal):
-        _, project = _coordinate_projector(source, proposal, policy)
-        target = project(jnp.asarray(mesh.coordinates).at[rows].set(proposal.values))
-        # A safe target must itself be a valid optimization reference. Backtrack
-        # toward the certified source, rather than accepting an inverted target.
-        for _ in range(64):
-            if bool(jnp.all(evaluate_cell_quality(mesh, target).sampled_valid)):
-                break
-            target = project(0.5 * (target + mesh.coordinates))
-        else:
-            raise ValueError("Coordinate proposal has no certifiable projected target.")
-    else:
-        if isinstance(proposal, MeshMarkingProposal):
+    withheld = np.empty(0, dtype=np.int64)
+    match proposal:
+        case MeshCoordinateProposal():
+            _, project = _coordinate_projector(source, proposal, policy)
+            target = project(jnp.asarray(mesh.coordinates).at[rows].set(proposal.values))
+            # A safe target must itself be a valid optimization reference. Backtrack
+            # toward the certified source, rather than accepting an inverted target.
+            for _ in range(64):
+                if bool(
+                    jnp.all(
+                        _dependency_phydrax_meshing__quality.evaluate_cell_quality(
+                            mesh, target
+                        ).sampled_valid
+                    )
+                ):
+                    break
+                target = project(0.5 * (target + mesh.coordinates))
+            else:
+                raise ValueError(
+                    f"MeshCoordinateProposal.target_coordinates must admit a certifiable projected target within 64 backtracking checks; got {target.shape!r}"
+                )
+        case MeshMarkingProposal():
             scores = np.zeros(source.audit.entity_counts[-1], dtype=np.float64)
             scores[rows] = np.asarray(proposal.values)
-            marks = _safe_marks(source, scores, policy)
-        else:
+            marks, withheld = _safe_marks(source, scores, policy)
+        case MeshSizeProposal() | MeshMetricProposal():
             kinds = {block.cell_kind for block in mesh.blocks}
             if kinds != {"triangle"} and kinds != {"tetrahedron"}:
                 raise ValueError(
-                    "Native size/metric proposal projection requires simplex blocks."
+                    f"MeshProposal.source.cell_kind must contain simplex blocks for size or metric projection; got {tuple(sorted(kinds))!r}"
                 )
             if rows.size != mesh.coordinates.shape[0]:
                 raise ValueError(
-                    "Size and metric proposals must cover every source vertex."
+                    f"MeshProposal.scope.entity_ids must cover every source vertex for size or metric projection; got {(rows.size, mesh.coordinates.shape[0])!r}"
                 )
             # Field arrays are scope ordered; connectivity and points are mesh ordered.
             inverse = np.empty(rows.size, dtype=np.int64)
             inverse[rows] = np.arange(rows.size)
             connectivity = mesh.connectivity
-            if not isinstance(
-                connectivity,
-                (PolygonalConnectivity, TetrahedralConnectivity, PolyhedralConnectivity),
-            ):
-                raise TypeError("Simplex proposals require canonical edge connectivity.")
+            match connectivity:
+                case (
+                    PolygonalConnectivity()
+                    | TetrahedralConnectivity()
+                    | PolyhedralConnectivity()
+                ):
+                    pass
+                case _:
+                    raise TypeError(
+                        f"MeshProposal.source.connectivity must provide declared simplex edge connectivity; got {type(connectivity).__name__!r}"
+                    )
             field_edges = inverse[np.asarray(connectivity.edges)]
             field_points = np.asarray(mesh.coordinates)[rows]
-            if isinstance(proposal, MeshSizeProposal):
-                sizes = ResolvedSizeField(
-                    SizeFieldDomain.SAMPLE_CLOUD,
-                    field_points,
-                    _project_sizes(
-                        np.asarray(proposal.values), field_points, field_edges, policy
-                    ),
-                    sample_entity_ids=proposal.scope.entity_ids,
-                    source_control_ids=(proposal.proposal_id, policy.policy_id),
-                )
-            else:
-                metric, metric_evidence = _project_metric(
-                    proposal.scope,
-                    np.asarray(proposal.values),
-                    field_points,
-                    field_edges,
-                    policy,
-                )
+            match proposal:
+                case MeshSizeProposal():
+                    sizes = _dependency_phydrax_meshing__sizing.ResolvedSizeField(
+                        _dependency_phydrax_meshing__sizing.SizeFieldDomain.SAMPLE_CLOUD,
+                        field_points,
+                        _project_sizes(
+                            np.asarray(proposal.values), field_points, field_edges, policy
+                        ),
+                        sample_entity_ids=proposal.scope.entity_ids,
+                        source_control_ids=(proposal.proposal_id, policy.policy_id),
+                    )
+                case MeshMetricProposal():
+                    metric, metric_evidence = _project_metric(
+                        proposal.scope,
+                        np.asarray(proposal.values),
+                        field_points,
+                        field_edges,
+                        policy,
+                    )
+                case _:
+                    raise TypeError(
+                        f"MeshProposalProjection.proposal must be a supported typed mesh proposal; got {type(proposal).__name__!r}"
+                    )
+        case _:
+            raise TypeError(
+                f"MeshProposalProjection.proposal must be a supported typed mesh proposal; got {type(proposal).__name__!r}"
+            )
     return MeshProposalProjection(
         proposal,
         policy,
@@ -1095,11 +1248,14 @@ def project_mesh_proposal(
         sizes,
         metric,
         target,
+        protected_cell_ids=withheld,
         metric_evidence=metric_evidence,
     )
 
 
-def _entity_vertex_signatures(mesh: CellMesh, dimension: int) -> Any:
+def _entity_vertex_signatures(
+    mesh: CellMesh, dimension: int
+) -> tuple[tuple[int, ...], ...]:
     vertices = [{int(identifier)} for identifier in np.asarray(mesh.vertex_global_ids)]
     for degree in range(1, dimension + 1):
         upper = [set() for _ in range(mesh.entity_set(degree).count)]
@@ -1115,7 +1271,11 @@ def _entity_vertex_signatures(mesh: CellMesh, dimension: int) -> Any:
     return tuple(tuple(sorted(values)) for values in vertices)
 
 
-def _preservation_issues(source: Any, candidate: Any, projection: Any) -> Any:
+def _preservation_issues(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    candidate: _dependency_phydrax_meshing__result.CellMeshingResult,
+    projection: MeshProposalProjection,
+) -> tuple[str, ...]:
     policy = projection.policy
     issues = []
     if candidate.coordinate_contract.spatial_id != source.coordinate_contract.spatial_id:
@@ -1194,64 +1354,92 @@ class MeshProposalTransaction(StrictModule, NonTrainableState):
     solution fields. Explicit rejection returns the identical source.
     """
 
-    source: CellMeshingResult
+    source: _dependency_phydrax_meshing__result.CellMeshingResult
     projection: MeshProposalProjection
-    trusted_result: CellMeshingResult
-    safety_audit: CellMeshAuditReport
-    compliance: MeshingComplianceReport
-    adaptation: MeshAdaptationResult | None
-    optimization: MeshOptimizationResult | None
+    trusted_result: _dependency_phydrax_meshing__result.CellMeshingResult
+    safety_audit: _dependency_phydrax_meshing__audit.CellMeshAuditReport
+    compliance: _dependency_phydrax_meshing__result.MeshingComplianceReport
+    adaptation: _dependency_phydrax_meshing__adaptation.MeshAdaptationResult | None
+    optimization: _dependency_phydrax_meshing__optimization.MeshOptimizationResult | None
     transaction_id: str = eqx.field(static=True)
 
+    @staticmethod
+    @checked
+    def coordinate_candidate(
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
+        optimization: _dependency_phydrax_meshing__optimization.MeshOptimizationResult,
+        /,
+    ) -> _dependency_phydrax_meshing__result.CellMeshingResult:
+        """Select an accepted optimization mesh or retain the rejected source."""
+        match (optimization.accepted, optimization.result):
+            case (False, _):
+                return source
+            case (
+                True,
+                _dependency_phydrax_meshing__result.CellMeshingResult() as result,
+            ):
+                return result
+            case _:
+                raise ValueError(
+                    f"MeshOptimizationResult.result must be present for an accepted coordinate proposal; got {(optimization.status, type(optimization.result).__name__)!r}"
+                )
+
+    @checked
     def __init__(
         self,
-        source: Any,
-        projection: Any,
-        trusted_result: Any,
-        safety_audit: Any,
-        compliance: Any,
-        adaptation: Any,
-        optimization: Any,
+        source: _dependency_phydrax_meshing__result.CellMeshingResult,
+        projection: MeshProposalProjection,
+        trusted_result: _dependency_phydrax_meshing__result.CellMeshingResult,
+        safety_audit: _dependency_phydrax_meshing__audit.CellMeshAuditReport,
+        compliance: _dependency_phydrax_meshing__result.MeshingComplianceReport,
+        adaptation: _dependency_phydrax_meshing__adaptation.MeshAdaptationResult | None,
+        optimization: _dependency_phydrax_meshing__optimization.MeshOptimizationResult
+        | None,
     ) -> None:
         _check_binding(source, projection.proposal, projection.policy)
         if (
             safety_audit.mesh_id != trusted_result.mesh.mesh_id
             or safety_audit.policy_id != projection.policy.audit_policy.policy_id
         ):
-            raise ValueError("Safety audit must match the candidate and safety policy.")
+            raise ValueError(
+                f"MeshProposalTransaction.safety_audit must bind the candidate mesh and safety policy; got {(safety_audit.mesh_id, trusted_result.mesh.mesh_id, safety_audit.policy_id, projection.policy.audit_policy.policy_id)!r}"
+            )
         if compliance.specification_id != projection.projection_id:
-            raise ValueError("Compliance must be bound to the exact projected proposal.")
+            raise ValueError(
+                f"MeshProposalTransaction.compliance must bind the projected proposal; got {(compliance.specification_id, projection.projection_id)!r}"
+            )
         if adaptation is not None and (
             adaptation.source.result_id != source.result_id
             or adaptation.target.result_id != trusted_result.result_id
         ):
-            raise ValueError("Proposal adaptation must match the source and candidate.")
-        if isinstance(projection.proposal, MeshCoordinateProposal):
-            # A failed optimization leaves the exact source as its candidate.
-            if (
-                optimization is None
-                or adaptation is not None
-                or (
-                    optimization.result.result_id
-                    if optimization.accepted
-                    else source.result_id
-                )
-                != trusted_result.result_id
-            ):
-                raise ValueError(
-                    "Coordinate proposal candidate must match its trusted optimization."
-                )
-        elif projection.marked_cell_ids.size or not isinstance(
-            projection.proposal, MeshMarkingProposal
-        ):
-            if adaptation is None or optimization is not None:
-                raise ValueError(
-                    "Adaptive proposal candidate requires trusted adaptation evidence."
-                )
-        elif adaptation is not None or trusted_result.result_id != source.result_id:
             raise ValueError(
-                "An empty projected marking must preserve the exact source result."
+                f"MeshProposalTransaction.adaptation must bind the source and candidate result revisions; got {(adaptation.source.result_id, source.result_id, adaptation.target.result_id, trusted_result.result_id)!r}"
             )
+        match projection.proposal:
+            case MeshCoordinateProposal():
+                if (
+                    optimization is None
+                    or adaptation is not None
+                    or self.coordinate_candidate(source, optimization).result_id
+                    != trusted_result.result_id
+                ):
+                    raise ValueError(
+                        f"MeshProposalTransaction.trusted_result must match the coordinate optimization candidate; got {(trusted_result.result_id, optimization is None, adaptation is not None)!r}"
+                    )
+            case MeshMarkingProposal() if projection.marked_cell_ids.size == 0:
+                if adaptation is not None or trusted_result.result_id != source.result_id:
+                    raise ValueError(
+                        f"MeshProposalTransaction.trusted_result must retain the source for an empty projected marking; got {(adaptation is not None, trusted_result.result_id, source.result_id)!r}"
+                    )
+            case MeshMarkingProposal() | MeshSizeProposal() | MeshMetricProposal():
+                if adaptation is None or optimization is not None:
+                    raise ValueError(
+                        f"MeshProposalTransaction.adaptation must provide trusted adaptation evidence without coordinate optimization; got {(adaptation is None, optimization is not None)!r}"
+                    )
+            case _:
+                raise TypeError(
+                    f"MeshProposalTransaction.proposal must be a supported typed mesh proposal; got {type(projection.proposal).__name__!r}"
+                )
         self.source, self.projection, self.trusted_result = (
             source,
             projection,
@@ -1278,16 +1466,22 @@ class MeshProposalTransaction(StrictModule, NonTrainableState):
     def admissible(self) -> bool:
         return self.safety_audit.passed and self.compliance.passed
 
+    @checked
     def commit(
-        self, current: CellMeshingResult, /, *, accept: bool = True
-    ) -> CellMeshingResult:
+        self,
+        current: _dependency_phydrax_meshing__result.CellMeshingResult,
+        /,
+        *,
+        accept: bool = True,
+    ) -> _dependency_phydrax_meshing__result.CellMeshingResult:
         if not isinstance(accept, (bool, np.bool_)):
-            raise TypeError("Proposal commit requires an explicit host boolean decision.")
-        if (
-            not isinstance(current, CellMeshingResult)
-            or current.result_id != self.source.result_id
-        ):
-            raise ValueError("Cannot commit a proposal against a stale current revision.")
+            raise TypeError(
+                f"MeshProposalTransaction.accept must be an explicit host boolean decision; got {type(accept).__name__!r}"
+            )
+        if current.result_id != self.source.result_id:
+            raise ValueError(
+                f"MeshProposalTransaction.current must bind the source result revision; got {(current.result_id, self.source.result_id)!r}"
+            )
         _check_binding(current, self.projection.proposal, self.projection.policy)
         if not accept:
             return current
@@ -1297,19 +1491,22 @@ class MeshProposalTransaction(StrictModule, NonTrainableState):
         issues += _preservation_issues(current, self.trusted_result, self.projection)
         if not self.admissible or issues:
             raise ValueError(
-                "Proposal is not admissible: "
-                + "; ".join((*self.safety_audit.issues, *issues))
+                f"MeshProposalTransaction.admissible must satisfy safety audit, compliance and preservation checks; got {(*self.safety_audit.issues, *issues)!r}"
             )
         self.trusted_result.audit.require_passed()
         return self.trusted_result
 
 
-def _mesh_scope(source: CellMeshingResult, scope: MeshingScope, /) -> MeshingScope:
+def _mesh_scope(
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    scope: _dependency_phydrax_meshing__scope.MeshingScope,
+    /,
+) -> _dependency_phydrax_meshing__scope.MeshingScope:
     """Rebind a result-revision proposal scope to the mesh-revision binding."""
-    return MeshingScope(
+    return _dependency_phydrax_meshing__scope.MeshingScope(
         source.mesh.mesh_id,
         source.mesh.numeric_version,
-        MeshingEntityKind.MESH,
+        _dependency_phydrax_meshing__scope.MeshingEntityKind.MESH,
         scope.entity_dimension,
         scope.entity_set_id,
         scope.entity_ids,
@@ -1317,8 +1514,10 @@ def _mesh_scope(source: CellMeshingResult, scope: MeshingScope, /) -> MeshingSco
 
 
 def _adaptation_metric(
-    source: CellMeshingResult, projection: MeshProposalProjection, /
-) -> MeshMetricField:
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
+    projection: MeshProposalProjection,
+    /,
+) -> _dependency_phydrax_meshing__metric.MeshMetricField:
     """Projected metric, or the isotropic metric ``I / h**2`` of projected sizes."""
     policy = projection.policy
     scope = _mesh_scope(source, projection.proposal.scope)
@@ -1329,7 +1528,7 @@ def _adaptation_metric(
         sizes = np.asarray(projection.size_field.values, dtype=np.float64)
         dimension = source.mesh.ambient_dimension
         values = np.eye(dimension)[None, :, :] / (sizes**2)[:, None, None]
-    return MeshMetricField(
+    return _dependency_phydrax_meshing__metric.MeshMetricField(
         scope,
         values,
         minimum_size=policy.minimum_size,
@@ -1339,73 +1538,94 @@ def _adaptation_metric(
 
 
 def _execute_adaptation(
-    source: CellMeshingResult,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
     projection: MeshProposalProjection,
-    native_policy: MeshAdaptationPolicy | None,
-    hierarchy: MeshAdaptationHierarchy,
-    layer_columns: MixedLayerColumns | None,
+    native_policy: _dependency_phydrax_meshing__adaptation.MeshAdaptationPolicy | None,
+    hierarchy: _dependency_phydrax_meshing__adaptation.MeshAdaptationHierarchy,
+    layer_columns: _dependency_phydrax_meshing__mixed_adaptation.MixedLayerColumns | None,
     /,
-) -> MeshAdaptationResult:
+) -> _dependency_phydrax_meshing__adaptation.MeshAdaptationResult:
     policy = projection.policy
     protected = tuple(_mesh_scope(source, scope) for scope in policy.protected_scopes)
-    if isinstance(projection.proposal, MeshMarkingProposal):
-        request = MarkedMeshAdaptation(
-            projection.marked_cell_ids, hierarchy=hierarchy, layer_columns=layer_columns
-        )
-        kinds = {block.cell_kind for block in source.mesh.blocks}
-        if kinds == {"triangle"} or kinds == {"tetrahedron"}:
-            route = MeshAdaptationRoute.NATIVE_BISECTION
-        elif native_policy is not None:
-            route = native_policy.route
-        else:
-            raise ValueError(
-                "This marked family requires an explicit qualified native policy."
+    match projection.proposal:
+        case MeshMarkingProposal():
+            request = _dependency_phydrax_meshing__adaptation.MarkedMeshAdaptation(
+                projection.marked_cell_ids,
+                hierarchy=hierarchy,
+                layer_columns=layer_columns,
             )
-    else:
-        request = MetricMeshAdaptation(_adaptation_metric(source, projection))
-        match (source.mesh.topological_dimension, source.mesh.ambient_dimension):
-            case (3, 3):
-                route = MeshAdaptationRoute.NATIVE_METRIC_3D
-            case (2, 2):
-                route = MeshAdaptationRoute.NATIVE_METRIC_2D
-            case _:
-                if native_policy is None:
-                    raise ValueError(
-                        "This metric proposal requires an explicit qualified native route."
-                    )
+            kinds = {block.cell_kind for block in source.mesh.blocks}
+            if kinds == {"triangle"} or kinds == {"tetrahedron"}:
+                route = _dependency_phydrax_meshing__adaptation.MeshAdaptationRoute.NATIVE_BISECTION
+            elif native_policy is not None:
                 route = native_policy.route
+            else:
+                raise ValueError(
+                    f"MeshProposal.native_policy must supply a qualified native route for this marked family; got {tuple(sorted(kinds))!r}"
+                )
+        case MeshSizeProposal() | MeshMetricProposal():
+            request = _dependency_phydrax_meshing__adaptation.MetricMeshAdaptation(
+                _adaptation_metric(source, projection)
+            )
+            match (source.mesh.topological_dimension, source.mesh.ambient_dimension):
+                case (3, 3):
+                    route = _dependency_phydrax_meshing__adaptation.MeshAdaptationRoute.NATIVE_METRIC_3D
+                case (2, 2):
+                    route = _dependency_phydrax_meshing__adaptation.MeshAdaptationRoute.NATIVE_METRIC_2D
+                case _:
+                    if native_policy is None:
+                        raise ValueError(
+                            f"MeshProposal.native_policy must supply a qualified native route for this metric family; got {(source.mesh.topological_dimension, source.mesh.ambient_dimension)!r}"
+                        )
+                    route = native_policy.route
+        case _:
+            raise TypeError(
+                f"MeshProposalProjection.proposal must be a marking, size or metric proposal for adaptation; got {type(projection.proposal).__name__!r}"
+            )
     if native_policy is None:
         # Native publication owns geometric validity; the stricter proposal
         # policy is evaluated below without turning rejection into execution failure.
-        native_policy = MeshAdaptationPolicy(
+        native_policy = _dependency_phydrax_meshing__adaptation.MeshAdaptationPolicy(
             route,
             protected_scopes=protected,
             limits=policy.limits,
         )
-    if native_policy.route in (MeshAdaptationRoute.MMG, MeshAdaptationRoute.OMEGA_H):
-        raise ValueError("Learned proposal execution requires an explicit native route.")
+    if native_policy.route in (
+        _dependency_phydrax_meshing__adaptation.MeshAdaptationRoute.MMG,
+        _dependency_phydrax_meshing__adaptation.MeshAdaptationRoute.OMEGA_H,
+    ):
+        raise ValueError(
+            f"MeshProposal.native_policy.route must select a native rather than external-provider route; got {native_policy.route!r}"
+        )
     if native_policy.limits.limits_id != policy.limits.limits_id:
         raise ValueError(
-            "Native execution must use the proposal's exact resource limits."
+            f"MeshProposal.native_policy.limits must match the proposal resource limits; got {(native_policy.limits.limits_id, policy.limits.limits_id)!r}"
         )
     if not {scope.scope_id for scope in protected}.issubset(
         scope.scope_id for scope in native_policy.protected_scopes
     ):
-        raise ValueError("Native execution must preserve every proposal-protected scope.")
-    return execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, request, policy=native_policy)
+        raise ValueError(
+            f"MeshProposal.native_policy.protected_scopes must retain every proposal-protected scope; got {(tuple(scope.scope_id for scope in protected), tuple(scope.scope_id for scope in native_policy.protected_scopes))!r}"
+        )
+    return _dependency_phydrax_meshing__adaptation.execute_mesh_adaptation(
+        _dependency_phydrax_meshing__adaptation.prepare_mesh_adaptation(
+            source, request, policy=native_policy
+        )
     )
 
 
+@checked
 def prepare_mesh_proposal(
-    source: CellMeshingResult,
+    source: _dependency_phydrax_meshing__result.CellMeshingResult,
     proposal: MeshProposal,
     policy: MeshProposalSafetyPolicy,
     /,
     *,
-    native_policy: MeshAdaptationPolicy | None = None,
-    hierarchy: MeshAdaptationHierarchy = None,
-    layer_columns: MixedLayerColumns | None = None,
+    native_policy: _dependency_phydrax_meshing__adaptation.MeshAdaptationPolicy
+    | None = None,
+    hierarchy: _dependency_phydrax_meshing__adaptation.MeshAdaptationHierarchy = None,
+    layer_columns: _dependency_phydrax_meshing__mixed_adaptation.MixedLayerColumns
+    | None = None,
     record_phase: NativeMeshingPhaseRecorder | None = None,
 ) -> MeshProposalTransaction:
     """Project, execute a native trusted path, audit and prepare atomic promotion.
@@ -1416,13 +1636,11 @@ def prepare_mesh_proposal(
     pass that owner's admission. Relocation's affine optimization route cannot
     silently flatten a curved map or discard metadata.
     """
-    if native_policy is not None and not isinstance(native_policy, MeshAdaptationPolicy):
-        raise TypeError("native_policy must be MeshAdaptationPolicy or None.")
     if (hierarchy is not None or layer_columns is not None) and not isinstance(
         proposal, MeshMarkingProposal
     ):
         raise ValueError(
-            "Refinement hierarchy/layer context belongs only to marking proposals."
+            f"MeshProposal.hierarchy must provide hierarchy and layer context only for marking proposals; got {(type(proposal).__name__, hierarchy is not None, layer_columns is not None)!r}"
         )
     started = time.monotonic()
     with measure_phase(record_phase, "native_preparation"):
@@ -1431,61 +1649,69 @@ def prepare_mesh_proposal(
             jax.block_until_ready(projection)
     adaptation, optimization = None, None
     candidate = source
-    if isinstance(proposal, MeshCoordinateProposal):
-        if native_policy is not None:
-            raise ValueError(
-                "Coordinate optimization does not consume an adaptation policy."
+    match proposal:
+        case MeshCoordinateProposal():
+            if native_policy is not None:
+                raise ValueError(
+                    f"MeshCoordinateProposal.native_policy must be absent for coordinate optimization; got {native_policy.route!r}"
+                )
+            affine = CellGeometrySpec.affine(source.mesh)
+            if (
+                source.geometry.geometry_layout_id != affine.geometry_layout_id
+                or not np.array_equal(source.geometry.coordinates, affine.coordinates)
+            ):
+                raise ValueError(
+                    f"MeshCoordinateProposal.source.geometry must be affine for coordinate optimization; got {(source.geometry.geometry_layout_id, affine.geometry_layout_id)!r}"
+                )
+            if source.boundary is not None or any(
+                (
+                    source.patches,
+                    source.zones,
+                    source.labels,
+                    source.attributes,
+                    source.associations,
+                )
+            ):
+                raise ValueError(
+                    f"MeshCoordinateProposal.source.metadata must be absent when coordinate optimization cannot transfer it; got {(source.boundary is not None, len(source.patches), len(source.zones), len(source.labels), len(source.attributes), len(source.associations))!r}"
+                )
+            fixed, _ = _coordinate_projector(source, proposal, policy)
+            plan = _dependency_phydrax_meshing__optimization.TargetMatrixOptimizationPlan(
+                source.mesh,
+                target_coordinates=projection.target_coordinates,
+                fixed_vertices=fixed,
+                coordinate_bounds=_optimization_bounds(source, policy),
+                termination=OptimizationTermination(
+                    maximum_steps=policy.maximum_optimization_iterations
+                ),
             )
-        affine = CellGeometrySpec.affine(source.mesh)
-        if (
-            source.geometry.geometry_layout_id != affine.geometry_layout_id
-            or not np.array_equal(source.geometry.coordinates, affine.coordinates)
-        ):
-            raise ValueError("Coordinate optimization requires affine mesh geometry.")
-        if source.boundary is not None or any(
-            (
-                source.patches,
-                source.zones,
-                source.labels,
-                source.attributes,
-                source.associations,
+            with measure_phase(record_phase, "improvement"):
+                optimization = (
+                    _dependency_phydrax_meshing__optimization.optimize_cell_mesh(
+                        plan,
+                        source.coordinate_contract,
+                        numeric_version=f"proposal:{projection.projection_id}",
+                    )
+                )
+                if record_phase is not None:
+                    jax.block_until_ready(optimization)
+            candidate = MeshProposalTransaction.coordinate_candidate(source, optimization)
+        case MeshMarkingProposal() if projection.marked_cell_ids.size == 0:
+            pass
+        case MeshMarkingProposal() | MeshSizeProposal() | MeshMetricProposal():
+            with measure_phase(record_phase, "topology_adaptation"):
+                adaptation = _execute_adaptation(
+                    source, projection, native_policy, hierarchy, layer_columns
+                )
+                if record_phase is not None:
+                    jax.block_until_ready(adaptation)
+            candidate = adaptation.target
+        case _:
+            raise TypeError(
+                f"MeshProposalTransaction.proposal must be a supported typed mesh proposal; got {type(proposal).__name__!r}"
             )
-        ):
-            raise ValueError(
-                "Coordinate optimization cannot discard revision-bound metadata."
-            )
-        fixed, _ = _coordinate_projector(source, proposal, policy)
-        plan = TargetMatrixOptimizationPlan(
-            source.mesh,
-            target_coordinates=projection.target_coordinates,
-            fixed_vertices=fixed,
-            coordinate_bounds=_optimization_bounds(source, policy),
-            termination=OptimizationTermination(
-                maximum_steps=policy.maximum_optimization_iterations
-            ),
-        )
-        with measure_phase(record_phase, "improvement"):
-            optimization = optimize_cell_mesh(
-                plan,
-                source.coordinate_contract,
-                numeric_version=f"proposal:{projection.projection_id}",
-            )
-            if record_phase is not None:
-                jax.block_until_ready(optimization)
-        if optimization.accepted:
-            candidate = optimization.result
-    elif projection.marked_cell_ids.size or not isinstance(proposal, MeshMarkingProposal):
-        with measure_phase(record_phase, "topology_adaptation"):
-            adaptation = _execute_adaptation(
-                source, projection, native_policy, hierarchy, layer_columns
-            )
-            if record_phase is not None:
-                jax.block_until_ready(adaptation)
-        candidate = adaptation.target
-    if not isinstance(candidate, CellMeshingResult):
-        raise TypeError("Native proposal execution must return CellMeshingResult.")
     with measure_phase(record_phase, "audit"):
-        audit = audit_cell_mesh(
+        audit = _dependency_phydrax_meshing__audit.audit_cell_mesh(
             candidate.mesh,
             candidate.geometry,
             policy=policy.audit_policy,
@@ -1512,7 +1738,7 @@ def prepare_mesh_proposal(
     elapsed = time.monotonic() - started
     if elapsed > policy.limits.maximum_wall_seconds:
         issues += ("maximum_wall_seconds",)
-    compliance = MeshingComplianceReport(
+    compliance = _dependency_phydrax_meshing__result.MeshingComplianceReport(
         projection.projection_id,
         issues=tuple(dict.fromkeys(issues)),
         requested=(

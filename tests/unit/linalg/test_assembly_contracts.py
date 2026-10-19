@@ -208,7 +208,7 @@ def test_sparse_contracts() -> None:
 
     with pytest.raises(la.LinearCapabilityError, match="materialization policy"):
         la.plan_sparse_assembly(operator)
-    with pytest.raises(la.LinearCapabilityError, match="4 nonzeros"):
+    with pytest.raises(la.LinearCapabilityError, match=r"SparseAssemblyPolicy\.max_nnz"):
         la.plan_sparse_assembly(
             operator,
             la.SparseAssemblyPolicy(

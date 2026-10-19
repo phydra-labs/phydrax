@@ -18,6 +18,32 @@ from jax.typing import ArrayLike
 from ._execution_runtime import ExecutionGroup
 
 
+@jax.jit
+def _slice_local_leading_axes(
+    values: tuple[Array, ...], indices: tuple[int, ...]
+) -> tuple[Array, ...]:
+    """Project local numerical leaves with dynamic leading-axis indices."""
+    return tuple(value[index] for value, index in zip(values, indices, strict=True))
+
+
+def _project_local_leading_axes(
+    payloads: tuple[tuple[Array, int, jax.Device], ...],
+) -> tuple[Array, ...]:
+    """Project admitted local shards without moving leaves between devices."""
+    grouped: dict[jax.Device, list[tuple[int, Array, int]]] = {}
+    for index, (value, local_index, device) in enumerate(payloads):
+        grouped.setdefault(device, []).append((index, value, local_index))
+    result = [payload[0] for payload in payloads]
+    for entries in grouped.values():
+        selected = _slice_local_leading_axes(
+            tuple(entry[1] for entry in entries),
+            tuple(entry[2] for entry in entries),
+        )
+        for entry, value in zip(entries, selected, strict=True):
+            result[entry[0]] = value
+    return tuple(result)
+
+
 def shard_array_axis(
     value: ArrayLike,
     execution_group: ExecutionGroup,

@@ -24,6 +24,10 @@ pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 Q = 1.602176634e-19
 LENGTH = 1e-6
 AREA = 1e-12
+# Empirical `test_reprepare_publishes_conserved_inventories_through_one_rebind`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_IDENTITY_RECLOSURE_COORDINATES_ATOL = 1e-12
+# Empirical `test_reprepare_rejected_conservation_retains_exact_accepted_source`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_TRIANGULAR_CARRIER_INVENTORY_TRANSFER_RTOL = 1e-12
 
 
 def _uniform_device(nodes: Any = 7) -> Any:
@@ -400,7 +404,11 @@ def test_reprepare_publishes_conserved_inventories_through_one_rebind() -> None:
             <= evidence.inventory_tolerance
         )
     )
-    np.testing.assert_allclose(result.coordinates, point.coordinates, atol=1e-12)
+    # Preserve e7b82d23c:test_semiconductor_analysis_scenario_1's acceptance
+    # ceiling for equilibrium coordinates after an identity-geometry reclosure.
+    np.testing.assert_allclose(
+        result.coordinates, point.coordinates, atol=_IDENTITY_RECLOSURE_COORDINATES_ATOL
+    )
 
 
 def test_reprepare_rejected_conservation_retains_exact_accepted_source() -> None:
@@ -428,8 +436,12 @@ def test_reprepare_rejected_conservation_retains_exact_accepted_source() -> None
     # Redistribution itself conserves. The reservoir consistency projection
     # would create carriers in the expanded physical volume, so it must not commit.
     evidence = result.evidence
+    # Preserve e7b82d23c:test_semiconductor_analysis_scenario_1's relative
+    # acceptance ceiling for the same triangular carrier inventory transfer.
     np.testing.assert_allclose(
-        evidence.transferred_inventory, evidence.source_inventory, rtol=1e-12
+        evidence.transferred_inventory,
+        evidence.source_inventory,
+        rtol=_TRIANGULAR_CARRIER_INVENTORY_TRANSFER_RTOL,
     )
     assert not bool(evidence.conservative)
     assert bool(jnp.any(jnp.abs(evidence.inventory_error) > evidence.inventory_tolerance))

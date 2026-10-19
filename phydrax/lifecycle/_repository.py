@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import cast, Iterator, Protocol
+from typing import assert_never, cast, Iterator, Protocol
 
 import equinox as eqx
 
@@ -27,17 +27,17 @@ from .._fingerprint import canonical_fingerprint
 from .._host_io import open_directory_beneath
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer, positive_integer
 from ..logging import emit
 from ..qualification._registry import SupportTuple
-from ..typing import checked
+from ..typing import checked, parse
 from ._chunk_repository import (
-    _identifier,
-    _object_key,
     ArtifactManifest,
     ArtifactRepository,
     ChunkEncoding,
     ChunkRecord,
     GarbageCollectionReport,
+    identifier,
     LeaseRecord,
     LegalHoldRecord,
     RepositoryConflictError,
@@ -47,6 +47,7 @@ from ._chunk_repository import (
     RetentionPolicy,
     TombstoneRecord,
     UnsupportedRepositoryProfileError,
+    validate_object_key,
 )
 
 
@@ -56,21 +57,25 @@ _DEFAULT_CHUNK_LIMIT = 64 * 1024 * 1024
 FailureInjector = Callable[[str], None]
 
 
-@lru_cache(maxsize=8)
-def _parsed_manifest(payload: bytes, /) -> ArtifactManifest:
-    """Reuse decoding of identical bounded bytes, never a mutable artifact path.
-
-    Readers still check current pointer, payload checksum, commit marker, and
-    immutable-root ownership on every access. Eight metadata-sized entries bound
-    retained bytes independently of the number of restored arrays.
-    """
+def _parse_manifest(payload: bytes, /) -> ArtifactManifest:
     return ArtifactManifest.from_record(_json_record(payload))
 
 
-def _read_manifest_record(payload: bytes, /) -> ArtifactManifest:
-    if len(payload) > _METADATA_LIMIT:
-        return ArtifactManifest.from_record(_json_record(payload))
-    return _parsed_manifest(payload)
+class _ManifestDecoder:
+    """Retain bounded decoded metadata for one repository's lifetime.
+
+    Callers revalidate durable bytes, pointers, checksums, and commit markers
+    before reusing decoded records. Eight metadata-sized entries preserve
+    multi-owner restore reuse without retaining unrelated repository lifetimes.
+    """
+
+    def __init__(self) -> None:
+        self._cached_parse = lru_cache(maxsize=8)(_parse_manifest)
+
+    def decode(self, payload: bytes, /) -> ArtifactManifest:
+        if len(payload) > _METADATA_LIMIT:
+            return _parse_manifest(payload)
+        return self._cached_parse(payload)
 
 
 class HPCFilesystemProfile(StrictModule, NonTrainableState):
@@ -97,8 +102,8 @@ class HPCFilesystemProfile(StrictModule, NonTrainableState):
         advisory_locking: bool,
         attempt_private_staging: bool,
     ) -> None:
-        provider = _identifier(provider_id, "provider_id")
-        filesystem_ = _identifier(filesystem, "filesystem")
+        provider = identifier(provider_id, "provider_id")
+        filesystem_ = identifier(filesystem, "filesystem")
         self.provider_id = provider
         self.filesystem = filesystem_
         self.atomic_rename_same_filesystem = bool(atomic_rename_same_filesystem)
@@ -133,7 +138,8 @@ class HPCFilesystemProfile(StrictModule, NonTrainableState):
         )
         if missing:
             raise UnsupportedRepositoryProfileError(
-                "HPC filesystem profile lacks required semantics: " + ", ".join(missing)
+                "filesystem_profile.features must include the transactional filesystem semantics; got missing "
+                + ", ".join(missing)
             )
 
 
@@ -155,8 +161,10 @@ class POSIXRepositoryPolicy(StrictModule, NonTrainableState):
         maximum_metadata_bytes: int = _METADATA_LIMIT,
     ) -> None:
         filesystem_profile.require_transactional_support()
-        chunk_limit = _positive(maximum_chunk_bytes, "maximum_chunk_bytes")
-        metadata_limit = _positive(maximum_metadata_bytes, "maximum_metadata_bytes")
+        chunk_limit = positive_integer(maximum_chunk_bytes, "maximum_chunk_bytes")
+        metadata_limit = positive_integer(
+            maximum_metadata_bytes, "maximum_metadata_bytes"
+        )
         self.filesystem_profile = filesystem_profile
         self.maximum_chunk_bytes = chunk_limit
         self.maximum_metadata_bytes = metadata_limit
@@ -171,7 +179,7 @@ class POSIXRepositoryPolicy(StrictModule, NonTrainableState):
 
 
 class ObjectStoreProfile(StrictModule, NonTrainableState):
-    """Exact S3-compatible semantics required by the object repository."""
+    """Declare S3-compatible semantics required by the object repository."""
 
     provider_id: str = eqx.field(static=True)
     conditional_create: bool = eqx.field(static=True)
@@ -194,8 +202,8 @@ class ObjectStoreProfile(StrictModule, NonTrainableState):
         multipart_free_objects: bool,
         maximum_object_bytes: int,
     ) -> None:
-        provider = _identifier(provider_id, "provider_id")
-        maximum = _positive(maximum_object_bytes, "maximum_object_bytes")
+        provider = identifier(provider_id, "provider_id")
+        maximum = positive_integer(maximum_object_bytes, "maximum_object_bytes")
         self.provider_id = provider
         self.conditional_create = bool(conditional_create)
         self.conditional_replace = bool(conditional_replace)
@@ -230,7 +238,8 @@ class ObjectStoreProfile(StrictModule, NonTrainableState):
         )
         if missing:
             raise UnsupportedRepositoryProfileError(
-                "Object-store profile lacks required semantics: " + ", ".join(missing)
+                "object_store_profile.features must include the conditional and consistency semantics; got missing "
+                + ", ".join(missing)
             )
 
 
@@ -285,14 +294,14 @@ class ArtifactGuardRecoveryAuthorization(StrictModule, NonTrainableState):
     ) -> None:
         if worker_fenced is not True:
             raise ValueError(
-                "Artifact guard recovery requires external worker-fencing evidence."
+                "guard_authorization.worker_fenced must have external worker-fencing evidence; got False"
             )
-        self.provider_id = _identifier(provider_id, "provider_id")
-        self.artifact_id = _identifier(artifact_id, "artifact_id")
-        self.guard_etag = _identifier(guard_etag, "guard_etag")
-        self.authority_id = _identifier(authority_id, "authority_id")
-        self.fencing_evidence_id = _identifier(fencing_evidence_id, "fencing_evidence_id")
-        self.issued_at = _nonnegative(issued_at, "issued_at")
+        self.provider_id = identifier(provider_id, "provider_id")
+        self.artifact_id = identifier(artifact_id, "artifact_id")
+        self.guard_etag = identifier(guard_etag, "guard_etag")
+        self.authority_id = identifier(authority_id, "authority_id")
+        self.fencing_evidence_id = identifier(fencing_evidence_id, "fencing_evidence_id")
+        self.issued_at = nonnegative_integer(issued_at, "issued_at")
         self.worker_fenced = True
         self.authorization_id = canonical_fingerprint(self._content_record())
 
@@ -319,7 +328,9 @@ class ArtifactGuardRecoveryAuthorization(StrictModule, NonTrainableState):
         cls, record: Mapping[str, object], /
     ) -> ArtifactGuardRecoveryAuthorization:
         if record.get("kind") != "artifact-guard-recovery-authorization":
-            raise ValueError("Record is not an artifact guard authorization.")
+            raise ValueError(
+                "guard_authorization.record.kind must identify an artifact guard authorization; got a different record kind"
+            )
         value = cls(
             str(record.get("provider_id", "")),
             str(record.get("artifact_id", "")),
@@ -331,7 +342,9 @@ class ArtifactGuardRecoveryAuthorization(StrictModule, NonTrainableState):
             worker_fenced=record.get("worker_fenced") is True,
         )
         if record.get("authorization_id") != value.authorization_id:
-            raise ValueError("Artifact guard authorization identity mismatch.")
+            raise ValueError(
+                "guard_authorization.authorization_id must match the decoded fields; got authorization identity mismatch"
+            )
         return value
 
 
@@ -355,7 +368,7 @@ class InMemoryConditionalObjectClient:
     """Standards-faithful conditional object client for qualification scenarios."""
 
     def __init__(self, /, *, maximum_object_bytes: int) -> None:
-        self.maximum_object_bytes = _positive(
+        self.maximum_object_bytes = positive_integer(
             maximum_object_bytes, "maximum_object_bytes"
         )
         self._objects: dict[str, tuple[bytes, str]] = {}
@@ -368,11 +381,13 @@ class InMemoryConditionalObjectClient:
         return tuple(self._read_requests)
 
     def create_object(self, key: str, data: bytes, /) -> ObjectMetadata:
-        key_ = _object_key(key)
+        key_ = validate_object_key(key)
         payload = _bounded_bytes(data, self.maximum_object_bytes, "object")
         with self._lock:
             if key_ in self._objects:
-                raise ObjectPreconditionError(f"Object {key_!r} already exists.")
+                raise ObjectPreconditionError(
+                    f"object.key must be absent before conditional creation; got {key_!r} already exists"
+                )
             etag = self._next_etag(payload)
             self._objects[key_] = (payload, etag)
             return ObjectMetadata(key_, etag, len(payload))
@@ -380,43 +395,47 @@ class InMemoryConditionalObjectClient:
     def replace_object(
         self, key: str, data: bytes, expected_etag: str, /
     ) -> ObjectMetadata:
-        key_ = _object_key(key)
-        expected = _identifier(expected_etag, "expected_etag")
+        key_ = validate_object_key(key)
+        expected = identifier(expected_etag, "expected_etag")
         payload = _bounded_bytes(data, self.maximum_object_bytes, "object")
         with self._lock:
             current = self._objects.get(key_)
             if current is None or current[1] != expected:
                 raise ObjectPreconditionError(
-                    f"Object {key_!r} conditional replace failed."
+                    f"object.expected_etag must match the current token for replacement; got conditional replace failed for {key_!r}"
                 )
             etag = self._next_etag(payload)
             self._objects[key_] = (payload, etag)
             return ObjectMetadata(key_, etag, len(payload))
 
     def read_object(self, key: str, /, *, maximum_bytes: int) -> ObjectValue:
-        key_ = _object_key(key)
-        maximum = _nonnegative(maximum_bytes, "maximum_bytes")
+        key_ = validate_object_key(key)
+        maximum = nonnegative_integer(maximum_bytes, "maximum_bytes")
         with self._lock:
             self._read_requests.append((key_, maximum))
             current = self._objects.get(key_)
             if current is None:
-                raise ObjectNotFoundError(f"Object {key_!r} does not exist.")
+                raise ObjectNotFoundError(
+                    f"object.key must identify a stored object; got {key_!r} does not exist"
+                )
             payload, etag = current
             if len(payload) > maximum:
                 raise RepositoryCorruptionError(
-                    f"Object {key_!r} exceeds its bounded read limit."
+                    f"object.size must fit its bounded read limit; got {key_!r} exceeds the read limit"
                 )
             return ObjectValue(ObjectMetadata(key_, etag, len(payload)), payload)
 
     def delete_object(self, key: str, /, *, expected_etag: str | None = None) -> None:
-        key_ = _object_key(key)
+        key_ = validate_object_key(key)
         with self._lock:
             current = self._objects.get(key_)
             if current is None:
-                raise ObjectNotFoundError(f"Object {key_!r} does not exist.")
+                raise ObjectNotFoundError(
+                    f"object.key must identify a stored object; got {key_!r} does not exist"
+                )
             if expected_etag is not None and current[1] != expected_etag:
                 raise ObjectPreconditionError(
-                    f"Object {key_!r} conditional delete failed."
+                    f"object.expected_etag must match the current token for deletion; got conditional delete failed for {key_!r}"
                 )
             del self._objects[key_]
 
@@ -453,6 +472,7 @@ class POSIXArtifactRepository:
         self.maximum_chunk_bytes = policy.maximum_chunk_bytes
         self.maximum_metadata_bytes = policy.maximum_metadata_bytes
         self.failure_injector = failure_injector
+        self._manifest_decoder = _ManifestDecoder()
         self.support_tuple = SupportTuple(
             "artifact.repository",
             {
@@ -473,9 +493,7 @@ class POSIXArtifactRepository:
         self._directory_descriptors = {
             name: os.open(
                 name,
-                os.O_RDONLY
-                | getattr(os, "O_DIRECTORY", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                 dir_fd=self._root_descriptor,
             )
             for name in (
@@ -504,7 +522,7 @@ class POSIXArtifactRepository:
         }
         if self._pinned_layout_identities != self._layout_identities:
             raise RepositoryCorruptionError(
-                "Repository storage layout changed while descriptors were pinned."
+                "repository.storage_layout must remain unchanged while descriptors are pinned; got storage layout changed"
             )
 
     def begin(
@@ -516,12 +534,12 @@ class POSIXArtifactRepository:
         attempt_id: str | None = None,
         started_at: int | None = None,
     ) -> RepositoryTransaction:
-        artifact = _identifier(artifact_id, "artifact_id")
-        writer = _identifier(writer_id, "writer_id")
+        artifact = identifier(artifact_id, "artifact_id")
+        writer = identifier(writer_id, "writer_id")
         attempt = (
             secrets.token_hex(16)
             if attempt_id is None
-            else _identifier(attempt_id, "attempt_id")
+            else identifier(attempt_id, "attempt_id")
         )
         with self._exclusive_lock():
             pointer = self._read_pointer_optional(artifact)
@@ -548,7 +566,7 @@ class POSIXArtifactRepository:
                 self._fsync_repository_directory(staging)
                 if self._repository_path_exists(root):
                     raise RepositoryConflictError(
-                        f"Repository attempt {attempt!r} already exists."
+                        f"repository.attempt_id must name an unused attempt root; got {attempt!r} already exists"
                     )
                 self._rename_repository_path(staging, root)
             finally:
@@ -565,6 +583,7 @@ class POSIXArtifactRepository:
         )
         return transaction
 
+    @checked
     def write_chunk(
         self,
         transaction: RepositoryTransaction,
@@ -577,13 +596,15 @@ class POSIXArtifactRepository:
         encoding: ChunkEncoding = "identity",
     ) -> ChunkRecord:
         self._validate_transaction(transaction)
-        logical = _identifier(logical_name, "logical_name")
-        index_ = _nonnegative(index, "index")
-        offset_ = _nonnegative(offset, "offset")
+        logical = identifier(logical_name, "logical_name")
+        index_ = nonnegative_integer(index, "index")
+        offset_ = nonnegative_integer(offset, "offset")
         plaintext = _bounded_bytes(payload, self.maximum_chunk_bytes, "chunk plaintext")
         encoded = _encode_chunk(plaintext, encoding)
         if len(encoded) > self.maximum_chunk_bytes:
-            raise ValueError("Encoded chunk exceeds maximum_chunk_bytes.")
+            raise ValueError(
+                "chunk.encoded_size must not exceed maximum_chunk_bytes; got encoded chunk byte limit exceeded"
+            )
         key = self._chunk_key(transaction.attempt_id, logical, index_)
         record = ChunkRecord(
             transaction.transaction_id,
@@ -600,6 +621,7 @@ class POSIXArtifactRepository:
         self._atomic_create_immutable(self.root / key, encoded)
         return record
 
+    @checked
     def commit(
         self,
         transaction: RepositoryTransaction,
@@ -634,11 +656,13 @@ class POSIXArtifactRepository:
                 current is not None
                 and current.get("transaction_id") == transaction.transaction_id
             ):
-                raise RepositoryConflictError("Transaction is already committed.")
+                raise RepositoryConflictError(
+                    "transaction.transaction_id must not already be published; got already committed"
+                )
             current_manifest_id = None if current is None else str(current["manifest_id"])
             if current_manifest_id != transaction.base_manifest_id:
                 raise RepositoryConflictError(
-                    "Artifact pointer changed after this transaction began."
+                    "transaction.base_manifest_id must match the current artifact pointer; got pointer changed after this transaction began"
                 )
             self._fail("before_manifest")
             self._create_or_verify_immutable(attempt / "manifest.json", manifest_payload)
@@ -666,12 +690,15 @@ class POSIXArtifactRepository:
 
     def get_manifest(self, artifact_id: str, /) -> ArtifactManifest:
         self._verify_repository_layout()
-        artifact = _identifier(artifact_id, "artifact_id")
+        artifact = identifier(artifact_id, "artifact_id")
         pointer = self._read_pointer_optional(artifact)
         if pointer is None:
-            raise ObjectNotFoundError(f"Artifact {artifact!r} does not exist.")
+            raise ObjectNotFoundError(
+                f"repository.artifact_id must identify a committed artifact; got {artifact!r} does not exist"
+            )
         return self._manifest_from_pointer(pointer, artifact)
 
+    @checked
     def read_chunk(
         self,
         manifest: ArtifactManifest,
@@ -685,10 +712,12 @@ class POSIXArtifactRepository:
         maximum = (
             self.maximum_chunk_bytes
             if maximum_plaintext_bytes is None
-            else _positive(maximum_plaintext_bytes, "maximum_plaintext_bytes")
+            else positive_integer(maximum_plaintext_bytes, "maximum_plaintext_bytes")
         )
         if chunk.plaintext_size > maximum:
-            raise RepositoryCorruptionError("Chunk exceeds requested plaintext bound.")
+            raise RepositoryCorruptionError(
+                "chunk.plaintext_size must fit the requested plaintext bound; got plaintext bound exceeded"
+            )
         encoded = self._read_bounded_file(
             self.root / chunk.object_key,
             min(self.maximum_chunk_bytes, chunk.encoded_size),
@@ -704,15 +733,17 @@ class POSIXArtifactRepository:
         maximum_bytes: int,
     ) -> bytes:
         manifest = self.get_manifest(artifact_id)
-        logical = _identifier(logical_name, "logical_name")
+        logical = identifier(logical_name, "logical_name")
         chunks = tuple(item for item in manifest.chunks if item.logical_name == logical)
         total = sum(item.plaintext_size for item in chunks)
-        maximum = _positive(maximum_bytes, "maximum_bytes")
+        maximum = positive_integer(maximum_bytes, "maximum_bytes")
         if not chunks:
-            raise ObjectNotFoundError(f"Artifact payload {logical!r} does not exist.")
+            raise ObjectNotFoundError(
+                f"artifact.logical_name must identify a stored payload; got payload {logical!r} does not exist"
+            )
         if total > maximum:
             raise RepositoryCorruptionError(
-                "Artifact payload exceeds requested byte bound."
+                "artifact.payload_size must fit the requested byte bound; got payload byte bound exceeded"
             )
         return b"".join(
             self.read_chunk(manifest, item, maximum_plaintext_bytes=maximum)
@@ -730,7 +761,7 @@ class POSIXArtifactRepository:
         issued_at: int | None = None,
     ) -> LeaseRecord:
         with self._exclusive_lock():
-            artifact = _identifier(artifact_id, "artifact_id")
+            artifact = identifier(artifact_id, "artifact_id")
             self.get_manifest(artifact)
             lease = LeaseRecord(
                 self.provider_id,
@@ -750,19 +781,21 @@ class POSIXArtifactRepository:
             self._fsync_repository_directory(directory)
             return lease
 
+    @checked
     def release_lease(self, lease: LeaseRecord, /) -> None:
         with self._exclusive_lock():
-            if (
-                not isinstance(lease, LeaseRecord)
-                or lease.provider_id != self.provider_id
-            ):
-                raise TypeError("lease must belong to this repository provider.")
+            if lease.provider_id != self.provider_id:
+                raise TypeError(
+                    "lease.provider_id must match the repository provider; got a foreign lease provider"
+                )
             path = self.root / "leases" / lease.artifact_id / f"{lease.lease_id}.json"
             persisted = LeaseRecord.from_record(
                 self._read_json_file(path, self.maximum_metadata_bytes)
             )
             if persisted.record_id != lease.record_id:
-                raise RepositoryConflictError("Lease release record does not match.")
+                raise RepositoryConflictError(
+                    "lease.record_id must match the stored lease before release; got release record mismatch"
+                )
             self._unlink_existing(path)
 
     def place_legal_hold(
@@ -775,7 +808,7 @@ class POSIXArtifactRepository:
         placed_at: int | None = None,
     ) -> LegalHoldRecord:
         with self._exclusive_lock():
-            artifact = _identifier(artifact_id, "artifact_id")
+            artifact = identifier(artifact_id, "artifact_id")
             self.get_manifest(artifact)
             hold = LegalHoldRecord(
                 self.provider_id,
@@ -794,26 +827,27 @@ class POSIXArtifactRepository:
             self._fsync_repository_directory(directory)
             return hold
 
+    @checked
     def release_legal_hold(self, hold: LegalHoldRecord, /) -> None:
         with self._exclusive_lock():
-            if (
-                not isinstance(hold, LegalHoldRecord)
-                or hold.provider_id != self.provider_id
-            ):
-                raise TypeError("hold must belong to this repository provider.")
+            if hold.provider_id != self.provider_id:
+                raise TypeError(
+                    "hold.provider_id must match the repository provider; got a foreign legal-hold provider"
+                )
             path = self.root / "holds" / hold.artifact_id / f"{hold.hold_id}.json"
             persisted = LegalHoldRecord.from_record(
                 self._read_json_file(path, self.maximum_metadata_bytes)
             )
             if persisted.record_id != hold.record_id:
-                raise RepositoryConflictError("Legal-hold release record does not match.")
+                raise RepositoryConflictError(
+                    "hold.record_id must match the stored legal hold before release; got release record mismatch"
+                )
             self._unlink_existing(path)
 
+    @checked
     def set_retention(self, artifact_id: str, policy: RetentionPolicy, /) -> None:
         with self._exclusive_lock():
-            artifact = _identifier(artifact_id, "artifact_id")
-            if not isinstance(policy, RetentionPolicy):
-                raise TypeError("policy must be RetentionPolicy.")
+            artifact = identifier(artifact_id, "artifact_id")
             self.get_manifest(artifact)
             payload = _json_bytes(
                 {
@@ -838,7 +872,7 @@ class POSIXArtifactRepository:
         eligible_at: int | None = None,
     ) -> TombstoneRecord:
         with self._exclusive_lock():
-            artifact = _identifier(artifact_id, "artifact_id")
+            artifact = identifier(artifact_id, "artifact_id")
             self.get_manifest(artifact)
             created = _now() if created_at is None else int(created_at)
             record = TombstoneRecord(
@@ -862,6 +896,7 @@ class POSIXArtifactRepository:
         )
         return record
 
+    @checked
     def collect_garbage(
         self,
         /,
@@ -889,10 +924,8 @@ class POSIXArtifactRepository:
         now: int | None,
         default_policy: RetentionPolicy | None,
     ) -> GarbageCollectionReport:
-        collected = _now() if now is None else _nonnegative(now, "now")
+        collected = _now() if now is None else nonnegative_integer(now, "now")
         default = RetentionPolicy() if default_policy is None else default_policy
-        if not isinstance(default, RetentionPolicy):
-            raise TypeError("default_policy must be RetentionPolicy.")
         self._cleanup_trash()
         self._cleanup_staging(collected, default.abandoned_attempt_grace_seconds)
         removed_attempts: list[str] = []
@@ -979,17 +1012,19 @@ class POSIXArtifactRepository:
             information = directory.lstat()
             if not stat.S_ISDIR(information.st_mode) or stat.S_ISLNK(information.st_mode):
                 raise RepositoryCorruptionError(
-                    f"Repository storage component {name!r} is not a real directory."
+                    f"repository.storage_component.kind must be a real directory; got non-directory or symlink for {name!r}"
                 )
         lock = self.root / "locks" / "repository.lock"
         descriptor = os.open(
             lock,
-            os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+            os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW,
             0o600,
         )
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                raise RepositoryCorruptionError("Repository lock is not a regular file.")
+                raise RepositoryCorruptionError(
+                    "repository.lock.kind must be a regular file; got a non-regular lock file"
+                )
         finally:
             os.close(descriptor)
         for name in (
@@ -1024,7 +1059,7 @@ class POSIXArtifactRepository:
             information = path.lstat()
             if not stat.S_ISDIR(information.st_mode) or stat.S_ISLNK(information.st_mode):
                 raise RepositoryCorruptionError(
-                    "Repository storage layout contains a symbolic link."
+                    "repository.storage_layout.kind must contain real directories; got a symbolic link or non-directory"
                 )
             identities[name] = (information.st_dev, information.st_ino)
         return identities
@@ -1036,7 +1071,7 @@ class POSIXArtifactRepository:
             or current != self._pinned_layout_identities
         ):
             raise RepositoryCorruptionError(
-                "Repository storage layout changed after initialization."
+                "repository.storage_layout must match its initialized and pinned identities; got storage layout changed after initialization"
             )
 
     def _remove_root(self, attempt_id: str, /) -> None:
@@ -1051,7 +1086,7 @@ class POSIXArtifactRepository:
         for name, information in self._repository_directory_entries(trash):
             if not stat.S_ISDIR(information.st_mode):
                 raise RepositoryCorruptionError(
-                    "Repository trash contains a non-directory."
+                    "repository.trash.entries must be directories; got a non-directory trash entry"
                 )
             self._remove_repository_tree(trash / name)
         self._fsync_repository_directory(trash)
@@ -1061,17 +1096,16 @@ class POSIXArtifactRepository:
         for name, information in self._repository_directory_entries(staging):
             if not stat.S_ISDIR(information.st_mode):
                 raise RepositoryCorruptionError(
-                    "Repository staging contains a non-directory."
+                    "repository.staging.entries must be directories; got a non-directory staging entry"
                 )
             if now - int(information.st_mtime) >= grace_seconds:
                 self._remove_repository_tree(staging / name)
         self._fsync_repository_directory(staging)
 
-    @checked
     def _validate_transaction(self, transaction: RepositoryTransaction, /) -> None:
         if transaction.provider_id != self.provider_id:
             raise RepositoryConflictError(
-                "Transaction provider does not match repository."
+                "transaction.provider_id must match the repository provider; got a foreign transaction provider"
             )
         path = self._attempt_path(transaction.attempt_id) / "transaction.json"
         record = RepositoryTransaction.from_record(
@@ -1079,7 +1113,7 @@ class POSIXArtifactRepository:
         )
         if record.transaction_id != transaction.transaction_id:
             raise RepositoryConflictError(
-                "Transaction record does not match its attempt."
+                "transaction.transaction_id must match its stored attempt; got transaction record mismatch"
             )
 
     def _validate_staged_manifest(
@@ -1094,7 +1128,7 @@ class POSIXArtifactRepository:
                 expected_prefix
             ):
                 raise RepositoryConflictError(
-                    "Manifest chunk does not belong to the attempt-private root."
+                    "chunk.object_key must belong to the attempt-private root; got a foreign manifest chunk key"
                 )
             encoded = self._read_bounded_file(
                 self.root / chunk.object_key,
@@ -1105,33 +1139,37 @@ class POSIXArtifactRepository:
     def _validate_manifest_argument(
         self, manifest: ArtifactManifest, chunk: ChunkRecord, /
     ) -> None:
-        if not isinstance(manifest, ArtifactManifest) or not isinstance(
-            chunk, ChunkRecord
-        ):
-            raise TypeError("manifest and chunk must be typed repository records.")
         if manifest.provider_id != self.provider_id:
-            raise RepositoryConflictError("Manifest provider does not match repository.")
+            raise RepositoryConflictError(
+                "manifest.provider_id must match the repository provider; got a foreign manifest provider"
+            )
         if chunk.chunk_id not in {item.chunk_id for item in manifest.chunks}:
-            raise RepositoryConflictError("Chunk is not present in the manifest.")
+            raise RepositoryConflictError(
+                "manifest.chunks must include the requested chunk ID; got a chunk not present in the manifest"
+            )
 
     def _manifest_from_pointer(
         self, pointer: Mapping[str, object], artifact: str, /
     ) -> ArtifactManifest:
         _validate_pointer(pointer, self.provider_id, artifact)
-        attempt = _identifier(str(pointer["attempt_id"]), "attempt_id")
+        attempt = identifier(str(pointer["attempt_id"]), "attempt_id")
         manifest_payload = self._read_bounded_file(
             self._attempt_path(attempt) / "manifest.json", self.maximum_metadata_bytes
         )
         if hashlib.sha256(manifest_payload).hexdigest() != pointer["manifest_sha256"]:
-            raise RepositoryCorruptionError("Artifact manifest checksum failed.")
-        manifest = _read_manifest_record(manifest_payload)
+            raise RepositoryCorruptionError(
+                "artifact.manifest_sha256 must match durable manifest bytes; got manifest checksum failed"
+            )
+        manifest = self._manifest_decoder.decode(manifest_payload)
         if (
             manifest.manifest_id != pointer["manifest_id"]
             or manifest.transaction_id != pointer["transaction_id"]
             or manifest.provider_id != self.provider_id
             or manifest.artifact_id != artifact
         ):
-            raise RepositoryCorruptionError("Artifact pointer and manifest disagree.")
+            raise RepositoryCorruptionError(
+                "artifact.pointer.fields must agree with the manifest; got pointer and manifest disagreement"
+            )
         marker = self._read_json_file(
             self._attempt_path(attempt) / "COMMIT", self.maximum_metadata_bytes
         )
@@ -1140,7 +1178,9 @@ class POSIXArtifactRepository:
         if any(
             not item.object_key.startswith(expected_prefix) for item in manifest.chunks
         ):
-            raise RepositoryCorruptionError("Manifest chunk escapes its immutable root.")
+            raise RepositoryCorruptionError(
+                "manifest.chunks.object_key must stay inside the immutable root; got an escaping chunk key"
+            )
         return manifest
 
     def _read_pointer_optional(self, artifact: str, /) -> dict[str, object] | None:
@@ -1157,7 +1197,7 @@ class POSIXArtifactRepository:
         for name, _ in self._repository_directory_entries(directory):
             if not name.endswith(".pointer"):
                 continue
-            artifact = _identifier(name.removesuffix(".pointer"), "artifact_id")
+            artifact = identifier(name.removesuffix(".pointer"), "artifact_id")
             path = directory / name
             pointer = self._read_json_file(path, _POINTER_LIMIT)
             _validate_pointer(pointer, self.provider_id, artifact)
@@ -1172,9 +1212,9 @@ class POSIXArtifactRepository:
         for name, information in self._repository_directory_entries(directory):
             if not stat.S_ISDIR(information.st_mode):
                 raise RepositoryCorruptionError(
-                    "Repository roots contain a non-directory."
+                    "repository.roots.entries must be directories; got a non-directory root entry"
                 )
-            attempt = _identifier(name, "attempt_id")
+            attempt = identifier(name, "attempt_id")
             path = directory / attempt
             transaction = RepositoryTransaction.from_record(
                 self._read_json_file(
@@ -1185,13 +1225,17 @@ class POSIXArtifactRepository:
                 transaction.attempt_id != attempt
                 or transaction.provider_id != self.provider_id
             ):
-                raise RepositoryCorruptionError("Attempt transaction identity mismatch.")
+                raise RepositoryCorruptionError(
+                    "repository.attempt.transaction_ids must match the root attempt and provider; got attempt transaction identity mismatch"
+                )
             manifest_path = path / "manifest.json"
             marker_path = path / "COMMIT"
             marker_exists = self._repository_path_exists(marker_path)
             manifest_exists = self._repository_path_exists(manifest_path)
             if marker_exists and not manifest_exists:
-                raise RepositoryCorruptionError("Commit marker has no manifest.")
+                raise RepositoryCorruptionError(
+                    "artifact.commit_marker.manifest must be present for a committed root; got commit marker with no manifest"
+                )
             manifest = (
                 None
                 if not marker_exists
@@ -1213,7 +1257,7 @@ class POSIXArtifactRepository:
                     )
                 ):
                     raise RepositoryCorruptionError(
-                        "Committed root manifest does not match its transaction."
+                        "artifact.manifest.fields must match the root transaction and chunk ownership; got committed root manifest mismatch"
                     )
                 marker = self._read_json_file(marker_path, self.maximum_metadata_bytes)
                 expected = _pointer_record(
@@ -1237,7 +1281,9 @@ class POSIXArtifactRepository:
                 self._read_json_file(path, self.maximum_metadata_bytes)
             )
             if lease.provider_id != self.provider_id:
-                raise RepositoryCorruptionError("Lease provider mismatch.")
+                raise RepositoryCorruptionError(
+                    "lease.provider_id must match the repository provider; got lease provider mismatch"
+                )
             if lease.expires_at <= now:
                 self._unlink_existing(path)
                 expired.append(lease.lease_id)
@@ -1251,7 +1297,9 @@ class POSIXArtifactRepository:
                 self._read_json_file(path, self.maximum_metadata_bytes)
             )
             if lease.provider_id != self.provider_id:
-                raise RepositoryCorruptionError("Lease provider mismatch.")
+                raise RepositoryCorruptionError(
+                    "lease.provider_id must match the repository provider; got lease provider mismatch"
+                )
             if lease.expires_at > now:
                 active.add(lease.artifact_id)
         return active
@@ -1264,7 +1312,9 @@ class POSIXArtifactRepository:
                 self._read_json_file(path, self.maximum_metadata_bytes)
             )
             if hold.provider_id != self.provider_id:
-                raise RepositoryCorruptionError("Legal-hold provider mismatch.")
+                raise RepositoryCorruptionError(
+                    "hold.provider_id must match the repository provider; got legal-hold provider mismatch"
+                )
             held.add(hold.artifact_id)
         return held
 
@@ -1282,7 +1332,9 @@ class POSIXArtifactRepository:
             or record.get("artifact_id") != artifact
             or not isinstance(policy, Mapping)
         ):
-            raise RepositoryCorruptionError("Retention record is invalid.")
+            raise RepositoryCorruptionError(
+                "artifact.retention.fields must match the artifact and provider with a mapping policy; got invalid retention record"
+            )
         return RetentionPolicy.from_record(policy)
 
     def _tombstone_optional(self, artifact: str, /) -> TombstoneRecord | None:
@@ -1293,7 +1345,9 @@ class POSIXArtifactRepository:
             self._read_json_file(path, self.maximum_metadata_bytes)
         )
         if value.provider_id != self.provider_id or value.artifact_id != artifact:
-            raise RepositoryCorruptionError("Tombstone provider or artifact mismatch.")
+            raise RepositoryCorruptionError(
+                "artifact.tombstone.fields must match the artifact and provider; got tombstone provider or artifact mismatch"
+            )
         return value
 
     @contextmanager
@@ -1302,12 +1356,15 @@ class POSIXArtifactRepository:
             relative = path.relative_to(self.root)
         except ValueError as error:
             raise RepositoryCorruptionError(
-                "Repository path escaped its pinned root."
+                "repository.path must remain inside its pinned root; got a path escaped its pinned root"
             ) from error
         if not relative.parts or any(
             component in ("", ".", "..") for component in relative.parts
         ):
-            raise RepositoryCorruptionError("Repository path is not canonical.")
+            raise RepositoryCorruptionError(
+                "repository.path must use nonempty relative components without dot segments; "
+                f"got {relative.parts!r}"
+            )
         first = relative.parts[0]
         if len(relative.parts) > 1 and first in self._directory_descriptors:
             descriptors = [os.dup(self._directory_descriptors[first])]
@@ -1320,9 +1377,7 @@ class POSIXArtifactRepository:
             for component in traversed:
                 parent = os.open(
                     component,
-                    os.O_RDONLY
-                    | getattr(os, "O_DIRECTORY", 0)
-                    | getattr(os, "O_NOFOLLOW", 0),
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                     dir_fd=parent,
                 )
                 descriptors.append(parent)
@@ -1339,9 +1394,7 @@ class POSIXArtifactRepository:
         with self._open_parent_descriptor(directory) as (parent, name):
             descriptor = os.open(
                 name,
-                os.O_RDONLY
-                | getattr(os, "O_DIRECTORY", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                 dir_fd=parent,
             )
             try:
@@ -1367,13 +1420,13 @@ class POSIXArtifactRepository:
         for child_name, child_status in self._repository_directory_entries(directory):
             if not stat.S_ISDIR(child_status.st_mode):
                 raise RepositoryCorruptionError(
-                    f"Repository directory {directory.name!r} contains a non-directory."
+                    f"repository.directory.children must be directories; got a non-directory child in {directory.name!r}"
                 )
             child = directory / child_name
             for name, information in self._repository_directory_entries(child):
                 if stat.S_ISDIR(information.st_mode):
                     raise RepositoryCorruptionError(
-                        f"Repository directory {child.name!r} contains a nested directory."
+                        f"repository.directory.files must not contain nested directories; got a nested directory in {child.name!r}"
                     )
                 if name.endswith(suffix):
                     paths.append(child / name)
@@ -1384,7 +1437,7 @@ class POSIXArtifactRepository:
             information = os.stat(name, dir_fd=parent, follow_symlinks=False)
             if not stat.S_ISDIR(information.st_mode):
                 raise RepositoryCorruptionError(
-                    "Repository cleanup target is not a directory."
+                    "repository.cleanup_target.kind must be a directory; got a non-directory cleanup target"
                 )
             shutil.rmtree(name, dir_fd=parent)
 
@@ -1405,9 +1458,7 @@ class POSIXArtifactRepository:
         with self._open_parent_descriptor(path) as (parent, name):
             descriptor = os.open(
                 name,
-                os.O_RDONLY
-                | getattr(os, "O_DIRECTORY", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                 dir_fd=parent,
             )
             try:
@@ -1435,18 +1486,18 @@ class POSIXArtifactRepository:
                     os.fsync(destination_parent)
 
     def _read_bounded_file(self, path: Path, maximum: int, /) -> bytes:
-        maximum_ = _nonnegative(maximum, "maximum read bytes")
+        maximum_ = nonnegative_integer(maximum, "maximum read bytes")
         with self._open_parent_descriptor(path) as (parent, name):
             descriptor = os.open(
                 name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | os.O_NOFOLLOW,
                 dir_fd=parent,
             )
             try:
                 before = os.fstat(descriptor)
                 if not stat.S_ISREG(before.st_mode) or before.st_size > maximum_:
                     raise RepositoryCorruptionError(
-                        f"Repository file {path.name!r} violates its byte bound."
+                        f"repository.file.size must fit its byte bound on a regular file; got {path.name!r} violates its byte bound"
                     )
                 payload = bytearray()
                 while len(payload) <= maximum_:
@@ -1464,7 +1515,7 @@ class POSIXArtifactRepository:
             != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
         ):
             raise RepositoryCorruptionError(
-                f"Repository file {path.name!r} changed while being read."
+                f"repository.file.identity must remain unchanged during the read; got {path.name!r} changed while being read"
             )
         return bytes(payload)
 
@@ -1478,7 +1529,7 @@ class POSIXArtifactRepository:
         with self._open_parent_descriptor(lock_path) as (parent, name):
             descriptor = os.open(
                 name,
-                os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDWR | os.O_NOFOLLOW,
                 dir_fd=parent,
             )
         try:
@@ -1516,20 +1567,22 @@ class POSIXArtifactRepository:
         try:
             descriptor = os.open(
                 name,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                 0o600,
                 dir_fd=parent,
             )
         except FileExistsError as error:
             raise RepositoryConflictError(
-                f"Immutable repository object {name!r} already exists."
+                f"repository.immutable_object.key must be absent before creation; got {name!r} already exists"
             ) from error
         try:
             view = memoryview(payload)
             while view:
                 written = os.write(descriptor, view)
                 if written <= 0:
-                    raise RepositoryError(f"Cannot write repository file {name}.")
+                    raise RepositoryError(
+                        f"repository.file.write_progress must be positive until payload completion; got failed write for {name}"
+                    )
                 view = view[written:]
             os.fsync(descriptor)
         finally:
@@ -1554,7 +1607,7 @@ class POSIXArtifactRepository:
                     )
                 except FileExistsError as error:
                     raise RepositoryConflictError(
-                        f"Immutable repository object {name!r} already exists."
+                        f"repository.immutable_object.key must be absent before creation; got {name!r} already exists"
                     ) from error
                 os.fsync(parent)
             finally:
@@ -1577,7 +1630,7 @@ class POSIXArtifactRepository:
                     existing = self._read_bounded_file(path, len(payload))
                     if existing != payload:
                         raise RepositoryConflictError(
-                            f"Immutable repository object {name!r} conflicts."
+                            f"repository.immutable_object.payload must match existing immutable bytes; got conflicting object {name!r}"
                         )
                 else:
                     os.fsync(parent)
@@ -1590,15 +1643,15 @@ class POSIXArtifactRepository:
                 os.unlink(name, dir_fd=parent)
             except FileNotFoundError as error:
                 raise RepositoryConflictError(
-                    f"Repository record {name!r} no longer exists."
+                    f"repository.record.key must exist until unlink; got record {name!r} no longer exists"
                 ) from error
             os.fsync(parent)
 
     def _attempt_path(self, attempt: str, /) -> Path:
-        return self.root / "roots" / _identifier(attempt, "attempt_id")
+        return self.root / "roots" / identifier(attempt, "attempt_id")
 
     def _pointer_path(self, artifact: str, /) -> Path:
-        return self.root / "artifacts" / f"{_identifier(artifact, 'artifact_id')}.pointer"
+        return self.root / "artifacts" / f"{identifier(artifact, 'artifact_id')}.pointer"
 
     @staticmethod
     def _chunk_key(attempt: str, logical: str, index: int, /) -> str:
@@ -1624,10 +1677,10 @@ class S3ArtifactRepository:
         failure_injector: FailureInjector | None = None,
     ) -> None:
         profile.require_transactional_support()
-        maximum = _positive(maximum_chunk_bytes, "maximum_chunk_bytes")
+        maximum = positive_integer(maximum_chunk_bytes, "maximum_chunk_bytes")
         if maximum > profile.maximum_object_bytes:
             raise UnsupportedRepositoryProfileError(
-                "maximum_chunk_bytes exceeds the object-store profile bound."
+                "repository.maximum_chunk_bytes must fit the object-store profile bound; got a chunk limit larger than the profile bound"
             )
         self.client = client
         self.profile = profile
@@ -1636,6 +1689,7 @@ class S3ArtifactRepository:
         self.maximum_chunk_bytes = maximum
         self.maximum_metadata_bytes = min(_METADATA_LIMIT, profile.maximum_object_bytes)
         self.failure_injector = failure_injector
+        self._manifest_decoder = _ManifestDecoder()
         self.support_tuple = SupportTuple(
             "artifact.repository",
             {
@@ -1656,7 +1710,7 @@ class S3ArtifactRepository:
         attempt_id: str | None = None,
         started_at: int | None = None,
     ) -> RepositoryTransaction:
-        artifact = _identifier(artifact_id, "artifact_id")
+        artifact = identifier(artifact_id, "artifact_id")
         attempt = secrets.token_hex(16) if attempt_id is None else attempt_id
         pointer_value = self._read_pointer_optional(artifact)
         pointer = None if pointer_value is None else _json_record(pointer_value.data)
@@ -1685,6 +1739,7 @@ class S3ArtifactRepository:
         )
         return transaction
 
+    @checked
     def write_chunk(
         self,
         transaction: RepositoryTransaction,
@@ -1697,13 +1752,15 @@ class S3ArtifactRepository:
         encoding: ChunkEncoding = "identity",
     ) -> ChunkRecord:
         self._validate_transaction(transaction)
-        logical = _identifier(logical_name, "logical_name")
-        index_ = _nonnegative(index, "index")
-        offset_ = _nonnegative(offset, "offset")
+        logical = identifier(logical_name, "logical_name")
+        index_ = nonnegative_integer(index, "index")
+        offset_ = nonnegative_integer(offset, "offset")
         plaintext = _bounded_bytes(payload, self.maximum_chunk_bytes, "chunk plaintext")
         encoded = _encode_chunk(plaintext, encoding)
         if len(encoded) > self.maximum_chunk_bytes:
-            raise ValueError("Encoded chunk exceeds maximum_chunk_bytes.")
+            raise ValueError(
+                "chunk.encoded_size must not exceed maximum_chunk_bytes; got encoded chunk byte limit exceeded"
+            )
         key = self._chunk_key(transaction.attempt_id, logical, index_)
         record = ChunkRecord(
             transaction.transaction_id,
@@ -1720,6 +1777,7 @@ class S3ArtifactRepository:
         self.client.create_object(key, encoded)
         return record
 
+    @checked
     def commit(
         self,
         transaction: RepositoryTransaction,
@@ -1786,10 +1844,12 @@ class S3ArtifactRepository:
         return manifest
 
     def get_manifest(self, artifact_id: str, /) -> ArtifactManifest:
-        artifact = _identifier(artifact_id, "artifact_id")
+        artifact = identifier(artifact_id, "artifact_id")
         value = self._read_pointer_optional(artifact)
         if value is None:
-            raise ObjectNotFoundError(f"Artifact {artifact!r} does not exist.")
+            raise ObjectNotFoundError(
+                f"repository.artifact_id must identify a committed artifact; got {artifact!r} does not exist"
+            )
         pointer = _json_record(value.data)
         _validate_pointer(pointer, self.provider_id, artifact)
         manifest_payload = self.client.read_object(
@@ -1797,15 +1857,19 @@ class S3ArtifactRepository:
             maximum_bytes=self.maximum_metadata_bytes,
         ).data
         if hashlib.sha256(manifest_payload).hexdigest() != pointer["manifest_sha256"]:
-            raise RepositoryCorruptionError("Artifact manifest checksum failed.")
-        manifest = _read_manifest_record(manifest_payload)
+            raise RepositoryCorruptionError(
+                "artifact.manifest_sha256 must match durable manifest bytes; got manifest checksum failed"
+            )
+        manifest = self._manifest_decoder.decode(manifest_payload)
         if (
             manifest.manifest_id != pointer["manifest_id"]
             or manifest.transaction_id != pointer["transaction_id"]
             or manifest.provider_id != self.provider_id
             or manifest.artifact_id != artifact
         ):
-            raise RepositoryCorruptionError("Artifact pointer and manifest disagree.")
+            raise RepositoryCorruptionError(
+                "artifact.pointer.fields must agree with the manifest; got pointer and manifest disagreement"
+            )
         marker = _json_record(
             self.client.read_object(
                 self._commit_key(str(pointer["attempt_id"])),
@@ -1817,9 +1881,12 @@ class S3ArtifactRepository:
         if any(
             not item.object_key.startswith(expected_prefix) for item in manifest.chunks
         ):
-            raise RepositoryCorruptionError("Manifest chunk escapes its immutable root.")
+            raise RepositoryCorruptionError(
+                "manifest.chunks.object_key must stay inside the immutable root; got an escaping chunk key"
+            )
         return manifest
 
+    @checked
     def read_chunk(
         self,
         manifest: ArtifactManifest,
@@ -1832,10 +1899,12 @@ class S3ArtifactRepository:
         maximum = (
             self.maximum_chunk_bytes
             if maximum_plaintext_bytes is None
-            else _positive(maximum_plaintext_bytes, "maximum_plaintext_bytes")
+            else positive_integer(maximum_plaintext_bytes, "maximum_plaintext_bytes")
         )
         if chunk.plaintext_size > maximum:
-            raise RepositoryCorruptionError("Chunk exceeds requested plaintext bound.")
+            raise RepositoryCorruptionError(
+                "chunk.plaintext_size must fit the requested plaintext bound; got plaintext bound exceeded"
+            )
         encoded = self.client.read_object(
             chunk.object_key,
             maximum_bytes=min(self.maximum_chunk_bytes, chunk.encoded_size),
@@ -1851,15 +1920,17 @@ class S3ArtifactRepository:
         maximum_bytes: int,
     ) -> bytes:
         manifest = self.get_manifest(artifact_id)
-        logical = _identifier(logical_name, "logical_name")
+        logical = identifier(logical_name, "logical_name")
         chunks = tuple(item for item in manifest.chunks if item.logical_name == logical)
         total = sum(item.plaintext_size for item in chunks)
-        maximum = _positive(maximum_bytes, "maximum_bytes")
+        maximum = positive_integer(maximum_bytes, "maximum_bytes")
         if not chunks:
-            raise ObjectNotFoundError(f"Artifact payload {logical!r} does not exist.")
+            raise ObjectNotFoundError(
+                f"artifact.logical_name must identify a stored payload; got payload {logical!r} does not exist"
+            )
         if total > maximum:
             raise RepositoryCorruptionError(
-                "Artifact payload exceeds requested byte bound."
+                "artifact.payload_size must fit the requested byte bound; got payload byte bound exceeded"
             )
         return b"".join(
             self.read_chunk(manifest, item, maximum_plaintext_bytes=maximum)
@@ -1876,12 +1947,14 @@ class S3ArtifactRepository:
         lease_id: str | None = None,
         issued_at: int | None = None,
     ) -> LeaseRecord:
-        artifact = _identifier(artifact_id, "artifact_id")
+        artifact = identifier(artifact_id, "artifact_id")
         guard = self._acquire_artifact_guard(artifact)
         try:
             pointer = self._read_pointer_optional(artifact)
             if pointer is None:
-                raise ObjectNotFoundError(f"Artifact {artifact!r} does not exist.")
+                raise ObjectNotFoundError(
+                    f"repository.artifact_id must identify a committed artifact; got {artifact!r} does not exist"
+                )
             self.get_manifest(artifact)
             lease = LeaseRecord(
                 self.provider_id,
@@ -1899,14 +1972,19 @@ class S3ArtifactRepository:
         finally:
             self._release_artifact_guard(guard)
 
+    @checked
     def release_lease(self, lease: LeaseRecord, /) -> None:
-        if not isinstance(lease, LeaseRecord) or lease.provider_id != self.provider_id:
-            raise TypeError("lease must belong to this repository provider.")
+        if lease.provider_id != self.provider_id:
+            raise TypeError(
+                "lease.provider_id must match the repository provider; got a foreign lease provider"
+            )
         key = self._lease_key(lease.artifact_id, lease.lease_id)
         value = self.client.read_object(key, maximum_bytes=self.maximum_metadata_bytes)
         persisted = LeaseRecord.from_record(_json_record(value.data))
         if persisted.record_id != lease.record_id:
-            raise RepositoryConflictError("Lease release record does not match.")
+            raise RepositoryConflictError(
+                "lease.record_id must match the stored lease before release; got release record mismatch"
+            )
         self.client.delete_object(key, expected_etag=value.metadata.etag)
 
     def place_legal_hold(
@@ -1918,11 +1996,13 @@ class S3ArtifactRepository:
         hold_id: str | None = None,
         placed_at: int | None = None,
     ) -> LegalHoldRecord:
-        artifact = _identifier(artifact_id, "artifact_id")
+        artifact = identifier(artifact_id, "artifact_id")
         guard = self._acquire_artifact_guard(artifact)
         try:
             if self._read_pointer_optional(artifact) is None:
-                raise ObjectNotFoundError(f"Artifact {artifact!r} does not exist.")
+                raise ObjectNotFoundError(
+                    f"repository.artifact_id must identify a committed artifact; got {artifact!r} does not exist"
+                )
             self.get_manifest(artifact)
             hold = LegalHoldRecord(
                 self.provider_id,
@@ -1939,19 +2019,24 @@ class S3ArtifactRepository:
         finally:
             self._release_artifact_guard(guard)
 
+    @checked
     def release_legal_hold(self, hold: LegalHoldRecord, /) -> None:
-        if not isinstance(hold, LegalHoldRecord) or hold.provider_id != self.provider_id:
-            raise TypeError("hold must belong to this repository provider.")
+        if hold.provider_id != self.provider_id:
+            raise TypeError(
+                "hold.provider_id must match the repository provider; got a foreign legal-hold provider"
+            )
         key = self._hold_key(hold.artifact_id, hold.hold_id)
         value = self.client.read_object(key, maximum_bytes=self.maximum_metadata_bytes)
         persisted = LegalHoldRecord.from_record(_json_record(value.data))
         if persisted.record_id != hold.record_id:
-            raise RepositoryConflictError("Legal-hold release record does not match.")
+            raise RepositoryConflictError(
+                "hold.record_id must match the stored legal hold before release; got release record mismatch"
+            )
         self.client.delete_object(key, expected_etag=value.metadata.etag)
 
     @checked
     def set_retention(self, artifact_id: str, policy: RetentionPolicy, /) -> None:
-        artifact = _identifier(artifact_id, "artifact_id")
+        artifact = identifier(artifact_id, "artifact_id")
         guard = self._acquire_artifact_guard(artifact)
         try:
             self.get_manifest(artifact)
@@ -1982,7 +2067,7 @@ class S3ArtifactRepository:
         created_at: int | None = None,
         eligible_at: int | None = None,
     ) -> TombstoneRecord:
-        artifact = _identifier(artifact_id, "artifact_id")
+        artifact = identifier(artifact_id, "artifact_id")
         guard = self._acquire_artifact_guard(artifact)
         try:
             self.get_manifest(artifact)
@@ -2009,6 +2094,7 @@ class S3ArtifactRepository:
         )
         return record
 
+    @checked
     def collect_garbage(
         self,
         /,
@@ -2016,10 +2102,8 @@ class S3ArtifactRepository:
         now: int | None = None,
         default_policy: RetentionPolicy | None = None,
     ) -> GarbageCollectionReport:
-        collected = _now() if now is None else _nonnegative(now, "now")
+        collected = _now() if now is None else nonnegative_integer(now, "now")
         default = RetentionPolicy() if default_policy is None else default_policy
-        if not isinstance(default, RetentionPolicy):
-            raise TypeError("default_policy must be RetentionPolicy.")
         expired_leases = self._expire_leases(collected)
         pointers = self._all_pointers()
         roots = self._all_roots()
@@ -2082,7 +2166,7 @@ class S3ArtifactRepository:
                 if is_current:
                     if pointer_value is None:
                         raise RepositoryCorruptionError(
-                            "Current pointer disappeared during GC."
+                            "artifact.pointer must remain present during current-root garbage collection; got current pointer disappeared during GC"
                         )
                     self.client.delete_object(
                         self._pointer_key(artifact),
@@ -2123,11 +2207,10 @@ class S3ArtifactRepository:
         )
         return report
 
-    @checked
     def _validate_transaction(self, transaction: RepositoryTransaction, /) -> None:
         if transaction.provider_id != self.provider_id:
             raise RepositoryConflictError(
-                "Transaction provider does not match repository."
+                "transaction.provider_id must match the repository provider; got a foreign transaction provider"
             )
         persisted = RepositoryTransaction.from_record(
             _json_record(
@@ -2139,7 +2222,7 @@ class S3ArtifactRepository:
         )
         if persisted.transaction_id != transaction.transaction_id:
             raise RepositoryConflictError(
-                "Transaction record does not match its attempt."
+                "transaction.transaction_id must match its stored attempt; got transaction record mismatch"
             )
 
     def _validate_staged_manifest(
@@ -2152,7 +2235,7 @@ class S3ArtifactRepository:
             )
             if chunk.object_key != expected or not expected.startswith(prefix):
                 raise RepositoryConflictError(
-                    "Manifest chunk does not belong to the attempt-private root."
+                    "chunk.object_key must belong to the attempt-private root; got a foreign manifest chunk key"
                 )
             encoded = self.client.read_object(
                 chunk.object_key,
@@ -2163,14 +2246,14 @@ class S3ArtifactRepository:
     def _validate_manifest_argument(
         self, manifest: ArtifactManifest, chunk: ChunkRecord, /
     ) -> None:
-        if not isinstance(manifest, ArtifactManifest) or not isinstance(
-            chunk, ChunkRecord
-        ):
-            raise TypeError("manifest and chunk must be typed repository records.")
         if manifest.provider_id != self.provider_id:
-            raise RepositoryConflictError("Manifest provider does not match repository.")
+            raise RepositoryConflictError(
+                "manifest.provider_id must match the repository provider; got a foreign manifest provider"
+            )
         if chunk.chunk_id not in {item.chunk_id for item in manifest.chunks}:
-            raise RepositoryConflictError("Chunk is not present in the manifest.")
+            raise RepositoryConflictError(
+                "manifest.chunks must include the requested chunk ID; got a chunk not present in the manifest"
+            )
 
     def _create_or_verify_object(self, key: str, payload: bytes, /) -> None:
         existing = self._read_object_optional(key, len(payload))
@@ -2178,7 +2261,7 @@ class S3ArtifactRepository:
             self.client.create_object(key, payload)
         elif existing.data != payload:
             raise RepositoryConflictError(
-                f"Immutable repository object {key!r} conflicts."
+                f"repository.immutable_object.payload must match existing immutable bytes; got conflicting object {key!r}"
             )
 
     def _read_pointer_optional(self, artifact: str, /) -> ObjectValue | None:
@@ -2194,9 +2277,9 @@ class S3ArtifactRepository:
             return None
 
     def artifact_guard_metadata(self, artifact_id: str, /) -> ObjectMetadata:
-        """Return the exact conditional token for an abandoned metadata guard."""
+        """Return the conditional token for an abandoned metadata guard."""
 
-        artifact = _identifier(artifact_id, "artifact_id")
+        artifact = identifier(artifact_id, "artifact_id")
         value = self.client.read_object(
             self._guard_key(artifact),
             maximum_bytes=self.maximum_metadata_bytes,
@@ -2209,7 +2292,9 @@ class S3ArtifactRepository:
             or not isinstance(record.get("token"), str)
             or type(record.get("acquired_at")) is not int
         ):
-            raise RepositoryCorruptionError("Artifact metadata guard is invalid.")
+            raise RepositoryCorruptionError(
+                "artifact.metadata_guard.fields must identify the artifact, provider, token, and acquisition time; got invalid metadata guard"
+            )
         return value.metadata
 
     @checked
@@ -2220,17 +2305,17 @@ class S3ArtifactRepository:
 
         if authorization.provider_id != self.provider_id:
             raise RepositoryConflictError(
-                "Artifact guard authorization targets another provider."
+                "guard_authorization.provider_id must match the repository provider; got an authorization for another provider"
             )
         metadata = self.artifact_guard_metadata(authorization.artifact_id)
         if metadata.etag != authorization.guard_etag:
             raise RepositoryConflictError(
-                "Artifact guard changed after external fencing evidence."
+                "guard_authorization.guard_etag must match the current guard after fencing; got guard changed after external fencing evidence"
             )
         self.client.delete_object(metadata.key, expected_etag=authorization.guard_etag)
 
     def _acquire_artifact_guard(self, artifact_id: str, /) -> ObjectMetadata:
-        artifact = _identifier(artifact_id, "artifact_id")
+        artifact = identifier(artifact_id, "artifact_id")
         key = self._guard_key(artifact)
         token = secrets.token_hex(16)
         payload = _json_bytes(
@@ -2253,9 +2338,11 @@ class S3ArtifactRepository:
                 or not isinstance(record.get("token"), str)
                 or type(record.get("acquired_at")) is not int
             ):
-                raise RepositoryCorruptionError("Artifact metadata guard is invalid.")
+                raise RepositoryCorruptionError(
+                    "artifact.metadata_guard.fields must identify the artifact, provider, token, and acquisition time; got invalid metadata guard"
+                )
             raise RepositoryConflictError(
-                f"Artifact {artifact!r} metadata is being modified."
+                f"artifact.metadata_guard must be absent before modification; got artifact {artifact!r} metadata is being modified"
             )
         return self.client.create_object(key, payload)
 
@@ -2268,9 +2355,9 @@ class S3ArtifactRepository:
         for metadata in self.client.list_objects(prefix):
             if not metadata.key.endswith(".pointer"):
                 raise RepositoryCorruptionError(
-                    "Artifact namespace has an invalid object."
+                    "repository.artifact_namespace.keys must name pointer objects; got an invalid artifact namespace object"
                 )
-            artifact = _identifier(
+            artifact = identifier(
                 metadata.key[len(prefix) : -len(".pointer")], "artifact_id"
             )
             value = self.client.read_object(metadata.key, maximum_bytes=_POINTER_LIMIT)
@@ -2290,7 +2377,7 @@ class S3ArtifactRepository:
         )
         roots: list[tuple[RepositoryTransaction, ArtifactManifest | None]] = []
         for attempt in attempts:
-            attempt_ = _identifier(attempt, "attempt_id")
+            attempt_ = identifier(attempt, "attempt_id")
             transaction = RepositoryTransaction.from_record(
                 _json_record(
                     self.client.read_object(
@@ -2300,7 +2387,9 @@ class S3ArtifactRepository:
                 )
             )
             if transaction.provider_id != self.provider_id:
-                raise RepositoryCorruptionError("Attempt provider mismatch.")
+                raise RepositoryCorruptionError(
+                    "transaction.provider_id must match the repository provider; got attempt provider mismatch"
+                )
             marker = self._read_object_optional(
                 self._commit_key(attempt_), self.maximum_metadata_bytes
             )
@@ -2310,7 +2399,9 @@ class S3ArtifactRepository:
             manifest: ArtifactManifest | None = None
             if marker is not None:
                 if manifest_value is None:
-                    raise RepositoryCorruptionError("Commit marker has no manifest.")
+                    raise RepositoryCorruptionError(
+                        "artifact.commit_marker.manifest must be present for a committed root; got commit marker with no manifest"
+                    )
                 manifest = ArtifactManifest.from_record(_json_record(manifest_value.data))
                 if (
                     manifest.provider_id != transaction.provider_id
@@ -2325,7 +2416,7 @@ class S3ArtifactRepository:
                     )
                 ):
                     raise RepositoryCorruptionError(
-                        "Committed root manifest does not match its transaction."
+                        "artifact.manifest.fields must match the root transaction and chunk ownership; got committed root manifest mismatch"
                     )
                 expected = _pointer_record(
                     transaction,
@@ -2344,7 +2435,9 @@ class S3ArtifactRepository:
             )
             lease = LeaseRecord.from_record(_json_record(value.data))
             if lease.provider_id != self.provider_id:
-                raise RepositoryCorruptionError("Lease provider mismatch.")
+                raise RepositoryCorruptionError(
+                    "lease.provider_id must match the repository provider; got lease provider mismatch"
+                )
             if lease.expires_at <= now:
                 self.client.delete_object(metadata.key, expected_etag=value.metadata.etag)
                 expired.append(lease.lease_id)
@@ -2375,7 +2468,9 @@ class S3ArtifactRepository:
                 )
             )
             if hold.provider_id != self.provider_id:
-                raise RepositoryCorruptionError("Legal-hold provider mismatch.")
+                raise RepositoryCorruptionError(
+                    "hold.provider_id must match the repository provider; got legal-hold provider mismatch"
+                )
             held.add(hold.artifact_id)
         return held
 
@@ -2395,7 +2490,9 @@ class S3ArtifactRepository:
             or record.get("artifact_id") != artifact
             or not isinstance(policy, Mapping)
         ):
-            raise RepositoryCorruptionError("Retention record is invalid.")
+            raise RepositoryCorruptionError(
+                "artifact.retention.fields must match the artifact and provider with a mapping policy; got invalid retention record"
+            )
         return RetentionPolicy.from_record(policy)
 
     def _tombstone_optional(self, artifact: str, /) -> TombstoneRecord | None:
@@ -2406,14 +2503,16 @@ class S3ArtifactRepository:
             return None
         record = TombstoneRecord.from_record(_json_record(value.data))
         if record.provider_id != self.provider_id or record.artifact_id != artifact:
-            raise RepositoryCorruptionError("Tombstone provider or artifact mismatch.")
+            raise RepositoryCorruptionError(
+                "artifact.tombstone.fields must match the artifact and provider; got tombstone provider or artifact mismatch"
+            )
         return record
 
     def _key(self, suffix: str, /) -> str:
         return f"{self.namespace}/{suffix}"
 
     def _root_prefix(self, attempt: str, /) -> str:
-        return self._key(f"roots/{_identifier(attempt, 'attempt_id')}/")
+        return self._key(f"roots/{identifier(attempt, 'attempt_id')}/")
 
     def _transaction_key(self, attempt: str, /) -> str:
         return self._root_prefix(attempt) + "transaction.json"
@@ -2428,26 +2527,26 @@ class S3ArtifactRepository:
         return self._root_prefix(attempt) + f"chunks/{logical}.{index:08d}.bin"
 
     def _pointer_key(self, artifact: str, /) -> str:
-        return self._key(f"artifacts/{_identifier(artifact, 'artifact_id')}.pointer")
+        return self._key(f"artifacts/{identifier(artifact, 'artifact_id')}.pointer")
 
     def _lease_key(self, artifact: str, lease: str, /) -> str:
         return self._key(
-            f"leases/{_identifier(artifact, 'artifact_id')}/{_identifier(lease, 'lease_id')}.json"
+            f"leases/{identifier(artifact, 'artifact_id')}/{identifier(lease, 'lease_id')}.json"
         )
 
     def _hold_key(self, artifact: str, hold: str, /) -> str:
         return self._key(
-            f"holds/{_identifier(artifact, 'artifact_id')}/{_identifier(hold, 'hold_id')}.json"
+            f"holds/{identifier(artifact, 'artifact_id')}/{identifier(hold, 'hold_id')}.json"
         )
 
     def _retention_key(self, artifact: str, /) -> str:
-        return self._key(f"retention/{_identifier(artifact, 'artifact_id')}.json")
+        return self._key(f"retention/{identifier(artifact, 'artifact_id')}.json")
 
     def _tombstone_key(self, artifact: str, /) -> str:
-        return self._key(f"tombstones/{_identifier(artifact, 'artifact_id')}.json")
+        return self._key(f"tombstones/{identifier(artifact, 'artifact_id')}.json")
 
     def _guard_key(self, artifact: str, /) -> str:
-        return self._key(f"guards/{_identifier(artifact, 'artifact_id')}.json")
+        return self._key(f"guards/{identifier(artifact, 'artifact_id')}.json")
 
     def _fail(self, point: str, /) -> None:
         if self.failure_injector is not None:
@@ -2470,7 +2569,7 @@ def _published_manifest_ids(
         root = manifests.get(manifest_id)
         if root is None or root[0].attempt_id != pointer["attempt_id"]:
             raise RepositoryCorruptionError(
-                "Artifact pointer references a missing immutable root."
+                "artifact.pointer.root must identify the committed attempt; got a missing or mismatched immutable root"
             )
         frontier.append(manifest_id)
     published: set[str] = set()
@@ -2527,8 +2626,10 @@ def _validate_pointer(
         or record.get("provider_id") != provider
         or record.get("artifact_id") != artifact
     ):
-        raise RepositoryCorruptionError("Artifact pointer identity is invalid.")
-    _identifier(str(record.get("attempt_id")), "attempt_id")
+        raise RepositoryCorruptionError(
+            "artifact.pointer.identity must match its record kind, artifact, and provider; got invalid pointer identity"
+        )
+    identifier(str(record.get("attempt_id")), "attempt_id")
     for name in ("transaction_id", "manifest_id", "manifest_sha256"):
         value = record.get(name)
         if (
@@ -2536,7 +2637,9 @@ def _validate_pointer(
             or len(value) != 64
             or any(character not in "0123456789abcdef" for character in value)
         ):
-            raise RepositoryCorruptionError(f"Artifact pointer {name} is invalid.")
+            raise RepositoryCorruptionError(
+                f"artifact.pointer.{name} must be a lowercase SHA-256 digest; got {value!r}"
+            )
 
 
 def _validate_commit_marker(
@@ -2545,42 +2648,59 @@ def _validate_commit_marker(
     expected = dict(pointer)
     expected["kind"] = "artifact-commit"
     if dict(marker) != expected:
-        raise RepositoryCorruptionError("Commit marker and artifact pointer disagree.")
+        raise RepositoryCorruptionError(
+            "artifact.commit_marker.fields must match the artifact pointer; got commit marker and pointer disagreement"
+        )
 
 
 def _encode_chunk(payload: bytes, encoding: ChunkEncoding, /) -> bytes:
-    if encoding == "identity":
-        return payload
-    if encoding == "zlib":
-        return zlib.compress(payload, level=9)
-    raise ValueError("Chunk encoding must be 'identity' or 'zlib'.")
+    selected = parse(encoding, ChunkEncoding, "chunk.encoding")
+    match selected:
+        case "identity":
+            return payload
+        case "zlib":
+            return zlib.compress(payload, level=9)
+        case _ as invalid:
+            assert_never(invalid)
 
 
 def _decode_and_validate_chunk(
     chunk: ChunkRecord, encoded: bytes, maximum_plaintext_bytes: int, /
 ) -> bytes:
     if len(encoded) != chunk.encoded_size:
-        raise RepositoryCorruptionError("Encoded chunk size mismatch.")
+        raise RepositoryCorruptionError(
+            "chunk.encoded_size must match the stored bytes; got encoded chunk size mismatch"
+        )
     if hashlib.sha256(encoded).hexdigest() != chunk.encoded_sha256:
-        raise RepositoryCorruptionError("Encoded chunk checksum mismatch.")
-    if chunk.encoding == "identity":
-        plaintext = encoded
-    else:
-        decompressor = zlib.decompressobj()
-        plaintext = decompressor.decompress(encoded, maximum_plaintext_bytes + 1)
-        if (
-            len(plaintext) > maximum_plaintext_bytes
-            or decompressor.unconsumed_tail
-            or not decompressor.eof
-            or decompressor.unused_data
-        ):
-            raise RepositoryCorruptionError(
-                "Encoded chunk exceeds its bound or is not canonical zlib data."
-            )
+        raise RepositoryCorruptionError(
+            "chunk.encoded_sha256 must match the stored bytes; got encoded chunk checksum mismatch"
+        )
+    match chunk.encoding:
+        case "identity":
+            plaintext = encoded
+        case "zlib":
+            decompressor = zlib.decompressobj()
+            plaintext = decompressor.decompress(encoded, maximum_plaintext_bytes + 1)
+            if (
+                len(plaintext) > maximum_plaintext_bytes
+                or decompressor.unconsumed_tail
+                or not decompressor.eof
+                or decompressor.unused_data
+            ):
+                raise RepositoryCorruptionError(
+                    "chunk.encoded_payload must contain bounded zlib data without trailing bytes; "
+                    "got incomplete, trailing, or over-limit data"
+                )
+        case _ as invalid:
+            assert_never(invalid)
     if len(plaintext) != chunk.plaintext_size:
-        raise RepositoryCorruptionError("Plaintext chunk size mismatch.")
+        raise RepositoryCorruptionError(
+            "chunk.plaintext_size must match decoded bytes; got plaintext chunk size mismatch"
+        )
     if hashlib.sha256(plaintext).hexdigest() != chunk.plaintext_sha256:
-        raise RepositoryCorruptionError("Plaintext chunk checksum mismatch.")
+        raise RepositoryCorruptionError(
+            "chunk.plaintext_sha256 must match decoded bytes; got plaintext chunk checksum mismatch"
+        )
     return plaintext
 
 
@@ -2591,15 +2711,21 @@ def _json_bytes(record: Mapping[str, object], maximum: int, /) -> bytes:
             + "\n"
         ).encode("utf-8")
     except (TypeError, ValueError) as error:
-        raise TypeError("Repository metadata must contain finite JSON values.") from error
+        raise TypeError(
+            "repository.metadata.values must be finite JSON values; got a non-JSON or non-finite value"
+        ) from error
     if len(payload) > maximum:
-        raise ValueError("Repository metadata exceeds its byte bound.")
+        raise ValueError(
+            "repository.metadata.nbytes must fit its byte bound; got metadata byte bound exceeded"
+        )
     return payload
 
 
 def _json_record(payload: bytes, /) -> dict[str, object]:
     def reject_constant(value: str) -> object:
-        raise ValueError(f"Non-finite JSON constant {value!r} is forbidden.")
+        raise ValueError(
+            f"repository.metadata.constants must be finite JSON values; got non-finite constant {value!r}"
+        )
 
     try:
         value = json.loads(
@@ -2613,9 +2739,13 @@ def _json_record(payload: bytes, /) -> dict[str, object]:
         RecursionError,
         ValueError,
     ) as error:
-        raise RepositoryCorruptionError("Repository metadata is invalid JSON.") from error
+        raise RepositoryCorruptionError(
+            "repository.metadata.json must decode as JSON without duplicate keys or non-finite constants; got invalid JSON"
+        ) from error
     if not isinstance(value, dict):
-        raise RepositoryCorruptionError("Repository metadata must be a JSON object.")
+        raise RepositoryCorruptionError(
+            "repository.metadata.root must be a JSON object; got a non-object JSON value"
+        )
     return value
 
 
@@ -2626,7 +2756,9 @@ def _unique_json_object(
     value: dict[str, object] = {}
     for name, item in pairs:
         if name in value:
-            raise ValueError(f"Duplicate JSON member {name!r} is forbidden.")
+            raise ValueError(
+                f"repository.metadata.members must be unique; got duplicate member {name!r}"
+            )
         value[name] = item
     return value
 
@@ -2642,7 +2774,9 @@ def _admit_repository_root(root: str | os.PathLike[str], /) -> Path:
             current.mkdir(mode=0o700)
             information = current.lstat()
         if stat.S_ISLNK(information.st_mode) or not stat.S_ISDIR(information.st_mode):
-            raise ValueError("Repository path components must be real directories.")
+            raise ValueError(
+                "repository.root.components must be real directories; got a symlink or non-directory component"
+            )
     return candidate
 
 
@@ -2651,14 +2785,14 @@ def _read_json_file(path: Path, maximum: int, /) -> dict[str, object]:
 
 
 def _read_bounded_file(path: Path, maximum: int, /) -> bytes:
-    maximum_ = _nonnegative(maximum, "maximum read bytes")
+    maximum_ = nonnegative_integer(maximum, "maximum read bytes")
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
         try:
             information = os.fstat(descriptor)
             if not stat.S_ISREG(information.st_mode) or information.st_size > maximum_:
                 raise RepositoryCorruptionError(
-                    f"Repository file {path.name!r} exceeds its read bound."
+                    f"repository.file.size must fit its read bound on a regular file; got {path.name!r} exceeds its read bound"
                 )
             parts: list[bytes] = []
             remaining = maximum_ + 1
@@ -2675,11 +2809,11 @@ def _read_bounded_file(path: Path, maximum: int, /) -> bytes:
         raise
     except (FileNotFoundError, PermissionError, OSError) as error:
         raise RepositoryCorruptionError(
-            f"Cannot read repository file {path.name!r}."
+            f"repository.file.path must identify a readable bounded file; got cannot read {path.name!r}"
         ) from error
     if len(payload) > maximum_ or len(payload) != information.st_size:
         raise RepositoryCorruptionError(
-            f"Repository file {path.name!r} changed or exceeded its read bound."
+            f"repository.file.size must remain unchanged and fit its read bound; got {path.name!r} changed or exceeded its read bound"
         )
     return payload
 
@@ -2699,25 +2833,15 @@ def _bounded_bytes(
     /,
 ) -> bytes:
     if not isinstance(value, (bytes, bytearray, memoryview)):
-        raise TypeError(f"{name} must be bytes-like.")
+        raise TypeError(
+            f"repository.payload must be bytes-like; got {type(value).__name__} for {name!r}"
+        )
     view = memoryview(value)
     if view.nbytes > maximum:
-        raise ValueError(f"{name} exceeds its byte bound.")
+        raise ValueError(
+            f"repository.payload.nbytes must fit the declared byte bound; got {name!r} exceeds its byte bound"
+        )
     return bytes(view)
-
-
-def _positive(value: int, name: str, /) -> int:
-    normalized = int(value)
-    if normalized <= 0:
-        raise ValueError(f"{name} must be positive.")
-    return normalized
-
-
-def _nonnegative(value: int, name: str, /) -> int:
-    normalized = int(value)
-    if normalized < 0:
-        raise ValueError(f"{name} must be nonnegative.")
-    return normalized
 
 
 def _now() -> int:
@@ -2725,13 +2849,13 @@ def _now() -> int:
 
 
 def _namespace(value: str, /) -> str:
-    normalized = _object_key(value.rstrip("/"))
+    normalized = validate_object_key(value.rstrip("/"))
     return normalized
 
 
 def _object_prefix(value: str, /) -> str:
     normalized = value.rstrip("/")
-    _object_key(normalized)
+    validate_object_key(normalized)
     return normalized + "/"
 
 

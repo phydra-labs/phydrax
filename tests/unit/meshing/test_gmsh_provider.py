@@ -1,5 +1,6 @@
 from typing import Any
 
+import build123d as bd
 import numpy as np
 import pytest
 
@@ -9,10 +10,6 @@ import phydrax as phx
 gmsh = pytest.importorskip(
     "gmsh",
     reason="optional Gmsh comparison provider is not installed; native periodic execution is independent",
-)
-bd = pytest.importorskip(
-    "build123d",
-    reason="optional Gmsh comparison CAD fixture provider is not installed; native periodic execution is independent",
 )
 pytestmark = pytest.mark.meshing_gmsh
 
@@ -30,6 +27,9 @@ _IMPORT_POLICY = phx.interchange.CadImportPolicy(
         linear_deflection=0.05, angular_deflection=0.2
     ),
 )
+
+# Empirical `test_real_persisted_semantic_source_replays_with_stable_identity`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+PERSISTED_SEMANTIC_VOLUME_RTOL = 1e-9
 
 
 def _read_native(path: Any) -> Any:
@@ -210,7 +210,7 @@ def _specification(
 def _assert_curved_geometry(result: Any) -> None:
     elements, routes, coordinates = result.geometry.resolve(result.mesh)
     for element, route in zip(elements, routes, strict=True):
-        # Evaluate canonical maps, independently of Gmsh's node ordering and audit.
+        # Evaluate coordinate maps, independently of Gmsh's node ordering and audit.
         center = np.mean(np.asarray(element.reference_nodes), axis=0, keepdims=True)
         _, gradients = element.tabulate(center)
         jacobians = np.einsum(
@@ -360,7 +360,7 @@ def test_real_whole_volume_sweep_has_exact_prism_schedule(tmp_path: Any) -> None
 
 def test_real_contracts() -> None:
 
-    from phydrax.meshing.providers._gmsh_elements import _audit_jacobians, _element_rows
+    from phydrax.meshing.providers._gmsh_elements import _audit_jacobians, element_rows
 
     with _provider().open_session():
         gmsh.model.add("curved-inversion")
@@ -374,14 +374,14 @@ def test_real_contracts() -> None:
         gmsh.model.mesh.addElementsByType(entity, element_type, [1], tags)
         assert np.linalg.det((points[1:4] - points[0]).T) > 0.0
         with pytest.raises(phx.meshing.MeshingFailure) as failure:
-            _audit_jacobians(gmsh, _element_rows(gmsh, 3, 2))
+            _audit_jacobians(gmsh, element_rows(gmsh, 3, 2))
         assert failure.value.category is phx.meshing.MeshingFailureCategory.AUDIT_FAILED
 
     provider = _provider()
-    with pytest.raises(RuntimeError, match="body failure"):
+    with pytest.raises(RuntimeError, match=r"fixture\.session_body"):
         with provider.open_session() as session:
             gmsh.model.add("failed-session")
-            raise RuntimeError("body failure")
+            raise RuntimeError("fixture.session_body must succeed; got injected failure")
     assert session.closed
     assert not gmsh.isInitialized()
     with provider.open_session() as reopened:
@@ -393,7 +393,7 @@ def test_real_contracts() -> None:
 def test_open_cad_model_is_rejected_for_volume_meshing_without_weakening_solid_source(
     tmp_path: Any,
 ) -> None:
-    from phydrax.meshing.providers._gmsh_inventory import _cad_scope_set
+    from phydrax.meshing.providers._gmsh_inventory import cad_scope_set
 
     provider = _provider()
     model = _source(
@@ -405,7 +405,7 @@ def test_open_cad_model_is_rejected_for_volume_meshing_without_weakening_solid_s
         model.source_revision,
         phx.meshing.MeshingEntityKind.GEOMETRY,
         3,
-        _cad_scope_set(model, 3),
+        cad_scope_set(model, 3),
         np.asarray((0,), dtype=np.int64),
     )
     specification = phx.meshing.VolumeMeshingSpec(
@@ -505,7 +505,9 @@ def _two_box_shape(*, conformal: Any) -> Any:
         splitter.AddArgument(right)
         splitter.Perform()
         if splitter.HasErrors():
-            raise RuntimeError("OCCT failed to build the conformal partition fixture.")
+            raise RuntimeError(
+                "fixture.splitter must build the conformal partition; got OCCT errors"
+            )
         return splitter.Shape()
     compound = TopoDS_Compound()
     builder = BRep_Builder()
@@ -593,7 +595,9 @@ def _semantic_specification(
         if len(owners) == 2
     )
     if not interface_faces and interface_required:
-        raise ValueError("The semantic fixture requires one shared interface face.")
+        raise ValueError(
+            "fixture.interface_faces must contain a shared interface; got empty tuple"
+        )
     patch_controls = (
         ()
         if not interface_faces
@@ -720,7 +724,7 @@ def test_real_persisted_semantic_source_replays_with_stable_identity(
     points = np.asarray(reloaded.mesh.coordinates)
     corners = points[np.asarray(reloaded.mesh.blocks[0].vertices)]
     volume = np.sum(np.linalg.det(corners[:, 1:] - corners[:, :1])) / 6.0
-    assert float(volume) == pytest.approx(3.0, rel=1e-9)
+    assert float(volume) == pytest.approx(3.0, rel=PERSISTED_SEMANTIC_VOLUME_RTOL)
 
 
 def test_semantic_region_ownership_conflict_is_rejected_by_contract(
@@ -748,7 +752,7 @@ def test_semantic_region_ownership_conflict_is_rejected_by_contract(
         ),
     )
 
-    with pytest.raises(ValueError, match="Region control scopes must be disjoint"):
+    with pytest.raises(ValueError, match="MeshingSpec.region_controls.scopes"):
         phx.meshing.VolumeMeshingSpec(
             phx.meshing.CellMeshingTarget(
                 3, 3, phx.meshing.CellFamilyPolicy(required=("tetrahedron",))

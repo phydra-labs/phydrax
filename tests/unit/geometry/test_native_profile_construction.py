@@ -1,11 +1,11 @@
-"""Native exact profile construction: solved sketches, rational sweeps, offsets.
+"""Native profile construction: solved sketches, rational sweeps, and offsets.
 
 Oracles are closed-form and independent of the construction: the slot is a
 2 x 1 rectangle with two radius-1/2 end caps and a radius-1/5 hole; the
-rational quadratic NURBS ellipse with corner weights sqrt(1/2) is the exact
+rational quadratic NURBS ellipse with corner weights sqrt(1/2) represents the
 ellipse ``(a cos t, b sin t)`` up to binary rounding of that weight, so its
 area is ``pi a b`` and its perimeter is the trapezoid sum of the analytic
-speed (spectrally exact for this periodic integrand). Revolved volumes and
+speed (spectrally convergent for this periodic integrand). Revolved volumes and
 areas follow Pappus; the parallel body of a convex meridian at signed
 distance ``d`` within its reach has area ``A + L d + pi d^2`` and, being
 symmetric about its centroid line, centroid radius ``R``.
@@ -15,6 +15,7 @@ import math
 import subprocess
 import sys
 import textwrap
+from itertools import permutations
 from pathlib import Path
 from typing import Literal
 
@@ -29,17 +30,26 @@ from phydrax._external_resource import ResourceLimits
 from phydrax.geometry.brep import BRepQueryBudget, BRepQueryResourceError
 from phydrax.geometry.brep._constructors import reversed_bspline
 from phydrax.geometry.brep._correspondence import certify_curve_surface
+from phydrax.geometry.brep._measure import (
+    face_quadrature,
+    green_nodes,
+    prepare_quadrature,
+    surface_quadrature_u_breaks,
+    trimmed_face_rules,
+)
 from phydrax.geometry.brep._patches import SurfaceIsoparametricCurve
 from phydrax.geometry.brep._placed import PlacedSurface
-from phydrax.geometry.brep._query import (
-    _face_quadrature,
-    _green_nodes,
-    _prepare_quadrature,
-    _surface_quadrature_u_breaks,
-    _trimmed_face_rules,
-)
+from phydrax.meshing.qualification import rational_ellipse_profile, revolved_ellipse
 from phydrax.units import METER, MILLIMETER, UnitDefinition
 from tests._support.cad_models import native_offset_plane
+from tests._support.patch_derivatives import (
+    ANCHOR_ABSOLUTE_ERROR,
+    assert_adjacent_order_partial,
+    CarrierFamily,
+    closed_form_partial,
+    derivative_carrier,
+    parameter_partial,
+)
 
 
 _CONTRACT = phx.SpatialCoordinateContract.si()
@@ -66,11 +76,11 @@ def _slot_sketch() -> phx.geometry.Sketch:
         circle_radii=np.asarray([0.45, 0.55, 0.25]),
         arcs=np.asarray([[0, 1, 2], [1, 3, 0]]),
         constraints=(
-            geometry.FixedPoint(4, (1.0, 0.0)),  # ty: ignore[invalid-argument-type]
-            geometry.FixedPoint(5, (-1.0, 0.0)),  # ty: ignore[invalid-argument-type]
-            geometry.FixedPoint(6, (0.0, 0.0)),  # ty: ignore[invalid-argument-type]
-            geometry.FixedPoint(1, (1.0, -0.5)),  # ty: ignore[invalid-argument-type]
-            geometry.FixedPoint(2, (1.0, 0.5)),  # ty: ignore[invalid-argument-type]
+            geometry.FixedPoint(4, (1.0, 0.0)),
+            geometry.FixedPoint(5, (-1.0, 0.0)),
+            geometry.FixedPoint(6, (0.0, 0.0)),
+            geometry.FixedPoint(1, (1.0, -0.5)),
+            geometry.FixedPoint(2, (1.0, 0.5)),
             geometry.Radius(0, 0.5),
             geometry.Radius(1, 0.5),
             geometry.Radius(2, 0.2),
@@ -83,28 +93,6 @@ def _slot_sketch() -> phx.geometry.Sketch:
     )
 
 
-def _ellipse(center: tuple[float, float], a: float, b: float) -> phx.geometry.ProfileLoop:
-    cx, cy = center
-    weight = math.sqrt(0.5)
-    curve = phx.geometry.BSplineCurve(
-        [
-            [cx + a, cy],
-            [cx + a, cy + b],
-            [cx, cy + b],
-            [cx - a, cy + b],
-            [cx - a, cy],
-            [cx - a, cy - b],
-            [cx, cy - b],
-            [cx + a, cy - b],
-            [cx + a, cy],
-        ],
-        [1.0, weight, 1.0, weight, 1.0, weight, 1.0, weight, 1.0],
-        [0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0],
-        2,
-    )
-    return phx.geometry.ProfileLoop(((cx + a, cy),), (curve,))
-
-
 def _ellipse_perimeter(a: float, b: float) -> float:
     angles = np.linspace(0.0, 2.0 * np.pi, 4096, endpoint=False)
     return float(np.mean(np.hypot(a * np.sin(angles), b * np.cos(angles))) * 2.0 * np.pi)
@@ -112,23 +100,6 @@ def _ellipse_perimeter(a: float, b: float) -> float:
 
 def _measures(model: phx.geometry.BRepModel) -> phx.geometry.brep.BRepMeasureResult:
     return phx.geometry.prepare_brep_query(model).measures
-
-
-def _revolved_ellipse(
-    tessellation: phx.geometry.BRepTessellationPolicy | None = None,
-) -> phx.geometry.BRepModel:
-    profile = phx.geometry.PlanarProfile(
-        phx.geometry.ProfilePlane((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
-        _ellipse((_RADIUS, 0.0), _A, _B),
-    )
-    return phx.geometry.brep_revolution(
-        profile,
-        (0.0, 0.0),
-        (0.0, 1.0),
-        coordinate_contract=_CONTRACT,
-        source_id="revolved-rational-ellipse",
-        tessellation=tessellation,
-    )
 
 
 def test_profile_spline_reversal_retains_live_native_parameter_leaves() -> None:
@@ -277,7 +248,7 @@ def test_nonunit_spline_profile_frame_retains_source_bank_and_volume(
 
 @pytest.mark.parametrize("placed", [False, True], ids=["source", "placed-source"])
 def test_native_green_measure_respects_original_c0_surface_knots(placed: bool) -> None:
-    # The actual degree-one source is exactly this closed polygon, not a fit.
+    # The degree-one source traces this closed polygon.
     # Its unequal native span widths make an unsplit inner Green rule inexact.
     polygon = np.asarray(
         [
@@ -312,45 +283,55 @@ def test_native_green_measure_respects_original_c0_surface_knots(placed: bool) -
     if placed:
         rotation = np.asarray([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
         patches = tuple(PlacedSurface(patch, rotation, np.zeros(3)) for patch in patches)
-    # Shoelace is an independent exact source-native oracle; all vertices are
+    # Shoelace independently computes the polygon's area; all vertices are
     # binary rationals, and it also isolates each face's signed divergence.
     area = 0.5 * sum(
         first[0] * last[1] - first[1] * last[0]
         for first, last in zip(polygon, np.roll(polygon, -1, axis=0), strict=True)
     )
     expected = [0.0, area * height / 3.0, 2.0 * area * height / 3.0]
+    from tests._support.coordinate_references import coordinate_reference_budget
+
     policy = phx.geometry.BRepQueryPolicy()
-    _, measures = _prepare_quadrature(model, model.geometry, policy)
-    assert float(measures.solid_volumes[0]) == pytest.approx(area * height, rel=1e-12)
-    rules = _trimmed_face_rules(model, policy)
-    budget = BRepQueryBudget(
-        policy.maximum_operations, policy.maximum_points, policy.maximum_scratch_bytes
-    )
-    for face, (parameters, weights) in enumerate(rules):
-        charts, rule_weights = np.asarray(parameters), np.asarray(weights)
-        if placed:
-            bounds = np.asarray(model.parameter_bounds)[face]
-            charts, rule_weights = _green_nodes(
-                model.geometry,
-                face,
-                bounds,
-                policy.quadrature_order,
-                policy.quadrature_subdivisions,
-                _surface_quadrature_u_breaks(patches[face], bounds, budget),
-                budget,
+    with coordinate_reference_budget() as coordinate_budget:
+        _, measures = prepare_quadrature(
+            model, model.geometry, policy, coordinate_budget=coordinate_budget
+        )
+        assert float(measures.solid_volumes[0]) == pytest.approx(area * height, rel=1e-12)
+        rules = trimmed_face_rules(model, policy, coordinate_budget=coordinate_budget)
+        budget = BRepQueryBudget(
+            policy.maximum_operations, policy.maximum_points, policy.maximum_scratch_bytes
+        )
+        for face, (parameters, weights) in enumerate(rules):
+            charts, rule_weights = np.asarray(parameters), np.asarray(weights)
+            if placed:
+                bounds = np.asarray(model.parameter_bounds)[face]
+                charts, rule_weights = green_nodes(
+                    model.geometry,
+                    face,
+                    bounds,
+                    policy.quadrature_order,
+                    policy.quadrature_subdivisions,
+                    surface_quadrature_u_breaks(
+                        patches[face], bounds, budget, coordinate_budget=coordinate_budget
+                    ),
+                    budget,
+                )
+            points, vector_areas, _ = face_quadrature(
+                patches[face], float(model.orientation[face]), charts, rule_weights
             )
-        points, vector_areas, _ = _face_quadrature(
-            patches[face], float(model.orientation[face]), charts, rule_weights
-        )
-        signed_volume = np.sum(points * vector_areas) / 3.0
-        assert signed_volume == pytest.approx(expected[face], abs=1e-12)
-    assert float(measures.solid_volume_errors[0]) <= 1e-12
-    with pytest.raises(BRepQueryResourceError) as refusal:
-        _prepare_quadrature(
-            model, model.geometry, phx.geometry.BRepQueryPolicy(maximum_points=1)
-        )
-    assert refusal.value.resource == "points"
-    assert refusal.value.remaining == 1
+            signed_volume = np.sum(points * vector_areas) / 3.0
+            assert signed_volume == pytest.approx(expected[face], abs=1e-12)
+        assert float(measures.solid_volume_error_estimates[0]) <= 1e-12
+        with pytest.raises(BRepQueryResourceError) as refusal:
+            prepare_quadrature(
+                model,
+                model.geometry,
+                phx.geometry.BRepQueryPolicy(maximum_points=1),
+                coordinate_budget=coordinate_budget,
+            )
+        assert refusal.value.resource == "points"
+        assert refusal.value.remaining == 1
 
 
 def _assert_live_sweep_derivatives(
@@ -432,6 +413,80 @@ def _assert_live_sweep_derivatives(
         )
     ) / (2 * step)
     np.testing.assert_allclose(source_tangent, difference, rtol=1e-8, atol=1e-9)
+
+
+@pytest.mark.parametrize("family", ["offset", "revolution", "bspline"])
+@pytest.mark.parametrize(
+    "axes",
+    [
+        (0,),
+        (1,),
+        (0, 0),
+        (0, 1),
+        (1, 1),
+        (0, 0, 0),
+        (0, 0, 1),
+        (0, 1, 1),
+        (1, 1, 1),
+    ],
+    ids=["u", "v", "uu", "uv", "vv", "uuu", "uuv", "uvv", "vvv"],
+)
+def test_patch_parameter_derivatives_match_adjacent_order_and_closed_form(
+    family: CarrierFamily, axes: tuple[int, ...]
+) -> None:
+    patch = derivative_carrier(family)
+    parameters = jnp.asarray([0.37, 0.41], dtype=jnp.float64)
+    lower = parameter_partial(patch.evaluate, axes[:-1])
+    higher = parameter_partial(patch.evaluate, axes)
+    # Preserve the offset distance check's stricter relative tolerance.
+    assert_adjacent_order_partial(
+        lower, higher, parameters, axes[-1], rtol=1e-9 if family == "offset" else 1e-8
+    )
+    # Independent formulas anchor every family and every tested derivative;
+    # neither positions nor another AD implementation supplies the reference.
+    np.testing.assert_allclose(
+        higher(parameters),
+        closed_form_partial(family, parameters, axes),
+        rtol=0.0,
+        atol=ANCHOR_ABSOLUTE_ERROR,
+    )
+    if 0 in axes and 1 in axes:
+        # Check every ordering of the third-order mixed partial, not just
+        # reversal (uuv, uvu, vuu and uvv, vuv, vvu).
+        for ordering in sorted(set(permutations(axes)) - {axes}):
+            np.testing.assert_allclose(
+                parameter_partial(patch.evaluate, ordering)(parameters),
+                higher(parameters),
+                rtol=0.0,
+                atol=ANCHOR_ABSOLUTE_ERROR,
+            )
+
+
+@pytest.mark.parametrize("family", ["offset", "revolution", "bspline"])
+@pytest.mark.parametrize(
+    "axes", [(0,), (0, 1), (0, 1, 1)], ids=["first", "second-mixed", "third-mixed"]
+)
+def test_patch_derivative_oracle_rejects_corrupted_order(
+    family: CarrierFamily, axes: tuple[int, ...]
+) -> None:
+    patch = derivative_carrier(family)
+    parameters = jnp.asarray([0.37, 0.41], dtype=jnp.float64)
+    lower = parameter_partial(patch.evaluate, axes[:-1])
+    higher = parameter_partial(patch.evaluate, axes)
+
+    def corrupted(value: jax.Array) -> jax.Array:
+        return higher(value) + jnp.asarray([0.001, 0.0, 0.0], dtype=jnp.float64)
+
+    # The order-n defect is detected against a correct order-(n-1) field;
+    # retaining correct positions alone cannot make this oracle pass.
+    with pytest.raises(AssertionError):
+        assert_adjacent_order_partial(
+            lower,
+            corrupted,
+            parameters,
+            axes[-1],
+            rtol=1e-9 if family == "offset" else 1e-8,
+        )
 
 
 def test_solved_mixed_line_arc_circle_sketch_lowers_to_exact_face() -> None:
@@ -547,15 +602,15 @@ def test_open_or_branched_sketch_curves_are_refused() -> None:
         circle_radii=np.asarray([0.2]),
     )
     with pytest.raises(ValueError, match="closed cycles"):
-        sketch.to_profile()
+        sketch.to_profile(sketch.solve())
     with pytest.raises(ValueError, match="to_profile or to_model"):
-        sketch.to_source()
+        sketch.to_source(sketch.solve())
 
 
 def test_rational_spline_extrusion_has_exact_carriers_and_volume(tmp_path: Path) -> None:
     a, b, height = 1.5, 0.75, 2.0
     profile = phx.geometry.PlanarProfile(
-        phx.geometry.ProfilePlane(), _ellipse((0.0, 0.0), a, b)
+        phx.geometry.ProfilePlane(), rational_ellipse_profile((0.0, 0.0), a, b)
     )
     model = phx.geometry.brep_extrusion(
         profile,
@@ -605,7 +660,7 @@ def test_rational_spline_extrusion_has_exact_carriers_and_volume(tmp_path: Path)
 
 
 def test_rational_spline_revolution_matches_pappus(tmp_path: Path) -> None:
-    model = _revolved_ellipse()
+    model = revolved_ellipse()
     assert len(model.patches) == 1
     assert isinstance(model.patches[0], phx.geometry.RevolutionSurface)
     _assert_live_sweep_derivatives(model.patches[0])
@@ -632,8 +687,10 @@ def test_normal_offset_of_rational_revolution_is_exact_parallel_body(
 ) -> None:
     # The source's own tessellation is covered by the Pappus test; the offset
     # is tessellated with the default policy here.
-    source = _revolved_ellipse(phx.geometry.BRepTessellationPolicy(realize=False))
-    model = phx.geometry.brep_offset(source, distance, source_id="offset-ellipse-torus")
+    source = revolved_ellipse(phx.geometry.BRepTessellationPolicy(realize=False))
+    model = phx.geometry.brep_offset(
+        source, distance, source_id="offset-ellipse-torus"
+    ).model
     assert model.source_id == "offset-ellipse-torus"
     (patch,) = model.patches
     assert isinstance(patch, phx.geometry.OffsetSurface)
@@ -744,9 +801,9 @@ def test_closed_meridian_revolution_containment_matches_parallel_body(
     # signed distance d is {s < d}, s the signed distance to the ellipse in
     # the meridian half-plane, and its boundary distance is |s - d|.
     lazy = phx.geometry.BRepTessellationPolicy(realize=False)
-    model = _revolved_ellipse(lazy)
+    model = revolved_ellipse(lazy)
     if distance:
-        model = phx.geometry.brep_offset(model, distance, tessellation=lazy)
+        model = phx.geometry.brep_offset(model, distance, tessellation=lazy).model
     rng = np.random.default_rng(20261010)
     samples = [
         *zip(
@@ -808,12 +865,26 @@ def test_closed_meridian_revolution_containment_matches_parallel_body(
 
 
 def test_normal_offset_refuses_sharp_edges_and_focal_distances() -> None:
+    lazy = phx.geometry.BRepTessellationPolicy(realize=False)
+    box = phx.geometry.brep_box(
+        (0.0, 0.0, 0.0),
+        (2.0, 3.0, 4.0),
+        coordinate_contract=_CONTRACT,
+        tessellation=lazy,
+    )
+    offset = phx.geometry.brep_offset(box, 0.25, tessellation=lazy)
+    assert float(_measures(offset.model).solid_volumes[0]) == pytest.approx(
+        2.5 * 3.5 * 4.5, rel=1e-12
+    )
+    with pytest.raises(ValueError, match="face vanishes"):
+        phx.geometry.brep_offset(box, -1.0, tessellation=lazy)
     extruded = phx.geometry.brep_extrusion(
         phx.geometry.PlanarProfile(
-            phx.geometry.ProfilePlane(), _ellipse((0.0, 0.0), 1.0, 0.5)
+            phx.geometry.ProfilePlane(), rational_ellipse_profile((0.0, 0.0), 1.0, 0.5)
         ),
         (0.0, 0.0, 1.0),
         coordinate_contract=_CONTRACT,
+        tessellation=lazy,
     )
     with pytest.raises(ValueError, match="blend faces"):
         phx.geometry.brep_offset(extruded, 0.1)
@@ -821,7 +892,71 @@ def test_normal_offset_refuses_sharp_edges_and_focal_distances() -> None:
     # offset by 0.3 passes its focal set and must not be published.
     lazy = phx.geometry.BRepTessellationPolicy(realize=False)
     with pytest.raises(ValueError, match="unresolved"):
-        phx.geometry.brep_offset(_revolved_ellipse(lazy), -0.3)
+        phx.geometry.brep_offset(revolved_ellipse(lazy), -0.3)
+
+
+@pytest.mark.parametrize("distance", [-0.25, 0.25])
+def test_sharp_planar_prism_offset_matches_inradius_closed_form(
+    distance: float,
+) -> None:
+    lazy = phx.geometry.BRepTessellationPolicy(realize=False)
+    # The 3-4-5 triangle has area 6 and inradius 1. Its parallel triangles
+    # are similar with scale (1+d); the height gains two plane offsets.
+    profile = phx.geometry.PlanarProfile(
+        phx.geometry.ProfilePlane(),
+        phx.geometry.ProfileLoop.polygon(((0.0, 0.0), (3.0, 0.0), (0.0, 4.0))),
+    )
+    prism = phx.geometry.brep_extrusion(
+        profile, (0.0, 0.0, 2.0), coordinate_contract=_CONTRACT, tessellation=lazy
+    )
+    offset = phx.geometry.brep_offset(prism, distance, tessellation=lazy)
+    assert float(_measures(offset.model).solid_volumes[0]) == pytest.approx(
+        6.0 * (1.0 + distance) ** 2 * (2.0 + 2.0 * distance), rel=2e-12
+    )
+
+
+@pytest.mark.parametrize("distance", [-0.25, 0.25])
+def test_concave_l_prism_offset_matches_miter_closed_form(distance: float) -> None:
+    lazy = phx.geometry.BRepTessellationPolicy(realize=False)
+    profile = phx.geometry.PlanarProfile(
+        phx.geometry.ProfilePlane(),
+        phx.geometry.ProfileLoop.polygon(
+            ((0.0, 0.0), (3.0, 0.0), (3.0, 1.0), (1.0, 1.0), (1.0, 3.0), (0.0, 3.0))
+        ),
+    )
+    prism = phx.geometry.brep_extrusion(
+        profile, (0.0, 0.0, 2.0), coordinate_contract=_CONTRACT, tessellation=lazy
+    )
+    offset = phx.geometry.brep_offset(prism, distance, tessellation=lazy)
+    # Five convex and one reflex right-angle corners give coefficient 4.
+    expected_area = 5.0 + 12.0 * distance + 4.0 * distance**2
+    assert float(_measures(offset.model).solid_volumes[0]) == pytest.approx(
+        expected_area * (2.0 + 2.0 * distance), rel=2e-12
+    )
+
+
+def test_planar_pocket_offset_refuses_collision_pair() -> None:
+    lazy = phx.geometry.BRepTessellationPolicy(realize=False)
+    profile = phx.geometry.PlanarProfile(
+        phx.geometry.ProfilePlane(),
+        phx.geometry.ProfileLoop.polygon(
+            (
+                (0.0, 0.0),
+                (3.0, 0.0),
+                (3.0, 3.0),
+                (2.0, 3.0),
+                (2.0, 1.0),
+                (1.0, 1.0),
+                (1.0, 3.0),
+                (0.0, 3.0),
+            )
+        ),
+    )
+    pocket = phx.geometry.brep_extrusion(
+        profile, (0.0, 0.0, 3.0), coordinate_contract=_CONTRACT, tessellation=lazy
+    )
+    with pytest.raises(ValueError, match="collision pair"):
+        phx.geometry.brep_offset(pocket, 0.625, tessellation=lazy)
 
 
 @pytest.mark.parametrize(
@@ -833,7 +968,7 @@ def test_inward_offset_beyond_minimum_curvature_radius_refuses(distance: float) 
     # meets the focal set and the certificate must refuse, not publish.
     lazy = phx.geometry.BRepTessellationPolicy(realize=False)
     with pytest.raises(ValueError, match="unresolved"):
-        phx.geometry.brep_offset(_revolved_ellipse(lazy), distance, tessellation=lazy)
+        phx.geometry.brep_offset(revolved_ellipse(lazy), distance, tessellation=lazy)
 
 
 @pytest.mark.parametrize(
@@ -844,8 +979,8 @@ def test_closed_meridian_seam_lifts_exactly_only_with_its_closure_proof(
     profile: str, offset_lifts: bool
 ) -> None:
     # The v = 0 isoline must equal the v = 1 coedge exactly. A revolution
-    # needs only the exact closed point; an offset also needs the closure's
-    # end legs exactly positively parallel, or the normals there disagree.
+    # needs endpoint position equality; an offset also needs the closure's
+    # end legs positively parallel, or the normals there disagree.
     if profile == "g1-ellipse":
         weight = math.sqrt(0.5)
         x, a, b = _RADIUS, _A, _B
@@ -889,7 +1024,7 @@ def test_closed_meridian_seam_lifts_exactly_only_with_its_closure_proof(
         (phx.geometry.OffsetSurface(revolution, 0.1), offset_lifts),
     ):
         seam = SurfaceIsoparametricCurve(surface, 1, 0.0)
-        # A zero tolerance admits only a represented exact identity.
+        # A zero tolerance requires equality of the represented carriers.
         result = certify_curve_surface(
             seam,
             opposite,
@@ -911,11 +1046,11 @@ def test_exact_rational_sweep_external_round_trip(
     tmp_path: Path,
 ) -> None:
     if sweep == "revolution":
-        model = _revolved_ellipse()
+        model = revolved_ellipse()
         expected_volume = 2.0 * math.pi * _RADIUS * math.pi * _A * _B
     else:
         profile = phx.geometry.PlanarProfile(
-            phx.geometry.ProfilePlane(), _ellipse((0.0, 0.0), _A, _B)
+            phx.geometry.ProfilePlane(), rational_ellipse_profile((0.0, 0.0), _A, _B)
         )
         model = phx.geometry.brep_extrusion(
             profile,
@@ -1033,9 +1168,9 @@ def test_native_profile_paths_never_import_external_kernels(tmp_path: Path) -> N
 
         import phydrax as phx
         from phydrax._external_resource import ResourceLimits
+        from phydrax.meshing.qualification import rational_ellipse_profile
         from tests.unit.geometry.test_native_profile_construction import (
             _CONTRACT,
-            _ellipse,
             _slot_sketch,
         )
 
@@ -1063,7 +1198,9 @@ def test_native_profile_paths_never_import_external_kernels(tmp_path: Path) -> N
             interchange.save_brep_archive(slot, root / "slot.phx").path
         )
         extruded = geometry.brep_extrusion(
-            geometry.PlanarProfile(geometry.ProfilePlane(), _ellipse((0.0, 0.0), 1.0, 0.5)),
+            geometry.PlanarProfile(
+                geometry.ProfilePlane(), rational_ellipse_profile((0.0, 0.0), 1.0, 0.5)
+            ),
             (0.0, 0.0, 0.75),
             coordinate_contract=_CONTRACT,
             tessellation=lazy,
@@ -1071,7 +1208,7 @@ def test_native_profile_paths_never_import_external_kernels(tmp_path: Path) -> N
         revolved = geometry.brep_revolution(
             geometry.PlanarProfile(
                 geometry.ProfilePlane((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
-                _ellipse((3.0, 0.0), 1.0, 0.5),
+                rational_ellipse_profile((3.0, 0.0), 1.0, 0.5),
             ),
             (0.0, 0.0),
             (0.0, 1.0),

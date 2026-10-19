@@ -63,8 +63,8 @@ def _case(
     started = time.perf_counter_ns()
     prepared = plan_type(
         sources,
-        [-1.0, -1.0, -1.0],
-        [1.0, 1.0, 1.0],
+        jnp.asarray((-1.0, -1.0, -1.0), dtype=jnp.float64),
+        jnp.asarray((1.0, 1.0, 1.0), dtype=jnp.float64),
         reference_targets=targets,
         depth=depth,
         expansion_order=order,

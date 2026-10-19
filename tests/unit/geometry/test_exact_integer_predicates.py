@@ -13,10 +13,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from phydrax.discretization._coordinate_enclosure import (
-    CoordinateEnclosureBudget,
-    CoordinateEnclosureResourceError,
-)
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
 from phydrax.geometry import (
     incircle,
     orient2d,
@@ -25,6 +22,8 @@ from phydrax.geometry import (
     segment_intersections_2d,
     SegmentIntersectionStatus,
 )
+from phydrax.geometry._embedding_state import MeshCertificateLimits
+from tests._support.coordinate_references import coordinate_reference_budget
 
 
 _SCALE = 2**300
@@ -85,7 +84,7 @@ def test_segment_classification_of_an_integer_bank_is_exact() -> None:
 )
 def test_integer_banks_refuse_other_entry_kinds(entry: object) -> None:
     bank = np.asarray([[0, entry, 0]], dtype=object)
-    with pytest.raises(TypeError, match="Python integer object arrays"):
+    with pytest.raises(TypeError, match=r"_host_points\.coordinates\.entries"):
         orient3d(
             bank,
             _bank([(1, 0, 0)]),
@@ -101,7 +100,7 @@ def test_integer_banks_refuse_other_entry_kinds(entry: object) -> None:
     ids=["int64", "float64"],
 )
 def test_integer_banks_refuse_mixed_numeric_owners(other: np.ndarray) -> None:
-    with pytest.raises(TypeError, match="Python integer object arrays"):
+    with pytest.raises(TypeError, match=r"_host_points\.coordinates\.dtype"):
         orient3d(
             _bank([(0, 0, 0)]),
             other,
@@ -112,7 +111,7 @@ def test_integer_banks_refuse_mixed_numeric_owners(other: np.ndarray) -> None:
 
 
 def test_integer_banks_support_orientation_only() -> None:
-    with pytest.raises(TypeError, match="orient2d and orient3d"):
+    with pytest.raises(TypeError, match=r"_exact_integer\.spec\.name"):
         incircle(
             _bank([(0, 0)]),
             _bank([(1, 0)]),
@@ -128,17 +127,50 @@ def test_integer_bank_charges_the_active_ledger_before_evaluation() -> None:
         _bank([point] * rows)
         for point in ((0, 0, 0), (_SCALE, 0, 0), (0, _SCALE, 0), (0, 0, _SCALE))
     )
-    budget = CoordinateEnclosureBudget(10**9, 10**9)
-    with budget.activate():
-        orient3d(*banks, mode=PredicateMode.EXACT)
+    with coordinate_reference_budget(
+        MeshCertificateLimits(maximum_work_units=10**9, maximum_scratch_bytes=10**9)
+    ) as budget:
+        orient3d(*banks, mode=PredicateMode.EXACT, budget=budget)
 
     # Every input entry and the prepared common plane/query actions are charged;
-    # repeated rows reuse that exact preparation instead of replaying a 68-visit
+    # repeated rows reuse that preparation instead of replaying a 68-visit
     # determinant kernel for each row.
     assert budget.work_units > sum(bank.size for bank in banks)
     assert budget.peak_bytes_upper > 0
     assert budget.temporary_bytes_upper == 0
 
-    starved = CoordinateEnclosureBudget(budget.work_units - 1, 10**9)
-    with starved.activate(), pytest.raises(CoordinateEnclosureResourceError):
-        orient3d(*banks, mode=PredicateMode.EXACT)
+    with (
+        coordinate_reference_budget(
+            MeshCertificateLimits(
+                maximum_work_units=budget.work_units - 1,
+                maximum_scratch_bytes=10**9,
+            )
+        ) as starved,
+        pytest.raises(CoordinateEnclosureResourceError),
+    ):
+        orient3d(*banks, mode=PredicateMode.EXACT, budget=starved)
+
+
+def test_integer_orientation_memo_is_content_bound_and_request_local() -> None:
+    limits = MeshCertificateLimits(maximum_work_units=10**9, maximum_scratch_bytes=10**9)
+    points = ((0, 0, 0), (_SCALE, 0, 0), (0, _SCALE, 0), (0, 0, _SCALE))
+    banks = tuple(_bank([point] * 3) for point in points)
+    with coordinate_reference_budget(limits) as budget:
+        first = orient3d(*banks, mode=PredicateMode.EXACT, budget=budget)
+        replay = orient3d(
+            *(bank.copy() for bank in banks), mode=PredicateMode.EXACT, budget=budget
+        )
+        assert budget.exact_predicate_evaluations == {"orient3d": 1}
+        assert budget.exact_predicate_cache_hits == {"orient3d": 5}
+        banks[-1][0, 2] = -_SCALE
+        changed = orient3d(*banks, mode=PredicateMode.EXACT, budget=budget)
+        assert budget.exact_predicate_evaluations == {"orient3d": 2}
+        assert budget.exact_predicate_cache_hits == {"orient3d": 7}
+    np.testing.assert_array_equal(first.signs, [1, 1, 1])
+    np.testing.assert_array_equal(replay.signs, first.signs)
+    np.testing.assert_array_equal(changed.signs, [-1, 1, 1])
+    assert np.all(changed.certain)
+    with coordinate_reference_budget(limits) as other:
+        orient3d(*banks, mode=PredicateMode.EXACT, budget=other)
+        assert other.exact_predicate_evaluations == {"orient3d": 2}
+        assert other.exact_predicate_cache_hits == {"orient3d": 1}

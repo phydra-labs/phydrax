@@ -11,7 +11,7 @@ volume of a finite region ``r`` follows from the divergence theorem,
 ``V_r = sum_f s_rf (x0 - c) . ((x1 - c) x (x2 - c)) / 6``,
 
 with ``s_rf = +1`` when ``r = left(f)``, ``-1`` when ``r = right(f)`` and a fixed
-reference point ``c`` (exact for closed cycles, chosen to limit cancellation).
+reference point ``c`` (the closed-cycle identity holds for any ``c``, chosen to limit cancellation).
 Boundary labels have no volume. The surface energy is ``E = sum_f gamma_f A_f``
 with the effective pair tension ``gamma_f`` of the face's two regions (a soap
 film carries ``2 sigma``); forces are the fixed-topology negative gradient
@@ -240,7 +240,7 @@ class PreparedMultiRegionSurface(StrictModule):
         state: MultiRegionSurfaceState,
         /,
     ) -> PreparedMultiRegionSurface:
-        """Rebuild all routes and BVH from original authority and retained controls."""
+        """Rebuild all routes and BVH from retained topology, state, and controls."""
         rebuilt = PreparedMultiRegionSurface(
             topology,
             state,
@@ -253,7 +253,7 @@ class PreparedMultiRegionSurface(StrictModule):
             or array_tree_fingerprint(rebuilt) != array_tree_fingerprint(self)
         ):
             raise ValueError(
-                "Prepared multiregion surface contradicts its retained authority."
+                f"PreparedMultiRegionSurface.restored must match retained preparation, policy, tree structure, and arrays; got rebuilt id {rebuilt.prepared_id!r}"
             )
         return rebuilt
 
@@ -301,7 +301,9 @@ class PreparedMultiRegionSurface(StrictModule):
         """``sum_f gamma_f A_f`` with capacity-shaped effective face tensions."""
         tension = jnp.asarray(face_tension)
         if tension.shape != (self.face_count,):
-            raise ValueError("face_tension must have one entry per face slot.")
+            raise ValueError(
+                f"PreparedMultiRegionSurface.face_tension must have one entry per face slot; got shape {tension.shape}"
+            )
         areas = self.face_areas(positions)
         return jnp.sum(jnp.where(self.topology.face_active, tension * areas, 0.0))
 
@@ -313,9 +315,11 @@ class PreparedMultiRegionSurface(StrictModule):
     def evaluate(
         self, state: MultiRegionSurfaceState, face_tension: ArrayLike, /
     ) -> MultiRegionSurfaceGeometry:
-        """Complete geometry, energy and force evaluation of one state."""
+        """Evaluate geometry, energy, and forces for one state."""
         if state.topology_id != self.topology.topology_id:
-            raise ValueError("State belongs to a different multiregion topology.")
+            raise ValueError(
+                f"PreparedMultiRegionSurface.state must belong to topology {self.topology.topology_id!r}; got {state.topology_id!r}"
+            )
         positions = state.positions
         vectors = self.face_area_vectors(positions)
         active = self.topology.face_active

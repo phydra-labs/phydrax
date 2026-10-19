@@ -12,9 +12,10 @@ import pytest
 
 import phydrax as phx
 from phydrax._mass import EstimatedMass, ExactMass
+from phydrax.units import METER
 
 
-class _HyperplaneMap(phx.geometry.BoundaryMap):
+class _HyperplaneMap(phx.geometry.AbstractBoundaryMap):
     @property
     def num_charts(self) -> int:
         return 1
@@ -40,10 +41,12 @@ class _HyperplaneMap(phx.geometry.BoundaryMap):
 
 
 def test_geometry_nd_closure_scenario_1() -> None:
-    ball = phx.geometry.Ball(jnp.zeros((4,)), 2.0, feature_id="ball4").compile()
+    ball = phx.geometry.Ball(jnp.zeros((4,)), 2.0, feature_id="ball4").compile(
+        coordinate_unit=METER
+    )
     box = phx.geometry.Orthotope(
         jnp.zeros((5,)), jnp.asarray((1.0, 2.0, 3.0, 4.0, 5.0)), feature_id="box5"
-    ).compile()
+    ).compile(coordinate_unit=METER)
 
     assert jnp.allclose(ball.measure, 8.0 * jnp.pi**2)
     assert jnp.allclose(ball.boundary_measure, 16.0 * jnp.pi**2)
@@ -59,7 +62,7 @@ def test_geometry_nd_closure_scenario_1() -> None:
     geometry = phx.geometry.AxisAlignedEllipsoid(
         jnp.zeros((4,)),
         jnp.asarray((1.0, 2.0, 3.0, 4.0)),
-    ).compile()
+    ).compile(coordinate_unit=METER)
 
     assert jnp.allclose(geometry.measure, 12.0 * jnp.pi**2)
     assert geometry.has_capability(phx.geometry.GeometryCapability.INTERIOR_MEASURE)
@@ -68,7 +71,7 @@ def test_geometry_nd_closure_scenario_1() -> None:
     assert jnp.all(
         jnp.sum((samples / jnp.asarray((1.0, 2.0, 3.0, 4.0))) ** 2, axis=-1) <= 1.0
     )
-    ellipse = phx.geometry.Ellipse((0.0, 0.0), (2.0, 1.0)).compile()
+    ellipse = phx.geometry.Ellipse((0.0, 0.0), (2.0, 1.0)).compile(coordinate_unit=METER)
     domain = phx.domain.GeometryDomain(ellipse)
 
     assert isinstance(ellipse.boundary_mass, EstimatedMass)
@@ -81,7 +84,7 @@ def test_geometry_nd_closure_scenario_2() -> None:
     extrusion = phx.geometry.Extrusion(
         phx.geometry.Ball(jnp.zeros((4,)), 1.0),
         2.0,
-    ).compile()
+    ).compile(coordinate_unit=METER)
     triangle = phx.geometry.simplicial.AffineSimplexMap(
         jnp.asarray(
             (
@@ -147,7 +150,7 @@ def test_geometry_nd_closure_scenario_2() -> None:
         (0.0, 0.0),
         0.73,
         feature_id="curve-source",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     plan = phx.geometry.discover_implicit_curve(
         geometry,
         grid,
@@ -181,7 +184,7 @@ def test_implicit_curve_evidence_reports_projection_diagnostics() -> None:
         (0.0, 0.0),
         0.73,
         feature_id="curve-evidence",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     plan = phx.geometry.discover_implicit_curve(
         geometry,
         grid,

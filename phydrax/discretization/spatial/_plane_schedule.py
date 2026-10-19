@@ -14,7 +14,7 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
-from ._morton import _canonical_morton_point_order, _MortonPointOrder, MortonAddressPlan
+from ._morton import canonical_morton_point_order, MortonAddressPlan, MortonPointOrder
 
 
 class MortonPlaneBuildEvidence(NonTrainableState, StrictModule):
@@ -40,7 +40,7 @@ class MortonPlaneBuildEvidence(NonTrainableState, StrictModule):
 class MortonPlaneScheduleState(NonTrainableState, StrictModule):
     """Compact execution planes over one canonical Morton point order."""
 
-    point_order: _MortonPointOrder
+    point_order: MortonPointOrder
     plane_offsets: jax.Array
     plane_active_counts: jax.Array
     node_active: jax.Array
@@ -205,7 +205,7 @@ class MortonPlaneSchedulePlan(StrictModule):
         bounding_padding: jax.Array | float = 0.0,
         epoch: int | jax.Array = 0,
     ) -> MortonPlaneScheduleState:
-        point_order = _canonical_morton_point_order(
+        point_order = canonical_morton_point_order(
             self.address_plan,
             points,
             point_capacity=self.point_capacity,

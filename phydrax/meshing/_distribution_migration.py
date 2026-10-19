@@ -4,12 +4,12 @@
 
 """Atomic bounded migration of native owner-local simplex packets.
 
-The generic WeightedCSRGraph owner partitions the actual dual-facet graph.
+The generic WeightedCSRGraph owner partitions the dual-facet graph.
 This module lowers adjacency and consumes graph-produced target owners in
-canonical semantic-ID row order; it does not own another partition algorithm.
+semantic-ID row order; it does not own another partition algorithm.
 Capacity-sized packets circulate without gathering geometry, CSR or candidates.
 
-Complete raw bisection forests travel as canonical AdaptiveSimplexState leaves.
+Raw bisection forest records travel as AdaptiveSimplexState leaves.
 Stable scientific IDs replace slot references in flight; family execution
 ownership is reconstructed separately from solver graph ownership.
 After acceptance, solvers must rebind their ownership, closure and field views.
@@ -18,7 +18,6 @@ After acceptance, solvers must rebind their ownership, closure and field views.
 from __future__ import annotations
 
 import operator
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import equinox as eqx
@@ -26,22 +25,41 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.sharding import PartitionSpec
+from jax.experimental import multihost_utils
+from jax.sharding import Mesh, PartitionSpec
 
+from .._fingerprint import logical_array_value_collection_digest
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._adaptive_simplex import (
     AdaptiveSimplexParts,
     AdaptiveSimplexState,
     AdaptiveSimplexStatus,
+    masked_simplex_facet_neighbors,
+    vertex_half_facets,
 )
-from ..graph._partition import GraphPartitionPlan
+from ..graph._distributed_partition import replay_logical_partition
+from ..graph._partition import GraphPartitionPlan, partition_graph, WeightedCSRGraph
+from ..typing import checked
+
+# Module references defer symbol resolution across mutually dependent execution owners.
+from . import (
+    _device_adaptation as device_adaptation_owner,
+    _distribution as distribution_owner,
+    _restart_distribution as restart_distribution_owner,
+)
+from ._distribution_forest import (
+    migrate_simplex_forest,
+    restore_forest_records,
+    slots,
+    vertex_record_owners,
+)
 
 
 if TYPE_CHECKING:
     from ..graph._partition import WeightedCSRGraph
-    from ._device_adaptation import PartitionedAdaptiveSimplex
-    from ._distribution import MeshPartitionPolicy, SimplexNeighborhoodWorkset
+    from ._device_adaptation import PartitionedAdaptiveSimplex, PreparedAdaptiveSimplex
+    from ._distribution import SimplexNeighborhoodWorkset
 
 
 _SENTINEL = jnp.iinfo(jnp.int64).max
@@ -50,7 +68,7 @@ _INVALID = int(AdaptiveSimplexStatus.INVALID_GEOMETRY)
 
 
 class OwnerLocalMigrationState(StrictModule, NonTrainableState):
-    """Canonical cell packets with aligned numerical content and epoch IDs.
+    """Cell packets with aligned numerical content and epoch IDs.
 
     Scientific identifiers/epochs are int64, owners are int32. Vertex fields
     and vertex owners have one row per cell corner, including shared copies.
@@ -96,7 +114,7 @@ class PreparedOwnerLocalMigration(StrictModule, NonTrainableState):
 
     ``target_parts`` describes measured proposed ownership adjacency. Consumers
     must bind it, rebuild solver halos and lifecycle views only after collective
-    acceptance; rejection retains the original execution binding and arrays.
+    acceptance; rejection retains the source execution binding and arrays.
     """
 
     original: OwnerLocalMigrationState
@@ -106,7 +124,7 @@ class PreparedOwnerLocalMigration(StrictModule, NonTrainableState):
     forest_parts: AdaptiveSimplexParts | None = None
 
 
-def _collective_status(status: Array, axis: str) -> Array:
+def collective_axis_status_union(status: Array, axis: str) -> Array:
     shifts = jnp.arange(8, dtype=jnp.int32)
     bits = (status >> shifts) & 1
     return jnp.sum(
@@ -114,7 +132,7 @@ def _collective_status(status: Array, axis: str) -> Array:
     )
 
 
-_WORKSET_FIELDS = (
+WORKSET_FIELDS = (
     "cell_ids",
     "cell_vertices",
     "cell_coordinates",
@@ -131,37 +149,39 @@ _WORKSET_FIELDS = (
 
 
 def _replace_work(
-    work: SimplexNeighborhoodWorkset, **changes: Array
-) -> SimplexNeighborhoodWorkset:
-    # The distribution owner imports this module's restart consumer; bind its
-    # workset type at call time so either module can be imported first.
-    from ._distribution import SimplexNeighborhoodWorkset
-
-    return SimplexNeighborhoodWorkset(
-        *(changes.get(name, getattr(work, name)) for name in _WORKSET_FIELDS)
-    )
+    work: distribution_owner.SimplexNeighborhoodWorkset, **changes: Array
+) -> distribution_owner.SimplexNeighborhoodWorkset:
+    return distribution_owner.SimplexNeighborhoodWorkset(**(work.arrays() | changes))
 
 
 def _migrate_owned_packets(
     parts: AdaptiveSimplexParts,
-    workset: SimplexNeighborhoodWorkset,
+    workset: distribution_owner.SimplexNeighborhoodWorkset,
     targets: Array,
     payloads: tuple[Array, ...],
-) -> tuple[SimplexNeighborhoodWorkset, tuple[Array, ...], Array, Array, Array]:
-    """Transport geometry and only the actual supplied cell-aligned payloads."""
-    from ._distribution import SimplexNeighborhoodWorkset
+) -> tuple[
+    distribution_owner.SimplexNeighborhoodWorkset, tuple[Array, ...], Array, Array, Array
+]:
+    """Transport geometry and supplied cell-aligned payloads."""
 
     axis = parts.axis_name
     spec = PartitionSpec(axis)
     ring = tuple(
         (rank, (rank + 1) % parts.part_count) for rank in range(parts.part_count)
     )
+    transported_payloads = tuple(value for value in payloads if value.size)
 
     def local(
-        block: SimplexNeighborhoodWorkset,
+        block: distribution_owner.SimplexNeighborhoodWorkset,
         target_block: Array,
         payload_block: tuple[Array, ...],
-    ) -> tuple[SimplexNeighborhoodWorkset, tuple[Array, ...], Array, Array, Array]:
+    ) -> tuple[
+        distribution_owner.SimplexNeighborhoodWorkset,
+        tuple[Array, ...],
+        Array,
+        Array,
+        Array,
+    ]:
         work, values = jax.tree_util.tree_map(
             lambda value: value[0], (block, payload_block)
         )
@@ -182,15 +202,15 @@ def _migrate_owned_packets(
         def merge_step(
             _: int,
             carry: tuple[
-                SimplexNeighborhoodWorkset,
+                distribution_owner.SimplexNeighborhoodWorkset,
                 tuple[Array, ...],
-                SimplexNeighborhoodWorkset,
+                distribution_owner.SimplexNeighborhoodWorkset,
                 tuple[Array, ...],
             ],
         ) -> tuple[
-            SimplexNeighborhoodWorkset,
+            distribution_owner.SimplexNeighborhoodWorkset,
             tuple[Array, ...],
-            SimplexNeighborhoodWorkset,
+            distribution_owner.SimplexNeighborhoodWorkset,
             tuple[Array, ...],
         ]:
             incoming, incoming_values, current, current_values = carry
@@ -211,7 +231,7 @@ def _migrate_owned_packets(
             def merge(left: Array, right: Array) -> Array:
                 return jnp.concatenate((left, right), axis=0)[selected]
 
-            merged = SimplexNeighborhoodWorkset(
+            merged = distribution_owner.SimplexNeighborhoodWorkset(
                 cell_ids=sorted_keys[:capacity],
                 cell_vertices=merge(current.cell_vertices, incoming.cell_vertices),
                 cell_coordinates=merge(
@@ -254,19 +274,29 @@ def _migrate_owned_packets(
         status = candidate.status | jnp.where(
             jax.lax.psum(before, axis) != jax.lax.psum(after, axis), _INVALID, 0
         )
-        candidate = _replace_work(candidate, status=_collective_status(status, axis))
+        candidate = _replace_work(
+            candidate, status=collective_axis_status_union(status, axis)
+        )
         return jax.tree_util.tree_map(
             lambda value: value[None],
             (candidate, candidate_values, before, before - retained, after - retained),
         )
 
-    return jax.shard_map(
+    work, transported, before, sent, received = jax.shard_map(
         local,
         mesh=parts.mesh,
         in_specs=(spec, spec, spec),
         out_specs=(spec, spec, spec, spec, spec),
         check_vma=False,
-    )(workset, targets, payloads)
+    )(workset, targets, transported_payloads)
+    values = iter(transported)
+    return (
+        work,
+        tuple(next(values) if value.size else value for value in payloads),
+        before,
+        sent,
+        received,
+    )
 
 
 _compiled_owned_packets = eqx.filter_jit(_migrate_owned_packets)
@@ -307,11 +337,20 @@ def _hydrate_packet_closure(
     closure: SimplexNeighborhoodWorkset,
     corner_payloads: tuple[int, ...] = (),
 ) -> tuple[SimplexNeighborhoodWorkset, tuple[Array, ...], Array, Array]:
-    """Hydrate exact-ID geometry and actual supplied payloads into a solver halo."""
+    """Hydrate geometry and supplied payloads into a solver halo by stable IDs."""
     axis = parts.axis_name
     spec = PartitionSpec(axis)
     ring = tuple(
         (rank, (rank + 1) % parts.part_count) for rank in range(parts.part_count)
+    )
+    transported_indices = tuple(
+        index for index, value in enumerate(payloads) if value.size
+    )
+    transported_payloads = tuple(payloads[index] for index in transported_indices)
+    corner_payloads = tuple(
+        transported_indices.index(index)
+        for index in corner_payloads
+        if index in transported_indices
     )
 
     def local(
@@ -443,13 +482,25 @@ def _hydrate_packet_closure(
             ),
         )
 
-    return jax.shard_map(
+    work, transported, owners, vertices = jax.shard_map(
         local,
         mesh=parts.mesh,
         in_specs=(spec, spec, spec),
         out_specs=(spec, spec, spec, spec),
         check_vma=False,
-    )(owned, payloads, closure)
+    )(owned, transported_payloads, closure)
+    values = iter(transported)
+    return (
+        work,
+        tuple(
+            next(values)
+            if value.size
+            else jnp.empty((*closure.cell_ids.shape, *value.shape[2:]), dtype=value.dtype)
+            for value in payloads
+        ),
+        owners,
+        vertices,
+    )
 
 
 _compiled_hydrate_packets = eqx.filter_jit(_hydrate_packet_closure)
@@ -551,13 +602,12 @@ def _simplex_graph_part(
     axis: str,
     part_count: int,
 ) -> tuple[Array, Array, Array, Array]:
-    from ._distribution import _lexicographic_bound, _neighborhood_facet_keys
 
     ring = tuple((rank, (rank + 1) % part_count) for rank in range(part_count))
     rank = jax.lax.axis_index(axis)
     owned = work.cell_valid & (work.cell_owner == rank)
     source = _replace_work(work, cell_valid=owned)
-    keys = _neighborhood_facet_keys(source)
+    keys = distribution_owner.neighborhood_facet_keys(source)
     capacity, width = work.cell_vertices.shape
     self_ids = jnp.repeat(work.cell_ids, width)
     neighbors = jnp.full((capacity * width,), _SENTINEL, jnp.int64)
@@ -566,16 +616,19 @@ def _simplex_graph_part(
         _: int, carry: tuple[SimplexNeighborhoodWorkset, Array]
     ) -> tuple[SimplexNeighborhoodWorkset, Array]:
         packet, neighbors = carry
-        facets = _neighborhood_facet_keys(packet)
+        facets = distribution_owner.neighborhood_facet_keys(packet)
         order = jnp.lexsort(
             tuple(facets[:, column] for column in range(width - 2, -1, -1))
         )
         facets = facets[order]
         ids = jnp.repeat(packet.cell_ids, width)[order]
         lower = jnp.minimum(
-            _lexicographic_bound(facets, keys, False), facets.shape[0] - 1
+            distribution_owner.lexicographic_bound(facets, keys, False),
+            facets.shape[0] - 1,
         )
-        upper = jnp.maximum(_lexicographic_bound(facets, keys, True) - 1, 0)
+        upper = jnp.maximum(
+            distribution_owner.lexicographic_bound(facets, keys, True) - 1, 0
+        )
         candidate = jnp.where(ids[lower] != self_ids, lower, upper)
         matched = (
             jnp.repeat(owned, width)
@@ -636,7 +689,7 @@ def replay_logical_simplex_graph(
     *,
     axis_name: str,
 ) -> tuple[Array, Array, Array, Array]:
-    """Recompute actual dual-facet CSR on saved logical parts without old devices."""
+    """Recompute dual-facet CSR from saved logical parts on the current devices."""
     if (
         workset.cell_ids.ndim != 2
         or edge_weights.shape != workset.cell_vertices.shape
@@ -645,7 +698,7 @@ def replay_logical_simplex_graph(
         or not axis_name
     ):
         raise ValueError(
-            "Logical dual-graph replay requires canonical saved geometry/facet-weight rows."
+            "migration.graph_replay must bind part-shaped geometry, int64 facet weights, and a nonempty axis; got incompatible rows, dtype, or axis"
         )
     count = workset.cell_ids.shape[0]
 
@@ -667,20 +720,19 @@ def ownerlocal_simplex_graph(
     vertex_weights: Array,
     edge_weights: Array | None = None,
 ) -> WeightedCSRGraph:
-    """Lower the actual owner-local dual facet graph to the canonical graph owner."""
-    from ..graph._partition import WeightedCSRGraph
+    """Lower the owner-local dual-facet graph to WeightedCSRGraph."""
 
     shape = state.workset.cell_ids.shape
     edge_shape = state.workset.cell_vertices.shape
     if vertex_weights.shape != shape or vertex_weights.dtype != jnp.int64:
         raise ValueError(
-            "Graph cell work weights must be int64 and aligned with scientific cell-ID rows."
+            f"migration.graph.vertex_weights must be int64 and align with cell-ID rows; got shape={vertex_weights.shape}, dtype={vertex_weights.dtype}, expected_shape={shape}"
         )
     if edge_weights is None:
         edge_weights = jnp.ones(edge_shape, jnp.int64)
     if edge_weights.shape != edge_shape or edge_weights.dtype != jnp.int64:
         raise ValueError(
-            "Graph facet communication weights must be int64 and aligned with cell corners."
+            f"migration.graph.edge_weights must be int64 and align with cell corners; got shape={edge_weights.shape}, dtype={edge_weights.dtype}, expected_shape={edge_shape}"
         )
     offsets, neighbors, weights, valid = _simplex_graph_packets(
         parts, state.workset, edge_weights
@@ -698,15 +750,13 @@ def ownerlocal_simplex_graph(
     )
 
 
-def _prepare_migration_routes(
+def prepare_migration_routes(
     parts: AdaptiveSimplexParts, route_mask: Array
 ) -> AdaptiveSimplexParts:
     """Validate the sole bounded replicated metadata read at the prepare barrier."""
     if route_mask.is_fully_addressable:
         mask = np.asarray(jax.device_get(route_mask), dtype=np.bool_)
     else:
-        from jax.experimental import multihost_utils
-
         mask = np.asarray(
             multihost_utils.process_allgather(route_mask, tiled=True), dtype=np.bool_
         )
@@ -714,7 +764,7 @@ def _prepare_migration_routes(
         mask, mask.T
     ):
         raise ValueError(
-            "Migration route metadata must be a single reciprocal global rank matrix."
+            f"migration.route_mask must be a reciprocal global rank matrix; got shape={mask.shape}, part_count={parts.part_count}, incompatible shape or asymmetric routes"
         )
     routes = tuple((int(source), int(target)) for source, target in np.argwhere(mask))
     return AdaptiveSimplexParts(
@@ -722,20 +772,28 @@ def _prepare_migration_routes(
     )
 
 
-@eqx.filter_jit
-def _forest_migration_routes(
+def forest_migration_routes(
     parts: AdaptiveSimplexParts, forest: AdaptiveSimplexState
 ) -> Array:
-    axis = parts.axis_name
-    ring = tuple(
-        (rank, (rank + 1) % parts.part_count) for rank in range(parts.part_count)
+    """Discover reciprocal shared-vertex routes independently of existing routes."""
+    return _forest_migration_route_values(
+        forest.mesh.vertex_ids, parts.mesh, parts.axis_name, parts.part_count
     )
+
+
+@eqx.filter_jit
+def _forest_migration_route_values(
+    vertex_ids: Array, mesh: Mesh, axis_name: str, part_count: int
+) -> Array:
+    """Compile route discovery on only its vertex inventory and collective mesh."""
+    axis = axis_name
+    ring = tuple((rank, (rank + 1) % part_count) for rank in range(part_count))
 
     def local(block: Array) -> Array:
         ids = block[0]
         keys = jnp.where(ids >= 0, ids, _SENTINEL)
         rank = jax.lax.axis_index(axis)
-        neighbors = jnp.zeros(parts.part_count, jnp.int32)
+        neighbors = jnp.zeros(part_count, jnp.int32)
 
         def visit(
             _: int, carry: tuple[Array, Array, Array]
@@ -752,14 +810,10 @@ def _forest_migration_routes(
                 neighbors,
             )
 
-        _, _, neighbors = jax.lax.fori_loop(
-            0, parts.part_count, visit, (keys, rank, neighbors)
-        )
+        _, _, neighbors = jax.lax.fori_loop(0, part_count, visit, (keys, rank, neighbors))
         return (
             jax.lax.psum(
-                jnp.zeros((parts.part_count, parts.part_count), jnp.int32)
-                .at[rank]
-                .set(neighbors),
+                jnp.zeros((part_count, part_count), jnp.int32).at[rank].set(neighbors),
                 axis,
             )
             > 0
@@ -767,11 +821,11 @@ def _forest_migration_routes(
 
     return jax.shard_map(
         local,
-        mesh=parts.mesh,
+        mesh=mesh,
         in_specs=PartitionSpec(axis),
         out_specs=PartitionSpec(),
         check_vma=False,
-    )(forest.mesh.vertex_ids)
+    )(vertex_ids)
 
 
 @eqx.filter_jit
@@ -787,7 +841,6 @@ def _bind_migration_state(
     cell_history: tuple[Array, ...],
     vertex_history: tuple[Array, ...],
 ) -> OwnerLocalMigrationState:
-    from ._distribution_forest import _vertex_record_owners
 
     axis = parts.axis_name
     spec = PartitionSpec(axis)
@@ -871,8 +924,8 @@ def _bind_migration_state(
         epoch_values, epoch_status = query(
             raw.mesh.cell_ids, epochs, work.cell_ids, work.cell_valid
         )
-        owners = _vertex_record_owners(parts, raw.mesh.vertex_ids)
-        status = _collective_status(
+        owners = vertex_record_owners(parts, raw.mesh.vertex_ids)
+        status = collective_axis_status_union(
             work.status | cell_status | vertex_status | epoch_status, axis
         )
         state = OwnerLocalMigrationState(
@@ -908,8 +961,9 @@ def _bind_migration_state(
     )
 
 
+@checked
 def prepare_ownerlocal_migration_state(
-    partitioned: PartitionedAdaptiveSimplex,
+    partitioned: device_adaptation_owner.PartitionedAdaptiveSimplex,
     states: AdaptiveSimplexState,
     /,
     *,
@@ -921,22 +975,14 @@ def prepare_ownerlocal_migration_state(
     cell_history: tuple[Array, ...] = (),
     vertex_history: tuple[Array, ...] = (),
 ) -> OwnerLocalMigrationState:
-    """Bind transferred scientific fields to actual source/forest packets.
+    """Bind transferred scientific fields to source and forest packets.
 
     Field IDs and values are capacity-padded part-sharded arrays (unused IDs -1).
-    Cells/vertices are matched by exact int64 identity, not shape/order. Cell
+    Cells/vertices are matched by int64 scientific identity, not shape/order. Cell
     history is aligned with all raw allocated cell slots; vertex history with
     all raw allocated vertex slots, including inactive/removed records.
     """
-    from ._device_adaptation import PartitionedAdaptiveSimplex
-    from ._distribution import expand_partitioned_simplex_neighborhood
 
-    if not isinstance(partitioned, PartitionedAdaptiveSimplex) or not isinstance(
-        states, AdaptiveSimplexState
-    ):
-        raise TypeError(
-            "Migration binding requires the canonical partitioned/raw simplex epoch."
-        )
     count = partitioned.parts.part_count
     if (
         cell_field_ids.ndim != 2
@@ -957,12 +1003,14 @@ def prepare_ownerlocal_migration_state(
         )
     ):
         raise ValueError(
-            "Scientific field IDs, epochs and raw history must have explicit matched capacity axes."
+            "migration.fields must bind nonempty int64 ID and epoch axes, aligned field values, and raw history capacities; got incompatible dtype or capacity axes"
         )
     policy = partitioned.prepared.adaptation.policy.distribution
     if policy is None:
-        raise ValueError("Migration binding requires the actual prepared distribution.")
-    work = expand_partitioned_simplex_neighborhood(
+        raise ValueError(
+            "migration.distribution must match the prepared distribution; got missing policy or owner-count mismatch"
+        )
+    work = distribution_owner.expand_partitioned_simplex_neighborhood(
         partitioned.parts,
         states,
         partitioned.states,
@@ -1000,10 +1048,12 @@ def ownerlocal_forest_marks(
     reject the operation rather than disappearing at an ownership boundary.
     """
     if state.forest is None or state.forest_cell_owners is None:
-        raise ValueError("Raw family marks require the accepted complete forest.")
+        raise ValueError(
+            "migration.forest_marks must bind the accepted raw forest; got missing forest or ownership"
+        )
     if marks.shape != state.workset.cell_ids.shape or marks.dtype != jnp.bool_:
         raise ValueError(
-            "Solver marks must be bool and aligned with canonical workset cell IDs."
+            f"migration.forest_marks must be bool and align with workset cell IDs; got shape={marks.shape}, dtype={marks.dtype}, expected_shape={state.workset.cell_ids.shape}"
         )
     axis = parts.axis_name
     spec = PartitionSpec(axis)
@@ -1041,7 +1091,7 @@ def ownerlocal_forest_marks(
         )
         before = jax.lax.psum(jnp.sum(requested, dtype=jnp.int32), axis)
         after = jax.lax.psum(jnp.sum(result, dtype=jnp.int32), axis)
-        status = _collective_status(
+        status = collective_axis_status_union(
             work.status | jnp.where(before != after, _INVALID, 0), axis
         )
         return result[None], status[None]
@@ -1098,7 +1148,9 @@ def _solver_owner_part(
     after = jax.lax.psum(jnp.sum(authoritative & (covered == 1), dtype=jnp.int32), axis)
     invalid = jnp.any(active & (covered != 1)) | (before != after)
     invalid |= jnp.any(owned & ((proposed < 0) | (proposed >= target_count)))
-    return owners, _collective_status(work.status | jnp.where(invalid, _INVALID, 0), axis)
+    return owners, collective_axis_status_union(
+        work.status | jnp.where(invalid, _INVALID, 0), axis
+    )
 
 
 @eqx.filter_jit
@@ -1111,7 +1163,7 @@ def _project_workset_solver_owners(
     raw_authority: Array,
     target_count: int,
 ) -> tuple[Array, Array]:
-    """One exact scientific-ID projection for current or proposed solver ownership."""
+    """Project current or proposed solver ownership by scientific cell IDs."""
     axis = parts.axis_name
     spec = PartitionSpec(axis)
 
@@ -1178,10 +1230,10 @@ def ownerlocal_solver_cell_owners(
     state: OwnerLocalMigrationState,
     /,
 ) -> tuple[Array, Array]:
-    """Bind solver ownership to actual raw active scientific cells, inactive -1."""
+    """Bind solver ownership to active raw scientific cells, using -1 for inactive rows."""
     if state.forest is None or state.forest_cell_owners is None:
         raise ValueError(
-            "Solver-owner projection requires the complete accepted raw forest."
+            "migration.solver_owners must bind the accepted raw forest; got missing forest or ownership"
         )
     return _project_workset_solver_owners(
         parts,
@@ -1203,7 +1255,7 @@ def restart_solver_target_owners(
     *,
     target_part_count: int | None = None,
 ) -> tuple[Array, Array]:
-    """Map the actual graph proposal into complete raw-slot order without slot guesses.
+    """Map the graph proposal into raw-slot order without slot guesses.
 
     Graph rows align workset.cell_ids; only its current source-owned rows propose.
     Scientific coverage must match every raw active record exactly once. Inactive
@@ -1223,7 +1275,7 @@ def restart_solver_target_owners(
         or requested_solver_owners.dtype != jnp.int32
     ):
         raise ValueError(
-            "Graph restart proposals require the actual scientific workset rows and target count."
+            "migration.graph_restart must match scientific workset rows and target count; got incompatible shape or count"
         )
     authority = jnp.where(
         saved.mesh.cell_ids >= 0,
@@ -1241,62 +1293,57 @@ def restart_solver_target_owners(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class SimplexGraphRestartProposal:
+class SimplexGraphRestartProposal(StrictModule, NonTrainableState):
     """An executed native dual-graph partition bound to its raw-slot proposal.
 
     ``parts`` is the accepted owner-local partition, aligned with
-    ``workset.cell_ids``; ``requested_target_owners`` is its exact projection
+    ``workset.cell_ids``; ``requested_target_owners`` is its scientific-ID projection
     into saved raw-cell order. Restart validation replays the same dual-graph
     lowering, multilevel partition operation and projection from these saved
     logical rows, so a GRAPH ownership claim is never a caller label.
     """
 
-    workset: SimplexNeighborhoodWorkset
+    workset: distribution_owner.SimplexNeighborhoodWorkset
     vertex_weights: Array
     edge_weights: Array
     parts: Array
     requested_target_owners: Array
-    maximum_imbalance: float
+    maximum_imbalance: float = eqx.field(static=True)
 
     @property
     def plan(self) -> GraphPartitionPlan:
-        """The canonical mesh GRAPH plan of this proposal's owner count and tolerance."""
+        """Return the GRAPH plan for the proposal owner count and imbalance tolerance."""
         return GraphPartitionPlan(
             self.parts.shape[0], maximum_imbalance=self.maximum_imbalance
         )
 
 
+@checked
 def prepare_graph_restart_proposal(
     parts: AdaptiveSimplexParts,
     saved: AdaptiveSimplexState,
     state: OwnerLocalMigrationState,
-    policy: MeshPartitionPolicy,
+    policy: distribution_owner.MeshPartitionPolicy,
     /,
     *,
     vertex_weights: Array,
     edge_weights: Array | None = None,
 ) -> SimplexGraphRestartProposal:
-    """Execute the native GRAPH route on the actual dual graph of an accepted epoch.
+    """Execute the native GRAPH route on the dual graph of an accepted epoch.
 
     The owner-local partition runs on the current execution parts, so the
     requested owner count equals the current one. A collectively refused
     partition or an incomplete scientific projection raises; its measured
     graph evidence is reported, never replaced by incoming ownership.
     """
-    from ..graph._partition import partition_graph
-    from ._distribution import MeshPartitionKind, MeshPartitionPolicy
 
-    if (
-        not isinstance(policy, MeshPartitionPolicy)
-        or policy.kind is not MeshPartitionKind.GRAPH
-    ):
+    if policy.kind is not distribution_owner.MeshPartitionKind.GRAPH:
         raise ValueError(
-            "A graph restart proposal requires a GRAPH mesh partition policy."
+            f"migration.graph_restart.policy.kind must be GRAPH; got {policy.kind}"
         )
     if policy.part_count != parts.part_count:
         raise ValueError(
-            "The owner-local GRAPH route partitions onto its current execution parts."
+            f"migration.graph_restart.policy.part_count must match current execution owners; got requested={policy.part_count}, execution={parts.part_count}"
         )
     if edge_weights is None:
         edge_weights = jnp.ones(state.workset.cell_vertices.shape, jnp.int64)
@@ -1310,15 +1357,14 @@ def prepare_graph_restart_proposal(
     evidence = result.evidence
     if not evidence.accepted or not isinstance(result.parts, Array):
         raise ValueError(
-            "The native GRAPH partition collectively refused the actual dual graph "
-            f"(resource status {evidence.resource_status}, evidence {evidence.evidence_id})."
+            f"migration.graph_restart.partition must accept the dual graph; got resource_status={evidence.resource_status}, evidence_id={evidence.evidence_id}"
         )
     requested, status = restart_solver_target_owners(
         parts, saved, state.workset, result.parts
     )
     if bool(jax.device_get(jnp.any(status != 0))):
         raise ValueError(
-            "The GRAPH proposal does not cover every raw active scientific cell exactly once."
+            "migration.graph_restart.requested_target_owners must cover every active raw cell once; got nonzero projection status"
         )
     return SimplexGraphRestartProposal(
         state.workset,
@@ -1338,8 +1384,6 @@ def replay_graph_restart_proposal(
     axis_name: str,
 ) -> None:
     """Recompute the saved GRAPH proposal exactly on the current devices."""
-    from .._fingerprint import logical_array_value_collection_digest
-    from ..graph._distributed_partition import replay_logical_partition
 
     def digest(value: Array) -> str:
         return logical_array_value_collection_digest({"value": value})
@@ -1356,7 +1400,7 @@ def replay_graph_restart_proposal(
         or work.cell_ids.shape[0] != saved.mesh.cell_ids.shape[0]
     ):
         raise ValueError(
-            "A GRAPH restart proposal must align with its saved dual-graph rows and raw forest."
+            "migration.graph_restart must align int32 proposal owners and int64 weights with saved graph and raw-forest rows; got incompatible shapes or dtypes"
         )
     offsets, neighbors, weights, valid = replay_logical_simplex_graph(
         work, proposal.edge_weights, axis_name=axis_name
@@ -1372,9 +1416,11 @@ def replay_graph_restart_proposal(
         proposal.plan,
         axis_name=axis_name,
     )
-    if bool(jax.device_get(measured[5] != 0)) or digest(parts) != digest(proposal.parts):
+    if bool(jax.device_get(measured.resource_status != 0)) or digest(parts) != digest(
+        proposal.parts
+    ):
         raise ValueError(
-            "Saved GRAPH ownership differs from the replayed native dual-graph partition."
+            "migration.graph_restart.parts must match an accepted replayed native partition; got nonzero replay status or different ownership digest"
         )
     requested, status = _replay_logical_solver_owners(
         work,
@@ -1388,7 +1434,7 @@ def replay_graph_restart_proposal(
         proposal.requested_target_owners
     ):
         raise ValueError(
-            "The raw-slot proposal is not the exact projection of its native GRAPH partition."
+            "migration.graph_restart.requested_target_owners must match its native partition projection; got different raw-slot proposal"
         )
 
 
@@ -1397,14 +1443,13 @@ def ownerlocal_solver_forest(
     state: OwnerLocalMigrationState,
     /,
 ) -> tuple[AdaptiveSimplexState, tuple[Array, ...], tuple[Array, ...], Array]:
-    """Receive complete family records needed by each solver resident closure.
+    """Receive all family records needed by each solver resident closure.
 
     This bounded projection is a hierarchy-construction view, never an execution
     ownership replacement. Raw active flags remain global family facts; callers
-    select solver labels by their resident scientific IDs. The original accepted
+    select solver labels by their resident scientific IDs. The accepted source
     execution forest and its owners remain unchanged.
     """
-    from ._distribution_forest import migrate_simplex_forest
 
     if (
         state.forest is None
@@ -1412,7 +1457,7 @@ def ownerlocal_solver_forest(
         or state.forest_vertex_owners is None
     ):
         raise ValueError(
-            "Solver hierarchy closure requires the complete accepted raw forest and record authority."
+            "migration.solver_closure must bind the accepted forest and record ownership; got missing forest or owners"
         )
     forest, _, _, cells, vertices, status = migrate_simplex_forest(
         parts,
@@ -1428,7 +1473,7 @@ def ownerlocal_solver_forest(
     spec = PartitionSpec(axis)
 
     def collective(block: Array) -> Array:
-        return _collective_status(block[0], axis)[None]
+        return collective_axis_status_union(block[0], axis)[None]
 
     status = jax.shard_map(
         collective, mesh=parts.mesh, in_specs=spec, out_specs=spec, check_vma=False
@@ -1443,14 +1488,13 @@ def ownerlocal_solver_forest_geometry(
     /,
 ) -> tuple[AdaptiveSimplexState, Array]:
     """Receive geometry/history families without claiming any physical payloads."""
-    from ._distribution_forest import _vertex_record_owners, migrate_simplex_forest
 
     if (
         states.mesh.cell_ids.shape[0] != parts.part_count
         or solver_workset.cell_ids.shape[0] != parts.part_count
     ):
         raise ValueError(
-            "Solver hierarchy projection requires the actual execution and solver placements."
+            "migration.solver_projection must match forest and solver placements; got incompatible owner count"
         )
     axis = parts.axis_name
     spec = PartitionSpec(axis)
@@ -1460,7 +1504,7 @@ def ownerlocal_solver_forest_geometry(
         rank = jax.lax.axis_index(axis)
         return jnp.where(cells >= 0, rank, -1).astype(jnp.int32)[
             None
-        ], _vertex_record_owners(parts, vertices)[None]
+        ], vertex_record_owners(parts, vertices)[None]
 
     cell_owners, vertex_owners = jax.shard_map(
         authority,
@@ -1481,7 +1525,7 @@ def ownerlocal_solver_forest_geometry(
     )
 
     def collective(block: Array) -> Array:
-        return _collective_status(block[0], axis)[None]
+        return collective_axis_status_union(block[0], axis)[None]
 
     status = jax.shard_map(
         collective, mesh=parts.mesh, in_specs=spec, out_specs=spec, check_vma=False
@@ -1499,13 +1543,12 @@ def relocate_solver_workset(
     vertex_capacity: int,
     route_metadata_capacity_bytes: int = 1 << 20,
 ) -> tuple[SimplexNeighborhoodWorkset, AdaptiveSimplexParts, Array]:
-    """Stage exact geometry-only solver ownership/closure using the migration core.
+    """Stage geometry-only solver ownership/closure using the migration core.
 
     No physical field or epoch payload exists on this path. Nothing is published:
-    the caller must reject the complete epoch on any returned nonzero status.
+    the caller must reject the epoch on any returned nonzero status.
     Target rows align with raw_workset.cell_ids; only raw-owned rows send.
     """
-    from ._distribution import expand_simplex_neighborhood_workset
 
     halo = operator.index(halo_width)
     vertices = operator.index(vertex_capacity)
@@ -1526,22 +1569,22 @@ def relocate_solver_workset(
         or vertices <= 0
     ):
         raise ValueError(
-            "Geometry-only relocation requires canonical matched packets, owners and capacities."
+            "migration.geometry_relocation must bind int64 geometry IDs, int32 owners, bool validity, matched execution rows, and positive capacities; got incompatible packet fields or capacities"
         )
     if (
         isinstance(route_metadata_capacity_bytes, bool)
         or budget < parts.part_count * parts.part_count
     ):
         raise ValueError(
-            "Geometry-only route metadata exceeds its explicit prepare-barrier byte budget."
+            f"migration.geometry_relocation.route_metadata_capacity_bytes must cover the rank routing matrix; got capacity={route_metadata_capacity_bytes!r}, required={parts.part_count * parts.part_count}"
         )
     owned, _, _, _, _ = _compiled_owned_packets(
         parts, raw_workset, requested_solver_owners, ()
     )
-    target_parts = _prepare_migration_routes(
+    target_parts = prepare_migration_routes(
         parts, _compiled_migration_routes(parts, owned)
     )
-    closure = expand_simplex_neighborhood_workset(
+    closure = distribution_owner.expand_simplex_neighborhood_workset(
         target_parts, owned, halo_width=halo, vertex_capacity=vertices
     )
     hydrated, _, _, vertex_counts = _compiled_hydrate_packets(
@@ -1554,7 +1597,7 @@ def relocate_solver_workset(
         block: SimplexNeighborhoodWorkset, counts: Array
     ) -> SimplexNeighborhoodWorkset:
         work = jax.tree_util.tree_map(lambda value: value[0], block)
-        status = _collective_status(
+        status = collective_axis_status_union(
             work.status | jnp.where(counts[0] > vertices, _CAPACITY, 0), axis
         )
         return jax.tree_util.tree_map(
@@ -1570,7 +1613,43 @@ def relocate_solver_workset(
     return staged, target_parts, staged.status
 
 
-def prepare_ownerlocal_migration(
+class _MigrationForest(StrictModule):
+    state: AdaptiveSimplexState
+    cell_owners: Array
+    vertex_owners: Array
+
+
+class _MigrationPacketInputs(StrictModule):
+    halo: int = eqx.field(static=True)
+    vertices: int = eqx.field(static=True)
+    route_bytes: int = eqx.field(static=True)
+    cell_capacity: int = eqx.field(static=True)
+
+
+class _MigrationInputs(StrictModule):
+    halo: int = eqx.field(static=True)
+    vertices: int = eqx.field(static=True)
+    route_bytes: int = eqx.field(static=True)
+    cell_capacity: int = eqx.field(static=True)
+    forest: _MigrationForest | None
+
+
+class _MigrationPackets(StrictModule):
+    owned: OwnerLocalMigrationState
+    candidate: OwnerLocalMigrationState
+    target_parts: AdaptiveSimplexParts
+    before: Array
+    sent: Array
+    received: Array
+    vertex_counts: Array
+
+
+class _MigrationForestStage(StrictModule):
+    candidate: OwnerLocalMigrationState
+    parts: AdaptiveSimplexParts | None
+
+
+def _prepare_migration_packet_inputs(
     parts: AdaptiveSimplexParts,
     original: OwnerLocalMigrationState,
     requested_target_owners: Array,
@@ -1579,20 +1658,7 @@ def prepare_ownerlocal_migration(
     halo_width: int,
     vertex_capacity: int,
     route_metadata_capacity_bytes: int = 1 << 20,
-) -> PreparedOwnerLocalMigration:
-    """Prepare geometry/state migration and actual requested ghost closure.
-
-    Target owners are int32 [parts,C] in the workset's semantic cell-ID order;
-    only source-owned rows send. A retained raw forest carries explicit
-    authoritative cell/vertex owners and aligned dtype-preserving history leaves.
-
-    ``route_metadata_capacity_bytes`` bounds the host prepare-barrier reads:
-    one replicated bool [parts,parts] solver-routing matrix, plus a separate
-    family-execution matrix when history is retained. Geometry, field content
-    and ancestry remain in capacity-sized device packets.
-    """
-    from ._distribution import expand_simplex_neighborhood_workset
-
+) -> _MigrationPacketInputs:
     halo = operator.index(halo_width)
     vertices = operator.index(vertex_capacity)
     route_bytes = (
@@ -1601,7 +1667,7 @@ def prepare_ownerlocal_migration(
     route_budget = operator.index(route_metadata_capacity_bytes)
     if isinstance(route_metadata_capacity_bytes, bool) or route_budget < route_bytes:
         raise ValueError(
-            "Migration routing metadata exceeds the explicit prepare-barrier byte budget."
+            f"migration.route_metadata_capacity_bytes must cover solver and retained-family routing matrices; got capacity={route_metadata_capacity_bytes!r}, required={route_bytes}"
         )
     shape = original.workset.cell_ids.shape
     width = original.workset.cell_vertices.shape[-1]
@@ -1629,8 +1695,14 @@ def prepare_ownerlocal_migration(
         or vertices <= 0
     ):
         raise ValueError(
-            "Migration requires matched explicit-dtype canonical packets and positive capacity."
+            "migration.packet_inputs must bind matched ID, owner, epoch, field, and source-support axes with explicit dtypes and valid capacities; got incompatible packet metadata or capacities"
         )
+    return _MigrationPacketInputs(halo, vertices, route_bytes, shape[1])
+
+
+def _prepare_migration_history(
+    parts: AdaptiveSimplexParts, original: OwnerLocalMigrationState, /
+) -> _MigrationForest | None:
     if original.forest is None:
         if (
             original.forest_cell_owners is not None
@@ -1639,35 +1711,43 @@ def prepare_ownerlocal_migration(
             or original.vertex_history
         ):
             raise ValueError(
-                "Forest ownership and history require the canonical raw forest."
+                "migration.forest must be present when record ownership or history is supplied; got None with retained ownership or history"
             )
-    else:
-        forest = original.forest
-        cell_owners, vertex_owners = (
-            original.forest_cell_owners,
-            original.forest_vertex_owners,
+        return None
+    forest = original.forest
+    cell_owners, vertex_owners = (
+        original.forest_cell_owners,
+        original.forest_vertex_owners,
+    )
+    if cell_owners is None or vertex_owners is None:
+        raise ValueError(
+            "migration.forest_owners must assign cell and vertex records; got missing ownership arrays"
         )
-        if cell_owners is None or vertex_owners is None:
-            raise ValueError(
-                "Raw forest migration requires explicit authoritative record ownership."
-            )
-        if (
-            forest.mesh.cell_ids.shape[0] != parts.part_count
-            or cell_owners.shape != forest.mesh.cell_ids.shape
-            or cell_owners.dtype != jnp.int32
-            or vertex_owners.shape != forest.mesh.vertex_ids.shape
-            or vertex_owners.dtype != jnp.int32
-            or any(
-                value.shape[:2] != cell_owners.shape for value in original.cell_history
-            )
-            or any(
-                value.shape[:2] != vertex_owners.shape
-                for value in original.vertex_history
-            )
-        ):
-            raise ValueError(
-                "Forest records and typed history must match their canonical raw capacities."
-            )
+    if (
+        forest.mesh.cell_ids.shape[0] != parts.part_count
+        or cell_owners.shape != forest.mesh.cell_ids.shape
+        or cell_owners.dtype != jnp.int32
+        or vertex_owners.shape != forest.mesh.vertex_ids.shape
+        or vertex_owners.dtype != jnp.int32
+        or any(value.shape[:2] != cell_owners.shape for value in original.cell_history)
+        or any(
+            value.shape[:2] != vertex_owners.shape for value in original.vertex_history
+        )
+    ):
+        raise ValueError(
+            "migration.forest_history must align int32 record ownership and history leaves with raw part capacities; got incompatible owner dtype or history shape"
+        )
+    return _MigrationForest(forest, cell_owners, vertex_owners)
+
+
+def _stage_migration_packets(
+    parts: AdaptiveSimplexParts,
+    original: OwnerLocalMigrationState,
+    requested_target_owners: Array,
+    inputs: _MigrationInputs,
+    /,
+) -> _MigrationPackets:
+    halo, vertices = inputs.halo, inputs.vertices
     packets = OwnerLocalMigrationState(
         original.workset,
         original.cell_fields,
@@ -1681,17 +1761,26 @@ def prepare_ownerlocal_migration(
     route_mask = _compiled_migration_routes(parts, owned.workset)
     # This is routing metadata only, already replicated by device psum. No
     # cell, vertex, candidate, ancestry or field arrays cross this host barrier.
-    target_parts = _prepare_migration_routes(parts, route_mask)
-    closure = expand_simplex_neighborhood_workset(
+    target_parts = prepare_migration_routes(parts, route_mask)
+    closure = distribution_owner.expand_simplex_neighborhood_workset(
         target_parts, owned.workset, halo_width=halo, vertex_capacity=vertices
     )
     candidate, vertex_counts = _compiled_hydrate_closure(target_parts, owned, closure)
-    forest_parts = None
-    if original.forest is not None:
-        from ._distribution_forest import migrate_simplex_forest
+    return _MigrationPackets(
+        owned, candidate, target_parts, before, sent, received, vertex_counts
+    )
 
-        if original.forest_cell_owners is None or original.forest_vertex_owners is None:
-            raise ValueError("Raw forest ownership was not validated.")
+
+def _stage_migration_forest(
+    parts: AdaptiveSimplexParts,
+    original: OwnerLocalMigrationState,
+    inputs: _MigrationInputs,
+    packets: _MigrationPackets,
+    /,
+) -> _MigrationForestStage:
+    owned, candidate = packets.owned, packets.candidate
+    forest_parts = None
+    if inputs.forest is not None:
         (
             forest,
             cell_owners,
@@ -1701,9 +1790,9 @@ def prepare_ownerlocal_migration(
             forest_status,
         ) = migrate_simplex_forest(
             parts,
-            original.forest,
-            original.forest_cell_owners,
-            original.forest_vertex_owners,
+            inputs.forest.state,
+            inputs.forest.cell_owners,
+            inputs.forest.vertex_owners,
             original.cell_history,
             original.vertex_history,
             owned.workset,
@@ -1722,9 +1811,19 @@ def prepare_ownerlocal_migration(
             cell_history,
             vertex_history,
         )
-        forest_parts = _prepare_migration_routes(
-            parts, _forest_migration_routes(parts, forest)
+        forest_parts = prepare_migration_routes(
+            parts, forest_migration_routes(parts, forest)
         )
+    return _MigrationForestStage(candidate, forest_parts)
+
+
+def _finalize_migration_candidate(
+    parts: AdaptiveSimplexParts,
+    candidate: OwnerLocalMigrationState,
+    vertex_counts: Array,
+    vertices: int,
+    /,
+) -> OwnerLocalMigrationState:
     # All reductions below are device collectives, including hydration refusal.
     axis = parts.axis_name
     spec = PartitionSpec(axis)
@@ -1736,7 +1835,7 @@ def prepare_ownerlocal_migration(
         status = state.workset.status | jnp.where(
             vertex_block[0] > vertices, _CAPACITY, 0
         )
-        status = _collective_status(status, axis)
+        status = collective_axis_status_union(status, axis)
         return jax.tree_util.tree_map(
             lambda value: value[None],
             eqx.tree_at(
@@ -1749,6 +1848,20 @@ def prepare_ownerlocal_migration(
     candidate = jax.shard_map(
         finish, mesh=parts.mesh, in_specs=(spec, spec), out_specs=spec, check_vma=False
     )(candidate, vertex_counts)
+    return candidate
+
+
+def _prepare_migration_evidence(
+    parts: AdaptiveSimplexParts,
+    original: OwnerLocalMigrationState,
+    candidate: OwnerLocalMigrationState,
+    inputs: _MigrationInputs,
+    packets: _MigrationPackets,
+    /,
+) -> OwnerLocalMigrationEvidence:
+    halo, vertices, route_bytes = inputs.halo, inputs.vertices, inputs.route_bytes
+    before, sent, received = packets.before, packets.sent, packets.received
+    vertex_counts = packets.vertex_counts
     rank = jnp.arange(parts.part_count, dtype=jnp.int32)[:, None]
     after = jnp.sum(
         candidate.workset.cell_valid & (candidate.workset.cell_owner == rank),
@@ -1776,7 +1889,7 @@ def prepare_ownerlocal_migration(
         )
         forest_cell_capacity = original.forest.mesh.cell_ids.shape[1]
         forest_vertex_capacity = original.forest.mesh.vertex_ids.shape[1]
-    evidence = OwnerLocalMigrationEvidence(
+    return OwnerLocalMigrationEvidence(
         candidate.workset.status,
         candidate.workset.status == 0,
         before,
@@ -1790,14 +1903,61 @@ def prepare_ownerlocal_migration(
         forest_vertices_before,
         forest_vertices_after,
         halo,
-        shape[1],
+        inputs.cell_capacity,
         vertices,
         forest_cell_capacity,
         forest_vertex_capacity,
         route_bytes,
     )
+
+
+@checked
+def prepare_ownerlocal_migration(
+    parts: AdaptiveSimplexParts,
+    original: OwnerLocalMigrationState,
+    requested_target_owners: Array,
+    /,
+    *,
+    halo_width: int,
+    vertex_capacity: int,
+    route_metadata_capacity_bytes: int = 1 << 20,
+) -> PreparedOwnerLocalMigration:
+    """Prepare geometry/state migration and requested ghost closure.
+
+    Target owners are int32 [parts,C] in the workset's semantic cell-ID order;
+    only source-owned rows send. A retained raw forest carries explicit
+    recorded cell/vertex ranks and aligned dtype-preserving history leaves.
+
+    ``route_metadata_capacity_bytes`` bounds the host prepare-barrier reads:
+    one replicated bool [parts,parts] solver-routing matrix, plus a separate
+    family-execution matrix when history is retained. Geometry, field content
+    and ancestry remain in capacity-sized device packets.
+    """
+
+    capacity = _prepare_migration_packet_inputs(
+        parts,
+        original,
+        requested_target_owners,
+        halo_width=halo_width,
+        vertex_capacity=vertex_capacity,
+        route_metadata_capacity_bytes=route_metadata_capacity_bytes,
+    )
+    retained_forest = _prepare_migration_history(parts, original)
+    inputs = _MigrationInputs(
+        capacity.halo,
+        capacity.vertices,
+        capacity.route_bytes,
+        capacity.cell_capacity,
+        retained_forest,
+    )
+    packets = _stage_migration_packets(parts, original, requested_target_owners, inputs)
+    forest = _stage_migration_forest(parts, original, inputs, packets)
+    candidate = _finalize_migration_candidate(
+        parts, forest.candidate, packets.vertex_counts, inputs.vertices
+    )
+    evidence = _prepare_migration_evidence(parts, original, candidate, inputs, packets)
     return PreparedOwnerLocalMigration(
-        original, candidate, evidence, target_parts, forest_parts
+        original, candidate, evidence, packets.target_parts, forest.parts
     )
 
 
@@ -1805,7 +1965,7 @@ def prepare_ownerlocal_migration(
 def accept_ownerlocal_migration(
     prepared: PreparedOwnerLocalMigration, /
 ) -> OwnerLocalMigrationState:
-    """Atomically publish all staged arrays, or preserve all original arrays."""
+    """Atomically publish staged arrays or retain all source arrays."""
     accepted = prepared.evidence.accepted
 
     def select(original: Array, candidate: Array) -> Array:
@@ -1813,3 +1973,656 @@ def accept_ownerlocal_migration(
         return jnp.where(mask, candidate, original)
 
     return jax.tree_util.tree_map(select, prepared.original, prepared.candidate)
+
+
+class PartitionedEpochMigration(StrictModule, NonTrainableState):
+    """Aligned source roots and current families from an accepted bounded migration.
+
+    The source preparation is retained unchanged. Solver ownership follows the
+    requested scientific-cell proposal; physical execution keeps each raw family
+    together. Initial records occupy the same prefix slots as the current forest.
+    """
+
+    source_partitioned: PartitionedAdaptiveSimplex
+    saved_states: AdaptiveSimplexState
+    saved_migration_state: OwnerLocalMigrationState
+    requested_target_owners: Array
+    states: AdaptiveSimplexState
+    initial_states: AdaptiveSimplexState
+    source_exterior: Array
+    slot_origins: Array
+    parts: AdaptiveSimplexParts
+    solver_cell_owners: Array
+    initial_solver_cell_owners: Array
+    solver_neighborhood: SimplexNeighborhoodWorkset
+    solver_forest: AdaptiveSimplexState
+    solver_initial_states: AdaptiveSimplexState
+    solver_source_exterior: Array
+    solver_slot_origins: Array
+    migration: PreparedOwnerLocalMigration
+
+
+@eqx.filter_jit
+def _partitioned_epoch_payloads(
+    partitioned: PartitionedAdaptiveSimplex,
+    states: AdaptiveSimplexState,
+    migration_state: OwnerLocalMigrationState,
+) -> tuple[tuple[Array, ...], tuple[Array, ...], Array]:
+    """Encode initial records as stable-ID histories on the current raw forest."""
+
+    parts = partitioned.parts
+    axis = parts.axis_name
+    spec = PartitionSpec(axis)
+    ring = tuple(
+        (rank, (rank + 1) % parts.part_count) for rank in range(parts.part_count)
+    )
+
+    def local(
+        initial_block: AdaptiveSimplexState,
+        current_block: AdaptiveSimplexState,
+        bound_block: AdaptiveSimplexState,
+        exterior_block: Array,
+        origins_block: Array,
+        solver_block: Array,
+    ) -> tuple[tuple[Array, ...], tuple[Array, ...], Array]:
+        initial, current, bound, exterior, origins, solver = jax.tree_util.tree_map(
+            lambda value: value[0],
+            (
+                initial_block,
+                current_block,
+                bound_block,
+                exterior_block,
+                origins_block,
+                solver_block,
+            ),
+        )
+        cells, vertices, status = restart_distribution_owner.packet(
+            initial, (exterior, origins, solver), ()
+        )
+        # JAX reconstructs dict PyTrees in sorted-key order. The transported
+        # tuple must retain the packet schema's order across the ring loop.
+        vertex_names = tuple(vertices)
+        roots, descendants, midpoints, _ = distribution_owner.subdivision_checks(
+            current, initial, exterior
+        )
+        same_current = jnp.asarray(True)
+        for left, right in zip(
+            jax.tree_util.tree_leaves(current),
+            jax.tree_util.tree_leaves(bound),
+            strict=True,
+        ):
+            same_current &= jnp.array_equal(left, right)
+        status |= jnp.where(roots & descendants & midpoints & same_current, 0, _INVALID)
+        # Source vertices can have several current copies. Query source packets
+        # before choosing the current vertex record owner, so a copy introduced
+        # by closure cannot discard the source vertex's initial history.
+        requested = current.mesh.vertex_ids
+        result = {
+            name: jnp.full_like(value, -1) if name == "ids" else jnp.zeros_like(value)
+            for name, value in vertices.items()
+        }
+        covered = jnp.zeros(requested.shape, jnp.bool_)
+
+        def visit(
+            _: int,
+            carry: tuple[dict[str, Array], dict[str, Array], Array, Array],
+        ) -> tuple[dict[str, Array], dict[str, Array], Array, Array]:
+            local_packet, result, covered, status = carry
+            order = jnp.argsort(
+                jnp.where(
+                    local_packet["ids"] >= 0,
+                    local_packet["ids"],
+                    _SENTINEL,
+                ),
+                stable=True,
+            )
+            keys = jnp.where(
+                local_packet["ids"][order] >= 0,
+                local_packet["ids"][order],
+                _SENTINEL,
+            )
+            position = jnp.minimum(
+                jnp.searchsorted(keys, requested), requested.shape[0] - 1
+            )
+            match = (requested >= 0) & (keys[position] == requested)
+            conflict = jnp.asarray(False)
+            for name, value in local_packet.items():
+                incoming = value[order[position]]
+                different = incoming != result[name]
+                if different.ndim > 1:
+                    different = jnp.any(different, axis=tuple(range(1, different.ndim)))
+                conflict |= jnp.any(covered & match & different)
+                mask = match.reshape(match.shape + (1,) * (incoming.ndim - 1))
+                result[name] = jnp.where(mask, incoming, result[name])
+            return (
+                jax.tree_util.tree_map(
+                    lambda value: jax.lax.ppermute(value, axis, ring),
+                    local_packet,
+                ),
+                result,
+                covered | match,
+                status | jnp.where(conflict, _INVALID, 0),
+            )
+
+        _, vertices, _, status = jax.lax.fori_loop(
+            0, parts.part_count, visit, (vertices, result, covered, status)
+        )
+        status = collective_axis_status_union(status, axis)
+        return (
+            tuple(value[None] for value in cells.values()),
+            tuple(vertices[name][None] for name in vertex_names),
+            status[None],
+        )
+
+    forest = migration_state.forest
+    if forest is None:
+        raise ValueError(
+            "PartitionedEpochMigration.forest must retain the current raw epoch; got none"
+        )
+    return jax.shard_map(
+        local,
+        mesh=parts.mesh,
+        in_specs=(spec, spec, spec, spec, spec, spec),
+        out_specs=(spec, spec, spec),
+        check_vma=False,
+    )(
+        partitioned.states,
+        states,
+        forest,
+        partitioned.source_exterior,
+        jnp.asarray(partitioned.slot_origins, dtype=jnp.int64),
+        partitioned.solver_cell_owners,
+    )
+
+
+@eqx.filter_jit
+def _reconstruct_partitioned_initial(
+    partitioned: PartitionedAdaptiveSimplex,
+    accepted: OwnerLocalMigrationState,
+    cell_payload_count: int,
+    vertex_payload_count: int,
+    *,
+    include_ghost_families: bool = False,
+) -> tuple[AdaptiveSimplexState, Array, Array, Array, Array, Array]:
+    """Decode source records into the accepted current forest's slot numbering."""
+
+    parts = partitioned.parts
+    axis = parts.axis_name
+    spec = PartitionSpec(axis)
+
+    def local(
+        template_block: AdaptiveSimplexState,
+        current_block: AdaptiveSimplexState,
+        cell_block: tuple[Array, ...],
+        vertex_block: tuple[Array, ...],
+        old_exterior_block: Array,
+        old_origins_block: Array,
+        old_solver_block: Array,
+    ) -> tuple[AdaptiveSimplexState, Array, Array, Array, Array, Array]:
+        template, current, ch, vh, old_exterior, old_origins, old_solver = (
+            jax.tree_util.tree_map(
+                lambda value: value[0],
+                (
+                    template_block,
+                    current_block,
+                    cell_block,
+                    vertex_block,
+                    old_exterior_block,
+                    old_origins_block,
+                    old_solver_block,
+                ),
+            )
+        )
+        cell_schema, vertex_schema, _ = restart_distribution_owner.packet(
+            template, (old_exterior, old_origins, old_solver), ()
+        )
+        cells = dict(zip(cell_schema, ch, strict=True))
+        vertices = dict(zip(vertex_schema, vh, strict=True))
+        cell_ids = jnp.where(current.mesh.cell_ids >= 0, cells["ids"], -1)
+        vertex_ids = jnp.where(current.mesh.vertex_ids >= 0, vertices["ids"], -1)
+        used, vertex_used = cell_ids >= 0, vertex_ids >= 0
+        c, v = cell_ids.shape[0], vertex_ids.shape[0]
+        cell_count = jnp.sum(used, dtype=jnp.int64)
+        vertex_count = jnp.sum(vertex_used, dtype=jnp.int64)
+        checks = [
+            ~jnp.any(used != (jnp.arange(c) < cell_count)),
+            ~jnp.any(vertex_used != (jnp.arange(v) < vertex_count)),
+            ~jnp.any(used & (cell_ids != current.mesh.cell_ids)),
+            ~jnp.any(vertex_used & (vertex_ids != current.mesh.vertex_ids)),
+        ]
+        # Only the physical execution forest owns the global once-count.
+        # Solver closure replicates all family records, with unchanged
+        # scientific payloads and independently checked local slot alignment.
+        conserved = jnp.asarray(True)
+        if not include_ghost_families:
+            conserved = jax.lax.psum(cell_count, axis) == jax.lax.psum(
+                jnp.sum(template.mesh.cell_ids >= 0, dtype=jnp.int64), axis
+            )
+        checks.append(conserved)
+        missing_vertices = jnp.asarray(False)
+        for name in ("cells", "tuples", "bisection"):
+            missing_vertices |= restart_distribution_owner.missing(
+                cells[name], vertex_ids, used
+            )
+        missing_cells = jnp.asarray(False)
+        for name in ("parents", "children"):
+            missing_cells |= restart_distribution_owner.missing(
+                cells[name], cell_ids, used
+            )
+        checks.extend(
+            (
+                ~missing_vertices,
+                ~missing_cells,
+                ~restart_distribution_owner.missing(
+                    vertices["parents"], vertex_ids, vertex_used
+                ),
+            )
+        )
+        rows = jnp.maximum(slots(vertex_ids, cells["cells"]), 0)
+        active = used & cells["active"]
+        neighbors = masked_simplex_facet_neighbors(rows, active)
+        mesh = eqx.tree_at(
+            lambda value: (
+                value.coordinates,
+                value.vertex_ids,
+                value.vertex_active,
+                value.cells,
+                value.cell_ids,
+                value.cell_active,
+                value.facet_neighbors,
+            ),
+            template.mesh,
+            (
+                vertices["coordinates"],
+                vertex_ids,
+                vertex_used & vertices["active"],
+                rows,
+                cell_ids,
+                active,
+                neighbors,
+            ),
+        )
+        parent_slots = slots(cell_ids, cells["parents"])
+        initial = restore_forest_records(
+            template,
+            cells,
+            vertices,
+            mesh=mesh,
+            tuples=jnp.maximum(slots(vertex_ids, cells["tuples"]), 0),
+            parents=jnp.where(
+                parent_slots >= 0, parent_slots * 2 + cells["ordinal"], -1
+            ).astype(jnp.int32),
+            children=slots(cell_ids, cells["children"]),
+            bisection_vertices=slots(vertex_ids, cells["bisection"]),
+            vertex_parents=slots(vertex_ids, vertices["parents"]),
+            protected_codes=current.protected_codes,
+            vertex_half_facets=vertex_half_facets(rows, active, neighbors, v),
+            cursors=jnp.stack(
+                (
+                    vertex_count,
+                    cell_count,
+                    jax.lax.pmax(template.cursors[2], axis),
+                    jax.lax.pmax(template.cursors[3], axis),
+                )
+            ),
+        )
+        exterior = jnp.where(used[:, None], cells["payload_0"], False)
+        origins = jnp.where(used, cells["payload_1"], -1)
+        solver = jnp.where(active, cells["payload_2"], -1).astype(jnp.int32)
+        roots, descendants, midpoints, _ = distribution_owner.subdivision_checks(
+            current, initial, exterior
+        )
+        checks.extend((roots, descendants, midpoints))
+        records = (current.mesh.cell_ids >= 0) & ~current.retired
+        tuple_slots = jnp.clip(current.tuples, 0, v - 1)
+        tuple_ids = current.mesh.vertex_ids[tuple_slots]
+        tuple_valid = jnp.all(
+            (current.tuples >= 0)
+            & (current.tuples < current.cursors[0])
+            & (tuple_ids >= 0),
+            axis=1,
+        )
+        tuple_valid &= ~current.mesh.cell_active | jnp.all(
+            current.mesh.vertex_active[tuple_slots], axis=1
+        )
+        ordered_tuples = jnp.sort(tuple_ids, axis=1)
+        ordered_cells = jnp.sort(current.mesh.vertex_ids[current.mesh.cells], axis=1)
+        tuple_vertices = jnp.all(ordered_tuples[:, 1:] > ordered_tuples[:, :-1], axis=1)
+        tuple_vertices &= jnp.all(ordered_tuples == ordered_cells, axis=1)
+        checks.extend(
+            (
+                jnp.all(~records | tuple_valid),
+                jnp.all(~records | tuple_vertices),
+            )
+        )
+        validity = jnp.stack(checks)
+        status = collective_axis_status_union(
+            jnp.where(jnp.all(validity), 0, _INVALID), axis
+        )
+        return jax.tree_util.tree_map(
+            lambda value: value[None],
+            (initial, exterior, origins, solver, status, validity),
+        )
+
+    forest = accepted.forest
+    if forest is None:
+        raise ValueError(
+            "PartitionedEpochMigration.forest must retain accepted raw families; got none"
+        )
+    return jax.shard_map(
+        local,
+        mesh=parts.mesh,
+        in_specs=(spec, spec, spec, spec, spec, spec, spec),
+        out_specs=(spec, spec, spec, spec, spec, spec),
+        check_vma=False,
+    )(
+        partitioned.states,
+        forest,
+        accepted.cell_history[-cell_payload_count:],
+        accepted.vertex_history[-vertex_payload_count:],
+        partitioned.source_exterior,
+        jnp.asarray(partitioned.slot_origins, dtype=jnp.int64),
+        partitioned.solver_cell_owners,
+    )
+
+
+def _complete_solver_family_neighborhood(
+    parts: AdaptiveSimplexParts,
+    accepted: OwnerLocalMigrationState,
+    solver_forest: AdaptiveSimplexState,
+    vertex_capacity: int,
+) -> tuple[SimplexNeighborhoodWorkset, Array]:
+    """Hydrate every active solver-family row from accepted scientific packets."""
+    work = accepted.workset
+    if solver_forest.mesh.cell_ids.shape != work.cell_ids.shape:
+        raise ValueError(
+            "PartitionedEpochMigration.solver_neighborhood must share bounded family capacity; got "
+            f"{solver_forest.mesh.cell_ids.shape}, {work.cell_ids.shape}"
+        )
+    axis = parts.axis_name
+    spec = PartitionSpec(axis)
+
+    def request(
+        forest_block: AdaptiveSimplexState,
+        work_block: SimplexNeighborhoodWorkset,
+    ) -> SimplexNeighborhoodWorkset:
+        forest, template = jax.tree_util.tree_map(
+            lambda value: value[0], (forest_block, work_block)
+        )
+        active = forest.mesh.cell_active & (forest.mesh.cell_ids >= 0)
+        order = jnp.argsort(
+            jnp.where(active, forest.mesh.cell_ids, _SENTINEL), stable=True
+        )
+        valid = active[order]
+        rows = forest.mesh.cells[order]
+        closure = _replace_work(
+            template,
+            cell_ids=jnp.where(valid, forest.mesh.cell_ids[order], _SENTINEL),
+            cell_valid=valid,
+            cell_vertices=forest.mesh.vertex_ids[rows],
+            cell_coordinates=forest.mesh.coordinates[rows],
+            status=template.status | forest.clocks[2],
+        )
+        return jax.tree_util.tree_map(lambda value: value[None], closure)
+
+    closure = jax.shard_map(
+        request,
+        mesh=parts.mesh,
+        in_specs=(spec, spec),
+        out_specs=spec,
+        check_vma=False,
+    )(solver_forest, work)
+    # The same bounded query hydrates geometry, organization, solver ownership,
+    # exterior flags, and source supports. Only semantic IDs select the rows.
+    arrays = {
+        name: value
+        for name, value in work.arrays().items()
+        if name not in ("cell_ids", "cell_valid", "status")
+    }
+    names = tuple(arrays)
+    hydrated, values, _, vertex_counts = _compiled_hydrate_packets(
+        parts, work, tuple(arrays.values()), closure
+    )
+    hydrated = _replace_work(hydrated, **dict(zip(names, values, strict=True)))
+
+    def finish(
+        work_block: SimplexNeighborhoodWorkset, count_block: Array
+    ) -> SimplexNeighborhoodWorkset:
+        local = jax.tree_util.tree_map(lambda value: value[0], work_block)
+        status = collective_axis_status_union(
+            local.status | jnp.where(count_block[0] > vertex_capacity, _CAPACITY, 0),
+            axis,
+        )
+        return jax.tree_util.tree_map(
+            lambda value: value[None], _replace_work(local, status=status)
+        )
+
+    result = jax.shard_map(
+        finish,
+        mesh=parts.mesh,
+        in_specs=(spec, spec),
+        out_specs=spec,
+        check_vma=False,
+    )(hydrated, vertex_counts)
+    return result, result.status
+
+
+def migrate_partitioned_epoch(
+    partitioned: PartitionedAdaptiveSimplex,
+    states: AdaptiveSimplexState,
+    migration_state: OwnerLocalMigrationState,
+    requested_target_owners: Array,
+    /,
+) -> PartitionedEpochMigration:
+    """Migrate current families and their prepared source records atomically.
+
+    Target rows belong to ``migration_state.workset``. A family executes on its
+    smallest active proposed owner, while each active solver row retains its
+    requested owner. Rejection raises before any migrated epoch is returned.
+    """
+    policy = partitioned.prepared.adaptation.policy.distribution
+    if policy is None:
+        raise ValueError(
+            "PartitionedEpochMigration.distribution must retain a prepared policy; got none"
+        )
+    if (
+        states.mesh.cell_ids.shape != partitioned.states.mesh.cell_ids.shape
+        or states.mesh.vertex_ids.shape != partitioned.states.mesh.vertex_ids.shape
+    ):
+        raise ValueError(
+            "PartitionedEpochMigration.states must share prepared raw capacities; got "
+            f"{states.mesh.cell_ids.shape}, {states.mesh.vertex_ids.shape}"
+        )
+    cells, vertices, status = _partitioned_epoch_payloads(
+        partitioned, states, migration_state
+    )
+    bound = OwnerLocalMigrationState(
+        _replace_work(
+            migration_state.workset, status=migration_state.workset.status | status
+        ),
+        migration_state.cell_fields,
+        migration_state.vertex_fields,
+        migration_state.cell_epochs,
+        migration_state.vertex_owners,
+        migration_state.forest,
+        migration_state.forest_cell_owners,
+        migration_state.forest_vertex_owners,
+        migration_state.cell_history + cells,
+        migration_state.vertex_history + vertices,
+    )
+    migration = prepare_ownerlocal_migration(
+        partitioned.parts,
+        bound,
+        requested_target_owners,
+        halo_width=policy.halo_width,
+        vertex_capacity=partitioned.layout.vertex_capacity,
+    )
+    if not bool(jax.device_get(jnp.all(migration.evidence.accepted))):
+        raise ValueError(
+            "PartitionedEpochMigration.transport must be collectively accepted; got rejection"
+        )
+    accepted = accept_ownerlocal_migration(migration)
+    forest, parts = accepted.forest, migration.forest_parts
+    if forest is None or parts is None:
+        raise ValueError(
+            "PartitionedEpochMigration.transport must retain physical families and their history; got none"
+        )
+    initial, exterior, origins, initial_solver, initial_status, initial_validity = (
+        _reconstruct_partitioned_initial(partitioned, accepted, len(cells), len(vertices))
+    )
+    solver, solver_status = ownerlocal_solver_cell_owners(parts, accepted)
+    solver_forest, solver_cells, solver_vertices, closure_status = (
+        ownerlocal_solver_forest(parts, accepted)
+    )
+    solver_neighborhood, family_status = _complete_solver_family_neighborhood(
+        parts, accepted, solver_forest, partitioned.layout.vertex_capacity
+    )
+    solver_state = OwnerLocalMigrationState(
+        accepted.workset,
+        accepted.cell_fields,
+        accepted.vertex_fields,
+        accepted.cell_epochs,
+        accepted.vertex_owners,
+        solver_forest,
+        accepted.forest_cell_owners,
+        accepted.forest_vertex_owners,
+        solver_cells,
+        solver_vertices,
+    )
+    (
+        solver_initial,
+        solver_exterior,
+        solver_origins,
+        _,
+        solver_initial_status,
+        solver_initial_validity,
+    ) = _reconstruct_partitioned_initial(
+        partitioned,
+        solver_state,
+        len(cells),
+        len(vertices),
+        include_ghost_families=True,
+    )
+    status = (
+        initial_status
+        | solver_status
+        | closure_status
+        | solver_initial_status
+        | family_status
+    )
+    if bool(jax.device_get(jnp.any(status != 0))):
+        stage_status = jax.device_get(
+            jnp.stack(
+                (
+                    initial_status,
+                    solver_status,
+                    closure_status,
+                    solver_initial_status,
+                    family_status,
+                ),
+                axis=-1,
+            )
+        ).tolist()
+        physical_validity = jax.device_get(initial_validity).tolist()
+        ghost_validity = jax.device_get(solver_initial_validity).tolist()
+        raise ValueError(
+            "PartitionedEpochMigration.records must preserve source and solver coverage; got "
+            "per-part [initial, solver, closure, solver_initial, neighborhood] status "
+            f"{stage_status}; initial validity "
+            "[cell_prefix, vertex_prefix, cell_ids, vertex_ids, conserved, "
+            "cell_vertex_refs, cell_family_refs, vertex_parents, roots, descendants, midpoints, "
+            "tuple_slots, tuple_vertices] "
+            f"physical={physical_validity}, solver={ghost_validity}"
+        )
+    return PartitionedEpochMigration(
+        partitioned,
+        states,
+        migration_state,
+        requested_target_owners,
+        forest,
+        initial,
+        exterior,
+        origins,
+        parts,
+        solver,
+        initial_solver,
+        solver_neighborhood,
+        solver_forest,
+        solver_initial,
+        solver_exterior,
+        solver_origins,
+        migration,
+    )
+
+
+def validate_migrated_epoch(
+    receipt: PartitionedEpochMigration,
+    prepared: PreparedAdaptiveSimplex,
+    current: AdaptiveSimplexState,
+    initial: AdaptiveSimplexState,
+    exterior: Array,
+    origins: Array | np.ndarray,
+    /,
+) -> None:
+    """Replay bounded transport and bind every published source/current record.
+
+    The preparation owner validates the retained source epoch's scientific
+    anchor. This transport record binds the allocation of all retained records,
+    aligned slot references, constraints, and requested solver ownership.
+    """
+    if receipt.source_partitioned.prepared.prepared_id != prepared.prepared_id:
+        raise ValueError(
+            "PartitionedEpochMigration.prepared must match the retained source; got mismatch"
+        )
+    replayed = migrate_partitioned_epoch(
+        receipt.source_partitioned,
+        receipt.saved_states,
+        receipt.saved_migration_state,
+        receipt.requested_target_owners,
+    )
+    pairs = (
+        (receipt.source_partitioned.prepared.state, prepared.state),
+        (receipt.states, current),
+        (receipt.initial_states, initial),
+        (receipt.source_exterior, exterior),
+        (receipt.slot_origins, origins),
+        (replayed.states, receipt.states),
+        (replayed.initial_states, receipt.initial_states),
+        (replayed.source_exterior, receipt.source_exterior),
+        (replayed.slot_origins, receipt.slot_origins),
+        (replayed.solver_cell_owners, receipt.solver_cell_owners),
+        (replayed.initial_solver_cell_owners, receipt.initial_solver_cell_owners),
+        (replayed.solver_neighborhood, receipt.solver_neighborhood),
+        (replayed.solver_forest, receipt.solver_forest),
+        (replayed.solver_initial_states, receipt.solver_initial_states),
+        (replayed.solver_source_exterior, receipt.solver_source_exterior),
+        (replayed.solver_slot_origins, receipt.solver_slot_origins),
+        (replayed.migration, receipt.migration),
+    )
+    same = jnp.asarray(True)
+    for expected, actual in pairs:
+        if jax.tree_util.tree_structure(expected) != jax.tree_util.tree_structure(actual):
+            raise ValueError(
+                "PartitionedEpochMigration.records must match replayed metadata; got mismatch"
+            )
+        left = jax.tree_util.tree_leaves(expected)
+        right = jax.tree_util.tree_leaves(actual)
+        if len(left) != len(right):
+            raise ValueError(
+                "PartitionedEpochMigration.records must match replayed leaves; got mismatch"
+            )
+        for before, after in zip(left, right, strict=True):
+            if before.shape != after.shape or before.dtype != after.dtype:
+                raise ValueError(
+                    "PartitionedEpochMigration.records must match replayed capacities/dtypes; got mismatch"
+                )
+            same &= jnp.array_equal(before, after)
+    if (
+        receipt.parts.part_count != replayed.parts.part_count
+        or receipt.parts.axis_name != replayed.parts.axis_name
+        or receipt.parts.neighbor_pairs != replayed.parts.neighbor_pairs
+        or not bool(jax.device_get(same))
+    ):
+        raise ValueError(
+            "PartitionedEpochMigration.records must equal accepted transport replay; got mismatch"
+        )

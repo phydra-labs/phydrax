@@ -4,59 +4,37 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import _meshcore
 from phydrax._meshcore import exact_orient3d, TetMesh3D, TetMeshBoundaryPolicy
+from phydrax.meshing._measurements import NativeExecutionRecord
+from phydrax.meshing._tetra_metric import MetricRemeshingCriterion
+from phydrax.meshing._volume_generation import generate_plc_volume, NativeVolumeSchedule
+from phydrax.meshing.providers._native_route_policy import publication_policy
+from tests._support.coordinate_references import native_meshing_request
+from tests._support.distributed_meshing.volume_generation import (
+    _mixed_refinement_of_nondyadic_plc,
+)
+from tests._support.forced_devices import run_on_forced_devices
+from tests._support.meshing_fixtures import (
+    box_corners,
+    BOX_LOOPS,
+    volume_mesh,
+    volume_specification,
+)
 
 
 M = phx.meshing
 _SI = phx.SpatialCoordinateContract.si()
 
-# Box corner i = (x, y, z) with x = i & 1, y = i >> 1 & 1, z = i >> 2 & 1;
-# loops wind counterclockwise seen from outside (outward right-hand normals).
-_BOX_LOOPS = (
-    (0, 2, 3, 1),
-    (4, 5, 7, 6),
-    (0, 1, 5, 4),
-    (2, 6, 7, 3),
-    (0, 4, 6, 2),
-    (1, 3, 7, 5),
-)
 
-
-def _box(lower: Sequence[float], upper: Sequence[float]) -> np.ndarray:
-    return np.asarray(
-        [
-            [(upper if i >> axis & 1 else lower)[axis] for axis in range(3)]
-            for i in range(8)
-        ],
-        dtype=np.float64,
-    )
-
-
-def _specification(
-    source: M.NativePlcSource,
-    *,
-    size: float,
-    limits: M.MeshingLimits | None = None,
-    region_seeds: tuple[M.RegionSeed, ...] = (),
-) -> M.VolumeMeshingSpec:
-    scope = M.MeshingScope(
-        source.source_id,
-        source.source_revision,
-        M.MeshingEntityKind.GEOMETRY,
-        2,
-        f"{source.source_id}-facets",
-        np.arange(source.complex.facet_count, dtype=np.int64),
-    )
-    return M.VolumeMeshingSpec(
-        M.CellMeshingTarget(3, 3, M.CellFamilyPolicy(required=("tetrahedron",))),
-        scope,
-        M.VolumeFillStrategy.SIMPLEX,
-        size_controls=(
-            M.UniformSizeControl(scope, size, strength=M.SizeControlStrength.SOFT),
-        ),
-        region_seeds=region_seeds,
-        limits=limits,
-    )
+# Fixed scalar-reference allowances from test_native_volume_generation.py
+# at a6827a9e5; values and relative/absolute roles are unchanged.
+# Sum of exterior oriented triangle areas against independently declared PLC boundary
+# area.
+_PLC_BOUNDARY_AREA_RTOL = 1e-12
+# Signed tetrahedron volume sums versus divergence-volume and analytic solid
+# inventories 1, 3, 8, 16 and 56.
+_PLC_VOLUME_RTOL = 1e-13
 
 
 def _mesh(
@@ -66,9 +44,222 @@ def _mesh(
     limits: M.MeshingLimits | None = None,
 ) -> M.CellMeshingResult:
     source = M.NativePlcSource(complex_, "plc", "r1")
-    provider = M.NativeMeshingProvider(M.NativeMeshingOptions("plc_tetrahedral"))
-    specification = _specification(source, size=size, limits=limits)
-    return provider.plan(source, specification, coordinate_contract=_SI).execute()
+    specification = volume_specification(source, size=size, limits=limits)
+    return volume_mesh(source, specification, coordinate_contract=_SI)
+
+
+@pytest.fixture(scope="module")
+def volume_runtime_resource_reference() -> tuple[
+    M.PiecewiseLinearComplex, M.CellMeshingResult, int, int
+]:
+    complex_ = M.PiecewiseLinearComplex(
+        box_corners((0, 0, 0), (1, 1, 1)),
+        BOX_LOOPS,
+        np.zeros(len(BOX_LOOPS), dtype=np.int64),
+        np.asarray(((-1, 0),), dtype=np.int64),
+        ("solid",),
+        boundary="fixed",
+    )
+    result = _mesh(complex_)
+    evidence = result.execution_evidence
+    assert evidence is not None
+    queries = int(np.asarray(evidence.total_geometry_queries))
+    pending: list[NativeExecutionRecord] = [evidence]
+    cavity = 0
+    while pending:
+        current = pending.pop()
+        cavity = max(cavity, int(np.asarray(current.work_counters.peak_cavity_cells)))
+        if current.preparation_evidence is not None:
+            pending.append(current.preparation_evidence)
+        if current.consumer_evidence is not None:
+            pending.append(current.consumer_evidence)
+    assert cavity > 1 and queries > 1
+    return complex_, result, cavity, queries
+
+
+def test_native_volume_declarations_agree_with_published_resource_contract(
+    volume_runtime_resource_reference: tuple[
+        M.PiecewiseLinearComplex, M.CellMeshingResult, int, int
+    ],
+) -> None:
+    _, reference, _, _ = volume_runtime_resource_reference
+    policy = publication_policy("volume")
+    assert reference.runtime.enforced_limits == policy.enforced_limits
+    assert reference.runtime.unenforced_limits == policy.unenforced_limits
+    assert reference.derivative_mode is policy.derivative_mode
+    assert reference.derivative_mode is M.MeshingDerivativeMode.NONDIFFERENTIABLE
+    assert not set(reference.runtime.enforced_limits) & set(
+        reference.runtime.unenforced_limits
+    )
+    # Existing resource declarations retain their order when a newly proven
+    # resource is added; the two tests below prove the added limits at runtime.
+    established = (
+        "vertices",
+        "edges",
+        "faces",
+        "cells",
+        "connectivity_entries",
+        "data_bytes",
+        "scratch_bytes",
+        "work_units",
+        "wall_seconds",
+    )
+    assert (
+        tuple(name for name in reference.runtime.enforced_limits if name in established)
+        == established
+    )
+
+
+def test_native_volume_cavity_limit_matches_observed_peak_and_refuses_one_less(
+    volume_runtime_resource_reference: tuple[
+        M.PiecewiseLinearComplex, M.CellMeshingResult, int, int
+    ],
+) -> None:
+    complex_, reference, cavity, _ = volume_runtime_resource_reference
+    admitted = _mesh(complex_, limits=M.MeshingLimits(maximum_cavity_cells=cavity))
+    assert admitted.audit.passed
+    assert "cavity_cells" in admitted.runtime.enforced_limits
+    assert "cavity_cells" not in admitted.runtime.unenforced_limits
+    assert "cavity_cells" in publication_policy("volume").enforced_limits
+    np.testing.assert_array_equal(admitted.mesh.coordinates, reference.mesh.coordinates)
+    before = complex_.vertices.copy()
+    published: list[M.CellMeshingResult] = []
+    with pytest.raises(M.MeshingFailure) as caught:
+        published.append(
+            _mesh(complex_, limits=M.MeshingLimits(maximum_cavity_cells=cavity - 1))
+        )
+    assert not published
+    np.testing.assert_array_equal(complex_.vertices, before)
+    failure = caught.value
+    assert failure.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
+    assert dict(failure.evidence.requested)["maximum_cavity_cells"] == cavity - 1
+    cause: BaseException | None = failure
+    recovery: _meshcore.PlcRecoveryFailure | None = None
+    while cause is not None:
+        if isinstance(cause, _meshcore.PlcRecoveryFailure):
+            recovery = cause
+        cause = cause.__cause__
+    assert recovery is not None
+    assert recovery.status is _meshcore.MeshcoreStatus.CAPACITY_EXCEEDED
+    assert recovery.reason == "tetrahedron_budget"
+
+
+def test_native_volume_query_limit_matches_observed_usage_and_refuses_one_less(
+    volume_runtime_resource_reference: tuple[
+        M.PiecewiseLinearComplex, M.CellMeshingResult, int, int
+    ],
+) -> None:
+    complex_, reference, _, queries = volume_runtime_resource_reference
+    admitted = _mesh(complex_, limits=M.MeshingLimits(maximum_geometry_queries=queries))
+    assert admitted.audit.passed
+    assert "geometry_queries" in admitted.runtime.enforced_limits
+    assert "geometry_queries" not in admitted.runtime.unenforced_limits
+    assert "geometry_queries" in publication_policy("volume").enforced_limits
+    np.testing.assert_array_equal(admitted.mesh.coordinates, reference.mesh.coordinates)
+    before = complex_.vertices.copy()
+    published: list[M.CellMeshingResult] = []
+    with pytest.raises(M.MeshingFailure) as caught:
+        published.append(
+            _mesh(complex_, limits=M.MeshingLimits(maximum_geometry_queries=queries - 1))
+        )
+    assert not published
+    np.testing.assert_array_equal(complex_.vertices, before)
+    failure = caught.value
+    assert failure.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
+    assert dict(failure.evidence.requested)["maximum_geometry_queries"] == queries - 1
+
+
+@pytest.mark.parametrize("maximum_vertices", (1, 7))
+def test_native_volume_refuses_insufficient_source_vertex_capacity_before_recovery(
+    maximum_vertices: int,
+) -> None:
+    complex_ = M.PiecewiseLinearComplex(
+        box_corners((0, 0, 0), (1, 1, 1)),
+        BOX_LOOPS,
+        np.zeros(len(BOX_LOOPS), dtype=np.int64),
+        np.asarray(((-1, 0),), dtype=np.int64),
+        ("solid",),
+        boundary="fixed",
+    )
+    before = phx.array_tree_fingerprint(complex_)
+
+    published: list[M.CellMeshingResult] = []
+    with pytest.raises(M.MeshingFailure) as caught:
+        published.append(
+            _mesh(complex_, limits=M.MeshingLimits(maximum_vertices=maximum_vertices))
+        )
+    assert not published
+    assert phx.array_tree_fingerprint(complex_) == before
+    failure = caught.value
+    assert failure.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
+    assert failure.stage == M.MeshingStageKind.SOURCE_INSPECTION.value
+    assert failure.evidence.provider_code == "vertex_budget"
+    assert dict(failure.evidence.requested)["maximum_vertices"] == maximum_vertices
+    achieved = dict(failure.evidence.achieved)
+    assert achieved["required_vertices"] == 8
+    assert achieved["available_vertices"] == maximum_vertices
+
+
+def test_native_volume_accepts_source_vertex_capacity_boundary(
+    volume_runtime_resource_reference: tuple[
+        M.PiecewiseLinearComplex, M.CellMeshingResult, int, int
+    ],
+) -> None:
+    complex_, reference, _, _ = volume_runtime_resource_reference
+    before = phx.array_tree_fingerprint(complex_)
+    admitted = _mesh(complex_, limits=M.MeshingLimits(maximum_vertices=8))
+    assert admitted.audit.passed
+    assert admitted.mesh.coordinates.shape[0] == 8
+    np.testing.assert_array_equal(admitted.mesh.coordinates, reference.mesh.coordinates)
+    assert phx.array_tree_fingerprint(complex_) == before
+
+
+@pytest.mark.parametrize(
+    "strength",
+    (M.SizeControlStrength.HARD, M.SizeControlStrength.SOFT),
+    ids=("hard-statistical-goal", "soft-refinement-preference"),
+)
+def test_plc_statistical_metric_epoch_requires_a_hard_size_goal(
+    strength: M.SizeControlStrength,
+) -> None:
+    points = np.asarray(
+        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        dtype=np.float64,
+    )
+    plc = M.PiecewiseLinearComplex(
+        points,
+        ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)),
+        np.arange(4, dtype=np.int64),
+        np.tile(np.asarray((-1, 0), dtype=np.int64), (4, 1)),
+        ("simplex",),
+    )
+    source = M.NativePlcSource(plc, "size-goal-simplex", "size-goal-authored")
+    limits = M.MeshingLimits()
+    specification = volume_specification(
+        source, size=4.0, limits=limits, strength=strength
+    )
+    with native_meshing_request(limits) as (scope, _, _):
+        construction = generate_plc_volume(
+            plc,
+            specification,
+            NativeVolumeSchedule(),
+            validity_policy=phx.discretization.CellValidityPolicy(),
+            source_id=source.source_id,
+            source_revision=source.source_revision,
+            input_id=source.binding_id,
+            scope=scope,
+        )
+    evidence = construction.metric_optimization
+    if strength is M.SizeControlStrength.SOFT:
+        assert evidence is None
+    else:
+        assert evidence is not None
+        assert evidence.criterion is MetricRemeshingCriterion.SIZE_STATISTICS
+        control = specification.size_controls[0]
+        assert (
+            dict(evidence.size_requested)[f"size:{control.control_id}:target_size"] == 4.0
+        )
+        assert evidence.size_issues
 
 
 @pytest.mark.parametrize(
@@ -130,7 +321,7 @@ def _zone_volumes(result: M.CellMeshingResult) -> dict[str, float]:
 
 
 def _assert_embedded(result: M.CellMeshingResult, boundary_area: float) -> None:
-    """Exact overlap-free cover: every cell positively oriented (exact predicate),
+    """Check overlap-free cover: every cell positively oriented (exact predicate),
     every interior face shared by two cells with opposite orientation, and the
     boundary faces summing to the declared boundary area. By the degree
     argument these imply that the cells cover the domain exactly once."""
@@ -152,7 +343,7 @@ def _assert_embedded(result: M.CellMeshingResult, boundary_area: float) -> None:
         np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]),
         axis=1,
     )
-    assert np.sum(areas) == pytest.approx(boundary_area, rel=1e-12)
+    assert np.sum(areas) == pytest.approx(boundary_area, rel=_PLC_BOUNDARY_AREA_RTOL)
     assert unique.shape[0] == (4 * cells.shape[0] + np.count_nonzero(boundary)) // 2
 
 
@@ -170,11 +361,11 @@ def _achieved(result: M.CellMeshingResult, name: str) -> float:
 
 def test_cube_volume_mesh_is_certified_with_exact_volume_and_boundary() -> None:
     complex_ = M.PiecewiseLinearComplex(
-        _box((0, 0, 0), (1, 1, 1)), _BOX_LOOPS, np.zeros(6), [[-1, 0]], ("solid",)
+        box_corners((0, 0, 0), (1, 1, 1)), BOX_LOOPS, np.zeros(6), [[-1, 0]], ("solid",)
     )
     result = _mesh(complex_, size=0.4)
     assert _certification_passed(result)
-    assert _zone_volumes(result) == {"solid": pytest.approx(1.0, rel=1e-13)}
+    assert _zone_volumes(result) == {"solid": pytest.approx(1.0, rel=_PLC_VOLUME_RTOL)}
     _assert_embedded(result, 6.0)
     assert {patch.name for patch in result.patches} == {"facet:0"}
 
@@ -193,7 +384,7 @@ def test_nonconvex_l_shape_is_meshed_exactly() -> None:
     )
     result = _mesh(complex_)
     assert _certification_passed(result)
-    assert _zone_volumes(result) == {"solid": pytest.approx(3.0, rel=1e-13)}
+    assert _zone_volumes(result) == {"solid": pytest.approx(3.0, rel=_PLC_VOLUME_RTOL)}
     _assert_embedded(result, 2 * 3.0 + 8.0)
 
 
@@ -255,7 +446,7 @@ def test_schonhardt_polyhedron_is_recovered_with_steiner_points() -> None:
     assert _certification_passed(result)
     assert _achieved(result, "steiner_points") > 0
     assert _zone_volumes(result)["solid"] == pytest.approx(
-        _divergence_volume(complex_), rel=1e-13
+        _divergence_volume(complex_), rel=_PLC_VOLUME_RTOL
     )
 
 
@@ -264,7 +455,7 @@ def test_fixed_schonhardt_uses_interior_fill_without_changing_boundary() -> None
     result = _mesh(complex_)
     assert _certification_passed(result)
     assert _zone_volumes(result)["solid"] == pytest.approx(
-        _divergence_volume(complex_), rel=1e-13
+        _divergence_volume(complex_), rel=_PLC_VOLUME_RTOL
     )
     points, cells = _cells(result)
     faces = np.concatenate(
@@ -291,9 +482,9 @@ def test_fixed_schonhardt_uses_interior_fill_without_changing_boundary() -> None
 
 
 def test_internal_cavity_is_removed_from_the_region() -> None:
-    outer = _box((0, 0, 0), (4, 4, 4))
-    inner = _box((1, 1, 1), (3, 3, 3))
-    loops = [*_BOX_LOOPS, *(tuple(v + 8 for v in loop) for loop in _BOX_LOOPS)]
+    outer = box_corners((0, 0, 0), (4, 4, 4))
+    inner = box_corners((1, 1, 1), (3, 3, 3))
+    loops = [*BOX_LOOPS, *(tuple(v + 8 for v in loop) for loop in BOX_LOOPS)]
     # Inner loops point out of the cavity into the solid: positive side solid.
     complex_ = M.PiecewiseLinearComplex(
         np.concatenate((outer, inner)),
@@ -304,7 +495,7 @@ def test_internal_cavity_is_removed_from_the_region() -> None:
     )
     result = _mesh(complex_)
     assert _certification_passed(result)
-    assert _zone_volumes(result) == {"solid": pytest.approx(56.0, rel=1e-13)}
+    assert _zone_volumes(result) == {"solid": pytest.approx(56.0, rel=_PLC_VOLUME_RTOL)}
     _assert_embedded(result, 6 * 16.0 + 6 * 4.0)
 
 
@@ -338,7 +529,7 @@ def test_two_material_box_publishes_conforming_interface() -> None:
         vertices, loops, facets, [[-1, 0], [-1, 1], [1, 0]], ("left", "right")
     )
     source = M.NativePlcSource(complex_, "materials", "r1")
-    base = _specification(source, size=0.5)
+    base = volume_specification(source, size=0.5)
     region_scopes = tuple(
         M.MeshingScope(
             source.source_id,
@@ -378,8 +569,8 @@ def test_two_material_box_publishes_conforming_interface() -> None:
     )
     assert _certification_passed(result)
     assert _zone_volumes(result) == {
-        "left": pytest.approx(1.0, rel=1e-13),
-        "right": pytest.approx(1.0, rel=1e-13),
+        "left": pytest.approx(1.0, rel=_PLC_VOLUME_RTOL),
+        "right": pytest.approx(1.0, rel=_PLC_VOLUME_RTOL),
     }
     zones = {zone.name: zone for zone in result.zones}
     assert zones["left"].material_id == "water"
@@ -398,28 +589,32 @@ def test_two_material_box_publishes_conforming_interface() -> None:
     area = 0.5 * np.linalg.norm(
         np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1
     )
-    assert np.sum(area) == pytest.approx(1.0, rel=1e-13)
+    assert np.sum(area) == pytest.approx(1.0, rel=_PLC_VOLUME_RTOL)
     patch = next(
         patch for patch in result.patches if patch.name == "shared-material-wall"
     )
     assert np.array_equal(patch.scope.entity_ids, interface.scope.entity_ids)
+    assert set(patch.adjacent_zone_ids) == {
+        zones["left"].zone_id,
+        zones["right"].zone_id,
+    }
 
 
 def test_embedded_internal_sheet_is_a_conforming_face_set() -> None:
-    cube = _box((0, 0, 0), (2, 2, 2))
+    cube = box_corners((0, 0, 0), (2, 2, 2))
     sheet = np.asarray(
         [(0.5, 0.5, 1.0), (1.5, 0.5, 1.0), (1.5, 1.5, 1.0), (0.5, 1.5, 1.0)]
     )
     complex_ = M.PiecewiseLinearComplex(
         np.concatenate((cube, sheet)),
-        [*_BOX_LOOPS, (8, 9, 10, 11)],
+        [*BOX_LOOPS, (8, 9, 10, 11)],
         [0] * 6 + [1],
         [[-1, 0], [0, 0]],
         ("solid",),
     )
     result = _mesh(complex_)
     assert _certification_passed(result)
-    assert _zone_volumes(result) == {"solid": pytest.approx(8.0, rel=1e-13)}
+    assert _zone_volumes(result) == {"solid": pytest.approx(8.0, rel=_PLC_VOLUME_RTOL)}
     points, _ = _cells(result)
     label = next(label for label in result.labels if label.name == "internal_sheet")
     connectivity = result.mesh.connectivity
@@ -431,11 +626,11 @@ def test_embedded_internal_sheet_is_a_conforming_face_set() -> None:
     area = 0.5 * np.linalg.norm(
         np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1
     )
-    assert np.sum(area) == pytest.approx(1.0, rel=1e-13)
+    assert np.sum(area) == pytest.approx(1.0, rel=_PLC_VOLUME_RTOL)
 
 
 def test_opposed_sheets_keep_individual_oriented_source_associations() -> None:
-    cube = _box((0, 0, 0), (2, 2, 2))
+    cube = box_corners((0, 0, 0), (2, 2, 2))
     lower = np.asarray(
         [(0.5, 0.5, 0.75), (1.5, 0.5, 0.75), (1.5, 1.5, 0.75), (0.5, 1.5, 0.75)],
         dtype=np.float64,
@@ -444,14 +639,14 @@ def test_opposed_sheets_keep_individual_oriented_source_associations() -> None:
     upper[:, 2] = 1.25
     complex_ = M.PiecewiseLinearComplex(
         np.concatenate((cube, lower, upper)),
-        [*_BOX_LOOPS, (8, 9, 10, 11), (15, 14, 13, 12)],
+        [*BOX_LOOPS, (8, 9, 10, 11), (15, 14, 13, 12)],
         [0] * 6 + [1, 1],
         [[-1, 0], [0, 0]],
         ("solid",),
     )
     result = _mesh(complex_)
     assert _certification_passed(result)
-    assert _zone_volumes(result)["solid"] == pytest.approx(8.0, rel=1e-13)
+    assert _zone_volumes(result)["solid"] == pytest.approx(8.0, rel=_PLC_VOLUME_RTOL)
     points, _ = _cells(result)
     face_set = result.mesh.entity_set(2)
     identifiers = np.asarray(face_set.entity_ids)
@@ -495,14 +690,14 @@ def test_small_angle_wedge_is_protected_and_meshed() -> None:
     result = _mesh(complex_)
     assert _certification_passed(result)
     assert _achieved(result, "construction:protected_vertices") > 0
-    assert _zone_volumes(result) == {"solid": pytest.approx(16.0, rel=1e-13)}
+    assert _zone_volumes(result) == {"solid": pytest.approx(16.0, rel=_PLC_VOLUME_RTOL)}
 
 
 def test_fixed_boundary_triangles_are_published_unchanged() -> None:
-    corners = _box((0, 0, 0), (1, 1, 1))
+    corners = box_corners((0, 0, 0), (1, 1, 1))
     triangles = [
         tri
-        for a, b, c, d in _BOX_LOOPS
+        for a, b, c, d in BOX_LOOPS
         for tri in (((a, b, c), (a, c, d)) if a % 2 == 0 else ((a, b, d), (b, c, d)))
     ]
     complex_ = M.PiecewiseLinearComplex(
@@ -525,11 +720,11 @@ def test_fixed_boundary_triangles_are_published_unchanged() -> None:
 
 
 def test_intersecting_facets_are_refused_with_the_polygons() -> None:
-    first = _box((0, 0, 0), (1, 1, 1))
-    second = _box((0.5, 0.5, 0.5), (1.5, 1.5, 1.5))
+    first = box_corners((0, 0, 0), (1, 1, 1))
+    second = box_corners((0.5, 0.5, 0.5), (1.5, 1.5, 1.5))
     complex_ = M.PiecewiseLinearComplex(
         np.concatenate((first, second)),
-        [*_BOX_LOOPS, *(tuple(v + 8 for v in loop) for loop in _BOX_LOOPS)],
+        [*BOX_LOOPS, *(tuple(v + 8 for v in loop) for loop in BOX_LOOPS)],
         [0] * 6 + [1] * 6,
         [[-1, 0], [-1, 1]],
         ("a", "b"),
@@ -544,7 +739,11 @@ def test_intersecting_facets_are_refused_with_the_polygons() -> None:
 
 def test_open_boundary_is_refused_with_its_region() -> None:
     complex_ = M.PiecewiseLinearComplex(
-        _box((0, 0, 0), (1, 1, 1)), _BOX_LOOPS[:5], np.zeros(5), [[-1, 0]], ("solid",)
+        box_corners((0, 0, 0), (1, 1, 1)),
+        BOX_LOOPS[:5],
+        np.zeros(5),
+        [[-1, 0]],
+        ("solid",),
     )
     with pytest.raises(M.MeshingFailure) as raised:
         _mesh(complex_)
@@ -553,7 +752,7 @@ def test_open_boundary_is_refused_with_its_region() -> None:
 
 def test_inverted_orientation_is_refused_as_a_region_leak() -> None:
     complex_ = M.PiecewiseLinearComplex(
-        _box((0, 0, 0), (1, 1, 1)), _BOX_LOOPS, np.zeros(6), [[0, -1]], ("solid",)
+        box_corners((0, 0, 0), (1, 1, 1)), BOX_LOOPS, np.zeros(6), [[0, -1]], ("solid",)
     )
     with pytest.raises(M.MeshingFailure) as raised:
         _mesh(complex_)
@@ -566,82 +765,6 @@ def test_exhausted_work_budget_is_refused_as_resource_exhaustion() -> None:
     evidence = raised.value.evidence
     assert evidence.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
     assert evidence.provider_code == "work_budget"
-
-
-# Nondyadic corners: every facet has its own exact plane, and the red-refined
-# affine carrier retains the authoritative exact PLC source.
-_NONDYADIC_TETRAHEDRON = np.asarray(
-    ((0.1, 0.0, 0.0), (1.0, 0.3, 0.0), (0.0, 0.7, 0.1), (0.2, 0.1, 0.9)),
-    dtype=np.float64,
-)
-
-
-def _mixed_refinement_of_nondyadic_plc(
-    source_limits: M.MeshingLimits,
-    *,
-    adaptation_limits: M.MeshingLimits | None = None,
-) -> tuple[M.CellMeshingResult, M.MeshAdaptationResult]:
-    from phydrax.meshing._volume_generation import (
-        NativeVolumeSchedule,
-        prepare_plc_source,
-    )
-
-    complex_ = M.PiecewiseLinearComplex(
-        _NONDYADIC_TETRAHEDRON,
-        tuple(
-            np.asarray(row, dtype=np.int64)
-            for row in ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3))
-        ),
-        np.arange(4, dtype=np.int64),
-        np.tile(np.asarray((-1, 0), dtype=np.int64), (4, 1)),
-        ("solid",),
-        boundary="conforming",
-    )
-    source = M.NativePlcSource(
-        complex_, "nondyadic-coverage-source", "nondyadic-revision"
-    )
-    result = (
-        M.NativeMeshingProvider(
-            M.NativeMeshingOptions(
-                "plc_tetrahedral",
-                volume_schedule=NativeVolumeSchedule(
-                    refinement_rounds=1,
-                    improvement_passes=1,
-                    minimum_dihedral_degrees=0.0,
-                ),
-            )
-        )
-        .plan(
-            source,
-            _specification(source, size=4.0, limits=source_limits),
-            coordinate_contract=_SI,
-        )
-        .execute()
-    )
-    adaptation_limits = (
-        M.MeshingLimits(maximum_vertices=100, maximum_cells=1000)
-        if adaptation_limits is None
-        else adaptation_limits
-    )
-    transfer = prepare_plc_source(
-        complex_, source.source_id, source.source_revision, _SI, limits=adaptation_limits
-    ).association_transfer
-    adaptation = M.execute_mesh_adaptation(
-        M.prepare_mesh_adaptation(
-            result,
-            M.MarkedMeshAdaptation(np.asarray(result.mesh.blocks[0].global_ids)),
-            policy=M.MeshAdaptationPolicy(
-                M.MeshAdaptationRoute.NATIVE_MIXED,
-                limits=adaptation_limits,
-                association_transfer=transfer,
-                audit_policy=M.CellMeshAuditPolicy(
-                    require_complete_association=True,
-                    watertight_boundary=M.CellMeshAuditDisposition.REJECT,
-                ),
-            ),
-        )
-    )
-    return result, adaptation
 
 
 def test_mixed_refined_plc_target_certifies_exact_coverage_of_every_source_facet() -> (
@@ -668,7 +791,7 @@ def test_mixed_refined_plc_target_certifies_exact_coverage_of_every_source_facet
     source_coverage = source_certificate.coverage
     assert source_coverage is not None
     assert coverage.domain_id == source_coverage.domain_id
-    # The target owns its actual metered proof under the source request limits.
+    # The target owns its metered proof under the source request limits.
     assert coverage.binding.limits_id == source_coverage.binding.limits_id
     work = coverage.source_expression_work_units
     assert work is not None and 0 < work <= certificate.request.limits.maximum_work_units
@@ -677,11 +800,6 @@ def test_mixed_refined_plc_target_certifies_exact_coverage_of_every_source_facet
 def test_mixed_refined_plc_target_coverage_refuses_one_unit_below_its_metered_work() -> (
     None
 ):
-    import subprocess
-    import sys
-    import textwrap
-    from pathlib import Path
-
     generous = M.MeshingLimits(maximum_vertices=100, maximum_cells=1000)
     _, adaptation = _mixed_refinement_of_nondyadic_plc(generous)
     certificate = adaptation.target.certification
@@ -699,60 +817,32 @@ def test_mixed_refined_plc_target_coverage_refuses_one_unit_below_its_metered_wo
         and embedding_work is not None
         and coverage_charged <= coverage_work
     )
-    # Separate ledgers: the embedding premise still fits, only coverage cannot.
+    # The embedding work fits independently of the coverage phase.
     assert embedding_work < coverage_work
-    script = textwrap.dedent("""
-        import sys
-        from phydrax.discretization._coordinate_enclosure import CoordinateEnclosureResourceError
-        from tests.unit.meshing.test_native_volume_generation import (
-            M, _mixed_refinement_of_nondyadic_plc)
-
-        requirement = int(sys.argv[1])
-        generous = M.MeshingLimits(maximum_vertices=100, maximum_cells=1000)
-        limits = M.MeshingLimits(
-            maximum_vertices=100,
-            maximum_cells=1000,
-            maximum_work_units=requirement)
-        try:
-            _, adaptation = _mixed_refinement_of_nondyadic_plc(
-                generous, adaptation_limits=limits)
-        except CoordinateEnclosureResourceError as error:
-            print("RESOURCE", error.resource, error.limit, error.requested)
-        else:
-            report = adaptation.target.certification
-            if report is None or report.coverage is None:
-                raise AssertionError("Exact-threshold adaptation lost coverage.")
-            print(
-                "ACCEPT",
-                report.coverage.source_expression_required_work_units,
-                report.coverage.source_expression_work_units,
-            )
-    """)
-
-    def run(requirement: int) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            (sys.executable, "-c", script, str(requirement)),
-            cwd=Path(__file__).resolve().parents[3],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-
-    exact = run(coverage_work)
-    if exact.returncode:
-        raise AssertionError(exact.stderr)
-    exact_fields = exact.stdout.strip().splitlines()[-1].split()
-    assert exact_fields[:2] == ["ACCEPT", str(coverage_work)]
-    assert int(exact_fields[2]) <= coverage_work
-    refused = run(coverage_work - 1)
-    if refused.returncode:
-        raise AssertionError(refused.stderr)
-    assert refused.stdout.strip().splitlines()[-1].split() == [
-        "RESOURCE",
-        "coefficient_work",
-        str(coverage_work - 1),
-        str(coverage_work),
-    ]
+    exact = run_on_forced_devices(
+        "tests._support.distributed_meshing.volume_generation",
+        "coverage_threshold",
+        ("0",),
+        devices=1,
+        env={},
+    )
+    assert exact["status"] == "ACCEPT"
+    assert exact["phase_required_work"] == coverage_work
+    assert exact["phase_charged_work"] <= coverage_work
+    assert exact["charged_work"] <= exact["required_work"]
+    refused = run_on_forced_devices(
+        "tests._support.distributed_meshing.volume_generation",
+        "coverage_threshold",
+        ("1",),
+        devices=1,
+        env={},
+    )
+    assert refused == {
+        "status": "RESOURCE",
+        "resource": "coefficient_work",
+        "limit": exact["required_work"] - 1,
+        "requested": exact["required_work"],
+    }
 
 
 # Relative determinant 0.0705 charted from (0, 0, 0) and 3.9e-4 from (10, 10, 1).
@@ -829,29 +919,32 @@ def test_postconstruction_host_work_keeps_original_cumulative_allowance() -> Non
     published: list[str] = []
     with pytest.raises(M.MeshingFailure) as caught:
         with native_volume_execution_budget(limits) as execution:
-            execution.charge(work=3, geometry_queries=2)
+            with execution.batch(3, queries_upper=2) as ticket:
+                ticket.consume(3, geometry_queries=2)
             with native_volume_execution_budget(
                 M.MeshingLimits(maximum_work_units=100, maximum_geometry_queries=100),
                 stage=M.MeshingStageKind.CERTIFICATION,
             ) as certification:
-                certification.charge(work=3, geometry_queries=2)
+                with certification.batch(3, queries_upper=2) as ticket:
+                    ticket.consume(3, geometry_queries=2)
                 published.append("inadmissible")
     assert not published
     assert caught.value.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
     assert execution.evidence is not None
     assert execution.evidence.externally_charged_work == 3
-    assert int(execution.evidence.work_evidence[1]) == 2
+    assert int(execution.evidence.work_counters.source_queries) == 2
 
 
 def test_host_phase_cannot_restart_original_operation_clock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from phydrax.meshing import _volume_generation as volume
-    from phydrax.meshing.providers import _native_publication as publication
+    from phydrax.meshing.providers import _native_route_checks as publication
 
     elapsed = [0.0]
     monkeypatch.setattr(volume, "monotonic", lambda: elapsed[0])
     monkeypatch.setattr(publication, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(_meshcore.time, "monotonic", lambda: elapsed[0])
     limits = M.MeshingLimits(maximum_wall_seconds=4.0)
     dispatched: list[str] = []
     with pytest.raises(M.MeshingFailure) as caught:

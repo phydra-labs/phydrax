@@ -18,6 +18,7 @@ from phydrax.applications.solid_mechanics._learned_design import (
     solve_learned_topology_design,
 )
 from phydrax.optim._state_design_parameterization import reparameterize_state_design
+from phydrax.units import METER
 from tools.learned_physical_design_benchmarks import (
     _linear_policy,
     build_density_case,
@@ -125,6 +126,7 @@ def test_state_design_parameterization_scenario_1() -> None:
                 (1,),
                 str(jnp.asarray([0.5]).dtype),
                 "geometry",
+                METER,
             ),
         )
     )
@@ -135,6 +137,7 @@ def test_state_design_parameterization_scenario_1() -> None:
                 (1,),
                 str(jnp.asarray([0.5]).dtype),
                 "geometry",
+                METER,
             ),
         )
     )

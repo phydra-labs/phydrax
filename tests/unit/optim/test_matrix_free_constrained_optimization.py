@@ -21,6 +21,18 @@ from phydrax.optim._primal_dual import (
 )
 
 
+# Empirical `test_prepared_kkt_renews_dynamic_objective_and_preserves_actual_linear_evidence`: matched max |delta|=9.72514e-08; joint allowance fraction=0.0474397, margin=95.256%.
+_REFRESHED_KKT_MINIMIZER_ATOL = 2.0e-6
+# Empirical `test_current_barrier_metric_matches_gram_and_schur_diagonals`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_BARRIER_METRIC_DIAGONAL_RTOL = 1.0e-14
+# Empirical `test_current_barrier_metric_matches_gram_and_schur_diagonals`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_BARRIER_PRIMAL_INVERSE_ACTION_RTOL = 1.0e-14
+# Empirical `test_current_barrier_metric_matches_gram_and_schur_diagonals`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_BARRIER_SCHUR_INVERSE_ACTION_RTOL = 1.0e-14
+# Empirical `test_compiled_barrier_metric_refreshes_point_and_slack_weights`: matched max |delta|=2.84217e-14; joint allowance fraction=0.0175681, margin=98.2432%.
+_REFRESHED_BARRIER_DIAGONAL_RTOL = 1.0e-14
+
+
 class _PartitionedDesign(eqx.Module):
     control: jax.Array
     scale: float = eqx.field(static=True)
@@ -85,7 +97,9 @@ def test_prepared_kkt_renews_dynamic_objective_and_preserves_actual_linear_evide
 
     for target, expected in (((2.0, -1.0), (1.5, -0.5)), ((1.0, 0.0), (1.0, 0.0))):
         result = solve(jnp.asarray(target, dtype=np.float64))
-        np.testing.assert_allclose(result.parameters, expected, atol=2.0e-6)
+        np.testing.assert_allclose(
+            result.parameters, expected, atol=_REFRESHED_KKT_MINIMIZER_ATOL
+        )
         assert int(result.status) == int(phx.optim.OptimizationStatus.SUCCESS)
         evidence = result.method_evidence
         assert isinstance(evidence, PrimalDualEvidence)
@@ -133,7 +147,7 @@ def test_current_barrier_metric_matches_gram_and_schur_diagonals() -> None:
         np.testing.assert_allclose(
             metric.diagonal,
             (first, second, 1.0 / first + 4.0 / second),
-            rtol=1.0e-14,
+            rtol=_BARRIER_METRIC_DIAGONAL_RTOL,
         )
         correction = phx.linalg.JacobiPreconditionerBuilder().prepare(
             metric,
@@ -142,9 +156,15 @@ def test_current_barrier_metric_matches_gram_and_schur_diagonals() -> None:
         applied = correction.apply(
             (jnp.ones(2, dtype=np.float64), jnp.ones(1, dtype=np.float64))
         )
-        np.testing.assert_allclose(applied[0], (1.0 / first, 1.0 / second), rtol=1.0e-14)
         np.testing.assert_allclose(
-            applied[1], (1.0 / (1.0 / first + 4.0 / second),), rtol=1.0e-14
+            applied[0],
+            (1.0 / first, 1.0 / second),
+            rtol=_BARRIER_PRIMAL_INVERSE_ACTION_RTOL,
+        )
+        np.testing.assert_allclose(
+            applied[1],
+            (1.0 / (1.0 / first + 4.0 / second),),
+            rtol=_BARRIER_SCHUR_INVERSE_ACTION_RTOL,
         )
         assert correction.properties.certifies("positive_definite")
         estimate = phx.linalg.JacobiPreconditionerBuilder().cost_for(metric)
@@ -195,7 +215,7 @@ def test_compiled_barrier_metric_refreshes_point_and_slack_weights() -> None:
         np.testing.assert_allclose(
             actual,
             (first, second, (2.0 * coordinate) ** 2 / first + 4.0 / second),
-            rtol=1.0e-14,
+            rtol=_REFRESHED_BARRIER_DIAGONAL_RTOL,
         )
 
 
@@ -266,7 +286,8 @@ class _FixedNativeKKTSetup(AbstractPrimalDualKKTSetup):
         del derivative, barrier_weights, regularization, primal, equality, kkt_operator
         if not self.operator.source.compatible(space):
             raise ValueError(
-                "The native test correction must preserve the bound block space."
+                "test_kkt_setup.operator.source must preserve the bound block space; "
+                "got incompatible source"
             )
         return PrimalDualKKTSetupResult(
             self.operator,

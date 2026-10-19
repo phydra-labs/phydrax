@@ -87,13 +87,11 @@ def _check_semantics(
         case "interpolation" | "l2-projection" | "restriction":
             if not _compatible_conformity(source, target):
                 raise ValueError(
-                    f"A {semantics} transfer needs one field conformity; got "
-                    f"{source.conformity} -> {target.conformity}."
+                    f"FieldTransfer.semantics must retain one field conformity for {semantics}; got {source.conformity} -> {target.conformity}"
                 )
             if semantics == "interpolation" and source.conformity in ("Hcurl", "Hdiv"):
                 raise ValueError(
-                    "Compatible H(curl)/H(div) fields transfer through Piola moment "
-                    "functionals, not nodal interpolation."
+                    "FieldTransfer.semantics must use Piola moment transfer for Hcurl or Hdiv fields; got nodal interpolation"
                 )
         case "nested-interpolation":
             if not _compatible_conformity(source, target) or source.conformity in (
@@ -101,41 +99,47 @@ def _check_semantics(
                 "Hdiv",
             ):
                 raise ValueError(
-                    "Nested interpolation needs one non-compatible field conformity; "
-                    f"got {source.conformity} -> {target.conformity}."
+                    f"FieldTransfer.semantics must retain one non-Piola conformity for nested interpolation; got {source.conformity} -> {target.conformity}"
                 )
             if not properties.nested:
-                raise ValueError("Nested interpolation must claim a nested transfer.")
+                raise ValueError(
+                    "TransferProperties.nested must be true for nested interpolation; got false"
+                )
             if geometry is None or geometry.relation != "exact-restriction":
                 raise ValueError(
-                    "Nested interpolation requires an exact-restriction geometry binding."
+                    "FieldTransfer.geometry must declare the restriction relation for nested interpolation; got another binding"
                 )
         case "conservative-remap":
             if not _compatible_conformity(source, target):
-                raise ValueError("A conservative remap needs one field conformity.")
+                raise ValueError(
+                    "FieldTransfer.semantics must retain field conformity for conservative remap; got different conformities"
+                )
             if not properties.conservative:
-                raise ValueError("A conservative remap must claim conservation.")
+                raise ValueError(
+                    "TransferProperties.conservative must be true for conservative remap; got false"
+                )
         case "material-pullback":
             if not _compatible_conformity(source, target) or source.conformity not in (
                 "H1",
                 "L2",
             ):
                 raise ValueError(
-                    "Material scalar pullback requires one scalar H1 or L2 conformity."
+                    "FieldTransfer.semantics must map one scalar H1 or L2 conformity for material pullback; got incompatible conformities"
                 )
             if geometry is None or geometry.relation != "source-realization":
                 raise ValueError(
-                    "Material pullback requires its actual source-realization correspondence."
+                    "FieldTransfer.geometry must declare a source-realization relation for material pullback; got another binding"
                 )
         case "covariant-piola" | "contravariant-piola":
             conformity = "Hcurl" if semantics == "covariant-piola" else "Hdiv"
             if source.conformity != conformity or target.conformity != conformity:
                 raise ValueError(
-                    f"A {semantics} transfer maps {conformity} fields; got "
-                    f"{source.conformity} -> {target.conformity}."
+                    f"FieldTransfer.semantics must map {conformity} fields for {semantics}; got {source.conformity} -> {target.conformity}"
                 )
             if geometry is None:
-                raise ValueError(f"A {semantics} transfer requires a geometry binding.")
+                raise ValueError(
+                    f"FieldTransfer.geometry must be present for {semantics}; got None"
+                )
         case unknown:
             assert_never(unknown)
 
@@ -170,7 +174,9 @@ class TransferProperties(StrictModule, NonTrainableState):
     ) -> None:
         exact = tuple(str(value) for value in exact_on)
         if any(not value for value in exact) or len(set(exact)) != len(exact):
-            raise ValueError("exact_on entries must be unique non-empty strings.")
+            raise ValueError(
+                "TransferProperties.exact_on must contain unique nonempty strings; got an empty or repeated entry"
+            )
         self.constant_preserving = bool(constant_preserving)
         self.conservative = bool(conservative)
         self.positivity_preserving = bool(positivity_preserving)
@@ -182,11 +188,11 @@ class TransferProperties(StrictModule, NonTrainableState):
 
 
 class TransferGeometryBinding(StrictModule, NonTrainableState):
-    """Actual source/target topology and coordinate-map identities of a transfer.
+    """Bind source/target topology and coordinate-map identities of a transfer.
 
     ``coverage_defect`` is the largest accepted relative measure defect of the
     target geometry against the source geometry: zero for ``identity`` and
-    ``exact-restriction`` bindings up to the reported roundoff certificate,
+    restriction bindings up to the reported roundoff certificate,
     positive for a ``bounded-reconstruction``.
     ``topology-correspondence`` instead requires ``None``: pure extensive
     correspondences do not supply a physical geometric coverage certificate.
@@ -216,25 +222,32 @@ class TransferGeometryBinding(StrictModule, NonTrainableState):
         source_topology = canonical_identifier(source_topology_id, "source_topology_id")
         target_topology = canonical_identifier(target_topology_id, "target_topology_id")
         relation_ = parse(relation, TransferGeometryRelation, "relation")
-        if relation_ in ("topology-correspondence", "source-realization"):
-            if coverage_defect is not None:
-                raise ValueError(
-                    "A reference correspondence cannot claim common physical coverage."
-                )
-            defect = None
-        else:
-            if coverage_defect is None:
-                raise ValueError(
-                    "A geometric relation requires a finite coverage defect."
-                )
-            defect = float(coverage_defect)
-            if not isfinite(defect) or defect < 0.0:
-                raise ValueError("coverage_defect must be finite and nonnegative.")
+        match relation_:
+            case "topology-correspondence" | "source-realization":
+                if coverage_defect is not None:
+                    raise ValueError(
+                        "TransferGeometryBinding.coverage_defect must be None for a reference correspondence; got a physical coverage claim"
+                    )
+                defect = None
+            case "identity" | "exact-restriction" | "bounded-reconstruction":
+                if coverage_defect is None:
+                    raise ValueError(
+                        "TransferGeometryBinding.coverage_defect must be present for a geometric relation; got None"
+                    )
+                defect = float(coverage_defect)
+                if not isfinite(defect) or defect < 0.0:
+                    raise ValueError(
+                        "TransferGeometryBinding.coverage_defect must be finite and nonnegative; got an invalid defect"
+                    )
+            case invalid:
+                assert_never(invalid)
         if relation_ == "identity" and source != target:
-            raise ValueError("An identity geometry binding needs one geometry identity.")
+            raise ValueError(
+                "TransferGeometryBinding.source_geometry_id must equal target_geometry_id for an identity relation; got different identities"
+            )
         if relation_ == "source-realization" and source_topology != target_topology:
             raise ValueError(
-                "Source-realization geometry requires one declared reference complex."
+                "TransferGeometryBinding.source_topology_id must equal target_topology_id for a source-realization relation; got different reference complexes"
             )
         self.source_geometry_id = source
         self.target_geometry_id = target
@@ -295,7 +308,7 @@ class FieldTransfer(StrictModule, NonTrainableState):
             source.vector_space
         ) or not primal_operator.target.compatible(target.vector_space):
             raise ValueError(
-                "Primal transfer spaces must match source and target fields."
+                "FieldTransfer.primal_operator must match source and target vector spaces; got incompatible operator spaces"
             )
         reverse_operators = {
             "dual_pullback_operator": dual_pullback_operator,
@@ -307,13 +320,17 @@ class FieldTransfer(StrictModule, NonTrainableState):
             if not operator.source.compatible(
                 target.vector_space
             ) or not operator.target.compatible(source.vector_space):
-                raise ValueError(f"{name} spaces must reverse source and target.")
+                raise ValueError(
+                    f"FieldTransfer.{name} must reverse source and target spaces; got incompatible operator spaces"
+                )
         properties_ = TransferProperties() if properties is None else properties
         if properties_.conservative and dual_pullback_operator is None:
-            raise ValueError("Conservative transfers require a dual_pullback_operator.")
+            raise ValueError(
+                "FieldTransfer.dual_pullback_operator must be present for a conservative transfer; got None"
+            )
         if properties_.adjoint_paired and hilbert_adjoint_operator is None:
             raise ValueError(
-                "Adjoint-paired transfers require a hilbert_adjoint_operator."
+                "FieldTransfer.hilbert_adjoint_operator must be present for an adjoint-paired transfer; got None"
             )
         _check_semantics(properties_.semantics, source, target, properties_, geometry)
         preparation_ = PreparationReport() if preparation is None else preparation

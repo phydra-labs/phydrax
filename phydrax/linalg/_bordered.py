@@ -30,7 +30,7 @@ from ._operators import (
     TransposeLinearOperator,
 )
 from ._properties import LinearCapabilityError, OperatorCapabilities, OperatorProperties
-from ._spaces import _coordinate_dtype, ArraySpace
+from ._spaces import ArraySpace, coordinate_dtype
 from ._structured_operators import BandedLinearOperator
 
 
@@ -455,7 +455,7 @@ class BorderedBlockAssemblyPlan(StrictModule):
         lower, upper = local_bandwidth
         if not (0 <= lower < local and 0 <= upper < local):
             raise ValueError("Local bandwidths must lie in [0, local_size).")
-        dtype = _coordinate_dtype(source)
+        dtype = coordinate_dtype(source)
         if not jnp.issubdtype(dtype, jnp.inexact):
             raise TypeError(
                 "Bordered assembly requires an inexact native coordinate dtype."
@@ -511,7 +511,7 @@ class BorderedBlockAssemblyPlan(StrictModule):
             raise ValueError("Bordered assembly requires the mapped native endomorphism.")
         action_cost = estimate_operator_action_cost(operator)
         dimension = source.size
-        itemsize = _coordinate_dtype(source).itemsize
+        itemsize = coordinate_dtype(source).itemsize
         chunk = min(self.probe_chunk_size, dimension)
         workspace = (
             3 * self.output_bytes
@@ -600,7 +600,7 @@ class BorderedBlockAssemblyPlan(StrictModule):
             return band_values, image[split:], maximum_omitted, relative_omitted
 
         chunk = min(self.probe_chunk_size, split)
-        dtype = _coordinate_dtype(selection.source)
+        dtype = coordinate_dtype(selection.source)
         initial = (
             jnp.zeros((split, lower + upper + 1), dtype=dtype),
             jnp.zeros((split, border), dtype=dtype),

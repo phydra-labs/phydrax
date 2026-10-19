@@ -394,8 +394,11 @@ intersects the two discretizations' cell meshes with the canonical
 `phydrax.geometry.prepare_common_refinement` (exact meshcore predicates and clipping;
 `CommonRefinementPolicy` sets coverage mode, relative coverage tolerance, and the
 candidate/accepted/memory limits). The returned `PreparedUnstructuredConservativeRemap`
-carries the `PreparedCommonRefinement`, its `CommonRefinementStatus` and evidence, a
-`reason`, and `plan` (an `UnstructuredConservativeRemapPlan`) only on `SUCCESS`.
+stores one typed `.route`: `PreparedCommonRefinement`, `MappedNestedRemapEvidence`,
+`MappedSurfaceChartRemapEvidence`, or `RemapPreparationFailure`. Its `.evidence`
+exposes the evidence for that route; `.status` is a `CommonRefinementStatus`, and
+`.reason` describes the result. Its `.plan` is an
+`UnstructuredConservativeRemapPlan` only on `SUCCESS`.
 Geometric failures, coverage gaps, double coverage, and resource refusal are returned
 as statuses without a plan; a certified refinement that does not cover the
 finite-volume cell volumes within tolerance reports `COVERAGE_GAP` or
@@ -405,12 +408,20 @@ finite-volume cell volumes within tolerance reports `COVERAGE_GAP` or
 remap = phx.discretization.prepare_unstructured_conservative_remap(
     source, target, provenance="remesh"
 )
-if not remap.succeeded:
+plan = remap.plan
+if plan is None:
     raise RuntimeError(remap.reason)
-first_order = remap.plan.apply(averages)
-second = phx.discretization.UnstructuredSecondOrderRemapPlan(
-    remap.plan, remap.refinement, source
-)
+first_order = plan.apply(averages)
+match remap.route:
+    case phx.geometry.PreparedCommonRefinement() as refinement:
+        second = phx.discretization.UnstructuredSecondOrderRemapPlan(
+            plan, refinement, source
+        )
+    case route:
+        raise ValueError(
+            "remap.route must be a common refinement for second-order reconstruction; "
+            f"got {type(route).__name__}."
+        )
 result = second.apply(averages)  # values, limiter and conservation evidence
 ```
 

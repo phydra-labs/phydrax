@@ -12,10 +12,10 @@ from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
+from ... import geometry as geometry_owner
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...geometry._tetra_intersections import intersect_tetrahedra
 from ...typing import checked
 from .._cell_mesh import CellMesh
 
@@ -37,7 +37,7 @@ class HydroelasticPressureFieldPlan(StrictModule, NonTrainableState):
             or mesh.blocks[0].cell_kind != "tetrahedron"
         ):
             raise ValueError(
-                "Hydroelastic pressure requires one affine tetrahedral CellMesh block."
+                "HydroelasticPressureFieldPlan.mesh must have one affine tetrahedral block in R3; got incompatible cell layout"
             )
         self.mesh = mesh
         self.tetrahedra = mesh.blocks[0].vertices
@@ -64,7 +64,9 @@ class HydroelasticPressureFieldState(StrictModule):
     def __init__(self, pressure: ArrayLike, /) -> None:
         value = jnp.asarray(pressure)
         if value.ndim != 1 or not jnp.issubdtype(value.dtype, jnp.floating):
-            raise ValueError("Hydroelastic pressure state must be a real vector.")
+            raise ValueError(
+                f"HydroelasticPressureFieldState.pressure must be a real vector; got shape={value.shape}, dtype={value.dtype}"
+            )
         self.pressure = value
 
 
@@ -86,7 +88,7 @@ class HydroelasticPressurePatch(StrictModule, NonTrainableState):
 
     @property
     def source_tetrahedron(self) -> Array:
-        """The plus source cell, retained as the one canonical source spelling."""
+        """Return the plus source cell."""
         return self.plus_source_cell
 
 
@@ -112,6 +114,18 @@ class HydroelasticPatchExtraction(StrictModule):
     evidence: HydroelasticPatchEvidence
 
 
+class _HydroelasticOverlap(StrictModule):
+    plus_cell: tuple[int, ...]
+    minus_cell: tuple[int, ...]
+    plus_id: int
+    minus_id: int
+    points: np.ndarray
+    plus_weights: np.ndarray
+    minus_weights: np.ndarray
+    plus_basis: np.ndarray
+    minus_basis: np.ndarray
+
+
 class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
     maximum_overlap_pairs: int = eqx.field(static=True)
     maximum_polytope_edges: int = eqx.field(static=True)
@@ -132,9 +146,13 @@ class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
         capacity = int(patch_capacity)
         tolerance_ = float(tolerance)
         if pairs <= 0 or edges < 3 or capacity <= 0:
-            raise ValueError("Hydroelastic extraction capacities are invalid.")
+            raise ValueError(
+                f"HydroelasticPatchExtractionPlan.capacities must have positive pairs/capacity and at least three edges; got pairs={pairs}, edges={edges}, capacity={capacity}"
+            )
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
-            raise ValueError("Hydroelastic extraction tolerance must be positive.")
+            raise ValueError(
+                f"HydroelasticPatchExtractionPlan.tolerance must be finite and positive; got {tolerance_}"
+            )
         self.maximum_overlap_pairs = pairs
         self.maximum_polytope_edges = edges
         self.patch_capacity = capacity
@@ -149,6 +167,7 @@ class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
         plus: HydroelasticPressureFieldPlan,
@@ -156,10 +175,6 @@ class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
         /,
     ) -> PreparedHydroelasticPatchExtraction:
 
-        if not isinstance(plus, HydroelasticPressureFieldPlan) or not isinstance(
-            minus, HydroelasticPressureFieldPlan
-        ):
-            raise TypeError("plus/minus must be HydroelasticPressureFieldPlan values.")
         plus_coordinates = np.asarray(plus.mesh.coordinates)
         minus_coordinates = np.asarray(minus.mesh.coordinates)
         plus_tetrahedra = np.asarray(plus.tetrahedra, dtype=np.int32)
@@ -179,7 +194,7 @@ class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
                     np.max(minus_cell, axis=0) < plus_minimum
                 ):
                     continue
-                intersection = intersect_tetrahedra(
+                intersection = geometry_owner.intersect_tetrahedra(
                     plus_cell,
                     minus_cell,
                     source_id=int(plus_ids[plus_index]),
@@ -211,10 +226,9 @@ class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
                 plus_weights = _barycentric_weights(edge_points, plus_cell, plus_basis)
                 minus_weights = _barycentric_weights(edge_points, minus_cell, minus_basis)
                 records.append(
-                    (
-                        int(plus_vertices[0]),
-                        plus_vertices,
-                        minus_vertices,
+                    _HydroelasticOverlap(
+                        tuple(plus_vertices),
+                        tuple(minus_vertices),
                         int(plus_ids[plus_index]),
                         int(minus_ids[minus_index]),
                         edge_points,
@@ -231,7 +245,7 @@ class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
                         0.0,
                     ),
                 )
-        records.sort(key=lambda value: (value[3], value[4]))
+        records.sort(key=lambda record: (record.plus_id, record.minus_id))
         if len(records) > self.maximum_overlap_pairs:
             preparation_complete = False
         records = records[: self.maximum_overlap_pairs]
@@ -249,29 +263,17 @@ class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
         minus_gradients = np.zeros((pair_capacity, 4, 3), dtype=np.float64)
         pair_valid = np.zeros((pair_capacity,), dtype=np.bool_)
         for pair_index, record in enumerate(records):
-            (
-                _,
-                plus_cell,
-                minus_cell,
-                plus_id,
-                minus_id,
-                points,
-                plus_route,
-                minus_route,
-                plus_basis,
-                minus_basis,
-            ) = record
-            count = points.shape[0]
-            edge_points[pair_index, :count] = points
-            plus_weights[pair_index, :count] = plus_route
-            minus_weights[pair_index, :count] = minus_route
+            count = record.points.shape[0]
+            edge_points[pair_index, :count] = record.points
+            plus_weights[pair_index, :count] = record.plus_weights
+            minus_weights[pair_index, :count] = record.minus_weights
             edge_valid[pair_index, :count] = True
-            plus_cells[pair_index] = plus_cell
-            minus_cells[pair_index] = minus_cell
-            plus_cell_ids[pair_index] = plus_id
-            minus_cell_ids[pair_index] = minus_id
-            plus_gradients[pair_index] = plus_basis
-            minus_gradients[pair_index] = minus_basis
+            plus_cells[pair_index] = record.plus_cell
+            minus_cells[pair_index] = record.minus_cell
+            plus_cell_ids[pair_index] = record.plus_id
+            minus_cell_ids[pair_index] = record.minus_id
+            plus_gradients[pair_index] = record.plus_basis
+            minus_gradients[pair_index] = record.minus_basis
             pair_valid[pair_index] = True
         return PreparedHydroelasticPatchExtraction(
             plus,
@@ -323,20 +325,20 @@ class PreparedHydroelasticPatchExtraction(StrictModule, NonTrainableState):
     tolerance: float = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    # Fixed-capacity crossings, angular sort, and evidence preserve pressure-patch reduction and derivative order.
+    @checked
     def evaluate(
         self,
         plus_state: HydroelasticPressureFieldState,
         minus_state: HydroelasticPressureFieldState,
         /,
     ) -> HydroelasticPatchExtraction:
-        if not isinstance(plus_state, HydroelasticPressureFieldState) or not isinstance(
-            minus_state, HydroelasticPressureFieldState
-        ):
-            raise TypeError("plus_state/minus_state must be pressure field states.")
         if plus_state.pressure.shape != (
             self.plus.vertex_count,
         ) or minus_state.pressure.shape != (self.minus.vertex_count,):
-            raise ValueError("Hydroelastic pressure state has the wrong vertex capacity.")
+            raise ValueError(
+                f"PreparedHydroelasticPatchExtraction.pressure must match endpoint vertex capacities; got plus={plus_state.pressure.shape}, minus={minus_state.pressure.shape}"
+            )
         plus_local = plus_state.pressure[self.plus_cells]
         minus_local = minus_state.pressure[self.minus_cells]
         plus_endpoint = ein.contract(
@@ -553,6 +555,8 @@ class PreparedHydroelasticPatchExtraction(StrictModule, NonTrainableState):
 
 def _tetrahedron_basis(vertices: np.ndarray, /) -> np.ndarray:
     jacobian = (vertices[1:] - vertices[0]).T
+    # Host preparation publishes the full affine basis-gradient matrix; its
+    # inverse rows are also reused for every edge's barycentric coordinates.
     inverse = np.linalg.inv(jacobian)
     gradients = np.concatenate((-np.sum(inverse, axis=0)[None, :], inverse), axis=0)
     return gradients
@@ -564,10 +568,7 @@ def _barycentric_weights(
     gradients: np.ndarray,
     /,
 ) -> np.ndarray:
-    del gradients
-    jacobian = (vertices[1:] - vertices[0]).T
-    inverse = np.linalg.inv(jacobian)
-    reduced = ein.contract("ij,...j->...i", inverse, points - vertices[0])
+    reduced = ein.contract("ij,...j->...i", gradients[1:], points - vertices[0])
     return np.concatenate(
         (1.0 - np.sum(reduced, axis=-1, keepdims=True), reduced), axis=-1
     )

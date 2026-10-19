@@ -197,10 +197,12 @@ boundary, its interior must contain the patch interior, and a declared interior
 measure must equal the patch measure.
 
 ```python
+from phydrax.units import METER
+
 region = (
     (phx.geometry.Ball((0.0, 0.0), 2.0) - phx.geometry.Ball((0.0, 0.0), 1.0))
     & phx.geometry.Orthotope((1.0, 1.0), (2.0, 2.0))
-).compile()
+).compile(coordinate_unit=METER)
 reconstruction = phx.discretization.iga.prepare_isogeometric_field_reconstruction(
     annulus, "u", support_geometry=region
 )

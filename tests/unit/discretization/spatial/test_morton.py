@@ -14,6 +14,8 @@ from phydrax.discretization.spatial import (
 from phydrax.discretization.spatial._morton import (
     morton_decode_integer_host,
     morton_encode_integer_host,
+    MortonEncoding,
+    MortonHostEncoding,
 )
 from phydrax.domain import HyperRectangle, PeriodicIdentification, TimeInterval
 
@@ -22,39 +24,32 @@ _BOX = HyperRectangle(np.asarray([0.0, -1.0]), np.asarray([2.0, 3.0]))
 _SEAM_X = PeriodicIdentification(_BOX, "x", component=0)
 
 
-def test_morton_scenario_1() -> None:
-    for dimension, depth in [(1, 8), (2, 7), (3, 6)]:
-        resolution = 1 << depth
-        coordinates = jnp.asarray(
-            [
-                [0] * dimension,
-                [resolution - 1] * dimension,
-                [axis + 1 for axis in range(dimension)],
-            ],
-            dtype=jnp.int64,
-        )
-        codes = morton_encode_integer(coordinates, depth)
-        decoded = morton_decode_integer(codes, dimension, depth)
-        np.testing.assert_array_equal(decoded, coordinates)
-    plan = MortonAddressPlan(
-        (0.0, -1.0),
-        (1.0, 1.0),
-        4,
-        periodic_axes=(True, False),
+@pytest.mark.parametrize(
+    ("dimension", "depth"), [(1, 8), (2, 7), (3, 6)], ids=["1d", "2d", "3d"]
+)
+def test_integer_morton_roundtrip(dimension: int, depth: int) -> None:
+    resolution = 1 << depth
+    coordinates = jnp.asarray(
+        [[0] * dimension, [resolution - 1] * dimension, list(range(1, dimension + 1))],
+        dtype=jnp.int64,
     )
+    codes = morton_encode_integer(coordinates, depth)
+    np.testing.assert_array_equal(
+        morton_decode_integer(codes, dimension, depth), coordinates
+    )
+
+
+def test_periodic_address_domain_and_invalid_coordinates() -> None:
+    plan = MortonAddressPlan((0.0, -1.0), (1.0, 1.0), 4, periodic_axes=(True, False))
     encoded = plan.encode(
-        jnp.asarray(
-            [
-                [0.0, -1.0],
-                [1.0, 0.0],
-                [0.5, 1.0],
-                [jnp.nan, 0.0],
-            ]
-        )
+        jnp.asarray([[0.0, -1.0], [1.0, 0.0], [0.5, 1.0], [jnp.nan, 0.0]])
     )
     np.testing.assert_array_equal(encoded.in_domain, [True, True, False, False])
-    np.testing.assert_allclose(encoded.coordinates[1], [0.0, 0.0])
+    np.testing.assert_array_equal(encoded.coordinates[1], [0.0, 0.0])
     np.testing.assert_array_equal(encoded.integer_coordinates[2:], 0)
+
+
+def test_morton_prefix_interval_and_cell_geometry() -> None:
     plan = MortonAddressPlan((0.0, 0.0, 0.0), (2.0, 4.0, 8.0), 3)
     coordinates = jnp.asarray([[6, 2, 5]], dtype=jnp.int64)
     code = morton_encode_integer(coordinates, 3)
@@ -62,24 +57,31 @@ def test_morton_scenario_1() -> None:
     start, end = plan.descendant_interval(prefix, jnp.asarray([2]))
     assert bool((start <= code)[0] & (code < end)[0])
     geometry = plan.cell_geometry(prefix, jnp.asarray([2]))
-    np.testing.assert_allclose(geometry.upper - geometry.lower, [[0.5, 1.0, 2.0]])
+    np.testing.assert_array_equal(geometry.upper - geometry.lower, [[0.5, 1.0, 2.0]])
+
+
+def test_compiled_morton_address_roundtrip() -> None:
     plan = MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 8)
-    encode = eqx.filter_jit(plan.encode)
-    encoded = encode(jnp.asarray([[0.25, 0.75], [0.75, 0.25]]))
+    encoded = eqx.filter_jit(plan.encode)(jnp.asarray([[0.25, 0.75], [0.75, 0.25]]))
     assert bool(encoded.successful)
     np.testing.assert_array_equal(plan.decode(encoded.codes), encoded.integer_coordinates)
-    for dimension, depth in [(1, 5), (2, 4), (3, 3)]:
-        resolution = 1 << depth
-        grid = np.stack(
-            np.meshgrid(*([np.arange(resolution)] * dimension), indexing="ij"), axis=-1
-        ).reshape(-1, dimension)
-        codes = np.asarray(hilbert_encode_integer(jnp.asarray(grid), depth))
-        np.testing.assert_array_equal(np.sort(codes), np.arange(resolution**dimension))
-        walk = grid[np.argsort(codes)]
-        np.testing.assert_array_equal(walk[0], np.zeros((dimension,)))
-        np.testing.assert_array_equal(np.sum(np.abs(np.diff(walk, axis=0)), axis=1), 1)
-        with pytest.raises(ValueError, match="code budget"):
-            hilbert_encode_integer(jnp.asarray(grid), 63 // dimension + 1)
+
+
+@pytest.mark.parametrize(
+    ("dimension", "depth"), [(1, 5), (2, 4), (3, 3)], ids=["1d", "2d", "3d"]
+)
+def test_hilbert_grid_walk_is_face_adjacent(dimension: int, depth: int) -> None:
+    resolution = 1 << depth
+    grid = np.stack(
+        np.meshgrid(*([np.arange(resolution)] * dimension), indexing="ij"), axis=-1
+    ).reshape(-1, dimension)
+    codes = np.asarray(hilbert_encode_integer(jnp.asarray(grid), depth))
+    np.testing.assert_array_equal(np.sort(codes), np.arange(resolution**dimension))
+    walk = grid[np.argsort(codes)]
+    np.testing.assert_array_equal(walk[0], np.zeros((dimension,)))
+    np.testing.assert_array_equal(np.sum(np.abs(np.diff(walk, axis=0)), axis=1), 1)
+    with pytest.raises(ValueError, match="code budget"):
+        hilbert_encode_integer(jnp.asarray(grid), 63 // dimension + 1)
 
 
 def test_identification_derived_address_binds_bounds_mask_and_seam_identity() -> None:
@@ -118,7 +120,7 @@ def test_identification_derived_address_binds_bounds_mask_and_seam_identity() ->
                 PeriodicIdentification(_BOX, "x", component=0, identification_id="x"),
             ),
             None,
-            "identified more than once",
+            "one identification per coordinate",
             id="duplicate-binding",
         ),
         pytest.param(
@@ -138,7 +140,12 @@ def test_identification_derived_address_binds_bounds_mask_and_seam_identity() ->
             "explicit point coordinates",
             id="multi-label-domain",
         ),
-        pytest.param((_SEAM_X,), (("x", 1),), "not a point axis", id="unbound-seam"),
+        pytest.param(
+            (_SEAM_X,),
+            (("x", 1),),
+            "bind an axis in the declared point coordinates",
+            id="unbound-seam",
+        ),
     ],
 )
 def test_identification_derived_address_refuses_ambiguous_bindings(
@@ -166,3 +173,126 @@ def test_host_morton_codes_match_device_codes(dimension: int, depth: int) -> Non
     np.testing.assert_array_equal(
         morton_decode_integer_host(host, dimension, depth), coordinates
     )
+
+
+@pytest.mark.parametrize(
+    ("dimension", "depth"), [(1, 63), (2, 31), (3, 21)], ids=["1d", "2d", "3d"]
+)
+def test_public_host_encoding_preserves_full_bit_budget(
+    dimension: int, depth: int
+) -> None:
+    coordinates = np.asarray(
+        [[0] * dimension, [(1 << depth) - 1] * dimension], dtype=np.int64
+    )
+    expected = np.asarray([0, (1 << (dimension * depth)) - 1], dtype=np.uint64)
+    codes = morton_encode_integer(coordinates, depth)
+    assert codes.dtype == jnp.uint64
+    np.testing.assert_array_equal(codes, expected)
+    np.testing.assert_array_equal(
+        morton_decode_integer(codes, dimension, depth), coordinates
+    )
+
+
+def test_public_integer_encoding_keeps_traced_device_route() -> None:
+    coordinates = jnp.asarray([[1, 2, 4], [0, 0, 0]], dtype=jnp.int64)
+    # In three dimensions, the isolated bits occupy positions 0, 4, and 8.
+    expected = np.asarray([273, 0], dtype=np.uint64)
+    codes = eqx.filter_jit(morton_encode_integer)(coordinates, 3)
+    assert codes.dtype == jnp.uint64
+    np.testing.assert_array_equal(codes, expected)
+
+
+def _assert_address_encoding_parity(
+    host: MortonHostEncoding, device: MortonEncoding
+) -> None:
+    assert host.codes.dtype == np.uint64
+    assert host.integer_coordinates.dtype == np.int64
+    np.testing.assert_array_equal(host.codes, device.codes)
+    np.testing.assert_array_equal(host.integer_coordinates, device.integer_coordinates)
+    np.testing.assert_array_equal(host.coordinates, device.coordinates)
+    np.testing.assert_array_equal(host.finite, device.finite)
+    np.testing.assert_array_equal(host.in_domain, device.in_domain)
+    np.testing.assert_array_equal(host.successful, device.successful)
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("dtype", [np.float32, np.float64], ids=["float32", "float64"])
+def test_host_address_encoding_retains_wrapping_and_domain_evidence(
+    dtype: type[np.float32] | type[np.float64],
+) -> None:
+    plan = MortonAddressPlan((-1.0, -2.0), (1.0, 2.0), 12, periodic_axes=(True, False))
+    points = np.asarray(
+        [
+            [-1.0, -2.0],
+            [1.0, 0.0],
+            [-3.0, 1.0],
+            [0.0, 2.0],
+            [np.nan, 0.0],
+            [0.0, np.inf],
+        ],
+        dtype=dtype,
+    )
+    host = plan.encode_host(points)
+    _assert_address_encoding_parity(host, plan.encode(points))
+    assert host.coordinates.dtype == points.dtype
+    np.testing.assert_array_equal(host.in_domain, [True, True, True, False, False, False])
+    np.testing.assert_array_equal(host.integer_coordinates[3:], 0)
+    np.testing.assert_array_equal(host.coordinates[:3, 0], -1.0)
+
+
+@pytest.mark.strict_jax
+def test_host_address_encoding_retains_batched_point_extents() -> None:
+    plan = MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 8)
+    points = np.asarray(
+        [[[0.0, 0.0], [0.25, 0.75]], [[0.75, 0.25], [1.0, 0.5]]],
+        dtype=np.float64,
+    )
+    host = plan.encode_host(points)
+    _assert_address_encoding_parity(host, eqx.filter_jit(plan.encode)(points))
+    assert host.codes.shape == (2, 2)
+    assert host.integer_coordinates.shape == (2, 2, 2)
+
+
+@pytest.mark.strict_jax
+def test_host_address_encoding_matches_int64_saturation_at_full_depth() -> None:
+    plan = MortonAddressPlan((-1.0e6,), (1.0,), 63)
+    points = np.asarray(
+        [[np.nextafter(np.float32(1.0), np.float32(0.0))]], dtype=np.float32
+    )
+    # Subtracting the large lower bound rounds the normalized coordinate to one.
+    # JAX converts 2**63 to int64 by saturation, then clips to the final cell.
+    host = plan.encode_host(points)
+    _assert_address_encoding_parity(host, plan.encode(points))
+    np.testing.assert_array_equal(host.in_domain, [True])
+    np.testing.assert_array_equal(host.codes, np.asarray([2**63 - 1], dtype=np.uint64))
+
+
+@pytest.mark.strict_jax
+def test_host_address_encoding_reports_nonfinite_and_overflowing_refusals() -> None:
+    plan = MortonAddressPlan((0.0,), (1.0,), 63)
+    points = np.asarray(
+        [[1.0], [1.0e300], [-1.0e300], [np.nan], [np.inf]], dtype=np.float64
+    )
+    host = plan.encode_host(points)
+    _assert_address_encoding_parity(host, plan.encode(points))
+    np.testing.assert_array_equal(host.in_domain, False)
+    np.testing.assert_array_equal(host.codes, 0)
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize(
+    "points",
+    [
+        pytest.param(np.asarray((0.5, 0.25), dtype=np.float64), id="single-point"),
+        pytest.param(np.empty((0, 2), dtype=np.float64), id="empty-batch"),
+    ],
+)
+def test_host_address_encoding_accepts_zero_and_empty_point_prefixes(
+    points: np.ndarray,
+) -> None:
+    plan = MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 8)
+    host = plan.encode_host(points)
+    _assert_address_encoding_parity(host, plan.encode(points))
+    assert host.codes.shape == points.shape[:-1]
+    assert host.integer_coordinates.shape == points.shape
+    assert bool(host.successful)

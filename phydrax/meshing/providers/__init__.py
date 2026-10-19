@@ -1,214 +1,202 @@
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+
 """Lazy native and optional comparison meshing provider facade."""
 
-from importlib import import_module
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
+
+from ..._deferred_exports import deferred_exports
 
 
-_SYMBOL_MODULES: dict[str, tuple[str, str]] = {
-    "SurfaceBooleanOperation": (
-        "...geometry.surface._boolean",
-        "SurfaceBooleanOperation",
-    ),
-    "FTetWildMeshingPlan": ("._ftetwild", "FTetWildMeshingPlan"),
-    "FTetWildOptions": ("._ftetwild", "FTetWildOptions"),
-    "FTetWildProvider": ("._ftetwild", "FTetWildProvider"),
-    "GmshHighOrderOptimization": ("._gmsh_options", "GmshHighOrderOptimization"),
-    "GmshMeshingPlan": ("._gmsh", "GmshMeshingPlan"),
-    "GmshOptions": ("._gmsh_options", "GmshOptions"),
-    "GmshProvider": ("._gmsh", "GmshProvider"),
-    "GmshRemeshingPlan": ("._gmsh", "GmshRemeshingPlan"),
-    "GmshSession": ("._gmsh", "GmshSession"),
-    "GmshSurfaceAlgorithm": ("._gmsh_options", "GmshSurfaceAlgorithm"),
-    "GmshVolumeAlgorithm": ("._gmsh_options", "GmshVolumeAlgorithm"),
-    "ManifoldProvider": ("._manifold", "ManifoldProvider"),
-    "MmgAdaptationPlan": ("._mmg", "MmgAdaptationPlan"),
-    "MmgAdaptationResult": ("._mmg", "MmgAdaptationResult"),
-    "MmgFieldTransfer": ("._mmg", "MmgFieldTransfer"),
-    "MmgLagrangianMode": ("._mmg", "MmgLagrangianMode"),
-    "MmgLagrangianMotion": ("._mmg", "MmgLagrangianMotion"),
-    "MmgLevelSet": ("._mmg", "MmgLevelSet"),
-    "MmgOptions": ("._mmg", "MmgOptions"),
-    "MmgProvider": ("._mmg", "MmgProvider"),
-    "MmgReference": ("._mmg", "MmgReference"),
-    "MmgReferenceRetention": ("._mmg", "MmgReferenceRetention"),
-    "MmgSessionEvidence": ("._mmg", "MmgSessionEvidence"),
-    "NativeCurveSchedule": ("._native_options", "NativeCurveSchedule"),
-    "NativeCurveSource": ("._native_sources", "NativeCurveSource"),
-    "NativeHexGridRoute": (".._hex_generation", "NativeHexGridRoute"),
-    "NativeHexGridSchedule": (".._hex_generation", "NativeHexGridSchedule"),
-    "NativeImplicitSource": ("._native_sources", "NativeImplicitSource"),
-    "NativeLayerCoreSource": ("._native_sources", "NativeLayerCoreSource"),
-    "NativeMappedHexSource": ("._native_sources", "NativeMappedHexSource"),
-    "NativeMeshingOptions": ("._native_options", "NativeMeshingOptions"),
-    "NativeMeshingPlan": ("._native", "NativeMeshingPlan"),
-    "NativeMeshingProvider": ("._native", "NativeMeshingProvider"),
-    "NativeMeshingRoute": ("._native_options", "NativeMeshingRoute"),
-    "NativeMeshingSource": ("._native_sources", "NativeMeshingSource"),
-    "NativePeriodicSource": ("._native_periodic", "NativePeriodicSource"),
-    "NativePlanarSource": ("._native_sources", "NativePlanarSource"),
-    "NativePlcSource": ("._native_sources", "NativePlcSource"),
-    "NativePolyhedralSchedule": (".._polyhedral_generation", "NativePolyhedralSchedule"),
-    "NativePolyhedralSource": ("._native_sources", "NativePolyhedralSource"),
-    "NativeStructuredSchedule": ("._native_options", "NativeStructuredSchedule"),
-    "NativeStructuredSource": ("._native_sources", "NativeStructuredSource"),
-    "NativeSurfaceEnvelopeSource": ("._native_sources", "NativeSurfaceEnvelopeSource"),
-    "NativeSurfaceSchedule": ("._native_options", "NativeSurfaceSchedule"),
-    "NativeSurfaceSource": ("._native_sources", "NativeSurfaceSource"),
-    "NativeSweepSource": ("._native_sources", "NativeSweepSource"),
-    "OmegaHAdaptationEvidence": ("._omega_h", "OmegaHAdaptationEvidence"),
-    "OmegaHAdaptationResult": ("._omega_h", "OmegaHAdaptationResult"),
-    "OmegaHClassification": ("._omega_h", "OmegaHClassification"),
-    "OmegaHField": ("._omega_h", "OmegaHField"),
-    "OmegaHFieldEvidence": ("._omega_h", "OmegaHFieldEvidence"),
-    "OmegaHFieldTransfer": ("._omega_h", "OmegaHFieldTransfer"),
-    "OmegaHOptions": ("._omega_h", "OmegaHOptions"),
-    "OmegaHPartition": ("._omega_h", "OmegaHPartition"),
-    "OmegaHProvider": ("._omega_h", "OmegaHProvider"),
-    "OmegaHTransferredField": ("._omega_h", "OmegaHTransferredField"),
-    "OpenVDBLevelSetRebuild": ("._openvdb", "OpenVDBLevelSetRebuild"),
-    "OpenVDBMeshingSpec": ("._openvdb", "OpenVDBMeshingSpec"),
-    "OpenVDBProvider": ("._openvdb", "OpenVDBProvider"),
-    "OrientedPointCloud": ("._poisson", "OrientedPointCloud"),
-    "PoissonBoundaryCondition": ("._poisson", "PoissonBoundaryCondition"),
-    "PoissonProvider": ("._poisson", "PoissonProvider"),
-    "PoissonReconstructionSpec": ("._poisson", "PoissonReconstructionSpec"),
-    "TiogaAssemblyResult": ("._tioga", "TiogaAssemblyResult"),
-    "TiogaDonorEvidence": ("._tioga", "TiogaDonorEvidence"),
-    "TiogaOptions": ("._tioga", "TiogaOptions"),
-    "TiogaPartBlanking": ("._tioga", "TiogaPartBlanking"),
-    "TiogaProvider": ("._tioga", "TiogaProvider"),
-    "TiogaRegistration": ("._tioga", "TiogaRegistration"),
-    "VoroCrustOptions": ("._vorocrust", "VoroCrustOptions"),
-    "VoroCrustProvider": ("._vorocrust", "VoroCrustProvider"),
-    "native_provider_source_path": ("._sources", "native_provider_source_path"),
+_DEFERRED_EXPORTS: dict[str, str] = {
+    "FTetWildMeshingPlan": "._ftetwild",
+    "FTetWildOptions": "._ftetwild",
+    "FTetWildProvider": "._ftetwild",
+    "GmshHighOrderOptimization": "._gmsh_options",
+    "GmshMeshingPlan": "._gmsh",
+    "GmshOptions": "._gmsh_options",
+    "GmshProvider": "._gmsh",
+    "GmshRemeshingPlan": "._gmsh",
+    "GmshSession": "._gmsh",
+    "GmshSurfaceAlgorithm": "._gmsh_options",
+    "GmshVolumeAlgorithm": "._gmsh_options",
+    "ManifoldProvider": "._manifold",
+    "MmgAdaptationPlan": "._mmg",
+    "MmgAdaptationResult": "._mmg",
+    "MmgFieldTransfer": "._mmg",
+    "MmgLagrangianMode": "._mmg",
+    "MmgLagrangianMotion": "._mmg",
+    "MmgLevelSet": "._mmg",
+    "MmgOptions": "._mmg",
+    "MmgProvider": "._mmg",
+    "MmgReference": "._mmg",
+    "MmgReferenceRetention": "._mmg",
+    "MmgSessionEvidence": "._mmg",
+    "NativeCurveSchedule": "._native_schedules",
+    "NativeCurveSource": "._native_sources",
+    "NativeHexGridRoute": ".._hex_generation",
+    "NativeHexGridSchedule": ".._hex_generation",
+    "NativeImplicitSource": "._native_sources",
+    "NativeLayerCoreSource": "._native_sources",
+    "NativeMappedHexSource": "._native_sources",
+    "NativeMeshingOptions": "._native_options",
+    "NativeMeshingPlan": "._native",
+    "NativeMeshingProvider": "._native",
+    "NativeMeshingRoute": "._native_options",
+    "NativeMeshingSession": "._native_session",
+    "NativeMeshingSource": "._native_sources",
+    "NativePeriodicSource": "._native_periodic",
+    "NativePlanarSource": "._native_sources",
+    "NativePlcSource": "._native_sources",
+    "NativePolyhedralSchedule": ".._polyhedral_generation",
+    "NativePolyhedralSource": "._native_sources",
+    "NativeStructuredSchedule": "._native_schedules",
+    "NativeStructuredSource": "._native_sources",
+    "NativeSurfaceEnvelopeSource": "._native_sources",
+    "NativeSurfaceSchedule": "._native_schedules",
+    "NativeSurfaceSource": "._native_sources",
+    "NativeSweepSource": "._native_sources",
+    "OmegaHAdaptationEvidence": "._omega_h",
+    "OmegaHAdaptationResult": "._omega_h",
+    "OmegaHClassification": "._omega_h",
+    "OmegaHField": "._omega_h",
+    "OmegaHFieldEvidence": "._omega_h",
+    "OmegaHFieldTransfer": "._omega_h",
+    "OmegaHOptions": "._omega_h",
+    "OmegaHPartition": "._omega_h",
+    "OmegaHProvider": "._omega_h",
+    "OmegaHTransferredField": "._omega_h",
+    "OpenVDBLevelSetRebuild": "._openvdb",
+    "OpenVDBMeshingSpec": "._openvdb",
+    "OpenVDBProvider": "._openvdb",
+    "OrientedPointCloud": "._poisson",
+    "PoissonBoundaryCondition": "._poisson",
+    "PoissonProvider": "._poisson",
+    "PoissonReconstructionSpec": "._poisson",
+    "PreparedPlanarDomain": "._native_planar_domain",
+    "TiogaAssemblyResult": "._tioga",
+    "TiogaDonorEvidence": "._tioga",
+    "TiogaOptions": "._tioga",
+    "TiogaPartBlanking": "._tioga",
+    "TiogaProvider": "._tioga",
+    "TiogaRegistration": "._tioga",
+    "VoroCrustOptions": "._vorocrust",
+    "VoroCrustProvider": "._vorocrust",
+    "native_provider_source_path": "._sources",
 }
 
+__getattr__, __dir__ = deferred_exports(__name__, globals(), _DEFERRED_EXPORTS)
 
+
+# BEGIN GENERATED FACADE EXPORTS
 if TYPE_CHECKING:
     from .._hex_generation import (
-        NativeHexGridRoute,
-        NativeHexGridSchedule,
+        NativeHexGridRoute as NativeHexGridRoute,
+        NativeHexGridSchedule as NativeHexGridSchedule,
     )
     from .._polyhedral_generation import (
-        NativePolyhedralSchedule,
+        NativePolyhedralSchedule as NativePolyhedralSchedule,
     )
     from ._ftetwild import (
-        FTetWildMeshingPlan,
-        FTetWildOptions,
-        FTetWildProvider,
+        FTetWildMeshingPlan as FTetWildMeshingPlan,
+        FTetWildOptions as FTetWildOptions,
+        FTetWildProvider as FTetWildProvider,
     )
     from ._gmsh import (
-        GmshMeshingPlan,
-        GmshProvider,
-        GmshRemeshingPlan,
-        GmshSession,
+        GmshMeshingPlan as GmshMeshingPlan,
+        GmshProvider as GmshProvider,
+        GmshRemeshingPlan as GmshRemeshingPlan,
+        GmshSession as GmshSession,
     )
     from ._gmsh_options import (
-        GmshHighOrderOptimization,
-        GmshOptions,
-        GmshSurfaceAlgorithm,
-        GmshVolumeAlgorithm,
+        GmshHighOrderOptimization as GmshHighOrderOptimization,
+        GmshOptions as GmshOptions,
+        GmshSurfaceAlgorithm as GmshSurfaceAlgorithm,
+        GmshVolumeAlgorithm as GmshVolumeAlgorithm,
     )
-    from ._manifold import (
-        ManifoldProvider,
-    )
+    from ._manifold import ManifoldProvider as ManifoldProvider
     from ._mmg import (
-        MmgAdaptationPlan,
-        MmgAdaptationResult,
-        MmgFieldTransfer,
-        MmgLagrangianMode,
-        MmgLagrangianMotion,
-        MmgLevelSet,
-        MmgOptions,
-        MmgProvider,
-        MmgReference,
-        MmgReferenceRetention,
-        MmgSessionEvidence,
+        MmgAdaptationPlan as MmgAdaptationPlan,
+        MmgAdaptationResult as MmgAdaptationResult,
+        MmgFieldTransfer as MmgFieldTransfer,
+        MmgLagrangianMode as MmgLagrangianMode,
+        MmgLagrangianMotion as MmgLagrangianMotion,
+        MmgLevelSet as MmgLevelSet,
+        MmgOptions as MmgOptions,
+        MmgProvider as MmgProvider,
+        MmgReference as MmgReference,
+        MmgReferenceRetention as MmgReferenceRetention,
+        MmgSessionEvidence as MmgSessionEvidence,
     )
     from ._native import (
-        NativeMeshingPlan,
-        NativeMeshingProvider,
+        NativeMeshingPlan as NativeMeshingPlan,
+        NativeMeshingProvider as NativeMeshingProvider,
     )
     from ._native_options import (
-        NativeCurveSchedule,
-        NativeMeshingOptions,
-        NativeMeshingRoute,
-        NativeStructuredSchedule,
-        NativeSurfaceSchedule,
+        NativeMeshingOptions as NativeMeshingOptions,
+        NativeMeshingRoute as NativeMeshingRoute,
     )
-    from ._native_periodic import (
-        NativePeriodicSource,
+    from ._native_periodic import NativePeriodicSource as NativePeriodicSource
+    from ._native_planar_domain import PreparedPlanarDomain as PreparedPlanarDomain
+    from ._native_schedules import (
+        NativeCurveSchedule as NativeCurveSchedule,
+        NativeStructuredSchedule as NativeStructuredSchedule,
+        NativeSurfaceSchedule as NativeSurfaceSchedule,
     )
+    from ._native_session import NativeMeshingSession as NativeMeshingSession
     from ._native_sources import (
-        NativeCurveSource,
-        NativeImplicitSource,
-        NativeLayerCoreSource,
-        NativeMappedHexSource,
-        NativeMeshingSource,
-        NativePlanarSource,
-        NativePlcSource,
-        NativePolyhedralSource,
-        NativeStructuredSource,
-        NativeSurfaceEnvelopeSource,
-        NativeSurfaceSource,
-        NativeSweepSource,
+        NativeCurveSource as NativeCurveSource,
+        NativeImplicitSource as NativeImplicitSource,
+        NativeLayerCoreSource as NativeLayerCoreSource,
+        NativeMappedHexSource as NativeMappedHexSource,
+        NativeMeshingSource as NativeMeshingSource,
+        NativePlanarSource as NativePlanarSource,
+        NativePlcSource as NativePlcSource,
+        NativePolyhedralSource as NativePolyhedralSource,
+        NativeStructuredSource as NativeStructuredSource,
+        NativeSurfaceEnvelopeSource as NativeSurfaceEnvelopeSource,
+        NativeSurfaceSource as NativeSurfaceSource,
+        NativeSweepSource as NativeSweepSource,
     )
     from ._omega_h import (
-        OmegaHAdaptationEvidence,
-        OmegaHAdaptationResult,
-        OmegaHClassification,
-        OmegaHField,
-        OmegaHFieldEvidence,
-        OmegaHFieldTransfer,
-        OmegaHOptions,
-        OmegaHPartition,
-        OmegaHProvider,
-        OmegaHTransferredField,
+        OmegaHAdaptationEvidence as OmegaHAdaptationEvidence,
+        OmegaHAdaptationResult as OmegaHAdaptationResult,
+        OmegaHClassification as OmegaHClassification,
+        OmegaHField as OmegaHField,
+        OmegaHFieldEvidence as OmegaHFieldEvidence,
+        OmegaHFieldTransfer as OmegaHFieldTransfer,
+        OmegaHOptions as OmegaHOptions,
+        OmegaHPartition as OmegaHPartition,
+        OmegaHProvider as OmegaHProvider,
+        OmegaHTransferredField as OmegaHTransferredField,
     )
     from ._openvdb import (
-        OpenVDBLevelSetRebuild,
-        OpenVDBMeshingSpec,
-        OpenVDBProvider,
+        OpenVDBLevelSetRebuild as OpenVDBLevelSetRebuild,
+        OpenVDBMeshingSpec as OpenVDBMeshingSpec,
+        OpenVDBProvider as OpenVDBProvider,
     )
     from ._poisson import (
-        OrientedPointCloud,
-        PoissonBoundaryCondition,
-        PoissonProvider,
-        PoissonReconstructionSpec,
+        OrientedPointCloud as OrientedPointCloud,
+        PoissonBoundaryCondition as PoissonBoundaryCondition,
+        PoissonProvider as PoissonProvider,
+        PoissonReconstructionSpec as PoissonReconstructionSpec,
     )
-    from ._sources import (
-        native_provider_source_path,
-    )
+    from ._sources import native_provider_source_path as native_provider_source_path
     from ._tioga import (
-        TiogaAssemblyResult,
-        TiogaDonorEvidence,
-        TiogaOptions,
-        TiogaPartBlanking,
-        TiogaProvider,
-        TiogaRegistration,
+        TiogaAssemblyResult as TiogaAssemblyResult,
+        TiogaDonorEvidence as TiogaDonorEvidence,
+        TiogaOptions as TiogaOptions,
+        TiogaPartBlanking as TiogaPartBlanking,
+        TiogaProvider as TiogaProvider,
+        TiogaRegistration as TiogaRegistration,
     )
     from ._vorocrust import (
-        VoroCrustOptions,
-        VoroCrustProvider,
+        VoroCrustOptions as VoroCrustOptions,
+        VoroCrustProvider as VoroCrustProvider,
     )
 
-
-def __getattr__(name: str) -> Any:
-    owner = _SYMBOL_MODULES.get(name)
-    if owner is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module_name, symbol = owner
-    value = getattr(import_module(module_name, __package__), symbol)
-    globals()[name] = value
-    return value
-
-
-def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(__all__))
-
-
 __all__ = [
-    "SurfaceBooleanOperation",
     "FTetWildMeshingPlan",
     "FTetWildOptions",
     "FTetWildProvider",
@@ -234,15 +222,16 @@ __all__ = [
     "MmgSessionEvidence",
     "NativeCurveSchedule",
     "NativeCurveSource",
-    "NativeImplicitSource",
-    "NativeLayerCoreSource",
     "NativeHexGridRoute",
     "NativeHexGridSchedule",
+    "NativeImplicitSource",
+    "NativeLayerCoreSource",
     "NativeMappedHexSource",
     "NativeMeshingOptions",
     "NativeMeshingPlan",
     "NativeMeshingProvider",
     "NativeMeshingRoute",
+    "NativeMeshingSession",
     "NativeMeshingSource",
     "NativePeriodicSource",
     "NativePlanarSource",
@@ -272,6 +261,7 @@ __all__ = [
     "PoissonBoundaryCondition",
     "PoissonProvider",
     "PoissonReconstructionSpec",
+    "PreparedPlanarDomain",
     "TiogaAssemblyResult",
     "TiogaDonorEvidence",
     "TiogaOptions",
@@ -282,3 +272,4 @@ __all__ = [
     "VoroCrustProvider",
     "native_provider_source_path",
 ]
+# END GENERATED FACADE EXPORTS

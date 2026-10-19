@@ -1301,7 +1301,9 @@ def test_g9_finite_element_field_view_feeds_the_same_closure_and_ports_must_matc
         variable="x",
         field_name="state",
     ).as_domain_function()
-    with pytest.raises(ValueError, match="value ports are incompatible: frame_id"):
+    with pytest.raises(
+        ValueError, match=r"field_composition\.operand\.value_port.*mismatches frame_id"
+    ):
         rotated - averages
 
 

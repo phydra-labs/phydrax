@@ -11,11 +11,12 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def test_2d_sdf_jvp_vector_and_scalar_inputs() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile(coordinate_unit=METER)
     )
 
     def f(p: Any) -> Any:
@@ -33,7 +34,7 @@ def test_2d_sdf_jvp_vector_and_scalar_inputs() -> None:
 
 def test_3d_sdf_jvp_vector_and_scalar_inputs() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=1.0).compile()
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=1.0).compile(coordinate_unit=METER)
     )
 
     def f(p: Any) -> Any:
@@ -55,7 +56,7 @@ def test_3d_sdf_jvp_vector_and_scalar_inputs() -> None:
 
 def test_compact_enforcement_gate_exact_zero_has_finite_linear_jet() -> None:
     geometry = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile(coordinate_unit=METER)
     )
     gate = geometry.make_enforcement_gate(method="compact")
 
@@ -76,7 +77,7 @@ def test_compact_enforcement_gate_exact_zero_has_finite_linear_jet() -> None:
 
 def test_3d_enforcement_contracts() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=1.0).compile()
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=1.0).compile(coordinate_unit=METER)
     )
     gate = geom.make_enforcement_gate()
     corner = jnp.array([0.5, 0.5, 0.5])
@@ -104,7 +105,9 @@ def test_3d_enforcement_contracts() -> None:
         ]
     )
     geom = phx.domain.GeometryDomain(
-        phx.geometry.mesh_region_from_source((vertices, faces), recenter=False).compile()
+        phx.geometry.mesh_region_from_source((vertices, faces), recenter=False).compile(
+            coordinate_unit=METER
+        )
     )
     gate = geom.make_enforcement_gate()
     facet_point = jnp.asarray(np.array([0.026, 0.957, 0.017]) @ vertices[[0, 1, 2]])

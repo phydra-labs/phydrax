@@ -324,9 +324,16 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
                 value, evidence = self._solve_linear(operator, right)
                 # An undefined derivative is a nonfinite numeric trial, not a
                 # host exception inside the enclosing nonlinear iteration.
-                return jnp.where(
-                    jnp.all(evidence.successful), value, jnp.full_like(value, jnp.nan)
+                # Root diagnostics retain the native matrix-failure evidence.
+                # Linearity fixes the image of a zero right-hand side at zero
+                # for every operator, so a masked or inactive root contributes
+                # an exact zero rather than an undefined derivative.
+                undefined = jnp.where(
+                    jnp.all(right == 0),
+                    jnp.zeros_like(value),
+                    jnp.full_like(value, jnp.nan),
                 )
+                return jnp.where(jnp.all(evidence.successful), value, undefined)
 
             # Native solve evidence may depend on the RHS. The IFT action is
             # linear nonetheless; explicitly own both actions rather than
@@ -540,8 +547,12 @@ class LocalRootPlan(StrictModule, NonTrainableState):
             safe = jnp.where(valid, derivative, 1.0)
 
             def solve_linear(_: Callable[[Array], Array], right: Array) -> Array:
+                # A refused derivative maps a zero right-hand side to
+                # zero (safe is one there) and every other one to NaN.
                 value = right / safe
-                return jnp.where(valid, value, jnp.full_like(value, jnp.nan))
+                return jnp.where(
+                    valid | (right == 0), value, jnp.full_like(value, jnp.nan)
+                )
 
             return jax.lax.custom_linear_solve(
                 linearize,

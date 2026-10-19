@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Filtered and exact geometric predicates.
+"""Evaluate filtered geometric predicates and resolve signs with exact arithmetic.
 
 Three evaluation modes share one sign convention:
 
@@ -24,24 +24,24 @@ never wrong; unresolved entries are ``UNCERTAIN``. Exact zeros are certified
 structurally, when every monomial of the determinant contains a coordinate
 difference of equal inputs. ``EXACT`` resolves uncertain host entries with the
 native meshcore adaptive expansion arithmetic when available and otherwise with
-exact dyadic-rational evaluation of the input floating-point coordinates.
+dyadic-rational evaluation of the input floating-point coordinates without rounding.
 
 ``segment_intersections_2d`` and ``polygon_simplicity_2d`` are host algorithms
-built on ``orient2d`` and exact coordinate comparisons; their classifications
-are exact wherever every contributing sign is certified.
+built on ``orient2d`` and coordinate comparisons without rounding; their classifications
+are certified wherever every contributing sign is certified.
 
 Host ``orient2d``, ``orient3d`` and ``segment_intersections_2d`` also accept
-exact integer banks: object arrays of Python integers, for example an exact
+integer banks: object arrays of Python integers, for example a
 rational source scaled to one positive common denominator. Their kernel
 determinant is evaluated without rounding and every sign is certain. Before
-evaluation the active coordinate ledger is charged the counted kernel visits
-and a storage bound of every bigint temporary from the measured input bits.
+evaluation the explicit coordinate ledger counts the kernel visits and bounds
+every bigint temporary from the measured input bits.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from enum import IntEnum, StrEnum
 from fractions import Fraction
 from types import ModuleType
@@ -62,9 +62,11 @@ from ._meshcore import (
     load_meshcore,
     meshcore_available,
 )
+from ._resource_ticket import HostBatchTicket
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
-from .typing import ConvertibleToArray
+from .discretization._coordinate_budget import CoordinateEnclosureBudget
+from .typing import checked, ConvertibleToArray, parse
 
 
 class PredicateMode(StrEnum):
@@ -88,7 +90,7 @@ class PredicateResult(StrictModule, NonTrainableState):
     """Batched predicate signs with certification.
 
     ``signs`` is int8 with :class:`PredicateSign` values and ``certain`` marks the
-    entries whose sign is exact. All routes publish canonical JAX arrays.
+    entries whose sign is certified. All routes publish JAX arrays.
     """
 
     signs: Array
@@ -97,24 +99,40 @@ class PredicateResult(StrictModule, NonTrainableState):
 
     def __init__(self, signs: Array, certain: Array, mode: PredicateMode) -> None:
         if not isinstance(mode, PredicateMode):
-            raise TypeError("mode must be a PredicateMode.")
+            raise TypeError(
+                f"PredicateResult.mode must be a PredicateMode; got {type(mode).__name__}"
+            )
         if signs.dtype != np.int8:
-            raise TypeError("Predicate signs must be int8.")
+            raise TypeError(
+                f"PredicateResult.signs.dtype must be int8; got {signs.dtype}"
+            )
         if certain.dtype != np.bool_:
-            raise TypeError("Predicate certainty must be boolean.")
+            raise TypeError(
+                f"PredicateResult.certain.dtype must be boolean; got {certain.dtype}"
+            )
         if signs.shape != certain.shape:
-            raise ValueError("Predicate signs and certainty must share one shape.")
+            raise ValueError(
+                f"PredicateResult.signs.shape must equal certain.shape; got {signs.shape} and {certain.shape}"
+            )
         self.signs = signs
         self.certain = certain
         self.mode = mode
 
 
+class HostPredicateResult(StrictModule, NonTrainableState):
+    """Retain NumPy predicate signs and certainty without device placement."""
+
+    signs: np.ndarray
+    certain: np.ndarray
+    mode: PredicateMode = eqx.field(static=True)
+
+
 def resolve_host_predicate_mode(mode: PredicateMode, /) -> PredicateMode:
-    """Effective mode of a host geometric algorithm that reports decisions.
+    """Return the effective mode of a host geometric algorithm.
 
     ``EXACT`` uses the optional meshcore adaptive predicates when available and
-    the exact dyadic host fallback otherwise. It therefore remains exact in
-    either environment; ``FILTERED`` alone may return unresolved entries.
+    the dyadic host fallback otherwise. Both evaluate without rounding;
+    ``FILTERED`` alone may return unresolved entries.
     """
 
     match mode:
@@ -122,16 +140,18 @@ def resolve_host_predicate_mode(mode: PredicateMode, /) -> PredicateMode:
             return mode
         case PredicateMode.FILTERED_DEVICE:
             raise ValueError(
-                "Host geometric algorithms require the FILTERED or EXACT predicate mode."
+                f"resolve_host_predicate_mode.mode must be FILTERED or EXACT; got {mode!r}"
             )
         case _:
-            raise TypeError("mode must be a PredicateMode.")
+            raise TypeError(
+                f"resolve_host_predicate_mode.mode must be a PredicateMode; got {type(mode).__name__}"
+            )
 
 
 # ------------------------------------------------------------------ filter kernels
 #
 # Each kernel returns the floating determinant in the package convention, its
-# Shewchuk permanent, the structural exact-zero mask, the largest coordinate
+# Shewchuk permanent, the structural zero mask, the largest coordinate
 # difference, and the static constants (relative bound coefficient, polynomial
 # degree, absolute-term multiplier).  Kernels are written once for NumPy and JAX.
 
@@ -337,33 +357,46 @@ def _filter(
 
 
 def _host_points(
-    values: tuple, width: int, /
+    values: tuple[np.ndarray, ...],
+    width: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> tuple[tuple[np.ndarray, ...], tuple[int, ...]]:
     arrays = []
-    hosts = tuple(np.asarray(value) for value in values)
+    hosts = values
     integer_bank = any(array.dtype == object for array in hosts)
     for array in hosts:
         if integer_bank:
-            # One exact bank owner: Python integers only. Fixed-width, boolean,
+            # One integer bank representation: Python integers only. Fixed-width, boolean,
             # floating or rational entries would mix two arithmetics.
             if array.dtype != object:
                 raise TypeError(
-                    "Exact integer predicate banks hold only Python integer object arrays."
+                    f"_host_points.coordinates.dtype must be object for integer banks; got {array.dtype}"
                 )
-            with exact_charge(array.size):
+            with (
+                nullcontext()
+                if budget is None
+                else exact_charge(array.size, budget=budget)
+            ):
                 if any(type(item) is not int for item in array.flat):
                     raise TypeError(
-                        "Exact integer predicate banks hold only Python integer object arrays."
+                        "_host_points.coordinates.entries must be Python integers in object arrays; "
+                        f"got {tuple(sorted({type(item).__name__ for item in array.flat if type(item) is not int}))}"
                     )
         elif np.issubdtype(array.dtype, np.integer):
             if np.any((array > 2**53) | (array < -(2**53))):
-                raise ValueError("Integer coordinates must be exactly representable.")
+                raise ValueError(
+                    f"_host_points.coordinates must lie in [-2**53, 2**53] for float64 conversion; got {array}"
+                )
         elif not np.issubdtype(array.dtype, np.floating):
             raise TypeError(
-                "Predicate coordinates must be real floating or integer arrays."
+                f"_host_points.coordinates.dtype must be real floating or integer; got {array.dtype}"
             )
         if array.ndim < 1 or array.shape[-1] != width:
-            raise ValueError(f"Predicate coordinates must have shape (..., {width}).")
+            raise ValueError(
+                f"_host_points.coordinates.shape must be (..., {width}); got {array.shape}"
+            )
         arrays.append(array if integer_bank else array.astype(np.float64, copy=False))
     leading = np.broadcast_shapes(*(array.shape[:-1] for array in arrays))
     flat = tuple(
@@ -384,7 +417,7 @@ _EXACT_ROUTES = {
 
 
 def _normalize_dyadic(numerator: int, exponent: int, /) -> tuple[int, int]:
-    """Canonical ``numerator * 2**exponent`` without even numerator factors."""
+    """Normalize ``numerator * 2**exponent`` by removing even numerator factors."""
     if numerator == 0:
         return 0, 0
     magnitude = abs(numerator)
@@ -492,7 +525,9 @@ def _exact_dyadic_row(
         )
         return _dyadic_sign(determinant)
     if spec.name != "insphere":
-        raise ValueError(f"Unknown exact predicate {spec.name!r}.")
+        raise ValueError(
+            f"_exact_dyadic_row.spec.name must name a supported exact predicate; got {spec.name!r}"
+        )
     z = tuple(difference(row_, spec.arity - 1, 2) for row_ in range(spec.arity - 1))
     ab, bc, cd = cross(0, 1), cross(1, 2), cross(2, 3)
     da, ac, bd = cross(3, 0), cross(0, 2), cross(1, 3)
@@ -549,13 +584,13 @@ def bigint_bytes(bits: int, /) -> int:
     return 40 + 4 * ((max(bits, 1) + 29) // 30)
 
 
-def exact_bits(values: np.ndarray, /) -> int:
-    """Largest numerator or denominator bit length of an exact bank.
+def exact_bits(values: np.ndarray, /, *, budget: CoordinateEnclosureBudget) -> int:
+    """Return the largest numerator or denominator bit length of an integer or rational bank.
 
     Python integers and Fractions share ``numerator``/``denominator``; the
     one-visit-per-entry scan is charged before it runs.
     """
-    with exact_charge(values.size):
+    with exact_charge(values.size, budget=budget):
         return max(
             (
                 max(value.numerator.bit_length(), value.denominator.bit_length())
@@ -565,54 +600,166 @@ def exact_bits(values: np.ndarray, /) -> int:
         )
 
 
-def exact_reserve(work: int, storage: int = 0, /) -> None:
-    """Charge exact host visits and storage the caller retains past this step.
+def exact_orientation_preparation_bounds(
+    row_count: int, dimension: int, integer_bits: int, /
+) -> tuple[int, int, int]:
+    """Bound charged integer orientation preparation from row and bit metadata."""
+    from ._host_storage import declared_integer_storage_bytes
 
-    Exact host arithmetic is preparation owned by the active coordinate
-    ledger, resolved lazily because discretization imports this module.
-    """
-    from .discretization._coordinate_enclosure import _COORDINATE_BUDGET
+    if row_count < 0 or integer_bits < 0 or dimension not in (2, 3):
+        raise ValueError(
+            "exact_orientation_preparation_bounds.metadata must have nonnegative rows/bits and dimension 2 or 3; "
+            f"got rows={row_count}, bits={integer_bits}, dimension={dimension}"
+        )
+    if row_count == 0:
+        return 0, 0, 0
+    bits = max(integer_bits, 1)
+    points = dimension + 1
+    normal_bits = (dimension - 1) * (bits + 1) + 1
+    offset_bits = dimension * (bits + 1) + dimension.bit_length()
+    profile_bits = max(normal_bits, offset_bits)
+    temporary_bits = (48 if dimension == 3 else 16) * bits + 64
+    result_bits = (dimension + 1) * (profile_bits + bits + 1) + dimension.bit_length() + 4
+    # Outer/key/point/preparation/normal tuples and the eight-character
+    # predicate name use _host_storage's 256-byte/16-byte-slot convention.
+    graph_bytes = (
+        256
+        + 16 * 2
+        + 256
+        + 16 * points
+        + dimension * (256 + 16 * dimension)
+        + 256
+        + 4 * 8
+        + 256
+        + 16 * 3
+        + 256
+        + 16 * dimension
+    )
+    cache_bytes = (
+        graph_bytes
+        + dimension**2 * declared_integer_storage_bytes(bits)
+        + dimension * declared_integer_storage_bytes(normal_bits)
+        + declared_integer_storage_bytes(offset_bits)
+        + declared_integer_storage_bytes(profile_bits.bit_length())
+    )
+    retention_visits = 7 + dimension**2 + 2 * dimension
+    visits = (
+        points * dimension
+        + points * dimension
+        + dimension**2
+        + 1
+        + dimension**2
+        + (20 if dimension == 3 else 5)
+        + dimension
+        + 1
+        + retention_visits
+        + dimension
+        + 2 * dimension
+        + 2
+    )
+    scratch = (
+        128
+        + 64 * points
+        + max(
+            512 + 24 * (128 + 2 * bigint_bytes(temporary_bits)),
+            (dimension + 2) * (128 + 2 * bigint_bytes(result_bits)),
+        )
+    )
+    # Ordered-input signs coexist with their shared line/plane profile.
+    cache_bytes += (
+        768
+        + 16 * (points + dimension + 4)
+        + dimension * declared_integer_storage_bytes(bits)
+    )
+    visits += 6 + 2 * dimension + points
+    return row_count * visits, row_count * cache_bytes + row_count + scratch, 0
 
-    ledger = _COORDINATE_BUDGET.get()
-    if ledger is not None:
-        ledger.reserve(work, storage)
+
+def polygon_simplicity_preparation_bounds(
+    polygon_count: int,
+    corner_count: int,
+    /,
+    *,
+    integer_bits: int = 1075,
+    maximum_candidate_pairs: int = 5_000_000,
+) -> tuple[int, int, int]:
+    """Bound the polygon edge-pair and extreme-turn orientation circuit."""
+    if polygon_count < 0 or corner_count < 3 or maximum_candidate_pairs <= 0:
+        raise ValueError(
+            "polygon_simplicity_preparation_bounds.metadata must have nonnegative polygons, at least three corners, and positive pair capacity; "
+            f"got polygons={polygon_count}, corners={corner_count}, capacity={maximum_candidate_pairs}"
+        )
+    pairs = min(
+        maximum_candidate_pairs,
+        polygon_count * corner_count * (corner_count - 1) // 2,
+    )
+    # Each edge-pair classification evaluates four orientations; the extreme
+    # turn adds one per polygon. Native predicate queries are telemetry only.
+    work, storage, queries = exact_orientation_preparation_bounds(
+        4 * pairs + polygon_count, 2, integer_bits
+    )
+    return work + 2 * polygon_count * corner_count, storage, queries
+
+
+def exact_reserve(
+    work: int,
+    storage: int = 0,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Count integer-arithmetic visits and storage retained by the supplied request."""
+    budget.reserve(work, storage)
 
 
 @contextmanager
-def exact_charge(work: int, storage: int = 0, /) -> Iterator[None]:
-    """Charge exact host visits and transient bytes before the guarded step.
-
-    The transient bound is released when the step completes; the ledger keeps
-    its peak.
-    """
-    from .discretization._coordinate_enclosure import _COORDINATE_BUDGET
-
-    ledger = _COORDINATE_BUDGET.get()
-    if ledger is None:
-        yield
-        return
-    with ledger.temporary_scope():
-        ledger.reserve(work, storage)
+def exact_charge(
+    work: int,
+    storage: int = 0,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> Iterator[None]:
+    """Count integer-arithmetic visits and transient bytes, releasing the transient bound."""
+    with budget.temporary_scope():
+        budget.reserve(work, storage)
         yield
 
 
 def _prepared_exact_orientation_signs(
-    spec: _Filter, points: tuple[np.ndarray, ...], ledger: Any
+    spec: _Filter,
+    points: tuple[np.ndarray, ...],
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> np.ndarray:
-    """Reuse immutable exact line/plane preparation on the original live ledger."""
+    """Reuse immutable line/plane preparation in the supplied request."""
     dimension = spec.width
     count = points[0].shape[0]
-    with exact_charge(0, count):
+    with exact_charge(0, count, budget=budget):
         signs = np.empty(count, dtype=np.int8)
-    cache = ledger.exact_orientation_preparation_cache
+    cache = budget.exact_orientation_preparation_cache
+    sign_cache = budget.exact_orientation_sign_cache
+    evaluations = budget.exact_predicate_evaluations
+    hits = budget.exact_predicate_cache_hits
     for row in range(count):
-        with exact_charge((len(points) - 1) * dimension + 1, 128 + 64 * len(points)):
-            key = (spec.name, *(tuple(point[row]) for point in points[:-1]))
+        with exact_charge(
+            len(points) * dimension + 1,
+            128 + 64 * len(points),
+            budget=budget,
+        ):
+            row_points = tuple(tuple(point[row]) for point in points)
+            sign_key = (spec.name, *row_points)
+            known = sign_cache.get(sign_key)
+            if known is not None:
+                signs[row] = known
+                hits[spec.name] = hits.get(spec.name, 0) + 1
+                continue
+            key = sign_key[:-1]
             prepared = cache.get(key)
             if prepared is None:
-                coordinates = key[1:]
+                coordinates = row_points[:-1]
                 values = tuple(value for point in coordinates for value in point)
-                with exact_charge(len(values)):
+                with exact_charge(len(values), budget=budget):
                     bits = max(
                         (
                             max(
@@ -626,10 +773,11 @@ def _prepared_exact_orientation_signs(
                 # Rational differences/products may multiply independent source
                 # denominators; integer inputs are the smaller special case.
                 temporary_bits = (48 if dimension == 3 else 16) * max(bits, 1) + 64
-                normal: tuple[Fraction, ...]
+                normal: tuple[int | Fraction, ...]
                 with exact_charge(
                     20 if dimension == 3 else 5,
                     512 + 24 * (128 + 2 * bigint_bytes(temporary_bits)),
+                    budget=budget,
                 ):
                     if spec.name == "orient3d":
                         a, b, c = coordinates
@@ -645,7 +793,7 @@ def _prepared_exact_orientation_signs(
                         a, b = coordinates
                         normal = (a[1] - b[1], b[0] - a[0])
                         offset = normal[0] * a[0] + normal[1] * a[1]
-                    with exact_charge(dimension + 1):
+                    with exact_charge(dimension + 1, budget=budget):
                         normal_bits = max(
                             (
                                 max(
@@ -657,10 +805,10 @@ def _prepared_exact_orientation_signs(
                             default=0,
                         )
                     prepared = (normal, offset, normal_bits)
-                    ledger.retain_basis((key, prepared))
-                    cache[key] = prepared
+                budget.retain_basis((key, prepared))
+                cache[key] = prepared
         normal, offset, normal_bits = prepared
-        with exact_charge(dimension):
+        with exact_charge(dimension, budget=budget):
             point = tuple(points[-1][row])
             point_bits = max(
                 (
@@ -673,10 +821,14 @@ def _prepared_exact_orientation_signs(
             (dimension + 1) * (normal_bits + point_bits + 1) + dimension.bit_length() + 4
         )
         with exact_charge(
-            2 * dimension, (dimension + 2) * (128 + 2 * bigint_bytes(bits))
+            2 * dimension,
+            (dimension + 2) * (128 + 2 * bigint_bytes(bits)),
+            budget=budget,
         ):
             if len(normal) != dimension or len(point) != dimension:
-                raise RuntimeError("Prepared exact orientation dimension changed.")
+                raise RuntimeError(
+                    f"_prepared_exact_orientation_signs.dimension must match prepared normal and point lengths; got dimension={dimension}, normal={len(normal)}, point={len(point)}"
+                )
             value = (
                 sum(
                     (
@@ -687,69 +839,201 @@ def _prepared_exact_orientation_signs(
                 )
                 - offset
             )
-            with exact_charge(2):
+            with exact_charge(2, budget=budget):
                 signs[row] = int(value > 0) - int(value < 0)
+            budget.retain_basis((sign_key, int(signs[row])))
+            sign_cache[sign_key] = int(signs[row])
+            evaluations[spec.name] = evaluations.get(spec.name, 0) + 1
     return signs
 
 
-def _exact_integer(spec: _Filter, points: tuple[np.ndarray, ...], /) -> np.ndarray:
-    """Exact kernel signs of an integer bank, charged before evaluation.
-
-    Per evaluation, counted from the kernels above: ``work`` object visits,
-    ``temporaries`` bigint results and ``slots`` further object-array entries.
-    With inputs below ``2**bits`` every difference has at most ``bits + 1``
-    bits and every kernel value is a sum of at most six degree-``degree``
-    products, hence at most ``degree * (bits + 1) + 3`` bits.
-    """
-
-    match spec.name:
-        case "orient2d":
-            work, temporaries, slots, degree = 22, 14, 30, 2
-        case "orient3d":
-            work, temporaries, slots, degree = 68, 50, 92, 3
-        case _:
-            raise TypeError(
-                "Exact integer predicate banks support orient2d and orient3d."
-            )
-    count = points[0].shape[0]
-    from .discretization._coordinate_enclosure import _COORDINATE_BUDGET
-
-    ledger = _COORDINATE_BUDGET.get()
-    if ledger is not None:
-        return _prepared_exact_orientation_signs(spec, points, ledger)
-    bits = max(exact_bits(point) for point in points)
-    storage = count * (temporaries * bigint_bytes(degree * (bits + 1) + 3) + 8 * slots)
-    with exact_charge(count * work, storage):
-        return np.sign(spec.kernel(np, *points)[0]).astype(np.int8)
+def _exact_integer(
+    spec: _Filter,
+    points: tuple[np.ndarray, ...],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Evaluate ordered orientations with integer arithmetic in the supplied request."""
+    if spec.name not in ("orient2d", "orient3d"):
+        raise TypeError(
+            f"_exact_integer.spec.name must be orient2d or orient3d; got {spec.name!r}"
+        )
+    return _prepared_exact_orientation_signs(spec, points, budget=budget)
 
 
-def _host(spec: _Filter, values: tuple, mode: PredicateMode, /) -> PredicateResult:
+def _host_signs(
+    spec: _Filter,
+    values: tuple[np.ndarray, ...],
+    mode: PredicateMode,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray]:
     native_exact = mode is PredicateMode.EXACT and meshcore_available()
     if native_exact:
         load_meshcore()
-    flat, leading = _host_points(values, spec.width)
+    flat, leading = _host_points(values, spec.width, budget=budget)
+    return _host_signs_from_points(
+        spec, flat, leading, mode, native_exact=native_exact, budget=budget
+    )
+
+
+def _memo_native_signs(
+    spec: _Filter,
+    flat: tuple[np.ndarray, ...],
+    unresolved: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Evaluate each unresolved binary64 input once within the supplied request."""
+    cache = budget.exact_native_sign_cache
+    evaluations = budget.exact_predicate_evaluations
+    hits = budget.exact_predicate_cache_hits
+    keys: list[tuple[str, bytes]] = []
+    missing: dict[tuple[str, bytes], int] = {}
+    with budget.temporary_scope():
+        budget.reserve(
+            unresolved.size * spec.arity * spec.width,
+            512 + unresolved.size * (512 + 8 * spec.arity * spec.width),
+        )
+        for row in unresolved:
+            key = (spec.name, b"".join(point[row].tobytes() for point in flat))
+            keys.append(key)
+            if key in cache or key in missing:
+                hits[spec.name] = hits.get(spec.name, 0) + 1
+            else:
+                missing[key] = int(row)
+        if missing:
+            rows = np.fromiter(missing.values(), dtype=np.int64, count=len(missing))
+
+            with (
+                budget.ticket.native_target()
+                if budget.ticket.native_accounting
+                else nullcontext()
+            ):
+                signs = _EXACT_ROUTES[spec.name](*(point[rows] for point in flat))
+            for key, sign in zip(missing, signs, strict=True):
+                value = int(sign)
+                budget.retain_basis((key, value))
+                cache[key] = value
+            evaluations[spec.name] = evaluations.get(spec.name, 0) + len(missing)
+        return np.fromiter((cache[key] for key in keys), dtype=np.int8, count=len(keys))
+
+
+def _host_signs_from_points(
+    spec: _Filter,
+    flat: tuple[np.ndarray, ...],
+    leading: tuple[int, ...],
+    mode: PredicateMode,
+    /,
+    *,
+    native_exact: bool,
+    memoize: bool = True,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray]:
     if flat[0].dtype == object:
-        return PredicateResult(
-            jnp.asarray(_exact_integer(spec, flat).reshape(leading)),
-            jnp.ones(leading, dtype=jnp.bool_),
-            mode,
+        return _exact_integer(spec, flat, budget=budget).reshape(leading), np.ones(
+            leading, dtype=np.bool_
         )
     with np.errstate(over="ignore", invalid="ignore", under="ignore"):
         signs, certain = _filter(np, spec, flat, np.float64, 1.0)
     if mode is PredicateMode.EXACT:
         unresolved = np.flatnonzero(~certain)
         if unresolved.size and native_exact:
-            signs[unresolved] = _EXACT_ROUTES[spec.name](
-                *(array[unresolved] for array in flat)
-            )
+            # Standalone binary predicates admit no host work or retained storage.
+            # Their native evaluation remains valid without a request-owned memo.
+            if memoize and budget.maximum_work_units and budget.maximum_memory_bytes:
+                signs[unresolved] = _memo_native_signs(
+                    spec, flat, unresolved, budget=budget
+                )
+            else:
+                with (
+                    budget.ticket.native_target()
+                    if budget.ticket.native_accounting
+                    else nullcontext()
+                ):
+                    signs[unresolved] = _EXACT_ROUTES[spec.name](
+                        *(array[unresolved] for array in flat)
+                    )
             certain[unresolved] = True
         elif unresolved.size:
             exact_signs, exact_certain = _exact_dyadic(spec, flat, unresolved)
             signs[unresolved] = exact_signs
             certain[unresolved] = exact_certain
-    return PredicateResult(
-        jnp.asarray(signs.reshape(leading)), jnp.asarray(certain.reshape(leading)), mode
+    return signs.reshape(leading), certain.reshape(leading)
+
+
+@contextmanager
+def _predicate_owner(
+    work_upper: int,
+    bytes_upper: int,
+    /,
+    *,
+    completed_metadata_work: int = 0,
+) -> Iterator[CoordinateEnclosureBudget]:
+    # Integer source preparation imports predicates; create the domain view only
+    # after those modules have finished their mutual initialization.
+    from .discretization._coordinate_budget import CoordinateEnclosureBudget
+
+    ticket = HostBatchTicket(work_upper, bytes_upper=bytes_upper)
+    budget = CoordinateEnclosureBudget(
+        ticket,
+        maximum_work_units=work_upper,
+        maximum_memory_bytes=bytes_upper,
     )
+    with ticket, budget.activate():
+        budget.reserve(completed_metadata_work)
+        yield budget
+
+
+def _integer_input_bits(points: tuple[np.ndarray, ...], /) -> int:
+    return max(
+        (value.bit_length() for point in points for value in point.flat),
+        default=0,
+    )
+
+
+def _host(
+    spec: _Filter,
+    values: tuple,
+    mode: PredicateMode,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> HostPredicateResult:
+    native_exact = mode is PredicateMode.EXACT and meshcore_available()
+    if native_exact:
+        load_meshcore()
+    hosts = tuple(np.asarray(value) for value in values)
+    flat, leading = _host_points(hosts, spec.width, budget=budget)
+    if budget is None:
+        work_upper = bytes_upper = metadata_work = 0
+        if flat[0].dtype == object:
+            work_upper, bytes_upper, _ = exact_orientation_preparation_bounds(
+                flat[0].shape[0], spec.width, _integer_input_bits(flat)
+            )
+            validation = sum(value.size for value in hosts)
+            metadata_work = validation + sum(point.size for point in flat)
+            work_upper += max(0, validation - flat[0].shape[0] * len(flat) * spec.width)
+        with _predicate_owner(
+            work_upper, bytes_upper, completed_metadata_work=metadata_work
+        ) as owner:
+            signs, certain = _host_signs_from_points(
+                spec,
+                flat,
+                leading,
+                mode,
+                native_exact=native_exact,
+                memoize=False,
+                budget=owner,
+            )
+    else:
+        signs, certain = _host_signs_from_points(
+            spec, flat, leading, mode, native_exact=native_exact, budget=budget
+        )
+    return HostPredicateResult(signs, certain, mode)
 
 
 # ------------------------------------------------------------------ device route
@@ -772,17 +1056,23 @@ def _device_points(values: tuple, width: int, /) -> tuple[tuple[Array, ...], np.
                 and source.itemsize > array.dtype.itemsize
             ):
                 raise ValueError(
-                    "Device predicates would round the input coordinates; enable "
-                    "jax_enable_x64 or pass arrays of the device dtype."
+                    "_device_points.coordinates.dtype must preserve input precision; "
+                    f"got source={source}, device={array.dtype}; enable jax_enable_x64 or pass the device dtype"
                 )
         if not jnp.issubdtype(array.dtype, jnp.floating):
-            raise TypeError("Predicate coordinates must be real floating arrays.")
+            raise TypeError(
+                f"_device_points.coordinates.dtype must be real floating; got {array.dtype}"
+            )
         if array.ndim < 1 or array.shape[-1] != width:
-            raise ValueError(f"Predicate coordinates must have shape (..., {width}).")
+            raise ValueError(
+                f"_device_points.coordinates.shape must be (..., {width}); got {array.shape}"
+            )
         arrays.append(array)
     dtype = jnp.result_type(*arrays)
     if np.dtype(dtype) not in _SUBNORMAL_MASKS:
-        raise TypeError("Device predicates support float32 and float64 coordinates.")
+        raise TypeError(
+            f"_device_points.coordinates.dtype must be float32 or float64; got {dtype}"
+        )
     broadcast = jnp.broadcast_arrays(*(array.astype(dtype) for array in arrays))
     return tuple(broadcast), np.dtype(dtype)
 
@@ -805,14 +1095,59 @@ def _device(spec: _Filter, values: tuple, /) -> PredicateResult:
     return PredicateResult(signs, certain, PredicateMode.FILTERED_DEVICE)
 
 
-def _evaluate(spec: _Filter, values: tuple, mode: PredicateMode, /) -> PredicateResult:
+def _evaluate(
+    spec: _Filter,
+    values: tuple,
+    mode: PredicateMode,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> PredicateResult:
     match mode:
         case PredicateMode.FILTERED | PredicateMode.EXACT:
-            return _host(spec, values, mode)
+            host = _host(spec, values, mode, budget=budget)
+            return PredicateResult(
+                jax.device_put(host.signs), jax.device_put(host.certain), host.mode
+            )
         case PredicateMode.FILTERED_DEVICE:
             return _device(spec, values)
         case _:
-            raise TypeError("mode must be a PredicateMode.")
+            raise TypeError(
+                f"_evaluate.mode must be a PredicateMode; got {type(mode).__name__}"
+            )
+
+
+@checked
+def orient2d_host(
+    a: ConvertibleToArray,
+    b: ConvertibleToArray,
+    c: ConvertibleToArray,
+    /,
+    *,
+    mode: PredicateMode,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> HostPredicateResult:
+    """Return host signs of ``det[b - a, c - a]`` with certification."""
+    mode = parse(mode, PredicateMode, "orient2d_host.mode")
+    resolve_host_predicate_mode(mode)
+    return _host(_ORIENT2D, (a, b, c), mode, budget=budget)
+
+
+@checked
+def orient3d_host(
+    a: ConvertibleToArray,
+    b: ConvertibleToArray,
+    c: ConvertibleToArray,
+    d: ConvertibleToArray,
+    /,
+    *,
+    mode: PredicateMode,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> HostPredicateResult:
+    """Return host signs of ``det[b - a, c - a, d - a]`` with certification."""
+    mode = parse(mode, PredicateMode, "orient3d_host.mode")
+    resolve_host_predicate_mode(mode)
+    return _host(_ORIENT3D, (a, b, c, d), mode, budget=budget)
 
 
 def orient2d(
@@ -822,6 +1157,7 @@ def orient2d(
     /,
     *,
     mode: PredicateMode,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> PredicateResult:
     """Sign of ``det[b - a, c - a]`` for ``(..., 2)`` coordinates (leading axes broadcast).
 
@@ -831,7 +1167,7 @@ def orient2d(
     ``TypeError``.
     """
 
-    return _evaluate(_ORIENT2D, (a, b, c), mode)
+    return _evaluate(_ORIENT2D, (a, b, c), mode, budget=budget)
 
 
 def orient3d(
@@ -842,29 +1178,45 @@ def orient3d(
     /,
     *,
     mode: PredicateMode,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> PredicateResult:
     """Sign of ``det[b - a, c - a, d - a]`` for ``(..., 3)`` coordinates.
 
     Accepts the same coordinate kinds as :func:`orient2d`.
     """
 
-    return _evaluate(_ORIENT3D, (a, b, c, d), mode)
+    return _evaluate(_ORIENT3D, (a, b, c, d), mode, budget=budget)
 
 
 def incircle(
-    a: Any, b: Any, c: Any, d: Any, /, *, mode: PredicateMode
+    a: Any,
+    b: Any,
+    c: Any,
+    d: Any,
+    /,
+    *,
+    mode: PredicateMode,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> PredicateResult:
     """Positive when ``d`` lies inside the circle through counterclockwise ``(a, b, c)``."""
 
-    return _evaluate(_INCIRCLE, (a, b, c, d), mode)
+    return _evaluate(_INCIRCLE, (a, b, c, d), mode, budget=budget)
 
 
 def insphere(
-    a: Any, b: Any, c: Any, d: Any, e: Any, /, *, mode: PredicateMode
+    a: Any,
+    b: Any,
+    c: Any,
+    d: Any,
+    e: Any,
+    /,
+    *,
+    mode: PredicateMode,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> PredicateResult:
     """Positive when ``e`` lies inside the sphere through positively oriented ``(a..d)``."""
 
-    return _evaluate(_INSPHERE, (a, b, c, d, e), mode)
+    return _evaluate(_INSPHERE, (a, b, c, d, e), mode, budget=budget)
 
 
 # ------------------------------------------------------------------ segments and polygons
@@ -892,9 +1244,13 @@ class SegmentIntersectionResult(StrictModule, NonTrainableState):
 
     def __init__(self, status: Array | np.ndarray, mode: PredicateMode) -> None:
         if not isinstance(mode, PredicateMode):
-            raise TypeError("mode must be a PredicateMode.")
+            raise TypeError(
+                f"SegmentIntersectionResult.mode must be a PredicateMode; got {type(mode).__name__}"
+            )
         if status.dtype != np.int8:
-            raise TypeError("Segment intersection status must be int8.")
+            raise TypeError(
+                f"SegmentIntersectionResult.status.dtype must be int8; got {status.dtype}"
+            )
         self.status = status
         self.mode = mode
 
@@ -922,43 +1278,55 @@ class PolygonSimplicityResult(StrictModule, NonTrainableState):
     ``uncertain_pairs`` the candidate pairs whose class stayed unresolved.
     """
 
-    status: Array
-    orientation: Array
-    intersecting_pairs: Array
-    uncertain_pairs: Array
+    status: Array | np.ndarray
+    orientation: Array | np.ndarray
+    intersecting_pairs: Array | np.ndarray
+    uncertain_pairs: Array | np.ndarray
     candidate_pair_count: int = eqx.field(static=True)
     candidate_capacity_exceeded: bool = eqx.field(static=True)
     mode: PredicateMode = eqx.field(static=True)
 
     def __init__(
         self,
-        status: Array,
-        orientation: Array,
-        intersecting_pairs: Array,
-        uncertain_pairs: Array,
+        status: Array | np.ndarray,
+        orientation: Array | np.ndarray,
+        intersecting_pairs: Array | np.ndarray,
+        uncertain_pairs: Array | np.ndarray,
         mode: PredicateMode,
         *,
         candidate_pair_count: int,
         candidate_capacity_exceeded: bool,
     ) -> None:
         if not isinstance(mode, PredicateMode):
-            raise TypeError("mode must be a PredicateMode.")
+            raise TypeError(
+                f"PolygonSimplicityResult.mode must be a PredicateMode; got {type(mode).__name__}"
+            )
         if status.dtype != np.int8 or orientation.dtype != np.int8:
-            raise TypeError("Polygon simplicity status and orientation must be int8.")
+            raise TypeError(
+                f"PolygonSimplicityResult.status.dtype must be int8 along with orientation.dtype; got status={status.dtype}, orientation={orientation.dtype}"
+            )
         if intersecting_pairs.dtype != np.int64 or uncertain_pairs.dtype != np.int64:
-            raise TypeError("Polygon simplicity pair counts must be int64.")
+            raise TypeError(
+                f"PolygonSimplicityResult.pair_counts.dtype must be int64; got intersecting={intersecting_pairs.dtype}, uncertain={uncertain_pairs.dtype}"
+            )
         if not (
             status.shape
             == orientation.shape
             == intersecting_pairs.shape
             == uncertain_pairs.shape
         ):
-            raise ValueError("Polygon simplicity arrays must share one shape.")
+            raise ValueError(
+                f"PolygonSimplicityResult.arrays.shape must agree; got status={status.shape}, orientation={orientation.shape}, intersecting={intersecting_pairs.shape}, uncertain={uncertain_pairs.shape}"
+            )
         count = int(candidate_pair_count)
         if count < 0:
-            raise ValueError("candidate_pair_count must be non-negative.")
+            raise ValueError(
+                f"PolygonSimplicityResult.candidate_pair_count must be non-negative; got {count}"
+            )
         if not isinstance(candidate_capacity_exceeded, (bool, np.bool_)):
-            raise TypeError("candidate_capacity_exceeded must be bool.")
+            raise TypeError(
+                f"PolygonSimplicityResult.candidate_capacity_exceeded must be bool; got {type(candidate_capacity_exceeded).__name__}"
+            )
         self.status = status
         self.orientation = orientation
         self.intersecting_pairs = intersecting_pairs
@@ -974,25 +1342,37 @@ def _require_host_mode(mode: PredicateMode, /) -> None:
             return
         case PredicateMode.FILTERED_DEVICE:
             raise ValueError(
-                "Segment and polygon predicates require the FILTERED or EXACT mode."
+                f"_require_host_mode.mode must be FILTERED or EXACT; got {mode!r}"
             )
         case _:
-            raise TypeError("mode must be a PredicateMode.")
+            raise TypeError(
+                f"_require_host_mode.mode must be a PredicateMode; got {type(mode).__name__}"
+            )
 
 
 def _classify_segments(
-    a: Any, b: Any, c: Any, d: Any, mode: PredicateMode, /
+    a: Any,
+    b: Any,
+    c: Any,
+    d: Any,
+    mode: PredicateMode,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> np.ndarray:
     """Contact classes of closed segments ``ab`` and ``cd`` of shape ``(..., 2)``."""
 
-    orientation = orient2d(
-        np.stack((a, a, c, c)),
-        np.stack((b, b, d, d)),
-        np.stack((c, d, a, b)),
-        mode=mode,
+    signs_, certain = _host_signs(
+        _ORIENT2D,
+        (
+            np.stack((a, a, c, c)),
+            np.stack((b, b, d, d)),
+            np.stack((c, d, a, b)),
+        ),
+        mode,
+        budget=budget,
     )
-    signs = orientation.signs.astype(np.int16)
-    certain = orientation.certain
+    signs = signs_.astype(np.int16)
     first = signs[0] * signs[1]
     second = signs[2] * signs[3]
     # One certified supporting line with both ends of the other segment strictly
@@ -1000,7 +1380,7 @@ def _classify_segments(
     separated = (certain[0] & certain[1] & (first > 0)) | (
         certain[2] & certain[3] & (second > 0)
     )
-    # Coordinate comparisons are exact; for collinear segments the common box is
+    # Coordinate comparisons introduce no rounding; for collinear segments the common box is
     # their common piece.
     lower = np.maximum(np.minimum(a, b), np.minimum(c, d))
     upper = np.minimum(np.maximum(a, b), np.maximum(c, d))
@@ -1038,29 +1418,62 @@ def segment_intersections_2d(
     /,
     *,
     mode: PredicateMode,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> SegmentIntersectionResult:
     """Classify the contact of closed segments ``ab`` and ``cd`` (``(..., 2)``, broadcast).
 
     Host-only (``FILTERED`` or ``EXACT``); unresolved filtered signs yield
-    ``UNCERTAIN`` unless an exact coordinate or certified sign test separates
+    ``UNCERTAIN`` unless a coordinate comparison or certified sign test separates
     the segments. Object arrays of Python integers are classified exactly.
     """
 
     _require_host_mode(mode)
-    flat, leading = _host_points((a, b, c, d), 2)
-    if flat[0].dtype == object:
-        # Exact integer banks: per row sixteen coordinate comparisons and
-        # thirty-six object slots of stacked/extremal references (no new
-        # bigints); the four orient2d signs charge themselves.
-        with exact_charge(16 * flat[0].shape[0], 8 * 36 * flat[0].shape[0]):
-            status = _classify_segments(flat[0], flat[1], flat[2], flat[3], mode)
+    hosts = tuple(np.asarray(value) for value in (a, b, c, d))
+    flat, leading = _host_points(hosts, 2, budget=budget)
+    if budget is None:
+        work_upper = bytes_upper = metadata_work = 0
+        if flat[0].dtype == object:
+            count = flat[0].shape[0]
+            work_upper, bytes_upper, _ = exact_orientation_preparation_bounds(
+                4 * count, 2, _integer_input_bits(flat)
+            )
+            validation = sum(value.size for value in hosts)
+            metadata_work = validation + sum(point.size for point in flat)
+            work_upper += 16 * count + validation
+            bytes_upper += 8 * 36 * count
+        with _predicate_owner(
+            work_upper, bytes_upper, completed_metadata_work=metadata_work
+        ) as owner:
+            status = _segment_status(flat, mode, budget=owner)
     else:
-        status = _classify_segments(flat[0], flat[1], flat[2], flat[3], mode)
+        status = _segment_status(flat, mode, budget=budget)
     return SegmentIntersectionResult(status.reshape(leading), mode)
 
 
+def _segment_status(
+    flat: tuple[np.ndarray, ...],
+    mode: PredicateMode,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    if flat[0].dtype == object:
+        with exact_charge(
+            16 * flat[0].shape[0], 8 * 36 * flat[0].shape[0], budget=budget
+        ):
+            return _classify_segments(
+                flat[0], flat[1], flat[2], flat[3], mode, budget=budget
+            )
+    return _classify_segments(flat[0], flat[1], flat[2], flat[3], mode, budget=budget)
+
+
 def _edge_pair_evidence(
-    points: np.ndarray, mode: PredicateMode, maximum_candidate_pairs: int, /
+    points: np.ndarray,
+    mode: PredicateMode,
+    maximum_candidate_pairs: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray, int, bool]:
     """Bounded offending and unresolved edge-pair evidence."""
 
@@ -1069,7 +1482,7 @@ def _edge_pair_evidence(
     uncertain = np.zeros((polygon_count,), dtype=np.int64)
     starts = points.reshape((-1, 2))
     stops = np.roll(points, -1, axis=1).reshape((-1, 2))
-    # An exact polygon coordinate axis keeps the broad phase within polygons.
+    # A polygon-index coordinate axis keeps the broad phase within polygons.
     group = np.repeat(np.arange(polygon_count, dtype=np.float64), corner_count)
     bvh = prepare_bvh(
         np.column_stack((np.minimum(starts, stops), group)),
@@ -1090,7 +1503,12 @@ def _edge_pair_evidence(
         candidate_count += first.size
         if first.size:
             status = _classify_segments(
-                starts[first], stops[first], starts[second], stops[second], mode
+                starts[first],
+                stops[first],
+                starts[second],
+                stops[second],
+                mode,
+                budget=budget,
             )
             gap = second - first
             adjacent = (gap == 1) | (gap == corner_count - 1)
@@ -1109,7 +1527,13 @@ def _edge_pair_evidence(
     return intersecting, uncertain, candidate_count, exceeded
 
 
-def _extreme_turn(points: np.ndarray, mode: PredicateMode, /) -> PredicateResult:
+def _extreme_turn(
+    points: np.ndarray,
+    mode: PredicateMode,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> PredicateResult:
     """Turn at the lexicographically smallest vertex of ``(polygons, n, 2)`` loops.
 
     That vertex is extreme, so for a simple loop its turn is the orientation.
@@ -1123,6 +1547,7 @@ def _extreme_turn(points: np.ndarray, mode: PredicateMode, /) -> PredicateResult
         points[rows, order],
         points[rows, (order + 1) % corner_count],
         mode=mode,
+        budget=budget,
     )
 
 
@@ -1132,13 +1557,14 @@ def polygon_simplicity_2d(
     *,
     mode: PredicateMode,
     maximum_candidate_pairs: int = 5_000_000,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> PolygonSimplicityResult:
     """Certify that closed vertex loops ``(..., n, 2)`` bound simple polygons.
 
     A loop is simple when non-adjacent edges are disjoint and adjacent edges
     meet only at their shared vertex; repeated vertices therefore make a loop
     self-intersecting. Candidate edge pairs come from a bounded BVH block stream
-    over exact edge boxes, partitioned by polygon; exhausting
+    over edge boxes, partitioned by polygon; exhausting
     ``maximum_candidate_pairs`` leaves every unproved loop ``UNCERTAIN``.
     Host-only (``FILTERED`` or ``EXACT``).
     """
@@ -1147,18 +1573,42 @@ def polygon_simplicity_2d(
     if isinstance(maximum_candidate_pairs, bool) or not isinstance(
         maximum_candidate_pairs, (int, np.integer)
     ):
-        raise TypeError("maximum_candidate_pairs must be an integer.")
+        raise TypeError(
+            f"polygon_simplicity_2d.maximum_candidate_pairs must be an integer; got {type(maximum_candidate_pairs).__name__}"
+        )
     capacity = int(maximum_candidate_pairs)
     if capacity <= 0:
-        raise ValueError("maximum_candidate_pairs must be positive.")
+        raise ValueError(
+            f"polygon_simplicity_2d.maximum_candidate_pairs must be positive; got {capacity}"
+        )
     array = np.asarray(vertices)
     if array.ndim < 2 or array.shape[-2] < 3:
-        raise ValueError("Polygon vertices must have shape (..., n >= 3, 2).")
-    (flat,), _ = _host_points((array,), 2)
+        raise ValueError(
+            f"polygon_simplicity_2d.vertices.shape must be (..., n >= 3, 2); got {array.shape}"
+        )
+    (flat,), _ = _host_points((array,), 2, budget=budget)
     if not np.all(np.isfinite(flat)):
-        raise ValueError("Polygon vertices must be finite.")
+        raise ValueError(f"polygon_simplicity_2d.vertices must be finite; got {flat}")
     leading = array.shape[:-2]
     points = flat.reshape((-1, array.shape[-2], 2))
+    if budget is None:
+        work_upper, bytes_upper, _ = polygon_simplicity_preparation_bounds(
+            points.shape[0], points.shape[1], maximum_candidate_pairs=capacity
+        )
+        with _predicate_owner(work_upper, bytes_upper) as owner:
+            return _polygon_simplicity(points, leading, mode, capacity, budget=owner)
+    return _polygon_simplicity(points, leading, mode, capacity, budget=budget)
+
+
+def _polygon_simplicity(
+    points: np.ndarray,
+    leading: tuple[int, ...],
+    mode: PredicateMode,
+    capacity: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> PolygonSimplicityResult:
     if points.shape[0] == 0:
         empty = np.zeros(leading, dtype=np.int64)
         return PolygonSimplicityResult(
@@ -1171,7 +1621,7 @@ def polygon_simplicity_2d(
             candidate_capacity_exceeded=False,
         )
     intersecting, uncertain, candidate_count, exceeded = _edge_pair_evidence(
-        points, mode, capacity
+        points, mode, capacity, budget=budget
     )
     status = np.where(
         intersecting > 0,
@@ -1182,7 +1632,7 @@ def polygon_simplicity_2d(
             PolygonSimplicityStatus.SIMPLE,
         ),
     ).astype(np.int8)
-    turn = _extreme_turn(points, mode)
+    turn = _extreme_turn(points, mode, budget=budget)
     orientation = np.where(
         (status == PolygonSimplicityStatus.SIMPLE) & turn.certain,
         turn.signs,
@@ -1200,6 +1650,7 @@ def polygon_simplicity_2d(
 
 
 __all__ = [
+    "HostPredicateResult",
     "PolygonSimplicityResult",
     "PolygonSimplicityStatus",
     "PredicateMode",
@@ -1210,7 +1661,9 @@ __all__ = [
     "incircle",
     "insphere",
     "orient2d",
+    "orient2d_host",
     "orient3d",
+    "orient3d_host",
     "polygon_simplicity_2d",
     "resolve_host_predicate_mode",
     "segment_intersections_2d",

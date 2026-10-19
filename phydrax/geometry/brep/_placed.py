@@ -2,57 +2,63 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Authored affine pose operations on original exact CAD source definitions.
+"""Apply authored affine poses to CAD source definitions.
 
-An authored orthogonal placement (including a reflected occurrence) is accepted
-within the placement owner's binary64 orthogonality premise; its coefficients
-are never normalized or canceled as though they formed an exactly orthogonal
-matrix. Common-pose cancellation uses exact coefficient equality and a
-binary-rational invertibility proof instead.
+Orthogonality is admitted within the placement tolerance. Coefficients remain
+unchanged; common-pose cancellation requires coefficient equality and
+binary-rational invertibility.
 """
 
 from __future__ import annotations
 
-from fractions import Fraction
-from typing import final, Literal
+from typing import assert_never, final, Literal
 
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, core as jax_core
 
-from ...typing import ConvertibleToArray, Float64, parse
+import phydrax.geometry.brep._intersection_curve as intersection_curve_owner
+import phydrax.geometry.brep._patches as patch_owner
+
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked, ConvertibleToArray, Float64, parse
 from .._interval_enclosure import interval_add, interval_multiply
-from ._intersection_curve import IntersectionCurve
-from ._patches import AbstractCurve, AbstractSurfacePatch
+from ._carrier_pieces import CurvePiece, SurfacePiece
+from ._coordinate_request import coordinate_source_request
+from ._exact import exact_determinant
+from ._patches import (
+    AbstractCurve,
+    AbstractSurfacePatch,
+    BernsteinRestrictionBank,
+    MeridianOverlaps,
+)
+from ._request_preparations import TrimRequestPreparations
 
 
-def _exact_determinant(rotation: np.ndarray, /) -> Fraction:
-    rows = tuple(tuple(Fraction(float(value)) for value in row) for row in rotation)
-    a, b, c = rows
-    return (
-        a[0] * (b[1] * c[2] - b[2] * c[1])
-        - a[1] * (b[0] * c[2] - b[2] * c[0])
-        + a[2] * (b[0] * c[1] - b[1] * c[0])
-    )
-
-
-def _validate_pose(
+def validate_pose(
     rotation: ConvertibleToArray, translation: ConvertibleToArray, /
 ) -> tuple[Array, Array]:
     rotation_host = np.asarray(rotation, dtype=np.float64)
     translation_host = np.asarray(translation, dtype=np.float64)
     if rotation_host.shape != (3, 3) or translation_host.shape != (3,):
-        raise ValueError("A source placement requires a 3x3 rotation and 3-vector.")
+        raise ValueError(
+            "placement.pose must have rotation shape (3, 3) and translation shape (3,); "
+            f"got {rotation_host.shape}/{translation_host.shape}"
+        )
     if not np.all(np.isfinite(rotation_host)) or not np.all(
         np.isfinite(translation_host)
     ):
-        raise ValueError("A source placement must be finite.")
+        raise ValueError(
+            "placement.pose must have finite rotation and translation coefficients; got nonfinite coefficients"
+        )
     if (
         np.max(np.abs(rotation_host.T @ rotation_host - np.eye(3, dtype=np.float64)))
         > 1.0e-12
-        or _exact_determinant(rotation_host) == 0
+        or exact_determinant(rotation_host) == 0
     ):
-        raise ValueError("A source placement rotation must be orthogonal and invertible.")
+        raise ValueError(
+            "placement.rotation must be orthogonal within 1e-12 and invertible; got an inadmissible matrix"
+        )
     return (
         parse(
             jnp.asarray(rotation_host, dtype=jnp.float64),
@@ -77,7 +83,8 @@ def source_transform_bounds(
     """
     if rotation.shape != (3, 3) or lower.shape != upper.shape or lower.shape[0] != 3:
         raise ValueError(
-            "Source transform bounds require a 3x3 map and matching three-coordinate intervals."
+            "source_transform.inputs must contain a 3x3 rotation and matching coordinate-first bounds; "
+            f"got {rotation.shape}/{lower.shape}/{upper.shape}"
         )
     coefficient_shape = (3,) + (1,) * (lower.ndim - 1)
     coefficient = rotation[:, 0].reshape(coefficient_shape)
@@ -91,7 +98,10 @@ def source_transform_bounds(
                 (lower[axis], upper[axis]),
             ),
         )
-    return result
+    return (
+        np.asarray(result[0], dtype=np.float64),
+        np.asarray(result[1], dtype=np.float64),
+    )
 
 
 def _placed_box(
@@ -103,27 +113,33 @@ def _placed_box(
     return np.stack((low, high))
 
 
+def _bind_pose(
+    carrier: PlacedSurface | PlacedCurve,
+    rotation: ConvertibleToArray,
+    translation: ConvertibleToArray,
+    /,
+) -> None:
+    carrier.rotation, carrier.translation = validate_pose(rotation, translation)
+
+
 @final
 class PlacedSurface(AbstractSurfacePatch):
-    """Original surface and immutable authored world-pose operation tree."""
+    """Surface definition and immutable authored world-pose operation tree."""
 
     __strict_contract__ = True
     definition: AbstractSurfacePatch
     rotation: Float64[Literal[3], Literal[3]]
     translation: Float64[Literal[3]]
 
+    @checked
     def __init__(
         self,
         definition: AbstractSurfacePatch,
         rotation: ConvertibleToArray,
         translation: ConvertibleToArray,
     ) -> None:
-        if not isinstance(definition, AbstractSurfacePatch):
-            raise TypeError("Placed surfaces require an exact surface source definition.")
-        rotation_, translation_ = _validate_pose(rotation, translation)
+        _bind_pose(self, rotation, translation)
         self.definition = definition
-        self.rotation = rotation_
-        self.translation = translation_
 
     def evaluate(self, parameters: Array, /) -> Array:
         return self.definition.evaluate(parameters) @ self.rotation.T + self.translation
@@ -132,20 +148,107 @@ class PlacedSurface(AbstractSurfacePatch):
     def periods(self) -> tuple[float | None, float | None]:
         return self.definition.periods
 
+    @checked
+    def source_pieces(
+        self,
+        parameter_box: ConvertibleToArray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[SurfacePiece[AbstractSurfacePatch], ...]:
+        """Restrict definition pieces and preserve their posed source identities."""
+        return tuple(
+            SurfacePiece(
+                PlacedSurface(piece.evaluator, self.rotation, self.translation),
+                piece.lower,
+                piece.upper,
+                piece.index,
+            )
+            for piece in self.definition.source_pieces(parameter_box, budget=budget)
+        )
+
+    def coefficient_enclosures(
+        self,
+    ) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], ...]:
+        """Return definition coefficient bounds without altering pose coefficients."""
+        return patch_owner.coefficient_enclosures(self.definition)
+
+    def native_period_symbols(self) -> tuple[str | None, str | None]:
+        """Return the definition's symbolic periods on both parameter axes."""
+        return self.definition.native_period_symbols()
+
     def degenerate_isolines(
         self, parameter_box: ConvertibleToArray, /
     ) -> tuple[tuple[int, float], ...]:
         return self.definition.degenerate_isolines(parameter_box)
 
-    def validate_parameter_box(self, parameter_box: ConvertibleToArray, /) -> np.ndarray:
-        return self.definition.validate_parameter_box(parameter_box)
+    def validate_parameter_box(
+        self,
+        parameter_box: ConvertibleToArray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    parameter_box,
+                )
+            ) as budget:
+                return self.validate_parameter_box(parameter_box, budget=budget)
+        return self.definition.validate_parameter_box(parameter_box, budget=budget)
 
-    def is_c1_on(self, parameter_box: ConvertibleToArray, /) -> bool:
-        return self.definition.is_c1_on(parameter_box)
+    def is_c1_on(
+        self,
+        parameter_box: ConvertibleToArray,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> bool:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    parameter_box,
+                )
+            ) as budget:
+                return self.is_c1_on(
+                    parameter_box, preparations=preparations, budget=budget
+                )
+        return self.definition.is_c1_on(
+            parameter_box, preparations=preparations, budget=budget
+        )
 
-    def bounding_box(self, parameter_box: ConvertibleToArray, /) -> np.ndarray:
+    def bounding_box(
+        self,
+        parameter_box: ConvertibleToArray,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    parameter_box,
+                )
+            ) as budget:
+                return self.bounding_box(
+                    parameter_box, preparations=preparations, budget=budget
+                )
         return _placed_box(
-            self.rotation, self.translation, self.definition.bounding_box(parameter_box)
+            self.rotation,
+            self.translation,
+            self.definition.bounding_box(
+                parameter_box, preparations=preparations, budget=budget
+            ),
         )
 
     def derivative_bounds_batch(
@@ -154,8 +257,36 @@ class PlacedSurface(AbstractSurfacePatch):
         /,
         *,
         order: int = 1,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+        restriction_bank: BernsteinRestrictionBank | None = None,
+        meridian_jets: list[MeridianOverlaps] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        low, high = self.definition.derivative_bounds_batch(parameter_boxes, order=order)
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    parameter_boxes,
+                )
+            ) as budget:
+                return self.derivative_bounds_batch(
+                    parameter_boxes,
+                    order=order,
+                    preparations=preparations,
+                    restriction_bank=restriction_bank,
+                    meridian_jets=meridian_jets,
+                    budget=budget,
+                )
+        low, high = self.definition.derivative_bounds_batch(
+            parameter_boxes,
+            order=order,
+            preparations=preparations,
+            budget=budget,
+            restriction_bank=restriction_bank,
+            meridian_jets=meridian_jets,
+        )
         low, high = source_transform_bounds(
             np.asarray(self.rotation), np.moveaxis(low, 1, 0), np.moveaxis(high, 1, 0)
         )
@@ -164,27 +295,29 @@ class PlacedSurface(AbstractSurfacePatch):
 
 @final
 class PlacedCurve(AbstractCurve):
-    """Original three-dimensional edge source and authored pose operation tree."""
+    """Three-dimensional curve definition and authored pose operation tree."""
 
     __strict_contract__ = True
-    definition: AbstractCurve | IntersectionCurve
+    definition: AbstractCurve | intersection_curve_owner.IntersectionCurve
     rotation: Float64[Literal[3], Literal[3]]
     translation: Float64[Literal[3]]
 
+    @checked
     def __init__(
         self,
-        definition: AbstractCurve | IntersectionCurve,
+        definition: AbstractCurve | intersection_curve_owner.IntersectionCurve,
         rotation: ConvertibleToArray,
         translation: ConvertibleToArray,
     ) -> None:
-        if not isinstance(definition, (AbstractCurve, IntersectionCurve)):
-            raise TypeError("Placed curves require an exact curve source definition.")
-        if isinstance(definition, AbstractCurve) and definition.ambient_dimension != 3:
-            raise ValueError("Placed edge definitions must be three-dimensional.")
-        rotation_, translation_ = _validate_pose(rotation, translation)
+        match definition:
+            case AbstractCurve() if definition.ambient_dimension != 3:
+                raise ValueError(
+                    f"placed_curve.definition must be three-dimensional; got {definition.ambient_dimension}"
+                )
+            case _:
+                pass
+        _bind_pose(self, rotation, translation)
         self.definition = definition
-        self.rotation = rotation_
-        self.translation = translation_
 
     @property
     def ambient_dimension(self) -> int:
@@ -192,43 +325,134 @@ class PlacedCurve(AbstractCurve):
 
     @property
     def period(self) -> float | None:
-        if isinstance(self.definition, AbstractCurve):
-            return self.definition.period
-        return float(self.definition.num_charts) if self.definition.closed else None
+        match self.definition:
+            case AbstractCurve() as curve:
+                return curve.period
+            case intersection_curve_owner.IntersectionCurve() as curve:
+                return float(curve.num_charts) if curve.closed else None
+            case unreachable:
+                assert_never(unreachable)
+
+    @checked
+    def source_pieces(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        coordinate_budget: CoordinateEnclosureBudget,
+    ) -> tuple[CurvePiece[AbstractCurve], ...]:
+        """Restrict definition pieces without changing interval or chart ordering."""
+        return tuple(
+            CurvePiece(
+                PlacedCurve(piece.evaluator, self.rotation, self.translation),
+                piece.lower,
+                piece.upper,
+                piece.index,
+            )
+            for piece in self.definition.source_pieces(
+                first, last, coordinate_budget=coordinate_budget
+            )
+        )
+
+    def coefficient_enclosures(
+        self,
+    ) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], ...]:
+        """Return coefficient bounds of the curve definition."""
+        return patch_owner.coefficient_enclosures(self.definition)
+
+    def native_period_symbol(self) -> str | None:
+        """Return the definition's symbolic parameter period."""
+        return self.definition.native_period_symbol()
 
     @property
     def parameter_domain(self) -> tuple[float, float] | None:
-        if isinstance(self.definition, AbstractCurve):
-            return self.definition.parameter_domain
-        return 0.0, float(self.definition.num_charts)
+        match self.definition:
+            case AbstractCurve() as curve:
+                return curve.parameter_domain
+            case intersection_curve_owner.IntersectionCurve() as curve:
+                return 0.0, float(curve.num_charts)
+            case unreachable:
+                assert_never(unreachable)
 
     def validate_range(self, first: float, last: float, /) -> tuple[float, float]:
         return self.definition.validate_range(first, last)
 
-    def is_c1_on(self, first: float, last: float, /) -> bool:
-        return self.definition.is_c1_on(first, last)
+    def is_c1_on(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> bool:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    first,
+                    last,
+                )
+            ) as budget:
+                return self.is_c1_on(
+                    first, last, preparations=preparations, budget=budget
+                )
+        return self.definition.is_c1_on(
+            first, last, preparations=preparations, budget=budget
+        )
 
     def evaluate(self, parameters: Array, /) -> Array:
-        if isinstance(self.definition, IntersectionCurve):
-            if not self.definition.fully_certified:
-                raise ValueError(
-                    "Placed intersection edges require certified source charts."
-                )
-            result = self.definition.evaluate(parameters)
-            if not isinstance(result.parameter_bound, jax_core.Tracer) and not np.all(
-                np.isfinite(np.asarray(result.parameter_bound))
-            ):
-                raise ValueError(
-                    "Placed intersection query has unresolved source bounds."
-                )
-            points = result.point
-        else:
-            points = self.definition.evaluate(parameters)
+        match self.definition:
+            case intersection_curve_owner.IntersectionCurve() as curve:
+                if not curve.fully_certified:
+                    raise ValueError(
+                        "placed_curve.definition must have certified source charts; got uncertified charts"
+                    )
+                result = curve.evaluate(parameters)
+                if not isinstance(result.parameter_bound, jax_core.Tracer) and not np.all(
+                    np.isfinite(np.asarray(result.parameter_bound))
+                ):
+                    raise ValueError(
+                        "placed_curve.query.parameter_bound must be finite; got unresolved source bounds"
+                    )
+                points = result.point
+            case AbstractCurve() as curve:
+                points = curve.evaluate(parameters)
+            case unreachable:
+                assert_never(unreachable)
         return points @ self.rotation.T + self.translation
 
-    def bounding_box(self, first: float, last: float, /) -> np.ndarray:
+    def bounding_box(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    first,
+                    last,
+                )
+            ) as budget:
+                return self.bounding_box(
+                    first, last, preparations=preparations, budget=budget
+                )
         return _placed_box(
-            self.rotation, self.translation, self.definition.bounding_box(first, last)
+            self.rotation,
+            self.translation,
+            self.definition.bounding_box(
+                first, last, preparations=preparations, budget=budget
+            ),
         )
 
     def derivative_bounds(
@@ -238,23 +462,50 @@ class PlacedCurve(AbstractCurve):
         /,
         *,
         order: int = 1,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+        restriction_bank: BernsteinRestrictionBank | None = None,
+        meridian_jets: list[MeridianOverlaps] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        low, high = self.definition.derivative_bounds(first, last, order=order)
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    first,
+                    last,
+                )
+            ) as budget:
+                return self.derivative_bounds(
+                    first,
+                    last,
+                    order=order,
+                    preparations=preparations,
+                    restriction_bank=restriction_bank,
+                    meridian_jets=meridian_jets,
+                    budget=budget,
+                )
+        low, high = self.definition.derivative_bounds(
+            first,
+            last,
+            order=order,
+            preparations=preparations,
+            budget=budget,
+            restriction_bank=restriction_bank,
+            meridian_jets=meridian_jets,
+        )
         return source_transform_bounds(np.asarray(self.rotation), low, high)
 
 
+@checked
 def same_source_pose(
     first: PlacedSurface | PlacedCurve, second: PlacedSurface | PlacedCurve, /
 ) -> bool:
-    """Prove one identical invertible authored affine map for residual pullback.
+    """Test equal pose coefficients and binary-rational invertibility.
 
-    This proves equality-zero conjugation, not equality of the definitions or
-    that the transpose is an inverse. It is a host-side source admission proof.
+    Definition identity is independent of pose equality.
     """
-    if not isinstance(first, (PlacedSurface, PlacedCurve)) or not isinstance(
-        second, (PlacedSurface, PlacedCurve)
-    ):
-        raise TypeError("Source pose equivalence requires canonical placed carriers.")
     rotation = np.asarray(first.rotation)
     translation = np.asarray(first.translation)
     return bool(
@@ -266,5 +517,5 @@ def same_source_pose(
         )
         and np.all(np.isfinite(rotation))
         and np.all(np.isfinite(translation))
-        and _exact_determinant(rotation) != 0
+        and exact_determinant(rotation) != 0
     )

@@ -13,10 +13,8 @@ from phydrax._meshcore import (
     exact_orient3d,
     meshcore_available,
     MeshcoreStatus,
-    TET_MESH_EXUDE_COUNTERS,
-    TET_MESH_IMPROVE_COUNTERS,
-    TET_MESH_REFINE_COUNTERS,
     TET_MESH_UNMET_CRITERIA,
+    TetMeshExudeCounters,
 )
 from phydrax.meshing._volume_generation import (
     generate_plc_volume,
@@ -24,6 +22,7 @@ from phydrax.meshing._volume_generation import (
     VolumeConstruction,
 )
 from phydrax.meshing.providers._native_volume import plc_volume_audit_policy
+from tests._support.meshing_fixtures import volume_specification
 
 
 pytestmark = pytest.mark.skipif(
@@ -54,6 +53,12 @@ _COMPLEX = M.PiecewiseLinearComplex(_CORNERS, _LOOPS, np.zeros(6), [[-1, 0]], ("
 _SOURCE = M.NativePlcSource(_COMPLEX, "exudation-box", "r1")
 
 
+# Fixed scalar-reference allowances from test_native_volume_exudation.py
+# at a6827a9e5; values and relative/absolute roles are unchanged.
+# Oriented unit-box boundary area 6 and total tetrahedral volume 1 after exudation.
+_EXUDATION_BOX_MEASURE_RTOL = 1e-12
+
+
 def _schedule(exudation_passes: int) -> NativeVolumeSchedule:
     # A demanding dihedral aim after one improvement sweep leaves interior slivers.
     return NativeVolumeSchedule(
@@ -67,38 +72,23 @@ def _schedule(exudation_passes: int) -> NativeVolumeSchedule:
 _SCHEDULE = _schedule(4)
 
 
-def _specification(limits: M.MeshingLimits | None = None) -> M.VolumeMeshingSpec:
-    scope = M.MeshingScope(
-        _SOURCE.source_id,
-        _SOURCE.source_revision,
-        M.MeshingEntityKind.GEOMETRY,
-        2,
-        "exudation-box-facets",
-        np.arange(_COMPLEX.facet_count, dtype=np.int64),
-    )
-    return M.VolumeMeshingSpec(
-        M.CellMeshingTarget(3, 3, M.CellFamilyPolicy(required=("tetrahedron",))),
-        scope,
-        M.VolumeFillStrategy.SIMPLEX,
-        size_controls=(
-            M.UniformSizeControl(scope, 0.25, strength=M.SizeControlStrength.SOFT),
-        ),
-        limits=limits,
-    )
-
-
 def _generate(
     schedule: NativeVolumeSchedule, limits: M.MeshingLimits | None = None
 ) -> VolumeConstruction:
-    return generate_plc_volume(
-        _COMPLEX,
-        _specification(limits),
-        schedule,
-        validity_policy=plc_volume_audit_policy().validity_policy,
-        source_id=_SOURCE.source_id,
-        source_revision=_SOURCE.source_revision,
-        input_id="exudation",
-    )
+    from tests._support.coordinate_references import native_meshing_request
+
+    specification = volume_specification(_SOURCE, size=0.25, limits=limits)
+    with native_meshing_request(specification.limits) as (scope, _, _):
+        return generate_plc_volume(
+            _COMPLEX,
+            specification,
+            schedule,
+            validity_policy=plc_volume_audit_policy().validity_policy,
+            source_id=_SOURCE.source_id,
+            source_revision=_SOURCE.source_revision,
+            input_id="exudation",
+            scope=scope,
+        )
 
 
 def _removal_schedule(
@@ -147,15 +137,19 @@ def _removal_schedule(
         minimum_dihedral_degrees=minimum_dihedral,
         improvement_passes=passes,
     )
-    return generate_plc_volume(
-        complex_,
-        specification,
-        schedule,
-        validity_policy=plc_volume_audit_policy().validity_policy,
-        source_id=source_id,
-        source_revision="authored",
-        input_id=source_id,
-    )
+    from tests._support.coordinate_references import native_meshing_request
+
+    with native_meshing_request(specification.limits) as (execution, _, _):
+        return generate_plc_volume(
+            complex_,
+            specification,
+            schedule,
+            validity_policy=plc_volume_audit_policy().validity_policy,
+            source_id=source_id,
+            source_revision="authored",
+            input_id=source_id,
+            scope=execution,
+        )
 
 
 def _assert_independent_unit_box(
@@ -182,9 +176,9 @@ def _assert_independent_unit_box(
         np.cross(boundary[:, 1] - boundary[:, 0], boundary[:, 2] - boundary[:, 0]),
         axis=1,
     )
-    assert np.sum(area) == pytest.approx(6.0, rel=1e-12)
+    assert np.sum(area) == pytest.approx(6.0, rel=_EXUDATION_BOX_MEASURE_RTOL)
     volume = np.linalg.det(corners[:, 1:] - corners[:, :1]) / 6.0
-    assert np.sum(volume) == pytest.approx(1.0, rel=1e-12)
+    assert np.sum(volume) == pytest.approx(1.0, rel=_EXUDATION_BOX_MEASURE_RTOL)
     for corner in source_points:
         assert np.any(np.all(points == corner, axis=1))
     validity = phx.discretization.certify_cell_geometry_validity(
@@ -206,16 +200,16 @@ def test_explicit_exudation_stage_weights_only_interior_vertices_and_keeps_the_d
     run = construction.exudation
     assert run is not None
     assert run.status in (MeshcoreStatus.OK, MeshcoreStatus.REFINEMENT_LIMIT)
-    counters = dict(zip(TET_MESH_EXUDE_COUNTERS, run.counters.tolist(), strict=True))
-    assert (
-        counters["flips"] > 0
-        and counters["weighted_vertices"] > 0
-        and counters["passes"] >= 1
-    )
+    counters = run.counters
+    assert counters.flips > 0 and counters.weighted_vertices > 0 and counters.passes >= 1
     # Exudation consumed the same refined/improved carrier as the disabled run.
-    assert np.array_equal(construction.refinement.counters, disabled.refinement.counters)
-    assert np.array_equal(
-        construction.improvement.counters, disabled.improvement.counters
+    assert construction.refinement is not None and disabled.refinement is not None
+    assert construction.improvement is not None and disabled.improvement is not None
+    assert (
+        construction.refinement.counters.items() == disabled.refinement.counters.items()
+    )
+    assert (
+        construction.improvement.counters.items() == disabled.improvement.counters.items()
     )
     points = np.asarray(construction.mesh.coordinates, dtype=np.float64)
     weights = construction.exudation_weights
@@ -223,7 +217,7 @@ def test_explicit_exudation_stage_weights_only_interior_vertices_and_keeps_the_d
     assert np.all(weights >= 0.0)
     on_boundary = np.any((points == 0.0) | (points == 1.0), axis=1)
     assert np.all(weights[on_boundary] == 0.0)
-    assert np.count_nonzero(weights) == counters["weighted_vertices"]
+    assert np.count_nonzero(weights) == counters.weighted_vertices
     # Every accepted move strictly raises its cavity's smallest dihedral angle.
     assert construction.quality.minimum_dihedral >= disabled.quality.minimum_dihedral
     assert all(
@@ -331,13 +325,8 @@ def test_volume_schedule_consumes_multiface_and_vertex_removal(
         f"{counter}-schedule",
         protect_points,
     )
-    counters = dict(
-        zip(
-            TET_MESH_IMPROVE_COUNTERS,
-            construction.improvement.counters.tolist(),
-            strict=True,
-        )
-    )
+    assert construction.improvement is not None
+    counters = dict(construction.improvement.counters.items())
     if expected:
         assert counters[counter] >= expected
         assert counters["attempts"] > counters[counter]
@@ -361,7 +350,7 @@ def test_provider_publishes_exudation_evidence_with_certified_coverage() -> None
         M.NativeMeshingProvider(options)
         .plan(
             _SOURCE,
-            _specification(),
+            volume_specification(_SOURCE, size=0.25),
             coordinate_contract=_SI,
         )
         .execute()
@@ -371,31 +360,30 @@ def test_provider_publishes_exudation_evidence_with_certified_coverage() -> None
     achieved = dict(result.compliance.achieved)
     direct = _generate(_SCHEDULE).exudation
     assert direct is not None
-    for name, value in zip(
-        TET_MESH_EXUDE_COUNTERS, direct.counters.tolist(), strict=True
-    ):
+    for name, value in direct.counters.items():
         assert achieved[f"exudation:{name}"] == value
 
 
 def test_exudation_without_remaining_work_is_a_resource_refusal() -> None:
     disabled = _generate(_schedule(0))
+    assert disabled.refinement is not None and disabled.improvement is not None
     spent = (
         sum(
             int(value)
             for name, value in disabled.construction_counters
             if name.endswith("work_units")
         )
-        + int(disabled.refinement.counters[TET_MESH_REFINE_COUNTERS.index("work_units")])
-        + int(
-            disabled.improvement.counters[TET_MESH_IMPROVE_COUNTERS.index("work_units")]
-        )
+        + disabled.refinement.counters.work_units
+        + disabled.improvement.counters.work_units
     )
     # One weighted trial (16 units) fits; the stage cannot finish.
     with pytest.raises(M.MeshingFailure) as refusal:
         _generate(_SCHEDULE, M.MeshingLimits(maximum_work_units=spent + 17))
     assert refusal.value.category is M.MeshingFailureCategory.RESOURCE_EXHAUSTED
     assert "exudation" in str(refusal.value)
-    assert set(TET_MESH_EXUDE_COUNTERS) <= set(dict(refusal.value.evidence.achieved))
+    assert {name for name, _ in TetMeshExudeCounters().items()} <= set(
+        dict(refusal.value.evidence.achieved)
+    )
 
 
 def test_exudation_controls_are_validated_and_identify_the_schedule() -> None:

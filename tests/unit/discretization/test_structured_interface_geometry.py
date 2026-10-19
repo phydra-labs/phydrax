@@ -185,6 +185,31 @@ def test_plane_offset_inverts_volume_in_two_and_three_dimensions() -> None:
         )
 
 
+@pytest.mark.parametrize("axis", (0, 1), ids=("x", "y"))
+@pytest.mark.parametrize("compiled", (False, True), ids=("eager", "jit"))
+def test_centered_column_normals_preserve_reflection_at_axis_ties(
+    axis: int, compiled: bool
+) -> None:
+    count, samples = 16, 12
+    plic = StructuredPLICPlan(_grid(count, 2, periodic=False))
+    centers = np.asarray(plic.discretization.cell_centers)
+    offsets = ((np.arange(samples) + 0.5) / samples - 0.5) / count
+    local = np.stack(np.meshgrid(offsets, offsets, indexing="ij"), axis=-1)
+    points = centers[..., None, :] + local.reshape((-1, 2))
+    # The centered bubble includes pure skirt cells with tied column axes;
+    # height-function fits also consume their normals.
+    alpha = jnp.asarray(np.mean(np.sum((points - 0.5) ** 2, axis=-1) >= 0.25**2, axis=-1))
+    np.testing.assert_array_equal(alpha, jnp.flip(alpha, axis=axis))
+    evaluate = (
+        eqx.filter_jit(plic.interface_normal) if compiled else plic.interface_normal
+    )
+
+    normal = evaluate(alpha)
+
+    reflected = jnp.flip(normal, axis=axis).at[..., axis].multiply(-1.0)
+    np.testing.assert_array_equal(normal, reflected)
+
+
 def test_reconstruction_facets_converge_to_circle_perimeter() -> None:
     errors = []
     for count in (16, 48):

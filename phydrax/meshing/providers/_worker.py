@@ -13,6 +13,9 @@ from typing import Any
 
 import numpy as np
 
+from phydrax.meshing._contracts import MeshingLimits
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from ..._config_state import worker_input
 from ..._config_types import WorkerSetting
 from ..._external_runtime import (
@@ -24,7 +27,6 @@ from ..._external_runtime import (
 )
 from ...logging import emit
 from ...typing import checked
-from .._contracts import MeshingFailure, MeshingFailureCategory, MeshingLimits
 
 
 _REJECTION_CATEGORIES = {

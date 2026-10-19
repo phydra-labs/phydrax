@@ -18,7 +18,7 @@ from ..._strict import StrictModule
 from ...typing import parse
 from .._certificates import _operator_numeric_fingerprint
 from .._operators import AbstractLinearOperator, estimate_operator_action_cost
-from .._spaces import _coordinate_dtype
+from .._spaces import coordinate_dtype
 from ._decompositions import arnoldi, lanczos, Orthogonalization
 from ._results import KrylovDecomposition
 
@@ -174,7 +174,7 @@ class PreparedKrylovProjection(StrictModule):
         values = jnp.asarray(coefficients)
         if values.shape != (self.capacity,):
             raise ValueError("coefficients must have shape (projection.capacity,).")
-        if values.dtype != _coordinate_dtype(self.operator.source):
+        if values.dtype != coordinate_dtype(self.operator.source):
             raise TypeError("coefficient dtype must match the source coordinate dtype.")
         active = jnp.arange(self.capacity) < self.effective_dimension
         coordinates = self.basis @ jnp.where(active, values, 0)
@@ -358,7 +358,7 @@ def _projection_cost(
     dimension: int,
     /,
 ) -> KrylovProjectionCostEstimate:
-    itemsize = _coordinate_dtype(operator.source).itemsize
+    itemsize = coordinate_dtype(operator.source).itemsize
     size = operator.source.size
     storage_entries = (dimension + 3) * size + (dimension + 1) * dimension
     action_cost = estimate_operator_action_cost(operator)
@@ -380,7 +380,7 @@ def _validate_operator(operator: AbstractLinearOperator, /) -> None:
         raise TypeError("operator must be an AbstractLinearOperator.")
     if operator.batch_shape or not operator.source.compatible(operator.target):
         raise ValueError("Krylov projections require an unbatched endomorphism.")
-    if not jnp.issubdtype(_coordinate_dtype(operator.source), jnp.inexact):
+    if not jnp.issubdtype(coordinate_dtype(operator.source), jnp.inexact):
         raise TypeError("Krylov projections require real or complex coordinates.")
 
 

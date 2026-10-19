@@ -12,15 +12,16 @@ import numpy as np
 from jax.sharding import Mesh
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def test_lifting_walls_workflows_scenario_1() -> None:
     topology = phx.discretization.VortexRingSheetTopology(
         4,
-        (0, 1, 2, 3),
-        (1, 2, 3, 0),
-        ((0, 1, 2, 3),),
-        ((1, 1, 1, 1),),
+        jnp.asarray((0, 1, 2, 3), dtype=jnp.int32),
+        jnp.asarray((1, 2, 3, 0), dtype=jnp.int32),
+        jnp.asarray(((0, 1, 2, 3),), dtype=jnp.int32),
+        jnp.asarray(((1, 1, 1, 1),), dtype=jnp.int32),
     )
     state = phx.discretization.VortexRingSheetState(
         topology,
@@ -49,6 +50,10 @@ def test_lifting_walls_workflows_scenario_1() -> None:
         0.0,
         0.1,
     )
+    if field.velocity_gradient is None:
+        raise RuntimeError(
+            "field.velocity_gradient must be present for the request; got None"
+        )
 
     assert field.velocity_gradient.shape == (1, 3, 3)
     np.testing.assert_allclose(step.evidence.circulation_residual, 0.0)
@@ -88,7 +93,7 @@ def test_lifting_walls_workflows_scenario_1() -> None:
         endpoint="clamp",
     )
     evaluation = polar.evaluate(0.0, 5.0e5, 0.2, 0.1)
-    stall = phx.solver.DynamicStallPlan(0.1, 0.1, jnp.deg2rad(12.0), 0.2)
+    stall = phx.solver.DynamicStallPlan(0.1, 0.1, float(np.deg2rad(12.0)), 0.2)
     stall_state = stall.initialize(jnp.asarray((0.0,)), jnp.asarray((0.0,)))
     stall_result = stall.step(
         stall_state,
@@ -122,7 +127,7 @@ def _component(name: Any, y_offset: Any) -> Any:
 
 
 def test_lifting_walls_workflows_scenario_2() -> None:
-    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     panelization = phx.operators.BoundaryPanelization2D(
         geometry.boundary_atlas,
         panels_per_chart=12,
@@ -142,7 +147,7 @@ def test_lifting_walls_workflows_scenario_2() -> None:
     assert flux.vortex_sheet_strength.shape == (native.straight.length.size,)
     assert jnp.all(jnp.isfinite(flux.vortex_sheet_strength))
     assert flux.evidence.slip_norm < 1e-5
-    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     panelization = phx.operators.BoundaryPanelization2D(
         geometry.boundary_atlas,
         panels_per_chart=12,
@@ -168,7 +173,7 @@ def test_lifting_walls_workflows_scenario_2() -> None:
         evaluation.velocity, jax.vmap(jax.grad(reference))(targets)
     )
     assert bool(evaluation.finite)
-    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile()
+    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     panelization = phx.operators.SurfacePanelization3D(
         geometry.boundary_atlas,
         quadrature_order=2,

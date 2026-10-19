@@ -1,12 +1,12 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Original native design Source1 publication and genuine fresh-process reanalysis.
+"""Publish native design Source1 and reanalyze it in a fresh process.
 
-This is the original sphere/.75, res4/count9, [-1.4,1.4]^3, cap20000,
-120-second, three-comparator case. Archive limits stay at their canonical
-257-member/16-level defaults. The original source has no carried RNG or
-constitutive history; its actual u/density/advected-history owners are retained.
+This is the sphere/.75, res4/count9, [-1.4,1.4]^3, cap20000,
+120-second, three-comparator case. Archive limits stay at their
+257-member/16-level defaults. The source has no carried RNG or
+constitutive history; its u/density/advected-history owners are retained.
 """
 
 from __future__ import annotations
@@ -20,19 +20,18 @@ from time import perf_counter
 import jax.numpy as jnp
 
 import phydrax as phx
-
-# Trusted original scientific model declaration, imported before artifact restore.
-from examples.curved_native_transfer import LinearMarker
-from phydrax._array_archive import ArrayArchiveLimits
-from phydrax._fingerprint import array_tree_fingerprint
-from phydrax.lifecycle._meshing_sources import (
+from phydrax import array_tree_fingerprint, ArrayArchiveLimits
+from phydrax.lifecycle import (
+    admit_meshing_source_model,
     read_meshing_source_closure,
-    register_native_design_source_artifacts,
     write_meshing_source_closure,
 )
-from phydrax.meshing._decision import NativeDesignSourceState
-from tools.meshing_qualification import (
-    _compiled_solver_stages,
+from phydrax.meshing import NativeDesignSourceState
+from tools.meshing_qualification._controls import QualificationControls
+from tools.meshing_qualification._physics import _compiled_solver_stages
+from tools.meshing_qualification._records import _result_identity
+from tools.meshing_qualification.scenarios.curved_native_transfer import LinearMarker
+from tools.meshing_qualification.scenarios.design import (
     _design_qualification_array,
     _design_qualification_derivatives,
     _design_qualification_lifecycle,
@@ -40,12 +39,17 @@ from tools.meshing_qualification import (
     _design_qualification_prepare,
     _design_qualification_source_acceptance,
     _design_qualification_transaction,
-    _result_identity,
 )
 
 
-def original_controls() -> argparse.Namespace:
-    return argparse.Namespace(
+# Archive identity of the learned marker model retained by the design source.
+_MARKER_IDENTITY = (
+    "tools.meshing_qualification.scenarios.curved_native_transfer:LinearMarker"
+)
+
+
+def original_controls() -> QualificationControls:
+    return QualificationControls(
         resolution=4,
         capacity=20000,
         timeout=120.0,
@@ -83,9 +87,9 @@ def _identity(state: NativeDesignSourceState) -> dict[str, object]:
 
 
 def produce(path: Path) -> dict[str, object]:
-    """Execute the original case once with its newly retained scientific owners."""
+    """Execute the case once with its newly retained scientific owners."""
     started = perf_counter()
-    register_native_design_source_artifacts()
+    admit_meshing_source_model(_MARKER_IDENTITY, LinearMarker)
     controls = original_controls()
     states: list[NativeDesignSourceState] = []
     campaign = _design_qualification_lifecycle(controls, retained_source_states=states)
@@ -96,7 +100,7 @@ def produce(path: Path) -> dict[str, object]:
     remaining = controls.timeout - (perf_counter() - started)
     if remaining <= 0.0:
         raise RuntimeError(
-            "Original source campaign clock expired before archive publication."
+            f"produce.remaining must be positive before archive publication; got {remaining!r}."
         )
     state = states[0]
     limits = ArrayArchiveLimits()
@@ -104,7 +108,7 @@ def produce(path: Path) -> dict[str, object]:
     elapsed = perf_counter() - started
     if elapsed > controls.timeout:
         raise RuntimeError(
-            "Original120 source clock expired during default-limit publication."
+            f"produce.elapsed must not exceed controls.timeout during archive publication; got {elapsed!r}."
         )
     return {
         "status": "published",
@@ -128,7 +132,7 @@ def _require_fields(
 ) -> None:
     if prepared.prepared_id != state.target_fields.prepared_id:
         raise RuntimeError(
-            "Cold FE preparation changed the original accepted field owner."
+            f"_require_fields.prepared_id must equal state.target_fields.prepared_id; got {prepared.prepared_id!r}."
         )
     for value, space in zip(
         state.accepted_state.fields, prepared.field_spaces, strict=True
@@ -137,7 +141,7 @@ def _require_fields(
             jnp.all(jnp.isfinite(value))
         ):
             raise RuntimeError(
-                "Cold accepted field does not realize its original physical layout."
+                f"_require_fields.value must have the declared space shape and finite values; got {value!r}."
             )
     density_error = float(jnp.max(jnp.abs(state.accepted_state.fields[1] - 2.0)))
     expected_history = prepared.dof_maps[2].dof_coordinates[:, 1] + 0.5
@@ -146,14 +150,14 @@ def _require_fields(
     )
     if max(density_error, history_error) > 1.0e-10:
         raise RuntimeError(
-            "Cold density or actual original advected history failed its unchanged physical gate."
+            f"_require_fields.field_errors must not exceed 1e-10 for density and advected history; got {(density_error, history_error)!r}."
         )
 
 
 def consume(path: Path, content_id: str) -> dict[str, object]:
-    """Restore exact source/state; reprepare, solve and requalify the real owners."""
+    """Restore source/state, prepare the FE owners, solve and requalify them."""
     started = perf_counter()
-    register_native_design_source_artifacts()
+    admit_meshing_source_model(_MARKER_IDENTITY, LinearMarker)
     controls = original_controls()
     limits = ArrayArchiveLimits()
     state = read_meshing_source_closure(
@@ -163,7 +167,7 @@ def consume(path: Path, content_id: str) -> dict[str, object]:
         state.learned_proposer.model, LinearMarker
     ):
         raise TypeError(
-            "Source1 archive did not restore its exact original design/model declaration."
+            f"consume.state must be NativeDesignSourceState with a LinearMarker model; got {type(state).__name__!r}."
         )
     state.validate_source_integrity()
     source_acceptance = _design_qualification_source_acceptance(
@@ -177,13 +181,13 @@ def consume(path: Path, content_id: str) -> dict[str, object]:
         field.name for field in state.field_specs
     ):
         raise RuntimeError(
-            "Cold allfield declaration changed its original scientific names."
+            f"consume.field_names must equal state.field_specs names; got {tuple(field.name for field in fields)!r}."
         )
     _require_fields(state, all_fields)
     preparation_seconds = perf_counter() - started
     if preparation_seconds >= controls.timeout:
         raise RuntimeError(
-            "Original120 cold source clock expired before continued PDE solve."
+            f"consume.preparation_seconds must be less than controls.timeout; got {preparation_seconds!r}."
         )
     values, compiler, solve_stages = _compiled_solver_stages(
         problem, state.accepted_state.fields[0], controls.repeats
@@ -192,7 +196,7 @@ def consume(path: Path, content_id: str) -> dict[str, object]:
     defect = float(jnp.max(jnp.abs(values - state.accepted_state.fields[0])))
     if defect > 1.0e-10:
         raise RuntimeError(
-            "Cold independently continued PDE differs from the original accepted solution."
+            f"consume.defect must not exceed 1e-10 against the accepted solution; got {defect!r}."
         )
     physical = _design_qualification_physical(state.accepted, scalar, values, 10)
     if (
@@ -200,7 +204,7 @@ def consume(path: Path, content_id: str) -> dict[str, object]:
         or physical["field_L2_error"] >= state.decision.baseline.bound
     ):
         raise RuntimeError(
-            "Cold physical source objective did not retain the actual admitted improvement."
+            f"consume.field_L2_error must not exceed controls.target_error and be less than the baseline bound; got {physical['field_L2_error']!r}."
         )
     executor, reanalysis, _, records = _design_qualification_transaction(
         state.initial,
@@ -213,7 +217,7 @@ def consume(path: Path, content_id: str) -> dict[str, object]:
     )
     actual = reanalysis(state.accepted.mesh, state.accepted_state.fields, None, None)
     state.decision.require_reanalysis(actual)
-    # Replay the actual allfield transition/physical acceptance from the original
+    # Replay the allfield transition/physical acceptance from the
     # accepted epoch; a decoded report or preserved constants alone is not proof.
     replay = executor.execute(
         state.initial_state,
@@ -234,17 +238,19 @@ def consume(path: Path, content_id: str) -> dict[str, object]:
     ):
         if float(jnp.max(jnp.abs(original - renewed))) > 1.0e-10:
             raise RuntimeError(
-                "Cold allfield transition violates the original declared-field error gate."
+                f"consume.fields must differ by at most 1e-10 after transition; got {(original, renewed)!r}."
             )
-    source_scalar, _, _, _ = _design_qualification_prepare(state.initial)
+    source_scalar, _, source_problem, _ = _design_qualification_prepare(state.initial)
     base = _design_qualification_derivatives(
-        state.geometry, state.plan, state.initial, None
+        state.geometry, state.plan, state.initial, source_scalar, source_problem, None
     )
     derivative_records: list[phx.meshing.FixedEpochDerivativeEvidence] = []
     derivative = _design_qualification_derivatives(
         state.geometry,
         state.plan,
         state.initial,
+        source_scalar,
+        source_problem,
         {
             "candidate": state.decision.require_selected(
                 state.initial.result_id,
@@ -274,12 +280,12 @@ def consume(path: Path, content_id: str) -> dict[str, object]:
         or derivative_records[0].routes != state.derivative.routes
     ):
         raise RuntimeError(
-            "Cold composite derivative source/plan routes differ from the original qualification."
+            f"consume.derivative_records must retain the qualified epoch, parameter and routes; got {derivative_records!r}."
         )
     elapsed = perf_counter() - started
     if elapsed > controls.timeout:
         raise RuntimeError(
-            "Original120 cold source clock expired during composite reanalysis."
+            f"consume.elapsed must not exceed controls.timeout during composite reanalysis; got {elapsed!r}."
         )
     return {
         "status": "passed",

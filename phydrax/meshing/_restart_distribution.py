@@ -1,17 +1,16 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Topology-changing placement of saved, complete simplex forest records.
+"""Repack saved simplex forest records for a changed execution topology.
 
-Only numerical stable-ID packets are repacked here. Scientific source recipes,
-accepted certificates and predecessor proofs remain with the checkpoint/epoch
-owners; a repack receipt is not an acceptance report.
+Source recipes, accepted certificates, and predecessor proofs remain with the
+checkpoint or epoch owners. This module returns placement inventory for their
+numerical stable-ID records.
 """
 
 from __future__ import annotations
 
 import operator
-from dataclasses import dataclass
 from typing import final
 
 import equinox as eqx
@@ -26,28 +25,30 @@ from .._fingerprint import canonical_fingerprint, logical_array_value_collection
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._adaptive_simplex import (
-    _vertex_half_facets,
     AdaptiveSimplexLayout,
     AdaptiveSimplexParts,
     AdaptiveSimplexState,
     AdaptiveSimplexStatus,
     masked_simplex_facet_neighbors,
     MaskedSimplexMesh,
+    vertex_half_facets,
+)
+from ..typing import checked
+
+# Module references defer symbol resolution across mutually dependent execution owners.
+# Deferred symbol lookup: _restart_distribution <-> _distribution_migration cycle.
+from . import (
+    _device_adaptation as device_adaptation_owner,
+    _distribution_migration as migration_owner,
 )
 from ._distribution_forest import (
-    _CELL_FIELDS,
-    _ids,
-    _members,
-    _slots,
-    _validated_forest_roots,
-    _VERTEX_FIELDS,
-)
-from ._distribution_migration import (
-    _forest_migration_routes,
-    _prepare_migration_routes,
-    _WORKSET_FIELDS,
-    replay_graph_restart_proposal,
-    SimplexGraphRestartProposal,
+    forest_cell_arrays,
+    forest_vertex_arrays,
+    ids,
+    members,
+    simplex_forest_arrays,
+    slots,
+    validated_forest_roots,
 )
 from ._result import CellMeshingResult, CollectiveMeshEvidence
 
@@ -57,13 +58,20 @@ _INVALID = int(AdaptiveSimplexStatus.INVALID_GEOMETRY)
 _CAPACITY = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
 
 
-@dataclass(frozen=True, slots=True)
-class _SimplexRestartInventory:
-    """Scientific old/new records, independent of where their archive is restored."""
+@final
+class SimplexRestartPlacement(StrictModule, NonTrainableState):
+    """Saved execution metadata without requiring its former physical devices."""
 
-    axis_name: str
-    partition_count: int
-    neighbor_pairs: tuple[tuple[int, int], ...]
+    axis_name: str = eqx.field(static=True)
+    part_count: int = eqx.field(static=True)
+    neighbor_pairs: tuple[tuple[int, int], ...] = eqx.field(static=True)
+
+
+@final
+class SimplexRestartRepack(StrictModule, NonTrainableState):
+    """Repacked scientific records with live or saved execution placement."""
+
+    parts: AdaptiveSimplexParts | SimplexRestartPlacement
     layout: AdaptiveSimplexLayout
     states: AdaptiveSimplexState
     cell_owners: Array
@@ -90,41 +98,17 @@ class _SimplexRestartInventory:
     solver_cell_owners: Array
     saved_solver_cell_owners: Array | None
     cell_migration_counts: Array | None
-    graph_proposal: SimplexGraphRestartProposal | None = None
+    graph_proposal: migration_owner.SimplexGraphRestartProposal | None = None
 
-
-@dataclass(frozen=True, slots=True)
-class SimplexRestartRepack:
-    """Concrete new-placement records and lossless original control inventory."""
-
-    parts: AdaptiveSimplexParts
-    layout: AdaptiveSimplexLayout
-    states: AdaptiveSimplexState
-    cell_owners: Array
-    vertex_owners: Array
-    cell_history: tuple[Array, ...]
-    vertex_history: tuple[Array, ...]
-    status: Array
-    cells_before: Array
-    cells_after: Array
-    vertices_before: Array
-    vertices_after: Array
-    saved_cursors: Array
-    saved_clocks: Array
-    saved_counters: Array
-    saved_states: AdaptiveSimplexState
-    saved_cell_owners: Array
-    saved_vertex_owners: Array
-    source_result: CellMeshingResult | None
-    cell_saved_locations: Array
-    vertex_saved_locations: Array
-    requested_target_owners: Array
-    saved_cell_history: tuple[Array, ...]
-    saved_vertex_history: tuple[Array, ...]
-    solver_cell_owners: Array
-    saved_solver_cell_owners: Array | None
-    cell_migration_counts: Array | None
-    graph_proposal: SimplexGraphRestartProposal | None = None
+    def execution_parts(self) -> AdaptiveSimplexParts:
+        """Return the live execution placement required for publication."""
+        match self.parts:
+            case AdaptiveSimplexParts() as parts:
+                return parts
+            case SimplexRestartPlacement():
+                raise ValueError(
+                    "restart.parts must provide live execution devices; got saved placement"
+                )
 
 
 @final
@@ -140,29 +124,27 @@ class SimplexRestartRepackProof(StrictModule, NonTrainableState):
     partition_count: int = eqx.field(static=True)
     neighbor_pairs: tuple[tuple[int, int], ...] = eqx.field(static=True)
 
+    @checked
     def __init__(self, receipt: SimplexRestartRepack, /) -> None:
-        if not isinstance(receipt, SimplexRestartRepack):
-            raise TypeError("Restart proof requires the owning actual numerical receipt.")
         identity = simplex_restart_repack_content_id(receipt)
         source = receipt.source_result
         if source is None:
-            raise ValueError("Validated restart proof lost its actual scientific source.")
+            raise ValueError("restart.source_result must be present; got None")
         arrays = tuple(sorted(_restart_repack_arrays(receipt).items()))
+        parts = receipt.execution_parts()
         self.arrays = arrays
         self.source = source
         self.layout = receipt.layout
         self.content_id = identity
         self.source_result_id = source.result_id
-        self.axis_name = receipt.parts.axis_name
-        self.partition_count = receipt.parts.part_count
-        self.neighbor_pairs = receipt.parts.neighbor_pairs
+        self.axis_name = parts.axis_name
+        self.partition_count = parts.part_count
+        self.neighbor_pairs = parts.neighbor_pairs
 
+    @checked
     def require_receipt(self, receipt: SimplexRestartRepack, /) -> None:
-        """Require exact immutable array/source bindings using only local metadata."""
-        if not isinstance(receipt, SimplexRestartRepack):
-            raise TypeError(
-                "Local restart construction requires its actual numerical receipt."
-            )
+        """Require immutable array/source bindings using only local metadata."""
+        parts = receipt.execution_parts()
         if (
             receipt.source_result is not self.source
             or receipt.layout is not self.layout
@@ -171,21 +153,21 @@ class SimplexRestartRepackProof(StrictModule, NonTrainableState):
             or receipt.parts.neighbor_pairs != self.neighbor_pairs
         ):
             raise ValueError(
-                "Restart proof has a different scientific source or reconstruction placement."
+                "restart.proof must bind the same source and placement; got mismatched source, layout, or owners"
             )
-        placement = NamedSharding(receipt.parts.mesh, PartitionSpec(self.axis_name))
+        placement = NamedSharding(parts.mesh, PartitionSpec(self.axis_name))
         if not receipt.states.mesh.cell_ids.sharding.is_equivalent_to(
             placement, receipt.states.mesh.cell_ids.ndim
         ):
             raise ValueError(
-                "Restart arrays have a different actual device placement from the validated receipt."
+                "restart.states must use the validated execution sharding; got different device placement"
             )
         actual = _restart_repack_arrays(receipt)
         if len(actual) != len(self.arrays) or any(
             name not in actual or actual[name] is not value for name, value in self.arrays
         ):
             raise ValueError(
-                "Restart arrays differ from the validated immutable numerical bindings."
+                "restart.arrays must retain validated numerical references; got different array bindings"
             )
 
 
@@ -200,12 +182,12 @@ def _restart_solver_owners(active: Array, locations: Array, requested: Array) ->
 def _source_solver_owners(
     source: CellMeshingResult, saved: AdaptiveSimplexState
 ) -> Array:
-    """Bind old solver senders to the actual accepted source entity bank."""
+    """Bind saved solver senders to the accepted source entity bank."""
     evidence = source.collective_evidence
     storage = source.mesh.storage
     if evidence is None or storage is None:
         raise ValueError(
-            "Accepted restart ownership requires the original logical mesh proof and storage."
+            "restart.source_result must retain collective mesh evidence and storage; got missing source evidence"
         )
     count = saved.mesh.cell_ids.shape[0]
     if (
@@ -214,7 +196,9 @@ def _source_solver_owners(
         or evidence.mesh_id != source.mesh.mesh_id
         or evidence.evidence_id != storage.evidence_id
     ):
-        raise ValueError("The accepted source does not bind the saved logical placement.")
+        raise ValueError(
+            "restart.saved_states must match the accepted source placement; got mismatched dimensions"
+        )
     identifiers, owners = evidence.entity_ids[-1], evidence.entity_owners[-1]
     total = evidence.global_entity_counts[-1]
     valid = jnp.arange(identifiers.shape[0]) < total
@@ -230,7 +214,7 @@ def _source_solver_owners(
     invalid |= jnp.sum(saved.mesh.cell_active, dtype=jnp.int64) != total
     if bool(jax.device_get(invalid)):
         raise ValueError(
-            "Saved active records do not cover the accepted scientific source ownership."
+            "restart.saved_states must cover accepted source ownership; got missing active records"
         )
     return jnp.where(saved.mesh.cell_active, selected, -1).astype(jnp.int32)
 
@@ -260,7 +244,7 @@ def _restart_cell_traffic(
 
 
 def _numerical_digest(tree: object) -> str:
-    """Use the canonical logical-byte owner for exact numerical leaf comparison."""
+    """Compare numerical leaves through their logical-byte collection digest."""
     arrays = {
         "value" + jax.tree_util.keystr(path): value
         for path, value in jax.tree_util.tree_flatten_with_path(tree)[0]
@@ -270,7 +254,7 @@ def _numerical_digest(tree: object) -> str:
 
 
 @eqx.filter_jit
-def _logical_restart_routes(vertex_ids: Array, /) -> Array:
+def logical_restart_routes(vertex_ids: Array, /) -> Array:
     """Replay shared allocated-ID routes without assuming one device per saved row."""
     count = vertex_ids.shape[0]
     keys = jnp.sort(jnp.where(vertex_ids >= 0, vertex_ids, _SENTINEL), axis=1)
@@ -292,54 +276,47 @@ def _logical_restart_routes(vertex_ids: Array, /) -> Array:
     )
 
 
+@checked
 def validate_simplex_restart_repack(
-    receipt: SimplexRestartRepack | _SimplexRestartInventory,
+    receipt: SimplexRestartRepack,
     requested_target_owners: Array,
     /,
 ) -> None:
-    """Consume an actual accepted-source, complete-history rectangular receipt.
+    """Validate an accepted-source repack inventory with all history leaves.
 
-    Cached status, source presence and rank metadata are not proof. Recompute
-    old-to-new scientific records and every supplied history leaf, rebind the
-    saved source through its numerical archive theorem, and check exact controls,
-    locations, solver senders/receivers and measured target execution routes.
+    Recompute source-to-target scientific records and supplied history leaves,
+    rebind the saved source through its archive proof, and compare retained
+    controls, locations, solver ranks, and measured execution routes.
     """
-    from ._device_adaptation import restore_partitioned_mesh_state
 
-    if not isinstance(receipt, (SimplexRestartRepack, _SimplexRestartInventory)):
-        raise TypeError(
-            "Restart validation requires the owning numerical repack receipt."
-        )
     source = receipt.source_result
     if source is None:
         raise ValueError(
-            "A raw staged repack is not an accepted scientific source receipt."
+            "restart.source_result must provide an accepted source; got None"
         )
     storage, evidence = source.mesh.storage, source.collective_evidence
     if storage is None or not isinstance(evidence, CollectiveMeshEvidence):
         raise ValueError(
-            "Restart validation requires the source's actual retained-forest inventory and theorem."
+            "restart.source_result must retain forest storage and collective evidence; got missing retained content"
         )
-    saved_layout, _, _ = restore_partitioned_mesh_state(storage, evidence)
+    saved_layout, _, _ = device_adaptation_owner.restore_partitioned_mesh_state(
+        storage, evidence
+    )
     # The storage epoch is the packed publication view; migration consumes the
     # independently retained raw compiled forest proved by that same theorem.
     accepted_saved = evidence.compiled_states
     if _numerical_digest(receipt.saved_states) != _numerical_digest(accepted_saved):
         raise ValueError(
-            "The saved forest differs from the actual accepted source theorem."
+            "restart.saved_states must match accepted source evidence; got different forest content"
         )
     if _numerical_digest(requested_target_owners) != _numerical_digest(
         receipt.requested_target_owners
     ):
         raise ValueError(
-            "The rectangular placement proposal differs from its retained numerical request."
+            "restart.requested_target_owners must match the retained proposal; got different numerical owners"
         )
-    placement = receipt.parts if isinstance(receipt, SimplexRestartRepack) else receipt
-    count = (
-        placement.part_count
-        if isinstance(placement, AdaptiveSimplexParts)
-        else placement.partition_count
-    )
+    placement = receipt.parts
+    count = placement.part_count
     if (
         requested_target_owners.shape != receipt.saved_states.mesh.cell_ids.shape
         or requested_target_owners.dtype != jnp.int32
@@ -350,7 +327,7 @@ def validate_simplex_restart_repack(
         or receipt.layout.coordinate_dtype != saved_layout.coordinate_dtype
     ):
         raise ValueError(
-            "Restart receipt dimensions do not describe the actual old/new execution placements."
+            "restart.layout must match source and target execution dimensions; got incompatible capacities or coordinates"
         )
     expected = _repack(
         receipt.layout,
@@ -364,7 +341,7 @@ def validate_simplex_restart_repack(
     )
     if expected[0].mesh.signature_id != receipt.states.mesh.signature_id:
         raise ValueError(
-            "Restart raw layout differs from its actual coordinate/cell capacity identity."
+            "restart.states must match the repacked layout signature; got different coordinate or cell capacity"
         )
     actual = (
         receipt.states,
@@ -376,12 +353,12 @@ def validate_simplex_restart_repack(
     )
     if _numerical_digest(expected) != _numerical_digest(actual):
         raise ValueError(
-            "Restart records, typed histories or numerical verdict differ from exact repacking."
+            "restart.states must match replayed records, histories, and status; got different numerical content"
         )
     states, co, vo, _, _, status = expected
     if bool(jax.device_get(jnp.any(status != 0))):
         raise ValueError(
-            "The complete-history placement failed its actual numerical packet proof."
+            "restart.status must pass history packet validation; got nonzero status"
         )
     cells = _saved_locations(
         receipt.saved_states.mesh.cell_ids,
@@ -434,7 +411,7 @@ def validate_simplex_restart_repack(
         )
     ):
         raise ValueError(
-            "Restart locations, original controls or measured record counts were corrupted."
+            "restart.saved_locations must match replayed locations, controls, and counts; got different retained content"
         )
     saved_solver = _source_solver_owners(source, receipt.saved_states)
     solver = _restart_solver_owners(
@@ -455,16 +432,17 @@ def validate_simplex_restart_repack(
         )
     ):
         raise ValueError(
-            "Rectangular solver ownership/traffic differs from exact scientific cell correspondence."
+            "restart.cell_migration_counts must match solver ownership correspondence; got different owners or traffic"
         )
-    if isinstance(receipt, SimplexRestartRepack):
-        routes = _prepare_migration_routes(
-            receipt.parts, _forest_migration_routes(receipt.parts, receipt.states)
+    if isinstance(placement, AdaptiveSimplexParts):
+        routes = migration_owner.prepare_migration_routes(
+            placement,
+            migration_owner.forest_migration_routes(placement, receipt.states),
         )
         neighbor_pairs = routes.neighbor_pairs
     else:
         mask = np.asarray(
-            jax.device_get(_logical_restart_routes(receipt.states.mesh.vertex_ids)),
+            jax.device_get(logical_restart_routes(receipt.states.mesh.vertex_ids)),
             dtype=np.bool_,
         )
         neighbor_pairs = tuple(
@@ -472,7 +450,7 @@ def validate_simplex_restart_repack(
         )
     if neighbor_pairs != placement.neighbor_pairs:
         raise ValueError(
-            "Restart execution routes differ from actual shared allocated vertices."
+            "restart.parts.neighbor_pairs must match shared allocated vertices; got different execution routes"
         )
     graph = receipt.graph_proposal
     if graph is not None:
@@ -480,22 +458,22 @@ def validate_simplex_restart_repack(
             graph.requested_target_owners
         ) != _numerical_digest(requested_target_owners):
             raise ValueError(
-                "A GRAPH restart must place exactly its executed partition's projected owners."
+                "restart.graph_proposal must bind its executed projected owners; got different target ownership"
             )
-        replay_graph_restart_proposal(
+        migration_owner.replay_graph_restart_proposal(
             graph, receipt.saved_states, axis_name=placement.axis_name
         )
 
 
 def _restart_repack_arrays(
-    receipt: SimplexRestartRepack | _SimplexRestartInventory,
+    receipt: SimplexRestartRepack,
 ) -> dict[str, Array]:
-    """Explicit complete numerical inventory shared by identity and local binding."""
+    """Return the numerical inventory shared by identity and local binding."""
     old_solver = receipt.saved_solver_cell_owners
     traffic = receipt.cell_migration_counts
     if receipt.source_result is None or old_solver is None or traffic is None:
         raise ValueError(
-            "Validated restart content requires its actual scientific source and solver transport."
+            "restart.source_result must bind source and solver transport; got missing source, owners, or traffic"
         )
     arrays = {
         "proposal/target_owners": receipt.requested_target_owners,
@@ -517,44 +495,12 @@ def _restart_repack_arrays(
         "counts/vertices_before": receipt.vertices_before,
         "counts/vertices_after": receipt.vertices_after,
     }
-    mesh_names = (
-        "coordinates",
-        "vertex_ids",
-        "vertex_active",
-        "cells",
-        "cell_ids",
-        "cell_active",
-        "facet_neighbors",
-    )
-    state_names = (
-        "vertex_half_facets",
-        "tuples",
-        "tags",
-        "blocks",
-        "generations",
-        "parents",
-        "children",
-        "bisection_vertices",
-        "retired",
-        "cell_classes",
-        "facet_classes",
-        "vertex_parents",
-        "vertex_levels",
-        "vertex_removal",
-        "vertex_protected",
-        "protected_codes",
-        "refine_rejected",
-        "coarsen_marked",
-        "cursors",
-        "clocks",
-        "counters",
-    )
     for prefix, state in (("source", receipt.saved_states), ("target", receipt.states)):
         arrays.update(
-            {f"{prefix}/mesh/{name}": getattr(state.mesh, name) for name in mesh_names}
-        )
-        arrays.update(
-            {f"{prefix}/state/{name}": getattr(state, name) for name in state_names}
+            {
+                f"{prefix}/{name}": value
+                for name, value in simplex_forest_arrays(state).items()
+            }
         )
     for prefix, cells, vertices in (
         ("source", receipt.saved_cell_history, receipt.saved_vertex_history),
@@ -577,24 +523,25 @@ def _restart_repack_arrays(
                 "graph/vertex_weights": graph.vertex_weights,
                 "graph/edge_weights": graph.edge_weights,
                 **{
-                    f"graph/workset/{name}": getattr(graph.workset, name)
-                    for name in _WORKSET_FIELDS
+                    f"graph/workset/{name}": value
+                    for name, value in graph.workset.arrays().items()
                 },
             }
         )
     return arrays
 
 
-def simplex_restart_repack_content_id(
-    receipt: SimplexRestartRepack | _SimplexRestartInventory, /
-) -> str:
-    """Validate once and identify complete scientific placement without live caches."""
+@checked
+def simplex_restart_repack_content_id(receipt: SimplexRestartRepack, /) -> str:
+    """Validate the scientific placement inventory and compute its content ID."""
     validate_simplex_restart_repack(receipt, receipt.requested_target_owners)
     source = receipt.source_result
     if source is None:
-        raise ValueError("Validated restart content lost its actual accepted source.")
+        raise ValueError(
+            "restart.source_result must be present after validation; got None"
+        )
     arrays = _restart_repack_arrays(receipt)
-    placement = receipt.parts if isinstance(receipt, SimplexRestartRepack) else receipt
+    placement = receipt.parts
     return canonical_fingerprint(
         {
             "kind": "complete-simplex-restart-repack",
@@ -604,9 +551,7 @@ def simplex_restart_repack_content_id(
             "source_layout": receipt.saved_states.mesh.signature_id,
             "target_layout": receipt.layout.signature_id,
             "old_partition_count": receipt.saved_states.mesh.cell_ids.shape[0],
-            "new_partition_count": placement.part_count
-            if isinstance(placement, AdaptiveSimplexParts)
-            else placement.partition_count,
+            "new_partition_count": placement.part_count,
             "axis_name": placement.axis_name,
             "neighbor_pairs": placement.neighbor_pairs,
             "proposal_route": None
@@ -630,9 +575,9 @@ def restart_forest_target_owners(
     """Route a saved theorem's initial forest by retained scientific cell IDs.
 
     The ancestor forest can have different capacities and old part count.
-    Every allocated ancestor record must have exactly one authoritative record
+    Every allocated ancestor record must have exactly one record-owner entry
     in the repacked forest; unknown/duplicated records refuse the whole mapping.
-    These owners permit an actual second repack of the old initial states and
+    These owners permit a second repack of the old initial states and
     their geometry/exterior payloads, not a relabeling of the predecessor proof.
     """
     if (
@@ -641,14 +586,16 @@ def restart_forest_target_owners(
         or repacked_cell_owners.shape != repacked_cell_ids.shape
     ):
         raise ValueError(
-            "Ancestor and repacked forest IDs require their actual part/capacity axes."
+            "restart.forest_ids must provide part and capacity axes; got incompatible array shapes"
         )
     if (
         ancestor_cell_ids.dtype != jnp.int64
         or repacked_cell_ids.dtype != jnp.int64
         or repacked_cell_owners.dtype != jnp.int32
     ):
-        raise TypeError("Forest correspondence requires int64 IDs and int32 owners.")
+        raise TypeError(
+            "restart.forest_ids must use int64 IDs and int32 owners; got incompatible dtypes"
+        )
     count = repacked_cell_ids.shape[0]
     result = jnp.full(ancestor_cell_ids.shape, count, jnp.int32)
     occurrences = jnp.zeros(ancestor_cell_ids.shape, jnp.int32)
@@ -678,7 +625,7 @@ def restart_forest_target_owners(
 
 @eqx.filter_jit
 def _saved_locations(saved_ids: Array, owners: Array, target_ids: Array) -> Array:
-    """Exact new-slot to authoritative old-part/slot correspondence."""
+    """Map new slots to their saved record-owner part and slot."""
     result = jnp.full((*target_ids.shape, 2), -1, jnp.int32)
 
     def visit(index: int, result: Array) -> Array:
@@ -741,7 +688,7 @@ def _empty(packet: dict[str, Array], capacity: int) -> dict[str, Array]:
     }
 
 
-def _packet(
+def packet(
     raw: AdaptiveSimplexState,
     cells: tuple[Array, ...],
     vertices: tuple[Array, ...],
@@ -750,22 +697,22 @@ def _packet(
     c, v = mesh.cell_ids.shape[0], mesh.vertex_ids.shape[0]
     cell = {
         "ids": mesh.cell_ids,
-        "cells": _ids(mesh.vertex_ids, mesh.cells),
-        "tuples": _ids(mesh.vertex_ids, raw.tuples),
+        "cells": ids(mesh.vertex_ids, mesh.cells),
+        "tuples": ids(mesh.vertex_ids, raw.tuples),
         "active": mesh.cell_active,
-        "parents": _ids(mesh.cell_ids, raw.parents // 2),
+        "parents": ids(mesh.cell_ids, raw.parents // 2),
         "ordinal": raw.parents % 2,
-        "children": _ids(mesh.cell_ids, raw.children),
-        "bisection": _ids(mesh.vertex_ids, raw.bisection_vertices),
-        **{name: getattr(raw, name) for name in _CELL_FIELDS},
+        "children": ids(mesh.cell_ids, raw.children),
+        "bisection": ids(mesh.vertex_ids, raw.bisection_vertices),
+        **forest_cell_arrays(raw),
         **{f"payload_{i}": value for i, value in enumerate(cells)},
     }
     vertex = {
         "ids": mesh.vertex_ids,
         "coordinates": mesh.coordinates,
         "active": mesh.vertex_active,
-        "parents": _ids(mesh.vertex_ids, raw.vertex_parents),
-        **{name: getattr(raw, name) for name in _VERTEX_FIELDS},
+        "parents": ids(mesh.vertex_ids, raw.vertex_parents),
+        **forest_vertex_arrays(raw),
         **{f"payload_{i}": value for i, value in enumerate(vertices)},
     }
     invalid = jnp.any(
@@ -784,13 +731,13 @@ def _packet(
     allocated = mesh.cell_ids >= 0
     invalid |= jnp.any(allocated[:, None] & ((mesh.cells < 0) | (raw.tuples < 0)))
     invalid |= jnp.any(allocated[:, None] & ((cell["cells"] < 0) | (cell["tuples"] < 0)))
-    for slots, references in (
+    for source_slots, references in (
         (raw.parents // 2, cell["parents"]),
         (raw.children, cell["children"]),
         (raw.bisection_vertices, cell["bisection"]),
     ):
-        mask = allocated.reshape((c,) + (1,) * (slots.ndim - 1))
-        invalid |= jnp.any(mask & (slots >= 0) & (references < 0))
+        mask = allocated.reshape((c,) + (1,) * (source_slots.ndim - 1))
+        invalid |= jnp.any(mask & (source_slots >= 0) & (references < 0))
     invalid |= jnp.any(
         (mesh.vertex_ids >= 0)[:, None]
         & (raw.vertex_parents >= 0)
@@ -799,7 +746,7 @@ def _packet(
     protected = raw.protected_codes != _SENTINEL
     endpoints = jnp.stack((raw.protected_codes // v, raw.protected_codes % v), axis=1)
     invalid |= jnp.any(
-        protected[:, None] & (_ids(mesh.vertex_ids, jnp.clip(endpoints, 0, v - 1)) < 0)
+        protected[:, None] & (ids(mesh.vertex_ids, jnp.clip(endpoints, 0, v - 1)) < 0)
     )
     invalid |= jnp.any(
         (mesh.vertex_ids >= 0) & ~jnp.all(jnp.isfinite(mesh.coordinates), axis=1)
@@ -814,11 +761,11 @@ def _packet(
     return cell, vertex, jnp.where(invalid, _INVALID, 0)
 
 
-def _missing(references: Array, ids: Array, valid: Array) -> Array:
-    keys = jnp.where(ids >= 0, ids, _SENTINEL)
-    pos = jnp.minimum(jnp.searchsorted(keys, references), ids.shape[0] - 1)
+def missing(references: Array, identifiers: Array, valid: Array) -> Array:
+    keys = jnp.where(identifiers >= 0, identifiers, _SENTINEL)
+    pos = jnp.minimum(jnp.searchsorted(keys, references), identifiers.shape[0] - 1)
     mask = valid.reshape((valid.shape[0],) + (1,) * (references.ndim - 1))
-    return jnp.any(mask & (references >= 0) & (ids[pos] != references))
+    return jnp.any(mask & (references >= 0) & (identifiers[pos] != references))
 
 
 @eqx.filter_jit
@@ -839,14 +786,17 @@ def _repack(
     authoritative = (old.mesh.cell_ids >= 0) & (cell_owners == ranks)
     vertex_authoritative = (old.mesh.vertex_ids >= 0) & (vertex_owners == ranks)
 
-    def complete_authority(ids: Array, owners: Array, mask: Array) -> Array:
-        order = jnp.argsort(jnp.where(mask, ids, _SENTINEL).reshape(-1), stable=True)
-        keys = jnp.where(mask, ids, _SENTINEL).reshape(-1)[order]
-        source_rank = jnp.broadcast_to(ranks, ids.shape).reshape(-1)[order]
-        position = jnp.minimum(jnp.searchsorted(keys, ids), keys.shape[0] - 1)
+    def complete_authority(identifiers: Array, owners: Array, mask: Array) -> Array:
+        order = jnp.argsort(
+            jnp.where(mask, identifiers, _SENTINEL).reshape(-1), stable=True
+        )
+        keys = jnp.where(mask, identifiers, _SENTINEL).reshape(-1)[order]
+        source_rank = jnp.broadcast_to(ranks, identifiers.shape).reshape(-1)[order]
+        position = jnp.minimum(jnp.searchsorted(keys, identifiers), keys.shape[0] - 1)
         unique = jnp.all((keys[1:] != keys[:-1]) | (keys[1:] == _SENTINEL))
         covered = jnp.all(
-            (ids < 0) | ((keys[position] == ids) & (source_rank[position] == owners))
+            (identifiers < 0)
+            | ((keys[position] == identifiers) & (source_rank[position] == owners))
         )
         return unique & covered
 
@@ -868,7 +818,7 @@ def _repack(
         AdaptiveSimplexState, Array, Array, tuple[Array, ...], tuple[Array, ...], Array
     ]:
         first = jax.tree_util.tree_map(lambda value: value[0], old)
-        cell, vertex, _ = _packet(
+        cell, vertex, _ = packet(
             first, tuple(value[0] for value in ch), tuple(value[0] for value in vh)
         )
         resident = _empty(cell, layout.cell_capacity)
@@ -880,12 +830,12 @@ def _repack(
         ) -> tuple[dict[str, Array], Array]:
             resident, status = carry
             raw = jax.tree_util.tree_map(lambda value: value[index], old)
-            packet, _, flags = _packet(
+            local_packet, _, flags = packet(
                 raw,
                 tuple(value[index] for value in ch),
                 tuple(value[index] for value in vh),
             )
-            roots, valid = _validated_forest_roots(raw)
+            roots, valid = validated_forest_roots(raw)
             target = jnp.full(raw.mesh.cell_ids.shape, count, jnp.int32)
             proposal = requested[index]
             active = raw.mesh.cell_active & (cell_owners[index] == index)
@@ -901,7 +851,7 @@ def _repack(
                 & (cell_owners[index] == index)
                 & (target == rank)
             )
-            resident, flags = _merge_packet(resident, packet, selected)
+            resident, flags = _merge_packet(resident, local_packet, selected)
             return resident, status | flags
 
         resident, status = jax.lax.fori_loop(0, old_count, cell_visit, (resident, status))
@@ -936,7 +886,7 @@ def _repack(
             ) -> tuple[dict[str, Array], Array]:
                 result, status = carry
                 raw = jax.tree_util.tree_map(lambda value: value[index], old)
-                _, packet, flags = _packet(
+                _, local_packet, flags = packet(
                     raw,
                     tuple(value[index] for value in ch),
                     tuple(value[index] for value in vh),
@@ -946,17 +896,17 @@ def _repack(
                 edges = jnp.stack((codes // v, codes % v), axis=1)
                 edges = jnp.where(
                     (codes != _SENTINEL)[:, None],
-                    _ids(raw.mesh.vertex_ids, jnp.clip(edges, 0, v - 1)),
+                    ids(raw.mesh.vertex_ids, jnp.clip(edges, 0, v - 1)),
                     -1,
                 )
-                touching = jnp.any(_members(refs, edges), axis=1)
+                touching = jnp.any(members(refs, edges), axis=1)
                 edge_refs = jnp.sort(jnp.where(touching[:, None], edges, -1).reshape(-1))
-                selected = (packet["ids"] >= 0) & (
-                    _members(refs, packet["ids"])
-                    | _members(edge_refs, packet["ids"])
-                    | (packet["ids"] % count == rank)
+                selected = (local_packet["ids"] >= 0) & (
+                    members(refs, local_packet["ids"])
+                    | members(edge_refs, local_packet["ids"])
+                    | (local_packet["ids"] % count == rank)
                 )
-                result, merged_status = _merge_packet(result, packet, selected)
+                result, merged_status = _merge_packet(result, local_packet, selected)
                 return result, status | flags | merged_status
 
             vertices, status = jax.lax.fori_loop(0, old_count, visit, (vertices, status))
@@ -971,11 +921,11 @@ def _repack(
         cids = jnp.where(used, resident["ids"], -1)
         vids = jnp.where(vertices["ids"] != _SENTINEL, vertices["ids"], -1)
         for name in ("cells", "tuples", "bisection"):
-            status |= jnp.where(_missing(resident[name], vids, used), _INVALID, 0)
+            status |= jnp.where(missing(resident[name], vids, used), _INVALID, 0)
         for name in ("parents", "children"):
-            status |= jnp.where(_missing(resident[name], cids, used), _INVALID, 0)
-        status |= jnp.where(_missing(vertices["parents"], vids, vids >= 0), _INVALID, 0)
-        rows = jnp.maximum(_slots(vids, resident["cells"]), 0)
+            status |= jnp.where(missing(resident[name], cids, used), _INVALID, 0)
+        status |= jnp.where(missing(vertices["parents"], vids, vids >= 0), _INVALID, 0)
+        rows = jnp.maximum(slots(vids, resident["cells"]), 0)
         active = used & resident["active"]
         neighbors = masked_simplex_facet_neighbors(rows, active)
         mesh = MaskedSimplexMesh(
@@ -996,16 +946,17 @@ def _repack(
             edges = jnp.stack((raw.protected_codes // v, raw.protected_codes % v), axis=1)
             edges = jnp.where(
                 (raw.protected_codes != _SENTINEL)[:, None],
-                _ids(raw.mesh.vertex_ids, jnp.clip(edges, 0, v - 1)),
+                ids(raw.mesh.vertex_ids, jnp.clip(edges, 0, v - 1)),
                 -1,
             )
             present = jnp.all(
-                _members(jnp.where(vids >= 0, vids, _SENTINEL), edges), axis=1
+                members(jnp.where(vids >= 0, vids, _SENTINEL), edges), axis=1
             )
-            slots = _slots(vids, edges).astype(jnp.int64)
+            local_slots = slots(vids, edges).astype(jnp.int64)
             incoming = jnp.where(
                 present,
-                jnp.min(slots, axis=1) * layout.vertex_capacity + jnp.max(slots, axis=1),
+                jnp.min(local_slots, axis=1) * layout.vertex_capacity
+                + jnp.max(local_slots, axis=1),
                 _SENTINEL,
             )
             ordered = jnp.sort(jnp.concatenate((codes, incoming)))
@@ -1021,7 +972,7 @@ def _repack(
             ), status | jnp.where(n > codes.shape[0], _CAPACITY, 0)
 
         codes, status = jax.lax.fori_loop(0, old_count, constraints, (codes, status))
-        parent = _slots(cids, resident["parents"])
+        parent = slots(cids, resident["parents"])
 
         def accumulate(index: int, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             counters, status = carry
@@ -1038,14 +989,14 @@ def _repack(
         clocks = jnp.max(old.clocks, axis=0).at[2].set(status)
         state = AdaptiveSimplexState(
             mesh,
-            vertex_half_facets=_vertex_half_facets(
+            vertex_half_facets=vertex_half_facets(
                 rows, active, neighbors, layout.vertex_capacity
             ),
-            tuples=jnp.maximum(_slots(vids, resident["tuples"]), 0),
+            tuples=jnp.maximum(slots(vids, resident["tuples"]), 0),
             parents=jnp.where(parent >= 0, parent * 2 + resident["ordinal"], -1),
-            children=_slots(cids, resident["children"]),
-            bisection_vertices=_slots(vids, resident["bisection"]),
-            vertex_parents=_slots(vids, vertices["parents"]),
+            children=slots(cids, resident["children"]),
+            bisection_vertices=slots(vids, resident["bisection"]),
+            vertex_parents=slots(vids, vertices["parents"]),
             protected_codes=codes,
             cursors=jnp.stack(
                 (
@@ -1097,6 +1048,7 @@ def _repack(
     return states, co, vo, ch, vh, status
 
 
+@checked
 def repack_simplex_restart(
     target_group: ExecutionGroup,
     layout: AdaptiveSimplexLayout,
@@ -1109,32 +1061,24 @@ def repack_simplex_restart(
     cell_history: tuple[Array, ...] = (),
     vertex_history: tuple[Array, ...] = (),
     source_result: CellMeshingResult | None = None,
-    graph_proposal: SimplexGraphRestartProposal | None = None,
+    graph_proposal: migration_owner.SimplexGraphRestartProposal | None = None,
     route_metadata_capacity_bytes: int = 1 << 20,
 ) -> SimplexRestartRepack:
-    """Reassemble complete old logical records on actual new execution devices.
+    """Reassemble all saved logical records on the target execution devices.
 
     ``requested_target_owners`` is the placement proposal in saved raw-cell ID
     order. When it comes from the native GRAPH route, ``graph_proposal`` binds
-    the executed partition and must hold this exact proposal; restart
+    the executed partition and must hold this proposal; restart
     validation replays it. A family stays together; its smallest active proposed
     owner wins.
     Entirely inactive families use their root scientific ID. Cumulative counters
     retain their total, clocks use their global maximum and allocator ID cursors
-    retain their maximum. Exact former rank controls are also returned unchanged.
+    retain their maximum. Saved rank controls are also returned unchanged.
     Any numerical refusal applies collectively; no result acceptance is implied.
     """
-    if (
-        not isinstance(target_group, ExecutionGroup)
-        or not isinstance(layout, AdaptiveSimplexLayout)
-        or not isinstance(saved, AdaptiveSimplexState)
-    ):
-        raise TypeError(
-            "Restart repack requires an explicit execution group, layout and saved raw state."
-        )
     if len(target_group.mesh.axis_names) != 1 or not target_group.is_member:
         raise ValueError(
-            "Restart repack requires membership in a one-axis target execution group."
+            "restart.target_group must have one axis and include this process; got incompatible execution membership"
         )
     old_shape = saved.mesh.cell_ids.shape
     if (
@@ -1144,41 +1088,43 @@ def repack_simplex_restart(
         or vertex_owners.shape != saved.mesh.vertex_ids.shape
     ):
         raise ValueError(
-            "Saved owner/proposal arrays must align with the old logical raw capacities."
+            "restart.saved_owners must align with saved raw capacities; got incompatible owner or proposal shapes"
         )
     if (
         cell_owners.dtype != jnp.int32
         or vertex_owners.dtype != jnp.int32
         or requested_target_owners.dtype != jnp.int32
     ):
-        raise TypeError("Raw owners and graph proposals must be int32.")
+        raise TypeError(
+            "restart.requested_target_owners must use int32 with raw owners; got incompatible dtypes"
+        )
     if (
         saved.mesh.cells.shape[-1] - 1 != layout.dimension
         or saved.mesh.ambient_dimension != layout.ambient_dimension
         or saved.mesh.coordinates.dtype.name != layout.coordinate_dtype
     ):
         raise ValueError(
-            "Restart placement cannot change the saved geometry or coordinate type."
+            "restart.layout must preserve saved geometry and coordinate dtype; got incompatible coordinate layout"
         )
     if any(value.shape[:2] != old_shape for value in cell_history) or any(
         value.shape[:2] != saved.mesh.vertex_ids.shape for value in vertex_history
     ):
-        raise ValueError("Typed histories must bind every allocated old raw record.")
-    if source_result is not None and not isinstance(source_result, CellMeshingResult):
-        raise TypeError("source_result must be the actual accepted predecessor result.")
+        raise ValueError(
+            "restart.saved_history must bind every allocated raw record; got incompatible history shapes"
+        )
     if (
         graph_proposal is not None
         and graph_proposal.requested_target_owners is not requested_target_owners
     ):
         raise ValueError(
-            "A GRAPH restart must place exactly its executed partition's projected owners."
+            "restart.graph_proposal must bind its executed projected owners; got different target ownership"
         )
     axis = target_group.mesh.axis_names[0]
     count = len(target_group.devices)
     route_budget = operator.index(route_metadata_capacity_bytes)
     if isinstance(route_metadata_capacity_bytes, bool) or route_budget < count * count:
         raise ValueError(
-            "Restart shared-vertex routing exceeds its explicit prepare-barrier byte budget."
+            "restart.route_metadata_capacity_bytes must cover shared-vertex routing; got insufficient byte capacity"
         )
     parts = AdaptiveSimplexParts(target_group.devices, axis_name=axis, neighbor_pairs=())
     output = _repack(
@@ -1201,7 +1147,7 @@ def repack_simplex_restart(
     solver_owners = _restart_solver_owners(
         logical_states.mesh.cell_active, cell_locations, requested_target_owners
     )
-    # Complete correspondence math runs in the old logical array placement;
+    # Correspondence math runs in the saved logical array placement;
     # the single explicit lowering then moves all new-slot records together.
     output, cell_locations, vertex_locations, solver_owners = jax.tree_util.tree_map(
         lambda value: jax.device_put(
@@ -1210,7 +1156,9 @@ def repack_simplex_restart(
         (output, cell_locations, vertex_locations, solver_owners),
     )
     states, co, vo, ch, vh, status = output
-    parts = _prepare_migration_routes(parts, _forest_migration_routes(parts, states))
+    parts = migration_owner.prepare_migration_routes(
+        parts, migration_owner.forest_migration_routes(parts, states)
+    )
     ranks = jnp.arange(old_shape[0], dtype=jnp.int32)[:, None]
     new_ranks = jnp.arange(count, dtype=jnp.int32)[:, None]
     saved_solver_owners = (

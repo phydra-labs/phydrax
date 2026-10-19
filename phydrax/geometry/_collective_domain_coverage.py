@@ -1,14 +1,141 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Target premises from actual sharded dyadic restriction witnesses.
+"""Certify target maps from sharded dyadic restriction evidence.
 
-The caller restores and validates the neutral numerical epoch before publication.
-This owner independently checks the root partition, exact coefficient/chart
-banks, reciprocal facet incidence, source-boundary contact and authoritative
-region/interface ancestry, and certifies the actual target maps with the
-canonical validity owner on every partition. No accepted target result,
-caller-supplied positive flags or materialized global mesh is consumed.
+Mesh certificate checks
+-----------------------
+[
+  {
+    "checks": [
+      "cell_validity"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "Every process reports certified status from the target cell-geometry validity certificate."
+      },
+      {
+        "tag": "X",
+        "statement": "Owned global cell counts form the declared inventory with one storage partition per process."
+      }
+    ],
+    "conclusion": "All-owner validity is accepted only when every process certifies its owned target maps; otherwise collective validity is unresolved.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._collective_domain_coverage._collective_validity",
+      "locator": "phydrax.geometry._collective_domain_coverage._collective_validity",
+      "url": ""
+    },
+    "failure_statuses": []
+  },
+  {
+    "checks": [
+      "collective_cell_validity"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "Every process reports certified status from the target cell-geometry validity certificate."
+      },
+      {
+        "tag": "X",
+        "statement": "Owned global cell counts form the declared inventory with one storage partition per process."
+      }
+    ],
+    "conclusion": "All-owner validity is accepted only when every process certifies its owned target maps; otherwise collective validity is unresolved.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._collective_domain_coverage._collective_validity",
+      "locator": "phydrax.geometry._collective_domain_coverage._collective_validity",
+      "url": ""
+    },
+    "failure_statuses": [
+      "unresolved"
+    ]
+  },
+  {
+    "checks": [
+      "facet_pairing"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "Each recomputed facet vertex record matches a logical facet and has incidence multiplicity one or two."
+      }
+    ],
+    "conclusion": "Target interior facets are paired and boundary facets have one incident target cell.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._collective_domain_coverage._facet_incidence",
+      "locator": "phydrax.geometry._collective_domain_coverage._facet_incidence",
+      "url": ""
+    },
+    "failure_statuses": []
+  },
+  {
+    "checks": [
+      "boundary_contact"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "Target barycentric charts follow the disjoint dyadic root partition; each unshared facet has zero root barycentric coordinate on a root boundary face."
+      }
+    ],
+    "conclusion": "Every unshared target facet lies on the root boundary.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._collective_domain_coverage._boundary_contacts",
+      "locator": "phydrax.geometry._collective_domain_coverage._boundary_contacts",
+      "url": ""
+    },
+    "failure_statuses": []
+  },
+  {
+    "checks": [
+      "embedding_premise"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "The newly bound target embedding certificate reports certified status before coverage is assembled."
+      }
+    ],
+    "conclusion": "An uncertified target embedding leaves target domain coverage unresolved.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._collective_domain_coverage.certify_collective_premises",
+      "locator": "phydrax.geometry._collective_domain_coverage.certify_collective_premises",
+      "url": ""
+    },
+    "failure_statuses": [
+      "unresolved"
+    ]
+  },
+  {
+    "checks": [
+      "mapped_coverage_resource_budget"
+    ],
+    "premises": [
+      {
+        "tag": "X",
+        "statement": "Independent affine root integrals fit the coordinate request work and storage limits."
+      }
+    ],
+    "conclusion": "Resource exhaustion produces unresolved coverage with absent achieved integrals.",
+    "citation": {
+      "kind": "definition",
+      "reference": "phydrax.geometry._collective_domain_coverage.certify_collective_premises",
+      "locator": "phydrax.geometry._collective_domain_coverage.certify_collective_premises",
+      "url": ""
+    },
+    "failure_statuses": [
+      "unresolved"
+    ]
+  }
+]
+End mesh certificate checks
 """
 
 from __future__ import annotations
@@ -20,6 +147,13 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.experimental import multihost_utils
+
+import phydrax.discretization._coordinate_budget as coordinate_budget_owner
+from phydrax.geometry._embedding_state import (
+    coordinate_certificate_request,
+    EmbeddingState,
+    MeshCertificateLimits,
+)
 
 from .._fingerprint import (
     array_tree_fingerprint,
@@ -35,18 +169,18 @@ from ..discretization._cell_geometry_validity import (
     certify_cell_geometry_validity,
 )
 from ..discretization._cell_mesh import CellMesh
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..discretization._coordinate_enclosure import coordinate_source_signature
-from ._mesh_certificates import (
-    _coverage_result,
-    _declared_coverage_measures,
-    _EmbeddingState,
-    _mapped_coverage_measures,
+from ..typing import checked
+from ._domain_coverage import (
+    coverage_result,
+    declared_coverage_measures,
     DomainCoverageCertificate,
-    GlobalEmbeddingCertificate,
-    MeshCertificateBinding,
-    MeshCertificateLimits,
+    mapped_coverage_measures,
     PiecewiseLinearDomain,
 )
+from ._global_embedding import EmbeddingCounts, GlobalEmbeddingCertificate
+from ._mesh_certificates import active_expression_work, MeshCertificateBinding
 
 
 def _require(predicate: Array, message: str) -> None:
@@ -58,11 +192,12 @@ def _bank(arrays: dict[str, Array], name: str) -> Array:
     value = arrays.get(name)
     if value is None:
         raise ValueError(
-            f"Collective proof banks lack the required logical array {name!r}."
+            f"collective.logical_arrays must contain bank {name!r}; got absent bank"
         )
     return value
 
 
+@jax.jit
 def _lookup(keys: Array, query: Array) -> tuple[Array, Array]:
     order = jnp.argsort(keys, stable=True)
     sorted_keys = keys[order]
@@ -78,17 +213,24 @@ def _source_identity(value: str) -> Array:
 
 
 def _raw_partition(states: AdaptiveSimplexState, initial: AdaptiveSimplexState) -> Array:
-    """Complete living binary families, not a sum-only volume witness.
+    """Check living binary families and their root partition.
 
     Child vertex sets are exactly the two halves of the parent split edge.
     Parent/child reciprocity and strictly increasing allocation imply a forest;
-    every living parent is either an active leaf or has both complete halves.
+    every living parent is either an active leaf or has both complementary halves.
     Coarsened history is allowed only when both historical children are retired.
     """
     if states.mesh.cells.ndim != 3 or initial.mesh.cells.shape != states.mesh.cells.shape:
         raise ValueError(
-            "Collective partitions require aligned partition-leading simplex arrays."
+            "collective.states.mesh.cells must match partition-leading simplex shapes; got incompatible arrays"
         )
+    return _raw_partition_values(states, initial)
+
+
+@jax.jit
+def _raw_partition_values(
+    states: AdaptiveSimplexState, initial: AdaptiveSimplexState
+) -> Array:
     parts, capacity, width = states.mesh.cells.shape
     vertices = states.mesh.vertex_ids.shape[1]
     lane = jnp.arange(capacity, dtype=jnp.int32)[None, :]
@@ -204,7 +346,17 @@ def _raw_partition(states: AdaptiveSimplexState, initial: AdaptiveSimplexState) 
 
 
 def _ancestry(states: AdaptiveSimplexState) -> tuple[Array, Array]:
-    """Exact dyadic support on immutable root vertices for each numerical slot."""
+    """Return dyadic support on immutable root vertices for each numerical slot."""
+    identifiers, weights, accepted = _ancestry_values(states)
+    _require(
+        accepted,
+        "collective.vertex_ancestry must form an ordered dyadic source DAG; got inconsistent ancestry",
+    )
+    return identifiers, weights
+
+
+@jax.jit
+def _ancestry_values(states: AdaptiveSimplexState) -> tuple[Array, Array, Array]:
     parts, vertices = states.mesh.vertex_ids.shape
     width = states.mesh.cells.shape[2]
     sentinel = jnp.iinfo(jnp.int64).max
@@ -212,7 +364,9 @@ def _ancestry(states: AdaptiveSimplexState) -> tuple[Array, Array]:
     weights = jnp.zeros((parts, vertices, width), dtype=jnp.float64)
     accepted = jnp.asarray(True)
 
-    def step(slot: int, carry: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
+    def step(
+        slot: Array, carry: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         ids, values, passed = carry
         parent = states.vertex_parents[:, slot]
         root = jnp.all(parent < 0, axis=1)
@@ -264,11 +418,17 @@ def _ancestry(states: AdaptiveSimplexState) -> tuple[Array, Array]:
         )
         return ids, values, passed & jnp.all(~active | valid)
 
-    identifiers, weights, accepted = jax.lax.fori_loop(
-        0, vertices, step, (identifiers, weights, accepted)
+    return jax.lax.fori_loop(0, vertices, step, (identifiers, weights, accepted))
+
+
+@jax.jit
+def _epoch_cell_inventory(
+    identifiers: Array, active: Array, expected_count: int
+) -> tuple[Array, Array]:
+    order = jnp.argsort(
+        jnp.where(active, identifiers, jnp.iinfo(jnp.int64).max), stable=True
     )
-    _require(accepted, "Collective vertex ancestry is not an ordered dyadic source DAG.")
-    return identifiers, weights
+    return order, jnp.sum(active, dtype=jnp.int64) == expected_count
 
 
 def _global_epoch_banks(
@@ -277,21 +437,20 @@ def _global_epoch_banks(
     """Root-vertex support and dyadic weights of every active target corner."""
     ids = states.mesh.cell_ids.reshape(-1)
     active = states.mesh.cell_active.reshape(-1)
-    order = jnp.argsort(jnp.where(active, ids, jnp.iinfo(jnp.int64).max), stable=True)[
-        :count
-    ]
+    full_order, complete_inventory = _epoch_cell_inventory(ids, active, count)
+    order = full_order[:count]
     selected_ids = ids[order]
     _require(
-        jnp.sum(active, dtype=jnp.int64) == count,
-        "Logical target cell count does not match the actual active forest.",
+        complete_inventory,
+        "collective.cell_count must equal the active forest count; got differing counts",
     )
     _require(
         selected_ids[1:] > selected_ids[:-1],
-        "Actual collective target cell identities overlap.",
+        "collective.cell_global_ids must be strictly increasing; got duplicate identities",
     )
     _require(
         selected_ids == _bank(arrays, "cell_global_ids")[:count],
-        "Logical target cell IDs differ from actual active epoch cells.",
+        "collective.cell_global_ids must match active epoch cells; got different identities",
     )
     part_count, _, width = states.mesh.cells.shape
     global_vertices = jnp.take_along_axis(
@@ -299,11 +458,11 @@ def _global_epoch_banks(
     ).reshape((-1, width))[order]
     _require(
         global_vertices == _bank(arrays, "cell_vertices")[:count],
-        "Logical cell corner identities differ from the numerical forest.",
+        "collective.cell_vertices must match the epoch forest; got different corner identities",
     )
     source_ids, weights = _ancestry(states)
     # Gather per partition, flatten the partition-leading slot axis, then select
-    # the active cells in canonical ID order.
+    # the active cells in increasing ID order.
     slots = (ids.shape[0], width, width)
     gathered_ids = jax.vmap(lambda source, rows: source[rows])(
         source_ids, states.mesh.cells
@@ -315,12 +474,12 @@ def _global_epoch_banks(
 
 
 def _exact_action_chart(actions: np.ndarray, width: int, /) -> tuple[Fraction, ...]:
-    """Exact root barycentrics of a composed coefficient action stack.
+    """Return root barycentrics of a rational coefficient action stack.
 
     Stack row 0 is the outermost action, so target corners are the rows of
     ``actions[0] @ ... @ actions[-1]``, as the serial
     ``BarycentricCellGeometryElement`` tabulation composes them. Each binary64
-    weight is its own exact rational; an empty stack is the root identity.
+    weight is represented as a Fraction; an empty stack is the root identity.
     """
     chart = [
         [Fraction(int(row == column)) for column in range(width)] for row in range(width)
@@ -346,15 +505,16 @@ def _exact_action_chart(actions: np.ndarray, width: int, /) -> tuple[Fraction, .
 def _require_action_charts(
     counts: Array, actions: Array, valid: Array, barycentric: Array, width: int, /
 ) -> None:
-    """Exact equality of witnessed action charts and the actual dyadic ancestry.
+    """Check coefficient action charts against dyadic ancestry.
 
-    Every owner gathers the complete global banks, so each decides the same
-    all-cell verdict.
+    Every owner gathers the same global banks before rational comparison.
     """
     host_counts, host_actions, host_valid, expected = (
         np.asarray(value)
-        for value in multihost_utils.process_allgather(
-            (counts, actions, valid, barycentric), tiled=True
+        for value in jax.device_get(
+            multihost_utils.process_allgather(
+                (counts, actions, valid, barycentric), tiled=True
+            )
         )
     )
     host_valid = host_valid.astype(np.bool_)
@@ -370,7 +530,7 @@ def _require_action_charts(
         or not np.all(np.isfinite(host_actions[host_valid]))
     ):
         raise ValueError(
-            "Collective coefficient action stacks lost their source columns or declared depth."
+            "collective.geometry.action_weights must match declared depths and source width; got malformed stacks"
         )
     expected = expected.astype(np.float64)
     decided: set[tuple[bytes, bytes]] = set()
@@ -383,9 +543,59 @@ def _require_action_charts(
             Fraction(float(value)) for value in expected[row].reshape(-1)
         ):
             raise ValueError(
-                "Collective coefficient actions differ from the actual dyadic ancestry."
+                "collective.geometry.action_weights must equal dyadic ancestry charts; got different coefficients"
             )
         decided.add(key)
+
+
+@jax.jit
+def _root_barycentric_values(
+    source_vertex_ids: Array,
+    source_weights: Array,
+    source_corners: Array,
+    root_rows: Array,
+) -> tuple[Array, Array, Array]:
+    root_vertices = source_corners[root_rows]
+    barycentric = jnp.sum(
+        jnp.where(
+            source_vertex_ids[:, :, :, None] == root_vertices[:, None, None, :],
+            source_weights[:, :, :, None],
+            0.0,
+        ),
+        axis=2,
+    )
+    return root_vertices, barycentric, jnp.all(jnp.sum(barycentric, axis=2) == 1.0)
+
+
+@jax.jit
+def _root_bank_values_match(first: Array, second: Array) -> Array:
+    return jnp.all(first == second)
+
+
+@jax.jit
+def _root_bank_masked_values_match(valid: Array, first: Array, second: Array) -> Array:
+    return jnp.all(~valid[:, None] | (first == second))
+
+
+@jax.jit
+def _root_bank_rows_match(
+    valid: Array, actual: Array, expected: Array, rows: Array
+) -> Array:
+    return jnp.all(~valid[:, None] | (actual == expected[rows]))
+
+
+@jax.jit
+def _root_parent_rows_match(
+    valid: Array,
+    present: Array,
+    block_present: Array,
+    target_sources: Array,
+    parent_ids: Array,
+    positions: Array,
+) -> Array:
+    return jnp.all(
+        ~valid | (present & block_present & (target_sources[positions] == parent_ids))
+    )
 
 
 def _geometry_banks(
@@ -395,27 +605,35 @@ def _geometry_banks(
     arrays: dict[str, Array],
     count: int,
 ) -> tuple[Array, Array, Array]:
-    """Exact dyadic root charts: target roots, root rows and corner barycentrics."""
+    """Return dyadic target roots, root rows and corner barycentrics."""
     elements, routes, coefficients = source_geometry.resolve(source_mesh)
     _require(
-        _bank(arrays, "geometry/source_geometry_id")
-        == _source_identity(cell_geometry_id(source_geometry)),
-        "Collective source geometry identity is not its actual original map.",
+        _root_bank_values_match(
+            _bank(arrays, "geometry/source_geometry_id"),
+            _source_identity(cell_geometry_id(source_geometry)),
+        ),
+        "collective.geometry.source_geometry_id must match the root geometry; got different identity",
     )
     _require(
-        _bank(arrays, "geometry/source_topology_id")
-        == _source_identity(source_mesh.topology_id),
-        "Collective source topology identity is not its actual original topology.",
+        _root_bank_values_match(
+            _bank(arrays, "geometry/source_topology_id"),
+            _source_identity(source_mesh.topology_id),
+        ),
+        "collective.geometry.source_topology_id must match the root topology; got different identity",
     )
     coordinate_count = coefficients.shape[0]
     _require(
-        _bank(arrays, "geometry/coordinate_ids")[:coordinate_count]
-        == jnp.arange(coordinate_count, dtype=jnp.int64),
-        "Scientific coordinate IDs lost their original coefficient namespace.",
+        _root_bank_values_match(
+            _bank(arrays, "geometry/coordinate_ids")[:coordinate_count],
+            jnp.arange(coordinate_count, dtype=jnp.int64),
+        ),
+        "collective.geometry.coordinate_ids must match the root coefficient namespace; got different identities",
     )
     _require(
-        _bank(arrays, "geometry/coordinates")[:coordinate_count] == coefficients,
-        "Collective target maps do not retain their actual original coefficients.",
+        _root_bank_values_match(
+            _bank(arrays, "geometry/coordinates")[:coordinate_count], coefficients
+        ),
+        "collective.geometry.coordinates must equal root coefficients; got changed values",
     )
     source_vertex_ids, source_weights = _global_epoch_banks(states, arrays, count)
     target_sources = _bank(arrays, "organization/cell/source_ids")[:count]
@@ -429,19 +647,16 @@ def _geometry_banks(
         )
     )
     root_rows, root_present = _lookup(source_cell_ids, target_sources)
-    _require(root_present, "A collective target cell has no authoritative original root.")
-    root_vertices = source_corners[root_rows]
-    barycentric = jnp.sum(
-        jnp.where(
-            source_vertex_ids[:, :, :, None] == root_vertices[:, None, None, :],
-            source_weights[:, :, :, None],
-            0.0,
-        ),
-        axis=2,
+    _require(
+        root_present,
+        "collective.organization.source_ids must identify root cells; got absent root",
+    )
+    root_vertices, barycentric, valid_barycentric = _root_barycentric_values(
+        source_vertex_ids, source_weights, source_corners, root_rows
     )
     _require(
-        jnp.sum(barycentric, axis=2) == 1.0,
-        "A target chart has source support outside its declared root.",
+        valid_barycentric,
+        "collective.geometry.barycentric must sum to one on the declared root; got exterior support",
     )
     covered = jnp.zeros((count,), dtype=jnp.int32)
     target_ids = _bank(arrays, "cell_global_ids")[:count]
@@ -453,7 +668,7 @@ def _geometry_banks(
             or not np.array_equal(np.asarray(route), np.asarray(block.vertices))
         ):
             raise ValueError(
-                "Collective inheritance requires the actual canonical affine simplex source."
+                "collective.source_geometry must be affine simplex geometry with vertex routes; got another basis or route"
             )
         prefix = f"geometry/cell_ids/{block.name}"
         cell_ids = _bank(arrays, prefix)
@@ -464,25 +679,28 @@ def _geometry_banks(
             jnp.asarray(block.global_ids), jnp.maximum(parent_ids, 0)
         )
         _require(
-            ~valid
-            | (present & block_present & (target_sources[positions] == parent_ids)),
-            "A collective target cell has no authoritative original root.",
+            _root_parent_rows_match(
+                valid, present, block_present, target_sources, parent_ids, positions
+            ),
+            "collective.organization.source_ids must identify root cells; got absent root",
         )
         _require(
-            ~valid[:, None]
-            | (
-                _bank(arrays, f"geometry/parent_vertex_ids/{block.name}")
-                == root_vertices[positions]
+            _root_bank_rows_match(
+                valid,
+                _bank(arrays, f"geometry/parent_vertex_ids/{block.name}"),
+                root_vertices,
+                positions,
             ),
-            "A collective target changed the ordered scientific root corner identities.",
+            "collective.geometry.parent_vertex_ids must match ordered root corners; got different identities",
         )
         _require(
-            ~valid[:, None]
-            | (
-                _bank(arrays, f"geometry/routes/{block.name}")
-                == jnp.asarray(route)[block_rows]
+            _root_bank_rows_match(
+                valid,
+                _bank(arrays, f"geometry/routes/{block.name}"),
+                jnp.asarray(route),
+                block_rows,
             ),
-            "A collective target changed its original scientific coefficient route.",
+            "collective.geometry.routes must match the root coefficient route; got changed route",
         )
         digest = canonical_fingerprint(
             {
@@ -492,9 +710,10 @@ def _geometry_banks(
         )
         basis = jnp.asarray(np.frombuffer(bytes.fromhex(digest), dtype=np.uint8).copy())
         _require(
-            ~valid[:, None]
-            | (_bank(arrays, f"geometry/source_basis/{block.name}") == basis),
-            "A collective target changed its actual source basis definition.",
+            _root_bank_masked_values_match(
+                valid, _bank(arrays, f"geometry/source_basis/{block.name}"), basis
+            ),
+            "collective.geometry.source_basis must match the root basis fingerprint; got changed definition",
         )
         _require_action_charts(
             _bank(arrays, f"geometry/action_counts/{block.name}"),
@@ -508,34 +727,18 @@ def _geometry_banks(
         )
     _require(
         covered == 1,
-        "Every logical target cell must occur exactly once in the actual source map banks.",
+        "collective.geometry.cell_ids must cover each target cell once; got missing or repeated cells",
     )
     return target_sources, root_rows, barycentric
 
 
-def _facet_incidence(
-    mesh: CellMesh, arrays: dict[str, Array], count: int
+@jax.jit
+def _facet_incidence_values(
+    cell_vertices: Array, keys: Array, columns: Array
 ) -> tuple[Array, Array]:
-    """Logical facet row of every (cell, opposite corner) and facet multiplicities.
-
-    Facet incidence is recomputed from actual logical cell vertices; scientific
-    facet IDs are matched by lexicographic vertex records, not row positions.
-    """
-    storage = mesh.storage
-    if storage is None:
-        raise ValueError("Collective facet incidence requires canonical mesh storage.")
-    dimension = mesh.topological_dimension
-    facets = storage.global_entity_counts[dimension - 1]
-    cell_vertices = _bank(arrays, "cell_vertices")[:count]
-    columns = np.asarray(
-        tuple(
-            tuple(i for i in range(dimension + 1) if i != opposite)
-            for opposite in range(dimension + 1)
-        ),
-        dtype=np.int32,
-    )
+    dimension = columns.shape[1]
+    facets = keys.shape[0]
     packet = jnp.sort(cell_vertices[:, columns], axis=2).reshape((-1, dimension))
-    keys = _bank(arrays, f"entity_vertices_{dimension - 1}")[:facets]
     joined = jnp.concatenate((keys, packet), axis=0)
     order = jnp.lexsort(tuple(joined[:, axis] for axis in reversed(range(dimension))))
     sorted_keys = joined[order]
@@ -553,14 +756,50 @@ def _facet_incidence(
         .set(jnp.arange(facets, dtype=jnp.int32))
     )
     incidence = destination[group_ids[facets:]]
-    _require(
-        incidence >= 0,
-        "Actual target facets are absent from the logical facet inventory.",
+    return incidence, jnp.all(incidence >= 0)
+
+
+@jax.jit
+def _facet_multiplicity_values(
+    incidence: Array, facet_rows: Array
+) -> tuple[Array, Array]:
+    counts = jnp.zeros((facet_rows.shape[0],), dtype=jnp.int32).at[incidence].add(1)
+    return counts, jnp.all((counts == 1) | (counts == 2))
+
+
+def _facet_incidence(
+    mesh: CellMesh, arrays: dict[str, Array], count: int
+) -> tuple[Array, Array]:
+    """Logical facet row of every (cell, opposite corner) and facet multiplicities.
+
+    Facet incidence comes from logical cell vertex records. Facet IDs match
+    lexicographic vertex records.
+    """
+    storage = mesh.storage
+    if storage is None:
+        raise ValueError(
+            "collective.mesh.storage must describe facet incidence; got None"
+        )
+    dimension = mesh.topological_dimension
+    facets = storage.global_entity_counts[dimension - 1]
+    cell_vertices = _bank(arrays, "cell_vertices")[:count]
+    columns = np.asarray(
+        tuple(
+            tuple(i for i in range(dimension + 1) if i != opposite)
+            for opposite in range(dimension + 1)
+        ),
+        dtype=np.int32,
     )
-    counts = jnp.zeros((facets,), dtype=jnp.int32).at[incidence].add(1)
+    keys = _bank(arrays, f"entity_vertices_{dimension - 1}")[:facets]
+    incidence, valid = _facet_incidence_values(cell_vertices, keys, columns)
     _require(
-        (counts == 1) | (counts == 2),
-        "Global reciprocal facet multiplicity is not one or two.",
+        valid,
+        "collective.facet_incidence must identify every target facet; got absent facet",
+    )
+    counts, valid = _facet_multiplicity_values(incidence, keys)
+    _require(
+        valid,
+        "collective.facet_multiplicity must equal one or two; got another multiplicity",
     )
     return incidence, counts
 
@@ -589,6 +828,15 @@ def _source_boundary_faces(source_mesh: CellMesh, /) -> np.ndarray:
     return (multiplicity[inverse.reshape(-1)] == 1).reshape((corners.shape[0], width))
 
 
+@jax.jit
+def _boundary_contact_values(boundary: Array, single: Array, barycentric: Array) -> Array:
+    width = barycentric.shape[1]
+    others = jnp.asarray(~np.eye(width, dtype=np.bool_))[None, :, :, None]
+    on_face = jnp.all((barycentric == 0.0)[:, None, :, :] | ~others, axis=2)
+    exterior = jnp.any(on_face & boundary[:, None, :], axis=2)
+    return jnp.all(~single | exterior)
+
+
 def _boundary_contacts(
     source_mesh: CellMesh,
     root_rows: Array,
@@ -601,17 +849,15 @@ def _boundary_contacts(
 
     A facet of a dyadic child lies in root face ``k`` exactly when every corner
     of that facet has zero barycentric weight on root corner ``k``. With the
-    complete partition and root embedding, this proves the target boundary is
+    partition of every root and root embedding, this proves the target boundary is
     the source boundary and every other contact is a shared facet.
     """
     width = barycentric.shape[1]
     boundary = jnp.asarray(_source_boundary_faces(source_mesh))[root_rows]
     single = (counts[incidence] == 1).reshape((count, width))
-    others = jnp.asarray(~np.eye(width, dtype=np.bool_))[None, :, :, None]
-    on_face = jnp.all((barycentric == 0.0)[:, None, :, :] | ~others, axis=2)
-    exterior = jnp.any(on_face & boundary[:, None, :], axis=2)
     _require(
-        ~single | exterior, "An unshared target facet is not part of the source boundary."
+        _boundary_contact_values(boundary, single, barycentric),
+        "collective.boundary_facets must lie on root boundary faces; got exterior unshared facet",
     )
 
 
@@ -638,11 +884,14 @@ def _region_banks(
         tuple(jnp.asarray(block.global_ids) for block in source_mesh.blocks)
     )
     positions, present = _lookup(source_ids, target_sources)
-    _require(present, "Target material labels have no actual original cell occurrence.")
+    _require(
+        present,
+        "collective.organization.region.cell_indices must identify root occurrences; got absent root",
+    )
     regions = _bank(arrays, "organization/region/cell_indices")[: target_sources.shape[0]]
     _require(
         regions == jnp.asarray(source_regions)[positions],
-        "Target material assignments differ from their scientific source roots.",
+        "collective.organization.region.cell_indices must match root labels; got different assignments",
     )
     facets = counts.shape[0]
     neighbors = _bank(arrays, "organization/region/facet_cell_regions")[:facets]
@@ -651,18 +900,17 @@ def _region_banks(
     cross = jnp.all(neighbors >= 0, axis=1) & (neighbors[:, 0] != neighbors[:, 1])
     _require(
         cross == (interface >= 0),
-        "Global material interfaces are missing or falsely created.",
+        "collective.organization.region.facet_indices must identify cross-material facets; got inconsistent interfaces",
     )
     _require(
         jnp.where(cross, jnp.abs(orientations) == 1, orientations == 0),
-        "Global material interface orientation is absent.",
+        "collective.organization.region.facet_orientations must be signed units on interfaces and zero elsewhere; got invalid orientation",
     )
     _require(
         jnp.all((neighbors >= -1) & (neighbors < len(domain.region_ids))),
-        "Global facet-region inventory has unknown source material labels.",
+        "collective.organization.region.facet_cell_regions must contain declared labels or exterior sentinel; got unknown labels",
     )
-    # Facet materials are checked against actual reciprocal cell incidence and
-    # inherited whole-cell labels, not accepted from interface flags.
+    # Reciprocal cell incidence and inherited labels determine facet materials.
     material = jnp.repeat(regions, incidence.shape[0] // regions.shape[0])
     low = (
         jnp.full((facets,), len(domain.region_ids), dtype=jnp.int32)
@@ -678,28 +926,29 @@ def _region_banks(
         (low == declared_low)
         & (high == declared_high)
         & ((counts == 1) == jnp.any(neighbors < 0, axis=1)),
-        "Facet materials or exterior status differ from actual reciprocal cell incidence.",
+        "collective.organization.region.facet_cell_regions must match reciprocal incidence; got different materials or exterior status",
     )
 
 
 def _collective_validity(
     mesh: CellMesh, geometry: CellGeometrySpec, policy: CellValidityPolicy, /
 ) -> tuple[CellValidityCertificate, bool]:
-    """Canonical validity of this owner's actual target maps and the all-owner verdict.
+    """Return target-map validity and the all-owner verdict.
 
-    Every logical cell is owned by exactly one partition of the bound storage
-    evidence; one partition per process makes the gathered owned counts and
-    verdicts a complete all-owner decision.
+    Each partition owns disjoint logical cells. Gathered owned counts establish
+    inventory coverage before the validity verdict is accepted.
     """
     storage = mesh.storage
     if storage is None:
-        raise ValueError("Collective validity requires canonical mesh storage.")
+        raise ValueError(
+            "collective.mesh.storage must describe owner-local validity; got None"
+        )
     if (
         storage.partition_count != jax.process_count()
         or storage.partition_index != jax.process_index()
     ):
         raise ValueError(
-            "Collective validity requires exactly one owner partition per process."
+            "collective.mesh.storage.partition must match one partition per process; got incompatible topology"
         )
     validity = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy)
     dimension = mesh.topological_dimension
@@ -722,11 +971,12 @@ def _collective_validity(
     ).reshape((-1, 2))
     if int(np.sum(gathered[:, 0])) != storage.global_entity_counts[dimension]:
         raise ValueError(
-            "Owned target cells do not partition the logical cell inventory."
+            "collective.owned_cells must partition the logical cell inventory; got differing global count"
         )
     return validity, bool(np.all(gathered[:, 1] == 1))
 
 
+@checked
 def certify_collective_premises(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
@@ -744,45 +994,24 @@ def certify_collective_premises(
     source_partition_id: str,
     validity_policy: CellValidityPolicy | None = None,
     limits: MeshCertificateLimits | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[
     CellValidityCertificate, GlobalEmbeddingCertificate, DomainCoverageCertificate
 ]:
-    """Create new target-bound validity, global embedding and domain coverage.
+    """Certify target validity, embedding and domain coverage.
 
-    Collective: every owner calls this with its owner-local target. The source
-    is the original serial affine root mesh with its certified embedding and
-    coverage; ``source_cell_regions`` are its coverage request's region indices.
-    The embedding theorem composes the root embedding with the complete
-    disjoint dyadic partition, exact root restriction charts, reciprocal facet
-    incidence and source-boundary contact; validity is the canonical owner's
-    certificate of the actual target maps on every owner. Coverage transports
-    exact root integrals through the same partition. Bank failures refuse.
+    Every owner supplies its local target and the serial affine root mesh.
+    The disjoint dyadic partition and root restriction charts transport the
+    root embedding and region integrals; reciprocal incidence identifies the
+    boundary. Source certificates must certify the declared root domain.
     """
-    if (
-        not isinstance(mesh, CellMesh)
-        or mesh.storage is None
-        or not isinstance(geometry, CellGeometrySpec)
-    ):
+    if mesh.storage is None:
         raise TypeError(
-            "Collective premises require an owner-local target mesh and restored geometry."
-        )
-    if (
-        not isinstance(domain, PiecewiseLinearDomain)
-        or not isinstance(source_coverage, DomainCoverageCertificate)
-        or not isinstance(source_embedding, GlobalEmbeddingCertificate)
-    ):
-        raise TypeError(
-            "Collective premises require the original declared domain and actual source embedding and coverage."
-        )
-    if not isinstance(states, AdaptiveSimplexState) or not isinstance(
-        initial_states, AdaptiveSimplexState
-    ):
-        raise TypeError(
-            "Collective premises require actual neutral adaptive simplex states."
+            "collective.mesh.storage must describe owner-local storage; got None"
         )
     if source_mesh.storage is not None:
         raise ValueError(
-            "Collective premises require the original serial source root mesh."
+            "collective.source_mesh.storage must be None for serial roots; got distributed storage"
         )
     source_embedding.binding.require(source_mesh, source_geometry)
     source_coverage.binding.require(source_mesh, source_geometry)
@@ -796,7 +1025,7 @@ def certify_collective_premises(
         != source_coverage.source_facet_count
     ):
         raise ValueError(
-            "Collective premises require certified embedding and complete coverage of the actual original source domain."
+            "collective.source_certificates must certify embedding and full domain coverage with matching bindings; got incompatible evidence"
         )
     storage = mesh.storage
     if (
@@ -804,23 +1033,21 @@ def certify_collective_premises(
         or cell_geometry_id(geometry) != storage.logical_coordinate_geometry_id
     ):
         raise ValueError(
-            "Collective premises must bind the actual target logical coordinate map, not its sampled carrier."
+            "collective.target_binding must match storage and logical geometry identities; got incompatible binding"
         )
     limits_ = MeshCertificateLimits() if limits is None else limits
-    if not isinstance(limits_, MeshCertificateLimits):
-        raise TypeError("limits must be MeshCertificateLimits or None.")
     policy = CellValidityPolicy() if validity_policy is None else validity_policy
-    if not isinstance(policy, CellValidityPolicy):
-        raise TypeError("validity_policy must be CellValidityPolicy or None.")
     arrays = dict(logical_arrays)
     owned = dict(storage.logical_arrays)
     if set(arrays) != set(owned) or logical_array_value_collection_digest(
         arrays
     ) != logical_array_value_collection_digest(owned):
-        raise ValueError("Collective proof banks differ from actual owner-local storage.")
+        raise ValueError(
+            "collective.logical_arrays must match owner-local storage content; got different banks"
+        )
     _require(
         _raw_partition(states, initial_states),
-        "The actual dyadic forest does not give a complete disjoint source partition.",
+        "collective.states must form a disjoint root partition; got inconsistent dyadic forest",
     )
     dimension = mesh.topological_dimension
     count = storage.global_entity_counts[dimension]
@@ -832,7 +1059,7 @@ def certify_collective_premises(
     regions = np.asarray(source_cell_regions, dtype=np.int64)
     if regions.shape != (sum(block.cell_count for block in source_mesh.blocks),):
         raise ValueError(
-            "Original cell-region assignments must cover every authoritative source cell."
+            "collective.source_cell_regions must cover every root cell; got incompatible shape"
         )
     region_banks = tuple(name for name in _REGION_BANKS if name in arrays)
     if region_banks == _REGION_BANKS:
@@ -841,10 +1068,10 @@ def certify_collective_premises(
         )
     elif region_banks:
         raise ValueError(
-            "Collective proof banks publish an incomplete material organization."
+            "collective.organization.region must publish all region banks; got incomplete bank set"
         )
     validity, valid = _collective_validity(mesh, geometry, policy)
-    embedding_state = _EmbeddingState(
+    embedding_state = EmbeddingState(
         [],
         [
             "cell_validity",
@@ -865,12 +1092,16 @@ def certify_collective_premises(
         validity.certificate_id,
         tuple(embedding_state.findings),
         tuple(embedding_state.checks),
-        cell_count=count,
-        boundary_facet_count=int(jax.device_get(jnp.sum(counts == 1))),
-        shell_count=source_embedding.shell_count,
-        candidate_pair_count=0,
-        ray_test_count=0,
-        subdivision_piece_count=0,
+        counts=EmbeddingCounts(
+            cell_count=count,
+            boundary_facet_count=int(
+                jax.device_get(jnp.sum(counts == 1, dtype=jnp.int64))
+            ),
+            shell_count=source_embedding.shell_count,
+            candidate_pair_count=0,
+            ray_test_count=0,
+            subdivision_piece_count=0,
+        ),
     )
     binding = MeshCertificateBinding(
         mesh,
@@ -880,7 +1111,7 @@ def certify_collective_premises(
         source_id=domain.source_id,
         source_revision=domain.source_revision,
     )
-    state = _EmbeddingState(
+    state = EmbeddingState(
         [],
         [
             "collective_domain_coverage",
@@ -891,44 +1122,32 @@ def certify_collective_premises(
     )
     if embedding.status != "certified":
         state.add("embedding_premise", "unresolved", "mesh")
-    # Exact affine source integrals are integrated independently over each
-    # original root. Complete disjoint dyadic partitions transport these root
-    # integrals to target regions; no old achieved report is copied.
-    # The request's coordinate work and scratch limits own these root integrals.
-    from ..discretization._coordinate_enclosure import (
-        CoordinateEnclosureBudget,
-        CoordinateEnclosureResourceError,
-    )
+    # Integrate affine roots independently, then transport through their disjoint
+    # dyadic partition to target regions under the request's resource limits.
 
-    budget = CoordinateEnclosureBudget(
-        limits_.maximum_work_units, limits_.maximum_scratch_bytes
-    )
-    try:
-        with budget.activate():
-            measured, _ = _mapped_coverage_measures(
-                state, source_mesh, source_geometry, regions
+    with coordinate_certificate_request(limits_, budget=budget) as budget:
+        try:
+            with budget.measurement(), budget.activate():
+                measured, _ = mapped_coverage_measures(
+                    state, source_mesh, source_geometry, regions, budget=budget
+                )
+            achieved = (
+                *measured,
+                *(Fraction(0) for _ in range(len(domain.region_ids) - len(measured))),
             )
-        achieved = (
-            *measured,
-            *(Fraction(0) for _ in range(len(domain.region_ids) - len(measured))),
+        except coordinate_budget_owner.CoordinateEnclosureResourceError:
+            state.add("mapped_coverage_resource_budget", "unresolved", "mesh")
+            achieved = tuple(None for _ in domain.region_ids)
+        coverage = coverage_result(
+            binding,
+            embedding,
+            domain,
+            state,
+            declared_coverage_measures(domain),
+            achieved,
+            source_coverage.source_facet_count,
+            {},
+            (source_coverage.certificate_id, source_partition_id),
+            expression_work=active_expression_work(budget=budget),
         )
-    except CoordinateEnclosureResourceError:
-        state.add("mapped_coverage_resource_budget", "unresolved", "mesh")
-        achieved = tuple(None for _ in domain.region_ids)
-    coverage = _coverage_result(
-        binding,
-        embedding,
-        domain,
-        state,
-        _declared_coverage_measures(domain),
-        achieved,
-        source_coverage.source_facet_count,
-        {},
-        (source_coverage.certificate_id, source_partition_id),
-        expression_work=(
-            budget.work_units,
-            budget.peak_bytes_upper,
-            budget.required_work_units,
-        ),
-    )
-    return validity, embedding, coverage
+        return validity, embedding, coverage

@@ -18,6 +18,7 @@ from phydrax.operators.differential import (
     surface_grad,
     tangential_component,
 )
+from phydrax.units import METER
 
 
 class _RadialNormalComponent:
@@ -34,7 +35,7 @@ class _RadialNormalComponent:
 
 def test_surface_grad_scalar_flat_edge_projection() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
 
@@ -55,7 +56,7 @@ def test_surface_grad_scalar_flat_edge_projection() -> None:
 
 def test_surface_div_vector_flat_edge() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
 
@@ -73,7 +74,7 @@ def test_surface_div_vector_flat_edge() -> None:
 
 def test_ambient_surface_hessian_trace_flat_edge() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
 
@@ -91,7 +92,7 @@ def test_ambient_surface_hessian_trace_flat_edge() -> None:
 
 def test_surface_curl_scalar_on_flat_face() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
     points = jnp.array([[0.2, 0.3, 1.0], [-0.4, 0.1, 1.0]])
@@ -118,7 +119,7 @@ def test_surface_curl_scalar_on_flat_face() -> None:
 
 def test_surface_curl_vector_on_flat_face() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
     points = jnp.array([[0.2, 0.3, 1.0], [-0.4, 0.1, 1.0]])
@@ -137,7 +138,7 @@ def test_surface_curl_vector_on_flat_face() -> None:
 
 def test_surface_div_grad_uses_differentiable_normal_provider() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = cast(phx.domain.DomainComponent, _RadialNormalComponent(geom))
     points = jnp.array(
@@ -162,7 +163,7 @@ def test_surface_div_grad_uses_differentiable_normal_provider() -> None:
 
 def test_tangential_component_projection() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": Boundary()})
 

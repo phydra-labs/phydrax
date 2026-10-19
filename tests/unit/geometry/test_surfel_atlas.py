@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from typing import Any
-
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 import phydrax as phx
 
 
-def _atlas_plan() -> Any:
+def _atlas_plan() -> tuple[
+    phx.geometry.BoundaryAtlas,
+    phx.geometry.ImmersedMarkerQuadraturePlan,
+    phx.geometry.BoundaryAtlasSurfelPlan,
+]:
     atlas = phx.geometry.circle_boundary_atlas(
         jnp.asarray((0.5, 0.5)),
         jnp.asarray(0.2),
@@ -26,6 +29,9 @@ def _atlas_plan() -> Any:
     return atlas, quadrature, plan
 
 
+# The existing 1e-12 circle-oracle allowance exceeds 4096 binary64 eps:
+# it covers trigonometric chart evaluation, norms, and four-chart summation.
+# Both relative and absolute bounds are retained from the analytic circle fixture.
 def test_surfel_atlas_scenario_1() -> None:
     atlas, _, plan = _atlas_plan()
     prepared = plan.prepare(atlas, 0.0)
@@ -72,5 +78,24 @@ def test_surfel_atlas_scenario_1() -> None:
         jnp.asarray((1.0,)),
     )
 
-    with pytest.raises(RuntimeError, match="existing atlas charts"):
+    with pytest.raises(RuntimeError, match="ImmersedMarkerQuadraturePlan.chart_indices"):
         invalid.materialize(atlas, 0.0)
+
+
+def test_marker_plan_refuses_wrong_materialization_kind() -> None:
+    _, quadrature, _ = _atlas_plan()
+    with pytest.raises(TypeError, match="materialization"):
+        quadrature.marker_plan(None)  # ty: ignore[invalid-argument-type]
+
+
+def test_marker_velocity_provider_matches_array_velocity() -> None:
+    atlas, quadrature, _ = _atlas_plan()
+
+    def velocity(time: Array, positions: Array) -> Array:
+        return jnp.ones_like(positions) * time
+
+    provided = quadrature.materialize(atlas, 0.25, velocity=velocity)
+    explicit = quadrature.materialize(atlas, 0.25, velocity=jnp.full((4, 2), 0.25))
+    np.testing.assert_array_equal(provided.velocity, explicit.velocity)
+    np.testing.assert_array_equal(provided.position, explicit.position)
+    assert bool(provided.finite)

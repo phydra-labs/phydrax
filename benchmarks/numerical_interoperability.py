@@ -40,6 +40,7 @@ from phydrax.discretization.fem import prepare_finite_element_field_reconstructi
 from phydrax.solver.coupling._interface_quadrature import (
     prepare_boundary_panel_resampling,
 )
+from phydrax.units import METER
 
 
 pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
@@ -547,7 +548,7 @@ def _isogeometric_query_case(
     region = (
         (geometry.Ball((0.0, 0.0), 2.0) - geometry.Ball((0.0, 0.0), 1.0))
         & geometry.Orthotope((1.0, 1.0), (2.0, 2.0))
-    ).compile()
+    ).compile(coordinate_unit=METER)
     (prepared, controls), discretization_seconds = measure_host(
         lambda: _isogeometric_annulus(spans)
     )

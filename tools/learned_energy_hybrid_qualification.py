@@ -73,7 +73,10 @@ from phydrax.equations._conservation import (
     compile_conservation_problem,
     ConservationProblemIR,
 )
-from phydrax.equations._hyperbolic_systems import EulerSystem
+from phydrax.equations._hyperbolic_systems import (
+    AbstractConservationSystem,
+    EulerSystem,
+)
 from phydrax.equations._transport_closures import ConstantTransport
 from phydrax.solver._finite_volume_runtime import (
     FiniteVolumeStepPolicy,
@@ -521,6 +524,17 @@ def _finite_volume_runtime(
     )
 
 
+def _euler_system(system: AbstractConservationSystem, /) -> EulerSystem:
+    match system:
+        case EulerSystem():
+            return system
+        case _:
+            raise TypeError(
+                "learned_energy_hybrid_qualification.system must be EulerSystem; "
+                f"got {type(system).__name__!r}."
+            )
+
+
 def _interfaces(
     finite_volume: PreparedFiniteVolumeRuntime,
     method: SmoothCompressibleD2VKineticMethod,
@@ -533,10 +547,11 @@ def _interfaces(
     tuple[tuple[int, int], ...],
 ]:
     rows = SPATIAL_SHAPE[1]
+    system = _euler_system(finite_volume.dynamics.system)
     upper = tuple(
         FixedConformingFVKineticInterfacePlan(
             method,
-            finite_volume.dynamics.system,
+            system,
             jnp.asarray((1.0, 0.0), dtype=jnp.float64),
             f"fixed-fv-upper-x-{y_index}",
         )
@@ -545,7 +560,7 @@ def _interfaces(
     lower = tuple(
         FixedConformingFVKineticInterfacePlan(
             method,
-            finite_volume.dynamics.system,
+            system,
             jnp.asarray((-1.0, 0.0), dtype=jnp.float64),
             f"fixed-fv-lower-x-{y_index}",
         )
@@ -636,7 +651,7 @@ def _riemann_states(
     temperature_delta = fraction * (
         support.temperature_bounds[1] - support.temperature_bounds[0]
     )
-    system = runtime.finite_volume.dynamics.system
+    system = _euler_system(runtime.finite_volume.dynamics.system)
     left = _primitive_to_conserved(
         system,
         rho_midpoint + rho_delta,
@@ -822,9 +837,9 @@ def _fixed_step_record(
         for stage_index, stage in enumerate(result.stage_flux_trace.stages)
     ]
     finite_volume_average = result.candidate.finite_volume.cell_average()
-    finite_volume_pressure = runtime.finite_volume.dynamics.system.pressure(
-        finite_volume_average
-    )
+    finite_volume_pressure = _euler_system(
+        runtime.finite_volume.dynamics.system
+    ).pressure(finite_volume_average)
     _, accepted_support = runtime.learned_energy.predict_dual_with_evidence(
         runtime.spatial.method.moments(result.runtime_state.kinetic).conserved
     )
@@ -1132,7 +1147,7 @@ def _fixed_rollback(
     /,
 ) -> dict[str, Any]:
     unsupported = _unsupported_conserved(
-        runtime.finite_volume.dynamics.system, runtime.learned_energy
+        _euler_system(runtime.finite_volume.dynamics.system), runtime.learned_energy
     )
     unsupported_average = initial_average.at[-1, :, :].set(unsupported)
     state, _, _ = _fixed_initial_state(runtime, unsupported_average, kinetic_conserved)

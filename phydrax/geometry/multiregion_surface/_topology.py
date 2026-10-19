@@ -109,7 +109,7 @@ def _vertex_slots(
     return counts, table, slot_rank[slot_inverse].reshape((-1, 3))
 
 
-def _host_incidence(
+def host_incidence(
     faces: np.ndarray, labels: np.ndarray, vertex_count: int, /
 ) -> _HostIncidence:
     origin = faces.reshape(-1)
@@ -308,7 +308,7 @@ class MultiRegionSurfaceTopology(StrictModule, NonTrainableState):
         labels = _host_labels(face_labels, rows.shape[0], len(ids))
         vertex_ids = _host_ids(vertex_global_ids, vertices, "vertex_global_ids")
         face_ids = _host_ids(face_global_ids, rows.shape[0], "face_global_ids")
-        host = _host_incidence(rows, labels, vertices)
+        host = host_incidence(rows, labels, vertices)
         counts = MultiRegionSurfaceCounts(
             vertex=vertices,
             edge=host.edges.shape[0],
@@ -402,6 +402,25 @@ class MultiRegionSurfaceTopology(StrictModule, NonTrainableState):
                 "vertex_global_ids": array_tree_fingerprint(vertex_ids),
                 "face_global_ids": array_tree_fingerprint(face_ids),
             }
+        )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[MultiRegionSurfaceTopology], value: MultiRegionSurfaceTopology, /
+    ) -> MultiRegionSurfaceTopology:
+        """Rebuild active inputs and authenticate every padded field."""
+        return cls(
+            value.plan,
+            value.faces[: value.face_count],
+            value.face_labels[: value.face_count],
+            value.region_ids,
+            value.region_kinds,
+            vertex_count=value.vertex_count,
+            vertex_global_ids=value.vertex_global_ids[: value.vertex_count],
+            face_global_ids=value.face_global_ids[: value.face_count],
+            epoch=value.epoch,
+            domain=value.domain,
         )
 
     @property

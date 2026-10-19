@@ -168,7 +168,9 @@ def __getattr__(name: str) -> object:
     elif name in _IDENTIFICATION_EXPORTS:
         value = getattr(import_module(".identification", __name__), name)
     else:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        raise AttributeError(
+            f"{__name__}.name must name an exported attribute; got {name!r}."
+        )
     globals()[name] = value
     return value
 

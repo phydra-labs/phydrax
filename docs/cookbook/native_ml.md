@@ -122,8 +122,10 @@ for the coordinates of a geometric domain. To learn a closure *of* domain
 coordinates, fit it on the domain's own coordinate ports:
 
 ```python
+from phydrax.units import METER
+
 geom = phx.domain.GeometryDomain(
-    phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
 )
 x_port = geom.value_port("x")
 conductivity = phx.ValuePort(

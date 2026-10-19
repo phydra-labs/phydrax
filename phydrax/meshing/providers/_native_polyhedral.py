@@ -1,72 +1,72 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Canonical native PLC-restricted polyhedral publication.
-
-Construction ancestry and numerical optimization diagnostics accompany the
-existing CellMeshingResult. Independent affine validity, global embedding and
-material-domain coverage remain mandatory; unresolved checks never publish.
-VEM/FV are explicit downstream consumers, not hidden allocations in generation.
-"""
+"native PLC-restricted polyhedral publication.\n\nConstruction ancestry and numerical optimization diagnostics accompany the\nexisting CellMeshingResult. Independent affine validity, global embedding and\nmaterial-domain coverage remain mandatory; unresolved checks never publish.\nVEM/FV are explicit downstream consumers, not hidden allocations in generation.\n"
 
 from __future__ import annotations
 
 from dataclasses import asdict, replace
-from time import monotonic
+from fractions import Fraction
+from typing import assert_never, final, Literal
 
 import equinox as eqx
+import jax
 import numpy as np
+
+from phydrax.discretization import CellMesh, PolyhedralConnectivity
+from phydrax.meshing._association_state import (
+    GeometryAssociation,
+    GeometryAssociationKind,
+    GeometrySourceEntityRole,
+)
+from phydrax.meshing._certification_schedule import MeshCertificationSchedule
+from phydrax.meshing._contracts import (
+    MeshingProviderInfo,
+    VolumeFillStrategy,
+    VolumeMeshingSpec,
+)
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+from phydrax.meshing._host_banks import entity_key
+from phydrax.typing import checked, parse
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._meshcore import (
     MeshcoreError,
     MeshcoreStatus,
+    NativeExecutionScope,
+    NativeHostStorageWorkspace,
     PlcRecoveryFailure,
     RestrictedPowerFailure,
 )
 from ..._physical import SpatialCoordinateContract
+from ..._resource_ticket import HostBatchTicket
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization._coordinate_enclosure import CoordinateEnclosureResourceError
-from ...geometry._triangulation import (
-    PeriodicPowerImageCapacityRefusal,
-    PeriodicPowerSourceRefusal,
+from ...discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
 )
-from .._association import (
-    GeometryAssociation,
-    GeometryAssociationKind,
-    GeometrySourceEntityRole,
-)
-from .._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
-from .._certification import MeshCertificationSchedule
-from .._contracts import (
-    MeshingDerivativeMode,
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingProviderInfo,
-    VolumeFillStrategy,
-    VolumeMeshingSpec,
-)
+from ...geometry._periodic_power_preparation import PeriodicPowerImageCapacityRefusal
+from ...geometry._triangulation import PeriodicPowerSourceRefusal
 from .._measurements import (
     measure_phase,
-    NativeMeshingPhase,
     NativeMeshingPhaseMeasurement,
     NativeMeshingPhaseRecorder,
     phase_started,
     record_elapsed,
 )
-from .._organization import MeshLabel, MeshPatch, MeshZone, MeshZoneRole
+from .._organization_records import MeshLabel, MeshPatch, MeshZone, MeshZoneRole
 from .._polyhedral_generation import (
-    _polyhedral_connectivity,
-    _polyhedral_periodic_group,
-    _sqrt_upper,
     generate_polyhedral_volume,
     NativePolyhedralSchedule,
+    polyhedral_periodic_group,
     PolyhedralConstruction,
     PolyhedralGenerationError,
+    require_polyhedral_connectivity,
+    sqrt_upper,
 )
 from .._result import CellMeshingResult, MeshingComplianceReport
-from .._scope import MeshingEntityKind, MeshingScope
+from .._scope import MeshingEntityKind
 from .._sizing import UniformSizeControl
 from .._trace import (
     MeshingDiagnostic,
@@ -76,29 +76,44 @@ from .._trace import (
     MeshingStageStatus,
 )
 from .._volume_generation import (
-    _entity,
-    _recovery_failure,
-    _seeds,
     native_volume_checkpoint,
-    native_volume_execution_budget,
+    recovery_failure,
+    region_seed_points,
 )
+from . import _native_sources as sources_owner, _native_volume as volume_owner
 from ._native_publication import (
+    NativeCertificationRequest,
+    NativePublicationExecution,
+    NativePublicationOrganization,
+    publish_native_result,
+)
+from ._native_route_checks import (
     check_deadline,
     edge_size_evidence,
-    NativeCertificationRequest,
-    publish_native_result,
     uniform_size_compliance,
 )
-from ._native_sources import NativePlcSource, NativePolyhedralSource
-from ._native_volume import volume_support_issues
+from ._native_route_metadata import mesh_entity_scope, NativeRouteMetadata
+from ._native_route_policy import publication_policy
 
 
+PowerConstructionPhase = Literal[
+    "regular_triangulation",
+    "power_adjacency",
+    "power_clipping",
+    "power_components",
+    "power_publication",
+]
+
+
+@checked
 def polyhedral_support_issues(
-    source: NativePlcSource | NativePolyhedralSource, specification: VolumeMeshingSpec, /
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    specification: VolumeMeshingSpec,
+    /,
 ) -> list[str]:
     issues = [
         issue
-        for issue in volume_support_issues(source, specification)
+        for issue in volume_owner.volume_support_issues(source, specification)
         if issue
         not in (
             "a tetrahedral volume target",
@@ -133,12 +148,25 @@ def polyhedral_support_issues(
             ):
                 issues.append("periodic scopes bound to original PLC facets")
     try:
-        _polyhedral_periodic_group(tuple(specification.periodic_constraints))
+        limits = specification.limits
+        with HostBatchTicket(
+            limits.maximum_work_units, bytes_upper=limits.maximum_scratch_bytes
+        ) as ticket:
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            with budget.activate():
+                polyhedral_periodic_group(
+                    tuple(specification.periodic_constraints), budget=budget
+                )
     except (TypeError, ValueError) as error:
         issues.append(f"proper commuting periodic source actions: {error}")
     return issues
 
 
+@final
 class PreparedPolyhedralVolume(StrictModule, NonTrainableState):
     """Bound source, specification, sites and the numerical refinement policy."""
 
@@ -149,19 +177,14 @@ class PreparedPolyhedralVolume(StrictModule, NonTrainableState):
     specification_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        source: NativePlcSource | NativePolyhedralSource,
+        source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
         specification: VolumeMeshingSpec,
         schedule: NativePolyhedralSchedule | None = None,
         /,
     ) -> None:
-        if not isinstance(
-            source, (NativePlcSource, NativePolyhedralSource)
-        ) or not isinstance(specification, VolumeMeshingSpec):
-            raise TypeError(
-                "Native polyhedra require a PLC/polyhedral source and VolumeMeshingSpec."
-            )
         issues = polyhedral_support_issues(source, specification)
         if issues:
             raise MeshingFailure(
@@ -170,14 +193,15 @@ class PreparedPolyhedralVolume(StrictModule, NonTrainableState):
                 stage="preparation",
             )
         policy = NativePolyhedralSchedule() if schedule is None else schedule
-        if not isinstance(policy, NativePolyhedralSchedule):
-            raise TypeError("schedule must be NativePolyhedralSchedule.")
         limits = specification.limits
         control = specification.size_controls[0]
-        if not isinstance(control, UniformSizeControl):
-            raise TypeError(
-                "Native polyhedral generation requires a uniform whole-domain size control."
-            )
+        match control:
+            case UniformSizeControl():
+                pass
+            case _:
+                raise TypeError(
+                    "polyhedral.size_controls must contain a uniform whole-domain control; got a different control kind"
+                )
         maximum = (
             control.maximum_size
             if control.maximum_size is not None
@@ -198,9 +222,15 @@ class PreparedPolyhedralVolume(StrictModule, NonTrainableState):
             else min(maximum, policy.maximum_cell_diameter),
         )
         self.schedule = policy
-        self.sites = source.sites if isinstance(source, NativePolyhedralSource) else None
+        self.sites = (
+            source.sites
+            if isinstance(source, sources_owner.NativePolyhedralSource)
+            else None
+        )
         self.weights = (
-            source.weights if isinstance(source, NativePolyhedralSource) else None
+            source.weights
+            if isinstance(source, sources_owner.NativePolyhedralSource)
+            else None
         )
         self.source_binding_id = source.binding_id
         self.specification_id = specification.specification_id
@@ -229,22 +259,21 @@ def _protected_vertices(specification: VolumeMeshingSpec) -> tuple[int, ...]:
 
 
 def _vertex_association(
-    source: NativePlcSource | NativePolyhedralSource,
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
     specification: VolumeMeshingSpec | None,
     construction: PolyhedralConstruction,
     selected_faces: np.ndarray,
     face_residuals: np.ndarray,
 ) -> GeometryAssociation:
-    from fractions import Fraction
 
-    mesh, c = construction.mesh, _polyhedral_connectivity(construction.mesh)
+    mesh, c = construction.mesh, require_polyhedral_connectivity(construction.mesh)
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     carriers = construction.diagram.construction.vertex_carriers
     original_count = source.complex.vertices.shape[0]
     dimensions = np.full(points.shape[0], 3, dtype=np.int64)
     sources = np.full(points.shape[0], -1, dtype=np.int64)
-    residuals = np.zeros(points.shape[0])
-    ambiguous = np.zeros(points.shape[0], dtype=bool)
+    residuals = np.zeros(points.shape[0], dtype=np.float64)
+    ambiguous = np.zeros(points.shape[0], dtype=np.bool_)
     original_rows: dict[int, int] = {}
     for vertex, carrier in enumerate(carriers):
         carrier = np.asarray(carrier, dtype=np.int32)
@@ -262,7 +291,7 @@ def _vertex_association(
                 ),
                 Fraction(0),
             )
-            residuals[vertex] = _sqrt_upper(squared)
+            residuals[vertex] = sqrt_upper(squared)
 
     def assign(
         rows: np.ndarray, dimension: int, source_index: int, residual: float
@@ -307,7 +336,7 @@ def _vertex_association(
     if missing:
         raise MeshingFailure(
             MeshingFailureCategory.AUDIT_FAILED,
-            "Protected PLC vertices disappeared from the restricted carrier.",
+            "polyhedral.protected_vertices must retain source carrier ancestry; got missing vertices",
             stage="geometry_association",
             entity_ids=missing,
         )
@@ -321,7 +350,7 @@ def _vertex_association(
             if bad:
                 raise MeshingFailure(
                     MeshingFailureCategory.AUDIT_FAILED,
-                    "Protected PLC point displacement exceeds its request.",
+                    "polyhedral.protected_vertices.displacement must not exceed maximum_deviation; got excessive displacement",
                     stage="geometry_association",
                     entity_ids=bad,
                 )
@@ -329,7 +358,7 @@ def _vertex_association(
     if np.any(unresolved):
         raise MeshingFailure(
             MeshingFailureCategory.AUDIT_FAILED,
-            "Restricted vertex source ancestry is ambiguous or missing.",
+            "polyhedral.vertex.source_ancestry must identify one source stratum; got missing or ambiguous ancestry",
             stage="geometry_association",
             entity_ids=tuple(map(int, np.asarray(c.vertex_global_ids)[unresolved])),
         )
@@ -348,7 +377,7 @@ def _vertex_association(
         mesh.entity_set(0).entity_set_id,
         c.vertex_global_ids,
         tuple(
-            _entity(source.source_revision, roles[int(dimension)].value, int(index))
+            entity_key(source.source_revision, roles[int(dimension)].value, int(index))
             for dimension, index in zip(dimensions, sources, strict=True)
         ),
         residuals,
@@ -359,34 +388,19 @@ def _vertex_association(
     )
 
 
-def _organization(
-    source: NativePlcSource | NativePolyhedralSource,
+@checked
+def organization(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
     specification: VolumeMeshingSpec | None,
     construction: PolyhedralConstruction,
     tolerance: float,
-) -> tuple[
-    tuple[MeshZone, ...],
-    tuple[MeshPatch, ...],
-    tuple[MeshLabel, ...],
-    tuple[GeometryAssociation, ...],
-]:
+) -> NativeRouteMetadata:
     mesh, complex_ = construction.mesh, source.complex
-    connectivity = _polyhedral_connectivity(mesh)
+    connectivity = require_polyhedral_connectivity(mesh)
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     cell_ids = np.asarray(connectivity.cell_global_ids, dtype=np.int64)
     face_ids = np.asarray(connectivity.face_global_ids, dtype=np.int64)
     edge_ids = np.asarray(connectivity.edge_global_ids, dtype=np.int64)
-
-    def scope(dimension: int, rows: np.ndarray) -> MeshingScope:
-        entity_set = mesh.entity_set(dimension)
-        return MeshingScope(
-            mesh.mesh_id,
-            mesh.numeric_version,
-            MeshingEntityKind.MESH,
-            dimension,
-            entity_set.entity_set_id,
-            np.sort(rows),
-        )
 
     seeds = (
         {}
@@ -402,7 +416,9 @@ def _organization(
         MeshZone(
             name,
             MeshZoneRole.REGION,
-            scope(3, cell_ids[construction.cell_regions == region]),
+            mesh_entity_scope(
+                mesh, 3, np.sort(cell_ids[construction.cell_regions == region])
+            ),
             material_id=(
                 controls[name].material_id
                 if name in controls
@@ -423,7 +439,10 @@ def _organization(
     facets = construction.face_facets
     selected = np.flatnonzero(facets >= 0)
     patches = tuple(
-        MeshPatch(f"facet:{facet}", scope(2, face_ids[facets == facet]))
+        MeshPatch(
+            f"facet:{facet}",
+            mesh_entity_scope(mesh, 2, np.sort(face_ids[facets == facet])),
+        )
         for facet in np.unique(facets[selected])
     )
     zone_ids = {zone.name: zone.zone_id for zone in zones}
@@ -432,7 +451,7 @@ def _organization(
         if control.required and not rows.size:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "A required source interface/patch has no published face fragments.",
+                "polyhedral.patch_controls must publish face fragments for every required patch; got an empty patch",
                 stage="geometry_association",
                 entity_ids=tuple(map(int, np.asarray(control.scope.entity_ids))),
             )
@@ -440,14 +459,14 @@ def _organization(
             patches += (
                 MeshPatch(
                     control.name,
-                    scope(2, rows),
+                    mesh_entity_scope(mesh, 2, np.sort(rows)),
                     adjacent_zone_ids=tuple(
                         zone_ids[name] for name in control.adjacent_region_names
                     ),
                 ),
             )
     labels = tuple(
-        MeshLabel(name, scope(dimension, rows))
+        MeshLabel(name, mesh_entity_scope(mesh, dimension, np.sort(rows)))
         for name, dimension, rows in (
             ("interface", 2, face_ids[construction.interface_faces]),
             ("internal_sheet", 2, face_ids[construction.sheet_faces]),
@@ -464,187 +483,44 @@ def _organization(
     )
     if construction.seam_face_pairs is not None:
         paired = np.unique(construction.seam_face_pairs[:, :2])
-        labels += (MeshLabel("periodic", scope(2, face_ids[paired])),)
-    offsets, vertices = (
-        np.asarray(connectivity.face_vertex_offsets),
-        np.asarray(connectivity.face_vertex_values),
+        labels += (
+            MeshLabel("periodic", mesh_entity_scope(mesh, 2, np.sort(face_ids[paired]))),
+        )
+    phase = _polyhedral_associations(
+        source,
+        specification,
+        construction,
+        tolerance,
+        points,
+        cell_ids,
+        face_ids,
+        edge_ids,
+        facets,
+        selected,
     )
-    edge_rows = {
-        tuple(sorted(map(int, edge))): row
-        for row, edge in enumerate(np.asarray(connectivity.edges))
-    }
-    edge_facets = np.full(edge_ids.size, -1, dtype=np.int64)
-    edge_residuals = np.zeros(edge_ids.size)
-    face_residuals = np.zeros(selected.size)
-    orientations = np.zeros(selected.size, dtype=np.int8)
-    for row, face in enumerate(selected):
-        facet = int(facets[face])
-        triangle = int(construction.face_recovery_triangles[face])
-        source_points = construction.recovery.points[
-            construction.recovery.faces[triangle]
-        ]
-        normal = np.cross(
-            source_points[1] - source_points[0], source_points[2] - source_points[0]
-        )
-        length = np.linalg.norm(normal)
-        loop = vertices[offsets[face] : offsets[face + 1]]
-        face_residuals[row] = float(
-            np.max(np.abs((points[loop] - source_points[0]) @ normal)) / length
-        )
-        normal_mesh = np.sum(
-            np.cross(
-                points[loop] - points[loop[0]],
-                np.roll(points[loop], -1, axis=0) - points[loop[0]],
-            ),
-            axis=0,
-        )
-        orientations[row] = 1 if np.dot(normal_mesh, normal) > 0 else -1
-        for a, b in zip(loop, np.roll(loop, -1), strict=True):
-            edge_facets[edge_rows[tuple(sorted((int(a), int(b))))]] = facet
-            edge = edge_rows[tuple(sorted((int(a), int(b))))]
-            edge_residuals[edge] = max(edge_residuals[edge], face_residuals[row])
-    if np.any(face_residuals > tolerance):
-        raise MeshingFailure(
-            MeshingFailureCategory.AUDIT_FAILED,
-            "Constrained power faces exceed planar source residual tolerance.",
-            stage="geometry_association",
-            entity_ids=tuple(map(int, face_ids[selected[face_residuals > tolerance]])),
-        )
-    feature_sources = construction.feature_edge_sources
-    combined = construction.feature_maximum_distance + construction.feature_coverage_gap
-    combined = np.where(combined == 0, 0.0, np.nextafter(combined, np.inf))
-    for feature in () if specification is None else specification.protected_features:
-        identifiers = np.asarray(feature.scope.entity_ids, dtype=np.int64)
-        if feature.scope.entity_dimension == 1:
-            bad = identifiers[combined[identifiers] > feature.maximum_deviation]
-        elif feature.scope.entity_dimension == 2:
-            bad = np.asarray(
-                [
-                    int(facet)
-                    for facet in identifiers
-                    if np.max(face_residuals[facets[selected] == facet], initial=0.0)
-                    > feature.maximum_deviation
-                ],
-                dtype=np.int64,
-            )
-        else:
-            continue
-        if bad.size:
-            raise MeshingFailure(
-                MeshingFailureCategory.AUDIT_FAILED,
-                "Protected PLC feature fidelity exceeds its request.",
-                stage="geometry_association",
-                entity_ids=tuple(map(int, bad)),
-            )
-    boundary_edges = np.flatnonzero((edge_facets >= 0) | (feature_sources >= 0))
-    revision = source.source_revision
-    edge_dimensions = np.where(feature_sources[boundary_edges] >= 0, 1, 2)
-    edge_sources = np.where(
-        feature_sources[boundary_edges] >= 0,
-        feature_sources[boundary_edges],
-        edge_facets[boundary_edges],
-    )
-    edge_orientations = np.zeros(boundary_edges.size, dtype=np.int8)
-    for row, edge in enumerate(boundary_edges):
-        if feature_sources[edge] >= 0:
-            pair = construction.feature_source_edges[feature_sources[edge]]
-            direction = (
-                construction.recovery.points[pair[1]]
-                - construction.recovery.points[pair[0]]
-            )
-            mesh_edge = np.asarray(connectivity.edges)[edge]
-            edge_orientations[row] = (
-                1
-                if np.dot(points[mesh_edge[1]] - points[mesh_edge[0]], direction) > 0
-                else -1
-            )
-    associations = (
-        _vertex_association(
-            source, specification, construction, selected, face_residuals
-        ),
-        GeometryAssociation(
-            GeometryAssociationKind.PIECEWISE_LINEAR,
-            source.source_id,
-            revision,
-            mesh.entity_set(3).entity_set_id,
-            cell_ids,
-            tuple(_entity(revision, "region", int(x)) for x in construction.cell_regions),
-            np.zeros(cell_ids.size),
-            exact=True,
-            source_dimensions=np.full(cell_ids.size, 3),
-            source_indices=construction.cell_regions,
-            source_entity_roles=(GeometrySourceEntityRole.REGION,) * cell_ids.size,
-        ),
-        GeometryAssociation(
-            GeometryAssociationKind.PIECEWISE_LINEAR,
-            source.source_id,
-            revision,
-            mesh.entity_set(2).entity_set_id,
-            face_ids[selected],
-            tuple(_entity(revision, "facet", int(facets[x])) for x in selected),
-            face_residuals,
-            exact=False,
-            orientations=orientations,
-            source_dimensions=np.full(selected.size, 2),
-            source_indices=facets[selected],
-            source_entity_roles=(GeometrySourceEntityRole.FACET,) * selected.size,
-        ),
-        GeometryAssociation(
-            GeometryAssociationKind.PIECEWISE_LINEAR,
-            source.source_id,
-            revision,
-            mesh.entity_set(1).entity_set_id,
-            edge_ids[boundary_edges],
-            tuple(
-                _entity(
-                    revision,
-                    "edge" if feature_sources[x] >= 0 else "facet",
-                    int(
-                        feature_sources[x] if feature_sources[x] >= 0 else edge_facets[x]
-                    ),
-                )
-                for x in boundary_edges
-            ),
-            np.asarray(
-                [
-                    construction.feature_maximum_distance[feature_sources[x]]
-                    if feature_sources[x] >= 0
-                    else edge_residuals[x]
-                    for x in boundary_edges
-                ]
-            ),
-            exact=False,
-            source_dimensions=edge_dimensions,
-            source_indices=edge_sources,
-            orientations=edge_orientations,
-            source_entity_roles=tuple(
-                GeometrySourceEntityRole.EDGE
-                if feature_sources[edge] >= 0
-                else GeometrySourceEntityRole.FACET
-                for edge in boundary_edges
-            ),
-        ),
-    )
-    return zones, patches, labels, associations
+    associations = phase.associations
+    return NativeRouteMetadata(zones, patches, labels, associations)
 
 
 def _native_resource_quantities(error: MeshcoreError, /) -> tuple[tuple[str, float], ...]:
     quantities = [("native_status", float(error.status))]
-    for name, values in (
-        ("native_execution", error.work_evidence),
-        ("native_memory", error.memory_evidence),
-    ):
-        if values is not None:
-            quantities.extend(
-                (f"{name}:{index}", float(value)) for index, value in enumerate(values)
-            )
+    if error.work_counters is not None:
+        quantities.extend(
+            (f"native_execution:{name}", float(value))
+            for name, value in error.work_counters.items()
+        )
+    if error.memory_counters is not None:
+        quantities.extend(
+            (f"native_memory:{name}", float(value))
+            for name, value in error.memory_counters.items()
+        )
     return tuple(quantities)
 
 
 def _periodic_source_failure(
     error: PeriodicPowerSourceRefusal, stage: str, /
 ) -> MeshingFailure:
-    native = _construction_failure(error.native_refusal, stage).evidence
+    native = construction_failure(error.native_refusal, stage).evidence
     quantities = list(native.achieved)
     if error.requested_work is not None:
         quantities.append(("periodic_requested_work_units", float(error.requested_work)))
@@ -667,98 +543,112 @@ def _periodic_source_failure(
     )
 
 
-def _construction_failure(
+@checked
+def construction_failure(
     error: MeshcoreError | PolyhedralGenerationError | CoordinateEnclosureResourceError,
     stage: str,
     /,
 ) -> MeshingFailure:
     """Preserve native resource/scientific status at generation and adaptation."""
-    if isinstance(error, CoordinateEnclosureResourceError):
-        return MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            str(error),
-            stage=stage,
-            requested=((error.resource, error.limit),),
-            achieved=(("requested", error.requested), ("completed", error.completed)),
-        )
-    if isinstance(error, PeriodicPowerImageCapacityRefusal):
-        return MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            str(error),
-            stage=stage,
-            requested=(("site_images", float(error.maximum_images)),),
-            achieved=(
-                *_native_resource_quantities(error),
-                ("requested_site_images", float(error.requested_images)),
-                ("completed_site_images", float(error.completed_images)),
-            ),
-        )
-    if isinstance(error, PeriodicPowerSourceRefusal):
-        return _periodic_source_failure(error, stage)
-    if isinstance(error, MeshcoreError) and error.status is MeshcoreStatus.TIMEOUT:
-        return MeshingFailure(
-            MeshingFailureCategory.TIMED_OUT,
-            str(error),
-            stage=stage,
-            achieved=_native_resource_quantities(error),
-        )
-    if isinstance(error, PlcRecoveryFailure):
-        return _recovery_failure(error)
-    if isinstance(error, RestrictedPowerFailure):
-        return MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED
-            if error.status == MeshcoreStatus.CAPACITY_EXCEEDED
-            else MeshingFailureCategory.AUDIT_FAILED,
-            str(error),
-            stage=stage,
-            entity_ids=tuple(int(value) for value in error.failure[1:3] if value >= 0),
-            achieved=(
-                *_native_resource_quantities(error),
-                *tuple(
-                    (f"power_failure_{index}", float(value))
-                    for index, value in enumerate(error.failure)
+    match error:
+        case CoordinateEnclosureResourceError():
+            return MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                str(error),
+                stage=stage,
+                requested=((error.resource, float(error.limit)),),
+                achieved=(
+                    ("requested", float(error.requested)),
+                    ("completed", float(error.completed)),
                 ),
-                *tuple(
-                    (f"power_counter_{index}", float(value))
-                    for index, value in enumerate(error.counters)
+            )
+        case PeriodicPowerImageCapacityRefusal():
+            return MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                str(error),
+                stage=stage,
+                requested=(("site_images", float(error.maximum_images)),),
+                achieved=(
+                    *_native_resource_quantities(error),
+                    ("requested_site_images", float(error.requested_images)),
+                    ("completed_site_images", float(error.completed_images)),
                 ),
-            ),
-        )
-    if isinstance(error, PolyhedralGenerationError):
-        if isinstance(error.achieved, dict):
-            quantities = tuple(
-                (str(name), float(value)) for name, value in error.achieved.items()
             )
-        elif isinstance(error.achieved, np.ndarray):
-            quantities = tuple(
-                (f"unmet_entity_{index}", float(value))
-                for index, value in enumerate(error.achieved.flat)
+        case PeriodicPowerSourceRefusal():
+            return _periodic_source_failure(error, stage)
+        case MeshcoreError() if error.status is MeshcoreStatus.TIMEOUT:
+            return MeshingFailure(
+                MeshingFailureCategory.TIMED_OUT,
+                str(error),
+                stage=stage,
+                achieved=_native_resource_quantities(error),
             )
-        elif isinstance(error.achieved, (int, float)):
-            quantities = (("consumed_work", float(error.achieved)),)
-        else:
-            quantities = ()
-        return MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED
-            if "budget" in error.reason
-            else MeshingFailureCategory.COMPLIANCE_FAILED,
-            str(error),
-            stage=stage,
-            entity_ids=error.entities,
-            achieved=quantities,
-        )
-    return MeshingFailure(
-        MeshingFailureCategory.RESOURCE_EXHAUSTED
-        if error.status == MeshcoreStatus.CAPACITY_EXCEEDED
-        else MeshingFailureCategory.AUDIT_FAILED,
-        str(error),
-        stage=stage,
-        achieved=_native_resource_quantities(error),
-    )
+        case PlcRecoveryFailure():
+            return recovery_failure(error)
+        case RestrictedPowerFailure():
+            return MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED
+                if error.status == MeshcoreStatus.CAPACITY_EXCEEDED
+                else MeshingFailureCategory.AUDIT_FAILED,
+                str(error),
+                stage=stage,
+                entity_ids=tuple(
+                    int(value) for value in error.failure[1:3] if value >= 0
+                ),
+                achieved=(
+                    *_native_resource_quantities(error),
+                    *tuple(
+                        (f"power_failure_{index}", float(value))
+                        for index, value in enumerate(error.failure)
+                    ),
+                    *tuple(
+                        (f"power_counter_{index}", float(value))
+                        for index, (_, value) in enumerate(error.counters.items())
+                    ),
+                ),
+            )
+        case PolyhedralGenerationError():
+            match error.achieved:
+                case dict():
+                    quantities = tuple(
+                        (str(name), float(value))
+                        for name, value in error.achieved.items()
+                    )
+                case np.ndarray():
+                    quantities = tuple(
+                        (f"unmet_entity_{index}", float(value))
+                        for index, value in enumerate(error.achieved.flat)
+                    )
+                case int() | float():
+                    quantities = (("consumed_work", float(error.achieved)),)
+                case None:
+                    quantities = ()
+                case invalid:
+                    assert_never(invalid)
+            return MeshingFailure(
+                error.reason.failure_category,
+                str(error),
+                stage=stage,
+                entity_ids=error.entities,
+                achieved=quantities,
+            )
+        case MeshcoreError():
+            return MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED
+                if error.status == MeshcoreStatus.CAPACITY_EXCEEDED
+                else MeshingFailureCategory.AUDIT_FAILED,
+                str(error),
+                stage=stage,
+                achieved=_native_resource_quantities(error),
+            )
+        case _:
+            raise TypeError(
+                f"polyhedral.error must carry a native construction refusal; got {type(error).__name__}"
+            )
 
 
 def _execute_polyhedral_route(
-    source: NativePlcSource | NativePolyhedralSource,
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
     specification: VolumeMeshingSpec,
     prepared: PreparedPolyhedralVolume,
     coordinate_contract: SpatialCoordinateContract,
@@ -767,116 +657,34 @@ def _execute_polyhedral_route(
     /,
     *,
     record_phase: NativeMeshingPhaseRecorder | None = None,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
-    """Construct, independently certify, and publish the canonical result."""
+    "Construct, independently certify, and publish the result."
     if (
         prepared.source_binding_id != source.binding_id
         or prepared.specification_id != specification.specification_id
     ):
         raise ValueError(
-            "Prepared polyhedral route binds a different source or specification."
+            "PreparedPolyhedralVolume.binding must match the source and specification IDs; got mismatched IDs"
         )
-    started = monotonic()
-    phase_names: dict[str, NativeMeshingPhase] = {
-        "regular_triangulation": "regular_triangulation",
-        "power_adjacency": "power_adjacency",
-        "power_clipping": "power_clipping",
-        "power_components": "power_components",
-        "power_publication": "power_publication",
-    }
-
-    def native_phase(
-        phase: str, elapsed: float, work_units: int | None, invocations: int
-    ) -> None:
-        if record_phase is not None:
-            record_phase(
-                NativeMeshingPhaseMeasurement(
-                    phase_names[phase], elapsed, work_units, invocations
-                )
-            )
-
-    construction_started = phase_started(record_phase)
-    try:
-        seeds, seed_regions = _seeds(source.complex, specification)
-        construction = generate_polyhedral_volume(
-            source.complex,
-            sites=prepared.sites,
-            weights=prepared.weights,
-            schedule=prepared.schedule,
-            source_id=source.source_id,
-            seeds=seeds,
-            seed_regions=seed_regions,
-            protected_vertices=_protected_vertices(specification),
-            periodic_constraints=specification.periodic_constraints,
-            record_native_phase=None if record_phase is None else native_phase,
-        )
-    except (
-        MeshcoreError,
-        PolyhedralGenerationError,
-        CoordinateEnclosureResourceError,
-    ) as error:
-        raise _construction_failure(error, "volume_fill") from error
-    record_elapsed(
-        record_phase,
-        "construction",
-        construction_started,
-        work_units=construction.work_units,
+    started = scope.operation_started
+    phase = _construct_polyhedral_route(
+        source, specification, prepared, started, record_phase, scope
     )
-    check_deadline(started, specification.limits, MeshingStageKind.VOLUME_FILL)
-    mesh = construction.mesh
-    c = _polyhedral_connectivity(mesh)
-    sizes = {
-        "vertices": mesh.coordinates.shape[0],
-        "edges": c.edge_count,
-        "faces": c.face_count,
-        "cells": c.cell_count,
-        "connectivity_entries": sum(
-            np.asarray(value).size
-            for value in (c.cell_vertex_values, c.face_vertex_values, c.cell_face_values)
-        ),
-    }
-    for name, achieved in sizes.items():
-        maximum = getattr(specification.limits, f"maximum_{name}")
-        if achieved > maximum:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                f"Polyhedral {name} capacity exceeded.",
-                stage="volume_fill",
-                requested=((name, maximum),),
-                achieved=((name, achieved),),
-            )
-    compliance_started = phase_started(record_phase)
-    lengths, growth = edge_size_evidence(
-        np.asarray(mesh.coordinates), np.asarray(c.edges)
-    )
-    size_control = specification.size_controls[0]
-    if not isinstance(size_control, UniformSizeControl):
-        raise TypeError(
-            "Polyhedral size compliance requires the admitted uniform control."
-        )
-    requested, achieved, issues = uniform_size_compliance(
-        size_control, specification.size_compliance, lengths, growth
-    )
-    achieved.extend(
-        (
-            ("cell_diameter_upper", construction.maximum_cell_diameter),
-            (
-                "volume_optimization_relative_residual",
-                construction.optimization_relative_residual,
-            ),
-        )
-    )
-    compliance = MeshingComplianceReport(
-        specification.specification_id,
-        issues=tuple(issues),
-        requested=tuple(requested),
-        achieved=tuple(achieved),
-    )
-    record_elapsed(record_phase, "compliance", compliance_started)
+    construction = phase.construction
+    mesh = phase.mesh
+    c = phase.c
+    phase = _polyhedral_compliance(construction, specification, record_phase)
+    compliance = phase.compliance
     with measure_phase(record_phase, "geometry_association"):
-        zones, patches, labels, associations = _organization(
+        metadata = organization(
             source, specification, construction, prepared.schedule.feature_tolerance
         )
+        zones = metadata.zones
+        patches = metadata.patches
+        labels = metadata.labels
+        associations = metadata.associations
     data = construction.diagram.construction
     diagnostics = (
         MeshingDiagnostic(
@@ -884,7 +692,7 @@ def _execute_polyhedral_route(
             "Reciprocal restricted components; non-star-visible sites decomposed into convex pieces. Site ancestry is not a field interpolation stencil.",
             quantities=tuple(
                 (f"power_counter_{i}", float(x), float(x))
-                for i, x in enumerate(data.counters)
+                for i, (_, x) in enumerate(data.counters.items())
             ),
         ),
     )
@@ -979,37 +787,20 @@ def _execute_polyhedral_route(
             domain=construction.domain,
             cell_regions=construction.cell_regions,
         ),
-        audit_policy=CellMeshAuditPolicy(
-            require_complete_association=True,
-            watertight_boundary=CellMeshAuditDisposition.REJECT,
+        policy=publication_policy("polyhedral"),
+        organization=NativePublicationOrganization(
+            patches=patches, zones=zones, labels=labels, associations=associations
         ),
-        derivative_mode=MeshingDerivativeMode.NONDIFFERENTIABLE,
-        enforced_limits=(
-            "vertices",
-            "edges",
-            "faces",
-            "cells",
-            "connectivity_entries",
-            "work_units",
-            "wall_seconds",
+        execution=NativePublicationExecution(
+            scope=scope, workspace=workspace, record_phase=record_phase
         ),
-        unenforced_limits=(
-            "cavity_cells",
-            "geometry_queries",
-            "scratch_bytes",
-            "data_bytes",
-        ),
-        zones=zones,
-        patches=patches,
-        labels=labels,
-        associations=associations,
         geometry=construction.geometry,
-        record_phase=record_phase,
     )
 
 
+@checked
 def execute_polyhedral_route(
-    source: NativePlcSource | NativePolyhedralSource,
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
     specification: VolumeMeshingSpec,
     prepared: PreparedPolyhedralVolume,
     coordinate_contract: SpatialCoordinateContract,
@@ -1018,39 +809,35 @@ def execute_polyhedral_route(
     /,
     *,
     record_phase: NativeMeshingPhaseRecorder | None = None,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
-    """Keep construction, association and publication in one original scope."""
-    started = monotonic()
+    "Keep construction, association and publication in one scope."
     try:
-        with native_volume_execution_budget(
-            specification.limits, operation_started=started
-        ):
-            native_volume_checkpoint(
-                specification.limits,
-                MeshingStageKind.SOURCE_INSPECTION,
-                operation_started=started,
-            )
-            result = _execute_polyhedral_route(
-                source,
-                specification,
-                prepared,
-                coordinate_contract,
-                provider,
-                plan_id,
-                record_phase=record_phase,
-            )
-            native_volume_checkpoint(
-                specification.limits,
-                MeshingStageKind.CERTIFICATION,
-                operation_started=started,
-            )
-            return result
+        native_volume_checkpoint(
+            specification.limits, MeshingStageKind.SOURCE_INSPECTION, scope=scope
+        )
+        result = _execute_polyhedral_route(
+            source,
+            specification,
+            prepared,
+            coordinate_contract,
+            provider,
+            plan_id,
+            record_phase=record_phase,
+            scope=scope,
+            workspace=workspace,
+        )
+        native_volume_checkpoint(
+            specification.limits, MeshingStageKind.CERTIFICATION, scope=scope
+        )
+        return result
     except (
         MeshcoreError,
         CoordinateEnclosureResourceError,
         PolyhedralGenerationError,
     ) as error:
-        raise _construction_failure(error, "native_execution") from error
+        raise construction_failure(error, "native_execution") from error
 
 
 __all__ = [
@@ -1058,3 +845,367 @@ __all__ = [
     "polyhedral_support_issues",
     "execute_polyhedral_route",
 ]
+
+
+@final
+class _PolyhedralAssociationPhase(StrictModule):
+    associations: tuple[GeometryAssociation, ...]
+
+
+def _polyhedral_associations(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    specification: VolumeMeshingSpec | None,
+    construction: PolyhedralConstruction,
+    tolerance: float,
+    points: np.ndarray,
+    cell_ids: np.ndarray,
+    face_ids: np.ndarray,
+    edge_ids: np.ndarray,
+    facets: np.ndarray,
+    selected: np.ndarray,
+) -> _PolyhedralAssociationPhase:
+    """Polyhedral associations."""
+    mesh = construction.mesh
+    connectivity = require_polyhedral_connectivity(mesh)
+    phase = _polyhedral_facet_residuals(
+        connectivity,
+        construction,
+        points,
+        edge_ids,
+        face_ids,
+        facets,
+        selected,
+        tolerance,
+    )
+    edge_facets = phase.edge_facets
+    edge_residuals = phase.edge_residuals
+    face_residuals = phase.face_residuals
+    orientations = phase.orientations
+    edge_vertices = phase.edge_vertices
+    feature_sources = construction.feature_edge_sources
+    combined = construction.feature_maximum_distance + construction.feature_coverage_gap
+    combined = np.where(combined == 0, 0.0, np.nextafter(combined, np.inf))
+    for feature in () if specification is None else specification.protected_features:
+        identifiers = np.asarray(feature.scope.entity_ids, dtype=np.int64)
+        if feature.scope.entity_dimension == 1:
+            bad = identifiers[combined[identifiers] > feature.maximum_deviation]
+        elif feature.scope.entity_dimension == 2:
+            bad = np.asarray(
+                [
+                    int(facet)
+                    for facet in identifiers
+                    if np.max(face_residuals[facets[selected] == facet], initial=0.0)
+                    > feature.maximum_deviation
+                ],
+                dtype=np.int64,
+            )
+        else:
+            continue
+        if bad.size:
+            raise MeshingFailure(
+                MeshingFailureCategory.AUDIT_FAILED,
+                "polyhedral.protected_features.deviation must not exceed maximum_deviation; got excessive feature distance",
+                stage="geometry_association",
+                entity_ids=tuple(map(int, bad)),
+            )
+    boundary_edges = np.flatnonzero((edge_facets >= 0) | (feature_sources >= 0))
+    revision = source.source_revision
+    edge_dimensions = np.where(feature_sources[boundary_edges] >= 0, 1, 2)
+    edge_sources = np.where(
+        feature_sources[boundary_edges] >= 0,
+        feature_sources[boundary_edges],
+        edge_facets[boundary_edges],
+    )
+    edge_orientations = np.zeros(boundary_edges.size, dtype=np.int8)
+    for row, edge in enumerate(boundary_edges):
+        if feature_sources[edge] >= 0:
+            pair = construction.feature_source_edges[feature_sources[edge]]
+            direction = (
+                construction.recovery.points[pair[1]]
+                - construction.recovery.points[pair[0]]
+            )
+            mesh_edge = edge_vertices[edge]
+            edge_orientations[row] = (
+                1
+                if np.dot(points[mesh_edge[1]] - points[mesh_edge[0]], direction) > 0
+                else -1
+            )
+    associations = (
+        _vertex_association(
+            source, specification, construction, selected, face_residuals
+        ),
+        GeometryAssociation(
+            GeometryAssociationKind.PIECEWISE_LINEAR,
+            source.source_id,
+            revision,
+            mesh.entity_set(3).entity_set_id,
+            cell_ids,
+            tuple(
+                entity_key(revision, "region", int(x)) for x in construction.cell_regions
+            ),
+            np.zeros(cell_ids.size, dtype=np.float64),
+            exact=True,
+            source_dimensions=np.full(cell_ids.size, 3, dtype=np.int64),
+            source_indices=construction.cell_regions,
+            source_entity_roles=(GeometrySourceEntityRole.REGION,) * cell_ids.size,
+        ),
+        GeometryAssociation(
+            GeometryAssociationKind.PIECEWISE_LINEAR,
+            source.source_id,
+            revision,
+            mesh.entity_set(2).entity_set_id,
+            face_ids[selected],
+            tuple(entity_key(revision, "facet", int(facets[x])) for x in selected),
+            face_residuals,
+            exact=False,
+            orientations=orientations,
+            source_dimensions=np.full(selected.size, 2, dtype=np.int64),
+            source_indices=facets[selected],
+            source_entity_roles=(GeometrySourceEntityRole.FACET,) * selected.size,
+        ),
+        GeometryAssociation(
+            GeometryAssociationKind.PIECEWISE_LINEAR,
+            source.source_id,
+            revision,
+            mesh.entity_set(1).entity_set_id,
+            edge_ids[boundary_edges],
+            tuple(
+                entity_key(
+                    revision,
+                    "edge" if feature_sources[x] >= 0 else "facet",
+                    int(
+                        feature_sources[x] if feature_sources[x] >= 0 else edge_facets[x]
+                    ),
+                )
+                for x in boundary_edges
+            ),
+            np.asarray(
+                [
+                    construction.feature_maximum_distance[feature_sources[x]]
+                    if feature_sources[x] >= 0
+                    else edge_residuals[x]
+                    for x in boundary_edges
+                ]
+            ),
+            exact=False,
+            source_dimensions=edge_dimensions,
+            source_indices=edge_sources,
+            orientations=edge_orientations,
+            source_entity_roles=tuple(
+                GeometrySourceEntityRole.EDGE
+                if feature_sources[edge] >= 0
+                else GeometrySourceEntityRole.FACET
+                for edge in boundary_edges
+            ),
+        ),
+    )
+    return _PolyhedralAssociationPhase(associations)
+
+
+@final
+class _PolyhedralCompliancePhase(StrictModule):
+    compliance: MeshingComplianceReport
+
+
+def _polyhedral_compliance(
+    construction: PolyhedralConstruction,
+    specification: VolumeMeshingSpec,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> _PolyhedralCompliancePhase:
+    """Polyhedral compliance."""
+    mesh = construction.mesh
+    c = require_polyhedral_connectivity(mesh)
+    compliance_started = phase_started(record_phase)
+    lengths, growth = edge_size_evidence(
+        np.asarray(mesh.coordinates), np.asarray(c.edges)
+    )
+    size_control = specification.size_controls[0]
+    match size_control:
+        case UniformSizeControl():
+            pass
+        case _:
+            raise TypeError(
+                "polyhedral.size_controls must contain a uniform control; got a different control kind"
+            )
+    requested, achieved, issues = uniform_size_compliance(
+        size_control, specification.size_compliance, lengths, growth
+    )
+    achieved.extend(
+        (
+            ("cell_diameter_upper", construction.maximum_cell_diameter),
+            (
+                "volume_optimization_relative_residual",
+                construction.optimization_relative_residual,
+            ),
+        )
+    )
+    compliance = MeshingComplianceReport(
+        specification.specification_id,
+        issues=tuple(issues),
+        requested=tuple(requested),
+        achieved=tuple(achieved),
+    )
+    record_elapsed(record_phase, "compliance", compliance_started)
+    return _PolyhedralCompliancePhase(compliance)
+
+
+@final
+class _PolyhedralFacetPhase(StrictModule):
+    edge_facets: np.ndarray
+    edge_residuals: np.ndarray
+    face_residuals: np.ndarray
+    orientations: np.ndarray
+    edge_vertices: np.ndarray
+
+
+def _polyhedral_facet_residuals(
+    connectivity: PolyhedralConnectivity,
+    construction: PolyhedralConstruction,
+    points: np.ndarray,
+    edge_ids: np.ndarray,
+    face_ids: np.ndarray,
+    facets: np.ndarray,
+    selected: np.ndarray,
+    tolerance: float,
+) -> _PolyhedralFacetPhase:
+    """Polyhedral facet residuals."""
+    offsets, vertices = (
+        np.asarray(connectivity.face_vertex_offsets),
+        np.asarray(connectivity.face_vertex_values),
+    )
+    edge_vertices = np.asarray(jax.device_get(connectivity.edges))
+    edge_rows = {
+        tuple(sorted(map(int, edge))): row for row, edge in enumerate(edge_vertices)
+    }
+    edge_facets = np.full(edge_ids.size, -1, dtype=np.int64)
+    edge_residuals = np.zeros(edge_ids.size, dtype=np.float64)
+    face_residuals = np.zeros(selected.size, dtype=np.float64)
+    orientations = np.zeros(selected.size, dtype=np.int8)
+    for row, face in enumerate(selected):
+        facet = int(facets[face])
+        triangle = int(construction.face_recovery_triangles[face])
+        source_points = construction.recovery.points[
+            construction.recovery.faces[triangle]
+        ]
+        normal = np.cross(
+            source_points[1] - source_points[0], source_points[2] - source_points[0]
+        )
+        length = np.linalg.norm(normal)
+        loop = vertices[offsets[face] : offsets[face + 1]]
+        face_residuals[row] = float(
+            np.max(np.abs((points[loop] - source_points[0]) @ normal)) / length
+        )
+        normal_mesh = np.sum(
+            np.cross(
+                points[loop] - points[loop[0]],
+                np.roll(points[loop], -1, axis=0) - points[loop[0]],
+            ),
+            axis=0,
+        )
+        orientations[row] = 1 if np.dot(normal_mesh, normal) > 0 else -1
+        for a, b in zip(loop, np.roll(loop, -1), strict=True):
+            edge_facets[edge_rows[tuple(sorted((int(a), int(b))))]] = facet
+            edge = edge_rows[tuple(sorted((int(a), int(b))))]
+            edge_residuals[edge] = max(edge_residuals[edge], face_residuals[row])
+    if np.any(face_residuals > tolerance):
+        raise MeshingFailure(
+            MeshingFailureCategory.AUDIT_FAILED,
+            "polyhedral.face_residuals must not exceed feature_tolerance; got excessive source-plane residuals",
+            stage="geometry_association",
+            entity_ids=tuple(map(int, face_ids[selected[face_residuals > tolerance]])),
+        )
+    return _PolyhedralFacetPhase(
+        edge_facets, edge_residuals, face_residuals, orientations, edge_vertices
+    )
+
+
+@final
+class _PolyhedralConstructionPhase(StrictModule):
+    construction: PolyhedralConstruction
+    mesh: CellMesh
+    c: PolyhedralConnectivity
+
+
+def _construct_polyhedral_route(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    specification: VolumeMeshingSpec,
+    prepared: PreparedPolyhedralVolume,
+    started: float,
+    record_phase: NativeMeshingPhaseRecorder | None,
+    scope: NativeExecutionScope,
+) -> _PolyhedralConstructionPhase:
+    """Construct polyhedral route."""
+
+    def native_phase(
+        phase: str, elapsed: float, work_units: int | None, invocations: int
+    ) -> None:
+        if record_phase is not None:
+            record_phase(
+                NativeMeshingPhaseMeasurement(
+                    parse(phase, PowerConstructionPhase, "polyhedral.phase"),
+                    elapsed,
+                    work_units,
+                    invocations,
+                )
+            )
+
+    construction_started = phase_started(record_phase)
+    try:
+        local_seeds, seed_regions = region_seed_points(source.complex, specification)
+        construction = generate_polyhedral_volume(
+            source.complex,
+            sites=prepared.sites,
+            weights=prepared.weights,
+            schedule=prepared.schedule,
+            source_id=source.source_id,
+            seeds=local_seeds,
+            seed_regions=seed_regions,
+            protected_vertices=_protected_vertices(specification),
+            periodic_constraints=specification.periodic_constraints,
+            record_native_phase=None if record_phase is None else native_phase,
+            scope=scope,
+        )
+    except (
+        MeshcoreError,
+        PolyhedralGenerationError,
+        CoordinateEnclosureResourceError,
+    ) as error:
+        raise construction_failure(error, "volume_fill") from error
+    record_elapsed(
+        record_phase,
+        "construction",
+        construction_started,
+        work_units=construction.work_units,
+    )
+    check_deadline(started, specification.limits, MeshingStageKind.VOLUME_FILL)
+    mesh = construction.mesh
+    c = require_polyhedral_connectivity(mesh)
+    limits = specification.limits
+    capacities = (
+        ("vertices", limits.maximum_vertices, mesh.coordinates.shape[0]),
+        ("edges", limits.maximum_edges, c.edge_count),
+        ("faces", limits.maximum_faces, c.face_count),
+        ("cells", limits.maximum_cells, c.cell_count),
+        (
+            "connectivity_entries",
+            limits.maximum_connectivity_entries,
+            sum(
+                value.size
+                for value in (
+                    c.cell_vertex_values,
+                    c.face_vertex_values,
+                    c.cell_face_values,
+                )
+            ),
+        ),
+    )
+    for name, maximum, achieved in capacities:
+        if achieved > maximum:
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                f"polyhedral.entity_capacity must not exceed maximum_{name}={maximum}; got {achieved}",
+                stage="volume_fill",
+                requested=((name, maximum),),
+                achieved=((name, achieved),),
+            )
+    return _PolyhedralConstructionPhase(construction, mesh, c)

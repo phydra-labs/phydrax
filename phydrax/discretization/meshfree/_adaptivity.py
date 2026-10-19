@@ -31,7 +31,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import IntEnum
 from math import comb
-from numbers import Integral, Real
+from numbers import Real
 from typing import assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
@@ -44,10 +44,11 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import finite_real_scalar, nonnegative_integer, positive_integer
 from ...linalg import LinearSolvePolicy
 from ...optim import ConvexSolvePolicy
 from ...sparse import EdgeRelation
-from ...typing import Bool, Dim, Float64, Int64, parse
+from ...typing import Bool, checked, Dim, Float64, Int64, parse
 from .._point_cloud import PreparedPointCloudDiscretization
 from .._point_cloud_pde import PointCollocationStability, PointStabilityOutcome
 from .._transfer import TransferGeometryBinding
@@ -157,29 +158,23 @@ class MeshfreeAdaptationStatus(IntEnum):
     CAPACITY_REFUSED = 2
 
 
-def _host_integer(value: int, name: str, /, *, minimum: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be a host integer.")
-    if value < minimum:
-        raise ValueError(f"{name} must be at least {minimum}.")
-    return int(value)
-
-
 def _host_fraction(value: float, name: str, /, *, lower: float, upper: float) -> float:
-    if isinstance(value, bool) or not isinstance(value, Real):
-        raise TypeError(f"{name} must be a real host number.")
-    result = float(value)
-    if not (np.isfinite(result) and lower <= result <= upper):
-        raise ValueError(f"{name} must lie in [{lower}, {upper}].")
+    result = finite_real_scalar(value, "meshfree.adaptivity." + name)
+    if not lower <= result <= upper:
+        raise ValueError(
+            f"adaptivity.fraction.value must lie in [{lower}, {upper}]; got {result!r}; field {name}"
+        )
     return result
 
 
 def _stable_ids(value: ArrayLike, count: int, /) -> np.ndarray:
     ids = np.asarray(value)
     if ids.shape != (count,) or not np.issubdtype(ids.dtype, np.integer):
-        raise ValueError("stable_ids must be one integer identifier per point.")
+        raise ValueError(
+            f"adaptivity.stable_ids.count must be one integer identifier per point; got {ids.shape!r}"
+        )
     if np.unique(ids).size != count:
-        raise ValueError("stable_ids must be unique.")
+        raise ValueError(f"adaptivity.stable_ids.count must be unique; got {count!r}")
     return ids.astype(np.int64)
 
 
@@ -224,14 +219,22 @@ def meshfree_fill_measures(
     """
     host = np.asarray(points, dtype=np.float64)
     if host.ndim != 2 or not np.all(np.isfinite(host)):
-        raise ValueError("points must be a finite (N, D) array.")
+        raise ValueError(
+            f"adaptivity.meshfree_fill_measures.points must be a finite (N, D) array; got {type(points).__name__}"
+        )
     total = float(total_measure)
     if not (np.isfinite(total) and total > 0.0):
-        raise ValueError("total_measure must be finite and positive.")
-    dimension = _host_integer(intrinsic_dimension, "intrinsic_dimension", minimum=1)
-    count = _host_integer(neighbors, "neighbors", minimum=1)
+        raise ValueError(
+            f"adaptivity.meshfree_fill_measures.total_measure must be finite and positive; got {total_measure!r}"
+        )
+    dimension = positive_integer(
+        intrinsic_dimension, "meshfree.adaptivity.intrinsic_dimension"
+    )
+    count = positive_integer(neighbors, "meshfree.adaptivity.neighbors")
     if host.shape[0] <= count:
-        raise ValueError("fill measures need more points than neighbors.")
+        raise ValueError(
+            f"adaptivity.meshfree_fill_measures.points must provide more points than neighbors; got {host.shape!r}"
+        )
     ids = np.arange(host.shape[0], dtype=np.int64)
     indices, usable = _neighbor_lists(host, count, ids)
     distance = np.linalg.norm(host[indices] - host[:, None, :], axis=-1)
@@ -281,10 +284,12 @@ class MeshfreeErrorIndicator(StrictModule):
     ) -> None:
         host = np.asarray(values, dtype=np.float64)
         if host.ndim != 1 or not np.all(np.isfinite(host)) or np.any(host < 0.0):
-            raise ValueError("Indicator values must be finite, nonnegative and rank-1.")
+            raise ValueError(
+                f"MeshfreeErrorIndicator.values must be finite, nonnegative and rank-1; got {type(values).__name__}"
+            )
         ids = _stable_ids(stable_ids, host.shape[0])
         kind_ = parse(kind, MeshfreeIndicatorKind, "kind")
-        probes = _host_integer(probe_count, "probe_count", minimum=0)
+        probes = nonnegative_integer(probe_count, "meshfree.adaptivity.probe_count")
         self.values = jnp.asarray(host)
         self.stable_ids = jnp.asarray(ids)
         self.kind = kind_
@@ -369,7 +374,7 @@ def _edge_probes(
     admit: MeshfreeContainment | None,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Midpoints of each point's nearest edges and their owning point index."""
+    """Midpoints of each point's nearest edges and their responsible point index."""
     indices, usable = _neighbor_lists(points, min(per_point, neighbors), ids)
     owners = np.broadcast_to(np.arange(points.shape[0])[:, None], indices.shape)
     owner = owners[usable]
@@ -377,7 +382,9 @@ def _edge_probes(
     if admit is not None:
         inside = np.asarray(admit(probes), dtype=np.bool_)
         if inside.shape != (probes.shape[0],):
-            raise ValueError("The probe predicate must return one Boolean per probe.")
+            raise ValueError(
+                f"adaptivity.edge_probes.points must return one Boolean per probe; got {inside.shape!r}"
+            )
         owner, probes = owner[inside], probes[inside]
     return probes, owner
 
@@ -392,6 +399,7 @@ def _aggregate(
     return np.sqrt(np.where(probes > 0, measures * totals / np.maximum(probes, 1), 0.0))
 
 
+@checked
 def probe_residual_indicator(
     cloud: PreparedPointCloudDiscretization,
     values: ArrayLike,
@@ -417,22 +425,26 @@ def probe_residual_indicator(
     of 665). Graded closure (``MeshfreeAdaptationPolicy.grading``), not this
     indicator, is what resolves such bands.
     """
-    if not isinstance(cloud, PreparedPointCloudDiscretization):
-        raise TypeError("cloud must be a PreparedPointCloudDiscretization.")
-    per_point = _host_integer(probes_per_point, "probes_per_point", minimum=1)
+    per_point = positive_integer(probes_per_point, "meshfree.adaptivity.probes_per_point")
     points = np.asarray(cloud.points, dtype=np.float64)
     ids = np.asarray(cloud.stable_ids, dtype=np.int64)
     nodal = jnp.asarray(values, dtype=jnp.float64)
     if nodal.shape != (points.shape[0],):
-        raise ValueError("values must be one nodal value per cloud point.")
+        raise ValueError(
+            f"adaptivity.probe_residual_indicator.cloud must be one nodal value per cloud point; got {nodal.shape!r}"
+        )
     probes, owner = _edge_probes(points, ids, cloud.plan.neighbors, per_point, admit)
     jet = _probe_jet(points, ids, probes, nodal, cloud.plan.stencil, cloud.plan.neighbors)
     rows = jnp.asarray(residual(jnp.asarray(probes), jet), dtype=jnp.float64)
     if rows.shape != (probes.shape[0],):
-        raise ValueError("The strong residual must return one value per probe.")
+        raise ValueError(
+            f"adaptivity.probe_residual_indicator.residual must return one value per probe; got {rows.shape!r}"
+        )
     squares = np.asarray(rows) ** 2
     if not np.all(np.isfinite(squares)):
-        raise ValueError("The strong residual is not finite at the probes.")
+        raise ValueError(
+            f"adaptivity.probe_residual_indicator.residual must return finite residual values at every probe; got {type(residual).__name__}"
+        )
     measures = np.asarray(cloud.quadrature_weights, dtype=np.float64)
     return MeshfreeErrorIndicator(
         _aggregate(owner, squares, measures),
@@ -456,6 +468,7 @@ def _nodal_hessian(cloud: PreparedPointCloudDiscretization, values: Array, /) ->
     return hessian
 
 
+@checked
 def flux_jump_indicator(
     cloud: PreparedPointCloudDiscretization,
     values: ArrayLike,
@@ -474,18 +487,20 @@ def flux_jump_indicator(
     each side's own diffusivity (one-sided at material interfaces) and
     ``eta_i^2 = (m_i / q_i) sum_j (J_ij / h_ij)^2``.
     """
-    if not isinstance(cloud, PreparedPointCloudDiscretization):
-        raise TypeError("cloud must be a PreparedPointCloudDiscretization.")
-    per_point = _host_integer(edges_per_point, "edges_per_point", minimum=1)
+    per_point = positive_integer(edges_per_point, "meshfree.adaptivity.edges_per_point")
     points = np.asarray(cloud.points, dtype=np.float64)
     count = points.shape[0]
     ids = np.asarray(cloud.stable_ids, dtype=np.int64)
     nodal = jnp.asarray(values, dtype=jnp.float64)
     if nodal.shape != (count,):
-        raise ValueError("values must be one nodal value per cloud point.")
+        raise ValueError(
+            f"adaptivity.flux_jump_indicator.cloud must be one nodal value per cloud point; got {nodal.shape!r}"
+        )
     conductivity = np.broadcast_to(np.asarray(diffusivity, dtype=np.float64), (count,))
     if not np.all(np.isfinite(conductivity)) or np.any(conductivity <= 0.0):
-        raise ValueError("diffusivity must be finite and positive at every point.")
+        raise ValueError(
+            f"adaptivity.flux_jump_indicator.diffusivity must be finite and positive at every point; got {type(diffusivity).__name__}"
+        )
     gradient = np.asarray(cloud.gradient(nodal), dtype=np.float64).reshape((count, -1))
     hessian = np.asarray(_nodal_hessian(cloud, nodal), dtype=np.float64)
     indices, usable = _neighbor_lists(points, min(per_point, cloud.plan.neighbors), ids)
@@ -526,12 +541,14 @@ def degree_difference_indicator(
     ``lower`` and ``higher`` apply the same declared nodal PDE operator fitted
     at two polynomial degrees on the same points (bulk Laplacians, surface
     Laplace-Beltrami operators, ...). ``eta_i = sqrt(m_i) |(L_{p+1} - L_p) u|_i``
-    on the selected ``rows`` (Dirichlet rows are exact and excluded by passing
+    on the selected ``rows`` (Dirichlet rows are algebraic and excluded by passing
     the interior mask); unselected rows carry zero.
     """
     nodal = jnp.asarray(values, dtype=jnp.float64)
     if nodal.ndim != 1:
-        raise ValueError("values must be one nodal value per point.")
+        raise ValueError(
+            f"adaptivity.degree_difference_indicator.values must be one nodal value per point; got {type(values).__name__}"
+        )
     count = nodal.shape[0]
     weights = np.asarray(measures, dtype=np.float64)
     if (
@@ -539,13 +556,19 @@ def degree_difference_indicator(
         or not np.all(np.isfinite(weights))
         or np.any(weights <= 0)
     ):
-        raise ValueError("measures must be finite positive values, one per point.")
+        raise ValueError(
+            f"adaptivity.degree_difference_indicator.values must be finite positive values, one per point; got {weights.shape!r}"
+        )
     selected = np.ones((count,), dtype=np.bool_) if rows is None else np.asarray(rows)
     if selected.dtype != np.bool_ or selected.shape != (count,):
-        raise ValueError("rows must be a Boolean mask with one entry per point.")
+        raise ValueError(
+            f"adaptivity.degree_difference_indicator.rows must be a Boolean mask with one entry per point; got {selected.shape!r}"
+        )
     difference = np.asarray(higher(nodal) - lower(nodal), dtype=np.float64)
     if difference.shape != (count,) or not np.all(np.isfinite(difference)):
-        raise ValueError("Both operators must return finite nodal values.")
+        raise ValueError(
+            f"adaptivity.degree_difference_indicator.values must return finite nodal values; got {difference.shape!r}"
+        )
     return MeshfreeErrorIndicator(
         np.where(selected, np.sqrt(weights) * np.abs(difference), 0.0),
         stable_ids,
@@ -580,10 +603,9 @@ class MeshfreeSupportQuality(StrictModule):
         )
 
 
+@checked
 def support_quality(cloud: PreparedPointCloudDiscretization, /) -> MeshfreeSupportQuality:
     """Read the cloud's stencil evidence and measure its support spacing."""
-    if not isinstance(cloud, PreparedPointCloudDiscretization):
-        raise TypeError("cloud must be a PreparedPointCloudDiscretization.")
     count = cloud.state_shape[0]
     evidence = cloud.stencils.evidence
     condition = np.asarray(evidence.condition, dtype=np.float64).reshape((count, -1))
@@ -632,10 +654,14 @@ class MeshfreeMarkingPolicy(StrictModule, NonTrainableState):
         strategy_ = parse(strategy, MeshfreeMarkingStrategy, "strategy")
         fraction_ = _host_fraction(fraction, "fraction", lower=0.0, upper=1.0)
         if fraction_ == 0.0:
-            raise ValueError("fraction must be positive.")
+            raise ValueError(
+                f"MeshfreeMarkingPolicy.fraction must lie in (0, 1]; got {fraction_}"
+            )
         self.strategy = strategy_
         self.fraction = fraction_
-        self.maximum_marked = _host_integer(maximum_marked, "maximum_marked", minimum=1)
+        self.maximum_marked = positive_integer(
+            maximum_marked, "meshfree.adaptivity.maximum_marked"
+        )
 
 
 @final
@@ -650,14 +676,11 @@ class MeshfreeMarking(StrictModule):
     indicator_id: str = eqx.field(static=True)
 
 
+@checked
 def mark_points(
     indicator: MeshfreeErrorIndicator, policy: MeshfreeMarkingPolicy, /
 ) -> MeshfreeMarking:
     """Select points by the policy's strategy; the result is order independent."""
-    if not isinstance(indicator, MeshfreeErrorIndicator):
-        raise TypeError("indicator must be a MeshfreeErrorIndicator.")
-    if not isinstance(policy, MeshfreeMarkingPolicy):
-        raise TypeError("policy must be a MeshfreeMarkingPolicy.")
     values = np.asarray(indicator.values)
     ids = np.asarray(indicator.stable_ids)
     match policy.strategy:
@@ -726,14 +749,17 @@ class MeshfreeAdaptiveSupport(StrictModule):
     ) -> None:
         host = np.asarray(points, dtype=np.float64)
         if host.ndim != 2 or host.shape[0] < 2 or not np.all(np.isfinite(host)):
-            raise ValueError("points must be a finite (N, D) array with N >= 2.")
+            raise ValueError(
+                f"MeshfreeAdaptiveSupport.points must be a finite (N, D) array with N >= 2; got {host.shape!r}"
+            )
         count, ambient = host.shape
         kind_ = parse(kind, MeshfreeSupportKind, "kind")
-        dimension = _host_integer(intrinsic_dimension, "intrinsic_dimension", minimum=1)
+        dimension = positive_integer(
+            intrinsic_dimension, "meshfree.adaptivity.intrinsic_dimension"
+        )
         if dimension > ambient or (kind_ == "bulk") != (dimension == ambient):
             raise ValueError(
-                "A bulk support has intrinsic dimension equal to its ambient "
-                "dimension; a surface support has a lower one."
+                f"MeshfreeAdaptiveSupport.points must match the ambient dimension for bulk support and have lower intrinsic dimension for surface support; got {type(points).__name__}"
             )
         boundary = (
             np.zeros((count,), dtype=np.bool_)
@@ -741,14 +767,18 @@ class MeshfreeAdaptiveSupport(StrictModule):
             else np.asarray(boundary_mask)
         )
         if boundary.dtype != np.bool_ or boundary.shape != (count,):
-            raise ValueError("boundary_mask must be Boolean with one entry per point.")
+            raise ValueError(
+                f"MeshfreeAdaptiveSupport.boundary_mask must be Boolean with one entry per point; got {boundary.shape!r}"
+            )
         normals = (
             np.zeros_like(host)
             if boundary_normals is None
             else np.asarray(boundary_normals, dtype=np.float64)
         )
         if normals.shape != host.shape or not np.all(np.isfinite(normals)):
-            raise ValueError("boundary_normals must be finite with the points' shape.")
+            raise ValueError(
+                f"MeshfreeAdaptiveSupport.points must be finite with the points' shape; got {normals.shape!r}"
+            )
         self.points = jnp.asarray(host)
         self.stable_ids = jnp.asarray(_stable_ids(stable_ids, count))
         self.boundary_mask = jnp.asarray(boundary)
@@ -758,12 +788,11 @@ class MeshfreeAdaptiveSupport(StrictModule):
         self.degree, self.neighbors = _fit_parameters(degree, neighbors, dimension, count)
 
     @classmethod
+    @checked
     def from_point_cloud(
         cls, cloud: PreparedPointCloudDiscretization, /
     ) -> MeshfreeAdaptiveSupport:
         """The bulk support of a prepared point cloud and its stencil policy."""
-        if not isinstance(cloud, PreparedPointCloudDiscretization):
-            raise TypeError("cloud must be a PreparedPointCloudDiscretization.")
         return cls(
             cloud.points,
             cloud.stable_ids,
@@ -780,13 +809,16 @@ def _fit_parameters(
     degree: int, neighbors: int, dimension: int, count: int, /
 ) -> tuple[int, int]:
     """Strong second derivatives need degree >= 2 and a unisolvent support."""
-    degree_ = _host_integer(degree, "degree", minimum=2)
-    neighbors_ = _host_integer(neighbors, "neighbors", minimum=1)
+    degree_ = positive_integer(degree, "meshfree.adaptivity.degree")
+    if degree_ < 2:
+        raise ValueError(
+            f"MeshfreeAdaptiveSupport.degree must be at least two for second derivatives; got {degree_}"
+        )
+    neighbors_ = positive_integer(neighbors, "meshfree.adaptivity.neighbors")
     basis = comb(dimension + degree_, degree_)
     if neighbors_ < basis or neighbors_ > count:
         raise ValueError(
-            f"Degree {degree_} in {dimension} intrinsic dimensions needs between "
-            f"{basis} and {count} neighbors; got {neighbors_}."
+            f"MeshfreeAdaptiveSupport.neighbors must lie in [{basis}, {count}] for degree {degree_} in {dimension} dimensions; got {neighbors_}"
         )
     return degree_, neighbors_
 
@@ -849,39 +881,56 @@ class MeshfreeAdaptationPolicy(StrictModule, NonTrainableState):
     ) -> None:
         total = float(total_measure)
         if not (np.isfinite(total) and total > 0.0):
-            raise ValueError("total_measure must be finite and positive.")
+            raise ValueError(
+                f"MeshfreeAdaptationPolicy.total_measure must be finite and positive; got {total_measure!r}"
+            )
         separation = _host_fraction(
             minimum_separation, "minimum_separation", lower=0.0, upper=0.5
         )
         if separation == 0.0:
-            raise ValueError("minimum_separation must be positive.")
-        self.children_per_point = _host_integer(
-            children_per_point, "children_per_point", minimum=1
+            raise ValueError(
+                f"MeshfreeAdaptationPolicy.minimum_separation must be positive; got {minimum_separation!r}"
+            )
+        self.children_per_point = positive_integer(
+            children_per_point, "meshfree.adaptivity.children_per_point"
         )
-        self.closure_neighbors = _host_integer(
-            closure_neighbors, "closure_neighbors", minimum=0
+        self.closure_neighbors = nonnegative_integer(
+            closure_neighbors, "meshfree.adaptivity.closure_neighbors"
         )
         if isinstance(grading, bool) or not isinstance(grading, Real):
-            raise TypeError("grading must be a real host number.")
+            raise TypeError(
+                f"MeshfreeAdaptationPolicy.grading must be a real host number; got {grading!r}"
+            )
         if not (np.isfinite(grading) and grading > 2.0):
-            raise ValueError("grading must exceed 2: bisection halves the spacing.")
+            raise ValueError(
+                f"MeshfreeAdaptationPolicy.grading must exceed 2: bisection halves the spacing; got {grading!r}"
+            )
         self.grading = float(grading)
         self.minimum_separation = separation
         self.coarsen_fraction = _host_fraction(
             coarsen_fraction, "coarsen_fraction", lower=0.0, upper=1.0
         )
-        self.maximum_inserted = _host_integer(
-            maximum_inserted, "maximum_inserted", minimum=0
+        self.maximum_inserted = nonnegative_integer(
+            maximum_inserted, "meshfree.adaptivity.maximum_inserted"
         )
-        self.maximum_removed = _host_integer(
-            maximum_removed, "maximum_removed", minimum=0
+        self.maximum_removed = nonnegative_integer(
+            maximum_removed, "meshfree.adaptivity.maximum_removed"
         )
-        self.maximum_points = _host_integer(maximum_points, "maximum_points", minimum=2)
+        maximum_points_ = positive_integer(
+            maximum_points, "meshfree.adaptivity.maximum_points"
+        )
+        if maximum_points_ < 2:
+            raise ValueError(
+                f"MeshfreeAdaptationPolicy.maximum_points must be at least two; got {maximum_points_}"
+            )
+        self.maximum_points = maximum_points_
         self.total_measure = total
-        self.measure_neighbors = _host_integer(
-            measure_neighbors, "measure_neighbors", minimum=1
+        self.measure_neighbors = positive_integer(
+            measure_neighbors, "meshfree.adaptivity.measure_neighbors"
         )
-        self.maximum_rounds = _host_integer(maximum_rounds, "maximum_rounds", minimum=1)
+        self.maximum_rounds = positive_integer(
+            maximum_rounds, "meshfree.adaptivity.maximum_rounds"
+        )
 
 
 @final
@@ -889,7 +938,7 @@ class MeshfreeAdaptationProposal(StrictModule):
     """One candidate adapted cloud with its identity, lineage and evidence.
 
     Retained points keep their stable IDs in source order and are followed by
-    the inserted children with fresh IDs above every source ID in canonical
+    the inserted children with fresh IDs above every source ID in deterministic
     parent-pair order. ``inserted_parents`` are the parent stable-ID pairs of
     the children; ``removed_ids`` are source IDs absent from the target.
     Dropped children are counted by cause: an unresolved boundary edge without
@@ -1002,7 +1051,7 @@ def _candidate_children(
     policy: MeshfreeAdaptationPolicy,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Unique parent index pairs of marked points' nearest edges, canonical order."""
+    """Unique parent index pairs of marked points' nearest edges, deterministic order."""
     ids = np.asarray(support.stable_ids)
     indices, usable = neighbors
     width = min(policy.children_per_point, indices.shape[1])
@@ -1049,14 +1098,16 @@ def _place_children(
     if support.kind == "surface" and np.any(interior):
         if manifold_projection is None:
             raise ValueError(
-                "A surface support needs a manifold projection for children."
+                f"adaptivity.place_children.support must provide a manifold projection for children; got {manifold_projection!r}"
             )
         midpoint[interior] = _projected(manifold_projection, midpoint[interior])[0]
     outside = 0
     if admit is not None and np.any(interior):
         inside = np.asarray(admit(midpoint[interior]), dtype=np.bool_)
         if inside.shape != (int(np.count_nonzero(interior)),):
-            raise ValueError("The domain predicate must return one Boolean per point.")
+            raise ValueError(
+                f"adaptivity.place_children.support must return one Boolean per point; got {inside.shape!r}"
+            )
         rejected = np.flatnonzero(interior)[~inside]
         outside = rejected.size
         keep[rejected] = False
@@ -1070,9 +1121,13 @@ def _projected(
     projected = np.asarray(projected, dtype=np.float64)
     normals = np.asarray(normals, dtype=np.float64)
     if projected.shape != points.shape or normals.shape != points.shape:
-        raise ValueError("A projection returns points and normals of the input shape.")
+        raise ValueError(
+            f"adaptivity.projected.projection must return points and normals matching the input shape; got {projected.shape!r}"
+        )
     if not (np.all(np.isfinite(projected)) and np.all(np.isfinite(normals))):
-        raise ValueError("A projection returned nonfinite points or normals.")
+        raise ValueError(
+            f"adaptivity.projected.projection must return finite points and normals; got {type(projection).__name__}"
+        )
     return projected, normals
 
 
@@ -1104,7 +1159,7 @@ def _separated_children(
     rejected = int(np.count_nonzero(~clear))
     candidates = candidates[clear]
     # Distinct edges can share a midpoint (the diagonals of a parallelogram);
-    # the canonical first parent pair keeps it.
+    # the deterministic first parent pair keeps it.
     _, first = np.unique(midpoint[candidates], axis=0, return_index=True)
     rejected += candidates.size - first.size
     candidates = candidates[np.sort(first)]
@@ -1172,6 +1227,7 @@ def _removed_points(
     return removed, capped, rounds
 
 
+@checked
 def propose_adaptation(
     support: MeshfreeAdaptiveSupport,
     indicator: MeshfreeErrorIndicator,
@@ -1194,24 +1250,20 @@ def propose_adaptation(
     surface children require ``manifold_projection``; ``admit`` refuses
     children outside a nonconvex domain.
     """
-    if not isinstance(support, MeshfreeAdaptiveSupport):
-        raise TypeError("support must be a MeshfreeAdaptiveSupport.")
-    if not isinstance(indicator, MeshfreeErrorIndicator):
-        raise TypeError("indicator must be a MeshfreeErrorIndicator.")
-    if not isinstance(marking, MeshfreeMarking):
-        raise TypeError("marking must be a MeshfreeMarking.")
-    if not isinstance(policy, MeshfreeAdaptationPolicy):
-        raise TypeError("policy must be a MeshfreeAdaptationPolicy.")
     ids = np.asarray(support.stable_ids)
     count = ids.size
     order = np.argsort(np.asarray(indicator.stable_ids), kind="stable")
     indicator_ids = np.asarray(indicator.stable_ids)[order]
     if not np.array_equal(indicator_ids, np.sort(ids)):
-        raise ValueError("The indicator does not cover exactly the support's stable IDs.")
+        raise ValueError(
+            f"adaptivity.propose_adaptation.support must cover every support stable ID once; got {type(support).__name__}"
+        )
     values = np.asarray(indicator.values)[order][np.searchsorted(indicator_ids, ids)]
     marked = np.isin(ids, np.asarray(marking.marked_ids))
     if marking.indicator_id != indicator.indicator_id:
-        raise ValueError("The marking was made from a different indicator.")
+        raise ValueError(
+            f"adaptivity.propose_adaptation.indicator must retain the supplied indicator identity; got {type(indicator).__name__}"
+        )
     degree, neighbors = _fit_parameters(
         support.degree if target_degree is None else target_degree,
         support.neighbors if target_neighbors is None else target_neighbors,
@@ -1311,6 +1363,7 @@ def propose_adaptation(
 # --- Transfer and acceptance ----------------------------------------------------------
 
 
+@checked
 def prepare_adaptation_transfer(
     cloud: PreparedPointCloudDiscretization,
     proposal: MeshfreeAdaptationProposal,
@@ -1333,7 +1386,7 @@ def prepare_adaptation_transfer(
     conservation additionally require ``m_new^T x^a = m_old^T x^a`` for every
     monomial of degree ``<= q`` (apply ``T x^a = x^a`` and conserve): two fill
     quadratures generally differ already in their first moments. The owner
-    certifies ``INFEASIBLE`` only with an audited left-null witness and exact-null
+    certifies ``INFEASIBLE`` only with audited left-null evidence and zero residual for the null
     action or independent rank/spectrum evidence; the default Krylov solve may
     instead return ``PROVIDER_UNRESOLVED``. Request moments only for measures
     that integrate those monomials identically. Refusals are returned, never
@@ -1343,12 +1396,10 @@ def prepare_adaptation_transfer(
     declares the source/target topology epochs the transfer is prepared between;
     it is required for the transfer to form an epoch transition.
     """
-    if not isinstance(cloud, PreparedPointCloudDiscretization):
-        raise TypeError("cloud must be a PreparedPointCloudDiscretization.")
-    if not isinstance(proposal, MeshfreeAdaptationProposal):
-        raise TypeError("proposal must be a MeshfreeAdaptationProposal.")
     if not np.array_equal(np.asarray(cloud.stable_ids), np.asarray(proposal.source_ids)):
-        raise ValueError("The proposal was not made from this cloud's stable IDs.")
+        raise ValueError(
+            f"adaptivity.prepare_adaptation_transfer.cloud must retain the supplied cloud stable IDs; got {type(cloud).__name__}"
+        )
     points = np.asarray(cloud.points, dtype=np.float64)
     targets = np.asarray(proposal.target_points, dtype=np.float64)
     neighborhood = MeshfreeNeighborhoodPlan(
@@ -1396,6 +1447,7 @@ class MeshfreeAdaptationAcceptance(StrictModule, NonTrainableState):
     indicator_after: float | None = eqx.field(static=True)
 
 
+@checked
 def adaptation_acceptance(
     proposal: MeshfreeAdaptationProposal,
     transfer: PreparedPointTransfer,
@@ -1413,20 +1465,14 @@ def adaptation_acceptance(
     indicator. A successful solve of a spectrally unstable collocation operator
     can be badly wrong, so supply the owner's stability evidence whenever the
     target is a square collocation."""
-    if not isinstance(proposal, MeshfreeAdaptationProposal):
-        raise TypeError("proposal must be a MeshfreeAdaptationProposal.")
-    if not isinstance(transfer, PreparedPointTransfer):
-        raise TypeError("transfer must be a PreparedPointTransfer.")
-    if not isinstance(report, LocalStencilReport):
-        raise TypeError("report must be the target cloud's LocalStencilReport.")
     if not isinstance(solve_successful, bool):
-        raise TypeError("solve_successful must be an explicit host bool.")
-    if stability is not None and not isinstance(stability, PointCollocationStability):
         raise TypeError(
-            "stability must be the target operator's PointCollocationStability."
+            f"adaptivity.adaptation_acceptance.solve_successful must be an explicit host bool; got {solve_successful!r}"
         )
     if (indicator_before is None) != (indicator_after is None):
-        raise ValueError("Indicator reduction needs both indicators or neither.")
+        raise ValueError(
+            f"adaptivity.adaptation_acceptance.indicator_before must provide both reduction indicators or neither; got {indicator_before!r}"
+        )
     before = None if indicator_before is None else indicator_before.aggregate
     after = None if indicator_after is None else indicator_after.aggregate
     criteria: tuple[tuple[MeshfreeAdaptationRefusal, bool], ...] = (

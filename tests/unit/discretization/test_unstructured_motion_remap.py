@@ -623,7 +623,7 @@ def test_unstructured_motion_remap_scenario_1() -> None:
     gradient = jax.grad(lambda state: jnp.sum(remap.apply(state) ** 2))(values)
     np.testing.assert_allclose(gradient, 2.0 * values)
 
-    with pytest.raises(ValueError, match="completely cover"):
+    with pytest.raises(ValueError, match=r"remap\.coverage"):
         phx.discretization.UnstructuredConservativeRemapPlan(
             discretization,
             discretization,

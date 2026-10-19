@@ -847,7 +847,7 @@ class AbstractPreparedLocalDiscretization(AbstractPreparedDiscretization):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def _field_index(self, name: str, /) -> int:
+    def field_index(self, name: str, /) -> int:
         raise NotImplementedError
 
     @abc.abstractmethod

@@ -19,7 +19,8 @@ from phydrax._interpolation import linear_interpolate
 
 from ..._mass import EstimatedMass
 from ..._numerics._quadrature_rules import gauss_legendre_data
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
+from ...units import RADIAN
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -40,9 +41,9 @@ from .._sampling import (
 )
 from .._validity import combine_validity, GeometryValidityEvidence
 from ..design._schema import (
-    _ParameterCollector,
     DesignState,
     ParameterBinding,
+    ParameterCollector,
     ParameterId,
 )
 from ..simplicial._bvh import _segment_ray_parity, SegmentBVH
@@ -257,14 +258,18 @@ class Ellipse(GeometrySource):
         self.radii = _validate_positive_vector(radii, 2, name="radii")
         self.feature_id = _feature_id(feature_id, "ellipse")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         center = context.bind(
-            ParameterId(self.feature_id, "center"), self.center, role="position"
+            ParameterId(self.feature_id, "center"),
+            self.center,
+            role="position",
+            unit=context.coordinate_unit,
         )
         radii = context.bind(
             ParameterId(self.feature_id, "radii"),
             self.radii,
             role="length",
+            unit=context.coordinate_unit,
             physical_scale=float(jnp.min(self.radii)),
             bounds=(0.0, None),
         )
@@ -305,6 +310,26 @@ class _EllipseKernel(GeometryKernel):
 
     def _parameters(self, state: DesignState) -> tuple[Array, Array]:
         return self.center.read(state), self.radii.read(state)
+
+    @checked
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
+        """Return ellipse validity with normalized positive-radius margins."""
+        center, radii = self._parameters(state)
+        scale = jnp.asarray(
+            state.schema.spec(self.radii.parameter_id).physical_scale,
+            dtype=radii.dtype,
+        )
+        return GeometryValidityEvidence(
+            finite=jnp.all(jnp.isfinite(center)) & jnp.all(jnp.isfinite(radii)),
+            conditions_satisfied=jnp.all(radii > 0.0),
+            resolved=self.field_certificate.validity_region == "all_space",
+            margins=radii / scale,
+            margin_names=tuple(
+                f"{self.radii.parameter_id}:positive:{axis}"
+                for axis in range(self.ambient_dimension)
+            ),
+            contract_id="analytic_ellipse_positive_radii",
+        )
 
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, 2)
@@ -454,7 +479,7 @@ class Rectangle(GeometrySource):
         self.size = _validate_positive_vector(size, 2, name="size")
         self.feature_id = _feature_id(feature_id, "rectangle")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         return _compile_orthotope(
             context,
             self.center,
@@ -523,11 +548,12 @@ class Polygon(GeometrySource):
         self.vertices = jnp.asarray(host, dtype=jnp.float64)
         self.feature_id = _feature_id(feature_id, "polygon")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         vertices = context.bind(
             ParameterId(self.feature_id, "vertices"),
             self.vertices,
             role="position",
+            unit=context.coordinate_unit,
             physical_scale=float(np.max(np.ptp(np.asarray(self.vertices), axis=0))),
         )
         count = self.vertices.shape[0]
@@ -790,14 +816,18 @@ class Ellipsoid(GeometrySource):
         self.radii = _validate_positive_vector(radii, 3, name="radii")
         self.feature_id = _feature_id(feature_id, "ellipsoid")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         center = context.bind(
-            ParameterId(self.feature_id, "center"), self.center, role="position"
+            ParameterId(self.feature_id, "center"),
+            self.center,
+            role="position",
+            unit=context.coordinate_unit,
         )
         radii = context.bind(
             ParameterId(self.feature_id, "radii"),
             self.radii,
             role="length",
+            unit=context.coordinate_unit,
             physical_scale=float(jnp.min(self.radii)),
             bounds=(0.0, None),
         )
@@ -838,6 +868,26 @@ class _EllipsoidKernel(GeometryKernel):
 
     def _parameters(self, state: DesignState) -> tuple[Array, Array]:
         return self.center.read(state), self.radii.read(state)
+
+    @checked
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
+        """Return ellipsoid validity with normalized positive-radius margins."""
+        center, radii = self._parameters(state)
+        scale = jnp.asarray(
+            state.schema.spec(self.radii.parameter_id).physical_scale,
+            dtype=radii.dtype,
+        )
+        return GeometryValidityEvidence(
+            finite=jnp.all(jnp.isfinite(center)) & jnp.all(jnp.isfinite(radii)),
+            conditions_satisfied=jnp.all(radii > 0.0),
+            resolved=self.field_certificate.validity_region == "all_space",
+            margins=radii / scale,
+            margin_names=tuple(
+                f"{self.radii.parameter_id}:positive:{axis}"
+                for axis in range(self.ambient_dimension)
+            ),
+            contract_id="analytic_ellipsoid_positive_radii",
+        )
 
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, 3)
@@ -961,16 +1011,18 @@ class AxisAlignedEllipsoid(GeometrySource):
         self.radii = radii_
         self.feature_id = _feature_id(feature_id, "axis-aligned-ellipsoid")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         center = context.bind(
             ParameterId(self.feature_id, "center"),
             self.center,
             role="position",
+            unit=context.coordinate_unit,
         )
         radii = context.bind(
             ParameterId(self.feature_id, "radii"),
             self.radii,
             role="length",
+            unit=context.coordinate_unit,
             physical_scale=float(jnp.min(self.radii)),
             bounds=(0.0, None),
         )
@@ -1036,6 +1088,26 @@ class _AxisAlignedEllipsoidKernel(GeometryKernel):
 
     def _parameters(self, state: DesignState) -> tuple[Array, Array]:
         return self.center.read(state), self.radii.read(state)
+
+    @checked
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
+        """Return ellipsoid validity with normalized positive-radius margins."""
+        center, radii = self._parameters(state)
+        scale = jnp.asarray(
+            state.schema.spec(self.radii.parameter_id).physical_scale,
+            dtype=radii.dtype,
+        )
+        return GeometryValidityEvidence(
+            finite=jnp.all(jnp.isfinite(center)) & jnp.all(jnp.isfinite(radii)),
+            conditions_satisfied=jnp.all(radii > 0.0),
+            resolved=self.field_certificate.validity_region == "all_space",
+            margins=radii / scale,
+            margin_names=tuple(
+                f"{self.radii.parameter_id}:positive:{axis}"
+                for axis in range(self.ambient_dimension)
+            ),
+            contract_id="analytic_axis_aligned_ellipsoid_positive_radii",
+        )
 
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, self.dimension)
@@ -1213,23 +1285,31 @@ class Cylinder(GeometrySource):
         self.full = float(self.angle) == 2.0 * math.pi
         self.feature_id = _feature_id(feature_id, "cylinder")
 
-    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector) -> GeometryKernel:
         base = context.bind(
-            ParameterId(self.feature_id, "base_center"), self.base_center, role="position"
+            ParameterId(self.feature_id, "base_center"),
+            self.base_center,
+            role="position",
+            unit=context.coordinate_unit,
         )
         axis = context.bind(
-            ParameterId(self.feature_id, "axis"), self.axis, role="direction_length"
+            ParameterId(self.feature_id, "axis"),
+            self.axis,
+            role="direction_length",
+            unit=context.coordinate_unit,
         )
         radius = context.bind(
             ParameterId(self.feature_id, "radius"),
             self.radius,
             role="length",
+            unit=context.coordinate_unit,
             bounds=(0.0, None),
         )
         angle = context.bind(
             ParameterId(self.feature_id, "angle"),
             self.angle,
             role="angle",
+            unit=RADIAN,
             bounds=(0.0, 2.0 * math.pi),
         )
         return _CylinderKernel(
@@ -1533,23 +1613,31 @@ class Cone(GeometrySource):
         self.full = float(self.angle) == 2.0 * math.pi
         self.feature_id = _feature_id(feature_id, "cone")
 
-    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector) -> GeometryKernel:
         base = context.bind(
-            ParameterId(self.feature_id, "base_center"), self.base_center, role="position"
+            ParameterId(self.feature_id, "base_center"),
+            self.base_center,
+            role="position",
+            unit=context.coordinate_unit,
         )
         axis = context.bind(
-            ParameterId(self.feature_id, "axis"), self.axis, role="direction_length"
+            ParameterId(self.feature_id, "axis"),
+            self.axis,
+            role="direction_length",
+            unit=context.coordinate_unit,
         )
         radii = context.bind(
             ParameterId(self.feature_id, "radii"),
             self.radii,
             role="length",
+            unit=context.coordinate_unit,
             bounds=(0.0, None),
         )
         angle = context.bind(
             ParameterId(self.feature_id, "angle"),
             self.angle,
             role="angle",
+            unit=RADIAN,
             bounds=(0.0, 2.0 * math.pi),
         )
         return _ConeKernel(
@@ -1840,34 +1928,40 @@ class Torus(GeometrySource):
         self.full = float(self.angle) == 2.0 * math.pi
         self.feature_id = _feature_id(feature_id, "torus")
 
-    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector) -> GeometryKernel:
         center = context.bind(
-            ParameterId(self.feature_id, "center"), self.center, role="position"
+            ParameterId(self.feature_id, "center"),
+            self.center,
+            role="position",
+            unit=context.coordinate_unit,
         )
         major = context.bind(
             ParameterId(self.feature_id, "major_radius"),
             self.major_radius,
             role="length",
+            unit=context.coordinate_unit,
             bounds=(0.0, None),
         )
         minor = context.bind(
             ParameterId(self.feature_id, "minor_radius"),
             self.minor_radius,
             role="length",
+            unit=context.coordinate_unit,
             bounds=(0.0, None),
         )
         angle = context.bind(
             ParameterId(self.feature_id, "angle"),
             self.angle,
             role="angle",
+            unit=RADIAN,
             bounds=(0.0, 2.0 * math.pi),
         )
-        return _TorusKernel(
+        return TorusKernel(
             center, major, minor, angle, full=self.full, source_id=self.feature_id
         )
 
 
-class _TorusKernel(GeometryKernel):
+class TorusKernel(GeometryKernel):
     center: ParameterBinding = eqx.field(static=True)
     major: ParameterBinding = eqx.field(static=True)
     minor: ParameterBinding = eqx.field(static=True)
@@ -2093,20 +2187,25 @@ class Wedge(GeometrySource):
         self.top_extent = jnp.asarray(top, dtype=jnp.float64)
         self.feature_id = _feature_id(feature_id, "wedge")
 
-    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector) -> GeometryKernel:
         corner = context.bind(
-            ParameterId(self.feature_id, "corner"), self.corner, role="position"
+            ParameterId(self.feature_id, "corner"),
+            self.corner,
+            role="position",
+            unit=context.coordinate_unit,
         )
         extents = context.bind(
             ParameterId(self.feature_id, "extents"),
             self.extents,
             role="length",
+            unit=context.coordinate_unit,
             bounds=(0.0, None),
         )
         top = context.bind(
             ParameterId(self.feature_id, "top_extent"),
             self.top_extent,
             role="length",
+            unit=context.coordinate_unit,
             bounds=(0.0, float(self.extents[0])),
         )
         return _WedgeKernel(corner, extents, top, source_id=self.feature_id)

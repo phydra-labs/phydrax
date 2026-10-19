@@ -413,8 +413,8 @@ def logical_array_bytes(value: Any, /) -> int:
     return sum(leaf.nbytes for leaf in _array_leaves(value))
 
 
-def source_build_fingerprint(project_root: Path, /) -> str:
-    """Fingerprint the current package source and repository build inputs."""
+def source_build_inputs(project_root: Path, /) -> tuple[Path, ...]:
+    """Return the deterministic package source and repository build-input inventory."""
     root = _repository_root(project_root)
     required = tuple(root / name for name in _SOURCE_BUILD_FILES)
     if any(not path.is_file() for path in required):
@@ -445,10 +445,16 @@ def source_build_fingerprint(project_root: Path, /) -> str:
             )
             and path.suffix not in {".pyc", ".pyo"}
         )
+    return tuple(sorted(set(paths), key=lambda path: path.relative_to(root).as_posix()))
+
+
+def source_build_fingerprint(project_root: Path, /) -> str:
+    """Fingerprint the current package source and repository build inputs."""
+    root = _repository_root(project_root)
     return canonical_fingerprint(
         {
             "kind": "phydrax-current-source-build",
-            "files": _file_records(root, paths),
+            "files": _file_records(root, source_build_inputs(root)),
         }
     )
 
@@ -750,6 +756,7 @@ __all__ = [
     "measure_repeated",
     "measure_synchronized",
     "source_build_fingerprint",
+    "source_build_inputs",
     "synchronize",
     "validate_benchmark_record",
 ]

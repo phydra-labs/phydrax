@@ -23,19 +23,49 @@ convergence status is retained independently; otherwise the result rolls back.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from enum import StrEnum
 from itertools import product
 from typing import final, NamedTuple
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+import phydrax.discretization._cell_geometry as _dependency_phydrax_discretization__cell_geometry
+import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
+import phydrax.geometry._approximate_source_coverage as approximate_source_coverage_owner
+import phydrax.geometry._domain_boundary as domain_boundary_owner
+import phydrax.geometry._domain_coverage as domain_coverage_owner
+import phydrax.geometry._domain_planar_boundary as domain_planar_boundary_owner
+import phydrax.geometry._embedding_state as _dependency_phydrax_geometry__embedding_state
+import phydrax.geometry._global_embedding as global_embedding_owner
+import phydrax.geometry._mapped_reference_domain as _dependency_phydrax_geometry__mapped_reference_domain
+import phydrax.geometry._meshing_domain as _owner_phydrax_geometry__meshing_domain
+import phydrax.geometry._source_boundary_records as source_boundary_records_owner
+import phydrax.geometry._source_fidelity as source_fidelity_owner
+import phydrax.geometry.brep._projection_contracts as _dependency_phydrax_geometry_brep__projection_contracts
+import phydrax.geometry.brep._query_projection as query_projection_owner
+import phydrax.meshing._association as _dependency_phydrax_meshing__association
+import phydrax.meshing._association_routes as association_routes_owner
+import phydrax.meshing._association_state as association_state_owner
+import phydrax.meshing._boundary_layer as _dependency_phydrax_meshing__boundary_layer
+import phydrax.meshing._coupling as _dependency_phydrax_meshing__coupling
+import phydrax.meshing._entity_keys as entity_keys_owner
+import phydrax.meshing._layer_curving as _dependency_phydrax_meshing__layer_curving
+import phydrax.meshing._optimization as _dependency_phydrax_meshing__optimization
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .._validation import positive_finite_float
+from .._validation import (
+    nonnegative_finite_float,
+    nonnegative_integer,
+    positive_finite_float,
+    positive_integer,
+)
 from ..discretization import (
     CellGeometrySpec,
     CellMesh,
@@ -44,50 +74,22 @@ from ..discretization import (
     certify_cell_geometry_validity,
     reference_cell_topology,
 )
-from ..discretization._cell_geometry import coordinate_lagrange_element
-from ..discretization._cell_geometry_validity import (
-    _bernstein_node_count,
-    _determinant_route,
-)
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..ein import contract
-from ..geometry._mapped_reference_domain import MappedReferenceDomain
-from ..geometry._mesh_certificates import (
-    certify_domain_coverage,
-    certify_global_embedding,
-    certify_source_fidelity,
-    DomainCoverageCertificate,
-    GlobalEmbeddingCertificate,
-    MappedDomainBoundarySource,
-    MeshCertificateLimits,
-    PiecewiseLinearDomain,
-    SourceBoundaryQuery,
-    SourceFidelityCertificate,
-)
-from ..geometry.brep._projection_contracts import (
-    AbstractBRepProjection,
-    BRepProjectionStatus,
-)
 from ..linalg import (
     determinant_small_linear,
     inverse_small_linear,
     SmallLinearSolvePlan,
 )
 from ..optim import MinimizationResult, OptimizationStatus, OptimizationTermination
-from ..typing import checked
-from ._association import (
-    _entity_rows,
-    _incidence_pairs,
-    _mesh_entity_classes,
-    _RESOLVED_STATUS,
-    GeometryAssociation,
-)
-from ._boundary_layer import BoundaryLayerMesh
-from ._coupling import PeriodicCoupling
-from ._layer_curving import prepare_layer_curving_nodes, transport_layer_curvature
-from ._optimization import optimize_cell_geometry_coordinates
+from ..typing import checked, parse
 
 
 _CURVING_DEGREES = (2, 3, 4, 6, 10)
+
+
+import phydrax.discretization.fem as _owner_phydrax_discretization_fem
+import phydrax.geometry._planar_embedding as _owner_phydrax_geometry__planar_embedding
 
 
 class HighOrderCurvingStatus(StrEnum):
@@ -114,13 +116,6 @@ class HighOrderCurvingStatus(StrEnum):
     UNRESOLVED_ASSOCIATION = "unresolved_association"
 
 
-def _non_negative(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result < 0.0:
-        raise ValueError(f"{name} must be finite and non-negative.")
-    return result
-
-
 @final
 class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
     """Degree, objective weights, acceptance tolerances, and solver controls.
@@ -133,9 +128,11 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
     ``regularization`` is the Escobar determinant regularization of the
     distortion, which keeps inverted starting configurations finite.
     ``residual_tolerance`` bounds constrained-node CAD residuals;
-    ``fidelity_tolerance`` independently bounds continuous two-sided source
-    approximation error. A relaxation whose native minimization did not converge
-    cannot replace the accepted geometry unless
+    ``fidelity_tolerance`` is required: it bounds continuous two-sided source
+    approximation error in the source coordinate units, independently of nodal
+    solver accuracy. Choose it from the declared source-deviation budget or a
+    resolution-dependent approximation bound. A relaxation whose native
+    minimization did not converge cannot replace the accepted geometry unless
     ``accept_valid_nonconverged_relaxation`` explicitly permits it; the next
     round still continues from its iterate.
     """
@@ -155,9 +152,11 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
     termination: OptimizationTermination
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
+        fidelity_tolerance: float,
         degree: int = 2,
         relaxation_rounds: int = 3,
         distortion_weight: float = 1.0,
@@ -165,25 +164,18 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
         displacement_weight: float = 1.0e-3,
         regularization: float = 5.0e-2,
         residual_tolerance: float = 1.0e-7,
-        fidelity_tolerance: float = 1.0e-7,
         validity: CellValidityPolicy | None = None,
         termination: OptimizationTermination | None = None,
         accept_valid_nonconverged_relaxation: bool = False,
         maximum_geometry_nodes: int = 1 << 20,
         maximum_tabulation_entries: int = 1 << 27,
     ) -> None:
-        if isinstance(degree, bool) or not isinstance(degree, (int, np.integer)):
-            raise TypeError("degree must be an integer.")
+        degree = positive_integer(degree, "degree")
         if degree not in _CURVING_DEGREES:
             raise ValueError(
-                "High-order curving supports geometry degrees 2, 3, 4, 6 and 10."
+                f"HighOrderCurvingPolicy.degree must be one of geometry degrees 2, 3, 4, 6 and 10; got {degree!r}"
             )
-        if isinstance(relaxation_rounds, bool) or not isinstance(
-            relaxation_rounds, (int, np.integer)
-        ):
-            raise TypeError("relaxation_rounds must be an integer.")
-        if relaxation_rounds < 0:
-            raise ValueError("relaxation_rounds must be non-negative.")
+        relaxation_rounds = nonnegative_integer(relaxation_rounds, "relaxation_rounds")
         validity_ = (
             CellValidityPolicy(maximum_bernstein_nodes=1 << 15)
             if validity is None
@@ -194,20 +186,15 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
             if termination is None
             else termination
         )
-        if not isinstance(validity_, CellValidityPolicy):
-            raise TypeError("validity must be CellValidityPolicy or None.")
-        if not isinstance(termination_, OptimizationTermination):
-            raise TypeError("termination must be OptimizationTermination or None.")
         if not isinstance(accept_valid_nonconverged_relaxation, bool):
-            raise TypeError("accept_valid_nonconverged_relaxation must be bool.")
+            raise TypeError(
+                f"HighOrderCurvingPolicy.accept_valid_nonconverged_relaxation must be bool; got {type(accept_valid_nonconverged_relaxation).__name__}"
+            )
         for value, name in (
             (maximum_geometry_nodes, "maximum_geometry_nodes"),
             (maximum_tabulation_entries, "maximum_tabulation_entries"),
         ):
-            if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
-                raise TypeError(f"{name} must be an integer.")
-            if value < 1:
-                raise ValueError(f"{name} must be positive.")
+            value = positive_integer(value, name)
         self.maximum_geometry_nodes = int(maximum_geometry_nodes)
         self.maximum_tabulation_entries = int(maximum_tabulation_entries)
         self.degree = int(degree)
@@ -215,8 +202,8 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
         self.distortion_weight = positive_finite_float(
             distortion_weight, "distortion_weight"
         )
-        self.tangent_weight = _non_negative(tangent_weight, "tangent_weight")
-        self.displacement_weight = _non_negative(
+        self.tangent_weight = nonnegative_finite_float(tangent_weight, "tangent_weight")
+        self.displacement_weight = nonnegative_finite_float(
             displacement_weight, "displacement_weight"
         )
         self.regularization = positive_finite_float(regularization, "regularization")
@@ -263,19 +250,26 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
     """Validity certificate and CAD residuals of one high-order geometry.
 
     Node rows follow ``geometry.coordinates``: ``node_dimensions``/``node_indices``
-    are the B-Rep class of each node's owning mesh entity, ``constrained`` marks
+    are the B-Rep class of each node's mesh entity, ``constrained`` marks
     nodes on B-Rep entities of lower dimension than the ambient space, and
     ``node_residuals`` their distance to that entity (zero for free nodes).
     ``minimum_scaled_jacobian`` and ``maximum_distortion`` are sampled at the
     Bernstein control-point lattice. ``accepted`` also requires global embedding,
     continuous source fidelity, applicable domain/interface coverage and every
     constrained nodal residual within tolerance.
+    Piecewise-linear and mapped-reference domains retain region-measure and
+    interface agreement. ``CadSourceDomain`` instead reports a certified
+    region-approximation bound.
     """
 
     certificate: CellValidityCertificate
-    embedding: GlobalEmbeddingCertificate
-    fidelity: SourceFidelityCertificate | None
-    coverage: DomainCoverageCertificate | None
+    embedding: global_embedding_owner.GlobalEmbeddingCertificate
+    fidelity: source_fidelity_owner.SourceFidelityCertificate | None
+    coverage: (
+        domain_coverage_owner.DomainCoverageCertificate
+        | approximate_source_coverage_owner.ApproximateSourceCoverageCertificate
+        | None
+    )
     certification_failures: tuple[str, ...] = eqx.field(static=True)
     node_dimensions: Array
     node_indices: Array
@@ -304,9 +298,11 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
         maximum_distortion: float,
         /,
         *,
-        embedding: GlobalEmbeddingCertificate,
-        fidelity: SourceFidelityCertificate | None,
-        coverage: DomainCoverageCertificate | None,
+        embedding: global_embedding_owner.GlobalEmbeddingCertificate,
+        fidelity: source_fidelity_owner.SourceFidelityCertificate | None,
+        coverage: domain_coverage_owner.DomainCoverageCertificate
+        | approximate_source_coverage_owner.ApproximateSourceCoverageCertificate
+        | None,
         certification_failures: tuple[str, ...],
         node_occurrence_paths: tuple[tuple[str, ...], ...],
         source_revision: str,
@@ -315,9 +311,13 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
         if not isinstance(source_revision, str) or not isinstance(
             source_projection_id, str
         ):
-            raise TypeError("Curving source identities must be strings.")
+            raise TypeError(
+                f"CurvedGeometryEvidence.source must have string revision and projection identities; got kinds={(type(source_revision).__name__, type(source_projection_id).__name__)!r}"
+            )
         if not source_revision or not source_projection_id:
-            raise ValueError("Curving evidence must bind its exact source projection.")
+            raise ValueError(
+                f"CurvedGeometryEvidence.source must bind a non-empty revision and projection identity; got {(source_revision, source_projection_id)!r}"
+            )
         dims = np.asarray(node_dimensions, dtype=np.int8)
         indices = np.asarray(node_indices, dtype=np.int32)
         mask = np.asarray(constrained, dtype=np.bool_)
@@ -328,7 +328,9 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
             or mask.shape != dims.shape
             or residuals.shape != dims.shape
         ):
-            raise ValueError("Curved geometry evidence rows must align with nodes.")
+            raise ValueError(
+                f"CurvedGeometryEvidence.nodes must have aligned dimension, index, constraint and residual vectors; got shapes={(dims.shape, indices.shape, mask.shape, residuals.shape)!r}"
+            )
         if (
             not isinstance(node_occurrence_paths, tuple)
             or len(node_occurrence_paths) != dims.size
@@ -339,7 +341,7 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "Every geometry node requires one authoritative occurrence path."
+                f"CurvedGeometryEvidence.node_occurrence_paths must supply one valid occurrence path per node; got kind={type(node_occurrence_paths).__name__} for {dims.size} nodes"
             )
         maximum = float(np.max(residuals)) if residuals.size else 0.0
         self.certificate = certificate
@@ -347,13 +349,26 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
         self.fidelity = fidelity
         self.coverage = coverage
         self.certification_failures = certification_failures
-        self.node_dimensions = jnp.asarray(dims)
-        self.node_indices = jnp.asarray(indices)
+        _host_node_dimensions = np.asarray(dims)
+        _host_node_indices = np.asarray(indices)
         self.node_occurrence_paths = node_occurrence_paths
         self.source_revision = source_revision
         self.source_projection_id = source_projection_id
-        self.constrained = jnp.asarray(mask)
-        self.node_residuals = jnp.asarray(residuals)
+        _host_constrained = np.asarray(mask)
+        _host_node_residuals = np.asarray(residuals)
+        (
+            self.node_dimensions,
+            self.node_indices,
+            self.constrained,
+            self.node_residuals,
+        ) = jax.device_put(
+            (
+                _host_node_dimensions,
+                _host_node_indices,
+                _host_constrained,
+                _host_node_residuals,
+            )
+        )
         self.maximum_residual = maximum
         self.residual_tolerance = float(residual_tolerance)
         self.minimum_scaled_jacobian = float(minimum_scaled_jacobian)
@@ -390,9 +405,9 @@ class CurvedGeometryEvidence(StrictModule, NonTrainableState):
 class HighOrderCurvingResult(StrictModule, NonTrainableState):
     """Accepted curved geometry, or the straight geometry after a rollback.
 
-    ``evidence`` certifies the returned ``geometry``; ``candidate`` is the
-    evidence of the last evaluated curved candidate (the rejection reason after
-    a rollback). ``minimizations`` carry the native optimizer evidence of every
+    ``evidence`` certifies the returned ``geometry``; ``candidate_geometry`` and
+    ``candidate`` retain the last evaluated curved map and its evidence even
+    after rollback. ``minimizations`` carry the native optimizer evidence of every
     relaxation round and ``relaxation_statuses`` their termination statuses.
     ``accepted_round`` is ``0`` when the geometry is the CAD projection, ``k``
     when it is the candidate of relaxation round ``k``, and ``None`` unless the
@@ -404,11 +419,13 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
     straight: CellGeometrySpec
     evidence: CurvedGeometryEvidence
     candidate: CurvedGeometryEvidence | None
+    candidate_geometry: CellGeometrySpec | None
     minimizations: tuple[MinimizationResult, ...]
     relaxation_statuses: tuple[OptimizationStatus, ...] = eqx.field(static=True)
     accepted_round: int | None = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         status: HighOrderCurvingStatus,
@@ -416,23 +433,38 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
         straight: CellGeometrySpec,
         evidence: CurvedGeometryEvidence,
         candidate: CurvedGeometryEvidence | None,
+        candidate_geometry: CellGeometrySpec | None,
         minimizations: tuple[MinimizationResult, ...],
         accepted_round: int | None,
         /,
     ) -> None:
-        if not isinstance(status, HighOrderCurvingStatus):
-            raise TypeError("status must be HighOrderCurvingStatus.")
+        status = parse(status, HighOrderCurvingStatus, "HighOrderCurvingResult.status")
         if status is HighOrderCurvingStatus.CURVED and not evidence.accepted:
-            raise ValueError("A curved result requires accepted evidence.")
+            raise ValueError(
+                f"HighOrderCurvingResult.evidence must be accepted for a curved result; got accepted={evidence.accepted!r}"
+            )
         if (status is HighOrderCurvingStatus.CURVED) != (accepted_round is not None):
-            raise ValueError("Exactly a curved result names its accepted round.")
+            raise ValueError(
+                f"HighOrderCurvingResult.accepted_round must be present exactly for a curved result; got status={status!r}, round={accepted_round!r}"
+            )
         if accepted_round is not None and not 0 <= accepted_round <= len(minimizations):
-            raise ValueError("accepted_round must name the projection or a round.")
+            raise ValueError(
+                f"HighOrderCurvingResult.accepted_round must name the projection or a relaxation round; got {accepted_round!r} for {len(minimizations)} rounds"
+            )
+        if (candidate is None) != (candidate_geometry is None):
+            raise ValueError(
+                "HighOrderCurvingResult.candidate_geometry must accompany candidate evidence; "
+                f"got geometry={candidate_geometry is not None}, evidence={candidate is not None}."
+            )
+        evidence.certificate.require_bound(geometry)
+        if candidate is not None and candidate_geometry is not None:
+            candidate.certificate.require_bound(candidate_geometry)
         self.status = status
         self.geometry = geometry
         self.straight = straight
         self.evidence = evidence
         self.candidate = candidate
+        self.candidate_geometry = candidate_geometry
         self.minimizations = tuple(minimizations)
         self.relaxation_statuses = tuple(
             OptimizationStatus(int(np.asarray(value.status)))
@@ -447,6 +479,13 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
                 "coordinates": array_tree_fingerprint(np.asarray(geometry.coordinates)),
                 "evidence": evidence.evidence_id,
                 "candidate": None if candidate is None else candidate.evidence_id,
+                "candidate_geometry": (
+                    None
+                    if candidate_geometry is None
+                    else array_tree_fingerprint(
+                        np.asarray(candidate_geometry.coordinates)
+                    )
+                ),
                 "relaxation_statuses": [int(value) for value in self.relaxation_statuses],
                 "accepted_round": accepted_round,
             }
@@ -459,7 +498,8 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
 _WEIGHT_QUANTUM = float(2**40)
 
 
-def _admit_geometry_resources(
+@checked
+def admit_geometry_resources(
     mesh: CellMesh,
     degree: int,
     maximum_nodes: int,
@@ -472,7 +512,9 @@ def _admit_geometry_resources(
 ) -> None:
     """Refuse layout/reference/distortion work before allocating any new nodes."""
     if degree not in _CURVING_DEGREES:
-        raise ValueError("Unsupported high-order coordinate degree.")
+        raise ValueError(
+            f"admit_geometry_resources.degree must be a supported high-order coordinate degree; got {degree!r}"
+        )
     nodes = mesh.coordinates.shape[0]
     retained_entries = 0
     reference_entries = 0
@@ -492,24 +534,29 @@ def _admit_geometry_resources(
             case "pyramid":
                 count = (p + 1) * (p + 2) * (2 * p + 3) // 6
             case _:
-                raise ValueError("Unsupported high-order coordinate cell family.")
+                raise ValueError(
+                    f"admit_geometry_resources.cell_kind must be a supported high-order coordinate family; got {block.cell_kind!r}"
+                )
         if include_layout_nodes:
             nodes += block.cell_count * count
             if nodes > maximum_nodes:
                 raise ValueError(
-                    f"Curving node resource limit: {nodes} upper-bound nodes exceed {maximum_nodes}."
+                    f"admit_geometry_resources.maximum_nodes must cover the upper-bound node count; got node resource limit exceeded with {nodes} nodes above {maximum_nodes}"
                 )
         topology = reference_cell_topology(block.cell_kind)
         dimension = topology.dimension
         linear_count = len(topology.vertices)
-        domain, degrees = _determinant_route(
-            block.cell_kind, p, mesh.ambient_dimension > dimension
+        domain, degrees = (
+            _dependency_phydrax_discretization__cell_geometry_validity.determinant_route(
+                block.cell_kind, p, mesh.ambient_dimension > dimension
+            )
         )
-        certificate_nodes = _bernstein_node_count(domain, degrees)
+        certificate_nodes = _dependency_phydrax_discretization__cell_geometry_validity.bernstein_node_count(
+            domain, degrees
+        )
         if certificate_nodes > maximum_bernstein_nodes:
             raise ValueError(
-                f"Curving certificate resource limit for {block.cell_kind} degree {p}: "
-                f"{certificate_nodes} Bernstein nodes exceed {maximum_bernstein_nodes}."
+                f"admit_geometry_resources.maximum_bernstein_nodes must cover the certificate node count; got certificate resource limit exceeded with {certificate_nodes} nodes above {maximum_bernstein_nodes} for {block.cell_kind} degree {p}"
             )
         order = max(
             _determinant_degree(block.cell_kind, p, mesh.ambient_dimension > dimension), 1
@@ -549,12 +596,12 @@ def _admit_geometry_resources(
             retained_entries += gradients + inverse_entries
         if entries > maximum_entries:
             raise ValueError(
-                f"Curving tabulation resource limit for {block.cell_kind} degree {p}: "
-                f"{entries} aggregate entries exceed {maximum_entries}."
+                f"admit_geometry_resources.maximum_entries must cover aggregate tabulation entries; got tabulation resource limit exceeded with {entries} entries above {maximum_entries} for {block.cell_kind} degree {p}"
             )
 
 
-def _straight_geometry(
+@checked
+def straight_geometry(
     mesh: CellMesh,
     degree: int,
     /,
@@ -562,17 +609,19 @@ def _straight_geometry(
     maximum_nodes: int = 1 << 20,
     maximum_entries: int = 1 << 27,
     maximum_bernstein_nodes: int = 1 << 15,
+    source_geometry: CellGeometrySpec | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> CellGeometrySpec:
-    """Straight-sided Lagrange geometry with shared nodes in canonical order.
+    """Return straight-sided Lagrange geometry with shared, deterministically ordered nodes.
 
     Local nodes follow the reference ordering of the discretization's Lagrange
-    element. A node is identified by its owning mesh entity (sorted vertex global
+    element. A node is identified by its mesh entity (sorted vertex global
     IDs) and its affine or multilinear weights on those vertices, so neighboring
     cells share it independently of their local edge and face orientation. Vertex
     nodes are the mesh vertex rows; the other nodes follow in (dimension, entity,
     weights) order.
     """
-    _admit_geometry_resources(
+    admit_geometry_resources(
         mesh,
         degree,
         maximum_nodes,
@@ -584,12 +633,18 @@ def _straight_geometry(
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     elements, routes, keys, positions, owners = {}, {}, [], [], []
     for block in mesh.blocks:
-        element = coordinate_lagrange_element(block.cell_kind, degree)
+        element = (
+            _dependency_phydrax_discretization__cell_geometry.coordinate_lagrange_element(
+                block.cell_kind, degree
+            )
+        )
         topology = reference_cell_topology(block.cell_kind)
         cells = np.asarray(block.vertices, dtype=np.int64)
-        weights, linear_gradients = coordinate_lagrange_element(
-            block.cell_kind, 1
-        ).tabulate(element.reference_nodes)
+        weights, linear_gradients = (
+            _dependency_phydrax_discretization__cell_geometry.coordinate_lagrange_element(
+                block.cell_kind, 1
+            ).tabulate(element.reference_nodes)
+        )
         weights = np.asarray(weights, dtype=np.float64)
         del linear_gradients
         route = np.full((cells.shape[0], element.local_dof_count), -1, dtype=np.int64)
@@ -619,22 +674,21 @@ def _straight_geometry(
                     sorted_weights * _WEIGHT_QUANTUM
                 )
                 keys.append(key.reshape(-1, 17))
-                positions.append(
-                    np.asarray(
-                        contract("dv,cva->cda", weights[np.asarray(dofs)], points[cells])
-                    ).reshape(-1, points.shape[1])
-                )
+                if source_geometry is None:
+                    positions.append(
+                        np.asarray(
+                            contract(
+                                "dv,cva->cda", weights[np.asarray(dofs)], points[cells]
+                            )
+                        ).reshape(-1, points.shape[1])
+                    )
                 owners.append((block.name, dofs, cells.shape[0]))
         elements[block.name] = element
         routes[block.name] = route
         del weights
     table, inverse = np.unique(np.concatenate(keys), axis=0, return_inverse=True)
     inverse = inverse.reshape(-1)
-    coordinates = np.empty(
-        (points.shape[0] + table.shape[0], points.shape[1]), dtype=np.float64
-    )
-    coordinates[: points.shape[0]] = points
-    coordinates[points.shape[0] + inverse] = np.concatenate(positions)
+    coordinate_count = points.shape[0] + table.shape[0]
     cursor = 0
     for name, dofs, count in owners:
         size = count * len(dofs)
@@ -642,7 +696,49 @@ def _straight_geometry(
             cursor : cursor + size
         ].reshape(count, len(dofs))
         cursor += size
-    geometry = CellGeometrySpec(elements, routes, coordinates)
+    if source_geometry is None:
+        coordinates = np.empty((coordinate_count, points.shape[1]), dtype=np.float64)
+        coordinates[: points.shape[0]] = points
+        coordinates[points.shape[0] + inverse] = np.concatenate(positions)
+        geometry = CellGeometrySpec(elements, routes, coordinates)
+    else:
+        from ..discretization._exact_rational_geometry import (
+            rational_geometry_lift,
+            rational_geometry_lift_preparation_bounds,
+        )
+
+        # Resolve against the carrier before deriving interpolation actions, so
+        # a foreign mesh or cell order cannot acquire the parent source binding.
+        work, memory = (
+            rational_geometry_lift_preparation_bounds(
+                source_geometry, elements, coordinate_count
+            )
+            if budget is None
+            else (0, 0)
+        )
+        with (
+            nullcontext(budget)
+            if budget is not None
+            else _dependency_phydrax_discretization__cell_geometry.owned_coordinate_preparation(
+                work,
+                memory,
+                maximum_geometry_queries=_dependency_phydrax_discretization__cell_geometry.cell_geometry_preparation_query_upper(
+                    source_geometry
+                ),
+            )
+        ) as admission:
+            source_geometry.resolve(mesh, budget=admission)
+            source = rational_geometry_lift(
+                source_geometry,
+                elements,
+                routes,
+                coordinate_count,
+                budget=admission,
+            )
+            coordinates = source.representatives(budget=admission)
+            geometry = CellGeometrySpec(
+                elements, routes, coordinates, exact_source=source, budget=admission
+            )
     return (
         geometry.with_periodic_source(mesh)
         if mesh.periodic_topology is not None
@@ -652,24 +748,26 @@ def _straight_geometry(
 
 def _entity_key_table(mesh: CellMesh, dimension: int, /) -> np.ndarray:
     """Sorted vertex-global-ID key of every entity row of ``dimension``."""
-    pairs = _incidence_pairs(mesh, 0, dimension)
+    pairs = association_routes_owner.incidence_pairs(mesh, 0, dimension)
     table = np.full((mesh.entity_set(dimension).count, 8), -1, dtype=np.int64)
     identifiers = np.asarray(mesh.vertex_global_ids, dtype=np.int64)[pairs[:, 0]]
     order = np.lexsort((identifiers, pairs[:, 1]))
     counts = np.bincount(pairs[:, 1], minlength=table.shape[0])
     if np.any(counts > table.shape[1]):
-        raise ValueError("Coordinate ownership entity exceeds supported arity.")
+        raise ValueError(
+            f"straight_geometry.entities must not exceed the supported arity; got maximum_arity={np.max(counts)!r}, supported_arity={table.shape[1]}"
+        )
     offsets = np.cumsum(counts) - counts
     slots = np.arange(order.size) - np.repeat(offsets, counts)
     table[pairs[order, 1], slots] = identifiers[order]
     return table
 
 
-def _node_owners(
+@checked
+def node_owners(
     mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Owning mesh entity ``(dimension, row)`` of every geometry node."""
-    from ._topology_edit import key_rows
+    """Return the mesh entity ``(dimension, row)`` containing each geometry node."""
 
     elements, routes, coordinates = geometry.resolve(mesh)
     count = coordinates.shape[0]
@@ -684,7 +782,9 @@ def _node_owners(
         route_ = np.asarray(route, dtype=np.int64)
         cells = np.asarray(block.vertices, dtype=np.int64)
         topology = reference_cell_topology(block.cell_kind)
-        cell_rows = _entity_rows(mesh, top, np.asarray(block.global_ids, dtype=np.int64))
+        cell_rows = association_state_owner.entity_rows(
+            mesh, top, np.asarray(block.global_ids, dtype=np.int64)
+        )
         # ty: ignore[unresolved-attribute]
         for dimension, entities in enumerate(element.entity_dofs):
             for local, dofs in enumerate(entities):
@@ -700,17 +800,21 @@ def _node_owners(
                     keys[:, : len(vertices)] = np.sort(
                         vertex_ids[cells[:, list(vertices)]], axis=1
                     )
-                    owners = key_rows(tables[dimension], keys)
+                    owners = entity_keys_owner.key_rows(tables[dimension], keys)
                 nodes = route_[:, list(dofs)]
                 previous = rows[nodes]
                 if np.any((previous >= 0) & (previous != owners[:, None])) or np.any(
                     (dims[nodes] >= 0) & (dims[nodes] != dimension)
                 ):
-                    raise ValueError("Geometry nodes are shared inconsistently.")
+                    raise ValueError(
+                        f"node_owners.geometry must share nodes with consistent entity identities; got inconsistent sharing at dimension={dimension}"
+                    )
                 dims[nodes] = dimension
                 rows[nodes] = owners[:, None]
     if np.any(rows < 0):
-        raise ValueError("Every geometry node must belong to one mesh entity.")
+        raise ValueError(
+            "node_owners.geometry must bind every node to one mesh entity; got unassigned nodes"
+        )
     return dims, rows
 
 
@@ -726,16 +830,22 @@ class _NodeClasses(NamedTuple):
 def _node_classes(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
-    association: GeometryAssociation,
-    projection: AbstractBRepProjection,
+    association: association_state_owner.GeometryAssociation,
+    projection: _dependency_phydrax_geometry_brep__projection_contracts.AbstractBRepProjection,
     /,
 ) -> _NodeClasses:
-    owner_dims, owner_rows = _node_owners(mesh, geometry)
-    levels = _mesh_entity_classes(mesh, association, projection)
+    owner_dims, owner_rows = node_owners(mesh, geometry)
+    levels = _dependency_phydrax_meshing__association.mesh_entity_classes(
+        mesh, association, projection
+    )
     count = owner_dims.size
     dims = np.full((count,), -1, dtype=np.int64)
     indices = np.full((count,), -1, dtype=np.int64)
-    status = np.full((count,), BRepProjectionStatus.FAILED, dtype=np.int8)
+    status = np.full(
+        (count,),
+        _dependency_phydrax_geometry_brep__projection_contracts.BRepProjectionStatus.FAILED,
+        dtype=np.int8,
+    )
     paths: list[tuple[str, ...]] = [()] * count
     for level, classes in enumerate(levels):
         selected = owner_dims == level
@@ -749,7 +859,7 @@ def _node_classes(
         dims,
         indices,
         tuple(paths),
-        np.isin(status, _RESOLVED_STATUS),
+        np.isin(status, _dependency_phydrax_meshing__association.RESOLVED_STATUS),
         constrained,
         owner_dims == 0,
     )
@@ -773,7 +883,9 @@ def _determinant_degree(kind: str, degree: int, embedded: bool, /) -> int:
         case "pyramid":
             return 3 * degree - 1
         case _:
-            raise ValueError(f"No curving sample lattice for {kind!r}.")
+            raise ValueError(
+                f"curve_cell_mesh.sample_lattice.cell_kind must have a supported curving lattice; got {kind!r}"
+            )
 
 
 def _control_lattice(kind: str, degree: int, embedded: bool, /) -> np.ndarray:
@@ -871,7 +983,11 @@ def _distortion_blocks(
         samples = _control_lattice(block.cell_kind, degree, embedded)
         # ty: ignore[unresolved-attribute]
         _, gradients = element.tabulate(samples)
-        _, linear = coordinate_lagrange_element(block.cell_kind, 1).tabulate(samples)
+        _, linear = (
+            _dependency_phydrax_discretization__cell_geometry.coordinate_lagrange_element(
+                block.cell_kind, 1
+            ).tabulate(samples)
+        )
         straight = contract(
             "mnk,cna->cmak",
             np.asarray(linear),
@@ -885,7 +1001,9 @@ def _distortion_blocks(
         )
         inverse = inverse_small_linear(plan, target)
         if not bool(jnp.all(inverse.successful)):
-            raise ValueError("Straight-sided reference elements must be nondegenerate.")
+            raise ValueError(
+                "curve_cell_mesh.reference_geometry must have nondegenerate reference elements; got a degenerate element"
+            )
         blocks.append(
             _BlockDistortion(
                 routes=jnp.asarray(route, dtype=jnp.int32),
@@ -930,7 +1048,7 @@ def _sampled_quality(
 
 
 def _node_residuals(
-    projection: AbstractBRepProjection,
+    projection: _dependency_phydrax_geometry_brep__projection_contracts.AbstractBRepProjection,
     coordinates: np.ndarray,
     classes: _NodeClasses,
     /,
@@ -945,7 +1063,10 @@ def _node_residuals(
         classes.indices[rows],
         occurrence_paths=tuple(classes.occurrence_paths[row] for row in rows),
     )
-    failed = ~np.isin(np.asarray(result.status), _RESOLVED_STATUS)
+    failed = ~np.isin(
+        np.asarray(result.status),
+        _dependency_phydrax_meshing__association.RESOLVED_STATUS,
+    )
     failed |= np.asarray(
         [
             path != classes.occurrence_paths[row]
@@ -974,21 +1095,27 @@ def _evidence(
     mesh: CellMesh,
     geometry: CellGeometrySpec,
     classes: _NodeClasses,
-    projection: AbstractBRepProjection,
+    projection: _dependency_phydrax_geometry_brep__projection_contracts.AbstractBRepProjection,
     blocks: tuple[_BlockDistortion, ...],
     policy: HighOrderCurvingPolicy,
     /,
     *,
-    source: SourceBoundaryQuery | None = None,
-    domain: PiecewiseLinearDomain | MappedReferenceDomain | None = None,
+    source: source_boundary_records_owner.SourceBoundaryQuery | None = None,
+    domain: domain_coverage_owner.PiecewiseLinearDomain
+    | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain
+    | domain_planar_boundary_owner.CadSourceDomain
+    | None = None,
     cell_regions: np.ndarray | None = None,
-    certificate_limits: MeshCertificateLimits | None = None,
+    certificate_limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+    | None = None,
 ) -> CurvedGeometryEvidence:
     coordinates = np.asarray(geometry.coordinates, dtype=np.float64)
     _, _, residuals, _ = _node_residuals(projection, coordinates, classes)
     scaled, distortion = _sampled_quality(blocks, coordinates)
     local = certify_cell_geometry_validity(geometry, mesh=mesh, policy=policy.validity)
-    embedding = certify_global_embedding(mesh, geometry, local, limits=certificate_limits)
+    embedding = global_embedding_owner.certify_global_embedding(
+        mesh, geometry, local, limits=certificate_limits
+    )
     failures = [] if embedding.status == "certified" else ["global_embedding"]
     fidelity = None
     if source is None:
@@ -996,9 +1123,9 @@ def _evidence(
     else:
         if source.source_revision != projection.source_revision:
             raise ValueError(
-                "Continuous source evidence must use the projection revision."
+                f"curve_cell_mesh.source must use the projection revision; got source_revision={source.source_revision!r}, projection_revision={projection.source_revision!r}"
             )
-        fidelity = certify_source_fidelity(
+        fidelity = source_fidelity_owner.certify_source_fidelity(
             mesh,
             geometry,
             source,
@@ -1008,27 +1135,55 @@ def _evidence(
         if fidelity.status != "certified":
             failures.append("source_fidelity")
     coverage = None
-    if domain is None and isinstance(source, MappedDomainBoundarySource):
+    if domain is None and isinstance(
+        source, source_fidelity_owner.MappedDomainBoundarySource
+    ):
         declared = source.domain
-        if not isinstance(declared, MappedReferenceDomain):
+        if not isinstance(
+            declared,
+            _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
+        ):
             raise TypeError(
-                "Mapped curving coverage requires its actual mapped reference domain."
+                f"curve_cell_mesh.source.domain must be MappedReferenceDomain; got {type(declared).__name__}"
             )
         domain = declared
         cell_regions = np.asarray(source.cell_regions, dtype=np.int64)
     if mesh.topological_dimension == mesh.ambient_dimension:
-        if domain is None or cell_regions is None:
+        if cell_regions is None:
             failures.append("domain_interface_coverage")
         else:
-            coverage = certify_domain_coverage(
-                mesh,
-                geometry,
-                domain,
-                cell_regions,
-                embedding=embedding,
-                limits=certificate_limits,
-            )
-            if coverage.status != "certified":
+            match domain:
+                case domain_planar_boundary_owner.CadSourceDomain():
+                    if fidelity is not None:
+                        coverage = approximate_source_coverage_owner.certify_approximate_source_coverage(
+                            mesh,
+                            geometry,
+                            domain,
+                            cell_regions,
+                            embedding=embedding,
+                            fidelity=fidelity,
+                            limits=certificate_limits,
+                        )
+                case (
+                    domain_coverage_owner.PiecewiseLinearDomain()
+                    | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain()
+                ):
+                    coverage = domain_coverage_owner.certify_domain_coverage(
+                        mesh,
+                        geometry,
+                        domain,
+                        cell_regions,
+                        embedding=embedding,
+                        limits=certificate_limits,
+                    )
+                case None:
+                    pass
+                case _:
+                    raise TypeError(
+                        "Curving.domain must be a declared CAD, piecewise-linear or mapped "
+                        f"domain; got {type(domain).__name__}."
+                    )
+            if coverage is None or coverage.status != "certified":
                 failures.append("domain_interface_coverage")
     return CurvedGeometryEvidence(
         local,
@@ -1049,69 +1204,71 @@ def _evidence(
     )
 
 
-def _require_inputs(
-    mesh: CellMesh,
-    association: GeometryAssociation,
-    projection: AbstractBRepProjection,
-    policy: HighOrderCurvingPolicy,
-    /,
-) -> None:
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be CellMesh.")
-    if not isinstance(association, GeometryAssociation):
-        raise TypeError("association must be GeometryAssociation.")
-    if not isinstance(projection, AbstractBRepProjection):
-        raise TypeError("projection must be AbstractBRepProjection.")
-    if not isinstance(policy, HighOrderCurvingPolicy):
-        raise TypeError("policy must be HighOrderCurvingPolicy.")
-
-
 def _continuous_source(
-    projection: AbstractBRepProjection, source: SourceBoundaryQuery | None, /
-) -> SourceBoundaryQuery | None:
-    """Admit the nominal carrier retained by a native world-space projection."""
-    from ..geometry._meshing_domain import MeshingDomain, MeshingDomainBoundarySource
-    from ..geometry.brep._query import NativeBRepProjection
+    projection: _dependency_phydrax_geometry_brep__projection_contracts.AbstractBRepProjection,
+    source: source_boundary_records_owner.SourceBoundaryQuery | None,
+    /,
+) -> source_boundary_records_owner.SourceBoundaryQuery | None:
+    """Admit a native projection's revision-bound continuous source."""
 
     if source is not None:
         return source
-    if isinstance(projection, NativeBRepProjection) and projection.ambient_dimension == 3:
-        domain = MeshingDomain.from_brep(projection.query.model)
-        return MeshingDomainBoundarySource(domain, tuple(range(len(domain.patches))))
-    return None
+    match projection:
+        case query_projection_owner.NativeBRepProjection(embedding=None):
+            domain = _owner_phydrax_geometry__meshing_domain.MeshingDomain.from_brep(
+                projection.query.model
+            )
+            return domain_boundary_owner.MeshingDomainBoundarySource(
+                domain, tuple(range(len(domain.patches)))
+            )
+        case query_projection_owner.NativeBRepProjection(
+            embedding=_owner_phydrax_geometry__planar_embedding.PlanarEmbedding() as embedding
+        ):
+            return domain_planar_boundary_owner.EmbeddedPlanarBoundarySource(
+                projection.query.model, embedding
+            )
+        case _dependency_phydrax_geometry_brep__projection_contracts.AbstractBRepProjection():
+            return None
+        case _:
+            raise TypeError(
+                "Curving.projection must be an AbstractBRepProjection; "
+                f"got {type(projection).__name__}."
+            )
 
 
+@checked
 def verify_curved_geometry(
     geometry: CellGeometrySpec,
     mesh: CellMesh,
-    association: GeometryAssociation,
-    projection: AbstractBRepProjection,
+    association: association_state_owner.GeometryAssociation,
+    projection: _dependency_phydrax_geometry_brep__projection_contracts.AbstractBRepProjection,
     /,
     *,
     policy: HighOrderCurvingPolicy,
-    source: SourceBoundaryQuery | None = None,
-    domain: PiecewiseLinearDomain | MappedReferenceDomain | None = None,
+    source: source_boundary_records_owner.SourceBoundaryQuery | None = None,
+    domain: domain_coverage_owner.PiecewiseLinearDomain
+    | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain
+    | domain_planar_boundary_owner.CadSourceDomain
+    | None = None,
     cell_regions: np.ndarray | None = None,
-    certificate_limits: MeshCertificateLimits | None = None,
+    certificate_limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+    | None = None,
 ) -> CurvedGeometryEvidence:
     """Certify an existing high-order geometry (e.g. a Gmsh high-order output).
 
-    Nodes are classified through their owning mesh entities and the vertex
+    Nodes are classified through their mesh entities and the vertex
     ``association``; the evidence carries the Bernstein validity certificate and
     the CAD residual of every constrained node. Nothing is moved.
-    Native world-space projections supply their original carrier when ``source``
-    is omitted; acceptance still requires a continuous source-distance proof.
+    Native world-space and embedded-planar projections supply their revision-bound
+    carrier when ``source`` is omitted; acceptance requires a continuous proof.
     """
-    _require_inputs(mesh, association, projection, policy)
-    if not isinstance(geometry, CellGeometrySpec):
-        raise TypeError("geometry must be CellGeometrySpec.")
     if geometry.coordinates.shape[0] > policy.maximum_geometry_nodes:
         raise ValueError(
-            "Curving node resource limit: supplied geometry exceeds maximum_geometry_nodes."
+            f"verify_curved_geometry.geometry must fit maximum_geometry_nodes; got node resource limit exceeded with {geometry.coordinates.shape[0]} nodes above {policy.maximum_geometry_nodes}"
         )
     # ty: ignore[unresolved-attribute]
     degree = max(int(element.degree) for element in geometry.elements)
-    _admit_geometry_resources(
+    admit_geometry_resources(
         mesh,
         degree,
         policy.maximum_geometry_nodes,
@@ -1152,20 +1309,32 @@ def _quotient_geometry_nodes(
     mesh: CellMesh, geometry: CellGeometrySpec, /
 ) -> _PeriodicNodes:
     """Lower the FE owner's quotient nodal numbering to geometry-node isometries."""
-    from ..discretization.fem import FiniteElementDofMap, FiniteElementSpec
 
     topology = mesh.periodic_topology
     if topology is None:
-        raise ValueError("Quotient geometry nodes require periodic topology.")
+        raise ValueError(
+            "periodic_nodes.mesh.periodic_topology must be supplied for quotient geometry nodes; got None"
+        )
     elements, routes, _ = geometry.resolve(mesh)
-    if any(not isinstance(element, FiniteElementSpec) for element in elements):
-        raise ValueError("Curving requires canonical nodal coordinate elements.")
+    if any(
+        not isinstance(element, _owner_phydrax_discretization_fem.FiniteElementSpec)
+        for element in elements
+    ):
+        raise ValueError(
+            f"periodic_nodes.geometry.elements must be nodal finite elements; got kinds={tuple(type(element).__name__ for element in elements)!r}"
+        )
     fields = tuple(
-        element for element in elements if isinstance(element, FiniteElementSpec)
+        element
+        for element in elements
+        if isinstance(element, _owner_phydrax_discretization_fem.FiniteElementSpec)
     )
-    dofs = FiniteElementDofMap(mesh, fields, coordinate_spec=geometry)
+    dofs = _owner_phydrax_discretization_fem.FiniteElementDofMap(
+        mesh, fields, coordinate_spec=geometry
+    )
     if dofs.coordinate_gather is None:
-        raise RuntimeError("The periodic FE owner did not publish representative nodes.")
+        raise RuntimeError(
+            "periodic_nodes.coordinate_gather must contain representative nodes; got None"
+        )
     flattened = np.concatenate([np.asarray(route).reshape(-1) for route in routes])
     representatives = flattened[np.asarray(dofs.coordinate_gather)]
     quotient = np.full((geometry.coordinates.shape[0],), -1, dtype=np.int64)
@@ -1173,20 +1342,22 @@ def _quotient_geometry_nodes(
         nodes = np.asarray(route)
         indices = np.asarray(field_route)
         if nodes.shape != indices.shape:
-            raise ValueError("Coordinate and field nodal layouts disagree.")
+            raise ValueError(
+                f"periodic_nodes.geometry must align coordinate and field nodal layouts; got coordinate_shape={nodes.shape}, field_shape={indices.shape}"
+            )
         previous = quotient[nodes]
         if np.any((previous >= 0) & (previous != indices)):
             raise ValueError(
-                "Shared coordinate nodes disagree on their quotient identity."
+                "periodic_nodes.geometry must share nodes with one quotient identity; got inconsistent identities"
             )
         quotient[nodes] = indices
     if np.any(quotient < 0):
         raise ValueError(
-            "Every coordinate node needs an authoritative quotient identity."
+            "periodic_nodes.geometry must bind every coordinate node to a quotient identity; got unassigned nodes"
         )
     sources = representatives[quotient]
     targets = np.flatnonzero(sources != np.arange(sources.size))
-    dimensions, owners = _node_owners(mesh, geometry)
+    dimensions, owners = node_owners(mesh, geometry)
     matrices = np.empty(
         (targets.size, mesh.ambient_dimension + 1, mesh.ambient_dimension + 1),
         dtype=np.float64,
@@ -1202,23 +1373,24 @@ def _quotient_geometry_nodes(
     )
 
 
-def _periodic_nodes(
+@checked
+def periodic_nodes(
     mesh: CellMesh,
     straight: CellGeometrySpec,
-    periodic: tuple[PeriodicCoupling, ...],
+    periodic: tuple[_dependency_phydrax_meshing__coupling.PeriodicCoupling, ...],
     /,
 ) -> _PeriodicNodes:
     """Pair the geometry nodes of every periodic coupling through its isometry.
 
-    A node belongs to a side when every vertex of its owning mesh entity is in
+    A node belongs to a side when every vertex of its mesh entity is in
     the side's vertex scope; sides are paired on the straight positions.
     """
-    owner_dims, owner_rows = _node_owners(mesh, straight)
+    owner_dims, owner_rows = node_owners(mesh, straight)
     coordinates = np.asarray(straight.coordinates, dtype=np.float64)
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     ambient = mesh.ambient_dimension
     incidences = tuple(
-        _incidence_pairs(mesh, 0, dimension)
+        association_routes_owner.incidence_pairs(mesh, 0, dimension)
         for dimension in range(mesh.topological_dimension + 1)
     )
     native = (
@@ -1233,15 +1405,21 @@ def _periodic_nodes(
         rotations.append(native.rotations)
         translations.append(native.translations)
     for coupling in periodic:
-        if not isinstance(coupling, PeriodicCoupling):
-            raise TypeError("periodic must contain PeriodicCoupling values.")
+        if not isinstance(
+            coupling, _dependency_phydrax_meshing__coupling.PeriodicCoupling
+        ):
+            raise TypeError(
+                f"periodic_nodes.periodic must contain PeriodicCoupling values; got {type(coupling).__name__}"
+            )
         scopes = (coupling.source_scope, coupling.target_scope)
         if any(
             scope.entity_dimension != 0
             or scope.entity_set_id != mesh.entity_set(0).entity_set_id
             for scope in scopes
         ):
-            raise ValueError("Periodic couplings must pair vertices of the curved mesh.")
+            raise ValueError(
+                "periodic_nodes.periodic must pair vertices of the curved mesh; got coupling scopes from another entity set or dimension"
+            )
         sides = []
         for scope in scopes:
             inside = np.isin(vertex_ids, np.asarray(scope.entity_ids, dtype=np.int64))
@@ -1274,7 +1452,9 @@ def _periodic_nodes(
         )
     target = np.concatenate(targets)
     if np.unique(target).size != target.size:
-        raise ValueError("Periodic couplings must not share target nodes.")
+        raise ValueError(
+            f"periodic_nodes.periodic must not share target nodes; got {target.size} targets including duplicates"
+        )
     return _PeriodicNodes(
         np.concatenate(sources),
         target,
@@ -1283,7 +1463,8 @@ def _periodic_nodes(
     )
 
 
-def _apply_periodic(coordinates: np.ndarray, periodic: _PeriodicNodes, /) -> np.ndarray:
+@checked
+def apply_periodic(coordinates: np.ndarray, periodic: _PeriodicNodes, /) -> np.ndarray:
     result = coordinates.copy()
     result[periodic.targets] = (
         np.asarray(
@@ -1295,7 +1476,7 @@ def _apply_periodic(coordinates: np.ndarray, periodic: _PeriodicNodes, /) -> np.
 
 
 def _project_constrained(
-    projection: AbstractBRepProjection,
+    projection: _dependency_phydrax_geometry_brep__projection_contracts.AbstractBRepProjection,
     coordinates: np.ndarray,
     classes: _NodeClasses,
     periodic: _PeriodicNodes,
@@ -1306,42 +1487,142 @@ def _project_constrained(
     result = coordinates.copy()
     movable = ~classes.fixed[rows]
     result[rows[movable]] = feet[movable]
-    return _apply_periodic(result, periodic), rows, projectors
+    return apply_periodic(result, periodic), rows, projectors
 
 
+@final
+class _ProjectedCurvingState(StrictModule, NonTrainableState):
+    pairs: _PeriodicNodes
+    layer_nodes: _dependency_phydrax_meshing__layer_curving.LayerCurvingNodes | None
+    fixed: np.ndarray
+    length: float = eqx.field(static=True)
+    reference_coordinates: np.ndarray
+    coordinates: np.ndarray
+    constrained_rows: np.ndarray
+    projectors: np.ndarray
+    geometry: CellGeometrySpec
+
+
+def _prepare_projected_curving(
+    mesh: CellMesh,
+    straight: CellGeometrySpec,
+    classes: _NodeClasses,
+    projection: _dependency_phydrax_geometry_brep__projection_contracts.AbstractBRepProjection,
+    periodic: tuple[_dependency_phydrax_meshing__coupling.PeriodicCoupling, ...],
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh | None,
+) -> _ProjectedCurvingState:
+    pairs = periodic_nodes(mesh, straight, tuple(periodic))
+    layer_nodes = (
+        None
+        if layers is None
+        else _dependency_phydrax_meshing__layer_curving.prepare_layer_curving_nodes(
+            mesh, straight, layers
+        )
+    )
+    fixed = classes.fixed.copy()
+    fixed[pairs.targets] = True
+    if layer_nodes is not None:
+        fixed[layer_nodes.nodes[layer_nodes.nodes != layer_nodes.owners]] = True
+    vertices = np.asarray(mesh.coordinates, dtype=np.float64)
+    edges = association_routes_owner.incidence_pairs(mesh, 0, 1)
+    edge_vertices = edges[np.argsort(edges[:, 1], kind="stable"), 0].reshape(-1, 2)
+    length = float(
+        np.mean(
+            np.linalg.norm(
+                vertices[edge_vertices[:, 0]] - vertices[edge_vertices[:, 1]], axis=1
+            )
+        )
+    )
+    reference_coordinates = np.asarray(straight.coordinates, dtype=np.float64)
+    coordinates, constrained_rows, projectors = _project_constrained(
+        projection, reference_coordinates, classes, pairs
+    )
+    if layer_nodes is not None:
+        _dependency_phydrax_meshing__layer_curving.transport_layer_curvature(
+            coordinates, reference_coordinates, layer_nodes
+        )
+        coordinates = apply_periodic(coordinates, pairs)
+    candidate_geometry = straight.with_coordinates(coordinates)
+    return _ProjectedCurvingState(
+        pairs,
+        layer_nodes,
+        fixed,
+        length,
+        reference_coordinates,
+        coordinates,
+        constrained_rows,
+        projectors,
+        candidate_geometry,
+    )
+
+
+def _curving_round_energy(
+    blocks: tuple[_BlockDistortion, ...],
+    coordinates: np.ndarray,
+    constrained_rows: np.ndarray,
+    projectors: np.ndarray,
+    length: float,
+    policy: HighOrderCurvingPolicy,
+) -> _CurvingEnergy:
+    """Freeze the current foot points and tangent penalties for one relaxation."""
+    return _CurvingEnergy(
+        blocks=blocks,
+        constrained_rows=jnp.asarray(constrained_rows, dtype=jnp.int32),
+        feet=jnp.asarray(coordinates[constrained_rows]),
+        normal_projectors=jnp.asarray(projectors),
+        reference=jnp.asarray(coordinates),
+        weights=jnp.asarray(
+            (
+                policy.distortion_weight,
+                policy.tangent_weight / length**2,
+                policy.displacement_weight / length**2,
+            ),
+            dtype=jnp.float64,
+        ),
+        regularization=jnp.asarray(policy.regularization, dtype=jnp.float64),
+    )
+
+
+# Keep projection, sequential relaxation acceptance, and rollback evidence in order.
+@checked
 def curve_cell_mesh(
     mesh: CellMesh,
-    association: GeometryAssociation,
-    projection: AbstractBRepProjection,
+    association: association_state_owner.GeometryAssociation,
+    projection: _dependency_phydrax_geometry_brep__projection_contracts.AbstractBRepProjection,
     /,
     *,
     policy: HighOrderCurvingPolicy,
-    periodic: tuple[PeriodicCoupling, ...] = (),
-    source: SourceBoundaryQuery | None = None,
-    domain: PiecewiseLinearDomain | MappedReferenceDomain | None = None,
+    periodic: tuple[_dependency_phydrax_meshing__coupling.PeriodicCoupling, ...] = (),
+    source: source_boundary_records_owner.SourceBoundaryQuery | None = None,
+    domain: domain_coverage_owner.PiecewiseLinearDomain
+    | _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain
+    | domain_planar_boundary_owner.CadSourceDomain
+    | None = None,
     cell_regions: np.ndarray | None = None,
-    certificate_limits: MeshCertificateLimits | None = None,
-    layers: BoundaryLayerMesh | None = None,
+    certificate_limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+    | None = None,
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh | None = None,
 ) -> HighOrderCurvingResult:
     """Curve an affine mesh to its B-Rep geometry with certified high-order nodes.
 
-    ``association`` is the complete B-Rep vertex association of ``mesh``;
+    ``association`` binds every B-Rep vertex of ``mesh``;
     ``periodic`` couplings pair vertices of ``mesh`` so the target-side high-order
     nodes are the declared isometry of the source-side nodes. A mesh-bound
     ``PeriodicMeshTopology`` instead supplies quotient node identity through the
-    finite-element owner's nodal numbering and canonical entity isometries;
+    finite-element nodal numbering and declared entity isometries;
     winding-distinct entities are never merged by a positional search.
-    A native world-space projection also admits its original model as the
-    continuous source when ``source`` is omitted. Nodal projection alone never
-    supplies the source-fidelity certificate.
-    ``layers`` retains the actual prepared prism columns. Their wall curvature
+    Native world-space and embedded-planar projections supply their revision-bound
+    continuous carrier when ``source`` is omitted. Nodal projection alone never
+    supplies the source-fidelity certificate. Full-dimensional meshes require
+    explicit ``domain`` and ``cell_regions``: domain coverage for piecewise-linear
+    or mapped-reference domains, approximate region coverage for ``CadSourceDomain``.
+    ``layers`` retains the prepared prism columns. Their wall curvature
     displacement is transported identically through every axial level, so the
-    original physical interval vectors survive both projection and relaxation.
+    prepared physical interval vectors survive both projection and relaxation.
     Source fidelity, validity, global embedding, and declared domain coverage
     still certify the resulting map independently.
     """
-    _require_inputs(mesh, association, projection, policy)
-    _admit_geometry_resources(
+    admit_geometry_resources(
         mesh,
         policy.degree,
         policy.maximum_geometry_nodes,
@@ -1349,7 +1630,7 @@ def curve_cell_mesh(
         policy.validity.maximum_bernstein_nodes,
     )
     source = _continuous_source(projection, source)
-    straight = _straight_geometry(
+    straight = straight_geometry(
         mesh,
         policy.degree,
         maximum_nodes=policy.maximum_geometry_nodes,
@@ -1377,37 +1658,24 @@ def curve_cell_mesh(
             straight,
             straight_evidence,
             None,
+            None,
             (),
             None,
         )
-    pairs = _periodic_nodes(mesh, straight, tuple(periodic))
-    layer_nodes = (
-        None if layers is None else prepare_layer_curving_nodes(mesh, straight, layers)
+    projected = _prepare_projected_curving(
+        mesh, straight, classes, projection, periodic, layers
     )
-    fixed = classes.fixed.copy()
-    fixed[pairs.targets] = True
-    if layer_nodes is not None:
-        fixed[layer_nodes.nodes[layer_nodes.nodes != layer_nodes.owners]] = True
-    vertices = np.asarray(mesh.coordinates, dtype=np.float64)
-    edges = _incidence_pairs(mesh, 0, 1)
-    edge_vertices = edges[np.argsort(edges[:, 1], kind="stable"), 0].reshape(-1, 2)
-    length = float(
-        np.mean(
-            np.linalg.norm(
-                vertices[edge_vertices[:, 0]] - vertices[edge_vertices[:, 1]], axis=1
-            )
-        )
+    pairs, layer_nodes, fixed = projected.pairs, projected.layer_nodes, projected.fixed
+    length, reference_coordinates = projected.length, projected.reference_coordinates
+    coordinates, constrained_rows, projectors = (
+        projected.coordinates,
+        projected.constrained_rows,
+        projected.projectors,
     )
-    reference_coordinates = np.asarray(straight.coordinates, dtype=np.float64)
-    coordinates, constrained_rows, projectors = _project_constrained(
-        projection, reference_coordinates, classes, pairs
-    )
-    if layer_nodes is not None:
-        transport_layer_curvature(coordinates, reference_coordinates, layer_nodes)
-        coordinates = _apply_periodic(coordinates, pairs)
+    candidate_geometry = projected.geometry
     candidate = _evidence(
         mesh,
-        straight.with_coordinates(coordinates),
+        candidate_geometry,
         classes,
         projection,
         blocks,
@@ -1418,30 +1686,19 @@ def curve_cell_mesh(
         certificate_limits=certificate_limits,
     )
     # The CAD projection needs no relaxation; it is accepted on its own when valid.
-    accepted = (coordinates, candidate, 0) if candidate.accepted else None
+    accepted = (candidate_geometry, candidate, 0) if candidate.accepted else None
     minimizations = []
     for round_ in range(1, policy.relaxation_rounds + 1):
-        energy = _CurvingEnergy(
-            blocks=blocks,
-            constrained_rows=jnp.asarray(constrained_rows, dtype=jnp.int32),
-            feet=jnp.asarray(coordinates[constrained_rows]),
-            normal_projectors=jnp.asarray(projectors),
-            reference=jnp.asarray(coordinates),
-            weights=jnp.asarray(
-                (
-                    policy.distortion_weight,
-                    policy.tangent_weight / length**2,
-                    policy.displacement_weight / length**2,
-                ),
-                dtype=jnp.float64,
-            ),
-            regularization=jnp.asarray(policy.regularization, dtype=jnp.float64),
+        energy = _curving_round_energy(
+            blocks, coordinates, constrained_rows, projectors, length, policy
         )
-        relaxed = optimize_cell_geometry_coordinates(
-            straight.with_coordinates(coordinates),
-            energy,
-            fixed_coordinates=fixed,
-            termination=policy.termination,
+        relaxed = (
+            _dependency_phydrax_meshing__optimization.optimize_cell_geometry_coordinates(
+                straight.with_coordinates(coordinates),
+                energy,
+                fixed_coordinates=fixed,
+                termination=policy.termination,
+            )
         )
         minimizations.append(relaxed.minimization)
         moved = np.asarray(relaxed.coordinates, dtype=np.float64)
@@ -1451,11 +1708,14 @@ def curve_cell_mesh(
             projection, moved, classes, pairs
         )
         if layer_nodes is not None:
-            transport_layer_curvature(coordinates, reference_coordinates, layer_nodes)
-            coordinates = _apply_periodic(coordinates, pairs)
+            _dependency_phydrax_meshing__layer_curving.transport_layer_curvature(
+                coordinates, reference_coordinates, layer_nodes
+            )
+            coordinates = apply_periodic(coordinates, pairs)
+        candidate_geometry = straight.with_coordinates(coordinates)
         candidate = _evidence(
             mesh,
-            straight.with_coordinates(coordinates),
+            candidate_geometry,
             classes,
             projection,
             blocks,
@@ -1468,14 +1728,15 @@ def curve_cell_mesh(
         if candidate.accepted and (
             relaxed.converged or policy.accept_valid_nonconverged_relaxation
         ):
-            accepted = (coordinates, candidate, round_)
+            accepted = (candidate_geometry, candidate, round_)
     if accepted is not None:
         return HighOrderCurvingResult(
             HighOrderCurvingStatus.CURVED,
-            straight.with_coordinates(accepted[0]),
+            accepted[0],
             straight,
             accepted[1],
             candidate,
+            candidate_geometry,
             tuple(minimizations),
             accepted[2],
         )
@@ -1509,6 +1770,7 @@ def curve_cell_mesh(
         straight,
         straight_evidence,
         candidate,
+        candidate_geometry,
         tuple(minimizations),
         None,
     )

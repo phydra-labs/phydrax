@@ -64,13 +64,13 @@ from ...sparse import (
     SparseCoordinateOperator,
     SparsePattern,
 )
-from ...sparse._linear import _SparseStoragePlan
+from ...sparse._linear import SparseStoragePlan
 from ...sparse._streamed import (
     PreparedStreamedRelation,
     StreamedPayloadSpec,
     StreamedRelationPlan,
 )
-from ...typing import Bool, Dim, Float64, Int32, Scalar
+from ...typing import Bool, checked, Dim, Float64, Int32, Scalar
 from ._constitutive import (
     AbstractCoupledEdgeConstitutiveLaw,
     AbstractEdgeConstitutiveLaw,
@@ -288,7 +288,9 @@ class _CoupledConservationRuntime(StrictModule):
 def _node_array(value: ArrayLike, count: int, name: str, /) -> Array:
     array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape not in ((), (count,)):
-        raise ValueError(f"{name} must be scalar or one value per compact node.")
+        raise ValueError(
+            f"conservation_solve.node_array.value must be scalar or one value per compact node; got {array.shape!r}; context {name}"
+        )
     return jnp.broadcast_to(array, (count,))
 
 
@@ -296,7 +298,7 @@ def _component_array(value: ArrayLike, count: int, size: int, name: str, /) -> A
     array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape not in ((), (size,), (count, size)):
         raise ValueError(
-            f"{name} must be scalar, one packed component vector, or one vector per compact node."
+            f"conservation_solve.component_array.size must be scalar, one packed component vector, or one vector per compact node; got {array.shape!r}; context {name}"
         )
     return jnp.broadcast_to(array, (count, size))
 
@@ -319,7 +321,7 @@ def _validated_masks(
         or boundary.shape != (count,)
     ):
         raise ValueError(
-            "Equation and boundary masks must be Boolean compact-node vectors."
+            f"conservation_solve.validated_masks.exterior must be Boolean compact-node vectors; got {equations.shape!r}"
         )
     if (
         np.any(equations & boundary)
@@ -327,11 +329,11 @@ def _validated_masks(
         or not np.any(equations)
     ):
         raise ValueError(
-            "Every node is either an equation row or a prescribed boundary row, with at least one equation."
+            f"conservation_solve.validated_masks.exterior must partition every node into equation or prescribed-boundary rows and include an equation; got {type(exterior).__name__}"
         )
     if np.any(equations & ~np.asarray(exterior.equation_mask)):
         raise ValueError(
-            "Conservation equations must be a subset of the exterior's moment-certified rows."
+            f"conservation_solve.validated_masks.exterior must be a subset of the exterior's moment-certified rows; got {type(exterior).__name__}"
         )
     return equations, boundary
 
@@ -353,19 +355,18 @@ def _validated_features(
         else features
     )
     if (
-        not isinstance(features_, EdgeFrameFeatures)
-        or features_.source_id != exterior.incidence.source.space_id
+        features_.source_id != exterior.incidence.source.space_id
         or features_.geometry_id
         != canonical_fingerprint(
             array_tree_fingerprint((exterior.points, exterior.pairs))
         )
     ):
         raise ValueError(
-            "Constitutive features must retain the prepared exterior's nominal geometry and edge orientation."
+            f"conservation_solve.validated_features.exterior must retain the prepared exterior's nominal geometry and edge orientation; got {type(exterior).__name__}"
         )
     if features_.even.shape[1] != even_size or features_.odd.shape[1] != odd_size:
         raise ValueError(
-            "Typed even/odd feature widths must match the law's declared input schema."
+            f"conservation_solve.validated_features.even_size must match the law's declared input schema; got {features_.even.shape!r}"
         )
     return features_
 
@@ -373,28 +374,27 @@ def _validated_features(
 def _validated_coverage(
     coverage: EdgeFeatureCoverage | None, features: EdgeFrameFeatures, /
 ) -> None:
-    if coverage is not None and (
-        not isinstance(coverage, EdgeFeatureCoverage)
-        or coverage.feature_names != features.even_names
-    ):
-        raise ValueError("Coverage must name exactly the immutable even-feature layout.")
+    if coverage is not None and coverage.feature_names != features.even_names:
+        raise ValueError(
+            f"conservation_solve.validated_coverage.coverage must name exactly the immutable even-feature layout; got {type(coverage).__name__}"
+        )
 
 
 def _parameter_owner(
     parameter_bindings: tuple[ParameterBinding, ...], /
 ) -> PreparedParameters:
-    if not isinstance(parameter_bindings, tuple) or any(
-        not isinstance(binding, ParameterBinding) for binding in parameter_bindings
-    ):
+    if not isinstance(parameter_bindings, tuple):
         raise TypeError(
-            "parameter_bindings must be a tuple of native ParameterBinding objects."
+            f"conservation_solve.parameter_owner.parameter_bindings must be a tuple of native ParameterBinding objects; got {type(parameter_bindings).__name__}"
         )
     ids = [binding.binding_id for binding in parameter_bindings]
     targets = [
         target.name for binding in parameter_bindings for target in binding.targets
     ]
     if len(set(ids)) != len(ids) or len(set(targets)) != len(targets):
-        raise ValueError("Parameter identities and runtime targets must be unique.")
+        raise ValueError(
+            f"conservation_solve.parameter_owner.parameter_bindings must be unique; got {type(parameter_bindings).__name__}"
+        )
     for binding in parameter_bindings:
         if binding.change != "refresh" or any(
             target.component != "meshfree"
@@ -403,7 +403,7 @@ def _parameter_owner(
             for target in binding.targets
         ):
             raise ValueError(
-                "Conservation parameters bind refresh-only meshfree law/conductance/metric_weights/source/boundary_values inputs."
+                f"conservation_solve.parameter_owner.parameter_bindings must bind refresh-only meshfree law, conductance, metric_weights, source, or boundary_values inputs; got {type(parameter_bindings).__name__}"
             )
         for target in binding.targets:
             required_role = (
@@ -415,7 +415,7 @@ def _parameter_owner(
             )
             if binding.role != required_role:
                 raise ValueError(
-                    "Parameter physical role must agree with its runtime input."
+                    f"conservation_solve.parameter_owner.parameter_bindings must agree with its runtime input; got {type(parameter_bindings).__name__}"
                 )
     return PreparedParameters(parameter_bindings, (), ())
 
@@ -432,7 +432,9 @@ def _problem_identity(
         or not problem_id
         or problem_id.strip() != problem_id
     ):
-        raise ValueError("problem_id must be a nonempty stripped scientific identity.")
+        raise ValueError(
+            f"conservation_solve.problem_identity.problem_id must be a nonempty stripped scientific identity; got {problem_id!r}"
+        )
     return canonical_fingerprint(
         {
             "kind": kind,
@@ -450,7 +452,7 @@ def _require_admitted_metric(exterior: PreparedMeshfreeExteriorCalculus, /) -> N
         exterior.metric_result.hilbert_admitted
     ):
         raise ValueError(
-            "Learned dissipative conservation requires an admitted strictly positive metric; signed pairings are refused."
+            f"conservation_solve.require_admitted_metric.exterior must provide an admitted strictly positive metric; signed pairings are refused; got {type(exterior).__name__}"
         )
 
 
@@ -464,11 +466,11 @@ def _bound_inputs(
     inputs = {} if bound is None else bound
     if not isinstance(inputs, Mapping):
         raise TypeError(
-            "Native parameter binding must yield a meshfree runtime input mapping."
+            f"conservation_solve.bound_inputs.parameters must yield a meshfree runtime input mapping; got {type(parameters).__name__}"
         )
     if law is not None and "law" in inputs:
         raise ValueError(
-            "A bound law parameter and an explicit law refresh cannot both supply the same physical input."
+            f"meshfree.conservation.law_binding must supply the law through either a bound parameter or explicit refresh, not both; got {type(law).__name__}"
         )
     return inputs
 
@@ -477,13 +479,16 @@ def _law_leaves(
     law: AbstractArrayModel, reference: AbstractArrayModel, /
 ) -> tuple[Array, ...]:
     """Numeric law leaves after refusing changed activations, transforms or traits."""
-    if isinstance(law, MonotoneEdgeConductance | MonotoneCoupledEdgeFlux):
-        law.potential.input_convex_certificate()
+    match law:
+        case MonotoneEdgeConductance() | MonotoneCoupledEdgeFlux():
+            law.potential.input_convex_certificate()
+        case _:
+            pass
     numeric_law, law_traits = eqx.partition(law, eqx.is_array)
     _, prepared_traits = eqx.partition(reference, eqx.is_array)
     if eqx.tree_equal(law_traits, prepared_traits) is not True:
         raise ValueError(
-            "Constitutive metadata changed; prepare a new solve for different activation, transforms or static law traits."
+            f"meshfree.conservation.law_traits must preserve the prepared activation, transforms, and static law traits; got {type(law).__name__}"
         )
     return tuple(jax.tree_util.tree_leaves(numeric_law))
 
@@ -491,7 +496,7 @@ def _law_leaves(
 def _bind_numeric_law[LawT: AbstractArrayModel](
     reference: LawT, leaves: tuple[Array, ...], /
 ) -> LawT:
-    """Reconstruct canonical law metadata around the actual numerical leaves."""
+    """Reconstruct law metadata around the numerical leaves."""
     numeric_template, traits = eqx.partition(reference, eqx.is_array)
     numeric_law = jax.tree_util.tree_unflatten(
         jax.tree_util.tree_structure(numeric_template), leaves
@@ -500,12 +505,15 @@ def _bind_numeric_law[LawT: AbstractArrayModel](
 
 
 def _runtime_value(item: object, /) -> Array:
-    if isinstance(item, AbstractArrayModel):
-        if item.in_size != "scalar":
-            raise ValueError(
-                "A runtime parameter model must declare a scalar constant input."
-            )
-        return jnp.asarray(item(jnp.zeros((), dtype=jnp.float64)), dtype=jnp.float64)
+    match item:
+        case AbstractArrayModel():
+            if item.in_size != "scalar":
+                raise ValueError(
+                    f"conservation_solve.runtime_value.item must declare a scalar constant input; got {type(item).__name__}"
+                )
+            return jnp.asarray(item(jnp.zeros((), dtype=jnp.float64)), dtype=jnp.float64)
+        case _:
+            pass
     return jnp.asarray(item, dtype=jnp.float64)
 
 
@@ -513,7 +521,7 @@ def _runtime_conductance(inputs: Mapping[str, object], /) -> Array:
     conductance = _runtime_value(inputs.get("conductance", 1.0))
     if conductance.shape != ():
         raise ValueError(
-            "The constitutive multiplier must be scalar; spatial context belongs to typed external edge features."
+            f"conservation_solve.runtime_conductance.inputs must be scalar; spatial context belongs to typed external edge features; got {conductance.shape!r}"
         )
     return conductance
 
@@ -525,7 +533,7 @@ def _runtime_metric_weights(
     weights = _runtime_value(inputs.get("metric_weights", exterior.metric_result.weights))
     if weights.shape != exterior.lengths.shape:
         raise ValueError(
-            "Runtime metric weights must hold one value per compact exterior edge."
+            f"conservation_solve.runtime_metric_weights.exterior must hold one value per compact exterior edge; got {weights.shape!r}"
         )
     return weights
 
@@ -556,6 +564,7 @@ class MeshfreeConservationProblem(StrictModule):
     parameters: PreparedParameters = fixed_field()
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         exterior: PreparedMeshfreeExteriorCalculus,
@@ -571,12 +580,6 @@ class MeshfreeConservationProblem(StrictModule):
         parameter_bindings: tuple[ParameterBinding, ...] = (),
         problem_id: str = "meshfree-conservation",
     ) -> None:
-        if not isinstance(exterior, PreparedMeshfreeExteriorCalculus) or not isinstance(
-            law, AbstractEdgeConstitutiveLaw
-        ):
-            raise TypeError(
-                "Conservation requires native prepared exterior geometry and an edge constitutive law."
-            )
         _require_admitted_metric(exterior)
         count = exterior.points.shape[0]
         equations, boundary = _validated_masks(exterior, equation_mask, boundary_mask)
@@ -587,7 +590,9 @@ class MeshfreeConservationProblem(StrictModule):
         if not np.all(np.isfinite(np.asarray(source_))) or not np.all(
             np.isfinite(np.asarray(values_))
         ):
-            raise ValueError("Prepared source and boundary values must be finite.")
+            raise ValueError(
+                f"MeshfreeConservationProblem.source must be finite; got {type(source).__name__}"
+            )
         identity = _problem_identity(
             "meshfree-conservation", problem_id, exterior, equations
         )
@@ -603,6 +608,7 @@ class MeshfreeConservationProblem(StrictModule):
         self.parameters = parameter_owner
         self.problem_id = identity
 
+    @checked
     def runtime(
         self,
         *,
@@ -611,14 +617,15 @@ class MeshfreeConservationProblem(StrictModule):
     ) -> _ConservationRuntime:
         inputs = _bound_inputs(self.parameters, parameters, law)
         law_ = inputs.get("law", self.law if law is None else law)
-        if (
-            not isinstance(law_, AbstractEdgeConstitutiveLaw)
-            or type(law_) is not type(self.law)
-            or law_.in_size != self.law.in_size
-        ):
-            raise ValueError(
-                "Runtime constitutive refresh must preserve the law family and feature schema."
-            )
+        match law_:
+            case AbstractEdgeConstitutiveLaw() if not (
+                type(law_) is not type(self.law) or law_.in_size != self.law.in_size
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    f"MeshfreeConservationProblem.runtime.law must preserve the law family and feature schema; got {type(law_).__name__}"
+                )
         law_parameters = _law_leaves(law_, self.law)
         conductance = _runtime_conductance(inputs)
         source = _node_array(
@@ -666,6 +673,7 @@ class MeshfreeCoupledConservationProblem(StrictModule):
     parameters: PreparedParameters = fixed_field()
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         exterior: PreparedMeshfreeExteriorCalculus,
@@ -681,12 +689,6 @@ class MeshfreeCoupledConservationProblem(StrictModule):
         parameter_bindings: tuple[ParameterBinding, ...] = (),
         problem_id: str = "meshfree-coupled-conservation",
     ) -> None:
-        if not isinstance(exterior, PreparedMeshfreeExteriorCalculus) or not isinstance(
-            law, AbstractCoupledEdgeConstitutiveLaw
-        ):
-            raise TypeError(
-                "Coupled conservation requires native prepared exterior geometry and a coupled edge law."
-            )
         _require_admitted_metric(exterior)
         count = exterior.points.shape[0]
         size = law.representation.packed_size
@@ -694,7 +696,7 @@ class MeshfreeCoupledConservationProblem(StrictModule):
         features_ = _validated_features(exterior, features, law.even_size, law.odd_size)
         if features_.spatial_dimension != 3:
             raise ValueError(
-                "Coupled O(3) conservation requires a three-dimensional Cartesian edge frame."
+                f"MeshfreeCoupledConservationProblem.exterior must provide a three-dimensional Cartesian edge frame; got {type(exterior).__name__}"
             )
         _validated_coverage(coverage, features_)
         source_ = _component_array(source, count, size, "source")
@@ -702,7 +704,9 @@ class MeshfreeCoupledConservationProblem(StrictModule):
         if not np.all(np.isfinite(np.asarray(source_))) or not np.all(
             np.isfinite(np.asarray(values_))
         ):
-            raise ValueError("Prepared source and boundary values must be finite.")
+            raise ValueError(
+                f"MeshfreeCoupledConservationProblem.source must be finite; got {type(source).__name__}"
+            )
         identity = _problem_identity(
             f"meshfree-coupled-conservation:{size}", problem_id, exterior, equations
         )
@@ -722,6 +726,7 @@ class MeshfreeCoupledConservationProblem(StrictModule):
     def component_count(self) -> int:
         return self.source.shape[1]
 
+    @checked
     def runtime(
         self,
         *,
@@ -730,15 +735,17 @@ class MeshfreeCoupledConservationProblem(StrictModule):
     ) -> _CoupledConservationRuntime:
         inputs = _bound_inputs(self.parameters, parameters, law)
         law_ = inputs.get("law", self.law if law is None else law)
-        if (
-            not isinstance(law_, AbstractCoupledEdgeConstitutiveLaw)
-            or type(law_) is not type(self.law)
-            or law_.in_size != self.law.in_size
-            or law_.representation.packed_size != self.component_count
-        ):
-            raise ValueError(
-                "Runtime constitutive refresh must preserve the law family, representation and feature schema."
-            )
+        match law_:
+            case AbstractCoupledEdgeConstitutiveLaw() if not (
+                type(law_) is not type(self.law)
+                or law_.in_size != self.law.in_size
+                or law_.representation.packed_size != self.component_count
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    f"MeshfreeCoupledConservationProblem.runtime.law must preserve the law family, representation and feature schema; got {type(law_).__name__}"
+                )
         law_parameters = _law_leaves(law_, self.law)
         count, size = self.source.shape
         source = _component_array(
@@ -805,7 +812,7 @@ def _scalar_edge_flux(
     edge: tuple[Array, Array, Array],
     /,
 ) -> tuple[Array, Array]:
-    """Metric-weighted law flux of one canonical edge, from its endpoint jump."""
+    """Metric-weighted law flux of one deterministic edge, from its endpoint jump."""
     law, conductance = parameters
     metric, even, odd = edge
     flux = conductance * metric * law.edge_flux(second - first, even, odd)
@@ -819,7 +826,7 @@ def _coupled_edge_flux(
     edge: tuple[Array, Array, Array, Array],
     /,
 ) -> tuple[Array, Array]:
-    """Metric-weighted packed coupled flux of one canonical edge."""
+    """Metric-weighted packed coupled flux of one deterministic edge."""
     law, conductance = parameters
     metric, tangent, even, odd = edge
     flux = conductance * metric * law.edge_flux(second - first, tangent, even, odd)
@@ -827,7 +834,7 @@ def _coupled_edge_flux(
 
 
 def _received_flux(parameters: object, node: Array, aggregate: Array, /) -> Array:
-    """Second-endpoint epilogue: the complete incoming flux sum of the node."""
+    """Second-endpoint epilogue: the full incoming flux sum of the node."""
     del parameters, node
     return aggregate
 
@@ -843,7 +850,7 @@ def _edge_balance(
 ) -> tuple[Array, Array]:
     """Integrated ``B.T f`` and per-edge flux ``f``; each edge law is evaluated once.
 
-    The streamed receiver sum carries ``+f`` to every canonical edge's second
+    The streamed receiver sum carries ``+f`` to every deterministic edge's second
     endpoint; the returned edge flux itself carries the exactly opposite ``-f``
     to its first endpoint, so action and reaction never depend on law parity.
     """
@@ -859,7 +866,9 @@ def _edge_balance(
     )
     flux = result.edge_outputs
     if flux is None:
-        raise RuntimeError("The streamed relation omitted its requested edge flux.")
+        raise RuntimeError(
+            f"conservation_solve.edge_balance.edges must provide its requested edge flux; got {flux!r}"
+        )
     return result.receiver_outputs - route_reduce(reaction, flux), flux
 
 
@@ -868,11 +877,9 @@ def _prepared_edges(
     execution: StreamedRelationPlan | None,
     /,
 ) -> tuple[PreparedStreamedRelation, EdgeRelation]:
-    """Streamed canonical edge schedule (first -> second endpoint) and its reaction."""
+    """Streamed deterministic edge schedule (first -> second endpoint) and its reaction."""
     if execution is None:
         execution = StreamedRelationPlan()
-    elif not isinstance(execution, StreamedRelationPlan):
-        raise TypeError("execution must be a StreamedRelationPlan or None.")
     pairs = np.asarray(problem.exterior.pairs)
     count = problem.source.shape[0]
     relation = EdgeRelation(
@@ -996,7 +1003,7 @@ class _CoupledConservationResidual(StrictModule, ExplicitFreeze):
 class _ReducedStiffness(StrictModule, NonTrainableState):
     """Dirichlet-reduced edge stiffness on the routes of ``exterior.stiffness``.
 
-    Values follow the canonical per-edge route order ``(i,i), (j,j), (i,j),
+    Values follow the deterministic per-edge route order ``(i,i), (j,j), (i,j),
     (j,i)`` with signs ``(+,+,-,-)``; building them directly keeps the operator
     identity static, so traced runtime metrics never fingerprint array content.
     """
@@ -1005,7 +1012,7 @@ class _ReducedStiffness(StrictModule, NonTrainableState):
     relation: EdgeRelation
     routes: Int32[_ConservationRouteDim]
     space: ArraySpace
-    storage: _SparseStoragePlan
+    storage: SparseStoragePlan
 
     def operator(self, conductances: Array, /) -> SparseCoordinateOperator:
         signed = conductances[:, None] * jnp.asarray((1.0, 1.0, -1.0, -1.0))
@@ -1032,7 +1039,7 @@ class _ReducedBlockStiffness(StrictModule, NonTrainableState):
     edges: Int32[_ConservationRouteDim]
     signs: Float64[_ConservationRouteDim]
     space: ArraySpace
-    storage: _SparseStoragePlan
+    storage: SparseStoragePlan
 
     def operator(self, blocks: Array, /) -> SparseCoordinateOperator:
         values = (self.signs[:, None, None] * blocks[self.edges]).reshape(-1)
@@ -1230,7 +1237,9 @@ def _resolved_policies(
     if not isinstance(policy, LinearSolvePolicy) or not isinstance(
         derivative, ImplicitRootDerivativePolicy
     ):
-        raise TypeError("Linear and derivative policies must be native policy objects.")
+        raise TypeError(
+            f"conservation_solve.resolved_policies.size must use native linear and implicit-derivative policy objects; got {size!r}"
+        )
     return policy, derivative
 
 
@@ -1282,6 +1291,7 @@ class PreparedMeshfreeConservationSolve(StrictModule, ExplicitFreeze):
             args.metric_weights,
         )
 
+    @checked
     def refresh(
         self,
         *,
@@ -1363,31 +1373,34 @@ class PreparedMeshfreeConservationSolve(StrictModule, ExplicitFreeze):
         )
         law = self.residual.bound_law(args)
         b = law.background_conductance
-        if isinstance(law, MonotoneEdgeConductance):
-            coercive = factor_good & positive
-            lower = jnp.where(coercive, jnp.asarray(1.0, dtype=jnp.float64), jnp.nan)
-            status = jnp.asarray(
-                int(MeshfreeContractionStatus.NOT_APPLICABLE), dtype=jnp.int32
-            )
-            bound = jnp.asarray(jnp.nan, dtype=jnp.float64)
-        elif isinstance(law, LipschitzEdgeFlux):
-            lipschitz = jnp.asarray(law.certified_lipschitz_bound(), dtype=jnp.float64)
-            bound = lipschitz / b
-            certified = factor_good & positive & jnp.isfinite(bound) & (bound < 1)
-            status = jnp.where(
-                certified,
-                int(MeshfreeContractionStatus.CERTIFIED),
-                int(MeshfreeContractionStatus.CONTRACT_UNCERTIFIED),
-            ).astype(jnp.int32)
-            lower = jnp.where(factor_good & positive, 1.0 - bound, jnp.nan)
-            coercive = certified
-        else:
-            lower = jnp.asarray(jnp.nan, dtype=jnp.float64)
-            coercive = jnp.asarray(False)
-            bound = jnp.asarray(jnp.nan, dtype=jnp.float64)
-            status = jnp.asarray(
-                int(MeshfreeContractionStatus.CONTRACT_UNCERTIFIED), dtype=jnp.int32
-            )
+        match law:
+            case MonotoneEdgeConductance():
+                coercive = factor_good & positive
+                lower = jnp.where(coercive, jnp.asarray(1.0, dtype=jnp.float64), jnp.nan)
+                status = jnp.asarray(
+                    int(MeshfreeContractionStatus.NOT_APPLICABLE), dtype=jnp.int32
+                )
+                bound = jnp.asarray(jnp.nan, dtype=jnp.float64)
+            case LipschitzEdgeFlux():
+                lipschitz = jnp.asarray(
+                    law.certified_lipschitz_bound(), dtype=jnp.float64
+                )
+                bound = lipschitz / b
+                certified = factor_good & positive & jnp.isfinite(bound) & (bound < 1)
+                status = jnp.where(
+                    certified,
+                    int(MeshfreeContractionStatus.CERTIFIED),
+                    int(MeshfreeContractionStatus.CONTRACT_UNCERTIFIED),
+                ).astype(jnp.int32)
+                lower = jnp.where(factor_good & positive, 1.0 - bound, jnp.nan)
+                coercive = certified
+            case _:
+                lower = jnp.asarray(jnp.nan, dtype=jnp.float64)
+                coercive = jnp.asarray(False)
+                bound = jnp.asarray(jnp.nan, dtype=jnp.float64)
+                status = jnp.asarray(
+                    int(MeshfreeContractionStatus.CONTRACT_UNCERTIFIED), dtype=jnp.int32
+                )
         return _evidence(
             background_,
             positive,
@@ -1398,6 +1411,7 @@ class PreparedMeshfreeConservationSolve(StrictModule, ExplicitFreeze):
             norm="Dirichlet-background-energy",
         )
 
+    @checked
     def solve(
         self,
         *,
@@ -1475,6 +1489,7 @@ class PreparedMeshfreeConservationSolve(StrictModule, ExplicitFreeze):
             background_result,
         )
 
+    @checked
     def adjoint(
         self,
         primal: MeshfreeConservationResult,
@@ -1510,6 +1525,7 @@ class PreparedMeshfreeConservationSolve(StrictModule, ExplicitFreeze):
         return MeshfreeConservationAdjoint(primal, linear, value, accepted)
 
 
+@checked
 def prepare_meshfree_conservation_solve(
     problem: MeshfreeConservationProblem,
     /,
@@ -1525,10 +1541,8 @@ def prepare_meshfree_conservation_solve(
 
     The background stiffness assessment is selected and charged by
     ``problem.exterior.coercivity_policy``. ``execution`` selects the streamed
-    canonical edge schedule on which every residual evaluates each edge law once.
+    deterministic edge schedule on which every residual evaluates each edge law once.
     """
-    if not isinstance(problem, MeshfreeConservationProblem):
-        raise TypeError("problem must be a MeshfreeConservationProblem.")
     free = np.flatnonzero(np.asarray(problem.equation_mask)).astype(np.int32)
     pairs = np.asarray(problem.exterior.pairs)
     routes, rows, columns = _reduced_routes(pairs, free, problem.source.size)
@@ -1536,7 +1550,7 @@ def prepare_meshfree_conservation_solve(
     space = ArraySpace(
         (free.size,), dtype=jnp.float64, space_id=f"{problem.problem_id}:free-state"
     )
-    storage = _SparseStoragePlan(relation)
+    storage = SparseStoragePlan(relation)
     reduced = _ReducedStiffness(relation, jnp.asarray(routes), space, storage)
     args = problem.runtime(parameters=parameters)
     policy, derivative = _resolved_policies(free.size, linear_policy, derivative_policy)
@@ -1566,7 +1580,9 @@ def prepare_meshfree_conservation_solve(
     if initial.shape == problem.source.shape:
         initial = initial[free]
     if initial.shape != (free.size,):
-        raise ValueError("Initial state must be full-node or reduced equation-node data.")
+        raise ValueError(
+            f"conservation_solve.prepare_meshfree_conservation_solve.problem must be full-node or reduced equation-node data; got {initial.shape!r}"
+        )
     sparse_plan = compile_sparse_jacobian(
         residual,
         initial,
@@ -1658,6 +1674,7 @@ class PreparedMeshfreeCoupledConservationSolve(StrictModule, ExplicitFreeze):
     assessment: _BackgroundAssessment
     coverage_assessment: EdgeCoverageAssessment | None
 
+    @checked
     def refresh(
         self,
         *,
@@ -1731,21 +1748,22 @@ class PreparedMeshfreeCoupledConservationSolve(StrictModule, ExplicitFreeze):
             factor_good & positive & jnp.isfinite(monotonicity) & (monotonicity > 0)
         )
         lower = jnp.where(factor_good & positive, monotonicity, jnp.nan)
-        if isinstance(law, LipschitzCoupledEdgeFlux):
-            bound = (
-                jnp.asarray(law.certified_lipschitz_bound(), dtype=jnp.float64)
-                / law.background_conductance
-            )
-            status = jnp.where(
-                factor_good & positive & jnp.isfinite(bound) & (bound < 1),
-                int(MeshfreeContractionStatus.CERTIFIED),
-                int(MeshfreeContractionStatus.CONTRACT_UNCERTIFIED),
-            ).astype(jnp.int32)
-        else:
-            bound = jnp.asarray(jnp.nan, dtype=jnp.float64)
-            status = jnp.asarray(
-                int(MeshfreeContractionStatus.NOT_APPLICABLE), dtype=jnp.int32
-            )
+        match law:
+            case LipschitzCoupledEdgeFlux():
+                bound = (
+                    jnp.asarray(law.certified_lipschitz_bound(), dtype=jnp.float64)
+                    / law.background_conductance
+                )
+                status = jnp.where(
+                    factor_good & positive & jnp.isfinite(bound) & (bound < 1),
+                    int(MeshfreeContractionStatus.CERTIFIED),
+                    int(MeshfreeContractionStatus.CONTRACT_UNCERTIFIED),
+                ).astype(jnp.int32)
+            case _:
+                bound = jnp.asarray(jnp.nan, dtype=jnp.float64)
+                status = jnp.asarray(
+                    int(MeshfreeContractionStatus.NOT_APPLICABLE), dtype=jnp.int32
+                )
         return _evidence(
             background_,
             positive,
@@ -1756,6 +1774,7 @@ class PreparedMeshfreeCoupledConservationSolve(StrictModule, ExplicitFreeze):
             norm="component-blocked-Dirichlet-background-energy",
         )
 
+    @checked
     def solve(
         self,
         *,
@@ -1822,6 +1841,7 @@ class PreparedMeshfreeCoupledConservationSolve(StrictModule, ExplicitFreeze):
             accepted,
         )
 
+    @checked
     def adjoint(
         self,
         primal: MeshfreeCoupledConservationResult,
@@ -1839,7 +1859,7 @@ class PreparedMeshfreeCoupledConservationSolve(StrictModule, ExplicitFreeze):
             rhs = rhs[free]
         if rhs.shape != (free.size, args.source.shape[1]):
             raise ValueError(
-                "Coupled cotangents must be full-node or free-node component blocks."
+                f"PreparedMeshfreeCoupledConservationSolve.adjoint.primal must be full-node or free-node component blocks; got {rhs.shape!r}"
             )
         blocks = (
             args.conductance
@@ -1864,6 +1884,7 @@ class PreparedMeshfreeCoupledConservationSolve(StrictModule, ExplicitFreeze):
         return MeshfreeCoupledConservationAdjoint(primal, linear, value, accepted)
 
 
+@checked
 def prepare_meshfree_coupled_conservation_solve(
     problem: MeshfreeCoupledConservationProblem,
     /,
@@ -1877,11 +1898,9 @@ def prepare_meshfree_coupled_conservation_solve(
 ) -> PreparedMeshfreeCoupledConservationSolve:
     """Prepare the block sparse Jacobian, NewtonKrylov template and background audit.
 
-    ``execution`` selects the streamed canonical edge schedule on which every
+    ``execution`` selects the streamed deterministic edge schedule on which every
     residual evaluates each coupled edge law once.
     """
-    if not isinstance(problem, MeshfreeCoupledConservationProblem):
-        raise TypeError("problem must be a MeshfreeCoupledConservationProblem.")
     free = np.flatnonzero(np.asarray(problem.equation_mask)).astype(np.int32)
     size = problem.component_count
     pairs = np.asarray(problem.exterior.pairs)
@@ -1897,7 +1916,7 @@ def prepare_meshfree_coupled_conservation_solve(
         scalar_relation,
         jnp.asarray(routes),
         scalar_space,
-        _SparseStoragePlan(scalar_relation),
+        SparseStoragePlan(scalar_relation),
     )
     background_operator = background_stiffness.operator(
         args.conductance * problem.law.background_conductance * args.metric_weights
@@ -1929,7 +1948,7 @@ def prepare_meshfree_coupled_conservation_solve(
         jnp.asarray(routes // 4, dtype=jnp.int32),
         jnp.asarray(np.asarray((1.0, 1.0, -1.0, -1.0))[routes % 4]),
         space,
-        _SparseStoragePlan(block_relation),
+        SparseStoragePlan(block_relation),
     )
     policy, derivative = _resolved_policies(
         free.size * size, linear_policy, derivative_policy
@@ -1955,7 +1974,7 @@ def prepare_meshfree_coupled_conservation_solve(
         initial = initial[free]
     if initial.shape != (free.size, size):
         raise ValueError(
-            "Initial state must be full-node or free-node packed component blocks."
+            f"conservation_solve.prepare_meshfree_coupled_conservation_solve.problem must be full-node or free-node packed component blocks; got {initial.shape!r}"
         )
     initial = initial.reshape(-1)
     # Only potential-gradient laws have a symmetric block Jacobian.

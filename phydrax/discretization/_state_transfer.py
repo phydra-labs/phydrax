@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 import hashlib
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,8 +16,9 @@ from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
 from .._strict import StrictModule
+from ..ein import contract
 from ..linalg import ArraySpace, FunctionLinearOperator, transpose
-from ..typing import parse
+from ..typing import checked, parse
 from ._spaces import DiscreteFieldSpace
 from ._transfer import FieldTransfer, TransferProperties
 
@@ -29,7 +30,9 @@ TensorGridRestriction: TypeAlias = Literal["injection", "weighted"]
 def _shape(value: Sequence[int], name: str, /) -> tuple[int, ...]:
     resolved = tuple(value)
     if not resolved or any(size <= 0 for size in resolved):
-        raise ValueError(f"{name} must contain positive dimensions.")
+        raise ValueError(
+            f"StateTransfer.{name} must contain positive dimensions; got {resolved}"
+        )
     return resolved
 
 
@@ -42,15 +45,15 @@ def _transfer_id(prefix: str, *parts: object) -> str:
 
 
 def _apply_axis_matrix(values: Array, matrix: Array, axis: int, /) -> Array:
-    transformed = jnp.tensordot(matrix, values, axes=((1,), (axis,)))
+    transformed = contract("ij,j...->i...", matrix, jnp.moveaxis(values, axis, 0))
     return jnp.moveaxis(transformed, 0, axis)
 
 
 def _endpoint_prolongation(coarse: int, fine: int, /) -> np.ndarray:
     if coarse == 1:
         return np.ones((fine, 1), dtype=np.float64)
-    coarse_points = np.linspace(0.0, 1.0, coarse)
-    fine_points = np.linspace(0.0, 1.0, fine)
+    coarse_points = np.linspace(0.0, 1.0, coarse, dtype=np.float64)
+    fine_points = np.linspace(0.0, 1.0, fine, dtype=np.float64)
     matrix = np.zeros((fine, coarse), dtype=np.float64)
     for row, point in enumerate(fine_points):
         upper = int(np.searchsorted(coarse_points, point, side="right"))
@@ -96,13 +99,13 @@ def _injection_restriction(
     if boundary == "periodic":
         if fine % coarse != 0:
             raise ValueError(
-                "Periodic injection requires each fine axis size to be an integer multiple of its coarse size."
+                f"TensorGridStateTransfer.fine_shape must have periodic injection axes divisible by coarse size {coarse}; got {fine}"
             )
         indices = np.arange(coarse, dtype=np.int64) * (fine // coarse)
     else:
         if (fine - 1) % (coarse - 1) != 0:
             raise ValueError(
-                "Endpoint injection requires nested endpoint-inclusive axis sizes."
+                f"TensorGridStateTransfer.fine_shape must have nested endpoint-inclusive injection axes; got {fine=} and {coarse=}"
             )
         indices = np.arange(coarse, dtype=np.int64) * ((fine - 1) // (coarse - 1))
     matrix = np.zeros((coarse, fine), dtype=np.float64)
@@ -131,7 +134,7 @@ class AbstractRefinementTransfer(StrictModule):
         *,
         dtype: DTypeLike = np.float64,
     ) -> FunctionLinearOperator:
-        """Return restriction as a rectangular canonical linear operator."""
+        """Return restriction as a rectangular linear operator."""
         source = ArraySpace(self.fine_shape, dtype=dtype)
         target = ArraySpace(self.coarse_shape, dtype=dtype)
         return FunctionLinearOperator(
@@ -147,7 +150,7 @@ class AbstractRefinementTransfer(StrictModule):
         *,
         dtype: DTypeLike = np.float64,
     ) -> FunctionLinearOperator:
-        """Return prolongation as a rectangular canonical linear operator."""
+        """Return prolongation as a rectangular linear operator."""
         source = ArraySpace(self.coarse_shape, dtype=dtype)
         target = ArraySpace(self.fine_shape, dtype=dtype)
         return FunctionLinearOperator(
@@ -157,6 +160,7 @@ class AbstractRefinementTransfer(StrictModule):
             operator_id=f"{self.transfer_id}:prolongation",
         )
 
+    @checked
     def field_transfer(
         self,
         fine_space: DiscreteFieldSpace,
@@ -165,24 +169,17 @@ class AbstractRefinementTransfer(StrictModule):
         *,
         properties: TransferProperties | None = None,
     ) -> FieldTransfer:
-        """Bind this refinement's restriction to exact source and target field spaces.
+        """Bind the refinement restriction to source and target field spaces.
 
         The primal map is the restriction, its dual pullback the algebraic
         transpose. Prolongation is a separate interpolation, not the Hilbert
         adjoint of the restriction, so no adjoint is claimed.
         """
-        if not isinstance(fine_space, DiscreteFieldSpace) or not isinstance(
-            coarse_space,
-            DiscreteFieldSpace,
-        ):
-            raise TypeError(
-                "fine_space and coarse_space must be DiscreteFieldSpace values."
-            )
         if fine_space.vector_space.size != int(
             np.prod(self.fine_shape)
         ) or coarse_space.vector_space.size != int(np.prod(self.coarse_shape)):
             raise ValueError(
-                "Field-space coordinate counts must match refinement transfer shapes."
+                "StateTransfer.field_spaces must match refinement coordinate counts; got incompatible vector-space sizes"
             )
         restriction = FunctionLinearOperator(
             self.restrict,
@@ -218,13 +215,17 @@ class IdentityStateTransfer(AbstractRefinementTransfer):
     def restrict(self, fine_state: ArrayLike, /) -> Array:
         values = jnp.asarray(fine_state)
         if values.shape[: len(self.fine_shape)] != self.fine_shape:
-            raise ValueError("fine_state does not begin with the declared state shape.")
+            raise ValueError(
+                f"IdentityStateTransfer.fine_state must begin with declared state shape; got {values.shape}"
+            )
         return values
 
     def prolong(self, coarse_state: ArrayLike, /) -> Array:
         values = jnp.asarray(coarse_state)
         if values.shape[: len(self.coarse_shape)] != self.coarse_shape:
-            raise ValueError("coarse_state does not begin with the declared state shape.")
+            raise ValueError(
+                f"IdentityStateTransfer.coarse_state must begin with declared state shape; got {values.shape}"
+            )
         return values
 
 
@@ -249,27 +250,36 @@ class TensorGridStateTransfer(AbstractRefinementTransfer):
         fine = _shape(fine_shape, "fine_shape")
         coarse = _shape(coarse_shape, "coarse_shape")
         if len(fine) != len(coarse):
-            raise ValueError("fine_shape and coarse_shape must have equal rank.")
+            raise ValueError(
+                f"TensorGridStateTransfer.fine_shape must have coarse_shape rank; got {fine=} and {coarse=}"
+            )
         if any(fine_size < coarse_size for fine_size, coarse_size in zip(fine, coarse)):
-            raise ValueError("Every fine grid axis must be at least as large as coarse.")
+            raise ValueError(
+                f"TensorGridStateTransfer.fine_shape must have axes at least as large as coarse_shape; got {fine=} and {coarse=}"
+            )
         boundary = parse(boundary, TensorGridBoundary, "boundary")
         restriction = parse(restriction, TensorGridRestriction, "restriction")
         prolongations: list[Array] = []
         restrictions: list[Array] = []
         for fine_size, coarse_size in zip(fine, coarse, strict=True):
-            prolongation = (
-                _periodic_prolongation(coarse_size, fine_size)
-                if boundary == "periodic"
-                else _endpoint_prolongation(coarse_size, fine_size)
-            )
-            if restriction == "injection":
-                restriction_matrix = _injection_restriction(
-                    coarse_size, fine_size, boundary
-                )
-            else:
-                restriction_matrix = prolongation.T
-                row_mass = np.sum(restriction_matrix, axis=1, keepdims=True)
-                restriction_matrix = restriction_matrix / row_mass
+            match boundary:
+                case "periodic":
+                    prolongation = _periodic_prolongation(coarse_size, fine_size)
+                case "endpoint":
+                    prolongation = _endpoint_prolongation(coarse_size, fine_size)
+                case invalid:
+                    assert_never(invalid)
+            match restriction:
+                case "injection":
+                    restriction_matrix = _injection_restriction(
+                        coarse_size, fine_size, boundary
+                    )
+                case "weighted":
+                    restriction_matrix = prolongation.T
+                    row_mass = np.sum(restriction_matrix, axis=1, keepdims=True)
+                    restriction_matrix = restriction_matrix / row_mass
+                case invalid:
+                    assert_never(invalid)
             prolongations.append(jnp.asarray(prolongation))
             restrictions.append(jnp.asarray(restriction_matrix))
         self.fine_shape = fine
@@ -285,7 +295,9 @@ class TensorGridStateTransfer(AbstractRefinementTransfer):
     def restrict(self, fine_state: ArrayLike, /) -> Array:
         values = jnp.asarray(fine_state)
         if values.shape[: len(self.fine_shape)] != self.fine_shape:
-            raise ValueError("fine_state does not begin with fine_shape.")
+            raise ValueError(
+                f"TensorGridStateTransfer.fine_state must begin with fine_shape; got {values.shape}"
+            )
         result = values
         for axis, matrix in enumerate(self.restriction_matrices):
             result = _apply_axis_matrix(result, matrix, axis)
@@ -294,7 +306,9 @@ class TensorGridStateTransfer(AbstractRefinementTransfer):
     def prolong(self, coarse_state: ArrayLike, /) -> Array:
         values = jnp.asarray(coarse_state)
         if values.shape[: len(self.coarse_shape)] != self.coarse_shape:
-            raise ValueError("coarse_state does not begin with coarse_shape.")
+            raise ValueError(
+                f"TensorGridStateTransfer.coarse_state must begin with coarse_shape; got {values.shape}"
+            )
         result = values
         for axis, matrix in enumerate(self.prolongation_matrices):
             result = _apply_axis_matrix(result, matrix, axis)
@@ -318,20 +332,32 @@ class SpectralCoefficientStateTransfer(AbstractRefinementTransfer):
         fine = _shape(fine_shape, "fine_shape")
         coarse = _shape(coarse_shape, "coarse_shape")
         if len(fine) != len(coarse):
-            raise ValueError("fine_shape and coarse_shape must have equal rank.")
+            raise ValueError(
+                "SpectralCoefficientStateTransfer.fine_shape must have the same rank "
+                f"as coarse_shape; got {fine!r} and {coarse!r}"
+            )
         position = int(axis)
         if position < 0:
             position += len(fine)
         if position < 0 or position >= len(fine):
-            raise ValueError("axis is outside the declared state rank.")
+            raise ValueError(
+                "SpectralCoefficientStateTransfer.axis must index the declared state rank; "
+                f"got {axis!r} for rank {len(fine)}"
+            )
         if any(
             fine_size != coarse_size
             for index, (fine_size, coarse_size) in enumerate(zip(fine, coarse))
             if index != position
         ):
-            raise ValueError("Spectral transfer may change only its declared axis.")
+            raise ValueError(
+                "SpectralCoefficientStateTransfer.fine_shape must match coarse_shape "
+                f"outside axis {position}; got {fine!r} and {coarse!r}"
+            )
         if fine[position] < coarse[position]:
-            raise ValueError("The fine spectral axis cannot be smaller than coarse.")
+            raise ValueError(
+                "SpectralCoefficientStateTransfer.fine_shape must be at least as large "
+                f"as coarse_shape on axis {position}; got {fine[position]} and {coarse[position]}"
+            )
         self.fine_shape = fine
         self.coarse_shape = coarse
         self.axis = position
@@ -342,14 +368,20 @@ class SpectralCoefficientStateTransfer(AbstractRefinementTransfer):
     def restrict(self, fine_state: ArrayLike, /) -> Array:
         values = jnp.asarray(fine_state)
         if values.shape[: len(self.fine_shape)] != self.fine_shape:
-            raise ValueError("fine_state does not begin with fine_shape.")
+            raise ValueError(
+                "SpectralCoefficientStateTransfer.fine_state must begin with "
+                f"fine_shape {self.fine_shape!r}; got {values.shape!r}"
+            )
         indices = jnp.arange(self.coarse_shape[self.axis])
         return jnp.take(values, indices, axis=self.axis)
 
     def prolong(self, coarse_state: ArrayLike, /) -> Array:
         values = jnp.asarray(coarse_state)
         if values.shape[: len(self.coarse_shape)] != self.coarse_shape:
-            raise ValueError("coarse_state does not begin with coarse_shape.")
+            raise ValueError(
+                "SpectralCoefficientStateTransfer.coarse_state must begin with "
+                f"coarse_shape {self.coarse_shape!r}; got {values.shape!r}"
+            )
         padding = [(0, 0)] * values.ndim
         padding[self.axis] = (
             0,

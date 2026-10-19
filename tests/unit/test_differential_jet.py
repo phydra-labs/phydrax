@@ -16,6 +16,7 @@ from phydrax.operators.differential import (
     laplacian,
     partial_n,
 )
+from phydrax.units import METER
 
 
 def test_dt_n_second_derivative_matches_ad_and_closed_form() -> None:
@@ -110,7 +111,7 @@ def test_bilaplacian_backend_jet_matches_ad_1d() -> None:
 
 def test_bilaplacian_backend_jet_matches_ad_2d_mixed_terms() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")

@@ -19,6 +19,7 @@ from phydrax.geometry.multiregion_surface import (
     seed_sphere,
     validate_multiregion_surface,
 )
+from phydrax.geometry.multiregion_surface._seeding import sphere_direction_lattice
 from phydrax.geometry.simplicial import TriangleMesh
 
 
@@ -376,3 +377,42 @@ def test_sheet_view_matches_independently_built_manifold_mesh() -> None:
     pairs = np.asarray(topology.region_pairs)
     assert np.all(slot_table[np.asarray(wall.slot_indices)] == wall.pair_index)
     assert tuple(pairs[wall.pair_index]) == (0, 1)
+
+
+@pytest.mark.parametrize("frequency", (1, 2, 3, 5))
+def test_integer_frequency_sphere_cones_share_edges_and_cover_one_closed_sheet(
+    frequency: int,
+) -> None:
+    points, faces = sphere_direction_lattice(frequency)
+    assert points.shape == (10 * frequency**2 + 2, 3)
+    assert faces.shape == (20 * frequency**2, 3)
+    assert np.unique(points, axis=0).shape[0] == points.shape[0]
+    np.testing.assert_allclose(
+        np.linalg.norm(points, axis=1), 1.0, rtol=0.0, atol=4 * np.finfo(np.float64).eps
+    )
+    mesh = TriangleMesh(points, faces)
+    assert mesh.topology.watertight
+    assert mesh.topology.euler_characteristic == 2
+    corners = points[faces]
+    assert np.all(
+        np.sum(
+            np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+            * corners[:, 0],
+            axis=1,
+        )
+        > 0.0
+    )
+    edges = np.asarray(mesh.topology.edges)
+    lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+    assert np.max(lengths) / np.min(lengths) < np.sqrt(2.0)
+    repeated = sphere_direction_lattice(frequency)
+    np.testing.assert_array_equal(repeated[0], points)
+    np.testing.assert_array_equal(repeated[1], faces)
+
+
+@pytest.mark.parametrize("frequency", (0, -1, True, 1.5))
+def test_integer_frequency_sphere_cones_refuse_nonpositive_or_noninteger_frequency(
+    frequency: int | float,
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        sphere_direction_lattice(frequency)  # ty: ignore[invalid-argument-type]

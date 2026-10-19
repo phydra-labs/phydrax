@@ -23,7 +23,7 @@ from ..._differentiation import (
 )
 from ..._strict import StrictModule
 from ...optim import DifferentialEvolutionSearch
-from ...optim._differential_evolution import _bounded_differential_evolution
+from ...optim._differential_evolution import bounded_differential_evolution
 from ...typing import checked
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult
@@ -833,7 +833,7 @@ class DifferentiableSearchAdapter(AbstractSearchPlan):
             primary_metric=self.primary_metric,
             maximize=maximize,
         )
-        optimizer_result = _bounded_differential_evolution(
+        optimizer_result = bounded_differential_evolution(
             objective,
             self.initial_vector,
             self.lower_bounds,

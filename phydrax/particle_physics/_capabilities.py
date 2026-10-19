@@ -73,7 +73,9 @@ class HEPProviderBinding(StrictModule, NonTrainableState):
 
         release = str(provider_release).strip()
         if not release:
-            raise ValueError("provider_release must be non-empty.")
+            raise ValueError(
+                f"HEPProviderBinding.provider_release must be non-empty after stripping whitespace; got {provider_release!r}."
+            )
         configuration = str(configuration_checksum).strip()
         if not configuration:
             raise ValueError("configuration_checksum must be non-empty.")

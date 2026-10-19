@@ -20,7 +20,7 @@ from ...typing import checked
 from ...units import derived_unit, LENGTH, UnitDefinition
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from ..brep._patches import BSplineSurfacePatch
-from ._model import _surface_connectivity, SurfaceModel
+from ._model import surface_connectivity, SurfaceModel
 
 
 class HighOrderSurfaceSource(str, Enum):
@@ -505,7 +505,7 @@ def _policy(value: HighOrderSurfacePolicy | None, /) -> HighOrderSurfacePolicy:
 
 
 def _authoritative_corners(model: SurfaceModel, /) -> np.ndarray:
-    faces = np.asarray(_surface_connectivity(model.mesh).cell_vertices, dtype=np.int32)[
+    faces = np.asarray(surface_connectivity(model.mesh).cell_vertices, dtype=np.int32)[
         :, :3
     ]
     return np.asarray(model.mesh.coordinates, dtype=np.float64)[faces]

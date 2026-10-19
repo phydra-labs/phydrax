@@ -13,7 +13,7 @@ from jax.typing import ArrayLike
 from ..._strict import StrictModule
 from ...typing import checked
 from .._preconditioning import PreparedPreconditioner
-from .._spaces import _coordinate_dtype
+from .._spaces import coordinate_dtype
 from ._plans import EigenSolvePlan
 from ._policies import DenseEigh
 from ._problems import Eigenproblem, EigenproblemLike, GeneralizedEigenproblem
@@ -99,7 +99,7 @@ class PreparedEigenSolve(StrictModule):
             raise ValueError("numeric_version must be non-negative.")
         n = problem.dimension
         capacity = 0 if problem.constraints is None else problem.constraints.capacity
-        dtype = _coordinate_dtype(problem.operator.source)
+        dtype = coordinate_dtype(problem.operator.source)
         initial = _coordinate_matrix(
             initial_basis,
             (n, plan.block_dimension),

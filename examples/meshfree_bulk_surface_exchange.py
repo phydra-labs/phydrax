@@ -49,6 +49,7 @@ from phydrax.solver.coupling import (
 )
 from phydrax.sparse import SparseCoordinateOperator
 from phydrax.typing import Dim, Float
+from phydrax.units import METER
 
 
 class _WorkflowBulkDim(Dim):
@@ -129,7 +130,7 @@ def prepare_workflow(
                 np.asarray(surface.points)[:remainder] * (1.0 - query_radius / 6.0),
             )
         )
-    support = Ball((0.0, 0.0, 0.0), 1.05).compile()
+    support = Ball((0.0, 0.0, 0.0), 1.05).compile(coordinate_unit=METER)
     volume = 4 * np.pi / 3
     provisional = PointCloudPlan(
         bulk_points,

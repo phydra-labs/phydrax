@@ -1,14 +1,14 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Validity and global embedding of exact PLC source points, not their carrier.
+"""Check validity and global embedding of rational PLC points versus their carrier.
 
 The constrained vertex lies on the tilted PLC edge ``A -> B`` (inside the plane
-``2 z = x + y``) at the decimal parameter ``t = 0.1``. Its exact source point is
+``2 z = x + y``) at the decimal parameter ``t = 0.1``. Its rational source point is
 ``S = (2 t, t, 3 t / 2)``; ``3 t / 2`` is a binary64 tie, so the carrier
 ``P = RNE(S)`` sits ``2**-56`` above ``S`` in ``z`` and above the plane. The
 oracles below use 200-digit decimal arithmetic on the binary64 inputs, which is
-exact for these dyadic values and independent of the rational implementation.
+lossless for these dyadic values and independent of the rational implementation.
 """
 
 from decimal import Decimal, localcontext
@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from tests._support.meshing_fixtures import finding_checks
 
 
 _T = 0.1
@@ -71,29 +72,29 @@ def _plc(
     rows = np.full((count,), -1, dtype=np.int64)
     parameters = np.zeros((count, 2), dtype=np.float64)
     strata[constrained], rows[constrained], parameters[constrained, 0] = 1, 0, _T
-    source = phx.discretization.ExactPlcCellGeometrySource(
-        np.asarray((_A, _B), dtype=np.float64),
-        np.empty((0, 3), dtype=np.int64),
-        np.asarray(((0, 1),), dtype=np.int64),
-        strata,
-        rows,
-        parameters,
-        domain_source_id="tilted-plc-edge",
-        maximum_bits=maximum_bits,
-        domain_source_revision="tilted-plc-edge-authored",
-        source_triangle_ids=np.empty((0,), dtype=np.int64),
-        source_triangle_bounds=np.empty((0,), dtype=np.float64),
-        source_segment_ids=np.asarray([0], dtype=np.int64),
-        source_segment_bounds=np.asarray([1e-15], dtype=np.float64),
-    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    with coordinate_reference_budget() as budget:
+        source = phx.discretization.ExactPlcCellGeometrySource(
+            np.asarray((_A, _B), dtype=np.float64),
+            np.empty((0, 3), dtype=np.int64),
+            np.asarray(((0, 1),), dtype=np.int64),
+            strata,
+            rows,
+            parameters,
+            domain_source_id="tilted-plc-edge",
+            maximum_bits=maximum_bits,
+            domain_source_revision="tilted-plc-edge-authored",
+            source_triangle_ids=np.empty((0,), dtype=np.int64),
+            source_triangle_bounds=np.empty((0,), dtype=np.float64),
+            source_segment_ids=np.asarray([0], dtype=np.int64),
+            source_segment_bounds=np.asarray([1e-15], dtype=np.float64),
+            budget=budget,
+        )
     mesh = phx.discretization.CellMesh.from_tetrahedra(
         np.asarray(points, dtype=np.float64), np.asarray(cells, dtype=np.int64)
     )
     return mesh, phx.discretization.CellGeometrySpec.plc(mesh, source)
-
-
-def _checks(certificate: Any, status: str) -> set[str]:
-    return {value.check for value in certificate.findings if value.status == status}
 
 
 def _single_tetrahedron() -> tuple[Any, Any]:
@@ -104,7 +105,7 @@ def _single_tetrahedron() -> tuple[Any, Any]:
 
 def _hidden_contact(maximum_bits: int = 4096) -> tuple[Any, Any]:
     # T1 = (A, C, B, D) lies below the plane with face ABC in it; T2 = (S, E, F, G)
-    # lies above it and touches edge AB only at the exact source point S.
+    # lies above it and touches edge AB only at the rational source point S.
     points = (
         _A,
         _B,
@@ -120,7 +121,15 @@ def _hidden_contact(maximum_bits: int = 4096) -> tuple[Any, Any]:
 
 def test_source_point_is_the_authority_of_its_rounded_carrier() -> None:
     mesh, geometry = _single_tetrahedron()
-    vertex = geometry.source_coordinates()[0]
+    from phydrax.discretization._cell_geometry import (
+        cell_geometry_preparation_query_upper,
+    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(geometry)
+    ) as budget:
+        vertex = geometry.source_coordinates(budget=budget)[0]
 
     assert vertex == _S
     assert vertex != tuple(Fraction(value) for value in _P)
@@ -194,7 +203,7 @@ def test_relative_floor_scales_the_source_jacobian(factor: float, expected: str)
 def test_carrier_positive_but_source_degenerate_tetrahedron_is_refused() -> None:
     mesh, geometry = _plc((_A, _B, _C, _P), ((0, 1, 2, 3),), 3)
     corners = (_decimal(_A), _decimal(_B), _decimal(_C))
-    # Oracle premise: the rounded carrier is positive, the source is coplanar.
+    # Oracle invariant: the rounded carrier is positive, the source is coplanar.
     assert _decimal_determinant((*corners, _decimal(_P))) > 0
     assert _decimal_determinant((*corners, _decimal_source())) == 0
     policy = phx.discretization.CellValidityPolicy(relative_determinant_floor=0.0)
@@ -210,7 +219,7 @@ def test_carrier_positive_but_source_degenerate_tetrahedron_is_refused() -> None
     assert carrier.all_certified
     assert int(validity.status[0]) == phx.discretization.CellValidityStatus.INVALID
     assert embedding.status == "violated"
-    assert "invalid_cell" in _checks(embedding, "violated")
+    assert "invalid_cell" in finding_checks(embedding, "violated")
 
 
 def test_source_contact_hidden_by_carrier_rounding_is_a_violation() -> None:
@@ -228,7 +237,7 @@ def test_source_contact_hidden_by_carrier_rounding_is_a_violation() -> None:
     assert carrier.status == "certified"
     assert validity.all_certified
     assert embedding.status == "violated"
-    assert "boundary_contact" in _checks(embedding, "violated")
+    assert "boundary_contact" in finding_checks(embedding, "violated")
 
 
 @pytest.mark.parametrize(
@@ -247,8 +256,8 @@ def test_exhausted_request_ledger_is_unresolved_not_a_violation(
     )
 
     assert embedding.status == "unresolved"
-    assert _checks(embedding, "unresolved") == {"exact_source_resource_budget"}
-    assert not _checks(embedding, "violated")
+    assert finding_checks(embedding, "unresolved") == {"exact_source_resource_budget"}
+    assert not finding_checks(embedding, "violated")
 
 
 def test_source_integer_bit_budget_bounds_the_scaled_bank() -> None:
@@ -262,4 +271,4 @@ def test_source_integer_bit_budget_bounds_the_scaled_bank() -> None:
 
     assert validity.all_certified
     assert embedding.status == "unresolved"
-    assert _checks(embedding, "unresolved") == {"exact_source_bit_budget"}
+    assert finding_checks(embedding, "unresolved") == {"exact_source_bit_budget"}

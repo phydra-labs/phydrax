@@ -9,11 +9,10 @@ from collections.abc import Callable, Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jax.typing import ArrayLike
 
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
-from ...typing import checked
+from ...typing import checked, ConvertibleToArray
 from ._schema import DesignState, ParameterBinding, ParameterId, ParameterSchema
 
 
@@ -45,9 +44,13 @@ class DesignParameterization(StrictModule):
             else tuple(parameter_ids)
         )
         if not identifiers:
-            raise ValueError("A design parameterization requires active parameters.")
+            raise ValueError(
+                "DesignParameterization.parameter_ids must contain active parameters; got empty selection"
+            )
         if len(set(identifiers)) != len(identifiers):
-            raise ValueError("Active design parameter IDs must be unique.")
+            raise ValueError(
+                f"DesignParameterization.parameter_ids must be unique; got {identifiers}"
+            )
 
         bindings: list[ParameterBinding] = []
         offsets = [0]
@@ -56,14 +59,20 @@ class DesignParameterization(StrictModule):
         upper_parts = []
         for parameter_id in identifiers:
             if not isinstance(parameter_id, ParameterId):
-                raise TypeError("parameter_ids must contain ParameterId values.")
+                raise TypeError(
+                    f"DesignParameterization.parameter_ids must contain ParameterId values; got {type(parameter_id).__name__}"
+                )
             index = reference.schema.index(parameter_id)
             spec = reference.schema.specs[index]
             if not spec.trainable:
-                raise ValueError(f"Parameter {parameter_id} is not trainable.")
+                raise ValueError(
+                    f"DesignParameterization.parameter_ids must select trainable parameters; got {parameter_id}"
+                )
             size = reference.values[index].size
             if size == 0:
-                raise ValueError(f"Parameter {parameter_id} cannot be empty.")
+                raise ValueError(
+                    f"DesignParameterization.parameter_ids must select nonempty parameters; got {parameter_id}"
+                )
             bindings.append(ParameterBinding(parameter_id, index))
             offsets.append(offsets[-1] + size)
             scale_parts.append(jnp.full((size,), spec.physical_scale, dtype=jnp.float64))
@@ -101,6 +110,7 @@ class DesignParameterization(StrictModule):
     def initial_coordinates(self) -> Array:
         return jnp.zeros((self.dimension,), dtype=self.scales.dtype)
 
+    @checked
     def reduce(self, state: DesignState, /) -> Array:
         """Map a full design state to dimensionless reduced coordinates."""
         self._validate_state(state)
@@ -117,12 +127,12 @@ class DesignParameterization(StrictModule):
             parts.append(delta / self.scales[start:stop])
         return jnp.concatenate(tuple(parts))
 
-    def expand(self, coordinates: ArrayLike, /) -> DesignState:
+    def expand(self, coordinates: ConvertibleToArray, /) -> DesignState:
         """Map dimensionless reduced coordinates to a full design state."""
         vector = jnp.asarray(coordinates, dtype=self.scales.dtype)
         if vector.shape != (self.dimension,):
             raise ValueError(
-                f"Reduced coordinates must have shape {(self.dimension,)}, got {vector.shape}."
+                f"DesignParameterization.coordinates must have shape {(self.dimension,)}; got {vector.shape}"
             )
         values = list(self.reference.values)
         for binding, start, stop in zip(
@@ -140,10 +150,11 @@ class DesignParameterization(StrictModule):
             )
         return DesignState(self.reference.schema, values)
 
-    @checked
     def _validate_state(self, state: DesignState, /) -> None:
         if state.schema != self.reference.schema:
-            raise ValueError("Design state and parameterization schemas do not match.")
+            raise ValueError(
+                "DesignParameterization.state.schema must match reference.schema; got different schema"
+            )
 
 
 class DesignBindingGraph(StrictModule):
@@ -162,24 +173,32 @@ class DesignBindingGraph(StrictModule):
     ) -> None:
         names = tuple(bindings)
         if not names:
-            raise ValueError("A design binding graph requires at least one binding.")
+            raise ValueError(
+                "DesignBindingGraph.bindings must contain at least one binding; got empty mapping"
+            )
         if any(not isinstance(name, str) or not name for name in names):
-            raise ValueError("Design binding names must be non-empty strings.")
+            raise ValueError(
+                f"DesignBindingGraph.names must contain nonempty strings; got {names}"
+            )
         compiled = []
         for name in names:
             binding = bindings[name]
-            if isinstance(binding, ParameterId):
-                index = schema.index(binding)
-                compiled.append(ParameterBinding(binding, index))
-            elif isinstance(binding, ParameterBinding):
-                index = schema.index(binding.parameter_id)
-                if binding.index != index:
-                    raise ValueError(f"Binding {name!r} has an invalid schema index.")
-                compiled.append(binding)
-            else:
-                raise TypeError(
-                    "Design binding values must be ParameterId or ParameterBinding."
-                )
+            match binding:
+                case ParameterId():
+                    index = schema.index(binding)
+                    compiled.append(ParameterBinding(binding, index))
+                case ParameterBinding():
+                    index = schema.index(binding.parameter_id)
+                    if binding.index != index:
+                        raise ValueError(
+                            f"DesignBindingGraph.bindings must have the schema index; got {name!r}: {binding.index}"
+                        )
+                    compiled.append(binding)
+                case _:
+                    raise TypeError(
+                        "DesignBindingGraph.bindings must contain ParameterId or ParameterBinding; "
+                        f"got {type(binding).__name__}"
+                    )
         self.schema = schema
         self.names = names
         self.bindings = tuple(compiled)
@@ -188,7 +207,9 @@ class DesignBindingGraph(StrictModule):
     def read(self, state: DesignState, /) -> frozendict[str, Array]:
         """Read every named binding without copying the underlying arrays."""
         if state.schema != self.schema:
-            raise ValueError("Design state and binding graph schemas do not match.")
+            raise ValueError(
+                "DesignBindingGraph.state.schema must match graph.schema; got different schema"
+            )
         return frozendict(
             {
                 name: binding.read(state)
@@ -207,25 +228,30 @@ class DesignEvaluation(StrictModule):
     constraints: Array
     valid: Array
 
+    @checked
     def __init__(
         self,
         *,
-        coordinates: ArrayLike,
+        coordinates: ConvertibleToArray,
         state: DesignState,
-        bound_values: Mapping[str, ArrayLike],
-        objective: ArrayLike,
-        constraints: ArrayLike,
-        valid: ArrayLike,
+        bound_values: Mapping[str, ConvertibleToArray],
+        objective: ConvertibleToArray,
+        constraints: ConvertibleToArray,
+        valid: ConvertibleToArray,
     ) -> None:
         objective_ = jnp.asarray(objective, dtype=jnp.float64)
         constraints_ = jnp.asarray(constraints, dtype=jnp.float64)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if objective_.ndim != 0:
-            raise ValueError("A design objective must be scalar.")
+            raise ValueError(
+                f"DesignEvaluation.objective must be scalar; got {objective_.shape}"
+            )
         if constraints_.ndim != 1:
-            raise ValueError("Design constraints must be a one-dimensional residual.")
+            raise ValueError(
+                f"DesignEvaluation.constraints must be one-dimensional; got {constraints_.shape}"
+            )
         if valid_.ndim != 0:
-            raise ValueError("Design validity must be scalar.")
+            raise ValueError(f"DesignEvaluation.valid must be scalar; got {valid_.shape}")
         self.coordinates = jnp.asarray(coordinates, dtype=jnp.float64)
         self.state = state
         self.bound_values = frozendict(
@@ -241,11 +267,11 @@ class ReducedDesignProblem(StrictModule):
 
     parameterization: DesignParameterization
     binding_graph: DesignBindingGraph
-    objective_fn: Callable[[DesignState, frozendict[str, Array]], ArrayLike] = eqx.field(
-        static=True
+    objective_fn: Callable[[DesignState, frozendict[str, Array]], ConvertibleToArray] = (
+        eqx.field(static=True)
     )
     constraint_fns: tuple[
-        Callable[[DesignState, frozendict[str, Array]], ArrayLike], ...
+        Callable[[DesignState, frozendict[str, Array]], ConvertibleToArray], ...
     ] = eqx.field(static=True)
 
     @checked
@@ -253,32 +279,36 @@ class ReducedDesignProblem(StrictModule):
         self,
         parameterization: DesignParameterization,
         binding_graph: DesignBindingGraph,
-        objective: Callable[[DesignState, frozendict[str, Array]], ArrayLike],
+        objective: Callable[[DesignState, frozendict[str, Array]], ConvertibleToArray],
         /,
         *,
         constraints: Sequence[
-            Callable[[DesignState, frozendict[str, Array]], ArrayLike]
+            Callable[[DesignState, frozendict[str, Array]], ConvertibleToArray]
         ] = (),
     ) -> None:
         if binding_graph.schema != parameterization.reference.schema:
-            raise ValueError("Parameterization and binding graph schemas do not match.")
-        if not callable(objective):
-            raise TypeError("objective must be callable.")
+            raise ValueError(
+                "ReducedDesignProblem.binding_graph.schema must match parameterization.schema; got different schema"
+            )
         constraint_tuple = tuple(constraints)
         if any(not callable(constraint) for constraint in constraint_tuple):
-            raise TypeError("Every design constraint must be callable.")
+            raise TypeError(
+                "ReducedDesignProblem.constraints must contain callables; got noncallable member"
+            )
         self.parameterization = parameterization
         self.binding_graph = binding_graph
         self.objective_fn = objective
         self.constraint_fns = constraint_tuple
 
-    def evaluate(self, coordinates: ArrayLike, /) -> DesignEvaluation:
+    def evaluate(self, coordinates: ConvertibleToArray, /) -> DesignEvaluation:
         """Evaluate objective and residuals without choosing an optimizer."""
         state = self.parameterization.expand(coordinates)
         bound_values = self.binding_graph.read(state)
         objective = jnp.asarray(self.objective_fn(state, bound_values), dtype=jnp.float64)
         if objective.ndim != 0:
-            raise ValueError("The reduced design objective must return a scalar.")
+            raise ValueError(
+                f"ReducedDesignProblem.objective must return a scalar; got {objective.shape}"
+            )
         if self.constraint_fns:
             residuals = tuple(
                 jnp.ravel(jnp.asarray(constraint(state, bound_values), dtype=jnp.float64))
@@ -297,7 +327,7 @@ class ReducedDesignProblem(StrictModule):
             valid=valid,
         )
 
-    def objective(self, coordinates: ArrayLike, /) -> Array:
+    def objective(self, coordinates: ConvertibleToArray, /) -> Array:
         """Return the scalar objective for use by the existing optimizer stack."""
         return self.evaluate(coordinates).objective
 

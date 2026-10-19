@@ -10,6 +10,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._meshcore import meshcore_available
+from tests._support.coordinate_references import coordinate_reference_budget
 
 
 D = phx.discretization
@@ -126,7 +127,7 @@ def test_cell_geometry_validity_scenario_2() -> None:
         S.DISJOINT,
         S.DISJOINT,
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="mode"):
         G.segment_intersections_2d(a, b, c, d, mode=G.PredicateMode.FILTERED_DEVICE)
     points = np.asarray(((0.0, 0.0), (2.0, 2.0), (2.0, 0.0), (1.0, -1.0), (0.0, 2.0)))
     mesh = D.CellMesh(
@@ -229,7 +230,7 @@ def test_certificate_is_bound_to_the_certified_coordinates_and_topology() -> Non
 
     certificate.require_bound(geometry, mesh=mesh)
     assert certificate.topology_id == mesh.topology_id
-    with pytest.raises(ValueError, match="coordinate arrays"):
+    with pytest.raises(ValueError, match=r"CellValidityCertificate\.geometry_id"):
         certificate.require_bound(moved, mesh=mesh)
 
 
@@ -273,7 +274,7 @@ def test_partition_of_unity_is_not_a_pointwise_source_error_bound() -> None:
     import jax.numpy as jnp
     from jax import Array
 
-    from phydrax.discretization.fem._reference import FiniteElementSpec
+    from phydrax.discretization.fem._reference_types import FiniteElementSpec
 
     def fabricated_basis(points: Array) -> tuple[Array, Array]:
         values = jnp.stack(
@@ -375,7 +376,7 @@ def test_validity_binding_rejects_changed_routes_despite_cached_layout_id() -> N
         (jnp.asarray(((1, 0, 2, 3),), dtype=jnp.int32),),
     )
 
-    with pytest.raises(ValueError, match="coordinate arrays"):
+    with pytest.raises(ValueError, match=r"CellValidityCertificate\.geometry_id"):
         certificate.require_bound(changed, mesh=mesh)
 
 
@@ -406,7 +407,7 @@ def test_validity_binding_rejects_changed_basis_coefficients_without_moving_node
     )
 
     assert certificate.all_certified
-    with pytest.raises(ValueError, match="coordinate arrays"):
+    with pytest.raises(ValueError, match=r"CellValidityCertificate\.geometry_id"):
         certificate.require_bound(changed)
 
 
@@ -427,12 +428,13 @@ def test_portable_discontinuous_sources_preserve_exact_field_integrals(
         if degree == 0
         else (1.0 + 2.0 * nodes[:, 0] - 3.0 * nodes[:, 1] + 4.0 * nodes[:, 2])[:, None]
     )
-    expression = coordinate_polynomials(element, coefficients)
-    if expression is None:
-        pytest.fail("Canonical immutable DG source expression was unavailable.")
+    with coordinate_reference_budget() as budget:
+        expression = coordinate_polynomials(element, coefficients, budget=budget)
+        if expression is None:
+            pytest.fail("Canonical immutable DG source expression was unavailable.")
 
-    expected = Fraction(11, 24) if degree == 0 else Fraction(7, 24)
-    assert integrate(expression[0], "simplex", 3) == expected
+        expected = Fraction(11, 24) if degree == 0 else Fraction(7, 24)
+        assert integrate(expression[0], "simplex", 3, budget=budget) == expected
 
 
 @pytest.mark.parametrize("ambient", (2, 3))

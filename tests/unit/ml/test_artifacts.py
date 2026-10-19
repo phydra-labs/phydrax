@@ -442,7 +442,7 @@ def test_model_recipe_rejects_malformed_prng_key_before_allocation(
         ),
     )
 
-    with pytest.raises(ValueError, match="PRNG key-data shape"):
+    with pytest.raises(ValueError, match=r"recipe\.shape"):
         model_from_structure_recipe(
             {
                 "kind": "prng_key",

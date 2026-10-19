@@ -29,7 +29,7 @@ from ..linalg import (
     ScaledLinearOperator,
     SumLinearOperator,
 )
-from ..linalg._spaces import _coordinate_dtype
+from ..linalg._spaces import coordinate_dtype
 from ..sparse import EdgeRelation, route_reduce, SparseCoordinateOperator
 from ..typing import Bool, checked, Dim, Float, Scalar
 
@@ -39,7 +39,7 @@ class CurvatureDegreeDim(Dim):
 
 
 def _apply_coordinates(operator: AbstractLinearOperator, values: ArrayLike, /) -> Array:
-    coordinates = jnp.asarray(values, dtype=_coordinate_dtype(operator.source))
+    coordinates = jnp.asarray(values, dtype=coordinate_dtype(operator.source))
     return operator.target.flatten(operator.mv(operator.source.unflatten(coordinates)))
 
 
@@ -245,8 +245,8 @@ class CoefficientSystem(StrictModule):
                 block_shape=(value.shape[1], value.shape[2]),
                 accumulation_dtype=jnp.result_type(
                     value.dtype,
-                    _coordinate_dtype(spaces_[degree]),
-                    _coordinate_dtype(spaces_[degree + 1]),
+                    coordinate_dtype(spaces_[degree]),
+                    coordinate_dtype(spaces_[degree + 1]),
                 ),
                 operator_id=canonical_fingerprint(
                     {"system": identity, "differential": degree}
@@ -268,8 +268,8 @@ class CoefficientSystem(StrictModule):
                 block_shape=(ranks[degree + 2], ranks[degree]),
                 accumulation_dtype=jnp.result_type(
                     dtype,
-                    _coordinate_dtype(spaces_[degree]),
-                    _coordinate_dtype(spaces_[degree + 2]),
+                    coordinate_dtype(spaces_[degree]),
+                    coordinate_dtype(spaces_[degree + 2]),
                 ),
                 operator_id=canonical_fingerprint(
                     {"system": identity, "curvature": degree}

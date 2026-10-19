@@ -13,8 +13,11 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
+from .._admissibility import guard_derivative_validity
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
+from .._validation import canonical_identifier
 from ..discretization import (
     CellMesh,
     PreparedEmbeddedMeasureTransfer,
@@ -23,12 +26,16 @@ from ..discretization import (
 )
 from ..ein import contract
 from ..linalg import (
+    AggregateLinearSolveResult,
     ArraySpace,
+    DiagonalLinearOperator,
     FunctionLinearOperator,
     LinearSolvePolicy,
+    LinearSolveStatus,
     LinearSystem,
-    solve,
+    solve_aggregate,
 )
+from ..linalg._runtime import _aggregate_residual_threshold, _error_on_failure
 from ..typing import checked
 
 
@@ -567,11 +574,25 @@ class MixedDimensionalMassLedger(StrictModule):
 
 
 class MixedDimensionalStepResult(StrictModule):
+    """Return physical fields and separate increment/full-system evidence.
+
+    ``increment_solve`` solves for inventory per unit time. Concentrations are
+    ``old + step_width * increment / mass``. Its rank/condition/residual evidence
+    belongs to that coordinate system; ``original_residual_*`` audit the full
+    concentration equation. ``linear_status`` requires both contracts.
+    """
+
     state: MixedDimensionalTransportState
     candidate_state: MixedDimensionalTransportState
     ledger: MixedDimensionalMassLedger
     linear_status: Array
     accepted: Array
+    increment_solve: AggregateLinearSolveResult
+    original_residual_norm: Array
+    original_residual_threshold: Array
+    original_residual_status: Array
+    step_width: Array
+    solved_variable: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
 
@@ -580,6 +601,8 @@ class PreparedMixedDimensionalTransport(StrictModule):
     network: PreparedNetworkTransport
     exchange: PermeabilityExchangePlan
     reservoirs: ReservoirCouplingPlan
+    inventory_aggregates: Array = fixed_field()
+    inventory_group_ids: tuple[str, ...] = eqx.field(static=True)
     require_nonnegative: bool = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
 
@@ -702,22 +725,81 @@ class PreparedMixedDimensionalTransport(StrictModule):
             )
             explicit = self.flatten(advective)
 
+        zero_residual, _ = self.residual(
+            self.unflatten(jnp.zeros_like(old)), include_advection=not imex
+        )
+        offset = self.flatten(zero_residual)
+
         def action(candidate: Array) -> Array:
             candidate_state = self.unflatten(candidate)
             residual, _ = self.residual(candidate_state, include_advection=not imex)
-            return mass * candidate + width * self.flatten(residual)
+            return mass * candidate + width * (self.flatten(residual) - offset)
 
         space = ArraySpace(old.shape, dtype=old.dtype)
         operator = FunctionLinearOperator(
             action,
             source=space,
             target=space,
-            operator_id=f"{self.runtime_id}:{'imex' if imex else 'be'}:{width:.17g}",
+            operator_id=f"{self.runtime_id}:{'imex' if imex else 'be'}:{width:.17g}:concentration",
         )
-        right = mass * old + width * (source - explicit)
-        solved = solve(LinearSystem(operator), right, policy=policy)
-        candidate = self.unflatten(solved.value)
-        accepted = jnp.all(solved.successful) & jnp.all(jnp.isfinite(solved.value))
+        inverse_mass = DiagonalLinearOperator(
+            1.0 / mass,
+            space=space,
+            operator_id=f"{self.runtime_id}:inventory-to-concentration",
+        )
+        increment_operator = operator @ inverse_mass
+        old_residual, _ = self.residual(state, include_advection=not imex)
+        increment_right = source - explicit - self.flatten(old_residual)
+        selected = LinearSolvePolicy() if policy is None else policy
+        solved = solve_aggregate(
+            LinearSystem(increment_operator),
+            increment_right,
+            self.inventory_aggregates[:, 0],
+            additional_aggregates=tuple(
+                self.inventory_aggregates[:, index]
+                for index in range(1, len(self.inventory_group_ids))
+            ),
+            policy=selected,
+        )
+        candidate_values = old + width * inverse_mass.mv(solved.value)
+        original_right = mass * old + width * (source - explicit - offset)
+        original_residual = action(candidate_values) - original_right
+        original_norm = jnp.linalg.norm(original_residual)
+        original_threshold = _aggregate_residual_threshold(
+            selected, original_right, old.size
+        )
+        original_input_finite = jnp.all(jnp.isfinite(original_right))
+        original_output_finite = jnp.all(jnp.isfinite(candidate_values)) & jnp.isfinite(
+            original_norm
+        )
+        original_status = jnp.where(
+            original_norm <= original_threshold,
+            int(LinearSolveStatus.SUCCESS),
+            int(LinearSolveStatus.RESIDUAL_TOO_LARGE),
+        )
+        original_status = jnp.where(
+            ~original_output_finite,
+            int(LinearSolveStatus.NONFINITE_OUTPUT),
+            original_status,
+        )
+        original_status = jnp.where(
+            ~original_input_finite,
+            int(LinearSolveStatus.NONFINITE_INPUT),
+            original_status,
+        )
+        linear_status = jnp.where(solved.successful, original_status, solved.status)
+        linear_successful = linear_status == int(LinearSolveStatus.SUCCESS)
+        if selected.differentiation.mode in ("mathematical", "rhs-only"):
+            candidate_values = guard_derivative_validity(
+                candidate_values,
+                linear_successful,
+                failure=selected.failure.mode,
+                message="MixedDimensionalStepResult.original_residual must satisfy the full-system contract; got failed increment audit.",
+            )
+        if selected.failure.mode == "error":
+            candidate_values = _error_on_failure(candidate_values, linear_status)
+        candidate = self.unflatten(candidate_values)
+        accepted = linear_successful & jnp.all(jnp.isfinite(candidate_values))
         initial_total = self.ledger(state).total_mass
         if imex:
             external_loss = jnp.sum(self.bulk.advective_residual(state.bulk)) + jnp.vdot(
@@ -736,12 +818,18 @@ class PreparedMixedDimensionalTransport(StrictModule):
             jnp.where(accepted, candidate.reservoirs, state.reservoirs),
         )
         return MixedDimensionalStepResult(
-            result_state,
-            candidate,
-            ledger,
-            solved.status,
-            accepted,
-            self.runtime_id,
+            state=result_state,
+            candidate_state=candidate,
+            ledger=ledger,
+            linear_status=linear_status,
+            accepted=accepted,
+            increment_solve=solved,
+            original_residual_norm=original_norm,
+            original_residual_threshold=original_threshold,
+            original_residual_status=original_status,
+            step_width=jnp.asarray(width, dtype=old.dtype),
+            solved_variable="inventory-rate-increment",
+            runtime_id=self.runtime_id,
         )
 
     def ledger(
@@ -772,8 +860,11 @@ class PreparedMixedDimensionalTransport(StrictModule):
         reference = total if reference_total is None else jnp.asarray(reference_total)
         balance = jnp.abs(total - reference) / jnp.maximum(1.0, jnp.abs(reference))
         minimum = jnp.minimum(
-            jnp.min(state.bulk),
-            jnp.minimum(jnp.min(state.network), jnp.min(state.reservoirs)),
+            jnp.min(state.bulk, initial=jnp.inf),
+            jnp.minimum(
+                jnp.min(state.network, initial=jnp.inf),
+                jnp.min(state.reservoirs, initial=jnp.inf),
+            ),
         )
         finite = jnp.all(jnp.isfinite(self.flatten(state))) & jnp.isfinite(total)
         positivity = (
@@ -822,6 +913,7 @@ class MixedDimensionalTransportPlan:
     reservoir_volumes: np.ndarray
     reservoir_coefficients: np.ndarray
     require_nonnegative: bool = True
+    bulk_region_ids: tuple[str, ...] | None = None
     plan_id: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -842,6 +934,23 @@ class MixedDimensionalTransportPlan:
             raise ValueError("Exchange targets must be the network node field.")
         if not isinstance(self.require_nonnegative, bool):
             raise TypeError("require_nonnegative must be boolean.")
+        regions = (
+            None
+            if self.bulk_region_ids is None
+            else tuple(
+                canonical_identifier(
+                    value, "MixedDimensionalTransportPlan.bulk_region_ids"
+                )
+                for value in self.bulk_region_ids
+            )
+        )
+        count = sum(block.cell_count for block in self.bulk.mesh.blocks)
+        if regions is not None and len(regions) != count:
+            raise ValueError(
+                "MixedDimensionalTransportPlan.bulk_region_ids must label every bulk cell; "
+                f"got regions={len(regions)}, cells={count}"
+            )
+        object.__setattr__(self, "bulk_region_ids", regions)
         object.__setattr__(
             self,
             "plan_id",
@@ -864,6 +973,7 @@ class MixedDimensionalTransportPlan:
                         np.asarray(self.reservoir_coefficients)
                     ),
                     "require_nonnegative": self.require_nonnegative,
+                    "bulk_region_ids": self.bulk_region_ids,
                 }
             ),
         )
@@ -880,6 +990,11 @@ class MixedDimensionalTransportPlan:
             self.reservoir_coefficients,
             network_size=len(network.mass),
         )
+        inventory_aggregates, inventory_group_ids = _prepare_inventory_aggregates(
+            (bulk.cell_count, len(network.mass), len(reservoirs.volumes)),
+            self.bulk_region_ids,
+            bulk.mass.dtype,
+        )
         runtime_id = canonical_fingerprint(
             {
                 "kind": "prepared-mixed-dimensional-transport",
@@ -889,16 +1004,61 @@ class MixedDimensionalTransportPlan:
                 "exchange": exchange.exchange_id,
                 "reservoirs": reservoirs.coupling_id,
                 "require_nonnegative": self.require_nonnegative,
+                "equation_reduction": "physical-inventory-bank-rate-increment",
+                "inventory_group_ids": inventory_group_ids,
             }
         )
         return PreparedMixedDimensionalTransport(
-            bulk,
-            network,
-            exchange,
-            reservoirs,
-            self.require_nonnegative,
-            runtime_id,
+            bulk=bulk,
+            network=network,
+            exchange=exchange,
+            reservoirs=reservoirs,
+            inventory_aggregates=inventory_aggregates,
+            inventory_group_ids=inventory_group_ids,
+            require_nonnegative=self.require_nonnegative,
+            runtime_id=runtime_id,
         )
+
+
+def _prepare_inventory_aggregates(
+    sizes: tuple[int, int, int],
+    bulk_region_ids: tuple[str, ...] | None,
+    dtype: DTypeLike,
+    /,
+) -> tuple[Array, tuple[str, ...]]:
+    """Prepare disjoint authored inventory rows before numerical tracing."""
+    bulk, network, reservoirs = sizes
+    labels = ("bulk",) if bulk_region_ids is None else tuple(sorted(set(bulk_region_ids)))
+    identifiers = (
+        (
+            ("bulk",)
+            if bulk_region_ids is None
+            else tuple(f"bulk:{label}" for label in labels)
+        )
+        if bulk
+        else ()
+    )
+    identifiers += ("network",) if network else ()
+    identifiers += ("reservoirs",) if reservoirs else ()
+    weights = np.zeros((sum(sizes), len(identifiers)), dtype=np.float64)
+    column = 0
+    if bulk:
+        for label in labels:
+            selected = (
+                np.ones((bulk,), dtype=np.bool_)
+                if bulk_region_ids is None
+                else np.asarray(
+                    [value == label for value in bulk_region_ids], dtype=np.bool_
+                )
+            )
+            weights[:bulk, column] = selected
+            column += 1
+    if network:
+        weights[bulk : bulk + network, column] = 1.0
+        column += 1
+    if reservoirs:
+        weights[bulk + network :, column] = 1.0
+    return jnp.asarray(weights, dtype=dtype), identifiers
 
 
 __all__ = [

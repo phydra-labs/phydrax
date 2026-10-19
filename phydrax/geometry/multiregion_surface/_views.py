@@ -18,7 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...discretization._topology import CellComplexTopology, EntitySet, OrientedIncidence
 from ...sparse import EdgeRelation
-from ...typing import Dim, Identifier, Int64
+from ...typing import checked, Dim, Identifier, Int64
 from ..simplicial._mesh import TriangleMesh
 from ._geometry import PreparedMultiRegionSurface
 from ._state import MultiRegionSurfaceState
@@ -33,6 +33,7 @@ class _SheetFaceDim(Dim, minimum=1):
     """Faces of one sheet view."""
 
 
+@checked
 def multiregion_cell_complex(
     topology: MultiRegionSurfaceTopology, /
 ) -> CellComplexTopology:
@@ -45,8 +46,6 @@ def multiregion_cell_complex(
     boundary-of-boundary chain check of `CellComplexTopology` certifies that
     every finite region is a closed oriented 2-cycle.
     """
-    if not isinstance(topology, MultiRegionSurfaceTopology):
-        raise TypeError("topology must be a MultiRegionSurfaceTopology.")
     edges = np.asarray(topology.edges[: topology.edge_count], dtype=np.int64)
     face_edges = np.asarray(topology.face_edges[: topology.face_count], dtype=np.int64)
     face_signs = np.asarray(
@@ -127,7 +126,7 @@ class MultiRegionSheetView(StrictModule):
 
     ``mesh`` holds the sheet's vertices (ascending global vertex slot) and faces
     oriented so that normals point out of ``region_ids[0]``, the first label of
-    the canonical pair. ``vertex_indices`` map mesh vertices to surface vertex
+    the sorted pair. ``vertex_indices`` map mesh vertices to surface vertex
     slots, ``slot_indices`` to flattened ``vertex * slot_width + slot`` sheet
     slots (the storage of sheet fields) and ``face_indices`` to surface face
     slots. Borders (wires and Plateau borders) are mesh boundary loops.
@@ -192,12 +191,11 @@ def _sheet_is_manifold(faces: np.ndarray, vertex_count: int, /) -> bool:
     )
 
 
+@checked
 def multiregion_sheet_views(
     prepared: PreparedMultiRegionSurface, state: MultiRegionSurfaceState, /
 ) -> MultiRegionSheetViews:
     """Per-region-pair manifold views of the current geometry (host boundary)."""
-    if not isinstance(prepared, PreparedMultiRegionSurface):
-        raise TypeError("prepared must be a PreparedMultiRegionSurface.")
     topology = prepared.topology
     state.require_topology(topology)
     faces = topology.host_faces()

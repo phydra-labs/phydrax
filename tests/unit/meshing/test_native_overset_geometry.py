@@ -1,17 +1,15 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
 from collections.abc import Sequence
-from fractions import Fraction
 from itertools import product
 from typing import TypedDict
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.typing import ArrayLike, NDArray
 
-from phydrax import SpatialCoordinateContract
+from phydrax import config as pxconfig, SpatialCoordinateContract
 from phydrax.discretization import (
     CellBlock,
     CellGeometrySpec,
@@ -27,25 +25,41 @@ from phydrax.discretization._cell_geometry import (
     coordinate_lagrange_element,
     RestrictedCellGeometryElement,
 )
+from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._hexahedral import HexahedralConnectivity
 from phydrax.discretization._reference_cell import reference_cell_topology
-from phydrax.geometry.brep import PreparedBRepQuery
-from phydrax.meshing import CellMeshingResult, certify_cell_mesh, MeshingScope
-from phydrax.meshing._assembly import MeshAssembly, MeshPart
+from phydrax.geometry.brep import PreparedBRepQuery, SpherePatch
+from phydrax.meshing import certify_cell_mesh, MeshingScope
+from phydrax.meshing._assembly import MeshAssembly
 from phydrax.meshing._coupling import CouplingSearchStatus, OversetCoupling
+from phydrax.meshing._mesh_part import MeshPart
 from phydrax.meshing._overset import (
-    _resolve_donors,
     OversetCellStatus,
     OversetConnectivity,
     OversetPartSpec,
     OversetPolicy,
     OversetVertexStatus,
     prepare_overset_connectivity,
+    resolve_donors,
 )
+from tests._support.meshing_fixtures import certified_carrier
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 _CONTRACT = SpatialCoordinateContract.si()
+
+
+# Fixed empirical allowances from test_native_overset_geometry.py
+# at a6827a9e5; no meshing acceptance policy is relaxed.
+# Curved donor interpolation of x^3 - x^2 + 2*y on the moving receptor sites.
+_CUBIC_DONOR_ATOL = 1e-11
+
+
+# Fixed empirical residual bounds from test_native_overset_geometry.py
+# at a6827a9e5; each comparison retains its strictness.
+# Inverse-location residuals on retained curved-family maps and the polyhedral sliver
+# donor.
+_MAPPED_LOCATION_RESIDUAL = 1e-10
 
 
 class _SphereWallBound(TypedDict):
@@ -55,15 +69,6 @@ class _SphereWallBound(TypedDict):
     maximum_distance: float
 
 
-def _carrier(part: MeshPart) -> CellMeshingResult:
-    carrier = part.carrier
-    if not isinstance(carrier, CellMeshingResult):
-        raise TypeError(
-            "The overset geometry fixture requires a certified cell-mesh producer."
-        )
-    return carrier
-
-
 def _part(
     name: str, mesh: CellMesh, geometry: CellGeometrySpec | None = None
 ) -> MeshPart:
@@ -71,7 +76,7 @@ def _part(
 
 
 def _boundary(part: MeshPart, *, inner: bool = False) -> MeshingScope:
-    mesh = _carrier(part).mesh
+    mesh = certified_carrier(part).mesh
     connectivity = mesh.connectivity
     if isinstance(connectivity, PolygonalConnectivity):
         mask = np.asarray(connectivity.boundary_edges)
@@ -99,7 +104,7 @@ def _boundary(part: MeshPart, *, inner: bool = False) -> MeshingScope:
             mask &= selected
     else:
         raise TypeError(
-            "The wall fixture requires two- or three-dimensional connectivity."
+            "part.carrier.mesh.connectivity must describe two- or three-dimensional cells; got unsupported connectivity."
         )
     return part.scope(
         mesh.ambient_dimension - 1,
@@ -168,7 +173,10 @@ def test_regular_mapped_family_uses_actual_inverse_and_scientific_ids(kind: str)
     (packet,) = connectivity.packets
     assert packet.donor_block == "mapped"
     np.testing.assert_array_equal(packet.donor_cell_rows, 0)
-    assert np.all(np.asarray(connectivity.receptors_of("receptor").residuals) < 1e-10)
+    assert np.all(
+        np.asarray(connectivity.receptors_of("receptor").residuals)
+        < _MAPPED_LOCATION_RESIDUAL
+    )
     assert not connectivity.assembly.couplings
 
 
@@ -196,7 +204,7 @@ def test_mixed_blocks_preserve_flat_ids_and_block_local_packet_routes() -> None:
         connectivity.blanking_of("mixed").cell_ids, [91, 84, 77, 70]
     )
     for packet in connectivity.packets:
-        block = _carrier(source).mesh.block(packet.donor_block)
+        block = certified_carrier(source).mesh.block(packet.donor_block)
         np.testing.assert_array_equal(packet.donor_cells, block.global_ids[0])
         np.testing.assert_array_equal(packet.donor_cell_rows, 0)
     assert {packet.donor_block for packet in connectivity.packets} == {
@@ -206,7 +214,7 @@ def test_mixed_blocks_preserve_flat_ids_and_block_local_packet_routes() -> None:
     assert isinstance(affine_overlay, OversetCoupling)
     assert affine_overlay.search_evidence is not None
     original_ids = np.concatenate(
-        [np.asarray(block.global_ids) for block in _carrier(source).mesh.blocks]
+        [np.asarray(block.global_ids) for block in certified_carrier(source).mesh.blocks]
     )
     np.testing.assert_array_equal(
         original_ids[np.asarray(affine_overlay.search_evidence.source_cells)], 70
@@ -263,8 +271,9 @@ def test_polyhedral_blocks_with_different_face_widths_keep_original_row_identity
 
 
 def test_closed_mapped_wall_classifies_beyond_its_affine_corner_hull() -> None:
+    from phydrax._meshcore import NativeExecutionScope
     from phydrax.discretization._view_support import mapped_mesh_support_geometry
-    from phydrax.meshing._overset import _part_geometry
+    from phydrax.meshing._overset import part_geometry
 
     reference = np.asarray(
         reference_cell_topology("hexahedron").vertices, dtype=np.float64
@@ -277,7 +286,9 @@ def test_closed_mapped_wall_classifies_beyond_its_affine_corner_hull() -> None:
         {"solid": element}, {"solid": np.arange(len(nodes))[None]}, nodes
     )
     body = _part("body", mesh, geometry)
-    owner = _part_geometry(body, OversetPartSpec(body.name), OversetPolicy(), None)
+    policy = OversetPolicy()
+    with NativeExecutionScope(policy.native_limits()) as scope:
+        owner = part_geometry(body, OversetPartSpec(body.name), policy, None, scope=scope)
     authority = mapped_mesh_support_geometry(owner.locators[0], "closed-curved-solid")
     background = _receptor([[0.45, 0.45, -0.03]])
     connectivity = prepare_overset_connectivity(
@@ -297,7 +308,9 @@ def test_closed_mapped_wall_classifies_beyond_its_affine_corner_hull() -> None:
     wall_owner = connectivity.geometries[connectivity.part_index(body.name)]
     wall_bvh = wall_owner.wall_bvh
     if wall_bvh is None:
-        raise ValueError("The declared mapped wall must publish its actual wall BVH.")
+        raise ValueError(
+            "wall_owner.wall_bvh must contain the mapped wall BVH; got None."
+        )
     assert np.min(np.asarray(wall_bvh.item_bbox_min)[:, 2]) < -0.03
 
 
@@ -329,6 +342,9 @@ def test_restricted_parent_coefficients_are_not_child_corner_geometry() -> None:
 
 
 def test_candidate_truncation_never_selects_an_unproven_mixed_donor() -> None:
+    from phydrax._meshcore import NativeExecutionScope
+    from phydrax.meshing._overset import coordinate_phase
+
     reference = np.asarray(
         reference_cell_topology("hexahedron").vertices, dtype=np.float64
     )
@@ -355,9 +371,17 @@ def test_candidate_truncation_never_selects_an_unproven_mixed_donor() -> None:
     specs = complete.specs
     index = complete.part_index("receptor")
     masks = tuple(jnp.ones(item.cell_ids.shape, dtype=jnp.bool_) for item in geometry)
-    selected = _resolve_donors(
-        np.asarray([[1.0, 0.5, 0.5]]), index, specs, geometry, masks, complete.policy
-    )
+    with NativeExecutionScope(complete.policy.native_limits()) as scope:
+        with coordinate_phase(scope=scope) as budget:
+            selected = resolve_donors(
+                np.asarray([[1.0, 0.5, 0.5]]),
+                index,
+                specs,
+                geometry,
+                masks,
+                complete.policy,
+                budget=budget,
+            )
     donor_geometry = geometry[complete.part_index(source.name)]
     expected = np.lexsort(
         (np.asarray(donor_geometry.cell_ids), np.asarray(donor_geometry.cell_measures))
@@ -367,14 +391,17 @@ def test_candidate_truncation_never_selects_an_unproven_mixed_donor() -> None:
         fringe_layers=1, location_policy=SimplicialLocationPolicy(1, 16, 1)
     )
     truncated = _register(source, receptor, policy=policy)
-    result = _resolve_donors(
-        np.asarray([[1.0, 0.5, 0.5]]),
-        index,
-        truncated.specs,
-        truncated.geometries,
-        masks,
-        policy,
-    )
+    with NativeExecutionScope(policy.native_limits()) as scope:
+        with coordinate_phase(scope=scope) as budget:
+            result = resolve_donors(
+                np.asarray([[1.0, 0.5, 0.5]]),
+                index,
+                truncated.specs,
+                truncated.geometries,
+                masks,
+                policy,
+                budget=budget,
+            )
     np.testing.assert_array_equal(
         result.status, int(CouplingSearchStatus.RESOURCE_EXCEEDED)
     )
@@ -428,7 +455,7 @@ def test_equal_mapped_parts_use_name_before_scientific_cell_id() -> None:
 
 
 def test_actual_candidate_capacity_honors_cell_count_and_hard_budget() -> None:
-    from phydrax.meshing._contracts import MeshingFailure, MeshingFailureCategory
+    from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
 
     reference = np.asarray(
         reference_cell_topology("hexahedron").vertices, dtype=np.float64
@@ -479,7 +506,7 @@ def _grid(values: Sequence[float], *, shell: bool = False) -> CellMesh:
 
 
 def _mapped_sphere_body() -> MeshPart:
-    """Actual quadratic shell source, not a vertex/chord interpolation surrogate."""
+    """Return a quadratic shell source with curved coordinate maps."""
     values = (-1.0, -0.6, -0.4, -0.2, 0.2, 0.4, 0.6, 1.0)
     mesh = _grid(values, shell=True)
     element = coordinate_lagrange_element("hexahedron", 2)
@@ -520,104 +547,84 @@ def _sphere_wall_bound(
     part: MeshPart,
     wall: MeshingScope,
     query: PreparedBRepQuery,
-    *,
-    subdivisions: int = 8,
 ) -> _SphereWallBound:
-    """Bound the whole polynomial wall's physical distance to its exact sphere."""
-    from phydrax.discretization._cell_geometry_validity import cell_geometry_id
-    from phydrax.discretization._coordinate_enclosure import (
-        add,
-        affine_arguments,
-        compose,
-        constant,
-        coordinate_polynomials,
-        multiply,
-        Polynomial,
-        polynomial_bounds,
-        restrict_coordinates,
-        sum_polynomials,
-    )
-    from phydrax.geometry.brep._patches import SpherePatch
-    from phydrax.meshing._overset import _facet_rows
-
-    if len(query.faces) != 1:
-        raise TypeError(
-            "The independent comparison authority must be the complete sphere."
-        )
+    """Bound the Q2 cube-face sphere interpolant using its closed-form radial norm."""
+    assert len(query.faces) == 1
     patch = query.faces[0].patch
-    if not isinstance(patch, SpherePatch):
-        raise TypeError(
-            "The independent comparison authority must be the complete sphere."
-        )
+    assert isinstance(patch, SpherePatch)
     center, radius = np.asarray(patch.center), float(patch.radius)
-    mesh = _carrier(part).mesh
-    elements, routes, coordinates = _carrier(part).geometry.resolve(mesh)
+    carrier = certified_carrier(part)
+    mesh = carrier.mesh
+    elements, routes, coordinates = carrier.geometry.resolve(mesh)
+    element = coordinate_lagrange_element("hexahedron", 2)
+    assert elements[0].element_id == element.element_id
+    connectivity = mesh.connectivity
+    assert isinstance(connectivity, HexahedralConnectivity)
+    face_ids = np.asarray(mesh.entity_set(2).entity_ids)
+    selected = {
+        tuple(sorted(face))
+        for face in np.asarray(connectivity.faces)[
+            np.isin(face_ids, np.asarray(wall.entity_ids))
+        ]
+    }
+    assert len(selected) == 6
     topology = reference_cell_topology("hexahedron")
-    selected = {tuple(sorted(row)) for row in _facet_rows(part, wall)}
-    bounds: list[float] = []
-    sources: dict[int, tuple[Polynomial, ...]] = {}
+    reference_nodes = np.asarray(element.reference_nodes)
+    samples = np.asarray(tuple(product((0.0, 0.5, 1.0), repeat=2)))
+    found = set()
+    # A translated source remains the same Q2 face interpolation. Verify every
+    # stored face node before applying the analytic inequality, so the bound
+    # cannot pass a wrong coordinate route or a perturbed midside coefficient.
+    rounding = 128 * np.finfo(np.float64).eps * max(radius, np.max(np.abs(center)))
     for cell, vertices in enumerate(np.asarray(mesh.blocks[0].vertices)):
         for facet in topology.entities[2]:
-            if tuple(sorted(vertices[list(facet)])) not in selected:
+            key = tuple(sorted(vertices[list(facet)]))
+            if key not in selected:
                 continue
-            if cell not in sources:
-                source = coordinate_polynomials(
-                    elements[0], np.asarray(coordinates)[np.asarray(routes[0])[cell]]
-                )
-                if source is None:
-                    raise ValueError(
-                        "The wall bound requires the actual polynomial coordinate source."
-                    )
-                sources[cell] = source
+            assert key not in found
+            found.add(key)
             reference = np.asarray(topology.vertices)[list(facet)]
-            axes = np.stack(
-                (reference[1] - reference[0], reference[3] - reference[0]), axis=1
+            sites = (
+                reference[0]
+                + samples[:, :1] * (reference[1] - reference[0])
+                + samples[:, 1:] * (reference[3] - reference[0])
             )
-            expressions = restrict_coordinates(
-                sources[cell], "hexahedron", reference[0], axes
+            node_rows = np.argmin(
+                np.sum((sites[:, None] - reference_nodes[None]) ** 2, axis=-1), axis=1
             )
-            if expressions is None:
-                raise ValueError(
-                    "The actual wall restriction must retain its polynomial coordinates."
-                )
-            relative = tuple(
-                add(value, constant(-Fraction.from_float(float(origin)), 2))
-                for value, origin in zip(expressions, center, strict=True)
+            np.testing.assert_array_equal(reference_nodes[node_rows], sites)
+            corners = np.asarray(mesh.coordinates)[vertices[list(facet)]] - center
+            logical = radius * np.sign(corners)
+            face_points = (
+                logical[0]
+                + samples[:, :1] * (logical[1] - logical[0])
+                + samples[:, 1:] * (logical[3] - logical[0])
             )
-            norm_squared = sum_polynomials(
-                tuple(multiply(value, value) for value in relative)
+            expected = center + radius * face_points / np.linalg.norm(
+                face_points, axis=1, keepdims=True
             )
-            error = 0.0
-            for i, j in product(range(subdivisions), repeat=2):
-                arguments = affine_arguments(
-                    np.asarray((i, j)) / subdivisions, np.eye(2) / subdivisions
-                )
-                lower, upper = polynomial_bounds(
-                    compose(norm_squared, arguments), "box", 2
-                )
-                radial_lower = np.nextafter(np.sqrt(max(0.0, lower)), -np.inf)
-                radial_upper = np.nextafter(np.sqrt(upper), np.inf)
-                error = float(
-                    max(
-                        error,
-                        np.nextafter(
-                            max(radius - radial_lower, radial_upper - radius), np.inf
-                        ),
-                    )
-                )
-            bounds.append(error)
-    if len(bounds) != len(selected):
-        raise ValueError("The bound must cover every declared wall facet exactly once.")
+            stored = np.asarray(coordinates)[np.asarray(routes[0])[cell, node_rows]]
+            np.testing.assert_allclose(stored, expected, rtol=0.0, atol=rounding)
+    assert found == selected
+    # On a unit cube face put t=u², s=v², T=t(1-t), S=s(1-s).
+    # The Q2 radial map is (1+a(t+s)+bts, u(c+ds), v(c+dt)),
+    # a=1/sqrt(2)-1, b=1+1/sqrt(3)-sqrt(2), c=1/sqrt(2),
+    # d=1/sqrt(3)-1/sqrt(2). Its squared norm minus one is
+    # -a²(T+S)+k(sT+tS)+b²TS, k=-2ab-d²-b².
+    # Here 0<=k<a²-b²/8, T,S<=1/4, and TS<=(T+S)/8.
+    # Thus 1-a²/2 <= |q|² <= 1 everywhere on the whole face.
+    a = 1 / np.sqrt(2.0) - 1
+    distance = radius * (1 - np.sqrt(1 - a * a / 2)) + rounding
     return {
         "part_id": part.part_id,
-        "geometry_id": cell_geometry_id(_carrier(part).geometry),
+        "geometry_id": cell_geometry_id(carrier.geometry),
         "solid_revision": query.source_revision,
-        "maximum_distance": max(bounds),
+        "maximum_distance": float(np.nextafter(distance, np.inf)),
     }
 
 
 def _sphere_query(center: tuple[float, float, float]) -> PreparedBRepQuery:
-    """Real native sphere authority; display realization is explicitly unrequested."""
+    """Prepare a native sphere query without requesting a display realization."""
     from phydrax.geometry.brep import (
         brep_sphere,
         BRepTessellationPolicy,
@@ -635,7 +642,7 @@ def _sphere_query(center: tuple[float, float, float]) -> PreparedBRepQuery:
 
 
 def test_native_sphere_wall_holes_protection_and_moving_donor_refresh() -> None:
-    """Curved BRep source classification on a chordal body; no exact-face fidelity claim."""
+    """Classify a chordal body against a curved BRep source."""
     query = _sphere_query((0.0, 0.0, 0.0))
     background = _part(
         "background", _grid((-1.6, -1.2, -0.8, -0.4, 0.0, 0.4, 0.8, 1.2, 1.6))
@@ -662,7 +669,7 @@ def test_native_sphere_wall_holes_protection_and_moving_donor_refresh() -> None:
     assert np.all(np.asarray(connectivity.receptors_of("background").found))
     moved_query = _sphere_query((0.3, 0.0, 0.0))
     moved = connectivity.moved(
-        {"body": _carrier(body).mesh.coordinates + jnp.asarray((0.3, 0.0, 0.0))},
+        {"body": certified_carrier(body).mesh.coordinates + jnp.asarray((0.3, 0.0, 0.0))},
         solid_queries={"body": moved_query},
     )
     moved.require_complete()
@@ -729,14 +736,16 @@ def test_quadratic_mapped_sphere_wall_fidelity_and_two_sided_motion() -> None:
         policy=OversetPolicy(fringe_layers=1),
     )
     connectivity.require_complete()
-    elements, routes, coordinates = _carrier(body).geometry.resolve(_carrier(body).mesh)
+    elements, routes, coordinates = certified_carrier(body).geometry.resolve(
+        certified_carrier(body).mesh
+    )
     shift = jnp.asarray((0.3, 0.0, 0.0))
     successor_geometry = CellGeometrySpec(
         {"hexes": elements[0]}, {"hexes": routes[0]}, coordinates + shift
     )
     moved_query = _sphere_query((0.3, 0.0, 0.0))
     moved = connectivity.moved(
-        {body.name: _carrier(body).mesh.coordinates + shift},
+        {body.name: certified_carrier(body).mesh.coordinates + shift},
         geometry={body.name: successor_geometry},
         solid_queries={body.name: moved_query},
     )
@@ -745,7 +754,7 @@ def test_quadratic_mapped_sphere_wall_fidelity_and_two_sided_motion() -> None:
     moved_wall = moved.specs[moved.part_index(body.name)].wall
     if moved_wall is None:
         raise ValueError(
-            "The successor sphere fixture must retain its declared wall scope."
+            "moved.specs.wall must retain the declared wall scope; got None."
         )
     moved_bound = _sphere_wall_bound(moved_body, moved_wall, moved_query)
     assert moved_bound["maximum_distance"] <= 0.01
@@ -809,13 +818,13 @@ def test_cubic_curved_donor_field_reproduction_and_motion_transpose() -> None:
         route = prepare_overset_field_transfer(registration, {source.name: field}, "u")
         rows = np.asarray(registration.receptors_of("receptor").receptor_rows)
         points = np.asarray(
-            _carrier(registration.assembly.part("receptor")).mesh.coordinates
+            certified_carrier(registration.assembly.part("receptor")).mesh.coordinates
         )[rows]
         output = route.apply(values)
         np.testing.assert_allclose(
             output["receptor"],
             points[:, 0] ** 3 - points[:, 0] ** 2 + 2 * points[:, 1],
-            atol=1e-11,
+            atol=_CUBIC_DONOR_ATOL,
         )
         cotangents = {
             name: jnp.arange(value.size, dtype=jnp.float64) + 1.0
@@ -827,7 +836,7 @@ def test_cubic_curved_donor_field_reproduction_and_motion_transpose() -> None:
             receptor = registration.assembly.part("receptor")
             registration = registration.moved(
                 {
-                    receptor.name: _carrier(receptor).mesh.coordinates
+                    receptor.name: certified_carrier(receptor).mesh.coordinates
                     + jnp.asarray([0.03, 0.02])
                 }
             )
@@ -857,4 +866,22 @@ def test_polyhedral_sliver_donor_keeps_exact_cell_identity_and_bounded_support()
     np.testing.assert_array_equal(evidence.donor_cells, 983)
     (packet,) = registration.packets
     np.testing.assert_array_equal(packet.donor_cell_rows, 0)
-    assert np.all(np.asarray(evidence.residuals) < 1e-10)
+    assert np.all(np.asarray(evidence.residuals) < _MAPPED_LOCATION_RESIDUAL)
+
+
+def test_sphere_wall_analytic_bound_rejects_perturbed_face_node() -> None:
+    body = _mapped_sphere_body()
+    carrier = certified_carrier(body)
+    elements, routes, coordinates = carrier.geometry.resolve(carrier.mesh)
+    changed = np.array(coordinates, copy=True)
+    rows = np.flatnonzero(np.all(changed == (0.2, 0.0, 0.0), axis=1))
+    assert rows.size == 1
+    # This perturbation remains far below the wall-fidelity request, but breaks
+    # the analytic interpolant assumptions; returning its unmodified bound is wrong.
+    changed[rows[0], 0] += 1.0e-4
+    geometry = CellGeometrySpec({"hexes": elements[0]}, {"hexes": routes[0]}, changed)
+    altered = _part(body.name, carrier.mesh, geometry)
+    with pytest.raises(AssertionError):
+        _sphere_wall_bound(
+            altered, _boundary(altered, inner=True), _sphere_query((0.0, 0.0, 0.0))
+        )

@@ -108,7 +108,7 @@ def test_discrete_space_ports_scenario_2() -> None:
         != _field("u", layout, representation="cell_average").value_port().port_id
     )
     assert port.port_id != _field("u", TensorDofLayout(("k",), (3,))).value_port().port_id
-    with pytest.raises(ValueError, match="'empty'"):
+    with pytest.raises(ValueError, match=r"DiscreteFieldSpace\.layout\.size"):
         _field("empty", EntityDofLayout("cells", 0, 0)).value_port()
 
 
@@ -189,7 +189,7 @@ def test_declared_form_degree_refuses_incompatible_vector_proxy_conformity(
     conformity: FieldConformity,
 ) -> None:
     form_type = FormType(4, 2, twist="untwisted")
-    with pytest.raises(ValueError, match="form degree"):
+    with pytest.raises(ValueError, match=r"DiscreteFieldSpace\.form_type\.degree"):
         DiscreteFieldSpace(
             "two-form",
             "four-dimensional-support",
@@ -202,7 +202,7 @@ def test_declared_form_degree_refuses_incompatible_vector_proxy_conformity(
 
 
 def test_generic_form_conformity_requires_declared_form_type() -> None:
-    with pytest.raises(ValueError, match="HLambda.*form_type"):
+    with pytest.raises(ValueError, match=r"DiscreteFieldSpace\.form_type.*HLambda"):
         DiscreteFieldSpace(
             "two-form",
             "mesh",

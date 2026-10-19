@@ -6,50 +6,56 @@
 
 from __future__ import annotations
 
+from typing import assert_never
+
 import jax
 import numpy as np
 
 from ..discretization._cell_geometry_validity import cell_geometry_id
-from ._adaptation import (
-    _RouteOutcome,
-    GeometryRealizationMeshAdaptation,
-    MeshAdaptationPolicy,
-    MeshAdaptationStatus,
-    PreparedMeshAdaptation,
-)
+from ..geometry._approximate_source_coverage import ApproximateSourceCoverageCertificate
+from ..geometry._domain_coverage import DomainCoverageCertificate
+from ..typing import checked
+from . import _adaptation as adaptation_owner
 from ._canonical import certify_cell_mesh
-from ._lineage import (
-    CellMeshTransition,
+from ._lineage import CellMeshTransition
+from ._lineage_records import (
     EntityLineage,
     EntityLineageKind,
     MeshLineage,
     MeshTransitionKind,
 )
-from ._organization import RegionMeshingEvidence
+from ._organization_records import RegionMeshingEvidence
 from ._result import CellMeshingResult
 
 
+@checked
 def validate_geometry_realization_adaptation(
     source: CellMeshingResult,
-    request: GeometryRealizationMeshAdaptation,
-    policy: MeshAdaptationPolicy,
+    request: adaptation_owner.GeometryRealizationMeshAdaptation,
+    policy: adaptation_owner.MeshAdaptationPolicy,
     /,
 ) -> None:
     if request.source_result_id != source.result_id:
-        raise ValueError("Geometry realization is stale for this exact source result.")
+        raise ValueError(
+            "request.source_result_id must match source.result_id; "
+            f"got {request.source_result_id!r}"
+        )
     correspondence = request.geometry_realization
     transition = correspondence.transition
     if transition.policy_id != policy.geometry_transition.policy_id:
         raise ValueError(
-            "Geometry realization must use the exact authored transition policy."
+            "geometry_realization.transition.policy_id must match policy.geometry_transition.policy_id; "
+            f"got {transition.policy_id!r}"
         )
     if transition.source_geometry_id != cell_geometry_id(source.geometry):
         raise ValueError(
-            "Geometry realization refers to a different source coordinate map."
+            "geometry_realization.transition.source_geometry_id must match source.geometry; "
+            f"got {transition.source_geometry_id!r}"
         )
     if policy.association_transfer is not None:
         raise ValueError(
-            "An accepted source realization already owns its source association/projection evidence."
+            "policy.association_transfer must be None for accepted source realization; "
+            f"got {type(policy.association_transfer).__name__}"
         )
     request.source_fidelity.binding.require(source.mesh, source.geometry)
     correspondence.source_embedding.binding.require(source.mesh, source.geometry)
@@ -60,7 +66,10 @@ def validate_geometry_realization_adaptation(
         correspondence.source_embedding.status != "certified"
         or correspondence.target_embedding.status != "certified"
     ):
-        raise ValueError("Source realization requires both actual physical embeddings.")
+        raise ValueError(
+            "geometry_realization.source_embedding.status must be certified along with target_embedding.status; "
+            f"got {correspondence.source_embedding.status!r}, {correspondence.target_embedding.status!r}"
+        )
     limits = policy.limits
     certificate_limits = request.certificate_limits
     work_upper = (
@@ -103,31 +112,56 @@ def validate_geometry_realization_adaptation(
     for name, upper, maximum in observations:
         if upper > maximum:
             raise ValueError(
-                f"Geometry realization exceeds its declared maximum_{name}: {upper} > {maximum}."
+                f"geometry_realization.{name} must not exceed limits.maximum_{name}={maximum}; got {upper}"
             )
     if source.region_evidence is not None:
-        coverage = request.realization.evidence.coverage
-        if (
-            coverage is None
-            or coverage.status != "certified"
-            or coverage.domain_id != source.region_evidence.domain.domain_id
-        ):
-            raise ValueError(
-                "Source realization requires actual renewed coverage of every material region/interface."
-            )
+        match request.realization.evidence.coverage:
+            case DomainCoverageCertificate() as coverage:
+                if (
+                    coverage.status != "certified"
+                    or coverage.domain_id != source.region_evidence.domain.domain_id
+                ):
+                    raise ValueError(
+                        "realization.evidence.coverage must certify source.region_evidence.domain; "
+                        f"got status={coverage.status!r}, domain_id={coverage.domain_id!r}"
+                    )
+            case ApproximateSourceCoverageCertificate():
+                raise ValueError(
+                    "GeometryRealizationMeshAdaptation.coverage must provide "
+                    "DomainCoverageCertificate evidence for material regions/interfaces; "
+                    "got ApproximateSourceCoverageCertificate."
+                )
+            case None:
+                raise ValueError(
+                    "realization.evidence.coverage must certify source.region_evidence.domain; got None"
+                )
+            case invalid:
+                assert_never(invalid)
 
 
 def _realized_region_evidence(
-    source: CellMeshingResult, request: GeometryRealizationMeshAdaptation, /
+    source: CellMeshingResult,
+    request: adaptation_owner.GeometryRealizationMeshAdaptation,
+    /,
 ) -> RegionMeshingEvidence | None:
     old = source.region_evidence
     if old is None:
         return None
-    coverage = request.realization.evidence.coverage
-    if coverage is None:
-        raise ValueError(
-            "The realized material domain lacks its actual coverage certificate."
-        )
+    match request.realization.evidence.coverage:
+        case DomainCoverageCertificate() as coverage:
+            pass
+        case ApproximateSourceCoverageCertificate():
+            raise ValueError(
+                "GeometryRealizationMeshAdaptation.coverage must provide "
+                "DomainCoverageCertificate evidence for material regions/interfaces; "
+                "got ApproximateSourceCoverageCertificate."
+            )
+        case None:
+            raise ValueError(
+                "realization.evidence.coverage must certify the realized material domain; got None"
+            )
+        case invalid:
+            assert_never(invalid)
     return RegionMeshingEvidence(
         source.mesh,
         request.realization.geometry,
@@ -140,17 +174,22 @@ def _realized_region_evidence(
         old.interface_facets,
         old.domain,
         coverage,
+        certificate_limits=request.certificate_limits,
     )
 
 
+@checked
 def execute_geometry_realization_route(
-    prepared: PreparedMeshAdaptation, /
-) -> _RouteOutcome:
-    request = prepared.request
-    if not isinstance(request, GeometryRealizationMeshAdaptation):
-        raise TypeError(
-            "Geometry realization execution requires its typed source-realized request."
-        )
+    prepared: adaptation_owner.PreparedMeshAdaptation, /
+) -> adaptation_owner.RouteOutcome:
+    match prepared.request:
+        case adaptation_owner.GeometryRealizationMeshAdaptation() as request:
+            pass
+        case invalid:
+            raise TypeError(
+                "prepared.request must be GeometryRealizationMeshAdaptation; "
+                f"got {type(invalid).__name__}"
+            )
     source = prepared.source
     validate_geometry_realization_adaptation(source, request, prepared.policy)
     entities = []
@@ -190,8 +229,8 @@ def execute_geometry_realization_route(
         MeshTransitionKind.GEOMETRY_REALIZATION,
         geometry_transition=request.geometry_realization.transition,
     )
-    return _RouteOutcome(
-        MeshAdaptationStatus.COMPLETE,
+    return adaptation_owner.RouteOutcome(
+        adaptation_owner.MeshAdaptationStatus.COMPLETE,
         target,
         transition,
         lineage,

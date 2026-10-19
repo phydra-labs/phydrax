@@ -15,6 +15,16 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax.meshing._contracts import (
+    MeshingDerivativeMode,
+    MeshingExecutionMode,
+    MeshingOperation,
+    MeshingProviderInfo,
+    MeshingSourceKind,
+    SurfaceMeshingSpec,
+)
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from ..._fingerprint import canonical_fingerprint
 from ..._identity import SemanticProvenance
 from ..._physical import SpatialCoordinateContract
@@ -25,17 +35,7 @@ from ...logging import emit
 from ...typing import checked
 from .._audit import CellMeshAuditPolicy
 from .._canonical import canonicalize_cell_mesh, certify_cell_mesh
-from .._contracts import (
-    MeshingDerivativeMode,
-    MeshingExecutionMode,
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingOperation,
-    MeshingProviderInfo,
-    MeshingSourceKind,
-    SurfaceMeshingSpec,
-)
-from .._organization import MeshAttribute, MeshAttributeRole
+from .._organization_records import MeshAttribute, MeshAttributeRole
 from .._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
 from .._scope import MeshingEntityKind, MeshingScope
 from .._trace import (

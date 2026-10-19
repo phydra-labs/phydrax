@@ -23,6 +23,7 @@ from phydrax.equations._mac_volume_fraction_ib_cfd_dem import (
     MACVolumeFractionIBCFDEMCouplingPlan,
 )
 from phydrax.solver._mac_volume_fraction_ib_cfd_dem import MACVolumeFractionIBState
+from phydrax.units import METER
 
 
 pytestmark = pytest.mark.strict_jax
@@ -674,7 +675,7 @@ def test_native_voxel_evaluation_error_is_retained_in_cut_enclosure() -> None:
     ).prepare(coordinates)
     analytic = phx.geometry.Sphere(
         (0.0, 0.0, 0.0), 0.23, feature_id="vf-voxel-error-sphere"
-    ).compile()
+    ).compile(coordinate_unit=METER)
     samples = phx.geometry.VoxelGeometrySamplingPlan(
         voxel,
         enclosure=phx.geometry.ExactSDFEnclosureCertificate(analytic.field_certificate),

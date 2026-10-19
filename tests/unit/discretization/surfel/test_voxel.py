@@ -54,6 +54,8 @@ def test_surfel_voxel_contracts() -> None:
     )
     prepared = plan.prepare(geometry)
     result = prepared.project(geometry, attributes=jnp.asarray(((4.0, -2.0),)))
+    if result.attributes is None:
+        raise RuntimeError("surfel projection.attributes must be present; got None")
     assert bool(result.successful)
     assert int(result.evidence.supported_voxels) > 0
     centers = grid.voxel_centers()

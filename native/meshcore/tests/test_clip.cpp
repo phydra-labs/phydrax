@@ -591,11 +591,28 @@ Cell3 box3(const double* lower, const double* upper, const std::vector<double>& 
   cell.labels.assign(face_capacity, 0);
   cell.loops.assign(face_vertex_capacity, -1);
   const int32_t planes = static_cast<int32_t>(offsets.size());
-  const int32_t call = phx_mc_clip_box_halfspaces(
-      1, lower, upper, planes, normals.data(), offsets.data(), &planes, vertex_capacity,
-      face_capacity, face_vertex_capacity, cell.vertices.data(), &cell.vertex_count,
-      cell.offsets.data(), cell.labels.data(), cell.loops.data(), &cell.face_count, &cell.volume,
-      cell.moment, &cell.status);
+  const phx_mc_clip_box_halfspaces_request request{
+      .count = 1,
+      .box_lower = lower,
+      .box_upper = upper,
+      .plane_capacity = planes,
+      .normals = normals.data(),
+      .offsets = offsets.data(),
+      .plane_counts = &planes,
+      .vertex_capacity = vertex_capacity,
+      .face_capacity = face_capacity,
+      .face_vertex_capacity = face_vertex_capacity,
+      .vertices = cell.vertices.data(),
+      .vertex_counts = &cell.vertex_count,
+      .face_offsets = cell.offsets.data(),
+      .face_labels = cell.labels.data(),
+      .face_vertices = cell.loops.data(),
+      .face_counts = &cell.face_count,
+      .volumes = &cell.volume,
+      .first_moments = cell.moment,
+      .item_status = &cell.status,
+  };
+  const int32_t call = phx_mc_clip_box_halfspaces(&request);
   PHX_CHECK(call == PHX_MC_OK);
   return cell;
 }
@@ -712,12 +729,50 @@ void test_box_halfspaces() {
   const double flat_upper[3] = {2.0, 2.0, 3.0};
   double v[24], vol = 0, m[3];
   int32_t vc = 0, fo[7], fl[6], fv[24], fc = 0, s = 0, zero = 0;
-  PHX_CHECK(phx_mc_clip_box_halfspaces(1, lower, flat_upper, 0, nullptr, nullptr, &zero, 8, 6, 24,
-                                       v, &vc, fo, fl, fv, &fc, &vol, m,
-                                       &s) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_clip_box_halfspaces(1, lower, upper, 0, nullptr, nullptr, &zero, 8, 0, 24, v,
-                                       &vc, fo, fl, fv, &fc, &vol, m,
-                                       &s) == PHX_MC_INVALID_ARGUMENT);
+  const phx_mc_clip_box_halfspaces_request invalid_box_request{
+      .count = 1,
+      .box_lower = lower,
+      .box_upper = flat_upper,
+      .plane_capacity = 0,
+      .normals = nullptr,
+      .offsets = nullptr,
+      .plane_counts = &zero,
+      .vertex_capacity = 8,
+      .face_capacity = 6,
+      .face_vertex_capacity = 24,
+      .vertices = v,
+      .vertex_counts = &vc,
+      .face_offsets = fo,
+      .face_labels = fl,
+      .face_vertices = fv,
+      .face_counts = &fc,
+      .volumes = &vol,
+      .first_moments = m,
+      .item_status = &s,
+  };
+  PHX_CHECK(phx_mc_clip_box_halfspaces(&invalid_box_request) == PHX_MC_INVALID_ARGUMENT);
+  const phx_mc_clip_box_halfspaces_request invalid_capacity_request{
+      .count = 1,
+      .box_lower = lower,
+      .box_upper = upper,
+      .plane_capacity = 0,
+      .normals = nullptr,
+      .offsets = nullptr,
+      .plane_counts = &zero,
+      .vertex_capacity = 8,
+      .face_capacity = 0,
+      .face_vertex_capacity = 24,
+      .vertices = v,
+      .vertex_counts = &vc,
+      .face_offsets = fo,
+      .face_labels = fl,
+      .face_vertices = fv,
+      .face_counts = &fc,
+      .volumes = &vol,
+      .first_moments = m,
+      .item_status = &s,
+  };
+  PHX_CHECK(phx_mc_clip_box_halfspaces(&invalid_capacity_request) == PHX_MC_INVALID_ARGUMENT);
 }
 
 void test_box_halfspaces_voronoi() {
@@ -984,9 +1039,49 @@ void test_exact_reference_halfplanes() {
     phx::mc::MemoryBudgetWindow parent_memory(16);
     phx::mc::MemoryScope scope(parent_memory.owner());
     PHX_CHECK(run(1 << 20, 10000) == PHX_MC_CAPACITY_EXCEEDED && count == 0);
-    PHX_CHECK(parent_memory.evidence()[5] > 0);
-    PHX_CHECK(parent_memory.evidence()[1] == 0);
+    PHX_CHECK(parent_memory.evidence()[PHX_MC_MEMORY_REFUSALS] > 0);
+    PHX_CHECK(parent_memory.evidence()[PHX_MC_MEMORY_LIVE_BYTES] == 0);
   }
+}
+
+void test_exact_reference_containment() {
+  std::array<std::int32_t, 18> coefficients = {-1, 0, 0, 0, -1, 0, 1, 1, 1,
+                                               -1, 0, 0, 0, -1, 0, 1, 1, 1};
+  std::array<std::uint32_t, 18> words{};
+  std::array<std::int64_t, 19> offsets{};
+  std::array<std::int8_t, 18> signs{};
+  std::array<std::int32_t, 12> supports{};
+  std::array<std::int32_t, 6> labels{};
+  std::int32_t count = -1;
+  std::int64_t work = -1;
+  auto run = [&](std::int64_t work_limit) {
+    std::int64_t size = 0;
+    for (std::size_t scalar = 0; scalar < coefficients.size(); ++scalar) {
+      const auto value = coefficients[scalar];
+      offsets[scalar] = size;
+      signs[scalar] = static_cast<std::int8_t>((value > 0) - (value < 0));
+      if (value != 0)
+        words[static_cast<std::size_t>(size++)] = static_cast<std::uint32_t>(std::abs(value));
+    }
+    offsets.back() = size;
+    return phx_mc_clip_reference_triangle_exact(words.data(), size, offsets.data(), signs.data(),
+                                                1 << 20, work_limit, 6, supports.data(),
+                                                labels.data(), &count, &work);
+  };
+  PHX_CHECK(run(15) == PHX_MC_OK && count == 3 && work == 15);
+  PHX_CHECK(
+      (std::array<std::int32_t, 6>{supports[0], supports[1], supports[2], supports[3], supports[4],
+                                   supports[5]} == std::array<std::int32_t, 6>{0, 1, 1, 2, 2, 0}));
+  PHX_CHECK(labels[0] == 1 && labels[1] == 2 && labels[2] == 0);
+  PHX_CHECK(run(14) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work == 0);
+  coefficients[11] = -1;
+  PHX_CHECK(run(81) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work == 1);
+  coefficients[9] = 2;
+  coefficients[11] = 1;
+  PHX_CHECK(run(81) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work == 3);
+  coefficients[9] = 0;
+  coefficients[10] = 2;
+  PHX_CHECK(run(81) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work == 5);
 }
 
 #include "reference_tetrahedron_clip_cases.inc"
@@ -1001,6 +1096,7 @@ int main() {
   test_polygon_call_status();
   test_box_halfplanes();
   test_exact_reference_halfplanes();
+  test_exact_reference_containment();
   test_exact_reference_tetrahedron_and_corner_closure();
   test_box_halfplanes_voronoi();
   test_tetrahedron_overlaps();

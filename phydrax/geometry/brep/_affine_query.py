@@ -2,11 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Exact constrained projection and parity of authored affine CAD faces.
+"""Project onto authored affine CAD faces and classify polygon-face parity.
 
-Binary-rational coefficient algebra cancels large source translations before
-any distance arithmetic. Placed operation trees are evaluated algebraically;
-no approximately orthogonal pose is replaced by its transpose as an inverse.
+Binary-rational coefficient algebra cancels source translations before
+distance arithmetic. Placed operation trees retain their coefficients;
+an approximately orthogonal map is not inverted by its transpose.
 """
 
 from __future__ import annotations
@@ -19,23 +19,25 @@ from fractions import Fraction
 import numpy as np
 
 from ..._bvh import PackedBVH
+from ..._strict import StrictModule
+from ..._validation import nonnegative_integer
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
 from ...linalg._small_batched import (
     ExactSmallLinearActions,
     prepare_exact_small_linear_actions,
 )
-from ._intersection_curve import _affine_curve_coefficients
-from ._model import BRepModel
-from ._patches import AbstractCurve, AbstractSurfacePatch, PlanePatch
+from ...typing import checked
+from .._rational import rational_cross, rational_dot, rational_vector
+from ._coordinate_request import coordinate_source_request
+from ._exact import square_root_interval
+from ._intersection_curve import affine_curve_coefficients
+from ._model import BRepGeometry, BRepModel
+from ._patches import AbstractCurve, AbstractSurfacePatch, ExtrusionSurface, PlanePatch
 from ._placed import PlacedSurface
 from ._root_bindings import BRepPlacedVertex
-from ._sphere_membership import _square_root_interval
 
 
 type Vector = tuple[Fraction, ...]
-
-
-def _vector(values: np.ndarray, /) -> Vector:
-    return tuple(Fraction(float(value)) for value in values)
 
 
 def _add(first: Vector, second: Vector, /) -> Vector:
@@ -50,25 +52,40 @@ def _scale(vector: Vector, factor: Fraction, /) -> Vector:
     return tuple(value * factor for value in vector)
 
 
-def _dot(first: Vector, second: Vector, /) -> Fraction:
-    return sum((a * b for a, b in zip(first, second, strict=True)), Fraction(0))
-
-
 def _plane(patch: AbstractSurfacePatch, /) -> tuple[Vector, Vector, Vector] | None:
-    if isinstance(patch, PlanePatch):
-        return (
-            _vector(np.asarray(patch.origin)),
-            _vector(np.asarray(patch.first_axis)),
-            _vector(np.asarray(patch.second_axis)),
-        )
-    if not isinstance(patch, PlacedSurface):
-        return None
-    source = _plane(patch.definition)
-    if source is None:
-        return None
-    rows = tuple(_vector(row) for row in np.asarray(patch.rotation))
-    mapped = tuple(tuple(_dot(row, value) for row in rows) for value in source)
-    return _add(mapped[0], _vector(np.asarray(patch.translation))), mapped[1], mapped[2]
+    match patch:
+        case PlanePatch():
+            return (
+                rational_vector(np.asarray(patch.origin)),
+                rational_vector(np.asarray(patch.first_axis)),
+                rational_vector(np.asarray(patch.second_axis)),
+            )
+        case ExtrusionSurface():
+            coefficients = affine_curve_coefficients(
+                patch.curve, np.zeros((3,), dtype=np.float64)
+            )
+            if coefficients is None:
+                return None
+            return (
+                coefficients[0],
+                coefficients[1],
+                rational_vector(np.asarray(patch.direction)),
+            )
+        case PlacedSurface():
+            source = _plane(patch.definition)
+            if source is None:
+                return None
+            rows = tuple(rational_vector(row) for row in np.asarray(patch.rotation))
+            mapped = tuple(
+                tuple(rational_dot(row, value) for row in rows) for value in source
+            )
+            return (
+                _add(mapped[0], rational_vector(np.asarray(patch.translation))),
+                mapped[1],
+                mapped[2],
+            )
+        case _:
+            return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +104,7 @@ class AffineFace:
     second_axis: Vector
     segments: tuple[AffineSegment, ...]
     projection_action: ExactSmallLinearActions
+    projection_coefficients: tuple[Vector, ...]
 
     def evaluate(self, uv: Vector, /) -> Vector:
         return _add(
@@ -96,10 +114,7 @@ class AffineFace:
 
     def projection(self, point: Vector, /) -> Vector:
         delta = _subtract(point, self.origin)
-        actions = self.projection_action.actions
-        if actions is None or not self.projection_action.successful:
-            raise RuntimeError("An affine face lost its native exact rank-two action.")
-        return tuple(_dot(row, delta) for row in actions)
+        return tuple(rational_dot(row, delta) for row in self.projection_coefficients)
 
     def trim(self, uv: Vector, /) -> tuple[bool, bool]:
         winding = 0
@@ -172,7 +187,7 @@ class QueryBroadphase:
                     )
                     for axis in range(3)
                 )
-                heapq.heappush(queue, (_dot(gap, gap), int(child)))
+                heapq.heappush(queue, (rational_dot(gap, gap), int(child)))
 
     def ray(self, point: Vector, direction: Vector, work: list[int], /) -> Iterator[int]:
         queue = [0]
@@ -200,75 +215,175 @@ class QueryBroadphase:
                 queue.extend((int(self.left[node]), int(self.right[node])))
 
 
+class _AffinePlane(StrictModule):
+    coefficients: tuple[Vector, Vector, Vector]
+    action: ExactSmallLinearActions
+    projection_coefficients: tuple[Vector, ...]
+    source_coefficients: tuple[Vector, Vector, Vector]
+
+
+class _AffineTrim(StrictModule):
+    segments: tuple[AffineSegment, ...]
+
+
+def _prepare_plane(
+    patch: AbstractSurfacePatch,
+    pose: tuple[np.ndarray, np.ndarray] | None,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> _AffinePlane | None:
+    plane = _plane(patch)
+    if plane is None:
+        return None
+    source_coefficients = plane
+    if pose is not None:
+        rows = tuple(rational_vector(row) for row in pose[0])
+        mapped = tuple(tuple(rational_dot(row, value) for row in rows) for value in plane)
+        plane = (_add(mapped[0], rational_vector(pose[1])), mapped[1], mapped[2])
+    gram = tuple(tuple(rational_dot(a, b) for b in plane[1:]) for a in plane[1:])
+    action = prepare_exact_small_linear_actions(gram, plane[1:], budget=budget)
+    coefficients = action.actions
+    if not action.successful or coefficients is None:
+        return None
+    return _AffinePlane(plane, action, coefficients, source_coefficients)
+
+
+def _affine_segment_agrees(
+    geometry: BRepGeometry,
+    edge: int,
+    parameters: tuple[Vector, Vector],
+    plane: tuple[Vector, Vector, Vector],
+    /,
+) -> bool:
+    carrier_index = geometry.edge_curves[edge]
+    if carrier_index < 0:
+        return False
+    match geometry.curves[carrier_index]:
+        case AbstractCurve() as curve:
+            source = affine_curve_coefficients(curve, np.zeros((3,), dtype=np.float64))
+        case _:
+            return False
+    if source is None:
+        return False
+    origin, first_axis, second_axis = plane
+    constant, derivative = parameters
+    expected = (
+        _add(
+            origin,
+            _add(_scale(first_axis, constant[0]), _scale(second_axis, constant[1])),
+        ),
+        _add(_scale(first_axis, derivative[0]), _scale(second_axis, derivative[1])),
+    )
+    return source == expected
+
+
+def _prepare_segment(
+    geometry: BRepGeometry,
+    coedge: int,
+    ranges: np.ndarray,
+    deviations: np.ndarray,
+    plane: tuple[Vector, Vector, Vector],
+    /,
+) -> AffineSegment | None:
+    edge = geometry.coedge_edges[coedge]
+    if any(root is not None for root in geometry.edge_endpoint_roots[edge]):
+        return None
+    for vertex in geometry.edge_vertices[edge]:
+        root = geometry.vertex_roots[vertex]
+        if root is not None:
+            match root.primary:
+                case BRepPlacedVertex(source_root=None):
+                    pass
+                case _:
+                    return None
+    match geometry.pcurves[coedge]:
+        case AbstractCurve() as pcurve:
+            coefficients = affine_curve_coefficients(
+                pcurve, np.zeros((2,), dtype=np.float64)
+            )
+        case _:
+            return None
+    if coefficients is None:
+        return None
+    # A positive numerical enclosure is not evidence of a nonzero gap.
+    # Admit it only when the authored coefficient equations prove zero gap.
+    if deviations[coedge] != 0.0 and not _affine_segment_agrees(
+        geometry, edge, coefficients, plane
+    ):
+        return None
+    first, last = rational_vector(ranges[edge])
+    if geometry.coedge_senses[coedge] < 0:
+        first, last = last, first
+    a, b = (
+        _add(coefficients[0], _scale(coefficients[1], parameter))
+        for parameter in (first, last)
+    )
+    return AffineSegment(a, b, edge, first, last)
+
+
+def _prepare_trim(
+    geometry: BRepGeometry,
+    index: int,
+    ranges: np.ndarray,
+    deviations: np.ndarray,
+    plane: tuple[Vector, Vector, Vector],
+    /,
+) -> _AffineTrim | None:
+    segments: list[AffineSegment] = []
+    for loop in geometry.face_loops[index]:
+        loop_start = len(segments)
+        for coedge in loop:
+            segment = _prepare_segment(geometry, coedge, ranges, deviations, plane)
+            if segment is None:
+                return None
+            segments.append(segment)
+        loop_segments = segments[loop_start:]
+        if any(
+            a.last != b.first
+            for a, b in zip(
+                loop_segments, (*loop_segments[1:], loop_segments[0]), strict=True
+            )
+        ):
+            return None
+    return _AffineTrim(tuple(segments)) if segments else None
+
+
+@checked
 def prepare_affine_faces(
     model: BRepModel,
     faces: tuple[int, ...],
     /,
     *,
     pose: tuple[np.ndarray, np.ndarray] | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[AffineFace, ...] | None:
-    """Admit only literal parameter endpoints and exact affine trim carriers."""
+    """Prepare affine face actions and closed polygon trims with literal endpoints."""
+    if budget is None:
+        with coordinate_source_request((model, faces)) as budget:
+            return prepare_affine_faces(model, faces, pose=pose, budget=budget)
     geometry = model.geometry
     if geometry is None:
         return None
     ranges = np.asarray(geometry.edge_ranges)
     deviations = np.asarray(model.coedge_deviation_bounds)
-    prepared = []
+    prepared: list[AffineFace] = []
     for index in faces:
-        plane = _plane(model.patches[index])
+        plane = _prepare_plane(model.patches[index], pose, budget)
         if plane is None:
             return None
-        if pose is not None:
-            rows = tuple(_vector(row) for row in pose[0])
-            mapped = tuple(tuple(_dot(row, value) for row in rows) for value in plane)
-            plane = (_add(mapped[0], _vector(pose[1])), mapped[1], mapped[2])
-        gram = tuple(tuple(_dot(a, b) for b in plane[1:]) for a in plane[1:])
-        action = prepare_exact_small_linear_actions(gram, plane[1:])
-        if not action.successful:
+        trim = _prepare_trim(
+            geometry, index, ranges, deviations, plane.source_coefficients
+        )
+        if trim is None:
             return None
-        segments = []
-        for loop in geometry.face_loops[index]:
-            loop_start = len(segments)
-            for coedge in loop:
-                edge = geometry.coedge_edges[coedge]
-                if deviations[coedge] != 0.0:
-                    return None
-                if any(root is not None for root in geometry.edge_endpoint_roots[edge]):
-                    return None
-                for vertex in geometry.edge_vertices[edge]:
-                    root = geometry.vertex_roots[vertex]
-                    if root is not None and (
-                        not isinstance(root.primary, BRepPlacedVertex)
-                        or root.primary.source_root is not None
-                    ):
-                        return None
-                pcurve = geometry.pcurves[coedge]
-                if not isinstance(pcurve, AbstractCurve):
-                    return None
-                coefficients = _affine_curve_coefficients(
-                    pcurve, np.zeros((2,), dtype=np.float64)
-                )
-                if coefficients is None:
-                    return None
-                first, last = _vector(ranges[edge])
-                if geometry.coedge_senses[coedge] < 0:
-                    first, last = last, first
-                a, b = (
-                    _add(coefficients[0], _scale(coefficients[1], parameter))
-                    for parameter in (first, last)
-                )
-                segments.append(AffineSegment(a, b, edge, first, last))
-            loop_segments = segments[loop_start:]
-            if any(
-                a.last != b.first
-                for a, b in zip(
-                    loop_segments, (*loop_segments[1:], loop_segments[0]), strict=True
-                )
-            ):
-                return None
-        if not segments:
-            return None
-        prepared.append(AffineFace(*plane, tuple(segments), action))
+        prepared.append(
+            AffineFace(
+                *plane.coefficients,
+                trim.segments,
+                plane.action,
+                plane.projection_coefficients,
+            )
+        )
     return tuple(prepared)
 
 
@@ -285,7 +400,7 @@ class AffineClosest:
 
     @property
     def distance_bounds(self) -> tuple[float, float]:
-        return _square_root_interval(self.squared_distance)
+        return square_root_interval(self.squared_distance)
 
 
 def closest_affine(
@@ -298,7 +413,7 @@ def closest_affine(
     /,
 ) -> AffineClosest:
     """Cover the full stationary set; prune only by conservative carrier boxes."""
-    query = _vector(point)
+    query = rational_vector(point)
     best: AffineClosest | None = None
     second: tuple[Fraction, Vector] | None = None
     operations = 0
@@ -321,7 +436,7 @@ def closest_affine(
         )
         if (
             best is not None
-            and _dot(gap, gap)
+            and rational_dot(gap, gap)
             > (Fraction(best.distance_bounds[1]) + Fraction(tolerance)) ** 2
         ):
             continue
@@ -336,11 +451,14 @@ def closest_affine(
             operations += 1
             start, stop = face.evaluate(segment.first), face.evaluate(segment.last)
             direction = _subtract(stop, start)
-            length = _dot(direction, direction)
+            length = rational_dot(direction, direction)
             fraction = (
                 min(
                     Fraction(1),
-                    max(Fraction(0), _dot(_subtract(query, start), direction) / length),
+                    max(
+                        Fraction(0),
+                        rational_dot(_subtract(query, start), direction) / length,
+                    ),
                 )
                 if length
                 else Fraction(0)
@@ -359,7 +477,7 @@ def closest_affine(
         for parameters, edge, edge_parameter in candidates:
             value = face.evaluate(parameters)
             delta = _subtract(value, query)
-            squared = _dot(delta, delta)
+            squared = rational_dot(delta, delta)
             if best is None or squared < best.squared_distance:
                 if best is not None and value != best.point:
                     second = best.squared_distance, best.point
@@ -390,10 +508,12 @@ def closest_affine(
         if best is not None:
             ceiling[0] = (Fraction(best.distance_bounds[1]) + Fraction(tolerance)) ** 2
     if best is None:
-        raise ValueError("An affine boundary must contain a nonempty trim.")
+        raise ValueError(
+            "affine_boundary.trim must be nonempty; got no closest candidate"
+        )
     ambiguous = (
         second is not None
-        and _square_root_interval(second[0])[0] <= best.distance_bounds[1] + tolerance
+        and square_root_interval(second[0])[0] <= best.distance_bounds[1] + tolerance
     )
     return AffineClosest(
         best.face,
@@ -407,48 +527,153 @@ def closest_affine(
     )
 
 
-def contains_affine(
+class AffineParity(StrictModule):
+    """Certified polygon-face parity and bounded-work refusal evidence."""
+
+    inside: bool
+    complete: bool
+    crossings: int
+    operations: int
+    unresolved_faces: tuple[int, ...]
+    resource_exhausted: bool
+
+
+@dataclass
+class _ParityWork:
+    maximum: int | None
+    operations: int = 0
+
+    def charge(self, amount: int = 1) -> bool:
+        if self.maximum is not None and self.operations + amount > self.maximum:
+            return False
+        self.operations += amount
+        return True
+
+
+class _ParityPreparation(StrictModule):
+    normals: tuple[Vector, ...]
+    constraints: tuple[Vector, ...]
+    unresolved_faces: tuple[int, ...]
+    exhausted: bool
+
+
+def _prepare_parity(
+    query: Vector,
+    faces: tuple[AffineFace, ...],
+    indices: tuple[int, ...],
+    work: _ParityWork,
+    /,
+) -> _ParityPreparation:
+    normals: list[Vector] = []
+    constraints: list[Vector] = []
+    for source, face in zip(indices, faces, strict=True):
+        if not work.charge():
+            return _ParityPreparation(tuple(normals), tuple(constraints), (source,), True)
+        normal = rational_cross(face.first_axis, face.second_axis)
+        normals.append(normal)
+        constraints.append(normal)
+        if rational_dot(normal, _subtract(face.origin, query)) == 0:
+            if not work.charge(1 + len(face.segments)):
+                return _ParityPreparation(
+                    tuple(normals), tuple(constraints), (source,), True
+                )
+            inside, _ = face.trim(face.projection(query))
+            if inside:
+                return _ParityPreparation(
+                    tuple(normals), tuple(constraints), (source,), False
+                )
+        for segment in face.segments:
+            if not work.charge():
+                return _ParityPreparation(
+                    tuple(normals), tuple(constraints), (source,), True
+                )
+            first = _subtract(face.evaluate(segment.first), query)
+            last = _subtract(face.evaluate(segment.last), query)
+            edge_plane = rational_cross(first, last)
+            # A collinear query and edge already lie in their face plane; a
+            # transverse ray can meet that line only at the boundary query.
+            if any(edge_plane):
+                constraints.append(edge_plane)
+    return _ParityPreparation(tuple(normals), tuple(constraints), (), False)
+
+
+def _parity_direction(
+    constraints: tuple[Vector, ...], work: _ParityWork, /
+) -> Vector | None:
+    # Each nonzero n·(1,k,k²) has at most two roots. This finite candidate
+    # count admits a transverse ray that misses every edge and vertex.
+    for k in range(1, 2 * len(constraints) + 2):
+        direction = (Fraction(1), Fraction(k), Fraction(k * k))
+        admitted = True
+        for normal in constraints:
+            if not work.charge():
+                return None
+            if rational_dot(normal, direction) == 0:
+                admitted = False
+                break
+        if admitted:
+            return direction
+    raise RuntimeError(
+        "affine_parity.direction must avoid finitely many degree-two roots; got no admitted candidate"
+    )
+
+
+def certify_affine_parity(
     point: np.ndarray,
     faces: tuple[AffineFace, ...],
-    broadphase: QueryBroadphase,
     indices: tuple[int, ...],
     /,
-) -> tuple[bool, bool, int]:
-    """Complete exact ray parity; edge/tangent coincidences remain unresolved."""
-    query = _vector(point)
-    operations = 0
-    work = [0]
-    selected = {source: local for local, source in enumerate(indices)}
-    for values in ((1, 317, 613), (487, 1000, 293), (211, 719, 1000)):
-        direction = tuple(Fraction(value) for value in values)
-        crossings: set[Fraction] = set()
-        unresolved = False
-        for source in broadphase.ray(query, direction, work):
-            if source not in selected:
-                continue
-            face = faces[selected[source]]
-            operations += 1
-            a, b = face.first_axis, face.second_axis
-            normal = (
-                a[1] * b[2] - a[2] * b[1],
-                a[2] * b[0] - a[0] * b[2],
-                a[0] * b[1] - a[1] * b[0],
+    *,
+    maximum_operations: int | None = None,
+) -> AffineParity:
+    """Classify a nonboundary query by half-open polygon-face parity.
+
+    Integer directions avoid every face tangent and query-edge plane. Polygon
+    trim winding uses half-open edge intervals; crossing distances are counted
+    once across shared faces. Boundary queries and exhausted work remain
+    unresolved. The direction search has a finite degree-two exclusion bound.
+    """
+    if maximum_operations is not None:
+        maximum_operations = nonnegative_integer(
+            maximum_operations, "affine_parity.maximum_operations"
+        )
+    query = rational_vector(point)
+    work = _ParityWork(maximum_operations)
+    preparation = _prepare_parity(query, faces, indices, work)
+    if preparation.unresolved_faces:
+        return AffineParity(
+            False,
+            False,
+            0,
+            work.operations,
+            preparation.unresolved_faces,
+            preparation.exhausted,
+        )
+    direction = _parity_direction(preparation.constraints, work)
+    if direction is None:
+        return AffineParity(False, False, 0, work.operations, indices, True)
+    crossings: set[Fraction] = set()
+    for source, face, normal in zip(indices, faces, preparation.normals, strict=True):
+        if not work.charge():
+            return AffineParity(
+                False, False, len(crossings), work.operations, (source,), True
             )
-            denominator = _dot(normal, direction)
-            numerator = _dot(normal, _subtract(face.origin, query))
-            if denominator == 0:
-                unresolved |= numerator == 0
-                continue
-            parameter = numerator / denominator
-            if parameter < 0:
-                continue
-            uv = face.projection(_add(query, _scale(direction, parameter)))
-            operations += 1
-            operations += len(face.segments)
-            inside, boundary = face.trim(uv)
-            if inside:
-                unresolved |= boundary or parameter == 0 or parameter in crossings
-                crossings.add(parameter)
-        if not unresolved:
-            return bool(len(crossings) % 2), True, operations + work[0]
-    return False, False, operations + work[0]
+        numerator = rational_dot(normal, _subtract(face.origin, query))
+        parameter = numerator / rational_dot(normal, direction)
+        if parameter <= 0:
+            continue
+        if not work.charge(1 + len(face.segments)):
+            return AffineParity(
+                False, False, len(crossings), work.operations, (source,), True
+            )
+        uv = face.projection(_add(query, _scale(direction, parameter)))
+        inside, boundary = face.trim(uv)
+        if boundary:
+            raise RuntimeError(
+                "affine_parity.direction must miss trim boundaries; got an edge crossing"
+            )
+        if inside:
+            crossings.add(parameter)
+    return AffineParity(
+        bool(len(crossings) % 2), True, len(crossings), work.operations, (), False
+    )

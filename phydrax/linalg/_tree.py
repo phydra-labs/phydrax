@@ -25,9 +25,9 @@ from .._trainable import NonTrainableState
 from ..typing import checked
 from ._operators import (
     _AbstractCostedLinearOperator,
-    _generic_adjoint,
     _id,
     _validate_action_dtype,
+    generic_adjoint,
 )
 from ._properties import OperatorCapabilities, OperatorProperties
 from ._spaces import AbstractVectorSpace, ArraySpace
@@ -152,7 +152,7 @@ class TreeLinearOperator(_AbstractCostedLinearOperator):
         return self.source.unflatten(self._action(value, self.upper, self.lower))
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         children = self.topology.elimination_order

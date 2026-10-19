@@ -1,62 +1,87 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Source-stratified native CDT images with explicit quotient construction witnesses."""
+"""Construct source-stratified native CDT images and their quotient evidence."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from fractions import Fraction
 from itertools import product
 from math import ceil, floor
+from typing import final
 
 import numpy as np
+
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.discretization._periodic_cell as periodic_cell_owner
+import phydrax.geometry._affine_mapped_contact as affine_mapped_contact_owner
+from phydrax.geometry._rational import dyadic_integers
+from phydrax.meshing._contracts import MeshingLimits
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
 
 from ..._meshcore import (
     constrained_delaunay_2d,
     MeshcoreStatus,
+    NativeExecutionScope,
     NativeResourceFailure,
     PlanarExecutionEvidence,
 )
-from ...discretization import CellMesh, PeriodicCell
-from ...geometry._mesh_certificates import _dyadic_integers
-from .._contracts import MeshingFailure, MeshingFailureCategory, MeshingLimits
+from ..._strict import StrictModule
+from ...typing import checked
+from .. import _periodic as periodic_owner
 from .._controls import ProtectedFeature
-from .._periodic import (
-    _edge_key,
-    _interiors_overlap,
-    _quotient_simplices,
-    _require_periodic_topology,
-    _simplex_entity_corners,
-)
 
 
-@dataclass(frozen=True, slots=True)
-class PeriodicSourceStrata:
+@final
+class PeriodicSourceStrata(StrictModule):
     points: np.ndarray
     cells: np.ndarray
     shifts: np.ndarray
     regions: np.ndarray
     edges: np.ndarray
-    cell: PeriodicCell
+    cell: periodic_cell_owner.PeriodicCell
     block_name: str
     protected_vertices: np.ndarray
 
+    @checked
+    def __init__(
+        self,
+        points: np.ndarray,
+        cells: np.ndarray,
+        shifts: np.ndarray,
+        regions: np.ndarray,
+        edges: np.ndarray,
+        cell: periodic_cell_owner.PeriodicCell,
+        block_name: str,
+        protected_vertices: np.ndarray,
+    ) -> None:
+        self.points, self.cells, self.shifts = points, cells, shifts
+        self.regions, self.edges, self.cell = regions, edges, cell
+        self.block_name, self.protected_vertices = block_name, protected_vertices
 
+
+@checked
 def prepare_periodic_source_strata(
-    mesh: CellMesh, regions: np.ndarray, features: tuple[ProtectedFeature, ...], /
+    mesh: cell_mesh_owner.CellMesh,
+    regions: np.ndarray,
+    features: tuple[ProtectedFeature, ...],
+    /,
 ) -> PeriodicSourceStrata:
     """Protect declared source edges and every material-interface edge orbit."""
-    points, cells, shifts, cell, name = _quotient_simplices(mesh)
+    points, cells, shifts, cell, name = periodic_owner.quotient_simplices(mesh)
     if mesh.topological_dimension != 2:
-        raise ValueError("Source-stratified periodic CDT requires triangles.")
-    periodic = _require_periodic_topology(mesh)
+        raise ValueError(
+            "periodic.strata.mesh must contain triangles; got a different topological dimension"
+        )
+    periodic = periodic_owner.require_periodic_topology(mesh)
     roots = np.asarray(periodic.vertex_representatives, dtype=np.int64)
     _, local = np.unique(roots, return_inverse=True)
-    rows = _simplex_entity_corners(mesh, 1)
+    rows = periodic_owner.simplex_entity_corners(mesh, 1)
     images = np.asarray(periodic.vertex_shifts, dtype=np.int64)
     keys = [
-        _edge_key(int(local[first]), images[first], int(local[second]), images[second])[0]
+        periodic_owner.edge_key(
+            int(local[first]), images[first], int(local[second]), images[second]
+        )[0]
         for first, second in rows
     ]
     selected: set[tuple[int, ...]] = set()
@@ -76,7 +101,7 @@ def prepare_periodic_source_strata(
     material: dict[tuple[int, ...], set[int]] = {}
     for vertices, corner_shifts, region in zip(cells, shifts, regions, strict=True):
         for first, second in ((0, 1), (0, 2), (1, 2)):
-            key = _edge_key(
+            key = periodic_owner.edge_key(
                 int(vertices[first]),
                 corner_shifts[first],
                 int(vertices[second]),
@@ -90,6 +115,7 @@ def prepare_periodic_source_strata(
     )
 
 
+@checked
 def periodic_source_seed_points(
     strata: PeriodicSourceStrata,
     target_size: float,
@@ -111,7 +137,7 @@ def periodic_source_seed_points(
             if len(points) + pieces - 1 > maximum_vertices:
                 raise MeshingFailure(
                     MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                    "Periodic source-feature subdivision exceeds its vertex budget.",
+                    "periodic.strata.subdivision.vertices must fit the declared vertex budget; got a request beyond the budget",
                 )
         for numerator in range(1, pieces):
             parameter = numerator / pieces
@@ -124,7 +150,9 @@ def _rational_dual(vectors: np.ndarray, /) -> tuple[tuple[Fraction, Fraction], .
     c, d = (Fraction(float(value)) for value in vectors[1])
     determinant = a * d - b * c
     if determinant == 0:
-        raise ValueError("Periodic source lattice is singular.")
+        raise ValueError(
+            "periodic.strata.lattice must be nonsingular; got a zero determinant"
+        )
     return ((d / determinant, -b / determinant), (-c / determinant, a / determinant))
 
 
@@ -144,7 +172,7 @@ class PeriodicConstructionImageBudgetError(MeshingFailure):
         self.work_units = 0
         super().__init__(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Periodic constrained construction exceeds its image budget.",
+            "periodic.strata.images must fit the declared image budget; got a request beyond the budget",
             requested=(("maximum_images", maximum),),
             achieved=(("required_images_lower_bound", required),),
         )
@@ -157,7 +185,7 @@ def _constraint_images(
     maximum_images: int,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Include every site and constraint intersecting the exact fractional box."""
+    """Include every site and constraint intersecting the rational fractional box."""
     vectors = np.asarray(strata.cell.vectors, dtype=np.float64)
     dual = _rational_dual(vectors)
     fractional = [
@@ -201,7 +229,7 @@ def _constraint_images(
         if len(bounds[0]) * len(bounds[1]) > maximum_images:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Periodic constraint images exceed their bounded neighborhood.",
+                "periodic.strata.constraint_images must fit the image neighborhood budget; got a request beyond the budget",
             )
         for x, y in product(*bounds):
             segments.append(
@@ -224,8 +252,8 @@ def _quotient_image_cells(
     vectors: np.ndarray,
     margin: Fraction,
     /,
-) -> tuple[np.ndarray, np.ndarray, bool]:
-    """Select one local lift and prove its exact circumball clears the image box."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
+    """Select one local lift and prove its rational circumball clears the image box."""
     dual = _rational_dual(vectors)
     point_values = [
         (Fraction(float(point[0])), Fraction(float(point[1]))) for point in points
@@ -235,8 +263,9 @@ def _quotient_image_cells(
     ]
     cells: list[np.ndarray] = []
     shifts: list[np.ndarray] = []
+    selected: list[int] = []
     complete = True
-    for native in native_cells:
+    for index, native in enumerate(native_cells):
         vertices, exponents = roots[native], images[native]
         corners = [
             (
@@ -266,7 +295,7 @@ def _quotient_image_cells(
         if determinant <= 0:
             raise MeshingFailure(
                 MeshingFailureCategory.AUDIT_FAILED,
-                "Native constrained cell lacks a positive scientific quotient lift.",
+                "periodic.strata.cell_lift must have positive orientation; got a nonpositive determinant",
             )
         first, second = (
             sum(value * value for value in u) / 2,
@@ -286,16 +315,22 @@ def _quotient_image_cells(
             complete &= distance > 0 and distance * distance > support_squared
         cells.append(vertices)
         shifts.append(exponents)
+        selected.append(index)
     if not cells:
         raise MeshingFailure(
             MeshingFailureCategory.AUDIT_FAILED,
-            "Constrained periodic construction has no fundamental-cell representative.",
+            "periodic.strata.construction must retain a fundamental-cell representative; got no selected cells",
         )
-    return np.asarray(cells, dtype=np.int64), np.asarray(shifts, dtype=np.int64), complete
+    return (
+        np.asarray(cells, dtype=np.int64),
+        np.asarray(shifts, dtype=np.int64),
+        np.asarray(selected, dtype=np.int64),
+        complete,
+    )
 
 
-@dataclass(frozen=True, slots=True)
-class PeriodicStratifiedTriangulation:
+@final
+class PeriodicStratifiedTriangulation(StrictModule):
     simplices: np.ndarray
     simplex_shifts: np.ndarray
     image_count: int
@@ -303,7 +338,24 @@ class PeriodicStratifiedTriangulation:
     protected_vertices: np.ndarray
     protected_edges: tuple[tuple[int, ...], ...]
 
+    def __init__(
+        self,
+        simplices: np.ndarray,
+        simplex_shifts: np.ndarray,
+        image_count: int,
+        work_units: int,
+        protected_vertices: np.ndarray,
+        protected_edges: tuple[tuple[int, ...], ...],
+    ) -> None:
+        self.simplices, self.simplex_shifts = simplices, simplex_shifts
+        self.image_count, self.work_units = image_count, work_units
+        self.protected_vertices, self.protected_edges = (
+            protected_vertices,
+            protected_edges,
+        )
 
+
+@checked
 def bind_periodic_source_strata(
     points: np.ndarray,
     cells: np.ndarray,
@@ -311,69 +363,80 @@ def bind_periodic_source_strata(
     strata: PeriodicSourceStrata,
     maximum_work: int,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> tuple[np.ndarray, tuple[tuple[int, ...], ...], int]:
-    """Exact positive-area overlaps bind every target to its authored material stratum."""
-    vectors = np.asarray(strata.cell.vectors, dtype=np.float64)
-    integers, _ = _dyadic_integers(np.concatenate((points, strata.points, vectors)))
-    point_count = points.shape[0]
-    first = integers[:point_count]
-    original = integers[point_count:-2]
-    lattice = integers[-2:]
-    target = first[cells] + shifts @ lattice
-    source = original[strata.cells] + strata.shifts @ lattice
-    dual = _rational_dual(vectors)
-    actual_target = points[cells] + shifts @ vectors
-    actual_source = strata.points[strata.cells] + strata.shifts @ vectors
-    fractional_target = actual_target @ np.asarray(
-        [[float(value) for value in row] for row in dual]
-    )
-    fractional_source = actual_source @ np.asarray(
-        [[float(value) for value in row] for row in dual]
-    )
-    ancestry: list[tuple[int, ...]] = []
-    regions = []
-    work = 0
-    for triangle, fractional in zip(target, fractional_target, strict=True):
-        members: set[int] = set()
-        for parent, (source_triangle, source_fractional) in enumerate(
-            zip(source, fractional_source, strict=True)
-        ):
-            lower = (
-                np.floor(
-                    np.min(fractional, axis=0) - np.max(source_fractional, axis=0)
-                ).astype(np.int64)
-                - 1
-            )
-            upper = (
-                np.ceil(
-                    np.max(fractional, axis=0) - np.min(source_fractional, axis=0)
-                ).astype(np.int64)
-                + 1
-            )
-            for image in product(
-                *(range(int(a), int(b) + 1) for a, b in zip(lower, upper, strict=True))
+    """Positive-area overlaps evaluated with exact arithmetic bind every target to its authored material stratum."""
+    with scope.batch(min(maximum_work, scope.remaining().remaining_work_units)) as ticket:
+        vectors = np.asarray(strata.cell.vectors, dtype=np.float64)
+        integers, _ = dyadic_integers(np.concatenate((points, strata.points, vectors)))
+        point_count = points.shape[0]
+        first = integers[:point_count]
+        original = integers[point_count:-2]
+        lattice = integers[-2:]
+        target = first[cells] + shifts @ lattice
+        source = original[strata.cells] + strata.shifts @ lattice
+        dual = _rational_dual(vectors)
+        actual_target = points[cells] + shifts @ vectors
+        actual_source = strata.points[strata.cells] + strata.shifts @ vectors
+        fractional_target = actual_target @ np.asarray(
+            [[float(value) for value in row] for row in dual]
+        )
+        fractional_source = actual_source @ np.asarray(
+            [[float(value) for value in row] for row in dual]
+        )
+        ancestry: list[tuple[int, ...]] = []
+        regions = []
+        work = 0
+        for triangle, fractional in zip(target, fractional_target, strict=True):
+            members: set[int] = set()
+            for parent, (source_triangle, source_fractional) in enumerate(
+                zip(source, fractional_source, strict=True)
             ):
-                work += 1
-                if work > maximum_work:
-                    raise MeshingFailure(
-                        MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                        "Periodic source-stratum certification exceeds its work budget.",
+                lower = (
+                    np.floor(
+                        np.min(fractional, axis=0) - np.max(source_fractional, axis=0)
+                    ).astype(np.int64)
+                    - 1
+                )
+                upper = (
+                    np.ceil(
+                        np.max(fractional, axis=0) - np.min(source_fractional, axis=0)
+                    ).astype(np.int64)
+                    + 1
+                )
+                for image in product(
+                    *(
+                        range(int(a), int(b) + 1)
+                        for a, b in zip(lower, upper, strict=True)
                     )
-                if _interiors_overlap(
-                    triangle, source_triangle + np.asarray(image, dtype=object) @ lattice
                 ):
-                    members.add(parent)
-        material = np.unique(strata.regions[sorted(members)])
-        if material.size != 1:
-            raise MeshingFailure(
-                MeshingFailureCategory.COMPLIANCE_FAILED,
-                "A constrained periodic cell crosses or loses an authored material stratum.",
-            )
-        regions.append(material[0])
-        ancestry.append(tuple(sorted(members)))
-    return np.asarray(regions, dtype=np.int64), tuple(ancestry), work
+                    work += 1
+                    if work > maximum_work:
+                        raise MeshingFailure(
+                            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                            "periodic.strata.certification.work must fit the declared work budget; got a request beyond the budget",
+                        )
+                    if ticket.remaining_work_units < 1:
+                        ticket.refuse(work)
+                    ticket.consume(1)
+                    if affine_mapped_contact_owner.interiors_overlap(
+                        triangle,
+                        source_triangle + np.asarray(image, dtype=object) @ lattice,
+                    ):
+                        members.add(parent)
+            material = np.unique(strata.regions[sorted(members)])
+            if material.size != 1:
+                raise MeshingFailure(
+                    MeshingFailureCategory.COMPLIANCE_FAILED,
+                    "periodic.strata.cell_regions must resolve one authored material stratum per cell; got absent or multiple material strata",
+                )
+            regions.append(material[0])
+            ancestry.append(tuple(sorted(members)))
+        return np.asarray(regions, dtype=np.int64), tuple(ancestry), work
 
 
+@checked
 def triangulate_periodic_source_strata(
     points: np.ndarray,
     strata: PeriodicSourceStrata,
@@ -381,15 +444,17 @@ def triangulate_periodic_source_strata(
     maximum_images: int,
     maximum_work: int,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> PeriodicStratifiedTriangulation:
-    """Native constrained triangulation; no scientific identity is reconstructed from coordinates."""
+    """Construct quotient cells while retaining input-vertex and protected-edge IDs."""
     vectors = np.asarray(strata.cell.vectors, dtype=np.float64)
     margin, work = Fraction(1, 4), 0
     while True:
         if work >= maximum_work:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Periodic constrained construction exhausts its shared work budget.",
+                "periodic.strata.construction.work must fit the shared work budget; got an exhausted work budget",
             )
         try:
             lifted, roots, images, segments = _constraint_images(
@@ -400,7 +465,7 @@ def triangulate_periodic_source_strata(
             raise
         evidence: list[PlanarExecutionEvidence] = []
         try:
-            _, native_cells, vertex_map, cell_segments, status = constrained_delaunay_2d(
+            native = constrained_delaunay_2d(
                 lifted,
                 segments,
                 keep_convex_hull=True,
@@ -411,9 +476,25 @@ def triangulate_periodic_source_strata(
                 max_scratch_bytes=limits.maximum_scratch_bytes,
                 record_native_resources=evidence.append,
             )
+            native_cells = native.triangles
+            vertex_map = native.vertex_map
+            cell_segments = native.segment_ids
+            status = native.status
         except NativeResourceFailure as error:
             raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED, str(error)
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                str(error),
+                achieved=(
+                    ("native_status", float(error.status)),
+                    *tuple(
+                        (f"native_execution:{index}", float(value))
+                        for index, value in enumerate(error.work_evidence)
+                    ),
+                    *tuple(
+                        (f"native_memory:{name}", float(value))
+                        for name, value in error.memory_counters.items()
+                    ),
+                ),
             ) from error
         work += int(evidence[0].work_evidence[0])
         if status is not MeshcoreStatus.OK or not np.array_equal(
@@ -421,36 +502,40 @@ def triangulate_periodic_source_strata(
         ):
             raise MeshingFailure(
                 MeshingFailureCategory.AUDIT_FAILED,
-                "Native constrained source images lack a complete input-identity witness.",
+                "periodic.strata.native_result must succeed and retain every input vertex once; got a failed status or invalid vertex map",
             )
         inverse = np.empty_like(vertex_map)
         inverse[vertex_map] = np.arange(vertex_map.size)
-        cells, shifts, complete = _quotient_image_cells(
-            points,
-            inverse[native_cells],
-            roots,
-            images,
-            vectors,
-            margin,
-        )
+        with scope.batch(native_cells.shape[0]) as ticket:
+            ticket.consume(native_cells.shape[0])
+            cells, shifts, selected, complete = _quotient_image_cells(
+                points,
+                inverse[native_cells],
+                roots,
+                images,
+                vectors,
+                margin,
+            )
         work += native_cells.shape[0]
         if work > maximum_work:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Periodic constrained image certification exceeds its work budget.",
+                "periodic.strata.image_certification.work must fit the declared work budget; got a request beyond the budget",
             )
         if complete:
             protected = np.zeros(points.shape[0], dtype=np.bool_)
             protected[: strata.points.shape[0]] = strata.protected_vertices
             protected_edges: set[tuple[int, ...]] = set()
             for opposite in range(3):
-                rows = native_cells[cell_segments[:, opposite] >= 0]
+                # Covering-box boundary segments can omit an interior subdivision.
+                # Only the selected quotient cells define the current edge bank.
+                rows = native_cells[selected][cell_segments[selected, opposite] >= 0]
                 corners = ((opposite + 1) % 3, (opposite + 2) % 3)
                 protected[roots[inverse[rows[:, corners]]]] = True
                 for row in inverse[rows]:
                     first, second = row[corners[0]], row[corners[1]]
                     protected_edges.add(
-                        _edge_key(
+                        periodic_owner.edge_key(
                             int(roots[first]),
                             images[first],
                             int(roots[second]),

@@ -36,8 +36,8 @@ from ...domain import (
     DomainFunction,
 )
 from ...domain._function import (
-    _ConstCallable,
     BinaryFieldEvaluator,
+    ConstCallable,
     SwapAxesFieldEvaluator,
     UnaryFieldEvaluator,
 )
@@ -81,7 +81,7 @@ def _combined_field_regularity(
         return left.add(right)
     if function.op in (operator.mul, operator.matmul):
         return left.multiply(right)
-    if function.op is operator.truediv and isinstance(function.b.func, _ConstCallable):
+    if function.op is operator.truediv and isinstance(function.b.func, ConstCallable):
         return left
     return None
 
@@ -118,7 +118,7 @@ def _callable_regularity(function: Any, /) -> DerivativeRegularity | None:
         )
     if isinstance(function, DiscreteFieldEvaluator):
         return function.regularity
-    if isinstance(function, _ConstCallable):
+    if isinstance(function, ConstCallable):
         return _CONSTANT_REGULARITY
     if isinstance(function, BinaryFieldEvaluator):
         return _combined_field_regularity(function)

@@ -21,6 +21,7 @@ from phydrax.domain import (
 from phydrax.nn.models import MLP, SeparableMLP
 from phydrax.nn.operator.architectures import DeepONet, FNO
 from phydrax.operators.differential import laplacian
+from phydrax.units import METER
 
 
 def test_neural_operator_models_scenario_1() -> None:
@@ -115,7 +116,9 @@ def test_neural_operator_models_scenario_1() -> None:
         data = jnp.ones((3, nx, ny), dtype="float64")
         data_dom = DatasetDomain(data)
         geom = phx.domain.GeometryDomain(
-            phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+            phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile(
+                coordinate_unit=METER
+            )
         )
         domain = data_dom @ geom
 
@@ -185,7 +188,7 @@ def test_neural_operator_models_scenario_1() -> None:
     assert out.data.shape == (5, 2)
     assert jnp.all(jnp.isfinite(jnp.asarray(out.data)))
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile(coordinate_unit=METER)
     )
     model = SeparableMLP(
         in_size=2,
@@ -228,7 +231,7 @@ def test_domain_model_explicit_binding_supports_plain_callable_blockwise_input()
     data = jnp.ones((3, 2), dtype="float64")
     data_dom = DatasetDomain(data)
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile(coordinate_unit=METER)
     )
     domain = data_dom @ geom
 
@@ -285,7 +288,7 @@ def test_domain_model_explicit_binding_supports_plain_callable_blockwise_input()
 
 def test_domain_model_contracts() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile(coordinate_unit=METER)
     )
     model = SeparableMLP(
         in_size=2,

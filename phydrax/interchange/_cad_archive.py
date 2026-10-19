@@ -2,18 +2,18 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Lossless native B-Rep persistence in the canonical Phydrax array archive.
+"""Persist native B-Rep source definitions and tessellation arrays losslessly.
 
-The archive stores the complete `BRepModel`: exact carriers (lossless
-hexadecimal payloads of the native carrier encoder), oriented topology, exact
+The archive stores `BRepModel` source definitions: carriers (lossless
+hexadecimal payloads of the native carrier encoder), oriented topology, definition-preserving
 p-curves, loops, shells, solids and occurrences, affine-normalized trim curves,
 and `IntersectionCurve` generating surfaces, certified atlases and oriented
 trim ranges. Query tessellation arrays retain their deviation/normal evidence
-and exact vertex source bindings separately from source geometry and lineage.
+and vertex source-root bindings separately from source geometry and lineage.
 Decoding is bounded by `ArrayArchiveLimits`, validates every defining closure,
 and requires restored model, geometry and tessellation identities to match.
 Publication is exclusive by default; replacement must be explicitly requested.
-Exact definitions are content-addressed DAG records, and large defining tensors
+Source definitions are content-addressed DAG records, and large defining tensors
 are pickle-free array references. Only identical defining payloads share a node;
 cycles, dangling references, orphan definitions and excessive reference depth
 are refused before construction. Restored immutable definitions are memoized
@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
@@ -34,6 +34,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 
 from .._array_archive import (
     ArrayArchiveLimits,
@@ -41,10 +42,16 @@ from .._array_archive import (
     read_array_archive,
     write_array_archive,
 )
+from .._fingerprint import iter_array_bytes
 from .._physical import SpatialCoordinateContract
 from .._publication import PublicationMode
-from ..geometry._atlas import CurveTrimLoop, PolygonTrimLoop, TrimDomain
-from ..geometry.brep._constructors import _NormalizedTrimCurve
+from ..geometry._atlas import (
+    AbstractTrimCurve,
+    CurveTrimLoop,
+    PolygonTrimLoop,
+    TrimDomain,
+)
+from ..geometry.brep._constructors import NormalizedTrimCurve
 from ..geometry.brep._intersection import (
     BranchRootEndpoint,
     CurveSurfaceIntersectionRoot,
@@ -69,15 +76,43 @@ from ..geometry.brep._model import (
     BRepImportReport,
     BRepModel,
     BRepOccurrence,
+    BRepPlacementEvidence,
     BRepTopology,
 )
 from ..geometry.brep._patches import AbstractCurve, AbstractSurfacePatch
+from ..geometry.brep._request_preparations import TrimRequestPreparations
 from ..geometry.brep._root_bindings import (
     BRepCurveSurfaceLift,
     BRepPlacedVertex,
     BRepRootSupport,
     BRepVertexRoot,
 )
+from ..typing import checked
+
+
+type ArchiveCarrier = (
+    AbstractCurve
+    | AbstractTrimCurve
+    | AbstractSurfacePatch
+    | IntersectionCurve
+    | NativePeriodEndpoint
+    | np.ndarray
+    | Array
+)
+type ArchiveRoot = (
+    BRepCurveSurfaceLift
+    | BRepPlacedVertex
+    | BRepRootSupport
+    | BRepVertexRoot
+    | BranchRootEndpoint
+    | CurveSurfaceIntersectionRoot
+    | IntersectionCurvePointRoot
+    | NativePeriodEndpoint
+    | TrimIntersectionRoot
+    | TrimRootEndpoint
+    | TripleSurfaceIntersectionRoot
+)
+type ArchiveTrimCurve = AbstractTrimCurve
 
 
 _KIND = "phydrax-brep-archive"
@@ -100,49 +135,57 @@ _MANIFEST_FIELDS = frozenset(
 
 
 _MAX_DEFINITIONS = 100_000
-_ENCODE_CACHE: ContextVar[dict[tuple[str, int], Any] | None] = ContextVar(
-    "brep_archive_encoding", default=None
+_ENCODE_CACHE: ContextVar[dict[tuple[Callable[..., object], int], Any] | None] = (
+    ContextVar("brep_archive_encoding", default=None)
 )
 
 
-class _DefinitionPayload(dict):
+class _DefinitionPayload(dict[str, Any]):
     """One decoded immutable definition, with per-resource construction memoization."""
 
-    def __init__(self, payload: Mapping[str, Any]) -> None:
+    def __init__(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        carrier_array: np.ndarray | None = None,
+    ) -> None:
         super().__init__(payload)
-        self.decoded: dict[str, Any] = {}
+        self.decoded: dict[Callable[..., object], Any] = {}
+        self.carrier_array = carrier_array
 
 
-def _cached_definition(decoder: Any) -> Any:
+def _cached_definition[**P, R](decoder: Callable[P, R]) -> Callable[P, R]:
     @wraps(decoder)
-    def decode(payload: Any, *args: Any) -> Any:
+    def decode(*args: P.args, **kwargs: P.kwargs) -> R:
+        payload = args[0]
         if not isinstance(payload, _DefinitionPayload):
-            return decoder(payload, *args)
-        key = decoder.__name__
+            return decoder(*args, **kwargs)
+        key = decoder
         if key not in payload.decoded:
-            payload.decoded[key] = decoder(payload, *args)
+            payload.decoded[key] = decoder(*args, **kwargs)
         return payload.decoded[key]
 
     return decode
 
 
-def _cached_encoding(encoder: Any) -> Any:
+def _cached_encoding[**P, R](encoder: Callable[P, R]) -> Callable[P, R]:
     @wraps(encoder)
-    def encode(value: Any, *args: Any) -> Any:
+    def encode(*args: P.args, **kwargs: P.kwargs) -> R:
+        value = args[0]
         cache = _ENCODE_CACHE.get()
         if cache is None or value is None:
-            return encoder(value, *args)
-        key = (encoder.__name__, id(value))
+            return encoder(*args, **kwargs)
+        key = (encoder, id(value))
         if key not in cache:
-            cache[key] = encoder(value, *args)
+            cache[key] = encoder(*args, **kwargs)
         return cache[key]
 
     return encode
 
 
-def _encoding_scope(encoder: Any) -> Any:
+def _encoding_scope[**P, R](encoder: Callable[P, R]) -> Callable[P, R]:
     @wraps(encoder)
-    def encode(*args: Any, **kwargs: Any) -> Any:
+    def encode(*args: P.args, **kwargs: P.kwargs) -> R:
         token = _ENCODE_CACHE.set({})
         try:
             return encoder(*args, **kwargs)
@@ -167,7 +210,8 @@ def _array_definition_id(value: np.ndarray, /) -> str:
     digest = hashlib.sha256()
     digest.update(value.dtype.str.encode("ascii"))
     digest.update(json.dumps(list(value.shape), separators=(",", ":")).encode("ascii"))
-    digest.update(np.ascontiguousarray(value).tobytes())
+    for chunk in iter_array_bytes(value):
+        digest.update(chunk)
     return digest.hexdigest()
 
 
@@ -175,7 +219,9 @@ def _definition_references(value: Any, /) -> list[str]:
     if isinstance(value, dict):
         if set(value) == {"definition"}:
             if not isinstance(value["definition"], str):
-                raise ValueError("Archive definition references have unexpected fields.")
+                raise ValueError(
+                    f"BRepArchive.definitions.reference must be a string; got {type(value['definition']).__name__}"
+                )
             return [value["definition"]]
         return [
             child for item in value.values() for child in _definition_references(item)
@@ -205,13 +251,17 @@ def _definition_children(
                 child = children[node][position]
                 stack[-1] = (node, position + 1)
                 if child not in definitions:
-                    raise ValueError("Archive contains a dangling definition reference.")
+                    raise ValueError(
+                        f"BRepArchive.definitions.reference must identify a defined node; got {child!r}"
+                    )
                 if child in active:
-                    raise ValueError("Archive contains a cyclic definition reference.")
+                    raise ValueError(
+                        f"BRepArchive.definitions.reference must be acyclic; got edge={node!r}->{child!r}"
+                    )
                 if child not in depths:
                     if len(stack) >= limits.max_manifest_nesting:
                         raise ValueError(
-                            "Archive defining reference depth exceeds its limit."
+                            f"BRepArchive.definitions.reference_depth must not exceed limit={limits.max_manifest_nesting}; got depth={depths[node]}"
                         )
                     active.add(child)
                     stack.append((child, 0))
@@ -221,7 +271,9 @@ def _definition_children(
                 default=0,
             )
             if depths[node] > limits.max_manifest_nesting:
-                raise ValueError("Archive defining reference depth exceeds its limit.")
+                raise ValueError(
+                    f"BRepArchive.definitions.reference_depth must not exceed limit={limits.max_manifest_nesting}; got proposed_depth={len(stack) + 1}"
+                )
             active.remove(node)
             stack.pop()
     return children
@@ -233,7 +285,7 @@ def _factor_definitions(
     limits: ArrayArchiveLimits,
     /,
 ) -> dict[str, Any]:
-    """Content-address only identical exact definitions; large tensors use NPY."""
+    """Content-address identical defining payloads; large tensors use NPY."""
     definitions: dict[str, Any] = {}
     memo: dict[int, Any] = {}
 
@@ -272,7 +324,7 @@ def _factor_definitions(
                 if identifier not in definitions:
                     if len(definitions) >= _MAX_DEFINITIONS:
                         raise ValueError(
-                            "Archive definition entity count exceeds its limit."
+                            f"BRepArchive.definitions must be a dictionary with at most {_MAX_DEFINITIONS} entries; got {len(definitions) if isinstance(definitions, dict) else type(definitions).__name__}"
                         )
                     definitions[identifier] = payload
                 result = {"definition": identifier}
@@ -293,18 +345,22 @@ def _expand_definitions(
     limits: ArrayArchiveLimits,
     /,
 ) -> tuple[dict[str, Any], set[str]]:
-    """Validate the complete bounded DAG before constructing scientific objects."""
+    """Validate the bounded definition DAG before constructing scientific objects."""
     definitions = manifest["definitions"]
     if not isinstance(definitions, dict) or len(definitions) > _MAX_DEFINITIONS:
-        raise ValueError("Archive definition entity count exceeds its limit.")
+        raise ValueError(
+            f"BRepArchive.definitions must be a dictionary with at most {_MAX_DEFINITIONS} entries; got {len(definitions) if isinstance(definitions, dict) else type(definitions).__name__}"
+        )
     if list(definitions) != sorted(definitions):
-        raise ValueError("Archive definition ordering is noncanonical.")
+        raise ValueError(
+            f"BRepArchive.definitions must have sorted identifiers; got {list(definitions)!r}"
+        )
 
     children = _definition_children(definitions, limits)
     for identifier, payload in definitions.items():
         if _definition_id(payload) != identifier:
             raise ValueError(
-                "Archive definition fingerprint does not match its defining payload."
+                f"BRepArchive.definitions.fingerprint must match the defining payload digest; got {identifier!r}, computed={_definition_id(payload)!r}"
             )
     body = {key: value for key, value in manifest.items() if key != "definitions"}
     pending = _definition_references(body)
@@ -312,12 +368,16 @@ def _expand_definitions(
     while pending:
         identifier = pending.pop()
         if identifier not in definitions:
-            raise ValueError("Archive contains a dangling definition reference.")
+            raise ValueError(
+                f"BRepArchive.definitions.reference must identify a defined node; got {identifier!r}"
+            )
         if identifier not in reachable:
             reachable.add(identifier)
             pending.extend(children[identifier])
     if reachable != set(definitions):
-        raise ValueError("Archive definitions do not match the exact support closure.")
+        raise ValueError(
+            f"BRepArchive.definitions must equal the reachable source-definition closure; got declared={len(definitions)}, reachable={len(reachable)}"
+        )
     used_arrays: set[str] = set()
     memo: dict[str, _DefinitionPayload] = {}
 
@@ -335,19 +395,23 @@ def _expand_definitions(
             _record(value, {"array_definition", "dtype", "shape"}, "array definition")
             name = value["array_definition"]
             if not isinstance(name, str) or name not in arrays:
-                raise ValueError("Archive lacks a defining array.")
+                raise ValueError(
+                    f"BRepArchive.definitions.array_definition must reference a stored array; got {name!r}"
+                )
             array = arrays[name]
             if (
                 array.dtype != np.dtype(value["dtype"])
                 or list(array.shape) != value["shape"]
             ):
-                raise ValueError("Archive defining array shape or dtype changed.")
+                raise ValueError(
+                    f"BRepArchive.definitions.array_definition must preserve declared shape and dtype; got shape={array.shape}, dtype={array.dtype}, declared_shape={value['shape']!r}, declared_dtype={value['dtype']!r}"
+                )
             if name != "definitions/arrays/" + _array_definition_id(array):
-                raise ValueError("Archive defining array fingerprint changed.")
+                raise ValueError(
+                    f"BRepArchive.definitions.array_definition must match its array digest; got {name!r}, computed={_array_definition_id(array)!r}"
+                )
             used_arrays.add(name)
-            payload = _DefinitionPayload(encode_geometry(array))
-            payload.decoded["_decode_carrier"] = array
-            return payload
+            return _DefinitionPayload(encode_geometry(array), carrier_array=array)
         return _DefinitionPayload({key: expand(item) for key, item in value.items()})
 
     return expand(body), used_arrays
@@ -369,10 +433,14 @@ def _hex(value: float, /) -> str:
 
 def _unhex(value: Any, name: str, /) -> float:
     if not isinstance(value, str):
-        raise ValueError(f"Archived {name} must be a hexadecimal float.")
+        raise ValueError(
+            f"BRepArchive.{name.replace(' ', '_')} must be a hexadecimal float string; got {type(value).__name__}"
+        )
     result = float.fromhex(value)
     if not np.isfinite(result):
-        raise ValueError(f"Archived {name} must be finite.")
+        raise ValueError(
+            f"BRepArchive.{name.replace(' ', '_')} must be finite; got {result!r}"
+        )
     return result
 
 
@@ -380,10 +448,14 @@ def _nested(value: Any, depth: int, name: str, /) -> Any:
     """Validate a nested integer tuple structure of exactly ``depth`` levels."""
     if depth == 0:
         if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"Archived {name} must contain integers.")
+            raise ValueError(
+                f"BRepArchive.{name.replace(' ', '_')} must contain integers; got {value!r}"
+            )
         return value
     if not isinstance(value, list):
-        raise ValueError(f"Archived {name} must be nested lists.")
+        raise ValueError(
+            f"BRepArchive.{name.replace(' ', '_')} must have nested list depth={depth}; got {type(value).__name__}"
+        )
     return tuple(_nested(item, depth - 1, name) for item in value)
 
 
@@ -395,33 +467,43 @@ def _lists(value: Any, /) -> Any:
 
 def _record(value: Any, fields: set[str], name: str, /) -> Mapping[str, Any]:
     if not isinstance(value, Mapping) or set(value) != fields:
-        raise ValueError(f"Archived {name} has unexpected or missing fields.")
+        raise ValueError(
+            f"BRepArchive.{name.replace(' ', '_')} must contain the required record fields; got type={type(value).__name__}, missing={tuple(sorted(fields - set(value))) if isinstance(value, Mapping) else 'not-a-mapping'}, extra={tuple(sorted(str(key) for key in set(value) - fields)) if isinstance(value, Mapping) else 'not-a-mapping'}"
+        )
     return value
 
 
 def _text(value: Any, name: str, /) -> str:
     if not isinstance(value, str):
-        raise ValueError(f"Archived {name} must be a string.")
+        raise ValueError(
+            f"BRepArchive.{name.replace(' ', '_')} must be a string; got {type(value).__name__}"
+        )
     return value
 
 
 def _boolean(value: Any, name: str, /) -> bool:
     if not isinstance(value, bool):
-        raise ValueError(f"Archived {name} must be boolean.")
+        raise ValueError(
+            f"BRepArchive.{name.replace(' ', '_')} must be boolean; got {type(value).__name__}"
+        )
     return value
 
 
 @_cached_encoding
-def _encode_carrier(value: Any, /) -> Any:
-    if isinstance(value, IntersectionCurve):
-        return value.payload()
-    if isinstance(value, IntersectionPCurve):
-        return _encode_trim_curve(value)
-    return encode_geometry(value)
+def _encode_carrier(value: ArchiveCarrier, /) -> dict[str, Any]:
+    match value:
+        case IntersectionCurve():
+            return value.payload()
+        case IntersectionPCurve():
+            return _encode_trim_curve(value)
+        case _:
+            return encode_geometry(value)
 
 
 @_cached_definition
 def _decode_carrier(payload: Any, /) -> Any:
+    if isinstance(payload, _DefinitionPayload) and payload.carrier_array is not None:
+        return payload.carrier_array
     if isinstance(payload, Mapping):
         if payload.get("kind") == "intersection-curve":
             return _decode_intersection(payload)
@@ -432,9 +514,13 @@ def _decode_carrier(payload: Any, /) -> Any:
     try:
         value = decode_geometry(payload)
         if encode_geometry(value) != payload:
-            raise ValueError("Archived geometry is not an exact defining payload.")
+            raise ValueError(
+                "BRepArchive.carrier.payload must equal the re-encoded defining payload; got unequal fields or values"
+            )
     except (TypeError, KeyError, OverflowError) as error:
-        raise ValueError(f"Archived geometry is malformed: {error}") from error
+        raise ValueError(
+            f"BRepArchive.carrier.payload must decode as a supported defining payload; got {error}"
+        ) from error
     return value
 
 
@@ -475,12 +561,16 @@ def _decode_intersection(payload: Any, /) -> IntersectionCurve:
     if not isinstance(certified, list) or not all(
         isinstance(item, bool) for item in certified
     ):
-        raise ValueError("Archived intersection certification must be boolean.")
+        raise ValueError(
+            f"BRepArchive.intersection.certified must be a list of booleans; got {certified!r}"
+        )
     _nested(payload["chart_axes"], 1, "chart axes")
     _nested(payload["chart_pieces"], 2, "chart pieces")
     curve = IntersectionCurve.from_payload(payload)
     if curve.payload() != payload:
-        raise ValueError("Archived intersection is not its exact defining closure.")
+        raise ValueError(
+            "BRepArchive.intersection.payload must equal its reconstructed source-definition payload; got unequal fields or values"
+        )
     return curve
 
 
@@ -504,19 +594,22 @@ def _decode_region(record: Any, /) -> SurfaceRegion:
 
 
 @_cached_encoding
-def _encode_root(root: Any, /) -> dict[str, Any] | None:
-    if root is None:
-        return None
-    if isinstance(root, BRepCurveSurfaceLift):
-        return {
-            "kind": "curve-surface-lift",
-            "lift_id": root.lift_id,
-            "curve": _encode_carrier(root.curve),
-            "pcurve": _encode_carrier(root.pcurve),
-            "surface": _encode_region(root.surface),
-            "first": _hex(root.first),
-            "last": _hex(root.last),
-        }
+def _encode_root(root: ArchiveRoot | None, /) -> dict[str, Any] | None:
+    match root:
+        case None:
+            return None
+        case BRepCurveSurfaceLift():
+            return {
+                "kind": "curve-surface-lift",
+                "lift_id": root.lift_id,
+                "curve": _encode_carrier(root.curve),
+                "pcurve": _encode_carrier(root.pcurve),
+                "surface": _encode_region(root.surface),
+                "first": _hex(root.first),
+                "last": _hex(root.last),
+            }
+        case _:
+            pass
     identity = {"root_id": root.root_id}
     match root:
         case TrimIntersectionRoot():
@@ -617,14 +710,16 @@ def _encode_root(root: Any, /) -> dict[str, Any] | None:
                 else _encode_region(root.source_surface),
             }
         case NativePeriodEndpoint():
-            # The owning codec retains the proved curve or surface period,
-            # its original carrier, and the exact rational coefficients.
+            # Retain the proved curve or surface period, its source carrier,
+            # and the rational coefficients.
             return identity | {
                 "kind": "native-period-endpoint",
                 "definition": _encode_carrier(root),
             }
         case _:
-            raise TypeError(f"{type(root).__name__} has no exact root archive encoding.")
+            raise TypeError(
+                f"BRepArchive.root.kind must have a definition-preserving encoder; got {type(root).__name__}"
+            )
 
 
 @_cached_definition
@@ -632,7 +727,9 @@ def _decode_root(record: Any, /) -> Any:
     if record is None:
         return None
     if not isinstance(record, Mapping):
-        raise ValueError("Archived root definitions must be records.")
+        raise ValueError(
+            f"BRepArchive.root must be a mapping; got {type(record).__name__}"
+        )
     if record.get("kind") == "curve-surface-lift":
         _record(
             record,
@@ -648,7 +745,7 @@ def _decode_root(record: Any, /) -> Any:
         )
         if lift.lift_id != record["lift_id"]:
             raise ValueError(
-                "Restored lift identity does not match its source correspondence."
+                f"BRepArchive.root.lift_id must match reconstructed source correspondence; got {lift.lift_id!r}, declared={record['lift_id']!r}"
             )
         return lift
     common = {"kind", "root_id"}
@@ -696,199 +793,225 @@ def _decode_root(record: Any, /) -> Any:
                 _decode_carrier(record["patch"]), _decode_root(record["root"])
             )
         case "placed-vertex-root":
-            _record(
-                record,
-                common
-                | {
-                    "source_point",
-                    "rotation",
-                    "translation",
-                    "source_entity_id",
-                    "source_root",
-                },
-                "placed vertex root",
-            )
-            source_root = _decode_root(record["source_root"])
-            if source_root is not None and not isinstance(source_root, BRepVertexRoot):
-                raise ValueError(
-                    "A placed vertex must retain a complete canonical source vertex root."
-                )
-            source_point = _decode_carrier(record["source_point"])
-            rotation = _decode_carrier(record["rotation"])
-            translation = _decode_carrier(record["translation"])
-            if any(
-                not isinstance(value, np.ndarray) or value.dtype != np.dtype(np.float64)
-                for value in (source_point, rotation, translation)
-            ):
-                raise ValueError(
-                    "Placed vertex source and pose arrays must preserve float64 construction data."
-                )
-            root = BRepPlacedVertex(
-                source_point,
-                rotation,
-                translation,
-                _text(record["source_entity_id"], "placed vertex source entity"),
-                source_root=source_root,
-            )
+            root = _decode_placed_vertex_root(record)
         case "vertex-root":
-            _record(
-                record,
-                common
-                | {
-                    "primary",
-                    "aliases",
-                    "spatial_root",
-                    "joint_root",
-                    "source_edge_lifts",
-                },
-                "vertex root",
-            )
-            if not isinstance(record["aliases"], list) or not isinstance(
-                record["source_edge_lifts"], list
-            ):
-                raise ValueError(
-                    "Archived vertex aliases and source lifts must be explicit lists."
-                )
-            root = BRepVertexRoot(
-                _decode_root(record["primary"]),
-                aliases=tuple(_decode_root(alias) for alias in record["aliases"]),
-                spatial_root=_decode_root(record["spatial_root"]),
-                joint_root=_decode_root(record["joint_root"]),
-                source_edge_lifts=tuple(
-                    _decode_root(lift) for lift in record["source_edge_lifts"]
-                ),
-            )
+            root = _decode_vertex_root(record)
         case "branch-endpoint-root":
-            _record(
-                record,
-                common
-                | {
-                    "root",
-                    "curve",
-                    "chart",
-                    "source_pcurve",
-                    "source_side",
-                    "source_first",
-                    "source_last",
-                    "periodic_shifts",
-                    "transforms",
-                },
-                "branch endpoint root",
-            )
-            shifts = _nested(record["periodic_shifts"], 1, "periodic shifts")
-            if len(shifts) != 4:
-                raise ValueError("Branch endpoint periodic shifts need four integers.")
-            transforms = record["transforms"]
-            if not isinstance(transforms, list) or any(
-                not isinstance(pair, list) or len(pair) != 2 for pair in transforms
-            ):
-                raise ValueError(
-                    "Branch endpoint transforms must be ordered affine pairs."
-                )
-            root = BranchRootEndpoint(
-                _decode_root(record["root"]),
-                _decode_carrier(record["curve"]),
-                _nested(record["chart"], 0, "branch chart"),
-                source_pcurve=None
-                if record["source_pcurve"] is None
-                else _decode_carrier(record["source_pcurve"]),
-                source_side=record["source_side"],
-                source_first=None
-                if record["source_first"] is None
-                else _unhex(record["source_first"], "source first"),
-                source_last=None
-                if record["source_last"] is None
-                else _unhex(record["source_last"], "source last"),
-                periodic_shifts=shifts,
-                affine_transforms=tuple(
-                    (_unhex(scale, "affine scale"), _unhex(offset, "affine offset"))
-                    for scale, offset in transforms
-                ),
-            )
+            root = _decode_branch_endpoint_root(record)
         case "endpoint-root":
-            _record(
-                record,
-                common
-                | {
-                    "root",
-                    "operand",
-                    "offset",
-                    "scale",
-                    "transforms",
-                    "source_pcurve",
-                    "source_surface",
-                },
-                "endpoint root",
-            )
-            transforms = record["transforms"]
-            if not isinstance(transforms, list) or any(
-                not isinstance(pair, list) or len(pair) != 2 for pair in transforms
-            ):
-                raise ValueError(
-                    "Archived endpoint expressions require ordered affine pairs."
-                )
-            operand = _text(record["operand"], "root operand")
-            if operand != "first" and operand != "second":
-                raise ValueError(
-                    "Archived endpoint root operands must be 'first' or 'second'."
-                )
-            if (record["source_pcurve"] is None) != (record["source_surface"] is None):
-                raise ValueError(
-                    "An archived endpoint lift requires both its p-curve and source surface."
-                )
-            source_pcurve = (
-                None
-                if record["source_pcurve"] is None
-                else _decode_carrier(record["source_pcurve"])
-            )
-            source_surface = (
-                None
-                if record["source_surface"] is None
-                else _decode_region(record["source_surface"])
-            )
-            if source_pcurve is not None and not isinstance(
-                source_pcurve, (AbstractCurve, IntersectionPCurve)
-            ):
-                raise ValueError(
-                    "An archived endpoint lift requires an exact native p-curve."
-                )
-            source_root = _decode_root(record["root"])
-            if not isinstance(
-                source_root,
-                (
-                    TrimIntersectionRoot,
-                    CurveSurfaceIntersectionRoot,
-                    IntersectionCurvePointRoot,
-                ),
-            ):
-                raise ValueError(
-                    "An archived scalar endpoint requires its actual canonical source root."
-                )
-            root = TrimRootEndpoint(
-                source_root,
-                operand,
-                affine_parameter_offset=_unhex(record["offset"], "endpoint offset"),
-                affine_parameter_scale=_unhex(record["scale"], "endpoint scale"),
-                affine_transforms=tuple(
-                    (_unhex(scale, "affine scale"), _unhex(offset, "affine offset"))
-                    for scale, offset in transforms
-                ),
-                source_pcurve=source_pcurve,
-                source_surface=source_surface,
-            )
+            root = _decode_trim_endpoint_root(record)
         case "native-period-endpoint":
             _record(record, common | {"definition"}, "native period endpoint")
             root = _decode_carrier(record["definition"])
             if not isinstance(root, NativePeriodEndpoint):
                 raise ValueError(
-                    "An archived native period endpoint must restore its exact scalar definition."
+                    f"BRepArchive.root.definition must restore NativePeriodEndpoint; got {type(root).__name__}"
                 )
         case kind:
-            raise ValueError(f"Unsupported archived root kind {kind!r}.")
+            raise ValueError(f"BRepArchive.root.kind must be supported; got {kind!r}")
     if root.root_id != record["root_id"]:
         raise ValueError(
-            "Restored root identity does not match its defining source system."
+            f"BRepArchive.root.root_id must match the reconstructed source system; got {root.root_id!r}, declared={record['root_id']!r}"
         )
+    return root
+
+
+def _decode_placed_vertex_root(record: Mapping[str, Any], /) -> BRepPlacedVertex:
+    common = {"kind", "root_id"}
+    _record(
+        record,
+        common
+        | {
+            "source_point",
+            "rotation",
+            "translation",
+            "source_entity_id",
+            "source_root",
+        },
+        "placed vertex root",
+    )
+    source_root = _decode_root(record["source_root"])
+    if source_root is not None and not isinstance(source_root, BRepVertexRoot):
+        raise ValueError(
+            f"BRepArchive.placed_vertex.source_root must restore BRepVertexRoot or None; got {type(source_root).__name__}"
+        )
+    source_point = _decode_carrier(record["source_point"])
+    rotation = _decode_carrier(record["rotation"])
+    translation = _decode_carrier(record["translation"])
+    if any(
+        not isinstance(value, np.ndarray) or value.dtype != np.dtype(np.float64)
+        for value in (source_point, rotation, translation)
+    ):
+        raise ValueError(
+            f"BRepArchive.placed_vertex.source_point must be float64 together with rotation and translation; got types_and_dtypes={tuple((type(value).__name__, str(value.dtype) if isinstance(value, np.ndarray) else 'not-an-array') for value in (source_point, rotation, translation))!r}"
+        )
+    root = BRepPlacedVertex(
+        source_point,
+        rotation,
+        translation,
+        _text(record["source_entity_id"], "placed vertex source entity"),
+        source_root=source_root,
+    )
+    return root
+
+
+def _decode_vertex_root(record: Mapping[str, Any], /) -> BRepVertexRoot:
+    common = {"kind", "root_id"}
+    _record(
+        record,
+        common
+        | {
+            "primary",
+            "aliases",
+            "spatial_root",
+            "joint_root",
+            "source_edge_lifts",
+        },
+        "vertex root",
+    )
+    if not isinstance(record["aliases"], list) or not isinstance(
+        record["source_edge_lifts"], list
+    ):
+        raise ValueError(
+            f"BRepArchive.vertex_root.aliases must be a list together with source_edge_lifts; got aliases_type={type(record['aliases']).__name__}, lifts_type={type(record['source_edge_lifts']).__name__}"
+        )
+    root = BRepVertexRoot(
+        _decode_root(record["primary"]),
+        aliases=tuple(_decode_root(alias) for alias in record["aliases"]),
+        spatial_root=_decode_root(record["spatial_root"]),
+        joint_root=_decode_root(record["joint_root"]),
+        source_edge_lifts=tuple(
+            _decode_root(lift) for lift in record["source_edge_lifts"]
+        ),
+    )
+    return root
+
+
+def _decode_branch_endpoint_root(record: Mapping[str, Any], /) -> BranchRootEndpoint:
+    common = {"kind", "root_id"}
+    _record(
+        record,
+        common
+        | {
+            "root",
+            "curve",
+            "chart",
+            "source_pcurve",
+            "source_side",
+            "source_first",
+            "source_last",
+            "periodic_shifts",
+            "transforms",
+        },
+        "branch endpoint root",
+    )
+    shifts = _nested(record["periodic_shifts"], 1, "periodic shifts")
+    if len(shifts) != 4:
+        raise ValueError(
+            f"BRepArchive.branch_endpoint.periodic_shifts must contain four integers; got {shifts!r}"
+        )
+    transforms = record["transforms"]
+    if not isinstance(transforms, list) or any(
+        not isinstance(pair, list) or len(pair) != 2 for pair in transforms
+    ):
+        raise ValueError(
+            f"BRepArchive.branch_endpoint.transforms must be a list of two-element affine pairs; got {transforms!r}"
+        )
+    root = BranchRootEndpoint(
+        _decode_root(record["root"]),
+        _decode_carrier(record["curve"]),
+        _nested(record["chart"], 0, "branch chart"),
+        source_pcurve=None
+        if record["source_pcurve"] is None
+        else _decode_carrier(record["source_pcurve"]),
+        source_side=record["source_side"],
+        source_first=None
+        if record["source_first"] is None
+        else _unhex(record["source_first"], "source first"),
+        source_last=None
+        if record["source_last"] is None
+        else _unhex(record["source_last"], "source last"),
+        periodic_shifts=shifts,
+        affine_transforms=tuple(
+            (_unhex(scale, "affine scale"), _unhex(offset, "affine offset"))
+            for scale, offset in transforms
+        ),
+    )
+    return root
+
+
+def _decode_trim_endpoint_root(record: Mapping[str, Any], /) -> TrimRootEndpoint:
+    common = {"kind", "root_id"}
+    _record(
+        record,
+        common
+        | {
+            "root",
+            "operand",
+            "offset",
+            "scale",
+            "transforms",
+            "source_pcurve",
+            "source_surface",
+        },
+        "endpoint root",
+    )
+    transforms = record["transforms"]
+    if not isinstance(transforms, list) or any(
+        not isinstance(pair, list) or len(pair) != 2 for pair in transforms
+    ):
+        raise ValueError(
+            f"BRepArchive.endpoint.transforms must be a list of two-element affine pairs; got {transforms!r}"
+        )
+    operand = _text(record["operand"], "root operand")
+    if operand != "first" and operand != "second":
+        raise ValueError(
+            f"BRepArchive.endpoint.operand must be first or second; got {operand!r}"
+        )
+    if (record["source_pcurve"] is None) != (record["source_surface"] is None):
+        raise ValueError(
+            f"BRepArchive.endpoint.source_pcurve must be present exactly when source_surface is present; got pcurve_present={record['source_pcurve'] is not None}, surface_present={record['source_surface'] is not None}"
+        )
+    source_pcurve = (
+        None
+        if record["source_pcurve"] is None
+        else _decode_carrier(record["source_pcurve"])
+    )
+    source_surface = (
+        None
+        if record["source_surface"] is None
+        else _decode_region(record["source_surface"])
+    )
+    if source_pcurve is not None and not isinstance(
+        source_pcurve, (AbstractCurve, IntersectionPCurve)
+    ):
+        raise ValueError(
+            f"BRepArchive.endpoint.source_pcurve must restore a supported native parameter-space carrier; got {type(source_pcurve).__name__}"
+        )
+    source_root = _decode_root(record["root"])
+    if not isinstance(
+        source_root,
+        (
+            TrimIntersectionRoot,
+            CurveSurfaceIntersectionRoot,
+            IntersectionCurvePointRoot,
+        ),
+    ):
+        raise ValueError(
+            f"BRepArchive.endpoint.root must restore a supported scalar source root; got {type(source_root).__name__}"
+        )
+    root = TrimRootEndpoint(
+        source_root,
+        operand,
+        affine_parameter_offset=_unhex(record["offset"], "endpoint offset"),
+        affine_parameter_scale=_unhex(record["scale"], "endpoint scale"),
+        affine_transforms=tuple(
+            (_unhex(scale, "affine scale"), _unhex(offset, "affine offset"))
+            for scale, offset in transforms
+        ),
+        source_pcurve=source_pcurve,
+        source_surface=source_surface,
+    )
     return root
 
 
@@ -896,14 +1019,16 @@ def _decode_root_pairs(records: Any, /) -> tuple[tuple[Any, Any], ...]:
     if not isinstance(records, list) or any(
         not isinstance(pair, list) or len(pair) != 2 for pair in records
     ):
-        raise ValueError("Archived endpoint inventories must contain exact pairs.")
+        raise ValueError(
+            f"BRepArchive.endpoint_roots must be a list of two-element root-reference pairs; got {records!r}"
+        )
     return tuple(tuple(_decode_root(value) for value in pair) for pair in records)
 
 
 @_cached_encoding
-def _encode_trim_curve(curve: Any, /) -> dict[str, Any]:
+def _encode_trim_curve(curve: ArchiveTrimCurve, /) -> dict[str, Any]:
     match curve:
-        case _NormalizedTrimCurve():
+        case NormalizedTrimCurve():
             return {
                 "kind": "normalized",
                 "curve": _encode_trim_curve(curve.curve),
@@ -935,7 +1060,9 @@ def _encode_trim_curve(curve: Any, /) -> dict[str, Any]:
                 "reversed": curve.reversed,
             }
         case _:
-            raise TypeError(f"{type(curve).__name__} has no lossless archive encoding.")
+            raise TypeError(
+                f"BRepArchive.trim_curve.kind must have a lossless encoder; got {type(curve).__name__}"
+            )
 
 
 def _encode_loop(
@@ -953,7 +1080,9 @@ def _encode_loop(
                 "curves": [_encode_trim_curve(curve) for curve in loop.curves],
             }
         case _:
-            raise TypeError(f"{type(loop).__name__} has no lossless archive encoding.")
+            raise TypeError(
+                f"BRepArchive.trim_loop.kind must have a lossless encoder; got {type(loop).__name__}"
+            )
 
 
 def _encode_occurrence(occurrence: BRepOccurrence, /) -> dict[str, Any]:
@@ -962,6 +1091,18 @@ def _encode_occurrence(occurrence: BRepOccurrence, /) -> dict[str, Any]:
         "solid": occurrence.solid,
         "rotation": [[_hex(value) for value in row] for row in occurrence.rotation],
         "translation": [_hex(value) for value in occurrence.translation],
+        **(
+            {
+                "placement_evidence": {
+                    key: [[_hex(item) for item in row] for row in value]
+                    if isinstance(value, tuple)
+                    else _hex(value)
+                    for key, value in occurrence.placement_evidence.payload().items()
+                }
+            }
+            if occurrence.placement_evidence is not None
+            else {}
+        ),
     }
 
 
@@ -977,6 +1118,25 @@ def _encode_geometry(
         "pcurves": [_encode_carrier(curve) for curve in geometry.pcurves],
         "edge_curves": list(geometry.edge_curves),
         "edge_vertices": _lists(geometry.edge_vertices),
+        **(
+            {
+                "edge_vertex_gap_bounds": [
+                    [_hex(bound) for bound in row]
+                    for row in geometry.edge_vertex_gap_bounds
+                ]
+            }
+            if geometry.edge_vertex_gap_bounds is not None
+            else {}
+        ),
+        **(
+            {
+                "edge_face_gap_bounds": [
+                    _hex(bound) for bound in geometry.edge_face_gap_bounds
+                ]
+            }
+            if geometry.edge_face_gap_bounds is not None
+            else {}
+        ),
         "coedge_edges": list(geometry.coedge_edges),
         "coedge_senses": list(geometry.coedge_senses),
         "face_loops": _lists(geometry.face_loops),
@@ -1028,6 +1188,7 @@ def _encode_report(report: BRepImportReport, /) -> dict[str, Any]:
 
 
 @_encoding_scope
+@checked
 def save_brep_archive(
     model: BRepModel,
     path: str | os.PathLike[str],
@@ -1037,8 +1198,6 @@ def save_brep_archive(
     mode: PublicationMode = "exclusive",
 ) -> BRepArchiveReceipt:
     """Publish lossless native geometry, exclusively unless replacement is requested."""
-    if not isinstance(model, BRepModel):
-        raise TypeError("model must be a BRepModel.")
     arrays: dict[str, np.ndarray] = {
         "model/parameter_bounds": np.asarray(model.parameter_bounds, dtype=np.float64),
         "model/orientation": np.asarray(model.orientation, dtype=np.float64),
@@ -1136,17 +1295,23 @@ def save_brep_archive(
 
 def _array(arrays: Mapping[str, np.ndarray], name: Any, dtype: Any, /) -> np.ndarray:
     if not isinstance(name, str) or name not in arrays:
-        raise ValueError(f"Archive lacks the array {name!r}.")
+        raise ValueError(
+            f"BRepArchive.arrays.reference must name a stored array; got {name!r}"
+        )
     value = arrays[name]
     if value.dtype != np.dtype(dtype):
-        raise ValueError(f"Archived array {name!r} has an unexpected dtype.")
+        raise ValueError(
+            f"BRepArchive.arrays.dtype must match the declared dtype for {name!r}; got {value.dtype}, expected={np.dtype(dtype)}"
+        )
     return value
 
 
 @_cached_definition
 def _decode_trim_curve(record: Any, /) -> Any:
     if not isinstance(record, Mapping):
-        raise ValueError("Archived trim curves must be records.")
+        raise ValueError(
+            f"BRepArchive.trim_curve must be a mapping; got {type(record).__name__}"
+        )
     match record.get("kind"):
         case "normalized":
             _record(
@@ -1170,13 +1335,13 @@ def _decode_trim_curve(record: Any, /) -> Any:
                 for values in (lower, extent)
             ):
                 raise ValueError(
-                    "Archived trim normalization requires two-dimensional vectors."
+                    f"BRepArchive.normalized_trim.lower must contain two elements together with extent; got lower={lower!r}, extent={extent!r}"
                 )
             lower_ = [_unhex(value, "trim lower") for value in lower]
             extent_ = [_unhex(value, "trim extent") for value in extent]
             if any(value <= 0.0 for value in extent_):
                 raise ValueError(
-                    "Archived trim normalization must have positive extents."
+                    f"BRepArchive.normalized_trim.extent must contain positive values; got {extent_!r}"
                 )
             patch = _decode_carrier(record["patch"])
             start_root, end_root = (
@@ -1185,25 +1350,26 @@ def _decode_trim_curve(record: Any, /) -> Any:
             )
             start_endpoint = _decode_root(record["start_endpoint"])
             end_endpoint = _decode_root(record["end_endpoint"])
-            if (
-                not isinstance(patch, AbstractSurfacePatch)
-                or any(
-                    root is not None and not isinstance(root, BRepVertexRoot)
-                    for root in (start_root, end_root)
-                )
-                or any(
-                    endpoint is not None
-                    and not isinstance(
-                        endpoint,
-                        (TrimRootEndpoint, BranchRootEndpoint, NativePeriodEndpoint),
-                    )
-                    for endpoint in (start_endpoint, end_endpoint)
-                )
-            ):
+            if not isinstance(patch, AbstractSurfacePatch):
                 raise ValueError(
-                    "Archived normalized trim root supports have invalid types."
+                    f"BRepArchive.normalized_trim.patch must restore a surface patch; got {type(patch).__name__}"
                 )
-            return _NormalizedTrimCurve(
+            for name, root in (("start_root", start_root), ("end_root", end_root)):
+                if root is not None and not isinstance(root, BRepVertexRoot):
+                    raise ValueError(
+                        f"BRepArchive.normalized_trim.{name} must restore BRepVertexRoot or None; got {type(root).__name__}"
+                    )
+            for name, endpoint in (
+                ("start_endpoint", start_endpoint),
+                ("end_endpoint", end_endpoint),
+            ):
+                if endpoint is not None and not isinstance(
+                    endpoint, (TrimRootEndpoint, BranchRootEndpoint, NativePeriodEndpoint)
+                ):
+                    raise ValueError(
+                        f"BRepArchive.normalized_trim.{name} must restore a supported scalar endpoint or None; got {type(endpoint).__name__}"
+                    )
+            return NormalizedTrimCurve(
                 _decode_trim_curve(record["curve"]),
                 jnp.asarray(lower_),
                 jnp.asarray(extent_),
@@ -1241,12 +1407,22 @@ def _decode_trim_curve(record: Any, /) -> Any:
                 reversed=_boolean(record["reversed"], "intersection reversed"),
             )
         case kind:
-            raise ValueError(f"Unknown archived trim curve kind {kind!r}.")
+            raise ValueError(
+                f"BRepArchive.trim_curve.kind must be supported; got {kind!r}"
+            )
 
 
-def _decode_loop(record: Any, arrays: Mapping[str, np.ndarray], /) -> Any:
+def _decode_loop(
+    record: Any,
+    arrays: Mapping[str, np.ndarray],
+    /,
+    *,
+    preparations: TrimRequestPreparations,
+) -> Any:
     if not isinstance(record, Mapping):
-        raise ValueError("Archived trim loops must be records.")
+        raise ValueError(
+            f"BRepArchive.trim_loop must be a mapping; got {type(record).__name__}"
+        )
     match record.get("kind"):
         case "polygon":
             _record(record, {"kind", "vertices"}, "polygon trim")
@@ -1264,7 +1440,9 @@ def _decode_loop(record: Any, arrays: Mapping[str, np.ndarray], /) -> Any:
             )
             curves = record["curves"]
             if not isinstance(curves, list):
-                raise ValueError("Archived curve loops must list their curves.")
+                raise ValueError(
+                    f"BRepArchive.trim_loop.curves must be a list; got {type(curves).__name__}"
+                )
             return CurveTrimLoop(
                 [_decode_trim_curve(curve) for curve in curves],
                 tolerance=_unhex(record["tolerance"], "tolerance"),
@@ -1272,19 +1450,37 @@ def _decode_loop(record: Any, arrays: Mapping[str, np.ndarray], /) -> Any:
                     record["relative_closure_tolerance"],
                     "relative_closure_tolerance",
                 ),
+                preparations=preparations,
             )
         case kind:
-            raise ValueError(f"Unknown archived trim loop kind {kind!r}.")
+            raise ValueError(
+                f"BRepArchive.trim_loop.kind must be supported; got {kind!r}"
+            )
+
+
+def _decode_placement_entry_bounds(value: Any, /) -> tuple[tuple[float, ...], ...] | None:
+    """Restore optional affine entry error rows through the evidence validator."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or any(not isinstance(row, list) for row in value):
+        raise ValueError(
+            "BRepArchive.entrywise_deviation_bounds must contain numerical rows; got invalid fields."
+        )
+    return tuple(
+        tuple(_unhex(item, "entrywise deviation") for item in row) for row in value
+    )
 
 
 def _decode_occurrence(record: Any, /) -> BRepOccurrence:
-    if not isinstance(record, Mapping) or set(record) != {
+    if not isinstance(record, Mapping) or set(record) - {"placement_evidence"} != {
         "path",
         "solid",
         "rotation",
         "translation",
     }:
-        raise ValueError("Archived occurrences are malformed.")
+        raise ValueError(
+            f"BRepArchive.occurrences must contain path, solid, rotation and translation records; got {tuple(sorted(str(key) for key in record)) if isinstance(record, Mapping) else type(record).__name__}"
+        )
     rows = record["rotation"]
     translation = record["translation"]
     if (
@@ -1294,11 +1490,42 @@ def _decode_occurrence(record: Any, /) -> BRepOccurrence:
         or not isinstance(translation, list)
         or len(translation) != 3
     ):
-        raise ValueError("Archived occurrence placements are malformed.")
+        raise ValueError(
+            f"BRepArchive.occurrence.rotation must contain three rows of three elements with a three-element translation; got rotation={rows!r}, translation={translation!r}"
+        )
     rotation = tuple(tuple(_unhex(value, "rotation") for value in row) for row in rows)
     path = record["path"]
     if not isinstance(path, list):
-        raise ValueError("Archived occurrence paths are lists.")
+        raise ValueError(
+            f"BRepArchive.occurrence.path must be a list; got {type(path).__name__}"
+        )
+    evidence_record = record.get("placement_evidence")
+    evidence = None
+    if evidence_record is not None:
+        if not isinstance(evidence_record, Mapping) or set(evidence_record) - {
+            "translation_deviation_bound",
+            "entrywise_deviation_bounds",
+        } != {
+            "rotation_deviation_bound",
+            "model_extent",
+            "point_deviation_bound",
+        }:
+            raise ValueError(
+                "BRepArchive.placement_evidence must contain all certified deviation bounds; got invalid fields."
+            )
+        evidence = BRepPlacementEvidence(
+            _unhex(evidence_record["rotation_deviation_bound"], "rotation deviation"),
+            _unhex(evidence_record["model_extent"], "model extent"),
+            _unhex(evidence_record["point_deviation_bound"], "point deviation"),
+            _unhex(
+                evidence_record["translation_deviation_bound"], "translation deviation"
+            )
+            if "translation_deviation_bound" in evidence_record
+            else 0.0,
+            entrywise_deviation_bounds=_decode_placement_entry_bounds(
+                evidence_record.get("entrywise_deviation_bounds")
+            ),
+        )
     return BRepOccurrence(
         tuple(_text(item, "occurrence path") for item in path),
         _nested(record["solid"], 0, "occurrence solid"),
@@ -1310,6 +1537,7 @@ def _decode_occurrence(record: Any, /) -> BRepOccurrence:
                 _unhex(translation[2], "translation"),
             )
         ),
+        placement_evidence=evidence,
     )
 
 
@@ -1318,18 +1546,50 @@ def _decode_container(record: Any, /) -> BRepAssemblyContainer:
 
     def path(value: Any) -> tuple[str, ...]:
         if not isinstance(value, list):
-            raise ValueError("Archived container paths must be string lists.")
+            raise ValueError(
+                f"BRepArchive.assembly_container.path must be a list of strings; got {type(value).__name__}"
+            )
         return tuple(_text(item, "container path") for item in value)
 
     if not isinstance(record["member_paths"], list) or not isinstance(
         record["child_paths"], list
     ):
-        raise ValueError("Archived assembly membership must be explicit path lists.")
+        raise ValueError(
+            f"BRepArchive.assembly_container.member_paths must be a list together with child_paths; got members_type={type(record['member_paths']).__name__}, children_type={type(record['child_paths']).__name__}"
+        )
     return BRepAssemblyContainer(
         path(record["path"]),
         tuple(path(value) for value in record["member_paths"]),
         tuple(path(value) for value in record["child_paths"]),
     )
+
+
+def _decode_vertex_gaps(record: Any, /) -> tuple[tuple[float, float], ...] | None:
+    if record is None:
+        return None
+    if not isinstance(record, list) or any(
+        not isinstance(row, list) or len(row) != 2 for row in record
+    ):
+        raise ValueError(
+            "BRepArchive.edge_vertex_gap_bounds must contain endpoint pairs; got invalid rows"
+        )
+    return tuple(
+        (
+            _unhex(row[0], "edge_vertex_gap_bounds"),
+            _unhex(row[1], "edge_vertex_gap_bounds"),
+        )
+        for row in record
+    )
+
+
+def _decode_face_gaps(record: Any, /) -> tuple[float, ...] | None:
+    if record is None:
+        return None
+    if not isinstance(record, list):
+        raise ValueError(
+            "BRepArchive.edge_face_gap_bounds must contain coedge bounds; got invalid rows"
+        )
+    return tuple(_unhex(bound, "edge_face_gap_bounds") for bound in record)
 
 
 def _decode_geometry(record: Any, arrays: Mapping[str, np.ndarray], /) -> BRepGeometry:
@@ -1351,8 +1611,17 @@ def _decode_geometry(record: Any, arrays: Mapping[str, np.ndarray], /) -> BRepGe
             "vertex_roots",
             "edge_endpoint_roots",
             "coedge_endpoint_roots",
-        },
-        "exact geometry",
+        }
+        | (
+            {
+                name
+                for name in ("edge_vertex_gap_bounds", "edge_face_gap_bounds")
+                if name in record
+            }
+            if isinstance(record, Mapping)
+            else set()
+        ),
+        "geometry",
     )
     curves = record["curves"]
     pcurves = record["pcurves"]
@@ -1361,15 +1630,21 @@ def _decode_geometry(record: Any, arrays: Mapping[str, np.ndarray], /) -> BRepGe
     if not all(
         isinstance(value, list) for value in (curves, pcurves, occurrences, containers)
     ):
-        raise ValueError("Archived carriers and occurrences must be lists.")
+        raise ValueError(
+            f"BRepArchive.geometry.curves must be a list together with pcurves, occurrences and assembly_containers; got types={tuple(type(value).__name__ for value in (curves, pcurves, occurrences, containers))!r}"
+        )
     if not isinstance(record["vertex_roots"], list):
-        raise ValueError("Archived vertex root inventory must be an explicit list.")
+        raise ValueError(
+            f"BRepArchive.geometry.vertex_roots must be a list; got {type(record['vertex_roots']).__name__}"
+        )
     return BRepGeometry(
         vertex_points=_array(arrays, "geometry/vertex_points", np.float64),
         curves=tuple(_decode_carrier(curve) for curve in curves),
         edge_curves=_nested(record["edge_curves"], 1, "edge_curves"),
         edge_ranges=_array(arrays, "geometry/edge_ranges", np.float64),
         edge_vertices=_nested(record["edge_vertices"], 2, "edge_vertices"),
+        edge_vertex_gap_bounds=_decode_vertex_gaps(record.get("edge_vertex_gap_bounds")),
+        edge_face_gap_bounds=_decode_face_gaps(record.get("edge_face_gap_bounds")),
         pcurves=tuple(_decode_carrier(curve) for curve in pcurves),
         coedge_edges=_nested(record["coedge_edges"], 1, "coedge_edges"),
         coedge_senses=_nested(record["coedge_senses"], 1, "coedge_senses"),
@@ -1406,11 +1681,13 @@ def _decode_report(record: Any, /) -> BRepImportReport:
     )
     counts = _nested(record["counts"], 1, "counts")
     if len(counts) != 6:
-        raise ValueError("Archived import report counts are malformed.")
+        raise ValueError(
+            f"BRepArchive.report.counts must contain six integers; got {counts!r}"
+        )
     contract = SpatialCoordinateContract.from_dict(record["coordinate_contract"])
     if contract.to_dict() != record["coordinate_contract"]:
         raise ValueError(
-            "Archived coordinate contract is not its exact defining closure."
+            "BRepArchive.report.coordinate_contract must equal its reconstructed defining payload; got unequal fields or values"
         )
     report = BRepImportReport(
         source_id=_text(record["source_id"], "source id"),
@@ -1433,7 +1710,9 @@ def _decode_report(record: Any, /) -> BRepImportReport:
         curve_surface_scale=_unhex(record["curve_surface_scale"], "curve surface scale"),
     )
     if report.source_revision != record["source_revision"]:
-        raise ValueError("Archived source revision does not match its lineage.")
+        raise ValueError(
+            f"BRepArchive.report.source_revision must match reconstructed lineage; got {report.source_revision!r}, declared={record['source_revision']!r}"
+        )
     return report
 
 
@@ -1462,33 +1741,41 @@ def _decode_topology(record: Any, /) -> BRepTopology:
     )
 
 
+@checked
 def load_brep_archive(
     path: str | os.PathLike[str],
     /,
     *,
     limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    preparations: TrimRequestPreparations | None = None,
 ) -> BRepModel:
     """Restore a native B-Rep archive under bounded decoding and identity checks."""
-    if not isinstance(limits, ArrayArchiveLimits):
-        raise TypeError("limits must be ArrayArchiveLimits.")
-    # Restored copies of one branch share identical-query results while their
-    # trim covers and model are rebuilt; a surrounding invocation is joined.
-    with original_trim_intersection_preparation(()):
-        return _load_brep_archive(path, limits)
+    with original_trim_intersection_preparation(
+        (), preparations=preparations
+    ) as preparations:
+        return _load_brep_archive(path, limits, preparations=preparations)
 
 
 def _load_brep_archive(
-    path: str | os.PathLike[str], limits: ArrayArchiveLimits, /
+    path: str | os.PathLike[str],
+    limits: ArrayArchiveLimits,
+    /,
+    *,
+    preparations: TrimRequestPreparations,
 ) -> BRepModel:
     manifest, arrays = read_array_archive(path, limits=limits)
     if set(manifest) != _MANIFEST_FIELDS or manifest["kind"] != _KIND:
-        raise ValueError("The file is not a native B-Rep archive.")
+        raise ValueError(
+            f"BRepArchive.manifest.kind must identify a native B-Rep archive with the required fields; got kind={manifest.get('kind')!r}, fields={tuple(sorted(manifest))!r}"
+        )
     manifest, definition_arrays = _expand_definitions(manifest, arrays, limits)
     patches = manifest["patches"]
     tags = manifest["physical_tags"]
     trims = manifest["trim_domains"]
     if not all(isinstance(value, list) for value in (patches, tags, trims)):
-        raise ValueError("Archived patches, tags and trims must be lists.")
+        raise ValueError(
+            f"BRepArchive.manifest.patches must be a list together with physical_tags and trim_domains; got types={tuple(type(value).__name__ for value in (patches, tags, trims))!r}"
+        )
     report = _decode_report(manifest["report"])
     domains: list[TrimDomain | None] = []
     for record in trims:
@@ -1496,12 +1783,17 @@ def _load_brep_archive(
             domains.append(None)
             continue
         if not isinstance(record, Mapping) or not isinstance(record.get("holes"), list):
-            raise ValueError("Archived trim domains are malformed.")
+            raise ValueError(
+                f"BRepArchive.trim_domains must contain mappings with list-valued holes; got {type(record).__name__}"
+            )
         _record(record, {"outer", "holes"}, "trim domain")
         domains.append(
             TrimDomain(
-                _decode_loop(record["outer"], arrays),
-                [_decode_loop(hole, arrays) for hole in record["holes"]],
+                _decode_loop(record["outer"], arrays, preparations=preparations),
+                [
+                    _decode_loop(hole, arrays, preparations=preparations)
+                    for hole in record["holes"]
+                ],
             )
         )
     geometry_record = manifest["geometry"]
@@ -1545,15 +1837,20 @@ def _load_brep_archive(
         geometry=None
         if geometry_record is None
         else _decode_geometry(geometry_record, arrays),
+        preparations=preparations,
     )
     if (model.model_id, model.tessellation_id) != (
         manifest["model_id"],
         manifest["tessellation_id"],
     ):
-        raise ValueError("Restored B-Rep identity does not match the archive.")
+        raise ValueError(
+            f"BRepArchive.model_id must match reconstructed model and tessellation identities; got model={model.model_id!r}, tessellation={model.tessellation_id!r}, declared_model={manifest['model_id']!r}, declared_tessellation={manifest['tessellation_id']!r}"
+        )
     geometry_id = None if model.geometry is None else model.geometry.geometry_id
     if geometry_id != manifest["geometry_id"]:
-        raise ValueError("Restored exact geometry identity does not match the archive.")
+        raise ValueError(
+            f"BRepArchive.geometry_id must match reconstructed geometry; got {geometry_id!r}, declared={manifest['geometry_id']!r}"
+        )
     expected_arrays = {
         "model/parameter_bounds",
         "model/orientation",
@@ -1586,7 +1883,9 @@ def _load_brep_archive(
                 expected_arrays.add(f"trim/{face:08d}/hole{index:08d}")
     expected_arrays.update(definition_arrays)
     if set(arrays) != expected_arrays:
-        raise ValueError("Archive arrays do not match the exact model closure.")
+        raise ValueError(
+            f"BRepArchive.arrays must equal the model source and tessellation array closure; got unexpected={tuple(sorted(set(arrays) - expected_arrays))!r}, missing={tuple(sorted(expected_arrays - set(arrays)))!r}"
+        )
     return model
 
 

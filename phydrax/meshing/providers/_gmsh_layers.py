@@ -7,41 +7,45 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, final
 
 import numpy as np
 
-from ...discretization import CellMesh
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+from phydrax.meshing._contracts import SurfaceMeshingSpec
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
+from ..._strict import StrictModule
 from ...discretization._cell_complex import PolyhedralConnectivity
 from ...geometry._planar_embedding import PlanarEmbedding
 from ...geometry.brep import BRepModel
-from .._boundary_layer import _nearest_distances
-from .._contracts import MeshingFailure, MeshingFailureCategory, SurfaceMeshingSpec
+from ...typing import checked
+from .._boundary_layer import nearest_distances
 from .._controls import (
     BoundaryLayerControl,
     BoundaryLayerCornerPolicy,
     BoundaryLayerRoute,
 )
-from .._organization import MeshAttribute, MeshAttributeRole
-from .._planar_bands import PlanarBandResult
+from .._organization_records import MeshAttribute, MeshAttributeRole
+from .._planar_bands import PlanarBandLayer, PlanarBandResult
 from .._quality import evaluate_swept_layer_quality
 from .._scope import MeshingEntityKind, MeshingScope
 from .._trace import MeshingStageKind
-from ._gmsh_elements import _ElementRows, _local_connectivity
-from ._gmsh_evidence import _connectivity_face_incidents, _connectivity_face_rows
+from ._gmsh_elements import ElementRows, local_connectivity
+from ._gmsh_evidence import connectivity_face_incidents, connectivity_face_rows
 from ._gmsh_import import (
-    _brep_model,
-    _CadEntityMap,
-    _entity_scope,
-    _resolve_entities,
-    _source_scale,
+    brep_model,
+    CadEntityMap,
+    entity_scope,
+    resolve_entities,
+    source_scale,
 )
-from ._gmsh_inventory import _cad_occurrence_inventory
+from ._gmsh_inventory import cad_occurrence_inventory, CadOccurrenceInventory
 
 
 @dataclass(frozen=True, slots=True)
 class _PlanarBandFront:
-    layer: object
+    layer: PlanarBandLayer
     curves: tuple[int, ...]
 
 
@@ -64,7 +68,7 @@ def _straight_surface_curves(
     if len(curves) != 4 or len(curves) != len(boundary):
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "Pure quadrilateral planar bands require every closure face to have four curves.",
+            "GmshLayer.closure.boundary must contain four curves per quadrilateral face; got a different curve count",
             stage=MeshingStageKind.LAYER_GENERATION.value,
         )
     directions: dict[int, np.ndarray] = {}
@@ -72,7 +76,7 @@ def _straight_surface_curves(
         if str(gmsh.model.getType(1, curve)).lower() != "line":
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "Pure quadrilateral planar bands require straight closure curves.",
+                "GmshLayer.closure.curves must be straight; got a nonlinear curve",
                 stage=MeshingStageKind.LAYER_GENERATION.value,
             )
         vertices = gmsh.model.getBoundary(
@@ -81,7 +85,7 @@ def _straight_surface_curves(
         if len(vertices) != 2 or any(dimension != 0 for dimension, _ in vertices):
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "A planar band boundary curve is not one straight segment.",
+                "GmshLayer.band.boundary must contain one straight segment per curve; got an incompatible endpoint set",
                 stage=MeshingStageKind.LAYER_GENERATION.value,
             )
         coordinates = np.asarray(
@@ -94,7 +98,7 @@ def _straight_surface_curves(
         if length <= 0.0:
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "A planar band closure curve has zero length.",
+                "GmshLayer.closure.curve_length must be positive; got zero",
                 stage=MeshingStageKind.LAYER_GENERATION.value,
             )
         directions[curve] = direction / length
@@ -108,7 +112,7 @@ def _configure_full_quad_band_closure(
     target_size: float | None,
     /,
 ) -> None:
-    """Propagate exact band node counts across rectangular Q4 closure faces."""
+    """Propagate band node counts across rectangular Q4 closure faces."""
 
     surfaces = tuple(
         int(tag) for dimension, tag in gmsh.model.getEntities(2) if dimension == 2
@@ -132,7 +136,7 @@ def _configure_full_quad_band_closure(
             if len(matches) != 1:
                 raise MeshingFailure(
                     MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "Pure quadrilateral planar bands require rectangular closure faces.",
+                    "GmshLayer.closure.faces must be rectangular; got nonorthogonal curve directions",
                     stage=MeshingStageKind.LAYER_GENERATION.value,
                 )
             second = matches[0]
@@ -167,7 +171,7 @@ def _configure_full_quad_band_closure(
         if len(prescribed) > 1:
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "Pure quadrilateral planar band closure has incompatible opposite curve counts.",
+                "GmshLayer.closure.opposite_curves must use equal node counts; got incompatible counts",
                 stage=MeshingStageKind.LAYER_GENERATION.value,
             )
         if prescribed:
@@ -196,10 +200,10 @@ def _configure_full_quad_band_closure(
         gmsh.model.mesh.setRecombine(2, surface)
 
 
-def _apply_planar_band_constraints(
+def apply_planar_band_constraints(
     gmsh: Any,
     bands: PlanarBandResult | None,
-    cad_entities: _CadEntityMap | None,
+    cad_entities: CadEntityMap | None,
     requested_kinds: set[str],
     target_size: float | None,
     /,
@@ -209,7 +213,7 @@ def _apply_planar_band_constraints(
     if cad_entities is None or not cad_entities.edge_to_curve:
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-            "Planar bands require resolved source face and edge identities.",
+            "GmshLayer.band.source_entities must bind source face and edge identities; got no CAD entity map",
             stage=MeshingStageKind.SCOPE_RESOLUTION.value,
         )
     constrained_curves: dict[int, int] = {}
@@ -218,7 +222,7 @@ def _apply_planar_band_constraints(
         if len(layer.face_entity_ids) != 1:
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "Each exact planar band layer must be one strip face.",
+                "GmshLayer.band.face_entity_ids must select one strip face; got a different face count",
                 stage=MeshingStageKind.LAYER_GENERATION.value,
             )
         surface = cad_entities.face_to_surface[layer.face_entity_ids[0].index]
@@ -229,7 +233,7 @@ def _apply_planar_band_constraints(
         if len(curves) != 4 or len(curves) != len(boundary):
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "A planar band layer is not an exact four-curve straight strip.",
+                "GmshLayer.band.boundary must be a four-curve straight strip; got an incompatible boundary",
                 stage=MeshingStageKind.LAYER_GENERATION.value,
             )
         tangential_nodes = max(
@@ -245,7 +249,7 @@ def _apply_planar_band_constraints(
             if len(points) != 2 or any(dimension != 0 for dimension, _ in points):
                 raise MeshingFailure(
                     MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "A planar band boundary curve is not one straight segment.",
+                    "GmshLayer.band.boundary must contain one straight segment per curve; got an incompatible endpoint set",
                     stage=MeshingStageKind.LAYER_GENERATION.value,
                 )
             coordinates = np.asarray(
@@ -261,7 +265,7 @@ def _apply_planar_band_constraints(
             if previous != node_count:
                 raise MeshingFailure(
                     MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "Intersecting planar band constraints require incompatible curve nodes.",
+                    "GmshLayer.band.curve_nodes must agree for intersecting controls; got incompatible node counts",
                     stage=MeshingStageKind.LAYER_GENERATION.value,
                 )
             gmsh.model.mesh.setTransfiniteCurve(curve, node_count)
@@ -270,7 +274,7 @@ def _apply_planar_band_constraints(
         if tangential_count != 2 or normal_count != 2:
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "A planar band strip lacks two tangential and two normal curves.",
+                "GmshLayer.band.curve_directions must contain two tangential and two normal curves; got a different direction count",
                 stage=MeshingStageKind.LAYER_GENERATION.value,
             )
         gmsh.model.mesh.setTransfiniteSurface(surface)
@@ -283,7 +287,7 @@ def _apply_planar_band_constraints(
         if not front_curves:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "An exact planar band front resolved to no source curves.",
+                "GmshLayer.band.front_curves must bind at least one source curve; got no curves",
                 stage=MeshingStageKind.LAYER_GENERATION.value,
             )
         fronts.append(_PlanarBandFront(layer, front_curves))
@@ -297,7 +301,7 @@ def _apply_planar_band_constraints(
     return _PlanarBandGeneration(bands.embedding, tuple(fronts))
 
 
-def _audit_planar_band_fronts(
+def audit_planar_band_fronts(
     gmsh: Any, generation: _PlanarBandGeneration | None, /
 ) -> tuple[tuple[tuple[str, float], ...], tuple[tuple[str, float], ...]]:
     if generation is None:
@@ -314,34 +318,28 @@ def _audit_planar_band_fronts(
         if not points.size:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "An exact planar band front contains no mesh nodes.",
+                "GmshLayer.band.front_nodes must be nonempty; got no mesh nodes",
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         planar = generation.embedding.to_planar(points)
-        # ty: ignore[unresolved-attribute]
         origin = np.asarray(layer.source_origin, dtype=np.float64)
-        # ty: ignore[unresolved-attribute]
         inward = np.asarray(layer.inward_normal, dtype=np.float64)
         distances = (planar - origin) @ inward
         residual = float(
-            # ty: ignore[unresolved-attribute]
             np.max(np.abs(distances - layer.cumulative_distance), initial=0.0)
         )
-        # ty: ignore[unresolved-attribute]
         tangent = np.asarray(layer.tangent, dtype=np.float64)
         tangential_positions = np.unique((planar - origin) @ tangent)
         if tangential_positions.size < 2:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "An exact planar band front has fewer than two tangential nodes.",
+                "GmshLayer.band.tangential_nodes must contain at least two positions; got fewer than two",
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         maximum_tangential_spacing = float(np.max(np.diff(tangential_positions)))
         scale = max(
             1.0,
-            # ty: ignore[unresolved-attribute]
             layer.source_length,
-            # ty: ignore[unresolved-attribute]
             layer.cumulative_distance,
             float(np.max(np.abs(planar), initial=0.0)),
         )
@@ -349,23 +347,19 @@ def _audit_planar_band_fronts(
         if residual > tolerance:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "Generated planar band nodes do not lie on the exact requested front.",
+                "GmshLayer.band.front_residual must satisfy the requested front bound; got a residual above tolerance",
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
-        # ty: ignore[unresolved-attribute]
         if maximum_tangential_spacing > layer.tangential_target + tolerance:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "Generated planar band tangential spacing exceeds its target.",
+                "GmshLayer.band.tangential_spacing must satisfy the requested target; got spacing above target",
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
-        # ty: ignore[unresolved-attribute]
         key = f"planar_band:{layer.control_id}:{layer.region_name}:front:{layer.layer_index + 1}"
         requested.extend(
             (
-                # ty: ignore[unresolved-attribute]
                 (f"{key}:distance", layer.cumulative_distance),
-                # ty: ignore[unresolved-attribute]
                 (f"{key}:tangential_target", layer.tangential_target),
             )
         )
@@ -382,8 +376,8 @@ def _audit_planar_band_fronts(
     return tuple(requested), tuple(achieved)
 
 
-@dataclass(frozen=True, slots=True)
-class _SweptVolume:
+@final
+class _SweptVolume(StrictModule):
     control_index: int
     control: BoundaryLayerControl
     solid_index: int
@@ -401,8 +395,8 @@ class _SweptVolume:
     relative_cad_difference: float
 
 
-@dataclass(frozen=True, slots=True)
-class _SweepGeneration:
+@final
+class _SweepGeneration(StrictModule):
     volumes: tuple[_SweptVolume, ...]
 
 
@@ -455,7 +449,7 @@ def _certify_swept_volume(
     if len(translated) != 1 or len(generated_volumes) != 1:
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "Swept-layer CAD certification did not produce one translated cap and volume.",
+            "GmshLayer.sweep.cad_extrusion must produce one translated cap and volume; got incompatible CAD entity counts",
             stage=MeshingStageKind.LAYER_GENERATION.value,
         )
     face_difference = _cad_symmetric_difference(
@@ -469,137 +463,152 @@ def _certify_swept_volume(
     return face_difference, volume_difference
 
 
-def _prepare_swept_geometry(
-    gmsh: Any, plan: Any, shape: Any, cad_entities: Any, /
-) -> Any:
-    controls = plan.specification.layer_controls
-    if not controls or any(
-        control.route is not BoundaryLayerRoute.EXACT_SWEEP for control in controls
-    ):
-        return None
-    source = _brep_model(plan.source)
-    inventory = _cad_occurrence_inventory(source)
-    scale = _source_scale(source)
+@final
+class _SweepSource(StrictModule):
+    inventory: CadOccurrenceInventory
+    scale: float
+    face_to_surface: tuple[int, ...]
+    solid_to_volume: tuple[int, ...]
+
+
+def _prepare_sweep_source(
+    gmsh: Any, source: BRepModel, cad_entities: CadEntityMap | None, /
+) -> _SweepSource:
+    inventory = cad_occurrence_inventory(source)
+    scale = source_scale(source)
     if cad_entities is None:
         volume_entities = tuple(gmsh.model.getEntities(3))
         if inventory.topology.num_solids != 1 or len(volume_entities) != 1:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "Non-semantic swept meshing requires one source solid.",
+                "GmshLayer.sweep.source_solids must contain one solid without semantic mappings; got a different solid count",
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
         face_to_surface = tuple(
-            _resolve_entities(gmsh, source, _entity_scope(source, 2, (face,)))[0]
+            resolve_entities(gmsh, source, entity_scope(source, 2, (face,)))[0]
             for face in range(len(inventory.entities[2]))
         )
         solid_to_volume = (int(volume_entities[0][1]),)
     else:
         face_to_surface = cad_entities.face_to_surface
         solid_to_volume = cad_entities.solid_to_volume
-    prepared = []
-    for control_index, control in enumerate(controls):
-        solid_ids = np.asarray(control.volume_scope.entity_ids, dtype=np.int64)
-        source_faces = {int(value) for value in np.asarray(control.wall_scope.entity_ids)}
-        target_faces = {int(value) for value in np.asarray(control.cap_scope.entity_ids)}
-        thicknesses = np.asarray(control.schedule.thicknesses, dtype=np.float64)
-        levels = np.concatenate(([0.0], np.cumsum(thicknesses)))
-        for solid_value in solid_ids:
-            solid = int(solid_value)
-            source_candidates = source_faces & set(inventory.topology.solid_faces[solid])
-            target_candidates = target_faces & set(inventory.topology.solid_faces[solid])
-            if len(source_candidates) != 1 or len(target_candidates) != 1:
-                raise MeshingFailure(
-                    MeshingFailureCategory.INVALID_SPECIFICATION,
-                    "Every controlled solid requires one exact source and target cap.",
-                    stage=MeshingStageKind.CONTROL_RESOLUTION.value,
-                )
-            source_face = source_candidates.pop()
-            target_face = target_candidates.pop()
-            source_surface = int(face_to_surface[source_face])
-            target_surface = int(face_to_surface[target_face])
-            if (
-                source_surface == target_surface
-                or gmsh.model.getType(2, source_surface) != "Plane"
-                or gmsh.model.getType(2, target_surface) != "Plane"
-            ):
-                raise MeshingFailure(
-                    MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "Swept layers require distinct planar source and target faces.",
-                    stage=MeshingStageKind.CONTROL_RESOLUTION.value,
-                )
-            origin = np.asarray(
-                gmsh.model.occ.getCenterOfMass(2, source_surface), dtype=np.float64
-            )
-            target_center = np.asarray(
-                gmsh.model.occ.getCenterOfMass(2, target_surface), dtype=np.float64
-            )
-            direction = target_center - origin
-            length = float(np.linalg.norm(direction))
-            tolerance = 1.0e-9 * max(scale, control.schedule.total_thickness)
-            if (
-                not np.isfinite(length)
-                or length <= 0.0
-                or abs(length - control.schedule.total_thickness) > tolerance
-            ):
-                raise MeshingFailure(
-                    MeshingFailureCategory.INVALID_SPECIFICATION,
-                    "Swept-layer schedule total thickness does not equal the source-to-target translation.",
-                    stage=MeshingStageKind.CONTROL_RESOLUTION.value,
-                )
-            unit = direction / length
-            _, parameters = gmsh.model.getClosestPoint(2, source_surface, origin.tolist())
-            normal = np.asarray(
-                gmsh.model.getNormal(source_surface, parameters), dtype=np.float64
-            ).reshape(3)
-            normal /= np.linalg.norm(normal)
-            if abs(float(np.dot(normal, unit))) < 1.0 - 1.0e-10:
-                raise MeshingFailure(
-                    MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "Swept-layer translation must be normal to its planar source face.",
-                    stage=MeshingStageKind.CONTROL_RESOLUTION.value,
-                )
-            volume_tag = int(solid_to_volume[solid])
-            face_difference, volume_difference = _certify_swept_volume(
-                gmsh,
-                (3, volume_tag),
-                source_surface,
-                target_surface,
-                direction,
-            )
-            face_area = float(gmsh.model.occ.getMass(2, source_surface))
-            volume_measure = float(gmsh.model.occ.getMass(3, volume_tag))
-            if face_difference > 1.0e-9 * max(
-                face_area, scale**2
-            ) or volume_difference > 1.0e-9 * max(volume_measure, scale**3):
-                raise MeshingFailure(
-                    MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "Controlled volume is not the exact straight extrusion from source cap to target cap.",
-                    stage=MeshingStageKind.LAYER_GENERATION.value,
-                )
-            lateral_faces = tuple(
-                int(face)
-                for face in inventory.topology.solid_faces[solid]
-                if face not in (source_face, target_face)
-            )
-            prepared.append(
-                _SweptVolume(
-                    control_index,
-                    control,
-                    solid,
-                    volume_tag,
-                    source_face,
-                    target_face,
-                    source_surface,
-                    target_surface,
-                    lateral_faces,
-                    tuple(int(face_to_surface[face]) for face in lateral_faces),
-                    origin,
-                    direction,
-                    unit,
-                    levels,
-                    volume_difference / max(volume_measure, np.finfo(np.float64).tiny),
-                )
-            )
+    return _SweepSource(inventory, scale, face_to_surface, solid_to_volume)
+
+
+def _prepare_swept_volume(
+    gmsh: Any,
+    source: _SweepSource,
+    control_index: int,
+    control: BoundaryLayerControl,
+    solid: int,
+    source_faces: set[int],
+    target_faces: set[int],
+    levels: np.ndarray,
+) -> _SweptVolume:
+    inventory = source.inventory
+    face_to_surface, solid_to_volume, scale = (
+        source.face_to_surface,
+        source.solid_to_volume,
+        source.scale,
+    )
+    source_candidates = source_faces & set(inventory.topology.solid_faces[solid])
+    target_candidates = target_faces & set(inventory.topology.solid_faces[solid])
+    if len(source_candidates) != 1 or len(target_candidates) != 1:
+        raise MeshingFailure(
+            MeshingFailureCategory.INVALID_SPECIFICATION,
+            "GmshLayer.sweep.cap_scopes must select one source and one target cap per solid; got incompatible cap counts",
+            stage=MeshingStageKind.CONTROL_RESOLUTION.value,
+        )
+    source_face = source_candidates.pop()
+    target_face = target_candidates.pop()
+    source_surface = int(face_to_surface[source_face])
+    target_surface = int(face_to_surface[target_face])
+    if (
+        source_surface == target_surface
+        or gmsh.model.getType(2, source_surface) != "Plane"
+        or gmsh.model.getType(2, target_surface) != "Plane"
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            "GmshLayer.sweep.cap_surfaces must be distinct and planar; got coincident or nonplanar caps",
+            stage=MeshingStageKind.CONTROL_RESOLUTION.value,
+        )
+    origin = np.asarray(
+        gmsh.model.occ.getCenterOfMass(2, source_surface), dtype=np.float64
+    )
+    target_center = np.asarray(
+        gmsh.model.occ.getCenterOfMass(2, target_surface), dtype=np.float64
+    )
+    direction = target_center - origin
+    length = float(np.linalg.norm(direction))
+    tolerance = 1.0e-9 * max(scale, control.schedule.total_thickness)
+    if (
+        not np.isfinite(length)
+        or length <= 0.0
+        or abs(length - control.schedule.total_thickness) > tolerance
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.INVALID_SPECIFICATION,
+            "GmshLayer.sweep.total_thickness must equal the source-to-target translation length; got an incompatible translation",
+            stage=MeshingStageKind.CONTROL_RESOLUTION.value,
+        )
+    unit = direction / length
+    _, parameters = gmsh.model.getClosestPoint(2, source_surface, origin.tolist())
+    normal = np.asarray(
+        gmsh.model.getNormal(source_surface, parameters), dtype=np.float64
+    ).reshape(3)
+    normal /= np.linalg.norm(normal)
+    if abs(float(np.dot(normal, unit))) < 1.0 - 1.0e-10:
+        raise MeshingFailure(
+            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            "GmshLayer.sweep.direction must be normal to the source face; got a nonnormal translation",
+            stage=MeshingStageKind.CONTROL_RESOLUTION.value,
+        )
+    volume_tag = int(solid_to_volume[solid])
+    face_difference, volume_difference = _certify_swept_volume(
+        gmsh,
+        (3, volume_tag),
+        source_surface,
+        target_surface,
+        direction,
+    )
+    face_area = float(gmsh.model.occ.getMass(2, source_surface))
+    volume_measure = float(gmsh.model.occ.getMass(3, volume_tag))
+    if face_difference > 1.0e-9 * max(
+        face_area, scale**2
+    ) or volume_difference > 1.0e-9 * max(volume_measure, scale**3):
+        raise MeshingFailure(
+            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            "GmshLayer.sweep.cad_difference must satisfy the straight-extrusion bound; got incompatible cap or volume geometry",
+            stage=MeshingStageKind.LAYER_GENERATION.value,
+        )
+    lateral_faces = tuple(
+        int(face)
+        for face in inventory.topology.solid_faces[solid]
+        if face not in (source_face, target_face)
+    )
+    return _SweptVolume(
+        control_index,
+        control,
+        solid,
+        volume_tag,
+        source_face,
+        target_face,
+        source_surface,
+        target_surface,
+        lateral_faces,
+        tuple(int(face_to_surface[face]) for face in lateral_faces),
+        origin,
+        direction,
+        unit,
+        levels,
+        volume_difference / max(volume_measure, np.finfo(np.float64).tiny),
+    )
+
+
+def _require_swept_cohort(
+    prepared: list[_SweptVolume], inventory: CadOccurrenceInventory, scale: float, /
+) -> None:
     by_solid = {value.solid_index: value for value in prepared}
     for value in prepared:
         for face in value.lateral_face_indices:
@@ -617,11 +626,45 @@ def _prepare_swept_geometry(
                 ):
                     raise MeshingFailure(
                         MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                        "A swept cohort has inconsistent lateral translation vectors.",
+                        "GmshLayer.sweep.cohort.direction must agree across lateral interfaces; got inconsistent translation vectors",
                         stage=MeshingStageKind.CONTROL_RESOLUTION.value,
                     )
+
+
+@checked
+def prepare_swept_geometry(
+    gmsh: Any, plan: Any, cad_entities: CadEntityMap | None, /
+) -> _SweepGeneration | None:
+    """Prepare and certify the CAD translations requested by EXACT_SWEEP controls."""
+    controls = plan.specification.layer_controls
+    if not controls or any(
+        control.route is not BoundaryLayerRoute.EXACT_SWEEP for control in controls
+    ):
+        return None
+    source = _prepare_sweep_source(gmsh, brep_model(plan.source), cad_entities)
+    prepared = []
+    for control_index, control in enumerate(controls):
+        solid_ids = np.asarray(control.volume_scope.entity_ids, dtype=np.int64)
+        source_faces = {int(value) for value in np.asarray(control.wall_scope.entity_ids)}
+        target_faces = {int(value) for value in np.asarray(control.cap_scope.entity_ids)}
+        thicknesses = np.asarray(control.schedule.thicknesses, dtype=np.float64)
+        levels = np.concatenate(([0.0], np.cumsum(thicknesses)))
+        for solid_value in solid_ids:
+            prepared.append(
+                _prepare_swept_volume(
+                    gmsh,
+                    source,
+                    control_index,
+                    control,
+                    int(solid_value),
+                    source_faces,
+                    target_faces,
+                    levels,
+                )
+            )
+    _require_swept_cohort(prepared, source.inventory, source.scale)
     for value in prepared:
-        transform = np.eye(4)
+        transform = np.eye(4, dtype=np.float64)
         transform[:3, 3] = value.direction
         gmsh.model.mesh.setPeriodic(
             2,
@@ -642,14 +685,14 @@ def _entity_linear_triangles(gmsh: Any, surface: int, /) -> np.ndarray:
         if name.split()[0] != "Triangle" or int(order) != 1 or int(corners) != 3:
             raise MeshingFailure(
                 MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "Swept source caps require complete linear triangle meshes.",
+                "GmshLayer.sweep.source_cap_elements must be linear triangles; got a different element type or order",
                 stage=MeshingStageKind.LAYER_GENERATION.value,
             )
         blocks.append(np.asarray(node_values, dtype=np.int64).reshape((-1, int(count))))
     if not blocks:
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            "Swept source cap generated no triangles.",
+            "GmshLayer.sweep.source_cap_elements must contain triangles; got no elements",
             stage=MeshingStageKind.LAYER_GENERATION.value,
         )
     return np.concatenate(blocks)
@@ -671,19 +714,39 @@ def _matching_lateral_surface(
     if len(matches) != 1:
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            "An extruded source edge does not map uniquely to one lateral CAD surface.",
+            "GmshLayer.sweep.lateral_surface must bind each extruded edge uniquely; got a different match count",
             stage=MeshingStageKind.LAYER_GENERATION.value,
         )
     return matches[0]
 
 
-def _install_swept_cells(gmsh: Any, sweep: _SweepGeneration, /) -> None:
-    for value in sweep.volumes:
-        gmsh.model.mesh.removeElements(3, value.volume_tag)
-    for surface in sorted(
-        {surface for value in sweep.volumes for surface in value.lateral_surfaces}
-    ):
-        gmsh.model.mesh.removeElements(2, surface)
+@final
+class _SweepNodeTable(StrictModule):
+    coordinates: dict[int, np.ndarray]
+    coordinate_nodes: dict[tuple[int, ...], int]
+    tolerance: float
+    first_node_tag: int
+
+
+@final
+class _SweepCap(StrictModule):
+    triangles: np.ndarray
+    level_nodes: dict[int, tuple[int, ...]]
+    next_node_tag: int
+
+
+@final
+class _SweepElements(StrictModule):
+    new_nodes: dict[int, list[tuple[int, np.ndarray]]]
+    prisms: dict[int, list[np.ndarray]]
+    quadrilaterals: dict[int, dict[tuple[int, ...], np.ndarray]]
+
+
+def _sweep_coordinate_key(point: np.ndarray, tolerance: float, /) -> tuple[int, ...]:
+    return tuple(int(value) for value in np.rint(point / tolerance).astype(np.int64))
+
+
+def _prepare_sweep_nodes(gmsh: Any, /) -> _SweepNodeTable:
     node_tags, node_coordinates, _ = gmsh.model.mesh.getNodes()
     node_tags = np.asarray(node_tags, dtype=np.int64)
     node_coordinates = np.asarray(node_coordinates, dtype=np.float64).reshape((-1, 3))
@@ -696,116 +759,145 @@ def _install_swept_cells(gmsh: Any, sweep: _SweepGeneration, /) -> None:
     scale = max(float(np.ptp(node_coordinates, axis=0).max()), 1.0)
     tolerance = 1.0e-9 * scale
     coordinate_nodes = {
-        tuple(np.rint(point / tolerance).astype(np.int64)): int(tag)
+        _sweep_coordinate_key(point, tolerance): int(tag)
         for tag, point in zip(node_tags, node_coordinates, strict=True)
     }
     next_node_tag = int(np.max(node_tags, initial=0)) + 1
-    new_nodes: dict[int, list[tuple[int, np.ndarray]]] = {}
-    prism_blocks: dict[int, list[np.ndarray]] = {}
-    quad_blocks: dict[int, dict[tuple[int, ...], np.ndarray]] = {}
-    for value in sweep.volumes:
-        triangles = _entity_linear_triangles(gmsh, value.source_surface)
-        actual_master, slave_nodes, master_nodes, affine = (
-            gmsh.model.mesh.getPeriodicNodes(
-                2, value.target_surface, includeHighOrderNodes=True
-            )
+    return _SweepNodeTable(coordinates, coordinate_nodes, tolerance, next_node_tag)
+
+
+def _prepare_sweep_cap(
+    gmsh: Any,
+    value: _SweptVolume,
+    nodes: _SweepNodeTable,
+    elements: _SweepElements,
+    next_node_tag: int,
+) -> _SweepCap:
+    coordinates, coordinate_nodes, tolerance = (
+        nodes.coordinates,
+        nodes.coordinate_nodes,
+        nodes.tolerance,
+    )
+    new_nodes = elements.new_nodes
+    triangles = _entity_linear_triangles(gmsh, value.source_surface)
+    actual_master, slave_nodes, master_nodes, affine = gmsh.model.mesh.getPeriodicNodes(
+        2, value.target_surface, includeHighOrderNodes=True
+    )
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, 3] = value.direction
+    if int(actual_master) != value.source_surface or not np.allclose(
+        np.asarray(affine, dtype=np.float64).reshape((4, 4)),
+        transform,
+        rtol=0.0,
+        atol=tolerance,
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            "GmshLayer.sweep.periodic_cap_transform must match the source-to-target translation; got an incompatible master or transform",
+            stage=MeshingStageKind.LAYER_GENERATION.value,
         )
-        transform = np.eye(4)
-        transform[:3, 3] = value.direction
-        if int(actual_master) != value.source_surface or not np.allclose(
-            np.asarray(affine, dtype=np.float64).reshape((4, 4)),
-            transform,
-            rtol=0.0,
-            atol=tolerance,
-        ):
-            raise MeshingFailure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                "Gmsh did not preserve the exact source-to-target cap translation.",
-                stage=MeshingStageKind.LAYER_GENERATION.value,
-            )
-        target_by_source = {
-            int(master): int(slave)
-            for slave, master in zip(slave_nodes, master_nodes, strict=True)
-        }
-        source_nodes = np.unique(triangles)
-        if any(int(node) not in target_by_source for node in source_nodes):
-            raise MeshingFailure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                "Target cap is not a complete translated copy of the source triangle mesh.",
-                stage=MeshingStageKind.LAYER_GENERATION.value,
-            )
-        level_nodes: dict[int, tuple[int, ...]] = {}
-        for source_node_value in source_nodes:
-            source_node = int(source_node_value)
-            route = [source_node]
-            for distance in value.levels[1:-1]:
-                point = coordinates[source_node] + value.unit * float(distance)
-                key = tuple(np.rint(point / tolerance).astype(np.int64))
-                node = coordinate_nodes.get(key)
-                if node is None:
-                    node = next_node_tag
-                    next_node_tag += 1
-                    coordinate_nodes[key] = node
-                    coordinates[node] = point
-                    new_nodes.setdefault(value.volume_tag, []).append((node, point))
-                route.append(node)
-            route.append(target_by_source[source_node])
-            level_nodes[source_node] = tuple(route)
-        edges = np.concatenate(
-            (
-                triangles[:, (0, 1)],
-                triangles[:, (1, 2)],
-                triangles[:, (2, 0)],
-            )
+    target_by_source = {
+        int(master): int(slave)
+        for slave, master in zip(slave_nodes, master_nodes, strict=True)
+    }
+    source_nodes = np.unique(triangles)
+    if any(int(node) not in target_by_source for node in source_nodes):
+        raise MeshingFailure(
+            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            "GmshLayer.sweep.target_cap_nodes must bind every source cap node; got missing periodic node mappings",
+            stage=MeshingStageKind.LAYER_GENERATION.value,
         )
-        edge_keys, edge_counts = np.unique(
-            np.sort(edges, axis=1), axis=0, return_counts=True
+    level_nodes: dict[int, tuple[int, ...]] = {}
+    for source_node_value in source_nodes:
+        source_node = int(source_node_value)
+        route = [source_node]
+        for distance in value.levels[1:-1]:
+            point = coordinates[source_node] + value.unit * float(distance)
+            key = _sweep_coordinate_key(point, tolerance)
+            node = coordinate_nodes.get(key)
+            if node is None:
+                node = next_node_tag
+                next_node_tag += 1
+                coordinate_nodes[key] = node
+                coordinates[node] = point
+                new_nodes.setdefault(value.volume_tag, []).append((node, point))
+            route.append(node)
+        route.append(target_by_source[source_node])
+        level_nodes[source_node] = tuple(route)
+    return _SweepCap(triangles, level_nodes, next_node_tag)
+
+
+def _extrude_sweep_elements(
+    gmsh: Any,
+    value: _SweptVolume,
+    nodes: _SweepNodeTable,
+    cap: _SweepCap,
+    elements: _SweepElements,
+) -> None:
+    triangles, level_nodes = cap.triangles, cap.level_nodes
+    coordinates, tolerance = nodes.coordinates, nodes.tolerance
+    prism_blocks, quad_blocks = elements.prisms, elements.quadrilaterals
+    edges = np.concatenate(
+        (
+            triangles[:, (0, 1)],
+            triangles[:, (1, 2)],
+            triangles[:, (2, 0)],
         )
-        boundary_edges = edge_keys[edge_counts == 1]
-        for triangle in triangles:
-            oriented = np.asarray(triangle, dtype=np.int64).copy()
-            first, second, third = (coordinates[int(node)] for node in oriented)
-            if np.dot(np.cross(second - first, third - first), value.direction) < 0.0:
-                oriented[1], oriented[2] = oriented[2], oriented[1]
-            for layer in range(value.control.schedule.layer_count):
-                bottom = np.asarray(
-                    [level_nodes[int(node)][layer] for node in oriented],
-                    dtype=np.int64,
+    )
+    edge_keys, edge_counts = np.unique(np.sort(edges, axis=1), axis=0, return_counts=True)
+    boundary_edges = edge_keys[edge_counts == 1]
+    for triangle in triangles:
+        oriented = np.asarray(triangle, dtype=np.int64).copy()
+        first, second, third = (coordinates[int(node)] for node in oriented)
+        if np.dot(np.cross(second - first, third - first), value.direction) < 0.0:
+            oriented[1], oriented[2] = oriented[2], oriented[1]
+        for layer in range(value.control.schedule.layer_count):
+            bottom = np.asarray(
+                [level_nodes[int(node)][layer] for node in oriented],
+                dtype=np.int64,
+            )
+            top = np.asarray(
+                [level_nodes[int(node)][layer + 1] for node in oriented],
+                dtype=np.int64,
+            )
+            prism_blocks.setdefault(value.volume_tag, []).append(
+                np.concatenate((bottom, top))
+            )
+    for edge in boundary_edges:
+        first, second = (int(node) for node in edge)
+        for layer in range(value.control.schedule.layer_count):
+            quad = np.asarray(
+                (
+                    level_nodes[first][layer],
+                    level_nodes[second][layer],
+                    level_nodes[second][layer + 1],
+                    level_nodes[first][layer + 1],
+                ),
+                dtype=np.int64,
+            )
+            center = np.mean(
+                np.asarray([coordinates[int(node)] for node in quad]), axis=0
+            )
+            surface = _matching_lateral_surface(
+                gmsh, value.lateral_surfaces, center, tolerance
+            )
+            key = tuple(sorted(int(node) for node in quad))
+            existing = quad_blocks.setdefault(surface, {}).get(key)
+            if existing is not None and set(existing) != set(quad):
+                raise MeshingFailure(
+                    MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                    "GmshLayer.sweep.shared_quad_incidence must agree across the cohort; got inconsistent node sets",
+                    stage=MeshingStageKind.LAYER_GENERATION.value,
                 )
-                top = np.asarray(
-                    [level_nodes[int(node)][layer + 1] for node in oriented],
-                    dtype=np.int64,
-                )
-                prism_blocks.setdefault(value.volume_tag, []).append(
-                    np.concatenate((bottom, top))
-                )
-        for edge in boundary_edges:
-            first, second = (int(node) for node in edge)
-            for layer in range(value.control.schedule.layer_count):
-                quad = np.asarray(
-                    (
-                        level_nodes[first][layer],
-                        level_nodes[second][layer],
-                        level_nodes[second][layer + 1],
-                        level_nodes[first][layer + 1],
-                    ),
-                    dtype=np.int64,
-                )
-                center = np.mean(
-                    np.asarray([coordinates[int(node)] for node in quad]), axis=0
-                )
-                surface = _matching_lateral_surface(
-                    gmsh, value.lateral_surfaces, center, tolerance
-                )
-                key = tuple(sorted(int(node) for node in quad))
-                existing = quad_blocks.setdefault(surface, {}).get(key)
-                if existing is not None and set(existing) != set(quad):
-                    raise MeshingFailure(
-                        MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                        "A swept cohort produced inconsistent shared quad incidence.",
-                        stage=MeshingStageKind.LAYER_GENERATION.value,
-                    )
-                quad_blocks[surface][key] = quad
+            quad_blocks[surface][key] = quad
+
+
+def _publish_sweep_elements(gmsh: Any, elements: _SweepElements, /) -> None:
+    new_nodes, prism_blocks, quad_blocks = (
+        elements.new_nodes,
+        elements.prisms,
+        elements.quadrilaterals,
+    )
     for volume_tag, entries in new_nodes.items():
         tags = np.asarray([tag for tag, _ in entries], dtype=np.int64)
         values = np.asarray([point for _, point in entries], dtype=np.float64)
@@ -828,7 +920,26 @@ def _install_swept_cells(gmsh: Any, sweep: _SweepGeneration, /) -> None:
         )
 
 
-def _audit_layers(sweep: Any, rows: Any, node_tags: Any, points: Any, /) -> _LayerAudit:
+@checked
+def install_swept_cells(gmsh: Any, sweep: _SweepGeneration, /) -> None:
+    """Replace swept interiors with conforming translated cap prisms and curtains."""
+    for value in sweep.volumes:
+        gmsh.model.mesh.removeElements(3, value.volume_tag)
+    for surface in sorted(
+        {surface for value in sweep.volumes for surface in value.lateral_surfaces}
+    ):
+        gmsh.model.mesh.removeElements(2, surface)
+    nodes = _prepare_sweep_nodes(gmsh)
+    elements = _SweepElements({}, {}, {})
+    next_node_tag = nodes.first_node_tag
+    for value in sweep.volumes:
+        cap = _prepare_sweep_cap(gmsh, value, nodes, elements, next_node_tag)
+        next_node_tag = cap.next_node_tag
+        _extrude_sweep_elements(gmsh, value, nodes, cap, elements)
+    _publish_sweep_elements(gmsh, elements)
+
+
+def audit_layers(sweep: Any, rows: Any, node_tags: Any, points: Any, /) -> _LayerAudit:
     if sweep is None:
         return _LayerAudit((), (), {}, {})
     volume_map = {value.volume_tag: value for value in sweep.volumes}
@@ -843,13 +954,13 @@ def _audit_layers(sweep: Any, rows: Any, node_tags: Any, points: Any, /) -> _Lay
         if np.any(controlled) and block.cell_kind != "prism":
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "A controlled swept volume contains a non-prism cell.",
+                "GmshLayer.sweep.controlled_cell_kind must be prism; got a non-prism cell",
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         if block.cell_kind == "prism" and np.any(~controlled):
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "A prism cell was generated outside the controlled swept volumes.",
+                "GmshLayer.sweep.prism_volume must belong to a controlled sweep; got an uncontrolled prism",
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
     for value in sweep.volumes:
@@ -863,11 +974,11 @@ def _audit_layers(sweep: Any, rows: Any, node_tags: Any, points: Any, /) -> _Lay
         if not selected_vertices:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "A controlled swept volume contains no generated prisms.",
+                "GmshLayer.sweep.controlled_prisms must be nonempty; got no generated prisms",
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         tags = np.concatenate(selected_tags)
-        vertices = _local_connectivity(node_tags, np.concatenate(selected_vertices))
+        vertices = local_connectivity(node_tags, np.concatenate(selected_vertices))
         corners = points[vertices]
         lower = np.mean((corners[:, :3] - value.origin) @ value.unit, axis=1)
         intervals = np.argmin(np.abs(lower[:, None] - value.levels[None, :-1]), axis=1)
@@ -889,7 +1000,7 @@ def _audit_layers(sweep: Any, rows: Any, node_tags: Any, points: Any, /) -> _Lay
         ):
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "Generated prisms do not realize the exact requested thickness, alignment, and interface levels.",
+                "GmshLayer.sweep.prism_geometry must satisfy thickness, alignment and interface bounds; got incompatible prism geometry",
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         evaluations.setdefault(value.control_index, []).append(evaluation)
@@ -992,9 +1103,9 @@ def _audit_layers(sweep: Any, rows: Any, node_tags: Any, points: Any, /) -> _Lay
     )
 
 
-def _layer_attributes(
-    mesh: CellMesh,
-    rows: tuple[_ElementRows, ...],
+def layer_attributes(
+    mesh: cell_mesh_owner.CellMesh,
+    rows: tuple[ElementRows, ...],
     row_orders: dict[str, np.ndarray],
     audit: _LayerAudit,
     /,
@@ -1038,8 +1149,8 @@ def _layer_attributes(
     )
 
 
-def _audit_swept_interfaces(
-    mesh: CellMesh,
+def audit_swept_interfaces(
+    mesh: cell_mesh_owner.CellMesh,
     source: BRepModel,
     cell_solid_ids: np.ndarray,
     mesh_face_source: np.ndarray,
@@ -1055,11 +1166,11 @@ def _audit_swept_interfaces(
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise MeshingFailure(
             MeshingFailureCategory.CONVERSION_FAILED,
-            "Mixed swept output requires canonical PolyhedralConnectivity.",
+            "GmshLayer.sweep.connectivity must be PolyhedralConnectivity for mixed output; got a different connectivity kind",
             stage=MeshingStageKind.CANONICALIZATION.value,
         )
-    faces = _connectivity_face_rows(connectivity)
-    incidents = _connectivity_face_incidents(connectivity)
+    faces = connectivity_face_rows(connectivity)
+    incidents = connectivity_face_incidents(connectivity)
     cell_kinds = np.concatenate(
         tuple(
             np.full((block.cell_count,), block.cell_kind, dtype=object)
@@ -1067,7 +1178,7 @@ def _audit_swept_interfaces(
         )
     )
     controlled = {value.solid_index for value in sweep.volumes}
-    inventory = _cad_occurrence_inventory(source)
+    inventory = cad_occurrence_inventory(source)
     expected_caps = {
         face
         for value in sweep.volumes
@@ -1082,20 +1193,20 @@ def _audit_swept_interfaces(
             if len(faces[face_index]) != 3 or source_face not in expected_caps:
                 raise MeshingFailure(
                     MeshingFailureCategory.COMPLIANCE_FAILED,
-                    "Prism/tetrahedron cells may meet only on a triangular swept cap.",
+                    "GmshLayer.sweep.mixed_interface must be a triangular cap; got an incompatible face or source cap",
                     stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
                 )
             observed_caps.add(source_face)
         if len(faces[face_index]) == 4 and "tetrahedron" in kinds:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "A swept quad curtain adjoins a tetrahedral cell.",
+                "GmshLayer.sweep.quad_curtain must not adjoin a tetrahedron; got a tetrahedral neighbor",
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
     if observed_caps != expected_caps:
         raise MeshingFailure(
             MeshingFailureCategory.COMPLIANCE_FAILED,
-            "Swept cap triangles do not form the complete conforming prism/tetrahedron interface.",
+            "GmshLayer.sweep.cap_interfaces must form the conforming prism/tetrahedron interface; got missing cap faces",
             stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
         )
     return (("layer_interface_compliance", 1.0),)
@@ -1112,8 +1223,14 @@ class _BoundaryLayerField:
     fan_points: tuple[int, ...]
 
 
-def _endpoint_tangent(gmsh: Any, curve: int, point: np.ndarray, /) -> np.ndarray:
-    """Unit tangent of ``curve`` at its endpoint ``point``, directed into the curve."""
+@final
+class _CurveEndpoint(StrictModule):
+    tangent: np.ndarray
+    at_upper: bool
+
+
+def _endpoint_tangent(gmsh: Any, curve: int, point: np.ndarray, /) -> _CurveEndpoint:
+    """Return the into-curve unit tangent and the endpoint's parameter orientation."""
     lower, upper = gmsh.model.getParametrizationBounds(1, curve)
     ends = np.asarray(
         [gmsh.model.getValue(1, curve, [value]) for value in (lower[0], upper[0])],
@@ -1125,11 +1242,41 @@ def _endpoint_tangent(gmsh: Any, curve: int, point: np.ndarray, /) -> np.ndarray
         gmsh.model.getDerivative(1, curve, [parameter]), dtype=np.float64
     )
     tangent = -tangent if at_upper else tangent
-    return tangent / np.linalg.norm(tangent)
+    return _CurveEndpoint(tangent / np.linalg.norm(tangent), bool(at_upper))
+
+
+def _wall_corner_convex(
+    gmsh: Any,
+    surface: int,
+    curves: tuple[int, int],
+    location: np.ndarray,
+    endpoints: tuple[_CurveEndpoint, _CurveEndpoint],
+    /,
+) -> bool:
+    """Return whether the oriented wall turn points out of the surface domain."""
+    boundary = {
+        abs(int(tag)): int(tag)
+        for dimension, tag in gmsh.model.getBoundary(
+            [(2, surface)], combined=False, oriented=True, recursive=False
+        )
+        if dimension == 1
+    }
+    if any(curve not in boundary for curve in curves):
+        return False
+    first_curve = curves[0]
+    incoming = endpoints[0].at_upper == (boundary[first_curve] > 0)
+    first, second = endpoints[0].tangent, endpoints[1].tangent
+    before, after = (-first, second) if incoming else (-second, first)
+    parameters = gmsh.model.getParametrization(2, surface, location.tolist())
+    normal = np.asarray(gmsh.model.getNormal(surface, parameters), dtype=np.float64)
+    # Both tangents follow the surface loop. A negative oriented turn is a
+    # convex wall protruding into the domain (including an obstacle's corners).
+    # No displaced point or length tolerance enters this unit-independent sign.
+    return float(np.cross(before, after) @ normal) < 0.0
 
 
 def _wall_fan_points(
-    gmsh: Any, control: BoundaryLayerControl, curves: Any, /
+    gmsh: Any, control: BoundaryLayerControl, curves: tuple[int, ...], /
 ) -> tuple[int, ...]:
     """Classify wall-curve junctions; FAN convex corners, REJECT any feature corner."""
     incident: dict[int, list[int]] = {}
@@ -1143,21 +1290,27 @@ def _wall_fan_points(
         if len(members) != 2:
             continue
         location = np.asarray(gmsh.model.getValue(0, point, []), dtype=np.float64)
-        first, second = (_endpoint_tangent(gmsh, curve, location) for curve in members)
+        endpoints = tuple(_endpoint_tangent(gmsh, curve, location) for curve in members)
+        first, second = endpoints[0].tangent, endpoints[1].tangent
         deviation = np.pi - np.arccos(np.clip(first @ second, -1.0, 1.0))
         if deviation <= control.feature_angle:
             continue
         surfaces = gmsh.model.getAdjacencies(1, members[0])[0]
-        probe = location + 1.0e-6 * (first + second) / np.linalg.norm(first + second)
-        # The tangent bisector leaves the domain exactly at convex (fanned) corners.
-        convex = not any(
-            gmsh.model.isInside(2, int(surface), probe.tolist()) for surface in surfaces
+        convex = bool(surfaces.size) and all(
+            _wall_corner_convex(
+                gmsh,
+                int(surface),
+                (members[0], members[1]),
+                location,
+                (endpoints[0], endpoints[1]),
+            )
+            for surface in surfaces
         )
         match control.corner:
             case BoundaryLayerCornerPolicy.REJECT:
                 raise MeshingFailure(
                     MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "The REJECT corner policy refuses wall corners beyond the feature angle.",
+                    "GmshLayer.corner.feature_angle must admit the wall turn under REJECT; got a corner above the feature angle",
                     stage=MeshingStageKind.LAYER_GENERATION.value,
                     entity_ids=(point,),
                     locations=(tuple(float(value) for value in location),),
@@ -1168,14 +1321,16 @@ def _wall_fan_points(
             case BoundaryLayerCornerPolicy.SMOOTH:
                 continue
             case _:
-                raise TypeError("corner must be BoundaryLayerCornerPolicy.")
+                raise TypeError(
+                    "GmshLayer.corner must be BoundaryLayerCornerPolicy; got an unsupported corner selector"
+                )
     return tuple(fans)
 
 
-def _apply_boundary_layer_field(
+def apply_boundary_layer_field(
     gmsh: Any,
     specification: Any,
-    cad_entities: _CadEntityMap | None,
+    cad_entities: CadEntityMap | None,
     requested_kinds: set[str],
     /,
 ) -> _BoundaryLayerField | None:
@@ -1189,7 +1344,7 @@ def _apply_boundary_layer_field(
     if cad_entities is None or not cad_entities.edge_to_curve:
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-            "Planar boundary layers require resolved source edge identities.",
+            "GmshLayer.wall_source_edges must bind source edge identities; got no resolved edge map",
             stage=MeshingStageKind.SCOPE_RESOLUTION.value,
         )
     curves = tuple(
@@ -1205,7 +1360,7 @@ def _apply_boundary_layer_field(
     if rates.size and np.ptp(rates) > 1.0e-12 * np.max(rates):
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "Gmsh boundary-layer fields realize geometric schedules only.",
+            "GmshLayer.field.schedule must use geometric layer growth; got nongeometric thickness ratios",
             stage=MeshingStageKind.CONTROL_RESOLUTION.value,
         )
     fans = _wall_fan_points(gmsh, control, curves)
@@ -1263,10 +1418,10 @@ def _field_columns(
     return np.asarray(levels)
 
 
-def _audit_boundary_layer_field(
+def audit_boundary_layer_field(
     gmsh: Any,
     field: _BoundaryLayerField | None,
-    rows: tuple[_ElementRows, ...],
+    rows: tuple[ElementRows, ...],
     node_tags: np.ndarray,
     points: np.ndarray,
     /,
@@ -1279,7 +1434,7 @@ def _audit_boundary_layer_field(
     layers = requested_values.size
     edges = []
     for block in rows:
-        local = _local_connectivity(node_tags, block.vertices[:, : block.corner_count])
+        local = local_connectivity(node_tags, block.vertices[:, : block.corner_count])
         edges.extend(
             local[:, (corner, (corner + 1) % block.corner_count)]
             for corner in range(block.corner_count)
@@ -1297,7 +1452,7 @@ def _audit_boundary_layer_field(
     for curve in field.curves:
         _, _, node_blocks = gmsh.model.mesh.getElements(1, curve)
         segments.append(
-            _local_connectivity(
+            local_connectivity(
                 node_tags, np.asarray(node_blocks[0], dtype=np.int64).reshape(-1, 2)
             )
         )
@@ -1306,10 +1461,10 @@ def _audit_boundary_layer_field(
         ):
             tags, _, _ = gmsh.model.mesh.getNodes(0, abs(int(point)))
             corner_nodes.append(
-                _local_connectivity(node_tags, np.asarray(tags, dtype=np.int64))
+                local_connectivity(node_tags, np.asarray(tags, dtype=np.int64))
             )
     segments = np.concatenate(segments)
-    distance = _nearest_distances(points[segments][:, (0, 1, 1)], points)
+    distance = nearest_distances(points[segments][:, (0, 1, 1)], points)
     start = np.setdiff1d(np.unique(segments), np.concatenate(corner_nodes))
     levels = np.median(
         _field_columns(points, distance, neighbors, start, layers + 1), axis=1

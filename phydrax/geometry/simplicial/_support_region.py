@@ -17,20 +17,22 @@ from jax import Array
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
 from ...discretization._coordinate_enclosure import coordinate_polynomials, evaluate
+from ...discretization._exact_algebraic_geometry import rational_coefficient
 from ...discretization._reference_cell import reference_cell_topology
 from ...discretization._simplicial_locator import (
-    _cell_map_vertices,
     AbstractCellLocator,
+    cell_map_vertices,
     CellLocationStatus,
 )
 from ...discretization.fem._cell_map import PreparedFiniteElementCellMap
-from ...typing import Dim, Float64, PRNGKey
+from ...typing import checked, Dim, Float64, PRNGKey
 from .._capabilities import GeometryCapability
 from .._certificate import exact_signed_distance_certificate, FieldCertificate
 from .._contracts import CompiledGeometry, GeometryKernel, GeometryKind
 from .._sampling import RejectionSamplingPlan
-from ..design._schema import _ParameterCollector, DesignState
+from ..design._schema import DesignState, ParameterSchema
 
 
 class _SupportFaceDim(Dim):
@@ -55,8 +57,8 @@ class _FaceProjection(StrictModule, NonTrainableState):
 
 
 @final
-class _SimplicialSupportKernel(GeometryKernel, NonTrainableState):
-    """Exact region queries for a fixed, affine simplicial mesh partition.
+class SimplicialSupportKernel(GeometryKernel, NonTrainableState):
+    """Query signed distance and containment for a fixed affine simplicial partition.
 
     Every subface of the exterior boundary participates in the nearest-point
     reduction. Unlike a minimum of per-cell fields, internal facets cannot
@@ -99,7 +101,9 @@ class _SimplicialSupportKernel(GeometryKernel, NonTrainableState):
 
     def _flat_points(self, points: Array, /) -> Array:
         if points.ndim < 1 or points.shape[-1] != self.dimension:
-            raise ValueError("Support queries must use the mesh coordinate dimension.")
+            raise ValueError(
+                f"SimplicialSupportKernel.points must use mesh coordinate dimension {self.dimension}; got shape {points.shape}"
+            )
         return points.reshape((-1, self.dimension))
 
     def _nearest_squared(self, point: Array, /) -> Array:
@@ -176,19 +180,19 @@ class _SimplicialSupportKernel(GeometryKernel, NonTrainableState):
     def boundary_normal(self, state: DesignState, points: Array, /) -> NoReturn:
         del state, points
         raise NotImplementedError(
-            "Affine mesh support queries do not certify unique boundary normals."
+            "SimplicialSupportKernel.boundary_normal must use a provider of certified unique normals; got support-query geometry"
         )
 
     def measure(self, state: DesignState, /) -> NoReturn:
         del state
         raise NotImplementedError(
-            "Support-query geometry does not certify a mesh integration measure."
+            "SimplicialSupportKernel.measure must use mesh integration; got support-query geometry without a certified measure"
         )
 
     def boundary_measure(self, state: DesignState, /) -> NoReturn:
         del state
         raise NotImplementedError(
-            "Support-query geometry does not certify a boundary integration measure."
+            "SimplicialSupportKernel.boundary_measure must use boundary integration; got support-query geometry without a certified measure"
         )
 
     def sample_interior(
@@ -201,18 +205,22 @@ class _SimplicialSupportKernel(GeometryKernel, NonTrainableState):
         plan: RejectionSamplingPlan | None = None,
     ) -> NoReturn:
         del state, num_points, key, plan
-        raise NotImplementedError("Use the owning mesh quadrature for interior sampling.")
+        raise NotImplementedError(
+            "support_region.sample_interior must use mesh quadrature; got a geometry sampling request"
+        )
 
     def sample_boundary(
         self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> NoReturn:
         del state, num_points, key
-        raise NotImplementedError("Use the owning mesh boundary quadrature for sampling.")
+        raise NotImplementedError(
+            "support_region.sample_boundary must use mesh boundary quadrature; got a geometry sampling request"
+        )
 
     def boundary_atlas(self, state: DesignState, /) -> NoReturn:
         del state
         raise NotImplementedError(
-            "Support-query geometry does not provide a boundary atlas."
+            "SimplicialSupportKernel.boundary_atlas must use a boundary-atlas provider; got support-query geometry"
         )
 
 
@@ -223,11 +231,13 @@ def _boundary_faces(cells: np.ndarray, cell_kind: str, /) -> np.ndarray:
     keys = np.sort(faces, axis=1)
     _, inverse, counts = np.unique(keys, axis=0, return_inverse=True, return_counts=True)
     if np.any(counts > 2):
-        raise ValueError("Simplicial support requires manifold facets.")
+        raise ValueError(
+            "SimplicialSupport.facets must be manifold; got more than two incident cells"
+        )
     boundary = keys[counts[inverse] == 1]
     if boundary.shape[0] == 0:
         raise ValueError(
-            "A bounded full-dimensional mesh region requires an exterior boundary."
+            "SimplicialSupport.boundary must contain exterior facets for a bounded full-dimensional region; got no exterior facets"
         )
     return boundary
 
@@ -237,6 +247,8 @@ def _affine_support_coordinates(
     source_coordinates: np.ndarray,
     cells: np.ndarray,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> np.ndarray:
     """Prove affine maps and realize their target corners, retaining source DOFs."""
     topology = reference_cell_topology(cell_map.coordinate_element.cell_kind)
@@ -245,11 +257,12 @@ def _affine_support_coordinates(
     )
     exact_points: dict[int, tuple[Fraction, ...]] = {}
     routes = np.asarray(cell_map.coordinate_dofs, dtype=np.int32)
-    source_bank = cell_map.source_coordinates(source_coordinates)
+    source_bank = cell_map.source_coordinates(source_coordinates, budget=budget)
     for row in range(cells.shape[0]):
         polynomials = coordinate_polynomials(
             cell_map.coordinate_element,
             tuple(source_bank[routes[row, column]] for column in range(routes.shape[1])),
+            budget=budget,
         )
         if (
             polynomials is None
@@ -257,15 +270,21 @@ def _affine_support_coordinates(
             or any(sum(index) > 1 for polynomial in polynomials for index in polynomial)
         ):
             raise ValueError(
-                "Simplicial support geometry requires proven affine simplex coordinate maps."
+                f"SimplicialSupport.coordinate_maps must be proven affine simplex maps; got an unrepresented or nonaffine map at cell {row}"
             )
         for column, corner in enumerate(corners):
-            image = tuple(evaluate(polynomial, corner) for polynomial in polynomials)
+            image = tuple(
+                rational_coefficient(
+                    evaluate(polynomial, corner, budget=budget),
+                    role="SimplicialSupport.corner_image",
+                )
+                for polynomial in polynomials
+            )
             identifier = int(cells[row, column])
             previous = exact_points.setdefault(identifier, image)
             if previous != image:
                 raise ValueError(
-                    "Simplicial support coordinate maps disagree at a shared mesh corner."
+                    f"SimplicialSupport.coordinate_maps must agree at shared mesh corners; got inconsistent corner {identifier}"
                 )
     coordinates = np.zeros(
         (cell_map.mesh.coordinates.shape[0], topology.dimension), dtype=np.float64
@@ -273,7 +292,9 @@ def _affine_support_coordinates(
     for vertex, image in exact_points.items():
         coordinates[vertex] = tuple(float(value) for value in image)
     if not np.all(np.isfinite(coordinates)):
-        raise ValueError("Simplicial support target corners must be finite.")
+        raise ValueError(
+            "SimplicialSupport.coordinates must have finite target corners; got nonfinite coordinates"
+        )
     return coordinates
 
 
@@ -306,7 +327,9 @@ def _projection_worksets(
                     rcond=None,
                 )
                 if observed_rank != rank:
-                    raise ValueError("Simplicial exterior faces must be nondegenerate.")
+                    raise ValueError(
+                        f"SimplicialSupport.exterior_faces must have affine rank {rank}; got {observed_rank}"
+                    )
                 duals[index] = dual
         worksets.append(
             _FaceProjection(
@@ -319,6 +342,7 @@ def _projection_worksets(
     return tuple(worksets)
 
 
+@checked
 def compile_simplicial_support(
     locator: AbstractCellLocator,
     support_id: str,
@@ -326,61 +350,72 @@ def compile_simplicial_support(
     *,
     maximum_face_entries: int = 1 << 20,
     maximum_retained_bytes: int = 256 << 20,
+    budget: CoordinateEnclosureBudget,
 ) -> CompiledGeometry:
-    """Compile affine simplex support in any dimension from its actual source map.
+    """Compile affine simplex support in any dimension from its source map.
 
-    Retained coefficient routes are not target corners. Exact coordinate source
-    expressions prove affinity and supply target-reference corner images; mesh
-    vertex identities alone define shared facets. Non-affine or unrepresented
-    maps need their owning mapped-support geometry rather than this affine path.
+    Coordinate source expressions evaluated in exact arithmetic prove affinity
+    and supply target-reference corner images. Retained coefficient routes are
+    distinct from target corners; mesh vertex identities define shared facets.
+    Non-affine or unrepresented maps require mapped-support geometry.
     """
-    if not isinstance(locator, AbstractCellLocator):
-        raise TypeError("Simplicial support requires an AbstractCellLocator.")
     if not isinstance(support_id, str):
-        raise TypeError("Simplicial support identity must be a string.")
+        raise TypeError(
+            f"compile_simplicial_support.support_id must be a string; got {type(support_id).__name__}"
+        )
     if not support_id:
-        raise ValueError("Simplicial support identity must be nonempty.")
-    for budget in (maximum_face_entries, maximum_retained_bytes):
-        if not isinstance(budget, int) or isinstance(budget, bool):
-            raise TypeError("Support preparation budgets must be integers.")
-        if budget < 1:
-            raise ValueError("Support preparation budgets must be positive.")
+        raise ValueError(
+            f"compile_simplicial_support.support_id must be nonempty; got {support_id!r}"
+        )
+    for limit in (maximum_face_entries, maximum_retained_bytes):
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise TypeError(
+                f"compile_simplicial_support.budgets must be integers; got {type(limit).__name__}"
+            )
+        if limit < 1:
+            raise ValueError(
+                f"compile_simplicial_support.budgets must be positive; got {limit!r}"
+            )
     cell_map = locator.cell_map
     if not isinstance(cell_map, PreparedFiniteElementCellMap):
         raise TypeError(
-            "Simplicial support requires a canonical finite-element cell map."
+            f"compile_simplicial_support.cell_map must be a PreparedFiniteElementCellMap; got {type(cell_map).__name__}"
         )
     dimension = locator.cell_map.reference_dimension
     if locator.cell_map.ambient_dimension != dimension:
         raise ValueError(
-            "A region support must be full-dimensional, not an embedded manifold."
+            f"compile_simplicial_support.cell_map must be full-dimensional; got ambient dimension {locator.cell_map.ambient_dimension} and reference dimension {dimension}"
         )
-    cells = _cell_map_vertices(cell_map)
+    cells = cell_map_vertices(cell_map)
     if cells.shape[1:] != (dimension + 1,):
         raise ValueError(
-            "Simplicial support geometry requires affine simplex vertex coordinates."
+            f"compile_simplicial_support.cells must have simplex vertex shape ({dimension + 1},); got {cells.shape[1:]}"
         )
     faces = _boundary_faces(cells, cell_map.coordinate_element.cell_kind)
     if maximum_face_entries < 1 or dimension > maximum_face_entries.bit_length():
-        raise ValueError("Simplicial support face entries exceed the preparation budget.")
+        raise ValueError(
+            f"compile_simplicial_support.face_entries must fit maximum_face_entries={maximum_face_entries}; got dimension {dimension} exceeding the budget"
+        )
     if faces.shape[0] * (2**dimension - 1) > maximum_face_entries:
-        raise ValueError("Simplicial support face entries exceed the preparation budget.")
+        raise ValueError(
+            f"compile_simplicial_support.face_entries must fit maximum_face_entries={maximum_face_entries}; got too many exterior face subfaces"
+        )
     # Admission bounds host/device retained projection maps before preparation.
     face_entries = faces.shape[0] * (2**dimension - 1)
     if face_entries * (2 * dimension**2 + dimension) * 8 > maximum_retained_bytes:
         raise ValueError(
-            "Simplicial support projection maps exceed maximum_retained_bytes."
+            f"compile_simplicial_support.projection_maps must fit maximum_retained_bytes={maximum_retained_bytes}; got retained bytes above the budget"
         )
     coordinates = _affine_support_coordinates(
-        cell_map, np.asarray(locator.coordinates, dtype=np.float64), cells
+        cell_map, np.asarray(locator.coordinates, dtype=np.float64), cells, budget=budget
     )
     used = coordinates[np.unique(cells)]
-    kernel = _SimplicialSupportKernel(
+    kernel = SimplicialSupportKernel(
         locator,
         _projection_worksets(coordinates, faces, dimension),
         jnp.asarray(np.stack((used.min(axis=0), used.max(axis=0))), dtype=jnp.float64),
         dimension,
         support_id,
     )
-    _, state = _ParameterCollector().finish()
+    state = DesignState(ParameterSchema(()), ())
     return CompiledGeometry(kernel, state)

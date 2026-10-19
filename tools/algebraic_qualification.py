@@ -98,12 +98,12 @@ def _image_case() -> Any:
         ),
     )
     result = (
-        polynomial_image.plan_polynomial_image_analysis(
+        polynomial_image.PolynomialImageAnalysisPlan(
             mapping,
             support,
             discovery_sample_count=24,
             heldout_sample_count=8,
-            key=jr.PRNGKey(2026),
+            key=jr.key(2026, impl="threefry2x32"),
             policy=polynomial_image.PolynomialImageAnalysisPolicy(
                 rank_relative_tolerance=1.0e-5,
                 heldout_absolute_tolerance=2.0e-5,

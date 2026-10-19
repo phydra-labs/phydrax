@@ -11,29 +11,27 @@ import numpy as np
 import pytest
 
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.geometry.brep._boolean import (
+from phydrax.geometry.brep import (
     boolean_brep,
-    BRepBooleanFailure,
-    BRepBooleanOperation,
-    BRepBooleanPolicy,
-)
-from phydrax.geometry.brep._boolean_coincidence import prove_surface_correspondence
-from phydrax.geometry.brep._constructors import (
     brep_box,
     brep_cylinder,
     brep_sphere,
+    BRepBooleanFailure,
+    BRepBooleanOperation,
+    BRepBooleanPolicy,
+    BRepModel,
     BRepTessellationPolicy,
-)
-from phydrax.geometry.brep._containment import certify_solid_containment
-from phydrax.geometry.brep._intersection import (
+    CylinderPatch,
+    IntersectionCurve,
     NativePeriodEndpoint,
     ParametricIntersectionPolicy,
+    PlanePatch,
+    prepare_brep_query,
+    SpherePatch,
 )
-from phydrax.geometry.brep._intersection_curve import IntersectionCurve
-from phydrax.geometry.brep._model import BRepModel
-from phydrax.geometry.brep._patches import CylinderPatch, PlanePatch, SpherePatch
+from phydrax.geometry.brep._boolean_coincidence import prove_surface_correspondence
+from phydrax.geometry.brep._containment import certify_solid_containment
 from phydrax.geometry.brep._placed import PlacedSurface
-from phydrax.geometry.brep._query import prepare_brep_query
 from phydrax.interchange._cad import CadInterchangeError
 from phydrax.interchange._cad_archive import load_brep_archive, save_brep_archive
 from phydrax.interchange._step import write_step
@@ -43,18 +41,23 @@ from phydrax.units import MILLIMETER
 _COORDINATES = SpatialCoordinateContract(MILLIMETER)
 _EXACT_SOURCE = BRepTessellationPolicy(realize=False)
 
-
-def _box(
-    lower: tuple[float, float, float], upper: tuple[float, float, float]
-) -> BRepModel:
-    return brep_box(lower, upper, coordinate_contract=_COORDINATES)
+# Empirical acceptance thresholds retained from this module's closed-form
+# box-volume, curved-integral, branch-agreement, and period-transport fixtures.
+# They are regression tolerances, not certified error enclosures.
+_BOX_VOLUME_ABSOLUTE_TOLERANCE = 1e-12
+_CURVED_INTEGRAL_RELATIVE_TOLERANCE = 1e-6
+_CURVED_DISTANCE_ABSOLUTE_TOLERANCE = 1e-6
+_BRANCH_AGREEMENT_ABSOLUTE_TOLERANCE = 1e-10
+_COINCIDENT_VOLUME_RELATIVE_TOLERANCE = 1e-10
 
 
 def _volume(model: BRepModel) -> float:
-    """Independent oriented boundary integral over exact planar face loops."""
+    """Integrate oriented planar loops independently of the BRep query."""
     geometry = model.geometry
     if geometry is None:
-        raise ValueError("The test requires authoritative exact topology.")
+        raise ValueError(
+            "test_native_cad_boolean.model.geometry must be defined; got None"
+        )
     points = np.asarray(geometry.vertex_points)
     volume = 0.0
     for faces, shell_signs in zip(
@@ -93,44 +96,50 @@ def test_overlapping_boxes_have_exact_oriented_volume(
     operation: BRepBooleanOperation,
     expected: float,
 ) -> None:
-    first = _box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0))
-    second = _box((1.0, 1.0, 1.0), (3.0, 3.0, 3.0))
+    first = brep_box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0), coordinate_contract=_COORDINATES)
+    second = brep_box((1.0, 1.0, 1.0), (3.0, 3.0, 3.0), coordinate_contract=_COORDINATES)
     original = first.model_id, second.model_id
     result = boolean_brep(first, second, operation)
-    assert _volume(result.model) == pytest.approx(expected, abs=1e-12)
+    assert _volume(result.model) == pytest.approx(
+        expected, abs=_BOX_VOLUME_ABSOLUTE_TOLERANCE
+    )
     assert (first.model_id, second.model_id) == original
     assert result.association_graph.transaction.coverage.source_exhaustive
     assert result.association_graph.transaction.coverage.target_exhaustive
 
 
 def test_difference_reconstructs_oriented_cavity_shell() -> None:
-    outer = _box((0.0, 0.0, 0.0), (3.0, 3.0, 3.0))
-    inner = _box((1.0, 1.0, 1.0), (2.0, 2.0, 2.0))
+    outer = brep_box((0.0, 0.0, 0.0), (3.0, 3.0, 3.0), coordinate_contract=_COORDINATES)
+    inner = brep_box((1.0, 1.0, 1.0), (2.0, 2.0, 2.0), coordinate_contract=_COORDINATES)
     result = boolean_brep(outer, inner, "difference")
     geometry = result.model.geometry
     assert geometry is not None
     assert result.model.topology.num_solids == 1
     assert len(geometry.solid_shells[0]) == 2
-    assert _volume(result.model) == pytest.approx(26.0, abs=1e-12)
+    assert _volume(result.model) == pytest.approx(
+        26.0, abs=_BOX_VOLUME_ABSOLUTE_TOLERANCE
+    )
 
 
 def test_disconnected_union_preserves_distinct_solid_topology() -> None:
     result = boolean_brep(
-        _box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
-        _box((2.0, 0.0, 0.0), (3.0, 1.0, 1.0)),
+        brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=_COORDINATES),
+        brep_box((2.0, 0.0, 0.0), (3.0, 1.0, 1.0), coordinate_contract=_COORDINATES),
         "union",
     )
     assert result.model.topology.num_solids == 2
-    assert _volume(result.model) == pytest.approx(2.0, abs=1e-12)
+    assert _volume(result.model) == pytest.approx(2.0, abs=_BOX_VOLUME_ABSOLUTE_TOLERANCE)
 
 
 @pytest.mark.parametrize("operation", ["intersection", "difference"])
 def test_regularized_empty_boolean_has_exhaustive_deletion(
     operation: BRepBooleanOperation,
 ) -> None:
-    first = _box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0))
+    first = brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=_COORDINATES)
     second = (
-        first if operation == "difference" else _box((1.0, 0.0, 0.0), (2.0, 1.0, 1.0))
+        first
+        if operation == "difference"
+        else brep_box((1.0, 0.0, 0.0), (2.0, 1.0, 1.0), coordinate_contract=_COORDINATES)
     )
     result = boolean_brep(first, second, operation)
     assert result.empty
@@ -143,10 +152,10 @@ def test_regularized_empty_boolean_has_exhaustive_deletion(
 
 
 def test_coincident_union_removes_duplicate_boundary_faces() -> None:
-    box = _box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0))
+    box = brep_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), coordinate_contract=_COORDINATES)
     result = boolean_brep(box, box, "union")
     assert result.model.topology.num_faces == 6
-    assert _volume(result.model) == pytest.approx(1.0, abs=1e-12)
+    assert _volume(result.model) == pytest.approx(1.0, abs=_BOX_VOLUME_ABSOLUTE_TOLERANCE)
     mapped = {
         edge.source_occurrence_id
         for edge in result.association_graph.transaction.correspondences
@@ -159,8 +168,8 @@ def test_coincident_union_removes_duplicate_boundary_faces() -> None:
 
 def test_native_boolean_model_archive_retains_exact_topology(tmp_path: Path) -> None:
     result = boolean_brep(
-        _box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0)),
-        _box((1.0, 1.0, 1.0), (3.0, 3.0, 3.0)),
+        brep_box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0), coordinate_contract=_COORDINATES),
+        brep_box((1.0, 1.0, 1.0), (3.0, 3.0, 3.0), coordinate_contract=_COORDINATES),
         "difference",
     )
     path = tmp_path / "boolean.phx"
@@ -170,12 +179,12 @@ def test_native_boolean_model_archive_retains_exact_topology(tmp_path: Path) -> 
     assert restored.geometry is not None
     assert result.model.geometry is not None
     assert restored.geometry.geometry_id == result.model.geometry.geometry_id
-    assert _volume(restored) == pytest.approx(7.0, abs=1e-12)
+    assert _volume(restored) == pytest.approx(7.0, abs=_BOX_VOLUME_ABSOLUTE_TOLERANCE)
 
 
 def test_arrangement_budget_refusal_preserves_source_revision() -> None:
-    first = _box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0))
-    second = _box((1.0, 1.0, 1.0), (3.0, 3.0, 3.0))
+    first = brep_box((0.0, 0.0, 0.0), (2.0, 2.0, 2.0), coordinate_contract=_COORDINATES)
+    second = brep_box((1.0, 1.0, 1.0), (3.0, 3.0, 3.0), coordinate_contract=_COORDINATES)
     original = first.model_id
     with pytest.raises(BRepBooleanFailure, match="cell budget exhausted"):
         boolean_brep(first, second, "union", policy=BRepBooleanPolicy(maximum_cells=1))
@@ -191,7 +200,9 @@ def test_curved_intersection_budget_preserves_source_revision() -> None:
     with pytest.raises(BRepBooleanFailure):
         boolean_brep(
             sphere,
-            _box((0.3, -2.0, -2.0), (2.0, 2.0, 2.0)),
+            brep_box(
+                (0.3, -2.0, -2.0), (2.0, 2.0, 2.0), coordinate_contract=_COORDINATES
+            ),
             "intersection",
             policy=policy,
         )
@@ -248,7 +259,7 @@ def test_overlapping_spheres_retain_exact_coupled_boundary(
     )
     measures = prepare_brep_query(result.model).measures
     assert float(np.sum(np.asarray(measures.solid_volumes))) == pytest.approx(
-        expected, rel=1e-6
+        expected, rel=_CURVED_INTEGRAL_RELATIVE_TOLERANCE
     )
     assert result.association_graph.transaction.coverage.source_exhaustive
     assert result.association_graph.transaction.coverage.target_exhaustive
@@ -281,7 +292,7 @@ def test_cylinder_plane_cut_keeps_irrational_root_bindings() -> None:
     actual = float(
         np.sum(np.asarray(prepare_brep_query(result.model).measures.solid_volumes))
     )
-    assert actual == pytest.approx(expected, rel=1e-6)
+    assert actual == pytest.approx(expected, rel=_CURVED_INTEGRAL_RELATIVE_TOLERANCE)
 
 
 def test_containment_on_a_face_plane_is_outside_or_on_boundary() -> None:
@@ -323,7 +334,9 @@ def test_closest_point_lower_bound_ignores_face_plane_outside_the_trim() -> None
     closest = query.closest_point(np.asarray([[0.9, 0.9, -1.0]]))
     distance = float(np.asarray(closest.distances)[0])
     lower = float(np.asarray(closest.distance_lower_bounds)[0])
-    assert distance == pytest.approx(math.hypot(0.9, 0.9) - 1.0, abs=1e-6)
+    assert distance == pytest.approx(
+        math.hypot(0.9, 0.9) - 1.0, abs=_CURVED_DISTANCE_ABSOLUTE_TOLERANCE
+    )
     assert 0.0 < lower <= distance
 
 
@@ -360,7 +373,9 @@ def test_nonrational_quadric_boolean_archive_preserves_authority(tmp_path: Path)
     evaluated = branch.evaluate(parameters)
     first_points = np.asarray(branch.first.patch.evaluate(evaluated.first_parameters))
     second_points = np.asarray(branch.second.patch.evaluate(evaluated.second_parameters))
-    np.testing.assert_allclose(first_points, second_points, atol=1e-10, rtol=0.0)
+    np.testing.assert_allclose(
+        first_points, second_points, atol=_BRANCH_AGREEMENT_ABSOLUTE_TOLERANCE, rtol=0.0
+    )
     nodes, weights = np.polynomial.legendre.leggauss(96)
     angle = 0.5 * math.pi * nodes
     expected = (
@@ -377,7 +392,7 @@ def test_nonrational_quadric_boolean_archive_preserves_authority(tmp_path: Path)
     actual = float(
         np.sum(np.asarray(prepare_brep_query(result.model).measures.solid_volumes))
     )
-    assert actual == pytest.approx(expected, rel=1e-6)
+    assert actual == pytest.approx(expected, rel=_CURVED_INTEGRAL_RELATIVE_TOLERANCE)
     path = tmp_path / "nonrational.phx"
     save_brep_archive(result.model, path)
     restored = load_brep_archive(path)
@@ -391,7 +406,10 @@ def test_nonrational_quadric_boolean_archive_preserves_authority(tmp_path: Path)
     assert tuple(curve.branch_id for curve in restored_branches) == tuple(
         curve.branch_id for curve in branches
     )
-    with pytest.raises(CadInterchangeError, match="bounded approximation"):
+    with pytest.raises(
+        CadInterchangeError,
+        match=r"CadExportPolicy\.intersection_approximation must be present",
+    ):
         write_step(restored, tmp_path / "nonrational.step")
 
 
@@ -416,7 +434,7 @@ def test_coincident_cylinder_support_preserves_region_volume(
     actual = float(
         np.sum(np.asarray(prepare_brep_query(result.model).measures.solid_volumes))
     )
-    assert actual == pytest.approx(expected, rel=1e-10)
+    assert actual == pytest.approx(expected, rel=_COINCIDENT_VOLUME_RELATIVE_TOLERANCE)
     assert result.model.topology.num_solids == 1
     assert result.association_graph.transaction.coverage.source_exhaustive
     assert result.association_graph.transaction.coverage.target_exhaustive
@@ -454,7 +472,7 @@ def test_coincident_cylinder_support_preserves_region_volume(
                 )
             ),
             rtol=0.0,
-            atol=1.0e-12,
+            atol=_BOX_VOLUME_ABSOLUTE_TOLERANCE,
         )
 
 

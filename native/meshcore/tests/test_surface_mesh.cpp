@@ -51,15 +51,36 @@ Outcome reconnect(const Patch& patch, const std::vector<double>& insert_charts,
   outcome.vertex_ids.assign(static_cast<std::size_t>(count), -7);
   outcome.item_status.assign(static_cast<std::size_t>(count), -7);
   int64_t produced = 0;
-  outcome.status = phx_mc_surface_reconnect(
-      static_cast<int64_t>(patch.charts.size() / 2), patch.charts.data(), patch.points.data(),
-      normals.data(), nullptr, nullptr, static_cast<int64_t>(patch.triangles.size() / 3), patch.triangles.data(),
-      patch.constrained.data(), count, insert_charts.data(), insert_points.data(),
-      new_normals.data(), nullptr, nullptr, spacings.data(), hints.data(),
-      insert_edges.empty() ? nullptr : insert_edges.data(), sweep, max_triangles, work_limit,
-      outcome.triangles.data(),
-      outcome.constrained.data(), &produced, outcome.vertex_ids.data(),
-      outcome.item_status.data(), outcome.counters.data());
+  const phx_mc_surface_reconnect_request request{
+      .vertex_count = static_cast<int64_t>(patch.charts.size() / 2),
+      .charts = patch.charts.data(),
+      .points = patch.points.data(),
+      .normals = normals.data(),
+      .vertex_metrics = nullptr,
+      .vertex_pole_ids = nullptr,
+      .triangle_count = static_cast<int64_t>(patch.triangles.size() / 3),
+      .triangles = patch.triangles.data(),
+      .constrained = patch.constrained.data(),
+      .insert_count = count,
+      .insert_charts = insert_charts.data(),
+      .insert_points = insert_points.data(),
+      .insert_normals = new_normals.data(),
+      .insert_metrics = nullptr,
+      .insert_pole_ids = nullptr,
+      .insert_spacing = spacings.data(),
+      .insert_hints = hints.data(),
+      .insert_edges = insert_edges.empty() ? nullptr : insert_edges.data(),
+      .sweep = sweep,
+      .max_triangles = max_triangles,
+      .work_limit = work_limit,
+      .triangles_out = outcome.triangles.data(),
+      .constrained_out = outcome.constrained.data(),
+      .triangle_count_out = &produced,
+      .vertex_ids = outcome.vertex_ids.data(),
+      .item_status = outcome.item_status.data(),
+      .counters = outcome.counters.data(),
+  };
+  outcome.status = phx_mc_surface_reconnect(&request);
   outcome.triangles.resize(static_cast<std::size_t>(3 * produced));
   outcome.constrained.resize(static_cast<std::size_t>(3 * produced));
   outcome.charts = patch.charts;
@@ -153,8 +174,8 @@ void planar_insertion_is_delaunay() {
   }
   const Outcome outcome = reconnect(square(), charts, points, 0.0, 1);
   PHX_CHECK(outcome.status == PHX_MC_OK);
-  PHX_CHECK(outcome.counters[0] == 25);
-  PHX_CHECK(outcome.counters[1] == 0);
+  PHX_CHECK(outcome.counters[PHX_MC_SURFACE_INSERTED] == 25);
+  PHX_CHECK(outcome.counters[PHX_MC_SURFACE_REFUSED] == 0);
   PHX_CHECK(outcome.triangles.size() / 3 == 2 + 2 * 25);
   PHX_CHECK(outcome.vertex_ids[0] == 4 && outcome.vertex_ids[24] == 28);
   PHX_CHECK(chart_valid(outcome));
@@ -179,12 +200,12 @@ Patch kite(bool coincident) {
 void physical_criterion_selects_diagonal() {
   const Outcome flipped = reconnect(kite(false), {}, {}, 0.0, 1);
   PHX_CHECK(flipped.status == PHX_MC_OK);
-  PHX_CHECK(flipped.counters[2] == 1);
+  PHX_CHECK(flipped.counters[PHX_MC_SURFACE_FLIPS] == 1);
   PHX_CHECK(has_edge(flipped, 0, 2) && !has_edge(flipped, 1, 3));
   PHX_CHECK(chart_valid(flipped));
   const Outcome pole = reconnect(kite(true), {}, {}, 0.0, 1);
   PHX_CHECK(pole.status == PHX_MC_OK);
-  PHX_CHECK(pole.counters[2] == 0);
+  PHX_CHECK(pole.counters[PHX_MC_SURFACE_FLIPS] == 0);
   PHX_CHECK(has_edge(pole, 1, 3));
 }
 
@@ -193,7 +214,7 @@ void constrained_diagonal_is_preserved() {
   patch.constrained = {1, 1, 1, 1, 1, 1};
   const Outcome outcome = reconnect(patch, {}, {}, 0.0, 1);
   PHX_CHECK(outcome.status == PHX_MC_OK);
-  PHX_CHECK(outcome.counters[2] == 0);
+  PHX_CHECK(outcome.counters[PHX_MC_SURFACE_FLIPS] == 0);
   PHX_CHECK(has_edge(outcome, 1, 3));
   // A point on the constrained diagonal is refused without any change.
   const Outcome refused = reconnect(patch, {1.0, 0.0}, {1.0, 0.0, 0.0}, 0.0, 0);
@@ -232,11 +253,11 @@ void budgets_refuse_without_invalidating() {
   PHX_CHECK(capacity.triangles.size() / 3 == 4);
   const Outcome work = reconnect(square(), charts, points, 0.0, 1, 1024, 2);
   PHX_CHECK(work.status == PHX_MC_OK);
-  PHX_CHECK(work.counters[5] == 1);
+  PHX_CHECK(work.counters[PHX_MC_SURFACE_EXHAUSTED] == 1);
   PHX_CHECK(work.item_status[1] == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(work.triangles == square().triangles);
   PHX_CHECK(work.constrained == square().constrained);
-  PHX_CHECK(work.counters[4] <= 2);
+  PHX_CHECK(work.counters[PHX_MC_SURFACE_WORK] <= 2);
   PHX_CHECK(chart_valid(work));
 }
 
@@ -281,7 +302,7 @@ void curved_patch_keeps_orientation() {
   const Outcome outcome = reconnect(patch, charts, points, 0.0, 1, 1024, 1 << 20, normals);
   PHX_CHECK(outcome.status == PHX_MC_OK);
   PHX_CHECK(chart_valid(outcome));
-  PHX_CHECK(outcome.counters[0] + outcome.counters[1] == 21);
+  PHX_CHECK(outcome.counters[PHX_MC_SURFACE_INSERTED] + outcome.counters[PHX_MC_SURFACE_REFUSED] == 21);
   int outward = 0;
   int inward = 0;
   for (std::size_t cell = 0; cell < outcome.triangles.size() / 3; ++cell) {
@@ -385,6 +406,67 @@ void explicit_edge_refusals_preserve_state() {
   PHX_CHECK(opposed.constrained == patch.constrained);
 }
 
+void item_errors_precede_work_exhaustion() {
+  const Patch patch = square();
+  const Outcome result = reconnect(
+      patch, {NAN, 0.5, 0.5, 0.5, 0.5, 0.5},
+      {0.5, 0.5, 0.0, 0.5, 0.5, 0.0, 0.5, 0.5, 0.0},
+      0.0, 0, 1024, 0, {}, {0, 2, -1, 2, 0, 2});
+  PHX_CHECK(result.status == PHX_MC_OK);
+  PHX_CHECK(result.item_status[0] == PHX_MC_NONFINITE_INPUT);
+  PHX_CHECK(result.item_status[1] == PHX_MC_INVALID_INPUT);
+  PHX_CHECK(result.item_status[2] == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(result.vertex_ids == std::vector<int32_t>({-1, -1, -1}));
+  PHX_CHECK(result.triangles == patch.triangles);
+  PHX_CHECK(result.constrained == patch.constrained);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_INSERTED] == 0);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_REFUSED] == 3);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_WORK] == 0);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_EXHAUSTED] == 1);
+}
+
+void paired_boundary_work_refusal_preserves_state() {
+  const Patch patch = square();
+  // Two seed cells cost 2 * (4 + 3 * 3) = 26 preparation units. Location
+  // costs one and three outer-side visits cost three; the fourth is refused.
+  const Outcome result = reconnect(
+      patch, {0.5, 0.5, 0.3, 0.1}, {0.5, 0.5, 0.0, 0.3, 0.1, 0.0},
+      0.0, 1, 1024, 30);
+  PHX_CHECK(result.status == PHX_MC_OK);
+  PHX_CHECK(result.item_status[0] == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(result.item_status[1] == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(result.vertex_ids == std::vector<int32_t>({-1, -1}));
+  PHX_CHECK(result.triangles == patch.triangles);
+  PHX_CHECK(result.constrained == patch.constrained);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_INSERTED] == 0);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_REFUSED] == 2);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_FLIPS] == 0);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_WALK_STEPS] == 1);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_WORK] == 30);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_EXHAUSTED] == 1);
+}
+
+void legalization_work_refusal_keeps_committed_success() {
+  // One more unit than the boundary-refusal case admits all four outer sides.
+  // The split commits before legalization's first charge exhausts the budget.
+  const Outcome result = reconnect(
+      square(), {0.5, 0.5, 0.3, 0.1}, {0.5, 0.5, 0.0, 0.3, 0.1, 0.0},
+      0.0, 1, 1024, 31);
+  PHX_CHECK(result.status == PHX_MC_OK);
+  PHX_CHECK(result.item_status[0] == PHX_MC_OK);
+  PHX_CHECK(result.item_status[1] == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(result.vertex_ids == std::vector<int32_t>({4, -1}));
+  PHX_CHECK(result.triangles.size() == 12);
+  PHX_CHECK(chart_valid(result));
+  PHX_CHECK(!has_edge(result, 0, 2));
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_INSERTED] == 1);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_REFUSED] == 1);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_FLIPS] == 0);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_WALK_STEPS] == 1);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_WORK] == 31);
+  PHX_CHECK(result.counters[PHX_MC_SURFACE_EXHAUSTED] == 1);
+}
+
 }  // namespace
 
 int main() {
@@ -398,5 +480,8 @@ int main() {
   opposed_source_normal_is_refused();
   explicit_paired_cavity();
   explicit_edge_refusals_preserve_state();
+  item_errors_precede_work_exhaustion();
+  paired_boundary_work_refusal_preserves_state();
+  legalization_work_refusal_keeps_committed_success();
   return phx::mc::test::finish("test_surface_mesh");
 }

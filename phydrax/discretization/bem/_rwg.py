@@ -14,6 +14,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
 from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
@@ -32,7 +33,6 @@ from .._boundary_trace_space import (
 from .._gram import sparse_gram_space
 from .._spaces import EntityDofLayout
 from ..fem._form_elements import form_element
-from ..fem._reference import FiniteElementSpec
 from ._surface_complex import OrientedTriangleSurfaceComplex3D
 
 

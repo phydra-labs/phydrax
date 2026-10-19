@@ -35,7 +35,7 @@ def _pencil(*, generalized: Any = False, reference_electron_count: Any = 2.0) ->
     basis = phx.operators.periodic.PeriodicOrbitalBasisPlan(
         cell,
         ("lower", "upper"),
-        [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0]],
+        np.asarray([[0.0, 0.0, 0.0], [0.25, 0.0, 0.0]], dtype=np.float64),
         phx.units.ANGSTROM,
         phx.operators.periodic.PeriodicBlochGauge("lattice"),
     )
@@ -43,7 +43,7 @@ def _pencil(*, generalized: Any = False, reference_electron_count: Any = 2.0) ->
         (1, 2, 1, 2, 1)
     )
     h = phx.operators.periodic.periodic_translation_family_from_dense_blocks(
-        [[0, 0, 0]],
+        np.asarray([[0, 0, 0]], dtype=np.int64),
         h_blocks,
     )
     if generalized:
@@ -51,7 +51,7 @@ def _pencil(*, generalized: Any = False, reference_electron_count: Any = 2.0) ->
             (1, 2, 1, 2, 1)
         )
         s = phx.operators.periodic.periodic_translation_family_from_dense_blocks(
-            [[0, 0, 0]],
+            np.asarray([[0, 0, 0]], dtype=np.int64),
             s_blocks,
         )
         pencil = phx.operators.periodic.PeriodicOrbitalPencilPlan(
@@ -135,7 +135,7 @@ def test_advanced_periodic_electronic_scenario_1() -> None:
     assert np.all(np.isfinite(np.asarray(local.values)))
     manifest = _manifest("gamma-gdf-integrals")
     factors = phx.operators.quantum.gaussian.FactorizedERITensor(
-        [[[0.5]]],
+        np.asarray([[[0.5]]], dtype=np.float64),
         0.0,
         manifest.source_id,
         "gdf",

@@ -69,14 +69,16 @@ def _validate_form_conformity(
             assert_never(conformity)
     if form_type.degree != required_degree:
         raise ValueError(
-            f"{conformity} conformity requires form degree {required_degree}."
+            f"DiscreteFieldSpace.form_type.degree must satisfy {conformity} form degree {required_degree}; got {form_type.degree}"
         )
 
 
 def _component_shape(value: Sequence[int], /) -> tuple[int, ...]:
     shape = tuple(value)
     if any(size <= 0 for size in shape):
-        raise ValueError("component_shape dimensions must be positive.")
+        raise ValueError(
+            f"DofLayout.component_shape must contain positive dimensions; got {shape}"
+        )
     return shape
 
 
@@ -101,7 +103,9 @@ class GlobalCoefficientId(StrictModule, NonTrainableState):
         ordinal_ = int(ordinal)
         component_ = tuple(component)
         if ordinal_ < 0 or any(index < 0 for index in component_):
-            raise ValueError("Global coefficient indices must be nonnegative.")
+            raise ValueError(
+                f"GlobalCoefficientId.indices must be nonnegative; got {ordinal_=}, {component_=}"
+            )
         self.field_space_id = space
         self.ordinal = ordinal_
         self.component = component_
@@ -150,14 +154,20 @@ class TensorDofLayout(AbstractDofLayout):
         shape = tuple(axis_shape)
         components = _component_shape(component_shape)
         if not names or any(not name for name in names):
-            raise ValueError("Tensor DOF layouts require non-empty axis names.")
+            raise ValueError(
+                f"TensorDofLayout.axis_names must be nonempty names; got {names}"
+            )
         if len(set(names)) != len(names):
-            raise ValueError("Tensor DOF axis names must be unique.")
+            raise ValueError(f"TensorDofLayout.axis_names must be unique; got {names}")
         if len(shape) != len(names) or any(size <= 0 for size in shape):
-            raise ValueError("Tensor DOF layouts require one positive size per axis.")
+            raise ValueError(
+                f"TensorDofLayout.axis_shape must contain one positive size per axis; got {shape}"
+            )
         location = None if location_id is None else str(location_id)
         if location is not None and not location:
-            raise ValueError("location_id must be non-empty or None.")
+            raise ValueError(
+                "TensorDofLayout.location_id must be nonempty or None; got an empty string"
+            )
         self.axis_names = names
         self.axis_shape = shape
         self.component_shape = components
@@ -194,6 +204,7 @@ class EntityDofLayout(AbstractDofLayout):
     local_to_global: RowRelation | None
     orientation: Array | None
 
+    @checked
     def __init__(
         self,
         entity_set_id: str,
@@ -213,37 +224,45 @@ class EntityDofLayout(AbstractDofLayout):
         per_entity = int(dofs_per_entity)
         components = _component_shape(component_shape)
         if entity_count_ < 0 or global_count < 0:
-            raise ValueError("Entity and global DOF counts must be non-negative.")
+            raise ValueError(
+                f"EntityDofLayout.counts must be nonnegative; got {entity_count_=}, {global_count=}"
+            )
         if per_entity <= 0:
-            raise ValueError("dofs_per_entity must be positive.")
+            raise ValueError(
+                f"EntityDofLayout.dofs_per_entity must be positive; got {per_entity}"
+            )
         orientation_ = None
         if local_to_global is not None:
-            if not isinstance(local_to_global, RowRelation):
-                raise TypeError("local_to_global must be a RowRelation or None.")
             if local_to_global.source_size != global_count:
                 raise ValueError(
-                    "local_to_global source size must equal global_dof_count."
+                    f"EntityDofLayout.local_to_global.source_size must equal global_dof_count; got {local_to_global.source_size}"
                 )
             if (
                 not local_to_global.target_shape
                 or local_to_global.target_shape[0] != entity_count_
             ):
-                raise ValueError("local_to_global targets must begin with entity_count.")
+                raise ValueError(
+                    f"EntityDofLayout.local_to_global.target_shape must begin with entity_count; got {local_to_global.target_shape}"
+                )
             if orientation is not None:
                 orientation_host = np.asarray(orientation)
                 if orientation_host.shape != local_to_global.route_shape:
                     raise ValueError(
-                        "orientation must have the local_to_global route shape."
+                        f"EntityDofLayout.orientation must have local_to_global route shape; got {orientation_host.shape}"
                     )
                 active = np.asarray(local_to_global.valid, dtype=np.bool_)
                 active_orientation = orientation_host[active]
                 if np.any(~np.isfinite(active_orientation)) or np.any(
                     np.abs(active_orientation) != 1
                 ):
-                    raise ValueError("Active local DOF orientations must be ±1.")
+                    raise ValueError(
+                        "EntityDofLayout.orientation must contain finite ±1 active entries; got invalid local DOF orientations"
+                    )
                 orientation_ = jnp.asarray(orientation_host, dtype=jnp.float64)
         elif orientation is not None:
-            raise ValueError("orientation requires local_to_global.")
+            raise ValueError(
+                "EntityDofLayout.orientation must have local_to_global; got None"
+            )
         self.entity_set_id = entity_set_id_
         self.entity_count = entity_count_
         self.global_dof_count = global_count
@@ -297,12 +316,14 @@ class ModalDofLayout(AbstractDofLayout):
     ) -> None:
         modes = tuple(str(value) for value in mode_ids)
         if not modes or any(not value for value in modes):
-            raise ValueError("Modal DOF layouts require non-empty mode IDs.")
+            raise ValueError(f"ModalDofLayout.mode_ids must be nonempty; got {modes}")
         if len(set(modes)) != len(modes):
-            raise ValueError("Mode IDs must be unique.")
+            raise ValueError(f"ModalDofLayout.mode_ids must be unique; got {modes}")
         groups = tuple(range(len(modes))) if group_ids is None else tuple(group_ids)
         if len(groups) != len(modes) or any(value < 0 for value in groups):
-            raise ValueError("group_ids must contain one non-negative value per mode.")
+            raise ValueError(
+                f"ModalDofLayout.group_ids must contain one nonnegative value per mode; got {groups}"
+            )
         components = _component_shape(component_shape)
         self.mode_ids = modes
         self.group_ids = groups
@@ -340,13 +361,15 @@ class BlockDofLayout(AbstractDofLayout):
         names_ = tuple(str(name) for name in names)
         layouts_ = tuple(layouts)
         if not names_ or any(not name for name in names_):
-            raise ValueError("Block layout names must be non-empty.")
+            raise ValueError(f"BlockDofLayout.names must be nonempty; got {names_}")
         if len(set(names_)) != len(names_):
-            raise ValueError("Block layout names must be unique.")
+            raise ValueError(f"BlockDofLayout.names must be unique; got {names_}")
         if len(layouts_) != len(names_) or not all(
             isinstance(layout, AbstractDofLayout) for layout in layouts_
         ):
-            raise TypeError("layouts must contain one AbstractDofLayout per name.")
+            raise TypeError(
+                "BlockDofLayout.layouts must contain one AbstractDofLayout per name; got different counts or object kinds"
+            )
         self.names = names_
         self.layouts = layouts_
         self.layout_id = resolved_identifier(
@@ -371,7 +394,7 @@ DofLayout: TypeAlias = TensorDofLayout | EntityDofLayout | ModalDofLayout | Bloc
 
 @final
 class DiscreteFieldSpace(StrictModule, NonTrainableState):
-    """One scientific field bound to exact finite coordinates and pairing."""
+    """Bind a scientific field to finite coordinates and a pairing."""
 
     name: str = eqx.field(static=True)
     support_id: str = eqx.field(static=True)
@@ -404,21 +427,16 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
     ) -> None:
         name_ = nonempty_identifier("name", name)
         support_id_ = nonempty_identifier("support_id", support_id)
-        if not isinstance(
-            layout,
-            (TensorDofLayout, EntityDofLayout, ModalDofLayout, BlockDofLayout),
-        ):
-            raise TypeError("layout must be a supported DofLayout value.")
         if vector_space.size != layout.size:
             raise ValueError(
-                f"Vector-space size {vector_space.size} does not match DOF-layout size {layout.size}."
+                f"DiscreteFieldSpace.vector_space.size must match DOF-layout size {layout.size}; got {vector_space.size}"
             )
         representation = parse(representation, FieldRepresentation, "representation")
         conformity = parse(conformity, FieldConformity, "conformity")
-        if form_type is not None and not isinstance(form_type, FormType):
-            raise TypeError("form_type must be a FormType or None.")
         if conformity == "HLambda" and form_type is None:
-            raise ValueError("HLambda conformity requires a declared form_type.")
+            raise ValueError(
+                "DiscreteFieldSpace.form_type must be declared for HLambda conformity; got None"
+            )
         if form_type is not None:
             _validate_form_conformity(form_type, conformity)
         projection = (
@@ -464,7 +482,7 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
         self.field_space_id = identifier
 
     def value_port(self) -> ValuePort:
-        """Return the `ValuePort` of this field's complete coefficient array.
+        """Return the `ValuePort` of this field's coefficient array.
 
         `semantic_id` is `name`, `space_id` is `field_space_id`, and
         `representation` is the declared field representation. The event shape
@@ -484,8 +502,8 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
         layout = self.layout
         if layout.size == 0:
             raise ValueError(
-                f"Discrete field space {self.name!r} has no coefficients; "
-                "it has no ValuePort view."
+                f"DiscreteFieldSpace.layout.size must be positive for a ValuePort view; "
+                f"got {layout.size} for field {self.name!r}"
             )
         components = None
         axis_keys = None
@@ -508,7 +526,10 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
             case BlockDofLayout():
                 shape = (layout.size,)
             case _:
-                raise TypeError("layout must be a supported DofLayout value.")
+                raise TypeError(
+                    "DiscreteFieldSpace.layout must be a supported DofLayout value; "
+                    f"got {type(layout).__name__}"
+                )
         if components is None:
             components = tuple(f"{self.name}[{i}]" for i in range(prod(shape)))
         return ValuePort(

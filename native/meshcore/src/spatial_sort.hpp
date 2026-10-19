@@ -12,7 +12,7 @@
 #include <span>
 #include <vector>
 
-#include "bounded_memory.hpp"
+#include "mesh.hpp"
 
 namespace phx::mc {
 
@@ -25,14 +25,15 @@ inline std::uint64_t splitmix64(std::uint64_t value) {
 
 // Hilbert index of integer coordinates with `bits` bits per axis (Skilling's
 // transpose algorithm), for dimension 2 or 3.
+template <class Charge = NativePreparationCharge>
 inline std::uint64_t hilbert_key(std::uint32_t* x, int dimension, int bits,
-                                 void (*charge)(void*) = nullptr, void* context = nullptr) {
+                                 const Charge& charge = {}) {
   const std::uint32_t top = std::uint32_t{1} << (bits - 1);
   // Inverse undo excess work.
   for (std::uint32_t q = top; q > 1; q >>= 1) {
     const std::uint32_t p = q - 1;
     for (int i = 0; i < dimension; ++i) {
-      charge_preparation_visit(charge, context);
+      charge();
       if (x[i] & q) {
         x[0] ^= p;
       } else {
@@ -44,25 +45,25 @@ inline std::uint64_t hilbert_key(std::uint32_t* x, int dimension, int bits,
   }
   // Gray encode.
   for (int i = 1; i < dimension; ++i) {
-    charge_preparation_visit(charge, context);
+    charge();
     x[i] ^= x[i - 1];
   }
   std::uint32_t t = 0;
   for (std::uint32_t q = top; q > 1; q >>= 1) {
-    charge_preparation_visit(charge, context);
+    charge();
     if (x[dimension - 1] & q) {
       t ^= q - 1;
     }
   }
   for (int i = 0; i < dimension; ++i) {
-    charge_preparation_visit(charge, context);
+    charge();
     x[i] ^= t;
   }
   // Interleave the transposed representation, most significant bit first.
   std::uint64_t key = 0;
   for (int bit = bits - 1; bit >= 0; --bit) {
     for (int i = 0; i < dimension; ++i) {
-      charge_preparation_visit(charge, context);
+      charge();
       key = (key << 1) | ((x[i] >> bit) & 1U);
     }
   }
@@ -70,9 +71,10 @@ inline std::uint64_t hilbert_key(std::uint32_t* x, int dimension, int bits,
 }
 
 // Returns `candidates` reordered for incremental insertion.
+template <class Charge = NativePreparationCharge>
 inline NativeVector<int32_t> brio_hilbert_order(
     const double* points, int dimension, std::span<const int32_t> candidates,
-    void (*charge)(void*) = nullptr, void* context = nullptr) {
+    const Charge& charge = {}) {
   const std::size_t count = candidates.size();
   if (count == 0) {
     return {};
@@ -80,13 +82,13 @@ inline NativeVector<int32_t> brio_hilbert_order(
   double lower[3] = {0.0, 0.0, 0.0};
   double upper[3] = {0.0, 0.0, 0.0};
   for (int axis = 0; axis < dimension; ++axis) {
-    charge_preparation_visit(charge, context);
+    charge();
     lower[axis] = upper[axis] = points[static_cast<int64_t>(candidates[0]) * dimension + axis];
   }
   for (int32_t index : candidates) {
-    charge_preparation_visit(charge, context);
+    charge();
     for (int axis = 0; axis < dimension; ++axis) {
-      charge_preparation_visit(charge, context);
+      charge();
       const double value = points[static_cast<int64_t>(index) * dimension + axis];
       lower[axis] = std::min(lower[axis], value);
       upper[axis] = std::max(upper[axis], value);
@@ -96,7 +98,7 @@ inline NativeVector<int32_t> brio_hilbert_order(
   const double cells = static_cast<double>((std::uint64_t{1} << bits) - 1);
   int rounds = 1;
   while ((std::size_t{1} << rounds) < count && rounds < 62) {
-    charge_preparation_visit(charge, context);
+    charge();
     ++rounds;
   }
   struct Entry {
@@ -107,10 +109,10 @@ inline NativeVector<int32_t> brio_hilbert_order(
   NativeVector<Entry> entries;
   entries.reserve(count);
   for (int32_t index : candidates) {
-    charge_preparation_visit(charge, context);
+    charge();
     std::uint32_t quantized[3] = {0, 0, 0};
     for (int axis = 0; axis < dimension; ++axis) {
-      charge_preparation_visit(charge, context);
+      charge();
       const double extent = upper[axis] - lower[axis];
       const double value = points[static_cast<int64_t>(index) * dimension + axis];
       const double scaled = extent > 0.0 ? (value - lower[axis]) / extent * cells : 0.0;
@@ -119,14 +121,14 @@ inline NativeVector<int32_t> brio_hilbert_order(
     const std::uint64_t hash = splitmix64(static_cast<std::uint64_t>(index) ^ 0x5DEECE66DULL);
     int level = 0;
     while (level < rounds - 1 && ((hash >> level) & 1U) == 0U) {
-      charge_preparation_visit(charge, context);
+      charge();
       ++level;
     }
     entries.push_back(
-        {rounds - 1 - level, hilbert_key(quantized, dimension, bits, charge, context), index});
+        {rounds - 1 - level, hilbert_key(quantized, dimension, bits, charge), index});
   }
   std::sort(entries.begin(), entries.end(), [&](const Entry& left, const Entry& right) {
-    charge_preparation_visit(charge, context);
+    charge();
     if (left.round != right.round) {
       return left.round < right.round;
     }
@@ -138,7 +140,7 @@ inline NativeVector<int32_t> brio_hilbert_order(
   NativeVector<int32_t> order;
   order.reserve(count);
   for (const Entry& entry : entries) {
-    charge_preparation_visit(charge, context);
+    charge();
     order.push_back(entry.index);
   }
   return order;

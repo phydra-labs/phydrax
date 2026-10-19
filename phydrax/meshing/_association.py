@@ -4,7 +4,7 @@
 
 """Audited mesh-to-geometry associations and their B-Rep classification rules.
 
-A B-Rep association classifies mesh entities on B-Rep entities of one exact
+A B-Rep association classifies mesh entities on B-Rep entities of one declared
 source revision: every row names the entity's dimension and index, the closest
 point parameters, the projection residual, ambiguity, orientation relation, and
 parent provenance. Classification of mesh edges, faces, and cells from vertex
@@ -30,15 +30,20 @@ transfer and projection (:func:`rederive_association`).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any, final, Literal, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
-import jax.numpy as jnp
 import numpy as np
-from jax import Array
 from jax.typing import ArrayLike
+
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+from phydrax.discretization._cell_geometry_transition_types import (
+    MaterialChartDeformation,
+)
+from phydrax.geometry._embedding_state import MeshCertificateLimits
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import (
@@ -47,15 +52,25 @@ from .._meshcore import (
     point_triangle_locations,
 )
 from .._physical import SpatialCoordinateContract
+from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CellMesh, EntitySet
-from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
-from ..geometry._mesh_certificates import (
-    _ray_crossings_3d,
-    DomainCoverageCertificate,
-    GlobalEmbeddingCertificate,
-    PiecewiseLinearDomain,
+from .._validation import canonical_identifier, positive_integer
+from ..discretization._cell_geometry import CellGeometrySpec
+from ..discretization._cell_geometry_predecessor import prepare_cell_geometry_predecessor
+from ..discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+)
+from ..discretization._exact_plc_geometry import (
+    ExactPlcCellGeometrySource,
+    translated_plc_layout_matches,
+)
+from ..geometry._domain_coverage import DomainCoverageCertificate, PiecewiseLinearDomain
+from ..geometry._global_embedding import GlobalEmbeddingCertificate, ray_crossings_3d
+from ..geometry._mapped_reference_domain import MappedReferenceDomain
+from ..geometry._surface_source_support import (
+    PreparedSurfaceSourceSupport,
+    SurfaceSourceReceipts,
 )
 from ..geometry.brep._projection_contracts import (
     AbstractBRepProjection,
@@ -64,369 +79,64 @@ from ..geometry.brep._projection_contracts import (
     BRepProjectionStatus,
 )
 from ..typing import (
-    as_host_array,
     checked,
     Dim,
     HostFloat64,
-    HostInt32,
     HostInt64,
-    HostInteger,
     parse,
     Scope,
 )
-from ._plc_mapped_support import (
-    MappedPlcSupport,
-    plc_mapped_vertices,
-    prepare_mapped_plc_support,
+
+# Module references defer symbol resolution across mutually dependent execution owners.
+from . import (
+    _association_state as association_state_owner,
+    _certification as certification_owner,
+    _certification_inputs as certification_inputs_owner,
+    _lineage as lineage_owner,
+    _lineage_records as lineage_records_owner,
+    _mapped_reference_association as mapped_reference_association_owner,
+    _organization_records as organization_records_owner,
+    _plc_mapped_support as plc_mapped_support_owner,
+    _plc_planar_support as plc_planar_support_owner,
+    _result as result_owner,
+    _surface_association_transfer as surface_association_transfer_owner,
 )
+from ._association_routes import (
+    association_for_dimension,
+    association_lookup,
+    AssociationPropagationError,
+    boundary_mask,
+    child_sources,
+    compose_incidence_pairs,
+    incidence_pairs,
+    ordered_vertices,
+    PlcEntityClasses,
+    require_transfer_lineage,
+    stratum_region_consensus,
+    surface_source_association_kind,
+)
+from ._association_state import (
+    entity_rows,
+    GeometryAssociation,
+    GeometryAssociationKind,
+    GeometryAssociationProvenance,
+    GeometrySourceEntityRole,
+    target_dimension,
+)
+from ._host_banks import entity_key
 from ._scope import resolve_mesh_scope
 
 
 if TYPE_CHECKING:
-    from ..discretization._cell_geometry import CellGeometrySpec
     from ..geometry._mapped_source_support import MappedSourceFacetAuthority
-    from ._certification import MeshCertificationPreparedEvidence
-    from ._certification_inputs import MeshCertificationInputs
-    from ._lineage import MeshLineage
-    from ._organization import MeshLabel, MeshPatch, MeshZone
-    from ._result import CellMeshingResult
-    from ._surface_association_transfer import SurfaceEntityClasses
 
 
-class GeometryAssociationKind(StrEnum):
-    """Representation owning the associated source entities.
-
-    ``PIECEWISE_LINEAR`` names represented vertices, segments, facets, and
-    regions; indexed rows retain their explicit source stratum and identifier.
-    ``CURVE`` names parametric one-dimensional chart sources. ``IMPLICIT``
-    names the scalar source's zero-set boundary in its source/revision namespace.
-    ``MAPPED_REFERENCE`` names exact image entities of a declared reference mesh.
-    """
-
-    BREP = "brep"
-    SURFACE = "surface"
-    IMPLICIT = "implicit"
-    PIECEWISE_LINEAR = "piecewise_linear"
-    CURVE = "curve"
-    MAPPED_REFERENCE = "mapped_reference"
-
-
-class GeometrySourceEntityRole(StrEnum):
-    """Declared source stratum role, independent of ambient or equal dimensions."""
-
-    VERTEX = "vertex"
-    EDGE = "edge"
-    FACET = "facet"
-    REGION = "region"
-
-
-class GeometryAssociationProvenance(StrEnum):
-    """How the rows were established.
-
-    ``PROVIDER``: emitted by the generating mesher. ``LINEAGE``: propagated
-    through an exact topology lineage from ``parent_association_id``.
-    ``CLASSIFICATION``: derived by geometric classification and projection
-    (optionally restricted by classification transfer from the parent).
-    """
-
-    PROVIDER = "provider"
-    LINEAGE = "lineage"
-    CLASSIFICATION = "classification"
-
-
-def _unclassified_id(source_revision: str, /) -> str:
-    return f"{source_revision}:unclassified"
-
-
-def _rows_or(value: ArrayLike | None, fill: Any, shape: Any, dtype: Any, /) -> np.ndarray:
-    return (
-        np.full(shape, fill, dtype=dtype) if value is None else np.asarray(value, dtype)
-    )
-
-
-class GeometryAssociation(StrictModule, NonTrainableState):
-    """Audited map from exact mesh entities to authoritative geometry entities.
-
-    B-Rep rows carry ``source_dimensions``/``source_indices`` as execution
-    definition metadata and explicit ``source_occurrence_paths`` as semantic
-    instance identity. ``-1`` marks an unresolved row without a candidate
-    (``<revision>:unclassified``). ``parameters`` hold face ``(u, v)`` or edge
-    ``(t, nan)`` closest-point parameters (NaN otherwise). ``orientations`` relate
-    the mesh entity's canonical vertex order to the B-Rep edge tangent or oriented
-    face normal (``+1``/``-1``; ``0`` when undefined). ``parent_dimensions`` and
-    ``parent_ids`` name the parent mesh entity whose class a row inherited
-    (``-1`` for geometric classification). Infinite residuals are allowed only on
-    unresolved rows (no closest point).
-    """
-
-    association_kind: GeometryAssociationKind = eqx.field(static=True)
-    source_id: str = eqx.field(static=True)
-    source_revision: str = eqx.field(static=True)
-    target_entity_set_id: str = eqx.field(static=True)
-    target_global_ids: Array
-    source_entity_ids: tuple[str, ...] = eqx.field(static=True)
-    source_entity_roles: tuple[GeometrySourceEntityRole | None, ...] | None = eqx.field(
-        static=True
-    )
-    residuals: Array
-    resolved: Array
-    ambiguous: Array
-    source_dimensions: Array
-    source_indices: Array
-    source_occurrence_paths: tuple[tuple[str, ...], ...] = eqx.field(static=True)
-    parameters: Array
-    orientations: Array
-    parent_dimensions: Array
-    parent_ids: Array
-    exact: bool = eqx.field(static=True)
-    provenance: GeometryAssociationProvenance = eqx.field(static=True)
-    parent_association_id: str | None = eqx.field(static=True)
-    association_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        association_kind: GeometryAssociationKind,
-        source_id: str,
-        source_revision: str,
-        target_entity_set_id: str,
-        target_global_ids: ArrayLike,
-        source_entity_ids: tuple[str, ...],
-        residuals: ArrayLike,
-        /,
-        *,
-        resolved: ArrayLike | None = None,
-        ambiguous: ArrayLike | None = None,
-        exact: bool = False,
-        source_dimensions: ArrayLike | None = None,
-        source_indices: ArrayLike | None = None,
-        source_occurrence_paths: tuple[tuple[str, ...], ...] | None = None,
-        source_entity_roles: tuple[GeometrySourceEntityRole | None, ...] | None = None,
-        parameters: ArrayLike | None = None,
-        orientations: ArrayLike | None = None,
-        parent_dimensions: ArrayLike | None = None,
-        parent_ids: ArrayLike | None = None,
-        parent_association_id: str | None = None,
-        provenance: GeometryAssociationProvenance = GeometryAssociationProvenance.PROVIDER,
-    ) -> None:
-        if not isinstance(association_kind, GeometryAssociationKind):
-            raise TypeError("association_kind must be GeometryAssociationKind.")
-        if not isinstance(provenance, GeometryAssociationProvenance):
-            raise TypeError("provenance must be GeometryAssociationProvenance.")
-        source = str(source_id).strip()
-        revision = str(source_revision).strip()
-        entity_set = str(target_entity_set_id).strip()
-        if not source or not revision or not entity_set:
-            raise ValueError("Geometry association identities must be non-empty.")
-        targets = np.asarray(target_global_ids)
-        if targets.ndim != 1 or not np.issubdtype(targets.dtype, np.integer):
-            raise TypeError("target_global_ids must be one integer vector.")
-        targets = targets.astype(np.int64, copy=False)
-        if (
-            targets.size == 0
-            or np.any(targets < 0)
-            or np.unique(targets).size != targets.size
-        ):
-            raise ValueError(
-                "Target geometry association IDs must be unique and non-negative."
-            )
-        count = targets.size
-        paths = (
-            ((),) * count if source_occurrence_paths is None else source_occurrence_paths
-        )
-        if (
-            not isinstance(paths, tuple)
-            or len(paths) != count
-            or any(
-                not isinstance(path, tuple)
-                or any(not isinstance(name, str) or not name for name in path)
-                for path in paths
-            )
-        ):
-            raise ValueError(
-                "Source occurrence paths must be authoritative tuple paths aligned with rows."
-            )
-        if association_kind not in (
-            GeometryAssociationKind.BREP,
-            GeometryAssociationKind.SURFACE,
-        ) and any(paths):
-            raise ValueError(
-                "Only B-Rep and surface associations carry source occurrence paths."
-            )
-        sources = tuple(str(value).strip() for value in source_entity_ids)
-        distances = np.asarray(residuals, dtype=np.float64)
-        if len(sources) != count or any(not value for value in sources):
-            raise ValueError(
-                "Source geometry IDs must match target entities and be non-empty."
-            )
-        resolved_ = _rows_or(resolved, True, (count,), np.bool_)
-        ambiguous_ = _rows_or(ambiguous, False, (count,), np.bool_)
-        if resolved_.shape != targets.shape or ambiguous_.shape != targets.shape:
-            raise ValueError("Association status masks must match target entities.")
-        if (
-            distances.shape != targets.shape
-            or np.any(np.isnan(distances))
-            or np.any(distances < 0)
-            or np.any(np.isinf(distances) & resolved_)
-        ):
-            raise ValueError(
-                "Association residuals must be non-negative and aligned; infinite "
-                "residuals are allowed only on unresolved rows."
-            )
-        if np.any(resolved_ & ambiguous_):
-            raise ValueError("Resolved geometry associations cannot be ambiguous.")
-        if exact and (
-            not np.all(resolved_) or np.any(ambiguous_) or np.any(distances != 0.0)
-        ):
-            raise ValueError(
-                "Exact geometry associations require zero-residual unique coverage."
-            )
-        roles = _source_roles(
-            association_kind,
-            count,
-            source_dimensions,
-            source_indices,
-            source_entity_roles,
-        )
-        dimensions, indices = _source_entities(
-            association_kind,
-            revision,
-            sources,
-            source_dimensions,
-            source_indices,
-            paths,
-            roles,
-        )
-        if (
-            source_dimensions is not None
-            and association_kind
-            in (
-                GeometryAssociationKind.BREP,
-                GeometryAssociationKind.PIECEWISE_LINEAR,
-                GeometryAssociationKind.SURFACE,
-            )
-            and np.any((dimensions < 0) & resolved_)
-        ):
-            family = {
-                GeometryAssociationKind.PIECEWISE_LINEAR: "PLC",
-                GeometryAssociationKind.BREP: "B-Rep",
-                GeometryAssociationKind.SURFACE: "Surface",
-            }[association_kind]
-            raise ValueError(f"Resolved {family} association rows must name an entity.")
-        parameters_, orientations_, parent_dimensions_, parent_ids_ = _row_metadata(
-            count, parameters, orientations, parent_dimensions, parent_ids
-        )
-        parent = None if parent_association_id is None else str(parent_association_id)
-        if parent is not None and not parent.strip():
-            raise ValueError("parent_association_id must be non-empty when provided.")
-        if provenance is GeometryAssociationProvenance.LINEAGE and parent is None:
-            raise ValueError("Lineage associations require their parent association.")
-        self.association_kind = association_kind
-        self.source_id = source
-        self.source_revision = revision
-        self.target_entity_set_id = entity_set
-        self.target_global_ids = jnp.asarray(targets)
-        self.source_entity_ids = sources
-        self.source_entity_roles = roles
-        self.residuals = jnp.asarray(distances)
-        self.resolved = jnp.asarray(resolved_)
-        self.ambiguous = jnp.asarray(ambiguous_)
-        self.source_dimensions = jnp.asarray(dimensions)
-        self.source_indices = jnp.asarray(indices)
-        self.source_occurrence_paths = paths
-        self.parameters = jnp.asarray(parameters_)
-        self.orientations = jnp.asarray(orientations_)
-        self.parent_dimensions = jnp.asarray(parent_dimensions_)
-        self.parent_ids = jnp.asarray(parent_ids_)
-        self.exact = bool(exact)
-        self.provenance = provenance
-        self.parent_association_id = parent
-        self.association_id = canonical_fingerprint(
-            {
-                "kind": "geometry-association",
-                "association_kind": association_kind.value,
-                "source_id": source,
-                "source_revision": revision,
-                "target_entity_set_id": entity_set,
-                "target_global_ids": array_tree_fingerprint(targets),
-                "source_entity_ids": sources,
-                "source_occurrence_paths": paths,
-                **(
-                    {
-                        "source_entity_roles": tuple(
-                            None if role is None else role.value for role in roles
-                        ),
-                    }
-                    if roles is not None
-                    else {}
-                ),
-                **(
-                    {
-                        "source_dimensions": array_tree_fingerprint(dimensions),
-                        "source_indices": array_tree_fingerprint(indices),
-                    }
-                    if roles is not None
-                    or (
-                        association_kind is GeometryAssociationKind.SURFACE
-                        and source_dimensions is not None
-                    )
-                    else {}
-                ),
-                "residuals": array_tree_fingerprint(distances),
-                "resolved": array_tree_fingerprint(resolved_),
-                "ambiguous": array_tree_fingerprint(ambiguous_),
-                "parameters": array_tree_fingerprint(parameters_),
-                "orientations": array_tree_fingerprint(orientations_),
-                "parent_dimensions": array_tree_fingerprint(parent_dimensions_),
-                "parent_ids": array_tree_fingerprint(parent_ids_),
-                "exact": bool(exact),
-                "provenance": provenance.value,
-                "parent_association_id": parent,
-            }
-        )
-
-    @property
-    def complete(self) -> bool:
-        return bool(np.all(np.asarray(self.resolved))) and not bool(
-            np.any(np.asarray(self.ambiguous))
-        )
-
-    @property
-    def maximum_residual(self) -> float:
-        """Largest residual over resolved rows (0 when none is resolved)."""
-        resolved = np.asarray(self.resolved)
-        residuals = np.asarray(self.residuals)[resolved]
-        return float(np.max(residuals)) if residuals.size else 0.0
-
-    @checked
-    def validate_target(self, entity_set: EntitySet, /) -> None:
-        """Require an exact target binding, not merely resolved row statuses."""
-        if self.target_entity_set_id != entity_set.entity_set_id:
-            raise ValueError("Geometry association targets a different entity set.")
-        if not np.all(
-            np.isin(np.asarray(self.target_global_ids), np.asarray(entity_set.entity_ids))
-        ):
-            raise ValueError("Geometry association contains undeclared target IDs.")
-
-    def target_rows(self, target_global_ids: ArrayLike, /) -> np.ndarray:
-        """Host rows of exact target global IDs; every requested ID must be a row."""
-        requested = np.asarray(target_global_ids)
-        if requested.ndim != 1 or not np.issubdtype(requested.dtype, np.integer):
-            raise TypeError("target_global_ids must be one integer vector.")
-        targets = np.asarray(self.target_global_ids, dtype=np.int64)
-        order = np.argsort(targets, kind="stable")
-        position = np.minimum(np.searchsorted(targets[order], requested), order.size - 1)
-        rows = order[position]
-        if not np.array_equal(targets[rows], requested):
-            raise ValueError("Geometry association does not classify every requested ID.")
-        return rows
-
-
-def _retain_association_scopes(
+def retain_association_scopes(
     originals: tuple[GeometryAssociation, ...],
     proved: tuple[GeometryAssociation, ...],
     /,
 ) -> tuple[GeometryAssociation, ...]:
-    """Retain fixed-topology scientific scopes after complete fresh support proof."""
+    """Retain fixed-topology scientific scopes after fresh support proof for every row."""
     result = []
     for original in originals:
         matches = tuple(
@@ -447,12 +157,13 @@ def _retain_association_scopes(
         )
         if len(matches) != 1:
             raise ValueError(
-                "Fixed-topology motion requires one freshly proved owning association per accepted scope."
+                f"GeometryAssociation.motion_support must provide one fresh table per accepted scope; got matching tables {len(matches)} for association {original.association_id!r}"
             )
         fresh = matches[0]
         if (
             np.array_equal(fresh.target_global_ids, original.target_global_ids)
-            and fresh.source_occurrence_paths == original.source_occurrence_paths
+            and fresh.source_entities.occurrence_paths()
+            == original.source_entities.occurrence_paths()
             and fresh.parent_association_id == original.association_id
         ):
             result.append(fresh)
@@ -465,18 +176,18 @@ def _retain_association_scopes(
                 fresh.source_revision,
                 fresh.target_entity_set_id,
                 original.target_global_ids,
-                tuple(fresh.source_entity_ids[row] for row in rows),
+                tuple(fresh.source_entities.entity_id(row) for row in rows),
                 fresh.residuals[rows],
                 resolved=fresh.resolved[rows],
                 ambiguous=fresh.ambiguous[rows],
                 exact=fresh.exact,
                 source_dimensions=fresh.source_dimensions[rows],
                 source_indices=fresh.source_indices[rows],
-                source_occurrence_paths=original.source_occurrence_paths,
+                source_occurrence_paths=original.source_entities.occurrence_paths(),
                 source_entity_roles=(
                     None
-                    if fresh.source_entity_roles is None
-                    else tuple(fresh.source_entity_roles[row] for row in rows)
+                    if not fresh.source_entities.indexed_roles
+                    else tuple(fresh.source_entities.role(row) for row in rows)
                 ),
                 parameters=fresh.parameters[rows],
                 orientations=fresh.orientations[rows],
@@ -487,263 +198,6 @@ def _retain_association_scopes(
             )
         )
     return tuple(result)
-
-
-def _row_metadata(
-    count: int,
-    parameters: ArrayLike | None,
-    orientations: ArrayLike | None,
-    parent_dimensions: ArrayLike | None,
-    parent_ids: ArrayLike | None,
-    /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Validated closest-point parameters, orientations, and parents of every row."""
-    parameters_ = _rows_or(parameters, np.nan, (count, 2), np.float64)
-    orientations_ = _rows_or(orientations, 0, (count,), np.int8)
-    parent_dimensions_ = _rows_or(parent_dimensions, -1, (count,), np.int8)
-    parent_ids_ = _rows_or(parent_ids, -1, (count,), np.int64)
-    if (
-        parameters_.shape != (count, 2)
-        or np.any(np.isinf(parameters_))
-        or orientations_.shape != (count,)
-        or parent_dimensions_.shape != (count,)
-        or parent_ids_.shape != (count,)
-    ):
-        raise ValueError(
-            "Association parameters, orientations, and parents must be aligned."
-        )
-    if not np.all(np.isin(orientations_, (-1, 0, 1))):
-        raise ValueError("Association orientations must be -1, 0, or 1.")
-    if (
-        np.any((parent_dimensions_ < -1) | (parent_dimensions_ > 3))
-        or np.any(parent_ids_ < -1)
-        or np.any((parent_dimensions_ < 0) != (parent_ids_ < 0))
-    ):
-        raise ValueError("Association parents must pair a dimension with an ID.")
-    return parameters_, orientations_, parent_dimensions_, parent_ids_
-
-
-class _SourceEntityRowDim(Dim):
-    """Rows sharing one authoritative source-entity metadata binding."""
-
-
-def _source_entity_rows(
-    dimensions: ArrayLike | None,
-    indices: ArrayLike | None,
-    count: int,
-    family: str,
-    index_dtype: type[np.int32] | type[np.int64],
-    /,
-) -> tuple[
-    HostInteger[_SourceEntityRowDim],
-    HostInt32[_SourceEntityRowDim] | HostInt64[_SourceEntityRowDim],
-]:
-    if dimensions is None or indices is None:
-        raise ValueError(f"{family} associations require source dimensions and indices.")
-    dimensions_ = np.asarray(dimensions)
-    indices_ = np.asarray(indices)
-    if not np.issubdtype(dimensions_.dtype, np.integer) or not np.issubdtype(
-        indices_.dtype, np.integer
-    ):
-        raise TypeError(f"{family} source dimensions and indices must be integers.")
-    if dimensions_.shape != (count,) or indices_.shape != (count,):
-        raise ValueError(f"{family} source dimensions and indices must align with rows.")
-    if (
-        np.any((dimensions_ < -1) | (dimensions_ > 3))
-        or np.any(indices_ < -1)
-        or np.any((dimensions_ >= 0) != (indices_ >= 0))
-    ):
-        raise ValueError(f"{family} source entities must pair a dimension with an index.")
-    if np.any(indices_ > np.iinfo(index_dtype).max):
-        raise ValueError(
-            f"{family} definition indices must fit the native local index contract."
-        )
-    scope = Scope()
-    dimensions_ = parse(
-        dimensions_.astype(np.int8),
-        HostInteger[_SourceEntityRowDim],
-        "source_dimensions",
-        scope=scope,
-    )
-    if index_dtype is np.int64:
-        indices_ = as_host_array(
-            indices_,
-            HostInt64[_SourceEntityRowDim],
-            "source_indices",
-            scope=scope,
-        )
-    else:
-        indices_ = as_host_array(
-            indices_,
-            HostInt32[_SourceEntityRowDim],
-            "source_indices",
-            scope=scope,
-        )
-    return dimensions_, indices_
-
-
-def _source_roles(
-    kind: GeometryAssociationKind,
-    count: int,
-    dimensions: ArrayLike | None,
-    indices: ArrayLike | None,
-    roles: tuple[GeometrySourceEntityRole | None, ...] | None,
-    /,
-) -> tuple[GeometrySourceEntityRole | None, ...] | None:
-    indexed_plc = kind is GeometryAssociationKind.PIECEWISE_LINEAR and (
-        dimensions is not None or indices is not None
-    )
-    if not indexed_plc:
-        if roles is not None:
-            raise ValueError("Source roles require indexed piecewise-linear strata.")
-        return None
-    if not isinstance(roles, tuple):
-        raise TypeError("Indexed PLC associations require explicit source_entity_roles.")
-    if len(roles) != count:
-        raise ValueError("Source entity roles must align with association rows.")
-    return tuple(
-        None
-        if role is None
-        else parse(role, GeometrySourceEntityRole, "source_entity_role")
-        for role in roles
-    )
-
-
-def _plc_source_entity_keys(
-    revision: str,
-    dimensions: np.ndarray,
-    indices: np.ndarray,
-    roles: tuple[GeometrySourceEntityRole | None, ...],
-    /,
-) -> tuple[str, ...]:
-    from ._volume_generation import _entity
-
-    keys: list[str] = []
-    for dimension, index, role in zip(
-        dimensions.tolist(),
-        indices.tolist(),
-        roles,
-        strict=True,
-    ):
-        match role:
-            case None:
-                if dimension != -1 or index != -1:
-                    raise ValueError(
-                        "Unclassified PLC roles require absent source dimension and index."
-                    )
-                keys.append(_unclassified_id(revision))
-                continue
-            case GeometrySourceEntityRole.VERTEX:
-                valid = dimension == 0
-            case GeometrySourceEntityRole.EDGE:
-                valid = dimension == 1
-            case GeometrySourceEntityRole.FACET:
-                valid = dimension == 2
-            case GeometrySourceEntityRole.REGION:
-                valid = 1 <= dimension <= 3
-            case _:
-                raise TypeError("Source roles must be GeometrySourceEntityRole values.")
-        if not valid or index < 0:
-            raise ValueError(
-                "PLC source role disagrees with its declared geometric dimension."
-            )
-        keys.append(_entity(revision, role.value, index))
-    return tuple(keys)
-
-
-def _source_entities(
-    kind: GeometryAssociationKind,
-    revision: str,
-    sources: tuple[str, ...],
-    dimensions: ArrayLike | None,
-    indices: ArrayLike | None,
-    occurrence_paths: tuple[tuple[str, ...], ...],
-    roles: tuple[GeometrySourceEntityRole | None, ...] | None,
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
-    count = len(sources)
-    if (
-        kind is not GeometryAssociationKind.BREP
-        and dimensions is None
-        and indices is None
-    ):
-        return np.full((count,), -1, np.int8), np.full((count,), -1, np.int32)
-    match kind:
-        case GeometryAssociationKind.BREP:
-            dimensions_, indices_ = _source_entity_rows(
-                dimensions,
-                indices,
-                count,
-                "B-Rep",
-                np.int32,
-            )
-            expected = tuple(
-                brep_entity_id(revision, dimension, index, occurrence_path=path)
-                if dimension >= 0
-                else _unclassified_id(revision)
-                for dimension, index, path in zip(
-                    dimensions_.tolist(),
-                    indices_.tolist(),
-                    occurrence_paths,
-                    strict=True,
-                )
-            )
-            if expected != sources:
-                raise ValueError(
-                    "B-Rep source IDs must name the canonical revision, definition entity, and occurrence path."
-                )
-        case GeometryAssociationKind.PIECEWISE_LINEAR:
-            if roles is None:
-                raise ValueError(
-                    "Indexed PLC associations require explicit source roles."
-                )
-            dimensions_, indices_ = _source_entity_rows(
-                dimensions,
-                indices,
-                count,
-                "PLC",
-                np.int64,
-            )
-            expected = _plc_source_entity_keys(revision, dimensions_, indices_, roles)
-            if expected != sources:
-                raise ValueError(
-                    "PLC source IDs must name the canonical revision and source stratum."
-                )
-        case GeometryAssociationKind.IMPLICIT:
-            dimensions_, indices_ = _source_entity_rows(
-                dimensions,
-                indices,
-                count,
-                "Implicit",
-                np.int32,
-            )
-            if np.any((dimensions_ < 0) | (dimensions_ > 2)) or np.any(indices_ != 0):
-                raise ValueError(
-                    "Implicit associations must name the scalar source's zero-set boundary."
-                )
-            if sources != ("implicit-zero-set",) * count:
-                raise ValueError(
-                    "Implicit source IDs must name the authoritative zero-set entity."
-                )
-        case GeometryAssociationKind.SURFACE:
-            dimensions_, indices_ = _source_entity_rows(
-                dimensions,
-                indices,
-                count,
-                "Surface",
-                np.int64,
-            )
-            if np.any(dimensions_ > 2):
-                raise ValueError(
-                    "Surface source strata must be corners, curves, or patches."
-                )
-        case GeometryAssociationKind.CURVE | GeometryAssociationKind.MAPPED_REFERENCE:
-            raise ValueError(
-                "This source representation does not declare indexed source strata."
-            )
-        case _:
-            raise TypeError("association_kind must be GeometryAssociationKind.")
-    return dimensions_, indices_
 
 
 # -- policy and errors ---------------------------------------------------------
@@ -771,9 +225,13 @@ class AssociationPropagationPolicy(StrictModule, NonTrainableState):
         tolerance = float(classification_tolerance)
         maximum = None if maximum_residual is None else float(maximum_residual)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
-            raise ValueError("classification_tolerance must be finite and positive.")
+            raise ValueError(
+                f"AssociationPropagationPolicy.classification_tolerance must be finite and positive; got {tolerance!r}"
+            )
         if maximum is not None and (not np.isfinite(maximum) or maximum < 0.0):
-            raise ValueError("maximum_residual must be finite and non-negative or None.")
+            raise ValueError(
+                f"AssociationPropagationPolicy.maximum_residual must be finite and nonnegative or None; got {maximum!r}"
+            )
         self.classification_tolerance = tolerance
         self.maximum_residual = maximum
         self.policy_id = canonical_fingerprint(
@@ -785,75 +243,9 @@ class AssociationPropagationPolicy(StrictModule, NonTrainableState):
         )
 
 
-class AssociationPropagationError(ValueError):
-    """A topology change violates the B-Rep classification rules."""
-
-    def __init__(self, message: str, target_ids: ArrayLike, /) -> None:
-        super().__init__(message)
-        self.target_ids = np.asarray(target_ids, dtype=np.int64)
-
-
-# -- mesh topology helpers -------------------------------------------------------
-
-
-def _compose(
-    first: np.ndarray, second: np.ndarray, /, *, unique: bool = True
+def _vertex_rows(
+    mesh: cell_mesh_owner.CellMesh, identifiers: np.ndarray, /
 ) -> np.ndarray:
-    """Compose ``(a, b)`` pairs with ``(b, c)`` pairs into ``(a, c)`` pairs.
-
-    With ``unique=False`` every path is kept, so multiplicities count the
-    intermediate ``b`` connecting each ``(a, c)``.
-    """
-    if first.shape[0] == 0 or second.shape[0] == 0:
-        return np.zeros((0, 2), dtype=np.int64)
-    order = np.argsort(second[:, 0], kind="stable")
-    keys = second[order, 0]
-    start = np.searchsorted(keys, first[:, 1], side="left")
-    counts = np.searchsorted(keys, first[:, 1], side="right") - start
-    owner = np.repeat(np.arange(first.shape[0]), counts)
-    offsets = np.cumsum(counts) - counts
-    position = np.repeat(start - offsets, counts) + np.arange(owner.size)
-    pairs = np.stack((first[owner, 0], second[order[position], 1]), axis=1)
-    return np.unique(pairs, axis=0).reshape(-1, 2) if unique else pairs
-
-
-def _incidence_pairs(mesh: CellMesh, low: int, high: int, /) -> np.ndarray:
-    """``(low_row, high_row)`` pairs with the low entity in the high entity's closure."""
-    if low == high:
-        rows = np.arange(mesh.entity_set(low).count, dtype=np.int64)
-        return np.stack((rows, rows), axis=1)
-    pairs = None
-    for degree in range(low, high):
-        relation = mesh.topology.incidences[degree].relation
-        valid = np.asarray(relation.valid, dtype=np.bool_).reshape(-1)
-        step = np.stack(
-            (
-                np.asarray(relation.source_indices, dtype=np.int64).reshape(-1)[valid],
-                np.asarray(relation.target_indices, dtype=np.int64).reshape(-1)[valid],
-            ),
-            axis=1,
-        )
-        pairs = step if pairs is None else _compose(pairs, step)
-    # ty: ignore[no-matching-overload]
-    return np.unique(pairs, axis=0).reshape(-1, 2)
-
-
-def _boundary_mask(mesh: CellMesh, dimension: int, /) -> np.ndarray:
-    """Entities of ``dimension`` in the closure of mesh boundary facets."""
-    top = mesh.topological_dimension
-    facets = _incidence_pairs(mesh, top - 1, top)
-    boundary_facets = np.flatnonzero(
-        np.bincount(facets[:, 0], minlength=mesh.entity_set(top - 1).count) == 1
-    )
-    mask = np.zeros((mesh.entity_set(dimension).count,), dtype=np.bool_)
-    if dimension == top:
-        return mask
-    pairs = _incidence_pairs(mesh, dimension, top - 1)
-    mask[pairs[np.isin(pairs[:, 1], boundary_facets), 0]] = True
-    return mask
-
-
-def _vertex_rows(mesh: CellMesh, identifiers: np.ndarray, /) -> np.ndarray:
     """Mesh vertex row of each global ID (-1 when absent)."""
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     order = np.argsort(vertex_ids, kind="stable")
@@ -861,44 +253,10 @@ def _vertex_rows(mesh: CellMesh, identifiers: np.ndarray, /) -> np.ndarray:
     return np.where(vertex_ids[order[position]] == identifiers, order[position], -1)
 
 
-def _entity_rows(
-    mesh: CellMesh, dimension: int, identifiers: np.ndarray, /
-) -> np.ndarray:
-    entity_ids = np.asarray(mesh.entity_set(dimension).entity_ids, dtype=np.int64)
-    order = np.argsort(entity_ids, kind="stable")
-    position = np.minimum(np.searchsorted(entity_ids[order], identifiers), order.size - 1)
-    return np.where(entity_ids[order[position]] == identifiers, order[position], -1)
-
-
-def _ordered_vertices(mesh: CellMesh, dimension: int, /) -> np.ndarray | None:
-    """Canonical vertex rows of every entity of ``dimension`` (simplex routes)."""
-    connectivity = mesh.connectivity
-    if dimension == 1 and isinstance(
-        connectivity, (PolygonalConnectivity, TetrahedralConnectivity)
-    ):
-        return np.asarray(connectivity.edges, dtype=np.int64)
-    if dimension == 2 and isinstance(connectivity, TetrahedralConnectivity):
-        return np.asarray(connectivity.faces, dtype=np.int64)
-    if dimension == mesh.topological_dimension == 2 and all(
-        block.cell_kind == "triangle" for block in mesh.blocks
-    ):
-        identifiers = np.concatenate(
-            [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
-        )
-        cells = np.concatenate(
-            [np.asarray(block.vertices, dtype=np.int64) for block in mesh.blocks]
-        )
-        rows = _entity_rows(mesh, dimension, identifiers)
-        ordered = np.empty_like(cells)
-        ordered[rows] = cells
-        return ordered
-    return None
-
-
 # -- classification --------------------------------------------------------------
 
 
-_RESOLVED_STATUS = (int(BRepProjectionStatus.UNIQUE), int(BRepProjectionStatus.SEAM))
+RESOLVED_STATUS = (int(BRepProjectionStatus.UNIQUE), int(BRepProjectionStatus.SEAM))
 
 
 class _Classes(NamedTuple):
@@ -915,15 +273,19 @@ class _Classes(NamedTuple):
 
     @property
     def resolved(self) -> np.ndarray:
-        return np.isin(self.status, _RESOLVED_STATUS)
+        return np.isin(self.status, RESOLVED_STATUS)
 
 
-def _vertex_classes(mesh: CellMesh, association: GeometryAssociation, /) -> _Classes:
+def _vertex_classes(
+    mesh: cell_mesh_owner.CellMesh, association: GeometryAssociation, /
+) -> _Classes:
     """Vertex classes in mesh row order; the association must cover every vertex."""
-    rows = _entity_rows(mesh, 0, np.asarray(association.target_global_ids))
+    rows = entity_rows(mesh, 0, np.asarray(association.target_global_ids))
     count = mesh.coordinates.shape[0]
     if np.any(rows < 0) or np.unique(rows).size != count or rows.size != count:
-        raise ValueError("The vertex association must cover exactly the mesh vertices.")
+        raise ValueError(
+            f"GeometryAssociation.target_global_ids must cover every mesh vertex once; got row routes {rows!r}, vertex count {count}"
+        )
     dims = np.full((count,), -1, dtype=np.int64)
     indices = np.full((count,), -1, dtype=np.int64)
     status = np.full((count,), BRepProjectionStatus.FAILED, dtype=np.int8)
@@ -939,12 +301,16 @@ def _vertex_classes(mesh: CellMesh, association: GeometryAssociation, /) -> _Cla
         ),
     )
     paths: list[tuple[str, ...]] = [()] * count
-    for row, path in zip(rows.tolist(), association.source_occurrence_paths, strict=True):
+    for row, path in zip(
+        rows.tolist(), association.source_entities.occurrence_paths(), strict=True
+    ):
         paths[row] = path
     return _Classes(dims, indices, status, tuple(paths))
 
 
-def _centroids(mesh: CellMesh, members: np.ndarray, count: int, /) -> np.ndarray:
+def centroids(
+    mesh: cell_mesh_owner.CellMesh, members: np.ndarray, count: int, /
+) -> np.ndarray:
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     totals = np.zeros((count, points.shape[1]))
     np.add.at(totals, members[:, 0], points[members[:, 1]])
@@ -1037,7 +403,7 @@ def _lowest_containers(
         *projection.code_entities(distinct), occurrence_paths=distinct_paths
     )
     keep = container_dims >= low
-    reach = _compose(
+    reach = compose_incidence_pairs(
         np.stack((owner_class[:, 0], inverse.reshape(-1)), axis=1),
         np.stack(
             (
@@ -1061,7 +427,7 @@ def _lowest_containers(
         candidate_dims <= high[candidates[:, 0]]
     )
     if within is not None and candidates.shape[0]:
-        joined = _compose(
+        joined = compose_incidence_pairs(
             np.stack((np.arange(candidates.shape[0]), candidates[:, 0]), axis=1),
             within,
             unique=False,
@@ -1132,7 +498,7 @@ def _lowest_containers(
 
 
 def _classify_mesh(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     vertex_classes: _Classes,
     projection: AbstractBRepProjection,
     /,
@@ -1140,7 +506,7 @@ def _classify_mesh(
     """B-Rep classes of every mesh entity dimension ``0..D`` (module rules)."""
     top = mesh.topological_dimension
     classes: list[_Classes] = [vertex_classes] * (top + 1)
-    members = _incidence_pairs(mesh, 0, top)[:, ::-1]
+    members = incidence_pairs(mesh, 0, top)[:, ::-1]
     count = mesh.entity_set(top).count
     classes[top] = _lowest_containers(
         projection,
@@ -1150,7 +516,7 @@ def _classify_mesh(
         top,
         np.full((count,), top),
         None,
-        _centroids(mesh, members, count),
+        centroids(mesh, members, count),
     )
     for dimension in range(top - 1, 0, -1):
         classes[dimension] = _classify_level(
@@ -1160,7 +526,7 @@ def _classify_mesh(
 
 
 def _classify_level(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     projection: AbstractBRepProjection,
     vertex_classes: _Classes,
     upper: _Classes,
@@ -1179,8 +545,8 @@ def _classify_level(
     code; full-dimensional regions never admit it.
     """
     count = mesh.entity_set(dimension).count
-    pairs = _incidence_pairs(mesh, dimension, dimension + 1)
-    good = np.isin(upper.status[pairs[:, 1]], _RESOLVED_STATUS)
+    pairs = incidence_pairs(mesh, dimension, dimension + 1)
+    good = np.isin(upper.status[pairs[:, 1]], RESOLVED_STATUS)
     unresolved = np.bincount(pairs[~good, 0], minlength=count) > 0
     pairs = pairs[good]
     upper_dims = upper.dimensions[pairs[:, 1]]
@@ -1215,7 +581,7 @@ def _classify_level(
         & (lowest < mesh.ambient_dimension)
         & ~unresolved
     )
-    members = _incidence_pairs(mesh, 0, dimension)[:, ::-1]
+    members = incidence_pairs(mesh, 0, dimension)[:, ::-1]
     # Only entities bounding their coface classes search for a lower class.
     bounding = members[~inherited[members[:, 0]]]
     bounded = _lowest_containers(
@@ -1226,7 +592,7 @@ def _classify_level(
         dimension,
         np.where(interior, lowest, np.minimum(lowest, 4) - 1),
         adjacent,
-        _centroids(mesh, members, count),
+        centroids(mesh, members, count),
     )
     code = np.full((count,), -1, dtype=np.int64)
     code[adjacent[:, 0]] = adjacent[:, 1]
@@ -1248,15 +614,15 @@ def _classify_level(
 
 
 def _orientations(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     dimension: int,
     classes: _Classes,
     projected: BRepProjectionResult,
     /,
 ) -> np.ndarray:
-    """Relation of each entity's canonical vertex order to its B-Rep orientation."""
+    """Relation of each entity's incidence-defined vertex order to its B-Rep orientation."""
     result = np.zeros((classes.dimensions.size,), dtype=np.int8)
-    ordered = _ordered_vertices(mesh, dimension)
+    ordered = ordered_vertices(mesh, dimension)
     if ordered is None:
         return result
     points = np.asarray(mesh.coordinates, dtype=np.float64)
@@ -1279,7 +645,7 @@ def _orientations(
 
 def _brep_association(
     projection: AbstractBRepProjection,
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     dimension: int,
     classes: _Classes,
     points: np.ndarray,
@@ -1304,7 +670,7 @@ def _brep_association(
     )
     if projected.source_occurrence_paths != tuple(classes.paths[row] for row in lower):
         raise ValueError(
-            "Projection changed the authoritative occurrence path of a classified entity."
+            f"GeometryAssociation.projected_occurrence_paths must retain classified paths; got {projected.source_occurrence_paths!r}, expected {tuple(classes.paths[row] for row in lower)!r}"
         )
     residuals = np.where(classes.dimensions == 3, 0.0, np.inf)
     parameters = np.full((count, 2), np.nan)
@@ -1332,12 +698,16 @@ def _brep_association(
         ),
         occurrence_paths=path_table,
     )
-    ambiguous = (classes.status == BRepProjectionStatus.AMBIGUOUS) | (
-        projection_status == BRepProjectionStatus.AMBIGUOUS
+    ambiguous_statuses = (
+        BRepProjectionStatus.AMBIGUOUS,
+        BRepProjectionStatus.NON_ISOLATED,
+    )
+    ambiguous = np.isin(classes.status, ambiguous_statuses) | np.isin(
+        projection_status, ambiguous_statuses
     )
     resolved = (
-        np.isin(classes.status, _RESOLVED_STATUS)
-        & np.isin(projection_status, _RESOLVED_STATUS)
+        np.isin(classes.status, RESOLVED_STATUS)
+        & np.isin(projection_status, RESOLVED_STATUS)
         & (
             residuals <= policy.maximum_residual
             if policy.maximum_residual is not None
@@ -1355,7 +725,9 @@ def _brep_association(
                 projection.source_revision, entity, index, occurrence_path=path
             )
             if entity >= 0
-            else _unclassified_id(projection.source_revision)
+            else association_state_owner.unclassified_entity_id(
+                projection.source_revision
+            )
             for entity, index, path in zip(
                 classes.dimensions.tolist(),
                 classes.indices.tolist(),
@@ -1387,57 +759,52 @@ def _scatter(rows: np.ndarray, values: np.ndarray, shape: tuple[int, ...], /) ->
 def _require_brep(
     association: GeometryAssociation,
     projection: AbstractBRepProjection,
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     dimension: int,
     /,
 ) -> None:
-    if not isinstance(association, GeometryAssociation):
-        raise TypeError("association must be GeometryAssociation.")
-    if not isinstance(projection, AbstractBRepProjection):
-        raise TypeError("projection must be AbstractBRepProjection.")
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be CellMesh.")
     if association.association_kind is not GeometryAssociationKind.BREP:
-        raise ValueError("B-Rep classification requires a B-Rep association.")
+        raise ValueError(
+            f"GeometryAssociation.association_kind must be BREP for B-Rep classification; got {association.association_kind!r}"
+        )
     if (
         association.source_revision != projection.source_revision
         or association.source_id != projection.source_id
     ):
         raise ValueError(
-            "The association and projection bind different authoritative sources."
+            f"GeometryAssociation.source_binding must match the projection source and revision; got {(association.source_id, association.source_revision)!r}, projection {(projection.source_id, projection.source_revision)!r}"
         )
     if association.target_entity_set_id != mesh.entity_set(dimension).entity_set_id:
-        raise ValueError("The association does not target this mesh's entities.")
+        raise ValueError(
+            f"GeometryAssociation.target_entity_set_id must bind the mesh stratum; got {association.target_entity_set_id!r}, expected {mesh.entity_set(dimension).entity_set_id!r}"
+        )
     if mesh.ambient_dimension != projection.ambient_dimension:
-        raise ValueError("Mesh and projection ambient dimensions differ.")
+        raise ValueError(
+            f"GeometryAssociation.ambient_dimension must agree between mesh and projection; got mesh {mesh.ambient_dimension}, projection {projection.ambient_dimension}"
+        )
     resolved = np.flatnonzero(np.asarray(association.resolved))
     projection.entity_codes(
         np.asarray(association.source_dimensions)[resolved],
         np.asarray(association.source_indices)[resolved],
         occurrence_paths=tuple(
-            association.source_occurrence_paths[row] for row in resolved
+            association.source_entities.occurrence_path(row) for row in resolved
         ),
     )
-
-
-def _policy(policy: AssociationPropagationPolicy, /) -> AssociationPropagationPolicy:
-    if not isinstance(policy, AssociationPropagationPolicy):
-        raise TypeError("policy must be AssociationPropagationPolicy.")
-    return policy
 
 
 # -- public classification ----------------------------------------------------------
 
 
-def _mesh_entity_classes(
-    mesh: CellMesh,
+@checked
+def mesh_entity_classes(
+    mesh: cell_mesh_owner.CellMesh,
     association: GeometryAssociation,
     projection: AbstractBRepProjection,
     /,
 ) -> tuple[_Classes, ...]:
     """Host B-Rep classes ``(dimensions, indices, status)`` of mesh dimensions ``0..D``.
 
-    ``association`` is the complete vertex association of ``mesh``. Consumers
+    ``association`` is the vertex association covering every vertex of ``mesh``. Consumers
     (adaptation constraints, curving) use the classes to protect, constrain, and
     project entities by the module rules.
     """
@@ -1445,8 +812,9 @@ def _mesh_entity_classes(
     return _classify_mesh(mesh, _vertex_classes(mesh, association), projection)
 
 
+@checked
 def associate_mesh_entities(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     association: GeometryAssociation,
     projection: AbstractBRepProjection,
     dimension: int,
@@ -1456,23 +824,25 @@ def associate_mesh_entities(
 ) -> GeometryAssociation:
     """Derive the B-Rep association of mesh entities of ``dimension`` (1..D).
 
-    Classes follow the module rules from the complete vertex ``association``;
+    Classes follow the module rules from the vertex ``association`` covering every vertex;
     residuals and parameters come from projecting each entity centroid (region
-    rows carry zero residual), orientations from the canonical vertex order.
+    rows carry zero residual), orientations from the incidence-defined vertex order.
     """
-    policy_ = _policy(policy)
+    policy_ = policy
     target = int(dimension)
     if not 1 <= target <= mesh.topological_dimension:
-        raise ValueError("dimension must lie in 1..D; vertex associations are direct.")
-    classes = _mesh_entity_classes(mesh, association, projection)[target]
-    members = _incidence_pairs(mesh, 0, target)[:, ::-1]
+        raise ValueError(
+            f"GeometryAssociation.dimension must lie in [1, D] for derived entities; got {target}, D {mesh.topological_dimension}"
+        )
+    classes = mesh_entity_classes(mesh, association, projection)[target]
+    members = incidence_pairs(mesh, 0, target)[:, ::-1]
     count = mesh.entity_set(target).count
     return _brep_association(
         projection,
         mesh,
         target,
         classes,
-        _centroids(mesh, members, count),
+        centroids(mesh, members, count),
         policy_,
         provenance=GeometryAssociationProvenance.CLASSIFICATION,
         parent_association_id=association.association_id,
@@ -1480,7 +850,7 @@ def associate_mesh_entities(
 
 
 def _geometric_vertex_classes(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     projection: AbstractBRepProjection,
     tolerance: float,
     groups: tuple[
@@ -1500,7 +870,7 @@ def _geometric_vertex_classes(
     top = mesh.topological_dimension
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     count = points.shape[0]
-    boundary = _boundary_mask(mesh, 0)
+    boundary = boundary_mask(mesh, 0)
     dims = np.full((count,), -1, dtype=np.int64)
     indices = np.full((count,), -1, dtype=np.int64)
     status = np.full((count,), BRepProjectionStatus.FAILED, dtype=np.int8)
@@ -1552,21 +922,20 @@ def _geometric_vertex_classes(
     return _Classes(dims, indices, status, tuple(paths))
 
 
+@checked
 def associate_mesh_vertices(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     projection: AbstractBRepProjection,
     /,
     *,
     policy: AssociationPropagationPolicy,
 ) -> GeometryAssociation:
     """Classify every mesh vertex geometrically and project it onto its class."""
-    policy_ = _policy(policy)
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be CellMesh.")
-    if not isinstance(projection, AbstractBRepProjection):
-        raise TypeError("projection must be AbstractBRepProjection.")
+    policy_ = policy
     if mesh.ambient_dimension != projection.ambient_dimension:
-        raise ValueError("Mesh and projection ambient dimensions differ.")
+        raise ValueError(
+            f"GeometryAssociation.ambient_dimension must agree between mesh and projection; got mesh {mesh.ambient_dimension}, projection {projection.ambient_dimension}"
+        )
     classes = _geometric_vertex_classes(
         mesh, projection, policy_.classification_tolerance, None
     )
@@ -1585,114 +954,18 @@ def associate_mesh_vertices(
 # -- propagation through lineage --------------------------------------------------
 
 
-def _child_sources(
-    lineage: MeshLineage,
-    source_mesh: CellMesh,
-    target_mesh: CellMesh,
-    created: np.ndarray,
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Lowest-dimensional source entity ``(dimension, row)`` each created vertex lies in.
-
-    A vertex on a target edge (face) refined from a source edge (face) lies in
-    that source entity; otherwise its split parents span the source simplex.
-    """
-    from ._lineage import EntityLineageKind
-    from ._topology_edit import entity_keys, key_rows
-
-    top = source_mesh.topological_dimension
-    dims = np.full((created.size,), -1, dtype=np.int64)
-    rows = np.full((created.size,), -1, dtype=np.int64)
-    target_ids = np.asarray(target_mesh.vertex_global_ids, dtype=np.int64)
-    refined = (int(EntityLineageKind.REFINED_FROM), int(EntityLineageKind.SPLIT_FROM))
-    for dimension in range(1, top):
-        record = lineage.entity_lineage(dimension)
-        kinds = np.asarray(record.relation_kinds)
-        mask = np.isin(kinds, refined)
-        source_rows = _entity_rows(
-            source_mesh, dimension, np.asarray(record.source_global_ids)[mask]
-        )
-        target_rows = _entity_rows(
-            target_mesh, dimension, np.asarray(record.target_global_ids)[mask]
-        )
-        vertices = _incidence_pairs(target_mesh, 0, dimension)
-        entity_vertices = _compose(
-            np.stack((np.arange(target_rows.size), target_rows), axis=1),
-            vertices[:, ::-1],
-        )
-        vertex_ids = target_ids[entity_vertices[:, 1]]
-        position = np.searchsorted(created, vertex_ids)
-        position = np.minimum(position, created.size - 1)
-        hit = (created.size > 0) & (created[position] == vertex_ids)
-        open_ = dims[position[hit]] < 0
-        chosen = position[hit][open_]
-        dims[chosen] = dimension
-        rows[chosen] = source_rows[entity_vertices[hit, 0][open_]]
-    record = lineage.entity_lineage(0)
-    split = np.asarray(record.relation_kinds) == EntityLineageKind.SPLIT_FROM
-    parents = np.stack(
-        (
-            np.asarray(record.target_global_ids)[split],
-            np.asarray(record.source_global_ids)[split],
-        ),
-        axis=1,
-    )
-    open_rows = np.flatnonzero(dims < 0)
-    if open_rows.size and parents.size:
-        parents = parents[np.isin(parents[:, 0], created[open_rows])]
-        parents = parents[np.lexsort((parents[:, 1], parents[:, 0]))]
-        owners, starts, sizes = np.unique(
-            parents[:, 0], return_index=True, return_counts=True
-        )
-        for size in np.unique(sizes).tolist():
-            if size - 1 > top or size < 2:
-                continue
-            selected = sizes == size
-            keys = np.stack(
-                [parents[starts[selected] + offset, 1] for offset in range(size)], axis=1
-            )
-            if size - 1 == top:
-                cells = np.concatenate(
-                    [
-                        np.asarray(block.vertices, dtype=np.int64)
-                        for block in source_mesh.blocks
-                    ]
-                )
-                identifiers = np.concatenate(
-                    [
-                        np.asarray(block.global_ids, dtype=np.int64)
-                        for block in source_mesh.blocks
-                    ]
-                )
-                table = np.sort(
-                    np.asarray(source_mesh.vertex_global_ids, dtype=np.int64)[cells],
-                    axis=1,
-                )
-                found = key_rows(table, keys)
-                entity = np.where(
-                    found >= 0,
-                    _entity_rows(source_mesh, top, identifiers[np.maximum(found, 0)]),
-                    -1,
-                )
-            else:
-                entity = key_rows(entity_keys(source_mesh, size - 1), keys)
-            position = np.searchsorted(created, owners[selected])
-            dims[position] = np.where(entity >= 0, size - 1, -1)
-            rows[position] = entity
-    return dims, rows
-
-
+@checked
 def propagate_association(
     association: GeometryAssociation,
-    lineage: MeshLineage,
-    source_mesh: CellMesh,
-    target_mesh: CellMesh,
+    lineage: lineage_records_owner.MeshLineage,
+    source_mesh: cell_mesh_owner.CellMesh,
+    target_mesh: cell_mesh_owner.CellMesh,
     projection: AbstractBRepProjection,
     /,
     *,
     policy: AssociationPropagationPolicy,
 ) -> GeometryAssociation:
-    """Carry a complete B-Rep vertex association through one exact topology lineage.
+    """Carry B-Rep vertex associations through a bound topology lineage.
 
     Preserved vertices keep their class and projection; relocated vertices keep
     their class and are re-projected; created vertices inherit the class of the
@@ -1700,19 +973,15 @@ def propagate_association(
     classified geometrically. Raises :class:`AssociationPropagationError` for a
     collapse whose kept vertex class is not in the closure of the removed class.
     """
-    from ._lineage import EntityLineageKind, MeshLineage
 
-    policy_ = _policy(policy)
+    policy_ = policy
     _require_brep(association, projection, source_mesh, 0)
-    if not isinstance(lineage, MeshLineage):
-        raise TypeError("lineage must be MeshLineage.")
-    if not isinstance(target_mesh, CellMesh):
-        raise TypeError("target_mesh must be CellMesh.")
-    if (
-        lineage.source_topology_id != source_mesh.topology_id
-        or lineage.target_topology_id != target_mesh.topology_id
-    ):
-        raise ValueError("The lineage does not relate these source and target meshes.")
+    require_transfer_lineage(
+        source_mesh,
+        lineage,
+        target_mesh,
+        message=f"GeometryAssociation.lineage.topology_ids must bind source and target meshes; got lineage {(lineage.source_topology_id, lineage.target_topology_id)!r}, meshes {(source_mesh.topology_id, target_mesh.topology_id)!r}",
+    )
     source_classes = _vertex_classes(source_mesh, association)
     target_ids = np.asarray(target_mesh.vertex_global_ids, dtype=np.int64)
     record = lineage.entity_lineage(0)
@@ -1722,9 +991,17 @@ def propagate_association(
     _check_collapses(
         projection,
         source_classes,
-        _entity_rows(source_mesh, 0, sources[kinds == EntityLineageKind.COLLAPSED_INTO]),
-        _entity_rows(source_mesh, 0, targets[kinds == EntityLineageKind.COLLAPSED_INTO]),
-        targets[kinds == EntityLineageKind.COLLAPSED_INTO],
+        entity_rows(
+            source_mesh,
+            0,
+            sources[kinds == lineage_records_owner.EntityLineageKind.COLLAPSED_INTO],
+        ),
+        entity_rows(
+            source_mesh,
+            0,
+            targets[kinds == lineage_records_owner.EntityLineageKind.COLLAPSED_INTO],
+        ),
+        targets[kinds == lineage_records_owner.EntityLineageKind.COLLAPSED_INTO],
     )
     count = target_ids.size
     dims = np.full((count,), -1, dtype=np.int64)
@@ -1733,8 +1010,8 @@ def propagate_association(
     paths: list[tuple[str, ...]] = [()] * count
     parent_dims = np.full((count,), -1, dtype=np.int8)
     parent_ids = np.full((count,), -1, dtype=np.int64)
-    kept = np.flatnonzero(_entity_rows(source_mesh, 0, target_ids) >= 0)
-    kept_source = _entity_rows(source_mesh, 0, target_ids[kept])
+    kept = np.flatnonzero(entity_rows(source_mesh, 0, target_ids) >= 0)
+    kept_source = entity_rows(source_mesh, 0, target_ids[kept])
     dims[kept] = source_classes.dimensions[kept_source]
     indices[kept] = source_classes.indices[kept_source]
     status[kept] = source_classes.status[kept_source]
@@ -1742,12 +1019,12 @@ def propagate_association(
         paths[target_row] = source_classes.paths[source_row]
     parent_dims[kept] = 0
     parent_ids[kept] = target_ids[kept]
-    created_rows = np.flatnonzero(_entity_rows(source_mesh, 0, target_ids) < 0)
+    created_rows = np.flatnonzero(entity_rows(source_mesh, 0, target_ids) < 0)
     created = target_ids[created_rows]
     order = np.argsort(created, kind="stable")
     created_rows, created = created_rows[order], created[order]
     if created.size:
-        entity_dims, entity_rows = _child_sources(
+        entity_dims, local_entity_rows = child_sources(
             lineage, source_mesh, target_mesh, created
         )
         found = entity_dims >= 0
@@ -1756,7 +1033,7 @@ def propagate_association(
             for level in np.unique(entity_dims[found]).tolist():
                 selected = np.flatnonzero(entity_dims == level)
                 level_classes = source_levels[level]
-                rows = entity_rows[selected]
+                rows = local_entity_rows[selected]
                 target_rows = created_rows[selected]
                 dims[target_rows] = level_classes.dimensions[rows]
                 indices[target_rows] = level_classes.indices[rows]
@@ -1806,7 +1083,9 @@ def _check_collapses(
     if removed.size == 0:
         return
     if np.any(removed < 0) or np.any(kept < 0):
-        raise ValueError("Collapse relations must connect source vertices.")
+        raise ValueError(
+            f"GeometryAssociation.collapse_lineage must connect declared source vertices; got removed rows {removed!r}, kept rows {kept!r}"
+        )
     removed_dims = classes.dimensions[removed]
     kept_dims = classes.dimensions[kept]
     known = (removed_dims >= 0) & (kept_dims >= 0)
@@ -1821,8 +1100,7 @@ def _check_collapses(
     )
     if not np.all(legal):
         raise AssociationPropagationError(
-            "A collapse removed a vertex whose B-Rep class does not bound the kept "
-            "vertex's class.",
+            f"GeometryAssociation.collapse_classes must place the kept class in the removed class closure; got violating kept IDs {kept_ids[~legal]!r}",
             kept_ids[~legal],
         )
 
@@ -1831,7 +1109,7 @@ def _check_collapses(
 
 
 def _facet_signatures(
-    result: CellMeshingResult, rows: int, /
+    result: result_owner.CellMeshingResult, rows: int, /
 ) -> tuple[np.ndarray, tuple]:
     """Facet organization signature (names of facet patches, zones, and labels)."""
     mesh = result.mesh
@@ -1850,8 +1128,8 @@ def _facet_signatures(
 
 
 def _transfer_groups(
-    source: CellMeshingResult,
-    target: CellMeshingResult,
+    source: result_owner.CellMeshingResult,
+    target: result_owner.CellMeshingResult,
     source_classes: tuple[_Classes, ...],
     projection: AbstractBRepProjection,
     /,
@@ -1875,7 +1153,7 @@ def _transfer_groups(
         output[:, [names.index(name) for name in own]] = matrix
         return output
 
-    boundary = _boundary_mask(source.mesh, top - 1)
+    boundary = boundary_mask(source.mesh, top - 1)
     _, signature = np.unique(
         np.concatenate(
             (
@@ -1898,8 +1176,8 @@ def _transfer_groups(
         facet_classes.indices[rows],
         tuple(facet_classes.paths[row] for row in rows),
     )
-    target_boundary = _boundary_mask(target.mesh, top - 1)
-    vertex_facets = _incidence_pairs(target.mesh, 0, top - 1)
+    target_boundary = boundary_mask(target.mesh, top - 1)
+    vertex_facets = incidence_pairs(target.mesh, 0, top - 1)
     vertex_facets = vertex_facets[target_boundary[vertex_facets[:, 1]]]
     vertex_signatures = np.unique(
         np.stack((vertex_facets[:, 0], target_signature[vertex_facets[:, 1]]), axis=1),
@@ -1916,7 +1194,7 @@ def _transfer_groups(
     combinations, groups = np.unique(padded, axis=0, return_inverse=True)
     group_signature = np.argwhere(combinations >= 0)
     group_signature[:, 1] = combinations[group_signature[:, 0], group_signature[:, 1]]
-    group_codes = _compose(group_signature, allowed)
+    group_codes = compose_incidence_pairs(group_signature, allowed)
     dims, indices = projection.code_entities(group_codes[:, 1])
     return (
         groups.reshape(-1),
@@ -1955,10 +1233,11 @@ def _members_closure(
     ).reshape(-1, 2)
 
 
+@checked
 def rederive_association(
     association: GeometryAssociation,
-    source: CellMeshingResult,
-    target: CellMeshingResult,
+    source: result_owner.CellMeshingResult,
+    target: result_owner.CellMeshingResult,
     projection: AbstractBRepProjection,
     /,
     *,
@@ -1974,16 +1253,13 @@ def rederive_association(
     the lowest-dimensional admissible entity within the classification tolerance
     and is projected; residuals are the evidence.
     """
-    from ._result import CellMeshingResult
 
-    policy_ = _policy(policy)
-    if not isinstance(source, CellMeshingResult) or not isinstance(
-        target, CellMeshingResult
-    ):
-        raise TypeError("source and target must be CellMeshingResult values.")
+    policy_ = policy
     _require_brep(association, projection, source.mesh, 0)
     if target.mesh.topological_dimension != source.mesh.topological_dimension:
-        raise ValueError("Re-derivation requires one topological dimension.")
+        raise ValueError(
+            f"GeometryAssociation.rederivation_dimension must agree between source and target; got source {source.mesh.topological_dimension}, target {target.mesh.topological_dimension}"
+        )
     source_levels = _classify_mesh(
         source.mesh, _vertex_classes(source.mesh, association), projection
     )
@@ -2004,13 +1280,6 @@ def rederive_association(
 
 
 # -- result-level transfer ---------------------------------------------------------
-
-
-def _target_dimension(mesh: CellMesh, association: GeometryAssociation, /) -> int:
-    for dimension in range(mesh.topological_dimension + 1):
-        if mesh.entity_set(dimension).entity_set_id == association.target_entity_set_id:
-            return dimension
-    raise ValueError("A B-Rep association does not target the source mesh entities.")
 
 
 @final
@@ -2036,7 +1305,7 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         *,
         policy: AssociationPropagationPolicy | None = None,
     ) -> None:
-        policy_ = AssociationPropagationPolicy() if policy is None else _policy(policy)
+        policy_ = AssociationPropagationPolicy() if policy is None else policy
         self.projection = projection
         self.policy = policy_
         self.transfer_id = canonical_fingerprint(
@@ -2047,14 +1316,12 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def source_associations(
-        self, source: CellMeshingResult, /
+        self, source: result_owner.CellMeshingResult, /
     ) -> tuple[GeometryAssociation, tuple[int, ...]]:
         """The source vertex association and the higher dimensions to rebuild."""
-        from ._result import CellMeshingResult
 
-        if not isinstance(source, CellMeshingResult):
-            raise TypeError("source must be CellMeshingResult.")
         dimensions = []
         vertex = None
         for association in source.associations:
@@ -2063,32 +1330,39 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
                 or association.source_revision != self.projection.source_revision
             ):
                 raise ValueError(
-                    "B-Rep association transfer carries associations of its revision only."
+                    f"BRepAssociationTransfer.source_associations must be BREP tables of the projection revision; got kind {association.association_kind!r}, revision {association.source_revision!r}, expected {self.projection.source_revision!r}"
                 )
-            dimension = _target_dimension(source.mesh, association)
+            dimension = target_dimension(source.mesh, association)
             if dimension == 0:
                 if vertex is not None:
-                    raise ValueError("A source carries one vertex association.")
+                    raise ValueError(
+                        f"BRepAssociationTransfer.vertex_association must be unique; got duplicate vertex table {association.association_id!r}"
+                    )
                 vertex = association
             else:
                 dimensions.append(dimension)
         if vertex is None:
-            raise ValueError("B-Rep association transfer requires a vertex association.")
+            raise ValueError(
+                f"BRepAssociationTransfer.vertex_association must be present; got {vertex!r}"
+            )
         if len(set(dimensions)) != len(dimensions):
-            raise ValueError("A source carries one association per mesh dimension.")
+            raise ValueError(
+                f"BRepAssociationTransfer.source_associations must have distinct target dimensions; got {dimensions!r}"
+            )
         _vertex_classes(source.mesh, vertex)
         return vertex, tuple(sorted(dimensions))
 
-    def classes(self, source: CellMeshingResult, /) -> tuple[_Classes, ...]:
+    @checked
+    def classes(self, source: result_owner.CellMeshingResult, /) -> tuple[_Classes, ...]:
         """B-Rep classes of every source mesh dimension (adaptation constraints)."""
         vertex, _ = self.source_associations(source)
-        return _mesh_entity_classes(source.mesh, vertex, self.projection)
+        return mesh_entity_classes(source.mesh, vertex, self.projection)
 
     def _derived(
         self,
         vertex: GeometryAssociation,
         dimensions: tuple[int, ...],
-        mesh: CellMesh,
+        mesh: cell_mesh_owner.CellMesh,
         /,
     ) -> tuple[GeometryAssociation, ...]:
         return (vertex,) + tuple(
@@ -2098,18 +1372,27 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
             for dimension in dimensions
         )
 
+    @checked
     def propagate(
-        self, source: CellMeshingResult, lineage: MeshLineage, target: CellMesh, /
+        self,
+        source: result_owner.CellMeshingResult,
+        lineage: lineage_records_owner.MeshLineage,
+        target: cell_mesh_owner.CellMesh,
+        /,
     ) -> tuple[GeometryAssociation, ...]:
-        """Target associations through one exact topology lineage."""
+        """Return target associations through one declared topology lineage."""
         vertex, dimensions = self.source_associations(source)
         propagated = propagate_association(
             vertex, lineage, source.mesh, target, self.projection, policy=self.policy
         )
         return self._derived(propagated, dimensions, target)
 
+    @checked
     def rederive(
-        self, source: CellMeshingResult, target: CellMeshingResult, /
+        self,
+        source: result_owner.CellMeshingResult,
+        target: result_owner.CellMeshingResult,
+        /,
     ) -> tuple[GeometryAssociation, ...]:
         """Target associations of a remeshed result with unknown lineage."""
         vertex, dimensions = self.source_associations(source)
@@ -2119,20 +1402,46 @@ class BRepAssociationTransfer(StrictModule, NonTrainableState):
         return self._derived(derived, dimensions, target.mesh)
 
 
+@contextmanager
+def support_budget(
+    maximum_work_units: int,
+    maximum_support_queries: int,
+    budget: CoordinateEnclosureBudget | None,
+    /,
+) -> Iterator[CoordinateEnclosureBudget]:
+    """Share a request view or settle one host-only source-support batch."""
+    if budget is not None:
+        with budget.activate():
+            yield budget
+        return
+    with HostBatchTicket(
+        maximum_work_units,
+        queries_upper=maximum_support_queries,
+        bytes_upper=MeshCertificateLimits().maximum_scratch_bytes,
+    ) as ticket:
+        ledger = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=maximum_work_units,
+            maximum_memory_bytes=MeshCertificateLimits().maximum_scratch_bytes,
+        )
+        with ledger.activate():
+            yield ledger
+
+
 class _PlcAmbientDim(Dim, minimum=2):
-    """Declared Cartesian dimension of authoritative PLC vertices."""
+    """Declared Cartesian dimension of source PLC vertices."""
 
 
 class _PlcEdgeDim(Dim, minimum=1):
-    """Authoritative source PLC edges."""
+    """Declared source PLC edges."""
 
 
 class _PlcTriangleDim(Dim):
-    """Authoritative source facet triangles."""
+    """Declared source facet triangles."""
 
 
 class _PlcFacetDim(Dim):
-    """Authoritative source facet incidence groups."""
+    """Declared source facet incidence groups."""
 
 
 class _PlcRegionDim(Dim, minimum=1):
@@ -2143,42 +1452,15 @@ class _PlcVertexDim(Dim, minimum=1):
     """Explicit source vertex identifiers."""
 
 
-class PlcEntityClasses(NamedTuple):
-    """Source strata and explicit namespace codes of one mesh dimension."""
-
-    dimensions: np.ndarray
-    indices: np.ndarray
-    resolved: np.ndarray
-    codes: np.ndarray
-
-
-def _plc_consensus(
-    mesh: CellMesh,
-    dimension: int,
-    cell_regions: np.ndarray,
-    /,
-) -> np.ndarray:
-    """Region of each stratum interior; interfaces require explicit source rows."""
-    incidence = _incidence_pairs(mesh, dimension, 3)
-    pairs = np.unique(
-        np.stack((incidence[:, 0], cell_regions[incidence[:, 1]]), axis=1), axis=0
-    )
-    rows, counts = np.unique(pairs[:, 0], return_counts=True)
-    result = np.full((mesh.entity_set(dimension).count,), -1, dtype=np.int64)
-    single = rows[counts == 1]
-    result[single] = pairs[np.searchsorted(pairs[:, 0], single), 1]
-    return result
-
-
 @dataclass
-class _PlcBankContext:
+class PlcBankContext:
     """One explicit namespace using shared, independently certified coverage."""
 
-    mapped: MappedPlcSupport
+    mapped: plc_mapped_support_owner.MappedPlcSupport
     facet_indices: np.ndarray
     region_map: np.ndarray
     work: list[int]
-    target_mapped: MappedPlcSupport | None = None
+    target_mapped: plc_mapped_support_owner.MappedPlcSupport | None = None
     mapped_facets: MappedSourceFacetAuthority | None = None
 
     def indices(self, association: GeometryAssociation, /) -> np.ndarray:
@@ -2188,7 +1470,9 @@ class _PlcBankContext:
         for row in np.flatnonzero(dimensions == 2):
             label = int(result[row])
             if label not in positions:
-                raise ValueError("Composed PLC facet lacks its original source identity.")
+                raise ValueError(
+                    f"PlcBankContext.facet_indices must declare each associated source facet; got label {label}, declared {self.facet_indices!r}"
+                )
             result[row] = positions[label]
         return result
 
@@ -2202,11 +1486,16 @@ class _PlcBankContext:
             return index
         matches = np.flatnonzero(transfer.region_indices == index)
         if matches.size != 1:
-            raise ValueError("Composed PLC region lacks its original source identity.")
+            raise ValueError(
+                f"PlcBankContext.region_map must declare one associated source region; got region {index}, matching rows {matches!r}"
+            )
         return int(self.region_map[matches[0]])
 
     def bank_regions(
-        self, transfer: PlcAssociationTransfer, mapped: MappedPlcSupport | None = None, /
+        self,
+        transfer: PlcAssociationTransfer,
+        mapped: plc_mapped_support_owner.MappedPlcSupport | None = None,
+        /,
     ) -> np.ndarray:
         proof = self.mapped if mapped is None else mapped
         result = np.full(proof.cell_regions.shape, -1, dtype=np.int64)
@@ -2217,15 +1506,329 @@ class _PlcBankContext:
         return result
 
 
+class _MappedSourceBindings(StrictModule):
+    tables: dict[int, GeometryAssociation]
+
+
+def _validate_mapped_source_bindings(
+    source: result_owner.CellMeshingResult,
+    domain: MappedReferenceDomain,
+    expected: tuple[GeometryAssociation, ...],
+) -> _MappedSourceBindings:
+    """Validate all retained source tables against their freshly certified root images."""
+    by_dimension = association_lookup(source)
+    if len(by_dimension) != len(source.associations) or set(by_dimension) != set(
+        range(4)
+    ):
+        raise ValueError(
+            f"MappedReferenceAssociationTransfer.source_associations must contain one table for each dimension in [0, 3]; got dimensions {tuple(by_dimension)!r}, table count {len(source.associations)}"
+        )
+    for degree, proof in enumerate(expected):
+        item = by_dimension[degree]
+        item.validate_target(source.mesh.entity_set(degree))
+        rows = item.target_rows(np.asarray(proof.target_global_ids))
+        if (
+            item.association_kind is not GeometryAssociationKind.MAPPED_REFERENCE
+            or item.source_id != domain.source_id
+            or item.source_revision != domain.source_revision
+            or not item.exact
+            or not np.all(np.asarray(item.resolved))
+            or np.any(np.asarray(item.ambiguous))
+            or tuple(item.source_entities.entity_id(row) for row in rows)
+            != proof.source_entities.entity_ids()
+            or not np.array_equal(
+                np.asarray(item.parent_dimensions)[rows],
+                np.asarray(proof.parent_dimensions),
+            )
+            or not np.array_equal(
+                np.asarray(item.parent_ids)[rows], np.asarray(proof.parent_ids)
+            )
+            or not np.array_equal(
+                np.asarray(item.orientations)[rows],
+                np.asarray(proof.orientations),
+            )
+        ):
+            raise ValueError(
+                f"MappedReferenceAssociationTransfer.source_associations must retain certified root strata, parents, and orientations; got dimension {degree}, association {item.association_id!r}, expected proof {proof.association_id!r}"
+            )
+    return _MappedSourceBindings(by_dimension)
+
+
+class _PlcGeometryTables(StrictModule):
+    authority_vertices: np.ndarray
+    edges: np.ndarray
+    triangles: np.ndarray
+    facets: np.ndarray
+    regions: np.ndarray
+
+
+class _PlcIdentityTables(StrictModule):
+    labels: np.ndarray
+    vertex_labels: np.ndarray
+    edge_labels: np.ndarray
+
+
+def _prepare_plc_geometry(
+    domain: PiecewiseLinearDomain,
+    edge_vertices: ArrayLike,
+    triangle_vertices: ArrayLike,
+    triangle_facets: ArrayLike,
+    facet_regions: ArrayLike,
+    source_vertices: ArrayLike | None,
+    scope: Scope,
+) -> _PlcGeometryTables:
+    """Prepare host source geometry and incidence tables in one shared dimension scope."""
+    raw = tuple(
+        np.asarray(value)
+        for value in (
+            edge_vertices,
+            triangle_vertices,
+            triangle_facets,
+            facet_regions,
+        )
+    )
+    if any(not np.issubdtype(value.dtype, np.integer) for value in raw):
+        raise TypeError(
+            f"PlcAssociationTransfer.identity_tables must contain integer indices; got dtypes {tuple(str(value.dtype) for value in raw)!r}"
+        )
+    authority_vertices = parse(
+        np.array(
+            domain.vertices if source_vertices is None else source_vertices,
+            dtype=np.float64,
+            copy=True,
+        ),
+        HostFloat64[_PlcVertexDim, _PlcAmbientDim],
+        "source_vertices",
+        scope=scope,
+    )
+    if authority_vertices.shape[1] != domain.ambient_dimension or not np.all(
+        np.isfinite(authority_vertices)
+    ):
+        raise ValueError(
+            f"PlcAssociationTransfer.source_vertices must be finite Cartesian rows in the domain frame; got shape {authority_vertices.shape!r}, ambient dimension {domain.ambient_dimension}, finite {bool(np.all(np.isfinite(authority_vertices)))}"
+        )
+    if domain.ambient_dimension == 3 and not np.array_equal(
+        authority_vertices, domain.vertices
+    ):
+        raise ValueError(
+            f"PlcAssociationTransfer.source_vertices must match volume domain vertices in row order; got source shape {authority_vertices.shape!r}, domain shape {domain.vertices.shape!r}, equal {bool(np.array_equal(authority_vertices, domain.vertices))}"
+        )
+    edges = parse(
+        np.array(raw[0], dtype=np.int64, copy=True),
+        HostInt64[_PlcEdgeDim, Literal[2]],
+        "edge_vertices",
+        scope=scope,
+    )
+    triangles = parse(
+        np.array(raw[1], dtype=np.int64, copy=True),
+        HostInt64[_PlcTriangleDim, Literal[3]],
+        "triangle_vertices",
+        scope=scope,
+    )
+    facets = parse(
+        np.array(raw[2], dtype=np.int64, copy=True),
+        HostInt64[_PlcTriangleDim],
+        "triangle_facets",
+        scope=scope,
+    )
+    regions = parse(
+        np.array(raw[3], dtype=np.int64, copy=True),
+        HostInt64[_PlcFacetDim, Literal[2]],
+        "facet_regions",
+        scope=scope,
+    )
+    return _PlcGeometryTables(authority_vertices, edges, triangles, facets, regions)
+
+
+def _prepare_plc_identity(
+    domain: PiecewiseLinearDomain,
+    geometry: _PlcGeometryTables,
+    region_indices: ArrayLike | None,
+    vertex_indices: ArrayLike | None,
+    edge_indices: ArrayLike | None,
+    scope: Scope,
+) -> _PlcIdentityTables:
+    """Validate source row identifiers against their admitted geometry table extents."""
+    authority_vertices, edges = geometry.authority_vertices, geometry.edges
+    labels_raw = (
+        np.arange(len(domain.region_ids), dtype=np.int64)
+        if region_indices is None
+        else np.asarray(region_indices)
+    )
+    if not np.issubdtype(labels_raw.dtype, np.integer):
+        raise TypeError(
+            f"PlcAssociationTransfer.region_indices must contain integer identifiers; got dtype {labels_raw.dtype}"
+        )
+    labels = parse(
+        np.array(labels_raw, dtype=np.int64, copy=True),
+        HostInt64[_PlcRegionDim],
+        "region_indices",
+        scope=scope,
+    )
+    if (
+        labels.shape != (len(domain.region_ids),)
+        or np.any(labels < 0)
+        or np.unique(labels).size != labels.size
+    ):
+        raise ValueError(
+            f"PlcAssociationTransfer.region_indices must uniquely name each domain region with nonnegative indices; got {labels!r}, region count {len(domain.region_ids)}"
+        )
+    vertex_labels_raw = (
+        np.arange(authority_vertices.shape[0], dtype=np.int64)
+        if vertex_indices is None
+        else np.asarray(vertex_indices)
+    )
+    edge_labels_raw = (
+        np.arange(edges.shape[0], dtype=np.int64)
+        if edge_indices is None
+        else np.asarray(edge_indices)
+    )
+    if not np.issubdtype(vertex_labels_raw.dtype, np.integer) or not np.issubdtype(
+        edge_labels_raw.dtype, np.integer
+    ):
+        raise TypeError(
+            f"PlcAssociationTransfer.primitive_indices must contain integer vectors; got vertex dtype {vertex_labels_raw.dtype}, edge dtype {edge_labels_raw.dtype}"
+        )
+    vertex_labels = parse(
+        np.array(vertex_labels_raw, dtype=np.int64, copy=True),
+        HostInt64[_PlcVertexDim],
+        "vertex_indices",
+        scope=scope,
+    )
+    edge_labels = parse(
+        np.array(edge_labels_raw, dtype=np.int64, copy=True),
+        HostInt64[_PlcEdgeDim],
+        "edge_indices",
+        scope=scope,
+    )
+    if (
+        vertex_labels.shape != (authority_vertices.shape[0],)
+        or edge_labels.shape != (edges.shape[0],)
+        or np.any(vertex_labels < 0)
+        or np.any(edge_labels < 0)
+        or np.unique(vertex_labels).size != vertex_labels.size
+        or np.unique(edge_labels).size != edge_labels.size
+    ):
+        raise ValueError(
+            f"PlcAssociationTransfer.primitive_indices must uniquely name each nonnegative vertex and edge row; got vertex labels {vertex_labels!r}, edge labels {edge_labels!r}, counts {(authority_vertices.shape[0], edges.shape[0])!r}"
+        )
+    return _PlcIdentityTables(labels, vertex_labels, edge_labels)
+
+
+def _validate_plc_incidence(
+    domain: PiecewiseLinearDomain, geometry: _PlcGeometryTables
+) -> _PlcGeometryTables:
+    """Validate planar or volume incidence without changing source namespace indices."""
+    authority_vertices, edges, triangles, facets, regions = (
+        geometry.authority_vertices,
+        geometry.edges,
+        geometry.triangles,
+        geometry.facets,
+        geometry.regions,
+    )
+    if domain.ambient_dimension == 3 and (
+        triangles.shape[0] == 0 or regions.shape[0] == 0
+    ):
+        raise ValueError(
+            f"PlcAssociationTransfer.volume_facets must contain triangles and region incidence; got triangle rows {triangles.shape[0]}, facet rows {regions.shape[0]}"
+        )
+    if domain.ambient_dimension == 2 and triangles.shape[0] != 0:
+        raise ValueError(
+            f"PlcAssociationTransfer.planar_facets must contain no facet triangles; got triangle rows {triangles.shape[0]}"
+        )
+    if (
+        np.any(edges < 0)
+        or np.any(edges >= authority_vertices.shape[0])
+        or np.any(triangles < 0)
+        or np.any(triangles >= authority_vertices.shape[0])
+    ):
+        raise ValueError(
+            f"PlcAssociationTransfer.vertex_incidence must index declared source vertices; got edges {edges!r}, triangles {triangles!r}, vertex count {authority_vertices.shape[0]}"
+        )
+    if (
+        np.any(facets < 0)
+        or np.any(facets >= regions.shape[0])
+        or np.any(regions < -1)
+        or np.any(regions >= len(domain.region_ids))
+    ):
+        raise ValueError(
+            f"PlcAssociationTransfer.facet_incidence must index declared facets and regions or void -1; got facets {facets!r}, regions {regions!r}, domain region count {len(domain.region_ids)}"
+        )
+    if (
+        np.any(edges[:, 0] == edges[:, 1])
+        or np.unique(np.sort(edges, axis=1), axis=0).shape[0] != edges.shape[0]
+    ):
+        raise ValueError(
+            f"PlcAssociationTransfer.edge_vertices must be distinct noncollapsed edges; got {edges!r}"
+        )
+    return geometry
+
+
+def _volume_stratum_consensus(
+    mesh: cell_mesh_owner.CellMesh, dimension: int, cell_regions: np.ndarray, /
+) -> np.ndarray:
+    """Return volume-interior labels, leaving exterior boundary strata unresolved."""
+    regions = stratum_region_consensus(mesh, dimension, cell_regions, 3)
+    if dimension < 3:
+        regions[boundary_mask(mesh, dimension)] = -1
+    return regions
+
+
+class _PlcAssociationBinding(StrictModule):
+    dimension: int
+    dimensions: np.ndarray
+
+
+class _PlcLineageTables(StrictModule):
+    table: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]
+    obligations: list[np.ndarray]
+
+
+class _PlcSourceClassification(StrictModule):
+    associations: tuple[GeometryAssociation, ...]
+    active_dimensions: frozenset[int]
+    proof: plc_mapped_support_owner.MappedPlcSupport
+    cell_regions: np.ndarray
+    work: list[int]
+
+
+class _PlcSourceTableProof(StrictModule):
+    association: GeometryAssociation
+    dimension: int
+    rows: np.ndarray
+    indices: np.ndarray
+
+
+class _PlcSourceClasses(StrictModule):
+    classes: tuple[PlcEntityClasses, ...]
+
+
+class _PlcTargetSupport(StrictModule):
+    mapped: plc_mapped_support_owner.MappedPlcSupport
+
+
+class _PlcCertifiedRows(StrictModule):
+    orientations: np.ndarray
+
+
+class _PlcTranslationSource(StrictModule):
+    vertex: GeometryAssociation
+    dimensions: tuple[int, ...]
+
+
+class _PlcAssociationBatch(StrictModule):
+    associations: tuple[GeometryAssociation, ...]
+
+
 @final
 class PlcAssociationTransfer(StrictModule, NonTrainableState):
-    """Exact represented-PLC source transfer, never a synthetic B-Rep projection.
+    """Transfer represented PLC source strata through certified coordinate restrictions.
 
-    Source vertex, edge and facet tables are authoritative identity banks emitted
-    by the PLC owner, not reconstructed from coordinate proximity. Planar source
-    vertices may be distinct from a refined support-domain carrier; its Steiner
-    rows never become source authorities. Exact translated planar sources retain
-    their strata through ``transition_source_associations``.
+    Source vertex, edge, and facet tables define explicit identity banks. Planar
+    source vertices may differ from the refined support-domain carrier; Steiner
+    rows retain carrier identities rather than becoming source vertices.
+    ``transition_source_associations`` retains planar strata under a declared
+    translation after checking incidence, source labels, and coordinate support.
     """
 
     __strict_contract__ = True
@@ -2243,6 +1846,7 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
     maximum_support_queries: int = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         domain: PiecewiseLinearDomain,
@@ -2260,169 +1864,48 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
         edge_indices: ArrayLike | None = None,
         maximum_support_queries: int = 1 << 26,
     ) -> None:
-        from .._validation import canonical_identifier, positive_integer
 
-        if not isinstance(
-            domain, PiecewiseLinearDomain
-        ) or domain.ambient_dimension not in (2, 3):
+        if domain.ambient_dimension not in (2, 3):
             raise TypeError(
-                "PLC transfer requires an authoritative planar or volume domain."
+                f"PlcAssociationTransfer.domain must have ambient dimension two or three; got {domain.ambient_dimension}"
             )
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         if not coordinate_contract.is_orthonormal_cartesian:
             raise ValueError(
-                "PLC support predicates require declared orthonormal Cartesian coordinates."
+                f"PlcAssociationTransfer.coordinate_contract must declare orthonormal Cartesian coordinates; got spatial ID {coordinate_contract.spatial_id!r}, Cartesian {coordinate_contract.is_orthonormal_cartesian}"
             )
         revision = canonical_identifier(source_revision, "source_revision")
         limit = positive_integer(maximum_support_queries, "maximum_support_queries")
-        raw = tuple(
-            np.asarray(value)
-            for value in (
-                edge_vertices,
-                triangle_vertices,
-                triangle_facets,
-                facet_regions,
-            )
-        )
-        if any(not np.issubdtype(value.dtype, np.integer) for value in raw):
-            raise TypeError("PLC source identity tables must contain integer indices.")
         scope = Scope()
-        authority_vertices = parse(
-            np.array(
-                domain.vertices if source_vertices is None else source_vertices,
-                dtype=np.float64,
-                copy=True,
-            ),
-            HostFloat64[_PlcVertexDim, _PlcAmbientDim],
-            "source_vertices",
-            scope=scope,
+        geometry_tables = _prepare_plc_geometry(
+            domain,
+            edge_vertices,
+            triangle_vertices,
+            triangle_facets,
+            facet_regions,
+            source_vertices,
+            scope,
         )
-        if authority_vertices.shape[1] != domain.ambient_dimension or not np.all(
-            np.isfinite(authority_vertices)
-        ):
-            raise ValueError(
-                "Source vertices must be finite Cartesian rows in the domain frame."
-            )
-        if domain.ambient_dimension == 3 and not np.array_equal(
-            authority_vertices, domain.vertices
-        ):
-            raise ValueError(
-                "Volume PLC support requires its authoritative vertices in domain-row order."
-            )
-        edges = parse(
-            np.array(raw[0], dtype=np.int64, copy=True),
-            HostInt64[_PlcEdgeDim, Literal[2]],
-            "edge_vertices",
-            scope=scope,
+        identity_tables = _prepare_plc_identity(
+            domain,
+            geometry_tables,
+            region_indices,
+            vertex_indices,
+            edge_indices,
+            scope,
         )
-        triangles = parse(
-            np.array(raw[1], dtype=np.int64, copy=True),
-            HostInt64[_PlcTriangleDim, Literal[3]],
-            "triangle_vertices",
-            scope=scope,
+        _validate_plc_incidence(domain, geometry_tables)
+        authority_vertices, edges, triangles, facets, regions = (
+            geometry_tables.authority_vertices,
+            geometry_tables.edges,
+            geometry_tables.triangles,
+            geometry_tables.facets,
+            geometry_tables.regions,
         )
-        facets = parse(
-            np.array(raw[2], dtype=np.int64, copy=True),
-            HostInt64[_PlcTriangleDim],
-            "triangle_facets",
-            scope=scope,
+        labels, vertex_labels, edge_labels = (
+            identity_tables.labels,
+            identity_tables.vertex_labels,
+            identity_tables.edge_labels,
         )
-        regions = parse(
-            np.array(raw[3], dtype=np.int64, copy=True),
-            HostInt64[_PlcFacetDim, Literal[2]],
-            "facet_regions",
-            scope=scope,
-        )
-        labels_raw = (
-            np.arange(len(domain.region_ids), dtype=np.int64)
-            if region_indices is None
-            else np.asarray(region_indices)
-        )
-        if not np.issubdtype(labels_raw.dtype, np.integer):
-            raise TypeError("region_indices must contain explicit integer identifiers.")
-        labels = parse(
-            np.array(labels_raw, dtype=np.int64, copy=True),
-            HostInt64[_PlcRegionDim],
-            "region_indices",
-            scope=scope,
-        )
-        if (
-            labels.shape != (len(domain.region_ids),)
-            or np.any(labels < 0)
-            or np.unique(labels).size != labels.size
-        ):
-            raise ValueError(
-                "region_indices must uniquely bind every declared domain region."
-            )
-        vertex_labels_raw = (
-            np.arange(authority_vertices.shape[0], dtype=np.int64)
-            if vertex_indices is None
-            else np.asarray(vertex_indices)
-        )
-        edge_labels_raw = (
-            np.arange(edges.shape[0], dtype=np.int64)
-            if edge_indices is None
-            else np.asarray(edge_indices)
-        )
-        if not np.issubdtype(vertex_labels_raw.dtype, np.integer) or not np.issubdtype(
-            edge_labels_raw.dtype, np.integer
-        ):
-            raise TypeError("Source vertex and edge authorities must be integer vectors.")
-        vertex_labels = parse(
-            np.array(vertex_labels_raw, dtype=np.int64, copy=True),
-            HostInt64[_PlcVertexDim],
-            "vertex_indices",
-            scope=scope,
-        )
-        edge_labels = parse(
-            np.array(edge_labels_raw, dtype=np.int64, copy=True),
-            HostInt64[_PlcEdgeDim],
-            "edge_indices",
-            scope=scope,
-        )
-        if (
-            vertex_labels.shape != (authority_vertices.shape[0],)
-            or edge_labels.shape != (edges.shape[0],)
-            or np.any(vertex_labels < 0)
-            or np.any(edge_labels < 0)
-            or np.unique(vertex_labels).size != vertex_labels.size
-            or np.unique(edge_labels).size != edge_labels.size
-        ):
-            raise ValueError(
-                "Vertex and edge authorities must uniquely name every declared source row."
-            )
-        if domain.ambient_dimension == 3 and (
-            triangles.shape[0] == 0 or regions.shape[0] == 0
-        ):
-            raise ValueError(
-                "A volume PLC requires authoritative facet triangles and incidences."
-            )
-        if domain.ambient_dimension == 2 and triangles.shape[0] != 0:
-            raise ValueError(
-                "A planar PLC uses source segments rather than facet triangles."
-            )
-        if (
-            np.any(edges < 0)
-            or np.any(edges >= authority_vertices.shape[0])
-            or np.any(triangles < 0)
-            or np.any(triangles >= authority_vertices.shape[0])
-        ):
-            raise ValueError("PLC identity tables reference undeclared vertices.")
-        if (
-            np.any(facets < 0)
-            or np.any(facets >= regions.shape[0])
-            or np.any(regions < -1)
-            or np.any(regions >= len(domain.region_ids))
-        ):
-            raise ValueError("PLC facet identities or region incidences are invalid.")
-        if (
-            np.any(edges[:, 0] == edges[:, 1])
-            or np.unique(np.sort(edges, axis=1), axis=0).shape[0] != edges.shape[0]
-        ):
-            raise ValueError(
-                "PLC source edge identities must be distinct noncollapsed edges."
-            )
         snapshot = PiecewiseLinearDomain(
             np.array(domain.vertices, dtype=np.float64, copy=True),
             np.array(domain.facets, dtype=np.int64, copy=True),
@@ -2482,87 +1965,34 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             }
         )
 
-    def transition_source_associations(
+    def _admit_planar_translation(
         self,
-        source: CellMeshingResult,
+        source: result_owner.CellMeshingResult,
         predecessor: PlcAssociationTransfer,
-        target: CellMesh,
-        /,
-        *,
+        target: cell_mesh_owner.CellMesh,
         geometry: CellGeometrySpec,
         translation: ArrayLike,
-        embedding: GlobalEmbeddingCertificate | None = None,
-        coverage: DomainCoverageCertificate | None = None,
-    ) -> tuple[
-        tuple[MeshPatch, ...],
-        tuple[MeshZone, ...],
-        tuple[MeshLabel, ...],
-        tuple[GeometryAssociation, ...],
-    ]:
-        """Revalidate unchanged source strata under a declared translation.
-
-        Source authority vertices and edges are independent of the represented
-        support-domain carrier. No Steiner row acquires a source vertex identity.
-        Incidence, scientific entity correspondence, and the actual translated
-        coordinate map must all survive before new source associations are issued.
-        Optional planar premises must bind this exact current target map and
-        source domain; they replace no source-stratum or correspondence check.
-        """
-        from ..discretization._cell_geometry import CellGeometrySpec
-        from ._lineage import identity_lineage, inherit_mesh_organization
-        from ._plc_planar_support import _preserved_parameters, _prove_levels, _roles
-        from ._result import CellMeshingResult
-        from ._volume_generation import _entity
-
-        if not isinstance(source, CellMeshingResult) or not isinstance(
-            predecessor, PlcAssociationTransfer
-        ):
-            raise TypeError(
-                "Source transition requires an accepted result and its predecessor transfer."
-            )
-        if not isinstance(target, CellMesh) or not isinstance(geometry, CellGeometrySpec):
-            raise TypeError(
-                "Source transition requires the actual target mesh and coordinate map."
-            )
-        if source.mesh.storage is not None or target.storage is not None:
-            raise ValueError(
-                "Translated source associations require host-only accepted mesh carriers."
-            )
-        if (
-            self.domain.ambient_dimension == 3
-            and predecessor.domain.ambient_dimension == 3
-        ):
-            if embedding is not None or coverage is not None:
-                raise ValueError(
-                    "Prepared translated-support premises currently require a planar PLC."
-                )
-            from ._plc_mapped_support import transition_mapped_source_associations
-
-            return transition_mapped_source_associations(
-                self,
-                source,
-                predecessor,
-                target,
-                geometry=geometry,
-                translation=translation,
-            )
+        *,
+        budget: CoordinateEnclosureBudget,
+    ) -> _PlcTranslationSource:
+        """Validate rigid source correspondence and retain the admitted predecessor tables."""
         if (
             self.domain.ambient_dimension != 2
             or predecessor.domain.ambient_dimension != 2
         ):
             raise ValueError(
-                "Translated source association transitions require planar PLC authority."
+                f"PlcAssociationTransfer.translation_domains must both be planar; got predecessor dimension {predecessor.domain.ambient_dimension}, successor dimension {self.domain.ambient_dimension}"
             )
         if self.domain.source_id != predecessor.domain.source_id or (
             self.coordinate_contract.spatial_id
             != predecessor.coordinate_contract.spatial_id
         ):
             raise ValueError(
-                "Source transition cannot change source identity, frame, or units."
+                f"PlcAssociationTransfer.translation_binding must retain source identity and physical frame; got predecessor {(predecessor.domain.source_id, predecessor.coordinate_contract.spatial_id)!r}, successor {(self.domain.source_id, self.coordinate_contract.spatial_id)!r}"
             )
         if self.source_revision == predecessor.source_revision:
             raise ValueError(
-                "Source translation requires an explicit successor revision."
+                f"PlcAssociationTransfer.source_revision must change for a source translation; got predecessor {predecessor.source_revision!r}, successor {self.source_revision!r}"
             )
         tables = (
             (self.edge_vertices, predecessor.edge_vertices),
@@ -2575,7 +2005,7 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
         )
         if any(not np.array_equal(actual, original) for actual, original in tables):
             raise ValueError(
-                "Source translation cannot change declared stratum incidence or authority indices."
+                f"PlcAssociationTransfer.translation_tables must retain stratum incidence and indices; got table equality {tuple(bool(np.array_equal(actual, previous)) for actual, previous in tables)!r}"
             )
         if not np.array_equal(self.domain.facets, predecessor.domain.facets) or (
             not np.array_equal(
@@ -2583,26 +2013,49 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "Source translation cannot change represented boundary or region incidence."
+                f"PlcAssociationTransfer.translation_domain must retain facet and region incidence; got facet equality {bool(np.array_equal(self.domain.facets, predecessor.domain.facets))}, region equality {bool(np.array_equal(self.domain.facet_regions, predecessor.domain.facet_regions))}"
             )
         for transfer in (predecessor, self):
             expected_regions = tuple(
-                _entity(transfer.source_revision, "region", int(index))
+                entity_key(transfer.source_revision, "region", int(index))
                 for index in transfer.region_indices
             )
             if transfer.domain.region_ids != expected_regions:
                 raise ValueError(
-                    "Translated planar domains must bind their explicit source region indices."
+                    f"PlcAssociationTransfer.domain.region_ids must encode declared source region indices; got {transfer.domain.region_ids!r}, expected {expected_regions!r}"
                 )
         shift = np.asarray(translation, dtype=np.float64)
         if shift.shape != (2,) or not np.all(np.isfinite(shift)):
-            raise ValueError("Source translation must be a finite planar displacement.")
-        if (
-            target.topology_id != source.mesh.topology_id
-            or geometry.geometry_layout_id != source.geometry.geometry_layout_id
-        ):
             raise ValueError(
-                "Source translation must retain mesh topology and coordinate-map layout."
+                f"PlcAssociationTransfer.translation must be a finite planar displacement; got {shift!r}"
+            )
+        layout_retained = (
+            geometry.geometry_layout_id == source.geometry.geometry_layout_id
+        )
+        match source.geometry.exact_source, geometry.exact_source:
+            case (
+                ExactPlcCellGeometrySource() as old,
+                ExactPlcCellGeometrySource() as new,
+            ):
+                layout_retained = (
+                    translated_plc_layout_matches(
+                        source.geometry,
+                        geometry,
+                        translation=shift,
+                        budget=budget,
+                    )
+                    and new.domain_source_id == self.domain.source_id
+                    and old.domain_source_id == predecessor.domain.source_id
+                    and new.domain_source_revision == self.source_revision
+                    and old.domain_source_revision == predecessor.source_revision
+                    and np.array_equal(new.source_points, self.source_vertices)
+                    and np.array_equal(old.source_points, predecessor.source_vertices)
+                )
+            case _:
+                pass
+        if target.topology_id != source.mesh.topology_id or not layout_retained:
+            raise ValueError(
+                f"PlcAssociationTransfer.translation_geometry must retain mesh topology and coordinate layout; got source topology {source.mesh.topology_id!r}, target topology {target.topology_id!r}, layout retained {layout_retained}"
             )
         for dimension in range(3):
             if not np.array_equal(
@@ -2610,55 +2063,61 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                 source.mesh.entity_set(dimension).entity_ids,
             ):
                 raise ValueError(
-                    "Source translation must retain every scientific mesh entity correspondence."
+                    f"PlcAssociationTransfer.translation_entities must retain each dimension row correspondence; got dimension {dimension}, source IDs {source.mesh.entity_set(dimension).entity_ids!r}, target IDs {target.entity_set(dimension).entity_ids!r}"
                 )
         for actual, original in (
             (self.source_vertices, predecessor.source_vertices),
             (self.domain.vertices, predecessor.domain.vertices),
             (np.asarray(target.coordinates), np.asarray(source.mesh.coordinates)),
-            (np.asarray(geometry.coordinates), np.asarray(source.geometry.coordinates)),
+            (
+                np.asarray(geometry.coordinates),
+                np.asarray(source.geometry.coordinates),
+            ),
         ):
             if actual.shape != original.shape or not np.array_equal(
                 actual, original + shift
             ):
                 raise ValueError(
-                    "Source transition differs from its declared rigid translation."
+                    f"PlcAssociationTransfer.translation_coordinates must equal predecessor coordinates plus displacement; got shapes {actual.shape!r}, {original.shape!r}, displacement {shift!r}, translated equality {bool(np.array_equal(actual, original + shift)) if actual.shape == original.shape else False}"
                 )
-        old_vertex, dimensions = predecessor.source_associations(source)
+        old_vertex, dimensions = predecessor.source_associations(source, budget=budget)
         if old_vertex is None:
             raise ValueError(
-                "Planar source transition requires an accepted vertex association."
+                f"PlcAssociationTransfer.translation_vertex_association must be present; got {old_vertex!r}"
             )
-        levels = predecessor.classes(source)
-        orientations = _prove_levels(
-            self,
-            target,
-            geometry,
-            levels,
-            [self.maximum_support_queries],
-            embedding=embedding,
-            coverage=coverage,
-        )
+
+        return _PlcTranslationSource(old_vertex, dimensions)
+
+    def _publish_planar_translation(
+        self,
+        source: result_owner.CellMeshingResult,
+        target: cell_mesh_owner.CellMesh,
+        admitted: _PlcTranslationSource,
+        levels: tuple[PlcEntityClasses, ...],
+        orientations: tuple[np.ndarray, ...],
+    ) -> _PlcAssociationBatch:
+        """Publish translated tables with the predecessor scopes, orientation, and lineage IDs."""
+        old_vertex, dimensions = admitted.vertex, admitted.dimensions
         output: list[GeometryAssociation] = []
         for dimension in (0, *dimensions):
             previous = (
                 old_vertex
                 if dimension == 0
-                else next(
-                    value
-                    for value in source.associations
-                    if _target_dimension(source.mesh, value) == dimension
-                )
+                else association_for_dimension(source, dimension)
             )
-            # Fixed topology transports the caller's exact association scope,
+            # Fixed topology transports the caller's declared association scope,
             # not every entity whose source stratum was proved internally.
             identifiers = np.asarray(previous.target_global_ids, dtype=np.int64)
-            rows = _entity_rows(target, dimension, identifiers)
+            rows = entity_rows(target, dimension, identifiers)
             level = levels[dimension]
-            roles = _roles(level.dimensions[rows])
+            local_source_entity_roles = plc_planar_support_owner.source_entity_roles(
+                level.dimensions[rows]
+            )
             names = tuple(
-                _entity(self.source_revision, role.value, int(index))
-                for role, index in zip(roles, level.indices[rows], strict=True)
+                entity_key(self.source_revision, role.value, int(index))
+                for role, index in zip(
+                    local_source_entity_roles, level.indices[rows], strict=True
+                )
             )
             output.append(
                 GeometryAssociation(
@@ -2672,9 +2131,9 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                     exact=True,
                     source_dimensions=level.dimensions[rows],
                     source_indices=level.indices[rows],
-                    source_occurrence_paths=previous.source_occurrence_paths,
-                    source_entity_roles=roles,
-                    parameters=_preserved_parameters(
+                    source_occurrence_paths=previous.source_entities.occurrence_paths(),
+                    source_entity_roles=local_source_entity_roles,
+                    parameters=plc_planar_support_owner.preserved_parameters(
                         source.mesh, target, dimension, previous, level
                     )[rows],
                     orientations=orientations[dimension][rows],
@@ -2686,196 +2145,313 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                     provenance=GeometryAssociationProvenance.LINEAGE,
                 )
             )
-        patches, zones, labels = inherit_mesh_organization(
-            source, target, identity_lineage(source.mesh, target)
-        )
-        return patches, zones, labels, tuple(output)
+        return _PlcAssociationBatch(tuple(output))
 
-    def source_associations(
+    @checked
+    def transition_source_associations(
         self,
-        source: CellMeshingResult,
+        source: result_owner.CellMeshingResult,
+        predecessor: PlcAssociationTransfer,
+        target: cell_mesh_owner.CellMesh,
         /,
         *,
-        _bank: _PlcBankContext | None = None,
-        _prepared_source: list[MappedPlcSupport] | None = None,
-    ) -> tuple[GeometryAssociation | None, tuple[int, ...]]:
-        from ._result import CellMeshingResult
-        from ._volume_generation import _entity
+        geometry: CellGeometrySpec,
+        translation: ArrayLike,
+        embedding: GlobalEmbeddingCertificate | None = None,
+        coverage: DomainCoverageCertificate | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[
+        tuple[organization_records_owner.MeshPatch, ...],
+        tuple[organization_records_owner.MeshZone, ...],
+        tuple[organization_records_owner.MeshLabel, ...],
+        tuple[GeometryAssociation, ...],
+    ]:
+        """Revalidate source strata under a declared translation.
 
-        if self.domain.ambient_dimension == 2:
-            from ._plc_planar_support import planar_source_associations
+        Source vertices and edges are independent of the represented support
+        carrier; Steiner rows retain carrier identities. Incidence, scientific
+        entity correspondence, and the translated coordinate map are checked
+        before successor associations are published. Supplied planar evidence
+        must bind the target map and source domain alongside the stratum checks.
+        """
+        with support_budget(
+            MeshCertificateLimits().maximum_work_units,
+            self.maximum_support_queries,
+            budget,
+        ) as budget:
+            if source.mesh.storage is not None or target.storage is not None:
+                raise ValueError(
+                    f"PlcAssociationTransfer.translation_storage must use host-only carriers; got source storage present {source.mesh.storage is not None}, target storage present {target.storage is not None}"
+                )
+            if (
+                self.domain.ambient_dimension == 3
+                and predecessor.domain.ambient_dimension == 3
+            ):
+                if embedding is not None or coverage is not None:
+                    raise ValueError(
+                        f"PlcAssociationTransfer.translation_evidence must be internally prepared for volume carriers; got supplied embedding {embedding is not None}, coverage {coverage is not None}"
+                    )
 
-            return planar_source_associations(self, source)
+                return plc_mapped_support_owner.transition_mapped_source_associations(
+                    self,
+                    source,
+                    predecessor,
+                    target,
+                    geometry=geometry,
+                    translation=translation,
+                    budget=budget,
+                )
+            admitted = self._admit_planar_translation(
+                source,
+                predecessor,
+                target,
+                geometry,
+                translation,
+                budget=budget,
+            )
+            levels = predecessor.classes(source, budget=budget)
+            orientations = plc_planar_support_owner.prove_levels(
+                self,
+                target,
+                geometry,
+                levels,
+                [self.maximum_support_queries],
+                embedding=embedding,
+                coverage=coverage,
+                budget=budget,
+            )
+            output = self._publish_planar_translation(
+                source,
+                target,
+                admitted,
+                levels,
+                orientations,
+            ).associations
+            patches, zones, labels = lineage_owner.inherit_mesh_organization(
+                source, target, lineage_owner.identity_lineage(source.mesh, target)
+            )
+            return patches, zones, labels, tuple(output)
 
-        if not isinstance(source, CellMeshingResult):
-            raise TypeError("source must be CellMeshingResult.")
-        if source.coordinate_contract.spatial_id != self.coordinate_contract.spatial_id:
-            raise ValueError("PLC transfer binds another coordinate frame or units.")
-        certificate = source.certification
-        coverage_domain = self.domain if _bank is None else _bank.mapped.domain
+    def _validate_source_binding(
+        self,
+        source: result_owner.CellMeshingResult,
+        association: GeometryAssociation,
+        dimensions: list[int],
+        counts: tuple[int, ...],
+        source_roles: tuple[GeometrySourceEntityRole, ...],
+        *,
+        _bank: PlcBankContext | None,
+    ) -> _PlcAssociationBinding:
+        """Validate one PLC table before recording its dimension and source namespace."""
         if (
-            certificate is None
-            or not certificate.passed
-            or certificate.coverage is None
-            or certificate.coverage.domain_id != coverage_domain.domain_id
+            association.association_kind is not GeometryAssociationKind.PIECEWISE_LINEAR
+            or association.source_id != self.domain.source_id
+            or association.source_revision != self.source_revision
         ):
             raise ValueError(
-                "PLC transfer requires current independent coverage of its domain."
+                f"PlcAssociationTransfer.source_association must identify the declared PLC source and revision; got kind {association.association_kind!r}, source {(association.source_id, association.source_revision)!r}, expected {(self.domain.source_id, self.source_revision)!r}"
             )
-        if certificate.mesh_id != source.mesh.mesh_id:
-            raise ValueError("PLC transfer requires the source's current mesh binding.")
-        certificate.coverage.binding.require(source.mesh, source.geometry)
-        if _bank is not None:
-            # This exact bank preparation already checked every rounded carrier
-            # corner under its persistent support ledger.
-            _bank.mapped.prepared.require(
-                source.mesh, source.geometry, certificate.request
-            )
-        dimensions: list[int] = []
-        vertex: GeometryAssociation | None = None
-        counts = (
-            self.domain.vertices.shape[0],
-            self.edge_vertices.shape[0],
-            self.facet_regions.shape[0],
-            len(self.domain.region_ids),
-        )
-        source_roles = (
-            GeometrySourceEntityRole.VERTEX,
-            GeometrySourceEntityRole.EDGE,
-            GeometrySourceEntityRole.FACET,
-            GeometrySourceEntityRole.REGION,
-        )
-        for association in source.associations:
-            if _bank is not None and (
-                association.source_id,
-                association.source_revision,
-            ) != (self.domain.source_id, self.source_revision):
-                continue
-            if (
-                association.association_kind
-                is not GeometryAssociationKind.PIECEWISE_LINEAR
-                or association.source_id != self.domain.source_id
-                or association.source_revision != self.source_revision
-            ):
-                raise ValueError(
-                    "PLC transfer carries its represented source identity only."
-                )
-            dimension = _target_dimension(source.mesh, association)
-            if dimension in dimensions:
-                raise ValueError(
-                    "A PLC source carries one association per mesh dimension."
-                )
-            association.validate_target(source.mesh.entity_set(dimension))
-            if (
-                not np.all(np.asarray(association.resolved))
-                or np.any(np.asarray(association.ambiguous))
-                or not association.exact
-            ):
-                raise ValueError(
-                    "PLC transfer requires resolved exact source associations."
-                )
-            dims = np.asarray(association.source_dimensions, dtype=np.int64)
-            indices = np.asarray(association.source_indices, dtype=np.int64)
-            if np.any(dims < 0) or np.any(dims > 3) or np.any(indices < 0):
-                raise ValueError("PLC associations name undeclared source strata.")
-            facet_authority = (
-                np.arange(counts[2], dtype=np.int64)
-                if _bank is None
-                else _bank.facet_indices
-            )
-            if (
-                np.any(~np.isin(indices[dims == 0], self.vertex_indices))
-                or np.any(~np.isin(indices[dims == 1], self.edge_indices))
-                or np.any(~np.isin(indices[dims == 2], facet_authority))
-                or np.any(~np.isin(indices[dims == 3], self.region_indices))
-            ):
-                raise ValueError("PLC associations name undeclared source authorities.")
-            roles = tuple(source_roles[kind] for kind in dims.tolist())
-            if association.source_entity_roles != roles:
-                raise ValueError(
-                    "PLC association roles disagree with the declared volume strata."
-                )
-            expected = tuple(
-                _entity(self.source_revision, role.value, index)
-                for role, index in zip(roles, indices.tolist(), strict=True)
-            )
-            if association.source_entity_ids != expected:
-                raise ValueError(
-                    "PLC association IDs disagree with their authoritative source indices."
-                )
-            dimensions.append(dimension)
-            if dimension == 0:
-                if _bank is None:
-                    association.target_rows(
-                        np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
-                    )
-                vertex = association
-            if dimension == 3:
-                if _bank is None:
-                    association.target_rows(
-                        np.asarray(source.mesh.entity_set(3).entity_ids, dtype=np.int64)
-                    )
-                if np.any(dims != 3):
-                    raise ValueError("PLC cells must bind explicit source regions.")
-        if _bank is None and (vertex is None or 3 not in dimensions):
+        dimension = target_dimension(source.mesh, association)
+        if dimension in dimensions:
             raise ValueError(
-                "PLC transfer requires complete vertex and cell association tables."
+                f"PlcAssociationTransfer.source_associations must have one table per dimension; got repeated dimension {dimension}, preceding dimensions {dimensions!r}"
             )
-        if _bank is None:
-            prepared = [] if _prepared_source is None else _prepared_source
-            if len(prepared) > 1:
-                raise ValueError("PLC source support requires one exact prepared source.")
-            if not prepared:
-                cell = next(
-                    value
-                    for value in source.associations
-                    if _target_dimension(source.mesh, value) == 3
-                )
-                ids = np.asarray(source.mesh.entity_set(3).entity_ids, dtype=np.int64)
-                cell_regions = np.asarray(cell.source_indices, dtype=np.int64)[
-                    cell.target_rows(ids)
-                ]
-                prepared.append(
-                    prepare_mapped_plc_support(
-                        source.mesh,
-                        source.geometry,
-                        self.domain,
-                        cell_regions,
-                        self.region_indices,
-                        maximum_support_queries=self.maximum_support_queries,
-                        embedding=certificate.embedding,
-                        validity=source.audit.validity,
-                        certificate_limits=certificate.request.limits,
-                        certification_request=certificate.request,
-                    )
-                )
-            proof = prepared[0]
-            if (
-                proof.domain.domain_id != self.domain.domain_id
-                or proof.limits.maximum_candidate_pairs != self.maximum_support_queries
-            ):
-                raise ValueError(
-                    "PLC source support belongs to another domain or support policy."
-                )
-            proof.prepared.require(source.mesh, source.geometry, certificate.request)
-        return vertex, tuple(
-            sorted(dimension for dimension in dimensions if dimension != 0)
+        association.validate_target(source.mesh.entity_set(dimension))
+        if (
+            not np.all(np.asarray(association.resolved))
+            or np.any(np.asarray(association.ambiguous))
+            or not association.exact
+        ):
+            raise ValueError(
+                f"PlcAssociationTransfer.source_association must resolve all rows unambiguously with zero-residual support; got GeometryAssociation.exact={association.exact}, resolved={np.asarray(association.resolved)!r}, ambiguous={np.asarray(association.ambiguous)!r}"
+            )
+        dims = np.asarray(association.source_dimensions, dtype=np.int64)
+        indices = np.asarray(association.source_indices, dtype=np.int64)
+        if np.any(dims < 0) or np.any(dims > 3) or np.any(indices < 0):
+            raise ValueError(
+                f"PlcAssociationTransfer.source_strata must use dimensions in [0, 3] and nonnegative indices; got dimensions {dims!r}, indices {indices!r}"
+            )
+        facet_authority = (
+            np.arange(counts[2], dtype=np.int64) if _bank is None else _bank.facet_indices
         )
+        if (
+            np.any(~np.isin(indices[dims == 0], self.vertex_indices))
+            or np.any(~np.isin(indices[dims == 1], self.edge_indices))
+            or np.any(~np.isin(indices[dims == 2], facet_authority))
+            or np.any(~np.isin(indices[dims == 3], self.region_indices))
+        ):
+            raise ValueError(
+                f"PlcAssociationTransfer.source_indices must belong to their declared source stratum; got dimensions {dims!r}, indices {indices!r}"
+            )
+        roles = tuple(source_roles[kind] for kind in dims.tolist())
+        if association.source_entities.roles() != roles:
+            raise ValueError(
+                f"PlcAssociationTransfer.source_entity_roles must agree with volume strata; got {association.source_entities.roles()!r}, expected {roles!r}"
+            )
+        expected = tuple(
+            entity_key(self.source_revision, role.value, index)
+            for role, index in zip(roles, indices.tolist(), strict=True)
+        )
+        if association.source_entities.entity_ids() != expected:
+            raise ValueError(
+                f"PlcAssociationTransfer.source_entity_ids must encode declared source roles and indices; got {association.source_entities.entity_ids()!r}, expected {expected!r}"
+            )
+        return _PlcAssociationBinding(dimension, dims)
 
-    def classes(
+    @checked
+    def source_associations(
         self,
-        source: CellMeshingResult,
+        source: result_owner.CellMeshingResult,
         /,
         *,
-        _bank: _PlcBankContext | None = None,
-        _prepared_source: list[MappedPlcSupport] | None = None,
-    ) -> tuple[PlcEntityClasses, ...]:
-        if self.domain.ambient_dimension == 2:
-            from ._plc_planar_support import planar_classes
+        _bank: PlcBankContext | None = None,
+        _prepared_source: list[plc_mapped_support_owner.MappedPlcSupport] | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[GeometryAssociation | None, tuple[int, ...]]:
+        with support_budget(
+            MeshCertificateLimits().maximum_work_units,
+            self.maximum_support_queries,
+            budget,
+        ) as budget:
+            if self.domain.ambient_dimension == 2:
+                return plc_planar_support_owner.planar_source_associations(
+                    self, source, budget=budget
+                )
 
-            return planar_classes(self, source)
-        prepared = [] if _prepared_source is None else _prepared_source
-        self.source_associations(source, _bank=_bank, _prepared_source=prepared)
+            if (
+                source.coordinate_contract.spatial_id
+                != self.coordinate_contract.spatial_id
+            ):
+                raise ValueError(
+                    f"PlcAssociationTransfer.source.coordinate_contract must match the transfer frame; got {source.coordinate_contract.spatial_id!r}, expected {self.coordinate_contract.spatial_id!r}"
+                )
+            certificate = source.certification
+            coverage_domain = self.domain if _bank is None else _bank.mapped.domain
+            if (
+                certificate is None
+                or not certificate.passed
+                or certificate.coverage is None
+                or certificate.coverage.domain_id != coverage_domain.domain_id
+            ):
+                raise ValueError(
+                    f"PlcAssociationTransfer.source.certification must pass and cover the declared domain; got passed {None if certificate is None else certificate.passed}, coverage domain {None if certificate is None or certificate.coverage is None else certificate.coverage.domain_id!r}, expected {coverage_domain.domain_id!r}"
+                )
+            if certificate.mesh_id != source.mesh.mesh_id:
+                raise ValueError(
+                    f"PlcAssociationTransfer.source.certification.mesh_id must bind the source mesh; got {certificate.mesh_id!r}, expected {source.mesh.mesh_id!r}"
+                )
+            certificate.coverage.binding.require(source.mesh, source.geometry)
+            if _bank is not None:
+                # This bank preparation already checked every rounded carrier
+                # corner under its persistent support ledger.
+                _bank.mapped.prepared.require(
+                    source.mesh,
+                    source.geometry,
+                    certificate.request,
+                    budget=budget,
+                )
+            dimensions: list[int] = []
+            vertex: GeometryAssociation | None = None
+            counts = (
+                self.domain.vertices.shape[0],
+                self.edge_vertices.shape[0],
+                self.facet_regions.shape[0],
+                len(self.domain.region_ids),
+            )
+            source_roles = (
+                GeometrySourceEntityRole.VERTEX,
+                GeometrySourceEntityRole.EDGE,
+                GeometrySourceEntityRole.FACET,
+                GeometrySourceEntityRole.REGION,
+            )
+            for association in source.associations:
+                if _bank is not None and (
+                    association.source_id,
+                    association.source_revision,
+                ) != (self.domain.source_id, self.source_revision):
+                    continue
+                binding = self._validate_source_binding(
+                    source,
+                    association,
+                    dimensions,
+                    counts,
+                    source_roles,
+                    _bank=_bank,
+                )
+                dimension, dims = binding.dimension, binding.dimensions
+                dimensions.append(dimension)
+                if dimension == 0:
+                    if _bank is None:
+                        association.target_rows(
+                            np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+                        )
+                    vertex = association
+                if dimension == 3:
+                    if _bank is None:
+                        association.target_rows(
+                            np.asarray(
+                                source.mesh.entity_set(3).entity_ids, dtype=np.int64
+                            )
+                        )
+                    if np.any(dims != 3):
+                        raise ValueError(
+                            f"PlcAssociationTransfer.cell_dimensions must identify source regions with dimension three; got {dims!r}"
+                        )
+            if _bank is None and (vertex is None or 3 not in dimensions):
+                raise ValueError(
+                    f"PlcAssociationTransfer.source_associations must include vertex and cell tables; got vertex present {vertex is not None}, dimensions {dimensions!r}"
+                )
+            if _bank is None:
+                prepared = [] if _prepared_source is None else _prepared_source
+                if len(prepared) > 1:
+                    raise ValueError(
+                        f"PlcAssociationTransfer.prepared_source must contain at most one support proof; got count {len(prepared)}"
+                    )
+                if not prepared:
+                    cell = association_for_dimension(source, 3)
+                    ids = np.asarray(source.mesh.entity_set(3).entity_ids, dtype=np.int64)
+                    cell_regions = np.asarray(cell.source_indices, dtype=np.int64)[
+                        cell.target_rows(ids)
+                    ]
+                    prepared.append(
+                        plc_mapped_support_owner.prepare_mapped_plc_support(
+                            source.mesh,
+                            source.geometry,
+                            self.domain,
+                            cell_regions,
+                            self.region_indices,
+                            maximum_support_queries=self.maximum_support_queries,
+                            embedding=certificate.embedding,
+                            validity=source.audit.validity,
+                            certificate_limits=certificate.request.limits,
+                            certification_request=certificate.request,
+                            budget=budget,
+                        )
+                    )
+                proof = prepared[0]
+                if (
+                    proof.domain.domain_id != self.domain.domain_id
+                    or proof.limits.maximum_candidate_pairs
+                    != self.maximum_support_queries
+                ):
+                    raise ValueError(
+                        f"PlcAssociationTransfer.prepared_source must match domain and support allowance; got domain {proof.domain.domain_id!r}, allowance {proof.limits.maximum_candidate_pairs}, expected {(self.domain.domain_id, self.maximum_support_queries)!r}"
+                    )
+                proof.prepared.require(
+                    source.mesh, source.geometry, certificate.request, budget=budget
+                )
+            return vertex, tuple(
+                sorted(dimension for dimension in dimensions if dimension != 0)
+            )
+
+    def _prepare_source_classification(
+        self,
+        source: result_owner.CellMeshingResult,
+        prepared: list[plc_mapped_support_owner.MappedPlcSupport],
+        *,
+        _bank: PlcBankContext | None,
+    ) -> _PlcSourceClassification:
+        """Bind one namespace's tables, material regions, and shared support allowance."""
         associations = tuple(
             value
             for value in source.associations
@@ -2883,9 +2459,9 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             or (value.source_id, value.source_revision)
             == (self.domain.source_id, self.source_revision)
         )
-        active_dimensions = {
-            _target_dimension(source.mesh, value) for value in associations
-        }
+        active_dimensions = frozenset(
+            target_dimension(source.mesh, value) for value in associations
+        )
         if _bank is None:
             proof = prepared[0]
             cell_regions = proof.cell_regions
@@ -2893,72 +2469,101 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             cell_regions = _bank.bank_regions(self)
             proof = _bank.mapped
         work = [self.maximum_support_queries] if _bank is None else _bank.work
-        for association in associations:
-            dimension = _target_dimension(source.mesh, association)
-            rows = _entity_rows(
-                source.mesh,
-                dimension,
-                np.asarray(association.target_global_ids, dtype=np.int64),
-            )
-            bank_indices = (
-                np.asarray(association.source_indices)
-                if _bank is None
-                else _bank.indices(association)
-            )
-            for association_row, row in enumerate(rows.tolist()):
-                kind = int(np.asarray(association.source_dimensions)[association_row])
-                index = int(bank_indices[association_row])
-                local_index = index
-                if kind in (0, 1):
-                    matches = np.flatnonzero(
-                        (self.vertex_indices if kind == 0 else self.edge_indices) == index
+        return _PlcSourceClassification(
+            associations, active_dimensions, proof, cell_regions, work
+        )
+
+    def _certify_source_classification(
+        self,
+        source: result_owner.CellMeshingResult,
+        association: GeometryAssociation,
+        prepared: _PlcSourceClassification,
+        *,
+        _bank: PlcBankContext | None,
+        budget: CoordinateEnclosureBudget,
+    ) -> _PlcSourceTableProof:
+        """Certify a table's continuous source support and requested orientations in row order."""
+        proof, work = prepared.proof, prepared.work
+        dimension = target_dimension(source.mesh, association)
+        target_ids = np.asarray(association.target_global_ids, dtype=np.int64)
+        source_dimensions = np.asarray(association.source_dimensions)
+        source_indices = np.asarray(association.source_indices)
+        orientations = np.asarray(association.orientations)
+        vertex_indices = np.asarray(self.vertex_indices)
+        edge_indices = np.asarray(self.edge_indices)
+        rows = entity_rows(
+            source.mesh,
+            dimension,
+            target_ids,
+        )
+        bank_indices = source_indices if _bank is None else _bank.indices(association)
+        for association_row, row in enumerate(rows.tolist()):
+            kind = int(source_dimensions[association_row])
+            index = int(bank_indices[association_row])
+            local_index = index
+            if kind in (0, 1):
+                matches = np.flatnonzero(
+                    (vertex_indices if kind == 0 else edge_indices) == index
+                )
+                if matches.size != 1:
+                    raise ValueError(
+                        f"PlcAssociationTransfer.source_index must identify one source primitive; got dimension {kind}, index {index}, matching rows {matches!r}"
                     )
-                    if matches.size != 1:
-                        raise ValueError(
-                            "Source association lacks its explicit primitive authority."
-                        )
-                    local_index = int(matches[0])
-                if _bank is not None:
-                    local_index = _bank.support_index(self, kind, local_index)
-                if kind == 2 and _bank is not None and _bank.mapped_facets is not None:
-                    supported, orientation = _bank.mapped_facets.support(
-                        proof, dimension, row, local_index, work
-                    )
-                elif dimension == 0:
-                    supported = proof.vertex_support(
-                        row,
-                        kind,
-                        local_index,
-                        edge_vertices=self.edge_vertices,
-                        triangle_vertices=self.triangle_vertices,
-                        triangle_facets=self.triangle_facets,
-                        work=work,
-                        source_vertices=self.source_vertices,
-                    )
-                    orientation = 0
-                else:
-                    supported, orientation = proof.entity_support(
-                        dimension,
-                        row,
-                        kind,
-                        local_index,
-                        edge_vertices=self.edge_vertices,
-                        triangle_vertices=self.triangle_vertices,
-                        triangle_facets=self.triangle_facets,
-                        work=work,
-                        source_vertices=self.source_vertices,
-                    )
-                expected = int(np.asarray(association.orientations)[association_row])
-                if not supported or (expected != 0 and expected != orientation):
-                    raise AssociationPropagationError(
-                        f"Source PLC bank {self.domain.source_id!r} fails dimension-{dimension} target "
-                        f"{int(np.asarray(association.target_global_ids)[association_row])}: "
-                        f"source stratum ({kind}, {int(np.asarray(association.source_indices)[association_row])}), "
-                        f"support={supported}, orientation={orientation}, requested_orientation={expected}.",
-                        np.asarray(association.target_global_ids)[
-                            association_row : association_row + 1
-                        ],
-                    )
+                local_index = int(matches[0])
+            if _bank is not None:
+                local_index = _bank.support_index(self, kind, local_index)
+            if kind == 2 and _bank is not None and _bank.mapped_facets is not None:
+                supported, orientation, work[0] = _bank.mapped_facets.support(
+                    proof,
+                    dimension,
+                    row,
+                    local_index,
+                    work[0],
+                    budget=budget,
+                )
+            elif dimension == 0:
+                supported = proof.vertex_support(
+                    row,
+                    kind,
+                    local_index,
+                    edge_vertices=self.edge_vertices,
+                    triangle_vertices=self.triangle_vertices,
+                    triangle_facets=self.triangle_facets,
+                    work=work,
+                    source_vertices=self.source_vertices,
+                )
+                orientation = 0
+            else:
+                supported, orientation = proof.entity_support(
+                    dimension,
+                    row,
+                    kind,
+                    local_index,
+                    edge_vertices=self.edge_vertices,
+                    triangle_vertices=self.triangle_vertices,
+                    triangle_facets=self.triangle_facets,
+                    work=work,
+                    source_vertices=self.source_vertices,
+                )
+            expected = int(orientations[association_row])
+            if not supported or (expected != 0 and expected != orientation):
+                raise AssociationPropagationError(
+                    f"PlcAssociationTransfer.source_support must certify source strata and requested orientation; got bank {self.domain.source_id!r}, dimension {dimension}, target ID {int(target_ids[association_row])}, stratum {(kind, int(source_indices[association_row]))!r}, support {supported}, orientation {orientation}, requested orientation {expected}",
+                    target_ids[association_row : association_row + 1],
+                )
+        return _PlcSourceTableProof(association, dimension, rows, bank_indices)
+
+    def _publish_source_classification(
+        self,
+        source: result_owner.CellMeshingResult,
+        prepared: _PlcSourceClassification,
+        bindings: tuple[_PlcSourceTableProof, ...],
+        *,
+        _bank: PlcBankContext | None,
+    ) -> _PlcSourceClasses:
+        """Publish immutable consensus strata and collision-free namespace codes."""
+        cell_regions = prepared.cell_regions
+        active_dimensions = prepared.active_dimensions
         offsets = np.cumsum(
             np.asarray(
                 (
@@ -2972,23 +2577,16 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
         )
         result: list[PlcEntityClasses] = []
         for dimension in range(4):
-            regions = _plc_consensus(source.mesh, dimension, cell_regions)
+            regions = _volume_stratum_consensus(source.mesh, dimension, cell_regions)
             dims = np.where(regions >= 0, 3, -1).astype(np.int64)
             indices = regions.copy()
-            for association in associations:
-                if _target_dimension(source.mesh, association) != dimension:
+            for binding in bindings:
+                association = binding.association
+                if binding.dimension != dimension:
                     continue
-                rows = _entity_rows(
-                    source.mesh,
-                    dimension,
-                    np.asarray(association.target_global_ids, dtype=np.int64),
-                )
+                rows = binding.rows
                 dims[rows] = np.asarray(association.source_dimensions, dtype=np.int64)
-                indices[rows] = (
-                    np.asarray(association.source_indices, dtype=np.int64)
-                    if _bank is None
-                    else _bank.indices(association)
-                )
+                indices[rows] = binding.indices
             if (
                 _bank is not None
                 and dimension not in active_dimensions
@@ -2999,7 +2597,7 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             resolved = (dims >= 0) & (indices >= 0)
             if _bank is None and not np.all(resolved):
                 raise AssociationPropagationError(
-                    "PLC interface strata lack authoritative source association.",
+                    f"PlcAssociationTransfer.interface_strata must resolve every target entity; got dimension {dimension}, unresolved IDs {np.asarray(source.mesh.entity_set(dimension).entity_ids)[~resolved]!r}",
                     np.asarray(source.mesh.entity_set(dimension).entity_ids)[~resolved],
                 )
             codes = np.full_like(indices, -1)
@@ -3019,12 +2617,58 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             for value in (dims, indices, resolved, codes):
                 value.setflags(write=False)
             result.append(PlcEntityClasses(dims, indices, resolved, codes))
-        return tuple(result)
+        return _PlcSourceClasses(tuple(result))
+
+    @checked
+    def classes(
+        self,
+        source: result_owner.CellMeshingResult,
+        /,
+        *,
+        _bank: PlcBankContext | None = None,
+        _prepared_source: list[plc_mapped_support_owner.MappedPlcSupport] | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[PlcEntityClasses, ...]:
+        with support_budget(
+            MeshCertificateLimits().maximum_work_units,
+            self.maximum_support_queries,
+            budget,
+        ) as budget:
+            if self.domain.ambient_dimension == 2:
+                return plc_planar_support_owner.planar_classes(
+                    self, source, budget=budget
+                )
+            prepared = [] if _prepared_source is None else _prepared_source
+            self.source_associations(
+                source, _bank=_bank, _prepared_source=prepared, budget=budget
+            )
+            classification = self._prepare_source_classification(
+                source, prepared, _bank=_bank
+            )
+            bindings: list[_PlcSourceTableProof] = []
+            for association in classification.associations:
+                bindings.append(
+                    self._certify_source_classification(
+                        source,
+                        association,
+                        classification,
+                        _bank=_bank,
+                        budget=budget,
+                    )
+                )
+            return self._publish_source_classification(
+                source,
+                classification,
+                tuple(bindings),
+                _bank=_bank,
+            ).classes
 
     def _region_triangles(self, region: int, /) -> np.ndarray:
         matches = np.flatnonzero(self.region_indices == region)
         if matches.size != 1:
-            raise ValueError("PLC support query names an undeclared region identifier.")
+            raise ValueError(
+                f"PlcAssociationTransfer.region_index must name one declared region; got {region}, matching rows {matches!r}"
+            )
         region = int(matches[0])
         pairs = self.domain.facet_regions
         selected = (pairs[:, 0] == region) | (pairs[:, 1] == region)
@@ -3033,30 +2677,37 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
         rows[reversed_] = rows[reversed_][:, (0, 2, 1)]
         return self.domain.vertices[rows]
 
-    def _point_support(
-        self, dimension: int, index: int, point: np.ndarray, work: list[int], /
+    @checked
+    def point_support(
+        self,
+        dimension: int,
+        index: int,
+        point: np.ndarray,
+        work: list[int],
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
     ) -> bool:
-        from .._meshcore import charge_native_geometry_queries
 
         if self.domain.ambient_dimension == 2:
-            from ._plc_planar_support import planar_point_support
-
-            return planar_point_support(self, dimension, index, point, work)
+            return plc_planar_support_owner.planar_point_support(
+                self, dimension, index, point, work, budget=budget
+            )
         if dimension in (0, 1):
             authority = self.vertex_indices if dimension == 0 else self.edge_indices
             matches = np.flatnonzero(authority == index)
             if matches.size != 1:
                 raise ValueError(
-                    "PLC support query names an undeclared source authority."
+                    f"PlcAssociationTransfer.source_index must name one declared primitive; got dimension {dimension}, index {index}, matching rows {matches!r}"
                 )
             index = int(matches[0])
         if dimension == 0:
             self._spend(work, 1)
-            charge_native_geometry_queries(1)
+            budget.reserve_geometry_queries(1)
             return np.array_equal(point, self.domain.vertices[index])
         if dimension == 1:
             self._spend(work, 1)
-            charge_native_geometry_queries(1)
+            budget.reserve_geometry_queries(1)
             edge = self.domain.vertices[self.edge_vertices[index]]
             for axes in ((0, 1), (1, 2), (2, 0)):
                 if (
@@ -3073,135 +2724,93 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
         elif dimension == 3:
             triangles = self._region_triangles(index)
         else:
-            raise ValueError("Unknown PLC source stratum dimension.")
+            raise ValueError(
+                f"PlcAssociationTransfer.source_dimension must identify a declared PLC stratum; got {dimension}"
+            )
         self._spend(work, triangles.shape[0])
-        charge_native_geometry_queries(triangles.shape[0])
+        budget.reserve_geometry_queries(triangles.shape[0])
         _, features, status = point_triangle_locations(
             np.broadcast_to(point, (triangles.shape[0], 3)), triangles
         )
         if np.any(status != MeshcoreStatus.OK):
-            raise ValueError("PLC exact source-support predicate was unresolved.")
+            raise ValueError(
+                f"PlcAssociationTransfer.support_status must be OK for every triangle predicate; got {status!r}"
+            )
         on_boundary = bool(np.any(features >= 0))
         if dimension == 2:
             return on_boundary
         if on_boundary:
             return False
         self._spend(work, triangles.shape[0])
-        charge_native_geometry_queries(triangles.shape[0])
-        winding, decided = _ray_crossings_3d(point, triangles)
+        budget.reserve_geometry_queries(triangles.shape[0])
+        winding, decided = ray_crossings_3d(point, triangles, budget=budget)
         return decided and winding == 1
 
     def _spend(self, work: list[int], amount: int, /) -> None:
         work[0] -= amount
         if work[0] < 0:
-            raise ValueError("PLC exact source-support query budget exhausted.")
+            raise ValueError(
+                f"PlcAssociationTransfer.support_queries must fit the query budget; got remaining allowance {work[0]}"
+            )
 
+    @checked
     def protected_edges(
         self,
-        source: CellMeshingResult,
+        source: result_owner.CellMeshingResult,
         /,
         *,
         midpoint_required: bool = True,
-        _bank: _PlcBankContext | None = None,
+        _bank: PlcBankContext | None = None,
         _classes: tuple[PlcEntityClasses, ...] | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> np.ndarray:
-        if self.domain.ambient_dimension == 2:
-            from ._plc_planar_support import planar_protected_edges
-
-            return planar_protected_edges(
-                self, source, midpoint_required=midpoint_required
-            )
-        levels = self.classes(source, _bank=_bank) if _classes is None else _classes
-        vertices = plc_mapped_vertices(source.mesh, 1)
-        coordinates = np.asarray(source.mesh.coordinates, dtype=np.float64)
-        endpoints = coordinates[vertices]
-        midpoints = np.sum(endpoints * np.float64(0.5), axis=1)
-        protected = np.all(midpoints == endpoints[:, 0], axis=1) | np.all(
-            midpoints == endpoints[:, 1], axis=1
-        )
-        if midpoint_required:
-            work = [self.maximum_support_queries] if _bank is None else _bank.work
-            for row in np.flatnonzero(
-                (levels[1].dimensions >= 0) & (levels[1].dimensions < 3)
-            ).tolist():
-                protected[row] |= not self._point_support(
-                    int(levels[1].dimensions[row]),
-                    int(levels[1].indices[row]),
-                    midpoints[row],
-                    work,
+        with support_budget(
+            MeshCertificateLimits().maximum_work_units,
+            self.maximum_support_queries,
+            budget,
+        ) as budget:
+            if self.domain.ambient_dimension == 2:
+                return plc_planar_support_owner.planar_protected_edges(
+                    self,
+                    source,
+                    midpoint_required=midpoint_required,
+                    _classes=_classes,
+                    budget=budget,
                 )
-        return protected
+            levels = (
+                self.classes(source, _bank=_bank, budget=budget)
+                if _classes is None
+                else _classes
+            )
+            vertices = plc_mapped_support_owner.plc_mapped_vertices(source.mesh, 1)
+            coordinates = np.asarray(source.mesh.coordinates, dtype=np.float64)
+            endpoints = coordinates[vertices]
+            midpoints = np.sum(endpoints * np.float64(0.5), axis=1)
+            protected = np.all(midpoints == endpoints[:, 0], axis=1) | np.all(
+                midpoints == endpoints[:, 1], axis=1
+            )
+            if midpoint_required:
+                work = [self.maximum_support_queries] if _bank is None else _bank.work
+                for row in np.flatnonzero(
+                    (levels[1].dimensions >= 0) & (levels[1].dimensions < 3)
+                ).tolist():
+                    protected[row] |= not self.point_support(
+                        int(levels[1].dimensions[row]),
+                        int(levels[1].indices[row]),
+                        midpoints[row],
+                        work,
+                        budget=budget,
+                    )
+            return protected
 
-    def propagate(
+    def _inherit_target_strata(
         self,
-        source: CellMeshingResult,
-        lineage: MeshLineage,
-        target: CellMesh,
-        /,
-        *,
-        geometry: CellGeometrySpec,
-        embedding: GlobalEmbeddingCertificate | None = None,
-        coverage: DomainCoverageCertificate | None = None,
-        _certification_request: MeshCertificationInputs | None = None,
-        _prepared_target: list[MeshCertificationPreparedEvidence] | None = None,
-        _bank: _PlcBankContext | None = None,
-        _mapped_target: list[MappedPlcSupport] | None = None,
-    ) -> tuple[GeometryAssociation, ...]:
-        """Prove lineage support, consuming current collective premises for local planar carriers."""
-        from ._lineage import EntityLineageKind, MeshLineage
-        from ._volume_generation import _entity
-
-        if (_certification_request is None) != (_prepared_target is None):
-            raise ValueError(
-                "Coherent target evidence needs its exact owning request and collector."
-            )
-        if self.domain.ambient_dimension != 3 and _prepared_target is not None:
-            raise ValueError(
-                "Volume target evidence collection requires a three-dimensional PLC."
-            )
-        if self.domain.ambient_dimension == 2:
-            from ._plc_planar_support import planar_propagate
-
-            return planar_propagate(
-                self,
-                source,
-                lineage,
-                target,
-                geometry=geometry,
-                embedding=embedding,
-                coverage=coverage,
-            )
-
-        if embedding is not None or coverage is not None:
-            raise ValueError(
-                "Externally supplied collective PLC premises require a planar carrier."
-            )
-        prepared_source: list[MappedPlcSupport] = []
-        vertex, dimensions = self.source_associations(
-            source, _bank=_bank, _prepared_source=prepared_source
-        )
-        if _bank is None and vertex is None:
-            raise ValueError("Volume PLC transfer requires a vertex association.")
-        if (
-            not isinstance(lineage, MeshLineage)
-            or lineage.source_topology_id != source.mesh.topology_id
-            or lineage.target_topology_id != target.topology_id
-        ):
-            raise ValueError(
-                "PLC transfer requires the actual source-to-target topology lineage."
-            )
-        if _bank is not None and _bank.target_mapped is not None:
-            # Reuse only this exact prepared target/request; no unmetered
-            # coordinate-map reconstruction is allowed for another bank.
-            _bank.target_mapped.prepared.require(
-                target,
-                geometry,
-                _bank.target_mapped.prepared.request
-                if _certification_request is None
-                else _certification_request,
-            )
-        old = self.classes(source, _bank=_bank, _prepared_source=prepared_source)
-        work = [self.maximum_support_queries] if _bank is None else _bank.work
+        source: result_owner.CellMeshingResult,
+        lineage: lineage_records_owner.MeshLineage,
+        target: cell_mesh_owner.CellMesh,
+        old: tuple[PlcEntityClasses, ...],
+    ) -> _PlcLineageTables:
+        """Prepare retained and inherited target rows while preserving unknown-lineage refusal order."""
         table: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
         obligations: list[np.ndarray] = []
         for dimension in range(4):
@@ -3210,7 +2819,7 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             indices = np.full(ids.shape, -1, dtype=np.int64)
             parent_dims = np.full(ids.shape, -1, dtype=np.int8)
             parent_ids = np.full(ids.shape, -1, dtype=np.int64)
-            kept = _entity_rows(source.mesh, dimension, ids)
+            kept = entity_rows(source.mesh, dimension, ids)
             present = kept >= 0
             dims[present], indices[present] = (
                 old[dimension].dimensions[kept[present]],
@@ -3221,22 +2830,34 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             required[present] = old[dimension].resolved[kept[present]]
             record = lineage.entity_lineage(dimension)
             kinds = np.asarray(record.relation_kinds, dtype=np.int32)
-            if np.any(kinds == EntityLineageKind.UNKNOWN):
+            if np.any(kinds == lineage_records_owner.EntityLineageKind.UNKNOWN):
                 raise AssociationPropagationError(
-                    "Unknown lineage cannot identify represented PLC strata.", ids
+                    f"PlcAssociationTransfer.lineage.relation_kinds must identify source strata; got unknown relations for dimension {dimension}, target IDs {ids!r}",
+                    ids,
                 )
-            source_rows = _entity_rows(
+            source_ids = np.asarray(record.source_global_ids, dtype=np.int64)
+            source_rows = entity_rows(
                 source.mesh,
                 dimension,
-                np.asarray(record.source_global_ids, dtype=np.int64),
+                source_ids,
             )
-            target_rows = _entity_rows(
-                target, dimension, np.asarray(record.target_global_ids, dtype=np.int64)
+            target_rows = entity_rows(
+                target,
+                dimension,
+                np.asarray(record.target_global_ids, dtype=np.int64),
             )
             if np.any(source_rows < 0) or np.any(target_rows < 0):
-                raise ValueError("PLC lineage references undeclared entities.")
-            for row in np.unique(target_rows).tolist():
-                parents = source_rows[target_rows == row]
+                raise ValueError(
+                    f"PlcAssociationTransfer.lineage.entity_ids must belong to source and target entity sets; got source routes {source_rows!r}, target routes {target_rows!r}"
+                )
+            order = np.argsort(target_rows, kind="stable")
+            ordered_rows = target_rows[order]
+            boundaries = np.flatnonzero(ordered_rows[1:] != ordered_rows[:-1]) + 1
+            for matches in np.split(order, boundaries):
+                if not matches.size:
+                    continue
+                row = int(target_rows[matches[0]])
+                parents = source_rows[matches]
                 required[row] |= bool(np.any(old[dimension].resolved[parents]))
                 candidates = np.unique(
                     np.stack(
@@ -3251,18 +2872,31 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                 if candidates.shape[0] == 1:
                     dims[row], indices[row] = candidates[0]
                     parent_dims[row] = dimension
-                    parent_ids[row] = int(
-                        np.min(np.asarray(record.source_global_ids)[target_rows == row])
-                    )
+                    parent_ids[row] = int(np.min(source_ids[matches]))
             table.append((dims, indices, parent_dims, parent_ids))
             obligations.append(required)
-        # Complete cell labels precede lower-stratum closure classification.
+        return _PlcLineageTables(table, obligations)
+
+    def _prepare_target_support(
+        self,
+        source: result_owner.CellMeshingResult,
+        target: cell_mesh_owner.CellMesh,
+        geometry: CellGeometrySpec,
+        inherited: _PlcLineageTables,
+        work: list[int],
+        *,
+        _bank: PlcBankContext | None,
+        _certification_request: certification_inputs_owner.MeshCertificationInputs | None,
+        budget: CoordinateEnclosureBudget,
+    ) -> _PlcTargetSupport:
+        """Certify all target cell regions before lower-stratum closure classification."""
+        table = inherited.table
         cell_dims, cell_regions, _, _ = table[3]
         cell_ids = np.asarray(target.entity_set(3).entity_ids, dtype=np.int64)
         if _bank is None or _bank.target_mapped is None:
             if np.any(cell_dims != 3) or np.any(cell_regions < 0):
                 raise AssociationPropagationError(
-                    "Target PLC cells lack unambiguous region lineage.",
+                    f"PlcAssociationTransfer.target_cell_strata must resolve inherited region labels; got dimensions {cell_dims!r}, regions {cell_regions!r}",
                     cell_ids[cell_dims != 3],
                 )
             if (
@@ -3270,9 +2904,26 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                 and self.domain.domain_id != _bank.mapped.domain.domain_id
             ):
                 raise ValueError(
-                    "The complete material owner must establish composed target coverage first."
+                    f"PlcAssociationTransfer.material_domain must establish composed target coverage first; got bank domain {self.domain.domain_id!r}, material domain {_bank.mapped.domain.domain_id!r}"
                 )
-            mapped = prepare_mapped_plc_support(
+            predecessor = None
+            source_certificate = source.certification
+            if (
+                geometry.restriction_source is not None
+                and source_certificate is not None
+                and source_certificate.embedding is not None
+                and source.audit.validity.all_certified
+            ):
+                predecessor = prepare_cell_geometry_predecessor(
+                    source.mesh,
+                    source.geometry,
+                    source.audit.validity,
+                    source_certificate.embedding,
+                    target,
+                    geometry,
+                    budget=budget,
+                )
+            mapped = plc_mapped_support_owner.prepare_mapped_plc_support(
                 target,
                 geometry,
                 self.domain,
@@ -3280,6 +2931,8 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                 self.region_indices,
                 maximum_support_queries=self.maximum_support_queries,
                 certification_request=_certification_request,
+                predecessor=predecessor,
+                budget=budget,
             )
         else:
             mapped = _bank.target_mapped
@@ -3288,7 +2941,7 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                 cell_dims[expected_regions >= 0] != 3
             ):
                 raise AssociationPropagationError(
-                    "Composed bank cell lineage disagrees with independent material coverage.",
+                    f"PlcAssociationTransfer.target_cell_strata must agree with material coverage; got regions {cell_regions!r}, expected {expected_regions!r}, dimensions {cell_dims!r}",
                     cell_ids[cell_regions != expected_regions],
                 )
         for row in np.flatnonzero(cell_regions >= 0):
@@ -3309,13 +2962,21 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             )
             if not supported:
                 raise AssociationPropagationError(
-                    "A target coordinate image is not contained in its inherited PLC region.",
+                    f"PlcAssociationTransfer.target_cell_support must be contained in its inherited region; got cell ID {cell_ids[row]}, region {region}, support {supported}",
                     cell_ids[row : row + 1],
                 )
+        return _PlcTargetSupport(mapped)
+
+    def _close_target_strata(
+        self, target: cell_mesh_owner.CellMesh, inherited: _PlcLineageTables
+    ) -> _PlcLineageTables:
+        """Fill lower strata from constrained faces and incident-cell region consensus."""
+        table = inherited.table
+        cell_regions = table[3][1]
         for dimension in (2, 1):
             dims, indices, parent_dims, parent_ids = table[dimension]
             if dimension == 1:
-                links = _incidence_pairs(target, 1, 2)
+                links = incidence_pairs(target, 1, 2)
                 face_dims, face_indices, _, _ = table[2]
                 for row in np.flatnonzero(dims < 0).tolist():
                     faces = links[links[:, 0] == row, 1]
@@ -3324,22 +2985,39 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                     if candidates.size == 1:
                         dims[row], indices[row] = 2, candidates[0]
             missing = dims < 0
-            regions = _plc_consensus(target, dimension, cell_regions)
+            regions = _volume_stratum_consensus(target, dimension, cell_regions)
             dims[missing & (regions >= 0)] = 3
             indices[missing & (regions >= 0)] = regions[missing & (regions >= 0)]
+        return inherited
+
+    def _inherit_target_vertices(
+        self,
+        source: result_owner.CellMeshingResult,
+        lineage: lineage_records_owner.MeshLineage,
+        target: cell_mesh_owner.CellMesh,
+        old: tuple[PlcEntityClasses, ...],
+        inherited: _PlcLineageTables,
+        mapped: plc_mapped_support_owner.MappedPlcSupport,
+        work: list[int],
+        *,
+        _bank: PlcBankContext | None,
+    ) -> _PlcLineageTables:
+        """Resolve created vertices from lower strata before admitting interior cell ancestry."""
+        table, obligations = inherited.table, inherited.obligations
+        cell_regions = table[3][1]
         target_ids = np.asarray(target.vertex_global_ids, dtype=np.int64)
         dims, indices, parent_dims, parent_ids = table[0]
         missing = np.flatnonzero(dims < 0)
         if missing.size:
             created = target_ids[missing]
             order = np.argsort(created, kind="stable")
-            entity_dims, entity_rows = _child_sources(
+            entity_dims, local_entity_rows = child_sources(
                 lineage, source.mesh, target, created[order]
             )
             for position, source_dimension, source_row in zip(
                 missing[order].tolist(),
                 entity_dims.tolist(),
-                entity_rows.tolist(),
+                local_entity_rows.tolist(),
                 strict=True,
             ):
                 if source_dimension < 0 or source_row < 0:
@@ -3359,14 +3037,16 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
         if missing.size:
             # A mixed cell-center vertex has cell ancestry, not invented
             # dimension-zero parent rows. Lower-stratum witnesses take priority.
-            vertex_cells = _incidence_pairs(target, 0, 3)
-            vertex_faces = _incidence_pairs(target, 0, 2)
-            vertex_edges = _incidence_pairs(target, 0, 1)
+            vertex_cells = incidence_pairs(target, 0, 3)
+            vertex_faces = incidence_pairs(target, 0, 2)
+            vertex_edges = incidence_pairs(target, 0, 1)
             cell_record = lineage.entity_lineage(3)
-            source_cells = _entity_rows(
-                source.mesh, 3, np.asarray(cell_record.source_global_ids, dtype=np.int64)
+            source_cells = entity_rows(
+                source.mesh,
+                3,
+                np.asarray(cell_record.source_global_ids, dtype=np.int64),
             )
-            target_cells = _entity_rows(
+            target_cells = entity_rows(
                 target, 3, np.asarray(cell_record.target_global_ids, dtype=np.int64)
             )
             source_cell_ids = np.asarray(
@@ -3405,7 +3085,100 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                 ):
                     continue
                 dims[position], indices[position] = 3, region
-                parent_dims[position], parent_ids[position] = 3, source_cell_ids[owner]
+                parent_dims[position], parent_ids[position] = (
+                    3,
+                    source_cell_ids[owner],
+                )
+        return inherited
+
+    def _certify_target_rows(
+        self,
+        dimension: int,
+        ids: np.ndarray,
+        dims: np.ndarray,
+        indices: np.ndarray,
+        selected: np.ndarray,
+        mapped: plc_mapped_support_owner.MappedPlcSupport,
+        work: list[int],
+        *,
+        _bank: PlcBankContext | None,
+        budget: CoordinateEnclosureBudget,
+    ) -> _PlcCertifiedRows:
+        """Certify each inherited source image and retain its orientation in row order."""
+        orientations = np.zeros(ids.shape, dtype=np.int8)
+        for row in np.flatnonzero(selected):
+            kind, index = int(dims[row]), int(indices[row])
+            local_index = index
+            if kind in (0, 1):
+                matches = np.flatnonzero(
+                    (self.vertex_indices if kind == 0 else self.edge_indices) == index
+                )
+                if matches.size != 1:
+                    raise AssociationPropagationError(
+                        f"PlcAssociationTransfer.target_source_index must name one source primitive; got dimension {kind}, index {index}, matching rows {matches!r}",
+                        ids[row : row + 1],
+                    )
+                local_index = int(matches[0])
+            if _bank is not None:
+                local_index = _bank.support_index(self, kind, local_index)
+            if kind == 2 and _bank is not None and _bank.mapped_facets is not None:
+                supported, orientation, work[0] = _bank.mapped_facets.support(
+                    mapped,
+                    dimension,
+                    int(row),
+                    local_index,
+                    work[0],
+                    budget=budget,
+                )
+                orientations[row] = orientation
+            elif dimension == 0:
+                # The coordinate-map corner before its binary64 rounding.
+                supported = mapped.vertex_support(
+                    int(row),
+                    kind,
+                    local_index,
+                    edge_vertices=self.edge_vertices,
+                    triangle_vertices=self.triangle_vertices,
+                    triangle_facets=self.triangle_facets,
+                    work=work,
+                    source_vertices=self.source_vertices,
+                )
+            else:
+                supported, orientation = mapped.entity_support(
+                    dimension,
+                    int(row),
+                    kind,
+                    local_index,
+                    edge_vertices=self.edge_vertices,
+                    triangle_vertices=self.triangle_vertices,
+                    triangle_facets=self.triangle_facets,
+                    work=work,
+                    source_vertices=self.source_vertices,
+                )
+                orientations[row] = orientation
+            if not supported:
+                source_index = index if _bank is None else _bank.source_index(kind, index)
+                raise AssociationPropagationError(
+                    f"PlcAssociationTransfer.target_support must certify the inherited source stratum; got bank {self.domain.source_id!r}, dimension {dimension}, target ID {int(ids[row])}, stratum {(kind, source_index)!r}, support {supported}",
+                    ids[row : row + 1],
+                )
+        return _PlcCertifiedRows(orientations)
+
+    def _publish_target_associations(
+        self,
+        source: result_owner.CellMeshingResult,
+        target: cell_mesh_owner.CellMesh,
+        vertex: GeometryAssociation | None,
+        dimensions: tuple[int, ...],
+        inherited: _PlcLineageTables,
+        mapped: plc_mapped_support_owner.MappedPlcSupport,
+        work: list[int],
+        *,
+        _bank: PlcBankContext | None,
+        budget: CoordinateEnclosureBudget,
+    ) -> _PlcAssociationBatch:
+        """Publish supported target rows while retaining source namespace and predecessor IDs."""
+        table, obligations = inherited.table, inherited.obligations
         output: list[GeometryAssociation] = []
         output_dimensions = (
             (0, *dimensions)
@@ -3423,78 +3196,30 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             )
             if np.any(unresolved & required):
                 raise AssociationPropagationError(
-                    "PLC target strata lack authoritative source parents.",
+                    f"PlcAssociationTransfer.target_strata must identify required source parents; got unresolved target IDs {ids[unresolved & required]!r}",
                     ids[unresolved & required],
                 )
             selected = ~unresolved
-            orientations = np.zeros(ids.shape, dtype=np.int8)
-            for row in np.flatnonzero(selected):
-                kind, index = int(dims[row]), int(indices[row])
-                local_index = index
-                if kind in (0, 1):
-                    matches = np.flatnonzero(
-                        (self.vertex_indices if kind == 0 else self.edge_indices) == index
-                    )
-                    if matches.size != 1:
-                        raise AssociationPropagationError(
-                            "Target entity names an undeclared source authority.",
-                            ids[row : row + 1],
-                        )
-                    local_index = int(matches[0])
-                if _bank is not None:
-                    local_index = _bank.support_index(self, kind, local_index)
-                if kind == 2 and _bank is not None and _bank.mapped_facets is not None:
-                    supported, orientation = _bank.mapped_facets.support(
-                        mapped, dimension, int(row), local_index, work
-                    )
-                    orientations[row] = orientation
-                elif dimension == 0:
-                    # The exact coordinate-map corner, not its binary64 rounding.
-                    supported = mapped.vertex_support(
-                        int(row),
-                        kind,
-                        local_index,
-                        edge_vertices=self.edge_vertices,
-                        triangle_vertices=self.triangle_vertices,
-                        triangle_facets=self.triangle_facets,
-                        work=work,
-                        source_vertices=self.source_vertices,
-                    )
-                else:
-                    supported, orientation = mapped.entity_support(
-                        dimension,
-                        int(row),
-                        kind,
-                        local_index,
-                        edge_vertices=self.edge_vertices,
-                        triangle_vertices=self.triangle_vertices,
-                        triangle_facets=self.triangle_facets,
-                        work=work,
-                        source_vertices=self.source_vertices,
-                    )
-                    orientations[row] = orientation
-                if not supported:
-                    source_index = (
-                        index if _bank is None else _bank.source_index(kind, index)
-                    )
-                    raise AssociationPropagationError(
-                        f"Target PLC bank {self.domain.source_id!r} fails dimension-{dimension} target "
-                        f"{int(ids[row])}: inherited source stratum ({kind}, {source_index}), "
-                        f"original root support={supported}.",
-                        ids[row : row + 1],
-                    )
+            orientations = self._certify_target_rows(
+                dimension,
+                ids,
+                dims,
+                indices,
+                selected,
+                mapped,
+                work,
+                _bank=_bank,
+                budget=budget,
+            ).orientations
             previous = (
                 vertex
                 if dimension == 0
-                else next(
-                    value
-                    for value in source.associations
-                    if _target_dimension(source.mesh, value) == dimension
-                    and (
-                        _bank is None
-                        or (value.source_id, value.source_revision)
-                        == (self.domain.source_id, self.source_revision)
-                    )
+                else association_for_dimension(
+                    source,
+                    dimension,
+                    namespace=None
+                    if _bank is None
+                    else (self.domain.source_id, self.source_revision),
                 )
             )
             dims, parent_dims, parent_ids = (
@@ -3516,9 +3241,9 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
             ids, orientations = ids[selected], orientations[selected]
             if previous is None:
                 raise ValueError(
-                    "PLC propagated namespace lacks its actual predecessor association."
+                    f"PlcAssociationTransfer.predecessor_association must bind the propagated namespace; got dimension {dimension}, predecessor {previous!r}"
                 )
-            # These are the volume owner's exact classification strata; planar
+            # Volume classification uses vertex/edge/facet/region strata; planar
             # region roles are constructed by the separate planar owner.
             source_roles = (
                 GeometrySourceEntityRole.VERTEX,
@@ -3535,7 +3260,7 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                     target.entity_set(dimension).entity_set_id,
                     ids,
                     tuple(
-                        _entity(self.source_revision, role.value, index)
+                        entity_key(self.source_revision, role.value, index)
                         for role, index in zip(roles, indices.tolist(), strict=True)
                     ),
                     np.zeros(ids.shape, dtype=np.float64),
@@ -3550,25 +3275,134 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                     provenance=GeometryAssociationProvenance.LINEAGE,
                 )
             )
-        if _prepared_target is not None:
-            if (
-                _certification_request is None
-                or _certification_request.cell_regions is None
-            ):
-                raise RuntimeError(
-                    "Target PLC evidence lost its complete certification request."
-                )
-            from ..discretization._coordinate_enclosure import (
-                CoordinateEnclosureResourceError,
-            )
-            from ._certification import (
-                _MeshCertificationPremiseFailure,
-                MeshCertificationPreparedEvidence,
-            )
+        return _PlcAssociationBatch(tuple(output))
 
-            try:
-                with mapped.ledger.activate():
-                    prepared_target = MeshCertificationPreparedEvidence(
+    @checked
+    def propagate(
+        self,
+        source: result_owner.CellMeshingResult,
+        lineage: lineage_records_owner.MeshLineage,
+        target: cell_mesh_owner.CellMesh,
+        /,
+        *,
+        geometry: CellGeometrySpec,
+        embedding: GlobalEmbeddingCertificate | None = None,
+        coverage: DomainCoverageCertificate | None = None,
+        _certification_request: certification_inputs_owner.MeshCertificationInputs
+        | None = None,
+        _prepared_target: list[certification_owner.MeshCertificationPreparedEvidence]
+        | None = None,
+        _bank: PlcBankContext | None = None,
+        _mapped_target: list[plc_mapped_support_owner.MappedPlcSupport] | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[GeometryAssociation, ...]:
+        """Prove lineage support, consuming current collective premises for local planar carriers."""
+        with support_budget(
+            MeshCertificateLimits().maximum_work_units,
+            self.maximum_support_queries,
+            budget,
+        ) as budget:
+            if (_certification_request is None) != (_prepared_target is None):
+                raise ValueError(
+                    f"PlcAssociationTransfer.target_evidence must pair a certification request with its collector; got request present {_certification_request is not None}, collector present {_prepared_target is not None}"
+                )
+            if self.domain.ambient_dimension != 3 and _prepared_target is not None:
+                raise ValueError(
+                    f"PlcAssociationTransfer.target_evidence must collect volume evidence only for three-dimensional domains; got dimension {self.domain.ambient_dimension}"
+                )
+            if self.domain.ambient_dimension == 2:
+                return plc_planar_support_owner.planar_propagate(
+                    self,
+                    source,
+                    lineage,
+                    target,
+                    geometry=geometry,
+                    embedding=embedding,
+                    coverage=coverage,
+                    budget=budget,
+                )
+
+            if embedding is not None or coverage is not None:
+                raise ValueError(
+                    f"PlcAssociationTransfer.collective_evidence must be supplied only for planar carriers; got dimension {self.domain.ambient_dimension}, embedding present {embedding is not None}, coverage present {coverage is not None}"
+                )
+            prepared_source: list[plc_mapped_support_owner.MappedPlcSupport] = []
+            vertex, dimensions = self.source_associations(
+                source,
+                _bank=_bank,
+                _prepared_source=prepared_source,
+                budget=budget,
+            )
+            if _bank is None and vertex is None:
+                raise ValueError(
+                    f"PlcAssociationTransfer.vertex_association must be present for volume propagation; got {vertex!r}"
+                )
+            require_transfer_lineage(
+                source.mesh,
+                lineage,
+                target,
+                message=f"PlcAssociationTransfer.lineage.topology_ids must bind source and target meshes; got lineage {(lineage.source_topology_id, lineage.target_topology_id)!r}, meshes {(source.mesh.topology_id, target.topology_id)!r}",
+            )
+            if _bank is not None and _bank.target_mapped is not None:
+                # Reuse only this prepared target/request pair; no unmetered
+                # coordinate-map reconstruction is allowed for another bank.
+                _bank.target_mapped.prepared.require(
+                    target,
+                    geometry,
+                    _bank.target_mapped.prepared.request
+                    if _certification_request is None
+                    else _certification_request,
+                    budget=budget,
+                )
+            old = self.classes(
+                source, _bank=_bank, _prepared_source=prepared_source, budget=budget
+            )
+            work = [self.maximum_support_queries] if _bank is None else _bank.work
+            inherited = self._inherit_target_strata(source, lineage, target, old)
+            # All cell labels precede lower-stratum closure classification.
+            mapped = self._prepare_target_support(
+                source,
+                target,
+                geometry,
+                inherited,
+                work,
+                _bank=_bank,
+                _certification_request=_certification_request,
+                budget=budget,
+            ).mapped
+            inherited = self._close_target_strata(target, inherited)
+            inherited = self._inherit_target_vertices(
+                source,
+                lineage,
+                target,
+                old,
+                inherited,
+                mapped,
+                work,
+                _bank=_bank,
+            )
+            output = self._publish_target_associations(
+                source,
+                target,
+                vertex,
+                dimensions,
+                inherited,
+                mapped,
+                work,
+                _bank=_bank,
+                budget=budget,
+            ).associations
+            if _prepared_target is not None:
+                if (
+                    _certification_request is None
+                    or _certification_request.cell_regions is None
+                ):
+                    raise RuntimeError(
+                        f"PlcAssociationTransfer.target_evidence.request must provide cell-region labels; got request present {_certification_request is not None}, labels present {_certification_request is not None and _certification_request.cell_regions is not None}"
+                    )
+
+                with mapped.ledger.measurement(), mapped.ledger.activate():
+                    prepared_target = certification_owner.MeshCertificationPreparedEvidence(
                         target,
                         geometry,
                         mapped.prepared.validity,
@@ -3582,58 +3416,20 @@ class PlcAssociationTransfer(StrictModule, NonTrainableState):
                         fidelity_sample_order=_certification_request.fidelity_sample_order,
                         scoped_fidelity=_certification_request.scoped_fidelity,
                     )
-            except _MeshCertificationPremiseFailure as error:
-                refusals = [
-                    finding
-                    for finding in error.coverage.findings
-                    if finding.resource == "coefficient_work"
-                ]
-                if len(refusals) != 1:
-                    raise
-                requested = dict(refusals[0].requested)
-                achieved = dict(refusals[0].achieved)
-                raise CoordinateEnclosureResourceError(
-                    "coefficient_work",
-                    requested["limit"],
-                    requested["requested"],
-                    achieved["completed"],
-                ) from error
-            prepared_target.require(target, geometry, _certification_request)
-            _prepared_target.append(prepared_target)
-        if _mapped_target is not None:
-            _mapped_target.append(mapped)
-        return tuple(output)
-
-
-def _surface_source_association_kind(
-    source_kinds: tuple[str, ...], /
-) -> GeometryAssociationKind:
-    """Resolve the declared original stratum namespace, never relabel an authority."""
-    match source_kinds:
-        case ("corner", "curve", "surface"):
-            return GeometryAssociationKind.SURFACE
-        case ("vertex", "edge", "face"):
-            return GeometryAssociationKind.BREP
-        case _:
-            raise ValueError(
-                "Parametric source transfer requires native surface or B-Rep stratum identities."
-            )
-
-
-from ..discretization._sphere_chart_deformation import PreparedSphereChartDeformation
-from ..discretization._surface_chart_deformation import PreparedSurfaceChartDeformation
-from ..geometry._surface_source_support import (
-    PreparedSurfaceSourceSupport,
-    SurfaceSourceReceipts,
-)
+                prepared_target.require(target, geometry, _certification_request)
+                _prepared_target.append(prepared_target)
+            if _mapped_target is not None:
+                _mapped_target.append(mapped)
+            return tuple(output)
 
 
 @final
 class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
-    """Preserve original parametric-source authority through native restrictions.
+    """Preserve parametric source identities through native coordinate restrictions.
 
-    Receipt preparation is collective and immutable. Owner-local methods never
-    gather global source banks or initiate rank-local source collectives.
+    Support records are prepared collectively and retained immutably. Owner-local
+    methods consume those records without gathering global source banks or
+    initiating rank-local source collectives.
     """
 
     support: PreparedSurfaceSourceSupport
@@ -3641,6 +3437,7 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
     receipts: SurfaceSourceReceipts | None
     transfer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         support: PreparedSurfaceSourceSupport,
@@ -3649,22 +3446,13 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
         policy: AssociationPropagationPolicy | None = None,
         receipts: SurfaceSourceReceipts | None = None,
     ) -> None:
-        if not isinstance(support, PreparedSurfaceSourceSupport):
-            raise TypeError(
-                "Surface transfer requires prepared original surface source support."
-            )
-        _surface_source_association_kind(support.domain.source_kinds)
-        if receipts is not None and (
-            not isinstance(receipts, SurfaceSourceReceipts)
-            or receipts.support is not support
-        ):
+        surface_source_association_kind(support.domain.source_kinds)
+        if receipts is not None and receipts.support is not support:
             raise ValueError(
-                "Current surface receipts must consume this exact original source support owner."
+                f"SurfaceAssociationTransfer.receipts.support must be the supplied support object; got support ID {receipts.support.support_id!r}, supplied support ID {support.support_id!r}, same object {receipts.support is support}"
             )
         self.support = support
-        self.policy = (
-            AssociationPropagationPolicy() if policy is None else _policy(policy)
-        )
+        self.policy = AssociationPropagationPolicy() if policy is None else policy
         self.receipts = receipts
         self.transfer_id = canonical_fingerprint(
             {
@@ -3675,88 +3463,119 @@ class SurfaceAssociationTransfer(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def with_receipts(
         self, receipts: SurfaceSourceReceipts, /
     ) -> SurfaceAssociationTransfer:
-        """Bind a genuinely prepared current projection, without mutating epochs."""
+        """Bind the current projection receipts without mutating epochs."""
         return SurfaceAssociationTransfer(
             self.support, policy=self.policy, receipts=receipts
         )
 
+    @checked
     def source_associations(
-        self, source: CellMeshingResult, /
+        self,
+        source: result_owner.CellMeshingResult,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> tuple[GeometryAssociation, tuple[int, ...]]:
-        from ._surface_association_transfer import source_associations
+        with support_budget(
+            self.support.maximum_support_queries,
+            self.support.maximum_support_queries,
+            budget,
+        ) as budget:
+            return surface_association_transfer_owner.source_associations(
+                self.support, source, budget=budget
+            )
 
-        return source_associations(self.support, source)
+    @checked
+    def classes(
+        self,
+        source: result_owner.CellMeshingResult,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[surface_association_transfer_owner.SurfaceEntityClasses, ...]:
+        with support_budget(
+            self.support.maximum_support_queries,
+            self.support.maximum_support_queries,
+            budget,
+        ) as budget:
+            return surface_association_transfer_owner.classes(
+                self.support, source, budget=budget
+            )
 
-    def classes(self, source: CellMeshingResult, /) -> tuple[SurfaceEntityClasses, ...]:
-        from ._surface_association_transfer import classes
-
-        return classes(self.support, source)
-
+    @checked
     def protected_edges(
-        self, source: CellMeshingResult, /, *, midpoint_required: bool = True
+        self,
+        source: result_owner.CellMeshingResult,
+        /,
+        *,
+        midpoint_required: bool = True,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> np.ndarray:
-        from ._surface_association_transfer import protected_edges
+        with support_budget(
+            self.support.maximum_support_queries,
+            self.support.maximum_support_queries,
+            budget,
+        ) as budget:
+            return surface_association_transfer_owner.protected_edges(
+                self.support, source, midpoint_required=midpoint_required, budget=budget
+            )
 
-        return protected_edges(self.support, source, midpoint_required=midpoint_required)
-
+    @checked
     def propagate(
         self,
-        source: CellMeshingResult,
-        lineage: MeshLineage,
-        target: CellMesh,
+        source: result_owner.CellMeshingResult,
+        lineage: lineage_records_owner.MeshLineage,
+        target: cell_mesh_owner.CellMesh,
         /,
         *,
         geometry: CellGeometrySpec,
         embedding: GlobalEmbeddingCertificate | None = None,
         coverage: DomainCoverageCertificate | None = None,
-        deformation: PreparedSurfaceChartDeformation
-        | PreparedSphereChartDeformation
-        | None = None,
+        deformation: MaterialChartDeformation | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> tuple[GeometryAssociation, ...]:
-        from ._surface_association_transfer import propagate
-
-        return propagate(
-            self.support,
-            source,
-            lineage,
-            target,
-            geometry=geometry,
-            receipts=self.receipts,
-            embedding=embedding,
-            coverage=coverage,
-            deformation=deformation,
-        )
-
-
-from ..geometry._mapped_reference_domain import MappedReferenceDomain
+        with support_budget(
+            self.support.maximum_support_queries,
+            self.support.maximum_support_queries,
+            budget,
+        ) as budget:
+            return surface_association_transfer_owner.propagate(
+                self.support,
+                source,
+                lineage,
+                target,
+                geometry=geometry,
+                receipts=self.receipts,
+                embedding=embedding,
+                coverage=coverage,
+                deformation=deformation,
+                budget=budget,
+            )
 
 
 @final
 class MappedReferenceAssociationTransfer(StrictModule, NonTrainableState):
-    """Carry exact original-root image identities through nested mixed-cell epochs."""
+    """Carry source-root image identities through nested mixed-cell epochs."""
 
     domain: MappedReferenceDomain
     maximum_support_queries: int = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, domain: MappedReferenceDomain, /, *, maximum_support_queries: int = 1 << 26
     ) -> None:
-        from .._validation import positive_integer
 
-        if not isinstance(domain, MappedReferenceDomain):
-            raise TypeError(
-                "Mapped transfer requires an independently declared mapped source."
-            )
         if any(
             block.cell_kind not in ("tetrahedron", "prism", "hexahedron")
             for block in domain.reference_mesh.blocks
         ):
             raise ValueError(
-                "Mapped transfer requires canonical tetrahedral, prismatic or hexahedral source-root charts."
+                f"MappedReferenceAssociationTransfer.cell_kinds must be tetrahedron, prism, or hexahedron; got {tuple(block.cell_kind for block in domain.reference_mesh.blocks)!r}"
             )
         self.domain = domain
         self.maximum_support_queries = positive_integer(
@@ -3770,159 +3589,138 @@ class MappedReferenceAssociationTransfer(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def associations(
-        self, mesh: CellMesh, geometry: CellGeometrySpec, /
+        self,
+        mesh: cell_mesh_owner.CellMesh,
+        geometry: CellGeometrySpec,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> tuple[GeometryAssociation, ...]:
-        from ._mapped_reference_association import mapped_reference_associations
-
-        return mapped_reference_associations(
-            self.domain,
-            mesh,
-            geometry,
-            maximum_support_queries=self.maximum_support_queries,
-        )
-
-    def source_associations(
-        self, source: CellMeshingResult, /
-    ) -> tuple[GeometryAssociation, tuple[int, ...]]:
-        from ._result import CellMeshingResult
-
-        if not isinstance(source, CellMeshingResult):
-            raise TypeError("source must be an accepted CellMeshingResult.")
-        certificate = source.certification
-        if (
-            certificate is None
-            or not certificate.passed
-            or certificate.coverage is None
-            or certificate.coverage.domain_id != self.domain.domain_id
-        ):
-            raise ValueError("Mapped transfer requires current original-source coverage.")
-        certificate.request.validate_source_integrity()
-        certificate.coverage.binding.require(source.mesh, source.geometry)
-        expected = self.associations(source.mesh, source.geometry)
-        by_dimension = {
-            _target_dimension(source.mesh, item): item for item in source.associations
-        }
-        if len(by_dimension) != len(source.associations) or set(by_dimension) != set(
-            range(4)
-        ):
-            raise ValueError(
-                "Mapped source requires one complete association table per dimension."
+        with support_budget(
+            self.maximum_support_queries, self.maximum_support_queries, budget
+        ) as budget:
+            return mapped_reference_association_owner.mapped_reference_associations(
+                self.domain,
+                mesh,
+                geometry,
+                maximum_support_queries=self.maximum_support_queries,
+                budget=budget,
             )
-        for degree, proof in enumerate(expected):
-            item = by_dimension[degree]
-            item.validate_target(source.mesh.entity_set(degree))
-            rows = item.target_rows(np.asarray(proof.target_global_ids))
+
+    @checked
+    def source_associations(
+        self,
+        source: result_owner.CellMeshingResult,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[GeometryAssociation, tuple[int, ...]]:
+        with support_budget(
+            self.maximum_support_queries, self.maximum_support_queries, budget
+        ) as budget:
+            certificate = source.certification
             if (
-                item.association_kind is not GeometryAssociationKind.MAPPED_REFERENCE
-                or item.source_id != self.domain.source_id
-                or item.source_revision != self.domain.source_revision
-                or not item.exact
-                or not np.all(np.asarray(item.resolved))
-                or np.any(np.asarray(item.ambiguous))
-                or tuple(item.source_entity_ids[row] for row in rows)
-                != proof.source_entity_ids
-                or not np.array_equal(
-                    np.asarray(item.parent_dimensions)[rows],
-                    np.asarray(proof.parent_dimensions),
-                )
-                or not np.array_equal(
-                    np.asarray(item.parent_ids)[rows], np.asarray(proof.parent_ids)
-                )
-                or not np.array_equal(
-                    np.asarray(item.orientations)[rows], np.asarray(proof.orientations)
-                )
+                certificate is None
+                or not certificate.passed
+                or certificate.coverage is None
+                or certificate.coverage.domain_id != self.domain.domain_id
             ):
                 raise ValueError(
-                    "Mapped source associations disagree with their exact original-root images."
+                    f"MappedReferenceAssociationTransfer.source.certification must pass and cover the declared domain; got passed {None if certificate is None else certificate.passed}, coverage domain {None if certificate is None or certificate.coverage is None else certificate.coverage.domain_id!r}, expected {self.domain.domain_id!r}"
                 )
-        return by_dimension[0], (1, 2, 3)
+            certificate.request.validate_source_integrity(budget=budget)
+            certificate.coverage.binding.require(source.mesh, source.geometry)
+            expected = self.associations(source.mesh, source.geometry, budget=budget)
+            by_dimension = _validate_mapped_source_bindings(
+                source, self.domain, expected
+            ).tables
+            return by_dimension[0], (1, 2, 3)
 
-    def classes(self, source: CellMeshingResult, /) -> tuple[PlcEntityClasses, ...]:
-        self.source_associations(source)
-        authority = self.domain.reference_mesh
-        offsets = np.cumsum(
-            np.asarray(
-                (0, *(authority.entity_set(degree).count for degree in range(3))),
-                dtype=np.int64,
-            )
-        )
-        result = []
-        for degree in range(4):
-            item = next(
-                item
-                for item in source.associations
-                if _target_dimension(source.mesh, item) == degree
-            )
-            rows = item.target_rows(np.asarray(source.mesh.entity_set(degree).entity_ids))
-            dimensions = np.asarray(item.parent_dimensions, dtype=np.int64)[rows]
-            identifiers = np.asarray(item.parent_ids, dtype=np.int64)[rows]
-            codes = np.empty(identifiers.shape, dtype=np.int64)
-            for kind in range(4):
-                lookup = {
-                    int(identifier): row
-                    for row, identifier in enumerate(
-                        np.asarray(authority.entity_set(kind).entity_ids)
-                    )
-                }
-                selected = dimensions == kind
-                codes[selected] = offsets[kind] + np.asarray(
-                    [lookup[int(identifier)] for identifier in identifiers[selected]],
+    @checked
+    def classes(
+        self,
+        source: result_owner.CellMeshingResult,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[PlcEntityClasses, ...]:
+        with support_budget(
+            self.maximum_support_queries, self.maximum_support_queries, budget
+        ) as budget:
+            self.source_associations(source, budget=budget)
+            authority = self.domain.reference_mesh
+            offsets = np.cumsum(
+                np.asarray(
+                    (0, *(authority.entity_set(degree).count for degree in range(3))),
                     dtype=np.int64,
                 )
-            result.append(
-                PlcEntityClasses(
-                    dimensions,
-                    identifiers,
-                    np.ones(dimensions.shape, dtype=np.bool_),
-                    codes,
-                )
             )
-        return tuple(result)
+            result = []
+            for degree in range(4):
+                item = association_for_dimension(source, degree)
+                rows = item.target_rows(
+                    np.asarray(source.mesh.entity_set(degree).entity_ids)
+                )
+                dimensions = np.asarray(item.parent_dimensions, dtype=np.int64)[rows]
+                identifiers = np.asarray(item.parent_ids, dtype=np.int64)[rows]
+                codes = np.empty(identifiers.shape, dtype=np.int64)
+                for kind in range(4):
+                    selected = dimensions == kind
+                    authority_rows = entity_rows(authority, kind, identifiers[selected])
+                    if np.any(authority_rows < 0):
+                        missing = identifiers[selected][authority_rows < 0]
+                        raise KeyError(int(missing[0]))
+                    codes[selected] = offsets[kind] + authority_rows
+                result.append(
+                    PlcEntityClasses(
+                        dimensions,
+                        identifiers,
+                        np.ones(dimensions.shape, dtype=np.bool_),
+                        codes,
+                    )
+                )
+            return tuple(result)
 
+    @checked
     def propagate(
         self,
-        source: CellMeshingResult,
-        lineage: MeshLineage,
-        target: CellMesh,
+        source: result_owner.CellMeshingResult,
+        lineage: lineage_records_owner.MeshLineage,
+        target: cell_mesh_owner.CellMesh,
         /,
         *,
         geometry: CellGeometrySpec,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> tuple[GeometryAssociation, ...]:
-        from ._lineage import EntityLineageKind, MeshLineage
-
-        self.source_associations(source)
-        if (
-            not isinstance(lineage, MeshLineage)
-            or lineage.source_topology_id != source.mesh.topology_id
-            or lineage.target_topology_id != target.topology_id
-        ):
-            raise ValueError(
-                "Mapped transfer requires the actual source-to-target topology lineage."
+        with support_budget(
+            self.maximum_support_queries, self.maximum_support_queries, budget
+        ) as budget:
+            self.source_associations(source, budget=budget)
+            require_transfer_lineage(
+                source.mesh,
+                lineage,
+                target,
+                message=f"MappedReferenceAssociationTransfer.lineage.topology_ids must bind source and target meshes; got lineage {(lineage.source_topology_id, lineage.target_topology_id)!r}, meshes {(source.mesh.topology_id, target.topology_id)!r}",
             )
-        for degree in range(4):
-            if np.any(
-                np.asarray(lineage.entity_lineage(degree).relation_kinds)
-                == EntityLineageKind.UNKNOWN
-            ):
-                raise ValueError(
-                    "Unknown topology lineage cannot preserve original mapped source strata."
-                )
-        return self.associations(target, geometry)
+            for degree in range(4):
+                if np.any(
+                    np.asarray(lineage.entity_lineage(degree).relation_kinds)
+                    == lineage_records_owner.EntityLineageKind.UNKNOWN
+                ):
+                    raise ValueError(
+                        f"MappedReferenceAssociationTransfer.lineage.relation_kinds must identify root strata; got dimension {degree}, relations {np.asarray(lineage.entity_lineage(degree).relation_kinds)!r}"
+                    )
+            return self.associations(target, geometry, budget=budget)
 
 
 __all__ = [
-    "AssociationPropagationError",
     "AssociationPropagationPolicy",
     "BRepAssociationTransfer",
     "PlcAssociationTransfer",
     "MappedReferenceAssociationTransfer",
     "SurfaceAssociationTransfer",
-    "PlcEntityClasses",
-    "GeometryAssociation",
-    "GeometryAssociationKind",
-    "GeometrySourceEntityRole",
-    "GeometryAssociationProvenance",
     "associate_mesh_entities",
     "associate_mesh_vertices",
     "propagate_association",

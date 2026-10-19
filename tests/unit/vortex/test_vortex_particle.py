@@ -65,6 +65,14 @@ def test_vortex_particle_scenario_1() -> None:
         source_indices=jnp.arange(2),
     )
     result = plan.evaluate(source, target, request=request)
+    if result.velocity is None:
+        raise RuntimeError("result.velocity must be present for the request; got None")
+    if result.velocity_gradient is None:
+        raise RuntimeError(
+            "result.velocity_gradient must be present for the request; got None"
+        )
+    if result.vorticity is None:
+        raise RuntimeError("result.vorticity must be present for the request; got None")
 
     np.testing.assert_allclose(result.velocity, 0.0)
     assert int(result.diagnostics.excluded_interaction_count) == 2
@@ -111,6 +119,8 @@ def test_vortex_particle_scenario_1() -> None:
         core_radius=core[permutation],
     )
     permuted = coarse.evaluate(permuted_source, targets).velocity
+    if expected is None or actual is None or permuted is None:
+        raise RuntimeError("velocity results must be present for the request; got None")
 
     np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(permuted, expected, rtol=1e-12, atol=1e-12)

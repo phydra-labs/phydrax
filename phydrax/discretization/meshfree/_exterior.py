@@ -37,7 +37,7 @@ from ...linalg import (
     SparseOrderingPolicy,
 )
 from ...sparse import EdgeRelation, linear_apply, SparseCoordinateOperator
-from ...sparse._linear import _SparseStoragePlan
+from ...sparse._linear import SparseStoragePlan
 from ...typing import Bool, Dim, Float64, Int32, parse, Scalar, Size
 from .._cochain import CochainDiscretization
 from .._cochain_hodge import DiagonalHodge
@@ -668,7 +668,7 @@ class MeshfreeExteriorCalculusPlan(StrictModule):
             jnp.asarray(route_values, dtype=jnp.float64),
             source=edge_space,
             target=moment_space,
-            storage_plan=_SparseStoragePlan(moment_relation),
+            storage_plan=SparseStoragePlan(moment_relation),
         )
         if self.edge_prior is None:
             prior = np.exp(-((lengths / self.radius) ** 2))
@@ -711,7 +711,7 @@ class MeshfreeExteriorCalculusPlan(StrictModule):
             incidence.signs,
             source=node_space,
             target=edge_space,
-            storage_plan=_SparseStoragePlan(incidence.relation),
+            storage_plan=SparseStoragePlan(incidence.relation),
         )
         native: CochainDiscretization | None = None
         if bool(np.asarray(result.hilbert_admitted)):
@@ -849,9 +849,9 @@ class PreparedMeshfreeExteriorCalculus(StrictModule):
     edge_relation: PreparedMeshfreeEdgeRelation
     boundary_quadrature: MeshfreeBoundaryQuadrature | None
     _stiffness_relation: EdgeRelation
-    _stiffness_storage: _SparseStoragePlan
+    _stiffness_storage: SparseStoragePlan
     _reduced_relation: EdgeRelation
-    _reduced_storage: _SparseStoragePlan
+    _reduced_storage: SparseStoragePlan
     _reduced_routes: Int32[_ExteriorReducedRouteDim]
     _reduced_space: ArraySpace
     _factor_plan: SparseFactorizationPlan | None
@@ -899,7 +899,7 @@ class PreparedMeshfreeExteriorCalculus(StrictModule):
         stiffness_relation = EdgeRelation(
             columns, rows, source_size=points.shape[0], target_size=points.shape[0]
         )
-        stiffness_storage = _SparseStoragePlan(stiffness_relation)
+        stiffness_storage = SparseStoragePlan(stiffness_relation)
         reduced = np.asarray(equation_indices)
         inverse = np.full(points.shape[0], -1, dtype=np.int32)
         inverse[reduced] = np.arange(reduced.size, dtype=np.int32)
@@ -910,7 +910,7 @@ class PreparedMeshfreeExteriorCalculus(StrictModule):
             source_size=reduced.size,
             target_size=reduced.size,
         )
-        reduced_storage = _SparseStoragePlan(reduced_relation)
+        reduced_storage = SparseStoragePlan(reduced_relation)
         reduced_space = ArraySpace(
             (reduced.size,),
             dtype=jnp.float64,

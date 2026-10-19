@@ -222,7 +222,7 @@ def test_mismatched_interface_is_rejected(tetra_coupling: Any) -> None:
         feature_id=surface.feature_id,
     )
 
-    with pytest.raises(ValueError, match="coordinates do not bijectively match"):
+    with pytest.raises(ValueError, match="surface_vertex_route.configuration"):
         prepare_scalar_laplace_fem_bem_3d(
             fem,
             mismatched,

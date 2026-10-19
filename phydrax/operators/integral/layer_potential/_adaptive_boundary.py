@@ -122,7 +122,7 @@ def _validated_closed_surface_mesh(mesh: CellMesh, /) -> None:
         or any(block.cell_kind != "triangle" for block in mesh.blocks)
     ):
         raise ValueError(
-            "Boundary adaptation requires a triangular 2-manifold embedded in 3D."
+            f"boundary_adaptation.mesh must have triangular blocks, topological dimension 2 and ambient dimension 3; got {(mesh.topological_dimension, mesh.ambient_dimension, tuple(block.cell_kind for block in mesh.blocks))!r}."
         )
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolygonalConnectivity):
@@ -560,7 +560,9 @@ def _dp0_parent_routes(
     if np.any(parent_positions >= source_ids.size) or not np.array_equal(
         source_ids[source_order][parent_positions], parents
     ):
-        raise ValueError("Local refinement lineage references a foreign DP0 parent.")
+        raise ValueError(
+            f"dp0_parent_routes.parents must belong to the source face IDs; got {parents!r}."
+        )
     parent_rows = source_order[parent_positions]
     child_order = np.argsort(children, kind="stable")
     routes = parent_rows[child_order][np.searchsorted(children[child_order], target_ids)]

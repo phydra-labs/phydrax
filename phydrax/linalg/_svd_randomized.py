@@ -5,11 +5,12 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
+from .._fingerprint import canonical_fingerprint
 from .._sampling._addressing import derive_key, SampleAddress
 from ..typing import parse, PRNGKey
 from ._operators import DenseLinearOperator
 from ._randomized import random_probes
-from ._spaces import _coordinate_dtype
+from ._spaces import coordinate_dtype
 from ._svd_contracts import (
     RandomizedSVD,
     RandomizedSVDState,
@@ -58,6 +59,36 @@ def finite_qr(block: Array, /) -> tuple[Array, Array, Array]:
     return jax.lax.cond(finite, factor, unavailable, block)
 
 
+def _scientific_stream_identity(
+    problem: SVDProblem, plan: SVDSolvePlan, method: RandomizedSVD, /
+) -> str:
+    """Address numerical sampling independently of admission and execution limits."""
+    policy = plan.policy
+    return canonical_fingerprint(
+        {
+            "kind": "randomized-svd-stream",
+            "problem": problem.problem_id,
+            "method": method.name,
+            "count": policy.count,
+            "which": policy.which,
+            "oversampling": method.oversampling,
+            "power_iterations": method.power_iterations,
+            "probe_refresh": method.probe_refresh,
+            "sketch_size": plan.sketch_size,
+            "rank_relative": policy.rank.relative_cutoff,
+            "rank_absolute": policy.rank.absolute_cutoff,
+            "full_rank": policy.rank.require_full_rank,
+            "residual": policy.tolerance.residual,
+            "orthogonality": policy.tolerance.orthogonality,
+            "audit_probes": policy.approximation.audit_probes,
+            "failure_probability": policy.approximation.failure_probability,
+            "numerical_allowance": policy.approximation.numerical_allowance,
+            "require_leading": policy.approximation.require_leading,
+            "certificate": plan.certificate_kind,
+        }
+    )
+
+
 def prepare_randomized(
     problem: SVDProblem, plan: SVDSolvePlan, key: PRNGKey, version: Array, /
 ) -> RandomizedSVDState:
@@ -71,20 +102,21 @@ def prepare_randomized(
     target, target_valid = diagonal_scales(problem.operator.target)
     rows, columns = problem.operator.target.size, problem.operator.source.size
     width = plan.sketch_size
-    dtype = _coordinate_dtype(problem.operator.source)
+    dtype = coordinate_dtype(problem.operator.source)
     sketch_version = (
         version if method.probe_refresh == "redraw" else jnp.zeros_like(version)
     )
+    stream_identity = _scientific_stream_identity(problem, plan, method)
     sketch_address = SampleAddress(
         "phydrax.linalg.svd",
         "range",
-        target=(plan.plan_id, problem.problem_id),
+        target=(stream_identity, problem.problem_id),
         role="construction-sketch",
     )
     audit_address = SampleAddress(
         "phydrax.linalg.svd",
         "range",
-        target=(plan.plan_id, problem.problem_id),
+        target=(stream_identity, problem.problem_id),
         role="independent-audit",
     )
     sketch_key = derive_key(root, sketch_address, sketch_version)

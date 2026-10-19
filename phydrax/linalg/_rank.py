@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import NamedTuple
 
 import jax.numpy as jnp
@@ -27,6 +28,8 @@ def numerical_rank_data(
     columns: int,
     policy: RankPolicy,
     /,
+    *,
+    rank_scale_floor: float | None = None,
 ) -> NumericalRankData:
     """Resolve one canonical numerical-rank decision over trailing modes."""
     values = jnp.asarray(singular_values)
@@ -36,6 +39,13 @@ def numerical_rank_data(
         raise ValueError("Matrix dimensions must be positive.")
     if not jnp.issubdtype(values.dtype, jnp.floating):
         raise TypeError("singular_values must have a real floating dtype.")
+    if rank_scale_floor is not None and (
+        not math.isfinite(rank_scale_floor) or rank_scale_floor < 0.0
+    ):
+        raise ValueError(
+            "numerical_rank_data.rank_scale_floor must be nonnegative and finite; "
+            f"got {rank_scale_floor!r}."
+        )
 
     relative = (
         float(max(rows, columns)) * float(jnp.finfo(values.dtype).eps)
@@ -44,13 +54,16 @@ def numerical_rank_data(
     )
     absolute = 0.0 if policy.absolute_cutoff is None else policy.absolute_cutoff
     largest = jnp.max(values, axis=-1)
+    reference_scale = (
+        largest if rank_scale_floor is None else jnp.maximum(largest, rank_scale_floor)
+    )
     cutoff = (
         jnp.asarray(absolute, dtype=values.dtype)
         + jnp.asarray(
             relative,
             dtype=values.dtype,
         )
-        * largest
+        * reference_scale
     )
     finite = jnp.all(jnp.isfinite(values), axis=-1) & jnp.isfinite(cutoff)
     retained = (values > cutoff[..., None]) & jnp.isfinite(values)

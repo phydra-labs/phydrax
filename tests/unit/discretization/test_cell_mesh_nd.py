@@ -22,6 +22,11 @@ from phydrax.discretization.fem import FiniteElementDeRhamComplex
 
 pytestmark = [pytest.mark.strict_jax, pytest.mark.filterwarnings("error")]
 
+# Empirical acceptance thresholds from this affine facet-distance fixture at
+# d2dfcb941; its independent distance oracle is -1/10 and sqrt(1/12).
+_AFFINE_FACET_DISTANCE_RTOL = 1.0e-10
+_AFFINE_FACET_DISTANCE_ATOL = 1.0e-12
+
 
 @pytest.mark.parametrize(
     "dimension",
@@ -46,7 +51,9 @@ def test_declared_simplex_mesh_retains_oriented_boundary(dimension: int) -> None
         lower = mesh.topology.incidences[degree - 1].exterior_derivative()
         upper = mesh.topology.incidences[degree].exterior_derivative()
         values = jnp.arange(lower.source.size, dtype=jnp.float64)
-        np.testing.assert_allclose(upper.mv(lower.mv(values)), 0.0, atol=1e-14)
+        # Signed integer incidence and these small integer inputs have exactly
+        # representable intermediates (below 2**53), so d(d(values)) is exact zero.
+        np.testing.assert_array_equal(upper.mv(lower.mv(values)), 0.0)
 
 
 def test_shared_four_dimensional_facet_is_not_a_support_boundary() -> None:
@@ -70,8 +77,8 @@ def test_shared_four_dimensional_facet_is_not_a_support_boundary() -> None:
     np.testing.assert_allclose(
         eqx.filter_jit(geometry.boundary_field)(queries),
         np.asarray((-0.1, np.sqrt(1.0 / 12.0)), dtype=np.float64),
-        rtol=1e-10,
-        atol=1e-12,
+        rtol=_AFFINE_FACET_DISTANCE_RTOL,
+        atol=_AFFINE_FACET_DISTANCE_ATOL,
     )
 
 
@@ -83,7 +90,7 @@ def test_dimension_qualified_reference_has_explicit_entities_and_capacity() -> N
     assert tuple(len(level) for level in cube.entities) == (16, 32, 24, 8, 1)
     with pytest.raises(ValueError, match="maximum_entities"):
         reference_cell_topology("tensor:4", maximum_entities=80)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"CellBlock\.vertices.*arity"):
         CellMesh.from_simplices(
             np.eye(4, dtype=np.float64),
             np.asarray(((0, 1, 2, 3),), dtype=np.int32),

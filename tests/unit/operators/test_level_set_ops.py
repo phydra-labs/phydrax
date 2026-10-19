@@ -12,6 +12,7 @@ import pytest
 import phydrax as phx
 import phydrax.axes as cx
 from phydrax._frozendict import frozendict
+from phydrax.units import METER
 
 
 def _points_1d(values: Any) -> Any:
@@ -53,7 +54,7 @@ def test_compact_level_set_regularizations_are_complementary_and_differentiable(
 
 def test_circle_level_set_geometry_and_motion_are_recovered() -> None:
     spatial = phx.domain.GeometryDomain(
-        phx.geometry.Circle(center=(0.0, 0.0), radius=3.0).compile()
+        phx.geometry.Circle(center=(0.0, 0.0), radius=3.0).compile(coordinate_unit=METER)
     )
     domain = spatial @ phx.domain.TimeInterval(0.0, 1.0)
 

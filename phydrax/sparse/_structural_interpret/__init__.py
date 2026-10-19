@@ -146,6 +146,7 @@ def _prop_nested_jaxpr(
     )
 
 
+# Exhaustive scientific primitive dispatch keeps derivative rules explicit and unknown primitives fail closed.
 def _prop_dispatch(
     eqn: JaxprEqn,
     state_indices: StateIndices,

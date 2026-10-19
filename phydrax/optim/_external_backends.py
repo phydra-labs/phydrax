@@ -348,7 +348,7 @@ def ceres_least_squares(
 ) -> LeastSquaresResult:
     if problem.trial_policy is not None:
         raise ValueError(
-            "The Ceres boundary does not implement an identified native trial policy."
+            f"ceres_least_squares.problem.trial_policy must be None; got {type(problem.trial_policy).__name__}."
         )
     if not callable(solver):
         raise TypeError("solver must be callable.")

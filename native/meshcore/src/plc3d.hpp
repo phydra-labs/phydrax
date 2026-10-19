@@ -29,22 +29,29 @@
 // Missing subfacets are recovered per exactly planar component by
 // exact-contact gift wrapping of the two cavity sides, enlarged first behind
 // the faces that trap a side, and committed through one validated CavityEdit.
+// Cavity recovery separates incidence preparation, contact-based cell discovery,
+// closed-side construction, filling, tentative interior insertion and commit.
+// Edge and facet fills share the removal/insertion/orientation transaction;
+// their geometric refusal rules and post-commit evidence remain distinct.
+// Endpoint preference used while wrapping an edge cavity is scoped to that
+// recovery attempt and cleared on every return or exception.
 // A fixed boundary never receives an edge/facet Steiner point.
 // Regions are flooded from both sides of every constrained facet (by its
 // declared incidence), from the enclosing corners (void) and from seeds;
 // any disagreement is refused with the conflicting regions as evidence.
 #pragma once
+#include "counter_records.hpp"
 
 #include <cstdint>
 #include <limits>
 #include <span>
 
 #include "bounded_memory.hpp"
+#include "boundary_policy.hpp"
 #include "source_construction.hpp"
 
 namespace phx::mc {
 
-enum class BoundaryPolicy : int32_t { kFixed = 0, kConforming = 1 };
 
 // Why recovery refused (phx_mc_plc3d_failure reason codes).
 enum PlcFailureReason : int32_t {
@@ -78,32 +85,15 @@ enum PlcEntityKind : int32_t {
   kPlcSeed = 6,
 };
 
-enum PlcCounter : int32_t {
-  kPlcRounds = 0,
-  kPlcInputTriangles,
-  kPlcFacetGroups,
-  kPlcEdges,
-  kPlcProtectedVertices,
-  kPlcSegmentSteiner,
-  kPlcFacetSteiner,
-  kPlcCavities,
-  kPlcLargestCavity,
-  kPlcCandidates,
-  kPlcContactTests,
-  kPlcWork,
-  kPlcPeakBytes,
-  kPlcInteriorSteiner,
-  kPlcCounterCount,
-};
 
 // Optional execution measurements; never part of work counters or identity.
 enum PlcPhase : int32_t {
-  kPlcValidationPhase,
-  kPlcPreparationPhase,
-  kPlcBoundaryRecoveryPhase,
-  kPlcClassificationPhase,
-  kPlcPublicationPhase,
-  kPlcPhaseCount,
+  kPlcValidationPhase = PHX_MC_PLC3D_PHASE_VALIDATION,
+  kPlcPreparationPhase = PHX_MC_PLC3D_PHASE_PREPARATION,
+  kPlcBoundaryRecoveryPhase = PHX_MC_PLC3D_PHASE_BOUNDARY_RECOVERY,
+  kPlcClassificationPhase = PHX_MC_PLC3D_PHASE_CLASSIFICATION,
+  kPlcPublicationPhase = PHX_MC_PLC3D_PHASE_PUBLICATION,
+
 };
 
 struct PlcInput {
@@ -178,13 +168,13 @@ struct PlcRecovery {
   // and third corners) and carries zero deviation exactly when it lies on it.
   NativeVector<SourceWitness> witnesses;
   // A kPlcSourceDeviation refusal: certified deviation and declared bound.
-  double source_refusal[2] = {0.0, 0.0};
+  PlcSourceRefusal source_refusal;
   bool memory_measured = false;
   std::array<uint64_t, 6> memory_snapshot{};
-  int64_t counters[kPlcCounterCount] = {};
+  PlcCounters counters;
   bool measurement_enabled = false;
-  int64_t phase_nanoseconds[kPlcPhaseCount] = {};
-  int64_t phase_invocations[kPlcPhaseCount] = {};
+  PlcPhaseValues phase_nanoseconds;
+  PlcPhaseValues phase_invocations;
   PlcFailure failure;
 };
 

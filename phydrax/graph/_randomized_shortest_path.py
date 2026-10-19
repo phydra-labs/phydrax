@@ -59,7 +59,7 @@ from ..sparse import (
     RelationExecutionState,
     SparseCoordinateOperator,
 )
-from ..sparse._linear import _SparseStoragePlan
+from ..sparse._linear import SparseStoragePlan
 from ..typing import Bool, checked, Dim, Float, Int32, parse, Scalar, Size
 
 
@@ -146,7 +146,7 @@ class _FreeEnergySystem(StrictModule):
 
     by_source: RelationExecutionState
     jacobian_relation: EdgeRelation
-    storage: _SparseStoragePlan
+    storage: SparseStoragePlan
     space: ArraySpace
     route_source: Int32[_RouteDim]
     route_target: Int32[_RouteDim]
@@ -451,7 +451,7 @@ class RandomizedShortestPathPlan(NonTrainableState, StrictModule):
         system = _FreeEnergySystem(
             RelationExecutionPlan().prepare(relation.transpose()),
             jacobian_relation,
-            _SparseStoragePlan(jacobian_relation),
+            SparseStoragePlan(jacobian_relation),
             ArraySpace((n,), dtype=jnp.float64),
             route_source,
             route_target,

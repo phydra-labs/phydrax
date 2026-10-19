@@ -54,6 +54,14 @@ from phydrax.units import MILLIMETER
 
 CONTRACT = SpatialCoordinateContract(MILLIMETER)
 
+# Existing empirical qualification budgets, retained without widening. Sources:
+# the ring/slab measure tests below; the reflected cylinder measure test; and
+# _exact_images_agree's seven-station line/circle carrier comparison.
+_ANALYTIC_MEASURE_REL = 1e-9
+_CURVED_MEASURE_REL = 1e-4
+_CYLINDER_CONSTRUCTION_REL = 1e-6
+_CARRIER_EVALUATION_ATOL = 1e-12
+
 type _Point = tuple[float, float, float]
 
 
@@ -140,8 +148,7 @@ def test_revolved_ring_tessellation_retains_complete_source_fidelity() -> None:
         np.max(np.asarray(model.tessellation_normal_bounds)) <= policy.angular_deflection
     )
     assert float(prepare_brep_query(model).measures.solid_volumes[0]) == pytest.approx(
-        5.0 * np.pi,
-        rel=1e-9,
+        5.0 * np.pi, rel=_ANALYTIC_MEASURE_REL
     )
 
 
@@ -347,11 +354,13 @@ def _exact_images_agree(source: BRepGeometry, result: BRepSewingResult) -> None:
         actual = np.asarray(
             source.curves[source.edge_curves[image.source_edge]].evaluate(jnp.asarray(s))
         )
-        np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1e-12)
+        np.testing.assert_allclose(
+            actual, expected, rtol=0.0, atol=_CARRIER_EVALUATION_ATOL
+        )
         source_first, source_last = np.asarray(source.edge_ranges)[image.source_edge]
         assert (
-            source_first - 1e-12 <= min(s[0], s[-1])
-            and max(s[0], s[-1]) <= source_last + 1e-12
+            source_first - _CARRIER_EVALUATION_ATOL <= min(s[0], s[-1])
+            and max(s[0], s[-1]) <= source_last + _CARRIER_EVALUATION_ATOL
         )
 
 
@@ -411,8 +420,12 @@ def test_coplanar_split_faces_fragment_t_junctions_into_closed_shell(
     _exact_images_agree(soup, result)
     model = _sewn_model(result, patches, bounds, orientation, tags)
     measures = prepare_brep_query(model).measures
-    assert float(measures.solid_volumes[0]) == pytest.approx(2.0, rel=1e-9)
-    assert float(np.sum(measures.face_areas)) == pytest.approx(10.0, rel=1e-9)
+    assert float(measures.solid_volumes[0]) == pytest.approx(
+        2.0, rel=_ANALYTIC_MEASURE_REL
+    )
+    assert float(np.sum(measures.face_areas)) == pytest.approx(
+        10.0, rel=_ANALYTIC_MEASURE_REL
+    )
     restored = interchange.load_brep_archive(
         interchange.save_brep_archive(model, tmp_path / "sewn.phx").path
     )
@@ -454,10 +467,14 @@ def test_curved_faces_with_reflected_and_quarter_turn_frames_sew_exactly(
             coordinate_contract=CONTRACT,
         )
     ).measures
-    assert float(measures.solid_volumes[0]) == pytest.approx(2.0 * np.pi, rel=1e-4)
-    assert float(np.sum(measures.face_areas)) == pytest.approx(6.0 * np.pi, rel=1e-4)
     assert float(measures.solid_volumes[0]) == pytest.approx(
-        float(reference.solid_volumes[0]), rel=1e-6
+        2.0 * np.pi, rel=_CURVED_MEASURE_REL
+    )
+    assert float(np.sum(measures.face_areas)) == pytest.approx(
+        6.0 * np.pi, rel=_CURVED_MEASURE_REL
+    )
+    assert float(measures.solid_volumes[0]) == pytest.approx(
+        float(reference.solid_volumes[0]), rel=_CYLINDER_CONSTRUCTION_REL
     )
     restored = interchange.load_brep_archive(
         interchange.save_brep_archive(model, tmp_path / "cylinder.phx").path
@@ -469,7 +486,7 @@ def test_one_ulp_noncoincident_face_refuses_with_intersection_evidence() -> None
     faces = _split_top_slab(top_height=float(np.nextafter(1.0, 2.0)))
     soup, _, _, orientation, _ = _face_soup(tuple((model, 0) for model in faces))
     original = soup.geometry_id
-    with pytest.raises(BRepSewingFailure, match="after exact correspondence") as raised:
+    with pytest.raises(BRepSewingFailure, match=r"sew_brep\.shells") as raised:
         sew_brep(soup, orientation, (tuple(range(len(faces))),))
     failure = raised.value
     assert soup.geometry_id == original
@@ -489,10 +506,10 @@ def test_tangent_unequal_circles_refuse_with_tangent_evidence() -> None:
     )
     soup, _, _, orientation, _ = _face_soup(_cylinder(tangent))
     original = soup.geometry_id
-    with pytest.raises(BRepSewingFailure, match="after exact correspondence") as raised:
+    with pytest.raises(BRepSewingFailure, match=r"sew_brep\.shells") as raised:
         sew_brep(soup, orientation, ((0, 1, 2),))
     assert any(
-        {"tangent", "singular"} & set(contact.relations)
+        {"tangent_point", "tangent_curve", "singular_point"} & set(contact.relations)
         for contact in raised.value.contacts
     )
     assert soup.geometry_id == original
@@ -585,7 +602,7 @@ def test_native_face_roots_require_both_exact_spatial_carriers() -> None:
     vertex = BRepVertexRoot(primary, aliases=(alias,), source_edge_lifts=lifts)
     assert vertex.supports_endpoint(TrimRootEndpoint(alias.root, "first"))
     assert not certify_native_root_alias(primary, alias, lifts[:-1])
-    with pytest.raises(ValueError, match="common spatial"):
+    with pytest.raises(ValueError, match=r"BRepVertexRoot\.aliases"):
         BRepVertexRoot(primary, aliases=(alias,), source_edge_lifts=lifts[:-1])
     broad = BRepRootSupport(
         alias_patch,
@@ -621,7 +638,7 @@ def test_native_face_roots_require_both_exact_spatial_carriers() -> None:
     # Both boxes overlap and one spatial edge is shared, but the second
     # carrier defines a distinct endpoint and cannot borrow the primary root.
     assert not certify_native_root_alias(primary, nearby, nearby_lifts)
-    with pytest.raises(ValueError, match="common spatial"):
+    with pytest.raises(ValueError, match=r"BRepVertexRoot\.aliases"):
         BRepVertexRoot(primary, aliases=(nearby,), source_edge_lifts=nearby_lifts)
 
 
@@ -663,3 +680,201 @@ def test_collapsed_cone_apex_cannot_borrow_a_planar_root() -> None:
     )
     assert not surface_chart_regular(cone, collapsed.root.point_enclosure())
     assert not certify_native_root_alias(primary, collapsed, ())
+
+
+def _gapped_cube(
+    gap: float,
+) -> tuple[
+    BRepGeometry,
+    tuple[AbstractSurfacePatch, ...],
+    np.ndarray,
+    np.ndarray,
+    tuple[str, ...],
+]:
+    faces = list(_cube(0.0))
+    faces[1] = _rectangle(
+        (0.0, 0.0, 1.0 + gap),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (1.0, 1.0),
+    )
+    return _face_soup(tuple((face, 0) for face in faces))
+
+
+def test_certified_gap_sews_without_moving_carriers() -> None:
+    gap = 1.0 / 1024.0
+    soup, _, _, orientation, _ = _gapped_cube(gap)
+    original = soup.geometry_id
+    result = sew_brep(
+        soup,
+        orientation,
+        (tuple(range(6)),),
+        policy=BRepSewingPolicy(maximum_gap=gap),
+    )
+    assert result.geometry.edge_use_balance(orientation) == (0,) * 12
+    assert len(result.lineage.pair_gap_bounds) == 4
+    assert len(result.lineage.edge_face_gap_coedges) == 4
+    assert result.geometry.edge_face_gap_bounds is not None
+    assert (
+        tuple(
+            result.geometry.edge_face_gap_bounds[coedge]
+            for coedge in result.lineage.edge_face_gap_coedges
+        )
+        == (gap,) * 4
+    )
+    for target, retained, other, bound in result.lineage.pair_gap_bounds:
+        # Independently authored parallel edges have the closed-form height gap.
+        assert bound == gap
+        assert (
+            result.geometry.curves[result.geometry.edge_curves[target]]
+            is (soup.curves[soup.edge_curves[retained]])
+        )
+        assert other != retained
+    assert soup.geometry_id == original
+
+
+@pytest.mark.parametrize("source_uncertainty", [None, 1.0 / 2048.0])
+def test_certified_gap_above_declaration_refuses(
+    source_uncertainty: float | None,
+) -> None:
+    gap = 1.0 / 1024.0
+    soup, _, _, orientation, _ = _gapped_cube(gap)
+    limit = gap / 2.0 if source_uncertainty is None else 2.0 * gap
+    with pytest.raises(BRepSewingFailure):
+        sew_brep(
+            soup,
+            orientation,
+            (tuple(range(6)),),
+            policy=BRepSewingPolicy(maximum_gap=limit, maximum_contact_pairs=0),
+            source_uncertainty=source_uncertainty,
+        )
+
+
+def test_certified_gap_ambiguous_pairing_refuses() -> None:
+    gap = 1.0 / 1024.0
+    faces = list(_cube(0.0))
+    faces[1] = _rectangle(
+        (0.0, 0.0, 1.0 + gap), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (1.0, 1.0)
+    )
+    faces.append(
+        _rectangle(
+            (0.0, 0.0, 1.0 + 2.0 * gap),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (1.0, 1.0),
+        )
+    )
+    soup, _, _, orientation, _ = _face_soup(tuple((face, 0) for face in faces))
+    with pytest.raises(BRepSewingFailure, match="ambiguous certified-gap"):
+        sew_brep(
+            soup,
+            orientation,
+            (tuple(range(7)),),
+            policy=BRepSewingPolicy(maximum_gap=3.0 * gap),
+        )
+
+
+def test_certified_gap_archive_geometry_retains_endpoint_bounds() -> None:
+    from phydrax.interchange._cad_archive import _decode_geometry, _encode_geometry
+
+    soup, _, _, orientation, _ = _gapped_cube(1.0 / 1024.0)
+    result = sew_brep(
+        soup,
+        orientation,
+        (tuple(range(6)),),
+        policy=BRepSewingPolicy(maximum_gap=1.0 / 512.0),
+    )
+    arrays: dict[str, np.ndarray] = {}
+    record = _encode_geometry(result.geometry, arrays)
+    restored = _decode_geometry(record, arrays)
+    assert restored.edge_vertex_gap_bounds is not None
+    assert restored.edge_vertex_gap_bounds == result.geometry.edge_vertex_gap_bounds
+    assert restored.edge_face_gap_bounds == result.geometry.edge_face_gap_bounds
+    assert restored.geometry_id == result.geometry.geometry_id
+    assert BRepGeometry.from_stored_fields(restored).geometry_id == restored.geometry_id
+    endpoint = next(
+        (edge, end)
+        for edge, row in enumerate(restored.edge_vertex_gap_bounds)
+        for end, bound in enumerate(row)
+        if bound > 0.0
+    )
+    record["edge_vertex_gap_bounds"][endpoint[0]][endpoint[1]] = float(0.0).hex()
+    with pytest.raises(ValueError, match="certified endpoint distances"):
+        _decode_geometry(record, arrays)
+
+
+def test_pre_gap_archive_preserves_model_identity() -> None:
+    fixture = Path(__file__).parents[2] / "data" / "brep_no_gap_prechange.phx"
+    restored = interchange.load_brep_archive(fixture)
+    expected = brep_box((0.0, 0.0, 0.0), (1.0, 2.0, 3.0), coordinate_contract=CONTRACT)
+    assert restored.model_id == expected.model_id
+    assert restored.geometry is not None
+    assert restored.geometry.edge_vertex_gap_bounds is None
+    assert restored.geometry.edge_face_gap_bounds is None
+    assert expected.geometry is not None
+    assert restored.geometry.geometry_id == expected.geometry.geometry_id
+
+
+def test_gap_model_archive_revalidates_face_bounds(tmp_path: Path) -> None:
+    from phydrax.interchange._cad_archive import _decode_geometry, _encode_geometry
+
+    gap = 1.0e-6
+    soup, patches, bounds, orientation, tags = _gapped_cube(gap)
+    result = sew_brep(
+        soup,
+        orientation,
+        (tuple(range(6)),),
+        policy=BRepSewingPolicy(maximum_gap=gap),
+    )
+    model = _sewn_model(result, patches, bounds, orientation, tags)
+    # Distance to the other trimmed rectangle is independent of the p-curve
+    # lift certificate: project in its orthonormal Cartesian frame and clip.
+    geometry = result.geometry
+    assert geometry.edge_face_gap_bounds is not None
+    for coedge in result.lineage.edge_face_gap_coedges:
+        edge = geometry.coedge_edges[coedge]
+        face = geometry.coedge_faces[coedge]
+        patch = patches[face]
+        assert isinstance(patch, PlanePatch)
+        parameter = np.mean(np.asarray(geometry.edge_ranges)[edge])
+        point = np.asarray(
+            geometry.curves[geometry.edge_curves[edge]].evaluate(jnp.asarray([parameter]))
+        )[0]
+        origin = np.asarray(patch.origin)
+        axes = np.stack((np.asarray(patch.first_axis), np.asarray(patch.second_axis)))
+        uv = axes @ (point - origin)
+        nearest = origin + np.clip(uv, bounds[face, 0], bounds[face, 1]) @ axes
+        independent_distance = np.linalg.norm(point - nearest)
+        assert 0.0 < independent_distance <= geometry.edge_face_gap_bounds[coedge]
+        incident = np.asarray(model.triangle_face_ids) == face
+        dimensions = np.asarray(model.mesh_vertex_source_dimensions)
+        identifiers = np.asarray(model.mesh_vertex_source_indices)
+        on_seam = ((dimensions == 1) & (identifiers == edge)) | (
+            (dimensions == 0) & np.isin(identifiers, geometry.edge_vertices[edge])
+        )
+        adjacent = incident & np.any(on_seam[np.asarray(model.mesh_faces)], axis=1)
+        assert np.any(adjacent)
+        assert np.all(
+            np.asarray(model.tessellation_deviation_bounds)[adjacent]
+            >= independent_distance
+        )
+    assert np.max(np.asarray(model.tessellation_deviation_bounds)) >= gap
+    restored = interchange.load_brep_archive(
+        interchange.save_brep_archive(model, tmp_path / "gapped.phx").path
+    )
+    assert restored.model_id == model.model_id
+    assert restored.geometry is not None
+    assert restored.geometry.edge_face_gap_bounds == result.geometry.edge_face_gap_bounds
+    arrays: dict[str, np.ndarray] = {}
+    record = _encode_geometry(result.geometry, arrays)
+    coedge = result.lineage.edge_face_gap_coedges[0]
+    record["edge_face_gap_bounds"][coedge] = float(0.0).hex()
+    underclaimed = _decode_geometry(record, arrays)
+    with pytest.raises(ValueError, match="certified carrier distances"):
+        _sewn_model(
+            BRepSewingResult(underclaimed, result.certificate_id, result.lineage),
+            patches,
+            bounds,
+            orientation,
+            tags,
+        )

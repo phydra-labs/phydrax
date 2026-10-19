@@ -7,10 +7,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import final
 
+import equinox as eqx
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
+from .._strict import StrictModule
+from .._validation import normalized_identifier, positive_finite_float
 from ..geometry._cad_revision import CADSelectionSet
 from ..geometry._planar_embedding import PlanarEmbedding
 from ..geometry.brep import (
@@ -27,26 +31,20 @@ from ..geometry.brep import (
     PlanarPartitionOperand,
     PlanarPartitionPlan,
 )
-from ..geometry.brep._planar import _mesh_loops
+from ..geometry.brep._planar import mesh_loops
 from ..geometry.brep._planar_arrangement import (
-    _common_area,
-    _curve_segment,
-    _face_loops,
+    common_area,
+    curve_segment,
+    face_loops,
 )
 from ..geometry.simplicial import PlanarMeshRegion
+from ..typing import checked
 from ._controls import LayerSchedule
-
-
-def _text(value: str, name: str, /) -> str:
-    result = str(value).strip()
-    if not result:
-        raise ValueError(f"{name} must be non-empty.")
-    return result
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class PlanarBandControl:
-    """Exact normal layers on each named side of one straight partition patch."""
+    """Describe layer schedules on named sides of a straight partition patch."""
 
     patch_name: str
     side_schedules: tuple[tuple[str, LayerSchedule], ...]
@@ -60,31 +58,40 @@ class PlanarBandControl:
         tangential_target: float,
         /,
     ) -> None:
-        patch = _text(patch_name, "patch_name")
+        patch = normalized_identifier(str(patch_name), "PlanarBandControl.patch_name")
         if isinstance(side_schedules, Mapping):
             entries = tuple(side_schedules.items())
         else:
             entries = tuple(side_schedules)
         if not entries:
-            raise ValueError("A planar band requires at least one controlled side.")
+            raise ValueError(
+                f"PlanarBandControl.side_schedules must contain a controlled side; got {len(entries)} entries."
+            )
         normalized = tuple(
             sorted(
                 (
-                    (_text(region, "side region name"), schedule)
+                    (
+                        normalized_identifier(
+                            str(region), "PlanarBandControl.side_schedules.region"
+                        ),
+                        schedule,
+                    )
                     for region, schedule in entries
                 ),
                 key=lambda value: value[0],
             )
         )
         if len({region for region, _ in normalized}) != len(normalized):
-            raise ValueError("A planar band cannot repeat a side region.")
+            raise ValueError(
+                f"PlanarBandControl.side_schedules must name unique regions; got {tuple(region for region, _ in normalized)}."
+            )
         if any(not isinstance(schedule, LayerSchedule) for _, schedule in normalized):
             raise TypeError(
-                "side_schedules must map region names to LayerSchedule values."
+                f"PlanarBandControl.side_schedules must map regions to LayerSchedule values; got {tuple(type(schedule).__name__ for _, schedule in normalized)}."
             )
-        target = float(tangential_target)
-        if not np.isfinite(target) or target <= 0.0:
-            raise ValueError("tangential_target must be positive and finite.")
+        target = positive_finite_float(
+            tangential_target, "PlanarBandControl.tangential_target"
+        )
         object.__setattr__(self, "patch_name", patch)
         object.__setattr__(self, "side_schedules", normalized)
         object.__setattr__(self, "tangential_target", target)
@@ -104,48 +111,57 @@ class PlanarBandControl:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class PlanarBandPlan:
-    """One exact CAD partition operation for nonintersecting straight bands."""
+    """Request one CAD partition operation for nonintersecting straight bands."""
 
     partition: BRepPartitionResult
     embedding: PlanarEmbedding
     controls: tuple[PlanarBandControl, ...]
     plan_id: str = field(init=False)
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.partition, BRepPartitionResult):
-            raise TypeError("partition must be a BRepPartitionResult.")
-        if (
-            self.partition.topological_dimension != 2
-            or self.partition.model.topology.num_solids
-        ):
-            raise ValueError("Planar bands require a zero-solid 2D BRep partition.")
-        if not isinstance(self.embedding, PlanarEmbedding):
-            raise TypeError("embedding must be a PlanarEmbedding.")
-        controls = tuple(self.controls)
+    @checked
+    def __init__(
+        self,
+        partition: BRepPartitionResult,
+        embedding: PlanarEmbedding,
+        controls: tuple[PlanarBandControl, ...],
+    ) -> None:
+        if partition.topological_dimension != 2 or partition.model.topology.num_solids:
+            raise ValueError(
+                f"PlanarBandPlan.partition must be a zero-solid 2D partition; got dimension={partition.topological_dimension}, solids={partition.model.topology.num_solids}."
+            )
+        controls = tuple(controls)
         if not controls or any(
             not isinstance(control, PlanarBandControl) for control in controls
         ):
-            raise TypeError("controls must contain at least one PlanarBandControl.")
+            raise TypeError(
+                f"PlanarBandPlan.controls must contain at least one PlanarBandControl; got {len(controls)} entries of kinds {tuple(type(control).__name__ for control in controls)}."
+            )
         patch_names = tuple(control.patch_name for control in controls)
         if len(set(patch_names)) != len(patch_names):
-            raise ValueError("A partition patch can carry at most one planar band.")
-        patches = {patch.name: patch for patch in self.partition.patches}
+            raise ValueError(
+                f"PlanarBandPlan.controls must name distinct partition patches; got {patch_names}."
+            )
+        patches = {patch.name: patch for patch in partition.patches}
         unknown = set(patch_names) - set(patches)
         if unknown:
-            raise ValueError(f"Unknown planar band patches {sorted(unknown)}.")
+            raise ValueError(
+                f"PlanarBandPlan.controls.patch_name must identify partition patches; got unknown names {sorted(unknown)}."
+            )
         for control in controls:
             patch = patches[control.patch_name]
             requested_sides = tuple(region for region, _ in control.side_schedules)
             if tuple(sorted(requested_sides)) != tuple(sorted(patch.adjacent_region_ids)):
                 raise ValueError(
-                    "Planar band side schedules must name every patch-adjacent region exactly once."
+                    f"PlanarBandPlan.side_schedules must name every patch-adjacent region once; got {requested_sides}, expected {patch.adjacent_region_ids}."
                 )
             if len(patch.entity_ids) != 1:
                 raise ValueError(
-                    "Planar bands require one exact straight edge, not a corner or junction patch."
+                    f"PlanarBandPlan.patch.entity_ids must contain one straight edge; got {len(patch.entity_ids)} entities for {patch.name!r}."
                 )
+        object.__setattr__(self, "partition", partition)
+        object.__setattr__(self, "embedding", embedding)
         object.__setattr__(self, "controls", controls)
         object.__setattr__(
             self,
@@ -153,8 +169,8 @@ class PlanarBandPlan:
             canonical_fingerprint(
                 {
                     "kind": "planar-band-plan",
-                    "partition": self.partition.report.target_revision_id,
-                    "embedding": self.embedding.embedding_id,
+                    "partition": partition.report.target_revision_id,
+                    "embedding": embedding.embedding_id,
                     "controls": tuple(control.control_id for control in controls),
                 }
             ),
@@ -162,7 +178,9 @@ class PlanarBandPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class _PlanarBandLayer:
+class PlanarBandLayer:
+    """Describe a partitioned straight strip and its named layer front."""
+
     control_id: str
     source_patch_name: str
     region_name: str
@@ -178,43 +196,57 @@ class _PlanarBandLayer:
     tangential_target: float
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class PlanarBandResult:
-    """Published exact band partition and the identities needed for meshing."""
+    """Publish the band partition and the identities needed for meshing."""
 
     partition: BRepPartitionResult
     embedding: PlanarEmbedding
     controls: tuple[PlanarBandControl, ...]
-    layer_partitions: tuple[_PlanarBandLayer, ...]
+    layer_partitions: tuple[PlanarBandLayer, ...]
     plan_id: str
     result_id: str = field(init=False)
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.partition, BRepPartitionResult):
-            raise TypeError("partition must be a BRepPartitionResult.")
-        if self.partition.topological_dimension != 2:
-            raise ValueError("A planar band result must contain a 2D partition.")
-        if not isinstance(self.embedding, PlanarEmbedding):
-            raise TypeError("embedding must be a PlanarEmbedding.")
-        controls = tuple(self.controls)
-        layers = tuple(self.layer_partitions)
+    @checked
+    def __init__(
+        self,
+        partition: BRepPartitionResult,
+        embedding: PlanarEmbedding,
+        controls: tuple[PlanarBandControl, ...],
+        layer_partitions: tuple[PlanarBandLayer, ...],
+        plan_id: str,
+    ) -> None:
+        if partition.topological_dimension != 2:
+            raise ValueError(
+                f"PlanarBandResult.partition.dimension must be 2; got {partition.topological_dimension}."
+            )
+        controls = tuple(controls)
+        layers = tuple(layer_partitions)
         if not controls or not layers:
-            raise ValueError("A planar band result requires controls and exact layers.")
+            raise ValueError(
+                f"PlanarBandResult.layers must contain controls and partitioned layers; got controls={len(controls)}, layers={len(layers)}."
+            )
         control_ids = {control.control_id for control in controls}
         if any(layer.control_id not in control_ids for layer in layers):
-            raise ValueError("A planar band layer references an unknown control.")
+            raise ValueError(
+                f"PlanarBandResult.layers.control_id must reference a declared control; got {tuple(layer.control_id for layer in layers)}."
+            )
         for layer in layers:
             if not layer.face_entity_ids:
                 raise ValueError(
-                    "Every planar band layer requires exact partition faces."
+                    f"PlanarBandResult.layers.face_entity_ids must contain partition faces; got {layer.face_entity_ids}."
                 )
-            patch = self.partition.patch(layer.front_patch_name)
+            patch = partition.patch(layer.front_patch_name)
             if patch.adjacent_region_ids != (
                 layer.region_name,
                 layer.region_name,
             ):
-                raise ValueError("A planar band front has incorrect region ownership.")
-        plan = _text(self.plan_id, "plan_id")
+                raise ValueError(
+                    f"PlanarBandResult.front.adjacent_region_ids must retain layer region ownership; got {patch.adjacent_region_ids}, expected {(layer.region_name, layer.region_name)}."
+                )
+        plan = normalized_identifier(str(plan_id), "PlanarBandResult.plan_id")
+        object.__setattr__(self, "partition", partition)
+        object.__setattr__(self, "embedding", embedding)
         object.__setattr__(self, "controls", controls)
         object.__setattr__(self, "layer_partitions", layers)
         object.__setattr__(self, "plan_id", plan)
@@ -225,7 +257,7 @@ class PlanarBandResult:
                 {
                     "kind": "planar-band-result",
                     "plan": plan,
-                    "partition": self.partition.report.target_revision_id,
+                    "partition": partition.report.target_revision_id,
                     "layers": tuple(
                         (
                             layer.control_id,
@@ -325,7 +357,7 @@ def _edge_segments(
     model: BRepModel, embedding: PlanarEmbedding, /
 ) -> tuple[np.ndarray, ...]:
     return tuple(
-        _curve_segment(model, edge, embedding) for edge in range(model.topology.num_edges)
+        curve_segment(model, edge, embedding) for edge in range(model.topology.num_edges)
     )
 
 
@@ -379,7 +411,9 @@ def _organized_partition(
             if _segment_subset(segment, source_segment, tolerance)
         )
         if len(set(matches)) > 1:
-            raise RuntimeError("A partition edge has ambiguous source-patch ownership.")
+            raise RuntimeError(
+                f"prepare_planar_bands.edge.source_patch must identify one source patch; got {matches}."
+            )
         if matches:
             name = matches[0]
         else:
@@ -389,7 +423,9 @@ def _organized_partition(
                 if _segment_subset(segment, front, tolerance)
             )
             if len(front_matches) > 1:
-                raise RuntimeError("A planar-band front has ambiguous exact ownership.")
+                raise RuntimeError(
+                    f"prepare_planar_bands.front.identity must identify one named front; got {front_matches}."
+                )
             name = (
                 front_matches[0] if front_matches else f"band-seam:{':'.join(adjacent)}"
             )
@@ -412,25 +448,58 @@ def _organized_partition(
     )
 
 
-def prepare_planar_bands(
-    plan: PlanarBandPlan,
-    /,
-    *,
-    destination: str | Path,
-    linear_deflection: float = 1e-3,
-    angular_deflection: float = 0.1,
-    trim_samples_per_edge: int = 33,
-    overwrite: bool = False,
-) -> PlanarBandResult:
-    """Partition all requested straight layer fronts in one certified CAD operation."""
+@final
+class _BandSource(StrictModule):
+    """Prepare planar source loops, segment identities, and region operands."""
 
-    if not isinstance(plan, PlanarBandPlan):
-        raise TypeError("plan must be a PlanarBandPlan.")
-    if not isinstance(overwrite, bool):
-        raise TypeError("overwrite must be a bool.")
+    faces: tuple[tuple[np.ndarray, ...], ...]
+    segments: tuple[np.ndarray, ...]
+    tolerance: float = eqx.field(static=True)
+    region_by_face: dict[int, str] = eqx.field(static=True)
+    operands: tuple[PlanarPartitionOperand, ...]
+
+
+@final
+class _BandSide(StrictModule):
+    """Carry one straight segment and its uniquely contained inward strip."""
+
+    segment: np.ndarray
+    tangent: np.ndarray
+    inward: np.ndarray
+
+
+@final
+class _BandLayerDraft(StrictModule):
+    control: PlanarBandControl = eqx.field(static=True)
+    region_name: str = eqx.field(static=True)
+    layer_index: int = eqx.field(static=True)
+    thickness: float = eqx.field(static=True)
+    cumulative: float = eqx.field(static=True)
+    temporary: str = eqx.field(static=True)
+    tangent: np.ndarray
+    inward: np.ndarray
+    origin: np.ndarray
+    front_name: str = eqx.field(static=True)
+
+
+@final
+class _BandOperands(StrictModule):
+    operands: tuple[PlanarPartitionOperand, ...]
+    temporary_owner: dict[str, str] = eqx.field(static=True)
+    layers: tuple[_BandLayerDraft, ...]
+    front_segments: dict[str, np.ndarray]
+
+
+@final
+class _BandLayers(StrictModule):
+    layers: tuple[PlanarBandLayer, ...] = eqx.field(static=True)
+
+
+def _prepare_band_source(plan: PlanarBandPlan, /) -> _BandSource:
+    """Prepare host loops and the scale-dependent geometric tolerance."""
     source = plan.partition
     faces = tuple(
-        _face_loops(source.model, face, plan.embedding)
+        face_loops(source.model, face, plan.embedding)
         for face in range(source.model.topology.num_faces)
     )
     original_segments = _edge_segments(source.model, plan.embedding)
@@ -455,67 +524,78 @@ def prepare_planar_bands(
                 _selection(source, face_indices),
             )
         )
+    return _BandSource(
+        faces, original_segments, tolerance, region_by_face, tuple(operands)
+    )
 
+
+def _prepare_band_side(
+    plan: PlanarBandPlan,
+    prepared: _BandSource,
+    control: PlanarBandControl,
+    region_name: str,
+    schedule: LayerSchedule,
+    /,
+) -> _BandSide:
+    """Find the single normal whose full scheduled strip lies inside the region."""
+    source = plan.partition
+    patch = source.patch(control.patch_name)
+    edge_index = patch.entity_ids[0].index
+    segment = prepared.segments[edge_index]
+    tangent = segment[1] - segment[0]
+    length = float(np.linalg.norm(tangent))
+    tangent /= length
+    candidate_normals = (
+        np.asarray((-tangent[1], tangent[0])),
+        np.asarray((tangent[1], -tangent[0])),
+    )
+    adjacent_faces = source.model.topology.edge_faces[edge_index]
+    face_candidates = tuple(
+        index for index in adjacent_faces if prepared.region_by_face[index] == region_name
+    )
+    if len(face_candidates) != 1:
+        raise ValueError(
+            f"prepare_planar_bands.side.region must meet one named-region face; got {region_name!r} with {len(face_candidates)} faces."
+        )
+    face_index = face_candidates[0]
+    total = schedule.total_thickness
+    expected_area = length * total
+    matching_normals = []
+    for normal_index, normal in enumerate(candidate_normals):
+        candidate = _rectangle(
+            segment,
+            normal,
+            0.0,
+            total,
+            f"band-probe:{control.control_id}:{region_name}:{normal_index}",
+        )
+        candidate_shape = mesh_loops(candidate)
+        area = common_area(candidate_shape, prepared.faces[face_index])
+        if abs(area - expected_area) <= max(
+            prepared.tolerance * max(length, total), 1e-11 * expected_area
+        ):
+            matching_normals.append(normal)
+    if len(matching_normals) != 1:
+        raise ValueError(
+            f"prepare_planar_bands.side.clearance must contain one collision-free inward strip; got {len(matching_normals)} candidate normals for {control.patch_name!r}/{region_name!r}."
+        )
+    inward = matching_normals[0]
+    return _BandSide(segment, tangent, inward)
+
+
+def _prepare_band_operands(
+    plan: PlanarBandPlan, prepared: _BandSource, /
+) -> _BandOperands:
+    """Build nonoverlapping layer operands and named front segments in request order."""
+    operands = list(prepared.operands)
     temporary_owner: dict[str, str] = {}
-    temporary_layers: list[
-        tuple[
-            PlanarBandControl,
-            str,
-            int,
-            float,
-            float,
-            str,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            str,
-        ]
-    ] = []
+    temporary_layers: list[_BandLayerDraft] = []
     occupied_rectangles: list[tuple[str, np.ndarray, tuple[np.ndarray, ...]]] = []
     front_segments: dict[str, np.ndarray] = {}
     for control_index, control in enumerate(plan.controls):
-        patch = source.patch(control.patch_name)
-        edge_index = patch.entity_ids[0].index
-        segment = original_segments[edge_index]
-        tangent = segment[1] - segment[0]
-        length = float(np.linalg.norm(tangent))
-        tangent /= length
-        candidate_normals = (
-            np.asarray((-tangent[1], tangent[0])),
-            np.asarray((tangent[1], -tangent[0])),
-        )
-        adjacent_faces = source.model.topology.edge_faces[edge_index]
         for region_name, schedule in control.side_schedules:
-            face_candidates = tuple(
-                index for index in adjacent_faces if region_by_face[index] == region_name
-            )
-            if len(face_candidates) != 1:
-                raise ValueError(
-                    "A planar band side must meet exactly one face of its named region."
-                )
-            face_index = face_candidates[0]
-            total = schedule.total_thickness
-            expected_area = length * total
-            matching_normals = []
-            for normal_index, normal in enumerate(candidate_normals):
-                candidate = _rectangle(
-                    segment,
-                    normal,
-                    0.0,
-                    total,
-                    f"band-probe:{control.control_id}:{region_name}:{normal_index}",
-                )
-                candidate_shape = _mesh_loops(candidate)
-                area = _common_area(candidate_shape, faces[face_index])
-                if abs(area - expected_area) <= max(
-                    tolerance * max(length, total), 1e-11 * expected_area
-                ):
-                    matching_normals.append(normal)
-            if len(matching_normals) != 1:
-                raise ValueError(
-                    "A planar band lacks unique collision-free clearance inside its adjacent region."
-                )
-            inward = matching_normals[0]
+            side = _prepare_band_side(plan, prepared, control, region_name, schedule)
+            segment, tangent, inward = side.segment, side.tangent, side.inward
             cumulative = np.cumsum(np.asarray(schedule.thicknesses, dtype=np.float64))
             lower = 0.0
             for layer_index, upper in enumerate(cumulative):
@@ -527,15 +607,18 @@ def prepare_planar_bands(
                     float(upper),
                     temporary,
                 )
-                rectangle_shape = _mesh_loops(rectangle)
+                rectangle_shape = mesh_loops(rectangle)
                 rectangle_points = np.asarray(rectangle.vertices, dtype=np.float64)
                 for other_name, other_points, other_shape in occupied_rectangles:
                     if (
-                        _rectangles_overlap(rectangle_points, other_points, tolerance)
-                        and _common_area(rectangle_shape, other_shape) > tolerance**2
+                        _rectangles_overlap(
+                            rectangle_points, other_points, prepared.tolerance
+                        )
+                        and common_area(rectangle_shape, other_shape)
+                        > prepared.tolerance**2
                     ):
                         raise ValueError(
-                            f"Planar bands {control.patch_name!r} and {other_name!r} collide."
+                            f"prepare_planar_bands.layers must not collide; got overlapping strips {control.patch_name!r} and {other_name!r}."
                         )
                 occupied_rectangles.append(
                     (control.patch_name, rectangle_points, rectangle_shape)
@@ -550,7 +633,7 @@ def prepare_planar_bands(
                 front = segment + float(upper) * inward
                 front_segments[front_name] = front
                 temporary_layers.append(
-                    (
+                    _BandLayerDraft(
                         control,
                         region_name,
                         layer_index,
@@ -564,57 +647,32 @@ def prepare_planar_bands(
                     )
                 )
                 lower = float(upper)
+    return _BandOperands(
+        tuple(operands), temporary_owner, tuple(temporary_layers), front_segments
+    )
 
-    precedence = (
-        *(layer[5] for layer in temporary_layers),
-        *(region.name for region in source.regions),
-    )
-    raw = partition_planar(
-        PlanarPartitionPlan(
-            source.model.coordinate_contract,
-            plan.embedding,
-            tuple(operands),
-            BRepPartitionPolicy(tuple(precedence), overwrite=overwrite),
-        ),
-        destination=destination,
-        linear_deflection=linear_deflection,
-        angular_deflection=angular_deflection,
-        trim_samples_per_edge=trim_samples_per_edge,
-    )
-    expected_faces = source.model.topology.num_faces + len(temporary_layers)
-    if raw.model.topology.num_faces != expected_faces:
-        raise ValueError(
-            "Planar-band partition changed topology beyond the requested straight strips."
-        )
-    organized = _organized_partition(
-        raw,
-        source,
-        temporary_owner,
-        original_segments,
-        front_segments,
-        plan.embedding,
-        tolerance,
-    )
+
+def _publish_band_layers(
+    raw: BRepPartitionResult, prepared: _BandOperands, /
+) -> _BandLayers:
+    """Bind each requested layer to its single partition face and front identity."""
     layers = []
-    for (
-        control,
-        region_name,
-        layer_index,
-        thickness,
-        cumulative,
-        temporary,
-        tangent,
-        inward,
-        origin,
-        front_name,
-    ) in temporary_layers:
+    for draft in prepared.layers:
+        control = draft.control
+        region_name = draft.region_name
+        layer_index = draft.layer_index
+        thickness = draft.thickness
+        cumulative = draft.cumulative
+        temporary = draft.temporary
+        tangent, inward, origin = draft.tangent, draft.inward, draft.origin
+        front_name = draft.front_name
         face_ids = raw.region(temporary).entity_ids
         if len(face_ids) != 1:
             raise ValueError(
-                "An exact planar-band layer did not remain one straight strip face."
+                f"prepare_planar_bands.layer.face_entity_ids must retain one straight strip face; got {len(face_ids)} for {temporary!r}."
             )
         layers.append(
-            _PlanarBandLayer(
+            PlanarBandLayer(
                 control.control_id,
                 control.patch_name,
                 region_name,
@@ -628,23 +686,79 @@ def prepare_planar_bands(
                 (float(origin[0]), float(origin[1])),
                 float(
                     np.linalg.norm(
-                        front_segments[front_name][1] - front_segments[front_name][0]
+                        prepared.front_segments[front_name][1]
+                        - prepared.front_segments[front_name][0]
                     )
                 ),
                 control.tangential_target,
             )
         )
+    return _BandLayers(tuple(layers))
+
+
+@checked
+def prepare_planar_bands(
+    plan: PlanarBandPlan,
+    /,
+    *,
+    destination: str | Path,
+    linear_deflection: float = 1e-3,
+    angular_deflection: float = 0.1,
+    trim_samples_per_edge: int = 33,
+    overwrite: bool = False,
+) -> PlanarBandResult:
+    """Partition requested straight layer fronts in one CAD operation."""
+    if not isinstance(overwrite, bool):
+        raise TypeError(
+            f"prepare_planar_bands.overwrite must be a bool; got {type(overwrite).__name__}."
+        )
+    source = plan.partition
+    prepared_source = _prepare_band_source(plan)
+    prepared = _prepare_band_operands(plan, prepared_source)
+    precedence = (
+        *(layer.temporary for layer in prepared.layers),
+        *(region.name for region in source.regions),
+    )
+    raw = partition_planar(
+        PlanarPartitionPlan(
+            source.model.coordinate_contract,
+            plan.embedding,
+            prepared.operands,
+            BRepPartitionPolicy(tuple(precedence), overwrite=overwrite),
+        ),
+        destination=destination,
+        linear_deflection=linear_deflection,
+        angular_deflection=angular_deflection,
+        trim_samples_per_edge=trim_samples_per_edge,
+    )
+    expected_faces = source.model.topology.num_faces + len(prepared.layers)
+    if raw.model.topology.num_faces != expected_faces:
+        raise ValueError(
+            "prepare_planar_bands.partition.faces must retain the requested strip topology; "
+            f"got {raw.model.topology.num_faces}, expected {expected_faces}."
+        )
+    organized = _organized_partition(
+        raw,
+        source,
+        prepared.temporary_owner,
+        prepared_source.segments,
+        prepared.front_segments,
+        plan.embedding,
+        prepared_source.tolerance,
+    )
+    published = _publish_band_layers(raw, prepared)
     return PlanarBandResult(
         organized,
         plan.embedding,
         plan.controls,
-        tuple(layers),
+        published.layers,
         plan.plan_id,
     )
 
 
 __all__ = [
     "PlanarBandControl",
+    "PlanarBandLayer",
     "PlanarBandPlan",
     "PlanarBandResult",
     "prepare_planar_bands",

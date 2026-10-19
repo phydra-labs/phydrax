@@ -14,43 +14,68 @@ from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from phydrax._fingerprint import canonical_fingerprint
-from phydrax.discretization._cell_complex import PolygonalConnectivity
-from phydrax.discretization._cell_geometry import (
+from phydrax.discretization import (
+    CellBlock,
     CellGeometrySpec,
+    CellMesh,
+    CellMeshStorage,
+    CellPartition,
     coordinate_lagrange_element,
-)
-from phydrax.discretization._cell_mesh import CellBlock, CellMesh, CellMeshStorage
-from phydrax.discretization._distributed_field import (
     DistributedHaloPlan,
-    prepare_owner_local_halo_plans,
-    resolve_owner_local_field_values,
-)
-from phydrax.discretization._partition import CellPartition
-from phydrax.discretization._periodic_topology import (
     PeriodicCell,
     PeriodicIsometryGroup,
     PeriodicMeshTopology,
+    PolygonalConnectivity,
+    prepare_owner_local_halo_plans,
+    resolve_owner_local_field_values,
 )
-from phydrax.discretization.fem._distributed import (
-    _map_owner_local_finite_element,
+from phydrax.discretization.fem import (
+    discontinuous_element,
     execute_owner_local_finite_element_mass,
     execute_owner_local_finite_element_operator,
     execute_owner_local_finite_element_transfer,
     finite_element_dof_identity_keys,
     FiniteElementDofOwnershipPlan,
+    FiniteElementFieldSpec,
     FiniteElementGlobalDofOwnership,
+    FiniteElementPlan,
+    form_element,
+    lagrange_element,
     lower_distributed_finite_element_phases,
+    map_owner_local_finite_element,
     owner_local_finite_element_transfer_support,
     OwnerLocalFiniteElementDiscretization,
     partition_cells_cost_aware,
+    prepare_nested_field_transfer,
     prepare_owner_local_finite_element,
     prepare_owner_local_finite_element_transfer,
 )
-from phydrax.discretization.fem._form_elements import form_element
-from phydrax.discretization.fem._generic import FiniteElementFieldSpec, FiniteElementPlan
-from phydrax.discretization.fem._reference import discontinuous_element, lagrange_element
-from phydrax.discretization.fem._topology_transfer import prepare_nested_field_transfer
-from phydrax.linalg._distributed import DistributedKrylovPolicy
+from phydrax.linalg import DistributedKrylovPolicy
+from tests._support.cell_meshes import storage
+from tests._support.forced_devices import run_on_forced_devices
+
+
+requires_two_devices = pytest.mark.skipif(
+    len(jax.local_devices()) < 2, reason="Requires two real JAX devices."
+)
+
+
+# Empirical `test_owner_local_p1_collective_mass_stiffness_and_solve`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_P1_CONSTANT_STIFFNESS_ATOL = 1.0e-12
+# Empirical `test_owner_local_p1_collective_mass_stiffness_and_solve`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_P1_COLLECTIVE_PAIRING_ATOL = 1.0e-12
+# Empirical `test_owner_local_p1_mass_uses_original_curved_coordinate_bank_by_default`: matched max |delta|=1.11022e-16; joint allowance fraction=2.13162e-09, margin=100%.
+_CURVED_P1_MASS_ATOL = 1.0e-13
+# Empirical `test_owner_local_p1_mass_uses_original_curved_coordinate_bank_by_default`: matched max |delta|=1.11022e-16; joint allowance fraction=0.00111022, margin=99.889%.
+_CURVED_P1_CONSTANT_STIFFNESS_ATOL = 1.0e-13
+# Empirical `test_owner_local_p1_mass_uses_original_curved_coordinate_bank_by_default`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_CURVED_P1_SOLVE_VALUES_ATOL = 1.0e-12
+# Empirical `test_owner_local_p1_collective_mass_stiffness_and_solve`: matched max |delta|=2.22045e-16; joint allowance fraction=1.90317e-09, margin=100%.
+_P1_OWNED_MASS_IMAGE_ATOL = 1.0e-12
+# Empirical `test_owner_local_p1_collective_mass_stiffness_and_solve`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_P1_OWNED_STIFFNESS_IMAGE_ATOL = 1.0e-12
+# Empirical `test_owner_local_p1_collective_mass_stiffness_and_solve`: matched max |delta|=5.9508e-14; joint allowance fraction=2.9385e-07, margin=100%.
+_P1_OWNED_SOLVE_VALUES_ATOL = 1.0e-9
 
 
 def test_scientific_dof_keys_follow_ids_not_coordinates_or_local_rows() -> None:
@@ -88,7 +113,7 @@ def test_scientific_dof_keys_follow_ids_not_coordinates_or_local_rows() -> None:
 
 @pytest.mark.parametrize("family", ("H1", "Hdiv", "Hcurl"))
 @pytest.mark.parametrize("identification", ("translation", "rotation"))
-def test_global_periodic_dof_owner_is_derived_from_actual_incident_cells(
+def test_global_periodic_dof_owner_is_derived_from_incident_cells(
     family: str,
     identification: str,
     tmp_path: Path,
@@ -148,8 +173,6 @@ def test_global_periodic_dof_owner_is_derived_from_actual_incident_cells(
         np.minimum.at(expected, identifiers, np.full(identifiers.shape, (1, 0)[cell]))
     np.testing.assert_array_equal(authority.owners, expected)
     assert np.all(expected < 2)
-    import subprocess
-    import sys
 
     from phydrax.lifecycle._meshing_sources import (
         read_meshing_source_closure,
@@ -171,25 +194,17 @@ def test_global_periodic_dof_owner_is_derived_from_actual_incident_cells(
         )
         np.testing.assert_array_equal(loaded.owners, original.owners)
     bad = eqx.tree_at(lambda value: value.owners, authority, 1 - authority.owners)
-    with pytest.raises(ValueError, match="canonical source replay"):
+    with pytest.raises(ValueError, match="restored_state"):
         bad.validate_restored()
-    cold = subprocess.run(
-        (
-            sys.executable,
-            "-c",
-            "from phydrax.lifecycle._meshing_sources import read_meshing_source_closure; import sys; "
-            "roots=read_meshing_source_closure(sys.argv[1],expected_content_id=sys.argv[2]); "
-            "[root.validate_restored() for root in roots]; "
-            "assert roots[0].scientific_keys==roots[1].scientific_keys",
-            str(receipt.path),
-            receipt.content_id,
-        ),
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
+    record = run_on_forced_devices(
+        "tests._support.discretization_process_scenarios",
+        "cold_periodic_owners",
+        (str(receipt.path), receipt.content_id),
+        devices=1,
+        env={},
+        timeout_seconds=120,
     )
-    assert cold.returncode == 0, cold.stdout + cold.stderr
+    assert record["owner_keys_equal"]
 
 
 def test_cost_partition_and_phases_are_exactly_once_and_conservative() -> None:
@@ -259,7 +274,9 @@ def _owner_local_simplex_source() -> CellMesh:
     probe = CellMesh(points, (block,), vertex_global_ids=identifiers)
     connectivity = probe.connectivity
     if not isinstance(connectivity, PolygonalConnectivity):
-        raise TypeError("The simplex source requires actual polygonal connectivity.")
+        raise TypeError(
+            "simplex_fixture.mesh.connectivity must be PolygonalConnectivity; got a different connectivity kind"
+        )
     endpoints = np.sort(identifiers[np.asarray(connectivity.edges)], axis=1)
     return CellMesh(
         points,
@@ -272,7 +289,7 @@ def _owner_local_simplex_source() -> CellMesh:
 def _owner_local_simplex_pair(
     devices: tuple[jax.Device, ...],
 ) -> tuple[OwnerLocalFiniteElementDiscretization, ...]:
-    """Actual sharded logical arrays; preparation sees only each five-row closure."""
+    """sharded logical arrays; preparation sees only each five-row closure."""
     sharding = NamedSharding(
         Mesh(np.asarray(devices, dtype=object), ("parts",)), PartitionSpec("parts")
     )
@@ -348,7 +365,7 @@ def _owner_local_simplex_pair(
         connectivity = local.connectivity
         if not isinstance(connectivity, PolygonalConnectivity):
             raise TypeError(
-                "The simplex-pair fixture requires polygonal triangle connectivity."
+                f"fixture.connectivity must be a PolygonalConnectivity; got {type(connectivity).__name__}"
             )
         edge_vertices = np.asarray(connectivity.edges)
         endpoints = np.sort(np.asarray(ids, dtype=np.int64)[edge_vertices], axis=1)
@@ -408,17 +425,21 @@ def _mapped_owner_local_programs(
     callback: Callable[[OwnerLocalFiniteElementDiscretization], Array],
     devices: tuple[jax.Device, ...],
 ) -> Array:
-    return _map_owner_local_finite_element(
-        programs,
-        (),
-        lambda program: (callback(program),),
-        devices,
-    )[0]
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    with coordinate_reference_budget() as budget:
+        return map_owner_local_finite_element(
+            programs,
+            (),
+            lambda program: (callback(program),),
+            devices,
+            budget=budget,
+        )[0]
 
 
+@requires_two_devices
 def test_dof_ownership_projection_reuses_prepared_space_and_rejects_wrong_owner() -> None:
-    if len(jax.local_devices()) < 2:
-        pytest.skip("Requires two real JAX devices.")
+
     programs = _owner_local_simplex_pair(tuple(jax.local_devices()[:2]))
     plans = tuple(
         FiniteElementPlan(
@@ -446,15 +467,15 @@ def test_dof_ownership_projection_reuses_prepared_space_and_rejects_wrong_owner(
         assert projected.local_discretization is local
         assert projected.global_dof_count == 6
         wrong = eqx.tree_at(lambda value: value.local_owned, halo, ~halo.local_owned)
-        with pytest.raises(ValueError, match="owner projection"):
+        with pytest.raises(ValueError, match="dof_ownership.halo"):
             FiniteElementDofOwnershipPlan(plan, local.dof_maps[0], authority, wrong)
-    with pytest.raises(ValueError, match="message bound"):
+    with pytest.raises(ValueError, match="global_dof_ownership.message_capacity"):
         authority.prepare_closures(plans, message_capacity=2)
 
 
+@requires_two_devices
 def test_source_owned_field_transfer_matches_global_primal_and_paired_pullbacks() -> None:
-    if len(jax.local_devices()) < 2:
-        pytest.skip("Requires two real JAX devices.")
+
     devices = tuple(jax.local_devices()[:2])
     closures = _owner_local_simplex_pair(devices)
     field = FiniteElementFieldSpec("u", lagrange_element("triangle", 1))
@@ -476,7 +497,9 @@ def test_source_owned_field_transfer_matches_global_primal_and_paired_pullbacks(
     mesh = source_plan.mesh
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolygonalConnectivity):
-        raise TypeError("The source transfer fixture requires actual triangle incidence.")
+        raise TypeError(
+            "transfer_fixture.mesh.connectivity must provide triangle incidence; got a different connectivity kind"
+        )
     vertex_owners = np.asarray(authority.owners)[np.asarray(authority.source_to_global)]
     edge_owners = np.min(vertex_owners[np.asarray(connectivity.edges)], axis=1)
     ids = tuple(np.asarray(entities.entity_ids) for entities in mesh.topology.entity_sets)
@@ -484,7 +507,7 @@ def test_source_owned_field_transfer_matches_global_primal_and_paired_pullbacks(
     original_storage = closures[0].local_discretization.mesh.storage
     if original_storage is None:
         raise TypeError(
-            "The source transfer fixture requires actual logical source arrays."
+            "transfer_fixture.mesh.logical_arrays must retain source arrays; got None"
         )
     local_plans = []
     for rank, required in enumerate(support):
@@ -563,11 +586,9 @@ def test_source_owned_field_transfer_matches_global_primal_and_paired_pullbacks(
         )
 
 
+@requires_two_devices
 def test_owner_local_p1_collective_mass_stiffness_and_solve() -> None:
-    if len(jax.local_devices()) < 2:
-        pytest.skip(
-            "Requires two real JAX devices; use --xla_force_host_platform_device_count=2."
-        )
+
     devices = tuple(jax.local_devices()[:2])
     programs = _owner_local_simplex_pair(devices)
     assert programs[0].global_space_id == programs[1].global_space_id
@@ -628,7 +649,7 @@ def test_owner_local_p1_collective_mass_stiffness_and_solve() -> None:
         ),
         devices,
     )
-    np.testing.assert_allclose(constant_stiffness, 0.0, atol=1.0e-12)
+    np.testing.assert_allclose(constant_stiffness, 0.0, atol=_P1_CONSTANT_STIFFNESS_ATOL)
     np.testing.assert_array_equal(accepted, True)
     expected_mass = {
         10: 7 / 24,
@@ -649,7 +670,7 @@ def test_owner_local_p1_collective_mass_stiffness_and_solve() -> None:
                 expected_mass[int(value)] if flag else 0
                 for value, flag in zip(ids, owned, strict=True)
             ],
-            atol=1.0e-12,
+            atol=_P1_OWNED_MASS_IMAGE_ATOL,
         )
         np.testing.assert_allclose(
             affine_stiffness[rank],
@@ -657,16 +678,16 @@ def test_owner_local_p1_collective_mass_stiffness_and_solve() -> None:
                 expected_stiffness[int(value)] if flag else 0
                 for value, flag in zip(ids, owned, strict=True)
             ],
-            atol=1.0e-12,
+            atol=_P1_OWNED_STIFFNESS_IMAGE_ATOL,
         )
         np.testing.assert_allclose(
             values[rank],
             np.where(owned, 1 + points[:, 0] + 2 * points[:, 1], 0),
-            atol=1.0e-9,
+            atol=_P1_OWNED_SOLVE_VALUES_ATOL,
         )
         with pytest.raises(ValueError, match="bounded export"):
             program.halo.pack_reference(jnp.ones((6,), dtype=jnp.float64))
-    np.testing.assert_allclose(pairing, 91.0, atol=1.0e-12)
+    np.testing.assert_allclose(pairing, 91.0, atol=_P1_COLLECTIVE_PAIRING_ATOL)
     assert solved.condition_estimate is None
     np.testing.assert_array_equal(solved.status, 0)
     np.testing.assert_array_less(solved.residual_norm, 1.0e-10)
@@ -678,7 +699,7 @@ def test_owner_local_p1_collective_mass_stiffness_and_solve() -> None:
     )
     np.testing.assert_array_equal(unfinished.status, 1)
     np.testing.assert_array_equal(unfinished.accepted, False)
-    with pytest.raises(ValueError, match="buckets differ"):
+    with pytest.raises(ValueError, match="execution.buckets"):
         execute_owner_local_finite_element_operator(
             programs,
             (affine_fields[0], affine_fields[1][:-1]),
@@ -687,15 +708,13 @@ def test_owner_local_p1_collective_mass_stiffness_and_solve() -> None:
         )
 
 
+@requires_two_devices
 def test_owner_local_collective_rejects_mismatched_stable_id_routes() -> None:
-    if len(jax.local_devices()) < 2:
-        pytest.skip("Requires two real JAX devices.")
+
     devices = tuple(jax.local_devices()[:2])
     left, right = _owner_local_simplex_pair(devices)
     # Locally valid route slots, but the peer requests the two shared IDs reversed.
-    bad_halo = DistributedHaloPlan(
-        None,
-        None,
+    bad_halo = DistributedHaloPlan.from_owner_local(
         2,
         local_global_ids=right.global_ids,
         local_owned=right.owned_mask,
@@ -713,7 +732,7 @@ def test_owner_local_collective_rejects_mismatched_stable_id_routes() -> None:
         (left, bad), lambda program: program.collective_certificate(), devices
     )
     np.testing.assert_array_equal(certificates, False)
-    with pytest.raises(ValueError, match="bounded message admission"):
+    with pytest.raises(ValueError, match="halo_preparation.message_capacity"):
         prepare_owner_local_halo_plans(
             (left.local_discretization.mesh, right.local_discretization.mesh),
             0,
@@ -723,11 +742,11 @@ def test_owner_local_collective_rejects_mismatched_stable_id_routes() -> None:
         )
 
 
+@requires_two_devices
 def test_predecessor_fields_resolve_remote_ids_in_transfer_order_after_device_move() -> (
     None
 ):
-    if len(jax.local_devices()) < 2:
-        pytest.skip("Requires two real JAX devices.")
+
     devices = tuple(jax.local_devices()[:2])
     programs = _owner_local_simplex_pair(devices)
     meshes = tuple(program.local_discretization.mesh for program in programs)
@@ -788,7 +807,9 @@ def test_predecessor_fields_resolve_remote_ids_in_transfer_order_after_device_mo
     for value, target, device in zip(resolved, expected, moved, strict=True):
         np.testing.assert_array_equal(value, target)
         assert value.devices() == {device}
-    with pytest.raises(ValueError, match="authoritative owner closure"):
+    with pytest.raises(
+        ValueError, match="resolve_owner_local_field_values.query_global_ids"
+    ):
         resolve_owner_local_field_values(
             meshes,
             fields,
@@ -802,10 +823,8 @@ def test_predecessor_fields_resolve_remote_ids_in_transfer_order_after_device_mo
         )
 
 
+@requires_two_devices
 def test_owner_local_p1_mass_uses_original_curved_coordinate_bank_by_default() -> None:
-    if len(jax.local_devices()) < 2:
-        pytest.skip("Requires two real JAX devices.")
-    from tests.unit.discretization.test_cell_geometry_storage import _storage
 
     coordinate_element = coordinate_lagrange_element("triangle", 2)
     coefficients = np.asarray(coordinate_element.reference_nodes).copy()
@@ -830,7 +849,7 @@ def test_owner_local_p1_mass_uses_original_curved_coordinate_bank_by_default() -
         },
         coefficients,
     )
-    owner = _storage(root, geometry)
+    owner = storage(root, geometry)
     ghost = CellMeshStorage(
         owner.global_entity_counts,
         owner.entity_global_ids,
@@ -878,21 +897,136 @@ def test_owner_local_p1_mass_uses_original_curved_coordinate_bank_by_default() -
         "mass",
         devices=devices,
     )
-    # det(Dx) = 1 + reference_x/8: its exact triangle integral is 25/48,
+    # det(Dx) = 1 + reference_x/8: its triangle integral is 25/48,
     # whereas silently replacing the source bank by sampled corners gives 1/2.
-    np.testing.assert_allclose(jnp.sum(mass), 25.0 / 48.0, atol=1.0e-13)
+    # The 1e-13 bounds are 451 float64 ulps at unit scale for the small
+    # polynomial quadrature and cell-assembly paths; the PCG comparison uses
+    # its 1e-12 relative stopping threshold at this unit-scale constant field.
+    np.testing.assert_allclose(jnp.sum(mass), 25.0 / 48.0, atol=_CURVED_P1_MASS_ATOL)
     stiffness = execute_owner_local_finite_element_operator(
         programs,
         constants,
         "stiffness",
         devices=devices,
     )
-    np.testing.assert_allclose(stiffness, 0.0, atol=1.0e-13)
+    np.testing.assert_allclose(stiffness, 0.0, atol=_CURVED_P1_CONSTANT_STIFFNESS_ATOL)
     solved = execute_owner_local_finite_element_mass(
         programs,
         tuple(shard.data[0] for shard in mass.addressable_shards),
         DistributedKrylovPolicy(10, relative_tolerance=1.0e-12),
         devices=devices,
     )
-    np.testing.assert_allclose(solved.value, np.stack(constants), atol=1.0e-12)
+    np.testing.assert_allclose(
+        solved.value, np.stack(constants), atol=_CURVED_P1_SOLVE_VALUES_ATOL
+    )
     np.testing.assert_array_equal(solved.accepted, True)
+
+
+@pytest.fixture
+def single_partition_halo() -> DistributedHaloPlan:
+    """Prepare two owned rows without peer communication."""
+    indices = np.empty((0, 1), dtype=np.int32)
+    valid = np.empty((0, 1), dtype=np.bool_)
+    return DistributedHaloPlan.from_owner_local(
+        1,
+        local_global_ids=np.asarray((41, 73), dtype=np.int64),
+        local_owned=np.asarray((True, True), dtype=np.bool_),
+        global_entity_count=2,
+        partition_index=0,
+        phase_send_indices=indices,
+        phase_receive_indices=indices,
+        phase_send_valid=valid,
+        phase_receive_valid=valid,
+        permutations=(),
+        evidence_id="single-partition-halo",
+    )
+
+
+def test_owner_local_halo_stored_fields_preserve_identity_and_routing(
+    single_partition_halo: DistributedHaloPlan,
+) -> None:
+    rebuilt = DistributedHaloPlan.from_stored_fields(single_partition_halo)
+    assert rebuilt.plan_id == single_partition_halo.plan_id
+    assert rebuilt.evidence_id == single_partition_halo.evidence_id
+    assert rebuilt.permutations == single_partition_halo.permutations
+    np.testing.assert_array_equal(
+        rebuilt.local_global_ids, single_partition_halo.local_global_ids
+    )
+    np.testing.assert_array_equal(rebuilt.local_owned, single_partition_halo.local_owned)
+    np.testing.assert_array_equal(rebuilt.local_valid, single_partition_halo.local_valid)
+    np.testing.assert_array_equal(
+        rebuilt.phase_send_indices, single_partition_halo.phase_send_indices
+    )
+    np.testing.assert_array_equal(
+        rebuilt.phase_receive_indices, single_partition_halo.phase_receive_indices
+    )
+
+
+def test_owner_local_halo_stored_fields_reject_corrupted_mask_shape(
+    single_partition_halo: DistributedHaloPlan,
+) -> None:
+    corrupted = eqx.tree_at(
+        lambda value: value.local_owned,
+        single_partition_halo,
+        jnp.asarray((True,), dtype=jnp.bool_),
+    )
+    with pytest.raises(ValueError, match="DistributedHaloPlan.local_global_ids"):
+        DistributedHaloPlan.from_stored_fields(corrupted)
+
+
+def test_owner_local_halo_stored_fields_reject_corrupted_id_dtype(
+    single_partition_halo: DistributedHaloPlan,
+) -> None:
+    corrupted = eqx.tree_at(
+        lambda value: value.local_global_ids,
+        single_partition_halo,
+        single_partition_halo.local_global_ids.astype(jnp.float64),
+    )
+    with pytest.raises(TypeError, match="local_global_ids"):
+        DistributedHaloPlan.from_stored_fields(corrupted)
+
+
+@requires_two_devices
+def test_owner_local_execution_view_preserves_scientific_source_identity() -> None:
+    source = _owner_local_simplex_pair(tuple(jax.local_devices()[:2]))[0]
+    capacities = (
+        source.local_dof_count + 1,
+        source.cell_owned.size + 1,
+        source.mass.relation.capacity + 1,
+        source.stiffness.relation.capacity + 1,
+        source.halo.message_capacity + 1,
+    )
+    view = OwnerLocalFiniteElementDiscretization.from_execution_source(source, capacities)
+    assert view.execution_source is source
+    assert view.execution_capacities == capacities
+    assert view.local_discretization is source.local_discretization
+    assert view.global_space_id == source.global_space_id
+    assert view.local_space_id == source.local_space_id
+    assert view.prepared_id == source.prepared_id
+    assert view.execution_vector_shape == (capacities[0],) + source.component_shape
+    np.testing.assert_array_equal(
+        view.global_ids[: source.local_dof_count], source.global_ids
+    )
+    np.testing.assert_array_equal(view.owned_mask[-1], False)
+    np.testing.assert_array_equal(view.cell_owned[-1], False)
+    view.validate_restored()
+
+
+def test_owner_local_halo_rejects_missing_evidence_metadata(
+    single_partition_halo: DistributedHaloPlan,
+) -> None:
+    halo = single_partition_halo
+    with pytest.raises(ValueError, match="DistributedHaloPlan.local_global_ids"):
+        DistributedHaloPlan.from_owner_local(
+            halo.part_count,
+            local_global_ids=halo.local_global_ids,
+            local_owned=halo.local_owned,
+            global_entity_count=halo.entity_count,
+            partition_index=0,
+            phase_send_indices=halo.phase_send_indices,
+            phase_receive_indices=halo.phase_receive_indices,
+            phase_send_valid=halo.phase_send_valid,
+            phase_receive_valid=halo.phase_receive_valid,
+            permutations=halo.permutations,
+            evidence_id=None,  # ty: ignore[invalid-argument-type]
+        )

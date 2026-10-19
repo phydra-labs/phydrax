@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def test_primitives_2d_scenario_1() -> None:
@@ -46,23 +47,25 @@ def test_primitives_2d_scenario_1() -> None:
         ),
     )
     for case_id, primitive, expected_area in cases:
-        domain = phx.domain.GeometryDomain(primitive.compile())
+        domain = phx.domain.GeometryDomain(primitive.compile(coordinate_unit=METER))
         assert np.isclose(float(domain.area), expected_area, rtol=0.05), case_id
     with pytest.raises(ValueError, match="Non-unique vertices"):
         phx.domain.GeometryDomain(
             phx.geometry.Polygon(
                 vertices=((0.0, 0.0), (1.0, 0.0), (1.0, 0.0), (0.0, 1.0))
-            ).compile()
+            ).compile(coordinate_unit=METER)
         )
     with pytest.raises(ValueError, match="Self-intersection"):
         phx.domain.GeometryDomain(
             phx.geometry.Polygon(
                 vertices=((0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0))
-            ).compile()
+            ).compile(coordinate_unit=METER)
         )
     with pytest.raises(ValueError, match="Triangle must have exactly 3 vertices"):
         phx.domain.GeometryDomain(
-            phx.geometry.Triangle(vertices=((0.0, 0.0), (1.0, 0.0))).compile()
+            phx.geometry.Triangle(vertices=((0.0, 0.0), (1.0, 0.0))).compile(
+                coordinate_unit=METER
+            )
         )
     # A non-centered polygon; ensure analytic bounds match input bounds.
     vertices = [
@@ -76,7 +79,9 @@ def test_primitives_2d_scenario_1() -> None:
         (0.4, 0.2),
         (0.2, 0.0),
     ]
-    poly = phx.domain.GeometryDomain(phx.geometry.Polygon(vertices=vertices).compile())
+    poly = phx.domain.GeometryDomain(
+        phx.geometry.Polygon(vertices=vertices).compile(coordinate_unit=METER)
+    )
 
     bounds = np.asarray(poly.bounds)
     in_min = np.min(np.asarray(vertices), axis=0)
@@ -86,7 +91,7 @@ def test_primitives_2d_scenario_1() -> None:
     assert np.allclose(out_max, in_max, atol=1e-6)
     # Circle centered at origin with radius 1
     c = phx.domain.GeometryDomain(
-        phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile()
+        phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile(coordinate_unit=METER)
     )
     # Points on boundary along axes
     from jax import numpy as jnp

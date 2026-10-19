@@ -4,7 +4,7 @@
 
 """METIS multilevel k-way partitioning as an explicit external comparison route.
 
-``MeshPartitionKind.METIS`` selects this route by name; the canonical GRAPH
+``MeshPartitionKind.METIS`` selects this route by name; the GRAPH
 route is the native partitioner of :mod:`phydrax.graph` and never falls back to
 METIS. METIS is reached through its plain C ABI with ctypes. The library is
 resolved from the native ``ProviderConfig.library_paths`` override, then
@@ -31,9 +31,9 @@ _OPTION_UFACTOR = 16
 _OPTION_NUMBERING = 17
 _STATUS_OK = 1
 _STATUS_MESSAGES = {
-    -2: "METIS rejected the graph or options as invalid input.",
-    -3: "METIS ran out of memory.",
-    -4: "METIS failed with an unspecified error.",
+    -2: "metis.status must accept graph inputs and options; got invalid input",
+    -3: "metis.status must complete within available memory; got memory exhaustion",
+    -4: "metis.status must complete partitioning; got provider failure",
 }
 # Weights are rescaled so the total stays below this bound for either index width.
 _WEIGHT_BUDGET = float(1 << 30)
@@ -52,14 +52,13 @@ def _library_path() -> str:
     if configured:
         if not os.path.isfile(configured):
             raise MetisUnavailableError(
-                f"{LIBRARY_ENVIRONMENT['metis']} names a missing METIS library: {configured!r}."
+                f"{LIBRARY_ENVIRONMENT['metis']} must name an existing METIS library; got missing path {configured!r}"
             )
         return configured
     located = ctypes.util.find_library("metis")
     if located is None:
         raise MetisUnavailableError(
-            "The METIS partition route requires METIS; set "
-            f"{LIBRARY_ENVIRONMENT['metis']} to the libmetis shared library path."
+            f"metis.library must be available through ProviderConfig.library_paths or {LIBRARY_ENVIRONMENT['metis']}; got no shared library"
         )
     return located
 
@@ -71,7 +70,7 @@ def _load(path: str, /) -> tuple[ctypes.CDLL, type[np.signedinteger]]:
         library = ctypes.CDLL(path)
     except OSError as error:
         raise MetisUnavailableError(
-            f"METIS library {path!r} cannot be loaded."
+            f"metis.library must load successfully; got loader failure for {path!r}"
         ) from error
     library.METIS_SetDefaultOptions.restype = ctypes.c_int
     library.METIS_SetDefaultOptions.argtypes = (ctypes.c_void_p,)
@@ -82,13 +81,17 @@ def _load(path: str, /) -> tuple[ctypes.CDLL, type[np.signedinteger]]:
     sentinel = np.int64(0x5A5A5A5A5A5A5A5A)
     probe = np.full((_OPTION_COUNT,), sentinel, dtype=np.int64)
     if library.METIS_SetDefaultOptions(probe.ctypes.data) != _STATUS_OK:
-        raise MetisUnavailableError(f"METIS library {path!r} rejected option setup.")
+        raise MetisUnavailableError(
+            f"metis.library must accept option setup; got refusal from {path!r}"
+        )
     half = _OPTION_COUNT // 2
     if np.all(probe == -1):
         return library, np.int64
     if np.all(probe[:half] == -1) and np.all(probe[half:] == sentinel):
         return library, np.int32
-    raise MetisUnavailableError(f"METIS library {path!r} has an unrecognized ABI.")
+    raise MetisUnavailableError(
+        f"metis.library must provide a recognized index ABI; got unknown ABI from {path!r}"
+    )
 
 
 def metis_identity() -> str:
@@ -141,7 +144,9 @@ def metis_partition(
     )
     if status != _STATUS_OK:
         raise MetisPartitionError(
-            _STATUS_MESSAGES.get(status, f"METIS returned status {status}.")
+            _STATUS_MESSAGES.get(
+                status, f"metis.status must report success; got {status}"
+            )
         )
     return owners.astype(np.int32)
 

@@ -47,10 +47,13 @@
 #include <vector>
 
 #include "capi_guard.hpp"
+#include "counter_records.hpp"
 #include "bounded_memory.hpp"
 #include "clip3d.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "topology_keys.hpp"
+#include "geometry3.hpp"
 
 namespace phx::mc {
 
@@ -72,8 +75,8 @@ struct PowerCellsResult {
   NativeVector<int32_t> piece_tets;
   NativeVector<int32_t> piece_cells;
   NativeVector<double> piece_volumes;
-  int64_t counters[PHX_MC_POWER_CELLS_COUNTERS] = {};
-  int64_t failure[PHX_MC_POWER_CELLS_FAILURE] = {};
+  PowerCounters counters;
+  PowerFailure failure;
   double phase_seconds[4] = {-1.0, -1.0, -1.0, -1.0};
   int64_t source_work_units = 0;
 };
@@ -94,18 +97,6 @@ enum Failure : int64_t {
   kImageSourceDomain = 10,
 };
 
-enum Counter : int {
-  kClips = 0,
-  kPieces = 1,
-  kEmptyClips = 2,
-  kWalkSteps = 3,
-  kMergedLinks = 4,
-  kUnmergedGroups = 5,
-  kRemovedVertices = 6,
-  kCells = 7,
-  kFaces = 8,
-  kVertices = 9,
-};
 
 constexpr int32_t kVertexCapacity = 1 << 14;
 
@@ -368,10 +359,10 @@ class Builder {
   }
 
   int32_t fail(Failure reason, int64_t site, int64_t tet, int32_t clip_status, int32_t status) {
-    out_.failure[0] = reason;
-    out_.failure[1] = site;
-    out_.failure[2] = tet;
-    out_.failure[3] = clip_status;
+    out_.failure.reason = reason;
+    out_.failure.site = site;
+    out_.failure.tet = tet;
+    out_.failure.clip_status = clip_status;
     return status;
   }
 
@@ -389,7 +380,7 @@ class Builder {
   }
 
   bool over_budget() const {
-    return out_.counters[kClips] + out_.counters[kWalkSteps] > in_.work_limit;
+    return out_.counters.clips + out_.counters.walk_steps > in_.work_limit;
   }
 
   int64_t piece_key(int32_t site_index, int32_t tet) const {
@@ -461,7 +452,7 @@ class Builder {
         break;
       }
       native_execution_charge(1);
-      ++out_.counters[kWalkSteps];
+      ++out_.counters.walk_steps;
       if (over_budget()) {
         return fail(kWorkBudget, current, -1, PHX_MC_OK, PHX_MC_CAPACITY_EXCEEDED);
       }
@@ -543,7 +534,7 @@ class Builder {
         return fail(kSeedFailure, owner, tet, PHX_MC_OK, PHX_MC_DEGENERATE_INPUT);
       }
     }
-    out_.counters[kPieces] = static_cast<int64_t>(pieces_.size());
+    out_.counters.pieces = static_cast<int64_t>(pieces_.size());
     return PHX_MC_OK;
   }
 
@@ -561,7 +552,7 @@ class Builder {
       return fail(kWorkBudget, s, tet, PHX_MC_OK,
                   native_execution_status(PHX_MC_CAPACITY_EXCEEDED));
     }
-    ++out_.counters[kClips];
+    ++out_.counters.clips;
     if (over_budget()) {
       return fail(kWorkBudget, s, tet, PHX_MC_OK, PHX_MC_CAPACITY_EXCEEDED);
     }
@@ -574,7 +565,7 @@ class Builder {
     // Exact clipping owns emptiness. Rounded fan moments can vanish for a
     // positive thin piece whose source intersections round to one point.
     if (polytope_.empty()) {
-      ++out_.counters[kEmptyClips];
+      ++out_.counters.empty_clips;
       return PHX_MC_OK;
     }
     if (static_cast<int64_t>(pieces_.size()) >= in_.max_pieces) {
@@ -619,7 +610,7 @@ class Builder {
           }
           identity_stamp_[other] = epoch;
           native_execution_charge(1);
-          ++out_.counters[kWalkSteps];
+          ++out_.counters.walk_steps;
           if (over_budget()) {
             return fail(kWorkBudget, s, tet, PHX_MC_OK, PHX_MC_CAPACITY_EXCEEDED);
           }
@@ -770,14 +761,6 @@ class Builder {
     return found == piece_index_.end() ? -1 : found->second;
   }
 
-  static int32_t root(NativeVector<int32_t>& parent, int32_t x) {
-    while (parent[x] != x) {
-      native_execution_charge(0);
-      parent[x] = parent[parent[x]];
-      x = parent[x];
-    }
-    return x;
-  }
 
   // Connected components of the pieces of every unsplit site through
   // unconstrained tet faces.  A site whose component would meet itself across
@@ -805,8 +788,8 @@ class Builder {
         if (pieces_[other].site != piece.site) {
           continue;
         }
-        const int32_t a = root(parent, fragment.piece);
-        const int32_t b = root(parent, other);
+        const int32_t a = topology::find_root(parent, fragment.piece, [] { native_execution_charge(0); });
+        const int32_t b = topology::find_root(parent, other, [] { native_execution_charge(0); });
         if (fragment.piece < other) {
           ++links;
         }
@@ -828,7 +811,8 @@ class Builder {
         }
         const int32_t index = static_cast<int32_t>(&fragment - fragments_.data());
         const int32_t other = fragments_[fragment_mates_[index]].piece;
-        if (root(parent, fragment.piece) == root(parent, other)) {
+        if (topology::find_root(parent, fragment.piece, [] { native_execution_charge(0); }) ==
+            topology::find_root(parent, other, [] { native_execution_charge(0); })) {
           split_[piece.site] = 1;
           resplit = true;
         }
@@ -836,12 +820,12 @@ class Builder {
       if (resplit) {
         continue;
       }
-      out_.counters[kMergedLinks] = links;
+      out_.counters.merged_links = links;
       // Cells ordered by (site, first piece): deterministic from the inputs.
       NativeVector<int32_t> roots;
       for (int32_t p = 0; p < count; ++p) {
         native_execution_charge(0);
-        if (root(parent, p) == p) {
+        if (topology::find_root(parent, p, [] { native_execution_charge(0); }) == p) {
           roots.push_back(p);
         }
       }
@@ -863,7 +847,8 @@ class Builder {
       out_.cell_second_moments.assign(roots.size(), 0.0);
       for (int32_t p = 0; p < count; ++p) {
         native_execution_charge(0);
-        const int32_t cell = cell_of_root[root(parent, p)];
+        const int32_t cell = cell_of_root[
+            topology::find_root(parent, p, [] { native_execution_charge(0); })];
         const Piece& piece = pieces_[p];
         piece_cell_[p] = cell;
         out_.cell_sites[cell] = piece.site;
@@ -1034,7 +1019,7 @@ class Builder {
       }
       NativeVector<NativeVector<int32_t>> merged;
       if (!chain(edges, group, merged)) {
-        ++out_.counters[kUnmergedGroups];
+        ++out_.counters.unmerged_fragment_groups;
         merged.clear();
         for (const int32_t index : group) {
           native_execution_charge(0);
@@ -1080,15 +1065,9 @@ class Builder {
         return a == b;
       }), row.end());
       if (row.size() == 2) {
-        bool collinear = true;
-        for (int axis = 0; axis < 3; ++axis) {
-          const int next = (axis + 1) % 3;
-          const double a[2] = {coordinates_[3 * row[0] + axis], coordinates_[3 * row[0] + next]};
-          const double b[2] = {coordinates_[3 * v + axis], coordinates_[3 * v + next]};
-          const double c[2] = {coordinates_[3 * row[1] + axis], coordinates_[3 * row[1] + next]};
-          collinear = collinear && orient2d(a, b, c) == 0;
-        }
-        removable[v] = collinear ? 1 : 0;
+        removable[v] = geometry::collinear(coordinates_.data() + 3 * row[0],
+                                           coordinates_.data() + 3 * v,
+                                           coordinates_.data() + 3 * row[1], 0) ? 1 : 0;
       }
     }
     bool changed = true;
@@ -1138,7 +1117,7 @@ class Builder {
         out_.vertex_sites.insert(out_.vertex_sites.end(), key.begin(), separator);
         out_.vertex_site_offsets.push_back(static_cast<int64_t>(out_.vertex_sites.size()));
       }
-      out_.counters[kRemovedVertices] += removable[v];
+      out_.counters.removed_collinear_vertices += removable[v];
     }
     for (std::size_t f = 0; f < loops.size(); ++f) {
       for (const int32_t v : loops[f]) {
@@ -1159,9 +1138,9 @@ class Builder {
       out_.piece_cells.push_back(piece_cell_[p]);
       out_.piece_volumes.push_back(pieces_[p].volume);
     }
-    out_.counters[kCells] = cell_count_;
-    out_.counters[kFaces] = static_cast<int64_t>(loops.size());
-    out_.counters[kVertices] = used;
+    out_.counters.cells = cell_count_;
+    out_.counters.faces = static_cast<int64_t>(loops.size());
+    out_.counters.vertices = used;
     return PHX_MC_OK;
   }
 };
@@ -1173,16 +1152,176 @@ struct phx_mc_power_cells : phx::mc::NativeAllocatedObject {
   phx::mc::PowerCellsResult result;
 };
 
+namespace phx::mc {
+namespace {
+
+struct ExactImageWork {
+  int64_t units = 0;
+
+  void visit() {
+    native_execution_charge(1);
+    ++units;
+  }
+};
+
+struct ExactImageCoordinates {
+  NativeVector<Approx> approximate;
+  NativeVector<Expansion> exact;
+  NativeVector<ExactPowerCoordinates> coordinates;
+  NativeVector<double> weights;
+
+  explicit ExactImageCoordinates(int64_t count)
+      : approximate(static_cast<std::size_t>(3 * count)),
+        exact(static_cast<std::size_t>(3 * count)),
+        coordinates(static_cast<std::size_t>(count)),
+        weights(static_cast<std::size_t>(count)) {}
+};
+
+int32_t validate_exact_image_layout(const phx_mc_restricted_power_cells_exact_request& in) {
+  if (in.original_site_count < 1 || in.original_site_count >= INT32_MAX ||
+      in.image_count < 1 || in.image_count >= INT32_MAX || in.component_count < 0 ||
+      in.work_limit < 1 || in.original_sites == nullptr || in.original_weights == nullptr ||
+      in.image_site_owners == nullptr || in.image_coordinate_offsets == nullptr ||
+      (in.component_count != 0 && in.image_coordinate_components == nullptr) ||
+      !addressable(in.original_site_count, 3, sizeof(double)) ||
+      !addressable(in.image_count, 3, sizeof(int64_t)) ||
+      !addressable(in.component_count, 1, sizeof(double))) return PHX_MC_INVALID_ARGUMENT;
+  return PHX_MC_OK;
+}
+
+int32_t refuse_image_source(const phx_mc_restricted_power_cells_exact_request& in,
+                            const ExactImageWork& work, int64_t coordinate, int64_t component) {
+  auto refused = make_native_unique<phx_mc_power_cells>();
+  refused->result.source_work_units = work.units;
+  refused->result.failure.reason = kImageSourceDomain;
+  refused->result.failure.site = coordinate;
+  refused->result.failure.tet = component;
+  refused->result.failure.clip_status = PHX_MC_INVALID_INPUT;
+  *in.result = refused.release();
+  return PHX_MC_INVALID_INPUT;
+}
+
+// Degree-six coordinate polynomials require the same 2^-172 quantum and
+// absolute envelope as the authored sites, even for cancelling expansions.
+int32_t validate_image_coordinate(const phx_mc_restricted_power_cells_exact_request& in,
+                                   ExactImageWork& work, int64_t coordinate) {
+  const int64_t first = in.image_coordinate_offsets[coordinate];
+  const int64_t last = in.image_coordinate_offsets[coordinate + 1];
+  if (first < 0 || last < first || last > in.component_count)
+    return PHX_MC_INVALID_ARGUMENT;
+  Expansion absolute_sum;
+  double preceding = 0.0;
+  for (int64_t entry = first; entry < last; ++entry) {
+    work.visit();
+    const double value = in.image_coordinate_components[entry];
+    const double magnitude = std::abs(value);
+    const double quantum = std::ldexp(value, 172);
+    if (!std::isfinite(value) || value == 0.0 ||
+        magnitude > kCoordinateMaxMagnitude ||
+        !std::isfinite(quantum) || quantum != std::trunc(quantum))
+      return refuse_image_source(in, work, coordinate, entry);
+    if (entry != first &&
+        preceding > (magnitude - std::nextafter(magnitude, 0.0)) * 0.5)
+      return refuse_image_source(in, work, coordinate, entry);
+    preceding = magnitude;
+    absolute_sum = absolute_sum + Expansion(magnitude);
+    if ((absolute_sum - Expansion(kCoordinateMaxMagnitude)).sign() > 0)
+      return refuse_image_source(in, work, coordinate, entry);
+  }
+  return PHX_MC_OK;
+}
+
+int32_t validate_exact_image_source(const phx_mc_restricted_power_cells_exact_request& in,
+                                    ExactImageWork& work) {
+  for (int64_t site = 0; site < in.original_site_count; ++site) {
+    work.visit();
+    if (!weight_in_domain(in.original_weights[site])) return PHX_MC_INVALID_INPUT;
+    for (int axis = 0; axis < 3; ++axis)
+      if (!coordinate_in_domain(in.original_sites[3 * site + axis])) return PHX_MC_INVALID_INPUT;
+  }
+  if (in.image_coordinate_offsets[0] != 0 ||
+      in.image_coordinate_offsets[3 * in.image_count] != in.component_count)
+    return PHX_MC_INVALID_ARGUMENT;
+  for (int64_t image = 0; image < in.image_count; ++image) {
+    work.visit();
+    if (in.image_site_owners[image] < 0 ||
+        in.image_site_owners[image] >= in.original_site_count)
+      return PHX_MC_INVALID_ARGUMENT;
+    for (int axis = 0; axis < 3; ++axis) {
+      const int64_t coordinate = 3 * image + axis;
+      const int32_t status = validate_image_coordinate(in, work, coordinate);
+      if (status != PHX_MC_OK) return status;
+    }
+  }
+  return PHX_MC_OK;
+}
+
+void prepare_exact_image_coordinates(const phx_mc_restricted_power_cells_exact_request& in,
+                                      ExactImageWork& work, ExactImageCoordinates& out) {
+  for (int64_t image = 0; image < in.image_count; ++image) {
+    work.visit();
+    out.weights[image] = in.original_weights[in.image_site_owners[image]];
+    out.coordinates[image] = {out.approximate.data() + 3 * image, out.exact.data() + 3 * image};
+    for (int axis = 0; axis < 3; ++axis) {
+      const int64_t coordinate = 3 * image + axis;
+      Approx filtered = Approx::exact(0.0);
+      Expansion expanded;
+      for (int64_t entry = in.image_coordinate_offsets[coordinate];
+           entry < in.image_coordinate_offsets[coordinate + 1]; ++entry) {
+        work.visit();
+        const double value = in.image_coordinate_components[entry];
+        filtered = filtered + Approx::exact(value);
+        expanded = expanded + Expansion(value);
+      }
+      out.approximate[coordinate] = filtered;
+      out.exact[coordinate] = std::move(expanded);
+    }
+  }
+}
+
+int32_t execute_power_builder(const Input& input, PowerCellsResult& out) {
+  int32_t status;
+  try {
+    status = validate(input);
+    if (status == PHX_MC_OK) {
+      Builder builder(input, out);
+      status = builder.run();
+    }
+  } catch (const ExecutionRefusal& refusal) {
+    out.failure.reason = kWorkBudget;
+    out.failure.site = -1;
+    out.failure.tet = -1;
+    out.failure.clip_status = refusal.status;
+    status = refusal.status;
+  }
+  return status;
+}
+
+}  // namespace
+}  // namespace phx::mc
+
 extern "C" {
 
-int32_t phx_mc_restricted_power_cells(int64_t site_count, const double* sites,
-                                      const double* weights, const int64_t* neighbor_offsets,
-                                      const int32_t* neighbors, const int8_t* split_sites,
-                                      int64_t point_count, const double* points, int64_t tet_count,
-                                      const int32_t* tets, const int32_t* tet_regions,
-                                      const int32_t* tet_face_facets, int64_t max_pieces,
-                                      int64_t max_vertices, int64_t work_limit, int8_t record_phases,
-                                      phx_mc_power_cells** result) {
+int32_t phx_mc_restricted_power_cells(
+    const phx_mc_restricted_power_cells_request* request) {
+  if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  auto site_count = request->site_count;
+  auto sites = request->sites;
+  auto weights = request->weights;
+  auto neighbor_offsets = request->neighbor_offsets;
+  auto neighbors = request->neighbors;
+  auto split_sites = request->split_sites;
+  auto point_count = request->point_count;
+  auto points = request->points;
+  auto tet_count = request->tet_count;
+  auto tets = request->tets;
+  auto tet_regions = request->tet_regions;
+  auto tet_face_facets = request->tet_face_facets;
+  auto max_pieces = request->max_pieces;
+  auto max_vertices = request->max_vertices;
+  auto work_limit = request->work_limit;
+  auto record_phases = request->record_phases;
+  auto result = request->result;
   return phx::mc::guarded([&]() -> int32_t {
     if (result == nullptr) {
       return PHX_MC_INVALID_ARGUMENT;
@@ -1202,20 +1341,8 @@ int32_t phx_mc_restricted_power_cells(int64_t site_count, const double* sites,
       return status;
     }
     auto handle = phx::mc::make_native_unique<phx_mc_power_cells>();
-    try {
-      status = phx::mc::validate(input);
-      if (status == PHX_MC_OK) {
-        phx::mc::Builder builder(input, handle->result);
-        status = builder.run();
-      }
-    } catch (const phx::mc::ExecutionRefusal& refusal) {
-      handle->result.failure[0] = phx::mc::kWorkBudget;
-      handle->result.failure[1] = -1;
-      handle->result.failure[2] = -1;
-      handle->result.failure[3] = refusal.status;
-      status = refusal.status;
-    }
-    if (status == PHX_MC_OK || handle->result.failure[0] != phx::mc::kNoFailure) {
+    status = phx::mc::execute_power_builder(input, handle->result);
+    if (status == PHX_MC_OK || handle->result.failure.reason != phx::mc::kNoFailure) {
       *result = handle.release();
     }
     return status;
@@ -1226,145 +1353,44 @@ int32_t phx_mc_restricted_power_cells(int64_t site_count, const double* sites,
 // Image-axis site IDs remain in all construction witnesses; original ownership
 // and authored action provenance are retained by the immutable source owner.
 int32_t phx_mc_restricted_power_cells_exact(
-    int64_t original_site_count, const double* original_sites,
-    const double* original_weights, int64_t image_count,
-    const int32_t* image_site_owners, const int64_t* image_coordinate_offsets,
-    int64_t component_count, const double* image_coordinate_components,
-    const int64_t* neighbor_offsets, const int32_t* neighbors, const int8_t* split_sites,
-    int64_t point_count, const double* points, int64_t tet_count, const int32_t* tets,
-    const int32_t* tet_regions, const int32_t* tet_face_facets,
-    int64_t max_pieces, int64_t max_vertices, int64_t work_limit, int8_t record_phases,
-    phx_mc_power_cells** result) {
+    const phx_mc_restricted_power_cells_exact_request* request) {
+  if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
     using namespace phx::mc;
-    if (result == nullptr) return PHX_MC_INVALID_ARGUMENT;
-    *result = nullptr;
-    if (original_site_count < 1 || original_site_count >= INT32_MAX ||
-        image_count < 1 || image_count >= INT32_MAX || component_count < 0 ||
-        work_limit < 1 || original_sites == nullptr || original_weights == nullptr ||
-        image_site_owners == nullptr || image_coordinate_offsets == nullptr ||
-        (component_count != 0 && image_coordinate_components == nullptr) ||
-        !addressable(original_site_count, 3, sizeof(double)) ||
-        !addressable(image_count, 3, sizeof(int64_t)) ||
-        !addressable(component_count, 1, sizeof(double))) return PHX_MC_INVALID_ARGUMENT;
+    const auto& in = *request;
+    if (in.result == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    *in.result = nullptr;
+    int32_t status = validate_exact_image_layout(in);
+    if (status != PHX_MC_OK) return status;
     NativeExecutionScope execution(
-        static_cast<uint64_t>(work_limit), std::numeric_limits<uint64_t>::max(),
+        static_cast<uint64_t>(in.work_limit), std::numeric_limits<uint64_t>::max(),
         std::numeric_limits<uint64_t>::max(), std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<double>::infinity());
-    int64_t source_work_units = 0;
-    const auto source_visit = [&]() {
-      native_execution_charge(1);
-      ++source_work_units;
-    };
-    const auto source_domain_refusal = [&](int64_t coordinate, int64_t component) {
-      auto refused = make_native_unique<phx_mc_power_cells>();
-      refused->result.source_work_units = source_work_units;
-      refused->result.failure[0] = kImageSourceDomain;
-      refused->result.failure[1] = coordinate;
-      refused->result.failure[2] = component;
-      refused->result.failure[3] = PHX_MC_INVALID_INPUT;
-      *result = refused.release();
-      return PHX_MC_INVALID_INPUT;
-    };
-    // Validate the entire source envelope before allocating a construction or
-    // mutating a clip workspace. Coordinate polynomials have degree <= six;
-    // components must share the original coordinate quantum 2^-172 and the
-    // absolute coordinate envelope, including cancellation-prone expansions.
-    for (int64_t site = 0; site < original_site_count; ++site) {
-      source_visit();
-      if (!weight_in_domain(original_weights[site])) return PHX_MC_INVALID_INPUT;
-      for (int axis = 0; axis < 3; ++axis)
-        if (!coordinate_in_domain(original_sites[3 * site + axis])) return PHX_MC_INVALID_INPUT;
-    }
-    if (image_coordinate_offsets[0] != 0 ||
-        image_coordinate_offsets[3 * image_count] != component_count)
-      return PHX_MC_INVALID_ARGUMENT;
-    for (int64_t image = 0; image < image_count; ++image) {
-      source_visit();
-      if (image_site_owners[image] < 0 || image_site_owners[image] >= original_site_count)
-        return PHX_MC_INVALID_ARGUMENT;
-      for (int axis = 0; axis < 3; ++axis) {
-        const int64_t coordinate = 3 * image + axis;
-        const int64_t first = image_coordinate_offsets[coordinate];
-        const int64_t last = image_coordinate_offsets[coordinate + 1];
-        if (first < 0 || last < first || last > component_count)
-          return PHX_MC_INVALID_ARGUMENT;
-        Expansion absolute_sum;
-        double preceding = 0.0;
-        for (int64_t entry = first; entry < last; ++entry) {
-          source_visit();
-          const double value = image_coordinate_components[entry];
-          const double magnitude = std::abs(value);
-          const double quantum = std::ldexp(value, 172);
-          if (!std::isfinite(value) || value == 0.0 ||
-              magnitude > kCoordinateMaxMagnitude ||
-              !std::isfinite(quantum) || quantum != std::trunc(quantum))
-            return source_domain_refusal(coordinate, entry);
-          if (entry != first &&
-              preceding > (magnitude - std::nextafter(magnitude, 0.0)) * 0.5)
-            return source_domain_refusal(coordinate, entry);
-          preceding = magnitude;
-          absolute_sum = absolute_sum + Expansion(magnitude);
-          if ((absolute_sum - Expansion(kCoordinateMaxMagnitude)).sign() > 0)
-            return source_domain_refusal(coordinate, entry);
-        }
-      }
-    }
-    NativeVector<Approx> approximate(static_cast<std::size_t>(3 * image_count));
-    NativeVector<Expansion> exact(static_cast<std::size_t>(3 * image_count));
-    NativeVector<ExactPowerCoordinates> coordinates(static_cast<std::size_t>(image_count));
-    NativeVector<double> weights(static_cast<std::size_t>(image_count));
-    for (int64_t image = 0; image < image_count; ++image) {
-      source_visit();
-      weights[image] = original_weights[image_site_owners[image]];
-      coordinates[image] = {approximate.data() + 3 * image, exact.data() + 3 * image};
-      for (int axis = 0; axis < 3; ++axis) {
-        const int64_t coordinate = 3 * image + axis;
-        Approx filtered = Approx::exact(0.0);
-        Expansion expanded;
-        for (int64_t entry = image_coordinate_offsets[coordinate];
-             entry < image_coordinate_offsets[coordinate + 1]; ++entry) {
-          source_visit();
-          const double value = image_coordinate_components[entry];
-          filtered = filtered + Approx::exact(value);
-          expanded = expanded + Expansion(value);
-        }
-        approximate[coordinate] = filtered;
-        exact[coordinate] = std::move(expanded);
-      }
-    }
+    ExactImageWork source_work;
+    status = validate_exact_image_source(in, source_work);
+    if (status != PHX_MC_OK) return status;
+    ExactImageCoordinates images(in.image_count);
+    prepare_exact_image_coordinates(in, source_work, images);
     auto handle = make_native_unique<phx_mc_power_cells>();
-    handle->result.source_work_units = source_work_units;
-    if (source_work_units >= work_limit) {
-      handle->result.failure[0] = kWorkBudget;
-      handle->result.failure[1] = -1;
-      handle->result.failure[2] = -1;
-      handle->result.failure[3] = PHX_MC_CAPACITY_EXCEEDED;
-      *result = handle.release();
+    handle->result.source_work_units = source_work.units;
+    if (source_work.units >= in.work_limit) {
+      handle->result.failure.reason = kWorkBudget;
+      handle->result.failure.site = -1;
+      handle->result.failure.tet = -1;
+      handle->result.failure.clip_status = PHX_MC_CAPACITY_EXCEEDED;
+      *in.result = handle.release();
       return PHX_MC_CAPACITY_EXCEEDED;
     }
-    const Input input{image_count, nullptr, weights.data(), neighbor_offsets, neighbors,
-                      split_sites, point_count, points, tet_count, tets, tet_regions,
-                      tet_face_facets, max_pieces, max_vertices,
-                      work_limit - source_work_units, record_phases,
-                      coordinates.data()};
-    int32_t status = validate_layout(input);
+    const Input input{in.image_count, nullptr, images.weights.data(), in.neighbor_offsets,
+                      in.neighbors, in.split_sites, in.point_count, in.points,
+                      in.tet_count, in.tets, in.tet_regions, in.tet_face_facets,
+                      in.max_pieces, in.max_vertices, in.work_limit - source_work.units,
+                      in.record_phases, images.coordinates.data()};
+    status = validate_layout(input);
     if (status != PHX_MC_OK) return status;
-    try {
-      status = validate(input);
-      if (status == PHX_MC_OK) {
-        Builder builder(input, handle->result);
-        status = builder.run();
-      }
-    } catch (const ExecutionRefusal& refusal) {
-      handle->result.failure[0] = kWorkBudget;
-      handle->result.failure[1] = -1;
-      handle->result.failure[2] = -1;
-      handle->result.failure[3] = refusal.status;
-      status = refusal.status;
-    }
-    if (status == PHX_MC_OK || handle->result.failure[0] != kNoFailure)
-      *result = handle.release();
+    status = execute_power_builder(input, handle->result);
+    if (status == PHX_MC_OK || handle->result.failure.reason != kNoFailure)
+      *in.result = handle.release();
     return status;
   });
 }
@@ -1373,66 +1399,110 @@ int64_t phx_mc_power_cells_source_work_units(const phx_mc_power_cells* result) {
   return result->result.source_work_units;
 }
 
-void phx_mc_power_cells_sizes(const phx_mc_power_cells* result, int64_t* sizes) {
-  const phx::mc::PowerCellsResult& r = result->result;
-  sizes[0] = static_cast<int64_t>(r.vertices.size() / 3);
-  sizes[1] = static_cast<int64_t>(r.face_facets.size());
-  sizes[2] = static_cast<int64_t>(r.face_vertices.size());
-  sizes[3] = static_cast<int64_t>(r.cell_sites.size());
-  sizes[4] = static_cast<int64_t>(r.piece_sites.size());
+int32_t phx_mc_power_cells_sizes(const phx_mc_power_cells* result, int64_t* sizes) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || sizes == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    const phx::mc::PowerCellsResult& r = result->result;
+    sizes[0] = static_cast<int64_t>(r.vertices.size() / 3);
+    sizes[1] = static_cast<int64_t>(r.face_facets.size());
+    sizes[2] = static_cast<int64_t>(r.face_vertices.size());
+    sizes[3] = static_cast<int64_t>(r.cell_sites.size());
+    sizes[4] = static_cast<int64_t>(r.piece_sites.size());
+    return PHX_MC_OK;
+  });
 }
 
 int64_t phx_mc_power_cells_site_witness_size(const phx_mc_power_cells* result) {
   return static_cast<int64_t>(result->result.vertex_sites.size());
 }
 
-void phx_mc_power_cells_export_vertex_sites(
+int32_t phx_mc_power_cells_export_vertex_sites(
     const phx_mc_power_cells* result, int64_t* offsets, int32_t* sites) {
-  std::copy(result->result.vertex_site_offsets.begin(), result->result.vertex_site_offsets.end(), offsets);
-  std::copy(result->result.vertex_sites.begin(), result->result.vertex_sites.end(), sites);
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    const auto& r = result->result;
+    if (!phx::mc::output_bank_valid(r.vertex_site_offsets, offsets) ||
+        !phx::mc::output_bank_valid(r.vertex_sites, sites)) return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::copy_output_bank(r.vertex_site_offsets, offsets);
+    phx::mc::copy_output_bank(r.vertex_sites, sites);
+    return PHX_MC_OK;
+  });
 }
 
-void phx_mc_power_cells_counters(const phx_mc_power_cells* result, int64_t* counters) {
-  std::copy(result->result.counters, result->result.counters + PHX_MC_POWER_CELLS_COUNTERS,
-            counters);
+int32_t phx_mc_power_cells_counters(const phx_mc_power_cells* result, int64_t* counters) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || counters == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::CounterPublisher publisher{result->result.counters, counters};
+    return PHX_MC_OK;
+  });
 }
 
-void phx_mc_power_cells_failure(const phx_mc_power_cells* result, int64_t* failure) {
-  std::copy(result->result.failure, result->result.failure + PHX_MC_POWER_CELLS_FAILURE,
-            failure);
+int32_t phx_mc_power_cells_failure(const phx_mc_power_cells* result, int64_t* failure) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || failure == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::CounterPublisher publisher{result->result.failure, failure};
+    return PHX_MC_OK;
+  });
 }
 
-void phx_mc_power_cells_export(const phx_mc_power_cells* result, double* vertices,
-                               int64_t* face_offsets, int32_t* face_vertices, int32_t* face_cells,
-                               int32_t* face_facets, int32_t* cell_sites, int32_t* cell_regions,
-                               double* cell_volumes, double* cell_moments,
-                               double* cell_second_moments, int32_t* piece_sites,
-                               int32_t* piece_tets, int32_t* piece_cells, double* piece_volumes) {
-  const phx::mc::PowerCellsResult& r = result->result;
-  std::copy(r.vertices.begin(), r.vertices.end(), vertices);
-  std::copy(r.face_offsets.begin(), r.face_offsets.end(), face_offsets);
-  std::copy(r.face_vertices.begin(), r.face_vertices.end(), face_vertices);
-  std::copy(r.face_cells.begin(), r.face_cells.end(), face_cells);
-  std::copy(r.face_facets.begin(), r.face_facets.end(), face_facets);
-  std::copy(r.cell_sites.begin(), r.cell_sites.end(), cell_sites);
-  std::copy(r.cell_regions.begin(), r.cell_regions.end(), cell_regions);
-  std::copy(r.cell_volumes.begin(), r.cell_volumes.end(), cell_volumes);
-  std::copy(r.cell_moments.begin(), r.cell_moments.end(), cell_moments);
-  std::copy(r.cell_second_moments.begin(), r.cell_second_moments.end(), cell_second_moments);
-  std::copy(r.piece_sites.begin(), r.piece_sites.end(), piece_sites);
-  std::copy(r.piece_tets.begin(), r.piece_tets.end(), piece_tets);
-  std::copy(r.piece_cells.begin(), r.piece_cells.end(), piece_cells);
-  std::copy(r.piece_volumes.begin(), r.piece_volumes.end(), piece_volumes);
+int32_t phx_mc_power_cells_export(const phx_mc_power_cells* result, double* vertices,
+                                  int64_t* face_offsets, int32_t* face_vertices, int32_t* face_cells,
+                                  int32_t* face_facets, int32_t* cell_sites, int32_t* cell_regions,
+                                  double* cell_volumes, double* cell_moments,
+                                  double* cell_second_moments, int32_t* piece_sites,
+                                  int32_t* piece_tets, int32_t* piece_cells, double* piece_volumes) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    const phx::mc::PowerCellsResult& r = result->result;
+    if (!phx::mc::output_bank_valid(r.vertices, vertices) ||
+        !phx::mc::output_bank_valid(r.face_offsets, face_offsets) ||
+        !phx::mc::output_bank_valid(r.face_vertices, face_vertices) ||
+        !phx::mc::output_bank_valid(r.face_cells, face_cells) ||
+        !phx::mc::output_bank_valid(r.face_facets, face_facets) ||
+        !phx::mc::output_bank_valid(r.cell_sites, cell_sites) ||
+        !phx::mc::output_bank_valid(r.cell_regions, cell_regions) ||
+        !phx::mc::output_bank_valid(r.cell_volumes, cell_volumes) ||
+        !phx::mc::output_bank_valid(r.cell_moments, cell_moments) ||
+        !phx::mc::output_bank_valid(r.cell_second_moments, cell_second_moments) ||
+        !phx::mc::output_bank_valid(r.piece_sites, piece_sites) ||
+        !phx::mc::output_bank_valid(r.piece_tets, piece_tets) ||
+        !phx::mc::output_bank_valid(r.piece_cells, piece_cells) ||
+        !phx::mc::output_bank_valid(r.piece_volumes, piece_volumes)) return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::copy_output_bank(r.vertices, vertices);
+    phx::mc::copy_output_bank(r.face_offsets, face_offsets);
+    phx::mc::copy_output_bank(r.face_vertices, face_vertices);
+    phx::mc::copy_output_bank(r.face_cells, face_cells);
+    phx::mc::copy_output_bank(r.face_facets, face_facets);
+    phx::mc::copy_output_bank(r.cell_sites, cell_sites);
+    phx::mc::copy_output_bank(r.cell_regions, cell_regions);
+    phx::mc::copy_output_bank(r.cell_volumes, cell_volumes);
+    phx::mc::copy_output_bank(r.cell_moments, cell_moments);
+    phx::mc::copy_output_bank(r.cell_second_moments, cell_second_moments);
+    phx::mc::copy_output_bank(r.piece_sites, piece_sites);
+    phx::mc::copy_output_bank(r.piece_tets, piece_tets);
+    phx::mc::copy_output_bank(r.piece_cells, piece_cells);
+    phx::mc::copy_output_bank(r.piece_volumes, piece_volumes);
+    return PHX_MC_OK;
+  });
 }
 
-void phx_mc_power_cells_export_vertex_carriers(const phx_mc_power_cells* result,
-                                              int32_t* vertex_carriers) {
-  std::copy(result->result.vertex_carriers.begin(), result->result.vertex_carriers.end(),
-            vertex_carriers);
+int32_t phx_mc_power_cells_export_vertex_carriers(const phx_mc_power_cells* result,
+                                                 int32_t* vertex_carriers) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr ||
+        !phx::mc::output_bank_valid(result->result.vertex_carriers, vertex_carriers))
+      return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::copy_output_bank(result->result.vertex_carriers, vertex_carriers);
+    return PHX_MC_OK;
+  });
 }
 
-void phx_mc_power_cells_phase_seconds(const phx_mc_power_cells* result, double* seconds) {
-  std::copy(result->result.phase_seconds, result->result.phase_seconds + 4, seconds);
+int32_t phx_mc_power_cells_phase_seconds(const phx_mc_power_cells* result, double* seconds) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || seconds == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    std::copy(result->result.phase_seconds, result->result.phase_seconds + 4, seconds);
+    return PHX_MC_OK;
+  });
 }
 
 void phx_mc_power_cells_free(phx_mc_power_cells* result) { phx::mc::destroy_native_object(result); }

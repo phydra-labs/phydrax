@@ -37,6 +37,13 @@ from phydrax.linalg import (
     OperatorProperties,
     prepare,
 )
+from phydrax.units import METER
+from tests._support.iga_fields import (
+    affine_box_field,
+    annulus_points,
+    annulus_region,
+    quarter_annulus_query,
+)
 
 
 pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
@@ -322,7 +329,7 @@ def test_one_sided_queries_bind_the_requested_trace_side() -> None:
     np.testing.assert_allclose(upper.apply(state), (0.0, 0.0), atol=1e-12)
     with pytest.raises(ValueError, match="SIDE_REQUIRED"):
         reconstruction.prepare_query(diagonal, derivative=(1, 0))
-    with pytest.raises(ValueError, match="require a side"):
+    with pytest.raises(ValueError, match=r"PreparedFieldReconstruction\.cell_ids"):
         reconstruction.prepare_query(diagonal, cell_ids=np.zeros(2, np.int32))
     with pytest.raises(ValueError, match="maximum_derivative_order"):
         reconstruction.prepare_query(diagonal, derivative=(1, 1))
@@ -680,7 +687,9 @@ def _point_cloud_reconstruction(points: np.ndarray, quadrature: np.ndarray) -> A
     )
     return phx.discretization.prepare_point_cloud_field_reconstruction(
         discretization.prepare(),
-        support_geometry=phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile(),
+        support_geometry=phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile(
+            coordinate_unit=METER
+        ),
         radius=_CLOUD_RADIUS,
         capacity=points.shape[0],
     )
@@ -729,7 +738,9 @@ def test_point_cloud_masked_query_keeps_partial_support_and_conditioning_evidenc
         )
     with pytest.raises(ValueError, match=r"ILL_CONDITIONED, OUTSIDE_SUPPORT"):
         reconstruction.prepare_query(_CLOUD_QUERIES)
-    with pytest.raises(ValueError, match="maximum_derivative_order=0"):
+    with pytest.raises(
+        ValueError, match=r"PreparedFieldReconstruction\.maximum_derivative_order"
+    ):
         reconstruction.prepare_query(admitted, derivative=(1, 0))
 
 
@@ -768,7 +779,9 @@ def test_explicit_shepard_reconstruction_is_positive_on_collinear_support() -> N
     cloud = phx.discretization.PointCloudPlan(points, np.ones(points.shape[0])).prepare()
     reconstruction = phx.discretization.prepare_point_cloud_field_reconstruction(
         cloud,
-        support_geometry=phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile(),
+        support_geometry=phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile(
+            coordinate_unit=METER
+        ),
         radius=_CLOUD_RADIUS,
         capacity=points.shape[0],
         reconstruction="shepard",
@@ -906,7 +919,9 @@ def test_fd_query_transpose_is_dual_and_adjoint_uses_the_sbp_norm() -> None:
     assert masked.admitted.tolist() == list(range(6)) and not masked.complete
     with pytest.raises(ValueError, match="OUTSIDE_SUPPORT"):
         reconstruction.prepare_query(outside)
-    with pytest.raises(ValueError, match="maximum_derivative_order=0"):
+    with pytest.raises(
+        ValueError, match=r"PreparedFieldReconstruction\.maximum_derivative_order"
+    ):
         reconstruction.prepare_query(points, derivative=(1, 0))
 
 
@@ -1032,101 +1047,20 @@ def test_real_spectral_query_operator_acts_on_realified_complex_modes() -> None:
 
 
 # --- Isogeometric analysis ---
-# Single NURBS patches: an exact rational quarter annulus 1 <= r <= 2 in the
+# Single NURBS patches: a rational quarter annulus 1 <= r <= 2 in the
 # first quadrant and affine boxes. References are host polynomial evaluations
-# and host (scipy) B-spline collocation; physical-linear fields are exact in
-# the isoparametric rational space (coefficients are affine images of the
-# control points).
-
-_IGA_HALF = np.sqrt(0.5)
-
-
-def _iga_insert_knot(
-    knots: np.ndarray, controls: np.ndarray, weights: np.ndarray, value: float
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Boehm insertion of one knot into a quadratic NURBS curve."""
-    homogeneous = np.concatenate((controls * weights[:, None], weights[:, None]), axis=1)
-    span = np.searchsorted(knots, value, side="right") - 1
-    refined = []
-    for index in range(homogeneous.shape[0] + 1):
-        if index <= span - 2:
-            refined.append(homogeneous[index])
-        elif index > span:
-            refined.append(homogeneous[index - 1])
-        else:
-            alpha = (value - knots[index]) / (knots[index + 2] - knots[index])
-            refined.append(
-                alpha * homogeneous[index] + (1 - alpha) * homogeneous[index - 1]
-            )
-    points = np.asarray(refined)
-    return np.sort(np.append(knots, value)), points[:, :2] / points[:, 2:], points[:, 2]
-
-
-def _iga_quarter_annulus(scale: float = 1.0) -> tuple[Any, Any, np.ndarray]:
-    """Plan, prepared patch, and control points of a 2 x 2 span quarter annulus."""
-    iga = phx.discretization.iga
-    knots, arc, arc_weights = _iga_insert_knot(
-        np.asarray((0.0, 0.0, 0.0, 1.0, 1.0, 1.0)),
-        np.asarray(((1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
-        np.asarray((1.0, _IGA_HALF, 1.0)),
-        0.5,
-    )
-    radii = 1.0 + np.asarray((0.0, 0.25, 0.75, 1.0))
-    controls = scale * radii[:, None, None] * arc[None, :, :]
-    plan = iga.IsogeometricPlan.isoparametric(
-        (
-            iga.BSplineGrid(jnp.asarray((0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0)), 2),
-            iga.BSplineGrid(jnp.asarray(knots), 2),
-        ),
-        iga.NURBSGeometryState(
-            jnp.asarray(controls), jnp.asarray(np.ones(4)[:, None] * arc_weights)
-        ),
-        axis_names=("r", "theta"),
-        quadrature_policy=iga.IsogeometricQuadraturePolicy(3),
-    )
-    return plan, plan.prepare(numeric_version="annulus"), controls
-
-
-def _iga_annulus_region() -> Any:
-    geometry = phx.geometry
-    ring = geometry.Ball((0.0, 0.0), 2.0) - geometry.Ball((0.0, 0.0), 1.0)
-    return (ring & geometry.Orthotope((1.0, 1.0), (2.0, 2.0))).compile()
-
-
-def _iga_annulus_points(count: int, seed: int) -> np.ndarray:
-    rng = np.random.default_rng(seed)
-    radius = rng.uniform(1.0, 2.0, count)
-    angle = rng.uniform(0.0, 0.5 * np.pi, count)
-    # One point on each interior knot line (r = 1.5 and theta = pi / 4).
-    radius = np.append(radius, (1.5, 1.3))
-    angle = np.append(angle, (0.3, 0.25 * np.pi))
-    return np.stack((radius * np.cos(angle), radius * np.sin(angle)), axis=-1)
-
-
-def _iga_box(degree: int) -> tuple[Any, np.ndarray]:
-    """Axis-aligned affine patch [0, 2] x [0, 1] with one interior knot per axis."""
-    iga = phx.discretization.iga
-    knots = np.concatenate((np.zeros(degree + 1), (0.5,), np.ones(degree + 1)))
-    grid = iga.BSplineGrid(jnp.asarray(knots), degree)
-    greville = np.asarray(grid.greville_abscissae)
-    xx, yy = np.meshgrid(2.0 * greville, greville, indexing="ij")
-    plan = iga.IsogeometricPlan.isoparametric(
-        (grid, grid),
-        iga.NURBSGeometryState(
-            jnp.asarray(np.stack((xx, yy), axis=-1)), jnp.ones(xx.shape)
-        ),
-        axis_names=("xi", "eta"),
-        quadrature_policy=iga.IsogeometricQuadraturePolicy(degree + 1),
-    )
-    return plan.prepare(numeric_version="box"), knots
+# and host (scipy) B-spline collocation; physical-linear fields lie in
+# the isoparametric rational space with coefficients given by affine images
+# of the control points.
 
 
 def test_isogeometric_query_reproduces_physical_linear_fields_on_a_curved_patch() -> None:
-    _, prepared, controls = _iga_quarter_annulus()
+    fixture = quarter_annulus_query()
+    prepared, controls = fixture.prepared, fixture.controls
     reconstruction = phx.discretization.iga.prepare_isogeometric_field_reconstruction(
-        prepared, "u", support_geometry=_iga_annulus_region()
+        prepared, "u", support_geometry=annulus_region()
     )
-    points = _iga_annulus_points(10, 3)
+    points = annulus_points(10, 3)
     values = reconstruction.prepare_query(points)
     slopes = (
         reconstruction.prepare_query(points, derivative=(1, 0)),
@@ -1160,7 +1094,7 @@ def test_isogeometric_query_reproduces_physical_linear_fields_on_a_curved_patch(
 def test_isogeometric_query_reproduces_tensor_quadratics_on_a_box_patch() -> None:
     from scipy.interpolate import BSpline
 
-    prepared, knots = _iga_box(2)
+    prepared, knots = affine_box_field(2)
     reconstruction = phx.discretization.iga.prepare_isogeometric_field_reconstruction(
         prepared, "u"
     )
@@ -1199,11 +1133,12 @@ def test_isogeometric_query_reproduces_tensor_quadratics_on_a_box_patch() -> Non
 
 
 def test_isogeometric_query_transpose_and_adjoint_use_declared_pairings() -> None:
-    _, prepared, controls = _iga_quarter_annulus()
+    fixture = quarter_annulus_query()
+    prepared, controls = fixture.prepared, fixture.controls
     reconstruction = phx.discretization.iga.prepare_isogeometric_field_reconstruction(
-        prepared, "u", support_geometry=_iga_annulus_region()
+        prepared, "u", support_geometry=annulus_region()
     )
-    points = _iga_annulus_points(6, 9)
+    points = annulus_points(6, 9)
     query = reconstruction.prepare_query(points, derivative=(0, 1))
     rng = np.random.default_rng(2)
     state = jnp.asarray(rng.normal(size=controls.shape[:2]))
@@ -1234,7 +1169,7 @@ def test_isogeometric_query_transpose_and_adjoint_use_declared_pairings() -> Non
 
 
 def test_isogeometric_query_binds_sides_on_a_c0_knot_line() -> None:
-    prepared, _ = _iga_box(1)
+    prepared, _ = affine_box_field(1)
     reconstruction = phx.discretization.iga.prepare_isogeometric_field_reconstruction(
         prepared, "u"
     )
@@ -1257,19 +1192,22 @@ def test_isogeometric_query_binds_sides_on_a_c0_knot_line() -> None:
     assert reconstruction.regularity.continuity == 0
     with pytest.raises(ValueError, match="SIDE_REQUIRED"):
         reconstruction.prepare_query(kink, derivative=(1, 0))
-    with pytest.raises(ValueError, match="containing each trace site"):
+    with pytest.raises(
+        ValueError, match="IsogeometricFieldReconstructionKernel.cell_ids"
+    ):
         reconstruction.prepare_query(kink, side="owner", cell_ids=np.asarray((1, 0)))
 
 
 def test_isogeometric_query_refuses_undeclared_supports_orders_and_revisions() -> None:
-    plan, prepared, _ = _iga_quarter_annulus()
+    fixture = quarter_annulus_query()
+    plan, prepared = fixture.plan, fixture.prepared
     prepare = phx.discretization.iga.prepare_isogeometric_field_reconstruction
     quarter_disk = (
         phx.geometry.Ball((0.0, 0.0), 2.0)
         & phx.geometry.Orthotope((1.0, 1.0), (2.0, 2.0))
-    ).compile()
-    reconstruction = prepare(prepared, "u", support_geometry=_iga_annulus_region())
-    query = reconstruction.prepare_query(_iga_annulus_points(2, 1))
+    ).compile(coordinate_unit=METER)
+    reconstruction = prepare(prepared, "u", support_geometry=annulus_region())
+    query = reconstruction.prepare_query(annulus_points(2, 1))
     moved = prepared.prepare_runtime(
         phx.discretization.iga.NURBSGeometryState(
             1.5 * plan.geometry.control_points, plan.geometry.weights
@@ -1277,18 +1215,22 @@ def test_isogeometric_query_refuses_undeclared_supports_orders_and_revisions() -
         numeric_version="moved",
     )
 
-    with pytest.raises(ValueError, match="not derived"):
+    with pytest.raises(
+        ValueError, match="prepare_isogeometric_field_reconstruction.support_geometry"
+    ):
         prepare(prepared, "u")
-    with pytest.raises(ValueError, match="does not lie on the support boundary"):
+    with pytest.raises(
+        ValueError, match="prepare_isogeometric_field_reconstruction.support_geometry"
+    ):
         prepare(prepared, "u", support_geometry=quarter_disk)
     with pytest.raises(ValueError, match="maximum_derivative_order"):
-        reconstruction.prepare_query(_iga_annulus_points(2, 1), derivative=(1, 1))
-    with pytest.raises(KeyError, match="Unknown isogeometric field"):
-        prepare(prepared, "p", support_geometry=_iga_annulus_region())
+        reconstruction.prepare_query(annulus_points(2, 1), derivative=(1, 1))
+    with pytest.raises(KeyError, match="PreparedIsogeometricDiscretization.field_name"):
+        prepare(prepared, "p", support_geometry=annulus_region())
     scaled_region = (
         (phx.geometry.Ball((0.0, 0.0), 3.0) - phx.geometry.Ball((0.0, 0.0), 1.5))
         & phx.geometry.Orthotope((1.5, 1.5), (3.0, 3.0))
-    ).compile()
+    ).compile(coordinate_unit=METER)
     refreshed = prepare(prepared, "u", runtime=moved, support_geometry=scaled_region)
     query.require_reconstruction(reconstruction)
     with pytest.raises(ValueError, match="another reconstruction revision"):
@@ -1423,7 +1365,9 @@ def test_point_cloud_reconstruction_rebinds_to_refreshed_owner_coordinates() -> 
     moved = 0.5 + (points - 0.5) * (1.0 - contraction)
     refresh = discretization.refresh(moved)
     assert bool(refresh.accepted)
-    support = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile()
+    support = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile(
+        coordinate_unit=METER
+    )
     anchored = phx.discretization.prepare_point_cloud_field_reconstruction(
         discretization, support_geometry=support, radius=_CLOUD_RADIUS, capacity=count
     )

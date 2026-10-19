@@ -11,10 +11,10 @@ import pytest
 
 import phydrax as phx
 from phydrax.discretization._hexahedral import (
-    _EDGES,
-    _FACES,
-    _quadrilateral_tensor_permutation,
     hexahedral_connectivity,
+    HEXAHEDRAL_EDGES,
+    HEXAHEDRAL_FACES,
+    quadrilateral_tensor_permutation,
 )
 from phydrax.discretization._spaces import BlockDofLayout
 
@@ -62,8 +62,8 @@ def _dof_map(mesh: Any, order: Any) -> Any:
 
 
 def _local_face_trace_dofs(element: Any, local_face: Any) -> Any:
-    face_vertices = _FACES[local_face]
-    edge_lookup = {frozenset(edge): index for index, edge in enumerate(_EDGES)}
+    face_vertices = HEXAHEDRAL_FACES[local_face]
+    edge_lookup = {frozenset(edge): index for index, edge in enumerate(HEXAHEDRAL_EDGES)}
     face_edges = tuple(
         edge_lookup[
             frozenset((face_vertices[position], face_vertices[(position + 1) % 4]))
@@ -104,7 +104,9 @@ def test_fem_high_order_hexahedral_topology_scenario_1() -> None:
         assert np.count_nonzero(dof_map.boundary_dof_mask) == boundary_count
         layout = prepared.field_spaces[0].layout
         if not isinstance(layout, BlockDofLayout):
-            raise TypeError("High-order topology fixture requires a block layout.")
+            raise TypeError(
+                f"fixture.layout must be a BlockDofLayout; got {type(layout).__name__}"
+            )
         assert layout.names == (
             "vertices",
             "edges",
@@ -119,7 +121,7 @@ def test_fem_high_order_hexahedral_topology_scenario_1() -> None:
     reordered_map = phx.discretization.FiniteElementDofMap(reordered, (element,))
 
     assert mesh.topology_id == reordered.topology_id
-    # DOF-map identity now binds the exact cell-row coordinate-layout routes.
+    # DOF-map identity now binds the cell-row coordinate-layout routes.
     assert original_map.dof_map_id != reordered_map.dof_map_id
     assert np.array_equal(original_map.cell_dofs[0], reordered_map.cell_dofs[0][::-1])
     assert np.array_equal(
@@ -176,7 +178,7 @@ def test_fem_high_order_hexahedral_topology_scenario_2() -> None:
     }
     for cycle, tensor_permutation in expected.items():
         cell = np.empty((8,), dtype=np.int32)
-        for local_vertex, vertex in zip(_FACES[0], cycle, strict=True):
+        for local_vertex, vertex in zip(HEXAHEDRAL_FACES[0], cycle, strict=True):
             cell[local_vertex] = vertex
             cell[local_vertex + 4] = vertex + 4
         connectivity = hexahedral_connectivity(cell[None, :], 8)
@@ -185,7 +187,7 @@ def test_fem_high_order_hexahedral_topology_scenario_2() -> None:
         assert tuple(connectivity.cell_face_permutations(2, 3)[0, 0]) == (
             tensor_permutation
         )
-        assert tuple(_quadrilateral_tensor_permutation(cycle, 2, 3)) == tensor_permutation
+        assert tuple(quadrilateral_tensor_permutation(cycle, 2, 3)) == tensor_permutation
     mesh = _two_hex_mesh()
     dof_map = _dof_map(mesh, (2, 3, 4))
 

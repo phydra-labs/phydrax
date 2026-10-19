@@ -31,6 +31,7 @@ class AdapterStatus(IntEnum):
     MALFORMED_SOURCE = 3
     OPTIONAL_DEPENDENCY_UNAVAILABLE = 4
     INCONSISTENT_SOURCE = 5
+    REPAIRED = 6
 
 
 @final
@@ -375,6 +376,10 @@ class AdapterReport(StrictModule, NonTrainableState):
             raise TypeError("losses must contain AdapterLoss values.")
         if status_ == AdapterStatus.LOSSLESS and losses_:
             raise ValueError("A lossless report cannot contain semantic losses.")
+        if status_ == AdapterStatus.REPAIRED and not losses_:
+            raise ValueError(
+                f"AdapterReport.losses must enumerate applied repairs for REPAIRED status; got {losses_!r}"
+            )
         source_profile_ = (
             AdapterFormatProfile(source_format_)
             if source_profile is None
@@ -427,7 +432,11 @@ class AdapterReport(StrictModule, NonTrainableState):
             or bool(waivers_)
             or bool(stages_)
         )
-        valid_status = status_ in (AdapterStatus.LOSSLESS, AdapterStatus.DECLARED_LOSS)
+        valid_status = status_ in (
+            AdapterStatus.LOSSLESS,
+            AdapterStatus.DECLARED_LOSS,
+            AdapterStatus.REPAIRED,
+        )
         self.valid = (
             valid_status
             and (negotiation.valid or not enforce_negotiation)
@@ -537,11 +546,17 @@ def compose_adapter_reports(reports: Sequence[AdapterReport], /) -> AdapterRepor
         status = (
             failed_stage.status
             if failed_stage.status
-            not in (AdapterStatus.LOSSLESS, AdapterStatus.DECLARED_LOSS)
+            not in (
+                AdapterStatus.LOSSLESS,
+                AdapterStatus.DECLARED_LOSS,
+                AdapterStatus.REPAIRED,
+            )
             else AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
         )
     elif negotiation.status == AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC:
         status = AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC
+    elif any(stage.status == AdapterStatus.REPAIRED for stage in stages):
+        status = AdapterStatus.REPAIRED
     elif negotiation.status == AdapterStatus.DECLARED_LOSS:
         status = AdapterStatus.DECLARED_LOSS
     else:

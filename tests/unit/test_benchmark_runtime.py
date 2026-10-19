@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
     source_build_fingerprint,
+    source_build_inputs,
     synchronize,
     validate_benchmark_record,
 )
@@ -245,6 +247,65 @@ def _benchmark_source_tree(root: Path) -> Path:
     (root / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
     (root / "uv.lock").write_text("revision = 1\n", encoding="utf-8")
     return driver
+
+
+def test_source_build_inputs_preserves_fingerprint_payload(tmp_path: Path) -> None:
+    import hashlib
+
+    _benchmark_source_tree(tmp_path)
+    included = (
+        "native/meshcore/LICENSE",
+        "native/meshcore/include/kernel.h",
+        "native/meshcore/src/kernel.cpp",
+    )
+    ignored = (
+        "phydrax/model.data",
+        "phydrax/__pycache__/cached.py",
+        "native/meshcore/build/generated.cpp",
+        "native/meshcore/dist/generated.cpp",
+        "native/meshcore/.mypy_cache/cached.cpp",
+        "native/meshcore/.pytest_cache/cached.cpp",
+        "native/meshcore/.ruff_cache/cached.cpp",
+        "native/meshcore/.ty_cache/cached.cpp",
+        "native/meshcore/__pycache__/cached.py",
+        "native/meshcore/module.pyc",
+        "native/meshcore/module.pyo",
+    )
+    for relative in (*included, *ignored):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(relative.encode("utf-8"))
+    expected = tuple(
+        tmp_path / relative
+        for relative in sorted(
+            (*included, "phydrax/model.py", "pyproject.toml", "uv.lock")
+        )
+    )
+    assert source_build_inputs(tmp_path) == expected
+    records = []
+    for path in expected:
+        payload = path.read_bytes()
+        records.append(
+            {
+                "path": path.relative_to(tmp_path).as_posix(),
+                "size_bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        )
+    assert source_build_fingerprint(tmp_path) == canonical_fingerprint(
+        {"kind": "phydrax-current-source-build", "files": records}
+    )
+
+
+@pytest.mark.parametrize("missing", ["pyproject.toml", "uv.lock"])
+@pytest.mark.parametrize("capture", [source_build_inputs, source_build_fingerprint])
+def test_source_build_inventory_requires_build_inputs(
+    missing: str, capture: Callable[[Path], tuple[Path, ...] | str], tmp_path: Path
+) -> None:
+    _benchmark_source_tree(tmp_path)
+    (tmp_path / missing).unlink()
+    with pytest.raises(FileNotFoundError):
+        capture(tmp_path)
 
 
 def _stored_record(identity: BenchmarkIdentity) -> dict[str, Any]:

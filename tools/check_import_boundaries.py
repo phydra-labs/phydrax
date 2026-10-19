@@ -453,6 +453,66 @@ def configuration_bypass_errors(root: Path, /) -> tuple[str, ...]:
     return tuple(sorted(errors))
 
 
+# Exceptions name one tool path, package owner, and symbol, with the benchmark
+# measurement or workflow instrumentation contract requiring private access.
+_MESHING_PRIVATE_IMPORT_EXCEPTIONS: dict[tuple[str, str, str], str] = {
+    (
+        "tools/meshing_qualification/kernel_performance.py",
+        "phydrax",
+        "_meshcore",
+    ): (
+        "The native batch benchmark measures private kernels and their execution "
+        "scopes directly; its preparation, timing, and bitwise evidence comparison "
+        "are tool-owned measurement, not a public scientific workflow."
+    ),
+    (
+        "tools/meshing_qualification/_runtime.py",
+        "phydrax._meshcore",
+        "NativeParallelExecution",
+    ): (
+        "The workflow stage ledger lowers its remaining deadline while inheriting "
+        "the active native parallelism; exposing this harness scope would add a "
+        "second public thread vocabulary forbidden by plan D7."
+    ),
+    (
+        "tools/meshing_qualification/_records.py",
+        "phydrax._meshcore",
+        "MeshcoreError",
+    ): (
+        "The harness reports bare native refusals with their status and optional "
+        "elapsed/maximum seconds; public MeshingFailure carries different request "
+        "evidence and cannot classify these exceptions without losing fields."
+    ),
+}
+
+
+def _meshing_private_imports(
+    root: Path,
+    path: Path,
+    allowed: frozenset[tuple[str, str, str]],
+) -> tuple[str, ...]:
+    """Refuse each unrecorded private module or private-symbol dependency."""
+    relative = path.relative_to(root).as_posix()
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    errors: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            imports = tuple((node.module, alias.name) for alias in node.names)
+        elif isinstance(node, ast.Import):
+            imports = tuple((alias.name, "<module>") for alias in node.names)
+        else:
+            continue
+        for module, symbol in imports:
+            if (module == "phydrax" or module.startswith("phydrax.")) and (
+                _is_private_path(module) or symbol.startswith("_")
+            ):
+                if (relative, module, symbol) not in allowed:
+                    errors.append(
+                        f"private-meshing-tool-import:{relative}:{node.lineno}:{module}:{symbol}"
+                    )
+    return tuple(errors)
+
+
 def import_boundary_errors(root: Path, /) -> tuple[str, ...]:
     record = public_api_record()
     modules = record["modules"]
@@ -473,6 +533,20 @@ def import_boundary_errors(root: Path, /) -> tuple[str, ...]:
 
     for path in (root / "examples").rglob("*.py"):
         errors.extend(_example_private_imports(path))
+
+    allowed = frozenset(_MESHING_PRIVATE_IMPORT_EXCEPTIONS)
+    meshing_tools = (
+        root / "tools/_meshing_cases.py",
+        root / "tools/meshing_benchmarks.py",
+        root / "tools/meshing_design_source.py",
+        root / "tools/check_native_dependency_isolation.py",
+        root / "tools/layer_core_lifecycle_continuation.py",
+        root / "tools/native_moving_overset.py",
+        *(root / "tools/meshing_qualification").rglob("*.py"),
+    )
+    for path in meshing_tools:
+        if path.exists():
+            errors.extend(_meshing_private_imports(root, path, allowed))
 
     documentation_paths = (root / "README.md", *(root / "docs").rglob("*.md"))
     for path in documentation_paths:

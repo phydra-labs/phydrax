@@ -15,8 +15,8 @@ def test_sparse_vortex_fmm_strength_gradient_is_finite() -> None:
     core = jnp.full((4,), 0.08)
     prepared = phx.operators.VortexFMMPlan(
         position,
-        (-1.0, -1.0),
-        (1.0, 1.0),
+        jnp.asarray((-1.0, -1.0), dtype=jnp.float64),
+        jnp.asarray((1.0, 1.0), dtype=jnp.float64),
         depth=2,
         expansion_order=1,
         leaf_capacity=2,
@@ -33,6 +33,10 @@ def test_sparse_vortex_fmm_strength_gradient_is_finite() -> None:
             position, strength, core_radius=core
         )
         velocity = prepared.evaluate(source, target).velocity
+        if velocity is None:
+            raise RuntimeError(
+                "evaluation.velocity must be present for the request; got None"
+            )
         return jnp.sum(velocity**2)
 
     strength = jnp.asarray((0.5, -0.3, 0.8, -0.4))
@@ -52,8 +56,8 @@ def test_plane_vortex_fmm_strength_gradient_and_jit_are_finite() -> None:
     core = jnp.full((4,), 0.08)
     prepared = phx.operators.VortexFMMPlan(
         position,
-        (-1.0, -1.0),
-        (1.0, 1.0),
+        jnp.asarray((-1.0, -1.0), dtype=jnp.float64),
+        jnp.asarray((1.0, 1.0), dtype=jnp.float64),
         reference_targets=target_position,
         depth=2,
         expansion_order=1,
@@ -76,7 +80,12 @@ def test_plane_vortex_fmm_strength_gradient_and_jit_are_finite() -> None:
             strength,
             core_radius=core,
         )
-        return jnp.sum(prepared.evaluate(source, target).velocity ** 2)
+        velocity = prepared.evaluate(source, target).velocity
+        if velocity is None:
+            raise RuntimeError(
+                "evaluation.velocity must be present for the request; got None"
+            )
+        return jnp.sum(velocity**2)
 
     strength = jnp.asarray((0.5, -0.3, 0.8, -0.4))
     gradient = jax.grad(objective)(strength)

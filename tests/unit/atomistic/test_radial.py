@@ -39,6 +39,21 @@ def _envelope(r: np.ndarray, p: int) -> np.ndarray:
     return np.where(r < CUTOFF, value, 0.0)
 
 
+def _envelope_roundoff_bound(radii: np.ndarray, power: int) -> np.ndarray:
+    """Bound polynomial-reference rounding by its unreduced term magnitudes."""
+    scaled = radii / CUTOFF
+    term_magnitude = (
+        1.0
+        + (power + 1.0) * (power + 2.0) / 2.0 * scaled**power
+        + power * (power + 2.0) * scaled ** (power + 1)
+        + power * (power + 1.0) / 2.0 * scaled ** (power + 2)
+    )
+    # Near the cutoff, cancellation makes output-relative error ill-conditioned.
+    # Bound rounding against the unreduced terms and conservative operation count.
+    rounding = (3 * power + 10) * np.finfo(np.float64).eps
+    return rounding / (1.0 - rounding) * term_magnitude
+
+
 def _agnesi(r: np.ndarray, r0: np.ndarray, a: float, q: float, p: float) -> np.ndarray:
     ratio = r / r0
     return 1.0 / (1.0 + a * ratio**q / (1.0 + ratio ** (q - p)))
@@ -77,17 +92,7 @@ def test_polynomial_cutoff_values_and_c2_join(power: int) -> None:
     def envelope(r: jax.Array) -> jax.Array:
         return cutoff(r)
 
-    scaled = RADII / CUTOFF
-    term_magnitude = (
-        1.0
-        + (power + 1.0) * (power + 2.0) / 2.0 * scaled**power
-        + power * (power + 2.0) * scaled ** (power + 1)
-        + power * (power + 1.0) / 2.0 * scaled ** (power + 2)
-    )
-    # Near the cutoff, cancellation makes output-relative error ill-conditioned.
-    # Bound rounding against the unreduced terms and conservative operation count.
-    rounding = (3 * power + 10) * np.finfo(np.float64).eps
-    forward_bound = rounding / (1.0 - rounding) * term_magnitude
+    forward_bound = _envelope_roundoff_bound(RADII, power)
     np.testing.assert_array_less(
         np.abs(np.asarray(cutoff(jnp.asarray(RADII))) - _envelope(RADII, power)),
         forward_bound,
@@ -127,14 +132,23 @@ def test_embedding_applies_cutoff_to_untransformed_distance() -> None:
     r0 = 0.5 * (COVALENT_RADII[np.asarray(sender)] + COVALENT_RADII[np.asarray(receiver)])
     transformed = _agnesi(RADII, r0, 1.0805, 0.9183, 4.5791)
     n = np.arange(1, 5, dtype=np.float64)
-    expected = (
+    bessel_values = (
         math.sqrt(2.0 / CUTOFF)
         * np.sin(n * math.pi * transformed[:, None] / CUTOFF)
         / transformed[:, None]
-        * _envelope(RADII, 5)[:, None]
     )
+    expected = bessel_values * _envelope(RADII, 5)[:, None]
 
-    np.testing.assert_allclose(embedding(RADII, sender, receiver), expected, rtol=1e-12)
+    allowance = (
+        1e-12 * np.abs(expected)
+        + np.abs(bessel_values) * _envelope_roundoff_bound(RADII, 5)[:, None]
+    )
+    np.testing.assert_array_less(
+        np.abs(np.asarray(embedding(RADII, sender, receiver)) - expected), allowance
+    )
+    wrong_cutoff = bessel_values * _envelope(transformed, 5)[:, None]
+    with pytest.raises(AssertionError):
+        np.testing.assert_array_less(np.abs(wrong_cutoff - expected), allowance)
     assert embedding.pair_dependent
 
 

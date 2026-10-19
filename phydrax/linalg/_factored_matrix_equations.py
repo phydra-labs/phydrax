@@ -30,7 +30,7 @@ from ._shifted import (
     ShiftedSolveStatus,
     solve_shifted,
 )
-from ._spaces import _coordinate_dtype, ArraySpace
+from ._spaces import ArraySpace, coordinate_dtype
 
 
 FactoredMatrixSolutionForm: TypeAlias = Literal[
@@ -166,14 +166,14 @@ class FactoredMatrixEquationProblem(StrictModule):
             factor.dtype, jnp.bool_
         ):
             raise TypeError("source_factor must contain real or complex values.")
-        coordinate_dtype = _coordinate_dtype(operator_.source)
-        promoted_dtype = np.dtype(jnp.result_type(coordinate_dtype, factor.dtype))
-        if promoted_dtype != coordinate_dtype:
+        stored_dtype = coordinate_dtype(operator_.source)
+        promoted_dtype = np.dtype(jnp.result_type(stored_dtype, factor.dtype))
+        if promoted_dtype != stored_dtype:
             raise TypeError(
                 "source_factor cannot promote the operator coordinate dtype; "
-                f"expected values representable as {coordinate_dtype}."
+                f"expected values representable as {stored_dtype}."
             )
-        factor = factor.astype(coordinate_dtype)
+        factor = factor.astype(stored_dtype)
         finite = jnp.all(jnp.isfinite(factor))
         if isinstance(finite, jax_core.Tracer):
             factor = eqx.error_if(
@@ -190,7 +190,7 @@ class FactoredMatrixEquationProblem(StrictModule):
                     "operator": operator_.operator_id,
                     "space": operator_.source.space_id,
                     "source_rank": factor.shape[1],
-                    "dtype": coordinate_dtype.str,
+                    "dtype": stored_dtype.str,
                 }
             )
             if problem_id is None
@@ -860,8 +860,8 @@ def _adi_shifts(
     /,
 ) -> Array:
     values = jnp.asarray(policy.shifts)
-    coordinate_dtype = _coordinate_dtype(problem.operator.source)
-    if not np.issubdtype(coordinate_dtype, np.complexfloating) and np.issubdtype(
+    stored_dtype = coordinate_dtype(problem.operator.source)
+    if not np.issubdtype(stored_dtype, np.complexfloating) and np.issubdtype(
         np.dtype(values.dtype), np.complexfloating
     ):
         imaginary = np.asarray([complex(value).imag for value in policy.shifts])
@@ -871,12 +871,12 @@ def _adi_shifts(
                 "shifted solves and are not currently supported."
             )
         values = jnp.real(values)
-    dtype = jnp.result_type(coordinate_dtype, values.dtype)
-    if np.dtype(dtype) != coordinate_dtype:
-        if np.issubdtype(coordinate_dtype, np.complexfloating):
-            values = values.astype(coordinate_dtype)
+    dtype = jnp.result_type(stored_dtype, values.dtype)
+    if np.dtype(dtype) != stored_dtype:
+        if np.issubdtype(stored_dtype, np.complexfloating):
+            values = values.astype(stored_dtype)
         else:
-            values = values.astype(coordinate_dtype)
+            values = values.astype(stored_dtype)
     else:
         values = values.astype(dtype)
     return values

@@ -4,6 +4,7 @@
 // Failure boundary of the C ABI: refused allocations, escaped exceptions, and
 // unaddressable counts become call statuses and never cross extern "C".
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
@@ -55,6 +56,21 @@ void test_guard_maps_escaped_exceptions() {
   PHX_CHECK(guarded([]() -> int32_t { throw 7; }) == PHX_MC_INTERNAL_ERROR);
 }
 
+void test_null_requests_are_invalid_arguments() {
+  PHX_CHECK(phx_mc_clip_reference_tetrahedron_exact(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_clip_box_halfspaces(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_constrained_delaunay_2d(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_surface_reconnect(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_tet_mesh_create(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_plc3d_recover(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_restricted_power_cells(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_restricted_power_cells_exact(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_polyhedron_corner_hexes(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_level_set_split_3d(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_surface_envelope_create(nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(nullptr) == PHX_MC_INVALID_ARGUMENT);
+}
+
 void test_addressable_extents() {
   using phx::mc::addressable;
   const int64_t limit = std::numeric_limits<int64_t>::max();
@@ -97,10 +113,31 @@ void test_unaddressable_counts_are_invalid_arguments() {
                                                 &status) == PHX_MC_INVALID_ARGUMENT);
   const int32_t segment[2] = {0, 1};
   phx_mc_mesh* mesh = nullptr;
-  PHX_CHECK(phx_mc_constrained_delaunay_2d(3, square, huge, segment, 0, nullptr, 1, 0.0,
-                                           std::numeric_limits<double>::infinity(), 0, 100,
-                                           INT64_MAX, INT64_MAX, INT64_MAX, nullptr, nullptr,
-                                           &mesh) == PHX_MC_INVALID_ARGUMENT);
+  const phx_mc_constrained_delaunay_2d_request request{
+      .point_count = 3,
+      .points = square,
+      .segment_count = huge,
+      .segments = segment,
+      .hole_count = 0,
+      .holes = nullptr,
+      .keep_convex_hull = 1,
+      .min_angle_degrees = 0.0,
+      .max_area = std::numeric_limits<double>::infinity(),
+      .max_steiner = 0,
+      .max_triangles = 100,
+      .max_cavity_cells = INT64_MAX,
+      .max_work = INT64_MAX,
+      .max_scratch_bytes = INT64_MAX,
+      .work_evidence = nullptr,
+      .memory_evidence = nullptr,
+      .witness_capacity = 0,
+      .witness_parents = nullptr,
+      .witness_segments = nullptr,
+      .witness_ratios = nullptr,
+      .mesh = &mesh,
+  };
+  PHX_CHECK(phx_mc_constrained_delaunay_2d(&request) ==
+            PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(mesh == nullptr);
 }
 
@@ -161,11 +198,11 @@ void test_native_phase_limits_refuse_before_publication() {
     double seconds = -1;
     PHX_CHECK(phx_mc_execution_end(scope, counters, memory, &seconds) == limit.status);
     PHX_CHECK(seconds >= 0);
-    PHX_CHECK(memory[1] == 0);
+    PHX_CHECK(memory[PHX_MC_EXECUTION_MEMORY_LIVE_BYTES] == 0);
     if (limit.counter >= 0) PHX_CHECK(counters[limit.counter] > 0);
-    if (limit.counter == 3 || limit.counter == -2) PHX_CHECK(memory[2] == 0);
+    if (limit.counter == 3 || limit.counter == -2) PHX_CHECK(memory[PHX_MC_EXECUTION_MEMORY_PEAK_BYTES] == 0);
     if (limit.counter == -1) {
-      PHX_CHECK(memory[2] == 0 && memory[3] > 0 && memory[5] > 0);
+      PHX_CHECK(memory[PHX_MC_EXECUTION_MEMORY_PEAK_BYTES] == 0 && memory[PHX_MC_EXECUTION_MEMORY_REQUESTED_BYTES] > 0 && memory[PHX_MC_EXECUTION_MEMORY_REFUSALS] > 0);
     }
   }
   phx_mc_mesh* mesh = nullptr;
@@ -189,9 +226,9 @@ void test_nested_phase_counters_share_original_allowance() {
   uint64_t work[PHX_MC_EXECUTION_COUNTERS] = {}, memory[PHX_MC_EXECUTION_MEMORY_VALUES] = {};
   double seconds = 0;
   PHX_CHECK(phx_mc_execution_end(inner, work, memory, &seconds) == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(work[1] == 1);
+  PHX_CHECK(work[PHX_MC_EXECUTION_SOURCE_QUERIES] == 1);
   PHX_CHECK(phx_mc_execution_end(outer, work, memory, &seconds) == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(work[1] == 1 && work[4] == 1 && work[7] == 1 && work[8] == 1);
+  PHX_CHECK(work[PHX_MC_EXECUTION_SOURCE_QUERIES] == 1 && work[PHX_MC_EXECUTION_QUERY_REFUSALS] == 1 && work[PHX_MC_EXECUTION_EXTERNAL_QUERIES] == 1 && work[PHX_MC_EXECUTION_PRIMITIVE_QUERIES] == 1);
 }
 
 void test_pure_batch_bound_is_not_reported_as_consumed_work() {
@@ -205,7 +242,32 @@ void test_pure_batch_bound_is_not_reported_as_consumed_work() {
   uint64_t work[PHX_MC_EXECUTION_COUNTERS] = {}, memory[PHX_MC_EXECUTION_MEMORY_VALUES] = {};
   double seconds = 0;
   PHX_CHECK(phx_mc_execution_end(scope, work, memory, &seconds) == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(work[0] == 2 && work[6] == 2 && work[3] == 1);
+  PHX_CHECK(work[PHX_MC_EXECUTION_CONSTRUCTION_WORK] == 2 && work[PHX_MC_EXECUTION_EXTERNAL_WORK] == 2 && work[PHX_MC_EXECUTION_WORK_REFUSALS] == 1);
+}
+
+void test_batch_handle_allocation_refusal_leaks_no_reservations() {
+  void* scope = nullptr;
+  PHX_CHECK(phx_mc_execution_begin(10, 10, 10, 10, INFINITY, nullptr, &scope) == PHX_MC_OK);
+  void* admitted = nullptr;
+  PHX_CHECK(phx_mc_execution_batch_admit(scope, nullptr, 6, 6, 6, 6, &admitted) == PHX_MC_OK);
+  void* ticket = admitted;
+  PHX_CHECK(refused([&] {
+              return phx_mc_execution_batch_admit(scope, nullptr, 1, 1, 1, 1, &ticket);
+            }) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(ticket == nullptr);
+  uint64_t remaining[4] = {};
+  double seconds = 0;
+  PHX_CHECK(phx_mc_execution_remaining(scope, remaining, &seconds) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(remaining[0] == 4 && remaining[1] == 4 && remaining[2] == 4 && remaining[3] == 4);
+  uint64_t refusal[PHX_MC_EXECUTION_BATCH_REFUSAL_VALUES] = {};
+  PHX_CHECK(phx_mc_execution_batch_refusal(scope, refusal) == PHX_MC_OK);
+  PHX_CHECK(refusal[PHX_MC_BATCH_REMAINING_WORK] == 4 &&
+            refusal[PHX_MC_BATCH_REMAINING_BYTES] == 4);
+  PHX_CHECK(phx_mc_execution_batch_settle(admitted, 2, 1, 3, 4) == PHX_MC_OK);
+  uint64_t work[PHX_MC_EXECUTION_COUNTERS] = {}, memory[PHX_MC_EXECUTION_MEMORY_VALUES] = {};
+  PHX_CHECK(phx_mc_execution_end(scope, work, memory, &seconds) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(work[PHX_MC_EXECUTION_CONSTRUCTION_WORK] == 2 && work[PHX_MC_EXECUTION_SOURCE_QUERIES] == 1 && work[PHX_MC_EXECUTION_EXTERNAL_WORK] == 2 && work[PHX_MC_EXECUTION_EXTERNAL_QUERIES] == 1);
+  PHX_CHECK(memory[PHX_MC_EXECUTION_MEMORY_LIVE_BYTES] == 0 && memory[PHX_MC_EXECUTION_MEMORY_EXTERNAL_LIVE_UPPER_BYTES] == 0 && memory[PHX_MC_EXECUTION_MEMORY_EXTERNAL_PEAK_UPPER_BYTES] == 4);
 }
 
 }  // namespace
@@ -219,11 +281,13 @@ void operator delete[](void* memory, std::size_t) noexcept { std::free(memory); 
 
 int main() {
   test_guard_maps_escaped_exceptions();
+  test_null_requests_are_invalid_arguments();
   test_addressable_extents();
   test_unaddressable_counts_are_invalid_arguments();
   test_refused_allocations_are_capacity_statuses();
   test_native_phase_limits_refuse_before_publication();
   test_nested_phase_counters_share_original_allowance();
   test_pure_batch_bound_is_not_reported_as_consumed_work();
+  test_batch_handle_allocation_refusal_leaks_no_reservations();
   return phx::mc::test::finish("test_capi_guard");
 }

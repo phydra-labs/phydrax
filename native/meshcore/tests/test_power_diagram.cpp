@@ -121,7 +121,7 @@ Sites generic_sites(int count) {
   PHX_CHECK(phx_mc_delaunay_3d(count, sites.points.data(), 100000, &mesh) == PHX_MC_OK);
   const int64_t cells = phx_mc_mesh_cell_count(mesh);
   std::vector<int32_t> tets(static_cast<std::size_t>(4 * cells));
-  phx_mc_mesh_copy_cells(mesh, tets.data());
+  PHX_CHECK(phx_mc_mesh_copy_cells(mesh, tets.data()) == PHX_MC_OK);
   phx_mc_mesh_free(mesh);
   std::vector<std::vector<int32_t>> adjacent(static_cast<std::size_t>(count));
   for (int64_t t = 0; t < cells; ++t) {
@@ -162,11 +162,26 @@ Cells run(const Sites& sites, const Domain& domain, const std::vector<int8_t>& s
   Cells cells;
   const int64_t count = static_cast<int64_t>(sites.points.size() / 3);
   const std::vector<double> weights(static_cast<std::size_t>(count), 0.0);
-  cells.status = phx_mc_restricted_power_cells(
-      count, sites.points.data(), weights.data(), sites.offsets.data(), sites.neighbors.data(),
-      split.data(), static_cast<int64_t>(domain.points.size() / 3), domain.points.data(),
-      static_cast<int64_t>(domain.regions.size()), domain.tets.data(), domain.regions.data(),
-      domain.facets.data(), 100000, 1000000, work_limit, 0, &cells.handle);
+  const phx_mc_restricted_power_cells_request request{
+      .site_count = count,
+      .sites = sites.points.data(),
+      .weights = weights.data(),
+      .neighbor_offsets = sites.offsets.data(),
+      .neighbors = sites.neighbors.data(),
+      .split_sites = split.data(),
+      .point_count = static_cast<int64_t>(domain.points.size() / 3),
+      .points = domain.points.data(),
+      .tet_count = static_cast<int64_t>(domain.regions.size()),
+      .tets = domain.tets.data(),
+      .tet_regions = domain.regions.data(),
+      .tet_face_facets = domain.facets.data(),
+      .max_pieces = 100000,
+      .max_vertices = 1000000,
+      .work_limit = work_limit,
+      .record_phases = 0,
+      .result = &cells.handle,
+  };
+  cells.status = phx_mc_restricted_power_cells(&request);
   return collect(std::move(cells));
 }
 
@@ -174,10 +189,10 @@ Cells collect(Cells cells) {
   if (cells.handle == nullptr) {
     return cells;
   }
-  phx_mc_power_cells_failure(cells.handle, cells.failure);
+  PHX_CHECK(phx_mc_power_cells_failure(cells.handle, cells.failure) == PHX_MC_OK);
   if (cells.status == PHX_MC_OK) {
     int64_t sizes[PHX_MC_POWER_CELLS_SIZES];
-    phx_mc_power_cells_sizes(cells.handle, sizes);
+    PHX_CHECK(phx_mc_power_cells_sizes(cells.handle, sizes) == PHX_MC_OK);
     cells.vertices.resize(3 * sizes[0]);
     cells.face_offsets.resize(sizes[1] + 1);
     cells.face_vertices.resize(sizes[2]);
@@ -192,12 +207,11 @@ Cells collect(Cells cells) {
     cells.piece_tets.resize(sizes[4]);
     cells.piece_cells.resize(sizes[4]);
     cells.piece_volumes.resize(sizes[4]);
-    phx_mc_power_cells_export(
-        cells.handle, cells.vertices.data(), cells.face_offsets.data(), cells.face_vertices.data(),
-        cells.face_cells.data(), cells.face_facets.data(), cells.cell_sites.data(),
-        cells.cell_regions.data(), cells.cell_volumes.data(), cells.cell_moments.data(),
-        cells.cell_second.data(), cells.piece_sites.data(), cells.piece_tets.data(),
-        cells.piece_cells.data(), cells.piece_volumes.data());
+    PHX_CHECK(phx_mc_power_cells_export(cells.handle, cells.vertices.data(), cells.face_offsets.data(), cells.face_vertices.data(),
+    cells.face_cells.data(), cells.face_facets.data(), cells.cell_sites.data(),
+    cells.cell_regions.data(), cells.cell_volumes.data(), cells.cell_moments.data(),
+    cells.cell_second.data(), cells.piece_sites.data(), cells.piece_tets.data(),
+    cells.piece_cells.data(), cells.piece_volumes.data()) == PHX_MC_OK);
   }
   phx_mc_power_cells_free(cells.handle);
   cells.handle = nullptr;
@@ -305,13 +319,13 @@ void test_refusals() {
   const std::vector<int8_t> split(40, 0);
   const Cells exhausted = run(sites, domain, split, 3);
   PHX_CHECK(exhausted.status == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(exhausted.failure[0] == 6);
+  PHX_CHECK(exhausted.failure[PHX_MC_POWER_CELLS_FAILURE_REASON] == 6);
 
   Domain open = domain;
   std::replace(open.facets.begin(), open.facets.end(), 0, -1);
   const Cells unconstrained = run(sites, open, split, 1000000);
   PHX_CHECK(unconstrained.status == PHX_MC_INVALID_INPUT);
-  PHX_CHECK(unconstrained.failure[0] == 7);
+  PHX_CHECK(unconstrained.failure[PHX_MC_POWER_CELLS_FAILURE_REASON] == 7);
 
   // Eight-way cospherical vertices and bisectors coincident with carrier
   // faces must reconcile, rather than treating a legal diagram as malformed.
@@ -327,7 +341,7 @@ void test_refusals() {
   PHX_CHECK(phx_mc_delaunay_3d(16, lattice.points.data(), 100000, &mesh) == PHX_MC_OK);
   const int64_t count = phx_mc_mesh_cell_count(mesh);
   std::vector<int32_t> tets(static_cast<std::size_t>(4 * count));
-  phx_mc_mesh_copy_cells(mesh, tets.data());
+  PHX_CHECK(phx_mc_mesh_copy_cells(mesh, tets.data()) == PHX_MC_OK);
   phx_mc_mesh_free(mesh);
   std::vector<std::vector<int32_t>> adjacent(16);
   for (int64_t t = 0; t < count; ++t) {
@@ -471,13 +485,31 @@ void test_exact_image_source_and_refusals() {
   const int8_t split[1] = {0};
   const auto construct = [&](int64_t work_limit, int64_t max_pieces) {
     Cells cells;
-    cells.status = phx_mc_restricted_power_cells_exact(
-        2, original_sites, original_weights, 1, owners, coordinate_offsets,
-        3, components, neighbors, nullptr, split,
-        static_cast<int64_t>(domain.points.size() / 3), domain.points.data(),
-        static_cast<int64_t>(domain.regions.size()), domain.tets.data(),
-        domain.regions.data(), domain.facets.data(), max_pieces, 1000000,
-        work_limit, 0, &cells.handle);
+    const phx_mc_restricted_power_cells_exact_request request{
+        .original_site_count = 2,
+        .original_sites = original_sites,
+        .original_weights = original_weights,
+        .image_count = 1,
+        .image_site_owners = owners,
+        .image_coordinate_offsets = coordinate_offsets,
+        .component_count = 3,
+        .image_coordinate_components = components,
+        .neighbor_offsets = neighbors,
+        .neighbors = nullptr,
+        .split_sites = split,
+        .point_count = static_cast<int64_t>(domain.points.size() / 3),
+        .points = domain.points.data(),
+        .tet_count = static_cast<int64_t>(domain.regions.size()),
+        .tets = domain.tets.data(),
+        .tet_regions = domain.regions.data(),
+        .tet_face_facets = domain.facets.data(),
+        .max_pieces = max_pieces,
+        .max_vertices = 1000000,
+        .work_limit = work_limit,
+        .record_phases = 0,
+        .result = &cells.handle,
+    };
+    cells.status = phx_mc_restricted_power_cells_exact(&request);
     return collect(std::move(cells));
   };
   const Cells cells = construct(1000000, 100000);
@@ -494,9 +526,9 @@ void test_exact_image_source_and_refusals() {
   components[0] = 0x1p-173;
   const Cells unsupported = construct(1000000, 100000);
   PHX_CHECK(unsupported.status == PHX_MC_INVALID_INPUT);
-  PHX_CHECK(unsupported.failure[0] == 10);
-  PHX_CHECK(unsupported.failure[1] == 0);
-  PHX_CHECK(unsupported.failure[2] == 0);
+  PHX_CHECK(unsupported.failure[PHX_MC_POWER_CELLS_FAILURE_REASON] == 10);
+  PHX_CHECK(unsupported.failure[PHX_MC_POWER_CELLS_FAILURE_SITE] == 0);
+  PHX_CHECK(unsupported.failure[PHX_MC_POWER_CELLS_FAILURE_TET] == 0);
   PHX_CHECK(original_sites[3] == 0.75);
 }
 

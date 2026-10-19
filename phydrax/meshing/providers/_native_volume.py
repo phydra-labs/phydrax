@@ -2,85 +2,89 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native PLC volume route: constrained tetrahedral generation and acceptance.
+"""Generate constrained PLC tetrahedra and publish their acceptance evidence.
 
-The route admits a `NativePlcSource` with a `VolumeMeshingSpec`, runs the
-phases of `phydrax.meshing._volume_generation` (exact boundary recovery under
-the source's fixed or conforming boundary policy, region classification,
-refinement and improvement, organization and exact associations), measures
-size compliance, and publishes only after the independent ``volume_plc``
-acceptance: per-cell validity, topology, global embedding and exact coverage
-of the declared source polygons and region measures.
+The route admits a `NativePlcSource` with a `VolumeMeshingSpec`, recovers its
+fixed or conforming boundary, classifies regions, runs the scheduled refinement
+and improvement, and constructs organization and source associations.
+Publication requires size-compliance evidence and independent ``volume_plc``
+checks for per-cell validity, topology, global embedding, and coverage of the
+declared source polygons and region measures.
 """
 
 from __future__ import annotations
 
-from contextlib import nullcontext
-from time import monotonic
 from typing import final
 
 import equinox as eqx
 import numpy as np
 
-from ..._fingerprint import canonical_fingerprint
-from ..._meshcore import (
-    current_native_execution_budget,
-    current_native_host_workspace,
-    TET_MESH_EXUDE_COUNTERS,
-    TET_MESH_IMPROVE_COUNTERS,
-    TET_MESH_REFINE_COUNTERS,
-)
-from ..._physical import SpatialCoordinateContract
-from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
-from ...discretization import CellGeometrySpec, TetrahedralConnectivity
-from ...discretization._exact_plc_geometry import ExactPlcCellGeometrySource
-from ...optim import OptimizationStatus
-from .._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
-from .._certification import MeshCertificationSchedule
-from .._contracts import (
-    MeshingDerivativeMode,
-    MeshingFailure,
-    MeshingFailureCategory,
+import phydrax.discretization._cell_complex as cell_complex_owner
+from phydrax.meshing._certification_schedule import MeshCertificationSchedule
+from phydrax.meshing._contracts import (
     MeshingProviderInfo,
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+from phydrax.meshing._host_banks import entity_key
+from phydrax.meshing.providers._native_route_policy import publication_policy
+
+from ..._fingerprint import canonical_fingerprint
+from ..._meshcore import (
+    NativeBatchTicket,
+    NativeExecutionScope,
+    NativeHostStorageWorkspace,
+)
+from ..._physical import SpatialCoordinateContract
+from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...optim import OptimizationStatus
+from ...typing import checked
+from .._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
 from .._controls import FeatureKind, RegionControl
 from .._measurements import NativeMeshingPhaseRecorder
+from .._native_preparation import native_preparation_ledger
 from .._result import CellMeshingResult, MeshingComplianceReport
 from .._sizing import UniformSizeControl
 from .._tetra_metric import MetricRemeshingEvidence
 from .._trace import MeshingStageKind, MeshingStageReport, MeshingStageStatus
 from .._volume_generation import (
-    _entity,
-    _import_native_preparation,
-    _native_volume_operation_started,
-    _require_native_preparation_allowance,
     declared_plc_domain,
     generate_plc_volume,
-    native_volume_execution_budget,
+    native_volume_coordinate_budget,
     NativeVolumeSchedule,
+    require_native_preparation_allowance,
     VolumeConstruction,
 )
+from . import _native_plc_geometry as plc_geometry_owner, _native_sources as sources_owner
 from ._native_publication import (
-    bind_native_execution_result,
+    NativeCertificationRequest,
+    NativePublicationExecution,
+    NativePublicationOrganization,
+    publish_native_result,
+)
+from ._native_route_checks import (
     check_deadline,
     edge_size_evidence,
-    NativeCertificationRequest,
-    publish_native_result,
     simplex_entity_limits,
     uniform_size_compliance,
     unique_edges,
 )
-from ._native_sources import NativePlcSource, NativePolyhedralSource
 
 
-def volume_support_issues(
-    source: NativePlcSource | NativePolyhedralSource, specification: VolumeMeshingSpec, /
-) -> list[str]:
-    """Physical requests of one volume specification this route cannot enforce."""
+@final
+class _VolumeSupportPhase(StrictModule):
+    issues: tuple[str, ...] = eqx.field(static=True)
 
+
+def _plc_request_support(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    specification: VolumeMeshingSpec,
+    /,
+) -> _VolumeSupportPhase:
+    """Check the tetrahedral target, all boundary facets, and PLC size controls."""
     unsupported: list[str] = []
     target = specification.target
     families = target.cell_families
@@ -102,14 +106,26 @@ def volume_support_issues(
         np.sort(np.asarray(boundary.entity_ids)), np.arange(complex_.facet_count)
     ):
         unsupported.append("a boundary scope of every PLC facet")
-    controls = specification.size_controls
-    for control in controls:
-        if not isinstance(control, UniformSizeControl):
-            unsupported.append("nonuniform curvature/proximity PLC size fields")
-        elif control.scope.entity_dimension != 2 or np.any(
-            np.asarray(control.scope.entity_ids) >= complex_.facet_count
-        ):
-            unsupported.append("uniform size controls bound to PLC facets")
+    for control in specification.size_controls:
+        match control:
+            case UniformSizeControl():
+                if control.scope.entity_dimension != 2 or np.any(
+                    np.asarray(control.scope.entity_ids) >= complex_.facet_count
+                ):
+                    unsupported.append("uniform size controls bound to PLC facets")
+            case _:
+                unsupported.append("nonuniform curvature/proximity PLC size fields")
+    return _VolumeSupportPhase(tuple(unsupported))
+
+
+def _plc_feature_support(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    specification: VolumeMeshingSpec,
+    /,
+) -> _VolumeSupportPhase:
+    """Check protected entity incidence and region seed names."""
+    unsupported: list[str] = []
+    complex_ = source.complex
     counts = {
         0: complex_.vertices.shape[0],
         1: complex_.segments.shape[0],
@@ -127,6 +143,18 @@ def volume_support_issues(
     names = set(complex_.region_ids)
     if any(seed.region_name not in names for seed in specification.region_seeds):
         unsupported.append("region seeds naming regions of the complex")
+    return _VolumeSupportPhase(tuple(unsupported))
+
+
+def _plc_region_support(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    specification: VolumeMeshingSpec,
+    /,
+) -> _VolumeSupportPhase:
+    """Check enabled PLC regions and consistent material/role declarations."""
+    unsupported: list[str] = []
+    complex_ = source.complex
+    names = set(complex_.region_ids)
     region_requests: dict[str, RegionControl] = {}
     for control in specification.region_controls:
         identifiers = np.asarray(control.scope.entity_ids)
@@ -152,6 +180,17 @@ def volume_support_issues(
                 seed.material_id != control.material_id or seed.role != control.role
             ):
                 unsupported.append("contradictory region seed material/role controls")
+    return _VolumeSupportPhase(tuple(unsupported))
+
+
+def _plc_patch_support(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    specification: VolumeMeshingSpec,
+    /,
+) -> _VolumeSupportPhase:
+    """Check requested facet scopes and their PLC region adjacency."""
+    unsupported: list[str] = []
+    complex_ = source.complex
     for control in specification.patch_controls:
         identifiers = np.asarray(control.scope.entity_ids)
         if control.scope.entity_dimension != 2 or np.any(
@@ -167,6 +206,22 @@ def volume_support_issues(
             }
             if adjacency != set(control.adjacent_region_names):
                 unsupported.append("patch control adjacency matching the PLC incidence")
+    return _VolumeSupportPhase(tuple(unsupported))
+
+
+@checked
+def volume_support_issues(
+    source: sources_owner.NativePlcSource | sources_owner.NativePolyhedralSource,
+    specification: VolumeMeshingSpec,
+    /,
+) -> list[str]:
+    """Return unmet PLC volume requirements in validation order."""
+    unsupported = [
+        *_plc_request_support(source, specification).issues,
+        *_plc_feature_support(source, specification).issues,
+        *_plc_region_support(source, specification).issues,
+        *_plc_patch_support(source, specification).issues,
+    ]
     if specification.periodic_constraints:
         unsupported.append("periodic constraints")
     if specification.layer_controls:
@@ -182,17 +237,14 @@ class PreparedPlcVolume(StrictModule, NonTrainableState):
     source_binding_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        source: NativePlcSource,
+        source: sources_owner.NativePlcSource,
         specification: VolumeMeshingSpec,
         schedule: NativeVolumeSchedule,
         /,
     ) -> None:
-        if not isinstance(source, NativePlcSource):
-            raise TypeError("source must be NativePlcSource.")
-        if not isinstance(schedule, NativeVolumeSchedule):
-            raise TypeError("schedule must be NativeVolumeSchedule.")
         self.schedule = schedule
         self.source_binding_id = source.binding_id
         self.prepared_id = canonical_fingerprint(
@@ -211,7 +263,7 @@ def _append_metric_evidence(
     achieved: list[tuple[str, float]],
     /,
 ) -> None:
-    """Publish the actual optimization goal, outcome, work and native resources."""
+    """Publish the optimization goal, outcome, work, and native resources."""
     guards = (
         ("metric_quality_floor", metric.metric_quality_floor),
         ("shape_radius_edge_bound", metric.shape_radius_edge_bound),
@@ -262,18 +314,23 @@ def _append_metric_evidence(
     achieved.extend(
         (f"metric_optimization:issue:{issue}", 1.0) for issue in metric.size_issues
     )
-    memory_names = (
-        "limit",
-        "live",
-        "peak",
-        "largest_request",
-        "allocations",
-        "refusals",
-    )
-    achieved.extend(
-        (f"metric_optimization:native_memory:{name}", value)
-        for name, value in zip(memory_names, metric.native_memory_evidence, strict=True)
-    )
+    if metric.memory.native_counters is not None:
+        achieved.extend(
+            (f"metric_optimization:native_memory:{name}", value)
+            for name, value in metric.memory.native_counters.items()
+        )
+    if metric.metric_arc_bounds is not None:
+        bounds = np.asarray(metric.metric_arc_bounds, dtype=np.float64)
+        achieved.extend(
+            (
+                ("metric_optimization:arc_minimum_lower", float(np.min(bounds[:, 0]))),
+                ("metric_optimization:arc_maximum_upper", float(np.max(bounds[:, 1]))),
+                (
+                    "metric_optimization:arc_maximum_width",
+                    float(np.max(bounds[:, 1] - bounds[:, 0])),
+                ),
+            )
+        )
     _append_optimizer_evidence(metric, requested, achieved)
 
 
@@ -283,54 +340,54 @@ def _append_optimizer_evidence(
     achieved: list[tuple[str, float]],
     /,
 ) -> None:
-    """Retain canonical solver termination and charged host proposal resources."""
-    if metric.optimizer_method_id is None:
+    """Retain solver termination and charged host proposal resources."""
+    if metric.optimizer.method_id is None:
         return
     achieved.extend(
         (
-            (f"metric_optimization:optimizer:{metric.optimizer_method_id}", 1.0),
+            (f"metric_optimization:optimizer:{metric.optimizer.method_id}", 1.0),
             ("metric_optimization:native_work_units", metric.native_work_units),
-            ("metric_optimization:optimizer_iterations", metric.optimizer_iterations),
+            ("metric_optimization:optimizer_iterations", metric.optimizer.iterations),
             (
                 "metric_optimization:optimizer_objective_evaluations",
-                metric.optimizer_evaluations,
+                metric.optimizer.evaluations,
             ),
             (
                 "metric_optimization:optimizer_constraint_evaluations",
-                metric.optimizer_constraint_evaluations,
+                metric.optimizer.constraint_evaluations,
             ),
             (
                 "metric_optimization:optimizer_proposal_evaluations",
-                metric.optimizer_proposal_evaluations,
+                metric.optimizer.proposal_evaluations,
             ),
             (
                 "metric_optimization:optimizer_refused_proposals",
-                metric.optimizer_refused_proposals,
+                metric.optimizer.refused_proposals,
             ),
             (
                 "metric_optimization:optimizer_host_work_units",
-                metric.optimizer_host_work_units,
+                metric.optimizer.host_work_units,
             ),
             (
                 "metric_optimization:optimizer_host_table_bytes",
-                metric.optimizer_scratch_required_bytes,
+                metric.memory.optimizer_scratch_required_bytes,
             ),
         )
     )
     requested.extend(
         (f"metric_optimization:optimizer_tolerance:{index}", value)
-        for index, value in enumerate(metric.optimizer_tolerances)
+        for index, value in enumerate(metric.optimizer.tolerances)
     )
-    if metric.optimizer_status_counts:
+    if metric.optimizer.status_counts:
         achieved.extend(
             (f"metric_optimization:optimizer_status:{status.name.lower()}", count)
             for status, count in zip(
                 OptimizationStatus,
-                metric.optimizer_status_counts,
+                metric.optimizer.status_counts,
                 strict=True,
             )
         )
-    for index, (steps, evaluations) in enumerate(metric.optimizer_terminations):
+    for index, (steps, evaluations) in enumerate(metric.optimizer.terminations):
         requested.extend(
             (
                 (f"metric_optimization:optimizer:{index}:maximum_steps", steps),
@@ -342,17 +399,20 @@ def _append_optimizer_evidence(
         )
     achieved.extend(
         (f"metric_optimization:optimizer_refusal:{name}", count)
-        for name, count in metric.optimizer_refusal_counts
+        for name, count in metric.optimizer.refusal_counts
     )
 
 
-def _volume_compliance(
+@checked
+def volume_compliance(
     specification: VolumeMeshingSpec,
     schedule: NativeVolumeSchedule,
     construction: VolumeConstruction,
     vertices: np.ndarray,
     cells: np.ndarray,
     /,
+    *,
+    scope: NativeExecutionScope | None = None,
 ) -> MeshingComplianceReport:
     """Size requests are hard or recorded; refinement and sliver aims are recorded."""
 
@@ -364,7 +424,7 @@ def _volume_compliance(
     if not np.isfinite(quality.maximum_radius_edge):
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            "Native tetrahedral circumcenter construction did not resolve radius-edge quality.",
+            "VolumeConstruction.quality.maximum_radius_edge must be finite; got unresolved tetrahedral circumcenter quality.",
             stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             requested=(("radius_edge_bound", schedule.radius_edge_bound),),
             achieved=(("native_radius_edge_quality_resolved", 0),),
@@ -378,18 +438,18 @@ def _volume_compliance(
         ("work_units", construction.work_units),
         *(
             (f"refinement:{name}", int(value))
-            for name, value in zip(
-                TET_MESH_REFINE_COUNTERS,
-                construction.refinement.counters.tolist(),
-                strict=True,
+            for name, value in (
+                ()
+                if construction.refinement is None
+                else construction.refinement.counters.items()
             )
         ),
         *(
             (f"improvement:{name}", int(value))
-            for name, value in zip(
-                TET_MESH_IMPROVE_COUNTERS,
-                construction.improvement.counters.tolist(),
-                strict=True,
+            for name, value in (
+                ()
+                if construction.improvement is None
+                else construction.improvement.counters.items()
             )
         ),
         *(
@@ -397,11 +457,7 @@ def _volume_compliance(
             if construction.exudation is None
             else (
                 (f"exudation:{name}", int(value))
-                for name, value in zip(
-                    TET_MESH_EXUDE_COUNTERS,
-                    construction.exudation.counters.tolist(),
-                    strict=True,
-                )
+                for name, value in construction.exudation.counters.items()
             )
         ),
         *(
@@ -418,8 +474,13 @@ def _volume_compliance(
     if metric is not None:
         _append_metric_evidence(metric, requested, achieved)
     for control in specification.size_controls:
-        if not isinstance(control, UniformSizeControl):
-            raise TypeError("Admitted volume size controls must be UniformSizeControl.")
+        match control:
+            case UniformSizeControl():
+                pass
+            case _:
+                raise TypeError(
+                    "VolumeMeshingSpec.size_controls must contain UniformSizeControl after admission; got a different size control."
+                )
         if np.array_equal(
             control.scope.entity_ids, specification.boundary_scope.entity_ids
         ):
@@ -433,22 +494,43 @@ def _volume_compliance(
                 if value.target_entity_set_id == face_set.entity_set_id
             )
             source_entities = {
-                _entity(mesh.numeric_version, "facet", facet)
+                entity_key(mesh.numeric_version, "facet", facet)
                 for facet in np.asarray(control.scope.entity_ids).tolist()
             }
             selected = np.asarray(
-                [entity in source_entities for entity in association.source_entity_ids],
+                [
+                    entity in source_entities
+                    for entity in association.source_entities.entity_ids()
+                ],
                 dtype=np.bool_,
             )
             identifiers = np.asarray(association.target_global_ids)[selected]
             connectivity = mesh.connectivity
-            if not isinstance(connectivity, TetrahedralConnectivity):
-                raise TypeError("A PLC volume requires tetrahedral connectivity.")
+            if not isinstance(connectivity, cell_complex_owner.TetrahedralConnectivity):
+                raise TypeError(
+                    "VolumeConstruction.mesh.connectivity must be TetrahedralConnectivity; got a different connectivity kind."
+                )
             rows = np.asarray(connectivity.faces, dtype=np.int64)[
                 np.isin(np.asarray(face_set.entity_ids), identifiers)
             ]
             edges = unique_edges(rows, "triangle")
-        lengths, growth = edge_size_evidence(vertices, edges)
+        if construction.geometry is None:
+            lengths, growth = edge_size_evidence(vertices, edges)
+        else:
+            if scope is None:
+                raise ValueError(
+                    "volume_compliance.geometry must share the request coordinate budget; got missing execution scope"
+                )
+            with native_volume_coordinate_budget(
+                specification.limits, scope=scope
+            ) as budget:
+                lengths, growth = edge_size_evidence(
+                    vertices,
+                    edges,
+                    geometry=construction.geometry,
+                    mesh=construction.mesh,
+                    budget=budget,
+                )
         size_requested, size_achieved, size_issues = uniform_size_compliance(
             control, specification.size_compliance, lengths, growth
         )
@@ -497,8 +579,9 @@ def plc_volume_audit_policy() -> CellMeshAuditPolicy:
     )
 
 
+@checked
 def execute_volume_route(
-    source: NativePlcSource,
+    source: sources_owner.NativePlcSource,
     specification: VolumeMeshingSpec,
     prepared: PreparedPlcVolume,
     coordinate_contract: SpatialCoordinateContract,
@@ -506,32 +589,17 @@ def execute_volume_route(
     plan_id: str,
     /,
     *,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
     construction: VolumeConstruction | None = None,
     record_phase: NativeMeshingPhaseRecorder | None = None,
 ) -> CellMeshingResult:
-    """Own standalone generation through publication, or borrow the public root."""
-    active = current_native_execution_budget()
-    if active is not None and (
-        construction is None or construction.native_execution_evidence is None
-    ):
-        return _execute_volume_route_bound(
-            source,
-            specification,
-            prepared,
-            coordinate_contract,
-            provider,
-            plan_id,
-            construction=construction,
-            record_phase=record_phase,
-        )
-    preparation = None
-    work = queries = 0
-    seconds = 0.0
-    if construction is not None:
+    """Generate and publish in the explicit request scope."""
+    if construction is not None and construction.native_execution_evidence is not None:
         preparation = construction.native_execution_record
         if preparation is None:
             raise ValueError(
-                "Standalone supplied construction requires its actual ended native receipt."
+                "VolumeConstruction.native_execution_record must retain ended execution evidence; got None for a supplied construction."
             )
         if prepared.source_binding_id != source.binding_id or any(
             association.source_id != source.source_id
@@ -539,68 +607,27 @@ def execute_volume_route(
             for association in construction.associations
         ):
             raise ValueError(
-                "The retained construction receipt binds another original source."
+                "VolumeConstruction.associations must bind NativePlcSource.source_id and source_revision; got a different source binding."
             )
-        _require_native_preparation_allowance(specification.limits, preparation)
-        work = int(np.asarray(preparation.total_work_units))
-        queries = int(np.asarray(preparation.total_geometry_queries))
-        seconds = float(np.asarray(preparation.total_elapsed_seconds))
-    started = monotonic() - seconds
-    workspace = current_native_host_workspace()
-    scope = (
-        active.host_workspace()
-        if active is not None and workspace is None
-        else nullcontext(workspace)
+        require_native_preparation_allowance(specification.limits, preparation)
+        native_preparation_ledger(scope).import_receipt(scope, preparation)
+    workspace.retain_owner((source, specification, prepared, construction))
+    return _execute_volume_route_bound(
+        source,
+        specification,
+        prepared,
+        coordinate_contract,
+        provider,
+        plan_id,
+        scope=scope,
+        workspace=workspace,
+        construction=construction,
+        record_phase=record_phase,
     )
-    with scope as storage:
-        if active is not None and preparation is not None:
-            if storage is None:
-                raise RuntimeError("Construction import lost its owning host workspace.")
-            _import_native_preparation(active, storage, preparation)
-        parent_started = _native_volume_operation_started()
-        if parent_started is not None:
-            started = min(started, parent_started)
-        with native_volume_execution_budget(
-            specification.limits,
-            source_work_units=work,
-            source_geometry_queries=queries,
-            operation_started=started,
-            borrow_active=False,
-        ) as budget:
-            storage = current_native_host_workspace()
-            if storage is None:
-                raise RuntimeError(
-                    "Native volume publication lost its owning host workspace."
-                )
-            storage.retain_owner((source, specification, prepared, construction))
-            result = _execute_volume_route_bound(
-                source,
-                specification,
-                prepared,
-                coordinate_contract,
-                provider,
-                plan_id,
-                construction=construction,
-                record_phase=record_phase,
-            )
-        if budget.evidence is None:
-            raise RuntimeError(
-                "Native volume publication has no actual ended scope evidence."
-            )
-        return bind_native_execution_result(
-            result,
-            budget.evidence,
-            specification.limits,
-            started,
-            source_work_units=work,
-            source_geometry_queries=queries,
-            preparation_seconds=seconds,
-            preparation_evidence=preparation,
-        )
 
 
 def _execute_volume_route_bound(
-    source: NativePlcSource,
+    source: sources_owner.NativePlcSource,
     specification: VolumeMeshingSpec,
     prepared: PreparedPlcVolume,
     coordinate_contract: SpatialCoordinateContract,
@@ -608,14 +635,18 @@ def _execute_volume_route_bound(
     plan_id: str,
     /,
     *,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
     construction: VolumeConstruction | None = None,
     record_phase: NativeMeshingPhaseRecorder | None = None,
 ) -> CellMeshingResult:
-    """Generate, certify and publish while borrowing the original allowance."""
+    """Generate, certify, and publish within the request allowance."""
 
     if prepared.source_binding_id != source.binding_id:
-        raise ValueError("The prepared volume route binds another source.")
-    started = monotonic()
+        raise ValueError(
+            "PreparedPlcVolume.source_binding_id must match NativePlcSource.binding_id; got a different source binding."
+        )
+    started = scope.operation_started
     limits = specification.limits
     audit_policy = plc_volume_audit_policy()
     if construction is None:
@@ -627,20 +658,21 @@ def _execute_volume_route_bound(
             source_id=source.source_id,
             source_revision=source.source_revision,
             input_id=prepared.prepared_id,
+            scope=scope,
             record_phase=record_phase,
         )
-    elif not isinstance(construction, VolumeConstruction):
-        raise TypeError("construction must be an authoritative VolumeConstruction.")
     if construction.validity_policy_id != audit_policy.validity_policy.policy_id:
         raise ValueError(
-            "The native construction was improved under another cell validity policy."
+            "VolumeConstruction.validity_policy_id must match the publication audit policy; got a different validity policy."
         )
     if any(
         association.source_id != source.source_id
         or association.source_revision != source.source_revision
         for association in construction.associations
     ):
-        raise ValueError("The native construction binds a different source revision.")
+        raise ValueError(
+            "VolumeConstruction.associations must bind NativePlcSource.source_id and source_revision; got a different source revision."
+        )
     check_deadline(started, limits, MeshingStageKind.VOLUME_FILL)
     mesh = construction.mesh
     vertices = np.asarray(mesh.coordinates, dtype=np.float64)
@@ -652,12 +684,30 @@ def _execute_volume_route_bound(
         MeshingStageKind.VOLUME_FILL,
         cell_kind=mesh.blocks[0].cell_kind,
     )
-    compliance = _volume_compliance(
-        specification, prepared.schedule, construction, vertices, cells
+    compliance = volume_compliance(
+        specification, prepared.schedule, construction, vertices, cells, scope=scope
     )
     check_deadline(started, limits, MeshingStageKind.GEOMETRY_AUDIT)
     domain = declared_plc_domain(source.complex, source.source_id)
-    geometry = _exact_plc_geometry(construction, source)
+    allowance = scope.remaining()
+    with scope.batch(
+        min(limits.maximum_work_units, allowance.remaining_work_units),
+        queries_upper=min(
+            limits.maximum_geometry_queries, allowance.remaining_geometry_queries
+        ),
+        bytes_upper=min(limits.maximum_scratch_bytes, allowance.remaining_managed_bytes),
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        with budget.activate():
+            geometry = (
+                plc_geometry_owner.exact_plc_geometry(construction, source, budget=budget)
+                if construction.geometry is None
+                else construction.geometry
+            )
     construction_stages = (
         MeshingStageReport(
             MeshingStageKind.SOURCE_INSPECTION,
@@ -667,90 +717,43 @@ def _execute_volume_route_bound(
         ),
         *construction.stages,
     )
-    return publish_native_result(
-        mesh,
-        coordinate_contract,
-        compliance,
-        construction_stages,
-        provider,
-        {
-            "kind": "native-plc-volume-mesh",
-            "route": "plc_tetrahedral",
-            "source": source.binding_id,
-            "plan": plan_id,
-            "specification": specification.specification_id,
-            "schedule": prepared.schedule.schedule_id,
-        },
-        NativeCertificationRequest(
-            MeshCertificationSchedule("volume_plc"),
-            source.source_id,
-            source.source_revision,
-            limits,
-            domain=domain,
-            cell_regions=construction.cell_regions,
-        ),
-        audit_policy=audit_policy,
-        geometry=geometry,
-        derivative_mode=MeshingDerivativeMode.NONDIFFERENTIABLE,
-        enforced_limits=(
-            "vertices",
-            "edges",
-            "faces",
-            "cells",
-            "connectivity_entries",
-            "data_bytes",
-            "scratch_bytes",
-            "work_units",
-            "wall_seconds",
-        ),
-        unenforced_limits=("cavity_cells", "geometry_queries"),
-        patches=construction.patches,
-        zones=construction.zones,
-        labels=construction.labels,
-        associations=construction.associations,
-        record_phase=record_phase,
-    )
 
+    def retain_coordinate_storage(bytes_upper: int) -> NativeBatchTicket:
+        return scope.batch(0, bytes_upper=bytes_upper)
 
-def _exact_plc_geometry(
-    construction: VolumeConstruction,
-    source: NativePlcSource,
-    /,
-) -> CellGeometrySpec | None:
-    """Exact source coordinates of a mesh with ancestry-backed carriers.
-
-    Zero deviation changes no coordinate but still retains the original closed
-    source rows and parameters. Bounded carriers publish the witness source S,
-    never an approximate affine carrier in its place.
-    """
-    fidelity = construction.source_fidelity
-    if fidelity is None:
-        return None
-    declared = fidelity.declared_source
-    if declared is None:
-        raise MeshingFailure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            "A bounded PLC carrier has no declared source rows for its exact coordinates.",
-            stage=MeshingStageKind.GEOMETRY_AUDIT.value,
+    with budget.retained_storage(retain_coordinate_storage):
+        return publish_native_result(
+            mesh,
+            coordinate_contract,
+            compliance,
+            construction_stages,
+            provider,
+            {
+                "kind": "native-plc-volume-mesh",
+                "route": "plc_tetrahedral",
+                "source": source.binding_id,
+                "plan": plan_id,
+                "specification": specification.specification_id,
+                "schedule": prepared.schedule.schedule_id,
+            },
+            NativeCertificationRequest(
+                MeshCertificationSchedule("volume_plc"),
+                source.source_id,
+                source.source_revision,
+                limits,
+                domain=domain,
+                cell_regions=construction.cell_regions,
+            ),
+            policy=publication_policy("volume", audit_policy=audit_policy),
+            organization=NativePublicationOrganization(
+                patches=construction.patches,
+                zones=construction.zones,
+                labels=construction.labels,
+                associations=construction.associations,
+            ),
+            execution=NativePublicationExecution(scope, workspace, record_phase, budget),
+            geometry=geometry,
         )
-    exact = ExactPlcCellGeometrySource(
-        declared.points,
-        declared.faces,
-        declared.segments,
-        fidelity.witness_strata,
-        fidelity.witness_entities,
-        fidelity.witness_parameters,
-        domain_source_id=source.source_id,
-        domain_source_revision=source.source_revision,
-        source_triangle_ids=declared.face_ids[declared.face_group_rows],
-        source_triangle_bounds=declared.face_tolerances,
-        source_segment_ids=declared.segment_ids[declared.segment_group_rows],
-        source_segment_bounds=declared.segment_tolerances,
-    )
-    exact.require_domain(
-        declared.points, declared.faces, source.source_id, source.source_revision
-    )
-    return CellGeometrySpec.plc(construction.mesh, exact)
 
 
 __all__ = [

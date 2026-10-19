@@ -24,6 +24,7 @@ from ..discretization.particle import (
     PreparedWeaklyCompressibleSPHDynamics,
     WeaklyCompressibleSPHMethodPlan,
 )
+from ..discretization.particle._wcsph import _WCSPHMaterial
 from ..typing import checked
 from ._barotropic import AbstractBarotropicMaterial
 
@@ -210,11 +211,18 @@ def compile_weakly_compressible_sph_problem(
         else precision
     )
     prepared_neighborhood = neighborhood.prepare(particles)
+    match problem.material:
+        case _WCSPHMaterial() as material:
+            pass
+        case _:
+            raise TypeError(
+                f"compile_weakly_compressible_sph_problem.material must provide the density-based WCSPH closure including reference_density; got {type(problem.material).__name__}"
+            )
     dynamics = PreparedWeaklyCompressibleSPHDynamics(
         particles,
         prepared_neighborhood,
         method,
-        problem.material,
+        material,
         execution=execution_,
         precision=precision_,
         external_acceleration=problem.external_acceleration,

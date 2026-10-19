@@ -68,6 +68,14 @@ def test_periodic_contracts() -> None:
     )
     evaluation = prepared.evaluate(source, target, request=request)
     diagnostics = evaluation.diagnostics.backend_diagnostics
+    if evaluation.velocity_gradient is None:
+        raise RuntimeError(
+            "evaluation.velocity_gradient must be present for the request; got None"
+        )
+    if evaluation.vorticity is None:
+        raise RuntimeError(
+            "evaluation.vorticity must be present for the request; got None"
+        )
 
     np.testing.assert_allclose(diagnostics.deposited_strength, 0.0, atol=1e-14)
     assert diagnostics.balance_defect < 1e-12
@@ -132,6 +140,14 @@ def test_periodic_contracts() -> None:
     )
     evaluation = prepared.evaluate(source, target, request=request)
     diagnostics = evaluation.diagnostics.backend_diagnostics
+    if evaluation.velocity is None:
+        raise RuntimeError(
+            "evaluation.velocity must be present for the request; got None"
+        )
+    if evaluation.velocity_gradient is None:
+        raise RuntimeError(
+            "evaluation.velocity_gradient must be present for the request; got None"
+        )
 
     assert evaluation.velocity.shape == (2, 3)
     assert evaluation.velocity_gradient.shape == (2, 3, 3)

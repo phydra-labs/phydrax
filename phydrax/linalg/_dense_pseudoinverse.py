@@ -42,8 +42,14 @@ def factor_pseudoinverse(
     /,
     *,
     hermitian: bool = False,
+    rank_scale_floor: float | None = None,
 ) -> DensePseudoinverseFactors:
-    """Compute one batched economy factorization for Moore-Penrose operations."""
+    """Compute one batched economy factorization for Moore-Penrose operations.
+
+    ``rank_scale_floor`` is static preparation metadata for a reference magnitude
+    omitted by a reduction. It floors the largest singular value used only for
+    the relative rank cutoff, not the matrix or its condition estimate.
+    """
     value = jnp.asarray(matrix)
     if value.ndim < 2:
         raise ValueError("matrix must have at least two dimensions.")
@@ -55,7 +61,9 @@ def factor_pseudoinverse(
     if hermitian:
         value = 0.5 * (value + jnp.conj(jnp.swapaxes(value, -1, -2)))
     left, singular_values, right_adjoint = _economy_components(value, hermitian=hermitian)
-    rank = numerical_rank_data(singular_values, rows, columns, rank_policy)
+    rank = numerical_rank_data(
+        singular_values, rows, columns, rank_policy, rank_scale_floor=rank_scale_floor
+    )
     finite = rank.finite & jnp.all(jnp.isfinite(value), axis=(-2, -1))
     return DensePseudoinverseFactors(
         matrix=value,
@@ -92,7 +100,7 @@ def apply_pseudoinverse(
 
 
 class ConnectedPseudoinverseResult(StrictModule):
-    """Complete exact-component action with one global numerical-rank rule."""
+    """Store component actions with one global numerical-rank rule."""
 
     value: Array
     finite: Array
@@ -138,6 +146,7 @@ def connected_pseudoinverse_upper_work(size: int, rhs_columns: int, /) -> int:
     )
 
 
+# Keep guarded component factors and their global cutoff in one fixed-order traced kernel.
 def apply_connected_pseudoinverse(
     matrix: Array,
     rhs: Array,
@@ -146,24 +155,34 @@ def apply_connected_pseudoinverse(
     remaining_work: Array,
     /,
 ) -> ConnectedPseudoinverseResult:
-    """Factor every exact-zero-connected component, retaining global cutoff.
+    """Factor every zero-connected component, retaining the global cutoff.
 
-    Connectivity uses original matrix entries AFTER the caller's equality
+    Connectivity uses matrix entries AFTER the caller's equality
     projection, never SCI support or epsilon sparsity. Signature padding is
     excluded from the collected spectrum; true rank-deficient zeros remain.
     No factor cache, inverse, dropped component, or per-block rank decision.
     """
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
-        raise ValueError("Connected pseudoinverse requires one square matrix.")
+        raise ValueError(
+            f"apply_connected_pseudoinverse.matrix must be square and rank 2; got shape={matrix.shape}."
+        )
     if matrix.dtype.kind != "f":
-        raise TypeError("Connected Gram actions require real floating data.")
+        raise TypeError(
+            f"apply_connected_pseudoinverse.matrix must have real floating dtype; got {matrix.dtype}."
+        )
     size = matrix.shape[0]
     if size < 1 or size > 32 or valid_rows.shape != (size,):
-        raise ValueError("Connected pseudoinverse requires at most32 matching rows.")
+        raise ValueError(
+            f"apply_connected_pseudoinverse.valid_rows must match 1 to 32 matrix rows; got matrix.shape={matrix.shape}, valid_rows.shape={valid_rows.shape}."
+        )
     if valid_rows.dtype.kind != "b":
-        raise TypeError("Component validity must be Boolean.")
+        raise TypeError(
+            f"apply_connected_pseudoinverse.valid_rows must have Boolean dtype; got {valid_rows.dtype}."
+        )
     if rhs.ndim not in (1, 2) or rhs.shape[0] != size:
-        raise ValueError("Connected right-hand side must match matrix rows.")
+        raise ValueError(
+            f"apply_connected_pseudoinverse.rhs must have rank 1 or 2 and match matrix rows; got shape={rhs.shape}, rows={size}."
+        )
     vector_rhs = rhs.ndim == 1
     columns = rhs[:, None] if vector_rhs else rhs
     graph_work = connected_pseudoinverse_graph_work(size)

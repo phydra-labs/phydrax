@@ -1,132 +1,142 @@
 import itertools
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import fields, is_dataclass
 from fractions import Fraction
 from pathlib import Path
+from typing import Any, NamedTuple
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 from jax.typing import ArrayLike
 
 import phydrax as phx
-from phydrax.discretization import CellGeometrySpec, CellMesh, PolyhedralConnectivity
+from phydrax._array_archive import ArrayArchiveLimits, DEFAULT_ARRAY_ARCHIVE_LIMITS
+from phydrax._differentiation import BranchDifferentiationPolicy
+from phydrax._frozendict import frozendict
+from phydrax._meshcore import (
+    MeshcoreStatus,
+    NativeExecutionScope,
+    regular_3d,
+    RestrictedPowerFailure,
+)
+from phydrax._model._structure import (
+    model_from_array_recipe,
+    model_recipe_array_values,
+    model_structure_recipe,
+)
+from phydrax.discretization import (
+    CellGeometrySpec,
+    CellMesh,
+    HybridDiffusionBoundary,
+    HybridMimeticDiffusion,
+    PolyhedralConnectivity,
+    UnstructuredFiniteVolumePlan,
+)
+from phydrax.discretization._cell_geometry import cell_geometry_preparation_query_upper
+from phydrax.discretization._cell_geometry_validity import (
+    cell_geometry_id,
+    certify_cell_geometry_validity,
+)
+from phydrax.discretization._conservation_ledger import ConservationStageLedger
+from phydrax.discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
+from phydrax.discretization._periodic_cell import PeriodicCell
+from phydrax.discretization._periodic_topology import PeriodicMeshTopology
+from phydrax.discretization._views import FieldTracePolicy
 from phydrax.discretization.finite_volume._polyhedral import (
     prepare_polyhedral_finite_volume_geometry,
+)
+from phydrax.discretization.finite_volume._unstructured_remap import (
+    UnstructuredConservativeRemapPlan,
 )
 from phydrax.discretization.vem._polyhedral import (
     prepare_polyhedral_h1_virtual_element_3d,
 )
+from phydrax.geometry._embedding_state import MeshCertificateLimits
+from phydrax.geometry._periodic_power_preparation import (
+    PeriodicPowerImageCapacityRefusal,
+    PeriodicPowerPreparation,
+)
+from phydrax.geometry._planar_primitives import (
+    intersection,
+    intersection_polygon,
+    signed_measure,
+)
 from phydrax.geometry._supermesh import CommonRefinementStatus, prepare_common_refinement
-from phydrax.geometry._triangulation import RestrictedPowerDiagram
-from phydrax.meshing import CellMeshingResult, MeshingScope, PiecewiseLinearComplex
-from phydrax.meshing._controls import PatchControl, PeriodicConstraint
+from phydrax.geometry._triangulation import (
+    PeriodicPowerSourceRefusal,
+    RestrictedPowerDiagram,
+)
+from phydrax.lifecycle._meshing_field_records import (
+    MeshingFieldStateRole,
+    MeshingFiniteVolumeFieldDeclaration,
+    prepare_meshing_field_index_binding,
+)
+from phydrax.lifecycle._meshing_sources import (
+    read_meshing_source_closure,
+    register_meshing_source_artifacts,
+    require_same_source_evidence,
+    validate_meshing_source_closure,
+    write_meshing_source_closure,
+)
+from phydrax.meshing import (
+    CellMeshingResult,
+    MeshingScope,
+    NativePolyhedralSchedule,
+    PiecewiseLinearComplex,
+)
+from phydrax.meshing._controls import PatchControl
+from phydrax.meshing._lineage import identity_lineage
+from phydrax.meshing._periodic_constraint import PeriodicConstraint
+from phydrax.meshing._polyhedral_adaptation import (
+    adapt_polyhedral_mesh,
+    PolyhedralAdaptationEvidence,
+)
 from phydrax.meshing._polyhedral_generation import (
     generate_polyhedral_volume,
-    NativePolyhedralSchedule,
     PolyhedralConstruction,
     PolyhedralGenerationError,
+    PolyhedralGenerationReason,
     prepare_periodic_polyhedral_seam_fragments,
 )
-from phydrax.meshing.providers._native_polyhedral import (
-    execute_polyhedral_route,
-    PreparedPolyhedralVolume,
+from phydrax.meshing._topology_edit import assemble_topology_edit
+from phydrax.meshing.providers._native_polyhedral import construction_failure
+from tests._support.coordinate_references import (
+    coordinate_reference_budget,
+)
+from tests._support.distributed_meshing.cold_lifecycle_identities import record_array
+from tests._support.forced_devices import run_on_forced_devices
+from tests._support.polyhedral_meshes import (
+    periodic_cube_source,
+    periodic_fv_public_inputs,
+    POLYHEDRAL_CUBE_LOOPS,
+    unequal_cube_seam_fixture,
+    voxel_plc,
 )
 
 
 M = phx.meshing
-_LOOPS = (
-    (0, 2, 3, 1),
-    (4, 5, 7, 6),
-    (0, 1, 5, 4),
-    (2, 6, 7, 3),
-    (0, 4, 6, 2),
-    (1, 3, 7, 5),
-)
 
-
-def _voxel_plc(
-    cubes: Sequence[tuple[int, int, int]],
-    regions: Sequence[int] | None = None,
-) -> PiecewiseLinearComplex:
-    regions = [0] * len(cubes) if regions is None else regions
-    vertices: list[tuple[int, int, int]] = []
-    ids: dict[tuple[int, int, int], int] = {}
-    faces: dict[tuple[int, ...], list[tuple[tuple[int, ...], int]]] = {}
-    for cube, region in zip(cubes, regions, strict=True):
-        corners = []
-        for i in range(8):
-            point = (
-                cube[0] + (i & 1),
-                cube[1] + ((i >> 1) & 1),
-                cube[2] + ((i >> 2) & 1),
-            )
-            if point not in ids:
-                ids[point] = len(vertices)
-                vertices.append(point)
-            corners.append(ids[point])
-        for local in _LOOPS:
-            face = tuple(corners[i] for i in local)
-            faces.setdefault(tuple(sorted(face)), []).append((face, region))
-    polygons, incidence = [], []
-    for entries in faces.values():
-        loop, region = entries[0]
-        other = entries[1][1] if len(entries) == 2 else -1
-        if other == region:
-            continue
-        polygons.append(loop)
-        incidence.append((other, region))
-    # Semantic groups deliberately span noncoplanar faces: they must not be
-    # merged into a single invalid polygon by restricted assembly.
-    pairs, facet_ids = np.unique(incidence, axis=0, return_inverse=True)
-    return M.PiecewiseLinearComplex(
-        vertices,
-        polygons,
-        facet_ids,
-        pairs,
-        tuple(f"material-{r}" for r in sorted(set(regions))),
-    )
-
-
-def _periodic_cube_source() -> tuple[
-    PiecewiseLinearComplex, tuple[PeriodicConstraint, ...]
-]:
-    points = np.asarray(
-        [(i & 1, (i >> 1) & 1, (i >> 2) & 1) for i in range(8)], dtype=float
-    )
-    domain = PiecewiseLinearComplex(
-        points, _LOOPS, np.arange(6), [(-1, 0)] * 6, ("material-0",)
-    )
-    constraints = []
-    for axis, source_facet, target_facet in ((0, 4, 5), (1, 2, 3), (2, 0, 1)):
-        source = M.MeshingScope(
-            "polyhedral-domain",
-            "r1",
-            M.MeshingEntityKind.GEOMETRY,
-            2,
-            f"source-{axis}",
-            [source_facet],
-        )
-        target = M.MeshingScope(
-            "polyhedral-domain",
-            "r1",
-            M.MeshingEntityKind.GEOMETRY,
-            2,
-            f"target-{axis}",
-            [target_facet],
-        )
-        matrix = np.eye(4)
-        matrix[axis, 3] = 1
-        constraints.append(
-            M.PeriodicConstraint(
-                source,
-                target,
-                matrix,
-                tolerance=0,
-                source_entity_ids=np.asarray([source_facet], dtype=np.int64),
-                orientations=np.asarray([-1], dtype=np.int64),
-            )
-        )
-    return domain, tuple(constraints)
+# Empirical absolute tolerances from the independent volume, remap, VEM, and
+# periodic-FV regressions in this file at a6827a9e54306a606ea5bc46bce894caf4ec7824.
+# Values are retained unchanged; zero tolerances below denote bitwise identities.
+_VOLUME_ATOL = 1e-12
+_REMAP_ATOL = 1e-11
+_OPERATOR_ATOL = 1e-10
+_QUOTIENT_ATOL = 1e-13
+# This is the authored relative stopping request, not a roundoff allowance.
+_VOLUME_OPTIMIZATION_TOLERANCE = 1e-6
+# Authored classification allowance in the source-action mismatch regression
+# at the same revision: it exceeds 2**-30 but cannot authorize changed geometry.
+_SEAM_CLASSIFICATION_TOLERANCE = 1e-6
+# Authored adversarial stopping allowance: an empty required site must still
+# fail even when the relative volume target allows a 200-percent error.
+_LOOSE_VOLUME_TARGET_TOLERANCE = 2
 
 
 def _publish(
@@ -165,19 +175,20 @@ def _publish(
         periodic_constraints=periodic_constraints,
         patch_controls=patch_controls,
     )
-    prepared = PreparedPolyhedralVolume(source, specification, schedule)
-    return execute_polyhedral_route(
-        source,
-        specification,
-        prepared,
-        phx.SpatialCoordinateContract.si(),
-        M.NativeMeshingProvider.info(),
-        "polyhedral-test-plan",
+    options = M.NativeMeshingOptions("plc_restricted_power", polyhedral_schedule=schedule)
+    return (
+        M.NativeMeshingProvider(options)
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
     )
 
 
 def test_nonconvex_material_coverage_reciprocity_and_consumers() -> None:
-    domain = _voxel_plc([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [0, 1, 0])
+    domain = voxel_plc([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [0, 1, 0])
     result = _publish(domain)
     assert isinstance(result, M.CellMeshingResult)
     assert result.certification is not None
@@ -188,17 +199,17 @@ def test_nonconvex_material_coverage_reciprocity_and_consumers() -> None:
     vem = prepare_polyhedral_h1_virtual_element_3d(
         result.mesh, cell_geometry=result.geometry
     )
-    assert float(jnp.sum(fv.cell_volumes)) == pytest.approx(3.0, abs=1e-12)
+    assert float(jnp.sum(fv.cell_volumes)) == pytest.approx(3.0, abs=_VOLUME_ATOL)
     assert vem.evidence.minimum_rank_margin > 0
-    assert vem.evidence.maximum_reproduction_defect < 1e-10
+    assert vem.evidence.maximum_reproduction_defect < _OPERATOR_ATOL
     ones = jnp.ones(vem.dof_count)
-    np.testing.assert_allclose(vem.mv(ones), 0, atol=1e-10)
+    np.testing.assert_allclose(vem.mv(ones), 0, atol=_OPERATOR_ATOL)
     x = jnp.asarray(result.mesh.coordinates)[:, 0]
-    assert float(jnp.vdot(x, vem.mv(x))) == pytest.approx(3.0, abs=1e-10)
+    assert float(jnp.vdot(x, vem.mv(x))) == pytest.approx(3.0, abs=_OPERATOR_ATOL)
     c = result.mesh.connectivity
     if not isinstance(c, PolyhedralConnectivity):
         raise TypeError(
-            "Native polyhedral publication requires root PolyhedralConnectivity."
+            "result.mesh.connectivity must be PolyhedralConnectivity; got a different connectivity kind."
         )
     signs, faces = np.asarray(c.cell_face_sign_values), np.asarray(c.cell_face_values)
     sums = np.bincount(faces, weights=signs, minlength=c.face_count)
@@ -209,14 +220,8 @@ def test_nonconvex_material_coverage_reciprocity_and_consumers() -> None:
 
 
 def test_canonical_weighted_regeneration_preserves_source_strata_and_inventory() -> None:
-    from phydrax.discretization.finite_volume._unstructured import (
-        UnstructuredFiniteVolumePlan,
-    )
-    from phydrax.discretization.finite_volume._unstructured_remap import (
-        UnstructuredConservativeRemapPlan,
-    )
 
-    domain = _voxel_plc([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [0, 1, 0])
+    domain = voxel_plc([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [0, 1, 0])
     source = _publish(
         domain,
         sites=np.asarray(
@@ -271,11 +276,11 @@ def test_canonical_weighted_regeneration_preserves_source_strata_and_inventory()
             == target.mesh.entity_set(dimension).entity_set_id
         )
         # New cut vertices may lie on different source edges after a site move;
-        # the fixed source points and the owning higher-dimensional strata persist.
+        # the fixed source points and higher-dimensional strata persist.
         previous_strata = {
             identity
             for identity, source_dimension in zip(
-                previous.source_entity_ids,
+                previous.source_entities.entity_ids(),
                 np.asarray(previous.source_dimensions),
                 strict=True,
             )
@@ -284,7 +289,7 @@ def test_canonical_weighted_regeneration_preserves_source_strata_and_inventory()
         current_strata = {
             identity
             for identity, source_dimension in zip(
-                current.source_entity_ids,
+                current.source_entities.entity_ids(),
                 np.asarray(current.source_dimensions),
                 strict=True,
             )
@@ -322,27 +327,27 @@ def test_canonical_weighted_regeneration_preserves_source_strata_and_inventory()
         assert np.dot(
             carried[after], np.asarray(new.cell_volumes)[after]
         ) == pytest.approx(
-            np.dot(values[before], np.asarray(old.cell_volumes)[before]),
-            abs=1e-11,
+            np.dot(values[before], np.asarray(old.cell_volumes)[before]), abs=_REMAP_ATOL
         )
     vem = prepare_polyhedral_h1_virtual_element_3d(
         target.mesh, cell_geometry=target.geometry
     )
     assert vem.evidence.minimum_rank_margin > 0
-    assert vem.evidence.maximum_reproduction_defect < 1e-10
+    assert vem.evidence.maximum_reproduction_defect < _OPERATOR_ATOL
     assert source.result_id == original_id
 
 
 def test_regenerated_partial_facet_label_tracks_physical_overlap() -> None:
-    from phydrax.meshing._lineage import identity_lineage
-    from phydrax.meshing._polyhedral_adaptation import PolyhedralAdaptationEvidence
 
-    domain = _voxel_plc([(0, 0, 0)])
+    domain = voxel_plc([(0, 0, 0)])
     published = _publish(domain)
     mesh = published.mesh
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
-        raise TypeError("The source requires genuine packed polyhedral faces.")
+        raise TypeError(
+            "test.source.mesh.connectivity must be PolyhedralConnectivity; "
+            f"got {type(connectivity).__name__}"
+        )
     offsets = np.asarray(connectivity.face_vertex_offsets)
     vertices = np.asarray(connectivity.face_vertex_values)
     coordinates = np.asarray(mesh.coordinates)
@@ -395,11 +400,14 @@ def test_regenerated_partial_facet_label_tracks_physical_overlap() -> None:
     target = adapted.target
     assert target.certification is not None and target.certification.passed
     fv = prepare_polyhedral_finite_volume_geometry(target.mesh)
-    np.testing.assert_allclose(np.sort(fv.cell_volumes), [0.25, 0.75], atol=1e-12)
+    np.testing.assert_allclose(np.sort(fv.cell_volumes), [0.25, 0.75], atol=_VOLUME_ATOL)
     inlet = next(label for label in target.labels if label.name == "inlet")
     c = target.mesh.connectivity
     if not isinstance(c, PolyhedralConnectivity):
-        raise TypeError("Regeneration must preserve genuine packed polyhedral faces.")
+        raise TypeError(
+            "test.target.mesh.connectivity must be PolyhedralConnectivity; "
+            f"got {type(c).__name__}"
+        )
     rows = np.flatnonzero(
         np.isin(np.asarray(c.face_global_ids), np.asarray(inlet.scope.entity_ids))
     )
@@ -414,7 +422,7 @@ def test_regenerated_partial_facet_label_tracks_physical_overlap() -> None:
 
 
 def test_coincident_carrier_bisector_and_conservative_nonnested_remap() -> None:
-    domain = _voxel_plc([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [0, 1, 0])
+    domain = voxel_plc([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [0, 1, 0])
     source = _publish(domain)
     target = _publish(
         domain, sites=np.asarray([[0.5, 0.25, 0.5], [0.5, 1.75, 0.5]], dtype=np.float64)
@@ -431,9 +439,13 @@ def test_coincident_carrier_bisector_and_conservative_nonnested_remap() -> None:
     source_connectivity = source.mesh.connectivity
     target_connectivity = target.mesh.connectivity
     if not isinstance(source_connectivity, PolyhedralConnectivity):
-        raise TypeError("Native polyhedral source requires root PolyhedralConnectivity.")
+        raise TypeError(
+            "source.mesh.connectivity must be PolyhedralConnectivity; got a different connectivity kind."
+        )
     if not isinstance(target_connectivity, PolyhedralConnectivity):
-        raise TypeError("Native polyhedral target requires root PolyhedralConnectivity.")
+        raise TypeError(
+            "target.mesh.connectivity must be PolyhedralConnectivity; got a different connectivity kind."
+        )
     assert source_connectivity.cell_count == 2
     assert target_connectivity.cell_count == 3
     inventory = np.array([2.0, 5.0])
@@ -447,17 +459,21 @@ def test_coincident_carrier_bisector_and_conservative_nonnested_remap() -> None:
     assert np.dot(
         target_average, np.asarray(refinement.target_measures)
     ) == pytest.approx(
-        np.dot(inventory, np.asarray(refinement.source_measures)), abs=1e-12
+        np.dot(inventory, np.asarray(refinement.source_measures)), abs=_VOLUME_ATOL
     )
     assert np.all((target_average >= 2) & (target_average <= 5))
 
 
 def test_disconnected_components_and_hole_decomposition() -> None:
-    disconnected = generate_polyhedral_volume(_voxel_plc([(0, 0, 0), (3, 0, 0)]))
+    generation_schedule = NativePolyhedralSchedule()
+    with NativeExecutionScope(generation_schedule.native_limits()) as scope:
+        disconnected = generate_polyhedral_volume(
+            voxel_plc([(0, 0, 0), (3, 0, 0)]), schedule=generation_schedule, scope=scope
+        )
     connectivity = disconnected.mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError(
-            "Native polyhedral construction requires root PolyhedralConnectivity."
+            "disconnected.mesh.connectivity must be PolyhedralConnectivity; got a different connectivity kind."
         )
     assert connectivity.cell_count == 2
     np.testing.assert_array_equal(disconnected.cell_sites, [0, 0])
@@ -465,11 +481,11 @@ def test_disconnected_components_and_hole_decomposition() -> None:
     ring = [
         (x, y, 0) for x, y in itertools.product(range(3), repeat=2) if (x, y) != (1, 1)
     ]
-    result = _publish(_voxel_plc(ring))
+    result = _publish(voxel_plc(ring))
     assert result.certification is not None
     assert result.certification.passed
     fv = prepare_polyhedral_finite_volume_geometry(result.mesh)
-    assert float(jnp.sum(fv.cell_volumes)) == pytest.approx(8.0, abs=1e-12)
+    assert float(jnp.sum(fv.cell_volumes)) == pytest.approx(8.0, abs=_VOLUME_ATOL)
     assert np.max(np.asarray(result.mesh.coordinates)[:, 0]) == 3
     # Every star quadrature point remains outside the hole (no convex-hull fill).
     q = np.asarray(fv.cell_quadrature_points)[np.asarray(fv.cell_quadrature_valid)]
@@ -477,31 +493,47 @@ def test_disconnected_components_and_hole_decomposition() -> None:
 
 
 def test_hidden_duplicate_sites_and_required_survival() -> None:
-    domain = _voxel_plc([(0, 0, 0)])
-    construction = generate_polyhedral_volume(
-        domain, sites=[[0.5, 0.5, 0.5], [0.5, 0.5, 0.5]], weights=[0, -100]
-    )
-    np.testing.assert_array_equal(construction.cell_sites, [0])
-    np.testing.assert_allclose(construction.achieved_site_volumes, [1, 0], atol=1e-12)
-    with pytest.raises(PolyhedralGenerationError, match="required_empty_sites"):
-        generate_polyhedral_volume(
+    domain = voxel_plc([(0, 0, 0)])
+    generation_schedule = NativePolyhedralSchedule()
+    with NativeExecutionScope(generation_schedule.native_limits()) as scope:
+        construction = generate_polyhedral_volume(
             domain,
             sites=[[0.5, 0.5, 0.5], [0.5, 0.5, 0.5]],
             weights=[0, -100],
-            schedule=NativePolyhedralSchedule(require_every_site=True),
+            schedule=generation_schedule,
+            scope=scope,
         )
+    np.testing.assert_array_equal(construction.cell_sites, [0])
+    np.testing.assert_allclose(
+        construction.achieved_site_volumes, [1, 0], atol=_VOLUME_ATOL
+    )
+    with pytest.raises(PolyhedralGenerationError, match="required_empty_sites"):
+        generation_schedule = NativePolyhedralSchedule(require_every_site=True)
+        with NativeExecutionScope(generation_schedule.native_limits()) as scope:
+            generate_polyhedral_volume(
+                domain,
+                sites=[[0.5, 0.5, 0.5], [0.5, 0.5, 0.5]],
+                weights=[0, -100],
+                schedule=generation_schedule,
+                scope=scope,
+            )
 
 
 def test_weight_optimization_meets_requested_site_volumes() -> None:
-    construction = generate_polyhedral_volume(
-        _voxel_plc([(0, 0, 0)]),
-        sites=[[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]],
-        schedule=NativePolyhedralSchedule(target_site_volumes=(0.25, 0.75)),
-    )
+    generation_schedule = NativePolyhedralSchedule(target_site_volumes=(0.25, 0.75))
+    with NativeExecutionScope(generation_schedule.native_limits()) as scope:
+        construction = generate_polyhedral_volume(
+            voxel_plc([(0, 0, 0)]),
+            sites=[[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]],
+            schedule=generation_schedule,
+            scope=scope,
+        )
     np.testing.assert_allclose(
-        construction.achieved_site_volumes, [0.25, 0.75], atol=1e-6
+        construction.achieved_site_volumes,
+        [0.25, 0.75],
+        atol=_VOLUME_OPTIMIZATION_TOLERANCE,
     )
-    assert construction.optimization_relative_residual <= 1e-6
+    assert construction.optimization_relative_residual <= _VOLUME_OPTIMIZATION_TOLERANCE
 
 
 def test_six_hundred_collinear_sites_cover_without_all_pairs_limit() -> None:
@@ -510,7 +542,7 @@ def test_six_hundred_collinear_sites_cover_without_all_pairs_limit() -> None:
     )
     tets = []
     for permutation in itertools.permutations(range(3)):
-        corner = np.zeros(3, dtype=int)
+        corner = np.zeros(3, dtype=np.int64)
         tet = [0]
         for axis in permutation:
             corner[axis] = 1
@@ -534,13 +566,13 @@ def test_six_hundred_collinear_sites_cover_without_all_pairs_limit() -> None:
         (np.linspace(0.01, 0.99, 600), np.full(600, 0.371), np.full(600, 0.419))
     )
     diagram = RestrictedPowerDiagram(
-        sites, np.zeros(600), points, tets, np.zeros(6, dtype=int), facets
+        sites, np.zeros(600), points, tets, np.zeros(6, dtype=np.int64), facets
     )
     data = diagram.construction
     assert np.unique(data.cell_sites).size == 600
-    assert np.sum(data.cell_volumes) == pytest.approx(1.0, abs=1e-10)
+    assert np.sum(data.cell_volumes) == pytest.approx(1.0, abs=_OPERATOR_ATOL)
     np.testing.assert_allclose(
-        np.sum(data.cell_moments, axis=0), [0.5, 0.5, 0.5], atol=1e-10
+        np.sum(data.cell_moments, axis=0), [0.5, 0.5, 0.5], atol=_OPERATOR_ATOL
     )
 
 
@@ -557,37 +589,58 @@ def test_weighted_collinear_sites_retain_their_restricted_partition() -> None:
     data = diagram.construction
     volumes = np.bincount(data.cell_sites, weights=data.cell_volumes, minlength=2)
     # The weighted bisector is x=0.55; the right tetrahedron has edge scale 0.45.
-    np.testing.assert_allclose(volumes, [1 / 6 - 0.45**3 / 6, 0.45**3 / 6], atol=1e-12)
-    assert np.sum(volumes) == pytest.approx(1 / 6, abs=1e-12)
+    np.testing.assert_allclose(
+        volumes, [1 / 6 - 0.45**3 / 6, 0.45**3 / 6], atol=_VOLUME_ATOL
+    )
+    assert np.sum(volumes) == pytest.approx(1 / 6, abs=_VOLUME_ATOL)
 
 
 def test_weighted_cube_collinear_faces_admit_fv_and_vem() -> None:
     result = _publish(
-        _voxel_plc([(0, 0, 0)]),
+        voxel_plc([(0, 0, 0)]),
         sites=np.asarray([[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]], dtype=np.float64),
         weights=np.asarray([0.03, -0.02], dtype=np.float64),
     )
+    _assert_weighted_cube_consumer_contract(result)
+
+
+def _assert_weighted_cube_consumer_contract(result: CellMeshingResult) -> None:
     fv = prepare_polyhedral_finite_volume_geometry(
         result.mesh, cell_geometry=result.geometry
     )
     vem = prepare_polyhedral_h1_virtual_element_3d(
         result.mesh, cell_geometry=result.geometry
     )
-    np.testing.assert_allclose(np.sort(fv.cell_volumes), [0.45, 0.55], atol=1e-12)
+    np.testing.assert_allclose(
+        np.sort(fv.cell_volumes),
+        [0.45, 0.55],
+        atol=_VOLUME_ATOL,
+        err_msg="PolyhedralPublication.weighted_volumes",
+    )
     x = np.asarray(result.mesh.coordinates)[:, 0]
-    assert float(jnp.vdot(x, vem.mv(x))) == pytest.approx(1.0, abs=1e-10)
+    assert float(jnp.vdot(x, vem.mv(x))) == pytest.approx(1.0, abs=_OPERATOR_ATOL)
     assert vem.evidence.minimum_rank_margin > 0
     left = jnp.linspace(0.1, 1.0, vem.dof_count)
     right = jnp.linspace(1.0, -0.2, vem.dof_count)
     assert float(jnp.vdot(left, vem.mv(right))) == pytest.approx(
-        float(jnp.vdot(vem.transpose_mv(left), right)), abs=1e-10
+        float(jnp.vdot(vem.transpose_mv(left), right)), abs=_OPERATOR_ATOL
     )
     quadrature_moment = np.sum(
         np.asarray(fv.cell_quadrature_points)
         * np.asarray(fv.cell_quadrature_weights)[..., None],
         axis=(0, 1),
     )
-    np.testing.assert_allclose(quadrature_moment, [0.5, 0.5, 0.5], atol=1e-12)
+    np.testing.assert_allclose(quadrature_moment, [0.5, 0.5, 0.5], atol=_VOLUME_ATOL)
+
+
+def test_weighted_cube_oracle_detects_publication_with_wrong_weights() -> None:
+    malformed = _publish(
+        voxel_plc([(0, 0, 0)]),
+        sites=np.asarray([[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]], dtype=np.float64),
+        weights=np.zeros(2, dtype=np.float64),
+    )
+    with pytest.raises(AssertionError, match=r"PolyhedralPublication\.weighted_volumes"):
+        _assert_weighted_cube_consumer_contract(malformed)
 
 
 def test_nonconvex_face_triangulation_preserves_polynomial_geometry() -> None:
@@ -604,10 +657,10 @@ def test_nonconvex_face_triangulation_preserves_polynomial_geometry() -> None:
     mesh = phx.discretization.CellMesh.from_polyhedra(points, [faces])
     fv = prepare_polyhedral_finite_volume_geometry(mesh)
     vem = prepare_polyhedral_h1_virtual_element_3d(mesh)
-    assert float(fv.cell_volumes[0]) == pytest.approx(3.5, abs=1e-12)
-    assert float(vem.evidence.cell_volumes[0]) == pytest.approx(3.5, abs=1e-12)
+    assert float(fv.cell_volumes[0]) == pytest.approx(3.5, abs=_VOLUME_ATOL)
+    assert float(vem.evidence.cell_volumes[0]) == pytest.approx(3.5, abs=_VOLUME_ATOL)
     x = jnp.asarray(mesh.coordinates)[:, 0]
-    assert float(jnp.vdot(x, vem.mv(x))) == pytest.approx(3.5, abs=1e-10)
+    assert float(jnp.vdot(x, vem.mv(x))) == pytest.approx(3.5, abs=_OPERATOR_ATOL)
     q = np.asarray(fv.face_quadrature_points)
     valid = np.asarray(fv.face_quadrature_valid)
     face_centers = np.asarray(fv.face_centers)
@@ -615,20 +668,13 @@ def test_nonconvex_face_triangulation_preserves_polynomial_geometry() -> None:
     cap = np.abs(np.asarray(fv.face_area_vectors)[:, 2]) > 0
     cap_points = q[cap][valid[cap]]
     assert not np.any((cap_points[:, 1] > 1.5 + 0.5 * np.abs(cap_points[:, 0] - 1)))
-    np.testing.assert_allclose(face_centers[cap, 0], 1, atol=1e-12)
+    np.testing.assert_allclose(face_centers[cap, 0], 1, atol=_VOLUME_ATOL)
 
 
 def test_exact_weighted_plane_restriction_preserves_source_and_consumer_volume() -> None:
-    from fractions import Fraction
-
-    from phydrax.discretization._cell_geometry_validity import (
-        certify_cell_geometry_validity,
-    )
-    from phydrax.meshing._polyhedral_adaptation import adapt_polyhedral_mesh
-    from phydrax.meshing._topology_edit import assemble_topology_edit
 
     source = _publish(
-        _voxel_plc([(0, 0, 0)]),
+        voxel_plc([(0, 0, 0)]),
         sites=np.asarray([[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]], dtype=np.float64),
         weights=np.asarray([0.03, -0.02], dtype=np.float64),
     )
@@ -640,9 +686,10 @@ def test_exact_weighted_plane_restriction_preserves_source_and_consumer_volume()
         ),
         source_geometry=source.geometry,
     )
-    mesh, _, _ = assemble_topology_edit(
-        source.mesh, outcome.edit, numeric_version="exact-plane-test"
-    )
+    with coordinate_reference_budget() as budget:
+        mesh, _, _ = assemble_topology_edit(
+            source.mesh, outcome.edit, numeric_version="exact-plane-test", budget=budget
+        )
     geometry = outcome.geometry
     assert outcome.common_refinement.status is CommonRefinementStatus.SUCCESS
     assert certify_cell_geometry_validity(geometry, mesh=mesh).all_certified
@@ -650,8 +697,14 @@ def test_exact_weighted_plane_restriction_preserves_source_and_consumer_volume()
     if not isinstance(
         restricted, phx.discretization.ExactPowerCellGeometryRestrictionSource
     ):
-        raise AssertionError("The plane restriction lost its original exact source.")
-    coordinates = restricted.prepare(mesh.coordinates).vertices
+        raise AssertionError(
+            "test.restriction.exact_source must be ExactPowerCellGeometryRestrictionSource; "
+            f"got {type(restricted).__name__}"
+        )
+    with coordinate_reference_budget(
+        queries_upper=restricted.preparation_query_upper()
+    ) as budget:
+        coordinates = restricted.prepare(mesh.coordinates, budget=budget).vertices
     normal = tuple(Fraction(float(value)) for value in plane[:3])
     offset = Fraction(float(plane[3]))
     for vertex in np.flatnonzero(np.asarray(restricted.vertex_plane_ids) >= 0):
@@ -669,26 +722,18 @@ def test_exact_weighted_plane_restriction_preserves_source_and_consumer_volume()
         )
     fv = prepare_polyhedral_finite_volume_geometry(mesh, cell_geometry=geometry)
     vem = prepare_polyhedral_h1_virtual_element_3d(mesh, cell_geometry=geometry)
-    assert float(jnp.sum(fv.cell_volumes)) == pytest.approx(1.0, abs=1e-12)
-    assert float(jnp.sum(vem.evidence.cell_volumes)) == pytest.approx(1.0, abs=1e-12)
-    assert vem.evidence.maximum_reproduction_defect < 1e-10
+    assert float(jnp.sum(fv.cell_volumes)) == pytest.approx(1.0, abs=_VOLUME_ATOL)
+    assert float(jnp.sum(vem.evidence.cell_volumes)) == pytest.approx(
+        1.0, abs=_VOLUME_ATOL
+    )
+    assert vem.evidence.maximum_reproduction_defect < _OPERATOR_ATOL
 
 
 def test_exact_power_geometry_persistence_roundtrip_keeps_power_source() -> None:
-    from phydrax._model._structure import (
-        model_from_array_recipe,
-        model_recipe_array_values,
-        model_structure_recipe,
-    )
-    from phydrax.discretization._cell_geometry_validity import cell_geometry_id
-    from phydrax.lifecycle._meshing_sources import (
-        register_meshing_source_artifacts,
-        validate_meshing_source_closure,
-    )
 
     register_meshing_source_artifacts()
     source = _publish(
-        _voxel_plc([(0, 0, 0)]),
+        voxel_plc([(0, 0, 0)]),
         sites=np.asarray([[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]], dtype=np.float64),
         weights=np.asarray([0.03, -0.02], dtype=np.float64),
     )
@@ -697,7 +742,8 @@ def test_exact_power_geometry_persistence_roundtrip_keeps_power_source() -> None
         geometry.exact_source, phx.discretization.ExactPowerCellGeometrySource
     ):
         raise AssertionError(
-            "Weighted polyhedral publication lost its exact power source."
+            "test.publication.geometry.exact_source must be ExactPowerCellGeometrySource; "
+            f"got {type(geometry.exact_source).__name__}"
         )
     recipe = model_structure_recipe(geometry)
     restored = model_from_array_recipe(
@@ -709,10 +755,21 @@ def test_exact_power_geometry_persistence_roundtrip_keeps_power_source() -> None
     if not isinstance(
         restored.exact_source, phx.discretization.ExactPowerCellGeometrySource
     ):
-        raise AssertionError("The restored geometry lost its exact power source kind.")
+        raise AssertionError(
+            "test.restored.geometry.exact_source must be ExactPowerCellGeometrySource; "
+            f"got {type(restored.exact_source).__name__}"
+        )
     assert restored.exact_source.source_id == geometry.exact_source.source_id
     assert cell_geometry_id(restored) == cell_geometry_id(geometry)
-    assert restored.source_coordinates() == geometry.source_coordinates()
+    with coordinate_reference_budget(
+        queries_upper=(
+            cell_geometry_preparation_query_upper(restored)
+            + cell_geometry_preparation_query_upper(geometry)
+        ),
+    ) as budget:
+        assert restored.source_coordinates(budget=budget) == geometry.source_coordinates(
+            budget=budget
+        )
     fv = prepare_polyhedral_finite_volume_geometry(source.mesh, cell_geometry=restored)
     reference = prepare_polyhedral_finite_volume_geometry(
         source.mesh, cell_geometry=geometry
@@ -722,7 +779,20 @@ def test_exact_power_geometry_persistence_roundtrip_keeps_power_source() -> None
     )
 
 
-def test_exact_power_source_refuses_corrupt_witness_carrier_rank_and_budgets() -> None:
+class _PowerSourceFixture(NamedTuple):
+    sites: np.ndarray
+    weights: np.ndarray
+    carrier: np.ndarray
+    tets: np.ndarray
+    offsets: np.ndarray
+    equal: np.ndarray
+    witnesses: np.ndarray
+    source: phx.discretization.ExactPowerCellGeometrySource
+    rounded: np.ndarray
+
+
+@pytest.fixture(scope="module")
+def power_source_fixture() -> _PowerSourceFixture:
     owner = phx.discretization.ExactPowerCellGeometrySource
     sites = np.asarray([[0.0, 0.0, 0.0], [0.7, 0.6, 0.8]], dtype=np.float64)
     weights = np.asarray([0.03, -0.02], dtype=np.float64)
@@ -746,35 +816,105 @@ def test_exact_power_source_refuses_corrupt_witness_carrier_rank_and_budgets() -
         dtype=np.int32,
     )
     source = owner(sites, weights, carrier, tets, offsets, equal, witnesses)
-    rounded = source.prepare().rounded_vertices
+    with coordinate_reference_budget(
+        queries_upper=source.preparation_query_upper()
+    ) as budget:
+        rounded = source.prepare(budget=budget).rounded_vertices
+    return _PowerSourceFixture(
+        sites, weights, carrier, tets, offsets, equal, witnesses, source, rounded
+    )
+
+
+def test_power_source_refuses_non_rne_carrier(
+    power_source_fixture: _PowerSourceFixture,
+) -> None:
+    sites, weights, carrier, tets, offsets, equal, witnesses, source, rounded = (
+        power_source_fixture
+    )
     wrong_rne = rounded.copy()
     wrong_rne[4, 2] = np.nextafter(wrong_rne[4, 2], np.inf)
-    with pytest.raises(ValueError):
-        source.prepare(wrong_rne)
+    with pytest.raises(
+        ValueError, match=r"ExactPowerCellGeometrySource\.rounded_vertices"
+    ):
+        with coordinate_reference_budget(
+            queries_upper=source.preparation_query_upper()
+        ) as budget:
+            source.prepare(wrong_rne, budget=budget)
+
+
+def test_power_source_refuses_wrong_site_ancestry(
+    power_source_fixture: _PowerSourceFixture,
+) -> None:
+    sites, weights, carrier, tets, offsets, equal, witnesses, source, rounded = (
+        power_source_fixture
+    )
+    owner = phx.discretization.ExactPowerCellGeometrySource
     wrong_owner = equal.copy()
     wrong_owner[3] = 0
-    with pytest.raises(ValueError):
-        owner(sites, weights, carrier, tets, offsets, wrong_owner, witnesses).prepare(
-            rounded
-        )
+    with pytest.raises(ValueError, match=r"ExactPowerCellGeometrySource\.vertex_sites"):
+        candidate = owner(sites, weights, carrier, tets, offsets, wrong_owner, witnesses)
+        with coordinate_reference_budget(
+            queries_upper=candidate.preparation_query_upper()
+        ) as budget:
+            candidate.prepare(rounded, budget=budget)
+
+
+def test_power_source_refuses_deficient_intersection_rank(
+    power_source_fixture: _PowerSourceFixture,
+) -> None:
+    sites, weights, carrier, tets, offsets, equal, witnesses, source, rounded = (
+        power_source_fixture
+    )
+    owner = phx.discretization.ExactPowerCellGeometrySource
     wrong_rank = witnesses.copy()
     wrong_rank[4] = [0, 1, 3, -1]
-    with pytest.raises(ValueError):
-        owner(sites, weights, carrier, tets, offsets, equal, wrong_rank).prepare(rounded)
+    with pytest.raises(
+        ValueError, match=r"ExactPowerCellGeometrySource\.vertex_carriers"
+    ):
+        candidate = owner(sites, weights, carrier, tets, offsets, equal, wrong_rank)
+        with coordinate_reference_budget(
+            queries_upper=candidate.preparation_query_upper()
+        ) as budget:
+            candidate.prepare(rounded, budget=budget)
+
+
+def test_power_source_refuses_deficient_carrier_rank(
+    power_source_fixture: _PowerSourceFixture,
+) -> None:
+    sites, weights, carrier, tets, offsets, equal, witnesses, source, rounded = (
+        power_source_fixture
+    )
+    owner = phx.discretization.ExactPowerCellGeometrySource
     flat_carrier = carrier.copy()
     flat_carrier[3] = [1.0, 1.0, 0.0]
-    with pytest.raises(ValueError):
-        owner(sites, weights, flat_carrier, tets, offsets, equal, witnesses).prepare()
-    with pytest.raises(ValueError):
-        owner(
-            sites, weights, carrier, tets, offsets, equal, witnesses, maximum_work=1
-        ).prepare()
-    with pytest.raises(ValueError):
-        owner(
-            sites, weights, carrier, tets, offsets, equal, witnesses, maximum_bits=1
-        ).prepare()
-    with pytest.raises(ValueError):
-        owner(
+    with pytest.raises(ValueError, match=r"ExactPowerCellGeometrySource\.carrier_tets"):
+        candidate = owner(sites, weights, flat_carrier, tets, offsets, equal, witnesses)
+        with coordinate_reference_budget(
+            queries_upper=candidate.preparation_query_upper()
+        ) as budget:
+            candidate.prepare(budget=budget)
+
+
+@pytest.mark.parametrize(
+    "maximum_work, maximum_bits, maximum_condition, diagnostic",
+    [
+        (1, 16384, 1e12, r"ExactPowerCellGeometrySource\.maximum_work"),
+        (10_000_000, 1, 1e12, r"ExactPowerCellGeometrySource\.maximum_bits"),
+        (10_000_000, 16384, 1.0, r"ExactPowerCellGeometrySource\.maximum_condition"),
+    ],
+    ids=["work", "integer-bits", "condition"],
+)
+def test_power_source_refuses_preparation_limit(
+    power_source_fixture: _PowerSourceFixture,
+    maximum_work: int,
+    maximum_bits: int,
+    maximum_condition: float,
+    diagnostic: str,
+) -> None:
+    sites, weights, carrier, tets, offsets, equal, witnesses, _, _ = power_source_fixture
+    owner = phx.discretization.ExactPowerCellGeometrySource
+    with pytest.raises(ValueError, match=diagnostic):
+        candidate = owner(
             sites,
             weights,
             carrier,
@@ -782,17 +922,25 @@ def test_exact_power_source_refuses_corrupt_witness_carrier_rank_and_budgets() -
             offsets,
             equal,
             witnesses,
-            maximum_condition=1.0,
-        ).prepare()
+            maximum_work=maximum_work,
+            maximum_bits=maximum_bits,
+            maximum_condition=maximum_condition,
+        )
+        with coordinate_reference_budget(
+            queries_upper=candidate.preparation_query_upper()
+        ) as budget:
+            candidate.prepare(budget=budget)
 
 
 def _independent_oriented_source_integrals(
-    construction: PolyhedralConstruction,
+    construction: PolyhedralConstruction, *, budget: CoordinateEnclosureBudget
 ) -> tuple[list[Fraction], list[list[Fraction]]]:
     """Rational divergence oracle, independent of native moments and FV/VEM."""
     c = construction.mesh.connectivity
     assert isinstance(c, PolyhedralConnectivity)
-    points = np.asarray(construction.geometry.source_coordinates(), dtype=object)
+    points = np.asarray(
+        construction.geometry.source_coordinates(budget=budget), dtype=object
+    )
     face_offsets = np.asarray(c.face_vertex_offsets)
     face_vertices = np.asarray(c.face_vertex_values)
     cell_offsets = np.asarray(c.cell_face_offsets)
@@ -844,23 +992,38 @@ def _independent_oriented_source_integrals(
         [(0, 0, 0), (3, 0, 0)],
         [(x, y, 0) for x, y in itertools.product(range(3), repeat=2) if (x, y) != (1, 1)],
     ],
+    ids=["nonconvex", "disconnected", "hole"],
 )
 def test_declared_domain_independent_exact_volume_moment_and_flux(
     cubes: Sequence[tuple[int, int, int]],
 ) -> None:
-    construction = generate_polyhedral_volume(
-        _voxel_plc(cubes),
-        sites=[[0.25, 0.5, 0.5], [2.75, 0.5, 0.5]],
-        weights=[0.125, -0.25],
-    )
-    volumes, moments = _independent_oriented_source_integrals(construction)
+    generation_schedule = NativePolyhedralSchedule()
+    with NativeExecutionScope(generation_schedule.native_limits()) as scope:
+        construction = generate_polyhedral_volume(
+            voxel_plc(cubes),
+            sites=[[0.25, 0.5, 0.5], [2.75, 0.5, 0.5]],
+            weights=[0.125, -0.25],
+            schedule=generation_schedule,
+            scope=scope,
+        )
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(construction.geometry),
+    ) as budget:
+        volumes, moments = _independent_oriented_source_integrals(
+            construction, budget=budget
+        )
     assert sum(volumes) == len(cubes)
     for axis in range(3):
         expected = sum(
             (Fraction(cube[axis]) + Fraction(1, 2) for cube in cubes), Fraction(0)
         )
         assert sum(moment[axis] for moment in moments) == expected
-    points = np.asarray(construction.geometry.source_coordinates(), dtype=object)
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(construction.geometry),
+    ) as budget:
+        points = np.asarray(
+            construction.geometry.source_coordinates(budget=budget), dtype=object
+        )
     c = construction.mesh.connectivity
     assert isinstance(c, PolyhedralConnectivity)
     offsets, vertices = (
@@ -880,7 +1043,7 @@ def test_declared_domain_independent_exact_volume_moment_and_flux(
 
 
 def test_concave_declared_prism_and_thin_feature_exact_oracle() -> None:
-    base = np.asarray([[0, 0], [2, 0], [2, 2], [1, 1.5], [0, 2]], dtype=float)
+    base = np.asarray([[0, 0], [2, 0], [2, 2], [1, 1.5], [0, 2]], dtype=np.float64)
     height = 2.0**-12
     n = len(base)
     points = np.vstack(
@@ -895,10 +1058,23 @@ def test_concave_declared_prism_and_thin_feature_exact_oracle() -> None:
         *[np.asarray([i, (i + 1) % n, (i + 1) % n + n, i + n]) for i in range(n)],
     ]
     domain = PiecewiseLinearComplex(
-        points, polygons, np.zeros(len(polygons), dtype=int), [[-1, 0]], ("material-0",)
+        points,
+        polygons,
+        np.zeros(len(polygons), dtype=np.int64),
+        [[-1, 0]],
+        ("material-0",),
     )
-    construction = generate_polyhedral_volume(domain)
-    volumes, moments = _independent_oriented_source_integrals(construction)
+    generation_schedule = NativePolyhedralSchedule()
+    with NativeExecutionScope(generation_schedule.native_limits()) as scope:
+        construction = generate_polyhedral_volume(
+            domain, schedule=generation_schedule, scope=scope
+        )
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(construction.geometry),
+    ) as budget:
+        volumes, moments = _independent_oriented_source_integrals(
+            construction, budget=budget
+        )
     assert sum(volumes) == Fraction(7, 2) * Fraction(height)
     assert sum(moment[0] for moment in moments) == sum(volumes)
     assert sum(moment[2] for moment in moments) == sum(volumes) * Fraction(height) / 2
@@ -908,39 +1084,41 @@ def test_concave_declared_prism_and_thin_feature_exact_oracle() -> None:
 
 def test_required_site_survival_is_not_overridden_by_loose_volume_target() -> None:
     with pytest.raises(PolyhedralGenerationError, match="required_empty_sites"):
-        generate_polyhedral_volume(
-            _voxel_plc([(0, 0, 0)]),
-            sites=[[0.5, 0.5, 0.5], [0.5, 0.5, 0.5 + 2.0**-10]],
-            weights=[0, -100],
-            schedule=NativePolyhedralSchedule(
-                require_every_site=True,
-                target_site_volumes=(0.5, 0.5),
-                relative_volume_tolerance=2,
-            ),
+        generation_schedule = NativePolyhedralSchedule(
+            require_every_site=True,
+            target_site_volumes=(0.5, 0.5),
+            relative_volume_tolerance=_LOOSE_VOLUME_TARGET_TOLERANCE,
         )
+        with NativeExecutionScope(generation_schedule.native_limits()) as scope:
+            generate_polyhedral_volume(
+                voxel_plc([(0, 0, 0)]),
+                sites=[[0.5, 0.5, 0.5], [0.5, 0.5, 0.5 + 2.0**-10]],
+                weights=[0, -100],
+                schedule=generation_schedule,
+                scope=scope,
+            )
 
 
 def test_unmet_cell_quality_is_a_bounded_failure() -> None:
     with pytest.raises(
         PolyhedralGenerationError, match="refinement_unresolved"
     ) as caught:
-        generate_polyhedral_volume(
-            _voxel_plc([(0, 0, 0)]),
-            schedule=NativePolyhedralSchedule(
-                maximum_cell_diameter=0.01,
-                maximum_refinement_steps=0,
-            ),
+        generation_schedule = NativePolyhedralSchedule(
+            maximum_cell_diameter=0.01,
+            maximum_refinement_steps=0,
         )
+        with NativeExecutionScope(generation_schedule.native_limits()) as scope:
+            generate_polyhedral_volume(
+                voxel_plc([(0, 0, 0)]), schedule=generation_schedule, scope=scope
+            )
     assert caught.value.entities
     assert isinstance(caught.value.achieved, dict)
     assert caught.value.achieved["diameter_upper"] > 0.01
 
 
 def test_native_clipping_refusal_preserves_status_failure_and_counters() -> None:
-    from phydrax._meshcore import MeshcoreStatus, regular_3d, RestrictedPowerFailure
-    from phydrax.meshing.providers._native_polyhedral import _construction_failure
 
-    points = np.asarray([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+    points = np.asarray([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float64)
     sites = np.asarray(
         [[0.1, 0.1, 0.1], [0.6, 0.1, 0.1], [0.1, 0.6, 0.1], [0.1, 0.1, 0.6]],
         dtype=np.float64,
@@ -958,7 +1136,7 @@ def test_native_clipping_refusal_preserves_status_failure_and_counters() -> None
     )
     clipping_capacity = len(accepted.construction.piece_sites) - 1
     assert len(prepared) <= clipping_capacity
-    with pytest.raises(RestrictedPowerFailure) as caught:
+    with pytest.raises(RestrictedPowerFailure, match="restricted_power_cells") as caught:
         RestrictedPowerDiagram(
             sites,
             weights,
@@ -970,34 +1148,34 @@ def test_native_clipping_refusal_preserves_status_failure_and_counters() -> None
         )
     native = caught.value
     assert native.status == MeshcoreStatus.CAPACITY_EXCEEDED
-    failure = _construction_failure(native, "volume_fill")
+    failure = construction_failure(native, "volume_fill")
     assert failure.category == M.MeshingFailureCategory.RESOURCE_EXHAUSTED
     evidence = dict(failure.achieved)
     assert evidence["native_status"] == native.status
     for index, value in enumerate(native.failure):
         assert evidence[f"power_failure_{index}"] == value
-    for index, value in enumerate(native.counters):
+    for index, (_, value) in enumerate(native.counters.items()):
         assert evidence[f"power_counter_{index}"] == value
 
 
 def test_exact_publication_budget_refusal_preserves_actual_allowance() -> None:
-    from phydrax.discretization._coordinate_enclosure import (
-        CoordinateEnclosureBudget,
-        CoordinateEnclosureResourceError,
-    )
-    from phydrax.meshing.providers._native_polyhedral import _construction_failure
 
-    ledger = CoordinateEnclosureBudget(1, 1024)
-    with pytest.raises(CoordinateEnclosureResourceError) as caught:
-        ledger.reserve(2, 0)
-    failure = _construction_failure(caught.value, "volume_fill")
+    with coordinate_reference_budget(
+        MeshCertificateLimits(maximum_work_units=1, maximum_scratch_bytes=1024)
+    ) as ledger:
+        with pytest.raises(
+            CoordinateEnclosureResourceError,
+            match=r"CoordinateEnclosureBudget\.coefficient_work",
+        ) as caught:
+            ledger.reserve(2, 0)
+    failure = construction_failure(caught.value, "volume_fill")
     assert failure.category == M.MeshingFailureCategory.RESOURCE_EXHAUSTED
     assert dict(failure.requested)["coefficient_work"] == 1
     assert dict(failure.achieved) == {"requested": 2, "completed": 0}
 
 
 def test_thin_material_partition_has_exact_interface_and_region_measures() -> None:
-    source = _voxel_plc([(0, 0, 0), (1, 0, 0)], [0, 1])
+    source = voxel_plc([(0, 0, 0), (1, 0, 0)], [0, 1])
     height = 2.0**-10
     points = np.array(source.vertices, copy=True)
     points[:, 2] *= height
@@ -1014,12 +1192,21 @@ def test_thin_material_partition_has_exact_interface_and_region_measures() -> No
         source.facet_regions,
         source.region_ids,
     )
-    construction = generate_polyhedral_volume(
-        domain,
-        sites=[[0.25, 0.5, height / 2], [1.75, 0.5, height / 2]],
-        weights=[0.125, 0],
-    )
-    volumes, moments = _independent_oriented_source_integrals(construction)
+    generation_schedule = NativePolyhedralSchedule()
+    with NativeExecutionScope(generation_schedule.native_limits()) as scope:
+        construction = generate_polyhedral_volume(
+            domain,
+            sites=[[0.25, 0.5, height / 2], [1.75, 0.5, height / 2]],
+            weights=[0.125, 0],
+            schedule=generation_schedule,
+            scope=scope,
+        )
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(construction.geometry),
+    ) as budget:
+        volumes, moments = _independent_oriented_source_integrals(
+            construction, budget=budget
+        )
     for region in (0, 1):
         cells = np.flatnonzero(construction.cell_regions == region)
         assert sum(volumes[cell] for cell in cells) == Fraction(height)
@@ -1045,40 +1232,8 @@ def test_thin_material_partition_has_exact_interface_and_region_measures() -> No
     assert np.all(construction.feature_coverage_gap == 0)
 
 
-def _unequal_cube_seam_fixture() -> tuple[
-    CellMesh, CellGeometrySpec, np.ndarray, MeshingScope, MeshingScope, np.ndarray
-]:
-    points = np.asarray(
-        [(i & 1, (i >> 1) & 1, (i >> 2) & 1) for i in range(8)], dtype=float
-    )
-    faces = [*_LOOPS[:4], (0, 4, 6), (0, 6, 2), _LOOPS[5]]
-    mesh = phx.discretization.CellMesh.from_polyhedra(
-        points, [[np.asarray(face, dtype=np.int64) for face in faces]]
-    )
-    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
-    c = mesh.connectivity
-    assert isinstance(c, PolyhedralConnectivity)
-    offsets, values = np.asarray(c.face_vertex_offsets), np.asarray(c.face_vertex_values)
-    facets = np.full(c.face_count, -1, dtype=np.int64)
-    for face, (a, b) in enumerate(zip(offsets[:-1], offsets[1:], strict=True)):
-        corners = set(map(int, values[a:b]))
-        if corners.issubset(_LOOPS[4]):
-            facets[face] = 4
-        if corners.issubset(_LOOPS[5]):
-            facets[face] = 5
-    source = M.MeshingScope(
-        "cube-seam", "r1", M.MeshingEntityKind.GEOMETRY, 2, "left", [4]
-    )
-    target = M.MeshingScope(
-        "cube-seam", "r1", M.MeshingEntityKind.GEOMETRY, 2, "right", [5]
-    )
-    matrix = np.eye(4)
-    matrix[0, 3] = 1
-    return mesh, geometry, facets, source, target, matrix
-
-
 def test_periodic_unequal_seam_fragments_reconstruct_both_exact_parent_actions() -> None:
-    mesh, geometry, facets, source, target, matrix = _unequal_cube_seam_fixture()
+    mesh, geometry, facets, source, target, matrix = unequal_cube_seam_fixture()
     constraint = M.PeriodicConstraint(
         source,
         target,
@@ -1087,17 +1242,27 @@ def test_periodic_unequal_seam_fragments_reconstruct_both_exact_parent_actions()
         source_entity_ids=np.asarray([4], dtype=np.int64),
         orientations=np.asarray([-1], dtype=np.int64),
     )
-    fragments = prepare_periodic_polyhedral_seam_fragments(
-        mesh,
-        geometry,
-        facets,
-        [constraint],
-        maximum_work=1_000_000,
-        maximum_scratch_bytes=16_000_000,
-    )
+    with coordinate_reference_budget(
+        MeshCertificateLimits(
+            maximum_work_units=1_000_000, maximum_scratch_bytes=16_000_000
+        ),
+        queries_upper=cell_geometry_preparation_query_upper(geometry),
+    ) as budget:
+        fragments = prepare_periodic_polyhedral_seam_fragments(
+            mesh,
+            geometry,
+            facets,
+            [constraint],
+            maximum_work=1_000_000,
+            maximum_scratch_bytes=16_000_000,
+            budget=budget,
+        )
     assert fragments
     assert sum(fragment.projected_measure for fragment in fragments) == 1
-    points = np.asarray(geometry.source_coordinates(), dtype=object)
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(geometry),
+    ) as budget:
+        points = np.asarray(geometry.source_coordinates(budget=budget), dtype=object)
     connectivity = mesh.connectivity
     assert isinstance(connectivity, PolyhedralConnectivity)
     face_ids = np.asarray(connectivity.cell_face_values)
@@ -1106,7 +1271,7 @@ def test_periodic_unequal_seam_fragments_reconstruct_both_exact_parent_actions()
     np.testing.assert_array_equal(constraint.orientations, [-1])
     for fragment in fragments:
         assert fragment.constraint_id == constraint.constraint_id
-        # Connectivity stores canonical loops, independently of outward cell signs.
+        # Connectivity loop ordering is independent of outward cell signs.
         assert (
             fragment.relative_orientation
             * outward_sign[fragment.source_face]
@@ -1150,50 +1315,61 @@ def test_periodic_unequal_seam_fragments_reconstruct_both_exact_parent_actions()
 
 
 def test_periodic_seam_tolerance_does_not_replace_original_source_transform() -> None:
-    mesh, geometry, facets, source, target, matrix = _unequal_cube_seam_fixture()
+    mesh, geometry, facets, source, target, matrix = unequal_cube_seam_fixture()
     matrix[0, 3] += 2.0**-30
-    constraint = M.PeriodicConstraint(source, target, matrix, tolerance=1e-6)
+    # The classification allowance exceeds the authored 2**-30 action mismatch;
+    # source coverage must still refuse that mismatch.
+    constraint = M.PeriodicConstraint(
+        source, target, matrix, tolerance=_SEAM_CLASSIFICATION_TOLERANCE
+    )
     with pytest.raises(PolyhedralGenerationError, match="periodic_seam_exact_coverage"):
-        prepare_periodic_polyhedral_seam_fragments(
-            mesh,
-            geometry,
-            facets,
-            [constraint],
-            maximum_work=1_000_000,
-            maximum_scratch_bytes=16_000_000,
-        )
+        with coordinate_reference_budget(
+            MeshCertificateLimits(
+                maximum_work_units=1_000_000, maximum_scratch_bytes=16_000_000
+            ),
+            queries_upper=cell_geometry_preparation_query_upper(geometry),
+        ) as budget:
+            prepare_periodic_polyhedral_seam_fragments(
+                mesh,
+                geometry,
+                facets,
+                [constraint],
+                maximum_work=1_000_000,
+                maximum_scratch_bytes=16_000_000,
+                budget=budget,
+            )
     assert float(np.asarray(constraint.transform)[0, 3]) == 1 + 2.0**-30
 
 
 def test_periodic_seam_common_refinement_refuses_original_work_capacity() -> None:
-    from phydrax.discretization._coordinate_enclosure import (
-        CoordinateEnclosureResourceError,
-    )
 
-    mesh, geometry, facets, source, target, matrix = _unequal_cube_seam_fixture()
+    mesh, geometry, facets, source, target, matrix = unequal_cube_seam_fixture()
     constraint = M.PeriodicConstraint(source, target, matrix, tolerance=0)
-    with pytest.raises(CoordinateEnclosureResourceError) as caught:
-        prepare_periodic_polyhedral_seam_fragments(
-            mesh,
-            geometry,
-            facets,
-            [constraint],
-            maximum_work=1,
-            maximum_scratch_bytes=16_000_000,
-        )
+    with pytest.raises(
+        CoordinateEnclosureResourceError,
+        match=r"CoordinateEnclosureBudget\.coefficient_work",
+    ) as caught:
+        with coordinate_reference_budget(
+            MeshCertificateLimits(maximum_work_units=1, maximum_scratch_bytes=16_000_000),
+            queries_upper=cell_geometry_preparation_query_upper(geometry),
+        ) as budget:
+            prepare_periodic_polyhedral_seam_fragments(
+                mesh,
+                geometry,
+                facets,
+                [constraint],
+                maximum_work=1,
+                maximum_scratch_bytes=16_000_000,
+                budget=budget,
+            )
     assert caught.value.limit == 1
     assert caught.value.requested > caught.value.completed
 
 
-@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
 def test_canonical_exact_clip_polygon_keeps_measure_and_oriented_loop(
     reverse: bool,
 ) -> None:
-    from phydrax.geometry._planar_coverage import (
-        intersection,
-        intersection_polygon,
-        signed_measure,
-    )
 
     subject = tuple(
         tuple(Fraction(x) for x in point) for point in [(0, 0), (2, 0), (2, 1), (0, 1)]
@@ -1203,36 +1379,43 @@ def test_canonical_exact_clip_polygon_keeps_measure_and_oriented_loop(
     )
     if reverse:
         subject = subject[::-1]
-    polygon = intersection_polygon(subject, target)
-    assert abs(signed_measure(polygon)) == intersection(subject, target) == 1
-    assert signed_measure(polygon) * signed_measure(subject) > 0
-    assert (
-        intersection_polygon(
-            ((Fraction(0),), (Fraction(1),)), ((Fraction(2),), (Fraction(3),))
+    with coordinate_reference_budget() as budget:
+        polygon = intersection_polygon(subject, target, budget=budget)
+        assert (
+            abs(signed_measure(polygon, budget=budget))
+            == intersection(subject, target, budget=budget)
+            == 1
         )
-        == ()
-    )
+        assert (
+            signed_measure(polygon, budget=budget)
+            * signed_measure(subject, budget=budget)
+            > 0
+        )
+        assert (
+            intersection_polygon(
+                ((Fraction(0),), (Fraction(1),)),
+                ((Fraction(2),), (Fraction(3),)),
+                budget=budget,
+            )
+            == ()
+        )
 
 
 def test_periodic_image_capacity_refusal_keeps_original_source_bits_and_limit() -> None:
-    from phydrax.discretization._periodic_cell import PeriodicCell
-    from phydrax.geometry._triangulation import (
-        PeriodicPowerImageCapacityRefusal,
-        PeriodicPowerPreparation,
-    )
-    from phydrax.meshing.providers._native_polyhedral import _construction_failure
 
     points = np.asarray([[0.25, -0.0, 0.25]])
     weights = np.asarray([-0.0])
-    carrier = np.asarray([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
-    with pytest.raises(PeriodicPowerImageCapacityRefusal) as caught:
+    carrier = np.asarray([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float64)
+    with pytest.raises(
+        PeriodicPowerImageCapacityRefusal, match=r"PeriodicPowerPreparation\."
+    ) as caught:
         PeriodicPowerPreparation(
             points, weights, carrier, PeriodicCell(np.eye(3)), maximum_images=1
         )
     error = caught.value
     np.testing.assert_array_equal(error.points.view(np.uint64), points.view(np.uint64))
     np.testing.assert_array_equal(error.weights.view(np.uint64), weights.view(np.uint64))
-    failure = _construction_failure(error, "volume_fill")
+    failure = construction_failure(error, "volume_fill")
     assert failure.category == M.MeshingFailureCategory.RESOURCE_EXHAUSTED
     assert dict(failure.requested)["site_images"] == error.maximum_images == 1
     assert dict(failure.achieved)["requested_site_images"] == error.requested_images > 1
@@ -1240,16 +1423,10 @@ def test_periodic_image_capacity_refusal_keeps_original_source_bits_and_limit() 
 
 
 def test_periodic_adjacency_refusal_keeps_source_identity_and_actual_work_bound() -> None:
-    from phydrax.discretization._periodic_cell import PeriodicCell
-    from phydrax.geometry._triangulation import (
-        PeriodicPowerPreparation,
-        PeriodicPowerSourceRefusal,
-    )
-    from phydrax.meshing.providers._native_polyhedral import _construction_failure
 
     points = np.asarray([[0.25, 0.25, 0.25]])
     weights = np.asarray([0.0])
-    carrier = np.asarray([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+    carrier = np.asarray([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float64)
     group = PeriodicCell(np.eye(3))
     preparation = PeriodicPowerPreparation(
         points,
@@ -1259,7 +1436,9 @@ def test_periodic_adjacency_refusal_keeps_source_identity_and_actual_work_bound(
         maximum_images=4096,
         maximum_work_units=2_000_000,
     )
-    with pytest.raises(PeriodicPowerSourceRefusal) as caught:
+    with pytest.raises(
+        PeriodicPowerSourceRefusal, match=r"PeriodicPowerSourceRefusal\.construction"
+    ) as caught:
         RestrictedPowerDiagram(
             points,
             weights,
@@ -1273,7 +1452,7 @@ def test_periodic_adjacency_refusal_keeps_source_identity_and_actual_work_bound(
         )
     error = caught.value
     assert error.preparation.source_id == preparation.source_id
-    failure = _construction_failure(error, "volume_fill")
+    failure = construction_failure(error, "volume_fill")
     assert failure.category == M.MeshingFailureCategory.RESOURCE_EXHAUSTED
     assert preparation.source_id in str(failure)
     assert dict(failure.requested)["periodic_call_work_units"] == error.maximum_work == 1
@@ -1281,25 +1460,18 @@ def test_periodic_adjacency_refusal_keeps_source_identity_and_actual_work_bound(
     assert dict(failure.achieved)["periodic_completed_work_units"] == error.completed_work
 
 
-def test_periodic_power_preparation_cold_archive_preserves_original_law_and_refuses_corruption(
-    tmp_path: Path,
-) -> None:
-    import subprocess
-    import sys
-    from copy import copy
-
-    from phydrax._array_archive import ArrayArchiveLimits
-    from phydrax.discretization._periodic_cell import PeriodicCell
-    from phydrax.geometry._triangulation import PeriodicPowerPreparation
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        validate_meshing_source_closure,
-        write_meshing_source_closure,
-    )
-
+@pytest.fixture(scope="module")
+def periodic_power_archive(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[
+    PeriodicPowerPreparation,
+    tuple[PeriodicPowerPreparation, ...],
+    dict[str, Any],
+]:
+    tmp_path = tmp_path_factory.mktemp("periodic-power-archive")
     points = np.asarray([[0.25, -0.0, 0.25]])
     weights = np.asarray([-0.0])
-    carrier = np.asarray([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+    carrier = np.asarray([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float64)
     preparation = PeriodicPowerPreparation(
         points,
         weights,
@@ -1314,30 +1486,42 @@ def test_periodic_power_preparation_cold_archive_preserves_original_law_and_refu
         (preparation, preparation),
         limits=limits,
     )
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from phydrax.lifecycle._meshing_sources import read_meshing_source_closure; "
-            "from phydrax.geometry._triangulation import PeriodicPowerPreparation; "
-            "v=read_meshing_source_closure(sys.argv[1], expected_content_id=sys.argv[2]); "
-            "assert type(v[0]) is PeriodicPowerPreparation; "
-            "assert v[0] is v[1]; "
-            "v[0].validate_restored()",
-            str(tmp_path / "periodic-power"),
-            receipt.content_id,
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
+    cold = run_on_forced_devices(
+        "tests._support.distributed_meshing.cold_lifecycle",
+        "periodic_power_preparation",
+        (str(tmp_path / "periodic-power"), receipt.content_id),
+        devices=1,
+        env={},
     )
+    # Consumer assertions stay in the tests; one cold reader is shared by
+    # identity and independently collected malformed-restoration cases.
     restored = read_meshing_source_closure(
         tmp_path / "periodic-power",
         expected_content_id=receipt.content_id,
         limits=limits,
     )
+    return preparation, restored, cold
+
+
+def test_periodic_power_preparation_cold_archive_preserves_original_law(
+    periodic_power_archive: tuple[
+        PeriodicPowerPreparation,
+        tuple[PeriodicPowerPreparation, ...],
+        dict[str, Any],
+    ],
+) -> None:
+    _assert_periodic_power_archive_law(*periodic_power_archive)
+
+
+def _assert_periodic_power_archive_law(
+    preparation: PeriodicPowerPreparation,
+    restored: tuple[PeriodicPowerPreparation, ...],
+    cold: dict[str, Any],
+) -> None:
+    assert cold["type_exact"]
+    assert cold["alias"]
     owner = restored[0]
-    assert owner is restored[1]
+    assert owner is restored[1], "PeriodicPowerArchive.alias"
     assert type(owner) is PeriodicPowerPreparation
     assert owner.preparation_id == preparation.preparation_id
     assert owner.maximum_images == preparation.maximum_images
@@ -1347,24 +1531,79 @@ def test_periodic_power_preparation_cold_archive_preserves_original_law_and_refu
             np.asarray(getattr(owner, name)).view(np.uint64),
             np.asarray(getattr(preparation, name)).view(np.uint64),
         )
-    corrupted = copy(owner)
+
+
+def test_periodic_power_archive_oracle_detects_lost_alias(
+    periodic_power_archive: tuple[
+        PeriodicPowerPreparation,
+        tuple[PeriodicPowerPreparation, ...],
+        dict[str, Any],
+    ],
+) -> None:
+    preparation, restored, cold = periodic_power_archive
+    owner = restored[0]
+    independent_owner = _corrupt_record_path(
+        owner, ("maximum_images",), owner.maximum_images
+    )
+    with pytest.raises(AssertionError, match=r"PeriodicPowerArchive\.alias"):
+        _assert_periodic_power_archive_law(preparation, (owner, independent_owner), cold)
+
+
+def _shift_first_periodic_image_action(owner: PeriodicPowerPreparation) -> np.ndarray:
     actions = np.array(owner.image_exponents, copy=True)
     actions[0, 0] += 1
-    object.__setattr__(corrupted, "image_exponents", actions)
-    with pytest.raises(ValueError):
-        validate_meshing_source_closure(corrupted, limits=limits)
-    corrupted = copy(owner)
-    object.__setattr__(corrupted, "carrier_id", "not-the-original-carrier")
-    with pytest.raises(ValueError):
-        validate_meshing_source_closure(corrupted, limits=limits)
+    return actions
+
+
+@pytest.mark.parametrize(
+    "field, replacement",
+    [
+        ("image_exponents", _shift_first_periodic_image_action),
+        ("carrier_id", lambda owner: "not-the-original-carrier"),
+    ],
+    ids=["image-exponents", "carrier-id"],
+)
+def test_periodic_power_preparation_refuses_stored_corruption(
+    periodic_power_archive: tuple[
+        PeriodicPowerPreparation,
+        tuple[PeriodicPowerPreparation, ...],
+        dict[str, Any],
+    ],
+    field: str,
+    replacement: Callable[[PeriodicPowerPreparation], object],
+) -> None:
+    _, restored, _ = periodic_power_archive
+    owner = restored[0]
+    with pytest.raises(ValueError, match=rf"PeriodicPowerPreparation\.{field}"):
+        corrupted = _corrupt_record_path(owner, (field,), replacement(owner))
+        validate_meshing_source_closure(corrupted, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS)
+
+
+def test_periodic_image_action_fault_changes_only_first_exponent(
+    periodic_power_archive: tuple[
+        PeriodicPowerPreparation,
+        tuple[PeriodicPowerPreparation, ...],
+        dict[str, Any],
+    ],
+) -> None:
+    _, restored, _ = periodic_power_archive
+    owner = restored[0]
+    original = np.array(owner.image_exponents, copy=True)
+    altered = _shift_first_periodic_image_action(owner)
+    difference = altered - original
+    assert np.count_nonzero(difference) == 1
+    assert difference[0, 0] == 1
+    np.testing.assert_array_equal(owner.image_exponents, original)
 
 
 def _source_face_area_vector(
-    construction: PolyhedralConstruction, face: int
+    construction: PolyhedralConstruction, face: int, *, budget: CoordinateEnclosureBudget
 ) -> tuple[Fraction, ...]:
     c = construction.mesh.connectivity
     assert isinstance(c, PolyhedralConnectivity)
-    points = np.asarray(construction.geometry.source_coordinates(), dtype=object)
+    points = np.asarray(
+        construction.geometry.source_coordinates(budget=budget), dtype=object
+    )
     a, b = np.asarray(c.face_vertex_offsets)[face : face + 2]
     polygon = points[np.asarray(c.face_vertex_values)[a:b]]
     vector = [Fraction(0)] * 3
@@ -1381,14 +1620,23 @@ def _source_face_area_vector(
 
 
 def test_full_periodic_power_source_independent_measure_faces_and_flux() -> None:
-    domain, constraints = _periodic_cube_source()
-    construction = generate_polyhedral_volume(
-        domain,
-        sites=[[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]],
-        weights=[0, 0],
-        periodic_constraints=constraints,
-    )
-    volumes, moments = _independent_oriented_source_integrals(construction)
+    domain, constraints = periodic_cube_source()
+    generation_schedule = NativePolyhedralSchedule()
+    with NativeExecutionScope(generation_schedule.native_limits()) as scope:
+        construction = generate_polyhedral_volume(
+            domain,
+            sites=[[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]],
+            weights=[0, 0],
+            periodic_constraints=constraints,
+            schedule=generation_schedule,
+            scope=scope,
+        )
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(construction.geometry),
+    ) as budget:
+        volumes, moments = _independent_oriented_source_integrals(
+            construction, budget=budget
+        )
     assert sum(volumes) == 1
     assert (
         tuple(sum(moment[axis] for moment in moments) for axis in range(3))
@@ -1398,8 +1646,18 @@ def test_full_periodic_power_source_independent_measure_faces_and_flux() -> None
     assert construction.seam_face_pairs is not None
     assert construction.seam_vertex_pairs is not None
     for source_face, target_face, generator in construction.seam_face_pairs:
-        source = _source_face_area_vector(construction, int(source_face))
-        target = _source_face_area_vector(construction, int(target_face))
+        with coordinate_reference_budget(
+            queries_upper=cell_geometry_preparation_query_upper(construction.geometry),
+        ) as budget:
+            source = _source_face_area_vector(
+                construction, int(source_face), budget=budget
+            )
+        with coordinate_reference_budget(
+            queries_upper=cell_geometry_preparation_query_upper(construction.geometry),
+        ) as budget:
+            target = _source_face_area_vector(
+                construction, int(target_face), budget=budget
+            )
         matrix = np.asarray(constraints[generator].transform)
         rotated = tuple(
             sum(
@@ -1431,7 +1689,7 @@ def test_full_periodic_power_source_independent_measure_faces_and_flux() -> None
 def test_public_periodic_power_route_retains_original_source_and_patch_conformity() -> (
     None
 ):
-    domain, constraints = _periodic_cube_source()
+    domain, constraints = periodic_cube_source()
     patch = PatchControl("periodic-left", constraints[0].source_scope, ("material-0",))
     region = M.RegionControl(
         M.MeshingScope(
@@ -1463,7 +1721,6 @@ def test_public_periodic_power_route_retains_original_source_and_patch_conformit
     source = result.geometry.exact_source
     assert isinstance(source, phx.discretization.ExactPowerCellGeometryLinearActionSource)
     assert isinstance(source.parent, phx.discretization.ExactPowerCellGeometrySource)
-    from phydrax.geometry._triangulation import PeriodicPowerPreparation
 
     assert isinstance(source.periodic_preparation, PeriodicPowerPreparation)
     assert isinstance(source.parent.periodic_preparation, PeriodicPowerPreparation)
@@ -1480,14 +1737,13 @@ def test_public_periodic_power_route_retains_original_source_and_patch_conformit
 def test_sheared_periodic_power_publication_uses_exact_source_not_double_rne_lifts() -> (
     None
 ):
-    from phydrax.discretization._periodic_topology import PeriodicMeshTopology
 
     points = np.asarray(
-        [(i & 1, (i >> 1) & 1, (i >> 2) & 1) for i in range(8)], dtype=float
+        [(i & 1, (i >> 1) & 1, (i >> 2) & 1) for i in range(8)], dtype=np.float64
     )
     points[:, 0] += points[:, 1]
     domain = PiecewiseLinearComplex(
-        points, _LOOPS, np.arange(6), [(-1, 0)] * 6, ("material-0",)
+        points, POLYHEDRAL_CUBE_LOOPS, np.arange(6), [(-1, 0)] * 6, ("material-0",)
     )
     source_scope = MeshingScope(
         "sheared-power", "r1", M.MeshingEntityKind.GEOMETRY, 2, "source", [5]
@@ -1505,13 +1761,22 @@ def test_sheared_periodic_power_publication_uses_exact_source_not_double_rne_lif
         source_entity_ids=np.asarray([5], dtype=np.int64),
         orientations=np.asarray([-1], dtype=np.int64),
     )
-    construction = generate_polyhedral_volume(
-        domain,
-        sites=[[0, 0, 0.5], [0, 3, 0.5]],
-        weights=[0, 7],
-        periodic_constraints=[constraint],
-    )
-    volumes, moments = _independent_oriented_source_integrals(construction)
+    generation_schedule = NativePolyhedralSchedule()
+    with NativeExecutionScope(generation_schedule.native_limits()) as scope:
+        construction = generate_polyhedral_volume(
+            domain,
+            sites=[[0, 0, 0.5], [0, 3, 0.5]],
+            weights=[0, 7],
+            periodic_constraints=[constraint],
+            schedule=generation_schedule,
+            scope=scope,
+        )
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(construction.geometry),
+    ) as budget:
+        volumes, moments = _independent_oriented_source_integrals(
+            construction, budget=budget
+        )
     assert sum(volumes) == 1
     assert tuple(sum(moment[axis] for moment in moments) for axis in range(3)) == (
         Fraction(1),
@@ -1521,7 +1786,10 @@ def test_sheared_periodic_power_publication_uses_exact_source_not_double_rne_lif
     original = construction.mesh
     topology = original.periodic_topology
     assert topology is not None
-    exact = construction.geometry.source_coordinates()
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(construction.geometry),
+    ) as budget:
+        exact = construction.geometry.source_coordinates(budget=budget)
     chosen = next(
         index
         for index, point in enumerate(exact)
@@ -1547,7 +1815,7 @@ def test_sheared_periodic_power_publication_uses_exact_source_not_double_rne_lif
         numeric_version=original.numeric_version,
     )
     geometry = CellGeometrySpec.power(lifted, construction.geometry.exact_source)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="coordinates"):
         PeriodicMeshTopology(lifted, topology.cell, representatives, shifts)
     renewed = PeriodicMeshTopology(
         lifted, topology.cell, representatives, shifts, actual_geometry=geometry
@@ -1557,206 +1825,136 @@ def test_sheared_periodic_power_publication_uses_exact_source_not_double_rne_lif
         assert renewed.vertex_representatives[member] == chosen
 
 
-def _assert_original_certificate_corruption_refuses(
-    publication: CellMeshingResult,
-) -> None:
-    """Exercise pre-renewal authentication with real reports, without new queries."""
-    from copy import copy
-
-    from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
-    from phydrax.lifecycle._meshing_source_families import (
-        require_same_native_scientific_theorem,
-    )
-
-    original = publication.certification
-    assert original is not None and original.embedding is not None
-
-    def corrupt_path[T](value: T, path: tuple[str, ...], replacement: object) -> T:
-        altered = copy(value)
-        if len(path) == 1:
-            object.__setattr__(altered, path[0], replacement)
+def _collect_shared_recipe_nodes(node: Any, shared: list[dict[str, Any]]) -> None:
+    """Visit only DAG-valued children in the public recipe's ordinal order."""
+    if isinstance(node, dict):
+        kind = node.get("kind")
+        # Codec payloads, set items and mapping keys have no shared ordinals.
+        if kind in ("value", "set", "frozenset"):
+            return
+        if kind in ("mapping", "frozendict", "mappingproxy"):
+            for _, child in node["items"]:
+                _collect_shared_recipe_nodes(child, shared)
         else:
-            object.__setattr__(
-                altered,
-                path[0],
-                corrupt_path(getattr(value, path[0]), path[1:], replacement),
-            )
-        return altered
+            for child in node.values():
+                _collect_shared_recipe_nodes(child, shared)
+        if kind in ("array", "prng_key", "dataclass"):
+            shared.append(node)
+    elif isinstance(node, list):
+        for child in node:
+            _collect_shared_recipe_nodes(child, shared)
 
-    changes = []
-    for name, maximum in (
-        ("source_expression_work_units", original.request.limits.maximum_work_units),
-        ("source_expression_peak_bytes", original.request.limits.maximum_scratch_bytes),
-    ):
-        changes.extend(
-            (
-                corrupt_path(original, ("embedding", name), -1),
-                corrupt_path(original, ("embedding", name), maximum + 1),
-            )
+
+def _corrupt_record_path[T](
+    value: T, path: tuple[str | int, ...], replacement: object
+) -> T:
+    """Restore malformed public recipe data, without mutating frozen owners."""
+    register_meshing_source_artifacts()
+    parent: Any = value
+    for component in path[:-1]:
+        parent = (
+            parent[component]
+            if isinstance(component, int)
+            else getattr(parent, component)
         )
-    changes.extend(
-        (
-            corrupt_path(original, ("embedding", "certificate_id"), "0" * 64),
-            corrupt_path(original, ("embedding", "binding", "binding_id"), "0" * 64),
-            corrupt_path(original, ("embedding", "binding", "limits_id"), "0" * 64),
-            corrupt_path(
-                original, ("embedding", "cell_count"), original.embedding.cell_count + 1
-            ),
-            corrupt_path(original, ("request", "request_id"), "0" * 64),
-            corrupt_path(original, ("report_id",), "0" * 64),
+    if not is_dataclass(parent) or isinstance(parent, type):
+        raise TypeError(
+            "corruption.parent must be a dataclass instance; got an unsupported kind"
         )
-    )
-    outcomes = list(original.outcomes)
-    index = next(
-        i for i, value in enumerate(outcomes) if value.check == "global_embedding"
-    )
-    outcomes[index] = corrupt_path(outcomes[index], ("outcome_id",), "0" * 64)
-    changes.append(corrupt_path(original, ("outcomes",), tuple(outcomes)))
-    for altered in changes:
-        with pytest.raises(ValueError):
-            require_same_native_scientific_theorem(
-                altered,
-                original,
-                publication.mesh,
-                publication.geometry,
-                publication.audit,
-                limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    name = path[-1]
+    if not isinstance(name, str):
+        raise TypeError(
+            "corruption.field must name a declared dataclass field; got a non-string selector"
+        )
+    declared = tuple(field.name for field in fields(parent))
+    if name not in declared:
+        raise ValueError(f"corruption.field must be declared; got {name!r}")
+    position = declared.index(name)
+    original = getattr(parent, name)
+    # The second tuple item references the already encoded parent. Its ordinal
+    # identifies the first declaration even when the selected path is an alias.
+    recipe = model_structure_recipe((value, parent))
+    arrays = model_recipe_array_values((value, parent), recipe, prefix="corruption")
+    shared: list[dict[str, Any]] = []
+
+    _collect_shared_recipe_nodes(recipe, shared)
+    target = shared[recipe["items"][1]["target"]]
+    if isinstance(original, (Array, np.ndarray)):
+        name = next(name for name, payload in arrays.items() if payload is original)
+        arrays[name] = np.asarray(replacement)
+    else:
+        # The selected scalar keeps the shared-object ordinals and array
+        # inventory intact; changing compound structure is not this fault's job.
+        if not isinstance(original, (str, int, float, bool)) or not isinstance(
+            replacement, (str, int, float, bool)
+        ):
+            raise TypeError(
+                "corruption.replacement must preserve scalar or array structure; got incompatible values"
             )
-    coordinates = np.asarray(publication.geometry.coordinates).copy()
-    coordinates.view(np.uint64).reshape(-1)[0] ^= np.uint64(1)
-    altered_geometry = corrupt_path(
-        publication.geometry, ("coordinates",), jnp.asarray(coordinates)
-    )
-    with pytest.raises(ValueError):
-        require_same_native_scientific_theorem(
-            original,
-            original,
-            publication.mesh,
-            altered_geometry,
-            publication.audit,
-            limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
-        )
+        target["items"][position] = model_structure_recipe(replacement)
+    return model_from_array_recipe(recipe, arrays, prefix="corruption")[0]
 
 
-def _periodic_fv_public_inputs(
-    action_kind: str,
-) -> tuple[
-    M.NativePolyhedralSource,
-    M.VolumeMeshingSpec,
-    M.NativeMeshingOptions,
-    np.ndarray,
-]:
-    """The actual authored provider inputs shared by FV and contact diagnostics."""
-    points = np.asarray(
-        [(i & 1, (i >> 1) & 1, (i >> 2) & 1) for i in range(8)], dtype=float
-    )
-    domain = PiecewiseLinearComplex(
-        points, _LOOPS, np.arange(6), [(-1, 0)] * 6, ("material",)
-    )
-    source_scope = M.MeshingScope(
-        "polyhedral-domain", "r1", M.MeshingEntityKind.GEOMETRY, 2, "left", [4]
-    )
-    target_scope = M.MeshingScope(
-        "polyhedral-domain",
-        "r1",
-        M.MeshingEntityKind.GEOMETRY,
-        2,
-        "target",
-        [2 if action_kind == "rotation" else 5],
-    )
-    action = np.eye(4)
-    action[0, 3] = 1
-    if action_kind == "rotation":
-        action = np.asarray(
-            (
-                (0.0, 1.0, 0.0, 0.0),
-                (-1.0, 0.0, 0.0, 0.0),
-                (0.0, 0.0, 1.0, 0.0),
-                (0.0, 0.0, 0.0, 1.0),
-            )
-        )
-    elif action_kind == "screw":
-        action[1, 1] = action[2, 2] = -1
-        action[1:3, 3] = 1
-    constraints = (
-        M.PeriodicConstraint(
-            source_scope,
-            target_scope,
-            action,
-            tolerance=0,
-            source_entity_ids=np.asarray([4], dtype=np.int64),
-            orientations=np.asarray([-1], dtype=np.int64),
-        ),
-    )
-    if action_kind == "translation":
-        domain, constraints = _periodic_cube_source()
-    source = M.NativePolyhedralSource(
-        domain,
-        "polyhedral-domain",
-        "r1",
-        sites=np.asarray([[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]], dtype=np.float64),
-        weights=np.zeros(2, dtype=np.float64),
-    )
-    root_scope = M.MeshingScope(
-        source.source_id,
-        source.source_revision,
-        M.MeshingEntityKind.GEOMETRY,
-        2,
-        "polyhedral-facets",
-        np.arange(domain.facet_count),
-    )
-    specification = M.VolumeMeshingSpec(
-        M.CellMeshingTarget(3, 3, M.CellFamilyPolicy(required=("polyhedron",))),
-        root_scope,
-        M.VolumeFillStrategy.POLYHEDRAL,
-        size_controls=(
-            M.UniformSizeControl(root_scope, 10.0, strength=M.SizeControlStrength.SOFT),
-        ),
-        periodic_constraints=constraints,
-    )
-    return source, specification, M.NativeMeshingOptions("plc_restricted_power"), action
+class _PeriodicFVScenario(NamedTuple):
+    action_kind: str
+    generation_source: M.NativePolyhedralSource
+    specification: M.VolumeMeshingSpec
+    options: M.NativeMeshingOptions
+    action: np.ndarray
+    construction: PolyhedralConstruction
+    original_coordinates: np.ndarray
+    original_source: tuple[tuple[Fraction, ...], ...]
+    system: phx.equations.ScalarConservationSystem
+    prepared: phx.discretization.UnstructuredFiniteVolumeDiscretization
+    diffusion: phx.discretization.HybridMimeticDiffusion
+    method: phx.discretization.UnstructuredFiniteVolumeMethodPlan
+    boundaries: phx.discretization.UnstructuredFiniteVolumeBoundarySet
+    dynamics: phx.discretization.PreparedUnstructuredFiniteVolumeDynamics
 
 
-@pytest.mark.parametrize("action_kind", ["translation", "rotation", "screw"])
-def test_native_periodic_polyhedral_fv_real_quotient_flux_and_adjoint(
-    action_kind: str, tmp_path: Path
-) -> None:
-    import jax
+class _ScalarFVEvolution(NamedTuple):
+    state: Array
+    history: tuple[Array, ...]
+    residuals: tuple[Array, ...]
+    varying: Array
+    manufactured_history: tuple[Array, ...]
+    initial_mode: Array | None
+    trace_histories: tuple[Array, ...]
 
-    from phydrax.discretization import UnstructuredFiniteVolumePlan
-    from phydrax.discretization.finite_volume._diffusion_boundary import (
-        HybridDiffusionBoundary,
-    )
-    from phydrax.discretization.finite_volume._hybrid_diffusion import (
-        HybridMimeticDiffusion,
-    )
 
-    native_policy = phx.linalg.LinearSolvePolicy(phx.linalg.ConjugateGradient())
-    generation_source, specification, options, action = _periodic_fv_public_inputs(
+class _VectorFVEvolution(NamedTuple):
+    system: phx.equations.EulerSystem
+    prepared: phx.discretization.UnstructuredFiniteVolumeDiscretization
+    dynamics: phx.discretization.PreparedUnstructuredFiniteVolumeDynamics
+    initial_state: Array
+    state: Array
+    history: tuple[Array, ...]
+
+
+@pytest.fixture(scope="module", params=["translation", "rotation", "screw"])
+def periodic_fv_case(request: pytest.FixtureRequest) -> _PeriodicFVScenario:
+    action_kind = request.param
+    generation_source, specification, options, action = periodic_fv_public_inputs(
         action_kind
     )
     domain = generation_source.complex
     constraints = specification.periodic_constraints
-    construction = generate_polyhedral_volume(
-        domain,
-        sites=[[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]],
-        weights=[0.0, 0.0],
-        periodic_constraints=constraints,
-        source_id="polyhedral-domain",
-    )
-    original_coordinates = np.asarray(construction.mesh.coordinates).copy()
-    original_source = construction.geometry.source_coordinates()
-    with pytest.raises(ValueError):
-        prepare_polyhedral_finite_volume_geometry(
-            construction.mesh,
-            cell_geometry=construction.geometry,
-            maximum_workset_entries=1,
+    generation_schedule = NativePolyhedralSchedule()
+    with NativeExecutionScope(generation_schedule.native_limits()) as scope:
+        construction = generate_polyhedral_volume(
+            domain,
+            sites=[[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]],
+            weights=[0.0, 0.0],
+            periodic_constraints=constraints,
+            source_id="polyhedral-domain",
+            schedule=generation_schedule,
+            scope=scope,
         )
-    np.testing.assert_array_equal(
-        np.asarray(construction.mesh.coordinates).view(np.uint64),
-        original_coordinates.view(np.uint64),
-    )
-    assert construction.geometry.source_coordinates() == original_source
+    original_coordinates = np.asarray(construction.mesh.coordinates).copy()
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(construction.geometry),
+    ) as budget:
+        original_source = construction.geometry.rational_source_coordinates(budget=budget)
     velocity = (0.0, 0.0, 1.0) if action_kind == "rotation" else (1.0, 0.0, 0.0)
     system = phx.equations.ScalarConservationSystem(
         3,
@@ -1770,47 +1968,7 @@ def test_native_periodic_polyhedral_fv_real_quotient_flux_and_adjoint(
     ).prepare(
         cell_geometry=construction.geometry,
     )
-    assert construction.seam_face_pairs is not None
-    pairs = construction.seam_face_pairs[:, :2]
-    active = np.asarray(prepared.face_block.active_mask)
-    for left, right in pairs:
-        rows = np.flatnonzero(
-            np.isin(np.asarray(prepared.source_face_indices), (left, right))
-        )
-        assert rows.size == 1
-        assert bool(active[rows[0]])
-        assert int(prepared.neighbor_cells[rows[0]]) >= 0
-        assert int(prepared.boundary_patch_ids[rows[0]]) == -1
-    volumes, moments = _independent_oriented_source_integrals(construction)
-    np.testing.assert_allclose(
-        prepared.cell_volumes, [float(value) for value in volumes], atol=1e-13
-    )
-    np.testing.assert_allclose(
-        prepared.cell_centers,
-        [
-            [float(value / volume) for value in moment]
-            for volume, moment in zip(volumes, moments, strict=True)
-        ],
-        atol=1e-13,
-    )
     diffusion = HybridMimeticDiffusion(prepared)
-    constant = jnp.ones((prepared.cell_count,))
-    traces = jnp.ones((diffusion.face_count,))
-    local = diffusion.local_fluxes(constant, traces, jnp.eye(3))
-    np.testing.assert_allclose(local, 0, atol=1e-13)
-    mask = active & (np.asarray(prepared.neighbor_cells) >= 0)
-    rates = jnp.asarray(np.arange(diffusion.face_count, dtype=float) * mask)
-    result = diffusion.cell_divergence(rates)
-    np.testing.assert_allclose(jnp.sum(result), 0, atol=1e-13)
-    direction = jnp.linspace(-0.5, 0.5, diffusion.face_count)
-    cotangent = jnp.arange(prepared.cell_count, dtype=float) + 0.25
-    _, tangent = jax.jvp(diffusion.cell_divergence, (rates,), (direction,))
-    _, pullback = jax.vjp(diffusion.cell_divergence, rates)
-    np.testing.assert_allclose(
-        jnp.vdot(cotangent, tangent),
-        jnp.vdot(pullback(cotangent)[0], direction),
-        atol=1e-13,
-    )
     boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
         prepared.boundary_patch_names,
         {"boundary": phx.discretization.ExtrapolationBoundary()},
@@ -1825,160 +1983,68 @@ def test_native_periodic_polyhedral_fv_real_quotient_flux_and_adjoint(
         method,
         boundaries,
     )
+    return _PeriodicFVScenario(
+        action_kind,
+        generation_source,
+        specification,
+        options,
+        action,
+        construction,
+        original_coordinates,
+        original_source,
+        system,
+        prepared,
+        diffusion,
+        method,
+        boundaries,
+        dynamics,
+    )
+
+
+@pytest.fixture(scope="module")
+def scalar_fv_evolution(periodic_fv_case: _PeriodicFVScenario) -> _ScalarFVEvolution:
+    prepared, dynamics = periodic_fv_case.prepared, periodic_fv_case.dynamics
     state = jnp.ones(prepared.state_shape)
-    history = []
+    history, residuals = [], []
     for step in range(4):
         residual = dynamics(jnp.asarray(step * 0.01), state)
-        np.testing.assert_allclose(residual, 0, atol=1e-13)
+        residuals.append(residual)
         state = state + 0.01 * residual
         history.append(state)
-    np.testing.assert_allclose(jnp.stack(history), 1, atol=1e-13)
-    varying = jnp.arange(prepared.cell_count, dtype=float)[:, None] + 1
-    residual = dynamics(jnp.asarray(0.0), varying)
-    np.testing.assert_allclose(
-        jnp.sum(prepared.cell_volumes[:, None] * residual), 0, atol=1e-13
-    )
+    varying = jnp.arange(prepared.cell_count, dtype=jnp.float64)[:, None] + 1
     manufactured_history = []
-    if action_kind != "rotation":
-        # Independent two-half-cell upwind balance: du/dt=-4(u-mean).
+    initial_mode = None
+    if periodic_fv_case.action_kind != "rotation":
         assert prepared.cell_count == 2
         order = np.argsort(np.asarray(prepared.cell_centers)[:, 0])
         manufactured = jnp.zeros((2, 1)).at[order].set(jnp.asarray(((1.0,), (2.0,))))
         initial_mode = manufactured - 1.5
-        np.testing.assert_allclose(
-            dynamics(jnp.asarray(0.0), manufactured),
-            -4 * initial_mode,
-            atol=1e-12,
-        )
         for step in range(4):
             manufactured = manufactured + 0.01 * dynamics(
                 jnp.asarray(step * 0.01), manufactured
             )
-            np.testing.assert_allclose(
-                manufactured,
-                1.5 + initial_mode * (1 - 4 * 0.01) ** (step + 1),
-                atol=1e-12,
-            )
             manufactured_history.append(manufactured)
-        # The same source-frame mimetic operator gives the independent
-        # two-half-cell diffusion mode du/dt=-16(u-mean), with no seam law.
-        diffused = jnp.zeros((2,)).at[order].set(jnp.asarray((1.0, 2.0)))
-        diffusion_mode = diffused - 1.5
-        for step in range(4):
-            owner_values = diffused[diffusion.owner_cells]
-            neighbor_values = diffused[jnp.maximum(diffusion.neighbor_cells, 0)]
-            face_values = jnp.where(
-                diffusion.neighbor_cells >= 0,
-                (owner_values + neighbor_values) / 2,
-                owner_values,
-            )
-            face_rates = diffusion.face_fluxes(diffused, face_values, jnp.eye(3))
-            rate = -diffusion.cell_divergence(face_rates) / prepared.cell_volumes
-            np.testing.assert_allclose(rate, -16 * (diffused - 1.5), atol=1e-12)
-            diffused = diffused + 0.01 * rate
-            np.testing.assert_allclose(
-                diffused, 1.5 + diffusion_mode * (1 - 16 * 0.01) ** (step + 1), atol=1e-12
-            )
-        neumann = HybridDiffusionBoundary(prepared)
-        # Authored piecewise physical forcing -u''=(-.25,+.25), integrated
-        # over the two exact half cells. It is not manufactured from A*u.
-        loads = jnp.zeros((2,)).at[order].set(jnp.asarray((-0.125, 0.125)))
-        pinned_system, pinned_rhs = diffusion.pinned_linear_system(
-            jnp.eye(3),
-            neumann,
-            source=loads,
-            pin_cell=int(order[0]),
-            pin_value=0.0,
-        )
-        solved = phx.linalg.solve(
-            pinned_system,
-            pinned_rhs,
-            policy=native_policy,
-        )
-        assert bool(solved.successful)
-        np.testing.assert_allclose(solved.value[order[0]], 0, atol=1e-12)
-        physical_residual = diffusion.residual(
-            solved.value[:2],
-            solved.value[2:],
-            jnp.eye(3),
-            neumann,
-            source=loads,
-        )
-        native_residual = pinned_system.operator.mv(solved.value) - pinned_rhs
-        native_limit = (
-            native_policy.tolerance.absolute
-            + native_policy.tolerance.relative * jnp.linalg.norm(pinned_rhs)
-        )
-        assert float(jnp.linalg.norm(native_residual)) <= float(native_limit)
-        # Exact source compatibility and physical flux cancellation recover the
-        # removed row: r_pin=-sum(r_free). Hence ||r||₂≤sqrt(n)||r_free||₂.
-        np.testing.assert_allclose(jnp.sum(loads), 0, atol=0)
-        np.testing.assert_allclose(jnp.sum(physical_residual), 0, atol=1e-13)
-        free_rows = np.arange(physical_residual.size) != order[0]
-        np.testing.assert_allclose(
-            physical_residual[free_rows], native_residual[free_rows], atol=1e-12
-        )
-        assert float(jnp.linalg.norm(physical_residual)) <= float(
-            jnp.sqrt(physical_residual.size) * native_limit
-        )
-        # The independently integrated piecewise quadratic differs between
-        # quarter/three-quarter centers by .25/16; the FV error stays below .05.
-        assert (
-            abs(float(solved.value[order[1]] - solved.value[order[0]]) - 0.25 / 16) < 0.05
-        )
-    trace_boundary = HybridDiffusionBoundary(prepared)
-    trace_system, cell_rhs_action, trace_offset = (
-        diffusion.trace_reconstruction_operators(
-            jnp.eye(3),
-            trace_boundary,
-        )
+    trace_histories = tuple(
+        manufactured_history[:3] if manufactured_history else history[:3]
     )
-    trace_prepared = phx.linalg.prepare(
-        trace_system,
-        native_policy,
-    )
-    actual_histories = manufactured_history[:3] if manufactured_history else history[:3]
-    for cell_values in (
-        varying[:, 0],
-        *(value[:, 0] for value in actual_histories),
-        jnp.ones(prepared.cell_count),
-    ):
-        actual_rhs = cell_rhs_action.mv(cell_values) + trace_offset
-        trace_solved = phx.linalg.solve(
-            trace_prepared,
-            actual_rhs,
-        )
-        assert bool(trace_solved.successful)
-        local_flux = diffusion.local_fluxes(cell_values, trace_solved.value, jnp.eye(3))
-        physical_face_residual = trace_boundary.face_residual(
-            trace_solved.value,
-            diffusion.continuity_residual(local_flux),
-        )
-        native_face_residual = trace_system.operator.mv(trace_solved.value) - actual_rhs
-        np.testing.assert_allclose(
-            physical_face_residual, native_face_residual, atol=1e-12
-        )
-        native_limit = (
-            native_policy.tolerance.absolute
-            + native_policy.tolerance.relative * jnp.linalg.norm(actual_rhs)
-        )
-        assert float(jnp.linalg.norm(physical_face_residual)) <= float(native_limit)
-    one = jnp.ones(diffusion.face_count)
-    np.testing.assert_allclose(
-        trace_system.operator.mv(one),
-        cell_rhs_action.mv(jnp.ones(prepared.cell_count)) + trace_offset,
-        atol=1e-12,
-    )
-    assert float(jnp.max(jnp.abs(trace_solved.value - one))) < 0.05
-    face_cotangent = jnp.linspace(-1.0, 1.0, diffusion.face_count)
-    cell_direction = jnp.linspace(0.2, 0.7, prepared.cell_count)
-    np.testing.assert_allclose(
-        jnp.vdot(face_cotangent, cell_rhs_action.mv(cell_direction)),
-        jnp.vdot(cell_rhs_action.transpose_mv(face_cotangent), cell_direction),
-        atol=1e-12,
+    return _ScalarFVEvolution(
+        state,
+        tuple(history),
+        tuple(residuals),
+        varying,
+        tuple(manufactured_history),
+        initial_mode,
+        trace_histories,
     )
 
-    # Conserved momentum is a genuine system-owned bundle representation.
+
+@pytest.fixture(scope="module")
+def vector_fv_evolution(periodic_fv_case: _PeriodicFVScenario) -> _VectorFVEvolution:
+    construction, action_kind = (
+        periodic_fv_case.construction,
+        periodic_fv_case.action_kind,
+    )
+    method, boundaries = periodic_fv_case.method, periodic_fv_case.boundaries
     euler = phx.equations.EulerSystem(3)
     vector_prepared = UnstructuredFiniteVolumePlan.from_cell_mesh(
         construction.mesh,
@@ -1998,24 +2064,329 @@ def test_native_periodic_polyhedral_fv_real_quotient_flux_and_adjoint(
     vector_state = jnp.broadcast_to(
         jnp.asarray(conserved_constant), vector_prepared.state_shape
     )
+    initial_state = vector_state
+    vector_history = []
+    for step in range(4):
+        vector_state = vector_state + 0.01 * vector_dynamics(
+            jnp.asarray(step * 0.01), vector_state
+        )
+        vector_history.append(vector_state)
+
+    return _VectorFVEvolution(
+        euler,
+        vector_prepared,
+        vector_dynamics,
+        initial_state,
+        vector_state,
+        tuple(vector_history),
+    )
+
+
+@pytest.fixture(scope="module")
+def periodic_fv_publication(periodic_fv_case: _PeriodicFVScenario) -> CellMeshingResult:
+    return (
+        M.NativeMeshingProvider(periodic_fv_case.options)
+        .plan(
+            periodic_fv_case.generation_source,
+            periodic_fv_case.specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
+
+
+def test_periodic_polyhedral_fv_capacity_refusal_preserves_source(
+    periodic_fv_case: _PeriodicFVScenario,
+) -> None:
+    construction = periodic_fv_case.construction
+    original_coordinates, original_source = (
+        periodic_fv_case.original_coordinates,
+        periodic_fv_case.original_source,
+    )
+    with pytest.raises(ValueError, match=r"prepare_polyhedral_worksets\.maximum_entries"):
+        prepare_polyhedral_finite_volume_geometry(
+            construction.mesh,
+            cell_geometry=construction.geometry,
+            maximum_workset_entries=1,
+        )
+    np.testing.assert_array_equal(
+        np.asarray(construction.mesh.coordinates).view(np.uint64),
+        original_coordinates.view(np.uint64),
+    )
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(construction.geometry),
+    ) as budget:
+        assert construction.geometry.source_coordinates(budget=budget) == original_source
+
+
+def test_periodic_polyhedral_fv_quotient_geometry_and_flux_adjoint(
+    periodic_fv_case: _PeriodicFVScenario,
+) -> None:
+    construction, prepared, diffusion = (
+        periodic_fv_case.construction,
+        periodic_fv_case.prepared,
+        periodic_fv_case.diffusion,
+    )
+    assert construction.seam_face_pairs is not None
+    pairs = construction.seam_face_pairs[:, :2]
+    active = np.asarray(prepared.face_block.active_mask)
+    for left, right in pairs:
+        rows = np.flatnonzero(
+            np.isin(np.asarray(prepared.source_face_indices), (left, right))
+        )
+        assert rows.size == 1
+        assert bool(active[rows[0]])
+        assert int(prepared.neighbor_cells[rows[0]]) >= 0
+        assert int(prepared.boundary_patch_ids[rows[0]]) == -1
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(construction.geometry),
+    ) as budget:
+        volumes, moments = _independent_oriented_source_integrals(
+            construction, budget=budget
+        )
     np.testing.assert_allclose(
-        vector_dynamics(jnp.asarray(0.0), vector_state), 0, atol=1e-12
+        prepared.cell_volumes, [float(value) for value in volumes], atol=_QUOTIENT_ATOL
+    )
+    np.testing.assert_allclose(
+        prepared.cell_centers,
+        [
+            [float(value / volume) for value in moment]
+            for volume, moment in zip(volumes, moments, strict=True)
+        ],
+        atol=_QUOTIENT_ATOL,
+    )
+    constant = jnp.ones((prepared.cell_count,))
+    traces = jnp.ones((diffusion.face_count,))
+    local = diffusion.local_fluxes(constant, traces, jnp.eye(3))
+    np.testing.assert_allclose(local, 0, atol=_QUOTIENT_ATOL)
+    mask = active & (np.asarray(prepared.neighbor_cells) >= 0)
+    rates = jnp.asarray(np.arange(diffusion.face_count, dtype=np.float64) * mask)
+    result = diffusion.cell_divergence(rates)
+    np.testing.assert_allclose(jnp.sum(result), 0, atol=_QUOTIENT_ATOL)
+    direction = jnp.linspace(-0.5, 0.5, diffusion.face_count)
+    cotangent = jnp.arange(prepared.cell_count, dtype=jnp.float64) + 0.25
+    _, tangent = jax.jvp(diffusion.cell_divergence, (rates,), (direction,))
+    _, pullback = jax.vjp(diffusion.cell_divergence, rates)
+    np.testing.assert_allclose(
+        jnp.vdot(cotangent, tangent),
+        jnp.vdot(pullback(cotangent)[0], direction),
+        atol=_QUOTIENT_ATOL,
+    )
+
+
+def test_periodic_polyhedral_scalar_constant_history_and_conservation(
+    periodic_fv_case: _PeriodicFVScenario,
+    scalar_fv_evolution: _ScalarFVEvolution,
+) -> None:
+    prepared, dynamics = periodic_fv_case.prepared, periodic_fv_case.dynamics
+    for residual in scalar_fv_evolution.residuals:
+        np.testing.assert_allclose(residual, 0, atol=_QUOTIENT_ATOL)
+    np.testing.assert_allclose(
+        jnp.stack(scalar_fv_evolution.history), 1, atol=_QUOTIENT_ATOL
+    )
+    varying = scalar_fv_evolution.varying
+    residual = dynamics(jnp.asarray(0.0), varying)
+    np.testing.assert_allclose(
+        jnp.sum(prepared.cell_volumes[:, None] * residual), 0, atol=_QUOTIENT_ATOL
+    )
+
+
+@pytest.mark.parametrize("periodic_fv_case", ["translation", "screw"], indirect=True)
+def test_periodic_polyhedral_scalar_manufactured_upwind_mode(
+    periodic_fv_case: _PeriodicFVScenario,
+    scalar_fv_evolution: _ScalarFVEvolution,
+) -> None:
+    prepared, dynamics = periodic_fv_case.prepared, periodic_fv_case.dynamics
+    assert prepared.cell_count == 2
+    initial_mode = scalar_fv_evolution.initial_mode
+    assert initial_mode is not None
+    np.testing.assert_allclose(
+        dynamics(jnp.asarray(0.0), initial_mode + 1.5),
+        -4 * initial_mode,
+        atol=_VOLUME_ATOL,
+    )
+    for step, state in enumerate(scalar_fv_evolution.manufactured_history):
+        np.testing.assert_allclose(
+            state, 1.5 + initial_mode * (1 - 4 * 0.01) ** (step + 1), atol=_VOLUME_ATOL
+        )
+
+
+@pytest.mark.parametrize("periodic_fv_case", ["translation", "screw"], indirect=True)
+def test_periodic_polyhedral_diffusion_mode_and_pinned_physical_residual(
+    periodic_fv_case: _PeriodicFVScenario,
+) -> None:
+    prepared, diffusion = periodic_fv_case.prepared, periodic_fv_case.diffusion
+    native_policy = phx.linalg.LinearSolvePolicy(phx.linalg.ConjugateGradient())
+    order = np.argsort(np.asarray(prepared.cell_centers)[:, 0])
+    # The same source-frame mimetic operator gives the independent
+    # two-half-cell diffusion mode du/dt=-16(u-mean), with no seam law.
+    diffused = jnp.zeros((2,)).at[order].set(jnp.asarray((1.0, 2.0)))
+    diffusion_mode = diffused - 1.5
+    for step in range(4):
+        owner_values = diffused[diffusion.owner_cells]
+        neighbor_values = diffused[jnp.maximum(diffusion.neighbor_cells, 0)]
+        face_values = jnp.where(
+            diffusion.neighbor_cells >= 0,
+            (owner_values + neighbor_values) / 2,
+            owner_values,
+        )
+        face_rates = diffusion.face_fluxes(diffused, face_values, jnp.eye(3))
+        rate = -diffusion.cell_divergence(face_rates) / prepared.cell_volumes
+        np.testing.assert_allclose(rate, -16 * (diffused - 1.5), atol=_VOLUME_ATOL)
+        diffused = diffused + 0.01 * rate
+        np.testing.assert_allclose(
+            diffused,
+            1.5 + diffusion_mode * (1 - 16 * 0.01) ** (step + 1),
+            atol=_VOLUME_ATOL,
+        )
+    neumann = HybridDiffusionBoundary(prepared)
+    # Authored piecewise physical forcing -u''=(-.25,+.25), integrated
+    # over the two half cells, independently of the discrete A*u action.
+    loads = jnp.zeros((2,)).at[order].set(jnp.asarray((-0.125, 0.125)))
+    pinned_system, pinned_rhs = diffusion.pinned_linear_system(
+        jnp.eye(3),
+        neumann,
+        source=loads,
+        pin_cell=int(order[0]),
+        pin_value=0.0,
+    )
+    solved = phx.linalg.solve(
+        pinned_system,
+        pinned_rhs,
+        policy=native_policy,
+    )
+    assert bool(solved.successful)
+    np.testing.assert_allclose(solved.value[order[0]], 0, atol=_VOLUME_ATOL)
+    physical_residual = diffusion.residual(
+        solved.value[:2],
+        solved.value[2:],
+        jnp.eye(3),
+        neumann,
+        source=loads,
+    )
+    native_residual = pinned_system.operator.mv(solved.value) - pinned_rhs
+    native_limit = (
+        native_policy.tolerance.absolute
+        + native_policy.tolerance.relative * jnp.linalg.norm(pinned_rhs)
+    )
+    assert float(jnp.linalg.norm(native_residual)) <= float(native_limit)
+    # Source compatibility and physical flux cancellation recover the
+    # removed row: r_pin=-sum(r_free). Hence ||r||₂≤sqrt(n)||r_free||₂.
+    np.testing.assert_allclose(jnp.sum(loads), 0, atol=0)
+    np.testing.assert_allclose(jnp.sum(physical_residual), 0, atol=_QUOTIENT_ATOL)
+    free_rows = np.arange(physical_residual.size) != order[0]
+    np.testing.assert_allclose(
+        physical_residual[free_rows], native_residual[free_rows], atol=_VOLUME_ATOL
+    )
+    assert float(jnp.linalg.norm(physical_residual)) <= float(
+        jnp.sqrt(physical_residual.size) * native_limit
+    )
+    # Two parallel half-cell paths each have conductance area/distance=2.
+    # The independent discrete balance is 4*delta=1/8, so delta=1/32;
+    # integrating the authored piecewise quadratic gives delta=1/64.
+    # Their truncation difference is exactly 1/64, not an arbitrary .05.
+    delta = float(solved.value[order[1]] - solved.value[order[0]])
+    assert delta == pytest.approx(1 / 32, rel=0, abs=_OPERATOR_ATOL)
+    assert abs(delta - 1 / 64) <= 1 / 64 + _OPERATOR_ATOL
+
+
+def test_periodic_polyhedral_trace_reconstruction_residual_and_adjoint(
+    periodic_fv_case: _PeriodicFVScenario,
+    scalar_fv_evolution: _ScalarFVEvolution,
+) -> None:
+    prepared, diffusion = periodic_fv_case.prepared, periodic_fv_case.diffusion
+    # The operator assertion requires solve accuracy below the default stopping rule.
+    native_policy = phx.linalg.LinearSolvePolicy(
+        phx.linalg.ConjugateGradient(),
+        tolerance=phx.linalg.TolerancePolicy(
+            relative=_VOLUME_ATOL, absolute=_VOLUME_ATOL
+        ),
+    )
+    varying, actual_histories = (
+        scalar_fv_evolution.varying,
+        scalar_fv_evolution.trace_histories,
+    )
+    trace_boundary = HybridDiffusionBoundary(prepared)
+    trace_system, cell_rhs_action, trace_offset = (
+        diffusion.trace_reconstruction_operators(
+            jnp.eye(3),
+            trace_boundary,
+        )
+    )
+    trace_prepared = phx.linalg.prepare(
+        trace_system,
+        native_policy,
+    )
+    for cell_values in (
+        varying[:, 0],
+        *(value[:, 0] for value in actual_histories),
+        jnp.ones(prepared.cell_count),
+    ):
+        actual_rhs = cell_rhs_action.mv(cell_values) + trace_offset
+        trace_solved = phx.linalg.solve(
+            trace_prepared,
+            actual_rhs,
+        )
+        assert bool(trace_solved.successful)
+        local_flux = diffusion.local_fluxes(cell_values, trace_solved.value, jnp.eye(3))
+        physical_face_residual = trace_boundary.face_residual(
+            trace_solved.value,
+            diffusion.continuity_residual(local_flux),
+        )
+        native_face_residual = trace_system.operator.mv(trace_solved.value) - actual_rhs
+        np.testing.assert_allclose(
+            physical_face_residual, native_face_residual, atol=_VOLUME_ATOL
+        )
+        native_limit = (
+            native_policy.tolerance.absolute
+            + native_policy.tolerance.relative * jnp.linalg.norm(actual_rhs)
+        )
+        assert float(jnp.linalg.norm(physical_face_residual)) <= float(native_limit)
+    one = jnp.ones(diffusion.face_count)
+    np.testing.assert_allclose(
+        trace_system.operator.mv(one),
+        cell_rhs_action.mv(jnp.ones(prepared.cell_count)) + trace_offset,
+        atol=_VOLUME_ATOL,
+    )
+    # A constant cell field has exactly unit traces. Apply the existing
+    # operator-reproduction regression allowance, not a 5-percent escape.
+    np.testing.assert_allclose(trace_solved.value, one, rtol=0, atol=_OPERATOR_ATOL)
+    face_cotangent = jnp.linspace(-1.0, 1.0, diffusion.face_count)
+    cell_direction = jnp.linspace(0.2, 0.7, prepared.cell_count)
+    np.testing.assert_allclose(
+        jnp.vdot(face_cotangent, cell_rhs_action.mv(cell_direction)),
+        jnp.vdot(cell_rhs_action.transpose_mv(face_cotangent), cell_direction),
+        atol=_VOLUME_ATOL,
+    )
+
+
+def test_periodic_polyhedral_vector_flux_ledger_and_adjoint(
+    periodic_fv_case: _PeriodicFVScenario,
+    vector_fv_evolution: _VectorFVEvolution,
+) -> None:
+    euler, vector_prepared, vector_dynamics = (
+        vector_fv_evolution.system,
+        vector_fv_evolution.prepared,
+        vector_fv_evolution.dynamics,
+    )
+    vector_state, action = vector_fv_evolution.initial_state, periodic_fv_case.action
+    np.testing.assert_allclose(
+        vector_dynamics(jnp.asarray(0.0), vector_state), 0, atol=_VOLUME_ATOL
     )
     action_matrix = euler.proper_isometry_state_matrix(jnp.asarray(action[:3, :3]))
     np.testing.assert_allclose(action_matrix[0], (1.0, 0.0, 0.0, 0.0, 0.0), atol=0)
     np.testing.assert_allclose(action_matrix[-1], (0.0, 0.0, 0.0, 0.0, 1.0), atol=0)
     np.testing.assert_allclose(action_matrix[1:4, 1:4], action[:3, :3], atol=0)
     flux, _ = vector_dynamics.face_fluxes(jnp.asarray(0.0), vector_state)
-    expected = vector_dynamics._content_rate_from_fluxes(flux)
-    from phydrax.discretization._conservation_ledger import ConservationStageLedger
-
+    face_active = vector_dynamics.discretization.face_block.active_mask
+    expected = vector_dynamics._content_rate_from_fluxes(flux, active_mask=face_active)
     block = vector_dynamics.stage_rate_block_templates[0].with_flux_rate(
         flux * vector_prepared.face_measures[:, None],
     )
     ledger = ConservationStageLedger(
         [block],
         jnp.zeros_like(vector_state),
-        jnp.ones((vector_prepared.cell_count,), dtype=bool),
+        jnp.ones((vector_prepared.cell_count,), dtype=jnp.bool_),
         geometry_family_id=vector_prepared.geometry_id,
         geometry_layout_id=vector_prepared.topology_id,
         geometry_version=jnp.asarray(0),
@@ -2023,85 +2394,230 @@ def test_native_periodic_polyhedral_fv_real_quotient_flux_and_adjoint(
         evidence_version=jnp.asarray(0),
         topology_epoch_id=vector_prepared.topology_id,
     )
-    np.testing.assert_allclose(ledger.scatter_content_rate(), expected, atol=1e-12)
+    np.testing.assert_allclose(ledger.scatter_content_rate(), expected, atol=_VOLUME_ATOL)
     source_sum, boundary_sum, net_sum = ledger.conservation_sums()
     np.testing.assert_allclose(
-        net_sum, source_sum - boundary_sum + ledger.frame_exchange_sum(), atol=1e-12
+        net_sum,
+        source_sum - boundary_sum + ledger.frame_exchange_sum(),
+        atol=_VOLUME_ATOL,
     )
-    raw_direction = jnp.arange(flux.size, dtype=float).reshape(flux.shape) / flux.size
+    raw_direction = (
+        jnp.arange(flux.size, dtype=jnp.float64).reshape(flux.shape) / flux.size
+    )
     cell_cotangent = (
-        jnp.arange(vector_state.size, dtype=float).reshape(vector_state.shape)
+        jnp.arange(vector_state.size, dtype=jnp.float64).reshape(vector_state.shape)
         / vector_state.size
     )
-    scatter = lambda values: vector_dynamics._content_rate_from_fluxes(values)
+    scatter = lambda values: vector_dynamics._content_rate_from_fluxes(
+        values, active_mask=face_active
+    )
     _, tangent = jax.jvp(scatter, (flux,), (raw_direction,))
     _, pullback = jax.vjp(scatter, flux)
     np.testing.assert_allclose(
         jnp.vdot(cell_cotangent, tangent),
         jnp.vdot(pullback(cell_cotangent)[0], raw_direction),
-        atol=1e-12,
+        atol=_VOLUME_ATOL,
     )
-    vector_history = []
-    for step in range(4):
-        vector_state = vector_state + 0.01 * vector_dynamics(
-            jnp.asarray(step * 0.01), vector_state
-        )
-        vector_history.append(vector_state)
-    import subprocess
-    import sys
 
-    from phydrax._differentiation import BranchDifferentiationPolicy
-    from phydrax._frozendict import frozendict
-    from phydrax.discretization._views import FieldTracePolicy
-    from phydrax.lifecycle._meshing_field_records import (
-        MeshingFieldDeclaration,
-        MeshingFieldStateRole,
-        prepare_meshing_field_index_binding,
-    )
-    from phydrax.lifecycle._meshing_sources import write_meshing_source_closure
 
-    # The cold root is the actual public certified publication, not an arbitrary
-    # mesh/array dictionary or a fabricated report around the direct constructor.
-    publication = (
-        M.NativeMeshingProvider(options)
-        .plan(
-            generation_source,
-            specification,
-            coordinate_contract=phx.SpatialCoordinateContract.si(),
-        )
-        .execute()
-    )
+def test_periodic_polyhedral_publication_identity(
+    periodic_fv_case: _PeriodicFVScenario,
+    periodic_fv_publication: CellMeshingResult,
+) -> None:
+    publication, construction = periodic_fv_publication, periodic_fv_case.construction
+    original_source = periodic_fv_case.original_source
     assert publication.certification is not None and publication.certification.passed
     np.testing.assert_array_equal(
         publication.mesh.entity_set(3).entity_ids,
         construction.mesh.entity_set(3).entity_ids,
     )
-    assert publication.geometry.source_coordinates() == original_source
-    _assert_original_certificate_corruption_refuses(publication)
-    restored_owner = UnstructuredFiniteVolumePlan.from_cell_mesh(
-        publication.mesh,
-        component_names=euler.component_names,
-    ).prepare(cell_geometry=publication.geometry)
-    np.testing.assert_array_equal(
-        restored_owner.cell_centers, vector_prepared.cell_centers
+    with coordinate_reference_budget(
+        queries_upper=cell_geometry_preparation_query_upper(publication.geometry),
+    ) as budget:
+        assert publication.geometry.source_coordinates(budget=budget) == original_source
+
+
+@pytest.mark.parametrize(
+    "field, limit_field, multiplier, offset",
+    [
+        ("source_expression_work_units", "maximum_work_units", 0, -1),
+        ("source_expression_work_units", "maximum_work_units", 1, 1),
+        ("source_expression_peak_bytes", "maximum_scratch_bytes", 0, -1),
+        ("source_expression_peak_bytes", "maximum_scratch_bytes", 1, 1),
+    ],
+    ids=["negative-work", "excess-work", "negative-bytes", "excess-bytes"],
+)
+def test_periodic_polyhedral_certificate_refuses_expression_quantity(
+    periodic_fv_publication: CellMeshingResult,
+    field: str,
+    limit_field: str,
+    multiplier: int,
+    offset: int,
+) -> None:
+    publication = periodic_fv_publication
+    original = publication.certification
+    assert original is not None and original.embedding is not None
+    maximum = getattr(original.request.limits, limit_field)
+    with pytest.raises(ValueError, match=rf"MeshCertificationReport\.embedding\.{field}"):
+        altered = _corrupt_record_path(
+            original, ("embedding", field), multiplier * maximum + offset
+        )
+        require_same_source_evidence(
+            altered,
+            original,
+            publication.mesh,
+            publication.geometry,
+            publication.audit,
+            limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        )
+
+
+@pytest.mark.parametrize(
+    "path, diagnostic",
+    [
+        (("embedding", "certificate_id"), r"GlobalEmbeddingCertificate\.stored_fields"),
+        (
+            ("embedding", "binding", "binding_id"),
+            r"stored_fields\.MeshCertificateBinding",
+        ),
+        (("embedding", "binding", "limits_id"), r"stored_fields\.MeshCertificateBinding"),
+        (("request", "request_id"), r"MeshCertificationInputs\.request_id"),
+        (("report_id",), r"stored_fields\.MeshCertificationReport"),
+    ],
+    ids=["certificate-id", "binding-id", "limits-id", "request-id", "report-id"],
+)
+def test_periodic_polyhedral_certificate_refuses_stored_identity(
+    periodic_fv_publication: CellMeshingResult,
+    path: tuple[str, ...],
+    diagnostic: str,
+) -> None:
+    publication = periodic_fv_publication
+    original = publication.certification
+    assert original is not None and original.embedding is not None
+    with pytest.raises(ValueError, match=diagnostic):
+        altered = _corrupt_record_path(original, path, "0" * 64)
+        require_same_source_evidence(
+            altered,
+            original,
+            publication.mesh,
+            publication.geometry,
+            publication.audit,
+            limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        )
+
+
+def test_periodic_polyhedral_certificate_refuses_cell_count(
+    periodic_fv_publication: CellMeshingResult,
+) -> None:
+    publication = periodic_fv_publication
+    original = publication.certification
+    assert original is not None and original.embedding is not None
+    with pytest.raises(ValueError, match=r"GlobalEmbeddingCertificate\.stored_fields"):
+        altered = _corrupt_record_path(
+            original, ("embedding", "cell_count"), original.embedding.cell_count + 1
+        )
+        require_same_source_evidence(
+            altered,
+            original,
+            publication.mesh,
+            publication.geometry,
+            publication.audit,
+            limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        )
+
+
+def test_periodic_polyhedral_certificate_refuses_outcome_identity(
+    periodic_fv_publication: CellMeshingResult,
+) -> None:
+    publication = periodic_fv_publication
+    original = publication.certification
+    assert original is not None and original.embedding is not None
+    index = next(
+        i
+        for i, outcome in enumerate(original.outcomes)
+        if outcome.check == "global_embedding"
     )
+    with pytest.raises(ValueError, match=r"stored_fields\.MeshCertificationOutcome"):
+        altered = _corrupt_record_path(
+            original, ("outcomes", index, "outcome_id"), "0" * 64
+        )
+        require_same_source_evidence(
+            altered,
+            original,
+            publication.mesh,
+            publication.geometry,
+            publication.audit,
+            limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        )
+
+
+def test_periodic_polyhedral_certificate_refuses_geometry_bits(
+    periodic_fv_publication: CellMeshingResult,
+) -> None:
+    publication = periodic_fv_publication
+    original = publication.certification
+    assert original is not None and original.embedding is not None
+    coordinates = np.asarray(publication.geometry.coordinates).copy()
+    coordinates.view(np.uint64).reshape(-1)[0] ^= np.uint64(1)
+    with pytest.raises(ValueError, match=r"MeshCertificateBinding\.geometry"):
+        altered_geometry = _corrupt_record_path(
+            publication.geometry, ("coordinates",), jnp.asarray(coordinates)
+        )
+        require_same_source_evidence(
+            original,
+            original,
+            publication.mesh,
+            altered_geometry,
+            publication.audit,
+            limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        )
+
+
+def test_public_record_restoration_preserves_identity_and_frozen_guard() -> None:
+    register_meshing_source_artifacts()
+    original = NativePolyhedralSchedule()
+    restored = _corrupt_record_path(original, ("maximum_cells",), original.maximum_cells)
+    assert restored.schedule_id == original.schedule_id
+    assert restored.maximum_cells == original.maximum_cells
+    with pytest.raises(AttributeError, match="maximum_cells"):
+        restored.maximum_cells = 1
+
+
+def test_public_record_restoration_refuses_unknown_field() -> None:
+    register_meshing_source_artifacts()
+    with pytest.raises(ValueError, match=r"corruption\.field"):
+        _corrupt_record_path(NativePolyhedralSchedule(), ("not_a_field",), 1)
+
+
+def test_public_record_restoration_refuses_invalid_capacity() -> None:
+    register_meshing_source_artifacts()
+    with pytest.raises(ValueError, match="maximum_cells"):
+        altered = _corrupt_record_path(NativePolyhedralSchedule(), ("maximum_cells",), 0)
+        validate_meshing_source_closure(altered, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS)
+
+
+def test_public_record_fault_changes_only_selected_field() -> None:
+    original = NativePolyhedralSchedule()
+    maximum_cells = original.maximum_cells
+    altered = _corrupt_record_path(original, ("maximum_cells",), maximum_cells + 1)
+    assert altered.maximum_cells == maximum_cells + 1
+    assert original.maximum_cells == maximum_cells
+    for field in fields(original):
+        if field.name != "maximum_cells":
+            assert getattr(altered, field.name) == getattr(original, field.name)
+
+
+def _periodic_fv_field_declaration(
+    publication: CellMeshingResult,
+    restored_owner: phx.discretization.UnstructuredFiniteVolumeDiscretization,
+    euler: phx.equations.EulerSystem,
+    arrays: dict[str, Array],
+) -> MeshingFiniteVolumeFieldDeclaration:
     binding = prepare_meshing_field_index_binding(
         publication,
         "field/global_coefficient_ids",
         field_space=restored_owner.cell_space,
     )
-    arrays = {
-        "vector_state": vector_state,
-        "vector_history": jnp.moveaxis(jnp.stack(vector_history), 0, 1),
-        "scalar_state": state,
-        "scalar_history": jnp.moveaxis(jnp.stack(history), 0, 1),
-        "density": jnp.ones((prepared.cell_count,)),
-        "state_epoch": jnp.asarray(4, dtype=jnp.int64),
-    }
-    if manufactured_history:
-        arrays["manufactured_history"] = jnp.moveaxis(
-            jnp.stack(manufactured_history), 0, 1
-        )
     density_unit = phx.units.derived_unit(
         "kg/m^3", ((phx.units.KILOGRAM, 1), (phx.units.METER, -3))
     )
@@ -2137,9 +2653,8 @@ def test_native_periodic_polyhedral_fv_real_quotient_flux_and_adjoint(
         ),
     )
     reconstruction = phx.discretization.PiecewiseConstantReconstruction()
-    declaration = MeshingFieldDeclaration(
+    declaration = MeshingFiniteVolumeFieldDeclaration(
         part_name="generation",
-        owner="finite_volume",
         topology_id=publication.mesh.topology_id,
         geometry_layout_id=publication.geometry.geometry_layout_id,
         field_space_ids=frozendict({"state": restored_owner.cell_space.field_space_id}),
@@ -2164,7 +2679,50 @@ def test_native_periodic_polyhedral_fv_real_quotient_flux_and_adjoint(
             }
         ),
     )
+    return declaration
+
+
+def test_periodic_polyhedral_cold_archive_restores_fields_and_quotient(
+    periodic_fv_case: _PeriodicFVScenario,
+    scalar_fv_evolution: _ScalarFVEvolution,
+    vector_fv_evolution: _VectorFVEvolution,
+    periodic_fv_publication: CellMeshingResult,
+    tmp_path: Path,
+) -> None:
+    publication, prepared = periodic_fv_publication, periodic_fv_case.prepared
+    generation_source, specification, options = (
+        periodic_fv_case.generation_source,
+        periodic_fv_case.specification,
+        periodic_fv_case.options,
+    )
+    euler, vector_prepared = vector_fv_evolution.system, vector_fv_evolution.prepared
+    vector_state, vector_history = vector_fv_evolution.state, vector_fv_evolution.history
+    state, history = scalar_fv_evolution.state, scalar_fv_evolution.history
+    manufactured_history = scalar_fv_evolution.manufactured_history
+    restored_owner = UnstructuredFiniteVolumePlan.from_cell_mesh(
+        publication.mesh,
+        component_names=euler.component_names,
+    ).prepare(cell_geometry=publication.geometry)
+    np.testing.assert_array_equal(
+        restored_owner.cell_centers, vector_prepared.cell_centers
+    )
+    arrays = {
+        "vector_state": vector_state,
+        "vector_history": jnp.moveaxis(jnp.stack(vector_history), 0, 1),
+        "scalar_state": state,
+        "scalar_history": jnp.moveaxis(jnp.stack(history), 0, 1),
+        "density": jnp.ones((prepared.cell_count,)),
+        "state_epoch": jnp.asarray(4, dtype=jnp.int64),
+    }
+    if manufactured_history:
+        arrays["manufactured_history"] = jnp.moveaxis(
+            jnp.stack(manufactured_history), 0, 1
+        )
+    declaration = _periodic_fv_field_declaration(
+        publication, restored_owner, euler, arrays
+    )
     report = publication.certification
+    assert report is not None and report.passed
     receipt = write_meshing_source_closure(
         tmp_path / "periodic-fv",
         {
@@ -2179,35 +2737,181 @@ def test_native_periodic_polyhedral_fv_real_quotient_flux_and_adjoint(
             "field_declarations": {"generation": declaration},
         },
     )
-    cold = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys, numpy as np, jax.numpy as jnp; "
-            "from phydrax.lifecycle._meshing_sources import read_meshing_source_closure,recertify_restored_meshing_source; "
-            "from phydrax.lifecycle._meshing_field_records import prepare_meshing_field_owner,prepare_meshing_field_dynamics; "
-            "from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS; "
-            "from phydrax.lifecycle._meshing_source_families import require_same_native_scientific_theorem; "
-            "from phydrax.discretization.finite_volume._hybrid_diffusion import HybridMimeticDiffusion; "
-            "v=read_meshing_source_closure(sys.argv[1],expected_content_id=sys.argv[2]); "
-            "p=v['generation_part'].carrier; "
-            "r=recertify_restored_meshing_source(v['certification_inputs'],p.mesh,p.geometry,p.audit); "
-            "old,current=require_same_native_scientific_theorem(v['report'],r,p.mesh,p.geometry,p.audit,limits=DEFAULT_ARRAY_ARCHIVE_LIMITS); "
-            "assert old is v['report'] and current is r; "
-            "decl=v['field_declarations']['generation']; "
-            "d,_=prepare_meshing_field_owner(decl,p); f=prepare_meshing_field_dynamics(decl,p); "
-            "a=v['accepted_data']['fields']; h=HybridMimeticDiffusion(d); "
-            "np.testing.assert_allclose(h.local_fluxes(a['scalar_state'][:,0],jnp.ones(h.face_count),jnp.eye(3)),0,atol=1e-13); "
-            "np.testing.assert_array_equal(a['scalar_history'],np.ones((d.cell_count,4,1))); "
-            "np.testing.assert_array_equal(a['density'],np.ones(d.cell_count)); "
-            "assert d.face_measures.size<p.mesh.connectivity.face_count; "
-            "np.testing.assert_allclose(f(jnp.asarray(.04),a['vector_state']),0,atol=1e-12); "
-            "np.testing.assert_allclose(a['vector_history'],np.broadcast_to(a['vector_state'][:,None,:],a['vector_history'].shape),atol=1e-12)",
-            str(tmp_path / "periodic-fv"),
-            receipt.content_id,
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
+    cold = run_on_forced_devices(
+        "tests._support.distributed_meshing.cold_lifecycle",
+        "periodic_finite_volume",
+        (str(tmp_path / "periodic-fv"), receipt.content_id),
+        devices=1,
+        env={},
     )
-    assert cold.returncode == 0, cold.stdout + cold.stderr
+    assert cold["old_report_alias"] and cold["current_report_alias"]
+    np.testing.assert_allclose(record_array(cold["local_fluxes"]), 0, atol=_QUOTIENT_ATOL)
+    np.testing.assert_array_equal(
+        record_array(cold["scalar_history"]),
+        np.ones((cold["cell_count"], 4, 1), dtype=np.float64),
+    )
+    np.testing.assert_array_equal(
+        record_array(cold["density"]), np.ones(cold["cell_count"], dtype=np.float64)
+    )
+    assert cold["quotient_face_count"] < cold["physical_face_count"]
+    np.testing.assert_allclose(record_array(cold["vector_rate"]), 0, atol=_VOLUME_ATOL)
+    cold_vector_state = record_array(cold["vector_state"])
+    cold_vector_history = record_array(cold["vector_history"])
+    np.testing.assert_allclose(
+        cold_vector_history,
+        np.broadcast_to(cold_vector_state[:, None, :], cold_vector_history.shape),
+        atol=_VOLUME_ATOL,
+    )
+
+
+def test_polyhedral_schedule_normalizes_controls_and_retains_identity() -> None:
+    supplied_volumes = [0.25, 0.75]
+    supplied_sites = [0]
+    schedule = NativePolyhedralSchedule(
+        target_site_volumes=supplied_volumes,
+        protected_sites=supplied_sites,
+    )
+    supplied_volumes[0] = 0.5
+    supplied_sites.append(1)
+    assert schedule.target_site_volumes == (0.25, 0.75)
+    assert schedule.protected_sites == (0,)
+    equivalent = NativePolyhedralSchedule(
+        target_site_volumes=(0.25, 0.75), protected_sites=(0,)
+    )
+    assert schedule.schedule_id == equivalent.schedule_id
+    assert schedule.schedule_id != NativePolyhedralSchedule().schedule_id
+    with pytest.raises(AttributeError, match="maximum_cells"):
+        schedule.maximum_cells = 1
+
+
+@pytest.mark.parametrize(
+    "capacities, field",
+    [
+        ((0, 1, 1, 1), "maximum_vertices"),
+        ((1, 0, 1, 1), "maximum_cells"),
+        ((1, 1, 0, 1), "maximum_work_units"),
+        ((1, 1, 1, 0), "maximum_scratch_bytes"),
+    ],
+    ids=["vertices", "cells", "work", "scratch"],
+)
+def test_polyhedral_schedule_refuses_nonpositive_capacity(
+    capacities: tuple[int, int, int, int],
+    field: str,
+) -> None:
+    with pytest.raises(ValueError, match=field):
+        NativePolyhedralSchedule(
+            maximum_vertices=capacities[0],
+            maximum_cells=capacities[1],
+            maximum_work_units=capacities[2],
+            maximum_scratch_bytes=capacities[3],
+        )
+
+
+@pytest.mark.parametrize(
+    "refinement, relocation, field",
+    [(-1, 0, "maximum_refinement_steps"), (0, -1, "lloyd_steps")],
+    ids=["refinement", "relocation"],
+)
+def test_polyhedral_schedule_refuses_negative_step_count(
+    refinement: int,
+    relocation: int,
+    field: str,
+) -> None:
+    with pytest.raises(ValueError, match=field):
+        NativePolyhedralSchedule(
+            maximum_refinement_steps=refinement, lloyd_steps=relocation
+        )
+
+
+@pytest.mark.parametrize(
+    "volumes",
+    [(0.0,), (-1.0,), (np.inf,), (np.nan,)],
+    ids=["zero", "negative", "infinite", "nan"],
+)
+def test_polyhedral_schedule_refuses_invalid_volume_targets(
+    volumes: tuple[float, ...],
+) -> None:
+    with pytest.raises(ValueError, match="target_site_volumes"):
+        NativePolyhedralSchedule(target_site_volumes=volumes)
+
+
+@pytest.mark.parametrize(
+    "reason, category",
+    [
+        (
+            PolyhedralGenerationReason.WORK_BUDGET,
+            M.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+        ),
+        (
+            PolyhedralGenerationReason.FEATURE_CANDIDATE_BUDGET,
+            M.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+        ),
+        (
+            PolyhedralGenerationReason.PERIODIC_VOLUME_OPTIMIZATION_UNRESOLVED,
+            M.MeshingFailureCategory.COMPLIANCE_FAILED,
+        ),
+        (
+            PolyhedralGenerationReason.AMBIGUOUS_FEATURE_ANCESTRY,
+            M.MeshingFailureCategory.COMPLIANCE_FAILED,
+        ),
+    ],
+    ids=["work", "feature-candidates", "volume", "feature-ancestry"],
+)
+def test_polyhedral_refusal_reason_retains_category_and_evidence(
+    reason: PolyhedralGenerationReason,
+    category: M.MeshingFailureCategory,
+) -> None:
+    evidence = {"covered_segments": 0.0}
+    refusal = PolyhedralGenerationError(reason, entities=(3,), achieved=evidence)
+    assert refusal.reason is reason
+    assert refusal.reason.failure_category is category
+    assert refusal.entities == (3,)
+    assert refusal.achieved is evidence
+
+
+@pytest.mark.parametrize(
+    "cubes, regions, expected_interfaces",
+    [
+        ([(0, 0, 0)], None, 0),
+        ([(0, 0, 0), (1, 0, 0)], None, 0),
+        ([(0, 0, 0), (1, 0, 0)], [0, 1], 1),
+        ([(0, 0, 0), (3, 0, 0)], None, 0),
+    ],
+    ids=["singleton", "joined", "material-interface", "disconnected"],
+)
+def test_voxel_fixture_oriented_union_volume_and_material_interfaces(
+    cubes: Sequence[tuple[int, int, int]],
+    regions: Sequence[int] | None,
+    expected_interfaces: int,
+) -> None:
+    domain = voxel_plc(cubes, regions)
+    volume = Fraction(0)
+    interfaces = 0
+    for polygon, (start, stop) in enumerate(
+        zip(domain.polygon_offsets[:-1], domain.polygon_offsets[1:], strict=True)
+    ):
+        sides = domain.facet_regions[domain.polygon_facets[polygon]]
+        if np.all(sides >= 0):
+            interfaces += 1
+            continue
+        points = [
+            tuple(Fraction(float(value)) for value in point)
+            for point in domain.vertices[domain.polygon_vertices[start:stop]]
+        ]
+        for index in range(1, len(points) - 1):
+            p, q, r = points[0], points[index], points[index + 1]
+            cross = (
+                q[1] * r[2] - q[2] * r[1],
+                q[2] * r[0] - q[0] * r[2],
+                q[0] * r[1] - q[1] * r[0],
+            )
+            volume += sum(p[axis] * cross[axis] for axis in range(3)) / 6
+    # Divergence of x/3 integrates each oriented triangular boundary piece;
+    # the independent union volume is the number of disjoint unit-cube interiors.
+    assert volume == len(cubes)
+    assert interfaces == expected_interfaces
+
+
+def test_polyhedral_generator_refuses_foreign_source_before_native_scope() -> None:
+    with pytest.raises(TypeError, match="complex_"):
+        generate_polyhedral_volume(object(), scope=object())  # ty: ignore[invalid-argument-type]

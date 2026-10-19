@@ -6,7 +6,7 @@
     0.0,
     0.0
   ],
-  "registration_id": "b4e7eee0121bb7213efe9d9ffc1767f37f3e5c97a7bdab9dd8bf590242b08c47",
+  "registration_id": "e6997845a5d9bd0adf3eb716d9b6829af5f32893e1f044c855557703316e90ed",
   "sources": [
     {
       "orbit_ids": [],
@@ -49,7 +49,7 @@
       "role": "negative-refusal",
       "source_artifact": {
         "license": "LicenseRef-PHYDRA-Proprietary",
-        "locator": "tools/_hybrid_layer_source.py::ORIGINAL_CURVED_PERIODIC_SOURCE_DIGEST",
+        "locator": "phydrax/meshing/qualification/_layer_source.py::ORIGINAL_CURVED_PERIODIC_SOURCE_DIGEST",
         "media_type": "application/vnd.phydrax.source-identity+json"
       },
       "source_digest": "ebeaa8557815eada07f50d04b77fe40d4ed2809392af56d147c6876bace97a35",
@@ -96,7 +96,7 @@
       "source_artifact": {
         "fiber_graph": true,
         "license": "LicenseRef-PHYDRA-Proprietary",
-        "locator": "tools/_hybrid_layer_source.py::corrected_periodic_layer_source",
+        "locator": "phydrax/meshing/qualification/_layer_source.py::prepare_corrected_periodic_layer_source",
         "mapped_domain_id": "78c304f2b99052d26ca7f234cdd423da5ee59050d942dc38218ee29921a97c6d",
         "media_type": "text/x-python",
         "source_binding_id": "b5f3d366ae32ddcb7144334d9b381e1bb829403253dd13cd7f363784d23c2078"

@@ -14,58 +14,69 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, TYPE_CHECKING
 
-import jax.numpy as jnp
 import numpy as np
+
+from ...typing import checked
 
 
 if TYPE_CHECKING:
     from OCP.TopoDS import TopoDS_Shape
 
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from ..._fingerprint import canonical_fingerprint
-from ...geometry.brep import BRepModel, BRepPartitionResult, BRepSource
+from ...geometry.brep import (
+    BRepModel,
+    BRepPartitionResult,
+    BRepSource,
+    curve_evaluate_host,
+    surface_evaluate_host,
+)
 from ...interchange._cad_brep_text import write_brep_text
-from ...interchange._cad_occt import _explore_unique, read_occt_shape
-from .._contracts import MeshingFailure, MeshingFailureCategory
+from ...interchange._cad_occt import explore_unique, read_occt_shape
 from .._planar_bands import PlanarBandResult
 from .._scope import MeshingEntityKind, MeshingScope
 from .._trace import MeshingStageKind
 from ._gmsh_inventory import (
-    _cad_occurrence_inventory,
-    _cad_scope_set,
-    _CadOccurrenceInventory,
-    _exact_geometry,
+    cad_occurrence_inventory,
+    cad_scope_set,
+    CadOccurrenceInventory,
+    exact_geometry,
 )
 
 
-_BRepMeshingSource = BRepModel | BRepSource | BRepPartitionResult | PlanarBandResult
+BRepMeshingSource = BRepModel | BRepSource | BRepPartitionResult | PlanarBandResult
 
 
-def _brep_model(source: _BRepMeshingSource, /) -> BRepModel:
-    if isinstance(source, PlanarBandResult):
-        return source.partition.model
-    if isinstance(source, BRepPartitionResult):
-        return source.model
-    if isinstance(source, BRepSource):
-        return source.model
-    if isinstance(source, BRepModel):
-        return source
-    raise TypeError(
-        "source must be a BRepModel, BRepSource, BRepPartitionResult, or PlanarBandResult."
-    )
+@checked
+def brep_model(source: BRepMeshingSource, /) -> BRepModel:
+    match source:
+        case PlanarBandResult():
+            return source.partition.model
+        case BRepPartitionResult() | BRepSource():
+            return source.model
+        case BRepModel():
+            return source
+        case _:
+            raise TypeError(
+                f"gmsh.source must be BRepModel, BRepSource, BRepPartitionResult, or PlanarBandResult; got {type(source).__name__}"
+            )
 
 
-def _entity_scope(source: BRepModel, dimension: int, identifiers: Any, /) -> MeshingScope:
+@checked
+def entity_scope(source: BRepModel, dimension: int, identifiers: Any, /) -> MeshingScope:
     return MeshingScope(
         source.report.source_id,
         source.report.source_revision,
         MeshingEntityKind.GEOMETRY,
         dimension,
-        _cad_scope_set(source, dimension),
+        cad_scope_set(source, dimension),
         np.asarray(identifiers, dtype=np.int64),
     )
 
 
-def _source_scale(source: BRepModel, /) -> float:
+@checked
+def source_scale(source: BRepModel, /) -> float:
     return max(float(np.ptp(np.asarray(source.mesh_vertices), axis=0).max()), 1.0)
 
 
@@ -79,16 +90,16 @@ class _CadImport:
     snapshot: Path
     shape: TopoDS_Shape
     inventory: tuple[tuple[int, int], ...] | None
-    entity_maps: dict[str, _CadEntityMap]
+    entity_maps: dict[str, CadEntityMap]
 
 
-class _CadImportCache:
+class CadImportCache:
     """Session CAD imports keyed by source revision and coordinate contract.
 
     Entries own a verified native BRep text export in the source coordinate
     unit, its explicit OCCT comparison shape, and revision-qualified Gmsh
     entity maps. Native snapshot model/revision identity owns acquisition;
-    original paths are provenance, while Gmsh consumes only the checked export.
+    paths are provenance, while Gmsh consumes only the checked export.
     """
 
     def __init__(self, capacity: int, /) -> None:
@@ -107,12 +118,16 @@ class _CadImportCache:
         entry = self._entries.pop(key)
         entry.snapshot.unlink(missing_ok=True)
 
+    @checked
     def acquire(self, source: BRepModel, /) -> _CadImport:
         report = source.report
         if source.geometry is None:
             raise MeshingFailure(
                 MeshingFailureCategory.INVALID_SOURCE,
-                "External CAD meshing requires an exact native source model.",
+                (
+                    "gmsh.acquire must retain native geometry and unchanged comparison export bytes; got "
+                    + "External CAD meshing requires an native source model."
+                ),
                 stage=MeshingStageKind.SOURCE_INSPECTION.value,
             )
         digest = report.source_digest
@@ -138,7 +153,10 @@ class _CadImportCache:
             snapshot.unlink(missing_ok=True)
             raise MeshingFailure(
                 MeshingFailureCategory.INVALID_SOURCE,
-                "The native CAD comparison export changed before engine import.",
+                (
+                    "gmsh.acquire must retain native geometry and unchanged comparison export bytes; got "
+                    + "The native CAD comparison export changed before engine import."
+                ),
                 stage=MeshingStageKind.SOURCE_INSPECTION.value,
             )
         entry = _CadImport(
@@ -153,7 +171,10 @@ class _CadImportCache:
         if hashlib.sha256(entry.snapshot.read_bytes()).hexdigest() != entry.export_digest:
             raise MeshingFailure(
                 MeshingFailureCategory.INVALID_SOURCE,
-                "The verified native comparison export changed before Gmsh import.",
+                (
+                    "gmsh.import_shapes must retain unchanged comparison bytes and a stable entity inventory; got "
+                    + "The verified native comparison export changed before Gmsh import."
+                ),
                 stage=MeshingStageKind.SOURCE_INSPECTION.value,
             )
         # Free curves and points must survive import so protection can embed them.
@@ -167,17 +188,21 @@ class _CadImportCache:
         elif entry.inventory != inventory:
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                "Re-importing verified CAD bytes changed the Gmsh entity inventory.",
+                (
+                    "gmsh.import_shapes must retain unchanged comparison bytes and a stable entity inventory; got "
+                    + "Re-importing verified CAD bytes changed the Gmsh entity inventory."
+                ),
                 stage=MeshingStageKind.SOURCE_INSPECTION.value,
             )
 
+    @checked
     def entity_map(
         self,
         entry: _CadImport,
         kind: str,
-        resolve: Callable[[], _CadEntityMap],
+        resolve: Callable[[], CadEntityMap],
         /,
-    ) -> _CadEntityMap:
+    ) -> CadEntityMap:
         resolved = entry.entity_maps.get(kind)
         if resolved is None:
             resolved = resolve()
@@ -189,23 +214,27 @@ class _CadImportCache:
         self._workspace.cleanup()
 
 
-def _scope_samples(source: BRepModel, scope: MeshingScope, /) -> tuple[np.ndarray, ...]:
+@checked
+def scope_samples(source: BRepModel, scope: MeshingScope, /) -> tuple[np.ndarray, ...]:
     """Sample stable source entities independently of Gmsh's import tag numbering."""
     ids = np.asarray(scope.entity_ids, dtype=np.int64)
-    inventory = _cad_occurrence_inventory(source)
+    inventory = cad_occurrence_inventory(source)
     counts = {dimension: len(inventory.entities[dimension]) for dimension in (0, 1, 2)}
     if (
         scope.entity_kind is not MeshingEntityKind.GEOMETRY
         or scope.entity_dimension not in counts
         or scope.source_id != source.report.source_id
         or scope.source_revision != source.report.source_revision
-        or scope.entity_set_id != _cad_scope_set(source, scope.entity_dimension)
+        or scope.entity_set_id != cad_scope_set(source, scope.entity_dimension)
         or np.any(ids >= counts[scope.entity_dimension])
         or np.any(ids < 0)
     ):
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-            "Scope does not select an entity of the supplied BRep revision.",
+            (
+                "gmsh.scope_samples must select populated entities of the supplied source revision; got "
+                + "Scope does not select an entity of the supplied BRep revision."
+            ),
         )
     if scope.entity_dimension == 2:
         face_ids = np.asarray(source.triangle_face_ids)
@@ -217,16 +246,19 @@ def _scope_samples(source: BRepModel, scope: MeshingScope, /) -> tuple[np.ndarra
             if not triangles.size:
                 raise MeshingFailure(
                     MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                    "Source face has no interior samples for entity resolution.",
+                    (
+                        "gmsh.scope_samples must select populated entities of the supplied source revision; got "
+                        + "Source face has no interior samples for entity resolution."
+                    ),
                 )
             selected = triangles[
                 np.linspace(0, len(triangles) - 1, min(3, len(triangles)), dtype=np.int64)
             ]
             uv = np.mean(parameters[selected], axis=1)
-            values = np.asarray(source.patches[face].evaluate(jnp.asarray(uv)))
+            values = surface_evaluate_host(source.patches[face], uv)
             result.append(inventory.world_points(2, int(face_row), values))
         return tuple(result)
-    geometry = _exact_geometry(source)
+    geometry = exact_geometry(source)
     if scope.entity_dimension == 0:
         points = np.asarray(geometry.vertex_points, dtype=np.float64)
         return tuple(
@@ -250,20 +282,21 @@ def _scope_samples(source: BRepModel, scope: MeshingScope, /) -> tuple[np.ndarra
         if curve_index == -1:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "A collapsed native pole edge has no external curve entity.",
+                (
+                    "gmsh.scope_samples must select populated entities of the supplied source revision; got "
+                    + "A collapsed native pole edge has no external curve entity."
+                ),
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
         parameters = np.linspace(
             float(ranges[edge, 0]), float(ranges[edge, 1]), 5, dtype=np.float64
         )[1:-1]
-        values = np.asarray(
-            geometry.curves[curve_index].evaluate(jnp.asarray(parameters))
-        )
+        values = curve_evaluate_host(geometry.curves[curve_index], parameters)
         result.append(inventory.world_points(1, int(edge_row), values))
     return tuple(result)
 
 
-def _match_entities(
+def match_entities(
     gmsh: Any, dimension: int, samples: Any, candidates: Any, tolerance: float, /
 ) -> tuple[int, ...]:
     result = []
@@ -292,38 +325,43 @@ def _match_entities(
         if len(matches) != 1:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "BRep entity does not resolve uniquely to the imported Gmsh geometry.",
+                (
+                    "gmsh.match_entities must resolve each source entity uniquely in imported geometry; got "
+                    + "BRep entity does not resolve uniquely to the imported Gmsh geometry."
+                ),
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
         result.append(matches[0])
     return tuple(result)
 
 
-def _resolve_entities(
+@checked
+def resolve_entities(
     gmsh: Any, source: BRepModel, scope: MeshingScope, /
 ) -> tuple[int, ...]:
-    samples = _scope_samples(source, scope)
-    return _match_entities(
+    samples = scope_samples(source, scope)
+    return match_entities(
         gmsh,
         scope.entity_dimension,
         samples,
         [tag for _, tag in gmsh.model.getEntities(scope.entity_dimension)],
-        1.0e-7 * _source_scale(source),
+        1.0e-7 * source_scale(source),
     )
 
 
 @dataclass(frozen=True, slots=True)
-class _CadEntityMap:
+class CadEntityMap:
     source_model_id: str
     source_revision: str
     artifact_digest: str
     native_export_digest: str
     correspondence_id: str
-    inventory: _CadOccurrenceInventory
+    inventory: CadOccurrenceInventory
     face_to_surface: tuple[int, ...]
     solid_to_volume: tuple[int, ...]
     edge_to_curve: tuple[int, ...]
 
+    @checked
     def require_source(self, source: BRepModel, /) -> None:
         if (
             self.source_model_id != source.model_id
@@ -332,7 +370,10 @@ class _CadEntityMap:
         ):
             raise MeshingFailure(
                 MeshingFailureCategory.ASSOCIATION_FAILED,
-                "External CAD correspondence belongs to a different native source revision.",
+                (
+                    "gmsh.require_source must bind the supplied source revision; got "
+                    + "External CAD correspondence belongs to a different native source revision."
+                ),
                 stage=MeshingStageKind.CANONICALIZATION.value,
             )
 
@@ -344,16 +385,19 @@ def _cad_entity_map(
     solids: tuple[int, ...],
     edges: tuple[int, ...] = (),
     /,
-) -> _CadEntityMap:
-    """Bind a verified external tag correspondence to exact native authority."""
-    inventory = _cad_occurrence_inventory(source)
+) -> CadEntityMap:
+    """Bind a verified external tag correspondence to native ."""
+    inventory = cad_occurrence_inventory(source)
     if (
         len(faces) != inventory.topology.num_faces
         or len(solids) != inventory.topology.num_solids
     ):
         raise MeshingFailure(
             MeshingFailureCategory.ASSOCIATION_FAILED,
-            "External CAD correspondence does not cover the native source strata.",
+            (
+                "gmsh.cad_entity_map must cover all source strata; got "
+                + "External CAD correspondence does not cover the native source strata."
+            ),
             stage=MeshingStageKind.SCOPE_RESOLUTION.value,
         )
     identifier = canonical_fingerprint(
@@ -372,7 +416,7 @@ def _cad_entity_map(
             "edge_to_curve": edges,
         }
     )
-    return _CadEntityMap(
+    return CadEntityMap(
         source.model_id,
         source.source_revision,
         source.source_digest,
@@ -394,7 +438,7 @@ def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple[Any, ...]
     from OCP.TopAbs import TopAbs_FACE, TopAbs_SOLID
     from OCP.TopoDS import TopoDS
 
-    topology = _cad_occurrence_inventory(source).topology
+    topology = cad_occurrence_inventory(source).topology
     if (
         any(not faces for faces in topology.solid_faces)
         or any(len(owners) not in (1, 2) for owners in topology.face_solids)
@@ -414,41 +458,53 @@ def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple[Any, ...]
     ):
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SOURCE,
-            "Source solids require nonempty manifold boundaries with opposite shared-face orientations.",
+            (
+                "gmsh.validate_source_solids must retain nonempty manifold solids with matching incidence and disjoint interiors; got "
+                + "Source solids require nonempty manifold boundaries with opposite shared-face orientations."
+            ),
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
         )
-    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
+    solids = explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
     if len(solids) != topology.num_solids or any(
         not BRepCheck_Analyzer(solid).IsValid() for solid in solids
     ):
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SOURCE,
-            "Reopened BRep solids do not match the valid imported solid inventory.",
+            (
+                "gmsh.validate_source_solids must retain nonempty manifold solids with matching incidence and disjoint interiors; got "
+                + "Reopened BRep solids do not match the valid imported solid inventory."
+            ),
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
         )
-    scale = _source_scale(source)
+    scale = source_scale(source)
     volume_tolerance = 1.0e-12 * scale**3
     contact_tolerance = 1.0e-9 * scale
     for left_index, left in enumerate(solids):
-        left_faces = _explore_unique(left, TopAbs_FACE, TopoDS.Face)
+        left_faces = explore_unique(left, TopAbs_FACE, TopoDS.Face)
         for right in solids[left_index + 1 :]:
             distance = BRepExtrema_DistShapeShape(left, right)
             distance.Perform()
             if not distance.IsDone():
                 raise MeshingFailure(
                     MeshingFailureCategory.INVALID_SOURCE,
-                    "BRep solid contact validation did not complete.",
+                    (
+                        "gmsh.validate_source_solids must retain nonempty manifold solids with matching incidence and disjoint interiors; got "
+                        + "BRep solid contact validation did not ."
+                    ),
                     stage=MeshingStageKind.SOURCE_INSPECTION.value,
                 )
             shared_faces = any(
                 first.IsSame(second)
                 for first in left_faces
-                for second in _explore_unique(right, TopAbs_FACE, TopoDS.Face)
+                for second in explore_unique(right, TopAbs_FACE, TopoDS.Face)
             )
             if not shared_faces and float(distance.Value()) <= contact_tolerance:
                 raise MeshingFailure(
                     MeshingFailureCategory.INVALID_SOURCE,
-                    "BRep solids touch without a complete shared topological face.",
+                    (
+                        "gmsh.validate_source_solids must retain nonempty manifold solids with matching incidence and disjoint interiors; got "
+                        + "BRep solids touch without a shared topological face."
+                    ),
                     stage=MeshingStageKind.SOURCE_INSPECTION.value,
                 )
             common = BRepAlgoAPI_Common(left, right)
@@ -456,7 +512,10 @@ def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple[Any, ...]
             if not common.IsDone():
                 raise MeshingFailure(
                     MeshingFailureCategory.INVALID_SOURCE,
-                    "BRep solid overlap validation did not complete.",
+                    (
+                        "gmsh.validate_source_solids must retain nonempty manifold solids with matching incidence and disjoint interiors; got "
+                        + "BRep solid overlap validation did not ."
+                    ),
                     stage=MeshingStageKind.SOURCE_INSPECTION.value,
                 )
             properties = GProp_GProps()
@@ -464,27 +523,34 @@ def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple[Any, ...]
             if abs(float(properties.Mass())) > volume_tolerance:
                 raise MeshingFailure(
                     MeshingFailureCategory.INVALID_SOURCE,
-                    "BRep solid interiors overlap; provider-side ownership fragmentation is prohibited.",
+                    (
+                        "gmsh.validate_source_solids must retain nonempty manifold solids with matching incidence and disjoint interiors; got "
+                        + "BRep solid interiors overlap; provider-side ownership fragmentation is prohibited."
+                    ),
                     stage=MeshingStageKind.SOURCE_INSPECTION.value,
                 )
     return tuple(solids)
 
 
-def _resolve_planar_cad_entity_map(
+@checked
+def resolve_planar_cad_entity_map(
     gmsh: Any, source: BRepModel, entry: _CadImport, /
-) -> _CadEntityMap:
-    inventory = _cad_occurrence_inventory(source)
+) -> CadEntityMap:
+    inventory = cad_occurrence_inventory(source)
     topology = inventory.topology
     if topology.num_solids:
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SOURCE,
-            "Strict planar CAD meshing requires a zero-solid BRep.",
+            (
+                "gmsh.resolve_planar_cad_entity_map must bind zero-solid planar source faces and edges bijectively; got "
+                + "Strict planar CAD meshing requires a zero-solid BRep."
+            ),
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
         )
-    face_tags = _resolve_entities(
-        gmsh, source, _entity_scope(source, 2, np.arange(topology.num_faces))
+    face_tags = resolve_entities(
+        gmsh, source, entity_scope(source, 2, np.arange(topology.num_faces))
     )
-    geometry = _exact_geometry(source)
+    geometry = exact_geometry(source)
     active_edges = np.asarray(
         [
             row
@@ -493,22 +559,26 @@ def _resolve_planar_cad_entity_map(
         ],
         dtype=np.int64,
     )
-    resolved_edges = _resolve_entities(
-        gmsh, source, _entity_scope(source, 1, active_edges)
-    )
+    resolved_edges = resolve_entities(gmsh, source, entity_scope(source, 1, active_edges))
     edge_tags = [0] * topology.num_edges
     for row, tag in zip(active_edges.tolist(), resolved_edges, strict=True):
         edge_tags[row] = tag
     if set(face_tags) != {tag for _, tag in gmsh.model.getEntities(2)}:
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-            "Imported Gmsh surfaces are not a bijection with planar BRep faces.",
+            (
+                "gmsh.resolve_planar_cad_entity_map must bind zero-solid planar source faces and edges bijectively; got "
+                + "Imported Gmsh surfaces are not a bijection with planar BRep faces."
+            ),
             stage=MeshingStageKind.SCOPE_RESOLUTION.value,
         )
     if {tag for tag in edge_tags if tag} != {tag for _, tag in gmsh.model.getEntities(1)}:
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-            "Imported Gmsh curves are not a bijection with planar BRep edges.",
+            (
+                "gmsh.resolve_planar_cad_entity_map must bind zero-solid planar source faces and edges bijectively; got "
+                + "Imported Gmsh curves are not a bijection with planar BRep edges."
+            ),
             stage=MeshingStageKind.SCOPE_RESOLUTION.value,
         )
     for face_index, surface in enumerate(face_tags):
@@ -524,7 +594,10 @@ def _resolve_planar_cad_entity_map(
         if len(actual) != len(boundary) or actual != expected:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "Gmsh planar surface boundaries differ from source face-edge incidence.",
+                (
+                    "gmsh.resolve_planar_cad_entity_map must bind zero-solid planar source faces and edges bijectively; got "
+                    + "Gmsh planar surface boundaries differ from source face-edge incidence."
+                ),
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
     for edge_index, curve in enumerate(edge_tags):
@@ -536,7 +609,10 @@ def _resolve_planar_cad_entity_map(
         if actual != expected:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "Gmsh curve-to-surface adjacency differs from source planar incidence.",
+                (
+                    "gmsh.resolve_planar_cad_entity_map must bind zero-solid planar source faces and edges bijectively; got "
+                    + "Gmsh curve-to-surface adjacency differs from source planar incidence."
+                ),
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
     return _cad_entity_map(
@@ -556,14 +632,20 @@ def _volume_boundaries(
         if any(dimension != 2 for dimension, _ in occurrences):
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "An imported Gmsh volume has a non-surface boundary occurrence.",
+                (
+                    "gmsh.volume_boundaries must contain unique surface boundary occurrences; got "
+                    + "An imported Gmsh volume has a non-surface boundary occurrence."
+                ),
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
         tags = tuple(abs(int(tag)) for _, tag in occurrences)
         if len(set(tags)) != len(tags):
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "An imported Gmsh volume repeats a boundary surface.",
+                (
+                    "gmsh.volume_boundaries must contain unique surface boundary occurrences; got "
+                    + "An imported Gmsh volume repeats a boundary surface."
+                ),
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
         boundary_faces[volume] = frozenset(tags)
@@ -576,19 +658,23 @@ def _volume_boundaries(
     return boundary_faces, boundary_orientations
 
 
-def _resolve_cad_entity_map(
+@checked
+def resolve_cad_entity_map(
     gmsh: Any, source: BRepModel, entry: _CadImport, /
-) -> _CadEntityMap:
+) -> CadEntityMap:
     _validate_source_solids(source, entry.shape)
-    topology = _cad_occurrence_inventory(source).topology
-    face_tags = _resolve_entities(
-        gmsh, source, _entity_scope(source, 2, np.arange(topology.num_faces))
+    topology = cad_occurrence_inventory(source).topology
+    face_tags = resolve_entities(
+        gmsh, source, entity_scope(source, 2, np.arange(topology.num_faces))
     )
     imported_surfaces = {tag for _, tag in gmsh.model.getEntities(2)}
     if set(face_tags) != imported_surfaces:
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-            "Imported Gmsh surfaces are not a bijection with source BRep faces.",
+            (
+                "gmsh.resolve_cad_entity_map must bind source solids and surfaces bijectively with matching oriented incidence; got "
+                + "Imported Gmsh surfaces are not a bijection with source BRep faces."
+            ),
             stage=MeshingStageKind.SCOPE_RESOLUTION.value,
         )
 
@@ -596,7 +682,10 @@ def _resolve_cad_entity_map(
     if len(volume_tags) != topology.num_solids:
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-            "Imported Gmsh volumes do not match the source solid inventory.",
+            (
+                "gmsh.resolve_cad_entity_map must bind source solids and surfaces bijectively with matching oriented incidence; got "
+                + "Imported Gmsh volumes do not match the source solid inventory."
+            ),
             stage=MeshingStageKind.SCOPE_RESOLUTION.value,
         )
     boundary_faces, boundary_orientations = _volume_boundaries(gmsh, volume_tags)
@@ -613,7 +702,10 @@ def _resolve_cad_entity_map(
         if len(candidates) != 1:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "A source solid does not resolve uniquely by exact boundary-face incidence.",
+                (
+                    "gmsh.resolve_cad_entity_map must bind source solids and surfaces bijectively with matching oriented incidence; got "
+                    + "A source solid does not resolve uniquely by boundary-face incidence."
+                ),
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
         solid_to_volume.append(candidates[0])
@@ -621,7 +713,10 @@ def _resolve_cad_entity_map(
     if used_volumes != set(volume_tags):
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-            "Imported Gmsh volume ownership is not a source-solid bijection.",
+            (
+                "gmsh.resolve_cad_entity_map must bind source solids and surfaces bijectively with matching oriented incidence; got "
+                + "Imported Gmsh volume ownership is not a source-solid bijection."
+            ),
             stage=MeshingStageKind.SCOPE_RESOLUTION.value,
         )
 
@@ -633,7 +728,10 @@ def _resolve_cad_entity_map(
         if actual_volumes != expected_volumes:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "Gmsh surface-to-volume adjacency differs from source BRep incidence.",
+                (
+                    "gmsh.resolve_cad_entity_map must bind source solids and surfaces bijectively with matching oriented incidence; got "
+                    + "Gmsh surface-to-volume adjacency differs from source BRep incidence."
+                ),
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
         if len(source_owners) == 2:
@@ -644,7 +742,10 @@ def _resolve_cad_entity_map(
             ):
                 raise MeshingFailure(
                     MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                    "A shared Gmsh surface has inconsistent volume orientations.",
+                    (
+                        "gmsh.resolve_cad_entity_map must bind source solids and surfaces bijectively with matching oriented incidence; got "
+                        + "A shared Gmsh surface has inconsistent volume orientations."
+                    ),
                     stage=MeshingStageKind.SCOPE_RESOLUTION.value,
                 )
     return _cad_entity_map(

@@ -140,11 +140,16 @@ def remap(
     )
     if not prepared.succeeded:
         raise RuntimeError(f"{label}: common refinement failed: {prepared.reason}.")
-    refinement = prepared.refinement
+    match prepared.route:
+        case phx.geometry.PreparedCommonRefinement() as refinement:
+            pass
+        case route:
+            raise RuntimeError(
+                f"{label}: remap.route must be a common refinement; "
+                f"got {type(route).__name__}."
+            )
     evidence = prepared.evidence
-    if refinement is None or not isinstance(
-        evidence, phx.geometry.CommonRefinementEvidence
-    ):
+    if not isinstance(evidence, phx.geometry.CommonRefinementEvidence):
         raise RuntimeError(
             f"{label}: this planar comparison requires an actual common refinement."
         )

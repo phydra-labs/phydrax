@@ -2,15 +2,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Exact n-operand triangle arrangements over original binary64 source features.
+"""Build joint n-operand triangle arrangements from input binary64 source features.
 
 Native indirect predicates retain input-plane identities throughout insertion,
-including coplanar edge intersections and triple-plane points, so every
-construction is resolved exactly. Coordinates are rounded only on publication;
-their outward max-norm bounds are not predicates. Binary64 coordinates that
-cannot represent the exact arrangement without inverting or colliding
-fragments are refused as ``unrepresentable_publication``, never repaired.
-"""
+including coplanar edge intersections and triple-plane points, so constructions
+are resolved in rational arithmetic. Coordinates are rounded only on publication;
+their outward max-norm bounds are excluded from predicate inputs. Binary64
+publication that would invert or collide fragments is refused as
+``unrepresentable_publication``."""
 
 from __future__ import annotations
 
@@ -31,12 +30,13 @@ from ..._meshcore import (
     IntersectionClass,
     meshcore_exact_domain,
     MeshcoreStatus,
+    NativeArrangement,
     triangle_intersection_classes,
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_integer
-from ...typing import Dim, HostFloat64, HostInt32, HostInt64, parse, Scope
+from ...typing import checked, Dim, HostFloat64, HostInt32, HostInt64, parse, Scope
 
 
 SurfaceArrangementStatus: TypeAlias = Literal[
@@ -63,7 +63,7 @@ class _SurfaceTriangleDim(Dim, minimum=1):
 
 
 class _ArrangementVertexDim(Dim, minimum=3):
-    """Exactly welded arrangement vertices."""
+    """Arrangement vertices welded by their source-feature identities."""
 
 
 class _FragmentDim(Dim, minimum=1):
@@ -79,7 +79,7 @@ class _IntersectionEdgeDim(Dim):
 
 
 class _LocationDim(Dim):
-    """Exact vertex/source-face feature incidences."""
+    """Vertex/source-face feature incidences determined by exact predicates."""
 
 
 class SurfaceArrangementError(ValueError):
@@ -102,12 +102,11 @@ class SurfaceArrangementError(ValueError):
 
 @final
 class SurfaceArrangementLimits(StrictModule, NonTrainableState):
-    """Shared budgets, counted across every operand, never reset per pair.
+    """Shared budgets counted across all operands without per-pair resets.
 
     ``maximum_incidence_records`` bounds vertex/operand simplex slots,
-    fragment/operand coplanar slots and exact source-face location records.
-    This prevents n-ary ancestry storage escaping the geometric work budgets.
-    """
+    fragment/operand coplanar slots and rational source-face location records.
+    This bounds n-ary ancestry storage within the geometric work budgets."""
 
     maximum_candidate_pairs: int = eqx.field(static=True)
     maximum_vertices: int = eqx.field(static=True)
@@ -139,7 +138,7 @@ class SurfaceArrangementLimits(StrictModule, NonTrainableState):
 
 @final
 class SurfaceArrangementEvidence(StrictModule, NonTrainableState):
-    """Work, original-feature constructions and publication-error evidence."""
+    """Work, input-feature constructions and publication-error evidence."""
 
     self_candidate_pairs: int = eqx.field(static=True)
     candidate_pairs: int = eqx.field(static=True)
@@ -172,14 +171,20 @@ class SurfaceArrangementEvidence(StrictModule, NonTrainableState):
         publication_candidate_pairs: int,
     ) -> None:
         if len(contact_counts) != len(IntersectionClass) or min(contact_counts) < 0:
-            raise ValueError("contact_counts needs one count per IntersectionClass.")
+            raise ValueError(
+                f"SurfaceArrangementEvidence.contact_counts must contain one nonnegative count per IntersectionClass; got {contact_counts!r}"
+            )
         if len(split_faces) != len(fragments) or len(fragments) < 2:
-            raise ValueError("Work counts need one entry per operand.")
+            raise ValueError(
+                f"SurfaceArrangementEvidence.fragments must match split_faces and include at least two operands; got fragments={len(fragments)}, split_faces={len(split_faces)}"
+            )
         if (
             not np.isfinite(maximum_construction_bound)
             or maximum_construction_bound < 0.0
         ):
-            raise ValueError("Construction bound must be finite and nonnegative.")
+            raise ValueError(
+                f"SurfaceArrangementEvidence.maximum_construction_bound must be finite and nonnegative; got {maximum_construction_bound!r}"
+            )
         self.self_candidate_pairs = self_candidate_pairs
         self.candidate_pairs = candidate_pairs
         self.publication_candidate_pairs = publication_candidate_pairs
@@ -213,14 +218,14 @@ class SurfaceArrangementEvidence(StrictModule, NonTrainableState):
 
 @final
 class SurfaceArrangement(StrictModule, NonTrainableState):
-    """Conforming n-operand fragments and exact original feature incidences.
+    """Conforming n-operand fragments with rational input-feature incidences.
 
-    ``vertex_features[v,i]`` is the sorted, -1-padded original vertex simplex
-    of operand i carrying v. ``vertex_locations`` retains *all* source-face
+    ``vertex_features[v,i]`` is the sorted, -1-padded input vertex simplex
+    of operand i carrying v. ``vertex_locations`` retains all source-face
     incidences, including a point on an internal triangulation edge.
     ``coincident_face[f,i]`` names a covering coplanar face of operand i,
-    with orientation relative to fragment f; the owning operand is -1/0.
-    """
+    with orientation relative to fragment f. The fragment's own source-operand
+    column has coincidence -1 and orientation 0."""
 
     __strict_contract__ = True
     vertices: HostFloat64[_ArrangementVertexDim, Literal[3]]
@@ -238,6 +243,7 @@ class SurfaceArrangement(StrictModule, NonTrainableState):
     evidence: SurfaceArrangementEvidence
     arrangement_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -323,46 +329,58 @@ class SurfaceArrangement(StrictModule, NonTrainableState):
             scope=scope,
         )
         count = features.shape[1]
-        if not isinstance(evidence, SurfaceArrangementEvidence):
-            raise TypeError("evidence must be SurfaceArrangementEvidence.")
         if (
             len(input_face_offsets) != count + 1
             or input_face_offsets[0] != 0
             or any(a >= b for a, b in zip(input_face_offsets, input_face_offsets[1:]))
         ):
-            raise ValueError("input_face_offsets must delimit every nonempty operand.")
+            raise ValueError(
+                f"SurfaceArrangement.input_face_offsets must start at zero and delimit every nonempty operand; got {input_face_offsets!r} for {count} operands"
+            )
         if (
             not np.all(np.isfinite(points))
             or not np.all(np.isfinite(bounds))
             or np.any(bounds < 0.0)
         ):
-            raise ValueError("Arrangement publication must have finite outward bounds.")
+            raise ValueError(
+                f"SurfaceArrangement.vertices must be finite with finite nonnegative publication bounds; got points_shape={points.shape}, bounds_shape={bounds.shape}"
+            )
         if (
             np.any(faces < 0)
             or np.any(faces >= points.shape[0])
             or np.any(edges < 0)
             or np.any(edges >= points.shape[0])
         ):
-            raise ValueError("Arrangement connectivity indexes missing vertices.")
+            raise ValueError(
+                f"SurfaceArrangement.connectivity must index declared vertices; got faces_shape={faces.shape}, edges_shape={edges.shape}, vertices={points.shape[0]}"
+            )
         if (
             np.any(surfaces < 0)
             or np.any(surfaces >= count)
             or np.any(sources < 0)
             or np.any(features < -1)
         ):
-            raise ValueError("Arrangement source feature identity is invalid.")
+            raise ValueError(
+                f"SurfaceArrangement.source_surface must name a declared operand with nonnegative source faces and vertex features at least -1; got operands={count}, source_shape={surfaces.shape}, feature_shape={features.shape}"
+            )
         offsets = np.asarray(input_face_offsets, dtype=np.int64)
         if np.any(sources >= np.diff(offsets)[surfaces]):
-            raise ValueError("Arrangement ancestry indexes a missing original face.")
+            raise ValueError(
+                f"SurfaceArrangement.source_face must index a declared input face of its operand; got source_shape={sources.shape}, offsets={input_face_offsets!r}"
+            )
         if (
             np.any(coincident < -1)
             or np.any(np.abs(orientation) > 1)
             or np.any((coincident < 0) != (orientation == 0))
             or np.any(coincident >= np.diff(offsets)[None, :])
         ):
-            raise ValueError("Coplanar coverage and orientation disagree.")
+            raise ValueError(
+                f"SurfaceArrangement.coincident_face must name input faces or -1 and agree with orientations in -1,0,1; got coverage_shape={coincident.shape}, orientation_shape={orientation.shape}"
+            )
         if np.any(constructions < 0) or np.any(constructions > 3):
-            raise ValueError("Unknown native point construction family.")
+            raise ValueError(
+                f"SurfaceArrangement.construction_types must use native construction codes from 0 through 3; got {np.unique(constructions).tolist()!r}"
+            )
         if (
             np.any(locations[:, 0] < 0)
             or np.any(locations[:, 0] >= points.shape[0])
@@ -371,7 +389,9 @@ class SurfaceArrangement(StrictModule, NonTrainableState):
             or np.any(locations[:, 2] < 0)
             or np.any(locations[:, 2] > 6)
         ):
-            raise ValueError("Exact feature incidences index missing source features.")
+            raise ValueError(
+                f"SurfaceArrangement.vertex_locations must index declared vertices and input faces with feature codes from 0 through 6; got shape={locations.shape}, vertices={points.shape[0]}, input_faces={offsets[-1]}"
+            )
         self.vertices = points
         self.vertex_bounds = bounds
         self.vertex_features = features
@@ -436,10 +456,14 @@ def _prepared_surface(
     )
     if not np.all(np.isfinite(points)):
         raise SurfaceArrangementError(
-            "invalid_coordinates", "Surface vertices must be finite.", surface=index
+            "invalid_coordinates",
+            f"arrange_triangle_surfaces.vertices must be finite; got nonfinite coordinates for surface={index}",
+            surface=index,
         )
     if np.any(faces < 0) or np.any(faces >= points.shape[0]):
-        raise ValueError("Surface triangles index missing vertices.")
+        raise ValueError(
+            f"arrange_triangle_surfaces.triangles must index declared vertices; got surface={index}, vertices={points.shape[0]}, faces_shape={faces.shape}"
+        )
     minimum, maximum = meshcore_exact_domain()
     smallest = np.ldexp(np.float64(1.0), minimum)
     largest = np.ldexp(np.float64(1.0), maximum)
@@ -451,8 +475,7 @@ def _prepared_surface(
     if np.any(outside):
         raise SurfaceArrangementError(
             "invalid_coordinates",
-            "Surface coordinates must be zero or have magnitude in "
-            f"[2**{minimum}, 2**{maximum}] for exact contact predicates.",
+            f"arrange_triangle_surfaces.vertices must be zero or have magnitude in [2**{minimum},2**{maximum}] for exact predicates; got surface={index}, out_of_range_mask_shape={outside.shape}",
             surface=index,
             faces=tuple(np.flatnonzero(outside).tolist()),
         )
@@ -470,7 +493,7 @@ def _prepared_surface(
     if degenerate.size:
         raise SurfaceArrangementError(
             "degenerate_triangle",
-            "Arrangement triangles must have three non-collinear corners.",
+            f"arrange_triangle_surfaces.triangles must have three noncollinear corners; got surface={index}, degenerate_faces={degenerate.tolist()!r}",
             surface=index,
             faces=tuple(degenerate.tolist()),
         )
@@ -511,7 +534,7 @@ def _candidate_pairs(
         if total > capacity:
             raise SurfaceArrangementError(
                 "limit_exceeded",
-                f"Arrangement candidate pairs exceed maximum_candidate_pairs={capacity}.",
+                f"arrange_triangle_surfaces.maximum_candidate_pairs must admit all closed-box candidates; got requested={total}, limit={capacity}",
             )
         firsts.append(block_first.astype(np.int64))
         seconds.append(block_second.astype(np.int64))
@@ -559,22 +582,21 @@ def _require_embedded(surface: _Surface, index: int, capacity: int, /) -> int:
     if refused.size:
         raise SurfaceArrangementError(
             "invalid_coordinates",
-            "Surface coordinates lie outside the exact contact-predicate domain.",
+            f"arrange_triangle_surfaces.vertices must lie within the contact classifier domain; got surface={index}, refused_faces={refused.tolist()!r}",
             surface=index,
             faces=tuple(refused.tolist()),
         )
     if illegal.size:
         raise SurfaceArrangementError(
             "self_intersecting_surface",
-            "Arrangement surfaces must be embedded: triangles may meet only "
-            "in shared vertices and edges.",
+            f"arrange_triangle_surfaces.embedding must allow triangle contacts only on shared vertices and edges; got surface={index}, illegal_faces={illegal.tolist()!r}",
             surface=index,
             faces=tuple(illegal.tolist()),
         )
     return pairs
 
 
-def _require_published_embedded(
+def require_published_embedded(
     vertices: np.ndarray,
     triangles: np.ndarray,
     reported_faces: np.ndarray,
@@ -583,11 +605,10 @@ def _require_published_embedded(
     *,
     surface: int | None,
 ) -> int:
-    """Certify that rounded publication of exact fragments is still embedded.
+    """Certify that rounded publication of rational fragments remains embedded.
 
-    ``reported_faces[k]`` names the face reported for triangle ``k`` when the
-    binary64 coordinates cannot represent the exact embedding.
-    """
+    ``reported_faces[k]`` names the face reported for triangle ``k`` when
+    binary64 publication would violate the source arrangement's embedding."""
 
     published = _Surface(
         vertices, triangles, np.arange(vertices.shape[0], dtype=np.int64)
@@ -597,7 +618,7 @@ def _require_published_embedded(
     if offending.size:
         raise SurfaceArrangementError(
             "unrepresentable_publication",
-            "Binary64 publication of the exact arrangement is not embedded.",
+            f"require_published_embedded.vertices must preserve fragment embedding after binary64 rounding; got surface={surface}, offending_triangles={offending.tolist()!r}",
             surface=surface,
             faces=tuple(np.unique(reported_faces[offending]).tolist()),
         )
@@ -630,6 +651,7 @@ def _feature_simplices(faces: np.ndarray, features: np.ndarray, /) -> np.ndarray
     return simplices
 
 
+@checked
 def arrange_triangle_surfaces(
     first_vertices: ArrayLike,
     first_triangles: ArrayLike,
@@ -640,33 +662,84 @@ def arrange_triangle_surfaces(
     operands: tuple[tuple[ArrayLike, ArrayLike], ...] = (),
     limits: SurfaceArrangementLimits | None = None,
 ) -> SurfaceArrangement:
-    """Split embedded surfaces in one exact n-ary arrangement.
+    """Split embedded surfaces in one joint rational n-ary arrangement.
 
-    Extra operands join the *same* construction pool, never a sequential
-    Boolean of rounded intermediate meshes. Open embedded sheets are admitted.
-    """
+    All operands join the same construction pool; coordinates are rounded only
+    when that joint arrangement is published. Open embedded sheets are admitted."""
     limits_ = SurfaceArrangementLimits() if limits is None else limits
-    if not isinstance(limits_, SurfaceArrangementLimits):
-        raise TypeError("limits must be SurfaceArrangementLimits or None.")
     inputs = (
         (first_vertices, first_triangles),
         (second_vertices, second_triangles),
         *operands,
     )
-    return _arrange(inputs, limits_, None)[0]
+    prepared = _prepare_arrangement(inputs, limits_)
+    contacts = _arrangement_contacts(prepared, limits_)
+    native = _execute_arrangement(prepared, contacts, limits_, None)
+    return _publish_arrangement(prepared, contacts, native, limits_)
 
 
-def _arrange(
+@final
+class _ArrangementPreparation(StrictModule):
+    """Referenced surfaces and offsets preserving operand and face order."""
+
+    surfaces: tuple[_Surface, ...]
+    vertex_offsets: np.ndarray
+    face_offsets: np.ndarray
+
+
+@final
+class _ArrangementContacts(StrictModule):
+    """Validated input embedding and cross-operand contact work."""
+
+    pairs: np.ndarray
+    counts: np.ndarray
+    self_pairs: int
+    spent: int
+
+
+@final
+class _ArrangementExecution(StrictModule):
+    """Native fragments paired with their input operand identities."""
+
+    native: NativeArrangement
+    owners: np.ndarray
+
+
+@final
+class ClassifiedSurfaceArrangement(StrictModule):
+    """Published fragments and the requested native membership result."""
+
+    arrangement: SurfaceArrangement
+    classification: ArrangementClassification
+
+
+@checked
+def arrange_classified_surfaces(
     inputs: tuple[tuple[ArrayLike, ArrayLike], ...],
     limits_: SurfaceArrangementLimits,
-    classification_work_limit: int | None,
+    classification_work_limit: int,
     /,
-) -> tuple[SurfaceArrangement, ArrangementClassification | None]:
-    """Exact arrangement and, with a work limit, exact fragment membership.
+) -> ClassifiedSurfaceArrangement:
+    """Arrange surfaces and retain membership, including capacity refusal evidence."""
+    prepared = _prepare_arrangement(inputs, limits_)
+    contacts = _arrangement_contacts(prepared, limits_)
+    native = _execute_arrangement(prepared, contacts, limits_, classification_work_limit)
+    arrangement = _publish_arrangement(prepared, contacts, native, limits_)
+    match native.native.classification:
+        case ArrangementClassification() as classification:
+            return ClassifiedSurfaceArrangement(arrangement, classification)
+        case None:
+            raise RuntimeError(
+                "arrange_classified_surfaces.classification must include the requested native membership result; got no classification"
+            )
 
-    The membership is decided natively on the implicit construction points
-    (see :class:`ArrangementClassification`), never on rounded coordinates.
-    """
+
+def _prepare_arrangement(
+    inputs: tuple[tuple[ArrayLike, ArrayLike], ...],
+    limits_: SurfaceArrangementLimits,
+    /,
+) -> _ArrangementPreparation:
+    """Validate source carriers and admit their minimum ancestry storage."""
     surfaces = tuple(_prepared_surface(v, t, i) for i, (v, t) in enumerate(inputs))
     vertex_offsets = np.r_[
         0, np.cumsum([s.points.shape[0] for s in surfaces], dtype=np.int64)
@@ -676,14 +749,24 @@ def _arrange(
     ]
     if vertex_offsets[-1] > limits_.maximum_vertices:
         raise SurfaceArrangementError(
-            "limit_exceeded", "Input vertices exceed maximum_vertices."
+            "limit_exceeded",
+            f"arrange_triangle_surfaces.maximum_vertices must admit the input vertex count; got requested={vertex_offsets[-1]}, limit={limits_.maximum_vertices}",
         )
     total_faces = sum(surface.faces.shape[0] for surface in surfaces)
     minimum_records = len(surfaces) * (total_faces + 3) + 3 * total_faces
     if minimum_records > limits_.maximum_incidence_records:
         raise SurfaceArrangementError(
-            "limit_exceeded", "Original ancestry exceeds maximum_incidence_records."
+            "limit_exceeded",
+            f"arrange_triangle_surfaces.maximum_incidence_records must admit input ancestry; got requested={minimum_records}, limit={limits_.maximum_incidence_records}",
         )
+    return _ArrangementPreparation(surfaces, vertex_offsets, face_offsets)
+
+
+def _arrangement_contacts(
+    prepared: _ArrangementPreparation, limits_: SurfaceArrangementLimits, /
+) -> _ArrangementContacts:
+    """Certify input embedding before evaluating cross-operand contact classes."""
+    surfaces, face_offsets = prepared.surfaces, prepared.face_offsets
     self_pairs = 0
     for index, surface in enumerate(surfaces):
         self_pairs += _require_embedded(
@@ -713,11 +796,24 @@ def _arrange(
                 if refused.size:
                     raise SurfaceArrangementError(
                         "invalid_coordinates",
-                        "Contact coordinates lie outside the exact predicate domain.",
+                        f"arrange_triangle_surfaces.vertices must lie within the contact classifier domain; got surface={first}, refusal_mask_shape={refused.shape}",
                         surface=first,
                         faces=tuple(np.unique(left[rows][refused]).tolist()),
                     )
                 counts += np.bincount(classes, minlength=len(IntersectionClass))
+    return _ArrangementContacts(np.concatenate(pairs), counts, self_pairs, spent)
+
+
+def _execute_arrangement(
+    prepared: _ArrangementPreparation,
+    contacts: _ArrangementContacts,
+    limits_: SurfaceArrangementLimits,
+    classification_work_limit: int | None,
+    /,
+) -> _ArrangementExecution:
+    """Execute native construction and map declared refusals to source faces."""
+    surfaces = prepared.surfaces
+    vertex_offsets, face_offsets = prepared.vertex_offsets, prepared.face_offsets
     points = np.concatenate([s.points for s in surfaces])
     faces = np.concatenate([s.faces + vertex_offsets[i] for i, s in enumerate(surfaces)])
     owners = np.repeat(np.arange(len(surfaces), dtype=np.int32), np.diff(face_offsets))
@@ -726,7 +822,7 @@ def _arrange(
             points,
             faces,
             owners,
-            np.concatenate(pairs),
+            contacts.pairs,
             maximum_vertices=limits_.maximum_vertices,
             maximum_fragments=limits_.maximum_fragments,
             classification_operands=(
@@ -751,19 +847,34 @@ def _arrange(
         raise SurfaceArrangementError(
             status, str(error), surface=operand, faces=local
         ) from error
+    return _ArrangementExecution(native, owners)
+
+
+def _publish_arrangement(
+    prepared: _ArrangementPreparation,
+    contacts: _ArrangementContacts,
+    execution: _ArrangementExecution,
+    limits_: SurfaceArrangementLimits,
+    /,
+) -> SurfaceArrangement:
+    """Certify rounded embedding and publish ancestry with measured work."""
+    surfaces, face_offsets = prepared.surfaces, prepared.face_offsets
+    native, owners = execution.native, execution.owners
+    self_pairs, spent, counts = contacts.self_pairs, contacts.spent, contacts.counts
     records = (native.vertices.shape[0] + native.fragments.shape[0]) * len(
         surfaces
     ) + native.locations.shape[0]
     if records > limits_.maximum_incidence_records:
         raise SurfaceArrangementError(
-            "limit_exceeded", "Exact ancestry exceeds maximum_incidence_records."
+            "limit_exceeded",
+            f"arrange_triangle_surfaces.maximum_incidence_records must admit constructed ancestry; got requested={records}, limit={limits_.maximum_incidence_records}",
         )
     source_surface = owners[native.fragment_faces].astype(np.int64)
     source_face = native.fragment_faces - face_offsets[source_surface]
     publication_pairs = 0
     for operand in range(len(surfaces)):
         selected = np.flatnonzero(source_surface == operand)
-        publication_pairs += _require_published_embedded(
+        publication_pairs += require_published_embedded(
             native.vertices,
             native.fragments[selected],
             source_face[selected],
@@ -771,7 +882,8 @@ def _arrange(
             surface=operand,
         )
     features = np.full((native.vertices.shape[0], len(surfaces), 3), -1, dtype=np.int64)
-    # Exact native location codes refer to original input faces, not rounded geometry.
+    # Native location codes refer to source faces in the rational arrangement,
+    # before coordinate rounding.
     for operand, surface in enumerate(surfaces):
         loc = native.locations
         selected = (loc[:, 1] >= face_offsets[operand]) & (
@@ -801,14 +913,13 @@ def _arrange(
         prior = coincident[fragment, owner]
         if prior >= 0 and orientation[fragment, owner] != sign:
             raise RuntimeError(
-                "Native coplanar coverage gave one fragment two orientations "
-                "against a single operand."
+                f"arrange_triangle_surfaces.coincident_orientation must assign one orientation per fragment and operand; got fragment={fragment}, operand={owner}, prior={orientation[fragment, owner]}, reported={sign}"
             )
         if prior < 0 or local_face < prior:
             coincident[fragment, owner] = local_face
             orientation[fragment, owner] = sign
     fragment_counts = np.bincount(source_surface, minlength=len(surfaces))
-    per_face = np.bincount(native.fragment_faces, minlength=faces.shape[0])
+    per_face = np.bincount(native.fragment_faces, minlength=face_offsets[-1])
     split = tuple(
         int(np.count_nonzero(per_face[face_offsets[i] : face_offsets[i + 1]] > 1))
         for i in range(len(surfaces))
@@ -819,13 +930,13 @@ def _arrange(
         publication_candidate_pairs=publication_pairs,
         contact_counts=tuple(counts.tolist()),
         constructed_vertices=int(np.count_nonzero(native.constructions)),
-        coincident_vertices=int(native.counters[3]),
+        coincident_vertices=native.counters.coincident_vertices,
         maximum_construction_bound=float(np.max(native.bounds, initial=0.0)),
         split_faces=split,
         fragments=tuple(fragment_counts.tolist()),
-        triple_plane_vertices=int(native.counters[6]),
-        exact_predicates=int(native.counters[10]),
-        filtered_predicates=int(native.counters[9]),
+        triple_plane_vertices=native.counters.triple_plane_vertices,
+        exact_predicates=native.counters.exact_predicates,
+        filtered_predicates=native.counters.filtered_predicates,
     )
     arrangement = SurfaceArrangement(
         vertices=native.vertices,
@@ -842,7 +953,7 @@ def _arrange(
         input_face_offsets=tuple(face_offsets.tolist()),
         evidence=evidence,
     )
-    return arrangement, native.classification
+    return arrangement
 
 
 __all__ = [

@@ -31,7 +31,7 @@ import numpy as np
 from ..._strict import StrictModule
 from ..._validation import positive_finite_float, positive_integer
 from ...typing import parse
-from ._normals import _merge_labels, nearest_neighbors
+from ._normals import merge_labels, nearest_neighbors
 from ._poisson import nearest_sample_distance
 
 
@@ -168,7 +168,9 @@ def remove_statistical_outliers(
 
     size = positive_integer(neighborhood_size, "neighborhood_size")
     if size >= points.shape[0]:
-        raise ValueError("neighborhood_size must be smaller than the number of points.")
+        raise ValueError(
+            f"remove_statistical_outliers.neighborhood_size must be smaller than the number of points {points.shape[0]}; got {size}"
+        )
     _, distances = nearest_neighbors(points, size)
     mean = np.mean(distances, axis=1)
     center = float(np.mean(mean))
@@ -239,7 +241,7 @@ def sampling_coverage(
     patches = 0
     if np.any(unsupported):
         corners = faces[unsupported].astype(np.int64)
-        labels = _merge_labels(
+        labels = merge_labels(
             np.arange(vertices.shape[0], dtype=np.int64),
             np.concatenate((corners[:, 0], corners[:, 1])),
             np.concatenate((corners[:, 1], corners[:, 2])),

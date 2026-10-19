@@ -561,3 +561,40 @@ def test_rank_deficient_gram_square_root_value_and_evidence() -> None:
     rejected = hermitian_sqrt(jnp.diag(jnp.asarray((-1e-4, 1.0, 2.0))))
     assert not bool(rejected.valid)
     assert not bool(rejected.derivative_valid)
+
+
+@pytest.mark.parametrize(
+    "value", ("0", "2", "2e-310", "2e-400", "2e-650", "2e-1000", "2e400", "2e800")
+)
+def test_rational_radical_endpoints_enclose_extreme_source_error_scales(
+    value: str,
+) -> None:
+    import math
+    from fractions import Fraction
+
+    from phydrax.geometry._rational import fraction_endpoint
+    from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
+
+    squared = Fraction(value)
+    lower, upper = fraction_sqrt_interval(squared)
+    assert 0 <= lower <= upper
+    assert lower * lower <= squared <= upper * upper
+    published = fraction_endpoint(upper, upper=True, saturate=True)
+    if math.isfinite(published):
+        assert Fraction(published) ** 2 >= squared
+    else:
+        assert published == math.inf and squared > Fraction(np.finfo(np.float64).max) ** 2
+
+
+def test_rational_radical_preserves_ordinary_endpoints_and_negative_refusal() -> None:
+    from fractions import Fraction
+
+    from phydrax.linalg._hermitian_spectral import fraction_sqrt_interval
+
+    assert fraction_sqrt_interval(Fraction(2)) == (
+        Fraction(float.fromhex("0x1.6a09e667f3bccp+0")),
+        Fraction(float.fromhex("0x1.6a09e667f3bcdp+0")),
+    )
+    assert fraction_sqrt_interval(Fraction(4)) == (Fraction(2), Fraction(2))
+    with pytest.raises(ValueError):
+        fraction_sqrt_interval(Fraction(-1))

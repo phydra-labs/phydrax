@@ -337,7 +337,7 @@ class _PreparedMinimizationValue(StrictModule):
 
 
 class LeastSquaresTrialResult(StrictModule):
-    """Dynamic trial proposal and actual executed numerical-work receipts."""
+    """Store a dynamic trial proposal and executed numerical-work counters."""
 
     direction: PyTree[Any]
     scale: Array
@@ -372,9 +372,13 @@ class LeastSquaresTrialResult(StrictModule):
         self.model_visits = jnp.asarray(model_visits)
         self.resource_refused = jnp.asarray(resource_refused)
         if self.resource_refused.ndim != 0 or self.resource_refused.dtype.kind != "b":
-            raise TypeError("Resource refusal evidence must be a Boolean scalar.")
+            raise TypeError(
+                f"LeastSquaresTrialResult.resource_refused must be a Boolean scalar; got {(self.resource_refused.shape, self.resource_refused.dtype)!r}."
+            )
         if self.scale.ndim != 0 or self.valid.ndim != 0 or self.valid.dtype.kind != "b":
-            raise TypeError("Trial scale and Boolean validity must be scalars.")
+            raise TypeError(
+                f"LeastSquaresTrialResult.scale_and_valid must contain a scalar scale and Boolean scalar valid; got {(self.scale.shape, self.valid.shape, self.valid.dtype)!r}."
+            )
         for receipt in (
             self.jvp_actions,
             self.vjp_actions,
@@ -382,10 +386,12 @@ class LeastSquaresTrialResult(StrictModule):
             self.model_visits,
         ):
             if receipt.ndim != 0 or receipt.dtype.kind != "i":
-                raise TypeError("Trial work receipts must be signed integer scalars.")
+                raise TypeError(
+                    f"LeastSquaresTrialResult.work_counters must be signed integer scalars; got {(receipt.shape, receipt.dtype)!r}."
+                )
 
     def receipts_valid(self) -> Array:
-        """Validate numeric receipt ranges without host synchronization."""
+        """Validate numeric work-counter ranges without host synchronization."""
         action_limit = jnp.iinfo(jnp.int32).max
         return (
             (self.jvp_actions >= 0)
@@ -401,8 +407,8 @@ class AbstractLeastSquaresTrialPolicy(StrictModule):
     """Identified nonsmooth trial and termination capability.
 
     Numerical state and the prepared Jacobian are dynamic. The returned
-    direction is the actual trial direction. The returned image is an
-    unscaled residual-model image, not an actual residual evaluation or
+    direction is the trial direction. The returned image is an
+    unscaled residual-model image, not a residual evaluation or
     replacement Krylov operator; it need not be a derivative.
     """
 
@@ -434,6 +440,7 @@ class NonlinearLeastSquaresProblem(StrictModule):
     has_aux: bool = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         residual: Callable[[PyTree[Any], Any], Any],
@@ -446,26 +453,16 @@ class NonlinearLeastSquaresProblem(StrictModule):
         trial_policy_id: str | None = None,
         trial_model_work_limit: Any = None,
     ) -> None:
-        if not callable(residual):
-            raise TypeError("residual must be callable.")
-        if bounds is not None and not isinstance(bounds, Bounds):
-            raise TypeError("bounds must be Bounds or None.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
         if (trial_policy is None) != (trial_policy_id is None):
             raise ValueError(
-                "trial_policy and trial_policy_id must be supplied together."
-            )
-        if trial_policy is not None and not isinstance(
-            trial_policy, AbstractLeastSquaresTrialPolicy
-        ):
-            raise TypeError(
-                "trial_policy must be an AbstractLeastSquaresTrialPolicy or None."
+                f"NonlinearLeastSquaresProblem.trial_policy_and_id must be supplied together; got {(type(trial_policy).__name__, trial_policy_id)!r}."
             )
         if (trial_policy is None) != (trial_model_work_limit is None):
             raise ValueError(
-                "An identified trial policy requires its dynamic model-work limit."
+                f"NonlinearLeastSquaresProblem.trial_model_work_limit must be supplied if and only if trial_policy is supplied; got {(type(trial_policy).__name__, trial_model_work_limit)!r}."
             )
         model_limit = (
             None
@@ -475,10 +472,14 @@ class NonlinearLeastSquaresProblem(StrictModule):
         if model_limit is not None and (
             model_limit.ndim != 0 or model_limit.dtype.kind != "i"
         ):
-            raise TypeError("trial_model_work_limit must be a signed integer scalar.")
+            raise TypeError(
+                f"NonlinearLeastSquaresProblem.trial_model_work_limit must be a signed integer scalar; got {(model_limit.shape, model_limit.dtype)!r}."
+            )
         self.trial_model_work_limit = model_limit
         if trial_policy_id is not None and not str(trial_policy_id):
-            raise ValueError("trial_policy_id must be non-empty.")
+            raise ValueError(
+                f"NonlinearLeastSquaresProblem.trial_policy_id must be nonempty; got {trial_policy_id!r}."
+            )
         self.trial_policy = trial_policy
         self.trial_policy_id = None if trial_policy_id is None else str(trial_policy_id)
         if self.trial_policy_id is not None:

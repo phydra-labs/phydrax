@@ -13,11 +13,13 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax.discretization._reference_cell_types import CellBlock
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from ._cell_complex import IntervalConnectivity
-from ._cell_mesh import CellBlock, CellMesh
+from ._cell_mesh import CellMesh
 
 
 class NetworkEvidence(StrictModule):

@@ -16,6 +16,20 @@ import phydrax as phx
 from phydrax.linalg._factorizations import _metric_orthonormalize
 
 
+# Empirical `test_jax_cpu_sparse_lu_is_batchable_under_vmap`: matched max |delta|=2.22045e-16; joint allowance fraction=0.000109075, margin=99.9891%.
+_BATCHED_SPARSE_LU_ACTION_RTOL = 1e-12
+# Empirical `test_jax_cpu_sparse_lu_is_batchable_under_vmap`: matched max |delta|=2.22045e-16; joint allowance fraction=0.000109075, margin=99.9891%.
+_BATCHED_SPARSE_LU_ACTION_ATOL = 1e-12
+# Empirical `test_jax_cpu_sparse_lu_is_batchable_under_vmap`: matched max |delta|=4.44089e-16; joint allowance fraction=0.000108126, margin=99.9892%.
+_NESTED_SPARSE_LU_ACTION_RTOL = 1e-12
+# Empirical `test_jax_cpu_sparse_lu_is_batchable_under_vmap`: matched max |delta|=4.44089e-16; joint allowance fraction=0.000108126, margin=99.9892%.
+_NESTED_SPARSE_LU_ACTION_ATOL = 1e-12
+# Empirical `test_jax_cpu_sparse_lu_is_batchable_under_vmap`: matched max |delta|=5.55112e-17; joint allowance fraction=1.99728e-06, margin=99.9998%.
+_BATCHED_SPARSE_LU_TANGENT_RTOL = 1e-10
+# Empirical `test_jax_cpu_sparse_lu_is_batchable_under_vmap`: matched max |delta|=5.55112e-17; joint allowance fraction=1.99728e-06, margin=99.9998%.
+_BATCHED_SPARSE_LU_TANGENT_ATOL = 1e-11
+
+
 la = phx.linalg
 
 
@@ -653,21 +667,26 @@ def test_jax_cpu_sparse_lu_is_batchable_under_vmap() -> None:
     assert jnp.allclose(
         shared_matrix,
         jax.vmap(lambda rhs: dense_solve(coefficients, rhs))(right_hand_sides),
-        rtol=1e-12,
-        atol=1e-12,
+        rtol=_BATCHED_SPARSE_LU_ACTION_RTOL,
+        atol=_BATCHED_SPARSE_LU_ACTION_ATOL,
     )
     assert jnp.allclose(
         lane_matrices,
         jax.vmap(dense_solve)(value_sets, right_hand_sides),
-        rtol=1e-12,
-        atol=1e-12,
+        rtol=_BATCHED_SPARSE_LU_ACTION_RTOL,
+        atol=_BATCHED_SPARSE_LU_ACTION_ATOL,
     )
-    assert jnp.allclose(nested[1], 3.0 * shared_matrix, rtol=1e-12, atol=1e-12)
+    assert jnp.allclose(
+        nested[1],
+        3.0 * shared_matrix,
+        rtol=_NESTED_SPARSE_LU_ACTION_RTOL,
+        atol=_NESTED_SPARSE_LU_ACTION_ATOL,
+    )
     assert jnp.allclose(
         tangent_map,
         jax.jacfwd(lambda values: dense_solve(values, right_hand_side))(coefficients),
-        rtol=1e-10,
-        atol=1e-11,
+        rtol=_BATCHED_SPARSE_LU_TANGENT_RTOL,
+        atol=_BATCHED_SPARSE_LU_TANGENT_ATOL,
     )
 
 

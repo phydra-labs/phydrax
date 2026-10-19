@@ -24,10 +24,10 @@ from ._policies import LinearSolvePolicy
 from ._problems import LinearSystem
 from ._runtime import prepare, solve
 from ._spaces import (
-    _coordinate_dtype,
     AbstractVectorSpace,
     ArraySpace,
     BlockSpace,
+    coordinate_dtype,
     DualSpace,
     PyTreeSpace,
     RHSLayout,
@@ -388,7 +388,7 @@ def estimate_numerical_range(
     """Random-probe numerical-range envelope under the source pairing."""
     _validate_endomorphism(operator)
     count = _positive_int(num_probes, "num_probes")
-    dtype = _coordinate_dtype(operator.source)
+    dtype = coordinate_dtype(operator.source)
     keys = jr.split(key, count)
 
     def one(probe_key: Array) -> Array:
@@ -482,7 +482,7 @@ def _batched_dense_stochastic(
             "pairing; no implicit similarity transform is performed."
         )
     matrix = operator.matrix
-    dtype = _coordinate_dtype(operator.source)
+    dtype = coordinate_dtype(operator.source)
     if quantity == "trace":
         eigenvalues, eigenvectors = jnp.linalg.eigh(matrix)
         if scalar_function is None:
@@ -605,7 +605,7 @@ def stochastic_trace(
         coordinates = _whiten_coordinates(
             operator.source,
             _addressed_rademacher_probe(
-                key, index, operator.source.size, _coordinate_dtype(operator.source)
+                key, index, operator.source.size, coordinate_dtype(operator.source)
             ),
         )
         decomposition = lanczos(
@@ -798,7 +798,7 @@ def estimate_diagonal(
         key,
         count,
         operator.source.size,
-        _coordinate_dtype(operator.source),
+        coordinate_dtype(operator.source),
     )
     images = jax.vmap(_coordinate_action(operator))(probes)
     raw_samples = jnp.conj(probes) * images
@@ -878,7 +878,7 @@ def estimate_inverse_diagonal(
                 key,
                 index,
                 operator.source.size,
-                _coordinate_dtype(operator.source),
+                coordinate_dtype(operator.source),
                 operator.batch_shape,
             )
         )(indices)
@@ -1248,7 +1248,7 @@ def _golub_kahan_matrix(decomposition: GolubKahanDecomposition, /) -> Array:
 def _initial_coordinates(operator: AbstractLinearOperator, initial: Any, /) -> Array:
     if initial is not None:
         return operator.source.flatten(operator.source.validate(initial))
-    return jnp.ones((operator.source.size,), dtype=_coordinate_dtype(operator.source))
+    return jnp.ones((operator.source.size,), dtype=coordinate_dtype(operator.source))
 
 
 def _initial_target_coordinates(
@@ -1258,7 +1258,7 @@ def _initial_target_coordinates(
 ) -> Array:
     if initial is not None:
         return operator.target.flatten(operator.target.validate(initial))
-    return jnp.ones((operator.target.size,), dtype=_coordinate_dtype(operator.target))
+    return jnp.ones((operator.target.size,), dtype=coordinate_dtype(operator.target))
 
 
 __all__ = [

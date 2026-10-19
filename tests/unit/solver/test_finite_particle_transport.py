@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _velocity(time: Any, position: Any, args: Any) -> Any:
@@ -49,7 +50,9 @@ def _plans(
         velocity_unit_id="m/s",
         frame="laboratory",
     )
-    geometry = phx.geometry.Circle((0.0, 0.0), 1.0, feature_id="obstacle").compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0, feature_id="obstacle").compile(
+        coordinate_unit=METER
+    )
     wall = phx.geometry.FiniteRadiusErosionPlan(
         geometry, "outside", geometry_id="circular-obstacle"
     )
@@ -66,7 +69,9 @@ def _plans(
 
 
 def test_finite_particle_transport_scenario_1() -> None:
-    circle = phx.geometry.Circle((0.0, 0.0), 1.0, feature_id="circle").compile()
+    circle = phx.geometry.Circle((0.0, 0.0), 1.0, feature_id="circle").compile(
+        coordinate_unit=METER
+    )
     outside = phx.geometry.FiniteRadiusErosionPlan(
         circle, "outside", geometry_id="circle"
     ).evaluate(jnp.asarray(((1.5, 0.0),)), jnp.asarray((0.2,)))

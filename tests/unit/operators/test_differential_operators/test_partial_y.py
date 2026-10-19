@@ -11,11 +11,12 @@ import phydrax as phx
 import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.operators.differential import partial_y
+from phydrax.units import METER
 
 
 def test_partial_y_point() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")
@@ -30,7 +31,7 @@ def test_partial_y_point() -> None:
 
 def test_partial_y_coord_separable(sample_grid: Any) -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component()
     batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
@@ -50,7 +51,7 @@ def test_partial_y_coord_separable(sample_grid: Any) -> None:
 
 def test_partial_y_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     u = geom.Function("x")(lambda x: x[1] ** 2).with_metadata(**{"tag": 1})
     out = partial_y(u)

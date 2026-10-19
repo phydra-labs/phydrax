@@ -21,7 +21,7 @@ from ...typing import checked
 from .._materialization import MaterializationPolicy, materialize
 from .._operators import AbstractLinearOperator
 from .._policies import FailurePolicy
-from .._spaces import _coordinate_dtype
+from .._spaces import coordinate_dtype
 
 
 SchurBackend: TypeAlias = Literal["jax-cpu"]
@@ -54,7 +54,7 @@ class SchurEigenproblem(StrictModule):
     ) -> None:
         if operator.batch_shape or not operator.source.compatible(operator.target):
             raise ValueError("Schur eigenproblems require an unbatched endomorphism.")
-        if not jnp.issubdtype(_coordinate_dtype(operator.source), jnp.inexact):
+        if not jnp.issubdtype(coordinate_dtype(operator.source), jnp.inexact):
             raise TypeError("Schur eigenproblems require real or complex coordinates.")
         identifier = (
             canonical_fingerprint(
@@ -425,9 +425,9 @@ def schur_eigensolve(
 
 def _schur_cost(problem: SchurEigenproblem, /) -> SchurCostEstimate:
     dimension = problem.dimension
-    input_itemsize = _coordinate_dtype(problem.operator.source).itemsize
+    input_itemsize = coordinate_dtype(problem.operator.source).itemsize
     output_dtype = jnp.result_type(
-        _coordinate_dtype(problem.operator.source), jnp.complex64
+        coordinate_dtype(problem.operator.source), jnp.complex64
     )
     output_itemsize = jnp.dtype(output_dtype).itemsize
     matrix_entries = dimension * dimension

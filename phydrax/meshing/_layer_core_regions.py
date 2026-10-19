@@ -2,19 +2,22 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Exact core-local to composite material identity for immutable layer volumes."""
+"""core-local to composite material identity for immutable layer volumes."""
 
 from __future__ import annotations
 
 import numpy as np
 from jax.typing import ArrayLike
 
+import phydrax.meshing._plc_source as plc_source_owner
+
 from .._validation import unique_identifiers
-from ._volume_generation import PiecewiseLinearComplex
+from ..typing import checked
 
 
+@checked
 def prepare_layer_region_identity(
-    complex_: PiecewiseLinearComplex,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
     layer_regions: np.ndarray,
     region_ids: tuple[str, ...] | None,
     core_region_map: ArrayLike | None,
@@ -22,7 +25,7 @@ def prepare_layer_region_identity(
 ) -> tuple[tuple[str, ...], np.ndarray]:
     if (region_ids is None) != (core_region_map is None):
         raise ValueError(
-            "Composite material identity requires its region namespace and exact core-local map together."
+            "NativeLayerCoreSource.core_region_map must provide its region namespace and core-local map together; got missing or incompatible its region namespace and core-local map together"
         )
     names = (
         complex_.region_ids
@@ -38,7 +41,7 @@ def prepare_layer_region_identity(
         complex_.region_count,
     ):
         raise TypeError(
-            "core_region_map must contain one integer composite material index per core region."
+            "NativeLayerCoreSource.core_region_map must contain one integer composite material index per core region; got incompatible core_region_map"
         )
     if (
         np.any(mapping < 0)
@@ -46,18 +49,18 @@ def prepare_layer_region_identity(
         or np.unique(mapping).size != mapping.size
     ):
         raise ValueError(
-            "Core material identities must map injectively into the declared composite namespace."
+            "NativeLayerCoreSource.core_region_map must map injectively into the declared composite namespace; got incompatible Core material identities"
         )
     if any(
         names[int(index)] != name
         for index, name in zip(mapping, complex_.region_ids, strict=True)
     ):
         raise ValueError(
-            "Core-local and composite maps must retain the exact authoritative material names."
+            "NativeLayerCoreSource.core_region_map must retain the declared material names; got incompatible Core-local and composite maps"
         )
     if np.any(layer_regions < 0) or np.any(layer_regions >= len(names)):
         raise ValueError(
-            "Every layer cell requires an authoritative composite material index."
+            "NativeLayerCoreSource.core_region_map must provide an declared composite material index; got missing or incompatible an declared composite material index"
         )
     occupied = np.unique(
         np.concatenate(
@@ -69,7 +72,7 @@ def prepare_layer_region_identity(
     )
     if not np.array_equal(occupied, np.arange(len(names), dtype=np.int64)):
         raise ValueError(
-            "Every composite region must have actual layer or bounded core material incidence."
+            "NativeLayerCoreSource.core_region_map must have realized layer or bounded core material incidence; got incompatible composite region"
         )
     mapping = np.array(mapping, dtype=np.int64, copy=True)
     mapping.setflags(write=False)

@@ -386,6 +386,7 @@ def _dense_isolation_gaps(
     return jnp.min(distances, axis=1)
 
 
+# Keep paired LOBPCG images, locked modes, and callback counts in one fixed-capacity carry.
 def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
     """Run a fixed-capacity, pairing-aware block LOBPCG iteration."""
     problem = prepared.problem
@@ -707,6 +708,7 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
     )
 
 
+# Keep thick-restart expansion and paired Ritz updates in their fixed-capacity traced order.
 def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
     """Run fixed-capacity thick-restarted, fully reorthogonalized Lanczos."""
     problem = prepared.problem
@@ -797,6 +799,7 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
         jnp.asarray(0, dtype=jnp.int32),
     )
 
+    # Restart gating retains paired bases, locking evidence, and callback counts atomically.
     def restart(cycle: Array, current: _RestartState) -> _RestartState:
         (
             retained_basis,
@@ -829,6 +832,7 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
         )
         execute = jnp.any(retained_mask) & incomplete
 
+        # Expansion and Ritz retention must commit one paired, locked-mode restart carry.
         def expand_and_restart(operand: _RestartState) -> _RestartState:
             (
                 retained_basis_i,

@@ -29,7 +29,7 @@ from ._preconditioner_properties import PreconditionerProperties
 from ._preconditioners import AbstractPreconditioner
 from ._preconditioning import AbstractPreconditionerBuilder, PreconditionerRefreshPolicy
 from ._properties import LinearCapabilityError
-from ._spaces import _coordinate_dtype, ArraySpace
+from ._spaces import ArraySpace, coordinate_dtype
 
 
 def _positive_integer(value: int, name: str, /) -> int:
@@ -47,7 +47,7 @@ def _validate_operator(operator: AbstractLinearOperator, /) -> None:
         raise ValueError("Block probing requires an unbatched endomorphism.")
     if operator.source.size < 1:
         raise ValueError("Block probing requires nonempty coordinates.")
-    if not jnp.issubdtype(_coordinate_dtype(operator.source), jnp.inexact):
+    if not jnp.issubdtype(coordinate_dtype(operator.source), jnp.inexact):
         raise TypeError("Block probing requires an inexact coordinate dtype.")
 
 
@@ -81,7 +81,7 @@ def _probe_coordinate_action(
     lax.map/vmap; retain or inspect rows before advancing to the next chunk.
     """
     coordinates = jnp.arange(operator.source.size, dtype=jnp.int32)
-    basis = (coordinates == native_column).astype(_coordinate_dtype(operator.source))
+    basis = (coordinates == native_column).astype(coordinate_dtype(operator.source))
     return operator.target.flatten(operator.mv(operator.source.unflatten(basis)))
 
 
@@ -132,7 +132,7 @@ def _probing_cost(
 ) -> PreconditionerCostEstimate:
     _validate_operator(operator)
     dimension = operator.source.size
-    dtype = _coordinate_dtype(operator.source)
+    dtype = coordinate_dtype(operator.source)
     real_itemsize = jnp.empty((), dtype=dtype).real.dtype.itemsize
     block_bytes = dimension * local_size * dtype.itemsize
     storage = (
@@ -214,7 +214,7 @@ class ProbedBlockPreconditioner(AbstractPreconditioner, NonTrainableState):
             member.size != factorization.block_size for member in selection.target.spaces
         ):
             raise ValueError("Selection members must match the factored local blocks.")
-        if factorization.factors.dtype != _coordinate_dtype(selection.source):
+        if factorization.factors.dtype != coordinate_dtype(selection.source):
             raise TypeError("Local factors must use the native coordinate dtype.")
         if not builder_id or not setup_operator_id:
             raise ValueError("Builder and setup operator identifiers must be nonempty.")
@@ -297,7 +297,7 @@ class ProbedBlockPreconditioner(AbstractPreconditioner, NonTrainableState):
             storage_bytes=_array_tree_storage_bytes(self),
             apply_workspace_bytes_per_rhs=3
             * self.space.size
-            * _coordinate_dtype(self.space).itemsize,
+            * coordinate_dtype(self.space).itemsize,
             reason="native local LU factors, pivots, failure flags, and mapped solve workspace",
         )
 
@@ -492,7 +492,7 @@ class BoundedLUPreconditionerBuilder(AbstractPreconditionerBuilder):
             self.max_output_bytes,
         )
         entries = dimension * dimension
-        matrix_bytes = entries * _coordinate_dtype(setup_operator.source).itemsize
+        matrix_bytes = entries * coordinate_dtype(setup_operator.source).itemsize
         admitted = dimension <= self.max_size and (
             materialization is None
             or (
@@ -532,7 +532,7 @@ class BoundedLUPreconditionerBuilder(AbstractPreconditionerBuilder):
                 (
                     "coarse",
                     CoordinateBlock(
-                        ArraySpace((source.size,), dtype=_coordinate_dtype(source)),
+                        ArraySpace((source.size,), dtype=coordinate_dtype(source)),
                         ((0, source.size),),
                     ),
                 ),

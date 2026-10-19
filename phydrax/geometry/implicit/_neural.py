@@ -25,6 +25,7 @@ from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState, partition_parameters
 from ..._validation import positive_finite_float
 from ...typing import checked, PRNGKey
+from ...units import ONE, UnitDefinition
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -44,13 +45,13 @@ from .._sampling import bounded_rejection_sample, RejectionSamplingPlan, Samplin
 from .._validity import GeometryValidityEvidence
 from ..analytic._primitives import _check_points, _feature_id
 from ..design._schema import (
-    _ParameterCollector,
     DesignState,
     ParameterBinding,
+    ParameterCollector,
     ParameterId,
 )
 from ._policy import ImplicitSurfacePolicy
-from ._projection import _field_and_gradient
+from ._projection import field_and_gradient
 
 
 _DEFAULT_POLICY = ImplicitSurfacePolicy()
@@ -380,7 +381,7 @@ class _NeuralImplicitKernel(GeometryKernel):
                 self.boundary_points,
             )
         )
-        _, gradients = _field_and_gradient(self, state, samples)
+        _, gradients = field_and_gradient(self, state, samples)
         gradient_norms = jnp.linalg.norm(gradients, axis=-1)
         margins = [
             -jnp.max(interior) - error - self.sign_margin,
@@ -448,7 +449,7 @@ class _NeuralImplicitKernel(GeometryKernel):
     def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, self.ambient_dimension)
         flat = points_.reshape((-1, self.ambient_dimension))
-        _, gradient = _field_and_gradient(self, state, flat)
+        _, gradient = field_and_gradient(self, state, flat)
         norm = jnp.linalg.norm(gradient, axis=-1, keepdims=True)
         normal = gradient / jnp.maximum(norm, jnp.finfo(flat.dtype).eps)
         return normal.reshape(points_.shape)
@@ -516,7 +517,7 @@ class _NeuralImplicitKernel(GeometryKernel):
 
 
 def _compile_kernel(
-    context: _ParameterCollector,
+    context: ParameterCollector,
     network: AbstractArrayModel,
     bounds: Array,
     interior_points: Array,
@@ -534,7 +535,7 @@ def _compile_kernel(
 ) -> _NeuralImplicitKernel:
     names, leaves, treedef, fixed, static = _network_parts(network)
     bindings = tuple(
-        context.bind(ParameterId(feature_id, name), leaf, role="network_weight")
+        context.bind(ParameterId(feature_id, name), leaf, role="network_weight", unit=ONE)
         for name, leaf in zip(names, leaves, strict=True)
     )
     return _NeuralImplicitKernel(
@@ -890,6 +891,7 @@ def _certify(
     exterior_points: Array,
     /,
     *,
+    coordinate_unit: UnitDefinition,
     sign_margin: float,
     gradient_margin: float | None,
     evaluation_error: float,
@@ -937,7 +939,7 @@ def _certify(
         boundary_points: Array,
         margin: float | None,
     ) -> CompiledGeometry:
-        context = _ParameterCollector()
+        context = ParameterCollector(coordinate_unit)
         kernel = _compile_kernel(
             context,
             network,
@@ -1057,6 +1059,7 @@ class NeuralImplicitRegion(GeometrySource):
     discovery_resolution: tuple[int, ...] = eqx.field(static=True)
     policy: ImplicitSurfacePolicy = eqx.field(static=True)
     feature_id: str = eqx.field(static=True)
+    coordinate_unit: UnitDefinition = eqx.field(static=True)
     certificate: NeuralImplicitCertificate
 
     @checked
@@ -1066,6 +1069,7 @@ class NeuralImplicitRegion(GeometrySource):
         bounds: Any,
         /,
         *,
+        coordinate_unit: UnitDefinition,
         interior_points: Any = None,
         exterior_points: Any = None,
         sign_margin: float | None = None,
@@ -1126,6 +1130,7 @@ class NeuralImplicitRegion(GeometrySource):
             region_bounds,
             interior,
             exterior,
+            coordinate_unit=coordinate_unit,
             sign_margin=margin,
             gradient_margin=gradient,
             evaluation_error=error,
@@ -1146,6 +1151,7 @@ class NeuralImplicitRegion(GeometrySource):
         self.discovery_resolution = resolution
         self.policy = policy
         self.feature_id = identifier
+        self.coordinate_unit = coordinate_unit
         self.certificate = certificate
 
     @property
@@ -1170,6 +1176,7 @@ class NeuralImplicitRegion(GeometrySource):
         return NeuralImplicitRegion(
             network,
             self.bounds,
+            coordinate_unit=self.coordinate_unit,
             interior_points=self.interior_points,
             exterior_points=self.exterior_points,
             sign_margin=self.sign_margin,
@@ -1182,7 +1189,11 @@ class NeuralImplicitRegion(GeometrySource):
             feature_id=self.feature_id,
         )
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
+        if context.coordinate_unit != self.coordinate_unit:
+            raise ValueError(
+                f"NeuralImplicitRegion.coordinate_unit must exactly match its declared unit; got {context.coordinate_unit.symbol}"
+            )
         certificate = self.certificate
         return _compile_kernel(
             context,

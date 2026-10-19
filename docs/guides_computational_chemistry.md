@@ -45,6 +45,13 @@ range-separated repulsion, Schwarz screening, direct J/K, density fitting,
 pivoted Cholesky, and first/second geometry derivatives. ECP data are typed; a
 provider is required for semilocal ECP integrals.
 
+Primitive-quartet ERI contractions use a reusable compiled loop with a static
+iteration bound, rather than expanding the primitive product into response
+derivative graphs. The loop retains the original lexicographic summation order
+(fourth primitive index fastest), masks, shell transforms, and dense/direct
+admission limits. Compilation boundaries change; compiler fusion can still
+change final-bit rounding. No global compilation-cache clearing is required.
+
 `MolecularHartreeFockPlan` implements RHF, UHF, ROHF, and GHF. It supports
 core, zero-density, extended-Hueckel, explicit, and externally projected guesses;
 integer, explicit, maximum-overlap, and Fermi-Dirac occupations; damping, DIIS,

@@ -1,0 +1,237 @@
+{
+  "contains_benchmark_results": false,
+  "expected_artifacts": [
+    "benchmarks/native_meshing_qualification.json",
+    "benchmarks/native_meshing_benchmarks.json"
+  ],
+  "kind": "native-meshing-campaign-registration",
+  "license": "LicenseRef-PHYDRA-Proprietary",
+  "phase_sections": [
+    "source_decode_and_geometry_preparation",
+    "constraint_metric_and_reusable_plan_preparation",
+    "generation_classification_refinement_improvement",
+    "projection_curving_and_independent_certification",
+    "publication_and_state_transfer",
+    "lowering_compilation_first_and_warmed_execution",
+    "compiler_process_device_and_logical_memory",
+    "partition_communication_checkpoint_restart",
+    "solver_time_and_memory_to_physical_target"
+  ],
+  "provenance": {
+    "origin": "Deterministic qualification workflow, scenario, and profile tables",
+    "owner": "tools/meshing_qualification/_campaign.py::campaign_registration_record"
+  },
+  "registration_id": "a081b7f9469b66c8e636566f4331f64ff8401e479f9dcd26a65a0a3dc1ee6410",
+  "required_result_fields": [
+    "runtime",
+    "frozen_controls",
+    "hard_timeout",
+    "resource_evidence",
+    "phase_evidence",
+    "independent_acceptance",
+    "positive_completion",
+    "mandatory_workflow_completion"
+  ],
+  "source_corpus_registration_id": "1d49c288a0a9a2a5c52df503c27810b34dcd883529afee5d32b7b13ee8056836",
+  "workflows": [
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "native-surface-pde:annulus",
+        "native-surface-pde:capped_cylinder",
+        "native-surface-pde:cylinder_sheet",
+        "native-surface-pde:folded_plates",
+        "native-surface-pde:torus",
+        "planar-hole-feature",
+        "planar-thin-channel",
+        "sphere-feature-surface"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-lifecycle",
+        "native-surface-pde"
+      ],
+      "workflow": "planar-features"
+    },
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "plc-disconnected",
+        "plc-fixed-boundary",
+        "plc-material-cavity",
+        "plc-nonconvex",
+        "plc-sliver-rich",
+        "plc-small-angle",
+        "plc-thin-channel",
+        "plc-triple-junction"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-lifecycle"
+      ],
+      "workflow": "constrained-solid"
+    },
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "native-implicit-lifecycle"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-implicit-lifecycle"
+      ],
+      "workflow": "implicit-domain"
+    },
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "native-image-lifecycle"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-image-lifecycle"
+      ],
+      "workflow": "labeled-image"
+    },
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "native-envelope-lifecycle"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-envelope-lifecycle"
+      ],
+      "workflow": "imperfect-surface"
+    },
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "native-cad-lifecycle:brep",
+        "native-cad-lifecycle:iges",
+        "native-cad-lifecycle:step"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-cad-lifecycle"
+      ],
+      "workflow": "native-cad"
+    },
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "native-periodic-lifecycle:skew-lattice",
+        "native-periodic-lifecycle:skew-material-feature"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-periodic-lifecycle"
+      ],
+      "workflow": "periodic-system"
+    },
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "native-hybrid-lifecycle:archived-layer-core",
+        "native-hybrid-lifecycle:cad-entire-solid-slab",
+        "native-hybrid-lifecycle:cad-slab-and-core",
+        "native-hybrid-lifecycle:channel_gap005_policies",
+        "native-hybrid-lifecycle:concave-box-core-lifecycle",
+        "native-hybrid-lifecycle:concave_box_count3",
+        "native-hybrid-lifecycle:curved-periodic-layer-core",
+        "native-hybrid-lifecycle:exact-sweep-nonperiodic-accepted",
+        "native-hybrid-lifecycle:exact-sweep-periodic-accepted",
+        "native-hybrid-lifecycle:open_box_floor_count4",
+        "native-hybrid-lifecycle:opposing_sloped_plates4",
+        "native-hybrid-lifecycle:outward_box_count3",
+        "native-hybrid-lifecycle:periodic-convex-ridge",
+        "native-hybrid-lifecycle:periodic-partial-quadrilateral",
+        "native-hybrid-lifecycle:periodic-partial-triangle",
+        "native-hybrid-lifecycle:periodic-rotation-quadrilateral",
+        "native-hybrid-lifecycle:periodic-rotation-triangle",
+        "native-hybrid-lifecycle:periodic-translation-quadrilateral",
+        "native-hybrid-lifecycle:periodic-translation-triangle",
+        "native-hybrid-lifecycle:plate5",
+        "native-hybrid-lifecycle:quadrilateral_plate3",
+        "native-hybrid-lifecycle:sphere_radius04_subdivision2",
+        "native-hybrid-lifecycle:unit-box"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-hybrid-lifecycle"
+      ],
+      "workflow": "hybrid-layers"
+    },
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "native-family-lifecycle:curved-cavity-hex",
+        "native-family-lifecycle:curved-frame-sweep-hex",
+        "native-family-lifecycle:curved-material-hex",
+        "native-family-lifecycle:curved-nonsweepable-hex",
+        "native-family-lifecycle:curved-quarter-extrusion-quad",
+        "native-family-lifecycle:dual-hex",
+        "native-family-lifecycle:dual-quad",
+        "native-family-lifecycle:hex-dominant",
+        "native-family-lifecycle:multiblock-cycle-quad",
+        "native-family-lifecycle:multiblock-material-hex",
+        "native-family-lifecycle:multiblock-quad",
+        "native-family-lifecycle:multiblock-reversed-hex",
+        "native-family-lifecycle:sweep-hex",
+        "native-family-lifecycle:sweep-prism",
+        "native-family-lifecycle:transfinite-quad"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-family-lifecycle"
+      ],
+      "workflow": "general-quads-hexes"
+    },
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "polyhedral-material-L",
+        "polyhedral-periodic-cube",
+        "polyhedral-stretched-L"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-polyhedral-lifecycle"
+      ],
+      "workflow": "polyhedral-system"
+    },
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "native-distributed-lifecycle"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-distributed-lifecycle"
+      ],
+      "workflow": "distributed-lifecycle"
+    },
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "native-overset-lifecycle"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-overset-lifecycle"
+      ],
+      "workflow": "moving-overset"
+    },
+    {
+      "expected_admission": "positive",
+      "profiles": [
+        "native-design-lifecycle"
+      ],
+      "refusal_counts_as_positive_completion": false,
+      "scenarios": [
+        "native-design-lifecycle"
+      ],
+      "workflow": "design-learned-loop"
+    }
+  ]
+}

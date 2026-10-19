@@ -31,7 +31,7 @@ from .._spaces import DiscreteFieldSpace, EntityDofLayout
 from .._support import DiscreteSupport
 from .._topology import EntitySet
 from ..spatial import DyadicCellTopology
-from ..spatial._morton import _morton_decode_host, _morton_encode_host
+from ..spatial._morton import morton_decode_host, morton_encode_host
 from ._geometry_protocol import FiniteVolumeFaceBlock
 
 
@@ -178,7 +178,7 @@ class DyadicFiniteVolumePlan(AbstractDiscretizationPlan):
             for level in range(maximum_depth, -1, -1):
                 shift = maximum_depth - level
                 level_coordinate = tuple(value >> shift for value in coordinate)
-                prefix = _morton_encode_host(level_coordinate, dimension, level)
+                prefix = morton_encode_host(level_coordinate, dimension, level)
                 cell = key_to_cell.get((level, prefix))
                 if cell is not None:
                     return cell
@@ -197,7 +197,7 @@ class DyadicFiniteVolumePlan(AbstractDiscretizationPlan):
         for owner in range(leaf_slots.size):
             level = int(leaf_levels[owner])
             prefix = int(leaf_prefixes[owner])
-            level_coordinate = _morton_decode_host(prefix, dimension, level)
+            level_coordinate = morton_decode_host(prefix, dimension, level)
             width = 1 << (maximum_depth - level)
             integer_lower = tuple(value * width for value in level_coordinate)
             for axis in range(dimension):
@@ -331,7 +331,7 @@ class DyadicFiniteVolumePlan(AbstractDiscretizationPlan):
                 [
                     (
                         np.asarray(
-                            _morton_decode_host(
+                            morton_decode_host(
                                 int(leaf_prefixes[cell]),
                                 dimension,
                                 int(leaf_levels[cell]),

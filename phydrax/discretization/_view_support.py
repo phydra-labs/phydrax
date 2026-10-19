@@ -11,7 +11,10 @@ source. Explicit support must carry whole-domain binding or boundary evidence.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from enum import IntEnum
+from fractions import Fraction
 from math import isfinite
 from typing import TYPE_CHECKING
 
@@ -19,9 +22,14 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.typing import ArrayLike
 
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
+
+from .. import geometry as imported_geometry
 from .._strict import StrictModule
-from ..geometry._atlas import BoundaryAtlas, BoundaryMap
+from ..geometry import simplicial as imported_geometry_simplicial
+from ..geometry._atlas import AbstractBoundaryMap, BoundaryAtlas
 from ..geometry._capabilities import GeometryCapability
 from ..geometry._certificate import (
     DistanceSemantics,
@@ -35,41 +43,66 @@ from ..geometry._contracts import (
     GeometryKernel,
     GeometryKind,
     GeometrySource,
+    GeometryTolerance,
 )
+from ..geometry.analytic import _primitives as imported_geometry_analytic__primitives
 from ..geometry.design._schema import (
-    _ParameterCollector,
     DesignState,
     ParameterBinding,
+    ParameterCollector,
     ParameterId,
 )
-from ..typing import PRNGKey
+from ..geometry.simplicial import (
+    _io as imported_geometry_simplicial__io,
+    _regions as imported_geometry_simplicial__regions,
+    _support_region as imported_geometry_simplicial__support_region,
+)
+from ..typing import checked, PRNGKey
+from ..units import METER, UnitDefinition
 from ._cell_complex import (
     IntervalConnectivity,
     PolygonalConnectivity,
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
+from ._cell_geometry import (
+    cell_geometry_preparation_bounds,
+    cell_geometry_preparation_query_upper,
+    owned_coordinate_preparation,
+)
 from ._cell_mesh import SimplicialConnectivity
+from ._coordinate_budget import CoordinateEnclosureBudget
 from ._coordinate_enclosure import (
+    coordinate_chart_restriction_estimates,
+    coordinate_estimate_bank,
+    coordinate_estimate_equal,
+    coordinate_evaluate_estimate,
     coordinate_expressions,
+    coordinate_map_expression_estimates,
+    coordinate_polynomials_estimate,
     Expression,
+    expression_sequence_equal,
     restrict_chart_expressions,
 )
 from ._hexahedral import HexahedralConnectivity
-from ._mapped_locator import PreparedMappedCellLocator
+from ._mapped_locator import PreparedMappedCellLocator, reference_domain
 from ._polyhedral_locator import PreparedPolyhedralCellLocator
-from ._reference_cell import reference_cell_topology
+from ._reference_cell import reference_cell_topology, ReferenceCellTopology
 from ._simplicial_locator import (
-    _cell_map_vertices,
     AbstractCellLocator,
+    cell_locator_preparation_bounds,
+    cell_map_vertices,
     CellLocationResult,
     CellLocationStatus,
     PreparedSimplicialCellLocator,
 )
 from ._views import FieldQueryStatus
 from .fem._cell_map import PreparedFiniteElementCellMap
-from .fem._reference import FiniteElementSpec
-from .fem._reference_operator import reference_facet_embedding
+from .fem._reference_operator import (
+    facet_corner_parameters,
+    reference_facet_embedding,
+    reference_facet_shape,
+)
 
 
 if TYPE_CHECKING:
@@ -108,8 +141,8 @@ class MappedMeshSupportQueryResult(StrictModule):
     source_binding_id: str = eqx.field(static=True)
 
 
-class _MappedCellBoundaryMap(BoundaryMap):
-    """Canonical reference facets composed with the complete coordinate source."""
+class MappedCellBoundaryMap(AbstractBoundaryMap):
+    """Reference facets composed with the coordinate source."""
 
     cell_map: PreparedFiniteElementCellMap
     coordinates: Array
@@ -205,7 +238,7 @@ class _MappedCellBoundaryMap(BoundaryMap):
 
 
 def _facet_span(corners: np.ndarray, dimension: int, /) -> np.ndarray:
-    """Canonical independent directions in the given global facet-vertex order."""
+    """Independent directions in the given global facet-vertex order."""
     directions: list[np.ndarray] = []
     for corner in corners[1:]:
         candidate = corner - corners[0]
@@ -216,47 +249,53 @@ def _facet_span(corners: np.ndarray, dimension: int, /) -> np.ndarray:
             if len(directions) == dimension - 1:
                 break
     if len(directions) != dimension - 1:
-        raise ValueError("Reference facet corners must have codimension one.")
+        raise ValueError(
+            "mapped_support.reference_facets must have codimension one; got incompatible corner span"
+        )
     return np.stack(directions, axis=1) if directions else np.empty((dimension, 0))
 
 
-def _mapped_mesh_boundary_atlas(locator: PreparedMappedCellLocator, /) -> BoundaryAtlas:
-    """Compile oriented exterior reference facets with canonical mesh identities."""
-    cell_map = locator.cell_map
+def _mapped_facet_occurrences(
+    cell_map: PreparedFiniteElementCellMap, /
+) -> tuple[np.ndarray, tuple[tuple[int, ...], ...], dict[int, list[tuple[int, int]]]]:
+    """Return facet rows and their cell-local occurrences."""
     mesh = cell_map.mesh
     kind = cell_map.coordinate_element.cell_kind
     topology = reference_cell_topology(kind)
     facets = topology.entities[topology.dimension - 1]
-    cells = _cell_map_vertices(cell_map)
+    cells = cell_map_vertices(cell_map)
     connectivity = mesh.connectivity
-    if isinstance(connectivity, SimplicialConnectivity):
-        global_facets = tuple(
-            tuple(int(value) for value in row)
-            for row in np.asarray(connectivity.entities[topology.dimension - 1])
-        )
-    elif topology.dimension == 1 and isinstance(connectivity, IntervalConnectivity):
-        global_facets = tuple((index,) for index in range(mesh.coordinates.shape[0]))
-    elif topology.dimension == 2 and isinstance(connectivity, PolygonalConnectivity):
-        global_facets = tuple(
-            tuple(int(value) for value in row) for row in np.asarray(connectivity.edges)
-        )
-    elif topology.dimension == 3 and isinstance(
-        connectivity, (TetrahedralConnectivity, HexahedralConnectivity)
-    ):
-        global_facets = tuple(
-            tuple(int(value) for value in row) for row in np.asarray(connectivity.faces)
-        )
-    elif topology.dimension == 3 and isinstance(connectivity, PolyhedralConnectivity):
-        offsets = np.asarray(connectivity.face_vertex_offsets)
-        values = np.asarray(connectivity.face_vertex_values)
-        global_facets = tuple(
-            tuple(int(value) for value in values[start:stop])
-            for start, stop in zip(offsets[:-1], offsets[1:], strict=True)
-        )
-    else:
-        raise TypeError(
-            "Mapped boundary facets require canonical connectivity matching the reference topology."
-        )
+    match connectivity:
+        case SimplicialConnectivity():
+            global_facets = tuple(
+                tuple(int(value) for value in row)
+                for row in np.asarray(connectivity.entities[topology.dimension - 1])
+            )
+        case IntervalConnectivity() if topology.dimension == 1:
+            global_facets = tuple((index,) for index in range(mesh.coordinates.shape[0]))
+        case PolygonalConnectivity() if topology.dimension == 2:
+            global_facets = tuple(
+                tuple(int(value) for value in row)
+                for row in np.asarray(connectivity.edges)
+            )
+        case TetrahedralConnectivity() | HexahedralConnectivity() if (
+            topology.dimension == 3
+        ):
+            global_facets = tuple(
+                tuple(int(value) for value in row)
+                for row in np.asarray(connectivity.faces)
+            )
+        case PolyhedralConnectivity() if topology.dimension == 3:
+            offsets = np.asarray(connectivity.face_vertex_offsets)
+            values = np.asarray(connectivity.face_vertex_values)
+            global_facets = tuple(
+                tuple(int(value) for value in values[start:stop])
+                for start, stop in zip(offsets[:-1], offsets[1:], strict=True)
+            )
+        case _:
+            raise TypeError(
+                "mapped_support.connectivity must match the reference topology; got unsupported connectivity"
+            )
     facet_slots = {
         tuple(sorted(vertices)): slot for slot, vertices in enumerate(global_facets)
     }
@@ -266,18 +305,200 @@ def _mapped_mesh_boundary_atlas(locator: PreparedMappedCellLocator, /) -> Bounda
             key = tuple(sorted(int(vertices[index]) for index in facet_vertices))
             slot = facet_slots[key]
             occurrences.setdefault(slot, []).append((cell, local_facet))
+    return cells, global_facets, occurrences
 
-    # Interior topology may only erase a face when its full coordinate-source
-    # traces agree. Matching corners or floating samples are not sufficient.
+
+def _mapped_support_preparation_bounds(
+    cell_map: PreparedFiniteElementCellMap, coordinates: np.ndarray, /
+) -> tuple[int, int, int]:
+    """Bound authored source banks, full facet restrictions and trace equality."""
+    geometry = cell_map.coordinate_spec
+    work, memory = cell_geometry_preparation_bounds(geometry)
+    queries = cell_geometry_preparation_query_upper(geometry)
+    cells, global_facets, occurrences = _mapped_facet_occurrences(cell_map)
+    interior = tuple(
+        (slot, entries) for slot, entries in occurrences.items() if len(entries) == 2
+    )
+    if not interior:
+        return work, memory, queries
+    source = geometry.exact_source
+    periodic = geometry.periodic_source
+    coefficient_bits = (
+        periodic.preparation_bounds()[2]
+        if periodic is not None
+        else max(source.maximum_bits, 1075)
+        if source is not None
+        else None
+    )
+    routes = np.asarray(cell_map.coordinate_dofs)
+    local = coordinates[routes[interior[0][1][0][0]]]
+    element = cell_map.coordinate_element
+    preparation = coordinate_polynomials_estimate(
+        element, local, coefficient_bits_upper=coefficient_bits
+    )
+    expressions = coordinate_map_expression_estimates(
+        element, local, coefficient_bits_upper=coefficient_bits
+    )
+    if preparation is None or expressions is None:
+        raise ValueError(
+            "mapped_support.coordinate_expressions must retain source traces; got an unsupported source expression"
+        )
+    touched = {cell for _, entries in interior for cell, _ in entries}
+    work += len(touched) * preparation.work_upper
+    memory += len(touched) * preparation.bytes_upper
+    topology = reference_cell_topology(element.cell_kind)
+    for slot, entries in interior:
+        traces = []
+        for cell, _ in entries:
+            positions = {
+                int(vertex): position for position, vertex in enumerate(cells[cell])
+            }
+            corners = np.asarray(
+                tuple(
+                    topology.vertices[positions[vertex]] for vertex in global_facets[slot]
+                )
+            )
+            axes = _facet_span(corners, topology.dimension)
+            target_kind = (
+                "interval"
+                if axes.shape[1] == 1
+                else "triangle"
+                if len(corners) == 3
+                else "quadrilateral"
+            )
+            trace = coordinate_chart_restriction_estimates(
+                expressions, element.cell_kind, target_kind, corners[0], axes
+            )
+            bank = coordinate_estimate_bank(trace)
+            work += bank.work_upper
+            memory += bank.bytes_upper
+            traces.append(trace)
+        for first, second in zip(traces[0], traces[1], strict=True):
+            equality = coordinate_estimate_equal(first, second)
+            work += equality.work_upper
+            memory += equality.bytes_upper
+    return work, memory, queries
+
+
+@contextmanager
+def _owned_mapped_support_preparation(
+    cell_map: PreparedFiniteElementCellMap,
+    coordinates: Array,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+    include_enclosure: bool,
+) -> Iterator[CoordinateEnclosureBudget]:
+    """Own the host support circuit or reuse its explicit request ledger."""
+    if budget is not None:
+        yield budget
+        return
+    host = np.asarray(coordinates)
+    work, memory, queries = _mapped_support_preparation_bounds(cell_map, host)
+    if include_enclosure:
+        enclosure_work, enclosure_memory, enclosure_queries = (
+            cell_locator_preparation_bounds(
+                cell_map, host, reference_domain(cell_map.coordinate_element.cell_kind)
+            )
+        )
+        work += enclosure_work
+        memory += enclosure_memory
+        queries += enclosure_queries
+    with owned_coordinate_preparation(
+        work, memory, maximum_geometry_queries=queries
+    ) as budget:
+        yield budget
+
+
+def _affine_support_preparation_bounds(
+    cell_map: PreparedFiniteElementCellMap, coordinates: np.ndarray, /
+) -> tuple[int, int, int]:
+    """Bound source expansion and every reference-corner evaluation."""
+    geometry = cell_map.coordinate_spec
+    work, memory = cell_geometry_preparation_bounds(geometry)
+    queries = cell_geometry_preparation_query_upper(geometry)
+    source = geometry.exact_source
+    periodic = geometry.periodic_source
+    coefficient_bits = (
+        periodic.preparation_bounds()[2]
+        if periodic is not None
+        else max(source.maximum_bits, 1075)
+        if source is not None
+        else None
+    )
+    routes = np.asarray(cell_map.coordinate_dofs)
+    if routes.shape[0]:
+        local = coordinates[routes[0]]
+        element = cell_map.coordinate_element
+        preparation = coordinate_polynomials_estimate(
+            element, local, coefficient_bits_upper=coefficient_bits
+        )
+        expressions = coordinate_map_expression_estimates(
+            element, local, coefficient_bits_upper=coefficient_bits
+        )
+        if preparation is None or expressions is None:
+            raise ValueError(
+                "affine_support.coordinate_expressions must retain source coordinates; got an unsupported source expression"
+            )
+        work += routes.shape[0] * preparation.work_upper
+        memory += routes.shape[0] * preparation.bytes_upper
+        for corner in reference_cell_topology(element.cell_kind).vertices:
+            point = tuple(Fraction(value) for value in corner)
+            for value in expressions:
+                evaluation = coordinate_evaluate_estimate(value, point)
+                work += routes.shape[0] * evaluation.work_upper
+                memory += routes.shape[0] * evaluation.bytes_upper
+    return work, memory, queries
+
+
+@contextmanager
+def _owned_affine_support_preparation(
+    cell_map: PreparedFiniteElementCellMap,
+    coordinates: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> Iterator[CoordinateEnclosureBudget]:
+    """Own the affine source proof without changing projection-map limits."""
+    if budget is not None:
+        yield budget
+        return
+    work, memory, queries = _affine_support_preparation_bounds(cell_map, coordinates)
+    with owned_coordinate_preparation(
+        work, memory, maximum_geometry_queries=queries
+    ) as budget:
+        yield budget
+
+
+class _MappedBoundaryProof(StrictModule):
+    """Exterior source facets after full coordinate-trace agreement."""
+
+    exterior: tuple[tuple[int, int, int], ...] = eqx.field(static=True)
+    ids: np.ndarray
+
+
+def _prepare_mapped_boundary_proof(
+    locator: PreparedMappedCellLocator,
+    topology: ReferenceCellTopology,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _MappedBoundaryProof:
+    cell_map = locator.cell_map
+    mesh = cell_map.mesh
+    kind = cell_map.coordinate_element.cell_kind
+    cells, global_facets, occurrences = _mapped_facet_occurrences(cell_map)
+    # Interior facets disappear only after whole source traces agree.
     source_polynomials: dict[int, tuple[Expression, ...] | None] = {}
     routes = np.asarray(cell_map.coordinate_dofs)
-    coordinates = cell_map.source_coordinates(locator.coordinates)
+    coordinates = cell_map.source_coordinates(locator.coordinates, budget=budget)
 
     def trace(cell: int, slot: int) -> tuple[Expression, ...]:
         if cell not in source_polynomials:
             source_polynomials[cell] = coordinate_expressions(
                 cell_map.coordinate_element,
                 tuple(coordinates[index] for index in routes[cell]),
+                budget=budget,
             )
         local_positions = {
             int(vertex): position for position, vertex in enumerate(cells[cell])
@@ -293,7 +514,7 @@ def _mapped_mesh_boundary_atlas(locator: PreparedMappedCellLocator, /) -> Bounda
         polynomials = source_polynomials[cell]
         if polynomials is None:
             raise ValueError(
-                "Mapped support traces require their actual owned source expressions."
+                "mapped_support.coordinate_expressions must retain source traces; got an unsupported source expression"
             )
         target_kind = (
             "interval"
@@ -302,32 +523,54 @@ def _mapped_mesh_boundary_atlas(locator: PreparedMappedCellLocator, /) -> Bounda
             if len(corners) == 3
             else "quadrilateral"
         )
-        return restrict_chart_expressions(polynomials, kind, target_kind, origin, axes)
+        return restrict_chart_expressions(
+            polynomials, kind, target_kind, origin, axes, budget=budget
+        )
 
     for slot, entries in occurrences.items():
-        if len(entries) == 2 and trace(entries[0][0], slot) != trace(entries[1][0], slot):
+        if len(entries) == 2 and not expression_sequence_equal(
+            trace(entries[0][0], slot), trace(entries[1][0], slot), budget=budget
+        ):
             raise ValueError(
-                "Mapped support topology has nonmatching full coordinate-source facet traces."
+                "mapped_support.facet_traces must match full coordinate-source traces; got nonmatching facet traces"
             )
         if len(entries) > 2:
             raise ValueError(
-                "Mapped support boundary requires manifold source facet topology."
+                "mapped_support.facet_topology must be manifold; got more than two facet occurrences"
             )
     facet_ids = np.asarray(mesh.entity_set(topology.dimension - 1).entity_ids)
-    exterior = sorted(
-        (slot, entries[0][0], entries[0][1])
-        for slot, entries in occurrences.items()
-        if len(entries) == 1
+    exterior = tuple(
+        sorted(
+            (slot, entries[0][0], entries[0][1])
+            for slot, entries in occurrences.items()
+            if len(entries) == 1
+        )
     )
     if not exterior:
         raise ValueError(
-            "Mapped support requires a non-empty represented exterior boundary."
+            "mapped_support.exterior_facets must be nonempty; got no represented exterior boundary"
         )
     ids = np.asarray([facet_ids[slot] for slot, _, _ in exterior], dtype=np.int64)
     if np.any(ids > np.iinfo(np.int32).max):
         raise ValueError(
-            "Mapped boundary atlas source facet IDs exceed represented int32 capacity."
+            "mapped_support.facet_ids must fit represented int32 capacity; got a larger source facet ID"
         )
+    return _MappedBoundaryProof(exterior, ids)
+
+
+def _mapped_mesh_boundary_atlas(
+    locator: PreparedMappedCellLocator,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> BoundaryAtlas:
+    """Compile oriented exterior reference facets with mesh identities."""
+    cell_map = locator.cell_map
+    kind = cell_map.coordinate_element.cell_kind
+    topology = reference_cell_topology(kind)
+    facets = topology.entities[topology.dimension - 1]
+    proof = _prepare_mapped_boundary_proof(locator, topology, budget=budget)
+    exterior, ids = proof.exterior, proof.ids
     facet_axes = np.empty((len(facets), topology.dimension, topology.dimension - 1))
     signs = np.empty((len(facets),))
     facet_normals = np.empty((len(facets), topology.dimension))
@@ -341,8 +584,14 @@ def _mapped_mesh_boundary_atlas(locator: PreparedMappedCellLocator, /) -> Bounda
             (np.zeros((1, topology.dimension - 1)), np.eye(topology.dimension - 1)),
             axis=0,
         )
-        embedded, _ = reference_facet_embedding(kind, index, parameter)
-        facet_axes[index] = np.asarray(embedded[1:] - embedded[:1]).T
+        # Unit-axis parameters select reference corners without device dispatch.
+        corner_parameters = facet_corner_parameters(reference_facet_shape(kind, index))
+        selected = tuple(
+            np.flatnonzero(np.all(corner_parameters == point, axis=1))[0]
+            for point in parameter
+        )
+        embedded = corners[np.asarray(selected, dtype=np.int64)]
+        facet_axes[index] = (embedded[1:] - embedded[:1]).T
         raw_normal = np.asarray(
             tuple(
                 (-1.0) ** axis * np.linalg.det(np.delete(facet_axes[index], axis, axis=0))
@@ -351,11 +600,11 @@ def _mapped_mesh_boundary_atlas(locator: PreparedMappedCellLocator, /) -> Bounda
         )
         outward = corners.mean(axis=0) - np.asarray(topology.vertices).mean(axis=0)
         signs[index] = 1.0 if raw_normal @ outward > 0.0 else -1.0
-        # Unnormalized dyadic reference planes preserve their actual zero set;
-        # their margin is not a signed physical or reference Euclidean distance.
+        # Unnormalized dyadic planes retain the represented reference zero set;
+        # their margin is not a Euclidean distance.
         facet_normals[index] = signs[index] * raw_normal
         facet_offsets[index] = facet_normals[index] @ corners[0]
-    mapping = _MappedCellBoundaryMap(
+    mapping = MappedCellBoundaryMap(
         cell_map,
         locator.coordinates,
         jnp.asarray([cell for _, cell, _ in exterior], dtype=jnp.int32),
@@ -375,24 +624,55 @@ def _mapped_mesh_boundary_atlas(locator: PreparedMappedCellLocator, /) -> Bounda
 
 
 class MappedMeshSupportSource(GeometrySource):
-    """Union of actual prepared coordinate-map images, not corner polytopes."""
+    """Union of prepared coordinate-map images, not corner polytopes."""
 
     locator: PreparedMappedCellLocator
     support_id: str = eqx.field(static=True)
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
-        coordinates = context.bind(
-            ParameterId(f"mapped-cell-support:{self.support_id}", "coordinates"),
+    @checked
+    def compile(
+        self,
+        *,
+        coordinate_unit: UnitDefinition,
+        tolerance: GeometryTolerance = GeometryTolerance(),
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> CompiledGeometry:
+        """Compile whole mapped support using one bounded host coordinate request."""
+        context = ParameterCollector(coordinate_unit)
+        kernel = self._compile(context, budget=budget)
+        _, state = context.finish()
+        return CompiledGeometry(kernel, state, tolerance=tolerance)
+
+    def _compile(
+        self,
+        context: ParameterCollector,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> GeometryKernel:
+        # Pure geometry compositions call the polymorphic hook directly.
+        # This source owns its host request when that hook has no caller ledger.
+        with _owned_mapped_support_preparation(
+            self.locator.cell_map,
             self.locator.coordinates,
-            role="position",
-            trainable=False,
-        )
-        return _MappedMeshSupportKernel(
-            self.locator, coordinates, _mapped_mesh_boundary_atlas(self.locator)
-        )
+            budget=budget,
+            include_enclosure=False,
+        ) as budget:
+            coordinates = context.bind(
+                ParameterId(f"mapped-cell-support:{self.support_id}", "coordinates"),
+                self.locator.coordinates,
+                role="position",
+                unit=context.coordinate_unit,
+                trainable=False,
+            )
+            return MappedMeshSupportKernel(
+                self.locator,
+                coordinates,
+                _mapped_mesh_boundary_atlas(self.locator, budget=budget),
+            )
 
 
-class _MappedMeshSupportKernel(GeometryKernel):
+class MappedMeshSupportKernel(GeometryKernel):
     locator: PreparedMappedCellLocator
     coordinates: ParameterBinding = eqx.field(static=True)
     atlas: BoundaryAtlas
@@ -442,7 +722,9 @@ class _MappedMeshSupportKernel(GeometryKernel):
     def query(self, state: DesignState, points: Array, /) -> MappedMeshSupportQueryResult:
         values = jnp.asarray(points, dtype=self.locator.coordinates.dtype)
         if values.ndim < 1 or values.shape[-1] != self.ambient_dimension:
-            raise ValueError("Mapped support points have incompatible ambient dimension.")
+            raise ValueError(
+                "MappedMeshSupportKernel.points must match the ambient dimension; got incompatible point shape"
+            )
         leading = values.shape[:-1]
         location = self.locator.locate(values.reshape((-1, self.ambient_dimension)))
         current = self._source_current(state)
@@ -470,7 +752,7 @@ class _MappedMeshSupportKernel(GeometryKernel):
         query = self.query(state, points)
         location = query.location
         mapping = self.atlas.mapping
-        assert isinstance(mapping, _MappedCellBoundaryMap)
+        assert isinstance(mapping, MappedCellBoundaryMap)
         candidates = location.candidate_cells
         masks = (
             mapping.exterior_facets[jnp.maximum(candidates, 0)]
@@ -500,17 +782,20 @@ class _MappedMeshSupportKernel(GeometryKernel):
 
     def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         raise NotImplementedError(
-            "Mapped membership support does not provide physical boundary normals."
+            "MappedMeshSupportKernel.boundary_normal must use a kernel providing "
+            f"physical boundary normals; got {type(self).__name__}"
         )
 
     def measure(self, state: DesignState, /) -> Array:
         raise NotImplementedError(
-            "Mapped membership support does not certify union measure."
+            "MappedMeshSupportKernel.measure must use a kernel certifying union "
+            f"measure; got {type(self).__name__}"
         )
 
     def boundary_measure(self, state: DesignState, /) -> Array:
         raise NotImplementedError(
-            "Mapped membership support does not certify boundary measure."
+            "MappedMeshSupportKernel.boundary_measure must use a kernel certifying "
+            f"boundary measure; got {type(self).__name__}"
         )
 
     def sample_interior(
@@ -523,14 +808,16 @@ class _MappedMeshSupportKernel(GeometryKernel):
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         raise NotImplementedError(
-            "Mapped membership support does not provide interior sampling."
+            "MappedMeshSupportKernel.sample_interior must use a kernel providing "
+            f"interior sampling; got {type(self).__name__}"
         )
 
     def sample_boundary(
         self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         raise NotImplementedError(
-            "Mapped membership support does not provide boundary sampling."
+            "MappedMeshSupportKernel.sample_boundary must use a kernel providing "
+            f"boundary sampling; got {type(self).__name__}"
         )
 
     def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
@@ -544,35 +831,60 @@ class _MappedMeshSupportKernel(GeometryKernel):
         )
 
 
+@checked
 def mapped_mesh_support_geometry(
-    locator: AbstractCellLocator, support_id: str, /
+    locator: AbstractCellLocator,
+    support_id: str,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> CompiledGeometry:
     """Compile whole-map support, retaining explicit bounded query failures."""
     locator = locator.canonical_locator
-    if not isinstance(locator, PreparedMappedCellLocator):
-        if not isinstance(locator, PreparedSimplicialCellLocator):
-            raise TypeError("Mapped support requires a canonical prepared FE locator.")
-        locator = PreparedMappedCellLocator(
-            locator.cell_map, locator.coordinates, locator.policy
+    if not isinstance(
+        locator, (PreparedMappedCellLocator, PreparedSimplicialCellLocator)
+    ):
+        raise TypeError(
+            "mapped_support.locator must be a prepared FE locator; got another locator kind"
         )
-    return MappedMeshSupportSource(locator, str(support_id)).compile()
+    with _owned_mapped_support_preparation(
+        locator.cell_map,
+        locator.coordinates,
+        budget=budget,
+        include_enclosure=not isinstance(locator, PreparedMappedCellLocator),
+    ) as budget:
+        if not isinstance(locator, PreparedMappedCellLocator):
+            locator = PreparedMappedCellLocator(
+                locator.cell_map, locator.coordinates, locator.policy, budget=budget
+            )
+        return MappedMeshSupportSource(locator, str(support_id)).compile(
+            coordinate_unit=METER, budget=budget
+        )
 
 
+@checked
 def mapped_mesh_support_query(
     geometry: CompiledGeometry, points: Array, /
 ) -> MappedMeshSupportQueryResult:
     """Return membership and status rather than conflating failed inverse/outside."""
-    if not isinstance(geometry.kernel, _MappedMeshSupportKernel):
-        raise TypeError("Geometry is not whole mapped-cell support.")
-    return geometry.kernel.query(geometry.state, points)
+    match geometry.kernel:
+        case MappedMeshSupportKernel() as kernel:
+            return kernel.query(geometry.state, points)
+        case _:
+            raise TypeError(
+                "mapped_support.geometry.kernel must represent whole mapped-cell support; got another kernel"
+            )
 
 
+@checked
 def simplicial_mesh_support_geometry(
-    locator: AbstractCellLocator, support_id: str, /
+    locator: AbstractCellLocator,
+    support_id: str,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> CompiledGeometry:
-    """Retain affine distance support or compile the actual whole mapped domain."""
-    from ..geometry.simplicial import MeshRegion
-    from ..geometry.simplicial._io import planar_region_from_triangles
+    """Retain affine distance support or compile the whole mapped domain."""
 
     locator = locator.canonical_locator
     if isinstance(locator, PreparedPolyhedralCellLocator):
@@ -580,7 +892,7 @@ def simplicial_mesh_support_geometry(
     cell_map = locator.cell_map
     if not isinstance(cell_map, PreparedFiniteElementCellMap):
         raise TypeError(
-            "Mesh support requires a canonical prepared FE or polyhedral locator."
+            "mesh_support.locator must retain a prepared FE or polyhedral map; got another map kind"
         )
     element = cell_map.coordinate_element
     if (
@@ -593,13 +905,13 @@ def simplicial_mesh_support_geometry(
         )
         or cell_map.ambient_dimension != cell_map.reference_dimension
     ):
-        return mapped_mesh_support_geometry(locator, support_id)
+        return mapped_mesh_support_geometry(locator, support_id, budget=budget)
     coordinates = np.asarray(locator.coordinates, dtype=np.float64)
     cells = np.asarray(cell_map.coordinate_dofs, dtype=np.int64)
     feature_id = f"finite-element-support:{support_id}"
     match cell_map.coordinate_element.cell_kind:
         case "triangle":
-            source = planar_region_from_triangles(
+            source = imported_geometry_simplicial__io.planar_region_from_triangles(
                 coordinates, cells, recenter=False, feature_id=feature_id
             )
         case "tetrahedron":
@@ -617,7 +929,7 @@ def simplicial_mesh_support_geometry(
             )
             boundary = faces[counts[inverse.reshape((-1,))] == 1]
             used, compact = np.unique(boundary, return_inverse=True)
-            source = MeshRegion(
+            source = imported_geometry_simplicial.MeshRegion(
                 coordinates[used],
                 compact.reshape(boundary.shape).astype(np.int32),
                 feature_id=feature_id,
@@ -629,26 +941,31 @@ def simplicial_mesh_support_geometry(
                 cell_map.coordinate_element.cell_kind,
                 feature_id,
                 locator,
+                budget=budget,
             )
         case "interval":
-            from ..geometry.simplicial._support_region import compile_simplicial_support
-
-            return compile_simplicial_support(locator, support_id)
+            with _owned_affine_support_preparation(
+                cell_map, coordinates, budget=budget
+            ) as budget:
+                return imported_geometry_simplicial__support_region.compile_simplicial_support(
+                    locator, support_id, budget=budget
+                )
         case kind:
             if kind.startswith("simplex:"):
-                from ..geometry.simplicial._support_region import (
-                    compile_simplicial_support,
-                )
-
-                return compile_simplicial_support(locator, support_id)
+                with _owned_affine_support_preparation(
+                    cell_map, coordinates, budget=budget
+                ) as budget:
+                    return imported_geometry_simplicial__support_region.compile_simplicial_support(
+                        locator, support_id, budget=budget
+                    )
             if kind.startswith("tensor:"):
                 return _tensor_mesh_support_geometry(
-                    coordinates, cells, kind, feature_id, locator
+                    coordinates, cells, kind, feature_id, locator, budget=budget
                 )
             raise ValueError(
-                f"The support of {kind!r} FE cells is not derived; pass an explicit support_geometry."
+                f"mesh_support.cell_kind must have a derived support or explicit support_geometry; got {kind!r}"
             )
-    return source.compile()
+    return source.compile(coordinate_unit=METER)
 
 
 def _tensor_mesh_support_geometry(
@@ -658,30 +975,41 @@ def _tensor_mesh_support_geometry(
     feature_id: str,
     locator: AbstractCellLocator,
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> CompiledGeometry:
-    from ..geometry.simplicial import MeshRegion
-    from ..geometry.simplicial._io import planar_region_from_triangles
 
     reference = reference_cell_topology(cell_kind)
     if reference.dimension == 1:
-        from ..geometry.simplicial._support_region import compile_simplicial_support
-
-        return compile_simplicial_support(locator, feature_id)
+        if not isinstance(locator.cell_map, PreparedFiniteElementCellMap):
+            raise TypeError(
+                "tensor_support.locator.cell_map must be a prepared FE coordinate map; got another map kind"
+            )
+        with _owned_affine_support_preparation(
+            locator.cell_map, coordinates, budget=budget
+        ) as budget:
+            return (
+                imported_geometry_simplicial__support_region.compile_simplicial_support(
+                    locator, feature_id, budget=budget
+                )
+            )
     if reference.dimension == 2:
         triangles = cells[:, np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)]
-        return planar_region_from_triangles(
+        return imported_geometry_simplicial__io.planar_region_from_triangles(
             coordinates,
             triangles.reshape((-1, 3)),
             recenter=False,
             feature_id=feature_id,
-        ).compile()
+        ).compile(coordinate_unit=METER)
     if reference.dimension != 3:
-        return mapped_mesh_support_geometry(locator, feature_id)
+        return mapped_mesh_support_geometry(locator, feature_id, budget=budget)
     faces = cells[:, np.asarray(reference.entities[2], dtype=np.int32)]
     keys = np.sort(faces.reshape((-1, 4)), axis=1)
     _, inverse, counts = np.unique(keys, axis=0, return_inverse=True, return_counts=True)
     if np.any(counts > 2):
-        raise ValueError("Tensor support requires manifold faces.")
+        raise ValueError(
+            "tensor_support.faces must be manifold; got more than two face occurrences"
+        )
     exterior = counts[inverse] == 1
     boundary = faces.reshape((-1, 4))[exterior].copy()
     parent = np.repeat(np.arange(cells.shape[0]), faces.shape[1])[exterior]
@@ -690,10 +1018,12 @@ def _tensor_mesh_support_geometry(
     norm = np.linalg.norm(normals, axis=1)
     scale = np.max(np.linalg.norm(points - points[:, :1], axis=2), axis=1)
     if np.any(norm <= np.finfo(np.float64).eps * np.maximum(scale**2, 1.0)):
-        raise ValueError("Tensor support boundary faces must be nondegenerate.")
+        raise ValueError(
+            "tensor_support.faces must be nondegenerate; got a degenerate boundary face"
+        )
     residual = np.abs(np.sum((points[:, 3] - points[:, 0]) * normals, axis=1)) / norm
     if np.any(residual > 1e-10 * np.maximum(scale, 1.0)):
-        return mapped_mesh_support_geometry(locator, feature_id)
+        return mapped_mesh_support_geometry(locator, feature_id, budget=budget)
     centers = np.mean(coordinates[cells[parent]], axis=1)
     inward = np.sum(normals * (np.mean(points, axis=1) - centers), axis=1) < 0.0
     boundary[inward] = boundary[inward][:, (0, 3, 2, 1)]
@@ -701,148 +1031,196 @@ def _tensor_mesh_support_geometry(
         (-1, 3)
     )
     used, compact = np.unique(triangles, return_inverse=True)
-    return MeshRegion(
+    return imported_geometry_simplicial.MeshRegion(
         coordinates[used],
         compact.reshape(triangles.shape).astype(np.int32),
         feature_id=feature_id,
-    ).compile()
+    ).compile(coordinate_unit=METER)
 
 
-def verify_mesh_support_geometry(
-    geometry: CompiledGeometry, locator: AbstractCellLocator, /, *, tolerance: float
-) -> None:
-    """Require source binding or exact whole affine-boundary coverage evidence."""
-    from ..geometry.analytic._primitives import _OrthotopeKernel
-    from ..geometry.simplicial._regions import _MeshRegionKernel, _PlanarMeshRegionKernel
-    from ..geometry.simplicial._support_region import _SimplicialSupportKernel
+class _SupportBoundary(StrictModule):
+    """Represented affine boundary and direct identity comparison evidence."""
 
-    locator = locator.canonical_locator
-    limit = float(tolerance)
-    if not isfinite(limit) or limit < 0.0:
-        raise ValueError("support_tolerance must be finite and non-negative.")
-    if not isinstance(geometry, CompiledGeometry):
-        raise TypeError("support_geometry must be CompiledGeometry.")
-    if isinstance(geometry.kernel, _MappedMeshSupportKernel):
-        if isinstance(locator, PreparedMappedCellLocator):
-            mapped = locator
-        else:
-            if not isinstance(locator, PreparedSimplicialCellLocator):
-                raise TypeError(
-                    "Mapped support verification requires a canonical prepared FE locator."
-                )
-            mapped = PreparedMappedCellLocator(
-                locator.cell_map, locator.coordinates, locator.policy
-            )
-        if geometry.kernel.locator.source_binding_id != mapped.source_binding_id:
-            raise ValueError(
-                "The support geometry does not cover this coordinate-map source revision."
-            )
-        if not bool(np.asarray(geometry.kernel._source_current(geometry.state))):
-            raise ValueError("The support geometry has stale whole-map source bounds.")
-        return
-    canonical = simplicial_mesh_support_geometry(locator, "support-verification")
-    if isinstance(canonical.kernel, _MappedMeshSupportKernel):
-        raise ValueError(
-            "Explicit support_geometry does not cover the whole mapped source; "
-            "use matching mapped source binding, not corner inclusion or sampled volume."
-        )
-    kernel = canonical.kernel
-    if isinstance(kernel, _SimplicialSupportKernel):
-        workset = kernel.projections[-1]
-        origins = np.asarray(workset.origins)
-        facets = np.concatenate(
-            (
-                origins[:, None, :],
-                origins[:, None, :] + np.swapaxes(np.asarray(workset.edges), -1, -2),
-            ),
-            axis=1,
-        )
-        vertices = facets.reshape((-1, kernel.dimension))
-        if isinstance(geometry.kernel, _SimplicialSupportKernel):
-            supplied = geometry.kernel.projections[-1]
-            supplied_origins = np.asarray(supplied.origins)
-            supplied_facets = np.concatenate(
-                (
-                    supplied_origins[:, None, :],
-                    supplied_origins[:, None, :]
-                    + np.swapaxes(np.asarray(supplied.edges), -1, -2),
-                ),
-                axis=1,
-            )
+    vertices: np.ndarray
+    facets: np.ndarray
+    matched: bool = eqx.field(static=True)
 
-            def keys(points: np.ndarray) -> list[tuple[tuple[float, ...], ...]]:
-                return sorted(
-                    tuple(
-                        sorted(tuple(float(value) for value in vertex) for vertex in face)
-                    )
-                    for face in points
-                )
 
-            if keys(facets) == keys(supplied_facets):
-                return
-    elif isinstance(kernel, (_MeshRegionKernel, _PlanarMeshRegionKernel)):
-        vertices = np.asarray(kernel.vertices.read(canonical.state), dtype=np.float64)
-        routes = np.asarray(
-            kernel.faces if isinstance(kernel, _MeshRegionKernel) else kernel.edges
-        )
-        facets = vertices[routes]
-    else:
-        raise ValueError(
-            "Explicit support_geometry needs whole represented-domain support evidence."
-        )
-    if isinstance(geometry.kernel, _OrthotopeKernel):
-        box = np.asarray(geometry.bounds, dtype=np.float64)
-        scale = max(1.0, float(np.max(np.abs(box))))
-        same_bounds = (
-            np.max(np.abs(np.stack((vertices.min(axis=0), vertices.max(axis=0))) - box))
-            <= limit * scale
-        )
-        on_planes = np.any(
-            np.all(
-                np.abs(facets[:, :, None, :] - box[None, None, :, :]) <= limit * scale,
-                axis=1,
-            ),
-            axis=(1, 2),
-        )
-        # The canonical closed boundary lies wholly on box facets and reaches
-        # every extremal plane. No interior hole/cut boundary is discarded.
-        if same_bounds and np.all(on_planes):
-            return
-    elif isinstance(
-        geometry.kernel, (_MeshRegionKernel, _PlanarMeshRegionKernel)
-    ) and type(geometry.kernel) is type(kernel):
-        supplied_vertices = np.asarray(
-            geometry.kernel.vertices.read(geometry.state), dtype=np.float64
-        )
-        supplied_routes = np.asarray(
-            geometry.kernel.faces
-            if isinstance(geometry.kernel, _MeshRegionKernel)
-            else geometry.kernel.edges
-        )
-
-        def boundary_keys(points: np.ndarray) -> list[tuple[tuple[float, ...], ...]]:
-            return sorted(
-                tuple(sorted(tuple(float(value) for value in vertex) for vertex in face))
-                for face in points
-            )
-
-        if boundary_keys(facets) == boundary_keys(supplied_vertices[supplied_routes]):
-            return
-    raise ValueError(
-        "The explicit support geometry does not cover the exact mesh boundary; "
-        "corner inclusion and equal sampled measure are not whole-domain evidence."
+def _boundary_keys(points: np.ndarray, /) -> list[tuple[tuple[float, ...], ...]]:
+    return sorted(
+        tuple(sorted(tuple(float(value) for value in vertex) for vertex in face))
+        for face in points
     )
 
 
+def _simplicial_support_facets(
+    kernel: imported_geometry_simplicial__support_region.SimplicialSupportKernel,
+    /,
+) -> np.ndarray:
+    workset = kernel.projections[-1]
+    origins = np.asarray(workset.origins)
+    return np.concatenate(
+        (
+            origins[:, None, :],
+            origins[:, None, :] + np.swapaxes(np.asarray(workset.edges), -1, -2),
+        ),
+        axis=1,
+    )
+
+
+def _prepare_affine_support_boundary(
+    canonical: CompiledGeometry, supplied: CompiledGeometry, /
+) -> _SupportBoundary:
+    match canonical.kernel:
+        case (
+            imported_geometry_simplicial__support_region.SimplicialSupportKernel() as kernel
+        ):
+            facets = _simplicial_support_facets(kernel)
+            vertices = facets.reshape((-1, kernel.dimension))
+            match supplied.kernel:
+                case (
+                    imported_geometry_simplicial__support_region.SimplicialSupportKernel() as other
+                ):
+                    matched = _boundary_keys(facets) == _boundary_keys(
+                        _simplicial_support_facets(other)
+                    )
+                case _:
+                    matched = False
+        case imported_geometry_simplicial__regions.MeshRegionKernel() as kernel:
+            vertices = np.asarray(kernel.vertices.read(canonical.state), dtype=np.float64)
+            facets = vertices[np.asarray(kernel.faces)]
+            matched = False
+        case imported_geometry_simplicial__regions.PlanarMeshRegionKernel() as kernel:
+            vertices = np.asarray(kernel.vertices.read(canonical.state), dtype=np.float64)
+            facets = vertices[np.asarray(kernel.edges)]
+            matched = False
+        case _:
+            raise ValueError(
+                "mesh_support.support_geometry must retain whole represented-domain evidence; got unsupported boundary evidence"
+            )
+    return _SupportBoundary(vertices, facets, matched)
+
+
+def _verify_mapped_support_binding(
+    geometry: CompiledGeometry,
+    kernel: MappedMeshSupportKernel,
+    locator: AbstractCellLocator,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> None:
+    match locator:
+        case PreparedMappedCellLocator():
+            mapped = locator
+        case PreparedSimplicialCellLocator():
+            mapped = PreparedMappedCellLocator(
+                locator.cell_map, locator.coordinates, locator.policy, budget=budget
+            )
+        case _:
+            raise TypeError(
+                "mapped_support.locator must be a prepared FE locator; got another locator kind"
+            )
+    if kernel.locator.source_binding_id != mapped.source_binding_id:
+        raise ValueError(
+            "mapped_support.support_geometry must bind the coordinate-map source revision; got a different source binding"
+        )
+    if not bool(np.asarray(kernel._source_current(geometry.state))):
+        raise ValueError(
+            "mapped_support.support_geometry must retain current whole-map bounds; got stale source bounds"
+        )
+
+
+@checked
+def verify_mesh_support_geometry(
+    geometry: CompiledGeometry,
+    locator: AbstractCellLocator,
+    /,
+    *,
+    tolerance: float,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> None:
+    """Require source binding or whole affine-boundary coverage evidence."""
+    locator = locator.canonical_locator
+    limit = float(tolerance)
+    if not isfinite(limit) or limit < 0.0:
+        raise ValueError(
+            "tensor_box_support.support_tolerance must be finite and nonnegative; got an invalid tolerance"
+        )
+    match geometry.kernel:
+        case MappedMeshSupportKernel() as kernel:
+            _verify_mapped_support_binding(geometry, kernel, locator, budget=budget)
+            return
+        case _:
+            pass
+    canonical = simplicial_mesh_support_geometry(
+        locator, "support-verification", budget=budget
+    )
+    if isinstance(canonical.kernel, MappedMeshSupportKernel):
+        raise ValueError(
+            "mesh_support.support_geometry must cover the whole mapped source; got unmatched whole-map source binding"
+        )
+    boundary = _prepare_affine_support_boundary(canonical, geometry)
+    if boundary.matched:
+        return
+    vertices, facets = boundary.vertices, boundary.facets
+    match geometry.kernel:
+        case imported_geometry_analytic__primitives.OrthotopeKernel():
+            box = np.asarray(geometry.bounds, dtype=np.float64)
+            scale = max(1.0, float(np.max(np.abs(box))))
+            same_bounds = (
+                np.max(
+                    np.abs(np.stack((vertices.min(axis=0), vertices.max(axis=0))) - box)
+                )
+                <= limit * scale
+            )
+            on_planes = np.any(
+                np.all(
+                    np.abs(facets[:, :, None, :] - box[None, None, :, :])
+                    <= limit * scale,
+                    axis=1,
+                ),
+                axis=(1, 2),
+            )
+            # Closed boundary coverage includes every extremal plane and hole.
+            if same_bounds and np.all(on_planes):
+                return
+        case imported_geometry_simplicial__regions.MeshRegionKernel() as kernel if type(
+            kernel
+        ) is type(canonical.kernel):
+            supplied_vertices = np.asarray(
+                kernel.vertices.read(geometry.state), dtype=np.float64
+            )
+            if _boundary_keys(facets) == _boundary_keys(
+                supplied_vertices[np.asarray(kernel.faces)]
+            ):
+                return
+        case imported_geometry_simplicial__regions.PlanarMeshRegionKernel() as kernel if (
+            type(kernel) is type(canonical.kernel)
+        ):
+            supplied_vertices = np.asarray(
+                kernel.vertices.read(geometry.state), dtype=np.float64
+            )
+            if _boundary_keys(facets) == _boundary_keys(
+                supplied_vertices[np.asarray(kernel.edges)]
+            ):
+                return
+        case _:
+            pass
+    raise ValueError(
+        "mesh_support.support_geometry must cover the represented mesh boundary; got unmatched whole-domain boundary evidence"
+    )
+
+
+@checked
 def tensor_box_support_geometry(
-    lower: np.ndarray,
-    upper: np.ndarray,
-    support_geometry: CompiledGeometry | None,
+    lower: ArrayLike,
+    upper: ArrayLike,
+    support_geometry: imported_geometry.CompiledGeometry | None,
     /,
     *,
     feature_id: str,
     tolerance: float,
-) -> CompiledGeometry:
+) -> imported_geometry.CompiledGeometry:
     """Return the compiled support box, or verify an explicit box geometry.
 
     `support_geometry=None` compiles an `Orthotope` spanning `[lower, upper]`.
@@ -850,7 +1228,6 @@ def tensor_box_support_geometry(
     interior measure equals the box measure: a region inside the box's bounding
     box with the box's measure is the box.
     """
-    from ..geometry import CompiledGeometry, GeometryCapability, GeometryKind, Orthotope
 
     lower_ = np.asarray(lower, dtype=np.float64)
     upper_ = np.asarray(upper, dtype=np.float64)
@@ -860,36 +1237,44 @@ def tensor_box_support_geometry(
         or not np.all(np.isfinite(lower_) & np.isfinite(upper_))
         or np.any(upper_ <= lower_)
     ):
-        raise ValueError("A support box needs finite, ordered lower and upper corners.")
+        raise ValueError(
+            "tensor_box_support.bounds must contain finite ordered lower and upper corners; got invalid box bounds"
+        )
     limit = float(tolerance)
     if not isfinite(limit) or limit < 0.0:
-        raise ValueError("support_tolerance must be finite and non-negative.")
-    if support_geometry is None:
-        return Orthotope(
-            0.5 * (lower_ + upper_), upper_ - lower_, feature_id=feature_id
-        ).compile()
-    if not isinstance(support_geometry, CompiledGeometry):
-        raise TypeError("support_geometry must be a CompiledGeometry or None.")
-    if support_geometry.kind is not GeometryKind.REGION:
-        raise ValueError("support_geometry must be a region geometry.")
-    if support_geometry.ambient_dimension != lower_.size:
-        raise ValueError("support_geometry dimension must equal the box dimension.")
-    if not support_geometry.has_capability(GeometryCapability.INTERIOR_MEASURE):
         raise ValueError(
-            "An explicit support_geometry needs an interior measure to evidence "
-            "that it is the reconstruction's tensor box."
+            "tensor_box_support.support_tolerance must be finite and nonnegative; got an invalid tolerance"
+        )
+    if support_geometry is None:
+        return imported_geometry.Orthotope(
+            0.5 * (lower_ + upper_), upper_ - lower_, feature_id=feature_id
+        ).compile(coordinate_unit=METER)
+    if support_geometry.kind is not imported_geometry.GeometryKind.REGION:
+        raise ValueError(
+            "tensor_box_support.support_geometry must be a region geometry; got another geometry kind"
+        )
+    if support_geometry.ambient_dimension != lower_.size:
+        raise ValueError(
+            "tensor_box_support.support_geometry.dimension must equal the box dimension; got a different ambient dimension"
+        )
+    if not support_geometry.has_capability(
+        imported_geometry.GeometryCapability.INTERIOR_MEASURE
+    ):
+        raise ValueError(
+            "tensor_box_support.support_geometry.interior_measure must evidence the tensor box; got no interior measure"
         )
     box = np.stack((lower_, upper_))
     bounds = np.asarray(support_geometry.bounds, dtype=np.float64)
     scale = max(1.0, float(np.max(np.abs(box))))
     if bounds.shape != box.shape or np.max(np.abs(bounds - box)) > limit * scale:
-        raise ValueError("support_geometry bounds differ from the reconstruction box.")
+        raise ValueError(
+            "tensor_box_support.support_geometry.bounds must match the reconstruction box; got different bounds"
+        )
     box_measure = float(np.prod(upper_ - lower_))
     measure = float(np.asarray(support_geometry.measure))
     if abs(measure - box_measure) > limit * max(1.0, box_measure):
         raise ValueError(
-            "support_geometry measure differs from the reconstruction box; the "
-            "geometry is not the tensor box the reconstruction covers."
+            "tensor_box_support.support_geometry.interior_measure must match the reconstruction box; got a different measure"
         )
     return support_geometry
 

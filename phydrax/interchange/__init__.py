@@ -4,33 +4,18 @@
 
 """Generic external-representation interchange contracts."""
 
-from importlib import import_module
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from .. import _external_runtime as external_runtime
 from .._deferred_exports import deferred_exports
 from .._external_runtime import __all__ as _external_runtime_all
 
 
-def _facade_getattr(name: str) -> Any:
-    if name in ("cosmology", "hep"):
-        # Cosmology interchange depends on application products; both load on use.
-        value = import_module(f".{name}", __name__)
-    elif name in _external_runtime_all:
-        value = external_runtime.__dict__[name]
-    else:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    globals()[name] = value
-    return value
-
-
-def _facade_dir() -> list[str]:
-    return sorted(set(globals()) | {"cosmology", "hep"} | set(_external_runtime_all))
-
-
 # Re-exports load on first use, so importing one owner never imports the
-# whole package and its import cycles.
+# whole package and its import cycles. Explicit entries follow the external
+# runtime names, so an explicit owner takes precedence.
 _DEFERRED_EXPORTS = {
+    **dict.fromkeys(_external_runtime_all, ".._external_runtime"),
     "decode_json_resource": ".._document_resource",
     "decode_text_resource": ".._document_resource",
     "decode_xml_resource": ".._document_resource",
@@ -90,16 +75,21 @@ _DEFERRED_EXPORTS = {
     "BoreholeTrajectory": "._borehole",
     "PreparedBoreholeSampling": "._borehole",
     "approximate_intersection_curve": "._cad",
+    "build_cad_import_tolerance_evidence": "._cad",
+    "CadCodecInvariantError": "._cad",
     "CadCoverage": "._cad",
     "CadCurveApproximation": "._cad",
     "CadCurveFitPolicy": "._cad",
     "CadExportPolicy": "._cad",
     "CadExportResult": "._cad",
+    "CadExportTolerances": "._cad",
     "CadImportPolicy": "._cad",
     "CadImportResult": "._cad",
+    "CadImportToleranceEvidence": "._cad",
     "CadInterchangeError": "._cad",
     "CadRefusal": "._cad",
     "CadRefusalReason": "._cad",
+    "certified_cad_export_tolerances": "._cad",
     "BRepArchiveReceipt": "._cad_archive",
     "load_brep_archive": "._cad_archive",
     "save_brep_archive": "._cad_archive",
@@ -127,6 +117,14 @@ _DEFERRED_EXPORTS = {
     "CoordinateTransformResult": "._coordinate_transform",
     "execute_coordinate_transform": "._coordinate_transform",
     "GeodeticDependencyError": "._coordinate_transform",
+    "decode_dxf_bytes": "._dxf",
+    "DxfExportResult": "._dxf",
+    "DxfImportError": "._dxf",
+    "DxfImportPolicy": "._dxf",
+    "DxfImportResult": "._dxf",
+    "encode_dxf": "._dxf",
+    "read_dxf": "._dxf",
+    "write_dxf": "._dxf",
     "ElectricalTabularSurvey": "._electrical_formats",
     "read_electrical_survey_csv": "._electrical_formats",
     "MTImpedanceData": "._em_formats",
@@ -242,6 +240,13 @@ _DEFERRED_EXPORTS = {
     "STEP_ENTITY_COVERAGE": "._step",
     "StepSchema": "._step",
     "write_step": "._step",
+    "select_step_entities": "._step_metadata",
+    "StepEntityLabels": "._step_metadata",
+    "StepEntityMetadata": "._step_metadata",
+    "StepMetadataConflict": "._step_metadata",
+    "StepMetadataKind": "._step_metadata",
+    "StepSelectionFamily": "._step_metadata",
+    "StepRepairPolicy": "._step_repair",
     "convert_time": "._time_reference",
     "LeapSecondTable": "._time_reference",
     "TimeReferenceContract": "._time_reference",
@@ -258,6 +263,9 @@ _DEFERRED_EXPORTS = {
     "QualifiedWellLog": "._well_formats",
     "read_las_curve": "._well_formats",
     "WellFormatDependencyError": "._well_formats",
+    # Cosmology and HEP interchange depend on application products; both load on use.
+    "cosmology": "module:.cosmology",
+    "hep": "module:.hep",
     "dafoam": "module:.dafoam",
     "fmi": "module:.fmi",
     "geant4_detector_design": "module:.geant4_detector_design",
@@ -268,9 +276,7 @@ _DEFERRED_EXPORTS = {
 }
 
 
-__getattr__, __dir__ = deferred_exports(
-    __name__, globals(), _DEFERRED_EXPORTS, fallback=_facade_getattr, listing=_facade_dir
-)
+__getattr__, __dir__ = deferred_exports(__name__, globals(), _DEFERRED_EXPORTS)
 
 
 if TYPE_CHECKING:
@@ -356,16 +362,21 @@ if TYPE_CHECKING:
     from ._borehole import BoreholeInterval, BoreholeTrajectory, PreparedBoreholeSampling
     from ._cad import (
         approximate_intersection_curve,
+        build_cad_import_tolerance_evidence,
+        CadCodecInvariantError,
         CadCoverage,
         CadCurveApproximation,
         CadCurveFitPolicy,
         CadExportPolicy,
         CadExportResult,
+        CadExportTolerances,
         CadImportPolicy,
         CadImportResult,
+        CadImportToleranceEvidence,
         CadInterchangeError,
         CadRefusal,
         CadRefusalReason,
+        certified_cad_export_tolerances,
     )
     from ._cad_archive import BRepArchiveReceipt, load_brep_archive, save_brep_archive
     from ._cad_brep_text import (
@@ -400,6 +411,16 @@ if TYPE_CHECKING:
         CoordinateTransformResult,
         execute_coordinate_transform,
         GeodeticDependencyError,
+    )
+    from ._dxf import (
+        decode_dxf_bytes,
+        DxfExportResult,
+        DxfImportError,
+        DxfImportPolicy,
+        DxfImportResult,
+        encode_dxf,
+        read_dxf,
+        write_dxf,
     )
     from ._electrical_formats import ElectricalTabularSurvey, read_electrical_survey_csv
     from ._em_formats import MTImpedanceData, read_edi_impedance, read_emtf_xml_impedance
@@ -541,6 +562,15 @@ if TYPE_CHECKING:
         StepSchema,
         write_step,
     )
+    from ._step_metadata import (
+        select_step_entities,
+        StepEntityLabels,
+        StepEntityMetadata,
+        StepMetadataConflict,
+        StepMetadataKind,
+        StepSelectionFamily,
+    )
+    from ._step_repair import StepRepairPolicy
     from ._time_reference import (
         convert_time,
         LeapSecondTable,
@@ -588,17 +618,22 @@ __all__ = [
     "BoundedResourceSet",
     "BRepArchiveReceipt",
     "BRepTextVersion",
+    "build_cad_import_tolerance_evidence",
+    "CadCodecInvariantError",
     "CadCoverage",
     "CadCurveApproximation",
     "CadCurveFitPolicy",
     "CadExportPolicy",
     "CadExportResult",
+    "CadExportTolerances",
     "CadImportPolicy",
     "CadImportResult",
+    "CadImportToleranceEvidence",
     "CadInterchangeError",
     "CadRefusal",
     "CadRefusalReason",
     "CarrierKind",
+    "certified_cad_export_tolerances",
     "compose_adapter_reports",
     "CompressibleKineticCaseIR",
     "convert_openpmd_hdf5_to_adios2",
@@ -608,6 +643,7 @@ __all__ = [
     "dafoam",
     "decode_brep_text_bytes",
     "decode_brep_text_resource",
+    "decode_dxf_bytes",
     "decode_iges_bytes",
     "decode_iges_resource",
     "decode_json_resource",
@@ -629,7 +665,12 @@ __all__ = [
     "DecodedSEGY",
     "DecodedText",
     "DecodedXML",
+    "DxfExportResult",
+    "DxfImportError",
+    "DxfImportPolicy",
+    "DxfImportResult",
     "ElectricalTabularSurvey",
+    "encode_dxf",
     "execute_coordinate_transform",
     "export_geospatial_grid",
     "external_runtime",
@@ -739,6 +780,7 @@ __all__ = [
     "read_cf_netcdf_grid",
     "read_compressible_kinetic_yaml",
     "read_consolidated_zip_zarr_grid",
+    "read_dxf",
     "read_edi_impedance",
     "read_electrical_survey_csv",
     "read_emtf_xml_impedance",
@@ -780,16 +822,24 @@ __all__ = [
     "SEGYRev1IEEEProfile",
     "SEGYRev2IEEEProfile",
     "SeismicFormatDependencyError",
+    "select_step_entities",
     "SINEXPositionSolution",
     "StationChannelMetadata",
     "StationXMLMetadata",
     "STEP_ENTITY_COVERAGE",
+    "StepEntityLabels",
+    "StepEntityMetadata",
+    "StepMetadataConflict",
+    "StepMetadataKind",
+    "StepRepairPolicy",
     "StepSchema",
+    "StepSelectionFamily",
     "TimeReferenceContract",
     "TimeScale",
     "TimeTransform",
     "WellFormatDependencyError",
     "write_brep_text",
+    "write_dxf",
     "write_iges",
     "write_openpmd_laser_envelope_hdf5",
     "write_openpmd_meshes_hdf5",

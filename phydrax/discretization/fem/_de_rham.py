@@ -13,6 +13,9 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
+from phydrax.discretization.fem._reference_rules import degree_aware_reference_rule
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...ein import contract
 from ...exterior._algebra import map_reference_values, pullback, vector_to_form
@@ -35,6 +38,7 @@ from ...linalg._complexes import (
 )
 from ...sparse import EdgeRelation, SparseCoordinateOperator
 from ...typing import checked, parse
+from .. import _mapped_locator as imported_mapped_locator
 from .._cell_de_rham import AbstractCellDeRhamComplex
 from .._cell_geometry import CellGeometrySpec
 from .._cell_mesh import CellMesh
@@ -42,12 +46,12 @@ from .._cochain_hodge import SparseHodge
 from .._side_actions import SideTraceProvider
 from .._topology import CellComplexTopology
 from .._views import PreparedFieldReconstruction
+from . import _assembly as imported_assembly
+from ._assembly import linear_reference_element, local_mass_tensor
 from ._cell_map import PreparedFiniteElementCellMap
-from ._form_elements import form_element, FormBasis, FormElementFamily
+from ._form_basis_types import AbstractReferenceFormBasis, FormElementFamily
+from ._form_elements import form_element
 from ._generic import (
-    _degree_aware_reference_rule,
-    _linear_reference_element,
-    _local_mass_tensor,
     FiniteElementBlockGeometry,
     FiniteElementDiscretization,
     FiniteElementDofMap,
@@ -55,7 +59,6 @@ from ._generic import (
     FiniteElementPlan,
 )
 from ._point_interpolation import prepare_finite_element_field_reconstruction
-from ._reference import FiniteElementSpec
 
 
 def _moment_rule(
@@ -63,7 +66,9 @@ def _moment_rule(
 ) -> tuple[Array, Array]:
     basis = element.form_basis
     if basis is None:
-        raise ValueError("Moment quadrature requires canonical form-basis metadata.")
+        raise ValueError(
+            "moment_rule.configuration must provide declared form-basis metadata; got Moment quadrature requires declared form-basis metadata."
+        )
     points, weights = [], []
     for dimension, faces in enumerate(basis.entity_vertices):
         for face, dofs in zip(faces, element.entity_dofs[dimension], strict=True):
@@ -85,7 +90,7 @@ def _moment_rule(
                         + max(sum(alpha) for alpha in factors.body_test_exponents)
                         + 2,
                     )
-                sites, cubature = _degree_aware_reference_rule(kind, degree)
+                sites, cubature = degree_aware_reference_rule(kind, degree)
             reference, functional = basis.functional_weights_at(face, sites, cubature)
             points.append(reference)
             weights.append(functional)
@@ -130,15 +135,19 @@ def _invert_known_cell(
         > 1e-10
     ):
         raise ValueError(
-            "The declared refinement parent does not invert the child coordinates."
+            "invert_known_cell.coordinates must invert the child coordinates; got The declared refinement parent does not invert the child coordinates."
         )
     return reference
 
 
 def _require_array_space(space: AbstractVectorSpace, /) -> ArraySpace:
-    if not isinstance(space, ArraySpace):
-        raise TypeError("Finite-element moments require an array coefficient space.")
-    return space
+    match space:
+        case ArraySpace():
+            return space
+        case _:
+            raise TypeError(
+                "require_array_space.space must provide an array coefficient space; got Finite-element moments require an array coefficient space."
+            )
 
 
 def _sparse_operator(
@@ -190,7 +199,7 @@ def _metric_hodge(
         discretization.block_geometries[degree],
         strict=True,
     ):
-        local = _local_mass_tensor(geometry)
+        local = local_mass_tensor(geometry)
         local = contract("cai,cab,cbj->cij", transform, local, transform)
         indices = np.asarray(routes)
         first = np.broadcast_to(indices[:, :, None], local.shape)
@@ -235,7 +244,7 @@ def _local_derivatives(
         first_basis, second_basis = first.form_basis, second.form_basis
         if first_basis is None or second_basis is None:
             raise ValueError(
-                "An FE de Rham differential requires canonical polynomial forms."
+                "local_derivatives.configuration must provide declared polynomial forms; got An FE de Rham differential requires declared polynomial forms."
             )
         reference = np.asarray(first_basis.exterior_derivative_matrix(second_basis))
         for cell in range(block.cell_count):
@@ -367,7 +376,9 @@ def _boundary_entity_closure(
         or selected.shape != facet_boundary.shape
         or np.any(selected & ~facet_boundary)
     ):
-        raise ValueError("boundary_mask must select topological boundary facets.")
+        raise ValueError(
+            "boundary_entity_closure.boundary_mask must select topological boundary facets; got boundary_mask must select topological boundary facets."
+        )
     closure = [
         np.zeros((entities.count,), dtype=np.bool_) for entities in topology.entity_sets
     ]
@@ -383,7 +394,7 @@ def _boundary_entity_closure(
 
 
 def _record_boundary_cell(
-    basis: FormBasis,
+    basis: AbstractReferenceFormBasis,
     entity_dofs: tuple[tuple[tuple[int, ...], ...], ...],
     cell_vertices: np.ndarray,
     cell_dofs: Array,
@@ -414,10 +425,9 @@ def _boundary_moment_selection(
     counts: tuple[int, ...],
     /,
 ) -> tuple[tuple[tuple[int, ...], ...], list[np.ndarray]]:
-    from ._generic import _topology_vertex_sets
 
     mesh = discretization.mesh
-    vertices = _topology_vertex_sets(mesh)
+    vertices = imported_assembly.topology_vertex_sets(mesh)
     lookups = tuple({face: i for i, face in enumerate(level)} for level in vertices)
     masks = [np.zeros((count,), dtype=np.bool_) for count in counts]
     orientation = [np.ones((count,), dtype=np.float64) for count in counts]
@@ -435,7 +445,9 @@ def _boundary_moment_selection(
         ):
             basis = element.form_basis
             if basis is None:
-                raise ValueError("FE trace requires canonical entity functionals.")
+                raise ValueError(
+                    "boundary_moment_selection.configuration must provide declared entity functionals; got FE trace requires declared entity functionals."
+                )
             for cell, cell_vertices in enumerate(np.asarray(block.vertices)):
                 _record_boundary_cell(
                     basis,
@@ -481,10 +493,14 @@ def _oriented_boundary_complex(
     derivatives = []
     for degree, derivative in enumerate(restricted.differentials[:-1]):
         if not isinstance(derivative, SparseCoordinateOperator):
-            raise TypeError("FE boundary derivatives must be sparse coordinate maps.")
+            raise TypeError(
+                "oriented_boundary_complex.configuration must be sparse coordinate maps; got FE boundary derivatives must be sparse coordinate maps."
+            )
         relation = derivative.relation
         if not isinstance(relation, EdgeRelation):
-            raise TypeError("FE boundary differentials require explicit edge relations.")
+            raise TypeError(
+                "oriented_boundary_complex.configuration must provide explicit edge relations; got FE boundary differentials require explicit edge relations."
+            )
         data = (
             derivative.coefficients
             * signs[degree + 1][relation.target_indices]
@@ -511,7 +527,7 @@ def _constitutive_admission(
     allowed = ((), (cells,), (components, components), (cells, components, components))
     if data.shape not in allowed:
         raise ValueError(
-            "Constitutive coefficient must be scalar, cell scalar, tensor, or cell tensor."
+            "constitutive_admission.configuration must be scalar, cell scalar, tensor, or cell tensor; got Constitutive coefficient must be scalar, cell scalar, tensor, or cell tensor."
         )
     properties = OperatorProperties()
     if not jnp.issubdtype(data.dtype, jnp.complexfloating):
@@ -598,7 +614,7 @@ def _constitutive_entries(
 
 @final
 class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
-    """Exact conforming polynomial forms with metric-only quadrature Riesz maps.
+    """algebraic conforming polynomial forms with metric-only quadrature Riesz maps.
 
     Trimmed and tensor-trimmed sequences use ``order`` in every degree.
     Full sequences use polynomial order ``order + dimension - degree``:
@@ -638,10 +654,9 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         minimum_order = 0 if selected == "full" else 1
         if isinstance(order, bool) or not isinstance(order, int) or order < minimum_order:
             raise ValueError(
-                f"FE complex order must be an integer at least {minimum_order} for {selected!r}."
+                f"FiniteElementDeRhamComplex.order must be an integer at least the declared value for the declared value; got FE complex order must be an integer at least {minimum_order} for {selected!r}."
             )
-        if hodge_solve is not None and not isinstance(hodge_solve, LinearSolvePolicy):
-            raise TypeError("hodge_solve must be an owning LinearSolvePolicy or None.")
+
         dimension = mesh.topological_dimension
         fields = _complex_fields(mesh, selected, order, twist_)
         discretization = FiniteElementDiscretization(
@@ -721,12 +736,12 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         for degree, differential in enumerate(complex.differentials):
             if not isinstance(differential, SparseCoordinateOperator):
                 raise TypeError(
-                    "FE restriction requires sparse coordinate differentials."
+                    "FiniteElementDeRhamComplex._restricted_complex.configuration must provide sparse coordinate differentials; got FE restriction requires sparse coordinate differentials."
                 )
             relation = differential.relation
             if not isinstance(relation, EdgeRelation):
                 raise TypeError(
-                    "FE polynomial differentials require explicit edge relations."
+                    "FiniteElementDeRhamComplex._restricted_complex.configuration must provide explicit edge relations; got FE polynomial differentials require explicit edge relations."
                 )
             row_lookup = np.full((complex.space(degree + 1).size,), -1, dtype=np.int32)
             col_lookup = np.full((complex.space(degree).size,), -1, dtype=np.int32)
@@ -773,7 +788,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         count = self._absolute.space(degree).size
         if value.shape != (count,):
             raise ValueError(
-                f"Form coefficients require shape {(count,)}; got {value.shape}."
+                f"FiniteElementDeRhamComplex._values.configuration must provide shape the declared value; got the declared value; got Form coefficients require shape {(count,)}; got {value.shape}."
             )
         if not jnp.issubdtype(value.dtype, jnp.inexact):
             value = value.astype(jnp.float64)
@@ -801,7 +816,9 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         boundary = parse(boundary, ComplexBoundary, "boundary")
         complex_ = self.hilbert_complex(boundary=boundary)
         if degree >= self.dimension:
-            raise ValueError("Exterior derivative degree must be below dimension.")
+            raise ValueError(
+                "FiniteElementDeRhamComplex.exterior_derivative.degree must be below dimension; got Exterior derivative degree must be below dimension."
+            )
         active = self._compact(degree, value, boundary)
         output = apply_real_map_componentwise(complex_.differential(degree).mv, active)
         return self._extend(degree + 1, output, boundary)
@@ -814,7 +831,9 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         boundary = parse(boundary, ComplexBoundary, "boundary")
         complex_ = self.hilbert_complex(boundary=boundary)
         if degree <= 0:
-            raise ValueError("Codifferential degree must be positive.")
+            raise ValueError(
+                "FiniteElementDeRhamComplex.codifferential.degree must be positive; got Codifferential degree must be positive."
+            )
         active = self._compact(degree, value, boundary)
         weighted = apply_real_map_componentwise(complex_.space(degree).riesz, active)
         transposed = apply_real_map_componentwise(
@@ -861,7 +880,9 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
     ) -> DiscreteForm:
         form_type = self.form_type(degree)
         if not callable(form):
-            raise TypeError("form must evaluate canonical physical form components.")
+            raise TypeError(
+                "FiniteElementDeRhamComplex.interpolant.form must evaluate declared physical form components; got form must evaluate declared physical form components."
+            )
         dofs = self.discretization.dof_maps[degree]
         result = jnp.zeros(
             (dofs.global_dof_count,),
@@ -871,7 +892,9 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         for block_index, element in enumerate(self.discretization.elements[degree]):
             basis = element.form_basis
             if basis is None:
-                raise ValueError("Interpolation requires canonical form functionals.")
+                raise ValueError(
+                    "FiniteElementDeRhamComplex.interpolant.form must provide declared form functionals; got Interpolation requires declared form functionals."
+                )
             cell_map = PreparedFiniteElementCellMap(self.discretization, block_index)
             for cell in range(cell_map.cell_count):
                 points = basis.functional_points
@@ -883,7 +906,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                 expected = (points.shape[0], form_type.component_count)
                 if values.shape != expected:
                     raise ValueError(
-                        f"Form interpolation requires canonical component shape {expected}."
+                        f"FiniteElementDeRhamComplex.interpolant.configuration must provide declared component shape the declared value; got Form interpolation requires declared component shape {expected}."
                     )
                 reference = pullback(values, form_type, geometry.jacobian)
                 local = basis.interpolate(reference)
@@ -929,7 +952,9 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         keep = (lookup[row] >= 0) & (lookup[column] >= 0)
         space = coordinate_space(self.hilbert_complex(boundary=boundary).space(degree))
         if not isinstance(space, ArraySpace):
-            raise TypeError("FE coordinate spaces must be array spaces.")
+            raise TypeError(
+                "FiniteElementDeRhamComplex.constitutive_operator.configuration must be array spaces; got FE coordinate spaces must be array spaces."
+            )
         promoted = jnp.result_type(space.dtype, data.dtype)
         if promoted != space.dtype:
             space = ArraySpace(
@@ -994,7 +1019,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
     def vector_interpolation(
         self, degree: int, /, *, boundary: ComplexBoundary = "absolute"
     ) -> AbstractLinearOperator:
-        """Canonical moments of a physical piecewise linear nodal field."""
+        """declared moments of a physical piecewise linear nodal field."""
         self.form_type(degree)
         boundary = parse(boundary, ComplexBoundary, "boundary")
         components = prod(self.discretization.elements[degree][0].value_shape) or 1
@@ -1012,7 +1037,9 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         )
         target = self.hilbert_complex(boundary=boundary).space(degree)
         if not isinstance(target, ArraySpace):
-            raise TypeError("FE vector interpolation requires array coefficient spaces.")
+            raise TypeError(
+                "FiniteElementDeRhamComplex.vector_interpolation.configuration must provide array coefficient spaces; got FE vector interpolation requires array coefficient spaces."
+            )
         vertex_lookup = np.full((vertices,), -1, dtype=np.int32)
         vertex_lookup[selected] = np.arange(selected.size, dtype=np.int32)
         active = np.asarray(self.active_indices(degree, boundary=boundary))
@@ -1026,9 +1053,11 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         ):
             basis = element.form_basis
             if basis is None:
-                raise ValueError("Vector interpolation requires form functionals.")
+                raise ValueError(
+                    "FiniteElementDeRhamComplex.vector_interpolation.configuration must provide form functionals; got Vector interpolation requires form functionals."
+                )
             points = basis.functional_points
-            nodal = _linear_reference_element(block.cell_kind).tabulate(points)[0]
+            nodal = linear_reference_element(block.cell_kind).tabulate(points)[0]
             cell_map = PreparedFiniteElementCellMap(self.discretization, block_index)
             for cell, cell_vertices in enumerate(np.asarray(block.vertices)):
                 geometry = cell_map.evaluate(
@@ -1087,7 +1116,9 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         this map does not claim a nonoverlap or whole-domain coverage certificate.
         """
         if target.dimension != self.dimension or target.primal_twist != self.primal_twist:
-            raise ValueError("FE transfer requires the same dimension and twist.")
+            raise ValueError(
+                "FiniteElementDeRhamComplex.transfer.configuration must provide the same dimension and twist; got FE transfer requires the same dimension and twist."
+            )
         parents = None if parent_cells is None else np.asarray(parent_cells)
         if parents is None and (
             target.mesh.mesh_id != self.mesh.mesh_id
@@ -1097,7 +1128,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             != array_tree_fingerprint(self.discretization.default_runtime.coordinates)
         ):
             raise ValueError(
-                "Distinct meshes or coordinate maps require an explicit nested parent_cells relation."
+                "FiniteElementDeRhamComplex.transfer.parent_cells must provide an explicit nested parent_cells relation; got Distinct meshes or coordinate maps require an explicit nested parent_cells relation."
             )
         if parents is not None:
             shape = (sum(block.cell_count for block in target.mesh.blocks),)
@@ -1108,7 +1139,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                 or np.any((parents < 0) | (parents >= count))
             ):
                 raise ValueError(
-                    "parent_cells must assign each target child one valid source cell."
+                    "FiniteElementDeRhamComplex.transfer.target must assign each target child one valid source cell; got parent_cells must assign each target child one valid source cell."
                 )
             self._admit_nested_parents(target, parents)
         maps = tuple(
@@ -1134,12 +1165,12 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         target_offset = 0
         for block_index, block in enumerate(target.mesh.blocks):
             target_map = PreparedFiniteElementCellMap(target.discretization, block_index)
-            refinement_element = _linear_reference_element(block.cell_kind)
+            refinement_element = linear_reference_element(block.cell_kind)
             geometry_degree = max(
                 target_map.coordinate_element.degree,
                 *(cell_map.coordinate_element.degree for cell_map in maps),
             )
-            probe, _ = _degree_aware_reference_rule(
+            probe, _ = degree_aware_reference_rule(
                 block.cell_kind, max(self.dimension + 1, 2 * geometry_degree)
             )
             reference = jnp.concatenate(
@@ -1160,21 +1191,23 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                     source_cell,
                     geometry.physical_points,
                 )
-                from .._mapped_locator import reference_margin
 
                 kind = maps[source_block].coordinate_element.cell_kind
                 inside = np.all(
-                    np.asarray(reference_margin(kind, source_reference)) >= -1e-10
+                    np.asarray(
+                        imported_mapped_locator.reference_margin(kind, source_reference)
+                    )
+                    >= -1e-10
                 )
                 if not inside:
                     raise ValueError(
-                        "A target child is not contained in its declared source parent."
+                        "FiniteElementDeRhamComplex._admit_nested_parents.target must lie within the declared reference support; got A target child is not contained in its declared source parent."
                     )
                 corners = source_reference[: refinement_element.local_dof_count]
                 represented = refinement_element.tabulate(reference)[0] @ corners
                 if np.max(np.abs(np.asarray(represented - source_reference))) > 1e-10:
                     raise ValueError(
-                        "The parent relation is not a native reference-cell refinement."
+                        "FiniteElementDeRhamComplex._admit_nested_parents.configuration must be a reference-cell refinement; got The parent relation is not a native reference-cell refinement."
                     )
             target_offset += block.cell_count
 
@@ -1215,7 +1248,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                     ].form_basis
                     if source_basis is None:
                         raise ValueError(
-                            "FE transfer requires canonical source basis metadata."
+                            "FiniteElementDeRhamComplex._transfer_degree.configuration must provide declared source basis metadata; got FE transfer requires declared source basis metadata."
                         )
                     reference = source_basis.tabulate_components(points)[0]
                 else:

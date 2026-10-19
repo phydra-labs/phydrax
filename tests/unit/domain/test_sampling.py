@@ -27,7 +27,7 @@ def test_sampling_scenario_1() -> None:
     first = factory(4)
 
     assert first.shape == (4, 3)
-    with pytest.raises(ValueError, match="count-dependent"):
+    with pytest.raises(ValueError, match=r"host_design_factory\.materialized"):
         factory(4)
     sample = host_design_factory("hammersley", dimension=2, seed=0)(8)
     expected = (np.arange(1, 9) - 0.5) / 8.0
@@ -149,7 +149,7 @@ def test_sampling_scenario_2() -> None:
     assert phx.sampling.design_signature(design) == "sobol"
     assert empty.shape == (0, 3)
 
-    with pytest.raises(ValueError, match="start index"):
+    with pytest.raises(ValueError, match=r"materialize_design\.start"):
         phx.sampling.materialize_design(
             phx.sampling.LatinHypercubeDesign(),
             count=4,

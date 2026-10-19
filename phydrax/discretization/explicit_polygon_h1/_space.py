@@ -442,13 +442,13 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
             raise ValueError("numeric_version must be non-empty.")
         return self._runtime(coordinates, version)
 
-    def _field_index(self, name: str, /) -> int:
+    def field_index(self, name: str, /) -> int:
         if str(name) != self.field.name:
             raise KeyError(f"Unknown explicit polygon field {name!r}.")
         return 0
 
     def local_field_binding(self, name: str, /) -> LocalFieldBinding:
-        self._field_index(name)
+        self.field_index(name)
         return self.binding
 
     def local_variational_capabilities(self, /) -> LocalVariationalCapabilities:
@@ -517,7 +517,7 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
         for this scalar-basis H1 field; `side="neighbor"` requires interior
         facets and `side="average"` is refused (compose both sides instead).
         """
-        self._field_index(field_name)
+        self.field_index(field_name)
         quantity_ = parse(quantity, SideTraceQuantity, "quantity")
         if quantity_ != "value":
             raise ValueError(

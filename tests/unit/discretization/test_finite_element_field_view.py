@@ -24,12 +24,23 @@ from phydrax.discretization.fem import (
     prepare_finite_element_point_interpolation,
     PreparedFiniteElementCellMap,
 )
+from phydrax.units import METER
 
 
 pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 _SQUARE = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
 _DIAGONAL_CELLS = ((0, 1, 2), (0, 2, 3))
+
+
+# Empirical `test_embedded_triangle_field_preserves_physical_chart_and_transpose`: matched max |delta|=8.88178e-16; joint allowance fraction=1.85037e-09, margin=100%.
+_EMBEDDED_LINEAR_FIELD_VALUES_ATOL = 1e-12
+# Empirical `test_embedded_triangle_field_preserves_physical_chart_and_transpose`: matched max |delta|=8.88178e-16; joint allowance fraction=2.61228e-09, margin=100%.
+_EMBEDDED_FIELD_DUAL_PAIRING_ATOL = 1e-12
+# Empirical `test_embedded_triangle_field_preserves_physical_chart_and_transpose`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_EMBEDDED_FUNCTION_VIEW_VALUES_ATOL = 1e-12
+# Empirical `test_embedded_triangle_field_preserves_physical_chart_and_transpose`: matched max |delta|=4.44089e-16; joint allowance fraction=4.99593e-09, margin=100%.
+_EMBEDDED_TANGENT_GRADIENT_ATOL = 1e-12
 
 
 def _discretization(
@@ -113,7 +124,7 @@ def test_finite_element_field_view_scenario_1() -> None:
         atol=1e-11,
     )
     # Native tabulation provides first derivatives only; second orders refuse.
-    with pytest.raises(ValueError, match="maximum_derivative_order=1"):
+    with pytest.raises(ValueError, match=r"maximum_derivative_order.*above 1"):
         phx.operators.partial_n(field, var="x", axis=0, order=2)
     reconstruction, coefficients, view = _kinked()
     gradient = phx.operators.grad(view.as_domain_function(), var="x")
@@ -154,7 +165,7 @@ def test_finite_element_field_view_scenario_2() -> None:
     _, _, view = _kinked()
     facet = jnp.asarray(((0.5, 0.5),))
 
-    with pytest.raises(ValueError, match="require explicit cell_ids"):
+    with pytest.raises(ValueError, match=r"bind_side\.cell_ids"):
         view.trace(facet, side="owner")
     with pytest.raises(ValueError, match="containing each trace site"):
         view.trace(jnp.asarray(((0.7, 0.2),)), side="owner", cell_ids=jnp.asarray((1,)))
@@ -193,7 +204,7 @@ def test_finite_element_field_view_scenario_2() -> None:
 
 def test_finite_element_field_view_scenario_3() -> None:
     reconstruction, coefficients, _ = _kinked()
-    square = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile()
+    square = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile(coordinate_unit=METER)
 
     with pytest.raises(TypeError, match="GeometryDomain"):
         DiscreteFieldFunctionView(
@@ -203,7 +214,9 @@ def test_finite_element_field_view_scenario_3() -> None:
             phx.domain.Interval1d(0.0, 1.0),
             variable="x",
         )
-    with pytest.raises(ValueError, match="not equivalent"):
+    with pytest.raises(
+        ValueError, match=r"DiscreteFieldFunctionView\.domain.*equivalent"
+    ):
         DiscreteFieldFunctionView(
             reconstruction,
             coefficients,
@@ -220,11 +233,13 @@ def test_finite_element_field_view_scenario_3() -> None:
     np.testing.assert_allclose(
         view.as_domain_function().func(jnp.asarray((0.7, 0.2))), 0.5
     )
-    with pytest.raises(ValueError, match="does not cover"):
+    with pytest.raises(ValueError, match=r"mesh_support\.support_geometry.*boundary"):
         prepare_finite_element_field_reconstruction(
             _discretization(1),
             "u",
-            support_geometry=phx.geometry.Rectangle((1.0, 0.5), (2.0, 1.0)).compile(),
+            support_geometry=phx.geometry.Rectangle((1.0, 0.5), (2.0, 1.0)).compile(
+                coordinate_unit=METER
+            ),
         )
     quadrilateral = _discretization(1, cell_kind="quadrilateral", cells=((0, 1, 2, 3),))
 
@@ -234,10 +249,21 @@ def test_finite_element_field_view_scenario_3() -> None:
         quadrilateral, "u", "cells", jnp.asarray((0,)), jnp.asarray(((0.25, 0.5),))
     )
     coefficients = _nodal(quadrilateral, lambda x, y: x + 2.0 * y)
-    np.testing.assert_allclose(native.interpolate(coefficients), (1.25,), atol=1e-12)
+    # Q1 partition of unity has four nonnegative terms. For this unit-square
+    # affine inverse and x + 2*y field, 32 eps bounds inverse-map, basis,
+    # coefficient and four-term summation roundoff at field scale three.
+    accuracy_atol = 32 * np.finfo(np.float64).eps * 3.0
+    np.testing.assert_allclose(
+        native.interpolate(coefficients), (1.25,), rtol=0.0, atol=accuracy_atol
+    )
     located = reconstruction.evaluate(coefficients, native.reference_positions)
     assert bool(jnp.all(located.valid))
-    np.testing.assert_allclose(located.values, (1.25,), atol=1e-12)
+    np.testing.assert_allclose(located.values, (1.25,), rtol=0.0, atol=accuracy_atol)
+    physical_points = jnp.asarray(((0.25, 0.5), (0.7, 0.2), (0.1, 0.8)))
+    located = reconstruction.evaluate(coefficients, physical_points)
+    assert bool(jnp.all(located.valid))
+    expected = physical_points[:, 0] + 2.0 * physical_points[:, 1]
+    np.testing.assert_allclose(located.values, expected, rtol=0.0, atol=accuracy_atol)
     dual = jnp.asarray((2.5,))
     assert bool(
         reconstruction.duality_evidence(
@@ -353,7 +379,7 @@ def test_embedded_triangle_field_preserves_physical_chart_and_transpose() -> Non
     np.testing.assert_allclose(
         evaluated.values,
         2.0 + points @ jnp.asarray((1.0, 2.0, 3.0)),
-        atol=1e-12,
+        atol=_EMBEDDED_LINEAR_FIELD_VALUES_ATOL,
     )
     assert bool(jnp.all(evaluated.valid))
     normal = jnp.asarray((-1.0, -2.0, 1.0))
@@ -366,16 +392,18 @@ def test_embedded_triangle_field_preserves_physical_chart_and_transpose() -> Non
     np.testing.assert_allclose(
         jnp.vdot(evaluated.values, cotangent),
         jnp.vdot(coefficients, reconstruction.transpose(points, cotangent)),
-        atol=1e-12,
+        atol=_EMBEDDED_FIELD_DUAL_PAIRING_ATOL,
     )
     function = _view(reconstruction, coefficients).as_domain_function()
     np.testing.assert_allclose(
-        jax.vmap(function.func)(points), evaluated.values, atol=1e-12
+        jax.vmap(function.func)(points),
+        evaluated.values,
+        atol=_EMBEDDED_FUNCTION_VIEW_VALUES_ATOL,
     )
     np.testing.assert_allclose(
         jax.vmap(phx.operators.grad(function, var="x").func)(points),
         jnp.broadcast_to(jnp.asarray((2.0 / 3.0, 4.0 / 3.0, 10.0 / 3.0)), (2, 3)),
-        atol=1e-12,
+        atol=_EMBEDDED_TANGENT_GRADIENT_ATOL,
     )
 
 
@@ -492,17 +520,22 @@ def test_fe_plus_network_requires_compatible_support_units_and_ports() -> None:
     )
     assert (u_fe * 2.0 - 1.0).func(point) == pytest.approx(0.8)
 
-    with pytest.raises(ValueError, match="units"):
+    with pytest.raises(
+        ValueError, match=r"field_composition\.operand\.value_port.*mismatches units"
+    ):
         u_fe + _bound_model(view.domain, _temperature_port(meter))
     unported = view.domain.Model("x", binding=phx.domain.ModelBinding())(
         phx.nn.models.MLP(
             in_size=2, out_size="scalar", width_size=4, depth=1, key=jax.random.key(0)
         )
     )
-    with pytest.raises(ValueError, match="declare a value port"):
+    with pytest.raises(
+        ValueError, match=r"field_composition\.operand\.value_port.*undeclared"
+    ):
         u_fe + unported
     other_support = phx.domain.GeometryDomain(
-        phx.geometry.Rectangle((1.0, 0.5), (2.0, 1.0)).compile(), label="x"
+        phx.geometry.Rectangle((1.0, 0.5), (2.0, 1.0)).compile(coordinate_unit=METER),
+        label="x",
     )
     with pytest.raises(ValueError, match="Label collision"):
         u_fe + _bound_model(other_support, _temperature_port(kelvin))

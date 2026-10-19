@@ -59,7 +59,11 @@ numeric state in its subtree.
 into `(parameters, model_state, fixed)` lanes with `None` holes (terminal nodes
 stay whole in `fixed`); `phx.combine_parameters` restores the tree.
 
-```python executable
+The executable examples in this guide produce no standard output. Their
+assertions check the displayed behavior; unexpected printed output fails the
+documentation example test.
+
+```python {.executable}
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -127,7 +131,7 @@ leaves, MODEL_STATE leaves, and anything below a terminal node are refused.
 that selection, for example one coefficient of a fitted closure while its
 intercept stays bitwise unchanged.
 
-```python executable
+```python {.executable}
 network = phx.nn.models.MLP(
     in_size=2, out_size="scalar", width_size=8, depth=1, key=jr.key(0)
 )
@@ -183,7 +187,7 @@ decides whether a valid physical step survives a training rejection
 Domain fields (`domain.Model(...)`) refuse models that carry MODEL_STATE
 arrays, and `FunctionalSolver` carries the model-state lane unchanged.
 
-```python executable
+```python {.executable}
 def running_center(parameters, model_state, x, key, *, inference):
     del key
     if inference:
@@ -234,7 +238,7 @@ vectorized member evaluation agree. When training is coupled to a plant,
 per-lane parameters need a case or member layout aligned with the plant cases
 and commit lane by lane.
 
-```python executable
+```python {.executable}
 members = tuple(
     Calibrated(jnp.full(3, 1.0 + member), jnp.full(3, float(member)), jnp.zeros(3))
     for member in range(4)
@@ -308,7 +312,7 @@ Construction fails closed when a requirement lacks its evidence: a requirement
 accepting declaration is met by a declared capability, while a safety-critical
 one needs a certificate.
 
-```python executable
+```python {.executable}
 contract = network.model_execution_contract()
 assert contract.execution.tier == "native-jax"
 assert contract.randomness.mode == "deterministic"
@@ -379,7 +383,7 @@ evidence = kappa.port_binding
 # space_time.Model("x", "t")(result.model) raises: an explicit port_mapping is required.
 ```
 
-```python executable
+```python {.executable}
 def scalar_port(semantic_id, representation):
     return phx.ValuePort(
         semantic_id,
@@ -464,7 +468,7 @@ would differentiate a ReLU→linear network is refused when the
 the solver is built with `regularity_policy=phx.RegularityPolicy(allow_almost_everywhere=True)`,
 and its recorded admission carries the almost-everywhere level and condition.
 
-```python executable
+```python {.executable}
 relu_linear = phx.DerivativeRegularity.piecewise_polynomial(continuity=0, degree_bound=1)
 assert relu_linear.admits_order(1)[0] is phx.GradientLevel.ALMOST_EVERYWHERE
 assert relu_linear.admits_order(2)[0] is phx.GradientLevel.NONE
@@ -527,7 +531,7 @@ the policy refuses a residual-defining component that computes in a coarser
 dtype without a declared floor, and refuses a tolerance below the derived floor;
 the floor itself is an achievable tolerance.
 
-```python executable
+```python {.executable}
 class Cubic(phx.AbstractArrayModel):
     precision: phx.ComponentPrecisionContract
     in_size: int = eqx.field(static=True)
@@ -600,7 +604,7 @@ ignored), and the binding declares a fixed realization. An implicit root through
 a frozen realization reproduces its primal and its derivative exactly, and its
 component evidence names the realization.
 
-```python executable
+```python {.executable}
 class Noisy(phx.AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
@@ -691,7 +695,7 @@ result = phx.solver.train_components(
 closure_paths, preconditioner_paths = result.selection
 ```
 
-```python executable
+```python {.executable}
 assert not phx.authority_admits(
     phx.ComponentAuthority.ACCELERATOR,
     phx.DerivativeRoute.IMPLICIT,
@@ -776,7 +780,7 @@ The owner's accepted response does not widen the surrogate's authority. A
 `phx.solver.SolverObjective`, whose implicit solution-map signal the surrogate
 does not admit:
 
-```python executable
+```python {.executable}
 surrogate = phx.bind_component(network, phx.ComponentAuthority.SURROGATE)
 admission = phx.optim.StateDesignComponentAdmission(
     surrogate,
@@ -888,7 +892,7 @@ a solver objective whose trained model does not admit the objective's route is
 refused with the derivative-free consumers named (`train_components` with a
 distribution-evolution optimizer, or `phx.uq.fit_eki`).
 
-```python executable
+```python {.executable}
 semantic = phx.SemanticProvenance({"kind": "guide-doubling-runtime"})
 host = phx.export.HostInferenceAdapter(
     lambda values: [2.0 * values[0]],

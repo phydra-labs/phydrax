@@ -582,15 +582,25 @@ def test_stage_contracts() -> None:
         ("geometry_family_id", "family "),
         ("geometry_layout_id", "layout "),
     ):
-        with pytest.raises(ValueError, match=f"{field} must be a non-empty canonical"):
+        with pytest.raises(
+            ValueError,
+            match=f"{field} must be a non-empty identifier without surrounding whitespace",
+        ):
             _stage_metrics(**{field: value})
 
-        with pytest.raises(ValueError, match="policy_id must be a non-empty canonical"):
+        with pytest.raises(
+            ValueError,
+            match="policy_id must be a non-empty identifier without surrounding whitespace",
+        ):
             _geometry_evidence(policy_id=" policy")
-        with pytest.raises(ValueError, match="block_id must be a non-empty canonical"):
+        with pytest.raises(
+            ValueError,
+            match="block_id must be a non-empty identifier without surrounding whitespace",
+        ):
             _face_block(block_id="face-block ")
         with pytest.raises(
-            ValueError, match="topology_epoch_id must be a non-empty canonical"
+            ValueError,
+            match="topology_epoch_id must be a non-empty identifier without surrounding whitespace",
         ):
             lower_static_unstructured_stage_metrics(
                 _unstructured(),

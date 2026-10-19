@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 class _ZeroNormalGeometry:
@@ -40,7 +41,7 @@ def test_mpm_contact_scenario_1() -> None:
     )
     assert not bool(result.successful)
     assert not bool(result.active_mask[0])
-    geometry = phx.geometry.Circle((0.0, 0.0), 0.5).compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 0.5).compile(coordinate_unit=METER)
     plan = phx.discretization.RigidMPMContactPlan(
         geometry,
         phx.discretization.SharpCoulombMPMFrictionPlan(0.25),
@@ -73,7 +74,7 @@ def test_mpm_contact_scenario_1() -> None:
     mask = jnp.ones(grid.vertices().shape + (2,), dtype="bool")
     boundary = phx.discretization.PrescribedGridVelocityPlan(mask)
     contact = phx.discretization.RigidMPMContactPlan(
-        phx.geometry.Circle((0.0, 0.0), 0.5).compile(),
+        phx.geometry.Circle((0.0, 0.0), 0.5).compile(coordinate_unit=METER),
         phx.discretization.SharpCoulombMPMFrictionPlan(0.0),
         contact_band=0.1,
     )
@@ -98,7 +99,7 @@ def test_mpm_contact_scenario_1() -> None:
 
 
 def test_smooth_rigid_contact_has_finite_geometry_velocity_derivative() -> None:
-    geometry = phx.geometry.Circle((0.0, 0.0), 0.5).compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 0.5).compile(coordinate_unit=METER)
     plan = phx.discretization.RigidMPMContactPlan(
         geometry,
         phx.discretization.SmoothCoulombMPMFrictionPlan(0.3, regularization=1e-3),

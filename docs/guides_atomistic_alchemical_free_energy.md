@@ -58,6 +58,17 @@ synchronously. FEP, BAR, TI, and MBAR return a common `FreeEnergyResult` with fu
 covariance, overlap/connectivity, effective sample sizes, solver evidence, and separate
 numerical and statistical status. Incomplete active MBAR coverage is rejected.
 
+MBAR covariance applies one relative `rank_tolerance` to the spectral scale of
+its full identity-minus-overlap operator. With more samples than states, omitted
+identity directions give the reference scale `max(1, norm(reduced, 2))`; square
+and wide sample-by-state weights retain the reduced operator's own scale.
+The native rank-scale floor preserves that reference without adding a second
+absolute tolerance or changing the matrix or condition estimate. Numerically
+null directions are omitted by the native pseudoinverse;
+this does not repair an indefinite covariance or make disconnected states
+estimable. Disconnected overlap remains an unsuccessful statistical result with
+its connectivity and status evidence intact.
+
 ## Sign conventions
 
 All elementary values use destination minus source.

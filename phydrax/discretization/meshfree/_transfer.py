@@ -15,11 +15,11 @@ If total source and target measure differ, conservation and constant
 reproduction are jointly impossible: summing the conservation equations gives
 ``sum_e m_new[r_e] t_e = sum m_old`` while the target-measure-weighted sum of
 the constant equations gives the same left side equal to ``sum m_new``. That
-obstruction is refused with its explicit witness before any solve. The same
-summation shows that conservation with exact reproduction of ambient
+obstruction is refused with its certificate vector before any solve. The same
+summation shows that conservation with polynomial reproduction of ambient
 polynomials of degree ``k`` requires both quadratures ``(x, m)`` to integrate
 every such polynomial identically. Local support can make an otherwise
-globally feasible problem infeasible as well; a certified provider witness
+globally feasible problem infeasible as well; a provider certificate
 (left-null vector or Farkas ray) is reported separately from an unresolved
 provider failure.
 """
@@ -37,6 +37,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import is_canonical_identifier
 from ...ein import contract
 from ...linalg import (
     ArraySpace,
@@ -67,12 +68,12 @@ from ...optim import (
     ZeroCone,
 )
 from ...sparse import EdgeRelation, RowRelation, SparseCoordinateOperator
-from ...typing import Dim, Float64, Int32, parse
+from ...typing import checked, Dim, Float64, Int32, parse
 from .._gram import diagonal_gram_space
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._topology_epoch import TopologyEpoch, TopologyEpochTransition
 from .._transfer import FieldTransfer, TransferGeometryBinding, TransferProperties
-from ._stencils import _basis_exponents, PreparedLocalStencils
+from ._stencils import polynomial_basis_exponents, PreparedLocalStencils
 
 
 PointTransferRoute: TypeAlias = Literal[
@@ -148,32 +149,39 @@ class PointTransferRequest(StrictModule):
         nonnegative: bool = False,
         objective: PointTransferObjective = "coefficient-change",
     ) -> None:
-        route_ = parse(route, PointTransferRoute, "route")
-        objective_ = parse(objective, PointTransferObjective, "objective")
+        route_ = parse(route, PointTransferRoute, "PointTransferRequest.route")
+        objective_ = parse(
+            objective, PointTransferObjective, "PointTransferRequest.objective"
+        )
         if isinstance(moment_degree, bool) or not isinstance(
             moment_degree, (int, np.integer)
         ):
-            raise TypeError("moment_degree must be an integer.")
+            raise TypeError(
+                f"PointTransferRequest.moment_degree must be an integer; got {moment_degree!r}"
+            )
         if not isinstance(nonnegative, bool):
-            raise TypeError("nonnegative must be bool.")
+            raise TypeError(
+                f"PointTransferRequest.nonnegative must be bool; got {nonnegative!r}"
+            )
         degree = int(moment_degree)
         match route_:
             case "conservative-signed":
                 if nonnegative or degree:
                     raise ValueError(
-                        "conservative-signed declares conservation only; request "
-                        "conservative-positive or joint for further constraints."
+                        f"PointTransferRequest.route must declare conservation only without positivity or moments for conservative-signed; got nonnegative={nonnegative}, degree={degree}"
                     )
                 sign = False
             case "conservative-positive":
                 if degree:
                     raise ValueError(
-                        "conservative-positive declares no moments; request joint."
+                        f"PointTransferRequest.moment_degree must declare no moments for conservative-positive; got {degree}"
                     )
                 sign = True
             case "joint":
                 if degree < 0:
-                    raise ValueError("Joint moment degree must be nonnegative.")
+                    raise ValueError(
+                        f"PointTransferRequest.moment_degree must be nonnegative for joint transfer; got {degree}"
+                    )
                 sign = nonnegative
             case unknown:
                 assert_never(unknown)
@@ -194,12 +202,12 @@ class PointTransferEvidence(StrictModule):
     Residuals are measured on the audited coefficients (the base coefficients
     when the request was refused before a solve): conservation relative to each
     source measure, constant reproduction absolute, and moments in each row's
-    scaled coordinates. ``witness`` lives in the declared equation rows
+    scaled coordinates. The infeasibility vector lives in the declared equation rows
     (conservation rows divided by their source measure, then constant rows, then
     moment rows) and is audited against them independently of the provider.
 
     ``lebesgue_constant`` is ``max_r sum_e |t_e|``, the max-norm amplification
-    of the transfer. A degree-``p`` exact transfer errs on a smooth field by at
+    of the transfer. A degree-``p`` polynomial-reproducing transfer errs on a smooth field by at
     most ``(1 + lebesgue_constant) |f|_{p+1} rho^(p+1) / (p+1)!`` with ``rho`` the
     largest route length, so its order needs a bounded Lebesgue constant. The
     minimum-change solve does not bound it: an ill-conditioned joint system on
@@ -261,8 +269,7 @@ class PreparedPointTransfer(StrictModule):
     def _admitted(self) -> FieldTransfer:
         if self.transfer is None:
             raise ValueError(
-                "Point transfer was refused with status "
-                f"{self.evidence.status.name}; inspect its evidence."
+                f"PreparedPointTransfer.transfer must be admitted before application; got status={self.evidence.status.name}"
             )
         return self.transfer
 
@@ -361,21 +368,24 @@ def _flat_routes(
     coefficients: ArrayLike,
     offsets: ArrayLike | None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, int]:
-    if not isinstance(relation, (EdgeRelation, RowRelation)):
-        raise TypeError("Point transfer needs a native sparse relation.")
-    if isinstance(relation, RowRelation):
-        if relation.case_shape or len(relation.target_shape) != 1:
-            raise ValueError(
-                "Point transfers require one unbatched compact target vector."
-            )
-        target_size = relation.targets_per_case
-        edge = relation.as_edge_relation()
-    else:
-        target_size = relation.target_size
-        edge = relation
+    match relation:
+        case RowRelation():
+            if relation.case_shape or len(relation.target_shape) != 1:
+                raise ValueError(
+                    "PointTransferPlan.relation must have one unbatched compact target vector; got case-batched or nonvector targets"
+                )
+            target_size = relation.targets_per_case
+            edge = relation.as_edge_relation()
+        case EdgeRelation():
+            target_size = relation.target_size
+            edge = relation
+        case unknown:
+            assert_never(unknown)
     base = np.asarray(coefficients, dtype=np.float64)
     if base.shape != relation.route_shape or not np.all(np.isfinite(base)):
-        raise ValueError("Transfer coefficients must be finite and match routes.")
+        raise ValueError(
+            f"PointTransferPlan.coefficients must be finite and match routes; got shape={base.shape}, routes={relation.route_shape}"
+        )
     valid = np.asarray(edge.valid).reshape(-1)
     rows = np.asarray(edge.target_indices).reshape(-1)[valid]
     columns = np.asarray(edge.source_indices).reshape(-1)[valid]
@@ -388,7 +398,7 @@ def _flat_routes(
             or not np.all(np.isfinite(raw.reshape(-1, raw.shape[-1])[valid]))
         ):
             raise ValueError(
-                "Route offsets must be finite (routes..., dimension) source-minus-target."
+                f"PointTransferPlan.offsets must be finite source-minus-target values with shape (routes..., dimension); got shape={raw.shape}, routes={relation.route_shape}"
             )
         shift = raw.reshape(-1, raw.shape[-1])[valid]
     return rows, columns, base.reshape(-1)[valid], shift, target_size
@@ -397,7 +407,9 @@ def _flat_routes(
 def _measure(value: ArrayLike, size: int, name: str) -> np.ndarray:
     array = np.asarray(value, dtype=np.float64)
     if array.shape != (size,) or not np.all(np.isfinite(array) & (array > 0)):
-        raise ValueError(f"{name} must be positive, finite, and match the relation.")
+        raise ValueError(
+            f"PointTransferPlan.{name} must be positive, finite, and match the relation; got shape={array.shape}, expected=({size},)"
+        )
     return array
 
 
@@ -433,6 +445,7 @@ class PointTransferPlan(StrictModule):
     source_id: str = eqx.field(static=True)
     target_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         relation: EdgeRelation | RowRelation,
@@ -452,28 +465,32 @@ class PointTransferPlan(StrictModule):
         lebesgue_bound: float | None = None,
         geometry: TransferGeometryBinding | None = None,
     ) -> None:
-        if not isinstance(request, PointTransferRequest):
-            raise TypeError("request must be a PointTransferRequest.")
         rows, columns, base, shift, target_size = _flat_routes(
             relation, coefficients, offsets
         )
         old = _measure(source_measures, relation.source_size, "source_measures")
         new = _measure(target_measures, target_size, "target_measures")
         if not np.isfinite(tolerance) or tolerance <= 0:
-            raise ValueError("Transfer tolerance must be positive and finite.")
+            raise ValueError(
+                f"PointTransferPlan.tolerance must be positive and finite; got {tolerance}"
+            )
         if any(
-            not isinstance(value, str) or not value.strip() or value != value.strip()
+            not isinstance(value, str) or not is_canonical_identifier(value)
             for value in (source_id, target_id)
         ):
             raise ValueError(
-                "Transfer supports require explicit canonical source_id and target_id."
+                f"PointTransferPlan.support_ids must be nonempty identifiers without surrounding whitespace; got source={source_id!r}, target={target_id!r}"
             )
         if request.moment_degree and shift is None:
-            raise ValueError("Declared moments require route offsets.")
+            raise ValueError(
+                f"PointTransferPlan.offsets must be supplied for declared moments; got None with degree={request.moment_degree}"
+            )
         coordinates = shift
         if frames is not None:
             if shift is None:
-                raise ValueError("Moment frames require route offsets.")
+                raise ValueError(
+                    "PointTransferPlan.offsets must be supplied with moment frames; got None"
+                )
             frame = np.asarray(frames, dtype=np.float64)
             if (
                 frame.ndim != 3
@@ -482,34 +499,28 @@ class PointTransferPlan(StrictModule):
                 or not np.all(np.isfinite(frame))
             ):
                 raise ValueError(
-                    "frames must be finite (targets, intrinsic, ambient) row frames."
+                    f"PointTransferPlan.frames must be finite (targets, intrinsic, ambient) row frames; got shape={frame.shape}, targets={target_size}, ambient={shift.shape[1]}"
                 )
             # One frame per route row: a bounded per-route matvec.
             coordinates = np.sum(frame[rows] * shift[:, None, :], axis=-1)
-        for policy, kind, name in (
-            (linear_policy, LinearSolvePolicy, "linear_policy"),
-            (conic_policy, ConvexSolvePolicy, "conic_policy"),
+        for policy, name in (
+            (linear_policy, "linear_policy"),
+            (conic_policy, "conic_policy"),
         ):
-            if policy is not None and not isinstance(policy, kind):
-                raise TypeError(f"{name} must be a native {kind.__name__}.")
             if policy is not None and policy.failure.mode != "status":
                 raise ValueError(
-                    f"{name} must return status so infeasibility evidence is retained."
+                    f"PointTransferPlan.{name}.failure.mode must return status to retain infeasibility evidence; got {policy.failure.mode!r}"
                 )
         if lebesgue_bound is not None and not (
             np.isfinite(lebesgue_bound) and lebesgue_bound >= 1.0
         ):
             raise ValueError(
-                "lebesgue_bound must be finite and at least one (constant rows force "
-                "row sums of at least one)."
+                f"PointTransferPlan.lebesgue_bound must be finite and at least one; got {lebesgue_bound}"
             )
         if geometry is not None:
-            if not isinstance(geometry, TransferGeometryBinding):
-                raise TypeError("geometry must be a TransferGeometryBinding.")
             if geometry.relation != "topology-correspondence":
                 raise ValueError(
-                    "A point transfer binds only a topology-correspondence between "
-                    "its declared source and target epochs."
+                    f"PointTransferPlan.geometry.relation must be topology-correspondence; got {geometry.relation!r}"
                 )
         self.routes = _Routes(
             jnp.asarray(rows, dtype=jnp.int32),
@@ -663,7 +674,7 @@ class PointTransferPlan(StrictModule):
             )
         if np.max(np.abs(elimination.local_residual), initial=0.0) > self.tolerance:
             # c - C C^+ c lies in null(C^T) and pairs positively with c: a
-            # left-null witness of one target's own constant/moment rows.
+            # left-null certificate for one target's constant/moment rows.
             return _outcome(
                 base,
                 PointTransferStatus.INFEASIBLE,
@@ -673,7 +684,7 @@ class PointTransferPlan(StrictModule):
                 witness_kind="left-null",
             )
         # Rows are equilibrated: scaling equations changes neither the feasible
-        # set nor the minimum-norm point. A left-null witness of the scaled rows
+        # set nor the minimum-norm point. A left-null certificate of the scaled rows
         # maps back as ``y = D y'``.
         norms = np.sqrt(
             np.bincount(
@@ -842,15 +853,14 @@ class PointTransferPlan(StrictModule):
         return _outcome(base, PointTransferStatus.PROVIDER_UNRESOLVED, "conic", status)
 
 
+@checked
 def stencil_routes(
     stencils: PreparedLocalStencils, functional_index: int, /
 ) -> tuple[RowRelation, Array, Array]:
     """Relation, base weights and source-minus-target offsets of stencils."""
-    if not isinstance(stencils, PreparedLocalStencils):
-        raise TypeError("Cross-target preparation requires PreparedLocalStencils.")
     if stencils.report.refused_rows or not 0 <= functional_index < len(stencils.weights):
         raise ValueError(
-            "Cross-target functional index or refused stencil rows are invalid."
+            f"stencil_routes.functional_index must select an admitted stencil functional; got index={functional_index}, refused_rows={stencils.report.refused_rows}"
         )
     return (
         stencils.neighborhood.relation,
@@ -882,7 +892,9 @@ def _system(
         np.maximum.at(scale, rows, np.linalg.norm(coordinates, axis=1))
         scale = np.where(scale > 0, scale, 1.0)
         scaled = coordinates / scale[rows, None]
-        exponents = _basis_exponents(coordinates.shape[1], request.moment_degree)[1:]
+        exponents = polynomial_basis_exponents(
+            coordinates.shape[1], request.moment_degree
+        )[1:]
         offset = old.size + new.size
         for index, exponent in enumerate(exponents):
             route.append(np.arange(count))
@@ -905,6 +917,7 @@ _LOCAL_ROWS_PSEUDOINVERSE = FactorizationPolicy(
     rank=RankPolicy(relative_cutoff=1e-12),
     failure=FailurePolicy("status"),
 )
+
 
 class _Elimination(NamedTuple):
     """Conservation rows on the null space of every target's local rows."""
@@ -953,7 +966,7 @@ def _eliminate_local_rows(
     sources: int,
     targets: int,
 ) -> _Elimination:
-    """Exact elimination of every target's constant and moment rows.
+    """Eliminate every target's constant and moment rows.
 
     The local rows ``C_r`` of target ``r`` touch only its own routes, so with
     the native batched pseudoinverse ``z_C = C^+ c`` is the minimum-norm local
@@ -1093,12 +1106,12 @@ def _objective_weights(
 def _witness_audit(
     solution: _Solution, system: _System, count: int, tolerance: float
 ) -> tuple[float, float, bool]:
-    """Independent check that the witness proves the declared rows infeasible.
+    """Check whether the certificate proves the declared rows infeasible.
 
     For ``|B t - b| <= tol`` one has ``y^T b = (B^T y)^T t - y^T r``. Equality
-    witnesses need ``B^T y = 0`` and Farkas rays ``B^T y >= 0`` within the
+    certificates need ``B^T y = 0`` and Farkas rays ``B^T y >= 0`` within the
     declared tolerance, and the margin ``b^T y`` must exceed the declared
-    tolerance acting on the witness (``tol |y|_1``) plus that residual, so no
+    tolerance acting on the certificate (``tol |y|_1``) plus that residual, so no
     coefficient vector meets the declared equations within tolerance.
     """
     witness = np.asarray(solution.witness)

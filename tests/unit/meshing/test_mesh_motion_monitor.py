@@ -16,6 +16,11 @@ Decision = meshing.MeshMotionDecision
 _POINTS = np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.5, 0.5)))
 _CELLS = np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=np.int32)
 
+# Empirical `test_motion_retains_original_domain_certificate_and_refuses_boundary_escape`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+MOTION_COVERAGE_AREA_ATOL = 2e-14
+# Empirical `test_motion_retains_original_domain_certificate_and_refuses_boundary_escape`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+MOTION_TRIANGLE_AREA_SUM_ATOL = 2e-14
+
 
 def _certified(points: Any, cells: Any) -> Any:
     mesh = phx.discretization.CellMesh.from_triangles(points, cells)
@@ -166,8 +171,8 @@ def test_advance_escalates_a_nonconverged_relocation_unless_explicitly_admitted(
 def test_motion_retains_original_domain_certificate_and_refuses_boundary_escape() -> None:
     from phydrax.discretization._cell_geometry import CellGeometrySpec
     from phydrax.geometry import PiecewiseLinearDomain
-    from phydrax.meshing._certification import MeshCertificationSchedule
     from phydrax.meshing._certification_inputs import MeshCertificationInputs
+    from phydrax.meshing._certification_schedule import MeshCertificationSchedule
     from phydrax.meshing._lineage import identity_lineage
 
     original = _certified(_POINTS, _CELLS)
@@ -208,7 +213,7 @@ def test_motion_retains_original_domain_certificate_and_refuses_boundary_escape(
         or result.certification.coverage is None
     ):
         raise AssertionError(
-            "Accepted motion omitted its current original-domain certificate."
+            "fixture.result.certification.coverage must exist after accepted motion; got missing certificate"
         )
     certificate = result.certification
     certificate.require_passed()
@@ -218,7 +223,7 @@ def test_motion_retains_original_domain_certificate_and_refuses_boundary_escape(
         ),
         [1.0],
         rtol=0.0,
-        atol=2e-14,
+        atol=MOTION_COVERAGE_AREA_ATOL,
     )
     corners = np.asarray(result.mesh.coordinates)[
         np.asarray(result.mesh.blocks[0].vertices)
@@ -228,7 +233,7 @@ def test_motion_retains_original_domain_certificate_and_refuses_boundary_escape(
         np.sum(0.5 * (first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0])),
         1.0,
         rtol=0.0,
-        atol=2e-14,
+        atol=MOTION_TRIANGLE_AREA_SUM_ATOL,
     )
     with pytest.raises(meshing.MeshingFailure):
         meshing.advance_mesh_motion(
@@ -237,3 +242,116 @@ def test_motion_retains_original_domain_certificate_and_refuses_boundary_escape(
             np.asarray(source.mesh.coordinates) + [0.1, 0.0],
             boundary_residual=0.0,
         )
+
+
+def test_periodic_motion_uses_declared_scope_without_renewing_parent_work() -> None:
+    from phydrax._meshcore import (
+        meshcore_available,
+        MeshcoreError,
+        MeshcoreStatus,
+        NativeExecutionLimits,
+        NativeExecutionScope,
+    )
+    from phydrax.discretization import PeriodicCell
+    from tests._support.periodic_meshing import periodic_lattice_points
+
+    if not meshcore_available():
+        pytest.skip("native meshcore library is unavailable")
+    # Displaced coefficient maps must retain bitwise periodic trace agreement.
+    # Dyadic authored sites avoid source-expression rounding at paired traces.
+    native_source = meshing.NativePeriodicSource(
+        meshing.PeriodicPointOrbits(periodic_lattice_points(4), PeriodicCell(np.eye(2))),
+        "scope-motion-torus",
+        "r1",
+    )
+    request_scope = meshing.MeshingScope(
+        native_source.source_id,
+        native_source.source_revision,
+        meshing.MeshingEntityKind.GEOMETRY,
+        2,
+        "regions",
+        np.asarray((0,), dtype=np.int64),
+    )
+    # This ownership fixture admits the authored grid by its represented median,
+    # rather than asking refinement to replace its dyadic periodic traces.
+    specification = meshing.SurfaceMeshingSpec(
+        meshing.CellMeshingTarget(2, 2, meshing.CellFamilyPolicy(required=("triangle",))),
+        request_scope,
+        size_controls=(
+            meshing.UniformSizeControl(request_scope, 0.25, maximum_size=0.375),
+        ),
+        size_compliance=meshing.SizeCompliancePolicy(target_statistics=("p50",)),
+        planar_embedding=phx.geometry.PlanarEmbedding(
+            (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)
+        ),
+    )
+    source = (
+        meshing.NativeMeshingProvider(meshing.NativeMeshingOptions("periodic_delaunay"))
+        .plan(
+            native_source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
+    monitor = meshing.MeshMotionMonitor(source.mesh)
+    transfer = meshing.PeriodicAssociationTransfer(native_source, specification)
+    policy = meshing.MeshAdaptationPolicy(
+        meshing.MeshAdaptationRoute.NATIVE_BISECTION,
+        limits=specification.limits,
+        association_transfer=transfer,
+    )
+    coordinates = np.asarray(source.mesh.coordinates).copy()
+    source_identity = source.result_id
+    lowered = specification.limits.native_limits()
+    owner = NativeExecutionScope(lowered)
+    with owner:
+        accepted = meshing.advance_mesh_motion(
+            monitor,
+            source,
+            coordinates,
+            boundary_residual=0.0,
+            adaptation_policy=policy,
+        )
+        assert accepted.accepted
+        assert accepted.decision is meshing.MeshMotionDecision.ACCEPT_MOTION
+        assert accepted.result is not None
+        np.testing.assert_array_equal(accepted.result.mesh.coordinates, coordinates)
+        assert len(accepted.result.associations) == len(source.associations)
+        targets = {
+            entity_set.entity_set_id: entity_set
+            for entity_set in (
+                accepted.result.mesh.entity_set(dimension)
+                for dimension in range(accepted.result.mesh.topological_dimension + 1)
+            )
+        }
+        for association in accepted.result.associations:
+            association.validate_target(targets[association.target_entity_set_id])
+            assert association.source_id == native_source.source_id
+            assert association.source_revision == native_source.source_revision
+            assert association.complete and association.exact
+        assert owner.remaining().remaining_work_units < lowered.maximum_work_units
+        assert owner.limits is lowered
+    assert owner.completed_evidence().status is MeshcoreStatus.OK
+
+    exhausted = NativeExecutionScope(
+        NativeExecutionLimits(
+            0,
+            lowered.maximum_geometry_queries,
+            lowered.maximum_cavity_cells,
+            lowered.maximum_managed_bytes,
+            lowered.maximum_seconds,
+        )
+    )
+    with pytest.raises(MeshcoreError) as refusal, exhausted:
+        meshing.advance_mesh_motion(
+            monitor,
+            source,
+            coordinates,
+            boundary_residual=0.0,
+            adaptation_policy=policy,
+        )
+    assert refusal.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
+    assert exhausted.completed_evidence().status is MeshcoreStatus.CAPACITY_EXCEEDED
+    assert source.result_id == source_identity
+    np.testing.assert_array_equal(source.mesh.coordinates, coordinates)

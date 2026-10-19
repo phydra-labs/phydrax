@@ -185,7 +185,7 @@ def test_core_scenario_2() -> None:
     support = phx.discretization.DiscreteSupport(topology, 1, "line")
     layout = phx.discretization.TensorDofLayout(("x",), (3,))
 
-    with pytest.raises(ValueError, match="does not match"):
+    with pytest.raises(ValueError, match=r"DiscreteFieldSpace\.vector_space\.size"):
         phx.discretization.DiscreteFieldSpace(
             "u",
             support.support_id,
@@ -348,3 +348,44 @@ def test_traced_invalid_measure_exposes_failed_admission() -> None:
     assert not bool(measure.valid)
     with pytest.raises(ValueError, match="non-negative"):
         measure.admit()
+
+
+def test_measure_mass_kernel_preserves_reduction_bits() -> None:
+    weights = np.linspace(-0.7, 1.4, 65, dtype=np.float64)
+    mask = np.arange(weights.size, dtype=np.int64) % 3 != 0
+    device_weights, device_mask = jax.device_put((weights, mask))
+    expected = jnp.sum(
+        jnp.where(device_mask, device_weights, jnp.zeros((), dtype=jnp.float64)),
+        dtype=jnp.float64,
+    )
+    measure = phx.discretization.DiscreteMeasure(
+        "signed-weights",
+        "mesh",
+        "cells",
+        weights,
+        active_mask=mask,
+        normalization="signed",
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(measure.total_mass).view(np.uint64),
+        np.asarray(expected).view(np.uint64),
+    )
+
+
+def test_measure_retains_captured_weights_with_a_traced_mask() -> None:
+    weights = jax.device_put(np.asarray((2.0, 3.0), dtype=np.float64))
+
+    @jax.jit
+    def mass(mask: Array) -> Array:
+        return phx.discretization.DiscreteMeasure(
+            "captured-weights",
+            "mesh",
+            "cells",
+            weights,
+            active_mask=mask,
+            measure_id="captured-binding",
+        ).total_mass
+
+    assert mass(jax.device_put(np.asarray((True, False), dtype=np.bool_))) == 2.0
+    assert mass(jax.device_put(np.asarray((False, True), dtype=np.bool_))) == 3.0

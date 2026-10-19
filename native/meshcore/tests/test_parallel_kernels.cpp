@@ -1,0 +1,427 @@
+// Copyright © 2026 PHYDRA, Inc. All rights reserved.
+// Batch-level equivalence: scalar predicate tests own the numerical oracle.
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <vector>
+
+#include "check.hpp"
+#include "phydrax_meshcore.h"
+#include "predicates.hpp"
+
+namespace {
+constexpr std::size_t kCount = 193;  // Three full chunks and one partial chunk.
+constexpr std::array<uint32_t, 4> kThreads{1, 2, 7, 64};
+
+struct Receipt {
+  std::array<uint64_t, PHX_MC_EXECUTION_COUNTERS> counters{};
+  std::array<uint64_t, PHX_MC_EXECUTION_MEMORY_VALUES> memory{};
+  bool operator==(const Receipt&) const = default;
+};
+
+class Execution final {
+ public:
+  explicit Execution(uint64_t bytes = UINT64_MAX) {
+    PHX_CHECK(phx_mc_execution_begin(0, 0, 0, bytes, INFINITY, nullptr, &scope_) == PHX_MC_OK);
+  }
+  Receipt finish(int32_t status = PHX_MC_OK) {
+    Receipt receipt;
+    double seconds = 0;
+    PHX_CHECK(phx_mc_execution_end(scope_, receipt.counters.data(), receipt.memory.data(),
+                                   &seconds) == status);
+    scope_ = nullptr;
+    return receipt;
+  }
+  std::array<uint64_t, 4> remaining(int32_t status = PHX_MC_OK) const {
+    std::array<uint64_t, 4> values{};
+    double seconds = 0;
+    PHX_CHECK(phx_mc_execution_remaining(scope_, values.data(), &seconds) == status);
+    return values;
+  }
+  void* scope() const { return scope_; }
+  ~Execution() {
+    if (scope_ != nullptr) finish();
+  }
+
+ private:
+  void* scope_ = nullptr;
+};
+
+class Policy final {
+ public:
+  explicit Policy(uint32_t threads) {
+    PHX_CHECK(phx_mc_parallel_begin(static_cast<int32_t>(threads), INFINITY, &policy_) ==
+              PHX_MC_OK);
+  }
+  ~Policy() { PHX_CHECK(phx_mc_parallel_end(policy_) == PHX_MC_OK); }
+  Policy(const Policy&) = delete;
+  Policy& operator=(const Policy&) = delete;
+
+ private:
+  void* policy_ = nullptr;
+};
+
+enum class Predicate {
+  Orient2d,
+  Orient3d,
+  Incircle,
+  Insphere,
+  Orient2dSos,
+  Orient3dSos,
+  IncircleSos,
+  InsphereSos
+};
+
+int32_t batch(Predicate kind, const std::array<std::vector<double>, 5>& p,
+              const std::vector<int64_t>& ids, int8_t* output) {
+  const auto n = static_cast<int64_t>(kCount);
+  switch (kind) {
+    case Predicate::Orient2d:
+      return phx_mc_orient2d(n, p[0].data(), p[1].data(), p[2].data(), output);
+    case Predicate::Orient3d:
+      return phx_mc_orient3d(n, p[0].data(), p[1].data(), p[2].data(), p[3].data(), output);
+    case Predicate::Incircle:
+      return phx_mc_incircle(n, p[0].data(), p[1].data(), p[2].data(), p[3].data(), output);
+    case Predicate::Insphere:
+      return phx_mc_insphere(n, p[0].data(), p[1].data(), p[2].data(), p[3].data(), p[4].data(),
+                             output);
+    case Predicate::Orient2dSos:
+      return phx_mc_orient2d_sos(n, p[0].data(), p[1].data(), p[2].data(), ids.data(), output);
+    case Predicate::Orient3dSos:
+      return phx_mc_orient3d_sos(n, p[0].data(), p[1].data(), p[2].data(), p[3].data(), ids.data(),
+                                 output);
+    case Predicate::IncircleSos:
+      return phx_mc_incircle_sos(n, p[0].data(), p[1].data(), p[2].data(), p[3].data(), ids.data(),
+                                 output);
+    case Predicate::InsphereSos:
+      return phx_mc_insphere_sos(n, p[0].data(), p[1].data(), p[2].data(), p[3].data(), p[4].data(),
+                                 ids.data(), output);
+  }
+  return PHX_MC_INTERNAL_ERROR;
+}
+
+int scalar(Predicate kind, const std::array<std::vector<double>, 5>& p, const int64_t* ids,
+           std::size_t row, int width) {
+  using namespace phx::mc;
+  const double* a = p[0].data() + width * row;
+  const double* b = p[1].data() + width * row;
+  const double* c = p[2].data() + width * row;
+  const double* d = p[3].data() + width * row;
+  const double* e = p[4].data() + width * row;
+  switch (kind) {
+    case Predicate::Orient2d:
+      return orient2d(a, b, c);
+    case Predicate::Orient3d:
+      return orient3d(a, b, c, d);
+    case Predicate::Incircle:
+      return incircle(a, b, c, d);
+    case Predicate::Insphere:
+      return insphere(a, b, c, d, e);
+    case Predicate::Orient2dSos:
+      return orient2d_sos(a, b, c, ids[0], ids[1], ids[2]);
+    case Predicate::Orient3dSos:
+      return orient3d_sos(a, b, c, d, ids[0], ids[1], ids[2], ids[3]);
+    case Predicate::IncircleSos:
+      return incircle_sos(a, b, c, d, ids[0], ids[1], ids[2], ids[3]);
+    case Predicate::InsphereSos:
+      return insphere_sos(a, b, c, d, e, ids[0], ids[1], ids[2], ids[3], ids[4]);
+  }
+  return 0;
+}
+
+void predicate_equivalence(Predicate kind, int width, int arity) {
+  std::array<std::vector<double>, 5> p;
+  std::vector<int64_t> ids(kCount * arity);
+  for (std::size_t point = 0; point < p.size(); ++point) {
+    p[point].resize(kCount * width);
+    for (std::size_t row = 0; row < kCount; ++row) {
+      const double scale = std::ldexp(1.0, static_cast<int>(row % 3) * 100 - 100);
+      for (int axis = 0; axis < width; ++axis) {
+        const int value = static_cast<int>((row * 13 + point * 7 + axis * 11) % 31) - 15;
+        p[point][width * row + axis] = row % 4 == 0 ? 0.0 : value * scale;
+      }
+    }
+  }
+  for (std::size_t row = 0; row < kCount; ++row) {
+    for (int point = 0; point < arity; ++point) ids[arity * row + point] = arity - point;
+  }
+  std::vector<int8_t> expected(kCount);
+  Receipt scalar_receipt;
+  {
+    Execution execution;
+    for (std::size_t row = 0; row < kCount; ++row) {
+      expected[row] = static_cast<int8_t>(scalar(kind, p, ids.data() + arity * row, row, width));
+    }
+    scalar_receipt = execution.finish();
+  }
+  Receipt reference;
+  for (uint32_t threads : kThreads) {
+    Policy policy(threads);
+    Execution execution;
+    const auto before = execution.remaining();
+    std::vector<int8_t> output(kCount, 9);
+    PHX_CHECK(batch(kind, p, ids, output.data()) == PHX_MC_OK);
+    PHX_CHECK(output == expected);
+    PHX_CHECK(execution.remaining() == before);  // Unused reservation is released.
+    const Receipt receipt = execution.finish();
+    PHX_CHECK(receipt.counters == scalar_receipt.counters);
+    PHX_CHECK(receipt.memory[PHX_MC_EXECUTION_MEMORY_LIVE_BYTES] == 0);
+    if (threads == 1)
+      reference = receipt;
+    else
+      PHX_CHECK(receipt == reference);
+  }
+}
+
+void location_equivalence() {
+  std::vector<double> points(3 * kCount), triangles(9 * kCount);
+  std::vector<int8_t> expected_sides(kCount), expected_features(kCount);
+  std::vector<int32_t> expected_status(kCount);
+  for (std::size_t row = 0; row < kCount; ++row) {
+    const double t[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    std::copy(t, t + 9, triangles.data() + 9 * row);
+    points[3 * row] = 0.25;
+    points[3 * row + 1] = 0.25;
+    expected_features[row] = 6;  // Interior.
+    switch (row % 6) {
+      case 0:
+        break;
+      case 1:
+        points[3 * row + 2] = 1;
+        expected_sides[row] = 1;
+        expected_features[row] = -1;
+        break;
+      case 2:
+        points[3 * row] = points[3 * row + 1] = 0;
+        expected_features[row] = 0;
+        break;
+      case 3:
+        triangles[9 * row + 3] = triangles[9 * row + 7] = 0;
+        expected_status[row] = PHX_MC_DEGENERATE_INPUT;
+        expected_features[row] = -1;
+        break;
+      case 4:
+        points[3 * row] = NAN;
+        expected_status[row] = PHX_MC_NONFINITE_INPUT;
+        expected_features[row] = -1;
+        break;
+      case 5:
+        points[3 * row] = 0x1p121;
+        expected_status[row] = PHX_MC_RANGE_ERROR;
+        expected_features[row] = -1;
+        break;
+    }
+  }
+  Receipt reference;
+  for (uint32_t threads : kThreads) {
+    Policy policy(threads);
+    Execution execution;
+    std::vector<int8_t> sides(kCount, 9), features(kCount, 9);
+    std::vector<int32_t> status(kCount, -1);
+    PHX_CHECK(phx_mc_point_triangle_locations(kCount, points.data(), triangles.data(), sides.data(),
+                                              features.data(), status.data()) == PHX_MC_OK);
+    PHX_CHECK(sides == expected_sides && features == expected_features &&
+              status == expected_status);
+    const Receipt receipt = execution.finish();
+    if (threads == 1)
+      reference = receipt;
+    else
+      PHX_CHECK(receipt == reference);
+  }
+}
+
+void restricted_bound_equivalence() {
+  const double points[12] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
+  const double domain[6] = {-1, -1, -1, 2, 2, 2};
+  std::vector<int32_t> tets(4 * kCount), facets(3 * kCount), cells(kCount);
+  for (std::size_t row = 0; row < kCount; ++row) {
+    for (int j = 0; j < 4; ++j) tets[4 * row + j] = j;
+    for (int j = 0; j < 3; ++j) facets[3 * row + j] = j;
+    cells[row] = static_cast<int32_t>(row);
+  }
+  std::vector<double> reference_centers, reference_rays;
+  std::vector<int32_t> reference_kinds, reference_status;
+  Receipt center_receipt, ray_receipt;
+  for (uint32_t threads : kThreads) {
+    Policy policy(threads);
+    std::vector<double> centers(6 * kCount), rays(12 * kCount);
+    std::vector<int32_t> status(kCount, -1), kinds(kCount, -1);
+    {
+      Execution execution;
+      PHX_CHECK(phx_mc_restricted_centers_3d(4, points, kCount, tets.data(), centers.data(),
+                                             status.data()) == PHX_MC_OK);
+      PHX_CHECK(
+          std::all_of(status.begin(), status.end(), [](int32_t s) { return s == PHX_MC_OK; }));
+      for (double value : centers) PHX_CHECK(value > 0.49 && value < 0.51);
+      const Receipt receipt = execution.finish();
+      if (threads == 1) {
+        reference_centers = centers;
+        center_receipt = receipt;
+      } else {
+        PHX_CHECK(std::memcmp(centers.data(), reference_centers.data(),
+                              centers.size() * sizeof(double)) == 0);
+        PHX_CHECK(receipt == center_receipt);
+      }
+    }
+    // Scientific failures in all four chunks must not cancel sibling rows.
+    for (std::size_t row = 1; row < kCount; row += 5) {
+      std::fill_n(centers.data() + 6 * row, 3, -INFINITY);
+      std::fill_n(centers.data() + 6 * row + 3, 3, INFINITY);
+    }
+    {
+      Execution execution;
+      PHX_CHECK(phx_mc_restricted_rays_3d(4, points, kCount, tets.data(), centers.data(), kCount,
+                                          facets.data(), cells.data(), domain, rays.data(),
+                                          kinds.data(), status.data()) == PHX_MC_OK);
+      for (std::size_t row = 0; row < kCount; ++row) {
+        PHX_CHECK(status[row] == (row % 5 == 1 ? PHX_MC_DEGENERATE_INPUT : PHX_MC_OK));
+        if (row % 5 == 1) {
+          PHX_CHECK(rays[12 * row] == -INFINITY && rays[12 * row + 3] == INFINITY);
+        }
+      }
+      const Receipt receipt = execution.finish();
+      if (threads == 1) {
+        reference_rays = rays;
+        reference_kinds = kinds;
+        reference_status = status;
+        ray_receipt = receipt;
+      } else {
+        PHX_CHECK(std::memcmp(rays.data(), reference_rays.data(), rays.size() * sizeof(double)) ==
+                  0);
+        PHX_CHECK(kinds == reference_kinds && status == reference_status && receipt == ray_receipt);
+      }
+    }
+  }
+}
+
+void resource_refusal_is_atomic() {
+  std::vector<double> a(2 * kCount), b(2 * kCount), c(2 * kCount);
+  for (std::size_t row = 0; row < kCount; ++row) {
+    b[2 * row] = 1;
+    c[2 * row + 1] = 1;
+  }
+  Receipt reference;
+  for (uint32_t threads : kThreads) {
+    Policy policy(threads);
+    Execution execution(0);
+    const auto before = execution.remaining();
+    std::vector<int8_t> output(kCount, 9);
+    PHX_CHECK(phx_mc_orient2d(kCount, a.data(), b.data(), c.data(), output.data()) ==
+              PHX_MC_CAPACITY_EXCEEDED);
+    PHX_CHECK(std::all_of(output.begin(), output.end(), [](int8_t s) { return s == 9; }));
+    PHX_CHECK(execution.remaining(PHX_MC_CAPACITY_EXCEEDED) == before);
+    const Receipt receipt = execution.finish(PHX_MC_CAPACITY_EXCEEDED);
+    PHX_CHECK(receipt.counters[PHX_MC_EXECUTION_PRIMITIVE_QUERIES] == 0);
+    if (threads == 1)
+      reference = receipt;
+    else
+      PHX_CHECK(receipt == reference);
+  }
+}
+
+void validation_precedes_reservation() {
+  std::vector<double> a(2 * kCount), b(2 * kCount), c(2 * kCount);
+  std::vector<int64_t> ids(3 * kCount, 0);  // Invalid IDs cannot mask coordinate errors.
+  a.back() = NAN;
+  for (uint32_t threads : kThreads) {
+    Policy policy(threads);
+    Execution execution(0);
+    std::vector<int8_t> output(kCount, 9);
+    PHX_CHECK(phx_mc_orient2d_sos(kCount, a.data(), b.data(), c.data(), ids.data(),
+                                  output.data()) == PHX_MC_NONFINITE_INPUT);
+    PHX_CHECK(std::all_of(output.begin(), output.end(), [](int8_t s) { return s == 9; }));
+    const Receipt receipt = execution.finish();
+    PHX_CHECK((receipt.counters == std::array<uint64_t, PHX_MC_EXECUTION_COUNTERS>{}));
+    PHX_CHECK((receipt.memory == std::array<uint64_t, PHX_MC_EXECUTION_MEMORY_VALUES>{}));
+  }
+}
+
+void batch_borrows_host_ticket_once() {
+  std::vector<double> a(2 * kCount), b(2 * kCount), c(2 * kCount);
+  for (std::size_t row = 0; row < kCount; ++row) {
+    b[2 * row] = 1;
+    c[2 * row + 1] = 1;
+  }
+  Receipt reference;
+  for (uint32_t threads : kThreads) {
+    Policy policy(threads);
+    Execution execution;
+    const auto before = execution.remaining();
+    void* ticket = nullptr;
+    PHX_CHECK(phx_mc_execution_batch_admit(execution.scope(), nullptr, 0, 0, 0, 1 << 20, &ticket) ==
+              PHX_MC_OK);
+    void* target = nullptr;
+    phx_mc_execution_usage* usage = nullptr;
+    PHX_CHECK(phx_mc_execution_target_begin(ticket, &target, &usage) == PHX_MC_OK);
+    std::vector<int8_t> output(kCount, 9);
+    PHX_CHECK(phx_mc_orient2d(kCount, a.data(), b.data(), c.data(), output.data()) == PHX_MC_OK);
+    PHX_CHECK(std::all_of(output.begin(), output.end(), [](int8_t s) { return s == 1; }));
+    PHX_CHECK(phx_mc_execution_target_end(target) == PHX_MC_OK);
+    PHX_CHECK(phx_mc_execution_batch_settle(ticket, 0, 0, 0, 0) == PHX_MC_OK);
+    PHX_CHECK(execution.remaining() == before);
+    const Receipt receipt = execution.finish();
+    PHX_CHECK(receipt.counters[PHX_MC_EXECUTION_PRIMITIVE_QUERIES] == kCount);
+    PHX_CHECK(receipt.counters[PHX_MC_EXECUTION_CONSTRUCTION_WORK] == 0 &&
+              receipt.counters[PHX_MC_EXECUTION_EXTERNAL_WORK] == 0 &&
+              receipt.counters[PHX_MC_EXECUTION_EXTERNAL_QUERIES] == 0);
+    if (threads == 1)
+      reference = receipt;
+    else
+      PHX_CHECK(receipt == reference);
+  }
+}
+
+void finite_scratch_batch_is_admitted() {
+  // 32 MiB encloses four fixed chunks' single-row cumulative insphere arenas
+  // (under 5 MiB each, including allocation/owner metadata), but not 193
+  // separate row arenas. No expansion or scratch pointer escapes a row.
+  constexpr uint64_t scratch = 32 * 1024 * 1024;
+  const double vertices[5][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {1, 1, 1}};
+  std::array<std::vector<double>, 5> p;
+  for (std::size_t point = 0; point < p.size(); ++point) {
+    p[point].resize(3 * kCount);
+    for (std::size_t row = 0; row < kCount; ++row) {
+      std::copy_n(vertices[point], 3, p[point].data() + 3 * row);
+    }
+  }
+  Receipt reference;
+  for (uint32_t threads : kThreads) {
+    Policy policy(threads);
+    Execution execution(scratch);
+    const auto before = execution.remaining();
+    std::vector<int8_t> output(kCount, 9);
+    PHX_CHECK(phx_mc_insphere(kCount, p[0].data(), p[1].data(), p[2].data(), p[3].data(),
+                              p[4].data(), output.data()) == PHX_MC_OK);
+    PHX_CHECK(std::all_of(output.begin(), output.end(), [](int8_t s) { return s == 0; }));
+    PHX_CHECK(execution.remaining() == before);
+    const Receipt receipt = execution.finish();
+    PHX_CHECK(receipt.counters[PHX_MC_EXECUTION_PRIMITIVE_QUERIES] == kCount);
+    PHX_CHECK(receipt.memory[PHX_MC_EXECUTION_MEMORY_PEAK_BYTES] <= scratch);
+    if (threads == 1)
+      reference = receipt;
+    else
+      PHX_CHECK(receipt == reference);
+  }
+}
+}  // namespace
+
+int main() {
+  predicate_equivalence(Predicate::Orient2d, 2, 3);
+  predicate_equivalence(Predicate::Orient3d, 3, 4);
+  predicate_equivalence(Predicate::Incircle, 2, 4);
+  predicate_equivalence(Predicate::Insphere, 3, 5);
+  predicate_equivalence(Predicate::Orient2dSos, 2, 3);
+  predicate_equivalence(Predicate::Orient3dSos, 3, 4);
+  predicate_equivalence(Predicate::IncircleSos, 2, 4);
+  predicate_equivalence(Predicate::InsphereSos, 3, 5);
+  location_equivalence();
+  restricted_bound_equivalence();
+  resource_refusal_is_atomic();
+  validation_precedes_reservation();
+  batch_borrows_host_ticket_once();
+  finite_scratch_batch_is_admitted();
+  return phx::mc::test::finish("test_parallel_kernels");
+}

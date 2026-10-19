@@ -23,6 +23,7 @@ from phydrax.geometry import (
     SegmentQueryExecution,
 )
 from phydrax.geometry.simplicial._bvh import _segment_ray_parity
+from phydrax.units import METER
 
 
 def _reference(
@@ -153,7 +154,9 @@ def test_polygon_pair_tiles_catch_crossing_after_first_tile() -> None:
     count = 130
     angles = np.arange(count, dtype=np.float64) * 2.0 * np.pi / count
     vertices = np.stack((np.cos(angles), np.sin(angles)), axis=-1)
-    geometry = Polygon(vertices, feature_id="streamed-polygon").compile()
+    geometry = Polygon(vertices, feature_id="streamed-polygon").compile(
+        coordinate_unit=METER
+    )
     assert bool(geometry.validity().accepted)
     changed = vertices.copy()
     changed[[90, 100]] = changed[[100, 90]]
@@ -168,7 +171,7 @@ def test_planar_closest_point_keeps_two_segment_evidence_after_refit() -> None:
     )
     geometry = PlanarMeshRegion(
         vertices, ((0, 1, 2, 3),), feature_id="evidence-square"
-    ).compile()
+    ).compile(coordinate_unit=METER)
     parameter = geometry.schema.index(ParameterId("evidence-square", "vertices"))
     offset = jnp.asarray((3.0, -2.0), dtype=jnp.float64)
     state = geometry.state.replace_at(parameter, vertices + offset)
@@ -235,7 +238,9 @@ def test_compiled_polygon_current_leaves_round_trip() -> None:
     vertices = jnp.asarray(
         ((0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)), dtype=jnp.float64
     )
-    template = Polygon(vertices, feature_id="persisted-polygon").compile()
+    template = Polygon(vertices, feature_id="persisted-polygon").compile(
+        coordinate_unit=METER
+    )
     parameter = template.schema.index(ParameterId("persisted-polygon", "vertices"))
     moved = vertices + jnp.asarray((3.0, -2.0), dtype=jnp.float64)
     geometry = template.with_state(template.state.replace_at(parameter, moved))

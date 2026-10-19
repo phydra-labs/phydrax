@@ -296,7 +296,7 @@ class TopologyReanalysisReport(StrictModule):
             or self.objective_id is None
         ):
             raise ValueError(
-                "Physical admission requires revision/objective-bound FE reanalysis."
+                f"TopologyReanalysisReport.bindings must include source, target and objective identities; got {(self.source_revision_id, self.target_revision_id, self.objective_id)!r}"
             )
         if not (
             bool(self.evidence.accepted)
@@ -306,7 +306,7 @@ class TopologyReanalysisReport(StrictModule):
             and bool(self.evidence.final_fe_reanalysis)
         ):
             raise ValueError(
-                "Decision evidence requires passed independent FE and transfer reanalysis."
+                f"TopologyReanalysisReport.evidence must pass optimization, transfer, mechanics and final FE reanalysis; got {self.evidence!r}"
             )
 
     @property
@@ -355,7 +355,9 @@ class TopologyReanalysisReport(StrictModule):
         from ...meshing._decision import PhysicalErrorEvidence
 
         if revision_id != self.target_revision_id or objective_id != self.objective_id:
-            raise ValueError("Physical evidence does not match this reference-FE report.")
+            raise ValueError(
+                f"TopologyReanalysisReport.physical_evidence.bindings must match {(self.target_revision_id, self.objective_id)!r}; got {(revision_id, objective_id)!r}"
+            )
         return PhysicalErrorEvidence(
             revision_id,
             objective_id,
@@ -374,7 +376,7 @@ class TopologyReanalysisReport(StrictModule):
         actual: PhysicalErrorEvidence,
         /,
     ) -> None:
-        """Require both scientific acceptance and the exact selected route.
+        """Require scientific acceptance and the selected route.
 
         This is an admission check, not a mesh/state publication or a replacement
         for the caller's existing atomic topology transaction.
@@ -382,9 +384,13 @@ class TopologyReanalysisReport(StrictModule):
         from ...meshing._decision import PhysicalErrorEvidence, SolverAwareDecision
 
         if not isinstance(decision, SolverAwareDecision):
-            raise TypeError("decision must be SolverAwareDecision.")
+            raise TypeError(
+                f"TopologyReanalysisReport.decision must be SolverAwareDecision; got {type(decision).__name__}"
+            )
         if not isinstance(actual, PhysicalErrorEvidence):
-            raise TypeError("actual must be PhysicalErrorEvidence.")
+            raise TypeError(
+                f"TopologyReanalysisReport.reanalysis must be PhysicalErrorEvidence; got {type(actual).__name__}"
+            )
         if (
             actual.estimator_id != self.physical_estimator_id
             or actual.quantity != "physical-error"
@@ -393,7 +399,7 @@ class TopologyReanalysisReport(StrictModule):
             or actual.objective_id != self.objective_id
         ):
             raise ValueError(
-                "Topology decision evidence must come from this passed FE reanalysis."
+                f"TopologyReanalysisReport.reanalysis must match the estimator, physical-error quantity and revision/objective bindings; got {actual!r}"
             )
         decision.require_selected(source_revision_id, candidate_id, actual.revision_id)
         decision.require_reanalysis(actual)
@@ -420,7 +426,7 @@ def reanalyze_topology_design(
     if any(value is not None for value in bindings):
         if not all(isinstance(value, str) and bool(value) for value in bindings):
             raise ValueError(
-                "Decision reanalysis requires all source/target/objective identities."
+                f"reanalysis.bindings must contain nonempty source, target and objective strings together; got {bindings!r}"
             )
     transfer = plan.transfer(result.physical_density, result.material_measure)
     selected_initial = (

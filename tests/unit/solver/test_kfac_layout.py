@@ -13,6 +13,7 @@ import pytest
 
 import phydrax as phx
 from phydrax.solver._kfac_layout import discover_parameter_layout
+from phydrax.units import METER
 
 
 def _layout(
@@ -46,7 +47,7 @@ def test_parameter_layout_contracts() -> None:
         layout.parameter_count
     )
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     model = phx.nn.models.MLP(
         in_size=2,
@@ -63,7 +64,7 @@ def test_parameter_layout_contracts() -> None:
     assert layout.affine_blocks[-1].name.endswith("residual_projection")
     assert layout.uncovered_block is None
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     model = phx.nn.models.MLP(
         in_size=2,

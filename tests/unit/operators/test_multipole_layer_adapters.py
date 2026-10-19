@@ -8,18 +8,21 @@ import phydrax as phx
 
 
 SOURCES = jnp.asarray(
-    [[-0.7, -0.6, -0.5], [-0.5, 0.6, 0.4], [0.55, -0.45, 0.5], [0.7, 0.65, -0.4]]
+    [[-0.7, -0.6, -0.5], [-0.5, 0.6, 0.4], [0.55, -0.45, 0.5], [0.7, 0.65, -0.4]],
+    dtype=jnp.float64,
 )
-TARGETS = jnp.asarray([[0.05, 0.1, 0.2], [0.2, -0.1, -0.15], [-0.1, 0.2, -0.2]])
-DENSITY = jnp.asarray([0.8, -0.4, 0.3, 1.1])
-WEIGHTS = jnp.asarray([0.7, 1.2, 0.8, 0.9])
+TARGETS = jnp.asarray(
+    [[0.05, 0.1, 0.2], [0.2, -0.1, -0.15], [-0.1, 0.2, -0.2]], dtype=jnp.float64
+)
+DENSITY = jnp.asarray([0.8, -0.4, 0.3, 1.1], dtype=jnp.float64)
+WEIGHTS = jnp.asarray([0.7, 1.2, 0.8, 0.9], dtype=jnp.float64)
 
 
 def _prepared() -> Any:
     return phx.operators.LaplaceMultipolePlan3D(
         SOURCES,
-        [-1.0, -1.0, -1.0],
-        [1.0, 1.0, 1.0],
+        jnp.asarray([-1.0, -1.0, -1.0], dtype=jnp.float64),
+        jnp.asarray([1.0, 1.0, 1.0], dtype=jnp.float64),
         reference_targets=TARGETS,
         depth=2,
         expansion_order=3,
@@ -56,8 +59,8 @@ def test_multipole_layer_adapters_scenario_1() -> None:
     sources, targets, density, weights = _clustered_layer()
     prepared = phx.operators.LaplaceMultipolePlan3D(
         sources,
-        [-1.0, -1.0, -1.0],
-        [1.0, 1.0, 1.0],
+        jnp.asarray([-1.0, -1.0, -1.0], dtype=jnp.float64),
+        jnp.asarray([1.0, 1.0, 1.0], dtype=jnp.float64),
         reference_targets=targets,
         depth=4,
         expansion_order=3,
@@ -77,8 +80,8 @@ def test_multipole_layer_adapters_scenario_1() -> None:
     np.testing.assert_allclose(local_values, evaluation.far_values, rtol=1e-9, atol=1e-11)
     prepared = phx.operators.LaplaceMultipolePlan3D(
         SOURCES,
-        [-1.0, -1.0, -1.0],
-        [1.0, 1.0, 1.0],
+        jnp.asarray([-1.0, -1.0, -1.0], dtype=jnp.float64),
+        jnp.asarray([1.0, 1.0, 1.0], dtype=jnp.float64),
         reference_targets=TARGETS,
         depth=2,
         expansion_order=3,
@@ -152,8 +155,8 @@ def _clustered_layer() -> Any:
     density = rng.standard_normal(sources.shape[0])
     weights = rng.uniform(0.5, 1.5, sources.shape[0])
     return (
-        jnp.asarray(sources),
-        jnp.asarray(targets),
-        jnp.asarray(density),
-        jnp.asarray(weights),
+        jnp.asarray(sources, dtype=jnp.float64),
+        jnp.asarray(targets, dtype=jnp.float64),
+        jnp.asarray(density, dtype=jnp.float64),
+        jnp.asarray(weights, dtype=jnp.float64),
     )

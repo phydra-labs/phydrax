@@ -288,9 +288,8 @@ class AffineBodyParticipant(AbstractImplicitContactParticipant):
     def has_potential(self) -> bool:
         return True
 
-    def _deformation(self, state: Array, /) -> tuple[Array, Array]:
-        controls = self.plan.reference_controls + state
-        frame = jnp.swapaxes(controls[:, 1:] - controls[:, :1], -1, -2)
+    def _displacement_gradient(self, state: Array, /) -> tuple[Array, Array]:
+        frame = jnp.swapaxes(state[:, 1:] - state[:, :1], -1, -2)
         reference = jnp.swapaxes(
             self.plan.reference_controls[:, 1:] - self.plan.reference_controls[:, :1],
             -1,
@@ -315,11 +314,10 @@ class AffineBodyParticipant(AbstractImplicitContactParticipant):
     ) -> Array:
         del time, args
         value = self.dof_space.validate(state)
-        deformation, _ = self._deformation(value)
-        strain = (
-            jnp.swapaxes(deformation, -1, -2) @ deformation
-            - jnp.eye(3, dtype=value.dtype)[None, :, :]
-        )
+        gradient, _ = self._displacement_gradient(value)
+        transpose = jnp.swapaxes(gradient, -1, -2)
+        # F = I + G: expand F.T F - I without subtracting nearly equal tensors.
+        strain = gradient + transpose + transpose @ gradient
         volume = jnp.sum(self.plan.quadrature_weights, axis=-1)
         energy = jnp.sum(
             volume
@@ -367,7 +365,8 @@ class AffineBodyParticipant(AbstractImplicitContactParticipant):
         energy, residual = jax.value_and_grad(self.potential)(
             value, history, accepted_state, time, step_size, args
         )
-        deformation, solve_ok = self._deformation(value)
+        gradient, solve_ok = self._displacement_gradient(value)
+        deformation = gradient + jnp.eye(3, dtype=value.dtype)[None, :, :]
         determinant = determinant_small_linear(self.plan.solve_plan, deformation)
         finite = jnp.all(jnp.isfinite(residual)) & jnp.isfinite(energy)
         admissible = solve_ok & jnp.all(determinant > 0.0) & finite

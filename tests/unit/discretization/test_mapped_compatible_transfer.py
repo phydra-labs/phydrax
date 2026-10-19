@@ -1,28 +1,27 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Actual nonlinear source restrictions and complete compatible source patches."""
+"""Nonlinear source restrictions and compatible source patches."""
 
 from __future__ import annotations
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from phydrax import config as pxconfig
 from phydrax.discretization import (
     CellGeometrySpec,
     CellMesh,
     FiniteElementFieldSpec,
     FiniteElementPlan,
 )
-from phydrax.discretization._cell_geometry_transfer import (
-    CellGeometryTransition,
-    transition_nested_cell_geometry,
-)
-from phydrax.discretization._nested_reference import (
-    _NestedReferencePair,
-    _PolynomialReferencePair,
+from phydrax.discretization._cell_geometry_transfer import transition_nested_cell_geometry
+from phydrax.discretization._cell_geometry_transition_types import CellGeometryTransition
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureResourceError
+from phydrax.discretization._nested_reference_types import (
+    NestedReferencePair,
+    PolynomialReferencePair,
 )
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization.fem import (
@@ -36,17 +35,34 @@ from phydrax.discretization.fem._exact_form_moments import (
     MomentIntegralMatrix,
 )
 from phydrax.discretization.fem._form_elements import FormBasis
-from phydrax.discretization.fem._generic import (
-    _degree_aware_reference_rule,
-    FiniteElementTransferDiscretization,
-)
+from phydrax.discretization.fem._generic import FiniteElementTransferDiscretization
+from phydrax.discretization.fem._reference_rules import degree_aware_reference_rule
 from phydrax.exterior._form_type import FormProxy, FormTwist
 from phydrax.meshing._mixed_adaptation import adapt_mixed_mesh
 from phydrax.meshing._topology_edit import assemble_topology_edit
-from tests.unit.meshing.test_mixed_adaptation import _periodic_template_source
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.mixed_adaptation import periodic_template_source
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
+
+
+# Empirical `_patch_edge_circulations`: matched max |delta|=4.88498e-15; joint allowance fraction=7.10818e-05, margin=99.9929%.
+_PATCH_EDGE_CIRCULATION_ATOL = 3e-11
+# Empirical `_patch_edge_circulations`: matched max |delta|=4.88498e-15; joint allowance fraction=7.10818e-05, margin=99.9929%.
+_PATCH_EDGE_CIRCULATION_RTOL = 3e-11
+# Empirical `test_nonlinear_compatible_complete_patch_and_dual_payload`: matched max |delta|=1.05471e-14; joint allowance fraction=0.000287825, margin=99.9712%.
+_NONLINEAR_PATCH_COARSENING_ATOL = 2e-11
+# Empirical `test_nonlinear_compatible_complete_patch_and_dual_payload`: matched max |delta|=1.05471e-14; joint allowance fraction=0.000287825, margin=99.9712%.
+_NONLINEAR_PATCH_COARSENING_RTOL = 2e-11
+# Empirical `test_nonlinear_compatible_complete_patch_and_dual_payload`: matched max |delta|=5.68434e-14; joint allowance fraction=1.42694e-06, margin=99.9999%.
+_NONLINEAR_PATCH_DUAL_PAIRING_ATOL = 2e-11
+# Empirical `test_nonlinear_compatible_complete_patch_and_dual_payload`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_NONLINEAR_PATCH_COMPILED_VALUES_ATOL = 2e-13
+# Empirical `test_nonlinear_compatible_complete_patch_and_dual_payload`: matched max |delta|=6.6569e-13; joint allowance fraction=0.0073078, margin=99.2692%.
+_PATCH_DIVERGENCE_CONTENT_ATOL = 3e-11
+# Empirical `test_nonlinear_compatible_complete_patch_and_dual_payload`: matched max |delta|=6.6569e-13; joint allowance fraction=0.0073078, margin=99.2692%.
+_PATCH_DIVERGENCE_CONTENT_RTOL = 3e-11
 
 
 def _elements(
@@ -74,11 +90,12 @@ def _tetrahedral_hdiv_refinement() -> tuple[
     FiniteElementTransferDiscretization,
     CellGeometryTransition,
 ]:
-    mesh, geometry = _periodic_template_source("tetrahedron", True)
+    mesh, geometry = periodic_template_source("tetrahedron", True)
     outcome = adapt_mixed_mesh(mesh, refine_cell_ids=np.asarray([17], dtype=np.int64))
-    fine_mesh, _, _ = assemble_topology_edit(
-        mesh, outcome.edit, numeric_version="hdiv-orientation-fine"
-    )
+    with coordinate_reference_budget() as budget:
+        fine_mesh, _, _ = assemble_topology_edit(
+            mesh, outcome.edit, numeric_version="hdiv-orientation-fine", budget=budget
+        )
     restriction = transition_nested_cell_geometry(
         mesh,
         geometry,
@@ -141,7 +158,7 @@ def _integrated_divergence(
         space.dof_maps[0].cell_transforms,
         strict=True,
     ):
-        points, weights = _degree_aware_reference_rule(element.cell_kind, 8)
+        points, weights = degree_aware_reference_rule(element.cell_kind, 8)
         _, gradients = element.tabulate(points)
         divergence = np.trace(np.asarray(gradients), axis1=-2, axis2=-1)
         for route, transform in zip(
@@ -219,7 +236,12 @@ def _patch_edge_circulations(
                     )
             cell_offset += len(routes)
         actual = _line_integral(coarse_element, coarse_local, a, a + tangent)
-        np.testing.assert_allclose(actual, expected, atol=3e-11, rtol=3e-11)
+        np.testing.assert_allclose(
+            actual,
+            expected,
+            atol=_PATCH_EDGE_CIRCULATION_ATOL,
+            rtol=_PATCH_EDGE_CIRCULATION_RTOL,
+        )
 
 
 @pytest.mark.parametrize("kind", ("tetrahedron", "hexahedron", "prism", "pyramid"))
@@ -227,11 +249,12 @@ def _patch_edge_circulations(
 def test_nonlinear_compatible_complete_patch_and_dual_payload(
     kind: str, degree: int
 ) -> None:
-    mesh, geometry = _periodic_template_source(kind, True)
+    mesh, geometry = periodic_template_source(kind, True)
     outcome = adapt_mixed_mesh(mesh, refine_cell_ids=np.asarray([17], dtype=np.int64))
-    fine_mesh, _, _ = assemble_topology_edit(
-        mesh, outcome.edit, numeric_version="compatible-fine"
-    )
+    with coordinate_reference_budget() as budget:
+        fine_mesh, _, _ = assemble_topology_edit(
+            mesh, outcome.edit, numeric_version="compatible-fine", budget=budget
+        )
     restriction = transition_nested_cell_geometry(
         mesh,
         geometry,
@@ -251,9 +274,10 @@ def test_nonlinear_compatible_complete_patch_and_dual_payload(
         coarsen_cell_ids=fine_ids,
         hierarchy=outcome.hierarchy,
     )
-    coarse_mesh, _, _ = assemble_topology_edit(
-        fine_mesh, coarsening.edit, numeric_version="compatible-coarse"
-    )
+    with coordinate_reference_budget() as budget:
+        coarse_mesh, _, _ = assemble_topology_edit(
+            fine_mesh, coarsening.edit, numeric_version="compatible-coarse", budget=budget
+        )
     restoration = transition_nested_cell_geometry(
         fine_mesh,
         restriction.geometry,
@@ -311,15 +335,22 @@ def test_nonlinear_compatible_complete_patch_and_dual_payload(
         )
         fine_values = forward.transfer.apply(values)
         restored = reverse.transfer.apply(fine_values)
-        np.testing.assert_allclose(restored, values, atol=2e-11, rtol=2e-11)
+        np.testing.assert_allclose(
+            restored,
+            values,
+            atol=_NONLINEAR_PATCH_COARSENING_ATOL,
+            rtol=_NONLINEAR_PATCH_COARSENING_RTOL,
+        )
         dual = np.random.default_rng(29).normal(size=fine_values.shape)
         np.testing.assert_allclose(
             np.vdot(fine_values, dual),
             np.vdot(values, forward.transfer.pullback(dual)),
-            atol=2e-11,
+            atol=_NONLINEAR_PATCH_DUAL_PAIRING_ATOL,
         )
         compiled = eqx.filter_jit(forward.transfer.apply)(jnp.asarray(values))
-        np.testing.assert_allclose(compiled, fine_values, atol=2e-13)
+        np.testing.assert_allclose(
+            compiled, fine_values, atol=_NONLINEAR_PATCH_COMPILED_VALUES_ATOL
+        )
         assert forward.evidence.passed and reverse.evidence.passed
         assert reverse.evidence.defect("commuting") <= reverse.evidence.tolerance
         np.testing.assert_array_equal(
@@ -334,14 +365,14 @@ def test_nonlinear_compatible_complete_patch_and_dual_payload(
             np.testing.assert_allclose(
                 _integrated_divergence(coarse, projected),
                 _integrated_divergence(fine, arbitrary_fine),
-                atol=3e-11,
-                rtol=3e-11,
+                atol=_PATCH_DIVERGENCE_CONTENT_ATOL,
+                rtol=_PATCH_DIVERGENCE_CONTENT_RTOL,
             )
         else:
             witnesses = coarsening.edit.coarsening
             if witnesses is None:
                 raise AssertionError(
-                    "Complete coarsening must retain its exact reference witnesses."
+                    "coarsening.edit.coarsening must retain its reference ancestry; got None"
                 )
             indices = {
                 int(identifier): row
@@ -361,7 +392,7 @@ def test_nonlinear_compatible_complete_patch_and_dual_payload(
 def test_hdiv_shared_face_coorientation_fault_is_certified() -> None:
     source, target, transition = _tetrahedral_hdiv_refinement()
     faulted = _fault_shared_hdiv_face(target)
-    with pytest.raises(ValueError, match="continuity"):
+    with pytest.raises(ValueError, match=r"mapped_nested_compatible_transfer\.evidence"):
         prepare_nested_field_transfer(
             source,
             faulted,
@@ -383,7 +414,7 @@ def test_hdiv_raw_commuting_moment_fault_is_certified(
         self: ExactFormMoments,
         source_basis: FormBasis,
         target_basis: FormBasis,
-        pair: _NestedReferencePair | _PolynomialReferencePair,
+        pair: NestedReferencePair | PolynomialReferencePair,
     ) -> MomentIntegralMatrix:
         result = original(self, source_basis, target_basis, pair)
         if source_basis.form_degree == 2 and target_basis.form_degree == 2:
@@ -393,7 +424,7 @@ def test_hdiv_raw_commuting_moment_fault_is_certified(
         return result
 
     monkeypatch.setattr(ExactFormMoments, "refine", faulted_refine)
-    with pytest.raises(ValueError, match="commuting"):
+    with pytest.raises(ValueError, match=r"mapped_nested_compatible_transfer\.evidence"):
         prepare_nested_field_transfer(
             source,
             target,
@@ -407,13 +438,13 @@ def test_hdiv_raw_commuting_moment_fault_is_certified(
 
 @pytest.mark.parametrize("resource", ("work", "storage"))
 def test_mapped_compatible_resource_refusal_preserves_source(resource: str) -> None:
-    mesh, geometry = _periodic_template_source("tetrahedron", True)
+    mesh, geometry = periodic_template_source("tetrahedron", True)
     field = FiniteElementFieldSpec(
         "u", form_element("tetrahedron", 1, 2, proxy="circulation")
     )
     source = FiniteElementPlan(mesh, field, coordinate_spec=geometry).prepare()
     before = np.asarray(geometry.coordinates).copy()
-    with pytest.raises(ValueError, match="budget"):
+    with pytest.raises(ValueError) as refusal:
         prepare_nested_field_transfer(
             source,
             source,
@@ -427,4 +458,11 @@ def test_mapped_compatible_resource_refusal_preserves_source(resource: str) -> N
             maximum_work=1 if resource == "work" else 100_000_000,
             maximum_storage_bytes=1 if resource == "storage" else 256_000_000,
         )
+    assert isinstance(refusal.value, CoordinateEnclosureResourceError)
+    assert refusal.value.resource == (
+        "coefficient_work" if resource == "work" else "polynomial_storage"
+    )
+    assert refusal.value.limit == 1
+    assert refusal.value.requested > refusal.value.limit
+    assert refusal.value.completed == 0
     np.testing.assert_array_equal(geometry.coordinates, before)

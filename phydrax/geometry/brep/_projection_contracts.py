@@ -4,7 +4,7 @@
 
 """Engine-neutral B-Rep projection status, evidence, and query contracts.
 
-These contracts bind closest-point and classification queries to one exact
+These contracts bind closest-point and classification queries to one
 B-Rep revision without depending on the geometry engine that answers them.
 The entity closure relation is pure topology over ``BRepTopology`` and is
 shared by every concrete projection.
@@ -15,9 +15,10 @@ from __future__ import annotations
 import json
 from abc import abstractmethod
 from enum import IntEnum
-from typing import Any, final
+from typing import final
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -27,9 +28,13 @@ from ..._bvh import bvh_overlap_pairs_host, prepare_bvh
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..._validation import positive_finite_float
+from ..._validation import normalized_identifier, positive_finite_float
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked
 from .._planar_embedding import PlanarEmbedding
+from ._coordinate_request import coordinate_source_request
 from ._model import BRepEntityId, BRepTopology
+from ._request_preparations import TrimRequestPreparations
 
 
 class BRepEntityDimension(IntEnum):
@@ -50,15 +55,18 @@ class BRepProjectionStatus(IntEnum):
     ``UNIQUE``: one closest point with unique parameters. ``SEAM``: one closest
     point whose parameters are not unique (periodic seam or singular pole); the
     reported parameters are the lexicographically lowest representative.
-    ``AMBIGUOUS``: distinct closest points (or distinct entities) tie within the
-    ambiguity tolerance, including continua such as a sphere center. ``FAILED``:
-    the query engine produced no closest point, or no entity satisfies the query.
+    ``AMBIGUOUS``: distinct closest points or entities tie within the ambiguity
+    tolerance. ``NON_ISOLATED``: a positive-dimensional closest-point fiber has
+    certified distance and entity ownership, but no point or unique parameter
+    representative is selected. ``FAILED``: the engine produced no certified
+    answer, or no entity satisfies the query.
     """
 
     UNIQUE = 0
     SEAM = 1
     AMBIGUOUS = 2
     FAILED = 3
+    NON_ISOLATED = 4
 
 
 def brep_entity_id(
@@ -69,9 +77,11 @@ def brep_entity_id(
     *,
     occurrence_path: tuple[str, ...] = (),
 ) -> str:
-    """Encode exact definition identity and, when supplied, its scientific path."""
+    """Encode definition identity and, when supplied, its scientific occurrence path."""
     if dimension not in range(len(_KINDS)):
-        raise ValueError("dimension must identify a vertex, edge, face, or solid.")
+        raise ValueError(
+            f"brep_entity_id.dimension must lie in [0, 3]; got {dimension!r}"
+        )
     entity = BRepEntityId(source_revision, _KINDS[dimension], index, occurrence_path)
     definition = f"{entity.source_revision}:{entity.kind}:{entity.index}"
     if not entity.occurrence_path:
@@ -129,6 +139,11 @@ class BRepProjectionResult(StrictModule, NonTrainableState):
     oriented face normals (NaN where undefined or not representable in a planar
     ambient); ``tangents[:, 0]`` is the unit edge tangent, ``tangents[:, :2]`` an
     orthonormal face tangent frame. ``dimensions == -1`` marks unclassified rows.
+    ``NON_ISOLATED`` rows retain finite nonnegative distance and source entity
+    identity, with NaN closest points and at least one undetermined parameter.
+    Native projections publish ``residuals`` as certified distance upper bounds,
+    including source-root enclosure and correspondence uncertainty. They are
+    not merely the norm of the returned binary point minus its query.
     """
 
     source_revision: str = eqx.field(static=True)
@@ -183,16 +198,18 @@ class BRepProjectionResult(StrictModule, NonTrainableState):
             not path or any(not isinstance(name, str) or not name for name in path)
             for path in paths
         ) or len(set(paths)) != len(paths):
-            raise ValueError("Occurrence path tables must contain unique nonempty paths.")
+            raise ValueError(
+                f"BRepProjectionResult.occurrence_paths must contain unique nonempty paths; got {paths!r}"
+            )
         if occurrences.shape != dims.shape or np.any(
             (occurrences < -1) | (occurrences >= len(paths))
         ):
             raise ValueError(
-                "Occurrence indices must be row-aligned and reference the path table or -1."
+                "BRepProjectionResult.occurrence_indices must align with rows and reference the path table or -1; "
+                f"got shape {occurrences.shape} for {dims.shape} rows and {len(paths)} paths"
             )
         ambient = query.shape[-1] if query.ndim == 2 else -1
-        if not revision:
-            raise ValueError("source_revision must be non-empty.")
+        revision = normalized_identifier(revision, "BRepProjectionResult.source_revision")
         if (
             dims.ndim != 1
             or ambient not in (2, 3)
@@ -205,22 +222,43 @@ class BRepProjectionResult(StrictModule, NonTrainableState):
             or normal.shape != (count, ambient)
             or tangent.shape != (count, 2, ambient)
         ):
-            raise ValueError("B-Rep projection arrays must be row-aligned.")
+            raise ValueError(
+                "BRepProjectionResult.arrays must align by row and ambient dimension; "
+                f"got {count} rows and ambient dimension {ambient}"
+            )
         if not np.all(np.isin(state, [int(value) for value in BRepProjectionStatus])):
-            raise ValueError("Projection status values must be BRepProjectionStatus.")
+            raise ValueError(
+                f"BRepProjectionResult.status must contain BRepProjectionStatus values; got {np.unique(state)!r}"
+            )
         if np.any((dims < -1) | (dims > 3)):
-            raise ValueError("Projection entity dimensions must lie in [-1, 3].")
+            raise ValueError(
+                f"BRepProjectionResult.dimensions must lie in [-1, 3]; got {np.unique(dims)!r}"
+            )
+        fiber = state == BRepProjectionStatus.NON_ISOLATED
+        if np.any(fiber) and (
+            np.any(~np.isin(dims[fiber], (1, 2)))
+            or np.any(rows[fiber] < 0)
+            or np.any(~np.isfinite(distance[fiber]) | (distance[fiber] < 0.0))
+            or np.any(~np.all(np.isnan(closest[fiber]), axis=1))
+            or np.any(~np.any(np.isnan(params[fiber]), axis=1))
+            or np.any((dims[fiber] == 1) & ~np.isnan(params[fiber, 0]))
+        ):
+            raise ValueError(
+                "BRepProjectionResult.NON_ISOLATED must retain curve/face identity "
+                "and finite nonnegative distance without a selected closest point "
+                "or unique parameter; got inconsistent fiber rows."
+            )
         self.source_revision = revision
-        self.dimensions = jnp.asarray(dims)
-        self.indices = jnp.asarray(rows)
-        self.queries = jnp.asarray(query)
-        self.points = jnp.asarray(closest)
-        self.parameters = jnp.asarray(params)
-        self.residuals = jnp.asarray(distance)
-        self.status = jnp.asarray(state)
-        self.normals = jnp.asarray(normal)
-        self.tangents = jnp.asarray(tangent)
-        self.occurrence_indices = jnp.asarray(occurrences, dtype=jnp.int32)
+        self.dimensions = jax.device_put(dims)
+        self.indices = jax.device_put(rows)
+        self.queries = jax.device_put(query)
+        self.points = jax.device_put(closest)
+        self.parameters = jax.device_put(params)
+        self.residuals = jax.device_put(distance)
+        self.status = jax.device_put(state)
+        self.normals = jax.device_put(normal)
+        self.tangents = jax.device_put(tangent)
+        self.occurrence_indices = jax.device_put(occurrences)
         self.occurrence_paths = paths
         self.result_id = canonical_fingerprint(
             {
@@ -267,7 +305,9 @@ class BRepProjectionResult(StrictModule, NonTrainableState):
         )
 
 
-def _matches(sorted_keys: np.ndarray, queries: np.ndarray, /) -> Any:
+def _matches(
+    sorted_keys: np.ndarray, queries: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
     """``(query_row, position)`` of every sorted key equal to each query."""
     start = np.searchsorted(sorted_keys, queries, side="left")
     counts = np.searchsorted(sorted_keys, queries, side="right") - start
@@ -276,7 +316,8 @@ def _matches(sorted_keys: np.ndarray, queries: np.ndarray, /) -> Any:
     return owner, position + np.arange(owner.size)
 
 
-def _closure_codes(
+@checked
+def closure_codes(
     topology: BRepTopology,
     edge_vertices: np.ndarray,
     counts: tuple[int, int, int, int],
@@ -346,7 +387,7 @@ def _closure_codes(
 
 
 class AbstractBRepProjection(StrictModule, NonTrainableState):
-    """Closest-point, classification, and closure queries of one exact B-Rep revision.
+    """Return closest-point, classification, and closure queries of one B-Rep revision.
 
     ``(dimension, index)`` pairs are the ``BRepEntityId`` identities of
     ``source_revision``. With a planar ``embedding`` queries and results use the
@@ -398,18 +439,20 @@ class AbstractBRepProjection(StrictModule, NonTrainableState):
         if occurrence_paths is None:
             return base
         if len(occurrence_paths) != base.size:
-            raise ValueError("One occurrence path is required per entity.")
+            raise ValueError(
+                f"projection.occurrence_paths must align with entities; got {len(occurrence_paths)} paths for {base.size} entities"
+            )
         namespaces = np.zeros(base.shape, dtype=np.int64)
         for row, path in enumerate(occurrence_paths):
             if path:
                 if path not in self.occurrence_paths:
                     raise ValueError(
-                        "An occurrence path is not part of this source revision."
+                        f"projection.occurrence_paths must belong to the source revision; got {path!r}"
                     )
                 index = self.occurrence_paths.index(path)
                 if index not in self.entity_occurrences[int(base[row])]:
                     raise ValueError(
-                        "The entity does not belong to the requested occurrence."
+                        f"projection.entity must belong to the requested occurrence; got code {base[row]} in {path!r}"
                     )
                 namespaces[row] = index + 1
         return base + namespaces * sum(self.entity_counts)
@@ -425,7 +468,9 @@ class AbstractBRepProjection(StrictModule, NonTrainableState):
         """Decode the scientific occurrence namespace of dense entity codes."""
         namespaces = np.asarray(codes, dtype=np.int64) // sum(self.entity_counts)
         if np.any((namespaces < 0) | (namespaces > len(self.occurrence_paths))):
-            raise ValueError("Entity codes reference an absent occurrence namespace.")
+            raise ValueError(
+                f"projection.entity_codes must reference occurrence namespaces in [0, {len(self.occurrence_paths)}]; got {namespaces!r}"
+            )
         return tuple(
             self.occurrence_paths[index - 1] if index > 0 else ()
             for index in namespaces.tolist()
@@ -519,7 +564,7 @@ class AbstractBRepProjection(StrictModule, NonTrainableState):
             or not np.all(np.isfinite(values))
         ):
             raise ValueError(
-                f"{name} must be finite (n, {self.ambient_dimension}) ambient points."
+                f"{name} must be finite (n, {self.ambient_dimension}) ambient points; got shape {values.shape}"
             )
         return values
 
@@ -534,10 +579,13 @@ class AbstractBRepProjection(StrictModule, NonTrainableState):
         /,
         *,
         occurrence_paths: tuple[tuple[str, ...], ...] | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+        preparations: TrimRequestPreparations | None = None,
     ) -> BRepProjectionResult:
         """Closest point of each query on its own vertex, edge, or face."""
         raise NotImplementedError
 
+    @checked
     def classify(
         self,
         points: ArrayLike,
@@ -551,6 +599,8 @@ class AbstractBRepProjection(StrictModule, NonTrainableState):
         allowed_indices: ArrayLike | None = None,
         occurrence_paths: tuple[tuple[str, ...], ...] | None = None,
         allowed_occurrence_paths: tuple[tuple[str, ...], ...] | None = None,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> BRepProjectionResult:
         """Lowest-dimensional entity within ``tolerance`` of each point.
 
@@ -563,11 +613,35 @@ class AbstractBRepProjection(StrictModule, NonTrainableState):
         candidate within the tolerance are FAILED with dimension -1; distinct
         lowest-dimensional entities with distinct closest points are AMBIGUOUS.
         """
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    points,
+                )
+            ) as budget:
+                return self.classify(
+                    points,
+                    tolerance=tolerance,
+                    maximum_dimension=maximum_dimension,
+                    groups=groups,
+                    allowed_groups=allowed_groups,
+                    allowed_dimensions=allowed_dimensions,
+                    allowed_indices=allowed_indices,
+                    occurrence_paths=occurrence_paths,
+                    allowed_occurrence_paths=allowed_occurrence_paths,
+                    preparations=preparations,
+                    budget=budget,
+                )
         queries = self._queries(points, "Classification queries")
         radius = positive_finite_float(tolerance, "tolerance")
         top = int(maximum_dimension)
         if top not in (0, 1, 2):
-            raise ValueError("maximum_dimension must be 0, 1, or 2.")
+            raise ValueError(
+                f"projection.maximum_dimension must be 0, 1, or 2; got {maximum_dimension!r}"
+            )
         world = self._world(queries)
         all_codes = np.asarray(self.qualified_entity_codes)
         all_dimensions, _ = self.code_entities(all_codes)
@@ -590,7 +664,7 @@ class AbstractBRepProjection(StrictModule, NonTrainableState):
         if occurrence_paths is not None:
             if len(occurrence_paths) != queries.shape[0]:
                 raise ValueError(
-                    "One occurrence path is required per classification query."
+                    f"projection.occurrence_paths must align with classification queries; got {len(occurrence_paths)} paths for {queries.shape[0]} queries"
                 )
             keep &= np.asarray(
                 [
@@ -620,6 +694,8 @@ class AbstractBRepProjection(StrictModule, NonTrainableState):
                 for path, selected in zip(pair_paths, keep.tolist(), strict=True)
                 if selected
             ),
+            preparations=preparations,
+            budget=budget,
         )
         within = np.asarray(candidates.residuals) <= radius
         return self._lowest(
@@ -643,7 +719,9 @@ class AbstractBRepProjection(StrictModule, NonTrainableState):
             or allowed_dimensions is None
             or allowed_indices is None
         ):
-            raise ValueError("Grouped classification requires the allowed entity table.")
+            raise ValueError(
+                "projection.allowed_entities must define the grouped entity table with group, dimension, and index arrays; got a missing array"
+            )
         total = sum(self.entity_counts) * (len(self.occurrence_paths) + 1)
         table = np.unique(
             np.asarray(allowed_groups, dtype=np.int64) * total
@@ -696,7 +774,7 @@ class AbstractBRepProjection(StrictModule, NonTrainableState):
         )
         ambiguous |= identity_spread
 
-        def gather(values: Array, fill: float, shape: tuple[int, ...] = ()) -> Any:
+        def gather(values: Array, fill: float, shape: tuple[int, ...] = ()) -> np.ndarray:
             output = np.full((count,) + shape, fill, dtype=np.float64)
             output[selected_owners] = np.asarray(values)[selected_rows]
             return output

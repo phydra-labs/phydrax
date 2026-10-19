@@ -4,14 +4,13 @@
 
 from __future__ import annotations
 
-from typing import cast
-
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ... import integration as imported_integration
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -43,13 +42,17 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
 
     @checked
     def __init__(self, mesh: CellMesh, element: VirtualElementSpec, /) -> None:
-        if not isinstance(mesh.connectivity, PolygonalConnectivity):
-            raise TypeError(
-                "Virtual elements require two-dimensional polygon connectivity."
-            )
+        match mesh.connectivity:
+            case PolygonalConnectivity() as connectivity:
+                pass
+            case _:
+                raise TypeError(
+                    f"VirtualElementDofMap.mesh must provide two-dimensional polygon connectivity; got {type(mesh).__name__}"
+                )
         if element.form_type.dimension != mesh.topological_dimension:
-            raise ValueError("Virtual-element form dimension must match the mesh.")
-        connectivity = mesh.connectivity
+            raise ValueError(
+                f"VirtualElementDofMap.element.form_type.dimension must match the mesh topological dimension; got {element.form_type.dimension}"
+            )
         topology_vertex_count = mesh.coordinates.shape[0]
         edge_count = connectivity.edges.shape[0]
         cell_count = connectivity.cell_count
@@ -58,7 +61,9 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
         cell_width = element.cell_dofs_per_entity
         periodic = mesh.periodic_topology
         if periodic is not None and element.family != "ConformingH1":
-            raise ValueError("Periodic VEM currently supports scalar conforming H1 only.")
+            raise ValueError(
+                f"VirtualElementDofMap.element must use scalar conforming H1 for periodic topology; got {type(element).__name__}"
+            )
         vertex_route = np.arange(topology_vertex_count, dtype=np.int32)
         edge_route = np.arange(edge_count, dtype=np.int32)
         edge_orientations = np.ones(edge_count, dtype=np.int32)
@@ -184,6 +189,7 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
             ]
         self.dof_map_id = canonical_fingerprint(fingerprint_payload)
 
+    @checked
     def evaluate_point_coordinates(
         self,
         coordinates: ArrayLike,
@@ -193,7 +199,7 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
         points = jnp.asarray(coordinates)
         if points.shape != mesh.coordinates.shape:
             raise ValueError(
-                "VEM coordinate refresh must preserve the mesh coordinate shape."
+                f"VirtualElementDofMap.coordinates must preserve the mesh coordinate shape; got {points.shape!r}"
             )
         result = jnp.zeros((self.global_dof_count, points.shape[1]), dtype=points.dtype)
         if self.family == "ConformingH1":
@@ -203,26 +209,25 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
                 else points[mesh.periodic_topology.orbit_representatives(0)]
             )
             result = result.at[: self.vertex_dof_count].set(vertices)
-        # Edge DOFs exist only for the PolygonalConnectivity mesh this map was built on.
-        connectivity = cast(PolygonalConnectivity, mesh.connectivity)
-        edge_width = (
-            self.edge_dof_count
-            // (
-                connectivity.edges.shape[0]
-                if mesh.periodic_topology is None
-                else len(mesh.periodic_topology.orbit_representatives(1))
-            )
-            if self.edge_dof_count
-            else 0
+        if not self.edge_dof_count:
+            return result
+        match mesh.connectivity:
+            case PolygonalConnectivity() as connectivity:
+                pass
+            case _:
+                raise TypeError(
+                    f"VirtualElementDofMap.mesh.connectivity must be PolygonalConnectivity; got {type(mesh.connectivity).__name__}"
+                )
+        edge_width = self.edge_dof_count // (
+            connectivity.edges.shape[0]
+            if mesh.periodic_topology is None
+            else len(mesh.periodic_topology.orbit_representatives(1))
         )
         if edge_width:
             if self.family == "ConformingH1":
-                from ...integration import (
-                    GaussLobattoLegendreRule,
-                    interval_rule_data,
+                data = imported_integration.interval_rule_data(
+                    imported_integration.GaussLobattoLegendreRule(edge_width + 2)
                 )
-
-                data = interval_rule_data(GaussLobattoLegendreRule(edge_width + 2))
                 nodes = 0.5 * (jnp.asarray(data.nodes)[1:-1] + 1.0)
             else:
                 nodes = jnp.full((edge_width,), 0.5, dtype=points.dtype)

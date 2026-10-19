@@ -8,22 +8,20 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax.discretization._topology_rows import (
+    has_duplicate_rows,
+    row_order,
+    row_run_starts,
+)
+
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation
-from ._topology import (
-    _has_duplicate_rows,
-    _row_order,
-    _row_run_starts,
-    CellComplexTopology,
-    EntitySet,
-    EntitySubset,
-    OrientedIncidence,
-)
+from ._topology import CellComplexTopology, EntitySet, EntitySubset, OrientedIncidence
 
 
-_EDGES = (
+HEXAHEDRAL_EDGES = (
     (0, 1),
     (1, 2),
     (2, 3),
@@ -37,7 +35,7 @@ _EDGES = (
     (2, 6),
     (3, 7),
 )
-_FACES = (
+HEXAHEDRAL_FACES = (
     (0, 3, 2, 1),
     (4, 5, 6, 7),
     (0, 1, 5, 4),
@@ -94,10 +92,10 @@ class HexahedralConnectivity(StrictModule, NonTrainableState):
         # Validation runs in the order a per-face scan checks permutations and
         # widths; an invalid permutation raises its own validation error.
         if not valid[0]:
-            _quadrilateral_tensor_permutation(vertex_routes[0], width_u, width_v)
+            quadrilateral_tensor_permutation(vertex_routes[0], width_u, width_v)
         tensor_routes = np.stack(
             [
-                _quadrilateral_tensor_permutation(
+                quadrilateral_tensor_permutation(
                     (start + step * np.arange(4)) % 4, width_u, width_v
                 )
                 for step in (1, -1)
@@ -105,7 +103,7 @@ class HexahedralConnectivity(StrictModule, NonTrainableState):
             ]
         )
         if not np.all(valid):
-            _quadrilateral_tensor_permutation(
+            quadrilateral_tensor_permutation(
                 vertex_routes[np.argmin(valid)], width_u, width_v
             )
         symmetry = vertex_routes[:, 0] + 4 * (steps < 0)
@@ -128,7 +126,7 @@ def _cycle_permutation(cycle: Any, canonical: Any) -> Any:
     return permutation
 
 
-def _quadrilateral_tensor_permutation(
+def quadrilateral_tensor_permutation(
     vertex_permutation: Any,
     width_u: int,
     width_v: int,
@@ -182,20 +180,20 @@ def hexahedral_connectivity(
     ordered_cells = np.sort(cells, axis=1)
     if np.any(ordered_cells[:, 1:] == ordered_cells[:, :-1]):
         raise ValueError("Each hexahedron must reference eight distinct vertices.")
-    if _has_duplicate_rows(ordered_cells):
+    if has_duplicate_rows(ordered_cells):
         raise ValueError("hexahedra cannot contain duplicate cells.")
 
     # Edges and faces are numbered by their sorted vertex keys.
-    local_edges = cells[:, np.asarray(_EDGES)].reshape((-1, 2))
+    local_edges = cells[:, np.asarray(HEXAHEDRAL_EDGES)].reshape((-1, 2))
     edge_rows = np.sort(local_edges, axis=1)
-    edge_order = _row_order(edge_rows)
-    edge_starts = _row_run_starts(edge_rows[edge_order])
+    edge_order = row_order(edge_rows)
+    edge_starts = row_run_starts(edge_rows[edge_order])
     edges = edge_rows[edge_order[edge_starts]]
     cell_edges = np.empty((edge_rows.shape[0],), dtype=np.int32)
     cell_edges[edge_order] = np.cumsum(edge_starts) - 1
     cell_edge_signs = np.where(local_edges[:, 0] < local_edges[:, 1], 1.0, -1.0)
 
-    cycles = cells[:, np.asarray(_FACES)].reshape((-1, 4))
+    cycles = cells[:, np.asarray(HEXAHEDRAL_FACES)].reshape((-1, 4))
     occurrences = np.arange(cycles.shape[0], dtype=np.int64)
     # The lexicographically smallest rotation or reflection of a cycle of
     # distinct vertices starts at its minimum toward the smaller neighbor;
@@ -214,8 +212,8 @@ def hexahedral_connectivity(
     permutations = (directions[:, None] * (positions - minimum[:, None])) % 4
 
     face_keys = np.sort(cycles, axis=1)
-    face_order = _row_order(face_keys)
-    face_starts = _row_run_starts(face_keys[face_order])
+    face_order = row_order(face_keys)
+    face_starts = row_run_starts(face_keys[face_order])
     first_positions = np.flatnonzero(face_starts)
     sorted_faces = np.cumsum(face_starts) - 1
     occurrence_faces = np.empty((cycles.shape[0],), dtype=np.int64)
@@ -272,7 +270,7 @@ def hexahedral_connectivity(
     )
 
 
-def _hexahedral_complex(
+def hexahedral_complex(
     c: HexahedralConnectivity,
     /,
     *,

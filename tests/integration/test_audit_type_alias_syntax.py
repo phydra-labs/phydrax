@@ -40,6 +40,29 @@ def accepts(route: str) -> bool:
     assert findings[0].alias == "Route"
 
 
+def test_selector_audit_refuses_get_args_on_type_statement_selectors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, package = _package(
+        tmp_path,
+        """from typing import Literal, TypeAlias, get_args
+
+type Ray = Literal[\"outward\", \"up\", \"down\"]
+Route: TypeAlias = Literal[\"direct\", \"fast\"]
+
+RAYS = get_args(Ray)
+ROUTES = get_args(Route)
+""",
+    )
+    monkeypatch.setattr(audit_selectors, "ROOT", root)
+
+    findings = audit_selectors.audit(package)
+
+    assert [(item.kind, item.alias, item.line) for item in findings] == [
+        ("type-statement-get-args", "Ray", 6)
+    ]
+
+
 def test_contract_audit_reads_pep_695_literal_aliases(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

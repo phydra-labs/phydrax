@@ -84,10 +84,8 @@ The numerical constants and transition center are part of the correlation;
 there is no tunable smoothing width.
 
 Beetstra's monodisperse fit is
-f0 = 10φ/ε² + ε²(1 + 1.5√φ), and
-fR = [0.413 Rs/(24ε²)]
-[ε⁻¹ + 3φε + 8.4 Rs^−0.343] /
-[1 + 10^(3φ) Rs^−(1+4φ)/2].
+`f0 = 10φ/ε² + ε²(1 + 1.5√φ)`, and
+`fR = [0.413 Rs/(24ε²)] [ε⁻¹ + 3φε + 8.4 Rs^−0.343] / [1 + 10^(3φ) Rs^−(1+4φ)/2]`.
 At zero speed fR = 0. This is the frictional drag definition from the paper,
 excluding the separately modeled pressure-gradient force; no bidisperse or
 polydisperse correction is implied by the `beetstra` selector.

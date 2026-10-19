@@ -546,8 +546,8 @@ class PreparedGrandPotentialFEM(AbstractFixedStepMethod, NonTrainableState):
         chemical_field: str,
         /,
     ) -> None:
-        phase_index = discretization._field_index(phase_field)
-        chemical_index = discretization._field_index(chemical_field)
+        phase_index = discretization.field_index(phase_field)
+        chemical_index = discretization.field_index(chemical_field)
         phase_space = discretization.field_spaces[phase_index].vector_space
         chemical_space = discretization.field_spaces[chemical_index].vector_space
         if not isinstance(phase_space, ArraySpace) or not isinstance(

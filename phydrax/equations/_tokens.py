@@ -176,6 +176,24 @@ def _symbol_vocabulary(problem: PDEProblemIR, /) -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
+type _TokenRow = tuple[int, int, int, int, float, tuple[float, ...], int, int, int]
+
+
+def _token_dimension_basis(dimension_basis: Sequence[str], /) -> tuple[str, ...]:
+    """Validate the explicitly ordered host dimension basis."""
+    basis = tuple(dimension_basis)
+    if any(not isinstance(axis, str) for axis in basis):
+        raise TypeError(
+            f"tokenize_pde_ir.dimension_basis must contain only strings; got {basis!r}"
+        )
+    if len(set(basis)) != len(basis) or any(not axis for axis in basis):
+        raise ValueError(
+            f"tokenize_pde_ir.dimension_basis must contain non-empty unique entries; got {basis!r}"
+        )
+    return basis
+
+
+# Schema projection keeps category, attribute, and expression-preorder emission explicit to preserve token addresses.
 def tokenize_pde_ir(
     problem: PDEProblemIR,
     /,
@@ -185,29 +203,10 @@ def tokenize_pde_ir(
 ) -> PDETokenBatch:
     """Encode a PDE using an explicit deterministic dense dimension basis."""
     validate_pde_ir(problem)
-    basis = tuple(dimension_basis)
-    if any(not isinstance(axis, str) for axis in basis):
-        raise TypeError("PDE token dimension basis entries must be strings.")
-    if len(set(basis)) != len(basis) or any(not axis for axis in basis):
-        raise ValueError(
-            "PDE token dimension basis entries must be non-empty and unique."
-        )
-    rank = len(basis)
+    basis = _token_dimension_basis(dimension_basis)
     vocabulary = _symbol_vocabulary(problem)
     symbols = {name: index for index, name in enumerate(vocabulary)}
-    rows: list[
-        tuple[
-            int,
-            int,
-            int,
-            int,
-            float,
-            tuple[float, ...],
-            int,
-            int,
-            int,
-        ]
-    ] = []
+    rows: list[_TokenRow] = []
 
     def append(
         kind: str,
@@ -536,6 +535,19 @@ def tokenize_pde_ir(
             scalar=scale,
         )
 
+    return _pde_token_batch(rows, basis, vocabulary, problem, max_tokens)
+
+
+def _pde_token_batch(
+    rows: list[_TokenRow],
+    basis: tuple[str, ...],
+    vocabulary: tuple[str, ...],
+    problem: PDEProblemIR,
+    max_tokens: int | None,
+    /,
+) -> PDETokenBatch:
+    """Convert emitted host rows to padded device columns."""
+    rank = len(basis)
     count = len(rows)
     capacity = count if max_tokens is None else int(max_tokens)
     if capacity < count:

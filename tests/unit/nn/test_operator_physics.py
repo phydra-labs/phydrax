@@ -12,6 +12,7 @@ import pytest
 
 import phydrax as phx
 from phydrax.nn.operator import AbstractOperatorModel
+from phydrax.units import METER
 
 
 def _axis(size: Any = 5) -> Any:
@@ -587,7 +588,7 @@ def test_operator_context_supports_multiple_coordinates_queries_and_outputs() ->
         field_name="radius_squared",
     )
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     function = context.domain_function(domain, "x")
     laplacian = phx.operators.laplacian(function, var="x")

@@ -13,6 +13,7 @@ import phydrax as phx
 import phydrax.axes as cx
 from phydrax.domain import Boundary, FixedStart, Interval1d, SampleLayout, TimeInterval
 from phydrax.operators.differential import div, dt
+from phydrax.units import METER
 
 
 def _jit_loss(term: Any, functions: Any) -> Any:
@@ -277,7 +278,7 @@ def test_integral_initial_constraint_zero() -> None:
 
 def test_poynting_flux_constraint_zero() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     boundary = geom.component({"x": Boundary()})
 

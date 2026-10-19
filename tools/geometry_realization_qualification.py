@@ -15,6 +15,7 @@ import numpy as np
 
 import phydrax as phx
 from benchmarks._io import write_json_atomic
+from phydrax.units import METER
 
 
 def _motion_setup() -> Any:
@@ -41,7 +42,7 @@ def _motion_setup() -> Any:
         (0.0, 0.0),
         1.0,
         feature_id="circle",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     projection = phx.geometry.ImplicitPointProjectionPlan(
         geometry,
         coordinates[:4],
@@ -61,7 +62,7 @@ def _surface_setup() -> Any:
         (0.0, 0.0, 0.0),
         0.75,
         feature_id="sphere",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformAxisSpec(7) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -96,7 +97,7 @@ def run() -> Any:
     extrusion = (
         phx.geometry.Circle((0.0, 0.0), 2.0, feature_id="profile")
         .extruded(6.0, feature_id="extrusion")
-        .compile()
+        .compile(coordinate_unit=METER)
     )
     extrusion_error = float(
         jnp.max(
@@ -116,7 +117,7 @@ def run() -> Any:
     revolution = (
         phx.geometry.Circle((2.0, 0.0), 0.5, feature_id="radial-profile")
         .revolved()
-        .compile()
+        .compile(coordinate_unit=METER)
     )
     revolution_error = float(
         jnp.max(
@@ -138,7 +139,7 @@ def run() -> Any:
     invalid_revolution = (
         phx.geometry.Circle((0.25, 0.0), 0.5, feature_id="invalid-profile")
         .revolved()
-        .compile()
+        .compile(coordinate_unit=METER)
     )
     cases.append(
         _case(

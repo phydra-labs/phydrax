@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.geometry.surface import SurfaceMetadata, SurfaceModel
 from phydrax.meshing.providers._ftetwild import FTetWildOptions, FTetWildProvider
 
 
@@ -19,10 +20,10 @@ def _source(scale: Any = 1.0, *, triangle_soup: Any = False) -> Any:
     if triangle_soup:
         points = points[faces].reshape((-1, 3))
         faces = np.arange(12).reshape((4, 3))
-    return phx.geometry.surface.SurfaceModel.from_triangles(
+    return SurfaceModel.from_triangles(
         points,
         faces,
-        phx.geometry.surface.SurfaceMetadata(
+        SurfaceMetadata(
             source_id="tetrahedral-surface",
             source_revision=f"scale:{scale}",
             coordinate_contract=phx.SpatialCoordinateContract(phx.units.METER),

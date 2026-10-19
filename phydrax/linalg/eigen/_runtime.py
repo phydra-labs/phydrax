@@ -18,9 +18,9 @@ from .._materialization import MaterializationPolicy, materialize
 from .._operators import AbstractLinearOperator
 from .._preconditioning import prepare_preconditioner, PreparedPreconditioner
 from .._spaces import (
-    _coordinate_dtype,
     _coordinate_pairing_matrix,
     _has_euclidean_pairing,
+    coordinate_dtype,
 )
 from ._native import _solve_dense_eigh, _solve_lobpcg, _solve_restarted_lanczos
 from ._plans import EigenSolvePlan, make_eigensolve_plan
@@ -125,7 +125,7 @@ def _prepare_for_plan(
 ) -> PreparedEigenSolve:
     if isinstance(plan.selected_method, DenseEigh):
         n = problem.dimension
-        dtype = _coordinate_dtype(problem.operator.source)
+        dtype = coordinate_dtype(problem.operator.source)
         constraint_basis = jnp.zeros((n, 0), dtype=dtype)
         metric_constraint_basis = constraint_basis
         initial_basis = jnp.zeros((n, plan.block_dimension), dtype=dtype)
@@ -168,7 +168,7 @@ def _prepare_dense_state(
 ) -> DenseEigenState:
     space = problem.operator.source
     n = problem.dimension
-    dtype = _coordinate_dtype(space)
+    dtype = coordinate_dtype(space)
     operator_matrix = materialize(problem.operator, plan.policy.materialization)
     standard_euclidean = isinstance(problem, Eigenproblem) and _has_euclidean_pairing(
         space
@@ -259,7 +259,7 @@ def _prepare_preconditioning(
     if plan.preconditioner_plan is None:
         return None
     byte_budget = plan.policy.resources.preconditioner_bytes
-    itemsize = np.dtype(_coordinate_dtype(problem.operator.source)).itemsize
+    itemsize = np.dtype(coordinate_dtype(problem.operator.source)).itemsize
     materialization = MaterializationPolicy(
         max_entries=max(1, byte_budget // itemsize),
         max_bytes=max(1, byte_budget),
@@ -277,7 +277,7 @@ def _constraint_state(problem: EigenproblemLike, /) -> tuple[Array, Array]:
     space = problem.operator.source
     constraints = problem.constraints
     if constraints is None or constraints.capacity == 0:
-        empty = jnp.zeros((space.size, 0), dtype=_coordinate_dtype(space))
+        empty = jnp.zeros((space.size, 0), dtype=coordinate_dtype(space))
         return empty, empty
     mask = (
         jnp.arange(constraints.capacity, dtype=constraints.dimension.dtype)
@@ -363,7 +363,7 @@ def _initial_block(
 ) -> tuple[Array, Array]:
     space = problem.operator.source
     policy = plan.policy
-    dtype = _coordinate_dtype(space)
+    dtype = coordinate_dtype(space)
     supplied = policy.initial_basis
     if supplied is not None:
         if supplied.shape[0] != space.size:

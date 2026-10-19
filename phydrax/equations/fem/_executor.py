@@ -490,7 +490,7 @@ def _cell_coefficient_values(
     if coefficient_.location == "dof":
         coefficient_field = None
         for field_name in gathers:
-            field_index = discretization._field_index(field_name)
+            field_index = discretization.field_index(field_name)
             candidate_id = discretization.field_spaces[field_index].field_space_id
             if candidate_id == field_space_id:
                 coefficient_field = field_name
@@ -502,7 +502,7 @@ def _cell_coefficient_values(
                 "DOF coefficient field is not gathered by the compiled workset."
             )
         dof_indices = gathers[coefficient_field]
-        coefficient_field_index = discretization._field_index(coefficient_field)
+        coefficient_field_index = discretization.field_index(coefficient_field)
         cell_start = sum(
             block.cell_count for block in discretization.mesh.blocks[:block_index]
         )
@@ -985,7 +985,7 @@ def _cell_functional_problem(
     physical_points = None
     physical_weights = None
     for field_name in action.input_fields:
-        field_index = discretization._field_index(field_name)
+        field_index = discretization.field_index(field_name)
         dof_map = discretization.dof_maps[field_index]
         geometry = discretization.evaluate_block_geometry(
             field_name,
@@ -1227,7 +1227,7 @@ def _exterior_functional_value(
     orientations = []
     selected_bases = []
     for field_name in action.input_fields:
-        field_index = discretization._field_index(field_name)
+        field_index = discretization.field_index(field_name)
         dof_map = discretization.dof_maps[field_index]
         dofs = dof_map.cell_dofs[block_index][local_owners]
         orientation = dof_map.orientations[block_index][local_owners]
@@ -1420,7 +1420,7 @@ def _accumulate_finite_element_workset(
             continue
         output_field = _action_output_fields(action)[0]
         output_state = state_by_field[output_field]
-        output_field_index = discretization._field_index(output_field)
+        output_field_index = discretization.field_index(output_field)
         output_dof_map = discretization.dof_maps[output_field_index]
         output_residual = residual_by_field[output_field]
         domain = (
@@ -1822,7 +1822,7 @@ def _accumulate_finite_element_workset(
             input_values = []
             input_gradients = []
             for input_field in action.input_fields:
-                input_field_index = discretization._field_index(input_field)
+                input_field_index = discretization.field_index(input_field)
                 input_dof_map = discretization.dof_maps[input_field_index]
                 input_geometry = discretization.evaluate_block_geometry(
                     input_field,
@@ -2075,7 +2075,7 @@ def _full_residual(
         )
     residuals = tuple(
         DualSpace(
-            discretization.field_spaces[discretization._field_index(name)].vector_space
+            discretization.field_spaces[discretization.field_index(name)].vector_space
         ).validate(bindings[name].unflatten(residual_by_field[name]))
         for name in form.field_names
     )
@@ -2355,7 +2355,7 @@ def _prepared_tensor_facet_residual(
     )
     if isinstance(action, InteriorFacetAction) and neighbor_block_index is None:
         raise ValueError("Prepared interior facet is missing its neighbor block.")
-    output_index = discretization._field_index(output_field)
+    output_index = discretization.field_index(output_field)
     output_state = state_by_field[output_field]
     output_owner_element = discretization.elements[output_index][owner_block_index]
     output_neighbor_element = (
@@ -2364,7 +2364,7 @@ def _prepared_tensor_facet_residual(
         else discretization.elements[output_index][neighbor_block_index]
     )
     for input_field in action.input_field_names:
-        input_index = discretization._field_index(input_field)
+        input_index = discretization.field_index(input_field)
         input_owner_element = discretization.elements[input_index][owner_block_index]
         input_neighbor_element = (
             None
@@ -2431,7 +2431,7 @@ def _prepared_tensor_facet_residual(
             )
 
     def traces(field_name: str, /, *, neighbor: bool = False) -> Array:
-        field_index = discretization._field_index(field_name)
+        field_index = discretization.field_index(field_name)
         state = state_by_field[field_name]
         component_shape = state.shape[1:]
         values = jnp.zeros((count, point_count) + component_shape, dtype=state.dtype)
@@ -3583,7 +3583,7 @@ def _execute_finite_element_functional(
         return total, values, None
     residuals = tuple(
         DualSpace(
-            discretization.field_spaces[discretization._field_index(name)].vector_space
+            discretization.field_spaces[discretization.field_index(name)].vector_space
         ).validate(bindings[name].unflatten(residual_by_field[name]))
         for name in form.field_names
     )

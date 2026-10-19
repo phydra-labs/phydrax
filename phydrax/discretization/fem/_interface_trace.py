@@ -13,36 +13,37 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import MeshRegion
 from ...linalg import (
     AbstractLinearOperator,
-    AbstractVectorSpace,
     ArraySpace,
     FunctionLinearOperator,
 )
+from ...typing import checked
 from .._cell_complex import TetrahedralConnectivity
 from .._cell_geometry import coordinate_lagrange_element
 from .._topology import EntitySelection
 from ._generic import FiniteElementDiscretization
-from ._reference import FiniteElementSpec
 
 
 class PreparedMatchingScalarInterfaceTrace3D(StrictModule, NonTrainableState):
-    """Exact affine P1-tetrahedron routes to one matching oriented DP0 surface.
+    """algebraic affine P1-tetrahedron routes to one matching oriented DP0 surface.
 
     The bounded envelope is a scalar three-dimensional interior Poisson problem
-    on an affine tetrahedral H1 P1 mesh coupled through its complete exterior
-    boundary to a homogeneous exterior Laplace problem.  The geometry is one
+    on an affine tetrahedral H1 P1 mesh coupled through its full exterior
+    boundary to a homogeneous exterior Laplace problem. The geometry is one
     vertex-matching, outward-oriented triangular ``MeshRegion``; the trace is
-    the exact facet average, never point interpolation.  Conormal values use
+    the algebraic facet average, never point interpolation. Conormal values use
     the normal pointing from the FEM interior into the exterior on both PDE
-    sides.  The provider is the fixed-topology FEM discretization and the
-    supplied DP0 boundary vector space.  Precision, coordinate/orientation
+    sides. The provider is the fixed-topology FEM discretization and the
+    supplied DP0 boundary vector space. Precision, coordinate/orientation
     error, flux-closure evidence, and fixed action resources are recorded
-    below.  This is discrete preparation evidence, not continuum certification.
+    below. This is discrete preparation evidence, not continuum certification.
 
     Non-goals are nonmatching/mortar interfaces, curved or moving geometry,
     partial/open boundaries, higher-order or vector fields, two dimensions,
@@ -75,12 +76,12 @@ class PreparedMatchingScalarInterfaceTrace3D(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
 
     def trace(self, coefficients: Array, /) -> Array:
-        """Return the exact DP0 facet-average Dirichlet trace."""
+        """Return the algebraic DP0 facet-average Dirichlet trace."""
 
         return self.trace_operator.mv(coefficients)
 
     def trace_transpose(self, facet_values: Array, /) -> Array:
-        """Apply the exact algebraic transpose of the facet-average trace."""
+        """Apply the algebraic transpose of the facet-average trace."""
 
         return self.trace_operator.transpose_mv(facet_values)
 
@@ -90,17 +91,17 @@ class PreparedMatchingScalarInterfaceTrace3D(StrictModule, NonTrainableState):
         return self.boundary_load_operator.mv(conormal_values)
 
     def boundary_load_transpose(self, coefficients: Array, /) -> Array:
-        """Apply the exact transpose of the conormal-to-FEM load route."""
+        """Apply the algebraic transpose of the conormal-to-FEM load route."""
 
         return self.boundary_load_operator.transpose_mv(coefficients)
 
     def conormal(self, coefficients: Array, /) -> Array:
-        """Return the exact outward normal derivative of affine P1 cells."""
+        """Return the algebraic outward normal derivative of affine P1 cells."""
 
         return self.conormal_operator.mv(coefficients)
 
     def conormal_transpose(self, facet_values: Array, /) -> Array:
-        """Apply the exact algebraic transpose of the conormal route."""
+        """Apply the algebraic transpose of the conormal route."""
 
         return self.conormal_operator.transpose_mv(facet_values)
 
@@ -123,7 +124,9 @@ def _field_index(
         if field_space.name == name
     )
     if len(matches) != 1:
-        raise ValueError("field_name must select exactly one prepared FEM field.")
+        raise ValueError(
+            "field_index.field_name must select exactly one prepared FEM field; got field_name must select exactly one prepared FEM field."
+        )
     return matches[0]
 
 
@@ -142,8 +145,8 @@ def _coordinate_tolerance(
     )
     if not math.isfinite(tolerance) or tolerance < 0.0 or tolerance > maximum:
         raise ValueError(
-            "coordinate_tolerance must be finite, nonnegative, and no larger "
-            "than sqrt(machine epsilon) times the interface scale."
+            "interface_trace.coordinate_tolerance must be finite, nonnegative, and no larger "
+            f"than {maximum!r}; got {tolerance!r}"
         )
     return tolerance, scale
 
@@ -157,7 +160,7 @@ def _surface_vertex_route(
 ) -> tuple[np.ndarray, float]:
     if surface_coordinates.shape != (boundary_vertices.size, 3):
         raise ValueError(
-            "The matching interface must contain every FEM boundary vertex exactly once."
+            "surface_vertex_route.configuration must contain every FEM boundary vertex exactly once; got The matching interface must contain every FEM boundary vertex exactly once."
         )
     candidates = fem_coordinates[boundary_vertices]
     route = np.full((surface_coordinates.shape[0],), -1, dtype=np.int32)
@@ -168,7 +171,9 @@ def _surface_vertex_route(
             for point, vertex in zip(candidates, boundary_vertices, strict=True)
         }
         if len(exact) != boundary_vertices.size:
-            raise ValueError("FEM boundary coordinates must be unique.")
+            raise ValueError(
+                "surface_vertex_route.configuration must be unique; got FEM boundary coordinates must be unique."
+            )
         for index, point in enumerate(surface_coordinates):
             route[index] = exact.get(tuple(float(value) for value in point), -1)
     else:
@@ -196,14 +201,14 @@ def _surface_vertex_route(
             )
             if len(accepted) != 1:
                 raise ValueError(
-                    "Surface coordinates do not bijectively match the FEM exterior vertices."
+                    "surface_vertex_route.configuration must bijectively match the FEM exterior vertices; got Surface coordinates do not bijectively match the FEM exterior vertices."
                 )
             local = accepted[0]
             route[index] = boundary_vertices[local]
             errors[index] = float(np.linalg.norm(point - candidates[local]))
     if np.any(route < 0) or np.unique(route).size != boundary_vertices.size:
         raise ValueError(
-            "Surface coordinates do not bijectively match the FEM exterior vertices."
+            "surface_vertex_route.configuration must bijectively match the FEM exterior vertices; got Surface coordinates do not bijectively match the FEM exterior vertices."
         )
     return route, float(np.max(errors, initial=0.0))
 
@@ -221,7 +226,9 @@ def _face_routes(
         for face in selected_faces
     }
     if len(keys) != selected_faces.size:
-        raise ValueError("FEM exterior facets do not have unique vertex triples.")
+        raise ValueError(
+            "face_routes.configuration must have unique vertex triples; got FEM exterior facets do not have unique vertex triples."
+        )
     mapped_faces = surface_to_fem_vertices[surface_faces]
     route = np.asarray(
         [
@@ -237,42 +244,65 @@ def _face_routes(
         != set(int(value) for value in selected_faces)
     ):
         raise ValueError(
-            "Surface triangles do not bijectively match the selected FEM exterior facets."
+            "face_routes.configuration must bijectively match the selected FEM exterior facets; got Surface triangles do not bijectively match the selected FEM exterior facets."
         )
     return route, mapped_faces
 
 
-def prepare_matching_scalar_interface_trace_3d(
+class _MatchingTraceEnvelope(StrictModule):
+    connectivity: TetrahedralConnectivity
+    field_space: ArraySpace
+    cells: np.ndarray
+    cell_dofs: np.ndarray
+    selected_faces: np.ndarray
+
+
+class _MatchingTraceGeometry(StrictModule):
+    surface_coordinates: np.ndarray
+    surface_faces: np.ndarray
+    surface_to_fem: np.ndarray
+    coordinate_error: float
+    fem_face_route: np.ndarray
+    mapped_faces: np.ndarray
+    owner_cells: np.ndarray
+    owner_routes: np.ndarray
+    normals: np.ndarray
+    areas: np.ndarray
+    orientation_cosines: np.ndarray
+    flux_closure: float
+    conormal_weights: np.ndarray
+
+
+class _MatchingTraceActions(StrictModule):
+    trace_operator: FunctionLinearOperator
+    boundary_load_operator: FunctionLinearOperator
+    conormal_operator: FunctionLinearOperator
+    face_areas: Array
+
+
+def _matching_trace_envelope(
     discretization: FiniteElementDiscretization,
-    surface: MeshRegion,
-    boundary_space: AbstractVectorSpace,
-    /,
-    *,
-    field_name: str = "u",
-    interface: EntitySelection | None = None,
-    coordinate_tolerance: float | None = None,
-) -> PreparedMatchingScalarInterfaceTrace3D:
-    """Prepare exact trace, boundary-load, and conormal routes for 3D P1/DP0.
-
-    Geometry validation is intentionally authoritative here: all coupling
-    preparation consumes this one result rather than repeating or weakening
-    coordinate, topology, or orientation checks.
-    """
-
-    if not isinstance(discretization, FiniteElementDiscretization):
-        raise TypeError("discretization must be a FiniteElementDiscretization.")
-    if not isinstance(surface, MeshRegion):
-        raise TypeError("surface must be a MeshRegion.")
-    if not isinstance(boundary_space, ArraySpace):
-        raise TypeError("boundary_space must be a one-dimensional ArraySpace.")
+    boundary_space: ArraySpace,
+    field_name: str,
+    interface: EntitySelection | None,
+) -> _MatchingTraceEnvelope:
     mesh = discretization.mesh
     if mesh.ambient_dimension != 3 or mesh.topological_dimension != 3:
-        raise ValueError("Matching scalar FEM–BEM preparation is three-dimensional.")
+        raise ValueError(
+            "matching_trace_envelope.configuration must have topological and ambient dimension three; got Matching scalar FEM–BEM preparation is three-dimensional."
+        )
     if len(mesh.blocks) != 1 or mesh.blocks[0].cell_kind != "tetrahedron":
-        raise ValueError("The supported FEM envelope is one affine tetrahedron block.")
+        raise ValueError(
+            "matching_trace_envelope.configuration must contain one affine tetrahedron block; got The supported FEM envelope is one affine tetrahedron block."
+        )
     connectivity = mesh.connectivity
-    if not isinstance(connectivity, TetrahedralConnectivity):
-        raise TypeError("Matching scalar FEM–BEM requires tetrahedral connectivity.")
+    match connectivity:
+        case TetrahedralConnectivity():
+            pass
+        case _:
+            raise TypeError(
+                "matching_trace_envelope.configuration must provide tetrahedral connectivity; got Matching scalar FEM–BEM requires tetrahedral connectivity."
+            )
 
     index = _field_index(discretization, field_name)
     elements = discretization.elements[index]
@@ -294,14 +324,16 @@ def prepare_matching_scalar_interface_trace_3d(
         or field_space.shape != (mesh.coordinates.shape[0],)
     ):
         raise ValueError(
-            "The supported scalar trace envelope is nodal H1 Lagrange P1 on affine tetrahedra."
+            "matching_trace_envelope.configuration must use vertex-associated scalar H1 Lagrange P1 fields on affine tetrahedra; got The supported scalar trace envelope is nodal H1 Lagrange P1 on affine tetrahedra."
         )
 
     block = mesh.blocks[0]
     cell_dofs = np.asarray(dof_map.cell_dofs[0], dtype=np.int32)
     cells = np.asarray(block.vertices, dtype=np.int32)
     if cell_dofs.shape != cells.shape or not np.array_equal(cell_dofs, cells):
-        raise ValueError("P1 FEM DOF routes must coincide with tetrahedron vertices.")
+        raise ValueError(
+            "matching_trace_envelope.configuration must coincide with tetrahedron vertices; got P1 FEM DOF routes must coincide with tetrahedron vertices."
+        )
     coordinate_element = discretization.coordinate_elements[0]
     coordinate_dofs = np.asarray(discretization.coordinate_dofs[0], dtype=np.int32)
     if (
@@ -312,7 +344,7 @@ def prepare_matching_scalar_interface_trace_3d(
         or not np.array_equal(coordinate_dofs, cells)
     ):
         raise ValueError(
-            "Matching scalar FEM-BEM requires affine P1 tetrahedral geometry."
+            "matching_trace_envelope.configuration must provide affine P1 tetrahedral geometry; got Matching scalar FEM-BEM requires affine P1 tetrahedral geometry."
         )
 
     domain = discretization.integration_domain("exterior_facet", interface)
@@ -324,16 +356,29 @@ def prepare_matching_scalar_interface_trace_3d(
         np.sort(selected_faces), np.sort(all_exterior)
     ):
         raise ValueError(
-            "The bounded coupling envelope requires the complete FEM exterior boundary."
+            "matching_trace_envelope.configuration must provide the full FEM exterior boundary; got The bounded coupling envelope requires the full FEM exterior boundary."
         )
     if (
         boundary_space.shape != (selected_faces.size,)
         or boundary_space.dtype != field_space.dtype
     ):
         raise ValueError(
-            "The DP0 boundary space must have one scalar per surface face and the FEM scalar dtype."
+            "matching_trace_envelope.configuration must have one scalar per surface face and the FEM scalar dtype; got The DP0 boundary space must have one scalar per surface face and the FEM scalar dtype."
         )
+    return _MatchingTraceEnvelope(
+        connectivity, field_space, cells, cell_dofs, selected_faces
+    )
 
+
+def _matching_trace_geometry(
+    discretization: FiniteElementDiscretization,
+    surface: MeshRegion,
+    envelope: _MatchingTraceEnvelope,
+    coordinate_tolerance: float | None,
+) -> _MatchingTraceGeometry:
+    mesh = discretization.mesh
+    connectivity, selected_faces = envelope.connectivity, envelope.selected_faces
+    cells, cell_dofs = envelope.cells, envelope.cell_dofs
     fem_coordinates = np.asarray(discretization.default_runtime.coordinates)
     surface_coordinates = np.asarray(surface.vertices)
     surface_faces = np.asarray(surface.faces, dtype=np.int32)
@@ -346,7 +391,9 @@ def prepare_matching_scalar_interface_trace_3d(
         or np.any(~np.isfinite(fem_coordinates))
         or np.any(~np.isfinite(surface_coordinates))
     ):
-        raise ValueError("Interface coordinates/faces must be finite triangles in 3D.")
+        raise ValueError(
+            "matching_trace_geometry.configuration must be finite triangles in 3D; got Interface coordinates/faces must be finite triangles in 3D."
+        )
     tolerance, scale = _coordinate_tolerance(coordinate_tolerance, fem_coordinates)
     boundary_vertices = np.flatnonzero(
         np.asarray(connectivity.boundary_vertices, dtype=np.bool_)
@@ -384,7 +431,9 @@ def prepare_matching_scalar_interface_trace_3d(
     )
     areas = np.linalg.norm(area_vectors, axis=1)
     if np.any(~np.isfinite(areas)) or np.any(areas <= 0.0):
-        raise ValueError("Matching interface triangles must have positive finite area.")
+        raise ValueError(
+            "matching_trace_geometry.configuration must have positive finite area; got Matching interface triangles must have positive finite area."
+        )
     normals = area_vectors / areas[:, None]
     face_centers = np.mean(triangles, axis=1)
     cell_centers = np.mean(fem_coordinates[cells[owner_cells]], axis=1)
@@ -396,7 +445,7 @@ def prepare_matching_scalar_interface_trace_3d(
         orientation_cosines <= orientation_tolerance
     ):
         raise ValueError(
-            "Surface faces must use the FEM-interior-to-exterior orientation."
+            "matching_trace_geometry.configuration must use the FEM-interior-to-exterior orientation; got Surface faces must use the FEM-interior-to-exterior orientation."
         )
     flux_closure = float(np.linalg.norm(np.sum(areas[:, None] * normals, axis=0)))
     boundary_measure = float(np.sum(areas))
@@ -406,7 +455,9 @@ def prepare_matching_scalar_interface_trace_3d(
         * max(boundary_measure, scale * scale, 1.0)
     )
     if not math.isfinite(flux_closure) or flux_closure > closure_tolerance:
-        raise ValueError("Interface area vectors do not close to zero flux.")
+        raise ValueError(
+            "matching_trace_geometry.configuration must close to zero flux; got Interface area vectors do not close to zero flux."
+        )
 
     owner_routes = cell_dofs[owner_cells]
     unique_owners, owner_inverse_route = np.unique(owner_cells, return_inverse=True)
@@ -422,7 +473,34 @@ def prepare_matching_scalar_interface_trace_3d(
         np.eye(affine.shape[-1], dtype=affine.dtype),
     )[owner_inverse_route]
     conormal_weights = np.sum(normals[:, :, None] * inverse_affine[:, 1:, :], axis=1)
+    return _MatchingTraceGeometry(
+        surface_coordinates,
+        surface_faces,
+        surface_to_fem,
+        coordinate_error,
+        fem_face_route,
+        mapped_faces,
+        owner_cells,
+        owner_routes,
+        normals,
+        areas,
+        orientation_cosines,
+        flux_closure,
+        conormal_weights,
+    )
 
+
+def _matching_trace_actions(
+    discretization: FiniteElementDiscretization,
+    surface: MeshRegion,
+    boundary_space: ArraySpace,
+    field_name: str,
+    envelope: _MatchingTraceEnvelope,
+    geometry: _MatchingTraceGeometry,
+) -> _MatchingTraceActions:
+    field_space = envelope.field_space
+    mapped_faces, owner_routes = geometry.mapped_faces, geometry.owner_routes
+    conormal_weights, areas = geometry.conormal_weights, geometry.areas
     face_dofs = jnp.asarray(mapped_faces, dtype=jnp.int32)
     owner_dofs = jnp.asarray(owner_routes, dtype=jnp.int32)
     conormal_weights_ = jnp.asarray(conormal_weights, dtype=field_space.dtype)
@@ -498,6 +576,52 @@ def prepare_matching_scalar_interface_trace_3d(
             }
         ),
     )
+    return _MatchingTraceActions(
+        trace_operator, boundary_load_operator, conormal_operator, face_areas
+    )
+
+
+@checked
+def prepare_matching_scalar_interface_trace_3d(
+    discretization: FiniteElementDiscretization,
+    surface: MeshRegion,
+    boundary_space: ArraySpace,
+    /,
+    *,
+    field_name: str = "u",
+    interface: EntitySelection | None = None,
+    coordinate_tolerance: float | None = None,
+) -> PreparedMatchingScalarInterfaceTrace3D:
+    """Prepare trace, load, and conormal routes for a matching 3D P1/DP0 interface.
+
+    Coordinate, topology, and orientation checks share one prepared interface.
+    """
+    envelope = _matching_trace_envelope(
+        discretization, boundary_space, field_name, interface
+    )
+    geometry = _matching_trace_geometry(
+        discretization, surface, envelope, coordinate_tolerance
+    )
+    actions = _matching_trace_actions(
+        discretization, surface, boundary_space, field_name, envelope, geometry
+    )
+    field_space, selected_faces = envelope.field_space, envelope.selected_faces
+    surface_coordinates, surface_faces = (
+        geometry.surface_coordinates,
+        geometry.surface_faces,
+    )
+    surface_to_fem, coordinate_error = geometry.surface_to_fem, geometry.coordinate_error
+    fem_face_route, owner_cells = geometry.fem_face_route, geometry.owner_cells
+    normals = geometry.normals
+    orientation_cosines, flux_closure = (
+        geometry.orientation_cosines,
+        geometry.flux_closure,
+    )
+    trace_operator, boundary_load_operator = (
+        actions.trace_operator,
+        actions.boundary_load_operator,
+    )
+    conormal_operator, face_areas = actions.conormal_operator, actions.face_areas
     prepared_id = canonical_fingerprint(
         {
             "kind": "prepared-matching-scalar-interface-trace-3d",

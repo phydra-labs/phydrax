@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _integrate_geometry(
@@ -15,7 +16,7 @@ def _integrate_geometry(
     boundary: Any = False,
     integrand: Any = 1.0,
 ) -> Any:
-    domain = phx.domain.GeometryDomain(source.compile())
+    domain = phx.domain.GeometryDomain(source.compile(coordinate_unit=METER))
     component = domain.component({"x": phx.domain.Boundary()} if boundary else None)
     rule = phx.integration.CubatureRule(reference, degree)
     estimate = phx.integration.integrate(
@@ -42,7 +43,7 @@ def test_geometry_cubature_scenario_1() -> None:
     assert perimeter.value.data == pytest.approx(4.0 * math.pi, rel=2e-13)
     assert area.num_evaluations < 100
     source = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0)
-    domain = phx.domain.GeometryDomain(source.compile())
+    domain = phx.domain.GeometryDomain(source.compile(coordinate_unit=METER))
     boundary = domain.component({"x": phx.domain.Boundary()})
     rule = phx.integration.CubatureRule("sphere", 3)
     realization = phx.integration.materialize(
@@ -73,7 +74,7 @@ def test_geometry_cubature_scenario_1() -> None:
     assert volume.value.data == pytest.approx(4.0 * math.pi / 3.0, rel=2e-13)
     assert x_second.value.data == pytest.approx(4.0 * math.pi / 15.0, rel=2e-13)
     space = phx.domain.GeometryDomain(
-        phx.geometry.Circle((0.0, 0.0), 1.0).compile(), label="x"
+        phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER), label="x"
     )
     time = phx.domain.ScalarInterval(0.0, 2.0, label="t")
     domain = phx.domain.ProductDomain(space, time)
@@ -125,4 +126,6 @@ def _tetrahedron_region() -> Any:
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
     faces = jnp.asarray(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)))
-    return phx.domain.GeometryDomain(phx.geometry.MeshRegion(vertices, faces).compile())
+    return phx.domain.GeometryDomain(
+        phx.geometry.MeshRegion(vertices, faces).compile(coordinate_unit=METER)
+    )

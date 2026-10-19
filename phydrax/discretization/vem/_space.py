@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import assert_never
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -147,11 +149,17 @@ class VirtualElementPlan(AbstractDiscretizationPlan):
         resource_budget: VirtualElementResourceBudget | None = None,
     ) -> None:
         if mesh.topological_dimension != 2 or mesh.ambient_dimension != 2:
-            raise ValueError("Virtual elements currently require a planar 2-D CellMesh.")
+            raise ValueError(
+                f"VirtualElementPlan.mesh must be a planar 2D CellMesh; got topological={mesh.topological_dimension}, ambient={mesh.ambient_dimension}"
+            )
         if not isinstance(mesh.connectivity, PolygonalConnectivity):
-            raise TypeError("Virtual elements require polygonal connectivity.")
+            raise TypeError(
+                "VirtualElementPlan.mesh.connectivity must be PolygonalConnectivity; got incompatible connectivity"
+            )
         if field.element.form_type.dimension != mesh.topological_dimension:
-            raise ValueError("Virtual-element form dimension must match the mesh.")
+            raise ValueError(
+                f"VirtualElementPlan.field.element must match the mesh form dimension; got form={field.element.form_type.dimension}, mesh={mesh.topological_dimension}"
+            )
         precision = (
             VirtualElementPrecisionPolicy()
             if precision_policy is None
@@ -165,23 +173,23 @@ class VirtualElementPlan(AbstractDiscretizationPlan):
         budget = (
             VirtualElementResourceBudget() if resource_budget is None else resource_budget
         )
-        if not isinstance(precision, VirtualElementPrecisionPolicy):
-            raise TypeError("precision_policy must be VirtualElementPrecisionPolicy.")
-        if not isinstance(admissibility, PolygonAdmissibilityPolicy):
-            raise TypeError("admissibility_policy must be PolygonAdmissibilityPolicy.")
-        if not isinstance(budget, VirtualElementResourceBudget):
-            raise TypeError("resource_budget must be VirtualElementResourceBudget.")
         cell_count = sum(block.cell_count for block in mesh.blocks)
         maximum_local = max(
             field.element.local_dof_count(block.arity) for block in mesh.blocks
         )
         if cell_count > budget.maximum_cells:
-            raise ValueError("Virtual-element cell budget exceeded.")
+            raise ValueError(
+                f"VirtualElementPlan.resource_budget must admit the cell count; got cells={cell_count}, maximum={budget.maximum_cells}"
+            )
         if maximum_local > budget.maximum_local_dofs:
-            raise ValueError("Virtual-element local-DOF budget exceeded.")
+            raise ValueError(
+                f"VirtualElementPlan.resource_budget must admit local DOFs; got local_dofs={maximum_local}, maximum={budget.maximum_local_dofs}"
+            )
         projector_bytes = _projector_storage_bytes(mesh, field, precision)
         if projector_bytes > budget.maximum_projector_bytes:
-            raise ValueError("Virtual-element projector storage budget exceeded.")
+            raise ValueError(
+                f"VirtualElementPlan.resource_budget must admit projector storage; got bytes={projector_bytes}, maximum={budget.maximum_projector_bytes}"
+            )
         self.mesh = mesh
         self.field = field
         self.precision_policy = precision
@@ -232,7 +240,9 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
     ) -> None:
         version = str(numeric_version)
         if not version:
-            raise ValueError("numeric_version must be non-empty.")
+            raise ValueError(
+                f"VirtualElementDiscretization.numeric_version must be non-empty; got {version!r}"
+            )
         mesh = plan.mesh
         dof_map = VirtualElementDofMap(mesh, plan.field.element)
         triangulations = tuple(
@@ -422,7 +432,7 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
         points = self.precision_policy.geometry(coordinates)
         if points.shape != self.mesh.coordinates.shape:
             raise ValueError(
-                "Virtual-element geometry refresh must preserve coordinates."
+                f"VirtualElementDiscretization.coordinates must preserve geometry shape on refresh; got shape={points.shape}, expected={self.mesh.coordinates.shape}"
             )
         geometries = []
         cubatures = []
@@ -475,7 +485,9 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
     ) -> VirtualElementRuntimeData:
         version = str(numeric_version)
         if not version:
-            raise ValueError("numeric_version must be non-empty.")
+            raise ValueError(
+                f"VirtualElementDiscretization.numeric_version must be non-empty; got {version!r}"
+            )
         return self._runtime(coordinates, version)
 
     def edge_trace_routes(self, edges: ArrayLike, /) -> Array:
@@ -483,14 +495,16 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
 
         The result has shape `(edges, k + 1)` and pairs with
         `VirtualElementSpec.edge_trace_basis`: H1 value traces list the
-        canonical start vertex, the `k - 1` interior Gauss--Lobatto edge DOFs,
+        start vertex in mesh edge order, the `k - 1` interior Gauss--Lobatto edge DOFs,
         and the end vertex; H(div)/H(curl) traces list the Legendre moment DOFs
         of each edge by mode. Discontinuous L2 spaces have no trace.
         """
         element = self.field.element
         edges_ = jnp.asarray(edges, dtype=jnp.int32)
         if edges_.ndim != 1:
-            raise ValueError("Trace edge indices must be one rank-1 array.")
+            raise ValueError(
+                f"VirtualElementDiscretization.edges must be a rank-1 array; got shape={edges_.shape}"
+            )
         offset = self.dof_map.vertex_dof_count
         degree = element.degree
         match element.trace_kind:
@@ -519,11 +533,12 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
                 return offset + edges_[:, None] * (degree + 1) + modes[None, :]
             case "none":
                 raise ValueError(
-                    "Discontinuous L2 virtual elements have no boundary trace."
+                    "VirtualElementDiscretization.trace_kind must support a boundary trace; got discontinuous L2 cell moments"
                 )
             case kind:
-                raise ValueError(f"Unknown virtual-element trace kind {kind!r}.")
+                assert_never(kind)
 
+    @checked
     def integration_domain(
         self,
         kind: str,
@@ -534,7 +549,7 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
 
         ``selection`` masks the entities of the domain's entity set (cells for
         ``"cell"``, edges for the facet kinds); the restricted domain keeps the
-        owner/neighbor routes of the selected rows in canonical order.
+        owner/neighbor routes of the selected rows in canonical ordering.
         """
         match kind:
             case "cell":
@@ -544,17 +559,20 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
             case "interior_facet":
                 base = self.interior_facet_domain
             case _:
-                raise ValueError("Unknown virtual-element integration-domain kind.")
+                raise ValueError(
+                    f"VirtualElementDiscretization.kind must select cell, exterior_facet, or interior_facet; got {kind!r}"
+                )
         if selection is None:
             return base
-        if not isinstance(selection, EntitySelection):
-            raise TypeError("selection must be EntitySelection or None.")
         if selection.entity_set_id != base.entity_set_id:
-            raise ValueError("Entity selection does not match the domain entity set.")
+            raise ValueError(
+                f"VirtualElementDiscretization.selection must match the domain entity set; got selection={selection.entity_set_id}, domain={base.entity_set_id}"
+            )
         mask = np.asarray(selection.mask, dtype=np.bool_)
         entities = np.asarray(base.entity_indices, dtype=np.int32)
         return subset_polygon_domain(base, np.flatnonzero(mask[entities]))
 
+    @checked
     def prepare_side_trace(
         self,
         field_name: str,
@@ -566,7 +584,7 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
         side: FieldTraceSide = "owner",
         runtime: VirtualElementRuntimeData | None = None,
     ) -> PreparedTraceAction:
-        """Prepare the exact edge trace of the field on selected polygon edges.
+        """Prepare the edge trace of the field on selected polygon edges.
 
         `ConformingH1` fields publish the degree-`k` value trace (Lagrange on
         the Gauss--Lobatto edge nodes); `ConformingHdiv` fields publish the
@@ -574,7 +592,7 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
         from their Legendre moment DOFs and oriented `"outward"` relative to
         the side cell (the tangent is the side cell's counter-clockwise edge
         direction, the `normals` rotated by +90 degrees). These traces are the
-        virtual field's own, exact edge traces (`trace_degree=k`), distinct
+        field's degree-`k` edge traces (`trace_degree=k`), distinct
         from the projected interior channels. Sites follow the owner cell's
         local edge parametrization and are shared by both sides of an interior
         facet. Discontinuous L2 fields have no boundary trace; other
@@ -582,25 +600,29 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
         are refused.
         """
         if str(field_name) != self.field.name:
-            raise KeyError(f"Unknown virtual-element field {field_name!r}.")
+            raise KeyError(
+                f"VirtualElementDiscretization.field_name must match the prepared field; got {field_name!r}"
+            )
         quantity_ = parse(quantity, SideTraceQuantity, "quantity")
         element = self.field.element
         if element.trace_kind == "none":
             raise ValueError(
-                "Discontinuous L2 virtual elements have no L2 boundary trace; their "
-                "DOFs are cell moments."
+                "VirtualElementDiscretization.trace_kind must support a boundary trace; got discontinuous L2 cell moments"
             )
         if quantity_ != element.trace_kind:
             raise ValueError(
-                f"{element.family} virtual elements publish "
-                f"{element.trace_kind!r} traces, not {quantity_!r} traces."
+                f"VirtualElementDiscretization.quantity must match the field trace kind; got quantity={quantity_!r}, trace_kind={element.trace_kind!r}, family={element.family}"
             )
         runtime_ = self.default_runtime if runtime is None else runtime
         if not virtual_element_runtime_matches(self, runtime_):
-            raise ValueError("The VEM trace runtime is incompatible with the space.")
+            raise ValueError(
+                f"VirtualElementDiscretization.runtime must match the trace space; got runtime_id={runtime_.runtime_id}"
+            )
         space = self.field_space.vector_space
         if not isinstance(space, ArraySpace):
-            raise TypeError("Virtual-element fields are array valued.")
+            raise TypeError(
+                "VirtualElementDiscretization.field_space must use ArraySpace; got non-array vector space"
+            )
         sites = prepare_polygon_facet_sites(
             self.mesh, runtime_.coordinates, runtime_.runtime_id, domain, rule, side
         )
@@ -635,14 +657,13 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
         return self.field_spaces[0]
 
 
+@checked
 def virtual_element_runtime_matches(
     discretization: VirtualElementDiscretization,
     runtime: VirtualElementRuntimeData,
     /,
 ) -> bool:
     """Whether `runtime` realizes the topology, layout, and field of the space."""
-    if not isinstance(runtime, VirtualElementRuntimeData):
-        raise TypeError("runtime must be VirtualElementRuntimeData.")
     expected_runtime_id = canonical_fingerprint(
         {
             "kind": "virtual-element-runtime",

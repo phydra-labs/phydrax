@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,6 +18,8 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
+from ...geometry import _supermesh as supermesh_owner
 from ...linalg import (
     adjoint,
     FunctionLinearOperator,
@@ -34,23 +35,26 @@ from ...sparse import (
     RowRelation,
     SparseLinearMap,
 )
+from ...typing import checked, parse
+from .. import (
+    _sphere_chart_records as sphere_chart_deformation_owner,
+    _surface_chart_records as surface_chart_deformation_owner,
+)
 from .._cell_mesh import CellMesh
+from .._coordinate_budget import CoordinateEnclosureBudget
 from .._spaces import DiscreteFieldSpace
 from .._topology_epoch import TopologyEpoch, TopologyEpochTransition
 from .._transfer import FieldTransfer, TransferGeometryBinding, TransferProperties
+from ..fem import _surface_chart_transfer as surface_chart_transfer_owner
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
-
-
-if TYPE_CHECKING:
-    from ...geometry._supermesh import PreparedCommonRefinement
 
 
 class UnstructuredRemapReport(StrictModule):
     """Certified source-content coverage and physical endpoint diagnostics.
 
     For ``source-physical-chart-content``, target measure defects report bounded
-    physical area deformation, not a UV coverage gap. Complete target coverage
-    is carried by the actual native chart certificate retained on the plan.
+    physical area deformation, not a UV coverage gap. Target coverage is
+    certified by the native chart certificate retained on the plan.
     """
 
     maximum_target_coverage_defect: Array
@@ -74,7 +78,9 @@ def _active_mask(value: ArrayLike | None, count: int, name: str, /) -> Array:
         return jnp.ones((count,), dtype=jnp.bool_)
     array = jnp.asarray(value)
     if array.shape != (count,) or array.dtype != jnp.dtype(jnp.bool_):
-        raise ValueError(f"{name} must be a boolean array with one entry per cell.")
+        raise ValueError(
+            f"remap.{name} must be a Boolean array with one entry per cell; got shape {array.shape} and dtype {array.dtype}."
+        )
     return array
 
 
@@ -83,7 +89,9 @@ def _volume_array(
 ) -> Array:
     array = fallback if value is None else jnp.asarray(value)
     if array.shape != (count,):
-        raise ValueError(f"{name} must contain one volume per cell.")
+        raise ValueError(
+            f"remap.{name} must contain one volume per cell; got shape {array.shape}."
+        )
     return array
 
 
@@ -97,7 +105,16 @@ def _mask_values(values: Array, mask: Array, name: str, /) -> Array:
     return values
 
 
-def _coverage_ledger(
+class RemapCoverageLedger(StrictModule):
+    """Signed covered-minus-cell measures and their admissible magnitudes."""
+
+    target_defect: np.ndarray
+    source_defect: np.ndarray
+    target_limit: np.ndarray
+    source_limit: np.ndarray
+
+
+def coverage_ledger(
     target_routes: np.ndarray,
     source_indices: np.ndarray,
     measures: np.ndarray,
@@ -109,12 +126,10 @@ def _coverage_ledger(
     intersection_error_bounds: np.ndarray | None = None,
     source_error_bounds: np.ndarray | None = None,
     target_error_bounds: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Signed covered-minus-cell measures and their admissible magnitudes.
+) -> RemapCoverageLedger:
+    """Return signed covered-minus-cell measures and their admissible magnitudes.
 
-    This is the single coverage certificate of a remap ledger: a plan requiring
-    complete coverage accepts it exactly when every defect magnitude is at most
-    its limit.
+    Full coverage is admitted when every defect magnitude is at most its limit.
     """
     target_defect = (
         np.bincount(target_routes, weights=measures, minlength=target_volumes.size)
@@ -141,7 +156,7 @@ def _coverage_ledger(
         target_error += target_error_bounds
     if source_error_bounds is not None:
         source_error += source_error_bounds
-    return (
+    return RemapCoverageLedger(
         target_defect,
         source_defect,
         tolerance * target_scale + target_error,
@@ -149,167 +164,193 @@ def _coverage_ledger(
     )
 
 
-class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
-    """Canonical CSR conservative content transport between immutable epochs.
+class _RemapCarrier(StrictModule):
+    offsets: np.ndarray
+    indices: np.ndarray
+    measures: np.ndarray
+    target_routes: np.ndarray
+    source_volumes: np.ndarray
+    target_volumes: np.ndarray
+    errors: np.ndarray
+    coverage: RemapCoverageLedger
 
-    ``physical-cell-overlap`` uses geometric intersections or exact nested cells.
-    ``source-physical-chart-content`` uses old physical density integrals over
-    actual native UV overlap pieces and divides by actual new physical cell
-    areas. It conserves content, not constants under area-changing deformation.
-    ``apply`` consumes cell averages; ``apply_content`` consumes extensive content.
-    """
 
-    source_topology_id: str = eqx.field(static=True)
-    source_geometry_id: str = eqx.field(static=True)
-    target_topology_id: str = eqx.field(static=True)
-    target_geometry_id: str = eqx.field(static=True)
-    source_cell_global_ids: Array
-    target_cell_global_ids: Array
-    target_offsets: Array
-    source_indices: Array
-    target_routes: Array
-    intersection_measures: Array
-    intersection_error_bounds: Array
-    source_volumes: Array
-    target_volumes: Array
-    source_volume_error_bounds: Array
-    target_volume_error_bounds: Array
-    surface_chart_deformation: Any | None
-    surface_chart_contents: Any | None
-    measure_semantics: str = eqx.field(static=True)
-    method: str = eqx.field(static=True)
-    provenance: str = eqx.field(static=True)
-    require_complete: bool = eqx.field(static=True)
+class _ChartContentsBinding(StrictModule):
+    source_limit: np.ndarray
+
+
+class _RemapCoveragePreparation(StrictModule):
     report: UnstructuredRemapReport
-    coverage_evidence_id: str = eqx.field(static=True)
+
+
+class _RemapIdentity(StrictModule):
     route_id: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
+    coverage_id: str = eqx.field(static=True)
 
-    def __init__(
-        self,
-        source: UnstructuredFiniteVolumeDiscretization,
-        target: UnstructuredFiniteVolumeDiscretization,
-        target_offsets: ArrayLike,
-        source_indices: ArrayLike,
-        intersection_measures: ArrayLike,
-        /,
-        *,
-        method: str,
-        provenance: str,
-        tolerance: float = 1e-10,
-        require_complete: bool = True,
-        route_id: str | None = None,
-        layout_id: str | None = None,
-        intersection_error_bounds: ArrayLike | None = None,
-        surface_chart_deformation: Any | None = None,
-        surface_chart_contents: Any | None = None,
-    ) -> None:
-        if not isinstance(
-            source, UnstructuredFiniteVolumeDiscretization
-        ) or not isinstance(target, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("Remap source and target must be unstructured FV geometry.")
-        method_ = str(method)
-        provenance_ = str(provenance)
-        if not method_ or not provenance_:
-            raise ValueError("Remap method and provenance must be non-empty.")
-        tolerance_ = float(tolerance)
-        if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
-            raise ValueError("Remap tolerance must be positive and finite.")
-        offsets = np.asarray(target_offsets, dtype=np.int32)
-        indices = np.asarray(source_indices, dtype=np.int32)
-        measures = np.asarray(intersection_measures, dtype=np.float64)
-        if offsets.shape != (target.cell_count + 1,):
-            raise ValueError(
-                "target_offsets must contain one CSR offset per target cell."
-            )
-        if (
-            offsets[0] != 0
-            or np.any(np.diff(offsets) < 0)
-            or offsets[-1] != indices.size
-            or measures.shape != indices.shape
-        ):
-            raise ValueError("Remap CSR routes are inconsistent.")
-        if np.any(indices < 0) or np.any(indices >= source.cell_count):
-            raise ValueError("Remap source_indices are out of range.")
-        if np.any(~np.isfinite(measures)) or np.any(measures <= 0.0):
-            raise ValueError("Remap intersection measures must be positive and finite.")
-        source_ids = np.asarray(source.cell_global_ids)
-        target_ids = np.asarray(target.cell_global_ids)
-        if source_ids.shape != (source.cell_count,) or target_ids.shape != (
-            target.cell_count,
-        ):
-            raise ValueError("Remap cell global IDs must contain one ID per cell.")
-        if source_ids.dtype.kind not in "iu" or target_ids.dtype.kind not in "iu":
-            raise TypeError("Remap cell global IDs must be integer arrays.")
-        if np.any(source_ids < 0) or np.any(target_ids < 0):
-            raise ValueError("Remap cell global IDs must be nonnegative.")
-        if (
-            np.unique(source_ids).size != source_ids.size
-            or np.unique(target_ids).size != target_ids.size
-        ):
-            raise ValueError("Remap cell global IDs must be unique within each mesh.")
-        target_routes = np.repeat(
-            np.arange(target.cell_count, dtype=np.int32), np.diff(offsets)
-        )
-        source_volumes = np.asarray(source.cell_volumes)
-        target_volumes = np.asarray(target.cell_volumes)
-        errors = (
-            np.zeros_like(measures)
-            if intersection_error_bounds is None
-            else np.asarray(intersection_error_bounds, dtype=np.float64)
-        )
-        if (
-            errors.shape != measures.shape
-            or np.any(~np.isfinite(errors))
-            or np.any(errors < 0)
-            or np.any(errors >= measures)
-        ):
-            raise ValueError(
-                "Remap measure error bounds must certify strictly positive overlaps."
-            )
-        target_defect, source_defect, target_limit, source_limit = _coverage_ledger(
-            target_routes,
-            indices,
-            measures,
-            source_volumes,
-            target_volumes,
-            tolerance_,
-            intersection_error_bounds=errors,
-            source_error_bounds=np.asarray(source.cell_volume_error_bounds),
-            target_error_bounds=np.asarray(target.cell_volume_error_bounds),
-        )
-        if (surface_chart_deformation is None) != (surface_chart_contents is None):
-            raise ValueError(
-                "Chart deformation and its actual physical contents are required together."
-            )
-        if surface_chart_deformation is not None:
-            from .._sphere_chart_deformation import PreparedSphereChartDeformation
-            from .._surface_chart_deformation import PreparedSurfaceChartDeformation
-            from ..fem._surface_chart_transfer import (
-                PreparedSurfaceChartFiniteVolumeContents,
-            )
 
-            if not isinstance(
-                surface_chart_deformation,
-                (PreparedSurfaceChartDeformation, PreparedSphereChartDeformation),
-            ) or not isinstance(
-                surface_chart_contents, PreparedSurfaceChartFiniteVolumeContents
-            ):
-                raise TypeError(
-                    "Chart remap requires the actual prepared deformation and physical contents."
-                )
+def _prepare_remap_carrier(
+    source: UnstructuredFiniteVolumeDiscretization,
+    target: UnstructuredFiniteVolumeDiscretization,
+    target_offsets: ArrayLike,
+    source_indices: ArrayLike,
+    intersection_measures: ArrayLike,
+    intersection_error_bounds: ArrayLike | None,
+    tolerance_: float,
+) -> _RemapCarrier:
+    offsets = np.asarray(target_offsets, dtype=np.int32)
+    indices = np.asarray(source_indices, dtype=np.int32)
+    measures = np.asarray(intersection_measures, dtype=np.float64)
+    if offsets.shape != (target.cell_count + 1,):
+        raise ValueError(
+            f"remap.target_offsets must contain one CSR offset per target cell; got shape {offsets.shape}."
+        )
+    if (
+        offsets[0] != 0
+        or np.any(np.diff(offsets) < 0)
+        or offsets[-1] != indices.size
+        or measures.shape != indices.shape
+    ):
+        raise ValueError(
+            "remap.csr must contain monotone offsets and aligned indices and measures; got inconsistent routes."
+        )
+    if np.any(indices < 0) or np.any(indices >= source.cell_count):
+        raise ValueError(
+            "remap.source_indices must index source cells; got out-of-range indices."
+        )
+    if np.any(~np.isfinite(measures)) or np.any(measures <= 0.0):
+        raise ValueError(
+            "remap.intersection_measures must be positive and finite; got nonpositive or nonfinite measures."
+        )
+    source_ids = np.asarray(source.cell_global_ids)
+    target_ids = np.asarray(target.cell_global_ids)
+    if source_ids.shape != (source.cell_count,) or target_ids.shape != (
+        target.cell_count,
+    ):
+        raise ValueError(
+            "remap.cell_global_ids must contain one ID per cell; got incompatible shapes."
+        )
+    if source_ids.dtype.kind not in "iu" or target_ids.dtype.kind not in "iu":
+        raise TypeError(
+            "remap.cell_global_ids must have integer dtype; got a noninteger array."
+        )
+    if np.any(source_ids < 0) or np.any(target_ids < 0):
+        raise ValueError("remap.cell_global_ids must be nonnegative; got negative IDs.")
+    if (
+        np.unique(source_ids).size != source_ids.size
+        or np.unique(target_ids).size != target_ids.size
+    ):
+        raise ValueError(
+            "remap.cell_global_ids must be unique within each mesh; got duplicate IDs."
+        )
+    target_routes = np.repeat(
+        np.arange(target.cell_count, dtype=np.int32), np.diff(offsets)
+    )
+    source_volumes = np.asarray(source.cell_volumes)
+    target_volumes = np.asarray(target.cell_volumes)
+    errors = (
+        np.zeros_like(measures)
+        if intersection_error_bounds is None
+        else np.asarray(intersection_error_bounds, dtype=np.float64)
+    )
+    if (
+        errors.shape != measures.shape
+        or np.any(~np.isfinite(errors))
+        or np.any(errors < 0)
+        or np.any(errors >= measures)
+    ):
+        raise ValueError(
+            "remap.intersection_error_bounds must certify positive overlaps; got invalid shapes, nonfinite bounds, or bounds outside the overlap measures."
+        )
+    coverage = coverage_ledger(
+        target_routes,
+        indices,
+        measures,
+        source_volumes,
+        target_volumes,
+        tolerance_,
+        intersection_error_bounds=errors,
+        source_error_bounds=np.asarray(source.cell_volume_error_bounds),
+        target_error_bounds=np.asarray(target.cell_volume_error_bounds),
+    )
+    return _RemapCarrier(
+        offsets,
+        indices,
+        measures,
+        target_routes,
+        source_volumes,
+        target_volumes,
+        errors,
+        coverage,
+    )
+
+
+def _bind_chart_contents(
+    source: UnstructuredFiniteVolumeDiscretization,
+    target: UnstructuredFiniteVolumeDiscretization,
+    carrier: _RemapCarrier,
+    surface_chart_deformation: surface_chart_deformation_owner.PreparedSurfaceChartDeformation
+    | sphere_chart_deformation_owner.PreparedSphereChartDeformation
+    | None,
+    surface_chart_contents: surface_chart_transfer_owner.PreparedSurfaceChartFiniteVolumeContents
+    | None,
+    budget: CoordinateEnclosureBudget | None,
+) -> _ChartContentsBinding:
+    indices, measures, target_routes = (
+        carrier.indices,
+        carrier.measures,
+        carrier.target_routes,
+    )
+    source_volumes, target_volumes, errors = (
+        carrier.source_volumes,
+        carrier.target_volumes,
+        carrier.errors,
+    )
+    source_limit = carrier.coverage.source_limit
+    if (surface_chart_deformation is None) != (surface_chart_contents is None):
+        raise ValueError(
+            "remap.surface_chart must pair deformation with physical contents; got an unpaired artifact."
+        )
+    match surface_chart_deformation, surface_chart_contents:
+        case None, None:
+            return _ChartContentsBinding(source_limit)
+        case (
+            (
+                surface_chart_deformation_owner.PreparedSurfaceChartDeformation()
+                | sphere_chart_deformation_owner.PreparedSphereChartDeformation()
+            ),
+            surface_chart_transfer_owner.PreparedSurfaceChartFiniteVolumeContents(),
+        ):
             if source.cell_geometry is None or target.cell_geometry is None:
-                raise ValueError("Chart remap needs the actual prepared coordinate maps.")
-            surface_chart_deformation.require_bound(
-                source.mesh, source.cell_geometry, target.mesh, target.cell_geometry
-            )
+                raise ValueError(
+                    "remap.surface_chart.cell_geometry must contain both prepared coordinate maps; got a missing map."
+                )
+            match surface_chart_deformation:
+                case sphere_chart_deformation_owner.PreparedSphereChartDeformation():
+                    surface_chart_deformation.require_bound(
+                        source.mesh,
+                        source.cell_geometry,
+                        target.mesh,
+                        target.cell_geometry,
+                        budget=budget,
+                    )
+                case surface_chart_deformation_owner.PreparedSurfaceChartDeformation():
+                    surface_chart_deformation.require_bound(
+                        source.mesh,
+                        source.cell_geometry,
+                        target.mesh,
+                        target.cell_geometry,
+                    )
+                case _:
+                    raise TypeError(
+                        "remap.surface_chart_deformation must declare a prepared material chart; got an unsupported kind."
+                    )
             if (
                 surface_chart_contents.deformation_id
                 != surface_chart_deformation.deformation_id
             ):
                 raise ValueError(
-                    "Chart physical contents belong to a different deformation."
+                    "remap.surface_chart_contents.deformation_id must match the deformation; got a different ID."
                 )
             if not np.array_equal(
                 surface_chart_contents.source_volumes, source_volumes
@@ -317,7 +358,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
                 surface_chart_contents.target_volumes, target_volumes
             ):
                 raise ValueError(
-                    "Chart contents must use authoritative prepared FV physical areas."
+                    "remap.surface_chart_contents.volumes must match prepared FV physical areas; got different measures."
                 )
             order = np.lexsort(
                 (
@@ -341,7 +382,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
                 )
             ):
                 raise ValueError(
-                    "Chart CSR does not realize its physical-content certificate."
+                    "remap.surface_chart.csr must realize the physical-content certificate; got mismatched routes, measures, or bounds."
                 )
             source_limit = np.asarray(
                 surface_chart_contents.source_content_defect_bounds, dtype=np.float64
@@ -352,79 +393,237 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
                 or np.any(source_limit < 0)
             ):
                 raise ValueError(
-                    "Chart source-content defect bounds must be finite per-cell absolute bounds."
+                    "remap.surface_chart_contents.source_content_defect_bounds must be finite nonnegative per-cell bounds; got invalid bounds."
                 )
-        source_complete = np.all(np.abs(source_defect) <= source_limit)
-        # Target coverage is a native UV tiling for chart deformation, not the
-        # false assertion that old physical piece areas equal new physical areas.
-        complete = source_complete and (
-            surface_chart_deformation is not None
-            or np.all(np.abs(target_defect) <= target_limit)
-        )
-        if require_complete and not complete:
+        case _:
             raise ValueError(
-                "Conservative remap does not completely cover source and target."
+                "remap.surface_chart must pair deformation with physical contents; got an unpaired artifact."
             )
-        target_errors = np.bincount(
-            target_routes, weights=errors, minlength=target_volumes.size
-        ) + np.asarray(target.cell_volume_error_bounds)
-        source_errors = np.bincount(
-            indices, weights=errors, minlength=source_volumes.size
-        ) + np.asarray(source.cell_volume_error_bounds)
-        if surface_chart_deformation is not None:
-            source_errors = np.maximum(source_errors, source_limit)
-        report = UnstructuredRemapReport(
-            maximum_target_coverage_defect=jnp.asarray(np.max(np.abs(target_defect))),
-            maximum_source_coverage_defect=jnp.asarray(np.max(np.abs(source_defect))),
-            uncovered_target_measure=jnp.asarray(np.sum(np.maximum(-target_defect, 0.0))),
-            uncovered_source_measure=jnp.asarray(np.sum(np.maximum(-source_defect, 0.0))),
-            donor_excess_measure=jnp.asarray(np.sum(np.maximum(source_defect, 0.0))),
-            source_measure=jnp.asarray(np.sum(source_volumes)),
-            target_measure=jnp.asarray(np.sum(target_volumes)),
-            coverage_complete=jnp.asarray(complete),
-            tolerance=jnp.asarray(tolerance_),
-            maximum_target_coverage_error_bound=jnp.asarray(np.max(target_errors)),
-            maximum_source_coverage_error_bound=jnp.asarray(np.max(source_errors)),
-            total_target_coverage_error_bound=jnp.asarray(np.sum(target_errors)),
-            total_source_coverage_error_bound=jnp.asarray(np.sum(source_errors)),
-            measure_semantics="source-physical-chart-content"
-            if surface_chart_deformation is not None
-            else "physical-cell-overlap",
+    return _ChartContentsBinding(source_limit)
+
+
+def _certify_remap_coverage(
+    source: UnstructuredFiniteVolumeDiscretization,
+    target: UnstructuredFiniteVolumeDiscretization,
+    carrier: _RemapCarrier,
+    source_limit: np.ndarray,
+    surface_chart_deformation: surface_chart_deformation_owner.PreparedSurfaceChartDeformation
+    | sphere_chart_deformation_owner.PreparedSphereChartDeformation
+    | None,
+    tolerance_: float,
+    require_complete: bool,
+) -> _RemapCoveragePreparation:
+    target_routes, indices, errors = (
+        carrier.target_routes,
+        carrier.indices,
+        carrier.errors,
+    )
+    source_volumes, target_volumes = carrier.source_volumes, carrier.target_volumes
+    target_defect, source_defect = (
+        carrier.coverage.target_defect,
+        carrier.coverage.source_defect,
+    )
+    target_limit = carrier.coverage.target_limit
+    source_complete = np.all(np.abs(source_defect) <= source_limit)
+    # Target coverage is a native UV tiling for chart deformation, not the
+    # false assertion that old physical piece areas equal new physical areas.
+    complete = source_complete and (
+        surface_chart_deformation is not None
+        or np.all(np.abs(target_defect) <= target_limit)
+    )
+    if require_complete and not complete:
+        raise ValueError(
+            "remap.coverage must completely cover source and target; got measure defects outside the certified limits."
         )
-        route_ = (
-            str(route_id)
-            if route_id is not None
-            else canonical_fingerprint(
-                {
-                    "kind": "unstructured-remap-route",
-                    "target_routes": array_tree_fingerprint(target_routes),
-                    "source_indices": array_tree_fingerprint(indices),
-                }
-            )
-        )
-        layout_ = (
-            str(layout_id)
-            if layout_id is not None
-            else canonical_fingerprint(
-                {
-                    "kind": "unstructured-remap-layout",
-                    "target_offsets": array_tree_fingerprint(offsets),
-                    "component": "cell-content",
-                }
-            )
-        )
-        if not route_ or not layout_:
-            raise ValueError("Remap route_id and layout_id must be non-empty.")
-        coverage_id = canonical_fingerprint(
+    target_errors = np.bincount(
+        target_routes, weights=errors, minlength=target_volumes.size
+    ) + np.asarray(target.cell_volume_error_bounds)
+    source_errors = np.bincount(
+        indices, weights=errors, minlength=source_volumes.size
+    ) + np.asarray(source.cell_volume_error_bounds)
+    if surface_chart_deformation is not None:
+        source_errors = np.maximum(source_errors, source_limit)
+    report = UnstructuredRemapReport(
+        maximum_target_coverage_defect=jnp.asarray(np.max(np.abs(target_defect))),
+        maximum_source_coverage_defect=jnp.asarray(np.max(np.abs(source_defect))),
+        uncovered_target_measure=jnp.asarray(np.sum(np.maximum(-target_defect, 0.0))),
+        uncovered_source_measure=jnp.asarray(np.sum(np.maximum(-source_defect, 0.0))),
+        donor_excess_measure=jnp.asarray(np.sum(np.maximum(source_defect, 0.0))),
+        source_measure=jnp.asarray(np.sum(source_volumes)),
+        target_measure=jnp.asarray(np.sum(target_volumes)),
+        coverage_complete=jnp.asarray(complete),
+        tolerance=jnp.asarray(tolerance_),
+        maximum_target_coverage_error_bound=jnp.asarray(np.max(target_errors)),
+        maximum_source_coverage_error_bound=jnp.asarray(np.max(source_errors)),
+        total_target_coverage_error_bound=jnp.asarray(np.sum(target_errors)),
+        total_source_coverage_error_bound=jnp.asarray(np.sum(source_errors)),
+        measure_semantics="source-physical-chart-content"
+        if surface_chart_deformation is not None
+        else "physical-cell-overlap",
+    )
+    return _RemapCoveragePreparation(report)
+
+
+def _prepare_remap_identity(
+    source: UnstructuredFiniteVolumeDiscretization,
+    target: UnstructuredFiniteVolumeDiscretization,
+    carrier: _RemapCarrier,
+    route_id: str | None,
+    layout_id: str | None,
+    require_complete: bool,
+    tolerance_: float,
+) -> _RemapIdentity:
+    target_routes, indices, offsets = (
+        carrier.target_routes,
+        carrier.indices,
+        carrier.offsets,
+    )
+    target_defect, source_defect = (
+        carrier.coverage.target_defect,
+        carrier.coverage.source_defect,
+    )
+    route_ = (
+        str(route_id)
+        if route_id is not None
+        else canonical_fingerprint(
             {
-                "kind": "unstructured-remap-coverage-evidence",
-                "source_topology": source.topology_id,
-                "target_topology": target.topology_id,
-                "maximum_target_defect": float(np.max(np.abs(target_defect))),
-                "maximum_source_defect": float(np.max(np.abs(source_defect))),
-                "require_complete": bool(require_complete),
-                "tolerance": tolerance_,
+                "kind": "unstructured-remap-route",
+                "target_routes": array_tree_fingerprint(target_routes),
+                "source_indices": array_tree_fingerprint(indices),
             }
+        )
+    )
+    layout_ = (
+        str(layout_id)
+        if layout_id is not None
+        else canonical_fingerprint(
+            {
+                "kind": "unstructured-remap-layout",
+                "target_offsets": array_tree_fingerprint(offsets),
+                "component": "cell-content",
+            }
+        )
+    )
+    if not route_ or not layout_:
+        raise ValueError(
+            f"remap.identifiers must contain non-empty route_id and layout_id; got route_id={route_!r}, layout_id={layout_!r}."
+        )
+    coverage_id = canonical_fingerprint(
+        {
+            "kind": "unstructured-remap-coverage-evidence",
+            "source_topology": source.topology_id,
+            "target_topology": target.topology_id,
+            "maximum_target_defect": float(np.max(np.abs(target_defect))),
+            "maximum_source_defect": float(np.max(np.abs(source_defect))),
+            "require_complete": bool(require_complete),
+            "tolerance": tolerance_,
+        }
+    )
+    return _RemapIdentity(route_, layout_, coverage_id)
+
+
+class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
+    """Prepare CSR conservative content transport between immutable epochs.
+
+    ``physical-cell-overlap`` uses geometric intersections or nested reference tilings.
+    ``source-physical-chart-content`` uses old physical density integrals over
+    native UV overlap pieces and divides by new physical cell
+    areas. It conserves content, not constants under area-changing deformation.
+    ``apply`` consumes cell averages; ``apply_content`` consumes extensive content.
+    """
+
+    source_topology_id: str = eqx.field(static=True)
+    source_geometry_id: str = eqx.field(static=True)
+    target_topology_id: str = eqx.field(static=True)
+    target_geometry_id: str = eqx.field(static=True)
+    source_cell_global_ids: Array
+    target_cell_global_ids: Array
+    target_offsets: Array
+    source_indices: Array
+    target_routes: Array
+    intersection_measures: Array
+    intersection_error_bounds: Array
+    source_volumes: Array
+    target_volumes: Array
+    source_volume_error_bounds: Array
+    target_volume_error_bounds: Array
+    surface_chart_deformation: (
+        surface_chart_deformation_owner.PreparedSurfaceChartDeformation
+        | sphere_chart_deformation_owner.PreparedSphereChartDeformation
+        | None
+    )
+    surface_chart_contents: (
+        surface_chart_transfer_owner.PreparedSurfaceChartFiniteVolumeContents | None
+    )
+    measure_semantics: str = eqx.field(static=True)
+    method: str = eqx.field(static=True)
+    provenance: str = eqx.field(static=True)
+    require_complete: bool = eqx.field(static=True)
+    report: UnstructuredRemapReport
+    coverage_evidence_id: str = eqx.field(static=True)
+    route_id: str = eqx.field(static=True)
+    layout_id: str = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        source: UnstructuredFiniteVolumeDiscretization,
+        target: UnstructuredFiniteVolumeDiscretization,
+        target_offsets: ArrayLike,
+        source_indices: ArrayLike,
+        intersection_measures: ArrayLike,
+        /,
+        *,
+        method: str,
+        provenance: str,
+        tolerance: float = 1e-10,
+        require_complete: bool = True,
+        route_id: str | None = None,
+        layout_id: str | None = None,
+        intersection_error_bounds: ArrayLike | None = None,
+        surface_chart_deformation: surface_chart_deformation_owner.PreparedSurfaceChartDeformation
+        | sphere_chart_deformation_owner.PreparedSphereChartDeformation
+        | None = None,
+        surface_chart_contents: surface_chart_transfer_owner.PreparedSurfaceChartFiniteVolumeContents
+        | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> None:
+        method_ = str(method)
+        provenance_ = str(provenance)
+        if not method_ or not provenance_:
+            raise ValueError(
+                f"remap.metadata must contain non-empty method and provenance; got method={method_!r}, provenance={provenance_!r}."
+            )
+        tolerance_ = positive_finite_float(tolerance, "remap.tolerance")
+        carrier = _prepare_remap_carrier(
+            source,
+            target,
+            target_offsets,
+            source_indices,
+            intersection_measures,
+            intersection_error_bounds,
+            tolerance_,
+        )
+        chart_binding = _bind_chart_contents(
+            source,
+            target,
+            carrier,
+            surface_chart_deformation,
+            surface_chart_contents,
+            budget,
+        )
+        coverage = _certify_remap_coverage(
+            source,
+            target,
+            carrier,
+            chart_binding.source_limit,
+            surface_chart_deformation,
+            tolerance_,
+            require_complete,
+        )
+        identity = _prepare_remap_identity(
+            source, target, carrier, route_id, layout_id, require_complete, tolerance_
         )
         self.source_topology_id = source.topology_id
         self.source_geometry_id = source.geometry_id
@@ -432,11 +631,11 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         self.target_geometry_id = target.geometry_id
         self.source_cell_global_ids = source.cell_global_ids
         self.target_cell_global_ids = target.cell_global_ids
-        self.target_offsets = jnp.asarray(offsets)
-        self.source_indices = jnp.asarray(indices)
-        self.target_routes = jnp.asarray(target_routes)
-        self.intersection_measures = jnp.asarray(measures)
-        self.intersection_error_bounds = jnp.asarray(errors)
+        self.target_offsets = jnp.asarray(carrier.offsets)
+        self.source_indices = jnp.asarray(carrier.indices)
+        self.target_routes = jnp.asarray(carrier.target_routes)
+        self.intersection_measures = jnp.asarray(carrier.measures)
+        self.intersection_error_bounds = jnp.asarray(carrier.errors)
         self.source_volumes = source.cell_volumes
         self.target_volumes = target.cell_volumes
         self.source_volume_error_bounds = source.cell_volume_error_bounds
@@ -451,10 +650,10 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         self.method = method_
         self.provenance = provenance_
         self.require_complete = bool(require_complete)
-        self.report = report
-        self.coverage_evidence_id = coverage_id
-        self.route_id = route_
-        self.layout_id = layout_
+        self.report = coverage.report
+        self.coverage_evidence_id = identity.coverage_id
+        self.route_id = identity.route_id
+        self.layout_id = identity.layout_id
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "unstructured-conservative-remap",
@@ -470,10 +669,10 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
                 else surface_chart_contents.contents_id,
                 "source_cell_global_ids": array_tree_fingerprint(source.cell_global_ids),
                 "target_cell_global_ids": array_tree_fingerprint(target.cell_global_ids),
-                "target_offsets": array_tree_fingerprint(offsets),
-                "source_indices": array_tree_fingerprint(indices),
-                "intersection_measures": array_tree_fingerprint(measures),
-                "intersection_error_bounds": array_tree_fingerprint(errors),
+                "target_offsets": array_tree_fingerprint(carrier.offsets),
+                "source_indices": array_tree_fingerprint(carrier.indices),
+                "intersection_measures": array_tree_fingerprint(carrier.measures),
+                "intersection_error_bounds": array_tree_fingerprint(carrier.errors),
                 "source_volume_error_bounds": array_tree_fingerprint(
                     source.cell_volume_error_bounds
                 ),
@@ -483,16 +682,18 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
                 "method": method_,
                 "provenance": provenance_,
                 "require_complete": bool(require_complete),
-                "coverage_evidence_id": coverage_id,
-                "route_id": route_,
-                "layout_id": layout_,
+                "coverage_evidence_id": identity.coverage_id,
+                "route_id": identity.route_id,
+                "layout_id": identity.layout_id,
             }
         )
 
     def _validate_values(self, values: ArrayLike, name: str, /) -> Array:
         value = jnp.asarray(values)
         if value.ndim == 0 or value.shape[0] != self.source_volumes.size:
-            raise ValueError(f"{name} must begin with source cell count.")
+            raise ValueError(
+                f"remap.{name} must begin with the source cell count; got shape {value.shape}."
+            )
         return value
 
     def apply(
@@ -560,7 +761,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         """Transfer extensive content without converting it to a target average.
 
         Each source content is distributed in proportion to its covered geometric
-        measure.  Thus a complete map preserves the global extensive integral,
+        measure. Thus a fully covered map preserves the global extensive integral,
         including when source and target cell volumes differ.
         """
         content = self._validate_values(source_content, "Remap content")
@@ -597,10 +798,6 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             jnp.zeros((), dtype=target.dtype),
         )
 
-    def apply_extensive(self, source_content: ArrayLike, /, **kwargs: Any) -> Array:
-        """Explicit extensive-transfer entry point used by AMR callers."""
-        return self.apply_content(source_content, **kwargs)
-
     def apply_bounded(
         self,
         source_cell_averages: ArrayLike,
@@ -614,12 +811,14 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         """Transfer a bounded scalar, failing for invalid source fractions."""
         if self.surface_chart_deformation is not None:
             raise ValueError(
-                "Conservative chart density transfer does not preserve density bounds under area change."
+                "remap.measure_semantics must support density bounds; got area-changing chart-content transport."
             )
         lower_ = float(lower)
         upper_ = float(upper)
         if not np.isfinite(lower_) or not np.isfinite(upper_) or lower_ > upper_:
-            raise ValueError("Bounded remap requires finite lower <= upper bounds.")
+            raise ValueError(
+                "remap.bounds must be finite with lower <= upper; got nonfinite or inverted bounds."
+            )
         source = self._validate_values(source_cell_averages, "Remap values")
         source = eqx.error_if(
             source,
@@ -631,9 +830,8 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             source_active_mask=source_active_mask,
             target_active_mask=target_active_mask,
         )
-        # Positive overlap weights make this a convex transfer.  Clipping only
-        # removes roundoff excursions; the explicit check catches a genuine
-        # violation instead of silently repairing nonphysical input.
+        # Positive overlap weights make this a convex transfer. Clipping removes
+        # roundoff excursions; the explicit check rejects values outside bounds.
         repaired = jnp.clip(transferred, lower_, upper_)
         return eqx.error_if(
             repaired,
@@ -658,12 +856,16 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         target_measure = jnp.asarray(target_volumes, dtype=source.dtype)
         if measures.shape != self.intersection_measures.shape:
             raise ValueError(
-                "Dynamic intersection measures must preserve remap capacity."
+                "remap.dynamic.intersection_measures must preserve overlap capacity; got a different shape."
             )
         if source_measure.shape != self.source_volumes.shape:
-            raise ValueError("Dynamic source volumes must preserve source capacity.")
+            raise ValueError(
+                "remap.dynamic.source_volumes must preserve source capacity; got a different shape."
+            )
         if target_measure.shape != self.target_volumes.shape:
-            raise ValueError("Dynamic target volumes must preserve target capacity.")
+            raise ValueError(
+                "remap.dynamic.target_volumes must preserve target capacity; got a different shape."
+            )
         measures = eqx.error_if(
             measures,
             jnp.any(~jnp.isfinite(measures) | (measures <= 0.0)),
@@ -713,9 +915,13 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         source = jnp.asarray(source_cell_averages)
         target = jnp.asarray(target_cell_averages)
         if source.ndim == 0 or source.shape[0] != self.source_volumes.size:
-            raise ValueError("source_cell_averages must begin with source cell count.")
+            raise ValueError(
+                "remap.source_cell_averages must begin with the source cell count; got a different shape."
+            )
         if target.ndim == 0 or target.shape[0] != self.target_volumes.size:
-            raise ValueError("target_cell_averages must begin with target cell count.")
+            raise ValueError(
+                "remap.target_cell_averages must begin with the target cell count; got a different shape."
+            )
         source_terms = (
             self.source_volumes.astype(source.dtype).reshape(
                 (-1,) + (1,) * (source.ndim - 1)
@@ -739,9 +945,13 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         source = jnp.asarray(source_content)
         target = jnp.asarray(target_content)
         if source.ndim == 0 or source.shape[0] != self.source_volumes.size:
-            raise ValueError("source_content must begin with source cell count.")
+            raise ValueError(
+                "remap.source_content must begin with the source cell count; got a different shape."
+            )
         if target.ndim == 0 or target.shape[0] != self.target_volumes.size:
-            raise ValueError("target_content must begin with target cell count.")
+            raise ValueError(
+                f"remap.target_content must begin with the target cell count; got shape {target.shape}."
+            )
         return compensated_sum_chunks(
             (target, -source),
             output_ndim=source.ndim - 1,
@@ -761,6 +971,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         )
         return source.at[self.source_indices].add(weighted)
 
+    @checked
     def epoch_transition(
         self,
         source_field: DiscreteFieldSpace,
@@ -769,19 +980,15 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         target_epoch: TopologyEpoch,
         /,
     ) -> TopologyEpochTransition:
-        """Bind this complete cell remap as an explicit topology-epoch transition.
+        """Bind a fully covered cell remap as a topology-epoch transition.
 
-        The epochs must realize both actual topology and geometry identities.
+        The epochs must realize both topology and geometry identities.
         Positivity and conservative content have the certified source-piece
         bounds; constant preservation is claimed only for geometric-overlap
-        routes, not an area-changing chart deformation. Transpose is exact CSR
-        algebra and Hilbert adjoint uses the actual FV physical-area pairings.
+        routes, not an area-changing chart deformation. Transpose uses CSR routing
+        and Hilbert adjoint uses the FV physical-area pairings.
         """
 
-        if not isinstance(source_epoch, TopologyEpoch) or not isinstance(
-            target_epoch, TopologyEpoch
-        ):
-            raise TypeError("Epoch transitions need TopologyEpoch endpoints.")
         if (
             source_epoch.topology_id != self.source_topology_id
             or target_epoch.topology_id != self.target_topology_id
@@ -789,12 +996,11 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             or target_epoch.geometry_id != self.target_geometry_id
         ):
             raise ValueError(
-                "Topology epochs do not realize this remap's topologies and geometry."
+                "remap.epochs must realize the remap topology and geometry IDs; got incompatible endpoints."
             )
         if not self.require_complete:
             raise ValueError(
-                "Only a complete-coverage remap is conservative enough for a "
-                "topology transition."
+                "remap.require_complete must be true for an epoch transition; got false."
             )
         primal = FunctionLinearOperator(
             lambda values: self.apply(values),
@@ -856,7 +1062,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         source_volumes = np.asarray(self.source_volumes, dtype=np.float64)
         target_volumes = np.asarray(self.target_volumes, dtype=np.float64)
         components = primal.source.size // source_volumes.size
-        _, _, _, source_limit = _coverage_ledger(
+        coverage = coverage_ledger(
             np.asarray(self.target_routes),
             np.asarray(self.source_indices),
             np.asarray(self.intersection_measures, dtype=np.float64),
@@ -867,6 +1073,7 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             source_error_bounds=np.asarray(self.source_volume_error_bounds),
             target_error_bounds=np.asarray(self.target_volume_error_bounds),
         )
+        source_limit = coverage.source_limit
         if self.surface_chart_contents is not None:
             source_limit = np.asarray(
                 self.surface_chart_contents.source_content_defect_bounds, dtype=np.float64
@@ -979,7 +1186,9 @@ def _least_squares_gradient(
     offsets = (centroids[neighbors] - centroids[:, None, :]) / lengths[:, None, None]
     distance_squared = np.sum(offsets * offsets, axis=-1)
     if np.any(valid & ~(distance_squared > 0.0)):
-        raise ValueError("Second-order remap stencil cells must have distinct centroids.")
+        raise ValueError(
+            "remap.gradient.stencil must contain distinct cell centroids; got a zero centroid separation."
+        )
     weights = np.where(valid, 1.0 / np.where(valid, distance_squared, 1.0), 0.0)
     normal = ein.contract("cw,cwi,cwj->cij", weights, offsets, offsets)
     right = ein.contract("cw,cwi->ciw", weights, offsets) / lengths[:, None, None]
@@ -1011,13 +1220,77 @@ def _content_residual(source_content: Array, target_content: Array, /) -> Array:
     return compensated_sum_chunks((source_content, -target_content), output_ndim=1)
 
 
+class _SecondOrderGradient(StrictModule):
+    centroids: np.ndarray
+    columns: np.ndarray
+    columns_valid: np.ndarray
+    solution: SmallLinearSolveResult
+    gradient: SparseLinearMap
+    gradient_id: str = eqx.field(static=True)
+
+
+def _prepare_second_order_gradient(
+    refinement: supermesh_owner.PreparedCommonRefinement,
+    source: UnstructuredFiniteVolumeDiscretization,
+    condition_limit: float,
+) -> _SecondOrderGradient:
+    measures = np.asarray(refinement.source_measures, dtype=np.float64)
+    centroids = (
+        np.asarray(refinement.source_first_moments, dtype=np.float64) / measures[:, None]
+    )
+    neighbors, valid = _vertex_neighbor_stencils(source.mesh)
+    solution = _least_squares_gradient(
+        centroids, measures, neighbors, valid, condition_limit
+    )
+    successful = np.asarray(solution.successful)
+    if not np.all(successful):
+        failed = np.flatnonzero(~successful)
+        raise ValueError(
+            f"remap.gradient must have full-rank stencils within maximum_condition; got rank deficient or ill-conditioned stencils for {failed.size} source cells (first: cell {failed[0]})."
+        )
+    count, dimension = centroids.shape
+    width = neighbors.shape[1] + 1
+    columns = np.concatenate(
+        (neighbors, np.arange(count, dtype=np.int32)[:, None]), axis=1
+    )
+    columns_valid = np.concatenate((valid, np.ones((count, 1), dtype=np.bool_)), axis=1)
+    # g_s = sum_n a_n (u_n - u_s): the owner column carries -sum_n a_n.
+    neighbor_weights = np.where(valid[:, None, :], np.asarray(solution.value), 0.0)
+    gradient_weights = np.concatenate(
+        (neighbor_weights, -np.sum(neighbor_weights, axis=-1, keepdims=True)),
+        axis=-1,
+    )
+    gradient_id = canonical_fingerprint(
+        {
+            "kind": "unstructured-remap-least-squares-gradient",
+            "source": source.prepared_id,
+            "centroids": array_tree_fingerprint(centroids),
+            "stencil": array_tree_fingerprint(columns),
+            "stencil_valid": array_tree_fingerprint(columns_valid),
+            "weights": array_tree_fingerprint(gradient_weights),
+        }
+    )
+    gradient = SparseLinearMap(
+        RowRelation(
+            np.broadcast_to(columns[:, None, :], (count, dimension, width)),
+            source_size=count,
+            valid=np.broadcast_to(columns_valid[:, None, :], (count, dimension, width)),
+        ),
+        gradient_weights,
+        operator_id=gradient_id,
+    )
+    return _SecondOrderGradient(
+        centroids, columns, columns_valid, solution, gradient, gradient_id
+    )
+
+
 class UnstructuredSecondOrderRemapPlan(StrictModule, NonTrainableState):
     """Bound-preserving second-order conservative remap on a common refinement.
 
     Source cell ``s`` carries the linear reconstruction
     ``u_s + phi_s g_s . (x - c_s)`` about its certified decomposition centroid
     ``c_s``, where ``g_s = G u`` is the weighted least-squares gradient over the
-    cells sharing a vertex with ``s`` (a prepared sparse map).  Its exact integral
+    cells sharing a vertex with ``s`` (a prepared sparse map). Its integral
     over overlap ``e = (s, t)`` with measure ``V_e`` and first moment ``m_e`` is
     ``I_e = V_e u_s + phi_s g_s . (m_e - c_s V_e)``, so linear fields are remapped
     exactly and every source cell keeps its content for any ``phi_s``.
@@ -1042,41 +1315,39 @@ class UnstructuredSecondOrderRemapPlan(StrictModule, NonTrainableState):
     refinement_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         remap: UnstructuredConservativeRemapPlan,
-        refinement: PreparedCommonRefinement,
+        refinement: supermesh_owner.PreparedCommonRefinement,
         source: UnstructuredFiniteVolumeDiscretization,
         /,
         *,
         limiter: UnstructuredRemapLimiter = UnstructuredRemapLimiter.BARTH_JESPERSEN,
         maximum_condition: float = 1.0e12,
     ) -> None:
-        from ...geometry._supermesh import PreparedCommonRefinement
 
-        if not isinstance(remap, UnstructuredConservativeRemapPlan):
-            raise TypeError("remap must be an UnstructuredConservativeRemapPlan.")
-        if not isinstance(refinement, PreparedCommonRefinement):
-            raise TypeError("refinement must be a PreparedCommonRefinement.")
-        if not isinstance(source, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("source must be an unstructured FV discretization.")
-        if not isinstance(limiter, UnstructuredRemapLimiter):
-            raise TypeError("limiter must be an UnstructuredRemapLimiter.")
+        limiter = parse(limiter, UnstructuredRemapLimiter, "remap.limiter")
         condition_limit = float(maximum_condition)
         if not np.isfinite(condition_limit) or condition_limit <= 1.0:
-            raise ValueError("maximum_condition must be finite and greater than one.")
+            raise ValueError(
+                "remap.maximum_condition must be finite and greater than one; got an invalid limit."
+            )
         if not refinement.succeeded:
             raise ValueError(
-                "Second-order remap requires a successful common refinement; got "
-                f"{refinement.status.name}: {refinement.evidence.reason}"
+                f"remap.second_order.refinement must have SUCCESS status; got {refinement.status.name}: {refinement.evidence.reason}."
             )
         if not remap.require_complete:
-            raise ValueError("Second-order remap requires a complete-coverage remap.")
+            raise ValueError(
+                "remap.second_order.require_complete must be true; got an incomplete-coverage plan."
+            )
         if (
             source.topology_id != remap.source_topology_id
             or source.geometry_id != remap.source_geometry_id
         ):
-            raise ValueError("source is not the source geometry of the remap.")
+            raise ValueError(
+                "remap.second_order.source must bind the remap source geometry; got mismatched IDs."
+            )
         if (
             refinement.dimension != source.cell_dimension
             or refinement.source_cell_count != source.cell_count
@@ -1092,59 +1363,19 @@ class UnstructuredSecondOrderRemapPlan(StrictModule, NonTrainableState):
                 np.asarray(remap.intersection_measures),
             )
         ):
-            raise ValueError("remap was not built from this common refinement.")
-        measures = np.asarray(refinement.source_measures, dtype=np.float64)
-        centroids = (
-            np.asarray(refinement.source_first_moments, dtype=np.float64)
-            / measures[:, None]
-        )
-        neighbors, valid = _vertex_neighbor_stencils(source.mesh)
-        solution = _least_squares_gradient(
-            centroids, measures, neighbors, valid, condition_limit
-        )
-        successful = np.asarray(solution.successful)
-        if not np.all(successful):
-            failed = np.flatnonzero(~successful)
             raise ValueError(
-                "Second-order remap gradient stencils are rank deficient or exceed "
-                f"maximum_condition for {failed.size} source cells (first: cell "
-                f"{failed[0]})."
+                "remap.second_order.refinement must realize the remap overlaps; got incompatible counts, routes, or measures."
             )
-        count, dimension = centroids.shape
-        width = neighbors.shape[1] + 1
-        columns = np.concatenate(
-            (neighbors, np.arange(count, dtype=np.int32)[:, None]), axis=1
+        prepared_gradient = _prepare_second_order_gradient(
+            refinement, source, condition_limit
         )
-        columns_valid = np.concatenate(
-            (valid, np.ones((count, 1), dtype=np.bool_)), axis=1
-        )
-        # g_s = sum_n a_n (u_n - u_s): the owner column carries -sum_n a_n.
-        neighbor_weights = np.where(valid[:, None, :], np.asarray(solution.value), 0.0)
-        gradient_weights = np.concatenate(
-            (neighbor_weights, -np.sum(neighbor_weights, axis=-1, keepdims=True)),
-            axis=-1,
-        )
-        gradient_id = canonical_fingerprint(
-            {
-                "kind": "unstructured-remap-least-squares-gradient",
-                "source": source.prepared_id,
-                "centroids": array_tree_fingerprint(centroids),
-                "stencil": array_tree_fingerprint(columns),
-                "stencil_valid": array_tree_fingerprint(columns_valid),
-                "weights": array_tree_fingerprint(gradient_weights),
-            }
-        )
-        gradient = SparseLinearMap(
-            RowRelation(
-                np.broadcast_to(columns[:, None, :], (count, dimension, width)),
-                source_size=count,
-                valid=np.broadcast_to(
-                    columns_valid[:, None, :], (count, dimension, width)
-                ),
-            ),
-            gradient_weights,
-            operator_id=gradient_id,
-        )
+        centroids = prepared_gradient.centroids
+        columns = prepared_gradient.columns
+        columns_valid = prepared_gradient.columns_valid
+        solution = prepared_gradient.solution
+        gradient = prepared_gradient.gradient
+        gradient_id = prepared_gradient.gradient_id
+        count = centroids.shape[0]
         overlap = EdgeRelation(
             remap.source_indices,
             remap.target_routes,
@@ -1184,10 +1415,12 @@ class UnstructuredSecondOrderRemapPlan(StrictModule, NonTrainableState):
         value = jnp.asarray(source_cell_averages)
         if value.ndim == 0 or value.shape[0] != remap.source_volumes.size:
             raise ValueError(
-                "Second-order remap values must begin with source cell count."
+                "remap.second_order.values must begin with the source cell count; got a different shape."
             )
         if not jnp.issubdtype(value.dtype, jnp.floating):
-            raise TypeError("Second-order remap values must be real floating point.")
+            raise TypeError(
+                "remap.second_order.values must have real floating dtype; got another dtype."
+            )
         payload_shape = value.shape[1:]
         source = value.reshape((value.shape[0], -1))
         dtype = source.dtype
@@ -1245,7 +1478,9 @@ class UnstructuredSecondOrderRemapPlan(StrictModule, NonTrainableState):
                     jnp.abs(residual), jnp.sum(capacity, axis=0)
                 )
             case _:
-                raise ValueError(f"Unknown remap limiter {self.limiter!r}.")
+                raise ValueError(
+                    f"remap.limiter must be a supported selector; got {self.limiter!r}."
+                )
         available = jnp.sum(capacity, axis=0)
         restored_content = (
             target_content
@@ -1274,5 +1509,6 @@ __all__ = [
     "UnstructuredRemapLimiter",
     "UnstructuredRemapReport",
     "UnstructuredSecondOrderRemapPlan",
+    "RemapCoverageLedger",
     "UnstructuredSecondOrderRemapResult",
 ]

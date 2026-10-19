@@ -22,10 +22,10 @@ from ._assembly import assemble_diagonal
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import (
-    _generic_adjoint,
     AbstractLinearOperator,
     DenseLinearOperator,
     DiagonalLinearOperator,
+    generic_adjoint,
 )
 from ._preconditioner_properties import (
     _preconditioner_properties_payload,
@@ -47,7 +47,7 @@ from ._properties import (
     OperatorProperties,
     PropertyEvidence,
 )
-from ._spaces import _coordinate_dtype, _has_diagonal_pairing, AbstractVectorSpace
+from ._spaces import _has_diagonal_pairing, AbstractVectorSpace, coordinate_dtype
 from ._sparse_contract import AbstractSparseLinearOperator
 from ._spectral import estimate_spectral_bounds
 
@@ -133,7 +133,7 @@ class _SymmetricJacobiLinearOperator(AbstractLinearOperator):
             raise LinearCapabilityError(
                 "The setup operator does not provide the transpose action needed for an adjoint."
             )
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         raise LinearCapabilityError(
@@ -480,9 +480,9 @@ class ChebyshevPreconditionerBuilder(AbstractPreconditionerBuilder):
     ) -> PreconditionerCostEstimate:
         _validate_setup_operator(setup_operator)
         dimension = setup_operator.source.size
-        itemsize = _coordinate_dtype(setup_operator.source).itemsize
+        itemsize = coordinate_dtype(setup_operator.source).itemsize
         real_itemsize = np.empty(
-            (), dtype=_coordinate_dtype(setup_operator.source)
+            (), dtype=coordinate_dtype(setup_operator.source)
         ).real.dtype.itemsize
         diagonal_operator = isinstance(setup_operator, DiagonalLinearOperator)
         sparse_operator = isinstance(setup_operator, AbstractSparseLinearOperator)
@@ -642,8 +642,8 @@ class ChebyshevPreconditionerBuilder(AbstractPreconditionerBuilder):
         effective_operator: AbstractLinearOperator,
         /,
     ) -> tuple[Array, Array, ChebyshevBoundsSource]:
-        coordinate_dtype = _coordinate_dtype(effective_operator.source)
-        real_dtype = np.empty((), dtype=coordinate_dtype).real.dtype
+        stored_dtype = coordinate_dtype(effective_operator.source)
+        real_dtype = np.empty((), dtype=stored_dtype).real.dtype
         if self.interval is not None:
             lower = jnp.asarray(self.interval[0], dtype=real_dtype)
             upper = jnp.asarray(self.interval[1], dtype=real_dtype)

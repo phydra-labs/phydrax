@@ -372,48 +372,6 @@ def test_mpc_contracts() -> None:
             terminal_policy="global",
             initial_state=jnp.array([1.0 + 2.0j]),
         )
-    infeasible = phx.control.LinearQuadraticControlProblem(
-        jnp.ones((1, 1, 1)),
-        jnp.zeros((1, 1, 1)),
-        jnp.array([1.0]),
-        jnp.zeros((1, 1, 1)),
-        jnp.ones((1, 1, 1)),
-        jnp.zeros((1, 1)),
-        terminal_equality_matrix=jnp.ones((1, 1)),
-        terminal_equality_rhs=jnp.zeros((1,)),
-    )
-    infeasible_result = phx.control.solve_receding_horizon_mpc(
-        infeasible,
-        prediction_horizon=1,
-        terminal_policy="global",
-    )
-    assert (
-        infeasible_result.qp_results[0].status
-        == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
-    )
-    assert infeasible_result.status == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
-    assert not infeasible_result.valid
-
-    dynamics = jnp.array([[[1.0]], [[jnp.nan]]])
-    specification = phx.control.LinearQuadraticControlProblem(
-        dynamics,
-        jnp.ones((2, 1, 1)),
-        jnp.array([1.0]),
-        jnp.zeros((2, 1, 1)),
-        jnp.ones((2, 1, 1)),
-        jnp.ones((1, 1)),
-    )
-    result = phx.control.solve_receding_horizon_mpc(
-        specification,
-        prediction_horizon=1,
-        terminal_policy="global",
-    )
-    assert result.qp_results[0].status == phx.optim.ConvexProgramStatus.OPTIMAL
-    assert result.qp_results[1].status == phx.optim.ConvexProgramStatus.NONFINITE_INPUT
-    assert result.status == phx.optim.ConvexProgramStatus.NONFINITE_INPUT
-    assert not result.valid
-    assert not result.trajectory.successful
-    assert jnp.isnan(result.states[-1]).any()
     specification = phx.control.LinearQuadraticControlProblem(
         jnp.ones((2, 1, 1)),
         jnp.ones((2, 1, 1)),
@@ -521,6 +479,52 @@ def test_mpc_contracts() -> None:
     with pytest.raises(TypeError, match="RecedingHorizonMPC"):
         # ty: ignore[invalid-argument-type]
         phx.control.prepare_receding_horizon_mpc_sensitivity(specification)
+
+
+def test_mpc_clarabel_contracts() -> None:
+    pytest.importorskip("clarabel", reason="requires the optional Clarabel provider")
+    infeasible = phx.control.LinearQuadraticControlProblem(
+        jnp.ones((1, 1, 1)),
+        jnp.zeros((1, 1, 1)),
+        jnp.array([1.0]),
+        jnp.zeros((1, 1, 1)),
+        jnp.ones((1, 1, 1)),
+        jnp.zeros((1, 1)),
+        terminal_equality_matrix=jnp.ones((1, 1)),
+        terminal_equality_rhs=jnp.zeros((1,)),
+    )
+    infeasible_result = phx.control.solve_receding_horizon_mpc(
+        infeasible,
+        prediction_horizon=1,
+        terminal_policy="global",
+    )
+    assert (
+        infeasible_result.qp_results[0].status
+        == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
+    )
+    assert infeasible_result.status == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
+    assert not infeasible_result.valid
+
+    dynamics = jnp.array([[[1.0]], [[jnp.nan]]])
+    specification = phx.control.LinearQuadraticControlProblem(
+        dynamics,
+        jnp.ones((2, 1, 1)),
+        jnp.array([1.0]),
+        jnp.zeros((2, 1, 1)),
+        jnp.ones((2, 1, 1)),
+        jnp.ones((1, 1)),
+    )
+    result = phx.control.solve_receding_horizon_mpc(
+        specification,
+        prediction_horizon=1,
+        terminal_policy="global",
+    )
+    assert result.qp_results[0].status == phx.optim.ConvexProgramStatus.OPTIMAL
+    assert result.qp_results[1].status == phx.optim.ConvexProgramStatus.NONFINITE_INPUT
+    assert result.status == phx.optim.ConvexProgramStatus.NONFINITE_INPUT
+    assert not result.valid
+    assert not result.trajectory.successful
+    assert jnp.isnan(result.states[-1]).any()
 
 
 def test_control_qp_mpc_scenario_2() -> None:

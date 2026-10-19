@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def run_advanced_potential_benchmarks(
@@ -36,7 +37,7 @@ def run_advanced_potential_benchmarks(
     jax.block_until_ready(harmonic_residual)
     holomorphic_ms = 1e3 * (time.perf_counter() - started)
 
-    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     panelization = phx.operators.BoundaryPanelization2D(
         geometry.boundary_atlas,
         panels_per_chart=int(panels_per_chart),

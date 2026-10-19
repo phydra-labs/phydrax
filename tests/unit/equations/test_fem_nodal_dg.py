@@ -10,11 +10,12 @@ import numpy as np
 import opt_einsum as oe
 
 import phydrax as phx
-from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.discretization._conservation_boundary import ExtrapolationBoundary
 from phydrax.discretization._reference_cell import (
     facet_orientation_actions,
 )
+from phydrax.discretization._reference_cell_types import CellBlock
 from phydrax.discretization.fem._boundary import (
     FiniteElementBoundarySet,
     FiniteElementPeriodicFacetPair,

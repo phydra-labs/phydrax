@@ -61,12 +61,20 @@
 
 #include "bounded_memory.hpp"
 #include "capi_guard.hpp"
+#include "counter_records.hpp"
 #include "filtered.hpp"
 #include "phydrax_meshcore.h"
 #include "exact_line.hpp"
+#include "exact_scalar.hpp"
+#include "geometry3.hpp"
+#include "facet_coverage.hpp"
+#include "topology_keys.hpp"
 
 namespace phx::mc {
 namespace {
+
+using exact::det3;
+using exact::lift;
 
 // ------------------------------------------------------------ dyadic integers
 
@@ -492,20 +500,6 @@ Dyadic line_nearest_integer(const Dyadic& numerator, const Dyadic& denominator,
   }
 // ------------------------------------------------------------ implicit points
 
-template <class T>
-T lift(double value) {
-  if constexpr (std::is_same_v<T, Approx>) {
-    return Approx::exact(value);
-  } else {
-    return Dyadic(value);
-  }
-}
-
-template <class T>
-T det3(const T& a0, const T& a1, const T& a2, const T& b0, const T& b1, const T& b2,
-       const T& c0, const T& c1, const T& c2) {
-  return a0 * (b1 * c2 - b2 * c1) - a1 * (b0 * c2 - b2 * c0) + a2 * (b0 * c1 - b1 * c0);
-}
 
 // kind 0: the plane through input vertices a, b, c; kind 1: the plane through
 // a and b (a < b) parallel to coordinate axis `axis`.
@@ -596,18 +590,18 @@ struct PoolPoint {
   std::int8_t construction = kInputVertex;
   Approx h[4];
   int w_sign = 1;
-  std::unique_ptr<std::array<Dyadic, 4>> exact;
+  NativeVector<Dyadic> exact;
   double x[3] = {0.0, 0.0, 0.0};
   double bound = 0.0;  // max-norm distance of x from the exact point
 
   double lower(int axis) const {
     return bound == 0.0 ? x[axis]
-                        : std::nextafter(x[axis] - bound, -std::numeric_limits<double>::infinity());
+                        : geometry::next_down(x[axis] - bound);
   }
 
   double upper(int axis) const {
     return bound == 0.0 ? x[axis]
-                        : std::nextafter(x[axis] + bound, std::numeric_limits<double>::infinity());
+                        : geometry::next_up(x[axis] + bound);
   }
 };
 
@@ -621,8 +615,9 @@ struct Refusal {
 // vertices; implicit points are interned by their defining planes.
 class Kernel {
  public:
-  Kernel(const double* coords, std::int64_t vertex_count, std::int64_t max_points)
-      : coords_(coords), max_points_(max_points) {
+  Kernel(const double* coords, std::int64_t vertex_count, std::int64_t max_points,
+         bool bounded_work = false)
+      : coords_(coords), max_points_(max_points), bounded_work_(bounded_work) {
     for (std::int64_t vertex = 0; vertex < vertex_count; ++vertex) {
       PoolPoint& point = pool_.emplace_back();
       point.def.vertex = vertex;
@@ -634,6 +629,9 @@ class Kernel {
   }
 
   std::int64_t size() const { return static_cast<std::int64_t>(pool_.size()); }
+  void work() const {
+    if (bounded_work_) native_execution_charge(1);
+  }
   const PoolPoint& point(std::int64_t id) const { return pool_[static_cast<std::size_t>(id)]; }
   bool is_input(std::int64_t id) const { return !pool_[static_cast<std::size_t>(id)].def.implicit; }
   std::int64_t filtered() const { return filtered_; }
@@ -706,6 +704,7 @@ class Kernel {
   }
 
   bool equal(std::int64_t p, std::int64_t q) {
+    work();
     if (p == q) {
       return true;
     }
@@ -855,6 +854,10 @@ class Kernel {
  private:
   template <class Eval>
   int decide(Eval&& eval) {
+    if (bounded_work_) {
+      native_execution_charge(1);
+      native_execution_primitive_query();
+    }
     const Approx filtered = eval.template operator()<Approx>();
     const int sign = filtered.certified_sign();
     if (sign != 2) {
@@ -871,11 +874,11 @@ class Kernel {
     if constexpr (std::is_same_v<T, Approx>) {
       return point.h;
     } else {
-      if (!point.exact) {
-        point.exact = std::make_unique<std::array<Dyadic, 4>>();
-        homogeneous(coords_, point.def, point.exact->data());
+      if (point.exact.empty()) {
+        point.exact.resize(4);
+        homogeneous(coords_, point.def, point.exact.data());
       }
-      return point.exact->data();
+      return point.exact.data();
     }
   }
 
@@ -956,8 +959,9 @@ class Kernel {
 
   const double* coords_;
   std::int64_t max_points_;
-  std::deque<PoolPoint> pool_;
-  std::map<std::array<std::int64_t, 15>, std::int64_t> interned_;
+  bool bounded_work_;
+  NativeDeque<PoolPoint> pool_;
+  NativeMap<std::array<std::int64_t, 15>, std::int64_t> interned_;
   std::int64_t filtered_ = 0;
   std::int64_t exact_ = 0;
 };
@@ -1029,18 +1033,18 @@ class LocalMesh {
            static_cast<std::uint32_t>(v);
   }
 
-  std::vector<std::array<int, 3>> triangles_;
-  std::vector<char> alive_;
-  std::unordered_map<std::uint64_t, int> owner_;
+  NativeVector<std::array<int, 3>> triangles_;
+  NativeVector<char> alive_;
+  NativeUnorderedMap<std::uint64_t, int> owner_;
 };
 
 struct Output {
-  std::vector<std::array<std::int64_t, 3>> fragments;  // pool ids
-  std::vector<std::int64_t> fragment_faces;
-  std::vector<std::int8_t> fragment_frames;  // sign * (dropped axis + 1)
-  std::vector<std::array<std::int64_t, 2>> contact_edges;        // pool ids
-  std::vector<std::array<std::int64_t, 3>> coplanar;             // fragment, face, orientation
-  std::vector<std::array<std::int64_t, 3>> locations;            // pool id, face, feature code
+  NativeVector<std::array<std::int64_t, 3>> fragments;  // pool ids
+  NativeVector<std::int64_t> fragment_faces;
+  NativeVector<std::int8_t> fragment_frames;  // sign * (dropped axis + 1)
+  NativeVector<std::array<std::int64_t, 2>> contact_edges;        // pool ids
+  NativeVector<std::array<std::int64_t, 3>> coplanar;             // fragment, face, orientation
+  NativeVector<std::array<std::int64_t, 3>> locations;            // pool id, face, feature code
   std::int64_t contact_pairs = 0;
   std::int64_t coplanar_pairs = 0;
   std::int64_t split_faces = 0;
@@ -1049,16 +1053,16 @@ struct Output {
 class Arranger {
  public:
   Arranger(const double* coords, std::int64_t vertex_count, const std::int64_t* triangles,
-           std::int64_t max_points, std::int64_t max_fragments)
+           std::int64_t max_points, std::int64_t max_fragments, bool coverage_only = false)
       : coords_(coords),
         triangles_(triangles),
-        kernel_(coords, vertex_count, max_points),
-        max_fragments_(max_fragments) {}
+        kernel_(coords, vertex_count, max_points, coverage_only),
+        max_fragments_(max_fragments), coverage_only_(coverage_only) {}
 
   Kernel& kernel() { return kernel_; }
   Output& output() { return output_; }
 
-  void face(std::int64_t t, const std::vector<std::int64_t>& partners) {
+  void face(std::int64_t t, std::span<const std::int64_t> partners) {
     face_ = t;
     const std::int64_t* corners = triangles_ + 3 * t;
     const PlaneDef plane = triangle_plane(t);
@@ -1068,7 +1072,7 @@ class Arranger {
     for (int k = 0; k < 3; ++k) {
       segments_.push_back({k, (k + 1) % 3, edge_line(corners[k], corners[(k + 1) % 3]), false});
     }
-    std::vector<std::int64_t> coplanar;
+    NativeVector<std::int64_t> coplanar;
     for (const std::int64_t u : partners) {
       add_partner(t, plane, u, coplanar);
     }
@@ -1161,7 +1165,7 @@ class Arranger {
   }
 
   void add_partner(std::int64_t t, const PlaneDef& plane, std::int64_t u,
-                   std::vector<std::int64_t>& coplanar) {
+                   NativeVector<std::int64_t>& coplanar) {
     const std::int64_t* tv = triangles_ + 3 * t;
     const std::int64_t* uv = triangles_ + 3 * u;
     const PlaneDef other = triangle_plane(u);
@@ -1297,6 +1301,7 @@ class Arranger {
   void split_at_points() {
     for (std::size_t s = 0; s < segments_.size(); ++s) {
       for (std::size_t p = 0; p < points_.size(); ++p) {
+        kernel_.work();
         if (on_open(static_cast<int>(p), segments_[s])) {
           Segment tail = segments_[s];
           tail.a = static_cast<int>(p);
@@ -1311,11 +1316,12 @@ class Arranger {
         std::swap(segment.a, segment.b);
       }
     }
-    std::stable_sort(segments_.begin(), segments_.end(),
-                     [](const Segment& left, const Segment& right) {
-                       return std::pair(left.a, left.b) < std::pair(right.a, right.b);
-                     });
-    std::vector<Segment> unique;
+    std::sort(segments_.begin(), segments_.end(),
+              [this](const Segment& left, const Segment& right) {
+                kernel_.work();
+                return std::pair(left.a, left.b) < std::pair(right.a, right.b);
+              });
+    NativeVector<Segment> unique;
     for (const Segment& segment : segments_) {
       if (!unique.empty() && unique.back().a == segment.a && unique.back().b == segment.b) {
         unique.back().contact = unique.back().contact || segment.contact;
@@ -1335,6 +1341,7 @@ class Arranger {
       const std::size_t before = points_.size();
       for (std::size_t i = 0; i < segments_.size(); ++i) {
         for (std::size_t j = i + 1; j < segments_.size(); ++j) {
+          kernel_.work();
           const Segment first = segments_[i];
           const Segment second = segments_[j];
           if (first.a == second.a || first.a == second.b || first.b == second.a ||
@@ -1356,8 +1363,8 @@ class Arranger {
 
   // Keeps the points in the closed triangle and the constraints between them.
   void clip() {
-    std::vector<int> renumber(points_.size(), -1);
-    std::vector<std::int64_t> kept;
+    NativeVector<int> renumber(points_.size(), -1);
+    NativeVector<std::int64_t> kept;
     for (std::size_t p = 0; p < points_.size(); ++p) {
       const int local = static_cast<int>(p);
       if (p < 3 || (orient(0, 1, local) >= 0 && orient(1, 2, local) >= 0 &&
@@ -1366,7 +1373,7 @@ class Arranger {
         kept.push_back(points_[p]);
       }
     }
-    std::vector<Segment> segments;
+    NativeVector<Segment> segments;
     for (Segment segment : segments_) {
       const int a = renumber[static_cast<std::size_t>(segment.a)];
       const int b = renumber[static_cast<std::size_t>(segment.b)];
@@ -1382,6 +1389,7 @@ class Arranger {
 
   void insert_point(LocalMesh& mesh, int p) {
     for (int index = 0; index < mesh.count(); ++index) {
+      kernel_.work();
       if (!mesh.alive(index)) {
         continue;
       }
@@ -1439,8 +1447,9 @@ class Arranger {
     if (mesh.find(a, b) >= 0 || mesh.find(b, a) >= 0) {
       return;
     }
-    std::deque<std::pair<int, int>> crossing;
+    NativeDeque<std::pair<int, int>> crossing;
     for (int index = 0; index < mesh.count(); ++index) {
+      kernel_.work();
       if (!mesh.alive(index)) {
         continue;
       }
@@ -1456,6 +1465,7 @@ class Arranger {
     const std::size_t initial = crossing.size();
     std::size_t budget = 16 * (initial + 1) * (initial + 1) + 1024;
     while (!crossing.empty()) {
+      kernel_.work();
       if (budget-- == 0) {
         throw Refusal{PHX_MC_INTERNAL_ERROR, face_};
       }
@@ -1563,8 +1573,8 @@ class Arranger {
     return 6;
   }
 
-  void triangulate(std::int64_t t, const std::vector<std::int64_t>& coplanar) {
-    std::vector<std::array<int, 3>> triangles;
+  void triangulate(std::int64_t t, const NativeVector<std::int64_t>& coplanar) {
+    NativeVector<std::array<int, 3>> triangles;
     bool split = points_.size() > 3;
     for (const Segment& segment : segments_) {
       // Constraints other than the three boundary edges split the face.
@@ -1581,8 +1591,10 @@ class Arranger {
       for (const Segment& segment : segments_) {
         insert_segment(mesh, segment.a, segment.b);
       }
-      triangulate_publication(mesh);
+      // Coverage consumes only exact topology, never rounded carrier quality.
+      if (!coverage_only_) triangulate_publication(mesh);
       for (int index = 0; index < mesh.count(); ++index) {
+        kernel_.work();
         if (mesh.alive(index)) {
           triangles.push_back(mesh.triangle(index));
         }
@@ -1595,8 +1607,8 @@ class Arranger {
     }
     // Coplanar coverage: a fragment crosses no edge of a coplanar partner, so
     // it lies in the partner exactly when its three corners do.
-    std::vector<std::vector<char>> inside(coplanar.size());
-    std::vector<int> orientation(coplanar.size());
+    NativeVector<NativeVector<char>> inside(coplanar.size());
+    NativeVector<int> orientation(coplanar.size());
     for (std::size_t c = 0; c < coplanar.size(); ++c) {
       const std::int64_t* uv = triangles_ + 3 * coplanar[c];
       orientation[c] = orient_pool(uv[0], uv[1], uv[2]);
@@ -1639,26 +1651,19 @@ class Arranger {
   const std::int64_t* triangles_;
   Kernel kernel_;
   std::int64_t max_fragments_;
+  bool coverage_only_;
   Output output_;
   std::int64_t face_ = -1;
   int axis_ = 0;
   int face_sign_ = 1;
   int first_axis_ = 1;
   int second_axis_ = 2;
-  std::vector<std::int64_t> points_;
-  std::vector<Segment> segments_;
+  NativeVector<std::int64_t> points_;
+  NativeVector<Segment> segments_;
 };
 
 // ------------------------------------------------------------ welding
 
-std::int64_t find_root(std::vector<std::int64_t>& parent, std::int64_t x) {
-  while (parent[static_cast<std::size_t>(x)] != x) {
-    parent[static_cast<std::size_t>(x)] =
-        parent[static_cast<std::size_t>(parent[static_cast<std::size_t>(x)])];
-    x = parent[static_cast<std::size_t>(x)];
-  }
-  return x;
-}
 
 // Exact clipping of a canonical physical reference triangle by three original
 // rational halfplanes. Positive denominator clearing supplies signed integers;
@@ -1681,6 +1686,147 @@ bool same_reference_vertex(const ExactReferenceVertex& a, const ExactReferenceVe
          (a.y * b.w - b.y * a.w).sign() == 0;
 }
 
+using ExactReferencePlanes = std::array<std::array<Dyadic, 3>, 6>;
+
+struct ExactReferenceClip {
+  std::array<ExactReferenceVertex, 16> vertices;
+  std::array<ExactReferenceEntry, 12> loop{};
+  std::array<ExactReferenceEntry, 12> next{};
+  std::int32_t used = 3;
+  std::int32_t count = 3;
+  std::int32_t next_count = 0;
+  std::int64_t work = 0;
+
+  ExactReferenceClip() {
+    vertices[0] = {Dyadic(0.0), Dyadic(0.0), Dyadic(1.0), {0, 1}};
+    vertices[1] = {Dyadic(1.0), Dyadic(0.0), Dyadic(1.0), {1, 2}};
+    vertices[2] = {Dyadic(0.0), Dyadic(1.0), Dyadic(1.0), {2, 0}};
+    loop[0] = {0, 0}; loop[1] = {1, 1}; loop[2] = {2, 2};
+  }
+};
+
+int32_t validate_reference_integers(const std::int64_t* offsets,
+                                   const std::int8_t* signs, std::int64_t word_count,
+                                   std::int64_t& maximum_words) {
+  for (int scalar = 0; scalar < 18; ++scalar) {
+    if (offsets[scalar] < 0 || offsets[scalar + 1] < offsets[scalar] ||
+        offsets[scalar + 1] > word_count || signs[scalar] < -1 || signs[scalar] > 1 ||
+        ((offsets[scalar + 1] == offsets[scalar]) != (signs[scalar] == 0))) {
+      return PHX_MC_INVALID_INPUT;
+    }
+    maximum_words = std::max(maximum_words, offsets[scalar + 1] - offsets[scalar]);
+  }
+  return PHX_MC_OK;
+}
+
+int32_t decode_reference_planes(const std::uint32_t* words, const std::int64_t* offsets,
+                                const std::int8_t* signs, ExactReferencePlanes& planes) {
+  for (int scalar = 0; scalar < 18; ++scalar) {
+    planes[scalar / 3][scalar % 3] =
+        Dyadic::integer(words + offsets[scalar],
+                        static_cast<std::size_t>(offsets[scalar + 1] - offsets[scalar]),
+                        signs[scalar]);
+  }
+  if (planes[0][0].sign() >= 0 || planes[0][1].sign() != 0 || planes[0][2].sign() != 0 ||
+      planes[1][0].sign() != 0 || planes[1][1].sign() >= 0 || planes[1][2].sign() != 0 ||
+      planes[2][0].sign() <= 0 || (planes[2][1] - planes[2][0]).sign() != 0 ||
+      (planes[2][2] - planes[2][0]).sign() != 0) {
+    return PHX_MC_INVALID_INPUT;
+  }
+  return PHX_MC_OK;
+}
+
+int32_t append_reference_entry(ExactReferenceClip& clip, std::int32_t& next_count,
+                               ExactReferenceEntry entry) {
+  if (next_count) {
+    clip.work += 6;
+    if (same_reference_vertex(clip.vertices[clip.next[next_count - 1].vertex],
+                              clip.vertices[entry.vertex])) {
+      return PHX_MC_OK;
+    }
+  }
+  if (next_count >= static_cast<int>(clip.next.size())) {
+    return PHX_MC_INTERNAL_ERROR;
+  }
+  clip.next[next_count++] = entry;
+  return PHX_MC_OK;
+}
+
+int32_t construct_reference_intersection(ExactReferenceClip& clip,
+                                         const ExactReferencePlanes& planes,
+                                         int incoming, int clipping) {
+  if (clip.used >= static_cast<int>(clip.vertices.size())) {
+    return PHX_MC_INTERNAL_ERROR;
+  }
+  const auto& first = planes[incoming];
+  const auto& second = planes[clipping];
+  Dyadic determinant = first[0] * second[1] - first[1] * second[0];
+  if (determinant.sign() == 0) {
+    return PHX_MC_INTERNAL_ERROR;
+  }
+  Dyadic x = first[2] * second[1] - first[1] * second[2];
+  Dyadic y = first[0] * second[2] - first[2] * second[0];
+  if (determinant.sign() < 0) {
+    determinant.negate(); x.negate(); y.negate();
+  }
+  clip.vertices[clip.used] = {std::move(x), std::move(y), std::move(determinant),
+                             {incoming, clipping}};
+  return PHX_MC_OK;
+}
+
+int32_t clip_reference_plane(ExactReferenceClip& clip,
+                             const ExactReferencePlanes& planes, int clipping) {
+  std::array<int, 12> sides{};
+  for (int slot = 0; slot < clip.count; ++slot) {
+    const auto& point = clip.vertices[clip.loop[slot].vertex];
+    sides[slot] = (planes[clipping][2] * point.w -
+                  planes[clipping][0] * point.x -
+                  planes[clipping][1] * point.y).sign();
+    clip.work += 7;
+  }
+  std::int32_t& next_count = clip.next_count;
+  next_count = 0;
+  for (int slot = 0; slot < clip.count; ++slot) {
+    const int following = (slot + 1) % clip.count;
+    const auto& b = clip.loop[following];
+    const bool a_inside = sides[slot] >= 0;
+    const bool b_inside = sides[following] >= 0;
+    if (a_inside != b_inside) {
+      int32_t status = construct_reference_intersection(clip, planes, b.incoming, clipping);
+      if (status != PHX_MC_OK) return status;
+      status = append_reference_entry(
+          clip, next_count, {clip.used++, a_inside ? b.incoming : clipping});
+      if (status != PHX_MC_OK) return status;
+      clip.work += 12;
+    }
+    if (b_inside) {
+      const int32_t status = append_reference_entry(clip, next_count, b);
+      if (status != PHX_MC_OK) return status;
+    }
+  }
+  if (next_count > 1) {
+    clip.work += 6;
+    if (same_reference_vertex(clip.vertices[clip.next[0].vertex],
+                              clip.vertices[clip.next[next_count - 1].vertex])) {
+      clip.next[0].incoming = clip.next[next_count - 1].incoming;
+      --next_count;
+    }
+  }
+  return PHX_MC_OK;
+}
+
+bool contains_reference_triangle(const ExactReferencePlanes& planes, std::int64_t& work) {
+  for (int clipping = 3; clipping < 6; ++clipping) {
+    ++work;
+    if (planes[clipping][2].sign() < 0) return false;
+    work += 2;
+    if ((planes[clipping][2] - planes[clipping][0]).sign() < 0) return false;
+    work += 2;
+    if ((planes[clipping][2] - planes[clipping][1]).sign() < 0) return false;
+  }
+  return true;
+}
+
 int32_t clip_reference_triangle_exact(
     const std::uint32_t* words, std::int64_t word_count,
     const std::int64_t* offsets, const std::int8_t* signs,
@@ -1697,14 +1843,8 @@ int32_t clip_reference_triangle_exact(
   *vertex_count = 0;
   *work_units = 0;
   std::int64_t maximum_words = 1;
-  for (int scalar = 0; scalar < 18; ++scalar) {
-    if (offsets[scalar] < 0 || offsets[scalar + 1] < offsets[scalar] ||
-        offsets[scalar + 1] > word_count || signs[scalar] < -1 || signs[scalar] > 1 ||
-        ((offsets[scalar + 1] == offsets[scalar]) != (signs[scalar] == 0))) {
-      return PHX_MC_INVALID_INPUT;
-    }
-    maximum_words = std::max(maximum_words, offsets[scalar + 1] - offsets[scalar]);
-  }
+  int32_t status = validate_reference_integers(offsets, signs, word_count, maximum_words);
+  if (status != PHX_MC_OK) return status;
   // Original integers have at most M limbs. Vertex cofactors have 2M and
   // every side/equality predicate at most 4M. Eighteen coefficients, sixteen
   // cached homogeneous vertices and all simultaneous arithmetic temporaries
@@ -1714,100 +1854,35 @@ int32_t clip_reference_triangle_exact(
   }
   MemoryBudgetWindow memory(static_cast<std::size_t>(scratch_limit));
   MemoryScope memory_scope(memory.owner());
-  std::array<std::array<Dyadic, 3>, 6> planes;
-  for (int scalar = 0; scalar < 18; ++scalar) {
-    planes[scalar / 3][scalar % 3] =
-        Dyadic::integer(words + offsets[scalar],
-                        static_cast<std::size_t>(offsets[scalar + 1] - offsets[scalar]),
-                        signs[scalar]);
+  ExactReferencePlanes planes;
+  status = decode_reference_planes(words, offsets, signs, planes);
+  if (status != PHX_MC_OK) return status;
+  ExactReferenceClip clip;
+  // The unit corners need one comparison and two subtraction/comparison pairs
+  // per plane. A failed proof retains its executed work before generic clipping.
+  // Three unchanged generic phases rotate the loop three times, restoring this
+  // initial support and label order when all corners remain inside.
+  const bool contained = work_limit >= 15 && contains_reference_triangle(planes, clip.work);
+  if (!contained) {
+    for (int clipping = 3; clipping < 6 && clip.count >= 3; ++clipping) {
+      if (13 * clip.count + 42 > work_limit - clip.work) {
+        *work_units = clip.work;
+        return PHX_MC_CAPACITY_EXCEEDED;
+      }
+      status = clip_reference_plane(clip, planes, clipping);
+      if (status != PHX_MC_OK) return status;
+      if (clip.work > work_limit) {
+        *work_units = clip.work;
+        return PHX_MC_CAPACITY_EXCEEDED;
+      }
+      clip.loop.swap(clip.next);
+      clip.count = clip.next_count;
+    }
   }
-  if (planes[0][0].sign() >= 0 || planes[0][1].sign() != 0 || planes[0][2].sign() != 0 ||
-      planes[1][0].sign() != 0 || planes[1][1].sign() >= 0 || planes[1][2].sign() != 0 ||
-      planes[2][0].sign() <= 0 || (planes[2][1] - planes[2][0]).sign() != 0 ||
-      (planes[2][2] - planes[2][0]).sign() != 0) {
-    return PHX_MC_INVALID_INPUT;
-  }
-  std::array<ExactReferenceVertex, 16> vertices;
-  vertices[0] = {Dyadic(0.0), Dyadic(0.0), Dyadic(1.0), {0, 1}};
-  vertices[1] = {Dyadic(1.0), Dyadic(0.0), Dyadic(1.0), {1, 2}};
-  vertices[2] = {Dyadic(0.0), Dyadic(1.0), Dyadic(1.0), {2, 0}};
-  std::int32_t used = 3;
-  std::array<ExactReferenceEntry, 12> loop{};
-  std::array<ExactReferenceEntry, 12> next{};
-  loop[0] = {0, 0}; loop[1] = {1, 1}; loop[2] = {2, 2};
-  std::int32_t count = 3;
-  std::int64_t work = 0;
-  for (int clipping = 3; clipping < 6 && count >= 3; ++clipping) {
-    if (13 * count + 42 > work_limit - work) {
-      *work_units = work;
-      return PHX_MC_CAPACITY_EXCEEDED;
-    }
-    std::array<int, 12> sides{};
-    for (int slot = 0; slot < count; ++slot) {
-      const auto& point = vertices[loop[slot].vertex];
-      sides[slot] = (planes[clipping][2] * point.w -
-                    planes[clipping][0] * point.x -
-                    planes[clipping][1] * point.y).sign();
-      work += 7;
-    }
-    std::int32_t next_count = 0;
-    auto append = [&](ExactReferenceEntry entry) {
-      if (next_count) {
-        work += 6;
-        if (same_reference_vertex(vertices[next[next_count - 1].vertex],
-                                  vertices[entry.vertex])) {
-          return;
-        }
-      }
-      if (next_count >= static_cast<int>(next.size())) {
-        throw Refusal{PHX_MC_INTERNAL_ERROR, -1};
-      }
-      next[next_count++] = entry;
-    };
-    for (int slot = 0; slot < count; ++slot) {
-      const int following = (slot + 1) % count;
-      const auto& b = loop[following];
-      const bool a_inside = sides[slot] >= 0;
-      const bool b_inside = sides[following] >= 0;
-      if (a_inside != b_inside) {
-        if (used >= static_cast<int>(vertices.size())) {
-          return PHX_MC_INTERNAL_ERROR;
-        }
-        const auto& first = planes[b.incoming];
-        const auto& second = planes[clipping];
-        Dyadic determinant = first[0] * second[1] - first[1] * second[0];
-        if (determinant.sign() == 0) {
-          return PHX_MC_INTERNAL_ERROR;
-        }
-        Dyadic x = first[2] * second[1] - first[1] * second[2];
-        Dyadic y = first[0] * second[2] - first[2] * second[0];
-        if (determinant.sign() < 0) {
-          determinant.negate(); x.negate(); y.negate();
-        }
-        vertices[used] = {std::move(x), std::move(y), std::move(determinant),
-                          {b.incoming, clipping}};
-        append({used++, a_inside ? b.incoming : clipping});
-        work += 12;
-      }
-      if (b_inside) {
-        append(b);
-      }
-    }
-    if (next_count > 1) {
-      work += 6;
-      if (same_reference_vertex(vertices[next[0].vertex],
-                                vertices[next[next_count - 1].vertex])) {
-        next[0].incoming = next[next_count - 1].incoming;
-        --next_count;
-      }
-    }
-    if (work > work_limit) {
-      *work_units = work;
-      return PHX_MC_CAPACITY_EXCEEDED;
-    }
-    loop.swap(next);
-    count = next_count;
-  }
+  const auto& vertices = clip.vertices;
+  const auto& loop = clip.loop;
+  const std::int32_t count = clip.count;
+  const std::int64_t work = clip.work;
   *work_units = work;
   if (count < 3) {
     return PHX_MC_OK;
@@ -1828,6 +1903,116 @@ int32_t clip_reference_triangle_exact(
 #include "reference_tetrahedron_clip.inc"
 
 }  // namespace
+
+bool exact_facet_coverage(
+    const double* subject, const double* original_points,
+    std::span<const std::array<int32_t, 4>> original_faces,
+    std::span<const int32_t> rows, NativeVector<int32_t>& contributors) {
+  contributors.clear();
+  native_execution_charge(1, 1);
+  if (rows.empty()) return false;
+  NativeVector<int32_t> selected(rows.begin(), rows.end());
+  std::sort(selected.begin(), selected.end(), [](int32_t a, int32_t b) {
+    native_execution_charge(1);
+    return a < b;
+  });
+  selected.erase(std::unique(selected.begin(), selected.end(), [](int32_t a, int32_t b) {
+    native_execution_charge(1);
+    return a == b;
+  }), selected.end());
+
+  // m supporting edges have at most m(m-1)/2 proper intersections.
+  // A planar triangulation has fewer than twice as many triangles as vertices.
+  // The local mesh uses int indices, so admit both bounds before allocating.
+  const auto limit = static_cast<std::uint64_t>(std::numeric_limits<int>::max() / 2);
+  const auto n = static_cast<std::uint64_t>(selected.size());
+  if (n > limit / 3 - 1) throw ExecutionRefusal{PHX_MC_CAPACITY_EXCEEDED};
+  const auto m = 3 * (n + 1);
+  if (m - 1 > (2 * (limit - m)) / m) {
+    throw ExecutionRefusal{PHX_MC_CAPACITY_EXCEEDED};
+  }
+  const auto points_bound = static_cast<std::int64_t>(m + m * (m - 1) / 2);
+  NativeVector<double> coordinates;
+  NativeVector<std::int64_t> triangles;
+  coordinates.reserve(static_cast<std::size_t>(3 * m));
+  triangles.reserve(static_cast<std::size_t>(m));
+  for (int k = 0; k < 9; ++k) {
+    if (!std::isfinite(subject[k])) return false;
+    coordinates.push_back(subject[k]);
+  }
+  for (std::int64_t k = 0; k < 3; ++k) triangles.push_back(k);
+  for (int32_t row : selected) {
+    native_execution_charge(1);
+    if (row < 0 || static_cast<std::size_t>(row) >= original_faces.size()) return false;
+    const auto& face = original_faces[static_cast<std::size_t>(row)];
+    for (int corner = 0; corner < 3; ++corner) {
+      if (face[corner] < 0) return false;
+      triangles.push_back(static_cast<std::int64_t>(coordinates.size() / 3));
+      const double* point = original_points + 3 * static_cast<std::size_t>(face[corner]);
+      coordinates.insert(coordinates.end(), point, point + 3);
+    }
+  }
+  try {
+    Arranger arranger(coordinates.data(), static_cast<std::int64_t>(m), triangles.data(),
+                      points_bound, 2 * points_bound, true);
+    Kernel& kernel = arranger.kernel();
+    const PlaneDef plane{0, 0, 0, 1, 2};
+    int axis = -1;
+    for (int a = 0; a < 3; ++a) {
+      double magnitude = 0.0;
+      if (kernel.normal_sign(plane, a, magnitude) != 0) {
+        axis = a;
+        break;
+      }
+    }
+    if (axis < 0) return false;
+    NativeVector<std::int64_t> partners;
+    partners.reserve(selected.size());
+    for (std::size_t index = 0; index < selected.size(); ++index) {
+      native_execution_charge(1);
+      const auto face = static_cast<std::int64_t>(index + 1);
+      const auto* corners = triangles.data() + 3 * face;
+      if (kernel.side(plane, corners[0]) != 0 || kernel.side(plane, corners[1]) != 0 ||
+          kernel.side(plane, corners[2]) != 0) continue;
+      const int orientation = kernel.orient2d(
+          corners[0], corners[1], corners[2], (axis + 1) % 3, (axis + 2) % 3);
+      if (orientation == 0) return false;
+      partners.push_back(face);
+    }
+    if (partners.empty()) return false;
+    arranger.face(0, partners);
+    const Output& out = arranger.output();
+    if (out.fragments.empty()) return false;
+    NativeVector<int32_t> owners(out.fragments.size(), -1);
+    std::int64_t source_orientation = 0;
+    for (const auto& record : out.coplanar) {
+      native_execution_charge(1);
+      if (record[2] == 0 ||
+          (source_orientation != 0 && record[2] != source_orientation)) return false;
+      source_orientation = record[2];
+      auto& owner = owners[static_cast<std::size_t>(record[0])];
+      if (owner >= 0) return false;  // positive-area overlap
+      owner = selected[static_cast<std::size_t>(record[1] - 1)];
+    }
+    for (int32_t owner : owners) {
+      native_execution_charge(1);
+      if (owner < 0) return false;  // positive-area gap
+    }
+    std::sort(owners.begin(), owners.end(), [](int32_t a, int32_t b) {
+      native_execution_charge(1);
+      return a < b;
+    });
+    owners.erase(std::unique(owners.begin(), owners.end(), [](int32_t a, int32_t b) {
+      native_execution_charge(1);
+      return a == b;
+    }), owners.end());
+    contributors = std::move(owners);
+    return true;
+  } catch (const Refusal& refusal) {
+    if (refusal.status == PHX_MC_DEGENERATE_INPUT) return false;
+    throw ExecutionRefusal{refusal.status};
+  }
+}
 
 int relative_orient3d_exact(const double* a, const double* b, const double* c, const double* d,
                             double relative_floor, double* score) {
@@ -2059,7 +2244,7 @@ bool construct_exact_line_point(
   return false;
 }
 
-constexpr int kArrangementCounters = 11;
+static_assert(PHX_MC_ARRANGEMENT_COUNTERS == 11);
 
 }  // namespace phx::mc
 
@@ -2073,7 +2258,7 @@ struct phx_mc_arrangement {
   std::vector<std::int64_t> contact_edges;
   std::vector<std::int64_t> coplanar;
   std::vector<std::int64_t> locations;
-  std::array<std::int64_t, phx::mc::kArrangementCounters> counters{};
+  phx::mc::ArrangementCounters counters;
   // Immutable input copies and the exact construction pool, retained so that
   // membership is decided on the implicit points (never on the rounded
   // publication) and never on caller memory the caller may free or mutate.
@@ -2099,21 +2284,43 @@ using phx::mc::Kernel;
   throw phx::mc::Refusal{PHX_MC_INTERNAL_ERROR, -1};
 }
 
-// Welds used pool points by exact equality and publishes the arrangement:
-// input vertices first (in input order, later coincident copies merged into
-// the first), then constructed points by first creation.
-void publish(Kernel& kernel, const phx::mc::Output& out, std::int64_t pair_count,
-             phx_mc_arrangement& result) {
+struct ArrangementPublication {
   std::vector<std::int64_t> used;
+  std::vector<std::int64_t> parent;
+  std::vector<std::size_t> order;
+  std::vector<std::int64_t> published;
+  std::vector<std::int8_t> construction;
+  std::int64_t coincident = 0;
+  std::int64_t constructed[4] = {0, 0, 0, 0};
+
+  std::int64_t root_index(std::int64_t id) const {
+    const auto found = std::lower_bound(used.begin(), used.end(), id);
+    if (found == used.end() || *found != id) {
+      return std::int64_t{-1};
+    }
+    return parent[static_cast<std::size_t>(found - used.begin())];
+  }
+
+  std::int64_t map_id(std::int64_t id) const {
+    const auto root = root_index(id);
+    return root < 0 ? std::int64_t{-1} : published[static_cast<std::size_t>(root)];
+  }
+};
+
+void prepare_publication_points(Kernel& kernel, const phx::mc::Output& out,
+                                ArrangementPublication& state) {
+  auto& used = state.used;
+  auto& parent = state.parent;
+  auto& order = state.order;
   for (const auto& fragment : out.fragments) {
     used.insert(used.end(), fragment.begin(), fragment.end());
   }
   std::sort(used.begin(), used.end());
   used.erase(std::unique(used.begin(), used.end()), used.end());
   const std::size_t n = used.size();
-  std::vector<std::int64_t> parent(n);
+  parent.resize(n);
   std::iota(parent.begin(), parent.end(), 0);
-  std::vector<std::size_t> order(n);
+  order.resize(n);
   std::iota(order.begin(), order.end(), 0);
   std::sort(order.begin(), order.end(), [&](std::size_t left, std::size_t right) {
     const auto& a = kernel.point(used[left]);
@@ -2125,14 +2332,20 @@ void publish(Kernel& kernel, const phx::mc::Output& out, std::int64_t pair_count
     }
     return left < right;
   });
+}
+
+void weld_publication_points(Kernel& kernel, ArrangementPublication& state) {
+  const auto& used = state.used;
+  auto& parent = state.parent;
+  const auto& order = state.order;
+  const std::size_t n = used.size();
   double widest = 0.0;
   for (const std::int64_t id : used) {
     widest = std::max(widest, kernel.point(id).bound);
   }
   for (std::size_t i = 0; i < n; ++i) {
     const phx::mc::PoolPoint& p = kernel.point(used[order[i]]);
-    const double reach = std::nextafter(
-        p.upper(0) + widest, std::numeric_limits<double>::infinity());
+    const double reach = phx::mc::geometry::next_up(p.upper(0) + widest);
     for (std::size_t j = i + 1; j < n; ++j) {
       const phx::mc::PoolPoint& q = kernel.point(used[order[j]]);
       if (q.x[0] > reach) {
@@ -2142,8 +2355,8 @@ void publish(Kernel& kernel, const phx::mc::Output& out, std::int64_t pair_count
           (p.x[1] != q.x[1] || p.x[2] != q.x[2] || p.x[0] != q.x[0])) {
         continue;
       }
-      const std::int64_t a = phx::mc::find_root(parent, static_cast<std::int64_t>(order[i]));
-      const std::int64_t b = phx::mc::find_root(parent, static_cast<std::int64_t>(order[j]));
+      const std::int64_t a = phx::mc::topology::find_root(parent, static_cast<std::int64_t>(order[i]));
+      const std::int64_t b = phx::mc::topology::find_root(parent, static_cast<std::int64_t>(order[j]));
       if (a != b && kernel.equal(used[order[i]], used[order[j]])) {
         parent[static_cast<std::size_t>(std::max(a, b))] = std::min(a, b);
       }
@@ -2151,8 +2364,16 @@ void publish(Kernel& kernel, const phx::mc::Output& out, std::int64_t pair_count
   }
   // Roots are the smallest member (pool ids, input vertices first).
   for (std::size_t index = 0; index < n; ++index) {
-    parent[index] = phx::mc::find_root(parent, static_cast<std::int64_t>(index));
+    parent[index] = phx::mc::topology::find_root(parent, static_cast<std::int64_t>(index));
   }
+}
+
+void certify_publication_points(Kernel& kernel, const phx::mc::Output& out,
+                                const ArrangementPublication& state) {
+  const auto& used = state.used;
+  const auto& parent = state.parent;
+  const auto& order = state.order;
+  const std::size_t n = used.size();
   // Different exact points must never be merged to repair a rounded carrier.
   // The root representatives retain the lexicographic coordinate ordering.
   std::size_t previous = n;
@@ -2174,14 +2395,23 @@ void publish(Kernel& kernel, const phx::mc::Output& out, std::int64_t pair_count
     }
     previous = index;
   }
-  std::vector<std::int64_t> published(n, -1);
-  std::vector<std::int8_t> construction(n, phx::mc::kTriplePlane);
+}
+
+void publish_point_representatives(Kernel& kernel, ArrangementPublication& state,
+                                   phx_mc_arrangement& result) {
+  const auto& used = state.used;
+  const auto& parent = state.parent;
+  auto& published = state.published;
+  auto& construction = state.construction;
+  const std::size_t n = used.size();
+  published.assign(n, -1);
+  construction.assign(n, phx::mc::kTriplePlane);
   for (std::size_t index = 0; index < n; ++index) {
     auto& best = construction[static_cast<std::size_t>(parent[index])];
     best = std::min(best, kernel.point(used[index]).construction);
   }
-  std::int64_t coincident = 0;
-  std::int64_t constructed[4] = {0, 0, 0, 0};
+  auto& coincident = state.coincident;
+  auto& constructed = state.constructed;
   for (std::size_t index = 0; index < n; ++index) {
     const std::size_t root = static_cast<std::size_t>(parent[index]);
     if (root != index) {
@@ -2196,22 +2426,18 @@ void publish(Kernel& kernel, const phx::mc::Output& out, std::int64_t pair_count
     result.origins.push_back(kernel.is_input(used[index]) ? point.def.vertex : -1);
     ++constructed[construction[index]];
   }
-  auto root_index = [&](std::int64_t id) {
-    const auto found = std::lower_bound(used.begin(), used.end(), id);
-    if (found == used.end() || *found != id) {
-      return std::int64_t{-1};
-    }
-    return parent[static_cast<std::size_t>(found - used.begin())];
-  };
-  auto map_id = [&](std::int64_t id) {
-    const auto root = root_index(id);
-    return root < 0 ? std::int64_t{-1} : published[static_cast<std::size_t>(root)];
-  };
+}
+
+void publish_fragment_carrier(Kernel& kernel, const phx::mc::Output& out,
+                              const ArrangementPublication& state,
+                              phx_mc_arrangement& result) {
+  const auto& used = state.used;
+  const auto& published = state.published;
   for (std::size_t index = 0; index < out.fragments.size(); ++index) {
     const auto& fragment = out.fragments[index];
     std::array<std::int64_t, 3> representatives;
     for (int corner = 0; corner < 3; ++corner) {
-      const auto root = static_cast<std::size_t>(root_index(fragment[corner]));
+      const auto root = static_cast<std::size_t>(state.root_index(fragment[corner]));
       representatives[corner] = used[root];
       result.fragments.push_back(published[root]);
     }
@@ -2224,11 +2450,16 @@ void publish(Kernel& kernel, const phx::mc::Output& out, std::int64_t pair_count
       throw phx::mc::Refusal{PHX_MC_RANGE_ERROR, out.fragment_faces[index]};
     }
   }
-  result.fragment_faces = out.fragment_faces;
+  result.fragment_faces.assign(out.fragment_faces.begin(), out.fragment_faces.end());
+}
+
+void publish_contact_relations(const phx::mc::Output& out,
+                               const ArrangementPublication& state,
+                               phx_mc_arrangement& result) {
   std::vector<std::array<std::int64_t, 2>> edges;
   for (const auto& edge : out.contact_edges) {
-    const std::int64_t a = map_id(edge[0]);
-    const std::int64_t b = map_id(edge[1]);
+    const std::int64_t a = state.map_id(edge[0]);
+    const std::int64_t b = state.map_id(edge[1]);
     edges.push_back({std::min(a, b), std::max(a, b)});
   }
   std::sort(edges.begin(), edges.end());
@@ -2241,7 +2472,7 @@ void publish(Kernel& kernel, const phx::mc::Output& out, std::int64_t pair_count
   }
   std::vector<std::array<std::int64_t, 3>> locations;
   for (const auto& record : out.locations) {
-    const std::int64_t vertex = map_id(record[0]);
+    const std::int64_t vertex = state.map_id(record[0]);
     if (vertex >= 0) {
       locations.push_back({vertex, record[1], record[2]});
     }
@@ -2251,13 +2482,27 @@ void publish(Kernel& kernel, const phx::mc::Output& out, std::int64_t pair_count
   for (const auto& record : locations) {
     result.locations.insert(result.locations.end(), record.begin(), record.end());
   }
+}
+
+// Pool order fixes the representative identity: input points first, then
+// constructed points in creation order. Rounded carriers are certified only
+// after exact welding and before any result coordinates are published.
+void publish(Kernel& kernel, const phx::mc::Output& out, std::int64_t pair_count,
+             phx_mc_arrangement& result) {
+  ArrangementPublication state;
+  prepare_publication_points(kernel, out, state);
+  weld_publication_points(kernel, state);
+  certify_publication_points(kernel, out, state);
+  publish_point_representatives(kernel, state, result);
+  publish_fragment_carrier(kernel, out, state, result);
+  publish_contact_relations(out, state, result);
   result.counters = {pair_count,
                      out.contact_pairs,
                      out.coplanar_pairs,
-                     coincident,
-                     constructed[phx::mc::kEdgePlane],
-                     constructed[phx::mc::kEdgeEdge],
-                     constructed[phx::mc::kTriplePlane],
+                     state.coincident,
+                     state.constructed[phx::mc::kEdgePlane],
+                     state.constructed[phx::mc::kEdgeEdge],
+                     state.constructed[phx::mc::kTriplePlane],
                      out.split_faces,
                      static_cast<std::int64_t>(out.fragments.size()),
                      kernel.filtered(),
@@ -2266,7 +2511,7 @@ void publish(Kernel& kernel, const phx::mc::Output& out, std::int64_t pair_count
 
 // Counts of a classification: components, operands, representative/triangle
 // pair scans and winding-matrix entries.
-constexpr int kClassificationSizes = 4;
+static_assert(PHX_MC_ARRANGEMENT_CLASSIFICATION_VALUES == 4);
 
 // Joins the fragments of each operand across shared edges that are not
 // contact edges.  A component crosses no other operand's surface, so its
@@ -2278,7 +2523,7 @@ constexpr int kClassificationSizes = 4;
 // against work_limit and the ambient native scope before anything is
 // allocated for them.
 void classify(phx_mc_arrangement& result, std::int64_t operand_count, std::int64_t work_limit,
-              std::int64_t* sizes) {
+              phx::mc::ArrangementClassificationVisits& sizes) {
   using phx::mc::NativeVector;
   constexpr std::int32_t kUnclassified = std::numeric_limits<std::int32_t>::min();
   Kernel& kernel = result.arranger->kernel();
@@ -2345,14 +2590,6 @@ void classify(phx_mc_arrangement& result, std::int64_t operand_count, std::int64
   };
   NativeVector<std::int64_t> parent(count);
   std::iota(parent.begin(), parent.end(), 0);
-  const auto root = [&](std::int64_t x) {
-    while (parent[static_cast<std::size_t>(x)] != x) {
-      parent[static_cast<std::size_t>(x)] =
-          parent[static_cast<std::size_t>(parent[static_cast<std::size_t>(x)])];
-      x = parent[static_cast<std::size_t>(x)];
-    }
-    return x;
-  };
   for (std::size_t index = 1; index < sides.size(); ++index) {
     const auto& before = sides[index - 1];
     const auto& side = sides[index];
@@ -2360,8 +2597,8 @@ void classify(phx_mc_arrangement& result, std::int64_t operand_count, std::int64
         contact(side[0], side[1])) {
       continue;
     }
-    const std::int64_t a = root(before[3]);
-    const std::int64_t b = root(side[3]);
+    const std::int64_t a = phx::mc::topology::find_root(parent, before[3]);
+    const std::int64_t b = phx::mc::topology::find_root(parent, side[3]);
     parent[static_cast<std::size_t>(std::max(a, b))] = std::min(a, b);
   }
   // Components are numbered by, and represented by, their lowest fragment.
@@ -2369,7 +2606,8 @@ void classify(phx_mc_arrangement& result, std::int64_t operand_count, std::int64
   NativeVector<std::int64_t> numbering(count, -1);
   NativeVector<std::int64_t> components(count, -1);
   for (std::size_t fragment = 0; fragment < count; ++fragment) {
-    const auto top = static_cast<std::size_t>(root(static_cast<std::int64_t>(fragment)));
+    const auto top = static_cast<std::size_t>(
+        phx::mc::topology::find_root(parent, static_cast<std::int64_t>(fragment)));
     if (numbering[top] < 0) {
       numbering[top] = static_cast<std::int64_t>(representatives.size());
       representatives.push_back(static_cast<std::int64_t>(fragment));
@@ -2389,14 +2627,20 @@ void classify(phx_mc_arrangement& result, std::int64_t operand_count, std::int64
                                                            static_cast<std::int64_t>(operand)});
   };
   const std::size_t component_count = representatives.size();
-  sizes[0] = static_cast<std::int64_t>(component_count);
-  sizes[1] = operand_count;
-  // Preadmission: matrix entries first (overflow-free), then pair scans.
-  if (component_count > static_cast<std::uint64_t>(work_limit) / operands) {
+  sizes.components = static_cast<std::int64_t>(component_count);
+  sizes.operands = operand_count;
+  // Refusal evidence records the evaluated requirement before admission.
+  // An unrepresentable requirement reports its largest representable lower bound.
+  if (component_count > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) /
+                            operands) {
+    sizes.matrix_entries = std::numeric_limits<std::int64_t>::max();
     throw phx::mc::Refusal{PHX_MC_CAPACITY_EXCEEDED, -1};
   }
   const auto entries = static_cast<std::int64_t>(component_count * operands);
-  sizes[3] = entries;
+  sizes.matrix_entries = entries;
+  if (entries > work_limit) {
+    throw phx::mc::Refusal{PHX_MC_CAPACITY_EXCEEDED, -1};
+  }
   std::int64_t scans = 0;
   for (std::size_t component = 0; component < component_count; ++component) {
     const auto fragment = static_cast<std::size_t>(representatives[component]);
@@ -2406,12 +2650,12 @@ void classify(phx_mc_arrangement& result, std::int64_t operand_count, std::int64
       }
       scans += face_offsets[operand + 1] - face_offsets[operand];
       if (scans > work_limit - entries) {
-        sizes[2] = scans;
+        sizes.pair_scans = scans;
         throw phx::mc::Refusal{PHX_MC_CAPACITY_EXCEEDED, out.fragment_faces[fragment]};
       }
     }
   }
-  sizes[2] = scans;
+  sizes.pair_scans = scans;
   phx::mc::native_execution_charge(entries + scans);
   NativeVector<std::int32_t> windings(static_cast<std::size_t>(entries), kUnclassified);
   NativeVector<std::int8_t> normal_signs(3 * face_total, 2);
@@ -2517,11 +2761,12 @@ int32_t phx_mc_arrangement_classify(phx_mc_arrangement* result, int64_t operand_
       return PHX_MC_INVALID_ARGUMENT;
     }
     *failed_face = -1;
-    std::fill(sizes, sizes + kClassificationSizes, 0);
+    phx::mc::ArrangementClassificationVisits state;
+    phx::mc::CounterPublisher publisher{state, sizes};
     result->fragment_components.clear();
     result->component_windings.clear();
     try {
-      classify(*result, operand_count, work_limit, sizes);
+      classify(*result, operand_count, work_limit, state);
     } catch (const phx::mc::Refusal& refusal) {
       *failed_face = refusal.face;
       return refusal.status;
@@ -2532,41 +2777,67 @@ int32_t phx_mc_arrangement_classify(phx_mc_arrangement* result, int64_t operand_
   });
 }
 
-void phx_mc_arrangement_export_classification(const phx_mc_arrangement* result,
-                                              int64_t* fragment_components,
-                                              int32_t* component_windings) {
-  std::copy(result->fragment_components.begin(), result->fragment_components.end(),
-            fragment_components);
-  std::copy(result->component_windings.begin(), result->component_windings.end(),
-            component_windings);
+int32_t phx_mc_arrangement_export_classification(const phx_mc_arrangement* result,
+                                                 int64_t* fragment_components,
+                                                 int32_t* component_windings) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr ||
+        !phx::mc::output_bank_valid(result->fragment_components, fragment_components) ||
+        !phx::mc::output_bank_valid(result->component_windings, component_windings))
+      return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::copy_output_bank(result->fragment_components, fragment_components);
+    phx::mc::copy_output_bank(result->component_windings, component_windings);
+    return PHX_MC_OK;
+  });
 }
 
-void phx_mc_arrangement_sizes(const phx_mc_arrangement* result, int64_t* sizes) {
-  sizes[0] = static_cast<int64_t>(result->bounds.size());
-  sizes[1] = static_cast<int64_t>(result->fragment_faces.size());
-  sizes[2] = static_cast<int64_t>(result->contact_edges.size() / 2);
-  sizes[3] = static_cast<int64_t>(result->coplanar.size() / 3);
-  sizes[4] = static_cast<int64_t>(result->locations.size() / 3);
+int32_t phx_mc_arrangement_sizes(const phx_mc_arrangement* result, int64_t* sizes) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || sizes == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    sizes[0] = static_cast<int64_t>(result->bounds.size());
+    sizes[1] = static_cast<int64_t>(result->fragment_faces.size());
+    sizes[2] = static_cast<int64_t>(result->contact_edges.size() / 2);
+    sizes[3] = static_cast<int64_t>(result->coplanar.size() / 3);
+    sizes[4] = static_cast<int64_t>(result->locations.size() / 3);
+    return PHX_MC_OK;
+  });
 }
 
-void phx_mc_arrangement_counters(const phx_mc_arrangement* result, int64_t* counters) {
-  std::copy(result->counters.begin(), result->counters.end(), counters);
+int32_t phx_mc_arrangement_counters(const phx_mc_arrangement* result, int64_t* counters) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr || counters == nullptr) return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::CounterPublisher publisher{result->counters, counters};
+    return PHX_MC_OK;
+  });
 }
 
-void phx_mc_arrangement_export(const phx_mc_arrangement* result, double* vertices,
-                               double* bounds, int8_t* constructions, int64_t* origins,
-                               int64_t* fragments, int64_t* fragment_faces,
-                               int64_t* contact_edges, int64_t* coplanar,
-                               int64_t* locations) {
-  std::copy(result->vertices.begin(), result->vertices.end(), vertices);
-  std::copy(result->bounds.begin(), result->bounds.end(), bounds);
-  std::copy(result->constructions.begin(), result->constructions.end(), constructions);
-  std::copy(result->origins.begin(), result->origins.end(), origins);
-  std::copy(result->fragments.begin(), result->fragments.end(), fragments);
-  std::copy(result->fragment_faces.begin(), result->fragment_faces.end(), fragment_faces);
-  std::copy(result->contact_edges.begin(), result->contact_edges.end(), contact_edges);
-  std::copy(result->coplanar.begin(), result->coplanar.end(), coplanar);
-  std::copy(result->locations.begin(), result->locations.end(), locations);
+int32_t phx_mc_arrangement_export(const phx_mc_arrangement* result, double* vertices,
+                                  double* bounds, int8_t* constructions, int64_t* origins,
+                                  int64_t* fragments, int64_t* fragment_faces,
+                                  int64_t* contact_edges, int64_t* coplanar,
+                                  int64_t* locations) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (result == nullptr ||
+        !phx::mc::output_bank_valid(result->vertices, vertices) ||
+        !phx::mc::output_bank_valid(result->bounds, bounds) ||
+        !phx::mc::output_bank_valid(result->constructions, constructions) ||
+        !phx::mc::output_bank_valid(result->origins, origins) ||
+        !phx::mc::output_bank_valid(result->fragments, fragments) ||
+        !phx::mc::output_bank_valid(result->fragment_faces, fragment_faces) ||
+        !phx::mc::output_bank_valid(result->contact_edges, contact_edges) ||
+        !phx::mc::output_bank_valid(result->coplanar, coplanar) ||
+        !phx::mc::output_bank_valid(result->locations, locations)) return PHX_MC_INVALID_ARGUMENT;
+    phx::mc::copy_output_bank(result->vertices, vertices);
+    phx::mc::copy_output_bank(result->bounds, bounds);
+    phx::mc::copy_output_bank(result->constructions, constructions);
+    phx::mc::copy_output_bank(result->origins, origins);
+    phx::mc::copy_output_bank(result->fragments, fragments);
+    phx::mc::copy_output_bank(result->fragment_faces, fragment_faces);
+    phx::mc::copy_output_bank(result->contact_edges, contact_edges);
+    phx::mc::copy_output_bank(result->coplanar, coplanar);
+    phx::mc::copy_output_bank(result->locations, locations);
+    return PHX_MC_OK;
+  });
 }
 
 void phx_mc_arrangement_free(phx_mc_arrangement* result) { delete result; }
@@ -2584,12 +2855,25 @@ int32_t phx_mc_clip_reference_triangle_exact(
 }
 
 int32_t phx_mc_clip_reference_tetrahedron_exact(
-    const uint32_t* words, int64_t word_count, const int64_t* offsets,
-    const int8_t* signs, int64_t scratch_limit, int64_t work_limit,
-    int32_t vertex_capacity, int32_t face_capacity, int32_t entry_capacity,
-    int32_t* supporting_planes, uint16_t* incident_planes,
-    int32_t* face_offsets, int32_t* face_planes, int32_t* face_vertices,
-    int32_t* vertex_count, int32_t* face_count, int64_t* work_units) {
+    const phx_mc_clip_reference_tetrahedron_exact_request* request) {
+  if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  auto words = request->words;
+  auto word_count = request->word_count;
+  auto offsets = request->offsets;
+  auto signs = request->signs;
+  auto scratch_limit = request->scratch_limit;
+  auto work_limit = request->work_limit;
+  auto vertex_capacity = request->vertex_capacity;
+  auto face_capacity = request->face_capacity;
+  auto entry_capacity = request->entry_capacity;
+  auto supporting_planes = request->supporting_planes;
+  auto incident_planes = request->incident_planes;
+  auto face_offsets = request->face_offsets;
+  auto face_planes = request->face_planes;
+  auto face_vertices = request->face_vertices;
+  auto vertex_count = request->vertex_count;
+  auto face_count = request->face_count;
+  auto work_units = request->work_units;
   return phx::mc::guarded([&]() -> int32_t {
     return phx::mc::clip_reference_tetrahedron_exact(
         words, word_count, offsets, signs, scratch_limit, work_limit,

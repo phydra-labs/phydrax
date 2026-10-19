@@ -4,14 +4,17 @@ from typing import Any
 import numpy as np
 import pytest
 
-from phydrax import SpatialCoordinateContract
-from phydrax.geometry.surface import (
-    SurfaceBooleanOperation,
-    SurfaceMetadata,
-    SurfaceModel,
-)
+from phydrax.geometry.surface import SurfaceBooleanOperation
 from phydrax.meshing import MeshingFailure
 from phydrax.meshing.providers import ManifoldProvider
+from tests._support.optional_surfaces import boolean_cube
+
+
+# Historical absolute affine-interpolation acceptance bound:
+# test_manifold_provider.py at merge base d2dfcb941, unchanged here.
+_AFFINE_INTERPOLATION_ATOL = 1.0e-12
+# Manifold's published relative barycentric-transfer acceptance bound.
+_PROPERTY_TRANSFER_RESIDUAL_LIMIT = 1.0e-8
 
 
 pytestmark = [
@@ -23,81 +26,54 @@ pytestmark = [
 ]
 
 
-def _cube(offset: Any) -> Any:
-    vertices = np.asarray(
-        (
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (1.0, 1.0, 0.0),
-            (0.0, 1.0, 0.0),
-            (0.0, 0.0, 1.0),
-            (1.0, 0.0, 1.0),
-            (1.0, 1.0, 1.0),
-            (0.0, 1.0, 1.0),
-        )
+@pytest.mark.parametrize(
+    ("operation", "volume"),
+    [
+        pytest.param(SurfaceBooleanOperation.UNION, 1.5, id="union"),
+        pytest.param(SurfaceBooleanOperation.DIFFERENCE, 0.5, id="difference"),
+        pytest.param(SurfaceBooleanOperation.INTERSECTION, 0.5, id="intersection"),
+    ],
+)
+def test_manifold_binary_boolean_volume(
+    operation: SurfaceBooleanOperation,
+    volume: float,
+) -> None:
+    result = ManifoldProvider().execute(
+        (boolean_cube((0, 0, 0)), boolean_cube((0.5, 0, 0))), operation
     )
-    faces = np.asarray(
-        (
-            (0, 2, 1),
-            (0, 3, 2),
-            (4, 5, 6),
-            (4, 6, 7),
-            (0, 1, 5),
-            (0, 5, 4),
-            (3, 7, 6),
-            (3, 6, 2),
-            (0, 4, 7),
-            (0, 7, 3),
-            (1, 2, 6),
-            (1, 6, 5),
-        ),
-        dtype=np.int64,
-    )
-    return SurfaceModel.from_triangles(
-        vertices + np.asarray(offset, dtype=float),
-        faces,
-        SurfaceMetadata(
-            source_id=str(offset),
-            source_revision="0",
-            coordinate_contract=SpatialCoordinateContract.si(),
-            provenance=("qualification",),
-        ),
-    )
+    assert _signed_volume(result) == pytest.approx(volume)
+    assert result.audit.passed
+    assert result.boundary is not None
 
 
-def test_manifold_provider_scenario_1() -> None:
-    for operation, volume in [
-        (SurfaceBooleanOperation.UNION, 1.5),
-        (SurfaceBooleanOperation.DIFFERENCE, 0.5),
-        (SurfaceBooleanOperation.INTERSECTION, 0.5),
-    ]:
-        result = ManifoldProvider().execute(
-            (_cube((0, 0, 0)), _cube((0.5, 0, 0))), operation
-        )
-        faces = np.asarray(result.mesh.blocks[0].vertices)
-        points = np.asarray(result.mesh.coordinates)[faces]
-        signed_volume = (
-            np.sum(np.sum(points[:, 0] * np.cross(points[:, 1], points[:, 2]), axis=1))
-            / 6
-        )
-        assert signed_volume == pytest.approx(volume)
-        assert result.audit.passed
-        assert result.boundary is not None
+def test_manifold_empty_intersection_is_refused() -> None:
     with pytest.raises(MeshingFailure, match="empty"):
         ManifoldProvider().execute(
-            (_cube((0, 0, 0)), _cube((2, 0, 0))), SurfaceBooleanOperation.INTERSECTION
+            (boolean_cube((0, 0, 0)), boolean_cube((2, 0, 0))),
+            SurfaceBooleanOperation.INTERSECTION,
         )
-    for operation, volume in [
-        (SurfaceBooleanOperation.UNION, 1.75),
-        (SurfaceBooleanOperation.DIFFERENCE, 0.5),
-        (SurfaceBooleanOperation.INTERSECTION, 0.25),
-    ]:
-        operands = (_cube((0, 0, 0)), _cube((0.5, 0, 0)), _cube((0.75, 0, 0)))
 
-        result = ManifoldProvider().execute(operands, operation)
 
-        assert _signed_volume(result) == pytest.approx(volume)
-        assert result.audit.passed
+@pytest.mark.parametrize(
+    ("operation", "volume"),
+    [
+        pytest.param(SurfaceBooleanOperation.UNION, 1.75, id="union"),
+        pytest.param(SurfaceBooleanOperation.DIFFERENCE, 0.5, id="difference"),
+        pytest.param(SurfaceBooleanOperation.INTERSECTION, 0.25, id="intersection"),
+    ],
+)
+def test_manifold_nary_boolean_volume(
+    operation: SurfaceBooleanOperation,
+    volume: float,
+) -> None:
+    operands = (
+        boolean_cube((0, 0, 0)),
+        boolean_cube((0.5, 0, 0)),
+        boolean_cube((0.75, 0, 0)),
+    )
+    result = ManifoldProvider().execute(operands, operation)
+    assert _signed_volume(result) == pytest.approx(volume)
+    assert result.audit.passed
 
 
 def _signed_volume(result: Any) -> Any:
@@ -107,7 +83,7 @@ def _signed_volume(result: Any) -> Any:
 
 
 def test_vertex_properties_contracts() -> None:
-    left, right = _cube((0, 0, 0)), _cube((0.5, 0.25, 0.25))
+    left, right = boolean_cube((0, 0, 0)), boolean_cube((0.5, 0.25, 0.25))
     # Affine fields are reproduced exactly by barycentric transfer, and differ
     # between operands so cut-curve corners must keep their own face's value.
     left_values = 2.0 * np.asarray(left.mesh.coordinates) @ np.asarray((1.0, -1.0, 0.5))
@@ -150,12 +126,19 @@ def test_vertex_properties_contracts() -> None:
     )
 
     assert attribute.name == "face_corner_temperature"
-    np.testing.assert_allclose(np.asarray(attribute.values), expected, atol=1e-12)
+    np.testing.assert_allclose(
+        np.asarray(attribute.values),
+        expected,
+        atol=_AFFINE_INTERPOLATION_ATOL,
+    )
     assert set(source.tolist()) == {0, 1}
     achieved = dict(result.compliance.achieved)
     residual = "vertex_property:temperature:maximum_relative_interpolation_residual"
-    assert achieved[residual] <= 1e-8
-    left, right = _cube((0, 0, 0)), _cube((0.5, 0, 0))
+    assert achieved[residual] <= _PROPERTY_TRANSFER_RESIDUAL_LIMIT
+
+
+def test_vertex_property_requires_one_array_per_operand() -> None:
+    left, right = boolean_cube((0, 0, 0)), boolean_cube((0.5, 0, 0))
     with pytest.raises(ValueError, match="one array per operand"):
         ManifoldProvider().execute(
             (left, right),

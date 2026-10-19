@@ -14,6 +14,7 @@ import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
+from ...units import LENGTH, UnitDefinition
 from ..simplicial import PlanarMeshRegion
 
 
@@ -23,8 +24,17 @@ class ZInterval:
 
     lower: float
     upper: float
+    unit: UnitDefinition
 
     def __post_init__(self) -> None:
+        if not isinstance(self.unit, UnitDefinition):
+            raise TypeError(
+                f"ZInterval.unit must be a UnitDefinition; got {type(self.unit).__name__}"
+            )
+        if self.unit.dimension != LENGTH:
+            raise ValueError(
+                f"ZInterval.unit must declare a length unit; got {self.unit.symbol}"
+            )
         if (
             isinstance(self.lower, bool)
             or not isinstance(self.lower, Real)
@@ -77,6 +87,7 @@ class StackRegion:
                     "region_id": identifier,
                     "footprint": geometry,
                     "z_interval": [self.z_interval.lower, self.z_interval.upper],
+                    "unit_id": self.z_interval.unit.unit_id,
                     "precedence": precedence,
                 }
             ),
@@ -121,6 +132,7 @@ class StackVoid:
                     "void_id": identifier,
                     "footprint": _footprint_payload(self.footprint),
                     "z_interval": [self.z_interval.lower, self.z_interval.upper],
+                    "unit_id": self.z_interval.unit.unit_id,
                     "target_region_ids": list(targets),
                 }
             ),
@@ -149,6 +161,12 @@ class ProcessStack:
             raise ValueError("A process stack requires at least one StackRegion.")
         if not all(isinstance(value, StackVoid) for value in voids):
             raise TypeError("voids must contain StackVoid values.")
+        for operand in (*regions, *voids):
+            if operand.z_interval.unit != self.coordinate_contract.length_unit:
+                raise ValueError(
+                    "ProcessStack.interval_unit must exactly match the coordinate unit; "
+                    f"got {operand.z_interval.unit.symbol}"
+                )
         region_ids = tuple(value.region_id for value in regions)
         void_ids = tuple(value.void_id for value in voids)
         if len(set(region_ids)) != len(region_ids):

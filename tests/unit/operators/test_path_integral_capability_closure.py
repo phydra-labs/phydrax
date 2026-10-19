@@ -25,6 +25,7 @@ from phydrax.operators.path_integral import (
     wilson_loop,
 )
 from phydrax.stochastic import StochasticPathEnsembleResult
+from phydrax.units import METER
 
 
 def test_path_integral_capability_closure_scenario_1() -> None:
@@ -169,7 +170,9 @@ def test_path_boundary_convention_keeps_negative_interior_until_outward_exit() -
         ),
     )
 
-    geometry = Sphere((0.0, 0.0, 0.0), 1.0, feature_id="path-domain").compile()
+    geometry = Sphere((0.0, 0.0, 0.0), 1.0, feature_id="path-domain").compile(
+        coordinate_unit=METER
+    )
     absorbing = prepare_path_boundary_schedule(
         geometry,
         "absorbing",

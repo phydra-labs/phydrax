@@ -5,6 +5,62 @@ preserve Phydrax's usual residual path: an operator builds a residual
 `DomainFunction`, and `ResidualPenalty` samples the relevant graph component
 through an explicit integration source.
 
+## Graph data and isolated nodes
+
+`phydrax.graph.Data` takes `num_nodes` whenever neither `x` nor `pos` is
+provided. Edges do not determine the node count: an explicit count preserves
+isolated nodes, including trailing nodes absent from `edge_index`.
+When node arrays are supplied, their row counts must agree with each other and
+with a supplied `num_nodes`. The count is static metadata and remains available
+inside transformed execution without reading an edge maximum from the device.
+Featureless batching and unbatching preserve the declared counts.
+
+::: phydrax.graph.Data
+
+## B-Rep incidence and differentiable samples
+
+`phydrax.graph.brep_incidence_graph(model, mass_properties=...,
+edge_classifications=..., recipe_names=...)` returns `BRepIncidenceGraph`,
+not a mesh graph inferred from a tessellation. Definition rows follow canonical
+face/coedge/edge/vertex order with exact entity IDs and `model_id`.
+`node_kinds` and `relation_kinds` interpret type indices. Directed relations
+include next/previous/mate, coedge–face, coedge–edge, and edge–vertex routes with
+reverse routes; seam mates and pole coedges retain separate types.
+Derived face adjacency is an edge-keyed multigraph, so parallel routes do not
+collapse into a single face-pair feature. No dense face-pair arrays are created.
+
+Optional mass and edge descriptors must belong to the same model and canonical
+edge order. Absent descriptors stay absent, never fabricated. `recipe_names`
+retains supported geometry-independent face/edge keys across edits and explicit
+unsupported-family evidence. Revision-scoped entity IDs themselves are not
+stable design names; coedges are uses, not CAD spatial strata.
+
+`prepare_brep_graph_samples(model, grid_size=..., coedge_samples=...,
+policy=..., budget=...)` reserves grid/coedge work, trim-band scratch, and the
+query policy's quadrature maxima on the caller's coordinate ticket before
+preparation. `plan.evaluate(realization)` returns `BRepGraphSamples` evaluated
+in JAX. Each face grid is `(6, n, n)`: three position channels followed by
+three material-side normal channels. Separate `trim_status` values are
+`0=inside`, `1=outside`, `2=boundary`, `3=unresolved`;
+`normal_status` is `0=defined`, `1=singular`. Singular normals are zero with
+explicit status, not nudged unit vectors. Consumers must interpret these masks
+when pooling samples.
+
+`coedge_points` follow coedge sense. `face_quadrature` contains weighted
+`FunctionSamples`, directly suitable for the geometric-operator point-measure
+contract. Linked realization transports parameter grids, realized p-curves,
+and native quadrature nodes/weights together. Realized trim winding is certified
+outside source-cover bands; band points stay unresolved. A fixed-patch
+realization without geometry retains prepared source trim decisions/rules.
+Topology changes require a new plan rather than reuse by equal array shape.
+See the [parametric B-Rep learning workflow](../../guides_differentiable_geometry.md#learning-from-parametric-b-rep-samples)
+for fitting a pooled sample surrogate and differentiating a design objective.
+
+::: phydrax.graph.brep_incidence_graph
+
+::: phydrax.graph.prepare_brep_graph_samples
+
+
 ## Reductions and adjacency
 
 ::: phydrax.operators.graph_degree
@@ -903,6 +959,11 @@ status (`indivisible_vertex_overload` or `balance_not_reached`), never a
 silently relaxed capacity, and the cut is not claimed optimal. A `work_limit`
 bounds adjacency visits; exhausting it is a resource refusal.
 `MeshPartitionKind.GRAPH` distributes meshes through this route.
+
+Construct measured evidence with `GraphPartitionEvidence.serial(...)` for a
+host CSR graph, or `GraphPartitionEvidence.collective(...)` for the distributed
+device result. These constructors own separate admission and measurement
+contracts; the former mixed constructor is removed.
 
 ::: phydrax.graph.WeightedCSRGraph
 

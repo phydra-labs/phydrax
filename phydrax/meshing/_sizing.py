@@ -6,25 +6,24 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import StrEnum
+from typing import assert_never, final, Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+import phydrax.meshing._metric as _dependency_phydrax_meshing__metric
+import phydrax.meshing._scope as _dependency_phydrax_meshing__scope
+
 from .._bvh import bvh_nearest_items, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import checked
-from ._metric import (
-    _grade_scalar_sizes,
-    _scalar_violation,
-    MeshMetricField,
-    MetricGradationKind,
-)
-from ._scope import MeshingScope
+from .._validation import positive_finite_float
+from ..typing import checked, parse
 
 
 class SizeControlStrength(StrEnum):
@@ -45,10 +44,25 @@ class SizeCombinationPolicy(StrEnum):
     EXPLICIT_PRIORITY = "explicit_priority"
 
 
+type SizeStatistic = Literal["p50", "p95"]
+
+
+def size_statistic_quantile(statistic: SizeStatistic, /) -> float:
+    """Return the quantile corresponding to a size-compliance statistic."""
+    selected = parse(statistic, SizeStatistic, "SizeCompliancePolicy.target_statistics")
+    match selected:
+        case "p50":
+            return 0.5
+        case "p95":
+            return 0.95
+        case _:
+            assert_never(selected)
+
+
 class SizeCompliancePolicy(StrictModule, NonTrainableState):
     absolute_tolerance: float = eqx.field(static=True)
     relative_tolerance: float = eqx.field(static=True)
-    target_statistics: tuple[str, ...] = eqx.field(static=True)
+    target_statistics: tuple[SizeStatistic, ...] = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -56,12 +70,11 @@ class SizeCompliancePolicy(StrictModule, NonTrainableState):
         *,
         absolute_tolerance: float = 0.0,
         relative_tolerance: float = 0.0,
-        target_statistics: tuple[str, ...] = ("p50", "p95"),
+        target_statistics: tuple[SizeStatistic, ...] = ("p50", "p95"),
     ) -> None:
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
-        statistics = tuple(str(value).strip() for value in target_statistics)
-        supported = {"p50", "p95"}
+        normalized_statistics = tuple(str(value).strip() for value in target_statistics)
         if (
             not np.isfinite(absolute)
             or not np.isfinite(relative)
@@ -69,16 +82,18 @@ class SizeCompliancePolicy(StrictModule, NonTrainableState):
             or relative < 0.0
         ):
             raise ValueError(
-                "Size compliance tolerances must be finite and non-negative."
+                f"SizeCompliancePolicy.tolerances must be finite and non-negative; got {(absolute, relative)!r}"
             )
-        if (
-            not statistics
-            or len(set(statistics)) != len(statistics)
-            or not set(statistics) <= supported
+        if not normalized_statistics or len(set(normalized_statistics)) != len(
+            normalized_statistics
         ):
             raise ValueError(
-                "target_statistics must contain distinct supported statistics p50/p95."
+                f"SizeCompliancePolicy.target_statistics must contain distinct supported statistics; got {normalized_statistics!r}"
             )
+        statistics = tuple(
+            parse(value, SizeStatistic, "SizeCompliancePolicy.target_statistics")
+            for value in normalized_statistics
+        )
         self.absolute_tolerance = absolute
         self.relative_tolerance = relative
         self.target_statistics = statistics
@@ -96,15 +111,17 @@ class SizeCompliancePolicy(StrictModule, NonTrainableState):
         return self.absolute_tolerance + self.relative_tolerance * abs(value)
 
 
-def _size(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be positive and finite.")
-    return result
-
-
 class UniformSizeControl(StrictModule, NonTrainableState):
-    scope: MeshingScope
+    """Bind a physical edge-size target and optional bounds to a declared scope.
+
+    A hard target requires each statistic selected by ``SizeCompliancePolicy``
+    to equal the target within its declared tolerance, including for coarse
+    requests. It is not merely an upper edge-length bound. Seed preparation
+    may add intervals required by source topology, but cannot exempt their
+    published lengths from these obligations.
+    """
+
+    scope: _dependency_phydrax_meshing__scope.MeshingScope
     target_size: float = eqx.field(static=True)
     minimum_size: float | None = eqx.field(static=True)
     maximum_size: float | None = eqx.field(static=True)
@@ -116,7 +133,7 @@ class UniformSizeControl(StrictModule, NonTrainableState):
     @checked
     def __init__(
         self,
-        scope: MeshingScope,
+        scope: _dependency_phydrax_meshing__scope.MeshingScope,
         target_size: float,
         /,
         *,
@@ -126,18 +143,31 @@ class UniformSizeControl(StrictModule, NonTrainableState):
         strength: SizeControlStrength = SizeControlStrength.HARD,
         priority: int = 0,
     ) -> None:
-        target = _size(target_size, "target_size")
-        minimum = None if minimum_size is None else _size(minimum_size, "minimum_size")
-        maximum = None if maximum_size is None else _size(maximum_size, "maximum_size")
+        target = positive_finite_float(target_size, "target_size")
+        minimum = (
+            None
+            if minimum_size is None
+            else positive_finite_float(minimum_size, "minimum_size")
+        )
+        maximum = (
+            None
+            if maximum_size is None
+            else positive_finite_float(maximum_size, "maximum_size")
+        )
         growth = None if maximum_growth_rate is None else float(maximum_growth_rate)
         if minimum is not None and minimum > target:
-            raise ValueError("Sizes must satisfy minimum <= target when supplied.")
+            raise ValueError(
+                f"UniformSizeControl.minimum_size must not exceed target_size when supplied; got minimum={minimum!r}, target={target!r}"
+            )
         if maximum is not None and target > maximum:
-            raise ValueError("Sizes must satisfy target <= maximum when supplied.")
+            raise ValueError(
+                f"UniformSizeControl.maximum_size must not be below target_size when supplied; got maximum={maximum!r}, target={target!r}"
+            )
         if growth is not None and (not np.isfinite(growth) or growth < 1.0):
-            raise ValueError("maximum_growth_rate must be finite and at least one.")
-        if not isinstance(strength, SizeControlStrength):
-            raise TypeError("strength must be SizeControlStrength.")
+            raise ValueError(
+                f"UniformSizeControl.maximum_growth_rate must be finite and at least one; got {growth!r}"
+            )
+        strength = parse(strength, SizeControlStrength, "SizeControl.strength")
         self.scope = scope
         self.target_size = target
         self.minimum_size = minimum
@@ -160,7 +190,7 @@ class UniformSizeControl(StrictModule, NonTrainableState):
 
 
 class CurvatureSizeControl(StrictModule, NonTrainableState):
-    scope: MeshingScope
+    scope: _dependency_phydrax_meshing__scope.MeshingScope
     normal_angle: float = eqx.field(static=True)
     minimum_size: float | None = eqx.field(static=True)
     maximum_size: float | None = eqx.field(static=True)
@@ -172,7 +202,7 @@ class CurvatureSizeControl(StrictModule, NonTrainableState):
     @checked
     def __init__(
         self,
-        scope: MeshingScope,
+        scope: _dependency_phydrax_meshing__scope.MeshingScope,
         normal_angle: float,
         /,
         *,
@@ -183,14 +213,25 @@ class CurvatureSizeControl(StrictModule, NonTrainableState):
         priority: int = 0,
     ) -> None:
         angle = float(normal_angle)
-        minimum = None if minimum_size is None else _size(minimum_size, "minimum_size")
-        maximum = None if maximum_size is None else _size(maximum_size, "maximum_size")
+        minimum = (
+            None
+            if minimum_size is None
+            else positive_finite_float(minimum_size, "minimum_size")
+        )
+        maximum = (
+            None
+            if maximum_size is None
+            else positive_finite_float(maximum_size, "maximum_size")
+        )
         if not np.isfinite(angle) or angle <= 0.0 or angle >= np.pi:
-            raise ValueError("normal_angle must lie strictly between zero and pi.")
+            raise ValueError(
+                f"CurvatureSizeControl.normal_angle must lie strictly between zero and pi; got {angle!r}"
+            )
         if minimum is not None and maximum is not None and minimum > maximum:
-            raise ValueError("minimum_size cannot exceed maximum_size.")
-        if not isinstance(strength, SizeControlStrength):
-            raise TypeError("strength must be SizeControlStrength.")
+            raise ValueError(
+                f"SizeControl.minimum_size must not exceed maximum_size; got minimum={minimum!r}, maximum={maximum!r}"
+            )
+        strength = parse(strength, SizeControlStrength, "SizeControl.strength")
         self.scope = scope
         self.normal_angle = angle
         self.minimum_size = minimum
@@ -213,8 +254,8 @@ class CurvatureSizeControl(StrictModule, NonTrainableState):
 
 
 class ProximitySizeControl(StrictModule, NonTrainableState):
-    source_scope: MeshingScope
-    target_scope: MeshingScope
+    source_scope: _dependency_phydrax_meshing__scope.MeshingScope
+    target_scope: _dependency_phydrax_meshing__scope.MeshingScope
     elements_per_gap: int = eqx.field(static=True)
     minimum_size: float | None = eqx.field(static=True)
     maximum_size: float | None = eqx.field(static=True)
@@ -223,10 +264,11 @@ class ProximitySizeControl(StrictModule, NonTrainableState):
     priority: int = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        source_scope: MeshingScope,
-        target_scope: MeshingScope,
+        source_scope: _dependency_phydrax_meshing__scope.MeshingScope,
+        target_scope: _dependency_phydrax_meshing__scope.MeshingScope,
         elements_per_gap: int,
         /,
         *,
@@ -236,10 +278,6 @@ class ProximitySizeControl(StrictModule, NonTrainableState):
         strength: SizeControlStrength = SizeControlStrength.HARD,
         priority: int = 0,
     ) -> None:
-        if not isinstance(source_scope, MeshingScope) or not isinstance(
-            target_scope, MeshingScope
-        ):
-            raise TypeError("source_scope and target_scope must be MeshingScope.")
         binding = (
             source_scope.source_id,
             source_scope.source_revision,
@@ -255,16 +293,29 @@ class ProximitySizeControl(StrictModule, NonTrainableState):
             target_scope.entity_set_id,
         )
         if binding != target_binding:
-            raise ValueError("Proximity scopes must share one exact entity binding.")
+            raise ValueError(
+                f"ProximitySizeControl.scopes must share one entity binding; got source={binding!r}, target={target_binding!r}"
+            )
         count = int(elements_per_gap)
-        minimum = None if minimum_size is None else _size(minimum_size, "minimum_size")
-        maximum = None if maximum_size is None else _size(maximum_size, "maximum_size")
+        minimum = (
+            None
+            if minimum_size is None
+            else positive_finite_float(minimum_size, "minimum_size")
+        )
+        maximum = (
+            None
+            if maximum_size is None
+            else positive_finite_float(maximum_size, "maximum_size")
+        )
         if count <= 0:
-            raise ValueError("elements_per_gap must be positive.")
+            raise ValueError(
+                f"ProximitySizeControl.elements_per_gap must be positive; got {count!r}"
+            )
         if minimum is not None and maximum is not None and minimum > maximum:
-            raise ValueError("minimum_size cannot exceed maximum_size.")
-        if not isinstance(strength, SizeControlStrength):
-            raise TypeError("strength must be SizeControlStrength.")
+            raise ValueError(
+                f"SizeControl.minimum_size must not exceed maximum_size; got minimum={minimum!r}, maximum={maximum!r}"
+            )
+        strength = parse(strength, SizeControlStrength, "SizeControl.strength")
         self.source_scope = source_scope
         self.target_scope = target_scope
         self.elements_per_gap = count
@@ -291,8 +342,8 @@ class ProximitySizeControl(StrictModule, NonTrainableState):
 class SourceProximityGapEvidence(StrictModule, NonTrainableState):
     """Source-bound lower gap enclosures, not arbitrary nearest sample distances."""
 
-    source_scope: MeshingScope
-    target_scope: MeshingScope
+    source_scope: _dependency_phydrax_meshing__scope.MeshingScope
+    target_scope: _dependency_phydrax_meshing__scope.MeshingScope
     sample_entity_ids: Array
     sample_points: Array
     lower_bounds: Array
@@ -300,6 +351,7 @@ class SourceProximityGapEvidence(StrictModule, NonTrainableState):
     control_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         control: ProximitySizeControl,
@@ -309,37 +361,52 @@ class SourceProximityGapEvidence(StrictModule, NonTrainableState):
         complete: ArrayLike,
         /,
     ) -> None:
-        if not isinstance(control, ProximitySizeControl):
-            raise TypeError("Source gap evidence requires ProximitySizeControl.")
         identifiers = np.asarray(sample_entity_ids)
         points = np.asarray(sample_points, dtype=np.float64)
         lower = np.asarray(lower_bounds, dtype=np.float64)
         decided = np.asarray(complete)
         if identifiers.ndim != 1 or not np.issubdtype(identifiers.dtype, np.integer):
-            raise ValueError("Source gap sample IDs must be one integer vector.")
+            raise ValueError(
+                f"SourceProximityGapEvidence.sample_entity_ids must be one integer vector; got shape={identifiers.shape}, dtype={identifiers.dtype}"
+            )
         if (
             points.ndim != 2
             or points.shape[0] != identifiers.size
             or not np.all(np.isfinite(points))
         ):
             raise ValueError(
-                "Source gap points must be one aligned finite physical-coordinate matrix."
+                f"SourceProximityGapEvidence.sample_points must be one aligned finite physical-coordinate matrix; got shape={points.shape}, identifier_count={identifiers.size}"
             )
         if (
             lower.shape != identifiers.shape
             or np.any(np.isnan(lower))
             or np.any(lower < 0)
         ):
-            raise ValueError("Source gap lower bounds must be aligned and nonnegative.")
+            raise ValueError(
+                f"SourceProximityGapEvidence.lower_bounds must be aligned and nonnegative; got shape={lower.shape}, identifier_shape={identifiers.shape}"
+            )
         if decided.dtype != np.dtype(np.bool_) or decided.shape != identifiers.shape:
             raise ValueError(
-                "Source gap completeness must be one aligned Boolean vector."
+                f"SourceProximityGapEvidence.complete must be one aligned Boolean vector; got shape={decided.shape}, dtype={decided.dtype}"
             )
         self.source_scope, self.target_scope = control.source_scope, control.target_scope
-        self.sample_entity_ids = jnp.asarray(identifiers, dtype=jnp.int64)
-        self.sample_points = jnp.asarray(points, dtype=jnp.float64)
-        self.lower_bounds = jnp.asarray(lower, dtype=jnp.float64)
-        self.complete = jnp.asarray(decided, dtype=jnp.bool_)
+        _host_sample_entity_ids = np.asarray(identifiers, dtype=np.int64)
+        _host_sample_points = np.asarray(points, dtype=np.float64)
+        _host_lower_bounds = np.asarray(lower, dtype=np.float64)
+        _host_complete = np.asarray(decided, dtype=np.bool_)
+        (
+            self.sample_entity_ids,
+            self.sample_points,
+            self.lower_bounds,
+            self.complete,
+        ) = jax.device_put(
+            (
+                _host_sample_entity_ids,
+                _host_sample_points,
+                _host_lower_bounds,
+                _host_complete,
+            )
+        )
         self.control_id = control.control_id
         self.evidence_id = canonical_fingerprint(
             {
@@ -367,14 +434,16 @@ class SourceProximityGapEvidence(StrictModule, NonTrainableState):
             or not np.array_equal(np.asarray(self.sample_points), points)
         ):
             raise ValueError(
-                "Source gap evidence is stale or binds another query workset."
+                f"SourceProximityGapEvidence.bindings must retain the control and query workset; got stale control_id={self.control_id!r}"
             )
         if not np.all(np.asarray(self.complete)[mask]):
-            raise ValueError("Source proximity lower-gap enclosure remains unresolved.")
+            raise ValueError(
+                "SourceProximityGapEvidence.complete must certify every selected query; got unresolved lower-gap enclosure"
+            )
         lower = np.asarray(self.lower_bounds, dtype=np.float64)
         if control.strength is SizeControlStrength.HARD and np.any(lower[mask] <= 0):
             raise ValueError(
-                "Hard proximity controls require separated source lower-gap evidence."
+                f"SourceProximityGapEvidence.lower_bounds must be strictly positive for hard proximity controls; got nonpositive bounds for control_id={control.control_id!r}"
             )
         return lower
 
@@ -402,33 +471,49 @@ class ResolvedSizeField(StrictModule, NonTrainableState):
         sample_entity_ids: ArrayLike,
         source_control_ids: tuple[str, ...],
     ) -> None:
-        if not isinstance(domain, SizeFieldDomain):
-            raise TypeError("domain must be SizeFieldDomain.")
+        domain = parse(domain, SizeFieldDomain, "ResolvedSizeField.domain")
         points = np.asarray(sample_points, dtype=np.float64)
         sizes = np.asarray(values, dtype=np.float64)
         identifiers = np.asarray(sample_entity_ids)
         if points.ndim != 2 or points.shape[0] == 0 or not np.all(np.isfinite(points)):
-            raise ValueError("sample_points must be one non-empty finite matrix.")
+            raise ValueError(
+                f"ResolvedSizeField.sample_points must be one non-empty finite matrix; got shape={points.shape}"
+            )
         if (
             sizes.shape != (points.shape[0],)
             or np.any(~np.isfinite(sizes))
             or np.any(sizes <= 0)
         ):
-            raise ValueError("Resolved size values must be positive and match samples.")
+            raise ValueError(
+                f"ResolvedSizeField.values must be positive and match samples; got size_shape={sizes.shape}, point_shape={points.shape}"
+            )
         if identifiers.shape != (points.shape[0],) or not np.issubdtype(
             identifiers.dtype, np.integer
         ):
             raise ValueError(
-                "sample_entity_ids must be integer IDs aligned with samples."
+                f"ResolvedSizeField.sample_entity_ids must be integer IDs aligned with samples; got shape={identifiers.shape}, dtype={identifiers.dtype}"
             )
         controls = tuple(str(value) for value in source_control_ids)
         if not controls or any(not value for value in controls):
-            raise ValueError("Resolved size fields require source control identities.")
+            raise ValueError(
+                f"ResolvedSizeField.source_control_ids must contain non-empty identities; got {controls!r}"
+            )
         identifiers = identifiers.astype(np.int64, copy=False)
         self.domain = domain
-        self.sample_points = jnp.asarray(points)
-        self.sample_entity_ids = jnp.asarray(identifiers)
-        self.values = jnp.asarray(sizes)
+        _host_sample_points = np.asarray(points)
+        _host_sample_entity_ids = np.asarray(identifiers)
+        _host_values = np.asarray(sizes)
+        (
+            self.sample_points,
+            self.sample_entity_ids,
+            self.values,
+        ) = jax.device_put(
+            (
+                _host_sample_points,
+                _host_sample_entity_ids,
+                _host_values,
+            )
+        )
         self.source_control_ids = controls
         self.field_id = canonical_fingerprint(
             {
@@ -443,7 +528,7 @@ class ResolvedSizeField(StrictModule, NonTrainableState):
 
 
 class SizeResolutionReport(StrictModule, NonTrainableState):
-    """Resolution decisions, including exact edge-length-aware growth evidence.
+    """Retain size-resolution decisions and edge-length-aware growth evidence.
 
     ``graded_count`` counts samples lowered by hard growth limits and
     ``maximum_gradation_violation`` is the a-posteriori relative excess of any
@@ -481,20 +566,26 @@ class SizeResolutionReport(StrictModule, NonTrainableState):
             )
             for control in controls
         ):
-            raise TypeError("controls must contain supported size controls.")
+            raise TypeError(
+                f"SizeResolutionReport.controls must contain supported size controls; got {tuple(type(control).__name__ for control in controls)!r}"
+            )
         identifiers = tuple(control.control_id for control in controls)
         winners = tuple(str(identifier) for identifier in winning_control_ids)
         if len(winners) != field.values.shape[0] or any(
             identifier not in identifiers for identifier in winners
         ):
-            raise ValueError("winning_control_ids must identify one control per sample.")
+            raise ValueError(
+                f"SizeResolutionReport.winning_control_ids must identify one control per sample; got {winners!r}"
+            )
         overlaps = tuple(
             (str(first), str(second)) for first, second in overlapping_scope_pairs
         )
         graded = int(graded_count)
         violation = float(maximum_gradation_violation)
         if graded < 0 or not np.isfinite(violation) or violation < 0.0:
-            raise ValueError("Gradation evidence must be finite and non-negative.")
+            raise ValueError(
+                f"SizeResolutionReport.gradation must be finite and non-negative; got graded_count={graded!r}, maximum_violation={violation!r}"
+            )
         self.control_ids = identifiers
         self.winning_control_ids = winners
         self.overlapping_scope_pairs = overlaps
@@ -518,16 +609,26 @@ class SizeResolutionReport(StrictModule, NonTrainableState):
         )
 
 
-def _control_scopes(control: SizeControl, /) -> tuple[MeshingScope, ...]:
-    if isinstance(control, ProximitySizeControl):
-        return control.source_scope, control.target_scope
-    return (control.scope,)
+@checked
+def control_scopes(
+    control: SizeControl, /
+) -> tuple[_dependency_phydrax_meshing__scope.MeshingScope, ...]:
+    """Return the source scopes participating in a size control."""
+    match control:
+        case ProximitySizeControl():
+            return control.source_scope, control.target_scope
+        case UniformSizeControl() | CurvatureSizeControl():
+            return (control.scope,)
+        case _:
+            raise TypeError(
+                f"control_scopes.control must be a supported size control; got {type(control).__name__}"
+            )
 
 
 def _nearest_rows(
     points: np.ndarray, queries: np.ndarray, candidates: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Exact nearest candidate row and distance for each query row (BVH)."""
+    """Return the nearest candidate row and distance for each BVH query row."""
     candidate_points = points[candidates]
     hierarchy = prepare_bvh(candidate_points, candidate_points, dtype=jnp.float64)
     nearest = bvh_nearest_items(hierarchy, points[queries])
@@ -555,18 +656,19 @@ def _proximity_gaps(
     target_only = np.flatnonzero(target & ~source)
     if not source_only.size or not target_only.size:
         raise ValueError(
-            "Proximity controls require samples on disjoint source and target entities."
+            f"resolve_size_controls.proximity_samples must cover disjoint source and target entities; got source_only={source_only.size}, target_only={target_only.size}"
         )
     if control.opposite_normals_only and normals is None:
-        raise ValueError("Opposite-normal proximity controls require sample normals.")
+        raise ValueError(
+            "resolve_size_controls.normals must be supplied for opposite-normal proximity controls; got None"
+        )
     gaps = np.full((points.shape[0],), np.inf)
     for queries, candidates in (
         (np.flatnonzero(source), target_only),
         (np.flatnonzero(target), source_only),
     ):
         nearest, distance = _nearest_rows(points, queries, candidates)
-        if control.opposite_normals_only:
-            assert normals is not None
+        if control.opposite_normals_only and normals is not None:
             facing = np.sum(normals[queries] * normals[nearest], axis=1) < 0.0
             distance = np.where(facing, distance, np.inf)
         gaps[queries] = np.minimum(gaps[queries], distance)
@@ -583,36 +685,46 @@ def _control_candidate(
     proximity: SourceProximityGapEvidence | None,
     /,
 ) -> np.ndarray:
-    if isinstance(control, UniformSizeControl):
-        value = np.full((points.shape[0],), control.target_size)
-    elif isinstance(control, CurvatureSizeControl):
-        if curvature is None or curvature.shape != identifiers.shape:
-            raise ValueError("Curvature controls require aligned curvature samples.")
-        if np.any(~np.isfinite(curvature[mask])) or np.any(curvature[mask] < 0.0):
-            raise ValueError("Curvature samples must be finite and non-negative.")
-        value = np.divide(
-            2.0 * np.sin(0.5 * control.normal_angle),
-            curvature,
-            out=np.full(curvature.shape, np.inf),
-            where=curvature > 0.0,
-        )
-    elif isinstance(control, ProximitySizeControl):
-        gap = (
-            _proximity_gaps(control, points, identifiers, normals)
-            if proximity is None
-            else proximity.require_current(control, identifiers, mask, points)
-        )
-        value = gap / control.elements_per_gap
-    else:
-        raise TypeError("Unsupported size control.")
+    match control:
+        case UniformSizeControl():
+            source_bound = proximity is not None
+            value = np.full((points.shape[0],), control.target_size)
+        case CurvatureSizeControl():
+            source_bound = True
+            if curvature is None or curvature.shape != identifiers.shape:
+                raise ValueError(
+                    f"resolve_size_controls.curvature must supply aligned curvature samples; got {None if curvature is None else curvature.shape!r}"
+                )
+            if np.any(~np.isfinite(curvature[mask])) or np.any(curvature[mask] < 0.0):
+                raise ValueError(
+                    f"resolve_size_controls.curvature must be finite and non-negative; got invalid samples for control_id={control.control_id!r}"
+                )
+            value = np.divide(
+                2.0 * np.sin(0.5 * control.normal_angle),
+                curvature,
+                out=np.full(curvature.shape, np.inf),
+                where=curvature > 0.0,
+            )
+        case ProximitySizeControl():
+            source_bound = proximity is not None
+            gap = (
+                _proximity_gaps(control, points, identifiers, normals)
+                if proximity is None
+                else proximity.require_current(control, identifiers, mask, points)
+            )
+            value = gap / control.elements_per_gap
+        case _:
+            raise TypeError(
+                f"resolve_size_controls.controls must use a supported size-control kind; got {type(control).__name__}"
+            )
     if control.minimum_size is not None:
         if (
             control.strength is SizeControlStrength.HARD
-            and (isinstance(control, CurvatureSizeControl) or proximity is not None)
+            and source_bound
             and np.any(value[mask] < control.minimum_size)
         ):
             raise ValueError(
-                "An active hard source curvature/gap bound contradicts minimum_size."
+                f"resolve_size_controls.minimum_size must not contradict an active hard curvature or gap bound; got minimum_size={control.minimum_size!r} for control_id={control.control_id!r}"
             )
         value = np.maximum(value, control.minimum_size)
     if control.maximum_size is not None:
@@ -638,7 +750,7 @@ def _hard_growth(
     return growth
 
 
-def _select_control(
+def select_control(
     candidates: np.ndarray,
     active_mask: np.ndarray,
     hard: np.ndarray,
@@ -650,25 +762,31 @@ def _select_control(
     """Winning control of one sample under the explicit combination policy."""
     active = np.flatnonzero(active_mask)
     if not active.size:
-        raise ValueError("Size controls do not cover every sample.")
+        raise ValueError(
+            "resolve_size_controls.controls must cover every sample; got an uncovered sample"
+        )
     active_hard = active[hard[active]]
     pool = active_hard if active_hard.size else active
     match combination:
         case SizeCombinationPolicy.REJECT_HARD_CONFLICTS:
             choices = np.clip(candidates[pool], *interval)
             if active_hard.size and np.any(choices != choices[0]):
-                raise ValueError("Overlapping hard size-control targets conflict.")
+                raise ValueError(
+                    f"resolve_size_controls.controls must agree on overlapping hard size-control targets; got {choices!r}"
+                )
             return int(pool[int(np.argmin(choices))])
         case SizeCombinationPolicy.EXPLICIT_PRIORITY:
             finalists = pool[priorities[pool] == np.max(priorities[pool])]
             choices = np.clip(candidates[finalists], *interval)
             if np.any(choices != choices[0]):
                 raise ValueError(
-                    "Equal-priority size-control targets conflict on one sample."
+                    f"resolve_size_controls.controls must agree on equal-priority size-control targets for one sample; got {choices!r}"
                 )
             return int(finalists[0])
         case _:
-            raise ValueError(f"Unsupported size combination policy {combination!r}.")
+            raise ValueError(
+                f"resolve_size_controls.combination must be a supported size-combination policy; got {combination!r}"
+            )
 
 
 def _apply_hard_growth(
@@ -680,107 +798,76 @@ def _apply_hard_growth(
     admissible_minimum: np.ndarray,
     /,
 ) -> tuple[np.ndarray, int, float]:
-    """Exact edge-length-aware growth limits through the metric owner."""
+    """Apply edge-length-aware growth limits through the metric owner."""
     if adjacency is None:
         return raw, 0, 0.0
     edges = np.asarray(adjacency)
     if not np.issubdtype(edges.dtype, np.integer):
-        raise TypeError("Size-field adjacency must contain integer sample rows.")
+        raise TypeError(
+            f"resolve_size_controls.adjacency must contain integer sample rows; got dtype={edges.dtype}"
+        )
     if (
         edges.ndim != 2
         or edges.shape[1] != 2
         or np.any(edges < 0)
         or np.any(edges >= points.shape[0])
     ):
-        raise ValueError("Size-field adjacency must have shape (edges, 2).")
+        raise ValueError(
+            f"resolve_size_controls.adjacency must have shape (edges, 2) with valid sample rows; got shape={edges.shape}"
+        )
     growth = _hard_growth(controls, masks, edges)
     limited = np.isfinite(growth)
     limited_edges = edges[limited].astype(np.int64, copy=False)
     lengths = np.linalg.norm(
         points[limited_edges[:, 1]] - points[limited_edges[:, 0]], axis=1
     )
-    resolved, _, _ = _grade_scalar_sizes(
-        raw, limited_edges, lengths, growth[limited], MetricGradationKind.PHYSICAL
+    resolved, _, _ = _dependency_phydrax_meshing__metric.grade_scalar_sizes(
+        raw,
+        limited_edges,
+        lengths,
+        growth[limited],
+        _dependency_phydrax_meshing__metric.MetricGradationKind.PHYSICAL,
     )
     if np.any(resolved < admissible_minimum):
-        raise ValueError("Hard growth limits are incompatible with hard size intervals.")
-    violation = _scalar_violation(
-        resolved, limited_edges, lengths, growth[limited], MetricGradationKind.PHYSICAL
+        raise ValueError(
+            "resolve_size_controls.adjacency must admit the hard size intervals under its growth limits; got resolved sizes below admissible minima"
+        )
+    violation = _dependency_phydrax_meshing__metric.scalar_violation(
+        resolved,
+        limited_edges,
+        lengths,
+        growth[limited],
+        _dependency_phydrax_meshing__metric.MetricGradationKind.PHYSICAL,
     )
     return resolved, int(np.count_nonzero(resolved < raw)), violation
 
 
-def resolve_size_controls(
-    controls: tuple[SizeControl, ...],
-    sample_points: ArrayLike,
-    sample_entity_ids: ArrayLike,
-    domain: SizeFieldDomain,
-    /,
-    *,
-    curvature: ArrayLike | None = None,
-    normals: ArrayLike | None = None,
-    adjacency: ArrayLike | None = None,
-    proximity_gaps: Mapping[str, SourceProximityGapEvidence] | None = None,
-    combination: SizeCombinationPolicy = SizeCombinationPolicy.REJECT_HARD_CONFLICTS,
-) -> tuple[ResolvedSizeField, SizeResolutionReport]:
-    """Resolve targets only after intersecting every active hard size interval.
+@final
+class _SizeCandidates(StrictModule, NonTrainableState):
+    candidates: np.ndarray
+    masks: np.ndarray
+    hard: np.ndarray
+    priorities: np.ndarray
+    minimum: np.ndarray
+    maximum: np.ndarray
+    overlaps: tuple[tuple[str, str], ...]
 
-    Without ``proximity_gaps``, gaps are exact BVH nearest distances between
-    supplied samples only: they do not certify a continuous source gap.
-    Supplied source lower-gap evidence must bind the exact original control,
-    scopes, revisions and sample workset; unresolved evidence is refused.
-    Hard growth limits on ``adjacency`` enforce
-    ``h_i <= h_j + (rate - 1) |x_i - x_j|`` through the metric owner.
-    """
 
-    controls_ = tuple(controls)
-    if not controls_:
-        raise ValueError("At least one size control is required.")
-    if not all(
-        isinstance(
-            control,
-            (UniformSizeControl, CurvatureSizeControl, ProximitySizeControl),
-        )
-        for control in controls_
-    ):
-        raise TypeError("controls must contain supported size controls.")
-    supplied_gaps = {} if proximity_gaps is None else dict(proximity_gaps)
-    known_gaps = {
-        control.control_id
-        for control in controls_
-        if isinstance(control, ProximitySizeControl)
-    }
-    if set(supplied_gaps) - known_gaps or not all(
-        isinstance(value, SourceProximityGapEvidence) for value in supplied_gaps.values()
-    ):
-        raise ValueError("Source gap evidence must bind known proximity controls.")
-    if not isinstance(domain, SizeFieldDomain):
-        raise TypeError("domain must be SizeFieldDomain.")
-    if not isinstance(combination, SizeCombinationPolicy):
-        raise TypeError("combination must be SizeCombinationPolicy.")
-    points = np.asarray(sample_points, dtype=np.float64)
-    identifiers = np.asarray(sample_entity_ids, dtype=np.int64)
-    if (
-        points.ndim != 2
-        or not np.all(np.isfinite(points))
-        or identifiers.shape != (points.shape[0],)
-    ):
-        raise ValueError("Size samples and entity IDs must be finite and aligned.")
-    curvature_values = (
-        None if curvature is None else np.asarray(curvature, dtype=np.float64)
-    )
-    normal_values = None if normals is None else np.asarray(normals, dtype=np.float64)
-    if normal_values is not None and (
-        normal_values.shape != points.shape or not np.all(np.isfinite(normal_values))
-    ):
-        raise ValueError("Sample normals must be finite and aligned with samples.")
+def _prepare_size_candidates(
+    controls_: tuple[SizeControl, ...],
+    points: np.ndarray,
+    identifiers: np.ndarray,
+    curvature_values: np.ndarray | None,
+    normal_values: np.ndarray | None,
+    supplied_gaps: dict[str, SourceProximityGapEvidence],
+) -> _SizeCandidates:
     candidates = []
     masks = []
     lower_bounds = []
     upper_bounds = []
     overlaps = []
     for left, control in enumerate(controls_):
-        scopes = _control_scopes(control)
+        scopes = control_scopes(control)
         entity_ids = np.unique(
             np.concatenate(
                 tuple(
@@ -791,7 +878,9 @@ def resolve_size_controls(
         )
         mask = np.isin(identifiers, entity_ids)
         if not np.any(mask):
-            raise ValueError("A size control resolves to no supplied sample entities.")
+            raise ValueError(
+                f"resolve_size_controls.controls must select supplied sample entities; got control_id={control.control_id!r} with no selected samples"
+            )
         for second in controls_[left + 1 :]:
             if any(
                 first_scope.entity_set_id == second_scope.entity_set_id
@@ -799,7 +888,7 @@ def resolve_size_controls(
                     first_scope.global_entity_ids, second_scope.global_entity_ids
                 ).size
                 for first_scope in scopes
-                for second_scope in _control_scopes(second)
+                for second_scope in control_scopes(second)
             ):
                 overlaps.append((control.control_id, second.control_id))
         candidates.append(
@@ -847,14 +936,108 @@ def resolve_size_controls(
     admissible_minimum = np.max(np.where(hard_mask, lower_array, 0.0), axis=0)
     admissible_maximum = np.min(np.where(hard_mask, upper_array, np.inf), axis=0)
     if np.any(admissible_minimum > admissible_maximum):
-        raise ValueError("Active hard size intervals have an empty intersection.")
+        raise ValueError(
+            "resolve_size_controls.controls must have intersecting active hard size intervals; got an empty intersection"
+        )
+    return _SizeCandidates(
+        candidate_array,
+        mask_array,
+        hard_array,
+        priority_array,
+        admissible_minimum,
+        admissible_maximum,
+        tuple(overlaps),
+    )
+
+
+def resolve_size_controls(
+    controls: tuple[SizeControl, ...],
+    sample_points: ArrayLike,
+    sample_entity_ids: ArrayLike,
+    domain: SizeFieldDomain,
+    /,
+    *,
+    curvature: ArrayLike | None = None,
+    normals: ArrayLike | None = None,
+    adjacency: ArrayLike | None = None,
+    proximity_gaps: Mapping[str, SourceProximityGapEvidence] | None = None,
+    combination: SizeCombinationPolicy = SizeCombinationPolicy.REJECT_HARD_CONFLICTS,
+) -> tuple[ResolvedSizeField, SizeResolutionReport]:
+    """Resolve targets only after intersecting every active hard size interval.
+
+    Without ``proximity_gaps``, gaps are BVH nearest distances between supplied
+    samples; they do not certify a continuous source gap. Supplied lower-gap
+    evidence binds the declared control, scopes, revisions and sample workset.
+    Unresolved evidence is refused.
+    Hard growth limits on ``adjacency`` enforce
+    ``h_i <= h_j + (rate - 1) |x_i - x_j|`` through the metric owner.
+    """
+
+    controls_ = tuple(controls)
+    if not controls_:
+        raise ValueError(
+            "resolve_size_controls.controls must contain at least one size control; got an empty sequence"
+        )
+    if not all(
+        isinstance(
+            control,
+            (UniformSizeControl, CurvatureSizeControl, ProximitySizeControl),
+        )
+        for control in controls_
+    ):
+        raise TypeError(
+            f"resolve_size_controls.controls must contain supported size controls; got {tuple(type(control).__name__ for control in controls_)!r}"
+        )
+    supplied_gaps = {} if proximity_gaps is None else dict(proximity_gaps)
+    known_gaps = {
+        control.control_id
+        for control in controls_
+        if isinstance(control, ProximitySizeControl)
+    }
+    if set(supplied_gaps) - known_gaps or not all(
+        isinstance(value, SourceProximityGapEvidence) for value in supplied_gaps.values()
+    ):
+        raise ValueError(
+            f"resolve_size_controls.proximity_gaps must bind known proximity controls; got evidence_keys={tuple(supplied_gaps)!r}"
+        )
+    domain = parse(domain, SizeFieldDomain, "ResolvedSizeField.domain")
+    combination = parse(
+        combination, SizeCombinationPolicy, "resolve_size_controls.combination"
+    )
+    points = np.asarray(sample_points, dtype=np.float64)
+    identifiers = np.asarray(sample_entity_ids, dtype=np.int64)
+    if (
+        points.ndim != 2
+        or not np.all(np.isfinite(points))
+        or identifiers.shape != (points.shape[0],)
+    ):
+        raise ValueError(
+            f"resolve_size_controls.samples must have finite points and aligned entity IDs; got point_shape={points.shape}, identifier_shape={identifiers.shape}"
+        )
+    curvature_values = (
+        None if curvature is None else np.asarray(curvature, dtype=np.float64)
+    )
+    normal_values = None if normals is None else np.asarray(normals, dtype=np.float64)
+    if normal_values is not None and (
+        normal_values.shape != points.shape or not np.all(np.isfinite(normal_values))
+    ):
+        raise ValueError(
+            f"resolve_size_controls.normals must be finite and aligned with samples; got normal_shape={normal_values.shape}, point_shape={points.shape}"
+        )
+    prepared = _prepare_size_candidates(
+        controls_, points, identifiers, curvature_values, normal_values, supplied_gaps
+    )
+    candidate_array, mask_array = prepared.candidates, prepared.masks
+    hard_array, priority_array = prepared.hard, prepared.priorities
+    admissible_minimum, admissible_maximum = prepared.minimum, prepared.maximum
+    overlaps = prepared.overlaps
 
     preferred = np.empty((points.shape[0],), dtype=np.float64)
     raw = np.empty((points.shape[0],), dtype=np.float64)
     winners = []
     for sample in range(points.shape[0]):
         interval = (admissible_minimum[sample], admissible_maximum[sample])
-        selected = _select_control(
+        selected = select_control(
             candidate_array[:, sample],
             mask_array[:, sample],
             hard_array,
@@ -866,7 +1049,9 @@ def resolve_size_controls(
         raw[sample] = np.clip(preferred[sample], *interval)
         winners.append(controls_[selected].control_id)
     if np.any(~np.isfinite(raw)) or np.any(raw <= 0.0):
-        raise ValueError("Resolved size targets must be positive and finite.")
+        raise ValueError(
+            f"resolve_size_controls.targets must be positive and finite; got {raw.size} targets including an invalid value"
+        )
 
     resolved, graded_count, violation = _apply_hard_growth(
         controls_, mask_array, adjacency, points, raw, admissible_minimum
@@ -889,9 +1074,10 @@ def resolve_size_controls(
     )
 
 
+@checked
 def size_field_metric(
-    field: ResolvedSizeField, scope: MeshingScope, /
-) -> MeshMetricField:
+    field: ResolvedSizeField, scope: _dependency_phydrax_meshing__scope.MeshingScope, /
+) -> _dependency_phydrax_meshing__metric.MeshMetricField:
     """Compile a resolved size field into isotropic metric constraints.
 
     Row ``i`` becomes ``h_i**-2 I`` for ``scope.global_entity_ids[i]``, which
@@ -901,19 +1087,17 @@ def size_field_metric(
     are already resolved into the sizes; requested execution gradation belongs to
     a `MetricGradationPolicy` or the provider options.
     """
-    if not isinstance(field, ResolvedSizeField):
-        raise TypeError("field must be ResolvedSizeField.")
-    if not isinstance(scope, MeshingScope):
-        raise TypeError("scope must be MeshingScope.")
     if not np.array_equal(
         np.asarray(scope.global_entity_ids, dtype=np.int64),
         np.asarray(field.sample_entity_ids),
     ):
-        raise ValueError("Scope entity IDs must equal the size-field sample entity IDs.")
+        raise ValueError(
+            f"size_field_metric.scope must have entity IDs equal to the size-field sample entity IDs; got scope_id={scope.scope_id!r}, field_id={field.field_id!r}"
+        )
     sizes = np.asarray(field.values, dtype=np.float64)
     dimension = field.sample_points.shape[1]
     values = np.eye(dimension)[None, :, :] / sizes[:, None, None] ** 2
-    return MeshMetricField(
+    return _dependency_phydrax_meshing__metric.MeshMetricField(
         scope,
         values,
         minimum_size=float(np.min(sizes)),
@@ -932,6 +1116,7 @@ __all__ = [
     "SizeControlStrength",
     "SizeFieldDomain",
     "SizeResolutionReport",
+    "SizeStatistic",
     "SourceProximityGapEvidence",
     "UniformSizeControl",
     "resolve_size_controls",

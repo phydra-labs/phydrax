@@ -964,15 +964,18 @@ def _segment_hermite_field(
     s = 0.5 * (1.0 + rule.nodes)
     hv, hd, hdd = _hermite_basis(s)
     cv = _cubic_basis(s)
+    # Reconstruct departures from p0 + h*s*v0, not cancelling absolute endpoints.
     ends = (
-        nodes.positions[:-1],
-        h[:, None] * velocity[:-1],
+        nodes.positions[1:] - nodes.positions[:-1] - h[:, None] * velocity[:-1],
+        h[:, None] * (velocity[1:] - velocity[:-1]),
         h[:, None] ** 2 * acceleration[:-1],
-        nodes.positions[1:],
-        h[:, None] * velocity[1:],
         h[:, None] ** 2 * acceleration[1:],
     )
-    proper_ends = (u[:-1], h[:, None] * u_dot[:-1], u[1:], h[:, None] * u_dot[1:])
+    proper_ends = (
+        u[1:] - u[:-1],
+        h[:, None] * u_dot[:-1],
+        h[:, None] * u_dot[1:],
+    )
 
     def reconstruct(basis: tuple[Array, ...], data: tuple[Array, ...]) -> Array:
         return sum(
@@ -980,11 +983,17 @@ def _segment_hermite_field(
             start=jnp.zeros((count, s.shape[0], 3), dtype=jnp.float64),
         )
 
-    position = reconstruct(hv, ends)
+    position = (
+        nodes.positions[:-1, None, :]
+        + h[:, None, None] * s[None, :, None] * velocity[:-1, None, :]
+        + reconstruct((hv[3], hv[4], hv[2], hv[5]), ends)
+    )
     safe_h = jnp.where(h > 0.0, h, 1.0)[:, None, None]
-    beta = reconstruct(hd, ends) / (safe_h * c)
-    beta_dot = reconstruct(hdd, ends) / (safe_h**2 * c)
-    proper = reconstruct(cv, proper_ends)
+    beta = (
+        velocity[:-1, None, :] + reconstruct((hd[3], hd[4], hd[2], hd[5]), ends) / safe_h
+    ) / c
+    beta_dot = reconstruct((hdd[3], hdd[4], hdd[2], hdd[5]), ends) / (safe_h**2 * c)
+    proper = u[:-1, None, :] + reconstruct((cv[2], cv[1], cv[3]), proper_ends)
     inverse_gamma_sq_q = 1.0 / (1.0 + jnp.sum(proper * proper, axis=-1) / c**2)
     kappa, _ = _retardation(inverse_gamma_sq_q, beta, observers)
     n_dot_beta_dot = beta_dot @ observers.directions.T

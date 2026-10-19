@@ -36,6 +36,7 @@ from phydrax.operators.mechanics import (
     NeoHookeanLaw,
     NeoHookeanParameters,
 )
+from phydrax.units import METER
 
 
 def _law() -> Any:
@@ -190,7 +191,7 @@ def test_field_and_fe_adapters_match_point_reduction_and_h0() -> None:
     deformation = jnp.eye(2) + displacement_gradient
     expected = plan.evaluate(deformation, law, reference_thickness=h0)
     geometry = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geometry.Function("x")

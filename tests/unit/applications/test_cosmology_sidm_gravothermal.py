@@ -1,4 +1,5 @@
 import hashlib
+import math
 from typing import Any
 
 import jax
@@ -147,13 +148,31 @@ def test_cosmology_sidm_gravothermal_scenario_1() -> None:
         jnp.sum(result.diagnostics.thermal_energy_before),
         rtol=3.0e-13,
     )
-    # The telescoping conductive update balances exactly in real arithmetic; the
-    # summed shell energies carry a few ulps of their total in floating point.
-    energy_scale = float(jnp.sum(jnp.abs(result.diagnostics.thermal_energy_before)))
+    # For rounded inputs E_i and L_i, the real update
+    # E_i + dt*(L_i-L_{i+1}) telescopes with zero endpoint luminosities.
+    # Each cell uses three rounded operations, each reduction uses at most
+    # m-1 additions (independent of the reduction tree), and the diagnostic
+    # uses two subtractions. Thus gamma_(m+4) bounds every arithmetic path,
+    # multiplying sum(|E_old|+|E_new|)+|dt|*sum(|L_i|+|L_{i+1}|).
+    # The luminosity term includes cancellation in the conductive increments;
+    # both energy sums include the independently rounded reduction terms.
+    before = np.asarray(result.diagnostics.thermal_energy_before)
+    after = np.asarray(result.diagnostics.post_conduction_thermal_energy)
+    luminosity = np.asarray(result.diagnostics.luminosity_faces)
+    np.testing.assert_array_equal(luminosity[[0, -1]], (0.0, 0.0))
+    operation_count = before.size + 4
+    unit_roundoff = np.finfo(np.float64).eps / 2
+    gamma = operation_count * unit_roundoff / (1 - operation_count * unit_roundoff)
+    energy_scale = math.fsum(np.abs(before)) + math.fsum(np.abs(after))
+    flux_scale = abs(float(dt)) * (
+        math.fsum(np.abs(luminosity[:-1])) + math.fsum(np.abs(luminosity[1:]))
+    )
+    rounding_bound = np.nextafter(gamma * (energy_scale + flux_scale), np.inf)
     np.testing.assert_allclose(
         result.diagnostics.energy_balance_defect,
         0.0,
-        atol=8.0 * np.finfo(np.float64).eps * energy_scale,
+        rtol=0.0,
+        atol=rounding_bound,
     )
     assert bool(result.diagnostics.total_energy_valid)
     assert abs(float(result.diagnostics.total_energy_defect)) <= (

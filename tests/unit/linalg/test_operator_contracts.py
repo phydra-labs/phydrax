@@ -21,6 +21,23 @@ pytestmark = [pytest.mark.strict_jax, pytest.mark.filterwarnings("error")]
 _MATERIALIZATION = la.MaterializationPolicy(max_entries=100_000, max_bytes=1_000_000)
 
 
+def test_concrete_diagonal_pairing_admission_uses_host_arithmetic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    weights = jax.device_put(np.asarray((2.0, 3.0, 5.0), dtype=np.float64))
+
+    def reject_device_validation(value: jax.Array) -> jax.Array:
+        raise AssertionError(
+            "PairingAdmission.inputs must use host arithmetic; got device validation."
+        )
+
+    monkeypatch.setattr(jnp, "isfinite", reject_device_validation)
+    pairing = la.DiagonalPairing(weights)
+
+    assert pairing.weights is weights
+    np.testing.assert_array_equal(pairing.weights, (2.0, 3.0, 5.0))
+
+
 def test_operator_contracts_scenario_1() -> None:
     for case in operator_cases():
         operator = case.build()
@@ -264,6 +281,66 @@ def test_function_operator_same_callable_preserves_distinct_space_actions() -> N
         reference.T @ np.asarray(cotangent),
         rtol=1e-13,
     )
+
+
+@pytest.mark.parametrize("closure_convert", (False, True), ids=["visible", "converted"])
+def test_function_operator_admits_weakly_typed_linearization_actions(
+    closure_convert: bool,
+) -> None:
+    point = jnp.asarray(0.5)
+    linearization = la.prepare_linearization(lambda value: 3.0 * value, point)
+    space = la.PyTreeSpace(point)
+    operator = la.FunctionLinearOperator(
+        linearization.jvp,
+        source=space,
+        target=space,
+        transpose_action=linearization.vjp,
+        closure_convert=closure_convert,
+    )
+    vector = jnp.asarray(2.0, dtype=jnp.float64)
+    cotangent = jnp.asarray(-4.0, dtype=jnp.float64)
+    np.testing.assert_array_equal(operator.mv(vector), 6.0)
+    np.testing.assert_array_equal(operator.transpose_mv(cotangent), -12.0)
+    np.testing.assert_array_equal(
+        eqx.filter_jit(lambda owner, value: owner.mv(value))(operator, vector), 6.0
+    )
+    np.testing.assert_array_equal(
+        eqx.filter_jit(lambda owner, value: owner.transpose_mv(value))(
+            operator, cotangent
+        ),
+        -12.0,
+    )
+    assert_coordinate_transpose_duality(operator, vector, cotangent, rtol=0.0, atol=0.0)
+
+
+@pytest.mark.parametrize("transpose", (False, True), ids=["forward", "transpose"])
+@pytest.mark.parametrize("mismatch", ("shape", "tree", "dtype"))
+def test_function_operator_rejects_coordinate_contract_mismatches(
+    transpose: bool, mismatch: str
+) -> None:
+    space = la.PyTreeSpace(jnp.asarray(0.5, dtype=jnp.float64))
+
+    def invalid(value: jax.Array) -> jax.Array | tuple[jax.Array]:
+        match mismatch:
+            case "shape":
+                return jnp.stack((value, value))
+            case "tree":
+                return (value,)
+            case "dtype":
+                return value.astype(jnp.float32)
+            case _:
+                raise AssertionError(f"Unknown mismatch: {mismatch}")
+
+    error = TypeError if mismatch == "dtype" else ValueError
+    with pytest.raises(
+        error, match={"shape": "shape", "tree": "PyTree", "dtype": "dtype"}[mismatch]
+    ):
+        la.FunctionLinearOperator(
+            (lambda value: value) if transpose else invalid,
+            source=space,
+            target=space,
+            transpose_action=invalid if transpose else (lambda value: value),
+        )
 
 
 def test_function_operator_captures_remain_dynamic_and_auditable() -> None:

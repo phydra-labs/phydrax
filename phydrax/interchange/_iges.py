@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native bounded IGES 5.3 reader and exact B-Rep writer.
+"""Read bounded IGES 5.3 resources and write native B-Rep models.
 
 Reading parses the fixed-format Start/Global/Directory/Parameter/Terminate
 sections, the global parameter/record delimiters, Hollerith strings, the
 directory/parameter linkage and the global units, and lowers the entity graph
-to one native exact `BRepModel` through the shared `CadStage`.
+to one native `BRepModel` through the shared `CadStage`.
 
 Coverage (read):
 
@@ -30,8 +30,8 @@ and does not certify a continuous distance bound. Subfigure definitions and
 instances (308/408) become rigid native assembly occurrences. Unsupported
 required geometry is refused with its dependency chain.
 
-Writing emits exact B-Rep topology, parameter-space carriers and rigid
-subfigure occurrences. Carriers without an exact IGES entity are refused.
+Writing emits B-Rep topology, parameter-space carriers and rigid subfigure
+occurrences. Carriers without a supported IGES entity are refused.
 """
 
 from __future__ import annotations
@@ -41,20 +41,18 @@ import os
 from dataclasses import dataclass, field
 from fractions import Fraction
 from math import cos, degrees, isfinite, radians, sin
+from typing import assert_never, final
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 
 from .._external_resource import (
     account_bounded_resource,
-    bounded_resource_from_bytes,
     BoundedResource,
-    read_bounded_resource,
     ResourceReadError,
 )
 from .._fingerprint import canonical_fingerprint
 from .._publication import PublicationMode, publish_bytes
+from .._strict import StrictModule
 from ..geometry.brep._model import (
     BRepAssemblyContainer,
     BRepGeometry,
@@ -62,28 +60,29 @@ from ..geometry.brep._model import (
     BRepOccurrence,
 )
 from ..geometry.brep._patches import (
-    _axis_frame,
     AbstractCurve,
     AbstractSurfacePatch,
+    axis_frame,
     BSplineCurve,
     BSplineSurfacePatch,
     CircleCurve,
     ConePatch,
+    curve_evaluate_host,
     CylinderPatch,
     EllipseCurve,
     ExtrusionSurface,
     LineCurve,
     OffsetSurface,
     PlanePatch,
+    prepare_surface_host,
     RevolutionSurface,
     SpherePatch,
+    surface_evaluate_host,
     TorusPatch,
 )
-from ..typing import ConvertibleToArray
+from ..typing import checked, ConvertibleToArray
 from ._cad import (
-    _export_loss_waivers,
-    _natural_box,
-    approximation_export_qualifiers,
+    build_cad_export_report,
     CadCurveApproximation,
     CadExportPolicy,
     CadExportResult,
@@ -93,6 +92,7 @@ from ._cad import (
     CadStage,
     explicit_carrier,
     length_factor,
+    natural_box,
     prepare_cad_export_geometry,
     refuse,
     resource_refusal,
@@ -106,6 +106,7 @@ from ._cad_carriers import (
     RigidPlacement,
     surface_tag,
 )
+from ._cad_io import decode_cad_bytes, read_cad_file
 from ._report import AdapterFormatProfile, AdapterLoss, AdapterReport, AdapterStatus
 
 
@@ -113,7 +114,7 @@ _FORMAT = "iges"
 _SCHEMA = "iges-5.3"
 _SECTIONS = "SGDPT"
 
-# IGES global unit flags: (canonical name, exact meters per unit).
+# IGES global unit flags: (standard name, rational meters per unit).
 _UNITS: dict[int, tuple[str, Fraction]] = {
     1: ("INCH", Fraction(254, 10_000)),
     2: ("MM", Fraction(1, 1_000)),
@@ -231,7 +232,11 @@ def _split_parameters(
             value: _Parameter = _Hollerith(text[position + 1 : position + 1 + count])
             position += 1 + count
             if position > length:
-                raise refuse("malformed", label, "A Hollerith string is truncated.")
+                raise refuse(
+                    "malformed",
+                    label,
+                    "iges.parameters.string must fit its declared length; got truncated text",
+                )
             while position < length and text[position] == " ":
                 position += 1
         else:
@@ -245,43 +250,81 @@ def _split_parameters(
             value = token if token else None
         values.append(value)
         if len(values) > limit:
-            raise refuse("limit", label, "The entity exceeds the attribute limit.")
+            raise refuse(
+                "limit",
+                label,
+                f"iges.parameters.attributes must not exceed {limit}; got {len(values)}",
+            )
         if position >= length:
-            raise refuse("malformed", label, "A parameter record has no terminator.")
+            raise refuse(
+                "malformed",
+                label,
+                "iges.parameters.record must end with a record delimiter; got unterminated text",
+            )
         delimiter = text[position]
         position += 1
         if delimiter == record_delimiter:
             return values, position
         if delimiter != parameter_delimiter:
-            raise refuse("malformed", label, f"Unexpected delimiter {delimiter!r}.")
+            raise refuse(
+                "malformed",
+                label,
+                f"iges.parameters.delimiter must match the declared delimiters; got {delimiter!r}",
+            )
 
 
 def _integer(value: _Parameter, label: str, default: int | None = None) -> int:
     if value is None:
         if default is None:
-            raise refuse("malformed", label, "A required integer parameter is missing.")
+            raise refuse(
+                "malformed",
+                label,
+                "iges.parameters.integer must be present; got a missing parameter",
+            )
         return default
     if isinstance(value, _Hollerith):
-        raise refuse("malformed", label, "Expected an integer, found a string.")
+        raise refuse(
+            "malformed",
+            label,
+            "iges.parameters.integer must contain integer text; got a Hollerith string",
+        )
     try:
         return int(value)
     except ValueError as error:
-        raise refuse("malformed", label, f"Malformed integer {value!r}.") from error
+        raise refuse(
+            "malformed",
+            label,
+            f"iges.parameters.integer must contain integer text; got {value!r}",
+        ) from error
 
 
 def _real(value: _Parameter, label: str, default: float | None = None) -> float:
     if value is None:
         if default is None:
-            raise refuse("malformed", label, "A required real parameter is missing.")
+            raise refuse(
+                "malformed",
+                label,
+                "iges.parameters.real must be present; got a missing parameter",
+            )
         return default
     if isinstance(value, _Hollerith):
-        raise refuse("malformed", label, "Expected a real, found a string.")
+        raise refuse(
+            "malformed",
+            label,
+            "iges.parameters.real must contain real-number text; got a Hollerith string",
+        )
     try:
         number = float(value.replace("D", "E").replace("d", "e"))
     except ValueError as error:
-        raise refuse("malformed", label, f"Malformed real {value!r}.") from error
+        raise refuse(
+            "malformed",
+            label,
+            f"iges.parameters.real must contain real-number text; got {value!r}",
+        ) from error
     if not isfinite(number):
-        raise refuse("malformed", label, "A real parameter is not finite.")
+        raise refuse(
+            "malformed", label, f"iges.parameters.real must be finite; got {number!r}"
+        )
     return number
 
 
@@ -301,7 +344,9 @@ def _lines(data: bytes, label: str) -> dict[str, list[str]]:
     try:
         text = data.decode("ascii")
     except UnicodeDecodeError as error:
-        raise refuse("malformed", label, "IGES files are ASCII text.") from error
+        raise refuse(
+            "malformed", label, "iges.file.encoding must be ASCII; got non-ASCII bytes"
+        ) from error
     sections: dict[str, list[str]] = {letter: [] for letter in _SECTIONS}
     order = ""
     for index, raw in enumerate(text.splitlines()):
@@ -309,22 +354,32 @@ def _lines(data: bytes, label: str) -> dict[str, list[str]]:
             continue
         line = raw.ljust(80)
         if len(line) != 80:
-            raise refuse("malformed", f"line {index + 1}", "IGES records are 80 columns.")
+            raise refuse(
+                "malformed",
+                f"line {index + 1}",
+                f"iges.file.record must contain 80 columns; got {len(line)}",
+            )
         letter = line[72]
         if letter in ("B", "C"):
             raise refuse(
                 "unsupported-entity",
                 f"line {index + 1}",
-                "Binary and compressed IGES forms are not admitted.",
+                f"iges.file.section must use uncompressed ASCII records; got {letter!r}",
             )
         if letter not in sections:
-            raise refuse("malformed", f"line {index + 1}", f"Unknown section {letter!r}.")
+            raise refuse(
+                "malformed",
+                f"line {index + 1}",
+                f"iges.file.section must name an S/G/D/P/T section; got {letter!r}",
+            )
         if not order or order[-1] != letter:
             if letter in order or (
                 order and _SECTIONS.index(letter) < _SECTIONS.index(order[-1])
             ):
                 raise refuse(
-                    "malformed", f"line {index + 1}", "IGES sections are out of order."
+                    "malformed",
+                    f"line {index + 1}",
+                    f"iges.file.sections must follow S/G/D/P/T order; got {order + letter!r}",
                 )
             order += letter
         sequence = line[73:80].strip()
@@ -332,18 +387,28 @@ def _lines(data: bytes, label: str) -> dict[str, list[str]]:
             raise refuse(
                 "malformed",
                 f"line {index + 1}",
-                f"Section {letter} sequence numbers are broken.",
+                f"iges.file.sequence must be consecutive within section {letter}; got {sequence!r}",
             )
         sections[letter].append(line)
     if order[:1] != "S" or "G" not in order or "D" not in order or "P" not in order:
-        raise refuse("malformed", label, "The file lacks its S/G/D/P sections.")
+        raise refuse(
+            "malformed", label, f"iges.file.sections must include S/G/D/P; got {order!r}"
+        )
     if order[-1] != "T" or len(sections["T"]) != 1:
-        raise refuse("malformed", label, "The file lacks its single Terminate record.")
+        raise refuse(
+            "malformed",
+            label,
+            "iges.file.termination must contain one final T record; got missing or repeated termination",
+        )
     terminate = sections["T"][0]
     counts = [terminate[8 * i + 1 : 8 * i + 8].strip() for i in range(4)]
     expected = [len(sections[letter]) for letter in "SGDP"]
     if [int(value) if value.isdigit() else -1 for value in counts] != expected:
-        raise refuse("malformed", "T", "The Terminate section counts do not match.")
+        raise refuse(
+            "malformed",
+            "T",
+            f"iges.file.termination_counts must match {expected!r}; got {counts!r}",
+        )
     return sections
 
 
@@ -355,13 +420,21 @@ def _global(lines: list[str], limit: int) -> tuple[str, str, list[_Parameter]]:
         parameter_delimiter = text[2]
         position = 3
     if text[position : position + 1] != parameter_delimiter:
-        raise refuse("malformed", "G", "Malformed global parameter delimiter.")
+        raise refuse(
+            "malformed",
+            "G",
+            "iges.global.parameter_delimiter must separate its declaration; got malformed delimiter text",
+        )
     position += 1
     if text.startswith("1H", position):
         record_delimiter = text[position + 2]
         position += 3
     if text[position : position + 1] != parameter_delimiter:
-        raise refuse("malformed", "G", "Malformed global record delimiter.")
+        raise refuse(
+            "malformed",
+            "G",
+            "iges.global.record_delimiter must have a separated declaration; got malformed delimiter text",
+        )
     values, _ = _split_parameters(
         text[position + 1 :], parameter_delimiter, record_delimiter, "G", limit
     )
@@ -372,20 +445,30 @@ def _units(values: list[_Parameter]) -> tuple[int, Fraction]:
     padded = values + [None] * max(0, 16 - len(values))
     scale = _real(padded[12], "G13", 1.0)
     if scale != 1.0:
-        raise refuse("units", "G13", "A model space scale other than 1 is not admitted.")
+        raise refuse(
+            "units", "G13", f"iges.global.model_scale must equal 1; got {scale!r}"
+        )
     flag = _integer(padded[13], "G14", 1)
     name = _string(padded[14]).strip().upper()
     if flag == 3:
         if name not in _UNIT_NAMES:
-            raise refuse("units", "G15", f"Unknown IGES unit name {name!r}.")
+            raise refuse(
+                "units",
+                "G15",
+                f"iges.global.unit_name must name a supported length unit; got {name!r}",
+            )
         flag = _UNIT_NAMES[name]
     if flag not in _UNITS:
-        raise refuse("units", "G14", f"Unknown IGES unit flag {flag}.")
+        raise refuse(
+            "units",
+            "G14",
+            f"iges.global.unit_flag must name a supported length unit; got {flag}",
+        )
     if name and _UNIT_NAMES.get(name, flag) != flag:
         raise refuse(
             "units",
             "G15",
-            f"The unit name {name!r} contradicts the unit flag {flag}.",
+            f"iges.global.unit_name must agree with unit flag {flag}; got {name!r}",
         )
     return flag, _UNITS[flag][1]
 
@@ -399,9 +482,17 @@ def _decode(data: bytes, policy: CadImportPolicy) -> _File:
     unit_flag, unit_meters = _units(global_values)
     directory = sections["D"]
     if len(directory) % 2:
-        raise refuse("malformed", "D", "The directory has an odd number of records.")
+        raise refuse(
+            "malformed",
+            "D",
+            f"iges.directory.records must occur in pairs; got {len(directory)} records",
+        )
     if len(directory) // 2 > limits.max_nodes:
-        raise refuse("limit", "D", "The file exceeds the entity limit.")
+        raise refuse(
+            "limit",
+            "D",
+            f"iges.directory.entities must not exceed {limits.max_nodes}; got {len(directory) // 2}",
+        )
     parameters = sections["P"]
     entries: dict[int, _Entry] = {}
     attributes = len(global_values)
@@ -412,19 +503,29 @@ def _decode(data: bytes, policy: CadImportPolicy) -> _File:
         second = [directory[index + 1][8 * k : 8 * k + 8] for k in range(9)]
         entity_type = _integer(first[0] or None, label)
         if _integer(second[0].strip() or None, label) != entity_type:
-            raise refuse("malformed", label, "Directory entry type fields disagree.")
+            raise refuse(
+                "malformed",
+                label,
+                "iges.directory.entity_type must agree across its two records; got conflicting type fields",
+            )
         pointer = _integer(first[1] or None, label)
         count = _integer(second[3].strip() or None, label)
         if pointer < 1 or count < 1 or pointer + count - 1 > len(parameters):
             raise refuse(
-                "dangling-reference", label, "Parameter data lies outside the file."
+                "dangling-reference",
+                label,
+                f"iges.directory.parameter_range must lie within the P section; got pointer {pointer}, count {count}",
             )
         records = parameters[pointer - 1 : pointer - 1 + count]
         if any(
             not record[64:72].strip().isdigit() or int(record[64:72]) != number
             for record in records
         ):
-            raise refuse("malformed", label, "Parameter records do not point back to it.")
+            raise refuse(
+                "malformed",
+                label,
+                "iges.parameters.directory_pointer must reference its directory entry; got a conflicting pointer",
+            )
         text = "".join(record[:64] for record in records)
         values, _ = _split_parameters(
             text,
@@ -435,7 +536,11 @@ def _decode(data: bytes, policy: CadImportPolicy) -> _File:
         )
         attributes += len(values)
         if _integer(values[0], label) != entity_type:
-            raise refuse("malformed", label, "Parameter data names another entity type.")
+            raise refuse(
+                "malformed",
+                label,
+                "iges.parameters.entity_type must match its directory entry; got a conflicting type",
+            )
         entries[number] = _Entry(
             number,
             entity_type,
@@ -451,7 +556,7 @@ def _decode(data: bytes, policy: CadImportPolicy) -> _File:
 
 
 class _Resolver:
-    """Lower the IGES entity graph to one exact native stage."""
+    """Lower the IGES entity graph to one native stage."""
 
     def __init__(self, file: _File, policy: CadImportPolicy, factor: float) -> None:
         self.file = file
@@ -489,7 +594,7 @@ class _Resolver:
             raise refuse(
                 "dangling-reference",
                 f"D{pointer}",
-                "The pointer does not name a directory entry.",
+                f"iges.reference.pointer must name a directory entry; got {pointer}",
                 chain,
             )
         entry = self.file.entries[pointer]
@@ -497,17 +602,22 @@ class _Resolver:
             raise refuse(
                 "unsupported-entity",
                 entry.name,
-                f"Entity type {entry.entity_type} (form {entry.form}) is not admitted "
-                f"here; expected one of {allowed}.",
+                f"iges.reference.entity_type must be one of {allowed}; got type {entry.entity_type}, form {entry.form}",
                 chain,
             )
         if pointer in self.active:
             raise refuse(
-                "cyclic-reference", entry.name, "The entity graph is cyclic.", chain
+                "cyclic-reference",
+                entry.name,
+                "iges.reference.graph must be acyclic; got a repeated active reference",
+                chain,
             )
         if len(chain) > self.policy.limits.max_depth:
             raise refuse(
-                "limit", entry.name, "The reference depth exceeds its limit.", chain
+                "limit",
+                entry.name,
+                f"iges.reference.depth must not exceed {self.policy.limits.max_depth}; got {len(chain)}",
+                chain,
             )
         stage_size = (
             len(self.stage.vertices)
@@ -520,7 +630,7 @@ class _Resolver:
             raise refuse(
                 "limit",
                 entry.name,
-                "Expanded native topology exceeds its allocation budget.",
+                "iges.topology.size must fit the import allocation budget; got excessive expanded topology",
                 chain,
             )
         self.maximum_depth = max(self.maximum_depth, len(chain))
@@ -541,10 +651,16 @@ class _Resolver:
     def count(self, entry: _Entry, index: int) -> int:
         value = self.integer(entry, index)
         if value < 0:
-            raise refuse("malformed", entry.name, "An entity count is negative.")
+            raise refuse(
+                "malformed",
+                entry.name,
+                f"iges.parameters.count must be nonnegative; got {value}",
+            )
         if value > self.policy.limits.max_attributes or value > len(entry.parameters):
             raise refuse(
-                "limit", entry.name, "An entity count exceeds the bounded parameter data."
+                "limit",
+                entry.name,
+                f"iges.parameters.count must fit the bounded parameter data; got {value}",
             )
         return value
 
@@ -570,7 +686,7 @@ class _Resolver:
             raise refuse(
                 "unsupported-entity",
                 matrix.name,
-                "Only rigid (form 0/1) transformation matrices are admitted.",
+                f"iges.transform.form must be 0 or 1; got {matrix.form}",
                 chain,
             )
         values = self.reals(matrix, 0, 12).reshape(3, 4)
@@ -599,7 +715,7 @@ class _Resolver:
                     raise refuse(
                         "inconsistent-geometry",
                         entry.name,
-                        "A line has zero length.",
+                        "iges.line.length must be positive; got zero",
                         chain,
                     )
                 curve: AbstractCurve = LineCurve(start, (end - start) / length)
@@ -623,14 +739,14 @@ class _Resolver:
             case 126:
                 try:
                     curve = self._spline_curve(entry, 3)
+                except CadInterchangeError as error:
+                    raise refuse(
+                        error.refusal.reason,
+                        error.refusal.entity,
+                        error.refusal.message,
+                        chain,
+                    ) from error
                 except (ValueError, TypeError) as error:
-                    if isinstance(error, CadInterchangeError):
-                        raise refuse(
-                            error.refusal.reason,
-                            error.refusal.entity,
-                            error.refusal.message,
-                            chain,
-                        ) from error
                     raise refuse("malformed", entry.name, str(error), chain) from error
             case 102:
                 count = self.integer(entry, 0)
@@ -638,12 +754,14 @@ class _Resolver:
                     raise refuse(
                         "unsupported-entity",
                         entry.name,
-                        "A composite curve with several segments is not one edge carrier.",
+                        f"iges.composite_curve.segments must contain one edge carrier; got {count} segments",
                         chain,
                     )
                 curve = self.curve(self.integer(entry, 1), chain)
             case _:
-                raise RuntimeError("entry() restricts curve types.")
+                raise RuntimeError(
+                    f"iges.curve.entity_type must name a supported curve; got {entry.entity_type}"
+                )
         self.active.pop()
         return place_curve(curve, placement, entry.name)
 
@@ -654,9 +772,11 @@ class _Resolver:
             raise refuse(
                 "unsupported-entity",
                 entry.name,
-                "Only ellipse conics are admitted.",
+                "iges.conic.form must describe an ellipse; got a different conic form",
                 chain,
             )
+        # This fixed two-dimensional eigensystem and solve decode one external
+        # conic into immutable host geometry; they are not numerical runtime kernels.
         quadratic = np.asarray(((a, 0.5 * b), (0.5 * b, c)))
         linear = np.asarray((d, e))
         eigenvalues, axes = np.linalg.eigh(quadratic)
@@ -664,7 +784,7 @@ class _Resolver:
             raise refuse(
                 "unsupported-entity",
                 entry.name,
-                "Parabolic and hyperbolic conics have no exact native carrier.",
+                "iges.conic.quadratic must be definite; got a parabolic or hyperbolic conic",
                 chain,
             )
         center = -0.5 * np.linalg.solve(quadratic, linear)
@@ -674,7 +794,7 @@ class _Resolver:
             raise refuse(
                 "inconsistent-geometry",
                 entry.name,
-                "An ellipse conic has no real positive radii.",
+                "iges.conic.squared_radii must be positive; got nonpositive radii",
                 chain,
             )
         if b == d == e == 0.0:
@@ -696,10 +816,16 @@ class _Resolver:
             or degree < 1
             or upper + degree + 2 > self.policy.limits.max_attributes
         ):
-            raise refuse("malformed", entry.name, "Inconsistent B-spline curve sizes.")
+            raise refuse(
+                "malformed",
+                entry.name,
+                "iges.spline_curve.sizes must define a valid control and knot layout; got inconsistent sizes",
+            )
         if any(self.integer(entry, index) not in (0, 1) for index in range(2, 6)):
             raise refuse(
-                "malformed", entry.name, "B-spline curve properties must be binary."
+                "malformed",
+                entry.name,
+                "iges.spline_curve.properties must be binary; got a nonbinary property",
             )
         count = upper + 1
         start = 6
@@ -713,7 +839,7 @@ class _Resolver:
             raise refuse(
                 "malformed",
                 entry.name,
-                "Curve domain lies outside its native knot support.",
+                "iges.spline_curve.domain must lie within its knot support; got an out-of-support domain",
             )
         return BSplineCurve(points[:, :dimension], weights, knots, degree)
 
@@ -723,7 +849,10 @@ class _Resolver:
         norm = float(np.linalg.norm(vector))
         if not norm > 0.0:
             raise refuse(
-                "inconsistent-geometry", entry.name, "A direction is zero.", chain
+                "inconsistent-geometry",
+                entry.name,
+                "iges.direction.norm must be positive; got zero",
+                chain,
             )
         return self.placement(entry, chain).vector(vector / norm)
 
@@ -754,7 +883,7 @@ class _Resolver:
             first = first - (first @ axis) * axis
             first = first / np.linalg.norm(first)
         else:
-            first, _ = _axis_frame(axis)
+            first, _ = axis_frame(axis)
         return first, np.cross(axis, first)
 
     def _surface(self, entry: _Entry, chain: tuple[str, ...]) -> AbstractSurfacePatch:
@@ -766,7 +895,7 @@ class _Resolver:
                     raise refuse(
                         "inconsistent-geometry",
                         entry.name,
-                        "A plane normal is zero.",
+                        "iges.plane.normal_norm must be positive; got zero",
                         chain,
                     )
                 axis = normal / norm
@@ -817,7 +946,7 @@ class _Resolver:
                     raise refuse(
                         "malformed",
                         entry.name,
-                        "A revolution axis must be a line.",
+                        f"iges.revolution.axis must be a line; got {type(axis).__name__}",
                         chain,
                     )
                 generatrix_pointer = self.integer(entry, 1)
@@ -827,7 +956,7 @@ class _Resolver:
                     line = self.file.entries[generatrix_pointer]
                     while line.entity_type == 102:
                         line = self.file.entries[self.integer(line, 1)]
-                    length = self._range(line, generatrix)[1]
+                    length = self._range(line)[1]
                     generatrix = LineCurve(
                         generatrix.origin, np.asarray(generatrix.direction) * length
                     )
@@ -844,21 +973,21 @@ class _Resolver:
             case 128:
                 try:
                     return self._spline_surface(entry)
+                except CadInterchangeError as error:
+                    raise refuse(
+                        error.refusal.reason,
+                        error.refusal.entity,
+                        error.refusal.message,
+                        chain,
+                    ) from error
                 except (ValueError, TypeError) as error:
-                    if isinstance(error, CadInterchangeError):
-                        raise refuse(
-                            error.refusal.reason,
-                            error.refusal.entity,
-                            error.refusal.message,
-                            chain,
-                        ) from error
                     raise refuse("malformed", entry.name, str(error), chain) from error
             case 140:
                 if entry.form != 0:
                     raise refuse(
                         "unsupported-entity",
                         entry.name,
-                        "Offset surfaces require form 0.",
+                        f"iges.offset_surface.form must equal 0; got {entry.form}",
                         chain,
                     )
                 # IGES5.3 section4.30 defines the indicator as advisory; it
@@ -869,14 +998,16 @@ class _Resolver:
                     raise refuse(
                         "malformed",
                         entry.name,
-                        "An IGES normal-offset distance must be nonzero.",
+                        "iges.offset_surface.distance must be nonzero; got zero",
                         chain,
                     )
                 return OffsetSurface(
                     self.surface(self.integer(entry, 4), chain), distance
                 )
             case _:
-                raise RuntimeError("entry() restricts surface types.")
+                raise RuntimeError(
+                    f"iges.surface.entity_type must name a supported surface; got {entry.entity_type}"
+                )
 
     @staticmethod
     def _curve_start(curve: AbstractCurve) -> np.ndarray:
@@ -886,9 +1017,9 @@ class _Resolver:
             case BSplineCurve():
                 domain = curve.parameter_domain
                 first = 0.0 if domain is None else domain[0]
-                return np.asarray(curve.evaluate(jnp.asarray(first, dtype=jnp.float64)))
+                return curve_evaluate_host(curve, first)
             case _:
-                return np.asarray(curve.evaluate(jnp.asarray(0.0, dtype=jnp.float64)))
+                return curve_evaluate_host(curve, 0.0)
 
     def _spline_surface(self, entry: _Entry) -> BSplineSurfacePatch:
         upper_u, upper_v = self.integer(entry, 0), self.integer(entry, 1)
@@ -900,10 +1031,16 @@ class _Resolver:
             or min(degree_u, degree_v) < 1
             or 4 * count_u * count_v > self.policy.limits.max_attributes
         ):
-            raise refuse("malformed", entry.name, "Inconsistent B-spline surface sizes.")
+            raise refuse(
+                "malformed",
+                entry.name,
+                "iges.spline_surface.sizes must define a valid control and knot layout; got inconsistent sizes",
+            )
         if any(self.integer(entry, index) not in (0, 1) for index in range(4, 9)):
             raise refuse(
-                "malformed", entry.name, "B-spline surface properties must be binary."
+                "malformed",
+                entry.name,
+                "iges.spline_surface.properties must be binary; got a nonbinary property",
             )
         start = 9
         u_knots = self.reals(entry, start, count_u + degree_u + 1)
@@ -921,7 +1058,7 @@ class _Resolver:
             raise refuse(
                 "malformed",
                 entry.name,
-                "Surface domain lies outside its native knot support.",
+                "iges.spline_surface.domain must lie within its knot support; got an out-of-support domain",
             )
         # IGES orders controls with the first (u) index varying fastest.
         return BSplineSurfacePatch(
@@ -942,7 +1079,10 @@ class _Resolver:
             count = self.count(entry, 0)
             if not 1 <= index <= count:
                 raise refuse(
-                    "dangling-reference", entry.name, f"Vertex {index} is absent.", chain
+                    "dangling-reference",
+                    entry.name,
+                    f"iges.vertex_list.index must name a listed vertex; got {index}",
+                    chain,
                 )
             point = self.placement(entry, chain).point(
                 self.point(entry, 1 + 3 * (index - 1))
@@ -958,7 +1098,10 @@ class _Resolver:
             count = self.count(entry, 0)
             if not 1 <= index <= count:
                 raise refuse(
-                    "dangling-reference", entry.name, f"Edge {index} is absent.", chain
+                    "dangling-reference",
+                    entry.name,
+                    f"iges.edge_list.index must name a listed edge; got {index}",
+                    chain,
                 )
             base = 1 + 5 * (index - 1)
             self.active.append(pointer)
@@ -978,7 +1121,7 @@ class _Resolver:
                     start,
                     end,
                     label,
-                    parameter_range=self._range(self.file.entries[curve_pointer], curve),
+                    parameter_range=self._range(self.file.entries[curve_pointer]),
                 )
             except ValueError as error:
                 raise refuse("inconsistent-geometry", label, str(error), chain) from error
@@ -995,7 +1138,7 @@ class _Resolver:
                 raise refuse(
                     "unsupported-entity",
                     entry.name,
-                    "A piecewise UV carrier cannot be represented as one native coedge.",
+                    "iges.pcurve.segments must contain one coedge carrier; got multiple segments",
                     (*chain, entry.name),
                 )
             return pieces[0]
@@ -1003,15 +1146,13 @@ class _Resolver:
         self.factor = 1.0
         try:
             curve = self.curve(pointer, chain)
-            domain = self._range(self.file.entries[pointer], curve)
+            domain = self._range(self.file.entries[pointer])
         finally:
             self.factor = factor
         match curve:
             case LineCurve():
-                points = np.asarray(
-                    curve.evaluate(jnp.asarray(domain, dtype=jnp.float64))
-                )[:, :2]
-                result: AbstractCurve = BSplineCurve(
+                points = curve_evaluate_host(curve, domain)[:, :2]
+                result: BSplineCurve | CircleCurve | EllipseCurve = BSplineCurve(
                     points, np.ones(2), [domain[0], domain[0], domain[1], domain[1]], 1
                 )
             case BSplineCurve():
@@ -1040,25 +1181,25 @@ class _Resolver:
                 raise refuse(
                     "unsupported-entity",
                     f"D{pointer}",
-                    "No exact UV carrier for this parameter-space curve.",
+                    f"iges.pcurve.carrier must have a supported UV representation; got {type(curve).__name__}",
                     chain,
                 )
         while isinstance(patch, OffsetSurface):
             patch = patch.base
         angular = radians(1.0)
-        factors = (
-            (factor, factor)
-            if isinstance(patch, PlanePatch)
-            else (angular, factor)
-            if isinstance(patch, (CylinderPatch, ConePatch))
-            else (angular, angular)
-            if isinstance(patch, (SpherePatch, TorusPatch))
-            else (-1.0, 1.0)
-            if isinstance(patch, RevolutionSurface)
-            else (1.0, factor)
-            if isinstance(patch, ExtrusionSurface)
-            else (1.0, 1.0)
-        )
+        match patch:
+            case PlanePatch():
+                factors = (factor, factor)
+            case CylinderPatch() | ConePatch():
+                factors = (angular, factor)
+            case SpherePatch() | TorusPatch():
+                factors = (angular, angular)
+            case RevolutionSurface():
+                factors = (-1.0, 1.0)
+            case ExtrusionSurface():
+                factors = (1.0, factor)
+            case _:
+                factors = (1.0, 1.0)
         revolution = isinstance(patch, RevolutionSurface)
         if revolution or isinstance(patch, TorusPatch):
             # IGES 198 orders tube angle before azimuth and IGES 120 orders the
@@ -1088,7 +1229,7 @@ class _Resolver:
                         result.second_radius,
                     )
                 case _:
-                    raise RuntimeError("UV decoding restricts exact carrier types.")
+                    assert_never(result)
         try:
             return transform_pcurve(
                 result, factors, 1.0, (2.0 * np.pi, 0.0) if revolution else (0.0, 0.0)
@@ -1109,22 +1250,18 @@ class _Resolver:
                 raise refuse(
                     "inconsistent-geometry",
                     f"edge:{edge}",
-                    "A B-spline p-curve requires a finite parameter domain.",
+                    "iges.pcurve.domain must be finite; got an unbounded spline domain",
                 )
             lower, upper = domain
             # Closed edges have identical endpoint vertices; interior carrier
             # correspondence, not endpoint coincidence, owns their direction.
             samples = np.asarray((0.0, 0.25, 0.5, 0.75, 1.0), dtype=np.float64)
-            world = np.asarray(
-                patch.evaluate(
-                    curve.evaluate(jnp.asarray(lower + samples * (upper - lower)))
-                )
+            world = surface_evaluate_host(
+                patch, curve_evaluate_host(curve, lower + samples * (upper - lower))
             )
             carrier_index = self.stage.edge_curves[edge]
             carrier = self.stage.curves[carrier_index]
-            reference = np.asarray(
-                carrier.evaluate(jnp.asarray(first + samples * (last - first)))
-            )
+            reference = curve_evaluate_host(carrier, first + samples * (last - first))
             forward_error = float(np.max(np.linalg.norm(world - reference, axis=1)))
             reverse_error = float(np.max(np.linalg.norm(world[::-1] - reference, axis=1)))
             reverse = reverse_error < forward_error
@@ -1166,13 +1303,16 @@ class _Resolver:
             curves = self.integer(entry, position + 4)
             if curves < 0 or agrees not in (0, 1) or kind not in (0, 1):
                 raise refuse(
-                    "malformed", entry.name, "Malformed loop edge record.", chain
+                    "malformed",
+                    entry.name,
+                    "iges.loop.edge_record must contain a valid edge use; got malformed parameters",
+                    chain,
                 )
             if curves > 1:
                 raise refuse(
                     "unsupported-entity",
                     entry.name,
-                    "A multi-segment parameter-space edge requires a piecewise carrier.",
+                    "iges.loop.pcurve must contain one segment; got a multi-segment carrier",
                     chain,
                 )
             pcurve = (
@@ -1187,7 +1327,7 @@ class _Resolver:
                     raise refuse(
                         "unsupported-entity",
                         entry.name,
-                        "A collapsed vertex use requires a bounded parameter-space curve.",
+                        "iges.loop.vertex_use must have a bounded p-curve; got an unbounded carrier",
                         chain,
                     )
                 domain = pcurve.parameter_domain
@@ -1207,7 +1347,7 @@ class _Resolver:
                     ):
                         lower, upper = domain
                         # A vertex use has no 3D parameter to preserve. Choose
-                        # its authored angular extent as the exact native phase.
+                        # its authored angular extent as the native phase.
                         pcurve = BSplineCurve(
                             points,
                             pcurve.weights,
@@ -1231,7 +1371,12 @@ class _Resolver:
             )
         self.active.pop()
         if not coedges:
-            raise refuse("malformed", entry.name, "A loop has no edges.", chain)
+            raise refuse(
+                "malformed",
+                entry.name,
+                "iges.loop.edges must be nonempty; got no edges",
+                chain,
+            )
         return coedges
 
     def face(self, pointer: int, orientation: int, chain: tuple[str, ...]) -> int:
@@ -1246,7 +1391,12 @@ class _Resolver:
         ]
         self.active.pop()
         if not loops:
-            raise refuse("unsupported-entity", entry.name, "A face has no loops.", chain)
+            raise refuse(
+                "unsupported-entity",
+                entry.name,
+                "iges.face.loops must be nonempty; got no loops",
+                chain,
+            )
         face = self.stage.face(
             patch,
             loops,
@@ -1273,7 +1423,12 @@ class _Resolver:
             )
         self.active.pop()
         if not faces:
-            raise refuse("malformed", entry.name, "A shell has no faces.", chain)
+            raise refuse(
+                "malformed",
+                entry.name,
+                "iges.shell.faces must be nonempty; got no faces",
+                chain,
+            )
         self.place_faces(faces, self.placement(entry, chain), entry.name)
         self.stage.shells.append((faces, closed))
         return len(self.stage.shells) - 1
@@ -1288,7 +1443,7 @@ class _Resolver:
             raise refuse(
                 "unsupported-entity",
                 label,
-                "Reflected subshape placements are not admitted.",
+                "iges.subshape.placement must be proper rigid; got a reflection",
                 (label,),
             )
         vertices: dict[int, int] = {}
@@ -1307,7 +1462,7 @@ class _Resolver:
                             raise refuse(
                                 "limit",
                                 label,
-                                "Placed topology exceeds its allocation budget.",
+                                "iges.topology.placed_size must fit the allocation budget; got excessive placed topology",
                                 (label,),
                             )
                         ends = self.stage.edge_vertices[original]
@@ -1357,7 +1512,7 @@ class _Resolver:
         path: tuple[str, ...],
         chain: tuple[str, ...] = (),
     ) -> tuple[tuple[tuple[str, ...], ...], tuple[tuple[str, ...], ...]]:
-        """Expand actual subfigure membership, never grouping placements or prefixes."""
+        """Expand subfigure membership from the declared definition graph."""
         entry = self.entry(pointer, chain, (186, 308, 408))
         chain = (*chain, entry.name)
         if entry.entity_type == 186:
@@ -1367,19 +1522,22 @@ class _Resolver:
                 raise refuse(
                     "unsupported-entity",
                     entry.name,
-                    "Reflected solid occurrences are not admitted.",
+                    "iges.occurrence.placement must be proper rigid; got a reflection",
                     chain,
                 )
             if len(self.stage.occurrences) >= self.policy.maximum_occurrences:
                 raise refuse(
-                    "limit", entry.name, "Expanded occurrences exceed their limit.", chain
+                    "limit",
+                    entry.name,
+                    "iges.occurrence.count must fit the occurrence limit; got excessive expanded occurrences",
+                    chain,
                 )
             source_path = path or (f"solid{solid}",)
             if source_path in self.occurrence_paths:
                 raise refuse(
                     "malformed",
                     entry.name,
-                    "Distinct occurrences require distinct scientific instance paths.",
+                    f"iges.occurrence.path must be unique; got repeated path {source_path!r}",
                     chain,
                 )
             self.occurrence_paths.add(source_path)
@@ -1397,7 +1555,7 @@ class _Resolver:
                 raise refuse(
                     "unsupported-entity",
                     entry.name,
-                    "Scaled subfigure instances have no rigid native representation.",
+                    "iges.subfigure.scale must equal 1; got a scaled instance",
                     chain,
                 )
             definition = self.integer(entry, 0)
@@ -1417,13 +1575,19 @@ class _Resolver:
         count = self.count(entry, 2)
         if count > self.policy.limits.max_nodes:
             raise refuse(
-                "limit", entry.name, "Subfigure member count exceeds its limit.", chain
+                "limit",
+                entry.name,
+                "iges.subfigure.member_count must fit the import limits; got excessive members",
+                chain,
             )
         children = [self.integer(entry, 3 + k) for k in range(count)]
         depth = self.integer(entry, 0)
         if depth < 0:
             raise refuse(
-                "malformed", entry.name, "Subfigure hierarchy depth is negative.", chain
+                "malformed",
+                entry.name,
+                f"iges.subfigure.depth must be nonnegative; got {depth}",
+                chain,
             )
         single_part = (
             count == 1
@@ -1491,7 +1655,7 @@ class _Resolver:
             raise refuse(
                 "unsupported-entity",
                 entry.name,
-                "Curves on surface without a model-space curve are not admitted.",
+                "iges.boundary.model_curve must be present; got no model-space curve",
                 chain,
             )
         segments = self._segments(model_curve, chain)
@@ -1505,16 +1669,14 @@ class _Resolver:
             raise refuse(
                 "unsupported-entity",
                 entry.name,
-                "Model-space and parameter-space boundary segmentation differs.",
+                "iges.boundary.segmentation must agree in model and parameter space; got differing segments",
                 chain,
             )
         self.active.pop()
         coedges = []
         points = []
         for curve, first, last in segments:
-            ends = np.asarray(
-                curve.evaluate(jnp.asarray((first, last), dtype=jnp.float64))
-            )
+            ends = curve_evaluate_host(curve, (first, last))
             points.append(ends)
         tolerance = self.stage.tolerance
         vertices = []
@@ -1528,7 +1690,7 @@ class _Resolver:
                     raise refuse(
                         "inconsistent-geometry",
                         entry.name,
-                        "A boundary is not closed.",
+                        "iges.boundary.endpoints must close the loop; got an open boundary",
                         chain,
                     )
             else:
@@ -1536,7 +1698,7 @@ class _Resolver:
                     raise refuse(
                         "inconsistent-geometry",
                         entry.name,
-                        "Boundary segments do not connect.",
+                        "iges.boundary.segments must connect at their endpoints; got disconnected segments",
                         chain,
                     )
                 end = self.stage.vertex(ends[1], entry.name)
@@ -1569,7 +1731,7 @@ class _Resolver:
             raise refuse(
                 "unsupported-entity",
                 entry.name,
-                "A transformed UV composite has no single parameter frame.",
+                "iges.pcurve.composite_transform must preserve one parameter frame; got a transformed composite",
                 chain,
             )
         result = []
@@ -1592,7 +1754,7 @@ class _Resolver:
                 raise refuse(
                     "unsupported-entity",
                     entry.name,
-                    "Transformed composite curves are not admitted.",
+                    "iges.composite_curve.transform must be absent; got a transformed composite",
                     chain,
                 )
             segments = []
@@ -1601,14 +1763,12 @@ class _Resolver:
             self.active.pop()
             return segments
         curve = self.curve(pointer, chain)
-        return [(curve, *self._range(entry, curve))]
+        return [(curve, *self._range(entry))]
 
-    def _range(self, entry: _Entry, curve: AbstractCurve) -> tuple[float, float]:
+    def _range(self, entry: _Entry) -> tuple[float, float]:
         """Parameter range of a stand-alone IGES curve on its native carrier."""
         match entry.entity_type:
             case 110:
-                if not isinstance(curve, LineCurve):
-                    raise RuntimeError("Lines decode to line carriers.")
                 length = float(
                     np.linalg.norm(self.point(entry, 3) - self.point(entry, 0))
                 )
@@ -1647,13 +1807,19 @@ class _Resolver:
                 while last <= first:
                     last += 2.0 * np.pi
                 return first, last
-            case _:
+            case 126:
                 upper, degree = self.integer(entry, 0), self.integer(entry, 1)
                 index = 6 + (upper + degree + 2) + 4 * (upper + 1)
                 return self.real(entry, index), self.real(entry, index + 1)
+            case _:
+                raise refuse(
+                    "unsupported-entity",
+                    entry.name,
+                    f"iges.curve.entity_type must define a supported parameter range; got {entry.entity_type}",
+                )
 
     def compact_placed_topology(self) -> None:
-        """Remove private placement templates, retaining source-labelled incidences."""
+        """Remove placement templates, retaining source-labeled incidences."""
         stage = self.stage
         edges = sorted(
             {
@@ -1755,7 +1921,7 @@ def _import(resource: BoundedResource, policy: CadImportPolicy, /) -> CadImportR
         raise refuse(
             "unsupported-entity",
             "file",
-            "A nonempty geometric file contains no admitted B-Rep faces.",
+            "iges.file.geometry must contain supported B-Rep faces; got nonempty geometry without faces",
         )
     dropped: dict[int, int] = {}
     for entry in file.entries.values():
@@ -1773,7 +1939,7 @@ def _import(resource: BoundedResource, policy: CadImportPolicy, /) -> CadImportR
                 raise refuse(
                     "unsupported-entity",
                     entry.name,
-                    "An unconsumed geometric entity cannot be discarded as annotation.",
+                    "iges.file.entity must be consumed or classified as non-geometric; got unconsumed geometry",
                     (entry.name,),
                 )
             dropped[entry.entity_type] = dropped.get(entry.entity_type, 0) + 1
@@ -1854,26 +2020,26 @@ def _import(resource: BoundedResource, policy: CadImportPolicy, /) -> CadImportR
         report=report,
         coverage=stage.coverage(dict(resolver.counts)),
         provenance=tuple(stage.provenance),
+        entity_metadata=None,
     )
 
 
+@checked
 def decode_iges_resource(
     resource: BoundedResource, policy: CadImportPolicy, /
 ) -> CadImportResult:
-    """Decode one bounded IGES 5.3 resource into one native exact `BRepModel`.
+    """Decode one bounded IGES 5.3 resource into one native `BRepModel`.
 
-    Lengths are converted exactly from the global-section unit to
+    Lengths are converted from the global-section unit to
     ``policy.coordinate_contract``. Manifold solids (186) become solids;
     unreferenced shells, faces and trimmed surfaces become free shells and
     faces. Unreferenced non-geometric and wireframe entities are dropped with
     a declared loss.
     """
-    if not isinstance(resource, BoundedResource):
-        raise TypeError("resource must be a BoundedResource.")
-    if not isinstance(policy, CadImportPolicy):
-        raise TypeError("policy must be a CadImportPolicy.")
     if resource.manifest.limits != policy.limits:
-        raise ValueError("The bounded resource and import policy limits must match.")
+        raise ValueError(
+            "resource.manifest.limits must match policy.limits; got unequal limits"
+        )
     try:
         return _import(resource, policy)
     except CadInterchangeError as error:
@@ -1887,21 +2053,17 @@ def decode_iges_resource(
         raise failure from error
 
 
+@checked
 def decode_iges_bytes(
     data: bytes, policy: CadImportPolicy, /, *, source_path: str | None = None
 ) -> CadImportResult:
-    """Bound and decode exact in-memory IGES bytes."""
-    if not isinstance(policy, CadImportPolicy):
-        raise TypeError("policy must be a CadImportPolicy.")
-    try:
-        resource = bounded_resource_from_bytes(
-            data, limits=policy.limits, source_path=source_path
-        )
-    except ResourceReadError as error:
-        resource_refusal(error)
-    return decode_iges_resource(resource, policy)
+    """Bound and decode in-memory IGES bytes."""
+    return decode_cad_bytes(
+        data, policy, decoder=decode_iges_resource, source_path=source_path
+    )
 
 
+@checked
 def read_iges(
     path: str | os.PathLike[str],
     policy: CadImportPolicy,
@@ -1910,15 +2072,9 @@ def read_iges(
     trusted_root: str | os.PathLike[str],
 ) -> CadImportResult:
     """Descriptor-read and decode one bounded local IGES file."""
-    if not isinstance(policy, CadImportPolicy):
-        raise TypeError("policy must be a CadImportPolicy.")
-    try:
-        resource = read_bounded_resource(
-            path, trusted_root=trusted_root, limits=policy.limits
-        )
-    except ResourceReadError as error:
-        resource_refusal(error)
-    return decode_iges_resource(resource, policy)
+    return read_cad_file(
+        path, policy, decoder=decode_iges_resource, trusted_root=trusted_root
+    )
 
 
 # ------------------------------------------------------------------ writer
@@ -1927,7 +2083,11 @@ def read_iges(
 def _real_text(value: float, /) -> str:
     number = float(value)
     if not isfinite(number):
-        raise refuse("inexact-export", "number", "Non-finite values cannot be exported.")
+        raise refuse(
+            "inexact-export",
+            "number",
+            f"iges.export.number must be finite; got {number!r}",
+        )
     text = repr(number).upper()
     mantissa, _, exponent = text.partition("E")
     if "." not in mantissa:
@@ -1940,7 +2100,7 @@ def _hollerith(text: str, /) -> str:
         raise refuse(
             "inexact-export",
             "text",
-            "IGES text fields require printable ASCII; no transliteration is performed.",
+            "iges.export.text must contain printable ASCII; got a nonprintable or non-ASCII character",
         )
     return f"{len(text)}H{text}"
 
@@ -1978,40 +2138,92 @@ def _decode_path_name(
                 raise refuse(
                     "malformed",
                     label,
-                    "Scientific path metadata must be a flat string array.",
+                    "iges.path.metadata must be a flat string array; got nested arrays",
                 )
         elif character == "]":
             depth -= 1
         elif character in "{}":
             raise refuse(
-                "malformed", label, "Scientific path metadata cannot contain records."
+                "malformed",
+                label,
+                "iges.path.metadata must be a string array; got a record",
             )
     try:
         path = json.loads(payload)
     except (ValueError, RecursionError) as error:
-        raise refuse("malformed", label, "Malformed scientific path metadata.") from error
+        raise refuse(
+            "malformed",
+            label,
+            "iges.path.metadata must contain valid JSON; got malformed text",
+        ) from error
     if (
         not isinstance(path, list)
         or not path
         or any(not isinstance(item, str) or not item for item in path)
     ):
         raise refuse(
-            "malformed", label, "Scientific paths require nonempty string components."
+            "malformed",
+            label,
+            "iges.path.components must be nonempty strings; got invalid components",
         )
     if len(path) > maximum_components:
         raise refuse(
-            "limit", label, "Scientific path components exceed the attribute budget."
+            "limit",
+            label,
+            "iges.path.components must fit the attribute budget; got excessive components",
         )
     return tuple(path)
 
 
+# IGES records contain 80 ASCII columns and one newline. Directory entries
+# occupy two records; P records reserve 64 columns for parameter text.
+_RECORD_BYTES = 81
+_DIRECTORY_RECORDS = 2
+_PARAMETER_COLUMNS = 64
+_GLOBAL_COLUMNS = 72
+_MAXIMUM_DIRECTORY_ENTITIES = (10**7 - 1) // _DIRECTORY_RECORDS
+# Preserve the early conservative metadata reservation. Serialization replaces
+# it with the measured S/G/T size before applying the final output limit.
+_METADATA_RESERVATION_BYTES = 1024
+
+
 @dataclass(slots=True)
 class _Out:
+    number: int
     entity_type: int
     parameters: list[str]
     form: int = 0
-    transform: int = 0
+    transform: _Out | None = None
     root: bool = False
+
+    def __str__(self) -> str:
+        """Return the IGES directory reference used in parameter records."""
+        return str(self.number)
+
+
+@final
+class _EdgeEntities(StrictModule):
+    vertex_list: _Out
+    edge_list: _Out
+    edge_index: dict[int, int]
+
+
+@final
+class _FaceEntities(StrictModule):
+    faces: tuple[_Out, ...]
+    frame_signs: tuple[int, ...]
+
+
+@final
+class _RootEntities(StrictModule):
+    shells: tuple[_Out, ...]
+    solids: tuple[_Out, ...]
+
+
+@final
+class _ParameterFrame(StrictModule):
+    matrix: np.ndarray
+    shift: np.ndarray
 
 
 @dataclass(slots=True)
@@ -2019,23 +2231,45 @@ class _IgesWriter:
     model: BRepModel
     policy: CadExportPolicy
     entities: list[_Out] = field(default_factory=list)
-    byte_count: int = 1024
+    byte_count: int = _METADATA_RESERVATION_BYTES
     approximations: tuple[CadCurveApproximation, ...] = ()
 
     def add(
-        self, entity_type: int, parameters: list[str], form: int = 0, transform: int = 0
-    ) -> int:
-        if len(self.entities) >= min(self.policy.maximum_entities, 4_999_999):
-            raise refuse("limit", "export", "The export exceeds the entity limit.")
+        self,
+        entity_type: int,
+        parameters: list[str],
+        form: int = 0,
+        transform: _Out | None = None,
+    ) -> _Out:
+        if len(self.entities) >= min(
+            self.policy.maximum_entities, _MAXIMUM_DIRECTORY_ENTITIES
+        ):
+            raise refuse(
+                "limit",
+                "export",
+                "iges.export.entity_count must fit the entity limit; got excessive entities",
+            )
         length = len(str(entity_type)) + 1 + sum(len(value) + 1 for value in parameters)
-        cost = 162 + 81 * ((length + 63) // 64)
+        parameter_records = (length + _PARAMETER_COLUMNS - 1) // _PARAMETER_COLUMNS
+        cost = _RECORD_BYTES * (_DIRECTORY_RECORDS + parameter_records)
         if self.byte_count + cost > self.policy.maximum_bytes:
-            raise refuse("limit", "export", "The export exceeds the byte limit.")
+            raise refuse(
+                "limit",
+                "export",
+                "iges.export.bytes must fit the byte limit; got excessive output records",
+            )
         self.byte_count += cost
-        self.entities.append(_Out(entity_type, parameters, form, transform))
-        return 2 * len(self.entities) - 1
+        entity = _Out(
+            _DIRECTORY_RECORDS * len(self.entities) + 1,
+            entity_type,
+            parameters,
+            form,
+            transform,
+        )
+        self.entities.append(entity)
+        return entity
 
-    def reals(self, values: object) -> list[str]:
+    def reals(self, values: ConvertibleToArray) -> list[str]:
         return [_real_text(v) for v in np.asarray(values, dtype=np.float64).reshape(-1)]
 
     def transform(
@@ -2044,23 +2278,24 @@ class _IgesWriter:
         first: ConvertibleToArray,
         second: ConvertibleToArray,
         label: str,
-    ) -> int:
-        first_, second_, normal = orthonormal_frame(first, second, label)
+    ) -> _Out:
+        first_values = np.asarray(first, dtype=np.float64)
+        second_values = np.asarray(second, dtype=np.float64)
+        first_, second_, normal = orthonormal_frame(first_values, second_values, label)
         rotation = np.stack((first_, second_, normal), axis=1)
         matrix = np.concatenate((rotation, np.asarray(origin)[:, None]), axis=1)
         return self.add(124, self.reals(matrix))
 
-    def point(self, value: object) -> int:
+    def point(self, value: ConvertibleToArray) -> _Out:
         return self.add(116, self.reals(value))
 
-    def direction(self, value: object) -> int:
+    def direction(self, value: ConvertibleToArray) -> _Out:
         return self.add(123, self.reals(value))
 
-    def curve(self, curve: AbstractCurve, first: float, last: float, label: str) -> int:
-        evaluate = curve.evaluate
+    def curve(self, curve: AbstractCurve, first: float, last: float, label: str) -> _Out:
         match curve:
             case LineCurve():
-                ends = np.asarray(evaluate(jnp.asarray((first, last), dtype=jnp.float64)))
+                ends = curve_evaluate_host(curve, (first, last))
                 return self.add(110, self.reals(ends))
             case CircleCurve():
                 transform = self.transform(
@@ -2115,10 +2350,12 @@ class _IgesWriter:
                 raise refuse(
                     "inexact-export",
                     label,
-                    f"{type(curve).__name__} carriers have no exact IGES entity.",
+                    f"iges.export.curve must have a supported IGES entity; got {type(curve).__name__}",
                 )
 
-    def surface(self, patch: AbstractSurfacePatch, box: np.ndarray, label: str) -> int:
+    # IGES 5.3 headers and control ordering are external layout contracts.
+    # Keep their straight-line parameter lists beside the fail-closed carrier dispatch.
+    def surface(self, patch: AbstractSurfacePatch, box: np.ndarray, label: str) -> _Out:
         match patch:
             case PlanePatch():
                 first_raw = np.asarray(patch.first_axis)
@@ -2178,7 +2415,7 @@ class _IgesWriter:
                             ],
                             form=1,
                         )
-                    case _:
+                    case TorusPatch():
                         return self.add(
                             198,
                             [
@@ -2190,6 +2427,8 @@ class _IgesWriter:
                             ],
                             form=1,
                         )
+                    case _:
+                        assert_never(patch)
             case BSplineSurfacePatch():
                 points = np.asarray(patch.control_points)
                 weights = np.asarray(patch.weights)
@@ -2245,49 +2484,49 @@ class _IgesWriter:
             case ExtrusionSurface():
                 first, last = float(box[0, 0]), float(box[1, 0])
                 directrix = self.curve(patch.curve, first, last, label)
-                if isinstance(patch.curve, LineCurve):
-                    start_parameter = first
-                elif isinstance(patch.curve, BSplineCurve):
-                    domain = patch.curve.parameter_domain
-                    if domain is None:
-                        raise refuse(
-                            "inexact-export",
-                            label,
-                            "A spline directrix requires a finite parameter domain.",
-                        )
-                    start_parameter = domain[0]
-                else:
-                    start_parameter = 0.0
-                end = np.asarray(
-                    patch.curve.evaluate(jnp.asarray(start_parameter, dtype=jnp.float64))
-                ) + np.asarray(patch.direction)
+                match patch.curve:
+                    case LineCurve():
+                        start_parameter = first
+                    case BSplineCurve():
+                        domain = patch.curve.parameter_domain
+                        if domain is None:
+                            raise refuse(
+                                "inexact-export",
+                                label,
+                                "iges.export.directrix_domain must be finite; got an unbounded spline domain",
+                            )
+                        start_parameter = domain[0]
+                    case _:
+                        start_parameter = 0.0
+                end = curve_evaluate_host(patch.curve, start_parameter) + np.asarray(
+                    patch.direction
+                )
                 return self.add(122, [str(directrix), *self.reals(end)])
             case OffsetSurface():
                 if float(patch.distance) == 0.0:
                     raise refuse(
                         "inexact-export",
                         label,
-                        "IGES offset surfaces require a nonzero distance.",
+                        "iges.export.offset_distance must be nonzero; got zero",
                     )
                 basis = self.surface(patch.base, box, label)
-                domain = _natural_box(patch.base)
+                domain = natural_box(patch.base)
                 midpoint = (
                     np.mean(domain, axis=0)
                     if np.all(np.isfinite(domain))
                     else np.zeros(2, dtype=np.float64)
                 )
-                frame = np.asarray(
-                    jax.jacfwd(patch.base.evaluate)(
-                        jnp.asarray(midpoint, dtype=jnp.float64)
-                    )
+                differential = prepare_surface_host(
+                    patch.base, with_differential=True, batch_capacity=1
                 )
+                frame = differential.evaluate_host_points(midpoint[None, :])[0, :, 1:]
                 normal = np.cross(frame[:, 0], frame[:, 1])
                 magnitude = float(np.linalg.norm(normal))
                 if not isfinite(magnitude) or magnitude == 0.0:
                     raise refuse(
                         "inexact-export",
                         label,
-                        "The offset-indicator reference has no regular source normal.",
+                        "iges.export.offset_normal must be regular; got a zero or nonfinite normal",
                     )
                 return self.add(
                     140,
@@ -2301,8 +2540,65 @@ class _IgesWriter:
                 raise refuse(
                     "inexact-export",
                     label,
-                    f"{type(patch).__name__} surfaces are not exported to IGES.",
+                    f"iges.export.surface must have a supported IGES entity; got {type(patch).__name__}",
                 )
+
+    def _parameter_frame(
+        self, patch: AbstractSurfacePatch, box: np.ndarray, label: str
+    ) -> _ParameterFrame:
+        """Map native UV coordinates to the emitted IGES surface parameter frame."""
+        while isinstance(patch, OffsetSurface):
+            patch = patch.base
+        matrix, shift = np.eye(2, dtype=np.float64), np.zeros(2, dtype=np.float64)
+        match patch:
+            case PlanePatch():
+                first_raw = np.asarray(patch.first_axis)
+                second_raw = np.asarray(patch.second_axis)
+                axis, second, _ = orthonormal_frame(
+                    first_raw / np.linalg.norm(first_raw),
+                    second_raw / np.linalg.norm(second_raw),
+                    label,
+                )
+                matrix = np.stack((axis, second)) @ np.stack(
+                    (first_raw, second_raw), axis=1
+                )
+            case CylinderPatch() | ConePatch() | SpherePatch() | TorusPatch():
+                first_axis, second_axis, _ = orthonormal_frame(
+                    patch.first_axis, patch.second_axis, label
+                )
+                external_second = np.cross(np.asarray(patch.axis), first_axis)
+                handedness = float(external_second @ second_axis)
+                if abs(abs(handedness) - 1.0) > 1.0e-9:
+                    raise refuse(
+                        "inexact-export",
+                        label,
+                        "iges.export.surface_frame must align with its axis; got a misaligned frame",
+                    )
+                matrix[0, 0] = (1.0 if handedness > 0.0 else -1.0) * degrees(1.0)
+                match patch:
+                    case SpherePatch():
+                        matrix[1, 1] = degrees(1.0)
+                    case TorusPatch():
+                        matrix[1, 1] = degrees(1.0)
+                        matrix = matrix[::-1]
+                    case _:
+                        pass
+            case ExtrusionSurface(curve=LineCurve() as directrix):
+                matrix[0, 0] = float(np.linalg.norm(np.asarray(directrix.direction)))
+                shift[0] = -float(box[0, 0]) * matrix[0, 0]
+            case RevolutionSurface():
+                # IGES orders the generatrix parameter before the angle.
+                # Reversing the angle preserves the native surface normal.
+                scale = (
+                    1.0 / float(box[1, 1] - box[0, 1])
+                    if isinstance(patch.curve, LineCurve)
+                    else 1.0
+                )
+                matrix = np.asarray(((0.0, scale), (-1.0, 0.0)))
+                shift = np.asarray((-float(box[0, 1]) * scale, 2.0 * np.pi))
+            case _:
+                pass
+        return _ParameterFrame(matrix, shift)
 
     def parameter_curve(
         self,
@@ -2313,50 +2609,10 @@ class _IgesWriter:
         first: float,
         last: float,
         label: str,
-    ) -> int:
+    ) -> _Out:
         """Write a UV carrier in the emitted surface and edge parameterization."""
-        while isinstance(patch, OffsetSurface):
-            patch = patch.base
-        matrix, shift = np.eye(2), np.zeros(2)
-        if isinstance(patch, PlanePatch):
-            first_raw = np.asarray(patch.first_axis)
-            second_raw = np.asarray(patch.second_axis)
-            axis, second, _ = orthonormal_frame(
-                first_raw / np.linalg.norm(first_raw),
-                second_raw / np.linalg.norm(second_raw),
-                label,
-            )
-            matrix = np.stack((axis, second)) @ np.stack((first_raw, second_raw), axis=1)
-        elif isinstance(patch, (CylinderPatch, ConePatch, SpherePatch, TorusPatch)):
-            first_axis, second_axis, _ = orthonormal_frame(
-                patch.first_axis, patch.second_axis, label
-            )
-            external_second = np.cross(np.asarray(patch.axis), first_axis)
-            handedness = float(external_second @ second_axis)
-            if abs(abs(handedness) - 1.0) > 1.0e-9:
-                raise refuse(
-                    "inexact-export",
-                    label,
-                    "The analytic surface frame is not aligned with its axis.",
-                )
-            matrix[0, 0] = (1.0 if handedness > 0.0 else -1.0) * degrees(1.0)
-            if isinstance(patch, (SpherePatch, TorusPatch)):
-                matrix[1, 1] = degrees(1.0)
-            if isinstance(patch, TorusPatch):
-                matrix = matrix[::-1]
-        elif isinstance(patch, ExtrusionSurface) and isinstance(patch.curve, LineCurve):
-            matrix[0, 0] = float(np.linalg.norm(np.asarray(patch.curve.direction)))
-            shift[0] = -float(box[0, 0]) * matrix[0, 0]
-        elif isinstance(patch, RevolutionSurface):
-            # (u, v) -> (t, theta) = (v, 2 pi - u); IGES parameterizes a line
-            # generatrix on [0, 1].
-            scale = (
-                1.0 / float(box[1, 1] - box[0, 1])
-                if isinstance(patch.curve, LineCurve)
-                else 1.0
-            )
-            matrix = np.asarray(((0.0, scale), (-1.0, 0.0)))
-            shift = np.asarray((-float(box[0, 1]) * scale, 2.0 * np.pi))
+        frame = self._parameter_frame(patch, box, label)
+        matrix, shift = frame.matrix, frame.shift
         parameter_first, parameter_last = first, last
         if isinstance(edge_curve, LineCurve):
             parameter_first = 0.0
@@ -2365,13 +2621,7 @@ class _IgesWriter:
             )
         match curve:
             case LineCurve():
-                uv = (
-                    np.asarray(
-                        curve.evaluate(jnp.asarray((first, last), dtype=jnp.float64))
-                    )
-                    @ matrix.T
-                    + shift
-                )
+                uv = curve_evaluate_host(curve, (first, last)) @ matrix.T + shift
                 points = np.pad(uv, ((0, 0), (0, 1)))
                 output: AbstractCurve = BSplineCurve(
                     points,
@@ -2392,7 +2642,7 @@ class _IgesWriter:
                     raise refuse(
                         "inexact-export",
                         label,
-                        "A conic UV curve does not admit affine angular reparameterization.",
+                        "iges.export.conic_parameters must retain their angular interval; got affine reparameterization",
                         (label,),
                     )
                 center = matrix @ np.asarray(curve.center) + shift
@@ -2405,7 +2655,7 @@ class _IgesWriter:
                     raise refuse(
                         "inexact-export",
                         label,
-                        "A skew conic UV image has no parameter-preserving native carrier.",
+                        "iges.export.conic_axes must be orthogonal; got a skew UV image",
                         (label,),
                     )
                 radius1 = (
@@ -2429,31 +2679,12 @@ class _IgesWriter:
                 raise refuse(
                     "inexact-export",
                     label,
-                    f"No exact IGES UV carrier for {type(curve).__name__}.",
+                    f"iges.export.pcurve must have a supported IGES entity; got {type(curve).__name__}",
                     (label,),
                 )
         return self.curve(output, parameter_first, parameter_last, label)
 
-    def encode(self) -> bytes:
-        model = self.model
-        geometry = model.geometry
-        if geometry is None:
-            raise refuse(
-                "inexact-export",
-                model.source_id,
-                "Only models with exact native geometry can be exported.",
-            )
-        geometry, _, self.approximations = prepare_cad_export_geometry(
-            model, geometry, self.policy, format_name=_FORMAT
-        )
-        if (
-            not model.patches
-            and not geometry.edge_curves
-            and not len(geometry.vertex_points)
-        ):
-            self.add(308, ["0", _hollerith(model.source_id or "empty"), "0"])
-            self.entities[-1].root = True
-            return self._text(0.0)
+    def _edge_entities(self, geometry: BRepGeometry) -> _EdgeEntities:
         points = np.asarray(geometry.vertex_points)
         vertex_list = self.add(502, [str(points.shape[0]), *self.reals(points)], form=1)
         ranges = np.asarray(geometry.edge_ranges)
@@ -2465,19 +2696,21 @@ class _IgesWriter:
             if curve_index == -1:
                 continue
             carrier = geometry.curves[curve_index]
-            if not isinstance(carrier, AbstractCurve):
-                raise refuse(
-                    "inexact-export",
-                    f"edge:{edge}",
-                    "The prepared export edge has no explicit IGES carrier.",
-                    (f"edge:{edge}",),
-                )
-            curve = self.curve(
-                explicit_carrier(carrier),
-                float(ranges[edge, 0]),
-                float(ranges[edge, 1]),
-                f"edge:{edge}",
-            )
+            match carrier:
+                case AbstractCurve():
+                    curve = self.curve(
+                        explicit_carrier(carrier),
+                        float(ranges[edge, 0]),
+                        float(ranges[edge, 1]),
+                        f"edge:{edge}",
+                    )
+                case _:
+                    raise refuse(
+                        "inexact-export",
+                        f"edge:{edge}",
+                        "iges.export.edge must have an explicit curve carrier; got an implicit carrier",
+                        (f"edge:{edge}",),
+                    )
             edge_rows.extend(
                 (
                     str(curve),
@@ -2489,127 +2722,157 @@ class _IgesWriter:
             )
             edge_index[edge] = len(edge_index) + 1
         edge_list = self.add(504, [str(len(edge_index)), *edge_rows], form=1)
-        orientation = np.asarray(model.orientation)
-        faces = []
-        frame_signs: list[int] = []
-        bounds = np.asarray(model.parameter_bounds)
-        for face, loops in enumerate(geometry.face_loops):
-            surface = self.surface(model.patches[face], bounds[face], f"face:{face}")
-            patch = model.patches[face]
-            while isinstance(patch, OffsetSurface):
-                patch = patch.base
-            frame_sign = 1
-            if isinstance(patch, (CylinderPatch, ConePatch, SpherePatch, TorusPatch)):
-                handedness = float(
-                    np.cross(np.asarray(patch.axis), np.asarray(patch.first_axis))
-                    @ np.asarray(patch.second_axis)
+        return _EdgeEntities(vertex_list, edge_list, edge_index)
+
+    def _coedge_row(
+        self,
+        geometry: BRepGeometry,
+        edges: _EdgeEntities,
+        face: int,
+        coedge: int,
+        frame_sign: int,
+        box: np.ndarray,
+        interval: np.ndarray,
+    ) -> list[str]:
+        edge = geometry.coedge_edges[coedge]
+        agrees = "1" if frame_sign * geometry.coedge_senses[coedge] > 0 else "0"
+        first, last = (float(value) for value in interval)
+        pcurve = geometry.pcurves[coedge]
+        match pcurve:
+            case AbstractCurve():
+                pass
+            case _:
+                raise refuse(
+                    "inexact-export",
+                    f"coedge:{coedge}",
+                    "iges.export.pcurve must have an explicit curve carrier; got an implicit carrier",
+                    (f"face:{face}", f"coedge:{coedge}"),
                 )
-                frame_sign = 1 if handedness > 0.0 else -1
-            frame_signs.append(frame_sign)
-            loop_pointers = []
-            for loop in loops:
-                rows = []
-                for coedge in loop if frame_sign > 0 else reversed(loop):
-                    edge = geometry.coedge_edges[coedge]
-                    agrees = (
-                        "1" if frame_sign * geometry.coedge_senses[coedge] > 0 else "0"
+        if edge in edges.edge_index:
+            edge_curve = geometry.curves[geometry.edge_curves[edge]]
+            match edge_curve:
+                case AbstractCurve():
+                    pass
+                case _:
+                    raise refuse(
+                        "inexact-export",
+                        f"edge:{edge}",
+                        "iges.export.edge must have an explicit curve carrier; got an implicit carrier",
+                        (f"face:{face}", f"edge:{edge}"),
                     )
-                    first, last = (float(value) for value in ranges[edge])
-                    pcurve = geometry.pcurves[coedge]
-                    if not isinstance(pcurve, AbstractCurve):
+        else:
+            edge_curve = None
+            if agrees == "0":
+                pcurve = explicit_carrier(pcurve)
+                match pcurve:
+                    case LineCurve():
+                        pcurve = LineCurve(
+                            np.asarray(pcurve.origin)
+                            + (first + last) * np.asarray(pcurve.direction),
+                            -np.asarray(pcurve.direction),
+                        )
+                    case BSplineCurve():
+                        pcurve = BSplineCurve(
+                            np.asarray(pcurve.control_points)[::-1],
+                            np.asarray(pcurve.weights)[::-1],
+                            first + last - np.asarray(pcurve.knots)[::-1],
+                            pcurve.degree,
+                        )
+                    case _:
                         raise refuse(
                             "inexact-export",
                             f"coedge:{coedge}",
-                            "The prepared export p-curve has no explicit IGES carrier.",
+                            "iges.export.vertex_pcurve must support reversed parameterization; got an unsupported carrier",
                             (f"face:{face}", f"coedge:{coedge}"),
                         )
-                    if edge in edge_index:
-                        edge_curve = geometry.curves[geometry.edge_curves[edge]]
-                        if not isinstance(edge_curve, AbstractCurve):
-                            raise refuse(
-                                "inexact-export",
-                                f"edge:{edge}",
-                                "The prepared export edge has no explicit IGES carrier.",
-                                (f"face:{face}", f"edge:{edge}"),
-                            )
-                    else:
-                        edge_curve = None
-                        if agrees == "0":
-                            pcurve = explicit_carrier(pcurve)
-                            match pcurve:
-                                case LineCurve():
-                                    pcurve = LineCurve(
-                                        np.asarray(pcurve.origin)
-                                        + (first + last) * np.asarray(pcurve.direction),
-                                        -np.asarray(pcurve.direction),
-                                    )
-                                case BSplineCurve():
-                                    pcurve = BSplineCurve(
-                                        np.asarray(pcurve.control_points)[::-1],
-                                        np.asarray(pcurve.weights)[::-1],
-                                        first + last - np.asarray(pcurve.knots)[::-1],
-                                        pcurve.degree,
-                                    )
-                                case _:
-                                    raise refuse(
-                                        "inexact-export",
-                                        f"coedge:{coedge}",
-                                        "A reversed vertex-use p-curve has no exact IGES carrier.",
-                                        (f"face:{face}", f"coedge:{coedge}"),
-                                    )
-                        agrees = "1"
-                    pointer = self.parameter_curve(
-                        explicit_carrier(pcurve),
-                        model.patches[face],
-                        bounds[face],
-                        None if edge_curve is None else explicit_carrier(edge_curve),
-                        first,
-                        last,
-                        f"coedge:{coedge}",
+            agrees = "1"
+        pointer = self.parameter_curve(
+            explicit_carrier(pcurve),
+            self.model.patches[face],
+            box,
+            None if edge_curve is None else explicit_carrier(edge_curve),
+            first,
+            last,
+            f"coedge:{coedge}",
+        )
+        if edge in edges.edge_index:
+            return [
+                "0",
+                str(edges.edge_list),
+                str(edges.edge_index[edge]),
+                agrees,
+                "1",
+                "0",
+                str(pointer),
+            ]
+        return [
+            "1",
+            str(edges.vertex_list),
+            str(geometry.edge_vertices[edge][0] + 1),
+            agrees,
+            "1",
+            "0",
+            str(pointer),
+        ]
+
+    def _face_entities(
+        self, geometry: BRepGeometry, edges: _EdgeEntities
+    ) -> _FaceEntities:
+        faces: list[_Out] = []
+        frame_signs: list[int] = []
+        bounds = np.asarray(self.model.parameter_bounds)
+        ranges = np.asarray(geometry.edge_ranges)
+        for face, loops in enumerate(geometry.face_loops):
+            surface = self.surface(self.model.patches[face], bounds[face], f"face:{face}")
+            patch = self.model.patches[face]
+            while isinstance(patch, OffsetSurface):
+                patch = patch.base
+            frame_sign = 1
+            match patch:
+                case CylinderPatch() | ConePatch() | SpherePatch() | TorusPatch():
+                    handedness = float(
+                        np.cross(np.asarray(patch.axis), np.asarray(patch.first_axis))
+                        @ np.asarray(patch.second_axis)
                     )
-                    if edge in edge_index:
-                        rows.extend(
-                            (
-                                "0",
-                                str(edge_list),
-                                str(edge_index[edge]),
-                                agrees,
-                                "1",
-                                "0",
-                                str(pointer),
-                            )
+                    frame_sign = 1 if handedness > 0.0 else -1
+                case _:
+                    pass
+            frame_signs.append(frame_sign)
+            loop_pointers: list[str] = []
+            for loop in loops:
+                rows: list[str] = []
+                for coedge in loop if frame_sign > 0 else reversed(loop):
+                    rows.extend(
+                        self._coedge_row(
+                            geometry,
+                            edges,
+                            face,
+                            coedge,
+                            frame_sign,
+                            bounds[face],
+                            ranges[geometry.coedge_edges[coedge]],
                         )
-                    else:
-                        vertex = geometry.edge_vertices[edge][0] + 1
-                        rows.extend(
-                            (
-                                "1",
-                                str(vertex_list),
-                                str(vertex),
-                                agrees,
-                                "1",
-                                "0",
-                                str(pointer),
-                            )
-                        )
+                    )
                 loop_pointers.append(str(self.add(508, [str(len(loop)), *rows], form=1)))
             faces.append(
                 self.add(
                     510, [str(surface), str(len(loops)), "1", *loop_pointers], form=1
                 )
             )
-        shells = []
+        return _FaceEntities(tuple(faces), tuple(frame_signs))
+
+    def _root_entities(
+        self, geometry: BRepGeometry, faces: _FaceEntities
+    ) -> _RootEntities:
+        orientation = np.asarray(self.model.orientation)
+        shells: list[_Out] = []
         for members, signs in zip(
             geometry.shell_faces, geometry.shell_orientations, strict=True
         ):
-            rows = []
+            rows: list[str] = []
             for face, sign in zip(members, signs, strict=True):
-                rows.extend(
-                    (
-                        str(faces[face]),
-                        "1" if sign * orientation[face] * frame_signs[face] > 0 else "0",
-                    )
-                )
+                sense = sign * orientation[face] * faces.frame_signs[face]
+                rows.extend((str(faces.faces[face]), "1" if sense > 0 else "0"))
             closed = any(
                 members[0] in geometry.shell_faces[s]
                 for group in geometry.solid_shells
@@ -2618,35 +2881,60 @@ class _IgesWriter:
             shells.append(
                 self.add(514, [str(len(members)), *rows], form=1 if closed else 2)
             )
-        in_solid = {shell for group in geometry.solid_shells for shell in group}
-        solids = []
+        solids: list[_Out] = []
         for group in geometry.solid_shells:
-            voids = []
+            voids: list[str] = []
             for shell in group[1:]:
                 voids.extend((str(shells[shell]), "1"))
             solids.append(
                 self.add(186, [str(shells[group[0]]), "1", str(len(group) - 1), *voids])
             )
-        self.assembly(solids, geometry)
-        for index, shell in enumerate(shells):
-            if index not in in_solid:
-                self.entities[(shell - 1) // 2].root = True
-        in_shell = {face for members in geometry.shell_faces for face in members}
-        free = [face for face in range(len(faces)) if face not in in_shell]
-        if free:
-            rows = []
-            for face in free:
-                rows.extend(
-                    (
-                        str(faces[face]),
-                        "1" if orientation[face] * frame_signs[face] > 0 else "0",
-                    )
-                )
-            self.add(514, [str(len(free)), *rows], form=2)
-            self.entities[-1].root = True
-        return self._text(float(np.max(np.abs(points))))
+        return _RootEntities(tuple(shells), tuple(solids))
 
-    def assembly(self, solids: list[int], geometry: BRepGeometry) -> None:
+    def _mark_free_roots(
+        self, geometry: BRepGeometry, faces: _FaceEntities, roots: _RootEntities
+    ) -> None:
+        in_solid = {shell for group in geometry.solid_shells for shell in group}
+        for index, shell in enumerate(roots.shells):
+            if index not in in_solid:
+                shell.root = True
+        in_shell = {face for members in geometry.shell_faces for face in members}
+        free = [face for face in range(len(faces.faces)) if face not in in_shell]
+        if free:
+            orientation = np.asarray(self.model.orientation)
+            rows: list[str] = []
+            for face in free:
+                sense = orientation[face] * faces.frame_signs[face]
+                rows.extend((str(faces.faces[face]), "1" if sense > 0 else "0"))
+            self.add(514, [str(len(free)), *rows], form=2).root = True
+
+    def encode(self) -> bytes:
+        model = self.model
+        geometry = model.geometry
+        if geometry is None:
+            raise refuse(
+                "inexact-export",
+                model.source_id,
+                "iges.export.model_geometry must be present; got no B-Rep geometry",
+            )
+        geometry, _, self.approximations = prepare_cad_export_geometry(
+            model, geometry, self.policy, format_name=_FORMAT
+        )
+        if (
+            not model.patches
+            and not geometry.edge_curves
+            and not len(geometry.vertex_points)
+        ):
+            self.add(308, ["0", _hollerith(model.source_id or "empty"), "0"]).root = True
+            return self._text(0.0)
+        edges = self._edge_entities(geometry)
+        faces = self._face_entities(geometry, edges)
+        roots = self._root_entities(geometry, faces)
+        self.assembly(roots.solids, geometry)
+        self._mark_free_roots(geometry, faces, roots)
+        return self._text(float(np.max(np.abs(np.asarray(geometry.vertex_points)))))
+
+    def assembly(self, solids: tuple[_Out, ...], geometry: BRepGeometry) -> None:
         occurrences = {occurrence.path: occurrence for occurrence in geometry.occurrences}
         containers = {
             container.path: container for container in geometry.assembly_containers
@@ -2657,9 +2945,9 @@ class _IgesWriter:
         child_paths = {
             path for container in containers.values() for path in container.child_paths
         }
-        prepared: dict[tuple[str, ...], tuple[int, int]] = {}
+        prepared: dict[tuple[str, ...], tuple[_Out, int]] = {}
 
-        def member(path: tuple[str, ...]) -> int:
+        def member(path: tuple[str, ...]) -> _Out:
             occurrence = occurrences[path]
             definition = self.add(
                 308, ["0", _path_name(path), "1", str(solids[occurrence.solid])]
@@ -2676,7 +2964,7 @@ class _IgesWriter:
                 408, [str(definition), "0.", "0.", "0.", "1."], transform=transform
             )
 
-        def container(path: tuple[str, ...]) -> tuple[int, int]:
+        def container(path: tuple[str, ...]) -> tuple[_Out, int]:
             if path in prepared:
                 return prepared[path]
             record = containers[path]
@@ -2702,12 +2990,11 @@ class _IgesWriter:
         for path in containers:
             if path not in child_paths:
                 definition, _ = container(path)
-                self.add(408, [str(definition), "0.", "0.", "0.", "1."])
-                self.entities[-1].root = True
+                self.add(408, [str(definition), "0.", "0.", "0.", "1."]).root = True
         for path in occurrences:
             if path not in declared_members:
                 pointer = member(path)
-                self.entities[(pointer - 1) // 2].root = True
+                pointer.root = True
 
     def _text(self, extent: float) -> bytes:
         unit = self.model.coordinate_contract.length_unit
@@ -2717,7 +3004,7 @@ class _IgesWriter:
             raise refuse(
                 "units",
                 unit.symbol,
-                "The model length unit has no IGES unit flag.",
+                f"iges.export.length_unit must have an IGES unit flag; got {unit.symbol!r}",
             )
         flag = flags[0]
         timestamp = "19700101.000000"
@@ -2749,12 +3036,16 @@ class _IgesWriter:
             _hollerith(timestamp),
         ]
         global_length = sum(len(value) + 1 for value in global_values)
-        global_bytes = 81 * ((global_length + 71) // 72) + 162
-        if self.byte_count - 1024 + global_bytes > self.policy.maximum_bytes:
+        global_records = (global_length + _GLOBAL_COLUMNS - 1) // _GLOBAL_COLUMNS
+        global_bytes = _RECORD_BYTES * (global_records + 2)
+        if (
+            self.byte_count - _METADATA_RESERVATION_BYTES + global_bytes
+            > self.policy.maximum_bytes
+        ):
             raise refuse(
                 "limit",
                 "export",
-                "Global metadata exceeds the remaining output byte budget.",
+                "iges.export.metadata_bytes must fit the remaining byte budget; got excessive global records",
             )
         label = (
             "Phydrax native CAD export with declared approximations"
@@ -2766,16 +3057,22 @@ class _IgesWriter:
         global_lines = [text.ljust(72) + f"G{i + 1:7d}" for i, text in enumerate(glob)]
         directory: list[str] = []
         parameter_lines: list[str] = []
-        for index, entity in enumerate(self.entities):
-            number = 2 * index + 1
-            chunks = _wrap([str(entity.entity_type), *entity.parameters], ",", ";", 64)
+        for entity in self.entities:
+            number = entity.number
+            chunks = _wrap(
+                [str(entity.entity_type), *entity.parameters],
+                ",",
+                ";",
+                _PARAMETER_COLUMNS,
+            )
             pointer = len(parameter_lines) + 1
             for chunk in chunks:
                 parameter_lines.append(
                     f"{chunk.ljust(64)} {number:7d}P{len(parameter_lines) + 1:7d}"
                 )
             status = "00000000" if entity.root else "00010000"
-            first = [entity.entity_type, pointer, 0, 0, 0, 0, entity.transform, 0]
+            transform = 0 if entity.transform is None else entity.transform.number
+            first = [entity.entity_type, pointer, 0, 0, 0, 0, transform, 0]
             second = [entity.entity_type, 0, 0, len(chunks), entity.form]
             directory.append(
                 "".join(f"{value:8d}" for value in first) + status + f"D{number:7d}"
@@ -2803,6 +3100,7 @@ def _wrap(tokens: list[str], delimiter: str, terminator: str, width: int) -> lis
     return [text[start : start + width] for start in range(0, len(text), width)]
 
 
+@checked
 def write_iges(
     model: BRepModel,
     path: str | os.PathLike[str],
@@ -2811,52 +3109,30 @@ def write_iges(
     policy: CadExportPolicy | None = None,
     mode: PublicationMode = "exclusive",
 ) -> CadExportResult:
-    """Publish IGES carriers exactly unless explicit branch approximation is requested.
+    """Publish IGES carriers using the caller's branch approximation policy.
 
     Solids become 186 manifold solids (inner shells as voids); free shells and
     faces become open 514 shells. Coordinates are written in the model length
     unit (declared in the global section). The global timestamps are fixed so
     identical models produce identical bytes.
     """
-    if not isinstance(model, BRepModel):
-        raise TypeError("model must be a BRepModel.")
     policy_ = CadExportPolicy() if policy is None else policy
-    if not isinstance(policy_, CadExportPolicy):
-        raise TypeError("policy must be a CadExportPolicy or None.")
     writer = _IgesWriter(model, policy_)
     data = writer.encode()
     receipt = publish_bytes(path, data, maximum_bytes=policy_.maximum_bytes, mode=mode)
     counts: dict[str, int] = {}
     for entity in writer.entities:
         counts[str(entity.entity_type)] = counts.get(str(entity.entity_type), 0) + 1
-    losses = tuple(
-        AdapterLoss(
-            f"intersection-curve {item.branch_id}",
-            "export",
-            "transformed",
-            f"New approximation {item.approximation_id}; continuous 3D "
-            f"deviation bound {item.continuous_evidence.distance_bound:.17g}, "
-            f"UV deviation bound {item.continuous_evidence.parameter_bound:.17g}, "
-            f"surface-lift bounds ({item.continuous_evidence.first_correspondence_bound:.17g}, "
-            f"{item.continuous_evidence.second_correspondence_bound:.17g}); "
-            "continuous embedded source-fit homotopy and exported trim separation.",
-            changes_interpretation=True,
-        )
-        for item in writer.approximations
-    )
-    report = AdapterReport(
-        AdapterStatus.DECLARED_LOSS if writer.approximations else AdapterStatus.LOSSLESS,
-        "phydrax-brep",
-        _FORMAT,
-        source_id=model.model_id,
+    report = build_cad_export_report(
+        model,
+        receipt,
+        policy_,
+        writer.approximations,
+        format_name=_FORMAT,
+        qualifiers={"profile": _SCHEMA},
         target_id=receipt.receipt_id,
-        target_profile=AdapterFormatProfile(
-            _FORMAT,
-            qualifiers={
-                "profile": _SCHEMA,
-                **approximation_export_qualifiers(writer.approximations),
-            },
-        ),
+        stage="adapter",
+        loss_field_prefix="intersection-curve ",
         coordinate_mapping=(
             f"IGES unit of {model.coordinate_contract.length_unit.symbol}",
         ),
@@ -2871,8 +3147,6 @@ def write_iges(
         assumptions=(
             canonical_fingerprint({"kind": "iges-export", "policy": policy_.policy_id}),
         ),
-        losses=losses,
-        waivers=_export_loss_waivers(losses, policy_, "IGES"),
     )
     return CadExportResult(
         receipt=receipt,

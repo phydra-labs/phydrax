@@ -20,7 +20,7 @@ from ._singular_subspaces import (
     singular_value_response,
     SingularSubspaceResponse,
 )
-from ._spaces import _coordinate_dtype, _has_diagonal_pairing, AbstractVectorSpace
+from ._spaces import _has_diagonal_pairing, AbstractVectorSpace, coordinate_dtype
 from ._svd_contracts import (
     DenseSVD,
     DenseSVDState,
@@ -181,7 +181,7 @@ def _cost(
 ) -> SVDCostEstimate:
     operator = problem.operator
     rows, columns, count = operator.target.size, operator.source.size, policy.count
-    itemsize = _coordinate_dtype(operator.source).itemsize
+    itemsize = coordinate_dtype(operator.source).itemsize
     provider = estimate_operator_action_cost(operator)
     diagonal = _has_diagonal_pairing(operator.source) and _has_diagonal_pairing(
         operator.target

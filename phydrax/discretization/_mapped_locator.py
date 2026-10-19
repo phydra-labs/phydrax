@@ -14,18 +14,21 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax.discretization._reference_cell_types import CellGeometryElement
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
+
 from .._bvh import BVHBuildPolicy, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..typing import checked
 from ._cell_geometry import (
-    _require_scalar_coordinate_element,
-    CellGeometryElement,
     LayerColumnCellGeometryElement,
     PolynomialComposedCellGeometryElement,
     RationalComposedCellGeometryElement,
+    require_scalar_coordinate_element,
     RestrictedCellGeometryElement,
     SplineCellGeometryElement,
 )
+from ._coordinate_budget import CoordinateEnclosureBudget
 from ._coordinate_enclosure import (
     coordinate_expressions,
     expression_bounds,
@@ -33,14 +36,14 @@ from ._coordinate_enclosure import (
 )
 from ._reference_cell import reference_cell_topology
 from ._simplicial_locator import (
-    _AbstractPreparedNewtonCellLocator,
-    _cell_map_vertices,
-    _is_affine_simplex_element,
-    _vertex_star_routes,
+    AbstractPreparedNewtonCellLocator,
+    cell_map_vertices,
+    is_affine_simplex_element,
+    owned_locator_coordinate_preparation,
     SimplicialLocationPolicy,
+    vertex_star_routes,
 )
 from .fem._cell_map import PreparedFiniteElementCellMap
-from .fem._reference import FiniteElementSpec
 
 
 _REFERENCE_DOMAINS = {
@@ -56,16 +59,18 @@ _REFERENCE_DOMAINS = {
 }
 
 
-def _reference_domain(cell_kind: str, /) -> str:
+def reference_domain(cell_kind: str, /) -> str:
     reference_cell_topology(cell_kind)
     if cell_kind.startswith("simplex:"):
         return "simplex"
     if cell_kind.startswith("tensor:"):
         return "box"
-    try:
-        return _REFERENCE_DOMAINS[cell_kind]
-    except KeyError:
-        raise ValueError(f"Unsupported mapped reference cell {cell_kind!r}.") from None
+    domain = _REFERENCE_DOMAINS.get(cell_kind)
+    if domain is None:
+        raise ValueError(
+            f"reference_domain.cell_kind must name a supported mapped reference cell; got {cell_kind!r}"
+        )
+    return domain
 
 
 def reference_margin(cell_kind: str, reference: Array, /) -> Array:
@@ -94,7 +99,9 @@ def reference_margin(cell_kind: str, reference: Array, /) -> Array:
         "tensor:"
     ):
         return jnp.min(jnp.minimum(reference, 1.0 - reference), axis=-1)
-    raise ValueError(f"Unsupported mapped reference cell {cell_kind!r}.")
+    raise ValueError(
+        f"reference_domain.cell_kind must name a supported mapped reference cell; got {cell_kind!r}"
+    )
 
 
 def _exact_inside(kind: str, point: tuple[Fraction, ...], /) -> bool:
@@ -137,32 +144,31 @@ def _validate_restrictions(
             )
             if not _exact_inside(element.source_element.cell_kind, source):
                 raise ValueError(
-                    "Restricted coordinate map leaves its canonical source domain."
+                    "PreparedMappedCellLocator.coordinate_element must restrict to the source reference domain; got a mapped vertex outside that domain"
                 )
         element = element.source_element
-    element = _require_scalar_coordinate_element(element, "Mapped coordinate sources")
-    if isinstance(element, RestrictedCellGeometryElement):
-        raise RuntimeError(
-            "Reference source validation left an unresolved affine restriction."
-        )
-    if not isinstance(
-        element,
-        (
-            FiniteElementSpec,
-            LayerColumnCellGeometryElement,
-            PolynomialComposedCellGeometryElement,
-            RationalComposedCellGeometryElement,
-            SplineCellGeometryElement,
-        ),
-    ):
-        raise TypeError("Mapped coordinate sources require a supported scalar element.")
-    return element
+    scalar = require_scalar_coordinate_element(element, "Mapped coordinate sources")
+    match scalar:
+        case (
+            FiniteElementSpec()
+            | LayerColumnCellGeometryElement()
+            | PolynomialComposedCellGeometryElement()
+            | RationalComposedCellGeometryElement()
+            | SplineCellGeometryElement()
+        ):
+            return scalar
+        case _:
+            raise TypeError(
+                "PreparedMappedCellLocator.coordinate_element must support scalar coordinate values; got an unsupported element"
+            )
 
 
 def _bound_budget(cell_map: PreparedFiniteElementCellMap, capacity: int, /) -> None:
     """Bound source expansion before gathering local arrays or making polynomials."""
     if capacity < 1:
-        raise ValueError("maximum_bound_coefficients must be positive.")
+        raise ValueError(
+            "PreparedMappedCellLocator.maximum_bound_coefficients must be positive; got a nonpositive capacity"
+        )
     element = _validate_restrictions(cell_map.coordinate_element)
     dimension = element.topological_dimension
     degree = max(1, element.degree)
@@ -176,45 +182,51 @@ def _bound_budget(cell_map: PreparedFiniteElementCellMap, capacity: int, /) -> N
     required += cell_map.cell_count * element.local_dof_count * cell_map.ambient_dimension
     if required > capacity:
         raise ValueError(
-            f"Mapped locator source-bound coefficient capacity exceeded: {required} > {capacity}."
+            f"PreparedMappedCellLocator.maximum_bound_coefficients must cover source-bound coefficients; got {required} > {capacity}"
         )
 
 
 def _mapped_cell_bounds(
-    cell_map: PreparedFiniteElementCellMap, coordinates: np.ndarray, capacity: int, /
+    cell_map: PreparedFiniteElementCellMap,
+    coordinates: np.ndarray,
+    capacity: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray]:
-    _bound_budget(cell_map, capacity)
     shape = (cell_map.cell_count, cell_map.ambient_dimension)
     lower = np.empty(shape, dtype=np.float64)
     upper = np.empty(shape, dtype=np.float64)
     routes = np.asarray(cell_map.coordinate_dofs)
-    source_coordinates = cell_map.source_coordinates(coordinates)
+    source_coordinates = cell_map.source_coordinates(coordinates, budget=budget)
     for cell, route in enumerate(routes):
         local = tuple(source_coordinates[index] for index in route)
         element: CellGeometryElement = cell_map.coordinate_element
-        polynomials = coordinate_expressions(element, local)
+        polynomials = coordinate_expressions(element, local, budget=budget)
         if polynomials is None:
             raise ValueError(
-                "Mapped locator requires a canonical coordinate source enclosure; this source is unsupported."
+                "PreparedMappedCellLocator.coordinate_element must support a source enclosure; got an unsupported coordinate expression"
             )
-        domain = _reference_domain(element.cell_kind)
+        domain = reference_domain(element.cell_kind)
         dimension = reference_cell_topology(element.cell_kind).dimension
         for axis, polynomial in enumerate(polynomials):
             count = expression_node_count(polynomial, domain, dimension)
             if count > capacity:
                 raise ValueError(
-                    "Mapped locator source-bound coefficient capacity exceeded."
+                    "PreparedMappedCellLocator.maximum_bound_coefficients must cover every bound polynomial; got a coefficient count above capacity"
                 )
             lower[cell, axis], upper[cell, axis] = expression_bounds(
-                polynomial, domain, dimension
+                polynomial, domain, dimension, budget=budget
             )
     if not np.all(np.isfinite(lower) & np.isfinite(upper)):
-        raise ValueError("Mapped locator source enclosures must be finite.")
+        raise ValueError(
+            "PreparedMappedCellLocator.cell_bounds must be finite; got a nonfinite enclosure endpoint"
+        )
     return lower, upper
 
 
-class PreparedMappedCellLocator(_AbstractPreparedNewtonCellLocator):
-    """Actual prepared coordinate-map inverse on simplex, tensor, hybrid or child cells.
+class PreparedMappedCellLocator(AbstractPreparedNewtonCellLocator):
+    """Prepare coordinate-map inverses on simplex, tensor, hybrid, or child cells.
 
     The Newton iteration and bounded candidate assembly are shared with the
     simplicial locator. Only source enclosure and reference-domain operations
@@ -236,30 +248,42 @@ class PreparedMappedCellLocator(_AbstractPreparedNewtonCellLocator):
         /,
         *,
         maximum_bound_coefficients: int = 2_000_000,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
-        _reference_domain(cell_map.coordinate_element.cell_kind)
+        reference_domain(cell_map.coordinate_element.cell_kind)
         values = jnp.asarray(coordinates)
         if values.shape != (cell_map.coordinate_count, cell_map.ambient_dimension):
-            raise ValueError("Locator coordinates do not match the prepared cell map.")
+            raise ValueError(
+                "PreparedMappedCellLocator.coordinates must match the prepared cell map shape; got incompatible coordinates"
+            )
         host = np.asarray(values, dtype=np.float64)
         if not np.all(np.isfinite(host)):
-            raise ValueError("Mapped locator coordinate source must be finite.")
+            raise ValueError(
+                "PreparedMappedCellLocator.coordinates must be finite; got a nonfinite source coordinate"
+            )
         capacity = int(maximum_bound_coefficients)
-        lower, upper = _mapped_cell_bounds(cell_map, host, capacity)
+        _bound_budget(cell_map, capacity)
+        with owned_locator_coordinate_preparation(
+            cell_map,
+            host,
+            reference_domain(cell_map.coordinate_element.cell_kind),
+            budget=budget,
+        ) as budget:
+            lower, upper = _mapped_cell_bounds(cell_map, host, capacity, budget=budget)
         # Keep the enclosure outward when a lower precision execution is used.
         lower_jax = jnp.nextafter(jnp.asarray(lower, dtype=values.dtype), -jnp.inf)
         upper_jax = jnp.nextafter(jnp.asarray(upper, dtype=values.dtype), jnp.inf)
         self.cell_map = cell_map
         self.coordinates = values
         self.cells = cell_map.coordinate_dofs
-        if _is_affine_simplex_element(cell_map.coordinate_element):
-            star_cells, star_valid = _vertex_star_routes(_cell_map_vertices(cell_map))
+        if is_affine_simplex_element(cell_map.coordinate_element):
+            star_cells, star_valid = vertex_star_routes(cell_map_vertices(cell_map))
         else:
             star_cells = np.zeros((cell_map.cell_count, 1), dtype=np.int32)
             star_valid = np.zeros(star_cells.shape, dtype=np.bool_)
         self.vertex_star_cells = jnp.asarray(star_cells)
         self.vertex_star_valid = jnp.asarray(star_valid)
-        center = self._reference_seeds(values.dtype)[0]
+        center = self.reference_seeds(values.dtype)[0]
         self.centroids = cell_map.evaluate(
             values,
             jnp.arange(cell_map.cell_count),
@@ -291,7 +315,7 @@ class PreparedMappedCellLocator(_AbstractPreparedNewtonCellLocator):
             }
         )
 
-    def _reference_seeds(self, dtype: jnp.dtype, /) -> Array:
+    def reference_seeds(self, dtype: jnp.dtype, /) -> Array:
         kind = self.cell_map.coordinate_element.cell_kind
         topology = reference_cell_topology(kind)
         vertices = jnp.asarray(topology.vertices, dtype=dtype)
@@ -307,16 +331,16 @@ class PreparedMappedCellLocator(_AbstractPreparedNewtonCellLocator):
         # are parent DOFs and a restricted element has no reference_nodes.
         return jnp.concatenate((center[None], vertices), axis=0)
 
-    def _inside_reference(self, reference: Array, /) -> Array:
+    def contains_reference(self, reference: Array, /) -> Array:
         return (
             reference_margin(self.cell_map.coordinate_element.cell_kind, reference)
             >= -self.policy.reference_tolerance
         )
 
-    def _reference_weights(self, reference: Array, /) -> Array:
+    def reference_weights(self, reference: Array, /) -> Array:
         kind = self.cell_map.coordinate_element.cell_kind
         if kind in ("triangle", "tetrahedron") or kind.startswith("simplex:"):
-            return super()._reference_weights(reference)
+            return super().reference_weights(reference)
         if kind == "prism":
             triangle = jnp.concatenate(
                 ((1.0 - jnp.sum(reference[:, :2], axis=-1))[:, None], reference[:, :2]),

@@ -29,6 +29,7 @@ from ..geometry.brep._patches import (
     SpherePatch,
     TorusPatch,
 )
+from ..typing import checked
 
 
 def _xyz(value: Any) -> np.ndarray:
@@ -59,7 +60,7 @@ def _explore(shape: TopoDS_Shape, kind: Any, caster: Any) -> list[Any]:
     return entities
 
 
-def _explore_unique(shape: TopoDS_Shape, kind: Any, caster: Any) -> list[Any]:
+def explore_unique(shape: TopoDS_Shape, kind: Any, caster: Any) -> list[Any]:
     entities: list[Any] = []
     for candidate in _explore(shape, kind, caster):
         if not any(entity.IsSame(candidate) for entity in entities):
@@ -67,7 +68,7 @@ def _explore_unique(shape: TopoDS_Shape, kind: Any, caster: Any) -> list[Any]:
     return entities
 
 
-def _shape_index(entities: list[Any], candidate: Any) -> int:
+def shape_index(entities: list[Any], candidate: Any) -> int:
     for index, entity in enumerate(entities):
         if entity.IsSame(candidate):
             return index
@@ -206,7 +207,7 @@ def _wire_edge_indices(wire: Any, face: Any, edges: list[Any]) -> tuple[int, ...
     result: list[int] = []
     while explorer.More():
         edge = TopoDS.Edge(explorer.Current())
-        index = _shape_index(edges, edge)
+        index = shape_index(edges, edge)
         sign = -1 if edge.Orientation() == TopAbs_REVERSED else 1
         result.append(sign * (index + 1))
         explorer.Next()
@@ -273,9 +274,9 @@ def _extract_topology(shape: Any, faces: list[Any]) -> tuple[BRepTopology, list[
     from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_SOLID, TopAbs_VERTEX
     from OCP.TopoDS import TopoDS
 
-    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
-    vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex)
-    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
+    edges = explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
+    vertices = explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex)
+    solids = explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
     face_edges: list[tuple[int, ...]] = []
     face_wires: list[tuple[tuple[int, ...], ...]] = []
     edge_faces: list[list[int]] = [[] for _ in edges]
@@ -295,8 +296,8 @@ def _extract_topology(shape: Any, faces: list[Any]) -> tuple[BRepTopology, list[
     for solid in solids:
         indices: list[int] = []
         relative_orientations: list[int] = []
-        for solid_face in _explore_unique(solid, TopAbs_FACE, TopoDS.Face):
-            face_index = _shape_index(faces, solid_face)
+        for solid_face in explore_unique(solid, TopAbs_FACE, TopoDS.Face):
+            face_index = shape_index(faces, solid_face)
             indices.append(face_index)
             relative_orientations.append(
                 1 if solid_face.Orientation() == faces[face_index].Orientation() else -1
@@ -407,7 +408,7 @@ def _write_native_brep(shape: Any, destination: Path) -> None:
         os.fsync(stream.fileno())
 
 
-def _shape_digest(shape: Any) -> str:
+def shape_digest(shape: Any) -> str:
     # The digest identifies exact geometry and topology only. It serializes a
     # geometry copy without cached query triangulations and with OCCT's mutable
     # Modified/Checked bookkeeping flags (cleared by tessellation) canonicalized,
@@ -429,7 +430,8 @@ def _shape_digest(shape: Any) -> str:
             children.Next()
     stream = io.BytesIO()
     BRepTools.Write_s(copy, stream, False, False, TopTools_FormatVersion_VERSION_1)
-    return hashlib.sha256(stream.getvalue()).hexdigest()
+    with stream.getbuffer() as payload:
+        return hashlib.sha256(payload).hexdigest()
 
 
 def _import_policy_id(source_format: str, /) -> str:
@@ -504,8 +506,8 @@ def model_from_occt_shape(
 ) -> BRepModel:
     """Extract external comparison patches, incidence and query triangulation.
 
-    This OCCT-owned representation deliberately does not claim native exact
-    edge/p-curve authority. For native BRepSource or meshing, decode a published
+    This representation stores OCCT comparison patches and triangulation.
+    For native BRepSource or meshing, decode a published
     CAD artifact with the native read_cad policy instead.
     """
 
@@ -516,7 +518,9 @@ def model_from_occt_shape(
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
     if not isinstance(shape, TopoDS_Shape):
-        raise TypeError("shape must be an OCP.TopoDS.TopoDS_Shape.")
+        raise TypeError(
+            f"model_from_occt_shape.shape must be an OCP.TopoDS.TopoDS_Shape; got {type(shape).__name__}."
+        )
     if shape.IsNull():
         raise ValueError("Cannot import a null OCCT shape.")
     if (
@@ -526,15 +530,17 @@ def model_from_occt_shape(
         or not 0.0 < angular_deflection < np.pi
     ):
         raise ValueError(
-            "Meshing deflections must be finite and positive; angle below pi."
+            f"model_from_occt_shape.deflections must be finite with linear_deflection > 0 and 0 < angular_deflection < pi; got {(linear_deflection, angular_deflection)!r}."
         )
     if isinstance(trim_samples_per_edge, bool) or not isinstance(
         trim_samples_per_edge, int
     ):
-        raise TypeError("trim_samples_per_edge must be an integer.")
+        raise TypeError(
+            f"model_from_occt_shape.trim_samples_per_edge must be an integer; got {trim_samples_per_edge!r}."
+        )
     if trim_samples_per_edge < 3:
         raise ValueError("trim_samples_per_edge must be at least three.")
-    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face)
+    faces = explore_unique(shape, TopAbs_FACE, TopoDS.Face)
     if not faces:
         raise ValueError("The OCCT shape contains no faces.")
     topology, edges = _extract_topology(shape, faces)
@@ -556,7 +562,7 @@ def model_from_occt_shape(
         trim_domains.append(_normalized_trim_domain(face, bounds, trim_samples_per_edge))
         tags.append(tag)
         converted_count += int(converted)
-    digest = _shape_digest(shape) if source_digest is None else source_digest
+    digest = shape_digest(shape) if source_digest is None else source_digest
     vertices, mesh_faces, triangle_face_ids, triangle_parameters = _extract_tessellation(
         shape,
         faces,
@@ -595,6 +601,7 @@ def model_from_occt_shape(
     )
 
 
+@checked
 def import_occt_brep(
     path: str | Path,
     *,
@@ -605,8 +612,6 @@ def import_occt_brep(
     trim_samples_per_edge: int = 33,
 ) -> BRepModel:
     """Import CAD through the explicit optional OCCT interoperability engine."""
-    if not isinstance(coordinate_contract, SpatialCoordinateContract):
-        raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
 
     shape, source_format, source_digest = read_occt_shape(path)
     identity = (
@@ -646,7 +651,9 @@ def persist_occt_shape(
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
     if not isinstance(shape, TopoDS_Shape):
-        raise TypeError("shape must be an OCP.TopoDS.TopoDS_Shape.")
+        raise TypeError(
+            f"persist_occt_shape.shape must be an OCP.TopoDS.TopoDS_Shape; got {type(shape).__name__}."
+        )
     if shape.IsNull():
         raise ValueError("Cannot persist a null OCCT shape.")
     if not isinstance(overwrite, bool):

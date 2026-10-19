@@ -11,11 +11,12 @@ import phydrax as phx
 import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.operators.differential import directional_derivative, div, grad, laplacian
+from phydrax.units import METER
 
 
 def test_grad_complex_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")
@@ -30,7 +31,7 @@ def test_grad_complex_scalar_point() -> None:
 
 def test_directional_derivative_complex_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")
@@ -47,7 +48,7 @@ def test_directional_derivative_complex_scalar_point() -> None:
 
 def test_div_complex_vector_field_point() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")
@@ -62,7 +63,7 @@ def test_div_complex_vector_field_point() -> None:
 
 def test_laplacian_complex_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")

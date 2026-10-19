@@ -214,7 +214,7 @@ def test_finite_volume_persistence_scenario_1() -> None:
     initial = state.topology_journal.epoch_table[0]
     malformed_epoch = initial.to_archive_record()
     malformed_epoch["geometry_id"] = "changed-geometry"
-    with pytest.raises(ValueError, match="epoch archive identity"):
+    with pytest.raises(ValueError, match="TopologyEpoch.archive.epoch_id"):
         phx.discretization.TopologyEpoch.from_archive_record(malformed_epoch)
     malformed_artifacts = state.topology_journal.artifact_table[0].to_archive_record()
     malformed_artifacts["prepared_id"] = "changed-preparation"

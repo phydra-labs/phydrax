@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from types import TracebackType
-from typing import Self
+from typing import Literal, Self
 
 import equinox as eqx
 import numpy as np
@@ -14,10 +14,17 @@ import numpy as np
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._contracts import MeshingExecutionMode
 
 
 class MeshingExecutionPolicy(StrictModule, NonTrainableState):
+    """Declare one provider execution policy and its requested thread count.
+
+    Determinism is a provider admission requirement, including for parallel
+    execution. Providers that cannot guarantee the requested pair refuse it.
+    """
+
     execution_mode: MeshingExecutionMode = eqx.field(static=True)
     timeout_seconds: float = eqx.field(static=True)
     maximum_transferred_bytes: int = eqx.field(static=True)
@@ -37,18 +44,21 @@ class MeshingExecutionPolicy(StrictModule, NonTrainableState):
         deterministic: bool = True,
         cleanup_workspace: bool = True,
     ) -> None:
-        if not isinstance(execution_mode, MeshingExecutionMode):
-            raise TypeError("execution_mode must be MeshingExecutionMode.")
+        mode = parse(
+            execution_mode, MeshingExecutionMode, "MeshingExecutionPolicy.execution_mode"
+        )
         timeout = float(timeout_seconds)
         transferred = int(maximum_transferred_bytes)
         workers = int(parallelism)
         if not np.isfinite(timeout) or timeout <= 0.0:
-            raise ValueError("timeout_seconds must be positive and finite.")
+            raise ValueError(
+                f"MeshingExecutionPolicy.timeout_seconds must be positive and finite; got {timeout}."
+            )
         if transferred <= 0 or workers <= 0:
-            raise ValueError("Transfer and parallelism limits must be positive.")
-        if deterministic and workers != 1:
-            raise ValueError("Deterministic meshing requires parallelism=1.")
-        self.execution_mode = execution_mode
+            raise ValueError(
+                f"MeshingExecutionPolicy.limits must be positive; got transferred_bytes={transferred}, parallelism={workers}."
+            )
+        self.execution_mode = mode
         self.timeout_seconds = timeout
         self.maximum_transferred_bytes = transferred
         self.parallelism = workers
@@ -79,7 +89,9 @@ class AbstractMeshingSession(abc.ABC):
 
     def __enter__(self) -> Self:
         if self.closed:
-            raise RuntimeError("Cannot enter a closed meshing session.")
+            raise RuntimeError(
+                "AbstractMeshingSession.closed must be False on entry; got a closed session."
+            )
         return self
 
     def __exit__(
@@ -87,7 +99,7 @@ class AbstractMeshingSession(abc.ABC):
         exception_type: type[BaseException] | None,
         exception: BaseException | None,
         traceback: TracebackType | None,
-    ) -> bool:
+    ) -> Literal[False]:
         self.close()
         return False
 

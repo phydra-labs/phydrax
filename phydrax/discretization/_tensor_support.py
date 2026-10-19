@@ -401,5 +401,23 @@ class PreparedTensorGrid(StrictModule, NonTrainableState):
             ),
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[PreparedTensorGrid], value: PreparedTensorGrid, /
+    ) -> PreparedTensorGrid:
+        """Revalidate stored axes with their declared support identities."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"{cls.__name__}.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        return cls(
+            value.axes,
+            axis_names=value.axis_names,
+            plan_id=value.plan_id,
+            embedding_id=value.support.embedding_id,
+            prepared_id=value.prepared_id,
+        )
+
 
 __all__ = ["GridLocation", "PreparedTensorGrid"]

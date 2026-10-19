@@ -55,7 +55,7 @@ from .._runtime import (
     refresh as refresh_linear_solve,
     solve as linear_solve,
 )
-from .._spaces import _coordinate_dtype, _has_euclidean_pairing
+from .._spaces import _has_euclidean_pairing, coordinate_dtype
 from .._sparse_contract import AbstractSparseLinearOperator
 from .._sparse_factorizations import (
     prepare_sparse_factorization,
@@ -898,9 +898,9 @@ def _validate_arnoldi_plan(
 def _validate_transform_selection(
     problem: GeneralEigenproblem, selected: GeneralEigenSolvePolicy, /
 ) -> None:
-    coordinate_dtype = np.dtype(_coordinate_dtype(problem.operator.source))
+    stored_dtype = np.dtype(coordinate_dtype(problem.operator.source))
     if (
-        not np.issubdtype(coordinate_dtype, np.complexfloating)
+        not np.issubdtype(stored_dtype, np.complexfloating)
         and isinstance(selected.transform, (ShiftInvertTransform, CayleyTransform))
         and selected.transform.shift.imag != 0.0
     ):
@@ -1023,7 +1023,7 @@ def _warm_start_vector(
     )
     vector = jnp.sum(columns * (jnp.conj(pivot) / jnp.abs(pivot)), axis=1)
     if not np.issubdtype(
-        np.dtype(_coordinate_dtype(problem.operator.source)), np.complexfloating
+        np.dtype(coordinate_dtype(problem.operator.source)), np.complexfloating
     ):
         vector = jnp.real(vector)
     norm = jnp.linalg.norm(vector)
@@ -1693,7 +1693,7 @@ def _require_general_endomorphism(operator: object, name: str, /) -> None:
         raise TypeError(f"{name} must be an AbstractLinearOperator.")
     if operator.batch_shape or not operator.source.compatible(operator.target):
         raise ValueError(f"{name} must be an unbatched endomorphism.")
-    if not jnp.issubdtype(_coordinate_dtype(operator.source), jnp.inexact):
+    if not jnp.issubdtype(coordinate_dtype(operator.source), jnp.inexact):
         raise TypeError(f"{name} requires real or complex inexact coordinates.")
 
 
@@ -1714,7 +1714,7 @@ def _capabilities(
 
 
 def _complex_coordinate_dtype(problem: GeneralEigenproblem, /) -> np.dtype:
-    dtype = np.dtype(_coordinate_dtype(problem.operator.source))
+    dtype = np.dtype(coordinate_dtype(problem.operator.source))
     if np.issubdtype(dtype, np.complexfloating):
         return dtype
     return np.dtype(np.complex64 if dtype.itemsize <= 4 else np.complex128)
@@ -1910,7 +1910,7 @@ def _prepare_general_numeric(
     transform_assembly: PreparedSparseAssembly | None = None,
 ) -> PreparedGeneralEigenSolve:
     dimension = problem.dimension
-    coordinate_dtype = np.dtype(_coordinate_dtype(problem.operator.source))
+    stored_dtype = np.dtype(coordinate_dtype(problem.operator.source))
     mass_fingerprint = (
         None
         if problem.mass_operator is None
@@ -1948,11 +1948,9 @@ def _prepare_general_numeric(
         shifted_rank = dimension
     else:
         empty_dtype = (
-            coordinate_dtype
-            if np.issubdtype(coordinate_dtype, np.complexfloating)
-            else np.dtype(
-                np.complex64 if coordinate_dtype.itemsize <= 4 else np.complex128
-            )
+            stored_dtype
+            if np.issubdtype(stored_dtype, np.complexfloating)
+            else np.dtype(np.complex64 if stored_dtype.itemsize <= 4 else np.complex128)
         )
         matrix = jnp.zeros((0, 0), dtype=empty_dtype)
         mass = jnp.zeros((0, 0), dtype=empty_dtype)
@@ -2029,7 +2027,7 @@ def _prepare_general_numeric(
 
 def _sparse_norm_upper_bound(operator: AbstractLinearOperator, /) -> Array:
     """``sqrt(‖A‖₁ ‖A‖∞) >= ‖A‖₂`` from canonical sparse storage; NaN otherwise."""
-    dtype = np.finfo(np.dtype(_coordinate_dtype(operator.source))).dtype
+    dtype = np.finfo(np.dtype(coordinate_dtype(operator.source))).dtype
     if not isinstance(operator, AbstractSparseLinearOperator):
         return jnp.asarray(jnp.nan, dtype=dtype)
     storage = operator.sparse_storage()
@@ -2071,7 +2069,7 @@ class _CanonicalCoordinateAdjoint(AbstractLinearOperator):
             coordinates,
             adjoint_action=True,
         )
-        target_dtype = np.dtype(_coordinate_dtype(self.target))
+        target_dtype = np.dtype(coordinate_dtype(self.target))
         if not np.issubdtype(target_dtype, np.complexfloating):
             applied = jnp.real(applied)
         return self.target.unflatten(applied.astype(target_dtype))
@@ -2085,7 +2083,7 @@ class _CanonicalCoordinateAdjoint(AbstractLinearOperator):
                 adjoint_action=False,
             )
         )
-        source_dtype = np.dtype(_coordinate_dtype(self.source))
+        source_dtype = np.dtype(coordinate_dtype(self.source))
         if not np.issubdtype(source_dtype, np.complexfloating):
             applied = jnp.real(applied)
         return self.source.unflatten(applied.astype(source_dtype))
@@ -2119,10 +2117,10 @@ def _transform_denominator(
     )
     if isinstance(transform, StandardTransform):
         return None if problem.mass_operator is None else mass
-    coordinate_dtype = np.dtype(_coordinate_dtype(problem.operator.source))
+    stored_dtype = np.dtype(coordinate_dtype(problem.operator.source))
     shift = (
         transform.shift
-        if np.issubdtype(coordinate_dtype, np.complexfloating)
+        if np.issubdtype(stored_dtype, np.complexfloating)
         else transform.shift.real
     )
     return problem.operator - shift * mass
@@ -2843,7 +2841,7 @@ def _native_krylov_schur_evidence(
 def _real_krylov(prepared: PreparedGeneralEigenSolve, /) -> bool:
     """Whether the transformed operator maps real coordinates to real coordinates."""
     transform = prepared.plan.policy.transform
-    coordinate = np.dtype(_coordinate_dtype(prepared.problem.operator.source))
+    coordinate = np.dtype(coordinate_dtype(prepared.problem.operator.source))
     shift_real = isinstance(transform, StandardTransform) or transform.shift.imag == 0.0
     return not np.issubdtype(coordinate, np.complexfloating) and shift_real
 
@@ -2973,7 +2971,7 @@ def _operator_coordinate_action(
 ) -> Array:
     input_space = operator.target if adjoint_action else operator.source
     output_space = operator.source if adjoint_action else operator.target
-    dtype = np.dtype(_coordinate_dtype(input_space))
+    dtype = np.dtype(coordinate_dtype(input_space))
 
     def apply_component(component: Array) -> Array:
         tree = input_space.unflatten(component.astype(dtype))
@@ -2993,7 +2991,7 @@ def _solve_complexified_coordinates(
     /,
 ) -> Array:
     space = prepared.problem.operator.target
-    dtype = np.dtype(_coordinate_dtype(space))
+    dtype = np.dtype(coordinate_dtype(space))
 
     def solve_component(component: Array) -> Array:
         tree = space.unflatten(component.astype(dtype))
@@ -3376,7 +3374,7 @@ def _pencil_vector_actions(
 
 
 def _unflatten_complex_columns(space: Any, coordinates: Array, /) -> PyTree[Array]:
-    dtype = np.dtype(_coordinate_dtype(space))
+    dtype = np.dtype(coordinate_dtype(space))
     if np.issubdtype(dtype, np.complexfloating):
         return jax.vmap(space.unflatten, in_axes=1, out_axes=-1)(
             coordinates.astype(dtype)

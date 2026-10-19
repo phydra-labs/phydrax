@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import isfinite, prod
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -37,7 +37,7 @@ from ...linalg import (
     solve,
     transpose,
 )
-from ...typing import checked
+from ...typing import checked, parse
 from .._core import DiscretizationCapability, PreparationReport
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._transfer import FieldTransfer, TransferProperties
@@ -46,16 +46,10 @@ from ._geometry import NURBSGeometryState
 
 
 TransferClass: TypeAlias = Literal["exact", "projected"]
-# Every vector space kind declaring an array `shape`.
-_SHAPED_SPACES = (ArraySpace, AlgebraArraySpace, AxisArraySpace)
 
 
 def _validated_transfer_class(value: str, /) -> TransferClass:
-    if value == "exact":
-        return "exact"
-    if value == "projected":
-        return "projected"
-    raise ValueError("transfer_class must be 'exact' or 'projected'.")
+    return parse(value, TransferClass, "transfer_class")
 
 
 class TransferEvidence(StrictModule, NonTrainableState):
@@ -100,9 +94,13 @@ class TransferEvidence(StrictModule, NonTrainableState):
         preserved_ = tuple(str(value) for value in preserved)
         transfer_class_ = _validated_transfer_class(class_)
         if quadrature is not None and not quadrature:
-            raise ValueError("quadrature_id must be non-empty or None.")
+            raise ValueError(
+                f"TransferEvidence.quadrature_id must be non-empty or None; got {quadrature_id!r}"
+            )
         if class_ == "projected" and quadrature is None:
-            raise ValueError("Projected IGA transfers require quadrature evidence.")
+            raise ValueError(
+                f"TransferEvidence.transfer_class must provide quadrature evidence; got {quadrature!r}"
+            )
         if (
             not isfinite(norm)
             or norm < 0.0
@@ -116,13 +114,19 @@ class TransferEvidence(StrictModule, NonTrainableState):
                 for value in (error, pointwise, constant, duality)
             )
         ):
-            raise ValueError("IGA transfer numeric evidence is invalid or unqualified.")
+            raise ValueError(
+                f"TransferEvidence.transfer_class must have finite nonnegative residual bounds and a condition estimate in [1, maximum_condition]; got {type(transfer_class).__name__}"
+            )
         if class_ == "exact" and error != 0.0:
-            raise ValueError("Exact IGA transfers must have zero projection error bound.")
+            raise ValueError(
+                f"TransferEvidence.transfer_class must have zero projection error bound; got {type(transfer_class).__name__}"
+            )
         if any(not value for value in preserved_) or len(set(preserved_)) != len(
             preserved_
         ):
-            raise ValueError("preserved entries must be unique non-empty strings.")
+            raise ValueError(
+                f"TransferEvidence.transfer_class must be unique non-empty strings; got {type(transfer_class).__name__}"
+            )
         self.transfer_class = transfer_class_
         self.operator_norm = norm
         self.quadrature_id = quadrature
@@ -187,12 +191,6 @@ class TransferPlan(StrictModule, NonTrainableState):
         composition: Sequence[str] = (),
         archive_arrays: Mapping[str, ArrayLike] | Sequence[tuple[str, ArrayLike]] = (),
     ) -> None:
-        if not isinstance(source_revision, NumericRevision) or not isinstance(
-            target_revision, NumericRevision
-        ):
-            raise TypeError(
-                "source_revision and target_revision must be NumericRevision."
-            )
         source_plan = str(source_plan_id)
         target_plan = str(target_plan_id)
         source_layout = str(source_layout_id)
@@ -201,34 +199,42 @@ class TransferPlan(StrictModule, NonTrainableState):
             not value
             for value in (source_plan, target_plan, source_layout, target_layout)
         ):
-            raise ValueError("IGA transfer plan and layout IDs must be non-empty.")
+            raise ValueError(
+                f"TransferPlan.field_transfer must be non-empty; got {type(field_transfer).__name__}"
+            )
         if field_transfer.source.layout.layout_id != source_layout:
-            raise ValueError("source_layout_id does not match the FieldTransfer source.")
+            raise ValueError(
+                f"TransferPlan.source_layout_id must match the FieldTransfer source; got {source_layout_id!r}"
+            )
         if field_transfer.target.layout.layout_id != target_layout:
-            raise ValueError("target_layout_id does not match the FieldTransfer target.")
+            raise ValueError(
+                f"TransferPlan.target_layout_id must match the FieldTransfer target; got {target_layout_id!r}"
+            )
         if field_transfer.dual_pullback_operator is None:
-            raise ValueError("IGA FieldTransfer must provide the P^T operator.")
+            raise ValueError(
+                f"TransferPlan.field_transfer must provide the P^T operator; got {field_transfer.dual_pullback_operator!r}"
+            )
         if restriction_operator is not None:
-            if not isinstance(restriction_operator, AbstractLinearOperator):
-                raise TypeError(
-                    "restriction_operator must be an AbstractLinearOperator or None."
-                )
             if not restriction_operator.source.compatible(
                 field_transfer.target.vector_space
             ) or not restriction_operator.target.compatible(
                 field_transfer.source.vector_space
             ):
-                raise ValueError("R must map the target field space back to the source.")
+                raise ValueError(
+                    f"TransferPlan.restriction_operator must map the target field space back to the source; got {type(restriction_operator).__name__}"
+                )
         composition_ = tuple(str(value) for value in composition)
         if any(not value for value in composition_) or len(set(composition_)) != len(
             composition_
         ):
-            raise ValueError("composition entries must be unique non-empty strings.")
-        items = (
-            tuple(archive_arrays.items())
-            if isinstance(archive_arrays, Mapping)
-            else tuple(archive_arrays)
-        )
+            raise ValueError(
+                f"TransferPlan.composition must be unique non-empty strings; got {type(composition).__name__}"
+            )
+        match archive_arrays:
+            case Mapping():
+                items = tuple(archive_arrays.items())
+            case _:
+                items = tuple(archive_arrays)
         names = tuple(str(name) for name, _ in items)
         arrays = tuple(jnp.asarray(value) for _, value in items)
         if (
@@ -241,7 +247,9 @@ class TransferPlan(StrictModule, NonTrainableState):
                 if np.issubdtype(np.asarray(array).dtype, np.inexact)
             )
         ):
-            raise ValueError("IGA transition archive arrays are invalid.")
+            raise ValueError(
+                f"TransferPlan.field_transfer must have unique nonempty names and finite numerical values; got {type(field_transfer).__name__}"
+            )
         invalidation = canonical_fingerprint(
             {
                 "kind": "iga-transfer-invalidation",
@@ -295,7 +303,9 @@ class TransferPlan(StrictModule, NonTrainableState):
         """Algebraic transpose P^T, used for raw dual pullback."""
         operator = self.field_transfer.dual_pullback_operator
         if operator is None:
-            raise RuntimeError("IGA transfer construction omitted P^T.")
+            raise RuntimeError(
+                f"TransferPlan.PT.state must provide P^T; got {operator!r}"
+            )
         return operator
 
     @property
@@ -311,7 +321,9 @@ class TransferPlan(StrictModule, NonTrainableState):
 
     def restrict(self, coefficients: Any, /) -> Any:
         if self.R is None:
-            raise ValueError("This IGA transfer has no qualified restriction R.")
+            raise ValueError(
+                f"TransferPlan.restrict.coefficients must provide qualified restriction R; got {self.R!r}"
+            )
         return self.R.mv(coefficients)
 
     def apply_payload(self, coefficients: ArrayLike, /) -> Array:
@@ -319,20 +331,24 @@ class TransferPlan(StrictModule, NonTrainableState):
         source = self.P.source
         target = self.P.target
         values = jnp.asarray(coefficients)
-        if (
-            not isinstance(source, type(target))
-            or not isinstance(source, _SHAPED_SPACES)
-            or not isinstance(target, _SHAPED_SPACES)
-        ):
-            raise TypeError(
-                "Payload transfer requires array-valued source/target spaces."
-            )
+        match (source, target):
+            case (
+                ArraySpace() | AlgebraArraySpace() | AxisArraySpace(),
+                ArraySpace() | AlgebraArraySpace() | AxisArraySpace(),
+            ) if isinstance(source, type(target)):
+                pass
+            case _:
+                raise TypeError(
+                    f"TransferPlan.apply_payload.coefficients must provide array-valued source/target spaces; got {type(source).__name__}, {type(target).__name__}"
+                )
         source_shape = source.shape
         target_shape = target.shape
         if values.ndim < len(source_shape) or tuple(
             values.shape[: len(source_shape)]
         ) != (*source_shape,):
-            raise ValueError("Payload coefficients do not begin with the source shape.")
+            raise ValueError(
+                f"TransferPlan.apply_payload.coefficients must begin with the source coefficient shape; got {values.shape!r}"
+            )
         payload_shape = tuple(values.shape[len(source_shape) :])
         if not payload_shape:
             return jnp.asarray(self.apply(values))
@@ -345,13 +361,24 @@ class TransferPlan(StrictModule, NonTrainableState):
     ) -> tuple[Array, Array]:
         """Transfer a rational field numerator and its shared denominator."""
         if self.evidence.transfer_class != "exact":
-            raise ValueError("Rational field preservation requires an exact transfer.")
+            raise ValueError(
+                f"TransferPlan.apply_rational_payload.coefficients must use a nested-space transfer; got {type(coefficients).__name__}"
+            )
         values, denominator = jnp.asarray(coefficients), jnp.asarray(weights)
         source = self.P.source
-        if not isinstance(source, _SHAPED_SPACES) or denominator.shape != source.shape:
-            raise ValueError("Rational weights must match the transfer source shape.")
+        match source:
+            case ArraySpace() | AlgebraArraySpace() | AxisArraySpace() if (
+                denominator.shape == source.shape
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    f"TransferPlan.apply_rational_payload.weights must match the transfer source shape; got {denominator.shape!r}"
+                )
         if values.shape[: denominator.ndim] != denominator.shape:
-            raise ValueError("Rational payload must begin with the source control shape.")
+            raise ValueError(
+                f"TransferPlan.apply_rational_payload.coefficients must begin with the source control shape; got {denominator.shape!r}"
+            )
         denominator = eqx.error_if(
             denominator,
             jnp.any(~jnp.isfinite(denominator)) | jnp.any(denominator <= 0.0),
@@ -369,26 +396,26 @@ class TransferPlan(StrictModule, NonTrainableState):
         target_broadcast_shape = target_weights.shape + (1,) * payload_rank
         return numerator / target_weights.reshape(target_broadcast_shape), target_weights
 
+    @checked
     def apply_geometry(self, geometry: NURBSGeometryState, /) -> NURBSGeometryState:
-        """Reuse an exact transfer on the source homogeneous geometry bank.
+        """Reuse a nested-space transfer on the source homogeneous geometry bank.
 
         Coordinates and weights are transferred together; transferring Cartesian
         control points alone does not preserve a rational source map. The result
         retains the transferred denominator scale, including under differentiation.
         """
-        if not isinstance(geometry, NURBSGeometryState):
-            raise TypeError("geometry must be NURBSGeometryState.")
         if self.evidence.transfer_class != "exact" or (
             "homogeneous-geometry" not in self.evidence.preserved
         ):
             raise ValueError(
-                "Geometry preservation requires an exact qualified transfer."
+                f"TransferPlan.apply_geometry.geometry must use a qualified nested-space transfer; got {type(geometry).__name__}"
             )
         points, weights = self.apply_rational_payload(
             geometry.control_points, geometry.weights
         )
         return NURBSGeometryState(points, weights)
 
+    @checked
     def is_valid_for(
         self,
         *,
@@ -400,12 +427,6 @@ class TransferPlan(StrictModule, NonTrainableState):
         target_revision: NumericRevision,
     ) -> bool:
         """Return whether every structure and numeric identity remains bound."""
-        if not isinstance(source_revision, NumericRevision) or not isinstance(
-            target_revision, NumericRevision
-        ):
-            raise TypeError(
-                "source_revision and target_revision must be NumericRevision."
-            )
         return (
             str(source_plan_id) == self.source_plan_id
             and str(target_plan_id) == self.target_plan_id
@@ -415,6 +436,7 @@ class TransferPlan(StrictModule, NonTrainableState):
             and target_revision.revision_id == self.target_revision_id
         )
 
+    @checked
     def require_valid_for(
         self,
         *,
@@ -434,22 +456,25 @@ class TransferPlan(StrictModule, NonTrainableState):
             target_revision=target_revision,
         ):
             raise ValueError(
-                "IGA transfer was invalidated by a plan, layout, or revision change."
+                f"TransferPlan.require_valid_for.source_plan_id must retain matching plan, layout, and numeric revision identities; got {source_plan_id!r}"
             )
 
+    @checked
     def bind_numeric(
         self, source_revision: NumericRevision, target_revision: NumericRevision, /
     ) -> TransferPlan:
-        """Bind new numeric banks while reusing a fixed exact tensor transfer.
+        """Bind new numeric banks while reusing a fixed nested-space tensor transfer.
 
         This is not a topology, layout or basis transition: all structural
         owners, factors, transpose actions and evidence remain unchanged. Both
-        revisions must describe the caller's actual source and target banks.
+        revisions must describe the caller's computed source and target banks.
         """
         if self.evidence.transfer_class != "exact" or (
             "homogeneous-geometry" not in self.evidence.preserved
         ):
-            raise ValueError("Numeric rebinding requires an exact tensor transfer.")
+            raise ValueError(
+                f"TransferPlan.bind_numeric.source_revision must use a nested-space tensor transfer; got {type(source_revision).__name__}"
+            )
         return TransferPlan(
             self.field_transfer,
             self.evidence,
@@ -580,7 +605,7 @@ def _exact_axis_matrix(
 ) -> tuple[np.ndarray, float, float, float]:
     if not _is_nested_axis(source, target):
         raise ValueError(
-            "Exact IGA transfer requires a structurally nested target spline space."
+            f"transfer.exact_axis_matrix.target must provide a structurally nested target spline space; got {type(target).__name__}"
         )
     source_grid = _axis_grid(source)
     target_grid = _axis_grid(target)
@@ -601,7 +626,7 @@ def _exact_axis_matrix(
         solve_condition = float(np.linalg.cond(target_collocation))
         if not isfinite(solve_condition) or solve_condition > maximum_condition:
             raise ValueError(
-                f"Exact IGA degree elevation collocation is ill-conditioned: condition estimate {solve_condition:.6g}."
+                f"transfer.exact_axis_matrix.maximum_condition must have a condition estimate within maximum_condition; got {maximum_condition!r}; context {solve_condition:.6g}"
             )
         matrix = np.asarray(
             solve(
@@ -649,6 +674,59 @@ def _projected_axis_matrix(
     )
 
 
+class _TensorAxisPreparation(StrictModule):
+    factors: tuple[Array, ...]
+    conditions: tuple[float, ...] = eqx.field(static=True)
+    projection_errors: tuple[float, ...] = eqx.field(static=True)
+    pointwise_residuals: tuple[float, ...] = eqx.field(static=True)
+    constant_residuals: tuple[float, ...] = eqx.field(static=True)
+
+
+def _prepare_tensor_axes(
+    source_basis: TensorSplineBasisSpec,
+    target_basis: TensorSplineBasisSpec,
+    class_: TransferClass,
+    limit: float,
+) -> _TensorAxisPreparation:
+    factors: list[Array] = []
+    conditions: list[float] = []
+    projection_errors: list[float] = []
+    pointwise_residuals: list[float] = []
+    constant_residuals: list[float] = []
+    for source_axis, target_axis in zip(
+        source_basis.axes, target_basis.axes, strict=True
+    ):
+        match class_:
+            case "exact":
+                matrix, condition, pointwise, constant = _exact_axis_matrix(
+                    source_axis,
+                    target_axis,
+                    maximum_condition=limit,
+                )
+                error = 0.0
+            case "projected":
+                matrix, condition, error, pointwise, constant = _projected_axis_matrix(
+                    source_axis,
+                    target_axis,
+                    maximum_condition=limit,
+                )
+            case unknown:
+                assert_never(unknown)
+        factors.append(jnp.asarray(matrix))
+        conditions.append(condition)
+        projection_errors.append(error)
+        pointwise_residuals.append(pointwise)
+        constant_residuals.append(constant)
+    return _TensorAxisPreparation(
+        tuple(factors),
+        tuple(conditions),
+        tuple(projection_errors),
+        tuple(pointwise_residuals),
+        tuple(constant_residuals),
+    )
+
+
+@checked
 def prepare_tensor_transfer(
     source_basis: TensorSplineBasisSpec,
     target_basis: TensorSplineBasisSpec,
@@ -667,59 +745,40 @@ def prepare_tensor_transfer(
     composition: Sequence[str] = (),
 ) -> TransferPlan:
     """Prepare a qualified tensor transfer without materializing a global matrix."""
-    if not isinstance(source_basis, TensorSplineBasisSpec) or not isinstance(
-        target_basis, TensorSplineBasisSpec
-    ):
-        raise TypeError("source_basis and target_basis must be TensorSplineBasisSpec.")
-    if not isinstance(source_field, DiscreteFieldSpace) or not isinstance(
-        target_field, DiscreteFieldSpace
-    ):
-        raise TypeError("source_field and target_field must be DiscreteFieldSpace.")
-    if not isinstance(source_field.layout, TensorDofLayout) or not isinstance(
-        target_field.layout, TensorDofLayout
-    ):
-        raise TypeError("IGA tensor transfers require TensorDofLayout field spaces.")
+    match (source_field.layout, target_field.layout):
+        case (TensorDofLayout() as source_layout, TensorDofLayout() as target_layout):
+            pass
+        case _:
+            raise TypeError(
+                f"transfer.prepare_tensor_transfer.layouts must be TensorDofLayout values; got {type(source_field.layout).__name__}, {type(target_field.layout).__name__}"
+            )
     if (
         source_basis.axis_names != target_basis.axis_names
-        or source_field.layout.axis_names != source_basis.axis_names
-        or target_field.layout.axis_names != target_basis.axis_names
-        or source_field.layout.axis_shape != source_basis.control_shape
-        or target_field.layout.axis_shape != target_basis.control_shape
+        or source_layout.axis_names != source_basis.axis_names
+        or target_layout.axis_names != target_basis.axis_names
+        or source_layout.axis_shape != source_basis.control_shape
+        or target_layout.axis_shape != target_basis.control_shape
     ):
-        raise ValueError("IGA transfer basis axes and field layouts must match exactly.")
+        raise ValueError(
+            f"transfer.prepare_tensor_transfer.source_basis must have matching semantic axes and control extents; got {type(source_basis).__name__}"
+        )
     class_ = _validated_transfer_class(str(transfer_class))
     limit = float(maximum_condition)
     if not isfinite(limit) or limit <= 1.0:
-        raise ValueError("maximum_condition must be finite and greater than one.")
+        raise ValueError(
+            f"transfer.prepare_tensor_transfer.maximum_condition must be finite and greater than one; got {maximum_condition!r}"
+        )
     if class_ == "projected" and (quadrature_id is None or not str(quadrature_id)):
-        raise ValueError("Projected IGA transfers require an explicit quadrature_id.")
+        raise ValueError(
+            f"transfer.prepare_tensor_transfer.quadrature_id must provide an explicit quadrature_id; got {quadrature_id!r}"
+        )
 
-    factors: list[Array] = []
-    conditions: list[float] = []
-    projection_errors: list[float] = []
-    pointwise_residuals: list[float] = []
-    constant_residuals: list[float] = []
-    for source_axis, target_axis in zip(
-        source_basis.axes, target_basis.axes, strict=True
-    ):
-        if class_ == "exact":
-            matrix, condition, pointwise, constant = _exact_axis_matrix(
-                source_axis,
-                target_axis,
-                maximum_condition=limit,
-            )
-            error = 0.0
-        else:
-            matrix, condition, error, pointwise, constant = _projected_axis_matrix(
-                source_axis,
-                target_axis,
-                maximum_condition=limit,
-            )
-        factors.append(jnp.asarray(matrix))
-        conditions.append(condition)
-        projection_errors.append(error)
-        pointwise_residuals.append(pointwise)
-        constant_residuals.append(constant)
+    axes = _prepare_tensor_axes(source_basis, target_basis, class_, limit)
+    factors = axes.factors
+    conditions = list(axes.conditions)
+    projection_errors = axes.projection_errors
+    pointwise_residuals = axes.pointwise_residuals
+    constant_residuals = axes.constant_residuals
 
     factor_tuple = tuple(factors)
     operator_id = canonical_fingerprint(
@@ -780,7 +839,7 @@ def prepare_tensor_transfer(
     if include_restriction:
         if quadrature_id is None or not str(quadrature_id):
             raise ValueError(
-                "Qualified restriction R requires an explicit quadrature_id."
+                f"transfer.prepare_tensor_transfer.quadrature_id must provide an explicit quadrature_id; got {quadrature_id!r}"
             )
         reverse_matrices = []
         for source_axis, target_axis in zip(
@@ -813,7 +872,7 @@ def prepare_tensor_transfer(
     condition_estimate = prod(conditions)
     if not isfinite(condition_estimate) or condition_estimate > limit:
         raise ValueError(
-            f"IGA tensor transfer is ill-conditioned: condition estimate {condition_estimate:.6g}."
+            f"transfer.prepare_tensor_transfer.source_basis must have a condition estimate within maximum_condition; got {type(source_basis).__name__}; context {condition_estimate:.6g}"
         )
     operator_norm = prod(
         float(np.linalg.norm(np.asarray(matrix), ord=2)) for matrix in factor_tuple

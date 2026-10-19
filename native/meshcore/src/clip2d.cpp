@@ -28,6 +28,7 @@
 
 #include "capi_guard.hpp"
 #include "clip_common.hpp"
+#include "exact_scalar.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
@@ -39,7 +40,7 @@ using clip::diff;
 using clip::exact_sign;
 using clip::kConstructionTolerance;
 using clip::kInvalidSide;
-using clip::lift;
+using exact::lift;
 using clip::mul;
 
 struct Line {

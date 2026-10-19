@@ -2,16 +2,19 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native projection preparation bound to an exact source revision."""
+"""Prepare native projection bound to a B-Rep source revision."""
 
 from __future__ import annotations
 
+from ...typing import checked
 from .._planar_embedding import PlanarEmbedding
 from ._model import BRepModel
 from ._projection_contracts import BRepProjectionPolicy
-from ._query import BRepQueryPolicy, NativeBRepProjection
+from ._query import BRepQueryPolicy
+from ._query_projection import NativeBRepProjection
 
 
+@checked
 def prepare_brep_projection(
     model: BRepModel,
     /,
@@ -20,17 +23,10 @@ def prepare_brep_projection(
     embedding: PlanarEmbedding | None = None,
     query_policy: BRepQueryPolicy | None = None,
 ) -> NativeBRepProjection:
-    """Prepare exact native projection; external comparison is explicit interchange."""
-    if not isinstance(model, BRepModel):
-        raise TypeError("model must be BRepModel.")
-    if model.geometry is None:
-        raise ValueError("Native projection requires exact native B-Rep geometry.")
+    """Prepare native projection bound to the model's source revision."""
+    model.require_geometry()
     policy_ = BRepProjectionPolicy() if policy is None else policy
     query_policy_ = BRepQueryPolicy() if query_policy is None else query_policy
-    if not isinstance(policy_, BRepProjectionPolicy):
-        raise TypeError("policy must be BRepProjectionPolicy or None.")
-    if not isinstance(query_policy_, BRepQueryPolicy):
-        raise TypeError("query_policy must be BRepQueryPolicy or None.")
     return NativeBRepProjection(model, policy_, embedding, query_policy_)
 
 

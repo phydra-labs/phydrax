@@ -5,10 +5,10 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.meshing._lineage import (
+from phydrax.meshing._lineage import inherit_mesh_attributes
+from phydrax.meshing._lineage_records import (
     EntityLineage,
     EntityLineageKind,
-    inherit_mesh_attributes,
     MeshLineage,
 )
 
@@ -144,7 +144,7 @@ def test_attribute_lineage_preserves_exact_values_and_rejects_conflicting_merge(
         np.asarray((children[0], children[0]), dtype=np.int64),
         np.full((2,), int(EntityLineageKind.MERGED_INTO), dtype=np.int32),
     )
-    with pytest.raises(ValueError, match="different scientific attribute values"):
+    with pytest.raises(ValueError, match=r"MeshLineage\.attribute_values"):
         inherit_mesh_attributes(
             source, target, MeshLineage(mesh.topology_id, target.topology_id, (merged,))
         )

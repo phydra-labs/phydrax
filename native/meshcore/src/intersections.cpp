@@ -38,6 +38,8 @@
 #include "clip_common.hpp"
 #include "expansion.hpp"
 #include "filtered.hpp"
+#include "geometry3.hpp"
+#include "parallel.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
@@ -46,9 +48,6 @@ namespace {
 
 constexpr double kUnitRoundoff = 0x1p-53;
 
-bool same_point(const double* a, const double* b) {
-  return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
-}
 
 int8_t edge_feature(int k) { return static_cast<int8_t>(3 + k); }
 
@@ -155,7 +154,7 @@ int32_t check_ids(const double* const first[], int first_count, const int64_t* f
   }
   for (int i = 0; i < first_count; ++i) {
     for (int j = 0; j < second_count; ++j) {
-      if (first_ids[i] == second_ids[j] && !same_point(first[i], second[j])) {
+      if (first_ids[i] == second_ids[j] && !geometry::same_point(first[i], second[j])) {
         return PHX_MC_INVALID_INPUT;
       }
     }
@@ -521,9 +520,9 @@ void coplanar_points(const CoplanarClipper& clipper, const double* const subject
             subject_sides[e] = clipper.subject_side(e, clipper.projected_clip(vertex.index));
           }
           subject_feature = feature_from_sides(subject_sides);
-        } else if (same_point(clip[vertex.index], subject[0])) {
+        } else if (geometry::same_point(clip[vertex.index], subject[0])) {
           subject_feature = 0;
-        } else if (same_point(clip[vertex.index], subject[1])) {
+        } else if (geometry::same_point(clip[vertex.index], subject[1])) {
           subject_feature = 1;
         }
         contact.points[k] = exact_point(clip[vertex.index], subject_feature, vertex.index);
@@ -617,7 +616,7 @@ int32_t intersect_triangles(const double* const first[3], const double* const se
                             const int64_t* first_ids, const int64_t* second_ids,
                             Contact& contact) {
   reset(contact);
-  if (collinear3d(first[0], first[1], first[2]) || collinear3d(second[0], second[1], second[2])) {
+  if (geometry::collinear(first[0], first[1], first[2]) || geometry::collinear(second[0], second[1], second[2])) {
     return PHX_MC_DEGENERATE_INPUT;
   }
   const int32_t status = check_ids(first, 3, first_ids, second, 3, second_ids);
@@ -650,7 +649,7 @@ int32_t intersect_segment_triangle(const double* const segment[2],
                                    const double* const triangle[3], const int64_t* segment_ids,
                                    const int64_t* triangle_ids, Contact& contact) {
   reset(contact);
-  if (same_point(segment[0], segment[1]) || collinear3d(triangle[0], triangle[1], triangle[2])) {
+  if (geometry::same_point(segment[0], segment[1]) || geometry::collinear(triangle[0], triangle[1], triangle[2])) {
     return PHX_MC_DEGENERATE_INPUT;
   }
   const int32_t status = check_ids(segment, 2, segment_ids, triangle, 3, triangle_ids);
@@ -858,27 +857,39 @@ int32_t phx_mc_point_triangle_locations(int64_t count, const double* points,
         (count > 0 && (points == nullptr || triangles == nullptr))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
-    for (int64_t item = 0; item < count; ++item) {
-      const double* x = points + 3 * item;
-      const double* t = triangles + 9 * item;
-      int32_t status = phx::mc::check_values(x, 3);
-      if (status == PHX_MC_OK) {
-        status = phx::mc::check_values(t, 9);
-      }
-      const double* const triangle[3] = {t, t + 3, t + 6};
-      if (status == PHX_MC_OK && phx::mc::collinear3d(t, t + 3, t + 6)) {
-        status = PHX_MC_DEGENERATE_INPUT;
-      }
-      int side = 0;
-      int8_t feature = phx::mc::kFeatureNone;
-      if (status == PHX_MC_OK) {
-        feature = phx::mc::locate_on_triangle(x, triangle, side);
-      }
-      item_status[item] = status;
-      sides[item] = static_cast<int8_t>(side);
-      features[item] = feature;
-    }
-    return PHX_MC_OK;
+    // Collinearity/projection/edge signs are orient2d and remain inline
+    // (<=16 components). The sole orient3d bounds both adaptive stages by
+    // 11 spills totaling 5632 bytes; primitive queries are telemetry only.
+    // All expansion temporaries release before the next row; only indexed
+    // scalar outputs escape. A chunk therefore reuses one row's arena bound.
+    phx::mc::ParallelRequest request;
+    request.parallelism = phx::mc::current_parallelism();
+    request.lease_seconds = phx::mc::current_parallel_lease_seconds();
+    request.arena_bytes_per_chunk = 5632 +
+        11 * phx::mc::native_parallel_allocation_bytes(0, alignof(double));
+    return phx::mc::parallel_for(static_cast<std::size_t>(count), request,
+        [&](std::size_t begin, std::size_t end, phx::mc::ChunkContext&) {
+          for (std::size_t item = begin; item < end; ++item) {
+            const double* x = points + 3 * item;
+            const double* t = triangles + 9 * item;
+            int32_t status = phx::mc::check_values(x, 3);
+            if (status == PHX_MC_OK) {
+              status = phx::mc::check_values(t, 9);
+            }
+            const double* const triangle[3] = {t, t + 3, t + 6};
+            if (status == PHX_MC_OK && phx::mc::geometry::collinear(t, t + 3, t + 6)) {
+              status = PHX_MC_DEGENERATE_INPUT;
+            }
+            int side = 0;
+            int8_t feature = phx::mc::kFeatureNone;
+            if (status == PHX_MC_OK) {
+              feature = phx::mc::locate_on_triangle(x, triangle, side);
+            }
+            item_status[item] = status;
+            sides[item] = static_cast<int8_t>(side);
+            features[item] = feature;
+          }
+        });
   });
 }
 

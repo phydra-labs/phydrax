@@ -17,6 +17,13 @@ _CELLS = np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=np.int32
 _BOUNDARY = np.asarray((True, True, True, True, False))
 
 
+# Fixed empirical allowances from test_optimization.py
+# at 6c8bd4ec0; no meshing acceptance policy is relaxed.
+# Recovered center (0.5, 0.5) after initial offsets (8e-9, -2e-8) in the square-star
+# shape solve.
+_NEAR_CONFORMAL_CENTER_ATOL = 1e-11
+
+
 def _mesh(center: Any) -> Any:
     coordinates = _TARGET.copy()
     coordinates[4] = center
@@ -39,7 +46,9 @@ def test_shape_optimization_resolves_near_conformal_displacement() -> None:
     assert result.final_objective < result.initial_objective
     assert result.result is not None
     np.testing.assert_array_equal(np.asarray(result.coordinates)[:4], _TARGET[:4])
-    np.testing.assert_allclose(np.asarray(result.coordinates)[4], (0.5, 0.5), atol=1e-11)
+    np.testing.assert_allclose(
+        np.asarray(result.coordinates)[4], (0.5, 0.5), atol=_NEAR_CONFORMAL_CENTER_ATOL
+    )
 
 
 @pytest.mark.parametrize("dimension", (2, 3), ids=("triangle", "tetrahedron"))

@@ -44,6 +44,8 @@
 #include "capi_guard.hpp"
 #include "bounded_memory.hpp"
 #include "clip_common.hpp"
+#include "exact_scalar.hpp"
+#include "topology_keys.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 
@@ -54,7 +56,8 @@ using clip::construction_value;
 using clip::diff;
 using clip::kConstructionTolerance;
 using clip::kInvalidSide;
-using clip::lift;
+using exact::lift;
+using exact::det3;
 using clip::mul;
 
 enum class Family { kTetTet, kTetHalfspaces, kBoxHalfspaces };
@@ -143,9 +146,6 @@ struct Segment {
   int to;
 };
 
-// Positively oriented tetrahedron: the face opposite vertex k is spanned by
-// kTetFace[k] with orient3d(face, v_k) > 0; its outside loop is (f0, f2, f1).
-constexpr int kTetFace[4][3] = {{1, 3, 2}, {0, 2, 3}, {0, 3, 1}, {0, 1, 2}};
 
 // Box corner index = x_bit + 2 y_bit + 4 z_bit; loop of face 2 axis + side,
 // counterclockwise seen from outside.
@@ -163,12 +163,6 @@ T orient_value(const double* a, const double* b, const double* c, const double* 
   }
 }
 
-template <class T>
-T det3(const T (&r)[3][4], int i, int j, int k) {
-  return r[0][i] * (r[1][j] * r[2][k] - r[1][k] * r[2][j]) -
-         r[0][j] * (r[1][i] * r[2][k] - r[1][k] * r[2][i]) +
-         r[0][k] * (r[1][i] * r[2][j] - r[1][j] * r[2][i]);
-}
 
 // The two tetrahedron vertices outside {i, j}, ascending.
 bool other_two(int i, int j, int& k, int& l) {
@@ -186,6 +180,12 @@ bool other_two(int i, int j, int& k, int& l) {
   l = found[1];
   return true;
 }
+
+struct ClipClassification {
+  bool positive = false;
+  bool negative = false;
+  int64_t kept = 0;
+};
 
 class PolytopeClipper {
  public:
@@ -221,9 +221,9 @@ class PolytopeClipper {
   void begin_tetrahedron() {
     for (int k = 0; k < 4; ++k) {
       Plane plane;
-      plane.a = kTetFace[k][0];
-      plane.b = kTetFace[k][1];
-      plane.c = kTetFace[k][2];
+      plane.a = topology::kTetFaceOrder[k][0];
+      plane.b = topology::kTetFaceOrder[k][1];
+      plane.c = topology::kTetFaceOrder[k][2];
       plane.tag = k;
       plane.label = -1 - k;
       planes.push_back(plane);
@@ -234,9 +234,9 @@ class PolytopeClipper {
     }
     for (int k = 0; k < 4; ++k) {
       faces.push_back({k, static_cast<int>(loops.size()), 3});
-      loops.push_back(kTetFace[k][0]);
-      loops.push_back(kTetFace[k][2]);
-      loops.push_back(kTetFace[k][1]);
+      loops.push_back(topology::kTetFaceOrder[k][0]);
+      loops.push_back(topology::kTetFaceOrder[k][2]);
+      loops.push_back(topology::kTetFaceOrder[k][1]);
     }
   }
 
@@ -322,12 +322,35 @@ class PolytopeClipper {
   // Keeps the part with s_plane >= 0.  `empty` reports a zero-measure result.
   int32_t clip(int plane_id, bool& empty) {
     empty = false;
+    ClipClassification sides;
+    int32_t status = classify_live_vertices(plane_id, sides);
+    if (status != PHX_MC_OK) return status;
+    if (!sides.positive) {
+      live.clear();
+      faces.clear();
+      loops.clear();
+      empty = true;
+      return PHX_MC_OK;
+    }
+    if (!sides.negative) return PHX_MC_OK;
+
+    int first_new = -1;
+    status = construct_cut_vertices(plane_id, sides.kept, first_new);
+    if (status != PHX_MC_OK) return status;
+    status = stage_clipped_faces();
+    if (status != PHX_MC_OK) return status;
+    status = stage_closing_face(plane_id);
+    if (status != PHX_MC_OK) return status;
+    return commit_clipped_polytope(first_new);
+  }
+
+  int32_t classify_live_vertices(int plane_id, ClipClassification& sides) {
     if (side_.size() < vertices.size()) {
       side_.resize(vertices.size());
     }
-    bool positive = false;
-    bool negative = false;
-    int64_t kept = 0;
+    bool& positive = sides.positive;
+    bool& negative = sides.negative;
+    int64_t& kept = sides.kept;
     for (const int v : live) {
       const int side = classify(v, plane_id);
       if (side == kInvalidSide) {
@@ -338,16 +361,10 @@ class PolytopeClipper {
       negative = negative || side < 0;
       kept += side >= 0;
     }
-    if (!positive) {
-      live.clear();
-      faces.clear();
-      loops.clear();
-      empty = true;
-      return PHX_MC_OK;
-    }
-    if (!negative) {
-      return PHX_MC_OK;
-    }
+    return PHX_MC_OK;
+  }
+
+  int32_t construct_cut_vertices(int plane_id, int64_t kept, int& first_new) {
 
     // Every crossing edge appears once in each of its two faces.
     cuts_.clear();
@@ -376,7 +393,7 @@ class PolytopeClipper {
     if (kept + created > capacity) {
       return PHX_MC_CAPACITY_EXCEEDED;
     }
-    const int first_new = static_cast<int>(vertices.size());
+    first_new = static_cast<int>(vertices.size());
     for (std::size_t k = 0; k < cuts_.size(); k += 2) {
       const Cut first = cuts_[k];
       const Cut second = cuts_[k + 1];
@@ -392,6 +409,10 @@ class PolytopeClipper {
       cuts_[k].vertex = id;
       cuts_[k + 1].vertex = id;
     }
+    return PHX_MC_OK;
+  }
+
+  int32_t stage_clipped_faces() {
 
     // Sutherland-Hodgman on every face; the part of a clipped face loop that
     // left the kept side becomes the segment exit -> entry on the plane.
@@ -460,6 +481,10 @@ class PolytopeClipper {
         next_loops_.resize(start);
       }
     }
+    return PHX_MC_OK;
+  }
+
+  int32_t stage_closing_face(int plane_id) {
 
     // The reversed segments chain into the new face, counterclockwise from
     // outside because every edge is traversed opposite to its other face.
@@ -491,6 +516,10 @@ class PolytopeClipper {
       return PHX_MC_INTERNAL_ERROR;
     }
     next_faces_.push_back({plane_id, start, static_cast<int>(segments_.size())});
+    return PHX_MC_OK;
+  }
+
+  int32_t commit_clipped_polytope(int first_new) {
 
     next_live_.clear();
     for (const int v : live) {
@@ -1001,7 +1030,9 @@ int32_t intersect_tetrahedra(const double* first, const double* second, int32_t 
   }
   clipper.begin_tetrahedron();
   for (int k = 0; k < 4; ++k) {
-    clipper.add_point_plane(4 + kTetFace[k][0], 4 + kTetFace[k][1], 4 + kTetFace[k][2], k);
+    clipper.add_point_plane(4 + topology::kTetFaceOrder[k][0],
+                            4 + topology::kTetFaceOrder[k][1],
+                            4 + topology::kTetFaceOrder[k][2], k);
   }
   status = clipper.finish_setup(vertex_capacity);
   bool empty = false;
@@ -1405,15 +1436,28 @@ int32_t phx_mc_polyhedron_clip_moments(int64_t count, int32_t plane_capacity,
   });
 }
 
-int32_t phx_mc_clip_box_halfspaces(int64_t count, const double* box_lower,
-                                   const double* box_upper, int32_t plane_capacity,
-                                   const double* normals, const double* offsets,
-                                   const int32_t* plane_counts, int32_t vertex_capacity,
-                                   int32_t face_capacity, int32_t face_vertex_capacity,
-                                   double* vertices, int32_t* vertex_counts,
-                                   int32_t* face_offsets, int32_t* face_labels,
-                                   int32_t* face_vertices, int32_t* face_counts, double* volumes,
-                                   double* first_moments, int32_t* item_status) {
+int32_t phx_mc_clip_box_halfspaces(
+    const phx_mc_clip_box_halfspaces_request* request) {
+  if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
+  auto count = request->count;
+  auto box_lower = request->box_lower;
+  auto box_upper = request->box_upper;
+  auto plane_capacity = request->plane_capacity;
+  auto normals = request->normals;
+  auto offsets = request->offsets;
+  auto plane_counts = request->plane_counts;
+  auto vertex_capacity = request->vertex_capacity;
+  auto face_capacity = request->face_capacity;
+  auto face_vertex_capacity = request->face_vertex_capacity;
+  auto vertices = request->vertices;
+  auto vertex_counts = request->vertex_counts;
+  auto face_offsets = request->face_offsets;
+  auto face_labels = request->face_labels;
+  auto face_vertices = request->face_vertices;
+  auto face_counts = request->face_counts;
+  auto volumes = request->volumes;
+  auto first_moments = request->first_moments;
+  auto item_status = request->item_status;
   return phx::mc::guarded([&]() -> int32_t {
     if (count < 0 || plane_capacity < 0 || vertex_capacity < 1 || face_capacity < 1 ||
         face_vertex_capacity < 1 ||

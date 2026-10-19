@@ -9,6 +9,12 @@ from dataclasses import dataclass, field
 from enum import IntFlag
 from typing import Literal, TypeAlias
 
+from ..._validation import (
+    integer,
+    nonnegative_integer,
+    positive_integer,
+    positive_real_scalar,
+)
 from ...typing import parse
 
 
@@ -67,17 +73,17 @@ class ImplicitProjectionPolicy:
     trust_fraction: float = 0.35
 
     def __post_init__(self) -> None:
-        if self.maximum_steps <= 0:
-            raise ValueError("maximum_steps must be positive.")
+        positive_integer(self.maximum_steps, "ImplicitProjectionPolicy.maximum_steps")
         for name, value in (
             ("root_tolerance", self.root_tolerance),
             ("minimum_gradient_norm", self.minimum_gradient_norm),
             ("trust_fraction", self.trust_fraction),
         ):
-            if not math.isfinite(value) or value <= 0.0:
-                raise ValueError(f"{name} must be finite and positive.")
+            positive_real_scalar(value, f"ImplicitProjectionPolicy.{name}")
         if self.trust_fraction > 1.0:
-            raise ValueError("trust_fraction must not exceed one.")
+            raise ValueError(
+                f"ImplicitProjectionPolicy.trust_fraction must not exceed one; got {self.trust_fraction}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,14 +104,15 @@ class ImplicitSurfacePolicy:
 
     def __post_init__(self) -> None:
         if not isinstance(self.projection, ImplicitProjectionPolicy):
-            raise TypeError("projection must be an ImplicitProjectionPolicy.")
+            raise TypeError(
+                f"ImplicitSurfacePolicy.projection must be ImplicitProjectionPolicy; got {type(self.projection).__name__}"
+            )
         for name, value in (
             ("lattice_zero_tolerance", self.lattice_zero_tolerance),
             ("qef_regularization", self.qef_regularization),
             ("minimum_face_area", self.minimum_face_area),
         ):
-            if not math.isfinite(value) or value <= 0.0:
-                raise ValueError(f"{name} must be finite and positive.")
+            positive_real_scalar(value, f"ImplicitSurfacePolicy.{name}")
         for name, value in (
             ("maximum_lattice_points", self.maximum_lattice_points),
             ("maximum_crossings", self.maximum_crossings),
@@ -113,8 +120,7 @@ class ImplicitSurfacePolicy:
             ("maximum_faces", self.maximum_faces),
             ("maximum_intersection_pairs", self.maximum_intersection_pairs),
         ):
-            if value <= 0:
-                raise ValueError(f"{name} must be positive.")
+            positive_integer(value, f"ImplicitSurfacePolicy.{name}")
 
 
 class AdaptiveImplicitSurfaceStatus(IntFlag):
@@ -198,10 +204,11 @@ class AdaptiveImplicitSurfacePolicy:
             ("maximum_intersection_pairs", self.maximum_intersection_pairs),
             ("edge_isolation_depth", self.edge_isolation_depth),
         ):
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise TypeError(f"{name} must be an int.")
-        if self.edge_isolation_depth < 0:
-            raise ValueError("edge_isolation_depth must be nonnegative.")
+            integer(value, f"AdaptiveImplicitSurfacePolicy.{name}")
+        nonnegative_integer(
+            self.edge_isolation_depth,
+            "AdaptiveImplicitSurfacePolicy.edge_isolation_depth",
+        )
         if not (
             1
             <= self.initial_level
@@ -210,8 +217,8 @@ class AdaptiveImplicitSurfacePolicy:
             <= _MAXIMUM_ADAPTIVE_LEVEL
         ):
             raise ValueError(
-                "Adaptive levels require 1 <= initial_level <= minimum_surface_level "
-                f"<= maximum_level <= {_MAXIMUM_ADAPTIVE_LEVEL}."
+                f"AdaptiveImplicitSurfacePolicy.levels must satisfy 1 <= initial_level <= minimum_surface_level <= maximum_level <= {_MAXIMUM_ADAPTIVE_LEVEL}; "
+                f"got {(self.initial_level, self.minimum_surface_level, self.maximum_level)}"
             )
         for name, value in (
             ("maximum_boxes", self.maximum_boxes),
@@ -219,24 +226,27 @@ class AdaptiveImplicitSurfacePolicy:
             ("maximum_faces", self.maximum_faces),
             ("maximum_intersection_pairs", self.maximum_intersection_pairs),
         ):
-            if value <= 0:
-                raise ValueError(f"{name} must be positive.")
+            positive_integer(value, f"AdaptiveImplicitSurfacePolicy.{name}")
         for name, value in (
             ("root_tolerance", self.root_tolerance),
             ("qef_regularization", self.qef_regularization),
             ("minimum_face_area", self.minimum_face_area),
             ("feature_angle", self.feature_angle),
         ):
-            if not math.isfinite(value) or value <= 0.0:
-                raise ValueError(f"{name} must be finite and positive.")
+            positive_real_scalar(value, f"AdaptiveImplicitSurfacePolicy.{name}")
         if self.feature_angle >= math.pi:
-            raise ValueError("feature_angle must be below pi.")
-        if self.flatness_tolerance is not None and (
-            not math.isfinite(self.flatness_tolerance) or self.flatness_tolerance <= 0.0
-        ):
-            raise ValueError("flatness_tolerance must be finite and positive or None.")
+            raise ValueError(
+                f"AdaptiveImplicitSurfacePolicy.feature_angle must be below pi; got {self.feature_angle}"
+            )
+        if self.flatness_tolerance is not None:
+            positive_real_scalar(
+                self.flatness_tolerance,
+                "AdaptiveImplicitSurfacePolicy.flatness_tolerance",
+            )
         if not isinstance(self.allow_approximate_zero_set, bool):
-            raise TypeError("allow_approximate_zero_set must be a bool.")
+            raise TypeError(
+                f"AdaptiveImplicitSurfacePolicy.allow_approximate_zero_set must be a bool; got {type(self.allow_approximate_zero_set).__name__}"
+            )
 
 
 # Integer entity keys pack (2**level + 1)**3 vertex keys with an axis and a size

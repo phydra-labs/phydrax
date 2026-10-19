@@ -238,7 +238,7 @@ def prepare_radiation_targets(
         tuple(
             Sphere(
                 site.center, site.radius, feature_id=f"radiation-target:{site.target_id}"
-            ).compile()
+            ).compile(coordinate_unit=geometry.length_unit)
             for site in geometry.sites
         ),
     )

@@ -117,6 +117,28 @@ class UnitDefinition(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[UnitDefinition], value: UnitDefinition, /
+    ) -> UnitDefinition:
+        """Revalidate a stored unit with its rational reference scale."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"UnitDefinition.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        fresh = cls(
+            value.symbol,
+            value.dimension,
+            value.reference_system_id,
+            (value.scale_numerator, value.scale_denominator),
+        )
+        if fresh.unit_id != value.unit_id:
+            raise ValueError(
+                f"UnitDefinition.unit_id must match its stored dimension and scale; got {value.unit_id}"
+            )
+        return fresh
+
     @property
     def scale_to_reference(self) -> Fraction:
         return Fraction(self.scale_numerator, self.scale_denominator)

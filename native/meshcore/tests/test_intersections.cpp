@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "geometry3.hpp"
 #include "intersections.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -296,8 +297,8 @@ void test_lattice_invariance() {
     if (trial % 4 == 0) {
       a[2] = a[5] = a[8] = b[2] = b[5] = b[8] = 0.0;
     }
-    if (phx::mc::collinear3d(a.data(), a.data() + 3, a.data() + 6) ||
-        phx::mc::collinear3d(b.data(), b.data() + 3, b.data() + 6)) {
+    if (phx::mc::geometry::collinear(a.data(), a.data() + 3, a.data() + 6) ||
+        phx::mc::geometry::collinear(b.data(), b.data() + 3, b.data() + 6)) {
       continue;
     }
     const Contact reference = triangles(a, b);

@@ -25,8 +25,9 @@ from ..linalg import (
 )
 from ..linalg._costs import _array_tree_storage_bytes
 from ..linalg._operators import _validate_properties
-from ..linalg._spaces import _coordinate_dtype
+from ..linalg._spaces import coordinate_dtype
 from ..linalg._sparse_contract import AbstractSparseLinearOperator, SparseStorage
+from ..typing import checked
 from ._ops import (
     block_linear_apply,
     block_linear_transpose_apply,
@@ -258,11 +259,12 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
     coefficients: Array
     accumulation_dtype: np.dtype = eqx.field(static=True)
     block_shape: tuple[int, int] | None = eqx.field(static=True)
-    _storage_plan: _SparseStoragePlan | None
+    _storage_plan: SparseStoragePlan | None
     _canonical_nnz: int | None = eqx.field(static=True)
     _target_gather: _RowGatherLayout | None
     _source_gather: _RowGatherLayout | None
 
+    @checked
     def __init__(
         self,
         relation: SparseRelation,
@@ -275,14 +277,8 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         operator_id: str | None = None,
         accumulation_dtype: DTypeLike | None = None,
         block_shape: tuple[int, int] | None = None,
-        storage_plan: _SparseStoragePlan | None = None,
+        storage_plan: SparseStoragePlan | None = None,
     ) -> None:
-        if not isinstance(relation, (EdgeRelation, RowRelation)):
-            raise TypeError("relation must be an EdgeRelation or RowRelation.")
-        if not isinstance(source, AbstractVectorSpace) or not isinstance(
-            target, AbstractVectorSpace
-        ):
-            raise TypeError("source and target must be AbstractVectorSpace values.")
         edge_relation = (
             relation
             if isinstance(relation, EdgeRelation)
@@ -309,7 +305,7 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
             values = values.astype(jnp.float64)
         accumulation_dtype_ = jnp.dtype(
             jnp.result_type(
-                values.dtype, _coordinate_dtype(source), _coordinate_dtype(target)
+                values.dtype, coordinate_dtype(source), coordinate_dtype(target)
             )
             if accumulation_dtype is None
             else accumulation_dtype
@@ -317,8 +313,6 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         if not jnp.issubdtype(accumulation_dtype_, jnp.inexact):
             raise TypeError("Sparse accumulation dtype must be inexact.")
         properties_ = OperatorProperties() if properties is None else properties
-        if not isinstance(properties_, OperatorProperties):
-            raise TypeError("properties must be OperatorProperties.")
         _validate_properties(properties_, source, target)
         identifier = (
             canonical_fingerprint(
@@ -337,8 +331,6 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         if not identifier:
             raise ValueError("operator_id must be non-empty.")
         if storage_plan is not None:
-            if not isinstance(storage_plan, _SparseStoragePlan):
-                raise TypeError("storage_plan must be a native sparse storage plan.")
             if (
                 storage_plan.block_shape != block_shape
                 or storage_plan.route_shape != coefficient_shape
@@ -418,12 +410,12 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
     def mv(self, vector: Any, /) -> Any:
         coordinates = self.source.flatten(vector).astype(self.accumulation_dtype)
         output = self._coordinate_apply(coordinates, reverse=False, conjugate=False)
-        return self.target.unflatten(output.astype(_coordinate_dtype(self.target)))
+        return self.target.unflatten(output.astype(coordinate_dtype(self.target)))
 
     def transpose_mv(self, vector: Any, /) -> Any:
         coordinates = self.target.flatten(vector).astype(self.accumulation_dtype)
         output = self._coordinate_apply(coordinates, reverse=True, conjugate=False)
-        return self.source.unflatten(output.astype(_coordinate_dtype(self.source)))
+        return self.source.unflatten(output.astype(coordinate_dtype(self.source)))
 
     def adjoint_mv(self, vector: Any, /) -> Any:
         target_covector = self.target.flatten(self.target.riesz(vector)).astype(
@@ -431,7 +423,7 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         )
         output = self._coordinate_apply(target_covector, reverse=True, conjugate=True)
         source_covector = self.source.unflatten(
-            output.astype(_coordinate_dtype(self.source))
+            output.astype(coordinate_dtype(self.source))
         )
         return self.source.inverse_riesz(source_covector)
 
@@ -466,14 +458,14 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         return (
             matrix.at[safe_target, safe_source]
             .add(values)
-            .astype(_coordinate_dtype(self.target))
+            .astype(coordinate_dtype(self.target))
         )
 
     def _assemble_diagonal(self, /) -> Array:
         relation, coefficients = self._edge_form()
         return _assemble_relation_diagonal(
             relation, coefficients.astype(self.accumulation_dtype)
-        ).astype(_coordinate_dtype(self.target))
+        ).astype(coordinate_dtype(self.target))
 
     def _materialize(self, /) -> Array:
         return self.as_dense()
@@ -721,7 +713,7 @@ def _row_gather_layouts(
 
 
 @final
-class _SparseStoragePlan(StrictModule):
+class SparseStoragePlan(StrictModule):
     """Host-planned route coalescing, reusable inside numeric JAX refresh."""
 
     positions: Array
@@ -866,7 +858,7 @@ def _canonical_sparse_storage(
     *,
     block_shape: tuple[int, int] | None = None,
 ) -> SparseStorage:
-    return _SparseStoragePlan(relation, block_shape=block_shape).apply(coefficients)
+    return SparseStoragePlan(relation, block_shape=block_shape).apply(coefficients)
 
 
 def _coefficient_values(coefficients: ArrayLike, /) -> Array:

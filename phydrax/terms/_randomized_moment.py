@@ -126,14 +126,9 @@ def _integration_sampling_design(
 def _plan_sampling_design(plan: Any, /) -> RealizationSamplingDesign:
     """Declare iid *replicate means* only for native known-unbiased integration."""
     if isinstance(plan, ProductIntegrationPlan):
-        # Each realization keys its randomized factors independently and repeats
-        # deterministic factor nodes, so replicate means are iid exactly when
-        # every randomized factor is.
-        designs = tuple(
-            _plan_sampling_design(factor)
-            for factor in plan.plans.values()
-            if _requires_random_key(factor)
-        )
+        # Independence of replicate keys does not remove a factor's quadrature
+        # bias. Every factor, including nested products, must certify unbiasedness.
+        designs = tuple(_plan_sampling_design(factor) for factor in plan.plans.values())
         return "iid" if designs and all(item == "iid" for item in designs) else "unknown"
     if isinstance(plan, ImportanceSamplingPlan):
         return "iid" if isinstance(plan.estimator, SampleMeanEstimator) else "unknown"

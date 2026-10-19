@@ -24,7 +24,7 @@ from ..linalg import (
     OperatorProperties,
     RankPolicy,
 )
-from ..linalg._spaces import _coordinate_dtype
+from ..linalg._spaces import coordinate_dtype
 from ..linalg.eigen import SelfAdjointSpectrumPolicy
 from ..sparse import EdgeRelation, SparseLinearMap
 from ..typing import checked
@@ -360,7 +360,7 @@ class MomentCalibrationProblem(StrictModule):
             raise ValueError(
                 f"Target moments must have shape ({moment_count},); got {target.values.shape}."
             )
-        dtype = _coordinate_dtype(moment_map.source)
+        dtype = coordinate_dtype(moment_map.source)
         if isinstance(target, ExactMoments):
             target_ = ExactMoments(target.values.astype(dtype))
         elif isinstance(target, IntervalMoments):
@@ -368,7 +368,7 @@ class MomentCalibrationProblem(StrictModule):
                 target.lower.astype(dtype), target.upper.astype(dtype)
             )
         else:
-            if _coordinate_dtype(target.covariance.source) != dtype:
+            if coordinate_dtype(target.covariance.source) != dtype:
                 raise TypeError(
                     "Quadratic moment covariance dtype must match the moment map."
                 )

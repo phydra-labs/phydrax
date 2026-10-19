@@ -2,10 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Numerical relation discovery and exact containment for polynomial images."""
+"""Discover numerical relations and prove polynomial-image containment."""
 
 from ._analysis import (
-    plan_polynomial_image_analysis,
     PolynomialImageAnalysisPlan,
     PolynomialImageAnalysisPolicy,
     prepare_polynomial_image_analysis,
@@ -45,7 +44,6 @@ __all__ = [
     "SparsePolynomialMap",
     "TargetMonomialSupport",
     "TargetRelationEvidence",
-    "plan_polynomial_image_analysis",
     "prepare_polynomial_image_analysis",
     "prove_exact_containment",
     "refresh_polynomial_image_analysis",

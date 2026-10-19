@@ -8,7 +8,6 @@
 #include <cmath>
 #include <array>
 #include <cstdint>
-#include <cstdio>
 #include <vector>
 #include <limits>
 #include <set>
@@ -24,6 +23,21 @@ namespace {
 
 using phx::mc::test::Domain;
 using phx::mc::test::Exported;
+
+// Historical empirical oracle allowances from this file's analytic fixtures.
+// Unit-box measures use tet_mesh_fixtures.hpp::{region_volume,source_area};
+// the small flip/collapse cavities sum only a few determinant/6 terms.
+// Keep these acceptance values separate from the native quality/validity policy.
+constexpr double kUnitBoxMeasureTolerance = 1e-12;
+constexpr double kSmallCavityVolumeTolerance = 1e-15;
+// cell_quality's independent acos oracle is compared with native atan2 angles.
+constexpr double kDihedralOracleTolerance = 1e-9;
+// reconstruction_hinge_domain has much smaller volume than the unit-box cases;
+// retain its existing empirical determinant-sum allowance rather than scaling up.
+constexpr double kHingeVolumeTolerance = 1e-18;
+// The reconstruction-hinge tests request this canonical-chart validity policy;
+// it is a tested admission threshold, not numerical slack on an assertion.
+constexpr double kReconstructionFloor = 1.0e-12;
 
 double smallest_dihedral(const Exported& mesh) {
   double worst = 180.0;
@@ -56,12 +70,6 @@ void test_improvement_removes_slivers_preserving_constraints() {
   int64_t counters[PHX_MC_TET_MESH_IMPROVE_COUNTERS];
   const int32_t status = phx_mc_tet_mesh_improve(mesh, 12.0, 0.0, 20, int64_t{1} << 40, counters);
   const Exported improved = phx::mc::test::export_mesh(mesh);
-  std::printf("improve: dihedral %.3f -> %.3f, flips23 %lld, edge removals %lld, moves %lld, "
-              "passes %lld, remaining %lld\n",
-              smallest_dihedral(refined), smallest_dihedral(improved),
-              static_cast<long long>(counters[0]), static_cast<long long>(counters[1]),
-              static_cast<long long>(counters[2]), static_cast<long long>(counters[4]),
-              static_cast<long long>(counters[6]));
   PHX_CHECK(status == PHX_MC_OK);
   PHX_CHECK(smallest_dihedral(improved) >= 12.0);
   PHX_CHECK(smallest_dihedral(improved) > smallest_dihedral(refined));
@@ -71,17 +79,17 @@ void test_improvement_removes_slivers_preserving_constraints() {
   const std::vector<double> before = source_areas(refined);
   const std::vector<double> after = source_areas(improved);
   for (std::size_t s = 0; s < before.size(); ++s) {
-    PHX_CHECK_NEAR(after[s], before[s], 1e-12);
+    PHX_CHECK_NEAR(after[s], before[s], kUnitBoxMeasureTolerance);
   }
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(improved, 0), 1.0, 1e-12);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(improved, 0), 1.0, kUnitBoxMeasureTolerance);
   PHX_CHECK(handle_audit(mesh));
   double values[PHX_MC_TET_MESH_QUALITY_VALUES];
   int64_t histogram[PHX_MC_TET_MESH_QUALITY_BINS];
   int64_t slivers = -1;
   PHX_CHECK(phx_mc_tet_mesh_quality(mesh, 12.0, values, histogram, &slivers) == PHX_MC_OK);
   PHX_CHECK(slivers == 0);
-  PHX_CHECK_NEAR(values[0], smallest_dihedral(improved), 1e-9);
-  PHX_CHECK_NEAR(values[5], 1.0, 1e-12);
+  PHX_CHECK_NEAR(values[0], smallest_dihedral(improved), kDihedralOracleTolerance);
+  PHX_CHECK_NEAR(values[5], 1.0, kUnitBoxMeasureTolerance);
   int64_t binned = 0;
   for (int64_t count : histogram) {
     binned += count;
@@ -98,10 +106,10 @@ void test_unattainable_target_reports_remaining_slivers() {
             PHX_MC_REFINEMENT_LIMIT);
   int64_t counts[PHX_MC_TET_MESH_COUNTS];
   phx_mc_tet_mesh_counts(mesh, counts);
-  PHX_CHECK(counts[4] == counters[6] && counts[4] > 0);
-  std::vector<int32_t> tets(4 * static_cast<std::size_t>(counts[4]));
-  std::vector<int32_t> codes(2 * static_cast<std::size_t>(counts[4]));
-  std::vector<double> values(static_cast<std::size_t>(counts[4]));
+  PHX_CHECK(counts[PHX_MC_TET_MESH_COUNT_UNMET_RECORDS] == counters[PHX_MC_TET_MESH_IMPROVE_REMAINING_SLIVERS] && counts[PHX_MC_TET_MESH_COUNT_UNMET_RECORDS] > 0);
+  std::vector<int32_t> tets(4 * static_cast<std::size_t>(counts[PHX_MC_TET_MESH_COUNT_UNMET_RECORDS]));
+  std::vector<int32_t> codes(2 * static_cast<std::size_t>(counts[PHX_MC_TET_MESH_COUNT_UNMET_RECORDS]));
+  std::vector<double> values(static_cast<std::size_t>(counts[PHX_MC_TET_MESH_COUNT_UNMET_RECORDS]));
   PHX_CHECK(phx_mc_tet_mesh_unmet(mesh, tets.data(), codes.data(), values.data()) == PHX_MC_OK);
   bool dihedral = true;
   for (std::size_t i = 0; i < values.size(); ++i) {
@@ -109,7 +117,7 @@ void test_unattainable_target_reports_remaining_slivers() {
   }
   PHX_CHECK(dihedral);
   const Exported after = phx::mc::test::export_mesh(mesh);
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0, 1e-12);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0, kUnitBoxMeasureTolerance);
   phx_mc_tet_mesh_free(mesh);
 }
 
@@ -138,13 +146,13 @@ void test_flip_and_edge_removal_round_trip() {
   Exported flipped = phx::mc::test::export_mesh(mesh);
   PHX_CHECK(flipped.regions.size() == 3);
   PHX_CHECK(phx::mc::test::all_positive(flipped));
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(flipped, 0), 2.0 / 6.0, 1e-15);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(flipped, 0), 2.0 / 6.0, kSmallCavityVolumeTolerance);
   // The new edge (3, 4) is removed again by the 3-2 flip.
   PHX_CHECK(phx_mc_tet_mesh_remove_edge(mesh, 3, 4, 0, &applied) == PHX_MC_OK && applied == 1);
   Exported restored = phx::mc::test::export_mesh(mesh);
   PHX_CHECK(restored.tets == phx::mc::test::export_mesh(mesh).tets);
   PHX_CHECK(restored.regions.size() == 2);
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(restored, 0), 2.0 / 6.0, 1e-15);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(restored, 0), 2.0 / 6.0, kSmallCavityVolumeTolerance);
   // Constrained faces and segments refuse.
   const int32_t boundary[3] = {0, 1, 3};
   PHX_CHECK(phx_mc_tet_mesh_flip_face(mesh, boundary, 0, &applied) == PHX_MC_OK && applied == 0);
@@ -207,7 +215,7 @@ void test_relocation_and_vertex_removal() {
   PHX_CHECK(removed.dimension[8] == -1);
   PHX_CHECK(removed.regions.size() == 6);
   PHX_CHECK(phx::mc::test::all_positive(removed));
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(removed, 0), 1.0, 1e-15);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(removed, 0), 1.0, kSmallCavityVolumeTolerance);
   PHX_CHECK(handle_audit(mesh));
   phx_mc_tet_mesh_free(mesh);
 }
@@ -277,7 +285,7 @@ void test_conforming_curve_split_collapse_preserves_source_and_ghost_closure() {
   PHX_CHECK(std::equal(original.points.begin(), original.points.end(), restored.points.begin()));
   PHX_CHECK(source_areas(restored) == source_areas(original));
   PHX_CHECK(phx::mc::test::all_positive(restored));
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(restored, 0), 1.0 / 6.0, 1e-15);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(restored, 0), 1.0 / 6.0, kSmallCavityVolumeTolerance);
   PHX_CHECK(handle_audit(handle));
   phx_mc_tet_mesh_free(handle);
 }
@@ -309,7 +317,7 @@ void test_conforming_segment_relocation_preserves_exact_source_and_volume() {
   PHX_CHECK(after.regions == before.regions);
   PHX_CHECK(source_areas(after) == source_areas(original));
   PHX_CHECK(phx::mc::test::all_positive(after));
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0 / 6.0, 1e-15);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0 / 6.0, kSmallCavityVolumeTolerance);
   const auto& witness = handle->mesh->witness(inserted);
   PHX_CHECK(witness.stratum == phx::mc::SourceStratum::kSegment);
   PHX_CHECK(witness.entity == 0 && witness.parameters[0] == 0.375);
@@ -343,9 +351,9 @@ void test_scheduled_segment_relocation_preserves_source_and_volume() {
   }
   PHX_CHECK(phx::mc::test::export_mesh(handle) == before);
   PHX_CHECK(handle_audit(handle));
-  uint64_t memory[6] = {};
+  uint64_t memory[PHX_MC_MEMORY_VALUES] = {};
   PHX_CHECK(phx_mc_tet_mesh_memory_evidence(handle, memory) == PHX_MC_OK);
-  PHX_CHECK(phx_mc_tet_mesh_set_memory_limit(handle, static_cast<int64_t>(memory[1])) ==
+  PHX_CHECK(phx_mc_tet_mesh_set_memory_limit(handle, static_cast<int64_t>(memory[PHX_MC_MEMORY_LIVE_BYTES])) ==
             PHX_MC_OK);
   PHX_CHECK(phx_mc_tet_mesh_improve(handle, 70.0, 0.0, 1, 1000000, counters) ==
             PHX_MC_CAPACITY_EXCEEDED);
@@ -355,7 +363,7 @@ void test_scheduled_segment_relocation_preserves_source_and_volume() {
   PHX_CHECK(phx_mc_tet_mesh_improve(handle, 70.0, 0.0, 1, 1000000, counters) ==
             PHX_MC_REFINEMENT_LIMIT);
   const Exported after = phx::mc::test::export_mesh(handle);
-  PHX_CHECK(counters[2] > 0);
+  PHX_CHECK(counters[PHX_MC_TET_MESH_IMPROVE_RELOCATIONS] > 0);
   PHX_CHECK(after.points[3 * inserted] != midpoint[0]);
   PHX_CHECK(smallest_dihedral(after) > smallest_dihedral(before));
   PHX_CHECK(std::equal(original.points.begin(), original.points.end(), after.points.begin()));
@@ -365,7 +373,7 @@ void test_scheduled_segment_relocation_preserves_source_and_volume() {
   PHX_CHECK(after.regions == before.regions);
   PHX_CHECK(source_areas(after) == source_areas(original));
   PHX_CHECK(phx::mc::test::all_positive(after));
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0 / 6.0, 1e-15);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0 / 6.0, kSmallCavityVolumeTolerance);
   const auto& witness = handle->mesh->witness(inserted);
   PHX_CHECK(witness.stratum == phx::mc::SourceStratum::kSegment);
   PHX_CHECK(witness.entity == 0 && witness.deviation == 0.0);
@@ -409,9 +417,9 @@ void test_conforming_curve_collapse_allocation_refusal_preserves_accepted_state(
   PHX_CHECK(phx::mc::try_split_edge(*handle->mesh, 0, 1, midpoint, 0, inserted) ==
             phx::mc::Insertion::kOk);
   const Exported accepted = phx::mc::test::export_mesh(handle);
-  uint64_t memory[6] = {};
+  uint64_t memory[PHX_MC_MEMORY_VALUES] = {};
   PHX_CHECK(phx_mc_tet_mesh_memory_evidence(handle, memory) == PHX_MC_OK);
-  PHX_CHECK(phx_mc_tet_mesh_set_memory_limit(handle, static_cast<int64_t>(memory[1])) ==
+  PHX_CHECK(phx_mc_tet_mesh_set_memory_limit(handle, static_cast<int64_t>(memory[PHX_MC_MEMORY_LIVE_BYTES])) ==
             PHX_MC_OK);
   int32_t applied = -1;
   PHX_CHECK(phx_mc_tet_mesh_collapse_edge(handle, inserted, 0, 0, 100000, &applied) ==
@@ -460,7 +468,7 @@ void test_weighted_regular_reconnection_removes_an_interior_sliver() {
   options.max_weight_fraction = 0.25;
   options.max_passes = 2;
   phx::mc::NativeVector<double> weights;
-  int64_t counters[6];
+  phx::mc::TetMeshExudeCounters counters;
   PHX_CHECK(phx::mc::exude_mesh(mesh, options, weights, counters) == PHX_MC_REFINEMENT_LIMIT);
   PHX_CHECK(mesh.edge_tet(a, b) == -1);
   const Exported improved = phx::mc::test::export_mesh(handle);
@@ -527,7 +535,7 @@ void test_weighted_exudation_never_creates_a_cell_below_the_floor() {
     options.max_passes = 2;
     options.minimum_relative_determinant = floor;
     phx::mc::NativeVector<double> weights;
-    int64_t counters[6];
+    phx::mc::TetMeshExudeCounters counters;
     const int32_t status = phx::mc::exude_mesh(mesh, options, weights, counters);
     PHX_CHECK(status == PHX_MC_OK || status == PHX_MC_REFINEMENT_LIMIT);
     PHX_CHECK(below() <= before);
@@ -553,13 +561,13 @@ void test_exudation_reports_unrepaired_below_floor_cells() {
   const Exported before = phx::mc::test::export_mesh(handle);
   phx::mc::ExudeOptions options;
   options.min_dihedral_degrees = 0.0;
-  options.minimum_relative_determinant = 1.0e-12;
+  options.minimum_relative_determinant = kReconstructionFloor;
   options.max_passes = 2;
   phx::mc::NativeVector<double> weights;
-  int64_t counters[6];
+  phx::mc::TetMeshExudeCounters counters;
   PHX_CHECK(phx::mc::exude_mesh(*handle->mesh, options, weights, counters) ==
             PHX_MC_REFINEMENT_LIMIT);
-  PHX_CHECK(counters[1] == 0 && counters[2] == 0);
+  PHX_CHECK(counters.flips == 0 && counters.weighted_vertices == 0);
   int32_t cell[4] = {}, codes[2] = {};
   double margin = 0.0;
   PHX_CHECK(phx_mc_tet_mesh_unmet(handle, cell, codes, &margin) == PHX_MC_OK);
@@ -599,7 +607,7 @@ void test_protected_interior_vertex_cannot_move_or_retire() {
 void test_protection_ball_center_rejects_otherwise_legal_relocation() {
   const Domain domain = phx::mc::test::box_domain(phx::mc::test::box_points(3, 20, 1), 0.0);
   std::vector<double> radii(domain.points.size() / 3, 0.0);
-  radii[27] = 1e-4;
+  radii[27] = 1e-4;  // Positive protection policy for this interior site, not oracle slack.
   phx_mc_tet_mesh* handle =
       phx::mc::test::create_mesh(domain, PHX_MC_TET_MESH_BOUNDARY_CONFORMING, radii.data());
   PHX_CHECK(handle != nullptr);
@@ -627,7 +635,7 @@ void test_expanded_insertion_inspection_is_atomic_and_epoch_bound() {
   const Exported original = phx::mc::test::export_mesh(handle);
   constexpr int64_t limit = 512;
   std::vector<int32_t> removed(4 * limit), proposed(4 * limit);
-  int64_t counts[4] = {};
+  int64_t counts[PHX_MC_EDGE_INSERTION_COUNTS] = {};
   std::set<std::array<int32_t, 2>> edges;
   for (std::size_t row = 0; row < original.regions.size(); ++row) {
     for (int a = 0; a < 4; ++a) {
@@ -654,23 +662,54 @@ void test_expanded_insertion_inspection_is_atomic_and_epoch_bound() {
       star += std::find(cell, cell + 4, edge[0]) != cell + 4 &&
               std::find(cell, cell + 4, edge[1]) != cell + 4;
     }
-    if (counts[2] == 0 && counts[0] > star) {
+    if (counts[PHX_MC_EDGE_INSERTION_KIND] == 0 && counts[PHX_MC_EDGE_INSERTION_REMOVED] > star) {
       seed = edge;
       break;
     }
   }
   PHX_CHECK(seed[0] >= 0);
-  PHX_CHECK(counts[0] > 0 && counts[1] > 0 && counts[0] + counts[1] <= limit);
+  PHX_CHECK(counts[PHX_MC_EDGE_INSERTION_REMOVED] > 0 && counts[PHX_MC_EDGE_INSERTION_PROPOSED] > 0 && counts[PHX_MC_EDGE_INSERTION_REMOVED] + counts[PHX_MC_EDGE_INSERTION_PROPOSED] <= limit);
   PHX_CHECK(phx::mc::test::export_mesh(handle) == original);
-  const std::array<int64_t, 4> inspected{counts[0], counts[1], counts[2], counts[3]};
+  const std::array<int64_t, 4> inspected{counts[PHX_MC_EDGE_INSERTION_REMOVED], counts[PHX_MC_EDGE_INSERTION_PROPOSED], counts[PHX_MC_EDGE_INSERTION_KIND], counts[PHX_MC_EDGE_INSERTION_GENERATION]};
   std::vector<int32_t> mismatch = proposed;
   std::swap(mismatch[0], mismatch[1]);
-  int32_t inserted = -1;
-  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(
-                handle, seed[0], seed[1], position, position, 0.0, limit,
-                static_cast<int32_t>(inspected[2]), inspected[3], inspected[0], removed.data(),
-                inspected[1], mismatch.data(), 0.0, 1000000, &inserted) == PHX_MC_OK);
+  int32_t inserted = INT32_MAX;
+  const phx_mc_tet_mesh_commit_edge_insertion_request mismatch_request{
+      .mesh = handle,
+      .first = seed[0],
+      .second = seed[1],
+      .split_position = position,
+      .final_position = position,
+      .source_fraction = 0.0,
+      .maximum_cavity_cells = limit,
+      .insertion_kind = static_cast<int32_t>(inspected[2]),
+      .accepted_generation = inspected[3],
+      .removed_count = inspected[0],
+      .removed_tetrahedra = removed.data(),
+      .proposed_count = inspected[1],
+      .proposed_tetrahedra = mismatch.data(),
+      .target_size = 0.0,
+      .work_limit = 1000000,
+      .inserted_vertex = &inserted,
+  };
+  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(&mismatch_request) == PHX_MC_OK);
   PHX_CHECK(inserted == -1 && phx::mc::test::export_mesh(handle) == original);
+  PHX_CHECK(handle->mesh->accepted_generation() == inspected[3]);
+  auto kind_mismatch_request = mismatch_request;
+  kind_mismatch_request.proposed_tetrahedra = proposed.data();
+  kind_mismatch_request.insertion_kind = (kind_mismatch_request.insertion_kind + 1) % 3;
+  inserted = INT32_MAX;
+  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(&kind_mismatch_request) == PHX_MC_OK);
+  PHX_CHECK(inserted == -1 && phx::mc::test::export_mesh(handle) == original);
+  PHX_CHECK(handle->mesh->accepted_generation() == inspected[3] && handle_audit(handle));
+  PHX_CHECK(inspected[0] > 1);
+  auto count_mismatch_request = kind_mismatch_request;
+  count_mismatch_request.insertion_kind = static_cast<int32_t>(inspected[2]);
+  --count_mismatch_request.removed_count;
+  inserted = INT32_MAX;
+  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(&count_mismatch_request) == PHX_MC_OK);
+  PHX_CHECK(inserted == -1 && phx::mc::test::export_mesh(handle) == original);
+  PHX_CHECK(handle->mesh->accepted_generation() == inspected[3] && handle_audit(handle));
   PHX_CHECK(phx_mc_tet_mesh_inspect_edge_insertion(
                 handle, seed[0], seed[1], position, position, 0.0, 1, 1000000,
                 removed.data(), proposed.data(), counts) == PHX_MC_CAPACITY_EXCEEDED);
@@ -682,11 +721,27 @@ void test_expanded_insertion_inspection_is_atomic_and_epoch_bound() {
   PHX_CHECK(phx_mc_tet_mesh_inspect_edge_insertion(
                 handle, seed[0], seed[1], position, position, 0.0, limit, 1000000,
                 removed.data(), proposed.data(), counts) == PHX_MC_OK);
-  const std::array<int64_t, 4> fresh{counts[0], counts[1], counts[2], counts[3]};
-  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(
-                handle, seed[0], seed[1], position, position, 0.0, limit,
-                static_cast<int32_t>(fresh[2]), fresh[3], fresh[0], removed.data(),
-                fresh[1], proposed.data(), 0.0, 0, &inserted) == PHX_MC_CAPACITY_EXCEEDED);
+  const std::array<int64_t, 4> fresh{counts[PHX_MC_EDGE_INSERTION_REMOVED], counts[PHX_MC_EDGE_INSERTION_PROPOSED], counts[PHX_MC_EDGE_INSERTION_KIND], counts[PHX_MC_EDGE_INSERTION_GENERATION]};
+  const phx_mc_tet_mesh_commit_edge_insertion_request work_limit_request{
+      .mesh = handle,
+      .first = seed[0],
+      .second = seed[1],
+      .split_position = position,
+      .final_position = position,
+      .source_fraction = 0.0,
+      .maximum_cavity_cells = limit,
+      .insertion_kind = static_cast<int32_t>(fresh[2]),
+      .accepted_generation = fresh[3],
+      .removed_count = fresh[0],
+      .removed_tetrahedra = removed.data(),
+      .proposed_count = fresh[1],
+      .proposed_tetrahedra = proposed.data(),
+      .target_size = 0.0,
+      .work_limit = 0,
+      .inserted_vertex = &inserted,
+  };
+  inserted = INT32_MAX;
+  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(&work_limit_request) == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(inserted == -1 && phx::mc::test::export_mesh(handle) == original);
   double moved[3];
   std::copy_n(handle->mesh->point(27), 3, moved);
@@ -695,25 +750,65 @@ void test_expanded_insertion_inspection_is_atomic_and_epoch_bound() {
   int32_t applied = 0;
   PHX_CHECK(phx_mc_tet_mesh_relocate(handle, 27, moved, 0, &applied) == PHX_MC_OK && applied == 1);
   const Exported relocated = phx::mc::test::export_mesh(handle);
-  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(
-                handle, seed[0], seed[1], position, position, 0.0, limit,
-                static_cast<int32_t>(fresh[2]), fresh[3], fresh[0], removed.data(),
-                fresh[1], proposed.data(), 0.0, 1000000, &inserted) == PHX_MC_OK);
+  const phx_mc_tet_mesh_commit_edge_insertion_request stale_request{
+      .mesh = handle,
+      .first = seed[0],
+      .second = seed[1],
+      .split_position = position,
+      .final_position = position,
+      .source_fraction = 0.0,
+      .maximum_cavity_cells = limit,
+      .insertion_kind = static_cast<int32_t>(fresh[2]),
+      .accepted_generation = fresh[3],
+      .removed_count = fresh[0],
+      .removed_tetrahedra = removed.data(),
+      .proposed_count = fresh[1],
+      .proposed_tetrahedra = proposed.data(),
+      .target_size = 0.0,
+      .work_limit = 1000000,
+      .inserted_vertex = &inserted,
+  };
+  inserted = INT32_MAX;
+  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(&stale_request) == PHX_MC_OK);
   PHX_CHECK(inserted == -1 && phx::mc::test::export_mesh(handle) == relocated);
+  const int64_t stale_work = handle->mesh->work();
+  const int64_t relocated_generation = handle->mesh->accepted_generation();
+  auto starved_stale_request = stale_request;
+  starved_stale_request.work_limit = 0;
+  inserted = INT32_MAX;
+  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(&starved_stale_request) == PHX_MC_OK);
+  PHX_CHECK(inserted == -1 && phx::mc::test::export_mesh(handle) == relocated);
+  PHX_CHECK(handle->mesh->accepted_generation() == relocated_generation);
+  PHX_CHECK(handle->mesh->work() == stale_work && handle_audit(handle));
   handle->mesh->set_work_limit(1000000);
   PHX_CHECK(phx_mc_tet_mesh_relocate(
                 handle, 27, original.points.data() + 3 * 27, 0, &applied) == PHX_MC_OK);
   PHX_CHECK(phx_mc_tet_mesh_inspect_edge_insertion(
                 handle, seed[0], seed[1], position, position, 0.0, limit, 1000000,
                 removed.data(), proposed.data(), counts) == PHX_MC_OK);
-  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(
-                handle, seed[0], seed[1], position, position, 0.0, limit,
-                static_cast<int32_t>(counts[2]), counts[3], counts[0], removed.data(),
-                counts[1], proposed.data(), 0.0, 1000000, &inserted) == PHX_MC_OK);
+  const phx_mc_tet_mesh_commit_edge_insertion_request commit_request{
+      .mesh = handle,
+      .first = seed[0],
+      .second = seed[1],
+      .split_position = position,
+      .final_position = position,
+      .source_fraction = 0.0,
+      .maximum_cavity_cells = limit,
+      .insertion_kind = static_cast<int32_t>(counts[PHX_MC_EDGE_INSERTION_KIND]),
+      .accepted_generation = counts[PHX_MC_EDGE_INSERTION_GENERATION],
+      .removed_count = counts[PHX_MC_EDGE_INSERTION_REMOVED],
+      .removed_tetrahedra = removed.data(),
+      .proposed_count = counts[PHX_MC_EDGE_INSERTION_PROPOSED],
+      .proposed_tetrahedra = proposed.data(),
+      .target_size = 0.0,
+      .work_limit = 1000000,
+      .inserted_vertex = &inserted,
+  };
+  PHX_CHECK(phx_mc_tet_mesh_commit_edge_insertion(&commit_request) == PHX_MC_OK);
   PHX_CHECK(inserted == static_cast<int32_t>(original.points.size() / 3));
   const Exported accepted = phx::mc::test::export_mesh(handle);
   PHX_CHECK(std::equal(original.points.begin(), original.points.end(), accepted.points.begin()));
-  PHX_CHECK(accepted.regions.size() == original.regions.size() - counts[0] + counts[1]);
+  PHX_CHECK(accepted.regions.size() == original.regions.size() - counts[PHX_MC_EDGE_INSERTION_REMOVED] + counts[PHX_MC_EDGE_INSERTION_PROPOSED]);
   PHX_CHECK(accepted.faces == original.faces && accepted.segments == original.segments);
   PHX_CHECK(phx::mc::test::all_positive(accepted) && handle_audit(handle));
   phx_mc_tet_mesh_free(handle);
@@ -756,7 +851,7 @@ void test_exude_allocation_refusal_publishes_actual_weight_state() {
   PHX_CHECK(initial->mesh->set_memory_limit(first_memory[1]));
   double first_weights[4];
   std::fill_n(first_weights, 4, std::numeric_limits<double>::quiet_NaN());
-  int64_t counters[6];
+  int64_t counters[PHX_MC_TET_MESH_EXUDE_COUNTERS] = {};
   PHX_CHECK(phx_mc_tet_mesh_exude(
                 initial, 20.0, 0.25, 2.0, 0.0, 2, 1000000, first_weights, counters) ==
             PHX_MC_CAPACITY_EXCEEDED);
@@ -776,9 +871,9 @@ void test_zero_angle_goal_does_not_hide_uncertain_construction() {
   const Exported before = phx::mc::test::export_mesh(handle);
   int64_t counters[PHX_MC_TET_MESH_IMPROVE_COUNTERS] = {};
   PHX_CHECK(phx_mc_tet_mesh_improve(handle, 0.0, 0.0, 1, 100000, counters) == PHX_MC_REFINEMENT_LIMIT);
-  PHX_CHECK(counters[6] == 0);
+  PHX_CHECK(counters[PHX_MC_TET_MESH_IMPROVE_REMAINING_SLIVERS] == 0);
   int64_t counts[PHX_MC_TET_MESH_COUNTS] = {};
-  PHX_CHECK(phx_mc_tet_mesh_counts(handle, counts) == PHX_MC_OK && counts[4] == 1);
+  PHX_CHECK(phx_mc_tet_mesh_counts(handle, counts) == PHX_MC_OK && counts[PHX_MC_TET_MESH_COUNT_UNMET_RECORDS] == 1);
   int32_t cells[4] = {}, codes[2] = {};
   double value = 0.0;
   PHX_CHECK(phx_mc_tet_mesh_unmet(handle, cells, codes, &value) == PHX_MC_OK);
@@ -829,7 +924,7 @@ void test_construction_three_ring_repair_preserves_exact_source_boundary() {
   if (handle == nullptr) return;
   const Exported before = phx::mc::test::export_mesh(handle);
   int64_t counters[PHX_MC_TET_MESH_IMPROVE_COUNTERS] = {};
-  PHX_CHECK(phx_mc_tet_mesh_improve(handle, 0.0, 1.0e-12, 1, 100000, counters) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_tet_mesh_improve(handle, 0.0, kReconstructionFloor, 1, 100000, counters) == PHX_MC_OK);
   const Exported after = phx::mc::test::export_mesh(handle);
   PHX_CHECK(after.points == before.points && after.faces == before.faces &&
             after.face_sources == before.face_sources && after.segments == before.segments &&
@@ -850,7 +945,7 @@ void test_construction_three_ring_repair_preserves_exact_source_boundary() {
 }
 
 void test_determinant_floor_hinge_receives_certified_interior_vertex() {
-  constexpr double kFloor = 1.0e-12;
+  constexpr double kFloor = kReconstructionFloor;
   const Domain domain = phx::mc::test::reconstruction_hinge_domain();
   phx_mc_tet_mesh* handle = phx::mc::test::create_mesh(domain, PHX_MC_TET_MESH_BOUNDARY_FIXED);
   PHX_CHECK(handle != nullptr);
@@ -871,7 +966,7 @@ void test_determinant_floor_hinge_receives_certified_interior_vertex() {
   PHX_CHECK(below_before);
   int64_t counters[PHX_MC_TET_MESH_IMPROVE_COUNTERS] = {};
   PHX_CHECK(phx_mc_tet_mesh_improve(handle, 0.0, kFloor, 1, 100000, counters) == PHX_MC_OK);
-  PHX_CHECK(counters[8] == 1);
+  PHX_CHECK(counters[PHX_MC_TET_MESH_IMPROVE_VERTEX_INSERTIONS] == 1);
   const Exported after = phx::mc::test::export_mesh(handle);
   PHX_CHECK(std::equal(before.points.begin(), before.points.end(), after.points.begin()));
   PHX_CHECK(after.faces == before.faces && after.face_sources == before.face_sources &&
@@ -880,8 +975,7 @@ void test_determinant_floor_hinge_receives_certified_interior_vertex() {
   for (std::size_t offset = 0; offset < after.tets.size(); offset += 4) {
     PHX_CHECK(above_floor(after, offset));
   }
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), phx::mc::test::region_volume(before, 0),
-                 1e-18);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), phx::mc::test::region_volume(before, 0), kHingeVolumeTolerance);
   PHX_CHECK(handle_audit(handle));
   phx_mc_tet_mesh_free(handle);
 
@@ -894,7 +988,7 @@ void test_determinant_floor_hinge_receives_certified_interior_vertex() {
   if (capped == nullptr) return;
   PHX_CHECK(phx_mc_tet_mesh_improve(capped, 0.0, kFloor, 1, 100000, counters) ==
             PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(counters[8] == 0);
+  PHX_CHECK(counters[PHX_MC_TET_MESH_IMPROVE_VERTEX_INSERTIONS] == 0);
   PHX_CHECK(phx::mc::test::export_mesh(capped) == before && handle_audit(capped));
   phx_mc_tet_mesh_free(capped);
 }
@@ -976,9 +1070,137 @@ void test_relative_floor_uses_the_publishing_canonical_chart_only() {
   phx_mc_tet_mesh_free(far);
 }
 
+void check_octahedron_cluster_rejections(phx::mc::TetMesh& mesh, int32_t cell) {
+  std::vector<int32_t> cavity{cell};
+  std::size_t begin = 0;
+  for (int depth = 0; depth < 2; ++depth) {
+    const std::size_t end = cavity.size();
+    for (std::size_t cursor = begin; cursor < end; ++cursor) {
+      for (int slot = 0; slot < 4; ++slot) {
+        const int32_t other = mesh.tet(cavity[cursor]).n[slot];
+        if (mesh.complex().constraint(cavity[cursor], slot) == phx::mc::kNoConstraint &&
+            mesh.finite(other) && std::find(cavity.begin(), cavity.end(), other) == cavity.end()) {
+          cavity.push_back(other);
+        }
+      }
+    }
+    begin = end;
+  }
+  for (int32_t apex = 0; apex < 6; ++apex) {
+    PHX_CHECK(!phx::mc::try_multiface_removal(mesh, cavity, apex, true));
+  }
+}
+
+void test_unchanged_edge_rejections_reuse_geometric_proofs() {
+  // The regular octahedron's three long diagonals give congruent cells.
+  // No strictly improving reconnection exists; all exterior vertices are
+  // fixed source corners. Four slivers therefore ask for the same failed
+  // directed interior-edge proposal without any accepted-state change.
+  Domain domain;
+  domain.points = {0, 0, -1, 0, 0, 1, 1, 0, 0,
+                   0, 1, 0, -1, 0, 0, 0, -1, 0};
+  for (int32_t i = 0; i < 4; ++i) {
+    const int32_t a = 2 + i, b = 2 + (i + 1) % 4;
+    domain.tets.insert(domain.tets.end(), {0, 1, a, b});
+    domain.regions.push_back(0);
+    for (int32_t apex : {0, 1}) {
+      domain.faces.insert(domain.faces.end(), {apex, a, b});
+      domain.face_sources.push_back(static_cast<int32_t>(domain.face_sources.size()));
+      domain.segments.insert(domain.segments.end(), {apex, a});
+      domain.segment_sources.push_back(static_cast<int32_t>(domain.segment_sources.size()));
+    }
+    domain.segments.insert(domain.segments.end(), {a, b});
+    domain.segment_sources.push_back(static_cast<int32_t>(domain.segment_sources.size()));
+  }
+  phx_mc_tet_mesh* reference = phx::mc::test::create_mesh(
+      domain, PHX_MC_TET_MESH_BOUNDARY_FIXED);
+  phx_mc_tet_mesh* scheduled = phx::mc::test::create_mesh(
+      domain, PHX_MC_TET_MESH_BOUNDARY_FIXED);
+  PHX_CHECK(reference != nullptr && scheduled != nullptr);
+  if (reference == nullptr || scheduled == nullptr) {
+    phx_mc_tet_mesh_free(reference);
+    phx_mc_tet_mesh_free(scheduled);
+    return;
+  }
+  const Exported before = phx::mc::test::export_mesh(reference);
+  auto& mesh = *reference->mesh;
+  const int64_t first = mesh.work();
+  PHX_CHECK(!phx::mc::try_edge_removal(mesh, 0, 1, true));
+  const int64_t edge_work = mesh.work() - first;
+  PHX_CHECK(edge_work > 0);
+  const int64_t reference_start = mesh.work();
+  // Replay the uncached operation traversal. Ordinary vertex removal and
+  // smoothing reject these fixed dimension-zero corners before any work.
+  for (int32_t t = 0; t < 4; ++t) {
+    PHX_CHECK(mesh.spend(1));  // Ordinary-sliver removal visit.
+    for (int32_t vertex : mesh.tet(t).v) PHX_CHECK(mesh.dimension(vertex) == 0);
+  }
+  for (int32_t t = 0; t < 4; ++t) {
+    PHX_CHECK(mesh.spend(1));  // Reconnection-frontier visit.
+    for (int slot = 0; slot < 4; ++slot) {
+      PHX_CHECK(!phx::mc::try_face_removal(mesh, t, slot, true));
+    }
+    for (int i = 0; i < 4; ++i) {
+      for (int j = i + 1; j < 4; ++j) {
+        PHX_CHECK(!phx::mc::try_edge_removal(
+            mesh, mesh.tet(t).v[i], mesh.tet(t).v[j], true));
+      }
+    }
+    check_octahedron_cluster_rejections(mesh, t);
+    for (int32_t vertex : mesh.tet(t).v) {
+      PHX_CHECK(!phx::mc::try_remove_vertex(mesh, vertex, true, nullptr));
+    }
+  }
+  const int64_t reference_work = mesh.work() - reference_start;
+  PHX_CHECK(phx::mc::test::export_mesh(reference) == before);
+  const int64_t generation = scheduled->mesh->accepted_generation();
+  int64_t counters[PHX_MC_TET_MESH_IMPROVE_COUNTERS] = {};
+  PHX_CHECK(phx_mc_tet_mesh_improve(scheduled, 70.0, 0.0, 1, 1000000, counters) ==
+            PHX_MC_REFINEMENT_LIMIT);
+  PHX_CHECK(scheduled->mesh->accepted_generation() == generation);
+  PHX_CHECK(phx::mc::test::export_mesh(scheduled) == before);
+  PHX_CHECK(counters[PHX_MC_TET_MESH_IMPROVE_REMAINING_SLIVERS] == 4);
+  PHX_CHECK(reference_work - counters[PHX_MC_TET_MESH_IMPROVE_WORK_UNITS] == 3 * edge_work);
+  PHX_CHECK(handle_audit(reference) && handle_audit(scheduled));
+  phx_mc_tet_mesh_free(reference);
+  phx_mc_tet_mesh_free(scheduled);
+}
+
+void test_completed_negative_vertex_searches_fit_reduced_work() {
+  const Domain domain = phx::mc::test::box_domain(phx::mc::test::box_points(3, 20, 21), 0.0);
+  auto* reference = phx::mc::test::create_mesh(domain, PHX_MC_TET_MESH_BOUNDARY_FIXED);
+  auto* bounded = phx::mc::test::create_mesh(domain, PHX_MC_TET_MESH_BOUNDARY_FIXED);
+  PHX_CHECK(reference != nullptr && bounded != nullptr);
+  if (reference == nullptr || bounded == nullptr) {
+    phx_mc_tet_mesh_free(reference);
+    phx_mc_tet_mesh_free(bounded);
+    return;
+  }
+  // The fixed corpus charged 359643 units without vertex-proof reuse.
+  // Its completed unchanged-state shortlists earn this smaller envelope.
+  constexpr int64_t kCompletedSearchWork = 324569;
+  int64_t reference_counters[PHX_MC_TET_MESH_IMPROVE_COUNTERS] = {};
+  int64_t bounded_counters[PHX_MC_TET_MESH_IMPROVE_COUNTERS] = {};
+  const int32_t reference_status = phx_mc_tet_mesh_improve(
+      reference, 70.0, 0.0, 3, int64_t{1} << 40, reference_counters);
+  const int32_t bounded_status = phx_mc_tet_mesh_improve(
+      bounded, 70.0, 0.0, 3, kCompletedSearchWork, bounded_counters);
+  PHX_CHECK(reference_status == PHX_MC_REFINEMENT_LIMIT);
+  PHX_CHECK(bounded_status == reference_status);
+  PHX_CHECK(phx::mc::test::export_mesh(bounded) == phx::mc::test::export_mesh(reference));
+  PHX_CHECK(std::equal(reference_counters, reference_counters + PHX_MC_TET_MESH_IMPROVE_COUNTERS,
+                      bounded_counters));
+  PHX_CHECK(reference_counters[PHX_MC_TET_MESH_IMPROVE_WORK_UNITS] <= kCompletedSearchWork);
+  PHX_CHECK(handle_audit(reference) && handle_audit(bounded));
+  phx_mc_tet_mesh_free(reference);
+  phx_mc_tet_mesh_free(bounded);
+}
+
 }  // namespace
 
 int main() {
+  test_completed_negative_vertex_searches_fit_reduced_work();
+  test_unchanged_edge_rejections_reuse_geometric_proofs();
   test_determinant_floor_hinge_receives_certified_interior_vertex();
   test_relative_floor_uses_the_publishing_canonical_chart_only();
   test_nonconvex_construction_ring_refuses_illegal_children();

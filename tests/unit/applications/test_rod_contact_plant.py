@@ -317,7 +317,6 @@ def test_rod_contact_plant_scenario_2() -> None:
         committed_velocity,
         result.evidence.response.post_velocities[0],
     )
-    # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(
         committed_velocity,
         result.evidence.free_step.candidate_state.reduced_state.coefficient_velocities

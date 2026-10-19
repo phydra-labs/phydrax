@@ -3,14 +3,17 @@
 
 Polyhedral FV fields use physical Cartesian charts: the reference domain of a
 cell is its represented polyhedron, and its chart map is the identity. This is
-not an affine finite-element surrogate. A certified star fan supplies exact
-closed-tetrahedron containment; the returned cell rows refer to the original
+not an affine finite-element surrogate. A certified star fan supplies
+closed-tetrahedron containment; the returned cell rows refer to the authored
 polyhedral cells, never the fan's private tetrahedra. Host preparation/queries
 use native exact predicates, traced queries retain filtered uncertainty.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager, ExitStack
+from math import prod
 from typing import final
 
 import equinox as eqx
@@ -22,13 +25,22 @@ from jax.typing import ArrayLike
 
 from .._bvh import PackedBVH, point_select_leaf_items, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._geometry_predicates import orient3d, PredicateMode
+from .._geometry_predicates import (
+    exact_orientation_preparation_bounds,
+    orient3d,
+    PredicateMode,
+    PredicateResult,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..geometry import simplicial as imported_geometry_simplicial
 from ..geometry._contracts import CompiledGeometry
+from ..typing import checked
+from ..units import METER
 from ._cell_complex import PolyhedralConnectivity
-from ._cell_geometry import CellVertexGeometryElement
+from ._cell_geometry import CellVertexGeometryElement, owned_coordinate_preparation
 from ._cell_mesh import CellMesh
+from ._coordinate_budget import CoordinateEnclosureBudget
 from ._simplicial_locator import (
     AbstractCellLocator,
     CellLocationResult,
@@ -36,39 +48,82 @@ from ._simplicial_locator import (
     SimplicialLocationPolicy,
 )
 from .fem._cell_map import FiniteElementCellMapEvaluation
+from .finite_volume import _polyhedral as imported_finite_volume__polyhedral
+
+
+@contextmanager
+def _owned_fan_predicate_preparation(
+    row_count: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> Iterator[CoordinateEnclosureBudget]:
+    """Own four host orientation batches or reuse their request ledger."""
+    if budget is not None:
+        yield budget
+        return
+    work, memory, queries = exact_orientation_preparation_bounds(4 * row_count, 3, 1075)
+    with owned_coordinate_preparation(
+        work, memory, maximum_geometry_queries=queries
+    ) as budget:
+        yield budget
+
+
+def _fan_orientations(
+    query: Array,
+    a: Array,
+    b: Array,
+    c: Array,
+    d: Array,
+    mode: PredicateMode,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[PredicateResult, ...]:
+    return (
+        orient3d(query, b, c, d, mode=mode, budget=budget),
+        orient3d(a, query, c, d, mode=mode, budget=budget),
+        orient3d(a, b, query, d, mode=mode, budget=budget),
+        orient3d(a, b, c, query, mode=mode, budget=budget),
+    )
 
 
 def _fan_membership(
-    points: Array, tetrahedra: Array, valid: Array, /
+    points: Array,
+    tetrahedra: Array,
+    valid: Array,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> tuple[Array, Array]:
-    """Membership/resolution for (points, candidates, fan, 4, 3) exact domains."""
+    """Membership/resolution for (points, candidates, fan, 4, 3) domains."""
     query = jnp.broadcast_to(points[:, None, None, :], tetrahedra.shape[:-2] + (3,))
     a, b, c, d = (tetrahedra[..., index, :] for index in range(4))
-    mode = (
-        PredicateMode.FILTERED_DEVICE
-        if isinstance(points, Tracer)
-        else PredicateMode.EXACT
-    )
-    outcomes = (
-        orient3d(query, b, c, d, mode=mode),
-        orient3d(a, query, c, d, mode=mode),
-        orient3d(a, b, query, d, mode=mode),
-        orient3d(a, b, c, query, mode=mode),
-    )
+    if isinstance(points, Tracer):
+        outcomes = _fan_orientations(
+            query, a, b, c, d, PredicateMode.FILTERED_DEVICE, budget=None
+        )
+    else:
+        with _owned_fan_predicate_preparation(
+            prod(tetrahedra.shape[:-2]), budget=budget
+        ) as budget:
+            outcomes = _fan_orientations(
+                query, a, b, c, d, PredicateMode.EXACT, budget=budget
+            )
     signs = jnp.stack(tuple(jnp.asarray(item.signs) for item in outcomes), axis=-1)
     certain = jnp.stack(tuple(jnp.asarray(item.certain) for item in outcomes), axis=-1)
     inside_tet = valid & jnp.all(certain & (signs >= 0), axis=-1)
     outside_tet = (~valid) | jnp.any(certain & (signs < 0), axis=-1)
     inside = jnp.any(inside_tet, axis=-1)
     # An uncertain private fan boundary does not invalidate another fully
-    # established fan witness in the same physical cell.
+    # established fan evidence in the same physical cell.
     resolved = inside | jnp.all(outside_tet, axis=-1)
     return inside, resolved
 
 
 @final
 class PreparedPolyhedralCellMap(StrictModule, NonTrainableState):
-    """Physical Cartesian chart of every original cell of one polyhedral mesh."""
+    """Physical Cartesian chart of every authored cell of one polyhedral mesh."""
 
     mesh: CellMesh
     coordinates: Array
@@ -90,26 +145,32 @@ class PreparedPolyhedralCellMap(StrictModule, NonTrainableState):
     block_names: tuple[str, ...] = eqx.field(static=True)
     maximum_workset_entries: int = eqx.field(static=True)
 
+    @checked
     def __init__(
-        self, mesh: CellMesh, /, *, maximum_workset_entries: int = 100_000_000
+        self,
+        mesh: CellMesh,
+        /,
+        *,
+        maximum_workset_entries: int = 100_000_000,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
-        if not isinstance(mesh, CellMesh) or not isinstance(
-            mesh.connectivity, PolyhedralConnectivity
-        ):
+        if not isinstance(mesh.connectivity, PolyhedralConnectivity):
             raise TypeError(
-                "Polyhedral Cartesian charts require canonical polyhedral connectivity."
+                "PreparedPolyhedralCellMap.mesh.connectivity must be polyhedral; got another connectivity kind"
             )
         mesh.require_dense("polyhedral point location")
         if mesh.ambient_dimension != 3 or mesh.topological_dimension != 3:
             raise ValueError(
-                "Polyhedral Cartesian charts are full-dimensional 3D regions."
+                "PreparedPolyhedralCellMap.mesh must be a full-dimensional 3-D region; got another ambient or reference dimension"
             )
         if (
             isinstance(maximum_workset_entries, bool)
             or not isinstance(maximum_workset_entries, int)
             or maximum_workset_entries < 1
         ):
-            raise ValueError("maximum_workset_entries must be a positive integer.")
+            raise ValueError(
+                f"PreparedPolyhedralCellMap.maximum_workset_entries must be a positive integer; got {maximum_workset_entries!r}"
+            )
         connectivity = mesh.connectivity
         points = np.asarray(mesh.coordinates, dtype=np.float64)
         face_offsets = np.asarray(connectivity.face_vertex_offsets)
@@ -131,63 +192,90 @@ class PreparedPolyhedralCellMap(StrictModule, NonTrainableState):
         entries = connectivity.cell_count * maximum_fan * 4
         if entries > maximum_workset_entries:
             raise ValueError(
-                "Polyhedral star-fan workset exceeds maximum_workset_entries."
+                "PreparedPolyhedralCellMap.maximum_workset_entries must admit the star fan; got an exceeded workset capacity"
             )
-        from .finite_volume._polyhedral import prepare_polyhedral_finite_volume_geometry
 
-        geometry = prepare_polyhedral_finite_volume_geometry(
-            mesh, maximum_workset_entries=maximum_workset_entries
+        # The fan and selected orientation rows coexist. A closed face fan
+        # contains every routed vertex in at most three slots per tetrahedron.
+        numeric_memory = (
+            2 * connectivity.cell_count * maximum_fan * 4 * 3 * 8
+            + connectivity.cell_count * maximum_fan * (1 + 3 * 4)
+            + 2 * connectivity.cell_count * 3 * 8
         )
-        tetrahedra = np.zeros(
-            (connectivity.cell_count, maximum_fan, 4, 3), dtype=np.float64
-        )
-        valid = np.zeros((connectivity.cell_count, maximum_fan), dtype=np.bool_)
-        lower, upper, vertices = [], [], []
-        for cell in range(connectivity.cell_count):
-            faces = cell_faces[cell_offsets[cell] : cell_offsets[cell + 1]]
-            signs = cell_signs[cell_offsets[cell] : cell_offsets[cell + 1]]
-            rows = np.unique(
-                np.concatenate(
-                    [
-                        face_values[face_offsets[face] : face_offsets[face + 1]]
-                        for face in faces
-                    ]
-                )
-            )
-            vertices.append(rows)
-            lower.append(np.min(points[rows], axis=0))
-            upper.append(np.max(points[rows], axis=0))
-            star = np.mean(points[rows], axis=0)
-            slot = 0
-            for face, sign in zip(faces, signs, strict=True):
-                polygon = face_values[face_offsets[face] : face_offsets[face + 1]]
-                for local in range(1, polygon.size - 1):
-                    triangle = polygon[[0, local, local + 1]]
-                    if sign < 0:
-                        triangle = triangle[[0, 2, 1]]
-                    tetrahedra[cell, slot] = np.concatenate(
-                        (star[None, :], points[triangle]), axis=0
+        with ExitStack() as resources:
+            if budget is None:
+                work, memory, queries = (
+                    imported_finite_volume__polyhedral.polyhedral_finite_volume_preparation_bounds(
+                        mesh, maximum_workset_entries=maximum_workset_entries
                     )
-                    valid[cell, slot] = True
-                    slot += 1
-        selected = tetrahedra[valid]
-        decision = orient3d(
-            *(selected[:, index] for index in range(4)), mode=PredicateMode.EXACT
-        )
-        if not np.all(np.asarray(decision.certain)) or np.any(
-            np.asarray(decision.signs) <= 0
-        ):
-            raise ValueError(
-                "Rounded polyhedral star construction is not an exact positive fan."
+                )
+                orientation_work, orientation_memory, orientation_queries = (
+                    exact_orientation_preparation_bounds(int(np.sum(fan_counts)), 3, 1075)
+                )
+                budget = resources.enter_context(
+                    owned_coordinate_preparation(
+                        work + orientation_work,
+                        memory + orientation_memory + numeric_memory,
+                        maximum_geometry_queries=queries + orientation_queries,
+                    )
+                )
+            resources.enter_context(budget.temporary_scope())
+            budget.reserve(0, numeric_memory)
+            geometry = imported_finite_volume__polyhedral.prepare_polyhedral_finite_volume_geometry(
+                mesh, maximum_workset_entries=maximum_workset_entries, budget=budget
             )
-        width = max(len(rows) for rows in vertices)
-        routes = np.asarray(
-            [
-                np.pad(rows, (0, width - rows.size), constant_values=int(rows[0]))
-                for rows in vertices
-            ],
-            dtype=np.int32,
-        )
+            tetrahedra = np.zeros(
+                (connectivity.cell_count, maximum_fan, 4, 3), dtype=np.float64
+            )
+            valid = np.zeros((connectivity.cell_count, maximum_fan), dtype=np.bool_)
+            lower, upper, vertices = [], [], []
+            for cell in range(connectivity.cell_count):
+                faces = cell_faces[cell_offsets[cell] : cell_offsets[cell + 1]]
+                signs = cell_signs[cell_offsets[cell] : cell_offsets[cell + 1]]
+                rows = np.unique(
+                    np.concatenate(
+                        [
+                            face_values[face_offsets[face] : face_offsets[face + 1]]
+                            for face in faces
+                        ]
+                    )
+                )
+                vertices.append(rows)
+                lower.append(np.min(points[rows], axis=0))
+                upper.append(np.max(points[rows], axis=0))
+                star = np.mean(points[rows], axis=0)
+                slot = 0
+                for face, sign in zip(faces, signs, strict=True):
+                    polygon = face_values[face_offsets[face] : face_offsets[face + 1]]
+                    for local in range(1, polygon.size - 1):
+                        triangle = polygon[[0, local, local + 1]]
+                        if sign < 0:
+                            triangle = triangle[[0, 2, 1]]
+                        tetrahedra[cell, slot] = np.concatenate(
+                            (star[None, :], points[triangle]), axis=0
+                        )
+                        valid[cell, slot] = True
+                        slot += 1
+            selected = tetrahedra[valid]
+            decision = orient3d(
+                *(selected[:, index] for index in range(4)),
+                mode=PredicateMode.EXACT,
+                budget=budget,
+            )
+            if not np.all(np.asarray(decision.certain)) or np.any(
+                np.asarray(decision.signs) <= 0
+            ):
+                raise ValueError(
+                    "PreparedPolyhedralCellMap.star_fan must have positive rounded construction; got a nonpositive or unresolved fan"
+                )
+            width = max(len(rows) for rows in vertices)
+            routes = np.asarray(
+                [
+                    np.pad(rows, (0, width - rows.size), constant_values=int(rows[0]))
+                    for rows in vertices
+                ],
+                dtype=np.int32,
+            )
         self.mesh, self.coordinates = mesh, mesh.coordinates
         self.tetrahedra, self.tetrahedron_valid = (
             jnp.asarray(tetrahedra),
@@ -225,6 +313,8 @@ class PreparedPolyhedralCellMap(StrictModule, NonTrainableState):
         cell_indices: ArrayLike,
         reference_points: ArrayLike,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> FiniteElementCellMapEvaluation:
         values, indices, points = (
             jnp.asarray(coordinates),
@@ -237,13 +327,18 @@ class PreparedPolyhedralCellMap(StrictModule, NonTrainableState):
             or points.shape != (indices.size, 3)
         ):
             raise ValueError(
-                "Cartesian chart coordinates/cell routes/reference points have incompatible shapes."
+                "PreparedPolyhedralCellMap.evaluate.inputs must have compatible coordinate, cell, and reference shapes; got incompatible shapes"
             )
         if not jnp.issubdtype(indices.dtype, jnp.integer):
-            raise TypeError("Cartesian chart cell indices must be integers.")
+            raise TypeError(
+                "PreparedPolyhedralCellMap.cell_indices must be integers; got noninteger indices"
+            )
         safe = jnp.clip(indices, 0, self.cell_count - 1)
         inside, resolved = _fan_membership(
-            points, self.tetrahedra[safe, None], self.tetrahedron_valid[safe, None]
+            points,
+            self.tetrahedra[safe, None],
+            self.tetrahedron_valid[safe, None],
+            budget=budget,
         )
         active = (
             (indices >= 0)
@@ -267,13 +362,12 @@ class PreparedPolyhedralCellMap(StrictModule, NonTrainableState):
         )
 
     def support_geometry(self, support_id: str, /) -> CompiledGeometry:
-        """Compile all exact represented physical boundary facets of the source."""
-        from ..geometry.simplicial import MeshRegion
+        """Compile all represented physical boundary facets of the source."""
 
         connectivity = self.mesh.connectivity
         if not isinstance(connectivity, PolyhedralConnectivity):
             raise TypeError(
-                "Polyhedral support requires canonical polyhedral connectivity."
+                "PreparedPolyhedralCellMap.mesh.connectivity must be polyhedral; got another connectivity kind"
             )
         face_offsets = np.asarray(connectivity.face_vertex_offsets)
         face_values = np.asarray(connectivity.face_vertex_values)
@@ -296,20 +390,20 @@ class PreparedPolyhedralCellMap(StrictModule, NonTrainableState):
                 triangles.append(triangle if sign > 0 else triangle[[0, 2, 1]])
         if not triangles:
             raise ValueError(
-                "The represented polyhedral domain has no physical closed boundary."
+                "PreparedPolyhedralCellMap.mesh must have a physical closed boundary; got no represented exterior boundary"
             )
         faces = np.asarray(triangles, dtype=np.int32)
         used, compact = np.unique(faces, return_inverse=True)
-        return MeshRegion(
+        return imported_geometry_simplicial.MeshRegion(
             self.coordinates[jnp.asarray(used)],
             compact.reshape(faces.shape).astype(np.int32),
             feature_id=f"polyhedral-field-support:{support_id}",
-        ).compile()
+        ).compile(coordinate_unit=METER)
 
 
 @final
 class PreparedPolyhedralCellLocator(AbstractCellLocator, NonTrainableState):
-    """Exhaustive bounded BVH location on original planar polyhedral cell rows."""
+    """Exhaustive bounded BVH location on authored planar polyhedral cell rows."""
 
     cell_map: PreparedPolyhedralCellMap
     coordinates: Array
@@ -319,6 +413,7 @@ class PreparedPolyhedralCellLocator(AbstractCellLocator, NonTrainableState):
     policy: SimplicialLocationPolicy
     locator_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mesh: CellMesh,
@@ -326,17 +421,16 @@ class PreparedPolyhedralCellLocator(AbstractCellLocator, NonTrainableState):
         /,
         *,
         maximum_workset_entries: int = 100_000_000,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         cell_map = PreparedPolyhedralCellMap(
-            mesh, maximum_workset_entries=maximum_workset_entries
+            mesh, maximum_workset_entries=maximum_workset_entries, budget=budget
         )
         policy_ = (
             SimplicialLocationPolicy(min(cell_map.cell_count, 64), 1, 1)
             if policy is None
             else policy
         )
-        if not isinstance(policy_, SimplicialLocationPolicy):
-            raise TypeError("policy must be SimplicialLocationPolicy or None.")
         self.cell_map, self.coordinates = cell_map, cell_map.coordinates
         self.cell_lower, self.cell_upper = cell_map.cell_lower, cell_map.cell_upper
         self.bvh = prepare_bvh(self.cell_lower, self.cell_upper, dtype=jnp.float64)
@@ -353,17 +447,26 @@ class PreparedPolyhedralCellLocator(AbstractCellLocator, NonTrainableState):
         return self.cell_map.support_geometry(support_id)
 
     def locate(
-        self, points: ArrayLike, /, *, cell_mask: ArrayLike | None = None
+        self,
+        points: ArrayLike,
+        /,
+        *,
+        cell_mask: ArrayLike | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> CellLocationResult:
         values = jnp.asarray(points, dtype=self.coordinates.dtype)
         if values.ndim != 2 or values.shape[1] != 3:
-            raise ValueError("Polyhedral locator points must have shape (points, 3).")
+            raise ValueError(
+                "PreparedPolyhedralCellLocator.points must have shape (points, 3); got incompatible point shape"
+            )
         capacity = min(self.policy.maximum_candidates, self.cell_map.cell_count)
         if (
             values.shape[0] * capacity * self.cell_map.tetrahedra.shape[1]
             > self.cell_map.maximum_workset_entries
         ):
-            raise ValueError("Polyhedral query fan exceeds maximum_workset_entries.")
+            raise ValueError(
+                "PreparedPolyhedralCellLocator.maximum_workset_entries must admit the query fan; got an exceeded fan capacity"
+            )
         candidates, valid, search_complete = point_select_leaf_items(
             values,
             bvh=self.bvh,
@@ -374,12 +477,15 @@ class PreparedPolyhedralCellLocator(AbstractCellLocator, NonTrainableState):
             mask = jnp.asarray(cell_mask)
             if mask.shape != (self.cell_map.cell_count,) or mask.dtype != jnp.bool_:
                 raise ValueError(
-                    "cell_mask must be one boolean per original polyhedral cell."
+                    "PreparedPolyhedralCellLocator.cell_mask must contain one boolean per polyhedral cell; got incompatible mask shape or dtype"
                 )
             valid &= mask[jnp.where(valid, candidates, 0)]
         safe = jnp.where(valid, candidates, 0)
         inside, resolved = _fan_membership(
-            values, self.cell_map.tetrahedra[safe], self.cell_map.tetrahedron_valid[safe]
+            values,
+            self.cell_map.tetrahedra[safe],
+            self.cell_map.tetrahedron_valid[safe],
+            budget=budget,
         )
         finite = jnp.all(jnp.isfinite(values), axis=1)
         accepted = valid & inside & finite[:, None]

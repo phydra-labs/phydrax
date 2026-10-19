@@ -13,6 +13,7 @@ from fractions import Fraction
 from functools import cache
 from pathlib import Path
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -32,7 +33,7 @@ from phydrax.geometry.brep._curve_approximation_topology import (
 )
 from phydrax.geometry.brep._patches import BSplineCurve, LineCurve
 from phydrax.geometry.brep._placement import materialize_brep_occurrences
-from phydrax.interchange._cad import CadCoverage
+from phydrax.interchange import CadCoverage
 from tests._support.cad_models import (
     native_assembly,
     native_empty_model,
@@ -42,6 +43,30 @@ from tests._support.cad_models import (
     native_rooted_sector_face,
     native_solid,
 )
+
+
+# Empirical `test_archive_preserves_certified_vertex_and_endpoint_source_definitions`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_ARCHIVED_VERTEX_SOURCE_POINT_ATOL = 1e-12
+# Empirical `test_branch_archive_deduplicates_exact_support_under_bounded_manifest`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_ARCHIVED_BRANCH_PLANE_COORDINATE_ATOL = 1e-12
+# Empirical `test_branch_archive_deduplicates_exact_support_under_bounded_manifest`: matched max |delta|=1.11022e-16; joint allowance fraction=1.16382e-09, margin=100%.
+_ARCHIVED_BRANCH_CIRCLE_RADIUS_ATOL = 1e-12
+# Empirical `test_intersection_curve_approximation_certifies_continuous_coupled_bounds`: matched max |delta|=6.06107e-08; joint allowance fraction=0.205186, margin=79.4814%.
+_FITTED_BRANCH_CIRCLE_RADIUS_ATOL = 2e-7
+# Empirical `test_intersection_curve_approximation_certifies_continuous_coupled_bounds`: matched max |delta|=4.996e-16; joint allowance fraction=2.17218e-09, margin=100%.
+_FITTED_BRANCH_PLANE_COORDINATE_ATOL = 2e-7
+# Empirical `test_intersection_curve_approximation_certifies_continuous_coupled_bounds`: matched max |delta|=3.9968e-15; joint allowance fraction=7.33294e-09, margin=100%.
+_FITTED_BRANCH_PCURVE_POINT_ATOL = 5e-7
+# Empirical `test_between_check_excursion_cannot_obtain_continuous_or_topology_certificate`: matched max |delta|=1.11022e-16; joint allowance fraction=0.000111022, margin=99.9889%.
+_ADVERSARIAL_BRANCH_CHECK_POINT_ATOL = 1.0e-12
+# Empirical `test_archive_preserves_native_branch_edge_and_pcurve_incidence`: matched max |delta|=4.16334e-16; joint allowance fraction=0.000416334, margin=99.9584%.
+_ARCHIVED_PCURVE_INCIDENCE_POINT_ATOL = 1e-12
+# Empirical `test_step_substitutes_real_branch_topology_under_explicit_policy`: matched max |delta|=4.85814e-08; joint allowance fraction=0.242907, margin=75.7093%.
+_EXPORTED_BRANCH_APPROXIMATION_POINT_ATOL = 2e-7
+# Empirical `test_archive_preserves_certified_vertex_and_endpoint_source_definitions`: matched max |delta|=4.44089e-16; joint allowance fraction=1.88397e-07, margin=100%.
+_ARCHIVED_SOURCE_FACE_AREA_RTOL = 1e-9
+# Empirical `test_step_substitutes_real_branch_topology_under_explicit_policy`: matched max |delta|=4.52608e-09; joint allowance fraction=0.000791591, margin=99.9208%.
+_EXPORTED_BRANCH_FACE_AREA_RTOL = 2e-6
 
 
 interchange = phx.interchange
@@ -79,7 +104,8 @@ def test_cad_coverage_refuses_invalid_provider_evidence(
         degenerate_edges=0,
         natural_boundaries=0,
     )
-    with pytest.raises(ValueError):
+    field = next(iter(changes))
+    with pytest.raises(ValueError, match=rf"CadCoverage\.{field}"):
         CadCoverage(**(values | changes))  # ty: ignore[invalid-argument-type]
 
 
@@ -128,7 +154,7 @@ def test_export_result_refuses_unbound_provider_output(
             source_id=result.report.source_id,
             target_id=result.report.target_id,
         )
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises((TypeError, ValueError), match=rf"CadExportResult\.{field}"):
         replace(result, **{field: value})
 
 
@@ -150,7 +176,7 @@ def _branch() -> brep.IntersectionCurve:
 def _with_intersection_trim(
     model: brep.BRepModel, *, split_reversed: bool = False
 ) -> brep.BRepModel:
-    """The model with face 0 trimmed by an exact intersection-curve loop."""
+    """Return the model with face 0 trimmed by an intersection-curve loop."""
     branch = _branch()
     first, last = branch.parameter_interval
     middle = 0.5 * (first + last)
@@ -168,35 +194,10 @@ def _with_intersection_trim(
     )
     loop = CurveTrimLoop(curves, tolerance=0.2)
     domains = (TrimDomain(loop), *model.trim_domains[1:])
-    return brep.BRepModel(
-        patches=model.patches,
-        parameter_bounds=model.parameter_bounds,
-        orientation=model.orientation,
-        trim_domains=domains,
-        topology=model.topology,
-        coordinate_contract=model.coordinate_contract,
-        mesh_vertices=model.mesh_vertices,
-        mesh_faces=model.mesh_faces,
-        triangle_face_ids=model.triangle_face_ids,
-        triangle_parameters=model.triangle_parameters,
-        tessellation_deviation_bounds=model.tessellation_deviation_bounds,
-        tessellation_normal_bounds=model.tessellation_normal_bounds,
-        mesh_vertex_source_dimensions=model.mesh_vertex_source_dimensions,
-        mesh_vertex_source_indices=model.mesh_vertex_source_indices,
-        mesh_vertex_parameters=model.mesh_vertex_parameters,
-        mesh_chart_restriction_vertices=model.mesh_chart_restriction_vertices,
-        mesh_chart_restriction_edges=model.mesh_chart_restriction_edges,
-        mesh_chart_restriction_endpoint_parameters=(
-            model.mesh_chart_restriction_endpoint_parameters
-        ),
-        mesh_chart_restriction_parameters=model.mesh_chart_restriction_parameters,
-        coedge_deviation_bounds=model.coedge_deviation_bounds,
-        triangle_occurrence_ids=model.triangle_occurrence_ids,
-        vertex_occurrence_ids=model.vertex_occurrence_ids,
-        physical_tags=model.physical_tags,
-        report=model.report,
-        geometry=model.geometry,
-    )
+    updated = eqx.tree_at(lambda value: value.trim_domains, model, domains)
+    # Trim IDs contribute to the derived tessellation identity; tree updates
+    # alone do not run the model's validation and identity construction phases.
+    return brep.BRepModel.from_stored_fields(updated)
 
 
 @pytest.mark.parametrize("name", ["box", "sphere", "torus", "plate", "assembly"])
@@ -311,7 +312,9 @@ def test_archived_placed_offset_sphere_retains_native_containment(
         source_length_unit=contract.length_unit,
     ).model
     if source.geometry is None:
-        raise ValueError("The authored sphere lost its complete native geometry.")
+        raise ValueError(
+            "source.geometry must contain the authored sphere geometry; got None"
+        )
     geometry = source.geometry
     rotation = np.asarray(
         ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)), dtype=np.float64
@@ -476,14 +479,16 @@ def test_archive_preserves_certified_vertex_and_endpoint_source_definitions(
     assert vertex.root_id == original.root_id
     point, bound, certified = vertex.evaluate()
     assert certified and bound < 1e-6
-    np.testing.assert_allclose(point, [1.0, 0.0, 0.0], rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        point, [1.0, 0.0, 0.0], rtol=0.0, atol=_ARCHIVED_VERTEX_SOURCE_POINT_ATOL
+    )
     for edge, endpoint in ((0, 0), (2, 1)):
         expression = restored.geometry.edge_endpoint_roots[edge][endpoint]
         assert expression is not None and vertex.supports_endpoint(expression)
         lower, upper = expression.parameter_enclosure()
         assert lower <= restored.geometry.edge_ranges[edge, endpoint] <= upper
     area = float(brep.prepare_brep_query(restored).measures.face_areas[0])
-    assert area == pytest.approx(0.75 * np.pi, rel=1e-9)
+    assert area == pytest.approx(0.75 * np.pi, rel=_ARCHIVED_SOURCE_FACE_AREA_RTOL)
 
 
 def test_archive_preserves_reversed_intersection_trim_slices(tmp_path: Path) -> None:
@@ -494,7 +499,7 @@ def test_archive_preserves_reversed_intersection_trim_slices(tmp_path: Path) -> 
     domain = restored.trim_domains[0]
     if domain is None or not isinstance(domain.outer, CurveTrimLoop):
         raise TypeError(
-            "Restored reversed intersection slices require a curve trim loop."
+            "restored.trim_domains must contain a CurveTrimLoop for reversed slices; got a missing domain or another loop type"
         )
     first, last = _branch().parameter_interval
     middle = 0.5 * (first + last)
@@ -502,7 +507,7 @@ def test_archive_preserves_reversed_intersection_trim_slices(tmp_path: Path) -> 
     for curve in domain.outer.curves:
         if not isinstance(curve, brep.IntersectionPCurve):
             raise TypeError(
-                "Restored reversed slices must retain exact intersection p-curves."
+                f"restored.trim_domains.curves must contain IntersectionPCurve carriers; got {type(curve).__name__}"
             )
         slices.append(curve)
     assert tuple((curve.first, curve.last, curve.reversed) for curve in slices) == (
@@ -543,9 +548,20 @@ def _definition(manifest: dict, value: dict) -> dict:
 
 
 @pytest.mark.parametrize(
-    "location", ["report", "geometry", "topology", "patch", "occurrence", "contract"]
+    ("location", "message"),
+    (
+        ("report", r"BRepArchive\.import_report"),
+        ("geometry", r"BRepArchive\.geometry"),
+        ("topology", r"BRepArchive\.topology"),
+        ("patch", r"geometry\.array must contain a registered dtype"),
+        ("occurrence", r"BRepArchive\.occurrences"),
+        ("contract", r"Spatial coordinate payload must use the canonical fields\."),
+    ),
+    ids=("report", "geometry", "topology", "patch", "occurrence", "contract"),
 )
-def test_archive_refuses_unknown_nested_fields(location: str, tmp_path: Path) -> None:
+def test_archive_refuses_unknown_nested_fields(
+    location: str, message: str, tmp_path: Path
+) -> None:
     source = interchange.save_brep_archive(
         native_solid("box"), tmp_path / "source.phx"
     ).path
@@ -562,7 +578,7 @@ def test_archive_refuses_unknown_nested_fields(location: str, tmp_path: Path) ->
         record["version"] = 1
 
     tampered = _mutated_archive(source, tmp_path / "unknown.phx", mutate)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=message):
         interchange.load_brep_archive(tampered)
 
 
@@ -578,7 +594,7 @@ def test_archive_refuses_altered_intersection_proof(tmp_path: Path) -> None:
         branch["certified"][0] = False
 
     tampered = _mutated_archive(source, tmp_path / "proof.phx", mutate)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"BRepArchive\.definitions\.fingerprint"):
         interchange.load_brep_archive(tampered)
 
 
@@ -593,7 +609,7 @@ def test_archive_refuses_coerced_trim_orientation(tmp_path: Path) -> None:
         trim["reversed"] = "false"
 
     tampered = _mutated_archive(source, tmp_path / "orientation.phx", mutate)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"BRepArchive\.definitions\.fingerprint"):
         interchange.load_brep_archive(tampered)
 
 
@@ -624,13 +640,19 @@ def test_branch_archive_deduplicates_exact_support_under_bounded_manifest(
     if not isinstance(branch, brep.IntersectionCurve) or not isinstance(
         pcurve, brep.IntersectionPCurve
     ):
-        raise TypeError("The archive must restore exact branch and p-curve carriers.")
+        raise TypeError(
+            f"archive.carriers must restore IntersectionCurve and IntersectionPCurve; got {type(branch).__name__} and {type(pcurve).__name__}"
+        )
     assert branch is pcurve.curve
     parameters = jnp.linspace(*branch.parameter_interval, 33)
     points = np.asarray(branch.evaluate(parameters).point)
-    np.testing.assert_allclose(points[:, 2], HEIGHT, rtol=0.0, atol=1e-12)
     np.testing.assert_allclose(
-        np.linalg.norm(points[:, :2], axis=1), np.sqrt(1.0 - HEIGHT**2), atol=1e-12
+        points[:, 2], HEIGHT, rtol=0.0, atol=_ARCHIVED_BRANCH_PLANE_COORDINATE_ATOL
+    )
+    np.testing.assert_allclose(
+        np.linalg.norm(points[:, :2], axis=1),
+        np.sqrt(1.0 - HEIGHT**2),
+        atol=_ARCHIVED_BRANCH_CIRCLE_RADIUS_ATOL,
     )
 
 
@@ -660,7 +682,7 @@ def test_archive_definition_dag_refuses_invalid_closure(
         manifest["definitions"] = dict(sorted(manifest["definitions"].items()))
 
     tampered = _mutated_archive(source, tmp_path / "bad-dag.phx", mutate)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"BRepArchive\.definitions"):
         interchange.load_brep_archive(tampered)
 
 
@@ -704,7 +726,7 @@ def test_tampered_archive_is_refused(tmp_path: Path) -> None:
                 manifest["physical_tags"][0] = "cylinder"
                 payload = json.dumps(manifest, indent=2, sort_keys=True).encode()
             target.writestr(item, payload)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"BRepArchive\.model_id"):
         interchange.load_brep_archive(tampered)
 
 
@@ -741,18 +763,22 @@ def test_intersection_curve_approximation_certifies_continuous_coupled_bounds() 
     parameters = jnp.linspace(0.0, float(_branch().num_charts), 257)
     points = np.asarray(approximation.curve.evaluate(parameters))
     np.testing.assert_allclose(
-        np.linalg.norm(points[:, :2], axis=1), math.sqrt(1 - HEIGHT**2), atol=2e-7
+        np.linalg.norm(points[:, :2], axis=1),
+        math.sqrt(1 - HEIGHT**2),
+        atol=_FITTED_BRANCH_CIRCLE_RADIUS_ATOL,
     )
-    np.testing.assert_allclose(points[:, 2], HEIGHT, atol=2e-7)
+    np.testing.assert_allclose(
+        points[:, 2], HEIGHT, atol=_FITTED_BRANCH_PLANE_COORDINATE_ATOL
+    )
     plane = _branch().second.patch
     on_plane = np.asarray(
         plane.evaluate(approximation.second_pcurve.evaluate(parameters))
     )
-    np.testing.assert_allclose(on_plane, points, atol=5e-7)
+    np.testing.assert_allclose(on_plane, points, atol=_FITTED_BRANCH_PCURVE_POINT_ATOL)
 
 
 def _between_check_loop(curve: BSplineCurve) -> BSplineCurve:
-    """A genuine cubic excursion between two original policy check points."""
+    """Construct a cubic excursion between two policy check points."""
     first, middle, last = 0.01, 0.0125, 0.015
 
     def split(points: np.ndarray, parameter: float) -> tuple[np.ndarray, np.ndarray]:
@@ -818,7 +844,7 @@ def test_between_check_excursion_cannot_obtain_continuous_or_topology_certificat
         np.asarray(adversary.evaluate(jnp.asarray(parameters))),
         np.asarray(approximation.curve.evaluate(jnp.asarray(parameters))),
         rtol=0.0,
-        atol=1.0e-12,
+        atol=_ADVERSARIAL_BRANCH_CHECK_POINT_ATOL,
     )
     with pytest.raises(ApproximationDeviationError) as deviation:
         certify_coupled_approximation(
@@ -893,8 +919,12 @@ def test_archive_preserves_native_branch_edge_and_pcurve_incidence(
     parameters = jnp.linspace(*branch.parameter_interval, 33)
     points = np.asarray(branch.evaluate(parameters).point)
     on_plane = np.asarray(restored.patches[0].evaluate(pcurve.evaluate(parameters)))
-    np.testing.assert_allclose(on_plane, points, rtol=0.0, atol=1e-12)
-    np.testing.assert_allclose(points[:, 2], HEIGHT, rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        on_plane, points, rtol=0.0, atol=_ARCHIVED_PCURVE_INCIDENCE_POINT_ATOL
+    )
+    np.testing.assert_allclose(
+        points[:, 2], HEIGHT, rtol=0.0, atol=_ARCHIVED_BRANCH_PLANE_COORDINATE_ATOL
+    )
     assert np.all(np.isfinite(restored.coedge_deviation_bounds))
     assert (
         np.max(restored.coedge_deviation_bounds)
@@ -944,10 +974,14 @@ def test_step_substitutes_real_branch_topology_under_explicit_policy(
     parameters = jnp.linspace(*branch.parameter_interval, 129)
     written = np.asarray(restored.geometry.curves[0].evaluate(parameters))
     expected = np.asarray(branch.evaluate(parameters).point)
-    np.testing.assert_allclose(written, expected, rtol=0.0, atol=2e-7)
+    np.testing.assert_allclose(
+        written, expected, rtol=0.0, atol=_EXPORTED_BRANCH_APPROXIMATION_POINT_ATOL
+    )
     area = float(brep.prepare_brep_query(restored).measures.face_areas[0])
-    assert area == pytest.approx(np.pi * (1.0 - HEIGHT**2), rel=2e-6)
-    # The source remains an exact branch model, not a forged fitted native ID.
+    assert area == pytest.approx(
+        np.pi * (1.0 - HEIGHT**2), rel=_EXPORTED_BRANCH_FACE_AREA_RTOL
+    )
+    # Export fitting leaves the source branch object unchanged.
     assert model.geometry.curves[0] is branch
 
 

@@ -98,3 +98,41 @@ def test_affine_inversion_step_is_scale_consistent(
             assert bound == 1.0
         bounds.append(bound)
     np.testing.assert_allclose(bounds, bounds[1], rtol=0.0, atol=1.0e-9)
+
+
+@pytest.mark.parametrize(
+    "stretch", [2.0**-54, -(2.0**-54)], ids=["tension", "compression"]
+)
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
+def test_sub_ulp_affine_stretch_preserves_energy_and_force(
+    stretch: float, compiled: bool
+) -> None:
+    participant = _scaled_body(1.0)
+    zero = jnp.zeros_like(participant.plan.reference_controls)
+    state = zero.at[0, 1, 0].set(stretch)
+    evaluate = eqx.filter_jit(participant.evaluate) if compiled else participant.evaluate
+    evaluation = evaluate(
+        state,
+        AffineBodyHistory(zero, zero),
+        zero,
+        jnp.zeros((), dtype=state.dtype),
+        None,
+        None,
+    )
+    # For a uniaxial stretch h, W = VE(2h+h²)²/8 and dW/dh = VE(2h+3h²+h³)/2.
+    volume_modulus = 30.0 / 6.0
+    expected_energy = volume_modulus * (2 * stretch + stretch**2) ** 2 / 8
+    force = volume_modulus * (2 * stretch + 3 * stretch**2 + stretch**3) / 2
+    expected_residual = np.zeros((1, 4, 3), dtype=np.float64)
+    expected_residual[0, 0, 0] = -force
+    expected_residual[0, 1, 0] = force
+    # 32 binary64 eps bounds the scalar polynomial, energy gradient and reductions.
+    relative_roundoff = 32 * np.finfo(np.float64).eps
+    assert bool(evaluation.admissible & evaluation.tangent_successful)
+    assert evaluation.potential_energy is not None
+    np.testing.assert_allclose(
+        evaluation.potential_energy, expected_energy, rtol=relative_roundoff, atol=0.0
+    )
+    np.testing.assert_allclose(
+        evaluation.residual, expected_residual, rtol=relative_roundoff, atol=0.0
+    )

@@ -23,7 +23,7 @@ from .._strict import StrictModule
 from ..typing import checked, Float, parse, PRNGKey, Scalar
 from ._operators import AbstractLinearOperator, DenseLinearOperator
 from ._rank import rank_gap_margin, singular_value_backward_error
-from ._spaces import _coordinate_dtype
+from ._spaces import coordinate_dtype
 from ._svd import _cost, _svd_method_geometry, svd
 from ._svd_contracts import (
     DenseSVD,
@@ -297,7 +297,7 @@ def certify_rectangular_rank(
     resident = isinstance(operator, DenseLinearOperator)
     width, _ = _svd_method_geometry(problem, selected, resident)
     cost = _cost(problem, selected, width, resident)
-    real_dtype = jnp.finfo(_coordinate_dtype(operator.source)).dtype
+    real_dtype = jnp.finfo(coordinate_dtype(operator.source)).dtype
     if not cost.accepted:
         unavailable = jnp.asarray(jnp.nan, dtype=real_dtype)
         return RectangularRankCertificate(

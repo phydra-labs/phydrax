@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,7 +16,9 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...equations import _multiphase as imported_equations__multiphase
 from ...typing import checked, parse
+from . import _unstructured as imported_unstructured
 from ._geometry_protocol import FiniteVolumeStageMetrics
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
@@ -41,7 +43,7 @@ class UnstructuredThermalBoundaryCondition(StrictModule, NonTrainableState):
         value_ = float(value)
         if not np.isfinite(value_) or (kind == "adiabatic" and value_ != 0.0):
             raise ValueError(
-                "Thermal boundary data must be finite and adiabatic data zero."
+                "UnstructuredThermalBoundaryCondition.value must be finite and zero for adiabatic boundaries; got invalid boundary data."
             )
         self.kind = kind
         self.value = value_
@@ -100,7 +102,9 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
             or conductivity0 <= 0.0
             or conductivity1 <= 0.0
         ):
-            raise ValueError("Phase conductivities must be positive and finite.")
+            raise ValueError(
+                "UnstructuredTwoMaterialThermalDiffusionPlan.conductivities must be positive and finite; got an invalid phase conductivity."
+            )
         supplied = (
             {}
             if boundaries is None
@@ -109,16 +113,20 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
         unknown = set(supplied).difference(discretization.boundary_patch_names)
         if unknown:
             raise ValueError(
-                f"Thermal boundaries reference unknown patches {sorted(unknown)!r}."
+                f"UnstructuredTwoMaterialThermalDiffusionPlan.boundaries must name prepared patches; got unknown patches {sorted(unknown)!r}."
             )
         condition_list: list[UnstructuredThermalBoundaryCondition] = []
         for name in discretization.boundary_patch_names:
             condition = supplied.get(name, "adiabatic")
-            condition_list.append(
-                condition
-                if isinstance(condition, UnstructuredThermalBoundaryCondition)
-                else UnstructuredThermalBoundaryCondition(condition)
-            )
+            match condition:
+                case UnstructuredThermalBoundaryCondition():
+                    condition_list.append(condition)
+                case str():
+                    condition_list.append(UnstructuredThermalBoundaryCondition(condition))
+                case _:
+                    raise TypeError(
+                        f"UnstructuredTwoMaterialThermalDiffusionPlan.boundaries must contain boundary conditions or kind strings; got {type(condition).__name__} for {name!r}."
+                    )
         conditions = tuple(condition_list)
         self.discretization = discretization
         self.phase0_conductivity = conductivity0
@@ -134,24 +142,24 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
             }
         )
 
+    @checked
     def evaluate(
         self,
-        system: Any,
+        system: imported_equations__multiphase.TwoMaterialVOFSystem,
         state: ArrayLike,
         /,
         *,
         stage_metrics: FiniteVolumeStageMetrics | None = None,
     ) -> UnstructuredThermalDiffusionEvaluation:
-        from ...equations._multiphase import TwoMaterialVOFSystem
 
-        if not isinstance(system, TwoMaterialVOFSystem):
-            raise TypeError("Thermal diffusion requires TwoMaterialVOFSystem.")
-        value = system._state(state)
+        value = jnp.asarray(state)
         if value.shape != (
             self.discretization.cell_count,
             system.component_count,
         ):
-            raise ValueError("Thermal state must contain one value per prepared cell.")
+            raise ValueError(
+                "UnstructuredTwoMaterialThermalDiffusionPlan.state must contain one component vector per prepared cell; got an incompatible shape."
+            )
         if stage_metrics is None:
             cell_centers = self.discretization.cell_centers
             cell_volumes = self.discretization.cell_volumes
@@ -162,10 +170,10 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
             active_cells = jnp.ones((self.discretization.cell_count,), dtype=jnp.bool_)
             face_active = self.discretization.face_block.active_mask
         else:
-            if not isinstance(stage_metrics, FiniteVolumeStageMetrics):
-                raise TypeError("stage_metrics must be FiniteVolumeStageMetrics or None.")
             if stage_metrics.cell_count != self.discretization.cell_count:
-                raise ValueError("Thermal stage and prepared cell counts differ.")
+                raise ValueError(
+                    "UnstructuredTwoMaterialThermalDiffusionPlan.stage_metrics.cell_count must match the prepared discretization; got a different cell count."
+                )
             physical_blocks = tuple(
                 block
                 for block in stage_metrics.face_blocks
@@ -173,7 +181,7 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
             )
             if len(physical_blocks) != 1:
                 raise ValueError(
-                    "Thermal moving geometry requires one physical face block."
+                    "UnstructuredTwoMaterialThermalDiffusionPlan.stage_metrics.face_blocks must contain one physical face block; got a different block count."
                 )
             block = physical_blocks[0]
             positions = jnp.argsort(block.layout.face_ids)
@@ -217,10 +225,11 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
                 jnp.finfo(conductivity.dtype).tiny,
             )
         )
-        from ._unstructured import _neighbor_centers_in_owner_frame
 
         center_difference = (
-            _neighbor_centers_in_owner_frame(self.discretization, cell_centers)
+            imported_unstructured.neighbor_centers_in_owner_frame(
+                self.discretization, cell_centers
+            )
             - cell_centers[owner]
         )
         distance = jnp.linalg.norm(center_difference, axis=-1)
@@ -236,21 +245,24 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
         boundary_patch_ids = self.discretization.boundary_patch_ids
         for patch_id, condition in enumerate(self.boundaries):
             mask = (boundary_patch_ids == patch_id) & face_active & active_cells[owner]
-            if condition.kind == "temperature":
-                boundary_flux = (
-                    owner_conductivity
-                    * (condition.value - temperature[owner])
-                    / safe_boundary_distance
-                )
-                boundary_conductance = jnp.where(
-                    mask,
-                    owner_conductivity * face_measures / safe_boundary_distance,
-                    boundary_conductance,
-                )
-            elif condition.kind == "heat_flux":
-                boundary_flux = jnp.full_like(owner_inward_flux, -condition.value)
-            else:
-                boundary_flux = jnp.zeros_like(owner_inward_flux)
+            match condition.kind:
+                case "temperature":
+                    boundary_flux = (
+                        owner_conductivity
+                        * (condition.value - temperature[owner])
+                        / safe_boundary_distance
+                    )
+                    boundary_conductance = jnp.where(
+                        mask,
+                        owner_conductivity * face_measures / safe_boundary_distance,
+                        boundary_conductance,
+                    )
+                case "heat_flux":
+                    boundary_flux = jnp.full_like(owner_inward_flux, -condition.value)
+                case "adiabatic":
+                    boundary_flux = jnp.zeros_like(owner_inward_flux)
+                case _:
+                    assert_never(condition.kind)
             owner_inward_flux = jnp.where(mask, boundary_flux, owner_inward_flux)
         face_energy_rate = owner_inward_flux * face_measures
         cell_energy_rate = jnp.zeros((self.discretization.cell_count,), dtype=value.dtype)

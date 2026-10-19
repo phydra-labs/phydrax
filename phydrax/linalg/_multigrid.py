@@ -35,7 +35,7 @@ from ._preconditioning import (
     PreconditionerSource,
 )
 from ._properties import LinearCapabilityError, OperatorProperties
-from ._spaces import _coordinate_dtype
+from ._spaces import coordinate_dtype
 from ._sparse_contract import AbstractSparseLinearOperator
 
 
@@ -548,7 +548,7 @@ class MultigridPreconditioner(AbstractPreconditioner):
             apply_workspace += (
                 4
                 * level.operator.source.size
-                * _coordinate_dtype(level.operator.source).itemsize
+                * coordinate_dtype(level.operator.source).itemsize
             )
         return PreconditionerCostEstimate(
             component=self.preconditioner_id,
@@ -821,7 +821,7 @@ class MultigridHierarchyBuilder(AbstractPreconditionerBuilder):
                     f"level {index} smoother {estimate.component}: {estimate.reason}"
                 )
             apply_workspace += (
-                4 * operator.source.size * _coordinate_dtype(operator.source).itemsize
+                4 * operator.source.size * coordinate_dtype(operator.source).itemsize
             )
         hierarchy_arrays = tuple(
             (

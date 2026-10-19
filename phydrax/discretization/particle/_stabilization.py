@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,7 +19,7 @@ from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
-from ...typing import parse
+from ...typing import checked, parse
 from ._core import ParticleDiscretization
 from ._pairwise import (
     ParticlePairGeometry,
@@ -62,7 +62,9 @@ class SPHFirstOrderGradientCorrectionPlan(StrictModule, NonTrainableState):
         self, *, regularization: float = 1e-10, maximum_condition: float = 1e10
     ) -> None:
         if regularization < 0.0 or maximum_condition <= 1.0:
-            raise ValueError("SPH correction regularization/condition are invalid.")
+            raise ValueError(
+                f"SPHFirstOrderGradientCorrectionPlan.regularization must have nonnegative regularization and maximum_condition greater than one; got {regularization!r}"
+            )
         self.regularization = float(regularization)
         self.maximum_condition = float(maximum_condition)
         self.plan_id = canonical_fingerprint(
@@ -74,6 +76,7 @@ class SPHFirstOrderGradientCorrectionPlan(StrictModule, NonTrainableState):
         )
 
 
+@checked
 def sph_kernel_normalization(
     particles: ParticleDiscretization,
     density: ArrayLike,
@@ -108,6 +111,7 @@ def sph_kernel_normalization(
     return SPHKernelNormalizationState(completeness, inverse, deficient)
 
 
+@checked
 def sph_first_order_correction(
     plan: SPHFirstOrderGradientCorrectionPlan,
     particles: ParticleDiscretization,
@@ -172,7 +176,9 @@ class MolteniColagrossiDensityDiffusionPlan(AbstractSPHDensityDiffusionPlan):
 
     def __init__(self, delta: float = 0.1, /, *, regularization: float = 0.01) -> None:
         if delta < 0.0 or regularization <= 0.0:
-            raise ValueError("Density diffusion parameters are invalid.")
+            raise ValueError(
+                f"MolteniColagrossiDensityDiffusionPlan.delta must have nonnegative delta and positive regularization; got {delta!r}"
+            )
         self.delta = float(delta)
         self.regularization = float(regularization)
         self.plan_id = canonical_fingerprint(
@@ -191,6 +197,7 @@ class AntuonoDeltaSPHDiffusionPlan(AbstractSPHDensityDiffusionPlan):
     free_surface_policy: FreeSurfaceDiffusionPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         delta: float = 0.1,
@@ -201,7 +208,9 @@ class AntuonoDeltaSPHDiffusionPlan(AbstractSPHDensityDiffusionPlan):
         free_surface_policy: FreeSurfaceDiffusionPolicy = "disable",
     ) -> None:
         if delta < 0.0 or regularization <= 0.0:
-            raise ValueError("Density diffusion parameters are invalid.")
+            raise ValueError(
+                f"AntuonoDeltaSPHDiffusionPlan.delta must have nonnegative delta and positive regularization; got {delta!r}"
+            )
         free_surface_policy = parse(
             free_surface_policy, FreeSurfaceDiffusionPolicy, "free_surface_policy"
         )
@@ -229,6 +238,7 @@ class SPHDensityDiffusionResult(StrictModule):
     correction_successful: Array
 
 
+@checked
 def sph_density_diffusion_rate(
     plan: AbstractSPHDensityDiffusionPlan,
     particles: ParticleDiscretization,
@@ -259,45 +269,62 @@ def sph_density_diffusion_rate(
         / denominator[:, None]
     )
     correction_successful = jnp.ones((particles.capacity,), dtype=jnp.bool_)
-    if isinstance(plan, AntuonoDeltaSPHDiffusionPlan):
-        correction = sph_first_order_correction(
-            plan.correction,
-            particles,
-            density_,
-            pairs,
-            geometry,
-            valid,
-            kernel,
-            smoothing_length,
-            execution,
-        )
-        raw_gradient = scatter_pair_sum(
-            pairs,
-            volume[right, None] * (density_[right] - density_[left])[:, None] * gradient,
-            volume[left, None]
-            * (density_[left] - density_[right])[:, None]
-            * (-gradient),
-            size=particles.capacity,
-            accumulation=execution.accumulation,
-            valid=valid,
-        )
-        corrected_gradient = contract(
-            "nij,nj->ni", correction.correction_matrix, raw_gradient
-        )
-        base_vector = base_vector - corrected_gradient[left] - corrected_gradient[right]
-        correction_successful = correction.successful
+    match plan:
+        case AntuonoDeltaSPHDiffusionPlan():
+            correction = sph_first_order_correction(
+                plan.correction,
+                particles,
+                density_,
+                pairs,
+                geometry,
+                valid,
+                kernel,
+                smoothing_length,
+                execution,
+            )
+            raw_gradient = scatter_pair_sum(
+                pairs,
+                volume[right, None]
+                * (density_[right] - density_[left])[:, None]
+                * gradient,
+                volume[left, None]
+                * (density_[left] - density_[right])[:, None]
+                * (-gradient),
+                size=particles.capacity,
+                accumulation=execution.accumulation,
+                valid=valid,
+            )
+            corrected_gradient = contract(
+                "nij,nj->ni", correction.correction_matrix, raw_gradient
+            )
+            base_vector = (
+                base_vector - corrected_gradient[left] - corrected_gradient[right]
+            )
+            correction_successful = correction.successful
+            surface_policy = plan.free_surface_policy
+        case MolteniColagrossiDensityDiffusionPlan():
+            surface_policy = None
+        case _:
+            raise TypeError(
+                f"sph_density_diffusion_rate.plan must be a supported density diffusion plan; got {type(plan).__name__}"
+            )
     pair_diffusion = jnp.sum(base_vector * gradient, axis=-1)
     pair_scale = 0.5 * (sound[left] + sound[right]) * smoothing_length
     left_rate = plan.delta * pair_scale * volume[right] * pair_diffusion
     right_rate = plan.delta * pair_scale * volume[left] * pair_diffusion
-    if free_surface_weight is not None and isinstance(plan, AntuonoDeltaSPHDiffusionPlan):
+    if free_surface_weight is not None and surface_policy is not None:
         weight = jnp.asarray(free_surface_weight)
-        if plan.free_surface_policy == "disable":
-            left_rate = jnp.where(weight[left] > 0.5, 0.0, left_rate)
-            right_rate = jnp.where(weight[right] > 0.5, 0.0, right_rate)
-        elif plan.free_surface_policy == "smooth-taper":
-            left_rate = (1.0 - weight[left]) * left_rate
-            right_rate = (1.0 - weight[right]) * right_rate
+        match surface_policy:
+            case "disable":
+                left_rate = jnp.where(weight[left] > 0.5, 0.0, left_rate)
+                right_rate = jnp.where(weight[right] > 0.5, 0.0, right_rate)
+            case "smooth-taper":
+                left_rate = (1.0 - weight[left]) * left_rate
+                right_rate = (1.0 - weight[right]) * right_rate
+            case "one-sided-corrected":
+                pass
+            case unknown:
+                assert_never(unknown)
     rate = scatter_pair_sum(
         pairs,
         left_rate,
@@ -338,7 +365,9 @@ class MonaghanArtificialViscosityPlan(StrictModule, NonTrainableState):
         smooth_sharpness: float = 50.0,
     ) -> None:
         if alpha < 0.0 or beta < 0.0 or regularization <= 0.0:
-            raise ValueError("Artificial-viscosity coefficients are invalid.")
+            raise ValueError(
+                f"MonaghanArtificialViscosityPlan.alpha must have nonnegative alpha and beta and positive regularization; got {alpha!r}"
+            )
         activation = parse(activation, ArtificialViscosityActivation, "activation")
         self.alpha = float(alpha)
         self.beta = float(beta)
@@ -365,6 +394,7 @@ class ArtificialViscosityResult(StrictModule):
     active_pairs: Array
 
 
+@checked
 def sph_artificial_viscosity_force(
     plan: MonaghanArtificialViscosityPlan,
     particles: ParticleDiscretization,
@@ -394,15 +424,18 @@ def sph_artificial_viscosity_force(
     pi = (-plan.alpha * 0.5 * (sound[left] + sound[right]) * mu + plan.beta * mu**2) / (
         0.5 * (density_[left] + density_[right])
     )
-    if plan.activation == "approaching-only":
-        activation = radial_velocity < 0.0
-        weight = activation.astype(pi.dtype)
-    elif plan.activation == "always":
-        activation = jnp.ones_like(radial_velocity, dtype=jnp.bool_)
-        weight = jnp.ones_like(pi)
-    else:
-        weight = jax.nn.sigmoid(-plan.smooth_sharpness * radial_velocity)
-        activation = weight > 0.5
+    match plan.activation:
+        case "approaching-only":
+            activation = radial_velocity < 0.0
+            weight = activation.astype(pi.dtype)
+        case "always":
+            activation = jnp.ones_like(radial_velocity, dtype=jnp.bool_)
+            weight = jnp.ones_like(pi)
+        case "smooth-approach":
+            weight = jax.nn.sigmoid(-plan.smooth_sharpness * radial_velocity)
+            activation = weight > 0.5
+        case unknown:
+            assert_never(unknown)
     physical = pairs.valid & jnp.asarray(physical_pairs, dtype=jnp.bool_)
     valid = physical & activation
     gradient = kernel.gradient(geometry.displacement, geometry.distance, smoothing_length)
@@ -430,6 +463,7 @@ def sph_artificial_viscosity_force(
     )
 
 
+@checked
 def shepard_renormalized_density(
     particles: ParticleDiscretization,
     density: ArrayLike,

@@ -9,11 +9,12 @@ import pytest
 import trimesh
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def test_operator_geometry_adapters_scenario_1() -> None:
     geometry = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     interior = phx.nn.operator.function_samples_from_geometry(

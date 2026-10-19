@@ -1,31 +1,33 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Occupied-image material admission and canonical native publication."""
+"""Admit occupied-image material requests and publish certified native cells."""
 
 from __future__ import annotations
 
-from time import monotonic
 from typing import final
 
 import equinox as eqx
 import numpy as np
 
+from phydrax.meshing._certification_schedule import MeshCertificationSchedule
+from phydrax.meshing.providers._native_route_policy import publication_policy
+
 from ..._fingerprint import canonical_fingerprint
-from ..._meshcore import current_native_execution_budget, NativeExecutionBudget
+from ..._meshcore import NativeExecutionScope, NativeHostStorageWorkspace
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry._compartments import CompartmentMeshingSource
+from ...geometry._embedding_state import MeshCertificateLimits
 from ...geometry.multiregion_surface._label_extraction import LabelFieldVolumeBinding
+from ...typing import checked
 from .._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
-from .._certification import MeshCertificationSchedule
 from .._compartments import (
     generate_compartment_volume,
     generate_reconstructed_image_volume,
 )
 from .._contracts import (
-    MeshingDerivativeMode,
     MeshingProviderInfo,
     VolumeFillStrategy,
     VolumeMeshingSpec,
@@ -36,68 +38,60 @@ from .._result import CellMeshingResult
 from .._sizing import UniformSizeControl
 from .._trace import MeshingStageKind, MeshingStageReport, MeshingStageStatus
 from .._volume_generation import (
-    _native_volume_operation_started,
     native_volume_checkpoint,
-    native_volume_execution_budget,
     NativeVolumeSchedule,
 )
 from ._native_publication import (
-    bind_native_execution_result,
     NativeCertificationRequest,
+    NativePublicationExecution,
+    NativePublicationOrganization,
     publish_native_result,
-    simplex_entity_limits,
 )
-from ._native_volume import _volume_compliance
+from ._native_route_checks import simplex_entity_limits
+from ._native_support import format_support_issues, SupportIssue
+from ._native_volume import volume_compliance
 
 
 type ImageVolumeSource = CompartmentMeshingSource | LabelFieldVolumeBinding
 
 
-def _image_source_binding_id(source: ImageVolumeSource, /) -> str:
+@final
+class _ImageSourceFacts(StrictModule):
+    binding_id: str = eqx.field(static=True)
+    regions: tuple[str, ...] = eqx.field(static=True)
+    interfaces: tuple[tuple[str, str, str, bool], ...] = eqx.field(static=True)
+
+
+def _image_source_facts(source: ImageVolumeSource, /) -> _ImageSourceFacts:
+    """Read the source's binding, regions, and interface incidence once."""
     match source:
         case CompartmentMeshingSource():
-            return source.source_id
-        case LabelFieldVolumeBinding():
-            return source.binding_id
-        case _:
-            raise TypeError(
-                "The image route requires an authoritative image volume source."
-            )
-
-
-def _source_regions(source: ImageVolumeSource, /) -> tuple[str, ...]:
-    match source:
-        case CompartmentMeshingSource():
-            return tuple(
-                value.compartment_id for value in source.compartments.compartments
+            return _ImageSourceFacts(
+                source.source_id,
+                tuple(value.compartment_id for value in source.compartments.compartments),
+                source.interface_definitions,
             )
         case LabelFieldVolumeBinding():
-            return source.domain.region_ids
+            return _ImageSourceFacts(
+                source.binding_id, source.domain.region_ids, source.interface_definitions
+            )
         case _:
             raise TypeError(
-                "The image route requires an authoritative image volume source."
+                "compartment.source must be CompartmentMeshingSource or "
+                f"LabelFieldVolumeBinding; got {type(source).__name__}."
             )
 
 
-def _source_interfaces(
-    source: ImageVolumeSource, /
-) -> tuple[tuple[str, str, str, bool], ...]:
-    match source:
-        case CompartmentMeshingSource():
-            return source.interface_definitions
-        case LabelFieldVolumeBinding():
-            return source.interface_definitions
-        case _:
-            raise TypeError(
-                "The image route requires an authoritative image volume source."
-            )
+@final
+class _SupportPhase(StrictModule):
+    issues: tuple[SupportIssue, ...] = eqx.field(static=True)
 
 
-def compartment_support_issues(
+def _image_request_support(
     source: ImageVolumeSource, specification: VolumeMeshingSpec, /
-) -> list[str]:
-    """Identify exact unenforceable requests, never replace their interpretation."""
-    unsupported: list[str] = []
+) -> _SupportPhase:
+    """Check the image route's target, all boundary entities, and size request."""
+    unsupported: list[SupportIssue] = []
     target = specification.target
     families = target.cell_families
     if (
@@ -105,15 +99,21 @@ def compartment_support_issues(
         target.ambient_dimension,
         target.geometry_order,
     ) != (3, 3, 1):
-        unsupported.append("affine three-dimensional tetrahedral geometry")
+        unsupported.append(
+            SupportIssue("geometry", "affine three-dimensional tetrahedral geometry")
+        )
     if (
         set((*families.required, *families.preferred)) != {"tetrahedron"}
         or families.allow_mixed
         or families.allowed_transitions
     ):
-        unsupported.append("a pure tetrahedral cell-family policy")
+        unsupported.append(
+            SupportIssue("cell-families", "a pure tetrahedral cell-family policy")
+        )
     if specification.fill_strategy is not VolumeFillStrategy.SIMPLEX:
-        unsupported.append("the simplex volume-fill strategy")
+        unsupported.append(
+            SupportIssue("fill-strategy", "the simplex volume-fill strategy")
+        )
     boundary = specification.boundary_scope
     if (
         boundary.source_id != source.source_id
@@ -124,20 +124,40 @@ def compartment_support_issues(
             np.asarray(boundary.entity_ids), np.asarray((0,), dtype=np.int64)
         )
     ):
-        unsupported.append("the complete occupied-image boundary scope")
+        unsupported.append(
+            SupportIssue("boundary-scope", "the complete occupied-image boundary scope")
+        )
     sizes = specification.size_controls
     if (
         len(sizes) != 1
         or not isinstance(sizes[0], UniformSizeControl)
         or sizes[0].scope.scope_id != boundary.scope_id
     ):
-        unsupported.append("one whole-image uniform size control")
-    regions = _source_regions(source)
+        unsupported.append(
+            SupportIssue("size-control", "one whole-image uniform size control")
+        )
+    return _SupportPhase(tuple(unsupported))
+
+
+def _image_region_support(
+    source: ImageVolumeSource,
+    specification: VolumeMeshingSpec,
+    facts: _ImageSourceFacts,
+    /,
+) -> _SupportPhase:
+    """Check region scopes and consistent material semantics in request order."""
+    unsupported: list[SupportIssue] = []
+    regions = facts.regions
     controlled: set[str] = set()
     for control in specification.region_controls:
         indices = np.asarray(control.scope.entity_ids, dtype=np.int64)
         if control.region_name not in regions or control.region_name in controlled:
-            unsupported.append("unique authoritative compartment region identities")
+            unsupported.append(
+                SupportIssue(
+                    "region-identity",
+                    "unique authoritative compartment region identities",
+                )
+            )
         elif (
             control.scope.entity_dimension != 3
             or control.scope.entity_set_id != f"{source.source_id}:regions"
@@ -145,12 +165,18 @@ def compartment_support_issues(
                 indices, np.asarray((regions.index(control.region_name),), dtype=np.int64)
             )
         ):
-            unsupported.append("exact source-region control scopes")
+            unsupported.append(
+                SupportIssue("region-scope", "exact source-region control scopes")
+            )
         if not control.meshing_enabled:
-            unsupported.append("disabling a required source compartment")
+            unsupported.append(
+                SupportIssue("disabled-region", "disabling a required source compartment")
+            )
         controlled.add(control.region_name)
     if any(seed.region_name not in regions for seed in specification.region_seeds):
-        unsupported.append("region seeds naming authoritative compartments")
+        unsupported.append(
+            SupportIssue("region-seed", "region seeds naming authoritative compartments")
+        )
     for region in regions:
         semantics = {
             (seed.material_id, seed.role)
@@ -163,16 +189,39 @@ def compartment_support_issues(
             if control.region_name == region
         )
         if len(semantics) > 1:
-            unsupported.append("consistent region-control and seed material semantics")
-    interfaces = _source_interfaces(source)
+            unsupported.append(
+                SupportIssue(
+                    "region-semantics",
+                    "consistent region-control and seed material semantics",
+                )
+            )
+    return _SupportPhase(tuple(unsupported))
+
+
+def _image_patch_support(
+    source: ImageVolumeSource,
+    specification: VolumeMeshingSpec,
+    facts: _ImageSourceFacts,
+    /,
+) -> _SupportPhase:
+    """Check interface adjacency and exterior patch ownership."""
+    unsupported: list[SupportIssue] = []
+    regions, interfaces = facts.regions, facts.interfaces
     patch_scopes: set[str] = set()
     for control in specification.patch_controls:
         indices = np.asarray(control.scope.entity_ids, dtype=np.int64)
         if control.scope.scope_id in patch_scopes:
-            unsupported.append("one patch control per source interface")
+            unsupported.append(
+                SupportIssue("duplicate-patch", "one patch control per source interface")
+            )
         patch_scopes.add(control.scope.scope_id)
         if control.scope.entity_dimension != 2 or indices.shape != (1,):
-            unsupported.append("one codimension-one source entity per patch control")
+            unsupported.append(
+                SupportIssue(
+                    "patch-dimension",
+                    "one codimension-one source entity per patch control",
+                )
+            )
         elif control.scope.entity_set_id == f"{source.source_id}:interfaces":
             row = indices.item()
             if (
@@ -180,26 +229,58 @@ def compartment_support_issues(
                 or row >= len(interfaces)
                 or control.adjacent_region_names != tuple(sorted(interfaces[row][1:3]))
             ):
-                unsupported.append("the exact adjacency of each source interface")
+                unsupported.append(
+                    SupportIssue(
+                        "patch-adjacency", "the exact adjacency of each source interface"
+                    )
+                )
         elif control.scope.entity_set_id == f"{source.source_id}:boundary":
             if (
                 indices.item() != 0
                 or len(control.adjacent_region_names) != 1
                 or control.adjacent_region_names[0] not in regions
             ):
-                unsupported.append("an occupied-image exterior boundary patch")
+                unsupported.append(
+                    SupportIssue(
+                        "exterior-patch", "an occupied-image exterior boundary patch"
+                    )
+                )
             # A full boundary control cannot describe just one region when
             # several materials touch the exterior; use explicit source facets.
             if len(regions) != 1:
-                unsupported.append("region-resolved exterior patch scopes")
+                unsupported.append(
+                    SupportIssue(
+                        "exterior-regions", "region-resolved exterior patch scopes"
+                    )
+                )
         else:
-            unsupported.append("authoritative image boundary/interface patch scopes")
+            unsupported.append(
+                SupportIssue(
+                    "patch-scope", "authoritative image boundary/interface patch scopes"
+                )
+            )
+    return _SupportPhase(tuple(unsupported))
+
+
+def _image_feature_support(
+    source: ImageVolumeSource,
+    specification: VolumeMeshingSpec,
+    facts: _ImageSourceFacts,
+    /,
+) -> _SupportPhase:
+    """Check protected image entity scopes and material-interface identity."""
+    unsupported: list[SupportIssue] = []
+    interfaces = facts.interfaces
     for feature in specification.protected_features:
         if feature.scope.entity_dimension != 2 or feature.scope.entity_set_id not in (
             f"{source.source_id}:boundary",
             f"{source.source_id}:interfaces",
         ):
-            unsupported.append("protected occupied-image boundary/interface scopes")
+            unsupported.append(
+                SupportIssue(
+                    "feature-scope", "protected occupied-image boundary/interface scopes"
+                )
+            )
         else:
             identifiers = np.asarray(feature.scope.entity_ids, dtype=np.int64)
             interface_scope = (
@@ -209,16 +290,42 @@ def compartment_support_issues(
                 feature.feature_kind is FeatureKind.MATERIAL_INTERFACE
                 and not interface_scope
             ):
-                unsupported.append("exact authoritative protected-interface identities")
+                unsupported.append(
+                    SupportIssue(
+                        "feature-identity",
+                        "exact authoritative protected-interface identities",
+                    )
+                )
+    return _SupportPhase(tuple(unsupported))
+
+
+@checked
+def compartment_support_issues(
+    source: ImageVolumeSource, specification: VolumeMeshingSpec, /
+) -> tuple[SupportIssue, ...]:
+    """Return unmet image-route requirements in validation order."""
+    facts = _image_source_facts(source)
+    issues = (
+        *_image_request_support(source, specification).issues,
+        *_image_region_support(source, specification, facts).issues,
+        *_image_patch_support(source, specification, facts).issues,
+        *_image_feature_support(source, specification, facts).issues,
+    )
     if specification.periodic_constraints:
-        unsupported.append(
-            "orbit-constrained PLC recovery and boundary-Steiner scheduling"
+        issues += (
+            SupportIssue(
+                "periodic-recovery",
+                "orbit-constrained PLC recovery and boundary-Steiner scheduling",
+            ),
         )
     if specification.layer_controls:
-        unsupported.append("the native layer/core volume route for layer controls")
-    # Hole seeds and region seeds are handed unchanged to native constrained
-    # recovery; contradictory seeds fail with their native region evidence.
-    return unsupported
+        issues += (
+            SupportIssue(
+                "layer-route", "the native layer/core volume route for layer controls"
+            ),
+        )
+    # Seeds reach constrained recovery unchanged; contradictory seeds retain native evidence.
+    return issues
 
 
 @final
@@ -229,6 +336,7 @@ class PreparedCompartmentVolume(StrictModule, NonTrainableState):
     specification_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: ImageVolumeSource,
@@ -236,17 +344,14 @@ class PreparedCompartmentVolume(StrictModule, NonTrainableState):
         schedule: NativeVolumeSchedule,
         /,
     ) -> None:
-        if not isinstance(source, (CompartmentMeshingSource, LabelFieldVolumeBinding)):
-            raise TypeError("source must be an authoritative image volume source.")
-        if not isinstance(specification, VolumeMeshingSpec):
-            raise TypeError("specification must be VolumeMeshingSpec.")
-        if not isinstance(schedule, NativeVolumeSchedule):
-            raise TypeError("schedule must be NativeVolumeSchedule.")
         issues = compartment_support_issues(source, specification)
         if issues:
-            raise ValueError("Unsupported compartment request: " + "; ".join(issues))
+            raise ValueError(
+                "PreparedCompartmentVolume.specification must be supported by the image "
+                f"route; got {format_support_issues(issues)}."
+            )
         self.schedule = schedule
-        self.source_binding_id = _image_source_binding_id(source)
+        self.source_binding_id = _image_source_facts(source).binding_id
         self.source_revision = source.source_revision
         self.specification_id = specification.specification_id
         self.prepared_id = canonical_fingerprint(
@@ -262,7 +367,9 @@ class PreparedCompartmentVolume(StrictModule, NonTrainableState):
     def validate_source_integrity(self) -> None:
         """Authenticate the retained source/request/schedule preparation binding."""
         if not isinstance(self.schedule, NativeVolumeSchedule):
-            raise TypeError("A prepared material route requires its native schedule.")
+            raise TypeError(
+                "PreparedCompartmentVolume.schedule must be NativeVolumeSchedule; got a different restored schedule kind."
+            )
         expected = canonical_fingerprint(
             {
                 "kind": "native-compartment-volume",
@@ -273,9 +380,12 @@ class PreparedCompartmentVolume(StrictModule, NonTrainableState):
             }
         )
         if expected != self.prepared_id:
-            raise ValueError("Prepared material source/request identity is stale.")
+            raise ValueError(
+                "PreparedCompartmentVolume.prepared_id must match its source/request/schedule binding; got stale preparation identity."
+            )
 
 
+@checked
 def execute_compartment_route(
     source: ImageVolumeSource,
     specification: VolumeMeshingSpec,
@@ -286,75 +396,29 @@ def execute_compartment_route(
     /,
     *,
     record_phase: NativeMeshingPhaseRecorder | None = None,
-    execution_budget: NativeExecutionBudget | None = None,
-    operation_started: float | None = None,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
 ) -> CellMeshingResult:
-    """Publish native material cells only after exact independent acceptance."""
+    """Publish native material cells after independent acceptance."""
     prepared.validate_source_integrity()
     if (
-        prepared.source_binding_id != _image_source_binding_id(source)
+        prepared.source_binding_id != _image_source_facts(source).binding_id
         or prepared.source_revision != source.source_revision
         or prepared.specification_id != specification.specification_id
     ):
         raise ValueError(
-            "The prepared material route binds a different source or request."
+            "PreparedCompartmentVolume.source_binding_id must match the image request together with source_revision and specification_id; got a different source or request."
         )
     if coordinate_contract.spatial_id != source.coordinate_contract.spatial_id:
         raise ValueError(
-            "The request and occupied image require one coordinate contract."
+            "execute_compartment_route.coordinate_contract.spatial_id must match the image coordinate contract; got a different spatial identity."
         )
-    active = current_native_execution_budget()
-    if execution_budget is not None and execution_budget is not active:
-        raise RuntimeError("Image publication must borrow the actual active budget.")
-    started = _native_volume_operation_started(operation_started)
-    if active is None and started is None:
-        started = monotonic()
-    with native_volume_execution_budget(
-        specification.limits,
-        operation_started=started,
-    ) as execution:
-        result = _execute_compartment_route_bound(
-            source,
-            specification,
-            prepared,
-            coordinate_contract,
-            provider,
-            plan_id,
-            record_phase=record_phase,
-            execution_budget=execution,
-            operation_started=started,
-        )
-    if active is not None:
-        return result
-    evidence = execution.evidence
-    if evidence is None:
-        raise RuntimeError(
-            "Image publication lost its completed original execution evidence."
-        )
-    if started is None:
-        raise RuntimeError("Owning image publication lost its original host clock.")
-    return bind_native_execution_result(result, evidence, specification.limits, started)
-
-
-def _execute_compartment_route_bound(
-    source: ImageVolumeSource,
-    specification: VolumeMeshingSpec,
-    prepared: PreparedCompartmentVolume,
-    coordinate_contract: SpatialCoordinateContract,
-    provider: MeshingProviderInfo,
-    plan_id: str,
-    /,
-    *,
-    record_phase: NativeMeshingPhaseRecorder | None,
-    execution_budget: NativeExecutionBudget,
-    operation_started: float | None,
-) -> CellMeshingResult:
-    started = operation_started
     # The native determinant-floor repair and the publication audit share one policy.
     audit_policy = CellMeshAuditPolicy(
         require_complete_association=True,
         watertight_boundary=CellMeshAuditDisposition.REJECT,
     )
+    material_limits = MeshCertificateLimits()
     match source:
         case CompartmentMeshingSource():
             construction = generate_compartment_volume(
@@ -363,9 +427,10 @@ def _execute_compartment_route_bound(
                 prepared.schedule,
                 validity_policy=audit_policy.validity_policy,
                 input_id=prepared.prepared_id,
+                certificate_limits=material_limits,
                 record_phase=record_phase,
-                operation_started=started,
-                execution_budget=execution_budget,
+                scope=scope,
+                workspace=workspace,
             )
         case LabelFieldVolumeBinding():
             construction = generate_reconstructed_image_volume(
@@ -374,19 +439,20 @@ def _execute_compartment_route_bound(
                 prepared.schedule,
                 validity_policy=audit_policy.validity_policy,
                 input_id=prepared.prepared_id,
+                certificate_limits=material_limits,
                 record_phase=record_phase,
-                operation_started=started,
-                execution_budget=execution_budget,
+                scope=scope,
+                workspace=workspace,
             )
         case _:
             raise TypeError(
-                "The image route requires an authoritative image volume source."
+                "execute_compartment_route.source must be CompartmentMeshingSource or LabelFieldVolumeBinding; got an unsupported source kind."
             )
     volume = construction.volume
     mesh = volume.mesh
     with measure_phase(record_phase, "compliance"):
         native_volume_checkpoint(
-            specification.limits, MeshingStageKind.SPECIFICATION_COMPLIANCE
+            specification.limits, MeshingStageKind.SPECIFICATION_COMPLIANCE, scope=scope
         )
         vertices = np.asarray(mesh.coordinates, dtype=np.float64)
         cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int64)
@@ -398,10 +464,10 @@ def _execute_compartment_route_bound(
             cell_kind=mesh.blocks[0].cell_kind,
         )
         native_volume_checkpoint(
-            specification.limits, MeshingStageKind.VOLUME_FILL, operation_started=started
+            specification.limits, MeshingStageKind.VOLUME_FILL, scope=scope
         )
-        compliance = _volume_compliance(
-            specification, prepared.schedule, volume, vertices, cells
+        compliance = volume_compliance(
+            specification, prepared.schedule, volume, vertices, cells, scope=scope
         )
     stages = (
         MeshingStageReport(
@@ -436,36 +502,19 @@ def _execute_compartment_route_bound(
             domain=volume.domain,
             cell_regions=volume.cell_regions,
         ),
-        audit_policy=audit_policy,
-        derivative_mode=MeshingDerivativeMode.NONDIFFERENTIABLE,
-        enforced_limits=(
-            "vertices",
-            "edges",
-            "faces",
-            "cells",
-            "connectivity_entries",
-            "data_bytes",
-            "work_units:native_and_metered_host",
-            "wall_seconds:native_and_host_boundaries",
-            "cavity_cells:native",
-            "geometry_queries:native_and_source_batches",
-            "scratch_bytes:managed_native_and_bounded_host",
+        policy=publication_policy("compartment", audit_policy=audit_policy),
+        organization=NativePublicationOrganization(
+            patches=volume.patches,
+            zones=volume.zones,
+            labels=volume.labels,
+            associations=volume.associations,
+            region_evidence=construction.region_evidence,
         ),
-        unenforced_limits=(
-            "scratch_bytes:unmanaged_host_device_compiler",
-            "work_units:unmetered_host_device_compiler",
-            "wall_seconds:nonpreemptible_host_device_compiler",
-        ),
-        patches=volume.patches,
-        zones=volume.zones,
-        labels=volume.labels,
-        associations=volume.associations,
-        region_evidence=construction.region_evidence,
-        record_phase=record_phase,
-        operation_started=started,
+        execution=NativePublicationExecution(scope, workspace, record_phase, None),
+        geometry=volume.geometry,
     )
     native_volume_checkpoint(
-        specification.limits, MeshingStageKind.CERTIFICATION, operation_started=started
+        specification.limits, MeshingStageKind.CERTIFICATION, scope=scope
     )
     return result
 

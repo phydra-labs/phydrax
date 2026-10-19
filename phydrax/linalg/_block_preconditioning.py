@@ -38,7 +38,7 @@ from ._preconditioning import (
     PreconditionerSource,
 )
 from ._properties import OperatorCapabilities, OperatorProperties
-from ._spaces import _coordinate_dtype, AbstractVectorSpace, BlockSpace
+from ._spaces import AbstractVectorSpace, BlockSpace, coordinate_dtype
 from ._structured_operators import SchurComplementLinearOperator
 
 
@@ -268,7 +268,7 @@ def _component_properties(
     # Diagonal composition is a direct sum; paired LDU is a congruence
     # transformation of the two component actions. Both preserve SPD, but
     # only with the already-certified fixed/self-adjoint component semantics.
-    # Native factor actions remain conditional on their actual SUCCESS branch;
+    # Native factor actions remain conditional on their SUCCESS branch;
     # this transformation neither proves factor success nor bypasses refusal.
     positive_definite = (
         self_adjoint
@@ -547,9 +547,7 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
         accepted = pivot_cost.accepted and schur_cost.accepted
         workspace_multiplier = 2 if self.form == "ldu" else 1
         workspace = (
-            workspace_multiplier
-            * self.space.size
-            * _coordinate_dtype(self.space).itemsize
+            workspace_multiplier * self.space.size * coordinate_dtype(self.space).itemsize
         )
         return PreconditionerCostEstimate(
             component=self.preconditioner_id,
@@ -828,7 +826,7 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
         storage = (
             pivot_cost.storage_bytes + schur_cost.storage_bytes + retained_coupling_bytes
         )
-        itemsize = _coordinate_dtype(block.source).itemsize
+        itemsize = coordinate_dtype(block.source).itemsize
         workspace = (2 if self.form == "ldu" else 1) * block.source.size * itemsize
         accepted = pivot_cost.accepted and schur_cost.accepted
         reason = (
@@ -1065,7 +1063,7 @@ def _mapped_cost(
     identifier: str, selection: BlockSelection, cost: PreconditionerCostEstimate, /
 ) -> PreconditionerCostEstimate:
     mapping_workspace = (
-        2 * selection.source.size * _coordinate_dtype(selection.source).itemsize
+        2 * selection.source.size * coordinate_dtype(selection.source).itemsize
     )
     return PreconditionerCostEstimate(
         component=identifier,

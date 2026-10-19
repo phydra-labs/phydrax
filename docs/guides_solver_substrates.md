@@ -132,7 +132,10 @@ physical input is bound as a `ParameterBinding` value of the prepared coupled
 problem and scored through its observation bindings; see
 [Inverse problems and learned components](guides_numerical_interoperability.md#inverse-problems-and-learned-components).
 
-```python executable
+Expected standard output: none. The example asserts the solved value and
+execution evidence.
+
+```python {.executable}
 from typing import ClassVar
 
 import equinox as eqx

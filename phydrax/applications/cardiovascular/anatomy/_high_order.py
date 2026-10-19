@@ -15,12 +15,12 @@ from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 import phydrax.linalg as la
+from phydrax.discretization._reference_cell_types import CellGeometryElement
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import CellGeometrySpec, CellMesh
-from ....discretization._cell_geometry import CellGeometryElement
 from ....discretization.fem import FiniteElementSpec
 from ....typing import checked
 from ._roles import CardiacBoundaryProfile

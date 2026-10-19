@@ -93,5 +93,5 @@ def test_mesh_import_preserves_volume_and_facet_groups_with_loss_evidence(
     assert "gmsh_periodic_not_imported:1" in imported.report.losses
     assert "gmsh_periodic" in dict(imported.report.source_metadata)
 
-    with pytest.raises(ValueError, match="Unknown imported volume group"):
+    with pytest.raises(ValueError, match="group_name"):
         imported.volume_cells("missing")

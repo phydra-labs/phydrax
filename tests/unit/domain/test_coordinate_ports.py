@@ -12,11 +12,13 @@ import pytest
 import phydrax as phx
 from phydrax.axes import AxisKey
 from phydrax.domain import DatasetDomain, GeometryDomain, ScalarInterval, TimeInterval
+from phydrax.units import METER
 
 
 def _square(label: str) -> GeometryDomain:
     return GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(), label=label
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER),
+        label=label,
     )
 
 

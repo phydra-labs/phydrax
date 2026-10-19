@@ -41,9 +41,16 @@ from phydrax.uq import (
     StochasticExperimentDesignPlan,
     TemporalDifferencePrior,
 )
+from tests._support.cell_meshes import unit_tetrahedron
 
 
-def test_production_foundations_scenario_1() -> None:
+# Empirical `test_tetrahedral_derham_differentials_and_hodge_energy`: matched max |delta|=5.55112e-17; joint allowance fraction=0.00555112, margin=99.4449%.
+_TETRAHEDRAL_CURL_OF_GRADIENT_ATOL = 1e-14
+# Empirical `test_tetrahedral_derham_differentials_and_hodge_energy`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_TETRAHEDRAL_DIVERGENCE_OF_CURL_ATOL = 1e-14
+
+
+def test_leap_second_conversion_roundtrips_with_resource_provenance() -> None:
     resource = bounded_resource_from_bytes(
         b"pinned leap table", limits=ResourceLimits(1024, 2, 4, 4, 0)
     ).manifest
@@ -62,6 +69,8 @@ def test_production_foundations_scenario_1() -> None:
     np.testing.assert_allclose(convert_time(converted, tai, utc)[0], [99.0, 100.0])
     assert transform.resources[0].manifest_id == resource.manifest_id
 
+
+def test_borehole_sampling_interpolates_and_has_consistent_transpose() -> None:
     coordinates = GeospatialContract.local_cartesian(
         phx.SpatialCoordinateContract.si(), vertical_datum="local"
     )
@@ -88,6 +97,8 @@ def test_production_foundations_scenario_1() -> None:
         jnp.vdot(station, sample.transpose(cotangent, 3)),
     )
 
+
+def test_planetary_rotation_roundtrips_body_fixed_coordinates() -> None:
     body = ReferenceBodyContract("test", 4.0e14, 6.4e6, 6.3e6, 1e-4, 0.0)
     angular_coordinates = GeospatialContract(
         phx.SpatialCoordinateContract(METER, reference_frame="test-body"),
@@ -118,24 +129,37 @@ def test_production_foundations_scenario_1() -> None:
     np.testing.assert_allclose(
         planetary.inertial_to_body_fixed(rotated, np.pi / (2e-4)), point, atol=1e-8
     )
+
+
+def test_tetrahedral_derham_differentials_and_hodge_energy() -> None:
     space = phx.discretization.FiniteElementDeRhamComplex(
-        _tetra_mesh(),
+        unit_tetrahedron(),
         family="trimmed",
         order=1,
     )
     vertex = jnp.asarray((0.3, -0.2, 1.1, 0.7))
     edge_gradient = space.exterior_derivative(0, vertex)
+    # Unit-tetrahedron incidence acceptance ceiling from 03ef670bc,
+    # test_production_foundations_scenario_1: cancellation of the six signed
+    # vertex contributions in d1*d0 and twelve edge contributions in d2*d1.
     np.testing.assert_allclose(
-        space.exterior_derivative(1, edge_gradient), 0.0, atol=1e-14
+        space.exterior_derivative(1, edge_gradient),
+        0.0,
+        atol=_TETRAHEDRAL_CURL_OF_GRADIENT_ATOL,
     )
     edge = jnp.arange(space.cell_counts[1], dtype="float64") + 1
     np.testing.assert_allclose(
-        space.exterior_derivative(2, space.exterior_derivative(1, edge)), 0.0, atol=1e-14
+        space.exterior_derivative(2, space.exterior_derivative(1, edge)),
+        0.0,
+        atol=_TETRAHEDRAL_DIVERGENCE_OF_CURL_ATOL,
     )
     mass = 2.0 * space.hodge_star(1, edge)
     curl = space.exterior_derivative(1, edge)
     assert float(jnp.vdot(edge, mass)) > 0
     assert float(jnp.vdot(curl, 3.0 * space.hodge_star(2, curl))) >= 0
+
+
+def test_covariance_actions_match_dense_quadratic_forms() -> None:
     layout = CoordinateLayout(("a", "b", "c", "d"))
     # ty: ignore[invalid-argument-type]
     diagonal = DiagonalCovarianceAction([1.0, 2.0, 3.0, 4.0], layout)
@@ -193,6 +217,13 @@ def test_production_foundations_scenario_1() -> None:
     )
     assert jnp.isfinite(spde.log_prob(jnp.zeros(4)))
 
+
+def test_linear_nuisance_projection_and_prior_sensitivity_match_normal_equations() -> (
+    None
+):
+    layout = CoordinateLayout(("a", "b", "c", "d"))
+    # ty: ignore[invalid-argument-type]
+    diagonal = DiagonalCovarianceAction([1.0, 2.0, 3.0, 4.0], layout)
     design = jnp.asarray(((1.0, 0.0), (1.0, 1.0), (1.0, 2.0), (1.0, 3.0)))
     truth = jnp.asarray((2.0, -0.5))
     projection = LinearNuisancePlan(design, diagonal, layout, ("offset", "slope"))
@@ -237,6 +268,8 @@ def test_production_foundations_scenario_1() -> None:
         atol=1e-12,
     )
 
+
+def test_graph_temporal_and_cross_gradient_priors_preserve_nullspaces() -> None:
     # ty: ignore[invalid-argument-type]
     graph = GraphMetricPrior([1.0, 1.0], [0], [1], [2.0], gradient_precision=1.0)
     # ty: ignore[invalid-argument-type]

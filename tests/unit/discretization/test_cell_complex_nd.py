@@ -56,11 +56,15 @@ def test_four_simplex_boundary_and_reorientation() -> None:
 
 def test_simplicial_builder_refuses_missing_face_and_repeated_vertices() -> None:
     vertices = np.arange(3, dtype=np.int32)[:, None]
-    with pytest.raises(ValueError, match="face closed"):
+    with pytest.raises(
+        ValueError, match=r"simplicial_cell_complex\.simplices.*face closed"
+    ):
         simplicial_cell_complex(
             (vertices, np.asarray([[0, 1], [1, 2]]), np.asarray([[0, 1, 2]]))
         )
-    with pytest.raises(ValueError, match="increasing"):
+    with pytest.raises(
+        ValueError, match=r"simplicial_cell_complex\.simplices.*increasing"
+    ):
         simplicial_cell_complex((vertices, np.asarray([[1, 1]])))
 
 
@@ -76,7 +80,7 @@ def test_periodic_single_site_four_torus_has_zero_boundary() -> None:
     for incidence in complex_.topology.incidences:
         np.testing.assert_array_equal(incidence.scipy_boundary().toarray(), 0.0)
     assert complex_.orientations[2] == tuple(combinations(range(4), 2))
-    with pytest.raises(ValueError, match="nonperiodic"):
+    with pytest.raises(ValueError, match=r"cubical_cell_complex\.shape.*nonperiodic"):
         cubical_cell_complex((1, 2), periodic=(False, True))
 
 

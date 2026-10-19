@@ -32,6 +32,10 @@ from phydrax.solver._finite_volume_topology_events import (
 )
 
 
+# Empirical `test_committed_remesh_publishes_physical_remap_through_rebind`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_REMESH_CONSERVATIVE_CONTENT_RTOL = 1e-15
+
+
 def _epoch(name: str, *, index: int = 0) -> TopologyEpoch:
     return TopologyEpoch(
         index,
@@ -953,7 +957,9 @@ def test_committed_remesh_publishes_physical_remap_through_rebind() -> None:
         <= transport.content_tolerance
     )
     np.testing.assert_allclose(
-        result.content_state.conservative_content, ((1.5,), (1.5,)), rtol=1e-15
+        result.content_state.conservative_content,
+        ((1.5,), (1.5,)),
+        rtol=_REMESH_CONSERVATIVE_CONTENT_RTOL,
     )
     assert receipt.composition.value("finite-volume/topology") == case.successor
     assert (

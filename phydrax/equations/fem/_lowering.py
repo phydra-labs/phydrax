@@ -43,7 +43,9 @@ from ._worksets import CompiledWorkset, WorksetProgram, WorksetSignature
 
 
 if TYPE_CHECKING:
-    from ...discretization._cell_mesh import CellBlock, CellMesh, PolyhedralBlock
+    from phydrax.discretization._reference_cell_types import CellBlock, PolyhedralBlock
+
+    from ...discretization._cell_mesh import CellMesh
     from ...discretization.fem import FiniteElementSpec, IntegrationDomain
     from ...discretization.fem._precision import FiniteElementPrecisionPolicy
     from ...integration import (
@@ -500,7 +502,7 @@ def compile_workset_program(
                     and element.value_spec.form_type.degree == 0
                     for field in fields
                     for element in discretization.elements[
-                        discretization._field_index(field)
+                        discretization.field_index(field)
                     ]
                 )
                 and all(
@@ -508,7 +510,7 @@ def compile_workset_program(
                         {
                             element.local_dof_count
                             for element in discretization.elements[
-                                discretization._field_index(field)
+                                discretization.field_index(field)
                             ]
                         }
                     )
@@ -748,7 +750,7 @@ def compile_workset_program(
             widths = {}
             neighbor_widths = {}
             for field in fields:
-                field_index = discretization._field_index(field)
+                field_index = discretization.field_index(field)
                 dof_map = discretization.dof_maps[field_index]
                 if domain.kind == "cell":
                     route = np.asarray(dof_map.cell_dofs[block_index])[selected]
@@ -776,7 +778,7 @@ def compile_workset_program(
                 widths[field] = route.shape[1]
                 neighbor_widths[field] = neighbor_route.shape[1]
             representative_output = _output_fields(action)[0]
-            output_field_index = discretization._field_index(representative_output)
+            output_field_index = discretization.field_index(representative_output)
             element = discretization.elements[output_field_index][block_index]
             coordinate_element = discretization.coordinate_elements[block_index]
             neighbor_block = (
@@ -905,7 +907,7 @@ def compile_finite_element_hp_mortar_workset(
 ) -> CompiledWorkset:
     """Lower one asymmetric hp mortar patch into the generic workset contract."""
 
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     owner_element = discretization.elements[field_index][owner_block_index]
     neighbor_element = discretization.elements[field_index][neighbor_block_index]
 

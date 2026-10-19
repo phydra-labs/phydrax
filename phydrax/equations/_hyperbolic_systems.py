@@ -37,7 +37,7 @@ def _proper_isometry_representation(
     rotation = jnp.asarray(rotation, dtype=jnp.result_type(rotation, 1.0))
     if rotation.shape[-2:] != (dimension, dimension):
         raise ValueError(
-            "Proper isometry rotation must match the owning system dimension."
+            f"proper_isometry.rotation.shape must end in {(dimension, dimension)!r}; got {rotation.shape!r}"
         )
     tolerance = 256 * jnp.finfo(rotation.dtype).eps
     rotation = eqx.error_if(
@@ -148,9 +148,9 @@ class AbstractConservationSystem(StrictModule):
         return len(self.component_names)
 
     def proper_isometry_state_matrix(self, rotation: Array, /) -> Array:
-        """Owning linear representation carrying conserved states between frames."""
+        """Return the linear representation carrying conserved states between frames."""
         raise TypeError(
-            f"{type(self).__name__} has no declared proper-isometry state representation."
+            f"{type(self).__name__}.proper_isometry_state_matrix must have a declared state representation; got undeclared representation"
         )
 
     @abc.abstractmethod
@@ -1216,7 +1216,7 @@ class IdealMHDSystem(
     def proper_isometry_state_matrix(self, rotation: Array, /) -> Array:
         if self.dimension != 3:
             raise TypeError(
-                "Proper MHD frame transport requires the owning three-dimensional vector representation."
+                f"MHD.dimension must be 3 for proper frame transport; got {self.dimension!r}"
             )
         return _proper_isometry_representation(
             rotation, 3, self.component_count, (slice(1, 4), slice(5, 8))

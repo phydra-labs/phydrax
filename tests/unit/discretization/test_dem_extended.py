@@ -3,6 +3,7 @@
 #
 
 
+from collections.abc import Sequence
 from typing import Any
 
 import equinox as eqx
@@ -12,9 +13,15 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
-def _materials(*, rolling: Any = 0.0) -> Any:
+# Empirical bounds for the two-body linear-spring fixture at d2dfcb941.
+_STEP_ENERGY_TOLERANCE = 1.0e-12
+_QUALIFICATION_ENERGY_TOLERANCE = 1.0e-10
+
+
+def _materials(*, rolling: float = 0.0) -> phx.equations.DEMMaterialTable:
     return phx.equations.DEMMaterialTable(
         jnp.asarray([2.0e5]),
         jnp.asarray([0.25]),
@@ -25,17 +32,17 @@ def _materials(*, rolling: Any = 0.0) -> Any:
 
 
 def _compile(
-    normal: Any,
+    normal: phx.discretization.AbstractDEMNormalContactPlan,
     *,
-    cohesion: Any = None,
-    tangential: Any = None,
-    rotational: Any = None,
-    barriers: Any = (),
-    neighborhood: Any = None,
-    execution: Any = None,
-    materials: Any = None,
-    maximum_overlap: Any = 0.3,
-) -> Any:
+    cohesion: phx.discretization.AbstractDEMCohesionPlan | None = None,
+    tangential: phx.discretization.AbstractDEMTangentialContactPlan | None = None,
+    rotational: phx.discretization.AbstractDEMRotationalContactPlan | None = None,
+    barriers: Sequence[phx.discretization.ImplicitDEMBarrier] = (),
+    neighborhood: phx.discretization.AbstractParticleNeighborhoodPlan | None = None,
+    execution: phx.discretization.ParticleExecutionPolicy | None = None,
+    materials: phx.equations.DEMMaterialTable | None = None,
+    maximum_overlap: float = 0.3,
+) -> phx.equations.CompiledDiscreteElementProblem:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([10, 20]), jnp.ones((2,)), ambient_dimension=2
     ).prepare()
@@ -71,7 +78,32 @@ def _compile(
     )
 
 
-def test_dem_extended_scenario_1() -> None:
+@pytest.fixture(scope="module")
+def verlet_case() -> tuple[
+    phx.equations.CompiledDiscreteElementProblem,
+    jax.Array,
+    phx.discretization.ParticleBox,
+]:
+    box = phx.discretization.ParticleBox(
+        jnp.asarray([-1.0, -1.0]),
+        jnp.asarray([1.0, 1.0]),
+        periodic_axes=(False, False),
+    )
+    base = phx.discretization.CellListParticleNeighborhoodPlan(1.2, 2, 1, box)
+    verlet = phx.discretization.VerletParticleNeighborhoodPlan(base, 1.0, 0.2)
+    execution = phx.discretization.ParticleExecutionPolicy(
+        realization="cell_edge_list", kernel_backend="verlet_fused"
+    )
+    compiled = _compile(
+        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+        neighborhood=verlet,
+        execution=execution,
+    )
+    positions = jnp.asarray([[-0.45, 0.0], [0.45, 0.0]])
+    return compiled, positions, box
+
+
+def test_dem_step_energy_ledger_and_qualification() -> None:
     compiled = _compile(phx.discretization.LinearSpringDashpotNormalPlan(1.0e4))
     state = compiled.initialize_state(
         0.0,
@@ -88,7 +120,7 @@ def test_dem_extended_scenario_1() -> None:
 
     assert detail.successful
     assert detail.energy.accepted
-    assert jnp.abs(detail.energy.energy_residual) < 1.0e-12
+    assert jnp.abs(detail.energy.energy_residual) < _STEP_ENERGY_TOLERANCE
     assert detail.accepted_state.energy.accepted_steps == 1
     assert detail.accepted_state.energy.cumulative_boundary_contact_work.shape == (0,)
     diagnostics = compiled.diagnostics(1.0e-4, detail.accepted_state)
@@ -96,11 +128,13 @@ def test_dem_extended_scenario_1() -> None:
         diagnostics,
         phx.discretization.DEMQualificationProfile(
             maximum_overlap_fraction=0.3,
-            energy_balance_tolerance=1.0e-10,
+            energy_balance_tolerance=_QUALIFICATION_ENERGY_TOLERANCE,
         ),
     )
     assert artifact.qualified
 
+
+def test_dem_overlap_refusal_retains_accepted_energy_ledger() -> None:
     strict = _compile(
         phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
         maximum_overlap=0.01,
@@ -120,22 +154,16 @@ def test_dem_extended_scenario_1() -> None:
     assert not rejected.successful
     assert rejected.rejection_reasons & int(phx.discretization.DEMRejectionReason.OVERLAP)
     assert rejected.accepted_state.energy.accepted_steps == 0
-    box = phx.discretization.ParticleBox(
-        jnp.asarray([-1.0, -1.0]),
-        jnp.asarray([1.0, 1.0]),
-        periodic_axes=(False, False),
-    )
-    base = phx.discretization.CellListParticleNeighborhoodPlan(1.2, 2, 1, box)
-    verlet = phx.discretization.VerletParticleNeighborhoodPlan(base, 1.0, 0.2)
-    execution = phx.discretization.ParticleExecutionPolicy(
-        realization="cell_edge_list", kernel_backend="verlet_fused"
-    )
-    compiled = _compile(
-        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
-        neighborhood=verlet,
-        execution=execution,
-    )
-    positions = jnp.asarray([[-0.45, 0.0], [0.45, 0.0]])
+
+
+def test_verlet_dem_reuses_admitted_neighborhood(
+    verlet_case: tuple[
+        phx.equations.CompiledDiscreteElementProblem,
+        jax.Array,
+        phx.discretization.ParticleBox,
+    ],
+) -> None:
+    compiled, positions, _ = verlet_case
     state = compiled.initialize_state(0.0, positions, jnp.zeros((2, 2)))
     detail = compiled.dynamics.step_detailed(
         jnp.asarray(0, dtype=jnp.int32),
@@ -145,9 +173,19 @@ def test_dem_extended_scenario_1() -> None:
         None,
     )
     assert detail.successful
+    assert detail.accepted_state.neighborhood_cache is not None
     assert not detail.accepted_state.neighborhood_cache.rebuilt
     assert detail.accepted_state.neighborhood_cache.rebuild_count == 1
 
+
+def test_verlet_dem_batch_accepts_each_lane(
+    verlet_case: tuple[
+        phx.equations.CompiledDiscreteElementProblem,
+        jax.Array,
+        phx.discretization.ParticleBox,
+    ],
+) -> None:
+    compiled, positions, _ = verlet_case
     batch = phx.discretization.initialize_dem_batch(
         compiled.dynamics,
         jnp.asarray(0.0),
@@ -164,6 +202,15 @@ def test_dem_extended_scenario_1() -> None:
     )
     assert jnp.all(batched.successful)
 
+
+def test_hierarchical_dem_routes_and_step_are_admitted(
+    verlet_case: tuple[
+        phx.equations.CompiledDiscreteElementProblem,
+        jax.Array,
+        phx.discretization.ParticleBox,
+    ],
+) -> None:
+    compiled, positions, box = verlet_case
     hierarchy = phx.discretization.HierarchicalRadiusParticleNeighborhoodPlan(
         jnp.asarray([0.5, 0.5]),
         jnp.asarray([0.1, 0.6]),
@@ -193,6 +240,15 @@ def test_dem_extended_scenario_1() -> None:
     assert hierarchy_step.successful
     assert hierarchy_step.accepted_state.particle_history.valid[0]
 
+
+def test_hierarchical_dem_refuses_underresolved_contact_envelope(
+    verlet_case: tuple[
+        phx.equations.CompiledDiscreteElementProblem,
+        jax.Array,
+        phx.discretization.ParticleBox,
+    ],
+) -> None:
+    _, _, box = verlet_case
     underresolved = phx.discretization.HierarchicalRadiusParticleNeighborhoodPlan(
         jnp.asarray([0.49, 0.49]),
         jnp.asarray([0.1, 0.6]),
@@ -205,44 +261,54 @@ def test_dem_extended_scenario_1() -> None:
             phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
             neighborhood=underresolved,
         )
-    for mode in [
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
         phx.discretization.DEMBatchExecutionMode.ALWAYS_BUILD,
         phx.discretization.DEMBatchExecutionMode.UNIFORM_REBUILD,
-    ]:
-        box = phx.discretization.ParticleBox(
-            jnp.asarray([-1.0, -1.0]),
-            jnp.asarray([1.0, 1.0]),
-            periodic_axes=(False, False),
-        )
-        base = phx.discretization.CellListParticleNeighborhoodPlan(1.2, 2, 1, box)
-        compiled = _compile(
-            phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
-            neighborhood=phx.discretization.VerletParticleNeighborhoodPlan(
-                base, 1.0, 0.2
-            ),
-        )
-        positions = jnp.asarray([[-0.45, 0.0], [0.45, 0.0]])
-        batch = phx.discretization.initialize_dem_batch(
+    ],
+    ids=["always-build", "uniform-rebuild"],
+)
+def test_dem_batch_build_modes_require_cached_state(
+    mode: phx.discretization.DEMBatchExecutionMode,
+) -> None:
+    box = phx.discretization.ParticleBox(
+        jnp.asarray([-1.0, -1.0]),
+        jnp.asarray([1.0, 1.0]),
+        periodic_axes=(False, False),
+    )
+    base = phx.discretization.CellListParticleNeighborhoodPlan(1.2, 2, 1, box)
+    compiled = _compile(
+        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+        neighborhood=phx.discretization.VerletParticleNeighborhoodPlan(base, 1.0, 0.2),
+    )
+    positions = jnp.asarray([[-0.45, 0.0], [0.45, 0.0]])
+    batch = phx.discretization.initialize_dem_batch(
+        compiled.dynamics,
+        jnp.asarray(0.0),
+        jnp.stack((positions, positions)),
+        jnp.zeros((2, 2, 2)),
+    )
+    uncached = eqx.tree_at(
+        lambda value: value.neighborhood_cache,
+        batch,
+        None,
+        is_leaf=lambda value: value is None,
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"PreparedCompliantDEMDynamics\.prepare_contact_routes\.state",
+    ):
+        phx.discretization.batch_step_detailed(
             compiled.dynamics,
+            uncached,
+            jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0.0),
-            jnp.stack((positions, positions)),
-            jnp.zeros((2, 2, 2)),
+            jnp.asarray(1.0e-5),
+            phx.discretization.DEMBatchExecutionPlan(mode),
         )
-        uncached = eqx.tree_at(
-            lambda value: value.neighborhood_cache,
-            batch,
-            None,
-            is_leaf=lambda value: value is None,
-        )
-        with pytest.raises(ValueError, match="requires a neighborhood cache"):
-            phx.discretization.batch_step_detailed(
-                compiled.dynamics,
-                uncached,
-                jnp.asarray(0, dtype=jnp.int32),
-                jnp.asarray(0.0),
-                jnp.asarray(1.0e-5),
-                phx.discretization.DEMBatchExecutionPlan(mode),
-            )
 
 
 def test_bagheri_bridge_force_energy_lifecycle_and_fit_domain() -> None:
@@ -322,14 +388,18 @@ def test_bagheri_bridge_force_energy_lifecycle_and_fit_domain() -> None:
     assert np.allclose(extents, 0.5 + 0.5 * critical_gap)
     with pytest.raises(ValueError, match="50 deg"):
         phx.discretization.BagheriCapillaryBridgePlan(0.072, np.deg2rad(51.0), 1.0e-3)
-    geometry = phx.geometry.Circle(center=(0.0, 0.0), radius=2.0).compile()
+    geometry = phx.geometry.Circle(center=(0.0, 0.0), radius=2.0).compile(
+        coordinate_unit=METER
+    )
     barrier = phx.discretization.ImplicitDEMBarrier(
         geometry,
         phx.discretization.DEMBarrierSide.INTERIOR,
         0,
         barrier_id="unsupported-wet-wall",
     )
-    with pytest.raises(ValueError, match="sphere pairs only"):
+    with pytest.raises(
+        ValueError, match="PreparedCompliantDEMDynamics.method.contact.cohesion"
+    ):
         _compile(
             phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
             cohesion=bridge,
@@ -459,7 +529,9 @@ def test_checkpointed_dem_vjp_guards_cotangent_on_replay_mismatch(
 
 
 def test_moving_servo_curvature_dmt_and_plastic_models() -> None:
-    geometry = phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    geometry = phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(
+        coordinate_unit=METER
+    )
 
     def motion(base: Any, time: Any, points: Any, args: Any) -> Any:
         del time, args
@@ -508,7 +580,7 @@ def test_moving_servo_curvature_dmt_and_plastic_models() -> None:
     assert servo_state.displacement > 0.0
 
     circle = phx.discretization.ImplicitDEMBarrier(
-        phx.geometry.Circle((0.0, 0.0), 2.0).compile(),
+        phx.geometry.Circle((0.0, 0.0), 2.0).compile(coordinate_unit=METER),
         phx.discretization.DEMBarrierSide.INTERIOR,
         0,
         barrier_id="curved-hertz",

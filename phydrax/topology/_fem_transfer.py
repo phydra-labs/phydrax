@@ -14,7 +14,7 @@ from ._maps import CellularChainMap
 
 
 if TYPE_CHECKING:
-    from ..meshing._lineage import MeshLineage
+    from ..meshing._lineage_records import MeshLineage
 
 
 def finite_element_topology_transfer(
@@ -26,7 +26,7 @@ def finite_element_topology_transfer(
 ) -> CellularChainMap:
     """Bind mesh-adaptation lineage to an independently verified exact chain map."""
     # Lazy: phydrax.meshing transitively imports packages that import topology.
-    from ..meshing._lineage import MeshLineage
+    from ..meshing._lineage_records import MeshLineage
 
     if not isinstance(source_mesh, CellMesh) or not isinstance(target_mesh, CellMesh):
         raise TypeError("Finite-element topology transfer requires two CellMesh values.")

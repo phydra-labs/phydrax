@@ -28,11 +28,12 @@ from phydrax.operators.differential import (
     viscous_stress,
     von_mises_stress,
 )
+from phydrax.units import METER
 
 
 def test_deviatoric_and_hydrostatic() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     # sigma = p I
@@ -70,7 +71,7 @@ def test_deviatoric_and_hydrostatic() -> None:
 
 def test_viscous_stress_symmetry() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     mu = 2.0
     a, b = 0.1, -0.2
@@ -88,7 +89,7 @@ def test_viscous_stress_symmetry() -> None:
 
 def test_maxwell_stress_E_only() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     eps = 2.0
 
@@ -110,7 +111,7 @@ def test_maxwell_stress_broadcasts_material_fields_over_matrix_axes() -> None:
             center=(0.0, 0.0),
             side=2.0,
             feature_id="maxwell-stress-grid",
-        ).compile()
+        ).compile(coordinate_unit=METER)
     )
     electric = geom.Function("x")(lambda x: jnp.asarray([1.0 + x[0], -1.0 + x[1]]))
     epsilon = geom.Function("x")(lambda x: 2.0 + x[0])
@@ -131,7 +132,7 @@ def test_maxwell_stress_broadcasts_material_fields_over_matrix_axes() -> None:
 
 def test_linear_isotropic_plane_stress_simple() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     E, nu = 10.0, 0.25
     a, b = 0.1, -0.2
@@ -151,7 +152,7 @@ def test_linear_isotropic_plane_stress_simple() -> None:
 
 def test_orthotropic_reduces_isotropic() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     # Choose E1=E2=E, nu12=nu, G12=E/(2(1+nu)) -> isotropic equivalence in plane stress
     E, nu = 10.0, 0.3
@@ -175,7 +176,9 @@ def test_orthotropic_reduces_isotropic() -> None:
 
 
 def test_dimension_declared_elasticity_and_equivalent_stress_are_explicit() -> None:
-    geom = phx.domain.GeometryDomain(phx.geometry.Ball(jnp.zeros((4,)), 1.0).compile())
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Ball(jnp.zeros((4,)), 1.0).compile(coordinate_unit=METER)
+    )
     material = phx.operators.LinearElasticityTensor.isotropic(
         4,
         lame_lambda=2.0,
@@ -205,7 +208,7 @@ def test_dimension_declared_elasticity_and_equivalent_stress_are_explicit() -> N
 
 def test_finite_strain_shapes_zero_disp() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     # At zero displacement, F=I, E=0 => SVK S=0; Neo-Hookean Cauchy σ=0
@@ -229,7 +232,7 @@ def test_finite_strain_shapes_zero_disp() -> None:
 
 def test_neo_hookean_field_energy_and_stresses_match_plane_strain_array_model() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     displacement_gradient = jnp.asarray([[0.08, 0.07], [0.02, -0.06]])
     deformation = jnp.eye(2) + displacement_gradient
@@ -264,7 +267,7 @@ def test_neo_hookean_field_energy_and_stresses_match_plane_strain_array_model() 
 
 def test_neo_hookean_field_supports_heterogeneous_scalar_materials() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")
@@ -295,7 +298,9 @@ def test_neo_hookean_field_marks_invalid_materials_nonfinite() -> None:
         (jnp.nan, 3.0),
     ]:
         geom = phx.domain.GeometryDomain(
-            phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+            phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(
+                coordinate_unit=METER
+            )
         )
 
         @geom.Function("x")
@@ -309,7 +314,7 @@ def test_neo_hookean_field_marks_invalid_materials_nonfinite() -> None:
 
 def test_neo_hookean_field_marks_nonpositive_jacobian_nonfinite() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")
@@ -328,7 +333,9 @@ def test_neo_hookean_field_marks_nonpositive_jacobian_nonfinite() -> None:
 def test_deformation_gradient_rejects_displacement_dimension_mismatch() -> None:
     for components in [1, 3]:
         geom = phx.domain.GeometryDomain(
-            phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+            phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(
+                coordinate_unit=METER
+            )
         )
 
         @geom.Function("x")
@@ -343,7 +350,7 @@ def test_deformation_gradient_rejects_displacement_dimension_mismatch() -> None:
 
 def test_neo_hookean_field_rejects_retired_kappa_keyword() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")

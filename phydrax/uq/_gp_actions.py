@@ -26,7 +26,7 @@ from ..linalg import (
     OperatorProperties,
     SparseStorage,
 )
-from ..linalg._spaces import _coordinate_dtype
+from ..linalg._spaces import coordinate_dtype
 from ..typing import parse, PRNGKey
 from ._gp_computation_backend import _GaussianProcessCovarianceOperator
 from ._gp_likelihood import GaussianProcessLikelihoodState
@@ -80,7 +80,7 @@ class _ResolvedGaussianProcessActions(StrictModule):
         )
         if mask.shape != (action_count,):
             raise ValueError("active_mask must align with action capacity.")
-        history_dtype = _coordinate_dtype(operator.source)
+        history_dtype = coordinate_dtype(operator.source)
         history = (
             jnp.empty((0,), dtype=history_dtype)
             if residual_history is None

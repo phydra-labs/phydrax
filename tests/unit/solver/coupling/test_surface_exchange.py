@@ -37,6 +37,7 @@ from phydrax.solver.coupling._surface_exchange import (
     SurfaceExchangeLaw,
 )
 from phydrax.sparse import SparseCoordinateOperator
+from phydrax.units import METER
 from tests.unit.solver.coupling._cases import (
     build_region,
     QUADRATIC,
@@ -65,7 +66,7 @@ def grid_surface(
     cloud = PointCloudPlan(points, measures, neighbors=neighbors).prepare()
     view = prepare_point_cloud_field_reconstruction(
         cloud,
-        support_geometry=Rectangle((0.5, 0.5), (1.0, 1.0)).compile(),
+        support_geometry=Rectangle((0.5, 0.5), (1.0, 1.0)).compile(coordinate_unit=METER),
         radius=0.65,
         capacity=points.shape[0],
         reconstruction="polynomial",
@@ -186,7 +187,9 @@ def circle_surface(count: int, /) -> MeshfreeComponent:
         surface,
         native,
         surface.prepare_field_reconstruction(
-            support_geometry=Rectangle((0.5, 0.5), (1.0, 1.0)).compile()
+            support_geometry=Rectangle((0.5, 0.5), (1.0, 1.0)).compile(
+                coordinate_unit=METER
+            )
         ),
         surface.measures,
         name="surface",

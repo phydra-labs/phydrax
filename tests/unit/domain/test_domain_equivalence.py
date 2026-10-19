@@ -19,6 +19,7 @@ from phydrax.domain import (
     ProductDomain,
     TimeInterval,
 )
+from phydrax.units import METER
 
 
 def _permute_mesh(points: np.ndarray, faces: np.ndarray, perm: np.ndarray) -> Any:
@@ -107,10 +108,14 @@ def test_domain_equivalence_scenario_2() -> None:
     mesh2 = meshio.Mesh(points=points2, cells=[("triangle", faces2)])
 
     geom1 = phx.domain.GeometryDomain(
-        phx.geometry.planar_region_from_source(mesh1, recenter=False).compile()
+        phx.geometry.planar_region_from_source(mesh1, recenter=False).compile(
+            coordinate_unit=METER
+        )
     )
     geom2 = phx.domain.GeometryDomain(
-        phx.geometry.planar_region_from_source(mesh2, recenter=False).compile()
+        phx.geometry.planar_region_from_source(mesh2, recenter=False).compile(
+            coordinate_unit=METER
+        )
     )
     assert geom1.same_support(geom2)
 
@@ -118,7 +123,9 @@ def test_domain_equivalence_scenario_2() -> None:
     points3[0, 0] += 1e-3
     mesh3 = meshio.Mesh(points=points3, cells=[("triangle", faces)])
     geom3 = phx.domain.GeometryDomain(
-        phx.geometry.planar_region_from_source(mesh3, recenter=False).compile()
+        phx.geometry.planar_region_from_source(mesh3, recenter=False).compile(
+            coordinate_unit=METER
+        )
     )
     assert not geom1.same_support(geom3)
     points = np.array(
@@ -146,10 +153,14 @@ def test_domain_equivalence_scenario_2() -> None:
     mesh2 = (points2, faces2)
 
     geom1 = phx.domain.GeometryDomain(
-        phx.geometry.mesh_region_from_source(mesh1, recenter=False).compile()
+        phx.geometry.mesh_region_from_source(mesh1, recenter=False).compile(
+            coordinate_unit=METER
+        )
     )
     geom2 = phx.domain.GeometryDomain(
-        phx.geometry.mesh_region_from_source(mesh2, recenter=False).compile()
+        phx.geometry.mesh_region_from_source(mesh2, recenter=False).compile(
+            coordinate_unit=METER
+        )
     )
     assert geom1.same_support(geom2)
 
@@ -157,7 +168,9 @@ def test_domain_equivalence_scenario_2() -> None:
     points3[1, 2] += 1e-3
     mesh3 = (points3, faces)
     geom3 = phx.domain.GeometryDomain(
-        phx.geometry.mesh_region_from_source(mesh3, recenter=False).compile()
+        phx.geometry.mesh_region_from_source(mesh3, recenter=False).compile(
+            coordinate_unit=METER
+        )
     )
     assert not geom1.same_support(geom3)
     a = Interval1d(0.0, 1.0)

@@ -71,7 +71,6 @@ def _surface(*, lateral: Any = True) -> Any:
         ),
     )
     fv = UnstructuredFiniteVolumePlan.from_cell_mesh(
-        # ty: ignore[invalid-argument-type]
         CellMesh.from_polyhedra(vertices, cells)
     ).prepare()
     faces = np.flatnonzero(np.asarray(fv.area_vectors)[:, 2] > 0.9)

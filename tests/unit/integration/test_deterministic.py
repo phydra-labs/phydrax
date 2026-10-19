@@ -8,6 +8,7 @@ import pytest
 
 import phydrax as phx
 import phydrax.axes as cx
+from phydrax.units import METER
 
 
 def _interval() -> Any:
@@ -641,7 +642,7 @@ def test_probability_component_uses_probability_measure() -> None:
 
 def test_partial_axis_integration_does_not_apply_unreduced_geometry_weights() -> None:
     geometry = phx.domain.GeometryDomain(
-        phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile()
+        phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile(coordinate_unit=METER)
     )
     time = phx.domain.TimeInterval(0.0, 3.0)
     domain = geometry @ time

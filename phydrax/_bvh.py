@@ -27,6 +27,7 @@ from jax.typing import ArrayLike, DTypeLike
 from ._jax_config import x64_enabled
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import checked
 
 
 class BVHBuildKind(StrEnum):
@@ -69,24 +70,30 @@ class BVHBuildPolicy(StrictModule):
         morton_code_bits: int = 63,
     ) -> None:
         if not isinstance(kind, BVHBuildKind):
-            raise TypeError("kind must be a BVHBuildKind.")
+            raise TypeError(
+                f"BVHBuildPolicy.kind must be a BVHBuildKind; got {type(kind).__name__}"
+            )
         for name, value in (
             ("leaf_size", leaf_size),
             ("sah_bins", sah_bins),
             ("morton_code_bits", morton_code_bits),
         ):
             if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
-                raise TypeError(f"{name} must be an integer.")
+                raise TypeError(
+                    f"BVHBuildPolicy.{name} must be an integer; got {type(value).__name__}"
+                )
         if leaf_size < 1:
-            raise ValueError(f"leaf_size must be positive, got {leaf_size}.")
+            raise ValueError(
+                f"BVHBuildPolicy.leaf_size must be positive; got {leaf_size}"
+            )
         if not 2 <= sah_bins <= _MAXIMUM_SAH_BINS:
             raise ValueError(
-                f"sah_bins must lie in [2, {_MAXIMUM_SAH_BINS}], got {sah_bins}."
+                f"BVHBuildPolicy.sah_bins must lie in [2, {_MAXIMUM_SAH_BINS}]; got {sah_bins}"
             )
         if morton_code_bits not in _MORTON_CODE_BITS:
             raise ValueError(
-                f"morton_code_bits must be one of {_MORTON_CODE_BITS}, "
-                f"got {morton_code_bits}."
+                f"BVHBuildPolicy.morton_code_bits must be one of {_MORTON_CODE_BITS}; "
+                f"got {morton_code_bits}"
             )
         self.kind = kind
         self.leaf_size = int(leaf_size)
@@ -129,6 +136,155 @@ class PackedBVH(StrictModule, NonTrainableState):
     @property
     def dimension(self) -> int:
         return self.bbox_min.shape[1]
+
+    def validate_restored(self) -> None:
+        """Validate packed topology, exactly-once item ownership, and enclosing bounds."""
+        arrays = _validated_packed_bvh_arrays(self)
+        _validate_packed_bvh_topology(self, arrays)
+        _validate_packed_bvh_bounds(arrays)
+
+
+def _validated_packed_bvh_arrays(bvh: PackedBVH) -> dict[str, np.ndarray]:
+    arrays = {
+        name: np.asarray(getattr(bvh, name))
+        for name in (
+            "bbox_min",
+            "bbox_max",
+            "left",
+            "right",
+            "leaf_id",
+            "leaf_items",
+            "leaf_node",
+            "item_bbox_min",
+            "item_bbox_max",
+        )
+    }
+    lower, items = arrays["bbox_min"], arrays["item_bbox_min"]
+    if lower.ndim != 2 or items.ndim != 2 or min(*lower.shape, items.shape[0]) < 1:
+        raise ValueError(
+            f"PackedBVH.bounds must have nonempty node, item and coordinate axes; got {lower.shape}, {items.shape}"
+        )
+    nodes, dimension = lower.shape
+    item_count = items.shape[0]
+    for name in ("bbox_min", "bbox_max", "item_bbox_min", "item_bbox_max"):
+        value = arrays[name]
+        expected = (item_count, dimension) if name.startswith("item_") else lower.shape
+        if value.shape != expected or not np.issubdtype(value.dtype, np.floating):
+            raise ValueError(
+                f"PackedBVH.{name} must have floating bounds of shape {expected}; got {value.shape}, {value.dtype}"
+            )
+        if value.dtype != lower.dtype or np.any(np.isnan(value)):
+            raise ValueError(
+                f"PackedBVH.{name} must share the node dtype and contain no NaN; got {value.dtype}"
+            )
+    for name in ("left", "right", "leaf_id", "leaf_items", "leaf_node"):
+        if arrays[name].dtype != np.dtype(np.int32):
+            raise TypeError(
+                f"PackedBVH.{name} must have int32 dtype; got {arrays[name].dtype}"
+            )
+    if any(arrays[name].shape != (nodes,) for name in ("left", "right", "leaf_id")):
+        raise ValueError(
+            f"PackedBVH.routing must have one entry per node; got node_count={nodes}"
+        )
+    BVHBuildPolicy(kind=bvh.build_kind, leaf_size=bvh.leaf_size)
+    if type(bvh.max_depth) is not int or bvh.max_depth < 0:
+        raise ValueError(
+            f"PackedBVH.max_depth must be a nonnegative integer; got {bvh.max_depth!r}"
+        )
+    offsets = bvh.level_offsets
+    if (
+        not isinstance(offsets, tuple)
+        or len(offsets) != bvh.max_depth + 2
+        or any(type(value) is not int for value in offsets)
+        or offsets[:2] != (0, 1)
+        or offsets[-1] != nodes
+        or any(first >= second for first, second in zip(offsets, offsets[1:]))
+    ):
+        raise ValueError(
+            f"PackedBVH.level_offsets must partition breadth-first levels from one root; got {offsets!r}"
+        )
+    return arrays
+
+
+def _validate_packed_bvh_topology(bvh: PackedBVH, arrays: dict[str, np.ndarray]) -> None:
+    left, right, leaf_id = (arrays[name] for name in ("left", "right", "leaf_id"))
+    internal = left >= 0
+    if np.any((left < -1) | (right < -1)) or not np.array_equal(internal, right >= 0):
+        raise ValueError(
+            "PackedBVH.children must declare two children or a leaf sentinel; got inconsistent routing"
+        )
+    leaves = np.flatnonzero(~internal)
+    if (
+        not np.array_equal(arrays["leaf_node"], leaves)
+        or not np.array_equal(leaf_id[leaves], np.arange(leaves.size))
+        or np.any(leaf_id[internal] != -1)
+        or arrays["leaf_items"].shape != (leaves.size, bvh.leaf_size)
+    ):
+        raise ValueError(
+            "PackedBVH.leaves must bind ordered leaf nodes and payload rows; got inconsistent leaf indices"
+        )
+    children = np.concatenate((left[internal], right[internal]))
+    if not np.array_equal(np.sort(children), np.arange(1, left.size)):
+        raise ValueError(
+            "PackedBVH.children must reach every nonroot node exactly once; got missing or repeated nodes"
+        )
+    offsets = bvh.level_offsets
+    for depth, (first, stop) in enumerate(zip(offsets, offsets[1:])):
+        selected = internal[first:stop]
+        descendants = np.concatenate(
+            (left[first:stop][selected], right[first:stop][selected])
+        )
+        if descendants.size and (
+            depth == bvh.max_depth
+            or np.any(descendants < stop)
+            or np.any(descendants >= offsets[depth + 2])
+        ):
+            raise ValueError(
+                f"PackedBVH.children must belong to the next breadth-first level; got depth={depth}"
+            )
+    payload = arrays["leaf_items"]
+    valid = payload >= 0
+    if (
+        np.any(payload < -1)
+        or np.any(~np.any(valid, axis=1))
+        or np.any(np.diff(valid.astype(np.int8), axis=1) > 0)
+        or not np.array_equal(
+            np.sort(payload[valid]), np.arange(arrays["item_bbox_min"].shape[0])
+        )
+    ):
+        raise ValueError(
+            "PackedBVH.leaf_items must contain each item once with trailing sentinels; got invalid item ownership"
+        )
+
+
+def _validate_packed_bvh_bounds(arrays: dict[str, np.ndarray]) -> None:
+    lower, upper = arrays["bbox_min"], arrays["bbox_max"]
+    item_lower, item_upper = arrays["item_bbox_min"], arrays["item_bbox_max"]
+    if np.any(lower > upper) or np.any(item_lower > item_upper):
+        raise ValueError(
+            "PackedBVH.bounds must have ordered lower and upper bounds; got inverted boxes"
+        )
+    payload = arrays["leaf_items"]
+    safe = np.maximum(payload, 0)
+    minimum = np.min(
+        np.where((payload >= 0)[..., None], item_lower[safe], np.inf), axis=1
+    )
+    maximum = np.max(
+        np.where((payload >= 0)[..., None], item_upper[safe], -np.inf), axis=1
+    )
+    leaves = arrays["leaf_node"]
+    if np.any(lower[leaves] > minimum) or np.any(upper[leaves] < maximum):
+        raise ValueError(
+            "PackedBVH.leaf_bounds must enclose their item boxes; got a nonenclosing leaf"
+        )
+    internal = arrays["left"] >= 0
+    children = np.stack((arrays["left"][internal], arrays["right"][internal]), axis=1)
+    if np.any(lower[internal, None] > lower[children]) or np.any(
+        upper[internal, None] < upper[children]
+    ):
+        raise ValueError(
+            "PackedBVH.node_bounds must enclose both child boxes; got a nonenclosing parent"
+        )
 
 
 # Host construction.  Builders return per-level node lists in breadth-first
@@ -368,7 +524,7 @@ def _bit_length(values: np.ndarray, /) -> np.ndarray:
 
 def _morton_codes(centers: np.ndarray, code_bits: int, /) -> np.ndarray:
     # Lazy import: the discretization package imports this module at load time.
-    from .discretization.spatial._morton import morton_encode_integer
+    from .discretization.spatial._morton import morton_encode_integer_host
 
     dimension = centers.shape[1]
     depth = code_bits // dimension
@@ -379,9 +535,7 @@ def _morton_codes(centers: np.ndarray, code_bits: int, /) -> np.ndarray:
     integer = np.floor(
         np.minimum(normalized * resolution, np.nextafter(resolution, 0.0))
     ).astype(np.uint64)
-    return np.asarray(
-        morton_encode_integer(jnp.asarray(integer, dtype=jnp.uint64), depth)
-    )
+    return morton_encode_integer_host(integer, depth)
 
 
 def _build_morton_levels(
@@ -390,7 +544,9 @@ def _build_morton_levels(
     """Karras (2012) radix tree over sorted Morton codes, collapsed to leaves."""
     item_count, dimension = lower.shape
     if dimension > 3:
-        raise ValueError("MORTON BVH construction supports dimensions 1, 2, and 3.")
+        raise ValueError(
+            f"prepare_bvh.dimension must be 1, 2, or 3 for MORTON construction; got {dimension}"
+        )
     codes = _morton_codes(0.5 * (lower + upper), code_bits)
     order = np.lexsort((np.arange(item_count, dtype=np.int64), codes)).astype(np.int64)
     keys = codes[order]
@@ -564,15 +720,15 @@ def _pack(
     node_lower = np.minimum.reduceat(sorted_lower, boundaries, axis=0)[0::2]
     node_upper = np.maximum.reduceat(sorted_upper, boundaries, axis=0)[0::2]
     return PackedBVH(
-        bbox_min=jnp.asarray(node_lower, dtype=dtype),
-        bbox_max=jnp.asarray(node_upper, dtype=dtype),
-        left=jnp.asarray(left, dtype=jnp.int32),
-        right=jnp.asarray(right, dtype=jnp.int32),
-        leaf_id=jnp.asarray(leaf_id, dtype=jnp.int32),
-        leaf_items=jnp.asarray(leaf_items, dtype=jnp.int32),
-        leaf_node=jnp.asarray(leaf_node, dtype=jnp.int32),
-        item_bbox_min=jnp.asarray(item_lower, dtype=dtype),
-        item_bbox_max=jnp.asarray(item_upper, dtype=dtype),
+        bbox_min=jax.device_put(node_lower),
+        bbox_max=jax.device_put(node_upper),
+        left=jax.device_put(left.astype(np.int32)),
+        right=jax.device_put(right.astype(np.int32)),
+        leaf_id=jax.device_put(leaf_id.astype(np.int32)),
+        leaf_items=jax.device_put(leaf_items.astype(np.int32)),
+        leaf_node=jax.device_put(leaf_node.astype(np.int32)),
+        item_bbox_min=jax.device_put(item_lower),
+        item_bbox_max=jax.device_put(item_upper),
         leaf_size=policy.leaf_size,
         max_depth=len(starts) - 1,
         level_offsets=level_offsets,
@@ -580,6 +736,7 @@ def _pack(
     )
 
 
+@checked
 def prepare_bvh(
     item_bbox_min: ArrayLike,
     item_bbox_max: ArrayLike,
@@ -595,20 +752,21 @@ def prepare_bvh(
     Bounds narrower than float64 are rounded outward, so stored boxes contain the
     supplied ones.  Point sets use `prepare_bvh(points, points, ...)`.
     """
-    if not isinstance(policy, BVHBuildPolicy):
-        raise TypeError("policy must be a BVHBuildPolicy.")
     if (_charge_work is None) != (_reserve_storage is None) or (
         _charge_work is not None
         and (not callable(_charge_work) or not callable(_reserve_storage))
     ):
         raise TypeError(
-            "Metered BVH construction requires both actual work and storage owners."
+            "prepare_bvh.resource_callbacks must both be callable or both be None; "
+            f"got _charge_work={type(_charge_work).__name__}, _reserve_storage={type(_reserve_storage).__name__}"
         )
     if _charge_work is not None and policy.kind != BVHBuildKind.MEDIAN:
-        raise ValueError("Metered BVH construction requires the canonical median policy.")
+        raise ValueError(
+            f"prepare_bvh.policy.kind must be MEDIAN for metered construction; got {policy.kind!r}"
+        )
     storage = np.dtype(dtype)
     if not np.issubdtype(storage, np.floating):
-        raise TypeError("dtype must be a floating dtype.")
+        raise TypeError(f"prepare_bvh.dtype must be a floating dtype; got {storage}")
     if _charge_work is not None:
         _charge_work(np.size(item_bbox_min) + np.size(item_bbox_max))
     if _reserve_storage is not None:
@@ -617,14 +775,21 @@ def prepare_bvh(
     upper = np.asarray(item_bbox_max, dtype=np.float64)
     if lower.ndim != 2 or upper.shape != lower.shape or lower.shape[1] == 0:
         raise ValueError(
-            "item_bbox_min/max must share shape (item_count, dimension > 0)."
+            "prepare_bvh.item_bbox_min.shape must match item_bbox_max.shape as (item_count, dimension > 0); "
+            f"got lower={lower.shape}, upper={upper.shape}"
         )
     if lower.shape[0] == 0:
-        raise ValueError("cannot build a BVH over an empty item set.")
+        raise ValueError(
+            f"prepare_bvh.item_bbox_min.shape must contain at least one item; got {lower.shape}"
+        )
     if not (np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))):
-        raise ValueError("item bounds must be finite.")
+        raise ValueError(
+            f"prepare_bvh.item_bounds must be finite; got lower={lower}, upper={upper}"
+        )
     if np.any(lower > upper):
-        raise ValueError("every item_bbox_min component must be <= item_bbox_max.")
+        raise ValueError(
+            f"prepare_bvh.item_bbox_min must be componentwise <= item_bbox_max; got lower={lower}, upper={upper}"
+        )
     if _charge_work is not None:
         _charge_work(3 * lower.size)
     if _reserve_storage is not None:
@@ -657,7 +822,9 @@ def prepare_bvh(
                 lower, upper, policy.leaf_size, policy.morton_code_bits
             )
         case _:
-            raise ValueError(f"Unsupported BVH build kind {policy.kind!r}.")
+            raise ValueError(
+                f"prepare_bvh.policy.kind must be a supported BVHBuildKind; got {policy.kind!r}"
+            )
     return _pack(
         lower,
         upper,
@@ -669,6 +836,7 @@ def prepare_bvh(
     )
 
 
+@checked
 def reduce_packed_bvh_nodes(
     bvh: PackedBVH,
     item_values: ArrayLike,
@@ -681,13 +849,15 @@ def reduce_packed_bvh_nodes(
     Returns shape `(node_count, *item_values.shape[1:])`.  The level sweep is
     differentiable with respect to `item_values`.
     """
-    if not isinstance(bvh, PackedBVH):
-        raise TypeError("bvh must be a PackedBVH.")
     values = jnp.asarray(item_values)
     if values.ndim < 1 or values.shape[0] != bvh.item_count:
-        raise ValueError(f"item_values must have leading dimension {bvh.item_count}.")
+        raise ValueError(
+            f"reduce_packed_bvh_nodes.item_values.shape must have leading dimension {bvh.item_count}; got {values.shape}"
+        )
     if not jnp.issubdtype(values.dtype, jnp.floating):
-        raise TypeError("item_values must be floating.")
+        raise TypeError(
+            f"reduce_packed_bvh_nodes.item_values.dtype must be floating; got {values.dtype}"
+        )
     match reduction:
         case "sum":
             identity = jnp.asarray(0.0, dtype=values.dtype)
@@ -702,7 +872,9 @@ def reduce_packed_bvh_nodes(
             combine = jnp.maximum
             reduce = jnp.max
         case _:
-            raise ValueError(f"Unsupported BVH node reduction {reduction!r}.")
+            raise ValueError(
+                f"reduce_packed_bvh_nodes.reduction must be 'sum', 'min', or 'max'; got {reduction!r}"
+            )
     trailing = (1,) * (values.ndim - 1)
     valid = bvh.leaf_items >= 0
     gathered = values[jnp.maximum(bvh.leaf_items, 0)]
@@ -725,6 +897,7 @@ def reduce_packed_bvh_nodes(
     return nodes
 
 
+@checked
 def refit_packed_bvh_bounds(
     bvh: PackedBVH,
     item_bbox_min: ArrayLike,
@@ -732,13 +905,13 @@ def refit_packed_bvh_bounds(
     /,
 ) -> PackedBVH:
     """Refit fixed BVH topology to differentiable current item bounds."""
-    if not isinstance(bvh, PackedBVH):
-        raise TypeError("bvh must be a PackedBVH.")
     item_min = jnp.asarray(item_bbox_min, dtype=bvh.bbox_min.dtype)
     item_max = jnp.asarray(item_bbox_max, dtype=bvh.bbox_min.dtype)
     expected = bvh.item_bbox_min.shape
     if item_min.shape != expected or item_max.shape != expected:
-        raise ValueError(f"item_bbox_min/max must have shape {expected}.")
+        raise ValueError(
+            f"refit_packed_bvh_bounds.item_bounds.shape must be {expected}; got lower={item_min.shape}, upper={item_max.shape}"
+        )
     return eqx.tree_at(
         lambda tree: (
             tree.bbox_min,
@@ -772,15 +945,19 @@ def beam_select_nodes(
 ) -> Array:
     """Beam traverse BVH by AABB lower bounds. Returns node ids with shape (N, B)."""
     if beam_width <= 0:
-        raise ValueError(f"beam_width must be positive, got {beam_width}.")
+        raise ValueError(
+            f"beam_select_nodes.beam_width must be positive; got {beam_width}"
+        )
     if steps <= 0:
-        raise ValueError(f"steps must be positive, got {steps}.")
+        raise ValueError(f"beam_select_nodes.steps must be positive; got {steps}")
 
     pts = jnp.asarray(points, dtype=bvh.bbox_min.dtype)
     if pts.ndim == 1:
         pts = pts.reshape((1, -1))
     if pts.ndim != 2:
-        raise ValueError("points must have shape (N, dim) or (dim,).")
+        raise ValueError(
+            f"beam_select_nodes.points.shape must be (N, dim) or (dim,); got reshaped {pts.shape}"
+        )
 
     B = int(beam_width)
     inf = jnp.asarray(jnp.inf, dtype=pts.dtype)
@@ -833,7 +1010,9 @@ def beam_select_leaf_items(
     if is_single:
         pts = pts.reshape((1, -1))
     if pts.ndim != 2:
-        raise ValueError("points must have shape (N, dim) or (dim,).")
+        raise ValueError(
+            f"beam_select_leaf_items.points.shape must be (N, dim) or (dim,); got reshaped {pts.shape}"
+        )
 
     nodes = beam_select_nodes(pts, bvh=bvh, beam_width=beam_width, steps=steps)
 
@@ -863,7 +1042,9 @@ def _bounded_leaf_candidates(
 ) -> tuple[Array, Array, Array]:
     capacity = int(maximum_candidates)
     if capacity <= 0:
-        raise ValueError("maximum_candidates must be positive.")
+        raise ValueError(
+            f"_bounded_leaf_candidates.maximum_candidates must be positive; got {maximum_candidates}"
+        )
     node_count = bvh.left.shape[0]
     stack_capacity = min(node_count, max(1, int(bvh.max_depth) + 2))
     stack = jnp.full((stack_capacity,), -1, dtype=jnp.int32).at[0].set(0)
@@ -960,7 +1141,9 @@ def _map_bounded_queries(query: Any, arguments: Any, query_batch_capacity: int, 
     count = arguments[0].shape[0]
     capacity = int(query_batch_capacity)
     if capacity <= 0:
-        raise ValueError("query_batch_capacity must be positive.")
+        raise ValueError(
+            f"_map_bounded_queries.query_batch_capacity must be positive; got {query_batch_capacity}"
+        )
     if count <= capacity:
         return jax.vmap(query)(*arguments)
     chunk_count = (count + capacity - 1) // capacity
@@ -1006,12 +1189,18 @@ def point_select_leaf_items(
     if single:
         values = values[None, :]
     if values.ndim != 2 or values.shape[-1] != bvh.bbox_min.shape[-1]:
-        raise ValueError("points must have shape (queries, dimension) or (dimension,).")
+        raise ValueError(
+            f"point_select_leaf_items.points.shape must be (queries, {bvh.bbox_min.shape[-1]}) or ({bvh.bbox_min.shape[-1]},); got reshaped {values.shape}"
+        )
     padding = jnp.asarray(tolerance, dtype=values.dtype)
     if padding.shape != ():
-        raise ValueError("tolerance must be a scalar.")
+        raise ValueError(
+            f"point_select_leaf_items.tolerance.shape must be scalar; got {padding.shape}"
+        )
     if isinstance(tolerance, (int, float)) and tolerance < 0.0:
-        raise ValueError("tolerance must be non-negative.")
+        raise ValueError(
+            f"point_select_leaf_items.tolerance must be non-negative; got {tolerance}"
+        )
 
     def query(point: Any) -> Any:
         def contains(lower: Any, upper: Any) -> Any:
@@ -1054,7 +1243,8 @@ def ray_select_leaf_items(
         or ray_origins.shape[-1] != bvh.bbox_min.shape[-1]
     ):
         raise ValueError(
-            "origins and directions must share shape (rays, dimension) or (dimension,)."
+            "ray_select_leaf_items.origins.shape must match directions.shape as (rays, dimension) or (dimension,); "
+            f"got origins={ray_origins.shape}, directions={ray_directions.shape}, dimension={bvh.bbox_min.shape[-1]}"
         )
     parameter_shape = (ray_origins.shape[0],)
     lower_parameter = jnp.broadcast_to(
@@ -1103,7 +1293,7 @@ def ray_select_leaf_items(
 
 
 class BVHNearestResult(StrictModule):
-    """Exact nearest items per query ordered by (squared distance, item index).
+    """Return nearest items per query ordered by (squared distance, item index).
 
     `items` is `-1` and `distance_squared` is infinite where fewer than `k`
     items have a finite distance.
@@ -1184,6 +1374,7 @@ def _nearest_items_one(bvh: PackedBVH, point: Array, k: int, distance: Any, /) -
     return jnp.where(best_key == sentinel, -1, best_key), best_distance
 
 
+@checked
 def bvh_nearest_items(
     bvh: PackedBVH,
     points: ArrayLike,
@@ -1193,25 +1384,25 @@ def bvh_nearest_items(
     item_distance_squared: Callable[[Array, Array], Array] | None = None,
     query_batch_capacity: int = 64,
 ) -> BVHNearestResult:
-    """Return the exact `k` nearest items of each point by branch and bound.
+    """Return the `k` nearest items of each point by branch and bound.
 
     `item_distance_squared(point, items)` maps one point `(dimension,)` and leaf
     item indices `(leaf_size,)` to squared distances; it must be bounded below
     by the squared distance to each item's box.  The default is the squared
-    distance to the stored item boxes, which is exact for point sets.
+    distance to the stored item boxes, which equals point distance for point sets.
     """
-    if not isinstance(bvh, PackedBVH):
-        raise TypeError("bvh must be a PackedBVH.")
     if isinstance(k, bool) or not isinstance(k, int):
-        raise TypeError("k must be an integer.")
+        raise TypeError(f"bvh_nearest_items.k must be an integer; got {type(k).__name__}")
     if k < 1:
-        raise ValueError(f"k must be positive, got {k}.")
+        raise ValueError(f"bvh_nearest_items.k must be positive; got {k}")
     values = jnp.asarray(points, dtype=bvh.bbox_min.dtype)
     single = values.ndim == 1
     if single:
         values = values[None, :]
     if values.ndim != 2 or values.shape[1] != bvh.dimension:
-        raise ValueError("points must have shape (queries, dimension) or (dimension,).")
+        raise ValueError(
+            f"bvh_nearest_items.points.shape must be (queries, {bvh.dimension}) or ({bvh.dimension},); got reshaped {values.shape}"
+        )
     distance = (
         _item_box_distance(bvh)
         if item_distance_squared is None
@@ -1230,6 +1421,7 @@ def bvh_nearest_items(
     return BVHNearestResult(items=items, distance_squared=distance_squared)
 
 
+@checked
 def bvh_hierarchical_sum(
     bvh: PackedBVH,
     points: ArrayLike,
@@ -1246,17 +1438,17 @@ def bvh_hierarchical_sum(
     false contributes `far_value(point, node)`; an opened leaf contributes
     `leaf_value(point, leaf_index)`; an opened internal node is replaced by its
     two children.  Every item lies below exactly one cut node, so the sum is
-    exact whenever `far_value` reproduces its subtree's contribution exactly and
+    equal to the itemwise sum whenever `far_value` reproduces its subtree's contribution and
     a Barnes-Hut style approximation otherwise.
     """
-    if not isinstance(bvh, PackedBVH):
-        raise TypeError("bvh must be a PackedBVH.")
     values = jnp.asarray(points, dtype=bvh.bbox_min.dtype)
     single = values.ndim == 1
     if single:
         values = values[None, :]
     if values.ndim != 2 or values.shape[1] != bvh.dimension:
-        raise ValueError("points must have shape (queries, dimension) or (dimension,).")
+        raise ValueError(
+            f"bvh_hierarchical_sum.points.shape must be (queries, {bvh.dimension}) or ({bvh.dimension},); got reshaped {values.shape}"
+        )
 
     def query(point: Any) -> Any:
         def far(state: Any) -> Any:
@@ -1334,6 +1526,7 @@ def _boxes_overlap(
     return jnp.all(extent > 0.0, axis=-1)
 
 
+@checked
 def bvh_overlap_pairs(
     first: PackedBVH,
     second: PackedBVH,
@@ -1352,25 +1545,31 @@ def bvh_overlap_pairs(
     `traversal_width * (first.max_depth + second.max_depth + 2)`, always
     descending the larger internal node.
     """
-    if not isinstance(first, PackedBVH) or not isinstance(second, PackedBVH):
-        raise TypeError("first and second must be PackedBVH instances.")
     if first.dimension != second.dimension:
-        raise ValueError("first and second must share their spatial dimension.")
+        raise ValueError(
+            f"bvh_overlap_pairs.first.dimension must equal second.dimension; got {first.dimension} and {second.dimension}"
+        )
     for name, value in (("capacity", capacity), ("traversal_width", traversal_width)):
         if isinstance(value, bool) or not isinstance(value, int):
-            raise TypeError(f"{name} must be an integer.")
+            raise TypeError(
+                f"bvh_overlap_pairs.{name} must be an integer; got {type(value).__name__}"
+            )
         if value < 1:
-            raise ValueError(f"{name} must be positive, got {value}.")
+            raise ValueError(f"bvh_overlap_pairs.{name} must be positive; got {value}")
     if not isinstance(include_touching, bool):
-        raise TypeError("include_touching must be a bool.")
+        raise TypeError(
+            f"bvh_overlap_pairs.include_touching must be a bool; got {type(include_touching).__name__}"
+        )
     if not x64_enabled():
         raise RuntimeError(
-            "bvh_overlap_pairs counts pairs in int64; enable jax_enable_x64."
+            "bvh_overlap_pairs.jax_enable_x64 must be enabled for int64 pair counts; got False"
         )
     dtype = jnp.result_type(first.bbox_min.dtype, second.bbox_min.dtype)
     pad = jnp.asarray(padding, dtype=dtype)
     if pad.shape != ():
-        raise ValueError("padding must be a scalar.")
+        raise ValueError(
+            f"bvh_overlap_pairs.padding.shape must be scalar; got {pad.shape}"
+        )
     width = traversal_width
     stack_capacity = width * (first.max_depth + second.max_depth + 2)
     lanes = jnp.arange(width, dtype=jnp.int32)
@@ -1539,8 +1738,8 @@ def _host_arrays(
         admit_storage(
             sum(value.size * np.dtype(dtype).itemsize for value, dtype in sources)
         )
-    # This is the explicit device-to-host boundary. Resource-owning callers
-    # admit the complete host bank before conversion, never after a query.
+    # At the device-to-host boundary, resource callers admit the host bank
+    # before conversion, never after a query.
     arrays = tuple(
         np.array(value, dtype=dtype, copy=True)
         if retain_owner is not None
@@ -1552,6 +1751,44 @@ def _host_arrays(
     return arrays
 
 
+def _host_minima_leaf(
+    point: np.ndarray,
+    leaf_items: np.ndarray,
+    active_items: np.ndarray,
+    values: np.ndarray,
+    best: np.ndarray,
+    keys: np.ndarray,
+    objective_count: int,
+    item_values: Callable[[np.ndarray, np.ndarray, np.ndarray], None],
+    visit: Callable[[Literal["node", "item"], int], None],
+    /,
+) -> int:
+    """Admit and reduce one leaf in input order with index-based tie breaking."""
+    count = 0
+    for item in leaf_items:
+        if item >= 0:
+            active_items[count] = item
+            count += 1
+    items = active_items[:count]
+    visit("item", items.size)
+    active = values[: items.size]
+    item_values(point, items, active)
+    if np.any(np.isnan(active)):
+        raise ValueError(
+            f"bvh_host_minima.item_values must contain no NaN; got items={items}, values={active}"
+        )
+    for row, item in enumerate(items):
+        for objective in range(objective_count):
+            candidate = active[row, objective]
+            if candidate < best[objective] or (
+                candidate == best[objective]
+                and (keys[objective] < 0 or item < keys[objective])
+            ):
+                best[objective], keys[objective] = candidate, item
+    return items.size
+
+
+@checked
 def bvh_host_minima(
     bvh: PackedBVH,
     points: np.ndarray,
@@ -1569,9 +1806,9 @@ def bvh_host_minima(
     """Exhaustively reduce admissible objectives over one packed host bank.
 
     The owner supplies a lower bound for *every* descendant item of each
-    objective, and exact item values, filling the supplied admitted buffers.
+    objective, and item values, filling the supplied admitted buffers.
     Bounds may prune only when all objectives are strictly worse; equality is
-    explored so ties resolve by original item index. Callbacks must account
+    explored so ties resolve by input item index. Callbacks must account
     for any additional workspace they use before evaluating it.
 
     Every node/item visit is admitted before its callback. Storage is admitted
@@ -1579,16 +1816,22 @@ def bvh_host_minima(
     Resource callback refusal propagates without publishing partial minima.
     A successful return has exhausted every unpruned branch.
     """
-    if not isinstance(bvh, PackedBVH) or not isinstance(points, np.ndarray):
-        raise TypeError("Host minima require a PackedBVH and explicit host query points.")
+    if not isinstance(points, np.ndarray):
+        raise TypeError(
+            f"bvh_host_minima.inputs must be a PackedBVH and NumPy query points; got bvh={type(bvh).__name__}, points={type(points).__name__}"
+        )
     if points.ndim != 2 or points.shape[1] != bvh.dimension:
-        raise ValueError("Host query points must have the packed bank dimension.")
+        raise ValueError(
+            f"bvh_host_minima.points.shape must be (queries, {bvh.dimension}); got {points.shape}"
+        )
     if (
         isinstance(objective_count, bool)
         or not isinstance(objective_count, int)
         or objective_count <= 0
     ):
-        raise ValueError("objective_count must be a positive integer.")
+        raise ValueError(
+            f"bvh_host_minima.objective_count must be a positive integer; got {objective_count!r}"
+        )
     if not all(
         callable(callback)
         for callback in (
@@ -1600,12 +1843,13 @@ def bvh_host_minima(
         )
     ):
         raise TypeError(
-            "Host minima require explicit bound, evaluation and admission callbacks."
+            "bvh_host_minima.callbacks must be callable bounds, evaluation, visit, storage, and retention functions; "
+            f"got types={tuple(type(callback).__name__ for callback in (node_lower_bounds, item_values, visit, admit_storage, retain_owner))}"
         )
     retain_owner((bvh, points))
     admit_storage(points.size)
     if not np.all(np.isfinite(points)):
-        raise ValueError("Host query points must be finite.")
+        raise ValueError(f"bvh_host_minima.points must be finite; got {points}")
     bank = _host_arrays(bvh, retain_owner=retain_owner, admit_storage=admit_storage)
     lower, upper, left, right, leaf, leaf_items = bank[:6]
     depth = bvh.max_depth + 2
@@ -1638,7 +1882,9 @@ def bvh_host_minima(
         node_visits += 1
         node_lower_bounds(point, node, lower[node], upper[node], out)
         if np.any(np.isnan(out)):
-            raise ValueError("A packed objective lower bound cannot contain NaN.")
+            raise ValueError(
+                f"bvh_host_minima.node_lower_bounds must contain no NaN; got node={node}, bounds={out}"
+            )
 
     for query, point in enumerate(points):
         stack[0] = 0
@@ -1652,26 +1898,17 @@ def bvh_host_minima(
                 continue
             leaf_id = int(leaf[node])
             if leaf_id >= 0:
-                count = 0
-                for item in leaf_items[leaf_id]:
-                    if item >= 0:
-                        active_items[count] = item
-                        count += 1
-                items = active_items[:count]
-                visit("item", items.size)
-                item_visits += items.size
-                active = values[: items.size]
-                item_values(point, items, active)
-                if np.any(np.isnan(active)):
-                    raise ValueError("A packed objective item value cannot contain NaN.")
-                for row, item in enumerate(items):
-                    for objective in range(objective_count):
-                        candidate = active[row, objective]
-                        if candidate < best[objective] or (
-                            candidate == best[objective]
-                            and (keys[objective] < 0 or item < keys[objective])
-                        ):
-                            best[objective], keys[objective] = candidate, item
+                item_visits += _host_minima_leaf(
+                    point,
+                    leaf_items[leaf_id],
+                    active_items,
+                    values,
+                    best,
+                    keys,
+                    objective_count,
+                    item_values,
+                    visit,
+                )
                 continue
             children = (int(left[node]), int(right[node]))
             for index, child in enumerate(children):
@@ -1687,7 +1924,7 @@ def bvh_host_minima(
                     continue
                 if top == depth:
                     raise ValueError(
-                        "The packed bank exceeds its declared traversal depth."
+                        f"bvh_host_minima.traversal_depth must fit the declared capacity {depth}; got stack size {top}"
                     )
                 stack[top], stack_bounds[top] = children[index], child_bounds[index]
                 top += 1
@@ -1810,6 +2047,7 @@ def _host_pair_blocks(
             pending.append((child_first[keep], child_second[keep]))
 
 
+@checked
 def _validate_host_pair_arguments(
     first: PackedBVH,
     second: PackedBVH,
@@ -1818,17 +2056,23 @@ def _validate_host_pair_arguments(
     relative_tolerance: float,
     /,
 ) -> Callable[..., np.ndarray]:
-    if not isinstance(first, PackedBVH) or not isinstance(second, PackedBVH):
-        raise TypeError("first and second must be PackedBVH instances.")
     if first.dimension != second.dimension:
-        raise ValueError("first and second must share their spatial dimension.")
+        raise ValueError(
+            f"_validate_host_pair_arguments.first.dimension must equal second.dimension; got {first.dimension} and {second.dimension}"
+        )
     if not isinstance(include_touching, bool):
-        raise TypeError("include_touching must be a bool.")
+        raise TypeError(
+            f"_validate_host_pair_arguments.include_touching must be a bool; got {type(include_touching).__name__}"
+        )
     tolerances = np.asarray((absolute_tolerance, relative_tolerance), dtype=np.float64)
     if not np.all(np.isfinite(tolerances)) or np.any(tolerances < 0.0):
-        raise ValueError("tolerances must be finite and non-negative.")
+        raise ValueError(
+            f"_validate_host_pair_arguments.tolerances must be finite and non-negative; got absolute={absolute_tolerance}, relative={relative_tolerance}"
+        )
     if not include_touching and np.any(tolerances > 0.0):
-        raise ValueError("tolerances apply only when include_touching is True.")
+        raise ValueError(
+            f"_validate_host_pair_arguments.tolerances must be zero when include_touching is False; got absolute={absolute_tolerance}, relative={relative_tolerance}"
+        )
     atol, rtol = (float(value) for value in tolerances)
 
     def test(first_min: Any, first_max: Any, second_min: Any, second_max: Any) -> Any:
@@ -1851,24 +2095,30 @@ def bvh_overlap_pair_blocks(
     maximum_block_pairs: int | None = None,
     retain_owner: Callable[[object], None] | None = None,
 ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-    """Enumerate exact overlapping item pairs in bounded host blocks.
+    """Enumerate overlapping item pairs in bounded host blocks.
 
     Blocks arrive in deterministic traversal order and together contain every
     overlapping pair exactly once; consumers may stop early to enforce resource
     limits.  See `bvh_overlap_pairs_host` for the overlap predicate.
 
-    ``visit`` admits each actual node/item AABB-test batch before evaluation.
+    ``visit`` admits each evaluated node/item AABB-test batch before evaluation.
     It includes rejected pairs, not only returned overlaps. ``maximum_block_pairs``
     bounds node batches and leaf-item batches (one leaf product is indivisible).
-    ``retain_owner`` receives the actual owned host-array bank after its caller
+    ``retain_owner`` receives the retained host-array bank after its caller
     has admitted construction and traversal scratch.
     """
     if visit is not None and not callable(visit):
-        raise TypeError("visit must be callable or None.")
+        raise TypeError(
+            f"bvh_overlap_pair_blocks.visit must be callable or None; got {type(visit).__name__}"
+        )
     if retain_owner is not None and not callable(retain_owner):
-        raise TypeError("retain_owner must be callable or None.")
+        raise TypeError(
+            f"bvh_overlap_pair_blocks.retain_owner must be callable or None; got {type(retain_owner).__name__}"
+        )
     if maximum_block_pairs is not None and maximum_block_pairs < 1:
-        raise ValueError("maximum_block_pairs must be positive or None.")
+        raise ValueError(
+            f"bvh_overlap_pair_blocks.maximum_block_pairs must be positive or None; got {maximum_block_pairs}"
+        )
     test = _validate_host_pair_arguments(
         first, second, include_touching, absolute_tolerance, relative_tolerance
     )
@@ -1897,7 +2147,7 @@ def bvh_overlap_pairs_host(
     `extent >= -(absolute_tolerance + relative_tolerance * scale)` with
     `scale = max(1, |coordinates of both boxes on that axis|)`.  Tolerances must
     be zero otherwise.  Evaluation uses float64 copies of the stored bounds, so
-    float64 builds are exact with respect to their input boxes.  A self query
+    float64 builds preserve their input boxes. A self query
     returns every ordered pair, including `(i, i)`.
     """
     blocks = list(

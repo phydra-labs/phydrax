@@ -111,24 +111,19 @@ class _DaviesHarteFractionalGaussianSampler(StrictModule):
         dimension: int,
         dtype: DTypeLike,
     ) -> Array:
-        normals = jax.vmap(
-            lambda key: jr.normal(
-                key,
-                (self.embedding_size, dimension),
-                dtype=dtype,
-            )
-        )(keys)
-        frequencies = jnp.fft.fft(normals, axis=1)
-        embedded = jnp.fft.ifft(
-            frequencies * self.spectrum_factor[None, :, None],
-            axis=1,
-        ).real
-        increments = embedded[:, : self.num_increments, :]
-        anchored = jnp.zeros((keys.shape[0], 1, dimension), dtype=dtype)
-        return jnp.concatenate(
-            (anchored, jnp.cumsum(increments, axis=1)),
-            axis=1,
-        )
+        def sample_one(key: Array) -> Array:
+            normals = jr.normal(key, (self.embedding_size, dimension), dtype=dtype)
+            frequencies = jnp.fft.fft(normals, axis=0)
+            embedded = jnp.fft.ifft(
+                frequencies * self.spectrum_factor[:, None], axis=0
+            ).real
+            increments = embedded[: self.num_increments]
+            anchored = jnp.zeros((1, dimension), dtype=dtype)
+            return jnp.concatenate((anchored, jnp.cumsum(increments, axis=0)), axis=0)
+
+        # Keep each transform/reduction shape independent of sample count;
+        # provider batching must not change the shared seeded sample prefix.
+        return jax.lax.map(sample_one, keys)
 
 
 _FractionalGaussianSampler: TypeAlias = (
@@ -145,6 +140,13 @@ def _dense_sampler(
         jax.device_get(process.time_covariance(nodes[:, None], nodes[None, :]))
     )
     eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    # LAPACK leaves each eigenvector's sign unspecified. Anchor its largest
+    # magnitude entry (first index on ties) so seeded normals use one basis.
+    anchors = np.argmax(np.abs(eigenvectors), axis=0)
+    signs = np.where(
+        eigenvectors[anchors, np.arange(eigenvectors.shape[1])] < 0.0, -1.0, 1.0
+    )
+    eigenvectors *= signs[None, :]
     tolerance = (
         1000.0
         * np.finfo(covariance.dtype).eps

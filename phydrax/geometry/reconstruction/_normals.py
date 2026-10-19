@@ -4,7 +4,7 @@
 
 """Bounded-neighborhood normal estimation and consistent orientation.
 
-Neighborhoods are the exact ``k`` nearest samples from the packed BVH owner.
+Neighborhoods contain the ``k`` nearest samples from the packed BVH owner.
 Unoriented directions are the least-variance principal axes of each
 neighborhood covariance (native Hermitian spectra). Orientation follows Hoppe
 et al. (1992): a minimum spanning forest of the symmetrized neighbor graph under
@@ -30,7 +30,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import positive_integer
 from ...linalg import HermitianSpectrum
-from ...typing import parse
+from ...typing import checked, parse
 
 
 NormalOrientation: TypeAlias = Literal["propagate", "supplied"]
@@ -72,7 +72,7 @@ class NormalEstimationEvidence:
 
 
 class PointNormals(StrictModule, NonTrainableState):
-    """Consistently oriented unit normals with their exact bounded neighborhoods.
+    """Return consistently oriented unit normals with bounded nearest-sample neighborhoods.
 
     ``neighbor_indices[i]`` lists the ``neighborhood_size`` nearest other samples
     of point ``i`` ordered by (distance, index), ``neighbor_distances`` their
@@ -90,6 +90,7 @@ class PointNormals(StrictModule, NonTrainableState):
     components: np.ndarray
     evidence: NormalEstimationEvidence
 
+    @checked
     def __init__(
         self,
         points: np.ndarray,
@@ -100,8 +101,6 @@ class PointNormals(StrictModule, NonTrainableState):
         components: np.ndarray,
         evidence: NormalEstimationEvidence,
     ) -> None:
-        if not isinstance(evidence, NormalEstimationEvidence):
-            raise TypeError("evidence must be NormalEstimationEvidence.")
         count = points.shape[0]
         if (
             normals.shape != (count, 3)
@@ -109,12 +108,14 @@ class PointNormals(StrictModule, NonTrainableState):
             or components.shape != (count,)
         ):
             raise ValueError(
-                "normals, surface_variation, and components must follow the points."
+                f"PointNormals.fields must follow {count} points; got shapes {(normals.shape, surface_variation.shape, components.shape)}"
             )
         if neighbor_indices.shape != neighbor_distances.shape or (
             neighbor_indices.shape[0] != count
         ):
-            raise ValueError("Neighbor arrays must have shape (num_points, k).")
+            raise ValueError(
+                f"PointNormals.neighbors must have aligned (num_points, k) shapes; got {(neighbor_indices.shape, neighbor_distances.shape)}"
+            )
         self.points = _frozen(points)
         self.normals = _frozen(normals)
         self.neighbor_indices = _frozen(neighbor_indices)
@@ -133,35 +134,41 @@ def _frozen(array: np.ndarray, /) -> np.ndarray:
 def _validated_points(points: ArrayLike, /) -> np.ndarray:
     values = np.asarray(points, dtype=np.float64)
     if values.ndim != 2 or values.shape[1] != 3:
-        raise ValueError("points must have shape (num_points, 3).")
+        raise ValueError(
+            f"PointNormals.points must have shape (num_points, 3); got {values.shape}"
+        )
     if not np.all(np.isfinite(values)):
-        raise ValueError("points must be finite.")
+        raise ValueError("PointNormals.points must be finite; got nonfinite samples")
     return values
 
 
 def _validated_directions(normals: ArrayLike, count: int, /) -> np.ndarray:
     values = np.asarray(normals, dtype=np.float64)
     if values.shape != (count, 3):
-        raise ValueError("normals must have shape (num_points, 3).")
+        raise ValueError(
+            f"PointNormals.normals must have shape ({count}, 3); got {values.shape}"
+        )
     if not np.all(np.isfinite(values)):
-        raise ValueError("normals must be finite.")
+        raise ValueError("PointNormals.normals must be finite; got nonfinite directions")
     lengths = np.linalg.norm(values, axis=1)
     if np.any(lengths == 0.0):
-        raise ValueError("normals must be nonzero.")
+        raise ValueError("PointNormals.normals must be nonzero; got a zero direction")
     return values / lengths[:, None]
 
 
 def _tolerance(value: float, name: str, /) -> float:
     result = float(value)
     if not np.isfinite(result) or result < 0.0 or result >= 1.0:
-        raise ValueError(f"{name} must lie in [0, 1).")
+        raise ValueError(
+            f"PointNormals.tolerances must lie in [0, 1); got {name}={result!r}"
+        )
     return result
 
 
 def nearest_neighbors(
     points: np.ndarray, neighborhood_size: int, /
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Exact nearest other samples per point, ordered by (distance, index).
+    """Return nearest other samples per point, ordered by (distance, index).
 
     Coincident samples are neighbors at distance zero; the query point itself is
     removed by index, not by distance.
@@ -196,7 +203,9 @@ def _principal_directions(
     )
     spectrum = HermitianSpectrum(jnp.asarray(covariance))
     if not bool(np.all(np.asarray(spectrum.valid))):
-        raise ValueError("Neighborhood covariance spectra are not valid.")
+        raise ValueError(
+            "PointNormals.covariance_spectra must be valid; got invalid neighborhood spectra"
+        )
     eigenvalues = np.asarray(spectrum.eigenvalues, dtype=np.float64)
     directions = np.asarray(spectrum.eigenvectors, dtype=np.float64)[:, :, 0]
     trace = np.sum(eigenvalues, axis=1)
@@ -221,7 +230,7 @@ def _neighbor_edges(neighbors: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     return keys // count, keys % count
 
 
-def _merge_labels(
+def merge_labels(
     labels: np.ndarray, first: np.ndarray, second: np.ndarray, /
 ) -> np.ndarray:
     """Merge representative labels joined by edges into their minimum label."""
@@ -268,7 +277,7 @@ def minimum_spanning_forest(
         np.minimum.at(best, second_label[crossing], rank[crossing])
         chosen = by_rank[np.unique(best[best != unset])]
         selected[chosen] = True
-        labels = _merge_labels(labels, first[chosen], second[chosen])
+        labels = merge_labels(labels, first[chosen], second[chosen])
 
 
 def _component_centroids(points: np.ndarray, components: np.ndarray, /) -> np.ndarray:
@@ -393,7 +402,7 @@ def estimate_point_normals(
     """Estimate and consistently orient unit normals of a 3D point cloud.
 
     Without ``normals``, each direction is the least-variance principal axis of
-    the point's exact ``neighborhood_size``-nearest neighborhood, and
+    the point's ``neighborhood_size``-nearest neighborhood, and
     ``orientation`` must be ``"propagate"``: signs are propagated along a
     minimum spanning forest of the neighbor graph from the sample farthest from
     each component centroid, whose normal is pointed away from that centroid.
@@ -407,13 +416,17 @@ def estimate_point_normals(
     orientation_ = parse(orientation, NormalOrientation, "orientation")
     size = positive_integer(neighborhood_size, "neighborhood_size")
     if size >= points_.shape[0]:
-        raise ValueError("neighborhood_size must be smaller than the number of points.")
+        raise ValueError(
+            f"estimate_point_normals.neighborhood_size must be smaller than the number of points {points_.shape[0]}; got {size}"
+        )
     direction_tolerance_ = _tolerance(direction_tolerance, "direction_tolerance")
     orientation_tolerance_ = _tolerance(orientation_tolerance, "orientation_tolerance")
     count = points_.shape[0]
     supplied = normals is not None
     if orientation_ == "supplied" and not supplied:
-        raise ValueError("orientation='supplied' requires normals.")
+        raise ValueError(
+            "estimate_point_normals.normals must be supplied for orientation='supplied'; got None"
+        )
     neighbors, distances = nearest_neighbors(points_, size)
     first, second = _neighbor_edges(neighbors)
     if normals is None:
@@ -438,7 +451,7 @@ def estimate_point_normals(
             weak = int(np.count_nonzero(forest_alignment < orientation_tolerance_))
         case "supplied":
             signs = np.ones((count,), dtype=np.float64)
-            components = _merge_labels(np.arange(count, dtype=np.int64), first, second)
+            components = merge_labels(np.arange(count, dtype=np.int64), first, second)
             weak = 0
         case _:
             assert_never(orientation_)

@@ -9,8 +9,17 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
+from jax import Array
 
 import phydrax as phx
+
+
+# Empirical `test_vector_local_root_reverse_mode_is_the_adjoint_of_its_implicit_tangent`: matched max |delta|=1.11022e-16; joint allowance fraction=0.000111022, margin=99.9889%.
+_LOCAL_ROOT_IMPLICIT_TANGENT_ATOL = 1e-12
+# Empirical `test_vector_local_root_reverse_mode_is_the_adjoint_of_its_implicit_tangent`: matched max |delta|=2.22045e-16; joint allowance fraction=0.000222045, margin=99.9778%.
+_LOCAL_ROOT_IMPLICIT_COTANGENT_ATOL = 1e-12
+# Empirical `test_vector_local_root_reverse_mode_is_the_adjoint_of_its_implicit_tangent`: matched max |delta|=8.88178e-16; joint allowance fraction=0.000888178, margin=99.9112%.
+_LOCAL_ROOT_ADJOINT_PAIRING_ATOL = 1e-12
 
 
 nl = phx.nonlinear
@@ -1443,14 +1452,28 @@ def test_vector_local_root_reverse_mode_is_the_adjoint_of_its_implicit_tangent(
     _, tangent = jax.jvp(root, (parameter,), (direction,))
     _, pullback = jax.vjp(root, parameter)
     (cotangent,) = pullback(weights)
-    assert jnp.allclose(tangent, implicit @ direction, rtol=0.0, atol=1e-12)
-    assert jnp.allclose(cotangent, implicit.T @ weights, rtol=0.0, atol=1e-12)
-    assert jnp.allclose(weights @ tangent, cotangent @ direction, rtol=0.0, atol=1e-12)
+    assert jnp.allclose(
+        tangent, implicit @ direction, rtol=0.0, atol=_LOCAL_ROOT_IMPLICIT_TANGENT_ATOL
+    )
+    assert jnp.allclose(
+        cotangent,
+        implicit.T @ weights,
+        rtol=0.0,
+        atol=_LOCAL_ROOT_IMPLICIT_COTANGENT_ATOL,
+    )
+    assert jnp.allclose(
+        weights @ tangent,
+        cotangent @ direction,
+        rtol=0.0,
+        atol=_LOCAL_ROOT_ADJOINT_PAIRING_ATOL,
+    )
     gradient = jax.jit(jax.grad(lambda value: weights @ root(value)))(parameter)
     assert jnp.array_equal(
         gradient, jax.grad(lambda value: weights @ root(value))(parameter)
     )
-    assert jnp.allclose(gradient, implicit.T @ weights, rtol=0.0, atol=1e-12)
+    assert jnp.allclose(
+        gradient, implicit.T @ weights, rtol=0.0, atol=_LOCAL_ROOT_IMPLICIT_COTANGENT_ATOL
+    )
 
 
 def test_vector_local_root_singular_tangent_keeps_refusal_in_both_modes() -> None:
@@ -1474,3 +1497,39 @@ def test_vector_local_root_singular_tangent_keeps_refusal_in_both_modes() -> Non
     # never a plausible zero.
     assert bool(jnp.all(jnp.isnan(tangent)))
     assert bool(jnp.isnan(cotangent))
+
+
+@pytest.mark.parametrize("kind", ["vector", "scalar"])
+def test_masked_singular_local_root_contributes_an_exact_zero_cotangent(
+    kind: str,
+) -> None:
+    # x^2 = p has an unbounded sensitivity at p = 0; the selection discards that
+    # root, so the gradient is the regular branch's 2 exactly. Reverse mode feeds
+    # the discarded root a zero cotangent, whose image under any linear map is 0.
+    def singular(parameter: Array) -> Array:
+        match kind:
+            case "vector":
+                plan = nl.VectorLocalRootPlan(1, plan_id="masked-singular-vector")
+                return plan.solve(
+                    lambda state: state**2 - parameter, jnp.zeros(1, dtype=jnp.float64)
+                )[0]
+            case "scalar":
+                scalar = nl.LocalRootPlan(plan_id="masked-singular-scalar")
+                return scalar.solve(
+                    lambda state: state**2 - parameter,
+                    jnp.asarray(0.0, dtype=jnp.float64),
+                )
+            case _:
+                raise ValueError(kind)
+
+    def selected(parameter: Array) -> Array:
+        return jnp.where(jnp.asarray(False), singular(parameter), 2.0 * parameter)
+
+    parameter = jnp.asarray(0.0, dtype=jnp.float64)
+    _, tangent = jax.jvp(selected, (parameter,), (jnp.asarray(1.0, dtype=jnp.float64),))
+    assert float(tangent) == 2.0
+    assert float(jax.grad(selected)(parameter)) == 2.0
+    _, singular_tangent = jax.jvp(
+        singular, (parameter,), (jnp.asarray(1.0, dtype=jnp.float64),)
+    )
+    assert bool(jnp.isnan(singular_tangent))

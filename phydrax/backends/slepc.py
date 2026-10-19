@@ -22,7 +22,7 @@ from jaxtyping import PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg._operators import AbstractLinearOperator
-from ..linalg._spaces import _coordinate_dtype
+from ..linalg._spaces import coordinate_dtype
 from ..linalg._sparse_contract import AbstractSparseLinearOperator
 from ..linalg.eigen import (
     CayleyTransform,
@@ -362,8 +362,8 @@ def plan_slepc_eigensolve(
             raise ValueError("Closest-selection target must equal the spectral shift.")
     elif selected.st_options is not None:
         raise ValueError("st_options may only be declared with shift-invert or Cayley.")
-    coordinate_dtype = np.dtype(_coordinate_dtype(problem.operator.source))
-    if not np.issubdtype(coordinate_dtype, np.complexfloating):
+    stored_dtype = np.dtype(coordinate_dtype(problem.operator.source))
+    if not np.issubdtype(stored_dtype, np.complexfloating):
         if selection.kind == "closest" and selection.target.imag != 0.0:
             raise ValueError("A complex target requires complex coordinates.")
         if transformed and selected.transform.shift.imag != 0.0:
@@ -542,12 +542,12 @@ def slepc_eigensolve(prepared: PreparedSLEPcEigenSolve, /) -> SLEPcEigenResult:
     shell_actions = sum(final[0] - initial[0] for initial, final in zip(before, after))
     shell_h2d = sum(final[1] - initial[1] for initial, final in zip(before, after))
     shell_d2h = sum(final[2] - initial[2] for initial, final in zip(before, after))
-    coordinate_dtype = _complex_coordinate_dtype(prepared.problem)
+    stored_dtype = _complex_coordinate_dtype(prepared.problem)
     result_bytes = values.nbytes + right.nbytes + left.nbytes
     verification_bytes = (
         (verification_actions + pairing_actions)
         * prepared.problem.dimension
-        * coordinate_dtype.itemsize
+        * stored_dtype.itemsize
     )
     transfer = BackendTransferEvidence(
         host_to_device_bytes=(
@@ -643,8 +643,8 @@ def _prepare_numeric(
     SLEPc = import_backend_module(availability, problem.kind, "slepc4py.SLEPc")
     PETSc = import_backend_module(availability, problem.kind, "petsc4py.PETSc")
     scalar_is_complex = np.issubdtype(np.dtype(PETSc.ScalarType), np.complexfloating)
-    coordinate_dtype = np.dtype(_coordinate_dtype(problem.operator.source))
-    if np.issubdtype(coordinate_dtype, np.complexfloating) and not scalar_is_complex:
+    stored_dtype = np.dtype(coordinate_dtype(problem.operator.source))
+    if np.issubdtype(stored_dtype, np.complexfloating) and not scalar_is_complex:
         raise ValueError(
             "This PETSc installation uses real scalars and cannot bind a complex pencil."
         )
@@ -1013,7 +1013,7 @@ def _operator_coordinate_action(
 ) -> np.ndarray:
     input_space = operator.target if adjoint else operator.source
     output_space = operator.source if adjoint else operator.target
-    dtype = np.dtype(_coordinate_dtype(input_space))
+    dtype = np.dtype(coordinate_dtype(input_space))
 
     def apply(component: Any) -> Array:
         tree = input_space.unflatten(jnp.asarray(component, dtype=dtype))
@@ -1037,7 +1037,7 @@ def _operator_coordinate_action(
 
 
 def _unflatten_complex_columns(space: Any, coordinates: Array, /) -> PyTree[Array]:
-    dtype = np.dtype(_coordinate_dtype(space))
+    dtype = np.dtype(coordinate_dtype(space))
     if np.issubdtype(dtype, np.complexfloating):
         return jax.vmap(space.unflatten, in_axes=1, out_axes=-1)(
             coordinates.astype(dtype)
@@ -1052,7 +1052,7 @@ def _unflatten_complex_columns(space: Any, coordinates: Array, /) -> PyTree[Arra
 
 
 def _complex_coordinate_dtype(problem: GeneralEigenproblem, /) -> np.dtype:
-    dtype = np.dtype(_coordinate_dtype(problem.operator.source))
+    dtype = np.dtype(coordinate_dtype(problem.operator.source))
     if np.issubdtype(dtype, np.complexfloating):
         return dtype
     return np.dtype(np.complex64 if dtype.itemsize <= 4 else np.complex128)

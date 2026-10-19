@@ -16,9 +16,11 @@ data through explicit send/receive sparse relations.
 from __future__ import annotations
 
 import operator
+from collections.abc import Mapping
+from dataclasses import replace
 from enum import StrEnum
 from math import prod
-from typing import TYPE_CHECKING
+from typing import final, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -27,28 +29,46 @@ import numpy as np
 from jax import Array
 from jax.sharding import PartitionSpec
 from jax.typing import ArrayLike
+from numpy.typing import NDArray
+
+import phydrax.discretization._partition as partition_owner
+import phydrax.discretization._point_cloud as point_cloud_owner
+import phydrax.discretization._tensor_support as tensor_support_owner
+from phydrax.discretization._reference_cell_types import CellBlock, CellGeometryElement
 
 from .._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
     logical_array_value_collection_digest,
 )
+from .._meshcore import NativeExecutionScope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CellPartition, PointCloudPlan, PreparedTensorGrid
 from ..discretization._adaptive_simplex import (
-    _children,
-    _facet_columns,
-    _members,
-    _refinement_edges,
-    _restored_facet_classes,
-    _terminal,
-    _work,
     AdaptiveSimplexParts,
     AdaptiveSimplexState,
     AdaptiveSimplexStatus,
+    members,
+    refinement_edges,
+    restored_facet_classes,
+    simplex_child_records,
+    simplex_work_bound,
+    terminal,
 )
-from ..discretization._cell_mesh import CellMesh
+from ..discretization._cell_geometry import (
+    CellGeometryRestrictionSource,
+    CellGeometrySpec,
+    coordinate_lagrange_element,
+)
+from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..discretization._cell_mesh import CellMesh, CellMeshStorage
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._coordinate_enclosure import coordinate_source_signature
+from ..discretization._exact_power_geometry import (
+    ExactPowerCellGeometryLinearActionSource,
+    ExactPowerCellGeometryRestrictionSource,
+    ExactPowerCellGeometrySource,
+)
 from ..discretization._partition import (
     CellAdjacency,
     CellPartitionHalo,
@@ -56,43 +76,68 @@ from ..discretization._partition import (
     mesh_cell_adjacency,
     padded_part_table,
 )
+from ..discretization._periodic_topology import PeriodicMeshTopology
+from ..discretization._topology_rows import facet_columns
 from ..discretization.fem import (
     FiniteElementDiscretization,
     FiniteElementDistributedPhasePlan,
     FiniteElementPartitionWorksetPlan,
 )
+from ..discretization.fem._distributed import (
+    FiniteElementClosurePreparation,
+    FiniteElementGlobalDofOwnership,
+    owner_local_finite_element_transfer_support,
+    OwnerLocalFiniteElementDiscretization,
+)
+from ..discretization.fem._generic import FiniteElementPlan
+from ..discretization.fem._topology_transfer import FiniteElementFieldTransfer
 from ..discretization.finite_volume import (
     FiniteVolumeDecompositionPlan,
     FiniteVolumeDiscretization,
 )
 from ..discretization.iga import IsogeometricPlan
 from ..discretization.spatial import hilbert_encode_integer, morton_encode_integer
-from ..graph._partition import GraphPartitionPlan, partition_graph, WeightedCSRGraph
+from ..geometry._global_embedding import GlobalEmbeddingCertificate
+from ..graph._distributed_partition import replay_logical_partition
+from ..graph._partition import (
+    GraphPartitionEvidence,
+    GraphPartitionPlan,
+    partition_graph,
+    WeightedCSRGraph,
+)
+from ..lifecycle import CompositionEntry, CompositionTransport
 from ..sparse import EdgeRelation, gather_routes, route_reduce, RouteReduction
-from ..typing import checked
-from ._assembly import MeshPart
-from ._lineage import MeshLineage
+from ..transport import solve_multidimensional_assignment
+from ..typing import checked, Dim, Int32, Int64, parse, validate
+
+# Deferred symbol lookup keeps checked annotations resolvable across the restart cycle.
+from . import (
+    _collective_geometry as collective_geometry_owner,
+    _distribution_migration as migration_owner,
+    _initial_certification as initial_certification_owner,
+    _restart_distribution as restart_owner,
+)
+from ._contracts import MeshingLimits
+from ._entity_keys import entity_keys, facet_packets
+from ._lineage_records import MeshLineage
+from ._measurements import NativeExecutionRecord
+
+# Module references defer symbol resolution across mutually dependent execution owners.
+from ._mesh_part import MeshPart
 from ._metis import metis_identity, metis_partition, MetisPartitionError
 from ._result import (
     CellMeshingResult,
     CollectiveMeshEvidence,
+    prepare_meshing_source_embedding,
     require_original_meshing_source,
 )
+from ._scope import local_logical_lookup
 
 
 if TYPE_CHECKING:
-    from ..discretization.fem._distributed import (
-        FiniteElementClosurePreparation,
-        FiniteElementGlobalDofOwnership,
-        OwnerLocalFiniteElementDiscretization,
-    )
-    from ..discretization.fem._generic import FiniteElementPlan
-    from ..discretization.fem._topology_transfer import (
-        FiniteElementFieldTransfer,
-    )
-    from ..lifecycle import CompositionEntry, CompositionTransport
     from ._bisection import BisectionUniformRefinement
-    from ._contracts import MeshingLimits
+    from ._device_adaptation import PartitionedAdaptiveSimplex
+    from ._distribution_migration import OwnerLocalMigrationState
 
 
 _MAXIMUM_CURVE_DEPTH = 21
@@ -144,23 +189,26 @@ class MeshPartitionPolicy(StrictModule, NonTrainableState):
         curve_depth: int = 16,
         metis_seed: int = 0,
     ) -> None:
-        if not isinstance(kind, MeshPartitionKind):
-            raise TypeError("kind must be MeshPartitionKind.")
+        kind = parse(kind, MeshPartitionKind, "partition_policy.kind")
         counts = (part_count, halo_width, curve_depth, metis_seed)
         if any(isinstance(value, bool) for value in counts):
-            raise TypeError("Partition policy counts must be integers.")
+            raise TypeError(
+                f"partition_policy.counts must be integers excluding booleans; got {counts!r}"
+            )
         parts, width, depth, seed = (operator.index(value) for value in counts)
         tolerance = float(maximum_imbalance)
         if parts <= 0 or width < 0 or seed < 0:
             raise ValueError(
-                "Partition count must be positive; halo width and seed non-negative."
+                f"partition_policy.counts must have positive part_count and nonnegative halo_width and seed; got part_count={parts}, halo_width={width}, seed={seed}"
             )
         if not 1 <= depth <= _MAXIMUM_CURVE_DEPTH:
             raise ValueError(
-                f"Curve depth must lie in [1, {_MAXIMUM_CURVE_DEPTH}] bits per axis."
+                f"partition_policy.curve_depth must lie in [1, {_MAXIMUM_CURVE_DEPTH}] bits per axis; got {depth}"
             )
         if not np.isfinite(tolerance) or tolerance < 1.0:
-            raise ValueError("Maximum imbalance must be finite and at least one.")
+            raise ValueError(
+                f"partition_policy.maximum_imbalance must be finite and at least one; got {tolerance!r}"
+            )
         self.kind = kind
         self.part_count = parts
         self.halo_width = width
@@ -231,7 +279,7 @@ class MeshPartitionEvidence(StrictModule, NonTrainableState):
                 or halo_replicas < 0
             ):
                 raise ValueError(
-                    "Collective partition summaries require positive finite part weights."
+                    f"distribution.collective_summary must have positive finite part weights and nonnegative traffic counts; got weight_shape={part_weights.shape}, part_count={part_count}, edge_cut={edge_cut}, halo_replicas={halo_replicas}"
                 )
         imbalance = np.max(part_weights) / np.mean(part_weights)
         self.part_weights = jnp.asarray(part_weights, dtype=jnp.float64)
@@ -254,18 +302,24 @@ class MeshPartitionEvidence(StrictModule, NonTrainableState):
 
 def _native_cell_ids(part: MeshPart) -> np.ndarray:
     carrier = part.carrier
-    if isinstance(carrier, CellMeshingResult):
-        return np.concatenate(
-            tuple(np.asarray(block.global_ids) for block in carrier.mesh.blocks)
-        ).astype(np.int64)
-    if isinstance(carrier, PreparedTensorGrid):
-        return np.arange(prod(carrier.cells().shape), dtype=np.int64)
-    if isinstance(carrier, PointCloudPlan):
-        return np.arange(carrier.points.shape[0], dtype=np.int64)
-    return np.arange(carrier.topology.cell_count, dtype=np.int64)
+    match carrier:
+        case CellMeshingResult():
+            return np.concatenate(
+                tuple(np.asarray(block.global_ids) for block in carrier.mesh.blocks)
+            ).astype(np.int64)
+        case tensor_support_owner.PreparedTensorGrid():
+            return np.arange(prod(carrier.cells().shape), dtype=np.int64)
+        case point_cloud_owner.PointCloudPlan():
+            return np.arange(carrier.points.shape[0], dtype=np.int64)
+        case IsogeometricPlan():
+            return np.arange(carrier.topology.cell_count, dtype=np.int64)
+        case _:
+            raise TypeError(
+                f"distribution.part.carrier must support native ownership and adjacency; got {type(carrier).__name__}"
+            )
 
 
-def _rows_of(native: np.ndarray, identifiers: ArrayLike, /) -> np.ndarray:
+def rows_of(native: np.ndarray, identifiers: ArrayLike, /) -> np.ndarray:
     """Native rows of ``identifiers``; -1 where an ID is not a native cell."""
     values = np.asarray(identifiers, dtype=np.int64).reshape(-1)
     sorter = np.argsort(native, kind="stable")
@@ -279,7 +333,7 @@ def _tensor_owners(shape: tuple[int, ...], splits: tuple[int, ...]) -> np.ndarra
         split <= 0 or size % split for size, split in zip(shape, splits, strict=True)
     ):
         raise ValueError(
-            "Cartesian split factors must divide the native cell shape exactly."
+            f"distribution.split_factors must divide each native cell-axis extent; got splits={splits}, shape={shape}"
         )
     local = tuple(size // split for size, split in zip(shape, splits, strict=True))
     owners = np.empty(shape, dtype=np.int32)
@@ -313,7 +367,7 @@ def _carrier_adjacency(part: MeshPart, /) -> CellAdjacency:
     match carrier:
         case CellMeshingResult():
             return mesh_cell_adjacency(carrier.mesh)
-        case PreparedTensorGrid():
+        case tensor_support_owner.PreparedTensorGrid():
             return _structured_adjacency(
                 carrier.cells().shape,
                 tuple(axis.periodic for axis in carrier.structured_axes),
@@ -321,13 +375,15 @@ def _carrier_adjacency(part: MeshPart, /) -> CellAdjacency:
         case IsogeometricPlan():
             shape = carrier.topology.span_shape
             return _structured_adjacency(shape, (False,) * len(shape))
-        case PointCloudPlan():
+        case point_cloud_owner.PointCloudPlan():
             # Point stencils are provider-defined; residency must be explicit.
             return CellAdjacency(
                 np.zeros((0, 2), dtype=np.int64), carrier.points.shape[0]
             )
         case _:
-            raise TypeError("Unsupported mesh carrier.")
+            raise TypeError(
+                f"distribution.part.carrier must support native ownership and adjacency; got {type(carrier).__name__}"
+            )
 
 
 def _cell_weights(value: ArrayLike | None, count: int, /) -> np.ndarray:
@@ -339,7 +395,9 @@ def _cell_weights(value: ArrayLike | None, count: int, /) -> np.ndarray:
         or not np.all(np.isfinite(weights))
         or np.any(weights <= 0.0)
     ):
-        raise ValueError("Cell weights must be finite, positive, one per cell.")
+        raise ValueError(
+            f"distribution.cell_weights must be finite positive values with one entry per cell; got shape={weights.shape}, cell_count={count}, invalid weight entries or shape"
+        )
     return weights
 
 
@@ -353,29 +411,39 @@ def _supplied_halos(
     """Validate explicit residency against the required reach; (parts, rows)."""
     values = tuple(np.asarray(value) for value in halos)
     if len(values) != reach.part_count:
-        raise ValueError("Exactly one halo residency vector is required per partition.")
+        raise ValueError(
+            f"distribution.halo_global_ids must provide one residency vector per partition; got vectors={len(values)}, partitions={reach.part_count}"
+        )
     if any(
         value.ndim != 1 or (value.size and not np.issubdtype(value.dtype, np.integer))
         for value in values
     ):
-        raise ValueError("Halo residency requires unique native global IDs.")
+        raise ValueError(
+            "distribution.halo_global_ids must contain one-dimensional unique native integer IDs per partition; got invalid dtype, rank, missing ID, or duplicate residency"
+        )
     sizes = np.asarray([value.size for value in values], dtype=np.int64)
     parts = np.repeat(np.arange(reach.part_count, dtype=np.int64), sizes)
     identifiers = np.concatenate(
         tuple(value.astype(np.int64) for value in values) + (np.zeros((0,), np.int64),)
     )
-    rows = _rows_of(native, identifiers)
+    rows = rows_of(native, identifiers)
     keys = parts * native.size + rows
     if np.any(rows < 0) or np.unique(keys).size != keys.size:
-        raise ValueError("Halo residency requires unique native global IDs.")
+        raise ValueError(
+            "distribution.halo_global_ids must contain one-dimensional unique native integer IDs per partition; got invalid dtype, rank, missing ID, or duplicate residency"
+        )
     if np.any(owner[rows] == parts):
-        raise ValueError("Halo residency cannot include locally owned entities.")
+        raise ValueError(
+            "distribution.halo_global_ids must exclude locally owned entities; got a local owner in halo residency"
+        )
     halo_offsets = np.asarray(reach.halo_offsets)
     required = np.repeat(
         np.arange(reach.part_count, dtype=np.int64), np.diff(halo_offsets)
     ) * native.size + np.asarray(reach.halo_cells, dtype=np.int64)
     if not np.all(np.isin(required, keys)):
-        raise ValueError("Halo residency omits the required native adjacency reach.")
+        raise ValueError(
+            "distribution.halo_global_ids must cover the native adjacency reach; got missing required halo residency"
+        )
     order = np.lexsort((identifiers, parts))
     return parts[order], rows[order]
 
@@ -397,17 +465,9 @@ def _padded_rows(rows: tuple[Array, ...], /) -> np.ndarray:
     )
 
 
-class MeshDistribution(StrictModule, NonTrainableState):
-    """Revision-bound native ownership and halo residency, independent of a solver.
-
-    Ownership is normalized into the carrier's native cell/span/point ordering.
-    Owned and halo rows of every part are sorted by global ID; halo IDs are
-    unique and never locally owned. The default halo is the ``halo_width``-layer
-    face-adjacency reach of each part. Compact carriers remain intact.
-    """
-
-    part: MeshPart
-    partition: CellPartition
+@final
+class _PreparedMeshDistribution(StrictModule):
+    partition: partition_owner.CellPartition
     cell_global_ids: Array
     cell_weights: Array
     owned_rows: tuple[Array, ...]
@@ -422,10 +482,269 @@ class MeshDistribution(StrictModule, NonTrainableState):
     global_cell_count: int = eqx.field(static=True)
     cell_content_id: str = eqx.field(static=True)
 
+
+def _prepare_local_mesh_distribution(
+    part: MeshPart,
+    partition: partition_owner.CellPartition,
+    /,
+    *,
+    cell_global_ids: ArrayLike | None,
+    halo_global_ids: tuple[ArrayLike, ...] | None,
+    split_factors: tuple[int, ...] | None,
+    width: int,
+    cell_weights: ArrayLike | None,
+    partition_kind: MeshPartitionKind,
+    partition_provenance: str,
+    result: CellMeshingResult,
+    storage: CellMeshStorage,
+    _collective_summary: tuple[Array, Array, Array] | None,
+) -> _PreparedMeshDistribution:
+    native = np.asarray(storage.entity_global_ids[-1], dtype=np.int64)
+    owner = np.asarray(partition.cell_owner, dtype=np.int32)
+    if (
+        partition.part_count != storage.partition_count
+        or partition.storage_id != storage.storage_id
+        or not np.array_equal(owner, np.asarray(storage.entity_owner[-1]))
+        or width > storage.neighborhood_depth
+        or split_factors is not None
+        or cell_global_ids is not None
+        or halo_global_ids is not None
+        or _collective_summary is None
+    ):
+        raise ValueError(
+            "distribution.owner_local_storage must bind ownership, halo depth, and collective summaries without replacement inventories; got incompatible partition metadata or missing summary"
+        )
+    collective = result.collective_evidence
+    if collective is None:
+        raise ValueError(
+            "distribution.owner_local_storage.collective_evidence must be present; got None"
+        )
+    collective.require_passed()
+    rank = storage.partition_index
+    weights = _cell_weights(cell_weights, native.size)
+    owned = np.flatnonzero(owner == rank)
+    ghosts = np.flatnonzero(owner != rank)
+    owned = owned[np.argsort(native[owned], kind="stable")]
+    ghosts = ghosts[np.argsort(native[ghosts], kind="stable")]
+    empty = jnp.empty((0,), dtype=jnp.int32)
+    partition = partition
+    cell_global_ids = storage.entity_global_ids[-1]
+    cell_weights = jnp.asarray(weights, dtype=jnp.float64)
+    owned_rows = tuple(
+        jnp.asarray(owned, dtype=jnp.int32) if index == rank else empty
+        for index in range(storage.partition_count)
+    )
+    halo_rows = tuple(
+        jnp.asarray(ghosts, dtype=jnp.int32) if index == rank else empty
+        for index in range(storage.partition_count)
+    )
+    halo_global_ids = tuple(cell_global_ids[rows] for rows in halo_rows)
+    dependencies = np.zeros(
+        (storage.partition_count, storage.partition_count), dtype=np.bool_
+    )
+    dependencies[rank, owner[ghosts]] = True
+    dependencies = jnp.asarray(dependencies, dtype=jnp.bool_)
+    evidence = MeshPartitionEvidence(
+        owner,
+        weights,
+        _carrier_adjacency(part),
+        ghosts.size,
+        storage.partition_count,
+        partition_kind,
+        partition_provenance,
+        _collective_summary=_collective_summary,
+    )
+    split_factors = None
+    halo_width = width
+    local_scope = True
+    global_cell_count = storage.global_entity_counts[-1]
+    cell_content_id = canonical_fingerprint(array_tree_fingerprint(native))
+    # Scientific distribution identity is shared across owner views;
+    # storage IDs identify only their process-local projections.
+    distribution_id = canonical_fingerprint(
+        {
+            "kind": "owner-local-mesh-distribution",
+            "part": part.part_id,
+            "partition_count": storage.partition_count,
+            "global_cell_count": storage.global_entity_counts[-1],
+            "collective": collective.evidence_id,
+            "partition_evidence": evidence.evidence_id,
+            "halo_width": width,
+        }
+    )
+    return _PreparedMeshDistribution(
+        partition,
+        cell_global_ids,
+        cell_weights,
+        owned_rows,
+        halo_rows,
+        halo_global_ids,
+        dependencies,
+        evidence,
+        split_factors,
+        halo_width,
+        distribution_id,
+        local_scope,
+        global_cell_count,
+        cell_content_id,
+    )
+
+
+def _prepare_whole_mesh_distribution(
+    part: MeshPart,
+    partition: partition_owner.CellPartition,
+    /,
+    *,
+    cell_global_ids: ArrayLike | None,
+    halo_global_ids: tuple[ArrayLike, ...] | None,
+    split_factors: tuple[int, ...] | None,
+    width: int,
+    cell_weights: ArrayLike | None,
+    partition_kind: MeshPartitionKind,
+    partition_provenance: str,
+) -> _PreparedMeshDistribution:
+    native = _native_cell_ids(part)
+    ids = native if cell_global_ids is None else np.asarray(cell_global_ids)
+    if ids.shape != native.shape or not np.issubdtype(ids.dtype, np.integer):
+        raise ValueError(
+            "distribution.cell_global_ids must cover native global IDs once; got incompatible shape, missing IDs, or duplicates"
+        )
+    position = rows_of(ids.astype(np.int64), native)
+    if np.any(position < 0) or np.unique(ids).size != ids.size:
+        raise ValueError(
+            "distribution.cell_global_ids must cover native global IDs once; got incompatible shape, missing IDs, or duplicates"
+        )
+    if partition.cell_owner.shape != native.shape:
+        raise ValueError(
+            "distribution.partition.cell_owner must cover the native cell count; got incompatible ownership shape"
+        )
+    normalized = partition_owner.CellPartition(
+        np.asarray(partition.cell_owner)[position], partition.part_count
+    )
+    owner = np.asarray(normalized.cell_owner)
+    weights = _cell_weights(cell_weights, native.size)[position]
+    splits = (
+        None
+        if split_factors is None
+        else tuple(operator.index(value) for value in split_factors)
+    )
+    if splits is not None:
+        if not isinstance(part.carrier, tensor_support_owner.PreparedTensorGrid):
+            raise TypeError(
+                f"distribution.split_factors must apply to a compact tensor carrier; got {type(part.carrier).__name__}"
+            )
+        expected = _tensor_owners(part.carrier.cells().shape, splits)
+        if prod(splits) != partition.part_count or not np.array_equal(owner, expected):
+            raise ValueError(
+                "distribution.split_factors must reproduce supplied ownership; got incompatible partition count or cell owners"
+            )
+    if (
+        isinstance(part.carrier, point_cloud_owner.PointCloudPlan)
+        and partition.part_count > 1
+        and halo_global_ids is None
+    ):
+        raise ValueError(
+            "distribution.halo_global_ids must provide stencil residency for distributed point carriers; got None"
+        )
+    adjacency = _carrier_adjacency(part)
+    reach = CellPartitionHalo(normalized, adjacency, layers=width, cell_global_ids=native)
+    if halo_global_ids is None:
+        halo_parts = np.repeat(
+            np.arange(partition.part_count), np.diff(np.asarray(reach.halo_offsets))
+        )
+        halo_rows = np.asarray(reach.halo_cells, dtype=np.int64)
+    else:
+        halo_parts, halo_rows = _supplied_halos(halo_global_ids, native, owner, reach)
+    owned_parts = owner[np.asarray(reach.owned_cells)]
+    owned_rows = _split_rows(
+        owned_parts, np.asarray(reach.owned_cells), partition.part_count
+    )
+    split_halos = _split_rows(halo_parts, halo_rows, partition.part_count)
+    dependencies = np.zeros((partition.part_count, partition.part_count), dtype=np.bool_)
+    dependencies[halo_parts, owner[halo_rows]] = True
+    evidence = MeshPartitionEvidence(
+        owner,
+        weights,
+        adjacency,
+        halo_rows.size,
+        partition.part_count,
+        partition_kind,
+        str(partition_provenance),
+    )
+    halo_ids = tuple(native[rows] for rows in split_halos)
+    partition = normalized
+    cell_global_ids = jnp.asarray(native, dtype=jnp.int64)
+    cell_weights = jnp.asarray(weights, dtype=jnp.float64)
+    owned_rows = tuple(jnp.asarray(rows) for rows in owned_rows)
+    halo_rows = tuple(jnp.asarray(rows) for rows in split_halos)
+    halo_global_ids = tuple(jnp.asarray(value, dtype=jnp.int64) for value in halo_ids)
+    dependencies = jnp.asarray(dependencies)
+    evidence = evidence
+    split_factors = splits
+    halo_width = width
+    local_scope = False
+    global_cell_count = native.size
+    cell_content_id = canonical_fingerprint(array_tree_fingerprint(native))
+    distribution_id = canonical_fingerprint(
+        {
+            "kind": "mesh-distribution",
+            "part": part.part_id,
+            "partition": normalized.partition_id,
+            "cell_ids": array_tree_fingerprint(native),
+            "halos": array_tree_fingerprint(halo_ids),
+            "split_factors": splits,
+            "halo_width": width,
+            "evidence": evidence.evidence_id,
+        }
+    )
+    return _PreparedMeshDistribution(
+        partition,
+        cell_global_ids,
+        cell_weights,
+        owned_rows,
+        halo_rows,
+        halo_global_ids,
+        dependencies,
+        evidence,
+        split_factors,
+        halo_width,
+        distribution_id,
+        local_scope,
+        global_cell_count,
+        cell_content_id,
+    )
+
+
+class MeshDistribution(StrictModule, NonTrainableState):
+    """Revision-bound native ownership and halo residency, independent of a solver.
+
+    Ownership is normalized into the carrier's native cell/span/point ordering.
+    Owned and halo rows of every part are sorted by global ID; halo IDs are
+    unique and never locally owned. The default halo is the ``halo_width``-layer
+    face-adjacency reach of each part. Compact carriers remain intact.
+    """
+
+    part: MeshPart
+    partition: partition_owner.CellPartition
+    cell_global_ids: Array
+    cell_weights: Array
+    owned_rows: tuple[Array, ...]
+    halo_rows: tuple[Array, ...]
+    halo_global_ids: tuple[Array, ...]
+    dependencies: Array
+    evidence: MeshPartitionEvidence
+    split_factors: tuple[int, ...] | None = eqx.field(static=True)
+    halo_width: int = eqx.field(static=True)
+    distribution_id: str = eqx.field(static=True)
+    local_scope: bool = eqx.field(static=True)
+    global_cell_count: int = eqx.field(static=True)
+    cell_content_id: str = eqx.field(static=True)
+
+    @checked
     def __init__(
         self,
         part: MeshPart,
-        partition: CellPartition,
+        partition: partition_owner.CellPartition,
         /,
         *,
         cell_global_ids: ArrayLike | None = None,
@@ -437,218 +756,110 @@ class MeshDistribution(StrictModule, NonTrainableState):
         partition_provenance: str = "supplied-ownership",
         _collective_summary: tuple[Array, Array, Array] | None = None,
     ) -> None:
-        if not isinstance(part, MeshPart) or not isinstance(partition, CellPartition):
-            raise TypeError("Mesh distribution requires MeshPart and CellPartition.")
-        if not isinstance(partition_kind, MeshPartitionKind):
-            raise TypeError("partition_kind must be MeshPartitionKind.")
+        partition_kind = parse(
+            partition_kind, MeshPartitionKind, "distribution.partition_kind"
+        )
         width = operator.index(halo_width)
         if isinstance(halo_width, bool) or width < 0:
-            raise ValueError("Halo width must be a non-negative integer.")
-        if (
-            isinstance(part.carrier, CellMeshingResult)
-            and part.carrier.mesh.storage is not None
-        ):
-            storage = part.carrier.mesh.storage
-            native = np.asarray(storage.entity_global_ids[-1], dtype=np.int64)
-            owner = np.asarray(partition.cell_owner, dtype=np.int32)
-            if (
-                partition.part_count != storage.partition_count
-                or partition.storage_id != storage.storage_id
-                or not np.array_equal(owner, np.asarray(storage.entity_owner[-1]))
-                or width > storage.neighborhood_depth
-                or split_factors is not None
-                or cell_global_ids is not None
-                or halo_global_ids is not None
-                or _collective_summary is None
-            ):
-                raise ValueError(
-                    "Owner-local distribution requires consumed ownership/halo and collective summaries."
-                )
-            collective = part.carrier.collective_evidence
-            if collective is None:
-                raise ValueError(
-                    "Owner-local distribution requires consumed collective mesh evidence."
-                )
-            collective.require_passed()
-            rank = storage.partition_index
-            weights = _cell_weights(cell_weights, native.size)
-            owned = np.flatnonzero(owner == rank)
-            ghosts = np.flatnonzero(owner != rank)
-            owned = owned[np.argsort(native[owned], kind="stable")]
-            ghosts = ghosts[np.argsort(native[ghosts], kind="stable")]
-            empty = jnp.empty((0,), dtype=jnp.int32)
-            self.part = part
-            self.partition = partition
-            self.cell_global_ids = storage.entity_global_ids[-1]
-            self.cell_weights = jnp.asarray(weights, dtype=jnp.float64)
-            self.owned_rows = tuple(
-                jnp.asarray(owned, dtype=jnp.int32) if index == rank else empty
-                for index in range(storage.partition_count)
-            )
-            self.halo_rows = tuple(
-                jnp.asarray(ghosts, dtype=jnp.int32) if index == rank else empty
-                for index in range(storage.partition_count)
-            )
-            self.halo_global_ids = tuple(
-                self.cell_global_ids[rows] for rows in self.halo_rows
-            )
-            dependencies = np.zeros(
-                (storage.partition_count, storage.partition_count), dtype=np.bool_
-            )
-            dependencies[rank, owner[ghosts]] = True
-            self.dependencies = jnp.asarray(dependencies, dtype=jnp.bool_)
-            self.evidence = MeshPartitionEvidence(
-                owner,
-                weights,
-                _carrier_adjacency(part),
-                ghosts.size,
-                storage.partition_count,
-                partition_kind,
-                partition_provenance,
-                _collective_summary=_collective_summary,
-            )
-            self.split_factors = None
-            self.halo_width = width
-            self.local_scope = True
-            self.global_cell_count = storage.global_entity_counts[-1]
-            self.cell_content_id = canonical_fingerprint(array_tree_fingerprint(native))
-            self.distribution_id = canonical_fingerprint(
-                {
-                    "kind": "owner-local-mesh-distribution",
-                    "part": part.part_id,
-                    "storage": storage.storage_id,
-                    "collective": collective.evidence_id,
-                    "partition_evidence": self.evidence.evidence_id,
-                    "halo_width": width,
-                }
-            )
-            return
-        native = _native_cell_ids(part)
-        ids = native if cell_global_ids is None else np.asarray(cell_global_ids)
-        if ids.shape != native.shape or not np.issubdtype(ids.dtype, np.integer):
             raise ValueError(
-                "Distribution cell IDs must cover the exact native global IDs once."
+                f"distribution.halo_width must be a nonnegative integer excluding booleans; got {halo_width!r}"
             )
-        position = _rows_of(ids.astype(np.int64), native)
-        if np.any(position < 0) or np.unique(ids).size != ids.size:
-            raise ValueError(
-                "Distribution cell IDs must cover the exact native global IDs once."
-            )
-        if partition.cell_owner.shape != native.shape:
-            raise ValueError("Ownership must cover the exact native cell count.")
-        normalized = CellPartition(
-            np.asarray(partition.cell_owner)[position], partition.part_count
-        )
-        owner = np.asarray(normalized.cell_owner)
-        weights = _cell_weights(cell_weights, native.size)[position]
-        splits = (
-            None
-            if split_factors is None
-            else tuple(operator.index(value) for value in split_factors)
-        )
-        if splits is not None:
-            if not isinstance(part.carrier, PreparedTensorGrid):
-                raise TypeError(
-                    "Cartesian split factors require a compact tensor carrier."
+        match part.carrier:
+            case CellMeshingResult() as result if result.mesh.storage is not None:
+                prepared = _prepare_local_mesh_distribution(
+                    part,
+                    partition,
+                    cell_global_ids=cell_global_ids,
+                    halo_global_ids=halo_global_ids,
+                    split_factors=split_factors,
+                    width=width,
+                    cell_weights=cell_weights,
+                    partition_kind=partition_kind,
+                    partition_provenance=partition_provenance,
+                    result=result,
+                    storage=result.mesh.storage,
+                    _collective_summary=_collective_summary,
                 )
-            expected = _tensor_owners(part.carrier.cells().shape, splits)
-            if prod(splits) != partition.part_count or not np.array_equal(
-                owner, expected
-            ):
-                raise ValueError(
-                    "Cartesian split factors do not reproduce the supplied ownership."
+            case _:
+                prepared = _prepare_whole_mesh_distribution(
+                    part,
+                    partition,
+                    cell_global_ids=cell_global_ids,
+                    halo_global_ids=halo_global_ids,
+                    split_factors=split_factors,
+                    width=width,
+                    cell_weights=cell_weights,
+                    partition_kind=partition_kind,
+                    partition_provenance=partition_provenance,
                 )
-        if (
-            isinstance(part.carrier, PointCloudPlan)
-            and partition.part_count > 1
-            and halo_global_ids is None
-        ):
-            raise ValueError(
-                "Distributed point carriers require explicit stencil halo residency."
-            )
-        adjacency = _carrier_adjacency(part)
-        reach = CellPartitionHalo(
-            normalized, adjacency, layers=width, cell_global_ids=native
-        )
-        if halo_global_ids is None:
-            halo_parts = np.repeat(
-                np.arange(partition.part_count), np.diff(np.asarray(reach.halo_offsets))
-            )
-            halo_rows = np.asarray(reach.halo_cells, dtype=np.int64)
-        else:
-            halo_parts, halo_rows = _supplied_halos(halo_global_ids, native, owner, reach)
-        owned_parts = owner[np.asarray(reach.owned_cells)]
-        owned_rows = _split_rows(
-            owned_parts, np.asarray(reach.owned_cells), partition.part_count
-        )
-        split_halos = _split_rows(halo_parts, halo_rows, partition.part_count)
-        dependencies = np.zeros(
-            (partition.part_count, partition.part_count), dtype=np.bool_
-        )
-        dependencies[halo_parts, owner[halo_rows]] = True
-        evidence = MeshPartitionEvidence(
-            owner,
-            weights,
-            adjacency,
-            halo_rows.size,
-            partition.part_count,
-            partition_kind,
-            str(partition_provenance),
-        )
-        halo_ids = tuple(native[rows] for rows in split_halos)
         self.part = part
-        self.partition = normalized
-        self.cell_global_ids = jnp.asarray(native, dtype=jnp.int64)
-        self.cell_weights = jnp.asarray(weights, dtype=jnp.float64)
-        self.owned_rows = tuple(jnp.asarray(rows) for rows in owned_rows)
-        self.halo_rows = tuple(jnp.asarray(rows) for rows in split_halos)
-        self.halo_global_ids = tuple(
-            jnp.asarray(value, dtype=jnp.int64) for value in halo_ids
+        self.partition = prepared.partition
+        self.cell_global_ids = prepared.cell_global_ids
+        self.cell_weights = prepared.cell_weights
+        self.owned_rows = prepared.owned_rows
+        self.halo_rows = prepared.halo_rows
+        self.halo_global_ids = prepared.halo_global_ids
+        self.dependencies = prepared.dependencies
+        self.evidence = prepared.evidence
+        self.split_factors = prepared.split_factors
+        self.halo_width = prepared.halo_width
+        self.distribution_id = prepared.distribution_id
+        self.local_scope = prepared.local_scope
+        self.global_cell_count = prepared.global_cell_count
+        self.cell_content_id = prepared.cell_content_id
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[MeshDistribution], value: MeshDistribution, /
+    ) -> MeshDistribution:
+        """Rebuild ownership, halos, and balance evidence from retained inputs."""
+        summary = (
+            (
+                value.evidence.part_weights,
+                value.evidence.edge_cut,
+                value.evidence.halo_replicas,
+            )
+            if value.local_scope
+            else None
         )
-        self.dependencies = jnp.asarray(dependencies)
-        self.evidence = evidence
-        self.split_factors = splits
-        self.halo_width = width
-        self.local_scope = False
-        self.global_cell_count = native.size
-        self.cell_content_id = canonical_fingerprint(array_tree_fingerprint(native))
-        self.distribution_id = canonical_fingerprint(
-            {
-                "kind": "mesh-distribution",
-                "part": part.part_id,
-                "partition": normalized.partition_id,
-                "cell_ids": array_tree_fingerprint(native),
-                "halos": array_tree_fingerprint(halo_ids),
-                "split_factors": splits,
-                "halo_width": width,
-                "evidence": evidence.evidence_id,
-            }
+        return cls(
+            value.part,
+            value.partition,
+            cell_global_ids=None if value.local_scope else value.cell_global_ids,
+            halo_global_ids=None if value.local_scope else value.halo_global_ids,
+            split_factors=value.split_factors,
+            halo_width=value.halo_width,
+            cell_weights=value.cell_weights,
+            partition_kind=value.evidence.kind,
+            partition_provenance=value.evidence.provenance,
+            _collective_summary=summary,
         )
 
     @classmethod
+    @checked
     def cartesian(
         cls, part: MeshPart, split_factors: tuple[int, ...], /, *, halo_width: int = 1
     ) -> MeshDistribution:
-        if not isinstance(part, MeshPart) or not isinstance(
-            part.carrier, PreparedTensorGrid
-        ):
-            raise TypeError("Cartesian distribution requires a compact tensor MeshPart.")
+        if not isinstance(part.carrier, tensor_support_owner.PreparedTensorGrid):
+            raise TypeError(
+                f"distribution.cartesian.part.carrier must be a compact tensor carrier; got {type(part.carrier).__name__}"
+            )
         splits = tuple(operator.index(value) for value in split_factors)
         owner = _tensor_owners(part.carrier.cells().shape, splits)
         return cls(
             part,
-            CellPartition(owner, prod(splits)),
+            partition_owner.CellPartition(owner, prod(splits)),
             split_factors=splits,
             halo_width=halo_width,
         )
 
+    @checked
     def require_current(self, part: MeshPart, /) -> None:
-        if (
-            not isinstance(part, MeshPart)
-            or part.name != self.part.name
-            or part.part_id != self.part.part_id
-        ):
-            raise ValueError("Mesh distribution is stale or belongs to another part.")
+        if part.name != self.part.name or part.part_id != self.part.part_id:
+            raise ValueError(
+                "distribution.part must match the bound name and revision; got stale or foreign part identity"
+            )
 
     def gather(
         self, rank: int, values: ArrayLike, /, *, include_halo: bool = True
@@ -657,9 +868,13 @@ class MeshDistribution(StrictModule, NonTrainableState):
         rank_ = operator.index(rank)
         field = jnp.asarray(values)
         if not 0 <= rank_ < self.partition.part_count:
-            raise ValueError("Distribution rank is out of range.")
+            raise ValueError(
+                f"distribution.rank must lie in [0, part_count); got rank={rank_}, part_count={self.partition.part_count}"
+            )
         if field.ndim == 0 or field.shape[0] != self.cell_global_ids.size:
-            raise ValueError("Distributed fields must follow native cell order.")
+            raise ValueError(
+                f"distribution.values must have a leading native-cell axis; got shape={field.shape}, cells={self.cell_global_ids.size}"
+            )
         rows = (
             jnp.concatenate((self.owned_rows[rank_], self.halo_rows[rank_]))
             if include_halo
@@ -667,23 +882,22 @@ class MeshDistribution(StrictModule, NonTrainableState):
         )
         return field[rows]
 
+    @checked
     def lower_finite_element(
         self, part: MeshPart, discretization: FiniteElementDiscretization, /
     ) -> FiniteElementDistributedPhasePlan:
-        """Lower exact ownership/residency to native FE worksets and interface phases."""
+        """Lower ownership and residency to FE worksets and interface phases."""
         self.require_current(part)
-        if not isinstance(part.carrier, CellMeshingResult) or not isinstance(
-            discretization, FiniteElementDiscretization
-        ):
+        if not isinstance(part.carrier, CellMeshingResult):
             raise TypeError(
-                "FE lowering requires a certified cell part and prepared FE discretization."
+                f"distribution.finite_element.part.carrier must be a certified cell result; got {type(part.carrier).__name__}"
             )
         result = part.carrier
         if discretization.mesh.mesh_id != result.mesh.mesh_id or array_tree_fingerprint(
             discretization.mesh
         ) != array_tree_fingerprint(result.mesh):
             raise ValueError(
-                "FE discretization does not use the exact distribution mesh revision."
+                "distribution.finite_element.mesh must bind the distribution mesh revision; got different mesh content"
             )
         if (
             discretization.default_runtime.geometry_layout_id
@@ -694,7 +908,7 @@ class MeshDistribution(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "FE discretization geometry differs from the certified part revision."
+                "distribution.finite_element.geometry must bind the certified part revision; got different coordinate layout or coordinate values"
             )
         owned = _padded_rows(self.owned_rows)
         halo = _padded_rows(self.halo_rows)
@@ -711,6 +925,7 @@ class MeshDistribution(StrictModule, NonTrainableState):
             discretization, self.partition, worksets=worksets
         )
 
+    @checked
     def prepare_finite_element_closures(
         self,
         source_plan: FiniteElementPlan,
@@ -726,35 +941,48 @@ class MeshDistribution(StrictModule, NonTrainableState):
         target_authority: FiniteElementGlobalDofOwnership | None = None,
         numeric_version: str = "0",
     ) -> FiniteElementClosurePreparation:
-        """Prepare genuine source-owned FE closures before any local numbering.
+        """Prepare source-owned FE closures before local numbering.
 
-        The immutable source remains the scientific authority. Communication
-        support is resolved to its actual cells before closure allocation.
-        This does not run a global numerical operator or a periodic device edit.
+        Communication support is resolved against the immutable source cells
+        before allocating resident closures.
         """
-        from ..discretization.fem._distributed import FiniteElementClosurePreparation
-        from ._measurements import NativeExecutionRecord
-        from ._volume_generation import native_volume_execution_budget
 
-        with native_volume_execution_budget(limits) as budget:
-            authority, programs = _prepare_source_finite_element_closures(
-                self,
-                source_plan,
-                limits=limits,
-                cell_capacity=cell_capacity,
-                vertex_capacity=vertex_capacity,
-                message_capacity=message_capacity,
-                axis_name=axis_name,
-                source_discretization=source_discretization,
-                transfer=transfer,
-                target_authority=target_authority,
-                numeric_version=numeric_version,
+        with NativeExecutionScope(limits.native_limits()) as scope:
+            remaining = scope.remaining()
+            ticket = scope.batch(
+                min(limits.maximum_work_units, remaining.remaining_work_units),
+                bytes_upper=min(
+                    limits.maximum_scratch_bytes, remaining.remaining_managed_bytes
+                ),
+                queries_upper=min(
+                    limits.maximum_geometry_queries, remaining.remaining_geometry_queries
+                ),
             )
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            with ticket, budget.activate(), ticket.native_target():
+                authority, programs = _prepare_source_finite_element_closures(
+                    self,
+                    source_plan,
+                    limits=limits,
+                    cell_capacity=cell_capacity,
+                    vertex_capacity=vertex_capacity,
+                    message_capacity=message_capacity,
+                    axis_name=axis_name,
+                    source_discretization=source_discretization,
+                    transfer=transfer,
+                    target_authority=target_authority,
+                    numeric_version=numeric_version,
+                    budget=budget,
+                )
         receipt = (
             None
-            if budget.evidence is None
+            if scope.evidence is None
             else NativeExecutionRecord(
-                budget.evidence,
+                scope.evidence,
                 owner_id=authority.plan_id,
             )
         )
@@ -762,16 +990,15 @@ class MeshDistribution(StrictModule, NonTrainableState):
             authority, programs, execution_evidence=receipt
         )
 
+    @checked
     def lower_finite_volume(
         self, part: MeshPart, discretization: FiniteVolumeDiscretization, /
     ) -> FiniteVolumeDecompositionPlan:
         """Lower Cartesian ownership to a real named-sharding FV execution plan."""
         self.require_current(part)
-        if not isinstance(part.carrier, PreparedTensorGrid) or not isinstance(
-            discretization, FiniteVolumeDiscretization
-        ):
+        if not isinstance(part.carrier, tensor_support_owner.PreparedTensorGrid):
             raise TypeError(
-                "Structured FV lowering requires a compact tensor part and prepared FV discretization."
+                f"distribution.finite_volume.part.carrier must be a compact tensor carrier; got {type(part.carrier).__name__}"
             )
         grid = part.carrier
         revision = canonical_fingerprint(array_tree_fingerprint(grid))
@@ -781,12 +1008,14 @@ class MeshDistribution(StrictModule, NonTrainableState):
             != revision
         ):
             raise ValueError(
-                "FV discretization does not use the exact distribution grid revision."
+                "distribution.finite_volume.grid must bind the distribution grid revision; got different grid content"
             )
         splits = self.split_factors
         if splits is None:
             if self.partition.part_count != 1:
-                raise ValueError("FV lowering requires explicit Cartesian split factors.")
+                raise ValueError(
+                    "distribution.finite_volume.split_factors must be supplied for multiple partitions; got None"
+                )
             splits = (1,) * len(grid.axis_names)
         return FiniteVolumeDecompositionPlan(
             grid.cells().shape,
@@ -798,7 +1027,59 @@ class MeshDistribution(StrictModule, NonTrainableState):
         )
 
 
-def _prepare_source_finite_element_closures(
+@final
+class _FEClosureSource(StrictModule):
+    distribution: MeshDistribution
+    plan: FiniteElementPlan
+    result: CellMeshingResult
+    authority: FiniteElementGlobalDofOwnership
+    support: tuple[NDArray[np.int64] | Array, ...]
+    blocks: tuple[CellBlock, ...]
+    cell_capacity: int = eqx.field(static=True)
+    vertex_capacity: int = eqx.field(static=True)
+
+
+@final
+class _FEClosureTopology(StrictModule):
+    cell_ids: np.ndarray
+    cell_lookup: dict[int, int]
+    closures: tuple[np.ndarray, ...]
+    entity_owners: tuple[np.ndarray, ...]
+
+
+@final
+class _FEClosureBanks(StrictModule):
+    elements: tuple[CellGeometryElement, ...]
+    routes: tuple[Array, ...]
+    coordinate_owners: np.ndarray
+    arrays: dict[str, Array]
+    source_geometry_id: str = eqx.field(static=True)
+    source_topology_id: str = eqx.field(static=True)
+    source_blocks: Mapping[str, str] | None = eqx.field(static=True)
+    retained_bytes: int = eqx.field(static=True)
+
+
+@final
+class _LocalFEClosureTopology(StrictModule):
+    active: tuple[tuple[CellBlock, CellGeometryElement, Array, np.ndarray], ...]
+    points: Array
+    blocks: tuple[CellBlock, ...]
+    vertex_ids: Array
+    local_ids: tuple[np.ndarray, ...]
+    local_owners: tuple[np.ndarray, ...]
+    periodic: PeriodicMeshTopology | None
+
+
+@final
+class _LocalFEClosureGeometry(StrictModule):
+    elements: dict[str, CellGeometryElement]
+    routes: dict[str, np.ndarray]
+    coordinate_ids: np.ndarray
+    geometry: CellGeometrySpec
+    retained_bytes: int = eqx.field(static=True)
+
+
+def _prepare_fe_closure_source(
     distribution: MeshDistribution,
     source_plan: FiniteElementPlan,
     /,
@@ -806,56 +1087,27 @@ def _prepare_source_finite_element_closures(
     limits: MeshingLimits,
     cell_capacity: int,
     vertex_capacity: int,
-    message_capacity: int,
-    axis_name: str,
     source_discretization: FiniteElementDiscretization | None,
     transfer: FiniteElementFieldTransfer | None,
     target_authority: FiniteElementGlobalDofOwnership | None,
-    numeric_version: str,
-) -> tuple[
-    FiniteElementGlobalDofOwnership,
-    tuple[OwnerLocalFiniteElementDiscretization, ...],
-]:
-    from .._meshcore import charge_native_geometry_queries, current_native_host_workspace
-    from ..discretization._cell_geometry import (
-        CellGeometryRestrictionSource,
-        CellGeometrySpec,
-    )
-    from ..discretization._cell_geometry_validity import cell_geometry_id
-    from ..discretization._cell_mesh import CellBlock, CellMeshStorage
-    from ..discretization._coordinate_enclosure import coordinate_source_signature
-    from ..discretization._exact_power_geometry import (
-        ExactPowerCellGeometryLinearActionSource,
-        ExactPowerCellGeometryRestrictionSource,
-        ExactPowerCellGeometrySource,
-    )
-    from ..discretization.fem._distributed import (
-        FiniteElementGlobalDofOwnership,
-        owner_local_finite_element_transfer_support,
-    )
-    from ..discretization.fem._generic import FiniteElementPlan
-    from ._collective_geometry import (
-        periodic_source_closure_cells,
-        project_source_periodic_topology,
-    )
-    from ._topology_edit import entity_keys
-
+    budget: CoordinateEnclosureBudget,
+) -> _FEClosureSource:
     distribution.require_current(distribution.part)
     source = distribution.part.carrier
     if not isinstance(source, CellMeshingResult) or source.certification is None:
         raise ValueError(
-            "Native FE closures require an actual certified immutable whole source."
+            "distribution.source must provide a certified immutable whole mesh; got incompatible or uncertified source"
         )
-    if not isinstance(source_plan, FiniteElementPlan) or (
+    if (
         source_plan.mesh.storage is not None
         or array_tree_fingerprint(source_plan.mesh) != array_tree_fingerprint(source.mesh)
         or cell_geometry_id(source_plan.coordinate_spec)
         != cell_geometry_id(source.geometry)
     ):
         raise ValueError(
-            "Native FE closures require the actual source FE mesh and geometry."
+            "distribution.source_plan must bind source FE mesh and geometry; got different mesh or geometry identity"
         )
-    mesh, geometry = source.mesh, source_plan.coordinate_spec
+    mesh = source.mesh
     cell_capacity, vertex_capacity = (
         operator.index(cell_capacity),
         operator.index(vertex_capacity),
@@ -864,42 +1116,63 @@ def _prepare_source_finite_element_closures(
         not 0 < cell_capacity <= limits.maximum_cells
         or not 0 < vertex_capacity <= limits.maximum_vertices
     ):
-        raise ValueError("FE closure capacities exceed the original entity limits.")
-    if any(not isinstance(block, CellBlock) for block in mesh.blocks):
-        raise TypeError(
-            "Source closure extraction requires canonical fixed-family blocks."
+        raise ValueError(
+            "distribution.closure_capacities must lie within request entity limits; got nonpositive or excessive capacity"
         )
-    workspace = current_native_host_workspace()
-    if workspace is None:
-        raise RuntimeError(
-            "Native FE closure preparation requires its original storage workspace."
-        )
-    workspace.retain_owner(
+    fixed_blocks: list[CellBlock] = []
+    for block in mesh.blocks:
+        match block:
+            case CellBlock():
+                fixed_blocks.append(block)
+            case _:
+                raise TypeError(
+                    f"distribution.source.blocks must contain fixed-family CellBlock records; got {type(block).__name__}"
+                )
+    budget.retain_basis(
         (distribution, source_plan, source_discretization, transfer, target_authority)
     )
-    charge_native_geometry_queries(
-        0, work_units=sum(block.vertices.size for block in mesh.blocks)
-    )
+    budget.reserve(sum(block.vertices.size for block in mesh.blocks), 0)
     authority = FiniteElementGlobalDofOwnership(
-        source_plan, distribution.partition, source_discretization=source_discretization
+        source_plan,
+        distribution.partition,
+        source_discretization=source_discretization,
+        budget=budget,
     )
-    workspace.retain_owner(authority)
-    if (transfer is None) != (target_authority is None):
-        raise ValueError(
-            "Transfer support requires the actual transfer and target authority together."
-        )
-    if transfer is None:
+    budget.retain_basis((authority,))
+    if transfer is None and target_authority is None:
         support = tuple(
             np.zeros(0, dtype=np.int64) for _ in range(distribution.partition.part_count)
         )
-    else:
-        if target_authority is None:
-            raise RuntimeError("Transfer target authority disappeared after validation.")
+    elif transfer is not None and target_authority is not None:
         support = owner_local_finite_element_transfer_support(
-            transfer, authority, target_authority
+            transfer, authority, target_authority, budget=budget
+        )
+    else:
+        raise ValueError(
+            "distribution.transfer_support must bind transfer and target_authority together; got only one supplied"
         )
     if len(support) != distribution.partition.part_count:
-        raise ValueError("Transfer support differs from the actual source owner count.")
+        raise ValueError(
+            "distribution.transfer_support must match source owner count; got incompatible support length"
+        )
+    return _FEClosureSource(
+        distribution,
+        source_plan,
+        source,
+        authority,
+        support,
+        tuple(fixed_blocks),
+        cell_capacity,
+        vertex_capacity,
+    )
+
+
+def _prepare_fe_closure_topology(
+    prepared: _FEClosureSource, budget: CoordinateEnclosureBudget, /
+) -> _FEClosureTopology:
+    distribution, mesh = prepared.distribution, prepared.result.mesh
+    authority, support = prepared.authority, prepared.support
+    cell_capacity, vertex_capacity = prepared.cell_capacity, prepared.vertex_capacity
     cell_ids = np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks])
     cell_lookup = {int(identifier): row for row, identifier in enumerate(cell_ids)}
     closures = []
@@ -915,24 +1188,25 @@ def _prepare_source_finite_element_closures(
                 (cell_ids[rows], np.asarray(authority.supporting_cells(requested)))
             )
         )
-        required = periodic_source_closure_cells(
-            mesh, required, cell_capacity=cell_capacity, vertex_capacity=vertex_capacity
+        required = collective_geometry_owner.periodic_source_closure_cells(
+            mesh,
+            required,
+            cell_capacity=cell_capacity,
+            vertex_capacity=vertex_capacity,
+            budget=budget,
         )
         if required.size > cell_capacity:
             raise ValueError(
-                "Actual transfer support exceeds the original closure capacity."
+                "distribution.transfer_support must fit cell_capacity; got excessive closure cells"
             )
         closures.append(
             np.asarray([cell_lookup[int(identifier)] for identifier in required])
         )
-    owners = [None] * (mesh.topological_dimension + 1)
-    owners[-1] = np.asarray(distribution.partition.cell_owner)
+    owners = [np.asarray(distribution.partition.cell_owner)]
     for degree in range(mesh.topological_dimension, 0, -1):
         relation = mesh.topology.incidences[degree - 1].relation
         valid = np.asarray(relation.valid)
-        cell_owner = owners[degree]
-        if cell_owner is None:
-            raise RuntimeError("A higher-dimensional source owner is absent.")
+        cell_owner = owners[-1]
         entity_owner = np.full(
             mesh.entity_set(degree - 1).count,
             distribution.partition.part_count,
@@ -944,12 +1218,26 @@ def _prepare_source_finite_element_closures(
             cell_owner[np.asarray(relation.target_indices)[valid]],
         )
         if np.any(entity_owner == distribution.partition.part_count):
-            raise ValueError("An actual source entity lacks incident-cell ownership.")
-        owners[degree - 1] = entity_owner
-    entity_owners = tuple(owner for owner in owners if isinstance(owner, np.ndarray))
-    if len(entity_owners) != mesh.topological_dimension + 1:
-        raise RuntimeError("Source entity ownership preparation is incomplete.")
-    elements, routes, _ = geometry.resolve(mesh)
+            raise ValueError(
+                "distribution.entity_owners must assign every source entity; got an entity without incident-cell ownership"
+            )
+        owners.append(entity_owner)
+    entity_owners = tuple(reversed(owners))
+    return _FEClosureTopology(cell_ids, cell_lookup, tuple(closures), entity_owners)
+
+
+def _prepare_fe_closure_banks(
+    prepared: _FEClosureSource,
+    topology: _FEClosureTopology,
+    limits: MeshingLimits,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> _FEClosureBanks:
+    distribution, mesh = prepared.distribution, prepared.result.mesh
+    geometry = prepared.plan.coordinate_spec
+    cell_ids, cell_lookup = topology.cell_ids, topology.cell_lookup
+    entity_owners, closures = topology.entity_owners, topology.closures
+    elements, routes, _ = geometry.resolve(mesh, budget=budget)
     coordinate_owners = np.full(
         geometry.coordinates.shape[0], distribution.partition.part_count, dtype=np.int32
     )
@@ -979,9 +1267,10 @@ def _prepare_source_finite_element_closures(
     for degree in range(mesh.topological_dimension + 1):
         arrays[f"entity/{degree}/ids"] = mesh.entity_set(degree).entity_ids
         arrays[f"entity/{degree}/owners"] = jnp.asarray(entity_owners[degree])
-    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+    for block, element, route in zip(prepared.blocks, elements, routes, strict=True):
         rows = np.asarray(
-            [cell_lookup[int(identifier)] for identifier in np.asarray(block.global_ids)]
+            [cell_lookup[int(identifier)] for identifier in np.asarray(block.global_ids)],
+            dtype=np.int64,
         )
         route_values = np.asarray(route).reshape(-1)
         route_owners = np.broadcast_to(
@@ -1027,199 +1316,329 @@ def _prepare_source_finite_element_closures(
             else origin.block_parent_vertex_ids[block.name]
         )
     if np.any(coordinate_owners == distribution.partition.part_count):
-        raise ValueError("An actual source coefficient lacks incident-cell ownership.")
+        raise ValueError(
+            "distribution.coordinate_owners must assign every source coefficient; got a coefficient without incident-cell ownership"
+        )
     arrays["geometry/coordinate_owners"] = jnp.asarray(coordinate_owners)
     retained_bytes = sum(value.nbytes for value in arrays.values())
     if retained_bytes > limits.maximum_scratch_bytes:
         raise ValueError(
-            "Actual scientific source banks exceed the original storage allowance."
+            "distribution.source_banks must fit the scratch allowance; got excessive retained bytes"
         )
-    workspace.retain_owner((arrays, closures))
-    local_plans = []
-    offsets = np.cumsum([0] + [block.cell_count for block in mesh.blocks])
-    for rank, selected in enumerate(closures):
-        charge_native_geometry_queries(
-            0, work_units=sum(block.vertices.size for block in mesh.blocks)
+    budget.retain_basis(((arrays, closures),))
+    return _FEClosureBanks(
+        elements,
+        routes,
+        coordinate_owners,
+        arrays,
+        source_geometry_id,
+        source_topology_id,
+        source_blocks,
+        retained_bytes,
+    )
+
+
+def _prepare_local_fe_closure_topology(
+    prepared: _FEClosureSource,
+    topology: _FEClosureTopology,
+    banks: _FEClosureBanks,
+    selected: np.ndarray,
+    offsets: np.ndarray,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> _LocalFEClosureTopology:
+    mesh, vertex_capacity = prepared.result.mesh, prepared.vertex_capacity
+    elements, routes, entity_owners = banks.elements, banks.routes, topology.entity_owners
+    budget.reserve(sum(block.vertices.size for block in mesh.blocks), 0)
+    selections = [
+        selected[(selected >= left) & (selected < right)] - left
+        for left, right in zip(offsets[:-1], offsets[1:], strict=True)
+    ]
+    active = [
+        (block, element, route, rows)
+        for block, element, route, rows in zip(
+            prepared.blocks, elements, routes, selections, strict=True
         )
-        selections = [
-            selected[(selected >= left) & (selected < right)] - left
-            for left, right in zip(offsets[:-1], offsets[1:], strict=True)
-        ]
-        active = [
-            (block, element, route, rows)
-            for block, element, route, rows in zip(
-                mesh.blocks, elements, routes, selections, strict=True
-            )
-            if rows.size
-        ]
-        vertex_rows = np.unique(
-            np.concatenate(
-                [
-                    np.asarray(block.vertices)[rows].reshape(-1)
-                    for block, _, _, rows in active
-                ]
-            )
+        if rows.size
+    ]
+    vertex_rows = np.unique(
+        np.concatenate(
+            [np.asarray(block.vertices)[rows].reshape(-1) for block, _, _, rows in active]
         )
-        if vertex_rows.size > vertex_capacity:
-            raise ValueError(
-                "Actual source closure exceeds the original vertex capacity."
-            )
-        blocks = tuple(
-            CellBlock(
-                block.name,
-                block.cell_kind,
-                np.searchsorted(vertex_rows, np.asarray(block.vertices)[rows]),
-                global_ids=np.asarray(block.global_ids)[rows],
-            )
+    )
+    if vertex_rows.size > vertex_capacity:
+        raise ValueError(
+            "distribution.closure_vertices must fit vertex_capacity; got excessive resident vertices"
+        )
+    blocks = tuple(
+        CellBlock(
+            block.name,
+            block.cell_kind,
+            np.searchsorted(vertex_rows, np.asarray(block.vertices)[rows]),
+            global_ids=np.asarray(block.global_ids)[rows],
+        )
+        for block, _, _, rows in active
+    )
+    points, vertex_ids = (
+        mesh.coordinates[vertex_rows],
+        mesh.vertex_global_ids[vertex_rows],
+    )
+    probe = CellMesh(points, blocks, vertex_global_ids=vertex_ids)
+    local_ids, local_owners, intermediate = [], [], {}
+    for degree in range(mesh.topological_dimension + 1):
+        lookup = {tuple(key): row for row, key in enumerate(entity_keys(mesh, degree))}
+        rows = np.asarray(
+            [lookup[tuple(key)] for key in entity_keys(probe, degree)],
+            dtype=np.int64,
+        )
+        identifiers = np.asarray(mesh.entity_set(degree).entity_ids)[rows]
+        local_ids.append(identifiers)
+        local_owners.append(entity_owners[degree][rows])
+        if 0 < degree < mesh.topological_dimension:
+            intermediate[degree] = identifiers
+    lifted = CellMesh(
+        points, blocks, vertex_global_ids=vertex_ids, entity_global_ids=intermediate
+    )
+    periodic = collective_geometry_owner.project_source_periodic_topology(
+        mesh, lifted, budget=budget
+    )
+    return _LocalFEClosureTopology(
+        tuple(active),
+        points,
+        blocks,
+        vertex_ids,
+        tuple(local_ids),
+        tuple(local_owners),
+        periodic,
+    )
+
+
+def _prepare_local_fe_closure_geometry(
+    prepared: _FEClosureSource,
+    banks: _FEClosureBanks,
+    local: _LocalFEClosureTopology,
+    retained_bytes: int,
+    limits: MeshingLimits,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> _LocalFEClosureGeometry:
+    geometry = prepared.plan.coordinate_spec
+    source_geometry_id, source_topology_id = (
+        banks.source_geometry_id,
+        banks.source_topology_id,
+    )
+    source_blocks, arrays = banks.source_blocks, banks.arrays
+    active, points, blocks = local.active, local.points, local.blocks
+    periodic, local_ids, local_owners = (
+        local.periodic,
+        local.local_ids,
+        local.local_owners,
+    )
+    selected_routes = {
+        block.name: np.asarray(route)[rows] for block, _, route, rows in active
+    }
+    coordinate_ids = np.unique(
+        np.concatenate([route[route >= 0] for route in selected_routes.values()])
+    )
+    local_elements = {block.name: element for block, element, _, _ in active}
+    local_routes = {
+        name: np.where(
+            route >= 0, np.searchsorted(coordinate_ids, np.maximum(route, 0)), -1
+        )
+        for name, route in selected_routes.items()
+    }
+    local_origin = CellGeometryRestrictionSource(
+        source_geometry_id,
+        source_topology_id,
+        {
+            block.name: arrays[f"geometry/parent_cell_ids/{block.name}"][rows]
             for block, _, _, rows in active
-        )
-        points, vertex_ids = (
-            mesh.coordinates[vertex_rows],
-            mesh.vertex_global_ids[vertex_rows],
-        )
-        probe = CellMesh(points, blocks, vertex_global_ids=vertex_ids)
-        local_ids, local_owners, intermediate = [], [], {}
-        for degree in range(mesh.topological_dimension + 1):
-            lookup = {
-                tuple(key): row for row, key in enumerate(entity_keys(mesh, degree))
-            }
-            rows = np.asarray(
-                [lookup[tuple(key)] for key in entity_keys(probe, degree)],
-                dtype=np.int64,
-            )
-            identifiers = np.asarray(mesh.entity_set(degree).entity_ids)[rows]
-            local_ids.append(identifiers)
-            local_owners.append(entity_owners[degree][rows])
-            if 0 < degree < mesh.topological_dimension:
-                intermediate[degree] = identifiers
-        lifted = CellMesh(
-            points, blocks, vertex_global_ids=vertex_ids, entity_global_ids=intermediate
-        )
-        periodic = project_source_periodic_topology(mesh, lifted)
-        selected_routes = {
-            block.name: np.asarray(route)[rows] for block, _, route, rows in active
-        }
-        coordinate_ids = np.unique(
-            np.concatenate([route[route >= 0] for route in selected_routes.values()])
-        )
-        local_elements = {block.name: element for block, element, _, _ in active}
-        local_routes = {
-            name: np.where(
-                route >= 0, np.searchsorted(coordinate_ids, np.maximum(route, 0)), -1
-            )
-            for name, route in selected_routes.items()
-        }
-        local_origin = CellGeometryRestrictionSource(
-            source_geometry_id,
-            source_topology_id,
-            {
-                block.name: arrays[f"geometry/parent_cell_ids/{block.name}"][rows]
-                for block, _, _, rows in active
-            },
-            {
-                block.name: arrays[f"geometry/parent_vertex_ids/{block.name}"][rows]
-                for block, _, _, rows in active
-            },
-            block_source_blocks=None
-            if source_blocks is None
-            else {block.name: source_blocks[block.name] for block, _, _, _ in active},
-        )
-        local_source = (
-            None
-            if geometry.periodic_source is None
-            else geometry.periodic_source.reindexed(coordinate_ids)
-        )
-        local_exact_source = geometry.exact_source
-        if isinstance(
+        },
+        {
+            block.name: arrays[f"geometry/parent_vertex_ids/{block.name}"][rows]
+            for block, _, _, rows in active
+        },
+        block_source_blocks=None
+        if source_blocks is None
+        else {block.name: source_blocks[block.name] for block, _, _, _ in active},
+    )
+    local_source = (
+        None
+        if geometry.periodic_source is None
+        else geometry.periodic_source.reindexed(coordinate_ids, budget=budget)
+    )
+    local_exact_source = geometry.exact_source
+    if isinstance(
+        local_exact_source,
+        (
+            ExactPowerCellGeometrySource,
+            ExactPowerCellGeometryRestrictionSource,
+            ExactPowerCellGeometryLinearActionSource,
+        ),
+    ):
+        local_exact_source = ExactPowerCellGeometryRestrictionSource(
             local_exact_source,
-            (
-                ExactPowerCellGeometrySource,
-                ExactPowerCellGeometryRestrictionSource,
-                ExactPowerCellGeometryLinearActionSource,
+            np.empty((0, 4), dtype=np.float64),
+            np.column_stack(
+                (coordinate_ids, np.full(coordinate_ids.size, -1, dtype=np.int64))
             ),
-        ):
-            local_exact_source = ExactPowerCellGeometryRestrictionSource(
-                local_exact_source,
-                np.empty((0, 4), dtype=np.float64),
-                np.column_stack(
-                    (coordinate_ids, np.full(coordinate_ids.size, -1, dtype=np.int64))
-                ),
-                np.full(coordinate_ids.size, -1, dtype=np.int64),
-            )
-        local_geometry = CellGeometrySpec(
-            local_elements,
-            local_routes,
-            geometry.coordinates[coordinate_ids],
-            restriction_source=local_origin,
-            periodic_source=local_source,
-            exact_source=local_exact_source,
+            np.full(coordinate_ids.size, -1, dtype=np.int64),
         )
-        workspace.retain_owner(
-            (blocks, periodic, local_geometry, local_ids, local_owners)
+    local_geometry = CellGeometrySpec(
+        local_elements,
+        local_routes,
+        geometry.coordinates[coordinate_ids],
+        restriction_source=local_origin,
+        periodic_source=local_source,
+        exact_source=local_exact_source,
+        budget=budget,
+    )
+    budget.retain_basis((blocks, periodic, local_geometry, local_ids, local_owners))
+    retained_bytes += (
+        points.nbytes
+        + sum(block.vertices.nbytes for block in blocks)
+        + local_geometry.coordinates.nbytes
+    )
+    if retained_bytes > limits.maximum_scratch_bytes:
+        raise ValueError(
+            "distribution.closure_storage must fit the scratch allowance; got excessive retained bytes"
         )
-        retained_bytes += (
-            points.nbytes
-            + sum(block.vertices.nbytes for block in blocks)
-            + local_geometry.coordinates.nbytes
+    return _LocalFEClosureGeometry(
+        local_elements, local_routes, coordinate_ids, local_geometry, retained_bytes
+    )
+
+
+def _prepare_local_fe_closure_plan(
+    prepared: _FEClosureSource,
+    banks: _FEClosureBanks,
+    local: _LocalFEClosureTopology,
+    coordinates: _LocalFEClosureGeometry,
+    rank: int,
+    budget: CoordinateEnclosureBudget,
+    /,
+) -> FiniteElementPlan:
+    distribution, source, source_plan = (
+        prepared.distribution,
+        prepared.result,
+        prepared.plan,
+    )
+    mesh, geometry = source.mesh, source_plan.coordinate_spec
+    points, blocks, periodic = local.points, local.blocks, local.periodic
+    local_ids, local_owners = local.local_ids, local.local_owners
+    local_elements, local_routes = coordinates.elements, coordinates.routes
+    coordinate_ids, local_geometry = coordinates.coordinate_ids, coordinates.geometry
+    coordinate_owners, arrays = banks.coordinate_owners, banks.arrays
+    local_origin = local_geometry.restriction_source
+    local_source, local_exact_source = (
+        local_geometry.periodic_source,
+        local_geometry.exact_source,
+    )
+    storage = CellMeshStorage(
+        tuple(
+            mesh.entity_set(degree).count
+            for degree in range(mesh.topological_dimension + 1)
+        ),
+        local_ids,
+        local_owners,
+        partition_index=rank,
+        partition_count=distribution.partition.part_count,
+        local_coordinates=points,
+        local_blocks=blocks,
+        logical_topology_id=mesh.topology_id,
+        logical_geometry_id=mesh.geometry_id,
+        logical_coordinate_geometry_id=cell_geometry_id(geometry),
+        evidence_id=source.result_id,
+        logical_arrays=tuple(sorted(arrays.items())),
+        local_geometry=local_geometry,
+        coordinate_global_ids=coordinate_ids,
+        coordinate_owner=coordinate_owners[coordinate_ids],
+        global_coordinate_count=geometry.coordinates.shape[0],
+        neighborhood_depth=distribution.halo_width,
+    )
+    local_mesh = CellMesh(
+        points,
+        blocks,
+        periodic_topology=periodic,
+        storage=storage,
+        numeric_version=mesh.numeric_version,
+    )
+    local_spec = CellGeometrySpec(
+        local_elements,
+        local_routes,
+        local_geometry.coordinates,
+        storage=storage,
+        restriction_source=local_origin,
+        periodic_source=local_source,
+        exact_source=local_exact_source,
+        budget=budget,
+    )
+    return FiniteElementPlan(
+        local_mesh,
+        source_plan.fields,
+        coordinate_spec=local_spec,
+        precision_policy=source_plan.precision_policy,
+        coefficient_dtype=source_plan.coefficient_dtype,
+        budget=budget,
+    )
+
+
+def _prepare_source_finite_element_closures(
+    distribution: MeshDistribution,
+    source_plan: FiniteElementPlan,
+    /,
+    *,
+    limits: MeshingLimits,
+    cell_capacity: int,
+    vertex_capacity: int,
+    message_capacity: int,
+    axis_name: str,
+    source_discretization: FiniteElementDiscretization | None,
+    transfer: FiniteElementFieldTransfer | None,
+    target_authority: FiniteElementGlobalDofOwnership | None,
+    numeric_version: str,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[
+    FiniteElementGlobalDofOwnership,
+    tuple[OwnerLocalFiniteElementDiscretization, ...],
+]:
+    prepared = _prepare_fe_closure_source(
+        distribution,
+        source_plan,
+        limits=limits,
+        cell_capacity=cell_capacity,
+        vertex_capacity=vertex_capacity,
+        source_discretization=source_discretization,
+        transfer=transfer,
+        target_authority=target_authority,
+        budget=budget,
+    )
+    topology = _prepare_fe_closure_topology(prepared, budget)
+    banks = _prepare_fe_closure_banks(prepared, topology, limits, budget)
+    offsets = np.cumsum([0] + [block.cell_count for block in prepared.result.mesh.blocks])
+    retained_bytes = banks.retained_bytes
+    local_plans = []
+    for rank, selected in enumerate(topology.closures):
+        local = _prepare_local_fe_closure_topology(
+            prepared, topology, banks, selected, offsets, budget
         )
-        if retained_bytes > limits.maximum_scratch_bytes:
-            raise ValueError(
-                "Actual FE closure storage exceeds the original storage allowance."
-            )
-        storage = CellMeshStorage(
-            tuple(
-                mesh.entity_set(degree).count
-                for degree in range(mesh.topological_dimension + 1)
-            ),
-            local_ids,
-            local_owners,
-            partition_index=rank,
-            partition_count=distribution.partition.part_count,
-            local_coordinates=points,
-            local_blocks=blocks,
-            logical_topology_id=mesh.topology_id,
-            logical_geometry_id=mesh.geometry_id,
-            logical_coordinate_geometry_id=cell_geometry_id(geometry),
-            evidence_id=source.result_id,
-            logical_arrays=tuple(sorted(arrays.items())),
-            local_geometry=local_geometry,
-            coordinate_global_ids=coordinate_ids,
-            coordinate_owner=coordinate_owners[coordinate_ids],
-            global_coordinate_count=geometry.coordinates.shape[0],
-            neighborhood_depth=distribution.halo_width,
+        coordinates = _prepare_local_fe_closure_geometry(
+            prepared, banks, local, retained_bytes, limits, budget
         )
-        local_mesh = CellMesh(
-            points,
-            blocks,
-            periodic_topology=periodic,
-            storage=storage,
-            numeric_version=mesh.numeric_version,
-        )
-        local_spec = CellGeometrySpec(
-            local_elements,
-            local_routes,
-            local_geometry.coordinates,
-            storage=storage,
-            restriction_source=local_origin,
-            periodic_source=local_source,
-            exact_source=local_exact_source,
-        )
+        retained_bytes = coordinates.retained_bytes
         local_plans.append(
-            FiniteElementPlan(
-                local_mesh,
-                source_plan.fields,
-                coordinate_spec=local_spec,
-                precision_policy=source_plan.precision_policy,
-                coefficient_dtype=source_plan.coefficient_dtype,
+            _prepare_local_fe_closure_plan(
+                prepared, banks, local, coordinates, rank, budget
             )
         )
+    authority = prepared.authority
     programs = authority.prepare_discretizations(
         local_plans,
         axis_name=axis_name,
         message_capacity=message_capacity,
         numeric_version=numeric_version,
+        budget=budget,
     )
-    workspace.retain_owner((local_plans, programs))
+    budget.retain_basis(((local_plans, programs),))
     return authority, programs
 
 
@@ -1237,7 +1656,7 @@ def _cell_centroids(part: MeshPart, /) -> np.ndarray:
                 )
                 centroids.append(total / np.sum(valid, axis=1)[:, None])
             return np.concatenate(centroids)
-        case PreparedTensorGrid():
+        case tensor_support_owner.PreparedTensorGrid():
             centers = np.meshgrid(
                 *(
                     np.asarray(axis.interval_centers, dtype=np.float64)
@@ -1246,11 +1665,11 @@ def _cell_centroids(part: MeshPart, /) -> np.ndarray:
                 indexing="ij",
             )
             return np.stack(tuple(value.reshape(-1) for value in centers), axis=-1)
-        case PointCloudPlan():
+        case point_cloud_owner.PointCloudPlan():
             return np.asarray(carrier.points, dtype=np.float64)
         case _:
             raise TypeError(
-                "Space-filling-curve partitions require cell, tensor, or point carriers."
+                f"distribution.curve.part.carrier must provide cell, tensor, or point centroids; got {type(carrier).__name__}"
             )
 
 
@@ -1258,7 +1677,9 @@ def _curve_codes(
     centroids: np.ndarray, kind: MeshPartitionKind, depth: int, /
 ) -> np.ndarray:
     if not np.all(np.isfinite(centroids)):
-        raise ValueError("Space-filling-curve partitions require finite centroids.")
+        raise ValueError(
+            "distribution.curve.centroids must be finite; got a nonfinite centroid coordinate"
+        )
     lower = np.min(centroids, axis=0)
     extent = np.max(np.max(centroids, axis=0) - lower)
     # One isotropic scale keeps the curve's locality in physical distance.
@@ -1273,7 +1694,9 @@ def _curve_codes(
         case MeshPartitionKind.HILBERT:
             codes = hilbert_encode_integer(jnp.asarray(integer), depth)
         case _:
-            raise ValueError("Curve codes require the MORTON or HILBERT route.")
+            raise ValueError(
+                f"distribution.curve.kind must be MORTON or HILBERT; got {kind}"
+            )
     return np.asarray(codes)
 
 
@@ -1288,7 +1711,9 @@ def _contiguous_ranges(
     """
     count = order.size
     if part_count > count:
-        raise ValueError("part_count exceeds the number of cells.")
+        raise ValueError(
+            "distribution.part_count must not exceed the native cell count; got more partitions than cells"
+        )
     ordered = weights[order]
     prefix = np.cumsum(ordered)
     midpoint = part_count * (prefix - 0.5 * ordered) / prefix[-1]
@@ -1347,7 +1772,9 @@ def _partition_owners(
     /,
 ) -> tuple[np.ndarray, str]:
     if ownership is not None and policy.kind is not MeshPartitionKind.PROVIDER:
-        raise ValueError("Supplied ownership requires the PROVIDER partition route.")
+        raise ValueError(
+            "distribution.ownership must be supplied only under the PROVIDER route; got ownership with a different partition kind"
+        )
     match policy.kind:
         case MeshPartitionKind.MORTON | MeshPartitionKind.HILBERT:
             codes = _curve_codes(_cell_centroids(part), policy.kind, policy.curve_depth)
@@ -1356,11 +1783,15 @@ def _partition_owners(
             return owner, f"{policy.kind.value}-curve-weighted-ranges"
         case MeshPartitionKind.GRAPH:
             if policy.part_count > weights.size:
-                raise ValueError("part_count exceeds the number of cells.")
+                raise ValueError(
+                    "distribution.part_count must not exceed the native cell count; got more partitions than cells"
+                )
             return _graph_owners(part, weights, policy)
         case MeshPartitionKind.METIS:
             if policy.part_count > weights.size:
-                raise ValueError("part_count exceeds the number of cells.")
+                raise ValueError(
+                    "distribution.part_count must not exceed the native cell count; got more partitions than cells"
+                )
             adjacency = _carrier_adjacency(part)
             owner = metis_partition(
                 np.asarray(adjacency.offsets),
@@ -1371,19 +1802,28 @@ def _partition_owners(
                 seed=policy.metis_seed,
             )
             if np.unique(owner).size != policy.part_count:
-                raise MetisPartitionError("METIS left at least one part empty.")
+                raise MetisPartitionError(
+                    "distribution.metis.ownership must assign at least one cell to each partition; got an empty partition"
+                )
             return owner, metis_identity()
         case MeshPartitionKind.PROVIDER:
             if ownership is None:
-                raise ValueError("The PROVIDER partition route requires ownership.")
+                raise ValueError(
+                    "distribution.provider.ownership must be supplied; got None"
+                )
             owner = np.asarray(ownership)
             if owner.shape != weights.shape:
-                raise ValueError("Provider ownership must cover every native cell.")
+                raise ValueError(
+                    f"distribution.provider.ownership must cover every native cell; got ownership_shape={owner.shape}, cell_shape={weights.shape}"
+                )
             return owner, "provider-ownership"
         case _:
-            raise ValueError("Unsupported mesh partition kind.")
+            raise ValueError(
+                f"distribution.partition_kind must select a supported partition route; got {policy.kind}"
+            )
 
 
+@checked
 def prepare_mesh_distribution(
     part: MeshPart,
     /,
@@ -1397,22 +1837,18 @@ def prepare_mesh_distribution(
     ``cell_weights`` and provider ``ownership`` follow native cell order.
     GRAPH runs the native partitioner and needs the meshcore library; only the
     METIS comparison route raises :class:`MetisUnavailableError`.
-    An already owner-local accepted carrier consumes its actual provider
-    ownership; optional vectors then follow the canonical global cell-ID prefix.
+    An already owner-local accepted carrier consumes its provider
+    ownership; optional vectors then follow the global cell-ID prefix.
     Repartitioning that carrier requires a validated migration/publication,
     never relabeling its bound storage as a different partition algorithm.
     """
-    if not isinstance(part, MeshPart):
-        raise TypeError("part must be MeshPart.")
-    if not isinstance(policy, MeshPartitionPolicy):
-        raise TypeError("policy must be MeshPartitionPolicy.")
     carrier = part.carrier
     if isinstance(carrier, CellMeshingResult) and carrier.mesh.storage is not None:
         mesh, storage = carrier.mesh, carrier.mesh.storage
         evidence, binding = carrier.collective_evidence, carrier.storage_binding
         if storage is None or evidence is None or binding is None:
             raise ValueError(
-                "Owner-local source distribution requires its actual accepted storage theorem binding."
+                "distribution.source_storage must retain accepted collective evidence; got missing or mismatched source binding"
             )
         binding.require_storage(mesh, evidence)
         evidence.require_passed()
@@ -1422,7 +1858,7 @@ def prepare_mesh_distribution(
             or policy.halo_width > storage.neighborhood_depth
         ):
             raise ValueError(
-                "Bound source ownership requires the provider route and its certified owner count and neighborhood."
+                "distribution.source_policy must use PROVIDER with the certified owner count and neighborhood; got incompatible source partition policy"
             )
         count = storage.global_entity_counts[-1]
         global_ids = evidence.entity_ids[-1][:count]
@@ -1433,30 +1869,28 @@ def prepare_mesh_distribution(
                 requested.dtype, jnp.integer
             ):
                 raise ValueError(
-                    "Source ownership must follow the exact canonical global cell-ID prefix."
+                    "distribution.source_owners must follow the global cell-ID prefix; got different ownership content"
                 )
             if not bool(jax.device_get(jnp.all(requested == global_owners))):
                 raise ValueError(
-                    "Changing accepted source owners requires actual validated migration and publication."
+                    "distribution.source_owners must preserve accepted owners until migration publication; got changed source ownership"
                 )
         summary = _owner_local_partition_summary(mesh)
         local_weights = None
         if cell_weights is not None:
-            from ._scope import _local_logical_lookup
-
             weights = jnp.asarray(cell_weights, dtype=jnp.float64)
             if weights.shape != global_ids.shape or not bool(
                 jax.device_get(jnp.all(jnp.isfinite(weights) & (weights > 0)))
             ):
                 raise ValueError(
-                    "Source load weights require finite positive values on the exact global cell-ID prefix."
+                    "distribution.cell_weights must be finite positive values on the global cell-ID prefix; got invalid weights or shape"
                 )
-            local_weights, valid = _local_logical_lookup(
+            local_weights, valid = local_logical_lookup(
                 global_ids, weights, storage.entity_global_ids[-1]
             )
             if not np.all(valid):
                 raise ValueError(
-                    "Source load weights lack an actual resident scientific cell."
+                    "distribution.cell_weights must bind resident cells; got a missing scientific cell"
                 )
             summary = (
                 jnp.bincount(
@@ -1467,7 +1901,7 @@ def prepare_mesh_distribution(
             )
         return MeshDistribution(
             part,
-            CellPartition(
+            partition_owner.CellPartition(
                 storage.entity_owner[-1], storage.partition_count, storage=storage
             ),
             halo_width=policy.halo_width,
@@ -1480,7 +1914,7 @@ def prepare_mesh_distribution(
     owner, provenance = _partition_owners(part, weights, policy, ownership)
     return MeshDistribution(
         part,
-        CellPartition(owner, policy.part_count),
+        partition_owner.CellPartition(owner, policy.part_count),
         halo_width=policy.halo_width,
         cell_weights=weights,
         partition_kind=policy.kind,
@@ -1492,48 +1926,60 @@ def _lineage_routes(
     source: MeshDistribution, target_part: MeshPart, lineage: MeshLineage, /
 ) -> tuple[np.ndarray, np.ndarray]:
     """Validated (source rows, target rows) cell routes covering both meshes."""
-    if not isinstance(source, MeshDistribution) or not isinstance(target_part, MeshPart):
-        raise TypeError("Transitions require a MeshDistribution and a target MeshPart.")
-    if not isinstance(lineage, MeshLineage):
-        raise TypeError("lineage must be MeshLineage.")
     if not isinstance(source.part.carrier, CellMeshingResult) or not isinstance(
         target_part.carrier, CellMeshingResult
     ):
-        raise TypeError("Distribution transitions require certified cell parts.")
+        raise TypeError(
+            "distribution.transition.carriers must be certified cell results; got an incompatible source or target carrier"
+        )
     if target_part.name != source.part.name:
-        raise ValueError("Distribution transitions must stay on one named part.")
+        raise ValueError(
+            f"distribution.transition.target.name must match the source part name; got target={target_part.name!r}, source={source.part.name!r}"
+        )
     source_mesh, target_mesh = source.part.carrier.mesh, target_part.carrier.mesh
     if (
         lineage.source_topology_id != source_mesh.topology_id
         or lineage.target_topology_id != target_mesh.topology_id
     ):
         raise ValueError(
-            "Mesh lineage endpoints do not match the source distribution and target part."
+            "distribution.transition.lineage.endpoints must match source and target topology IDs; got different lineage endpoints"
         )
     dimension = source_mesh.topological_dimension
     records = tuple(value for value in lineage.entities if value.dimension == dimension)
     if target_mesh.topological_dimension != dimension or not records:
-        raise ValueError("Mesh lineage lacks a cell-dimension record.")
+        raise ValueError(
+            "distribution.transition.lineage.cells must contain the source and target cell dimension; got different dimensions or missing cell lineage"
+        )
     cells = records[0]
     if (
         cells.source_entity_set_id != source_mesh.entity_set(dimension).entity_set_id
         or cells.target_entity_set_id != target_mesh.entity_set(dimension).entity_set_id
     ):
-        raise ValueError("Cell lineage entity sets do not match the meshes.")
+        raise ValueError(
+            "distribution.transition.lineage.entity_sets must match source and target cell sets; got different entity-set IDs"
+        )
     source_ids = np.asarray(source.cell_global_ids)
     target_ids = _native_cell_ids(target_part)
-    source_rows = _rows_of(source_ids, cells.source_global_ids)
-    target_rows = _rows_of(target_ids, cells.target_global_ids)
-    created = _rows_of(target_ids, cells.created_target_ids)
-    deleted = _rows_of(source_ids, cells.deleted_source_ids)
+    source_rows = rows_of(source_ids, cells.source_global_ids)
+    target_rows = rows_of(target_ids, cells.target_global_ids)
+    created = rows_of(target_ids, cells.created_target_ids)
+    deleted = rows_of(source_ids, cells.deleted_source_ids)
     if np.any(source_rows < 0) or np.any(deleted < 0):
-        raise ValueError("Cell lineage references IDs outside the source mesh.")
+        raise ValueError(
+            "distribution.transition.lineage.source_ids must belong to the source mesh; got missing source or deleted cell IDs"
+        )
     if np.any(target_rows < 0) or np.any(created < 0):
-        raise ValueError("Cell lineage references IDs outside the target mesh.")
+        raise ValueError(
+            "distribution.transition.lineage.target_ids must belong to the target mesh; got missing target or created cell IDs"
+        )
     if not np.all(np.isin(np.arange(target_ids.size), np.union1d(target_rows, created))):
-        raise ValueError("Cell lineage must account for every target cell.")
+        raise ValueError(
+            "distribution.transition.lineage.target_ids must cover routed and created target cells; got an uncovered target cell"
+        )
     if not np.all(np.isin(np.arange(source_ids.size), np.union1d(source_rows, deleted))):
-        raise ValueError("Cell lineage must account for every source cell.")
+        raise ValueError(
+            "distribution.transition.lineage.source_ids must cover routed and deleted source cells; got an uncovered source cell"
+        )
     return source_rows, target_rows
 
 
@@ -1553,19 +1999,11 @@ def _grow_ownership(owner: np.ndarray, adjacency: CellAdjacency, /) -> np.ndarra
         grown = np.where(grown < 0, proposed, grown)
 
 
-def _relabel_to_inherited(
-    fresh: np.ndarray, inherited: np.ndarray, weights: np.ndarray, part_count: int, /
-) -> np.ndarray:
-    """Rename fresh parts to the inherited ranks they overlap most (assignment)."""
-    # Imported lazily: the transport package is heavy and unrelated to meshing import.
-    from ..transport import solve_multidimensional_assignment
+def _overlap_rank_mapping(overlap: np.ndarray, /) -> np.ndarray:
+    """Assign fresh ranks to inherited ranks with the serial overlap tie rules."""
+    # The replicated rank-by-rank overlap is routing metadata, not mesh content.
 
-    defined = inherited >= 0
-    overlap = np.bincount(
-        fresh[defined] * part_count + inherited[defined],
-        weights=weights[defined],
-        minlength=part_count * part_count,
-    ).reshape(part_count, part_count)
+    part_count = overlap.shape[0]
     anchors = np.zeros((part_count, 1), dtype=np.float64)
     assignment = solve_multidimensional_assignment(
         anchors,
@@ -1575,7 +2013,20 @@ def _relabel_to_inherited(
     )
     mapping = np.empty((part_count,), dtype=np.int32)
     mapping[np.asarray(assignment.source_indices)] = np.asarray(assignment.target_indices)
-    return mapping[fresh]
+    return mapping
+
+
+def _relabel_to_inherited(
+    fresh: np.ndarray, inherited: np.ndarray, weights: np.ndarray, part_count: int, /
+) -> np.ndarray:
+    """Rename fresh parts to the inherited ranks they overlap most (assignment)."""
+    defined = inherited >= 0
+    overlap = np.bincount(
+        fresh[defined] * part_count + inherited[defined],
+        weights=weights[defined],
+        minlength=part_count * part_count,
+    ).reshape(part_count, part_count)
+    return _overlap_rank_mapping(overlap)[fresh]
 
 
 def _transition_owners(
@@ -1611,19 +2062,17 @@ def _transition_owners(
 def _restart_transport_binding(
     source: MeshDistribution,
     target: MeshDistribution,
-    repack: SimplexRestartRepack,
-    proof: SimplexRestartRepackProof,
+    repack: restart_owner.SimplexRestartRepack,
+    proof: restart_owner.SimplexRestartRepackProof | None,
     /,
 ) -> str:
-    """Consume the all-owner mathematical repack proof and exact published inputs locally."""
+    """Bind the all-owner repack proof to published numerical inputs locally."""
 
-    if not isinstance(repack, SimplexRestartRepack) or not isinstance(
-        proof, SimplexRestartRepackProof
-    ):
-        raise TypeError(
-            "Changed placement requires its actual numerical repack and prepared proof."
-        )
-    proof.require_receipt(repack)
+    if proof is None:
+        content_id = restart_owner.simplex_restart_repack_content_id(repack)
+    else:
+        proof.require_receipt(repack)
+        content_id = proof.content_id
     original = repack.source_result
     before, after = source.part.carrier, target.part.carrier
     if (
@@ -1632,7 +2081,7 @@ def _restart_transport_binding(
         or not isinstance(after, CellMeshingResult)
     ):
         raise ValueError(
-            "Restart transport must bind actual accepted source and target results."
+            "distribution.restart_transport must bind accepted source and target results; got missing or incompatible results"
         )
     evidence = after.collective_evidence
     if not isinstance(evidence, CollectiveMeshEvidence) or (
@@ -1651,7 +2100,7 @@ def _restart_transport_binding(
         )
     ):
         raise ValueError(
-            "Restart transport lost its accepted source, target or rectangular ownership binding."
+            "distribution.restart_transport must bind accepted source, target, and rectangular ownership counts; got incompatible source evidence, layout, or migration-count shape"
         )
     initial = jax.tree_util.tree_leaves(evidence.initial_states)
     actual = jax.tree_util.tree_leaves(repack.states)
@@ -1659,7 +2108,7 @@ def _restart_transport_binding(
         left is not right for left, right in zip(initial, actual, strict=True)
     ):
         raise ValueError(
-            "Restart target does not consume the exact prepared numerical initial forest."
+            "distribution.restart_target must consume the prepared initial forest; got different numerical references"
         )
     banks = dict(evidence.logical_arrays)
     for name, value in (
@@ -1671,9 +2120,211 @@ def _restart_transport_binding(
     ):
         if name not in banks or banks[name] is not value:
             raise ValueError(
-                "Restart target lost an exact independently validated placement receipt bank."
+                "distribution.restart_target must retain validated placement banks; got missing bank or different numerical reference"
             )
-    return proof.content_id
+    return content_id
+
+
+@final
+class _TransitionSource(StrictModule):
+    identifiers: Array | np.ndarray
+    sender: np.ndarray
+    routed_identifiers: np.ndarray
+
+
+@final
+class _TransitionMessages(StrictModule):
+    sources: np.ndarray
+    targets: np.ndarray
+    sender: np.ndarray
+    receiver: np.ndarray
+    slots: np.ndarray
+    pair_counts: np.ndarray
+    offsets: np.ndarray
+    remote: np.ndarray
+    volume: np.float64
+
+
+def _prepare_logical_transition_source(
+    source: MeshDistribution,
+    target: MeshDistribution,
+    sources: np.ndarray,
+    targets: np.ndarray,
+    lineage: MeshLineage,
+    source_count: int,
+    _source_cell_owners: ArrayLike | None,
+    _source_cell_ids: ArrayLike | None,
+) -> _TransitionSource:
+    parts = source.partition.part_count
+    carrier = source.part.carrier
+    if not isinstance(carrier, CellMeshingResult) or carrier.mesh.storage is None:
+        raise ValueError(
+            "distribution.transition.source.storage must retain accepted cell mesh storage; got incompatible carrier or missing storage"
+        )
+    evidence = carrier.collective_evidence
+    if (
+        evidence is None
+        or source_count != evidence.global_entity_counts[-1]
+        or source.partition.global_cell_count != source_count
+        or source.partition.storage_id != carrier.mesh.storage.storage_id
+    ):
+        raise ValueError(
+            "distribution.transition.source.storage must match collective evidence and global cell count; got missing evidence or incompatible storage metadata"
+        )
+    evidence.require_passed()
+    native_partition_id = canonical_fingerprint(
+        {
+            "kind": "owner-local-cell-partition",
+            "cell_owner": array_tree_fingerprint(source.partition.cell_owner),
+            "part_count": parts,
+            "storage": source.partition.storage_id,
+            "global_cell_count": source_count,
+        }
+    )
+    if (
+        native_partition_id != source.partition.partition_id
+        or canonical_fingerprint(array_tree_fingerprint(source.cell_global_ids))
+        != source.cell_content_id
+    ):
+        raise ValueError(
+            "distribution.source_cache must match native partition and cell content; got changed cache binding"
+        )
+    source_ids = (
+        evidence.entity_ids[-1]
+        if _source_cell_ids is None
+        else jnp.asarray(_source_cell_ids)
+    )
+    source_owner = (
+        evidence.entity_owners[-1]
+        if _source_cell_owners is None
+        else jnp.asarray(_source_cell_owners)
+    )
+    if (
+        source_ids.shape != evidence.entity_ids[-1].shape
+        or source_owner.shape != source_ids.shape
+        or source_ids.dtype != jnp.int64
+        or source_owner.dtype != jnp.int32
+    ):
+        raise ValueError(
+            "distribution.source_cache must use aligned int64 IDs and int32 owners; got incompatible shape or dtype"
+        )
+    shapes = {"cell_ids": (source_count,), "cell_owner": (source_count,)}
+    actual = logical_array_value_collection_digest(
+        {"cell_ids": source_ids, "cell_owner": source_owner},
+        logical_shapes=shapes,
+    )
+    expected = logical_array_value_collection_digest(
+        {
+            "cell_ids": evidence.entity_ids[-1],
+            "cell_owner": evidence.entity_owners[-1],
+        },
+        logical_shapes=shapes,
+    )
+    if actual != expected:
+        raise ValueError(
+            f"distribution.transition.source.logical_arrays must match accepted source IDs and ownership; got digest={actual}, expected={expected}"
+        )
+    # Only transport occurrences are lowered. The scientific source
+    # bank stays globally sharded, irrespective of local block order.
+    sender = np.asarray(
+        jax.device_get(source_owner[jnp.asarray(sources)]), dtype=np.int32
+    )
+    routed_source_ids = np.asarray(
+        jax.device_get(source_ids[jnp.asarray(sources)]), dtype=np.int64
+    )
+    record = lineage.entity_lineage(carrier.mesh.topological_dimension)
+    if not np.array_equal(
+        routed_source_ids, np.asarray(record.source_global_ids)
+    ) or not np.array_equal(
+        np.asarray(target.cell_global_ids)[targets],
+        np.asarray(record.target_global_ids),
+    ):
+        raise ValueError(
+            "distribution.transition.routes must bind the retained source and target cell lineage IDs; got different routed identifiers"
+        )
+    return _TransitionSource(source_ids, sender, routed_source_ids)
+
+
+def _prepare_serial_transition_source(
+    source: MeshDistribution,
+    sources: np.ndarray,
+    _source_cell_owners: ArrayLike | None,
+    _source_cell_ids: ArrayLike | None,
+) -> _TransitionSource:
+    parts = source.partition.part_count
+    source_owner = (
+        np.asarray(source.partition.cell_owner, dtype=np.int32)
+        if _source_cell_owners is None
+        else np.asarray(_source_cell_owners, dtype=np.int32)
+    )
+    source_ids = (
+        np.asarray(source.cell_global_ids, dtype=np.int64)
+        if _source_cell_ids is None
+        else np.asarray(_source_cell_ids, dtype=np.int64)
+    )
+    source_partition_payload = {
+        "kind": "cell-partition",
+        "cell_owner": array_tree_fingerprint(source_owner),
+        "part_count": parts,
+    }
+    if (
+        canonical_fingerprint(source_partition_payload) != source.partition.partition_id
+        or canonical_fingerprint(array_tree_fingerprint(source_ids))
+        != source.cell_content_id
+    ):
+        raise ValueError(
+            "distribution.transition.source.cache must match bound ownership and ID fingerprints; got changed source cache"
+        )
+    sender = source_owner[sources]
+    routed_source_ids = source_ids[sources]
+    return _TransitionSource(source_ids, sender, routed_source_ids)
+
+
+def _prepare_transition_messages(
+    source: MeshDistribution,
+    target: MeshDistribution,
+    sources: np.ndarray,
+    targets: np.ndarray,
+    prepared: _TransitionSource,
+    /,
+) -> _TransitionMessages:
+    parts, target_parts = source.partition.part_count, target.partition.part_count
+    sender, routed_source_ids = prepared.sender, prepared.routed_identifiers
+    receiver = np.asarray(target.partition.cell_owner, dtype=np.int64)[targets]
+    if np.any((sender < 0) | (sender >= parts)) or np.any(
+        (receiver < 0) | (receiver >= target_parts)
+    ):
+        raise ValueError(
+            "distribution.transition_ranks must belong to source and target owner groups; got out-of-range sender or receiver"
+        )
+    order = np.lexsort(
+        (
+            routed_source_ids,
+            np.asarray(target.cell_global_ids)[targets],
+            receiver,
+            sender,
+        )
+    )
+    sources, targets = sources[order], targets[order]
+    sender, receiver = sender[order], receiver[order]
+    slots = np.arange(sources.size, dtype=np.int32)
+    pair_counts = np.bincount(
+        sender * target_parts + receiver, minlength=parts * target_parts
+    )
+    offsets = np.concatenate(([0], np.cumsum(pair_counts)))
+    remote = np.unique(targets[sender != receiver])
+    volume = np.sum(np.asarray(target.cell_weights)[remote])
+    return _TransitionMessages(
+        sources, targets, sender, receiver, slots, pair_counts, offsets, remote, volume
+    )
+
+
+class _DistributionRouteDim(Dim):
+    """Lineage routes retained in their input order for reconstruction."""
+
+
+class _DistributionSourceCapacityDim(Dim):
+    """Allocated source-cell identity and optional owner rows."""
 
 
 class MeshDistributionTransition(StrictModule, NonTrainableState):
@@ -1686,13 +2337,17 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
     ``message_offsets`` groups slots by the source-rank-major pair
     ``source_rank * target.part_count + target_rank``. Its rectangular traffic
     table has one row per old owner and one column per new owner. Global IDs are
-    never renumbered; changed owner counts consume an actual numerical repack proof.
+    never renumbered; changed owner counts consume a numerical repack proof.
+    Input routes, lineage, and portable repack records are retained so archive
+    reconstruction repeats the same source and migration validation.
     """
+
+    __strict_contract__ = True
 
     source: MeshDistribution
     target: MeshDistribution
     send: EdgeRelation
-    source_cell_global_ids: Array
+    source_cell_global_ids: Int64[_DistributionSourceCapacityDim]
     source_cell_count: int = eqx.field(static=True)
     receive: EdgeRelation
     message_source_ranks: Array
@@ -1708,6 +2363,33 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
     restart_repack_id: str | None = eqx.field(static=True)
     restart_source_result_id: str | None = eqx.field(static=True)
     transition_id: str = eqx.field(static=True)
+    source_rows: Int64[_DistributionRouteDim]
+    target_rows: Int64[_DistributionRouteDim]
+    source_cell_owners: Int32[_DistributionSourceCapacityDim] | None
+    lineage: MeshLineage
+    restart_repack: restart_owner.SimplexRestartRepack | None
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[MeshDistributionTransition],
+        value: MeshDistributionTransition,
+        /,
+    ) -> MeshDistributionTransition:
+        """Reconstruct routes and revalidate retained source and restart records."""
+        rebuilt = cls(
+            value.source,
+            value.target,
+            value.source_rows,
+            value.target_rows,
+            value.lineage,
+            rebalanced=value.rebalanced,
+            _source_cell_owners=value.source_cell_owners,
+            _source_cell_ids=value.source_cell_global_ids,
+            restart_repack=value.restart_repack,
+        )
+        validate(rebuilt)
+        return rebuilt
 
     @checked
     def __init__(
@@ -1722,26 +2404,18 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
         rebalanced: bool,
         _source_cell_owners: ArrayLike | None = None,
         _source_cell_ids: ArrayLike | None = None,
-        restart_repack: SimplexRestartRepack | None = None,
-        restart_proof: SimplexRestartRepackProof | None = None,
+        restart_repack: restart_owner.SimplexRestartRepack | None = None,
+        restart_proof: restart_owner.SimplexRestartRepackProof | None = None,
     ) -> None:
-        if not isinstance(source, MeshDistribution) or not isinstance(
-            target, MeshDistribution
-        ):
-            raise TypeError("Transition endpoints must be MeshDistribution values.")
         parts = source.partition.part_count
         target_parts = target.partition.part_count
         repack_id = None
         if restart_repack is None:
             if restart_proof is not None or target_parts != parts:
                 raise ValueError(
-                    "Changed owner counts require an actual independently validated restart repack."
+                    "distribution.restart_repack must bind changed owner counts; got missing repack or unexpected proof"
                 )
         else:
-            if restart_proof is None:
-                raise ValueError(
-                    "Restart transport requires its prepared all-owner numerical proof."
-                )
             repack_id = _restart_transport_binding(
                 source, target, restart_repack, restart_proof
             )
@@ -1759,147 +2433,59 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
             or np.any((sources < 0) | (sources >= source_count))
             or np.any((targets < 0) | (targets >= target_count))
         ):
-            raise ValueError("Transition routes must address native source/target rows.")
-        if source.local_scope:
-            carrier = source.part.carrier
-            if not isinstance(carrier, CellMeshingResult) or carrier.mesh.storage is None:
-                raise ValueError(
-                    "Logical source ownership requires its accepted mesh storage."
-                )
-            evidence = carrier.collective_evidence
-            if (
-                evidence is None
-                or source_count != evidence.global_entity_counts[-1]
-                or source.partition.global_cell_count != source_count
-                or source.partition.storage_id != carrier.mesh.storage.storage_id
-            ):
-                raise ValueError(
-                    "Logical source ownership lost its consumed global entity count."
-                )
-            evidence.require_passed()
-            native_partition_id = canonical_fingerprint(
-                {
-                    "kind": "owner-local-cell-partition",
-                    "cell_owner": array_tree_fingerprint(source.partition.cell_owner),
-                    "part_count": parts,
-                    "storage": source.partition.storage_id,
-                    "global_cell_count": source_count,
-                }
-            )
-            if (
-                native_partition_id != source.partition.partition_id
-                or canonical_fingerprint(array_tree_fingerprint(source.cell_global_ids))
-                != source.cell_content_id
-            ):
-                raise ValueError(
-                    "The source local view lost its owning native cache binding."
-                )
-            source_ids = (
-                evidence.entity_ids[-1]
-                if _source_cell_ids is None
-                else jnp.asarray(_source_cell_ids)
-            )
-            source_owner = (
-                evidence.entity_owners[-1]
-                if _source_cell_owners is None
-                else jnp.asarray(_source_cell_owners)
-            )
-            if (
-                source_ids.shape != evidence.entity_ids[-1].shape
-                or source_owner.shape != source_ids.shape
-                or source_ids.dtype != jnp.int64
-                or source_owner.dtype != jnp.int32
-            ):
-                raise ValueError(
-                    "Source logical caches require the actual canonical ID/owner bank."
-                )
-            shapes = {"cell_ids": (source_count,), "cell_owner": (source_count,)}
-            actual = logical_array_value_collection_digest(
-                {"cell_ids": source_ids, "cell_owner": source_owner},
-                logical_shapes=shapes,
-            )
-            expected = logical_array_value_collection_digest(
-                {
-                    "cell_ids": evidence.entity_ids[-1],
-                    "cell_owner": evidence.entity_owners[-1],
-                },
-                logical_shapes=shapes,
-            )
-            if actual != expected:
-                raise ValueError(
-                    "Source logical ownership/ID receipt differs from its accepted source."
-                )
-            # Only transport occurrences are lowered. The scientific source
-            # bank stays globally sharded, irrespective of local block order.
-            sender = np.asarray(
-                jax.device_get(source_owner[jnp.asarray(sources)]), dtype=np.int32
-            )
-            routed_source_ids = np.asarray(
-                jax.device_get(source_ids[jnp.asarray(sources)]), dtype=np.int64
-            )
-            record = lineage.entity_lineage(carrier.mesh.topological_dimension)
-            if not np.array_equal(
-                routed_source_ids, np.asarray(record.source_global_ids)
-            ) or not np.array_equal(
-                np.asarray(target.cell_global_ids)[targets],
-                np.asarray(record.target_global_ids),
-            ):
-                raise ValueError(
-                    "Logical transport occurrences do not bind the consumed cell lineage."
-                )
-        else:
-            source_owner = (
-                np.asarray(source.partition.cell_owner, dtype=np.int32)
-                if _source_cell_owners is None
-                else np.asarray(_source_cell_owners, dtype=np.int32)
-            )
-            source_ids = (
-                np.asarray(source.cell_global_ids, dtype=np.int64)
-                if _source_cell_ids is None
-                else np.asarray(_source_cell_ids, dtype=np.int64)
-            )
-            source_partition_payload = {
-                "kind": "cell-partition",
-                "cell_owner": array_tree_fingerprint(source_owner),
-                "part_count": parts,
-            }
-            if (
-                canonical_fingerprint(source_partition_payload)
-                != source.partition.partition_id
-                or canonical_fingerprint(array_tree_fingerprint(source_ids))
-                != source.cell_content_id
-            ):
-                raise ValueError(
-                    "Prepared source ownership/ID cache differs from its bound source."
-                )
-            sender = source_owner[sources]
-            routed_source_ids = source_ids[sources]
-        receiver = np.asarray(target.partition.cell_owner, dtype=np.int64)[targets]
-        if np.any((sender < 0) | (sender >= parts)) or np.any(
-            (receiver < 0) | (receiver >= target_parts)
-        ):
             raise ValueError(
-                "Transition sender and receiver ranks must belong to their exact respective owner groups."
+                "distribution.transition.routes must provide paired one-dimensional in-range source and target rows; got incompatible route shape or out-of-range rows"
             )
-        order = np.lexsort(
-            (
-                routed_source_ids,
-                np.asarray(target.cell_global_ids)[targets],
-                receiver,
-                sender,
+        retained_sources = jnp.asarray(sources, dtype=jnp.int64)
+        retained_targets = jnp.asarray(targets, dtype=jnp.int64)
+        if source.local_scope:
+            prepared = _prepare_logical_transition_source(
+                source,
+                target,
+                sources,
+                targets,
+                lineage,
+                source_count,
+                _source_cell_owners,
+                _source_cell_ids,
             )
+        else:
+            prepared = _prepare_serial_transition_source(
+                source,
+                sources,
+                _source_cell_owners,
+                _source_cell_ids,
+            )
+        messages = _prepare_transition_messages(
+            source, target, sources, targets, prepared
         )
-        sources, targets = sources[order], targets[order]
-        sender, receiver = sender[order], receiver[order]
-        slots = np.arange(sources.size, dtype=np.int32)
-        pair_counts = np.bincount(
-            sender * target_parts + receiver, minlength=parts * target_parts
-        )
-        offsets = np.concatenate(([0], np.cumsum(pair_counts)))
-        remote = np.unique(targets[sender != receiver])
-        volume = np.sum(np.asarray(target.cell_weights)[remote])
+        source_ids = prepared.identifiers
+        sources, targets = messages.sources, messages.targets
+        sender, receiver, slots = messages.sender, messages.receiver, messages.slots
+        pair_counts, offsets = messages.pair_counts, messages.offsets
+        remote, volume = messages.remote, messages.volume
         self.source = source
         self.target = target
+        self.source_rows = retained_sources
+        self.target_rows = retained_targets
+        self.source_cell_owners = (
+            None
+            if _source_cell_owners is None
+            else jnp.asarray(_source_cell_owners, dtype=jnp.int32)
+        )
+        self.lineage = lineage
+        self.restart_repack = (
+            None
+            if restart_repack is None
+            else replace(
+                restart_repack,
+                parts=restart_owner.SimplexRestartPlacement(
+                    axis_name=restart_repack.parts.axis_name,
+                    part_count=restart_repack.parts.part_count,
+                    neighbor_pairs=restart_repack.parts.neighbor_pairs,
+                ),
+            )
+        )
         self.source_cell_global_ids = jnp.asarray(source_ids, dtype=jnp.int64)
         self.source_cell_count = source_count
         self.send = EdgeRelation(
@@ -1923,8 +2509,9 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
         self.rebalanced = bool(rebalanced)
         self.lineage_id = lineage.lineage_id
         self.restart_repack_id = repack_id
+        restart_source = None if restart_repack is None else restart_repack.source_result
         self.restart_source_result_id = (
-            None if restart_proof is None else restart_proof.source_result_id
+            None if restart_source is None else restart_source.result_id
         )
         self.transition_id = canonical_fingerprint(
             {
@@ -1942,7 +2529,9 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
     def _rank(self, rank: int, parts: int, /) -> int:
         index = operator.index(rank)
         if not 0 <= index < parts:
-            raise ValueError("Transition rank is out of range.")
+            raise ValueError(
+                f"distribution.transition.rank must lie in [0, part_count); got rank={index}, part_count={parts}"
+            )
         return index
 
     def sent_by(self, rank: int, /) -> Array:
@@ -1968,7 +2557,7 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
     ) -> Array:
         """Migrate source-bank cell data onto native target cells.
 
-        Owner-local predecessors use the canonical global ID prefix exposed by
+        Owner-local predecessors use the global ID prefix exposed by
         ``source_cell_global_ids``; compact predecessors retain native order.
 
         Preserved and refined cells copy their parent value; merged cells reduce
@@ -1978,12 +2567,13 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
         values = jnp.asarray(source_values)
         if values.ndim == 0 or values.shape[0] != self.source_cell_count:
             raise ValueError(
-                "Transferred values must follow the bound source cell bank prefix."
+                f"distribution.transition.values must follow the bound source cell bank prefix; got shape={values.shape}, source_cells={self.source_cell_count}"
             )
         return route_reduce(
             self.receive, gather_routes(self.send, values), reduction=reduction
         )
 
+    @checked
     def composition_transport(
         self, source: CompositionEntry, target: CompositionEntry, /
     ) -> CompositionTransport:
@@ -2005,40 +2595,35 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
         cannot borrow this route's evidence.
         """
 
-        # Lazy: the lifecycle package sits above the meshing owners.
-        from ..lifecycle import CompositionEntry, CompositionTransport
-
-        if not isinstance(source, CompositionEntry) or not isinstance(
-            target, CompositionEntry
-        ):
-            raise TypeError("Composition transports bind CompositionEntry values.")
         if (
             source.structure_id != self.source.distribution_id
             or target.structure_id != self.target.distribution_id
         ):
             raise ValueError(
-                "Composition entries do not live on this transition's distributions."
+                "distribution.transition.composition.structure_ids must match source and target distributions; got foreign composition structure IDs"
             )
         if not np.all(np.asarray(self.target_defined)):
             raise ValueError(
-                "Created target rows hold no migrated content; they need an explicit "
-                "physical remap or initialization rule, never an ownership migration."
+                "distribution.transition.target_defined must cover every target row for ownership transport; got created rows requiring physical remap or initialization"
             )
         sent = np.bincount(
             np.asarray(self.send.source_indices), minlength=self.send.source_size
         )
         if np.any(sent != 1):
             raise ValueError(
-                "Ownership migration moves every source row exactly once; deleted or "
-                "refined rows need an explicit physical remap."
+                "distribution.transition.send must route each source row once for ownership transport; got deleted or refined rows requiring physical remap"
             )
         values = jnp.asarray(source.value)
         if not jnp.issubdtype(values.dtype, jnp.inexact):
-            raise TypeError("Migrated cell content must be a real or complex array.")
+            raise TypeError(
+                f"distribution.transition.composition.value must use a real or complex inexact dtype; got {values.dtype}"
+            )
         image = self.transfer(values, reduction="sum")
         staged = jnp.asarray(target.value)
         if staged.shape != image.shape or staged.dtype != image.dtype:
-            raise ValueError("Staged target does not match the migrated row layout.")
+            raise ValueError(
+                f"distribution.transition.composition.target must match migrated shape and dtype; got shape={staged.shape}, dtype={staged.dtype}, expected_shape={image.shape}, expected_dtype={image.dtype}"
+            )
         eps = jnp.finfo(jnp.real(image).dtype).eps
         exact = jnp.abs(staged - image) <= 100 * eps * jnp.max(jnp.abs(image))
         finite = jnp.all(jnp.isfinite(image)) & jnp.all(jnp.isfinite(staged))
@@ -2057,6 +2642,7 @@ class MeshDistributionTransition(StrictModule, NonTrainableState):
         )
 
 
+@checked
 def prepare_distribution_transition(
     source: MeshDistribution,
     target_part: MeshPart,
@@ -2076,20 +2662,22 @@ def prepare_distribution_transition(
     the source ranks they overlap most, minimizing migration. The PROVIDER
     route takes target ``ownership`` as supplied.
     """
-    if not isinstance(policy, MeshPartitionPolicy):
-        raise TypeError("policy must be MeshPartitionPolicy.")
     if ownership is not None and policy.kind is not MeshPartitionKind.PROVIDER:
-        raise ValueError("Supplied ownership requires the PROVIDER partition route.")
+        raise ValueError(
+            "distribution.ownership must be supplied only under the PROVIDER route; got ownership with a different partition kind"
+        )
     routes = _lineage_routes(source, target_part, lineage)
     if policy.part_count != source.partition.part_count:
-        raise ValueError("Distribution transitions keep the source part count.")
+        raise ValueError(
+            f"distribution.transition.policy.part_count must match the source owner count; got requested={policy.part_count}, source={source.partition.part_count}"
+        )
     weights = _cell_weights(cell_weights, _native_cell_ids(target_part).size)
     owner, rebalanced, provenance = _transition_owners(
         source, target_part, routes, weights, policy, ownership
     )
     target = MeshDistribution(
         target_part,
-        CellPartition(owner, policy.part_count),
+        partition_owner.CellPartition(owner, policy.part_count),
         halo_width=policy.halo_width,
         cell_weights=weights,
         partition_kind=policy.kind,
@@ -2100,7 +2688,8 @@ def prepare_distribution_transition(
     )
 
 
-def _lexicographic_bound(table: Array, queries: Array, upper: bool, /) -> Array:
+@jax.jit
+def lexicographic_bound(table: Array, queries: Array, upper: bool, /) -> Array:
     """Vector lower/upper bounds without a query-by-table allocation."""
     size = table.shape[0]
     low = jnp.zeros((queries.shape[0],), dtype=jnp.int32)
@@ -2128,29 +2717,14 @@ def _lexicographic_bound(table: Array, queries: Array, upper: bool, /) -> Array:
     return jax.lax.while_loop(proceed, step, (low, high))[0]
 
 
-def _facet_packets(state: AdaptiveSimplexState, /) -> tuple[Array, Array]:
-    width = state.mesh.cells.shape[1]
-    columns = jnp.asarray(_facet_columns(width), dtype=jnp.int32)
-    identifiers = state.mesh.vertex_ids[state.mesh.cells[:, columns]]
-    signs = jnp.ones(identifiers.shape[:2], dtype=jnp.int32)
-    for left in range(width - 1):
-        for right in range(left + 1, width - 1):
-            signs *= jnp.where(identifiers[..., left] > identifiers[..., right], -1, 1)
-    signs *= jnp.where(jnp.arange(width) % 2 == 0, 1, -1)[None, :]
-    active = jnp.repeat(state.mesh.cell_active, width)
-    keys = jnp.sort(identifiers, axis=2).reshape((-1, width - 1))
-    keys = jnp.where(active[:, None], keys, jnp.iinfo(jnp.int64).max)
-    return keys, jnp.where(active, signs.reshape(-1), 0)
-
-
 def _facet_matches(
     keys: Array, packet: Array, orientations: Array, /
 ) -> tuple[Array, Array]:
     columns = tuple(packet[:, column] for column in range(packet.shape[1]))
     sorted_values = jax.lax.sort((*columns, orientations), num_keys=packet.shape[1])
     table = jnp.stack(sorted_values[:-1], axis=1)
-    first = _lexicographic_bound(table, keys, False)
-    last = _lexicographic_bound(table, keys, True)
+    first = lexicographic_bound(table, keys, False)
+    last = lexicographic_bound(table, keys, True)
     prefix = jnp.concatenate(
         (jnp.zeros((1,), dtype=jnp.int32), jnp.cumsum(sorted_values[-1], dtype=jnp.int32))
     )
@@ -2166,7 +2740,7 @@ def _proof_packet_permutation(
 ) -> tuple[tuple[int, int], ...]:
     if not logical_batch:
         return ((source, target),)
-    # Named vmap axes require a complete permutation. The swapped reverse
+    # Named vmap axes require a permutation over every rank. The swapped reverse
     # packet and identity lanes are ignored by the same recipient predicate.
     return tuple(
         (rank, target if rank == source else source if rank == target else rank)
@@ -2182,7 +2756,7 @@ def _collective_facets(
     logical_batch: bool,
     /,
 ) -> tuple[Array, Array]:
-    keys, orientations = _facet_packets(state)
+    keys, orientations = facet_packets(state)
     counts, signs = _facet_matches(keys, keys, orientations)
     rank = jax.lax.axis_index(axis)
     for source, target in neighbor_pairs:
@@ -2195,73 +2769,74 @@ def _collective_facets(
     return counts, signs
 
 
-def _subdivision_checks(
+@eqx.filter_jit
+def subdivision_checks(
     state: AdaptiveSimplexState, initial: AdaptiveSimplexState, exterior: Array, /
 ) -> tuple[Array, Array, Array, Array]:
-    work = _work(state)
-    cells = work.cell_ids.shape[0]
-    vertices = work.vertex_ids.shape[0]
+    local_work = simplex_work_bound(state)
+    cells = local_work.cell_ids.shape[0]
+    vertices = local_work.vertex_ids.shape[0]
     width = state.mesh.cells.shape[1]
     lanes = jnp.arange(cells, dtype=jnp.int32)
     vertex_lanes = jnp.arange(vertices, dtype=jnp.int32)
     original_cells = lanes < initial.cursors[1]
     original_vertices = vertex_lanes < initial.cursors[0]
-    allocated = lanes < work.cursors[1]
-    allocated_vertices = vertex_lanes < work.cursors[0]
-    living = allocated & ~work.retired
-    first = jnp.clip(work.children[:, 0], 0, cells - 1)
-    second = jnp.clip(work.children[:, 1], 0, cells - 1)
-    has_children = (work.children[:, 0] >= 0) & (work.children[:, 1] >= 0)
+    allocated = lanes < local_work.cursors[1]
+    allocated_vertices = vertex_lanes < local_work.cursors[0]
+    living = allocated & ~local_work.retired
+    first = jnp.clip(local_work.children[:, 0], 0, cells - 1)
+    second = jnp.clip(local_work.children[:, 1], 0, cells - 1)
+    has_children = (local_work.children[:, 0] >= 0) & (local_work.children[:, 1] >= 0)
     restored_history = (
         living
-        & work.cell_active
+        & local_work.cell_active
         & has_children
-        & work.retired[first]
-        & work.retired[second]
+        & local_work.retired[first]
+        & local_work.retired[second]
     )
-    split = living & has_children & ~work.cell_active
+    split = living & has_children & ~local_work.cell_active
     family = split | restored_history
-    parent = jnp.clip(work.parents // 2, 0, cells - 1)
-    expected_first, expected_second, tags = _children(
-        work, jnp.clip(work.bisection_vertices, 0, vertices - 1), width - 1
+    parent = jnp.clip(local_work.parents // 2, 0, cells - 1)
+    expected_first, expected_second, tags = simplex_child_records(
+        local_work, jnp.clip(local_work.bisection_vertices, 0, vertices - 1), width - 1
     )
     roots = jnp.all(
         ~original_cells
         | (
-            (work.cell_ids == initial.mesh.cell_ids)
-            & jnp.all(work.cells == initial.mesh.cells, axis=1)
-            & jnp.all(work.tuples == initial.tuples, axis=1)
-            & (work.tags == initial.tags)
-            & (work.blocks == initial.blocks)
-            & (work.cell_classes == initial.cell_classes)
-            & jnp.all(work.facet_classes == initial.facet_classes, axis=1)
-            & (work.parents == initial.parents)
-            & (work.generations == initial.generations)
-            & (~initial.retired | work.retired)
-            & (~initial.retired | ~work.cell_active)
+            (local_work.cell_ids == initial.mesh.cell_ids)
+            & jnp.all(local_work.cells == initial.mesh.cells, axis=1)
+            & jnp.all(local_work.tuples == initial.tuples, axis=1)
+            & (local_work.tags == initial.tags)
+            & (local_work.blocks == initial.blocks)
+            & (local_work.cell_classes == initial.cell_classes)
+            & jnp.all(local_work.facet_classes == initial.facet_classes, axis=1)
+            & (local_work.parents == initial.parents)
+            & (local_work.generations == initial.generations)
+            & (~initial.retired | local_work.retired)
+            & (~initial.retired | ~local_work.cell_active)
         )
     ) & jnp.all(
         ~original_vertices
         | (
-            (work.vertex_ids == initial.mesh.vertex_ids)
-            & jnp.all(work.coordinates == initial.mesh.coordinates, axis=1)
-            & jnp.all(work.vertex_parents == initial.vertex_parents, axis=1)
+            (local_work.vertex_ids == initial.mesh.vertex_ids)
+            & jnp.all(local_work.coordinates == initial.mesh.coordinates, axis=1)
+            & jnp.all(local_work.vertex_parents == initial.vertex_parents, axis=1)
         )
     )
     descendants = (
         jnp.all(
             ~living
             | (
-                (work.cell_active == ~split)
+                (local_work.cell_active == ~split)
                 & (~has_children | family)
-                & ((work.parents < 0) == (original_cells & (initial.parents < 0)))
+                & ((local_work.parents < 0) == (original_cells & (initial.parents < 0)))
                 & (
-                    (work.parents < 0)
+                    (local_work.parents < 0)
                     | (
-                        (work.parents >= 0)
+                        (local_work.parents >= 0)
                         & (parent < lanes)
-                        & (work.generations == work.generations[parent] + 1)
-                        & (lanes == work.children[parent, work.parents % 2])
+                        & (local_work.generations == local_work.generations[parent] + 1)
+                        & (lanes == local_work.children[parent, local_work.parents % 2])
                     )
                 )
             )
@@ -2269,75 +2844,77 @@ def _subdivision_checks(
         & jnp.all(
             ~family
             | (
-                (work.children[:, 0] > lanes)
-                & (work.children[:, 1] > lanes)
-                & (work.children[:, 0] < work.cursors[1])
-                & (work.children[:, 1] < work.cursors[1])
-                & (work.parents[first] == 2 * lanes)
-                & (work.parents[second] == 2 * lanes + 1)
+                (local_work.children[:, 0] > lanes)
+                & (local_work.children[:, 1] > lanes)
+                & (local_work.children[:, 0] < local_work.cursors[1])
+                & (local_work.children[:, 1] < local_work.cursors[1])
+                & (local_work.parents[first] == 2 * lanes)
+                & (local_work.parents[second] == 2 * lanes + 1)
                 & jnp.where(
                     split,
-                    ~work.retired[first] & ~work.retired[second],
-                    work.retired[first] & work.retired[second],
+                    ~local_work.retired[first] & ~local_work.retired[second],
+                    local_work.retired[first] & local_work.retired[second],
                 )
-                & jnp.all(work.cells[first] == expected_first[1], axis=1)
-                & jnp.all(work.cells[second] == expected_second[1], axis=1)
-                & jnp.all(work.facet_classes[first] == expected_first[2], axis=1)
-                & jnp.all(work.facet_classes[second] == expected_second[2], axis=1)
-                & (work.tags[first] == tags)
-                & (work.tags[second] == tags)
-                & (work.cell_classes[first] == work.cell_classes)
-                & (work.cell_classes[second] == work.cell_classes)
+                & jnp.all(local_work.cells[first] == expected_first[1], axis=1)
+                & jnp.all(local_work.cells[second] == expected_second[1], axis=1)
+                & jnp.all(local_work.facet_classes[first] == expected_first[2], axis=1)
+                & jnp.all(local_work.facet_classes[second] == expected_second[2], axis=1)
+                & (local_work.tags[first] == tags)
+                & (local_work.tags[second] == tags)
+                & (local_work.cell_classes[first] == local_work.cell_classes)
+                & (local_work.cell_classes[second] == local_work.cell_classes)
             )
         )
-        & ~jnp.any(work.retired & work.cell_active)
-        & ~jnp.any(allocated & (work.parents < 0) & work.retired)
-        & (work.cursors[0] >= initial.cursors[0])
-        & (work.cursors[1] >= initial.cursors[1])
+        & ~jnp.any(local_work.retired & local_work.cell_active)
+        & ~jnp.any(allocated & (local_work.parents < 0) & local_work.retired)
+        & (local_work.cursors[0] >= initial.cursors[0])
+        & (local_work.cursors[1] >= initial.cursors[1])
     )
-    endpoints = jnp.clip(work.vertex_parents, 0, vertices - 1)
+    endpoints = jnp.clip(local_work.vertex_parents, 0, vertices - 1)
     midpoint_coordinates = (
-        0.5 * work.coordinates[endpoints[:, 0]] + 0.5 * work.coordinates[endpoints[:, 1]]
+        0.5 * local_work.coordinates[endpoints[:, 0]]
+        + 0.5 * local_work.coordinates[endpoints[:, 1]]
     )
     midpoints = jnp.all(
         ~allocated_vertices
         | (
-            jnp.all(jnp.isfinite(work.coordinates), axis=1)
+            jnp.all(jnp.isfinite(local_work.coordinates), axis=1)
             & (
                 original_vertices
                 | (
-                    jnp.all(work.vertex_parents >= 0, axis=1)
-                    & jnp.all(work.vertex_parents < vertex_lanes[:, None], axis=1)
-                    & jnp.all(work.coordinates == midpoint_coordinates, axis=1)
+                    jnp.all(local_work.vertex_parents >= 0, axis=1)
+                    & jnp.all(local_work.vertex_parents < vertex_lanes[:, None], axis=1)
+                    & jnp.all(local_work.coordinates == midpoint_coordinates, axis=1)
                 )
             )
         )
     )
-    low, high = _refinement_edges(work)
-    midpoint = jnp.clip(work.bisection_vertices, 0, vertices - 1)
+    low, high = refinement_edges(local_work)
+    midpoint = jnp.clip(local_work.bisection_vertices, 0, vertices - 1)
     midpoints &= jnp.all(
         ~family
         | jnp.all(
-            jnp.sort(work.vertex_parents[midpoint], axis=1)
+            jnp.sort(local_work.vertex_parents[midpoint], axis=1)
             == jnp.sort(jnp.stack((low, high), axis=1), axis=1),
             axis=1,
         )
     )
-    initial_work = _work(initial)
+    initial_work = simplex_work_bound(initial)
     edge_codes = jnp.minimum(endpoints[:, 0], endpoints[:, 1]).astype(
         jnp.int64
     ) * vertices + jnp.maximum(endpoints[:, 0], endpoints[:, 1]).astype(jnp.int64)
-    protected_split, _ = _members(initial_work.protected_codes, edge_codes)
+    protected_split, _ = members(initial_work.protected_codes, edge_codes)
     constraints = (
-        jnp.array_equal(work.protected_codes, initial_work.protected_codes)
+        jnp.array_equal(local_work.protected_codes, initial_work.protected_codes)
         & jnp.all(
-            ~original_vertices | (work.vertex_protected == initial_work.vertex_protected)
+            ~original_vertices
+            | (local_work.vertex_protected == initial_work.vertex_protected)
         )
         & jnp.all(
             ~initial_work.vertex_protected
             | (
-                work.vertex_active
-                & jnp.all(work.coordinates == initial_work.coordinates, axis=1)
+                local_work.vertex_active
+                & jnp.all(local_work.coordinates == initial_work.coordinates, axis=1)
             )
         )
         & ~jnp.any(allocated_vertices & ~original_vertices & protected_split)
@@ -2350,7 +2927,7 @@ def _subdivision_checks(
     initial_depth = jnp.max(jnp.where(original_cells, initial.generations, 0))
 
     def restore(step: Array, flags: Array) -> Array:
-        inherited = _restored_facet_classes(initial_work._replace(facet_classes=flags))
+        inherited = restored_facet_classes(initial_work._replace(facet_classes=flags))
         selected = (
             original_cells
             & ~initial.mesh.cell_active
@@ -2362,12 +2939,12 @@ def _subdivision_checks(
     boundary = jax.lax.fori_loop(0, initial_depth + 1, restore, boundary)
 
     def inherit(level: Array, flags: Array) -> Array:
-        first_child, second_child, _ = _children(
-            work._replace(facet_classes=flags),
+        first_child, second_child, _ = simplex_child_records(
+            local_work._replace(facet_classes=flags),
             midpoint,
             width - 1,
         )
-        selected = split & (work.generations == level)
+        selected = split & (local_work.generations == level)
         first_slots = jnp.where(selected, first, cells)
         second_slots = jnp.where(selected, second, cells)
         return (
@@ -2378,11 +2955,12 @@ def _subdivision_checks(
         )
 
     boundary = jax.lax.fori_loop(
-        0, jnp.max(jnp.where(allocated, work.generations, 0)) + 1, inherit, boundary
+        0, jnp.max(jnp.where(allocated, local_work.generations, 0)) + 1, inherit, boundary
     )
     return roots, descendants, midpoints, boundary.reshape(-1).astype(jnp.bool_)
 
 
+@eqx.filter_jit
 def _bisection_part_checks(
     state: AdaptiveSimplexState,
     initial: AdaptiveSimplexState,
@@ -2405,7 +2983,7 @@ def _bisection_part_checks(
         ~initial_facets_active
         | (initial_counts == jnp.where(authoritative_exterior, 1, 2))
     )
-    roots, descendants, midpoints, exterior = _subdivision_checks(
+    roots, descendants, midpoints, exterior = subdivision_checks(
         state, initial, authoritative_exterior.astype(jnp.int32)
     )
     roots &= source_facets
@@ -2450,7 +3028,7 @@ def _bisection_part_checks(
         shared &= (rank != target) | jnp.all(
             ~match | jnp.all(state.mesh.coordinates == other_points[position], axis=1)
         )
-    status = _terminal(_work(state), None) == 0
+    status = terminal(simplex_work_bound(state), None) == 0
     return jnp.stack((roots, descendants, midpoints, unique, reciprocal, shared, status))
 
 
@@ -2488,6 +3066,7 @@ def _collective_bisection_checks(
     )(states, initial_states, initial_exterior)
 
 
+@eqx.filter_jit
 def replay_logical_bisection_checks(
     states: AdaptiveSimplexState,
     initial_states: AdaptiveSimplexState,
@@ -2499,7 +3078,7 @@ def replay_logical_bisection_checks(
 ) -> Array:
     """Replay saved logical owners on any available physical device placement.
 
-    The mapped axis is the actual retained partition axis, not the current
+    The mapped axis is the saved partition axis, not the current
     hardware mesh. All facet exchanges, identity circulation and shared-point
     comparisons are recomputed from those numerical records.
     """
@@ -2516,7 +3095,7 @@ def replay_logical_bisection_checks(
         )
     ):
         raise ValueError(
-            "Logical replay requires matching saved owner records and their real neighbor graph."
+            "distribution.bisection_replay must bind matching saved owner arrays, exterior flags, axis, and valid neighbor pairs; got incompatible replay inventory"
         )
 
     def local(
@@ -2537,11 +3116,11 @@ def replay_logical_bisection_checks(
     return jax.vmap(local, axis_name=axis_name)(states, initial_states, initial_exterior)
 
 
-_compiled_bisection_checks = eqx.filter_jit(_collective_bisection_checks)
+compiled_bisection_checks = eqx.filter_jit(_collective_bisection_checks)
 
 
 class AffineBisectionSourceWitness(StrictModule, NonTrainableState):
-    """Validated immutable source-map premise prepared before distributed execution."""
+    """Store immutable source-map bindings prepared before distributed execution."""
 
     source_result_id: str = eqx.field(static=True)
     source_geometry_id: str = eqx.field(static=True)
@@ -2549,6 +3128,7 @@ class AffineBisectionSourceWitness(StrictModule, NonTrainableState):
     source_coordinate_geometry_id: str = eqx.field(static=True)
     scientific_source_result_id: str = eqx.field(static=True)
     scientific_certification_id: str = eqx.field(static=True)
+    embedding: GlobalEmbeddingCertificate | None
     predecessor_evidence_id: str | None = eqx.field(static=True)
     witness_id: str = eqx.field(static=True)
 
@@ -2558,17 +3138,19 @@ class AffineBisectionSourceWitness(StrictModule, NonTrainableState):
         /,
         *,
         uniform_refinement: BisectionUniformRefinement | None,
+        scope: NativeExecutionScope,
+        budget: CoordinateEnclosureBudget,
     ) -> None:
-        from ..discretization._cell_geometry import coordinate_lagrange_element
-        from ..discretization._cell_geometry_validity import cell_geometry_id
-        from ._initial_certification import InitialCollectiveMeshEvidence
+
+        embedding: GlobalEmbeddingCertificate | None = None
 
         scientific_source = require_original_meshing_source(
             source if uniform_refinement is None else uniform_refinement.source,
         )
-        if isinstance(scientific_source, InitialCollectiveMeshEvidence):
+        if isinstance(
+            scientific_source, initial_certification_owner.InitialCollectiveMeshEvidence
+        ):
             scientific_source.require_passed()
-            from ..discretization._coordinate_enclosure import coordinate_source_signature
 
             element = coordinate_lagrange_element("triangle", 1)
             basis = np.frombuffer(
@@ -2593,39 +3175,29 @@ class AffineBisectionSourceWitness(StrictModule, NonTrainableState):
                 )
             ):
                 raise ValueError(
-                    "Initial scientific source lost its actual affine basis definition."
+                    "distribution.initial_source must retain its affine basis definition; got missing source basis bank"
                 )
             scientific_id = scientific_source.evidence_id
             premise_id = scientific_source.evidence_id
         else:
-            certification = scientific_source.certification
-            if certification is None or certification.embedding is None:
-                raise ValueError(
-                    "The original scientific source embedding certification is absent."
-                )
-            from .._meshcore import current_native_host_workspace
-            from ._collective_geometry import _original_p1_vertex_images
+            embedding, premise_id = prepare_meshing_source_embedding(
+                scientific_source, budget=budget
+            )
 
-            workspace = current_native_host_workspace()
-            if workspace is None:
-                raise RuntimeError(
-                    "Scientific P1 source validation requires its actual native host owner."
+            with budget.temporary_scope():
+                budget.retain_basis((scientific_source,))
+                collective_geometry_owner.original_p1_vertex_images(
+                    scientific_source, budget=budget
                 )
-            workspace.retain_owner(scientific_source)
-            retained = workspace.bound
-            try:
-                _original_p1_vertex_images(scientific_source)
-            finally:
-                workspace.set_bound(retained)
             scientific_id = scientific_source.result_id
-            premise_id = certification.report_id
-        source.geometry.resolve(source.mesh)
+        source.geometry.resolve(source.mesh, budget=budget)
+        self.embedding = embedding
         coordinate_geometry_id = cell_geometry_id(source.geometry)
         if source.collective_evidence is not None and (
             coordinate_geometry_id != source.collective_evidence.coordinate_geometry_id
         ):
             raise ValueError(
-                "The accepted predecessor lost its actual original coefficient restriction map."
+                "distribution.predecessor.geometry must retain its coefficient restriction map; got missing source ancestry"
             )
         self.source_result_id = source.result_id
         self.source_geometry_id = source.mesh.geometry_id
@@ -2656,7 +3228,7 @@ class AffineBisectionSourceWitness(StrictModule, NonTrainableState):
 
 
 class SimplexNeighborhoodWorkset(StrictModule, NonTrainableState):
-    """Bounded owner/ghost packets with actual affine field ancestry."""
+    """Store bounded owner and ghost packets with affine field ancestry."""
 
     cell_ids: Array
     cell_vertices: Array
@@ -2671,8 +3243,549 @@ class SimplexNeighborhoodWorkset(StrictModule, NonTrainableState):
     source_weights: Array
     status: Array
 
+    def arrays(self) -> dict[str, Array]:
+        """Return numerical packets in declaration order."""
+        return {
+            "cell_ids": self.cell_ids,
+            "cell_vertices": self.cell_vertices,
+            "cell_coordinates": self.cell_coordinates,
+            "cell_owner": self.cell_owner,
+            "cell_classes": self.cell_classes,
+            "cell_exterior": self.cell_exterior,
+            "cell_valid": self.cell_valid,
+            "root_cell_ids": self.root_cell_ids,
+            "source_cell_ids": self.source_cell_ids,
+            "source_vertex_ids": self.source_vertex_ids,
+            "source_weights": self.source_weights,
+            "status": self.status,
+        }
 
-def _simplex_neighborhood_seed(
+
+@final
+class PartitionedRebalanceProposal(StrictModule, NonTrainableState):
+    """Replayable equal-weight ownership in migration-workset cell-ID order.
+
+    Only owned rows contribute curve ranks, dual-graph edges and overlap.
+    Valid ghost rows receive the same proposed owner as their scientific cell.
+    ``policy.kind`` is the executed route; rank relabeling uses the same
+    deterministic overlap assignment as serial distribution transitions.
+    """
+
+    workset: SimplexNeighborhoodWorkset
+    policy: MeshPartitionPolicy
+    fresh_owners: Array
+    rank_mapping: Array
+    requested_target_owners: Array
+    part_weights: Array
+    imbalance: Array
+    graph_evidence: GraphPartitionEvidence | None
+    proposal_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        workset: SimplexNeighborhoodWorkset,
+        policy: MeshPartitionPolicy,
+        fresh_owners: Array,
+        rank_mapping: Array,
+        requested_target_owners: Array,
+        part_weights: Array,
+        imbalance: Array,
+        graph_evidence: GraphPartitionEvidence | None,
+        /,
+    ) -> None:
+        _require_rebalance_workset(workset, policy)
+        _require_rebalance_array_layout(
+            workset,
+            policy,
+            fresh_owners,
+            rank_mapping,
+            requested_target_owners,
+            part_weights,
+            imbalance,
+        )
+        self.workset = workset
+        self.policy = policy
+        self.fresh_owners = fresh_owners
+        self.rank_mapping = rank_mapping
+        self.requested_target_owners = requested_target_owners
+        self.part_weights = part_weights
+        self.imbalance = imbalance
+        self.graph_evidence = graph_evidence
+        self.proposal_id = _partitioned_proposal_identity(self)
+
+
+def _require_rebalance_workset(
+    work: SimplexNeighborhoodWorkset, policy: MeshPartitionPolicy, /
+) -> None:
+    shape = work.cell_ids.shape
+    if (
+        len(shape) != 2
+        or shape[0] != policy.part_count
+        or shape[1] < 1
+        or work.cell_owner.shape != shape
+        or work.cell_valid.shape != shape
+        or work.cell_vertices.ndim != 3
+        or work.cell_vertices.shape[:2] != shape
+        or work.cell_coordinates.ndim != 4
+        or work.cell_coordinates.shape[:3] != work.cell_vertices.shape
+        or work.status.shape != (policy.part_count,)
+        or work.cell_ids.dtype != jnp.int64
+        or work.cell_vertices.dtype != jnp.int64
+        or work.cell_owner.dtype != jnp.int32
+        or work.cell_valid.dtype != jnp.bool_
+        or not jnp.issubdtype(work.cell_coordinates.dtype, jnp.floating)
+    ):
+        raise ValueError(
+            "proposal.workset must align scientific simplex packets with the policy "
+            f"execution parts; got cells={shape}, parts={policy.part_count}."
+        )
+
+
+def _require_rebalance_array_layout(
+    work: SimplexNeighborhoodWorkset,
+    policy: MeshPartitionPolicy,
+    fresh: Array,
+    mapping: Array,
+    requested: Array,
+    part_weights: Array,
+    imbalance: Array,
+    /,
+) -> None:
+    if (
+        fresh.shape != work.cell_ids.shape
+        or requested.shape != work.cell_ids.shape
+        or mapping.shape != (policy.part_count,)
+        or part_weights.shape != (policy.part_count,)
+        or imbalance.shape != ()
+        or fresh.dtype != jnp.int32
+        or requested.dtype != jnp.int32
+        or mapping.dtype != jnp.int32
+        or part_weights.dtype != jnp.float64
+        or imbalance.dtype != jnp.float64
+    ):
+        raise ValueError(
+            f"proposal.arrays must align cell-ID ownership and rank metadata; got cells={work.cell_ids.shape}, parts={policy.part_count}, mismatched shape or dtype"
+        )
+
+
+def _curve_owner_part(
+    work: SimplexNeighborhoodWorkset,
+    policy: MeshPartitionPolicy,
+    axis: str,
+    /,
+) -> tuple[Array, Array]:
+    """Rank bounded code/ID packets without gathering coordinates or candidates."""
+    count = policy.part_count
+    rank = jax.lax.axis_index(axis)
+    owned = work.cell_valid & (work.cell_owner == rank)
+    coordinates = work.cell_coordinates.astype(jnp.float64)
+
+    def add_corner(corner: int | Array, total: Array) -> Array:
+        return total + coordinates[:, corner]
+
+    total = jax.lax.fori_loop(
+        0,
+        work.cell_vertices.shape[1],
+        add_corner,
+        jnp.zeros((coordinates.shape[0], coordinates.shape[2]), jnp.float64),
+    )
+    centroids = total / work.cell_vertices.shape[1]
+    lower = jax.lax.pmin(
+        jnp.min(jnp.where(owned[:, None], centroids, jnp.inf), axis=0), axis
+    )
+    upper = jax.lax.pmax(
+        jnp.max(jnp.where(owned[:, None], centroids, -jnp.inf), axis=0), axis
+    )
+    extent = jnp.max(upper - lower)
+    resolution = (1 << policy.curve_depth) - 1
+    scale = jnp.where(extent > 0.0, resolution / extent, 0.0)
+    integer = jnp.clip(jnp.floor((centroids - lower) * scale), 0, resolution).astype(
+        jnp.int64
+    )
+    match policy.kind:
+        case MeshPartitionKind.MORTON:
+            codes = morton_encode_integer(integer, policy.curve_depth)
+        case MeshPartitionKind.HILBERT:
+            codes = hilbert_encode_integer(integer, policy.curve_depth)
+        case _:
+            raise ValueError(
+                f"proposal.policy.kind must name a curve route; got {policy.kind}."
+            )
+    sentinel = jnp.iinfo(jnp.int64).max
+    queries = jnp.stack((codes.astype(jnp.int64), work.cell_ids), axis=1)
+    packet = jnp.where(owned[:, None], queries, sentinel)
+    packet = packet[jnp.lexsort((packet[:, 1], packet[:, 0]))]
+    ring = tuple((source, (source + 1) % count) for source in range(count))
+
+    def visit(
+        _: int | Array, carry: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
+        packet, positions, matches = carry
+        low = lexicographic_bound(packet, queries, False)
+        high = lexicographic_bound(packet, queries, True)
+        return (
+            jax.lax.ppermute(packet, axis, ring),
+            positions + low.astype(jnp.int64),
+            matches + high - low,
+        )
+
+    _, positions, matches = jax.lax.fori_loop(
+        0,
+        count,
+        visit,
+        (
+            packet,
+            jnp.zeros(work.cell_ids.shape, jnp.int64),
+            jnp.zeros(work.cell_ids.shape, jnp.int32),
+        ),
+    )
+    total = jax.lax.psum(jnp.sum(owned, dtype=jnp.int64), axis)
+    levels = jnp.arange(1, count, dtype=jnp.int64)
+    # Equal-weight midpoint cuts use the _contiguous_ranges integer formula.
+    cuts = (2 * levels * total + count - 1) // (2 * count)
+    fresh = jnp.searchsorted(cuts, positions, side="right").astype(jnp.int32)
+    invalid = (total < count) | jnp.any(work.cell_valid & (matches != 1))
+    invalid |= jnp.any(work.cell_valid[:, None] & ~jnp.isfinite(centroids))
+    invalid = jax.lax.pmax(invalid.astype(jnp.int32), axis)
+    return jnp.where(work.cell_valid, fresh, -1), invalid
+
+
+@eqx.filter_jit
+def _partitioned_curve_owners(
+    parts: AdaptiveSimplexParts,
+    workset: SimplexNeighborhoodWorkset,
+    policy: MeshPartitionPolicy,
+    /,
+) -> tuple[Array, Array]:
+    axis = parts.axis_name
+    spec = PartitionSpec(axis)
+
+    def local(block: SimplexNeighborhoodWorkset) -> tuple[Array, Array]:
+        work = jax.tree_util.tree_map(lambda value: value[0], block)
+        fresh, invalid = _curve_owner_part(work, policy, axis)
+        return fresh[None], invalid
+
+    return jax.shard_map(
+        local,
+        mesh=parts.mesh,
+        in_specs=(spec,),
+        out_specs=(spec, PartitionSpec()),
+        check_vma=False,
+    )(workset)
+
+
+@eqx.filter_jit
+def _replay_curve_owners(
+    workset: SimplexNeighborhoodWorkset,
+    policy: MeshPartitionPolicy,
+    axis_name: str,
+    /,
+) -> tuple[Array, Array]:
+    def local(work: SimplexNeighborhoodWorkset) -> tuple[Array, Array]:
+        return _curve_owner_part(work, policy, axis_name)
+
+    fresh, invalid = jax.vmap(local, axis_name=axis_name)(workset)
+    return fresh, jnp.max(invalid)
+
+
+def _proposal_summary_part(
+    work: SimplexNeighborhoodWorkset,
+    fresh: Array,
+    part_count: int,
+    axis: str,
+    /,
+) -> tuple[Array, Array, Array]:
+    owned = work.cell_valid & (work.cell_owner == jax.lax.axis_index(axis))
+    valid = (fresh >= 0) & (fresh < part_count)
+    weights = owned.astype(jnp.float64)
+    owners = jnp.clip(fresh, 0, part_count - 1)
+    inherited = jnp.clip(work.cell_owner, 0, part_count - 1)
+    part_weights = jnp.bincount(owners, weights=weights, length=part_count)
+    overlap = jnp.bincount(
+        owners * part_count + inherited,
+        weights=weights,
+        length=part_count * part_count,
+    ).reshape((part_count, part_count))
+    invalid = (work.status != 0) | jnp.any(
+        work.cell_valid
+        & (
+            ~valid
+            | (work.cell_ids < 0)
+            | (work.cell_ids == jnp.iinfo(jnp.int64).max)
+            | (work.cell_owner < 0)
+            | (work.cell_owner >= part_count)
+        )
+    )
+    return (
+        jax.lax.psum(part_weights, axis),
+        jax.lax.psum(overlap, axis),
+        jax.lax.pmax(invalid.astype(jnp.int32), axis),
+    )
+
+
+@eqx.filter_jit
+def _partitioned_proposal_summary(
+    parts: AdaptiveSimplexParts,
+    workset: SimplexNeighborhoodWorkset,
+    fresh: Array,
+    /,
+) -> tuple[Array, Array, Array]:
+    axis = parts.axis_name
+    spec = PartitionSpec(axis)
+
+    def local(
+        block: SimplexNeighborhoodWorkset, owners: Array
+    ) -> tuple[Array, Array, Array]:
+        work = jax.tree_util.tree_map(lambda value: value[0], block)
+        return _proposal_summary_part(work, owners[0], parts.part_count, axis)
+
+    return jax.shard_map(
+        local,
+        mesh=parts.mesh,
+        in_specs=(spec, spec),
+        out_specs=(PartitionSpec(),) * 3,
+        check_vma=False,
+    )(workset, fresh)
+
+
+@eqx.filter_jit
+def _replay_proposal_summary(
+    workset: SimplexNeighborhoodWorkset, fresh: Array, axis_name: str, /
+) -> tuple[Array, Array, Array]:
+    def local(
+        work: SimplexNeighborhoodWorkset, owners: Array
+    ) -> tuple[Array, Array, Array]:
+        return _proposal_summary_part(work, owners, workset.cell_ids.shape[0], axis_name)
+
+    weights, overlap, invalid = jax.vmap(local, axis_name=axis_name)(workset, fresh)
+    return weights[0], overlap[0], jnp.max(invalid)
+
+
+def partitioned_rebalance_proposal_arrays(
+    proposal: PartitionedRebalanceProposal, /
+) -> dict[str, Array]:
+    """Return every numerical replay array under its declared inventory name."""
+    return {
+        "fresh_owners": proposal.fresh_owners,
+        "rank_mapping": proposal.rank_mapping,
+        "requested_target_owners": proposal.requested_target_owners,
+        "part_weights": proposal.part_weights,
+        "imbalance": proposal.imbalance,
+        **{
+            "workset" + jax.tree_util.keystr(path): value
+            for path, value in jax.tree_util.tree_flatten_with_path(proposal.workset)[0]
+        },
+    }
+
+
+def _partitioned_proposal_identity(proposal: PartitionedRebalanceProposal, /) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "partitioned-mesh-rebalance-proposal",
+            "policy": proposal.policy.policy_id,
+            "graph_evidence": None
+            if proposal.graph_evidence is None
+            else proposal.graph_evidence.evidence_id,
+            "numerical_content": logical_array_value_collection_digest(
+                partitioned_rebalance_proposal_arrays(proposal)
+            ),
+        }
+    )
+
+
+def _require_proposal_balance(
+    part_weights: Array, invalid: Array, policy: MeshPartitionPolicy, /
+) -> Array:
+    imbalance = jnp.max(part_weights) / jnp.mean(part_weights)
+    measured = np.asarray(
+        jax.device_get(
+            jnp.stack((invalid.astype(jnp.float64), jnp.min(part_weights), imbalance))
+        ),
+        dtype=np.float64,
+    )
+    if (
+        measured[0] != 0
+        or measured[1] <= 0.0
+        or not np.isfinite(measured[2])
+        or measured[2] > policy.maximum_imbalance
+    ):
+        raise ValueError(
+            "proposal.ownership must cover nonempty parts within "
+            f"policy.maximum_imbalance={policy.maximum_imbalance}; "
+            f"got invalid={measured[0]}, minimum_weight={measured[1]}, "
+            f"imbalance={measured[2]}."
+        )
+    return imbalance
+
+
+def prepare_partitioned_rebalance_proposal(
+    partitioned: PartitionedAdaptiveSimplex,
+    state: OwnerLocalMigrationState,
+    policy: MeshPartitionPolicy,
+    /,
+) -> PartitionedRebalanceProposal:
+    """Execute a bounded native ownership proposal and relabel to inherited ranks.
+
+    The target is equal-weight simplices. Coordinate, candidate and CSR banks
+    remain distributed; host reads are scalar admission and replicated
+    rank-overlap routing metadata. The returned owner array follows exactly
+    ``state.workset.cell_ids``, not raw forest slot order.
+    """
+
+    parts, work = partitioned.parts, state.workset
+    _require_rebalance_workset(work, policy)
+    if policy.part_count != parts.part_count:
+        raise ValueError(
+            "proposal.policy.part_count must match the current execution parts; "
+            f"got policy={policy.part_count}, execution={parts.part_count}."
+        )
+    graph_evidence = None
+    match policy.kind:
+        case MeshPartitionKind.MORTON | MeshPartitionKind.HILBERT:
+            fresh, curve_invalid = _partitioned_curve_owners(parts, work, policy)
+        case MeshPartitionKind.GRAPH:
+            graph = migration_owner.ownerlocal_simplex_graph(
+                parts,
+                state,
+                vertex_weights=jax.device_put(
+                    jnp.ones(work.cell_ids.shape, jnp.int64), work.cell_ids.sharding
+                ),
+                edge_weights=jax.device_put(
+                    jnp.ones(work.cell_vertices.shape, jnp.int64),
+                    work.cell_vertices.sharding,
+                ),
+            )
+            result = partition_graph(
+                graph,
+                GraphPartitionPlan(
+                    policy.part_count, maximum_imbalance=policy.maximum_imbalance
+                ),
+            )
+            graph_evidence = result.evidence
+            if not graph_evidence.accepted or not isinstance(result.parts, Array):
+                raise ValueError(
+                    "proposal.graph must accept the distributed native dual graph; "
+                    f"got resource_status={graph_evidence.resource_status}, "
+                    f"evidence={graph_evidence.evidence_id}."
+                )
+            fresh = jnp.where(work.cell_valid, result.parts, -1).astype(jnp.int32)
+            curve_invalid = jnp.asarray(0, jnp.int32)
+        case MeshPartitionKind.METIS | MeshPartitionKind.PROVIDER:
+            raise ValueError(
+                "proposal.policy.kind must name an automatic distributed native route; "
+                f"got {policy.kind}."
+            )
+        case _:
+            raise ValueError(
+                f"proposal.policy.kind must name a supported route; got {policy.kind}."
+            )
+    weights, overlap, invalid = _partitioned_proposal_summary(parts, work, fresh)
+    imbalance = _require_proposal_balance(weights, invalid | curve_invalid, policy)
+    mapping = jnp.asarray(
+        _overlap_rank_mapping(np.asarray(jax.device_get(overlap), dtype=np.float64)),
+        dtype=jnp.int32,
+    )
+    owners = jnp.where(work.cell_valid, mapping[jnp.maximum(fresh, 0)], -1)
+    relabeled_weights = jnp.zeros_like(weights).at[mapping].set(weights)
+    return PartitionedRebalanceProposal(
+        work,
+        policy,
+        fresh,
+        mapping,
+        owners,
+        relabeled_weights,
+        imbalance,
+        graph_evidence,
+    )
+
+
+def replay_partitioned_rebalance_proposal(
+    proposal: PartitionedRebalanceProposal, /, *, axis_name: str
+) -> None:
+    """Replay the declared curve/graph route, overlap relabeling and balance."""
+
+    work, policy = proposal.workset, proposal.policy
+    _require_rebalance_workset(work, policy)
+    _require_rebalance_array_layout(
+        work,
+        policy,
+        proposal.fresh_owners,
+        proposal.rank_mapping,
+        proposal.requested_target_owners,
+        proposal.part_weights,
+        proposal.imbalance,
+    )
+    if not axis_name:
+        raise ValueError(f"proposal.axis_name must be nonempty; got {axis_name!r}.")
+    match policy.kind:
+        case MeshPartitionKind.MORTON | MeshPartitionKind.HILBERT:
+            if proposal.graph_evidence is not None:
+                raise ValueError(
+                    "proposal.graph_evidence must be absent for a curve route; "
+                    f"got policy={policy.kind}."
+                )
+            fresh, route_invalid = _replay_curve_owners(work, policy, axis_name)
+        case MeshPartitionKind.GRAPH:
+            evidence = proposal.graph_evidence
+            if evidence is None or not evidence.accepted:
+                raise ValueError(
+                    "proposal.graph_evidence must retain an accepted native partition; "
+                    f"got evidence={evidence}."
+                )
+            offsets, neighbors, edges, valid = (
+                migration_owner.replay_logical_simplex_graph(
+                    work,
+                    jnp.ones(work.cell_vertices.shape, jnp.int64),
+                    axis_name=axis_name,
+                )
+            )
+            fresh, _, measured = replay_logical_partition(
+                offsets,
+                neighbors,
+                edges,
+                jnp.ones(work.cell_ids.shape, jnp.int64),
+                work.cell_ids,
+                work.cell_owner,
+                valid,
+                GraphPartitionPlan(
+                    policy.part_count, maximum_imbalance=policy.maximum_imbalance
+                ),
+                axis_name=axis_name,
+            )
+            fresh = jnp.where(work.cell_valid, fresh, -1).astype(jnp.int32)
+            route_invalid = measured.resource_status
+        case MeshPartitionKind.METIS | MeshPartitionKind.PROVIDER:
+            raise ValueError(
+                "proposal.policy.kind must name an automatic distributed native route; "
+                f"got {policy.kind}."
+            )
+        case _:
+            raise ValueError(
+                f"proposal.policy.kind must name a supported route; got {policy.kind}."
+            )
+    weights, overlap, invalid = _replay_proposal_summary(work, fresh, axis_name)
+    imbalance = _require_proposal_balance(weights, invalid | route_invalid, policy)
+    mapping = jnp.asarray(
+        _overlap_rank_mapping(np.asarray(jax.device_get(overlap), dtype=np.float64)),
+        dtype=jnp.int32,
+    )
+    owners = jnp.where(work.cell_valid, mapping[jnp.maximum(fresh, 0)], -1)
+    relabeled_weights = jnp.zeros_like(weights).at[mapping].set(weights)
+    difference = jnp.any(fresh != proposal.fresh_owners)
+    difference |= jnp.any(mapping != proposal.rank_mapping)
+    difference |= jnp.any(owners != proposal.requested_target_owners)
+    difference |= jnp.any(relabeled_weights != proposal.part_weights)
+    difference |= imbalance != proposal.imbalance
+    if bool(jax.device_get(difference)) or (
+        _partitioned_proposal_identity(proposal) != proposal.proposal_id
+    ):
+        raise ValueError(
+            f"proposal.replay must reproduce route, inherited-rank assignment, and numerical identity; got policy={policy.policy_id}, different arrays or proposal ID"
+        )
+
+
+def simplex_neighborhood_seed(
     state: AdaptiveSimplexState,
     initial: AdaptiveSimplexState,
     initial_exterior: Array,
@@ -2808,7 +3921,7 @@ def _simplex_neighborhood_seed(
     valid = jnp.arange(capacity) < active_count
     root_ids = jnp.where(roots >= 0, initial.mesh.cell_ids[jnp.maximum(roots, 0)], -1)
     ids = gather(state.mesh.cell_ids)
-    _, _, _, exterior = _subdivision_checks(
+    _, _, _, exterior = subdivision_checks(
         state, initial, initial_exterior.reshape(-1).astype(jnp.int32)
     )
     return SimplexNeighborhoodWorkset(
@@ -2834,9 +3947,9 @@ def _simplex_neighborhood_seed(
     )
 
 
-def _neighborhood_facet_keys(work: SimplexNeighborhoodWorkset, /) -> Array:
+def neighborhood_facet_keys(work: SimplexNeighborhoodWorkset, /) -> Array:
     width = work.cell_vertices.shape[1]
-    columns = jnp.asarray(_facet_columns(width), dtype=jnp.int32)
+    columns = jnp.asarray(facet_columns(width), dtype=jnp.int32)
     keys = jnp.sort(work.cell_vertices[:, columns], axis=2).reshape((-1, width - 1))
     return jnp.where(
         jnp.repeat(work.cell_valid, width)[:, None], keys, jnp.iinfo(jnp.int64).max
@@ -2850,7 +3963,7 @@ def _merge_neighborhood_packets(
     /,
 ) -> SimplexNeighborhoodWorkset:
     capacity, width = resident.cell_vertices.shape
-    packet_keys = _neighborhood_facet_keys(packet)
+    packet_keys = neighborhood_facet_keys(packet)
     matches, _ = _facet_matches(
         packet_keys, frontier_keys, jnp.zeros((frontier_keys.shape[0],), dtype=jnp.int32)
     )
@@ -2934,7 +4047,7 @@ def _expand_local_neighborhood(
     def expand(
         _: int, previous: SimplexNeighborhoodWorkset
     ) -> SimplexNeighborhoodWorkset:
-        frontier = _neighborhood_facet_keys(previous)
+        frontier = neighborhood_facet_keys(previous)
         current = previous
         for source, target in parts.neighbor_pairs:
             packet = jax.tree_util.tree_map(
@@ -3014,7 +4127,7 @@ def _expand_simplex_neighborhood(
         state = jax.tree_util.tree_map(lambda value: value[0], state_block)
         initial = jax.tree_util.tree_map(lambda value: value[0], initial_block)
         rank = jax.lax.axis_index(axis)
-        work = _simplex_neighborhood_seed(
+        work = simplex_neighborhood_seed(
             state, initial, exterior_block[0], rank, cell_capacity
         )
 
@@ -3065,7 +4178,7 @@ def expand_simplex_neighborhood_workset(
     halo_width: int,
     vertex_capacity: int,
 ) -> SimplexNeighborhoodWorkset:
-    """Rebuild actual ghosts of migrated packets without discarding their ancestry."""
+    """Rebuild ghost residency for migrated packets while retaining ancestry."""
     width = operator.index(halo_width)
     vertices = operator.index(vertex_capacity)
     if (
@@ -3078,7 +4191,7 @@ def expand_simplex_neighborhood_workset(
         or workset.cell_valid.shape != workset.cell_ids.shape
     ):
         raise ValueError(
-            "Migrated neighborhood worksets require valid placement and bounded capacities."
+            "distribution.neighborhood_workset must match execution placement and bounded positive capacities; got invalid halo, vertex capacity, or packet shape"
         )
     return _compiled_existing_neighborhood_expansion(parts, workset, width, vertices)
 
@@ -3094,7 +4207,7 @@ def expand_partitioned_simplex_neighborhood(
     cell_capacity: int,
     vertex_capacity: int,
 ) -> SimplexNeighborhoodWorkset:
-    """Expand actual neighboring cells by bounded packets, with collective refusal."""
+    """Expand neighboring cell residency with bounded packets and collective refusal."""
     width = operator.index(halo_width)
     cells = operator.index(cell_capacity)
     vertices = operator.index(vertex_capacity)
@@ -3112,41 +4225,26 @@ def expand_partitioned_simplex_neighborhood(
         or initial_exterior.dtype != jnp.bool_
     ):
         raise ValueError(
-            "Neighborhood expansion requires matched states and bounded valid capacities."
+            "distribution.neighborhood_expansion must bind matching source and current states with bool exterior flags and positive capacities; got incompatible arrays or capacities"
         )
     return _compiled_neighborhood_expansion(
         parts, states, initial_states, initial_exterior, width, cells, vertices
     )
 
 
-def _owner_local_partition_summary(mesh: CellMesh, /) -> tuple[Array, Array, Array]:
-    """Reduce actual canonical owner/facet/ghost arrays to bounded summaries."""
-    storage = mesh.storage
-    if storage is None:
-        raise ValueError("Collective partition summaries require owner-local storage.")
-    arrays = dict(storage.logical_arrays)
-    required = {
-        "cell_owners",
-        "cell_vertices",
-        "closure/cell_owner",
-        "closure/cell_valid",
-    }
-    if not required.issubset(arrays):
-        raise ValueError(
-            "Owner-local publication lacks its actual placement/closure arrays."
-        )
-    owners = arrays["cell_owners"]
-    vertices = arrays["cell_vertices"]
-    active = (
-        jnp.arange(owners.shape[0], dtype=jnp.int64) < storage.global_entity_counts[-1]
-    )
-    weights = jnp.bincount(
-        owners,
-        weights=active.astype(jnp.float64),
-        length=storage.partition_count,
-    )
+@jax.jit
+def _partition_summary_values(
+    owners: Array,
+    vertices: Array,
+    closure_owners: Array,
+    closure_valid: Array,
+    cell_count: int,
+) -> tuple[Array, Array, Array]:
+    part_count = closure_owners.shape[0]
+    active = jnp.arange(owners.shape[0], dtype=jnp.int64) < cell_count
+    weights = jnp.bincount(owners, weights=active.astype(jnp.float64), length=part_count)
     width = vertices.shape[1]
-    columns = jnp.asarray(_facet_columns(width), dtype=jnp.int32)
+    columns = jnp.asarray(facet_columns(width), dtype=jnp.int32)
     facets = jnp.sort(vertices[:, columns], axis=2).reshape((-1, width - 1))
     facets = jnp.where(
         jnp.repeat(active, width)[:, None], facets, jnp.iinfo(jnp.int64).max
@@ -3161,16 +4259,41 @@ def _owner_local_partition_summary(mesh: CellMesh, /) -> tuple[Array, Array, Arr
     )
     edge_cut = jnp.sum(shared, dtype=jnp.int64)
     halo_replicas = jnp.sum(
-        arrays["closure/cell_valid"]
-        & (
-            arrays["closure/cell_owner"]
-            != jnp.arange(storage.partition_count, dtype=jnp.int32)[:, None]
-        ),
+        closure_valid
+        & (closure_owners != jnp.arange(part_count, dtype=jnp.int32)[:, None]),
         dtype=jnp.int64,
     )
     return weights, edge_cut, halo_replicas
 
 
+def _owner_local_partition_summary(mesh: CellMesh, /) -> tuple[Array, Array, Array]:
+    """Reduce owner, facet, and ghost arrays to bounded partition summaries."""
+    storage = mesh.storage
+    if storage is None:
+        raise ValueError(
+            "distribution.partition_summary.mesh.storage must provide owner-local storage; got None"
+        )
+    arrays = dict(storage.logical_arrays)
+    required = {
+        "cell_owners",
+        "cell_vertices",
+        "closure/cell_owner",
+        "closure/cell_valid",
+    }
+    if not required.issubset(arrays):
+        raise ValueError(
+            "distribution.publication_storage must retain placement and closure arrays; got missing logical banks"
+        )
+    return _partition_summary_values(
+        arrays["cell_owners"],
+        arrays["cell_vertices"],
+        arrays["closure/cell_owner"],
+        arrays["closure/cell_valid"],
+        storage.global_entity_counts[-1],
+    )
+
+
+@checked
 def prepare_owner_local_distribution_transition(
     source: MeshDistribution,
     target_part: MeshPart,
@@ -3182,35 +4305,52 @@ def prepare_owner_local_distribution_transition(
     /,
     *,
     policy: MeshPartitionPolicy,
-    restart_repack: SimplexRestartRepack | None = None,
-    restart_proof: SimplexRestartRepackProof | None = None,
+    restart_repack: restart_owner.SimplexRestartRepack | None = None,
+    restart_proof: restart_owner.SimplexRestartRepackProof | None = None,
 ) -> MeshDistributionTransition:
-    """Publish retained owner routes only after actual halo/balance consensus.
+    """Publish validated retained, rebalanced, or restart ownership and transport.
 
-    Source caches are validated against accepted identity, avoiding a complete
-    source-array host transfer during commit. The bounded summary is global;
-    transport slots and migration counts remain explicitly owner-local.
+    The bounded summary is global; transport slots and migration counts remain
+    owner-local. Rebalanced ownership consumes accepted transport of all forest records.
     """
     if not isinstance(target_part.carrier, CellMeshingResult):
         raise ValueError(
-            "Owner-local distribution transitions require a certified local target."
+            "distribution.transition.target.carrier must provide certified owner-local mesh storage; got incompatible carrier or missing storage"
         )
     mesh = target_part.carrier.mesh
     storage = mesh.storage
     if storage is None:
         raise ValueError(
-            "Owner-local distribution transitions require a certified local target."
+            "distribution.transition.target.carrier must provide certified owner-local mesh storage; got incompatible carrier or missing storage"
         )
+    collective = target_part.carrier.collective_evidence
+    migration = (
+        collective.migration_record
+        if isinstance(collective, CollectiveMeshEvidence)
+        else None
+    )
+    proposal = (
+        collective.rebalance_proposal
+        if isinstance(collective, CollectiveMeshEvidence)
+        else None
+    )
+    if migration is not None:
+        if proposal is None or proposal.policy.policy_id != policy.policy_id:
+            raise ValueError(
+                "distribution_migration.proposal must bind the declared policy; got mismatched evidence"
+            )
+        if not bool(jax.device_get(jnp.all(migration.transport_evidence.accepted))):
+            raise ValueError(
+                "distribution_migration.transport must be collectively accepted; got rejection"
+            )
     if (
-        not isinstance(policy, MeshPartitionPolicy)
-        or (restart_repack is None and policy.part_count != source.partition.part_count)
+        (restart_repack is None and policy.part_count != source.partition.part_count)
         or (restart_repack is None and policy.kind is not source.evidence.kind)
         or policy.part_count != storage.partition_count
         or policy.halo_width > storage.neighborhood_depth
     ):
         raise ValueError(
-            "Retained ownership must preserve its actual partition algorithm and meet "
-            "the requested owner count/neighborhood; repartitioning requires a validated migration."
+            "distribution.retained_ownership must preserve the partition algorithm and satisfy requested owner count and neighborhood; got incompatible policy without validated migration"
         )
     if restart_repack is not None:
         graph = restart_repack.graph_proposal
@@ -3221,18 +4361,20 @@ def prepare_owner_local_distribution_transition(
             graph is not None and graph.maximum_imbalance != policy.maximum_imbalance
         ):
             raise ValueError(
-                "Restart ownership must name the route that produced its validated proposal: "
-                "GRAPH only for a replayed native graph partition under the same plan, "
-                "PROVIDER for an explicit requested placement."
+                "distribution.restart_policy must identify the validated proposal route and graph imbalance plan; got incompatible partition kind or graph plan"
             )
     summary = _owner_local_partition_summary(mesh)
     target = MeshDistribution(
         target_part,
-        CellPartition(storage.entity_owner[-1], storage.partition_count, storage=storage),
+        partition_owner.CellPartition(
+            storage.entity_owner[-1], storage.partition_count, storage=storage
+        ),
         halo_width=policy.halo_width,
         partition_kind=policy.kind,
         partition_provenance=(
-            "collective-retained-ownership"
+            f"collective-rebalanced:{policy.kind.value}:{proposal.proposal_id}"
+            if migration is not None and proposal is not None
+            else "collective-retained-ownership"
             if restart_repack is None
             else "collective-validated-restart-ownership"
             if restart_repack.graph_proposal is None
@@ -3240,13 +4382,21 @@ def prepare_owner_local_distribution_transition(
         ),
         _collective_summary=summary,
     )
+    if proposal is not None and not bool(
+        jax.device_get(
+            jnp.array_equal(target.evidence.part_weights, proposal.part_weights)
+            & jnp.array_equal(target.evidence.imbalance, proposal.imbalance)
+        )
+    ):
+        raise ValueError(
+            "distribution_migration.summary must match the replayed proposal; got mismatched ownership"
+        )
     if (
         np.asarray(jax.device_get(target.evidence.imbalance)).item()
         > policy.maximum_imbalance
     ):
         raise ValueError(
-            "Requested balance requires native repartition plus complete epoch-forest migration; "
-            "retained ownership cannot satisfy this policy."
+            "distribution.retained_ownership must satisfy maximum_imbalance; got imbalance requiring native repartition and epoch-forest migration"
         )
     transition = MeshDistributionTransition(
         source,
@@ -3254,18 +4404,22 @@ def prepare_owner_local_distribution_transition(
         source_rows,
         target_rows,
         lineage,
-        rebalanced=restart_repack is not None,
+        rebalanced=restart_repack is not None or migration is not None,
         _source_cell_ids=source_cell_ids,
         _source_cell_owners=source_cell_owners,
         restart_repack=restart_repack,
         restart_proof=restart_proof,
     )
-    if restart_repack is None and np.any(
-        np.asarray(transition.message_source_ranks)
-        != np.asarray(transition.message_target_ranks)
+    if (
+        restart_repack is None
+        and migration is None
+        and np.any(
+            np.asarray(transition.message_source_ranks)
+            != np.asarray(transition.message_target_ranks)
+        )
     ):
         raise ValueError(
-            "Retained owner publication cannot silently perform an unprepared migration."
+            "distribution.transition.message_ranks must preserve owners when no migration was prepared; got different source and target message ranks"
         )
     return transition
 
@@ -3287,7 +4441,3 @@ __all__ = [
 
 # Checked restart annotations resolve at runtime. The restart owner consumes
 # this module's workset/policy types, so it binds only after their definitions.
-from ._restart_distribution import (
-    SimplexRestartRepack,
-    SimplexRestartRepackProof,
-)

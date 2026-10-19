@@ -5,41 +5,183 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import Array, core as jax_core
+from jax import Array, core as jax_core, device_get, device_put
 from jax.typing import ArrayLike
+
+import phydrax.discretization.fem._reference_types as reference_types_owner
+from phydrax.discretization._periodic_exact import (
+    exact_periodic_element,
+    exact_periodic_generators,
+    owned_periodic_preparation,
+)
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ein import contract
-from ._cell_mesh import CellMesh
-from ._periodic_topology import _exact_periodic_element, _exact_periodic_generators
+from ..geometry._rational import rational_vector
+from ..typing import checked
+from . import (
+    _cell_geometry as imported_cell_geometry,
+    _cell_mesh as cell_mesh_owner,
+    _coordinate_enclosure as coordinate_enclosure_owner,
+    _periodic_topology as periodic_topology_owner,
+    fem as fem_owner,
+)
+from ._coordinate_budget import CoordinateEnclosureBudget
 
 
 if TYPE_CHECKING:
-    from ._cell_geometry import CellGeometrySpec
     from ._coordinate_enclosure import CoordinateSourceBank
-    from .fem._generic import FiniteElementDofMap
+
+
+class _PeriodicNodeOwners(StrictModule):
+    """Host correspondence between coordinate nodes and quotient entities."""
+
+    representatives: np.ndarray
+    orbits: np.ndarray
+    degree: np.ndarray
+    entity: np.ndarray
+
+
+class _PeriodicNodeActions(StrictModule):
+    """Prepared group actions in first-occurrence node order."""
+
+    exponents: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    exact: tuple[tuple[tuple[tuple[int, int], ...], ...], ...] = eqx.field(static=True)
+    numerical: tuple[tuple[tuple[float, ...], ...], ...] = eqx.field(static=True)
+    indices: tuple[int, ...] = eqx.field(static=True)
+
+
+def _prepare_periodic_node_owners(
+    mesh: cell_mesh_owner.CellMesh,
+    geometry: imported_cell_geometry.CellGeometrySpec,
+    resolved: tuple[reference_types_owner.FiniteElementSpec, ...],
+    routes: tuple[Array, ...],
+    dofs: fem_owner.FiniteElementDofMap,
+    /,
+) -> _PeriodicNodeOwners:
+    # Cell geometry → periodic geometry → FEM assembly → cell geometry.
+    from .fem import _assembly as assembly_owner
+
+    if dofs.coordinate_gather is None:
+        raise TypeError(
+            "PeriodicCellGeometrySource.numbering.coordinate_gather must retain nodal coordinate numbering; got None"
+        )
+    host_routes, gather = device_get((routes, dofs.coordinate_gather))
+    flattened = np.concatenate(
+        [np.asarray(route, dtype=np.int64).reshape(-1) for route in host_routes]
+    )
+    representatives = flattened[np.asarray(gather, dtype=np.int64)]
+    count = geometry.coordinates.shape[0]
+    orbits = np.full(count, -1, dtype=np.int64)
+    lifted = assembly_owner.lifted_finite_element_dof_layout(mesh, resolved, ())
+    lifted_routes, _, _ = assembly_owner.build_finite_element_dof_routes(
+        mesh, resolved, lifted
+    )
+    degrees, entities, _, _ = assembly_owner.lifted_dof_entities(mesh, lifted)
+    owner_degree = np.full(count, -1, dtype=np.int64)
+    owner_entity = np.full(count, -1, dtype=np.int64)
+    host_quotient, host_lifted = device_get((dofs.cell_dofs, lifted_routes))
+    for route, quotient_route, lifted_route in zip(
+        host_routes, host_quotient, host_lifted, strict=True
+    ):
+        for node, orbit, lifted_dof in zip(
+            np.asarray(route).reshape(-1),
+            np.asarray(quotient_route).reshape(-1),
+            np.asarray(lifted_route).reshape(-1),
+            strict=True,
+        ):
+            node, orbit, lifted_dof = int(node), int(orbit), int(lifted_dof)
+            if orbits[node] >= 0 and orbits[node] != orbit:
+                raise ValueError(
+                    "PeriodicCellGeometrySource.node_orbits must agree at shared coordinate nodes; got conflicting quotient identities"
+                )
+            orbits[node] = orbit
+            owner_degree[node], owner_entity[node] = (
+                degrees[lifted_dof],
+                entities[lifted_dof],
+            )
+    if np.any(orbits < 0) or np.any(owner_degree < 0):
+        raise ValueError(
+            "PeriodicCellGeometrySource.node_orbits must cover every coordinate coefficient; got unbound quotient entities"
+        )
+    return _PeriodicNodeOwners(representatives, orbits, owner_degree, owner_entity)
+
+
+def _prepare_periodic_node_actions(
+    periodic: periodic_topology_owner.PeriodicMeshTopology,
+    owners: _PeriodicNodeOwners,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _PeriodicNodeActions:
+    generators, orders = exact_periodic_generators(periodic.cell, budget=budget)
+    # Packed topology fields cross to the host once, before coefficient loops.
+    offsets, quotient_indices, orbit_shifts = device_get(
+        (periodic.lifted_offsets, periodic.orbit_indices, periodic.orbit_shifts)
+    )
+    exponent_rows = []
+    exact = []
+    numerical = []
+    indices = []
+    unique: dict[tuple[int, ...], int] = {}
+    for node, orbit in enumerate(owners.orbits):
+        root = int(owners.representatives[orbit])
+        degree = int(owners.degree[node])
+        if degree != int(owners.degree[root]):
+            raise ValueError(
+                "PeriodicCellGeometrySource.node_orbits must preserve entity degree; got a different representative degree"
+            )
+        start, stop = int(offsets[degree]), int(offsets[degree + 1])
+        quotient = quotient_indices[start:stop]
+        anchors = orbit_shifts[start:stop]
+        copy, base = int(owners.entity[node]), int(owners.entity[root])
+        if quotient[copy] != quotient[base]:
+            raise ValueError(
+                "PeriodicCellGeometrySource.node_orbits must preserve winding entity identity; got unrelated entities"
+            )
+        exponent = tuple(
+            (int(a) - int(b)) % order if order else int(a) - int(b)
+            for a, b, order in zip(anchors[copy], anchors[base], orders, strict=True)
+        )
+        exponent_rows.append(exponent)
+        if exponent not in unique:
+            unique[exponent] = len(exact)
+            matrix = exact_periodic_element(generators, orders, exponent, budget=budget)
+            exact.append(
+                tuple(
+                    tuple((value.numerator, value.denominator) for value in row)
+                    for row in matrix
+                )
+            )
+            numerical.append(
+                tuple(tuple(float(value) for value in row) for row in matrix)
+            )
+        indices.append(unique[exponent])
+    return _PeriodicNodeActions(
+        tuple(exponent_rows), tuple(exact), tuple(numerical), tuple(indices)
+    )
 
 
 class PeriodicCellGeometrySource(StrictModule, NonTrainableState):
-    """Existing FE nodal numbering bound to exact authored group expressions.
+    """Bind FE nodal numbering to authored group expressions.
 
-    Numerical image coefficients are not independent scientific parameters.
-    Only representative coefficients are dynamic parameters of this source.
-    Exact coefficients are prepared on the host; execution remains ordinary
-    binary64 JAX operations with a separately bounded coefficient error.
+    Numerical image coefficients are not independent parameters. Representative
+    coefficients remain dynamic, rational coefficients are prepared on the host,
+    and binary64 execution retains a bounded coefficient error.
     """
 
-    source_mesh: CellMesh
-    source_geometry: CellGeometrySpec
-    numbering: FiniteElementDofMap
+    source_mesh: cell_mesh_owner.CellMesh
+    source_geometry: imported_cell_geometry.CellGeometrySpec
+    numbering: fem_owner.FiniteElementDofMap
     representative_coordinates: Array
     representative_nodes: tuple[int, ...] = eqx.field(static=True)
     node_orbits: tuple[int, ...] = eqx.field(static=True)
@@ -54,185 +196,166 @@ class PeriodicCellGeometrySource(StrictModule, NonTrainableState):
     node_isometries: tuple[int, ...] = eqx.field(static=True)
     source_layout_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        mesh: CellMesh,
-        geometry: CellGeometrySpec,
+        mesh: cell_mesh_owner.CellMesh,
+        geometry: imported_cell_geometry.CellGeometrySpec,
         /,
         *,
         active_indices: ArrayLike | None = None,
         representative_coordinates: ArrayLike | None = None,
-        numbering: FiniteElementDofMap | None = None,
+        numbering: fem_owner.FiniteElementDofMap | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
-        from ._cell_geometry import CellGeometrySpec
-        from .fem._generic import (
-            _build_finite_element_dof_routes,
-            _lifted_dof_entities,
-            _lifted_finite_element_dof_layout,
-            FiniteElementDofMap,
-        )
-        from .fem._reference import FiniteElementSpec
 
-        if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
-            raise TypeError(
-                "A quotient coordinate source requires canonical mesh and geometry owners."
-            )
-        periodic = mesh.periodic_topology
-        if (
-            periodic is None
-            or geometry.periodic_source is not None
-            or geometry.exact_source is not None
-        ):
-            raise ValueError(
-                "A quotient coordinate source must compile an independent nodal carrier on its authored periodic topology."
-            )
-        elements, routes, _ = geometry.resolve(mesh)
-        if any(
-            not isinstance(element, FiniteElementSpec)
-            or element.representation != "point_value"
-            or element.mapping != "identity"
-            or element.value_shape
-            for element in elements
-        ):
-            raise ValueError(
-                "A quotient coordinate source requires canonical scalar nodal coordinate elements."
-            )
-        resolved = tuple(
-            element for element in elements if isinstance(element, FiniteElementSpec)
-        )
-        dofs = (
-            FiniteElementDofMap(mesh, resolved, coordinate_spec=geometry)
-            if numbering is None
-            else numbering
-        )
-        if not isinstance(dofs, FiniteElementDofMap) or dofs.coordinate_gather is None:
-            raise TypeError(
-                "The quotient coordinate source requires the actual FE nodal numbering owner."
-            )
-        flattened = np.concatenate(
-            [np.asarray(route, dtype=np.int64).reshape(-1) for route in routes]
-        )
-        representatives = flattened[np.asarray(dofs.coordinate_gather, dtype=np.int64)]
-        count = geometry.coordinates.shape[0]
-        orbits = np.full(count, -1, dtype=np.int64)
-        lifted = _lifted_finite_element_dof_layout(mesh, resolved, ())
-        lifted_routes, _, _ = _build_finite_element_dof_routes(mesh, resolved, lifted)
-        degrees, entities, _, _ = _lifted_dof_entities(mesh, lifted)
-        owner_degree = np.full(count, -1, dtype=np.int64)
-        owner_entity = np.full(count, -1, dtype=np.int64)
-        for route, quotient_route, lifted_route in zip(
-            routes, dofs.cell_dofs, lifted_routes, strict=True
-        ):
-            for node, orbit, lifted_dof in zip(
-                np.asarray(route).reshape(-1),
-                np.asarray(quotient_route).reshape(-1),
-                np.asarray(lifted_route).reshape(-1),
-                strict=True,
+        with ExitStack() as stack:
+            periodic = mesh.periodic_topology
+            if (
+                periodic is None
+                or geometry.periodic_source is not None
+                or geometry.exact_source is not None
             ):
-                node, orbit, lifted_dof = int(node), int(orbit), int(lifted_dof)
-                if orbits[node] >= 0 and orbits[node] != orbit:
-                    raise ValueError(
-                        "Shared coordinate coefficients disagree on their authored quotient identity."
-                    )
-                orbits[node] = orbit
-                owner_degree[node], owner_entity[node] = (
-                    degrees[lifted_dof],
-                    entities[lifted_dof],
-                )
-        if np.any(orbits < 0) or np.any(owner_degree < 0):
-            raise ValueError(
-                "Every coordinate coefficient requires its actual FE quotient owner."
-            )
-        generators, orders = _exact_periodic_generators(periodic.cell)
-        exponent_rows = []
-        exact = []
-        numerical = []
-        indices = []
-        unique: dict[tuple[int, ...], int] = {}
-        for node, orbit in enumerate(orbits):
-            root = int(representatives[orbit])
-            degree = int(owner_degree[node])
-            if degree != int(owner_degree[root]):
                 raise ValueError(
-                    "A quotient coefficient changes its owning entity degree."
+                    "PeriodicCellGeometrySource.source_geometry must be an independent nodal carrier on periodic_topology; got missing topology or a dependent source"
                 )
-            quotient, _, anchors = (
-                np.asarray(value) for value in periodic.orbits(degree)
-            )
-            copy, base = int(owner_entity[node]), int(owner_entity[root])
-            if quotient[copy] != quotient[base]:
-                raise ValueError(
-                    "A quotient coefficient crosses unrelated winding entities."
-                )
-            exponent = tuple(
-                (int(a) - int(b)) % order if order else int(a) - int(b)
-                for a, b, order in zip(anchors[copy], anchors[base], orders, strict=True)
-            )
-            exponent_rows.append(exponent)
-            if exponent not in unique:
-                unique[exponent] = len(exact)
-                matrix = _exact_periodic_element(generators, orders, exponent)
-                exact.append(
-                    tuple(
-                        tuple((value.numerator, value.denominator) for value in row)
-                        for row in matrix
+            if budget is None:
+                work_upper, bytes_upper, queries_upper = (
+                    periodic_topology_owner.periodic_preparation_bounds(
+                        periodic.cell,
+                        geometry.coordinates.shape[0],
+                        np.asarray(periodic.orbit_shifts, dtype=np.int64),
                     )
                 )
-                numerical.append(
-                    tuple(tuple(float(value) for value in row) for row in matrix)
+                budget = stack.enter_context(
+                    owned_periodic_preparation(
+                        work_upper, bytes_upper, queries_upper=queries_upper
+                    )
                 )
-            indices.append(unique[exponent])
-        active = (
-            np.arange(count, dtype=np.int64)
-            if active_indices is None
-            else np.asarray(active_indices)
+            elements, routes, _ = geometry.resolve(mesh, budget=budget)
+            resolved_elements: list[reference_types_owner.FiniteElementSpec] = []
+            for element in elements:
+                match element:
+                    case reference_types_owner.FiniteElementSpec(
+                        representation="point_value", mapping="identity", value_shape=()
+                    ):
+                        resolved_elements.append(element)
+                    case _:
+                        raise ValueError(
+                            "PeriodicCellGeometrySource.source_geometry.elements must be scalar identity-mapped point-value elements; got another coordinate element"
+                        )
+            resolved = tuple(resolved_elements)
+            dofs = (
+                fem_owner.FiniteElementDofMap(mesh, resolved, coordinate_spec=geometry)
+                if numbering is None
+                else numbering
+            )
+            owners = _prepare_periodic_node_owners(mesh, geometry, resolved, routes, dofs)
+            representatives, orbits = owners.representatives, owners.orbits
+            count = geometry.coordinates.shape[0]
+            actions = _prepare_periodic_node_actions(periodic, owners, budget=budget)
+            active = (
+                np.arange(count, dtype=np.int64)
+                if active_indices is None
+                else np.asarray(active_indices)
+            )
+            if (
+                active.ndim != 1
+                or not np.issubdtype(active.dtype, np.integer)
+                or np.any(active < 0)
+                or np.any(active >= count)
+            ):
+                raise ValueError(
+                    "PeriodicCellGeometrySource.active_indices must index source coordinate rows; got invalid source indices"
+                )
+            values = (
+                np.asarray(geometry.coordinates)[representatives]
+                if representative_coordinates is None
+                else np.asarray(representative_coordinates, dtype=np.float64)
+            )
+            if values.shape != (
+                dofs.global_dof_count,
+                mesh.ambient_dimension,
+            ) or not np.all(np.isfinite(np.asarray(values))):
+                raise ValueError(
+                    f"PeriodicCellGeometrySource.representative_coordinates must cover finite quotient DOFs; got {values.shape}"
+                )
+            self.source_mesh, self.source_geometry, self.numbering = mesh, geometry, dofs
+            self.representative_coordinates = device_put(values)
+            self.representative_nodes = tuple(int(value) for value in representatives)
+            self.node_orbits = tuple(int(value) for value in orbits)
+            self.node_exponents = actions.exponents
+            self.active_indices = tuple(int(value) for value in active)
+            self.exact_isometries, self.numerical_isometries = (
+                actions.exact,
+                actions.numerical,
+            )
+            self.node_isometries = actions.indices
+            self.source_layout_id = canonical_fingerprint(
+                {
+                    "kind": "periodic-coordinate-source-layout",
+                    "topology": periodic.periodic_topology_id,
+                    "geometry_layout": geometry.geometry_layout_id,
+                    "numbering": dofs.dof_map_id,
+                    "orbits": self.node_orbits,
+                    "exponents": self.node_exponents,
+                    "active_indices": self.active_indices,
+                }
+            )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[PeriodicCellGeometrySource],
+        value: PeriodicCellGeometrySource,
+        /,
+    ) -> PeriodicCellGeometrySource:
+        """Rebuild numbering and authenticate the stored quotient coordinate law."""
+        renewed = cls(
+            value.source_mesh,
+            value.source_geometry,
+            active_indices=np.asarray(value.active_indices, dtype=np.int64),
+            representative_coordinates=value.representative_coordinates,
+            numbering=None,
         )
+        if renewed.source_layout_id != value.source_layout_id:
+            raise ValueError(
+                "PeriodicCellGeometrySource.source_layout_id must bind restored numbering and topology; "
+                f"got {value.source_layout_id!r}"
+            )
         if (
-            active.ndim != 1
-            or not np.issubdtype(active.dtype, np.integer)
-            or np.any(active < 0)
-            or np.any(active >= count)
+            value.representative_nodes,
+            value.node_orbits,
+            value.node_exponents,
+            value.exact_isometries,
+            value.numerical_isometries,
+            value.node_isometries,
+        ) != (
+            renewed.representative_nodes,
+            renewed.node_orbits,
+            renewed.node_exponents,
+            renewed.exact_isometries,
+            renewed.numerical_isometries,
+            renewed.node_isometries,
         ):
             raise ValueError(
-                "Quotient coefficient views require valid original source indices."
+                "PeriodicCellGeometrySource.node_exponents must retain the restored quotient coordinate law; "
+                "got different node or action rows"
             )
-        values = (
-            geometry.coordinates[representatives]
-            if representative_coordinates is None
-            else jnp.asarray(representative_coordinates, dtype=jnp.float64)
-        )
-        if values.shape != (dofs.global_dof_count, mesh.ambient_dimension) or not np.all(
-            np.isfinite(np.asarray(values))
+        if (
+            value.numbering.dof_map_id != renewed.numbering.dof_map_id
+            or array_tree_fingerprint(value.numbering)
+            != array_tree_fingerprint(renewed.numbering)
         ):
             raise ValueError(
-                "Representative coefficients must cover the actual finite-element quotient numbering."
+                "PeriodicCellGeometrySource.numbering must match restored FE numbering; "
+                "got different numbering content"
             )
-        self.source_mesh, self.source_geometry, self.numbering = mesh, geometry, dofs
-        self.representative_coordinates = values
-        self.representative_nodes = tuple(int(value) for value in representatives)
-        self.node_orbits = tuple(int(value) for value in orbits)
-        self.node_exponents = tuple(exponent_rows)
-        self.active_indices = tuple(int(value) for value in active)
-        self.exact_isometries, self.numerical_isometries = tuple(exact), tuple(numerical)
-        self.node_isometries = tuple(indices)
-        self.source_layout_id = canonical_fingerprint(
-            {
-                "kind": "periodic-coordinate-source-layout",
-                "topology": periodic.periodic_topology_id,
-                "geometry_layout": geometry.geometry_layout_id,
-                "numbering": dofs.dof_map_id,
-                "orbits": self.node_orbits,
-                "exponents": self.node_exponents,
-                "active_indices": self.active_indices,
-            }
-        )
+        return renewed
 
     @property
     def source_id(self) -> str:
-        from ._cell_geometry import CellGeometrySpec
 
-        if not isinstance(self.source_geometry, CellGeometrySpec):
-            raise TypeError("The quotient source lost its actual coordinate basis owner.")
         return canonical_fingerprint(
             {
                 "kind": "periodic-coordinate-source",
@@ -243,6 +366,54 @@ class PeriodicCellGeometrySource(StrictModule, NonTrainableState):
                 "source_elements": array_tree_fingerprint(self.source_geometry.elements),
                 "exact_isometries": self.exact_isometries,
             }
+        )
+
+    def preparation_bounds(self) -> tuple[int, int, int]:
+        """Bound rebinding plus two rational source-bank preparation stages.
+
+        Matrix actions use the admitted identification and retained exponent
+        rows. Coefficient bits follow the stored rational matrices and the
+        binary64 representative contract; no numerical values are transferred.
+        """
+        periodic = self.source_mesh.periodic_topology
+        if periodic is None:
+            raise ValueError(
+                "PeriodicCellGeometrySource.source_mesh.periodic_topology must retain its identification; got None"
+            )
+        work, storage, _ = periodic_topology_owner.periodic_preparation_bounds(
+            periodic.cell,
+            len(self.node_orbits),
+            np.asarray(self.node_exponents, dtype=np.int64),
+        )
+        dimension = self.representative_coordinates.shape[1]
+        binary64_bits = (
+            float(np.finfo(np.float64).smallest_subnormal)
+            .as_integer_ratio()[1]
+            .bit_length()
+        )
+        matrix_bits = max(
+            abs(numerator).bit_length() + denominator.bit_length()
+            for matrix in self.exact_isometries
+            for row in matrix
+            for numerator, denominator in row
+        )
+        coefficient_bits = (dimension + 1) * (
+            binary64_bits + matrix_bits
+        ) + dimension.bit_length()
+        representatives = self.representative_coordinates.shape[0] * dimension
+        values = len(self.active_indices) * dimension
+        bank = coordinate_enclosure_owner.coordinate_polynomial_estimate(
+            terms=representatives + 2 * values,
+            dimension=dimension,
+            degree=0,
+            numerator_bits=coefficient_bits,
+            denominator_bits=(representatives + 2 * values) * coefficient_bits,
+        )
+        bank_work = representatives + 2 * values * (dimension + 1)
+        return (
+            work + bank_work + bank.work_upper,
+            storage + bank.bytes_upper,
+            coefficient_bits,
         )
 
     def runtime_coordinates(self) -> Array:
@@ -262,12 +433,16 @@ class PeriodicCellGeometrySource(StrictModule, NonTrainableState):
             contract("nij,nj->ni", matrices[:, :-1, :-1], values) + matrices[:, :-1, -1]
         )
 
-    def source_coordinates(self) -> CoordinateSourceBank:
+    @checked
+    def source_coordinates(
+        self, *, budget: CoordinateEnclosureBudget
+    ) -> CoordinateSourceBank:
         if isinstance(self.representative_coordinates, jax_core.Tracer):
-            raise TypeError("Exact quotient coefficient preparation is host-only.")
+            raise TypeError(
+                "PeriodicCellGeometrySource.source_coordinates must receive host coefficients; got a JAX tracer"
+            )
         values = tuple(
-            tuple(Fraction(float(value)) for value in row)
-            for row in np.asarray(self.representative_coordinates)
+            rational_vector(row) for row in np.asarray(self.representative_coordinates)
         )
         result = []
         for node in self.active_indices:
@@ -287,11 +462,11 @@ class PeriodicCellGeometrySource(StrictModule, NonTrainableState):
             )
         return tuple(result)
 
-    def reindexed(self, indices: ArrayLike, /) -> PeriodicCellGeometrySource:
-        from ._cell_geometry import CellGeometrySpec
+    @checked
+    def reindexed(
+        self, indices: ArrayLike, /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> PeriodicCellGeometrySource:
 
-        if not isinstance(self.source_geometry, CellGeometrySpec):
-            raise TypeError("The periodic source lost its canonical geometry owner.")
         indices_ = np.asarray(indices)
         if (
             indices_.ndim != 1
@@ -300,7 +475,7 @@ class PeriodicCellGeometrySource(StrictModule, NonTrainableState):
             or np.any(indices_ >= len(self.active_indices))
         ):
             raise ValueError(
-                "Periodic coefficient reindexing requires valid current source rows."
+                "PeriodicCellGeometrySource.active_indices must index current source rows; got invalid reindexing"
             )
         return PeriodicCellGeometrySource(
             self.source_mesh,
@@ -310,20 +485,25 @@ class PeriodicCellGeometrySource(StrictModule, NonTrainableState):
             ),
             representative_coordinates=self.representative_coordinates,
             numbering=self.numbering,
+            budget=budget,
         )
 
-    def rebound(self, coordinates: ArrayLike, /) -> PeriodicCellGeometrySource:
-        from ._cell_geometry import CellGeometrySpec
+    @checked
+    def rebound(
+        self,
+        coordinates: ArrayLike,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> PeriodicCellGeometrySource:
 
-        if not isinstance(self.source_geometry, CellGeometrySpec):
-            raise TypeError("The periodic source lost its canonical geometry owner.")
-        values = jnp.asarray(coordinates, dtype=jnp.float64)
+        values = np.asarray(coordinates, dtype=np.float64)
         if values.shape != (
             len(self.active_indices),
             self.representative_coordinates.shape[1],
         ):
             raise ValueError(
-                "Periodic rebinding must preserve the actual coefficient view."
+                f"PeriodicCellGeometrySource.rebound.coordinates must preserve coefficient view shape; got {values.shape}"
             )
         positions = {node: position for position, node in enumerate(self.active_indices)}
         roots = [
@@ -332,13 +512,15 @@ class PeriodicCellGeometrySource(StrictModule, NonTrainableState):
             if node in positions
         ]
         rows = [positions[self.representative_nodes[orbit]] for orbit in roots]
-        representatives = self.representative_coordinates.at[
-            jnp.asarray(roots, dtype=jnp.int32)
-        ].set(values[jnp.asarray(rows, dtype=jnp.int32)])
+        representatives = np.asarray(self.representative_coordinates).copy()
+        representatives[np.asarray(roots, dtype=np.int64)] = values[
+            np.asarray(rows, dtype=np.int64)
+        ]
         return PeriodicCellGeometrySource(
             self.source_mesh,
             self.source_geometry,
             active_indices=np.asarray(self.active_indices, dtype=np.int64),
             representative_coordinates=representatives,
             numbering=self.numbering,
+            budget=budget,
         )

@@ -44,7 +44,6 @@ from ...typing import Bool, Dim, Float, parse
 from ._edits import (
     _CCDLeg,
     _edge_faces,
-    _Edit,
     _is_feature_edge,
     _neighbors,
     _new_edit,
@@ -52,7 +51,8 @@ from ._edits import (
     _pair,
     _star,
     _vertex_rank,
-    _WorkingMesh,
+    Edit,
+    WorkingMesh,
 )
 from ._events import SurfaceEventKind, SurfaceEventStatus
 from ._geometry import PreparedMultiRegionSurface
@@ -364,9 +364,9 @@ def propose_remesh(
 # ------------------------------------------------------------------ builders
 
 
-def _split_edit(
-    mesh: _WorkingMesh, first: int, second: int, /
-) -> _Edit | SurfaceEventStatus:
+def split_edit(
+    mesh: WorkingMesh, first: int, second: int, /
+) -> Edit | SurfaceEventStatus:
     faces = _edge_faces(mesh, first, second)
     if not faces:
         return SurfaceEventStatus.SUPPORT_INVALID
@@ -398,7 +398,7 @@ def _split_edit(
 
 
 def _collapse_target(
-    mesh: _WorkingMesh, first: int, second: int, /
+    mesh: WorkingMesh, first: int, second: int, /
 ) -> tuple[int, int, np.ndarray] | SurfaceEventStatus:
     """``(kept, removed, position)`` under the vertex feature ranks."""
     ranks = (_vertex_rank(mesh, first), _vertex_rank(mesh, second))
@@ -418,9 +418,9 @@ def _collapse_target(
     return kept, removed, mesh.positions[kept].copy()
 
 
-def _collapse_edit(
-    mesh: _WorkingMesh, first: int, second: int, /
-) -> _Edit | SurfaceEventStatus:
+def collapse_edit(
+    mesh: WorkingMesh, first: int, second: int, /
+) -> Edit | SurfaceEventStatus:
     shared = _edge_faces(mesh, first, second)
     if not shared:
         return SurfaceEventStatus.SUPPORT_INVALID
@@ -472,9 +472,7 @@ def _collapse_edit(
     )
 
 
-def _flip_edit(
-    mesh: _WorkingMesh, first: int, second: int, /
-) -> _Edit | SurfaceEventStatus:
+def flip_edit(mesh: WorkingMesh, first: int, second: int, /) -> Edit | SurfaceEventStatus:
     faces = _edge_faces(mesh, first, second)
     if len(faces) != 2:
         return SurfaceEventStatus.FEATURE_NOT_PRESERVED

@@ -1,34 +1,41 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Scalar transport through actual full-sphere projective material correspondence.
-
-Physical reference maps are rational, not affine maps fitted to corner images.
-Every mixed form uses the true projective quotient/Jacobian on an exact old
-reference overlap triangle. Positive-denominator series carry an explicit
-remainder and reuse the canonical signed sqrt-Gram integration owner.
-"""
+"Transport scalar fields through projective sphere material correspondence.\n\nPhysical reference maps are rational, not affine maps fitted to corner images.\nEvery mixed form uses the true projective quotient/Jacobian on an old\nreference overlap triangle. Positive-denominator series carry an explicit\nremainder and reuse the ordered signed sqrt-Gram integration owner."
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+import sys
+from collections.abc import Callable, Iterator, Sequence
 from fractions import Fraction
-from typing import Literal, overload, TYPE_CHECKING, TypedDict
+from typing import assert_never, Literal, overload, TypedDict
 
 import numpy as np
 from numpy.typing import NDArray
 
+import phydrax.discretization._mapped_geometry_measure as mapped_measure_owner
+import phydrax.discretization._sphere_chart_records as imported_sphere_chart_deformation
+from phydrax.discretization._sphere_chart_records import (
+    PreparedSphereChartDeformation,
+    PreparedSphereChartPiece,
+)
+from phydrax.geometry._rational import fraction_endpoint
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._resource_ticket import HostBatchTicket
+from ..._strict import StrictModule
+from ...geometry._sphere_material_atlas import SphereProjectiveReferenceMap
 from ...linalg import ArraySpace
-from ...linalg._hermitian_spectral import _fraction_sqrt_interval
+from ...linalg._hermitian_spectral import fraction_sqrt_interval
 from ...sparse import RowRelation, SparseLinearMap
+from ...typing import checked, parse
+from .. import _coordinate_enclosure as algebra
 from .._cell_geometry import CellGeometrySpec
-from .._cell_geometry_transfer import (
-    _embedded_measure_submaps,
-    _embedded_squared_density,
-    _mapped_geometry_cells,
-    _sqrt_polynomial_integral_piece,
-    CellGeometryTransitionError,
+from .._cell_geometry_transition_types import CellGeometryTransitionError
+from .._chart_geometry import contains, orientation, projective_point
+from .._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
 )
 from .._coordinate_enclosure import (
     add,
@@ -38,7 +45,6 @@ from .._coordinate_enclosure import (
     constant,
     Expression,
     multiply,
-    outward,
     Polynomial,
     rational_expression,
     RationalPolynomial,
@@ -46,43 +52,41 @@ from .._coordinate_enclosure import (
     source_basis,
     sum_polynomials,
 )
+from .._mapped_geometry_measure import (
+    embedded_measure_submaps,
+    embedded_squared_density,
+    mapped_geometry_cells,
+    sqrt_polynomial_integral_piece,
+)
 from ._generic import FiniteElementDiscretization
+from ._mapped_form_transfer import PreparationWork
+from ._surface_chart_compatible import (
+    MaterialCompatiblePiece,
+    prepare_material_chart_compatible_transfer,
+    PreparedSurfaceChartCompatibleTransfer,
+)
 from ._surface_chart_transfer import (
-    _binding,
-    _bound_surface_endpoint,
-    _ChartEndpoint,
-    _endpoint_cell_measures,
-    _field_cells,
-    _finish_material_dg_projection,
-    _integral,
-    _IntegrationBudgets,
-    _physical_rows,
-    _restricted,
+    bound_surface_endpoint,
+    ChartEndpoint,
+    ChartFieldSemantics,
+    deformation_binding,
+    endpoint_cell_measures,
+    field_cells,
+    finish_material_dg_projection,
+    integral,
+    IntegrationBudgets,
+    physical_rows,
     PreparedSurfaceChartFiniteVolumeContents,
+    restricted,
 )
 from ._topology_transfer import (
-    _mapped_dg_cells,
-    _owned_rows,
-    _tabulated,
+    field_transfer_query_upper,
     FiniteElementFieldTransfer,
     FiniteElementTopologyTransfer,
     FiniteElementTransferEvidence,
-)
-
-
-if TYPE_CHECKING:
-    from ...geometry._sphere_material_atlas import SphereProjectiveReferenceMap
-    from .._sphere_chart_deformation import (
-        PreparedSphereChartDeformation,
-        PreparedSphereChartPiece,
-    )
-
-from .. import _coordinate_enclosure as algebra
-from ._mapped_form_transfer import _PreparationWork
-from ._surface_chart_compatible import (
-    _MaterialCompatiblePiece,
-    _prepare_material_chart_compatible_transfer,
-    PreparedSurfaceChartCompatibleTransfer,
+    mapped_dg_cells,
+    owned_rows,
+    tabulated,
 )
 
 
@@ -101,19 +105,20 @@ class _ProjectiveBudgets(TypedDict):
 
 
 def _validate_sphere(
-    source: _ChartEndpoint,
-    target: _ChartEndpoint,
-    prepared: PreparedSphereChartDeformation,
+    source: ChartEndpoint,
+    target: ChartEndpoint,
+    prepared: imported_sphere_chart_deformation.PreparedSphereChartDeformation,
     source_geometry: CellGeometrySpec,
     target_geometry: CellGeometrySpec,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> _CellIndices:
-    from .._sphere_chart_deformation import PreparedSphereChartDeformation
 
-    if not isinstance(prepared, PreparedSphereChartDeformation):
-        raise TypeError("An actual prepared sphere chart deformation is required.")
-    _bound_surface_endpoint(source, source_geometry, "source", prepared)
-    _bound_surface_endpoint(target, target_geometry, "target", prepared)
-    prepared.require_bound(source.mesh, source_geometry, target.mesh, target_geometry)
+    bound_surface_endpoint(source, source_geometry, "source", prepared, budget=budget)
+    bound_surface_endpoint(target, target_geometry, "target", prepared, budget=budget)
+    prepared.require_bound(
+        source.mesh, source_geometry, target.mesh, target_geometry, budget=budget
+    )
     indices: list[dict[int, int]] = []
     for discretization, atlas in (
         (source, prepared.source_atlas),
@@ -129,39 +134,10 @@ def _validate_sphere(
             np.asarray(atlas.cell_global_ids, dtype=np.int64).tolist()
         ):
             raise ValueError(
-                "Sphere correspondence does not bind the current scientific cells."
+                "sphere_chart.validate_sphere.pieces must satisfy the material reference contract; got Sphere correspondence does not bind the current scientific cells."
             )
         indices.append({int(identity): row for row, identity in enumerate(ids)})
     return indices[0], indices[1]
-
-
-def _orientation(first: _Point, second: _Point, third: _Point) -> Fraction:
-    return (second[0] - first[0]) * (third[1] - first[1]) - (second[1] - first[1]) * (
-        third[0] - first[0]
-    )
-
-
-def _contains_exact(vertices: _Triangle, point: _Point) -> bool:
-    direction = _orientation(*vertices)
-    if direction == 0:
-        raise ValueError("An exact sphere reference overlap is degenerate.")
-    return all(
-        _orientation(vertices[i], vertices[(i + 1) % 3], point) * direction >= 0
-        for i in range(3)
-    )
-
-
-def _map_exact(projective_map: SphereProjectiveReferenceMap, point: _Point) -> _Point:
-    homogeneous = tuple(
-        row[0] + row[1] * point[0] + row[2] * point[1]
-        for row in projective_map.exact_coefficients
-    )
-    denominator = sum(homogeneous, Fraction(0))
-    if denominator <= 0 or any(value < 0 for value in homogeneous):
-        raise ValueError(
-            "An actual sphere chart functional leaves its positive reference cone."
-        )
-    return homogeneous[1] / denominator, homogeneous[2] / denominator
 
 
 def _prepare_h1(
@@ -170,15 +146,17 @@ def _prepare_h1(
     prepared: PreparedSphereChartDeformation,
     indices: _CellIndices,
     name: str,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
-    si, ti = source._field_index(name), target._field_index(name)
-    source_cells, target_cells = _field_cells(source, si), _field_cells(target, ti)
+    si, ti = source.field_index(name), target.field_index(name)
+    source_cells, target_cells = field_cells(source, si), field_cells(target, ti)
     if any(
-        element.conformity != "H1" or source_basis(element) is None
+        element.conformity != "H1" or source_basis(element, budget=budget) is None
         for element, _ in source_cells + target_cells
     ):
         raise ValueError(
-            "Sphere H1 transport requires actual canonical scalar nodal sources."
+            "sphere_chart.prepare_h1.pieces must satisfy the material reference contract; got Sphere H1 transport requires ordered scalar nodal sources."
         )
     source_indices, target_indices = indices
     inverse_maps: dict[tuple[int, int], SphereProjectiveReferenceMap] = {}
@@ -198,23 +176,37 @@ def _prepare_h1(
         nodes = np.asarray(target_element.reference_nodes, dtype=np.float64)
         if nodes.ndim != 2 or nodes.shape[1] != 2:
             raise ValueError(
-                "Sphere H1 functionals require two-dimensional reference nodes."
+                "sphere_chart.prepare_h1.pieces must satisfy the material reference contract; got Sphere H1 functionals require two-dimensional reference nodes."
             )
         for node in range(nodes.shape[0]):
             point = Fraction(float(nodes[node, 0])), Fraction(float(nodes[node, 1]))
-            if not _contains_exact(piece.exact_target_reference_vertices, point):
+            if not contains(
+                piece.exact_target_reference_vertices,
+                point,
+                degenerate_message="sphere_chart.reference_triangle must have nonzero area; got degenerate triangle.",
+            ):
                 continue
-            reference = _map_exact(inverse, point)
-            if not _contains_exact(piece.exact_source_reference_vertices, reference):
+            reference = projective_point(
+                inverse.exact_coefficients,
+                point,
+                invalid_message="sphere_chart.reference_functional must remain inside the positive reference cone; got nonpositive denominator or negative barycentric coordinate.",
+            )
+            if not contains(
+                piece.exact_source_reference_vertices,
+                reference,
+                degenerate_message="sphere_chart.reference_triangle must have nonzero area; got degenerate triangle.",
+            ):
                 raise ValueError(
-                    "A projective target functional has no exact old overlap witness."
+                    "sphere_chart.prepare_h1.binding must satisfy the declared geometry and cell identities; got A projective target functional has no old overlap binding."
                 )
-            basis, _ = _tabulated(
+            basis, _ = tabulated(
                 source_element,
                 np.asarray([[float(value) for value in reference]], dtype=np.float64),
             )
             if not np.all(np.isfinite(basis)):
-                raise ValueError("Sphere source nodal functionals are not finite.")
+                raise ValueError(
+                    "sphere_chart.prepare_h1.pieces must satisfy the material reference contract; got Sphere source nodal functionals are not finite."
+                )
             candidates.append(int(target_route[node]))
             columns.append(source_route)
             values.append(basis[0])
@@ -224,7 +216,7 @@ def _prepare_h1(
     for row, (route, value) in enumerate(zip(columns, values, strict=True)):
         padded_columns[row, : route.size], padded_values[row, : route.size] = route, value
     ss, ts = source.dof_maps[si].global_dof_count, target.dof_maps[ti].global_dof_count
-    rows, coefficients, continuity = _owned_rows(
+    rows, coefficients, continuity = owned_rows(
         np.asarray(candidates, dtype=np.int64)[:, None],
         padded_columns,
         padded_values[:, None],
@@ -240,7 +232,9 @@ def _prepare_h1(
         64 * np.finfo(np.float64).eps * amplification,
     )
     if not evidence.passed:
-        raise ValueError("Sphere rational H1 nodal/trace certificate failed.")
+        raise ValueError(
+            "sphere_chart.prepare_h1.pieces must satisfy the material reference contract; got Sphere rational H1 nodal/trace certificate failed."
+        )
     primal = SparseLinearMap(
         RowRelation(rows.astype(np.int32), source_size=ss),
         coefficients,
@@ -269,7 +263,7 @@ def _prepare_h1(
         transfer,
         source.field_spaces[si],
         target.field_spaces[ti],
-        _binding(prepared),
+        deformation_binding(prepared),
         evidence,
     )
 
@@ -278,10 +272,12 @@ def _degree(polynomial: Polynomial) -> int:
     return max((sum(index) for index in polynomial), default=0)
 
 
-def _power(polynomial: Polynomial, exponent: int) -> Polynomial:
-    result = constant(1, 2)
+def _power(
+    polynomial: Polynomial, exponent: int, *, budget: CoordinateEnclosureBudget
+) -> Polynomial:
+    result = constant(1, 2, budget=budget)
     for _ in range(exponent):
-        result = multiply(result, polynomial)
+        result = multiply(result, polynomial, budget=budget)
     return result
 
 
@@ -290,226 +286,272 @@ def _homogeneous(
     numerators: Sequence[Polynomial],
     denominator: Polynomial,
     degree: int,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> Polynomial:
-    """Exact numerator after substituting N/D, with one positive D power."""
+    "numerator after substituting N/D, with one positive D power."
     powers = [
-        tuple(_power(value, exponent) for exponent in range(degree + 1))
+        tuple(_power(value, exponent, budget=budget) for exponent in range(degree + 1))
         for value in (*numerators, denominator)
     ]
     return sum_polynomials(
         tuple(
             scale(
                 multiply(
-                    multiply(powers[0][index[0]], powers[1][index[1]]),
+                    multiply(powers[0][index[0]], powers[1][index[1]], budget=budget),
                     powers[2][degree - sum(index)],
+                    budget=budget,
                 ),
                 coefficient,
+                budget=budget,
             )
             for index, coefficient in polynomial.items()
-        )
+        ),
+        budget=budget,
     )
 
 
-def _projective_rational_density(
+@checked
+def projective_rational_density(
     gram: Expression,
     numerators: Sequence[Polynomial],
     denominator: Polynomial,
     jacobian_numerator: Fraction,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[Expression, Polynomial, int]:
-    """Keep exact positive even denominator/Jacobian factors outside sqrt(Gram)."""
-    if not isinstance(gram, RationalPolynomial):
-        raise ValueError(
-            "Rational sphere density substitution requires its owning exact quotient."
-        )
-    controls = bernstein_coefficients(denominator, "simplex", 2)
+    "Keep positive even denominator/Jacobian factors outside sqrt(Gram)."
+    match gram:
+        case RationalPolynomial():
+            pass
+        case _:
+            raise ValueError(
+                "sphere_chart.projective_rational_density.measures must satisfy the positive physical measure contract; got Rational sphere density substitution requires its quotient."
+            )
+    controls = bernstein_coefficients(denominator, "simplex", 2, budget=budget)
     if min(controls) <= 0:
         raise ValueError(
-            "Rational sphere reference action has no positive denominator proof."
+            "sphere_chart.projective_rational_density.pieces must satisfy the material reference contract; got Rational sphere reference action has no positive denominator proof."
         )
     numerator_degree, denominator_degree = (
         _degree(gram.numerator),
         _degree(gram.denominator),
     )
-    numerator = _homogeneous(gram.numerator, numerators, denominator, numerator_degree)
-    divisor = _homogeneous(gram.denominator, numerators, denominator, denominator_degree)
+    numerator = _homogeneous(
+        gram.numerator, numerators, denominator, numerator_degree, budget=budget
+    )
+    divisor = _homogeneous(
+        gram.denominator, numerators, denominator, denominator_degree, budget=budget
+    )
     degree_difference = denominator_degree - numerator_degree
     parity = degree_difference % 2
     if parity:
-        numerator = multiply(numerator, denominator)
+        numerator = multiply(numerator, denominator, budget=budget)
     outside_power = (degree_difference - parity) // 2 - 3
-    weight = scale(_power(denominator, max(outside_power, 0)), abs(jacobian_numerator))
-    return rational_expression(numerator, divisor), weight, max(-outside_power, 0)
+    weight = scale(
+        _power(denominator, max(outside_power, 0), budget=budget),
+        abs(jacobian_numerator),
+        budget=budget,
+    )
+    return (
+        rational_expression(numerator, divisor, budget=budget),
+        weight,
+        max(-outside_power, 0),
+    )
 
 
 def _projective_arguments(
-    piece: PreparedSphereChartPiece, source_arguments: Sequence[Polynomial]
+    piece: PreparedSphereChartPiece,
+    source_arguments: Sequence[Polynomial],
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[tuple[Polynomial, ...], Polynomial]:
     homogeneous = tuple(
         sum_polynomials(
             (
-                constant(row[0], 2),
-                scale(source_arguments[0], row[1]),
-                scale(source_arguments[1], row[2]),
-            )
+                constant(row[0], 2, budget=budget),
+                scale(source_arguments[0], row[1], budget=budget),
+                scale(source_arguments[1], row[2], budget=budget),
+            ),
+            budget=budget,
         )
         for row in piece.projective_map.exact_coefficients
     )
-    return homogeneous[1:], sum_polynomials(homogeneous)
+    return homogeneous[1:], sum_polynomials(homogeneous, budget=budget)
 
 
-@overload
-def _projective_integral(
-    gram: Expression,
+def _rational_projective_integral(
+    gram: RationalPolynomial,
     numerator: Polynomial,
     denominator: Polynomial,
     exponent: int,
+    absolute: Fraction,
+    relative: Fraction,
+    maximum_terms: int,
+    maximum_subcells: int,
     budgets: _ProjectiveBudgets,
-    *,
-    fraction_result: Literal[True],
-) -> tuple[Fraction, Fraction]: ...
-
-
-@overload
-def _projective_integral(
-    gram: Expression,
-    numerator: Polynomial,
-    denominator: Polynomial,
-    exponent: int,
-    budgets: _ProjectiveBudgets,
-    *,
-    fraction_result: Literal[False] = False,
-) -> tuple[float, float]: ...
-
-
-def _projective_integral(
-    gram: Expression,
-    numerator: Polynomial,
-    denominator: Polynomial,
-    exponent: int,
-    budgets: _ProjectiveBudgets,
-    *,
-    fraction_result: bool = False,
+    fraction_result: bool,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[Fraction | float, Fraction | float]:
-    """Enclose sqrt(Gram)*numerator/D**exponent using the canonical root owner.
-
-    The reciprocal series is exact polynomial data with a uniform remainder.
-    Fractions may be retained across a polynomial moment functional, so a DG
-    matrix is published once, rather than rounding every intermediate moment.
-    Density and denominator subdivisions are genuine source-reference maps.
-    Resource exhaustion never switches to a sampled or affine approximation.
-    """
-    if not numerator:
-        return (Fraction(0), Fraction(0)) if fraction_result else (0.0, 0.0)
-    if exponent == 0:
-        denominator = constant(1, 2)
-    absolute, relative = (
-        Fraction(budgets["absolute_tolerance"]),
-        Fraction(budgets["relative_tolerance"]),
+    "Enclose a projective moment through the rational density integral owner."
+    divisor_lower = algebra.require_rational_reference_scalar(
+        min(bernstein_coefficients(gram.denominator, "simplex", 2, budget=budget))
     )
-    if absolute < 0 or relative < 0 or absolute == relative == 0:
-        raise ValueError("Projective integration requires positive error budgets.")
-    maximum_terms, maximum_subcells = (
-        int(budgets["maximum_binomial_terms"]),
-        int(budgets["maximum_subcells"]),
+    reference_lower = algebra.require_rational_reference_scalar(
+        min(bernstein_coefficients(denominator, "simplex", 2, budget=budget))
     )
-    if maximum_terms <= 0 or maximum_subcells <= 0:
-        raise ValueError("Projective integration requires positive work limits.")
-    if isinstance(gram, RationalPolynomial):
-        from .._cell_geometry_transfer import _certified_sqrt_prepare_expression_integral
-        from .._coordinate_enclosure import (
-            _COORDINATE_BUDGET,
-            CoordinateEnclosureBudget,
-            CoordinateEnclosureResourceError,
+    if min(divisor_lower, reference_lower) <= 0:
+        raise ValueError(
+            "sphere_chart.rational_projective_integral.measures must satisfy the positive physical measure contract; got Rational projective density has no positive denominator proof."
         )
-
-        if _COORDINATE_BUDGET.get() is None:
-            import sys
-
-            ledger = CoordinateEnclosureBudget(int(budgets["maximum_work"]), sys.maxsize)
-            try:
-                with ledger.activate():
-                    if fraction_result:
-                        return _projective_integral(
-                            gram,
-                            numerator,
-                            denominator,
-                            exponent,
-                            budgets,
-                            fraction_result=True,
-                        )
-                    return _projective_integral(
-                        gram, numerator, denominator, exponent, budgets
+    density_upper = (
+        fraction_sqrt_interval(
+            algebra.require_rational_reference_scalar(
+                max(bernstein_coefficients(gram.numerator, "simplex", 2, budget=budget))
+            )
+            / divisor_lower
+        )[1]
+        / reference_lower**exponent
+    )
+    magnitude = max(
+        abs(algebra.require_rational_reference_scalar(value))
+        for value in bernstein_coefficients(numerator, "simplex", 2, budget=budget)
+    )
+    goal = absolute + relative * density_upper * magnitude / 2
+    work = [0, int(budgets["maximum_work"])]
+    for refinement in range(maximum_terms):
+        try:
+            with budget.measurement():
+                prepared = (
+                    mapped_measure_owner.certified_sqrt_prepare_expression_integral(
+                        gram,
+                        "triangle",
+                        goal / (max(magnitude, Fraction(1)) * 2**refinement),
+                        work,
+                        maximum_subcells,
+                        maximum_terms,
+                        denominator=denominator,
+                        denominator_exponent=exponent,
+                        budget=budget,
                     )
-            except CoordinateEnclosureResourceError as exhausted:
-                raise CellGeometryTransitionError(
-                    "resource_limit",
-                    "Rational projective source coefficient budget exhausted.",
-                    measured=exhausted.requested,
-                    limit=exhausted.limit,
-                ) from exhausted
-        divisor_lower = min(bernstein_coefficients(gram.denominator, "simplex", 2))
-        reference_lower = min(bernstein_coefficients(denominator, "simplex", 2))
-        if min(divisor_lower, reference_lower) <= 0:
-            raise ValueError(
-                "Rational projective density has no positive denominator proof."
-            )
-        density_upper = (
-            _fraction_sqrt_interval(
-                max(bernstein_coefficients(gram.numerator, "simplex", 2)) / divisor_lower
-            )[1]
-            / reference_lower**exponent
-        )
-        magnitude = max(
-            abs(value) for value in bernstein_coefficients(numerator, "simplex", 2)
-        )
-        goal = absolute + relative * density_upper * magnitude / 2
-        work = [0, int(budgets["maximum_work"])]
-        for refinement in range(maximum_terms):
-            try:
-                prepared = _certified_sqrt_prepare_expression_integral(
-                    gram,
-                    "triangle",
-                    goal / (max(magnitude, Fraction(1)) * 2**refinement),
-                    work,
-                    maximum_subcells,
-                    maximum_terms,
-                    denominator=denominator,
-                    denominator_exponent=exponent,
                 )
-                value, error = prepared.integral(numerator)
-            except CoordinateEnclosureResourceError as exhausted:
-                raise CellGeometryTransitionError(
-                    "resource_limit",
-                    "Rational projective source coefficient budget exhausted.",
-                    measured=exhausted.requested,
-                    limit=exhausted.limit,
-                ) from exhausted
-            allowed = absolute + relative * max(
-                abs(Fraction(value)) - Fraction(error), Fraction(0)
+                value, error = prepared.integral(numerator, budget=budget)
+        except CoordinateEnclosureResourceError as exhausted:
+            raise CellGeometryTransitionError(
+                "resource_limit",
+                "sphere_chart.rational_projective_integral.budget must satisfy the admitted resource limits; got Rational projective source coefficient budget exhausted.",
+                measured=float(exhausted.requested),
+                limit=float(exhausted.limit),
+            ) from exhausted
+        allowed = absolute + relative * max(
+            abs(Fraction(value)) - Fraction(error), Fraction(0)
+        )
+        if Fraction(error) <= allowed:
+            return (
+                (Fraction(value), Fraction(error)) if fraction_result else (value, error)
             )
-            if Fraction(error) <= allowed:
-                return (
-                    (Fraction(value), Fraction(error))
-                    if fraction_result
-                    else (value, error)
-                )
+    raise CellGeometryTransitionError(
+        "resource_limit",
+        "sphere_chart.rational_projective_integral.budget must satisfy the admitted resource limits; got Rational projective publication exceeds its requested error budget.",
+        measured=error,
+        limit=float(allowed),
+    )
+
+
+class _ProjectiveReciprocalSeries(StrictModule):
+    polynomial_weight: Polynomial
+    remainder_error: Fraction
+
+
+def _projective_reciprocal_series(
+    g: Polynomial,
+    weight: Polynomial,
+    d: Polynomial,
+    lo: Fraction,
+    hi: Fraction,
+    rho: Fraction,
+    exponent: int,
+    maximum_terms: int,
+    local_goal: Fraction,
+    product: Callable[[Polynomial, Polynomial], Polynomial],
+    budget: CoordinateEnclosureBudget,
+) -> _ProjectiveReciprocalSeries:
+    "Bound the reciprocal-series remainder before integrating its polynomial."
+    center = (lo + hi) / 2
+    normalized = add(
+        scale(d, 1 / center, budget=budget),
+        constant(-1, 2, budget=budget),
+        budget=budget,
+    )
+    series: Polynomial = {}
+    power, coefficient = constant(1, 2, budget=budget), Fraction(1)
+    density_upper = fraction_sqrt_interval(
+        algebra.require_rational_reference_scalar(
+            max(bernstein_coefficients(g, "simplex", 2, budget=budget))
+        )
+    )[1]
+    weight_upper = max(
+        abs(algebra.require_rational_reference_scalar(value))
+        for value in bernstein_coefficients(weight, "simplex", 2, budget=budget)
+    )
+    remainder_error = None
+    for order in range(maximum_terms):
+        series = add(series, scale(power, coefficient, budget=budget), budget=budget)
+        next_coefficient = -coefficient * Fraction(exponent + order, order + 1)
+        ratio = rho * Fraction(exponent + order + 1, order + 2)
+        if ratio < 1:
+            tail = abs(next_coefficient) * rho ** (order + 1) / (1 - ratio)
+            bound = density_upper * weight_upper * tail / (2 * center**exponent)
+            if bound <= local_goal / 8:
+                remainder_error = bound
+                break
+        power = product(power, normalized)
+        coefficient = next_coefficient
+    if remainder_error is None:
         raise CellGeometryTransitionError(
             "resource_limit",
-            "Rational projective publication exceeds its exact requested error budget.",
-            measured=error,
-            limit=float(allowed),
+            "sphere_chart.projective_reciprocal_series.budget must satisfy the admitted resource limits; got Projective reciprocal-series budget exhausted.",
+            measured=maximum_terms,
+            limit=maximum_terms,
         )
-    lower = min(bernstein_coefficients(denominator, "simplex", 2))
+    polynomial_weight = product(
+        weight, scale(series, center ** (-exponent), budget=budget)
+    )
+    return _ProjectiveReciprocalSeries(
+        polynomial_weight=polynomial_weight, remainder_error=remainder_error
+    )
+
+
+def _polynomial_projective_integral(
+    gram: Polynomial,
+    numerator: Polynomial,
+    denominator: Polynomial,
+    exponent: int,
+    absolute: Fraction,
+    relative: Fraction,
+    maximum_terms: int,
+    maximum_subcells: int,
+    budgets: _ProjectiveBudgets,
+    fraction_result: bool,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[Fraction | float, Fraction | float]:
+    "Refine projective polynomial moments until their error contract holds."
+    lower = algebra.require_rational_reference_scalar(
+        min(bernstein_coefficients(denominator, "simplex", 2, budget=budget))
+    )
     if lower <= 0:
         raise ValueError(
-            "Projective density integration requires a positive denominator enclosure."
+            "sphere_chart.polynomial_projective_integral.measures must satisfy the positive physical measure contract; got Projective density integration requires a positive denominator enclosure."
         )
-    gram_upper = max(bernstein_coefficients(gram, "simplex", 2))
+    gram_upper = algebra.require_rational_reference_scalar(
+        max(bernstein_coefficients(gram, "simplex", 2, budget=budget))
+    )
     magnitude = max(
-        abs(value) for value in bernstein_coefficients(numerator, "simplex", 2)
+        abs(algebra.require_rational_reference_scalar(value))
+        for value in bernstein_coefficients(numerator, "simplex", 2, budget=budget)
     )
     scale_bound = (
-        _fraction_sqrt_interval(gram_upper)[1] * magnitude / (2 * lower**exponent)
+        fraction_sqrt_interval(gram_upper)[1] * magnitude / (2 * lower**exponent)
     )
     goal = absolute + relative * scale_bound
     pieces, pending, visited = [], [(gram, numerator, denominator, Fraction(1))], 0
@@ -520,11 +562,11 @@ def _projective_integral(
         if work[0] > work[1]:
             raise CellGeometryTransitionError(
                 "resource_limit",
-                "Projective polynomial work budget exhausted.",
+                "sphere_chart.product.budget must satisfy the admitted resource limits; got Projective polynomial work budget exhausted.",
                 measured=work[0],
                 limit=work[1],
             )
-        return multiply(first, second)
+        return multiply(first, second, budget=budget)
 
     def split(
         g: Polynomial,
@@ -532,12 +574,12 @@ def _projective_integral(
         d: Polynomial,
         fraction: Fraction,
     ) -> Iterator[tuple[Polynomial, Polynomial, Polynomial, Fraction]]:
-        for matrix, offset in _embedded_measure_submaps("triangle"):
-            arguments = affine_arguments(offset, matrix)
+        for matrix, offset in embedded_measure_submaps("triangle"):
+            arguments = affine_arguments(offset, matrix, budget=budget)
             yield (
-                compose(g, arguments),
-                compose(weight, arguments),
-                compose(d, arguments),
+                compose(g, arguments, budget=budget),
+                compose(weight, arguments, budget=budget),
+                compose(d, arguments, budget=budget),
                 fraction / 4,
             )
 
@@ -547,15 +589,16 @@ def _projective_integral(
         if visited > maximum_subcells:
             raise CellGeometryTransitionError(
                 "resource_limit",
-                "Projective denominator subdivision budget exhausted.",
+                "sphere_chart.polynomial_projective_integral.budget must satisfy the admitted resource limits; got Projective denominator subdivision budget exhausted.",
                 measured=visited,
                 limit=maximum_subcells,
             )
-        controls = bernstein_coefficients(d, "simplex", 2)
-        lo, hi = min(controls), max(controls)
+        controls = bernstein_coefficients(d, "simplex", 2, budget=budget)
+        lo = algebra.require_rational_reference_scalar(min(controls))
+        hi = algebra.require_rational_reference_scalar(max(controls))
         if lo <= 0:
             raise ValueError(
-                "Projective subdivision lost its positive denominator proof."
+                "sphere_chart.polynomial_projective_integral.pieces must satisfy the material reference contract; got Projective subdivision lost its positive denominator proof."
             )
         rho = (hi - lo) / (hi + lo)
         if rho > Fraction(1, 8):
@@ -568,38 +611,22 @@ def _projective_integral(
         central, error = Fraction(0), Fraction(0)
         refined_pieces, complete = [], True
         for g, weight, d, fraction, lo, hi, rho in pieces:
-            center = (lo + hi) / 2
-            normalized = add(scale(d, 1 / center), constant(-1, 2))
-            series: Polynomial = {}
-            power, coefficient = constant(1, 2), Fraction(1)
-            density_upper = _fraction_sqrt_interval(
-                max(bernstein_coefficients(g, "simplex", 2))
-            )[1]
-            weight_upper = max(
-                abs(value) for value in bernstein_coefficients(weight, "simplex", 2)
+            _phase = _projective_reciprocal_series(
+                g=g,
+                weight=weight,
+                d=d,
+                lo=lo,
+                hi=hi,
+                rho=rho,
+                exponent=exponent,
+                maximum_terms=maximum_terms,
+                local_goal=local_goal,
+                product=product,
+                budget=budget,
             )
-            remainder_error = None
-            for order in range(maximum_terms):
-                series = add(series, scale(power, coefficient))
-                next_coefficient = -coefficient * Fraction(exponent + order, order + 1)
-                ratio = rho * Fraction(exponent + order + 1, order + 2)
-                if ratio < 1:
-                    tail = abs(next_coefficient) * rho ** (order + 1) / (1 - ratio)
-                    bound = density_upper * weight_upper * tail / (2 * center**exponent)
-                    if bound <= local_goal / 8:
-                        remainder_error = bound
-                        break
-                power = product(power, normalized)
-                coefficient = next_coefficient
-            if remainder_error is None:
-                raise CellGeometryTransitionError(
-                    "resource_limit",
-                    "Projective reciprocal-series budget exhausted.",
-                    measured=maximum_terms,
-                    limit=maximum_terms,
-                )
-            polynomial_weight = product(weight, scale(series, center ** (-exponent)))
-            integral = _sqrt_polynomial_integral_piece(
+            polynomial_weight = _phase.polynomial_weight
+            remainder_error = _phase.remainder_error
+            integral = sqrt_polynomial_integral_piece(
                 g,
                 "triangle",
                 local_goal / 8,
@@ -607,6 +634,7 @@ def _projective_integral(
                 maximum_terms,
                 work,
                 weight=polynomial_weight,
+                budget=budget,
             )
             if integral is None:
                 complete = False
@@ -617,11 +645,13 @@ def _projective_integral(
                     if visited > maximum_subcells:
                         raise CellGeometryTransitionError(
                             "resource_limit",
-                            "Projective density subdivision budget exhausted.",
+                            "sphere_chart.polynomial_projective_integral.budget must satisfy the admitted resource limits; got Projective density subdivision budget exhausted.",
                             measured=visited,
                             limit=maximum_subcells,
                         )
-                    controls = bernstein_coefficients(child_d, "simplex", 2)
+                    controls = bernstein_coefficients(
+                        child_d, "simplex", 2, budget=budget
+                    )
                     child_lo, child_hi = min(controls), max(controls)
                     refined_pieces.append(
                         (
@@ -651,53 +681,165 @@ def _projective_integral(
         lower_magnitude = max(abs(central) - error, Fraction(0))
         tolerance = absolute + relative * lower_magnitude
         bound = (
-            error if fraction_result else (0.0 if error == 0 else outward(error, np.inf))
+            error
+            if fraction_result
+            else (
+                0.0 if error == 0 else fraction_endpoint(error, upper=True, saturate=True)
+            )
         )
         if Fraction(bound) <= tolerance:
             return published, bound
         refinement += 1
     raise CellGeometryTransitionError(
         "resource_limit",
-        "Projective signed-integral error budget exhausted.",
+        "sphere_chart.polynomial_projective_integral.budget must satisfy the admitted resource limits; got Projective signed-integral error budget exhausted.",
         measured=maximum_terms,
         limit=maximum_terms,
     )
 
 
-def _projective_form(
+@overload
+def _projective_integral(
+    gram: Expression,
+    numerator: Polynomial,
+    denominator: Polynomial,
+    exponent: int,
+    budgets: _ProjectiveBudgets,
+    *,
+    fraction_result: Literal[True],
+    budget: CoordinateEnclosureBudget,
+) -> tuple[Fraction, Fraction]: ...
+
+
+@overload
+def _projective_integral(
+    gram: Expression,
+    numerator: Polynomial,
+    denominator: Polynomial,
+    exponent: int,
+    budgets: _ProjectiveBudgets,
+    *,
+    fraction_result: Literal[False] = False,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[float, float]: ...
+def _projective_integral(
+    gram: Expression,
+    numerator: Polynomial,
+    denominator: Polynomial,
+    exponent: int,
+    budgets: _ProjectiveBudgets,
+    *,
+    fraction_result: bool = False,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[Fraction | float, Fraction | float]:
+    "Enclose sqrt(Gram)*numerator/D**exponent using the ordered root owner.\n\n The reciprocal series is polynomial data with a uniform remainder.\n Fractions may be retained across a polynomial moment functional, so a DG\n matrix is published once, rather than rounding every intermediate moment.\n Density and denominator subdivisions are source-reference maps.\n Resource exhaustion never switches to a sampled or affine approximation."
+    try:
+        with budget.measurement():
+            if not numerator:
+                return (Fraction(0), Fraction(0)) if fraction_result else (0.0, 0.0)
+            if exponent == 0:
+                denominator = constant(1, 2, budget=budget)
+            absolute, relative = (
+                Fraction(budgets["absolute_tolerance"]),
+                Fraction(budgets["relative_tolerance"]),
+            )
+            if absolute < 0 or relative < 0 or absolute == relative == 0:
+                raise ValueError(
+                    "sphere_chart.projective_integral.budget must satisfy the admitted resource limits; got Projective integration requires positive error budgets."
+                )
+            maximum_terms, maximum_subcells = (
+                int(budgets["maximum_binomial_terms"]),
+                int(budgets["maximum_subcells"]),
+            )
+            if maximum_terms <= 0 or maximum_subcells <= 0:
+                raise ValueError(
+                    "sphere_chart.projective_integral.budget must satisfy the admitted resource limits; got Projective integration requires positive work limits."
+                )
+            match gram:
+                case RationalPolynomial():
+                    return _rational_projective_integral(
+                        gram=gram,
+                        numerator=numerator,
+                        denominator=denominator,
+                        exponent=exponent,
+                        absolute=absolute,
+                        relative=relative,
+                        maximum_terms=maximum_terms,
+                        maximum_subcells=maximum_subcells,
+                        budgets=budgets,
+                        fraction_result=fraction_result,
+                        budget=budget,
+                    )
+                case dict():
+                    return _polynomial_projective_integral(
+                        gram=gram,
+                        numerator=numerator,
+                        denominator=denominator,
+                        exponent=exponent,
+                        absolute=absolute,
+                        relative=relative,
+                        maximum_terms=maximum_terms,
+                        maximum_subcells=maximum_subcells,
+                        budgets=budgets,
+                        fraction_result=fraction_result,
+                        budget=budget,
+                    )
+                case other:
+                    assert_never(other)
+    except CoordinateEnclosureResourceError as error:
+        if isinstance(gram, RationalPolynomial):
+            raise CellGeometryTransitionError(
+                "resource_limit",
+                "sphere_chart.projective_integral.budget must satisfy the admitted resource limits; got Rational projective source coefficient budget exhausted.",
+                measured=float(error.requested),
+                limit=float(error.limit),
+            ) from error
+        raise
+
+
+@checked
+def projective_form(
     first: Sequence[Polynomial],
     second: Sequence[Polynomial],
     gram: Expression,
     denominator: Polynomial,
     exponent: int,
-    budgets: _IntegrationBudgets,
+    budgets: IntegrationBudgets,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[_FloatArray, _FloatArray]:
-    """Integrate the actual polynomial functionals through shared rational moments."""
-    weights = tuple(tuple(multiply(a, b) for b in second) for a in first)
+    "Integrate the polynomial functionals through shared rational moments."
+    weights = tuple(tuple(multiply(a, b, budget=budget) for b in second) for a in first)
     powers = sorted({index for row in weights for weight in row for index in weight})
     amplification = max(
         Fraction(1),
         max(
-            sum((abs(value) for value in weight.values()), Fraction(0))
+            sum(
+                (
+                    abs(algebra.require_rational_reference_scalar(value))
+                    for value in weight.values()
+                ),
+                Fraction(0),
+            )
             for row in weights
             for weight in row
         ),
     )
     # A constant physical density is one shared algebraic factor, not independent
     # rounded roots in every moment. Preserve that correlation and refine the
-    # owner's valid rational root interval by exact squaring when needed.
+    # owner's valid rational root interval by squaring when needed.
     constant_value = (
-        gram.get((0, 0), Fraction(0))
+        algebra.require_rational_reference_scalar(gram.get((0, 0), Fraction(0)))
         if not isinstance(gram, RationalPolynomial) and _degree(gram) == 0
         else None
     )
     constant_density = constant_value is not None
     root_lower, root_upper = (
-        _fraction_sqrt_interval(constant_value)
+        fraction_sqrt_interval(constant_value)
         if constant_value is not None
         else (Fraction(1), Fraction(1))
     )
-    moment_gram = constant(1, 2) if constant_density else gram
+    moment_gram = constant(1, 2, budget=budget) if constant_density else gram
     maximum_refinements = int(budgets["maximum_binomial_terms"])
     for refinement in range(maximum_refinements):
         moment_budgets: _ProjectiveBudgets = {
@@ -715,6 +857,7 @@ def _projective_form(
                 exponent,
                 moment_budgets,
                 fraction_result=True,
+                budget=budget,
             )
             for index in powers
         }
@@ -729,14 +872,16 @@ def _projective_form(
             for j, weight in enumerate(row):
                 central = sum(
                     (
-                        coefficient * moments[index][0]
+                        algebra.require_rational_reference_scalar(coefficient)
+                        * moments[index][0]
                         for index, coefficient in weight.items()
                     ),
                     Fraction(0),
                 )
                 error = sum(
                     (
-                        abs(coefficient) * moments[index][1]
+                        abs(algebra.require_rational_reference_scalar(coefficient))
+                        * moments[index][1]
                         for index, coefficient in weight.items()
                     ),
                     Fraction(0),
@@ -745,7 +890,11 @@ def _projective_form(
                 central *= root_center
                 published = float(central)
                 error += abs(Fraction(published) - central)
-                bound = 0.0 if error == 0 else outward(error, np.inf)
+                bound = (
+                    0.0
+                    if error == 0
+                    else fraction_endpoint(error, upper=True, saturate=True)
+                )
                 lower = max(abs(central) - error, Fraction(0))
                 tolerance = (
                     Fraction(budgets["absolute_tolerance"])
@@ -763,7 +912,7 @@ def _projective_form(
                 root_upper = midpoint
     raise CellGeometryTransitionError(
         "resource_limit",
-        "Projective form publication exceeds its error budget.",
+        "sphere_chart.projective_form.budget must satisfy the admitted resource limits; got Projective form publication exceeds its error budget.",
         measured=maximum_refinements,
         limit=maximum_refinements,
     )
@@ -775,17 +924,23 @@ def _prepare_dg(
     prepared: PreparedSphereChartDeformation,
     indices: _CellIndices,
     name: str,
-    semantics: Literal["intensive", "conservative-density"],
-    budgets: _IntegrationBudgets,
+    semantics: ChartFieldSemantics,
+    budgets: IntegrationBudgets,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
-    si, ti = source._field_index(name), target._field_index(name)
-    sc, tc = _mapped_dg_cells(source, si), _mapped_dg_cells(target, ti)
+    si, ti = source.field_index(name), target.field_index(name)
+    sc, tc = (
+        mapped_dg_cells(source, si, budget=budget),
+        mapped_dg_cells(target, ti, budget=budget),
+    )
     geometries = (
-        _mapped_geometry_cells(source.mesh, prepared.source_geometry),
-        _mapped_geometry_cells(target.mesh, prepared.target_geometry),
+        mapped_geometry_cells(source.mesh, prepared.source_geometry, budget=budget),
+        mapped_geometry_cells(target.mesh, prepared.target_geometry, budget=budget),
     )
     grams = tuple(
-        tuple(_embedded_squared_density(*cell) for cell in cells) for cells in geometries
+        tuple(embedded_squared_density(*cell, budget=budget) for cell in cells)
+        for cells in geometries
     )
     ss, ts = source.dof_maps[si].global_dof_count, target.dof_maps[ti].global_dof_count
     form_count = (
@@ -796,7 +951,7 @@ def _prepare_dg(
         * max(len(basis) for _, _, basis in sc)
         * max(len(basis) for _, _, basis in tc)
     )
-    local_budgets: _IntegrationBudgets = {
+    local_budgets: IntegrationBudgets = {
         **budgets,
         "absolute_tolerance": budgets["absolute_tolerance"] / form_count,
         "relative_tolerance": budgets["relative_tolerance"] / form_count,
@@ -812,18 +967,21 @@ def _prepare_dg(
         for cell, (element, route, basis) in enumerate(cells):
             if element.cell_kind != "triangle":
                 raise ValueError(
-                    "Sphere DG requires actual canonical scalar triangle fields."
+                    "sphere_chart.prepare_dg.pieces must satisfy the material reference contract; got Sphere DG requires ordered scalar triangle fields."
                 )
             for dof, term in zip(route, basis, strict=True):
-                measures[dof], uncertainties[dof] = _integral(
-                    density[cell], term, local_budgets
+                measures[dof], uncertainties[dof] = integral(
+                    density[cell], term, local_budgets, budget=budget
                 )
             if is_target:
                 mass = np.empty((len(basis), len(basis)), dtype=np.float64)
                 for i, first in enumerate(basis):
                     for j, second in enumerate(basis):
-                        mass[i, j], error = _integral(
-                            density[cell], multiply(first, second), local_budgets
+                        mass[i, j], error = integral(
+                            density[cell],
+                            multiply(first, second, budget=budget),
+                            local_budgets,
+                            budget=budget,
                         )
                         errors += error
                 masses.append(mass)
@@ -832,51 +990,76 @@ def _prepare_dg(
         old = source_indices[int(piece.source_cell_global_id)]
         new = target_indices[int(piece.target_cell_global_id)]
         vertices = np.asarray(piece.exact_source_reference_vertices, dtype=object)
-        old_gram, old_arguments = _restricted(grams[0][old], vertices)
-        numerators, denominator = _projective_arguments(piece, old_arguments)
+        old_gram, old_arguments = restricted(grams[0][old], vertices, budget=budget)
+        numerators, denominator = _projective_arguments(
+            piece, old_arguments, budget=budget
+        )
         target_degree = max(_degree(term) for term in tc[new][2])
         new_basis = tuple(
-            _homogeneous(term, numerators, denominator, target_degree)
+            _homogeneous(term, numerators, denominator, target_degree, budget=budget)
             for term in tc[new][2]
         )
-        old_basis = tuple(compose(term, old_arguments) for term in sc[old][2])
-        if semantics == "conservative-density":
-            gram, denominator_power = old_gram, target_degree
-        elif isinstance(grams[1][new], RationalPolynomial):
-            gram, measure_weight, measure_denominator_power = (
-                _projective_rational_density(
-                    grams[1][new],
-                    numerators,
-                    denominator,
-                    abs(_orientation(*piece.exact_source_reference_vertices))
-                    * piece.projective_map.orientation_ratio,
-                )
-            )
-            new_basis = tuple(multiply(term, measure_weight) for term in new_basis)
-            denominator_power = target_degree + measure_denominator_power
-        else:
-            target_gram = grams[1][new]
-            if isinstance(target_gram, RationalPolynomial):
-                raise ValueError(
-                    "Polynomial sphere Gram preparation received an unresolved rational source."
-                )
-            degree = 2 * ((_degree(target_gram) + 1) // 2)
-            source_determinant = abs(_orientation(*piece.exact_source_reference_vertices))
-            jacobian_numerator = (
-                source_determinant * piece.projective_map.orientation_ratio
-            )
-            gram = scale(
-                _homogeneous(target_gram, numerators, denominator, degree),
-                jacobian_numerator**2,
-            )
-            denominator_power = target_degree + degree // 2 + 3
-        form, form_errors = _projective_form(
-            new_basis, old_basis, gram, denominator, denominator_power, local_budgets
+        old_basis = tuple(
+            compose(term, old_arguments, budget=budget) for term in sc[old][2]
+        )
+        match semantics:
+            case "conservative-density":
+                gram, denominator_power = old_gram, target_degree
+            case "intensive":
+                match grams[1][new]:
+                    case RationalPolynomial() as target_gram:
+                        gram, measure_weight, measure_denominator_power = (
+                            projective_rational_density(
+                                target_gram,
+                                numerators,
+                                denominator,
+                                abs(orientation(*piece.exact_source_reference_vertices))
+                                * piece.projective_map.orientation_ratio,
+                                budget=budget,
+                            )
+                        )
+                        new_basis = tuple(
+                            multiply(term, measure_weight, budget=budget)
+                            for term in new_basis
+                        )
+                        denominator_power = target_degree + measure_denominator_power
+                    case dict() as target_gram:
+                        degree = 2 * ((_degree(target_gram) + 1) // 2)
+                        source_determinant = abs(
+                            orientation(*piece.exact_source_reference_vertices)
+                        )
+                        jacobian_numerator = (
+                            source_determinant * piece.projective_map.orientation_ratio
+                        )
+                        gram = scale(
+                            _homogeneous(
+                                target_gram,
+                                numerators,
+                                denominator,
+                                degree,
+                                budget=budget,
+                            ),
+                            jacobian_numerator**2,
+                            budget=budget,
+                        )
+                        denominator_power = target_degree + degree // 2 + 3
+                    case invalid_gram:
+                        assert_never(invalid_gram)
+            case _:
+                assert_never(semantics)
+        form, form_errors = projective_form(
+            new_basis,
+            old_basis,
+            gram,
+            denominator,
+            denominator_power,
+            local_budgets,
+            budget=budget,
         )
         errors += float(np.sum(form_errors))
         previous = mixed[new].get(old)
         mixed[new][old] = form if previous is None else previous + form
-    return _finish_material_dg_projection(
+    return finish_material_dg_projection(
         source,
         target,
         prepared,
@@ -895,7 +1078,7 @@ def _prepare_dg(
     )
 
 
-def prepare_sphere_chart_field_transfer(
+def _prepare_sphere_chart_field_transfer(
     source: FiniteElementDiscretization,
     target: FiniteElementDiscretization,
     prepared: PreparedSphereChartDeformation,
@@ -904,60 +1087,63 @@ def prepare_sphere_chart_field_transfer(
     field_name: str,
     source_geometry: CellGeometrySpec,
     target_geometry: CellGeometrySpec,
-    semantics: Literal["intensive", "conservative-density"] = "intensive",
+    semantics: ChartFieldSemantics = "intensive",
     absolute_tolerance: float = 1e-12,
     relative_tolerance: float = 1e-12,
     maximum_work: int = 100_000_000,
     maximum_subcells: int = 10000,
     maximum_binomial_terms: int = 32,
+    budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
-    """Actual scalar material pullback/projection and its algebraic transpose.
-
-    H1 intensive transport applies old nodal functionals through the exact inverse
-    projective map. DG integrates actual old density for conserved inventory, or
-    actual target density including the projective Jacobian for intensive fields.
-    No affine corner approximation, source-nodal density or Piola claim is used.
-    """
-    if not isinstance(source, FiniteElementDiscretization) or not isinstance(
-        target, FiniteElementDiscretization
-    ):
-        raise TypeError(
-            "Sphere scalar field transport requires actual prepared FE endpoints."
-        )
-    if semantics not in ("intensive", "conservative-density"):
-        raise ValueError("Unknown sphere chart field semantics.")
-    indices = _validate_sphere(source, target, prepared, source_geometry, target_geometry)
-    si, ti = source._field_index(field_name), target._field_index(field_name)
+    "scalar material pullback/projection and its algebraic transpose.\n\n H1 intensive transport applies old nodal functionals through the inverse\n projective map. DG integrates old density for conserved inventory, or\n target density including the projective Jacobian for intensive fields.\n No affine corner approximation, source-nodal density or Piola claim is used."
+    semantics = parse(semantics, ChartFieldSemantics, "chart.semantics")
+    indices = _validate_sphere(
+        source, target, prepared, source_geometry, target_geometry, budget=budget
+    )
+    si, ti = source.field_index(field_name), target.field_index(field_name)
     source_space = source.field_spaces[si].vector_space
     target_space = target.field_spaces[ti].vector_space
-    if not isinstance(source_space, ArraySpace) or not isinstance(
-        target_space, ArraySpace
-    ):
-        raise TypeError("Sphere chart transfer requires array coefficient spaces.")
+    match (source_space, target_space):
+        case (ArraySpace() as source_space, ArraySpace() as target_space):
+            pass
+        case _:
+            raise TypeError(
+                "sphere_chart.prepare_sphere_chart_field_transfer.pieces must satisfy the material reference contract; got Sphere chart transfer requires array coefficient spaces."
+            )
     if source_space.shape[1:] != target_space.shape[1:]:
-        raise ValueError("Sphere scalar field payload layouts differ.")
+        raise ValueError(
+            "sphere_chart.prepare_sphere_chart_field_transfer.pieces must satisfy the material reference contract; got Sphere scalar field payload layouts differ."
+        )
     conformities = {
         element.conformity for element in source.elements[si] + target.elements[ti]
     }
-    if conformities == {"H1"} and semantics == "intensive":
-        return _prepare_h1(source, target, prepared, indices, field_name)
-    if conformities != {"L2"}:
-        raise ValueError(
-            "Sphere all-field transport is unclosed for compatible/Piola or non-DG density fields."
-        )
-    budgets = _IntegrationBudgets(
+    match (tuple(sorted(conformities)), semantics):
+        case (("H1",), "intensive"):
+            return _prepare_h1(
+                source, target, prepared, indices, field_name, budget=budget
+            )
+        case (("L2",), _):
+            pass
+        case _:
+            raise ValueError(
+                "sphere_chart.prepare_sphere_chart_field_transfer.measures must satisfy the positive physical measure contract; got Sphere all-field transport is unclosed for compatible/Piola or non-DG density fields."
+            )
+    budgets = IntegrationBudgets(
         absolute_tolerance=absolute_tolerance,
         relative_tolerance=relative_tolerance,
         maximum_work=maximum_work,
         maximum_subcells=maximum_subcells,
         maximum_binomial_terms=maximum_binomial_terms,
     )
-    return _prepare_dg(source, target, prepared, indices, field_name, semantics, budgets)
+    return _prepare_dg(
+        source, target, prepared, indices, field_name, semantics, budgets, budget=budget
+    )
 
 
-def prepare_sphere_chart_finite_volume_contents(
-    source: _ChartEndpoint,
-    target: _ChartEndpoint,
+@checked
+def sphere_chart_finite_volume_contents(
+    source: ChartEndpoint,
+    target: ChartEndpoint,
     prepared: PreparedSphereChartDeformation,
     /,
     *,
@@ -968,14 +1154,15 @@ def prepare_sphere_chart_finite_volume_contents(
     maximum_work: int = 100_000_000,
     maximum_subcells: int = 10000,
     maximum_binomial_terms: int = 32,
+    budget: CoordinateEnclosureBudget,
 ) -> PreparedSurfaceChartFiniteVolumeContents:
-    """True old physical contents of exact projective overlaps for the FV owner."""
+    "True old physical contents of projective overlaps for the FV owner."
     source_indices, target_indices = _validate_sphere(
-        source, target, prepared, source_geometry, target_geometry
+        source, target, prepared, source_geometry, target_geometry, budget=budget
     )
-    geometries = _mapped_geometry_cells(source.mesh, source_geometry)
-    grams = tuple(_embedded_squared_density(*cell) for cell in geometries)
-    local_budgets = _IntegrationBudgets(
+    geometries = mapped_geometry_cells(source.mesh, source_geometry, budget=budget)
+    grams = tuple(embedded_squared_density(*cell, budget=budget) for cell in geometries)
+    local_budgets = IntegrationBudgets(
         absolute_tolerance=absolute_tolerance / len(prepared.pieces),
         relative_tolerance=relative_tolerance / len(prepared.pieces),
         maximum_work=maximum_work,
@@ -986,22 +1173,26 @@ def prepare_sphere_chart_finite_volume_contents(
     for piece in prepared.pieces:
         old = source_indices[int(piece.source_cell_global_id)]
         new = target_indices[int(piece.target_cell_global_id)]
-        gram, _ = _restricted(
-            grams[old], np.asarray(piece.exact_source_reference_vertices, dtype=object)
+        gram, _ = restricted(
+            grams[old],
+            np.asarray(piece.exact_source_reference_vertices, dtype=object),
+            budget=budget,
         )
-        value, error = _integral(gram, constant(1, 2), local_budgets)
+        value, error = integral(
+            gram, constant(1, 2, budget=budget), local_budgets, budget=budget
+        )
         rows.append(old)
         targets.append(new)
         values.append(value)
         errors.append(error)
     source_order, target_order = (
-        _physical_rows(source, prepared.source_mesh),
-        _physical_rows(target, prepared.target_mesh),
+        physical_rows(source, prepared.source_mesh),
+        physical_rows(target, prepared.target_mesh),
     )
-    volumes, volume_errors = _endpoint_cell_measures(
+    volumes, volume_errors = endpoint_cell_measures(
         target, prepared, target_order, "target"
     )
-    old_volumes, old_errors = _endpoint_cell_measures(
+    old_volumes, old_errors = endpoint_cell_measures(
         source, prepared, source_order, "source"
     )
     sums, uncertainties = np.zeros_like(old_volumes), np.zeros_like(old_volumes)
@@ -1034,42 +1225,55 @@ def prepare_sphere_chart_finite_volume_contents(
 
 def _sphere_piece_charts(
     piece: PreparedSphereChartPiece,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[tuple[Expression, ...], tuple[Expression, ...]]:
     vertices = piece.exact_source_reference_vertices
-    variables = algebra.axes(2)
+    variables = algebra.axes(2, budget=budget)
     source: tuple[Expression, ...] = tuple(
         algebra.add(
-            algebra.constant(vertices[0][axis], 2),
+            algebra.constant(vertices[0][axis], 2, budget=budget),
             algebra.sum_polynomials(
                 tuple(
                     algebra.scale(
-                        variable, vertices[column + 1][axis] - vertices[0][axis]
+                        variable,
+                        vertices[column + 1][axis] - vertices[0][axis],
+                        budget=budget,
                     )
                     for column, variable in enumerate(variables)
-                )
+                ),
+                budget=budget,
             ),
+            budget=budget,
         )
         for axis in range(2)
     )
     projective = piece.projective_map.reference_expressions()
-    target = tuple(algebra.expression_compose(value, source) for value in projective)
+    target = tuple(
+        algebra.expression_compose(value, source, budget=budget) for value in projective
+    )
     return source, target
 
 
 def _sphere_projective_condition(
     piece: PreparedSphereChartPiece,
     source: tuple[Expression, ...],
-    work: _PreparationWork,
+    work: PreparationWork,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
     expressions = piece.projective_map.reference_expressions()
     bounds = tuple(
         tuple(
             algebra.expression_bounds(
                 algebra.expression_compose(
-                    algebra.expression_derivative(value, axis), source
+                    algebra.expression_derivative(value, axis, budget=work.enclosure),
+                    source,
+                    budget=work.enclosure,
                 ),
                 "simplex",
                 2,
+                budget=work.enclosure,
             )
             for axis in range(2)
         )
@@ -1086,16 +1290,187 @@ def _sphere_projective_condition(
     minimum = piece.projective_bounds.jacobian_lower
     if minimum <= 0:
         raise ValueError(
-            "Sphere material transport lacks a positive whole-piece Jacobian."
+            "sphere_chart.sphere_projective_condition.pieces must satisfy the material reference contract; got Sphere material transport lacks a positive whole-piece Jacobian."
         )
-    condition = algebra.outward(norm_squared / minimum, np.inf)
+    condition = fraction_endpoint(norm_squared / minimum, upper=True, saturate=True)
     if not np.isfinite(condition) or condition > 1e12:
         raise ValueError(
-            "Sphere material reference transport exceeds its whole-piece condition bound."
+            "sphere_chart.sphere_projective_condition.reference_map must satisfy the regular reference-map contract; got Sphere material reference transport exceeds its whole-piece condition bound."
         )
     work.condition = max(work.condition, condition)
 
 
+def _prepare_sphere_chart_compatible_transfer(
+    source: FiniteElementDiscretization,
+    target: FiniteElementDiscretization,
+    prepared: PreparedSphereChartDeformation,
+    /,
+    *,
+    field_name: str,
+    source_geometry: CellGeometrySpec,
+    target_geometry: CellGeometrySpec,
+    maximum_work: int = 100_000_000,
+    maximum_storage_bytes: int = 256_000_000,
+    budget: CoordinateEnclosureBudget,
+) -> PreparedSurfaceChartCompatibleTransfer:
+    "Transport sphere material forms through their projective pieces."
+    indices = _validate_sphere(
+        source, target, prepared, source_geometry, target_geometry, budget=budget
+    )
+
+    def prepare_pieces(work: PreparationWork) -> tuple[MaterialCompatiblePiece, ...]:
+        pieces: list[MaterialCompatiblePiece] = []
+        for piece in prepared.pieces:
+            old = indices[0][piece.source_cell_global_id]
+            new = indices[1][piece.target_cell_global_id]
+            with work.enclosure.temporary_scope():
+                arguments, images = _sphere_piece_charts(piece, budget=work.enclosure)
+                _sphere_projective_condition(
+                    piece, arguments, work, budget=work.enclosure
+                )
+            pieces.append((old, new, arguments, images))
+        return tuple(pieces)
+
+    return prepare_material_chart_compatible_transfer(
+        source,
+        target,
+        prepared,
+        field_name=field_name,
+        prepare_pieces=prepare_pieces,
+        maximum_work=maximum_work,
+        maximum_storage_bytes=maximum_storage_bytes,
+        budget=budget,
+    )
+
+
+__all__ = [
+    "prepare_sphere_chart_field_transfer",
+    "prepare_sphere_chart_finite_volume_contents",
+    "prepare_sphere_chart_compatible_transfer",
+]
+
+
+@checked
+def prepare_sphere_chart_field_transfer(
+    source: FiniteElementDiscretization,
+    target: FiniteElementDiscretization,
+    prepared: PreparedSphereChartDeformation,
+    /,
+    *,
+    field_name: str,
+    source_geometry: CellGeometrySpec,
+    target_geometry: CellGeometrySpec,
+    semantics: ChartFieldSemantics = "intensive",
+    absolute_tolerance: float = 1e-12,
+    relative_tolerance: float = 1e-12,
+    maximum_work: int = 100_000_000,
+    maximum_subcells: int = 10000,
+    maximum_binomial_terms: int = 32,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> FiniteElementFieldTransfer:
+    "Prepare the request with one explicitly bounded host -work ticket."
+    if budget is not None:
+        return _prepare_sphere_chart_field_transfer(
+            source,
+            target,
+            prepared,
+            field_name=field_name,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            semantics=semantics,
+            absolute_tolerance=absolute_tolerance,
+            relative_tolerance=relative_tolerance,
+            maximum_work=maximum_work,
+            maximum_subcells=maximum_subcells,
+            maximum_binomial_terms=maximum_binomial_terms,
+            budget=budget,
+        )
+    with HostBatchTicket(
+        maximum_work,
+        queries_upper=field_transfer_query_upper(
+            maximum_work, source_geometry, target_geometry
+        ),
+        bytes_upper=sys.maxsize,
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=maximum_work, maximum_memory_bytes=sys.maxsize
+        )
+        with budget.activate():
+            return _prepare_sphere_chart_field_transfer(
+                source,
+                target,
+                prepared,
+                field_name=field_name,
+                source_geometry=source_geometry,
+                target_geometry=target_geometry,
+                semantics=semantics,
+                absolute_tolerance=absolute_tolerance,
+                relative_tolerance=relative_tolerance,
+                maximum_work=maximum_work,
+                maximum_subcells=maximum_subcells,
+                maximum_binomial_terms=maximum_binomial_terms,
+                budget=budget,
+            )
+
+
+@checked
+def prepare_sphere_chart_finite_volume_contents(
+    source: ChartEndpoint,
+    target: ChartEndpoint,
+    prepared: PreparedSphereChartDeformation,
+    /,
+    *,
+    source_geometry: CellGeometrySpec,
+    target_geometry: CellGeometrySpec,
+    absolute_tolerance: float = 1e-12,
+    relative_tolerance: float = 1e-12,
+    maximum_work: int = 100_000_000,
+    maximum_subcells: int = 10000,
+    maximum_binomial_terms: int = 32,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> PreparedSurfaceChartFiniteVolumeContents:
+    "Prepare the request with one explicitly bounded host -work ticket."
+    if budget is not None:
+        return sphere_chart_finite_volume_contents(
+            source,
+            target,
+            prepared,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            absolute_tolerance=absolute_tolerance,
+            relative_tolerance=relative_tolerance,
+            maximum_work=maximum_work,
+            maximum_subcells=maximum_subcells,
+            maximum_binomial_terms=maximum_binomial_terms,
+            budget=budget,
+        )
+    with HostBatchTicket(
+        maximum_work,
+        queries_upper=field_transfer_query_upper(
+            maximum_work, source_geometry, target_geometry
+        ),
+        bytes_upper=sys.maxsize,
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=maximum_work, maximum_memory_bytes=sys.maxsize
+        )
+        with budget.activate():
+            return sphere_chart_finite_volume_contents(
+                source,
+                target,
+                prepared,
+                source_geometry=source_geometry,
+                target_geometry=target_geometry,
+                absolute_tolerance=absolute_tolerance,
+                relative_tolerance=relative_tolerance,
+                maximum_work=maximum_work,
+                maximum_subcells=maximum_subcells,
+                maximum_binomial_terms=maximum_binomial_terms,
+                budget=budget,
+            )
+
+
+@checked
 def prepare_sphere_chart_compatible_transfer(
     source: FiniteElementDiscretization,
     target: FiniteElementDiscretization,
@@ -1107,36 +1482,42 @@ def prepare_sphere_chart_compatible_transfer(
     target_geometry: CellGeometrySpec,
     maximum_work: int = 100_000_000,
     maximum_storage_bytes: int = 256_000_000,
-    coordinate_budget: algebra.CoordinateEnclosureBudget | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> PreparedSurfaceChartCompatibleTransfer:
-    """Transport actual sphere material forms through their genuine projective pieces."""
-    indices = _validate_sphere(source, target, prepared, source_geometry, target_geometry)
-
-    def prepare_pieces(work: _PreparationWork) -> tuple[_MaterialCompatiblePiece, ...]:
-        pieces: list[_MaterialCompatiblePiece] = []
-        for piece in prepared.pieces:
-            old = indices[0][piece.source_cell_global_id]
-            new = indices[1][piece.target_cell_global_id]
-            with work.enclosure.temporary_scope():
-                arguments, images = _sphere_piece_charts(piece)
-                _sphere_projective_condition(piece, arguments, work)
-            pieces.append((old, new, arguments, images))
-        return tuple(pieces)
-
-    return _prepare_material_chart_compatible_transfer(
-        source,
-        target,
-        prepared,
-        field_name=field_name,
-        prepare_pieces=prepare_pieces,
-        maximum_work=maximum_work,
-        maximum_storage_bytes=maximum_storage_bytes,
-        coordinate_budget=coordinate_budget,
-    )
-
-
-__all__ = [
-    "prepare_sphere_chart_field_transfer",
-    "prepare_sphere_chart_finite_volume_contents",
-    "prepare_sphere_chart_compatible_transfer",
-]
+    "Prepare the request with one explicitly bounded host -work ticket."
+    if budget is not None:
+        return _prepare_sphere_chart_compatible_transfer(
+            source,
+            target,
+            prepared,
+            field_name=field_name,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            maximum_work=maximum_work,
+            maximum_storage_bytes=maximum_storage_bytes,
+            budget=budget,
+        )
+    with HostBatchTicket(
+        maximum_work,
+        queries_upper=field_transfer_query_upper(
+            maximum_work, source_geometry, target_geometry
+        ),
+        bytes_upper=maximum_storage_bytes,
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=maximum_work,
+            maximum_memory_bytes=maximum_storage_bytes,
+        )
+        with budget.activate():
+            return _prepare_sphere_chart_compatible_transfer(
+                source,
+                target,
+                prepared,
+                field_name=field_name,
+                source_geometry=source_geometry,
+                target_geometry=target_geometry,
+                maximum_work=maximum_work,
+                maximum_storage_bytes=maximum_storage_bytes,
+                budget=budget,
+            )

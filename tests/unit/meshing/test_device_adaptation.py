@@ -4,9 +4,8 @@
 
 
 import itertools
-import subprocess
-import sys
-import textwrap
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +19,7 @@ import phydrax as phx
 from phydrax._meshcore import meshcore_available
 from phydrax.discretization import (
     AdaptiveSimplexPolicy,
+    AdaptiveSimplexState,
     AdaptiveSimplexStatus,
     CellMesh,
     coarsen_adaptive_simplex,
@@ -28,11 +28,12 @@ from phydrax.discretization import (
 )
 from phydrax.meshing import (
     BisectionCompatibility,
+    BisectionHierarchy,
+    CellMeshingResult,
     commit_adaptive_simplex,
     commit_partitioned_adaptive_simplex,
     execute_mesh_adaptation,
     MarkedMeshAdaptation,
-    MeshAdaptationPolicy,
     MeshAdaptationRoute,
     MeshAdaptationStatus,
     MeshingEntityKind,
@@ -46,49 +47,34 @@ from phydrax.meshing import (
     prepare_adaptive_simplex,
     prepare_mesh_adaptation,
     prepare_mesh_distribution,
+    PreparedAdaptiveSimplex,
 )
-from phydrax.meshing._bisection import BisectionHierarchy
+from phydrax.meshing._measurements import NativeExecutionRecord
+from tests._support.cell_meshes import kuhn_cube, triangle_grid
+from tests._support.distributed_meshing.device_adaptation import (
+    _adapt,
+    _cell_ids,
+    _cells,
+    _certified,
+    _policy,
+)
+from tests._support.forced_devices import run_on_forced_devices
 
 
-def _triangle_grid(columns: int, rows: int) -> CellMesh:
-    xs = np.linspace(0.0, 1.0, columns + 1)
-    ys = np.linspace(0.0, 1.0, rows + 1)
-    points = np.stack(np.meshgrid(xs, ys), axis=-1).reshape((-1, 2))
-    cells = []
-    for j, i in itertools.product(range(rows), range(columns)):
-        a = j * (columns + 1) + i
-        b, c, d = a + 1, a + columns + 2, a + columns + 1
-        cells.extend(((a, b, c), (a, c, d)))
-    return CellMesh.from_triangles(points, np.asarray(cells, dtype=np.int32))
+# Reference envelopes retained from d2dfcb941's fixed float64 volume, affine
+# transfer, and masked-versus-compact Poisson fixtures; none are mesh policies.
+_MEASURE_AND_BALANCE_ATOL = 1.0e-12
+_AFFINE_TRANSFER_ATOL = 1.0e-13
+_POISSON_COMPARISON_RTOL = 1.0e-9
+_POISSON_COMPARISON_ATOL = 1.0e-11
+# Four unit-cube bisections keep nonzero corner distances above 1/16; this
+# threshold separates those corners from the exactly represented origin.
+_ORIGIN_SELECTION_RADIUS = 1.0e-12
 
 
-def _kuhn_grid(size: int) -> CellMesh:
-    axis = np.linspace(0.0, 1.0, size + 1)
-    points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1)
-    points = points.reshape((-1, 3))
-    cells = []
-    for origin in itertools.product(range(size), repeat=3):
-        for order in itertools.permutations(range(3)):
-            corner = list(origin)
-            path = [(corner[0] * (size + 1) + corner[1]) * (size + 1) + corner[2]]
-            for direction in order:
-                corner[direction] += 1
-                path.append((corner[0] * (size + 1) + corner[1]) * (size + 1) + corner[2])
-            cells.append(path)
-    cells = np.asarray(cells, dtype=np.int32)
-    corners = points[cells]
-    negative = np.linalg.det(corners[:, 1:] - corners[:, :1]) < 0.0
-    cells[negative] = cells[negative][:, [1, 0, 2, 3]]
-    return CellMesh.from_tetrahedra(points, cells)
-
-
-def _certified(mesh: CellMesh) -> Any:
-    return phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
-
-
-def test_device_adaptation_scenario_1() -> None:
+def test_device_mesh_contract_refuses_wrong_extent_and_dtype() -> None:
     prepared = prepare_adaptive_simplex(
-        _certified(_triangle_grid(1, 1)),
+        _certified(triangle_grid(1, 1)),
         policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION),
     )
     mesh = prepared.state.mesh
@@ -107,60 +93,85 @@ def test_device_adaptation_scenario_1() -> None:
         mesh,
         mesh.cells.astype(jnp.float64),
     )
-    with pytest.raises(ValueError, match="cells"):
+    with pytest.raises(TypeError, match="cells"):
         phx.typing.validate(wrong_dtype)
-    for mesh in [_triangle_grid(3, 3), _kuhn_grid(1)]:
-        source = _certified(mesh)
-        prepared = prepare_adaptive_simplex(
-            source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
-        )
-        marks = prepared.cell_marks(np.sort(_cell_ids(source.mesh))[::2])
-        state = refine_adaptive_simplex(prepared.layout, prepared.state, marks).state
-        geometry = phx.discretization.evaluate_masked_fv_geometry(state.mesh)
-        flux = jax.random.normal(jax.random.key(3), (geometry.face_capacity,))
-        residual = phx.discretization.masked_fv_flux_divergence(geometry, flux)
-        volumes = np.asarray(geometry.cell_volumes)
-        active = np.asarray(state.mesh.cell_active)
-        boundary = np.asarray(geometry.boundary_faces)
-        content = np.sum(volumes * np.asarray(residual))
-        assert np.isclose(content, -np.sum(np.asarray(flux)[boundary]), atol=1e-12)
-        assert np.all(np.asarray(residual)[~active] == 0.0)
-        assert np.isclose(np.sum(volumes[active]), 1.0, atol=1e-12)
-        ledger = phx.discretization.evaluate_masked_fv_conservation(
-            geometry, flux, jnp.zeros((state.mesh.cell_capacity,))
-        )
-        assert np.all(np.abs(np.asarray(ledger.residual)) < 1e-12)
-    for mesh in [_triangle_grid(4, 4), _kuhn_grid(2)]:
-        host_route = MeshAdaptationRoute.NATIVE_BISECTION
-        device_route = MeshAdaptationRoute.DEVICE_BISECTION
-        source = _certified(mesh)
-        marks = np.sort(_cell_ids(mesh))[::3]
-        host = _adapt(host_route, source, marks)
-        device = _adapt(device_route, source, marks)
-        _assert_same_target(host, device)
-        assert host.lineage.lineage_id == device.lineage.lineage_id
 
-        identifiers = np.sort(_cell_ids(host.target.mesh))
-        refine, coarsen = _corner_cells(host.target.mesh), identifiers[-40:]
-        coarsen = np.setdiff1d(coarsen, refine)
-        host = _adapt(host_route, host.target, refine, coarsen, hierarchy=host.hierarchy)
-        device = _adapt(
-            device_route, device.target, refine, coarsen, hierarchy=device.hierarchy
-        )
-        _assert_same_target(host, device)
-        np.testing.assert_array_equal(
-            np.asarray(host.evidence.rejected_coarsening_ids),
-            np.asarray(device.evidence.rejected_coarsening_ids),
-        )
 
-        everything = np.sort(_cell_ids(host.target.mesh))
-        host = _adapt(host_route, host.target, (), everything, hierarchy=host.hierarchy)
-        device = _adapt(
-            device_route, device.target, (), everything, hierarchy=device.hierarchy
-        )
-        _assert_same_target(host, device)
-        assert device.evidence.coarsened_vertices == host.evidence.coarsened_vertices > 0
-    source = _certified(_triangle_grid(4, 4))
+@pytest.mark.parametrize(
+    "mesh_factory",
+    (partial(triangle_grid, 3, 3), partial(kuhn_cube, 1, orientation_swap=(0, 1))),
+    ids=("triangle", "tetrahedron"),
+)
+def test_masked_fv_conservation_after_device_refinement(
+    mesh_factory: Callable[[], CellMesh],
+) -> None:
+    mesh = mesh_factory()
+    source = _certified(mesh)
+    prepared = prepare_adaptive_simplex(
+        source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
+    )
+    marks = prepared.cell_marks(np.sort(_cell_ids(source.mesh))[::2])
+    state = refine_adaptive_simplex(prepared.layout, prepared.state, marks).state
+    geometry = phx.discretization.evaluate_masked_fv_geometry(state.mesh)
+    flux = jax.random.normal(jax.random.key(3), (geometry.face_capacity,))
+    residual = phx.discretization.masked_fv_flux_divergence(geometry, flux)
+    volumes = np.asarray(geometry.cell_volumes)
+    active = np.asarray(state.mesh.cell_active)
+    boundary = np.asarray(geometry.boundary_faces)
+    content = np.sum(volumes * np.asarray(residual))
+    assert np.isclose(
+        content, -np.sum(np.asarray(flux)[boundary]), atol=_MEASURE_AND_BALANCE_ATOL
+    )
+    assert np.all(np.asarray(residual)[~active] == 0.0)
+    assert np.isclose(np.sum(volumes[active]), 1.0, atol=_MEASURE_AND_BALANCE_ATOL)
+    ledger = phx.discretization.evaluate_masked_fv_conservation(
+        geometry, flux, jnp.zeros((state.mesh.cell_capacity,))
+    )
+    assert np.all(np.abs(np.asarray(ledger.residual)) < _MEASURE_AND_BALANCE_ATOL)
+
+
+@pytest.mark.parametrize(
+    "mesh_factory",
+    (partial(triangle_grid, 4, 4), partial(kuhn_cube, 2, orientation_swap=(0, 1))),
+    ids=("triangle", "tetrahedron"),
+)
+def test_device_and_host_marked_lifecycle_have_identical_targets(
+    mesh_factory: Callable[[], CellMesh],
+) -> None:
+    mesh = mesh_factory()
+    host_route = MeshAdaptationRoute.NATIVE_BISECTION
+    device_route = MeshAdaptationRoute.DEVICE_BISECTION
+    source = _certified(mesh)
+    marks = np.sort(_cell_ids(mesh))[::3]
+    host = _adapt(host_route, source, marks)
+    device = _adapt(device_route, source, marks)
+    _assert_same_target(host, device)
+    assert host.lineage.lineage_id == device.lineage.lineage_id
+
+    identifiers = np.sort(_cell_ids(host.target.mesh))
+    refine, coarsen = _corner_cells(host.target.mesh), identifiers[-40:]
+    coarsen = np.setdiff1d(coarsen, refine)
+    host = _adapt(host_route, host.target, refine, coarsen, hierarchy=host.hierarchy)
+    device = _adapt(
+        device_route, device.target, refine, coarsen, hierarchy=device.hierarchy
+    )
+    _assert_same_target(host, device)
+    np.testing.assert_array_equal(
+        np.asarray(host.evidence.rejected_coarsening_ids),
+        np.asarray(device.evidence.rejected_coarsening_ids),
+    )
+
+    everything = np.sort(_cell_ids(host.target.mesh))
+    host = _adapt(host_route, host.target, (), everything, hierarchy=host.hierarchy)
+    device = _adapt(
+        device_route, device.target, (), everything, hierarchy=device.hierarchy
+    )
+    _assert_same_target(host, device)
+    assert device.evidence.coarsened_vertices == host.evidence.coarsened_vertices > 0
+
+
+def test_device_protected_scope_refuses_only_incident_marks() -> None:
+    source = _certified(triangle_grid(4, 4))
     scope, through = _guarded_diagonal(source)
     marks = np.union1d(through, np.setdiff1d(_cell_ids(source.mesh), through)[[0, -1]])
     host = _adapt(
@@ -174,19 +185,30 @@ def test_device_adaptation_scenario_1() -> None:
         np.asarray(device.evidence.rejected_refinement_ids), through
     )
     _assert_same_target(host, device)
-    for route in (
-        MeshAdaptationRoute.NATIVE_BISECTION,
-        MeshAdaptationRoute.DEVICE_BISECTION,
-    ):
-        rejected = _adapt(route, source, through, protected_scopes=(scope,))
-        assert rejected.status is MeshAdaptationStatus.PARTIAL
-        assert not rejected.status.converged
-        assert rejected.target.result_id == source.result_id
-        assert rejected.transition is rejected.lineage is rejected.transfer is None
-        np.testing.assert_array_equal(
-            np.asarray(rejected.evidence.rejected_refinement_ids), through
-        )
-    source = _certified(_triangle_grid(4, 4))
+
+
+@pytest.mark.parametrize(
+    "route",
+    (MeshAdaptationRoute.NATIVE_BISECTION, MeshAdaptationRoute.DEVICE_BISECTION),
+    ids=("native", "device"),
+)
+def test_protected_only_request_preserves_the_source_epoch(
+    route: MeshAdaptationRoute,
+) -> None:
+    source = _certified(triangle_grid(4, 4))
+    scope, through = _guarded_diagonal(source)
+    rejected = _adapt(route, source, through, protected_scopes=(scope,))
+    assert rejected.status is MeshAdaptationStatus.PARTIAL
+    assert not rejected.status.converged
+    assert rejected.target.result_id == source.result_id
+    assert rejected.transition is rejected.lineage is rejected.transfer is None
+    np.testing.assert_array_equal(
+        np.asarray(rejected.evidence.rejected_refinement_ids), through
+    )
+
+
+def test_partitioned_protected_conflict_retains_clocks_and_refuses_commit() -> None:
+    source = _certified(triangle_grid(4, 4))
     scope, _ = _guarded_diagonal(source)
     partition = MeshPartitionPolicy(MeshPartitionKind.MORTON, 1)
     distribution = prepare_mesh_distribution(MeshPart("domain", source), policy=partition)
@@ -343,7 +365,7 @@ def test_device_uniform_inverse_keeps_compiled_counters_and_source_authority(
     not meshcore_available(), reason="native execution ledger unavailable"
 )
 def test_device_commit_refuses_foreign_and_changed_preparation_receipts() -> None:
-    source = _certified(_triangle_grid(1, 1))
+    source = _certified(triangle_grid(1, 1))
     policy = _policy(MeshAdaptationRoute.DEVICE_BISECTION)
     prepared = prepare_adaptive_simplex(source, policy=policy)
     foreign_source = _certified(
@@ -358,49 +380,38 @@ def test_device_commit_refuses_foreign_and_changed_preparation_receipts() -> Non
     )
     with pytest.raises(ValueError, match="scientific operation"):
         commit_adaptive_simplex(substituted, prepared.state)
-    changed = eqx.tree_at(
+    forged = eqx.tree_at(
         lambda value: value.execution_evidence.source_preparation_work_units,
         prepared,
         jnp.asarray(1, dtype=jnp.uint64),
     )
-    # A root receipt has no predecessor. Inventing scalar source work must not
-    # silently recharge a different phase, even when its operation tag matches.
+    with pytest.raises(ValueError, match=r"NativeExecutionRecord\.receipt_id must bind"):
+        commit_adaptive_simplex(forged, prepared.state)
+    original = prepared.execution_evidence
+    assert original is not None
+    assert original.preparation_evidence is None
+    assert original.consumer_evidence is None
+    assert int(np.asarray(original.imported_preparation_count)) == 0
+    changed = NativeExecutionRecord(
+        original.native_evidence(),
+        source_preparation_work_units=1,
+        source_preparation_geometry_queries=int(
+            np.asarray(original.source_preparation_geometry_queries)
+        ),
+        preparation_seconds=float(np.asarray(original.preparation_seconds)),
+        owner_id=original.owner_id,
+    )
+    assert changed.receipt_hex() != original.receipt_hex()
+    changed.require_valid()
+    # Preparation is checked at construction, so commit cannot receive this record.
     with pytest.raises(ValueError, match="preparation"):
-        commit_adaptive_simplex(changed, prepared.state)
-
-
-def _policy(route: Any, **options: Any) -> Any:
-    if route is MeshAdaptationRoute.DEVICE_BISECTION:
-        options.setdefault("device_policy", AdaptiveSimplexPolicy())
-    return MeshAdaptationPolicy(route, **options)
-
-
-def _adapt(
-    route: Any,
-    source: Any,
-    refine: Any = (),
-    coarsen: Any = (),
-    /,
-    *,
-    hierarchy: Any = None,
-    **options: Any,
-) -> Any:
-    request = MarkedMeshAdaptation(
-        np.asarray(refine, dtype=np.int64),
-        np.asarray(coarsen, dtype=np.int64),
-        hierarchy=hierarchy,
-    )
-    return execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, request, policy=_policy(route, **options))
-    )
-
-
-def _cells(mesh: CellMesh) -> np.ndarray:
-    return np.concatenate(tuple(np.asarray(block.vertices) for block in mesh.blocks))
-
-
-def _cell_ids(mesh: CellMesh) -> np.ndarray:
-    return np.concatenate(tuple(np.asarray(block.global_ids) for block in mesh.blocks))
+        PreparedAdaptiveSimplex(
+            prepared.adaptation,
+            prepared.layout,
+            prepared.state,
+            prepared.anchor,
+            execution_evidence=changed,
+        )
 
 
 def _assert_same_target(host: Any, device: Any) -> None:
@@ -438,10 +449,10 @@ def _assert_conforming(mesh: CellMesh, measure: float) -> None:
     edges = np.unique(np.sort(cells[:, pairs].reshape((-1, 2)), axis=1), axis=0)
     midpoints = 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
     distances = np.linalg.norm(midpoints[:, None, :] - points[None, :, :], axis=2)
-    assert np.min(distances) > 1.0e-9
+    assert np.min(distances) > _POISSON_COMPARISON_RTOL
     measures = _signed_measures(points, cells)
     assert np.all(measures > 0.0)
-    assert np.isclose(np.sum(measures), measure, rtol=0.0, atol=1.0e-12)
+    assert np.isclose(np.sum(measures), measure, rtol=0.0, atol=_MEASURE_AND_BALANCE_ATOL)
 
 
 def _corner_cells(mesh: CellMesh) -> np.ndarray:
@@ -567,7 +578,7 @@ def test_device_commit_owns_uniform_inverse_without_mutating_compiled_summary(
         commit_adaptive_simplex(prepared, negative)
 
 
-def test_device_adaptation_scenario_2() -> None:
+def test_device_uniform_compatibility_matches_the_host_target() -> None:
     points = np.asarray([(0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)])
     source = _certified(
         CellMesh.from_triangles(points, np.asarray([(0, 1, 2), (0, 3, 1)]))
@@ -578,9 +589,109 @@ def test_device_adaptation_scenario_2() -> None:
     assert device.evidence.uniform_refinement_applied
     _assert_same_target(host, device)
     _assert_conforming(device.target.mesh, 3.5)
-    """Refine, coarsen back, and refine again before one commit."""
 
-    source = _certified(_triangle_grid(3, 3))
+
+@pytest.mark.parametrize("uniform", (False, True), ids=("root-labels", "uniform"))
+def test_source_solver_owners_inherit_canonical_preclosure_lineage(
+    uniform: bool,
+) -> None:
+    from phydrax.meshing._device_adaptation import source_solver_cell_owners
+
+    mesh = (
+        CellMesh.from_triangles(
+            np.asarray(
+                ((0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)),
+                dtype=np.float64,
+            ),
+            np.asarray(((0, 1, 2), (0, 3, 1)), dtype=np.int32),
+        )
+        if uniform
+        else triangle_grid(1, 1)
+    )
+    source = _certified(mesh)
+    partition_policy = MeshPartitionPolicy(MeshPartitionKind.MORTON, 2)
+    distribution = prepare_mesh_distribution(
+        MeshPart("domain", source),
+        policy=partition_policy,
+    )
+    prepared = prepare_adaptive_simplex(
+        source,
+        policy=_policy(
+            MeshAdaptationRoute.DEVICE_BISECTION,
+            compatibility=(
+                BisectionCompatibility.UNIFORM_REFINEMENT
+                if uniform
+                else BisectionCompatibility.REJECT
+            ),
+            distribution=distribution,
+            partition_policy=partition_policy,
+        ),
+    )
+    expected = {
+        int(identifier): int(owner)
+        for identifier, owner in zip(
+            np.asarray(distribution.cell_global_ids),
+            np.asarray(distribution.partition.cell_owner),
+            strict=True,
+        )
+    }
+    assert set(expected.values()) == {0, 1}
+    lineage = prepared.anchor.start.uniform_refinement
+    if uniform:
+        assert lineage is not None
+        expected = {
+            int(child): expected[int(parent)]
+            for parent, children in zip(
+                lineage.parent_ids, lineage.child_ids, strict=True
+            )
+            for child in children
+        }
+    else:
+        assert lineage is None
+    state = prepared.state
+    active = np.asarray(state.mesh.cell_active)
+    identifiers = np.asarray(state.mesh.cell_ids)
+    assert set(identifiers[active]) == set(expected)
+    owners = source_solver_cell_owners(prepared, state)
+    assert owners.dtype == jnp.int32
+    np.testing.assert_array_equal(
+        np.asarray(owners)[active],
+        np.asarray([expected[int(key)] for key in identifiers[active]], dtype=np.int32),
+    )
+    assert np.all(np.asarray(owners)[~active] == -1)
+    if not uniform:
+        np.testing.assert_array_equal(
+            owners, source_solver_cell_owners(prepared.adaptation, state)
+        )
+        local = eqx.tree_at(
+            lambda value: (value.anchor.cell_ids, value.anchor.slot_origins),
+            prepared,
+            (prepared.anchor.cell_ids[1:], prepared.anchor.slot_origins[1:]),
+        )
+        np.testing.assert_array_equal(owners, source_solver_cell_owners(local, state))
+
+    slot = int(np.flatnonzero(active)[0])
+    absent = int(np.max(identifiers)) + 1
+    missing = eqx.tree_at(
+        lambda value: value.mesh.cell_ids,
+        state,
+        state.mesh.cell_ids.at[slot].set(absent),
+    )
+    for preparation in (prepared, prepared.adaptation):
+        with pytest.raises(ValueError, match="solver ownership bank"):
+            source_solver_cell_owners(preparation, missing)
+    if uniform:
+        origins = prepared.anchor.slot_origins.copy()
+        origins[prepared.anchor.cell_ids == identifiers[slot]] = absent
+        missing_owner = eqx.tree_at(
+            lambda value: value.anchor.slot_origins, prepared, origins
+        )
+        with pytest.raises(ValueError, match="solver ownership bank"):
+            source_solver_cell_owners(missing_owner, state)
+
+
+def test_device_refine_coarsen_refine_matches_host_ancestry_and_affine_transfer() -> None:
+    source = _certified(triangle_grid(3, 3))
     marks = np.sort(_cell_ids(source.mesh))[::2]
     policy = _policy(MeshAdaptationRoute.DEVICE_BISECTION)
     prepared = prepare_adaptive_simplex(source, policy=policy)
@@ -604,7 +715,7 @@ def test_device_adaptation_scenario_2() -> None:
     )
     assert back.target.mesh.topology_id == source.mesh.topology_id
     assert device.target.mesh.topology_id == host.target.mesh.topology_id
-    # Pin the numerical content as diagnostics for canonical identity equality.
+    # Pin the numerical content as diagnostics for identity equality.
     source_order = np.argsort(_cell_ids(source.mesh), kind="stable")
     back_order = np.argsort(_cell_ids(back.target.mesh), kind="stable")
     np.testing.assert_array_equal(
@@ -656,9 +767,14 @@ def test_device_adaptation_scenario_2() -> None:
         np.asarray(device.transfer.apply(before)),
         after,
         rtol=0.0,
-        atol=1e-13,
+        atol=_AFFINE_TRANSFER_ATOL,
     )
-    source = _certified(_kuhn_grid(1))
+
+
+def test_tetrahedral_device_closure_retains_reciprocal_facets_after_repeated_edits() -> (
+    None
+):
+    source = _certified(kuhn_cube(1, orientation_swap=(0, 1)))
     prepared = prepare_adaptive_simplex(
         source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
     )
@@ -667,7 +783,7 @@ def test_device_adaptation_scenario_2() -> None:
     flags = 0
     for _ in range(4):
         points = state.mesh.coordinates[state.mesh.cells]
-        near = jnp.min(jnp.linalg.norm(points, axis=2), axis=1) < 1.0e-12
+        near = jnp.min(jnp.linalg.norm(points, axis=2), axis=1) < _ORIGIN_SELECTION_RADIUS
         update = refine_adaptive_simplex(layout, state, near & state.mesh.cell_active)
         assert (int(update.report.status) & ~allowed) == 0
         assert int(update.report.operations) > 0
@@ -721,8 +837,9 @@ def _geometry_failure(source: Any) -> Any:
     return prepared, state, jnp.zeros_like(state.mesh.cell_active)
 
 
-def test_device_adaptation_scenario_3() -> None:
-    for failure, flag, category in [
+@pytest.mark.parametrize(
+    "failure, flag, category",
+    (
         (
             _capacity_failure,
             AdaptiveSimplexStatus.CAPACITY_EXCEEDED,
@@ -738,30 +855,43 @@ def test_device_adaptation_scenario_3() -> None:
             AdaptiveSimplexStatus.INVALID_GEOMETRY,
             MeshingFailureCategory.QUALITY_REJECTED,
         ),
-    ]:
-        source = _certified(_triangle_grid(2, 2))
-        prepared, state, marks = failure(source)
-        layout = prepared.layout
-        failed = refine_adaptive_simplex(layout, state, marks)
-        assert AdaptiveSimplexStatus(int(failed.report.status)) & flag
-        assert bool(failed.report.failed)
-        assert AdaptiveSimplexStatus(int(failed.state.status_flags)) & flag
-        # Every array but the recorded status is rolled back to the input.
-        _assert_same_arrays(
-            state, eqx.tree_at(lambda value: value.clocks, failed.state, state.clocks)
-        )
-        for call in (refine_adaptive_simplex, coarsen_adaptive_simplex):
-            refused = call(layout, failed.state, failed.state.mesh.cell_active)
-            report = refused.report
-            assert AdaptiveSimplexStatus(int(report.status)) & flag
-            assert bool(report.failed)
-            assert int(report.accepted) == int(report.operations) == 0
-            assert int(report.iterations) == int(report.vertices) == 0
-            _assert_same_arrays(failed.state, refused.state)
-        with pytest.raises(MeshingFailure) as rejection:
-            commit_adaptive_simplex(prepared, failed.state)
-        assert rejection.value.category is category
-    source = _certified(_triangle_grid(2, 2))
+    ),
+    ids=("capacity", "closure", "geometry"),
+)
+def test_failed_device_epoch_rolls_back_and_remains_terminal(
+    failure: Callable[
+        [CellMeshingResult],
+        tuple[PreparedAdaptiveSimplex, AdaptiveSimplexState, jax.Array],
+    ],
+    flag: AdaptiveSimplexStatus,
+    category: MeshingFailureCategory,
+) -> None:
+    source = _certified(triangle_grid(2, 2))
+    prepared, state, marks = failure(source)
+    layout = prepared.layout
+    failed = refine_adaptive_simplex(layout, state, marks)
+    assert AdaptiveSimplexStatus(int(failed.report.status)) & flag
+    assert bool(failed.report.failed)
+    assert AdaptiveSimplexStatus(int(failed.state.status_flags)) & flag
+    # Every array but the recorded status is rolled back to the input.
+    _assert_same_arrays(
+        state, eqx.tree_at(lambda value: value.clocks, failed.state, state.clocks)
+    )
+    for call in (refine_adaptive_simplex, coarsen_adaptive_simplex):
+        refused = call(layout, failed.state, failed.state.mesh.cell_active)
+        report = refused.report
+        assert AdaptiveSimplexStatus(int(report.status)) & flag
+        assert bool(report.failed)
+        assert int(report.accepted) == int(report.operations) == 0
+        assert int(report.iterations) == int(report.vertices) == 0
+        _assert_same_arrays(failed.state, refused.state)
+    with pytest.raises(MeshingFailure) as rejection:
+        commit_adaptive_simplex(prepared, failed.state)
+    assert rejection.value.category is category
+
+
+def test_device_coarsening_pass_limit_publishes_partial_progress() -> None:
+    source = _certified(triangle_grid(2, 2))
     policy = _policy(
         MeshAdaptationRoute.DEVICE_BISECTION,
         device_policy=AdaptiveSimplexPolicy(maximum_coarsening_passes=1),
@@ -803,7 +933,7 @@ def test_device_adaptation_scenario_3() -> None:
 def test_uncertain_device_orientation_is_resolved_exactly_at_commit(
     offset: Any, certified: Any
 ) -> None:
-    source = _certified(_triangle_grid(2, 2))
+    source = _certified(triangle_grid(2, 2))
     prepared = prepare_adaptive_simplex(
         source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
     )
@@ -862,7 +992,7 @@ def test_masked_poisson_on_the_device_state_equals_the_committed_solve() -> None
     def source_term(points: Any) -> Any:
         return 1.0 + points[..., 0] + 2.0 * points[..., 1]
 
-    source = _certified(_triangle_grid(3, 3))
+    source = _certified(triangle_grid(3, 3))
     prepared = prepare_adaptive_simplex(
         source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
     )
@@ -891,150 +1021,107 @@ def test_masked_poisson_on_the_device_state_equals_the_committed_solve() -> None
     )
     assert np.count_nonzero(active) == committed.coordinates.shape[0]
     np.testing.assert_allclose(
-        np.asarray(masked.value)[slots], np.asarray(expected), rtol=1e-9, atol=1e-11
+        np.asarray(masked.value)[slots],
+        np.asarray(expected),
+        rtol=_POISSON_COMPARISON_RTOL,
+        atol=_POISSON_COMPARISON_ATOL,
     )
     assert np.all(np.asarray(masked.value)[~active] == 0.0)
 
 
 @pytest.mark.parametrize("scenario", ("chain", "owners", "protected", "capacity"))
 def test_part_sharded_neighbor_closure_semantics(scenario: str) -> None:
-    environment = phx.config.environment(
-        phx.config.RuntimeConfig(platforms=("cpu",), cpu_device_count=4)
+    report = run_on_forced_devices(
+        "tests._support.distributed_meshing.device_adaptation",
+        f"neighbor_{scenario}",
+        (),
+        devices=4,
+        env={},
     )
-    environment["PYTHONPATH"] = str(Path(phx.__file__).resolve().parents[1])
-    subprocess.run(
-        [sys.executable, "-c", _NEIGHBOR_PARTS_SCRIPT, scenario],
-        capture_output=True,
-        text=True,
-        env=environment,
-        check=True,
-    )
-
-
-_NEIGHBOR_PARTS_SCRIPT = textwrap.dedent(
-    """
-    import sys
-
-    import equinox as eqx
-    import jax
-    import jax.numpy as jnp
-    import numpy as np
-
-    from phydrax.discretization._adaptive_simplex import (
-        AdaptiveSimplexLayout,
-        AdaptiveSimplexParts,
-        AdaptiveSimplexState,
-        AdaptiveSimplexStatus,
-        adaptive_simplex_state,
-        refine_adaptive_simplex,
-        refine_adaptive_simplex_parts,
-    )
-
-    scenario = sys.argv[1]
-    angles = np.linspace(0.0, np.pi, 5)
-    points = np.vstack((np.zeros((1, 2)), np.stack((np.cos(angles), np.sin(angles)), axis=1)))
-    rows = np.asarray([(0, index, index + 1) for index in range(1, 5)], dtype=np.int32)
-    owners = np.asarray([3, 0, 2, 1] if scenario == "owners" else [0, 1, 2, 3], dtype=np.int32)
-    layout = AdaptiveSimplexLayout(
-        2, 2, vertex_capacity=64,
-        cell_capacity=3 if scenario == "capacity" else 64,
-        protected_edge_capacity=4, maximum_closure_iterations=64,
-        maximum_coarsening_passes=1,
-    )
-
-    def state_for(indices: np.ndarray, bucket: AdaptiveSimplexLayout) -> AdaptiveSimplexState:
-        global_rows = rows[indices]
-        vertex_ids = np.unique(global_rows).astype(np.int64)
-        local_rows = np.searchsorted(vertex_ids, global_rows).astype(np.int32)
-        count = indices.size
-        protected = np.empty((0, 2), dtype=np.int32)
-        if scenario == "protected" and 3 in indices:
-            protected = np.searchsorted(vertex_ids, np.asarray([[0, 5]])).astype(np.int32)
-        return adaptive_simplex_state(
-            bucket,
-            coordinates=points[vertex_ids],
-            vertex_ids=vertex_ids,
-            vertex_active=np.ones(vertex_ids.size, dtype=np.bool_),
-            vertex_parents=np.full((vertex_ids.size, 2), -1, dtype=np.int32),
-            vertex_protected=np.zeros(vertex_ids.size, dtype=np.bool_),
-            cells=local_rows, tuples=local_rows,
-            tags=np.full(count, 2, dtype=np.int32),
-            blocks=np.zeros(count, dtype=np.int32),
-            generations=np.zeros(count, dtype=np.int32),
-            parents=np.full(count, -1, dtype=np.int32),
-            children=np.full((count, 2), -1, dtype=np.int32),
-            bisection_vertices=np.full(count, -1, dtype=np.int32),
-            cell_ids=indices.astype(np.int64) + 10,
-            cell_active=np.ones(count, dtype=np.bool_),
-            cell_classes=np.zeros(count, dtype=np.int32),
-            facet_classes=np.zeros((count, 3), dtype=np.int32),
-            protected_edges=protected, next_vertex_id=6, next_cell_id=14,
-        )
-
-    pieces = [state_for(np.flatnonzero(owners == part), layout) for part in range(4)]
-    stacked = jax.tree_util.tree_map(lambda *values: jnp.stack(values), *pieces)
-    # Every shared edge is routed, but center-only vertex overlap is not a
-    # topology route. A forced cavity must advance through the whole chain.
-    neighbors = tuple(
-        pair for index in range(3)
-        for pair in ((int(owners[index]), int(owners[index + 1])),
-                     (int(owners[index + 1]), int(owners[index])))
-    )
-    parts = AdaptiveSimplexParts(jax.devices("cpu"), neighbor_pairs=neighbors)
-    marks = np.zeros((4, layout.cell_capacity), dtype=np.bool_)
-    marks[owners[0], 0] = True
-    update = refine_adaptive_simplex_parts(layout, parts, stacked, marks)
-
-    def same_tree(first: AdaptiveSimplexState, second: AdaptiveSimplexState) -> None:
-        for left, right in zip(jax.tree_util.tree_leaves(first), jax.tree_util.tree_leaves(second), strict=True):
-            np.testing.assert_array_equal(np.asarray(left), np.asarray(right))
-
+    status = np.asarray(report["status"])
     if scenario in ("protected", "capacity"):
-        expected = AdaptiveSimplexStatus.PROTECTED_CONFLICT if scenario == "protected" else AdaptiveSimplexStatus.CAPACITY_EXCEEDED
-        assert np.all(np.asarray(update.report.status) & int(expected))
-        assert np.all(np.asarray(update.report.accepted) == 0)
-        assert np.all(np.asarray(update.report.operations) == 0)
-        cleared = eqx.tree_at(
-            lambda state: state.clocks, update.state,
-            update.state.clocks.at[:, 2].set(0),
+        expected = (
+            AdaptiveSimplexStatus.PROTECTED_CONFLICT
+            if scenario == "protected"
+            else AdaptiveSimplexStatus.CAPACITY_EXCEEDED
         )
-        same_tree(cleared, stacked)
-        refused = refine_adaptive_simplex_parts(layout, parts, update.state, marks)
-        same_tree(refused.state, update.state)
-        assert np.all(np.asarray(refused.report.failed))
+        assert np.all(status & int(expected))
+        assert np.all(np.asarray(report["accepted"]) == 0)
+        assert np.all(np.asarray(report["operations"]) == 0)
+        for left, right in zip(
+            report["rollback_leaves"], report["source_leaves"], strict=True
+        ):
+            np.testing.assert_array_equal(left, right)
+        for left, right in zip(
+            report["refused_leaves"], report["failed_leaves"], strict=True
+        ):
+            np.testing.assert_array_equal(left, right)
+        assert np.all(report["refused_failed"])
     else:
-        assert np.all(np.asarray(update.report.status) == 0)
-        grown = np.asarray(update.state.cursors[:, 1] - stacked.cursors[:, 1])
+        assert np.all(status == 0)
+        grown = np.asarray(report["grown"])
         assert np.all(grown > 0), grown
-        assert np.all(np.asarray(update.report.iterations) >= 3)
-        serial_state = state_for(np.arange(4, dtype=np.int32), layout)
-        serial_marks = np.zeros(layout.cell_capacity, dtype=np.bool_)
-        serial_marks[0] = True
-        serial = refine_adaptive_simplex(layout, serial_state, serial_marks)
-        assert int(serial.report.status) == 0
-        mesh = update.state.mesh
-        active = np.asarray(mesh.cell_active)
-        cell_ids = np.asarray(mesh.cell_ids)[active]
-        connectivity = np.asarray(mesh.vertex_ids)[np.arange(4)[:, None, None], np.asarray(mesh.cells)][active]
-        order = np.argsort(cell_ids)
-        reference = serial.state.mesh
-        reference_active = np.asarray(reference.cell_active)
-        reference_order = np.argsort(np.asarray(reference.cell_ids)[reference_active])
+        assert np.all(np.asarray(report["iterations"]) >= 3)
+        assert report["serial_status"] == 0
+        np.testing.assert_array_equal(report["cell_ids"], report["reference_cell_ids"])
         np.testing.assert_array_equal(
-            cell_ids[order], np.asarray(reference.cell_ids)[reference_active][reference_order],
+            report["connectivity"], report["reference_connectivity"]
+        )
+        np.testing.assert_array_equal(report["coordinates"], report["shared_coordinates"])
+        np.testing.assert_array_equal(
+            report["vertex_ids"], report["reference_vertex_ids"]
         )
         np.testing.assert_array_equal(
-            connectivity[order],
-            np.asarray(reference.vertex_ids)[np.asarray(reference.cells)[reference_active]][reference_order],
+            report["unique_coordinates"], report["reference_coordinates"]
         )
-        held = np.asarray(mesh.vertex_active)
-        ids = np.asarray(mesh.vertex_ids)[held]
-        coordinates = np.asarray(mesh.coordinates)[held]
-        unique, first = np.unique(ids, return_index=True)
-        for identifier, coordinate in zip(ids, coordinates, strict=True):
-            np.testing.assert_array_equal(coordinate, coordinates[first[np.searchsorted(unique, identifier)]])
-        reference_held = np.asarray(reference.vertex_active)
-        np.testing.assert_array_equal(unique, np.asarray(reference.vertex_ids)[reference_held])
-        np.testing.assert_array_equal(coordinates[first], np.asarray(reference.coordinates)[reference_held])
-    """
-)
+
+
+@pytest.mark.parametrize("scenario", ("identity", "capacity"))
+def test_partitioned_commit_preserves_public_contracts(scenario: str) -> None:
+    report = run_on_forced_devices(
+        "tests._support.distributed_meshing.device_adaptation",
+        f"public_{scenario}",
+        (),
+        devices=4,
+        env={},
+    )
+    if scenario == "capacity":
+        flag = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
+        status = np.asarray(report["status"])
+        assert status.size == 4
+        assert np.all(status & flag)
+        assert np.all(np.asarray(report["flags"]) & flag)
+        np.testing.assert_array_equal(report["cursors"], report["source_cursors"])
+        assert np.all(report["refused_failed"])
+        assert report["refused_operations"] == 0
+        np.testing.assert_array_equal(report["refused_cursors"], report["cursors"])
+        assert report["category"] == MeshingFailureCategory.RESOURCE_EXHAUSTED.value
+    else:
+        assert np.all(np.asarray(report["first_status"]) == 0)
+        assert np.all(np.asarray(report["second_status"]) == 0)
+        grown = np.asarray(report["grown"])
+        assert grown[0] > 0 and np.count_nonzero(grown[1:]) > 0
+        assert report["topology_id"] == report["reference_topology_id"]
+        assert report["lineage_id"] == report["reference_lineage_id"]
+        assert report["hierarchy_id"] == report["reference_hierarchy_id"]
+        assert report["source_certification_absent"]
+        assert len(report["locals"]) == 4
+        for local in report["locals"]:
+            assert local["storage_present"]
+            assert local["topology_id"] == report["topology_id"]
+            assert local["embedding_status"] == "certified"
+            assert local["source_audit_id"] == report["source_audit_id"]
+            assert local["source_premise_id"] == report["source_premise_id"]
+            assert local["distribution_present"]
+            assert local["source_result_id"] == report["source_result_id"]
+            assert local["rebalanced"]
+            assert local["imbalance"] <= report["maximum_imbalance"]
+            assert np.all(local["migration_accepted"])
+            assert local["sent_cells"] > 0
+            np.testing.assert_array_equal(
+                local["part_weights"], local["proposed_weights"]
+            )
+        np.testing.assert_array_equal(report["cell_ids"], report["host_cell_ids"])
+        np.testing.assert_array_equal(report["connectivity"], report["host_connectivity"])
+        np.testing.assert_array_equal(report["vertex_ids"], report["host_vertex_ids"])
+        np.testing.assert_array_equal(report["coordinates"], report["host_coordinates"])

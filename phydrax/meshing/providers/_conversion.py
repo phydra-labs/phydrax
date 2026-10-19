@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import numpy as np
 
+from phydrax.meshing._contracts import MeshingLimits
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from ...discretization import CellMesh
 from ...interchange import AdapterLoss, AdapterReport, AdapterStatus
-from .._contracts import MeshingFailure, MeshingFailureCategory, MeshingLimits
 from .._result import CellMeshingResult
 
 

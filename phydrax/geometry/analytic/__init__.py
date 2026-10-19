@@ -30,7 +30,7 @@ from ._operations import (
 )
 from ._primitives import Ball, Box, Circle, Cube, Orthotope, Sphere
 from ._superquadric import Superquadric
-from ._sweeps import Extrusion, Revolution
+from ._sweeps import Extrusion, Revolution, Tube
 
 
 __all__ = [
@@ -55,6 +55,7 @@ __all__ = [
     "Rectangle",
     "RigidFrame",
     "Revolution",
+    "Tube",
     "RigidTransform",
     "Scaling",
     "SharpCSG",

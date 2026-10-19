@@ -2,52 +2,64 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Lift an actual reference partition through independently authored source roots."""
+"""Lift an realized reference partition through independently authored source roots."""
 
 from __future__ import annotations
 
-from fractions import Fraction
-from typing import NamedTuple, TYPE_CHECKING
+import dataclasses as _owner_dataclasses
+from contextlib import ExitStack
+from typing import final
 
 import numpy as np
 
-from .._meshcore import charge_native_geometry_queries
+import phydrax.discretization._cell_geometry as _dependency_phydrax_discretization__cell_geometry
+import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.discretization._coordinate_enclosure as _dependency_phydrax_discretization__coordinate_enclosure
+import phydrax.discretization._periodic_topology as _owner_phydrax_discretization__periodic_topology
+import phydrax.geometry._mapped_reference_domain as _dependency_phydrax_geometry__mapped_reference_domain
+import phydrax.geometry._source_fidelity as _owner_phydrax_geometry__mesh_certificates
+import phydrax.meshing._boundary_layer as _dependency_phydrax_meshing__boundary_layer
+import phydrax.meshing._canonical as _owner_phydrax_meshing__canonical
+import phydrax.meshing._certification_schedule as _leaf_phydrax_meshing__certification_schedule
+import phydrax.meshing._controls as _owner_phydrax_meshing__controls
+import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
+import phydrax.meshing._layer_core as _owner_phydrax_meshing__layer_core
+import phydrax.meshing._layer_core_controls as _owner_phydrax_meshing__layer_core_controls
+import phydrax.meshing._layer_core_publication as layer_publication
+import phydrax.meshing._layer_core_resources as _dependency_phydrax_meshing__layer_core_resources
+import phydrax.meshing._layer_core_topology as layer_topology
+import phydrax.meshing._layer_curving as _owner_phydrax_meshing__layer_curving
+import phydrax.meshing._layer_source_certification as _owner_phydrax_meshing__layer_source_certification
+import phydrax.meshing._mapped_reference_association as _owner_phydrax_meshing__mapped_reference_association
+import phydrax.meshing._measurements as _owner_phydrax_meshing__measurements
+import phydrax.meshing._organization_records as _owner_phydrax_meshing__organization
+import phydrax.meshing._reference_root_composition as _dependency_phydrax_meshing__reference_root_composition
+import phydrax.meshing._result as _owner_phydrax_meshing__result
+import phydrax.meshing._scope as _owner_phydrax_meshing_scope
+import phydrax.meshing._sizing as _owner_phydrax_meshing__sizing
+import phydrax.meshing._trace as _owner_phydrax_meshing__trace
+import phydrax.meshing.providers._native_publication as _owner_phydrax_meshing_providers__native_publication
+import phydrax.meshing.providers._native_route_checks as route_checks
+import phydrax.meshing.providers._native_sources as sources_owner
+from phydrax.discretization._reference_cell_types import CellGeometryElement
+
+from .._meshcore import NativeExecutionScope, NativeHostStorageWorkspace
+from .._physical import SpatialCoordinateContract
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ..discretization import CellBlock, CellGeometrySpec, CellMesh
-from ..discretization._cell_geometry import (
-    _require_scalar_coordinate_element,
-    CellGeometryElement,
-    CellGeometryRestrictionSource,
-    coordinate_lagrange_element,
-    PolynomialComposedCellGeometryElement,
-)
-from ..discretization._cell_geometry_validity import cell_geometry_id
-from ..discretization._coordinate_enclosure import (
-    add,
-    coordinate_corner_images,
-    coordinate_polynomials,
-    derivative,
-    rounded_point,
-    scale,
-)
-from ..geometry._mapped_reference_domain import MappedReferenceDomain
-from ._boundary_layer import BoundaryLayerMesh
-from ._layer_core_resources import LayerCoreSourceWork
-from ._quad_generation import _family_host_array
-from ._reference_root_composition import exact_reference_chart_controls
+from ..discretization.fem import FiniteElementSpec
+from ..geometry._rational import rational_vector
+from ..typing import checked
+from ._contracts import MeshingProviderInfo, VolumeMeshingSpec
+from ._measurements import NativeMeshingPhaseRecorder
+from ._result import CellMeshingResult
+from ._scope import mesh_entity_scope
 
 
-if TYPE_CHECKING:
-    from .._physical import SpatialCoordinateContract
-    from ._contracts import MeshingProviderInfo, VolumeMeshingSpec
-    from ._layer_core import LayerCoreConstruction
-    from ._measurements import NativeMeshingPhaseRecorder
-    from ._organization import MeshAttribute, MeshLabel, MeshPatch, MeshZone
-    from ._result import CellMeshingResult
-    from .providers._native_layer import PreparedLayerCore
-    from .providers._native_sources import NativeLayerCoreSource
-
-
-class LayerReferenceComposition(NamedTuple):
+@final
+class LayerReferenceComposition(StrictModule, NonTrainableState):
     mesh: CellMesh
     geometry: CellGeometrySpec
     reference_mesh: CellMesh
@@ -55,19 +67,22 @@ class LayerReferenceComposition(NamedTuple):
     cell_regions: np.ndarray
 
 
+@checked
 def validate_layer_reference_columns(
-    layers: BoundaryLayerMesh,
-    reference_layers: BoundaryLayerMesh,
-    domain: MappedReferenceDomain,
-    work: LayerCoreSourceWork,
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    reference_layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    domain: _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> None:
-    """Prove the entire original physical interval vectors, not sampled heights."""
+    """Prove the entire source physical interval vectors, not sampled heights."""
     if not np.array_equal(
         layers.mesh.vertex_global_ids, reference_layers.mesh.vertex_global_ids
     ):
         raise ValueError(
-            "Reference layer columns must retain the actual physical source vertex registry."
+            "NativeLayerCoreSource.reference_source must retain the realized physical source vertex registry; got incompatible Reference layer columns"
         )
     if not np.array_equal(
         layers.layer_index, reference_layers.layer_index
@@ -76,7 +91,7 @@ def validate_layer_reference_columns(
         reference_layers.column_index,
     ):
         raise ValueError(
-            "Reference layer columns must retain every actual physical interval and column identity."
+            "NativeLayerCoreSource.reference_source must retain every realized physical interval and column identity; got incompatible Reference layer columns"
         )
     reference_cells = {
         int(identifier): tuple(
@@ -87,8 +102,10 @@ def validate_layer_reference_columns(
             np.asarray(block.global_ids), np.asarray(block.vertices), strict=True
         )
     }
-    elements, routes, _ = domain.source_geometry.resolve(domain.reference_mesh)
-    values = domain.source_geometry.source_coordinates()
+    elements, routes, _ = domain.source_geometry.resolve(
+        domain.reference_mesh, budget=budget
+    )
+    values = domain.source_geometry.source_coordinates(budget=budget)
     roots = {
         int(identifier): (
             block,
@@ -105,11 +122,15 @@ def validate_layer_reference_columns(
     }
     physical_ids = np.asarray(layers.mesh.vertex_global_ids, dtype=np.int64)
     root_vertex_ids = np.asarray(domain.reference_mesh.vertex_global_ids, dtype=np.int64)
-    affine = coordinate_lagrange_element("prism", 1)
+    affine = (
+        _dependency_phydrax_discretization__cell_geometry.coordinate_lagrange_element(
+            "prism", 1
+        )
+    )
     for block in layers.mesh.blocks:
         if block.cell_kind != "prism":
             raise ValueError(
-                "Source-controlled layer composition requires actual prepared prism columns."
+                "NativeLayerCoreSource.reference_source must provide realized prepared prism columns; got missing or incompatible realized prepared prism columns"
             )
         for identifier, vertices in zip(
             np.asarray(block.global_ids).tolist(), np.asarray(block.vertices), strict=True
@@ -117,7 +138,7 @@ def validate_layer_reference_columns(
             work.charge(1)
             if identifier not in roots or identifier not in reference_cells:
                 raise ValueError(
-                    "Every physical source layer cell must own its independently declared reference root."
+                    "NativeLayerCoreSource.reference_source must own its independently declared reference root; got incompatible physical source layer cell"
                 )
             root_block, element, route, root_vertices = roots[identifier]
             expected = tuple(physical_ids[vertices].tolist())
@@ -127,7 +148,7 @@ def validate_layer_reference_columns(
                 or tuple(root_vertex_ids[root_vertices].tolist()) != expected
             ):
                 raise ValueError(
-                    "Reference roots changed an actual physical column's directed source corners."
+                    "NativeLayerCoreSource.reference_source must retain source vertex IDs, prism cells, intervals, and polynomial column vectors; got reference roots changed an realized physical column's directed source corners"
                 )
             if not np.array_equal(
                 np.asarray(domain.reference_mesh.coordinates)[root_vertices].view(
@@ -136,49 +157,63 @@ def validate_layer_reference_columns(
                 np.asarray(reference_layers.mesh.coordinates)[vertices].view(np.uint64),
             ):
                 raise ValueError(
-                    "Original layer roots must retain their actual authored reference column coordinates."
+                    "NativeLayerCoreSource.reference_source must retain their realized authored reference column coordinates; got incompatible Source layer roots"
                 )
             local = tuple(values[index] for index in route)
             physical = np.asarray(layers.mesh.coordinates, dtype=np.float64)[vertices]
-            images = coordinate_corner_images(element, local)
-            if images != tuple(
-                tuple(Fraction(float(value)) for value in point) for point in physical
-            ):
+            images = _dependency_phydrax_discretization__coordinate_enclosure.coordinate_corner_images(
+                element, local, budget=budget
+            )
+            if images != tuple(rational_vector(point) for point in physical):
                 raise ValueError(
-                    "Reference source roots changed the original physical column corners."
+                    "NativeLayerCoreSource.reference_source must retain source vertex IDs, prism cells, intervals, and polynomial column vectors; got reference source roots changed the source physical column corners"
                 )
-            source = coordinate_polynomials(element, local)
-            original = coordinate_polynomials(affine, physical)
+            source = _dependency_phydrax_discretization__coordinate_enclosure.coordinate_polynomials(
+                element, local, budget=budget
+            )
+            original = _dependency_phydrax_discretization__coordinate_enclosure.coordinate_polynomials(
+                affine, physical, budget=budget
+            )
             if source is None or original is None:
                 raise ValueError(
-                    "Actual layer columns require their original exact polynomial coordinate expressions."
+                    "NativeLayerCoreSource.reference_source must provide their source polynomial coordinate expressions; got missing or incompatible their source polynomial coordinate expressions"
                 )
             work.charge(sum(len(value) for value in (*source, *original)))
             if any(
-                derivative(add(current, scale(initial, -1)), 2)
+                _dependency_phydrax_discretization__coordinate_enclosure.derivative(
+                    _dependency_phydrax_discretization__coordinate_enclosure.add(
+                        current,
+                        _dependency_phydrax_discretization__coordinate_enclosure.scale(
+                            initial, -1, budget=budget
+                        ),
+                        budget=budget,
+                    ),
+                    2,
+                    budget=budget,
+                )
                 for current, initial in zip(source, original, strict=True)
             ):
                 raise ValueError(
-                    "Mapped layer curvature changed an entire original physical interval vector."
+                    "NativeLayerCoreSource.reference_source must retain source vertex IDs, prism cells, intervals, and polynomial column vectors; got mapped layer curvature changed an entire source physical interval vector"
                 )
     if set(reference_cells) != set(
         np.asarray(layers.mesh.entity_set(3).entity_ids).tolist()
     ):
         raise ValueError(
-            "The reference layer source added or omitted an original physical column cell."
+            "NativeLayerCoreSource.reference_source must retain source vertex IDs, prism cells, intervals, and polynomial column vectors; got the reference layer source added or omitted an source physical column cell"
         )
 
 
+@checked
 def require_reference_root_sheets(
-    reference: NativeLayerCoreSource,
-    domain: MappedReferenceDomain,
-    work: LayerCoreSourceWork,
+    reference: sources_owner.NativeLayerCoreSource,
+    domain: _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
     /,
 ) -> None:
-    """Require actual core-root incidence sheets, even within one material."""
-    from ._layer_core import _faces, _prepare_identity, _triangles
+    """Require realized core-root incidence sheets, even within one material."""
 
-    mapping, _, polygons, points = _prepare_identity(
+    mapping, _, polygons, points = layer_topology.prepare_identity(
         reference.layers,
         reference.complex,
         reference.vertex_layer_ids,
@@ -189,11 +224,9 @@ def require_reference_root_sheets(
     extra = points.shape[0] - layer_ids.size
     next_vertex = int(np.max(layer_ids)) + 1
     if extra and next_vertex + extra - 1 > np.iinfo(np.int64).max:
-        from ._contracts import MeshingFailure, MeshingFailureCategory
-
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "The reference layer vertex registry has no room for its original core source identities.",
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "NativeLayerCoreSource.reference_source must retain the root vertex registry and every internal root incidence sheet; got the reference layer vertex registry has no room for its source core source identities",
         )
     combined_ids = np.concatenate(
         (layer_ids, next_vertex + np.arange(extra, dtype=np.int64))
@@ -210,48 +243,43 @@ def require_reference_root_sheets(
     regions[np.searchsorted(sorted_cells, cells)] = domain.cell_regions
     layer_cells = set(np.asarray(reference.layers.mesh.entity_set(3).entity_ids).tolist())
     vertices = np.asarray(domain.reference_mesh.vertex_global_ids, dtype=np.int64)
-    for incidents in _faces(domain.reference_mesh, regions, work=work).values():
+    for incidents in layer_topology.faces(
+        domain.reference_mesh, regions, work=work
+    ).values():
         if len(incidents) != 2 or any(
             int(sorted_cells[face.cell]) in layer_cells for face in incidents
         ):
             continue
-        for triangle in _triangles(incidents[0].vertices):
+        for triangle in layer_topology.triangles(incidents[0].vertices):
             work.charge(1)
             key = tuple(sorted(vertices[np.asarray(triangle, dtype=np.int64)].tolist()))
             if key not in constrained:
                 raise ValueError(
-                    "Native reference fill must retain every original internal core-root incidence sheet, including equal-material sheets."
+                    "NativeLayerCoreSource.reference_source must retain every source internal core-root incidence sheet, including equal-material sheets; got incompatible Native reference fill"
                 )
 
 
-def compose_layer_reference_mesh(
-    reference_mesh: CellMesh,
-    domain: MappedReferenceDomain,
-    cell_regions: np.ndarray,
-    work: LayerCoreSourceWork,
-    /,
-) -> LayerReferenceComposition:
-    """Bind every actual cell to its unique entire exact reference-root chart.
+@final
+class LayerReferenceRoots(StrictModule, NonTrainableState):
+    """Source root inventory and source coefficient bank."""
 
-    Native fill must retain every internal source-root incidence sheet, including
-    sheets whose two material labels agree. A target crossing a sheet has no
-    containing root and is refused; no physical inverse or nearest-root choice
-    can conceal missing reference partition constraints.
-    """
-    if reference_mesh.topological_dimension != 3 or reference_mesh.ambient_dimension != 3:
-        raise ValueError(
-            "Layer reference composition requires a three-dimensional reference partition."
-        )
-    count = sum(block.cell_count for block in reference_mesh.blocks)
-    regions = np.asarray(cell_regions)
-    if regions.shape != (count,) or regions.dtype.kind not in "iu":
-        raise ValueError(
-            "Layer reference regions must bind every actual cell in block order."
-        )
-    source_elements, source_routes, _ = domain.source_geometry.resolve(
-        domain.reference_mesh
+    cells: list[tuple[CellBlock, CellGeometryElement, np.ndarray, int, int]]
+    coordinates: (
+        _dependency_phydrax_discretization__coordinate_enclosure.CoordinateSourceBank
     )
-    source_coordinates = domain.source_geometry.source_coordinates()
+    points: np.ndarray
+    vertex_ids: np.ndarray
+
+
+def _prepare_layer_reference_roots(
+    domain: _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> LayerReferenceRoots:
+    source_elements, source_routes, _ = domain.source_geometry.resolve(
+        domain.reference_mesh,
+        budget=budget,
+    )
+    source_coordinates = domain.source_geometry.source_coordinates(budget=budget)
     reference_points = np.asarray(domain.reference_mesh.coordinates, dtype=np.float64)
     source_ids = np.asarray(domain.reference_mesh.vertex_global_ids, dtype=np.int64)
     roots: list[tuple[CellBlock, CellGeometryElement, np.ndarray, int, int]] = []
@@ -259,10 +287,13 @@ def compose_layer_reference_mesh(
     for block, element, route in zip(
         domain.reference_mesh.blocks, source_elements, source_routes, strict=True
     ):
-        if not isinstance(block, CellBlock):
-            raise TypeError(
-                "Mapped layer roots require canonical fixed-arity CellBlock reference cells."
-            )
+        match block:
+            case CellBlock():
+                pass
+            case _:
+                raise TypeError(
+                    "MappedReferenceDomain.reference_mesh must provide standard fixed-arity CellBlock reference cells; got missing or incompatible standard fixed-arity CellBlock reference cells"
+                )
         for row in range(block.cell_count):
             roots.append(
                 (
@@ -274,93 +305,63 @@ def compose_layer_reference_mesh(
                 )
             )
         source_offset += block.cell_count
-    points = np.asarray(reference_mesh.coordinates, dtype=np.float64)
-    groups: dict[str, list[tuple[int, np.ndarray, int, int, np.ndarray, np.ndarray]]] = {}
-    elements: dict[str, PolynomialComposedCellGeometryElement] = {}
-    exact_points: dict[int, tuple[Fraction, ...]] = {}
-    physical_points = _family_host_array(points.shape, np.float64)
-    position = 0
-    for block in reference_mesh.blocks:
-        if not isinstance(block, CellBlock):
-            raise TypeError(
-                "Mapped layer targets require canonical fixed-arity CellBlock reference cells."
-            )
-        chart = coordinate_lagrange_element(block.cell_kind, 1)
-        for target_row in range(block.cell_count):
-            identifier = int(np.asarray(block.global_ids)[target_row])
-            vertices = np.asarray(block.vertices[target_row], dtype=np.int64)
-            candidates = []
-            target = points[vertices]
-            for parent, (
-                root_block,
-                source_element,
-                route,
-                root_row,
-                root_region,
-            ) in enumerate(roots):
-                work.charge(1)
-                if regions[position] != root_region:
-                    continue
-                root_vertices = np.asarray(root_block.vertices[root_row], dtype=np.int64)
-                corners = reference_points[root_vertices]
-                charge_native_geometry_queries(1)
-                if np.any(np.min(target, axis=0) < np.min(corners, axis=0)) or np.any(
-                    np.max(target, axis=0) > np.max(corners, axis=0)
-                ):
-                    continue
-                controls = exact_reference_chart_controls(
-                    target, corners, root_block.cell_kind, chart
-                )
-                if controls is not None:
-                    candidates.append((parent, controls))
-            if len(candidates) != 1:
-                raise ValueError(
-                    "An actual reference cell has no unique entire source-root chart; preserve all internal root incidence sheets during fill."
-                )
-            parent, (numerators, denominators) = candidates[0]
-            root_block, source_element, route, root_row, _ = roots[parent]
-            source_element = _require_scalar_coordinate_element(
-                source_element, "Layer source root"
-            )
-            element = PolynomialComposedCellGeometryElement(
-                source_element, chart, numerators, denominators
-            )
-            name = f"root-chart:{element.element_id}"
-            elements[name] = element
-            source_route = np.asarray(route[root_row], dtype=np.int64)
-            root_vertices = np.asarray(root_block.vertices[root_row], dtype=np.int64)
-            groups.setdefault(name, []).append(
-                (
-                    position,
-                    vertices,
-                    identifier,
-                    int(np.asarray(root_block.global_ids)[root_row]),
-                    source_ids[root_vertices],
-                    source_route,
-                )
-            )
-            images = coordinate_corner_images(
-                element,
-                tuple(source_coordinates[int(index)] for index in source_route.tolist()),
-            )
-            if images is None:
-                raise ValueError(
-                    "A layer root composition lacks its original exact coordinate expression."
-                )
-            work.charge(len(images))
-            for vertex, image in zip(vertices.tolist(), images, strict=True):
-                previous = exact_points.get(vertex)
-                if previous is not None and previous != image:
-                    raise ValueError(
-                        "Independent layer source charts disagree exactly at a shared reference vertex."
-                    )
-                exact_points[vertex] = image
-                physical_points[vertex] = rounded_point(image)
-            position += 1
-    if len(exact_points) != points.shape[0]:
-        raise ValueError(
-            "The reference partition has a vertex without an original source-root chart."
+    return LayerReferenceRoots(roots, source_coordinates, reference_points, source_ids)
+
+
+def _unique_layer_root_chart(
+    target: np.ndarray,
+    region: int,
+    roots: list[tuple[CellBlock, CellGeometryElement, np.ndarray, int, int]],
+    reference_points: np.ndarray,
+    chart: FiniteElementSpec,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[int, tuple[np.ndarray, np.ndarray]]:
+    """Select the unique entire source chart without altering root traversal order."""
+    candidates: list[tuple[int, tuple[np.ndarray, np.ndarray]]] = []
+    for parent, (
+        root_block,
+        source_element,
+        route,
+        root_row,
+        root_region,
+    ) in enumerate(roots):
+        work.charge(1)
+        if region != root_region:
+            continue
+        root_vertices = np.asarray(root_block.vertices[root_row], dtype=np.int64)
+        corners = reference_points[root_vertices]
+        work.ticket.consume(geometry_queries=1)
+        if np.any(np.min(target, axis=0) < np.min(corners, axis=0)) or np.any(
+            np.max(target, axis=0) > np.max(corners, axis=0)
+        ):
+            continue
+        controls = _dependency_phydrax_meshing__reference_root_composition.exact_reference_chart_controls(
+            target, corners, root_block.cell_kind, chart, budget=budget
         )
+        if controls is not None:
+            candidates.append((parent, controls))
+    if len(candidates) != 1:
+        raise ValueError(
+            "MappedReferenceDomain.reference_mesh must provide a unique entire root chart for each reference target cell; got an realized reference cell has no unique entire source-root chart; preserve all internal root incidence sheets during fill"
+        )
+    return candidates[0]
+
+
+def _assemble_layer_reference_mesh(
+    reference_mesh: CellMesh,
+    domain: _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
+    regions: np.ndarray,
+    physical_points: np.ndarray,
+    groups: dict[str, list[tuple[int, np.ndarray, int, int, np.ndarray, np.ndarray]]],
+    elements: dict[
+        str,
+        _dependency_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement,
+    ],
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> LayerReferenceComposition:
+    """Publish sorted chart blocks with their root restriction ancestry."""
+    points = np.asarray(reference_mesh.coordinates, dtype=np.float64)
     blocks, routes, parents, parent_vertices, order = [], {}, {}, {}, []
     for name in sorted(groups):
         cells = sorted(groups[name], key=lambda cell: cell[2])
@@ -376,11 +377,15 @@ def compose_layer_reference_mesh(
         parents[name] = np.asarray([cell[3] for cell in cells], dtype=np.int64)
         parent_vertices[name] = np.stack([cell[4] for cell in cells])
         order.extend(cell[0] for cell in cells)
-    ancestry = CellGeometryRestrictionSource(
-        cell_geometry_id(domain.source_geometry),
-        domain.reference_mesh.topology_id,
-        parents,
-        parent_vertices,
+    ancestry = (
+        _dependency_phydrax_discretization__cell_geometry.CellGeometryRestrictionSource(
+            _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                domain.source_geometry
+            ),
+            domain.reference_mesh.topology_id,
+            parents,
+            parent_vertices,
+        )
     )
     geometry = CellGeometrySpec(
         elements,
@@ -388,6 +393,7 @@ def compose_layer_reference_mesh(
         domain.source_geometry.coordinates,
         restriction_source=ancestry,
         periodic_source=domain.source_geometry.periodic_source,
+        budget=budget,
     )
     reference = CellMesh(
         points,
@@ -404,20 +410,141 @@ def compose_layer_reference_mesh(
     )
 
 
+@checked
+def compose_layer_reference_mesh(
+    reference_mesh: CellMesh,
+    domain: _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
+    cell_regions: np.ndarray,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> LayerReferenceComposition:
+    """Bind every realized cell to its unique entire reference-root chart.
+
+    Native fill must retain every internal source-root incidence sheet, including
+    sheets whose two material labels agree. A target crossing a sheet has no
+    containing root and is refused; no physical inverse or nearest-root choice
+    can conceal missing reference partition constraints.
+    """
+    if reference_mesh.topological_dimension != 3 or reference_mesh.ambient_dimension != 3:
+        raise ValueError(
+            "compose_layer_reference_mesh.reference_mesh must provide a three-dimensional reference partition; got missing or incompatible a three-dimensional reference partition"
+        )
+    count = sum(block.cell_count for block in reference_mesh.blocks)
+    regions = np.asarray(cell_regions)
+    if regions.shape != (count,) or regions.dtype.kind not in "iu":
+        raise ValueError(
+            "compose_layer_reference_mesh.reference_mesh must bind every realized cell in block order; got incompatible Layer reference regions"
+        )
+    inventory = _prepare_layer_reference_roots(domain, budget)
+    roots, source_coordinates = inventory.cells, inventory.coordinates
+    reference_points, source_ids = inventory.points, inventory.vertex_ids
+    points = np.asarray(reference_mesh.coordinates, dtype=np.float64)
+    groups: dict[str, list[tuple[int, np.ndarray, int, int, np.ndarray, np.ndarray]]] = {}
+    elements: dict[
+        str,
+        _dependency_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement,
+    ] = {}
+    exact_points: dict[
+        int,
+        tuple[_dependency_phydrax_discretization__coordinate_enclosure.ExactScalar, ...],
+    ] = {}
+    budget.reserve(0, points.size * np.dtype(np.float64).itemsize)
+    physical_points = np.empty(points.shape, dtype=np.float64)
+    position = 0
+    for block in reference_mesh.blocks:
+        match block:
+            case CellBlock():
+                pass
+            case _:
+                raise TypeError(
+                    "compose_layer_reference_mesh.reference_mesh must provide standard fixed-arity CellBlock reference cells; got missing or incompatible standard fixed-arity CellBlock reference cells"
+                )
+        chart = (
+            _dependency_phydrax_discretization__cell_geometry.coordinate_lagrange_element(
+                block.cell_kind, 1
+            )
+        )
+        for target_row in range(block.cell_count):
+            identifier = int(np.asarray(block.global_ids)[target_row])
+            vertices = np.asarray(block.vertices[target_row], dtype=np.int64)
+            parent, (numerators, denominators) = _unique_layer_root_chart(
+                points[vertices],
+                int(regions[position]),
+                roots,
+                reference_points,
+                chart,
+                work,
+                budget,
+            )
+            root_block, source_element, route, root_row, _ = roots[parent]
+            source_element = _dependency_phydrax_discretization__cell_geometry.require_scalar_coordinate_element(
+                source_element, "Layer source root"
+            )
+            element = _dependency_phydrax_discretization__cell_geometry.PolynomialComposedCellGeometryElement(
+                source_element,
+                chart,
+                numerators,
+                denominators,
+                budget=budget,
+            )
+            name = f"root-chart:{element.element_id}"
+            elements[name] = element
+            source_route = np.asarray(route[root_row], dtype=np.int64)
+            root_vertices = np.asarray(root_block.vertices[root_row], dtype=np.int64)
+            groups.setdefault(name, []).append(
+                (
+                    position,
+                    vertices,
+                    identifier,
+                    int(np.asarray(root_block.global_ids)[root_row]),
+                    source_ids[root_vertices],
+                    source_route,
+                )
+            )
+            images = _dependency_phydrax_discretization__coordinate_enclosure.coordinate_corner_images(
+                element,
+                tuple(source_coordinates[int(index)] for index in source_route.tolist()),
+                budget=budget,
+            )
+            if images is None:
+                raise ValueError(
+                    "compose_layer_reference_mesh.reference_mesh must retain a three-dimensional reference partition with region-bound root charts; got a layer root composition lacks its source coordinate expression"
+                )
+            work.charge(len(images))
+            for vertex, image in zip(vertices.tolist(), images, strict=True):
+                previous = exact_points.get(vertex)
+                if previous is not None and previous != image:
+                    raise ValueError(
+                        "compose_layer_reference_mesh.reference_mesh must retain a three-dimensional reference partition with region-bound root charts; got independent layer source charts disagree exactly at a shared reference vertex"
+                    )
+                exact_points[vertex] = image
+                physical_points[vertex] = (
+                    _dependency_phydrax_discretization__coordinate_enclosure.rounded_point(
+                        image
+                    )
+                )
+            position += 1
+    if len(exact_points) != points.shape[0]:
+        raise ValueError(
+            "compose_layer_reference_mesh.reference_mesh must retain a three-dimensional reference partition with region-bound root charts; got the reference partition has a vertex without an source-root chart"
+        )
+    return _assemble_layer_reference_mesh(
+        reference_mesh, domain, regions, physical_points, groups, elements, budget
+    )
+
+
 def _mapped_layer_organization(
-    construction: LayerCoreConstruction,
+    construction: layer_topology.LayerCoreConstruction,
     mesh: CellMesh,
     /,
 ) -> tuple[
-    tuple[MeshZone, ...],
-    tuple[MeshPatch, ...],
-    tuple[MeshLabel, ...],
-    tuple[MeshAttribute, ...],
+    tuple[_owner_phydrax_meshing__organization.MeshZone, ...],
+    tuple[_owner_phydrax_meshing__organization.MeshPatch, ...],
+    tuple[_owner_phydrax_meshing__organization.MeshLabel, ...],
+    tuple[_owner_phydrax_meshing__organization.MeshAttribute, ...],
 ]:
-    from ._canonical import _entity_vertex_keys
-    from ._layer_core import _scope
-    from ._organization import MeshAttribute, MeshLabel, MeshPatch, MeshZone
-    from ._scope import MeshingScope
 
     correspondences = {}
     for degree in range(4):
@@ -428,21 +555,33 @@ def _mapped_layer_organization(
             # and face registries are rebuilt from directed incidence.
             if not np.array_equal(np.sort(old), np.sort(new)):
                 raise ValueError(
-                    "Mapped organization must retain every explicit source vertex and cell identity."
+                    "LayerCoreConstruction.mesh must retain every explicit source vertex and cell identity; got incompatible Mapped organization"
                 )
             correspondences[degree] = dict(zip(old.tolist(), old.tolist(), strict=True))
             continue
-        targets = dict(zip(_entity_vertex_keys(mesh, degree), new.tolist(), strict=True))
+        targets = dict(
+            zip(
+                _owner_phydrax_meshing__canonical.entity_vertex_keys(mesh, degree),
+                new.tolist(),
+                strict=True,
+            )
+        )
         correspondences[degree] = {
             identifier: targets[key]
             for identifier, key in zip(
-                old.tolist(), _entity_vertex_keys(construction.mesh, degree), strict=True
+                old.tolist(),
+                _owner_phydrax_meshing__canonical.entity_vertex_keys(
+                    construction.mesh, degree
+                ),
+                strict=True,
             )
         }
 
-    def scope(original: MeshingScope) -> MeshingScope:
+    def scope(
+        original: _owner_phydrax_meshing_scope.MeshingScope,
+    ) -> _owner_phydrax_meshing_scope.MeshingScope:
         degree = original.entity_dimension
-        return _scope(
+        return mesh_entity_scope(
             mesh,
             degree,
             np.asarray(
@@ -455,7 +594,7 @@ def _mapped_layer_organization(
         )
 
     zones = tuple(
-        MeshZone(
+        _owner_phydrax_meshing__organization.MeshZone(
             zone.name,
             zone.role,
             scope(zone.scope),
@@ -469,7 +608,7 @@ def _mapped_layer_organization(
         for old, new in zip(construction.zones, zones, strict=True)
     }
     patches = tuple(
-        MeshPatch(
+        _owner_phydrax_meshing__organization.MeshPatch(
             patch.name,
             scope(patch.scope),
             connected=patch.connected,
@@ -481,7 +620,8 @@ def _mapped_layer_organization(
         for patch in construction.patches
     )
     labels = tuple(
-        MeshLabel(label.name, scope(label.scope)) for label in construction.labels
+        _owner_phydrax_meshing__organization.MeshLabel(label.name, scope(label.scope))
+        for label in construction.labels
     )
     attributes = []
     for attribute in construction.attributes:
@@ -493,7 +633,7 @@ def _mapped_layer_organization(
             dtype=np.int64,
         )
         attributes.append(
-            MeshAttribute(
+            _owner_phydrax_meshing__organization.MeshAttribute(
                 attribute.name,
                 attribute.role,
                 scope(attribute.scope),
@@ -504,285 +644,354 @@ def _mapped_layer_organization(
     return zones, patches, labels, tuple(attributes)
 
 
-def execute_mapped_layer_core_route(
-    source: NativeLayerCoreSource,
+def _compose_mapped_layer_carrier(
+    source: sources_owner.NativeLayerCoreSource,
+    construction: layer_topology.LayerCoreConstruction,
+    domain: _dependency_phydrax_geometry__mapped_reference_domain.MappedReferenceDomain,
+    work: _dependency_phydrax_meshing__layer_core_resources.LayerCoreSourceWork,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> LayerReferenceComposition:
+    """Lift source roots, bind quotient ancestry, and preserve physical columns."""
+    composed = compose_layer_reference_mesh(
+        construction.mesh,
+        domain,
+        construction.cell_regions,
+        work,
+        budget=budget,
+    )
+    mesh = composed.mesh
+    periodic = source.layers.mesh.periodic_topology
+    reference_periodic = construction.mesh.periodic_topology
+    if (periodic is None) != (reference_periodic is None):
+        raise ValueError(
+            "NativeLayerCoreSource.layers must retain the same declared periodic column ancestry; got incompatible Physical and reference layer sources"
+        )
+    if periodic is not None and reference_periodic is not None:
+        topology = _owner_phydrax_discretization__periodic_topology.PeriodicMeshTopology(
+            mesh,
+            periodic.cell,
+            reference_periodic.vertex_representatives,
+            reference_periodic.vertex_shifts,
+        )
+        mesh = CellMesh(
+            mesh.coordinates,
+            mesh.blocks,
+            vertex_global_ids=mesh.vertex_global_ids,
+            numeric_version=mesh.numeric_version,
+            periodic_topology=topology,
+        )
+
+    _owner_phydrax_meshing__layer_curving.source_layer_cells(mesh, source.layers)
+    return LayerReferenceComposition(
+        mesh,
+        composed.geometry,
+        composed.reference_mesh,
+        composed.cell_order,
+        composed.cell_regions,
+    )
+
+
+@final
+class MappedLayerCompliance(StrictModule, NonTrainableState):
+    size: _owner_phydrax_meshing__sizing.UniformSizeControl
+    report: _owner_phydrax_meshing__result.MeshingComplianceReport
+
+
+def _mapped_layer_compliance(
+    source: sources_owner.NativeLayerCoreSource,
     specification: VolumeMeshingSpec,
-    prepared: PreparedLayerCore,
+    construction: layer_topology.LayerCoreConstruction,
+    mesh: CellMesh,
+    preparation: layer_publication.LayerRoutePreparation,
+) -> MappedLayerCompliance:
+    """Measure physical size and retain reference construction work separately."""
+    periodic_requested, periodic_achieved = (
+        preparation.periodic_requested,
+        preparation.periodic_achieved,
+    )
+    work = preparation.work
+    size = specification.size_controls[0]
+    match size:
+        case _owner_phydrax_meshing__sizing.UniformSizeControl():
+            pass
+        case _:
+            raise TypeError(
+                "VolumeMeshingSpec.size_controls must provide its source uniform physical size control; got missing or incompatible its source uniform physical size control"
+            )
+    lengths, growth = route_checks.edge_size_evidence(
+        np.asarray(mesh.coordinates, dtype=np.float64),
+        np.asarray(
+            _dependency_phydrax_meshing__layer_core_resources.row_entity_vertex_keys(
+                mesh, 1
+            ),
+            dtype=np.int64,
+        ),
+    )
+    requested, achieved, issues = route_checks.uniform_size_compliance(
+        size, specification.size_compliance, lengths, growth
+    )
+    bounds = tuple(
+        control.core_maximum_size
+        for control in (*specification.layer_controls, source.layers.control)
+        if control.core_maximum_size is not None
+    )
+    if bounds:
+        cap = min(bounds)
+        vertices = np.asarray(mesh.coordinates, dtype=np.float64)
+        core_cells = np.concatenate(
+            [
+                np.asarray(block.vertices, dtype=np.int64)
+                for block in mesh.blocks
+                if block.cell_kind == "tetrahedron"
+            ]
+        )
+
+        core_edges = route_checks.unique_edges(core_cells, "tetrahedron")
+        maximum = float(
+            np.max(
+                np.linalg.norm(
+                    vertices[core_edges[:, 1]] - vertices[core_edges[:, 0]],
+                    axis=1,
+                )
+            )
+        )
+        requested.append(("core_maximum_size", cap))
+        achieved.append(("core_maximum_edge", maximum))
+        if (
+            maximum
+            > cap
+            + specification.size_compliance.absolute_tolerance
+            + specification.size_compliance.relative_tolerance * cap
+        ):
+            issues.append("core_maximum_size")
+    achieved.extend(
+        (f"reference:construction:{name}", value)
+        for name, value in construction.core.construction_counters
+    )
+    achieved.extend(
+        (
+            ("reference:native:work_units", construction.core.work_units),
+            ("reference:native:steiner_points", construction.core.steiner_points),
+        )
+    )
+    evidence = source.layers.evidence
+    compliance = _owner_phydrax_meshing__result.MeshingComplianceReport(
+        specification.specification_id,
+        requested=(
+            *requested,
+            *periodic_requested,
+            *(
+                (f"layer:{index}:thickness", value)
+                for index, value in enumerate(evidence.requested_thicknesses)
+            ),
+        ),
+        achieved=(
+            *achieved,
+            *periodic_achieved,
+            ("original_polynomial_column_vectors", 1),
+            ("fixed_cap_vertices_bitwise", 1),
+            ("fixed_reference_root_sheets", 1),
+            ("layer_core_prepublication_work_units", work.work_units),
+            *(
+                (f"layer:{index}:mean_thickness", float(value))
+                for index, value in enumerate(np.asarray(evidence.achieved_thicknesses))
+                if np.isfinite(value)
+            ),
+        ),
+        issues=tuple(issues),
+    )
+    return MappedLayerCompliance(size, compliance)
+
+
+@checked
+def execute_mapped_layer_core_route(
+    source: sources_owner.NativeLayerCoreSource,
+    specification: VolumeMeshingSpec,
+    prepared: layer_publication.PreparedMappedLayer,
     coordinate_contract: SpatialCoordinateContract,
     provider: MeshingProviderInfo,
     plan_id: str,
     /,
     *,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
     record_phase: NativeMeshingPhaseRecorder | None = None,
 ) -> CellMeshingResult:
-    """Native reference fill followed by original-root, column-preserving curving."""
-    from dataclasses import replace
-    from time import monotonic
-
-    from ..discretization._periodic_topology import PeriodicMeshTopology
-    from ._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
-    from ._certification import MeshCertificationSchedule
-    from ._contracts import MeshingDerivativeMode
-    from ._layer_core import generate_layer_core
-    from ._layer_core_controls import compose_layer_controls
-    from ._layer_core_periodic import core_periodic_constraint_evidence
-    from ._layer_core_resources import _row_entity_vertex_keys
-    from ._layer_source_certification import layer_source_fidelity_requests
-    from ._mapped_reference_association import mapped_reference_associations
-    from ._measurements import measure_phase
-    from ._result import MeshingComplianceReport
-    from ._sizing import UniformSizeControl
-    from ._trace import MeshingStageKind
-    from .providers._native_publication import (
-        check_deadline,
-        edge_size_evidence,
-        NativeCertificationRequest,
-        publish_native_result,
-        uniform_size_compliance,
-    )
-
-    reference, domain = source.reference_source, source.mapped_domain
-    reference_prepared = prepared.reference_prepared
-    if reference is None or domain is None or reference_prepared is None:
-        raise ValueError(
-            "Mapped layer/core execution requires the exact independently prepared source roots and reference partition."
-        )
-    started = monotonic()
-    limits = specification.limits
-    work = LayerCoreSourceWork(limits.maximum_work_units, prepared.source_work_units)
-    periodic_requested, periodic_achieved = core_periodic_constraint_evidence(
-        source, specification, work=work
-    )
-    audit_policy = CellMeshAuditPolicy(
-        require_complete_association=True,
-        watertight_boundary=CellMeshAuditDisposition.REJECT,
-    )
-    construction = generate_layer_core(
-        reference.layers,
-        reference.complex,
-        reference_prepared.core_specification,
-        prepared.schedule,
-        validity_policy=audit_policy.validity_policy,
-        vertex_layer_ids=reference.vertex_layer_ids,
-        cap_polygon_ids=reference.cap_polygon_ids,
-        layer_regions=reference.layer_regions,
-        source_id=reference.source_id,
-        source_revision=reference.source_revision,
-        input_id=plan_id,
-        source_binding=reference,
-        operation_started=started,
-        source_work_units=work.work_units,
-        record_phase=record_phase,
-    )
-    work.work_units = construction.work_units
-    with measure_phase(record_phase, "curving"):
-        composed = compose_layer_reference_mesh(
-            construction.mesh, domain, construction.cell_regions, work
-        )
-        mesh = composed.mesh
-        periodic = source.layers.mesh.periodic_topology
-        reference_periodic = construction.mesh.periodic_topology
-        if (periodic is None) != (reference_periodic is None):
+    """Native reference fill followed by source-root, column-preserving curving."""
+    with ExitStack() as resources:
+        reference, domain = source.reference_source, source.mapped_domain
+        reference_prepared = prepared.reference_prepared
+        if reference is None or domain is None or reference_prepared is None:
             raise ValueError(
-                "Physical and reference layer sources must retain the same declared periodic column ancestry."
+                "execute_mapped_layer_core_route.source must provide the independently prepared source roots and reference partition; got missing or incompatible the independently prepared source roots and reference partition"
             )
-        if periodic is not None and reference_periodic is not None:
-            topology = PeriodicMeshTopology(
-                mesh,
-                periodic.cell,
-                reference_periodic.vertex_representatives,
-                reference_periodic.vertex_shifts,
+        started = scope.operation_started
+        limits = specification.limits
+        preparation = layer_publication.prepare_layer_route(
+            source,
+            specification,
+            prepared.source_work_units,
+            scope,
+            resources,
+            started=started,
+        )
+        work = preparation.work
+        audit_policy = preparation.policy.audit_policy
+        construction = _owner_phydrax_meshing__layer_core.generate_layer_core(
+            reference.layers,
+            reference.complex,
+            reference_prepared.core_specification,
+            prepared.schedule,
+            validity_policy=audit_policy.validity_policy,
+            scope=scope,
+            vertex_layer_ids=reference.vertex_layer_ids,
+            cap_polygon_ids=reference.cap_polygon_ids,
+            layer_regions=reference.layer_regions,
+            source_id=reference.source_id,
+            source_revision=reference.source_revision,
+            input_id=plan_id,
+            source_binding=reference,
+            source_work_units=work.work_units,
+            record_phase=record_phase,
+        )
+        work.work_units = construction.work_units
+        allowance = scope.remaining()
+        ticket = resources.enter_context(
+            scope.batch(
+                min(limits.maximum_work_units, allowance.remaining_work_units),
+                queries_upper=min(
+                    limits.maximum_geometry_queries, allowance.remaining_geometry_queries
+                ),
+                bytes_upper=min(
+                    limits.maximum_scratch_bytes, allowance.remaining_managed_bytes
+                ),
             )
-            mesh = CellMesh(
-                mesh.coordinates,
-                mesh.blocks,
-                vertex_global_ids=mesh.vertex_global_ids,
-                numeric_version=mesh.numeric_version,
-                periodic_topology=topology,
+        )
+        work.ticket = ticket
+        budget = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        resources.enter_context(budget.activate())
+        with _owner_phydrax_meshing__measurements.measure_phase(record_phase, "curving"):
+            composed = _compose_mapped_layer_carrier(
+                source, construction, domain, work, budget
             )
-        from ._layer_curving import _source_layer_cells
-
-        _source_layer_cells(mesh, source.layers)
-    with measure_phase(record_phase, "organization"):
-        zones, patches, labels, attributes = _mapped_layer_organization(
-            construction, mesh
-        )
-        physical = replace(
-            construction,
-            mesh=mesh,
-            domain=domain,
-            cell_regions=composed.cell_regions,
-            zones=zones,
-            patches=patches,
-            labels=labels,
-            attributes=attributes,
-        )
-        zones, patches = compose_layer_controls(
-            source, specification, physical, work=work
-        )
-    with measure_phase(record_phase, "geometry_association"):
-        associations = mapped_reference_associations(
-            domain,
-            mesh,
-            composed.geometry,
-            maximum_support_queries=min(
-                limits.maximum_geometry_queries, limits.maximum_work_units
-            ),
-        )
-    with measure_phase(record_phase, "compliance"):
-        size = specification.size_controls[0]
-        if not isinstance(size, UniformSizeControl):
-            raise TypeError(
-                "Mapped layer/core publication requires its original uniform physical size control."
+            mesh = composed.mesh
+        with _owner_phydrax_meshing__measurements.measure_phase(
+            record_phase, "organization"
+        ):
+            zones, patches, labels, attributes = _mapped_layer_organization(
+                construction, mesh
             )
-        lengths, growth = edge_size_evidence(
-            np.asarray(mesh.coordinates, dtype=np.float64),
-            np.asarray(_row_entity_vertex_keys(mesh, 1), dtype=np.int64),
-        )
-        requested, achieved, issues = uniform_size_compliance(
-            size, specification.size_compliance, lengths, growth
-        )
-        bounds = tuple(
-            control.core_maximum_size
-            for control in (*specification.layer_controls, source.layers.control)
-            if control.core_maximum_size is not None
-        )
-        if bounds:
-            cap = min(bounds)
-            vertices = np.asarray(mesh.coordinates, dtype=np.float64)
-            core_cells = np.concatenate(
-                [
-                    np.asarray(block.vertices, dtype=np.int64)
-                    for block in mesh.blocks
-                    if block.cell_kind == "tetrahedron"
-                ]
+            physical = _owner_dataclasses.replace(
+                construction,
+                mesh=mesh,
+                domain=domain,
+                cell_regions=composed.cell_regions,
+                zones=zones,
+                patches=patches,
+                labels=labels,
+                attributes=attributes,
             )
-            from .providers._native_publication import unique_edges
-
-            core_edges = unique_edges(core_cells, "tetrahedron")
-            maximum = float(
-                np.max(
-                    np.linalg.norm(
-                        vertices[core_edges[:, 1]] - vertices[core_edges[:, 0]], axis=1
-                    )
+            zones, patches = (
+                _owner_phydrax_meshing__layer_core_controls.compose_layer_controls(
+                    source, specification, physical, work=work
                 )
             )
-            requested.append(("core_maximum_size", cap))
-            achieved.append(("core_maximum_edge", maximum))
-            if (
-                maximum
-                > cap
-                + specification.size_compliance.absolute_tolerance
-                + specification.size_compliance.relative_tolerance * cap
-            ):
-                issues.append("core_maximum_size")
-        achieved.extend(
-            (f"reference:construction:{name}", value)
-            for name, value in construction.core.construction_counters
-        )
-        achieved.extend(
-            (
-                ("reference:native:work_units", construction.core.work_units),
-                ("reference:native:steiner_points", construction.core.steiner_points),
+        with _owner_phydrax_meshing__measurements.measure_phase(
+            record_phase, "geometry_association"
+        ):
+            associations = _owner_phydrax_meshing__mapped_reference_association.mapped_reference_associations(
+                domain,
+                mesh,
+                composed.geometry,
+                budget=budget,
+                maximum_support_queries=min(
+                    limits.maximum_geometry_queries, limits.maximum_work_units
+                ),
             )
+        with _owner_phydrax_meshing__measurements.measure_phase(
+            record_phase, "compliance"
+        ):
+            measured = _mapped_layer_compliance(
+                source, specification, construction, mesh, preparation
+            )
+            size, compliance = measured.size, measured.report
+        scoped = _owner_phydrax_meshing__layer_source_certification.layer_source_fidelity_requests(
+            source, specification, physical, work=work
         )
-        evidence = source.layers.evidence
-        compliance = MeshingComplianceReport(
-            specification.specification_id,
-            requested=(
-                *requested,
-                *periodic_requested,
-                *(
-                    (f"layer:{index}:thickness", value)
-                    for index, value in enumerate(evidence.requested_thicknesses)
-                ),
-            ),
-            achieved=(
-                *achieved,
-                *periodic_achieved,
-                ("original_polynomial_column_vectors", 1),
-                ("fixed_cap_vertices_bitwise", 1),
-                ("fixed_reference_root_sheets", 1),
-                ("layer_core_prepublication_work_units", work.work_units),
-                *(
-                    (f"layer:{index}:mean_thickness", float(value))
-                    for index, value in enumerate(
-                        np.asarray(evidence.achieved_thicknesses)
-                    )
-                    if np.isfinite(value)
-                ),
-            ),
-            issues=tuple(issues),
-        )
-    scoped = layer_source_fidelity_requests(source, specification, physical, work=work)
-    fidelity = source.fidelity_source
-    if fidelity is None:
-        raise ValueError(
-            "Mapped layer/core publication must retain its independent original physical geometry query."
-        )
-    from ..geometry._mesh_certificates import MappedDomainBoundarySource
+        fidelity = source.fidelity_source
+        if fidelity is None:
+            raise ValueError(
+                "execute_mapped_layer_core_route.source must retain its independent source physical geometry query; got incompatible Mapped layer/core publication"
+            )
 
-    if isinstance(fidelity, MappedDomainBoundarySource):
-        # The source owns immutable root-region facts; certification binds the
-        # same exact mapped boundary to this publication's actual cell inventory.
-        fidelity = fidelity.for_target_regions(composed.cell_regions)
-    from ._controls import FeatureKind
+        match fidelity:
+            case _owner_phydrax_geometry__mesh_certificates.MappedDomainBoundarySource():
+                # The source owns immutable root-region facts; certification binds the
+                # same mapped boundary to this publication's realized cell inventory.
+                fidelity = fidelity.for_target_regions(composed.cell_regions)
+            case _:
+                pass
 
-    tolerance = min(
-        (
-            feature.maximum_deviation
-            for feature in specification.protected_features
-            if feature.feature_kind is FeatureKind.SURFACE
-            and feature.scope.scope_id == specification.boundary_scope.scope_id
-        ),
-        default=size.target_size,
-    )
-    request = NativeCertificationRequest(
-        MeshCertificationSchedule("mapped_volume"),
-        source.source_id,
-        source.source_revision,
-        limits,
-        domain=domain,
-        cell_regions=composed.cell_regions,
-        fidelity_source=fidelity,
-        fidelity_tolerance=tolerance,
-        scoped_fidelity=scoped,
-    )
-    check_deadline(started, limits, MeshingStageKind.CERTIFICATION)
-    result = publish_native_result(
-        mesh,
-        coordinate_contract,
-        compliance,
-        construction.stages,
-        provider,
-        {
-            "kind": "native-mapped-layer-core",
-            "plan": plan_id,
-            "specification": specification.specification_id,
-            "source": source.binding_id,
-            "reference": reference.binding_id,
-            "mapped_domain": domain.domain_id,
-        },
-        request,
-        geometry=composed.geometry,
-        audit_policy=audit_policy,
-        derivative_mode=MeshingDerivativeMode.NONDIFFERENTIABLE,
-        enforced_limits=(
-            "vertices",
-            "edges",
-            "faces",
-            "cells",
-            "connectivity_entries",
-            "data_bytes",
-            "wall_time",
-        ),
-        unenforced_limits=("native_workspace",),
-        zones=zones,
-        patches=patches,
-        labels=labels,
-        attributes=attributes,
-        associations=associations,
-        record_phase=record_phase,
-    )
-    check_deadline(started, limits, MeshingStageKind.CERTIFICATION)
-    return result
+        tolerance = min(
+            (
+                feature.maximum_deviation
+                for feature in specification.protected_features
+                if feature.feature_kind
+                is _owner_phydrax_meshing__controls.FeatureKind.SURFACE
+                and feature.scope.scope_id == specification.boundary_scope.scope_id
+            ),
+            default=size.target_size,
+        )
+        request = _owner_phydrax_meshing_providers__native_publication.NativeCertificationRequest(
+            _leaf_phydrax_meshing__certification_schedule.MeshCertificationSchedule(
+                "mapped_volume"
+            ),
+            source.source_id,
+            source.source_revision,
+            limits,
+            domain=domain,
+            cell_regions=composed.cell_regions,
+            fidelity_source=fidelity,
+            fidelity_tolerance=tolerance,
+            scoped_fidelity=scoped,
+        )
+        route_checks.check_deadline(
+            started, limits, _owner_phydrax_meshing__trace.MeshingStageKind.CERTIFICATION
+        )
+        resources.close()
+        del budget
+        publication = layer_publication.LayerCorePublication(
+            mesh=mesh,
+            compliance=compliance,
+            stages=construction.stages,
+            provenance={
+                "kind": "native-mapped-layer-core",
+                "plan": plan_id,
+                "specification": specification.specification_id,
+                "source": source.binding_id,
+                "reference": reference.binding_id,
+                "mapped_domain": domain.domain_id,
+            },
+            certification=request,
+            geometry=composed.geometry,
+            organization=_owner_phydrax_meshing_providers__native_publication.NativePublicationOrganization(
+                zones=zones,
+                patches=patches,
+                labels=labels,
+                attributes=attributes,
+                associations=associations,
+            ),
+        )
+        return layer_publication.publish_layer_route(
+            publication,
+            preparation,
+            coordinate_contract,
+            provider,
+            scope,
+            workspace,
+            record_phase=record_phase,
+        )

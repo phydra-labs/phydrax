@@ -1,19 +1,14 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Scalar field actions on a certified, occurrence-local exact material deformation.
-
-Exact material charts express correspondence, not physical area. H1 applies the
-old field's point functionals through the exact material reference relation; DG
-integrates paired exact physical-reference pieces against old or new geometry.
-No vector/Piola compatibility is implied by this route.
-"""
+"Prepare scalar field actions on occurrence-local material deformations.\n\n material charts express correspondence, not physical area. H1 applies the\nold field's point functionals through the material reference relation; DG\nintegrates paired physical-reference pieces against old or new geometry.\nNo vector/Piola compatibility is implied by this route."
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterator, Sequence
 from fractions import Fraction
-from typing import Literal, TYPE_CHECKING, TypedDict
+from typing import assert_never, Literal, TypedDict
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -22,10 +17,22 @@ from jax import Array
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
+import phydrax.discretization._mapped_geometry_measure as mapped_measure_owner
+import phydrax.discretization._surface_chart_records as imported_surface_chart_deformation
+from phydrax.discretization._sphere_chart_records import PreparedSphereChartDeformation
+from phydrax.discretization._surface_chart_records import (
+    PreparedSurfaceChartDeformation,
+    PreparedSurfaceChartOccurrence,
+)
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
+from phydrax.geometry._rational import fraction_endpoint
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._resource_ticket import HostBatchTicket
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
+    _hermitian_spectral as imported_linalg__hermitian_spectral,
     ArraySpace,
     DenseLinearOperator,
     FactorizationPolicy,
@@ -33,14 +40,12 @@ from ...linalg import (
     OperatorProperties,
 )
 from ...sparse import RowRelation, SparseLinearMap
+from ...typing import checked, parse
 from .._cell_geometry import CellGeometrySpec
-from .._cell_geometry_transfer import (
-    _embedded_squared_density,
-    _mapped_geometry_cells,
-    SourceGeometryRealization,
-)
 from .._cell_geometry_validity import cell_geometry_id
 from .._cell_mesh import CellMesh
+from .._chart_geometry import contains
+from .._coordinate_budget import CoordinateEnclosureBudget
 from .._coordinate_enclosure import (
     axes,
     compose,
@@ -54,39 +59,40 @@ from .._coordinate_enclosure import (
     source_basis,
     sum_polynomials,
 )
+from .._mapped_geometry_measure import (
+    embedded_squared_density,
+    mapped_geometry_cells,
+)
+from .._source_geometry_realization import SourceGeometryRealization
 from .._transfer import TransferGeometryBinding
+from ..finite_volume._unstructured import UnstructuredFiniteVolumeDiscretization
 from ._generic import FiniteElementDiscretization
-from ._reference import FiniteElementSpec
 from ._topology_transfer import (
-    _bound_coordinate_spec,
-    _coalesced_map,
-    _mapped_dg_cells,
-    _MappedDgCell,
-    _measure_defect_bound,
-    _owned_rows,
-    _tabulated,
+    bound_coordinate_spec,
+    coalesced_map,
+    field_transfer_query_upper,
     FiniteElementFieldTransfer,
     FiniteElementTopologyTransfer,
     FiniteElementTransferEvidence,
+    mapped_dg_cells,
+    MappedDgCell,
+    measure_defect_bound,
+    owned_rows,
+    tabulated,
 )
 
 
-if TYPE_CHECKING:
-    from .._sphere_chart_deformation import PreparedSphereChartDeformation
-    from .._surface_chart_deformation import (
-        PreparedSurfaceChartDeformation,
-        PreparedSurfaceChartOccurrence,
-    )
-    from ..finite_volume._unstructured import UnstructuredFiniteVolumeDiscretization
+type ChartEndpoint = FiniteElementDiscretization | UnstructuredFiniteVolumeDiscretization
 
-type _ChartEndpoint = FiniteElementDiscretization | UnstructuredFiniteVolumeDiscretization
+type ChartFieldSemantics = Literal["intensive", "conservative-density"]
+type ChartEndpointRole = Literal["source", "target"]
 type _ChartDeformation = PreparedSurfaceChartDeformation | PreparedSphereChartDeformation
 type _FloatArray = NDArray[np.float64]
 type _IntArray = NDArray[np.int64]
 type _ExactArray = NDArray[np.object_]
 
 
-class _IntegrationBudgets(TypedDict):
+class IntegrationBudgets(TypedDict):
     absolute_tolerance: float
     relative_tolerance: float
     maximum_work: int
@@ -97,13 +103,15 @@ class _IntegrationBudgets(TypedDict):
 def _exact_material_reference_points(
     corners: _ExactArray,
     points: _ExactArray,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> _ExactArray:
-    """Invert one exact triangle chart with a bounded serial 2x2 action."""
-    from ...linalg._hermitian_spectral import _reserve_fraction_work
-    from .._coordinate_enclosure import _COORDINATE_BUDGET
+    "Invert one triangle chart with a bounded serial 2x2 action."
 
     if corners.shape != (3, 2) or points.ndim != 2 or points.shape[1] != 2:
-        raise ValueError("Exact material reference inversion requires triangle points.")
+        raise ValueError(
+            "surface_chart.exact_material_reference_points.pieces must satisfy the material reference contract; got material reference inversion requires triangle points."
+        )
     inputs = tuple(
         value if isinstance(value, Fraction) else Fraction(value)
         for value in (*corners.flat, *points.flat)
@@ -113,8 +121,8 @@ def _exact_material_reference_points(
         for value in inputs
     )
     count = points.shape[0]
-    _reserve_fraction_work(
-        _COORDINATE_BUDGET.get(),
+    imported_linalg__hermitian_spectral.reserve_fraction_work(
+        budget,
         3 + 8 * count,
         13 + 2 * count,
         8 * bits + 8,
@@ -126,7 +134,9 @@ def _exact_material_reference_points(
     d = inputs[5] - origin_y
     determinant = a * d - b * c
     if determinant == 0:
-        raise ValueError("An exact material chart has a singular reference action.")
+        raise ValueError(
+            "surface_chart.exact_material_reference_points.reference_map must satisfy the regular reference-map contract; got A material chart has a singular reference action."
+        )
     result = []
     for row in range(count):
         x = inputs[6 + 2 * row] - origin_x
@@ -135,42 +145,29 @@ def _exact_material_reference_points(
     return np.asarray(result, dtype=object)
 
 
-def _inside_material(corners: _ExactArray, point: _ExactArray) -> bool:
-    def orientation(
-        first: _ExactArray, second: _ExactArray, third: _ExactArray
-    ) -> Fraction:
-        return (second[0] - first[0]) * (third[1] - first[1]) - (second[1] - first[1]) * (
-            third[0] - first[0]
-        )
-
-    sign = orientation(*corners)
-    if sign == 0:
-        raise ValueError("An exact material chart has a degenerate triangle.")
-    return all(
-        orientation(corners[index], corners[(index + 1) % 3], point) * sign >= 0
-        for index in range(3)
-    )
-
-
-def _bound_surface_endpoint(
-    discretization: _ChartEndpoint,
+@checked
+def bound_surface_endpoint(
+    discretization: ChartEndpoint,
     geometry: CellGeometrySpec,
-    role: Literal["source", "target"],
+    role: ChartEndpointRole,
     prepared: _ChartDeformation,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
-    if isinstance(discretization, FiniteElementDiscretization):
-        _bound_coordinate_spec(discretization, geometry, role)
-        return
-    from ..finite_volume._unstructured import UnstructuredFiniteVolumeDiscretization
+    role = parse(role, ChartEndpointRole, "chart.role")
+    match discretization:
+        case FiniteElementDiscretization():
+            bound_coordinate_spec(discretization, geometry, role, budget=budget)
+            return
+        case UnstructuredFiniteVolumeDiscretization():
+            pass
+        case other:
+            assert_never(other)
 
-    if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
-        raise TypeError(
-            "Surface chart endpoints require actual prepared FE or unstructured FV discretizations."
-        )
     retained = discretization.cell_geometry
     if retained is None or cell_geometry_id(retained) != cell_geometry_id(geometry):
         raise ValueError(
-            f"The {role} chart geometry differs from the actual prepared FV map."
+            f"surface_chart.bound_surface_endpoint.pieces must satisfy the material reference contract; got The{role}chart geometry differs from the prepared FV map.."
         )
     ids = np.concatenate(
         [
@@ -180,7 +177,7 @@ def _bound_surface_endpoint(
     )
     if not np.array_equal(np.asarray(discretization.cell_global_ids), ids):
         raise ValueError(
-            f"The {role} FV state rows do not bind the mesh's scientific cells."
+            f"surface_chart.bound_surface_endpoint.pieces must satisfy the material reference contract; got The{role}FV state rows do not bind the mesh's scientific cells.."
         )
     volumes = np.asarray(discretization.cell_volumes, dtype=np.float64)
     errors = np.asarray(discretization.cell_volume_error_bounds, dtype=np.float64)
@@ -192,7 +189,9 @@ def _bound_surface_endpoint(
         or np.any(errors < 0)
         or np.any(volumes <= errors)
     ):
-        raise ValueError(f"The {role} FV physical cell-measure certificate is invalid.")
+        raise ValueError(
+            f"surface_chart.bound_surface_endpoint.measures must satisfy the positive physical measure contract; got The{role}FV physical cell-measure certificate is invalid.."
+        )
     original_mesh = prepared.source_mesh if role == "source" else prepared.target_mesh
     measures = (
         prepared.source_cell_measures
@@ -204,11 +203,11 @@ def _bound_surface_endpoint(
         if role == "source"
         else prepared.target_measure_errors
     )
-    order = _physical_rows(discretization, original_mesh)
+    order = physical_rows(discretization, original_mesh)
     expected = np.asarray(measures, dtype=np.float64)[np.argsort(order)]
     expected_errors = np.asarray(measure_errors, dtype=np.float64)[np.argsort(order)]
     # Independent certified integrations may publish different midpoints. Their
-    # exact dyadic intervals must overlap; the FV's own measures remain authoritative
+    # dyadic intervals must overlap; the FV's own measures remain
     # for its cell-average pairing and inventory ledger.
     if any(
         abs(Fraction(float(actual)) - Fraction(float(reference)))
@@ -218,50 +217,56 @@ def _bound_surface_endpoint(
         )
     ):
         raise ValueError(
-            f"The {role} FV cell measures disagree with the certified chart geometry."
+            f"surface_chart.bound_surface_endpoint.measures must satisfy the positive physical measure contract; got The{role}FV cell measures disagree with the certified chart geometry.."
         )
 
 
-def _endpoint_cell_measures(
-    discretization: _ChartEndpoint,
+@checked
+def endpoint_cell_measures(
+    discretization: ChartEndpoint,
     prepared: _ChartDeformation,
     order: _IntArray,
-    role: Literal["source", "target"],
+    role: ChartEndpointRole,
 ) -> tuple[_FloatArray, _FloatArray]:
-    if isinstance(discretization, FiniteElementDiscretization):
-        measures = (
-            prepared.source_cell_measures
-            if role == "source"
-            else prepared.target_cell_measures
-        )
-        errors = (
-            prepared.source_measure_errors
-            if role == "source"
-            else prepared.target_measure_errors
-        )
-        return (
-            np.asarray(measures, dtype=np.float64)[np.argsort(order)],
-            np.asarray(errors, dtype=np.float64)[np.argsort(order)],
-        )
-    return (
-        np.asarray(discretization.cell_volumes, dtype=np.float64),
-        np.asarray(discretization.cell_volume_error_bounds, dtype=np.float64),
-    )
+    role = parse(role, ChartEndpointRole, "chart.role")
+    match discretization:
+        case FiniteElementDiscretization():
+            measures = (
+                prepared.source_cell_measures
+                if role == "source"
+                else prepared.target_cell_measures
+            )
+            errors = (
+                prepared.source_measure_errors
+                if role == "source"
+                else prepared.target_measure_errors
+            )
+            return (
+                np.asarray(measures, dtype=np.float64)[np.argsort(order)],
+                np.asarray(errors, dtype=np.float64)[np.argsort(order)],
+            )
+        case UnstructuredFiniteVolumeDiscretization():
+            return (
+                np.asarray(discretization.cell_volumes, dtype=np.float64),
+                np.asarray(discretization.cell_volume_error_bounds, dtype=np.float64),
+            )
+        case other:
+            assert_never(other)
 
 
-def _validate(
-    source: _ChartEndpoint,
-    target: _ChartEndpoint,
-    prepared: PreparedSurfaceChartDeformation,
+@checked
+def validate(
+    source: ChartEndpoint,
+    target: ChartEndpoint,
+    prepared: imported_surface_chart_deformation.PreparedSurfaceChartDeformation,
     source_geometry: CellGeometrySpec,
     target_geometry: CellGeometrySpec,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[_IntArray, _IntArray]:
-    from .._surface_chart_deformation import PreparedSurfaceChartDeformation
 
-    if not isinstance(prepared, PreparedSurfaceChartDeformation):
-        raise TypeError("A prepared surface chart deformation is required.")
-    _bound_surface_endpoint(source, source_geometry, "source", prepared)
-    _bound_surface_endpoint(target, target_geometry, "target", prepared)
+    bound_surface_endpoint(source, source_geometry, "source", prepared, budget=budget)
+    bound_surface_endpoint(target, target_geometry, "target", prepared, budget=budget)
     prepared.require_bound(source.mesh, source_geometry, target.mesh, target_geometry)
     if (
         source.mesh.topology_id != prepared.source_topology_id
@@ -270,7 +275,7 @@ def _validate(
         or cell_geometry_id(target_geometry) != prepared.target_geometry_id
     ):
         raise ValueError(
-            "Surface chart transfer has stale physical geometry/topology endpoints."
+            "surface_chart.validate.binding must satisfy the declared geometry and cell identities; got Surface chart transfer has stale physical geometry/topology endpoints."
         )
     for discretization, witness in (
         (source, prepared.source_witness),
@@ -282,20 +287,21 @@ def _validate(
                 for block in discretization.mesh.blocks
             ]
         )
-        # Scientific identities select physical rows; the witness order is explicit.
+        # Scientific identities select physical rows; the binding order is explicit.
         if len(set(ids.tolist())) != ids.size or set(ids.tolist()) != set(
             np.asarray(witness.cell_global_ids, dtype=np.int64).tolist()
         ):
             raise ValueError(
-                "Surface chart witness does not bind the current scientific cells."
+                "surface_chart.validate.binding must satisfy the declared geometry and cell identities; got Surface chart binding does not bind the current scientific cells."
             )
     return (
-        _physical_rows(source, prepared.source_mesh),
-        _physical_rows(target, prepared.target_mesh),
+        physical_rows(source, prepared.source_mesh),
+        physical_rows(target, prepared.target_mesh),
     )
 
 
-def _physical_rows(discretization: _ChartEndpoint, original_mesh: CellMesh) -> _IntArray:
+@checked
+def physical_rows(discretization: ChartEndpoint, original_mesh: CellMesh) -> _IntArray:
     ids = np.concatenate(
         [
             np.asarray(block.global_ids, dtype=np.int64)
@@ -309,7 +315,8 @@ def _physical_rows(discretization: _ChartEndpoint, original_mesh: CellMesh) -> _
     return np.asarray([index[int(value)] for value in original_ids], dtype=np.int64)
 
 
-def _field_cells(
+@checked
+def field_cells(
     discretization: FiniteElementDiscretization, field_index: int
 ) -> tuple[tuple[FiniteElementSpec, _IntArray], ...]:
     dofs = discretization.dof_maps[field_index]
@@ -327,35 +334,42 @@ def _field_cells(
             or element.representation != "point_value"
         ):
             raise ValueError(
-                "Surface chart actions require scalar triangle point-value fields."
+                "surface_chart.field_cells.pieces must satisfy the material reference contract; got Surface chart actions require scalar triangle point-value fields."
             )
         for route, sign in zip(np.asarray(routes), np.asarray(signs), strict=True):
             if np.any(sign != 1):
-                raise ValueError("Scalar surface fields require canonical orientation.")
+                raise ValueError(
+                    "surface_chart.field_cells.pieces must satisfy the material reference contract; got Scalar surface fields require ordered orientation."
+                )
             cells.append((element, np.asarray(route, dtype=np.int64)))
     return tuple(cells)
 
 
-def _binding(
+@checked
+def deformation_binding(
     prepared: _ChartDeformation | SourceGeometryRealization,
 ) -> TransferGeometryBinding:
-    if isinstance(prepared, SourceGeometryRealization):
-        transition = prepared.transition
-        return TransferGeometryBinding(
-            transition.source_geometry_id,
-            transition.target_geometry_id,
-            "source-realization",
-            source_topology_id=transition.source_topology_id,
-            target_topology_id=transition.target_topology_id,
-            coverage_defect=None,
-        )
-    return TransferGeometryBinding(
-        prepared.source_geometry_id,
-        prepared.target_geometry_id,
-        "bounded-reconstruction",
-        source_topology_id=prepared.source_topology_id,
-        target_topology_id=prepared.target_topology_id,
-    )
+    match prepared:
+        case SourceGeometryRealization():
+            transition = prepared.transition
+            return TransferGeometryBinding(
+                transition.source_geometry_id,
+                transition.target_geometry_id,
+                "source-realization",
+                source_topology_id=transition.source_topology_id,
+                target_topology_id=transition.target_topology_id,
+                coverage_defect=None,
+            )
+        case PreparedSurfaceChartDeformation() | PreparedSphereChartDeformation():
+            return TransferGeometryBinding(
+                prepared.source_geometry_id,
+                prepared.target_geometry_id,
+                "bounded-reconstruction",
+                source_topology_id=prepared.source_topology_id,
+                target_topology_id=prepared.target_topology_id,
+            )
+        case other:
+            assert_never(other)
 
 
 def _prepare_h1(
@@ -365,15 +379,17 @@ def _prepare_h1(
     source_order: _IntArray,
     target_order: _IntArray,
     name: str,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
-    si, ti = source._field_index(name), target._field_index(name)
-    sc, tc = _field_cells(source, si), _field_cells(target, ti)
+    si, ti = source.field_index(name), target.field_index(name)
+    sc, tc = field_cells(source, si), field_cells(target, ti)
     if any(
-        element.conformity != "H1" or source_basis(element) is None
+        element.conformity != "H1" or source_basis(element, budget=budget) is None
         for element, _ in sc + tc
     ):
         raise ValueError(
-            "Surface chart H1 requires actual canonical scalar nodal sources."
+            "surface_chart.prepare_h1.pieces must satisfy the material reference contract; got Surface chart H1 requires ordered scalar nodal sources."
         )
     candidates, columns, values = [], [], []
     for occurrence in prepared.occurrences:
@@ -406,16 +422,20 @@ def _prepare_h1(
             for node, point in enumerate(points):
                 found = False
                 for old_row in source_scan:
-                    if not _inside_material(source_triangles[old_row], point):
+                    if not contains(
+                        source_triangles[old_row],
+                        point,
+                        degenerate_message="surface_chart.material_triangle must have nonzero area; got degenerate triangle.",
+                    ):
                         continue
                     old_physical = int(
                         source_order[int(np.asarray(occurrence.source_rows)[old_row])]
                     )
                     old_element, old_route = sc[old_physical]
                     reference = _exact_material_reference_points(
-                        source_triangles[old_row], point[None]
+                        source_triangles[old_row], point[None], budget=budget
                     )
-                    basis, _ = _tabulated(
+                    basis, _ = tabulated(
                         old_element, np.asarray(reference, dtype=np.float64)
                     )
                     candidates.append(int(route[node]))
@@ -425,7 +445,7 @@ def _prepare_h1(
                     # Retain every boundary candidate: shared trace rows must agree.
                 if not found:
                     raise ValueError(
-                        "Target H1 node is outside the complete exact material cover."
+                        "surface_chart.prepare_h1.pieces must satisfy the material reference contract; got Target H1 node is outside the whole material cover."
                     )
     width = max(element.local_dof_count for element, _ in sc)
     indices = np.zeros((len(candidates), width), dtype=np.int64)
@@ -433,7 +453,7 @@ def _prepare_h1(
     for row, (route, value) in enumerate(zip(columns, values, strict=True)):
         indices[row, : route.size], coefficients[row, : route.size] = route, value
     ss, ts = source.dof_maps[si].global_dof_count, target.dof_maps[ti].global_dof_count
-    rows, coefficients, continuity = _owned_rows(
+    rows, coefficients, continuity = owned_rows(
         np.asarray(candidates, dtype=np.int64)[:, None],
         indices,
         coefficients[:, None],
@@ -450,7 +470,9 @@ def _prepare_h1(
         tolerance,
     )
     if not evidence.passed:
-        raise ValueError("Surface chart H1 nodal/trace certificate failed.")
+        raise ValueError(
+            "surface_chart.prepare_h1.pieces must satisfy the material reference contract; got Surface chart H1 nodal/trace certificate failed."
+        )
     primal = SparseLinearMap(
         RowRelation(rows.astype(np.int32), source_size=ss),
         coefficients,
@@ -481,20 +503,27 @@ def _prepare_h1(
         transfer,
         source.field_spaces[si],
         target.field_spaces[ti],
-        _binding(prepared),
+        deformation_binding(prepared),
         evidence,
     )
 
 
-def _integral(
-    gram: Expression, weight: Expression, budgets: _IntegrationBudgets
+@checked
+def integral(
+    gram: Expression,
+    weight: Expression,
+    budgets: IntegrationBudgets,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[float, float]:
-    from .._cell_geometry_transfer import _certified_sqrt_polynomial_integral
 
-    return _certified_sqrt_polynomial_integral(gram, weight, "triangle", **budgets)
+    return mapped_measure_owner.certified_sqrt_polynomial_integral(
+        gram, weight, "triangle", **budgets, budget=budget
+    )
 
 
-def _piece_maps(
+@checked
+def piece_maps(
     occurrence: PreparedSurfaceChartOccurrence,
 ) -> Iterator[tuple[int, int, int, _ExactArray, _ExactArray]]:
     for entry, piece in enumerate(occurrence.pieces):
@@ -507,28 +536,33 @@ def _piece_maps(
         )
 
 
-def _restricted(
-    gram: Expression, reference: _ExactArray
+@checked
+def restricted(
+    gram: Expression,
+    reference: _ExactArray,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[Expression, tuple[Polynomial, ...]]:
     matrix = (reference[1:] - reference[0]).T
     determinant = matrix[0, 0] * matrix[1, 1] - matrix[0, 1] * matrix[1, 0]
     if determinant == 0:
         raise ValueError(
-            "An exact material piece has a degenerate physical-reference map."
+            "surface_chart.restricted.pieces must satisfy the material reference contract; got A material piece has a degenerate physical-reference map."
         )
-    variables = axes(2)
+    variables = axes(2, budget=budget)
     arguments = tuple(
         sum_polynomials(
-            (constant(origin, 2),)
+            (constant(origin, 2, budget=budget),)
             + tuple(
-                scale(variable, value)
+                scale(variable, value, budget=budget)
                 for variable, value in zip(variables, row, strict=True)
-            )
+            ),
+            budget=budget,
         )
         for origin, row in zip(reference[0], matrix, strict=True)
     )
     return expression_scale(
-        expression_compose(gram, arguments), determinant**2
+        expression_compose(gram, arguments, budget=budget), determinant**2, budget=budget
     ), arguments
 
 
@@ -556,18 +590,23 @@ def _prepare_dg(
     source_order: _IntArray,
     target_order: _IntArray,
     name: str,
-    semantics: Literal["intensive", "conservative-density"],
-    budgets: _IntegrationBudgets,
+    semantics: ChartFieldSemantics,
+    budgets: IntegrationBudgets,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
-    si, ti = source._field_index(name), target._field_index(name)
-    sc, tc = _mapped_dg_cells(source, si), _mapped_dg_cells(target, ti)
+    si, ti = source.field_index(name), target.field_index(name)
+    sc, tc = (
+        mapped_dg_cells(source, si, budget=budget),
+        mapped_dg_cells(target, ti, budget=budget),
+    )
     sg, tg = (
-        _mapped_geometry_cells(source.mesh, source_geometry),
-        _mapped_geometry_cells(target.mesh, target_geometry),
+        mapped_geometry_cells(source.mesh, source_geometry, budget=budget),
+        mapped_geometry_cells(target.mesh, target_geometry, budget=budget),
     )
     grams = (
-        tuple(_embedded_squared_density(*cell) for cell in sg),
-        tuple(_embedded_squared_density(*cell) for cell in tg),
+        tuple(embedded_squared_density(*cell, budget=budget) for cell in sg),
+        tuple(embedded_squared_density(*cell, budget=budget) for cell in tg),
     )
     ss, ts = source.dof_maps[si].global_dof_count, target.dof_maps[ti].global_dof_count
     piece_count = sum(len(occurrence.pieces) for occurrence in prepared.occurrences)
@@ -579,7 +618,7 @@ def _prepare_dg(
         * max(len(basis) for _, _, basis in sc)
         * max(len(basis) for _, _, basis in tc)
     )
-    local_budgets: _IntegrationBudgets = {
+    local_budgets: IntegrationBudgets = {
         **budgets,
         "absolute_tolerance": budgets["absolute_tolerance"] / form_count,
         "relative_tolerance": budgets["relative_tolerance"] / form_count,
@@ -595,40 +634,54 @@ def _prepare_dg(
         for cell, (element, route, basis) in enumerate(cells):
             if element.cell_kind != "triangle":
                 raise ValueError(
-                    "Surface chart DG requires canonical scalar triangle elements."
+                    "surface_chart.prepare_dg.pieces must satisfy the material reference contract; got Surface chart DG requires ordered scalar triangle elements."
                 )
             for dof, term in zip(route, basis, strict=True):
-                measures[dof], uncertainty[dof] = _integral(
-                    density[cell], term, local_budgets
+                measures[dof], uncertainty[dof] = integral(
+                    density[cell], term, local_budgets, budget=budget
                 )
             if is_target:
                 matrix = np.empty((len(basis), len(basis)), dtype=np.float64)
                 for i, first in enumerate(basis):
                     for j, second in enumerate(basis):
-                        matrix[i, j], error = _integral(
-                            density[cell], multiply(first, second), local_budgets
+                        matrix[i, j], error = integral(
+                            density[cell],
+                            multiply(first, second, budget=budget),
+                            local_budgets,
+                            budget=budget,
                         )
                         errors += error
                 masses.append(matrix)
     for occurrence in prepared.occurrences:
-        for _, old_row, new_row, old_ref, new_ref in _piece_maps(occurrence):
+        for _, old_row, new_row, old_ref, new_ref in piece_maps(occurrence):
             old_cell = int(source_order[int(np.asarray(occurrence.source_rows)[old_row])])
             new_cell = int(target_order[int(np.asarray(occurrence.target_rows)[new_row])])
-            old_gram, old_arguments = _restricted(grams[0][old_cell], old_ref)
-            new_gram, new_arguments = _restricted(grams[1][new_cell], new_ref)
+            old_gram, old_arguments = restricted(
+                grams[0][old_cell], old_ref, budget=budget
+            )
+            new_gram, new_arguments = restricted(
+                grams[1][new_cell], new_ref, budget=budget
+            )
             gram = old_gram if semantics == "conservative-density" else new_gram
-            old_basis = tuple(compose(term, old_arguments) for term in sc[old_cell][2])
-            new_basis = tuple(compose(term, new_arguments) for term in tc[new_cell][2])
+            old_basis = tuple(
+                compose(term, old_arguments, budget=budget) for term in sc[old_cell][2]
+            )
+            new_basis = tuple(
+                compose(term, new_arguments, budget=budget) for term in tc[new_cell][2]
+            )
             form = np.empty((len(new_basis), len(old_basis)), dtype=np.float64)
             for i, first in enumerate(new_basis):
                 for j, second in enumerate(old_basis):
-                    form[i, j], error = _integral(
-                        gram, multiply(first, second), local_budgets
+                    form[i, j], error = integral(
+                        gram,
+                        multiply(first, second, budget=budget),
+                        local_budgets,
+                        budget=budget,
                     )
                     errors += error
             previous = mixed[new_cell].get(old_cell)
             mixed[new_cell][old_cell] = form if previous is None else previous + form
-    return _finish_material_dg_projection(
+    return finish_material_dg_projection(
         source,
         target,
         prepared,
@@ -647,36 +700,27 @@ def _prepare_dg(
     )
 
 
-def _finish_material_dg_projection(
-    source: FiniteElementDiscretization,
-    target: FiniteElementDiscretization,
-    prepared: _ChartDeformation | SourceGeometryRealization,
-    /,
-    *,
-    field_name: str,
-    source_cells: tuple[_MappedDgCell, ...],
-    target_cells: tuple[_MappedDgCell, ...],
-    source_measures: _FloatArray,
-    target_measures: _FloatArray,
-    source_errors: _FloatArray,
-    target_errors: _FloatArray,
+class _MaterialDgMassSolution(StrictModule):
+    rows: _IntArray
+    columns: _IntArray
+    coefficients: _FloatArray
+    condition: float
+    solve_defect: float
+    correction_bound: float
+    conservative: bool
+
+
+def _solve_material_dg_masses(
+    sc: tuple[MappedDgCell, ...],
+    tc: tuple[MappedDgCell, ...],
+    sm: _FloatArray,
+    tm: _FloatArray,
+    ss: int,
     masses: Sequence[_FloatArray],
     mixed: Sequence[dict[int, _FloatArray]],
-    integration_error: float,
-    semantics: Literal["intensive", "conservative-density"],
-    budgets: _IntegrationBudgets,
-) -> FiniteElementFieldTransfer:
-    """Native scalar mass projection under its declared physical functional."""
-    binding = _binding(prepared)
-    correspondence_id = (
-        prepared.realization_id
-        if isinstance(prepared, SourceGeometryRealization)
-        else prepared.deformation_id
-    )
-    si, ti = source._field_index(field_name), target._field_index(field_name)
-    sc, tc, name = source_cells, target_cells, field_name
-    sm, tm, se, te = source_measures, target_measures, source_errors, target_errors
-    ss, ts, errors = sm.size, tm.size, integration_error
+    semantics: ChartFieldSemantics,
+) -> _MaterialDgMassSolution:
+    "Solve physical mass blocks and enforce the declared scalar functional."
     row_batches: list[_IntArray] = []
     column_batches: list[_IntArray] = []
     coefficient_batches: list[_FloatArray] = []
@@ -687,14 +731,16 @@ def _finish_material_dg_projection(
     for cell, matrix in enumerate(masses):
         parents = sorted(mixed[cell])
         if not parents:
-            raise ValueError("Surface chart DG target has no complete overlap.")
+            raise ValueError(
+                "surface_chart.solve_material_dg_masses.pieces must satisfy the material reference contract; got Surface chart DG target has no whole overlap."
+            )
         rhs = np.concatenate([mixed[cell][parent] for parent in parents], axis=1)
         old_routes = np.concatenate([sc[parent][1] for parent in parents])
         route = tc[cell][1]
-        # The exact projection has a physical inventory constraint for density,
+        # The projection has a physical inventory constraint for density,
         # and a partition-of-unity constraint for intensive scalars. Independently
         # enclosed forms do not share identical publication errors; enforce these
-        # actual functionals using the same native mass inverse, not relaxed claims.
+        # functionals using the same native mass inverse, not relaxed claims.
         extra = tm[route] if conservative else matrix.sum(axis=1) - rhs.sum(axis=1)
         full_rhs = np.column_stack((rhs, extra))
         factor = factorize(
@@ -710,17 +756,21 @@ def _finish_material_dg_projection(
             FactorizationPolicy("svd"),
         )
         if int(np.asarray(factor.rank())) != matrix.shape[0]:
-            raise ValueError("Surface chart DG target physical mass is rank deficient.")
+            raise ValueError(
+                "surface_chart.solve_material_dg_masses.measures must satisfy the positive physical measure contract; got Surface chart DG target physical mass is rank deficient."
+            )
         spectrum = np.asarray(factor.singular_values())
         condition = max(condition, float(spectrum[0] / spectrum[-1]))
         solved = factor.solve(jnp.asarray(full_rhs, dtype=jnp.float64))
         if not bool(np.all(np.asarray(solved.successful))):
-            raise ValueError("Surface chart DG native mass solve failed.")
+            raise ValueError(
+                "surface_chart.solve_material_dg_masses.measures must satisfy the positive physical measure contract; got Surface chart DG native mass solve failed."
+            )
         full_value = np.asarray(solved.value, dtype=np.float64)
         value, lift = full_value[:, :-1], full_value[:, -1]
         if not np.all(np.isfinite(full_value)):
             raise ValueError(
-                "Surface chart DG mass solve returned nonfinite coefficients."
+                "surface_chart.solve_material_dg_masses.measures must satisfy the positive physical measure contract; got Surface chart DG mass solve returned nonfinite coefficients."
             )
         solve_defect = max(
             solve_defect, float(np.max(np.abs(matrix @ full_value - full_rhs)))
@@ -729,7 +779,7 @@ def _finish_material_dg_projection(
             local_denominator = float(np.dot(tm[route], lift))
             if not np.isfinite(local_denominator) or local_denominator <= 0:
                 raise ValueError(
-                    "Surface chart DG physical inventory lift is not positive."
+                    "surface_chart.solve_material_dg_masses.pieces must satisfy the material reference contract; got Surface chart DG physical inventory lift is not positive."
                 )
             np.add.at(denominator, old_routes, local_denominator)
             lifts.append(np.repeat(lift, old_routes.size))
@@ -738,7 +788,7 @@ def _finish_material_dg_projection(
             total_mean = float(np.sum(physical_mean))
             if not np.isfinite(total_mean) or total_mean <= 0:
                 raise ValueError(
-                    "Surface chart DG source support has no positive physical measure."
+                    "surface_chart.solve_material_dg_masses.measures must satisfy the positive physical measure contract; got Surface chart DG source support has no positive physical measure."
                 )
             correction = lift[:, None] * (physical_mean / total_mean)[None, :]
             correction_bound = max(
@@ -756,7 +806,7 @@ def _finish_material_dg_projection(
     if conservative:
         if np.any(denominator <= 0):
             raise ValueError(
-                "Surface chart DG inventory constraint lacks source support."
+                "surface_chart.solve_material_dg_masses.pieces must satisfy the material reference contract; got Surface chart DG inventory constraint lacks source support."
             )
         residual = _column_content(rows, columns, coefficients, sm, tm)
         correction = (
@@ -770,8 +820,61 @@ def _finish_material_dg_projection(
             np.float64
         ).eps * float(np.max(np.abs(coefficients)))
         coefficients -= correction
+    return _MaterialDgMassSolution(
+        rows=rows,
+        columns=columns,
+        coefficients=coefficients,
+        condition=condition,
+        solve_defect=solve_defect,
+        correction_bound=correction_bound,
+        conservative=conservative,
+    )
+
+
+@checked
+def finish_material_dg_projection(
+    source: FiniteElementDiscretization,
+    target: FiniteElementDiscretization,
+    prepared: _ChartDeformation | SourceGeometryRealization,
+    /,
+    *,
+    field_name: str,
+    source_cells: tuple[MappedDgCell, ...],
+    target_cells: tuple[MappedDgCell, ...],
+    source_measures: _FloatArray,
+    target_measures: _FloatArray,
+    source_errors: _FloatArray,
+    target_errors: _FloatArray,
+    masses: Sequence[_FloatArray],
+    mixed: Sequence[dict[int, _FloatArray]],
+    integration_error: float,
+    semantics: ChartFieldSemantics,
+    budgets: IntegrationBudgets,
+) -> FiniteElementFieldTransfer:
+    """Native scalar mass projection under its declared physical functional."""
+    semantics = parse(semantics, ChartFieldSemantics, "chart.semantics")
+    binding = deformation_binding(prepared)
+    correspondence_id = (
+        prepared.realization_id
+        if isinstance(prepared, SourceGeometryRealization)
+        else prepared.deformation_id
+    )
+    si, ti = source.field_index(field_name), target.field_index(field_name)
+    sc, tc, name = source_cells, target_cells, field_name
+    sm, tm, se, te = source_measures, target_measures, source_errors, target_errors
+    ss, ts, errors = sm.size, tm.size, integration_error
+    _phase = _solve_material_dg_masses(
+        sc=sc, tc=tc, sm=sm, tm=tm, ss=ss, masses=masses, mixed=mixed, semantics=semantics
+    )
+    rows = _phase.rows
+    columns = _phase.columns
+    coefficients = _phase.coefficients
+    condition = _phase.condition
+    solve_defect = _phase.solve_defect
+    correction_bound = _phase.correction_bound
+    conservative = _phase.conservative
     amplification = max(1.0, condition * max(matrix.shape[0] ** 2 for matrix in masses))
-    primal = _coalesced_map(
+    primal = coalesced_map(
         rows,
         columns,
         coefficients,
@@ -798,15 +901,17 @@ def _finish_material_dg_projection(
     propagated = np.zeros(ss, dtype=np.float64)
     np.add.at(propagated, columns, np.abs(coefficients) * te[rows])
     exact_content = _column_content(rows, columns, coefficients, sm, tm)
-    from .._coordinate_enclosure import outward
 
-    content_defect = max(outward(abs(value), np.inf) for value in exact_content)
+    content_defect = max(
+        fraction_endpoint(abs(value), upper=True, saturate=True)
+        for value in exact_content
+    )
     publication_roundoff = np.finfo(np.float64).eps * (coefficients.size + 2)
     content_bound = float(
         np.nextafter(
             content_defect
             + np.max(se + propagated) / (1 - publication_roundoff)
-            + _measure_defect_bound(np.dtype(np.float64), amplification, sm, tm),
+            + measure_defect_bound(np.dtype(np.float64), amplification, sm, tm),
             np.inf,
         )
     )
@@ -832,7 +937,9 @@ def _finish_material_dg_projection(
         estimates={"mass_condition": condition},
     )
     if not evidence.passed:
-        raise ValueError("Surface chart DG physical projection certificate failed.")
+        raise ValueError(
+            "surface_chart.finish_material_dg_projection.pieces must satisfy the material reference contract; got Surface chart DG physical projection certificate failed."
+        )
     transfer = FiniteElementTopologyTransfer(
         primal,
         binding.source_topology_id,
@@ -856,7 +963,7 @@ def _finish_material_dg_projection(
     )
 
 
-def prepare_surface_chart_field_transfer(
+def _prepare_surface_chart_field_transfer(
     source: FiniteElementDiscretization,
     target: FiniteElementDiscretization,
     prepared: PreparedSurfaceChartDeformation,
@@ -865,67 +972,54 @@ def prepare_surface_chart_field_transfer(
     field_name: str,
     source_geometry: CellGeometrySpec,
     target_geometry: CellGeometrySpec,
-    semantics: Literal["intensive", "conservative-density"] = "intensive",
+    semantics: ChartFieldSemantics = "intensive",
     absolute_tolerance: float = 1e-12,
     relative_tolerance: float = 1e-12,
     maximum_work: int = 100_000_000,
     maximum_subcells: int = 10000,
     maximum_binomial_terms: int = 32,
+    budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
-    """Prepare actual scalar material correspondence and its algebraic transpose.
-
-    Both supplied coordinate specifications must realize the actual prepared
-    endpoint elements, routes, layout and coordinate values; a valid external
-    chart witness cannot authorize a differently prepared field map.
-
-    H1 supports intensive point functionals. DG intensive projection uses target
-    density; conservative-density projection uses old physical density and target
-    physical mass. A constant conservative density need not remain constant when
-    the surface area changes. H(curl), H(div), and other all-field dispositions
-    require a separate declared differential/geometric transport and are refused.
-
-    Enclosed mass and mixed forms are projected under their exact declared
-    functional: old physical inventory for conservative density, or
-    partition-of-unity for intensive scalars. Inventory uses a native
-    mass-minimal lift on the true overlap support. Intensive correction uses
-    the old support's physical mean functional. The coefficient perturbation
-    from independent integration/publication errors is exposed by
-    ``evidence.bound("projection_correction")``; conservation/constant claims
-    retain the canonical roundoff-only checks, never an inflated tolerance.
-
-    Error tolerances are allocated across all integrated forms; work/subcell
-    limits apply to each enclosed integral. Physical inventory errors are exposed
-    by ``evidence.bound("content")`` for conservative-density fields. Epoch
-    transport uses the canonical field-transfer disposition: positive DOF
-    measures admit a topology content ledger; other scalar bases retain a
-    ``FieldEpochTransition`` with the physical content evidence on this artifact.
-    """
-    if semantics not in ("intensive", "conservative-density"):
-        raise ValueError("Unknown surface chart field semantics.")
-    source_order, target_order = _validate(
-        source, target, prepared, source_geometry, target_geometry
+    'Prepare scalar material correspondence and its algebraic transpose.\n\n Both supplied coordinate specifications must realize the prepared\n endpoint elements, routes, layout and coordinate values; a valid external\n chart binding cannot authorize a differently prepared field map.\n\n H1 supports intensive point functionals. DG intensive projection uses target\n density; conservative-density projection uses old physical density and target\n physical mass. A constant conservative density need not remain constant when\n the surface area changes. H(curl), H(div), and other all-field dispositions\n require a separate declared differential/geometric transport and are refused.\n\n Enclosed mass and mixed forms are projected under their declared\n functional: old physical inventory for conservative density, or\n partition-of-unity for intensive scalars. Inventory uses a native\n mass-minimal lift on the true overlap support. Intensive correction uses\n the old support\'s physical mean functional. The coefficient perturbation\n from independent integration/publication errors is exposed by\n ``evidence.bound("projection_correction")``; conservation/constant claims\n retain the ordered roundoff-only checks, never an inflated tolerance.\n\n Error tolerances are allocated across all integrated forms; work/subcell\n limits apply to each enclosed integral. Physical inventory errors are exposed\n by ``evidence.bound("content")`` for conservative-density fields. Epoch\n transport uses the ordered field-transfer disposition: positive DOF\n measures admit a topology content ledger; other scalar bases retain a\n ``FieldEpochTransition`` with the physical content evidence on this artifact.'
+    semantics = parse(semantics, ChartFieldSemantics, "chart.semantics")
+    source_order, target_order = validate(
+        source, target, prepared, source_geometry, target_geometry, budget=budget
     )
-    si, ti = source._field_index(field_name), target._field_index(field_name)
+    si, ti = source.field_index(field_name), target.field_index(field_name)
     source_space = source.field_spaces[si].vector_space
     target_space = target.field_spaces[ti].vector_space
-    if not isinstance(source_space, ArraySpace) or not isinstance(
-        target_space, ArraySpace
-    ):
-        raise TypeError("Surface chart transfer requires array coefficient spaces.")
+    match (source_space, target_space):
+        case (ArraySpace() as source_space, ArraySpace() as target_space):
+            pass
+        case _:
+            raise TypeError(
+                "surface_chart.prepare_surface_chart_field_transfer.pieces must satisfy the material reference contract; got Surface chart transfer requires array coefficient spaces."
+            )
     if source_space.shape[1:] != target_space.shape[1:]:
-        raise ValueError("Surface chart field payload layouts differ.")
+        raise ValueError(
+            "surface_chart.prepare_surface_chart_field_transfer.pieces must satisfy the material reference contract; got Surface chart field payload layouts differ."
+        )
     conformities = {
         element.conformity for element in source.elements[si] + target.elements[ti]
     }
-    if conformities == {"H1"} and semantics == "intensive":
-        return _prepare_h1(
-            source, target, prepared, source_order, target_order, field_name
-        )
-    if conformities != {"L2"}:
-        raise ValueError(
-            "Surface chart all-field contract is open for non-scalar-DG density or compatible/Piola fields."
-        )
-    budgets = _IntegrationBudgets(
+    match (tuple(sorted(conformities)), semantics):
+        case (("H1",), "intensive"):
+            return _prepare_h1(
+                source,
+                target,
+                prepared,
+                source_order,
+                target_order,
+                field_name,
+                budget=budget,
+            )
+        case (("L2",), _):
+            pass
+        case _:
+            raise ValueError(
+                "surface_chart.prepare_surface_chart_field_transfer.measures must satisfy the positive physical measure contract; got Surface chart all-field contract is open for non-scalar-DG density or compatible/Piola fields."
+            )
+    budgets = IntegrationBudgets(
         absolute_tolerance=absolute_tolerance,
         relative_tolerance=relative_tolerance,
         maximum_work=maximum_work,
@@ -943,18 +1037,12 @@ def prepare_surface_chart_field_transfer(
         field_name,
         semantics,
         budgets,
+        budget=budget,
     )
 
 
 class PreparedSurfaceChartFiniteVolumeContents(StrictModule, NonTrainableState):
-    """Old physical density contents on exact material pieces, not chart areas.
-
-    Rows refer to current concatenated physical cell rows. Dividing these contents
-    by target volumes gives conservative-density transfer; dividing by summed old
-    contents gives intensive cell averages. The latter is not inventory preserving
-    under an area-changing geometry deformation. Errors are absolute physical
-    measure enclosures, suitable for the owner's quantitative content ledger.
-    """
+    "Old physical density contents on material pieces, not chart areas.\n\n Rows refer to current concatenated physical cell rows. Dividing these contents\n by target volumes gives conservative-density transfer; dividing by summed old\n contents gives intensive cell averages. The latter is not inventory preserving\n under an area-changing geometry deformation. Errors are absolute physical\n measure enclosures, suitable for the owner's quantitative content ledger."
 
     source_rows: Array
     target_rows: Array
@@ -972,6 +1060,7 @@ class PreparedSurfaceChartFiniteVolumeContents(StrictModule, NonTrainableState):
     deformation_id: str = eqx.field(static=True)
     contents_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source_rows: ArrayLike,
@@ -1022,9 +1111,10 @@ class PreparedSurfaceChartFiniteVolumeContents(StrictModule, NonTrainableState):
         )
 
 
-def prepare_surface_chart_finite_volume_contents(
-    source: _ChartEndpoint,
-    target: _ChartEndpoint,
+@checked
+def surface_chart_finite_volume_contents(
+    source: ChartEndpoint,
+    target: ChartEndpoint,
     prepared: PreparedSurfaceChartDeformation,
     /,
     *,
@@ -1035,18 +1125,11 @@ def prepare_surface_chart_finite_volume_contents(
     maximum_work: int = 100_000_000,
     maximum_subcells: int = 10000,
     maximum_binomial_terms: int = 32,
+    budget: CoordinateEnclosureBudget,
 ) -> PreparedSurfaceChartFiniteVolumeContents:
-    """Prepare occurrence-local physical overlaps for the finite-volume owner.
-
-    Actual unstructured FV endpoints bind their retained coordinate map and
-    certified physical volumes/errors. Those endpoint arrays, rather than
-    independent core integration midpoints, define the returned inventory
-    pairings. Their exact dyadic measure intervals must agree with the core's
-    scientific-cell certificate. FE endpoints remain supported for geometry
-    handoff and must bind their actual prepared coordinate specification.
-    """
-    source_order, target_order = _validate(
-        source, target, prepared, source_geometry, target_geometry
+    "Prepare occurrence-local physical overlaps for the finite-volume owner.\n\n unstructured FV endpoints bind their retained coordinate map and\n certified physical volumes/errors. Those endpoint arrays, rather than\n independent core integration midpoints, define the returned inventory\n pairings. Their dyadic measure intervals must agree with the core's\n scientific-cell certificate. FE endpoints remain supported for geometry\n handoff and must bind their prepared coordinate specification."
+    source_order, target_order = validate(
+        source, target, prepared, source_geometry, target_geometry, budget=budget
     )
     rows, targets, source_references = [], [], []
     exact_whole_targets = True
@@ -1054,9 +1137,9 @@ def prepare_surface_chart_finite_volume_contents(
         displacement = np.asarray(occurrence.displacement_bounds, dtype=np.float64)
         if displacement.shape != (len(occurrence.pieces),):
             raise ValueError(
-                "Material displacement bounds do not align with their exact pieces."
+                "surface_chart.surface_chart_finite_volume_contents.displacement must satisfy the whole-piece displacement bound; got Material displacement bounds do not align with their pieces."
             )
-        for entry, old_row, new_row, old_ref, _ in _piece_maps(occurrence):
+        for entry, old_row, new_row, old_ref, _ in piece_maps(occurrence):
             old = int(source_order[int(np.asarray(occurrence.source_rows)[old_row])])
             new = int(target_order[int(np.asarray(occurrence.target_rows)[new_row])])
             rows.append(old)
@@ -1065,10 +1148,10 @@ def prepare_surface_chart_finite_volume_contents(
             exact_whole_targets &= displacement[entry] == 0.0 and occurrence.pieces[
                 entry
             ].target_reference_area == Fraction(1, 2)
-    volumes, volume_errors = _endpoint_cell_measures(
+    volumes, volume_errors = endpoint_cell_measures(
         target, prepared, target_order, "target"
     )
-    old_volumes, old_errors = _endpoint_cell_measures(
+    old_volumes, old_errors = endpoint_cell_measures(
         source, prepared, source_order, "source"
     )
     exact_whole_targets &= len(targets) == volumes.size and np.array_equal(
@@ -1080,12 +1163,12 @@ def prepare_surface_chart_finite_volume_contents(
         values = volumes[target_rows].tolist()
         errors = volume_errors[target_rows].tolist()
     else:
-        geometry = _mapped_geometry_cells(source.mesh, source_geometry)
+        geometry = mapped_geometry_cells(source.mesh, source_geometry, budget=budget)
         grams = tuple(
-            _embedded_squared_density(*cell, denominators_certified=True)
+            embedded_squared_density(*cell, denominators_certified=True, budget=budget)
             for cell in geometry
         )
-        budgets = _IntegrationBudgets(
+        budgets = IntegrationBudgets(
             absolute_tolerance=absolute_tolerance,
             relative_tolerance=relative_tolerance,
             maximum_work=maximum_work,
@@ -1097,8 +1180,10 @@ def prepare_surface_chart_finite_volume_contents(
         budgets["relative_tolerance"] /= piece_count
         values, errors = [], []
         for old, old_ref in zip(rows, source_references, strict=True):
-            gram, _ = _restricted(grams[old], old_ref)
-            value, error = _integral(gram, constant(1, 2), budgets)
+            gram, _ = restricted(grams[old], old_ref, budget=budget)
+            value, error = integral(
+                gram, constant(1, 2, budget=budget), budgets, budget=budget
+            )
             values.append(value)
             errors.append(error)
     sums, uncertainties = np.zeros_like(old_volumes), np.zeros_like(old_volumes)
@@ -1134,3 +1219,123 @@ __all__ = [
     "prepare_surface_chart_field_transfer",
     "prepare_surface_chart_finite_volume_contents",
 ]
+
+
+@checked
+def prepare_surface_chart_field_transfer(
+    source: FiniteElementDiscretization,
+    target: FiniteElementDiscretization,
+    prepared: PreparedSurfaceChartDeformation,
+    /,
+    *,
+    field_name: str,
+    source_geometry: CellGeometrySpec,
+    target_geometry: CellGeometrySpec,
+    semantics: ChartFieldSemantics = "intensive",
+    absolute_tolerance: float = 1e-12,
+    relative_tolerance: float = 1e-12,
+    maximum_work: int = 100_000_000,
+    maximum_subcells: int = 10000,
+    maximum_binomial_terms: int = 32,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> FiniteElementFieldTransfer:
+    "Prepare the request with one explicitly bounded host -work ticket."
+    if budget is not None:
+        return _prepare_surface_chart_field_transfer(
+            source,
+            target,
+            prepared,
+            field_name=field_name,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            semantics=semantics,
+            absolute_tolerance=absolute_tolerance,
+            relative_tolerance=relative_tolerance,
+            maximum_work=maximum_work,
+            maximum_subcells=maximum_subcells,
+            maximum_binomial_terms=maximum_binomial_terms,
+            budget=budget,
+        )
+    with HostBatchTicket(
+        maximum_work,
+        queries_upper=field_transfer_query_upper(
+            maximum_work, source_geometry, target_geometry
+        ),
+        bytes_upper=sys.maxsize,
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=maximum_work, maximum_memory_bytes=sys.maxsize
+        )
+        with budget.activate():
+            return _prepare_surface_chart_field_transfer(
+                source,
+                target,
+                prepared,
+                field_name=field_name,
+                source_geometry=source_geometry,
+                target_geometry=target_geometry,
+                semantics=semantics,
+                absolute_tolerance=absolute_tolerance,
+                relative_tolerance=relative_tolerance,
+                maximum_work=maximum_work,
+                maximum_subcells=maximum_subcells,
+                maximum_binomial_terms=maximum_binomial_terms,
+                budget=budget,
+            )
+
+
+@checked
+def prepare_surface_chart_finite_volume_contents(
+    source: ChartEndpoint,
+    target: ChartEndpoint,
+    prepared: PreparedSurfaceChartDeformation,
+    /,
+    *,
+    source_geometry: CellGeometrySpec,
+    target_geometry: CellGeometrySpec,
+    absolute_tolerance: float = 1e-12,
+    relative_tolerance: float = 1e-12,
+    maximum_work: int = 100_000_000,
+    maximum_subcells: int = 10000,
+    maximum_binomial_terms: int = 32,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> PreparedSurfaceChartFiniteVolumeContents:
+    "Prepare the request with one explicitly bounded host -work ticket."
+    if budget is not None:
+        return surface_chart_finite_volume_contents(
+            source,
+            target,
+            prepared,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            absolute_tolerance=absolute_tolerance,
+            relative_tolerance=relative_tolerance,
+            maximum_work=maximum_work,
+            maximum_subcells=maximum_subcells,
+            maximum_binomial_terms=maximum_binomial_terms,
+            budget=budget,
+        )
+    with HostBatchTicket(
+        maximum_work,
+        queries_upper=field_transfer_query_upper(
+            maximum_work, source_geometry, target_geometry
+        ),
+        bytes_upper=sys.maxsize,
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=maximum_work, maximum_memory_bytes=sys.maxsize
+        )
+        with budget.activate():
+            return surface_chart_finite_volume_contents(
+                source,
+                target,
+                prepared,
+                source_geometry=source_geometry,
+                target_geometry=target_geometry,
+                absolute_tolerance=absolute_tolerance,
+                relative_tolerance=relative_tolerance,
+                maximum_work=maximum_work,
+                maximum_subcells=maximum_subcells,
+                maximum_binomial_terms=maximum_binomial_terms,
+                budget=budget,
+            )

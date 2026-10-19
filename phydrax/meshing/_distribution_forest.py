@@ -1,30 +1,32 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Bounded stable-ID transport of the canonical raw simplex forest.
+"""Bounded stable-ID transport of the raw simplex forest.
 
 Slot references never cross a rank boundary. Families are assigned an execution
 owner independently of solver-cell ownership, because raw bisection/coarsening
-operates on complete families. The solver workset retains graph ownership.
+operates on all family records. The solver workset retains graph ownership.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jax.sharding import PartitionSpec
+from jax.sharding import Mesh, PartitionSpec
 
 from ..discretization._adaptive_simplex import (
-    _global_flags,
-    _vertex_half_facets,
     AdaptiveSimplexParts,
     AdaptiveSimplexState,
     AdaptiveSimplexStatus,
+    global_flags,
     masked_simplex_facet_neighbors,
+    MaskedSimplexMesh,
+    vertex_half_facets,
 )
 
 
@@ -35,30 +37,142 @@ if TYPE_CHECKING:
 _SENTINEL = jnp.iinfo(jnp.int64).max
 _INVALID = int(AdaptiveSimplexStatus.INVALID_GEOMETRY)
 _CAPACITY = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
-_CELL_FIELDS = (
-    "tags",
-    "blocks",
-    "generations",
-    "retired",
-    "cell_classes",
-    "facet_classes",
-    "refine_rejected",
-    "coarsen_marked",
-)
-_VERTEX_FIELDS = ("vertex_levels", "vertex_removal", "vertex_protected")
 
 
-def _ids(ids: Array, slots: Array) -> Array:
+def forest_cell_arrays(state: AdaptiveSimplexState, /) -> dict[str, Array]:
+    """Return aligned cell-history fields in declaration order."""
+    return {
+        "tags": state.tags,
+        "blocks": state.blocks,
+        "generations": state.generations,
+        "retired": state.retired,
+        "cell_classes": state.cell_classes,
+        "facet_classes": state.facet_classes,
+        "refine_rejected": state.refine_rejected,
+        "coarsen_marked": state.coarsen_marked,
+    }
+
+
+def forest_vertex_arrays(state: AdaptiveSimplexState, /) -> dict[str, Array]:
+    """Return aligned vertex-history fields in declaration order."""
+    return {
+        "vertex_levels": state.vertex_levels,
+        "vertex_removal": state.vertex_removal,
+        "vertex_protected": state.vertex_protected,
+    }
+
+
+def restore_forest_records(
+    state: AdaptiveSimplexState,
+    cells: Mapping[str, Array],
+    vertices: Mapping[str, Array],
+    /,
+    *,
+    mesh: MaskedSimplexMesh,
+    tuples: Array,
+    parents: Array,
+    children: Array,
+    bisection_vertices: Array,
+    vertex_parents: Array,
+    protected_codes: Array,
+    vertex_half_facets: Array,
+    cursors: Array,
+) -> AdaptiveSimplexState:
+    """Replace transported records without changing retained clocks or counters."""
+    return eqx.tree_at(
+        lambda value: (
+            value.tags,
+            value.blocks,
+            value.generations,
+            value.retired,
+            value.cell_classes,
+            value.facet_classes,
+            value.refine_rejected,
+            value.coarsen_marked,
+            value.vertex_levels,
+            value.vertex_removal,
+            value.vertex_protected,
+            value.mesh,
+            value.tuples,
+            value.parents,
+            value.children,
+            value.bisection_vertices,
+            value.vertex_parents,
+            value.protected_codes,
+            value.vertex_half_facets,
+            value.cursors,
+        ),
+        state,
+        (
+            cells["tags"],
+            cells["blocks"],
+            cells["generations"],
+            cells["retired"],
+            cells["cell_classes"],
+            cells["facet_classes"],
+            cells["refine_rejected"],
+            cells["coarsen_marked"],
+            vertices["vertex_levels"],
+            vertices["vertex_removal"],
+            vertices["vertex_protected"],
+            mesh,
+            tuples,
+            parents,
+            children,
+            bisection_vertices,
+            vertex_parents,
+            protected_codes,
+            vertex_half_facets,
+            cursors,
+        ),
+    )
+
+
+def simplex_forest_arrays(state: AdaptiveSimplexState, /) -> dict[str, Array]:
+    """Return the numerical raw-forest inventory with stable archive keys."""
+    return {
+        "mesh/coordinates": state.mesh.coordinates,
+        "mesh/vertex_ids": state.mesh.vertex_ids,
+        "mesh/vertex_active": state.mesh.vertex_active,
+        "mesh/cells": state.mesh.cells,
+        "mesh/cell_ids": state.mesh.cell_ids,
+        "mesh/cell_active": state.mesh.cell_active,
+        "mesh/facet_neighbors": state.mesh.facet_neighbors,
+        "state/vertex_half_facets": state.vertex_half_facets,
+        "state/tuples": state.tuples,
+        "state/tags": state.tags,
+        "state/blocks": state.blocks,
+        "state/generations": state.generations,
+        "state/parents": state.parents,
+        "state/children": state.children,
+        "state/bisection_vertices": state.bisection_vertices,
+        "state/retired": state.retired,
+        "state/cell_classes": state.cell_classes,
+        "state/facet_classes": state.facet_classes,
+        "state/vertex_parents": state.vertex_parents,
+        "state/vertex_levels": state.vertex_levels,
+        "state/vertex_removal": state.vertex_removal,
+        "state/vertex_protected": state.vertex_protected,
+        "state/protected_codes": state.protected_codes,
+        "state/refine_rejected": state.refine_rejected,
+        "state/coarsen_marked": state.coarsen_marked,
+        "state/cursors": state.cursors,
+        "state/clocks": state.clocks,
+        "state/counters": state.counters,
+    }
+
+
+def ids(ids: Array, slots: Array) -> Array:
     return jnp.where(slots >= 0, ids[jnp.maximum(slots, 0)], -1)
 
 
-def _slots(ids: Array, references: Array) -> Array:
+def slots(ids: Array, references: Array) -> Array:
     keys = jnp.where(ids >= 0, ids, _SENTINEL)
     position = jnp.minimum(jnp.searchsorted(keys, references), ids.shape[0] - 1)
     return jnp.where(references >= 0, position, -1).astype(jnp.int32)
 
 
-def _members(sorted_ids: Array, references: Array) -> Array:
+def members(sorted_ids: Array, references: Array) -> Array:
     position = jnp.minimum(
         jnp.searchsorted(sorted_ids, references), sorted_ids.shape[0] - 1
     )
@@ -69,30 +183,60 @@ def _members(sorted_ids: Array, references: Array) -> Array:
     )
 
 
-def _vertex_record_owners(parts: AdaptiveSimplexParts, vertex_ids: Array) -> Array:
-    """Local shard kernel assigning one authority to each allocated raw vertex."""
-    axis = parts.axis_name
-    ring = tuple(
-        (rank, (rank + 1) % parts.part_count) for rank in range(parts.part_count)
+def forest_vertex_record_owners(parts: AdaptiveSimplexParts, vertex_ids: Array) -> Array:
+    """Elect record owners for a global part-sharded raw vertex inventory."""
+    return _forest_vertex_record_owner_values(
+        vertex_ids, parts.mesh, parts.axis_name, parts.part_count
     )
+
+
+@eqx.filter_jit
+def _forest_vertex_record_owner_values(
+    vertex_ids: Array, mesh: Mesh, axis_name: str, part_count: int
+) -> Array:
+    """Compile owner election together with its global-to-local placement."""
+
+    def local(block: Array) -> Array:
+        return _vertex_record_owner_values(block[0], axis_name, part_count)[None]
+
+    return jax.shard_map(
+        local,
+        mesh=mesh,
+        in_specs=PartitionSpec(axis_name),
+        out_specs=PartitionSpec(axis_name),
+    )(vertex_ids)
+
+
+def vertex_record_owners(parts: AdaptiveSimplexParts, vertex_ids: Array) -> Array:
+    """Assign one record owner to each allocated raw vertex in a local shard."""
+    return _vertex_record_owner_values(vertex_ids, parts.axis_name, parts.part_count)
+
+
+@eqx.filter_jit
+def _vertex_record_owner_values(
+    vertex_ids: Array, axis_name: str, part_count: int
+) -> Array:
+    """Elect minimum ranks inside the caller's bound collective axis."""
+    axis = axis_name
+    ring = tuple((rank, (rank + 1) % part_count) for rank in range(part_count))
     rank = jax.lax.axis_index(axis)
-    owners = jnp.full(vertex_ids.shape, parts.part_count, jnp.int32)
+    owners = jnp.full(vertex_ids.shape, part_count, jnp.int32)
+    # Owner updates vary by shard; scan carry types must agree from iteration zero.
+    owners = jax.lax.pcast(owners, axis, to="varying")
 
     def visit(_: int, carry: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
         ids, source_rank, owners = carry
         keys = jnp.where(ids >= 0, ids, _SENTINEL)
         position = jnp.minimum(jnp.searchsorted(keys, vertex_ids), ids.shape[0] - 1)
         match = (vertex_ids >= 0) & (ids[position] == vertex_ids)
-        owners = jnp.minimum(owners, jnp.where(match, source_rank, parts.part_count))
+        owners = jnp.minimum(owners, jnp.where(match, source_rank, part_count))
         return (
             jax.lax.ppermute(ids, axis, ring),
             jax.lax.ppermute(source_rank, axis, ring),
             owners,
         )
 
-    _, _, owners = jax.lax.fori_loop(
-        0, parts.part_count, visit, (vertex_ids, rank, owners)
-    )
+    _, _, owners = jax.lax.fori_loop(0, part_count, visit, (vertex_ids, rank, owners))
     return jnp.where(vertex_ids >= 0, owners, -1)
 
 
@@ -117,7 +261,7 @@ def _family_roots(parents: Array) -> tuple[Array, Array]:
     return roots, valid
 
 
-def _validated_forest_roots(state: AdaptiveSimplexState) -> tuple[Array, Array]:
+def validated_forest_roots(state: AdaptiveSimplexState) -> tuple[Array, Array]:
     """Validate allocated scientific parent/child links, ignoring unused padding."""
     ids, parents, children = state.mesh.cell_ids, state.parents, state.children
     allocated = ids >= 0
@@ -154,7 +298,7 @@ def _source_owner_support(
     owners: Array,
     children: Array,
 ) -> tuple[Array, Array]:
-    """Resolve complete source-epoch leaf coverage and its canonical minimum."""
+    """Resolve source-epoch leaf coverage and its minimum owner."""
     capacity = ids.shape[0]
     keys = jnp.where(ids >= 0, ids, _SENTINEL)
     positions = jnp.minimum(jnp.searchsorted(keys, children), capacity - 1)
@@ -235,15 +379,15 @@ def _inherit_solver_owners_local(
 ) -> tuple[Array, Array]:
     """One numerical part operation shared by physical and archived-logical execution."""
     ring = tuple((rank, (rank + 1) % part_count) for rank in range(part_count))
-    ids = current.mesh.cell_ids
-    allocated = ids >= 0
+    local_ids = current.mesh.cell_ids
+    allocated = local_ids >= 0
     source_allocated = source.mesh.cell_ids >= 0
-    capacity = ids.shape[0]
-    initial_parent_ids = _ids(
+    capacity = local_ids.shape[0]
+    initial_parent_ids = ids(
         source.mesh.cell_ids, jnp.clip(source.parents // 2, -1, capacity - 1)
     )
-    current_parent_ids = _ids(ids, jnp.clip(current.parents // 2, -1, capacity - 1))
-    initial_children_ids = _ids(
+    current_parent_ids = ids(local_ids, jnp.clip(current.parents // 2, -1, capacity - 1))
+    initial_children_ids = ids(
         source.mesh.cell_ids, jnp.clip(source.children, -1, capacity - 1)
     )
     packet = (
@@ -254,11 +398,11 @@ def _inherit_solver_owners_local(
         initial_children_ids,
     )
     source_active = jnp.zeros_like(allocated)
-    owners = jnp.full(ids.shape, -1, jnp.int32)
+    owners = jnp.full(local_ids.shape, -1, jnp.int32)
     children = jnp.full((capacity, 2), -1, jnp.int64)
-    coverage = jnp.zeros(ids.shape, jnp.int32)
-    _, current_valid = _validated_forest_roots(current)
-    _, source_valid = _validated_forest_roots(source)
+    coverage = jnp.zeros(local_ids.shape, jnp.int32)
+    _, current_valid = validated_forest_roots(current)
+    _, source_valid = validated_forest_roots(source)
     valid = current_valid & source_valid
     valid &= ~jnp.any(
         source.mesh.cell_active & ((source_owners < 0) | (source_owners >= part_count))
@@ -281,8 +425,8 @@ def _inherit_solver_owners_local(
             incoming_children,
         ) = incoming
         keys = jnp.where(incoming_ids >= 0, incoming_ids, _SENTINEL)
-        position = jnp.minimum(jnp.searchsorted(keys, ids), capacity - 1)
-        match = allocated & (incoming_ids[position] == ids)
+        position = jnp.minimum(jnp.searchsorted(keys, local_ids), capacity - 1)
+        match = allocated & (incoming_ids[position] == local_ids)
         valid &= ~jnp.any(match & (incoming_parents[position] != current_parent_ids))
         active |= match & incoming_active[position]
         owners = jnp.where(match, incoming_owners[position], owners)
@@ -303,11 +447,11 @@ def _inherit_solver_owners_local(
     after = jax.lax.psum(jnp.sum(coverage == 1, dtype=jnp.int32), axis)
     valid &= (before == after) & ~jnp.any(coverage > 1)
     support, complete = _source_owner_support(
-        ids, coverage == 1, source_active, owners, children
+        local_ids, coverage == 1, source_active, owners, children
     )
     inherited, converged = _inherit_tree_owners(current.parents, support, allocated)
     valid &= complete & converged & ~jnp.any(current.mesh.cell_active & (inherited < 0))
-    status = _global_flags(
+    status = global_flags(
         current.status_flags | source.status_flags | jnp.where(valid, 0, _INVALID), axis
     )
     return jnp.where(current.mesh.cell_active, inherited, -1), status
@@ -321,10 +465,10 @@ def inherit_solver_cell_owners(
     initial_solver_cell_owners: Array,
     /,
 ) -> tuple[Array, Array]:
-    """Preserve graph ownership through actual refinement/coarsening history.
+    """Preserve graph ownership through refinement/coarsening history.
 
     Initial active cells retain ownership precedence. Restored source parents
-    consume complete source-child support and take its minimum owner. New
+    consume all source-child support and take its minimum owner. New
     descendants inherit the nearest covered source ownership, including a parent
     coarsened and refined again before publication. No graph is repartitioned.
     """
@@ -337,7 +481,7 @@ def inherit_solver_cell_owners(
         or initial_solver_cell_owners.dtype != jnp.int32
     ):
         raise ValueError(
-            "Solver ownership inheritance requires matched part-sharded raw cell capacities."
+            "forest.solver_ownership must bind matching part-sharded raw capacities and int32 owners; got incompatible source, current, or owner arrays"
         )
     axis = parts.axis_name
     spec = PartitionSpec(axis)
@@ -374,7 +518,7 @@ def replay_logical_solver_cell_owners(
     neighbor_pairs: tuple[tuple[int, int], ...],
     axis_name: str,
 ) -> tuple[Array, Array]:
-    """Revalidate archived logical ownership on the actual current devices.
+    """Revalidate archived logical ownership on the current devices.
 
     The saved leading part axis is a named numerical batch, not a fabricated
     device mesh. This invokes the identical part operation used by shard_map.
@@ -391,7 +535,7 @@ def replay_logical_solver_cell_owners(
         or not axis_name
     ):
         raise ValueError(
-            "Logical solver ownership replay requires matched saved part arrays and an explicit axis."
+            "forest.solver_replay must bind matching saved part arrays, int32 ownership, and a nonempty axis; got incompatible replay inventory"
         )
     count = shape[0]
     if (
@@ -408,7 +552,9 @@ def replay_logical_solver_cell_owners(
             (target, source) not in neighbor_pairs for source, target in neighbor_pairs
         )
     ):
-        raise ValueError("Saved logical routes must be valid, unique and reciprocal.")
+        raise ValueError(
+            "forest.neighbor_pairs must be unique reciprocal in-range routes between different owners; got duplicate, one-way, self, or out-of-range route"
+        )
 
     def local(
         current: AdaptiveSimplexState, source: AdaptiveSimplexState, owners: Array
@@ -444,7 +590,7 @@ def _merge(
         for name in current
     }
     merged["ids"] = jnp.where(jnp.arange(capacity) < count, ordered[pick], _SENTINEL)
-    # Authoritative packets must agree on every replica, including history.
+    # Record-owner packets must agree on every replica, including history.
     duplicate = (ordered[1:] == ordered[:-1]) & (ordered[1:] != _SENTINEL)
     conflict = jnp.asarray(False)
     for name in current:
@@ -508,7 +654,7 @@ def migrate_simplex_forest(
         rank = jax.lax.axis_index(axis)
         mesh = state.mesh
         c, v = mesh.cell_ids.shape[0], mesh.vertex_ids.shape[0]
-        roots, root_valid = _validated_forest_roots(state)
+        roots, root_valid = validated_forest_roots(state)
         recipients = None
         if include_ghost_families:
             recipients = jnp.zeros((c, parts.part_count), jnp.bool_)
@@ -568,21 +714,21 @@ def migrate_simplex_forest(
             owner = (
                 jnp.full((c,), parts.part_count, jnp.int32).at[roots].min(owner)[roots]
             )
-            # Entirely inactive families remain authoritative on their former owner.
+            # Entirely inactive families retain their former record owner.
             owner = jnp.where(owner == parts.part_count, co[roots], owner)
         cells = {
             "ids": jnp.where(
                 (mesh.cell_ids >= 0) & (co == rank), mesh.cell_ids, _SENTINEL
             ),
             "owner": owner,
-            "cells": _ids(mesh.vertex_ids, mesh.cells),
-            "tuples": _ids(mesh.vertex_ids, state.tuples),
+            "cells": ids(mesh.vertex_ids, mesh.cells),
+            "tuples": ids(mesh.vertex_ids, state.tuples),
             "active": mesh.cell_active,
-            "parents": _ids(mesh.cell_ids, state.parents // 2),
+            "parents": ids(mesh.cell_ids, state.parents // 2),
             "ordinal": state.parents % 2,
-            "children": _ids(mesh.cell_ids, state.children),
-            "bisection": _ids(mesh.vertex_ids, state.bisection_vertices),
-            **{name: getattr(state, name) for name in _CELL_FIELDS},
+            "children": ids(mesh.cell_ids, state.children),
+            "bisection": ids(mesh.vertex_ids, state.bisection_vertices),
+            **forest_cell_arrays(state),
             **{f"payload_{i}": value for i, value in enumerate(ch)},
         }
         if recipients is not None:
@@ -639,7 +785,7 @@ def migrate_simplex_forest(
         )
         edge_ids = jnp.where(
             (state.protected_codes != _SENTINEL)[:, None],
-            _ids(mesh.vertex_ids, jnp.minimum(edge_slots, v - 1)),
+            ids(mesh.vertex_ids, jnp.minimum(edge_slots, v - 1)),
             -1,
         )
         referenced = jnp.zeros((v,), jnp.bool_)
@@ -656,7 +802,7 @@ def migrate_simplex_forest(
                     jnp.where(live, packet["bisection"], -1),
                 )
             )
-            seen |= _members(jnp.sort(refs), mesh.vertex_ids)
+            seen |= members(jnp.sort(refs), mesh.vertex_ids)
             return jax.tree_util.tree_map(
                 lambda value: jax.lax.ppermute(value, axis, ring), packet
             ), seen
@@ -673,8 +819,8 @@ def migrate_simplex_forest(
             ),
             "coordinates": mesh.coordinates,
             "active": mesh.vertex_active,
-            "parents": _ids(mesh.vertex_ids, state.vertex_parents),
-            **{name: getattr(state, name) for name in _VERTEX_FIELDS},
+            "parents": ids(mesh.vertex_ids, state.vertex_parents),
+            **forest_vertex_arrays(state),
             **{f"payload_{i}": value for i, value in enumerate(vh)},
         }
         vertex_empty = {**vertices, "ids": jnp.full_like(vertices["ids"], _SENTINEL)}
@@ -702,15 +848,15 @@ def migrate_simplex_forest(
                 def edge_visit(_: int, carry: tuple[Array, Array]) -> tuple[Array, Array]:
                     constraint_packet, selected = carry
                     touching = jnp.any(
-                        _members(sorted_refs, constraint_packet), axis=1
+                        members(sorted_refs, constraint_packet), axis=1
                     ) & jnp.all(constraint_packet >= 0, axis=1)
                     constraint_ids = jnp.sort(
                         jnp.where(touching[:, None], constraint_packet, -1).reshape(-1)
                     )
-                    selected |= _members(constraint_ids, packet["ids"])
+                    selected |= members(constraint_ids, packet["ids"])
                     return jax.lax.ppermute(constraint_packet, axis, ring), selected
 
-                selected = _members(sorted_refs, packet["ids"])
+                selected = members(sorted_refs, packet["ids"])
                 _, selected = jax.lax.fori_loop(
                     0, parts.part_count, edge_visit, (edges, selected)
                 )
@@ -753,12 +899,12 @@ def migrate_simplex_forest(
         vertex_ids = jnp.where(
             retained_vertices["ids"] != _SENTINEL, retained_vertices["ids"], -1
         )
-        rows = _slots(vertex_ids, resident["cells"])
-        tuples = _slots(vertex_ids, resident["tuples"])
-        parent_slots = _slots(cell_ids, resident["parents"])
-        child_slots = _slots(cell_ids, resident["children"])
-        bisect_slots = _slots(vertex_ids, resident["bisection"])
-        vertex_parents = _slots(vertex_ids, retained_vertices["parents"])
+        rows = slots(vertex_ids, resident["cells"])
+        tuples = slots(vertex_ids, resident["tuples"])
+        parent_slots = slots(cell_ids, resident["parents"])
+        child_slots = slots(cell_ids, resident["children"])
+        bisect_slots = slots(vertex_ids, resident["bisection"])
+        vertex_parents = slots(vertex_ids, retained_vertices["parents"])
 
         # Padding references are immaterial and must not veto an empty part.
         def missing(references: Array, ids: Array, mask: Array) -> Array:
@@ -784,14 +930,14 @@ def migrate_simplex_forest(
             _: int, carry: tuple[Array, Array, Array]
         ) -> tuple[Array, Array, Array]:
             edges, codes, status = carry
-            slots = _slots(vertex_ids, edges)
+            local_slots = slots(vertex_ids, edges)
             keys = jnp.where(vertex_ids >= 0, vertex_ids, _SENTINEL)
             positions = jnp.minimum(jnp.searchsorted(keys, edges), v - 1)
             present = jnp.all((edges >= 0) & (vertex_ids[positions] == edges), axis=1)
             incoming = jnp.where(
                 present,
-                jnp.minimum(slots[:, 0], slots[:, 1]).astype(jnp.int64) * v
-                + jnp.maximum(slots[:, 0], slots[:, 1]),
+                jnp.minimum(local_slots[:, 0], local_slots[:, 1]).astype(jnp.int64) * v
+                + jnp.maximum(local_slots[:, 0], local_slots[:, 1]),
                 _SENTINEL,
             )
             sorted_codes = jnp.sort(jnp.concatenate((codes, incoming)))
@@ -814,7 +960,7 @@ def migrate_simplex_forest(
         _, protected, status = jax.lax.fori_loop(
             0, parts.part_count, constraints, (edge_ids, protected, status)
         )
-        new_vertex_owner = _vertex_record_owners(parts, vertex_ids)
+        new_vertex_owner = vertex_record_owners(parts, vertex_ids)
         before_vertices = jnp.sum((mesh.vertex_ids >= 0) & (vo == rank), dtype=jnp.int32)
         after_vertices = jnp.sum(
             (vertex_ids >= 0) & (new_vertex_owner == rank), dtype=jnp.int32
@@ -856,9 +1002,10 @@ def migrate_simplex_forest(
                 neighbors,
             ),
         )
-        changes = {name: resident[name] for name in _CELL_FIELDS}
-        changes.update({name: retained_vertices[name] for name in _VERTEX_FIELDS})
-        changes.update(
+        result = restore_forest_records(
+            state,
+            resident,
+            retained_vertices,
             mesh=new_mesh,
             tuples=jnp.maximum(tuples, 0),
             parents=jnp.where(
@@ -868,7 +1015,7 @@ def migrate_simplex_forest(
             bisection_vertices=bisect_slots,
             vertex_parents=vertex_parents,
             protected_codes=protected,
-            vertex_half_facets=_vertex_half_facets(rows, active, neighbors, v),
+            vertex_half_facets=vertex_half_facets(rows, active, neighbors, v),
             cursors=jnp.stack(
                 (
                     jnp.sum(vertex_ids >= 0, dtype=jnp.int64),
@@ -877,12 +1024,6 @@ def migrate_simplex_forest(
                     jax.lax.pmax(state.cursors[3], axis),
                 )
             ),
-        )
-        names = tuple(changes)
-        result = eqx.tree_at(
-            lambda value: tuple(getattr(value, name) for name in names),
-            state,
-            tuple(changes.values()),
         )
         return jax.tree_util.tree_map(
             lambda value: value[None],

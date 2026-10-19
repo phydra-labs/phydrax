@@ -1,39 +1,34 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Actual finite-volume remap acceptance and ended-execution evidence."""
+"""Finite-volume remap acceptance and ended-execution evidence."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Self
 
 import equinox as eqx
 import numpy as np
 from jax import Array
 
+from phydrax.discretization._sphere_chart_records import PreparedSphereChartDeformation
+from phydrax.discretization._surface_chart_records import PreparedSurfaceChartDeformation
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from .._sphere_chart_deformation import PreparedSphereChartDeformation
-from .._surface_chart_deformation import PreparedSurfaceChartDeformation
+from ...geometry import _supermesh as supermesh_owner
+from ...meshing._measurements import NativeExecutionRecord
+from ...typing import checked, parse
+from ..fem._surface_chart_transfer import PreparedSurfaceChartFiniteVolumeContents
 from ._unstructured_remap import (
     UnstructuredConservativeRemapPlan,
     UnstructuredRemapReport,
 )
 
 
-if TYPE_CHECKING:
-    from ...geometry._supermesh import (
-        CommonRefinementEvidence,
-        CommonRefinementStatus,
-        PreparedCommonRefinement,
-    )
-    from ...meshing._measurements import NativeExecutionRecord
-    from ..fem._surface_chart_transfer import PreparedSurfaceChartFiniteVolumeContents
-
-
 class MappedNestedRemapEvidence(StrictModule, NonTrainableState):
-    """Exact reference tiling plus certified physical overlap measure evidence."""
+    """Retain reference tiling and certified physical overlap measures."""
 
     source_topology_id: str = eqx.field(static=True)
     target_topology_id: str = eqx.field(static=True)
@@ -47,7 +42,7 @@ class MappedNestedRemapEvidence(StrictModule, NonTrainableState):
 
     @property
     def passed(self) -> bool:
-        """Admission result of the certified tiling/map and physical ledger."""
+        """Return whether the tiling, map, and physical ledger are admitted."""
         return (
             bool(np.asarray(self.report.coverage_complete))
             and np.isfinite(self.geometry_error_bound)
@@ -56,7 +51,7 @@ class MappedNestedRemapEvidence(StrictModule, NonTrainableState):
 
 
 class MappedSurfaceChartRemapEvidence(StrictModule, NonTrainableState):
-    """Actual old physical contents and new physical areas on certified material cells."""
+    """Old physical contents and new physical areas on certified material cells."""
 
     deformation: PreparedSurfaceChartDeformation | PreparedSphereChartDeformation
     physical_contents: PreparedSurfaceChartFiniteVolumeContents
@@ -75,7 +70,7 @@ class MappedSurfaceChartRemapEvidence(StrictModule, NonTrainableState):
 
 
 class RemapPreparationFailure(StrictModule, NonTrainableState):
-    """An actual refused preparation; no overlap or successful plan is invented."""
+    """Retain refused preparation and its ended native execution."""
 
     source_discretization_id: str = eqx.field(static=True)
     target_discretization_id: str = eqx.field(static=True)
@@ -89,127 +84,103 @@ class RemapPreparationFailure(StrictModule, NonTrainableState):
         return False
 
 
-class PreparedUnstructuredConservativeRemap(StrictModule, NonTrainableState):
-    """Prepared overlap ledger with its actual geometric construction evidence.
+type UnstructuredRemapRoute = (
+    supermesh_owner.PreparedCommonRefinement
+    | MappedNestedRemapEvidence
+    | MappedSurfaceChartRemapEvidence
+    | RemapPreparationFailure
+)
 
-    ``plan`` is present exactly when ``status`` is ``SUCCESS``. ``refinement``
-    exists only for geometrically intersected corner cells. ``nested_evidence``
-    carries exact reference tiling; ``surface_chart_evidence`` retains actual
-    native chart deformation and its certified old physical contents. Neither
-    route fabricates geometrically intersected common-refinement cells.
+
+class PreparedUnstructuredConservativeRemap(StrictModule, NonTrainableState):
+    """Retain one geometric route and its conservative overlap plan.
+
+    A plan is present exactly for ``SUCCESS``. The route retains common
+    refinement, nested tiling, chart contents, or preparation-refusal evidence.
     """
 
-    refinement: PreparedCommonRefinement | None
-    nested_evidence: MappedNestedRemapEvidence | None
-    surface_chart_evidence: MappedSurfaceChartRemapEvidence | None
-    preparation_failure: RemapPreparationFailure | None
+    route: UnstructuredRemapRoute
     execution_evidence: NativeExecutionRecord | None
-    route: str = eqx.field(static=True)
     plan: UnstructuredConservativeRemapPlan | None
-    status: CommonRefinementStatus = eqx.field(static=True)
+    status: supermesh_owner.CommonRefinementStatus = eqx.field(static=True)
     reason: str = eqx.field(static=True)
     remap_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        refinement: PreparedCommonRefinement | None,
+        route: UnstructuredRemapRoute,
         plan: UnstructuredConservativeRemapPlan | None,
         /,
         *,
-        status: CommonRefinementStatus,
+        status: supermesh_owner.CommonRefinementStatus,
         reason: str,
-        nested_evidence: MappedNestedRemapEvidence | None = None,
-        surface_chart_evidence: MappedSurfaceChartRemapEvidence | None = None,
-        preparation_failure: RemapPreparationFailure | None = None,
         execution_evidence: NativeExecutionRecord | None = None,
     ) -> None:
-        from ...geometry._supermesh import (
-            CommonRefinementStatus,
-            PreparedCommonRefinement,
-        )
-
-        if refinement is not None and not isinstance(
-            refinement, PreparedCommonRefinement
-        ):
-            raise TypeError("refinement must be a PreparedCommonRefinement or None.")
-        if (
-            sum(
-                item is not None
-                for item in (
-                    refinement,
-                    nested_evidence,
-                    surface_chart_evidence,
-                    preparation_failure,
-                )
-            )
-            != 1
-        ):
-            raise ValueError(
-                "Exactly one actual refinement, nested proof, chart evidence, or preparation refusal is required."
-            )
-        if plan is not None and not isinstance(plan, UnstructuredConservativeRemapPlan):
-            raise TypeError("plan must be an UnstructuredConservativeRemapPlan or None.")
-        if not isinstance(status, CommonRefinementStatus):
-            raise TypeError("status must be a CommonRefinementStatus.")
+        status = parse(status, supermesh_owner.CommonRefinementStatus, "remap.status")
         if not isinstance(reason, str) or not reason:
-            raise ValueError("reason must be a non-empty string.")
-        succeeded = status is CommonRefinementStatus.SUCCESS
+            raise ValueError(f"remap.reason must be a non-empty string; got {reason!r}.")
+        succeeded = status is supermesh_owner.CommonRefinementStatus.SUCCESS
         if succeeded != (plan is not None):
-            raise ValueError("A remap plan is present exactly for a successful status.")
-        if succeeded and refinement is not None and not refinement.succeeded:
-            raise ValueError("A successful remap requires a successful refinement.")
-        if (
-            succeeded
-            and surface_chart_evidence is not None
-            and not surface_chart_evidence.passed
-        ):
             raise ValueError(
-                "A successful remap requires its actual complete material content certificate."
+                f"remap.plan must be present exactly for SUCCESS; got {status.name}."
             )
-        if succeeded and nested_evidence is not None and not nested_evidence.passed:
-            raise ValueError(
-                "A successful nested remap requires its actual complete tiling and measure certificate."
-            )
-        if preparation_failure is not None and (succeeded or plan is not None):
-            raise ValueError(
-                "A refused preparation cannot publish a successful remap plan."
-            )
+        refinement_id = None
+        nested_id = None
+        chart_id = None
+        failure_id = None
+        match route:
+            case supermesh_owner.PreparedCommonRefinement():
+                if succeeded and not route.succeeded:
+                    raise ValueError(
+                        "remap.route must contain successful refinement for SUCCESS; "
+                        f"got {route.status.name}."
+                    )
+                refinement_id = route.refinement_id
+            case MappedNestedRemapEvidence():
+                if succeeded and not route.passed:
+                    raise ValueError(
+                        "remap.route must certify nested tiling and measures for SUCCESS; "
+                        "got failed evidence."
+                    )
+                nested_id = route.reference_witness_id
+            case MappedSurfaceChartRemapEvidence():
+                if succeeded and not route.passed:
+                    raise ValueError(
+                        "remap.route must certify material contents for SUCCESS; "
+                        "got failed evidence."
+                    )
+                chart_id = array_tree_fingerprint(route)
+            case RemapPreparationFailure():
+                if succeeded:
+                    raise ValueError(
+                        "remap.status must refuse a failed preparation; got SUCCESS."
+                    )
+                failure_id = array_tree_fingerprint(route)
+            case _:
+                raise TypeError(
+                    "remap.route must contain refinement, tiling, chart contents, "
+                    f"or preparation refusal; got {type(route).__name__}."
+                )
         if execution_evidence is not None:
             execution_evidence.require_valid()
             if succeeded and int(np.asarray(execution_evidence.status)) != 0:
                 raise ValueError(
-                    "A successful remap cannot carry a failed native execution."
+                    "remap.execution_evidence must report native success for SUCCESS; "
+                    f"got {np.asarray(execution_evidence.status)}."
                 )
-        self.refinement = refinement
-        self.nested_evidence = nested_evidence
-        self.surface_chart_evidence = surface_chart_evidence
-        self.preparation_failure = preparation_failure
+        self.route = route
         self.execution_evidence = execution_evidence
-        self.route = (
-            "resource-limit"
-            if preparation_failure is not None
-            else "mapped-surface-chart"
-            if surface_chart_evidence is not None
-            else "mapped-nested"
-            if nested_evidence is not None
-            else "common-refinement"
-        )
         self.plan = plan
         self.status = status
         self.reason = reason
         self.remap_id = canonical_fingerprint(
             {
                 "kind": "prepared-unstructured-conservative-remap",
-                "refinement": None if refinement is None else refinement.refinement_id,
-                "nested_witness": None
-                if nested_evidence is None
-                else nested_evidence.reference_witness_id,
-                "surface_chart": None
-                if surface_chart_evidence is None
-                else array_tree_fingerprint(surface_chart_evidence),
-                "preparation_failure": None
-                if preparation_failure is None
-                else array_tree_fingerprint(preparation_failure),
+                "refinement": refinement_id,
+                "nested_witness": nested_id,
+                "surface_chart": chart_id,
+                "preparation_failure": failure_id,
                 "execution": None
                 if execution_evidence is None
                 else array_tree_fingerprint(execution_evidence),
@@ -219,6 +190,24 @@ class PreparedUnstructuredConservativeRemap(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(cls, value: PreparedUnstructuredConservativeRemap, /) -> Self:
+        """Rebuild a stored remap and validate its preparation identity."""
+        rebuilt = cls(
+            value.route,
+            value.plan,
+            status=value.status,
+            reason=value.reason,
+            execution_evidence=value.execution_evidence,
+        )
+        if rebuilt.remap_id != value.remap_id or rebuilt.succeeded != value.succeeded:
+            raise ValueError(
+                "remap.remap_id must preserve restored preparation and acceptance; "
+                f"got {rebuilt.remap_id!r}, expected {value.remap_id!r}."
+            )
+        return rebuilt
+
     @property
     def succeeded(self) -> bool:
         return self.plan is not None
@@ -227,20 +216,25 @@ class PreparedUnstructuredConservativeRemap(StrictModule, NonTrainableState):
     def evidence(
         self,
     ) -> (
-        CommonRefinementEvidence
+        supermesh_owner.CommonRefinementEvidence
         | MappedNestedRemapEvidence
         | MappedSurfaceChartRemapEvidence
         | RemapPreparationFailure
     ):
-        if self.preparation_failure is not None:
-            return self.preparation_failure
-        if self.surface_chart_evidence is not None:
-            return self.surface_chart_evidence
-        if self.nested_evidence is not None:
-            return self.nested_evidence
-        if self.refinement is not None:
-            return self.refinement.evidence
-        raise ValueError("Prepared remap has no actual route evidence.")
+        match self.route:
+            case supermesh_owner.PreparedCommonRefinement() as route:
+                return route.evidence
+            case (
+                MappedNestedRemapEvidence()
+                | MappedSurfaceChartRemapEvidence()
+                | RemapPreparationFailure()
+            ) as route:
+                return route
+            case _:
+                raise TypeError(
+                    "remap.route must contain supported geometric evidence; "
+                    f"got {type(self.route).__name__}."
+                )
 
 
 __all__ = [
@@ -248,4 +242,5 @@ __all__ = [
     "MappedSurfaceChartRemapEvidence",
     "PreparedUnstructuredConservativeRemap",
     "RemapPreparationFailure",
+    "UnstructuredRemapRoute",
 ]

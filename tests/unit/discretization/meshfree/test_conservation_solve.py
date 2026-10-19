@@ -177,7 +177,7 @@ def test_model_bound_convex_potential_parameter_has_implicit_gradient_and_fixed_
         problem.runtime()
     with pytest.raises(ValueError, match="not bound by the plan"):
         problem.runtime(parameters={"edge-law": initial, "source": problem.source})
-    with pytest.raises(ValueError, match="same physical input"):
+    with pytest.raises(ValueError, match="meshfree.conservation.law_binding"):
         problem.runtime(parameters={"edge-law": initial}, law=original.law)
     subspace = ParameterSubspace.from_leaf_paths(
         problem, (".law.potential.state_layers[0].weight",)
@@ -208,7 +208,7 @@ def test_model_bound_convex_potential_parameter_has_implicit_gradient_and_fixed_
     changed = phx.bind_component(
         changed_traits, phx.ComponentAuthority.MODEL, owner_ports=ports
     )
-    with pytest.raises(ValueError, match="metadata changed"):
+    with pytest.raises(ValueError, match="meshfree.conservation.law_traits"):
         prepared.solve(parameters={"edge-law": changed})
 
 

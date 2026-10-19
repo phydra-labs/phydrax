@@ -93,6 +93,7 @@ from phydrax.solver.coupling import (
     solve_coupled_problem,
 )
 from phydrax.sparse import SparseCoordinateOperator
+from phydrax.units import METER
 
 
 type Parameters = tuple[float, float, float]
@@ -383,7 +384,7 @@ def prepare_setup(
     support = (
         Rectangle((0.5, 0.5), (1.0, 1.0))
         - Rectangle((0.5, 0.5), (1.0 - 2.0 * core, 1.0 - 2.0 * core))
-    ).compile()
+    ).compile(coordinate_unit=METER)
     reconstruction = prepare_point_cloud_field_reconstruction(
         cloud, support_geometry=support, radius=3.0 * spacing, capacity=40
     )

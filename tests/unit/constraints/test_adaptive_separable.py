@@ -20,13 +20,14 @@ from phydrax.sampling.collocation import (
     SeparableCollocationPopulation,
 )
 from phydrax.solver import FunctionalSolver
+from phydrax.units import METER
 
 
 def _square_constraint(
     policy: Any, *, counts: Any = (12, 10), trainable: Any = False
 ) -> Any:
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @domain.Function("x")
@@ -58,7 +59,9 @@ def _axis(population: Any, index: Any) -> Any:
 
 def test_adaptive_separable_scenario_1() -> None:
     policy = PeriodicSeparableCollocation(refresh_every=2)
-    domain = phx.domain.GeometryDomain(phx.geometry.Circle((0.0, 0.0), 1.0).compile())
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
+    )
     component = domain.component()
     condition = phx.conditions.Residual("u", component, lambda _u: domain.Function()(1.0))
     source = phx.integration.adaptive(

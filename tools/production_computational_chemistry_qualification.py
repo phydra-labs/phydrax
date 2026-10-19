@@ -59,8 +59,8 @@ def qualification() -> Any:
     )
     basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
         [11, 17],
-        [_EXPONENTS, _EXPONENTS],
-        [_COEFFICIENTS, _COEFFICIENTS],
+        np.asarray([_EXPONENTS, _EXPONENTS], dtype=np.float64),
+        np.asarray([_COEFFICIENTS, _COEFFICIENTS], dtype=np.float64),
         source_id="sto-3g-hydrogen-qualification",
     ).prepare(h2_system)
     rhf = phx.chemistry.NativeRHFPlan(
@@ -209,7 +209,7 @@ def qualification() -> Any:
     )
     periodic_family = (
         phx.operators.periodic.periodic_translation_family_from_dense_blocks(
-            [[0, 0, 0]],
+            np.asarray([[0, 0, 0]], dtype=np.int64),
             np.asarray([-1.0]).reshape((1, 1, 1, 1, 1)),
         )
     )

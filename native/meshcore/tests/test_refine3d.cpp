@@ -7,12 +7,13 @@
 // input validation.
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <map>
 #include <utility>
 #include <vector>
 
 #include "check.hpp"
+#include "facet_coverage.hpp"
+#include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "tet_mesh.hpp"
 #include "tet_mesh_fixtures.hpp"
@@ -21,6 +22,25 @@ namespace {
 
 using phx::mc::test::Domain;
 using phx::mc::test::Exported;
+
+// Historical empirical allowances of the independent unit-box fixture oracles
+// in tet_mesh_fixtures.hpp::{cell_quality,region_volume,source_area}. These do
+// not change native encroachment, size or radius-edge admission thresholds.
+constexpr double kRadiusEdgeOracleTolerance = 1e-9;
+constexpr double kUnitBoxMeasureTolerance = 1e-12;
+constexpr double kCircumradiusOracleTolerance = 1e-12;
+// Historical relative allowance for the expansion-volume comparison against
+// reconstruction_sliver_domain's authored determinant/6 value.
+constexpr double kExactVolumeRatioTolerance = 1e-14;
+// Historical absolute allowance for the analytic 1/2-volume row-carrier case.
+constexpr double kRowCarrierVolumeTolerance = 1e-14;
+// Historical relative allowance on the independent two-face sliver-volume
+// bound in test_tilted_decimal_bounded_segment_split_is_ancestry_backed.
+constexpr double kSliverVolumeRelativeTolerance = 1e-12;
+// Declared physical source-row policies for decimal and dyadic fixtures,
+// respectively. These are inputs whose refusal/fidelity assertions stay strict.
+constexpr double kDecimalSourceBound = 1e-12;
+constexpr double kDyadicSourceBound = 1e-14;
 
 struct Run {
   int32_t status = -1;
@@ -48,7 +68,7 @@ double worst_ratio(const Exported& mesh) {
 std::vector<int32_t> unmet_reasons(const phx_mc_tet_mesh* mesh) {
   int64_t counts[PHX_MC_TET_MESH_COUNTS];
   phx_mc_tet_mesh_counts(mesh, counts);
-  const auto n = static_cast<std::size_t>(counts[4]);
+  const auto n = static_cast<std::size_t>(counts[PHX_MC_TET_MESH_COUNT_UNMET_RECORDS]);
   std::vector<int32_t> tets(4 * n);
   std::vector<int32_t> codes(2 * n);
   std::vector<double> values(n);
@@ -68,19 +88,16 @@ void test_cube_point_set_reaches_radius_edge_bound() {
   PHX_CHECK(worst_ratio(before) > 2.0);
   const Run run = refine(mesh, 2.0);
   PHX_CHECK(run.status == PHX_MC_OK);
-  PHX_CHECK(run.counters[0] > 0);
+  PHX_CHECK(run.counters[PHX_MC_TET_MESH_REFINE_CIRCUMCENTER_INSERTIONS] > 0);
   const Exported after = phx::mc::test::export_mesh(mesh);
-  PHX_CHECK(worst_ratio(after) <= 2.0 + 1e-9);
+  PHX_CHECK(worst_ratio(after) <= 2.0 + kRadiusEdgeOracleTolerance);
   PHX_CHECK(phx::mc::test::all_positive(after));
   PHX_CHECK(phx::mc::test::faces_on_sides(after, 0.0));
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0, 1e-12);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0, kUnitBoxMeasureTolerance);
   for (int32_t side = 0; side < 6; ++side) {
-    PHX_CHECK_NEAR(phx::mc::test::source_area(after, side), 1.0, 1e-12);
+    PHX_CHECK_NEAR(phx::mc::test::source_area(after, side), 1.0, kUnitBoxMeasureTolerance);
   }
   PHX_CHECK(handle_audit(mesh));
-  std::printf("cube: vertices %zu -> %zu, cells %zu, ratio %.3f -> %.3f\n",
-              before.dimension.size(), after.dimension.size(), after.regions.size(),
-              worst_ratio(before), worst_ratio(after));
   phx_mc_tet_mesh_free(mesh);
 }
 
@@ -105,11 +122,11 @@ void test_two_region_box_preserves_interface_and_volumes() {
   const Run run = refine(mesh, 2.0);
   PHX_CHECK(run.status == PHX_MC_OK);
   const Exported after = phx::mc::test::export_mesh(mesh);
-  PHX_CHECK(worst_ratio(after) <= 2.0 + 1e-9);
+  PHX_CHECK(worst_ratio(after) <= 2.0 + kRadiusEdgeOracleTolerance);
   PHX_CHECK(phx::mc::test::faces_on_sides(after, 0.5));
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 0.5, 1e-12);
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 1), 0.5, 1e-12);
-  PHX_CHECK_NEAR(phx::mc::test::source_area(after, 6), 1.0, 1e-12);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 0.5, kUnitBoxMeasureTolerance);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 1), 0.5, kUnitBoxMeasureTolerance);
+  PHX_CHECK_NEAR(phx::mc::test::source_area(after, 6), 1.0, kUnitBoxMeasureTolerance);
   // Every cell lies on its region's side of the interface.
   bool sided = true;
   for (std::size_t t = 0; t < after.regions.size(); ++t) {
@@ -148,8 +165,8 @@ void test_size_field_bounds_circumradius() {
     }
     largest = std::max(largest, ratio * shortest);
   }
-  PHX_CHECK(largest <= 0.2 + 1e-12);
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0, 1e-12);
+  PHX_CHECK(largest <= 0.2 + kCircumradiusOracleTolerance);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0, kUnitBoxMeasureTolerance);
   phx_mc_tet_mesh_free(mesh);
 }
 
@@ -161,7 +178,7 @@ void test_fixed_boundary_keeps_faces_and_reports() {
   const Exported after = phx::mc::test::export_mesh(mesh);
   PHX_CHECK(after.faces == before.faces);
   PHX_CHECK(after.segments == before.segments);
-  PHX_CHECK(run.counters[1] == 0 && run.counters[2] == 0);
+  PHX_CHECK(run.counters[PHX_MC_TET_MESH_REFINE_SUBFACET_SPLITS] == 0 && run.counters[PHX_MC_TET_MESH_REFINE_SUBSEGMENT_SPLITS] == 0);
   PHX_CHECK(run.status == PHX_MC_REFINEMENT_LIMIT);
   bool fixed = false;
   for (int32_t reason : unmet_reasons(mesh)) {
@@ -174,7 +191,7 @@ void test_fixed_boundary_keeps_faces_and_reports() {
     interior = interior && after.dimension[v] == 3;
   }
   PHX_CHECK(interior);
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0, 1e-12);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0, kUnitBoxMeasureTolerance);
   phx_mc_tet_mesh_free(mesh);
 }
 
@@ -215,10 +232,10 @@ void test_budgets_refuse_cleanly() {
   PHX_CHECK(budget);
   const Run starved = refine(mesh, 2.0, 1 << 20, nullptr, 50);
   PHX_CHECK(starved.status == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(starved.counters[7] <= 50);
+  PHX_CHECK(starved.counters[PHX_MC_TET_MESH_REFINE_WORK_UNITS] <= 50);
   const Exported still = phx::mc::test::export_mesh(mesh);
   PHX_CHECK(phx::mc::test::all_positive(still));
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(still, 0), 1.0, 1e-12);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(still, 0), 1.0, kUnitBoxMeasureTolerance);
   PHX_CHECK(handle_audit(mesh));
   // The same mesh finishes once the budget allows it.
   PHX_CHECK(refine(mesh, 2.0).status == PHX_MC_OK);
@@ -257,11 +274,9 @@ void test_invalid_domains_are_refused() {
   PHX_CHECK(status == PHX_MC_INVALID_ARGUMENT);
 }
 
-// ------------------------------------------- ancestry-backed bounded splits
-// Tilted decimal tetrahedron. Rational arithmetic (fixture selection) showed
-// that none of its edges has an exactly representable dyadic split and none
-// of its faces an exact dyadic barycentric point; each test re-asserts the
-// owner's exact search fails before exercising a bounded carrier.
+// Tilted decimal coordinates have neither representable dyadic edge splits
+// nor exact dyadic face barycenters; the exact-search refusal assertions below
+// distinguish their ancestry-backed bounded carriers from exact subdivision.
 Domain tilted_decimal_domain() {
   Domain domain;
   domain.points = {0.1, 0.2, 0.3, 1.7, 0.4, 0.9, 0.3, 1.9, 0.7, 0.6, 0.5, 2.3};
@@ -426,9 +441,10 @@ void check_source_fidelity(const phx_mc_tet_mesh* handle, const Domain& source,
   }
   PHX_CHECK(mesh.achieved_source_error_bound() == largest);
   for (std::size_t f = 0; f < exported.face_sources.size(); ++f) {
-    PHX_CHECK(mesh.original_face_ancestor(exported.faces.data() + 3 * f,
-                                          exported.face_sources[f]) ==
-              exported.face_sources[f]);
+    phx::mc::NativeVector<int32_t> contributors;
+    PHX_CHECK(mesh.face_ancestry(exported.faces.data() + 3 * f,
+                                  exported.face_sources[f], contributors));
+    PHX_CHECK(contributors.size() == 1 && contributors.front() == exported.face_sources[f]);
   }
   for (std::size_t s = 0; s < exported.segment_sources.size(); ++s) {
     PHX_CHECK(mesh.original_segment_ancestor(exported.segments[2 * s],
@@ -458,14 +474,14 @@ void test_rotated_decimal_constraint_split_has_exact_original_ancestry() {
       phx::mc::test::create_mesh(domain, PHX_MC_TET_MESH_BOUNDARY_CONFORMING, nullptr, 16, 32);
   PHX_CHECK(handle != nullptr);
   phx::mc::TetMesh& mesh = *handle->mesh;
-  PHX_CHECK(declare_source(handle, domain, 1e-14) == PHX_MC_OK);
+  PHX_CHECK(declare_source(handle, domain, kDyadicSourceBound) == PHX_MC_OK);
   double midpoint[3];
   PHX_CHECK(mesh.construct_edge_point(0, 1, midpoint));
   const double rounded_midpoint[3] = {(p[0][0] + p[1][0]) * 0.5,
                                      (p[0][1] + p[1][1]) * 0.5,
                                      (p[0][2] + p[1][2]) * 0.5};
-  PHX_CHECK(!phx::mc::collinear3d(p[0], p[1], rounded_midpoint));
-  PHX_CHECK(phx::mc::collinear3d(p[0], p[1], midpoint));
+  PHX_CHECK(!phx::mc::geometry::collinear(p[0], p[1], rounded_midpoint));
+  PHX_CHECK(phx::mc::geometry::collinear(p[0], p[1], midpoint));
   int32_t inserted = -1;
   PHX_CHECK(mesh.split_edge(0, 1, midpoint, 0.0, inserted) == phx::mc::Insertion::kOk);
   PHX_CHECK(mesh.original_segment_ancestor(0, inserted, 0) == 0);
@@ -474,7 +490,9 @@ void test_rotated_decimal_constraint_split_has_exact_original_ancestry() {
   for (std::size_t i = 0; i < after.face_sources.size(); ++i) {
     const int32_t source = after.face_sources[i];
     const int32_t* face = after.faces.data() + 3 * i;
-    PHX_CHECK(mesh.original_face_ancestor(face, source) == source);
+    phx::mc::NativeVector<int32_t> contributors;
+    PHX_CHECK(mesh.face_ancestry(face, source, contributors));
+    PHX_CHECK(contributors.size() == 1 && contributors.front() == source);
     const int32_t* original = domain.faces.data() + 3 * source;
     for (int k = 0; k < 3; ++k) {
       PHX_CHECK(phx::mc::orient3d(domain.points.data() + 3 * original[0],
@@ -484,7 +502,7 @@ void test_rotated_decimal_constraint_split_has_exact_original_ancestry() {
     }
   }
   PHX_CHECK(mesh.achieved_source_error_bound() == 0.0);
-  PHX_CHECK(mesh.requested_source_tolerance() == 1e-14);
+  PHX_CHECK(mesh.requested_source_tolerance() == kDyadicSourceBound);
   PHX_CHECK(handle_audit(handle));
   phx_mc_tet_mesh_free(handle);
 }
@@ -505,18 +523,18 @@ void test_oblique_facet_refinement_preserves_shape_with_bounded_work() {
   const Exported before = phx::mc::test::export_mesh(mesh);
   const Run starved = refine(mesh, 2.0, 1 << 20, nullptr, 50);
   PHX_CHECK(starved.status == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(starved.counters[7] <= 50);
+  PHX_CHECK(starved.counters[PHX_MC_TET_MESH_REFINE_WORK_UNITS] <= 50);
   PHX_CHECK(phx::mc::test::export_mesh(mesh) == before);
   PHX_CHECK(handle_audit(mesh));
 
   constexpr int64_t work_limit = 10000;
   const Run run = refine(mesh, 2.0, 1 << 20, nullptr, work_limit);
   PHX_CHECK(run.status == PHX_MC_OK);
-  PHX_CHECK(run.counters[7] <= work_limit);
+  PHX_CHECK(run.counters[PHX_MC_TET_MESH_REFINE_WORK_UNITS] <= work_limit);
   const Exported after = phx::mc::test::export_mesh(mesh);
-  PHX_CHECK(worst_ratio(after) <= 2.0 + 1e-9);
+  PHX_CHECK(worst_ratio(after) <= 2.0 + kRadiusEdgeOracleTolerance);
   PHX_CHECK(phx::mc::test::all_positive(after));
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0, 1e-12);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), 1.0, kUnitBoxMeasureTolerance);
   PHX_CHECK(unmet_reasons(mesh).empty());
   // Pull back only the oracle coordinates, not the native source. The exact
   // shear preserves volume and maps every source side onto a unit-box side.
@@ -527,7 +545,7 @@ void test_oblique_facet_refinement_preserves_shape_with_bounded_work() {
   }
   PHX_CHECK(phx::mc::test::faces_on_sides(pulled_back, 0.0));
   for (int32_t source = 0; source < 6; ++source) {
-    PHX_CHECK_NEAR(phx::mc::test::source_area(pulled_back, source), 1.0, 1e-12);
+    PHX_CHECK_NEAR(phx::mc::test::source_area(pulled_back, source), 1.0, kUnitBoxMeasureTolerance);
   }
   for (std::size_t e = 0; e < after.segment_sources.size(); ++e) {
     PHX_CHECK(mesh->mesh->original_segment_ancestor(after.segments[2 * e],
@@ -560,7 +578,7 @@ void test_exact_acute_source_angle_reports_infeasible_shape_without_growth() {
   PHX_CHECK(phx::mc::test::export_mesh(mesh) == before);
   int64_t counts[PHX_MC_TET_MESH_COUNTS];
   PHX_CHECK(phx_mc_tet_mesh_counts(mesh, counts) == PHX_MC_OK);
-  PHX_CHECK(counts[4] == 1);
+  PHX_CHECK(counts[PHX_MC_TET_MESH_COUNT_UNMET_RECORDS] == 1);
   const auto reasons = unmet_reasons(mesh);
   PHX_CHECK(reasons[0] == PHX_MC_TET_MESH_REASON_PROTECTED);
   PHX_CHECK(handle_audit(mesh));
@@ -577,13 +595,13 @@ void test_exact_positive_reconstruction_sliver_is_not_silently_satisfied() {
   PHX_CHECK(phx_mc_tet_mesh_quality(mesh, 5.0, values, histogram, &slivers) == PHX_MC_OK);
   PHX_CHECK(std::isfinite(values[2]) && values[2] > 1e15);
   PHX_CHECK(values[4] > 0);
-  PHX_CHECK_NEAR(values[4] / (8.987998638190837e-22 / 6.0), 1.0, 1e-14);
+  PHX_CHECK_NEAR(values[4] / (8.987998638190837e-22 / 6.0), 1.0, kExactVolumeRatioTolerance);
   PHX_CHECK(slivers == 1 && values[0] < 5.0);
   const Run run = refine(mesh, 2.0, 8, nullptr, 100000);
   PHX_CHECK(run.status == PHX_MC_REFINEMENT_LIMIT);
   PHX_CHECK(phx::mc::test::export_mesh(mesh) == before);
   int64_t counts[PHX_MC_TET_MESH_COUNTS] = {};
-  PHX_CHECK(phx_mc_tet_mesh_counts(mesh, counts) == PHX_MC_OK && counts[4] == 1);
+  PHX_CHECK(phx_mc_tet_mesh_counts(mesh, counts) == PHX_MC_OK && counts[PHX_MC_TET_MESH_COUNT_UNMET_RECORDS] == 1);
   PHX_CHECK(handle_audit(mesh));
   phx_mc_tet_mesh_free(mesh);
 }
@@ -602,7 +620,7 @@ void test_independent_permuted_source_bank_uses_source_corner_topology() {
   std::vector<int32_t> source_segments = domain.segments;
   for (int32_t& v : source_faces) v = permutation[v];
   for (int32_t& v : source_segments) v = permutation[v];
-  const std::vector<double> bounds(6, 1e-12);
+  const std::vector<double> bounds(6, kDecimalSourceBound);
   phx::mc::SourceComplex source;
   source.point_count = 5;
   source.points = source_points.data();
@@ -633,7 +651,7 @@ void test_authored_subsegment_obeys_containing_zero_bound_facet() {
     std::swap(original.tets[0], original.tets[1]);
   }
   phx_mc_tet_mesh* handle = declared_mesh(
-      original, 1e-12, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
+      original, kDecimalSourceBound, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
   handle->mesh->set_work_limit(1 << 20);
   double midpoint[3] = {.85, .2, .45};
   int32_t middle = -1;
@@ -644,8 +662,8 @@ void test_authored_subsegment_obeys_containing_zero_bound_facet() {
   source_points.insert(source_points.end(), midpoint, midpoint + 3);
   const int32_t segments[4] = {0, 4, 4, 1};
   const int32_t segment_ids[2] = {0, 0};
-  const double segment_bounds[2] = {1e-12, 1e-12};
-  const double face_bounds[4] = {0, 1e-12, 1e-12, 1e-12};
+  const double segment_bounds[2] = {kDecimalSourceBound, kDecimalSourceBound};
+  const double face_bounds[4] = {0, kDecimalSourceBound, kDecimalSourceBound, kDecimalSourceBound};
   phx::mc::SourceComplex source;
   source.point_count = 5;
   source.points = source_points.data();
@@ -696,7 +714,7 @@ void test_unsegmented_shared_diagonal_keeps_both_exact_facet_ancestors() {
   // The outer creases are source segments; the coplanar A-C diagonal is not.
   domain.segments = {0, 1, 1, 2, 2, 3, 0, 3, 0, 4, 1, 4, 2, 4, 3, 4};
   domain.segment_sources = {0, 1, 2, 3, 4, 5, 6, 7};
-  phx_mc_tet_mesh* handle = declared_mesh(domain, 1e-12, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
+  phx_mc_tet_mesh* handle = declared_mesh(domain, kDecimalSourceBound, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
   handle->mesh->set_work_limit(1 << 20);
   double position[3];
   phx::mc::SourceWitness witness;
@@ -708,11 +726,14 @@ void test_unsegmented_shared_diagonal_keeps_both_exact_facet_ancestors() {
             phx::mc::Insertion::kOk);
   const Exported after = phx::mc::test::export_mesh(handle);
   for (std::size_t i = 0; i < after.face_sources.size(); ++i) {
-    PHX_CHECK(handle->mesh->original_face_ancestor(
-        after.faces.data() + 3 * i, after.face_sources[i]) >= 0);
+    phx::mc::NativeVector<int32_t> contributors;
+    PHX_CHECK(handle->mesh->face_ancestry(
+        after.faces.data() + 3 * i, after.face_sources[i], contributors));
+    PHX_CHECK(!contributors.empty());
   }
   PHX_CHECK(handle_audit(handle));
-  double bounds[6] = {1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12};
+  double bounds[6] = {kDecimalSourceBound, kDecimalSourceBound, kDecimalSourceBound,
+                     kDecimalSourceBound, kDecimalSourceBound, kDecimalSourceBound};
   PHX_CHECK(witness.entity == 0 || witness.entity == 1);
   bounds[witness.entity == 0 ? 1 : 0] = 0.0;
   phx::mc::SourceComplex source;
@@ -720,7 +741,9 @@ void test_unsegmented_shared_diagonal_keeps_both_exact_facet_ancestors() {
   source.faces = domain.faces.data();
   source.face_sources = domain.face_sources.data();
   source.face_tolerances = bounds;
-  const double segment_bounds[8] = {1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12};
+  const double segment_bounds[8] = {kDecimalSourceBound, kDecimalSourceBound, kDecimalSourceBound,
+                                    kDecimalSourceBound, kDecimalSourceBound, kDecimalSourceBound,
+                                    kDecimalSourceBound, kDecimalSourceBound};
   source.segment_count = 8;
   source.segments = domain.segments.data();
   source.segment_sources = domain.segment_sources.data();
@@ -739,7 +762,7 @@ void test_unsegmented_shared_diagonal_keeps_both_exact_facet_ancestors() {
 
 void test_tilted_decimal_bounded_segment_split_is_ancestry_backed() {
   const Domain domain = tilted_decimal_domain();
-  phx_mc_tet_mesh* handle = declared_mesh(domain, 1e-12, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
+  phx_mc_tet_mesh* handle = declared_mesh(domain, kDecimalSourceBound, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
   phx::mc::TetMesh& mesh = *handle->mesh;
   const double* a = domain.points.data();
   const double* b = domain.points.data() + 3;
@@ -750,8 +773,8 @@ void test_tilted_decimal_bounded_segment_split_is_ancestry_backed() {
   PHX_CHECK(mesh.construct_source_split(0, 1, 0.5, carrier, witness) == phx::mc::Insertion::kOk);
   PHX_CHECK(witness.stratum == phx::mc::SourceStratum::kSegment && witness.entity == 0);
   PHX_CHECK(witness.parameters[0] == 0.5);
-  PHX_CHECK(witness.deviation > 0.0 && witness.deviation <= 1e-12);
-  PHX_CHECK(!phx::mc::collinear3d(a, b, carrier) && within_line(a, b, carrier, witness.deviation));
+  PHX_CHECK(witness.deviation > 0.0 && witness.deviation <= kDecimalSourceBound);
+  PHX_CHECK(!phx::mc::geometry::collinear(a, b, carrier) && within_line(a, b, carrier, witness.deviation));
   // Each coordinate is the nearest binary64 value to the exact midpoint.
   for (int k = 0; k < 3; ++k) {
     const phx::mc::Expansion middle =
@@ -777,7 +800,7 @@ void test_tilted_decimal_bounded_segment_split_is_ancestry_backed() {
   PHX_CHECK(mesh.achieved_source_error_bound() == witness.deviation);
   PHX_CHECK(mesh.original_segment_ancestor(0, inserted, 0) == 0);
   PHX_CHECK(mesh.original_segment_ancestor(inserted, 1, 0) == 0);
-  check_source_fidelity(handle, domain, 1e-12);
+  check_source_fidelity(handle, domain, kDecimalSourceBound);
   // The region volume moves by at most the slivers over the two source
   // faces through the split edge: |dV| <= (A(0,1,2) + A(0,1,3)) d / 3.
   const double changed =
@@ -785,13 +808,13 @@ void test_tilted_decimal_bounded_segment_split_is_ancestry_backed() {
   const double bound =
       (phx::mc::test::source_area(before, 0) + phx::mc::test::source_area(before, 1)) *
       witness.deviation / 3.0;
-  PHX_CHECK(changed <= bound * (1.0 + 1e-12));
+  PHX_CHECK(changed <= bound * (1.0 + kSliverVolumeRelativeTolerance));
   phx_mc_tet_mesh_free(handle);
 }
 
 void test_tilted_decimal_bound_below_certified_deviation_refuses_without_mutation() {
   const Domain domain = tilted_decimal_domain();
-  phx_mc_tet_mesh* probe = declared_mesh(domain, 1e-12, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
+  phx_mc_tet_mesh* probe = declared_mesh(domain, kDecimalSourceBound, PHX_MC_TET_MESH_BOUNDARY_CONFORMING);
   double carrier[3];
   phx::mc::SourceWitness certified;
   PHX_CHECK(probe->mesh->construct_source_split(0, 1, 0.5, carrier, certified) ==
@@ -829,7 +852,7 @@ void test_tilted_decimal_bound_below_certified_deviation_refuses_without_mutatio
     }
     phx_mc_tet_mesh_free(handle);
   }
-  phx_mc_tet_mesh* fixed = declared_mesh(domain, 1e-12, PHX_MC_TET_MESH_BOUNDARY_FIXED);
+  phx_mc_tet_mesh* fixed = declared_mesh(domain, kDecimalSourceBound, PHX_MC_TET_MESH_BOUNDARY_FIXED);
   const Exported before = phx::mc::test::export_mesh(fixed);
   PHX_CHECK(fixed->mesh->construct_source_split(0, 1, 0.5, carrier, certified) ==
             phx::mc::Insertion::kRefused);
@@ -846,7 +869,7 @@ void test_tilted_decimal_refinement_uses_bounded_ancestry() {
   std::vector<double> sizes(4, 0.6);
   const Run run = refine(handle, 2.0, 400, sizes.data(), int64_t{1} << 26);
   PHX_CHECK(run.status == PHX_MC_OK || run.status == PHX_MC_REFINEMENT_LIMIT);
-  PHX_CHECK(run.counters[2] > 0 && run.counters[1] > 0);
+  PHX_CHECK(run.counters[PHX_MC_TET_MESH_REFINE_SUBSEGMENT_SPLITS] > 0 && run.counters[PHX_MC_TET_MESH_REFINE_SUBFACET_SPLITS] > 0);
   const phx::mc::TetMesh& mesh = *handle->mesh;
   PHX_CHECK(mesh.achieved_source_error_bound() > 0.0 &&
             mesh.achieved_source_error_bound() <= 1e-12);
@@ -965,7 +988,7 @@ void test_bounded_poor_shape_refines_even_when_size_is_already_met() {
   const std::vector<double> sizes(before.dimension.size(), 10.0);
   const Run run = refine(handle, 2.0, 400, sizes.data(), int64_t{1} << 26);
   PHX_CHECK(run.status == PHX_MC_OK || run.status == PHX_MC_REFINEMENT_LIMIT);
-  PHX_CHECK(run.counters[1] + run.counters[2] > 0);
+  PHX_CHECK(run.counters[PHX_MC_TET_MESH_REFINE_SUBFACET_SPLITS] + run.counters[PHX_MC_TET_MESH_REFINE_SUBSEGMENT_SPLITS] > 0);
   PHX_CHECK(handle->mesh->vertex_count() > static_cast<int64_t>(before.dimension.size()));
   PHX_CHECK(handle->mesh->source_refusals().empty());
   const auto reasons = unmet_reasons(handle);
@@ -1006,11 +1029,121 @@ void test_exact_row_carrier_remains_canonical_authority_despite_parameter_roundi
   PHX_CHECK(handle->mesh->source_position(inserted, authority));
   const Exported after = phx::mc::test::export_mesh(handle);
   for (std::size_t row = 0; row < after.face_sources.size(); ++row) {
-    PHX_CHECK(handle->mesh->original_face_ancestor(
-        after.faces.data() + 3 * row, after.face_sources[row]) >= 0);
+    phx::mc::NativeVector<int32_t> contributors;
+    PHX_CHECK(handle->mesh->face_ancestry(
+        after.faces.data() + 3 * row, after.face_sources[row], contributors));
+    PHX_CHECK(!contributors.empty());
   }
-  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), .5, 1e-14);
+  PHX_CHECK_NEAR(phx::mc::test::region_volume(after, 0), .5, kRowCarrierVolumeTolerance);
   PHX_CHECK(handle_audit(handle));
+  phx_mc_tet_mesh_free(handle);
+}
+
+void test_logical_facet_coverage_retains_all_primitive_contributors() {
+  const double points[] = {0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0};
+  const double crossing[] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+  const std::array<int32_t, 4> faces[] = {{0, 1, 2, 7}, {0, 2, 3, 7}};
+  const int32_t rows[] = {0, 1};
+  phx::mc::NativeVector<int32_t> contributors;
+  PHX_CHECK(phx::mc::exact_facet_coverage(crossing, points, faces, rows, contributors));
+  PHX_CHECK(contributors.size() == 2 && contributors[0] == 0 && contributors[1] == 1);
+  const int32_t missing[] = {0};
+  PHX_CHECK(!phx::mc::exact_facet_coverage(crossing, points, faces, missing, contributors));
+  PHX_CHECK(contributors.empty());
+  const std::array<int32_t, 4> overlapping[] =
+      {{0, 1, 2, 7}, {0, 2, 3, 7}, {0, 1, 2, 7}};
+  const int32_t overlap_rows[] = {0, 1, 2};
+  PHX_CHECK(!phx::mc::exact_facet_coverage(
+      crossing, points, overlapping, overlap_rows, contributors));
+  const std::array<int32_t, 4> reversed[] = {{0, 1, 2, 7}, {3, 2, 0, 7}};
+  PHX_CHECK(!phx::mc::exact_facet_coverage(crossing, points, reversed, rows, contributors));
+  // All subject corners belong to the union of these three small triangles,
+  // but the interior does not. Corner containment is not a union proof.
+  const double gaps[] = {0,0,0, .25,0,0, 0,.25,0,
+                        1,0,0, .75,0,0, 1,.25,0,
+                        0,1,0, .25,.75,0, 0,.75,0};
+  const std::array<int32_t, 4> islands[] = {{0,1,2,7}, {3,5,4,7}, {6,8,7,7}};
+  const int32_t island_rows[] = {0, 1, 2};
+  PHX_CHECK(!phx::mc::exact_facet_coverage(crossing, gaps, islands, island_rows, contributors));
+}
+
+void test_logical_facet_retriangulation_split_relocation_and_collapse() {
+  Domain carrier;
+  carrier.points = {0,0,0, 1,0,0, 1,1,0, 0,1,0, .5,.5,1};
+  carrier.tets = {0,1,3,4, 1,2,3,4};
+  for (int offset : {0,4}) {
+    const int32_t* v = carrier.tets.data() + offset;
+    if (phx::mc::orient3d(carrier.points.data()+3*v[0], carrier.points.data()+3*v[1],
+                          carrier.points.data()+3*v[2], carrier.points.data()+3*v[3]) < 0)
+      std::swap(carrier.tets[offset], carrier.tets[offset+1]);
+  }
+  carrier.regions = {0,0};
+  carrier.faces = {0,1,3, 1,2,3, 0,1,4, 1,2,4, 2,3,4, 0,3,4};
+  carrier.face_sources = {0,0,2,3,4,5};
+  carrier.segments = {0,1, 1,2, 2,3, 0,3, 0,4, 1,4, 2,4, 3,4};
+  carrier.segment_sources = {0,1,2,3,4,5,6,7};
+  auto* handle = phx::mc::test::create_mesh(
+      carrier, PHX_MC_TET_MESH_BOUNDARY_CONFORMING, nullptr, 32, 128);
+  PHX_CHECK(handle != nullptr);
+  const int32_t original_faces[] = {0,1,2, 0,2,3, 0,1,4, 1,2,4, 2,3,4, 0,3,4};
+  phx::mc::SourceComplex source;
+  source.face_count = 6;
+  source.faces = original_faces;
+  source.face_sources = carrier.face_sources.data();
+  source.segment_count = 8;
+  source.segments = carrier.segments.data();
+  source.segment_sources = carrier.segment_sources.data();
+  PHX_CHECK(handle->mesh->build(5, carrier.points.data(), 2, carrier.tets.data(),
+      carrier.regions.data(), 6, carrier.faces.data(), carrier.face_sources.data(),
+      8, carrier.segments.data(), carrier.segment_sources.data(), nullptr, &source) == PHX_MC_OK);
+  phx::mc::NativeVector<int32_t> contributors;
+  PHX_CHECK(handle->mesh->face_ancestry(carrier.faces.data(), 0, contributors));
+  PHX_CHECK(contributors.size() == 2 && contributors[0] == 0 && contributors[1] == 1);
+  PHX_CHECK(!handle->mesh->face_ancestry(carrier.faces.data(), 2, contributors));
+  int64_t required = -1;
+  PHX_CHECK(phx_mc_tet_mesh_source_evidence(handle, 0, &required, nullptr, nullptr,
+      nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) == PHX_MC_OK);
+  PHX_CHECK(required == 8);
+  double values[2] = {-44,-44}, parameters[10], deviations[5];
+  int64_t offsets[7];
+  std::fill_n(offsets, 7, -44);
+  int32_t rows[8], segments[8], entities[5];
+  int8_t strata[5];
+  PHX_CHECK(phx_mc_tet_mesh_source_evidence(handle, required-1, &required, values,
+      offsets, rows, segments, strata, entities, parameters, deviations) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(values[0] == -44 && values[1] == -44 && offsets[0] == -44 && offsets[6] == -44);
+  PHX_CHECK(phx_mc_tet_mesh_source_evidence(handle, required, &required, values,
+      offsets, rows, segments, strata, entities, parameters, deviations) == PHX_MC_OK);
+  PHX_CHECK(offsets[0] == 0 && offsets[6] == required && values[0] == 0 && values[1] == 0);
+  void* execution = nullptr;
+  PHX_CHECK(phx_mc_execution_begin(UINT64_MAX, 0, UINT64_MAX, 1<<20,
+      INFINITY, nullptr, &execution) == PHX_MC_OK);
+  int64_t refused_count = -44;
+  PHX_CHECK(phx_mc_tet_mesh_source_evidence(handle, 0, &refused_count, nullptr,
+      nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(refused_count == -44);
+  uint64_t work[PHX_MC_EXECUTION_COUNTERS], memory[PHX_MC_EXECUTION_MEMORY_VALUES];
+  double seconds;
+  PHX_CHECK(phx_mc_execution_end(execution, work, memory, &seconds) == PHX_MC_CAPACITY_EXCEEDED);
+  handle->mesh->set_work_limit(1 << 20);
+  double position[3];
+  phx::mc::SourceWitness witness;
+  PHX_CHECK(handle->mesh->construct_source_split(1,3,.5,position,witness) == phx::mc::Insertion::kOk);
+  PHX_CHECK(witness.stratum == phx::mc::SourceStratum::kFacet && witness.deviation == 0);
+  int32_t inserted = -1;
+  PHX_CHECK(handle->mesh->split_edge_bounded(1,3,position,witness,0,inserted) == phx::mc::Insertion::kOk);
+  int32_t applied = -1;
+  const double moved[] = {.375,.5,0};
+  PHX_CHECK(phx_mc_tet_mesh_relocate(handle,inserted,moved,0,&applied) == PHX_MC_OK && applied == 1);
+  PHX_CHECK(phx_mc_tet_mesh_collapse_edge(handle,inserted,1,0,1<<20,&applied) == PHX_MC_OK && applied == 1);
+  const auto after = phx::mc::test::export_mesh(handle);
+  for (std::size_t row = 0; row < after.face_sources.size(); ++row)
+    PHX_CHECK(handle->mesh->face_ancestry(
+        after.faces.data()+3*row, after.face_sources[row], contributors));
+  PHX_CHECK(handle_audit(handle));
+  for (std::size_t row = 0; row < 6; ++row)
+    PHX_CHECK(std::equal(original_faces+3*row, original_faces+3*row+3,
+                         handle->mesh->original_faces()[row].begin()));
   phx_mc_tet_mesh_free(handle);
 }
 
@@ -1018,6 +1151,8 @@ void test_exact_row_carrier_remains_canonical_authority_despite_parameter_roundi
 
 
 int main() {
+  test_logical_facet_retriangulation_split_relocation_and_collapse();
+  test_logical_facet_coverage_retains_all_primitive_contributors();
   test_exact_positive_reconstruction_sliver_is_not_silently_satisfied();
   test_cube_point_set_reaches_radius_edge_bound();
   test_refinement_is_deterministic();

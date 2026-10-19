@@ -378,8 +378,8 @@ class Domain(StrictModule):
         metadata: Mapping[str, Any] | None = None,
     ) -> DomainFunction:
         from ._function import (
-            _TrainableConstCallable,
             DomainFunction,
+            TrainableConstCallable,
             UnaryFieldEvaluator,
         )
 
@@ -394,7 +394,7 @@ class Domain(StrictModule):
             return DomainFunction(
                 domain=self,
                 deps=(),
-                func=_TrainableConstCallable(raw),
+                func=TrainableConstCallable(raw),
                 metadata=metadata,
             )
 
@@ -404,7 +404,7 @@ class Domain(StrictModule):
         return DomainFunction(
             domain=self,
             deps=(),
-            func=UnaryFieldEvaluator(_TrainableConstCallable(raw), transform),
+            func=UnaryFieldEvaluator(TrainableConstCallable(raw), transform),
             metadata=metadata,
         )
 

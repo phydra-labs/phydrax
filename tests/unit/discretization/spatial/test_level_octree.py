@@ -76,7 +76,7 @@ def _touching_leaf_level_gap(tree: Any) -> int:
     return gap
 
 
-def test_level_octree_scenario_1() -> None:
+def test_octree_leaves_partition_points_with_bounded_occupancy() -> None:
     points = _clustered_points(3)
     address = _address(3, depth=10)
     tree = AdaptiveOctreePlan(address, leaf_capacity=8).prepare(points)
@@ -111,6 +111,9 @@ def test_level_octree_scenario_1() -> None:
     lower = np.asarray(tree.node_centers - tree.node_half_widths)[point_leaves]
     upper = np.asarray(tree.node_centers + tree.node_half_widths)[point_leaves]
     assert np.all((points >= lower) & (points < upper))
+
+
+def test_octree_point_location_covers_the_half_open_address_box() -> None:
     tree = AdaptiveOctreePlan(_address(2), leaf_capacity=4).prepare(_clustered_points(2))
     queries = np.random.default_rng(5).uniform(0.0, 1.0, (400, 2))
     leaves = np.asarray(tree.locate(queries))
@@ -120,6 +123,9 @@ def test_level_octree_scenario_1() -> None:
     assert np.all((queries >= lower) & (queries < upper))
     outside = np.asarray(tree.locate(np.asarray([[1.0, 0.5], [-0.1, 0.2]])))
     np.testing.assert_array_equal(outside, [-1, -1])
+
+
+def test_balanced_octree_limits_touching_leaf_level_gaps() -> None:
     points = _clustered_points(2)
     unbalanced = AdaptiveOctreePlan(_address(2), leaf_capacity=4).prepare(points)
     balanced = AdaptiveOctreePlan(_address(2), leaf_capacity=4, balanced=True).prepare(
@@ -172,7 +178,7 @@ def test_interaction_lists_cover_every_source_point_exactly_once() -> None:
         assert np.all(leaf[sources] & (levels[sources] < levels[targets]))
 
 
-def test_level_octree_scenario_2() -> None:
+def test_octree_interaction_rows_preserve_target_major_route_order() -> None:
     tree = AdaptiveOctreePlan(_address(2), leaf_capacity=4).prepare(_clustered_points(2))
     interaction = tree.u_list
     relation = interaction.routes
@@ -185,6 +191,11 @@ def test_level_octree_scenario_2() -> None:
     row_valid = np.asarray(row_valid)
     for leaf, row, mask in zip(leaves, rows, row_valid):
         np.testing.assert_array_equal(row[mask], sources[targets == leaf])
+
+
+def test_octree_bounded_interaction_lists_report_overflow_without_losing_required_counts() -> (
+    None
+):
     points = _clustered_points(3)
     complete = AdaptiveOctreePlan(_address(3), leaf_capacity=4).prepare(points)
     bounded = AdaptiveOctreePlan(
@@ -211,6 +222,9 @@ def test_level_octree_scenario_2() -> None:
             getattr(complete, name).required_routes
         )
         assert not bool(getattr(complete, name).overflow)
+
+
+def test_octree_plan_refuses_unsupported_domains_and_invalid_capacities() -> None:
     with pytest.raises(ValueError, match="periodic"):
         AdaptiveOctreePlan(
             MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 4, periodic_axes=(True, False)),

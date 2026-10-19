@@ -16,6 +16,7 @@ import jax.numpy as jnp
 
 import phydrax as phx
 from benchmarks._runtime import synchronize
+from phydrax.units import METER
 
 
 def _output_bytes(tree: Any) -> int:
@@ -188,11 +189,11 @@ def run_benchmarks(
     phase_points = jnp.linspace(0.1, 0.8, batch_size * even_dimension).reshape(
         batch_size, even_dimension
     )
-    ball = phx.geometry.Ball((0.0,) * dimension, 1.0).compile()
+    ball = phx.geometry.Ball((0.0,) * dimension, 1.0).compile(coordinate_unit=METER)
     orthotope = phx.geometry.Orthotope(
         (0.0,) * dimension,
         tuple(float(index + 1) for index in range(dimension)),
-    ).compile()
+    ).compile(coordinate_unit=METER)
     analytic_geometry = lambda values: (
         ball.boundary_field(values),
         ball.boundary_normal(values),
@@ -242,9 +243,9 @@ def _csg_setup(grid_size: int) -> Any:
         Sphere((0.8, 0.0, 0.0), 0.75, feature_id="right"),
         width=0.3,
     )
-    target = target_source.compile()
-    sharp = sharp_source.compile()
-    blend = blend_source.compile()
+    target = target_source.compile(coordinate_unit=METER)
+    sharp = sharp_source.compile(coordinate_unit=METER)
+    blend = blend_source.compile(coordinate_unit=METER)
     left_id = phx.geometry.ParameterId("left", "center")
     right_id = phx.geometry.ParameterId("right", "center")
     width_id = phx.geometry.ParameterId(blend_source.feature_id, "width")

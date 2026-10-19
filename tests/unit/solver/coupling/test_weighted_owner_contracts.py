@@ -192,22 +192,54 @@ def test_gauged_kernel_accepts_exactly_the_compatible_loads() -> None:
         _plan(owner, gauge=cpl.CoupledGauge(compatibility="error")),
         arguments={"graph": _arguments(compatible)},
     )
-    policy = phx.linalg.LinearSolvePolicy(phx.linalg.DenseLU())
+    # Compatibility and gauge projection do not make the operator invertible.
+    policy = phx.linalg.LinearSolvePolicy(phx.linalg.GMRES())
 
     solution = cpl.solve_coupled_problem(
         prepared, arguments={"graph": _arguments(compatible)}, policy=policy
     )
     u = np.asarray(solution.field("graph", "u"))
+    assert np.all(np.isfinite(u))
     np.testing.assert_allclose(_LAPLACIAN @ u, compatible, atol=1.0e-12)
-    # Dense LU reports the singular gauged pivot; the compatibility test and the
-    # original equations are what this contract certifies.
+    reference = np.linalg.lstsq(_LAPLACIAN, compatible, rcond=None)[0]
+    reference -= np.dot(_WEIGHTS, reference) / np.sum(_WEIGHTS)
+    np.testing.assert_allclose(u, reference, atol=1.0e-12)
+    np.testing.assert_allclose(_WEIGHTS @ u, 0.0, atol=1.0e-12)
     assert solution.linear is not None
+    assert bool(solution.linear.successful)
+    assert bool(solution.native_successful)
+    assert bool(solution.accepted)
     assert float(solution.linear.diagnostics.compatibility_residual) <= 1.0e-14
+    assert float(solution.linear.diagnostics.gauge_residual) <= 1.0e-12
     assert all(bool(item.accepted) for item in solution.components)
     with pytest.raises(eqx.EquinoxRuntimeError, match="incompatible with the declared"):
         cpl.solve_coupled_problem(
             prepared, arguments={"graph": _arguments(misidentified)}, policy=policy
         )
+
+
+def test_gauged_dense_lu_preserves_native_singular_status() -> None:
+    """A compatible load does not turn singular LU factors into a successful solve."""
+    owner = _WeightedOwner("graph", _LAPLACIAN, kernel=_ONES)
+    compatible = np.asarray([1.0, -2.0, 0.5, 3.0, -2.5])
+    arguments = {"graph": _arguments(compatible)}
+    prepared = cpl.prepare_coupled_problem(
+        _plan(owner, gauge=cpl.CoupledGauge(compatibility="error")),
+        arguments=arguments,
+    )
+    solution = cpl.solve_coupled_problem(
+        prepared,
+        arguments=arguments,
+        policy=phx.linalg.LinearSolvePolicy(phx.linalg.DenseLU()),
+    )
+
+    assert solution.linear is not None
+    assert solution.linear.status == int(phx.linalg.LinearSolveStatus.SINGULAR)
+    assert float(solution.linear.diagnostics.compatibility_residual) <= 1.0e-14
+    assert not bool(solution.linear.successful)
+    assert not bool(solution.native_successful)
+    assert not bool(solution.accepted)
+    assert not bool(solution.derivative_valid)
 
 
 def test_left_kernel_without_a_right_kernel_is_refused() -> None:

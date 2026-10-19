@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def run_case(points: int, samples_per_axis: int, /) -> dict[str, object]:
@@ -27,7 +28,9 @@ def run_case(points: int, samples_per_axis: int, /) -> dict[str, object]:
             smoothing_width=0.02,
         ),
     )
-    geometry = phx.geometry.Circle((0.5, 0.5), 0.2, feature_id="inclusion").compile()
+    geometry = phx.geometry.Circle((0.5, 0.5), 0.2, feature_id="inclusion").compile(
+        coordinate_unit=METER
+    )
     radius_id = phx.geometry.ParameterId("inclusion", "radius")
 
     def mean_fill(radius: Any) -> Any:

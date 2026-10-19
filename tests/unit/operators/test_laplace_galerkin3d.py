@@ -107,6 +107,7 @@ def test_resource_capacity_failures_precede_pair_state_allocation(
         raise AssertionError("surface binding allocation was reached")
 
     monkeypatch.setattr(galerkin3d, "_SurfaceFEMBinding3D", allocation_forbidden)
+    defaults = phx.operators.LaplaceSingleLayerDP0GalerkinPolicy3D()
     for limit_name, failure_code in (
         ("max_preparation_workspace_bytes", "preparation-bytes"),
         ("max_resident_bytes", "resident-bytes"),
@@ -116,7 +117,14 @@ def test_resource_capacity_failures_precede_pair_state_allocation(
             near_ratio=1.0,
             absolute_tolerance=1.0e-3,
             relative_tolerance=1.0e-3,
-            **{limit_name: 1},
+            max_preparation_workspace_bytes=(
+                1
+                if limit_name == "max_preparation_workspace_bytes"
+                else defaults.max_preparation_workspace_bytes
+            ),
+            max_resident_bytes=(
+                1 if limit_name == "max_resident_bytes" else defaults.max_resident_bytes
+            ),
         )
         with pytest.raises(ValueError, match=rf"^\[{failure_code}\]"):
             phx.operators.prepare_laplace_single_layer_dp0_3d(

@@ -475,7 +475,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
     ) -> LeastSquaresResult:
         if problem.trial_policy is not None:
             raise ValueError(
-                "FiniteDifferenceGaussNewton does not implement an identified trial policy."
+                f"FiniteDifferenceGaussNewton.problem.trial_policy must be None; got {type(problem.trial_policy).__name__}."
             )
         if problem.bounds is not None:
             raise ValueError(

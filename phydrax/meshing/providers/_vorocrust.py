@@ -18,23 +18,24 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
-from ..._external_runtime import NativeWorkerIdentity
-from ..._identity import SemanticProvenance
-from ...discretization import CellMesh
-from ...geometry.surface import SurfaceModel
-from ...logging import emit
-from .._canonical import certify_cell_mesh
-from .._contracts import (
+import phydrax.discretization as cell_mesh_owner
+from phydrax.meshing._contracts import (
     MeshingCapability,
     MeshingDerivativeMode,
     MeshingExecutionMode,
-    MeshingFailure,
-    MeshingFailureCategory,
     MeshingLimits,
     MeshingOperation,
     MeshingProviderInfo,
     MeshingSourceKind,
 )
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
+from ..._external_runtime import NativeWorkerIdentity
+from ..._identity import SemanticProvenance
+from ...geometry.surface import SurfaceModel
+from ...logging import emit
+from ...typing import checked
+from .._canonical import certify_cell_mesh
 from .._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
 from .._trace import (
     MeshingStageKind,
@@ -78,29 +79,41 @@ class VoroCrustOptions:
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.maximum_radius) or self.maximum_radius <= 0:
-            raise ValueError("maximum_radius must be positive and finite.")
+            raise ValueError(
+                f"VoroCrustOptions.maximum_radius must be positive and finite; got {self.maximum_radius!r}"
+            )
         if (
             not np.isfinite(self.lipschitz_constant)
             or not 0 <= self.lipschitz_constant < 1
         ):
-            raise ValueError("lipschitz_constant must lie in [0, 1).")
+            raise ValueError(
+                f"VoroCrustOptions.lipschitz_constant must lie in [0, 1); got {self.lipschitz_constant!r}"
+            )
         if (
             not np.isfinite(self.feature_angle_degrees)
             or not 0 < self.feature_angle_degrees < 180
         ):
-            raise ValueError("feature_angle_degrees must lie in (0, 180).")
+            raise ValueError(
+                f"VoroCrustOptions.feature_angle_degrees must lie in (0, 180); got {self.feature_angle_degrees!r}"
+            )
         if (
             not np.isfinite(self.relative_volume_tolerance)
             or not 0 < self.relative_volume_tolerance < 1
         ):
-            raise ValueError("relative_volume_tolerance must lie in (0, 1).")
+            raise ValueError(
+                f"VoroCrustOptions.relative_volume_tolerance must lie in (0, 1); got {self.relative_volume_tolerance!r}"
+            )
         if (
             not np.isfinite(self.relative_merge_tolerance)
             or not 0 <= self.relative_merge_tolerance <= 1e-8
         ):
-            raise ValueError("relative_merge_tolerance must lie in [0, 1e-8].")
+            raise ValueError(
+                f"VoroCrustOptions.relative_merge_tolerance must lie in [0, 1e-8]; got {self.relative_merge_tolerance!r}"
+            )
         if type(self.require_native_output_preallocation) is not bool:
-            raise TypeError("require_native_output_preallocation must be a Boolean.")
+            raise TypeError(
+                f"VoroCrustOptions.require_native_output_preallocation must be Boolean; got {self.require_native_output_preallocation!r}"
+            )
 
 
 def _conversion(message: str, /) -> MeshingFailure:
@@ -116,7 +129,10 @@ def _executable(value: str | Path) -> str:
     if path is None:
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-            f"Executable is unavailable: {value}",
+            (
+                "vorocrust.executable must resolve an executable path; got "
+                + f"Executable is unavailable: {value}"
+            ),
         )
     return str(Path(path).resolve())
 
@@ -125,7 +141,11 @@ def _run(command: list[str], directory: Path, deadline: float) -> None:
     remaining = deadline - monotonic()
     if remaining <= 0:
         raise MeshingFailure(
-            MeshingFailureCategory.TIMED_OUT, "VoroCrust deadline expired."
+            MeshingFailureCategory.TIMED_OUT,
+            (
+                "vorocrust.run must launch and finish before the deadline with zero exit status; got "
+                + "VoroCrust deadline expired."
+            ),
         )
     started = monotonic()
     emit(
@@ -155,7 +175,11 @@ def _run(command: list[str], directory: Path, deadline: float) -> None:
                 provider="vorocrust",
             )
             raise MeshingFailure(
-                MeshingFailureCategory.TIMED_OUT, "VoroCrust execution timed out."
+                MeshingFailureCategory.TIMED_OUT,
+                (
+                    "vorocrust.run must launch and finish before the deadline with zero exit status; got "
+                    + "VoroCrust execution timed out."
+                ),
             ) from error
         except OSError as error:
             emit(
@@ -168,7 +192,10 @@ def _run(command: list[str], directory: Path, deadline: float) -> None:
             )
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-                "VoroCrust process could not be launched.",
+                (
+                    "vorocrust.run must launch and finish before the deadline with zero exit status; got "
+                    + "VoroCrust process could not be launched."
+                ),
             ) from error
     if result.returncode:
         emit(
@@ -182,7 +209,10 @@ def _run(command: list[str], directory: Path, deadline: float) -> None:
         )
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            f"VoroCrust process exited with code {result.returncode}.",
+            (
+                "vorocrust.run must launch and finish before the deadline with zero exit status; got "
+                + f"VoroCrust process exited with code {result.returncode}."
+            ),
         )
     emit(
         "DEBUG",
@@ -217,8 +247,10 @@ def _provider_info(
     ):
         raise MeshingFailure(
             MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-            "Unsupported phydrax-vorocrust-worker identity; it must report the exact "
-            "revision and source/configuration/library SHA-256 identities.",
+            (
+                "vorocrust.provider_info must report revision and source/configuration/library SHA-256 identities; got "
+                + "Unsupported phydrax-vorocrust-worker identity; it must report the revision and source/configuration/library SHA-256 identities."
+            ),
             stage="startup",
         )
     # ty: ignore[invalid-return-type]
@@ -243,28 +275,68 @@ def _read_seeds(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Parse vc_mesh seeds.csv into coordinates, sizing radii, and region IDs."""
     if path.stat().st_size > limits.maximum_data_bytes:
-        raise _resource("VoroCrust seeds exceed transfer budget.")
+        raise _resource(
+            (
+                "vorocrust.read_seeds must provide a bounded nonempty five-column seed table with finite coordinates, radii, and regions; got "
+                + "VoroCrust seeds exceed transfer budget."
+            )
+        )
     header, _, body = path.read_bytes().partition(b"\n")
     if header.rstrip(b"\r") != _SEED_HEADER:
-        raise _conversion("Unexpected VoroCrust seed CSV header.")
+        raise _conversion(
+            (
+                "vorocrust.read_seeds must provide a bounded nonempty five-column seed table with finite coordinates, radii, and regions; got "
+                + "Unexpected VoroCrust seed CSV header."
+            )
+        )
     maximum = min(2 * limits.maximum_cells, 40_000_000)
     if body.count(b"\n") > maximum:
-        raise _resource("VoroCrust seed count exceeds its bound.")
+        raise _resource(
+            (
+                "vorocrust.read_seeds must provide a bounded nonempty five-column seed table with finite coordinates, radii, and regions; got "
+                + "VoroCrust seed count exceeds its bound."
+            )
+        )
     if not body.strip():
-        raise _conversion("VoroCrust produced no seeds.")
+        raise _conversion(
+            (
+                "vorocrust.read_seeds must provide a bounded nonempty five-column seed table with finite coordinates, radii, and regions; got "
+                + "VoroCrust produced no seeds."
+            )
+        )
     # Ragged or non-numeric rows are external-format violations.
     try:
         table = np.loadtxt(
             io.BytesIO(body), delimiter=",", dtype=np.float64, ndmin=2, encoding=None
         )
     except ValueError as error:
-        raise _conversion(f"Invalid VoroCrust seed rows: {error}") from error
+        raise _conversion(
+            (
+                "vorocrust.read_seeds must provide a bounded nonempty five-column seed table with finite coordinates, radii, and regions; got "
+                + f"Invalid VoroCrust seed rows: {error}"
+            )
+        ) from error
     if table.shape[0] == 0:
-        raise _conversion("VoroCrust produced no seeds.")
+        raise _conversion(
+            (
+                "vorocrust.read_seeds must provide a bounded nonempty five-column seed table with finite coordinates, radii, and regions; got "
+                + "VoroCrust produced no seeds."
+            )
+        )
     if table.shape[0] > maximum:
-        raise _resource("VoroCrust seed count exceeds its bound.")
+        raise _resource(
+            (
+                "vorocrust.read_seeds must provide a bounded nonempty five-column seed table with finite coordinates, radii, and regions; got "
+                + "VoroCrust seed count exceeds its bound."
+            )
+        )
     if table.shape[1] != 5:
-        raise _conversion("VoroCrust seed rows require five columns.")
+        raise _conversion(
+            (
+                "vorocrust.read_seeds must provide a bounded nonempty five-column seed table with finite coordinates, radii, and regions; got "
+                + "VoroCrust seed rows require five columns."
+            )
+        )
     points, radii, regions = table[:, :3], table[:, 3], table[:, 4]
     if (
         not np.all(np.isfinite(table))
@@ -272,7 +344,12 @@ def _read_seeds(
         or np.any(regions != np.floor(regions))
         or np.any((regions < 0) | (regions > table.shape[0]))
     ):
-        raise _conversion("VoroCrust seeds require finite points, radii, and regions.")
+        raise _conversion(
+            (
+                "vorocrust.read_seeds must provide a bounded nonempty five-column seed table with finite coordinates, radii, and regions; got "
+                + "VoroCrust seeds require finite points, radii, and regions."
+            )
+        )
     return (
         np.ascontiguousarray(points),
         np.ascontiguousarray(radii),
@@ -300,7 +377,10 @@ def _preflight_native_output(
         > limits.maximum_connectivity_entries
     ):
         raise _resource(
-            "Conservative VoroCrust output bounds exceed configured limits before native extraction."
+            (
+                "vorocrust.preflight_native_output must fit conservative output resource bounds before extraction; got "
+                + "Conservative VoroCrust output bounds exceed configured limits before native extraction."
+            )
         )
 
 
@@ -324,7 +404,10 @@ def _vertex_aliases(points: np.ndarray, relative_tolerance: float) -> np.ndarray
     aliases = representatives[labels]
     if np.any(np.linalg.norm(points - points[aliases], axis=1) > tolerance):
         raise _conversion(
-            "Transitive vertex aliases exceed the requested merge tolerance."
+            (
+                "vorocrust.vertex_aliases must keep each transitive alias within the requested merge tolerance; got "
+                + "Transitive vertex aliases exceed the requested merge tolerance."
+            )
         )
     return aliases
 
@@ -334,7 +417,12 @@ def _extraction_arrays(
 ) -> tuple[np.ndarray, ...]:
     """Validate the extraction worker's packed output before any assembly."""
     if set(arrays) != _OUTPUT_ARRAYS:
-        raise _conversion("VoroCrust extraction output arrays are incomplete.")
+        raise _conversion(
+            (
+                "vorocrust.extraction_arrays must publish bounded finite packed arrays with valid connectivity indices; got "
+                + "VoroCrust extraction output arrays are incomplete."
+            )
+        )
     points = np.asarray(arrays["vertices"], dtype=np.float64)
     offsets = np.asarray(arrays["face_offsets"], dtype=np.int64)
     loops = np.asarray(arrays["face_vertices"], dtype=np.int64)
@@ -347,9 +435,19 @@ def _extraction_arrays(
         or face_count > limits.maximum_faces
         or seed_count > 2 * limits.maximum_cells
     ):
-        raise _resource("VoroCrust output exceeds entity budgets.")
+        raise _resource(
+            (
+                "vorocrust.extraction_arrays must publish bounded finite packed arrays with valid connectivity indices; got "
+                + "VoroCrust output exceeds entity budgets."
+            )
+        )
     if 2 * loops.size > limits.maximum_connectivity_entries:
-        raise _resource("VoroCrust connectivity exceeds budget.")
+        raise _resource(
+            (
+                "vorocrust.extraction_arrays must publish bounded finite packed arrays with valid connectivity indices; got "
+                + "VoroCrust connectivity exceeds budget."
+            )
+        )
     if (
         points.ndim != 2
         or points.shape[1] != 3
@@ -365,7 +463,12 @@ def _extraction_arrays(
         or not np.all(np.isfinite(seeds))
         or np.any(regions < 0)
     ):
-        raise _conversion("Invalid VoroCrust point or seed arrays.")
+        raise _conversion(
+            (
+                "vorocrust.extraction_arrays must publish bounded finite packed arrays with valid connectivity indices; got "
+                + "Invalid VoroCrust point or seed arrays."
+            )
+        )
     if (
         offsets[0] != 0
         or offsets[-1] != loops.size
@@ -373,16 +476,22 @@ def _extraction_arrays(
         or np.any((loops < 0) | (loops >= vertex_count))
         or np.any((pairs < 0) | (pairs >= seed_count))
     ):
-        raise _conversion("VoroCrust connectivity index is out of bounds.")
+        raise _conversion(
+            (
+                "vorocrust.extraction_arrays must publish bounded finite packed arrays with valid connectivity indices; got "
+                + "VoroCrust connectivity index is out of bounds."
+            )
+        )
     return points, offsets, loops, pairs, seeds, regions
 
 
-def _polyhedra(
+@checked
+def polyhedra(
     arrays: Mapping[str, np.ndarray],
     limits: MeshingLimits,
     relative_merge_tolerance: float,
     /,
-) -> tuple[CellMesh, int, int]:
+) -> tuple[cell_mesh_owner.CellMesh, int, int]:
     """Assemble outward-oriented polyhedra from packed VoroCrust output.
 
     Face loops are alias-normalized; consecutive repeated vertices are removed
@@ -393,7 +502,12 @@ def _polyhedra(
     points, offsets, loops, pairs, seeds, regions = _extraction_arrays(arrays, limits)
     interior = np.flatnonzero(regions > 0)
     if interior.size == 0 or interior.size > limits.maximum_cells:
-        raise _resource("Invalid VoroCrust interior cell count.")
+        raise _resource(
+            (
+                "vorocrust.polyhedra must publish bounded closed interior polytopes; got "
+                + "Invalid VoroCrust interior cell count."
+            )
+        )
     aliases = _vertex_aliases(points, relative_merge_tolerance)
     widths = np.diff(offsets)
     entry_faces = np.repeat(np.arange(widths.size), widths)
@@ -406,7 +520,12 @@ def _polyhedra(
     collapsed_faces = np.count_nonzero(~retained)
     keep &= retained[entry_faces]
     if not np.any(retained):
-        raise _conversion("VoroCrust interior cells must be bounded by faces.")
+        raise _conversion(
+            (
+                "vorocrust.polyhedra must publish bounded closed interior polytopes; got "
+                + "VoroCrust interior cells must be bounded by faces."
+            )
+        )
     faces, sizes = np.flatnonzero(retained), kept[retained]
     values, loop_faces = loops[keep], np.repeat(np.arange(faces.size), sizes)
     starts = np.concatenate(([0], np.cumsum(sizes)))
@@ -439,7 +558,12 @@ def _polyhedra(
         incidence_cells, interior, side="right"
     ) - np.searchsorted(incidence_cells, interior, side="left")
     if np.any(cell_faces == 0):
-        raise _conversion("VoroCrust interior cells must be bounded by faces.")
+        raise _conversion(
+            (
+                "vorocrust.polyhedra must publish bounded closed interior polytopes; got "
+                + "VoroCrust interior cells must be bounded by faces."
+            )
+        )
     lengths = sizes[incidence_faces]
     incidence_starts = np.concatenate(([0], np.cumsum(lengths)))
     local = np.arange(incidence_starts[-1]) - np.repeat(incidence_starts[:-1], lengths)
@@ -457,7 +581,7 @@ def _polyhedra(
     face_loops = np.split(mapping[entries], incidence_starts[1:-1])
     cell_starts = np.concatenate(([0], np.cumsum(cell_faces)))
     try:
-        mesh = CellMesh.from_polyhedra(
+        mesh = cell_mesh_owner.CellMesh.from_polyhedra(
             points[used],
             tuple(
                 tuple(face_loops[start:stop])
@@ -467,9 +591,19 @@ def _polyhedra(
             cell_global_ids=interior,
         )
     except ValueError as error:
-        raise _conversion(f"VoroCrust cells are not closed polytopes: {error}") from error
+        raise _conversion(
+            (
+                "vorocrust.polyhedra must publish bounded closed interior polytopes; got "
+                + f"VoroCrust cells are not closed polytopes: {error}"
+            )
+        ) from error
     if mesh.entity_set(1).count > limits.maximum_edges:
-        raise _resource("VoroCrust edges exceed the entity budget.")
+        raise _resource(
+            (
+                "vorocrust.polyhedra must publish bounded closed interior polytopes; got "
+                + "VoroCrust edges exceed the entity budget."
+            )
+        )
     # ty: ignore[invalid-return-type]
     return mesh, points.shape[0] - np.unique(aliases).size, collapsed_faces
 
@@ -478,7 +612,11 @@ def _remaining_limits(limits: MeshingLimits, deadline: float, /) -> MeshingLimit
     remaining = deadline - monotonic()
     if remaining <= 0:
         raise MeshingFailure(
-            MeshingFailureCategory.TIMED_OUT, "VoroCrust deadline expired."
+            MeshingFailureCategory.TIMED_OUT,
+            (
+                "vorocrust.run must launch and finish before the deadline with zero exit status; got "
+                + "VoroCrust deadline expired."
+            ),
         )
     return MeshingLimits(
         maximum_vertices=limits.maximum_vertices,
@@ -493,6 +631,100 @@ def _remaining_limits(limits: MeshingLimits, deadline: float, /) -> MeshingLimit
         maximum_scratch_bytes=limits.maximum_scratch_bytes,
         maximum_wall_seconds=remaining,
     )
+
+
+def _admit_vorocrust_limits(
+    surface: SurfaceModel,
+    options: VoroCrustOptions,
+    limits: MeshingLimits | None,
+    /,
+) -> MeshingLimits:
+    """Admit metadata, allocator requirements, and worker hard bounds before work."""
+    if surface.selections or surface.interfaces or surface.metadata.cell_tags:
+        raise MeshingFailure(
+            MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+            (
+                "vorocrust.execute must admit a closed outward source without unsupported metadata and preserve its enclosed volume within resource limits; got "
+                + "VoroCrust does not transfer source selections, interfaces, or material tags."
+            ),
+        )
+    limits = MeshingLimits() if limits is None else limits
+    if options.require_native_output_preallocation:
+        raise MeshingFailure(
+            MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+            (
+                "vorocrust.execute must admit a closed outward source without unsupported metadata and preserve its enclosed volume within resource limits; got "
+                + "VoroCrust exposes no bounded native output allocator or callback."
+            ),
+        )
+    if (
+        limits.maximum_vertices > 10_000_000
+        or limits.maximum_faces > 50_000_000
+        or limits.maximum_connectivity_entries > 500_000_000
+        or limits.maximum_data_bytes > 4_000_000_000
+        or 2 * limits.maximum_cells > 40_000_000
+    ):
+        raise ValueError(
+            (
+                "vorocrust.execute must admit a closed outward source without unsupported metadata and preserve its enclosed volume within resource limits; got "
+                + "limits exceed the VoroCrust worker hard bounds."
+            )
+        )
+    return limits
+
+
+def _prepare_vorocrust_surface(
+    surface: SurfaceModel, limits: MeshingLimits, /
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Bound input storage before materializing and proving a closed outward surface."""
+    point_count = surface.mesh.coordinates.shape[0]
+    face_count = sum(block.cell_count for block in surface.mesh.blocks)
+    connectivity_count = sum(block.vertices.size for block in surface.mesh.blocks)
+    estimated_input_bytes = (
+        point_count * 80 + face_count * 24 + connectivity_count * 12 + 4_096
+    )
+    if (
+        point_count > limits.maximum_vertices
+        or face_count > limits.maximum_faces
+        or connectivity_count > limits.maximum_connectivity_entries
+        or estimated_input_bytes > limits.maximum_data_bytes
+    ):
+        raise _resource(
+            (
+                "vorocrust.execute must admit a closed outward source without unsupported metadata and preserve its enclosed volume within resource limits; got "
+                + "VoroCrust source exceeds configured entity or byte limits."
+            )
+        )
+    faces = np.concatenate([np.asarray(block.vertices) for block in surface.mesh.blocks])
+    points = np.asarray(surface.mesh.coordinates, dtype=np.float64)
+    edges = np.sort(
+        np.concatenate((faces[:, (0, 1)], faces[:, (1, 2)], faces[:, (2, 0)])), axis=1
+    )
+    _, counts = np.unique(edges, axis=0, return_counts=True)
+    if np.any(counts != 2):
+        raise MeshingFailure(
+            MeshingFailureCategory.INVALID_SOURCE,
+            (
+                "vorocrust.execute must admit a closed outward source without unsupported metadata and preserve its enclosed volume within resource limits; got "
+                + "VoroCrust requires a closed manifold surface."
+            ),
+        )
+    triangles = points[faces]
+    source_volume = float(
+        np.sum(
+            np.sum(triangles[:, 0] * np.cross(triangles[:, 1], triangles[:, 2]), axis=1)
+        )
+        / 6
+    )
+    if not np.isfinite(source_volume) or source_volume <= 0:
+        raise MeshingFailure(
+            MeshingFailureCategory.INVALID_SOURCE,
+            (
+                "vorocrust.execute must admit a closed outward source without unsupported metadata and preserve its enclosed volume within resource limits; got "
+                + "VoroCrust requires outward-oriented positive-volume input."
+            ),
+        )
+    return points, faces, source_volume
 
 
 class VoroCrustProvider:
@@ -536,6 +768,8 @@ class VoroCrustProvider:
     def __exit__(self, *_: object) -> None:
         self.close()
 
+    # Admit and prepare the source before worker execution and volume certification.
+    @checked
     def execute(
         self,
         surface: SurfaceModel,
@@ -544,71 +778,8 @@ class VoroCrustProvider:
         *,
         limits: MeshingLimits | None = None,
     ) -> CellMeshingResult:
-        if not isinstance(surface, SurfaceModel) or not isinstance(
-            options, VoroCrustOptions
-        ):
-            raise TypeError("Expected SurfaceModel and VoroCrustOptions.")
-        if surface.selections or surface.interfaces or surface.metadata.cell_tags:
-            raise MeshingFailure(
-                MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
-                "VoroCrust does not transfer source selections, interfaces, or material tags.",
-            )
-        limits = MeshingLimits() if limits is None else limits
-        if not isinstance(limits, MeshingLimits):
-            raise TypeError("limits must be MeshingLimits.")
-        if options.require_native_output_preallocation:
-            raise MeshingFailure(
-                MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
-                "VoroCrust exposes no bounded native output allocator or callback.",
-            )
-        if (
-            limits.maximum_vertices > 10_000_000
-            or limits.maximum_faces > 50_000_000
-            or limits.maximum_connectivity_entries > 500_000_000
-            or limits.maximum_data_bytes > 4_000_000_000
-            or 2 * limits.maximum_cells > 40_000_000
-        ):
-            raise ValueError("limits exceed the VoroCrust worker hard bounds.")
-        point_count = surface.mesh.coordinates.shape[0]
-        face_count = sum(block.cell_count for block in surface.mesh.blocks)
-        connectivity_count = sum(block.vertices.size for block in surface.mesh.blocks)
-        estimated_input_bytes = (
-            point_count * 80 + face_count * 24 + connectivity_count * 12 + 4_096
-        )
-        if (
-            point_count > limits.maximum_vertices
-            or face_count > limits.maximum_faces
-            or connectivity_count > limits.maximum_connectivity_entries
-            or estimated_input_bytes > limits.maximum_data_bytes
-        ):
-            raise _resource("VoroCrust source exceeds configured entity or byte limits.")
-        faces = np.concatenate(
-            [np.asarray(block.vertices) for block in surface.mesh.blocks]
-        )
-        points = np.asarray(surface.mesh.coordinates, dtype=np.float64)
-        edges = np.sort(
-            np.concatenate((faces[:, (0, 1)], faces[:, (1, 2)], faces[:, (2, 0)])), axis=1
-        )
-        _, counts = np.unique(edges, axis=0, return_counts=True)
-        if np.any(counts != 2):
-            raise MeshingFailure(
-                MeshingFailureCategory.INVALID_SOURCE,
-                "VoroCrust requires a closed manifold surface.",
-            )
-        triangles = points[faces]
-        source_volume = float(
-            np.sum(
-                np.sum(
-                    triangles[:, 0] * np.cross(triangles[:, 1], triangles[:, 2]), axis=1
-                )
-            )
-            / 6
-        )
-        if not np.isfinite(source_volume) or source_volume <= 0:
-            raise MeshingFailure(
-                MeshingFailureCategory.INVALID_SOURCE,
-                "VoroCrust requires outward-oriented positive-volume input.",
-            )
+        limits = _admit_vorocrust_limits(surface, options, limits)
+        points, faces, source_volume = _prepare_vorocrust_surface(surface, limits)
         provider, extractor_identity = _provider_info(self.worker.identity)
         deadline = monotonic() + limits.maximum_wall_seconds
         with TemporaryDirectory(prefix="phydrax-vorocrust-") as temporary:
@@ -626,7 +797,10 @@ class VoroCrustProvider:
             if not seeds.is_file():
                 raise MeshingFailure(
                     MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                    "VoroCrust produced no seeds.",
+                    (
+                        "vorocrust.execute must admit a closed outward source without unsupported metadata and preserve its enclosed volume within resource limits; got "
+                        + "VoroCrust produced no seeds."
+                    ),
                 )
             seed_points, seed_radii, seed_regions = _read_seeds(seeds, limits)
         _preflight_native_output(
@@ -649,7 +823,7 @@ class VoroCrustProvider:
             },
             limits=_remaining_limits(limits, deadline),
         )
-        mesh, merged_vertices, collapsed_faces = _polyhedra(
+        mesh, merged_vertices, collapsed_faces = polyhedra(
             call.arrays, limits, options.relative_merge_tolerance
         )
         native = certify_cell_mesh(mesh, surface.metadata.coordinate_contract)
@@ -658,7 +832,10 @@ class VoroCrustProvider:
         if error > options.relative_volume_tolerance:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "VoroCrust output does not preserve source enclosed volume.",
+                (
+                    "vorocrust.execute must admit a closed outward source without unsupported metadata and preserve its enclosed volume within resource limits; got "
+                    + "VoroCrust output does not preserve source enclosed volume."
+                ),
             )
         identity = self.worker.identity
         provenance = SemanticProvenance(

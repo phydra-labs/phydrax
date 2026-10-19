@@ -537,7 +537,7 @@ def _require_regularity(value: Any, /) -> DerivativeRegularity:
     return value
 
 
-def _regularity_payload(regularity: DerivativeRegularity | None, /) -> Any:
+def regularity_payload(regularity: DerivativeRegularity | None, /) -> Any:
     if regularity is None:
         return None
     return {
@@ -722,7 +722,9 @@ class DerivativeAdmission(StrictModule, NonTrainableState):
         if self.runtime_valid is None:
             return self
         if self.runtime_status is None:
-            raise RuntimeError("Resolved derivative evidence is missing its status array.")
+            raise RuntimeError(
+                f"DerivativeAdmission.runtime_status must be supplied with runtime_valid; got {self.runtime_status!r}."
+            )
         checked = eqx.error_if(
             self.runtime_valid,
             ~self.runtime_valid,
@@ -1223,7 +1225,7 @@ def _contract_content(contract: DerivativeContract, /) -> dict[str, Any]:
             for entry in contract.surfaces
         ],
         "route": contract.route.value,
-        "regularity": _regularity_payload(contract.regularity),
+        "regularity": regularity_payload(contract.regularity),
         "conditions": list(contract.conditions),
         "nondifferentiable_outputs": list(contract.nondifferentiable_outputs),
     }

@@ -71,8 +71,8 @@ def _fmm_case(count: Any, target_count: Any) -> Any:
     target = phx.discretization.VortexTargetState(target_position)
     fmm = phx.operators.VortexFMMPlan(
         position,
-        (-1.0, -1.0),
-        (1.0, 1.0),
+        jnp.asarray((-1.0, -1.0), dtype=jnp.float64),
+        jnp.asarray((1.0, 1.0), dtype=jnp.float64),
         depth=2,
         expansion_order=1,
         leaf_capacity=max(8, count // 4),
@@ -130,8 +130,8 @@ def _remesh_case(count: Any, grid_count: Any) -> Any:
         jnp.asarray(count, dtype=jnp.int64),
     )
     plan = phx.discretization.CompleteVortexRemeshPlan(
-        (0.0, 0.0),
-        (1.0, 1.0),
+        jnp.asarray((0.0, 0.0), dtype=jnp.float64),
+        jnp.asarray((1.0, 1.0), dtype=jnp.float64),
         (grid_count, grid_count),
         degree=3,
         boundary="reject",

@@ -2,11 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Certified membership of a complete closed-meridian revolution solid.
+"""Certify membership in a full-turn closed-meridian revolution solid.
 
 A full-turn revolution of a B-spline meridian ``c`` about an exactly unit
 axis, or a normal offset of one, is the rotation of one closed curve ``w``:
-``c`` itself, or its exact parallel curve ``c + d n``. Its solid is rotation
+``c`` itself, or its parallel curve ``c + d n``. Its solid is rotation
 invariant, so with ``z = (x - o) . a`` and ``rho = |(x - o) x a|`` a point
 belongs to it iff ``(rho_p, z_p)`` lies inside the closed half-plane curve
 ``(rho_w, z_w)``, and its boundary distance is the half-plane distance to
@@ -21,32 +21,35 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Literal
+from typing import assert_never, get_args, Literal, TypeAlias
 
 import numpy as np
 
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked
+from .._rational import fraction_down, fraction_up, rational_dot, rational_vector
+from ._coordinate_request import coordinate_source_request
+from ._exact import square_root_interval
 from ._patches import (
-    _closure_tangent_continuous,
-    _coordinate_budget,
-    _directed_sum_of_squares,
-    _exact_unit,
-    _fraction_down,
-    _fraction_up,
-    _interval_cross,
-    _interval_dot,
-    _interval_norm,
-    _junction_rows,
-    _meridian_frame,
-    _meridian_jets,
-    _meridian_spans,
-    _MeridianFrame,
-    _MeridianSpans,
-    _parallel_meridian_jets,
-    _revolution_meridian,
     AbstractSurfacePatch,
     BSplineCurve,
+    closure_tangent_continuous,
+    directed_sum_of_squares,
+    evaluate_meridian_jets,
+    exact_unit,
+    interval_cross,
+    interval_dot,
+    interval_norm,
+    junction_rows,
+    meridian_frame,
+    MeridianFrame,
+    MeridianOverlaps,
+    MeridianSpans,
+    parallel_meridian_jets,
+    prepare_meridian_spans,
+    revolution_meridian,
 )
-from ._sphere_membership import _square_root_interval
+from ._request_preparations import TrimRequestPreparations
 
 
 # Equal meridian ranges of the initial cycle cover; bisection refines them.
@@ -56,14 +59,14 @@ _INITIAL_RANGES = 16
 # with a cut on a root is abandoned for the next start.
 _START_PHASES = (0.0, 1.0 / 3.0, 1.0 / 7.0, 3.0 / 11.0, 5.0 / 13.0)
 
-type _Direction = Literal["outward", "up", "down"]
+_Direction: TypeAlias = Literal["outward", "up", "down"]
 
 
 @dataclass(frozen=True, slots=True)
 class RevolutionMembership:
     """Parity membership with half-plane boundary distance bounds.
 
-    ``complete`` is False when the point is not separated from the boundary by
+    The result is unresolved when the point is not separated from the boundary by
     more than the tolerance, or when no half-line was certified within the row
     allowance; ``exhausted`` reports that the allowance ran out.
     """
@@ -77,26 +80,44 @@ class RevolutionMembership:
 
 
 @dataclass(frozen=True, slots=True)
-class _RevolutionSource:
+class RevolutionSource:
     origin: np.ndarray
     axis: np.ndarray
-    spans: _MeridianSpans
-    frame: _MeridianFrame | None
+    spans: MeridianSpans
+    frame: MeridianFrame | None
     distance: float
     first: float
     last: float
 
 
+@checked
 def prepare_full_revolution(
-    patch: AbstractSurfacePatch, lower: float, upper: float, /
-) -> _RevolutionSource | None:
+    patch: AbstractSurfacePatch,
+    lower: float,
+    upper: float,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+    meridian_jets: list[MeridianOverlaps] | None = None,
+) -> RevolutionSource | None:
     """Prove an exactly closed meridian over ``[lower, upper]`` about a unit axis.
 
-    The caller establishes one complete turn and closed solid incidence. An
+    The caller establishes one full turn and closed solid incidence. An
     offset's parallel meridian also needs its closure's end legs exactly
     positively parallel, so both end normals agree.
     """
-    resolved = _revolution_meridian(patch)
+    if budget is None:
+        with coordinate_source_request(
+            (
+                patch,
+                lower,
+                upper,
+            )
+        ) as budget:
+            return prepare_full_revolution(
+                patch, lower, upper, meridian_jets=meridian_jets, budget=budget
+            )
+    resolved = revolution_meridian(patch)
     if resolved is None:
         return None
     revolution, distance = resolved
@@ -105,31 +126,30 @@ def prepare_full_revolution(
     if (
         not isinstance(curve, BSplineCurve)
         or curve.parameter_domain != (lower, upper)
-        or not _exact_unit(axis)
-        or not _closure_tangent_continuous(
+        or not exact_unit(axis)
+        or not closure_tangent_continuous(
             revolution, 1, lower, upper, tangent=distance != 0.0
         )
     ):
         return None
-    budget = _coordinate_budget()
     frame = None
     if distance != 0.0:
-        frame = _meridian_frame(revolution, budget)
+        frame = meridian_frame(revolution, budget=budget)
         if frame is None:
             return None
         spans = frame.spans
     else:
-        spans = _meridian_spans(curve, budget)
+        spans = prepare_meridian_spans(curve, budget=budget)
         if spans is None:
             return None
-    return _RevolutionSource(
-        np.asarray(revolution.axis_origin, dtype=np.float64),
-        axis,
-        spans,
-        frame,
-        distance,
-        lower,
-        upper,
+    return RevolutionSource(
+        origin=np.asarray(revolution.axis_origin, dtype=np.float64),
+        axis=axis,
+        spans=spans,
+        frame=frame,
+        distance=distance,
+        first=lower,
+        last=upper,
     )
 
 
@@ -145,17 +165,24 @@ class _Enclosure:
 
 
 def _enclose(
-    source: _RevolutionSource, first: np.ndarray, last: np.ndarray, /
+    source: RevolutionSource,
+    first: np.ndarray,
+    last: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    meridian_jets: list[MeridianOverlaps] | None = None,
 ) -> _Enclosure:
     """Half-plane boxes of ``w`` over closed meridian ranges, row-wise.
 
     ``radial_rate`` encloses ``((w - o) x a) . (w' x a) = rho rho'``, whose
     sign is that of ``rho'`` wherever ``rho > 0``.
     """
-    budget = _coordinate_budget()
     origin = source.origin
     if source.frame is None:
-        jets = _meridian_jets(source.spans, first, last, 1, budget)
+        jets = evaluate_meridian_jets(
+            source.spans, first, last, 1, meridian_jets=meridian_jets, budget=budget
+        )
         position = jets.hull(0)
         relative = (
             np.nextafter(position[0] - origin, -np.inf),
@@ -164,9 +191,11 @@ def _enclose(
         derivative = jets.hull(1)
         valid = np.ones(first.shape, dtype=np.bool_)
     else:
-        jets = _meridian_jets(source.spans, first, last, 2, budget)
+        jets = evaluate_meridian_jets(
+            source.spans, first, last, 2, budget=budget, meridian_jets=meridian_jets
+        )
         with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
-            parallel, regular = _parallel_meridian_jets(
+            parallel, regular = parallel_meridian_jets(
                 source.frame, jets.jets, source.distance
             )
         relative, derivative = (
@@ -176,16 +205,16 @@ def _enclose(
             )
             for lower, upper in parallel[:2]
         )
-        valid = np.logical_and.reduceat(regular, jets.offsets) & ~_junction_rows(
+        valid = np.logical_and.reduceat(regular, jets.offsets) & ~junction_rows(
             source.spans, first, last, source.spans.g1, closed=False
         )
     axis = (source.axis, source.axis)
     with np.errstate(invalid="ignore", over="ignore"):
-        radial = _interval_cross(relative, axis)
-        rho = _interval_norm(radial)
-        height = _interval_dot(relative, axis)
-        radial_rate = _interval_dot(radial, _interval_cross(derivative, axis))
-        height_rate = _interval_dot(derivative, axis)
+        radial = interval_cross(relative, axis)
+        rho = interval_norm(radial)
+        height = interval_dot(relative, axis)
+        radial_rate = interval_dot(radial, interval_cross(derivative, axis))
+        height_rate = interval_dot(derivative, axis)
     valid &= np.all(np.isfinite(relative[0]) & np.isfinite(relative[1]), axis=1)
     valid &= np.all(np.isfinite(derivative[0]) & np.isfinite(derivative[1]), axis=1)
     return _Enclosure(rho, height, radial_rate, height_rate, valid)
@@ -206,7 +235,7 @@ def _strict(value: tuple[np.ndarray, np.ndarray], /) -> np.ndarray:
 class _Cycle:
     """Phases ``tau`` in ``[start, start + 1]`` of the closed meridian cycle."""
 
-    source: _RevolutionSource
+    source: RevolutionSource
     start: float
 
     def parameter(self, phase: float, /) -> float:
@@ -214,25 +243,61 @@ class _Cycle:
         span = self.source.last - self.source.first
         return self.source.last if phase == 1.0 else self.source.first + phase * span
 
-    def pieces(self, first: float, last: float, /) -> tuple[tuple[float, float], ...]:
+    def pieces(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[tuple[float, float], ...]:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    first,
+                    last,
+                )
+            ) as budget:
+                return self.pieces(first, last, preparations=preparations, budget=budget)
         if last <= 1.0:
             return ((self.parameter(first), self.parameter(last)),)
         if first >= 1.0:
             return ((self.parameter(first - 1.0), self.parameter(last - 1.0)),)
-        # The exact closure glues the cycle's two parameter ends.
+        # Proved endpoint equality glues the cycle's two parameter ends.
         return (
             (self.parameter(first), self.source.last),
             (self.source.first, self.parameter(last - 1.0)),
         )
 
-    def endpoint(self, tau: float, /) -> float:
+    def endpoint(
+        self,
+        tau: float,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> float:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    tau,
+                )
+            ) as budget:
+                return self.endpoint(tau, preparations=preparations, budget=budget)
         return self.parameter(tau - 1.0 if tau > 1.0 else tau)
 
 
 class _Rows:
     """Batched range and endpoint enclosures with a shared row allowance."""
 
-    def __init__(self, source: _RevolutionSource, allowance: int, /) -> None:
+    def __init__(self, source: RevolutionSource, allowance: int, /) -> None:
         self.source = source
         self.allowance = allowance
         self.used = 0
@@ -246,14 +311,34 @@ class _Rows:
         return True
 
     def ranges(
-        self, cycle: _Cycle, rows: list[tuple[float, float]], /
+        self,
+        cycle: _Cycle,
+        rows: list[tuple[float, float]],
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> _Enclosure | None:
-        pieces = [cycle.pieces(first, last) for first, last in rows]
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    cycle,
+                    rows,
+                )
+            ) as budget:
+                return self.ranges(cycle, rows, preparations=preparations, budget=budget)
+        pieces = [
+            cycle.pieces(first, last, preparations=preparations, budget=budget)
+            for first, last in rows
+        ]
         offsets = np.cumsum([0, *(len(row) for row in pieces[:-1])])
         flat = np.asarray([piece for row in pieces for piece in row], dtype=np.float64)
         if not self.admit(flat.shape[0]):
             return None
-        enclosure = _enclose(self.source, flat[:, 0], flat[:, 1])
+        enclosure = _enclose(self.source, flat[:, 0], flat[:, 1], budget=budget)
 
         def hull(
             value: tuple[np.ndarray, np.ndarray],
@@ -271,10 +356,24 @@ class _Rows:
             np.logical_and.reduceat(enclosure.valid, offsets),
         )
 
-    def points(self, parameters: np.ndarray, /) -> _Enclosure | None:
+    def points(
+        self,
+        parameters: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> _Enclosure | None:
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    parameters,
+                )
+            ) as budget:
+                return self.points(parameters, budget=budget)
         if not self.admit(parameters.shape[0]):
             return None
-        return _enclose(self.source, parameters, parameters)
+        return _enclose(self.source, parameters, parameters, budget=budget)
 
 
 def _distance_bounds(
@@ -320,9 +419,9 @@ def _distance_bounds(
             axis=-1,
         )
         lower = np.maximum(
-            np.nextafter(np.sqrt(_directed_sum_of_squares(near, -np.inf)), -np.inf), 0.0
+            np.nextafter(np.sqrt(directed_sum_of_squares(near, -np.inf)), -np.inf), 0.0
         )
-        upper = np.nextafter(np.sqrt(_directed_sum_of_squares(far, np.inf)), np.inf)
+        upper = np.nextafter(np.sqrt(directed_sum_of_squares(far, np.inf)), np.inf)
     valid = enclosure.valid & np.isfinite(upper)
     return np.where(valid, lower, 0.0), np.where(valid, upper, np.inf)
 
@@ -335,19 +434,23 @@ def _half_line(
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Crossing function sign, half-line side and monotone rate sign per row."""
-    if direction == "outward":
-        return (
-            _signs(enclosure.height, height),
-            _signs(enclosure.rho, rho),
-            _strict(enclosure.height_rate),
-        )
-    side = _signs(enclosure.height, height)
-    rate = np.where(enclosure.rho[0] > 0.0, _strict(enclosure.radial_rate), 0)
-    return (
-        _signs(enclosure.rho, rho),
-        side if direction == "up" else -side,
-        rate,
-    )
+    match direction:
+        case "outward":
+            return (
+                _signs(enclosure.height, height),
+                _signs(enclosure.rho, rho),
+                _strict(enclosure.height_rate),
+            )
+        case "up" | "down":
+            side = _signs(enclosure.height, height)
+            rate = np.where(enclosure.rho[0] > 0.0, _strict(enclosure.radial_rate), 0)
+            return (
+                _signs(enclosure.rho, rho),
+                side if direction == "up" else -side,
+                rate,
+            )
+        case _:
+            assert_never(direction)
 
 
 def _crossings(
@@ -357,6 +460,9 @@ def _crossings(
     rho: tuple[float, float],
     height: tuple[float, float],
     /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> int | None:
     """Transversal crossings of one half-line, or None when undecided.
 
@@ -376,14 +482,23 @@ def _crossings(
         missing = sorted({tau for row in rows for tau in row if tau not in signs})
         if missing:
             points = rows_owner.points(
-                np.asarray([cycle.endpoint(tau) for tau in missing], dtype=np.float64)
+                np.asarray(
+                    [
+                        cycle.endpoint(tau, preparations=preparations, budget=budget)
+                        for tau in missing
+                    ],
+                    dtype=np.float64,
+                ),
+                budget=budget,
             )
             if points is None:
                 return None
             value, _, _ = _half_line(points, direction, rho, height)
             value = np.where(points.valid, value, 0)
             signs.update(zip(missing, (int(sign) for sign in value), strict=True))
-        enclosure = rows_owner.ranges(cycle, rows)
+        enclosure = rows_owner.ranges(
+            cycle, rows, preparations=preparations, budget=budget
+        )
         if enclosure is None:
             return None
         value, side, rate = _half_line(enclosure, direction, rho, height)
@@ -407,13 +522,16 @@ def _crossings(
     return count
 
 
+@checked
 def classify_full_revolution(
-    source: _RevolutionSource,
+    source: RevolutionSource,
     point: np.ndarray,
     /,
     *,
     tolerance: float,
     maximum_rows: int,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> RevolutionMembership:
     """Certified parity membership and boundary distance bounds of one point.
 
@@ -422,15 +540,32 @@ def classify_full_revolution(
     boundary without solving for its closest point; a boundary point keeps
     a lower bound within ``tolerance``.
     """
-    origin = tuple(Fraction(float(value)) for value in source.origin)
-    axis = tuple(Fraction(float(value)) for value in source.axis)
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                source,
+                point,
+            )
+        ) as budget:
+            return classify_full_revolution(
+                source,
+                point,
+                tolerance=tolerance,
+                maximum_rows=maximum_rows,
+                preparations=preparations,
+                budget=budget,
+            )
+    origin = rational_vector(source.origin)
+    axis = rational_vector(source.axis)
     delta = tuple(
         Fraction(float(value)) - shift for value, shift in zip(point, origin, strict=True)
     )
-    exact_height = sum((a * b for a, b in zip(delta, axis, strict=True)), Fraction())
-    squared = sum((value * value for value in delta), Fraction()) - exact_height**2
-    height = (_fraction_down(exact_height), _fraction_up(exact_height))
-    rho = _square_root_interval(squared)
+    exact_height = rational_dot(delta, axis)
+    squared = rational_dot(delta, delta) - exact_height**2
+    height = (fraction_down(exact_height), fraction_up(exact_height))
+    rho = square_root_interval(squared)
     rows_owner = _Rows(source, maximum_rows)
     cycle = _Cycle(source, 0.0)
     rows = [
@@ -439,9 +574,18 @@ def classify_full_revolution(
     ]
     lower, upper = np.inf, np.inf
     while rows:
-        enclosure = rows_owner.ranges(cycle, rows)
+        enclosure = rows_owner.ranges(
+            cycle, rows, preparations=preparations, budget=budget
+        )
         if enclosure is None:
-            return RevolutionMembership(False, False, 0.0, upper, rows_owner.used, True)
+            return RevolutionMembership(
+                inside=False,
+                complete=False,
+                distance_lower=0.0,
+                distance_upper=upper,
+                operations=rows_owner.used,
+                exhausted=True,
+            )
         row_lower, row_upper = _distance_bounds(enclosure, rho, height)
         upper = min(upper, float(np.min(row_upper)))
         if upper <= tolerance:
@@ -459,21 +603,56 @@ def classify_full_revolution(
         rows = following
     if not lower > tolerance:
         # Within the classifier tolerance parity does not establish membership.
-        return RevolutionMembership(False, False, lower, upper, rows_owner.used, False)
-    for direction in ("outward", "up", "down"):
+        return RevolutionMembership(
+            inside=False,
+            complete=False,
+            distance_lower=lower,
+            distance_upper=upper,
+            operations=rows_owner.used,
+            exhausted=False,
+        )
+    for direction in get_args(_Direction):
         for start in _START_PHASES:
             crossings = _crossings(
-                rows_owner, _Cycle(source, start), direction, rho, height
+                rows_owner,
+                _Cycle(source, start),
+                direction,
+                rho,
+                height,
+                preparations=preparations,
+                budget=budget,
             )
             if crossings is not None:
                 return RevolutionMembership(
-                    bool(crossings % 2), True, lower, upper, rows_owner.used, False
+                    inside=bool(crossings % 2),
+                    complete=True,
+                    distance_lower=lower,
+                    distance_upper=upper,
+                    operations=rows_owner.used,
+                    exhausted=False,
                 )
             if rows_owner.exhausted:
                 return RevolutionMembership(
-                    False, False, lower, upper, rows_owner.used, True
+                    inside=False,
+                    complete=False,
+                    distance_lower=lower,
+                    distance_upper=upper,
+                    operations=rows_owner.used,
+                    exhausted=True,
                 )
-    return RevolutionMembership(False, False, lower, upper, rows_owner.used, False)
+    return RevolutionMembership(
+        inside=False,
+        complete=False,
+        distance_lower=lower,
+        distance_upper=upper,
+        operations=rows_owner.used,
+        exhausted=False,
+    )
 
 
-__all__ = ["RevolutionMembership", "classify_full_revolution", "prepare_full_revolution"]
+__all__ = [
+    "RevolutionMembership",
+    "RevolutionSource",
+    "classify_full_revolution",
+    "prepare_full_revolution",
+]

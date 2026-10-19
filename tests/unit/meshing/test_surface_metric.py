@@ -1,73 +1,134 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-from collections.abc import Callable
+import gc
+import weakref
+from collections.abc import Callable, Mapping
+from dataclasses import replace
 from fractions import Fraction
-from pathlib import Path
 from typing import Any, NamedTuple
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from jax import Array
+from jax import jvp, vjp
 
-from examples._native_surface_sources import AnalyticSurface, sphere, torus
-from phydrax._meshcore import NativeExecutionBudget
-from phydrax.discretization import CellGeometrySpec, CellMesh
-from phydrax.discretization._cell_geometry_transfer import CellGeometryTransitionPolicy
-from phydrax.discretization._coordinate_enclosure import (
+import phydrax as phx
+import phydrax.meshing._surface_metric as owner
+from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
+from phydrax._fingerprint import tree_content_equal
+from phydrax._meshcore import (
+    MeshcoreError,
+    MeshcoreStatus,
+    NativeExecutionLimits,
+    NativeExecutionScope,
+)
+from phydrax._resource_ticket import HostBatchTicket
+from phydrax.discretization import CellBlock, CellMesh
+from phydrax.discretization._cell_geometry import (
+    PolynomialComposedCellGeometryElement,
+    SplineCellGeometryElement,
+)
+from phydrax.discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
 )
-from phydrax.discretization._surface_chart_deformation import (
+from phydrax.discretization._coordinate_enclosure import (
+    coordinate_expressions,
+    Polynomial,
+)
+from phydrax.discretization._sphere_chart_deformation import (
+    cone_candidates,
+    sphere_full_map_displacement,
+)
+from phydrax.discretization._surface_chart_records import (
     PreparedSurfaceChartDeformation,
+    SurfaceChartWitness,
 )
 from phydrax.discretization.fem import FiniteElementDiscretization
 from phydrax.discretization.finite_volume._remap_evidence import (
     MappedSurfaceChartRemapEvidence,
 )
-from phydrax.equations import CompiledFiniteElementProblem
-from phydrax.geometry import MeshingDomain
-from phydrax.geometry._sphere_material_atlas import SphereMaterialCellAtlas
-from phydrax.geometry._surface_source_support import (
-    prepare_surface_source_root_atlas,
-    PreparedSurfaceSourceSupport,
-    SurfaceSourceCharts,
+from phydrax.geometry import BSplineSurfacePatch
+from phydrax.geometry._sphere_material_atlas import sphere_material_strata
+from phydrax.geometry._surface_source_support import SurfaceSourceRootAtlas
+from phydrax.lifecycle._meshing_field_records import prepare_meshing_field_owner
+from phydrax.lifecycle._meshing_sources import (
+    read_meshing_source_closure,
+    source_content_equal,
+    validate_meshing_source_closure,
+    write_meshing_source_closure,
 )
-from phydrax.linalg._spaces import ArraySpace
+from phydrax.meshing import (
+    execute_mesh_adaptation,
+    MeshAdaptationStatus,
+    MeshingEntityKind,
+    MeshingScope,
+    MeshMetricField,
+    MetricMeshAdaptation,
+    prepare_mesh_adaptation,
+)
 from phydrax.meshing._adaptation import MeshAdaptationPolicy, MeshAdaptationRoute
-from phydrax.meshing._association import SurfaceAssociationTransfer
 from phydrax.meshing._contracts import MeshingLimits
+from phydrax.meshing._entity_keys import entity_keys, key_rows
 from phydrax.meshing._lineage import inherit_mesh_organization
+from phydrax.meshing._mesh_part import MeshPart
+from phydrax.meshing._periodic import metric_target_lineage
 from phydrax.meshing._result import CellMeshingResult
+from phydrax.meshing._surface_association_transfer import prepare_surface_curve_witness
+from phydrax.meshing._surface_boundary_sources import SurfaceChartBoundarySource
 from phydrax.meshing._surface_metric import (
     execute_sphere_metric_adaptation,
     execute_surface_metric_adaptation,
 )
 from phydrax.meshing._tetra_metric import MetricRemeshingEvidence, MetricRemeshingStatus
 from phydrax.meshing._topology_edit import assemble_topology_edit, TopologyEditBlock
-from tests.unit.geometry.test_sphere_material_atlas import _accepted
+from phydrax.meshing.qualification import AnalyticSurface, sphere_surface, torus_surface
+from phydrax.solver import FiniteElementAcceptedState, FiniteElementTopologyTransaction
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.surface_metric import (
+    COORDINATE_RECONSTRUCTION_RTOL,
+    GEOMETRY_EVALUATION_ATOL,
+    host_coordinate_phase,
+    MATERIAL_FIELD_ATOL,
+    MATERIAL_FIELD_RTOL,
+    material_p1_reference_matrix,
+    METRIC_ARC_RTOL,
+    native_coordinate_phase,
+    native_coordinate_resources,
+    prepare_rational_metric_archive,
+    prepare_rational_metric_fields,
+    prepare_rational_metric_scenario,
+    prepare_rational_trim_metric_source,
+    prepare_sphere_metric_source,
+    rational_patch_point,
+    rational_surface_reconstruction_reference,
+    rational_trim_point,
+    RationalMaterialHistory,
+    RationalMetricArchive,
+    RationalMetricFieldState,
+    RationalMetricScenario,
+    require_exact_rational_patch_map,
+    solve_surface_reaction,
+    SOURCE_RESIDUAL_ATOL,
+    SOURCE_RESIDUAL_RTOL,
+    sphere_native_scope,
+    SphereMetricSource,
+    surface_patch,
+    surface_resources,
+    UVMetricSource,
+)
 
 
-def _patch(surface: AnalyticSurface) -> tuple[CellMesh, np.ndarray, np.ndarray]:
-    chart_points = np.asarray(
-        ((0.0, 0.0), (0.2, 0.0), (0.2, 0.2), (0.0, 0.2)), dtype=np.float64
-    )
-    cells = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32)
-    points = surface.domain.evaluate(np.zeros((4,), dtype=np.int32), chart_points)
-    return (
-        CellMesh.from_triangles(points, cells),
-        np.zeros((2,), dtype=np.int32),
-        chart_points[cells],
-    )
-
-
-@pytest.mark.parametrize("builder", [sphere, torus], ids=["sphere", "torus"])
-def test_curved_patch_metric_keeps_authoritative_chart_geometry(
+@pytest.mark.parametrize(
+    "builder", [sphere_surface, torus_surface], ids=["sphere", "torus"]
+)
+def test_curved_patch_metric_preserves_source_chart_geometry(
     builder: Callable[[], AnalyticSurface],
 ) -> None:
     surface = builder()
-    source, patches, charts = _patch(surface)
+    source, patches, charts = surface_patch(surface)
     # Independent analytic tangent scales at (u,v)=(0,0): sphere (1,1), torus (2.6,.6).
     if surface.domain.source_id == "sphere":
         tensor = np.eye(3, dtype=np.float64) * (0.95 / 0.2) ** 2
@@ -75,59 +136,71 @@ def test_curved_patch_metric_keeps_authoritative_chart_geometry(
         tensor = np.diag((1.0, (0.95 / 0.52) ** 2, (0.95 / 0.12) ** 2))
     metric = np.broadcast_to(tensor, (4, 3, 3))
     before = np.asarray(source.coordinates).copy()
-    outcome = execute_surface_metric_adaptation(
-        source,
-        metric,
-        surface.domain,
-        source_id=surface.domain.source_id,
-        source_revision=surface.domain.source_revision,
-        cell_patches=patches,
-        cell_charts=charts,
-        maximum_fidelity=0.1,
-        maximum_passes=4,
-        topology_operations=False,
-        relocation=False,
-    )
+    with surface_resources() as (native_scope, ledger):
+        outcome = execute_surface_metric_adaptation(
+            source,
+            metric,
+            surface.domain,
+            source_id=surface.domain.source_id,
+            source_revision=surface.domain.source_revision,
+            cell_patches=patches,
+            cell_charts=charts,
+            maximum_fidelity=0.1,
+            maximum_passes=4,
+            topology_operations=False,
+            relocation=False,
+            budget=ledger,
+            scope=native_scope,
+        )
     assert outcome.evidence.status is MetricRemeshingStatus.COMPLETE
-    assert outcome.source_id == surface.domain.source_id
-    assert outcome.source_revision == surface.domain.source_revision
+    assert outcome.geometry.source_id == surface.domain.source_id
+    assert outcome.geometry.source_revision == surface.domain.source_revision
     cell_blocks = []
-    for block in outcome.edit.blocks:
+    for block in outcome.geometry.edit.blocks:
         assert isinstance(block, TopologyEditBlock)
         cell_blocks.append(block.cells)
     target_cells = np.concatenate(cell_blocks)
     represented = surface.domain.evaluate(
-        np.repeat(outcome.cell_patches, 3), outcome.cell_charts.reshape((-1, 2))
+        np.repeat(outcome.geometry.cell_patches, 3),
+        outcome.geometry.cell_charts.reshape((-1, 2)),
     ).reshape((-1, 3, 3))
     np.testing.assert_allclose(
-        represented, outcome.edit.coordinates[target_cells], atol=1.0e-12
+        represented,
+        outcome.geometry.edit.coordinates[target_cells],
+        atol=GEOMETRY_EVALUATION_ATOL,
     )
-    assert np.max(surface.distance(outcome.edit.coordinates)) < 1.0e-12
+    assert (
+        np.max(surface.distance(outcome.geometry.edit.coordinates))
+        < GEOMETRY_EVALUATION_ATOL
+    )
     assert outcome.evidence.maximum_fidelity_bound <= 0.1
     np.testing.assert_array_equal(source.coordinates, before)
 
 
 def test_metric_target_lineage_binds_regrouped_scientific_cells() -> None:
-    from phydrax.discretization import CellBlock
-    from phydrax.meshing._periodic import metric_target_lineage
-    from phydrax.meshing._topology_edit import entity_keys, key_rows
 
-    surface = torus()
-    source, patches, charts = _patch(surface)
-    outcome = execute_surface_metric_adaptation(
-        source,
-        np.broadcast_to(np.eye(3), (4, 3, 3)),
-        surface.domain,
-        source_id=surface.domain.source_id,
-        source_revision=surface.domain.source_revision,
-        cell_patches=patches,
-        cell_charts=charts,
-        maximum_fidelity=0.1,
-        maximum_passes=1,
-        topology_operations=False,
-        relocation=False,
-    )
-    staged, _, _ = assemble_topology_edit(source, outcome.edit, numeric_version="regroup")
+    surface = torus_surface()
+    source, patches, charts = surface_patch(surface)
+    with surface_resources() as (native_scope, ledger):
+        outcome = execute_surface_metric_adaptation(
+            source,
+            np.broadcast_to(np.eye(3), (4, 3, 3)),
+            surface.domain,
+            source_id=surface.domain.source_id,
+            source_revision=surface.domain.source_revision,
+            cell_patches=patches,
+            cell_charts=charts,
+            maximum_fidelity=0.1,
+            maximum_passes=1,
+            topology_operations=False,
+            relocation=False,
+            budget=ledger,
+            scope=native_scope,
+        )
+    with coordinate_reference_budget() as budget:
+        staged, _, _ = assemble_topology_edit(
+            source, outcome.geometry.edit, numeric_version="regroup", budget=budget
+        )
     cells = np.concatenate([np.asarray(block.vertices) for block in staged.blocks])
     ids = np.concatenate([np.asarray(block.global_ids) for block in staged.blocks])
     blocks = tuple(
@@ -154,7 +227,10 @@ def test_metric_target_lineage_binds_regrouped_scientific_cells() -> None:
         entity_global_ids={1: np.asarray(staged.entity_set(1).entity_ids)[edge_rows]},
         numeric_version=staged.numeric_version,
     )
-    lineage = metric_target_lineage(source, outcome.edit, target)
+    with surface_resources() as (native_scope, ledger):
+        lineage = metric_target_lineage(
+            source, outcome.geometry.edit, target, scope=native_scope, budget=ledger
+        )
     assert lineage.target_topology_id == target.topology_id
     assert lineage.source_topology_id == source.topology_id
     mismatched = CellMesh(
@@ -164,32 +240,39 @@ def test_metric_target_lineage_binds_regrouped_scientific_cells() -> None:
         entity_global_ids={1: staged.entity_set(1).entity_ids},
         numeric_version=staged.numeric_version,
     )
-    with pytest.raises(ValueError, match="scientific carrier incidence"):
-        metric_target_lineage(source, outcome.edit, mismatched)
+    with (
+        pytest.raises(ValueError, match="scientific carrier incidence"),
+        surface_resources() as (native_scope, ledger),
+    ):
+        metric_target_lineage(
+            source, outcome.geometry.edit, mismatched, scope=native_scope, budget=ledger
+        )
 
 
 def test_metric_target_lineage_refuses_replaced_scientific_cell() -> None:
-    from phydrax.discretization import CellBlock
-    from phydrax.meshing._periodic import metric_target_lineage
 
-    surface = torus()
-    source, patches, charts = _patch(surface)
-    outcome = execute_surface_metric_adaptation(
-        source,
-        np.broadcast_to(np.eye(3), (4, 3, 3)),
-        surface.domain,
-        source_id=surface.domain.source_id,
-        source_revision=surface.domain.source_revision,
-        cell_patches=patches,
-        cell_charts=charts,
-        maximum_fidelity=0.1,
-        maximum_passes=1,
-        topology_operations=False,
-        relocation=False,
-    )
-    staged, _, _ = assemble_topology_edit(
-        source, outcome.edit, numeric_version="replacement"
-    )
+    surface = torus_surface()
+    source, patches, charts = surface_patch(surface)
+    with surface_resources() as (native_scope, ledger):
+        outcome = execute_surface_metric_adaptation(
+            source,
+            np.broadcast_to(np.eye(3), (4, 3, 3)),
+            surface.domain,
+            source_id=surface.domain.source_id,
+            source_revision=surface.domain.source_revision,
+            cell_patches=patches,
+            cell_charts=charts,
+            maximum_fidelity=0.1,
+            maximum_passes=1,
+            topology_operations=False,
+            relocation=False,
+            budget=ledger,
+            scope=native_scope,
+        )
+    with coordinate_reference_budget() as budget:
+        staged, _, _ = assemble_topology_edit(
+            source, outcome.geometry.edit, numeric_version="replacement", budget=budget
+        )
     target = CellMesh(
         staged.coordinates,
         tuple(
@@ -207,28 +290,36 @@ def test_metric_target_lineage_refuses_replaced_scientific_cell() -> None:
         },
         numeric_version=staged.numeric_version,
     )
-    with pytest.raises(ValueError, match="scientific carrier entity identities"):
-        metric_target_lineage(source, outcome.edit, target)
+    with (
+        pytest.raises(ValueError, match="scientific carrier entity identities"),
+        surface_resources() as (native_scope, ledger),
+    ):
+        metric_target_lineage(
+            source, outcome.geometry.edit, target, scope=native_scope, budget=ledger
+        )
 
 
 def test_complete_sphere_quality_bounds_the_independent_curved_differential() -> None:
-    surface = sphere()
-    mesh, patches, charts = _patch(surface)
+    surface = sphere_surface()
+    mesh, patches, charts = surface_patch(surface)
     metric = np.broadcast_to(np.eye(3) / 0.2**2, (4, 3, 3))
-    outcome = execute_surface_metric_adaptation(
-        mesh,
-        metric,
-        surface.domain,
-        source_id=surface.domain.source_id,
-        source_revision=surface.domain.source_revision,
-        cell_patches=patches,
-        cell_charts=charts,
-        maximum_fidelity=0.1,
-        minimum_metric_quality=0.2,
-        maximum_passes=1,
-        topology_operations=False,
-        relocation=False,
-    )
+    with surface_resources() as (native_scope, ledger):
+        outcome = execute_surface_metric_adaptation(
+            mesh,
+            metric,
+            surface.domain,
+            source_id=surface.domain.source_id,
+            source_revision=surface.domain.source_revision,
+            cell_patches=patches,
+            cell_charts=charts,
+            maximum_fidelity=0.1,
+            minimum_metric_quality=0.2,
+            maximum_passes=1,
+            topology_operations=False,
+            relocation=False,
+            budget=ledger,
+            scope=native_scope,
+        )
     assert outcome.evidence.status is MetricRemeshingStatus.COMPLETE
     assert outcome.evidence.minimum_metric_quality >= 0.2
     assert outcome.evidence.converged
@@ -258,181 +349,135 @@ def test_complete_sphere_quality_bounds_the_independent_curved_differential() ->
 
 
 def test_spherical_edge_metric_uses_source_arc_not_straight_chord() -> None:
-    surface = sphere()
-    source, patches, charts = _patch(surface)
+    surface = sphere_surface()
+    source, patches, charts = surface_patch(surface)
     metric = np.broadcast_to(np.eye(3, dtype=np.float64) / 0.2**2, (4, 3, 3))
-    outcome = execute_surface_metric_adaptation(
-        source,
-        metric,
-        surface.domain,
-        source_id=surface.domain.source_id,
-        source_revision=surface.domain.source_revision,
-        cell_patches=patches,
-        cell_charts=charts,
-        maximum_fidelity=0.1,
-        maximum_passes=0,
-    )
+    with surface_resources() as (native_scope, ledger):
+        outcome = execute_surface_metric_adaptation(
+            source,
+            metric,
+            surface.domain,
+            source_id=surface.domain.source_id,
+            source_revision=surface.domain.source_revision,
+            cell_patches=patches,
+            cell_charts=charts,
+            maximum_fidelity=0.1,
+            maximum_passes=0,
+            budget=ledger,
+            scope=native_scope,
+        )
     # Latitude v=.2 is shorter than a meridian by cos(.2); Gauss integrates the
-    # exact analytic arc, whereas chord length is 2 sin(.1) cos(.2)/.2.
+    # analytic arc, whereas chord length is 2 sin(.1) cos(.2)/.2.
     assert outcome.evidence.minimum_metric_length == pytest.approx(
-        np.cos(0.2), rel=1.0e-10
+        np.cos(0.2), rel=METRIC_ARC_RTOL
     )
     chord = 2.0 * np.sin(0.1) * np.cos(0.2) / 0.2
     assert outcome.evidence.minimum_metric_length > chord + 1.0e-3
 
 
 def test_stale_surface_revision_is_refused_without_mutation() -> None:
-    surface = sphere()
-    source, patches, charts = _patch(surface)
+    surface = sphere_surface()
+    source, patches, charts = surface_patch(surface)
     before = np.asarray(source.coordinates).copy()
     with pytest.raises(ValueError, match="revision"):
-        execute_surface_metric_adaptation(
-            source,
-            np.broadcast_to(np.eye(3), (4, 3, 3)),
-            surface.domain,
-            source_id=surface.domain.source_id,
-            source_revision="stale",
-            cell_patches=patches,
-            cell_charts=charts,
-            maximum_fidelity=0.1,
-        )
+        with surface_resources() as (native_scope, ledger):
+            execute_surface_metric_adaptation(
+                source,
+                np.broadcast_to(np.eye(3), (4, 3, 3)),
+                surface.domain,
+                source_id=surface.domain.source_id,
+                source_revision="stale",
+                cell_patches=patches,
+                cell_charts=charts,
+                maximum_fidelity=0.1,
+                budget=ledger,
+                scope=native_scope,
+            )
     np.testing.assert_array_equal(source.coordinates, before)
 
 
 def test_surface_budget_exhaustion_keeps_source_and_unmet_metric_evidence() -> None:
-    surface = sphere()
-    source, patches, charts = _patch(surface)
+    surface = sphere_surface()
+    source, patches, charts = surface_patch(surface)
     before = np.asarray(source.coordinates).copy()
-    outcome = execute_surface_metric_adaptation(
-        source,
-        np.broadcast_to(np.eye(3) / 0.05**2, (4, 3, 3)),
-        surface.domain,
-        source_id=surface.domain.source_id,
-        source_revision=surface.domain.source_revision,
-        cell_patches=patches,
-        cell_charts=charts,
-        maximum_fidelity=0.1,
-        maximum_operations=0,
-        maximum_passes=3,
-    )
+    with surface_resources() as (native_scope, ledger):
+        outcome = execute_surface_metric_adaptation(
+            source,
+            np.broadcast_to(np.eye(3) / 0.05**2, (4, 3, 3)),
+            surface.domain,
+            source_id=surface.domain.source_id,
+            source_revision=surface.domain.source_revision,
+            cell_patches=patches,
+            cell_charts=charts,
+            maximum_fidelity=0.1,
+            maximum_operations=0,
+            maximum_passes=3,
+            budget=ledger,
+            scope=native_scope,
+        )
     assert outcome.evidence.status is MetricRemeshingStatus.RESOURCE_LIMIT
     assert outcome.evidence.out_of_range_edges == 5
     assert outcome.evidence.resource_message
     assert dict(outcome.evidence.resource_requested)["maximum_operations"] == 0
     assert dict(outcome.evidence.resource_achieved)["operation_attempts"] == 0
-    np.testing.assert_array_equal(outcome.edit.coordinates, before)
+    np.testing.assert_array_equal(outcome.geometry.edit.coordinates, before)
     np.testing.assert_array_equal(source.coordinates, before)
 
 
 def test_spherical_refinement_improves_continuous_fidelity_without_flattening() -> None:
-    surface = sphere()
-    source, patches, charts = _patch(surface)
+    surface = sphere_surface()
+    source, patches, charts = surface_patch(surface)
     before = np.asarray(source.coordinates).copy()
-    outcome = execute_surface_metric_adaptation(
-        source,
-        np.broadcast_to(np.eye(3) / 0.1**2, (4, 3, 3)),
-        surface.domain,
-        source_id=surface.domain.source_id,
-        source_revision=surface.domain.source_revision,
-        cell_patches=patches,
-        cell_charts=charts,
-        maximum_fidelity=0.01,
-        maximum_passes=12,
-        relocation=False,
-    )
+    with surface_resources() as (native_scope, ledger):
+        outcome = execute_surface_metric_adaptation(
+            source,
+            np.broadcast_to(np.eye(3) / 0.1**2, (4, 3, 3)),
+            surface.domain,
+            source_id=surface.domain.source_id,
+            source_revision=surface.domain.source_revision,
+            cell_patches=patches,
+            cell_charts=charts,
+            maximum_fidelity=0.01,
+            maximum_passes=12,
+            relocation=False,
+            budget=ledger,
+            scope=native_scope,
+        )
     assert outcome.evidence.status is MetricRemeshingStatus.COMPLETE
     assert outcome.evidence.maximum_fidelity_bound <= 0.01
-    assert np.max(surface.distance(outcome.edit.coordinates)) < 1.0e-12
+    assert (
+        np.max(surface.distance(outcome.geometry.edit.coordinates))
+        < GEOMETRY_EVALUATION_ATOL
+    )
     cell_blocks = []
-    for block in outcome.edit.blocks:
+    for block in outcome.geometry.edit.blocks:
         assert isinstance(block, TopologyEditBlock)
         cell_blocks.append(block.cells)
     target_cells = np.concatenate(cell_blocks)
-    corner = outcome.edit.coordinates[target_cells]
+    corner = outcome.geometry.edit.coordinates[target_cells]
     normal = np.cross(corner[:, 1] - corner[:, 0], corner[:, 2] - corner[:, 0])
     assert np.all(np.sum(normal * np.mean(corner, axis=1), axis=1) > 0.0)
     represented = surface.domain.evaluate(
-        np.repeat(outcome.cell_patches, 3), outcome.cell_charts.reshape((-1, 2))
+        np.repeat(outcome.geometry.cell_patches, 3),
+        outcome.geometry.cell_charts.reshape((-1, 2)),
     ).reshape((-1, 3, 3))
-    np.testing.assert_allclose(represented, corner, atol=1.0e-12)
+    np.testing.assert_allclose(represented, corner, atol=GEOMETRY_EVALUATION_ATOL)
     np.testing.assert_array_equal(source.coordinates, before)
 
 
-class _SphereProducerFixture(NamedTuple):
-    domain: MeshingDomain
-    source: CellMeshingResult
-    atlas: SphereMaterialCellAtlas
-    transfer: SurfaceAssociationTransfer
-    policy: MeshAdaptationPolicy
-
-
-def _prepare_sphere_metric_source(size: float) -> _SphereProducerFixture:
-    """Retain actual native corner charts, not a manufactured latitude atlas."""
-    domain, source, atlas = _accepted.__wrapped__(size)
-    retained = source.surface_source
-    if not isinstance(retained, SurfaceSourceCharts):
-        raise TypeError(
-            "The native sphere must retain its actual original source charts."
-        )
-    retained.require_root(source.mesh, source.geometry)
-    charts, boundary = retained.root_parameters, retained.boundary_source
-    transfer = SurfaceAssociationTransfer(
-        PreparedSurfaceSourceSupport(
-            domain,
-            source,
-            jnp.asarray(charts),
-            boundary,
-            maximum_support_queries=1_280_000,
-        )
-    )
-    limits = MeshingLimits(
-        maximum_vertices=20_000,
-        maximum_edges=160_000,
-        maximum_faces=160_000,
-        maximum_cells=160_000,
-        maximum_work_units=640_000,
-        maximum_geometry_queries=1_280_000,
-        maximum_scratch_bytes=81_920_000,
-    )
-    policy = MeshAdaptationPolicy(
-        MeshAdaptationRoute.NATIVE_SURFACE_METRIC,
-        association_transfer=transfer,
-        maximum_passes=4,
-        relocation=False,
-        limits=limits,
-        geometry_transition=CellGeometryTransitionPolicy(
-            reconstruction="bounded_chart_deformation",
-            reconstruction_tolerance=0.32,
-            maximum_evaluations=640_000,
-        ),
-    )
-    return _SphereProducerFixture(domain, source, atlas, transfer, policy)
+@pytest.fixture(scope="module")
+def sphere_metric_source() -> SphereMetricSource:
+    return prepare_sphere_metric_source(0.8)
 
 
 @pytest.fixture(scope="module")
-def sphere_metric_source() -> _SphereProducerFixture:
-    return _prepare_sphere_metric_source(0.8)
+def fine_sphere_metric_source() -> SphereMetricSource:
+    return prepare_sphere_metric_source(0.4)
 
 
-@pytest.fixture(scope="module")
-def fine_sphere_metric_source() -> _SphereProducerFixture:
-    return _prepare_sphere_metric_source(0.4)
-
-
-def _sphere_native_budget(limits: MeshingLimits) -> NativeExecutionBudget:
-    return NativeExecutionBudget(
-        max_work=limits.maximum_work_units,
-        max_geometry_queries=limits.maximum_geometry_queries,
-        max_cavity_cells=limits.maximum_cavity_cells,
-        max_scratch_bytes=limits.maximum_scratch_bytes,
-        max_wall_seconds=limits.maximum_wall_seconds,
-    )
-
-
-def test_sphere_cone_filter_resolves_zero_area_contact_without_losing_actual_cells(
-    sphere_metric_source: _SphereProducerFixture,
+def test_sphere_cone_filter_resolves_zero_area_contact_and_retains_source_cells(
+    sphere_metric_source: SphereMetricSource,
 ) -> None:
-    from phydrax.discretization._sphere_chart_deformation import _cone_candidates
 
     _, source, atlas, _, policy = sphere_metric_source
     cells = np.concatenate([np.asarray(block.vertices) for block in source.mesh.blocks])
@@ -442,52 +487,72 @@ def test_sphere_cone_filter_resolves_zero_area_contact_without_losing_actual_cel
     )
     assert neighbors.size
     ledger = CoordinateEnclosureBudget(
-        policy.limits.maximum_work_units, policy.limits.maximum_scratch_bytes
+        HostBatchTicket(
+            policy.limits.maximum_work_units,
+            bytes_upper=policy.limits.maximum_scratch_bytes,
+        ),
+        maximum_work_units=policy.limits.maximum_work_units,
+        maximum_memory_bytes=policy.limits.maximum_scratch_bytes,
     )
-    with _sphere_native_budget(policy.limits), ledger.activate():
-        kept_source, kept_target = _cone_candidates(
+    with (
+        sphere_native_scope(policy.limits) as native_scope,
+        native_coordinate_phase(native_scope, ledger),
+    ):
+        kept_source, kept_target = cone_candidates(
             atlas,
             atlas,
             np.asarray((0, 0), dtype=np.int64),
             np.asarray((0, neighbors[0]), dtype=np.int64),
             policy.limits.maximum_scratch_bytes,
+            budget=ledger,
         )
     np.testing.assert_array_equal(kept_source, (0,))
     np.testing.assert_array_equal(kept_target, (0,))
 
 
 def test_sphere_displacement_zero_requires_exact_coefficient_cancellation() -> None:
-    from phydrax.discretization._sphere_chart_deformation import (
-        _sphere_full_map_displacement,
-    )
 
     vertices = (
         (Fraction(0), Fraction(0)),
         (Fraction(1), Fraction(0)),
         (Fraction(0), Fraction(1)),
     )
-    zero = CoordinateEnclosureBudget(3, 0)
-    assert _sphere_full_map_displacement(({}, {}, {}), vertices, zero) == 0.0
-    nonzero = CoordinateEnclosureBudget(3, 0)
-    with pytest.raises(CoordinateEnclosureResourceError):
-        _sphere_full_map_displacement(
-            ({(0, 0): Fraction(1, 2**100)}, {}, {}), vertices, nonzero
+    zero = CoordinateEnclosureBudget(
+        HostBatchTicket(3, bytes_upper=0), maximum_work_units=3, maximum_memory_bytes=0
+    )
+    with host_coordinate_phase(zero):
+        assert sphere_full_map_displacement(({}, {}, {}), vertices, budget=zero) == 0.0
+    nonzero = CoordinateEnclosureBudget(
+        HostBatchTicket(3, bytes_upper=0), maximum_work_units=3, maximum_memory_bytes=0
+    )
+    with pytest.raises(CoordinateEnclosureResourceError), host_coordinate_phase(nonzero):
+        sphere_full_map_displacement(
+            ({(0, 0): Fraction(1, 2**100)}, {}, {}), vertices, budget=nonzero
         )
 
 
-def test_native_sphere_metric_changes_actual_cells_with_complete_radial_correspondence(
-    sphere_metric_source: _SphereProducerFixture,
+@pytest.mark.parametrize(
+    "minimum_metric_quality", [0.05, 0.1], ids=["default-floor", "authored-floor"]
+)
+def test_native_sphere_metric_changes_cells_with_radial_correspondence(
+    sphere_metric_source: SphereMetricSource,
+    minimum_metric_quality: float,
 ) -> None:
     domain, source, atlas, transfer, policy = sphere_metric_source
     before = np.asarray(source.geometry.coordinates).copy()
     ledger = CoordinateEnclosureBudget(
-        policy.limits.maximum_work_units, policy.limits.maximum_scratch_bytes
+        HostBatchTicket(
+            policy.limits.maximum_work_units,
+            bytes_upper=policy.limits.maximum_scratch_bytes,
+        ),
+        maximum_work_units=policy.limits.maximum_work_units,
+        maximum_memory_bytes=policy.limits.maximum_scratch_bytes,
     )
     metric = np.broadcast_to(
         np.eye(3, dtype=np.float64) / 0.8**2, (source.mesh.coordinates.shape[0], 3, 3)
     )
-    native = _sphere_native_budget(policy.limits)
-    with native:
+    native = sphere_native_scope(policy.limits)
+    with native as native_scope, native_coordinate_phase(native_scope, ledger):
         outcome = execute_sphere_metric_adaptation(
             source,
             metric,
@@ -497,10 +562,17 @@ def test_native_sphere_metric_changes_actual_cells_with_complete_radial_correspo
             policy=policy,
             coordinate_contract=source.coordinate_contract,
             maximum_fidelity=0.16,
+            minimum_metric_quality=minimum_metric_quality,
             topology_operations=True,
             relocation=False,
-            coordinate_budget=ledger,
+            budget=ledger,
+            scope=native_scope,
         )
+    assert outcome.evidence.metric_quality_floor == minimum_metric_quality
+    assert (
+        not outcome.evidence.converged
+        or outcome.evidence.minimum_metric_quality >= minimum_metric_quality
+    )
     assert (
         sum((outcome.evidence.splits, outcome.evidence.collapses, outcome.evidence.flips))
         > 0
@@ -512,9 +584,13 @@ def test_native_sphere_metric_changes_actual_cells_with_complete_radial_correspo
     outcome.deformation.require_bound(
         source.mesh, source.geometry, outcome.target_mesh, outcome.reconstruction.geometry
     )
-    target, lineage, _ = assemble_topology_edit(
-        source.mesh, outcome.edit, numeric_version=outcome.target_mesh.numeric_version
-    )
+    with coordinate_reference_budget() as budget:
+        target, lineage, _ = assemble_topology_edit(
+            source.mesh,
+            outcome.edit,
+            numeric_version=outcome.target_mesh.numeric_version,
+            budget=budget,
+        )
     patches, zones, labels = inherit_mesh_organization(source, target, lineage)
     assert tuple(value.name for value in patches) == tuple(
         value.name for value in source.patches
@@ -592,8 +668,8 @@ def test_native_sphere_metric_changes_actual_cells_with_complete_radial_correspo
         )
     assert ledger.native_charged_work_units == ledger.work_units
     assert native.evidence is not None
-    # Native clipping and other owning FFI stages have separate work; only the
-    # coordinate attribution counter must equal this original host ledger.
+    # Native clipping and other FFI stages have separate work; only the
+    # coordinate attribution counter must equal this source host ledger.
     assert (
         ledger.work_units
         <= native.evidence.externally_charged_work
@@ -606,41 +682,54 @@ def test_native_sphere_metric_changes_actual_cells_with_complete_radial_correspo
     "source_dimension", [1, 2], ids=["source-curve", "source-surface"]
 )
 def test_sphere_relocation_certification_refusal_restores_trial_carrier(
-    sphere_metric_source: _SphereProducerFixture,
+    sphere_metric_source: SphereMetricSource,
     monkeypatch: pytest.MonkeyPatch,
     source_dimension: int,
 ) -> None:
-    import phydrax.meshing._surface_metric as owner
-
     domain, source, atlas, transfer, policy = sphere_metric_source
-    ledger = CoordinateEnclosureBudget(
-        policy.limits.maximum_work_units, policy.limits.maximum_scratch_bytes
-    )
     metric = np.broadcast_to(
         np.eye(3, dtype=np.float64), (source.mesh.coordinates.shape[0], 3, 3)
     )
-    with _sphere_native_budget(policy.limits), ledger.activate():
+    with (
+        sphere_native_scope(policy.limits) as native_scope,
+        native_coordinate_resources(native_scope, policy.limits) as ledger,
+    ):
         state, background = owner._sphere_initial_state(
-            source, metric, atlas, transfer, policy, 0.16
+            source, metric, atlas, transfer, policy, 0.16, budget=ledger
         )
-        vertex = next(
-            int(value)
-            for value in np.unique(state.cells)
-            if int(value) not in state.fixed
-            and state.dimensions[int(value)] == source_dimension
-            and (
-                source_dimension == 1
-                and len([edge for edge in state.features if int(value) in edge]) == 2
+        if source_dimension == 1:
+            # Uniform authored curve intervals have no improving relocation.
+            # Earn a nonuniform carrier with a real certified feature split.
+            edge = next(
+                edge
+                for edge, curve in sorted(state.features.items())
+                if curve >= 0
+                and edge not in state.blocked
                 and all(
-                    edge not in state.blocked and curve == state.indices[int(value)]
-                    for edge, curve in state.features.items()
-                    if int(value) in edge
+                    vertex not in state.fixed
+                    and state.dimensions[vertex] == 1
+                    and state.indices[vertex] == curve
+                    for vertex in edge
                 )
-                or source_dimension == 2
-                and not any(int(value) in edge for edge in state.features)
+                and np.unique(
+                    state.patches[np.sum(np.isin(state.cells, edge), axis=1) == 2]
+                ).size
+                == 1
             )
-            and np.unique(state.patches[np.any(state.cells == value, axis=1)]).size == 1
-        )
+            vertices_before, cells_before = state.points.shape[0], state.cells.shape[0]
+            assert owner._sphere_apply_operation(
+                state,
+                "split",
+                edge,
+                domain,
+                background,
+                transfer,
+                budget=ledger,
+                scope=native_scope,
+            )
+            assert state.points.shape[0] == vertices_before + 1
+            assert state.cells.shape[0] == cells_before + 2
+            assert state.dimensions[vertices_before] == 1
         points, directions, tensors = (
             state.points.copy(),
             state.directions.copy(),
@@ -650,76 +739,272 @@ def test_sphere_relocation_certification_refusal_restores_trial_carrier(
         stencils = tuple(state.stencils)
         ancestry = tuple(frozenset(value) for value in state.vertex_sources)
         kinds = dict(state.kinds)
+        relocated = set(state.relocated)
         work_before = ledger.work_units
+        refused_vertices: list[int] = []
 
         def refuse(*args: Any, **kwargs: Any) -> bool:
-            # The real proposal has already installed its numeric trial. A
-            # certification refusal must not leave that trial in the carrier.
-            raise ValueError("owning certification refusal")
+            # The production merit gate, not this test, admitted the real trial.
+            # Prove that the exception occurs after numeric installation.
+            assert any(
+                not np.array_equal(actual, original)
+                for actual, original in (
+                    (state.points, points),
+                    (state.directions, directions),
+                    (state.metric, tensors),
+                )
+            )
+            refused_vertices.append(vertex)
+            raise ValueError(
+                "surface_metric.certification must accept the trial carrier; got deliberate certification refusal"
+            )
 
         monkeypatch.setattr(owner, "_sphere_legal", refuse)
-        with pytest.raises(ValueError, match="owning certification refusal"):
-            owner._sphere_relocate(state, vertex, domain, background, ledger, transfer)
-        np.testing.assert_array_equal(state.points, points)
-        np.testing.assert_array_equal(state.directions, directions)
-        np.testing.assert_array_equal(state.metric, tensors)
-        for actual, original in zip(state.parameters, parameters, strict=True):
-            np.testing.assert_array_equal(actual, original)
-        assert tuple(state.stencils) == stencils
-        assert tuple(frozenset(value) for value in state.vertex_sources) == ancestry
-        assert state.kinds == kinds
-        assert vertex not in state.relocated
+        with pytest.raises(ValueError, match="surface_metric.certification"):
+            for candidate in np.unique(state.cells):
+                vertex = int(candidate)
+                if vertex in state.fixed or state.dimensions[vertex] != source_dimension:
+                    continue
+                rows = np.flatnonzero(np.any(state.cells == vertex, axis=1))
+                if (
+                    np.unique(state.patches[rows]).size != 1
+                    or np.unique(state.classes[rows]).size != 1
+                ):
+                    continue
+                incident = [edge for edge in state.features if vertex in edge]
+                if source_dimension == 1:
+                    if len(incident) != 2 or any(
+                        edge in state.blocked
+                        or state.features[edge] != state.indices[vertex]
+                        for edge in incident
+                    ):
+                        continue
+                elif incident:
+                    continue
+                # Reuse the production proposal/merit implementation.
+                # Nonimproving proposals are allowed to reject, never forced in.
+                try:
+                    changed = owner._sphere_relocate(
+                        state, vertex, domain, background, transfer, budget=ledger
+                    )
+                finally:
+                    np.testing.assert_array_equal(state.points, points)
+                    np.testing.assert_array_equal(state.directions, directions)
+                    np.testing.assert_array_equal(state.metric, tensors)
+                    for actual, original in zip(
+                        state.parameters, parameters, strict=True
+                    ):
+                        np.testing.assert_array_equal(actual, original)
+                    assert tuple(state.stencils) == stencils
+                    assert (
+                        tuple(frozenset(value) for value in state.vertex_sources)
+                        == ancestry
+                    )
+                    assert state.kinds == kinds
+                    assert state.relocated == relocated
+                    assert vertex not in state.relocated
+                assert not changed
+            pytest.fail(
+                "surface_metric.fixture.relocation must contain a naturally merit-admitted "
+                f"dimension-{source_dimension} trial under the original sphere/.8, "
+                "identity metric and fidelity .16 controls; got no qualifying proposal"
+            )
+        assert len(refused_vertices) == 1
+        assert state.dimensions[refused_vertices[0]] == source_dimension
         assert ledger.work_units > work_before
 
 
 def test_sphere_carrier_operation_admits_its_actual_cavity_before_mutation(
-    sphere_metric_source: _SphereProducerFixture,
+    sphere_metric_source: SphereMetricSource,
 ) -> None:
-    import phydrax.meshing._surface_metric as owner
-    from phydrax._meshcore import MeshcoreError
-
     domain, source, atlas, transfer, policy = sphere_metric_source
     ledger = CoordinateEnclosureBudget(
-        policy.limits.maximum_work_units, policy.limits.maximum_scratch_bytes
+        HostBatchTicket(
+            policy.limits.maximum_work_units,
+            bytes_upper=policy.limits.maximum_scratch_bytes,
+        ),
+        maximum_work_units=policy.limits.maximum_work_units,
+        maximum_memory_bytes=policy.limits.maximum_scratch_bytes,
     )
     metric = np.broadcast_to(
         np.eye(3, dtype=np.float64), (source.mesh.coordinates.shape[0], 3, 3)
     )
-    with _sphere_native_budget(policy.limits), ledger.activate():
+    with (
+        sphere_native_scope(policy.limits) as native_scope,
+        native_coordinate_phase(native_scope, ledger),
+    ):
         state, background = owner._sphere_initial_state(
-            source, metric, atlas, transfer, policy, 0.16
+            source, metric, atlas, transfer, policy, 0.16, budget=ledger
         )
     vertex = int(state.cells[0, 0])
     before = state.points.copy()
     cells = state.cells.copy()
     stencils = tuple(state.stencils)
     work_before = ledger.work_units
-    native = NativeExecutionBudget(
-        max_work=policy.limits.maximum_work_units,
-        max_geometry_queries=policy.limits.maximum_geometry_queries,
-        max_cavity_cells=0,
-        max_scratch_bytes=policy.limits.maximum_scratch_bytes,
-        max_wall_seconds=policy.limits.maximum_wall_seconds,
-    )
-    with pytest.raises(MeshcoreError), native, ledger.activate():
-        owner._sphere_apply_operation(
-            state, "relocate", (vertex,), domain, background, transfer, ledger
+    native = NativeExecutionScope(
+        NativeExecutionLimits(
+            policy.limits.maximum_work_units,
+            policy.limits.maximum_geometry_queries,
+            0,
+            policy.limits.maximum_scratch_bytes,
+            policy.limits.maximum_wall_seconds,
         )
+    )
+    with (
+        pytest.raises(MeshcoreError) as refused,
+        native as native_scope,
+        native_coordinate_phase(native_scope, ledger),
+    ):
+        owner._sphere_apply_operation(
+            state,
+            "relocate",
+            (vertex,),
+            domain,
+            background,
+            transfer,
+            budget=ledger,
+            scope=native_scope,
+        )
+    assert refused.value.status is MeshcoreStatus.CAPACITY_EXCEEDED
     np.testing.assert_array_equal(state.points, before)
     np.testing.assert_array_equal(state.cells, cells)
     assert tuple(state.stencils) == stencils
     assert ledger.work_units == work_before
 
 
+@pytest.mark.parametrize(
+    "source_dimension", [1, 2], ids=["source-curve", "source-surface"]
+)
+def test_public_sphere_relocation_refuses_uncertified_source_without_mutation(
+    sphere_metric_source: SphereMetricSource,
+    source_dimension: int,
+) -> None:
+    _, source, _, _, policy = sphere_metric_source
+    before = np.asarray(source.geometry.coordinates).copy()
+    vertex_association = next(
+        value
+        for value in source.associations
+        if value.target_entity_set_id == source.mesh.entity_set(0).entity_set_id
+    )
+    rows = np.flatnonzero(
+        np.asarray(vertex_association.source_dimensions) == source_dimension
+    )
+    assert rows.size
+    parameters = np.asarray(vertex_association.parameters)[rows].copy()
+    uncertified = eqx.tree_at(lambda value: value.certification, source, None)
+    vertices = source.mesh.entity_set(0)
+    scope = MeshingScope(
+        source.mesh.mesh_id,
+        source.mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        0,
+        vertices.entity_set_id,
+        vertices.entity_ids,
+    )
+    metric = MeshMetricField(
+        scope,
+        np.broadcast_to(
+            np.eye(3, dtype=np.float64), (source.mesh.coordinates.shape[0], 3, 3)
+        ),
+        minimum_size=1.0,
+        maximum_size=1.0,
+    )
+    with pytest.raises(ValueError, match="MeshAdaptation.source.certification"):
+        prepare_mesh_adaptation(
+            uncertified,
+            phx.meshing.RelocationMeshAdaptation(
+                metric, coordinate_contract=source.coordinate_contract
+            ),
+            policy=policy,
+        )
+    np.testing.assert_array_equal(source.geometry.coordinates, before)
+    np.testing.assert_array_equal(vertex_association.parameters[rows], parameters)
+    assert uncertified.mesh.mesh_id == source.mesh.mesh_id
+    assert uncertified.geometry.geometry_layout_id == source.geometry.geometry_layout_id
+    assert tree_content_equal(uncertified.associations, source.associations)
+
+
+def test_public_sphere_cavity_refusal_preserves_source_and_reports_allowance(
+    sphere_metric_source: SphereMetricSource,
+) -> None:
+    _, source, _, transfer, policy = sphere_metric_source
+    before = np.asarray(source.geometry.coordinates).copy()
+    limits = MeshingLimits(
+        maximum_vertices=20_000,
+        maximum_edges=160_000,
+        maximum_faces=160_000,
+        maximum_cells=160_000,
+        maximum_work_units=640_000,
+        maximum_geometry_queries=1_280_000,
+        maximum_cavity_cells=1,
+        maximum_scratch_bytes=81_920_000,
+    )
+    bounded = MeshAdaptationPolicy(
+        MeshAdaptationRoute.NATIVE_SURFACE_METRIC,
+        association_transfer=transfer,
+        maximum_passes=policy.maximum_passes,
+        relocation=True,
+        limits=limits,
+        geometry_transition=policy.geometry_transition,
+    )
+    vertices = source.mesh.entity_set(0)
+    scope = MeshingScope(
+        source.mesh.mesh_id,
+        source.mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        0,
+        vertices.entity_set_id,
+        vertices.entity_ids,
+    )
+    metric = MeshMetricField(
+        scope,
+        np.broadcast_to(
+            np.eye(3, dtype=np.float64) / 0.07**2,
+            (source.mesh.coordinates.shape[0], 3, 3),
+        ),
+        minimum_size=0.07,
+        maximum_size=0.07,
+    )
+    result = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            source,
+            phx.meshing.RelocationMeshAdaptation(
+                metric, coordinate_contract=source.coordinate_contract
+            ),
+            policy=bounded,
+        )
+    )
+    assert result.target.result_id == source.result_id
+    assert result.transition is None and result.lineage is None and result.stencil is None
+    assert isinstance(result.evidence, MetricRemeshingEvidence)
+    assert result.evidence.status is MetricRemeshingStatus.STALLED
+    assert result.evidence.rejected_operations == source.mesh.coordinates.shape[0]
+    assert result.evidence.operation_attempts == 0
+    assert (
+        result.evidence.splits
+        == result.evidence.collapses
+        == result.evidence.flips
+        == result.evidence.relocations
+        == 0
+    )
+    assert result.evidence.execution_evidence is not None
+    assert result.evidence.execution_evidence.total_work_units <= 640_000
+    assert result.policy.limits.maximum_cavity_cells == 1
+    np.testing.assert_array_equal(source.geometry.coordinates, before)
+
+
 def test_native_sphere_metric_zero_ledger_refuses_without_source_mutation(
-    sphere_metric_source: _SphereProducerFixture,
+    sphere_metric_source: SphereMetricSource,
 ) -> None:
     domain, source, atlas, transfer, policy = sphere_metric_source
     before = np.asarray(source.geometry.coordinates).copy()
-    ledger = CoordinateEnclosureBudget(0, 0)
+    ledger = CoordinateEnclosureBudget(
+        HostBatchTicket(0, bytes_upper=0), maximum_work_units=0, maximum_memory_bytes=0
+    )
     with (
-        _sphere_native_budget(policy.limits),
+        sphere_native_scope(policy.limits) as native_scope,
         pytest.raises(CoordinateEnclosureResourceError),
+        native_coordinate_phase(native_scope, ledger),
     ):
         execute_sphere_metric_adaptation(
             source,
@@ -734,27 +1019,37 @@ def test_native_sphere_metric_zero_ledger_refuses_without_source_mutation(
             maximum_fidelity=0.16,
             topology_operations=True,
             relocation=False,
-            coordinate_budget=ledger,
+            budget=ledger,
+            scope=native_scope,
         )
     assert ledger.work_units == ledger.native_charged_work_units == 0
     np.testing.assert_array_equal(np.asarray(source.geometry.coordinates), before)
 
 
 def test_native_sphere_metric_stale_source_revision_refuses_without_mutation(
-    sphere_metric_source: _SphereProducerFixture,
+    sphere_metric_source: SphereMetricSource,
 ) -> None:
     _, source, atlas, transfer, policy = sphere_metric_source
     before = np.asarray(source.geometry.coordinates).copy()
     ledger = CoordinateEnclosureBudget(
-        policy.limits.maximum_work_units, policy.limits.maximum_scratch_bytes
+        HostBatchTicket(
+            policy.limits.maximum_work_units,
+            bytes_upper=policy.limits.maximum_scratch_bytes,
+        ),
+        maximum_work_units=policy.limits.maximum_work_units,
+        maximum_memory_bytes=policy.limits.maximum_scratch_bytes,
     )
-    with pytest.raises(ValueError, match="stale"):
+    with (
+        pytest.raises(ValueError, match="stale"),
+        sphere_native_scope(policy.limits) as native_scope,
+        native_coordinate_phase(native_scope, ledger),
+    ):
         execute_sphere_metric_adaptation(
             source,
             np.broadcast_to(
                 np.eye(3, dtype=np.float64), (source.mesh.coordinates.shape[0], 3, 3)
             ),
-            sphere(revision="changed").domain,
+            sphere_surface(revision="changed").domain,
             atlas,
             transfer,
             policy=policy,
@@ -762,24 +1057,16 @@ def test_native_sphere_metric_stale_source_revision_refuses_without_mutation(
             maximum_fidelity=0.16,
             topology_operations=True,
             relocation=False,
-            coordinate_budget=ledger,
+            budget=ledger,
+            scope=native_scope,
         )
     assert ledger.work_units == 0
     np.testing.assert_array_equal(np.asarray(source.geometry.coordinates), before)
 
 
 def test_public_sphere_metric_resource_refusal_reaches_the_consumer_as_evidence(
-    sphere_metric_source: _SphereProducerFixture,
+    sphere_metric_source: SphereMetricSource,
 ) -> None:
-    from phydrax.meshing import (
-        execute_mesh_adaptation,
-        MeshAdaptationStatus,
-        MeshingEntityKind,
-        MeshingScope,
-        MeshMetricField,
-        MetricMeshAdaptation,
-        prepare_mesh_adaptation,
-    )
 
     _, source, _, transfer, policy = sphere_metric_source
     before = np.asarray(source.geometry.coordinates).copy()
@@ -838,10 +1125,8 @@ def test_public_sphere_metric_resource_refusal_reaches_the_consumer_as_evidence(
 
 
 def test_public_native_sphere_query_refusal_retains_ended_status_and_source(
-    sphere_metric_source: _SphereProducerFixture,
+    sphere_metric_source: SphereMetricSource,
 ) -> None:
-    import phydrax as phx
-    from phydrax._meshcore import MeshcoreStatus
 
     _, source, _, transfer, policy = sphere_metric_source
     before = np.asarray(source.geometry.coordinates).copy()
@@ -895,17 +1180,23 @@ def test_public_native_sphere_query_refusal_retains_ended_status_and_source(
     assert (
         int(result.evidence.execution_evidence.status) == MeshcoreStatus.CAPACITY_EXCEEDED
     )
-    assert (
-        int(result.evidence.execution_evidence.total_geometry_queries)
-        == limits.maximum_geometry_queries
-    )
+
+    requested = dict(result.evidence.resource_requested)
+    achieved = dict(result.evidence.resource_achieved)
+    queries_upper = sphere_material_strata(
+        sphere_metric_source.domain, source
+    ).queries_upper()
+    assert requested["native_batch:requested_geometry_queries"] == queries_upper
+    assert queries_upper > limits.maximum_geometry_queries
+    assert requested["maximum_geometry_queries"] == limits.maximum_geometry_queries
+    assert int(result.evidence.execution_evidence.total_geometry_queries) == 0
+    assert achieved["native_batch:refusal:5"] == 0
     np.testing.assert_array_equal(source.geometry.coordinates, before)
 
 
 def test_public_fine_sphere_metric_preserves_original_all_phase_capacity(
-    fine_sphere_metric_source: _SphereProducerFixture,
+    fine_sphere_metric_source: SphereMetricSource,
 ) -> None:
-    import phydrax as phx
 
     _, source, _, _, policy = fine_sphere_metric_source
     before = np.asarray(source.geometry.coordinates).copy()
@@ -937,8 +1228,15 @@ def test_public_fine_sphere_metric_preserves_original_all_phase_capacity(
     )
     evidence = adaptation.evidence
     if not isinstance(evidence, MetricRemeshingEvidence):
-        raise TypeError("The fine sphere route requires its actual metric evidence.")
-    assert adaptation.status is not phx.meshing.MeshAdaptationStatus.RESOURCE_LIMIT
+        raise TypeError(
+            "surface_metric.test.result must retain its declared scientific contract; got the fine sphere route requires its metric evidence"
+        )
+    assert adaptation.status is not phx.meshing.MeshAdaptationStatus.RESOURCE_LIMIT, (
+        dict(evidence.resource_requested),
+        dict(evidence.resource_achieved),
+        evidence.resource_message,
+        evidence.execution_evidence,
+    )
     assert adaptation.target.mesh.topology_id != source.mesh.topology_id
     assert adaptation.geometry_transition is not None
     assert adaptation.geometry_transition.chart_deformation is not None
@@ -961,8 +1259,12 @@ def test_live_coefficient_bank_cannot_evade_memory_limit_with_recycled_wrappers(
     # All source polynomials stay live simultaneously; short-lived argument
     # tuples must not make later scientific coefficients invisible to the ledger.
     polynomials = [{(index,): Fraction(index + 1)} for index in range(100)]
-    ledger = CoordinateEnclosureBudget(10_000, 10_000)
-    with pytest.raises(CoordinateEnclosureResourceError):
+    ledger = CoordinateEnclosureBudget(
+        HostBatchTicket(10000, bytes_upper=10000),
+        maximum_work_units=10000,
+        maximum_memory_bytes=10000,
+    )
+    with pytest.raises(CoordinateEnclosureResourceError), host_coordinate_phase(ledger):
         for polynomial in polynomials:
             ledger.retain_basis((polynomial,))
 
@@ -970,7 +1272,6 @@ def test_live_coefficient_bank_cannot_evade_memory_limit_with_recycled_wrappers(
 def test_rational_derivative_batch_reuses_only_exact_boxes_under_original_budget() -> (
     None
 ):
-    from phydrax.geometry import BSplineSurfacePatch
 
     patch = BSplineSurfacePatch(
         np.asarray(
@@ -987,15 +1288,23 @@ def test_rational_derivative_batch_reuses_only_exact_boxes_under_original_budget
     neighboring = box.copy()
     neighboring[1, 0] = np.nextafter(neighboring[1, 0], np.inf)
     boxes = np.stack((box, box, neighboring))
-    prepared = CoordinateEnclosureBudget(640_000, 81_920_000)
-    with prepared.activate():
-        lower, upper = patch.derivative_bounds_batch(boxes, order=2)
+    prepared = CoordinateEnclosureBudget(
+        HostBatchTicket(640000, bytes_upper=81920000),
+        maximum_work_units=640000,
+        maximum_memory_bytes=81920000,
+    )
+    with host_coordinate_phase(prepared):
+        lower, upper = patch.derivative_bounds_batch(boxes, order=2, budget=prepared)
     cold_work = 0
     for row, query in enumerate(boxes):
-        cold = CoordinateEnclosureBudget(640_000, 81_920_000)
-        with cold.activate():
+        cold = CoordinateEnclosureBudget(
+            HostBatchTicket(640000, bytes_upper=81920000),
+            maximum_work_units=640000,
+            maximum_memory_bytes=81920000,
+        )
+        with host_coordinate_phase(cold):
             expected_lower, expected_upper = patch.derivative_bounds_batch(
-                query[None], order=2
+                query[None], order=2, budget=cold
             )
         np.testing.assert_array_equal(lower[row], expected_lower[0])
         np.testing.assert_array_equal(upper[row], expected_upper[0])
@@ -1003,180 +1312,111 @@ def test_rational_derivative_batch_reuses_only_exact_boxes_under_original_budget
     assert 0 < prepared.work_units < cold_work < 640_000
     first_work = prepared.work_units
     first_retained = prepared.retained_basis_bytes
-    with prepared.activate():
-        repeated_lower, repeated_upper = patch.derivative_bounds_batch(boxes, order=2)
+    with host_coordinate_phase(prepared):
+        repeated_lower, repeated_upper = patch.derivative_bounds_batch(
+            boxes, order=2, budget=prepared
+        )
     np.testing.assert_array_equal(repeated_lower, lower)
     np.testing.assert_array_equal(repeated_upper, upper)
     assert 0 < prepared.work_units - first_work < first_work
     assert prepared.retained_basis_bytes == first_retained
     before_first_jet = prepared.work_units
-    with prepared.activate():
+    validation_keys = set(prepared.source_derivative_box_validation_cache)
+    basis_ids = set(prepared.retained_objects)
+    owner_ids = set(prepared.retained_owner_objects)
+    with host_coordinate_phase(prepared):
         prepared_first_lower, prepared_first_upper = patch.derivative_bounds_batch(
-            boxes, order=1
+            boxes, order=1, budget=prepared
         )
-    cold_first = CoordinateEnclosureBudget(640_000, 81_920_000)
-    with cold_first.activate():
-        cold_first_lower, cold_first_upper = patch.derivative_bounds_batch(boxes, order=1)
+        assert prepared._storage_owner is not None
+        assert (
+            prepared._storage_owner.bound + prepared._work_storage.bound
+            == prepared.retained_basis_bytes + prepared.temporary_bytes_upper
+        )
+    cold_first = CoordinateEnclosureBudget(
+        HostBatchTicket(640000, bytes_upper=81920000),
+        maximum_work_units=640000,
+        maximum_memory_bytes=81920000,
+    )
+    with host_coordinate_phase(cold_first):
+        cold_first_lower, cold_first_upper = patch.derivative_bounds_batch(
+            boxes, order=1, budget=cold_first
+        )
     np.testing.assert_array_equal(prepared_first_lower, cold_first_lower)
     np.testing.assert_array_equal(prepared_first_upper, cold_first_upper)
     assert 0 < prepared.work_units - before_first_jet < cold_first.work_units
-    assert prepared.retained_basis_bytes == first_retained
-    starved = CoordinateEnclosureBudget(first_work - 1, 81_920_000)
-    with starved.activate(), pytest.raises(CoordinateEnclosureResourceError):
-        patch.derivative_bounds_batch(boxes, order=2)
+    # A lower derivative order reuses the jets but owns its distinct C0 mask.
+    (validation_key,) = (
+        prepared.source_derivative_box_validation_cache.keys() - validation_keys
+    )
+    assert validation_key[1:] == (1, boxes.tobytes())
+    validation = prepared.source_derivative_box_validation_cache[validation_key]
+    assert validation.nbytes == boxes.shape[0]
+    assert not validation.flags.writeable and validation.flags.owndata
+    assert set(prepared.retained_owner_objects) - owner_ids == {id(validation)}
+    new_basis = {
+        key: value
+        for key, value in prepared.retained_objects.items()
+        if key not in basis_ids
+    }
+    (wrapper,) = (
+        value
+        for value in new_basis.values()
+        if isinstance(value, tuple) and len(value) == 1 and value[0] is validation_key
+    )
+    assert (
+        set(new_basis)
+        == ({id(wrapper), id(validation_key)} | {id(value) for value in validation_key})
+        - basis_ids
+    )
+    first_jet_retained = prepared.retained_basis_bytes
+    assert first_jet_retained > first_retained
+    with host_coordinate_phase(prepared):
+        repeated_first = patch.derivative_bounds_batch(boxes, order=1, budget=prepared)
+    np.testing.assert_array_equal(repeated_first[0], prepared_first_lower)
+    np.testing.assert_array_equal(repeated_first[1], prepared_first_upper)
+    assert prepared.retained_basis_bytes == first_jet_retained
+    validation_reference = weakref.ref(validation)
+    starved = CoordinateEnclosureBudget(
+        HostBatchTicket(first_work - 1, bytes_upper=81920000),
+        maximum_work_units=first_work - 1,
+        maximum_memory_bytes=81920000,
+    )
+    with host_coordinate_phase(starved), pytest.raises(CoordinateEnclosureResourceError):
+        patch.derivative_bounds_batch(boxes, order=2, budget=starved)
     altered_points = np.asarray(patch.control_points).copy()
     altered_points[1, 1, 2] += 0.1
     altered = BSplineSurfacePatch(
         altered_points, patch.weights, patch.u_knots, patch.v_knots, 1, 1
     )
-    with prepared.activate():
-        changed_lower, changed_upper = altered.derivative_bounds_batch(boxes, order=2)
-    independent = CoordinateEnclosureBudget(640_000, 81_920_000)
-    with independent.activate():
+    with host_coordinate_phase(prepared):
+        changed_lower, changed_upper = altered.derivative_bounds_batch(
+            boxes, order=2, budget=prepared
+        )
+    independent = CoordinateEnclosureBudget(
+        HostBatchTicket(640000, bytes_upper=81920000),
+        maximum_work_units=640000,
+        maximum_memory_bytes=81920000,
+    )
+    with host_coordinate_phase(independent):
         independent_lower, independent_upper = altered.derivative_bounds_batch(
-            boxes, order=2
+            boxes, order=2, budget=independent
         )
     np.testing.assert_array_equal(changed_lower, independent_lower)
     np.testing.assert_array_equal(changed_upper, independent_upper)
     assert not np.array_equal(changed_lower, lower)
-
-
-class _UVProducerFixture(NamedTuple):
-    domain: MeshingDomain
-    source: CellMeshingResult
-    transfer: SurfaceAssociationTransfer
-    policy: MeshAdaptationPolicy
+    del prepared, validation
+    gc.collect()
+    assert validation_reference() is None
 
 
 @pytest.fixture(scope="module")
-def rational_trim_metric_source() -> _UVProducerFixture:
-    """One actual authored rational patch/trim producer under the original cap."""
-    import phydrax as phx
-
-    geometry, meshing = phx.geometry, phx.meshing
-    controls = np.asarray(
-        (
-            ((0.75, 0.5), (0.75, 0.75), (0.5, 0.75)),
-            ((0.5, 0.75), (0.25, 0.75), (0.25, 0.5)),
-            ((0.25, 0.5), (0.25, 0.25), (0.5, 0.25)),
-            ((0.5, 0.25), (0.75, 0.25), (0.75, 0.5)),
-        ),
-        dtype=np.float64,
-    )
-    loop = tuple(
-        geometry.PatchCurveUse(
-            index,
-            geometry.BSplineCurve.bezier(points, (1.0, 0.75, 1.0)),
-            0.0,
-            1.0,
-        )
-        for index, points in enumerate(controls)
-    )
-    patch = geometry.BSplineSurfacePatch(
-        np.asarray(
-            (((0.0, 0.0, 0.0), (0.0, 1.0, 0.05)), ((1.0, 0.0, 0.1), (1.0, 1.0, 0.2))),
-            dtype=np.float64,
-        ),
-        np.asarray(((1.0, 0.9), (1.1, 1.0)), dtype=np.float64),
-        (0.0, 0.0, 1.0, 1.0),
-        (0.0, 0.0, 1.0, 1.0),
-        1,
-        1,
-    )
-    domain = geometry.MeshingDomain(
-        (geometry.MeshingSurfacePatch(patch, (loop,)),),
-        tuple(geometry.MeshingDomainCurve(index, (index + 1) % 4) for index in range(4)),
-        4,
-        source_id="native-rational-trim-metric",
-        source_revision="authored",
-    )
-    scope = meshing.MeshingScope(
-        domain.source_id,
-        domain.source_revision,
-        meshing.MeshingEntityKind.GEOMETRY,
-        2,
-        domain.entity_set_id(2),
-        np.asarray(domain.scope_indices(2), dtype=np.int64),
-    )
-    limits = MeshingLimits(
-        maximum_vertices=20_000,
-        maximum_edges=160_000,
-        maximum_faces=160_000,
-        maximum_cells=160_000,
-        maximum_work_units=640_000,
-        maximum_geometry_queries=1_280_000,
-        maximum_scratch_bytes=81_920_000,
-    )
-    specification = meshing.SurfaceMeshingSpec(
-        meshing.CellMeshingTarget(2, 3, meshing.CellFamilyPolicy(required=("triangle",))),
-        scope,
-        size_controls=(
-            meshing.UniformSizeControl(
-                scope, 0.16, maximum_size=0.24, strength=meshing.SizeControlStrength.HARD
-            ),
-        ),
-        size_compliance=meshing.SizeCompliancePolicy(
-            relative_tolerance=0.5, target_statistics=("p50",)
-        ),
-        protected_features=(
-            meshing.ProtectedFeature(
-                scope, meshing.FeatureKind.SURFACE, maximum_deviation=0.01
-            ),
-        ),
-        limits=limits,
-    )
-    source = (
-        meshing.NativeMeshingProvider(meshing.NativeMeshingOptions("parametric_surface"))
-        .plan(
-            meshing.NativeSurfaceSource(domain),
-            specification,
-            coordinate_contract=phx.SpatialCoordinateContract.si(),
-        )
-        .execute()
-    )
-    if not isinstance(source, CellMeshingResult):
-        raise TypeError(
-            "The authored rational surface plan must produce its actual cell result."
-        )
-    retained = source.surface_source
-    if not isinstance(retained, SurfaceSourceCharts):
-        raise TypeError(
-            "The authored rational surface must retain its original source charts."
-        )
-    retained.require_root(source.mesh, source.geometry)
-    boundary = retained.boundary_source
-    atlas = prepare_surface_source_root_atlas(
-        domain,
-        boundary.patches,
-        source.coordinate_contract,
-        maximum_support_queries=limits.maximum_geometry_queries,
-    )
-    transfer = SurfaceAssociationTransfer(
-        PreparedSurfaceSourceSupport(
-            domain,
-            atlas,
-            atlas.root_parameters,
-            boundary,
-            maximum_support_queries=limits.maximum_geometry_queries,
-        )
-    )
-    policy = MeshAdaptationPolicy(
-        MeshAdaptationRoute.NATIVE_SURFACE_METRIC,
-        association_transfer=transfer,
-        maximum_passes=4,
-        relocation=False,
-        limits=limits,
-        geometry_transition=CellGeometryTransitionPolicy(
-            reconstruction="bounded_chart_deformation",
-            reconstruction_tolerance=0.02,
-            maximum_evaluations=640_000,
-        ),
-    )
-    return _UVProducerFixture(domain, source, transfer, policy)
+def rational_trim_metric_source() -> UVMetricSource:
+    return prepare_rational_trim_metric_source()
 
 
 def test_rational_source_required_growth_preserves_hard_density_and_geometry(
-    rational_trim_metric_source: _UVProducerFixture,
+    rational_trim_metric_source: UVMetricSource,
 ) -> None:
     _, source, _, _ = rational_trim_metric_source
     requested = dict(source.compliance.requested)
@@ -1226,21 +1466,17 @@ def test_rational_source_required_growth_preserves_hard_density_and_geometry(
 @pytest.mark.parametrize(
     "component", ["curve-index", "curve-parameter", "entity", "occurrence"]
 )
-def test_actual_rational_curve_witness_refuses_changed_source_strata(
-    rational_trim_metric_source: _UVProducerFixture,
+def test_rational_curve_witness_refuses_changed_source_strata(
+    rational_trim_metric_source: UVMetricSource,
     component: str,
 ) -> None:
-    from dataclasses import replace
-
-    import equinox as eqx
-
-    from phydrax.meshing._surface_association_transfer import (
-        prepare_surface_curve_witness,
-    )
 
     domain, source, transfer, policy = rational_trim_metric_source
-    with _sphere_native_budget(policy.limits):
-        witness = prepare_surface_curve_witness(transfer.support, source)
+    with (
+        sphere_native_scope(policy.limits) as native_scope,
+        native_coordinate_resources(native_scope, policy.limits) as ledger,
+    ):
+        witness = prepare_surface_curve_witness(transfer.support, source, budget=ledger)
         witness.validate_restored()
         row = int(np.flatnonzero(np.asarray(witness.source_dimensions) == 1)[0])
         if component == "curve-index":
@@ -1265,171 +1501,129 @@ def test_actual_rational_curve_witness_refuses_changed_source_strata(
             occurrences = list(witness.source_occurrence_paths)
             occurrences[row] = (*occurrences[row], "foreign-source-occurrence")
             changed = replace(witness, source_occurrence_paths=tuple(occurrences))
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="SurfaceCurveWitness"):
             changed.validate_restored()
         witness.validate_restored()
 
 
-def test_actual_rational_curve_split_keeps_independent_exact_material_anchor(
-    rational_trim_metric_source: _UVProducerFixture,
+def test_public_rational_curve_split_keeps_independent_exact_material_anchor(
+    rational_metric_scenario: RationalMetricScenario,
 ) -> None:
-    import phydrax.meshing._surface_metric as owner
-    from phydrax.meshing._surface_association_transfer import (
-        prepare_surface_curve_witness,
+    scenario = rational_metric_scenario
+    domain, source, _, _ = scenario.source_fixture
+    target, chart = scenario.target, scenario.chart
+    source_ids = set(map(int, np.asarray(source.mesh.vertex_global_ids)))
+    association = next(
+        value
+        for value in target.associations
+        if value.target_entity_set_id == target.mesh.entity_set(0).entity_set_id
     )
-    from phydrax.meshing._topology_edit import entity_keys, key_rows
-
-    domain, source, transfer, policy = rational_trim_metric_source
-    before = np.asarray(source.mesh.coordinates).copy()
-    ledger = CoordinateEnclosureBudget(
-        policy.limits.maximum_work_units, policy.limits.maximum_scratch_bytes
+    association_rows = association.target_rows(np.asarray(target.mesh.vertex_global_ids))
+    new_features = [
+        row
+        for row, identifier in enumerate(np.asarray(target.mesh.vertex_global_ids))
+        if int(identifier) not in source_ids
+        and int(association.source_dimensions[association_rows[row]]) == 1
+    ]
+    assert new_features
+    target_cells = np.concatenate(
+        [np.asarray(block.vertices) for block in target.mesh.blocks]
     )
-    with _sphere_native_budget(policy.limits), ledger.activate():
-        witness = owner.prepare_surface_metric_source(source, transfer)
-        curve_witness = prepare_surface_curve_witness(transfer.support, source)
-        cells = np.concatenate(
-            [np.asarray(block.vertices) for block in source.mesh.blocks]
+    material = np.asarray(chart.material_charts(target=True), dtype=object)
+    physical_charts = np.asarray(chart.target_witness.charts)
+    nonlinear_anchors = 0
+    source_cells = np.concatenate(
+        [np.asarray(block.vertices) for block in source.mesh.blocks]
+    )
+    source_material = chart.material_charts(target=False)
+    source_vertices = np.asarray(source.mesh.vertex_global_ids)
+    midpoints = {
+        tuple((source_material[cell, left] + source_material[cell, right]) / 2): {
+            int(source_vertices[corners[left]]),
+            int(source_vertices[corners[right]]),
+        }
+        for cell, corners in enumerate(source_cells)
+        for left, right in ((0, 1), (1, 2), (2, 0))
+    }
+    stencil = scenario.adaptation.stencil
+    assert stencil is not None
+    exact_midpoints = 0
+    for row in new_features:
+        token = association_rows[row]
+        curve = next(
+            index
+            for index in range(len(domain.curves))
+            if domain.entity_id(1, index) == association.source_entities.entity_id(token)
         )
-        cell_ids = np.concatenate(
-            [np.asarray(block.global_ids) for block in source.mesh.blocks]
+        expected = rational_trim_point(
+            domain, curve, float(association.parameters[token, 0])
         )
-        vertices = np.asarray(source.mesh.vertex_global_ids)
-        rows = key_rows(np.asarray(witness.cell_global_ids)[:, None], cell_ids[:, None])
-        charts, patches = (
-            np.asarray(witness.charts)[rows],
-            np.asarray(witness.patches)[rows],
-        )
-        classifications = transfer.classes(source)
-        class_rows = key_rows(
-            np.asarray(source.mesh.entity_set(2).entity_ids)[:, None], cell_ids[:, None]
-        )
-        metric = np.broadcast_to(np.eye(3) / 0.14**2, (vertices.size, 3, 3)).copy()
-        state = owner._SurfaceState(
-            before.copy(),
-            metric,
-            cells.copy(),
-            patches,
-            charts.copy(),
-            classifications[2].codes[class_rows],
-            cell_ids.copy(),
-            vertices.copy(),
-            [{int(value)} for value in cell_ids],
-            [{int(value)} for value in vertices],
-            int(np.max(cell_ids)) + 1,
-            int(np.max(vertices)) + 1,
-        )
-        state.curve_witness = curve_witness
-        state.vertex_strata = [
-            (int(dimension), int(index), np.asarray(parameters).copy())
-            for dimension, index, parameters in zip(
-                curve_witness.source_dimensions,
-                curve_witness.source_indices,
-                curve_witness.source_parameters,
-                strict=True,
-            )
-        ]
-        state.material_charts = np.asarray(
-            [Fraction(float(value)) for value in charts.flat], dtype=object
-        ).reshape(charts.shape)
-        edges, _, _ = owner._edge_table(state)
-        edge_rows = key_rows(
-            entity_keys(source.mesh, 1), np.sort(vertices[edges], axis=1)
-        )
-        edge = edges[np.flatnonzero(classifications[1].dimensions[edge_rows] == 1)[0]]
-        tokens = [state.vertex_strata[int(vertex)] for vertex in edge]
-        curve, left, right = curve_witness.edge_interval(
-            np.asarray([token[0] for token in tokens]),
-            np.asarray([token[1] for token in tokens]),
-            np.asarray([token[2] for token in tokens]),
-        )
-        cavity = np.flatnonzero(np.sum(np.isin(cells, edge), axis=1) == 2)
-        material_midpoint = np.mean(
-            state.material_charts[cavity[0], np.isin(cells[cavity[0]], edge)], axis=0
-        )
-        affine_uv_midpoint = np.mean(
-            charts[cavity[0], np.isin(cells[cavity[0]], edge)], axis=0
-        )
-        vertex = state.points.shape[0]
-        assert owner._split(domain, state, edge, metric[edge[0]], source_curve=True)
-        point, uses = curve_witness.evaluate_curve(curve, (left + right) / 2)
         np.testing.assert_allclose(
-            state.points[vertex], point, rtol=0.0, atol=domain.tolerance * domain.scale
+            target.mesh.coordinates[row],
+            expected,
+            rtol=0.0,
+            atol=domain.tolerance * domain.scale,
         )
-        actual_uv = next(chart for patch, _, chart in uses if patch == patches[cavity[0]])
-        assert np.linalg.norm(actual_uv - affine_uv_midpoint) > domain.tolerance
-        assert state.vertex_strata[vertex][0:2] == (1, curve)
-        assert state.vertex_sources[vertex] == {int(vertices[value]) for value in edge}
-        for row in np.flatnonzero(np.any(state.cells == vertex, axis=1)):
-            slot = np.flatnonzero(state.cells[row] == vertex)[0]
+        incident = np.flatnonzero(np.any(target_cells == row, axis=1))
+        anchors = [
+            tuple(material[cell, np.flatnonzero(target_cells[cell] == row)[0]])
+            for cell in incident
+        ]
+        assert all(anchor == anchors[0] for anchor in anchors)
+        assert all(isinstance(value, Fraction) for value in anchors[0])
+        if anchors[0] in midpoints:
+            exact_midpoints += 1
+            stencil_row = int(
+                np.flatnonzero(
+                    np.asarray(stencil.target_global_ids)
+                    == np.asarray(target.mesh.vertex_global_ids)[row]
+                )[0]
+            )
+            positive = np.asarray(stencil.valid)[stencil_row] & (
+                np.asarray(stencil.weights)[stencil_row] > 0
+            )
+            assert (
+                set(
+                    map(int, np.asarray(stencil.source_global_ids)[stencil_row, positive])
+                )
+                == midpoints[anchors[0]]
+            )
             np.testing.assert_array_equal(
-                state.material_charts[row, slot], material_midpoint
+                np.asarray(stencil.weights)[stencil_row, positive], (0.5, 0.5)
             )
-            np.testing.assert_allclose(
-                state.charts[row, slot], actual_uv, rtol=0.0, atol=domain.tolerance
+        nonlinear_anchors += any(
+            np.linalg.norm(
+                np.asarray(anchors[0], dtype=np.float64)
+                - physical_charts[cell, np.flatnonzero(target_cells[cell] == row)[0]]
             )
+            > domain.tolerance
+            for cell in incident
+        )
+    assert nonlinear_anchors > 0
+    assert exact_midpoints > 0
+    assert scenario.adaptation.lineage is not None
     np.testing.assert_array_equal(
-        np.asarray(source.mesh.coordinates).view(np.uint64), before.view(np.uint64)
+        np.asarray(source.geometry.coordinates).view(np.uint64),
+        scenario.before.view(np.uint64),
     )
 
 
 def test_rational_surface_reconstruction_preserves_original_complete_map(
-    rational_trim_metric_source: _UVProducerFixture,
+    rational_trim_metric_source: UVMetricSource,
 ) -> None:
-    from phydrax.discretization._cell_geometry import (
-        PolynomialComposedCellGeometryElement,
-        SplineCellGeometryElement,
-    )
-    from phydrax.discretization._cell_geometry_transfer import (
-        reconstruct_parametric_surface_cell_geometry,
-    )
-    from phydrax.discretization._coordinate_enclosure import (
-        add,
-        axes,
-        constant,
-        coordinate_expressions,
-        expression_add,
-        expression_compose,
-        expression_parts,
-        expression_scale,
-        scale,
-    )
-    from phydrax.geometry._surface_source_support import SurfaceSourceRootAtlas
-    from phydrax.meshing._surface_metric import prepare_surface_metric_source
-
-    domain, source, transfer, policy = rational_trim_metric_source
-    atlas = transfer.support.original
-    assert isinstance(atlas, SurfaceSourceRootAtlas)
-    witness = prepare_surface_metric_source(source, transfer)
-    original_controls = np.asarray(atlas.geometry.coordinates).copy()
-    source_coordinates = np.asarray(source.geometry.coordinates).copy()
-    originals, original_routes, _ = atlas.geometry.resolve(atlas.mesh)
-    original = originals[0]
-    assert isinstance(original, SplineCellGeometryElement)
-    ledger = CoordinateEnclosureBudget(
-        policy.limits.maximum_work_units, policy.limits.maximum_scratch_bytes
-    )
-    with _sphere_native_budget(policy.limits), ledger.activate():
-        original_maps = coordinate_expressions(
-            original, original_controls[np.asarray(original_routes[0])[0]]
-        )
-        assert original_maps is not None
-        reconstruction = reconstruct_parametric_surface_cell_geometry(
-            source.mesh,
-            source.geometry,
-            source.mesh,
-            None,
-            domain,
-            domain_id=domain.domain_id,
-            cell_ids=np.asarray(witness.cell_global_ids),
-            cell_patches=np.asarray(witness.patches),
-            cell_charts=np.asarray(witness.charts),
-            cell_geometry_entity_ids=witness.geometry_entity_ids,
-            cell_occurrence_paths=witness.occurrence_paths,
-            maximum_fidelity=0.01,
-            policy=policy.geometry_transition,
-            source_atlas=atlas,
-        )
-        mesh = reconstruction.target_mesh
+    with rational_surface_reconstruction_reference(
+        rational_trim_metric_source
+    ) as reference_state:
+        source = reference_state.source
+        atlas = reference_state.atlas
+        original_controls = reference_state.original_controls
+        source_coordinates = reference_state.source_coordinates
+        original = reference_state.original
+        reconstruction = reference_state.reconstruction
+        mesh = reference_state.mesh
+        ledger = reference_state.ledger
+        assert isinstance(reference_state.atlas, SurfaceSourceRootAtlas)
+        assert isinstance(reference_state.original, SplineCellGeometryElement)
         np.testing.assert_array_equal(
             np.sort(
                 np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks])
@@ -1447,12 +1641,11 @@ def test_rational_surface_reconstruction_preserves_original_complete_map(
             np.asarray(reconstruction.geometry.coordinates).view(np.uint64),
             original_controls.view(np.uint64),
         )
-        elements, routes, _ = reconstruction.geometry.resolve(mesh)
+        elements, routes, _ = reconstruction.geometry.resolve(mesh, budget=ledger)
         chart_rows = {
             int(identifier): row
             for row, identifier in enumerate(np.asarray(reconstruction.cell_global_ids))
         }
-        variables = axes(2)
         reference = jnp.asarray(((1 / 7, 2 / 9),), dtype=jnp.float64)
         barycentric = np.asarray((1 - 1 / 7 - 2 / 9, 1 / 7, 2 / 9))
         for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
@@ -1474,32 +1667,18 @@ def test_rational_surface_reconstruction_preserves_original_complete_map(
                 charts = np.asarray(reconstruction.cell_charts)[
                     chart_rows[int(identifier)]
                 ]
-                exact = tuple(
-                    tuple(Fraction(float(value)) for value in point) for point in charts
+                actual_maps = coordinate_expressions(
+                    element, original_controls[dofs], budget=ledger
                 )
-                arguments = tuple(
-                    add(
-                        constant(exact[0][axis], 2),
-                        add(
-                            scale(variables[0], exact[1][axis] - exact[0][axis]),
-                            scale(variables[1], exact[2][axis] - exact[0][axis]),
-                        ),
-                    )
-                    for axis in range(2)
-                )
-                expected = tuple(
-                    expression_compose(value, arguments) for value in original_maps
-                )
-                actual_maps = coordinate_expressions(element, original_controls[dofs])
                 assert actual_maps is not None
-                for actual, authored in zip(actual_maps, expected, strict=True):
-                    numerator, _ = expression_parts(
-                        expression_add(actual, expression_scale(authored, -1)), 2
-                    )
-                    assert not numerator
-                # Independent bilinear rational map of the authored fixture,
-                # at a nonnodal point. The exact identities above, not this
-                # probe, establish whole-map preservation.
+                require_exact_rational_patch_map(
+                    actual_maps,
+                    charts,
+                    original_controls.reshape((2, 2, 3)),
+                    np.asarray(original.weights),
+                )
+                # The degree-sufficient rational proof above covers the whole map;
+                # this nonnodal probe also checks numerical element tabulation.
                 u, v = barycentric @ charts
                 basis = np.asarray(
                     (((1 - u) * (1 - v), (1 - u) * v), (u * (1 - v), u * v))
@@ -1512,7 +1691,10 @@ def test_rational_surface_reconstruction_preserves_original_complete_map(
                 values, _ = element.tabulate(reference)
                 represented = np.asarray(values)[0] @ original_controls[dofs]
                 np.testing.assert_allclose(
-                    represented, physical, rtol=1.0e-13, atol=1.0e-14
+                    represented,
+                    physical,
+                    rtol=COORDINATE_RECONSTRUCTION_RTOL,
+                    atol=SOURCE_RESIDUAL_ATOL,
                 )
     np.testing.assert_array_equal(
         np.asarray(source.geometry.coordinates).view(np.uint64),
@@ -1524,144 +1706,74 @@ def test_rational_surface_reconstruction_preserves_original_complete_map(
     )
 
 
-def _surface_reaction_load(points: Array, context: object) -> Array:
-    del context
-    return 1.0 + points[..., 0] ** 2
+@pytest.fixture(scope="module")
+def rational_metric_scenario(
+    rational_trim_metric_source: UVMetricSource,
+) -> RationalMetricScenario:
+    return prepare_rational_metric_scenario(rational_trim_metric_source)
 
 
-def _solve_surface_reaction(
-    prepared: FiniteElementDiscretization,
-    seed: Array | None = None,
-) -> tuple[CompiledFiniteElementProblem, Array]:
-    import phydrax as phx
-
-    form = phx.equations.FiniteElementForm(
-        "surface-reaction",
-        "temperature",
-        (
-            phx.equations.MassAction("temperature", 1.0),
-            phx.equations.SourceAction(
-                "temperature",
-                phx.equations.coefficient(
-                    _surface_reaction_load, coefficient_id="ambient-temperature-reaction"
-                ),
-            ),
-        ),
-    )
-    problem = phx.equations.compile_finite_element_problem(form, prepared)
-    system, raw_rhs = problem.linear_system()
-    space = prepared.field_spaces[0].vector_space
-    if not isinstance(space, ArraySpace):
-        raise TypeError(
-            "The single temperature field requires its actual array coefficient space."
-        )
-    rhs = space.validate(raw_rhs)
-    initial = space.validate(seed) if seed is not None else jnp.zeros_like(rhs)
-    solved = phx.linalg.solve(system, rhs - space.validate(system.operator.mv(initial)))
-    if not bool(solved.successful):
-        raise ValueError("The physical surface reaction solve did not succeed.")
-    value = initial + space.validate(solved.value)
-    correction = phx.linalg.solve(system, rhs - space.validate(system.operator.mv(value)))
-    if not bool(correction.successful):
-        raise ValueError("The physical surface reaction refinement did not succeed.")
-    value += space.validate(correction.value)
-    np.testing.assert_allclose(
-        np.asarray(space.validate(system.operator.mv(value))),
-        np.asarray(rhs),
-        rtol=1.0e-8,
-        atol=1.0e-10,
-    )
-    return problem, space.validate(problem.expand(value))
+@pytest.fixture(scope="module")
+def rational_metric_fields(
+    rational_metric_scenario: RationalMetricScenario,
+) -> RationalMetricFieldState:
+    return prepare_rational_metric_fields(rational_metric_scenario)
 
 
-def test_native_rational_trim_metric_archive_reopens_and_continues_physical_fields(
-    rational_trim_metric_source: _UVProducerFixture,
-    tmp_path: Path,
+@pytest.fixture(scope="module")
+def rational_metric_archive(
+    rational_metric_fields: RationalMetricFieldState,
+) -> RationalMetricArchive:
+    return prepare_rational_metric_archive(rational_metric_fields)
+
+
+def test_rational_metric_success_preserves_geometry_and_request_budget(
+    rational_metric_scenario: RationalMetricScenario,
 ) -> None:
-    import phydrax as phx
-    from phydrax._differentiation import BranchDifferentiationPolicy
-    from phydrax._frozendict import frozendict
-    from phydrax.discretization._views import FieldTracePolicy
-    from phydrax.discretization.fem._precision import FiniteElementPrecisionPolicy
-    from phydrax.discretization.fem._surface_chart_transfer import (
-        prepare_surface_chart_field_transfer,
-    )
-    from phydrax.discretization.finite_volume import (
-        prepare_unstructured_conservative_remap,
-        UnstructuredFiniteVolumePlan,
-    )
-    from phydrax.lifecycle._meshing_field_records import (
-        MeshingFieldDeclaration,
-        MeshingFieldStateRole,
-        prepare_meshing_field_index_binding,
-        prepare_meshing_field_owner,
-    )
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        validate_meshing_source_closure,
-        write_meshing_source_closure,
-    )
-    from phydrax.meshing._assembly import MeshPart
-    from phydrax.meshing._surface_association_transfer import SurfaceChartBoundarySource
-
-    domain, source, _, policy = rational_trim_metric_source
-    before = np.asarray(source.geometry.coordinates).copy()
-    field = phx.discretization.FiniteElementFieldSpec(
-        "temperature", phx.discretization.lagrange_element("triangle", 1)
-    )
-    source_space = phx.discretization.FiniteElementPlan(
-        source.mesh, field, coordinate_spec=source.geometry
-    ).prepare()
-    source_problem, source_temperature = _solve_surface_reaction(source_space)
-    vertices = source.mesh.entity_set(0)
-    scope = phx.meshing.MeshingScope(
-        source.mesh.mesh_id,
-        source.mesh.numeric_version,
-        phx.meshing.MeshingEntityKind.MESH,
-        0,
-        vertices.entity_set_id,
-        vertices.entity_ids,
-    )
-    metric = phx.meshing.MeshMetricField(
-        scope,
-        np.broadcast_to(
-            np.eye(3, dtype=np.float64) / 0.14**2,
-            (source.mesh.coordinates.shape[0], 3, 3),
-        ),
-        minimum_size=0.14,
-        maximum_size=0.14,
-    )
-    adaptation = phx.meshing.execute_mesh_adaptation(
-        phx.meshing.prepare_mesh_adaptation(
-            source,
-            phx.meshing.MetricMeshAdaptation(
-                metric, coordinate_contract=source.coordinate_contract
-            ),
-            policy=policy,
-        )
-    )
-    if not isinstance(adaptation.target, CellMeshingResult):
-        raise TypeError("The surface metric route must return its actual cell carrier.")
+    adaptation = rational_metric_scenario.adaptation
+    target = rational_metric_scenario.target
+    chart = rational_metric_scenario.chart
+    domain = rational_metric_scenario.source_fixture.domain
+    source = rational_metric_scenario.source_fixture.source
     assert adaptation.status is phx.meshing.MeshAdaptationStatus.COMPLETE
-    assert adaptation.target.mesh.topology_id != source.mesh.topology_id
+    assert target.mesh.topology_id != source.mesh.topology_id
     assert adaptation.geometry_transition is not None
     chart = adaptation.geometry_transition.chart_deformation
     if not isinstance(chart, PreparedSurfaceChartDeformation):
         raise TypeError(
-            "The rational trim route requires its actual UV deformation, not a sphere map."
+            "surface_metric.test.result must retain its declared scientific contract; got the rational trim route requires its UV deformation, not a sphere map"
         )
     assert chart.source_domain_coverage == chart.target_domain_coverage == "certified"
+    assert target.certification is not None and target.certification.passed
+    if not isinstance(adaptation.evidence, MetricRemeshingEvidence):
+        raise TypeError(
+            "surface_metric.test.result must retain its declared scientific contract; got the surface route must expose its metric evidence"
+        )
+    assert adaptation.evidence.execution_evidence is not None
+    assert int(adaptation.evidence.execution_evidence.total_work_units) <= 640_000
+    assert all(
+        value.source_id == domain.source_id
+        and value.source_revision == domain.source_revision
+        for value in target.associations
+    )
+
+
+@pytest.mark.parametrize("partial_index", [0, 1], ids=["occurrence", "piece"])
+def test_rational_material_closure_rejects_partial_deformation(
+    rational_metric_scenario: RationalMetricScenario,
+    partial_index: int,
+) -> None:
+    chart = rational_metric_scenario.chart
     validate_meshing_source_closure(chart)
-    for partial in (chart.occurrences[0], chart.occurrences[0].pieces[0]):
-        with pytest.raises(
-            ValueError,
-            match="lacks its original owning material deformation and source banks",
-        ):
-            validate_meshing_source_closure(partial)
-    from dataclasses import replace
+    partial = (chart.occurrences[0], chart.occurrences[0].pieces[0])[partial_index]
+    with pytest.raises(ValueError, match="material deformation"):
+        validate_meshing_source_closure(partial)
 
-    from phydrax.discretization._surface_chart_deformation import SurfaceChartWitness
 
+def test_rational_material_closure_rejects_foreign_root_witness(
+    rational_metric_scenario: RationalMetricScenario,
+) -> None:
+    chart = rational_metric_scenario.chart
     root = chart.material_root_witness
     malformed_root = SurfaceChartWitness(
         geometry_id=root.geometry_id,
@@ -1674,64 +1786,50 @@ def test_native_rational_trim_metric_archive_reopens_and_continues_physical_fiel
         occurrence_paths=root.occurrence_paths,
     )
     malformed_chart = replace(chart, material_root_witness=malformed_root)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="surface_chart.require_bound.binding"):
         malformed_chart.require_bound(
             chart.source_mesh,
             chart.source_geometry,
             chart.target_mesh,
             chart.target_geometry,
         )
-    assert (
-        adaptation.target.certification is not None
-        and adaptation.target.certification.passed
-    )
-    if not isinstance(adaptation.evidence, MetricRemeshingEvidence):
-        raise TypeError(
-            "The actual surface route must expose its owning metric evidence."
-        )
-    assert adaptation.evidence.execution_evidence is not None
-    assert int(adaptation.evidence.execution_evidence.total_work_units) <= 640_000
-    assert all(
-        value.source_id == domain.source_id
-        and value.source_revision == domain.source_revision
-        for value in adaptation.target.associations
-    )
+
+
+def test_rational_curve_associations_bound_independent_source_residuals(
+    rational_metric_scenario: RationalMetricScenario,
+) -> None:
+    target = rational_metric_scenario.target
+    domain = rational_metric_scenario.source_fixture.domain
+    source = rational_metric_scenario.source_fixture.source
     vertex_association = next(
         value
-        for value in adaptation.target.associations
-        if value.target_entity_set_id
-        == adaptation.target.mesh.entity_set(0).entity_set_id
+        for value in target.associations
+        if value.target_entity_set_id == target.mesh.entity_set(0).entity_set_id
     )
     feature_rows = np.flatnonzero(np.asarray(vertex_association.source_dimensions) == 1)
     assert feature_rows.size > 0 and not vertex_association.exact
     actual_residuals = []
     vertex_rows = vertex_association.target_rows(
-        np.asarray(adaptation.target.mesh.vertex_global_ids)
+        np.asarray(target.mesh.vertex_global_ids)
     )
     for row in feature_rows:
         curve = next(
             index
             for index in range(len(domain.curves))
-            if domain.entity_id(1, index) == vertex_association.source_entity_ids[row]
+            if domain.entity_id(1, index)
+            == vertex_association.source_entities.entity_id(row)
         )
-        patch, loop, position = domain.curve_owners[curve]
-        use = domain.patches[patch].loops[loop][position]
         parameter = float(vertex_association.parameters[row, 0])
-        fraction = (parameter - use.first) / (use.last - use.first)
-        analytic = domain.curve_atlas.map(
-            jnp.asarray((curve,), dtype=jnp.int32),
-            jnp.asarray(((fraction,),), dtype=jnp.float64),
-        )[0]
+        analytic = rational_trim_point(domain, curve, parameter)
         target_row = int(np.flatnonzero(vertex_rows == row)[0])
         residual = np.linalg.norm(
-            np.asarray(analytic)
-            - np.asarray(adaptation.target.mesh.coordinates)[target_row]
+            np.asarray(analytic) - np.asarray(target.mesh.coordinates)[target_row]
         )
         np.testing.assert_allclose(
             np.asarray(vertex_association.residuals[row]),
             np.asarray(residual),
-            rtol=1.0e-12,
-            atol=1.0e-14,
+            rtol=SOURCE_RESIDUAL_RTOL,
+            atol=SOURCE_RESIDUAL_ATOL,
         )
         actual_residuals.append(residual)
     assert max(actual_residuals) <= domain.tolerance * domain.scale
@@ -1740,44 +1838,30 @@ def test_native_rational_trim_metric_archive_reopens_and_continues_physical_fiel
         and source.certification.request.fidelity_tolerance is not None
     )
     assert max(actual_residuals) <= source.certification.request.fidelity_tolerance
-    old_fv = UnstructuredFiniteVolumePlan.from_cell_mesh(
-        source.mesh, component_names=("temperature",)
-    ).prepare(cell_geometry=source.geometry)
-    new_fv = UnstructuredFiniteVolumePlan.from_cell_mesh(
-        adaptation.target.mesh, component_names=("temperature",)
-    ).prepare(cell_geometry=adaptation.target.geometry)
-    remap = prepare_unstructured_conservative_remap(
-        old_fv,
-        new_fv,
-        provenance="native-rational-material-history",
-        surface_chart_deformation=chart,
-        adaptation=adaptation,
-        policy=phx.geometry.CommonRefinementPolicy(
-            maximum_exact_work=640_000, maximum_memory_bytes=81_920_000
-        ),
-    )
+
+
+def test_rational_fv_material_history_preserves_conservation_and_source(
+    rational_metric_fields: RationalMetricFieldState,
+) -> None:
+    before = rational_metric_fields.scenario.before
+    source = rational_metric_fields.scenario.source_fixture.source
+    old_fv = rational_metric_fields.old_fv
+    remap = rational_metric_fields.remap
+    history = rational_metric_fields.history
+    source_material = rational_metric_fields.source_material
+    carried_history = rational_metric_fields.carried_history
+    bound = rational_metric_fields.bound
     if not isinstance(remap.evidence, MappedSurfaceChartRemapEvidence):
         raise TypeError(
-            "The surface FV remap must expose its actual material correspondence "
-            f"evidence, got {remap.evidence!r}."
+            f"surface_metric.test.remap.evidence must describe material correspondence; got {remap.evidence!r}"
         )
     assert remap.succeeded and remap.plan is not None and remap.evidence.passed
-    remap_plan = remap.plan
-    history = (1.0 + old_fv.cell_centers[:, 0] ** 2)[:, None]
-    source_material = phx.equations.MaterialTransaction(
-        (
-            phx.equations.MaterialState(
-                phx.equations.MaterialSiteId("surface-temperature-history"),
-                "surface-temperature-history",
-                history,
-            ),
-        )
-    )
-    carried_history = remap.plan.apply(
-        source_material.state("surface-temperature-history").committed
-    )
     defect = np.max(
-        np.abs(np.asarray(remap.plan.conservation_defect(history, carried_history)))
+        np.abs(
+            np.asarray(old_fv.cell_volumes) @ np.asarray(history)
+            - np.asarray(rational_metric_fields.new_fv.cell_volumes)
+            @ np.asarray(carried_history)
+        )
     )
     bound = float(remap.plan.report.total_source_coverage_error_bound) * float(
         np.max(np.abs(history))
@@ -1788,32 +1872,42 @@ def test_native_rational_trim_metric_archive_reopens_and_continues_physical_fiel
         * float(np.sum(np.abs(np.asarray(old_fv.cell_volumes)[:, None] * history)))
     )
     assert defect <= bound
-    prepared = phx.discretization.FiniteElementPlan(
-        adaptation.target.mesh,
-        field,
-        coordinate_spec=adaptation.target.geometry,
-    ).prepare(numeric_version=adaptation.target.mesh.numeric_version)
-    transfer = prepare_surface_chart_field_transfer(
-        source_space,
-        prepared,
-        chart,
-        field_name="temperature",
-        source_geometry=source.geometry,
-        target_geometry=adaptation.target.geometry,
-        semantics="intensive",
-        maximum_work=640_000,
+    np.testing.assert_array_equal(
+        source_material.state("surface-temperature-history").committed, history
     )
-    assert transfer.evidence.passed
-    carried_temperature = transfer.transfer.apply(source_temperature)
-    from jax import jvp, vjp
+    np.testing.assert_array_equal(source.geometry.coordinates, before)
 
+
+def test_rational_fe_material_transfer_preserves_primal_jvp_and_transpose(
+    rational_metric_fields: RationalMetricFieldState,
+) -> None:
+    source_temperature = rational_metric_fields.scenario.source_temperature
+    transfer = rational_metric_fields.transfer
+    carried_temperature = rational_metric_fields.carried_temperature
+    assert transfer.evidence.passed
+    reference = material_p1_reference_matrix(
+        rational_metric_fields.scenario.source_space,
+        rational_metric_fields.prepared,
+        rational_metric_fields.scenario.chart,
+    )
+    np.testing.assert_allclose(
+        carried_temperature,
+        reference @ np.asarray(source_temperature),
+        rtol=MATERIAL_FIELD_RTOL,
+        atol=MATERIAL_FIELD_ATOL,
+    )
     direction = jnp.cos(jnp.arange(source_temperature.size, dtype=jnp.float64)).reshape(
         source_temperature.shape
     )
     primal, tangent = jvp(transfer.transfer.apply, (source_temperature,), (direction,))
-    np.testing.assert_allclose(primal, carried_temperature, rtol=1.0e-12, atol=1.0e-12)
     np.testing.assert_allclose(
-        tangent, transfer.transfer.apply(direction), rtol=1.0e-12, atol=1.0e-12
+        primal, carried_temperature, rtol=MATERIAL_FIELD_RTOL, atol=MATERIAL_FIELD_ATOL
+    )
+    np.testing.assert_allclose(
+        tangent,
+        reference @ np.asarray(direction),
+        rtol=MATERIAL_FIELD_RTOL,
+        atol=MATERIAL_FIELD_ATOL,
     )
     cotangent = jnp.sin(jnp.arange(primal.size, dtype=jnp.float64) + 0.5).reshape(
         primal.shape
@@ -1821,28 +1915,41 @@ def test_native_rational_trim_metric_archive_reopens_and_continues_physical_fiel
     _, pullback = vjp(transfer.transfer.apply, source_temperature)
     (source_cotangent,) = pullback(cotangent)
     np.testing.assert_allclose(
+        source_cotangent,
+        reference.T @ np.asarray(cotangent),
+        rtol=MATERIAL_FIELD_RTOL,
+        atol=MATERIAL_FIELD_ATOL,
+    )
+    np.testing.assert_allclose(
         jnp.vdot(tangent, cotangent),
         jnp.vdot(direction, source_cotangent),
-        rtol=1.0e-12,
-        atol=1.0e-12,
-    )
-    problem, temperature = _solve_surface_reaction(prepared, carried_temperature)
-    material = phx.equations.MaterialTransaction(
-        (
-            phx.equations.MaterialState(
-                phx.equations.MaterialSiteId("surface-temperature-history"),
-                "surface-temperature-history",
-                carried_history,
-            ),
-        )
-    )
-    from phydrax._meshcore import NativeHostStorageWorkspace
-    from phydrax.solver import (
-        FiniteElementAcceptedState,
-        FiniteElementTopologyTransaction,
-        MaterialTopologyTransferResult,
+        rtol=MATERIAL_FIELD_RTOL,
+        atol=MATERIAL_FIELD_ATOL,
     )
 
+
+def test_rational_topology_transaction_publishes_fields_and_material_history(
+    rational_metric_fields: RationalMetricFieldState,
+) -> None:
+    field = rational_metric_fields.scenario.field
+    source_space = rational_metric_fields.scenario.source_space
+    source_problem = rational_metric_fields.scenario.source_problem
+    source_temperature = rational_metric_fields.scenario.source_temperature
+    adaptation = rational_metric_fields.scenario.adaptation
+    chart = rational_metric_fields.scenario.chart
+    source = rational_metric_fields.scenario.source_fixture.source
+    old_fv = rational_metric_fields.old_fv
+    new_fv = rational_metric_fields.new_fv
+    remap = rational_metric_fields.remap
+    remap_plan = rational_metric_fields.remap_plan
+    history = rational_metric_fields.history
+    source_material = rational_metric_fields.source_material
+    carried_history = rational_metric_fields.carried_history
+    bound = rational_metric_fields.bound
+    prepared = rational_metric_fields.prepared
+    carried_temperature = rational_metric_fields.carried_temperature
+    problem = rational_metric_fields.problem
+    temperature = rational_metric_fields.temperature
     accepted = FiniteElementAcceptedState(
         (source_temperature,),
         jnp.asarray(0.0, dtype=jnp.float64),
@@ -1854,76 +1961,21 @@ def test_native_rational_trim_metric_archive_reopens_and_continues_physical_fiel
         schedule_cursor=1,
         state_version=1,
     )
-
-    def move_material(
-        value: phx.equations.MaterialTransaction,
-        lineage: object,
-        args: object,
-        *,
-        source_workspace: NativeHostStorageWorkspace,
-    ) -> MaterialTopologyTransferResult:
-        del lineage, args
-        actual = prepare_unstructured_conservative_remap(
-            old_fv,
-            new_fv,
-            provenance="native-rational-transaction-history",
-            surface_chart_deformation=chart,
-            adaptation=adaptation,
-            policy=phx.geometry.CommonRefinementPolicy(
-                maximum_exact_work=640_000, maximum_memory_bytes=81_920_000
-            ),
-            source_workspace=source_workspace,
-        )
-        if not actual.succeeded or actual.plan is None:
-            raise ValueError(
-                "The actual material history remap refused its original transaction allowance."
-            )
-        prior = value.state("surface-temperature-history")
-        moved = actual.plan.apply(prior.committed)
-        candidate = phx.equations.MaterialTransaction(
-            (
-                phx.equations.MaterialState(
-                    prior.site_id,
-                    prior.model_id,
-                    moved,
-                    state_version=prior.state_version + 1,
-                ),
-            )
-        )
-        return MaterialTopologyTransferResult(materials=candidate, remaps=(actual,))
-
-    def certify_material(
-        mesh: CellMesh,
-        values: tuple[Array, ...],
-        candidate: phx.equations.MaterialTransaction | None,
-        lineage: object,
-        args: object,
-    ) -> bool:
-        del lineage, args
-        if candidate is None or mesh.mesh_id != adaptation.target.mesh.mesh_id:
-            return False
-        actual_history = candidate.state("surface-temperature-history").committed
-        actual_defect = np.max(
-            np.abs(np.asarray(remap_plan.conservation_defect(history, actual_history)))
-        )
-        return bool(
-            adaptation.target.audit.passed
-            and adaptation.target.certification is not None
-            and adaptation.target.certification.passed
-            and actual_defect <= bound
-            and np.all(np.isfinite(np.asarray(values[0])))
-            and np.allclose(
-                np.asarray(values[0]),
-                np.asarray(carried_temperature),
-                rtol=1.0e-12,
-                atol=1.0e-12,
-            )
-        )
-
+    material_history = RationalMaterialHistory(
+        adaptation,
+        old_fv,
+        new_fv,
+        chart,
+        remap_plan,
+        history,
+        carried_temperature,
+        bound,
+        rational_metric_fields.scenario.target,
+    )
     executor = FiniteElementTopologyTransaction(
-        certify_material,
+        material_history.certify_material,
         fields=(field,),
-        material_transfer=move_material,
+        material_transfer=material_history.move_material,
         surface_chart_semantics={"temperature": "intensive"},
         projection_policy=phx.geometry.CommonRefinementPolicy(
             overlap_simplices=True,
@@ -1957,123 +2009,127 @@ def test_native_rational_trim_metric_archive_reopens_and_continues_physical_fiel
     )
     assert published.state.materials is not None
     np.testing.assert_allclose(
-        published.state.fields[0], carried_temperature, rtol=1.0e-12, atol=1.0e-12
+        published.state.fields[0],
+        carried_temperature,
+        rtol=MATERIAL_FIELD_RTOL,
+        atol=MATERIAL_FIELD_ATOL,
     )
     np.testing.assert_allclose(
         published.state.materials.state("surface-temperature-history").committed,
         carried_history,
-        rtol=1.0e-12,
-        atol=1.0e-12,
+        rtol=MATERIAL_FIELD_RTOL,
+        atol=MATERIAL_FIELD_ATOL,
     )
-    _, continued_after_rebind = _solve_surface_reaction(
+    _, continued_after_rebind = solve_surface_reaction(
         prepared, published.state.fields[0]
     )
     np.testing.assert_allclose(
-        continued_after_rebind, temperature, rtol=1.0e-12, atol=1.0e-12
+        continued_after_rebind,
+        temperature,
+        rtol=MATERIAL_FIELD_RTOL,
+        atol=MATERIAL_FIELD_ATOL,
     )
     assert accepted.state_version == 1 and published.state.state_version == 2
     assert published.state.schedule_cursor == accepted.schedule_cursor
     assert published.state.transition_id == published.receipt.receipt_id
-    part = MeshPart(domain.source_id, adaptation.target)
-    carrier = part.carrier
-    if not isinstance(carrier, CellMeshingResult) or not isinstance(
-        carrier.geometry, CellGeometrySpec
-    ):
-        raise TypeError(
-            "The archived temperature owner requires its actual cell geometry carrier."
-        )
-    coefficient_binding = prepare_meshing_field_index_binding(
-        carrier, "mesh/vertex_ids", field_space=prepared.field_spaces[0]
-    )
-    history_binding = prepare_meshing_field_index_binding(carrier, "mesh/cell_ids")
-    roles = (
-        MeshingFieldStateRole(
-            "temperature",
-            "temperature",
-            "coefficients",
-            temperature.shape,
-            np.dtype(np.float64),
-            1,
-            index_binding=coefficient_binding,
-        ),
-        MeshingFieldStateRole(
-            "material-temperature",
-            "temperature",
-            "material-history",
-            carried_history.shape,
-            np.dtype(np.float64),
-            1,
-            value_units=(phx.units.KELVIN,),
-            index_binding=history_binding,
-        ),
-        MeshingFieldStateRole(
-            "accepted-epoch", "temperature", "state-epoch", (), np.dtype(np.int64), 1
-        ),
-    )
-    declaration = MeshingFieldDeclaration(
-        part_name=part.name,
-        owner="finite_element",
-        topology_id=carrier.mesh.topology_id,
-        geometry_layout_id=carrier.geometry.geometry_layout_id,
-        field_space_ids=frozendict(
-            {"temperature": prepared.field_spaces[0].field_space_id}
-        ),
-        value_units=frozendict({"temperature": (phx.units.KELVIN,)}),
-        maximum_derivative_orders=frozendict({"temperature": 1}),
-        branch_policy=BranchDifferentiationPolicy.SMOOTH,
-        trace_policy=FieldTracePolicy("cell-sided"),
-        state_roles=roles,
-        history_policy="material-history",
-        numeric_version=carrier.mesh.numeric_version,
-        finite_element_fields=(field,),
-        precision_policy=FiniteElementPrecisionPolicy(),
-    )
-    if carrier.certification is None:
-        raise TypeError("The rational archive requires its accepted certification.")
-    if adaptation.transition is None or adaptation.lineage is None:
-        raise TypeError(
-            "The rational archive requires its accepted source-to-target event."
-        )
-    from phydrax._fingerprint import canonical_fingerprint
 
-    event_values = {
-        "source_result_id": adaptation.source.result_id,
-        "source_mesh_id": adaptation.source.mesh.mesh_id,
-        "source_topology_id": adaptation.source.mesh.topology_id,
-        "target_result_id": carrier.result_id,
-        "target_mesh_id": carrier.mesh.mesh_id,
-        "target_topology_id": carrier.mesh.topology_id,
-        "transition_id": adaptation.transition.transition_id,
-    }
-    adaptation_event: dict[str, Any] = {
-        **event_values,
-        "lineage": adaptation.lineage,
-        "accepted_event_id": canonical_fingerprint(
-            {
-                "kind": "accepted-serial-adaptation-event",
-                **event_values,
-                "lineage": adaptation.lineage.lineage_id,
-            }
-        ),
-    }
-    archive_records = {
-        "accepted_target": carrier,
-        "certification_inputs": carrier.certification.request,
-        "report": carrier.certification,
-        "associations": carrier.associations,
-        "field_declarations": {part.name: declaration},
-        "accepted_data": {
-            "adaptation_event": adaptation_event,
-            "fields": {
-                "temperature": np.asarray(temperature),
-                "material-temperature": np.asarray(carried_history),
-                "accepted-epoch": np.asarray(1, dtype=np.int64),
-            },
-        },
-    }
-    from copy import copy
 
-    malformed_carrier = copy(carrier)
+def test_rational_material_acceptance_refuses_corrupted_history(
+    rational_metric_fields: RationalMetricFieldState,
+) -> None:
+    adaptation = rational_metric_fields.scenario.adaptation
+    target = rational_metric_fields.scenario.target
+    chart = rational_metric_fields.scenario.chart
+    old_fv = rational_metric_fields.old_fv
+    new_fv = rational_metric_fields.new_fv
+    remap_plan = rational_metric_fields.remap_plan
+    history = rational_metric_fields.history
+    carried_history = rational_metric_fields.carried_history
+    bound = rational_metric_fields.bound
+    carried_temperature = rational_metric_fields.carried_temperature
+    material_history = RationalMaterialHistory(
+        adaptation,
+        old_fv,
+        new_fv,
+        chart,
+        remap_plan,
+        history,
+        carried_temperature,
+        bound,
+        target,
+    )
+    corrupted = phx.equations.MaterialTransaction(
+        (
+            phx.equations.MaterialState(
+                phx.equations.MaterialSiteId("surface-temperature-history"),
+                "surface-temperature-history",
+                carried_history + 1.0,
+            ),
+        )
+    )
+    assert not material_history.certify_material(
+        target.mesh, (carried_temperature,), corrupted, None, None
+    )
+
+
+def test_rational_archive_trust_binds_native_part_identity(
+    rational_metric_archive: RationalMetricArchive,
+) -> None:
+    part = rational_metric_archive.part
+    carrier = rational_metric_archive.carrier
+    fresh_part = MeshPart(
+        part.name,
+        carrier,
+        coordinate_contract=part.coordinate_contract,
+    )
+    assert source_content_equal(
+        part,
+        fresh_part,
+        limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        freshly_rebuilt=True,
+    )
+    name_fault = MeshPart(
+        f"{part.name}-authority-fault",
+        carrier,
+        coordinate_contract=part.coordinate_contract,
+    )
+    assert not source_content_equal(
+        name_fault,
+        fresh_part,
+        limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        freshly_rebuilt=True,
+    )
+
+
+def test_rational_archive_part_refuses_uncertified_carrier_kind(
+    rational_metric_archive: RationalMetricArchive,
+) -> None:
+    part, carrier = rational_metric_archive.part, rational_metric_archive.carrier
+    # A bare mesh is not a certified archive carrier.
+    with pytest.raises(TypeError, match="MeshPart.carrier"):
+        MeshPart(
+            part.name,
+            carrier.mesh,  # ty: ignore[invalid-argument-type] -- deliberate public wrong-carrier refusal
+            coordinate_contract=part.coordinate_contract,
+        )
+
+
+def test_rational_archive_part_refuses_foreign_coordinate_frame(
+    rational_metric_archive: RationalMetricArchive,
+) -> None:
+    part, carrier = rational_metric_archive.part, rational_metric_archive.carrier
+    altered_contract = phx.SpatialCoordinateContract(
+        part.coordinate_contract.length_unit, reference_frame="foreign-material-frame"
+    )
+    with pytest.raises(ValueError, match="MeshPart.coordinate_contract"):
+        MeshPart(part.name, carrier, coordinate_contract=altered_contract)
+
+
+def test_rational_archive_refuses_changed_native_provider(
+    rational_metric_archive: RationalMetricArchive,
+) -> None:
+    carrier = rational_metric_archive.carrier
+    archive_records = rational_metric_archive.archive_records
     provider = carrier.provider
     altered_provider = type(provider)(
         f"{provider.name}-authority-fault",
@@ -2086,7 +2142,9 @@ def test_native_rational_trim_metric_archive_reopens_and_continues_physical_fiel
         dimensions=provider.dimensions,
         execution_modes=provider.execution_modes,
     )
-    object.__setattr__(malformed_carrier, "provider", altered_provider)
+    malformed_carrier = eqx.tree_at(
+        lambda value: value.provider, carrier, altered_provider
+    )
     runtime = carrier.runtime
     altered_runtime = type(runtime)(
         altered_provider.provider_id,
@@ -2096,54 +2154,35 @@ def test_native_rational_trim_metric_archive_reopens_and_continues_physical_fiel
         enforced_limits=runtime.enforced_limits,
         unenforced_limits=runtime.unenforced_limits,
     )
-    object.__setattr__(malformed_carrier, "runtime", altered_runtime)
-    from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
-    from phydrax.lifecycle._meshing_sources import _native_authority_equal
-    from phydrax.meshing._assembly import MeshCarrierKind
-
-    fresh_part = MeshPart(
-        part.name,
-        carrier,
-        coordinate_contract=part.coordinate_contract,
+    malformed_carrier = eqx.tree_at(
+        lambda value: value.runtime, malformed_carrier, altered_runtime
     )
-    assert _native_authority_equal(
-        part,
-        fresh_part,
-        limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
-        freshly_rebuilt=True,
-    )
-    name_fault = copy(part)
-    object.__setattr__(name_fault, "name", f"{part.name}-authority-fault")
-    kind_fault = copy(part)
-    object.__setattr__(
-        kind_fault,
-        "carrier_kind",
-        next(value for value in MeshCarrierKind if value is not part.carrier_kind),
-    )
-    contract_fault = copy(part)
-    altered_contract = copy(part.coordinate_contract)
-    object.__setattr__(altered_contract, "spatial_id", "0" * 64)
-    object.__setattr__(contract_fault, "coordinate_contract", altered_contract)
-    for fault in (name_fault, kind_fault, contract_fault):
-        assert not _native_authority_equal(
-            fault,
-            fresh_part,
-            limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
-            freshly_rebuilt=True,
-        )
     malformed_records = dict(archive_records)
     malformed_records["accepted_target"] = malformed_carrier
     with pytest.raises(
         ValueError,
-        match="differs from its freshly certified native source authority",
+        match="stored_fields",
     ):
         validate_meshing_source_closure(malformed_records)
-    missing_certification = copy(carrier)
-    object.__setattr__(missing_certification, "certification", None)
+
+
+def test_rational_archive_refuses_missing_certification(
+    rational_metric_archive: RationalMetricArchive,
+) -> None:
+    carrier = rational_metric_archive.carrier
+    archive_records = rational_metric_archive.archive_records
+    missing_certification = eqx.tree_at(lambda value: value.certification, carrier, None)
     missing_certification_records = dict(archive_records)
     missing_certification_records["accepted_target"] = missing_certification
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="source_closure.accepted_target"):
         validate_meshing_source_closure(missing_certification_records)
+
+
+def test_rational_archive_refuses_missing_lineage(
+    rational_metric_archive: RationalMetricArchive,
+) -> None:
+    adaptation_event = rational_metric_archive.adaptation_event
+    archive_records = rational_metric_archive.archive_records
     missing_lineage_records = dict(archive_records)
     missing_lineage_event = dict(adaptation_event)
     missing_lineage_event["lineage"] = None
@@ -2151,47 +2190,122 @@ def test_native_rational_trim_metric_archive_reopens_and_continues_physical_fiel
         archive_records["accepted_data"],
         adaptation_event=missing_lineage_event,
     )
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises((TypeError, ValueError), match="source_closure.accepted_target"):
         validate_meshing_source_closure(missing_lineage_records)
+
+
+def test_rational_archive_refuses_duplicate_field_owner(
+    rational_metric_archive: RationalMetricArchive,
+) -> None:
+    part = rational_metric_archive.part
+    declaration = rational_metric_archive.declaration
+    archive_records = rational_metric_archive.archive_records
     duplicate_owner_records = dict(archive_records)
     duplicate_owner_records["field_declarations"] = {
         part.name: declaration,
         f"{part.name}-duplicate": declaration,
     }
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="field_declarations"):
         validate_meshing_source_closure(duplicate_owner_records)
+
+
+def test_rational_archive_refuses_mislabeled_generation(
+    rational_metric_archive: RationalMetricArchive,
+) -> None:
+    part = rational_metric_archive.part
+    archive_records = rational_metric_archive.archive_records
     mislabeled_generation_records: dict[str, Any] = dict(archive_records)
     mislabeled_generation_records["generation_part"] = part
-    with pytest.raises(ValueError, match="must not be mislabeled"):
+    with pytest.raises(ValueError, match="accepted_target|roles"):
         validate_meshing_source_closure(mislabeled_generation_records)
+
+
+class ReopenedRationalMetricArchive(NamedTuple):
+    records: Mapping[str, Any]
+    carrier: CellMeshingResult
+    chart: PreparedSurfaceChartDeformation
+    space: FiniteElementDiscretization
+
+
+@pytest.fixture(scope="module")
+def reopened_rational_metric_archive(
+    rational_metric_archive: RationalMetricArchive,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> ReopenedRationalMetricArchive:
     receipt = write_meshing_source_closure(
-        tmp_path / "native-rational-temperature.npz",
-        archive_records,
+        tmp_path_factory.mktemp("rational-metric") / "temperature.npz",
+        rational_metric_archive.archive_records,
     )
     reopened = read_meshing_source_closure(
         receipt.path, expected_content_id=receipt.content_id
     )
     cold = reopened["accepted_target"]
-    assert isinstance(cold, CellMeshingResult) and cold.certification is not None
-    boundary = cold.certification.request.source
-    assert isinstance(boundary, SurfaceChartBoundarySource)
-    cold_chart = boundary.deformation
-    assert isinstance(cold_chart, PreparedSurfaceChartDeformation)
-    validate_meshing_source_closure(cold_chart)
-    cold_chart.require_bound(
-        cold_chart.source_mesh, cold_chart.source_geometry, cold.mesh, cold.geometry
-    )
-    assert cold_chart.deformation_id == chart.deformation_id
-    assert (
-        cold_chart.material_root_witness.witness_id
-        == chart.material_root_witness.witness_id
-    )
-    for target in (False, True):
-        np.testing.assert_array_equal(
-            cold_chart.material_charts(target=target),
-            chart.material_charts(target=target),
+    if not isinstance(cold, CellMeshingResult) or cold.certification is None:
+        raise TypeError(
+            "rational_archive.carrier must retain certified cell geometry; got an incompatible carrier"
         )
-    for restored, original in zip(cold_chart.occurrences, chart.occurrences, strict=True):
+    boundary = cold.certification.request.source
+    if not isinstance(boundary, SurfaceChartBoundarySource):
+        raise TypeError(
+            "rational_archive.boundary must retain surface charts; got an incompatible boundary owner"
+        )
+    chart = boundary.deformation
+    if not isinstance(chart, PreparedSurfaceChartDeformation):
+        raise TypeError(
+            "rational_archive.deformation must retain material correspondence; got an incompatible chart"
+        )
+    space, _ = prepare_meshing_field_owner(
+        reopened["field_declarations"][rational_metric_archive.part.name], cold
+    )
+    if not isinstance(space, FiniteElementDiscretization):
+        raise TypeError(
+            "rational_archive.space must retain the finite-element temperature owner; got an incompatible space"
+        )
+    return ReopenedRationalMetricArchive(reopened, cold, chart, space)
+
+
+def test_rational_archive_reopens_bound_material_deformation(
+    rational_metric_archive: RationalMetricArchive,
+    reopened_rational_metric_archive: ReopenedRationalMetricArchive,
+) -> None:
+    cold = reopened_rational_metric_archive
+    original = rational_metric_archive.fields.scenario.chart
+    validate_meshing_source_closure(cold.chart)
+    cold.chart.require_bound(
+        cold.chart.source_mesh,
+        cold.chart.source_geometry,
+        cold.carrier.mesh,
+        cold.carrier.geometry,
+    )
+    assert cold.chart.deformation_id == original.deformation_id
+    assert (
+        cold.chart.material_root_witness.witness_id
+        == original.material_root_witness.witness_id
+    )
+
+
+@pytest.mark.parametrize("target", [False, True], ids=["source", "target"])
+def test_rational_archive_reopens_exact_material_charts(
+    rational_metric_archive: RationalMetricArchive,
+    reopened_rational_metric_archive: ReopenedRationalMetricArchive,
+    target: bool,
+) -> None:
+    np.testing.assert_array_equal(
+        reopened_rational_metric_archive.chart.material_charts(target=target),
+        rational_metric_archive.fields.scenario.chart.material_charts(target=target),
+    )
+
+
+def test_rational_archive_reopens_exact_material_partition(
+    rational_metric_archive: RationalMetricArchive,
+    reopened_rational_metric_archive: ReopenedRationalMetricArchive,
+) -> None:
+    original_chart = rational_metric_archive.fields.scenario.chart
+    for restored, original in zip(
+        reopened_rational_metric_archive.chart.occurrences,
+        original_chart.occurrences,
+        strict=True,
+    ):
         assert restored.material_root_witness_id == original.material_root_witness_id
         for restored_piece, original_piece in zip(
             restored.pieces, original.pieces, strict=True
@@ -2205,39 +2319,171 @@ def test_native_rational_trim_metric_archive_reopens_and_continues_physical_fiel
                 restored_piece.exact_target_reference_vertices
                 == original_piece.exact_target_reference_vertices
             )
-    restored_space, _ = prepare_meshing_field_owner(
-        reopened["field_declarations"][part.name], cold
+
+
+def test_rational_archive_reopens_field_owner_and_continues_reaction(
+    rational_metric_archive: RationalMetricArchive,
+    reopened_rational_metric_archive: ReopenedRationalMetricArchive,
+) -> None:
+    cold = reopened_rational_metric_archive
+    fields = rational_metric_archive.fields
+    assert cold.space.prepared_id == fields.prepared.prepared_id
+    problem, continued = solve_surface_reaction(
+        cold.space, jnp.asarray(cold.records["accepted_data"]["fields"]["temperature"])
     )
-    if not isinstance(restored_space, FiniteElementDiscretization):
-        raise TypeError(
-            "The reopened temperature declaration must prepare its finite-element owner."
-        )
-    assert restored_space.prepared_id == prepared.prepared_id
-    cold_problem, continued = _solve_surface_reaction(
-        restored_space, jnp.asarray(reopened["accepted_data"]["fields"]["temperature"])
+    assert problem.compilation_id == fields.problem.compilation_id
+    np.testing.assert_allclose(
+        continued, fields.temperature, rtol=MATERIAL_FIELD_RTOL, atol=MATERIAL_FIELD_ATOL
     )
-    assert cold_problem.compilation_id == problem.compilation_id
-    np.testing.assert_allclose(continued, temperature, rtol=1.0e-12, atol=1.0e-12)
+
+
+def test_rational_archive_reopens_material_history_without_source_mutation(
+    rational_metric_archive: RationalMetricArchive,
+    reopened_rational_metric_archive: ReopenedRationalMetricArchive,
+) -> None:
+    fields = rational_metric_archive.fields
     restored_material = phx.equations.MaterialTransaction(
         (
             phx.equations.MaterialState(
                 phx.equations.MaterialSiteId("surface-temperature-history"),
                 "surface-temperature-history",
-                reopened["accepted_data"]["fields"]["material-temperature"],
+                reopened_rational_metric_archive.records["accepted_data"]["fields"][
+                    "material-temperature"
+                ],
             ),
         )
     )
-    assert restored_material.transaction_id == material.transaction_id
+    assert restored_material.transaction_id == fields.material.transaction_id
     np.testing.assert_array_equal(
-        source_material.state("surface-temperature-history").committed, history
+        fields.source_material.state("surface-temperature-history").committed,
+        fields.history,
     )
-    np.testing.assert_array_equal(source.geometry.coordinates, before)
+    np.testing.assert_array_equal(
+        fields.scenario.source_fixture.source.geometry.coordinates,
+        fields.scenario.before,
+    )
 
 
-def test_public_rational_uv_resource_refusal_retains_the_actual_source(
-    rational_trim_metric_source: _UVProducerFixture,
+@pytest.mark.parametrize("fault", ["numerator", "chart", "control", "weight"])
+def test_exact_rational_map_reference_detects_authored_fault(fault: str) -> None:
+    controls = np.asarray(
+        (((0.0, 0.0, 0.0), (0.0, 1.0, 0.0)), ((1.0, 0.0, 0.0), (1.0, 1.0, 0.0))),
+        dtype=np.float64,
+    )
+    weights = np.ones((2, 2), dtype=np.float64)
+    charts = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), dtype=np.float64)
+    expressions: tuple[Polynomial, ...] = (
+        {(1, 0): Fraction(1)},
+        {(0, 1): Fraction(1)},
+        {},
+    )
+    require_exact_rational_patch_map(expressions, charts, controls, weights)
+    if fault == "numerator":
+        expressions = ({(1, 0): Fraction(2)}, expressions[1], expressions[2])
+    elif fault == "chart":
+        charts[0, 0] = 0.125
+    elif fault == "control":
+        controls[1, 1, 2] = 0.125
+    else:
+        weights[1, 1] = 2.0
+    with pytest.raises(AssertionError):
+        require_exact_rational_patch_map(expressions, charts, controls, weights)
+
+
+def test_rational_patch_reference_keeps_projective_weights() -> None:
+    controls = np.asarray(
+        (((0.0, 0.0, 0.0), (0.0, 1.0, 0.0)), ((1.0, 0.0, 0.0), (1.0, 1.0, 0.0))),
+        dtype=np.float64,
+    )
+    weights = np.asarray(((1.0, 1.0), (1.0, 3.0)), dtype=np.float64)
+    expected = (Fraction(2, 3), Fraction(2, 3), Fraction(0))
+    assert (
+        rational_patch_point(controls, weights, Fraction(1, 2), Fraction(1, 2))
+        == expected
+    )
+    # Deliberately omit homogeneous weights, then exercise the same rational
+    # point invariant against the corrupted reference output.
+    faulty = rational_patch_point(
+        controls, np.ones_like(weights), Fraction(1, 2), Fraction(1, 2)
+    )
+    with pytest.raises(AssertionError):
+        assert faulty == expected
+
+
+def test_material_p1_reference_refuses_uncovered_authored_target(
+    rational_metric_fields: RationalMetricFieldState,
 ) -> None:
-    import phydrax as phx
+    fields = rational_metric_fields
+    chart = fields.scenario.chart
+    altered_occurrences = tuple(
+        replace(
+            occurrence,
+            exact_target_material_charts=tuple(
+                tuple((u + 10, v + 10) for u, v in triangle)
+                for triangle in occurrence.exact_target_material_charts
+            ),
+        )
+        for occurrence in chart.occurrences
+    )
+    altered = replace(chart, occurrences=altered_occurrences)
+    with pytest.raises(ValueError, match=r"material_reference\.coverage"):
+        material_p1_reference_matrix(
+            fields.scenario.source_space, fields.prepared, altered
+        )
+
+
+def test_material_p1_reference_detects_corrupted_operator_output(
+    rational_metric_fields: RationalMetricFieldState,
+) -> None:
+    fields = rational_metric_fields
+    matrix = material_p1_reference_matrix(
+        fields.scenario.source_space, fields.prepared, fields.scenario.chart
+    )
+    direction = np.ones(matrix.shape[1], dtype=np.float64)
+    expected = np.asarray(fields.transfer.transfer.apply(jnp.asarray(direction)))
+    np.testing.assert_allclose(
+        matrix @ direction,
+        expected,
+        rtol=MATERIAL_FIELD_RTOL,
+        atol=MATERIAL_FIELD_ATOL,
+    )
+    faulty = matrix.copy()
+    faulty[0, 0] += 1.0
+    with pytest.raises(AssertionError):
+        np.testing.assert_allclose(
+            faulty @ direction,
+            expected,
+            rtol=MATERIAL_FIELD_RTOL,
+            atol=MATERIAL_FIELD_ATOL,
+        )
+
+
+def test_rational_trim_reference_detects_changed_authored_curve(
+    rational_trim_metric_source: UVMetricSource,
+) -> None:
+    domain = rational_trim_metric_source.domain
+    # The authored first Bezier has weights (1, 3/4, 1). At t=1/2 its
+    # UV point is exactly (19/28, 19/28), unlike its affine endpoint midpoint.
+    surface = domain.patches[0].surface
+    assert isinstance(surface, BSplineSurfacePatch)
+    expected = np.asarray(
+        rational_patch_point(
+            np.asarray(surface.control_points),
+            np.asarray(surface.weights),
+            Fraction(19, 28),
+            Fraction(19, 28),
+        ),
+        dtype=np.float64,
+    )
+    np.testing.assert_array_equal(rational_trim_point(domain, 0, 0.5), expected)
+    faulty = rational_trim_point(domain, 0, 0.25)
+    with pytest.raises(AssertionError):
+        np.testing.assert_array_equal(faulty, expected)
+
+
+def test_public_rational_uv_resource_refusal_retains_source(
+    rational_trim_metric_source: UVMetricSource,
+) -> None:
 
     _, source, transfer, policy = rational_trim_metric_source
     before = np.asarray(source.geometry.coordinates).copy()
@@ -2294,10 +2540,9 @@ def test_public_rational_uv_resource_refusal_retains_the_actual_source(
     np.testing.assert_array_equal(source.geometry.coordinates, before)
 
 
-def test_rational_uv_capacity_refusal_rolls_back_an_actual_partial_edit(
-    rational_trim_metric_source: _UVProducerFixture,
+def test_rational_uv_capacity_refusal_rolls_back_partial_edit(
+    rational_trim_metric_source: UVMetricSource,
 ) -> None:
-    import phydrax as phx
 
     _, source, transfer, policy = rational_trim_metric_source
     before = np.asarray(source.geometry.coordinates).copy()
@@ -2356,4 +2601,39 @@ def test_rational_uv_capacity_refusal_rolls_back_an_actual_partial_edit(
     )
     assert dict(result.evidence.resource_achieved)["vertices"] == maximum_vertices
     assert result.evidence.execution_evidence is not None
+    np.testing.assert_array_equal(source.geometry.coordinates, before)
+
+
+@pytest.mark.parametrize(
+    "minimum_quality",
+    [-0.01, 1.01, np.nan, np.inf],
+    ids=["below-zero", "above-one", "nan", "infinite"],
+)
+def test_sphere_quality_floor_refuses_invalid_value_without_source_mutation(
+    sphere_metric_source: SphereMetricSource,
+    minimum_quality: float,
+) -> None:
+    domain, source, atlas, transfer, policy = sphere_metric_source
+    before = np.asarray(source.geometry.coordinates).copy()
+    metric = np.broadcast_to(
+        np.eye(3, dtype=np.float64), (source.mesh.coordinates.shape[0], 3, 3)
+    )
+    with sphere_native_scope(policy.limits) as native_scope:
+        with native_coordinate_resources(native_scope, policy.limits) as ledger:
+            with pytest.raises(ValueError, match="sphere_metric.minimum_metric_quality"):
+                execute_sphere_metric_adaptation(
+                    source,
+                    metric,
+                    domain,
+                    atlas,
+                    transfer,
+                    policy=policy,
+                    coordinate_contract=source.coordinate_contract,
+                    maximum_fidelity=0.16,
+                    minimum_metric_quality=minimum_quality,
+                    topology_operations=True,
+                    relocation=False,
+                    budget=ledger,
+                    scope=native_scope,
+                )
     np.testing.assert_array_equal(source.geometry.coordinates, before)

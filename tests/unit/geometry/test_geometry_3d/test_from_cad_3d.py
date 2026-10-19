@@ -12,6 +12,7 @@ import trimesh
 from jax import numpy as jnp
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 @pytest.fixture
@@ -27,7 +28,7 @@ def geometry_from_cube(simple_cube_mesh: Any) -> Any:
         phx.geometry.mesh_region_from_source(
             (np.asarray(simple_cube_mesh.vertices), np.asarray(simple_cube_mesh.faces)),
             recenter=False,
-        ).compile()
+        ).compile(coordinate_unit=METER)
     )
 
 
@@ -65,7 +66,7 @@ def test_from_cad_3d_scenario_1() -> None:
             phx.geometry.mesh_region_from_source(
                 (np.asarray(open_mesh.vertices), np.asarray(open_mesh.faces)),
                 recenter=False,
-            ).compile()
+            ).compile(coordinate_unit=METER)
         )
 
     nonfinite_mesh = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
@@ -76,7 +77,7 @@ def test_from_cad_3d_scenario_1() -> None:
             phx.geometry.mesh_region_from_source(
                 (vertices, np.asarray(nonfinite_mesh.faces)),
                 recenter=False,
-            ).compile()
+            ).compile(coordinate_unit=METER)
         )
     scales = (1e-7, 1.0)
     normalized_points = jnp.array(
@@ -104,7 +105,7 @@ def test_from_cad_3d_scenario_1() -> None:
                     np.asarray(trimesh.creation.box(extents=(scale, scale, scale)).faces),
                 ),
                 recenter=False,
-            ).compile()
+            ).compile(coordinate_unit=METER)
         )
         boundary_point = jnp.array([0.5 * scale, 0.0, 0.0])
         assert abs(float(geometry.adf(boundary_point))) <= 1e-12 * scale
@@ -250,7 +251,7 @@ def test_geometry_from_cad_file(tmp_path: Any) -> None:
     mesh.export(mesh_file)
 
     geom = phx.domain.GeometryDomain(
-        phx.geometry.mesh_region_from_source(mesh_file).compile()
+        phx.geometry.mesh_region_from_source(mesh_file).compile(coordinate_unit=METER)
     )
     assert isinstance(geom, phx.domain.GeometryDomain)
     assert np.isclose(float(geom.volume), mesh.volume, atol=1e-6)

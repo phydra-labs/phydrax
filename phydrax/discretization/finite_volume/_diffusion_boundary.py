@@ -44,18 +44,24 @@ class HybridDiffusionBoundary(StrictModule):
         exterior = np.asarray(discretization.neighbor_cells) < 0
         count = exterior.size
         kind = np.where(exterior, 2, 0).astype(np.int32)
-        value = np.zeros(count)
-        conductance = np.zeros(count)
+        value = np.zeros(count, dtype=np.float64)
+        conductance = np.zeros(count, dtype=np.float64)
         assigned: set[int] = set()
 
         def validate_face(face: int) -> int:
             if isinstance(face, bool) or not isinstance(face, (int, np.integer)):
-                raise TypeError("Boundary face indices must be integers.")
+                raise TypeError(
+                    f"diffusion_boundary.face must be an integer index; got {type(face).__name__}."
+                )
             face_index = int(face)
             if not 0 <= face_index < count or not exterior[face_index]:
-                raise ValueError("Boundary laws require exterior face indices.")
+                raise ValueError(
+                    f"diffusion_boundary.face must index an exterior face; got {face_index}."
+                )
             if face_index in assigned:
-                raise ValueError("A face cannot have multiple boundary laws.")
+                raise ValueError(
+                    f"diffusion_boundary.face must carry one boundary law; got duplicate face {face_index}."
+                )
             assigned.add(face_index)
             return face_index
 
@@ -63,7 +69,9 @@ class HybridDiffusionBoundary(StrictModule):
             for face, target in ({} if data is None else data).items():
                 face_index = validate_face(face)
                 if not np.isfinite(target):
-                    raise ValueError("Boundary targets must be finite.")
+                    raise ValueError(
+                        f"diffusion_boundary.target must be finite; got {target!r}."
+                    )
                 kind[face_index], value[face_index] = code, target
 
         assign_scalar(dirichlet, 1)
@@ -72,9 +80,13 @@ class HybridDiffusionBoundary(StrictModule):
             face_index = validate_face(face)
             transfer, target = datum
             if not np.isfinite(transfer) or transfer <= 0:
-                raise ValueError("Robin conductance must be finite and positive.")
+                raise ValueError(
+                    f"diffusion_boundary.robin.conductance must be finite and positive; got {transfer!r}."
+                )
             if not np.isfinite(target):
-                raise ValueError("Boundary targets must be finite.")
+                raise ValueError(
+                    f"diffusion_boundary.target must be finite; got {target!r}."
+                )
             kind[face_index], value[face_index] = 3, target
             conductance[face_index] = transfer
         active = np.asarray(discretization.face_block.active_mask)

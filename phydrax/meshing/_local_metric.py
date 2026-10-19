@@ -17,51 +17,53 @@ protected edges) is never crossed, so inherited organization stays unanimous.
 
 from __future__ import annotations
 
-from typing import Any, final, NamedTuple
+from typing import final, NamedTuple, Protocol
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import ArrayLike
+
+import phydrax._geometry_predicates as _dependency_phydrax__geometry_predicates
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.meshing._entity_keys as entity_keys_owner
+import phydrax.meshing._metric as _dependency_phydrax_meshing__metric
+import phydrax.meshing._topology_edit as _dependency_phydrax_meshing__topology_edit
 
 from .._bvh import bvh_overlap_pairs_host, prepare_bvh
 from .._fingerprint import canonical_fingerprint
-from .._geometry_predicates import orient2d, PredicateMode, PredicateSign
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer, positive_integer
 from ..discretization import CellMesh
-from ._lineage import EntityLineageKind
-from ._metric import interpolate_mesh_metric, metric_edge_lengths
-from ._topology_edit import (
-    CellTopologyEdit,
-    entity_keys,
-    EntityRelations,
-    key_rows,
-    source_family_blocks,
-)
+from ..typing import checked, parse
+from ._lineage_records import EntityLineageKind
+from ._metric_execution import validate_metric_operation_controls
 
 
-_LOWER = float(1.0 / np.sqrt(2.0))
-_UPPER = float(np.sqrt(2.0))
+LOWER = float(1.0 / np.sqrt(2.0))
+UPPER = float(np.sqrt(2.0))
 # Longest metric edge a collapse may create. Edges in (sqrt(2), 2] are split by
 # the next pass into halves inside the unit range; a strict sqrt(2) bound would
 # lock anisotropic coarsening (a removed row always lengthens diagonals).
-_COLLAPSE_LIMIT = 2.0
+COLLAPSE_LIMIT = 2.0
 # Sub-rounds of one operation phase per pass and greedy selection rounds per
 # sub-round; both only bound work, remaining candidates return next round.
-_PHASE_ROUNDS = 8
-_SELECTION_ROUNDS = 64
-_RELOCATION_STEPS = np.asarray((1.0, 0.5, 0.25), dtype=np.float64)
+PHASE_ROUNDS = 8
+SELECTION_ROUNDS = 64
+RELOCATION_STEPS = np.asarray((1.0, 0.5, 0.25), dtype=np.float64)
 # Minimum metric-quality gain of a flip or relocation; excludes rounding cycles.
-_IMPROVEMENT = 1.0e-6
+IMPROVEMENT = 1.0e-6
 # Candidate-pair padding of the source point location; exact signs decide.
 _LOCATION_TOLERANCE = 1.0e-9
 _MINIMUM_CAPACITY = 16
 _KEY_SHIFT = np.int64(1 << 32)
 
 _OK, _UNCERTAIN, _INVALID, _INADMISSIBLE = 0, 1, 2, 3
-_INTERIOR, _CURVE, _CORNER = 0, 1, 2
+INTERIOR, CURVE, CORNER = 0, 1, 2
 # History ranks; a cell's lineage kind is its strongest operation.
-_REFINED, _RELOCATED, _SWAPPED, _COLLAPSED = 1, 2, 3, 4
+REFINED, RELOCATED, SWAPPED, COLLAPSED = 1, 2, 3, 4
 _RANK_KINDS = np.asarray(
     (
         EntityLineageKind.PRESERVED,
@@ -101,7 +103,9 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
     minimum_metric_quality: float = eqx.field(static=True)
     topology_operations: bool = eqx.field(static=True)
     relocation: bool = eqx.field(static=True)
-    predicate_mode: PredicateMode = eqx.field(static=True)
+    predicate_mode: _dependency_phydrax__geometry_predicates.PredicateMode = eqx.field(
+        static=True
+    )
     evidence_id: str = eqx.field(static=True)
 
     def __init__(
@@ -124,7 +128,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
         minimum_metric_quality: float,
         topology_operations: bool,
         relocation: bool,
-        predicate_mode: PredicateMode,
+        predicate_mode: _dependency_phydrax__geometry_predicates.PredicateMode,
     ) -> None:
         counts = {
             "passes": passes,
@@ -150,22 +154,35 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
             "minimum_metric_quality": minimum_metric_quality,
         }
         for name, value in counts.items():
-            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                raise ValueError(f"{name} must be a non-negative integer.")
+            value = nonnegative_integer(value, name)
         for name, value in flags.items():
             if not isinstance(value, bool):
-                raise TypeError(f"{name} must be bool.")
+                raise TypeError(f"LocalMetricEvidence.{name} must be bool; got {value!r}")
         for name, value in measures.items():
             if not isinstance(value, float) or not np.isfinite(value) or value < 0.0:
-                raise ValueError(f"{name} must be a finite non-negative float.")
+                raise ValueError(
+                    f"LocalMetricEvidence.{name} must be a finite nonnegative float; got {value!r}"
+                )
         if unit_fraction > 1.0:
-            raise ValueError("unit_fraction cannot exceed one.")
-        if not isinstance(predicate_mode, PredicateMode):
-            raise TypeError("predicate_mode must be PredicateMode.")
-        if predicate_mode is PredicateMode.FILTERED_DEVICE:
-            raise ValueError("Local metric adaptation uses host predicate modes.")
+            raise ValueError(
+                f"LocalMetricEvidence.unit_fraction must not exceed one; got {unit_fraction!r}"
+            )
+        predicate_mode = parse(
+            predicate_mode,
+            _dependency_phydrax__geometry_predicates.PredicateMode,
+            "predicate_mode",
+        )
+        if (
+            predicate_mode
+            is _dependency_phydrax__geometry_predicates.PredicateMode.FILTERED_DEVICE
+        ):
+            raise ValueError(
+                f"LocalMetricEvidence.predicate_mode must select a host predicate mode; got {predicate_mode!r}"
+            )
         if converged and stalled:
-            raise ValueError("A converged adaptation cannot be stalled.")
+            raise ValueError(
+                "LocalMetricEvidence.stalled must be false for converged evidence; got both flags true"
+            )
         self.passes = passes
         self.splits = splits
         self.collapses = collapses
@@ -198,12 +215,12 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
 class LocalMetricOutcome(NamedTuple):
     """Target topology edit, its vertex-aligned metric, and the evidence."""
 
-    edit: CellTopologyEdit
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit
     metric: np.ndarray
     evidence: LocalMetricEvidence
 
 
-class _State(NamedTuple):
+class State(NamedTuple):
     """Working mesh; vertex rows are never reused, removed rows stay dead."""
 
     points: np.ndarray
@@ -230,7 +247,7 @@ class _State(NamedTuple):
     next_vertex_id: int
 
 
-class _Source(NamedTuple):
+class Source(NamedTuple):
     points: np.ndarray
     vertex_ids: np.ndarray
     cells: np.ndarray
@@ -269,10 +286,24 @@ class _Topology(NamedTuple):
     neighbor_values: np.ndarray
 
 
+class _MetricPhase(Protocol):
+    def __call__(
+        self,
+        state: State,
+        topology: _Topology,
+        counts: _Counts,
+        mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+        /,
+        *,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+        | None,
+    ) -> tuple[State, _Counts, int]: ...
+
+
 # ------------------------------------------------------------------ primitives
 
 
-def _codes(keys: np.ndarray, /) -> np.ndarray:
+def entity_codes(keys: np.ndarray, /) -> np.ndarray:
     """Scalar codes of ascending vertex-row pairs."""
     return keys[:, 0] * _KEY_SHIFT + keys[:, 1]
 
@@ -281,7 +312,7 @@ def _sorted_pairs(first: np.ndarray, second: np.ndarray, /) -> np.ndarray:
     return np.sort(np.stack((first, second), axis=1), axis=1)
 
 
-def _lookup(table: np.ndarray, queries: np.ndarray, /) -> np.ndarray:
+def lookup(table: np.ndarray, queries: np.ndarray, /) -> np.ndarray:
     """Position of each query in the ascending unique ``table``, or -1."""
     if table.size == 0:
         return np.full(queries.shape, -1, dtype=np.int64)
@@ -289,14 +320,16 @@ def _lookup(table: np.ndarray, queries: np.ndarray, /) -> np.ndarray:
     return np.where(table[position] == queries, position, -1)
 
 
-def _csr(owners: np.ndarray, values: np.ndarray, size: int, /) -> Any:
+def _csr(
+    owners: np.ndarray, values: np.ndarray, size: int, /
+) -> tuple[np.ndarray, np.ndarray]:
     order = np.argsort(owners, kind="stable")
     offsets = np.zeros((size + 1,), dtype=np.int64)
     offsets[1:] = np.cumsum(np.bincount(owners, minlength=size))
     return offsets, values[order]
 
 
-def _expand(offsets: np.ndarray, rows: np.ndarray, /) -> Any:
+def _expand(offsets: np.ndarray, rows: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     """``(owner, position)`` pairs enumerating CSR rows ``rows`` in order."""
     starts = offsets[rows]
     counts = offsets[rows + 1] - starts
@@ -305,7 +338,7 @@ def _expand(offsets: np.ndarray, rows: np.ndarray, /) -> Any:
     return owner, np.arange(owner.size, dtype=np.int64) - first + starts[owner]
 
 
-def _distinct(*columns: np.ndarray) -> np.ndarray:
+def distinct_rows(*columns: np.ndarray) -> np.ndarray:
     """Indices of the first occurrence of each distinct row, lexicographic order."""
     order = np.lexsort(columns[::-1])
     if order.size == 0:
@@ -342,8 +375,10 @@ def _metric_lengths(
     coordinates[: points.shape[0]] = points
     pairs = np.zeros((edge_capacity, 2), dtype=np.int32)
     pairs[: edges.shape[0]] = edges
-    lengths = metric_edge_lengths(values, coordinates, pairs)
-    return np.asarray(lengths, dtype=np.float64)[: edges.shape[0]]
+    lengths = _dependency_phydrax_meshing__metric.metric_edge_lengths(
+        values, coordinates, pairs
+    )
+    return np.asarray(jax.device_get(lengths), dtype=np.float64)[: edges.shape[0]]
 
 
 def _interpolate_metrics(values: np.ndarray, weights: np.ndarray, /) -> np.ndarray:
@@ -357,8 +392,10 @@ def _interpolate_metrics(values: np.ndarray, weights: np.ndarray, /) -> np.ndarr
     coefficients = np.zeros((capacity, values.shape[1]), dtype=np.float64)
     coefficients[:, 0] = 1.0
     coefficients[:count] = weights
-    result = interpolate_mesh_metric(tensors, coefficients)
-    return np.asarray(result, dtype=np.float64)[:count]
+    result = _dependency_phydrax_meshing__metric.interpolate_mesh_metric(
+        tensors, coefficients
+    )
+    return np.asarray(jax.device_get(result), dtype=np.float64)[:count]
 
 
 def _quality(lengths: np.ndarray, /) -> np.ndarray:
@@ -368,35 +405,73 @@ def _quality(lengths: np.ndarray, /) -> np.ndarray:
     return np.sqrt(3.0) * np.sqrt(np.maximum(product, 0.0)) / (a * a + b * b + c * c)
 
 
-def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray, mode: Any, /) -> np.ndarray:
+def _orientation(
+    a: np.ndarray,
+    b: np.ndarray,
+    c: np.ndarray,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> np.ndarray:
     """``_OK`` for certified POSITIVE, ``_UNCERTAIN``, else ``_INVALID``."""
     if a.shape[0] == 0:
         return np.zeros((0,), dtype=np.int64)
-    result = orient2d(a, b, c, mode=mode)
+    result = _dependency_phydrax__geometry_predicates.orient2d(
+        a, b, c, mode=mode, budget=budget
+    )
     signs = np.asarray(result.signs)
     certain = np.asarray(result.certain)
     return np.where(
-        ~certain, _UNCERTAIN, np.where(signs == PredicateSign.POSITIVE, _OK, _INVALID)
+        ~certain,
+        _UNCERTAIN,
+        np.where(
+            signs == _dependency_phydrax__geometry_predicates.PredicateSign.POSITIVE,
+            _OK,
+            _INVALID,
+        ),
     )
 
 
-def _collinear(a: np.ndarray, b: np.ndarray, c: np.ndarray, mode: Any, /) -> np.ndarray:
+def _collinear(
+    a: np.ndarray,
+    b: np.ndarray,
+    c: np.ndarray,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> np.ndarray:
     """``_OK`` for certified ZERO orientation, ``_UNCERTAIN``, else ``_INVALID``."""
     if a.shape[0] == 0:
         return np.zeros((0,), dtype=np.int64)
-    result = orient2d(a, b, c, mode=mode)
+    result = _dependency_phydrax__geometry_predicates.orient2d(
+        a, b, c, mode=mode, budget=budget
+    )
     signs = np.asarray(result.signs)
     certain = np.asarray(result.certain)
     return np.where(
-        ~certain, _UNCERTAIN, np.where(signs == PredicateSign.ZERO, _OK, _INVALID)
+        ~certain,
+        _UNCERTAIN,
+        np.where(
+            signs == _dependency_phydrax__geometry_predicates.PredicateSign.ZERO,
+            _OK,
+            _INVALID,
+        ),
     )
 
 
+# Preserve the oriented-area construction order on predicate-admitted triangles.
+# This host epoch computes geometric barycentric coordinates, not a generic
+# matrix determinant or inverse action; replacing its area ratios with a solve
+# would change the rounding of retained interpolation stencils.
 def _barycentric(triangles: np.ndarray, points: np.ndarray, /) -> np.ndarray:
     """Floating barycentric weights of ``points`` in ``(k, 3, 2)`` triangles."""
     a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
 
-    def cross(origin: Any, first: Any, second: Any) -> Any:
+    def cross(origin: np.ndarray, first: np.ndarray, second: np.ndarray) -> np.ndarray:
         u = first - origin
         v = second - origin
         return u[:, 0] * v[:, 1] - u[:, 1] * v[:, 0]
@@ -414,16 +489,16 @@ def _normalized(weights: np.ndarray, /) -> np.ndarray:
 
 
 def _group_maximum(
-    values: np.ndarray, owners: np.ndarray, size: int, fill: Any, /
-) -> Any:
+    values: np.ndarray, owners: np.ndarray, size: int, fill: float | int, /
+) -> np.ndarray:
     result = np.full((size,), fill, dtype=values.dtype)
     np.maximum.at(result, owners, values)
     return result
 
 
 def _group_minimum(
-    values: np.ndarray, owners: np.ndarray, size: int, fill: Any, /
-) -> Any:
+    values: np.ndarray, owners: np.ndarray, size: int, fill: float | int, /
+) -> np.ndarray:
     result = np.full((size,), fill, dtype=values.dtype)
     np.minimum.at(result, owners, values)
     return result
@@ -442,7 +517,7 @@ def _disjoint_selection(
     count = rank.size
     undecided = np.ones((count,), dtype=np.bool_)
     selected = np.zeros((count,), dtype=np.bool_)
-    for _ in range(_SELECTION_ROUNDS):
+    for _ in range(SELECTION_ROUNDS):
         live = undecided[pair_ops]
         if not np.any(live):
             break
@@ -472,60 +547,87 @@ def _tally(counts: _Counts, statuses: np.ndarray, /) -> _Counts:
 # ------------------------------------------------------------------ validation
 
 
-def _integer_array(values: Any, rows: int, name: str, /) -> np.ndarray:
+def integer_array(values: ArrayLike, rows: int, name: str, /) -> np.ndarray:
     array = np.asarray(values)
     if not np.issubdtype(array.dtype, np.integer):
-        raise TypeError(f"{name} must be an integer array.")
+        raise TypeError(
+            f"local_metric.{name} must be an integer array; got dtype={array.dtype}"
+        )
     if array.shape != (rows,) or np.any(array < 0):
-        raise ValueError(f"{name} must be non-negative with shape ({rows},).")
+        raise ValueError(
+            f"local_metric.{name} must be nonnegative with shape ({rows},); got shape={array.shape}"
+        )
     return array.astype(np.int64)
 
 
-def _boolean_array(values: Any, rows: int, name: str, /) -> np.ndarray:
+def boolean_array(values: ArrayLike, rows: int, name: str, /) -> np.ndarray:
     array = np.asarray(values)
     if array.dtype != np.bool_:
-        raise TypeError(f"{name} must be a boolean array.")
+        raise TypeError(
+            f"local_metric.{name} must be a boolean array; got dtype={array.dtype}"
+        )
     if array.shape != (rows,):
-        raise ValueError(f"{name} must have shape ({rows},).")
+        raise ValueError(
+            f"local_metric.{name} must have shape ({rows},); got shape={array.shape}"
+        )
     return array
 
 
-def _validate_mesh(mesh: CellMesh, metric: Any, /) -> np.ndarray:
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be CellMesh.")
+@checked
+def validate_mesh(mesh: CellMesh, metric: ArrayLike, /) -> np.ndarray:
     if mesh.ambient_dimension != 2 or mesh.topological_dimension != 2:
-        raise ValueError("Local metric adaptation requires planar triangle meshes.")
+        raise ValueError(
+            "local_metric.mesh must have ambient and topological dimension two; got another mesh dimension"
+        )
     if any(block.cell_kind != "triangle" for block in mesh.blocks):
-        raise ValueError("Local metric adaptation requires triangle blocks only.")
+        raise ValueError(
+            "local_metric.mesh.blocks must contain triangles only; got another cell kind"
+        )
     values = np.asarray(metric, dtype=np.float64)
     if values.shape != (mesh.coordinates.shape[0], 2, 2) or not np.all(
         np.isfinite(values)
     ):
-        raise ValueError("metric must be finite with shape (vertex_count, 2, 2).")
+        raise ValueError(
+            f"local_metric.metric must be finite with shape (vertex_count, 2, 2); got shape={values.shape}"
+        )
     return values
 
 
 def _validate_controls(
-    predicate_mode: Any, maximum_passes: Any, topology_operations: Any, relocation: Any, /
+    predicate_mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    maximum_passes: int,
+    topology_operations: bool,
+    relocation: bool,
+    /,
 ) -> None:
-    if not isinstance(predicate_mode, PredicateMode):
-        raise TypeError("predicate_mode must be PredicateMode.")
+    predicate_mode = parse(
+        predicate_mode,
+        _dependency_phydrax__geometry_predicates.PredicateMode,
+        "predicate_mode",
+    )
     match predicate_mode:
-        case PredicateMode.EXACT | PredicateMode.FILTERED:
+        case (
+            _dependency_phydrax__geometry_predicates.PredicateMode.EXACT
+            | _dependency_phydrax__geometry_predicates.PredicateMode.FILTERED
+        ):
             pass
-        case PredicateMode.FILTERED_DEVICE:
-            raise ValueError("Local metric adaptation requires a host predicate mode.")
+        case _dependency_phydrax__geometry_predicates.PredicateMode.FILTERED_DEVICE:
+            raise ValueError(
+                f"local_metric.predicate_mode must select a host predicate mode; got {predicate_mode!r}"
+            )
         case _:
-            raise ValueError(f"Unsupported predicate mode {predicate_mode!r}.")
-    if not isinstance(maximum_passes, int) or isinstance(maximum_passes, bool):
-        raise TypeError("maximum_passes must be an integer.")
-    if maximum_passes < 1:
-        raise ValueError("maximum_passes must be at least one.")
-    if not isinstance(topology_operations, bool) or not isinstance(relocation, bool):
-        raise TypeError("topology_operations and relocation must be bool.")
+            raise ValueError(
+                f"local_metric.predicate_mode must select a supported host mode; got {predicate_mode!r}"
+            )
+    maximum_passes = positive_integer(maximum_passes, "maximum_passes")
+    validate_metric_operation_controls(
+        topology_operations,
+        relocation,
+        message="topology_operations and relocation must be bool.",
+    )
 
 
-def _validate_classification(state: _State, topology: _Topology, /) -> None:
+def validate_classification(state: State, topology: _Topology, /) -> None:
     boundary = topology.edge_cells[:, 1] < 0
     second = np.maximum(topology.edge_cells[:, 1], 0)
     interface = ~boundary & (
@@ -533,23 +635,26 @@ def _validate_classification(state: _State, topology: _Topology, /) -> None:
     )
     if np.any((boundary | interface) & (topology.edge_class == 0)):
         raise ValueError(
-            "Boundary and region-interface edges must carry a positive edge class."
+            "local_metric.edge_classes must be positive on boundary and region-interface edges; got an unclassified edge"
         )
 
 
 # ------------------------------------------------------------------ preparation
 
 
-def _initial_state(
+def initial_state(
     mesh: CellMesh,
     metric: np.ndarray,
     cell_classes: np.ndarray,
     edge_classes: np.ndarray,
     protected_edges: np.ndarray,
     fixed_vertices: np.ndarray,
-    mode: PredicateMode,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
     /,
-) -> tuple[_State, _Source]:
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[State, Source]:
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     cells = np.concatenate(
@@ -564,21 +669,34 @@ def _initial_state(
     cell_ids = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
     )
-    classes = cell_classes[key_rows(entity_keys(mesh, 2), cell_ids[:, None])]
+    classes = cell_classes[
+        entity_keys_owner.key_rows(
+            entity_keys_owner.entity_keys(mesh, 2),
+            cell_ids[:, None],
+        )
+    ]
     _, region = np.unique(
         np.stack((blocks, classes), axis=1), axis=0, return_inverse=True
     )
     if np.any(
-        _orientation(points[cells[:, 0]], points[cells[:, 1]], points[cells[:, 2]], mode)
+        _orientation(
+            points[cells[:, 0]],
+            points[cells[:, 1]],
+            points[cells[:, 2]],
+            mode,
+            budget=budget,
+        )
         != _OK
     ):
-        raise ValueError("Source triangles must be certified positively oriented.")
+        raise ValueError(
+            "local_metric.source_triangles must have predicate-certified positive orientation; got a nonpositive triangle"
+        )
     # ty: ignore[unresolved-attribute]
     edges = np.sort(np.asarray(mesh.connectivity.edges, dtype=np.int64), axis=1)
     features = np.flatnonzero((edge_classes > 0) | protected_edges)
     count = points.shape[0]
     cell_count = cells.shape[0]
-    state = _State(
+    state = State(
         points=points,
         metric=metric,
         vertex_ids=vertex_ids,
@@ -602,12 +720,12 @@ def _initial_state(
         lineage_ranks=np.zeros((edges.shape[0],), dtype=np.int64),
         next_vertex_id=int(np.max(vertex_ids)) + 1,
     )
-    source = _Source(
+    source = Source(
         points=points,
         vertex_ids=vertex_ids,
         cells=cells,
         cell_ids=cell_ids,
-        edge_keys=entity_keys(mesh, 1),
+        edge_keys=entity_keys_owner.entity_keys(mesh, 1),
         blocks=tuple((block.name, block.cell_kind) for block in mesh.blocks),
     )
     return state, source
@@ -616,16 +734,22 @@ def _initial_state(
 # ------------------------------------------------------------------ topology
 
 
-def _edge_table(cells: np.ndarray, /) -> Any:
+def _edge_table(
+    cells: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     count = cells.shape[0]
     first = cells.reshape((-1,))
     second = cells[:, (1, 2, 0)].reshape((-1,))
     apex = cells[:, (2, 0, 1)].reshape((-1,))
     codes, inverse, counts = np.unique(
-        _codes(_sorted_pairs(first, second)), return_inverse=True, return_counts=True
+        entity_codes(_sorted_pairs(first, second)),
+        return_inverse=True,
+        return_counts=True,
     )
     if np.any(counts > 2):
-        raise ValueError("Local metric adaptation requires a manifold triangle mesh.")
+        raise ValueError(
+            "local_metric.mesh must be manifold; got an edge with more than two incident cells"
+        )
     inverse = inverse.reshape((-1,))
     owner = np.repeat(np.arange(count, dtype=np.int64), 3)
     order = np.argsort(inverse, kind="stable")
@@ -642,13 +766,16 @@ def _edge_table(cells: np.ndarray, /) -> Any:
 
 
 def _vertex_classes(
-    state: _State,
+    state: State,
     edges: np.ndarray,
     edge_class: np.ndarray,
     edge_protected: np.ndarray,
-    mode: PredicateMode,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
     /,
-) -> Any:
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     count = state.points.shape[0]
     classified = edges[edge_class > 0]
     ends = classified.reshape((-1,))
@@ -660,7 +787,7 @@ def _vertex_classes(
     guarded = state.fixed.copy()
     guarded[edges[edge_protected].reshape((-1,))] = True
     curve = (incident == 2) & (low == high) & ~guarded
-    kind = np.where(curve, _CURVE, np.where(guarded | (incident > 0), _CORNER, _INTERIOR))
+    kind = np.where(curve, CURVE, np.where(guarded | (incident > 0), CORNER, INTERIOR))
     order = np.argsort(ends, kind="stable")
     first = np.searchsorted(ends[order], np.arange(count))
     rows = np.flatnonzero(curve)
@@ -671,25 +798,38 @@ def _vertex_classes(
     points = state.points
     straight[rows] = (
         _collinear(
-            points[neighbors[rows, 0]], points[rows], points[neighbors[rows, 1]], mode
+            points[neighbors[rows, 0]],
+            points[rows],
+            points[neighbors[rows, 1]],
+            mode,
+            budget=budget,
         )
         == _OK
     )
     return kind, np.where(curve, low, 0), neighbors, straight
 
 
-def _topology(state: _State, mode: PredicateMode, /) -> _Topology:
+def metric_topology(
+    state: State,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> _Topology:
     edges, codes, edge_cells, edge_apex, cell_edges = _edge_table(state.cells)
-    feature_rows = _lookup(codes, _codes(state.feature_keys))
+    feature_rows = lookup(codes, entity_codes(state.feature_keys))
     if np.any(feature_rows < 0):
-        raise RuntimeError("Local metric adaptation lost a classified edge.")
+        raise RuntimeError(
+            "local_metric.classified_edges must remain present; got a missing edge row"
+        )
     edge_class = np.zeros((codes.size,), dtype=np.int64)
     edge_class[feature_rows] = state.feature_class
     edge_protected = np.zeros((codes.size,), dtype=np.bool_)
     edge_protected[feature_rows] = state.feature_protected
     lengths = _metric_lengths(state.metric, state.points, edges)
     kind, curve_class, neighbors, straight = _vertex_classes(
-        state, edges, edge_class, edge_protected, mode
+        state, edges, edge_class, edge_protected, mode, budget=budget
     )
     count = state.points.shape[0]
     corners = state.cells.reshape((-1,))
@@ -725,20 +865,20 @@ def _topology(state: _State, mode: PredicateMode, /) -> _Topology:
     )
 
 
-def _measured(topology: _Topology, /) -> np.ndarray:
+def measured(topology: _Topology, /) -> np.ndarray:
     unprotected = ~topology.edge_protected
     return topology.lengths[unprotected] if np.any(unprotected) else topology.lengths
 
 
 def _unit(topology: _Topology, /) -> bool:
-    lengths = _measured(topology)
-    return bool(np.all((lengths >= _LOWER) & (lengths <= _UPPER)))
+    lengths = measured(topology)
+    return bool(np.all((lengths >= LOWER) & (lengths <= UPPER)))
 
 
 # ------------------------------------------------------------------ state updates
 
 
-def _append_vertices(state: _State, points: np.ndarray, metric: np.ndarray, /) -> _State:
+def _append_vertices(state: State, points: np.ndarray, metric: np.ndarray, /) -> State:
     count = points.shape[0]
     return state._replace(
         points=np.concatenate((state.points, points)),
@@ -763,14 +903,14 @@ def _append_vertices(state: _State, points: np.ndarray, metric: np.ndarray, /) -
 
 
 def _replace_cells(
-    state: _State,
+    state: State,
     removed_rows: np.ndarray,
     children: np.ndarray,
     child_of: np.ndarray,
     parent_of: np.ndarray,
     rank: int,
     /,
-) -> _State:
+) -> State:
     """Replace cells; each child inherits the region and ancestry of its parents.
 
     ``(child_of, parent_of)`` pairs name the cells whose region a child descends
@@ -795,7 +935,7 @@ def _replace_cells(
     kept = renumber[ancestry_cells] >= 0
     cells = np.concatenate((renumber[ancestry_cells[kept]], keep.size + child_of[pair]))
     sources = np.concatenate((ancestry_sources[kept], ancestry_sources[position]))
-    distinct = _distinct(cells, sources)
+    distinct = distinct_rows(cells, sources)
     return state._replace(
         cells=np.concatenate((state.cells[keep], children)),
         cell_region=np.concatenate((state.cell_region[keep], state.cell_region[primary])),
@@ -821,7 +961,7 @@ def _split_records(
     halves (records created by the split).
     """
     order = np.argsort(split_codes)
-    found = _lookup(split_codes[order], _codes(keys))
+    found = lookup(split_codes[order], entity_codes(keys))
     hit = np.flatnonzero(found >= 0)
     rest = np.flatnonzero(found < 0)
     middle = new_rows[order][found[hit]]
@@ -834,7 +974,7 @@ def _split_records(
     return np.concatenate((keys[rest], left, right)), source, halves
 
 
-def _raise_touching(state: _State, vertices: np.ndarray, rank: int, /) -> _State:
+def _raise_touching(state: State, vertices: np.ndarray, rank: int, /) -> State:
     """Raise the history rank of lineage records and cells touching ``vertices``."""
     mark = np.zeros((state.points.shape[0],), dtype=np.bool_)
     mark[vertices] = True
@@ -851,11 +991,13 @@ def _raise_touching(state: _State, vertices: np.ndarray, rank: int, /) -> _State
 # ------------------------------------------------------------------ split
 
 
-def _metric_midpoint(state: _State, first: np.ndarray, second: np.ndarray, /) -> Any:
+def _metric_midpoint(
+    state: State, first: np.ndarray, second: np.ndarray, /
+) -> np.ndarray:
     """Parameter of the metric-length midpoint under geometric size variation."""
     delta = state.points[second] - state.points[first]
 
-    def length(rows: Any) -> Any:
+    def length(rows: np.ndarray) -> np.ndarray:
         tensor = state.metric[rows]
         return np.sqrt(
             delta[:, 0] * delta[:, 0] * tensor[:, 0, 0]
@@ -869,7 +1011,9 @@ def _metric_midpoint(state: _State, first: np.ndarray, second: np.ndarray, /) ->
     return np.where(nearly_equal, 0.5, np.log(0.5 * (1.0 + safe)) / np.log(safe))
 
 
-def _cavity_sides(topology: _Topology, edges: np.ndarray, /) -> Any:
+def _cavity_sides(
+    topology: _Topology, edges: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """``(op, cell, local)`` per cell on candidate edges; local edge ``i`` is CCW."""
     sides = topology.edge_cells[edges]
     op, side = np.nonzero(sides >= 0)
@@ -879,9 +1023,16 @@ def _cavity_sides(topology: _Topology, edges: np.ndarray, /) -> Any:
 
 
 def _split_round(
-    state: _State, topology: _Topology, counts: _Counts, mode: PredicateMode, /
-) -> tuple[_State, _Counts, int]:
-    candidates = np.flatnonzero((topology.lengths > _UPPER) & ~topology.edge_protected)
+    state: State,
+    topology: _Topology,
+    counts: _Counts,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[State, _Counts, int]:
+    candidates = np.flatnonzero((topology.lengths > UPPER) & ~topology.edge_protected)
     if candidates.size == 0:
         return state, counts, 0
     first, second = topology.edges[candidates].T
@@ -897,8 +1048,8 @@ def _split_round(
     apex = rows[span, (local + 2) % 3]
     points = state.points
     checks = np.maximum(
-        _orientation(points[u], middle[op], points[apex], mode),
-        _orientation(middle[op], points[v], points[apex], mode),
+        _orientation(points[u], middle[op], points[apex], mode, budget=budget),
+        _orientation(middle[op], points[v], points[apex], mode, budget=budget),
     )
     status = _group_maximum(checks, op, candidates.size, _OK)
     counts = _tally(counts, status)
@@ -940,9 +1091,9 @@ def _split_round(
         children,
         np.arange(children.shape[0], dtype=np.int64),
         parents,
-        _REFINED,
+        REFINED,
     )
-    split_codes = _codes(topology.edges[candidates[chosen]])
+    split_codes = entity_codes(topology.edges[candidates[chosen]])
     feature_keys, feature_source, _ = _split_records(
         grown.feature_keys, split_codes, new_rows[chosen]
     )
@@ -956,7 +1107,7 @@ def _split_round(
         feature_protected=grown.feature_protected[feature_source],
         lineage_keys=lineage_keys,
         lineage_sources=grown.lineage_sources[lineage_source],
-        lineage_ranks=np.where(halves, np.maximum(ranks, _REFINED), ranks),
+        lineage_ranks=np.where(halves, np.maximum(ranks, REFINED), ranks),
     )
     return grown, counts._replace(splits=counts.splits + chosen.size), chosen.size
 
@@ -973,18 +1124,18 @@ class _CollapseCandidates(NamedTuple):
 
 
 def _collapse_admissible(
-    topology: _Topology, edge: Any, removed: Any, kept: Any, /
+    topology: _Topology, edge: np.ndarray, removed: np.ndarray, kept: np.ndarray, /
 ) -> np.ndarray:
     """Classification: interior vertices along unclassified edges inside one region;
     straight curve vertices along an edge of their own curve class."""
     label = topology.edge_class[edge]
     interior = (
-        (topology.kind[removed] == _INTERIOR)
+        (topology.kind[removed] == INTERIOR)
         & (label == 0)
         & topology.uniform_region[removed]
     )
     curve = (
-        (topology.kind[removed] == _CURVE)
+        (topology.kind[removed] == CURVE)
         & (label > 0)
         & (label == topology.curve_class[removed])
         & topology.straight[removed]
@@ -993,20 +1144,28 @@ def _collapse_admissible(
 
 
 def _collapse_link(
-    topology: _Topology, edge: Any, removed: Any, kept: Any, /
+    topology: _Topology, edge: np.ndarray, removed: np.ndarray, kept: np.ndarray, /
 ) -> np.ndarray:
     """Link condition: common neighbors are exactly the apexes of the edge."""
     owner, position = _expand(topology.neighbor_offsets, removed)
     other = topology.neighbor_values[position]
-    common = _lookup(topology.codes, _codes(_sorted_pairs(kept[owner], other))) >= 0
+    common = lookup(topology.codes, entity_codes(_sorted_pairs(kept[owner], other))) >= 0
     common &= other != kept[owner]
     shared = np.bincount(owner[common], minlength=removed.size)
     return shared == 1 + (topology.edge_cells[edge, 1] >= 0)
 
 
 def _collapse_geometry(
-    state: _State, topology: _Topology, removed: Any, kept: Any, mode: PredicateMode, /
-) -> Any:
+    state: State,
+    topology: _Topology,
+    removed: np.ndarray,
+    kept: np.ndarray,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Worst orientation of the modified ball cells and the longest new edge."""
     owner, position = _expand(topology.ball_offsets, removed)
     rows = state.cells[topology.ball_cells[position]]
@@ -1015,13 +1174,13 @@ def _collapse_geometry(
     moved = moved[modified]
     points = state.points
     orientation = _orientation(
-        points[moved[:, 0]], points[moved[:, 1]], points[moved[:, 2]], mode
+        points[moved[:, 0]], points[moved[:, 1]], points[moved[:, 2]], mode, budget=budget
     )
     status = _group_maximum(orientation, owner[modified], removed.size, _OK)
     neighbor, spot = _expand(topology.neighbor_offsets, removed)
     other = topology.neighbor_values[spot]
     fresh = (other != kept[neighbor]) & (
-        _lookup(topology.codes, _codes(_sorted_pairs(kept[neighbor], other))) < 0
+        lookup(topology.codes, entity_codes(_sorted_pairs(kept[neighbor], other))) < 0
     )
     lengths = _metric_lengths(
         state.metric, points, np.stack((kept[neighbor][fresh], other[fresh]), axis=1)
@@ -1031,25 +1190,33 @@ def _collapse_geometry(
 
 
 def _collapse_candidates(
-    state: _State, topology: _Topology, mode: PredicateMode, /
+    state: State,
+    topology: _Topology,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
 ) -> _CollapseCandidates:
-    short = np.flatnonzero((topology.lengths < _LOWER) & ~topology.edge_protected)
+    short = np.flatnonzero((topology.lengths < LOWER) & ~topology.edge_protected)
     edge = np.concatenate((short, short))
     removed = np.concatenate((topology.edges[short, 0], topology.edges[short, 1]))
     kept = np.concatenate((topology.edges[short, 1], topology.edges[short, 0]))
     admissible = _collapse_admissible(topology, edge, removed, kept)
     link = _collapse_link(topology, edge, removed, kept)
-    orientation, longest = _collapse_geometry(state, topology, removed, kept, mode)
+    orientation, longest = _collapse_geometry(
+        state, topology, removed, kept, mode, budget=budget
+    )
     geometric = np.maximum(
-        orientation, np.where(link & (longest <= _COLLAPSE_LIMIT), _OK, _INVALID)
+        orientation, np.where(link & (longest <= COLLAPSE_LIMIT), _OK, _INVALID)
     )
     status = np.where(admissible, geometric, _INADMISSIBLE)
     return _CollapseCandidates(edge, removed, kept, status, longest)
 
 
 def _collapse_cells(
-    state: _State, topology: _Topology, removed: Any, kept: Any, /
-) -> _State:
+    state: State, topology: _Topology, removed: np.ndarray, kept: np.ndarray, /
+) -> State:
     """Remove the edge cells, move the other ball cells onto the kept vertex."""
     owner, position = _expand(topology.ball_offsets, removed)
     cell = topology.ball_cells[position]
@@ -1073,16 +1240,16 @@ def _collapse_cells(
     child, column = np.nonzero(same)
     child_of = np.concatenate((np.arange(survivor.size), child))
     parent_of = np.concatenate((cell[survivor], absorbed[child, column]))
-    return _replace_cells(state, cell, children, child_of, parent_of, _COLLAPSED)
+    return _replace_cells(state, cell, children, child_of, parent_of, COLLAPSED)
 
 
-def _collapse_records(state: _State, removed: Any, kept: Any, /) -> _State:
+def _collapse_records(state: State, removed: np.ndarray, kept: np.ndarray, /) -> State:
     remap = np.arange(state.points.shape[0], dtype=np.int64)
     remap[removed] = kept
     features = np.sort(remap[state.feature_keys], axis=1)
     live = np.flatnonzero(features[:, 0] != features[:, 1])
-    codes = _codes(features[live])
-    distinct = live[_distinct(codes, -state.feature_class[live])]
+    codes = entity_codes(features[live])
+    distinct = live[distinct_rows(codes, -state.feature_class[live])]
     protected = _group_maximum(
         state.feature_protected[live].astype(np.int64),
         np.searchsorted(np.unique(codes), codes),
@@ -1091,12 +1258,14 @@ def _collapse_records(state: _State, removed: Any, kept: Any, /) -> _State:
     )
     touched = np.any(np.isin(state.lineage_keys, removed), axis=1)
     ranks = np.where(
-        touched, np.maximum(state.lineage_ranks, _COLLAPSED), state.lineage_ranks
+        touched, np.maximum(state.lineage_ranks, COLLAPSED), state.lineage_ranks
     )
     lineage = np.sort(remap[state.lineage_keys], axis=1)
     alive = np.flatnonzero(lineage[:, 0] != lineage[:, 1])
     keep = alive[
-        _distinct(_codes(lineage[alive]), state.lineage_sources[alive], -ranks[alive])
+        distinct_rows(
+            entity_codes(lineage[alive]), state.lineage_sources[alive], -ranks[alive]
+        )
     ]
     return state._replace(
         feature_keys=features[distinct],
@@ -1109,9 +1278,16 @@ def _collapse_records(state: _State, removed: Any, kept: Any, /) -> _State:
 
 
 def _collapse_round(
-    state: _State, topology: _Topology, counts: _Counts, mode: PredicateMode, /
-) -> tuple[_State, _Counts, int]:
-    found = _collapse_candidates(state, topology, mode)
+    state: State,
+    topology: _Topology,
+    counts: _Counts,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[State, _Counts, int]:
+    found = _collapse_candidates(state, topology, mode, budget=budget)
     if found.edge.size == 0:
         return state, counts, 0
     half = found.edge.size // 2
@@ -1157,8 +1333,15 @@ def _collapse_round(
 
 
 def _flip_round(
-    state: _State, topology: _Topology, counts: _Counts, mode: PredicateMode, /
-) -> tuple[_State, _Counts, int]:
+    state: State,
+    topology: _Topology,
+    counts: _Counts,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[State, _Counts, int]:
     first_cell = topology.edge_cells[:, 0]
     second_cell = topology.edge_cells[:, 1]
     candidates = np.flatnonzero(
@@ -1191,12 +1374,12 @@ def _flip_round(
     before = np.minimum(topology.quality[c0], topology.quality[c1])
     points = state.points
     status = np.maximum(
-        _orientation(points[u], points[x1], points[x0], mode),
-        _orientation(points[v], points[x0], points[x1], mode),
+        _orientation(points[u], points[x1], points[x0], mode, budget=budget),
+        _orientation(points[v], points[x0], points[x1], mode, budget=budget),
     )
-    duplicate = _lookup(topology.codes, _codes(_sorted_pairs(x0, x1))) >= 0
+    duplicate = lookup(topology.codes, entity_codes(_sorted_pairs(x0, x1))) >= 0
     status = np.where(duplicate, _INVALID, status)
-    improving = after > before + _IMPROVEMENT
+    improving = after > before + IMPROVEMENT
     counts = _tally(counts, status[improving])
     valid = np.flatnonzero(improving & (status == _OK))
     if valid.size == 0:
@@ -1222,10 +1405,10 @@ def _flip_round(
         children,
         np.concatenate((child, child)),
         np.concatenate((c0[selected], c1[selected], c1[selected], c0[selected])),
-        _SWAPPED,
+        SWAPPED,
     )
-    flipped = np.sort(_codes(topology.edges[candidates[selected]]))
-    survive = _lookup(flipped, _codes(updated.lineage_keys)) < 0
+    flipped = np.sort(entity_codes(topology.edges[candidates[selected]]))
+    survive = lookup(flipped, entity_codes(updated.lineage_keys)) < 0
     updated = updated._replace(
         lineage_keys=updated.lineage_keys[survive],
         lineage_sources=updated.lineage_sources[survive],
@@ -1237,7 +1420,9 @@ def _flip_round(
 # ------------------------------------------------------------------ relocation
 
 
-def _relocation_targets(state: _State, topology: _Topology, vertices: Any, /) -> Any:
+def _relocation_targets(
+    state: State, topology: _Topology, vertices: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
     """Spring displacement toward unit metric lengths and each vertex's badness.
 
     Interior vertices use every neighbor; curve vertices only their two curve
@@ -1245,10 +1430,10 @@ def _relocation_targets(state: _State, topology: _Topology, vertices: Any, /) ->
     """
     owner, position = _expand(topology.neighbor_offsets, vertices)
     other = topology.neighbor_values[position]
-    edge = _lookup(topology.codes, _codes(_sorted_pairs(vertices[owner], other)))
+    edge = lookup(topology.codes, entity_codes(_sorted_pairs(vertices[owner], other)))
     length = topology.lengths[edge]
     badness = _group_maximum(np.maximum(length, 1.0 / length), owner, vertices.size, 0.0)
-    curve = topology.kind[vertices] == _CURVE
+    curve = topology.kind[vertices] == CURVE
     use = ~curve[owner] | np.any(
         topology.curve_neighbors[vertices[owner]] == other[:, None], axis=1
     )
@@ -1262,8 +1447,8 @@ def _relocation_targets(state: _State, topology: _Topology, vertices: Any, /) ->
 
 
 def _proposal_metric(
-    state: _State, topology: _Topology, vertex: Any, target: Any, /
-) -> Any:
+    state: State, topology: _Topology, vertex: np.ndarray, target: np.ndarray, /
+) -> np.ndarray:
     """Log-Euclidean P1 metric at each proposal inside the current vertex ball."""
     owner, position = _expand(topology.ball_offsets, vertex)
     cell = topology.ball_cells[position]
@@ -1276,14 +1461,17 @@ def _proposal_metric(
 
 
 def _proposal_checks(
-    state: _State,
+    state: State,
     topology: _Topology,
-    vertex: Any,
-    target: Any,
-    metric: Any,
-    mode: Any,
+    vertex: np.ndarray,
+    target: np.ndarray,
+    metric: np.ndarray,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
     /,
-) -> Any:
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Worst orientation status and minimum metric quality of each proposal."""
     owner, position = _expand(topology.ball_offsets, vertex)
     rows = state.cells[topology.ball_cells[position]]
@@ -1291,10 +1479,10 @@ def _proposal_checks(
     moved = np.where(rows == vertex[owner][:, None], base + owner[:, None], rows)
     points = np.concatenate((state.points, target))
     orientation = _orientation(
-        points[moved[:, 0]], points[moved[:, 1]], points[moved[:, 2]], mode
+        points[moved[:, 0]], points[moved[:, 1]], points[moved[:, 2]], mode, budget=budget
     )
     status = _group_maximum(orientation, owner, vertex.size, _OK)
-    curve = np.flatnonzero(topology.kind[vertex] == _CURVE)
+    curve = np.flatnonzero(topology.kind[vertex] == CURVE)
     neighbors = topology.curve_neighbors[vertex[curve]]
     status[curve] = np.maximum(
         status[curve],
@@ -1303,6 +1491,7 @@ def _proposal_checks(
             target[curve],
             state.points[neighbors[:, 1]],
             mode,
+            budget=budget,
         ),
     )
     lengths = _metric_lengths(
@@ -1315,18 +1504,21 @@ def _proposal_checks(
 
 
 def _relocation_round(
-    state: _State,
+    state: State,
     topology: _Topology,
     counts: _Counts,
     done: np.ndarray,
-    mode: PredicateMode,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
     /,
-) -> tuple[_State, _Counts, int, np.ndarray]:
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[State, _Counts, int, np.ndarray]:
     valence = np.diff(topology.ball_offsets)
     movable = (
         (valence > 0)
         & ~done
-        & ((topology.kind == _INTERIOR) | ((topology.kind == _CURVE) & topology.straight))
+        & ((topology.kind == INTERIOR) | ((topology.kind == CURVE) & topology.straight))
     )
     vertices = np.flatnonzero(movable)
     displacement, badness = _relocation_targets(state, topology, vertices)
@@ -1338,19 +1530,21 @@ def _relocation_round(
     )
     if vertices.size == 0:
         return state, counts, 0, done
-    steps = _RELOCATION_STEPS.size
+    steps = RELOCATION_STEPS.size
     owner = np.repeat(np.arange(vertices.size), steps)
     vertex = vertices[owner]
     target = state.points[vertex] + (
-        np.tile(_RELOCATION_STEPS, vertices.size)[:, None] * displacement[owner]
+        np.tile(RELOCATION_STEPS, vertices.size)[:, None] * displacement[owner]
     )
     metric = _proposal_metric(state, topology, vertex, target)
-    status, after = _proposal_checks(state, topology, vertex, target, metric, mode)
+    status, after = _proposal_checks(
+        state, topology, vertex, target, metric, mode, budget=budget
+    )
     ball, position = _expand(topology.ball_offsets, vertices)
     before = _group_minimum(
         topology.quality[topology.ball_cells[position]], ball, vertices.size, np.inf
     )
-    improving = (after > before[owner] + _IMPROVEMENT).reshape((-1, steps))
+    improving = (after > before[owner] + IMPROVEMENT).reshape((-1, steps))
     grid = status.reshape((-1, steps))
     accepted = improving & (grid == _OK)
     success = np.any(accepted, axis=1)
@@ -1385,7 +1579,7 @@ def _relocation_round(
     finished = done.copy()
     finished[moved] = True
     updated = _raise_touching(
-        state._replace(points=points, metric=tensors, moved=flags), moved, _RELOCATED
+        state._replace(points=points, metric=tensors, moved=flags), moved, RELOCATED
     )
     return (
         updated,
@@ -1398,10 +1592,25 @@ def _relocation_round(
 # ------------------------------------------------------------------ passes
 
 
-def _run_phase(state: Any, counts: Any, phase: Any, mode: Any, /) -> Any:
+def _run_phase(
+    state: State,
+    counts: _Counts,
+    phase: _MetricPhase,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[State, _Counts, int]:
     applied = 0
-    for _ in range(_PHASE_ROUNDS):
-        state, counts, count = phase(state, _topology(state, mode), counts, mode)
+    for _ in range(PHASE_ROUNDS):
+        state, counts, count = phase(
+            state,
+            metric_topology(state, mode, budget=budget),
+            counts,
+            mode,
+            budget=budget,
+        )
         applied += count
         if count == 0:
             break
@@ -1409,23 +1618,31 @@ def _run_phase(state: Any, counts: Any, phase: Any, mode: Any, /) -> Any:
 
 
 def _run_pass(
-    state: _State,
+    state: State,
     counts: _Counts,
-    mode: PredicateMode,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
     topology_operations: bool,
     relocation: bool,
     /,
-) -> tuple[_State, _Counts, int]:
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[State, _Counts, int]:
     applied = 0
     if topology_operations:
         for phase in (_split_round, _collapse_round, _flip_round):
-            state, counts, count = _run_phase(state, counts, phase, mode)
+            state, counts, count = _run_phase(state, counts, phase, mode, budget=budget)
             applied += count
     if relocation:
         done = np.zeros((state.points.shape[0],), dtype=np.bool_)
-        for _ in range(_PHASE_ROUNDS):
+        for _ in range(PHASE_ROUNDS):
             state, counts, count, done = _relocation_round(
-                state, _topology(state, mode), counts, done, mode
+                state,
+                metric_topology(state, mode, budget=budget),
+                counts,
+                done,
+                mode,
+                budget=budget,
             )
             applied += count
             if count == 0:
@@ -1436,12 +1653,20 @@ def _run_pass(
 # ------------------------------------------------------------------ assembly
 
 
-def _locate(source: _Source, queries: np.ndarray, mode: PredicateMode, /) -> Any:
+def _locate(
+    source: Source,
+    queries: np.ndarray,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Containing source cell (lowest ID among certified hosts) and P1 weights.
 
     Points certified inside or on a source triangle take the lowest-ID such cell;
     points within rounding of the domain boundary take the least-violated
-    candidate, whose clipped weights are the nearest exact P1 evaluation.
+    candidate, whose clipped weights evaluate the P1 interpolant on that triangle.
     """
     triangles = source.points[source.cells]
     cells_tree = prepare_bvh(
@@ -1455,30 +1680,41 @@ def _locate(source: _Source, queries: np.ndarray, mode: PredicateMode, /) -> Any
         relative_tolerance=_LOCATION_TOLERANCE,
     )
     if np.unique(query).size != queries.shape[0]:
-        raise ValueError("A target vertex lies outside the source domain.")
+        raise ValueError(
+            "local_metric.target_vertices must lie inside the source domain; got an uncovered vertex"
+        )
     corners = triangles[cell]
     point = queries[query]
-    result = orient2d(
+    result = _dependency_phydrax__geometry_predicates.orient2d(
         np.stack((corners[:, 1], corners[:, 2], corners[:, 0]), axis=1),
         np.stack((corners[:, 2], corners[:, 0], corners[:, 1]), axis=1),
         np.repeat(point[:, None, :], 3, axis=1),
         mode=mode,
+        budget=budget,
     )
     signs = np.asarray(result.signs)
     certain = np.asarray(result.certain)
-    negative = certain & (signs == PredicateSign.NEGATIVE)
-    contained = np.all(certain & (signs != PredicateSign.NEGATIVE), axis=1)
+    negative = certain & (
+        signs == _dependency_phydrax__geometry_predicates.PredicateSign.NEGATIVE
+    )
+    contained = np.all(
+        certain
+        & (signs != _dependency_phydrax__geometry_predicates.PredicateSign.NEGATIVE),
+        axis=1,
+    )
     grade = np.where(contained, 0, np.where(np.any(negative, axis=1), 2, 1))
     weights = _barycentric(corners, point)
     violation = np.where(grade == 0, 0.0, -np.min(weights, axis=1))
     order = np.lexsort((source.cell_ids[cell], violation, grade, query))
     first = order[np.searchsorted(query[order], np.arange(queries.shape[0]))]
-    exact_zero = certain[first] & (signs[first] == PredicateSign.ZERO)
+    exact_zero = certain[first] & (
+        signs[first] == _dependency_phydrax__geometry_predicates.PredicateSign.ZERO
+    )
     chosen = _normalized(np.where(exact_zero, 0.0, weights[first]))
     return cell[first], chosen
 
 
-def _target_order(state: _State, /) -> Any:
+def _target_order(state: State, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Target rows: surviving source vertices in source order, then new vertices."""
     rows = np.flatnonzero(state.alive)
     source = rows[state.source_rows[rows] >= 0]
@@ -1498,7 +1734,16 @@ def _target_order(state: _State, /) -> Any:
     return order, identifiers, final
 
 
-def _stencil(state: _State, source: _Source, order: Any, mode: PredicateMode, /) -> Any:
+def _stencil(
+    state: State,
+    source: Source,
+    order: np.ndarray,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     count = order.size
     sources = np.full((count, 3), -1, dtype=np.int64)
     weights = np.zeros((count, 3), dtype=np.float64)
@@ -1507,14 +1752,16 @@ def _stencil(state: _State, source: _Source, order: Any, mode: PredicateMode, /)
     weights[identity, 0] = 1.0
     located = np.flatnonzero(~identity)
     if located.size:
-        cell, barycentric = _locate(source, state.points[order[located]], mode)
+        cell, barycentric = _locate(
+            source, state.points[order[located]], mode, budget=budget
+        )
         sources[located] = source.vertex_ids[source.cells[cell]]
         weights[located] = barycentric
     valid = weights > 0.0
     return np.where(valid, sources, -1), np.where(valid, weights, 0.0), valid
 
 
-def _surviving(state: _State, /) -> np.ndarray:
+def _surviving(state: State, /) -> np.ndarray:
     """Final surviving vertex row of every vertex row (pointer jumping)."""
     final = np.where(
         state.alive, np.arange(state.points.shape[0], dtype=np.int64), state.collapse_to
@@ -1528,17 +1775,22 @@ def _surviving(state: _State, /) -> np.ndarray:
 
 
 def _relation(
-    dimension: Any, sources: Any, targets: Any, kinds: Any, /
-) -> EntityRelations:
+    dimension: int, sources: np.ndarray, targets: np.ndarray, kinds: np.ndarray, /
+) -> _dependency_phydrax_meshing__topology_edit.EntityRelations:
     order = np.lexsort((*targets.T[::-1], *sources.T[::-1]))
-    return EntityRelations(
+    return _dependency_phydrax_meshing__topology_edit.EntityRelations(
         dimension, sources[order], targets[order], kinds[order].astype(np.int32)
     )
 
 
 def _vertex_relations(
-    state: Any, order: Any, identifiers: Any, final: Any, stencil: Any, /
-) -> Any:
+    state: State,
+    order: np.ndarray,
+    identifiers: np.ndarray,
+    final: np.ndarray,
+    stencil: tuple[np.ndarray, np.ndarray, np.ndarray],
+    /,
+) -> _dependency_phydrax_meshing__topology_edit.EntityRelations:
     ids = state.vertex_ids
     rows = np.flatnonzero((state.source_rows >= 0) & state.alive & state.moved)
     collapsed = np.flatnonzero((state.source_rows >= 0) & ~state.alive)
@@ -1560,11 +1812,15 @@ def _vertex_relations(
     return _relation(0, sources[:, None], targets[:, None], kinds)
 
 
-def _edge_relations(state: _State, source: _Source, final: Any, /) -> EntityRelations:
+def _edge_relations(
+    state: State, source: Source, final: np.ndarray, /
+) -> _dependency_phydrax_meshing__topology_edit.EntityRelations:
     changed = np.flatnonzero(state.lineage_ranks > 0)
     targets = np.sort(final[state.lineage_keys[changed]], axis=1)
     if np.any(targets < 0):
-        raise RuntimeError("Edge lineage references a removed vertex.")
+        raise RuntimeError(
+            "local_metric.edge_lineage must reference surviving vertices; got a removed vertex"
+        )
     return _relation(
         1,
         source.edge_keys[state.lineage_sources[changed]],
@@ -1573,7 +1829,7 @@ def _edge_relations(state: _State, source: _Source, final: Any, /) -> EntityRela
     )
 
 
-def _cell_identifiers(state: _State, source: _Source, final: Any, /) -> np.ndarray:
+def _cell_identifiers(state: State, source: Source, final: np.ndarray, /) -> np.ndarray:
     identifiers = state.cell_ids.copy()
     new = np.flatnonzero(identifiers < 0)
     keys = np.sort(final[state.cells[new]], axis=1)
@@ -1584,7 +1840,9 @@ def _cell_identifiers(state: _State, source: _Source, final: Any, /) -> np.ndarr
     return identifiers
 
 
-def _cell_relations(state: _State, source: _Source, identifiers: Any, /) -> Any:
+def _cell_relations(
+    state: State, source: Source, identifiers: np.ndarray, /
+) -> _dependency_phydrax_meshing__topology_edit.EntityRelations:
     related = (state.cell_ids < 0) | (state.cell_rank > 0)
     pairs = np.flatnonzero(related[state.ancestry_cells])
     cells = state.ancestry_cells[pairs]
@@ -1596,11 +1854,19 @@ def _cell_relations(state: _State, source: _Source, identifiers: Any, /) -> Any:
     )
 
 
-def _assemble(state: _State, source: _Source, mode: PredicateMode, /) -> Any:
+def assemble(
+    state: State,
+    source: Source,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None,
+) -> tuple[_dependency_phydrax_meshing__topology_edit.CellTopologyEdit, np.ndarray]:
     order, identifiers, final = _target_order(state)
     row_of = np.full((state.points.shape[0],), -1, dtype=np.int64)
     row_of[order] = np.arange(order.size, dtype=np.int64)
-    stencil = _stencil(state, source, order, mode)
+    stencil = _stencil(state, source, order, mode, budget=budget)
     cell_identifiers = _cell_identifiers(state, source, final)
     target_cells = row_of[state.cells].astype(np.int32)
     families = len(source.blocks)
@@ -1622,11 +1888,13 @@ def _assemble(state: _State, source: _Source, mode: PredicateMode, /) -> Any:
         and np.all(state.source_rows[order] >= 0)
         and order.size == source.vertex_ids.size
     )
-    edit = CellTopologyEdit(
+    edit = _dependency_phydrax_meshing__topology_edit.CellTopologyEdit(
         "relocation" if relocated else "local_reconnection",
         state.points[order],
         identifiers,
-        source_family_blocks(source.blocks, block_cells, block_ids),
+        _dependency_phydrax_meshing__topology_edit.source_family_blocks(
+            source.blocks, block_cells, block_ids
+        ),
         stencil[0],
         stencil[1],
         stencil[2],
@@ -1642,11 +1910,11 @@ def _evidence(
     stalled: bool,
     topology_operations: bool,
     relocation: bool,
-    mode: PredicateMode,
+    mode: _dependency_phydrax__geometry_predicates.PredicateMode,
     /,
 ) -> LocalMetricEvidence:
-    lengths = _measured(topology)
-    inside = (lengths >= _LOWER) & (lengths <= _UPPER)
+    lengths = measured(topology)
+    inside = (lengths >= LOWER) & (lengths <= UPPER)
     converged = bool(np.all(inside))
     return LocalMetricEvidence(
         passes=passes,
@@ -1670,6 +1938,7 @@ def _evidence(
     )
 
 
+@checked
 def execute_local_metric_adaptation(
     mesh: CellMesh,
     metric: np.ndarray,
@@ -1679,10 +1948,12 @@ def execute_local_metric_adaptation(
     edge_classes: np.ndarray,
     protected_edges: np.ndarray,
     fixed_vertices: np.ndarray,
-    predicate_mode: PredicateMode,
+    predicate_mode: _dependency_phydrax__geometry_predicates.PredicateMode,
     maximum_passes: int,
     topology_operations: bool,
     relocation: bool,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None = None,
 ) -> LocalMetricOutcome:
     """Adapt a planar triangle mesh toward the unit mesh of ``metric``.
 
@@ -1690,35 +1961,36 @@ def execute_local_metric_adaptation(
     ``[1/sqrt(2), sqrt(2)]`` (converged), a pass applies nothing (stalled), or
     ``maximum_passes`` is reached; the returned mesh is valid in every case.
     """
-    values = _validate_mesh(mesh, metric)
+    values = validate_mesh(mesh, metric)
     _validate_controls(predicate_mode, maximum_passes, topology_operations, relocation)
     vertex_count = mesh.coordinates.shape[0]
     edge_count = mesh.entity_set(1).entity_ids.shape[0]
     cell_count = mesh.entity_set(2).entity_ids.shape[0]
-    state, source = _initial_state(
+    state, source = initial_state(
         mesh,
         values,
-        _integer_array(cell_classes, cell_count, "cell_classes"),
-        _integer_array(edge_classes, edge_count, "edge_classes"),
-        _boolean_array(protected_edges, edge_count, "protected_edges"),
-        _boolean_array(fixed_vertices, vertex_count, "fixed_vertices"),
+        integer_array(cell_classes, cell_count, "cell_classes"),
+        integer_array(edge_classes, edge_count, "edge_classes"),
+        boolean_array(protected_edges, edge_count, "protected_edges"),
+        boolean_array(fixed_vertices, vertex_count, "fixed_vertices"),
         predicate_mode,
+        budget=budget,
     )
-    topology = _topology(state, predicate_mode)
-    _validate_classification(state, topology)
+    topology = metric_topology(state, predicate_mode, budget=budget)
+    validate_classification(state, topology)
     counts = _Counts()
     passes = 0
     stalled = False
     while passes < maximum_passes and not _unit(topology):
         passes += 1
         state, counts, applied = _run_pass(
-            state, counts, predicate_mode, topology_operations, relocation
+            state, counts, predicate_mode, topology_operations, relocation, budget=budget
         )
-        topology = _topology(state, predicate_mode)
+        topology = metric_topology(state, predicate_mode, budget=budget)
         if applied == 0:
             stalled = True
             break
-    edit, target_metric = _assemble(state, source, predicate_mode)
+    edit, target_metric = assemble(state, source, predicate_mode, budget=budget)
     evidence = _evidence(
         topology,
         counts,

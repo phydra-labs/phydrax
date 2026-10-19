@@ -17,25 +17,19 @@ from numpy.typing import NDArray
 from phydrax._meshcore import meshcore_available, MeshcoreUnavailableError
 from phydrax.discretization import (
     prepare_unstructured_conservative_remap,
+    PreparedUnstructuredConservativeRemap,
+    UnstructuredConservativeRemapPlan,
+    UnstructuredFiniteVolumeDiscretization,
     UnstructuredFiniteVolumePlan,
     UnstructuredRemapLimiter,
     UnstructuredSecondOrderRemapPlan,
-)
-from phydrax.discretization.finite_volume._remap_evidence import (
-    PreparedUnstructuredConservativeRemap,
-)
-from phydrax.discretization.finite_volume._unstructured import (
-    UnstructuredFiniteVolumeDiscretization,
-)
-from phydrax.discretization.finite_volume._unstructured_remap import (
-    UnstructuredConservativeRemapPlan,
 )
 from phydrax.geometry import (
     CommonRefinementEvidence,
     CommonRefinementPolicy,
     CommonRefinementStatus,
+    PreparedCommonRefinement,
 )
-from phydrax.geometry._supermesh import PreparedCommonRefinement
 
 
 requires_meshcore = pytest.mark.skipif(
@@ -43,29 +37,43 @@ requires_meshcore = pytest.mark.skipif(
 )
 
 
+# Empirical `test_containment_and_mixed_cells_cover_both_ledgers`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_MIXED_CELL_COVERAGE_DEFECT_ATOL = 1e-14
+
+
 def _require_plan(
     remap: PreparedUnstructuredConservativeRemap,
 ) -> UnstructuredConservativeRemapPlan:
     if remap.plan is None:
-        raise ValueError(f"Expected successful remap, got {remap.status}: {remap.reason}")
+        raise ValueError(
+            f"remap.plan must contain a successful plan; got {remap.status}: {remap.reason}"
+        )
     return remap.plan
 
 
 def _require_refinement(
     remap: PreparedUnstructuredConservativeRemap,
 ) -> PreparedCommonRefinement:
-    if remap.refinement is None:
-        raise ValueError("Expected actual common refinement.")
-    return remap.refinement
+    match remap.route:
+        case PreparedCommonRefinement() as refinement:
+            return refinement
+        case _:
+            raise ValueError(
+                "remap.route must contain a common refinement; got another geometric route."
+            )
 
 
 def _require_common_evidence(
     remap: PreparedUnstructuredConservativeRemap,
 ) -> CommonRefinementEvidence:
     evidence = remap.evidence
-    if not isinstance(evidence, CommonRefinementEvidence):
-        raise TypeError("Expected common-refinement evidence.")
-    return evidence
+    match evidence:
+        case CommonRefinementEvidence():
+            return evidence
+        case _:
+            raise TypeError(
+                "remap.evidence must contain common-refinement evidence; got another evidence kind."
+            )
 
 
 def _quad(
@@ -185,10 +193,14 @@ def test_containment_and_mixed_cells_cover_both_ledgers() -> None:
     assert remap.succeeded
     np.testing.assert_allclose(_require_plan(remap).intersection_measures, (1.0, 1.0))
     np.testing.assert_allclose(
-        _require_common_evidence(remap).source_coverage_defects, 0.0, atol=1e-14
+        _require_common_evidence(remap).source_coverage_defects,
+        0.0,
+        atol=_MIXED_CELL_COVERAGE_DEFECT_ATOL,
     )
     np.testing.assert_allclose(
-        _require_common_evidence(remap).target_coverage_defects, 0.0, atol=1e-14
+        _require_common_evidence(remap).target_coverage_defects,
+        0.0,
+        atol=_MIXED_CELL_COVERAGE_DEFECT_ATOL,
     )
     values = jnp.asarray([[1.0], [3.0]])
     mapped = _require_plan(remap).apply(values)
@@ -413,7 +425,7 @@ def test_second_order_remap_differentiates_through_values() -> None:
 
     unlimited = _second_order(remap, source, UnstructuredRemapLimiter.NONE)
     gradient = jax.grad(lambda u: jnp.sum(weights * unlimited.apply(u).values))(values)
-    # The unlimited remap is linear, so its gradient is the exact transpose action.
+    # The unlimited remap is linear, so its gradient is the transpose action.
     np.testing.assert_allclose(
         jnp.sum(gradient * direction),
         jnp.sum(weights * unlimited.apply(direction).values),
@@ -431,14 +443,17 @@ def test_second_order_remap_differentiates_through_values() -> None:
 def test_second_order_remap_requires_full_rank_gradient_stencils() -> None:
     source = _unit_quad()
     remap = prepare_unstructured_conservative_remap(source, source, provenance="one")
-    with pytest.raises(ValueError, match="rank deficient"):
+    with pytest.raises(ValueError, match=r"remap\.gradient"):
         _second_order(remap, source)
 
 
 def test_remap_requires_finite_volume_geometry_and_meshcore(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    with pytest.raises(TypeError, match="unstructured FV"):
+    with pytest.raises(
+        TypeError,
+        match=r"prepare_unstructured_conservative_remap argument 'source': expected UnstructuredFiniteVolumeDiscretization",
+    ):
         # Deliberately bypass the static FV contract to exercise runtime rejection.
         prepare_unstructured_conservative_remap(object(), object(), provenance="kind")  # ty: ignore[invalid-argument-type]
     geometry = _unit_quad()

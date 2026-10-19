@@ -40,6 +40,7 @@ from ..linalg import (
     OperatorProperties,
     prepare_linearization,
     PreparedLinearization,
+    PreparedLinearSolve,
     PreparedSparseFactorization,
     solve as solve_linear,
     sparse_preconditioner_factorization,
@@ -47,6 +48,7 @@ from ..linalg import (
     SparseFactorizationStatus,
     TolerancePolicy,
 )
+from ..typing import checked
 from ._iterative._base import AbstractMinimizationMethod
 from ._iterative._types import (
     ConstrainedOptimalityCertificate,
@@ -60,11 +62,11 @@ from ._iterative._types import (
 )
 from ._nonlinear_constraints import (
     _canonical_constraints,
-    _constraint_layout,
     _constraint_violation,
-    _ConstraintLayout,
     _max_abs,
     _max_positive,
+    constraint_layout,
+    ConstraintLayout,
 )
 
 
@@ -94,6 +96,22 @@ def _usable_linear_status(status: Any, /) -> Array:
         | (status_ == int(LinearSolveStatus.STAGNATION))
         | (status_ == int(LinearSolveStatus.CONDITION_LIMIT_REACHED))
     )
+
+
+def _jacobi_setup_hvp_count(
+    method: _AbstractPrimalDualInteriorMethod,
+    primal_dimension: int,
+    /,
+) -> int:
+    preconditioning = method.linear_policy.preconditioning
+    if (
+        preconditioning is None
+        or not isinstance(preconditioning.builder, JacobiPreconditionerBuilder)
+        or preconditioning.setup_operator is not None
+        or (isinstance(method, PrimalDualNewtonKrylov) and method.kkt_setup is not None)
+    ):
+        return 0
+    return primal_dimension
 
 
 def _fraction_to_boundary(
@@ -202,7 +220,7 @@ class _AbstractPrimalDualInteriorMethod(AbstractMinimizationMethod):
             raise ValueError("line_search_contraction must lie in (0, 1).")
         if line_steps < 1 or restoration_steps < 0:
             raise ValueError(
-                "Line-search steps must be positive and restoration steps nonnegative."
+                f"_AbstractPrimalDualInteriorMethod.line_search_and_restoration_steps must be positive and nonnegative respectively; got {(line_steps, restoration_steps)!r}."
             )
         self.linear_policy = policy
         (
@@ -277,14 +295,14 @@ class AbstractPrimalDualKKTSetup(StrictModule, NonTrainableState):
     def prepare_derivatives(
         self,
         problem: MinimizationProblem,
-        layout: _ConstraintLayout,
+        layout: ConstraintLayout,
         args: Any,
         primal: Array,
         equality_multipliers: Array,
         inequality_multipliers: Array,
         /,
     ) -> tuple[AbstractLinearOperator, AbstractLinearOperator] | None:
-        """Optionally bind exact source-backed constraint and Lagrangian derivatives."""
+        """Optionally bind source-backed constraint and Lagrangian derivatives."""
         return None
 
     def prepare_kkt_operator(
@@ -296,7 +314,7 @@ class AbstractPrimalDualKKTSetup(StrictModule, NonTrainableState):
         space: BlockSpace,
         /,
     ) -> AbstractLinearOperator | None:
-        """Optionally fuse exact current local blocks without changing the saddle system."""
+        """Optionally fuse current local blocks without changing the saddle system."""
         return None
 
     @abc.abstractmethod
@@ -319,20 +337,17 @@ class PrimalDualNewtonKrylov(_AbstractPrimalDualInteriorMethod):
 
     kkt_setup: AbstractPrimalDualKKTSetup | None
 
+    @checked
     def __init__(
         self,
         *,
         kkt_setup: AbstractPrimalDualKKTSetup | None = None,
         **kwargs: Any,
     ) -> None:
-        if kkt_setup is not None and not isinstance(
-            kkt_setup, AbstractPrimalDualKKTSetup
-        ):
-            raise TypeError("kkt_setup must be an AbstractPrimalDualKKTSetup or None.")
         super().__init__(**kwargs)
         if kkt_setup is not None and self.linear_policy.preconditioning is None:
             raise ValueError(
-                "A method-scoped KKT setup requires a preconditioning policy."
+                f"PrimalDualNewtonKrylov.linear_policy.preconditioning must be supplied with kkt_setup; got {self.linear_policy.preconditioning!r}."
             )
         self.kkt_setup = kkt_setup
 
@@ -384,7 +399,7 @@ class PrimalDualPredictorCorrector(_AbstractPrimalDualInteriorMethod):
 
 def _point_data(
     problem: MinimizationProblem,
-    layout: _ConstraintLayout,
+    layout: ConstraintLayout,
     unravel: _Unravel,
     flat_parameters: Array,
     args: Any,
@@ -503,7 +518,7 @@ def _restore_feasibility(
 
 
 class PrimalDualEvidence(StrictModule, NonTrainableState):
-    """Actual last KKT solve, or explicitly unavailable before a solve."""
+    """Store the last KKT solve, or its unavailable status before a solve."""
 
     linear_status: Array
     linear_rank: Array
@@ -615,8 +630,14 @@ def _barrier_schur_metric(
     space: BlockSpace,
     problem_id: str,
     /,
+    *,
+    hessian: AbstractLinearOperator | None = None,
 ) -> DiagonalLinearOperator:
-    """Stream the current barrier-Gram diagonal and diagonal Schur approximation."""
+    """Stream a positive primal metric and its diagonal Schur approximation.
+
+    Lagrangian diagonal magnitudes include curvature absent from the barrier
+    Gram matrix while keeping the preconditioner positive for MINRES.
+    """
     dimension = primal.size
 
     def column(
@@ -634,6 +655,8 @@ def _barrier_schur_metric(
                 diagonal * inequality_column,
             ).real
         )
+        if hessian is not None:
+            value = value + jnp.abs(hessian.mv(basis)[index])
         primal_diagonal = primal_diagonal.at[index].set(value)
         schur_diagonal = schur_diagonal + equality_column * equality_column / value
         return primal_diagonal, schur_diagonal, basis
@@ -644,7 +667,7 @@ def _barrier_schur_metric(
         column,
         (jnp.zeros_like(primal), jnp.zeros_like(equality), jnp.zeros_like(primal)),
     )
-    # Jacobi's canonical preparation owns finite/strict-positive admission.
+    # Jacobi preparation owns finite/strict-positive admission.
     # A zero Schur row is not regularized, omitted or relabeled as full rank.
     return DiagonalLinearOperator(
         jnp.concatenate((primal_diagonal, schur_diagonal)),
@@ -666,7 +689,7 @@ def _barrier_schur_metric(
 def _build_kkt_system(
     method: _AbstractPrimalDualInteriorMethod,
     problem: MinimizationProblem,
-    layout: _ConstraintLayout,
+    layout: ConstraintLayout,
     unravel: _Unravel,
     args: Any,
     flat_parameters: Array,
@@ -723,17 +746,19 @@ def _build_kkt_system(
             )
         )
         if not constraint_derivative.source.compatible(primal_space):
-            raise ValueError("Prepared constraints changed the current primal space.")
+            raise ValueError(
+                f"_build_kkt_system.constraint_derivative.source must be compatible with {primal_space!r}; got {constraint_derivative.source!r}."
+            )
         if not constraint_derivative.target.compatible(expected_target):
             raise ValueError(
-                "Prepared constraints changed the canonical bound residual space."
+                f"_build_kkt_system.constraint_derivative.target must be compatible with {expected_target!r}; got {constraint_derivative.target!r}."
             )
         if not (
             hessian.source.compatible(primal_space)
             and hessian.target.compatible(primal_space)
         ):
             raise ValueError(
-                "Prepared Lagrangian Hessian changed the current primal space."
+                f"_build_kkt_system.hessian.spaces must be compatible with {primal_space!r}; got {(hessian.source, hessian.target)!r}."
             )
 
     # One shared constraint pushforward and pullback apply both blocks.
@@ -778,7 +803,9 @@ def _build_kkt_system(
             operator_id=f"{problem.problem_id}/primal-dual-kkt",
         )
     elif not operator.source.compatible(space) or not operator.target.compatible(space):
-        raise ValueError("Prepared local KKT action changed the original saddle space.")
+        raise ValueError(
+            f"_build_kkt_system.operator.spaces must be compatible with {space!r}; got {(operator.source, operator.target)!r}."
+        )
     preconditioning = method.linear_policy.preconditioning
     setup = None
     if (
@@ -798,18 +825,18 @@ def _build_kkt_system(
             )
             if not isinstance(setup, PrimalDualKKTSetupResult):
                 raise TypeError(
-                    "The owning KKT setup must return PrimalDualKKTSetupResult."
+                    f"_build_kkt_system.setup must be PrimalDualKKTSetupResult; got {type(setup).__name__}."
                 )
             if not setup.operator.source.compatible(
                 space
             ) or not setup.operator.target.compatible(space):
                 raise ValueError(
-                    "The KKT setup must preserve the original bound BlockSpace."
+                    f"_build_kkt_system.setup.operator.spaces must be compatible with {space!r}; got {(setup.operator.source, setup.operator.target)!r}."
                 )
         elif isinstance(preconditioning.builder, JacobiPreconditionerBuilder):
             if not isinstance(constraint_derivative, JacobianLinearOperator):
                 raise TypeError(
-                    "Jacobi barrier-Schur setup requires its prepared Jacobian operator."
+                    f"_build_kkt_system.constraint_derivative must be JacobianLinearOperator for Jacobi barrier-Schur setup; got {type(constraint_derivative).__name__}."
                 )
             metric = _barrier_schur_metric(
                 constraint_derivative,
@@ -819,12 +846,13 @@ def _build_kkt_system(
                 equality,
                 space,
                 problem.problem_id,
+                hessian=hessian,
             )
             setup = PrimalDualKKTSetupResult(
                 metric,
                 jnp.asarray(flat_parameters.size, dtype=jnp.int32),
                 jnp.asarray(
-                    flat_parameters.size * (3 * diagonal.size + 3 * equality.size + 4)
+                    flat_parameters.size * (3 * diagonal.size + 3 * equality.size + 6)
                     + 12 * space.size
                     + flat_parameters.size,
                     dtype=jnp.int64,
@@ -838,6 +866,229 @@ def _build_kkt_system(
     )
 
 
+def _primal_dual_initial_status(
+    method: _AbstractPrimalDualInteriorMethod,
+    initial_parameters: PyTree[Any],
+    equality: Array,
+    inequality: Array,
+    initial_factorization: PreparedSparseFactorization | None,
+    /,
+) -> Array:
+    """Input refusal precedes feasible-start refusal and native setup refusal."""
+    finite_initial = (
+        _tree_allfinite(initial_parameters)
+        & jnp.all(jnp.isfinite(equality))
+        & jnp.all(jnp.isfinite(inequality))
+    )
+    infeasible_start = method.requires_feasible_start & (
+        _constraint_violation(equality, inequality) > method.active_tolerance
+    )
+    initial_status = jnp.where(
+        ~finite_initial,
+        int(OptimizationStatus.NONFINITE_INPUT),
+        jnp.where(
+            infeasible_start,
+            int(OptimizationStatus.INFEASIBLE),
+            int(OptimizationStatus.ITERATING),
+        ),
+    ).astype(jnp.int32)
+    if initial_factorization is not None:
+        initial_status = jnp.where(
+            (initial_status == int(OptimizationStatus.ITERATING))
+            & (initial_factorization.status != int(SparseFactorizationStatus.SUCCESS)),
+            jnp.where(
+                initial_factorization.status == int(SparseFactorizationStatus.NONFINITE),
+                int(OptimizationStatus.NONFINITE_EVALUATION),
+                int(OptimizationStatus.LINEAR_SOLVE_FAILED),
+            ),
+            initial_status,
+        ).astype(jnp.int32)
+    return initial_status
+
+
+def _primal_dual_record_solve(
+    current: _PrimalDualState,
+    evaluated: _PrimalDualState,
+    linear_result: LinearSolveResult,
+    native_factorization: PreparedSparseFactorization | None,
+    setup_result: PrimalDualKKTSetupResult | None,
+    solve_count: Array,
+    operator_actions: Array,
+    linear_iterations: Array,
+    setup_hvp_count: int,
+    has_inequalities: bool,
+    /,
+) -> tuple[_PrimalDualCounters, _PrimalDualState]:
+    """Record executed solve/setup work without committing a candidate iterate."""
+    derivative_increment = jnp.where(
+        has_inequalities,
+        solve_count,
+        jnp.asarray(0, dtype=jnp.int32),
+    )
+    solve_counters = evaluated.counters._replace(
+        linear_solves=(evaluated.counters.linear_solves + solve_count),
+        numeric_refreshes=evaluated.counters.numeric_refreshes + 1,
+        linear_iterations=(evaluated.counters.linear_iterations + linear_iterations),
+        hvp_evaluations=(
+            evaluated.counters.hvp_evaluations + operator_actions + setup_hvp_count
+        ),
+        jvp_evaluations=(
+            evaluated.counters.jvp_evaluations
+            + operator_actions
+            + derivative_increment
+            + (0 if setup_result is None else setup_result.jvp_evaluations)
+        ),
+        vjp_evaluations=(
+            evaluated.counters.vjp_evaluations + operator_actions + derivative_increment
+        ),
+    )
+    solved = evaluated._replace(
+        evidence=PrimalDualEvidence(
+            linear_result,
+            dtype=current.parameters.dtype,
+            setup=setup_result,
+            previous=current.evidence,
+            factorization=native_factorization,
+        ),
+    )
+    return solve_counters, solved
+
+
+def _primal_dual_trial_counters(
+    solve_counters: _PrimalDualCounters,
+    line_evaluations: Array,
+    constraint_sources: Array,
+    /,
+) -> _PrimalDualCounters:
+    """Charge every trial evaluation regardless of candidate acceptance."""
+    return solve_counters._replace(
+        objective_evaluations=(solve_counters.objective_evaluations + line_evaluations),
+        gradient_evaluations=(solve_counters.gradient_evaluations + line_evaluations),
+        constraint_evaluations=(
+            solve_counters.constraint_evaluations + constraint_sources * line_evaluations
+        ),
+        globalization_evaluations=(
+            solve_counters.globalization_evaluations + line_evaluations
+        ),
+        vjp_evaluations=(solve_counters.vjp_evaluations + line_evaluations),
+    )
+
+
+def _primal_dual_restoration_counters(
+    trial_counters: _PrimalDualCounters,
+    restored: Array,
+    restoration_evaluations: Array,
+    constraint_sources: Array,
+    /,
+) -> _PrimalDualCounters:
+    """Charge failed Newton work and restoration work before its conditional commit."""
+    return trial_counters._replace(
+        accepted_steps=(trial_counters.accepted_steps + restored.astype(jnp.int32)),
+        rejected_steps=trial_counters.rejected_steps + 1,
+        gradient_evaluations=(trial_counters.gradient_evaluations + 1),
+        constraint_evaluations=(
+            trial_counters.constraint_evaluations
+            + constraint_sources * (restoration_evaluations + 1)
+        ),
+        globalization_evaluations=(
+            trial_counters.globalization_evaluations + restoration_evaluations
+        ),
+        direction_fallbacks=(trial_counters.direction_fallbacks + 1),
+        vjp_evaluations=trial_counters.vjp_evaluations + 1,
+    )
+
+
+def _primal_dual_failed_factor(
+    current: _PrimalDualState,
+    evaluated: _PrimalDualState,
+    setup_result: PrimalDualKKTSetupResult | None,
+    native_factorization: PreparedSparseFactorization,
+    next_refresh_arrays: Any,
+    /,
+) -> _PrimalDualState:
+    """Publish refresh refusal without running a solve or replacing last linear evidence."""
+    return evaluated._replace(
+        iteration=evaluated.iteration + 1,
+        status=jnp.where(
+            native_factorization.status == int(SparseFactorizationStatus.NONFINITE),
+            int(OptimizationStatus.NONFINITE_EVALUATION),
+            int(OptimizationStatus.LINEAR_SOLVE_FAILED),
+        ).astype(jnp.int32),
+        evidence=PrimalDualEvidence(
+            dtype=current.parameters.dtype,
+            setup=setup_result,
+            previous=current.evidence,
+            factorization=native_factorization,
+        ),
+        counters=evaluated.counters._replace(
+            rejected_steps=evaluated.counters.rejected_steps + 1,
+            numeric_refreshes=evaluated.counters.numeric_refreshes + 1,
+            jvp_evaluations=evaluated.counters.jvp_evaluations
+            + (0 if setup_result is None else setup_result.jvp_evaluations),
+        ),
+        linear_refresh_arrays=next_refresh_arrays,
+    )
+
+
+def _primal_dual_solve_direction(
+    prepared_kkt: PreparedLinearSolve,
+    constraint_derivative: AbstractLinearOperator,
+    current: _PrimalDualState,
+    current_equality: Array,
+    has_inequalities: bool,
+    stationarity: Array,
+    inequality_slack: Array,
+    complementarity_vector: Array,
+    inverse_slack: Array,
+    target: Array,
+    correction: Array,
+    /,
+) -> tuple[LinearSolveResult, Array, Array, Array, Array]:
+    """Eliminate slack/inequality rows, solve the saddle system, then reconstruct them."""
+    if has_inequalities:
+        reduced_rhs_part = inverse_slack * (
+            complementarity_vector
+            + correction
+            - target
+            - current.inequality_multipliers * inequality_slack
+        )
+        multiplier_pullback = constraint_derivative.adjoint_mv(
+            (
+                jnp.zeros_like(current_equality),
+                reduced_rhs_part,
+            )
+        )
+        reduced_rhs = -stationarity + multiplier_pullback
+    else:
+        reduced_rhs = -stationarity
+    result = solve_linear(
+        prepared_kkt,
+        (reduced_rhs, -current_equality),
+    )
+    primal_direction, equality_direction_ = result.value
+    if has_inequalities:
+        inequality_direction = constraint_derivative.mv(primal_direction)[1]
+        slack_direction_ = -inequality_slack - inequality_direction
+        multiplier_direction_ = inverse_slack * (
+            -complementarity_vector
+            - correction
+            + target
+            + current.inequality_multipliers * inequality_slack
+            + current.inequality_multipliers * inequality_direction
+        )
+    else:
+        slack_direction_ = current.slacks
+        multiplier_direction_ = current.inequality_multipliers
+    return (
+        result,
+        primal_direction,
+        equality_direction_,
+        slack_direction_,
+        multiplier_direction_,
+    )
+
+
+# One traced carry owns refresh arrays and lazy predictor/corrector/globalization routes.
 def _solve_primal_dual_newton_krylov(
     method: _AbstractPrimalDualInteriorMethod,
     problem: MinimizationProblem,
@@ -854,7 +1105,7 @@ def _solve_primal_dual_newton_krylov(
     if not isinstance(termination, OptimizationTermination):
         raise TypeError("termination must be an OptimizationTermination.")
 
-    layout = _constraint_layout(problem, initial_parameters, args)
+    layout = constraint_layout(problem, initial_parameters, args)
     flat_parameters, unravel = ravel_pytree(initial_parameters)
     equality, inequality = _canonical_constraints(
         problem,
@@ -906,6 +1157,7 @@ def _solve_primal_dual_newton_krylov(
         else initial_prepared_kkt.preconditioning_state.action,
     )
     zero = jnp.asarray(0, dtype=jnp.int32)
+    setup_hvp_count = _jacobi_setup_hvp_count(method, flat_parameters.size)
     counters = _PrimalDualCounters(
         accepted_steps=zero,
         rejected_steps=zero,
@@ -922,36 +1174,11 @@ def _solve_primal_dual_newton_krylov(
             dtype=jnp.int32,
         ),
         vjp_evaluations=zero,
-        hvp_evaluations=zero,
+        hvp_evaluations=jnp.asarray(setup_hvp_count, dtype=jnp.int32),
     )
-    finite_initial = (
-        _tree_allfinite(initial_parameters)
-        & jnp.all(jnp.isfinite(equality))
-        & jnp.all(jnp.isfinite(inequality))
+    initial_status = _primal_dual_initial_status(
+        method, initial_parameters, equality, inequality, initial_factorization
     )
-    infeasible_start = method.requires_feasible_start & (
-        _constraint_violation(equality, inequality) > method.active_tolerance
-    )
-    initial_status = jnp.where(
-        ~finite_initial,
-        int(OptimizationStatus.NONFINITE_INPUT),
-        jnp.where(
-            infeasible_start,
-            int(OptimizationStatus.INFEASIBLE),
-            int(OptimizationStatus.ITERATING),
-        ),
-    ).astype(jnp.int32)
-    if initial_factorization is not None:
-        initial_status = jnp.where(
-            (initial_status == int(OptimizationStatus.ITERATING))
-            & (initial_factorization.status != int(SparseFactorizationStatus.SUCCESS)),
-            jnp.where(
-                initial_factorization.status == int(SparseFactorizationStatus.NONFINITE),
-                int(OptimizationStatus.NONFINITE_EVALUATION),
-                int(OptimizationStatus.LINEAR_SOLVE_FAILED),
-            ),
-            initial_status,
-        ).astype(jnp.int32)
     state = _PrimalDualState(
         iteration=zero,
         parameters=flat_parameters,
@@ -984,6 +1211,7 @@ def _solve_primal_dual_newton_krylov(
             & within_evaluations
         )
 
+    # Prepared derivatives belong to one model point across all lazy Newton outcomes.
     def outer_body(current: _PrimalDualState) -> _PrimalDualState:
         def current_constraints(candidate: Array) -> tuple[Array, Array]:
             return _canonical_constraints(problem, layout, unravel(candidate), args)
@@ -1067,6 +1295,7 @@ def _solve_primal_dual_newton_krylov(
                 )
             )
 
+        # Refresh admission and Newton execution must share the same prepared KKT system.
         def newton_step(_operand: None) -> _PrimalDualState:
             inverse_slack = (
                 1.0 / jnp.maximum(current.slacks, method.minimum_slack)
@@ -1105,53 +1334,24 @@ def _solve_primal_dual_newton_krylov(
                 else prepared_kkt.preconditioning_state.action,
             )
 
+            # Affine/corrector solves and lazy trial commits preserve the shared KKT carry.
             def admitted_newton(_operand: None) -> _PrimalDualState:
                 def solve_direction(
                     target: Array,
                     correction: Array,
                 ) -> tuple[LinearSolveResult, Array, Array, Array, Array]:
-                    if current_inequality.size:
-                        reduced_rhs_part = inverse_slack * (
-                            complementarity_vector
-                            + correction
-                            - target
-                            - current.inequality_multipliers * inequality_slack
-                        )
-                        multiplier_pullback = constraint_derivative.adjoint_mv(
-                            (
-                                jnp.zeros_like(current_equality),
-                                reduced_rhs_part,
-                            )
-                        )
-                        reduced_rhs = -stationarity + multiplier_pullback
-                    else:
-                        reduced_rhs = -stationarity
-                    result = solve_linear(
+                    return _primal_dual_solve_direction(
                         prepared_kkt,
-                        (reduced_rhs, -current_equality),
-                    )
-                    primal_direction, equality_direction_ = result.value
-                    if current_inequality.size:
-                        inequality_direction = constraint_derivative.mv(primal_direction)[
-                            1
-                        ]
-                        slack_direction_ = -inequality_slack - inequality_direction
-                        multiplier_direction_ = inverse_slack * (
-                            -complementarity_vector
-                            - correction
-                            + target
-                            + current.inequality_multipliers * inequality_slack
-                            + current.inequality_multipliers * inequality_direction
-                        )
-                    else:
-                        slack_direction_ = current.slacks
-                        multiplier_direction_ = current.inequality_multipliers
-                    return (
-                        result,
-                        primal_direction,
-                        equality_direction_,
-                        slack_direction_,
-                        multiplier_direction_,
+                        constraint_derivative,
+                        current,
+                        current_equality,
+                        current_inequality.size > 0,
+                        stationarity,
+                        inequality_slack,
+                        complementarity_vector,
+                        inverse_slack,
+                        target,
+                        correction,
                     )
 
                 zero_correction = jnp.zeros_like(complementarity_vector)
@@ -1259,40 +1459,17 @@ def _solve_primal_dual_newton_krylov(
                     )
                     usable_linear_status = _usable_linear_status(linear_result.status)
 
-                derivative_increment = jnp.where(
-                    current_inequality.size > 0,
+                solve_counters, solved = _primal_dual_record_solve(
+                    current,
+                    evaluated,
+                    linear_result,
+                    native_factorization,
+                    setup_result,
                     solve_count,
-                    jnp.asarray(0, dtype=jnp.int32),
-                )
-                solve_counters = evaluated.counters._replace(
-                    linear_solves=(evaluated.counters.linear_solves + solve_count),
-                    numeric_refreshes=evaluated.counters.numeric_refreshes + 1,
-                    linear_iterations=(
-                        evaluated.counters.linear_iterations + linear_iterations
-                    ),
-                    hvp_evaluations=(
-                        evaluated.counters.hvp_evaluations + operator_actions
-                    ),
-                    jvp_evaluations=(
-                        evaluated.counters.jvp_evaluations
-                        + operator_actions
-                        + derivative_increment
-                        + (0 if setup_result is None else setup_result.jvp_evaluations)
-                    ),
-                    vjp_evaluations=(
-                        evaluated.counters.vjp_evaluations
-                        + operator_actions
-                        + derivative_increment
-                    ),
-                )
-                solved = evaluated._replace(
-                    evidence=PrimalDualEvidence(
-                        linear_result,
-                        dtype=current.parameters.dtype,
-                        setup=setup_result,
-                        previous=current.evidence,
-                        factorization=native_factorization,
-                    ),
+                    operator_actions,
+                    linear_iterations,
+                    setup_hvp_count,
+                    current_inequality.size > 0,
                 )
                 usable_direction = (
                     usable_linear_status
@@ -1444,7 +1621,6 @@ def _solve_primal_dual_newton_krylov(
                         current.slacks,
                         current.final_step_norm,
                         current.accepted_rate,
-
                     )
 
                 (
@@ -1463,21 +1639,8 @@ def _solve_primal_dual_newton_krylov(
                     unusable_line_search,
                     None,
                 )
-                trial_counters = solve_counters._replace(
-                    objective_evaluations=(
-                        solve_counters.objective_evaluations + line_evaluations
-                    ),
-                    gradient_evaluations=(
-                        solve_counters.gradient_evaluations + line_evaluations
-                    ),
-                    constraint_evaluations=(
-                        solve_counters.constraint_evaluations
-                        + constraint_sources_ * line_evaluations
-                    ),
-                    globalization_evaluations=(
-                        solve_counters.globalization_evaluations + line_evaluations
-                    ),
-                    vjp_evaluations=(solve_counters.vjp_evaluations + line_evaluations),
+                trial_counters = _primal_dual_trial_counters(
+                    solve_counters, line_evaluations, constraint_sources_
                 )
 
                 def accept_newton_step(_: None) -> _PrimalDualState:
@@ -1523,22 +1686,11 @@ def _solve_primal_dual_newton_krylov(
                         current_equality,
                         current_inequality,
                     )
-                    restoration_counters = trial_counters._replace(
-                        accepted_steps=(
-                            trial_counters.accepted_steps + restored.astype(jnp.int32)
-                        ),
-                        rejected_steps=trial_counters.rejected_steps + 1,
-                        gradient_evaluations=(trial_counters.gradient_evaluations + 1),
-                        constraint_evaluations=(
-                            trial_counters.constraint_evaluations
-                            + constraint_sources_ * (restoration_evaluations + 1)
-                        ),
-                        globalization_evaluations=(
-                            trial_counters.globalization_evaluations
-                            + restoration_evaluations
-                        ),
-                        direction_fallbacks=(trial_counters.direction_fallbacks + 1),
-                        vjp_evaluations=trial_counters.vjp_evaluations + 1,
+                    restoration_counters = _primal_dual_restoration_counters(
+                        trial_counters,
+                        restored,
+                        restoration_evaluations,
+                        constraint_sources_,
                     )
                     failed_restoration = solved._replace(
                         iteration=evaluated.iteration + 1,
@@ -1611,27 +1763,12 @@ def _solve_primal_dual_newton_krylov(
                 return admitted_newton(None)
 
             def failed_factor(_: None) -> _PrimalDualState:
-                return evaluated._replace(
-                    iteration=evaluated.iteration + 1,
-                    status=jnp.where(
-                        native_factorization.status
-                        == int(SparseFactorizationStatus.NONFINITE),
-                        int(OptimizationStatus.NONFINITE_EVALUATION),
-                        int(OptimizationStatus.LINEAR_SOLVE_FAILED),
-                    ).astype(jnp.int32),
-                    evidence=PrimalDualEvidence(
-                        dtype=current.parameters.dtype,
-                        setup=setup_result,
-                        previous=current.evidence,
-                        factorization=native_factorization,
-                    ),
-                    counters=evaluated.counters._replace(
-                        rejected_steps=evaluated.counters.rejected_steps + 1,
-                        numeric_refreshes=evaluated.counters.numeric_refreshes + 1,
-                        jvp_evaluations=evaluated.counters.jvp_evaluations
-                        + (0 if setup_result is None else setup_result.jvp_evaluations),
-                    ),
-                    linear_refresh_arrays=next_refresh_arrays,
+                return _primal_dual_failed_factor(
+                    current,
+                    evaluated,
+                    setup_result,
+                    native_factorization,
+                    next_refresh_arrays,
                 )
 
             return jax.lax.cond(
@@ -1654,6 +1791,15 @@ def _solve_primal_dual_newton_krylov(
         )
 
     state = jax.lax.while_loop(outer_condition, outer_body, state)
+    return _primal_dual_result(
+        method, problem, layout, unravel, state, termination, args, constraint_sources_
+    )
+
+
+def _primal_dual_exhausted_state(
+    state: _PrimalDualState, termination: OptimizationTermination, /
+) -> _PrimalDualState:
+    """Evaluation exhaustion takes precedence over step exhaustion for a live carry."""
     if termination.maximum_evaluations is not None:
         state = state._replace(
             status=jnp.where(
@@ -1673,6 +1819,22 @@ def _solve_primal_dual_newton_krylov(
             state.status,
         ).astype(jnp.int32)
     )
+    return state
+
+
+def _primal_dual_result(
+    method: _AbstractPrimalDualInteriorMethod,
+    problem: MinimizationProblem,
+    layout: ConstraintLayout,
+    unravel: _Unravel,
+    state: _PrimalDualState,
+    termination: OptimizationTermination,
+    args: Any,
+    constraint_sources_: Array,
+    /,
+) -> MinimizationResult:
+    """Audit nonlinear problem residuals before packaging the last executed KKT evidence."""
+    state = _primal_dual_exhausted_state(state, termination)
 
     parameters = unravel(state.parameters)
     (
@@ -1756,26 +1918,7 @@ def _solve_primal_dual_newton_krylov(
         active_constraints=jnp.sum(active_mask, dtype=jnp.int32),
         counts_complete=False,
     )
-    provenance = OptimizationProvenance(
-        problem_id=problem.problem_id,
-        method=method.method_id,
-        backend="phydrax-linalg",
-        backend_method=type(method.linear_policy.method).__name__.lower(),
-        globalization=(
-            "mehrotra-predictor-corrector-residual"
-            if method.predictor_corrector
-            else "barrier-residual-with-feasibility-restoration"
-        ),
-        matrix_free=True,
-        implicit_differentiation=True,
-        notes=(
-            "Each accepted predictor-corrector step uses an affine KKT predictor, "
-            "the affine complementarity ratio for centering, and the product of "
-            "affine slack and multiplier directions in the corrector equation."
-            if method.predictor_corrector
-            else "Centered matrix-free KKT steps with feasibility restoration."
-        ),
-    )
+    provenance = _primal_dual_provenance(method, problem)
     certificate = ConstrainedOptimalityCertificate(
         equality_multipliers=state.equality_multipliers,
         inequality_multipliers=state.inequality_multipliers,
@@ -1797,6 +1940,31 @@ def _solve_primal_dual_newton_krylov(
         provenance,
         certificate=certificate,
         method_evidence=state.evidence,
+    )
+
+
+def _primal_dual_provenance(
+    method: _AbstractPrimalDualInteriorMethod, problem: MinimizationProblem, /
+) -> OptimizationProvenance:
+    return OptimizationProvenance(
+        problem_id=problem.problem_id,
+        method=method.method_id,
+        backend="phydrax-linalg",
+        backend_method=type(method.linear_policy.method).__name__.lower(),
+        globalization=(
+            "mehrotra-predictor-corrector-residual"
+            if method.predictor_corrector
+            else "barrier-residual-with-feasibility-restoration"
+        ),
+        matrix_free=True,
+        implicit_differentiation=True,
+        notes=(
+            "Each accepted predictor-corrector step uses an affine KKT predictor, "
+            "the affine complementarity ratio for centering, and the product of "
+            "affine slack and multiplier directions in the corrector equation."
+            if method.predictor_corrector
+            else "Centered matrix-free KKT steps with feasibility restoration."
+        ),
     )
 
 

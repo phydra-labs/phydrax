@@ -8,11 +8,13 @@ from enum import StrEnum
 
 import equinox as eqx
 
+from phydrax.meshing._failures import MeshingFailureCategory
+
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
-from ._contracts import MeshingFailureCategory
+from ..typing import checked, parse
 
 
 class MeshingStageKind(StrEnum):
@@ -84,15 +86,16 @@ class MeshingDiagnostic(StrictModule, NonTrainableState):
         locations: tuple[tuple[float, ...], ...] = (),
         quantities: tuple[tuple[str, float, float], ...] = (),
     ) -> None:
-        if not isinstance(severity, MeshingDiagnosticSeverity):
-            raise TypeError("severity must be MeshingDiagnosticSeverity.")
-        if failure_category is not None and not isinstance(
-            failure_category, MeshingFailureCategory
-        ):
-            raise TypeError("failure_category must be MeshingFailureCategory or None.")
+        parse(severity, MeshingDiagnosticSeverity, "MeshingDiagnostic.severity")
+        if failure_category is not None:
+            parse(
+                failure_category,
+                MeshingFailureCategory,
+                "MeshingDiagnostic.failure_category",
+            )
         text = str(message).strip()
         if not text:
-            raise ValueError("Meshing diagnostic message must be non-empty.")
+            raise ValueError(f"MeshingDiagnostic.message must be nonempty; got {text!r}")
         identifiers = tuple(entity_ids)
         points = tuple(
             tuple(float(component) for component in point) for point in locations
@@ -102,7 +105,9 @@ class MeshingDiagnostic(StrictModule, NonTrainableState):
             for name, requested, achieved in quantities
         )
         if any(not name for name, _, _ in measured):
-            raise ValueError("Diagnostic quantities require non-empty names.")
+            raise ValueError(
+                f"MeshingDiagnostic.quantities must have nonempty names; got {tuple(name for name, _, _ in measured)!r}"
+            )
         self.severity = severity
         self.message = text
         self.provider_code = str(provider_code)
@@ -150,15 +155,17 @@ class MeshingStageReport(StrictModule, NonTrainableState):
         modified_count: int = 0,
         deleted_count: int = 0,
     ) -> None:
-        if not isinstance(stage, MeshingStageKind):
-            raise TypeError("stage must be MeshingStageKind.")
-        if not isinstance(status, MeshingStageStatus):
-            raise TypeError("status must be MeshingStageStatus.")
+        parse(stage, MeshingStageKind, "MeshingStageReport.stage")
+        parse(status, MeshingStageStatus, "MeshingStageReport.status")
         if not all(isinstance(value, MeshingDiagnostic) for value in diagnostics):
-            raise TypeError("diagnostics must contain MeshingDiagnostic values.")
+            raise TypeError(
+                f"MeshingStageReport.diagnostics must contain MeshingDiagnostic values; got {tuple(type(value).__name__ for value in diagnostics)!r}"
+            )
         counts = (int(created_count), int(modified_count), int(deleted_count))
         if any(value < 0 for value in counts):
-            raise ValueError("Meshing stage entity counts must be non-negative.")
+            raise ValueError(
+                f"MeshingStageReport.entity_counts must be nonnegative; got {counts!r}"
+            )
         if status in (
             MeshingStageStatus.FAILED,
             MeshingStageStatus.UNRESOLVED,
@@ -166,7 +173,7 @@ class MeshingStageReport(StrictModule, NonTrainableState):
             value.severity is MeshingDiagnosticSeverity.ERROR for value in diagnostics
         ):
             raise ValueError(
-                "Failed or unresolved meshing stages require one error diagnostic."
+                f"MeshingStageReport.diagnostics must contain an error for failed or unresolved stages; got {len(diagnostics)} entries for {status.value!r}"
             )
         self.stage = stage
         self.status = status
@@ -190,7 +197,7 @@ class MeshingStageReport(StrictModule, NonTrainableState):
 class MeshingEvidenceBinding(StrictModule, NonTrainableState):
     """Identity of the inputs a meshing trace's evidence was computed from.
 
-    Binds the geometry source revision, mesh topology, actual coordinate array
+    Binds the geometry source revision, mesh topology, coordinate array
     and coordinate-element layout, the governing policy identities and the
     runtime identity.
     """
@@ -252,6 +259,7 @@ class MeshingTrace(StrictModule, NonTrainableState):
     successful: bool = eqx.field(static=True)
     trace_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         stages: tuple[MeshingStageReport, ...],
@@ -262,16 +270,18 @@ class MeshingTrace(StrictModule, NonTrainableState):
         if not stages or not all(
             isinstance(stage, MeshingStageReport) for stage in stages
         ):
-            raise ValueError("Meshing traces require at least one stage report.")
-        if binding is not None and not isinstance(binding, MeshingEvidenceBinding):
-            raise TypeError("binding must be MeshingEvidenceBinding or None.")
+            raise ValueError(
+                f"MeshingTrace.stages must contain at least one MeshingStageReport; got {tuple(type(stage).__name__ for stage in stages)!r}"
+            )
         terminal = tuple(
             index
             for index, stage in enumerate(stages)
             if stage.status in (MeshingStageStatus.FAILED, MeshingStageStatus.UNRESOLVED)
         )
         if terminal and terminal != (len(stages) - 1,):
-            raise ValueError("A failed meshing stage must terminate the trace.")
+            raise ValueError(
+                f"MeshingTrace.stages must end at the first failed or unresolved stage; got terminal indexes {terminal!r} for {len(stages)} stages"
+            )
         self.stages = tuple(stages)
         self.binding = binding
         self.successful = not terminal

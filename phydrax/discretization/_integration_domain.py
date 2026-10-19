@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
-import jax.numpy as jnp
+import jax
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
@@ -129,13 +129,25 @@ class IntegrationDomain(StrictModule, NonTrainableState):
             )
         )
         self.kind = kind_
-        self.entity_indices = jnp.asarray(indices)
-        self.owner_cells = jnp.asarray(owner)
-        self.neighbor_cells = jnp.asarray(neighbor)
-        self.owner_local_entities = jnp.asarray(owner_local)
-        self.neighbor_trace_permutations = jnp.asarray(trace_permutations)
-        self.periodic_face_mask = jnp.asarray(periodic)
-        self.neighbor_local_entities = jnp.asarray(neighbor_local)
+        (
+            self.entity_indices,
+            self.owner_cells,
+            self.neighbor_cells,
+            self.owner_local_entities,
+            self.neighbor_trace_permutations,
+            self.periodic_face_mask,
+            self.neighbor_local_entities,
+        ) = jax.device_put(
+            (
+                indices,
+                owner,
+                neighbor,
+                owner_local,
+                trace_permutations,
+                periodic,
+                neighbor_local,
+            )
+        )
         self.support_id = support
         self.entity_set_id = entity_set
         self.selection_id = selection

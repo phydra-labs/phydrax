@@ -11,9 +11,10 @@ from typing import Any
 
 import numpy as np
 
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from ...discretization import CellGeometrySpec, CellMesh, lagrange_element
 from ...discretization._reference_cell import reference_cell_topology
-from .._contracts import MeshingFailure, MeshingFailureCategory
 from .._trace import MeshingStageKind
 
 
@@ -34,7 +35,7 @@ _GMSH_FAMILIES = {
 
 
 @dataclass(frozen=True, slots=True)
-class _ElementRows:
+class ElementRows:
     tags: np.ndarray
     vertices: np.ndarray
     entity_tags: np.ndarray
@@ -47,9 +48,9 @@ class _ElementRows:
         return _BLOCK_NAMES[self.cell_kind]
 
 
-def _element_rows(
+def element_rows(
     gmsh: Any, dimension: int, geometry_order: int, /
-) -> tuple[_ElementRows, ...]:
+) -> tuple[ElementRows, ...]:
     records: dict[int, list[tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
     properties = {}
     for _, entity_tag in sorted(gmsh.model.getEntities(dimension)):
@@ -90,7 +91,7 @@ def _element_rows(
         order = np.argsort(tags, kind="stable")
         kind, corners = properties[element_type]
         result.append(
-            _ElementRows(
+            ElementRows(
                 tags[order], nodes[order], entities[order], element_type, kind, corners
             )
         )
@@ -102,7 +103,7 @@ def _element_rows(
     return tuple(sorted(result, key=key))
 
 
-def _local_connectivity(node_tags: np.ndarray, values: np.ndarray, /) -> np.ndarray:
+def local_connectivity(node_tags: np.ndarray, values: np.ndarray, /) -> np.ndarray:
     locations = np.searchsorted(node_tags, values)
     if np.any(locations >= node_tags.size) or not np.array_equal(
         node_tags[locations], values
@@ -115,9 +116,7 @@ def _local_connectivity(node_tags: np.ndarray, values: np.ndarray, /) -> np.ndar
     return locations.astype(np.int32, copy=False)
 
 
-def _curve_corner_rows(
-    gmsh: Any, geometry_order: int, /
-) -> tuple[np.ndarray, np.ndarray]:
+def curve_corner_rows(gmsh: Any, geometry_order: int, /) -> tuple[np.ndarray, np.ndarray]:
     node_chunks = []
     entity_chunks = []
     for _, curve in sorted(gmsh.model.getEntities(1)):
@@ -152,7 +151,7 @@ def _curve_corner_rows(
     return np.concatenate(node_chunks), np.concatenate(entity_chunks)
 
 
-def _evaluate_element_maps(
+def evaluate_element_maps(
     gmsh: Any,
     element_type: int,
     element_points: np.ndarray,
@@ -179,7 +178,7 @@ def _evaluate_element_maps(
 
 
 @dataclass(frozen=True, slots=True)
-class _NativeQuality:
+class NativeQuality:
     minimum_jacobian: float
     minimum_sicn: float
     mean_sicn: float
@@ -204,7 +203,7 @@ class _NativeQuality:
         )
 
 
-def _audit_jacobians(gmsh: Any, rows: tuple[_ElementRows, ...], /) -> float:
+def _audit_jacobians(gmsh: Any, rows: tuple[ElementRows, ...], /) -> float:
     """Audit the curved map with Gmsh's adaptive determinant extrema, not corners."""
     minimum = np.inf
     for block in rows:
@@ -225,7 +224,7 @@ def _audit_jacobians(gmsh: Any, rows: tuple[_ElementRows, ...], /) -> float:
     return minimum
 
 
-def _native_quality(gmsh: Any, rows: tuple[_ElementRows, ...], /) -> _NativeQuality:
+def native_quality(gmsh: Any, rows: tuple[ElementRows, ...], /) -> NativeQuality:
     """Certify curved maps with Gmsh's own per-element quality measures.
 
     `minSICN` and `minSIGE` are Gmsh's scaled inverse condition number and
@@ -247,7 +246,7 @@ def _native_quality(gmsh: Any, rows: tuple[_ElementRows, ...], /) -> _NativeQual
             values.append(quality)
     sicn = np.concatenate(measures["minSICN"])
     sige = np.concatenate(measures["minSIGE"])
-    return _NativeQuality(
+    return NativeQuality(
         minimum,
         float(np.min(sicn)),
         float(np.mean(sicn)),
@@ -257,7 +256,7 @@ def _native_quality(gmsh: Any, rows: tuple[_ElementRows, ...], /) -> _NativeQual
 
 
 def _reference_permutation(
-    gmsh: Any, rows: _ElementRows, element: Any, /
+    gmsh: Any, rows: ElementRows, element: Any, /
 ) -> np.ndarray | None:
     """Map Gmsh reference nodes onto canonical element nodes when they coincide.
 
@@ -324,7 +323,7 @@ def _canonical_element_nodes(element: Any, dimension: int, /) -> _CanonicalEleme
 
 def _resampled_block(
     gmsh: Any,
-    rows: _ElementRows,
+    rows: ElementRows,
     element: Any,
     cell_corners: np.ndarray,
     gmsh_corners: np.ndarray,
@@ -355,7 +354,7 @@ def _resampled_block(
         selected = np.flatnonzero(inverse.reshape(-1) == group_index)
         gmsh_barycentric = np.empty_like(nodes.barycentric)
         gmsh_barycentric[:, group] = nodes.barycentric
-        values[selected] = _evaluate_element_maps(
+        values[selected] = evaluate_element_maps(
             gmsh, rows.element_type, element_points[selected], gmsh_barycentric[:, 1:]
         )
     keys = np.full((cell_corners.shape[0], count, dimension + 3), -1, dtype=np.int64)
@@ -390,15 +389,15 @@ def _resampled_block(
 
 
 @dataclass(frozen=True, slots=True)
-class _CurvedGeometry:
+class CurvedGeometry:
     geometry: CellGeometrySpec
     conformity_residual: float | None
 
 
-def _cell_geometry(
+def cell_geometry(
     gmsh: Any,
     mesh: CellMesh,
-    rows: tuple[_ElementRows, ...],
+    rows: tuple[ElementRows, ...],
     row_orders: dict[str, np.ndarray],
     top_vertices: dict[str, np.ndarray],
     corner_nodes: np.ndarray,
@@ -408,9 +407,9 @@ def _cell_geometry(
     geometry_order: int,
     flip_surface_routes: bool,
     /,
-) -> _CurvedGeometry:
+) -> CurvedGeometry:
     if geometry_order == 1:
-        return _CurvedGeometry(CellGeometrySpec.affine(mesh), None)
+        return CurvedGeometry(CellGeometrySpec.affine(mesh), None)
     elements = {}
     permutations = {}
     for block in rows:
@@ -418,7 +417,7 @@ def _cell_geometry(
         elements[block.block_name] = element
         permutations[block.block_name] = _reference_permutation(gmsh, block, element)
     if all(value is not None for value in permutations.values()):
-        return _CurvedGeometry(
+        return CurvedGeometry(
             _routed_geometry(
                 mesh,
                 rows,
@@ -491,14 +490,14 @@ def _cell_geometry(
         stop = cursor + shape[0] * shape[1]
         routes[name] = position[inverse[cursor:stop]].reshape(shape)
         cursor = stop
-    return _CurvedGeometry(
+    return CurvedGeometry(
         CellGeometrySpec(elements, routes, coordinates[ordering]), residual
     )
 
 
 def _routed_geometry(
     mesh: CellMesh,
-    rows: tuple[_ElementRows, ...],
+    rows: tuple[ElementRows, ...],
     row_orders: dict[str, np.ndarray],
     top_vertices: dict[str, np.ndarray],
     corner_nodes: np.ndarray,

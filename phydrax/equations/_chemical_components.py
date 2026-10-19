@@ -20,6 +20,7 @@ from ..typing import (
     Float64,
     HostFloat64,
     HostInteger,
+    HostShaped,
     Identifier,
     Int32,
     parse,
@@ -90,6 +91,13 @@ class ChemicalComponentCatalog(StrictModule, NonTrainableState):
         parse(masses_np, HostFloat64[_ComponentDim], "molar_masses", scope=scope)
         if not np.all(np.isfinite(masses_np)) or np.any(masses_np <= 0.0):
             raise ValueError("molar_masses must be finite and strictly positive.")
+        # This catalog's failure contract admits extents before integer dtypes.
+        parse(
+            composition_np,
+            HostShaped[_ElementDim, _ComponentDim],
+            "element_composition",
+            scope=scope,
+        )
         parse(
             composition_np,
             HostInteger[_ElementDim, _ComponentDim],
@@ -98,6 +106,7 @@ class ChemicalComponentCatalog(StrictModule, NonTrainableState):
         )
         if np.any(composition_np < 0):
             raise ValueError("element_composition must be nonnegative.")
+        parse(charges_np, HostShaped[_ComponentDim], "charges", scope=scope)
         parse(charges_np, HostInteger[_ComponentDim], "charges", scope=scope)
         if not source:
             raise ValueError("provenance must be non-empty.")

@@ -34,7 +34,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
-from ..linalg._spaces import _coordinate_dtype
+from ..linalg._spaces import coordinate_dtype
 from ..operators.integral.layer_potential._maxwell_bc3d import PreparedMaxwellBCEFIE3D
 from ..operators.integral.layer_potential._periodic_maxwell_boundary3d import (
     PreparedPeriodicMaxwellBoundary3D,
@@ -77,7 +77,7 @@ class PreparedNonmatchingFEMBEM3D(StrictModule, NonTrainableState):
     def solve(
         self, interior_load: ArrayLike, boundary_load: ArrayLike, /
     ) -> CoupledFEMBEMResult3D:
-        dtype = _coordinate_dtype(self.operator.source)
+        dtype = coordinate_dtype(self.operator.source)
         interior = jnp.asarray(interior_load, dtype=dtype)
         boundary = jnp.asarray(boundary_load, dtype=dtype)
         if interior.shape != (self.interior_size,) or boundary.shape != (
@@ -143,10 +143,10 @@ def _prepare(
     if any(not item.capabilities.transpose for item in operators):
         raise ValueError("Coupled FEM-BEM operators require coordinate transposes.")
     dtype = np.dtype(
-        jnp.result_type(*(_coordinate_dtype(item.source) for item in operators))
+        jnp.result_type(*(coordinate_dtype(item.source) for item in operators))
     )
     if any(
-        _coordinate_dtype(item.source) != dtype or _coordinate_dtype(item.target) != dtype
+        coordinate_dtype(item.source) != dtype or coordinate_dtype(item.target) != dtype
         for item in operators
     ):
         raise TypeError("Coupled FEM-BEM operators must share one coordinate dtype.")

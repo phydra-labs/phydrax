@@ -2,18 +2,22 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Source-oriented exact-curve boundary arrangements for native CAD Booleans."""
+"""Construct source-oriented curve boundary arrangements for CAD Booleans."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
+from ..._strict import StrictModule
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked
 from .._atlas import AbstractTrimCurve, CurveTrimLoop, PolygonTrimLoop, TrimDomain
 from .._interval_enclosure import (
     interval_add,
@@ -21,28 +25,30 @@ from .._interval_enclosure import (
     interval_subtract,
     prepare_interval_function,
 )
-from ._boolean import (
-    _MaterialSelection,
-    BRepBooleanFailure,
-    BRepBooleanPolicy,
-)
 from ._boolean_coincidence import CoincidentFaceArc, SourceEdgeFacePairCoverage
+from ._boolean_core import BRepBooleanFailure, BRepBooleanPolicy, MaterialSelection
+from ._carrier_pieces import carrier_payload
 from ._constructors import assemble_brep_model
 from ._intersection import (
     BranchRootEndpoint,
+    CurveIntersectionResult,
     CurveSurfaceIntersectionRoot,
+    CurveSurfaceSystem,
     intersect_curve_region,
+    intersect_trim_curves,
     IntersectionCurvePointRoot,
+    joint_root_parameter_image,
     NativePeriodEndpoint,
     ParametricIntersectionPolicy,
+    prepare,
     RootEndpoint,
+    source_pcurve_image,
     SurfaceIntersectionResult,
     TrimIntersectionRoot,
     TrimRootEndpoint,
     TripleSurfaceIntersectionRoot,
 )
 from ._intersection_curve import (
-    coefficient_enclosures,
     curve_pieces,
     CurveRange,
     CurveTrimSegment,
@@ -50,31 +56,32 @@ from ._intersection_curve import (
     IntersectionCurveSide,
     IntersectionPCurve,
     surface_pieces,
-    SurfaceEvaluator,
     SurfaceRegion,
 )
+from ._intersection_kernel import krawczyk
+from ._interval_source import evaluate_interval
 from ._model import (
-    _carrier_payload,
     BRepCurve,
     BRepGeometry,
     BRepImportReport,
     BRepModel,
     BRepPCurve,
 )
-from ._patches import AbstractSurfacePatch
+from ._patches import AbstractCurve, AbstractSurfacePatch, coefficient_enclosures
 from ._projection_contracts import brep_entity_id
 from ._query import prepare_brep_query, PreparedBRepQuery
+from ._request_preparations import TrimRequestPreparations
 from ._root_bindings import BRepCurveSurfaceLift, BRepRootSupport, BRepVertexRoot
-from ._sewing import _shells
+from ._sewing import shells
 
 
-type _Face = tuple[int, int]
+type FaceOwner = tuple[int, int]
 
 
 @dataclass(frozen=True, slots=True)
-class _Arc:
+class Arc:
     token: str
-    owner: _Face
+    owner: FaceOwner
     trim: AbstractTrimCurve
     curve: BRepCurve | None
     pcurve: BRepPCurve
@@ -86,10 +93,11 @@ class _Arc:
     last_vertex: str
     source_edge: int | None
     branch: IntersectionCurve | None
+    parent_token: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class _Cut:
+class Cut:
     """Local directed trim scalar with a native raw-carrier root expression.
 
     RootEndpoint owns segment unwrapping; its enclosure is not in the local
@@ -107,22 +115,29 @@ class _Cut:
 
 
 @dataclass(frozen=True, slots=True)
-class _Piece:
-    arc: _Arc
-    first: _Cut
-    last: _Cut
+class Piece:
+    arc: Arc
+    first: Cut
+    last: Cut
     sense: int
 
 
 @dataclass
-class _Arrangement:
+class Arrangement:
+    """Accumulate source topology and scientific box-work evidence.
+
+    The root-search cap is independent of the request's work/byte ticket.
+    Interval and coordinate operations use CoordinateEnclosureBudget for
+    resource accounting; boxes_used retains discovery and material evidence.
+    """
+
     models: tuple[BRepModel, ...]
-    selection: _MaterialSelection
+    selection: MaterialSelection
     policy: BRepBooleanPolicy
     queries: tuple[PreparedBRepQuery, ...]
-    arcs: dict[_Face, list[_Arc]] = field(default_factory=dict)
-    domains: dict[_Face, TrimDomain] = field(default_factory=dict)
-    cuts: dict[str, list[_Cut]] = field(default_factory=dict)
+    arcs: dict[FaceOwner, list[Arc]] = field(default_factory=dict)
+    domains: dict[FaceOwner, TrimDomain] = field(default_factory=dict)
+    cuts: dict[str, list[Cut]] = field(default_factory=dict)
     spatial_roots: dict[
         tuple[int, int, int, int], tuple[CurveSurfaceIntersectionRoot, ...]
     ] = field(default_factory=dict)
@@ -134,20 +149,20 @@ class _Arrangement:
     vertex_lifts: dict[str, tuple[BRepCurveSurfaceLift, ...]] = field(
         default_factory=dict
     )
-    branches: dict[str, tuple[IntersectionCurve, _Face, _Face]] = field(
+    branches: dict[str, tuple[IntersectionCurve, FaceOwner, FaceOwner]] = field(
         default_factory=dict
     )
-    branch_owners: dict[str, tuple[_Face, _Face]] = field(default_factory=dict)
-    # Branch sides proved (exact lift + certified chart uniqueness) to be a
+    branch_owners: dict[str, tuple[FaceOwner, FaceOwner]] = field(default_factory=dict)
+    # Branch sides proved (source lift + certified chart uniqueness) to be a
     # present source edge of that face (its own, or a coincident partner's):
     # branch id -> {face: (source model, source edge)}.
-    branch_source_edges: dict[str, dict[_Face, tuple[int, int]]] = field(
+    branch_source_edges: dict[str, dict[FaceOwner, tuple[int, int]]] = field(
         default_factory=dict
     )
-    source_pair_coverage: dict[tuple[_Face, _Face], SourceEdgeFacePairCoverage] = field(
-        default_factory=dict
-    )
-    source_adjacencies: dict[tuple[_Face, _Face], tuple[int, ...]] = field(
+    source_pair_coverage: dict[
+        tuple[FaceOwner, FaceOwner], SourceEdgeFacePairCoverage
+    ] = field(default_factory=dict)
+    source_adjacencies: dict[tuple[FaceOwner, FaceOwner], tuple[int, ...]] = field(
         default_factory=dict
     )
     roots: dict[str, TrimIntersectionRoot] = field(default_factory=dict)
@@ -161,17 +176,22 @@ class _Arrangement:
     def consume(self, boxes: int) -> None:
         self.boxes_used += boxes
         if self.boxes_used > self.policy.intersection.maximum_boxes:
-            raise BRepBooleanFailure("coupled intersection work budget exhausted")
+            raise BRepBooleanFailure(
+                "BRepBoolean.intersection.work must fit maximum_boxes; got coupled intersection work budget exhausted"
+            )
 
     @property
     def remaining_boxes(self) -> int:
         return max(0, self.policy.intersection.maximum_boxes - self.boxes_used)
 
 
-def _remaining_intersection_policy(state: _Arrangement) -> ParametricIntersectionPolicy:
+@checked
+def remaining_intersection_policy(state: Arrangement) -> ParametricIntersectionPolicy:
     remaining = state.remaining_boxes
     if remaining <= 0:
-        raise BRepBooleanFailure("curved Boolean exhausted its native root work budget")
+        raise BRepBooleanFailure(
+            "BRepBoolean.root_work must have remaining boxes; got exhausted root work budget"
+        )
     policy = state.policy.intersection
     return ParametricIntersectionPolicy(
         maximum_boxes=remaining,
@@ -192,16 +212,66 @@ def _face_id(model: BRepModel, face: int) -> str:
     return f"{model.source_revision}:face:{face}"
 
 
-def _overlap(first: np.ndarray, second: np.ndarray) -> bool:
+def overlap(first: np.ndarray, second: np.ndarray) -> bool:
     return bool(np.all(first[0] <= second[1]) and np.all(second[0] <= first[1]))
 
 
-def _source_arcs(state: _Arrangement) -> None:
+class ArcPairIntersection(StrictModule):
+    result: CurveIntersectionResult | None
+
+
+@checked
+def intersect_arc_pair(
+    first: Arc,
+    second: Arc,
+    policy: ParametricIntersectionPolicy | Arrangement,
+    *,
+    intersection: Callable[
+        [AbstractTrimCurve, AbstractTrimCurve], CurveIntersectionResult
+    ]
+    | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> ArcPairIntersection:
+    """Intersect overlapping arc enclosures without charging caller work counters."""
+    first_box = first.trim.enclosure(
+        *first.trim.parameter_interval, preparations=preparations, budget=budget
+    )
+    second_box = second.trim.enclosure(
+        *second.trim.parameter_interval, preparations=preparations, budget=budget
+    )
+    if not overlap(first_box, second_box):
+        return ArcPairIntersection(None)
+    if intersection is not None:
+        return ArcPairIntersection(intersection(first.trim, second.trim))
+    match policy:
+        case Arrangement():
+            policy_ = remaining_intersection_policy(policy)
+        case ParametricIntersectionPolicy():
+            policy_ = policy
+        case _:
+            raise TypeError(
+                "intersect_arc_pair.policy must be an intersection policy or arrangement; "
+                f"got {type(policy).__name__}"
+            )
+    result = intersect_trim_curves(
+        first.trim,
+        second.trim,
+        policy=policy_,
+        preparations=preparations,
+        budget=budget,
+    )
+    return ArcPairIntersection(result)
+
+
+@checked
+def source_arcs(state: Arrangement) -> None:
     for model_index, model in enumerate(state.models):
         geometry = model.geometry
         if geometry is None:
             raise BRepBooleanFailure(
-                "source has no authoritative curve/face topology", (model.model_id,)
+                "BRepBoolean.source.geometry must contain curve/face topology; got None",
+                (model.model_id,),
             )
         points = np.asarray(geometry.vertex_points)
         ranges = np.asarray(geometry.edge_ranges)
@@ -236,7 +306,7 @@ def _source_arcs(state: _Arrangement) -> None:
                     last_node = f"face:{model_index}:{face}:loop:{loop_index}:corner:{(ordinal + 1) % len(loop)}"
                     first_vertex = f"source:{model_index}:vertex:{start}"
                     last_vertex = f"source:{model_index}:vertex:{end}"
-                    arc = _Arc(
+                    arc = Arc(
                         token,
                         owner,
                         trim,
@@ -253,7 +323,7 @@ def _source_arcs(state: _Arrangement) -> None:
                     )
                     arcs.append(arc)
                     state.cuts[token] = [
-                        _Cut(
+                        Cut(
                             0.0,
                             0.0,
                             0.0,
@@ -263,7 +333,7 @@ def _source_arcs(state: _Arrangement) -> None:
                             geometry.vertex_roots[start],
                             points[start],
                         ),
-                        _Cut(
+                        Cut(
                             1.0,
                             1.0,
                             1.0,
@@ -278,11 +348,12 @@ def _source_arcs(state: _Arrangement) -> None:
             state.domains[owner] = state.queries[model_index].faces[face].trim_domain
 
 
-def _check_surface_result(
-    state: _Arrangement,
+@checked
+def check_surface_result(
+    state: Arrangement,
     result: SurfaceIntersectionResult,
-    first: _Face,
-    second: _Face,
+    first: FaceOwner,
+    second: FaceOwner,
 ) -> None:
     state.consume(result.work.boxes_processed + result.work.march_steps)
     sources = tuple(
@@ -291,16 +362,17 @@ def _check_surface_result(
     if not result.complete:
         reasons = ",".join(sorted({region.reason for region in result.unresolved}))
         raise BRepBooleanFailure(
-            f"surface intersection discovery unresolved ({reasons})", sources
+            f"BRepBoolean.surface_intersection must resolve discovery; got {reasons}",
+            sources,
         )
     if result.coincident:
         raise BRepBooleanFailure(
-            "coincident curved face arrangement requires a certified parameter correspondence",
+            "BRepBoolean.coincident_faces must have certified parameter correspondence; got unresolved correspondence",
             sources,
         )
 
 
-def _periodic_transition(
+def periodic_transition(
     curve: IntersectionCurve,
     transition: int,
     side: IntersectionCurveSide | None = None,
@@ -315,30 +387,31 @@ def _periodic_transition(
     )
 
 
-def _branch_arc(
-    state: _Arrangement,
+@checked
+def branch_arc(
+    state: Arrangement,
     curve: IntersectionCurve,
-    owner: _Face,
+    owner: FaceOwner,
     side: IntersectionCurveSide,
     first: int,
     last: int,
     *,
-    owners: tuple[_Face, _Face],
+    owners: tuple[FaceOwner, FaceOwner],
 ) -> None:
     pcurve = curve.p_curve(side)
     local = IntersectionPCurve(curve, side, first=float(first), last=float(last))
     first_vertex = f"branch:{curve.branch_id}:node:{first}"
     final = 0 if curve.closed and last == curve.num_charts else last
     last_vertex = f"branch:{curve.branch_id}:node:{final}"
-    first_seam = _periodic_transition(curve, (first - 1) % curve.num_charts, side)
-    last_seam = _periodic_transition(curve, (last - 1) % curve.num_charts, side)
+    first_seam = periodic_transition(curve, (first - 1) % curve.num_charts, side)
+    last_seam = periodic_transition(curve, (last - 1) % curve.num_charts, side)
     first_sheet = "after" if first_seam else "common"
     last_sheet = "before" if last_seam else "common"
     first_node = f"{first_vertex}:face:{owner}:sheet:{first_sheet}"
     last_node = f"{last_vertex}:face:{owner}:sheet:{last_sheet}"
     token = f"branch:{curve.branch_id}:owners:{owners}:face:{owner}:span:{first}:{last}"
     state.branch_owners[token] = owners
-    arc = _Arc(
+    arc = Arc(
         token,
         owner,
         local,
@@ -364,17 +437,20 @@ def _branch_arc(
         last_binding.primary,
         IntersectionCurvePointRoot,
     ):
-        raise RuntimeError("Fixed branch factories must return fixed parameter roots.")
+        raise RuntimeError(
+            "BRepBoolean.branch.endpoints must retain fixed parameter roots; got another endpoint family"
+        )
     if final == 0 and first == 0 and first_binding.root_id != last_binding.root_id:
         raise BRepBooleanFailure(
-            "closed branch endpoint identities disagree", (curve.branch_id,)
+            "BRepBoolean.closed_branch.endpoints must share their vertex identity; got different identities",
+            (curve.branch_id,),
         )
     first_endpoint = TrimRootEndpoint(first_binding.primary, "first")
     last_endpoint = TrimRootEndpoint(last_binding.primary, "first")
     state.vertex_bindings.setdefault(first_vertex, first_binding)
     state.vertex_bindings.setdefault(last_vertex, last_binding)
     state.cuts[token] = [
-        _Cut(
+        Cut(
             float(first),
             float(first),
             float(first),
@@ -384,7 +460,7 @@ def _branch_arc(
             first_binding,
             first_binding.evaluate()[0],
         ),
-        _Cut(
+        Cut(
             float(last),
             float(last),
             float(last),
@@ -397,11 +473,18 @@ def _branch_arc(
     ]
 
 
-def _arc_area_bounds(
-    curve: AbstractTrimCurve, first: float, last: float
+def arc_area_bounds(
+    curve: AbstractTrimCurve,
+    first: float,
+    last: float,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[float, float]:
-    box = curve.enclosure(first, last)
-    derivative = curve.derivative_bounds(first, last)
+    box = curve.enclosure(first, last, preparations=preparations, budget=budget)
+    derivative = curve.derivative_bounds(
+        first, last, preparations=preparations, budget=budget
+    )
     forward = interval_multiply(
         (box[0, 0], box[1, 0]), (derivative[0][1], derivative[1][1])
     )
@@ -416,7 +499,13 @@ def _arc_area_bounds(
     return float(result[0]), float(result[1])
 
 
-def _loop_sign(loop: CurveTrimLoop, maximum_cells: int) -> int:
+def _loop_sign(
+    loop: CurveTrimLoop,
+    maximum_cells: int,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> int:
     cells = [
         (loop.curves[int(index)], float(first), float(last))
         for index, first, last in zip(
@@ -424,41 +513,67 @@ def _loop_sign(loop: CurveTrimLoop, maximum_cells: int) -> int:
         )
     ]
     if len(cells) > maximum_cells:
-        raise BRepBooleanFailure("oriented trim cover exceeds its area-sign budget")
+        raise BRepBooleanFailure(
+            "BRepBoolean.trim.cover must fit its area-sign work limit; got an oversized cover"
+        )
     while True:
-        intervals = [_arc_area_bounds(curve, first, last) for curve, first, last in cells]
+        intervals = [
+            arc_area_bounds(curve, first, last, preparations=preparations, budget=budget)
+            for curve, first, last in cells
+        ]
         lower, upper = np.asarray(0.0, np.float64), np.asarray(0.0, np.float64)
         for a, b in intervals:
             lower, upper = interval_add((lower, upper), (np.asarray(a), np.asarray(b)))
+        lower = np.asarray(lower, dtype=np.float64)
+        upper = np.asarray(upper, dtype=np.float64)
         if lower > 0.0:
             return 1
         if upper < 0.0:
             return -1
         if len(cells) * 2 > maximum_cells:
-            raise BRepBooleanFailure("oriented trim area sign budget exhausted")
+            raise BRepBooleanFailure(
+                "BRepBoolean.trim.area_sign must fit its work limit; got area-sign budget exhausted"
+            )
         following = []
         for curve, first, last in cells:
             middle = 0.5 * (first + last)
             if not first < middle < last:
-                raise BRepBooleanFailure("oriented trim area sign is unresolvable")
+                raise BRepBooleanFailure(
+                    "BRepBoolean.trim.area_sign must separate from zero; got an unresolved sign"
+                )
             following.extend(((curve, first, middle), (curve, middle, last)))
         cells = following
 
 
-def _trim_box_status(domain: TrimDomain, box: np.ndarray) -> int:
+@checked
+def trim_box_status(
+    domain: TrimDomain,
+    box: np.ndarray,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> int:
     for loop in domain.loops:
-        if isinstance(loop, CurveTrimLoop):
-            lower = np.concatenate((loop.arc_lower, loop.junction_lower))
-            upper = np.concatenate((loop.arc_upper, loop.junction_upper))
-        elif isinstance(loop, PolygonTrimLoop):
-            points = np.asarray(loop.vertices)
-            following = np.roll(points, -1, axis=0)
-            lower, upper = np.minimum(points, following), np.maximum(points, following)
-        else:
-            raise TypeError("Unknown exact trim-loop representation.")
+        match loop:
+            case CurveTrimLoop():
+                lower = np.concatenate((loop.arc_lower, loop.junction_lower))
+                upper = np.concatenate((loop.arc_upper, loop.junction_upper))
+            case PolygonTrimLoop():
+                points = np.asarray(loop.vertices)
+                following = np.roll(points, -1, axis=0)
+                lower, upper = (
+                    np.minimum(points, following),
+                    np.maximum(points, following),
+                )
+            case _:
+                raise TypeError(
+                    "BRepBoolean.trim.loops must use supported polygon or curve loops; got another representation"
+                )
         if np.any(np.all(lower <= box[1], axis=1) & np.all(upper >= box[0], axis=1)):
             return 0
-    decision = domain.classify((0.5 * (box[0] + box[1]))[None])
+    decision = domain.classify(
+        (0.5 * (box[0] + box[1]))[None], preparations=preparations, budget=budget
+    )
     if not decision.resolved[0]:
         return 0
     return 1 if decision.inside[0] else -1
@@ -471,21 +586,29 @@ def _shell_volume_sign(
     signs: np.ndarray,
     faces: tuple[int, ...],
     maximum_cells: int,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> int:
     functions = []
     cell_faces = []
     cells = []
     for face in faces:
-        for piece in surface_pieces(SurfaceRegion(patches[face], bounds[face])):
+        for piece in surface_pieces(
+            SurfaceRegion(
+                patches[face], bounds[face], budget=budget, preparations=preparations
+            ),
+            budget=budget,
+        ):
             if len(functions) >= maximum_cells:
                 raise BRepBooleanFailure(
-                    "oriented shell initial cover exceeds its cell budget"
+                    "BRepBoolean.shell.cover must fit maximum_cells; got an oversized initial cover"
                 )
             evaluator = piece.evaluator
 
             def integrand(
                 uv: jax.Array,
-                evaluator: SurfaceEvaluator = evaluator,
+                evaluator: AbstractSurfacePatch = evaluator,
             ) -> jax.Array:
                 point = evaluator.evaluate(uv)
                 frame = jax.jacfwd(evaluator.evaluate)(uv)
@@ -503,12 +626,28 @@ def _shell_volume_sign(
             cell_faces.append(face)
             cells.append((index, np.stack((piece.lower, piece.upper))))
 
-    def cell_contribution(index: int, box: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def cell_contribution(
+        index: int,
+        box: np.ndarray,
+        *,
+        preparations: TrimRequestPreparations | None = preparations,
+        budget: CoordinateEnclosureBudget = budget,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
         face = cell_faces[index]
-        status = _trim_box_status(domains[face], box)
+        status = trim_box_status(
+            domains[face], box, preparations=preparations, budget=budget
+        )
         if status < 0:
             return np.asarray(0.0, np.float64), np.asarray(0.0, np.float64)
-        lower, upper = functions[index].evaluate(box[0][None], box[1][None])
+        lower, upper = evaluate_interval(
+            functions[index],
+            box[0][None],
+            box[1][None],
+            budget=budget,
+            preparations=preparations,
+        )
         integrand_bounds = lower[0], upper[0]
         if signs[face] < 0:
             integrand_bounds = -integrand_bounds[1], -integrand_bounds[0]
@@ -527,38 +666,72 @@ def _shell_volume_sign(
                 np.nextafter(box[1, 1] - box[0, 1], np.inf),
             ),
         )
-        return interval_multiply(integrand_bounds, area)
+        contribution = interval_multiply(integrand_bounds, area)
+        return (
+            np.asarray(contribution[0], dtype=np.float64),
+            np.asarray(contribution[1], dtype=np.float64),
+        )
 
-    bounded_cells = [(index, box, cell_contribution(index, box)) for index, box in cells]
+    bounded_cells = [
+        (
+            index,
+            box,
+            cell_contribution(index, box, preparations=preparations, budget=budget),
+        )
+        for index, box in cells
+    ]
     while True:
         total = np.asarray(0.0, np.float64), np.asarray(0.0, np.float64)
         widths = []
         for _, _, contribution in bounded_cells:
             total = interval_add(total, contribution)
             widths.append(float(contribution[1] - contribution[0]))
-        if total[0] > 0.0:
+        total_lower = np.asarray(total[0], dtype=np.float64)
+        total_upper = np.asarray(total[1], dtype=np.float64)
+        if total_lower > 0.0:
             return 1
-        if total[1] < 0.0:
+        if total_upper < 0.0:
             return -1
         if len(bounded_cells) >= maximum_cells:
-            raise BRepBooleanFailure("oriented shell volume sign budget exhausted")
+            raise BRepBooleanFailure(
+                "BRepBoolean.shell.volume_sign must fit its work limit; got volume-sign budget exhausted"
+            )
         worst = int(np.argmax(widths))
         index, box, _ = bounded_cells.pop(worst)
         axis = int(np.argmax(box[1] - box[0]))
         middle = 0.5 * (box[0, axis] + box[1, axis])
         if not box[0, axis] < middle < box[1, axis]:
-            raise BRepBooleanFailure("oriented shell volume sign cannot be resolved")
+            raise BRepBooleanFailure(
+                "BRepBoolean.shell.volume_sign must separate from zero; got an unresolved sign"
+            )
         first, second = box.copy(), box.copy()
         first[1, axis], second[0, axis] = middle, middle
-        bounded_cells.append((index, first, cell_contribution(index, first)))
-        bounded_cells.append((index, second, cell_contribution(index, second)))
+        bounded_cells.append(
+            (
+                index,
+                first,
+                cell_contribution(index, first, preparations=preparations, budget=budget),
+            )
+        )
+        bounded_cells.append(
+            (
+                index,
+                second,
+                cell_contribution(
+                    index, second, preparations=preparations, budget=budget
+                ),
+            )
+        )
 
 
 def _edge_spatial_roots(
-    state: _Arrangement,
-    source: _Face,
+    state: Arrangement,
+    source: FaceOwner,
     edge: int,
-    opposite: _Face,
+    opposite: FaceOwner,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[CurveSurfaceIntersectionRoot, ...]:
     key = source[0], edge, opposite[0], opposite[1]
     if key in state.spatial_roots:
@@ -566,36 +739,43 @@ def _edge_spatial_roots(
     model = state.models[source[0]]
     geometry = model.geometry
     if geometry is None:
-        raise BRepBooleanFailure("source edge has no exact geometry")
+        raise BRepBooleanFailure(
+            "BRepBoolean.source_edge.geometry must be defined; got None"
+        )
     curve_index = geometry.edge_curves[edge]
     if curve_index < 0:
         raise BRepBooleanFailure(
-            "a degenerate source edge meets a regular intersection branch"
+            "BRepBoolean.source_edge.curve must be regular at the branch; got a degenerate edge"
         )
     curve = geometry.curves[curve_index]
     if isinstance(curve, IntersectionCurve):
         raise BRepBooleanFailure(
-            "source intersection-edge discovery requires coupled spatial range isolation",
+            "BRepBoolean.source_edge.curve must support coupled spatial range isolation; got an intersection carrier",
             (f"{model.source_revision}:edge:{edge}",),
         )
     first, last = np.asarray(geometry.edge_ranges)[edge]
     other = state.models[opposite[0]]
     region = SurfaceRegion(
-        other.patches[opposite[1]], np.asarray(other.parameter_bounds)[opposite[1]]
+        other.patches[opposite[1]],
+        np.asarray(other.parameter_bounds)[opposite[1]],
+        budget=budget,
+        preparations=preparations,
     )
     result = intersect_curve_region(
         CurveRange(curve, float(first), float(last)),
         region,
-        policy=_remaining_intersection_policy(state),
+        policy=remaining_intersection_policy(state),
+        preparations=preparations,
+        coordinate_budget=budget,
     )
     state.consume(result.work.boxes_processed)
     if not result.complete or result.coincident:
         raise BRepBooleanFailure(
-            "source-edge spatial roots are unresolved or coincident",
+            "BRepBoolean.source_edge.roots must be isolated and resolved; got unresolved or coincident roots",
             (f"{model.source_revision}:edge:{edge}", _face_id(other, opposite[1])),
         )
     points = sorted(
-        (point for point in result.points if point.kind == "transversal"),
+        (point for point in result.points if point.kind == "crossing"),
         key=lambda point: float(point.parameters[0]),
     )
     roots = tuple(
@@ -604,6 +784,8 @@ def _edge_spatial_roots(
             region,
             parameter_lower=point.parameter_lower,
             parameter_upper=point.parameter_upper,
+            budget=budget,
+            preparations=preparations,
         )
         for point in points
     )
@@ -611,7 +793,9 @@ def _edge_spatial_roots(
         roots[index].parameter_upper[0] >= roots[index + 1].parameter_lower[0]
         for index in range(len(roots) - 1)
     ):
-        raise BRepBooleanFailure("source-edge spatial root order is unresolved")
+        raise BRepBooleanFailure(
+            "BRepBoolean.source_edge.roots must have disjoint ordered intervals; got overlapping intervals"
+        )
     state.spatial_roots[key] = roots
     return roots
 
@@ -638,24 +822,32 @@ def _normalize_periodic_box(
 
 
 def _prove_edge_root_alias(
-    state: _Arrangement,
+    state: Arrangement,
     root: TrimIntersectionRoot,
-    source_arc: _Arc,
-    branch_arc: _Arc,
+    source_arc: Arc,
+    branch_arc: Arc,
     source_operand: int,
     branch_operand: int,
     spatial: CurveSurfaceIntersectionRoot,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
-    from ._intersection import _CurveSurfaceSystem, _krawczyk, _prepare
 
     source_endpoint = TrimRootEndpoint(root, "first" if source_operand == 0 else "second")
-    t_lower, t_upper = source_endpoint.parameter_enclosure()
+    t_lower, t_upper = source_endpoint.parameter_enclosure(
+        preparations=preparations, budget=budget
+    )
     branch = branch_arc.branch
     if branch is None:
-        raise BRepBooleanFailure("spatial alias requires an authoritative branch")
+        raise BRepBooleanFailure(
+            "BRepBoolean.spatial_alias.branch must be defined; got None"
+        )
     tau_lower = max(0.0, float(root.parameter_lower[branch_operand]))
     tau_upper = min(float(branch.num_charts), float(root.parameter_upper[branch_operand]))
-    coupled = branch.parameter_enclosures(tau_lower, tau_upper)
+    coupled = branch.parameter_enclosures(
+        tau_lower, tau_upper, preparations=preparations, budget=budget
+    )
     first, second = state.branch_owners[branch_arc.token]
     columns = slice(2, 4) if branch_arc.owner == first else slice(0, 2)
     uv_lower = np.min(coupled[:, 0, columns], axis=0)
@@ -684,34 +876,48 @@ def _prove_edge_root_alias(
     if isinstance(spatial.curve, IntersectionCurve):
         evaluator = spatial.curve
     else:
-        pieces = curve_pieces(CurveRange(spatial.curve, float(lower[0]), float(upper[0])))
+        pieces = curve_pieces(
+            CurveRange(spatial.curve, float(lower[0]), float(upper[0])), budget=budget
+        )
         if len(pieces) != 1:
-            raise BRepBooleanFailure("spatial alias crosses an unresolved source knot")
+            raise BRepBooleanFailure(
+                "BRepBoolean.spatial_alias.curve must lie in one source knot piece; got multiple pieces"
+            )
         evaluator = pieces[0].evaluator
     pieces = [
         piece
-        for piece in surface_pieces(spatial.surface)
+        for piece in surface_pieces(spatial.surface, budget=budget)
         if np.all(lower[1:] >= piece.lower) and np.all(upper[1:] <= piece.upper)
     ]
     if len(pieces) != 1:
         raise BRepBooleanFailure(
-            "spatial alias crosses an unresolved source chart boundary"
+            "BRepBoolean.spatial_alias.surface must lie in one source chart piece; got multiple pieces"
         )
-    prepared = _prepare(_CurveSurfaceSystem(evaluator, pieces[0].evaluator), 3, 1)
+    prepared = prepare(
+        CurveSurfaceSystem(evaluator, pieces[0].evaluator),
+        3,
+        1,
+        preparations=preparations,
+    )
     state.consume(1)
-    inclusion = _krawczyk(prepared, lower[None], upper[None])
+    inclusion = krawczyk(
+        prepared, lower[None], upper[None], budget=budget, preparations=preparations
+    )
     if not bool(inclusion.certified[0]):
         raise BRepBooleanFailure(
-            "adjacent UV roots have no unique shared spatial root certificate",
+            "BRepBoolean.spatial_alias.roots must share a unique spatial certificate; got failed certification",
             (source_arc.token, branch_arc.token),
         )
 
 
-def _event_vertex(
-    state: _Arrangement,
+def event_vertex(
+    state: Arrangement,
     root: TrimIntersectionRoot,
-    first: _Arc,
-    second: _Arc,
+    first: Arc,
+    second: Arc,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> str:
     source_arc = first if first.source_edge is not None else second
     branch_arc = second if source_arc is first else first
@@ -720,10 +926,17 @@ def _event_vertex(
         owner_a, owner_b = state.branch_owners[branch_arc.token]
         opposite = owner_b if source_arc.owner == owner_a else owner_a
         roots = _edge_spatial_roots(
-            state, source_arc.owner, source_arc.source_edge, opposite
+            state,
+            source_arc.owner,
+            source_arc.source_edge,
+            opposite,
+            preparations=preparations,
+            budget=budget,
         )
         endpoint = TrimRootEndpoint(root, "first" if source_operand == 0 else "second")
-        lower, upper = endpoint.parameter_enclosure()
+        lower, upper = endpoint.parameter_enclosure(
+            preparations=preparations, budget=budget
+        )
         matches = [
             spatial
             for spatial in roots
@@ -731,12 +944,20 @@ def _event_vertex(
         ]
         if len(matches) != 1:
             raise BRepBooleanFailure(
-                "trim and spatial root correspondence is not unique",
+                "BRepBoolean.trim_root must correspond to one spatial root; got another candidate count",
                 (source_arc.token, branch_arc.token),
             )
         spatial = matches[0]
         _prove_edge_root_alias(
-            state, root, source_arc, branch_arc, source_operand, branch_operand, spatial
+            state,
+            root,
+            source_arc,
+            branch_arc,
+            source_operand,
+            branch_operand,
+            spatial,
+            preparations=preparations,
+            budget=budget,
         )
         vertex = f"spatial-root:{spatial.root_id}"
         state.vertex_spatial[vertex] = spatial
@@ -748,7 +969,9 @@ def _event_vertex(
             second_owners[1] if second.owner == second_owners[0] else second_owners[0]
         )
         if other_a[0] != other_b[0]:
-            raise BRepBooleanFailure("triple junction source ownership is inconsistent")
+            raise BRepBooleanFailure(
+                "BRepBoolean.triple_junction.sources must agree on source ownership; got incompatible owners"
+            )
         model = state.models[other_a[0]]
         common = set(model.topology.face_edges[other_a[1]]) & set(
             model.topology.face_edges[other_b[1]]
@@ -756,20 +979,36 @@ def _event_vertex(
         candidates = [
             (edge, spatial)
             for edge in sorted(common)
-            for spatial in _edge_spatial_roots(state, other_a, edge, first.owner)
+            for spatial in _edge_spatial_roots(
+                state,
+                other_a,
+                edge,
+                first.owner,
+                preparations=preparations,
+                budget=budget,
+            )
         ]
         point_box = np.asarray(
             state.models[first.owner[0]]
             .patches[first.owner[1]]
-            .bounding_box(root.point_enclosure())
+            .bounding_box(
+                root.point_enclosure(preparations=preparations, budget=budget),
+                preparations=preparations,
+                budget=budget,
+            )
         )
         matches = [
             (edge, spatial)
             for edge, spatial in candidates
-            if _overlap(point_box, spatial.point_enclosure())
+            if overlap(
+                point_box,
+                spatial.point_enclosure(preparations=preparations, budget=budget),
+            )
         ]
         if len(matches) != 1:
-            raise BRepBooleanFailure("triple point has no unique source-edge witness")
+            raise BRepBooleanFailure(
+                "BRepBoolean.triple_junction.source_edge must have one supporting root; got another root count"
+            )
         edge, spatial = matches[0]
         joint, lifts = _triple_vertex_certificate(
             state,
@@ -779,21 +1018,25 @@ def _event_vertex(
             other_b,
             edge,
             spatial,
+            preparations=preparations,
+            budget=budget,
         )
         vertex = f"spatial-root:{spatial.root_id}"
         state.vertex_spatial[vertex] = spatial
         state.vertex_joint[vertex] = joint
         state.vertex_lifts[vertex] = lifts
     else:
-        raise BRepBooleanFailure("a source boundary self-intersection was not declared")
+        raise BRepBooleanFailure(
+            "BRepBoolean.source_boundary must declare every self-intersection; got an undeclared intersection"
+        )
     patch = state.models[first.owner[0]].patches[first.owner[1]]
     state.vertex_aliases.setdefault(vertex, []).append((patch, root))
     return vertex
 
 
-def _add_root_cut(
-    state: _Arrangement,
-    arc: _Arc,
+def add_root_cut(
+    state: Arrangement,
+    arc: Arc,
     root: TrimIntersectionRoot,
     operand: int,
     vertex: str,
@@ -814,11 +1057,11 @@ def _add_root_cut(
     elif lower <= last <= upper:
         node = arc.last_node
     state.cuts[arc.token].append(
-        _Cut(parameter, lower, upper, node, vertex, endpoint, None, point)
+        Cut(parameter, lower, upper, node, vertex, endpoint, None, point)
     )
 
 
-def _piece_trim(piece: _Piece) -> CurveTrimSegment:
+def piece_trim(piece: Piece) -> CurveTrimSegment:
     arc = piece.arc
     a = arc.offset + arc.scale * piece.first.parameter
     b = arc.offset + arc.scale * piece.last.parameter
@@ -838,7 +1081,7 @@ def _piece_trim(piece: _Piece) -> CurveTrimSegment:
     )
 
 
-def _ordered_cuts(state: _Arrangement, arc: _Arc) -> tuple[_Cut, ...]:
+def ordered_cuts(state: Arrangement, arc: Arc) -> tuple[Cut, ...]:
     cuts = sorted(state.cuts[arc.token], key=lambda cut: cut.parameter)
     result = []
     for cut in cuts:
@@ -846,7 +1089,7 @@ def _ordered_cuts(state: _Arrangement, arc: _Arc) -> tuple[_Cut, ...]:
             previous = result[-1]
             if previous.vertex != cut.vertex:
                 raise BRepBooleanFailure(
-                    "root ordering or boundary endpoint identity is unresolved",
+                    "BRepBoolean.arc.cuts must have ordered intervals or common vertex identity; got incompatible overlapping cuts",
                     (arc.token,),
                 )
             if previous.endpoint is None and cut.endpoint is not None:
@@ -856,8 +1099,8 @@ def _ordered_cuts(state: _Arrangement, arc: _Arc) -> tuple[_Cut, ...]:
     return tuple(result)
 
 
-def _propagate_branch_cuts(state: _Arrangement) -> None:
-    branch_cuts: dict[str, dict[str, tuple[_Cut, _Arc]]] = {}
+def propagate_branch_cuts(state: Arrangement) -> None:
+    branch_cuts: dict[str, dict[str, tuple[Cut, Arc]]] = {}
     for arcs in state.arcs.values():
         for arc in arcs:
             if arc.branch is None:
@@ -881,7 +1124,7 @@ def _propagate_branch_cuts(state: _Arrangement) -> None:
                 if vertex in local or not first < cut.parameter < last:
                     continue
                 state.cuts[arc.token].append(
-                    _Cut(
+                    Cut(
                         cut.parameter,
                         cut.lower,
                         cut.upper,
@@ -893,10 +1136,12 @@ def _propagate_branch_cuts(state: _Arrangement) -> None:
                     )
                 )
             if len(state.cuts[arc.token]) > state.policy.sewing.maximum_coedges:
-                raise BRepBooleanFailure("coupled branch cut capacity exhausted")
+                raise BRepBooleanFailure(
+                    "BRepBoolean.branch.cuts must fit maximum_coedges; got branch cut capacity exhausted"
+                )
 
 
-def _piece_nodes(piece: _Piece) -> tuple[str, str]:
+def piece_nodes(piece: Piece) -> tuple[str, str]:
     return (
         (piece.first.node, piece.last.node)
         if piece.sense > 0
@@ -905,36 +1150,44 @@ def _piece_nodes(piece: _Piece) -> tuple[str, str]:
 
 
 @dataclass(frozen=True, slots=True)
-class _FaceFragment:
-    owner: _Face
-    loops: tuple[tuple[_Piece, ...], ...]
+class FaceFragment:
+    owner: FaceOwner
+    loops: tuple[tuple[Piece, ...], ...]
     domain: TrimDomain
     orientation: int
 
 
-@dataclass(frozen=True, slots=True)
-class _BuiltBoundary:
+class BuiltBoundary(StrictModule):
     geometry: BRepGeometry
     patches: tuple[AbstractSurfacePatch, ...]
     bounds: np.ndarray
     orientation: np.ndarray
     domains: tuple[TrimDomain, ...]
-    sources: tuple[_Face, ...]
-    tags: tuple[str, ...]
+    sources: tuple[FaceOwner, ...] = eqx.field(static=True)
+    tags: tuple[str, ...] = eqx.field(static=True)
 
 
-def _vertex_binding(state: _Arrangement, vertex: str) -> BRepVertexRoot | None:
+def _vertex_binding(
+    state: Arrangement,
+    vertex: str,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> BRepVertexRoot | None:
     if vertex in state.vertex_bindings:
         return state.vertex_bindings[vertex]
     if vertex in state.vertex_spatial:
         aliases = tuple(
-            BRepRootSupport(patch, root) for patch, root in state.vertex_aliases[vertex]
+            BRepRootSupport(patch, root, budget=budget, preparations=preparations)
+            for patch, root in state.vertex_aliases[vertex]
         )
         binding = BRepVertexRoot(
             state.vertex_spatial[vertex],
             aliases=aliases,
             joint_root=state.vertex_joint.get(vertex),
             source_edge_lifts=state.vertex_lifts.get(vertex, ()),
+            budget=budget,
+            preparations=preparations,
         )
     elif vertex in state.vertex_branch_points:
         curve, parameter = state.vertex_branch_points[vertex]
@@ -943,14 +1196,16 @@ def _vertex_binding(state: _Arrangement, vertex: str) -> BRepVertexRoot | None:
         model_text, index_text = vertex.removeprefix("source:").split(":vertex:", 1)
         geometry = state.models[int(model_text)].geometry
         if geometry is None:
-            raise BRepBooleanFailure("source vertex lost its authoritative geometry")
+            raise BRepBooleanFailure(
+                "BRepBoolean.source_vertex.geometry must be defined; got None"
+            )
         binding = geometry.vertex_roots[int(index_text)]
     state.vertex_bindings[vertex] = binding
     return binding
 
 
 def _edge_key(
-    piece: _Piece, source: CoincidentFaceArc | None = None
+    piece: Piece, source: CoincidentFaceArc | None = None
 ) -> tuple[str, str, str]:
     first, last = piece.first.vertex, piece.last.vertex
     if piece.arc.scale < 0.0:
@@ -973,15 +1228,15 @@ def _edge_key(
 def _endpoint_on_carrier(
     endpoint: RootEndpoint | None, carrier: BRepCurve | BRepPCurve
 ) -> RootEndpoint | None:
-    """Bind an authored native scalar to the retained exact source lift.
+    """Bind an authored native scalar to the retained source lift.
 
     Coincident chart transport changes the UV carrier, not its raw parameter.
-    The new carrier retains the original source expression and chart map.
+    The new carrier retains the source source expression and chart map.
     Isolated roots remain with their existing certified support definitions.
     """
     if not isinstance(endpoint, NativePeriodEndpoint) or (
-        canonical_fingerprint(_carrier_payload(endpoint.carrier))
-        == canonical_fingerprint(_carrier_payload(carrier))
+        canonical_fingerprint(carrier_payload(endpoint.carrier))
+        == canonical_fingerprint(carrier_payload(carrier))
     ):
         return endpoint
     return NativePeriodEndpoint(
@@ -993,160 +1248,218 @@ def _endpoint_on_carrier(
     )
 
 
-def _build_boundary(
-    state: _Arrangement,
-    fragments: tuple[_FaceFragment, ...],
+class _BoundVertex(StrictModule):
+    point: np.ndarray
+    binding: BRepVertexRoot | None
+
+
+def _certify_boundary_vertex(
+    state: Arrangement,
+    arc: Arc,
+    cut: Cut,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> _BoundVertex:
+    binding = _vertex_binding(state, cut.vertex, preparations=preparations, budget=budget)
+    if binding is None:
+        return _BoundVertex(cut.point, binding)
+    point, _, certified = binding.evaluate()
+    box = binding.point_enclosure(preparations=preparations, budget=budget)
+    radius = np.nextafter(
+        np.maximum(np.abs(box[0] - point), np.abs(box[1] - point)), np.inf
+    )
+    squared = interval_multiply((radius, radius), (radius, radius))
+    squared_lower = np.asarray(squared[0], dtype=np.float64)
+    squared_upper = np.asarray(squared[1], dtype=np.float64)
+    total = (np.asarray(0.0, np.float64), np.asarray(0.0, np.float64))
+    for axis in range(3):
+        total = interval_add(total, (squared_lower[axis], squared_upper[axis]))
+    total_upper = np.asarray(total[1], dtype=np.float64)
+    bound = np.nextafter(np.sqrt(total_upper), np.inf)
+    if (
+        not certified
+        or not np.isfinite(bound)
+        or bound > state.policy.construction_tolerance
+    ):
+        raise BRepBooleanFailure(
+            "BRepBoolean.vertex must have a certified positional bound within construction_tolerance; got uncertified, nonfinite, or excessive error",
+            (arc.token, cut.vertex),
+        )
+    return _BoundVertex(point, binding)
+
+
+class _BoundaryTopology(StrictModule):
+    vertices: list[np.ndarray] = eqx.field(default_factory=list)
+    vertex_roots: list[BRepVertexRoot | None] = eqx.field(default_factory=list)
+    vertex_ids: dict[str, int] = eqx.field(default_factory=dict)
+    curves: list[BRepCurve] = eqx.field(default_factory=list)
+    edge_curves: list[int] = eqx.field(default_factory=list)
+    edge_vertices: list[tuple[int, int]] = eqx.field(default_factory=list)
+    edge_ranges: list[tuple[float, float]] = eqx.field(default_factory=list)
+    edge_roots: list[tuple[RootEndpoint | None, RootEndpoint | None]] = eqx.field(
+        default_factory=list
+    )
+    edge_ids: dict[tuple[str, str, str], int] = eqx.field(default_factory=dict)
+    pcurves: list[BRepPCurve] = eqx.field(default_factory=list)
+    coedge_edges: list[int] = eqx.field(default_factory=list)
+    coedge_senses: list[int] = eqx.field(default_factory=list)
+    coedge_roots: list[tuple[RootEndpoint | None, RootEndpoint | None]] = eqx.field(
+        default_factory=list
+    )
+    face_loops: list[tuple[tuple[int, ...], ...]] = eqx.field(default_factory=list)
+    scalar_boxes: dict[tuple[int, int], list[tuple[float, float]]] = eqx.field(
+        default_factory=dict
+    )
+
+    def append_piece(
+        self,
+        state: Arrangement,
+        piece: Piece,
+        overlay_sources: Mapping[str, CoincidentFaceArc] | None,
+        *,
+        preparations: TrimRequestPreparations | None,
+        budget: CoordinateEnclosureBudget,
+    ) -> int:
+        arc = piece.arc
+        endpoints = (
+            (piece.first, piece.last) if arc.scale > 0.0 else (piece.last, piece.first)
+        )
+        ids = []
+        for cut in endpoints:
+            if cut.vertex not in self.vertex_ids:
+                prepared = _certify_boundary_vertex(
+                    state, arc, cut, preparations=preparations, budget=budget
+                )
+                self.vertex_ids[cut.vertex] = len(self.vertices)
+                self.vertices.append(prepared.point)
+                self.vertex_roots.append(prepared.binding)
+            ids.append(self.vertex_ids[cut.vertex])
+        source = None if overlay_sources is None else overlay_sources.get(arc.token)
+        key = _edge_key(piece, source)
+        if key not in self.edge_ids:
+            edge = len(self.edge_vertices)
+            self.edge_ids[key] = edge
+            if arc.curve is None:
+                self.edge_curves.append(-1)
+            else:
+                self.edge_curves.append(len(self.curves))
+                self.curves.append(arc.curve)
+            self.edge_vertices.append((ids[0], ids[1]))
+            self.edge_ranges.append(
+                (
+                    arc.offset + arc.scale * endpoints[0].parameter,
+                    arc.offset + arc.scale * endpoints[1].parameter,
+                )
+            )
+            self.edge_roots.append(
+                (
+                    endpoints[0].endpoint
+                    if arc.curve is None
+                    else _endpoint_on_carrier(endpoints[0].endpoint, arc.curve),
+                    endpoints[1].endpoint
+                    if arc.curve is None
+                    else _endpoint_on_carrier(endpoints[1].endpoint, arc.curve),
+                )
+            )
+        edge = self.edge_ids[key]
+        for endpoint, cut in enumerate(endpoints):
+            if cut.endpoint is not None:
+                self.scalar_boxes.setdefault((edge, endpoint), []).append(
+                    cut.endpoint.parameter_enclosure(
+                        preparations=preparations, budget=budget
+                    )
+                )
+        pcurve = arc.pcurve
+        if isinstance(pcurve, IntersectionPCurve):
+            first, last = self.edge_ranges[edge]
+            pcurve = IntersectionPCurve(
+                pcurve.curve, pcurve.side, first=float(first), last=float(last)
+            )
+        self.pcurves.append(pcurve)
+        coedge = len(self.coedge_edges)
+        self.coedge_edges.append(edge)
+        self.coedge_senses.append(piece.sense * (1 if arc.scale > 0.0 else -1))
+        self.coedge_roots.append(
+            (
+                _endpoint_on_carrier(endpoints[0].endpoint, pcurve),
+                _endpoint_on_carrier(endpoints[1].endpoint, pcurve),
+            )
+        )
+        return coedge
+
+    def geometry(
+        self,
+        state: Arrangement,
+        *,
+        preparations: TrimRequestPreparations | None,
+        budget: CoordinateEnclosureBudget,
+    ) -> BRepGeometry:
+        for (edge, endpoint), boxes in self.scalar_boxes.items():
+            lower, upper = max(box[0] for box in boxes), min(box[1] for box in boxes)
+            if lower > upper:
+                raise BRepBooleanFailure(
+                    "BRepBoolean.edge.endpoint_enclosures must have a common scalar interval; got disjoint intervals"
+                )
+            values = list(self.edge_ranges[edge])
+            values[endpoint] = 0.5 * (lower + upper)
+            self.edge_ranges[edge] = (values[0], values[1])
+        if len(self.coedge_edges) > state.policy.sewing.maximum_coedges:
+            raise BRepBooleanFailure(
+                "BRepBoolean.boundary.coedges must fit maximum_coedges; got coedge allocation budget exhausted"
+            )
+        return BRepGeometry(
+            vertex_points=np.asarray(self.vertices, np.float64).reshape((-1, 3)),
+            curves=tuple(self.curves),
+            edge_curves=tuple(self.edge_curves),
+            edge_ranges=np.asarray(self.edge_ranges, np.float64).reshape((-1, 2)),
+            edge_vertices=tuple(self.edge_vertices),
+            pcurves=tuple(self.pcurves),
+            coedge_edges=tuple(self.coedge_edges),
+            coedge_senses=tuple(self.coedge_senses),
+            face_loops=tuple(self.face_loops),
+            shell_faces=(),
+            shell_orientations=(),
+            solid_shells=(),
+            vertex_roots=tuple(self.vertex_roots),
+            edge_endpoint_roots=tuple(self.edge_roots),
+            coedge_endpoint_roots=tuple(self.coedge_roots),
+            budget=budget,
+            preparations=preparations,
+        )
+
+
+@checked
+def build_boundary(
+    state: Arrangement,
+    fragments: tuple[FaceFragment, ...],
     *,
     overlay_sources: Mapping[str, CoincidentFaceArc] | None = None,
     vertex_bindings: Mapping[str, BRepVertexRoot | None] | None = None,
-) -> _BuiltBoundary:
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> BuiltBoundary:
     if vertex_bindings is not None:
         state.vertex_bindings.update(vertex_bindings)
-    vertices = []
-    vertex_roots = []
-    vertex_ids: dict[str, int] = {}
-    curves = []
-    edge_curves = []
-    edge_vertices = []
-    edge_ranges = []
-    edge_roots = []
-    edge_ids: dict[tuple[str, str, str], int] = {}
-    pcurves = []
-    coedge_edges = []
-    coedge_senses = []
-    coedge_roots = []
-    face_loops = []
-    scalar_boxes: dict[tuple[int, int], list[tuple[float, float]]] = {}
+    topology = _BoundaryTopology()
     for fragment in fragments:
         loops = []
         for loop in fragment.loops:
             coedges = []
             for piece in loop:
-                arc = piece.arc
-                endpoints = (
-                    (piece.first, piece.last)
-                    if arc.scale > 0.0
-                    else (piece.last, piece.first)
-                )
-                ids = []
-                for cut in endpoints:
-                    if cut.vertex not in vertex_ids:
-                        binding = _vertex_binding(state, cut.vertex)
-                        if binding is None:
-                            point = cut.point
-                        else:
-                            point, _, certified = binding.evaluate()
-                            box = binding.point_enclosure()
-                            radius = np.nextafter(
-                                np.maximum(
-                                    np.abs(box[0] - point), np.abs(box[1] - point)
-                                ),
-                                np.inf,
-                            )
-                            squared = interval_multiply(
-                                (radius, radius), (radius, radius)
-                            )
-                            total = (
-                                np.asarray(0.0, np.float64),
-                                np.asarray(0.0, np.float64),
-                            )
-                            for axis in range(3):
-                                total = interval_add(
-                                    total, (squared[0][axis], squared[1][axis])
-                                )
-                            bound = np.nextafter(np.sqrt(total[1]), np.inf)
-                            if (
-                                not certified
-                                or not np.isfinite(bound)
-                                or bound > state.policy.construction_tolerance
-                            ):
-                                raise BRepBooleanFailure(
-                                    "constructed vertex misses its declared positional bound",
-                                    (arc.token, cut.vertex),
-                                )
-                        vertex_ids[cut.vertex] = len(vertices)
-                        vertices.append(point)
-                        vertex_roots.append(binding)
-                    ids.append(vertex_ids[cut.vertex])
-                source = (
-                    None if overlay_sources is None else overlay_sources.get(arc.token)
-                )
-                key = _edge_key(piece, source)
-                if key not in edge_ids:
-                    edge = len(edge_vertices)
-                    edge_ids[key] = edge
-                    if arc.curve is None:
-                        edge_curves.append(-1)
-                    else:
-                        edge_curves.append(len(curves))
-                        curves.append(arc.curve)
-                    edge_vertices.append((ids[0], ids[1]))
-                    edge_ranges.append(
-                        tuple(arc.offset + arc.scale * cut.parameter for cut in endpoints)
-                    )
-                    edge_roots.append(
-                        (
-                            endpoints[0].endpoint
-                            if arc.curve is None
-                            else _endpoint_on_carrier(endpoints[0].endpoint, arc.curve),
-                            endpoints[1].endpoint
-                            if arc.curve is None
-                            else _endpoint_on_carrier(endpoints[1].endpoint, arc.curve),
-                        )
-                    )
-                edge = edge_ids[key]
-                for endpoint, cut in enumerate(endpoints):
-                    if cut.endpoint is not None:
-                        scalar_boxes.setdefault((edge, endpoint), []).append(
-                            cut.endpoint.parameter_enclosure()
-                        )
-                pcurve = arc.pcurve
-                if isinstance(pcurve, IntersectionPCurve):
-                    first, last = edge_ranges[edge]
-                    pcurve = IntersectionPCurve(
-                        pcurve.curve, pcurve.side, first=float(first), last=float(last)
-                    )
-                pcurves.append(pcurve)
-                coedges.append(len(coedge_edges))
-                coedge_edges.append(edge)
-                coedge_senses.append(piece.sense * (1 if arc.scale > 0.0 else -1))
-                coedge_roots.append(
-                    (
-                        _endpoint_on_carrier(endpoints[0].endpoint, pcurve),
-                        _endpoint_on_carrier(endpoints[1].endpoint, pcurve),
+                coedges.append(
+                    topology.append_piece(
+                        state,
+                        piece,
+                        overlay_sources,
+                        preparations=preparations,
+                        budget=budget,
                     )
                 )
             loops.append(tuple(coedges))
-        face_loops.append(tuple(loops))
-    for (edge, endpoint), boxes in scalar_boxes.items():
-        lower, upper = max(box[0] for box in boxes), min(box[1] for box in boxes)
-        if lower > upper:
-            raise BRepBooleanFailure(
-                "shared coedge scalar source enclosures are inconsistent"
-            )
-        values = list(edge_ranges[edge])
-        values[endpoint] = 0.5 * (lower + upper)
-        edge_ranges[edge] = tuple(values)
-    if len(coedge_edges) > state.policy.sewing.maximum_coedges:
-        raise BRepBooleanFailure("curved boundary coedge allocation budget exhausted")
-    geometry = BRepGeometry(
-        vertex_points=np.asarray(vertices, np.float64).reshape((-1, 3)),
-        curves=tuple(curves),
-        edge_curves=tuple(edge_curves),
-        edge_ranges=np.asarray(edge_ranges, np.float64).reshape((-1, 2)),
-        edge_vertices=tuple(edge_vertices),
-        pcurves=tuple(pcurves),
-        coedge_edges=tuple(coedge_edges),
-        coedge_senses=tuple(coedge_senses),
-        face_loops=tuple(face_loops),
-        shell_faces=(),
-        shell_orientations=(),
-        solid_shells=(),
-        vertex_roots=tuple(vertex_roots),
-        edge_endpoint_roots=tuple(edge_roots),
-        coedge_endpoint_roots=tuple(coedge_roots),
-    )
-    return _BuiltBoundary(
+        topology.face_loops.append(tuple(loops))
+    geometry = topology.geometry(state, preparations=preparations, budget=budget)
+    return BuiltBoundary(
         geometry,
         tuple(
             state.models[fragment.owner[0]].patches[fragment.owner[1]]
@@ -1176,6 +1489,9 @@ def _with_shells(
     shells: tuple[tuple[int, ...], ...],
     shell_orientations: tuple[tuple[int, ...], ...],
     solids: tuple[tuple[int, ...], ...],
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
 ) -> BRepGeometry:
     return BRepGeometry(
         vertex_points=geometry.vertex_points,
@@ -1193,14 +1509,19 @@ def _with_shells(
         vertex_roots=geometry.vertex_roots,
         edge_endpoint_roots=geometry.edge_endpoint_roots,
         coedge_endpoint_roots=geometry.coedge_endpoint_roots,
+        preparations=preparations,
+        budget=budget,
     )
 
 
 def _shell_query_model(
-    state: _Arrangement,
-    built: _BuiltBoundary,
+    state: Arrangement,
+    built: BuiltBoundary,
     faces: tuple[int, ...],
     outward: np.ndarray,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
 ) -> BRepModel:
     orientation = np.asarray(built.orientation)
     geometry = _with_shells(
@@ -1208,6 +1529,8 @@ def _shell_query_model(
         (faces,),
         (tuple(int(outward[face] * orientation[face]) for face in faces),),
         ((0,),),
+        preparations=preparations,
+        budget=budget,
     )
     digest = canonical_fingerprint(
         {"kind": "boolean-shell-query", "geometry": geometry.geometry_id}
@@ -1253,35 +1576,49 @@ def _shell_query_model(
         mesh_chart_restriction_parameters=np.empty((0, 2), np.int64),
         triangle_occurrence_ids=np.empty((0,), np.int32),
         vertex_occurrence_ids=np.empty((0,), np.int32),
+        preparations=preparations,
+        budget=budget,
     )
 
 
-def _face_seed(domain: TrimDomain, bounds: np.ndarray, maximum_cells: int) -> np.ndarray:
+def _face_seed(
+    domain: TrimDomain,
+    bounds: np.ndarray,
+    maximum_cells: int,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
     count = 1
     while count * count <= maximum_cells:
         fractions = (np.arange(count, dtype=np.float64) + 0.5) / count
         points = np.asarray([(x, y) for x in fractions for y in fractions], np.float64)
         points = bounds[0] + points * (bounds[1] - bounds[0])
-        membership = domain.classify(points)
+        membership = domain.classify(points, preparations=preparations, budget=budget)
         candidates = np.flatnonzero(membership.inside & membership.resolved)
         if candidates.size:
             return points[candidates[0]]
         count *= 2
-    raise BRepBooleanFailure("trim fragment interior seed budget exhausted")
+    raise BRepBooleanFailure(
+        "BRepBoolean.trim.interior_seed must fit its search limit; got interior seed budget exhausted"
+    )
 
 
 def _oriented_solids(
-    state: _Arrangement,
-    built: _BuiltBoundary,
+    state: Arrangement,
+    built: BuiltBoundary,
     faces: tuple[int, ...],
     outward: np.ndarray,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, ...], ...]]:
     """Closed shells of one material set and their outer/cavity solid nesting.
 
     ``outward`` is each face's material-outward sign relative to its patch
     normal. Returned solids index the returned shells, outer shell first.
     """
-    shells = _shells(built.geometry, faces, outward)
+    shells_bank = shells(built.geometry, faces, outward)
     signs = tuple(
         _shell_volume_sign(
             built.patches,
@@ -1290,25 +1627,42 @@ def _oriented_solids(
             outward,
             shell,
             state.policy.maximum_cells,
+            preparations=preparations,
+            budget=budget,
         )
-        for shell in shells
+        for shell in shells_bank
     )
     outer = [index for index, sign in enumerate(signs) if sign > 0]
     if not outer:
-        raise BRepBooleanFailure("no positively oriented material shell survives")
-    if len(outer) == len(shells):
-        return shells, tuple((index,) for index in outer)
+        raise BRepBooleanFailure(
+            "BRepBoolean.shells must contain a positively oriented material shell; got none"
+        )
+    if len(outer) == len(shells_bank):
+        return shells_bank, tuple((index,) for index in outer)
     queries = {
         index: prepare_brep_query(
-            _shell_query_model(state, built, shells[index], outward)
+            _shell_query_model(
+                state,
+                built,
+                shells_bank[index],
+                outward,
+                preparations=preparations,
+                budget=budget,
+            ),
+            preparations=preparations,
+            budget=budget,
         )
         for index in outer
     }
     parent_contains: dict[tuple[int, int], bool] = {}
     for child in outer:
-        face = shells[child][0]
+        face = shells_bank[child][0]
         uv = _face_seed(
-            built.domains[face], built.bounds[face], state.policy.maximum_cells
+            built.domains[face],
+            built.bounds[face],
+            state.policy.maximum_cells,
+            preparations=preparations,
+            budget=budget,
         )
         point = np.asarray(built.patches[face].evaluate(jnp.asarray(uv, jnp.float64)))[
             None
@@ -1316,26 +1670,38 @@ def _oriented_solids(
         for parent, query in queries.items():
             if child == parent:
                 continue
-            membership = query.contains(point)
+            membership = query.contains(
+                point, preparations=preparations, coordinate_budget=budget
+            )
             if membership.unresolved[0]:
-                raise BRepBooleanFailure("positive shell containment order is unresolved")
+                raise BRepBooleanFailure(
+                    "BRepBoolean.shell.containment must be resolved; got an unresolved positive-shell query"
+                )
             parent_contains[parent, child] = bool(membership.inside[0])
     children: dict[int, list[int]] = {index: [] for index in outer}
     for index, sign in enumerate(signs):
         if sign > 0:
             continue
-        face = shells[index][0]
+        face = shells_bank[index][0]
         uv = _face_seed(
-            built.domains[face], built.bounds[face], state.policy.maximum_cells
+            built.domains[face],
+            built.bounds[face],
+            state.policy.maximum_cells,
+            preparations=preparations,
+            budget=budget,
         )
         point = np.asarray(built.patches[face].evaluate(jnp.asarray(uv, jnp.float64)))[
             None
         ]
         candidates = []
         for parent, query in queries.items():
-            membership = query.contains(point)
+            membership = query.contains(
+                point, preparations=preparations, coordinate_budget=budget
+            )
             if membership.unresolved[0]:
-                raise BRepBooleanFailure("cavity shell nesting is unresolved")
+                raise BRepBooleanFailure(
+                    "BRepBoolean.cavity.containment must be resolved; got an unresolved nesting query"
+                )
             if membership.inside[0]:
                 candidates.append(parent)
         immediate = [
@@ -1347,30 +1713,50 @@ def _oriented_solids(
         ]
         if len(immediate) != 1:
             raise BRepBooleanFailure(
-                "cavity shell has no unique immediate material owner"
+                "BRepBoolean.cavity.owner must identify one immediate containing shell; got another owner count"
             )
         children[immediate[0]].append(index)
-    return shells, tuple((index, *children[index]) for index in outer)
+    return shells_bank, tuple((index, *children[index]) for index in outer)
 
 
-def _reconstruct_solids(state: _Arrangement, built: _BuiltBoundary) -> BRepGeometry:
+@checked
+def reconstruct_solids(
+    state: Arrangement,
+    built: BuiltBoundary,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> BRepGeometry:
     if not built.patches:
         return built.geometry
     faces = tuple(range(len(built.patches)))
-    shells, solids = _oriented_solids(state, built, faces, np.asarray(built.orientation))
+    shells, solids = _oriented_solids(
+        state,
+        built,
+        faces,
+        np.asarray(built.orientation),
+        preparations=preparations,
+        budget=budget,
+    )
     return _with_shells(
         built.geometry,
         shells,
         tuple(tuple(1 for _ in shell) for shell in shells),
         solids,
+        preparations=preparations,
+        budget=budget,
     )
 
 
-def _reconstruct_region_solids(
-    state: _Arrangement,
-    built: _BuiltBoundary,
+@checked
+def reconstruct_region_solids(
+    state: Arrangement,
+    built: BuiltBoundary,
     sides: tuple[tuple[str | None, str | None], ...],
     regions: tuple[str, ...],
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[BRepGeometry, tuple[str, ...]]:
     """Shared-face solids of every owned region, in declared region order.
 
@@ -1390,7 +1776,9 @@ def _reconstruct_region_solids(
         outward = orientation.copy()
         for face in faces:
             outward[face] = 1.0 if sides[face][0] == region else -1.0
-        region_shells, region_solids = _oriented_solids(state, built, faces, outward)
+        region_shells, region_solids = _oriented_solids(
+            state, built, faces, outward, preparations=preparations, budget=budget
+        )
         offset = len(shells)
         shells.extend(region_shells)
         shell_orientations.extend(
@@ -1400,15 +1788,24 @@ def _reconstruct_region_solids(
         solids.extend(tuple(offset + shell for shell in solid) for solid in region_solids)
         owners.extend(region for _ in region_solids)
     return _with_shells(
-        built.geometry, tuple(shells), tuple(shell_orientations), tuple(solids)
+        built.geometry,
+        tuple(shells),
+        tuple(shell_orientations),
+        tuple(solids),
+        preparations=preparations,
+        budget=budget,
     ), tuple(owners)
 
 
-def _publish_curved(
-    state: _Arrangement,
-    built: _BuiltBoundary,
+@checked
+def publish_curved(
+    state: Arrangement,
+    built: BuiltBoundary,
     geometry: BRepGeometry,
     certificate: str,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> BRepModel:
     return assemble_brep_model(
         geometry,
@@ -1422,37 +1819,47 @@ def _publish_curved(
         source_digest=certificate,
         import_policy_id=certificate,
         tessellation=state.policy.tessellation,
+        preparations=preparations,
+        budget=budget,
     )
 
 
 def _triple_vertex_certificate(
-    state: _Arrangement,
+    state: Arrangement,
     root: TrimIntersectionRoot,
-    owner: _Face,
-    other_a: _Face,
-    other_b: _Face,
+    owner: FaceOwner,
+    other_a: FaceOwner,
+    other_b: FaceOwner,
     edge: int,
     spatial: CurveSurfaceIntersectionRoot,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[TripleSurfaceIntersectionRoot, tuple[BRepCurveSurfaceLift, ...]]:
-    from ._intersection import _joint_root_parameter_image
 
-    def source_region(face_owner: _Face) -> SurfaceRegion:
+    def source_region(face_owner: FaceOwner) -> SurfaceRegion:
         index, face = face_owner
         return SurfaceRegion(
             state.models[index].patches[face],
             np.asarray(state.models[index].parameter_bounds)[face],
+            preparations=preparations,
+            budget=budget,
         )
 
     regions = source_region(owner), source_region(other_a), source_region(other_b)
-    image = _joint_root_parameter_image(root, regions)
+    image = joint_root_parameter_image(
+        root, regions, preparations=preparations, budget=budget
+    )
     if image is None:
         raise BRepBooleanFailure(
-            "triple UV root does not retain its generating source surfaces"
+            "BRepBoolean.triple_root must retain all generating surface parameter images; got a missing image"
         )
     source = state.models[other_a[0]]
     geometry = source.geometry
     if geometry is None:
-        raise BRepBooleanFailure("source-edge triple lift lost its exact geometry")
+        raise BRepBooleanFailure(
+            "BRepBoolean.triple_lift.geometry must be defined; got None"
+        )
     first, last = (float(value) for value in np.asarray(geometry.edge_ranges)[edge])
     t_lower, t_upper = (
         float(spatial.parameter_lower[0]),
@@ -1468,15 +1875,34 @@ def _triple_vertex_certificate(
             if geometry.coedge_edges[coedge] == edge
         ]
         if len(coedges) != 1:
-            raise BRepBooleanFailure("triple source edge has no unique coedge lift")
+            raise BRepBooleanFailure(
+                "BRepBoolean.triple_lift.edge must have one coedge per incident face; got another coedge count"
+            )
         pcurve = geometry.pcurves[coedges[0]]
         patch = source.patches[face]
-        region = SurfaceRegion(patch, np.asarray(source.parameter_bounds)[face])
+        region = SurfaceRegion(
+            patch,
+            np.asarray(source.parameter_bounds)[face],
+            budget=budget,
+            preparations=preparations,
+        )
         lift = BRepCurveSurfaceLift(
-            geometry.curves[geometry.edge_curves[edge]], pcurve, region, first, last
+            geometry.curves[geometry.edge_curves[edge]],
+            pcurve,
+            region,
+            first,
+            last,
+            budget=budget,
+            preparations=preparations,
         )
         lifts.append(lift)
-        spatial_boxes.append(np.asarray(pcurve.bounding_box(t_lower, t_upper)))
+        spatial_boxes.append(
+            np.asarray(
+                pcurve.bounding_box(
+                    t_lower, t_upper, preparations=preparations, budget=budget
+                )
+            )
+        )
     spatial_image = np.concatenate(spatial_boxes, axis=1)
     lower, upper = (
         np.minimum(image[0], spatial_image[0]),
@@ -1492,46 +1918,210 @@ def _triple_vertex_certificate(
         np.nextafter(upper + margin, np.inf),
     )
     proof_regions = (
-        SurfaceRegion(regions[0].patch, np.stack((lower[0:2], upper[0:2]))),
-        SurfaceRegion(regions[1].patch, np.stack((lower[2:4], upper[2:4]))),
-        SurfaceRegion(regions[2].patch, np.stack((lower[4:6], upper[4:6]))),
+        SurfaceRegion(
+            regions[0].patch,
+            np.stack((lower[0:2], upper[0:2])),
+            budget=budget,
+            preparations=preparations,
+        ),
+        SurfaceRegion(
+            regions[1].patch,
+            np.stack((lower[2:4], upper[2:4])),
+            budget=budget,
+            preparations=preparations,
+        ),
+        SurfaceRegion(
+            regions[2].patch,
+            np.stack((lower[4:6], upper[4:6])),
+            budget=budget,
+            preparations=preparations,
+        ),
     )
     joint = TripleSurfaceIntersectionRoot(
-        *proof_regions, parameter_lower=lower, parameter_upper=upper
+        *proof_regions,
+        parameter_lower=lower,
+        parameter_upper=upper,
+        budget=budget,
+        preparations=preparations,
     )
-    if not joint.certifies_root(root):
+    if not joint.certifies_root(root, preparations=preparations, budget=budget):
         raise BRepBooleanFailure(
-            "triple UV event has no shared unique source-system certificate"
+            "BRepBoolean.triple_event must certify a shared unique source-system root; got failed certification"
         )
     return joint, tuple(lifts)
 
 
-def _boundary_spatial_events(state: _Arrangement) -> None:
-    from ._intersection import _source_pcurve_image
-    from ._patches import AbstractCurve
+class _SpatialSourceArc(StrictModule):
+    arc: Arc
+    edge: int = eqx.field(static=True)
 
+
+class _SpatialBranchArc(StrictModule):
+    arc: Arc
+    branch: IntersectionCurve
+
+
+class _FixedBranchCut(StrictModule):
+    cut: Cut
+    root: IntersectionCurvePointRoot
+
+
+class _SpatialArcPair(StrictModule):
+    branch: IntersectionCurve
+    side: IntersectionCurveSide = eqx.field(static=True)
+    whole_first: float = eqx.field(static=True)
+    whole_last: float = eqx.field(static=True)
+    span_first: float = eqx.field(static=True)
+    span_last: float = eqx.field(static=True)
+
+
+def _append_spatial_root_cuts(
+    state: Arrangement,
+    owner: FaceOwner,
+    source_arc: Arc,
+    source_pcurve: AbstractCurve,
+    branch_arc: Arc,
+    pair: _SpatialArcPair,
+    spatial: CurveSurfaceIntersectionRoot,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    branch, side = pair.branch, pair.side
+    span_first, span_last = pair.span_first, pair.span_last
+    source_box = source_pcurve_image(
+        source_pcurve,
+        float(spatial.parameter_lower[0]),
+        float(spatial.parameter_upper[0]),
+        preparations=preparations,
+        budget=budget,
+    )
+    opposite_box = np.stack((spatial.parameter_lower[1:], spatial.parameter_upper[1:]))
+    image = np.concatenate(
+        (source_box, opposite_box) if side == "first" else (opposite_box, source_box),
+        axis=1,
+    )
+    charts = [
+        chart
+        for chart in range(int(span_first), int(span_last))
+        if np.all(image[0] >= branch.box_lower[chart])
+        and np.all(image[1] <= branch.box_upper[chart])
+    ]
+    if not charts:
+        return
+    chart = charts[0]
+    branch_endpoint = BranchRootEndpoint(
+        spatial,
+        branch,
+        chart,
+        source_pcurve=source_pcurve,
+        source_side=side,
+        source_first=pair.whole_first,
+        source_last=pair.whole_last,
+        budget=budget,
+        preparations=preparations,
+    )
+    lower, upper = branch_endpoint.parameter_enclosure(
+        preparations=preparations, budget=budget
+    )
+    if upper < span_first or lower > span_last:
+        return
+    parameter = min(span_last, max(span_first, branch_endpoint.parameter))
+    if not lower <= parameter <= upper:
+        raise BRepBooleanFailure(
+            "BRepBoolean.source_root.parameter must lie inside its enclosure; got an outside representative"
+        )
+    source_endpoint = TrimRootEndpoint(
+        spatial,
+        "first",
+        source_pcurve=source_pcurve,
+        source_surface=SurfaceRegion(
+            state.models[owner[0]].patches[owner[1]],
+            np.asarray(state.models[owner[0]].parameter_bounds)[owner[1]],
+            budget=budget,
+            preparations=preparations,
+        ),
+    )
+    source_local = source_endpoint.affine(
+        1.0 / source_arc.scale, -source_arc.offset / source_arc.scale
+    )
+    source_lower, source_upper = source_local.parameter_enclosure(
+        preparations=preparations, budget=budget
+    )
+    if not 0.0 < source_lower < source_upper < 1.0:
+        raise BRepBooleanFailure(
+            "BRepBoolean.source_root.interval must lie strictly inside the source edge; got a corner root without a vertex alias",
+            (source_arc.token,),
+        )
+    vertex = f"spatial-root:{spatial.root_id}"
+    binding = BRepVertexRoot(spatial, budget=budget, preparations=preparations)
+    point = binding.evaluate()[0]
+    state.vertex_spatial[vertex] = spatial
+    state.vertex_aliases.setdefault(vertex, [])
+    state.vertex_bindings[vertex] = binding
+    node = f"spatial:{spatial.root_id}:face:{owner}"
+    alias_node = _bind_fixed_branch_alias(
+        state,
+        branch_arc,
+        branch_endpoint,
+        vertex,
+        binding,
+        point,
+        preparations=preparations,
+        budget=budget,
+    )
+    if alias_node is not None:
+        node = alias_node
+    state.cuts[source_arc.token].append(
+        Cut(
+            source_local.parameter,
+            source_lower,
+            source_upper,
+            node,
+            vertex,
+            source_endpoint,
+            binding,
+            point,
+        )
+    )
+    state.cuts[branch_arc.token].append(
+        Cut(parameter, lower, upper, node, vertex, branch_endpoint, binding, point)
+    )
+
+
+@checked
+def boundary_spatial_events(
+    state: Arrangement,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> None:
     for owner, arcs in sorted(state.arcs.items()):
         source_arcs = tuple(
-            arc for arc in arcs if arc.source_edge is not None and arc.curve is not None
+            _SpatialSourceArc(arc=arc, edge=arc.source_edge)
+            for arc in arcs
+            if arc.source_edge is not None and arc.curve is not None
         )
-        branch_arcs = tuple(arc for arc in arcs if arc.branch is not None)
-        for source_arc in source_arcs:
+        branch_arcs = tuple(
+            _SpatialBranchArc(arc=arc, branch=arc.branch)
+            for arc in arcs
+            if arc.branch is not None
+        )
+        for source in source_arcs:
+            source_arc = source.arc
             if not isinstance(source_arc.pcurve, AbstractCurve):
                 raise BRepBooleanFailure(
-                    "source-root boundary transport requires an owned native pcurve lift",
+                    "BRepBoolean.source_root.pcurve must be a native curve; got another pcurve family",
                     (source_arc.token,),
                 )
-            for branch_arc in branch_arcs:
-                branch = branch_arc.branch
-                if branch is None or source_arc.source_edge is None:
-                    raise RuntimeError(
-                        "Prepared branch/source arcs lost their owning identities."
-                    )
+            source_pcurve = source_arc.pcurve
+            for candidate in branch_arcs:
+                branch_arc, branch = candidate.arc, candidate.branch
                 if (
                     branch.start_kind != "boundary"
                     and branch.end_kind != "boundary"
                     and not any(
-                        _periodic_transition(branch, index)
+                        periodic_transition(branch, index)
                         for index in range(branch.num_charts)
                     )
                 ):
@@ -1542,196 +2132,84 @@ def _boundary_spatial_events(state: _Arrangement) -> None:
                 )
                 opposite = second_owner if side == "first" else first_owner
                 roots = _edge_spatial_roots(
-                    state, owner, source_arc.source_edge, opposite
+                    state,
+                    owner,
+                    source.edge,
+                    opposite,
+                    preparations=preparations,
+                    budget=budget,
                 )
                 geometry = state.models[owner[0]].geometry
                 if geometry is None:
-                    raise RuntimeError("Prepared source edge lost its exact geometry.")
+                    raise RuntimeError(
+                        "BRepBoolean.spatial_arc.geometry must be defined; got None"
+                    )
                 whole_first, whole_last = (
                     float(value)
-                    for value in np.asarray(geometry.edge_ranges)[source_arc.source_edge]
+                    for value in np.asarray(geometry.edge_ranges)[source.edge]
                 )
                 span_first, span_last = branch_arc.trim.parameter_interval
+                pair = _SpatialArcPair(
+                    branch, side, whole_first, whole_last, span_first, span_last
+                )
                 for spatial in roots:
-                    source_box = _source_pcurve_image(
-                        source_arc.pcurve,
-                        float(spatial.parameter_lower[0]),
-                        float(spatial.parameter_upper[0]),
-                    )
-                    opposite_box = np.stack(
-                        (spatial.parameter_lower[1:], spatial.parameter_upper[1:])
-                    )
-                    image = np.concatenate(
-                        (source_box, opposite_box)
-                        if side == "first"
-                        else (opposite_box, source_box),
-                        axis=1,
-                    )
-                    charts = [
-                        chart
-                        for chart in range(int(span_first), int(span_last))
-                        if np.all(image[0] >= branch.box_lower[chart])
-                        and np.all(image[1] <= branch.box_upper[chart])
-                    ]
-                    if not charts:
-                        continue
-                    chart = charts[0]
-                    branch_endpoint = BranchRootEndpoint(
+                    _append_spatial_root_cuts(
+                        state,
+                        owner,
+                        source_arc,
+                        source_pcurve,
+                        branch_arc,
+                        pair,
                         spatial,
-                        branch,
-                        chart,
-                        source_pcurve=source_arc.pcurve,
-                        source_side=side,
-                        source_first=whole_first,
-                        source_last=whole_last,
-                    )
-                    lower, upper = branch_endpoint.parameter_enclosure()
-                    if upper < span_first or lower > span_last:
-                        continue
-                    parameter = min(span_last, max(span_first, branch_endpoint.parameter))
-                    if not lower <= parameter <= upper:
-                        raise BRepBooleanFailure(
-                            "source-root chart endpoint has no legal bounded representative"
-                        )
-                    source_endpoint = TrimRootEndpoint(
-                        spatial,
-                        "first",
-                        source_pcurve=source_arc.pcurve,
-                        source_surface=SurfaceRegion(
-                            state.models[owner[0]].patches[owner[1]],
-                            np.asarray(state.models[owner[0]].parameter_bounds)[owner[1]],
-                        ),
-                    )
-                    source_local = source_endpoint.affine(
-                        1.0 / source_arc.scale, -source_arc.offset / source_arc.scale
-                    )
-                    source_lower, source_upper = source_local.parameter_enclosure()
-                    if not 0.0 < source_lower < source_upper < 1.0:
-                        raise BRepBooleanFailure(
-                            "source corner root identity requires an exact vertex alias",
-                            (source_arc.token,),
-                        )
-                    vertex = f"spatial-root:{spatial.root_id}"
-                    binding = BRepVertexRoot(spatial)
-                    point = binding.evaluate()[0]
-                    state.vertex_spatial[vertex] = spatial
-                    state.vertex_aliases.setdefault(vertex, [])
-                    state.vertex_bindings[vertex] = binding
-                    node = f"spatial:{spatial.root_id}:face:{owner}"
-                    alias_node = _bind_fixed_branch_alias(
-                        state, branch_arc, branch_endpoint, vertex, binding, point
-                    )
-                    if alias_node is not None:
-                        node = alias_node
-                    state.cuts[source_arc.token].append(
-                        _Cut(
-                            source_local.parameter,
-                            source_lower,
-                            source_upper,
-                            node,
-                            vertex,
-                            source_endpoint,
-                            binding,
-                            point,
-                        )
-                    )
-                    state.cuts[branch_arc.token].append(
-                        _Cut(
-                            parameter,
-                            lower,
-                            upper,
-                            node,
-                            vertex,
-                            branch_endpoint,
-                            binding,
-                            point,
-                        )
+                        preparations=preparations,
+                        budget=budget,
                     )
                 first_token, last_token = sorted((source_arc.token, branch_arc.token))
                 state.spatial_pairs.add((first_token, last_token))
 
 
-def _bind_fixed_branch_alias(
-    state: _Arrangement,
-    arc: _Arc,
-    endpoint: BranchRootEndpoint,
-    vertex: str,
-    binding: BRepVertexRoot,
-    point: np.ndarray,
-) -> str | None:
-    from dataclasses import replace
+class _SourceNodeGauge(StrictModule):
+    shifts: np.ndarray
 
-    from ._patches import AbstractCurve
 
-    first_owner, _ = state.branch_owners[arc.token]
-    columns = slice(0, 2) if arc.owner == first_owner else slice(2, 4)
-    patch = state.models[arc.owner[0]].patches[arc.owner[1]]
-    for cut in state.cuts[arc.token]:
-        existing = cut.endpoint
-        if (
-            isinstance(existing, BranchRootEndpoint)
-            and existing.root_id == endpoint.root_id
-            and np.array_equal(
-                existing._source_gauges()[columns], endpoint._source_gauges()[columns]
-            )
-            and isinstance(arc.pcurve, (AbstractCurve, IntersectionPCurve))
-            and binding.same_uv_endpoint(
-                patch, arc.pcurve, endpoint, arc.pcurve, existing
-            )
+def _branch_node_gauge(branch: IntersectionCurve, node: int, chart: int) -> np.ndarray:
+    shifts = branch.node_period_shifts[node].astype(np.int64).copy()
+    if node == chart and chart:
+        for axis, period in enumerate(
+            (*branch.first.patch.periods, *branch.second.patch.periods)
         ):
-            return cut.node
+            if period is not None:
+                shifts[axis] += int(
+                    round(branch.transition_shifts[chart - 1, axis] / period)
+                )
+    return shifts
 
-    matches = [
-        cut
-        for cut in state.cuts[arc.token]
-        if isinstance(cut.endpoint, TrimRootEndpoint)
-        and isinstance(cut.endpoint.root, IntersectionCurvePointRoot)
-        and endpoint.certifies_point_root(cut.endpoint.root)
-    ]
-    if not matches:
-        return None
+
+def _certify_source_node_gauge(
+    endpoint: BranchRootEndpoint,
+    matched_reference: int,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> _SourceNodeGauge:
     branch = endpoint.curve
-    lower, upper = endpoint.parameter_enclosure()
-    matched_cut = next((cut for cut in matches if lower <= cut.parameter <= upper), None)
-    if matched_cut is None:
-        raise BRepBooleanFailure(
-            "fixed branch alias has no node in its certified source chart"
-        )
-    matched_endpoint = matched_cut.endpoint
-    if not isinstance(matched_endpoint, TrimRootEndpoint) or not isinstance(
-        matched_endpoint.root,
-        IntersectionCurvePointRoot,
-    ):
-        raise BRepBooleanFailure("fixed branch alias lost its source-node definition")
-    matched_reference = int(branch.node_references[int(matched_endpoint.root.parameter)])
-
-    def node_gauge(node: int, chart: int) -> np.ndarray:
-        shifts = branch.node_period_shifts[node].astype(np.int64).copy()
-        if node == chart and chart:
-            for axis, period in enumerate(
-                (*branch.first.patch.periods, *branch.second.patch.periods)
-            ):
-                if period is not None:
-                    shifts[axis] += int(
-                        round(branch.transition_shifts[chart - 1, axis] / period)
-                    )
-        return shifts
-
-    # Identify the source node in its own certified chart before changing its
-    # sheet. A closed-loop vertex can occur in distinct source parameter gauges.
-    source_image = endpoint._source_image(maximum_steps=16, include_periodic_shifts=False)
+    # Closed-loop nodes can occur in distinct source parameter gauges.
+    source_image = endpoint.source_image(
+        maximum_steps=16,
+        include_periodic_shifts=False,
+        preparations=preparations,
+        budget=budget,
+    )
     source_gauge = None
     for node in (endpoint.chart, endpoint.chart + 1):
         reference = int(branch.node_references[node])
         if reference != matched_reference:
             continue
-        shifts = node_gauge(node, endpoint.chart)
-        difference = endpoint._source_gauges() - shifts
+        shifts = _branch_node_gauge(branch, node, endpoint.chart)
+        difference = endpoint.source_gauges() - shifts
         image = source_image
         if np.any(difference):
-            lower_shift, upper_shift = branch._shift_bounds(difference)
-            from .._interval_enclosure import interval_add
-
+            lower_shift, upper_shift = branch.shift_parameter_bounds(difference)
             image = np.stack(
                 interval_add(
                     (source_image[0], source_image[1]), (lower_shift, upper_shift)
@@ -1742,72 +2220,159 @@ def _bind_fixed_branch_alias(
             source_gauge = shifts
             break
     if source_gauge is None:
-        raise BRepBooleanFailure("fixed branch alias lost its exact source-node gauge")
-    old_vertices = {cut.vertex for cut in matches}
+        raise BRepBooleanFailure(
+            "BRepBoolean.branch_alias must retain a source-node gauge; got no matching gauge"
+        )
+    return _SourceNodeGauge(source_gauge)
+
+
+def _transport_fixed_branch_cut(
+    other: Arc,
+    cut: Cut,
+    endpoint: BranchRootEndpoint,
+    source_gauge: _SourceNodeGauge,
+    vertex: str,
+    binding: BRepVertexRoot,
+    point: np.ndarray,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> Cut:
+    if (
+        other.branch is None
+        or not isinstance(cut.endpoint, TrimRootEndpoint)
+        or not isinstance(cut.endpoint.root, IntersectionCurvePointRoot)
+    ):
+        raise BRepBooleanFailure(
+            "BRepBoolean.branch_alias.incident_endpoints must be fixed branch point roots; got an unrelated endpoint"
+        )
+    first, last = other.trim.parameter_interval
+    chart = min(int(last) - 1, max(int(first), int(np.floor(cut.parameter))))
+    target_gauge = _branch_node_gauge(
+        endpoint.curve, int(cut.endpoint.root.parameter), chart
+    )
+    shifts = (
+        np.asarray(endpoint.periodic_shifts, dtype=np.int64)
+        + target_gauge
+        - source_gauge.shifts
+    )
+    transported = BranchRootEndpoint(
+        endpoint.root,
+        endpoint.curve,
+        chart,
+        source_pcurve=endpoint.source_pcurve,
+        source_side=endpoint.source_side,
+        source_first=endpoint.source_first,
+        source_last=endpoint.source_last,
+        periodic_shifts=(int(shifts[0]), int(shifts[1]), int(shifts[2]), int(shifts[3])),
+        budget=budget,
+        preparations=preparations,
+    )
+    if not transported.certifies_point_root(
+        cut.endpoint.root, preparations=preparations, budget=budget
+    ):
+        raise BRepBooleanFailure(
+            "BRepBoolean.branch_alias.incident_endpoint must certify the same fixed node; got failed point-root certification"
+        )
+    lower, upper = transported.parameter_enclosure(
+        preparations=preparations, budget=budget
+    )
+    if not lower <= cut.parameter <= upper:
+        raise BRepBooleanFailure(
+            "BRepBoolean.branch_alias.cut.parameter must lie in the transported enclosure; got an outside representative"
+        )
+    return replace(
+        cut,
+        lower=lower,
+        upper=upper,
+        vertex=vertex,
+        endpoint=transported,
+        vertex_root=binding,
+        point=point,
+    )
+
+
+def _bind_fixed_branch_alias(
+    state: Arrangement,
+    arc: Arc,
+    endpoint: BranchRootEndpoint,
+    vertex: str,
+    binding: BRepVertexRoot,
+    point: np.ndarray,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> str | None:
+
+    first_owner, _ = state.branch_owners[arc.token]
+    columns = slice(0, 2) if arc.owner == first_owner else slice(2, 4)
+    patch = state.models[arc.owner[0]].patches[arc.owner[1]]
+    for cut in state.cuts[arc.token]:
+        existing = cut.endpoint
+        if (
+            isinstance(existing, BranchRootEndpoint)
+            and existing.root_id == endpoint.root_id
+            and np.array_equal(
+                existing.source_gauges()[columns], endpoint.source_gauges()[columns]
+            )
+            and isinstance(arc.pcurve, (AbstractCurve, IntersectionPCurve))
+            and binding.same_uv_endpoint(
+                patch,
+                arc.pcurve,
+                endpoint,
+                arc.pcurve,
+                existing,
+                preparations=preparations,
+                budget=budget,
+            )
+        ):
+            return cut.node
+
+    matches: list[_FixedBranchCut] = []
+    for cut in state.cuts[arc.token]:
+        match cut.endpoint:
+            case TrimRootEndpoint(root=IntersectionCurvePointRoot() as root):
+                if endpoint.certifies_point_root(
+                    root, preparations=preparations, budget=budget
+                ):
+                    matches.append(_FixedBranchCut(cut=cut, root=root))
+            case _:
+                continue
+    if not matches:
+        return None
+    branch = endpoint.curve
+    lower, upper = endpoint.parameter_enclosure(preparations=preparations, budget=budget)
+    matched_cut = next(
+        (match for match in matches if lower <= match.cut.parameter <= upper), None
+    )
+    if matched_cut is None:
+        raise BRepBooleanFailure(
+            "BRepBoolean.branch_alias must have a matched cut inside its source chart; got no matching cut"
+        )
+    matched_reference = int(branch.node_references[int(matched_cut.root.parameter)])
+
+    source_gauge = _certify_source_node_gauge(
+        endpoint, matched_reference, preparations=preparations, budget=budget
+    )
+    old_vertices = {match.cut.vertex for match in matches}
     changes = []
     for arcs in state.arcs.values():
         for other in arcs:
             for index, cut in enumerate(state.cuts[other.token]):
                 if cut.vertex not in old_vertices:
                     continue
-                if (
-                    other.branch is None
-                    or not isinstance(cut.endpoint, TrimRootEndpoint)
-                    or not isinstance(
-                        cut.endpoint.root,
-                        IntersectionCurvePointRoot,
-                    )
-                ):
-                    raise BRepBooleanFailure(
-                        "fixed branch alias has an unrelated incident source endpoint"
-                    )
-                first, last = other.trim.parameter_interval
-                chart = min(int(last) - 1, max(int(first), int(np.floor(cut.parameter))))
-                target_gauge = node_gauge(int(cut.endpoint.root.parameter), chart)
-                shifts = (
-                    np.asarray(endpoint.periodic_shifts, dtype=np.int64)
-                    + target_gauge
-                    - source_gauge
+                transported_cut = _transport_fixed_branch_cut(
+                    other,
+                    cut,
+                    endpoint,
+                    source_gauge,
+                    vertex,
+                    binding,
+                    point,
+                    preparations=preparations,
+                    budget=budget,
                 )
-                transported = BranchRootEndpoint(
-                    endpoint.root,
-                    endpoint.curve,
-                    chart,
-                    source_pcurve=endpoint.source_pcurve,
-                    source_side=endpoint.source_side,
-                    source_first=endpoint.source_first,
-                    source_last=endpoint.source_last,
-                    periodic_shifts=(
-                        int(shifts[0]),
-                        int(shifts[1]),
-                        int(shifts[2]),
-                        int(shifts[3]),
-                    ),
-                )
-                if not transported.certifies_point_root(cut.endpoint.root):
-                    raise BRepBooleanFailure(
-                        "incident branch endpoint has no exact common node proof"
-                    )
-                lower, upper = transported.parameter_enclosure()
-                if not lower <= cut.parameter <= upper:
-                    raise BRepBooleanFailure(
-                        "fixed-node numerical representative leaves its source expression"
-                    )
-                changes.append(
-                    (
-                        other.token,
-                        index,
-                        replace(
-                            cut,
-                            lower=lower,
-                            upper=upper,
-                            vertex=vertex,
-                            endpoint=transported,
-                            vertex_root=binding,
-                            point=point,
-                        ),
-                    )
-                )
+                changes.append((other.token, index, transported_cut))
     for token, index, cut in changes:
         state.cuts[token][index] = cut
-    return matched_cut.node
+    return matched_cut.cut.node

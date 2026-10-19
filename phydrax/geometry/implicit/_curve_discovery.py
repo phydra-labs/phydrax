@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import final
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,14 +15,15 @@ import numpy.typing as npt
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...discretization._tensor_support import PreparedTensorGrid
+from ...typing import checked
 from .._certificate import FieldRegularity, SignReliability, ZeroSetAccuracy
 from .._contracts import CompiledGeometry, GeometryKind
 from ..design._schema import DesignState, ParameterSchema
 from ..simplicial._regions import SegmentMesh
-from ._discovery import _isolate_roots
+from ._discovery import isolate_roots
 from ._policy import ImplicitSurfacePolicy
 from ._projection import (
-    _field_and_gradient,
+    field_and_gradient,
     ImplicitPointProjectionEvidence,
     ImplicitPointProjectionPlan,
 )
@@ -59,7 +62,9 @@ class ImplicitCurveRealization(StrictModule):
 
     def to_segment_mesh(self, /) -> SegmentMesh:
         if not bool(np.asarray(self.accepted)):
-            raise ValueError("Only an accepted implicit curve can be materialized.")
+            raise ValueError(
+                "ImplicitCurveRealization.accepted must be true for materialization; got a rejected realization"
+            )
         return SegmentMesh(
             # ty: ignore[invalid-argument-type]
             np.asarray(self.vertices),
@@ -119,7 +124,9 @@ class ImplicitCurvePlan(StrictModule):
         vectors = vertices_[edges_[:, 1]] - vertices_[edges_[:, 0]]
         lengths = np.linalg.norm(vectors, axis=-1)
         if np.any(lengths <= 0.0):
-            raise ValueError("Implicit curve contains a degenerate segment.")
+            raise ValueError(
+                "ImplicitCurvePlan.segment_lengths must be positive; got nonpositive lengths"
+            )
         topology_id = canonical_fingerprint(
             {
                 "kind": "implicit-curve-topology",
@@ -147,7 +154,9 @@ class ImplicitCurvePlan(StrictModule):
 
     def realize(self, state: DesignState, /) -> ImplicitCurveRealization:
         if not isinstance(state, DesignState) or state.schema != self.schema:
-            raise ValueError("Implicit curve state must use the discovery schema.")
+            raise ValueError(
+                "ImplicitCurvePlan.state must be DesignState with the discovery schema; got an incompatible state or schema"
+            )
         projection = self.projection.realize(state)
         proposed = projection.proposed_points
         segments = proposed[self.edges]
@@ -210,44 +219,64 @@ def _edge_key(
     return lower, upper
 
 
-def discover_implicit_curve(
+@final
+class _CurveLattice(StrictModule):
+    """Validated host lattice and field values for one planar contour."""
+
+    axes: tuple[np.ndarray, ...]
+    points: np.ndarray
+    values: np.ndarray
+    root_tolerance: float
+    zero_tolerance: float
+
+
+def _prepare_curve_lattice(
     geometry: CompiledGeometry,
     grid: PreparedTensorGrid,
-    /,
-    *,
-    policy: ImplicitSurfacePolicy = _DEFAULT_CURVE_POLICY,
+    policy: ImplicitSurfacePolicy,
     source_id: str,
-) -> ImplicitCurvePlan:
-    """Discover an oriented closed planar zero contour and freeze its segment topology."""
-    if not isinstance(geometry, CompiledGeometry):
-        raise TypeError("geometry must be CompiledGeometry.")
-    if not isinstance(grid, PreparedTensorGrid):
-        raise TypeError("grid must be PreparedTensorGrid.")
-    if not isinstance(policy, ImplicitSurfacePolicy):
-        raise TypeError("policy must be ImplicitSurfacePolicy.")
+    /,
+) -> _CurveLattice:
+    """Validate source/grid admission and evaluate the bounded host lattice once."""
     if not source_id:
-        raise ValueError("source_id must be non-empty.")
+        raise ValueError(
+            f"ImplicitDiscovery.source_id must be non-empty; got {source_id!r}"
+        )
     if geometry.ambient_dimension != 2 or geometry.kind is not GeometryKind.REGION:
-        raise ValueError("Implicit curve discovery requires a two-dimensional region.")
+        raise ValueError(
+            f"ImplicitCurveDiscovery.geometry must be a two-dimensional region; got dimension {geometry.ambient_dimension} and kind {geometry.kind}"
+        )
     if len(grid.structured_axes) != 2:
-        raise ValueError("Implicit curve discovery requires a two-dimensional grid.")
+        raise ValueError(
+            f"ImplicitCurveDiscovery.grid must have two structured axes; got {len(grid.structured_axes)}"
+        )
     if any(axis.periodic for axis in grid.structured_axes):
-        raise ValueError("Implicit curve discovery requires nonperiodic axes.")
+        raise ValueError(
+            "ImplicitCurveDiscovery.grid.axes must be nonperiodic; got periodic axes"
+        )
     if not bool(np.asarray(geometry.validity().accepted)):
-        raise ValueError("Implicit curve discovery geometry must be valid.")
+        raise ValueError(
+            "ImplicitCurveDiscovery.geometry must have accepted validity evidence; got a rejected state"
+        )
     certificate = geometry.field_certificate
     if certificate.sign_reliability is not SignReliability.RELIABLE:
-        raise ValueError("Implicit curve discovery requires reliable field sign.")
+        raise ValueError(
+            f"ImplicitCurveDiscovery.field.sign_reliability must be reliable; got {certificate.sign_reliability.value}"
+        )
     if (
         certificate.zero_set_accuracy is ZeroSetAccuracy.APPROXIMATE
         and not policy.allow_approximate_zero_set
     ):
-        raise ValueError("Approximate zero sets require explicit policy approval.")
+        raise ValueError(
+            "ImplicitDiscovery.policy.allow_approximate_zero_set must permit approximate zero sets; got an approximate source with approval disabled"
+        )
     if (
         certificate.regularity is FieldRegularity.NONSMOOTH
         and not policy.allow_nonsmooth_field
     ):
-        raise ValueError("Nonsmooth fields require explicit selected-branch approval.")
+        raise ValueError(
+            "ImplicitDiscovery.policy.allow_nonsmooth_field must approve selected branches of nonsmooth fields; got a nonsmooth source with approval disabled"
+        )
 
     axes = tuple(
         np.asarray(axis.point_coordinates, dtype=np.float64)
@@ -256,8 +285,8 @@ def discover_implicit_curve(
     lattice_count = axes[0].size * axes[1].size
     if lattice_count > policy.maximum_lattice_points:
         raise ValueError(
-            "Implicit curve grid exceeds maximum_lattice_points: "
-            f"required {lattice_count}, allowed {policy.maximum_lattice_points}."
+            f"ImplicitCurveDiscovery.lattice must fit maximum_lattice_points {policy.maximum_lattice_points}; "
+            f"got {lattice_count}"
         )
     first, second = np.meshgrid(*axes, indexing="ij")
     lattice_points = np.stack((first, second), axis=-1)
@@ -268,11 +297,29 @@ def discover_implicit_curve(
     root_tolerance = float(policy.projection.root_tolerance)
     zero_tolerance = float(policy.lattice_zero_tolerance)
     if np.any(~np.isfinite(values)):
-        raise ValueError("Implicit curve lattice values must be finite.")
+        raise ValueError(
+            "ImplicitCurveDiscovery.lattice.values must be finite; got nonfinite values"
+        )
     if np.any(np.abs(values) <= zero_tolerance):
         raise ValueError(
-            "Implicit curve discovery refuses lattice vertices on the zero set."
+            f"ImplicitCurveDiscovery.lattice.values must exclude ambiguous zero samples; got samples within tolerance {zero_tolerance}"
         )
+    return _CurveLattice(axes, lattice_points, values, root_tolerance, zero_tolerance)
+
+
+@checked
+def discover_implicit_curve(
+    geometry: CompiledGeometry,
+    grid: PreparedTensorGrid,
+    /,
+    *,
+    policy: ImplicitSurfacePolicy = _DEFAULT_CURVE_POLICY,
+    source_id: str,
+) -> ImplicitCurvePlan:
+    """Discover an oriented closed planar zero contour and freeze its segment topology."""
+    lattice = _prepare_curve_lattice(geometry, grid, policy, source_id)
+    axes, lattice_points, values = lattice.axes, lattice.points, lattice.values
+    root_tolerance, zero_tolerance = lattice.root_tolerance, lattice.zero_tolerance
 
     vertices: list[tuple[tuple[int, int], tuple[int, int]]] = []
     edge_vertices: dict[tuple[tuple[int, int], tuple[int, int]], int] = {}
@@ -294,7 +341,9 @@ def discover_implicit_curve(
             if not crossings:
                 continue
             if len(crossings) not in (2, 4):
-                raise ValueError("Implicit curve cell has an invalid crossing count.")
+                raise ValueError(
+                    f"ImplicitCurveDiscovery.cell.crossings must contain two or four crossings; got {len(crossings)}"
+                )
 
             crossing_vertices: dict[int, int] = {}
             for edge in crossings:
@@ -306,11 +355,11 @@ def discover_implicit_curve(
                     vertices.append(key)
                     if len(vertices) > policy.maximum_vertices:
                         raise ValueError(
-                            "Implicit curve discovery exceeds maximum_vertices."
+                            f"ImplicitCurveDiscovery.vertices must fit maximum_vertices {policy.maximum_vertices}; got {len(vertices)}"
                         )
                     if len(edge_vertices) > policy.maximum_crossings:
                         raise ValueError(
-                            "Implicit curve discovery exceeds maximum_crossings."
+                            f"ImplicitCurveDiscovery.edge_vertices must fit maximum_crossings {policy.maximum_crossings}; got {len(edge_vertices)}"
                         )
                     edge_vertices[key] = vertex
                 crossing_vertices[edge] = vertex
@@ -330,7 +379,7 @@ def discover_implicit_curve(
                 )
                 if abs(center_value) <= zero_tolerance:
                     raise ValueError(
-                        "Implicit curve ambiguity decider landed on the zero set."
+                        f"ImplicitCurveDiscovery.cell.center_value must exclude the ambiguity tolerance; got {center_value}"
                     )
                 if (center_value < 0.0) == (corner_values[0] < 0.0):
                     pairings = ((0, 3), (1, 2))
@@ -342,14 +391,18 @@ def discover_implicit_curve(
                     (crossing_vertices[first_edge], crossing_vertices[second_edge])
                 )
                 if len(segments) > policy.maximum_faces:
-                    raise ValueError("Implicit curve discovery exceeds maximum_faces.")
+                    raise ValueError(
+                        f"ImplicitCurveDiscovery.segments must fit maximum_faces {policy.maximum_faces}; got {len(segments)}"
+                    )
 
     if not vertices or not segments:
-        raise ValueError("Implicit curve discovery found no closed zero contour.")
+        raise ValueError(
+            "ImplicitCurveDiscovery.contour must contain vertices and closed segments; got no closed zero contour"
+        )
     edge_keys = np.asarray(vertices, dtype=np.int64)
     lower_key = tuple(edge_keys[:, 0].T)
     upper_key = tuple(edge_keys[:, 1].T)
-    roots, residuals = _isolate_roots(
+    isolation = isolate_roots(
         geometry.kernel,
         geometry.state,
         jnp.asarray(lattice_points[lower_key]),
@@ -358,13 +411,17 @@ def discover_implicit_curve(
         jnp.asarray(values[upper_key]),
         jnp.asarray(root_tolerance, dtype=jnp.float64),
     )
+    residuals = isolation.residuals
     if np.any(np.asarray(residuals) > root_tolerance):
-        raise ValueError("Implicit root isolation did not meet root_tolerance.")
-    vertices_array = np.asarray(roots, dtype=np.float64)
+        raise ValueError(
+            "ImplicitDiscovery.root_residuals must meet root_tolerance; got residuals above the declared tolerance"
+        )
+    isolation.require_converged()
+    vertices_array = np.asarray(isolation.points, dtype=np.float64)
     segment_array = np.asarray(segments, dtype=np.int32)
     tangent = vertices_array[segment_array[:, 1]] - vertices_array[segment_array[:, 0]]
     right_normal = np.stack((tangent[:, 1], -tangent[:, 0]), axis=1)
-    _, gradients = _field_and_gradient(
+    _, gradients = field_and_gradient(
         geometry.kernel,
         geometry.state,
         jnp.asarray(np.mean(vertices_array[segment_array], axis=1)),
@@ -373,7 +430,9 @@ def discover_implicit_curve(
     segment_array = np.where(flip[:, None], segment_array[:, ::-1], segment_array)
     degree = np.bincount(segment_array.reshape((-1,)), minlength=len(vertices))
     if np.any(degree != 2):
-        raise ValueError("Implicit curve discovery produced a nonmanifold open topology.")
+        raise ValueError(
+            f"ImplicitCurveDiscovery.vertex_degrees must be two; got {np.unique(degree).tolist()}"
+        )
     intersection_pairs = np.asarray(
         [
             (first_index, second_index)
@@ -387,7 +446,9 @@ def discover_implicit_curve(
         dtype=np.int32,
     ).reshape((-1, 2))
     if intersection_pairs.shape[0] > policy.maximum_intersection_pairs:
-        raise ValueError("Implicit curve exceeds maximum_intersection_pairs.")
+        raise ValueError(
+            f"ImplicitCurveDiscovery.intersection_pairs must fit maximum_intersection_pairs {policy.maximum_intersection_pairs}; got {intersection_pairs.shape[0]}"
+        )
     base_segments = vertices_array[segment_array]
     if intersection_pairs.shape[0]:
         intersections = jax.vmap(
@@ -398,7 +459,9 @@ def discover_implicit_curve(
             )
         )(jnp.asarray(base_segments[intersection_pairs]))
         if bool(np.asarray(jnp.any(intersections))):
-            raise ValueError("Implicit curve discovery produced a self-intersection.")
+            raise ValueError(
+                "ImplicitCurveDiscovery.segments must be intersection-free; got a self-intersection"
+            )
     minimum_spacing = min(float(np.min(np.diff(axis))) for axis in axes)
     projection = ImplicitPointProjectionPlan(
         geometry,

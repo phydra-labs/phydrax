@@ -1752,7 +1752,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             coverage_tolerance=plan.coverage_tolerance,
         )
         # The prepared runtime and accepted content are refreshed only from a
-        # published rebind: its receipt carries the coverage, conservation, and
+        # published rebind: its CompositionRebindReceipt carries coverage, conservation, and
         # admissibility evidence the transaction required before publication.
         receipt = transaction.receipt
         published_content = transaction.content_state
@@ -2893,6 +2893,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         args: Any = None,
         /,
     ) -> FiniteVolumeAdvanceResult:
+        """Run bounded static retries with one traced attempt, then publish its evidence."""
         initial_stage_average = self._provide_stage_state(
             runtime_state.time, original_average
         )
@@ -2937,7 +2938,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             )
             if self.stage_flux_provider is not None and stage_flux_trace is None:
                 raise RuntimeError(
-                    "Bound stage-flux provider did not produce an SSPRK3 trace."
+                    f"FiniteVolumeRuntime.stage_flux_trace must contain an SSPRK3 trace from the bound provider; got {stage_flux_trace!r}"
                 )
             return candidate, stage_flux_trace
 
@@ -2965,14 +2966,16 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             if isinstance(candidate, BalancedPositivityBlendResult):
                 if balanced is None:
                     raise RuntimeError(
-                        "Hydrostatic retry state lacks balanced face evidence."
+                        f"_StaticRetryCarry.balanced_contributions must contain balanced face evidence for hydrostatic retry; got {balanced!r}"
                     )
                 balanced = select_tree(take, candidate.contributions, balanced)
             accepted_trace = carry.accepted_stage_flux_trace
             attempted_trace = carry.attempted_stage_flux_trace
             if stage_flux_trace is not None:
                 if accepted_trace is None:
-                    raise RuntimeError("Stage-flux retry state lacks attempt evidence.")
+                    raise RuntimeError(
+                        f"_StaticRetryCarry.accepted_stage_flux_trace must contain attempt evidence; got {accepted_trace!r}"
+                    )
                 accepted_trace = select_tree(take, stage_flux_trace, accepted_trace)
                 attempted_trace = stage_flux_trace
             return _StaticRetryCarry(
@@ -3064,123 +3067,137 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             initial,
             jnp.arange(self.policy.maximum_retries + 1, dtype=jnp.int32),
         )
-        accepted = final.accepted
-        accepted_average = final.accepted_average
-        accepted_dt = final.accepted_dt
-        retries = final.retries
-        last_report = final.report
-        accepted_flux_rates = final.flux_rates
-        accepted_balanced_contributions = final.balanced_contributions
-        accepted_stage_flux_trace = final.accepted_stage_flux_trace
-        attempted_stage_flux_trace = final.attempted_stage_flux_trace
-        current_dt = final.current_dt
+        return _finish_static_retries(self, runtime_state, attempted, final)
 
-        minimum_reached = current_dt < self.precision.decision(
-            self.policy.minimum_step_size
-        )
-        status = jnp.where(
-            accepted & (retries > 0),
-            int(FiniteVolumeRunStatus.RECOVERED_REJECTION),
-            jnp.where(
-                accepted,
-                int(FiniteVolumeRunStatus.SUCCESS),
-                jnp.where(
-                    minimum_reached,
-                    int(FiniteVolumeRunStatus.MINIMUM_STEP_REACHED),
-                    int(FiniteVolumeRunStatus.RETRY_LIMIT_REACHED),
-                ),
-            ),
-        )
-        original_content = runtime_state.content_state
-        accepted_content = FiniteVolumeConservativeContentState.from_cell_average(
-            accepted_average.reshape(original_content.conservative_content.shape),
-            original_content.effective_cell_volumes,
-            original_content.active_cell_mask,
-            self.precision.decision(runtime_state.time + accepted_dt),
-            topology_epoch_id=original_content.topology_epoch_id,
-            geometry_family_id=original_content.geometry_family_id,
-            geometry_layout_id=original_content.geometry_layout_id,
-            geometry_version=original_content.geometry_version,
-            evidence_policy_id=original_content.evidence_policy_id,
-            evidence_version=original_content.evidence_version,
-            precision=original_content.precision,
-        )
-        next_content = jax.lax.cond(
+
+def _finish_static_retries(
+    runtime: PreparedFiniteVolumeRuntime,
+    runtime_state: FiniteVolumeRuntimeState,
+    attempted: Array,
+    final: _StaticRetryCarry,
+) -> FiniteVolumeAdvanceResult:
+    """Commit accepted content and retain accepted or last-attempt face evidence."""
+    accepted = final.accepted
+    accepted_average = final.accepted_average
+    accepted_dt = final.accepted_dt
+    retries = final.retries
+    last_report = final.report
+    accepted_flux_rates = final.flux_rates
+    accepted_balanced_contributions = final.balanced_contributions
+    accepted_stage_flux_trace = final.accepted_stage_flux_trace
+    attempted_stage_flux_trace = final.attempted_stage_flux_trace
+    current_dt = final.current_dt
+
+    minimum_reached = current_dt < runtime.precision.decision(
+        runtime.policy.minimum_step_size
+    )
+    status = jnp.where(
+        accepted & (retries > 0),
+        int(FiniteVolumeRunStatus.RECOVERED_REJECTION),
+        jnp.where(
             accepted,
-            lambda _: accepted_content,
-            lambda _: original_content,
-            operand=None,
-        )
-        next_state = FiniteVolumeRuntimeState(
-            next_content,
-            runtime_state.topology_journal,
-            self.precision.decision(
-                jnp.where(accepted, accepted_dt, runtime_state.step_size)
+            int(FiniteVolumeRunStatus.SUCCESS),
+            jnp.where(
+                minimum_reached,
+                int(FiniteVolumeRunStatus.MINIMUM_STEP_REACHED),
+                int(FiniteVolumeRunStatus.RETRY_LIMIT_REACHED),
             ),
-            accepted_step=(runtime_state.accepted_step + accepted.astype(jnp.int32)),
-            last_status=status,
-            controller_state=runtime_state.controller_state,
-            integrator_state=runtime_state.integrator_state,
-            output_cursor=runtime_state.output_cursor,
-            sliding_coupling=runtime_state.sliding_coupling,
-            sliding_shift=runtime_state.sliding_shift,
-            sliding_event_id=runtime_state.sliding_event_id,
-        )
-        shallow_water_integrals = None
-        if isinstance(self.dynamics, PreparedFiniteVolumeDynamics) and isinstance(
-            self.dynamics.method.interface_solver,
-            ShallowWaterHydrostaticHLLPlan,
+        ),
+    )
+    original_content = runtime_state.content_state
+    accepted_content = FiniteVolumeConservativeContentState.from_cell_average(
+        accepted_average.reshape(original_content.conservative_content.shape),
+        original_content.effective_cell_volumes,
+        original_content.active_cell_mask,
+        runtime.precision.decision(runtime_state.time + accepted_dt),
+        topology_epoch_id=original_content.topology_epoch_id,
+        geometry_family_id=original_content.geometry_family_id,
+        geometry_layout_id=original_content.geometry_layout_id,
+        geometry_version=original_content.geometry_version,
+        evidence_policy_id=original_content.evidence_policy_id,
+        evidence_version=original_content.evidence_version,
+        precision=original_content.precision,
+    )
+    next_content = jax.lax.cond(
+        accepted,
+        lambda _: accepted_content,
+        lambda _: original_content,
+        operand=None,
+    )
+    next_state = FiniteVolumeRuntimeState(
+        next_content,
+        runtime_state.topology_journal,
+        runtime.precision.decision(
+            jnp.where(accepted, accepted_dt, runtime_state.step_size)
+        ),
+        accepted_step=(runtime_state.accepted_step + accepted.astype(jnp.int32)),
+        last_status=status,
+        controller_state=runtime_state.controller_state,
+        integrator_state=runtime_state.integrator_state,
+        output_cursor=runtime_state.output_cursor,
+        sliding_coupling=runtime_state.sliding_coupling,
+        sliding_shift=runtime_state.sliding_shift,
+        sliding_event_id=runtime_state.sliding_event_id,
+    )
+    shallow_water_integrals = None
+    if isinstance(runtime.dynamics, PreparedFiniteVolumeDynamics) and isinstance(
+        runtime.dynamics.method.interface_solver,
+        ShallowWaterHydrostaticHLLPlan,
+    ):
+        if accepted_balanced_contributions is None or not isinstance(
+            runtime.dynamics.bathymetry, PreparedShallowWaterBathymetry
         ):
-            if accepted_balanced_contributions is None or not isinstance(
-                self.dynamics.bathymetry, PreparedShallowWaterBathymetry
-            ):
-                raise RuntimeError(
-                    "Hydrostatic shallow-water acceptance lacks face evidence."
-                )
-            shallow_water_integrals = ShallowWaterAcceptedFaceIntegrals(
-                accepted_balanced_contributions,
-                tuple(self.dynamics.discretization.face_measures),
-                accepted_dt,
-                axis_names=self.dynamics.discretization.grid.axis_names,
-                bed_id=self.dynamics.bathymetry.bed_id,
-                plan_id=self.dynamics.method.interface_solver.plan_id,
+            raise RuntimeError(
+                "FiniteVolumeAdvanceResult.shallow_water_integrals must have balanced face contributions and PreparedShallowWaterBathymetry; "
+                f"got contributions={type(accepted_balanced_contributions).__name__}, "
+                f"bathymetry={type(runtime.dynamics.bathymetry).__name__}"
             )
-        stage_flux_trace = None
-        if self.stage_flux_provider is not None:
-            if accepted_stage_flux_trace is None or attempted_stage_flux_trace is None:
-                raise RuntimeError(
-                    "Stage-flux retry loop did not retain complete attempt evidence."
-                )
-            stage_flux_trace = jax.tree.map(
-                lambda accepted_value, attempted_value: jnp.where(
-                    accepted, accepted_value, attempted_value
-                ),
-                accepted_stage_flux_trace,
-                attempted_stage_flux_trace,
-            )
-        return FiniteVolumeAdvanceResult(
-            runtime_state=next_state,
-            accepted=accepted,
-            retries=retries,
-            attempted_step_size=attempted,
-            accepted_step_size=accepted_dt,
-            positivity=last_report,
-            accepted_flux_integrals=self._static_accepted_flux_integral_ledger(
-                original_content,
-                next_content,
-                accepted_flux_rates,
-                accepted_dt,
-                self.precision.decision(
-                    runtime_state.time + jnp.where(accepted, accepted_dt, attempted)
-                ),
-                runtime_state.accepted_step + accepted.astype(jnp.int32),
-            ),
-            precision_evidence=self.precision.evidence(),
-            ale=None,
-            embedded=None,
-            shallow_water_integrals=shallow_water_integrals,
-            stage_flux_trace=stage_flux_trace,
+        shallow_water_integrals = ShallowWaterAcceptedFaceIntegrals(
+            accepted_balanced_contributions,
+            tuple(runtime.dynamics.discretization.face_measures),
+            accepted_dt,
+            axis_names=runtime.dynamics.discretization.grid.axis_names,
+            bed_id=runtime.dynamics.bathymetry.bed_id,
+            plan_id=runtime.dynamics.method.interface_solver.plan_id,
         )
+    stage_flux_trace = None
+    if runtime.stage_flux_provider is not None:
+        if accepted_stage_flux_trace is None or attempted_stage_flux_trace is None:
+            raise RuntimeError(
+                "FiniteVolumeAdvanceResult.stage_flux_trace must retain accepted and attempted traces when a stage flux provider is configured; "
+                f"got accepted={type(accepted_stage_flux_trace).__name__}, "
+                f"attempted={type(attempted_stage_flux_trace).__name__}"
+            )
+        stage_flux_trace = jax.tree.map(
+            lambda accepted_value, attempted_value: jnp.where(
+                accepted, accepted_value, attempted_value
+            ),
+            accepted_stage_flux_trace,
+            attempted_stage_flux_trace,
+        )
+    return FiniteVolumeAdvanceResult(
+        runtime_state=next_state,
+        accepted=accepted,
+        retries=retries,
+        attempted_step_size=attempted,
+        accepted_step_size=accepted_dt,
+        positivity=last_report,
+        accepted_flux_integrals=runtime._static_accepted_flux_integral_ledger(
+            original_content,
+            next_content,
+            accepted_flux_rates,
+            accepted_dt,
+            runtime.precision.decision(
+                runtime_state.time + jnp.where(accepted, accepted_dt, attempted)
+            ),
+            runtime_state.accepted_step + accepted.astype(jnp.int32),
+        ),
+        precision_evidence=runtime.precision.evidence(),
+        ale=None,
+        embedded=None,
+        shallow_water_integrals=shallow_water_integrals,
+        stage_flux_trace=stage_flux_trace,
+    )
 
 
 __all__ = [

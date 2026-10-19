@@ -19,10 +19,12 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_integer
 from ..linalg import (
     DenseLinearOperator,
     DenseLU,
     determinant_small_linear,
+    DifferentiationPolicy,
     LinearSolvePolicy,
     LinearSystem,
     SmallLinearSolvePlan,
@@ -46,7 +48,9 @@ def lattice_right_inverse_with_status(vectors: ArrayLike, /) -> tuple[Array, Arr
     """
     matrix = jnp.asarray(vectors)
     if matrix.ndim < 2:
-        raise ValueError("Lattice vectors must have shape (..., rank, d).")
+        raise ValueError(
+            "lattice_right_inverse_with_status.vectors must have shape (..., rank, d); got fewer than two axes"
+        )
     rank = matrix.shape[-2]
     gram = contract("...ik,...jk->...ij", matrix, matrix, backend="jax")
     if rank <= 4:
@@ -76,7 +80,7 @@ def lattice_right_inverse(vectors: ArrayLike, /) -> Array:
     return eqx.error_if(
         inverse,
         ~jnp.all(successful),
-        "Dynamic lattice coordinate solve failed.",
+        "lattice_right_inverse.vectors must admit a successful coordinate solve; got a failed native solve",
     )
 
 
@@ -91,7 +95,9 @@ def lattice_measure(vectors: ArrayLike, /) -> tuple[Array, Array]:
     """
     matrix = jnp.asarray(vectors)
     if matrix.ndim < 2 or matrix.shape[-2] > 4:
-        raise ValueError("Lattice measure requires vectors of shape (..., rank<=4, d).")
+        raise ValueError(
+            "lattice_measure.vectors must have shape (..., rank <= 4, d); got an unsupported rank or shape"
+        )
     if not jnp.issubdtype(matrix.dtype, jnp.inexact):
         matrix = matrix.astype(jnp.float64)
     gram = contract("...ik,...jk->...ij", matrix, matrix, backend="jax")
@@ -107,7 +113,7 @@ def lattice_measure(vectors: ArrayLike, /) -> tuple[Array, Array]:
     return jnp.where(successful, jnp.sqrt(safe), jnp.nan), successful
 
 
-def _complete_image_shifts(extents: tuple[int, ...], /) -> np.ndarray:
+def complete_image_shifts(extents: tuple[int, ...], /) -> np.ndarray:
     """Every integer translation ``|n_i| <= extents[i]`` in lexicographic order."""
     grids = np.meshgrid(
         *(np.arange(-extent, extent + 1, dtype=np.int32) for extent in extents),
@@ -119,11 +125,11 @@ def _complete_image_shifts(extents: tuple[int, ...], /) -> np.ndarray:
 
 
 class PeriodicImageStencil(StrictModule, NonTrainableState):
-    """Complete bounded integer translation set for one enumeration radius.
+    """Enumerate bounded integer translations for one radius.
 
     ``shifts`` are every row ``n`` with ``|n_i| <= extents[i]`` in
     lexicographic order; they are derived from ``extents`` and never supplied,
-    so the identity binds the exact translation content. They cover every
+    so the identity binds every translation row. They cover every
     image ``d = x_receiver - x_source + n @ vectors`` with ``|d| < radius``
     while endpoint fractional separations stay below ``fractional_excursion``.
     Nonperiodic axes of the enumerating cell have extent zero.
@@ -163,18 +169,20 @@ class PeriodicImageStencil(StrictModule, NonTrainableState):
             for item in bounds
         ):
             raise ValueError(
-                "Image extents must be nonnegative integers per lattice axis."
+                "PeriodicImageStencil.extents must contain nonnegative integers per lattice axis; got an empty or invalid extent bank"
             )
         if len(fractional_excursion) != len(bounds) or len(axis_reach) != len(bounds):
             raise ValueError(
-                "fractional_excursion and axis_reach must be lattice-rank aligned."
+                "PeriodicImageStencil.fractional_excursion must align with extents and axis_reach; got incompatible bank lengths"
             )
         limit = int(maximum_image_count)
         count = prod(2 * int(item) + 1 for item in bounds)
         if limit <= 0 or count > limit:
-            raise ValueError("Image stencil exceeds maximum_image_count.")
+            raise ValueError(
+                "PeriodicImageStencil.maximum_image_count must cover the image stencil; got a nonpositive limit or too many images"
+            )
         self.extents = tuple(int(item) for item in bounds)
-        self.shifts = jnp.asarray(_complete_image_shifts(self.extents))
+        self.shifts = jnp.asarray(complete_image_shifts(self.extents))
         self.radius = float(radius)
         self.fractional_excursion = tuple(float(item) for item in fractional_excursion)
         self.axis_reach = tuple(float(item) for item in axis_reach)
@@ -240,18 +248,24 @@ class PeriodicCell(StrictModule, NonTrainableState):
     ) -> None:
         matrix = np.asarray(vectors)
         if matrix.ndim != 2 or matrix.shape[0] == 0 or matrix.shape[1] == 0:
-            raise ValueError("PeriodicCell vectors must have shape (rank > 0, d > 0).")
-        rank, ambient_dimension = map(int, matrix.shape)
+            raise ValueError(
+                "PeriodicCell.vectors must have shape (rank > 0, d > 0); got an empty or nonmatrix bank"
+            )
+        rank, ambient_dimension = matrix.shape
         if rank > ambient_dimension:
-            raise ValueError("PeriodicCell rank cannot exceed its ambient dimension.")
+            raise ValueError(
+                "PeriodicCell.vectors must have rank at most the ambient dimension; got too many lattice rows"
+            )
         dtype = np.result_type(matrix.dtype, np.float32)
         matrix = matrix.astype(dtype, copy=False)
         if np.any(~np.isfinite(matrix)):
-            raise ValueError("PeriodicCell vectors must be finite.")
+            raise ValueError("PeriodicCell.vectors must be finite; got a nonfinite entry")
         singular_values = np.linalg.svd(matrix, compute_uv=False)
         threshold = np.finfo(dtype).eps * max(matrix.shape) * singular_values[0]
         if singular_values[-1] <= threshold:
-            raise ValueError("PeriodicCell vectors must have full row rank.")
+            raise ValueError(
+                "PeriodicCell.vectors must have full row rank; got a deficient lattice"
+            )
 
         origin_host = (
             np.zeros((ambient_dimension,), dtype=dtype)
@@ -260,7 +274,7 @@ class PeriodicCell(StrictModule, NonTrainableState):
         )
         if origin_host.shape != (ambient_dimension,) or np.any(~np.isfinite(origin_host)):
             raise ValueError(
-                "PeriodicCell origin must be a finite ambient-dimension vector."
+                "PeriodicCell.origin must be a finite ambient-dimension vector; got another shape or a nonfinite value"
             )
         axes = (
             (True,) * rank
@@ -269,7 +283,7 @@ class PeriodicCell(StrictModule, NonTrainableState):
         )
         if len(axes) != rank:
             raise ValueError(
-                "periodic_axes must align with PeriodicCell lattice vectors."
+                "PeriodicCell.periodic_axes must align with lattice rows; got another axis-bank length"
             )
 
         condition = float(singular_values[0] / singular_values[-1])
@@ -280,36 +294,36 @@ class PeriodicCell(StrictModule, NonTrainableState):
         )
         if not np.isfinite(certified_condition) or certified_condition < condition:
             raise ValueError(
-                "maximum_condition_number must cover the initial lattice condition."
+                "PeriodicCell.maximum_condition_number must be finite and cover the lattice condition; got an invalid condition bound"
             )
         extent = max(1, ceil(0.5 + certified_condition * sqrt(rank)))
-        limit = int(maximum_image_count)
-        if isinstance(maximum_image_count, (bool, np.bool_)) or not isinstance(
-            maximum_image_count, (int, np.integer)
-        ):
-            raise TypeError("maximum_image_count must be an integer.")
-        if limit <= 0:
-            raise ValueError("maximum_image_count must be positive.")
+        limit = positive_integer(maximum_image_count, "maximum_image_count")
         # Admit the scalar stencil size before enumerating condition-sized shifts.
         image_count = (2 * extent + 1) ** sum(axes)
         if image_count > limit:
             raise ValueError(
-                f"PeriodicCell requires {image_count} image candidates, exceeding maximum_image_count={limit}."
+                f"PeriodicCell.maximum_image_count must cover the lattice image candidates; got {image_count} > {limit}"
             )
         choices = [range(-extent, extent + 1) if axis else (0,) for axis in axes]
         shifts = np.asarray(tuple(product(*choices)), dtype=np.int32)
 
         gram = matrix @ matrix.T
+        # These coordinates become immutable host preparation, so tracing a
+        # mathematical derivative would charge unused Krylov work.
         coordinate_solve = solve(
             LinearSystem(DenseLinearOperator(gram)),
             matrix,
-            policy=LinearSolvePolicy(DenseLU()),
+            policy=LinearSolvePolicy(
+                DenseLU(), differentiation=DifferentiationPolicy("none")
+            ),
         )
         inverse = np.asarray(coordinate_solve.value).T
         reciprocal = _TWO_PI * inverse.T
         measure = float(np.sqrt(np.linalg.det(gram)))
         if not np.isfinite(measure) or measure <= np.finfo(dtype).eps:
-            raise ValueError("PeriodicCell lattice measure must be finite and positive.")
+            raise ValueError(
+                "PeriodicCell.cell_measure must be finite and positive above the dtype threshold; got a singular or nonfinite measure"
+            )
         nonzero = np.any(shifts != 0, axis=1)
         if np.any(nonzero):
             translations = shifts[nonzero] @ matrix
@@ -353,7 +367,7 @@ class PeriodicCell(StrictModule, NonTrainableState):
         )
 
     def validate_restored(self) -> None:
-        """Authenticate original controls and every derived lattice field."""
+        """Validate retained controls and every constructor-derived lattice field."""
         replay = PeriodicCell(
             self.vectors,
             origin=self.origin,
@@ -361,34 +375,42 @@ class PeriodicCell(StrictModule, NonTrainableState):
             maximum_condition_number=self.maximum_condition_number,
             maximum_image_count=self.maximum_image_count,
         )
-        for name in (
-            "origin",
-            "vectors",
-            "inverse_vectors",
-            "reciprocal_vectors",
-            "periodic_mask",
-            "image_shifts",
+        for name, value, expected in (
+            ("origin", self.origin, replay.origin),
+            ("vectors", self.vectors, replay.vectors),
+            ("inverse_vectors", self.inverse_vectors, replay.inverse_vectors),
+            ("reciprocal_vectors", self.reciprocal_vectors, replay.reciprocal_vectors),
+            ("periodic_mask", self.periodic_mask, replay.periodic_mask),
+            ("image_shifts", self.image_shifts, replay.image_shifts),
         ):
-            if array_tree_fingerprint(getattr(self, name)) != array_tree_fingerprint(
-                getattr(replay, name)
-            ):
+            if array_tree_fingerprint(value) != array_tree_fingerprint(expected):
                 raise ValueError(
-                    f"Restored PeriodicCell {name} violates its original lattice law."
+                    f"PeriodicCell.{name} must match constructor-derived lattice arrays; got a changed stored value"
                 )
-        for name in (
-            "periodic_axes",
-            "cell_measure",
-            "volume",
-            "unique_image_radius",
-            "condition_number",
-            "certified_condition_number",
-            "image_extent",
-            "maximum_condition_number",
-            "maximum_image_count",
-            "cell_id",
+        for name, value, expected in (
+            ("periodic_axes", self.periodic_axes, replay.periodic_axes),
+            ("cell_measure", self.cell_measure, replay.cell_measure),
+            ("volume", self.volume, replay.volume),
+            ("unique_image_radius", self.unique_image_radius, replay.unique_image_radius),
+            ("condition_number", self.condition_number, replay.condition_number),
+            (
+                "certified_condition_number",
+                self.certified_condition_number,
+                replay.certified_condition_number,
+            ),
+            ("image_extent", self.image_extent, replay.image_extent),
+            (
+                "maximum_condition_number",
+                self.maximum_condition_number,
+                replay.maximum_condition_number,
+            ),
+            ("maximum_image_count", self.maximum_image_count, replay.maximum_image_count),
+            ("cell_id", self.cell_id, replay.cell_id),
         ):
-            if getattr(self, name) != getattr(replay, name):
-                raise ValueError(f"Restored PeriodicCell {name} is not authenticated.")
+            if value != expected:
+                raise ValueError(
+                    f"PeriodicCell.{name} must match constructor-derived metadata; got a changed stored value"
+                )
 
     @property
     def rank(self) -> int:
@@ -409,13 +431,13 @@ class PeriodicCell(StrictModule, NonTrainableState):
     def _require_ambient(self, value: Array, noun: str, /) -> None:
         if not value.shape or value.shape[-1] != self.ambient_dimension:
             raise ValueError(
-                f"PeriodicCell {noun} must end in ambient dimension {self.ambient_dimension}."
+                f"PeriodicCell.{noun} must end in ambient dimension {self.ambient_dimension}; got {value.shape}"
             )
 
     def _require_fractional(self, value: Array, /) -> None:
         if not value.shape or value.shape[-1] != self.rank:
             raise ValueError(
-                f"Fractional coordinates must end in lattice rank {self.rank}."
+                f"PeriodicCell.fractional must end in lattice rank {self.rank}; got {value.shape}"
             )
 
     def fractional(self, position: ArrayLike, /) -> Array:
@@ -481,7 +503,9 @@ class PeriodicCell(StrictModule, NonTrainableState):
         """Return the dynamic right inverse and its solve status without raising."""
         matrix = jnp.asarray(vectors, dtype=self.vectors.dtype)
         if matrix.shape != self.vectors.shape:
-            raise ValueError("Dynamic lattice vectors must match the prepared shape.")
+            raise ValueError(
+                "PeriodicCell.vectors must match the prepared lattice shape; got incompatible dynamic vectors"
+            )
         return lattice_right_inverse_with_status(matrix)
 
     def fractional_with_vectors_with_status(
@@ -502,22 +526,26 @@ class PeriodicCell(StrictModule, NonTrainableState):
     def inverse_for_vectors(self, vectors: ArrayLike, /) -> Array:
         matrix = jnp.asarray(vectors, dtype=self.vectors.dtype)
         if matrix.shape != self.vectors.shape:
-            raise ValueError("Dynamic lattice vectors must match the prepared shape.")
+            raise ValueError(
+                "PeriodicCell.vectors must match the prepared lattice shape; got incompatible dynamic vectors"
+            )
         return lattice_right_inverse(matrix)
 
     def measure_with_vectors(self, vectors: ArrayLike, /) -> tuple[Array, Array]:
         """Return the dynamic cell measure (volume for full rank) and its status."""
         matrix = jnp.asarray(vectors)
         if matrix.shape[-2:] != self.vectors.shape:
-            raise ValueError("Dynamic lattice vectors must match the prepared shape.")
+            raise ValueError(
+                "PeriodicCell.vectors must match the prepared lattice shape; got incompatible dynamic vectors"
+            )
         return lattice_measure(matrix)
 
     def axis_reach_with_vectors(self, vectors: ArrayLike, /) -> Array:
         """Return ``||inverse[:, i]||``, the reciprocal perpendicular lattice heights.
 
         Any displacement ``d = (delta_s + n) @ vectors + d_perp`` satisfies
-        ``|delta_s_i + n_i| <= |d| * reach_i``; this is the complete per-axis
-        integer bound used by image enumeration and its certificates.
+        ``|delta_s_i + n_i| <= |d| * reach_i``; these per-axis
+        integer bounds drive image enumeration and its certificates.
         """
         inverse = self.inverse_for_vectors(vectors)
         return jnp.sqrt(jnp.sum(inverse * inverse, axis=0))
@@ -533,8 +561,8 @@ class PeriodicCell(StrictModule, NonTrainableState):
     ) -> PeriodicImageStencil:
         """Enumerate every integer translation that can reach within ``radius``.
 
-        Unlike the nearest-image ``image_shifts`` stencil, the result is complete
-        for ``d = x_receiver - x_source + n @ vectors`` with ``|d| < radius``
+        Unlike the nearest-image ``image_shifts`` stencil, this set covers every
+        ``d = x_receiver - x_source + n @ vectors`` with ``|d| < radius``
         whenever the endpoint fractional separation on each periodic axis is
         below ``fractional_excursion`` (``1`` for wrapped coordinates).  The
         bound uses the host right inverse and refuses conditioning outside the
@@ -542,22 +570,30 @@ class PeriodicCell(StrictModule, NonTrainableState):
         """
         value = float(radius)
         if not np.isfinite(value) or value <= 0.0:
-            raise ValueError("Image enumeration radius must be finite and positive.")
+            raise ValueError(
+                "PeriodicCell.radius must be finite and positive for image enumeration; got an invalid radius"
+            )
         limit = int(maximum_image_count)
         if limit <= 0:
-            raise ValueError("maximum_image_count must be positive.")
+            raise ValueError(
+                "PeriodicCell.maximum_image_count must be positive; got a nonpositive image limit"
+            )
         matrix = np.asarray(
             self.vectors if cell_vectors is None else cell_vectors, dtype=np.float64
         )
         if matrix.shape != tuple(self.vectors.shape) or np.any(~np.isfinite(matrix)):
-            raise ValueError("Image enumeration vectors must match the prepared cell.")
+            raise ValueError(
+                "PeriodicCell.cell_vectors must be finite and match the prepared lattice shape; got incompatible enumeration vectors"
+            )
         singular_values = np.linalg.svd(matrix, compute_uv=False)
         if singular_values[-1] <= np.finfo(np.float64).eps * singular_values[0]:
-            raise ValueError("Image enumeration vectors are rank deficient.")
+            raise ValueError(
+                "PeriodicCell.cell_vectors must have full row rank for image enumeration; got a deficient lattice"
+            )
         condition = float(singular_values[0] / singular_values[-1])
         if condition > self.certified_condition_number:
             raise ValueError(
-                "Image enumeration vectors exceed the PeriodicCell condition certificate."
+                "PeriodicCell.cell_vectors must satisfy the prepared condition certificate; got a larger condition number"
             )
         excursion = (
             (float(fractional_excursion),) * self.rank
@@ -568,12 +604,15 @@ class PeriodicCell(StrictModule, NonTrainableState):
             not np.isfinite(item) or item < 0.0 for item in excursion
         ):
             raise ValueError(
-                "fractional_excursion must be finite, nonnegative, and lattice-rank aligned."
+                "PeriodicCell.fractional_excursion must be finite, nonnegative, and lattice-rank aligned; got invalid excursion controls"
             )
+        # Image budget derivation is host-only, not a differentiable solve.
         coordinate_solve = solve(
             LinearSystem(DenseLinearOperator(matrix @ matrix.T)),
             matrix,
-            policy=LinearSolvePolicy(DenseLU()),
+            policy=LinearSolvePolicy(
+                DenseLU(), differentiation=DifferentiationPolicy("none")
+            ),
         )
         inverse = np.asarray(coordinate_solve.value).T
         reach = np.sqrt(np.sum(inverse * inverse, axis=0))
@@ -586,8 +625,7 @@ class PeriodicCell(StrictModule, NonTrainableState):
             count *= 2 * extent + 1
         if count > limit:
             raise ValueError(
-                f"Image enumeration requires {count} translations, exceeding "
-                f"maximum_image_count={limit}."
+                f"PeriodicCell.maximum_image_count must cover enumerated translations; got {count} > {limit}"
             )
         return PeriodicImageStencil(
             extents=extents,
@@ -616,7 +654,9 @@ class PeriodicCell(StrictModule, NonTrainableState):
         lattice solve, so the result is a traced certificate.
         """
         if stencil.cell_id != self.cell_id:
-            raise ValueError("Image stencil belongs to another PeriodicCell.")
+            raise ValueError(
+                "PeriodicCell.stencil must bind this cell_id; got another lattice identity"
+            )
         reach = self.axis_reach_with_vectors(vectors)
         excursion = jnp.asarray(fractional_excursion, dtype=reach.dtype)
         extents = jnp.asarray(stencil.extents, dtype=reach.dtype)
@@ -645,7 +685,9 @@ class PeriodicCell(StrictModule, NonTrainableState):
         self._require_fractional(value)
         matrix = jnp.asarray(vectors, dtype=value.dtype)
         if matrix.shape != self.vectors.shape:
-            raise ValueError("Dynamic lattice vectors must match the prepared shape.")
+            raise ValueError(
+                "PeriodicCell.vectors must match the prepared lattice shape; got incompatible dynamic vectors"
+            )
         return self.origin.astype(value.dtype) + contract(
             "...i,ij->...j", value, matrix, backend="jax"
         )
@@ -689,10 +731,12 @@ class PeriodicCell(StrictModule, NonTrainableState):
     def require_unique_image(self, radius: float, /) -> None:
         value = float(radius)
         if not np.isfinite(value) or value <= 0.0:
-            raise ValueError("Interaction radius must be finite and positive.")
+            raise ValueError(
+                "PeriodicCell.radius must be finite and positive; got an invalid interaction radius"
+            )
         if value >= self.unique_image_radius:
             raise ValueError(
-                "Interaction radius violates the PeriodicCell unique-image certificate."
+                "PeriodicCell.radius must remain below the unique-image certificate; got an unsupported interaction radius"
             )
 
 

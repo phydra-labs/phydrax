@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 _BOX = phx.domain.HyperRectangle(np.asarray([0.0, -1.0]), np.asarray([2.0, 3.0]))
@@ -171,7 +172,7 @@ def test_identification_refuses_invalid_coordinates(
 
 def test_identification_refuses_geometry_without_cartesian_faces() -> None:
     disk = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile(coordinate_unit=METER)
     )
     with pytest.raises(ValueError, match="does not expose Cartesian coordinate faces"):
         phx.domain.PeriodicIdentification(disk, "x", component=0)

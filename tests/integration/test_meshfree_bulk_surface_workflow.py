@@ -60,6 +60,7 @@ from phydrax.solver.coupling._surface_exchange import (
     SurfaceExchangeLaw,
 )
 from phydrax.sparse import EdgeRelation, SparseCoordinateOperator
+from phydrax.units import METER
 
 
 def test_analytic_langmuir_equilibrium_and_moving_query_ledger() -> None:
@@ -457,7 +458,9 @@ def _ring_component(points: np.ndarray, /) -> MeshfreeComponent:
     return MeshfreeComponent(
         surface,
         native,
-        surface.prepare_field_reconstruction(support_geometry=RING_SUPPORT.compile()),
+        surface.prepare_field_reconstruction(
+            support_geometry=RING_SUPPORT.compile(coordinate_unit=METER)
+        ),
         surface.measures,
         name="surface",
         owner_id=surface.prepared_id,
@@ -471,7 +474,7 @@ def _shepard_bulk() -> MeshfreeComponent:
     cloud = PointCloudPlan(points, volumes, neighbors=20).prepare()
     view = prepare_point_cloud_field_reconstruction(
         cloud,
-        support_geometry=RING_SUPPORT.compile(),
+        support_geometry=RING_SUPPORT.compile(coordinate_unit=METER),
         radius=0.3,
         capacity=points.shape[0],
         reconstruction="shepard",

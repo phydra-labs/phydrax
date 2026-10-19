@@ -1,45 +1,60 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Continuous, bounded source/fit embedding proofs, not sample certificates.
+"""Certify continuous source/fit embedding and separation of trim homotopies.
 
-The three straight homotopies share the authored atlas parameter. Every cell
-and every neighboring pair has a common strictly monotone coordinate for the
-source and fit derivatives. All other pairs have disjoint whole-homotopy image
-boxes. These premises prove an oriented piecewise-regular embedding throughout
-the homotopy; they do not assert C1 continuity across independently parameterized
-source charts. Root references, not numerical endpoint agreement, establish
-source incidence.
-
-A nonzero native-period winding is an OPEN lifted UV trace here. A binary
-polynomial does not acquire exact irrational-period closure from a small seam
-gap. Exporters must inspect ``trim_closure_kinds`` before admitting a closed
-face trim. This module never changes source roots or invents a seam correction.
+The physical and two chart-space straight homotopies share the source atlas
+parameter. Local cells share an oriented monotone coordinate; nonlocal cells
+have disjoint image boxes. Root references establish endpoint incidence.
+Native-period winding certifies an open lifted trace: exporters inspect
+``trim_closure_kinds`` before admitting a closed face trim.
 """
 
 from __future__ import annotations
 
 import math
 import sys
-from dataclasses import dataclass
-from fractions import Fraction
-from typing import Any
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
+from typing import assert_never, final, Literal, NoReturn, TypedDict
 
+import equinox as eqx
+import jax
 import numpy as np
+from jax.typing import ArrayLike, DTypeLike
 
-from ..._interpolation._bspline import restrict_bernstein_bounds
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._resource_ticket import HostBatchTicket, ManagedBytesContributor
+from ..._strict import StrictModule
+from ..._validation import nonnegative_integer, positive_integer
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked, parse
+from .._atlas import AbstractTrimCurve
 from .._interval_enclosure import (
     interval_add,
     interval_divide,
     interval_multiply,
     interval_subtract,
 )
-from ._intersection_curve import IntersectionCurve
-from ._patches import _piece_hull, BSplineCurve, RationalBezierPiece
+from ._coordinate_request import coordinate_source_request
+from ._intersection_curve import IntersectionCurve, IntersectionCurveSide
+from ._patches import (
+    AbstractCurve,
+    AbstractSurfacePatch,
+    BSplineCurve,
+    BSplineSurfacePatch,
+    piece_hull,
+    rational_piece_jet_bounds,
+    RationalBezierPiece,
+)
+from ._request_preparations import TrimRequestPreparations
+
+
+type TrimClosureKind = Literal["closed", "open-native-period-lift", "open"]
 
 
 class BranchApproximationTopologyResourceError(ValueError):
-    """A continuous topology premise remains unresolved within explicit limits."""
+    """Report unresolved continuous topology and consumed resource evidence."""
 
     def __init__(self, cause: str, *, cells: int, depth: int, bytes_used: int) -> None:
         self.cause = cause
@@ -47,14 +62,14 @@ class BranchApproximationTopologyResourceError(ValueError):
         self.maximum_depth_used = depth
         self.bytes_used = bytes_used
         super().__init__(
-            f"Branch approximation topology: {cause} "
-            f"(work={cells}, depth={depth}, bytes={bytes_used})."
+            f"BranchApproximationTopology.resource must cover continuous topology; "
+            f"got {cause} (work={cells}, depth={depth}, bytes={bytes_used})."
         )
 
 
-@dataclass(frozen=True, slots=True)
-class BranchApproximationTopologyEvidence:
-    """Immutable evidence for exactly the supplied carriers and source atlas.
+@final
+class BranchApproximationTopologyEvidence(StrictModule):
+    """Record continuous embedding bounds for the supplied carriers and atlas.
 
     ``homotopy_boxes`` and ``derivative_intervals`` have shape (cells,2,7),
     columns XYZ, first UV, second UV. ``local_axes`` and ``adjacent_axes``
@@ -66,18 +81,16 @@ class BranchApproximationTopologyEvidence:
     storage and enclosure workspaces, not process RSS or a native-runtime cache.
     """
 
-    cells: int
-    maximum_depth_used: int
-    bytes_used: int
-    subdivision_cells: int
-    pair_checks: int
-    source_branch_id: str
-    source_identity: str
-    approximation_identity: str
-    homotopy_authority: str
-    orientation_authority: str
-    closed: bool
-    trim_closure_kinds: tuple[str, str]
+    cells: int = eqx.field(static=True)
+    maximum_depth_used: int = eqx.field(static=True)
+    bytes_used: int = eqx.field(static=True)
+    subdivision_cells: int = eqx.field(static=True)
+    pair_checks: int = eqx.field(static=True)
+    source_branch_id: str = eqx.field(static=True)
+    source_identity: str = eqx.field(static=True)
+    approximation_identity: str = eqx.field(static=True)
+    closed: bool = eqx.field(static=True)
+    trim_closure_kinds: tuple[TrimClosureKind, TrimClosureKind] = eqx.field(static=True)
     parameter_cells: np.ndarray
     chart_indices: np.ndarray
     homotopy_boxes: np.ndarray
@@ -96,60 +109,64 @@ class BranchApproximationTopologyEvidence:
     fit_endpoint_difference_interval: np.ndarray
 
 
-@dataclass(frozen=True, slots=True)
-class BranchTrimSeparationEvidence:
-    topology_identity: str
-    trim_identity: str
-    side: str
-    cells: int
-    maximum_depth_used: int
-    bytes_used: int
+@final
+class BranchTrimSeparationEvidence(StrictModule):
+    """Record interval separation from every potentially intersecting trim lift."""
+
+    topology_identity: str = eqx.field(static=True)
+    trim_identity: str = eqx.field(static=True)
+    side: IntersectionCurveSide = eqx.field(static=True)
+    cells: int = eqx.field(static=True)
+    maximum_depth_used: int = eqx.field(static=True)
+    bytes_used: int = eqx.field(static=True)
     separation_lower_bound: float
     interval_evidence: np.ndarray
 
 
-def _readonly(value: Any, dtype: Any = np.float64) -> np.ndarray:
+def _readonly(value: ArrayLike, dtype: DTypeLike = np.float64) -> np.ndarray:
     array = np.asarray(value, dtype=dtype)
     # Immutable backing prevents callers from re-enabling writeability.
     return np.frombuffer(array.tobytes(), dtype=array.dtype).reshape(array.shape)
 
 
-class _Budget:
-    def __init__(self, cells: int, depth: int, memory: int) -> None:
-        for name, value, minimum in (
-            ("maximum_cells", cells, 1),
-            ("maximum_depth", depth, 0),
-            ("maximum_bytes", memory, 1),
-        ):
-            if type(value) is not int or value < minimum:
-                raise ValueError(f"{name} must be an integer >= {minimum}.")
-        self.limit, self.depth_limit, self.memory_limit = cells, depth, memory
-        self.work = self.depth = self.memory = self.peak = 0
-        self.subdivisions = self.pairs = 0
+class _TopologyBudget:
+    """Retain topology depth/categories over the shared host resource ledger."""
 
-    def fail(self, cause: str) -> None:
+    def __init__(
+        self, ticket: HostBatchTicket, storage: ManagedBytesContributor, depth: int
+    ) -> None:
+        self.ticket = ticket
+        self.storage = storage
+        self.depth_limit = depth
+        self.depth = self.subdivisions = self.pairs = 0
+
+    @property
+    def work(self) -> int:
+        return self.ticket.work_units
+
+    @property
+    def peak(self) -> int:
+        return self.ticket.managed_bytes
+
+    def fail(self, cause: str) -> NoReturn:
         raise BranchApproximationTopologyResourceError(
-            cause,
-            cells=self.work,
-            depth=self.depth,
-            bytes_used=self.peak,
+            cause, cells=self.work, depth=self.depth, bytes_used=self.peak
         )
 
     def reserve(self, amount: int) -> None:
-        if amount < 0 or self.memory + amount > self.memory_limit:
+        if amount < 0 or self.storage.bound + amount > self.ticket.bytes_upper:
             self.fail("maximum_bytes exhausted before growing interval storage")
-        self.memory += amount
-        self.peak = max(self.peak, self.memory)
+        self.storage.set_bound(self.storage.bound + amount)
 
     def release(self, amount: int) -> None:
-        self.memory -= amount
+        self.storage.set_bound(self.storage.bound - amount)
 
     def charge(self, depth: int, *, pair: bool = False) -> None:
         if depth > self.depth_limit:
-            self.fail("maximum_depth exhausted with an unresolved continuous premise")
-        if self.work >= self.limit:
-            self.fail("maximum_cells exhausted with an unresolved continuous premise")
-        self.work += 1
+            self.fail("maximum_depth exhausted with unresolved continuous topology")
+        if self.ticket.remaining_work_units <= 0:
+            self.fail("maximum_cells exhausted with unresolved continuous topology")
+        self.ticket.consume(1)
         self.depth = max(self.depth, depth)
         if pair:
             self.pairs += 1
@@ -157,22 +174,47 @@ class _Budget:
             self.subdivisions += 1
 
 
-def _identity(value: Any) -> str:
-    from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-
-    if isinstance(value, IntersectionCurve):
-        return canonical_fingerprint(value.payload())
-    carriers = value if isinstance(value, tuple) else (value,)
-    return canonical_fingerprint(
-        {
-            "types": [type(carrier).__name__ for carrier in carriers],
-            "degrees": [getattr(carrier, "degree", None) for carrier in carriers],
-            "arrays": array_tree_fingerprint(value),
-        }
-    )
+@contextmanager
+def _topology_budget(cells: int, depth: int, memory: int) -> Iterator[_TopologyBudget]:
+    positive_integer(cells, "maximum_cells")
+    nonnegative_integer(depth, "maximum_depth")
+    positive_integer(memory, "maximum_bytes")
+    with HostBatchTicket(cells, bytes_upper=memory) as ticket:
+        with ticket.managed_storage() as storage:
+            yield _TopologyBudget(ticket, storage, depth)
 
 
-def _finite_box(value: Any, dimension: int) -> np.ndarray:
+class _CarrierIdentityPayload(TypedDict):
+    types: list[str]
+    degrees: list[int | None]
+    arrays: dict[str, str | list[dict[str, str | list[int]]]]
+
+
+def _identity(value: IntersectionCurve | TrimCarrier | tuple[BSplineCurve, ...]) -> str:
+    match value:
+        case IntersectionCurve():
+            return canonical_fingerprint(value.payload())
+        case tuple():
+            carriers = value
+        case _:
+            carriers = (value,)
+    payload: _CarrierIdentityPayload = {
+        "types": [type(carrier).__name__ for carrier in carriers],
+        "degrees": [_carrier_degree(carrier) for carrier in carriers],
+        "arrays": array_tree_fingerprint(value),
+    }
+    return canonical_fingerprint(payload)
+
+
+def _carrier_degree(carrier: TrimCarrier) -> int | None:
+    match carrier:
+        case BSplineCurve():
+            return carrier.degree
+        case _:
+            return None
+
+
+def _finite_box(value: ArrayLike, dimension: int) -> np.ndarray:
     box = np.asarray(value, dtype=np.float64)
     if (
         box.shape != (2, dimension)
@@ -180,7 +222,8 @@ def _finite_box(value: Any, dimension: int) -> np.ndarray:
         or np.any(box[0] > box[1])
     ):
         raise ValueError(
-            "The native enclosure substrate returned no finite ordered interval."
+            f"BranchApproximationTopology.enclosure must be finite ordered (2, {dimension}); "
+            f"got shape={box.shape}."
         )
     return box
 
@@ -205,7 +248,7 @@ def _separation(first: np.ndarray, second: np.ndarray) -> float:
 
 
 def _spline_pieces(
-    curve: BSplineCurve, budget: _Budget
+    curve: BSplineCurve, budget: _TopologyBudget
 ) -> tuple[RationalBezierPiece, ...]:
     points = np.asarray(curve.control_points)
     weights = np.asarray(curve.weights)
@@ -216,7 +259,8 @@ def _spline_pieces(
         or np.any(weights <= 0)
     ):
         raise ValueError(
-            "Spline embedding requires finite controls and strictly positive weights."
+            "BranchApproximationTopology.fit must have finite controls and positive weights; "
+            "got nonfinite controls or nonpositive weights."
         )
     spans = int(np.count_nonzero(np.diff(knots) > 0))
     coefficients = spans * (curve.degree + 1) * (curve.ambient_dimension + 1)
@@ -245,57 +289,19 @@ def _spline_pieces(
     return pieces
 
 
-def _spline_bounds(
+def _fitted_interval(
     pieces: tuple[RationalBezierPiece, ...], first: float, last: float
 ) -> tuple[np.ndarray, np.ndarray]:
-    boxes, jets = [], []
+    boxes: list[np.ndarray] = []
+    jets: list[np.ndarray] = []
     for piece in pieces:
         start, end = piece.parameter_bounds[0]
         if end < first or start > last:
             continue
-        boxes.append(_piece_hull(piece, (first,), (last,)))
-        lo, hi = piece.homogeneous_lower, piece.homogeneous_upper
-        width = interval_subtract(
-            (np.asarray(end), np.asarray(end)), (np.asarray(start), np.asarray(start))
+        boxes.append(piece_hull(piece, (first,), (last,)))
+        jets.append(
+            np.stack(rational_piece_jet_bounds(piece, max(first, start), min(last, end)))
         )
-        degree = lo.shape[0] - 1
-        difference = interval_subtract((lo[1:], hi[1:]), (lo[:-1], hi[:-1]))
-        derivative = interval_divide(
-            interval_multiply(difference, (degree, degree)), width
-        )
-        exact_width = Fraction(end) - Fraction(start)
-        a = max(
-            0.0,
-            float(
-                np.nextafter(
-                    float((Fraction(max(first, start)) - Fraction(start)) / exact_width),
-                    -np.inf,
-                )
-            ),
-        )
-        b = min(
-            1.0,
-            float(
-                np.nextafter(
-                    float((Fraction(min(last, end)) - Fraction(start)) / exact_width),
-                    np.inf,
-                )
-            ),
-        )
-        values = restrict_bernstein_bounds(lo, hi, a, b, 0)
-        derivatives = restrict_bernstein_bounds(*derivative, a, b, 0)
-        h = (np.min(values[0], axis=0), np.max(values[1], axis=0))
-        dh = (np.min(derivatives[0], axis=0), np.max(derivatives[1], axis=0))
-        numerator = interval_subtract(
-            interval_multiply((dh[0][:-1], dh[1][:-1]), (h[0][-1], h[1][-1])),
-            interval_multiply((h[0][:-1], h[1][:-1]), (dh[0][-1], dh[1][-1])),
-        )
-        denominator = interval_multiply((h[0][-1], h[1][-1]), (h[0][-1], h[1][-1]))
-        if denominator[0] <= 0:
-            raise ValueError(
-                "The rational spline derivative denominator is not strictly positive."
-            )
-        jets.append(np.stack(interval_divide(numerator, denominator)))
     return (
         np.stack(
             (np.min(np.stack(boxes)[:, 0], axis=0), np.max(np.stack(boxes)[:, 1], axis=0))
@@ -306,21 +312,506 @@ def _spline_bounds(
     )
 
 
-@dataclass(slots=True)
-class _Cell:
-    first: float
-    last: float
-    chart: int
-    depth: int
+@final
+class _Cell(StrictModule):
+    first: float = eqx.field(static=True)
+    last: float = eqx.field(static=True)
+    chart: int = eqx.field(static=True)
+    depth: int = eqx.field(static=True)
     box: np.ndarray
     jet: np.ndarray
     axes: tuple[int, int, int]
+
+
+@final
+class _FittedAtlas(StrictModule):
+    source: IntersectionCurve
+    fits: tuple[BSplineCurve, BSplineCurve, BSplineCurve]
+    pieces: tuple[tuple[RationalBezierPiece, ...], ...]
+    pcurves: tuple[AbstractTrimCurve, AbstractTrimCurve]
+    gauge: np.ndarray
+    winding: np.ndarray
+    periods: tuple[float | None, ...] = eqx.field(static=True)
+    closures: tuple[TrimClosureKind, TrimClosureKind] = eqx.field(static=True)
+
+
+@final
+class _PairPartition(StrictModule):
+    offender: int | None = eqx.field(static=True)
+    adjacent_rows: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    pair_rows: tuple[tuple[float, ...], ...] = eqx.field(static=True)
+    memory: int = eqx.field(static=True)
+
+
+@final
+class _PairRelation(StrictModule):
+    adjacent: bool = eqx.field(static=True)
+    seam: bool = eqx.field(static=True)
+    axes: tuple[int, ...] = eqx.field(static=True)
+    distances: tuple[float, ...] = eqx.field(static=True)
+    local: tuple[bool, ...] = eqx.field(static=True)
+    resolved: bool = eqx.field(static=True)
+
+
+@final
+class BranchTrimHomotopyTube(StrictModule):
+    """Enclose the chart-space homotopy over a represented source range."""
+
+    evidence: BranchApproximationTopologyEvidence
+    side: IntersectionCurveSide = eqx.field(static=True)
+    parameter_domain: tuple[float, float] = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        evidence: BranchApproximationTopologyEvidence,
+        side: IntersectionCurveSide,
+        parameter_domain: tuple[float, float],
+    ) -> None:
+        side = parse(side, IntersectionCurveSide, "BranchTrimHomotopyTube.side")
+        first, last = parameter_domain
+        if not math.isfinite(first) or not math.isfinite(last) or not first < last:
+            raise ValueError(
+                "BranchTrimHomotopyTube.parameter_domain must be finite and nonempty; "
+                f"got {parameter_domain}."
+            )
+        self.evidence = evidence
+        self.side = side
+        self.parameter_domain = parameter_domain
+
+    @property
+    def enclosure_workspace_bytes(self) -> int:
+        return 64 * self.evidence.parameter_cells.shape[0]
+
+    def enclosure(self, first: float, last: float, /) -> np.ndarray:
+        cells = self.evidence.parameter_cells
+        if not self.parameter_domain[0] <= first <= last <= self.parameter_domain[1]:
+            raise ValueError(
+                "BranchTrimHomotopyTube.range must retain its represented source range; "
+                f"got ({first}, {last})."
+            )
+        active = (cells[:, 0] <= last) & (cells[:, 1] >= first)
+        if not np.any(active):
+            raise ValueError(
+                "BranchTrimHomotopyTube.range must overlap certified cells; "
+                f"got ({first}, {last})."
+            )
+        columns = slice(3, 5) if self.side == "first" else slice(5, 7)
+        boxes = self.evidence.homotopy_boxes[active, :, columns]
+        return np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0)))
+
+
+type TrimCarrier = AbstractCurve | AbstractTrimCurve | BranchTrimHomotopyTube
 
 
 _CELL_BYTES = 1024
 _PAIR_BYTES = 512
 
 
+def _coefficient_bytes(value: AbstractSurfacePatch | TrimCarrier) -> int:
+    # A tube borrows certificate storage; its exporter accounts for that storage
+    # separately. Only its active-cell enclosure workspace is newly reserved here.
+    match value:
+        case BranchTrimHomotopyTube():
+            return 0
+    total = 0
+    for leaf in jax.tree_util.tree_leaves(value):
+        match leaf:
+            case jax.Array() | np.ndarray():
+                total += leaf.size * np.dtype(leaf.dtype).itemsize
+    return total
+
+
+def _validate_fits(
+    source: IntersectionCurve, fits: tuple[BSplineCurve, BSplineCurve, BSplineCurve]
+) -> None:
+    if not source.fully_certified:
+        raise ValueError(
+            "BranchApproximationTopology.source must have certified charts and shared roots; "
+            "got an uncertified source atlas."
+        )
+    domain = source.parameter_domain
+    for fit, dimension in zip(fits, (3, 2, 2), strict=True):
+        if fit.ambient_dimension != dimension or fit.parameter_domain != domain:
+            raise ValueError(
+                "BranchApproximationTopology.fit must use the source domain and space dimension; "
+                f"got domain={fit.parameter_domain}, dimension={fit.ambient_dimension}."
+            )
+        knots = np.asarray(fit.knots)
+        if (
+            np.count_nonzero(knots == domain[0]) != fit.degree + 1
+            or np.count_nonzero(knots == domain[1]) != fit.degree + 1
+        ):
+            raise ValueError(
+                "BranchApproximationTopology.fit.knots must clamp both source endpoints; "
+                f"got degree={fit.degree}, domain={domain}."
+            )
+
+
+@final
+class _RootGauge(StrictModule):
+    gauge: np.ndarray
+    winding: np.ndarray
+    periods: tuple[float | None, ...] = eqx.field(static=True)
+
+
+def _prepare_root_gauge(source: IntersectionCurve) -> _RootGauge:
+    gauge = np.zeros((source.num_charts, 4), dtype=np.int64)
+    periods = (*source.first.patch.periods, *source.second.patch.periods)
+    for chart in range(1, source.num_charts):
+        gauge[chart] = gauge[chart - 1]
+        for axis, shift in enumerate(source.transition_shifts[chart - 1]):
+            if shift:
+                period = periods[axis]
+                if period is None:
+                    raise ValueError(
+                        "BranchApproximationTopology.source.transition must have a declared period; "
+                        f"got chart={chart}, axis={axis}, shift={shift}."
+                    )
+                integer = int(round(float(shift) / period))
+                if float(shift) != integer * period:
+                    raise ValueError(
+                        "BranchApproximationTopology.source.transition must be an integer period shift; "
+                        f"got shift={shift}, period={period}."
+                    )
+                gauge[chart, axis] -= integer
+    return _RootGauge(
+        gauge=gauge,
+        winding=np.asarray(source.node_period_shifts[-1], dtype=np.int64) + gauge[-1],
+        periods=periods,
+    )
+
+
+def _trim_closures(
+    source: IntersectionCurve,
+    fits: tuple[BSplineCurve, BSplineCurve, BSplineCurve],
+    winding: np.ndarray,
+) -> tuple[TrimClosureKind, TrimClosureKind]:
+    if source.closed:
+        if int(source.node_references[-1]) != int(source.node_references[0]):
+            raise ValueError(
+                "BranchApproximationTopology.source.seam must reference one shared root; "
+                "got different endpoint root references."
+            )
+        if not np.array_equal(
+            np.asarray(fits[0].control_points)[0], np.asarray(fits[0].control_points)[-1]
+        ):
+            raise ValueError(
+                "BranchApproximationTopology.fit.endpoints must coincide algebraically for a closed source; "
+                "got different physical endpoint controls."
+            )
+    closures: list[TrimClosureKind] = []
+    for side, fit in enumerate(fits[1:]):
+        shift = winding[2 * side : 2 * side + 2]
+        if source.closed and not np.any(shift):
+            if not np.array_equal(
+                np.asarray(fit.control_points)[0], np.asarray(fit.control_points)[-1]
+            ):
+                raise ValueError(
+                    "BranchApproximationTopology.fit.trim_endpoints must coincide for zero winding; "
+                    f"got different endpoint controls on side={side}."
+                )
+            closures.append("closed")
+        elif source.closed:
+            closures.append("open-native-period-lift")
+        else:
+            closures.append("open")
+    return closures[0], closures[1]
+
+
+def _prepare_fitted_atlas(
+    source: IntersectionCurve,
+    fits: tuple[BSplineCurve, BSplineCurve, BSplineCurve],
+    budget: _TopologyBudget,
+) -> _FittedAtlas:
+    _validate_fits(source, fits)
+    # Generating coefficients contribute even when the intersection has few charts.
+    source_workspace = 0
+    for patch in (source.first.patch, source.second.patch):
+        match patch:
+            case BSplineSurfacePatch():
+                expansion = (patch.u_degree + 1) * (patch.v_degree + 1)
+            case _:
+                expansion = 1
+        source_workspace += 64 * expansion * _coefficient_bytes(patch)
+    budget.reserve(32768 + source.num_charts * 4096 + source_workspace)
+    roots = _prepare_root_gauge(source)
+    closures = _trim_closures(source, fits, roots.winding)
+    pieces = tuple(_spline_pieces(fit, budget) for fit in fits)
+    # This reusable workspace precedes every restriction/quotient interval query.
+    budget.reserve(
+        sum(
+            len(items) * (1024 + 256 * fit.degree * (fit.ambient_dimension + 1))
+            for fit, items in zip(fits, pieces, strict=True)
+        )
+    )
+    return _FittedAtlas(
+        source=source,
+        fits=fits,
+        pieces=pieces,
+        pcurves=(source.p_curve("first"), source.p_curve("second")),
+        gauge=roots.gauge,
+        winding=roots.winding,
+        periods=roots.periods,
+        closures=closures,
+    )
+
+
+def _make_cell(
+    atlas: _FittedAtlas,
+    interval: tuple[float, float],
+    chart_depth: tuple[int, int],
+    budget: _TopologyBudget,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> _Cell:
+    first, last = interval
+    chart, depth = chart_depth
+    source = atlas.source
+    budget.charge(depth)
+    budget.reserve(_CELL_BYTES)
+    source_boxes = [
+        _finite_box(
+            source.bounding_box(
+                first, last, preparations=preparations, budget=coordinate_budget
+            ),
+            3,
+        )
+    ]
+    coupled = source.parameter_enclosures(
+        first,
+        last,
+        minimum_chart=chart,
+        maximum_chart=chart,
+        preparations=preparations,
+        budget=coordinate_budget,
+    )[0]
+    delta = source.shift_parameter_bounds(atlas.gauge[chart])
+    lifted = np.stack(interval_add((coupled[0], coupled[1]), delta))
+    source_boxes.extend((lifted[:, :2], lifted[:, 2:]))
+    source_jets = [
+        np.stack(
+            source.derivative_bounds(
+                first, last, preparations=preparations, budget=coordinate_budget
+            )
+        )
+    ]
+    source_jets.extend(
+        np.stack(
+            pcurve.derivative_bounds(
+                first, last, preparations=preparations, budget=coordinate_budget
+            )
+        )
+        for pcurve in atlas.pcurves
+    )
+    fitted = [_fitted_interval(item, first, last) for item in atlas.pieces]
+    source_box = np.concatenate(source_boxes, axis=1)
+    fit_box = np.concatenate([item[0] for item in fitted], axis=1)
+    source_jet = np.concatenate(source_jets, axis=1)
+    fit_jet = np.concatenate([item[1] for item in fitted], axis=1)
+    box = _finite_box(
+        np.stack(
+            (np.minimum(source_box[0], fit_box[0]), np.maximum(source_box[1], fit_box[1]))
+        ),
+        7,
+    )
+    jet = np.stack(
+        (np.minimum(source_jet[0], fit_jet[0]), np.maximum(source_jet[1], fit_jet[1]))
+    )
+    return _Cell(
+        first=first,
+        last=last,
+        chart=chart,
+        depth=depth,
+        box=box,
+        jet=jet,
+        axes=(_axis(jet, _SPACES[0]), _axis(jet, _SPACES[1]), _axis(jet, _SPACES[2])),
+    )
+
+
+def _split_cell(
+    cell: _Cell,
+    atlas: _FittedAtlas,
+    budget: _TopologyBudget,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> tuple[_Cell, _Cell]:
+    if cell.depth >= budget.depth_limit:
+        budget.fail(
+            "maximum_depth exhausted: regularity, local injectivity or homotopy separation unresolved"
+        )
+    midpoint = cell.first + (cell.last - cell.first) / 2
+    if not cell.first < midpoint < cell.last:
+        budget.fail("binary parameter subdivision cannot advance")
+    children = (
+        _make_cell(
+            atlas,
+            (cell.first, midpoint),
+            (cell.chart, cell.depth + 1),
+            budget,
+            preparations,
+            coordinate_budget,
+        ),
+        _make_cell(
+            atlas,
+            (midpoint, cell.last),
+            (cell.chart, cell.depth + 1),
+            budget,
+            preparations,
+            coordinate_budget,
+        ),
+    )
+    budget.release(_CELL_BYTES)
+    return children
+
+
+def _pair_relation(
+    atlas: _FittedAtlas, first: _Cell, second: _Cell, i: int, j: int, count: int
+) -> _PairRelation:
+    adjacent = j == i + 1
+    seam = atlas.source.closed and i == 0 and j == count - 1
+    bounds = np.stack(
+        (np.minimum(first.jet[0], second.jet[0]), np.maximum(first.jet[1], second.jet[1]))
+    )
+    axes = tuple(_axis(bounds, space) for space in _SPACES)
+    distances = tuple(
+        _separation(first.box[:, space], second.box[:, space]) for space in _SPACES
+    )
+    # Physical and zero-winding UV seams retain one oriented axis.
+    local = tuple(
+        adjacent or (seam and (space == 0 or atlas.closures[space - 1] == "closed"))
+        for space in range(3)
+    )
+    resolved = not any((not axes[k]) if local[k] else distances[k] <= 0 for k in range(3))
+    return _PairRelation(
+        adjacent=adjacent,
+        seam=seam,
+        axes=axes,
+        distances=distances,
+        local=local,
+        resolved=resolved,
+    )
+
+
+def _check_partition(
+    atlas: _FittedAtlas, leaves: list[_Cell], budget: _TopologyBudget
+) -> _PairPartition:
+    offender = next(
+        (index for index, cell in enumerate(leaves) if not all(cell.axes)), None
+    )
+    if offender is not None:
+        return _PairPartition(offender=offender, adjacent_rows=(), pair_rows=(), memory=0)
+    adjacent_rows: list[tuple[int, ...]] = []
+    pair_rows: list[tuple[float, ...]] = []
+    pair_memory = 0
+    for i, first in enumerate(leaves):
+        for j in range(i + 1, len(leaves)):
+            second = leaves[j]
+            budget.charge(max(first.depth, second.depth), pair=True)
+            relation = _pair_relation(atlas, first, second, i, j, len(leaves))
+            if not relation.resolved:
+                offender = (
+                    i if first.last - first.first >= second.last - second.first else j
+                )
+                return _PairPartition(
+                    offender=offender,
+                    adjacent_rows=tuple(adjacent_rows),
+                    pair_rows=tuple(pair_rows),
+                    memory=pair_memory,
+                )
+            budget.reserve(_PAIR_BYTES)
+            pair_memory += _PAIR_BYTES
+            if relation.adjacent or relation.seam:
+                adjacent_rows.append(
+                    (
+                        i,
+                        j,
+                        *[relation.axes[k] if relation.local[k] else 0 for k in range(3)],
+                    )
+                )
+            pair_rows.append(
+                (
+                    i,
+                    j,
+                    *[
+                        math.inf if relation.local[k] else relation.distances[k]
+                        for k in range(3)
+                    ],
+                )
+            )
+    return _PairPartition(
+        offender=None,
+        adjacent_rows=tuple(adjacent_rows),
+        pair_rows=tuple(pair_rows),
+        memory=pair_memory,
+    )
+
+
+def _topology_evidence(
+    atlas: _FittedAtlas,
+    leaves: list[_Cell],
+    partition: _PairPartition,
+    budget: _TopologyBudget,
+) -> BranchApproximationTopologyEvidence:
+    source = atlas.source
+    # Immutable copies coexist with the working partition until construction ends.
+    budget.reserve(
+        len(leaves) * 768 + len(partition.pair_rows) * 80 + source.num_charts * 256
+    )
+    margins = tuple(
+        min((row[2 + k] for row in partition.pair_rows), default=math.inf)
+        for k in range(3)
+    )
+    period_intervals = np.zeros((2, 4))
+    for axis, period in enumerate(atlas.periods):
+        if period is not None:
+            unit = np.zeros(4, dtype=np.int64)
+            unit[axis] = 1
+            lower, upper = source.shift_parameter_bounds(unit)
+            period_intervals[:, axis] = (lower[axis], upper[axis])
+    differences: list[np.ndarray] = []
+    for fit in atlas.fits[1:]:
+        points = np.asarray(fit.control_points)
+        differences.append(
+            np.stack(interval_subtract((points[-1], points[-1]), (points[0], points[0])))
+        )
+    return BranchApproximationTopologyEvidence(
+        cells=budget.work,
+        maximum_depth_used=budget.depth,
+        bytes_used=budget.peak,
+        subdivision_cells=budget.subdivisions,
+        pair_checks=budget.pairs,
+        source_branch_id=source.branch_id,
+        source_identity=_identity(source),
+        approximation_identity=_identity(atlas.fits),
+        closed=source.closed,
+        trim_closure_kinds=atlas.closures,
+        parameter_cells=_readonly(
+            np.asarray([(cell.first, cell.last) for cell in leaves])
+        ),
+        chart_indices=_readonly(np.asarray([cell.chart for cell in leaves]), np.int64),
+        homotopy_boxes=_readonly(np.asarray([cell.box for cell in leaves])),
+        derivative_intervals=_readonly(np.asarray([cell.jet for cell in leaves])),
+        local_axes=_readonly(np.asarray([cell.axes for cell in leaves]), np.int64),
+        adjacent_axes=_readonly(np.asarray(partition.adjacent_rows), np.int64).reshape(
+            (-1, 5)
+        ),
+        nonlocal_pairs=_readonly(np.asarray(partition.pair_rows)).reshape((-1, 5)),
+        tube_separation_lower_bound=margins[0],
+        trim_separation_lower_bounds=(margins[1], margins[2]),
+        root_references=_readonly(source.node_references, np.int64),
+        root_period_shifts=_readonly(source.node_period_shifts, np.int64),
+        chart_gauge_shifts=_readonly(atlas.gauge, np.int64),
+        winding_shifts=_readonly(atlas.winding, np.int64),
+        period_intervals=_readonly(period_intervals),
+        source_seam_shift_interval=_readonly(
+            np.stack(source.shift_parameter_bounds(atlas.winding))
+        ),
+        fit_endpoint_difference_interval=_readonly(np.concatenate(differences, axis=1)),
+    )
+
+
+@checked
 def certify_branch_approximation_topology(
     source: IntersectionCurve,
     curve: BSplineCurve,
@@ -330,391 +821,253 @@ def certify_branch_approximation_topology(
     maximum_cells: int,
     maximum_depth: int,
     maximum_bytes: int,
+    preparations: TrimRequestPreparations | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> BranchApproximationTopologyEvidence:
-    """Prove coupled physical/UV straight homotopies with bounded adaptive work.
+    """Certify physical and chart-space homotopy embedding within explicit limits.
 
-    Positive native-period lifts prove trace embedding only, not exact quotient
-    closure of the emitted UV polynomial. The source's exact winding and root
-    gauge remain separately recorded. No supplied carrier or source is mutated.
-    ``cells`` counts all attempted interval cells and pair checks, including
-    failed/refined attempts, rather than only the final evidence partition.
+    Native-period lifts establish trace embedding, not closure of the fitted
+    polynomial in the quotient. Work counts attempted interval cells and pairs.
     """
-    budget = _Budget(maximum_cells, maximum_depth, maximum_bytes)
-    if not isinstance(source, IntersectionCurve) or not source.fully_certified:
-        raise ValueError(
-            "Topology requires a fully certified source chart/shared-root atlas."
-        )
+    preparations = preparations if preparations is not None else TrimRequestPreparations()
     fits = (curve, first_pcurve, second_pcurve)
-    domain = source.parameter_domain
-    for fit, dimension in zip(fits, (3, 2, 2), strict=True):
-        if (
-            not isinstance(fit, BSplineCurve)
-            or fit.ambient_dimension != dimension
-            or fit.parameter_domain != domain
-        ):
-            raise ValueError(
-                "Each fitted carrier must use the source atlas parameter and its native dimension."
-            )
-        knots = np.asarray(fit.knots)
-        if (
-            np.count_nonzero(knots == domain[0]) != fit.degree + 1
-            or np.count_nonzero(knots == domain[1]) != fit.degree + 1
-        ):
-            raise ValueError(
-                "Root-incidence evidence requires clamped fitted endpoint coefficients."
-            )
-    # Source/root bookkeeping, serialization and native enclosure temporaries.
-    # Include generating coefficient trees: a large rational surface must not
-    # bypass the byte guard merely because its intersection has few charts.
-    import jax
-
-    source_workspace = 0
-    for patch in (source.first.patch, source.second.patch):
-        coefficient_bytes = sum(
-            int(leaf.size) * np.dtype(leaf.dtype).itemsize
-            for leaf in jax.tree_util.tree_leaves(patch)
-            if hasattr(leaf, "size") and hasattr(leaf, "dtype")
-        )
-        expansion = (getattr(patch, "u_degree", 0) + 1) * (
-            getattr(patch, "v_degree", 0) + 1
-        )
-        source_workspace += 64 * expansion * coefficient_bytes
-    budget.reserve(32768 + source.num_charts * 4096 + source_workspace)
-    gauge = np.zeros((source.num_charts, 4), dtype=np.int64)
-    periods = (*source.first.patch.periods, *source.second.patch.periods)
-    for chart in range(1, source.num_charts):
-        gauge[chart] = gauge[chart - 1]
-        for axis, shift in enumerate(source.transition_shifts[chart - 1]):
-            if shift:
-                period = periods[axis]
-                if period is None:
-                    raise ValueError("A source transition has no authored native period.")
-                integer = int(round(float(shift) / period))
-                if float(shift) != integer * period:
-                    raise ValueError(
-                        "A source transition lacks exact integer period incidence."
-                    )
-                gauge[chart, axis] -= integer
-    winding = np.asarray(source.node_period_shifts[-1], dtype=np.int64) + gauge[-1]
-    closures: list[str] = []
-    if source.closed:
-        if int(source.node_references[-1]) != int(source.node_references[0]):
-            raise ValueError(
-                "The closed source does not reference one authored seam root."
-            )
-        if not np.array_equal(
-            np.asarray(curve.control_points)[0], np.asarray(curve.control_points)[-1]
-        ):
-            raise ValueError(
-                "The fitted physical curve lacks algebraically identical closed endpoints."
-            )
-    for side, fit in enumerate(fits[1:]):
-        shift = winding[2 * side : 2 * side + 2]
-        if source.closed and not np.any(shift):
-            if not np.array_equal(
-                np.asarray(fit.control_points)[0], np.asarray(fit.control_points)[-1]
-            ):
-                raise ValueError(
-                    "A zero-winding fitted trim lacks algebraically identical closed endpoints."
-                )
-            closures.append("closed")
-        elif source.closed:
-            closures.append("open-native-period-lift")
-        else:
-            closures.append("open")
-    pieces = tuple(_spline_pieces(fit, budget) for fit in fits)
-    # One reusable reservation covers restriction/quotient-rule temporaries
-    # and overlapping-span box/jet lists before any cell queries allocate them.
-    budget.reserve(
-        sum(
-            len(items) * (1024 + 256 * fit.degree * (fit.ambient_dimension + 1))
-            for fit, items in zip(fits, pieces, strict=True)
-        )
+    request = (
+        coordinate_source_request((source, *fits))
+        if coordinate_budget is None
+        else nullcontext(coordinate_budget)
     )
-    pcurves = (source.p_curve("first"), source.p_curve("second"))
-
-    def make(first: float, last: float, chart: int, depth: int) -> _Cell:
-        budget.charge(depth)
-        budget.reserve(_CELL_BYTES)
-        source_boxes = [_finite_box(source.bounding_box(first, last), 3)]
-        coupled = source.parameter_enclosures(
-            first, last, minimum_chart=chart, maximum_chart=chart
-        )[0]
-        delta = source._shift_bounds(gauge[chart])
-        lifted = np.stack(interval_add((coupled[0], coupled[1]), delta))
-        source_boxes.extend((lifted[:, :2], lifted[:, 2:]))
-        source_jets = [np.stack(source.derivative_bounds(first, last))]
-        source_jets.extend(
-            np.stack(pcurve.derivative_bounds(first, last)) for pcurve in pcurves
-        )
-        fitted = [_spline_bounds(item, first, last) for item in pieces]
-        source_box = np.concatenate(source_boxes, axis=1)
-        fit_box = np.concatenate([item[0] for item in fitted], axis=1)
-        source_jet = np.concatenate(source_jets, axis=1)
-        fit_jet = np.concatenate([item[1] for item in fitted], axis=1)
-        box = _finite_box(
-            np.stack(
-                (
-                    np.minimum(source_box[0], fit_box[0]),
-                    np.maximum(source_box[1], fit_box[1]),
+    with request as coordinate_budget:
+        with _topology_budget(maximum_cells, maximum_depth, maximum_bytes) as budget:
+            atlas = _prepare_fitted_atlas(source, fits, budget)
+            leaves = [
+                _make_cell(
+                    atlas,
+                    (float(chart), float(chart + 1)),
+                    (chart, 0),
+                    budget,
+                    preparations,
+                    coordinate_budget,
                 )
-            ),
-            7,
-        )
-        jet = np.stack(
-            (np.minimum(source_jet[0], fit_jet[0]), np.maximum(source_jet[1], fit_jet[1]))
-        )
-        axes = (_axis(jet, _SPACES[0]), _axis(jet, _SPACES[1]), _axis(jet, _SPACES[2]))
-        return _Cell(first, last, chart, depth, box, jet, axes)
-
-    def split(cell: _Cell) -> tuple[_Cell, _Cell]:
-        if cell.depth >= maximum_depth:
-            budget.fail(
-                "maximum_depth exhausted: regularity, local injectivity or homotopy separation unresolved"
-            )
-        midpoint = cell.first + (cell.last - cell.first) / 2
-        if not cell.first < midpoint < cell.last:
-            budget.fail("binary parameter subdivision cannot advance")
-        children = (
-            make(cell.first, midpoint, cell.chart, cell.depth + 1),
-            make(midpoint, cell.last, cell.chart, cell.depth + 1),
-        )
-        budget.release(_CELL_BYTES)
-        return children
-
-    leaves = [
-        make(float(chart), float(chart + 1), chart, 0)
-        for chart in range(source.num_charts)
-    ]
-    while True:
-        offender = next(
-            (index for index, cell in enumerate(leaves) if not all(cell.axes)), None
-        )
-        adjacent_rows: list[tuple[int, ...]] = []
-        pair_rows: list[tuple[float, ...]] = []
-        pair_memory = 0
-        if offender is None:
-            for i, first in enumerate(leaves):
-                for j in range(i + 1, len(leaves)):
-                    second = leaves[j]
-                    budget.charge(max(first.depth, second.depth), pair=True)
-                    adjacent = j == i + 1
-                    seam = source.closed and i == 0 and j == len(leaves) - 1
-                    bounds = np.stack(
-                        (
-                            np.minimum(first.jet[0], second.jet[0]),
-                            np.maximum(first.jet[1], second.jet[1]),
-                        )
-                    )
-                    axes = tuple(_axis(bounds, space) for space in _SPACES)
-                    distances = tuple(
-                        _separation(first.box[:, space], second.box[:, space])
-                        for space in _SPACES
-                    )
-                    # At the physical seam and zero-winding UV seams, the last
-                    # cell followed by the first has the same oriented axis.
-                    local = tuple(
-                        adjacent
-                        or (seam and (space == 0 or closures[space - 1] == "closed"))
-                        for space in range(3)
-                    )
-                    if any(
-                        (not axes[k]) if local[k] else distances[k] <= 0 for k in range(3)
-                    ):
-                        offender = (
-                            i
-                            if first.last - first.first >= second.last - second.first
-                            else j
-                        )
-                        break
-                    budget.reserve(_PAIR_BYTES)
-                    pair_memory += _PAIR_BYTES
-                    if adjacent or seam:
-                        adjacent_rows.append(
-                            (i, j, *[axes[k] if local[k] else 0 for k in range(3)])
-                        )
-                    pair_rows.append(
-                        (
-                            i,
-                            j,
-                            *[math.inf if local[k] else distances[k] for k in range(3)],
-                        )
-                    )
-                if offender is not None:
+                for chart in range(source.num_charts)
+            ]
+            while True:
+                partition = _check_partition(atlas, leaves, budget)
+                if partition.offender is None:
                     break
-        if offender is None:
-            break
-        budget.release(pair_memory)
-        leaves[offender : offender + 1] = split(leaves[offender])
-    # Reserve final immutable copies while the working partition is still live.
-    budget.reserve(len(leaves) * 768 + len(pair_rows) * 80 + source.num_charts * 256)
-    margins = tuple(
-        min((row[2 + k] for row in pair_rows), default=math.inf) for k in range(3)
-    )
-    period_intervals = np.zeros((2, 4))
-    for axis, period in enumerate(periods):
-        if period is not None:
-            unit = np.zeros(4, dtype=np.int64)
-            unit[axis] = 1
-            lower, upper = source._shift_bounds(unit)
-            period_intervals[:, axis] = (lower[axis], upper[axis])
-    differences = []
-    for fit in fits[1:]:
-        points = np.asarray(fit.control_points)
-        differences.append(
-            np.stack(interval_subtract((points[-1], points[-1]), (points[0], points[0])))
+                budget.release(partition.memory)
+                offender = partition.offender
+                leaves[offender : offender + 1] = _split_cell(
+                    leaves[offender], atlas, budget, preparations, coordinate_budget
+                )
+            return _topology_evidence(atlas, leaves, partition, budget)
+
+
+@final
+class _TrimRange(StrictModule):
+    trim: TrimCarrier
+    first: float
+    last: float
+    offset: int
+
+
+def _prepare_trim_range(
+    trim: TrimCarrier,
+    side: IntersectionCurveSide,
+    first: float | None,
+    last: float | None,
+    budget: _TopologyBudget,
+) -> _TrimRange:
+    domain = trim.parameter_domain
+    if first is None or last is None:
+        if domain is None:
+            raise ValueError(
+                "BranchTrimSeparation.range must have explicit finite endpoints for an unbounded trim; "
+                f"got first={first}, last={last}."
+            )
+        first = float(domain[0]) if first is None else first
+        last = float(domain[1]) if last is None else last
+    if not math.isfinite(first) or not math.isfinite(last) or not first < last:
+        raise ValueError(
+            "BranchTrimSeparation.range must be finite and nonempty; "
+            f"got ({first}, {last})."
         )
-    return BranchApproximationTopologyEvidence(
-        budget.work,
-        budget.depth,
-        budget.peak,
-        budget.subdivisions,
-        budget.pairs,
-        source.branch_id,
-        _identity(source),
-        _identity(fits),
-        "continuous-straight-homotopy/interval-bernstein-source-atlas",
-        "shared-strict-monotone-coordinate/authored-root-chart-incidence",
-        source.closed,
-        (closures[0], closures[1]),
-        _readonly([(cell.first, cell.last) for cell in leaves]),
-        _readonly([cell.chart for cell in leaves], np.int64),
-        _readonly([cell.box for cell in leaves]),
-        _readonly([cell.jet for cell in leaves]),
-        _readonly([cell.axes for cell in leaves], np.int64),
-        _readonly(adjacent_rows, np.int64).reshape((-1, 5)),
-        _readonly(pair_rows).reshape((-1, 5)),
-        margins[0],
-        (margins[1], margins[2]),
-        _readonly(source.node_references, np.int64),
-        _readonly(source.node_period_shifts, np.int64),
-        _readonly(gauge, np.int64),
-        _readonly(winding, np.int64),
-        _readonly(period_intervals),
-        _readonly(np.stack(source._shift_bounds(winding))),
-        _readonly(np.concatenate(differences, axis=1)),
+    match trim:
+        case BSplineCurve():
+            degree = trim.degree
+        case _:
+            degree = 0
+    budget.reserve(8192 + 64 * (degree + 1) * _coefficient_bytes(trim))
+    match trim:
+        case BranchTrimHomotopyTube():
+            workspace = trim.enclosure_workspace_bytes
+        case _:
+            workspace = 0
+    budget.reserve(workspace)
+    return _TrimRange(
+        trim=trim, first=first, last=last, offset=0 if side == "first" else 2
     )
 
 
+def _trim_box(
+    trim: TrimCarrier,
+    first: float,
+    last: float,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    match trim:
+        case AbstractCurve() | AbstractTrimCurve():
+            box = trim.bounding_box(
+                first, last, preparations=preparations, budget=coordinate_budget
+            )
+        case BranchTrimHomotopyTube():
+            box = trim.enclosure(first, last)
+        case _ as invalid:
+            assert_never(invalid)
+    return _finite_box(box, 2)
+
+
+def _period_translates(
+    tube: np.ndarray, whole: np.ndarray, periods: np.ndarray
+) -> tuple[range, range]:
+    ranges: list[range] = []
+    for axis in range(2):
+        period = periods[:, axis]
+        if period[0] > 0:
+            numerator = interval_subtract(
+                (tube[0, axis], tube[1, axis]), (whole[0, axis], whole[1, axis])
+            )
+            possible = interval_divide(numerator, (period[0], period[1]))
+            ranges.append(
+                range(
+                    math.floor(float(possible[0])) - 1, math.ceil(float(possible[1])) + 2
+                )
+            )
+        else:
+            ranges.append(range(0, 1))
+    return ranges[0], ranges[1]
+
+
+@final
+class _TrimCellSeparation(StrictModule):
+    rows: tuple[tuple[float, ...], ...]
+    minimum: float
+
+
+def _separate_trim_translate(
+    cell: int,
+    tube: np.ndarray,
+    trim_range: _TrimRange,
+    translation: tuple[int, int],
+    shift: tuple[np.ndarray, np.ndarray],
+    budget: _TopologyBudget,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> _TrimCellSeparation:
+    ku, kv = translation
+    stack = [(trim_range.first, trim_range.last, 0)]
+    rows: list[tuple[float, ...]] = []
+    minimum = math.inf
+    budget.reserve(256)
+    while stack:
+        a, b, depth = stack.pop()
+        budget.release(256)
+        budget.charge(depth, pair=True)
+        box = _trim_box(trim_range.trim, a, b, preparations, coordinate_budget)
+        moved = np.stack(interval_add((box[0], box[1]), shift))
+        distance = _separation(tube, moved)
+        if distance > 0:
+            budget.reserve(_PAIR_BYTES)
+            rows.append((cell, a, b, ku, kv, distance))
+            minimum = min(minimum, distance)
+            continue
+        if depth >= budget.depth_limit:
+            budget.fail("unaffected trim separation unresolved at maximum_depth")
+        midpoint = a + (b - a) / 2
+        if not a < midpoint < b:
+            budget.fail("unaffected trim subdivision cannot advance")
+        budget.reserve(512)
+        stack.extend(((a, midpoint, depth + 1), (midpoint, b, depth + 1)))
+    return _TrimCellSeparation(rows=tuple(rows), minimum=minimum)
+
+
+@checked
 def certify_branch_trim_separation(
     evidence: BranchApproximationTopologyEvidence,
-    trim: Any,
+    trim: TrimCarrier,
     *,
-    side: str,
+    side: IntersectionCurveSide,
     maximum_cells: int,
     maximum_depth: int,
     maximum_bytes: int,
     first: float | None = None,
     last: float | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> BranchTrimSeparationEvidence:
-    """Prove separation of a whole branch homotopy from another unaffected trim.
+    """Certify branch-homotopy separation from every overlapping trim translate.
 
-    Every potentially intersecting native-period translate is checked. A trim
-    sharing an intentional root must instead be admitted by the model's exact
-    incidence algorithm; this function does not remove endpoint neighborhoods.
+    Shared intentional endpoints require the model's root-incidence algorithm;
+    this proof retains endpoint neighborhoods.
     """
-    if side not in ("first", "second"):
-        raise ValueError("side must be 'first' or 'second'.")
-    budget = _Budget(maximum_cells, maximum_depth, maximum_bytes)
-    offset = 0 if side == "first" else 2
-    columns = slice(3 + offset, 5 + offset)
-    domain = getattr(trim, "parameter_domain", None) or getattr(
-        trim, "parameter_interval", None
+    preparations = preparations if preparations is not None else TrimRequestPreparations()
+    request = (
+        coordinate_source_request((evidence, trim))
+        if coordinate_budget is None
+        else nullcontext(coordinate_budget)
     )
-    if first is None or last is None:
-        if domain is None:
-            raise ValueError(
-                "An unaffected trim requires an explicit finite parameter interval."
-            )
-        first = float(domain[0]) if first is None else first
-        last = float(domain[1]) if last is None else last
-    if not math.isfinite(first) or not math.isfinite(last) or not first < last:
-        raise ValueError("Unaffected-trim separation requires a finite nonempty range.")
-    enclosure = getattr(trim, "bounding_box", None) or getattr(trim, "enclosure", None)
-    if enclosure is None:
-        raise ValueError(
-            "The unaffected trim has no native interval enclosure substrate."
-        )
-    import jax
-
-    coefficient_bytes = sum(
-        int(leaf.size) * np.dtype(leaf.dtype).itemsize
-        for leaf in jax.tree_util.tree_leaves(trim)
-        if hasattr(leaf, "size") and hasattr(leaf, "dtype")
-    )
-    budget.reserve(8192 + 64 * (getattr(trim, "degree", 0) + 1) * coefficient_bytes)
-    workspace_bytes = getattr(trim, "enclosure_workspace_bytes", 0)
-    if (
-        isinstance(workspace_bytes, bool)
-        or not isinstance(workspace_bytes, int)
-        or workspace_bytes < 0
-    ):
-        raise ValueError("Trim enclosure workspace must be a nonnegative byte count.")
-    budget.reserve(workspace_bytes)
-    rows: list[tuple[float, ...]] = []
-    minimum = math.inf
-    for cell, tube in enumerate(evidence.homotopy_boxes[:, :, columns]):
-        budget.charge(0, pair=True)
-        whole = _finite_box(enclosure(first, last), 2)
-        ranges = []
-        for axis in range(2):
-            period = evidence.period_intervals[:, offset + axis]
-            if period[0] > 0:
-                numerator = interval_subtract(
-                    (tube[0, axis], tube[1, axis]), (whole[0, axis], whole[1, axis])
+    with request as coordinate_budget:
+        side = parse(side, IntersectionCurveSide, "BranchTrimSeparation.side")
+        with _topology_budget(maximum_cells, maximum_depth, maximum_bytes) as budget:
+            trim_range = _prepare_trim_range(trim, side, first, last, budget)
+            offset = trim_range.offset
+            columns = slice(3 + offset, 5 + offset)
+            periods = evidence.period_intervals[:, offset : offset + 2]
+            rows: list[tuple[float, ...]] = []
+            minimum = math.inf
+            for cell, tube in enumerate(evidence.homotopy_boxes[:, :, columns]):
+                budget.charge(0, pair=True)
+                whole = _trim_box(
+                    trim,
+                    trim_range.first,
+                    trim_range.last,
+                    preparations,
+                    coordinate_budget,
                 )
-                possible = interval_divide(numerator, (period[0], period[1]))
-                ranges.append(
-                    range(
-                        math.floor(float(possible[0])) - 1,
-                        math.ceil(float(possible[1])) + 2,
-                    )
-                )
-            else:
-                ranges.append(range(0, 1))
-        copies = len(ranges[0]) * len(ranges[1])
-        if copies > budget.limit - budget.work:
-            budget.fail("native-period translate count exceeds maximum_cells")
-        for ku in ranges[0]:
-            for kv in ranges[1]:
-                shift = interval_multiply(
-                    (
-                        evidence.period_intervals[0, offset : offset + 2],
-                        evidence.period_intervals[1, offset : offset + 2],
-                    ),
-                    (np.asarray((ku, kv)), np.asarray((ku, kv))),
-                )
-                stack = [(float(first), float(last), 0)]
-                budget.reserve(256)
-                while stack:
-                    a, b, depth = stack.pop()
-                    budget.release(256)
-                    budget.charge(depth, pair=True)
-                    box = _finite_box(enclosure(a, b), 2)
-                    moved = np.stack(interval_add((box[0], box[1]), shift))
-                    distance = _separation(tube, moved)
-                    if distance > 0:
-                        budget.reserve(_PAIR_BYTES)
-                        rows.append((cell, a, b, ku, kv, distance))
-                        minimum = min(minimum, distance)
-                        continue
-                    if depth >= maximum_depth:
-                        budget.fail(
-                            "unaffected trim separation unresolved at maximum_depth"
+                ranges = _period_translates(tube, whole, periods)
+                copies = len(ranges[0]) * len(ranges[1])
+                if copies > budget.ticket.remaining_work_units:
+                    budget.fail("native-period translate count exceeds maximum_cells")
+                for ku in ranges[0]:
+                    for kv in ranges[1]:
+                        shift_lower, shift_upper = interval_multiply(
+                            (periods[0], periods[1]),
+                            (np.asarray((ku, kv)), np.asarray((ku, kv))),
                         )
-                    midpoint = a + (b - a) / 2
-                    if not a < midpoint < b:
-                        budget.fail("unaffected trim subdivision cannot advance")
-                    budget.reserve(512)
-                    stack.extend(((a, midpoint, depth + 1), (midpoint, b, depth + 1)))
-    budget.reserve(len(rows) * 96)
-    return BranchTrimSeparationEvidence(
-        evidence.approximation_identity,
-        _identity(trim),
-        side,
-        budget.work,
-        budget.depth,
-        budget.peak,
-        minimum,
-        _readonly(rows).reshape((-1, 6)),
-    )
+                        shift = (
+                            np.asarray(shift_lower, dtype=np.float64),
+                            np.asarray(shift_upper, dtype=np.float64),
+                        )
+                        separated = _separate_trim_translate(
+                            cell,
+                            tube,
+                            trim_range,
+                            (ku, kv),
+                            shift,
+                            budget,
+                            preparations,
+                            coordinate_budget,
+                        )
+                        rows.extend(separated.rows)
+                        minimum = min(minimum, separated.minimum)
+            budget.reserve(len(rows) * 96)
+            return BranchTrimSeparationEvidence(
+                topology_identity=evidence.approximation_identity,
+                trim_identity=_identity(trim),
+                side=side,
+                cells=budget.work,
+                maximum_depth_used=budget.depth,
+                bytes_used=budget.peak,
+                separation_lower_bound=minimum,
+                interval_evidence=_readonly(np.asarray(rows)).reshape((-1, 6)),
+            )

@@ -99,21 +99,5 @@ Approx orient3d_approx(const double* a, const double* b, const double* c, const 
 int relative_orient3d_exact(const double* a, const double* b, const double* c, const double* d,
                             double relative_floor, double* score);
 
-// Whether three 3D points are collinear: (b - a) x (c - a) vanishes iff the
-// orientations of the three coordinate-plane projections vanish, each an exact
-// orient2d.
-inline bool collinear3d(const double* a, const double* b, const double* c) {
-  for (int axis = 0; axis < 3; ++axis) {
-    const int i = (axis + 1) % 3;
-    const int j = (axis + 2) % 3;
-    const double pa[2] = {a[i], a[j]};
-    const double pb[2] = {b[i], b[j]};
-    const double pc[2] = {c[i], c[j]};
-    if (orient2d(pa, pb, pc) != 0) {
-      return false;
-    }
-  }
-  return true;
-}
 
 }  // namespace phx::mc

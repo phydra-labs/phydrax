@@ -12,11 +12,12 @@ import optax
 import phydrax as phx
 from phydrax.nn.models import MLP
 from phydrax.solver import FunctionalSolver
+from phydrax.units import METER
 
 
 def _make_regression_solver(seed: int, *, scan: bool = False) -> FunctionalSolver:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")

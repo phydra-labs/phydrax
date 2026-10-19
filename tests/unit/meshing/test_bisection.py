@@ -4,28 +4,57 @@
 
 
 import itertools
-import subprocess
-import sys
-import textwrap
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Any
 
+import equinox as eqx
 import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.discretization import CellMesh
+from phydrax.discretization import (
+    CellBlock,
+    CellGeometrySpec,
+    CellMesh,
+    PolygonalConnectivity,
+    PolyhedralConnectivity,
+    TetrahedralConnectivity,
+)
+from phydrax.discretization._cell_geometry import (
+    cell_geometry_preparation_query_upper,
+    coordinate_lagrange_element,
+)
+from phydrax.lifecycle import read_meshing_source_closure, write_meshing_source_closure
 from phydrax.meshing import (
     BisectionCompatibility,
+    BisectionHierarchy,
+    BisectionUniformRefinement,
     execute_mesh_adaptation,
     MarkedMeshAdaptation,
     MeshAdaptationPolicy,
+    MeshAdaptationResult,
     MeshAdaptationRoute,
     MeshAdaptationStatus,
     MeshingEntityKind,
     MeshingScope,
     prepare_mesh_adaptation,
 )
+from tests._support.cell_meshes import incompatible_simplex, kuhn_cube, triangle_grid
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.distributed_meshing.cold_lifecycle_identities import record_array
+from tests._support.forced_devices import run_on_forced_devices
+
+
+# Qualification bounds retained from test_bisection.py at d2dfcb941.
+_GEOMETRY_ROUNDOFF = 1.0e-12
+_AFFINE_TRANSFER_ROUNDOFF = 1.0e-13
+_HANGING_VERTEX_SEPARATION = 1.0e-9
+_TETRA_SIMILARITY_FLOOR = 0.999
+# Empirical agreement threshold retained from the pre-refactor midpoint and P2-node
+# fixtures in test_conforming_closure_* and test_bisection_keeps_curved_source_maps_*.
+_MIDPOINT_ROUNDOFF = 1.0e-15
 
 
 def _signed_measures(points: np.ndarray, cells: np.ndarray) -> np.ndarray:
@@ -34,37 +63,6 @@ def _signed_measures(points: np.ndarray, cells: np.ndarray) -> np.ndarray:
     if cells.shape[1] == 3:
         return 0.5 * (edges[:, 0, 0] * edges[:, 1, 1] - edges[:, 0, 1] * edges[:, 1, 0])
     return np.linalg.det(edges) / 6.0
-
-
-def _triangle_grid(columns: int, rows: int, height: float = 1.0) -> CellMesh:
-    xs = np.linspace(0.0, 1.0, columns + 1)
-    ys = np.linspace(0.0, height, rows + 1)
-    points = np.stack(np.meshgrid(xs, ys), axis=-1).reshape((-1, 2))
-    cells = []
-    for j, i in itertools.product(range(rows), range(columns)):
-        a = j * (columns + 1) + i
-        b, c, d = a + 1, a + columns + 2, a + columns + 1
-        cells.extend(((a, b, c), (a, c, d)))
-    return CellMesh.from_triangles(points, np.asarray(cells, dtype=np.int32))
-
-
-def _kuhn_grid(size: int) -> CellMesh:
-    axis = np.linspace(0.0, 1.0, size + 1)
-    points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1)
-    points = points.reshape((-1, 3))
-    cells = []
-    for origin in itertools.product(range(size), repeat=3):
-        for order in itertools.permutations(range(3)):
-            corner = list(origin)
-            path = [(corner[0] * (size + 1) + corner[1]) * (size + 1) + corner[2]]
-            for direction in order:
-                corner[direction] += 1
-                path.append((corner[0] * (size + 1) + corner[1]) * (size + 1) + corner[2])
-            cells.append(path)
-    cells = np.asarray(cells, dtype=np.int32)
-    negative = _signed_measures(points, cells) < 0.0
-    cells[negative] = cells[negative][:, [1, 0, 2, 3]]
-    return CellMesh.from_tetrahedra(points, cells)
 
 
 def _certified(mesh: CellMesh) -> Any:
@@ -107,8 +105,17 @@ def _canonical_cells(mesh: CellMesh) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _edge_keys(mesh: CellMesh) -> np.ndarray:
-    # ty: ignore[unresolved-attribute]
-    edges = np.asarray(mesh.connectivity.edges)
+    match mesh.connectivity:
+        case (
+            PolygonalConnectivity()
+            | PolyhedralConnectivity()
+            | TetrahedralConnectivity() as connectivity
+        ):
+            edges = np.asarray(connectivity.edges)
+        case _:
+            raise TypeError(
+                f"bisection.mesh.connectivity must expose simplex edges; got {type(mesh.connectivity).__name__}"
+            )
     return np.sort(np.asarray(mesh.vertex_global_ids)[edges], axis=1)
 
 
@@ -151,10 +158,10 @@ def _assert_conforming(mesh: CellMesh, measure: float) -> None:
     midpoints = 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
     for start in range(0, midpoints.shape[0], 512):
         chunk = midpoints[start : start + 512, None, :] - points[None, :, :]
-        assert np.min(np.linalg.norm(chunk, axis=2)) > 1.0e-9
+        assert np.min(np.linalg.norm(chunk, axis=2)) > _HANGING_VERTEX_SEPARATION
     measures = _signed_measures(points, cells)
     assert np.all(measures > 0.0)
-    assert np.isclose(np.sum(measures), measure, rtol=0.0, atol=1.0e-12)
+    assert np.isclose(np.sum(measures), measure, rtol=0.0, atol=_GEOMETRY_ROUNDOFF)
 
 
 def _assert_boundary_on_unit_box(mesh: CellMesh) -> None:
@@ -176,38 +183,53 @@ def _corner_cells(mesh: CellMesh) -> np.ndarray:
     return np.sort(_cell_ids(mesh)[np.any(_cells(mesh) == corner, axis=1)])
 
 
-def test_bisection_scenario_1() -> None:
-    for mesh, cycles, stride in [(_triangle_grid(4, 4), 6, 7), (_kuhn_grid(2), 4, 11)]:
-        result = _adapt(_certified(mesh), (0, 5, 17, 30))
-        for _ in range(cycles):
-            target = result.target.mesh
-            marks = np.union1d(
-                _corner_cells(target), np.sort(_cell_ids(target))[::stride]
-            )
-            result = _adapt(result.target, marks, hierarchy=result.hierarchy)
-            _assert_conforming(result.target.mesh, 1.0)
-            _assert_boundary_on_unit_box(result.target.mesh)
-        assert result.status is MeshAdaptationStatus.COMPLETE
-        assert result.evidence.maximum_generation >= cycles
-    source = _certified(_triangle_grid(2, 2, height=0.6))
+@pytest.mark.parametrize(
+    ("mesh_builder", "cycles", "stride"),
+    (
+        pytest.param(partial(triangle_grid, 4, 4), 6, 7, id="triangles"),
+        pytest.param(
+            partial(kuhn_cube, 2, orientation_swap=(0, 1)), 4, 11, id="tetrahedra"
+        ),
+    ),
+)
+def test_repeated_bisection_preserves_conformity_and_boundary(
+    mesh_builder: Callable[[], CellMesh], cycles: int, stride: int
+) -> None:
+    mesh = mesh_builder()
+    result = _adapt(_certified(mesh), (0, 5, 17, 30))
+    for _ in range(cycles):
+        target = result.target.mesh
+        marks = np.union1d(_corner_cells(target), np.sort(_cell_ids(target))[::stride])
+        result = _adapt(result.target, marks, hierarchy=result.hierarchy)
+        _assert_conforming(result.target.mesh, 1.0)
+        _assert_boundary_on_unit_box(result.target.mesh)
+    assert result.status is MeshAdaptationStatus.COMPLETE
+    assert result.evidence.maximum_generation >= cycles
+
+
+def test_triangle_bisection_preserves_uniform_similarity_angle_bound() -> None:
+    source = _certified(triangle_grid(2, 2, height=0.6))
     bound = _uniform_class_bound(source, _minimum_angles, 4)
     result = _adapt(source, _corner_cells(source.mesh))
     for _ in range(20):
-        assert np.min(_minimum_angles(result.target.mesh)) >= bound - 1.0e-12
+        assert np.min(_minimum_angles(result.target.mesh)) >= bound - _GEOMETRY_ROUNDOFF
         result = _adapt(
             result.target, _corner_cells(result.target.mesh), hierarchy=result.hierarchy
         )
-    assert np.min(_minimum_angles(result.target.mesh)) >= bound - 1.0e-12
+    assert np.min(_minimum_angles(result.target.mesh)) >= bound - _GEOMETRY_ROUNDOFF
     assert result.evidence.maximum_generation >= 20
-    source = _certified(_kuhn_grid(1))
+
+
+def test_tetrahedral_bisection_preserves_uniform_similarity_quality_bound() -> None:
+    source = _certified(kuhn_cube(1, orientation_swap=(0, 1)))
     bound = _uniform_class_bound(source, _mean_ratios, 3)
     result = _adapt(source, _corner_cells(source.mesh))
     for _ in range(9):
-        assert np.min(_mean_ratios(result.target.mesh)) >= 0.999 * bound
+        assert np.min(_mean_ratios(result.target.mesh)) >= _TETRA_SIMILARITY_FLOOR * bound
         result = _adapt(
             result.target, _corner_cells(result.target.mesh), hierarchy=result.hierarchy
         )
-    assert np.min(_mean_ratios(result.target.mesh)) >= 0.999 * bound
+    assert np.min(_mean_ratios(result.target.mesh)) >= _TETRA_SIMILARITY_FLOOR * bound
     assert result.evidence.maximum_generation >= 9
 
 
@@ -223,47 +245,74 @@ def _uniform_class_bound(source: Any, quality: Any, rounds: int) -> float:
     return bound
 
 
-def test_bisection_scenario_2() -> None:
-    for mesh in [_triangle_grid(3, 3), _kuhn_grid(2)]:
-        source = _certified(mesh)
-        refined = _adapt(source, np.sort(_cell_ids(mesh))[::3])
-        refined = _adapt(
-            refined.target,
-            _corner_cells(refined.target.mesh),
-            hierarchy=refined.hierarchy,
-        )
-        assert refined.target.mesh.topology_id != source.mesh.topology_id
-        restored = _adapt(
-            refined.target,
-            (),
-            np.sort(_cell_ids(refined.target.mesh)),
-            hierarchy=refined.hierarchy,
-        )
-        target = restored.target.mesh
-        # Marked cells that were never refined have no family to merge into.
-        assert np.all(np.isin(restored.evidence.rejected_coarsening_ids, _cell_ids(mesh)))
-        assert restored.evidence.coarsened_vertices == (
-            refined.target.mesh.coordinates.shape[0] - mesh.coordinates.shape[0]
-        )
-        assert target.topology_id == source.mesh.topology_id
-        np.testing.assert_array_equal(target.vertex_global_ids, mesh.vertex_global_ids)
-        target_ids, target_cells = _canonical_cells(target)
-        source_ids, source_cells = _canonical_cells(mesh)
-        np.testing.assert_array_equal(target_ids, source_ids)
-        np.testing.assert_array_equal(target_cells, source_cells)
-        np.testing.assert_array_equal(target.coordinates, mesh.coordinates)
-    for mesh in [_triangle_grid(3, 3), _kuhn_grid(2)]:
-        result = _adapt(_certified(mesh), np.sort(_cell_ids(mesh))[::2])
-        result = _adapt(
-            result.target, _corner_cells(result.target.mesh), hierarchy=result.hierarchy
-        )
-        slope = np.linspace(0.5, 1.5, mesh.ambient_dimension)
-        before = np.asarray(result.source.mesh.coordinates) @ slope + 0.25
-        expected = np.asarray(result.target.mesh.coordinates) @ slope + 0.25
-        np.testing.assert_allclose(
-            np.asarray(result.transfer.apply(before)), expected, rtol=0.0, atol=1.0e-13
-        )
-    source = _certified(_triangle_grid(4, 4))
+@pytest.mark.parametrize(
+    "mesh_builder",
+    (
+        pytest.param(partial(triangle_grid, 3, 3), id="triangles"),
+        pytest.param(partial(kuhn_cube, 2, orientation_swap=(0, 1)), id="tetrahedra"),
+    ),
+)
+def test_coarsening_restores_source_topology_and_coordinates(
+    mesh_builder: Callable[[], CellMesh],
+) -> None:
+    mesh = mesh_builder()
+    source = _certified(mesh)
+    refined = _adapt(source, np.sort(_cell_ids(mesh))[::3])
+    refined = _adapt(
+        refined.target,
+        _corner_cells(refined.target.mesh),
+        hierarchy=refined.hierarchy,
+    )
+    assert refined.target.mesh.topology_id != source.mesh.topology_id
+    restored = _adapt(
+        refined.target,
+        (),
+        np.sort(_cell_ids(refined.target.mesh)),
+        hierarchy=refined.hierarchy,
+    )
+    target = restored.target.mesh
+    # Marked cells that were never refined have no family to merge into.
+    assert np.all(np.isin(restored.evidence.rejected_coarsening_ids, _cell_ids(mesh)))
+    assert restored.evidence.coarsened_vertices == (
+        refined.target.mesh.coordinates.shape[0] - mesh.coordinates.shape[0]
+    )
+    assert target.topology_id == source.mesh.topology_id
+    np.testing.assert_array_equal(target.vertex_global_ids, mesh.vertex_global_ids)
+    target_ids, target_cells = _canonical_cells(target)
+    source_ids, source_cells = _canonical_cells(mesh)
+    np.testing.assert_array_equal(target_ids, source_ids)
+    np.testing.assert_array_equal(target_cells, source_cells)
+    np.testing.assert_array_equal(target.coordinates, mesh.coordinates)
+
+
+@pytest.mark.parametrize(
+    "mesh_builder",
+    (
+        pytest.param(partial(triangle_grid, 3, 3), id="triangles"),
+        pytest.param(partial(kuhn_cube, 2, orientation_swap=(0, 1)), id="tetrahedra"),
+    ),
+)
+def test_bisection_transfer_reproduces_affine_fields(
+    mesh_builder: Callable[[], CellMesh],
+) -> None:
+    mesh = mesh_builder()
+    result = _adapt(_certified(mesh), np.sort(_cell_ids(mesh))[::2])
+    result = _adapt(
+        result.target, _corner_cells(result.target.mesh), hierarchy=result.hierarchy
+    )
+    slope = np.linspace(0.5, 1.5, mesh.ambient_dimension)
+    before = np.asarray(result.source.mesh.coordinates) @ slope + 0.25
+    expected = np.asarray(result.target.mesh.coordinates) @ slope + 0.25
+    np.testing.assert_allclose(
+        np.asarray(result.transfer.apply(before)),
+        expected,
+        rtol=0.0,
+        atol=_AFFINE_TRANSFER_ROUNDOFF,
+    )
+
+
+def test_protected_edge_retains_identity_and_reports_rejected_marks() -> None:
+    source = _certified(triangle_grid(4, 4))
     mesh = source.mesh
     edges = mesh.entity_set(1)
     keys = _edge_keys(mesh)
@@ -295,8 +344,8 @@ def test_bisection_scenario_2() -> None:
     assert not np.any(np.isin(_cell_ids(target), elsewhere))
 
 
-def test_bisection_scenario_3() -> None:
-    source = _certified(_triangle_grid(2, 2))
+def test_coarsening_preserves_protected_bisection_vertex() -> None:
+    source = _certified(triangle_grid(2, 2))
     refined = _adapt(source, np.sort(_cell_ids(source.mesh)))
     refined = _adapt(
         refined.target,
@@ -327,10 +376,13 @@ def test_bisection_scenario_3() -> None:
     np.testing.assert_array_equal(surviving, kept)
     assert result.evidence.coarsened_vertices == created.size - 1
     _assert_conforming(result.target.mesh, 1.0)
+
+
+def test_uniform_compatibility_preparation_closes_incompatible_source_labels() -> None:
     points = np.asarray([(0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)])
     mesh = CellMesh.from_triangles(points, np.asarray([(0, 1, 2), (0, 3, 1)]))
     source = _certified(mesh)
-    with pytest.raises(ValueError, match="UNIFORM_REFINEMENT"):
+    with pytest.raises(ValueError, match=r"Bisection\.compatibility"):
         _adapt(source, (0,))
     result = _adapt(source, (0,), compatibility=BisectionCompatibility.UNIFORM_REFINEMENT)
     assert result.evidence.uniform_refinement_applied
@@ -340,51 +392,30 @@ def test_bisection_scenario_3() -> None:
         result.target, _corner_cells(result.target.mesh), hierarchy=result.hierarchy
     )
     _assert_conforming(follow.target.mesh, 3.5)
-    first = _adapt(_certified(_kuhn_grid(2)), (0, 7, 13))
-    second = _adapt(_certified(_kuhn_grid(2)), (0, 7, 13))
+
+
+def test_bisection_repeats_with_identical_result_and_forest_ids() -> None:
+    first = _adapt(_certified(kuhn_cube(2, orientation_swap=(0, 1))), (0, 7, 13))
+    second = _adapt(_certified(kuhn_cube(2, orientation_swap=(0, 1))), (0, 7, 13))
     assert first.result_id == second.result_id
     assert first.hierarchy.hierarchy_id == second.hierarchy.hierarchy_id
 
 
-@pytest.mark.parametrize("dimension", (2, 3))
-def test_uniform_source_inverse_survives_archive_and_protected_rollback(
-    dimension: int, tmp_path: Path
+@pytest.mark.parametrize(
+    ("dimension", "siblings"),
+    (pytest.param(2, 6, id="triangles"), pytest.param(3, 24, id="tetrahedra")),
+)
+def test_uniform_source_inverse_restores_scientific_identity_after_cold_archive(
+    dimension: int, siblings: int, tmp_path: Path
 ) -> None:
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        write_meshing_source_closure,
-    )
-
-    if dimension == 2:
-        points = np.asarray(
-            ((0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)), dtype=np.float64
-        )
-        mesh = CellMesh.from_triangles(
-            points, np.asarray(((0, 1, 2), (0, 3, 1)), dtype=np.int32)
-        )
-    else:
-        points = np.asarray(
-            (
-                (0.0, 0.0, 0.0),
-                (2.0, 0.0, 0.0),
-                (1.0, 0.5, 0.0),
-                (1.0, 0.2, 1.0),
-                (1.0, -3.0, -1.0),
-            ),
-            dtype=np.float64,
-        )
-        mesh = CellMesh.from_tetrahedra(
-            points, np.asarray(((0, 1, 2, 3), (0, 2, 1, 4)), dtype=np.int32)
-        )
-    source = _certified(mesh)
-    original_ids = _cell_ids(source.mesh)
+    source = _certified(incompatible_simplex(dimension))
     refined = _adapt(
         source, (0,), compatibility=BisectionCompatibility.UNIFORM_REFINEMENT
     )
     assert refined.status is MeshAdaptationStatus.COMPLETE
     assert refined.hierarchy.uniform_refinement is not None
     lineage = refined.hierarchy.uniform_refinement
-    assert lineage.child_ids.shape[1] == (6 if dimension == 2 else 24)
+    assert lineage.child_ids.shape[1] == siblings
     assert np.any(np.asarray(lineage.barycentric_weights) == 1.0 / 3.0)
     policy = MeshAdaptationPolicy(
         MeshAdaptationRoute.NATIVE_BISECTION,
@@ -394,41 +425,65 @@ def test_uniform_source_inverse_survives_archive_and_protected_rollback(
         tmp_path / "uniform-cold",
         (source, refined.target, refined.hierarchy, policy),
     )
-    script = textwrap.dedent("""
-        import sys
-        import numpy as np
-        import phydrax as phx
-        from phydrax.lifecycle._meshing_sources import read_meshing_source_closure
-        original, fine, hierarchy, policy = read_meshing_source_closure(
-            sys.argv[1], expected_content_id=sys.argv[2])
-        before_work = np.asarray(fine.execution_evidence.work).copy()
-        lineage = hierarchy.uniform_refinement
-        request = phx.meshing.MarkedMeshAdaptation(
-            (), np.sort(np.concatenate([np.asarray(block.global_ids) for block in fine.mesh.blocks])),
-            hierarchy=hierarchy)
-        result = phx.meshing.execute_mesh_adaptation(
-            phx.meshing.prepare_mesh_adaptation(fine, request, policy=policy))
-        assert result.status is phx.meshing.MeshAdaptationStatus.COMPLETE
-        np.testing.assert_array_equal(result.target.mesh.coordinates, original.mesh.coordinates)
-        np.testing.assert_array_equal(result.target.mesh.vertex_global_ids, original.mesh.vertex_global_ids)
-        for before, after in zip(original.mesh.blocks, result.target.mesh.blocks, strict=True):
-            np.testing.assert_array_equal(after.global_ids, before.global_ids)
-            np.testing.assert_array_equal(after.vertices, before.vertices)
-        for degree in range(original.mesh.topological_dimension + 1):
-            np.testing.assert_array_equal(result.target.mesh.entity_set(degree).entity_ids,
-                                          original.mesh.entity_set(degree).entity_ids)
-        np.testing.assert_array_equal(result.hierarchy.tags, lineage.parent_tags)
-        np.testing.assert_array_equal(result.hierarchy.generations, lineage.parent_levels)
-        np.testing.assert_array_equal(fine.execution_evidence.work, before_work)
-        assert int(result.target.execution_evidence.total_work_units) > 0
-        assert int(result.target.execution_evidence.host_storage_peak_bytes_upper) > 0
-        assert result.hierarchy.uniform_refinement is None
-    """)
-    subprocess.run(
-        (sys.executable, "-c", script, str(cold.path), cold.content_id),
-        cwd=Path(__file__).resolve().parents[3],
-        check=True,
+    cold_record = run_on_forced_devices(
+        "tests._support.distributed_meshing.cold_lifecycle",
+        "uniform_source_inverse",
+        (str(cold.path), cold.content_id),
+        devices=1,
+        env={},
     )
+    assert cold_record["status"] == MeshAdaptationStatus.COMPLETE.value
+    cold_original, cold_target = cold_record["original"], cold_record["target"]
+    np.testing.assert_array_equal(
+        record_array(cold_target["coordinates"]),
+        record_array(cold_original["coordinates"]),
+    )
+    np.testing.assert_array_equal(
+        record_array(cold_target["vertex_global_ids"]),
+        record_array(cold_original["vertex_global_ids"]),
+    )
+    for before, after in zip(cold_original["blocks"], cold_target["blocks"], strict=True):
+        np.testing.assert_array_equal(
+            record_array(after["global_ids"]), record_array(before["global_ids"])
+        )
+        np.testing.assert_array_equal(
+            record_array(after["vertices"]), record_array(before["vertices"])
+        )
+    for degree in range(source.mesh.topological_dimension + 1):
+        np.testing.assert_array_equal(
+            record_array(cold_record["target_entity_ids"][degree]),
+            record_array(cold_record["original_entity_ids"][degree]),
+        )
+    np.testing.assert_array_equal(
+        record_array(cold_record["tags"]), record_array(cold_record["parent_tags"])
+    )
+    np.testing.assert_array_equal(
+        record_array(cold_record["generations"]),
+        record_array(cold_record["parent_levels"]),
+    )
+    assert cold_record["fine_work"] == cold_record["before_work"]
+    assert cold_record["total_work_units"] > 0
+    assert cold_record["host_storage_peak_bytes_upper"] > 0
+    assert cold_record["uniform_refinement_absent"]
+
+
+@pytest.mark.parametrize(
+    ("dimension", "siblings"),
+    (pytest.param(2, 6, id="triangles"), pytest.param(3, 24, id="tetrahedra")),
+)
+def test_uniform_source_inverse_preserves_protected_rollback_and_can_continue(
+    dimension: int, siblings: int, tmp_path: Path
+) -> None:
+    source = _certified(incompatible_simplex(dimension))
+    original_ids = _cell_ids(source.mesh)
+    refined = _adapt(
+        source, (0,), compatibility=BisectionCompatibility.UNIFORM_REFINEMENT
+    )
+    assert refined.status is MeshAdaptationStatus.COMPLETE
+    assert refined.hierarchy.uniform_refinement is not None
+    lineage = refined.hierarchy.uniform_refinement
+    assert lineage.child_ids.shape[1] == siblings
+    assert np.any(np.asarray(lineage.barycentric_weights) == 1.0 / 3.0)
     receipt = write_meshing_source_closure(
         tmp_path / "uniform-triangle", (refined.target, refined.hierarchy)
     )
@@ -467,10 +522,15 @@ def test_uniform_source_inverse_survives_archive_and_protected_rollback(
             np.flatnonzero(np.asarray(target.mesh.vertex_global_ids) == born[0])[0]
         ],
     )
-    assert (
-        refused.target.geometry.source_coordinates()
-        == target.geometry.source_coordinates()
-    )
+    with coordinate_reference_budget(
+        queries_upper=(
+            cell_geometry_preparation_query_upper(refused.target.geometry)
+            + cell_geometry_preparation_query_upper(target.geometry)
+        ),
+    ) as budget:
+        assert refused.target.geometry.source_coordinates(
+            budget=budget
+        ) == target.geometry.source_coordinates(budget=budget)
     assert (
         refused.hierarchy.uniform_refinement.lineage_id
         == hierarchy.uniform_refinement.lineage_id
@@ -510,17 +570,11 @@ def test_uniform_source_inverse_survives_archive_and_protected_rollback(
     )
 
 
-@pytest.mark.parametrize("dimension", (2, 3))
+@pytest.mark.parametrize("dimension", (2, 3), ids=("triangles", "tetrahedra"))
 def test_partial_uniform_inverse_preserves_original_block_rows_and_coefficient_routes(
     dimension: int,
     tmp_path: Path,
 ) -> None:
-    from phydrax.discretization import CellBlock, CellGeometrySpec
-    from phydrax.discretization._cell_geometry import coordinate_lagrange_element
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        write_meshing_source_closure,
-    )
 
     width = dimension + 1
     simplex = np.concatenate(
@@ -584,7 +638,6 @@ def test_partial_uniform_inverse_preserves_original_block_rows_and_coefficient_r
     assert lineage is not None
     original_weights = np.asarray(lineage.barycentric_weights).copy()
     root = np.flatnonzero(np.asarray(lineage.parent_ids) == 90)[0]
-    import equinox as eqx
 
     wrong_sci = eqx.tree_at(
         lambda value: value.uniform_refinement.parent_blocks,
@@ -593,14 +646,14 @@ def test_partial_uniform_inverse_preserves_original_block_rows_and_coefficient_r
             tuple(block.name for block in original.blocks).index("a-root")
         ),
     )
-    with pytest.raises(ValueError, match="scientific block"):
+    with pytest.raises(ValueError, match="BisectionUniformRefinement.parent_blocks"):
         _adapt(fine.target, (), np.asarray(lineage.child_ids)[root], hierarchy=wrong_sci)
     wrong_support = eqx.tree_at(
         lambda value: value.uniform_refinement.barycentric_weights,
         fine.hierarchy,
         lineage.barycentric_weights.at[root, 0, 0, 0].set(0.25),
     )
-    with pytest.raises(ValueError, match="canonical barycentric"):
+    with pytest.raises(ValueError, match="barycentric_weights"):
         _adapt(
             fine.target, (), np.asarray(lineage.child_ids)[root], hierarchy=wrong_support
         )
@@ -609,7 +662,7 @@ def test_partial_uniform_inverse_preserves_original_block_rows_and_coefficient_r
         fine.target,
         fine.target.geometry.coordinates.at[0, 0].add(1.0),
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"BisectionUniformRefinement\.coefficient_bank"):
         _adapt(
             wrong_bank, (), np.asarray(lineage.child_ids)[root], hierarchy=fine.hierarchy
         )
@@ -666,7 +719,7 @@ def test_partial_uniform_inverse_preserves_original_block_rows_and_coefficient_r
     )
 
 
-@pytest.mark.parametrize("degree", (1, 2))
+@pytest.mark.parametrize("degree", (1, 2), ids=("edges", "cells"))
 def test_uniform_source_inverse_refuses_changed_scientific_classes(degree: int) -> None:
     points = np.asarray(
         ((0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)), dtype=np.float64
@@ -706,7 +759,7 @@ def test_uniform_source_inverse_refuses_changed_scientific_classes(degree: int) 
 def _jittered_triangle_grid() -> CellMesh:
     """Unit-square grid whose jittered interior breaks the longest-edge matching."""
 
-    mesh = _triangle_grid(4, 4)
+    mesh = triangle_grid(4, 4)
     points = np.asarray(mesh.coordinates).copy()
     interior = np.all((points > 0.0) & (points < 1.0), axis=1)
     offsets = np.random.default_rng(13).uniform(-0.06, 0.06, size=points.shape)
@@ -718,7 +771,7 @@ def test_conforming_closure_bisects_incompatible_triangle_labels_locally() -> No
     mesh = _jittered_triangle_grid()
     source = _certified(mesh)
     marks = np.sort(_cell_ids(mesh))[::5]
-    with pytest.raises(ValueError, match="CONFORMING_CLOSURE"):
+    with pytest.raises(ValueError, match=r"Bisection\.compatibility"):
         _adapt(source, marks)
     result = _adapt(
         source, marks, compatibility=BisectionCompatibility.CONFORMING_CLOSURE
@@ -748,14 +801,14 @@ def test_conforming_closure_bisects_incompatible_triangle_labels_locally() -> No
     )
     assert np.count_nonzero(created) == evidence.created_vertices
     for point in np.asarray(target.coordinates)[created]:
-        assert np.min(np.linalg.norm(midpoints - point, axis=1)) < 1.0e-15
+        assert np.min(np.linalg.norm(midpoints - point, axis=1)) < _MIDPOINT_ROUNDOFF
     follow = _adapt(result.target, _corner_cells(target), hierarchy=result.hierarchy)
     assert follow.status is MeshAdaptationStatus.COMPLETE
     _assert_conforming(follow.target.mesh, 1.0)
     restored = _adapt(
         result.target, (), np.sort(_cell_ids(target)), hierarchy=result.hierarchy
     )
-    # Complete restoration rejoins every root to its authored block.
+    # Restoration rejoins every root to its authored block.
     assert restored.target.mesh.topology_id == source.mesh.topology_id
     target_ids, target_cells = _canonical_cells(restored.target.mesh)
     source_ids, source_cells = _canonical_cells(mesh)
@@ -765,12 +818,12 @@ def test_conforming_closure_bisects_incompatible_triangle_labels_locally() -> No
 
 
 def test_conforming_closure_keeps_incompatible_tetrahedral_labels_refused() -> None:
-    mesh = _kuhn_grid(2)
+    mesh = kuhn_cube(2, orientation_swap=(0, 1))
     points = np.asarray(mesh.coordinates).copy()
     interior = np.all((points > 0.0) & (points < 1.0), axis=1)
     points[interior] += 0.1
     source = _certified(CellMesh.from_tetrahedra(points, _cells(mesh).astype(np.int32)))
-    with pytest.raises(ValueError, match="triangle meshes only"):
+    with pytest.raises(ValueError, match=r"Bisection\.compatibility"):
         _adapt(source, (0,), compatibility=BisectionCompatibility.CONFORMING_CLOSURE)
 
 
@@ -811,7 +864,7 @@ def test_device_bisection_refuses_label_conforming_closure() -> None:
 def test_bisection_closure_refuses_batches_beyond_declared_capacity(
     limits: Any, requested: str, achieved: str
 ) -> None:
-    source = _certified(_triangle_grid(4, 4))
+    source = _certified(triangle_grid(4, 4))
     marks = np.sort(_cell_ids(source.mesh))[::3]
     assert marks.size == 11
     with pytest.raises(phx.meshing.MeshingFailure) as refused:
@@ -851,7 +904,7 @@ def _quadratic_geometry(mesh: CellMesh) -> Any:
 
 
 def test_bisection_keeps_curved_source_maps_and_affine_successors_affine() -> None:
-    mesh = phx.meshing.canonicalize_cell_mesh(_triangle_grid(2, 2))
+    mesh = phx.meshing.canonicalize_cell_mesh(triangle_grid(2, 2))
     curved = phx.meshing.certify_cell_mesh(
         mesh, phx.SpatialCoordinateContract.si(), geometry=_quadratic_geometry(mesh)
     )
@@ -875,14 +928,14 @@ def test_bisection_keeps_curved_source_maps_and_affine_successors_affine() -> No
         np.asarray(curved.geometry.geometry_dofs[0])[:, edge_dofs].reshape(-1)
     ]
     for point in np.asarray(target.mesh.coordinates)[created]:
-        assert np.min(np.linalg.norm(edge_nodes - point, axis=1)) < 1e-15
+        assert np.min(np.linalg.norm(edge_nodes - point, axis=1)) < _MIDPOINT_ROUNDOFF
     assert np.any(np.abs(np.asarray(target.mesh.coordinates)[created, 1] % 0.5) > 1e-3)
 
     result = _adapt(_certified(mesh), (0,))
     affine = phx.discretization.CellGeometrySpec.affine(result.target.mesh)
     assert result.status is MeshAdaptationStatus.COMPLETE
     assert result.geometry_transition is None
-    # Exact P1 coefficient actions retain ancestry in canonical layout identity
+    # P1 coefficient actions retain ancestry in the coordinate layout identity
     # rather than flattening into the incidental vertex-coordinate presentation.
     assert result.target.geometry.geometry_layout_id != affine.geometry_layout_id
     assert all(element.degree == 1 for element in result.target.geometry.elements)
@@ -901,3 +954,97 @@ def test_bisection_keeps_curved_source_maps_and_affine_successors_affine() -> No
             represented,
             np.asarray(result.target.mesh.coordinates)[np.asarray(block.vertices)],
         )
+
+
+@pytest.fixture(scope="module")
+def uniform_refinement_state() -> MeshAdaptationResult:
+    source = _certified(incompatible_simplex(2))
+    return _adapt(source, (), compatibility=BisectionCompatibility.UNIFORM_REFINEMENT)
+
+
+def test_stored_uniform_actions_rebuild_without_changing_scientific_identity(
+    uniform_refinement_state: MeshAdaptationResult,
+) -> None:
+    hierarchy = uniform_refinement_state.hierarchy
+    assert isinstance(hierarchy, BisectionHierarchy)
+    lineage = hierarchy.uniform_refinement
+    assert lineage is not None
+    rebuilt = BisectionUniformRefinement.from_stored_fields(lineage)
+    assert rebuilt is not lineage
+    assert rebuilt.source is lineage.source
+    assert rebuilt.lineage_id == lineage.lineage_id
+    expected_arrays = lineage.host_arrays()
+    rebuilt_arrays = rebuilt.host_arrays()
+    for name, expected in expected_arrays.items():
+        np.testing.assert_array_equal(rebuilt_arrays[name], expected)
+
+
+def test_stored_uniform_actions_refuse_corrupted_barycentric_support(
+    uniform_refinement_state: MeshAdaptationResult,
+) -> None:
+    hierarchy = uniform_refinement_state.hierarchy
+    assert isinstance(hierarchy, BisectionHierarchy)
+    lineage = hierarchy.uniform_refinement
+    assert lineage is not None
+    corrupt = eqx.tree_at(
+        lambda value: value.barycentric_weights,
+        lineage,
+        lineage.barycentric_weights.at[0, 0, 0, 0].add(0.25),
+    )
+    with pytest.raises(
+        ValueError, match="BisectionUniformRefinement.barycentric_weights"
+    ):
+        BisectionUniformRefinement.from_stored_fields(corrupt)
+
+
+def test_stored_hierarchy_rebuild_retains_cell_labels_and_issuers(
+    uniform_refinement_state: MeshAdaptationResult,
+) -> None:
+    hierarchy = uniform_refinement_state.hierarchy
+    assert isinstance(hierarchy, BisectionHierarchy)
+    rebuilt = BisectionHierarchy.from_stored_fields(hierarchy)
+    assert rebuilt is not hierarchy
+    assert rebuilt.hierarchy_id == hierarchy.hierarchy_id
+    assert rebuilt.uniform_refinement is hierarchy.uniform_refinement
+    assert rebuilt.next_vertex_id == hierarchy.next_vertex_id
+    assert rebuilt.next_cell_id == hierarchy.next_cell_id
+    np.testing.assert_array_equal(rebuilt.cell_global_ids, hierarchy.cell_global_ids)
+    np.testing.assert_array_equal(rebuilt.ordered_vertices, hierarchy.ordered_vertices)
+    np.testing.assert_array_equal(rebuilt.tags, hierarchy.tags)
+    np.testing.assert_array_equal(rebuilt.generations, hierarchy.generations)
+    np.testing.assert_array_equal(
+        rebuilt.scientific_cell_ids, hierarchy.scientific_cell_ids
+    )
+    np.testing.assert_array_equal(
+        rebuilt.scientific_block_ids, hierarchy.scientific_block_ids
+    )
+    for restored, retained in zip(
+        rebuilt.retired_entity_ids, hierarchy.retired_entity_ids, strict=True
+    ):
+        np.testing.assert_array_equal(restored, retained)
+
+
+def test_stored_hierarchy_refuses_corrupted_simplex_incidence(
+    uniform_refinement_state: MeshAdaptationResult,
+) -> None:
+    hierarchy = uniform_refinement_state.hierarchy
+    assert isinstance(hierarchy, BisectionHierarchy)
+    corrupt = eqx.tree_at(
+        lambda value: value.ordered_vertices,
+        hierarchy,
+        hierarchy.ordered_vertices.at[0, 1].set(hierarchy.ordered_vertices[0, 0]),
+    )
+    with pytest.raises(ValueError, match="Bisection.ordered_vertices"):
+        BisectionHierarchy.from_stored_fields(corrupt)
+
+
+def test_rectangular_triangle_fixture_retains_storage_and_cell_identity() -> None:
+    mesh = triangle_grid(2, 1, height=0.5)
+    np.testing.assert_array_equal(
+        mesh.coordinates,
+        ((0.0, 0.0), (0.5, 0.0), (1.0, 0.0), (0.0, 0.5), (0.5, 0.5), (1.0, 0.5)),
+    )
+    np.testing.assert_array_equal(
+        _cells(mesh), ((0, 1, 4), (0, 4, 3), (1, 2, 5), (1, 5, 4))
+    )
+    np.testing.assert_array_equal(_cell_ids(mesh), (0, 1, 2, 3))

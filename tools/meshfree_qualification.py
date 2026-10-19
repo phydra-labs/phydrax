@@ -62,6 +62,7 @@ from phydrax.discretization.meshfree import (
     MeshfreeApproximation,
     PointTransferStatus,
 )
+from phydrax.discretization.meshfree._profiles import MeshfreeSupportPrecision
 from phydrax.linalg import SparseAssemblyPolicy
 from phydrax.qualification import (
     CampaignObservationRecord,
@@ -416,7 +417,7 @@ def _q1_support(method: str, config: MeshfreeConfig, /) -> dict[str, SupportValu
         geometry_authority="unit-cube-stratified-samples",
         derivative_class="coordinate-orders-1-2",
         capacity=16384,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
     )
 
 
@@ -995,7 +996,7 @@ def _q2_support(
             geometry_authority="native-point-primary-tensor-grid-sbp-norm",
             derivative_class="none",
             capacity=16384,
-            precision=config.precision,
+            precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
         )
     return meshfree_support(
         dimension=config.dimension,
@@ -1004,7 +1005,7 @@ def _q2_support(
         geometry_authority="cartesian-box-perturbed-samples",
         derivative_class="none",
         capacity=16384,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
     )
 
 
@@ -1176,7 +1177,7 @@ def _plan_q3(config: MeshfreeConfig, /) -> tuple[PlannedRow, ...]:
                 geometry_authority="unit-cube-stratified-samples",
                 derivative_class="none",
                 capacity=16384,
-                precision=config.precision,
+                precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
             ),
             size,
             seed,
@@ -1225,7 +1226,7 @@ def _q4_support(config: MeshfreeConfig, /) -> dict[str, SupportValue]:
         geometry_authority="cartesian-nodal-control-volumes",
         derivative_class="fixed-topology-coordinate",
         capacity=4096,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
     )
 
 
@@ -1494,7 +1495,7 @@ def _q5_support(
         geometry_authority=f"{surface}-{geometry_kind}",
         derivative_class="none",
         capacity=16384,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
     )
 
 
@@ -1607,7 +1608,7 @@ def _plan_q6(config: MeshfreeConfig, /) -> tuple[PlannedRow, ...]:
                 geometry_authority="prescribed-expanding-sphere",
                 derivative_class="none",
                 capacity=4096,
-                precision=config.precision,
+                precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
                 temporal_method="additive-imex",
             ),
             size,
@@ -1658,7 +1659,7 @@ def _plan_q7(config: MeshfreeConfig, /) -> tuple[PlannedRow, ...]:
                 geometry_authority="sphere-interface-in-box",
                 derivative_class="none",
                 capacity=4096,
-                precision=config.precision,
+                precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
                 temporal_method="explicit-window-buffer",
             ),
             size,
@@ -1716,7 +1717,7 @@ def _q8_support(config: MeshfreeConfig, /) -> dict[str, SupportValue]:
         geometry_authority="cartesian-nodal-control-volumes",
         derivative_class="implicit-adjoint",
         capacity=1024,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
     )
 
 
@@ -1848,7 +1849,7 @@ def _q9_collocation_support(
         geometry_authority="periodic-unit-square-jittered-lattice",
         derivative_class="none",
         capacity=4096,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
         temporal_method=_Q9_TEMPORAL[method],
     )
 
@@ -1861,7 +1862,7 @@ def _q9_ale_support(config: MeshfreeConfig, /) -> dict[str, SupportValue]:
         geometry_authority="periodic-shell-lattice",
         derivative_class="none",
         capacity=4096,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
         temporal_method="ssprk33",
     )
 
@@ -1876,7 +1877,7 @@ def _q9_graph_support(
         geometry_authority="cartesian-lattice-control-volumes",
         derivative_class="none",
         capacity=4096,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
         temporal_method=temporal,
     )
 
@@ -2335,7 +2336,7 @@ def _q13_transfer_support(
         geometry_authority=geometry,
         derivative_class="frozen-transfer-value",
         capacity=65536,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
     )
 
 
@@ -2362,7 +2363,7 @@ def _q13_event_support(
         geometry_authority=geometry,
         derivative_class="frozen-transfer-value",
         capacity=8192,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
     )
 
 
@@ -3583,7 +3584,7 @@ def _q12_support(
         geometry_authority=authority,
         derivative_class="none",
         capacity=capacity,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
     )
 
 
@@ -3595,7 +3596,7 @@ def _clique_support(config: MeshfreeConfig, /) -> dict[str, SupportValue]:
         geometry_authority="abstract-radius-clique-no-geometry",
         derivative_class="none",
         capacity=4096,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
     )
 
 
@@ -3881,7 +3882,7 @@ def _q14_support(route: str, config: MeshfreeConfig, /) -> dict[str, SupportValu
         geometry_authority=authority,
         derivative_class=derivative,
         capacity=capacity,
-        precision=config.precision,
+        precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
     )
 
 
@@ -4164,7 +4165,7 @@ class _Q15Q17Row:
             geometry_authority=self.geometry,
             derivative_class=self.derivative,
             capacity=self.support_capacity,
-            precision=config.precision,
+            precision=parse(config.precision, MeshfreeSupportPrecision, "precision"),
             temporal_method=self.temporal,
             device=self.device,
             reproducibility=self.reproducibility,
@@ -5011,7 +5012,7 @@ def _q16_support(
         geometry_authority="unit-cube-stratified-samples",
         derivative_class="none" if workload == "distributed-refusal" else _Q16_DERIVATIVE,
         capacity=capacity,
-        precision=precision,
+        precision=parse(precision, MeshfreeSupportPrecision, "precision"),
         device=device,
     )
 

@@ -195,6 +195,7 @@ def _evaluate(
     bunch_sigma: np.ndarray | None = None,
     observer_time_window: tuple[float, float] | None = None,
     quadrature_order: int = 8,
+    compiled: bool = False,
 ) -> TrajectoryRadiationResult:
     plan = TrajectoryRadiationPlan(
         SCALE,
@@ -208,7 +209,9 @@ def _evaluate(
         observer_time_window=observer_time_window,
         quadrature_order=quadrature_order,
     )
-    return plan.prepare().evaluate(trajectory)
+    prepared = plan.prepare()
+    evaluate = eqx.filter_jit(prepared.evaluate) if compiled else prepared.evaluate
+    return evaluate(trajectory)
 
 
 def _harmonic_power_density(result: TrajectoryRadiationResult) -> np.ndarray:
@@ -274,6 +277,31 @@ def test_uniform_motion_radiates_nothing(route: TrajectoryRadiationRoute) -> Non
         np.array([1.0e8, 1.0e9, 1.0e10]),
         route=route,
         observer_time_window=_window(route, (-5.0e-9, 5.0e-9)),
+    )
+    assert np.max(np.abs(np.asarray(result.field_spectrum))) <= 1.0e-12 * Q / (
+        4.0 * np.pi * EPS0 * C
+    )
+    assert _status(result) == TrajectoryRadiationStatus.SUCCESS
+    assert bool(result.evidence.resolved)
+
+
+def test_uniform_motion_hermite_jit_radiates_nothing() -> None:
+    gamma = 3.0
+    velocity = np.sqrt(1.0 - 1.0 / gamma**2) * C * np.array([0.6, 0.0, 0.8])
+    times = np.linspace(0.0, 1.0e-9, 41)
+    zeros = np.zeros((times.size, 3), dtype=np.float64)
+    lane = Samples(
+        times,
+        times[:, None] * velocity[None, :],
+        np.broadcast_to(gamma * velocity, zeros.shape).copy(),
+        zeros,
+    )
+    result = _evaluate(
+        _trajectory(lane),
+        _in_plane_directions(np.array([0.1, 0.9, 2.5])),
+        np.array([1.0e8, 1.0e9, 1.0e10]),
+        route="segment-hermite",
+        compiled=True,
     )
     assert np.max(np.abs(np.asarray(result.field_spectrum))) <= 1.0e-12 * Q / (
         4.0 * np.pi * EPS0 * C

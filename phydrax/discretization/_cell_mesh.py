@@ -7,7 +7,7 @@ from __future__ import annotations
 import operator
 from collections.abc import Mapping, Sequence
 from itertools import combinations
-from typing import final, NamedTuple, TYPE_CHECKING
+from typing import assert_never, final, NamedTuple
 
 import equinox as eqx
 import jax
@@ -15,265 +15,50 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+from numpy.typing import NDArray
+
+from phydrax.discretization._topology_rows import has_duplicate_rows
 
 from .._array_archive import array_collection_digest
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._jax_config import x64_enabled
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation
-from ..typing import checked, Dim, Int32
+from ..typing import checked, ConvertibleToArray, Dim, Int32
+from . import (
+    _cell_geometry as cell_geometry_owner,
+    _cell_geometry_validity as cell_geometry_validity_owner,
+    _periodic_topology as periodic_topology_owner,
+)
 from ._cell_complex import (
-    _canonical_entity_ids,
-    _interval_complex,
-    _polygonal_complex,
-    _tetrahedral_complex,
+    canonical_entity_ids,
+    interval_complex,
     interval_connectivity,
     IntervalConnectivity,
+    polygonal_complex,
     polygonal_connectivity,
     PolygonalConnectivity,
     polyhedral_cell_complex,
     polyhedral_connectivity as _build_polyhedral_connectivity,
     PolyhedralConnectivity,
     simplicial_cell_complex,
+    tetrahedral_complex,
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
+from ._coordinate_budget import CoordinateEnclosureBudget
 from ._hexahedral import (
-    _hexahedral_complex,
+    hexahedral_complex,
     hexahedral_connectivity,
     HexahedralConnectivity,
 )
-from ._periodic_topology import PeriodicMeshTopology
 from ._reference_cell import (
     reference_cell_topology,
-    REFERENCE_TOPOLOGIES,
-    ReferenceCellTopology,
 )
+from ._reference_cell_types import CellBlock, PolyhedralBlock
 from ._support import DiscreteSupport
-from ._topology import (
-    _has_duplicate_rows,
-    CellComplexTopology,
-    EntitySet,
-    EntitySubset,
-    OrientedIncidence,
-)
-
-
-if TYPE_CHECKING:
-    from ._cell_geometry import CellGeometrySpec, CellGeometryStorageProjection
-
-
-def _admit_cell_kind(kind: str, /) -> ReferenceCellTopology | None:
-    if (
-        kind not in REFERENCE_TOPOLOGIES
-        and kind not in ("polygon", "polyhedron")
-        and not kind.startswith(("simplex:", "tensor:"))
-    ):
-        raise ValueError(
-            "cell_kind must name a reference cell, simplex:N, tensor:N, polygon, or polyhedron."
-        )
-    return None if kind in ("polygon", "polyhedron") else reference_cell_topology(kind)
-
-
-def _admit_cell_rows(
-    kind: str, reference: ReferenceCellTopology | None, vertices: ArrayLike, /
-) -> tuple[np.ndarray, int]:
-    """Own reference-cell arity and nonempty rank-two connectivity admission."""
-    cells = np.asarray(vertices, dtype=np.int32)
-    if reference is None:
-        arity = cells.shape[1] if cells.ndim == 2 else -1
-        minimum_arity = 4 if kind == "polyhedron" else 3
-    else:
-        arity = len(reference.vertices)
-        minimum_arity = 2 if reference.dimension == 1 else 3
-    if (
-        cells.ndim != 2
-        or cells.shape[0] == 0
-        or cells.shape[1] != arity
-        or arity < minimum_arity
-        or (kind == "polygon" and arity < 5)
-    ):
-        raise ValueError(f"{kind} cell vertices have incompatible arity {arity}.")
-    return cells, minimum_arity
-
-
-def _admit_active_cell_vertices(
-    kind: str, cells: np.ndarray, vertex_valid: ArrayLike | None, minimum_arity: int, /
-) -> np.ndarray:
-    """Validate fixed-capacity padding and active vertex-set uniqueness."""
-    valid = (
-        np.ones_like(cells, dtype=np.bool_)
-        if vertex_valid is None
-        else np.asarray(vertex_valid, dtype=np.bool_)
-    )
-    if valid.shape != cells.shape:
-        raise ValueError("vertex_valid must match cell vertex storage.")
-    if kind != "polyhedron" and not np.all(valid):
-        raise ValueError("Only polyhedron blocks may contain padded vertices.")
-    if np.any(np.sum(valid, axis=1) < minimum_arity):
-        raise ValueError(f"Each {kind} cell requires at least {minimum_arity} vertices.")
-    if np.any(cells[valid] < 0):
-        raise ValueError("Cell vertex indices must be non-negative.")
-    # Padding sorts first as -1, so equal sorted rows are equal active sets.
-    active_rows = np.sort(np.where(valid, cells, -1), axis=1)
-    if np.any((active_rows[:, 1:] == active_rows[:, :-1]) & (active_rows[:, 1:] >= 0)):
-        raise ValueError("Each cell must reference distinct active vertices.")
-    if _has_duplicate_rows(active_rows):
-        raise ValueError("Cell blocks cannot contain duplicate cells.")
-    return valid
-
-
-def _admit_cell_global_ids(
-    cell_count: int, global_ids: ArrayLike | None, /
-) -> np.ndarray:
-    """Admit one unique stable identity per cell without changing numeric representation."""
-    ids = (
-        np.arange(cell_count, dtype=np.int64)
-        if global_ids is None
-        else np.asarray(global_ids, dtype=np.int64)
-    )
-    if ids.shape != (cell_count,):
-        raise ValueError("Cell global_ids must have shape (cell_count,).")
-    if np.any(ids < 0) or np.unique(ids).size != ids.size:
-        raise ValueError("Cell global_ids must be unique non-negative integers.")
-    return ids
-
-
-class CellBlock(StrictModule, NonTrainableState):
-    """One homogeneous, ordered block of top-dimensional cells."""
-
-    name: str = eqx.field(static=True)
-    cell_kind: str = eqx.field(static=True)
-    vertices: Array
-    vertex_valid: Array
-    global_ids: Array
-    block_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        name: str,
-        cell_kind: str,
-        vertices: ArrayLike,
-        /,
-        *,
-        vertex_valid: ArrayLike | None = None,
-        global_ids: ArrayLike | None = None,
-    ) -> None:
-        block_name = str(name)
-        kind = str(cell_kind)
-        if not block_name:
-            raise ValueError("Cell block name must be non-empty.")
-        reference = _admit_cell_kind(kind)
-        cells, minimum_arity = _admit_cell_rows(kind, reference, vertices)
-        valid = _admit_active_cell_vertices(kind, cells, vertex_valid, minimum_arity)
-        ids = _admit_cell_global_ids(cells.shape[0], global_ids)
-        self.name = block_name
-        self.cell_kind = kind
-        self.vertices = jnp.asarray(cells)
-        self.vertex_valid = jnp.asarray(valid)
-        self.global_ids = jnp.asarray(ids)
-        self.block_id = canonical_fingerprint(
-            {
-                "kind": "cell-block",
-                "name": block_name,
-                "cell_kind": kind,
-                "vertices": array_tree_fingerprint(cells),
-                "vertex_valid": array_tree_fingerprint(valid),
-                "global_ids": array_tree_fingerprint(ids),
-            }
-        )
-
-    @property
-    def cell_count(self) -> int:
-        return self.vertices.shape[0]
-
-    @property
-    def arity(self) -> int:
-        return (
-            self.vertices.shape[1]
-            if self.cell_kind in ("polygon", "polyhedron")
-            else len(reference_cell_topology(self.cell_kind).vertices)
-        )
-
-    @property
-    def topological_dimension(self) -> int:
-        if self.cell_kind == "polygon":
-            return 2
-        if self.cell_kind == "polyhedron":
-            return 3
-        return reference_cell_topology(self.cell_kind).dimension
-
-
-class PolyhedralBlock(StrictModule, NonTrainableState):
-    """One exact-width block of arbitrary polyhedra grouped by vertex count."""
-
-    name: str = eqx.field(static=True)
-    cell_kind: str = eqx.field(static=True)
-    vertices: Array
-    vertex_valid: Array
-    global_ids: Array
-    block_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        name: str,
-        vertices: ArrayLike,
-        /,
-        *,
-        global_ids: ArrayLike | None = None,
-    ) -> None:
-        block_name = str(name)
-        cells = np.asarray(vertices, dtype=np.int32)
-        if not block_name:
-            raise ValueError("Polyhedral block name must be non-empty.")
-        if cells.ndim != 2 or cells.shape[0] == 0 or cells.shape[1] < 4:
-            raise ValueError(
-                "Polyhedral block vertices must have shape (cells > 0, arity >= 4)."
-            )
-        if np.any(cells < 0):
-            raise ValueError("Polyhedral cell vertex indices must be non-negative.")
-        ordered = np.sort(cells, axis=1)
-        if np.any(ordered[:, 1:] == ordered[:, :-1]):
-            raise ValueError("Each polyhedral cell must reference distinct vertices.")
-        if _has_duplicate_rows(ordered):
-            raise ValueError("Polyhedral blocks cannot contain duplicate cells.")
-        ids = (
-            np.arange(cells.shape[0], dtype=np.int64)
-            if global_ids is None
-            else np.asarray(global_ids, dtype=np.int64)
-        )
-        if ids.shape != (cells.shape[0],):
-            raise ValueError("Polyhedral global_ids must match the cell count.")
-        if np.any(ids < 0) or np.unique(ids).size != ids.size:
-            raise ValueError(
-                "Polyhedral global_ids must be unique non-negative integers."
-            )
-        valid = np.ones_like(cells, dtype=np.bool_)
-        self.name = block_name
-        self.cell_kind = "polyhedron"
-        self.vertices = jnp.asarray(cells)
-        self.vertex_valid = jnp.asarray(valid)
-        self.global_ids = jnp.asarray(ids)
-        self.block_id = canonical_fingerprint(
-            {
-                "kind": "polyhedral-block",
-                "name": block_name,
-                "vertices": array_tree_fingerprint(cells),
-                "global_ids": array_tree_fingerprint(ids),
-            }
-        )
-
-    @property
-    def cell_count(self) -> int:
-        return self.vertices.shape[0]
-
-    @property
-    def arity(self) -> int:
-        return self.vertices.shape[1]
-
-    @property
-    def topological_dimension(self) -> int:
-        return 3
+from ._topology import CellComplexTopology, EntitySet, EntitySubset, OrientedIncidence
 
 
 class SimplexCellDim(Dim):
@@ -318,28 +103,38 @@ class SimplicialConnectivity(StrictModule, NonTrainableState):
         masks = tuple(np.asarray(value, dtype=np.bool_) for value in boundary_masks)
         if cell_rows.shape != (topology.entity_sets[-1].count, dimension + 1):
             raise ValueError(
-                "Simplex cells must have one reference-vertex row per top cell."
+                f"SimplicialConnectivity.cells must have one reference-vertex row per top cell; got {cell_rows.shape}."
             )
         if any(
             len(values) != dimension + 1 for values in (vertex_rows, routes, signs, masks)
         ):
-            raise ValueError("Simplex connectivity must contain every entity degree.")
+            raise ValueError(
+                f"SimplicialConnectivity.entities must contain every entity degree in vertices, routes, signs, and masks; got {tuple(len(values) for values in (vertex_rows, routes, signs, masks))}."
+            )
         for degree, entity_set in enumerate(topology.entity_sets):
             expected = len(tuple(combinations(range(dimension + 1), degree + 1)))
             if vertex_rows[degree].shape != (entity_set.count, degree + 1):
-                raise ValueError("Simplex entity vertices have incompatible shape.")
+                raise ValueError(
+                    f"SimplicialConnectivity.entities must match the entity count and vertex arity at degree {degree}; got {vertex_rows[degree].shape}."
+                )
             if routes[degree].shape != (cell_rows.shape[0], expected):
-                raise ValueError("Simplex cell-to-entity routes have incompatible shape.")
+                raise ValueError(
+                    f"SimplicialConnectivity.cell_entities must match cell count and reference entity count at degree {degree}; got {routes[degree].shape}."
+                )
             if signs[degree].shape != routes[degree].shape or np.any(
                 np.abs(signs[degree]) != 1.0
             ):
                 raise ValueError(
-                    "Simplex route signs must be unit orientation coefficients."
+                    f"SimplicialConnectivity.cell_entity_signs must match routes with unit orientation coefficients; got {signs[degree].shape}."
                 )
             if masks[degree].shape != (entity_set.count,):
-                raise ValueError("Simplex boundary masks must match entity counts.")
+                raise ValueError(
+                    f"SimplicialConnectivity.boundary_masks must match entity counts at degree {degree}; got {masks[degree].shape}."
+                )
             if np.any(routes[degree] < 0) or np.any(routes[degree] >= entity_set.count):
-                raise ValueError("Simplex routes index undeclared entities.")
+                raise ValueError(
+                    f"SimplicialConnectivity.cell_entities must index declared entities at degree {degree}; got {routes[degree].shape}."
+                )
         self.dimension = dimension
         self.vertex_count = topology.entity_sets[0].count
         self.cells = jnp.asarray(cell_rows, dtype=jnp.int32)
@@ -378,7 +173,9 @@ class SimplicialConnectivity(StrictModule, NonTrainableState):
     @property
     def boundary_faces(self) -> Array:
         if self.dimension < 2:
-            raise ValueError("This simplex complex has no degree-two faces.")
+            raise ValueError(
+                f"SimplicialConnectivity.dimension must be at least two to expose degree-two faces; got {self.dimension}."
+            )
         return self.boundary_masks[2]
 
     @property
@@ -405,7 +202,7 @@ class _PreparedCellMeshTopology(NamedTuple):
     topology: CellComplexTopology
     topology_id: str
     topological_dimension: int
-    periodic_topology: PeriodicMeshTopology | None
+    periodic_topology: periodic_topology_owner.PeriodicMeshTopology | None
 
 
 def _interval_mesh_topology(
@@ -416,13 +213,15 @@ def _interval_mesh_topology(
     /,
 ) -> tuple[IntervalConnectivity, CellComplexTopology]:
     if any(block.cell_kind != "interval" for block in blocks):
-        raise ValueError("One-dimensional meshes support interval blocks only.")
+        raise ValueError(
+            f"CellMesh.blocks must use interval blocks in one dimension; got {tuple(block.cell_kind for block in blocks)}."
+        )
     intervals = np.concatenate(
         tuple(np.asarray(block.vertices, dtype=np.int32) for block in blocks),
         axis=0,
     )
     connectivity = interval_connectivity(intervals, coordinate_count)
-    return connectivity, _interval_complex(
+    return connectivity, interval_complex(
         connectivity, vertex_global_ids=vertex_ids, cell_global_ids=cell_ids
     )
 
@@ -439,10 +238,14 @@ def _polygonal_mesh_topology(
         block.cell_kind not in ("triangle", "quadrilateral", "polygon")
         for block in blocks
     ):
-        raise ValueError("Two-dimensional meshes support polygonal blocks only.")
+        raise ValueError(
+            f"CellMesh.blocks must use polygonal blocks in two dimensions; got {tuple(block.cell_kind for block in blocks)}."
+        )
     arities = tuple(block.arity for block in blocks)
     if arities != tuple(sorted(arities)):
-        raise ValueError("Polygonal CellMesh blocks must be ordered by increasing arity.")
+        raise ValueError(
+            f"CellMesh.blocks must be ordered by increasing arity; got {arities}."
+        )
     triangles = [
         np.asarray(block.vertices, dtype=np.int32)
         for block in blocks
@@ -463,7 +266,7 @@ def _polygonal_mesh_topology(
             if block.cell_kind == "polygon"
         ),
     )
-    return connectivity, _polygonal_complex(
+    return connectivity, polygonal_complex(
         connectivity,
         vertex_global_ids=vertex_ids,
         edge_global_ids=edge_ids,
@@ -498,21 +301,27 @@ def _validate_supplied_polyhedral_connectivity(
         )
         or not np.array_equal(np.asarray(connectivity.cell_global_ids), cell_ids)
     ):
-        raise ValueError("PolyhedralConnectivity does not match the CellMesh IDs.")
+        raise ValueError(
+            f"CellMesh.polyhedral_connectivity must match mesh vertex, entity, and cell IDs; got {(connectivity.vertex_count, connectivity.cell_count)}."
+        )
     offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
     values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
     cell_offset = 0
     for block in blocks:
         widths = np.diff(offsets[cell_offset : cell_offset + block.cell_count + 1])
         if np.any(widths != block.arity):
-            raise ValueError("PolyhedralConnectivity cell widths do not match blocks.")
+            raise ValueError(
+                f"CellMesh.polyhedral_connectivity must match block cell widths; got {widths}."
+            )
         start = int(offsets[cell_offset])
         stop = int(offsets[cell_offset + block.cell_count])
         expected = np.asarray(block.vertices, dtype=np.int32)
         if not np.array_equal(
             values[start:stop].reshape(expected.shape), np.sort(expected, axis=1)
         ):
-            raise ValueError("PolyhedralConnectivity cell vertices do not match blocks.")
+            raise ValueError(
+                f"CellMesh.polyhedral_connectivity must match sorted block cell vertices; got {block.name!r}."
+            )
         cell_offset += block.cell_count
 
 
@@ -534,7 +343,7 @@ def _volume_mesh_topology(
         connectivity = tetrahedral_connectivity(
             np.asarray(blocks[0].vertices, dtype=np.int32), coordinate_count
         )
-        return connectivity, _tetrahedral_complex(
+        return connectivity, tetrahedral_complex(
             connectivity,
             vertex_global_ids=vertex_ids,
             edge_global_ids=entity_ids.get(1),
@@ -545,7 +354,7 @@ def _volume_mesh_topology(
         connectivity = hexahedral_connectivity(
             np.asarray(blocks[0].vertices, dtype=np.int32), coordinate_count
         )
-        return connectivity, _hexahedral_complex(
+        return connectivity, hexahedral_complex(
             connectivity,
             vertex_global_ids=vertex_ids,
             edge_global_ids=entity_ids.get(1),
@@ -553,7 +362,9 @@ def _volume_mesh_topology(
             cell_global_ids=cell_ids,
         )
     if any(block.cell_kind == "polyhedron" for block in blocks):
-        raise ValueError("Polyhedron blocks require matching PolyhedralConnectivity.")
+        raise ValueError(
+            f"CellMesh.polyhedral_connectivity must be supplied for polyhedron blocks; got {supplied}."
+        )
     connectivity = _build_polyhedral_connectivity(
         tuple(
             (block.cell_kind, np.asarray(block.vertices, dtype=np.int32))
@@ -576,29 +387,35 @@ def _validated_mesh_blocks(
     coordinate_count, ambient_dimension = point_shape
     normalized_blocks = tuple(blocks)
     if not normalized_blocks:
-        raise ValueError("Cell mesh requires at least one cell block.")
+        raise ValueError(
+            f"CellMesh.blocks must contain at least one cell block; got {len(normalized_blocks)}."
+        )
     if not all(
         isinstance(block, (CellBlock, PolyhedralBlock)) for block in normalized_blocks
     ):
         raise TypeError(
-            "blocks must contain only CellBlock or PolyhedralBlock instances."
+            f"CellMesh.blocks must contain only CellBlock or PolyhedralBlock instances; got {tuple(type(block).__name__ for block in normalized_blocks)}."
         )
     names = tuple(block.name for block in normalized_blocks)
     if len(set(names)) != len(names):
-        raise ValueError("Cell block names must be unique.")
+        raise ValueError(f"CellMesh.blocks must have unique block names; got {names}.")
     dimensions = {block.topological_dimension for block in normalized_blocks}
     if len(dimensions) != 1:
-        raise ValueError("All cell blocks must share one topological dimension.")
+        raise ValueError(
+            f"CellMesh.blocks must share one topological dimension; got {dimensions}."
+        )
     topological_dimension = dimensions.pop()
     if ambient_dimension < topological_dimension:
         raise ValueError(
-            "Cell mesh ambient dimension cannot be smaller than its topological dimension."
+            f"CellMesh.coordinates must have ambient dimension at least the topological dimension; got {point_shape[1]}."
         )
     for block in normalized_blocks:
         vertices_ = np.asarray(block.vertices)
         valid_ = np.asarray(block.vertex_valid, dtype=np.bool_)
         if np.any(vertices_[valid_] >= coordinate_count):
-            raise ValueError(f"Cell block {block.name!r} indexes undeclared vertices.")
+            raise ValueError(
+                f"CellMesh.blocks must index declared vertices; got {block.name!r}."
+            )
     return normalized_blocks, topological_dimension
 
 
@@ -623,14 +440,16 @@ def _resolved_mesh_identities(
     if any(
         dimension < 0 or dimension > topological_dimension for dimension in entity_ids
     ):
-        raise ValueError("entity_global_ids contains an undeclared dimension.")
+        raise ValueError(
+            f"CellMesh.entity_global_ids must index declared entity dimensions; got {tuple(entity_ids)}."
+        )
     supplied_vertices = entity_ids.get(0)
     if supplied_vertices is not None and vertex_global_ids is not None:
         if not np.array_equal(
             supplied_vertices, np.asarray(vertex_global_ids, dtype=np.int64)
         ):
             raise ValueError(
-                "vertex_global_ids contradicts entity_global_ids dimension zero."
+                f"CellMesh.vertex_global_ids must agree with entity_global_ids at degree zero; got {np.asarray(vertex_global_ids).shape}."
             )
     global_ids = (
         supplied_vertices
@@ -642,18 +461,24 @@ def _resolved_mesh_identities(
         )
     )
     if global_ids.shape != (coordinate_count,):
-        raise ValueError("vertex_global_ids must have shape (coordinate_count,).")
+        raise ValueError(
+            f"CellMesh.vertex_global_ids must have one entry per coordinate; got {global_ids.shape}."
+        )
     if np.any(global_ids < 0) or np.unique(global_ids).size != global_ids.size:
-        raise ValueError("vertex_global_ids must be unique non-negative integers.")
+        raise ValueError(
+            f"CellMesh.vertex_global_ids must be unique nonnegative integers; got {global_ids.shape}."
+        )
     cell_global_ids = np.concatenate(
         tuple(np.asarray(block.global_ids, dtype=np.int64) for block in blocks)
     )
     if np.unique(cell_global_ids).size != cell_global_ids.size:
-        raise ValueError("Cell global IDs must be unique across mesh blocks.")
+        raise ValueError(
+            f"CellMesh.blocks must have unique global IDs across blocks; got {cell_global_ids.shape}."
+        )
     supplied_cells = entity_ids.get(topological_dimension)
     if supplied_cells is not None and not np.array_equal(supplied_cells, cell_global_ids):
         raise ValueError(
-            "Top-dimensional entity_global_ids contradict cell block global IDs."
+            f"CellMesh.entity_global_ids must agree with top-dimensional block global IDs; got {supplied_cells.shape}."
         )
     return global_ids, entity_ids, cell_global_ids
 
@@ -668,7 +493,7 @@ def _simplex_logical_topology_arrays(
     topology: CellComplexTopology,
     /,
 ) -> dict[str, np.ndarray]:
-    """Canonical logical simplex content, independent of local slots/placement."""
+    """Return logical simplex content independent of local slots and placement."""
     cell_ids = np.asarray(block.global_ids, dtype=np.int64)
     cell_order = np.argsort(cell_ids, kind="stable")
     arrays = {
@@ -679,19 +504,22 @@ def _simplex_logical_topology_arrays(
         ],
     }
     entities: tuple[np.ndarray, ...]
-    if isinstance(connectivity, SimplicialConnectivity):
-        entities = tuple(
-            np.asarray(value, dtype=np.int32) for value in connectivity.entities[1:-1]
-        )
-    elif isinstance(connectivity, IntervalConnectivity):
-        entities = ()
-    elif isinstance(connectivity, PolygonalConnectivity):
-        entities = (np.asarray(connectivity.edges, dtype=np.int32),)
-    else:
-        entities = (
-            np.asarray(connectivity.edges, dtype=np.int32),
-            np.asarray(connectivity.faces, dtype=np.int32),
-        )
+    match connectivity:
+        case SimplicialConnectivity():
+            entities = tuple(
+                np.asarray(value, dtype=np.int32) for value in connectivity.entities[1:-1]
+            )
+        case IntervalConnectivity():
+            entities = ()
+        case PolygonalConnectivity():
+            entities = (np.asarray(connectivity.edges, dtype=np.int32),)
+        case TetrahedralConnectivity():
+            entities = (
+                np.asarray(connectivity.edges, dtype=np.int32),
+                np.asarray(connectivity.faces, dtype=np.int32),
+            )
+        case _ as invalid:
+            assert_never(invalid)
     for degree, vertices in enumerate(entities, start=1):
         keys = np.sort(vertex_ids[vertices], axis=1)
         order = np.lexsort(
@@ -716,8 +544,10 @@ def _simplex_mesh_levels(
     cells: np.ndarray, dimension: int, vertex_count: int, /
 ) -> tuple[np.ndarray, ...]:
     top = np.sort(cells, axis=1)
-    if _has_duplicate_rows(top):
-        raise ValueError("Simplex mesh blocks cannot contain duplicate cells.")
+    if has_duplicate_rows(top):
+        raise ValueError(
+            f"CellMesh.blocks must contain no duplicate simplices; got {cells.shape}."
+        )
     levels: list[np.ndarray] = [np.arange(vertex_count, dtype=np.int32)[:, None]]
     for degree in range(1, dimension):
         faces = {
@@ -739,7 +569,9 @@ def _simplex_mesh_boundary(
     source = np.asarray(relation.source_indices)[valid]
     counts = np.bincount(source, minlength=levels[-2].shape[0])
     if np.any(counts > 2):
-        raise ValueError("Simplex mesh facets may have at most two incident cells.")
+        raise ValueError(
+            f"CellMesh.blocks must give each facet at most two incident cells; got {counts}."
+        )
     facets = levels[-2][counts == 1]
     masks: list[np.ndarray] = []
     for degree in range(dimension):
@@ -806,7 +638,9 @@ def _simplex_mesh_topology(
         and not block.cell_kind.startswith("simplex:")
         for block in blocks
     ):
-        raise ValueError("General simplicial meshes require simplex blocks.")
+        raise ValueError(
+            f"CellMesh.blocks must use simplex cell kinds for simplicial construction; got {tuple(block.cell_kind for block in blocks)}."
+        )
     cells = np.concatenate(
         tuple(np.asarray(block.vertices, dtype=np.int32) for block in blocks)
     )
@@ -822,10 +656,12 @@ def _simplex_mesh_topology(
             if degree == 0
             else cell_ids
             if degree == dimension
-            else entity_ids.get(degree, _canonical_entity_ids(vertex_ids[rows]))
+            else entity_ids.get(degree, canonical_entity_ids(vertex_ids[rows]))
         )
         if ids.shape != (source.count,):
-            raise ValueError("Simplex entity global IDs must match entity counts.")
+            raise ValueError(
+                f"CellMesh.entity_global_ids must match the entity count at degree {degree}; got {ids.shape}."
+            )
         sets.append(
             EntitySet(
                 source.name,
@@ -872,7 +708,7 @@ def _tensor_mesh_route_blocks(
         dimension = block.topological_dimension
         if dimension not in names:
             raise ValueError(
-                "Unstructured tensor CellMesh supports dimensions one through three."
+                f"CellMesh.blocks must use tensor cell dimensions one through three; got {dimension}."
             )
         result.append(
             CellBlock(
@@ -890,7 +726,7 @@ def _prepare_cell_mesh_topology(
     vertex_global_ids: ArrayLike | None,
     entity_global_ids: Mapping[int, ArrayLike] | None,
     polyhedral_connectivity: PolyhedralConnectivity | None,
-    periodic_topology: PeriodicMeshTopology | None,
+    periodic_topology: periodic_topology_owner.PeriodicMeshTopology | None,
 ) -> _PreparedCellMeshTopology:
     """Validate blocks and identities, then build connectivity and topology once."""
 
@@ -905,12 +741,14 @@ def _prepare_cell_mesh_topology(
     )
     if polyhedral_connectivity is not None and topological_dimension != 3:
         raise ValueError(
-            "polyhedral_connectivity is valid only for three-dimensional meshes."
+            f"CellMesh.polyhedral_connectivity must be supplied only for three-dimensional meshes; got {topological_dimension}."
         )
     route_blocks = _tensor_mesh_route_blocks(normalized_blocks)
     if any(block.cell_kind.startswith("simplex:") for block in normalized_blocks):
         if polyhedral_connectivity is not None:
-            raise ValueError("Simplicial meshes cannot use polyhedral connectivity.")
+            raise ValueError(
+                f"CellMesh.polyhedral_connectivity must be omitted for simplicial meshes; got {tuple(block.cell_kind for block in normalized_blocks)}."
+            )
         connectivity, topology = _simplex_mesh_topology(
             normalized_blocks, coordinate_count, global_ids, entity_ids, cell_global_ids
         )
@@ -992,11 +830,9 @@ def _prepare_cell_mesh_topology(
             }
         )
     if periodic_topology is not None:
-        if not isinstance(periodic_topology, PeriodicMeshTopology):
-            raise TypeError("periodic_topology must be PeriodicMeshTopology or None.")
         if periodic_topology.lifted_topology_id != topology_id:
             raise ValueError(
-                "periodic_topology was not prepared for this lifted mesh topology."
+                f"CellMesh.periodic_topology must match the lifted mesh topology identity; got {periodic_topology.lifted_topology_id}."
             )
         # Quotient identity is part of topology identity; plain meshes keep theirs.
         topology_id = canonical_fingerprint(
@@ -1027,44 +863,538 @@ def _reused_cell_mesh_topology(
 ) -> _PreparedCellMeshTopology:
     """Check that a coordinate refresh keeps the prepared topology intact."""
 
-    if not isinstance(prepared, _PreparedCellMeshTopology):
-        raise TypeError("A prepared cell-mesh topology must come from a CellMesh.")
     if identities_supplied:
-        raise ValueError("A prepared cell-mesh topology already owns its identities.")
+        raise ValueError(
+            f"CellMesh.prepared_topology must be reused without separately supplied identities; got {identities_supplied}."
+        )
     normalized_blocks = tuple(blocks)
     if len(normalized_blocks) != len(prepared.blocks) or any(
         block is not prepared_block
         for block, prepared_block in zip(normalized_blocks, prepared.blocks, strict=True)
     ):
-        raise ValueError("blocks must be the prepared topology's blocks.")
+        raise ValueError(
+            f"CellMesh.blocks must be the prepared topology blocks; got {tuple(type(block).__name__ for block in normalized_blocks)}."
+        )
     if point_shape[0] != prepared.vertex_global_ids.shape[0]:
-        raise ValueError("vertex_global_ids must have shape (coordinate_count,).")
+        raise ValueError(
+            f"CellMesh.coordinates must match the prepared vertex identity count; got {point_shape[0]}."
+        )
     if point_shape[1] < prepared.topological_dimension:
         raise ValueError(
-            "Cell mesh ambient dimension cannot be smaller than its topological dimension."
+            f"CellMesh.coordinates must have ambient dimension at least the topological dimension; got {point_shape[1]}."
         )
     return prepared
+
+
+class _StoragePlacement(StrictModule):
+    """Validated global degree counts and owner-local placement metadata."""
+
+    counts: tuple[int, ...] = eqx.field(static=True)
+    rank: int = eqx.field(static=True)
+    parts: int = eqx.field(static=True)
+    bound: int = eqx.field(static=True)
+
+
+def _prepare_storage_placement(
+    global_entity_counts: Sequence[int],
+    partition_index: int,
+    partition_count: int,
+    maximum_materialization_bytes: int,
+) -> _StoragePlacement:
+    if not x64_enabled():
+        raise ValueError(
+            "CellMeshStorage.entity_global_ids must retain int64 identity with JAX x64 execution; got x64 disabled."
+        )
+    counts = tuple(operator.index(value) for value in global_entity_counts)
+    rank = operator.index(partition_index)
+    parts = operator.index(partition_count)
+    bound = operator.index(maximum_materialization_bytes)
+    if (
+        len(counts) < 2
+        or any(isinstance(value, bool) or value <= 0 for value in global_entity_counts)
+        or isinstance(partition_index, bool)
+        or isinstance(partition_count, bool)
+        or not 0 <= rank < parts
+        or isinstance(maximum_materialization_bytes, bool)
+        or bound < 0
+    ):
+        raise ValueError(
+            "CellMeshStorage.global_entity_counts must be positive with a valid partition and materialization bound; got incompatible placement metadata."
+        )
+    return _StoragePlacement(counts, rank, parts, bound)
+
+
+class _StorageRoutes(StrictModule):
+    """Validated placement and locally addressable entity closure."""
+
+    counts: tuple[int, ...] = eqx.field(static=True)
+    rank: int = eqx.field(static=True)
+    parts: int = eqx.field(static=True)
+    bound: int = eqx.field(static=True)
+    ids: tuple[Array, ...]
+    owners: tuple[Array, ...]
+    owned: tuple[Array, ...]
+    coordinates: np.ndarray
+    local_coordinate_id: str = eqx.field(static=True)
+
+
+def _prepare_storage_routes(
+    global_entity_counts: Sequence[int],
+    entity_global_ids: Sequence[ArrayLike],
+    entity_owner: Sequence[ArrayLike],
+    *,
+    partition_index: int,
+    partition_count: int,
+    maximum_materialization_bytes: int,
+    local_coordinates: ArrayLike,
+) -> _StorageRoutes:
+    placement = _prepare_storage_placement(
+        global_entity_counts,
+        partition_index,
+        partition_count,
+        maximum_materialization_bytes,
+    )
+    counts, rank, parts, bound = (
+        placement.counts,
+        placement.rank,
+        placement.parts,
+        placement.bound,
+    )
+    if len(entity_global_ids) != len(counts) or len(entity_owner) != len(counts):
+        raise ValueError(
+            f"CellMeshStorage.entity_global_ids must cover every declared degree with entity_owner; got {(len(entity_global_ids), len(entity_owner), len(counts))}."
+        )
+    ids = []
+    owners = []
+    owned = []
+    for count, values, placement in zip(
+        counts, entity_global_ids, entity_owner, strict=True
+    ):
+        if (isinstance(values, Array) and not values.is_fully_addressable) or (
+            isinstance(placement, Array) and not placement.is_fully_addressable
+        ):
+            raise ValueError(
+                f"CellMeshStorage.entity_global_ids must be fully addressable with local owner maps; got {'non-addressable identity or owner data'}."
+            )
+        identifiers = np.asarray(values)
+        routing = np.asarray(placement)
+        if (
+            identifiers.ndim != 1
+            or identifiers.dtype.kind not in "iu"
+            or identifiers.size > count
+            or routing.shape != identifiers.shape
+            or routing.dtype.kind not in "iu"
+            or np.any(identifiers < 0)
+            or np.any(identifiers > np.iinfo(np.int64).max)
+            or np.unique(identifiers).size != identifiers.size
+            or np.any(routing < 0)
+            or np.any(routing >= parts)
+        ):
+            raise ValueError(
+                "CellMeshStorage.entity_global_ids must be unique with compatible entity_owner; got invalid identity or owner routes."
+            )
+        ids.append(jnp.asarray(identifiers, dtype=jnp.int64))
+        routing = np.asarray(routing, dtype=np.int32)
+        owners.append(jnp.asarray(routing, dtype=jnp.int32))
+        owned.append(jnp.asarray(routing == rank, dtype=jnp.bool_))
+    if (
+        isinstance(local_coordinates, Array)
+        and not local_coordinates.is_fully_addressable
+    ):
+        raise ValueError(
+            f"CellMeshStorage.local_coordinates must be fully addressable; got {'non-addressable coordinate data'}."
+        )
+    coordinates = np.asarray(local_coordinates, dtype=np.float64)
+    if (
+        coordinates.ndim != 2
+        or coordinates.shape[0] != ids[0].shape[0]
+        or coordinates.shape[1] <= 0
+        or not np.all(np.isfinite(coordinates))
+    ):
+        raise ValueError(
+            f"CellMeshStorage.local_coordinates must match finite locally routed vertices; got {coordinates.shape}."
+        )
+    local_coordinate_id = canonical_fingerprint(array_tree_fingerprint(coordinates))
+    return _StorageRoutes(
+        counts,
+        rank,
+        parts,
+        bound,
+        tuple(ids),
+        tuple(owners),
+        tuple(owned),
+        coordinates,
+        local_coordinate_id,
+    )
+
+
+class _StorageClosure(StrictModule):
+    """Logical source identity and validated local block-to-source routes."""
+
+    coordinate_geometry_id: str = eqx.field(static=True)
+    arrays: tuple[tuple[str, Array], ...]
+    blocks: tuple[CellBlock | PolyhedralBlock, ...]
+    source_blocks: tuple[tuple[str, str], ...] = eqx.field(static=True)
+
+
+def _prepare_storage_closure(
+    routes: _StorageRoutes,
+    logical_topology_id: str,
+    logical_geometry_id: str,
+    evidence_id: str,
+    logical_arrays: Sequence[tuple[str, Array]],
+    local_blocks: Sequence[CellBlock | PolyhedralBlock],
+    local_coordinates: ArrayLike,
+    entity_global_ids: Sequence[ArrayLike],
+    entity_owner: Sequence[ArrayLike],
+    local_geometry: cell_geometry_owner.CellGeometrySpec | None,
+    geometry_projection: cell_geometry_owner.CellGeometryStorageProjection | None,
+    geometry_source_blocks: Mapping[str, str] | None,
+    logical_coordinate_geometry_id: str | None,
+) -> _StorageClosure:
+    coordinates, counts, ids = routes.coordinates, routes.counts, routes.ids
+    if (
+        local_geometry is not None or geometry_projection is not None
+    ) and logical_coordinate_geometry_id is None:
+        raise ValueError(
+            "CellMeshStorage.logical_coordinate_geometry_id must identify the source map for mapped storage; got None."
+        )
+    coordinate_geometry_id = (
+        logical_geometry_id
+        if logical_coordinate_geometry_id is None
+        else logical_coordinate_geometry_id
+    )
+    identities = (
+        logical_topology_id,
+        logical_geometry_id,
+        coordinate_geometry_id,
+        evidence_id,
+    )
+    if any(
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+        for value in identities
+    ):
+        raise ValueError(
+            f"CellMeshStorage.logical_ids must be lowercase SHA-256 digests; got {identities}."
+        )
+    arrays = tuple(logical_arrays)
+    names = tuple(name for name, _ in arrays)
+    if (
+        not arrays
+        or names != tuple(sorted(names))
+        or len(set(names)) != len(names)
+        or any(not name or not isinstance(value, Array) for name, value in arrays)
+    ):
+        raise ValueError(
+            f"CellMeshStorage.logical_arrays must contain uniquely named JAX arrays in sorted name order; got {names}."
+        )
+    blocks = tuple(local_blocks)
+    if blocks:
+        _validated_mesh_blocks(coordinates.shape, blocks)
+        if not np.array_equal(
+            np.concatenate(tuple(np.asarray(block.global_ids) for block in blocks)),
+            np.asarray(ids[-1]),
+        ):
+            raise ValueError(
+                "CellMeshStorage.local_blocks must match routed cell identities; got different global IDs."
+            )
+    elif (
+        coordinates.shape[0] != 0
+        or any(value.shape[0] != 0 for value in ids)
+        or coordinates.shape[1] < len(counts) - 1
+        or np.asarray(local_coordinates).dtype != np.float64
+        or any(np.asarray(value).dtype != np.int64 for value in entity_global_ids)
+        or any(np.asarray(value).dtype != np.int32 for value in entity_owner)
+    ):
+        raise ValueError(
+            "CellMeshStorage.local_coordinates must describe an empty, exactly typed local closure; got incompatible closure banks."
+        )
+    source_blocks = (
+        {block.name: block.name for block in blocks}
+        if geometry_source_blocks is None
+        else dict(geometry_source_blocks)
+    )
+    if set(source_blocks) != {block.name for block in blocks} or any(
+        not isinstance(value, str) or not value for value in source_blocks.values()
+    ):
+        raise ValueError(
+            f"CellMeshStorage.geometry_source_blocks must name one scientific source bank per local block; got {source_blocks}."
+        )
+    return _StorageClosure(
+        coordinate_geometry_id, arrays, blocks, tuple(source_blocks.items())
+    )
+
+
+class _StorageGeometryBinding(StrictModule):
+    """Restored local coefficient geometry and its admitted projection packets."""
+
+    geometry: cell_geometry_owner.CellGeometrySpec | None
+
+
+def _prepare_storage_geometry_binding(
+    routes: _StorageRoutes,
+    closure: _StorageClosure,
+    local_geometry: cell_geometry_owner.CellGeometrySpec | None,
+    geometry_projection: cell_geometry_owner.CellGeometryStorageProjection | None,
+    coordinate_global_ids: ArrayLike | None,
+) -> _StorageGeometryBinding:
+    arrays, blocks = closure.arrays, closure.blocks
+    source_blocks = dict(closure.source_blocks)
+    coordinate_geometry_id = closure.coordinate_geometry_id
+    coordinates, counts, rank, parts = (
+        routes.coordinates,
+        routes.counts,
+        routes.rank,
+        routes.parts,
+    )
+    packets = None
+    if geometry_projection is not None:
+        geometry_projection.require_source(arrays, coordinate_geometry_id)
+        if (
+            geometry_projection.partition_count != parts
+            or geometry_projection.global_cell_count != counts[-1]
+        ):
+            raise ValueError(
+                "CellMeshStorage.geometry_projection must match global mesh placement; got different partition or cell counts."
+            )
+        packets = dict(geometry_projection.addressable_arrays(rank))
+    if not blocks:
+        if (
+            geometry_projection is None
+            or packets is None
+            or not geometry_projection.source_elements
+            or "geometry/owned_cell_count" not in packets
+            or int(np.asarray(packets["geometry/owned_cell_count"])) != 0
+            or packets["geometry/coordinate_ids"].shape != (0,)
+            or packets["geometry/coordinates"].shape != coordinates.shape
+            or local_geometry is not None
+            or packets["geometry/coordinate_owners"].shape != (0,)
+        ):
+            raise ValueError(
+                "CellMeshStorage.geometry_projection must provide the passive-owner source projection; got incompatible empty-owner banks."
+            )
+    if local_geometry is None and blocks and geometry_projection is not None:
+        if coordinate_global_ids is None:
+            raise ValueError(
+                f"CellMeshStorage.coordinate_global_ids must be supplied for restored source geometry; got {coordinate_global_ids}."
+            )
+        local_geometry = cell_geometry_owner.restore_authored_storage_geometry(
+            blocks,
+            source_blocks,
+            geometry_projection,
+            rank,
+            coordinate_global_ids,
+        )
+    return _StorageGeometryBinding(local_geometry)
+
+
+class _StorageCoordinateRoutes(StrictModule):
+    """Scientific coordinate identity lowered independently of corner IDs."""
+
+    count: int = eqx.field(static=True)
+    ids: Array
+    owners: Array
+    source_id: str = eqx.field(static=True)
+
+
+class _ScientificCoordinateIdentity(StrictModule):
+    """Validated coordinate IDs and owners before scientific source binding."""
+
+    count: int = eqx.field(static=True)
+    ids: Array
+    owners: Array
+    exact_route_dtypes: bool = eqx.field(static=True)
+
+
+def _prepare_scientific_coordinate_identity(
+    local_geometry: cell_geometry_owner.CellGeometrySpec | None,
+    global_coordinate_count: int | None,
+    coordinate_global_ids: ArrayLike | None,
+    coordinate_owner: ArrayLike | None,
+    parts: int,
+) -> _ScientificCoordinateIdentity:
+    if local_geometry is not None and local_geometry.storage is not None:
+        raise TypeError(
+            f"CellMeshStorage.local_geometry must be an unbound CellGeometrySpec; got storage type {type(local_geometry.storage).__name__}."
+        )
+    if (
+        global_coordinate_count is None
+        or coordinate_global_ids is None
+        or coordinate_owner is None
+    ):
+        raise ValueError(
+            f"CellMeshStorage.coordinate_global_ids must be supplied with coordinate DOF count and owners; got {(global_coordinate_count, coordinate_global_ids is not None, coordinate_owner is not None)}."
+        )
+    coordinate_count = operator.index(global_coordinate_count)
+    if isinstance(global_coordinate_count, bool) or coordinate_count <= 0:
+        raise ValueError(
+            f"CellMeshStorage.global_coordinate_count must be positive; got {coordinate_count}."
+        )
+    if any(
+        isinstance(value, Array) and not value.is_fully_addressable
+        for value in (coordinate_global_ids, coordinate_owner)
+    ):
+        raise ValueError(
+            f"CellMeshStorage.coordinate_global_ids must be locally addressable with coordinate_owner; got {'non-addressable scientific coordinate routes'}."
+        )
+    coordinate_ids_ = np.asarray(coordinate_global_ids)
+    coordinate_owners_ = np.asarray(coordinate_owner)
+    if (
+        coordinate_ids_.ndim != 1
+        or coordinate_ids_.dtype.kind not in "iu"
+        or coordinate_ids_.size > coordinate_count
+        or coordinate_ids_.size
+        != (0 if local_geometry is None else local_geometry.coordinates.shape[0])
+        or np.unique(coordinate_ids_).size != coordinate_ids_.size
+        or np.any(coordinate_ids_ < 0)
+        or np.any(coordinate_ids_ > np.iinfo(np.int64).max)
+        or coordinate_owners_.shape != coordinate_ids_.shape
+        or coordinate_owners_.dtype.kind not in "iu"
+        or np.any(coordinate_owners_ < 0)
+        or np.any(coordinate_owners_ >= parts)
+    ):
+        raise ValueError(
+            "CellMeshStorage.coordinate_global_ids must match coordinate count and coordinate_owner; got incompatible scientific routes."
+        )
+    coordinate_ids = jnp.asarray(coordinate_ids_, dtype=jnp.int64)
+    coordinate_owners = jnp.asarray(coordinate_owners_, dtype=jnp.int32)
+    return _ScientificCoordinateIdentity(
+        coordinate_count,
+        coordinate_ids,
+        coordinate_owners,
+        coordinate_ids_.dtype == np.int64 and coordinate_owners_.dtype == np.int32,
+    )
+
+
+def _prepare_storage_coordinate_routes(
+    routes: _StorageRoutes,
+    closure: _StorageClosure,
+    local_geometry: cell_geometry_owner.CellGeometrySpec | None,
+    geometry_projection: cell_geometry_owner.CellGeometryStorageProjection | None,
+    global_coordinate_count: int | None,
+    coordinate_global_ids: ArrayLike | None,
+    coordinate_owner: ArrayLike | None,
+) -> _StorageCoordinateRoutes:
+    counts, ids, owners = routes.counts, routes.ids, routes.owners
+    coordinates, rank, parts = routes.coordinates, routes.rank, routes.parts
+    local_coordinate_id = routes.local_coordinate_id
+    arrays, blocks = closure.arrays, closure.blocks
+    source_blocks = dict(closure.source_blocks)
+    coordinate_geometry_id = closure.coordinate_geometry_id
+    if local_geometry is None and geometry_projection is None:
+        if any(
+            value is not None
+            for value in (
+                global_coordinate_count,
+                coordinate_global_ids,
+                coordinate_owner,
+                geometry_projection,
+            )
+        ):
+            raise ValueError(
+                "CellMeshStorage.local_geometry must define explicit scientific coordinate routes; got no geometry layout."
+            )
+        coordinate_count = counts[0]
+        coordinate_ids = ids[0]
+        coordinate_owners = owners[0]
+        geometry_source_id = local_coordinate_id
+    else:
+        coordinate_identity = _prepare_scientific_coordinate_identity(
+            local_geometry,
+            global_coordinate_count,
+            coordinate_global_ids,
+            coordinate_owner,
+            parts,
+        )
+        coordinate_count = coordinate_identity.count
+        coordinate_ids = coordinate_identity.ids
+        coordinate_owners = coordinate_identity.owners
+        witness_arrays = arrays
+        witness_count = coordinate_count
+        if geometry_projection is None and any(
+            name.startswith("geometry/") and not value.is_fully_addressable
+            for name, value in arrays
+        ):
+            raise ValueError(
+                f"CellMeshStorage.geometry_projection must be supplied for non-addressable scientific banks; got {geometry_projection}."
+            )
+        if geometry_projection is not None:
+            if (
+                geometry_projection.global_coordinate_count != coordinate_count
+                or geometry_projection.partition_count != parts
+            ):
+                raise ValueError(
+                    "CellMeshStorage.geometry_projection must match scientific coordinate placement; got different coordinate or partition counts."
+                )
+            geometry_projection.require_source(arrays, coordinate_geometry_id)
+            witness_arrays = geometry_projection.addressable_arrays(rank)
+            witness_count = dict(witness_arrays)["geometry/coordinate_ids"].shape[0]
+        if local_geometry is not None:
+            cell_geometry_owner.require_logical_geometry_lowering(
+                local_geometry,
+                blocks,
+                witness_arrays,
+                witness_count,
+                coordinate_ids,
+                coordinate_owners,
+                source_blocks,
+            )
+            geometry_source_id = cell_geometry_validity_owner.cell_geometry_id(
+                local_geometry
+            )
+        else:
+            if not coordinate_identity.exact_route_dtypes:
+                raise ValueError(
+                    f"CellMeshStorage.coordinate_global_ids must use int64 IDs and int32 owners for zero-resident routes; got {coordinate_identity.exact_route_dtypes}."
+                )
+            geometry_source_id = canonical_fingerprint(
+                {
+                    "kind": "zero-resident-coordinate-source",
+                    "coordinate_geometry": coordinate_geometry_id,
+                    "coordinates": array_tree_fingerprint(coordinates),
+                }
+            )
+    return _StorageCoordinateRoutes(
+        coordinate_count, coordinate_ids, coordinate_owners, geometry_source_id
+    )
+
+
+def _storage_local_mask(value: ArrayLike | None, count: int, name: str) -> Array | None:
+    if value is None:
+        return None
+    if isinstance(value, Array) and not value.is_fully_addressable:
+        raise ValueError(
+            f"CellMeshStorage.{name} must be locally addressable; got a non-addressable array."
+        )
+    mask = np.asarray(value)
+    if mask.shape != (count,) or mask.dtype != np.bool_:
+        raise ValueError(
+            f"CellMeshStorage.{name} must match the local entity count with boolean dtype; got {(mask.shape, mask.dtype)}."
+        )
+    return jnp.asarray(mask, dtype=jnp.bool_)
 
 
 class CellMeshStorage(StrictModule, NonTrainableState):
     """Globally logical storage with a process-local, stable-ID closure view.
 
     ``CellMesh`` numerical fields are the locally addressable lowered view, not
-    complete global arrays. ``logical_arrays`` are the accepted globally shaped
+    global array contents. ``logical_arrays`` are the accepted globally shaped
     arrays used by addressable checkpoint publication. Neither ownership nor
     positive local geometry is a global certificate; ``evidence_id`` binds the
     separately established collective coverage.
 
     ``local_coordinates`` are sampled topological corners; mapped coordinates
-    retain original source coefficients in ``local_geometry``. Their scientific
+    retain source coefficients in ``local_geometry``. Their scientific
     DOF IDs/count/owners are independent of topological vertex identities.
     ``logical_geometry_id`` binds the sampled carrier, whereas
-    ``logical_coordinate_geometry_id`` binds the authoritative source map and
-    exact reference ancestry. ``restore_geometry`` validates and restores that
+    ``logical_coordinate_geometry_id`` binds the source map and
+    reference ancestry. ``restore_geometry`` validates and restores that
     map from the logical coefficient, basis, route, and ancestry banks.
     Non-addressable banks require a ``CellGeometryStorageProjection`` computed
     collectively from fixed-capacity closure queries before owner-local lowering;
-    geometry validation subsequently reads only its addressable receipts.
+    geometry validation subsequently reads only its addressable banks.
     """
 
     entity_global_ids: tuple[Array, ...]
@@ -1075,8 +1405,8 @@ class CellMeshStorage(StrictModule, NonTrainableState):
     local_blocks: tuple[CellBlock | PolyhedralBlock, ...]
     coordinate_global_ids: Array
     coordinate_owner: Array
-    local_geometry: CellGeometrySpec | None
-    geometry_projection: CellGeometryStorageProjection | None
+    local_geometry: cell_geometry_owner.CellGeometrySpec | None
+    geometry_projection: cell_geometry_owner.CellGeometryStorageProjection | None
     global_coordinate_count: int = eqx.field(static=True)
     local_geometry_source_id: str = eqx.field(static=True)
     geometry_source_blocks: tuple[tuple[str, str], ...] = eqx.field(static=True)
@@ -1094,6 +1424,7 @@ class CellMeshStorage(StrictModule, NonTrainableState):
     maximum_materialization_bytes: int = eqx.field(static=True)
     storage_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         global_entity_counts: Sequence[int],
@@ -1116,336 +1447,86 @@ class CellMeshStorage(StrictModule, NonTrainableState):
         global_coordinate_count: int | None = None,
         coordinate_global_ids: ArrayLike | None = None,
         coordinate_owner: ArrayLike | None = None,
-        local_geometry: CellGeometrySpec | None = None,
+        local_geometry: cell_geometry_owner.CellGeometrySpec | None = None,
         geometry_source_blocks: Mapping[str, str] | None = None,
         logical_coordinate_geometry_id: str | None = None,
-        geometry_projection: CellGeometryStorageProjection | None = None,
+        geometry_projection: cell_geometry_owner.CellGeometryStorageProjection
+        | None = None,
     ) -> None:
-        if not jax.config.jax_enable_x64:
-            raise ValueError(
-                "Owner-local scientific IDs and coordinate witnesses require JAX x64 execution."
-            )
-        counts = tuple(operator.index(value) for value in global_entity_counts)
-        rank = operator.index(partition_index)
-        parts = operator.index(partition_count)
-        bound = operator.index(maximum_materialization_bytes)
-        if (
-            len(counts) < 2
-            or any(
-                isinstance(value, bool) or value <= 0 for value in global_entity_counts
-            )
-            or isinstance(partition_index, bool)
-            or isinstance(partition_count, bool)
-            or not 0 <= rank < parts
-            or isinstance(maximum_materialization_bytes, bool)
-            or bound < 0
-        ):
-            raise ValueError(
-                "Owner-local storage requires positive counts and a valid placement."
-            )
-        if len(entity_global_ids) != len(counts) or len(entity_owner) != len(counts):
-            raise ValueError("Each declared entity degree requires IDs and ownership.")
-        ids = []
-        owners = []
-        for count, values, placement in zip(
-            counts, entity_global_ids, entity_owner, strict=True
-        ):
-            if (isinstance(values, Array) and not values.is_fully_addressable) or (
-                isinstance(placement, Array) and not placement.is_fully_addressable
-            ):
-                raise ValueError("Local ID and ownership maps must be fully addressable.")
-            identifiers = np.asarray(values)
-            routing = np.asarray(placement)
-            if (
-                identifiers.ndim != 1
-                or identifiers.dtype.kind not in "iu"
-                or identifiers.size > count
-                or routing.shape != identifiers.shape
-                or routing.dtype.kind not in "iu"
-                or np.any(identifiers < 0)
-                or np.any(identifiers > np.iinfo(np.int64).max)
-                or np.unique(identifiers).size != identifiers.size
-                or np.any(routing < 0)
-                or np.any(routing >= parts)
-            ):
-                raise ValueError(
-                    "Local entity IDs and ownership violate the logical storage contract."
-                )
-            ids.append(jnp.asarray(identifiers, dtype=jnp.int64))
-            owners.append(jnp.asarray(routing, dtype=jnp.int32))
-        if (
-            isinstance(local_coordinates, Array)
-            and not local_coordinates.is_fully_addressable
-        ):
-            raise ValueError("Local coordinate evidence must be fully addressable.")
-        coordinates = np.asarray(local_coordinates, dtype=np.float64)
-        if (
-            coordinates.ndim != 2
-            or coordinates.shape[0] != ids[0].shape[0]
-            or coordinates.shape[1] <= 0
-            or not np.all(np.isfinite(coordinates))
-        ):
-            raise ValueError(
-                "Local coordinate evidence must match finite locally routed vertices."
-            )
-        local_coordinate_id = canonical_fingerprint(array_tree_fingerprint(coordinates))
-        if (
-            local_geometry is not None or geometry_projection is not None
-        ) and logical_coordinate_geometry_id is None:
-            raise ValueError(
-                "Mapped storage requires a distinct scientific coordinate-map identity."
-            )
-        coordinate_geometry_id = (
-            logical_geometry_id
-            if logical_coordinate_geometry_id is None
-            else logical_coordinate_geometry_id
+        routes = _prepare_storage_routes(
+            global_entity_counts,
+            entity_global_ids,
+            entity_owner,
+            partition_index=partition_index,
+            partition_count=partition_count,
+            maximum_materialization_bytes=maximum_materialization_bytes,
+            local_coordinates=local_coordinates,
         )
-        identities = (
+        closure = _prepare_storage_closure(
+            routes,
             logical_topology_id,
             logical_geometry_id,
-            coordinate_geometry_id,
             evidence_id,
+            logical_arrays,
+            local_blocks,
+            local_coordinates,
+            entity_global_ids,
+            entity_owner,
+            local_geometry,
+            geometry_projection,
+            geometry_source_blocks,
+            logical_coordinate_geometry_id,
         )
-        if any(
-            not isinstance(value, str)
-            or len(value) != 64
-            or any(character not in "0123456789abcdef" for character in value)
-            for value in identities
-        ):
-            raise ValueError(
-                "Logical storage identities must be canonical SHA-256 digests."
-            )
-        arrays = tuple(logical_arrays)
-        names = tuple(name for name, _ in arrays)
-        if (
-            not arrays
-            or names != tuple(sorted(names))
-            or len(set(names)) != len(names)
-            or any(not name or not isinstance(value, Array) for name, value in arrays)
-        ):
-            raise ValueError(
-                "Logical arrays require uniquely named canonical ordered JAX arrays."
-            )
-        blocks = tuple(local_blocks)
-        if blocks:
-            _validated_mesh_blocks(coordinates.shape, blocks)
-            if not np.array_equal(
-                np.concatenate(tuple(np.asarray(block.global_ids) for block in blocks)),
-                np.asarray(ids[-1]),
-            ):
-                raise ValueError(
-                    "Local incidence witnesses must match the routed cell identities."
-                )
-        elif (
-            coordinates.shape[0] != 0
-            or any(value.shape[0] != 0 for value in ids)
-            or coordinates.shape[1] < len(counts) - 1
-            or np.asarray(local_coordinates).dtype != np.float64
-            or any(np.asarray(value).dtype != np.int64 for value in entity_global_ids)
-            or any(np.asarray(value).dtype != np.int32 for value in entity_owner)
-        ):
-            raise ValueError(
-                "Zero-resident storage requires an actual empty, exactly typed local closure."
-            )
-        source_blocks = (
-            {block.name: block.name for block in blocks}
-            if geometry_source_blocks is None
-            else dict(geometry_source_blocks)
+        local_geometry = _prepare_storage_geometry_binding(
+            routes,
+            closure,
+            local_geometry,
+            geometry_projection,
+            coordinate_global_ids,
+        ).geometry
+        coordinate_routes = _prepare_storage_coordinate_routes(
+            routes,
+            closure,
+            local_geometry,
+            geometry_projection,
+            global_coordinate_count,
+            coordinate_global_ids,
+            coordinate_owner,
         )
-        if set(source_blocks) != {block.name for block in blocks} or any(
-            not isinstance(value, str) or not value for value in source_blocks.values()
-        ):
-            raise ValueError(
-                "Every local coordinate block requires one explicit scientific source bank."
-            )
-        from ._cell_geometry import (
-            _require_logical_geometry_lowering,
-            _restore_authored_storage_geometry,
-            CellGeometrySpec,
-            CellGeometryStorageProjection,
+        counts, rank, parts, bound = (
+            routes.counts,
+            routes.rank,
+            routes.parts,
+            routes.bound,
         )
-        from ._cell_geometry_validity import cell_geometry_id
-
-        if geometry_projection is not None and not isinstance(
-            geometry_projection, CellGeometryStorageProjection
-        ):
-            raise TypeError(
-                "geometry_projection must be an actual CellGeometryStorageProjection."
-            )
-        packets = None
-        if geometry_projection is not None:
-            geometry_projection.require_source(arrays, coordinate_geometry_id)
-            if (
-                geometry_projection.partition_count != parts
-                or geometry_projection.global_cell_count != counts[-1]
-            ):
-                raise ValueError(
-                    "Geometry projection differs from the actual globally nonempty mesh placement."
-                )
-            packets = dict(geometry_projection.addressable_arrays(rank))
-        if not blocks:
-            if (
-                geometry_projection is None
-                or packets is None
-                or not geometry_projection.source_elements
-                or "geometry/owned_cell_count" not in packets
-                or int(np.asarray(packets["geometry/owned_cell_count"])) != 0
-                or packets["geometry/coordinate_ids"].shape != (0,)
-                or packets["geometry/coordinates"].shape != coordinates.shape
-                or local_geometry is not None
-                or packets["geometry/coordinate_owners"].shape != (0,)
-            ):
-                raise ValueError(
-                    "Zero-resident storage requires its actual passive-owner scientific source projection."
-                )
-        if local_geometry is None and blocks and geometry_projection is not None:
-            if coordinate_global_ids is None:
-                raise ValueError(
-                    "Authored source geometry requires explicit scientific coordinate IDs."
-                )
-            local_geometry = _restore_authored_storage_geometry(
-                blocks,
-                source_blocks,
-                geometry_projection,
-                rank,
-                coordinate_global_ids,
-            )
-
-        if local_geometry is None and geometry_projection is None:
-            if any(
-                value is not None
-                for value in (
-                    global_coordinate_count,
-                    coordinate_global_ids,
-                    coordinate_owner,
-                    geometry_projection,
-                )
-            ):
-                raise ValueError(
-                    "Explicit coordinate identity requires its scientific geometry layout."
-                )
-            coordinate_count = counts[0]
-            coordinate_ids = ids[0]
-            coordinate_owners = owners[0]
-            geometry_source_id = local_coordinate_id
-        else:
-            if local_geometry is not None and (
-                not isinstance(local_geometry, CellGeometrySpec)
-                or local_geometry.storage is not None
-            ):
-                raise TypeError("local_geometry must be an unbound CellGeometrySpec.")
-            if (
-                global_coordinate_count is None
-                or coordinate_global_ids is None
-                or coordinate_owner is None
-            ):
-                raise ValueError(
-                    "Scientific storage requires explicit coordinate DOF count, IDs, and owners."
-                )
-            coordinate_count = operator.index(global_coordinate_count)
-            if isinstance(global_coordinate_count, bool) or coordinate_count <= 0:
-                raise ValueError("Global coordinate DOF count must be positive.")
-            if any(
-                isinstance(value, Array) and not value.is_fully_addressable
-                for value in (coordinate_global_ids, coordinate_owner)
-            ):
-                raise ValueError(
-                    "Coordinate DOF identity lowering must be locally addressable."
-                )
-            coordinate_ids_ = np.asarray(coordinate_global_ids)
-            coordinate_owners_ = np.asarray(coordinate_owner)
-            if (
-                coordinate_ids_.ndim != 1
-                or coordinate_ids_.dtype.kind not in "iu"
-                or coordinate_ids_.size > coordinate_count
-                or coordinate_ids_.size
-                != (0 if local_geometry is None else local_geometry.coordinates.shape[0])
-                or np.unique(coordinate_ids_).size != coordinate_ids_.size
-                or np.any(coordinate_ids_ < 0)
-                or np.any(coordinate_ids_ > np.iinfo(np.int64).max)
-                or coordinate_owners_.shape != coordinate_ids_.shape
-                or coordinate_owners_.dtype.kind not in "iu"
-                or np.any(coordinate_owners_ < 0)
-                or np.any(coordinate_owners_ >= parts)
-            ):
-                raise ValueError(
-                    "Coordinate DOF identities and ownership violate their scientific layout."
-                )
-            coordinate_ids = jnp.asarray(coordinate_ids_, dtype=jnp.int64)
-            coordinate_owners = jnp.asarray(coordinate_owners_, dtype=jnp.int32)
-            witness_arrays = arrays
-            witness_count = coordinate_count
-            if geometry_projection is None and any(
-                name.startswith("geometry/") and not value.is_fully_addressable
-                for name, value in arrays
-            ):
-                raise ValueError(
-                    "Non-addressable scientific banks require their collective geometry projection."
-                )
-            if geometry_projection is not None:
-                if (
-                    geometry_projection.global_coordinate_count != coordinate_count
-                    or geometry_projection.partition_count != parts
-                ):
-                    raise ValueError(
-                        "Collective coordinate projection differs from scientific storage placement."
-                    )
-                geometry_projection.require_source(arrays, coordinate_geometry_id)
-                witness_arrays = geometry_projection.addressable_arrays(rank)
-                witness_count = dict(witness_arrays)["geometry/coordinate_ids"].shape[0]
-            if local_geometry is not None:
-                _require_logical_geometry_lowering(
-                    local_geometry,
-                    blocks,
-                    witness_arrays,
-                    witness_count,
-                    coordinate_ids,
-                    coordinate_owners,
-                    source_blocks,
-                )
-                geometry_source_id = cell_geometry_id(local_geometry)
-            else:
-                if (
-                    coordinate_ids_.dtype != np.int64
-                    or coordinate_owners_.dtype != np.int32
-                ):
-                    raise ValueError(
-                        "Zero-resident scientific coordinate routes require exact ID and owner dtypes."
-                    )
-                geometry_source_id = canonical_fingerprint(
-                    {
-                        "kind": "zero-resident-coordinate-source",
-                        "coordinate_geometry": coordinate_geometry_id,
-                        "coordinates": array_tree_fingerprint(coordinates),
-                    }
-                )
+        ids, owners, coordinates = routes.ids, routes.owners, routes.coordinates
+        local_coordinate_id = routes.local_coordinate_id
+        arrays, blocks = closure.arrays, closure.blocks
+        source_blocks = dict(closure.source_blocks)
+        coordinate_geometry_id = closure.coordinate_geometry_id
+        coordinate_count = coordinate_routes.count
+        coordinate_ids, coordinate_owners = (
+            coordinate_routes.ids,
+            coordinate_routes.owners,
+        )
+        geometry_source_id = coordinate_routes.source_id
         depth = operator.index(neighborhood_depth)
         if isinstance(neighborhood_depth, bool) or depth < 0:
-            raise ValueError("neighborhood_depth must be a non-negative integer.")
+            raise ValueError(
+                f"CellMeshStorage.neighborhood_depth must be a nonnegative integer; got {neighborhood_depth!r}."
+            )
 
-        def local_mask(value: ArrayLike | None, count: int, name: str) -> Array | None:
-            if value is None:
-                return None
-            if isinstance(value, Array) and not value.is_fully_addressable:
-                raise ValueError(f"{name} must be a locally addressable witness.")
-            mask = np.asarray(value)
-            if mask.shape != (count,) or mask.dtype != np.bool_:
-                raise ValueError(
-                    f"{name} must match the local entity count with boolean dtype."
-                )
-            return jnp.asarray(mask, dtype=jnp.bool_)
-
-        physical = local_mask(
+        physical = _storage_local_mask(
             local_physical_boundary_facets,
             ids[-2].shape[0],
             "local_physical_boundary_facets",
         )
-        complete = local_mask(
+        complete = _storage_local_mask(
             local_neighborhood_complete, ids[-1].shape[0], "local_neighborhood_complete"
         )
         self.entity_global_ids = tuple(ids)
         self.entity_owner = tuple(owners)
-        self.entity_owned = tuple(value == rank for value in owners)
+        self.entity_owned = routes.owned
         self.logical_arrays = arrays
         self.local_coordinates = jnp.asarray(coordinates)
         self.local_blocks = blocks
@@ -1501,41 +1582,79 @@ class CellMeshStorage(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(cls, value: CellMeshStorage, /) -> CellMeshStorage:
+        """Revalidate stored logical banks and rebuild their local closure."""
+        scientific = (
+            value.local_geometry is not None or value.geometry_projection is not None
+        )
+        return cls(
+            value.global_entity_counts,
+            value.entity_global_ids,
+            value.entity_owner,
+            partition_index=value.partition_index,
+            partition_count=value.partition_count,
+            logical_topology_id=value.logical_topology_id,
+            logical_geometry_id=value.logical_geometry_id,
+            evidence_id=value.evidence_id,
+            logical_arrays=value.logical_arrays,
+            local_coordinates=value.local_coordinates,
+            local_blocks=value.local_blocks,
+            maximum_materialization_bytes=value.maximum_materialization_bytes,
+            local_physical_boundary_facets=value.local_physical_boundary_facets,
+            local_neighborhood_complete=value.local_neighborhood_complete,
+            neighborhood_depth=value.neighborhood_depth,
+            global_coordinate_count=value.global_coordinate_count if scientific else None,
+            coordinate_global_ids=value.coordinate_global_ids if scientific else None,
+            coordinate_owner=value.coordinate_owner if scientific else None,
+            local_geometry=value.local_geometry,
+            geometry_source_blocks=dict(value.geometry_source_blocks),
+            logical_coordinate_geometry_id=value.logical_coordinate_geometry_id,
+            geometry_projection=value.geometry_projection,
+        )
+
+    @checked
     def require_local_topology(self, topology: CellComplexTopology, /) -> None:
         if topology.dimension + 1 != len(self.global_entity_counts):
             raise ValueError(
-                "Storage entity degrees differ from the local closure topology."
+                f"CellMeshStorage.global_entity_counts must match local closure topology degrees; got {(len(self.global_entity_counts), topology.dimension)}."
             )
         for degree, identifiers in enumerate(self.entity_global_ids):
             if not np.array_equal(
                 np.asarray(identifiers), np.asarray(topology.entities(degree).entity_ids)
             ):
-                raise ValueError("Storage IDs differ from the local topology lowering.")
+                raise ValueError(
+                    f"CellMeshStorage.entity_global_ids must match local topology IDs at degree {degree}; got {identifiers.shape}."
+                )
 
-    def restore_geometry(self) -> CellGeometrySpec:
-        """Restore the actual coefficient basis, never the sampled corner carrier."""
-        from ._cell_geometry import (
-            CellGeometrySpec,
-            CellVertexGeometryElement,
-            coordinate_lagrange_element,
-        )
+    @checked
+    def restore_geometry(
+        self, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> cell_geometry_owner.CellGeometrySpec:
+        """Restore the stored coefficient basis and bind its coordinate routes."""
 
         geometry = self.local_geometry
         if geometry is None:
-            return CellGeometrySpec(
+            return cell_geometry_owner.CellGeometrySpec(
                 {
                     block.name: (
-                        CellVertexGeometryElement(block.cell_kind, block.arity)
+                        cell_geometry_owner.CellVertexGeometryElement(
+                            block.cell_kind, block.arity
+                        )
                         if block.cell_kind in ("polygon", "polyhedron")
-                        else coordinate_lagrange_element(block.cell_kind, 1)
+                        else cell_geometry_owner.coordinate_lagrange_element(
+                            block.cell_kind, 1
+                        )
                     )
                     for block in self.local_blocks
                 },
                 {block.name: block.vertices for block in self.local_blocks},
                 self.local_coordinates,
                 storage=self,
+                budget=budget,
             )
-        return CellGeometrySpec(
+        return cell_geometry_owner.CellGeometrySpec(
             dict(zip(geometry.block_names, geometry.elements, strict=True)),
             dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
             geometry.coordinates,
@@ -1543,17 +1662,20 @@ class CellMeshStorage(StrictModule, NonTrainableState):
             restriction_source=geometry.restriction_source,
             periodic_source=geometry.periodic_source,
             exact_source=geometry.exact_source,
+            budget=budget,
         )
 
 
 def _empty_storage_topology(storage: CellMeshStorage, /) -> _PreparedCellMeshTopology:
-    """Construct the actual zero subcomplex of a proven nonempty logical carrier."""
+    """Construct the zero subcomplex of the nonempty logical carrier."""
     if storage.local_blocks or any(value.shape[0] for value in storage.entity_global_ids):
-        raise ValueError("Zero topology requires exactly zero resident entities.")
+        raise ValueError(
+            f"CellMeshStorage.local_blocks must describe zero resident entities for empty topology construction; got {(len(storage.local_blocks), tuple(value.shape for value in storage.entity_global_ids))}."
+        )
     projection = storage.geometry_projection
     if projection is None or not projection.source_elements:
         raise ValueError(
-            "Zero topology requires its actual global scientific source layout."
+            "CellMeshStorage.geometry_projection must declare the global source layout; got no source elements."
         )
     dimension = len(storage.global_entity_counts) - 1
     source = dict(projection.source_arrays)
@@ -1572,7 +1694,7 @@ def _empty_storage_topology(storage: CellMeshStorage, /) -> _PreparedCellMeshTop
         )
         if target_dimension != dimension:
             raise ValueError(
-                "Global coordinate charts differ from the declared mesh topological degree."
+                f"CellMeshStorage.geometry_projection must use source charts matching the mesh topological degree; got {target_dimension}."
             )
     integer = jnp.empty((0,), dtype=jnp.int32)
     boolean = jnp.empty((0,), dtype=jnp.bool_)
@@ -1694,8 +1816,179 @@ def _empty_storage_topology(storage: CellMeshStorage, /) -> _PreparedCellMeshTop
     )
 
 
+class _CellMeshIdentity(StrictModule):
+    """Geometry-layout and numerical IDs bound to the accepted topology."""
+
+    topology_id: str = eqx.field(static=True)
+    geometry_layout_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+
+
+def _prepare_cell_mesh_identity(
+    prepared: _PreparedCellMeshTopology,
+    points: np.ndarray,
+    storage: CellMeshStorage | None,
+    numeric_version: str,
+) -> _CellMeshIdentity:
+    topology_id = prepared.topology_id if storage is None else storage.logical_topology_id
+    geometry_layout_id = canonical_fingerprint(
+        {
+            "kind": "cell-mesh-geometry-layout",
+            "topology": topology_id,
+            "ambient_dimension": points.shape[1],
+            "coordinate_count": (
+                points.shape[0] if storage is None else storage.global_entity_counts[0]
+            ),
+            "coordinate_dtype": str(points.dtype),
+        }
+    )
+    match storage:
+        case CellMeshStorage() as placement:
+            geometry_id = placement.logical_geometry_id
+        case None:
+            match prepared.blocks:
+                case (CellBlock(cell_kind="interval" | "triangle" | "tetrahedron"),):
+                    order = np.argsort(prepared.vertex_global_ids, kind="stable")
+                    geometry_id = canonical_fingerprint(
+                        {
+                            "kind": "cell-mesh-geometry",
+                            "topology": topology_id,
+                            "ambient_dimension": points.shape[1],
+                            "coordinates": array_collection_digest(
+                                {"coordinates": points[order]}
+                            ),
+                        }
+                    )
+                case _:
+                    geometry_id = canonical_fingerprint(
+                        {
+                            "kind": "cell-mesh-geometry",
+                            "layout": geometry_layout_id,
+                            "coordinates": array_tree_fingerprint(points),
+                            "numeric_version": str(numeric_version),
+                        }
+                    )
+        case _ as invalid:
+            assert_never(invalid)
+    return _CellMeshIdentity(topology_id, geometry_layout_id, geometry_id)
+
+
+class _MixedPolyhedralBlocks(StrictModule):
+    """Arity-grouped blocks with face loops and stable source cell identities."""
+
+    standard_blocks: tuple[CellBlock, ...]
+    poly_blocks: tuple[PolyhedralBlock, ...]
+    explicit_cells: tuple[tuple[ArrayLike, ...], ...]
+    explicit_ids: tuple[int, ...] = eqx.field(static=True)
+
+
+def _polyhedral_cell_vertex_set(cell: tuple[ArrayLike, ...]) -> set[int]:
+    """Identify distinct cell vertices from authored face loops on the host."""
+    return {int(vertex) for face in cell for vertex in np.asarray(face, dtype=np.int32)}
+
+
+def _append_polyhedral_arity_blocks(
+    name: str,
+    cells: tuple[tuple[ArrayLike, ...], ...],
+    ids: NDArray[np.int64],
+    poly_blocks: list[PolyhedralBlock],
+    explicit_cells: list[tuple[ArrayLike, ...]],
+    explicit_ids: list[int],
+) -> None:
+    """Keep stable source identities aligned with each vertex-arity block."""
+    counts = np.asarray(
+        [len(_polyhedral_cell_vertex_set(cell)) for cell in cells],
+        dtype=np.int32,
+    )
+    order = np.argsort(counts, kind="stable")
+    ordered_cells = tuple(cells[int(index)] for index in order)
+    ordered_ids = ids[order]
+    ordered_counts = counts[order]
+    unique_counts = tuple(np.unique(ordered_counts))
+    for vertex_count in unique_counts:
+        selected = np.flatnonzero(ordered_counts == vertex_count)
+        selected_cells = tuple(ordered_cells[int(index)] for index in selected)
+        selected_ids = ordered_ids[selected]
+        vertices = np.asarray(
+            [sorted(_polyhedral_cell_vertex_set(cell)) for cell in selected_cells],
+            dtype=np.int32,
+        )
+        block_name = name if len(unique_counts) == 1 else f"{name}-{vertex_count}"
+        poly_blocks.append(
+            PolyhedralBlock(
+                block_name,
+                vertices,
+                global_ids=selected_ids,
+            )
+        )
+        explicit_cells.extend(selected_cells)
+        explicit_ids.extend(int(value) for value in selected_ids)
+
+
+def _prepare_mixed_polyhedral_blocks(
+    blocks: Sequence[CellBlock],
+    polyhedra: Mapping[str, Sequence[Sequence[ArrayLike]]],
+    polyhedral_cell_global_ids: Mapping[str, ArrayLike] | None,
+) -> _MixedPolyhedralBlocks:
+    standard_blocks = tuple(blocks)
+    if any(
+        block.cell_kind not in ("tetrahedron", "hexahedron", "prism", "pyramid")
+        for block in standard_blocks
+    ):
+        raise ValueError(
+            f"CellMesh.from_mixed_3d.blocks must use standard volume cell kinds; got {tuple(block.cell_kind for block in standard_blocks)}."
+        )
+    named_cells = tuple(
+        (str(name), tuple(tuple(cell) for cell in cells))
+        for name, cells in sorted(polyhedra.items())
+    )
+    if any(not name or not cells for name, cells in named_cells):
+        raise ValueError(
+            f"CellMesh.from_mixed_3d.polyhedra must have nonempty block names and cell collections; got {tuple((name, len(cells)) for name, cells in named_cells)}."
+        )
+    id_mapping = (
+        {}
+        if polyhedral_cell_global_ids is None
+        else {
+            str(name): np.asarray(values, dtype=np.int64)
+            for name, values in polyhedral_cell_global_ids.items()
+        }
+    )
+    if set(id_mapping) not in (set(), {name for name, _ in named_cells}):
+        raise ValueError(
+            f"CellMesh.from_mixed_3d.polyhedral_cell_global_ids must cover every polyhedral block when supplied; got {tuple(id_mapping)}."
+        )
+    used_ids = [
+        int(value)
+        for block in standard_blocks
+        for value in np.asarray(block.global_ids, dtype=np.int64)
+    ]
+    next_id = max(used_ids, default=-1) + 1
+    poly_blocks: list[PolyhedralBlock] = []
+    explicit_cells: list[tuple[ArrayLike, ...]] = []
+    explicit_ids: list[int] = []
+    for name, cells in named_cells:
+        ids = id_mapping.get(name)
+        if ids is None:
+            ids = np.arange(next_id, next_id + len(cells), dtype=np.int64)
+        if ids.shape != (len(cells),):
+            raise ValueError(
+                f"CellMesh.from_mixed_3d.polyhedral_cell_global_ids must match the cell count for source block {name!r}; got {ids.shape}."
+            )
+        _append_polyhedral_arity_blocks(
+            name, cells, ids, poly_blocks, explicit_cells, explicit_ids
+        )
+        next_id = max(next_id, int(np.max(ids, initial=next_id - 1)) + 1)
+    return _MixedPolyhedralBlocks(
+        standard_blocks,
+        tuple(poly_blocks),
+        tuple(explicit_cells),
+        tuple(explicit_ids),
+    )
+
+
 class CellMesh(StrictModule, NonTrainableState):
-    """Canonical computational mesh shared by unstructured discretizations.
+    """Computational mesh shared by unstructured discretizations.
 
     A periodic mesh is its finite lifted carrier plus ``periodic_topology``, the
     quotient descriptor built from the plain lifted mesh; the descriptor is part
@@ -1715,7 +2008,7 @@ class CellMesh(StrictModule, NonTrainableState):
     )
     topology: CellComplexTopology
     support: DiscreteSupport
-    periodic_topology: PeriodicMeshTopology | None
+    periodic_topology: periodic_topology_owner.PeriodicMeshTopology | None
     storage: CellMeshStorage | None
     topological_dimension: int = eqx.field(static=True)
     ambient_dimension: int = eqx.field(static=True)
@@ -1725,6 +2018,7 @@ class CellMesh(StrictModule, NonTrainableState):
     mesh_id: str = eqx.field(static=True)
     numeric_version: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coordinates: ArrayLike,
@@ -1734,21 +2028,19 @@ class CellMesh(StrictModule, NonTrainableState):
         vertex_global_ids: ArrayLike | None = None,
         entity_global_ids: Mapping[int, ArrayLike] | None = None,
         polyhedral_connectivity: PolyhedralConnectivity | None = None,
-        periodic_topology: PeriodicMeshTopology | None = None,
+        periodic_topology: periodic_topology_owner.PeriodicMeshTopology | None = None,
         numeric_version: str = "0",
         storage: CellMeshStorage | None = None,
         _prepared_topology: _PreparedCellMeshTopology | None = None,
     ) -> None:
-        if storage is not None and not isinstance(storage, CellMeshStorage):
-            raise TypeError("storage must be CellMeshStorage or None.")
         if isinstance(coordinates, Array) and not coordinates.is_fully_addressable:
             raise ValueError(
-                "CellMesh coordinates require a local view; bind global arrays in storage."
+                f"CellMesh.coordinates must be locally addressable with global arrays bound in storage; got {'non-addressable coordinates'}."
             )
         if storage is not None and _prepared_topology is None:
             if vertex_global_ids is not None or entity_global_ids is not None:
                 raise ValueError(
-                    "Owner-local entity identities are owned by the storage descriptor."
+                    f"CellMesh.entity_global_ids must be omitted with storage-backed identity routing; got {(vertex_global_ids is not None, entity_global_ids is not None)}."
                 )
             entity_global_ids = dict(enumerate(storage.entity_global_ids))
         points = np.asarray(coordinates, dtype=np.float64)
@@ -1758,17 +2050,17 @@ class CellMesh(StrictModule, NonTrainableState):
             or (points.shape[0] == 0 and storage is None)
         ):
             raise ValueError(
-                "Cell mesh coordinates require a nonempty serial mesh or bound zero-resident storage."
+                f"CellMesh.coordinates must be rank two with nonempty serial data or bound zero-resident storage; got {points.shape}."
             )
         if not np.all(np.isfinite(points)):
-            raise ValueError("Cell mesh coordinates must be finite.")
+            raise ValueError(f"CellMesh.coordinates must be finite; got {points.shape}.")
         if (
             storage is not None
             and canonical_fingerprint(array_tree_fingerprint(points))
             != storage.local_coordinate_id
         ):
             raise ValueError(
-                "Local mesh coordinates differ from their logical storage witness."
+                "CellMesh.coordinates must match storage.local_coordinate_id; got a different local coordinate digest."
             )
         if points.shape[0] == 0 and storage is not None:
             if (
@@ -1777,7 +2069,7 @@ class CellMesh(StrictModule, NonTrainableState):
                 or periodic_topology is not None
             ):
                 raise ValueError(
-                    "Zero-resident meshes require their exact empty storage closure."
+                    f"CellMesh.blocks must be empty without separate connectivity or periodic descriptors for zero-resident storage; got {(len(blocks), polyhedral_connectivity is not None, periodic_topology is not None)}."
                 )
             prepared = _empty_storage_topology(storage)
         elif _prepared_topology is None:
@@ -1808,56 +2100,19 @@ class CellMesh(StrictModule, NonTrainableState):
             if tuple(block.block_id for block in prepared.blocks) != tuple(
                 block.block_id for block in storage.local_blocks
             ):
-                raise ValueError("Local mesh incidence differs from its storage witness.")
-        topology_id = (
-            prepared.topology_id if storage is None else storage.logical_topology_id
-        )
-        geometry_layout_id = canonical_fingerprint(
-            {
-                "kind": "cell-mesh-geometry-layout",
-                "topology": topology_id,
-                "ambient_dimension": points.shape[1],
-                "coordinate_count": (
-                    points.shape[0]
-                    if storage is None
-                    else storage.global_entity_counts[0]
-                ),
-                "coordinate_dtype": str(points.dtype),
-            }
-        )
-        if storage is not None:
-            geometry_id = storage.logical_geometry_id
-        elif (
-            len(prepared.blocks) == 1
-            and isinstance(prepared.blocks[0], CellBlock)
-            and prepared.blocks[0].cell_kind in ("interval", "triangle", "tetrahedron")
-        ):
-            order = np.argsort(prepared.vertex_global_ids, kind="stable")
-            geometry_id = canonical_fingerprint(
-                {
-                    "kind": "cell-mesh-geometry",
-                    "topology": topology_id,
-                    "ambient_dimension": points.shape[1],
-                    "coordinates": array_collection_digest(
-                        {"coordinates": points[order]}
-                    ),
-                }
-            )
-        else:
-            geometry_id = canonical_fingerprint(
-                {
-                    "kind": "cell-mesh-geometry",
-                    "layout": geometry_layout_id,
-                    "coordinates": array_tree_fingerprint(points),
-                    "numeric_version": str(numeric_version),
-                }
-            )
+                raise ValueError(
+                    "CellMesh.blocks must match storage.local_blocks; got different block identities."
+                )
+        identity = _prepare_cell_mesh_identity(prepared, points, storage, numeric_version)
+        topology_id = identity.topology_id
+        geometry_layout_id = identity.geometry_layout_id
+        geometry_id = identity.geometry_id
         support = DiscreteSupport(prepared.topology, points.shape[1], geometry_layout_id)
         self.coordinates = (
-            jnp.asarray(points) if storage is None else storage.local_coordinates
+            jax.device_put(points) if storage is None else storage.local_coordinates
         )
         self.blocks = prepared.blocks
-        self.vertex_global_ids = jnp.asarray(prepared.vertex_global_ids)
+        self.vertex_global_ids = jax.device_put(prepared.vertex_global_ids)
         self.topology = prepared.topology
         self.connectivity = prepared.connectivity
         self.support = support
@@ -1877,11 +2132,72 @@ class CellMesh(StrictModule, NonTrainableState):
         )
         self.numeric_version = str(numeric_version)
 
+    @classmethod
+    @checked
+    def from_stored_fields(cls, value: CellMesh, /) -> CellMesh:
+        """Revalidate stored incidence and rebuild any quotient on its lifted carrier."""
+        if value.storage is not None:
+            return cls(
+                value.coordinates,
+                value.blocks,
+                storage=value.storage,
+                periodic_topology=value.periodic_topology,
+                numeric_version=value.numeric_version,
+            )
+        lifted = cls.lifted_from_stored_fields(value)
+        periodic = value.periodic_topology
+        if periodic is None:
+            return lifted
+        return cls._from_stored_carrier(value, periodic.rebuilt(lifted))
+
+    @classmethod
+    @checked
+    def lifted_from_stored_fields(cls: type[CellMesh], value: CellMesh, /) -> CellMesh:
+        """Revalidate stored lifted incidence without binding a quotient descriptor."""
+        value.require_dense("CellMesh.lifted_from_stored_fields")
+        return cls._from_stored_carrier(value, None)
+
+    @classmethod
+    def _from_stored_carrier(
+        cls: type[CellMesh],
+        value: CellMesh,
+        periodic: periodic_topology_owner.PeriodicMeshTopology | None,
+        /,
+    ) -> CellMesh:
+        """Rebuild a carrier from stored topological IDs and authored face incidence."""
+        entity_ids = {
+            entities.intrinsic_dimension: entities.entity_ids
+            for entities in value.topology.entity_sets
+        }
+        match value.connectivity:
+            case PolyhedralConnectivity() as connectivity:
+                polyhedral = connectivity
+            case (
+                IntervalConnectivity()
+                | PolygonalConnectivity()
+                | TetrahedralConnectivity()
+                | HexahedralConnectivity()
+                | SimplicialConnectivity()
+            ):
+                polyhedral = None
+            case _ as invalid:
+                assert_never(invalid)
+
+        return cls(
+            value.coordinates,
+            value.blocks,
+            vertex_global_ids=value.vertex_global_ids,
+            entity_global_ids=entity_ids,
+            polyhedral_connectivity=polyhedral,
+            periodic_topology=periodic,
+            numeric_version=value.numeric_version,
+        )
+
     def require_dense(self, operation: str, /) -> None:
         """Guard a serial-only consumer before any implicit global conversion."""
         if self.storage is not None:
             raise ValueError(
-                f"{operation} requires explicit bounded materialization of owner-local CellMesh storage."
+                f"CellMesh.storage must be explicitly materialized within bounds for {operation}; got {type(self.storage).__name__}."
             )
 
     @classmethod
@@ -1899,9 +2215,13 @@ class CellMesh(StrictModule, NonTrainableState):
     ) -> CellMesh:
         """Build simplicial mesh geometry with an explicitly declared intrinsic dimension."""
         if not isinstance(dimension, int) or isinstance(dimension, bool):
-            raise TypeError("Simplex dimension must be an integer.")
+            raise TypeError(
+                f"CellMesh.from_simplices.dimension must be a non-boolean integer; got {type(dimension).__name__}."
+            )
         if dimension < 1:
-            raise ValueError("Simplex dimension must be positive.")
+            raise ValueError(
+                f"CellMesh.from_simplices.dimension must be positive; got {dimension}."
+            )
         return cls(
             coordinates,
             (
@@ -1953,15 +2273,17 @@ class CellMesh(StrictModule, NonTrainableState):
         cell_global_ids: ArrayLike | None = None,
         numeric_version: str = "0",
     ) -> CellMesh:
-        """Build a canonical mixed-arity polygon mesh from cyclic vertex loops."""
+        """Build a mixed-arity polygon mesh from cyclic vertex loops."""
 
         points = np.asarray(coordinates, dtype=np.float64)
         loops = tuple(np.asarray(loop, dtype=np.int32) for loop in polygons)
         if not loops:
-            raise ValueError("from_polygons requires at least one cell.")
+            raise ValueError(
+                f"CellMesh.from_polygons.polygons must contain at least one cell; got {len(loops)}."
+            )
         if any(loop.ndim != 1 or loop.size < 3 for loop in loops):
             raise ValueError(
-                "Every polygon must be one rank-1 loop with at least 3 vertices."
+                f"CellMesh.from_polygons.polygons must contain rank-one loops with at least three vertices; got {tuple(loop.shape for loop in loops)}."
             )
         identifiers = (
             np.arange(len(loops), dtype=np.int64)
@@ -1969,11 +2291,15 @@ class CellMesh(StrictModule, NonTrainableState):
             else np.asarray(cell_global_ids, dtype=np.int64)
         )
         if identifiers.shape != (len(loops),):
-            raise ValueError("cell_global_ids must have one ID per polygon.")
+            raise ValueError(
+                f"CellMesh.from_polygons.cell_global_ids must have one ID per polygon; got {identifiers.shape}."
+            )
         grouped: dict[int, list[tuple[np.ndarray, int]]] = {}
         for loop, identifier in zip(loops, identifiers, strict=True):
             if np.any(loop < 0) or np.any(loop >= points.shape[0]):
-                raise ValueError("Polygon loop indexes an undeclared vertex.")
+                raise ValueError(
+                    f"CellMesh.from_polygons.polygons must index declared vertices; got {loop.shape}."
+                )
             cell_points = points[loop]
             area2 = float(
                 np.sum(
@@ -1982,7 +2308,9 @@ class CellMesh(StrictModule, NonTrainableState):
                 )
             )
             if not np.isfinite(area2) or area2 == 0.0:
-                raise ValueError("Polygon loops require finite nonzero signed area.")
+                raise ValueError(
+                    f"CellMesh.from_polygons.polygons must have finite nonzero signed area; got {area2}."
+                )
             oriented = loop[::-1] if area2 < 0.0 else loop
             grouped.setdefault(loop.size, []).append((oriented, int(identifier)))
         blocks = []
@@ -2038,7 +2366,7 @@ class CellMesh(StrictModule, NonTrainableState):
     def from_polyhedra(
         cls,
         coordinates: ArrayLike,
-        cells: Sequence[Sequence[ArrayLike]],
+        cells: Sequence[Sequence[ConvertibleToArray]],
         /,
         *,
         block_name: str = "polyhedra",
@@ -2046,23 +2374,27 @@ class CellMesh(StrictModule, NonTrainableState):
         cell_global_ids: ArrayLike | None = None,
         numeric_version: str = "0",
     ) -> CellMesh:
-        """Build a canonical mesh from closed outward-oriented face loops."""
+        """Build a mesh from closed outward-oriented face loops."""
 
         points = np.asarray(coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] < 3:
             raise ValueError(
-                "Polyhedral coordinates must have shape (vertex_count, d >= 3)."
+                f"CellMesh.from_polyhedra.coordinates must have shape (vertex_count, d >= 3); got {points.shape}."
             )
         normalized_cells = tuple(tuple(cell) for cell in cells)
         if not normalized_cells:
-            raise ValueError("At least one polyhedral cell is required.")
+            raise ValueError(
+                f"CellMesh.from_polyhedra.cells must contain at least one cell; got {len(normalized_cells)}."
+            )
         source_ids = (
             np.arange(len(normalized_cells), dtype=np.int64)
             if cell_global_ids is None
             else np.asarray(cell_global_ids, dtype=np.int64)
         )
         if source_ids.shape != (len(normalized_cells),):
-            raise ValueError("cell_global_ids must match the polyhedral cell count.")
+            raise ValueError(
+                f"CellMesh.from_polyhedra.cell_global_ids must match the polyhedral cell count; got {source_ids.shape}."
+            )
         vertex_counts = np.asarray(
             [
                 len(
@@ -2131,101 +2463,20 @@ class CellMesh(StrictModule, NonTrainableState):
         """Build one mixed standard/polyhedral three-dimensional mesh."""
 
         points = np.asarray(coordinates, dtype=np.float64)
-        standard_blocks = tuple(blocks)
-        if any(
-            block.cell_kind not in ("tetrahedron", "hexahedron", "prism", "pyramid")
-            for block in standard_blocks
-        ):
-            raise ValueError("Mixed 3-D dense blocks use standard volume cell kinds.")
-        named_cells = tuple(
-            (str(name), tuple(tuple(cell) for cell in cells))
-            for name, cells in sorted(polyhedra.items())
+        prepared_blocks = _prepare_mixed_polyhedral_blocks(
+            blocks,
+            polyhedra,
+            polyhedral_cell_global_ids,
         )
-        if any(not name or not cells for name, cells in named_cells):
-            raise ValueError(
-                "Polyhedral block names and cell collections must be non-empty."
-            )
-        id_mapping = (
-            {}
-            if polyhedral_cell_global_ids is None
-            else {
-                str(name): np.asarray(values, dtype=np.int64)
-                for name, values in polyhedral_cell_global_ids.items()
-            }
-        )
-        if set(id_mapping) not in (set(), {name for name, _ in named_cells}):
-            raise ValueError(
-                "polyhedral_cell_global_ids must cover every polyhedral block."
-            )
-        used_ids = [
-            int(value)
-            for block in standard_blocks
-            for value in np.asarray(block.global_ids, dtype=np.int64)
-        ]
-        next_id = max(used_ids, default=-1) + 1
-        poly_blocks: list[PolyhedralBlock] = []
-        explicit_cells: list[tuple[ArrayLike, ...]] = []
-        explicit_ids: list[int] = []
-        for name, cells in named_cells:
-            ids = id_mapping.get(name)
-            if ids is None:
-                ids = np.arange(next_id, next_id + len(cells), dtype=np.int64)
-            if ids.shape != (len(cells),):
-                raise ValueError(
-                    f"Polyhedral global IDs for {name!r} must match its cell count."
-                )
-            counts = np.asarray(
-                [
-                    len(
-                        {
-                            int(vertex)
-                            for face in cell
-                            for vertex in np.asarray(face, dtype=np.int32)
-                        }
-                    )
-                    for cell in cells
-                ],
-                dtype=np.int32,
-            )
-            order = np.argsort(counts, kind="stable")
-            ordered_cells = tuple(cells[int(index)] for index in order)
-            ordered_ids = ids[order]
-            ordered_counts = counts[order]
-            for vertex_count in tuple(np.unique(ordered_counts)):
-                selected = np.flatnonzero(ordered_counts == vertex_count)
-                selected_cells = tuple(ordered_cells[int(index)] for index in selected)
-                selected_ids = ordered_ids[selected]
-                vertices = np.asarray(
-                    [
-                        sorted(
-                            {
-                                int(vertex)
-                                for face in cell
-                                for vertex in np.asarray(face, dtype=np.int32)
-                            }
-                        )
-                        for cell in selected_cells
-                    ],
-                    dtype=np.int32,
-                )
-                block_name = (
-                    name
-                    if len(np.unique(ordered_counts)) == 1
-                    else f"{name}-{vertex_count}"
-                )
-                poly_blocks.append(
-                    PolyhedralBlock(
-                        block_name,
-                        vertices,
-                        global_ids=selected_ids,
-                    )
-                )
-                explicit_cells.extend(selected_cells)
-                explicit_ids.extend(int(value) for value in selected_ids)
-            next_id = max(next_id, int(np.max(ids, initial=next_id - 1)) + 1)
+        standard_blocks = prepared_blocks.standard_blocks
+        poly_blocks = prepared_blocks.poly_blocks
+        explicit_cells = prepared_blocks.explicit_cells
+        explicit_ids = prepared_blocks.explicit_ids
         combined_blocks = (*standard_blocks, *poly_blocks)
         if not combined_blocks:
-            raise ValueError("Mixed 3-D mesh requires at least one cell block.")
+            raise ValueError(
+                f"CellMesh.from_mixed_3d.blocks must provide at least one dense or polyhedral block; got {len(combined_blocks)}."
+            )
         entries: list[Sequence[ArrayLike] | tuple[str, ArrayLike]] = [
             (block.cell_kind, np.asarray(block.vertices, dtype=np.int32))
             for block in standard_blocks
@@ -2259,14 +2510,16 @@ class CellMesh(StrictModule, NonTrainableState):
         for block in self.blocks:
             if block.name == requested:
                 return block
-        raise KeyError(f"Unknown cell block {requested!r}.")
+        raise KeyError(f"CellMesh.block.name must name a mesh block; got {requested!r}.")
 
     def entity_set(self, dimension: int, /) -> EntitySet:
         target = int(dimension)
         for entities in self.topology.entity_sets:
             if entities.intrinsic_dimension == target:
                 return entities
-        raise KeyError(f"Cell mesh has no entity set of dimension {target}.")
+        raise KeyError(
+            f"CellMesh.entity_set.dimension must name a declared entity degree; got {target}."
+        )
 
     @property
     def boundary_masks(self) -> tuple[Array, ...]:
@@ -2285,10 +2538,12 @@ class CellMesh(StrictModule, NonTrainableState):
     ) -> CellMesh:
         if self.storage is not None and storage is None:
             raise ValueError(
-                "Owner-local coordinate refresh requires renewed logical geometry evidence."
+                f"CellMesh.with_coordinates.storage must supply renewed logical geometry evidence for owner-local refresh; got {storage}."
             )
         if self.storage is None and storage is not None:
-            raise ValueError("Coordinate refresh cannot change mesh storage placement.")
+            raise ValueError(
+                f"CellMesh.with_coordinates.storage must preserve mesh storage placement; got {'storage supplied for a serial mesh'}."
+            )
         if (
             storage is not None
             and self.storage is not None
@@ -2299,12 +2554,12 @@ class CellMesh(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "Coordinate refresh must preserve logical topology and local placement."
+                f"CellMesh.with_coordinates.storage must preserve logical topology and local placement; got {(storage.logical_topology_id, storage.partition_index, storage.partition_count)}."
             )
         points = jnp.asarray(coordinates)
         if points.shape != self.coordinates.shape:
             raise ValueError(
-                "Fixed-topology coordinate refresh must preserve coordinate shape."
+                f"CellMesh.with_coordinates.coordinates must preserve coordinate shape; got {points.shape}."
             )
         # The blocks, identities, connectivity, and topology are coordinate
         # independent, so the refresh reuses them instead of rebuilding them.
@@ -2326,9 +2581,7 @@ class CellMesh(StrictModule, NonTrainableState):
 
 
 __all__ = [
-    "CellBlock",
     "CellMesh",
     "CellMeshStorage",
-    "PolyhedralBlock",
     "SimplicialConnectivity",
 ]

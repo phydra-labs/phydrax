@@ -143,7 +143,17 @@ def test_prepared_schur_is_jittable_and_refreshes_under_same_symbolic_plan() -> 
     assert refreshed.numeric_version == 1
     assert refreshed.refresh_count == 1
     assert second.provenance.numeric_version == 1
-    assert np.allclose(
-        np.sort_complex(np.asarray(second.eigenvalues)),
-        np.sort_complex(np.asarray(jnp.linalg.eigvals(second_matrix))),
+    # det(lambda I - A) = lambda**2 - 5 lambda + 11. Match the
+    # conjugate roots by their separated imaginary parts, not rounded real ties.
+    eigenvalues = np.asarray(second.eigenvalues)
+    expected = np.asarray(
+        (2.5 - 0.5j * np.sqrt(19.0), 2.5 + 0.5j * np.sqrt(19.0)),
+        dtype=np.complex128,
     )
+    np.testing.assert_allclose(
+        eigenvalues[np.argsort(eigenvalues.imag)], expected, rtol=1e-11, atol=1e-12
+    )
+    reconstructed = (
+        second.schur_vectors @ second.schur_form @ jnp.conj(second.schur_vectors.T)
+    )
+    assert jnp.allclose(reconstructed, second_matrix, rtol=1e-11, atol=1e-12)

@@ -42,8 +42,10 @@ from ._spec import (
     conforming_hcurl_virtual_element,
     conforming_hdiv_virtual_element,
     discontinuous_l2_virtual_element,
+    VirtualElementFamily,
     VirtualElementFieldSpec,
     VirtualElementSpec,
+    VirtualElementTraceKind,
 )
 from ._stabilization import (
     stabilize_virtual_element_tensor,
@@ -65,6 +67,7 @@ __all__ = [
     "VirtualElementDirichletConstraint",
     "VirtualElementDiscretization",
     "VirtualElementDofMap",
+    "VirtualElementFamily",
     "VirtualElementFieldSpec",
     "VirtualElementPlan",
     "VirtualElementAdaptationResult",
@@ -81,6 +84,7 @@ __all__ = [
     "VirtualElementSpec",
     "VirtualElementStabilizationEvidence",
     "VirtualElementStabilizationPolicy",
+    "VirtualElementTraceKind",
     "conforming_h1_virtual_element",
     "conforming_hcurl_virtual_element",
     "conforming_hdiv_virtual_element",

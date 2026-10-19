@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _time(function: Any, *arguments: Any, repetitions: Any = 3) -> Any:
@@ -126,7 +127,7 @@ def run(output: Path) -> None:
             "routes": compiled.dynamics.splat.route_count,
         }
     contact = phx.discretization.RigidMPMContactPlan(
-        phx.geometry.Circle((0.0, 0.0), 0.5).compile(),
+        phx.geometry.Circle((0.0, 0.0), 0.5).compile(coordinate_unit=METER),
         phx.discretization.SharpCoulombMPMFrictionPlan(0.25),
         contact_band=0.02,
     )

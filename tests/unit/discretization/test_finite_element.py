@@ -280,9 +280,19 @@ def test_finite_elements_reject_degenerate_and_unconstrained_components() -> Non
             boundary_mask=jnp.asarray([True, False, False, False, False, False]),
         )
 
-    with pytest.raises(ValueError, match="proper subset"):
-        phx.discretization.dirichlet_constraint(
-            _square_discretization(),
-            "u",
-            boundary_mask=jnp.ones((5,), dtype="bool"),
-        )
+
+def test_finite_elements_admit_fully_constrained_discrete_state() -> None:
+    constraint = phx.discretization.dirichlet_constraint(
+        _square_discretization(),
+        "u",
+        boundary_mask=jnp.ones((5,), dtype=jnp.bool_),
+    )
+    assert constraint.constraint_map.reduced_space.size == 0
+    assert constraint.free_dofs.shape == (0,)
+    assert constraint.constrained_dofs.shape == (5,)
+    np.testing.assert_array_equal(
+        constraint.constraint_map.expand(
+            jnp.zeros((0,), dtype=jnp.float64), constraint.lift(2.0)
+        ),
+        np.full((5,), 2.0, dtype=np.float64),
+    )

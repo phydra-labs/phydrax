@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -35,7 +38,8 @@ from ._diffusion_boundary import HybridDiffusionBoundary
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 
-def _tensor(value: ArrayLike, count: int) -> Array:
+@partial(jax.jit, static_argnums=(1,))
+def diffusion_tensor(value: ArrayLike, count: int) -> Array:
     result = jnp.asarray(value)
     result = result.astype(jnp.result_type(result, 1.0))
     if result.shape == ():
@@ -45,11 +49,14 @@ def _tensor(value: ArrayLike, count: int) -> Array:
     if result.shape == (3, 3):
         return jnp.broadcast_to(result, (count, 3, 3))
     if result.shape != (count, 3, 3):
-        raise ValueError("Tensor must be scalar, (cells,), (3,3), or (cells,3,3).")
+        raise ValueError(
+            "diffusion_tensor.value must be scalar, (cells,), (3,3), or (cells,3,3); got an incompatible shape."
+        )
     return result
 
 
-def _positive_tensor(value: Array) -> Array:
+@eqx.filter_jit
+def positive_tensor(value: Array) -> Array:
     """Sylvester certificate, without factoring or altering the physical tensor."""
     a, b, c = value[:, 0, 0], value[:, 0, 1], value[:, 0, 2]
     d, e, f = value[:, 1, 1], value[:, 1, 2], value[:, 2, 2]
@@ -76,7 +83,7 @@ def _trace_cell_rhs_transpose(
     cotangent: Array,
     /,
 ) -> Array:
-    """Exact local-energy transpose over the owning prepared sparse routes."""
+    """certified local-energy transpose over the bound prepared sparse routes."""
     face_cotangent = jnp.where(boundary_kind == 1, 0, cotangent)
     local_cotangent = accumulation.transpose_mv(face_cotangent).reshape(local_shape)
     return jnp.sum(contract("cfg,cf->cg", matrices, local_cotangent), axis=1)
@@ -86,7 +93,7 @@ class HybridMimeticDiffusion(StrictModule):
     """Fixed polyhedral geometry, shared global face potentials, no TPFA reduction.
 
     Cells must be strictly star-shaped about their FV centers, have planar faces,
-    positive measures, outward closure and exact first geometric moments. The
+    positive measures, outward closure and certified first geometric moments. The
     local energy is V grad(u).K.grad(u) plus a positive normal-distance weighted
     penalty on deviations from affine face traces. This is consistent for full
     rotated SPD tensors, including off-diagonal tensor entries.
@@ -120,9 +127,13 @@ class HybridMimeticDiffusion(StrictModule):
         stabilization: float = 1.0,
     ) -> None:
         if discretization.cell_dimension != 3:
-            raise ValueError("Hybrid mimetic diffusion requires three-dimensional cells.")
+            raise ValueError(
+                "HybridMimeticDiffusion.discretization must contain three-dimensional cells; got another cell dimension."
+            )
         if not np.isfinite(stabilization) or stabilization <= 0:
-            raise ValueError("stabilization must be finite and strictly positive.")
+            raise ValueError(
+                "HybridMimeticDiffusion.stabilization must be finite and strictly positive; got an invalid scalar."
+            )
         owner = np.asarray(discretization.owner_cells)
         neighbor = np.asarray(discretization.neighbor_cells)
         centers = np.asarray(discretization.cell_centers)
@@ -166,18 +177,26 @@ class HybridMimeticDiffusion(StrictModule):
         offsets = (side_centers - centers[:, None, :]) * valid[..., None]
         distance = contract("cfi,cfi->cf", offsets, outward) / measures[faces]
         if np.any(~np.isfinite(volumes)) or np.any(volumes <= 0):
-            raise ValueError("Hybrid diffusion cell volumes must be positive and finite.")
+            raise ValueError(
+                "HybridMimeticDiffusion.cell_volumes must be positive and finite; got a nonpositive or nonfinite measure."
+            )
         if np.any(~np.isfinite(distance)) or np.any(distance[valid] <= 0):
-            raise ValueError("Cells must be strictly star-shaped about their FV centers.")
+            raise ValueError(
+                "HybridMimeticDiffusion.cell_centers must be strictly inside each facet halfspace; got a nonpositive center-to-facet distance."
+            )
         weights = outward / volumes[:, None, None]
         moment = contract("cfi,cfj->cij", weights, offsets)
         tolerance = 512 * np.finfo(centers.dtype).eps
         if not np.allclose(moment, np.eye(3), rtol=tolerance, atol=tolerance):
-            raise ValueError("Hybrid geometry fails the affine first-moment identity.")
+            raise ValueError(
+                "HybridMimeticDiffusion.geometry must satisfy the affine first-moment identity; got a moment defect above tolerance."
+            )
         closure = np.sum(outward, axis=1)
         area_scale = np.sum(measures[faces] * valid, axis=1)
         if np.any(np.abs(closure) > tolerance * area_scale[:, None]):
-            raise ValueError("Hybrid cell outward area vectors must close.")
+            raise ValueError(
+                "HybridMimeticDiffusion.outward_areas must close within tolerance; got an area-vector sum above tolerance."
+            )
         defect = np.eye(width)[None] * valid[:, :, None] - contract(
             "cfi,cgi->cfg", offsets, weights
         )
@@ -190,14 +209,14 @@ class HybridMimeticDiffusion(StrictModule):
         source_faces = np.flatnonzero(active).astype(np.int32)
         quotient_rows = np.zeros(owner.size, dtype=np.int32)
         quotient_rows[source_faces] = np.arange(source_faces.size, dtype=np.int32)
-        self.source_face_indices = jnp.asarray(source_faces)
-        self.owner_cells = jnp.asarray(owner[source_faces])
-        self.neighbor_cells = jnp.asarray(neighbor[source_faces])
-        self.face_measures = jnp.asarray(measures[source_faces])
-        self.face_centers = jnp.asarray(face_centers[source_faces])
+        self.source_face_indices = jax.device_put(source_faces)
+        self.owner_cells = jax.device_put(owner[source_faces])
+        self.neighbor_cells = jax.device_put(neighbor[source_faces])
+        self.face_measures = jax.device_put(measures[source_faces])
+        self.face_centers = jax.device_put(face_centers[source_faces])
         self.discretization = discretization
-        self.cell_faces = jnp.asarray(quotient_rows[faces])
-        self.valid = jnp.asarray(valid)
+        self.cell_faces = jax.device_put(quotient_rows[faces])
+        self.valid = jax.device_put(valid)
         local_slots = np.arange(faces.size, dtype=np.int32)
         self.facet_accumulation = SparseLinearMap(
             EdgeRelation(
@@ -207,7 +226,9 @@ class HybridMimeticDiffusion(StrictModule):
                 target_size=source_faces.size,
                 valid=valid.reshape(-1),
             ),
-            jnp.ones((faces.size,), dtype=discretization.cell_volumes.dtype),
+            jax.device_put(
+                np.ones((faces.size,), dtype=discretization.cell_volumes.dtype)
+            ),
             operator_id=canonical_fingerprint(
                 {
                     "kind": "hybrid-local-facet-accumulation",
@@ -215,15 +236,15 @@ class HybridMimeticDiffusion(StrictModule):
                 }
             ),
         )
-        self.outward_areas = jnp.asarray(outward)
-        self.displacements = jnp.asarray(offsets)
-        self.gradient_weights = jnp.asarray(weights)
-        self.defect = jnp.asarray(defect)
-        self.stabilization_weights = jnp.asarray(
+        self.outward_areas = jax.device_put(outward)
+        self.displacements = jax.device_put(offsets)
+        self.gradient_weights = jax.device_put(weights)
+        self.defect = jax.device_put(defect)
+        self.stabilization_weights = jax.device_put(
             measures[faces] / np.where(valid, distance, 1.0) * valid
         )
-        self.owner_slots = jnp.asarray(slots[source_faces])
-        self.component_ids = jnp.asarray(labels)
+        self.owner_slots = jax.device_put(slots[source_faces])
+        self.component_ids = jax.device_put(labels)
         self.component_count = int(labels.max()) + 1
         self.stabilization = float(stabilization)
 
@@ -236,7 +257,7 @@ class HybridMimeticDiffusion(StrictModule):
         return self.source_face_indices.size
 
     def local_matrices(self, tensor: ArrayLike) -> Array:
-        tensor = _positive_tensor(_tensor(tensor, self.cell_count))
+        tensor = positive_tensor(diffusion_tensor(tensor, self.cell_count))
         normal = self.outward_areas / self.face_measures[self.cell_faces, None]
         normal_conductivity = contract("cfi,cij,cfj->cf", normal, tensor, normal)
         penalty = self.stabilization * self.stabilization_weights * normal_conductivity
@@ -259,7 +280,7 @@ class HybridMimeticDiffusion(StrictModule):
         *,
         body_force: ArrayLike | None = None,
     ) -> Array:
-        tensor = _tensor(tensor, self.cell_count)
+        tensor = diffusion_tensor(tensor, self.cell_count)
         difference = (
             jnp.asarray(face_values)[self.cell_faces] - jnp.asarray(cell_values)[:, None]
         )
@@ -299,6 +320,7 @@ class HybridMimeticDiffusion(StrictModule):
             jnp.where(neighbor >= 0, -rates, 0.0)
         )
 
+    @checked
     def anchored_components(self, boundary: HybridDiffusionBoundary) -> Array:
         anchored = (boundary.kind == 1) | (
             (boundary.kind == 3) & (boundary.conductance > 0)
@@ -310,6 +332,7 @@ class HybridMimeticDiffusion(StrictModule):
             > 0
         )
 
+    @checked
     def residual(
         self,
         cell_values: ArrayLike,
@@ -321,7 +344,9 @@ class HybridMimeticDiffusion(StrictModule):
         body_force: ArrayLike | None = None,
     ) -> Array:
         if boundary.geometry_id != self.discretization.geometry_id:
-            raise ValueError("Boundary and diffusion geometry must match.")
+            raise ValueError(
+                "HybridMimeticDiffusion.boundary must bind the diffusion geometry; got a different prepared ID."
+            )
         local = self.local_fluxes(
             cell_values,
             boundary.impose_dirichlet(face_values),
@@ -334,6 +359,7 @@ class HybridMimeticDiffusion(StrictModule):
         faces = boundary.face_residual(face_values, self.continuity_residual(local))
         return jnp.concatenate((cells, faces))
 
+    @checked
     def linear_system(
         self,
         tensor: ArrayLike,
@@ -386,6 +412,7 @@ class HybridMimeticDiffusion(StrictModule):
         )
         return LinearSystem(operator), -offset
 
+    @checked
     def pinned_linear_system(
         self,
         tensor: ArrayLike,
@@ -399,30 +426,36 @@ class HybridMimeticDiffusion(StrictModule):
         """Explicit constant gauge for a connected, compatible unanchored problem.
 
         ``source`` retains the existing integrated cell-load units. No mean is
-        removed from a supplied source. The original physical equations remain
+        removed from a supplied source. The preceding physical equations remain
         valid at the pinned cell by the checked total Neumann compatibility.
         Local coefficient matrices are bound once; native diagonal actions
         eliminate the pin row/column symmetrically, preserving raw transposes.
         """
         if self.component_count != 1:
             raise ValueError(
-                "A single cell pin requires one connected diffusion component."
+                "HybridMimeticDiffusion.pin_cell must bind one connected diffusion component; got disconnected cell components."
             )
         if (
             isinstance(pin_cell, bool)
             or not isinstance(pin_cell, (int, np.integer))
             or not 0 <= pin_cell < self.cell_count
         ):
-            raise ValueError("The explicit gauge pin must name an actual cell.")
+            raise ValueError(
+                "HybridMimeticDiffusion.pin_cell must name an in-range cell; got an invalid cell index."
+            )
         if boundary.geometry_id != self.discretization.geometry_id:
-            raise ValueError("Boundary and diffusion geometry must match.")
-        tensor = _positive_tensor(_tensor(tensor, self.cell_count))
+            raise ValueError(
+                "HybridMimeticDiffusion.boundary must bind the diffusion geometry; got a different prepared ID."
+            )
+        tensor = positive_tensor(diffusion_tensor(tensor, self.cell_count))
         matrices = self.local_matrices(tensor)
         dtype = matrices.dtype
         loads = jnp.broadcast_to(jnp.asarray(source, dtype=dtype), (self.cell_count,))
         lift_value = jnp.asarray(pin_value, dtype=dtype)
         if lift_value.shape != ():
-            raise ValueError("The cell gauge value must be scalar.")
+            raise ValueError(
+                "HybridMimeticDiffusion.pin_value must be scalar; got a nonscalar gauge value."
+            )
         lift_value = eqx.error_if(
             lift_value,
             ~jnp.isfinite(lift_value)
@@ -540,6 +573,7 @@ class HybridMimeticDiffusion(StrictModule):
         rhs = free.mv(-offset - physical.mv(lift)) + lift
         return LinearSystem(operator), rhs
 
+    @checked
     def trace_reconstruction_operators(
         self,
         tensor: ArrayLike,
@@ -549,7 +583,7 @@ class HybridMimeticDiffusion(StrictModule):
     ) -> tuple[LinearSystem, FunctionLinearOperator, Array]:
         """Bind one face stationarity system and its affine cell-state RHS.
 
-        The returned RHS action maps actual cell potentials to actual facet
+        The returned RHS action maps represented cell potentials to represented facet
         loads. Factor the face system once; rebind each transferred cell/history
         state through that action plus the returned physical-load offset.
         This is equation-owned trace reprepare, not interpolation or conservative
@@ -560,9 +594,9 @@ class HybridMimeticDiffusion(StrictModule):
             or boundary.kind.shape != (self.face_count,)
         ):
             raise ValueError(
-                "Trace reprepare requires boundary laws on the actual quotient facet axis."
+                "HybridMimeticDiffusion.boundary_kind must use the quotient facet axis; got incompatible boundary law shapes."
             )
-        tensor = _tensor(tensor, self.cell_count)
+        tensor = diffusion_tensor(tensor, self.cell_count)
         matrices = self.local_matrices(tensor)
         dtype = matrices.dtype
         body_rates = jnp.zeros_like(self.valid, dtype=dtype)
@@ -647,6 +681,7 @@ class HybridMimeticDiffusion(StrictModule):
         )
         return LinearSystem(operator), rhs_action, -offset
 
+    @checked
     def trace_linear_system(
         self,
         cell_values: ArrayLike,
@@ -664,10 +699,11 @@ class HybridMimeticDiffusion(StrictModule):
         cells = jnp.asarray(cell_values, dtype=offset.dtype)
         if cells.shape != (self.cell_count,):
             raise ValueError(
-                "Trace reprepare requires one scalar potential per actual cell."
+                "HybridMimeticDiffusion.pin_values must contain one scalar per cell; got an incompatible potential shape."
             )
         return system, rhs_action.mv(cells) + offset
 
+    @checked
     def solve(
         self,
         tensor: ArrayLike,

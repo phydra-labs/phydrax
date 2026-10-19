@@ -1,4 +1,4 @@
-"""Native IGES exact topology/carriers, bounded decoding and independent fixtures."""
+"""Exercise IGES carriers, bounded decoding and independent fixtures."""
 
 from __future__ import annotations
 
@@ -12,16 +12,17 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._external_resource import ResourceLimits
-from phydrax._physical import SpatialCoordinateContract
-from phydrax.geometry._atlas import PolygonTrimLoop, TrimDomain
-from phydrax.geometry.brep import brep_box, BRepGeometry, BRepModel, prepare_brep_query
-from phydrax.geometry.brep._intersection_curve import IntersectionCurve
-from phydrax.geometry.brep._patches import (
+from phydrax import SpatialCoordinateContract
+from phydrax.geometry import PolygonTrimLoop, TrimDomain
+from phydrax.geometry.brep import (
+    brep_box,
+    BRepModel,
     BSplineCurve,
     BSplineSurfacePatch,
+    IntersectionCurve,
     OffsetSurface,
     PlanePatch,
+    prepare_brep_query,
 )
 from phydrax.interchange import (
     AdapterStatus,
@@ -29,20 +30,25 @@ from phydrax.interchange import (
     CadExportPolicy,
     CadImportPolicy,
     CadInterchangeError,
+    decode_iges_bytes,
     load_brep_archive,
+    read_iges,
+    ResourceLimits,
     save_brep_archive,
+    write_iges,
 )
-from phydrax.interchange._iges import decode_iges_bytes, read_iges, write_iges
 from phydrax.units import MILLIMETER
 from tests._support.cad_models import (
     CONTRACT,
     EXACT_VOLUMES,
+    geometry_of,
     native_assembly,
     native_empty_model,
     native_intersection_cap,
     native_rational_spline_face,
     native_repeated_assembly,
     native_solid,
+    solid_volumes,
     SOLIDS,
 )
 
@@ -56,16 +62,18 @@ LIMITS = ResourceLimits(
 )
 POLICY = CadImportPolicy(CONTRACT, LIMITS)
 
-
-def _volume(model: BRepModel) -> float:
-    return float(prepare_brep_query(model).measures.solid_volumes[0])
-
-
-def _geometry(model: BRepModel) -> BRepGeometry:
-    geometry = model.geometry
-    if geometry is None:
-        raise TypeError("Native CAD qualification requires exact geometry.")
-    return geometry
+# Preserve the pre-refactor IGES qualification envelopes: these are empirical
+# acceptance thresholds, not certified bounds. Source: this module's native
+# solid/assembly and independent OCCT measure comparisons.
+_VOLUME_RELATIVE_TOLERANCE = 2.0e-6
+_OCP_MEASURE_RELATIVE_TOLERANCE = 1.0e-7
+# Source: the independent IGES 5.3 section 4.30 planar-offset fixture below.
+_OFFSET_AREA_RELATIVE_TOLERANCE = 1.0e-10
+# For coordinates up to 2 m, 1e-14 allows about 45 float64 eps of roundoff
+# through the offset evaluation. Retain the fixture's pre-refactor envelope.
+_OFFSET_COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-14
+# At 3 mm, 1e-18 is below three float64 ulps; retain the unit-scaling envelope.
+_MILLIMETER_COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-18
 
 
 @pytest.mark.parametrize("name", SOLIDS)
@@ -76,14 +84,21 @@ def test_native_solid_retains_topology_and_pcurves(name: str, tmp_path: Path) ->
     result = read_iges(path, POLICY, trusted_root=tmp_path)
     assert result.model.topology.num_solids == model.topology.num_solids
     assert result.model.topology.num_faces == model.topology.num_faces
-    assert _geometry(result.model).occurrences == _geometry(model).occurrences
-    assert result.coverage.pcurves_honored == len(_geometry(model).pcurves)
+    assert geometry_of(result.model).occurrences == geometry_of(model).occurrences
+    assert result.coverage.pcurves_honored == len(geometry_of(model).pcurves)
     assert result.coverage.pcurves_fitted == 0
-    assert _volume(result.model) == pytest.approx(EXACT_VOLUMES[name], rel=2.0e-6)
+    assert float(solid_volumes(result.model)[0]) == pytest.approx(
+        EXACT_VOLUMES[name], rel=_VOLUME_RELATIVE_TOLERANCE
+    )
     assert not result.report.losses
 
 
-def test_rational_surface_and_curves_survive_native_roundtrip(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "edge", (0, 2), ids=("first-rational-edge", "opposite-rational-edge")
+)
+def test_rational_surface_and_curves_survive_native_roundtrip(
+    edge: int, tmp_path: Path
+) -> None:
     model = native_rational_spline_face()
     path = tmp_path / "rational.igs"
     write_iges(model, path)
@@ -93,22 +108,23 @@ def test_rational_surface_and_curves_survive_native_roundtrip(tmp_path: Path) ->
     if not isinstance(patch, BSplineSurfacePatch) or not isinstance(
         original, BSplineSurfacePatch
     ):
-        raise TypeError("The rational surface fixture must retain its spline family.")
+        raise TypeError(
+            "fixture.surface must retain its spline family; got another carrier"
+        )
     np.testing.assert_array_equal(patch.control_points, original.control_points)
     np.testing.assert_array_equal(patch.weights, original.weights)
     np.testing.assert_array_equal(patch.u_knots, original.u_knots)
     np.testing.assert_array_equal(patch.v_knots, original.v_knots)
     assert restored.coverage.pcurves_honored == 4
-    for edge in (0, 2):
-        restored_geometry, source_geometry = _geometry(restored.model), _geometry(model)
-        curve = restored_geometry.curves[restored_geometry.edge_curves[edge]]
-        source = source_geometry.curves[source_geometry.edge_curves[edge]]
-        if not isinstance(curve, BSplineCurve) or not isinstance(source, BSplineCurve):
-            raise TypeError(
-                "The rational boundary fixture must retain its spline family."
-            )
-        np.testing.assert_array_equal(curve.weights, source.weights)
-        np.testing.assert_array_equal(curve.control_points, source.control_points)
+    restored_geometry, source_geometry = geometry_of(restored.model), geometry_of(model)
+    curve = restored_geometry.curves[restored_geometry.edge_curves[edge]]
+    source = source_geometry.curves[source_geometry.edge_curves[edge]]
+    if not isinstance(curve, BSplineCurve) or not isinstance(source, BSplineCurve):
+        raise TypeError(
+            "fixture.boundary must retain its spline family; got another carrier"
+        )
+    np.testing.assert_array_equal(curve.weights, source.weights)
+    np.testing.assert_array_equal(curve.control_points, source.control_points)
 
 
 def test_native_assembly_retains_occurrence_paths_and_placements(tmp_path: Path) -> None:
@@ -116,12 +132,12 @@ def test_native_assembly_retains_occurrence_paths_and_placements(tmp_path: Path)
     path = tmp_path / "assembly.igs"
     write_iges(model, path)
     result = read_iges(path, POLICY, trusted_root=tmp_path)
-    assert _geometry(result.model).occurrences == _geometry(model).occurrences
+    assert geometry_of(result.model).occurrences == geometry_of(model).occurrences
     assert result.model.topology.num_solids == 2
     np.testing.assert_allclose(
         np.asarray(prepare_brep_query(result.model).measures.solid_volumes),
         np.asarray(prepare_brep_query(model).measures.solid_volumes),
-        rtol=2.0e-6,
+        rtol=_VOLUME_RELATIVE_TOLERANCE,
     )
 
 
@@ -133,18 +149,18 @@ def test_repeated_definition_retains_independent_nested_occurrences(
     write_iges(model, path)
     result = read_iges(path, POLICY, trusted_root=tmp_path)
     assert result.model.topology.num_solids == 1
-    assert _geometry(result.model).occurrences == _geometry(model).occurrences
+    assert geometry_of(result.model).occurrences == geometry_of(model).occurrences
     assert result.model.topology.num_faces == 6
     assert {
         record.path: (record.member_paths, record.child_paths)
-        for record in _geometry(result.model).assembly_containers
+        for record in geometry_of(result.model).assembly_containers
     } == {
         record.path: (record.member_paths, record.child_paths)
-        for record in _geometry(model).assembly_containers
+        for record in geometry_of(model).assembly_containers
     }
 
 
-def test_explicit_branch_approximation_emits_the_actual_coupled_geometry(
+def test_explicit_branch_approximation_emits_coupled_geometry(
     tmp_path: Path,
 ) -> None:
     model = native_intersection_cap()
@@ -161,22 +177,45 @@ def test_explicit_branch_approximation_emits_the_actual_coupled_geometry(
         model, path, policy=CadExportPolicy(intersection_approximation=fit)
     )
     assert result.report.status == AdapterStatus.DECLARED_LOSS
-    source_branch = _geometry(model).curves[0]
+    approximation = result.approximations[0]
+    loss = result.report.losses[0]
+    assert loss.path == f"intersection-curve {approximation.branch_id}"
+    assert approximation.approximation_id in loss.rationale
+    assert f"{approximation.continuous_evidence.distance_bound:.17g}" in loss.rationale
+    assert f"{approximation.continuous_evidence.parameter_bound:.17g}" in loss.rationale
+    assert (
+        f"{approximation.continuous_evidence.first_correspondence_bound:.17g}"
+        in loss.rationale
+    )
+    assert (
+        f"{approximation.continuous_evidence.second_correspondence_bound:.17g}"
+        in loss.rationale
+    )
+    assert len(result.report.waivers) == 1
+    assert result.report.waivers[0].loss_id == loss.loss_id
+    source_branch = geometry_of(model).curves[0]
     if not isinstance(source_branch, IntersectionCurve):
-        raise TypeError("The cap fixture must retain its coupled intersection source.")
+        raise TypeError(
+            "fixture.cap_curve must be a coupled intersection; got another carrier"
+        )
     assert result.approximations[0].branch_id == source_branch.branch_id
     restored = read_iges(path, POLICY, trusted_root=tmp_path).model
-    restored_geometry = _geometry(restored)
+    restored_geometry = geometry_of(restored)
     edge = restored_geometry.curves[restored_geometry.edge_curves[0]]
     if not isinstance(edge, BSplineCurve):
-        raise TypeError("Explicit branch approximation must emit a spline carrier.")
+        raise TypeError("iges.approximated_edge must be a spline; got another carrier")
     interval = np.asarray(restored_geometry.edge_ranges)[0]
     parameters = jnp.linspace(float(interval[0]), float(interval[1]), 257)
     points = np.asarray(edge.evaluate(parameters))
+    # Radial distance is 1-Lipschitz. Two fit tolerances retain the pre-refactor
+    # sampled acceptance envelope for fitting plus IGES decimal serialization.
+    sample_tolerance = 2.0 * fit.tolerance
     np.testing.assert_allclose(
-        np.linalg.norm(points[:, :2], axis=1), np.sqrt(1.0 - 0.3**2), atol=2.0e-7
+        np.linalg.norm(points[:, :2], axis=1),
+        np.sqrt(1.0 - 0.3**2),
+        atol=sample_tolerance,
     )
-    np.testing.assert_allclose(points[:, 2], 0.3, atol=2.0e-7)
+    np.testing.assert_allclose(points[:, 2], 0.3, atol=sample_tolerance)
 
 
 def test_declared_iges_units_scale_geometry_and_preserve_pcurves(tmp_path: Path) -> None:
@@ -188,13 +227,15 @@ def test_declared_iges_units_scale_geometry_and_preserve_pcurves(tmp_path: Path)
     result = read_iges(path, POLICY, trusted_root=tmp_path)
     assert result.source_length_unit_meters == 1.0e-3
     np.testing.assert_allclose(
-        np.max(np.asarray(_geometry(result.model).vertex_points), axis=0),
+        np.max(np.asarray(geometry_of(result.model).vertex_points), axis=0),
         [1.0e-3, 2.0e-3, 3.0e-3],
         rtol=0.0,
-        atol=1.0e-18,
+        atol=_MILLIMETER_COORDINATE_ABSOLUTE_TOLERANCE,
     )
-    assert result.coverage.pcurves_honored == len(_geometry(model).pcurves)
-    assert _volume(result.model) == pytest.approx(6.0e-9, rel=2.0e-6)
+    assert result.coverage.pcurves_honored == len(geometry_of(model).pcurves)
+    assert float(solid_volumes(result.model)[0]) == pytest.approx(
+        6.0e-9, rel=_VOLUME_RELATIVE_TOLERANCE
+    )
 
 
 def test_empty_native_model_has_no_synthetic_geometry_or_occurrences(
@@ -204,11 +245,11 @@ def test_empty_native_model_has_no_synthetic_geometry_or_occurrences(
     path = tmp_path / "empty.igs"
     write_iges(model, path)
     result = read_iges(path, POLICY, trusted_root=tmp_path)
-    assert _geometry(result.model).geometry_id == _geometry(model).geometry_id
+    assert geometry_of(result.model).geometry_id == geometry_of(model).geometry_id
     assert result.model.topology.num_solids == 0
     assert result.model.topology.num_faces == 0
-    assert _geometry(result.model).occurrences == ()
-    assert np.asarray(_geometry(result.model).vertex_points).shape == (0, 3)
+    assert geometry_of(result.model).occurrences == ()
+    assert np.asarray(geometry_of(result.model).vertex_points).shape == (0, 3)
     assert not result.report.losses
 
 
@@ -222,51 +263,52 @@ def test_native_writer_is_deterministic(tmp_path: Path) -> None:
     )
 
 
-def test_decoder_enforces_byte_entity_and_depth_limits(tmp_path: Path) -> None:
-    path = tmp_path / "box.igs"
-    write_iges(native_solid("box"), path)
-    data = path.read_bytes()
-    for limits in (
+@pytest.mark.parametrize(
+    "limits",
+    (
         replace(LIMITS, max_bytes=128),
         replace(LIMITS, max_nodes=1),
         replace(LIMITS, max_depth=1),
-    ):
-        with pytest.raises(CadInterchangeError) as refused:
-            decode_iges_bytes(data, CadImportPolicy(CONTRACT, limits))
-        assert refused.value.refusal.reason == "limit"
+    ),
+    ids=("byte-limit", "entity-limit", "reference-depth-limit"),
+)
+def test_decoder_enforces_byte_entity_and_depth_limits(
+    limits: ResourceLimits, tmp_path: Path
+) -> None:
+    path = tmp_path / "box.igs"
+    write_iges(native_solid("box"), path)
+    data = path.read_bytes()
+    with pytest.raises(CadInterchangeError) as refused:
+        decode_iges_bytes(data, CadImportPolicy(CONTRACT, limits))
+    assert refused.value.refusal.reason == "limit"
 
 
-def test_authoritative_trim_is_never_replaced_by_stale_topology(tmp_path: Path) -> None:
+def test_declared_trim_refuses_stale_topology(tmp_path: Path) -> None:
     source = native_solid("box")
-    fields = {
-        name: getattr(source, name)
-        for name in (
-            "patches",
-            "parameter_bounds",
-            "orientation",
-            "trim_domains",
-            "topology",
-            "coordinate_contract",
-            "mesh_vertices",
-            "mesh_faces",
-            "triangle_face_ids",
-            "triangle_parameters",
-            "physical_tags",
-            "report",
-            "geometry",
-            "tessellation_deviation_bounds",
-            "tessellation_normal_bounds",
-            "mesh_vertex_source_dimensions",
-            "mesh_vertex_source_indices",
-            "mesh_vertex_parameters",
-        )
-    }
     domains = list(source.trim_domains)
     domains[0] = TrimDomain(
         PolygonTrimLoop([[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]])
     )
-    fields["trim_domains"] = tuple(domains)
-    model = BRepModel(**fields)
+    model = BRepModel(
+        patches=source.patches,
+        parameter_bounds=source.parameter_bounds,
+        orientation=source.orientation,
+        trim_domains=tuple(domains),
+        topology=source.topology,
+        coordinate_contract=source.coordinate_contract,
+        mesh_vertices=source.mesh_vertices,
+        mesh_faces=source.mesh_faces,
+        triangle_face_ids=source.triangle_face_ids,
+        triangle_parameters=source.triangle_parameters,
+        physical_tags=source.physical_tags,
+        report=source.report,
+        geometry=source.geometry,
+        tessellation_deviation_bounds=source.tessellation_deviation_bounds,
+        tessellation_normal_bounds=source.tessellation_normal_bounds,
+        mesh_vertex_source_dimensions=source.mesh_vertex_source_dimensions,
+        mesh_vertex_source_indices=source.mesh_vertex_source_indices,
+        mesh_vertex_parameters=source.mesh_vertex_parameters,
+    )
     path = tmp_path / "stale.igs"
     with pytest.raises(CadInterchangeError) as refused:
         write_iges(model, path)
@@ -275,10 +317,17 @@ def test_authoritative_trim_is_never_replaced_by_stale_topology(tmp_path: Path) 
     assert not path.exists()
 
 
-def test_export_budget_failure_leaves_no_destination(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "policy",
+    (CadExportPolicy(maximum_entities=2), CadExportPolicy(maximum_bytes=128)),
+    ids=("entity-limit", "byte-limit"),
+)
+def test_export_budget_failure_leaves_no_destination(
+    policy: CadExportPolicy, tmp_path: Path
+) -> None:
     path = tmp_path / "too-large.igs"
     with pytest.raises(CadInterchangeError) as refused:
-        write_iges(native_solid("box"), path, policy=CadExportPolicy(maximum_entities=2))
+        write_iges(native_solid("box"), path, policy=policy)
     assert refused.value.refusal.reason == "limit"
     assert not path.exists()
 
@@ -321,7 +370,7 @@ def test_independent_ocp_fixture_decodes_without_ocp_algorithms(
     from OCP.IGESControl import IGESControl_Controller, IGESControl_Writer
 
     # Keep OCCT's native millimeters for both model-space and parameter-space
-    # lengths; importing converts the complete source to the SI contract.
+    # lengths; importing converts the source to the SI contract.
     factories = {
         "box": lambda: BRepPrimAPI_MakeBox(1000.0, 2000.0, 3000.0).Shape(),
         "cylinder": lambda: BRepPrimAPI_MakeCylinder(1000.0, 2000.0).Shape(),
@@ -346,7 +395,7 @@ def test_independent_ocp_fixture_decodes_without_ocp_algorithms(
     ) -> object:
         if name == "OCP" or name.startswith("OCP."):
             raise AssertionError(
-                "Native IGES decoding invoked the independent fixture producer."
+                "iges.decoder.dependencies must exclude OCP; got an OCP import"
             )
         return original_import(name, globals, locals, fromlist, level)
 
@@ -354,7 +403,9 @@ def test_independent_ocp_fixture_decodes_without_ocp_algorithms(
     result = decode_iges_bytes(data, POLICY)
     assert result.model.topology.num_solids == 1
     assert result.coverage.pcurves_fitted == 0
-    assert _volume(result.model) == pytest.approx(EXACT_VOLUMES[kind], rel=2.0e-6)
+    assert float(solid_volumes(result.model)[0]) == pytest.approx(
+        EXACT_VOLUMES[kind], rel=_VOLUME_RELATIVE_TOLERANCE
+    )
 
 
 def test_revolution_export_uses_standard_parameter_space_for_independent_ocp(
@@ -415,10 +466,10 @@ def test_revolution_export_uses_standard_parameter_space_for_independent_ocp(
     BRepGProp.VolumeProperties_s(shape, volume, 1.0e-10)
     BRepGProp.SurfaceProperties_s(shape, area, 1.0e-10)
     assert volume.Mass() * 1.0e-9 == pytest.approx(
-        2.0 * np.pi * radius * np.pi * a * b, rel=1.0e-7
+        2.0 * np.pi * radius * np.pi * a * b, rel=_OCP_MEASURE_RELATIVE_TOLERANCE
     )
     assert area.Mass() * 1.0e-6 == pytest.approx(
-        2.0 * np.pi * radius * perimeter, rel=1.0e-7
+        2.0 * np.pi * radius * perimeter, rel=_OCP_MEASURE_RELATIVE_TOLERANCE
     )
 
 
@@ -489,13 +540,15 @@ def test_independent_offset_surface_source_retains_tree_without_fitted_pcurves(
         patch.evaluate(jnp.asarray([[0.2, 0.7], [1.7, 0.2]], dtype=jnp.float64) * factor),
         np.asarray([[0.2, 0.7, 0.75], [1.7, 0.2, 0.75]]) * factor,
         rtol=0.0,
-        atol=1e-14,
+        atol=_OFFSET_COORDINATE_ABSOLUTE_TOLERANCE,
     )
     assert (
         imported.model.topology.num_faces == 1 and imported.model.topology.num_edges == 4
     )
     area = prepare_brep_query(imported.model).measures.face_areas[0]
-    assert float(area) == pytest.approx(2.0 * factor**2, rel=1e-10)
+    assert float(area) == pytest.approx(
+        2.0 * factor**2, rel=_OFFSET_AREA_RELATIVE_TOLERANCE
+    )
     receipt = save_brep_archive(imported.model, tmp_path / "independent-offset.phx")
     restored = load_brep_archive(receipt.path)
     assert restored.model_id == imported.model.model_id == receipt.model_id
@@ -606,3 +659,34 @@ def test_independent_spline_surface_refuses_invalid_declared_domain_with_provena
     manifest = refused.value.resource_manifest
     assert manifest is not None
     assert manifest.size_bytes == len(data)
+
+
+def test_file_and_byte_decoders_preserve_geometry_and_report(tmp_path: Path) -> None:
+    path = tmp_path / "dispatch.igs"
+    write_iges(native_repeated_assembly(), path)
+    from_file = read_iges(path, POLICY, trusted_root=tmp_path)
+    from_bytes = decode_iges_bytes(path.read_bytes(), POLICY, source_path=str(path))
+    assert from_file.model.model_id == from_bytes.model.model_id
+    assert from_file.report.report_id == from_bytes.report.report_id
+    assert from_file.coverage == from_bytes.coverage
+    assert from_file.provenance == from_bytes.provenance
+    assert from_file.source_digest == from_bytes.source_digest
+    assert (
+        from_file.resource_manifest.size_bytes == from_bytes.resource_manifest.size_bytes
+    )
+
+
+def test_export_report_preserves_unit_and_policy_evidence(tmp_path: Path) -> None:
+    model = native_solid("box")
+    result = write_iges(model, tmp_path / "report.igs")
+    assert result.report.target_id == result.receipt.receipt_id
+    assert result.report.source_id == model.model_id
+    assert result.report.stage == "adapter"
+    assert result.report.coordinate_mapping == (
+        f"IGES unit of {model.coordinate_contract.length_unit.symbol}",
+    )
+    assert len(result.report.assumptions) == 1
+    assert result.report.target_profile.qualifiers == (("profile", "iges-5.3"),)
+    assert result.report.status == AdapterStatus.LOSSLESS
+    assert not result.report.losses
+    assert not result.report.waivers

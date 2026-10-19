@@ -8,28 +8,40 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import product
-from math import isfinite
-from typing import final, Literal, NamedTuple, TYPE_CHECKING
+from math import factorial, isfinite
+from typing import assert_never, final, Literal, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
-from ... import ein
+import phydrax.discretization._mapped_geometry_measure as mapped_measure_owner
+import phydrax.discretization._periodic_exact as periodic_exact_owner
+import phydrax.discretization._source_geometry_realization as source_realization_owner
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
+from phydrax.geometry._rational import fraction_endpoint
+
+from ... import ein, geometry as imported_geometry, linalg as imported_linalg
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._cubature import cubature_rule_data
+from ..._resource_ticket import HostBatchTicket
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier
+from ...exterior import (
+    _algebra as imported_exterior__algebra,
+    _form_type as imported_exterior__form_type,
+)
 from ...linalg import (
     AbstractLinearOperator,
     adjoint,
     ArraySpace,
-    compound_matrix,
     DenseLinearOperator,
+    determinant_small_linear,
     estimate_condition_number,
     FactorizationPolicy,
     factorize,
@@ -40,13 +52,15 @@ from ...linalg import (
     PreparedFactorization,
     PreparedSparseFactorization,
     refresh_sparse_factorization,
+    SmallLinearSolvePlan,
     SparseFactorizationPlan,
     SparseFactorizationPolicy,
     SparseFactorizationStatus,
     SpectralEstimate,
     transpose,
 )
-from ...linalg._operators import _generic_adjoint, _materialize_by_basis
+from ...linalg._operators import generic_adjoint, materialize_by_basis
+from ...meshing import _measurements as imported_meshing__measurements
 from ...sparse import (
     EdgeRelation,
     linear_apply,
@@ -54,7 +68,14 @@ from ...sparse import (
     RowRelation,
     SparseLinearMap,
 )
-from ...typing import checked, parse
+from ...typing import checked, Dim, Float, parse, validate
+from .. import (
+    _cell_geometry as imported_cell_geometry,
+    _cell_geometry_validity as imported_cell_geometry_validity,
+    _coordinate_enclosure as imported_coordinate_enclosure,
+    _nested_reference as imported_nested_reference,
+    _reference_cell as imported_reference_cell,
+)
 from .._cell_complex import (
     PolygonalConnectivity,
     PolyhedralConnectivity,
@@ -62,22 +83,36 @@ from .._cell_complex import (
 )
 from .._cell_geometry import (
     BarycentricCellGeometryElement,
-    CellGeometryElement,
     CellGeometrySpec,
     coordinate_lagrange_element,
     RestrictedCellGeometryElement,
+    ScalarCoordinateElement,
 )
-from .._cell_geometry_transfer import (
-    _PreparedMappedSqrtIntegral,
-    SourceGeometryRealization,
+from .._cell_geometry_transition_types import (
+    CellGeometryTransition,
+    CellGeometryTransitionError,
+    NestedReferenceWitnesses,
 )
 from .._cell_mesh import CellMesh
-from .._coordinate_enclosure import CoordinateSourceBank, Expression, Polynomial
-from .._nested_reference import (
-    _NestedReferencePair,
-    _PolynomialReferencePair,
-    _rooted_nested_reference_pairs,
+from .._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
 )
+from .._coordinate_enclosure import (
+    coordinate_estimate_bank,
+    coordinate_polynomials_estimate,
+    CoordinateSourceBank,
+    Expression,
+    Polynomial,
+)
+from .._exact_algebraic_geometry import rational_coefficient
+from .._mapped_geometry_measure import (
+    mapped_root_identities,
+    PreparedMappedSqrtIntegral,
+)
+from .._nested_reference import rooted_nested_reference_pairs
+from .._nested_reference_types import NestedReferencePair, PolynomialReferencePair
+from .._source_geometry_realization import SourceGeometryRealization
 from .._spaces import DiscreteFieldSpace
 from .._topology_epoch import (
     FieldEpochTransition,
@@ -90,33 +125,34 @@ from .._transfer import (
     TransferProperties,
     TransferSemantics,
 )
+from . import (
+    _mapped_form_transfer as imported_mapped_form_transfer,
+    _reference as imported_reference,
+)
+from ._assembly import tetrahedral_face_vertices
 from ._generic import (
-    _tetrahedral_face_vertices,
     FiniteElementDiscretization,
+    FiniteElementDofMap,
     FiniteElementTransferDiscretization,
 )
-from ._reference import FiniteElementSpec
 
 
 if TYPE_CHECKING:
-    from ...geometry import PreparedCommonRefinement
     from ...meshing._measurements import NativeExecutionRecord
-    from .._cell_geometry_transfer import CellGeometryTransition, NestedReferenceWitnesses
 
 
 # Invariant claims are certified in the coefficient dtype up to this many ulps of
 # the local row scale.
-_CLAIM_ULPS = 64.0
+CLAIM_ULPS = 64.0
 
 _SIMPLEX_KINDS = {2: "triangle", 3: "tetrahedron"}
+_AFFINE_MEASURE_PLANS = {
+    dimension: SmallLinearSolvePlan(dimension) for dimension in _SIMPLEX_KINDS
+}
 
-type _MappedDgCell = tuple[FiniteElementSpec, NDArray[np.int64], tuple[Polynomial, ...]]
+type MappedDgCell = tuple[FiniteElementSpec, NDArray[np.int64], tuple[Polynomial, ...]]
 type _NestedFiniteElementDiscretization = (
     FiniteElementDiscretization | FiniteElementTransferDiscretization
-)
-_NESTED_SPACE_TYPES = (
-    FiniteElementDiscretization,
-    FiniteElementTransferDiscretization,
 )
 type _CompatibleFieldBinding = tuple[
     str,
@@ -133,12 +169,14 @@ def _compatible_field_binding(
     discretization: _NestedFiniteElementDiscretization, field_name: str, /
 ) -> _CompatibleFieldBinding:
     name = canonical_identifier(field_name, "field_name")
-    index = discretization._field_index(name)
+    index = discretization.field_index(name)
     field = discretization.construction_plan.fields[index]
     dof_map = discretization.dof_maps[index]
     space = discretization.field_spaces[index].vector_space
     if not isinstance(space, ArraySpace):
-        raise TypeError("Compatible transfer fields require ArraySpace coefficients.")
+        raise TypeError(
+            "compatible_field_binding.configuration must provide ArraySpace coefficients; got Compatible transfer fields require ArraySpace coefficients."
+        )
     return (
         name,
         index,
@@ -159,7 +197,7 @@ class _MappedNestedCompatiblePreparation:
     source_geometry_id: str
     target_geometry_id: str
     bindings: tuple[tuple[_CompatibleFieldBinding, _CompatibleFieldBinding], ...]
-    pairs: tuple[_NestedReferencePair | _PolynomialReferencePair, ...]
+    pairs: tuple[NestedReferencePair | PolynomialReferencePair, ...]
     geometry_bound: float
 
     def require(
@@ -185,8 +223,9 @@ class _MappedNestedCompatiblePreparation:
             or binding not in self.bindings
         ):
             raise ValueError(
-                "Compatible reference preparation belongs to another mesh revision, "
-                "coordinate map, ordered field role, basis, or DOF orientation."
+                "_MappedNestedCompatiblePreparation.binding must match the prepared mesh revisions, coordinate maps, and field bindings; got "
+                f"source=({source.prepared_id!r}, {source.mesh.numeric_version!r}, {_coordinate_geometry_id(source_geometry)!r}), "
+                f"target=({target.prepared_id!r}, {target.mesh.numeric_version!r}, {_coordinate_geometry_id(target_geometry)!r}), binding={binding!r}"
             )
 
 
@@ -195,14 +234,16 @@ def _simplex_cubature_kind(kind: str, /) -> Literal["triangle", "tetrahedron"]:
         return "triangle"
     if kind == "tetrahedron":
         return "tetrahedron"
-    raise ValueError(f"Simplex finite-element cubature does not support {kind!r}.")
+    raise ValueError(
+        f"simplex_cubature_kind.kind must support the declared value; got Simplex finite-element cubature does not support {kind!r}."
+    )
 
 
 def _claim_tolerance(dtype: np.dtype, scale: np.ndarray, /) -> np.ndarray:
-    return _CLAIM_ULPS * np.finfo(dtype).eps * np.maximum(scale, 1.0)
+    return CLAIM_ULPS * np.finfo(dtype).eps * np.maximum(scale, 1.0)
 
 
-def _measure_defect_bound(
+def measure_defect_bound(
     dtype: np.dtype,
     action_condition: float,
     source_mass: np.ndarray,
@@ -216,17 +257,31 @@ def _measure_defect_bound(
     measures of 1e-9 m^3 are as conservative as those of 1 m^3).
     """
     total = np.sum(np.abs(target_mass)) + np.sum(np.abs(source_mass))
-    return float(action_condition * _CLAIM_ULPS * np.finfo(dtype).eps * total)
+    return float(action_condition * CLAIM_ULPS * np.finfo(dtype).eps * total)
 
 
 def _block_action(action: Callable[[Array], Array], values: ArrayLike, /) -> Array:
-    """Apply a canonical-column action to ``(dofs, *payload)`` values."""
+    """Apply a declared-column action to ``(dofs, *payload)`` values."""
 
     array = jnp.asarray(values)
     if array.ndim == 0:
-        raise ValueError("Transfer inputs require a leading DOF axis.")
+        raise ValueError(
+            "block_action.configuration must provide a leading DOF axis; got Transfer inputs require a leading DOF axis."
+        )
     block = action(array.reshape((array.shape[0], -1)))
     return block.reshape((block.shape[0],) + array.shape[1:])
+
+
+class _TransferSourceDofDim(Dim):
+    """Source coefficient rows used to certify a topology transfer."""
+
+
+class _TransferTargetDofDim(Dim):
+    """Target coefficient rows used to certify a topology transfer."""
+
+
+class _TransferPhysicalDim(Dim):
+    """Physical coordinate components shared by a transfer's endpoints."""
 
 
 class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
@@ -245,8 +300,12 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
     sparse coefficients only, linear preservation from supplied coordinates, and
     conservation from supplied DOF measures. Tolerances scale with
     ``action_condition``, the relative roundoff amplification of ``primal`` actions
-    (for example the condition estimate of an inner mass solve).
+    (for example the condition estimate of an inner mass solve). Coordinates and
+    measures needed by declared claims remain dynamic leaves so stored-field
+    reconstruction can certify those claims again.
     """
+
+    __strict_contract__ = True
 
     primal: SparseLinearMap | AbstractLinearOperator
     hilbert_adjoint: SparseLinearMap | AbstractLinearOperator | None
@@ -259,7 +318,39 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
     action_condition: float = eqx.field(static=True)
     semantics: TransferSemantics = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
+    source_coordinates: Float[_TransferSourceDofDim, _TransferPhysicalDim] | None
+    target_coordinates: Float[_TransferTargetDofDim, _TransferPhysicalDim] | None
+    source_measures: Float[_TransferSourceDofDim] | None
+    target_measures: Float[_TransferTargetDofDim] | None
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[FiniteElementTopologyTransfer],
+        value: FiniteElementTopologyTransfer,
+        /,
+    ) -> FiniteElementTopologyTransfer:
+        """Reconstruct the transfer and recertify its retained invariant inputs."""
+        rebuilt = cls(
+            value.primal,
+            value.source_topology_id,
+            value.target_topology_id,
+            hilbert_adjoint=value.hilbert_adjoint,
+            preserves_constants=value.preserves_constants,
+            preserves_linear=value.preserves_linear,
+            conservative=value.conservative,
+            positivity_preserving=value.positivity_preserving,
+            action_condition=value.action_condition,
+            semantics=value.semantics,
+            source_coordinates=value.source_coordinates,
+            target_coordinates=value.target_coordinates,
+            source_measures=value.source_measures,
+            target_measures=value.target_measures,
+        )
+        validate(rebuilt)
+        return rebuilt
+
+    @checked
     def __init__(
         self,
         primal: SparseLinearMap | AbstractLinearOperator,
@@ -279,8 +370,7 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
         source_measures: ArrayLike | None = None,
         target_measures: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(primal, AbstractLinearOperator):
-            raise TypeError("primal must be a SparseLinearMap or linear operator.")
+
         source_space = primal.source
         target_space = primal.target
         if (
@@ -291,22 +381,23 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
             or len(target_space.shape) != 1
         ):
             raise ValueError(
-                "Topology transfer primal must be one unbatched target-by-source map."
+                "FiniteElementTopologyTransfer.primal must be one unbatched target-by-source map; got Topology transfer primal must be one unbatched target-by-source map."
             )
         source_id = canonical_identifier(source_topology_id, "source_topology_id")
         target_id = canonical_identifier(target_topology_id, "target_topology_id")
-        if hilbert_adjoint is not None and not isinstance(
-            hilbert_adjoint, AbstractLinearOperator
-        ):
-            raise TypeError("hilbert_adjoint must be a linear operator or None.")
+
         if hilbert_adjoint is not None and (
             hilbert_adjoint.source.size != primal.target.size
             or hilbert_adjoint.target.size != primal.source.size
         ):
-            raise ValueError("hilbert_adjoint must map target DOFs back to source DOFs.")
+            raise ValueError(
+                "FiniteElementTopologyTransfer.hilbert_adjoint must map target DOFs back to source DOFs; got hilbert_adjoint must map target DOFs back to source DOFs."
+            )
         condition = float(action_condition)
         if not isfinite(condition) or condition < 1.0:
-            raise ValueError("action_condition must be finite and at least one.")
+            raise ValueError(
+                "FiniteElementTopologyTransfer.action_condition must be finite and at least one; got action_condition must be finite and at least one."
+            )
         semantics_ = parse(semantics, TransferSemantics, "semantics")
         claims = tuple(
             bool(value)
@@ -317,15 +408,35 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
                 positivity_preserving,
             )
         )
+        source_coordinates_ = (
+            None
+            if not claims[1] or source_coordinates is None
+            else jnp.asarray(source_coordinates, dtype=source_space.dtype)
+        )
+        target_coordinates_ = (
+            None
+            if not claims[1] or target_coordinates is None
+            else jnp.asarray(target_coordinates, dtype=source_space.dtype)
+        )
+        source_measures_ = (
+            None
+            if not claims[2] or source_measures is None
+            else jnp.asarray(source_measures, dtype=source_space.dtype)
+        )
+        target_measures_ = (
+            None
+            if not claims[2] or target_measures is None
+            else jnp.asarray(target_measures, dtype=source_space.dtype)
+        )
         _certify_claims(
             primal,
             source_space,
             *claims,
             action_condition=condition,
-            source_coordinates=source_coordinates,
-            target_coordinates=target_coordinates,
-            source_measures=source_measures,
-            target_measures=target_measures,
+            source_coordinates=source_coordinates_,
+            target_coordinates=target_coordinates_,
+            source_measures=source_measures_,
+            target_measures=target_measures_,
         )
         self.primal = primal
         self.hilbert_adjoint = hilbert_adjoint
@@ -339,6 +450,10 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
         ) = claims
         self.action_condition = condition
         self.semantics = semantics_
+        self.source_coordinates = source_coordinates_
+        self.target_coordinates = target_coordinates_
+        self.source_measures = source_measures_
+        self.target_measures = target_measures_
         self.transfer_id = canonical_fingerprint(
             {
                 "kind": "finite-element-topology-transfer",
@@ -371,13 +486,26 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
     def apply(self, values: ArrayLike, /) -> Array:
         """Transfer source coefficients, preserving trailing payload axes."""
 
-        return _block_action(self.primal.mv_block, values)
+        match self.primal:
+            case SparseLinearMap() as primal:
+                return _mixed_mass_action(
+                    primal.relation, primal.coefficients, jnp.asarray(values)
+                )
+            case primal:
+                return _block_action(primal.mv_block, values)
 
     def pullback(self, dual: ArrayLike, /) -> Array:
         """Pull target duals back through the algebraic transpose of the primal map."""
 
-        return _block_action(self.primal.transpose_mv_block, dual)
+        match self.primal:
+            case SparseLinearMap() as primal:
+                return _mixed_mass_transpose_action(
+                    primal.relation, primal.coefficients, jnp.asarray(dual)
+                )
+            case primal:
+                return _block_action(primal.transpose_mv_block, dual)
 
+    @checked
     def epoch_transition(
         self,
         source_field: DiscreteFieldSpace,
@@ -402,33 +530,35 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
         bound the transition carries into its content tolerance. ``geometry`` binds
         the source/target
         coordinate maps the transfer was prepared on; a ``nested-interpolation``
-        transfer requires its exact-restriction binding.
+        transfer requires its algebraic-restriction binding.
         """
 
-        if not isinstance(source_epoch, TopologyEpoch) or not isinstance(
-            target_epoch, TopologyEpoch
-        ):
-            raise TypeError("Epoch transitions need TopologyEpoch endpoints.")
         if (
             source_epoch.topology_id != self.source_topology_id
             or target_epoch.topology_id != self.target_topology_id
         ):
-            raise ValueError("Topology epochs do not realize this transfer's topologies.")
+            raise ValueError(
+                "FiniteElementTopologyTransfer.epoch_transition.configuration must realize this transfer's topologies; got Topology epochs do not realize this transfer's topologies."
+            )
         if not self.conservative:
             raise ValueError(
-                "Only a certified conservative transfer forms a topology transition."
+                "FiniteElementTopologyTransfer.epoch_transition.configuration must certify conservation before binding a topology transition; got Only a certified conservative transfer forms a topology transition."
             )
         source_space = self.primal.source
         if not isinstance(source_space, ArraySpace):
-            raise RuntimeError("Topology transfer primal lost its ArraySpace source.")
+            raise RuntimeError(
+                "FiniteElementTopologyTransfer.epoch_transition.configuration must have an ArraySpace source; got Topology transfer primal lost its ArraySpace source."
+            )
         dtype = np.dtype(source_space.dtype)
         source_mass = np.asarray(source_measures, dtype=dtype)
         target_mass = np.asarray(target_measures, dtype=dtype)
         if source_mass.shape != (self.source_size,) or target_mass.shape != (
             self.target_size,
         ):
-            raise ValueError("Transition measures must align with source/target DOFs.")
-        bound = _measure_defect_bound(
+            raise ValueError(
+                "FiniteElementTopologyTransfer.epoch_transition.configuration must align with source/target DOFs; got Transition measures must align with source/target DOFs."
+            )
+        bound = measure_defect_bound(
             dtype, self.action_condition, source_mass, target_mass
         )
         pulled = np.asarray(
@@ -436,8 +566,8 @@ class FiniteElementTopologyTransfer(StrictModule, NonTrainableState):
         )
         if np.any(np.abs(pulled - source_mass) > bound):
             raise ValueError(
-                "Transition measures are not conserved by this transfer within its "
-                "certified bound."
+                "FiniteElementTopologyTransfer.epoch_transition.measures must conserve source measures within the certified bound; got "
+                f"defect={np.abs(pulled - source_mass)!r}, bound={bound!r}"
             )
         exact_on = ("constants", "linears") if self.preserves_linear else ("constants",)
         transfer = FieldTransfer(
@@ -482,27 +612,38 @@ def _row_scales(
     """Row sums and absolute row sums (action magnitude without coefficients)."""
 
     ones = jnp.ones((primal.source.size,), dtype=dtype)
-    row_scale = np.asarray(_block_action(primal.mv_block, ones), dtype=dtype)
+    row_scale = np.asarray(
+        _mixed_mass_action(primal.relation, primal.coefficients, ones)
+        if isinstance(primal, SparseLinearMap)
+        else _block_action(primal.mv_block, ones),
+        dtype=dtype,
+    )
     if not isinstance(primal, SparseLinearMap):
         if not np.all(np.isfinite(row_scale)):
-            raise ValueError("Topology transfer actions must be finite.")
+            raise ValueError(
+                "row_scales.configuration must be finite; got Topology transfer actions must be finite."
+            )
         if positivity_preserving:
             raise ValueError(
-                "Positivity preservation is certified only from sparse coefficients."
+                "row_scales.configuration must provide sparse coefficients for positivity certification; got Positivity preservation is certified only from sparse coefficients."
             )
         return row_scale, np.abs(row_scale)
     valid = np.asarray(primal.relation.valid, dtype=np.bool_)
     coefficients = np.where(valid, np.asarray(primal.coefficients), 0.0)
     if not np.all(np.isfinite(coefficients)):
-        raise ValueError("Topology transfer coefficients must be finite.")
+        raise ValueError(
+            "row_scales.configuration must be finite; got Topology transfer coefficients must be finite."
+        )
     if positivity_preserving and np.any(coefficients < 0.0):
-        raise ValueError("Transfer claims positivity preservation with negative weights.")
+        raise ValueError(
+            "row_scales.configuration must have nonnegative weights for positivity preservation; got Transfer claims positivity preservation with negative weights."
+        )
     absolute_scale = np.asarray(
-        SparseLinearMap(
+        _mixed_mass_action(
             primal.relation,
-            jnp.abs(primal.coefficients),
-            operator_id=f"{primal.operator_id}:absolute",
-        ).mv(ones),
+            np.abs(np.asarray(primal.coefficients)),
+            ones,
+        ),
         dtype=dtype,
     )
     return row_scale, absolute_scale
@@ -533,12 +674,12 @@ def _certify_claims(
 
     if preserves_constants and exceeds(row_scale - 1.0, absolute_scale):
         raise ValueError(
-            "Transfer claims constant preservation but rows do not sum to one."
+            "certify_claims.configuration must sum to one; got Transfer claims constant preservation but rows do not sum to one."
         )
     if preserves_linear:
         if source_coordinates is None or target_coordinates is None:
             raise ValueError(
-                "Linear preservation requires source and target coordinates to certify."
+                "certify_claims.configuration must provide source and target coordinates to certify; got Linear preservation requires source and target coordinates to certify."
             )
         source = np.asarray(source_coordinates, dtype=dtype)
         target = np.asarray(target_coordinates, dtype=dtype)
@@ -548,28 +689,49 @@ def _certify_claims(
             or source.shape[0] != primal.source.size
             or target.shape != (primal.target.size, source.shape[1])
         ):
-            raise ValueError("Transfer coordinates must align with source/target DOFs.")
-        mapped = np.asarray(_block_action(primal.mv_block, source), dtype=dtype)
+            raise ValueError(
+                "certify_claims.configuration must align with source/target DOFs; got Transfer coordinates must align with source/target DOFs."
+            )
+        mapped = np.asarray(
+            _mixed_mass_action(primal.relation, primal.coefficients, source)
+            if isinstance(primal, SparseLinearMap)
+            else _block_action(primal.mv_block, source),
+            dtype=dtype,
+        )
         scale = absolute_scale[:, None] * np.max(np.abs(source), initial=1.0)
         if exceeds(mapped - target, scale):
-            raise ValueError("Transfer claims linear preservation but moves coordinates.")
+            raise ValueError(
+                "certify_claims.configuration must preserve source coordinates for a linear-preservation claim; got Transfer claims linear preservation but moves coordinates."
+            )
     if conservative:
         if source_measures is None or target_measures is None:
-            raise ValueError("Conservation requires source and target DOF measures.")
+            raise ValueError(
+                "certify_claims.configuration must provide source and target DOF measures; got Conservation requires source and target DOF measures."
+            )
         source_mass = np.asarray(source_measures, dtype=dtype)
         target_mass = np.asarray(target_measures, dtype=dtype)
         if source_mass.shape != (primal.source.size,) or target_mass.shape != (
             primal.target.size,
         ):
-            raise ValueError("Transfer measures must align with source/target DOFs.")
+            raise ValueError(
+                "certify_claims.configuration must align with source/target DOFs; got Transfer measures must align with source/target DOFs."
+            )
         pulled = np.asarray(
-            _block_action(primal.transpose_mv_block, target_mass), dtype=dtype
+            _mixed_mass_transpose_action(
+                primal.relation, primal.coefficients, target_mass
+            )
+            if isinstance(primal, SparseLinearMap)
+            else _block_action(primal.transpose_mv_block, target_mass),
+            dtype=dtype,
         )
-        bound = _measure_defect_bound(dtype, action_condition, source_mass, target_mass)
+        bound = measure_defect_bound(dtype, action_condition, source_mass, target_mass)
         if np.any(np.abs(pulled - source_mass) > bound):
-            raise ValueError("Transfer claims conservation but changes DOF measures.")
+            raise ValueError(
+                "certify_claims.configuration must preserve DOF measures for a conservation claim; got Transfer claims conservation but changes DOF measures."
+            )
 
 
+@checked
 def vertex_interpolation_transfer(
     source_rows: ArrayLike,
     weights: ArrayLike,
@@ -599,11 +761,17 @@ def vertex_interpolation_transfer(
     coefficients = np.asarray(weights)
     route_valid = np.asarray(valid)
     if not np.issubdtype(rows.dtype, np.integer):
-        raise TypeError("source_rows must have an integer dtype.")
+        raise TypeError(
+            "vertex_interpolation_transfer.source_rows must have an integer dtype; got source_rows must have an integer dtype."
+        )
     if route_valid.dtype != np.bool_:
-        raise TypeError("valid must be a boolean mask.")
+        raise TypeError(
+            "vertex_interpolation_transfer.valid must be a boolean mask; got valid must be a boolean mask."
+        )
     if not np.issubdtype(coefficients.dtype, np.floating):
-        raise TypeError("weights must have a real floating dtype.")
+        raise TypeError(
+            "vertex_interpolation_transfer.weights must have a real floating dtype; got weights must have a real floating dtype."
+        )
     size = int(source_size)
     if (
         rows.ndim != 2
@@ -613,14 +781,22 @@ def vertex_interpolation_transfer(
         or route_valid.shape != rows.shape
         or size <= 0
     ):
-        raise ValueError("Interpolation rows, weights, and validity must share (n, w).")
+        raise ValueError(
+            "vertex_interpolation_transfer.weights must share (n, w); got Interpolation rows, weights, and validity must share (n, w)."
+        )
     if not np.all(np.any(route_valid, axis=1)):
-        raise ValueError("Every interpolation target requires one valid source route.")
+        raise ValueError(
+            "vertex_interpolation_transfer.valid must provide one valid source route; got Every interpolation target requires one valid source route."
+        )
     routed = rows[route_valid]
     if np.any(routed < 0) or np.any(routed >= size):
-        raise ValueError("Valid interpolation routes must address source DOFs.")
+        raise ValueError(
+            "vertex_interpolation_transfer.configuration must address source DOFs; got Valid interpolation routes must address source DOFs."
+        )
     if not np.all(np.isfinite(coefficients[route_valid])):
-        raise ValueError("Valid interpolation weights must be finite.")
+        raise ValueError(
+            "vertex_interpolation_transfer.weights must be finite; got Valid interpolation weights must be finite."
+        )
     safe_rows = np.where(route_valid, rows, 0).astype(np.int32)
     safe_weights = np.where(route_valid, coefficients, 0.0)
     tolerance = _claim_tolerance(coefficients.dtype, np.sum(np.abs(safe_weights), axis=1))
@@ -769,11 +945,11 @@ class PreparedL2ProjectionTarget(StrictModule, NonTrainableState):
     ) -> None:
         if _construction_token is not _L2_ARTIFACT_TOKEN:
             raise TypeError(
-                "PreparedL2ProjectionTarget is constructed by "
-                "prepare_l2_projection_target or refresh_l2_projection_target."
+                "PreparedL2ProjectionTarget._construction_token must come from prepare_l2_projection_target or refresh_l2_projection_target; got "
+                f"{type(_construction_token).__name__}"
             )
         name = str(field_name)
-        index = discretization._field_index(name)
+        index = discretization.field_index(name)
         dof_map = discretization.dof_maps[index]
         size = dof_map.global_dof_count
         value_shape = discretization.elements[index][0].value_shape
@@ -788,24 +964,26 @@ class PreparedL2ProjectionTarget(StrictModule, NonTrainableState):
             or measures.shape != (size,) + value_shape
         ):
             raise ValueError(
-                "The target mass, its Cholesky factorization, and the DOF measures "
-                f"must be unbatched over the {size} DOFs of field {name!r}."
+                f"PreparedL2ProjectionTarget.mass must have unbatched ({size},) input/output axes, an unbatched ({size}, {size}) Cholesky factorization, and measures shaped {(size,) + value_shape} for field {name!r}; got "
+                f"mass batch={mass.batch_shape!r}, input={mass.input_shape!r}, output={mass.output_shape!r}, factor shape={factorization.plan.shape!r}, batch={factorization.batch_shape!r}, kind={factorization.plan.kind!r}, measures={measures.shape!r}"
             )
         if not (
             mass.properties.certifies("self_adjoint")
             and mass.properties.certifies("positive_definite")
         ):
             raise ValueError(
-                "The target mass must certify self-adjoint positive definiteness."
+                "PreparedL2ProjectionTarget.mass must certify self-adjoint positive definiteness; got The target mass must certify self-adjoint positive definiteness."
             )
         # Preparation boundary: one host decision on the prepared factor status.
         status = SparseFactorizationStatus(int(factorization.status))
         if status is not SparseFactorizationStatus.SUCCESS:
             raise ValueError(
-                f"Target mass Cholesky factorization failed ({status.name})."
+                f"PreparedL2ProjectionTarget.mass must pass the declared scientific certificate; got Target mass Cholesky factorization failed ({status.name})."
             )
         if not isfinite(float(mass_condition.value)):
-            raise ValueError("The target mass condition estimate is not finite.")
+            raise ValueError(
+                "PreparedL2ProjectionTarget.mass must be finite; got The target mass condition estimate is not finite."
+            )
         self.discretization = discretization
         self.mass = mass
         self.factorization = factorization
@@ -872,8 +1050,8 @@ class FiniteElementL2Projection(AbstractLinearOperator):
     ) -> None:
         if _construction_token is not _L2_ARTIFACT_TOKEN:
             raise TypeError(
-                "FiniteElementL2Projection is constructed by "
-                "prepare_l2_projection_transfer."
+                "FiniteElementL2Projection._construction_token must come from prepare_l2_projection_transfer; got "
+                f"{type(_construction_token).__name__}"
             )
         if (
             mixed_mass.batch_shape
@@ -881,8 +1059,8 @@ class FiniteElementL2Projection(AbstractLinearOperator):
             or mixed_mass.output_shape != prepared_target.mass.output_shape
         ):
             raise ValueError(
-                "L2 projection needs an unbatched mixed mass from source DOFs onto "
-                "the prepared target DOFs."
+                "FiniteElementL2Projection.mixed_mass must be unbatched with one source DOF axis and the prepared target output shape; got "
+                f"batch={mixed_mass.batch_shape!r}, input={mixed_mass.input_shape!r}, output={mixed_mass.output_shape!r}, target={prepared_target.mass.output_shape!r}"
             )
         identifier = canonical_identifier(operator_id, "operator_id")
         self.mixed_mass = mixed_mass
@@ -912,10 +1090,10 @@ class FiniteElementL2Projection(AbstractLinearOperator):
         )
 
     def adjoint_mv(self, vector: ArrayLike, /) -> Array:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
-        return _materialize_by_basis(self)
+        return materialize_by_basis(self)
 
 
 # Module-level compiled kernels. Their arguments carry only structural static
@@ -943,37 +1121,35 @@ _mass_condition = eqx.filter_jit(estimate_condition_number)
 
 
 def _validated_overlaps(
-    refinement: PreparedCommonRefinement,
+    refinement: imported_geometry.PreparedCommonRefinement,
     source: CellMesh,
     target: CellMesh,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Overlap simplices ``(S, d+1, d)`` with their source and target cells."""
 
-    from ...geometry import CommonRefinementStatus, PreparedCommonRefinement
-
-    if not isinstance(refinement, PreparedCommonRefinement):
-        raise TypeError("refinement must be a PreparedCommonRefinement.")
     if not refinement.succeeded:
         raise ValueError(
-            "L2 projection requires a successful common refinement; got "
-            f"{CommonRefinementStatus(refinement.status).name}: "
+            "validated_overlaps.refinement.status must indicate successful common refinement; got "
+            f"{imported_geometry.CommonRefinementStatus(refinement.status).name}: "
             f"{refinement.evidence.reason}"
         )
     if refinement.source_mesh_id != source.mesh_id or (
         refinement.target_mesh_id != target.mesh_id
     ):
         raise ValueError(
-            "The common refinement does not join the source and target meshes."
+            "validated_overlaps.refinement must join the source and target meshes; got The common refinement does not join the source and target meshes."
         )
     if refinement.simplices is None or refinement.simplex_offsets is None:
         raise ValueError(
-            "L2 projection requires CommonRefinementPolicy(overlap_simplices=True)."
+            "validated_overlaps.configuration must provide CommonRefinementPolicy(overlap_simplices=True); got L2 projection requires CommonRefinementPolicy(overlap_simplices=True)."
         )
     offsets = np.asarray(refinement.simplex_offsets, dtype=np.int64)
     simplices = np.asarray(refinement.simplices, dtype=np.float64)
     if simplices.shape[0] == 0:
-        raise ValueError("The common refinement has no overlap simplices.")
+        raise ValueError(
+            "validated_overlaps.refinement must select a supported declared route; got The common refinement has no overlap simplices."
+        )
     entries = np.repeat(np.arange(offsets.size - 1, dtype=np.int64), np.diff(offsets))
     return (
         simplices,
@@ -998,37 +1174,120 @@ def _require_affine_simplices(
     ):
         if block.cell_kind not in _SIMPLEX_KINDS.values():
             raise ValueError(
-                f"{operation} requires triangles or tetrahedra; {role} block "
-                f"{block.name!r} has {block.cell_kind} cells."
+                "require_affine_simplices.block.cell_kind must be triangle or tetrahedron; got "
+                f"{block.cell_kind!r} in {role} block {block.name!r} for {operation}"
             )
         canonical = coordinate_lagrange_element(block.cell_kind, 1)
-        if isinstance(coordinate_element, BarycentricCellGeometryElement):
-            affine_element = coordinate_element
-        elif (
-            isinstance(coordinate_element, FiniteElementSpec)
-            and coordinate_element.element_id == canonical.element_id
-        ):
-            affine_element = coordinate_element
-        else:
-            raise ValueError(
-                f"{operation} requires affine geometry; {role} block {block.name!r} "
-                "uses a non-affine coordinate map."
-            )
+        match coordinate_element:
+            case BarycentricCellGeometryElement():
+                affine_element = coordinate_element
+            case FiniteElementSpec() if (
+                coordinate_element.element_id == canonical.element_id
+            ):
+                affine_element = coordinate_element
+            case _:
+                raise ValueError(
+                    "require_affine_simplices.coordinate_element must define affine simplex geometry; got "
+                    f"{type(coordinate_element).__name__} in {role} block {block.name!r} for {operation}, element={coordinate_element!r}"
+                )
         reference_values = np.asarray(
             affine_element.tabulate(canonical.reference_nodes)[0]
         )
         represented = reference_values @ coordinates[np.asarray(routes)]
         if not np.array_equal(represented, mesh_coordinates[np.asarray(block.vertices)]):
-            raise ValueError(f"The {role} FE geometry differs from its refined mesh.")
+            raise ValueError(
+                f"require_affine_simplices.role must agree with the declared geometry, topology, and field layout; got The {role} FE geometry differs from its refined mesh."
+            )
 
 
-def _projection_elements(
+def _require_coefficient_affine_simplices(
+    discretization: _NestedFiniteElementDiscretization,
+    geometry: CellGeometrySpec,
+    role: str,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    """Authenticate retained affine maps and their published corner carriers."""
+    restriction = geometry.restriction_source
+    published_roots = (
+        restriction is not None
+        and restriction.carrier_publication == "published_affine_roots"
+    )
+    if published_roots:
+        imported_cell_geometry.require_published_affine_carrier(
+            geometry, discretization.mesh, budget=budget
+        )
+    cells = mapped_measure_owner.mapped_geometry_cells(
+        discretization.mesh, geometry, budget=budget
+    )
+    mesh_coordinates = np.asarray(discretization.mesh.coordinates)
+    runtime_coordinates = np.asarray(discretization.default_runtime.coordinates)
+    start = 0
+    for block, element, routes in zip(
+        discretization.mesh.blocks,
+        discretization.coordinate_elements,
+        discretization.coordinate_dofs,
+        strict=True,
+    ):
+        canonical = coordinate_lagrange_element(block.cell_kind, 1)
+        if not isinstance(element, BarycentricCellGeometryElement):
+            if (
+                not isinstance(element, FiniteElementSpec)
+                or element.element_id != canonical.element_id
+            ):
+                raise ValueError(
+                    "coefficient_affine_simplices.element must retain an affine P1 simplex source; got another coordinate map."
+                )
+            represented = (
+                np.asarray(element.tabulate(canonical.reference_nodes)[0])
+                @ (runtime_coordinates[np.asarray(routes)])
+            )
+            if not published_roots and not np.array_equal(
+                represented, mesh_coordinates[np.asarray(block.vertices)]
+            ):
+                raise ValueError(
+                    f"coefficient_affine_simplices.carrier must bind the {role} coordinate map; got different mesh corners."
+                )
+        for row, (cell_element, local) in zip(
+            np.asarray(block.vertices),
+            cells[start : start + block.cell_count],
+            strict=True,
+        ):
+            corners = imported_coordinate_enclosure.affine_simplex_corner_images(
+                cell_element, local, budget=budget
+            )
+            if corners is None:
+                raise ValueError(
+                    "coefficient_affine_simplices.source must prove the retained source affine throughout; got unproved source affinity."
+                )
+            if (
+                not published_roots
+                and isinstance(element, BarycentricCellGeometryElement)
+                and not np.array_equal(
+                    np.asarray(
+                        [
+                            imported_coordinate_enclosure.rounded_point(point)
+                            for point in corners
+                        ],
+                        dtype=np.float64,
+                    ),
+                    mesh_coordinates[row],
+                )
+            ):
+                raise ValueError(
+                    f"coefficient_affine_simplices.carrier must bind the {role} rational corner images; got different mesh corners."
+                )
+        start += block.cell_count
+
+
+def _projection_field_elements(
     discretization: FiniteElementDiscretization,
     field_index: int,
     role: str,
     /,
 ) -> tuple[FiniteElementSpec, ...]:
-    """Scalar Lagrange or Piola-mapped vector elements on the refined affine mesh."""
+    """Return supported scalar Lagrange or Piola-mapped projection elements."""
 
     elements = discretization.elements[field_index]
     for block, element in zip(discretization.mesh.blocks, elements, strict=True):
@@ -1045,11 +1304,9 @@ def _projection_elements(
                 supported = False
         if element.cell_kind not in _SIMPLEX_KINDS.values() or not supported:
             raise ValueError(
-                "L2 projection supports scalar Lagrange and Piola-mapped H(curl)/H(div) "
-                f"elements on triangles and tetrahedra; {role} block {block.name!r} "
-                f"has {element.family} on {element.cell_kind}."
+                "projection_elements.element must be scalar Lagrange or Piola-mapped H(curl)/H(div) on a triangle or tetrahedron; got "
+                f"role={role!r}, block={block.name!r}, family={element.family!r}, cell_kind={element.cell_kind!r}, mapping={element.mapping!r}, value_shape={element.value_shape!r}, form_degree={element.value_spec.form_type.degree!r}, form_basis_present={element.form_basis is not None}"
             )
-    _require_affine_simplices(discretization, role, "L2 projection")
     return elements
 
 
@@ -1067,16 +1324,18 @@ def _polynomial_degree(element: FiniteElementSpec, /) -> int:
 def _affine_frames(
     discretization: _NestedFiniteElementDiscretization, /
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Origins ``(C, d)`` and edge-column frames ``(C, d, d)`` of every cell.
+    """Return physical affine-cell origins and edge-column frames.
 
-    Cells follow the concatenated block order; the P1 coordinate element (checked
-    by ``_projection_elements``) maps ``x = origin + frame @ xi``.
+    Cells follow concatenated mesh block order. Affine admission verifies that
+    coordinate-map corner images match the mesh vertices. Retained coefficient
+    rows can be nonnodal and must not be reinterpreted as physical vertices.
     """
 
-    coordinates = np.asarray(discretization.default_runtime.coordinates, np.float64)
+    coordinates = np.asarray(discretization.mesh.coordinates, dtype=np.float64)
     vertices = np.concatenate(
         tuple(
-            coordinates[np.asarray(routes)] for routes in discretization.coordinate_dofs
+            coordinates[np.asarray(block.vertices)]
+            for block in discretization.mesh.blocks
         )
     )
     return vertices[:, 0, :], np.swapaxes(vertices[:, 1:, :] - vertices[:, :1, :], -1, -2)
@@ -1086,27 +1345,30 @@ def _affine_measure_densities(frames: np.ndarray, /) -> np.ndarray:
     """Physical measure per unit reference measure of affine cells ``(C, m, d)``.
 
     Full-dimensional frames use ``|det F|``. An embedded affine immersion
-    (``m > d``) has the exact area-formula density ``sqrt(det(F^T F))``, the same
+    (``m > d``) has the algebraic area-formula density ``sqrt(det(F^T F))``, the same
     measure the exterior owner uses to map densities and fluxes.
     """
     if frames.shape[-2] == frames.shape[-1]:
         return np.abs(np.linalg.det(frames))
     if frames.shape[-2] < frames.shape[-1]:
-        raise ValueError("Affine cell frames must immerse their reference cell.")
+        raise ValueError(
+            "affine_measure_densities.frames must immerse their reference cell; got Affine cell frames must immerse their reference cell."
+        )
     gram = np.swapaxes(frames, -1, -2) @ frames
-    return np.sqrt(np.abs(np.asarray(compound_matrix(gram, frames.shape[-1]))[..., 0, 0]))
+    determinant = determinant_small_linear(_AFFINE_MEASURE_PLANS[frames.shape[-1]], gram)
+    return np.sqrt(np.abs(np.asarray(jax.device_get(determinant))))
 
 
 def _overlap_quadrature(
     simplices: np.ndarray, degree: int, /
 ) -> tuple[np.ndarray, np.ndarray, str]:
-    """Physical points ``(S, Q, d)`` and weights ``(S, Q)`` exact to ``degree``."""
+    """Physical points ``(S, Q, d)`` and weights ``(S, Q)`` algebraic to ``degree``."""
 
     dimension = simplices.shape[-1]
     rule = cubature_rule_data(_simplex_cubature_kind(_SIMPLEX_KINDS[dimension]), degree)
     frames = np.swapaxes(simplices[:, 1:, :] - simplices[:, :1, :], -1, -2)
     # Overlap simplices are fanned and positively oriented up to rounding; the
-    # signed measure keeps each fan an exact partition of its overlap.
+    # signed measure keeps each fan an algebraic partition of its overlap.
     measures = np.linalg.det(frames)
     points = simplices[:, None, 0, :] + np.asarray(rule.points)[None] @ np.swapaxes(
         frames, -1, -2
@@ -1122,7 +1384,7 @@ def _overlap_basis(
     points: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
-    """Padded DOF routes, validity, and mapped basis of the owning cells.
+    """Padded DOF routes, validity, and mapped basis of the cells.
 
     Values are the oriented Piola-mapped basis ``(S, Q, n, V)`` (``V = 1`` for
     scalar fields) and its curl/divergence ``(S, Q, n, W)``, ``None`` for scalar
@@ -1141,7 +1403,7 @@ def _overlap_basis(
     values = np.zeros((count, quadrature, width, value_width), dtype=np.float64)
     differential: np.ndarray | None = None
     origins, frames = _affine_frames(discretization)
-    # x = origin + frame @ xi on the owning affine cell; one batched solve pulls
+    # x = origin + frame @ xi on the affine cell; one batched solve pulls
     # every quadrature point of an overlap simplex back to reference coordinates.
     reference = np.linalg.solve(
         frames[cells][:, None], (points - origins[cells][:, None, :])[..., None]
@@ -1181,19 +1443,34 @@ def _cell_integrals(
     /,
     *,
     mass: bool,
+    cell_measures: NDArray[np.float64] | None = None,
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray] | None]:
     """Integrals of every global basis function and, optionally, mass COO triples.
 
     Integrals are ``(N,)`` for scalar fields and ``(N, V)`` for Piola-mapped
     vector fields; the mass pairs values by their Euclidean inner product. The
-    per-block rule is exact for degree ``2p`` (mass) or ``p`` (integrals) of the
+    per-block rule is algebraic for degree ``2p`` (mass) or ``p`` (integrals) of the
     basis polynomial degree ``p``.
     """
 
     dof_map = discretization.dof_maps[field_index]
     elements = discretization.elements[field_index]
-    _, frames = _affine_frames(discretization)
-    determinants = _affine_measure_densities(frames)
+    if cell_measures is None:
+        _, frames = _affine_frames(discretization)
+        determinants = _affine_measure_densities(frames)
+    else:
+        count = sum(block.cell_count for block in discretization.mesh.blocks)
+        dimension = discretization.mesh.topological_dimension
+        if cell_measures.shape != (count,) or any(
+            element.mapping != "identity" or element.value_shape for element in elements
+        ):
+            raise ValueError(
+                "cell_integrals.cell_measures must bind scalar affine reference bases in mesh cell order; got incompatible measures or elements."
+            )
+        frames = np.broadcast_to(
+            np.eye(dimension, dtype=np.float64), (count, dimension, dimension)
+        )
+        determinants = cell_measures * factorial(dimension)
     size = dof_map.global_dof_count
     value_shape = elements[0].value_shape
     measures = np.zeros((size, value_shape[0] if value_shape else 1), dtype=np.float64)
@@ -1239,7 +1516,7 @@ def _cell_integrals(
     )
 
 
-def _coalesced_map(
+def coalesced_map(
     target_routes: np.ndarray,
     source_routes: np.ndarray,
     values: np.ndarray,
@@ -1250,7 +1527,7 @@ def _coalesced_map(
     properties: OperatorProperties,
     operator_id: str,
 ) -> SparseLinearMap:
-    """Sum duplicate routes in canonical (target, source) order.
+    """Sum duplicate routes in declared (target, source) order.
 
     The stable sort keeps each duplicate group in input order, so the reduction is
     deterministic for a deterministic input ordering.
@@ -1283,9 +1560,11 @@ def _target_mass(
 
     measures, triples = _cell_integrals(target, field_index, mass=True)
     if triples is None:
-        raise ValueError("Target mass assembly requires cell mass entries.")
+        raise ValueError(
+            "target_mass.configuration must provide cell mass entries; got Target mass assembly requires cell mass entries."
+        )
     dof_map = target.dof_maps[field_index]
-    mass = _coalesced_map(
+    mass = coalesced_map(
         *triples,
         target_size=dof_map.global_dof_count,
         source_size=dof_map.global_dof_count,
@@ -1327,7 +1606,7 @@ def _factored_target(
     pattern) and the retained symbolic plan for a numeric refresh.
     """
 
-    mass, measures = _target_mass(target, target._field_index(field_name))
+    mass, measures = _target_mass(target, target.field_index(field_name))
     symbolic = (
         prepare_sparse_factorization(mass, _TARGET_MASS_FACTORIZATION)
         if plan is None
@@ -1345,6 +1624,7 @@ def _factored_target(
     )
 
 
+@checked
 def prepare_l2_projection_target(
     target: FiniteElementDiscretization,
     /,
@@ -1370,20 +1650,20 @@ def prepare_l2_projection_target(
     budgets can be supplied without changing transfer semantics or certificates.
     """
 
-    if not isinstance(target, FiniteElementDiscretization):
-        raise TypeError("target must be a FiniteElementDiscretization.")
     name = str(field_name)
-    _projection_elements(target, target._field_index(name), "target")
+    _projection_field_elements(target, target.field_index(name), "target")
+    _require_affine_simplices(target, "target", "L2 projection")
     policy = (
         FactorizationPolicy("svd") if constraint_policy is None else constraint_policy
     )
-    if not isinstance(policy, FactorizationPolicy) or policy.kind != "svd":
+    if policy.kind != "svd":
         raise ValueError(
-            "Compatible constraint_policy must be a native SVD factorization policy."
+            "prepare_l2_projection_target.constraint_policy must be a native SVD factorization policy; got Compatible constraint_policy must be a native SVD factorization policy."
         )
     return _factored_target(target, name, None, constraint_policy=policy)
 
 
+@checked
 def refresh_l2_projection_target(
     prepared: PreparedL2ProjectionTarget,
     target: FiniteElementDiscretization,
@@ -1400,21 +1680,18 @@ def refresh_l2_projection_target(
     prepare a new target instead.
     """
 
-    if not isinstance(prepared, PreparedL2ProjectionTarget):
-        raise TypeError("prepared must be a PreparedL2ProjectionTarget.")
-    if not isinstance(target, FiniteElementDiscretization):
-        raise TypeError("target must be a FiniteElementDiscretization.")
     name = prepared.field_name
-    index = target._field_index(name)
-    _projection_elements(target, index, "target")
+    index = target.field_index(name)
+    _projection_field_elements(target, index, "target")
+    _require_affine_simplices(target, "target", "L2 projection")
     previous = prepared.discretization
     if (
         target.dof_maps[index].dof_map_id
-        != previous.dof_maps[previous._field_index(name)].dof_map_id
+        != previous.dof_maps[previous.field_index(name)].dof_map_id
     ):
         raise ValueError(
-            "Refreshing an L2 projection target requires an unchanged DOF structure; "
-            "prepare a new target instead."
+            "refresh_l2_projection_target.dof_map_id must match the prepared field DOF structure; got "
+            f"{target.dof_maps[index].dof_map_id!r}, prepared={previous.dof_maps[previous.field_index(name)].dof_map_id!r}, field={name!r}"
         )
     return _factored_target(
         target,
@@ -1426,7 +1703,7 @@ def refresh_l2_projection_target(
     )
 
 
-def _coverage_bound(refinement: PreparedCommonRefinement, /) -> float:
+def _coverage_bound(refinement: imported_geometry.PreparedCommonRefinement, /) -> float:
     """Largest accepted relative coverage defect of any source or target cell."""
 
     evidence = refinement.evidence
@@ -1446,22 +1723,24 @@ def _coverage_bound(refinement: PreparedCommonRefinement, /) -> float:
     )
 
 
-def _coverage_claims(refinement: PreparedCommonRefinement, /) -> tuple[bool, bool]:
+def _coverage_claims(
+    refinement: imported_geometry.PreparedCommonRefinement, /
+) -> tuple[bool, bool]:
     """Whether every target cell, and every source cell, is certified covered."""
 
-    from ...geometry import CommonRefinementCoverage
-
     match refinement.policy.coverage:
-        case CommonRefinementCoverage.COMPLETE:
+        case imported_geometry.CommonRefinementCoverage.COMPLETE:
             return True, True
-        case CommonRefinementCoverage.TARGET:
+        case imported_geometry.CommonRefinementCoverage.TARGET:
             return True, False
-        case CommonRefinementCoverage.SOURCE:
+        case imported_geometry.CommonRefinementCoverage.SOURCE:
             return False, True
-        case CommonRefinementCoverage.PARTIAL:
+        case imported_geometry.CommonRefinementCoverage.PARTIAL:
             return False, False
         case coverage:
-            raise ValueError(f"Unknown common-refinement coverage {coverage!r}.")
+            raise ValueError(
+                f"coverage_claims.refinement must select a supported declared route; got Unknown common-refinement coverage {coverage!r}."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1481,24 +1760,21 @@ class _ProjectionOverlap:
 def _assembled_projection(
     source: FiniteElementDiscretization,
     target: PreparedL2ProjectionTarget,
-    refinement: PreparedCommonRefinement,
+    refinement: imported_geometry.PreparedCommonRefinement,
     field_name: str,
     /,
 ) -> tuple[FiniteElementTopologyTransfer, _ProjectionOverlap]:
     """The certified projection transfer and the overlap data it was built from."""
 
-    if not isinstance(source, FiniteElementDiscretization):
-        raise TypeError("source must be a FiniteElementDiscretization.")
-    if not isinstance(target, PreparedL2ProjectionTarget):
-        raise TypeError("target must be a PreparedL2ProjectionTarget.")
     source_name = str(field_name)
-    source_index = source._field_index(source_name)
+    source_index = source.field_index(source_name)
     space = target.discretization
-    target_index = space._field_index(target.field_name)
+    target_index = space.field_index(target.field_name)
     simplices, source_cells, target_cells = _validated_overlaps(
         refinement, source.mesh, space.mesh
     )
-    source_elements = _projection_elements(source, source_index, "source")
+    source_elements = _projection_field_elements(source, source_index, "source")
+    _require_affine_simplices(source, "source", "L2 projection")
     target_elements = space.elements[target_index]
     if (
         len(
@@ -1510,15 +1786,15 @@ def _assembled_projection(
         != 1
     ):
         raise ValueError(
-            "L2 projection requires one scientific form type, twist, and physical proxy."
+            "assembled_projection.configuration must provide one scientific form type, twist, and physical proxy; got L2 projection requires one scientific form type, twist, and physical proxy."
         )
     if (source_elements[0].mapping, source_elements[0].value_shape) != (
         target_elements[0].mapping,
         target_elements[0].value_shape,
     ):
         raise ValueError(
-            "L2 projection maps fields of one Piola mapping and value shape; got "
-            f"{source_elements[0].mapping} -> {target_elements[0].mapping}."
+            "assembled_projection.elements must share one Piola mapping and value shape; got "
+            f"source=({source_elements[0].mapping!r}, {source_elements[0].value_shape!r}), target=({target_elements[0].mapping!r}, {target_elements[0].value_shape!r})"
         )
     points, weights, rule_id = _overlap_quadrature(
         simplices,
@@ -1544,7 +1820,7 @@ def _assembled_projection(
         "target": target.target_id,
         "rule": rule_id,
     }
-    mixed_mass = _coalesced_map(
+    mixed_mass = coalesced_map(
         np.broadcast_to(target_routes[:, :, None], local.shape)[routed],
         np.broadcast_to(source_routes[:, None, :], local.shape)[routed],
         local[routed],
@@ -1592,7 +1868,7 @@ def _assembled_projection(
         float(np.max(np.sum(np.abs(target_basis), axis=2))),
         float(np.max(np.sum(np.abs(source_basis), axis=2))),
     )
-    coverage = _coverage_bound(refinement) / (_CLAIM_ULPS * np.finfo(np.float64).eps)
+    coverage = _coverage_bound(refinement) / (CLAIM_ULPS * np.finfo(np.float64).eps)
     condition = float(target.mass_condition.value)
     transfer = FiniteElementTopologyTransfer(
         projection,
@@ -1621,10 +1897,11 @@ def _assembled_projection(
     )
 
 
+@checked
 def prepare_l2_projection_transfer(
     source: FiniteElementDiscretization,
     target: PreparedL2ProjectionTarget,
-    refinement: PreparedCommonRefinement,
+    refinement: imported_geometry.PreparedCommonRefinement,
     /,
     *,
     field_name: str,
@@ -1640,7 +1917,7 @@ def prepare_l2_projection_transfer(
     axes of scalar fields are carried as payload. Only the mixed mass ``B`` is
     assembled here, exactly on the overlap simplices with a rule for the product
     of source and target polynomial degrees, pairing covariant or contravariant
-    Piola values of both owning cells; the prepared target factor is shared
+    Piola values of both cells; the prepared target factor is shared
     (``FiniteElementL2Projection``). The transfer applies ``M_T^{-1} B`` and
     pulls duals back through ``B^T M_T^{-1}``.
 
@@ -1684,7 +1961,9 @@ def _native_generalized_inverse(
     )
     inverse = factor.materialize_pseudoinverse()
     if not bool(inverse.successful) or not np.all(np.isfinite(np.asarray(inverse.value))):
-        raise ValueError(f"Compatible projection {kind} factorization failed.")
+        raise ValueError(
+            f"native_generalized_inverse.kind must pass the declared scientific certificate; got Compatible projection {kind} factorization failed."
+        )
     rank = int(factor.rank())
     spectrum = np.asarray(factor.singular_values())
     condition = 1.0 if rank == 0 else float(spectrum[0] / spectrum[rank - 1])
@@ -1740,7 +2019,9 @@ def _prepare_compatible_target(
             transformation=_basis_transformation(target, field_index, block_index),
         )
         if derivative is None:
-            raise ValueError("Compatible projection requires a differential field.")
+            raise ValueError(
+                "prepare_compatible_target.configuration must provide a differential field; got Compatible projection requires a differential field."
+            )
         weights = (
             _affine_measure_densities(frames[start:stop])[:, None]
             * np.asarray(rule.weights)[None]
@@ -1811,7 +2092,9 @@ class _CompatibleProjection(AbstractLinearOperator):
     ) -> None:
         data = base.prepared_target.compatible
         if data is None:
-            raise ValueError("Compatible target differential factors are missing.")
+            raise ValueError(
+                "_CompatibleProjection.configuration must agree with the declared geometry, topology, and field layout; got Compatible target differential factors are missing."
+            )
         self.base = base
         self.raw_differential = raw_differential
         self.source_measures = jnp.asarray(source_measures)
@@ -1871,10 +2154,10 @@ class _CompatibleProjection(AbstractLinearOperator):
         ) + self.constraint_transpose(dual)
 
     def adjoint_mv(self, vector: ArrayLike, /) -> Array:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
-        return _materialize_by_basis(self)
+        return materialize_by_basis(self)
 
 
 def _polynomial_probes(element: FiniteElementSpec, points: np.ndarray, /) -> np.ndarray:
@@ -1911,7 +2194,9 @@ def _polynomial_probes(element: FiniteElementSpec, points: np.ndarray, /) -> np.
                 axis=-1,
             )
         case mapping:
-            raise ValueError(f"Mapping {mapping!r} has no compatible probe fields.")
+            raise ValueError(
+                f"polynomial_probes.configuration must select a supported declared route; got Mapping {mapping!r} has no compatible probe fields."
+            )
     return np.concatenate((constants, linear), axis=-1)
 
 
@@ -1921,7 +2206,7 @@ def _periodic_probe_mask(
     """Admit affine probes by physical seam traces, independently of FE routes.
 
     Affine trace differences vanish on an entire affine seam precisely when
-    they vanish at its spanning facet corners. These checks use authoritative
+    they vanish at its spanning facet corners. These checks use declared
     representative-to-copy isometries and vertex permutations, never the
     assembled basis/routes being certified.
     """
@@ -1941,14 +2226,15 @@ def _periodic_probe_mask(
     if copies.size == 0:
         return np.ones(count, dtype=np.bool_)
     connectivity = mesh.connectivity
-    if dimension == 3 and isinstance(
-        connectivity, (TetrahedralConnectivity, PolyhedralConnectivity)
-    ):
-        entities = _tetrahedral_face_vertices(connectivity)
-    elif dimension == 2 and isinstance(connectivity, PolygonalConnectivity):
-        entities = np.asarray(connectivity.edges)
-    else:
-        raise ValueError("Periodic compatible probes require simplex facet connectivity.")
+    match (dimension, connectivity):
+        case (3, TetrahedralConnectivity() | PolyhedralConnectivity()):
+            entities = tetrahedral_face_vertices(connectivity)
+        case (2, PolygonalConnectivity()):
+            entities = np.asarray(connectivity.edges)
+        case _:
+            raise ValueError(
+                "periodic_probe_mask.configuration must provide simplex facet connectivity; got Periodic compatible probes require simplex facet connectivity."
+            )
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     permutations = periodic.entity_vertex_permutations(mesh, degree)
     source_corners = coordinates[entities[representatives[orbit[copies]]]]
@@ -1980,7 +2266,7 @@ def _periodic_probe_mask(
         np.max(np.abs(expected), axis=(0, 1, 2)),
     )
     return np.max(np.abs(trace_defect), axis=(0, 1, 2)) <= (
-        _CLAIM_ULPS
+        CLAIM_ULPS
         * np.finfo(np.float64).eps
         * np.maximum(scale, np.finfo(np.float64).tiny)
     )
@@ -2073,7 +2359,9 @@ def _cell_differentials(
             ),
         )
         if differential is None:
-            raise ValueError("Scalar fields have no curl or divergence.")
+            raise ValueError(
+                "cell_differentials.configuration must select a supported declared route; got Scalar fields have no curl or divergence."
+            )
         weights = determinants[start:stop, None] * np.asarray(rule.weights)[None, :]
         if integrals is None:
             integrals = np.zeros(
@@ -2086,7 +2374,9 @@ def _cell_differentials(
         valid[start:stop, :size] = True
         start = stop
     if integrals is None:
-        raise ValueError("A Piola field needs at least one cell.")
+        raise ValueError(
+            "cell_differentials.configuration must provide at least one cell; got A Piola field needs at least one cell."
+        )
     return routes, valid, integrals
 
 
@@ -2099,26 +2389,26 @@ def _constrained_projection(
     source: FiniteElementDiscretization,
     source_index: int,
     target: PreparedL2ProjectionTarget,
-    refinement: PreparedCommonRefinement | None,
+    refinement: imported_geometry.PreparedCommonRefinement | None,
     overlap: _ProjectionOverlap,
     /,
 ) -> FiniteElementTopologyTransfer:
     space = target.discretization
-    target_index = space._field_index(target.field_name)
+    target_index = space.field_index(target.field_name)
     element = _field_signature(source, source_index, space, target_index)
     if refinement is not None and not all(_coverage_claims(refinement)):
         raise ValueError(
-            "Compatible projection requires complete source and target coverage."
+            "constrained_projection.source must provide full source and target coverage; got Compatible projection requires full source and target coverage."
         )
     if refinement is None and overlap.source_measures is None:
         raise ValueError(
-            "Reference coarsening requires its integrated source content measures."
+            "constrained_projection.source must provide its integrated source content measures; got Reference coarsening requires its integrated source content measures."
         )
     data = target.compatible
     derivative = overlap.source_differential
     if data is None or derivative is None:
         raise ValueError(
-            "Compatible projection requires prepared Piola differential factors."
+            "constrained_projection.configuration must provide prepared Piola differential factors; got Compatible projection requires prepared Piola differential factors."
         )
     origins, frames = _affine_frames(space)
     cells = overlap.target_cells
@@ -2133,7 +2423,7 @@ def _constrained_projection(
     width = moments.shape[1]
     rows = cells[:, None] * width + np.arange(width)[None]
     valid = np.broadcast_to(overlap.source_valid[:, None, :], moments.shape)
-    raw = _coalesced_map(
+    raw = coalesced_map(
         np.broadcast_to(rows[:, :, None], moments.shape)[valid],
         np.broadcast_to(overlap.source_routes[:, None, :], moments.shape)[valid],
         moments[valid],
@@ -2171,7 +2461,7 @@ def _compatible_projection_evidence(
     source: FiniteElementDiscretization,
     source_index: int,
     target: PreparedL2ProjectionTarget,
-    refinement: PreparedCommonRefinement | None,
+    refinement: imported_geometry.PreparedCommonRefinement | None,
     transfer: FiniteElementTopologyTransfer,
     overlap: _ProjectionOverlap,
     /,
@@ -2186,20 +2476,26 @@ def _compatible_projection_evidence(
     """
 
     space = target.discretization
-    target_index = space._field_index(target.field_name)
+    target_index = space.field_index(target.field_name)
     projection = transfer.primal
     if not isinstance(projection, _CompatibleProjection):
-        raise TypeError("Compatible evidence needs a constrained projection.")
+        raise TypeError(
+            "compatible_projection_evidence.configuration must provide a constrained projection; got Compatible evidence needs a constrained projection."
+        )
     differential = overlap.source_differential
     if differential is None:
-        raise ValueError("Compatible projection evidence needs a Piola source field.")
+        raise ValueError(
+            "compatible_projection_evidence.source must provide a Piola source field; got Compatible projection evidence needs a Piola source field."
+        )
     if refinement is None and overlap.source_measures is None:
         raise ValueError(
-            "Reference coarsening evidence requires integrated source content measures."
+            "compatible_projection_evidence.source must provide integrated source content measures; got Reference coarsening evidence requires integrated source content measures."
         )
     coefficient_space = projection.source
     if not isinstance(coefficient_space, ArraySpace):
-        raise TypeError("Compatible projection evidence requires an ArraySpace source.")
+        raise TypeError(
+            "compatible_projection_evidence.source must provide an ArraySpace source; got Compatible projection evidence requires an ArraySpace source."
+        )
 
     def apply(values: ArrayLike, /) -> np.ndarray:
         return np.asarray(_block_action(projection.mv_block, values), dtype=np.float64)
@@ -2246,7 +2542,7 @@ def _compatible_projection_evidence(
     differential_count = data.differential.shape[0]
     commuting_error = commuting_scale = 0.0
     raw_error = raw_scale = 0.0
-    # Exact algebraic transpose checks every source column, in bounded RHS
+    # algebraic algebraic transpose checks every source column, in bounded RHS
     # blocks, rather than estimating the invariant from a selection of DOFs.
     for start in range(0, differential_count, 32):
         stop = min(start + 32, differential_count)
@@ -2272,7 +2568,9 @@ def _compatible_projection_evidence(
         case "covariant_piola":
             content_name = "curl-content"
         case mapping:
-            raise ValueError(f"Mapping {mapping!r} is not a compatible Piola map.")
+            raise ValueError(
+                f"compatible_projection_evidence.configuration must use a covariant or contravariant Piola map; got Mapping {mapping!r} is not a compatible Piola map."
+            )
     certified = {
         "coverage": 0.0 if refinement is None else _coverage_bound(refinement),
         "commuting": commuting_error / max(commuting_scale, np.finfo(np.float64).tiny),
@@ -2297,7 +2595,7 @@ def _compatible_projection_evidence(
             raw_scale, np.finfo(np.float64).tiny
         )
     tolerance = (
-        _CLAIM_ULPS
+        CLAIM_ULPS
         * float(np.finfo(np.dtype(coefficient_space.dtype)).eps)
         * transfer.action_condition
     )
@@ -2310,19 +2608,19 @@ def _compatible_projection_evidence(
 class FiniteElementTransferEvidence(StrictModule, NonTrainableState):
     """Certificate of one prepared finite-element field transfer.
 
-    ``defects`` are certified relative defects in canonical name order.
+    ``defects`` are certified relative defects in declared name order.
     ``containment`` is the largest barycentric excursion of a target cell outside
-    its parent witness; ``reproduction`` the residual of reconstructing every
+    its parent chart; ``reproduction`` the residual of reconstructing every
     source basis function (or, for projections, every reproducible polynomial
     probe) in the target space; ``continuity`` the disagreement of shared target
-    DOFs computed from different owning cells (trace continuity and
+    DOFs computed from different cells (trace continuity and
     orientation); ``commuting`` the curl or divergence of the transferred field
     against the transferred curl or divergence; ``coverage`` the accepted
     common-refinement coverage of a projection; ``content`` the conserved total
     integral of a projected vector field. ``passed`` holds when every defect is
     at most ``tolerance``.
 
-    ``estimates`` are measured, uncertified relative quantities in canonical
+    ``estimates`` are measured, uncertified relative quantities in declared
     name order, including the uncorrected mass-solve residual and the
     unrealizability of a discontinuous cellwise curl projection. The 3D curl
     companion is L2 projection into the target discrete curl image. Estimates
@@ -2343,6 +2641,7 @@ class FiniteElementTransferEvidence(StrictModule, NonTrainableState):
     evidence_id: str = eqx.field(static=True)
     execution_evidence: NativeExecutionRecord | None
 
+    @checked
     def __init__(
         self,
         defects: Mapping[str, float],
@@ -2351,33 +2650,34 @@ class FiniteElementTransferEvidence(StrictModule, NonTrainableState):
         *,
         estimates: Mapping[str, float] | None = None,
         bounds: Mapping[str, float] | None = None,
-        execution_evidence: NativeExecutionRecord | None = None,
+        execution_evidence: imported_meshing__measurements.NativeExecutionRecord
+        | None = None,
     ) -> None:
         records = _evidence_records(defects, "defect")
         measured = _evidence_records({} if estimates is None else estimates, "estimate")
         certified_bounds = _evidence_records({} if bounds is None else bounds, "bound")
         bound = float(tolerance)
         if not records:
-            raise ValueError("Transfer evidence needs at least one certified defect.")
+            raise ValueError(
+                "FiniteElementTransferEvidence.configuration must provide at least one certified defect; got Transfer evidence needs at least one certified defect."
+            )
         if not isfinite(bound) or bound < 0.0:
             raise ValueError(
-                "Transfer evidence tolerance must be finite and nonnegative."
+                "FiniteElementTransferEvidence.tolerance must be finite and nonnegative; got Transfer evidence tolerance must be finite and nonnegative."
             )
         if {name for name, _ in records} & {name for name, _ in measured}:
-            raise ValueError("A transfer quantity is either certified or estimated.")
+            raise ValueError(
+                "FiniteElementTransferEvidence.configuration must keep certified defects disjoint from estimates; got A transfer quantity is either certified or estimated."
+            )
         if {name for name, _ in certified_bounds} & {name for name, _ in measured}:
-            raise ValueError("An absolute error quantity is either bounded or estimated.")
+            raise ValueError(
+                "FiniteElementTransferEvidence.configuration must keep absolute bounds disjoint from estimates; got An absolute error quantity is either bounded or estimated."
+            )
         if execution_evidence is not None:
-            from ...meshing._measurements import NativeExecutionRecord
-
-            if not isinstance(execution_evidence, NativeExecutionRecord):
-                raise TypeError(
-                    "Transfer execution evidence must be the actual ended native record."
-                )
             execution_evidence.require_valid()
             if int(np.asarray(execution_evidence.status)) != 0:
                 raise ValueError(
-                    "A refused original execution allowance cannot certify a field transfer."
+                    "FiniteElementTransferEvidence.configuration must have successful execution evidence before certifying a transfer; got A refused source execution allowance cannot certify a field transfer."
                 )
         self.execution_evidence = execution_evidence
         self.defects = records
@@ -2398,23 +2698,54 @@ class FiniteElementTransferEvidence(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[FiniteElementTransferEvidence],
+        value: FiniteElementTransferEvidence,
+        /,
+    ) -> FiniteElementTransferEvidence:
+        """Reconstruct persisted quantities and verify their evidence identity."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"FiniteElementTransferEvidence.stored_fields must have the registered {cls.__qualname__} type; got {type(value).__qualname__}"
+            )
+        rebuilt = cls(
+            dict(value.defects),
+            value.tolerance,
+            estimates=dict(value.estimates),
+            bounds=dict(value.bounds),
+            execution_evidence=value.execution_evidence,
+        )
+        if rebuilt.evidence_id != value.evidence_id or rebuilt.passed != value.passed:
+            raise ValueError(
+                "FiniteElementTransferEvidence.stored_fields must retain certified quantities and execution evidence; got changed evidence identity or acceptance"
+            )
+        return rebuilt
+
     def defect(self, name: str, /) -> float:
         for key, value in self.defects:
             if key == name:
                 return value
-        raise KeyError(f"Transfer evidence has no {name!r} defect.")
+        raise KeyError(
+            f"FiniteElementTransferEvidence.defect.name must select a supported declared route; got Transfer evidence has no {name!r} defect."
+        )
 
     def estimate(self, name: str, /) -> float:
         for key, value in self.estimates:
             if key == name:
                 return value
-        raise KeyError(f"Transfer evidence has no {name!r} estimate.")
+        raise KeyError(
+            f"FiniteElementTransferEvidence.estimate.name must select a supported declared route; got Transfer evidence has no {name!r} estimate."
+        )
 
     def bound(self, name: str, /) -> float:
         for key, value in self.bounds:
             if key == name:
                 return value
-        raise KeyError(f"Transfer evidence has no {name!r} absolute bound.")
+        raise KeyError(
+            f"FiniteElementTransferEvidence.bound.name must select a supported declared route; got Transfer evidence has no {name!r} absolute bound."
+        )
 
 
 def _evidence_records(
@@ -2427,7 +2758,9 @@ def _evidence_records(
         )
     )
     if any(not isfinite(value) or value < 0.0 for _, value in records):
-        raise ValueError(f"Transfer {kind}s must be finite and nonnegative.")
+        raise ValueError(
+            f"evidence_records.kind must be finite and nonnegative; got Transfer {kind}s must be finite and nonnegative."
+        )
     return records
 
 
@@ -2466,7 +2799,7 @@ class FiniteElementFieldTransfer(StrictModule, NonTrainableState):
     """One finite-element field transfer with semantics, geometry, and evidence.
 
     ``transfer`` owns the certified primal map and claims; ``source_field`` and
-    ``target_field`` are the actual field spaces it maps (their DOF functionals
+    ``target_field`` are the represented field spaces it maps (their DOF functionals
     selected the route, never array widths); ``geometry`` binds the coordinate
     maps; ``evidence`` certifies nesting, continuity, and commuting defects.
     ``source_measures``/``target_measures`` are the DOF integrals of a
@@ -2483,6 +2816,7 @@ class FiniteElementFieldTransfer(StrictModule, NonTrainableState):
     evidence: FiniteElementTransferEvidence
     transfer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         transfer: FiniteElementTopologyTransfer,
@@ -2495,16 +2829,7 @@ class FiniteElementFieldTransfer(StrictModule, NonTrainableState):
         source_measures: ArrayLike | None = None,
         target_measures: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(transfer, FiniteElementTopologyTransfer):
-            raise TypeError("transfer must be a FiniteElementTopologyTransfer.")
-        if not isinstance(source_field, DiscreteFieldSpace) or not isinstance(
-            target_field, DiscreteFieldSpace
-        ):
-            raise TypeError("source_field and target_field must be DiscreteFieldSpace.")
-        if not isinstance(geometry, TransferGeometryBinding):
-            raise TypeError("geometry must be a TransferGeometryBinding.")
-        if not isinstance(evidence, FiniteElementTransferEvidence):
-            raise TypeError("evidence must be FiniteElementTransferEvidence.")
+
         spaces = (source_field.vector_space, target_field.vector_space)
         if (
             not isinstance(spaces[0], ArraySpace)
@@ -2514,14 +2839,14 @@ class FiniteElementFieldTransfer(StrictModule, NonTrainableState):
             or spaces[0].shape[1:] != spaces[1].shape[1:]
         ):
             raise ValueError(
-                "Field spaces must lead with the transfer's source/target DOF axes and "
-                "share their component axes."
+                "FiniteElementFieldTransfer.field_spaces must lead with the source/target DOF axes and share component axes; got "
+                f"source={spaces[0]!r}, target={spaces[1]!r}, source_size={transfer.source_size}, target_size={transfer.target_size}"
             )
         if (source_measures is None) != (target_measures is None) or (
             source_measures is None
         ) == transfer.conservative:
             raise ValueError(
-                "Exactly the conservative transfers carry source and target measures."
+                "FiniteElementFieldTransfer.configuration must provide both measures if and only if the transfer is conservative; got Exactly the conservative transfers carry source and target measures."
             )
         measures = (
             None
@@ -2536,7 +2861,7 @@ class FiniteElementFieldTransfer(StrictModule, NonTrainableState):
             or geometry.target_topology_id != transfer.target_topology_id
         ):
             raise ValueError(
-                "Geometry binding does not realize the field transfer's topologies."
+                "FiniteElementFieldTransfer.transfer must realize the field transfer's topologies; got Geometry binding does not realize the field transfer's topologies."
             )
         self.transfer = transfer
         self.source_field = source_field
@@ -2565,7 +2890,9 @@ class FiniteElementFieldTransfer(StrictModule, NonTrainableState):
         if not isinstance(source_space, ArraySpace) or not isinstance(
             target_space, ArraySpace
         ):
-            raise RuntimeError("Finite-element field spaces lost their ArraySpace.")
+            raise RuntimeError(
+                "FiniteElementFieldTransfer._field_transfer.configuration must have ArraySpace coefficient spaces; got Finite-element field spaces lost their ArraySpace."
+            )
         primal = _payload_operator(self.transfer.primal, source_space, target_space)
         declared = self.transfer.hilbert_adjoint
         hilbert = (
@@ -2602,6 +2929,7 @@ class FiniteElementFieldTransfer(StrictModule, NonTrainableState):
 
         return self._field_transfer(self.transfer.conservative)
 
+    @checked
     def epoch_transition(
         self, source_epoch: TopologyEpoch, target_epoch: TopologyEpoch, /
     ) -> TopologyEpochTransition | FieldEpochTransition:
@@ -2615,22 +2943,20 @@ class FiniteElementFieldTransfer(StrictModule, NonTrainableState):
         ``composition_transport(source_entry, target_entry)``.
         """
 
-        if not isinstance(source_epoch, TopologyEpoch) or not isinstance(
-            target_epoch, TopologyEpoch
-        ):
-            raise TypeError("Epoch transitions need TopologyEpoch endpoints.")
         transfer = self.transfer
         if (
             source_epoch.topology_id != transfer.source_topology_id
             or target_epoch.topology_id != transfer.target_topology_id
         ):
-            raise ValueError("Topology epochs do not realize this transfer's topologies.")
+            raise ValueError(
+                "FiniteElementTopologyTransfer.epoch_transition.configuration must realize this transfer's topologies; got Topology epochs do not realize this transfer's topologies."
+            )
         if (
             source_epoch.geometry_id != self.geometry.source_geometry_id
             or target_epoch.geometry_id != self.geometry.target_geometry_id
         ):
             raise ValueError(
-                "Topology epochs do not realize this transfer's actual geometry."
+                "FiniteElementFieldTransfer.epoch_transition.configuration must realize this transfer's represented geometry; got Topology epochs do not realize this transfer's represented geometry."
             )
         source_measures, target_measures = self.source_measures, self.target_measures
         if (
@@ -2649,7 +2975,7 @@ class FiniteElementFieldTransfer(StrictModule, NonTrainableState):
         source_mass = np.asarray(source_measures, dtype=np.float64)
         target_mass = np.asarray(target_measures, dtype=np.float64)
         components = self.source_field.vector_space.size // transfer.source_size
-        bound = _measure_defect_bound(
+        bound = measure_defect_bound(
             np.dtype(np.float64), transfer.action_condition, source_mass, target_mass
         )
         certified_content = dict(self.evidence.bounds).get("content")
@@ -2691,15 +3017,17 @@ def _field_signature(
     }
     if len(signatures) != 1:
         raise ValueError(
-            "Finite-element transfer needs one field family, degree, mapping, and cell kind "
-            f"on both meshes; got {sorted(signatures)}."
+            "field_signature.elements must share one family, degree, conformity, representation, mapping, value shape, cell kind, value specification, and tabulator on both meshes; got "
+            f"{sorted(signatures)!r}"
         )
     element = elements[0]
     if element.mapping == "identity" and element.value_shape:
-        raise ValueError("Identity-mapped vector elements have no nested transfer.")
+        raise ValueError(
+            "field_signature.configuration must select a supported declared route; got Identity-mapped vector elements have no nested transfer."
+        )
     if element.form_basis is None and element.mapping != "identity":
         raise ValueError(
-            "Mapped finite-element transfer requires canonical form-basis metadata."
+            "field_signature.configuration must provide declared form-basis metadata; got Mapped finite-element transfer requires declared form-basis metadata."
         )
     return element
 
@@ -2746,7 +3074,7 @@ def _tabulate_basis(element: FiniteElementSpec, points: Array, /) -> tuple[Array
     return element.tabulate(points)
 
 
-def _tabulated(
+def tabulated(
     element: FiniteElementSpec, points: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
     """Reference basis values and gradients at points ``(..., d)``.
@@ -2781,26 +3109,18 @@ def _mapped_basis(
     """Oriented physical basis ``(C, Q, n, V)`` and its curl/divergence ``(C, Q, n, W)``.
 
     Reference points are ``(C, Q, d)`` per cell or ``(Q, d)`` shared by every
-    cell. Mapping uses the element's canonical form value specification, including
-    its twist and physical proxy. Complete cell transforms map global routed
+    cell. Mapping uses the element's declared form value specification, including
+    its twist and physical proxy. full cell transforms map global routed
     coefficients to reference coefficients and include entity orientation.
     """
 
-    values, gradients = _tabulated(element, points)
+    values, gradients = tabulated(element, points)
     if points.ndim == 2:
         values = np.broadcast_to(values, (frames.shape[0],) + values.shape)
         gradients = np.broadcast_to(gradients, (frames.shape[0],) + gradients.shape)
     if element.form_basis is not None:
-        from ...exterior._algebra import (
-            exterior_derivative_from_jacobian,
-            form_to_vector,
-            map_reference_values,
-            vector_to_form,
-        )
-        from ...exterior._form_type import FormValueSpec
-
         mapped = np.asarray(
-            map_reference_values(
+            imported_exterior__algebra.map_reference_values(
                 values, element.value_spec, jnp.asarray(frames[:, None, None])
             )
         )
@@ -2810,7 +3130,9 @@ def _mapped_basis(
         if degree < element.topological_dimension:
             component_gradient = jnp.stack(
                 tuple(
-                    vector_to_form(jnp.asarray(gradients[..., axis]), element.value_spec)
+                    imported_exterior__algebra.vector_to_form(
+                        jnp.asarray(gradients[..., axis]), element.value_spec
+                    )
                     for axis in range(element.topological_dimension)
                 ),
                 axis=-1,
@@ -2824,13 +3146,17 @@ def _mapped_basis(
                 if derivative_type.degree == 1
                 else "flux"
             )
-            derivative_spec = FormValueSpec(derivative_type, proxy=proxy)
-            derivative = form_to_vector(
-                exterior_derivative_from_jacobian(component_gradient, scientific),
+            derivative_spec = imported_exterior__form_type.FormValueSpec(
+                derivative_type, proxy=proxy
+            )
+            derivative = imported_exterior__algebra.form_to_vector(
+                imported_exterior__algebra.exterior_derivative_from_jacobian(
+                    component_gradient, scientific
+                ),
                 derivative_spec,
             )
             differential = np.asarray(
-                map_reference_values(
+                imported_exterior__algebra.map_reference_values(
                     derivative, derivative_spec, jnp.asarray(frames[:, None, None])
                 )
             )
@@ -2848,7 +3174,7 @@ def _mapped_basis(
         return mapped, differential
     if element.mapping != "identity":
         raise ValueError(
-            "Mapped finite-element transfer requires canonical form-basis metadata."
+            "field_signature.configuration must provide declared form-basis metadata; got Mapped finite-element transfer requires declared form-basis metadata."
         )
     mapped = values[..., None]
     if transformation is not None:
@@ -2862,14 +3188,22 @@ def _parent_witness(
     parent_cells: ArrayLike | None, target_count: int, source_count: int, /
 ) -> np.ndarray:
     if parent_cells is None:
-        raise ValueError("Nested refinement requires parent_cells.")
+        raise ValueError(
+            "parent_witness.parent_cells must provide parent_cells; got Nested refinement requires parent_cells."
+        )
     parents = np.asarray(parent_cells)
     if not np.issubdtype(parents.dtype, np.integer):
-        raise TypeError("parent_cells must have an integer dtype.")
+        raise TypeError(
+            "parent_witness.parent_cells must have an integer dtype; got parent_cells must have an integer dtype."
+        )
     if parents.shape != (target_count,):
-        raise ValueError("parent_cells needs one source cell per target cell.")
+        raise ValueError(
+            "parent_witness.parent_cells must provide one source cell per target cell; got parent_cells needs one source cell per target cell."
+        )
     if np.any(parents < 0) or np.any(parents >= source_count):
-        raise ValueError("parent_cells must address source cells.")
+        raise ValueError(
+            "parent_witness.parent_cells must address source cells; got parent_cells must address source cells."
+        )
     return parents.astype(np.int64)
 
 
@@ -2899,7 +3233,7 @@ def _containment_defect(
     """Largest barycentric excursion of target corners outside their parents.
 
     Affine simplices are convex, so corner containment certifies containment of
-    the whole target cell and exact restriction of the parent coordinate map.
+    the whole target cell and algebraic restriction of the parent coordinate map.
     """
 
     corners = _reference_vertices(target_frames.shape[-1])
@@ -2931,7 +3265,7 @@ def _row_disagreement(
 
     Row ``k`` of each operand is the pair ``(columns[k], values[k])``; two rows
     agree when their coefficients agree on every column, whatever local order or
-    owning cell produced them.
+     cell produced them.
     """
 
     rows = np.arange(columns.shape[0], dtype=np.int64)[:, None]
@@ -2951,7 +3285,7 @@ def _row_disagreement(
     return float(np.max(np.abs(difference), initial=0.0)) / scale
 
 
-def _owned_rows(
+def owned_rows(
     target_routes: np.ndarray,
     source_routes: np.ndarray,
     local: np.ndarray,
@@ -2959,7 +3293,7 @@ def _owned_rows(
     source_size: int,
     /,
 ) -> tuple[np.ndarray, np.ndarray, float]:
-    """Global rows from the first owning cell of each DOF and their continuity defect.
+    """Global rows from the first cell of each DOF and their continuity defect.
 
     Every other cell sharing a DOF must produce the same row; the defect measures
     trace continuity and orientation consistency of the local transfers.
@@ -2969,7 +3303,9 @@ def _owned_rows(
     flat = target_routes.reshape((-1,))
     dofs, first = np.unique(flat, return_index=True)
     if not np.array_equal(dofs, np.arange(target_size)):
-        raise ValueError("Target cells do not cover every target DOF.")
+        raise ValueError(
+            "owned_rows.configuration must cover every target DOF; got Target cells do not cover every target DOF."
+        )
     owner_cells, owner_slots = np.divmod(first, width)
     rows = source_routes[owner_cells]
     coefficients = local[owner_cells, owner_slots]
@@ -2999,18 +3335,19 @@ def _local_nested_transfer(
     parent_transformation: np.ndarray | None = None,
     maximum_work: int = 100_000_000,
     maximum_storage_bytes: int = 256_000_000,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, dict[str, float], float]:
-    """Exact local reconstruction ``M^{-1} B`` of parent basis functions per child.
+    """algebraic local reconstruction ``M^{-1} B`` of parent basis functions per child.
 
     Returns the local maps ``(C, n_target, n_source)``, their reproduction and
     commuting defects, and the local mass condition that scales the certificate.
     """
 
     cells = target_frames.shape[0]
-    from ...linalg import RHSLayout, SmallLinearSolvePlan, solve_small_linear
-    from ._mapped_form_transfer import _PreparationWork
 
-    preparation = _PreparationWork(maximum_work, maximum_storage_bytes)
+    preparation = imported_mapped_form_transfer.PreparationWork(
+        maximum_work, maximum_storage_bytes, budget=budget
+    )
     width = element.local_dof_count
     value_width = max(element.topological_dimension if element.value_shape else 1, 1)
     samples = reference_points.shape[0]
@@ -3044,22 +3381,30 @@ def _local_nested_transfer(
         ein.contract("cq,cqiv,cqkv->cik", weights, target_basis, source_basis)
     )
     if width <= 4:
-        solved = solve_small_linear(SmallLinearSolvePlan(width), mass, mixed)
+        solved = imported_linalg.solve_small_linear(
+            imported_linalg.SmallLinearSolvePlan(width), mass, mixed
+        )
         condition = float(np.max(np.asarray(solved.condition_estimate)))
     else:
         factor = factorize(DenseLinearOperator(mass), FactorizationPolicy("svd"))
         if np.any(np.asarray(factor.rank()) != width):
-            raise ValueError("Nested finite-element local mass is rank deficient.")
+            raise ValueError(
+                "local_nested_transfer.element must have full rank; got Nested finite-element local mass is rank deficient."
+            )
         spectrum = np.asarray(factor.singular_values())
         condition = float(np.max(spectrum[..., 0] / spectrum[..., -1]))
         solved = factor.solve(
-            jnp.asarray(mixed), rhs_layout=RHSLayout((mixed.shape[-1],))
+            jnp.asarray(mixed), rhs_layout=imported_linalg.RHSLayout((mixed.shape[-1],))
         )
     if not bool(np.all(np.asarray(solved.successful))):
-        raise ValueError("Nested finite-element native local mass solve failed.")
+        raise ValueError(
+            "local_nested_transfer.element must pass the declared scientific certificate; got Nested finite-element native local mass solve failed."
+        )
     local = np.asarray(solved.value, dtype=np.float64)
     if not np.all(np.isfinite(local)) or not np.isfinite(condition) or condition > 1e12:
-        raise ValueError("Nested finite-element local mass is ill conditioned.")
+        raise ValueError(
+            "local_nested_transfer.element must meet the declared conditioning bound; got Nested finite-element local mass is ill conditioned."
+        )
     reconstructed = np.asarray(ein.contract("cqiv,cik->cqkv", target_basis, local))
     scale = max(float(np.max(np.abs(source_basis))), np.finfo(np.float64).tiny)
     defects = {
@@ -3095,7 +3440,9 @@ def _nested_semantics(element: FiniteElementSpec, passed: bool, /) -> TransferSe
         case "contravariant_piola":
             return "contravariant-piola"
         case mapping:
-            raise ValueError(f"Unsupported finite-element mapping {mapping!r}.")
+            raise ValueError(
+                f"nested_semantics.element must select a supported declared route; got Unsupported finite-element mapping {mapping!r}."
+            )
 
 
 def _single_coordinate_element(
@@ -3116,8 +3463,8 @@ def _single_coordinate_element(
         != coordinate_lagrange_element(element.cell_kind, element.degree).element_id
     ):
         raise ValueError(
-            f"Nested transfer on reference witnesses requires one simplex Lagrange "
-            f"coordinate element on every {role} block."
+            "single_coordinate_element.coordinate_elements must share one simplex Lagrange element across all blocks; got "
+            f"role={role!r}, element_ids={tuple(elements)!r}, cell_kinds={sorted(kinds)!r}, element_type={type(element).__name__}"
         )
     return element
 
@@ -3134,7 +3481,7 @@ def _map_restriction_defect(
 
     Every target coordinate node is compared with the parent coordinate map at
     the node's parent reference point; zero certifies that the target geometry is
-    the exact restriction the reference witnesses describe.
+    the algebraic restriction the reference witnesses describe.
     """
 
     source_element = _single_coordinate_element(source, "source")
@@ -3160,7 +3507,326 @@ def _map_restriction_defect(
     return float(np.max(np.abs(restricted - target_points[target_routes]))) / scale
 
 
-def prepare_nested_field_transfer(
+class _NestedAffineGeometry(StrictModule):
+    parents: NDArray[np.int64]
+    target_origins: NDArray[np.float64]
+    target_frames: NDArray[np.float64]
+    parent_origins: NDArray[np.float64]
+    parent_frames: NDArray[np.float64]
+    geometry_defects: dict[str, float]
+    affine: bool
+
+
+def _nested_affine_geometry(
+    source: _NestedFiniteElementDiscretization,
+    target: _NestedFiniteElementDiscretization,
+    parent_cells: ArrayLike | None,
+    parent_reference_vertices: ArrayLike | None,
+    actual_source_geometry: CellGeometrySpec,
+    actual_target_geometry: CellGeometrySpec,
+    affine_coefficient_actions: bool,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _NestedAffineGeometry:
+    geometry_defects: dict[str, float] = {}
+    if parent_reference_vertices is None:
+        _require_affine_simplices(source, "source", "Nested transfer")
+        _require_affine_simplices(target, "target", "Nested transfer")
+        affine = True
+        source_origins, source_frames = _affine_frames(source)
+        target_origins, target_frames = _affine_frames(target)
+        parents = _parent_witness(
+            parent_cells, target_frames.shape[0], source_frames.shape[0]
+        )
+        parent_origins, parent_frames = source_origins[parents], source_frames[parents]
+    else:
+        # Reference-relative child maps: the target reference simplex maps into the
+        # parent reference cell, whose own frame is the identity.
+        affine = all(
+            element_.element_id
+            == coordinate_lagrange_element(block.cell_kind, 1).element_id
+            or isinstance(element_, BarycentricCellGeometryElement)
+            for block, element_ in zip(
+                source.mesh.blocks, source.coordinate_elements, strict=True
+            )
+        )
+        corners = np.asarray(parent_reference_vertices, dtype=np.float64)
+        dimension = target.mesh.topological_dimension
+        count = sum(block.cell_count for block in target.mesh.blocks)
+        if corners.shape != (count, dimension + 1, dimension) or not np.all(
+            np.isfinite(corners)
+        ):
+            raise ValueError(
+                "nested_affine_geometry.target must be finite (target cells, d+1, d); got parent_reference_vertices must be finite (target cells, d+1, d)."
+            )
+        parents = _parent_witness(
+            parent_cells, count, sum(block.cell_count for block in source.mesh.blocks)
+        )
+        target_origins = corners[:, 0]
+        target_frames = np.swapaxes(corners[:, 1:] - corners[:, :1], -1, -2)
+        parent_origins = np.zeros_like(target_origins)
+        parent_frames = np.broadcast_to(np.eye(dimension), target_frames.shape).copy()
+        if affine_coefficient_actions:
+            pairs = imported_nested_reference.nested_reference_pairs(
+                source.mesh,
+                actual_source_geometry,
+                target.mesh,
+                actual_target_geometry,
+                parent_cells=parents,
+                parent_reference_vertices=corners,
+                budget=budget,
+            )
+            bound = mapped_measure_owner.certify_nested_geometry_pairs(
+                source.mesh,
+                actual_source_geometry,
+                target.mesh,
+                actual_target_geometry,
+                pairs,
+                budget=budget,
+            )
+            if bound != 0.0:
+                raise ValueError(
+                    "nested_affine_geometry.coefficient_action must preserve the source map algebraically under its reference witnesses; got a nonzero algebraic difference."
+                )
+            geometry_defects["geometry"] = bound
+        else:
+            geometry_defects["geometry"] = _map_restriction_defect(
+                source, target, parents, target_origins, target_frames
+            )
+    if not affine_coefficient_actions and (
+        actual_source_geometry.restriction_source is not None
+        or actual_target_geometry.restriction_source is not None
+    ):
+        source_roots = mapped_root_identities(source.mesh, actual_source_geometry)
+        target_roots = mapped_root_identities(target.mesh, actual_target_geometry)
+        if any(
+            source_roots[parent] != target_roots[row]
+            for row, parent in enumerate(parents)
+        ):
+            raise ValueError(
+                "nested_affine_geometry.parent_cells must preserve scientific root identities; got "
+                f"source_roots={source_roots!r}, target_roots={target_roots!r}, parents={parents!r}"
+            )
+    return _NestedAffineGeometry(
+        parents,
+        target_origins,
+        target_frames,
+        parent_origins,
+        parent_frames,
+        geometry_defects,
+        affine,
+    )
+
+
+def _prepare_affine_nested_field_transfer(
+    source: _NestedFiniteElementDiscretization,
+    target: _NestedFiniteElementDiscretization,
+    parent_cells: ArrayLike | None,
+    *,
+    name: str,
+    source_index: int,
+    target_index: int,
+    parent_reference_vertices: ArrayLike | None,
+    actual_source_geometry: CellGeometrySpec,
+    actual_target_geometry: CellGeometrySpec,
+    affine_coefficient_actions: bool,
+    maximum_work: int,
+    maximum_storage_bytes: int,
+    budget: CoordinateEnclosureBudget,
+) -> FiniteElementFieldTransfer:
+    element = _field_signature(source, source_index, target, target_index)
+    prepared = _nested_affine_geometry(
+        source,
+        target,
+        parent_cells,
+        parent_reference_vertices,
+        actual_source_geometry,
+        actual_target_geometry,
+        affine_coefficient_actions,
+        budget=budget,
+    )
+    parents = prepared.parents
+    target_origins, target_frames = prepared.target_origins, prepared.target_frames
+    parent_origins, parent_frames = prepared.parent_origins, prepared.parent_frames
+    geometry_defects, affine = prepared.geometry_defects, prepared.affine
+    degree = _polynomial_degree(element)
+    rule = cubature_rule_data(_simplex_cubature_kind(element.cell_kind), 2 * degree)
+    reference_points = np.asarray(rule.points, dtype=np.float64)
+    physical = target_origins[:, None, :] + reference_points[None] @ np.swapaxes(
+        target_frames, -1, -2
+    )
+    target_routes, target_orientation = _cell_routes(target, target_index)
+    source_routes, source_orientation = _cell_routes(source, source_index)
+    source_transformation = _cell_transformations(source, source_index)
+    local, defects, mass_condition = _local_nested_transfer(
+        element,
+        target_frames,
+        target_orientation,
+        reference_points,
+        np.asarray(rule.weights, dtype=np.float64),
+        parent_frames,
+        source_orientation[parents],
+        _pullback(parent_origins, parent_frames, physical),
+        target_transformation=_cell_transformations(target, target_index),
+        parent_transformation=None
+        if source_transformation is None
+        else source_transformation[parents],
+        maximum_work=maximum_work,
+        maximum_storage_bytes=maximum_storage_bytes,
+        budget=budget,
+    )
+    source_dofs = source.dof_maps[source_index]
+    target_dofs = target.dof_maps[target_index]
+    rows, coefficients, continuity = owned_rows(
+        target_routes,
+        source_routes[parents],
+        local,
+        target_dofs.global_dof_count,
+        source_dofs.global_dof_count,
+    )
+    containment = _containment_defect(
+        target_origins, target_frames, parent_origins, parent_frames
+    )
+    lagrange = (
+        element.mapping == "identity"
+        and not element.value_shape
+        and element.representation == "point_value"
+    )
+    source_measures, target_measures = None, None
+    if lagrange and affine and affine_coefficient_actions:
+        cell_measures: list[NDArray[np.float64]] = []
+        for space, geometry in (
+            (source, actual_source_geometry),
+            (target, actual_target_geometry),
+        ):
+            measured_cells, errors, _ = mapped_measure_owner.certified_cell_measures(
+                space.mesh, geometry, maximum_work=maximum_work, budget=budget
+            )
+            cell_measures.append(measured_cells)
+            defects["measure_rounding"] = max(
+                defects.get("measure_rounding", 0.0),
+                float(np.sum(errors))
+                / max(float(np.sum(measured_cells)), np.finfo(np.float64).tiny),
+            )
+        source_measures = _cell_integrals(
+            source, source_index, mass=False, cell_measures=cell_measures[0]
+        )[0]
+        target_measures = _cell_integrals(
+            target, target_index, mass=False, cell_measures=cell_measures[1]
+        )[0]
+        restricted_measures = np.zeros_like(source_measures)
+        np.add.at(
+            restricted_measures,
+            rows.reshape(-1),
+            (coefficients * target_measures[:, None]).reshape(-1),
+        )
+        defects["conservation"] = _relative(
+            restricted_measures - source_measures, source_measures
+        )
+    amplification = max(
+        mass_condition, _frame_condition(target_frames), _frame_condition(parent_frames)
+    ) * float(local.shape[1] * local.shape[2])
+    evidence = FiniteElementTransferEvidence(
+        {
+            "containment": containment,
+            "continuity": continuity,
+            **geometry_defects,
+            **defects,
+        },
+        CLAIM_ULPS * float(np.finfo(np.float64).eps) * amplification,
+    )
+    passed = evidence.passed
+    identity = {
+        "source": source.prepared_id,
+        "target": target.prepared_id,
+        "field": name,
+        "parents": array_tree_fingerprint(parents),
+    }
+    primal = SparseLinearMap(
+        RowRelation(
+            rows.astype(np.int32),
+            source_size=source_dofs.global_dof_count,
+            valid=np.ones(rows.shape, dtype=np.bool_),
+        ),
+        jnp.asarray(coefficients),
+        operator_id=canonical_fingerprint(
+            {"kind": "finite-element-nested-transfer", **identity}
+        ),
+    )
+    claims = passed and lagrange
+    measured = claims and affine
+    if not measured:
+        source_measures, target_measures = None, None
+    elif not affine_coefficient_actions:
+        source_measures = _cell_integrals(source, source_index, mass=False)[0]
+        target_measures = _cell_integrals(target, target_index, mass=False)[0]
+    linear = (
+        measured
+        and element.degree >= 1
+        and not source_dofs.association.startswith("quotient_")
+        and not target_dofs.association.startswith("quotient_")
+    )
+    transfer = FiniteElementTopologyTransfer(
+        primal,
+        source.mesh.topology_id,
+        target.mesh.topology_id,
+        preserves_constants=claims,
+        preserves_linear=linear,
+        conservative=measured,
+        positivity_preserving=claims and bool(np.all(coefficients >= 0.0)),
+        action_condition=max(amplification, 1.0),
+        semantics=_nested_semantics(element, passed),
+        source_coordinates=source_dofs.dof_coordinates if linear else None,
+        target_coordinates=target_dofs.dof_coordinates if linear else None,
+        source_measures=source_measures,
+        target_measures=target_measures,
+    )
+    nesting = max(containment, geometry_defects.get("geometry", 0.0))
+    geometry = TransferGeometryBinding(
+        _coordinate_geometry_id(actual_source_geometry),
+        _coordinate_geometry_id(actual_target_geometry),
+        "exact-restriction"
+        if nesting <= evidence.tolerance
+        else "bounded-reconstruction",
+        source_topology_id=source.mesh.topology_id,
+        target_topology_id=target.mesh.topology_id,
+        coverage_defect=0.0 if nesting <= evidence.tolerance else nesting,
+    )
+    return FiniteElementFieldTransfer(
+        transfer,
+        source.field_spaces[source_index],
+        target.field_spaces[target_index],
+        geometry,
+        evidence,
+        source_measures=source_measures,
+        target_measures=target_measures,
+    )
+
+
+def _reference_coarsening_admissible(
+    source: FiniteElementDiscretization,
+    target: FiniteElementDiscretization,
+    source_index: int,
+    target_index: int,
+) -> bool:
+    return not all(
+        element.form_basis is not None
+        for element in source.elements[source_index] + target.elements[target_index]
+    ) and all(
+        block.cell_kind in _SIMPLEX_KINDS.values()
+        and (
+            coordinate.element_id
+            == coordinate_lagrange_element(block.cell_kind, 1).element_id
+            or isinstance(coordinate, BarycentricCellGeometryElement)
+        )
+        for space in (source, target)
+        for block, coordinate in zip(
+            space.mesh.blocks, space.coordinate_elements, strict=True
+        )
+    )
+
+
+def _prepare_nested_field_transfer(
     source: _NestedFiniteElementDiscretization,
     target: _NestedFiniteElementDiscretization,
     parent_cells: ArrayLike | None,
@@ -3174,86 +3840,36 @@ def prepare_nested_field_transfer(
     coarsening_witnesses: NestedReferenceWitnesses | None = None,
     maximum_work: int = 100_000_000,
     maximum_storage_bytes: int = 256_000_000,
+    budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
-    """Prepare the exact transfer of one FE field onto a nested refinement.
-
-    ``parent_cells[t]`` is the source cell (concatenated block order) containing
-    target cell ``t``, the parent witness of a refinement lineage. The route is
-    selected by the field's element family and DOF functionals on both meshes,
-    never by array widths; an incompatible family raises ``ValueError``.
-
-    Without ``parent_reference_vertices`` both meshes must be affine simplices and
-    the child maps are recovered from physical corners. With it (``(C, d+1, d)``
-    target corners in parent reference coordinates, e.g.
-    ``MeshAdaptationResult.parent_reference_vertices``) the transfer is built in
-    reference coordinates, so curved Lagrange coordinate maps are admitted; the
-    ``geometry`` defect then certifies that the target map is the exact
-    restriction of the parent map at every target coordinate node.
-
-    Each target cell reconstructs the parent's basis functions in its own space,
-    ``M^{-1} B`` with the target Piola-mapped basis (identity for H1/L2 Lagrange,
-    covariant for H(curl) Nedelec, contravariant for H(div) RT/BDM).
-    Where the target space contains the source space this equals applying the
-    target DOF functionals (nodal values, edge circulation or face flux moments)
-    and reproduces every source field exactly. The evidence certifies it:
-    ``containment`` (the witness nests), ``reproduction`` (the space inclusion
-    holds), ``continuity`` (shared DOFs agree across cells, validating trace
-    continuity and orientation), and ``commuting`` for compatible fields (the
-    curl/divergence of the transfer equals the transferred curl/divergence).
-    Scalar Lagrange transfers then certify constant, linear, positivity, and
-    content conservation claims on affine maps (constants only on curved maps,
-    whose content measures this route does not integrate); a failed certificate
-    claims nothing and its epoch transition refuses the rebind.
-
-    Canonical mixed/restricted maps use explicit ``source_geometry`` and
-    ``target_geometry`` and immediate-parent reference witnesses. A bound
-    ``geometry_transition`` supplies complete coarsening patches when
-    ``parent_cells`` is ``None``. H1 evaluates actual target nodal functionals
-    (without claiming general coarsening function/content reproduction); DG
-    projects with exact/enclosed physical forms and a conserved content ledger.
-    Restricted coordinate routes remain source coefficients. Canonical form
-    fields apply their complete entity functionals on certified reference
-    patches, including complete-source coarsening. Compatible preparation obeys
-    cumulative ``maximum_work`` and ``maximum_storage_bytes`` bounds.
-    """
-
-    if not isinstance(source, _NESTED_SPACE_TYPES) or not isinstance(
-        target, _NESTED_SPACE_TYPES
-    ):
-        raise TypeError(
-            "source and target must be finite-element or transfer-space preparations."
-        )
+    """Dispatch certified affine, mapped, and retained-reference field transfers."""
     name = str(field_name)
-    source_index = source._field_index(name)
-    target_index = target._field_index(name)
-    actual_source_geometry = _bound_coordinate_spec(source, source_geometry, "source")
-    actual_target_geometry = _bound_coordinate_spec(target, target_geometry, "target")
-    if (
-        isinstance(source, FiniteElementDiscretization)
-        and isinstance(target, FiniteElementDiscretization)
-        and coarsening_witnesses is not None
-        and not all(
-            element.form_basis is not None
-            for element in source.elements[source_index] + target.elements[target_index]
-        )
-        and all(
-            block.cell_kind in _SIMPLEX_KINDS.values()
-            and coordinate.element_id
-            == coordinate_lagrange_element(block.cell_kind, 1).element_id
-            for space in (source, target)
-            for block, coordinate in zip(
-                space.mesh.blocks, space.coordinate_elements, strict=True
+    source_index = source.field_index(name)
+    target_index = target.field_index(name)
+    actual_source_geometry = bound_coordinate_spec(
+        source, source_geometry, "source", budget=budget
+    )
+    actual_target_geometry = bound_coordinate_spec(
+        target, target_geometry, "target", budget=budget
+    )
+    match source, target:
+        case FiniteElementDiscretization(), FiniteElementDiscretization() if (
+            coarsening_witnesses is not None
+            and _reference_coarsening_admissible(
+                source, target, source_index, target_index
             )
-        )
-    ):
-        return _prepare_reference_coarsening_projection(
-            source,
-            target,
-            actual_source_geometry,
-            actual_target_geometry,
-            field_name=name,
-            coarsening_witnesses=coarsening_witnesses,
-        )
+        ):
+            return _prepare_reference_coarsening_projection(
+                source,
+                target,
+                actual_source_geometry,
+                actual_target_geometry,
+                field_name=name,
+                coarsening_witnesses=coarsening_witnesses,
+                budget=budget,
+            )
+        case _:
+            pass
     coefficient_action_geometry = any(
         isinstance(element, BarycentricCellGeometryElement)
         for space in (source, target)
@@ -3266,8 +3882,12 @@ def prepare_nested_field_transfer(
         and parent_reference_vertices is not None
     )
     if affine_coefficient_actions:
-        _require_affine_simplices(source, "source", "Nested transfer")
-        _require_affine_simplices(target, "target", "Nested transfer")
+        _require_coefficient_affine_simplices(
+            source, actual_source_geometry, "source", budget=budget
+        )
+        _require_coefficient_affine_simplices(
+            target, actual_target_geometry, "target", budget=budget
+        )
     mapped = (
         any(
             block.cell_kind not in _SIMPLEX_KINDS.values()
@@ -3312,17 +3932,19 @@ def prepare_nested_field_transfer(
                 coarsening_witnesses=coarsening_witnesses,
                 maximum_work=maximum_work,
                 maximum_storage_bytes=maximum_storage_bytes,
+                budget=budget,
             )
-        elif kinds == {"H1"}:
-            prepare = _prepare_mapped_nested_h1_transfer
-        elif kinds == {"L2"}:
-            prepare = _prepare_mapped_nested_dg_transfer
-        elif kinds in ({"Hcurl"}, {"Hdiv"}):
-            prepare = _prepare_mapped_nested_compatible_transfer
-        else:
-            raise ValueError(
-                "Mapped nested transfer cannot change field-family conformity."
-            )
+        match sorted(kinds):
+            case ["H1"]:
+                prepare = _prepare_mapped_nested_h1_transfer
+            case ["L2"]:
+                prepare = prepare_mapped_nested_dg_transfer
+            case ["Hcurl"] | ["Hdiv"]:
+                prepare = _prepare_mapped_nested_compatible_transfer
+            case _:
+                raise ValueError(
+                    "prepare_nested_field_transfer.configuration must preserve field-family conformity; got Mapped nested transfer cannot change field-family conformity."
+                )
         return prepare(
             source,
             target,
@@ -3332,201 +3954,38 @@ def prepare_nested_field_transfer(
             parent_cells=parent_cells,
             parent_reference_vertices=parent_reference_vertices,
             geometry_transition=geometry_transition,
+            budget=budget,
         )
-    element = _field_signature(source, source_index, target, target_index)
-    geometry_defects: dict[str, float] = {}
-    if parent_reference_vertices is None:
-        _require_affine_simplices(source, "source", "Nested transfer")
-        _require_affine_simplices(target, "target", "Nested transfer")
-        affine = True
-        source_origins, source_frames = _affine_frames(source)
-        target_origins, target_frames = _affine_frames(target)
-        parents = _parent_witness(
-            parent_cells, target_frames.shape[0], source_frames.shape[0]
-        )
-        parent_origins, parent_frames = source_origins[parents], source_frames[parents]
-    else:
-        # Reference-relative child maps: the target reference simplex maps into the
-        # parent reference cell, whose own frame is the identity.
-        affine = all(
-            element_.element_id
-            == coordinate_lagrange_element(block.cell_kind, 1).element_id
-            or isinstance(element_, BarycentricCellGeometryElement)
-            for block, element_ in zip(
-                source.mesh.blocks, source.coordinate_elements, strict=True
-            )
-        )
-        corners = np.asarray(parent_reference_vertices, dtype=np.float64)
-        dimension = target.mesh.topological_dimension
-        count = sum(block.cell_count for block in target.mesh.blocks)
-        if corners.shape != (count, dimension + 1, dimension) or not np.all(
-            np.isfinite(corners)
-        ):
-            raise ValueError(
-                "parent_reference_vertices must be finite (target cells, d+1, d)."
-            )
-        parents = _parent_witness(
-            parent_cells, count, sum(block.cell_count for block in source.mesh.blocks)
-        )
-        target_origins = corners[:, 0]
-        target_frames = np.swapaxes(corners[:, 1:] - corners[:, :1], -1, -2)
-        parent_origins = np.zeros_like(target_origins)
-        parent_frames = np.broadcast_to(np.eye(dimension), target_frames.shape).copy()
-        if affine_coefficient_actions:
-            source_origins, source_frames = _affine_frames(source)
-            target_rows = np.concatenate(
-                [np.asarray(block.vertices) for block in target.mesh.blocks]
-            )
-            target_points = np.asarray(target.mesh.coordinates)[target_rows]
-            restricted = source_origins[parents, None, :] + corners @ np.swapaxes(
-                source_frames[parents], -1, -2
-            )
-            scale = max(
-                float(np.max(np.abs(np.asarray(source.mesh.coordinates)))),
-                np.finfo(np.float64).tiny,
-            )
-            geometry_defects["geometry"] = (
-                float(np.max(np.abs(restricted - target_points))) / scale
-            )
-        else:
-            geometry_defects["geometry"] = _map_restriction_defect(
-                source, target, parents, target_origins, target_frames
-            )
-    degree = _polynomial_degree(element)
-    rule = cubature_rule_data(_simplex_cubature_kind(element.cell_kind), 2 * degree)
-    reference_points = np.asarray(rule.points, dtype=np.float64)
-    physical = target_origins[:, None, :] + reference_points[None] @ np.swapaxes(
-        target_frames, -1, -2
-    )
-    target_routes, target_orientation = _cell_routes(target, target_index)
-    source_routes, source_orientation = _cell_routes(source, source_index)
-    source_transformation = _cell_transformations(source, source_index)
-    local, defects, mass_condition = _local_nested_transfer(
-        element,
-        target_frames,
-        target_orientation,
-        reference_points,
-        np.asarray(rule.weights, dtype=np.float64),
-        parent_frames,
-        source_orientation[parents],
-        _pullback(parent_origins, parent_frames, physical),
-        target_transformation=_cell_transformations(target, target_index),
-        parent_transformation=None
-        if source_transformation is None
-        else source_transformation[parents],
+    return _prepare_affine_nested_field_transfer(
+        source,
+        target,
+        parent_cells,
+        name=name,
+        source_index=source_index,
+        target_index=target_index,
+        parent_reference_vertices=parent_reference_vertices,
+        actual_source_geometry=actual_source_geometry,
+        actual_target_geometry=actual_target_geometry,
+        affine_coefficient_actions=affine_coefficient_actions,
         maximum_work=maximum_work,
         maximum_storage_bytes=maximum_storage_bytes,
-    )
-    source_dofs = source.dof_maps[source_index]
-    target_dofs = target.dof_maps[target_index]
-    rows, coefficients, continuity = _owned_rows(
-        target_routes,
-        source_routes[parents],
-        local,
-        target_dofs.global_dof_count,
-        source_dofs.global_dof_count,
-    )
-    containment = _containment_defect(
-        target_origins, target_frames, parent_origins, parent_frames
-    )
-    amplification = max(
-        mass_condition, _frame_condition(target_frames), _frame_condition(parent_frames)
-    ) * float(local.shape[1] * local.shape[2])
-    evidence = FiniteElementTransferEvidence(
-        {
-            "containment": containment,
-            "continuity": continuity,
-            **geometry_defects,
-            **defects,
-        },
-        _CLAIM_ULPS * float(np.finfo(np.float64).eps) * amplification,
-    )
-    passed = evidence.passed
-    identity = {
-        "source": source.prepared_id,
-        "target": target.prepared_id,
-        "field": name,
-        "parents": array_tree_fingerprint(parents),
-    }
-    primal = SparseLinearMap(
-        RowRelation(
-            rows.astype(np.int32),
-            source_size=source_dofs.global_dof_count,
-            valid=np.ones(rows.shape, dtype=np.bool_),
-        ),
-        jnp.asarray(coefficients),
-        operator_id=canonical_fingerprint(
-            {"kind": "finite-element-nested-transfer", **identity}
-        ),
-    )
-    lagrange = (
-        element.mapping == "identity"
-        and not element.value_shape
-        and element.representation == "point_value"
-    )
-    claims = passed and lagrange
-    measured = claims and affine and not affine_coefficient_actions
-    linear = (
-        measured
-        and element.degree >= 1
-        and not source_dofs.association.startswith("quotient_")
-        and not target_dofs.association.startswith("quotient_")
-    )
-    source_measures = (
-        _cell_integrals(source, source_index, mass=False)[0] if measured else None
-    )
-    target_measures = (
-        _cell_integrals(target, target_index, mass=False)[0] if measured else None
-    )
-    transfer = FiniteElementTopologyTransfer(
-        primal,
-        source.mesh.topology_id,
-        target.mesh.topology_id,
-        preserves_constants=claims,
-        preserves_linear=linear,
-        conservative=measured,
-        positivity_preserving=claims and bool(np.all(coefficients >= 0.0)),
-        action_condition=max(amplification, 1.0),
-        semantics=_nested_semantics(element, passed),
-        source_coordinates=source_dofs.dof_coordinates if linear else None,
-        target_coordinates=target_dofs.dof_coordinates if linear else None,
-        source_measures=source_measures,
-        target_measures=target_measures,
-    )
-    nesting = max(containment, geometry_defects.get("geometry", 0.0))
-    geometry = TransferGeometryBinding(
-        _coordinate_geometry_id(actual_source_geometry),
-        _coordinate_geometry_id(actual_target_geometry),
-        "exact-restriction"
-        if nesting <= evidence.tolerance
-        else "bounded-reconstruction",
-        source_topology_id=source.mesh.topology_id,
-        target_topology_id=target.mesh.topology_id,
-        coverage_defect=0.0 if nesting <= evidence.tolerance else nesting,
-    )
-    return FiniteElementFieldTransfer(
-        transfer,
-        source.field_spaces[source_index],
-        target.field_spaces[target_index],
-        geometry,
-        evidence,
-        source_measures=source_measures,
-        target_measures=target_measures,
+        budget=budget,
     )
 
 
-def prepare_projection_field_transfer(
+def _prepare_projection_field_transfer(
     source: FiniteElementDiscretization,
     target: PreparedL2ProjectionTarget,
-    refinement: PreparedCommonRefinement,
+    refinement: imported_geometry.PreparedCommonRefinement,
     /,
     *,
     field_name: str,
+    budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
     """Prepare a non-nested scalar or compatible vector projection.
 
     Scalar fields use ordinary Galerkin L2 projection. Piola fields require one
-    identical family/degree on both affine meshes and complete common-refinement
+    identical family/degree on both affine meshes and full common-refinement
     coverage. They minimize L2 field error subject to conserved vector content
     and a commuting differential: cellwise polynomial L2 divergence in H(div),
     cellwise L2 curl in 2D, and L2 projection into the target discrete curl image
@@ -3540,11 +3999,11 @@ def prepare_projection_field_transfer(
 
     transfer, overlap = _assembled_projection(source, target, refinement, field_name)
     name = str(field_name)
-    source_index = source._field_index(name)
+    source_index = source.field_index(name)
     space = target.discretization
     coverage = _coverage_bound(refinement)
     if source.elements[source_index][0].mapping == "identity":
-        target_index = space._field_index(target.field_name)
+        target_index = space.field_index(target.field_name)
         # Scalar probes are constant-first; only probes in both spaces must be
         # reproduced, and affine probes are not periodic functions.
         periodic = (
@@ -3566,7 +4025,7 @@ def prepare_projection_field_transfer(
         }
         estimates = {"polynomial-probes": float(common)} if periodic else {}
         tolerance = (
-            _CLAIM_ULPS * float(np.finfo(np.float64).eps) * transfer.action_condition
+            CLAIM_ULPS * float(np.finfo(np.float64).eps) * transfer.action_condition
         )
         evidence = FiniteElementTransferEvidence(
             certified, max(tolerance, coverage), estimates=estimates
@@ -3580,16 +4039,20 @@ def prepare_projection_field_transfer(
         )
         if not evidence.passed:
             raise ValueError(
-                f"Compatible projection commuting/content constraints are unrealizable "
-                f"or failed: {evidence.defects}, tolerance={evidence.tolerance}."
+                "prepare_l2_projection_transfer.evidence must satisfy commuting and content constraints within tolerance; got "
+                f"defects={evidence.defects!r}, tolerance={evidence.tolerance!r}"
             )
     return FiniteElementFieldTransfer(
         transfer,
         source.field_spaces[source_index],
-        space.field_spaces[space._field_index(target.field_name)],
+        space.field_spaces[space.field_index(target.field_name)],
         TransferGeometryBinding(
-            _coordinate_geometry_id(_bound_coordinate_spec(source, None, "source")),
-            _coordinate_geometry_id(_bound_coordinate_spec(space, None, "target")),
+            _coordinate_geometry_id(
+                bound_coordinate_spec(source, None, "source", budget=budget)
+            ),
+            _coordinate_geometry_id(
+                bound_coordinate_spec(space, None, "target", budget=budget)
+            ),
             "bounded-reconstruction",
             source_topology_id=source.mesh.topology_id,
             target_topology_id=space.mesh.topology_id,
@@ -3620,9 +4083,10 @@ __all__ = [
 ]
 
 
-def _mapped_dg_source_basis(element: FiniteElementSpec) -> tuple[Polynomial, ...]:
-    """Recover the actual canonical scalar DG source, never a width alias."""
-    from .._coordinate_enclosure import source_basis
+def _mapped_dg_source_basis(
+    element: FiniteElementSpec, *, budget: CoordinateEnclosureBudget
+) -> tuple[Polynomial, ...]:
+    """Recover the represented declared scalar DG source, never a width alias."""
 
     if (
         element.conformity != "L2"
@@ -3631,31 +4095,35 @@ def _mapped_dg_source_basis(element: FiniteElementSpec) -> tuple[Polynomial, ...
         or element.representation != "point_value"
     ):
         raise ValueError(
-            "Mapped nested DG transfer requires scalar point-value cell functionals."
+            "mapped_dg_source_basis.configuration must provide scalar point-value cell functionals; got Mapped nested DG transfer requires scalar point-value cell functionals."
         )
-    basis = source_basis(element)
+    basis = imported_coordinate_enclosure.source_basis(element, budget=budget)
     if basis is None:
-        raise ValueError("Mapped DG field source has no exact canonical expression.")
+        raise ValueError(
+            "mapped_dg_source_basis.configuration must select a supported declared route; got Mapped DG field source has no algebraic declared expression."
+        )
     return basis
 
 
-def _mapped_dg_cells(
+def mapped_dg_cells(
     discretization: _NestedFiniteElementDiscretization,
     field_index: int,
-) -> tuple[_MappedDgCell, ...]:
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[MappedDgCell, ...]:
     dofs = discretization.dof_maps[field_index]
-    result: list[_MappedDgCell] = []
+    result: list[MappedDgCell] = []
     for element, routes, signs in zip(
         discretization.elements[field_index],
         dofs.cell_dofs,
         dofs.orientations,
         strict=True,
     ):
-        basis = _mapped_dg_source_basis(element)
+        basis = _mapped_dg_source_basis(element, budget=budget)
         for route, sign in zip(np.asarray(routes), np.asarray(signs), strict=True):
             if np.any(sign != 1):
                 raise ValueError(
-                    "Scalar DG routes must use canonical identity orientation."
+                    "mapped_dg_cells.configuration must use declared identity orientation; got Scalar DG routes must use declared identity orientation."
                 )
             result.append((element, np.asarray(route, dtype=np.int64), basis))
     all_routes = np.concatenate([route for _, route, _ in result])
@@ -3664,15 +4132,15 @@ def _mapped_dg_cells(
         or np.unique(all_routes).size != all_routes.size
     ):
         raise ValueError(
-            "Mapped DG transfer requires unshared complete cell-local DOF routes."
+            "mapped_dg_cells.configuration must provide unshared full cell-local DOF routes; got Mapped DG transfer requires unshared full cell-local DOF routes."
         )
     return tuple(result)
 
 
 class _EmbeddedDgDensity(NamedTuple):
-    element: CellGeometryElement
+    element: ScalarCoordinateElement
     coefficients: CoordinateSourceBank
-    preparation: _PreparedMappedSqrtIntegral
+    preparation: PreparedMappedSqrtIntegral
 
 
 def _mapped_dg_integral(
@@ -3680,19 +4148,21 @@ def _mapped_dg_integral(
     density: Expression | _EmbeddedDgDensity,
     kind: str,
     work: list[int],
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[float, float]:
-    from .._cell_geometry_transfer import _integrate_mapped_polynomial
-    from .._coordinate_enclosure import expression_multiply
 
     if isinstance(density, _EmbeddedDgDensity):
-        from .._coordinate_enclosure import RationalPolynomial
-
-        if isinstance(weight, RationalPolynomial):
+        if isinstance(weight, imported_coordinate_enclosure.RationalPolynomial):
             raise ValueError(
-                "Prepared embedded DG functionals require canonical polynomial reference weights."
+                "mapped_dg_integral.configuration must provide declared polynomial reference weights; got Prepared embedded DG functionals require declared polynomial reference weights."
             )
-        return density.preparation.integral(weight)
-    return _integrate_mapped_polynomial(expression_multiply(density, weight), kind)
+        return density.preparation.integral(weight, budget=budget)
+    return mapped_measure_owner.integrate_mapped_polynomial(
+        imported_coordinate_enclosure.expression_multiply(density, weight, budget=budget),
+        kind,
+        budget=budget,
+    )
 
 
 def _mapped_dg_forms(
@@ -3701,42 +4171,53 @@ def _mapped_dg_forms(
     density: Expression | _EmbeddedDgDensity,
     kind: str,
     work: list[int] | None = None,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    from .._coordinate_enclosure import expression_multiply
 
     integration_work = [0, 100_000_000] if work is None else work
     values = np.empty((len(first), len(second)), dtype=np.float64)
     errors = np.empty_like(values)
-    for i, a in enumerate(first):
-        for j, b in enumerate(second):
-            values[i, j], errors[i, j] = _mapped_dg_integral(
-                expression_multiply(a, b), density, kind, integration_work
-            )
+    # Products and their polynomial memos are consumed by this local form.
+    # Only numerical values and outward errors survive into the transfer.
+    with budget.polynomial_preparation_scope():
+        for i, a in enumerate(first):
+            for j, b in enumerate(second):
+                values[i, j], errors[i, j] = _mapped_dg_integral(
+                    imported_coordinate_enclosure.expression_multiply(
+                        a, b, budget=budget
+                    ),
+                    density,
+                    kind,
+                    integration_work,
+                    budget=budget,
+                )
     return values, errors
 
 
 def _mapped_dg_constant_bound(
-    cells: Sequence[_MappedDgCell],
+    cells: Sequence[MappedDgCell],
     weights: Sequence[Fraction],
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> float:
-    from .._coordinate_enclosure import (
-        add,
-        constant,
-        polynomial_bounds,
-        scale,
-        sum_polynomials,
-    )
 
     bound = 0.0
     for element, route, basis in cells:
-        polynomial = add(
-            sum_polynomials(
+        polynomial = imported_coordinate_enclosure.add(
+            imported_coordinate_enclosure.sum_polynomials(
                 tuple(
-                    scale(term, weights[int(dof)])
+                    imported_coordinate_enclosure.scale(
+                        term, weights[int(dof)], budget=budget
+                    )
                     for dof, term in zip(route, basis, strict=True)
-                )
+                ),
+                budget=budget,
             ),
-            constant(-1, element.topological_dimension),
+            imported_coordinate_enclosure.constant(
+                -1, element.topological_dimension, budget=budget
+            ),
+            budget=budget,
         )
         if polynomial:
             domain = (
@@ -3746,109 +4227,108 @@ def _mapped_dg_constant_bound(
                 if element.cell_kind == "prism"
                 else "box"
             )
-            lower, upper = polynomial_bounds(
-                polynomial, domain, element.topological_dimension
+            lower, upper = imported_coordinate_enclosure.polynomial_bounds(
+                polynomial, domain, element.topological_dimension, budget=budget
             )
             bound = max(bound, abs(lower), abs(upper))
     return bound
 
 
 def _mapped_dg_embedded_density(
-    element: CellGeometryElement,
+    element: ScalarCoordinateElement,
     coefficients: CoordinateSourceBank,
     goal: Fraction,
     work: list[int],
     cache: dict[tuple[str, CoordinateSourceBank], _EmbeddedDgDensity],
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> _EmbeddedDgDensity:
-    from .._cell_geometry_transfer import _certified_sqrt_prepare_mapped_integral
 
     key = element.element_id, coefficients
     if key not in cache:
-        preparation = _certified_sqrt_prepare_mapped_integral(
-            element, coefficients, goal, work
+        preparation = mapped_measure_owner.certified_sqrt_prepare_mapped_integral(
+            element, coefficients, goal, work, budget=budget
         )
         cache[key] = _EmbeddedDgDensity(element, coefficients, preparation)
     return cache[key]
 
 
-def _prepare_mapped_nested_dg_transfer(
+class _MappedDgInput(StrictModule):
+    name: str
+    source_index: int
+    target_index: int
+    source_cells: tuple[MappedDgCell, ...]
+    target_cells: tuple[MappedDgCell, ...]
+    pairs: tuple[NestedReferencePair | PolynomialReferencePair, ...]
+    geometry_bound: float
+    source_geometry_cells: tuple[
+        tuple[ScalarCoordinateElement, CoordinateSourceBank], ...
+    ]
+    target_geometry_cells: tuple[
+        tuple[ScalarCoordinateElement, CoordinateSourceBank], ...
+    ]
+
+
+class _MappedDgForms(StrictModule):
+    source_measures: NDArray[np.float64]
+    target_measures: NDArray[np.float64]
+    source_errors: NDArray[np.float64]
+    target_errors: NDArray[np.float64]
+    masses: list[NDArray[np.float64]]
+    mixed: list[dict[int, NDArray[np.float64]]]
+    groups: dict[tuple[str, str, str], list[int]]
+    integration_error: float
+    integration_work: list[int]
+    density_cache: dict[tuple[str, CoordinateSourceBank], _EmbeddedDgDensity]
+    uniform_goal: Fraction
+
+
+class _MappedDgSolution(StrictModule):
+    rows: NDArray[np.int64]
+    columns: NDArray[np.int64]
+    coefficients: NDArray[np.float64]
+    condition: float
+    solve_defect: float
+    minimum_rank: float
+
+
+class _MappedDgCertificate(StrictModule):
+    evidence: FiniteElementTransferEvidence
+    amplification: float
+    geometry_scale: float
+
+
+def _mapped_dg_input(
     source: _NestedFiniteElementDiscretization,
     target: _NestedFiniteElementDiscretization,
     source_geometry: CellGeometrySpec,
     target_geometry: CellGeometrySpec,
-    /,
     *,
     field_name: str,
-    parent_cells: ArrayLike | None = None,
-    parent_reference_vertices: ArrayLike | None = None,
-    geometry_transition: CellGeometryTransition | None = None,
-) -> FiniteElementFieldTransfer:
-    """Prepare physical cell-local L2 DG projection over certified nested patches.
-
-    Integration uses exact canonical expressions (including collapsed pyramid
-    charts), with explicit outward publication errors. Local masses are batched
-    by actual field and geometry descriptors and solved by native SVD factors.
-    The sparse primal and its algebraic transpose preserve all payload axes.
-    """
-    from .._coordinate_enclosure import (
-        _COORDINATE_BUDGET,
-        CoordinateEnclosureBudget,
-        CoordinateEnclosureResourceError,
-    )
-
-    if (
-        source.mesh.topological_dimension == 2
-        and source.mesh.ambient_dimension == 3
-        and _COORDINATE_BUDGET.get() is None
-    ):
-        import sys
-
-        from .._cell_geometry_transfer import CellGeometryTransitionError
-
-        ledger = CoordinateEnclosureBudget(100_000_000, sys.maxsize)
-        try:
-            with ledger.activate():
-                return _prepare_mapped_nested_dg_transfer(
-                    source,
-                    target,
-                    source_geometry,
-                    target_geometry,
-                    field_name=field_name,
-                    parent_cells=parent_cells,
-                    parent_reference_vertices=parent_reference_vertices,
-                    geometry_transition=geometry_transition,
-                )
-        except CoordinateEnclosureResourceError as error:
-            raise CellGeometryTransitionError(
-                "resource_limit",
-                "Mapped DG exact coefficient preparation exhausted its shared work/storage budget.",
-                measured=error.requested,
-                limit=error.limit,
-            ) from error
-    from .._cell_geometry import RestrictedCellGeometryElement
-    from .._cell_geometry_transfer import (
-        _mapped_density_expression,
-        _mapped_expression_restriction,
-        _mapped_geometry_cells,
-    )
-    from .._cell_geometry_validity import cell_geometry_id
-    from .._coordinate_enclosure import bernstein_coefficients, chart_arguments, compose
-
+    parent_cells: ArrayLike | None,
+    parent_reference_vertices: ArrayLike | None,
+    geometry_transition: CellGeometryTransition | None,
+    budget: CoordinateEnclosureBudget,
+) -> _MappedDgInput:
     name = canonical_identifier(field_name, "field_name")
-    source_index, target_index = source._field_index(name), target._field_index(name)
+    source_index, target_index = source.field_index(name), target.field_index(name)
     source_cells, target_cells = (
-        _mapped_dg_cells(source, source_index),
-        _mapped_dg_cells(target, target_index),
+        mapped_dg_cells(source, source_index, budget=budget),
+        mapped_dg_cells(target, target_index, budget=budget),
     )
     source_space = source.field_spaces[source_index].vector_space
     target_space = target.field_spaces[target_index].vector_space
     if not isinstance(source_space, ArraySpace) or not isinstance(
         target_space, ArraySpace
     ):
-        raise TypeError("Mapped DG transfer requires array coefficient spaces.")
+        raise TypeError(
+            "mapped_dg_input.configuration must provide array coefficient spaces; got Mapped DG transfer requires array coefficient spaces."
+        )
     if source_space.shape[1:] != target_space.shape[1:]:
-        raise ValueError("Mapped DG source and target component payloads differ.")
-    pairs, geometry_bound = _rooted_nested_reference_pairs(
+        raise ValueError(
+            "mapped_dg_input.source must agree with the declared geometry, topology, and field layout; got Mapped DG source and target component payloads differ."
+        )
+    pairs, geometry_bound = rooted_nested_reference_pairs(
         source.mesh,
         source_geometry,
         target.mesh,
@@ -3856,22 +4336,35 @@ def _prepare_mapped_nested_dg_transfer(
         parent_cells=parent_cells,
         parent_reference_vertices=parent_reference_vertices,
         geometry_transition=geometry_transition,
+        budget=budget,
     )
-    source_geometry_cells = _mapped_geometry_cells(source.mesh, source_geometry)
-    target_geometry_cells = _mapped_geometry_cells(target.mesh, target_geometry)
-    source_size = source.dof_maps[source_index].global_dof_count
-    target_size = target.dof_maps[target_index].global_dof_count
-    source_measures, target_measures = np.zeros(source_size), np.zeros(target_size)
-    source_errors, target_errors = np.zeros(source_size), np.zeros(target_size)
-    masses: list[NDArray[np.float64]] = []
-    mixed: list[dict[int, NDArray[np.float64]]] = [dict() for _ in target_cells]
-    groups: dict[tuple[str, str, str], list[int]] = {}
-    integration_error = 0.0
-    integration_work = [0, 100_000_000]
-    embedded = (
-        source.mesh.topological_dimension == 2 and source.mesh.ambient_dimension == 3
+    source_geometry_cells = mapped_measure_owner.mapped_geometry_cells(
+        source.mesh, source_geometry, budget=budget
     )
-    density_cache: dict[tuple[str, CoordinateSourceBank], _EmbeddedDgDensity] = {}
+    target_geometry_cells = mapped_measure_owner.mapped_geometry_cells(
+        target.mesh, target_geometry, budget=budget
+    )
+    return _MappedDgInput(
+        name,
+        source_index,
+        target_index,
+        source_cells,
+        target_cells,
+        pairs,
+        geometry_bound,
+        source_geometry_cells,
+        target_geometry_cells,
+    )
+
+
+def _mapped_dg_integration_goal(
+    source_cells: tuple[MappedDgCell, ...],
+    target_cells: tuple[MappedDgCell, ...],
+    pairs: tuple[NestedReferencePair | PolynomialReferencePair, ...],
+    embedded: bool,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> Fraction:
     uniform_goal = Fraction(0)
     if embedded:
         functional_count = (
@@ -3886,23 +4379,61 @@ def _prepare_mapped_nested_dg_transfer(
         amplification_lower = max(len(basis) ** 2 for _, _, basis in target_cells)
         basis_sup = max(
             (
-                abs(value)
+                abs(
+                    rational_coefficient(
+                        value, role="mapped_dg.integration_goal.reference_basis"
+                    )
+                )
                 for element, _, basis in (*source_cells, *target_cells)
                 for polynomial in basis
-                for value in bernstein_coefficients(
-                    polynomial, "simplex" if element.cell_kind == "triangle" else "box", 2
+                for value in imported_coordinate_enclosure.bernstein_coefficients(
+                    polynomial,
+                    "simplex" if element.cell_kind == "triangle" else "box",
+                    2,
+                    budget=budget,
                 )
             ),
             default=Fraction(1),
         )
         # The existing native mass-condition amplification is at least k**2.
-        # Publication errors remain explicit in the original all-column proof.
+        # Publication errors remain explicit in the source all-column proof.
         uniform_goal = (
-            Fraction(_CLAIM_ULPS)
+            Fraction(CLAIM_ULPS)
             * Fraction(float(np.finfo(np.float64).eps))
             * amplification_lower
             / (16 * functional_count * max(basis_sup, Fraction(1)) ** 2)
         )
+    return uniform_goal
+
+
+def _mapped_dg_cell_forms(
+    source: _NestedFiniteElementDiscretization,
+    target: _NestedFiniteElementDiscretization,
+    prepared: _MappedDgInput,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _MappedDgForms:
+    source_index, target_index = prepared.source_index, prepared.target_index
+    source_cells, target_cells = prepared.source_cells, prepared.target_cells
+    pairs = prepared.pairs
+    source_geometry_cells = prepared.source_geometry_cells
+    target_geometry_cells = prepared.target_geometry_cells
+    source_size = source.dof_maps[source_index].global_dof_count
+    target_size = target.dof_maps[target_index].global_dof_count
+    source_measures, target_measures = np.zeros(source_size), np.zeros(target_size)
+    source_errors, target_errors = np.zeros(source_size), np.zeros(target_size)
+    masses: list[NDArray[np.float64]] = []
+    mixed: list[dict[int, NDArray[np.float64]]] = [dict() for _ in target_cells]
+    groups: dict[tuple[str, str, str], list[int]] = {}
+    integration_error = 0.0
+    integration_work = [0, 100_000_000]
+    embedded = (
+        source.mesh.topological_dimension == 2 and source.mesh.ambient_dimension == 3
+    )
+    density_cache: dict[tuple[str, CoordinateSourceBank], _EmbeddedDgDensity] = {}
+    uniform_goal = _mapped_dg_integration_goal(
+        source_cells, target_cells, pairs, embedded, budget=budget
+    )
     for cells, geometries, measures, errors, is_target in (
         (source_cells, source_geometry_cells, source_measures, source_errors, False),
         (target_cells, target_geometry_cells, target_measures, target_errors, True),
@@ -3912,16 +4443,28 @@ def _prepare_mapped_nested_dg_transfer(
         ):
             density = (
                 _mapped_dg_embedded_density(
-                    geometry_element, local, uniform_goal, integration_work, density_cache
+                    geometry_element,
+                    local,
+                    uniform_goal,
+                    integration_work,
+                    density_cache,
+                    budget=budget,
                 )
                 if embedded
-                else _mapped_density_expression(geometry_element, local)
+                else mapped_measure_owner.mapped_density_expression(
+                    geometry_element, local, budget=budget
+                )
             )
             chart_basis = (
                 tuple(
-                    compose(
+                    imported_coordinate_enclosure.compose(
                         term,
-                        chart_arguments(element.cell_kind, element.topological_dimension),
+                        imported_coordinate_enclosure.chart_arguments(
+                            element.cell_kind,
+                            element.topological_dimension,
+                            budget=budget,
+                        ),
+                        budget=budget,
                     )
                     for term in basis
                 )
@@ -3930,16 +4473,23 @@ def _prepare_mapped_nested_dg_transfer(
             )
             for dof, term in zip(route, chart_basis, strict=True):
                 measures[dof], errors[dof] = _mapped_dg_integral(
-                    term, density, element.cell_kind, integration_work
+                    term, density, element.cell_kind, integration_work, budget=budget
                 )
             if is_target:
                 mass, error = _mapped_dg_forms(
-                    chart_basis, chart_basis, density, element.cell_kind, integration_work
+                    chart_basis,
+                    chart_basis,
+                    density,
+                    element.cell_kind,
+                    integration_work,
+                    budget=budget,
                 )
                 masses.append(mass)
                 integration_error += float(np.sum(error))
                 root_element = geometry_element
-                while isinstance(root_element, RestrictedCellGeometryElement):
+                while isinstance(
+                    root_element, imported_cell_geometry.RestrictedCellGeometryElement
+                ):
                     root_element = root_element.source_element
                 key = (
                     element.element_id,
@@ -3947,6 +4497,40 @@ def _prepare_mapped_nested_dg_transfer(
                     root_element.element_id,
                 )
                 groups.setdefault(key, []).append(cell)
+    return _MappedDgForms(
+        source_measures,
+        target_measures,
+        source_errors,
+        target_errors,
+        masses,
+        mixed,
+        groups,
+        integration_error,
+        integration_work,
+        density_cache,
+        uniform_goal,
+    )
+
+
+def _mapped_dg_patch_forms(
+    source: _NestedFiniteElementDiscretization,
+    prepared: _MappedDgInput,
+    forms: _MappedDgForms,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _MappedDgForms:
+    source_cells, target_cells = prepared.source_cells, prepared.target_cells
+    pairs = prepared.pairs
+    source_geometry_cells = prepared.source_geometry_cells
+    target_geometry_cells = prepared.target_geometry_cells
+    source_measures, target_measures = forms.source_measures, forms.target_measures
+    source_errors, target_errors = forms.source_errors, forms.target_errors
+    masses, mixed, groups = forms.masses, forms.mixed, forms.groups
+    integration_error, integration_work = forms.integration_error, forms.integration_work
+    density_cache, uniform_goal = forms.density_cache, forms.uniform_goal
+    embedded = (
+        source.mesh.topological_dimension == 2 and source.mesh.ambient_dimension == 3
+    )
     for pair in pairs:
         se, sr, sb = source_cells[pair.source_cell]
         te, tr, tb = target_cells[pair.target_cell]
@@ -3956,47 +4540,90 @@ def _prepare_mapped_nested_dg_transfer(
             else target_geometry_cells[pair.target_cell]
         )
         fine_kind = fine_element.cell_kind
-        if isinstance(pair, _PolynomialReferencePair):
-            if pair.fine_is_source:
-                first = tuple(compose(value, pair.arguments) for value in tb)
-                second = tuple(sb)
-            else:
-                first = tuple(tb)
-                second = tuple(compose(value, pair.arguments) for value in sb)
-        elif pair.fine_is_source:
-            first = _mapped_expression_restriction(
-                tb, te.cell_kind, fine_kind, pair.matrix, pair.offset
-            )
-            second = _mapped_expression_restriction(
-                sb,
-                se.cell_kind,
-                fine_kind,
-                np.eye(se.topological_dimension),
-                np.zeros(se.topological_dimension),
-            )
-        else:
-            first = _mapped_expression_restriction(
-                tb,
-                te.cell_kind,
-                fine_kind,
-                np.eye(te.topological_dimension),
-                np.zeros(te.topological_dimension),
-            )
-            second = _mapped_expression_restriction(
-                sb, se.cell_kind, fine_kind, pair.matrix, pair.offset
-            )
+        match pair:
+            case PolynomialReferencePair():
+                if pair.fine_is_source:
+                    first = tuple(
+                        imported_coordinate_enclosure.compose(
+                            value, pair.arguments, budget=budget
+                        )
+                        for value in tb
+                    )
+                    second = tuple(sb)
+                else:
+                    first = tuple(tb)
+                    second = tuple(
+                        imported_coordinate_enclosure.compose(
+                            value, pair.arguments, budget=budget
+                        )
+                        for value in sb
+                    )
+            case NestedReferencePair() if pair.fine_is_source:
+                first = mapped_measure_owner.mapped_expression_restriction(
+                    tb, te.cell_kind, fine_kind, pair.matrix, pair.offset, budget=budget
+                )
+                second = mapped_measure_owner.mapped_expression_restriction(
+                    sb,
+                    se.cell_kind,
+                    fine_kind,
+                    np.eye(se.topological_dimension),
+                    np.zeros(se.topological_dimension),
+                    budget=budget,
+                )
+            case NestedReferencePair():
+                first = mapped_measure_owner.mapped_expression_restriction(
+                    tb,
+                    te.cell_kind,
+                    fine_kind,
+                    np.eye(te.topological_dimension),
+                    np.zeros(te.topological_dimension),
+                    budget=budget,
+                )
+                second = mapped_measure_owner.mapped_expression_restriction(
+                    sb, se.cell_kind, fine_kind, pair.matrix, pair.offset, budget=budget
+                )
+            case _:
+                assert_never(pair)
         density = (
             _mapped_dg_embedded_density(
-                fine_element, fine_local, uniform_goal, integration_work, density_cache
+                fine_element,
+                fine_local,
+                uniform_goal,
+                integration_work,
+                density_cache,
+                budget=budget,
             )
             if embedded
-            else _mapped_density_expression(fine_element, fine_local)
+            else mapped_measure_owner.mapped_density_expression(
+                fine_element, fine_local, budget=budget
+            )
         )
         form, error = _mapped_dg_forms(
-            first, second, density, fine_kind, integration_work
+            first, second, density, fine_kind, integration_work, budget=budget
         )
         mixed[pair.target_cell][pair.source_cell] = form
         integration_error += float(np.sum(error))
+    return _MappedDgForms(
+        source_measures,
+        target_measures,
+        source_errors,
+        target_errors,
+        masses,
+        mixed,
+        groups,
+        integration_error,
+        integration_work,
+        density_cache,
+        uniform_goal,
+    )
+
+
+def _solve_mapped_dg_forms(
+    prepared: _MappedDgInput,
+    forms: _MappedDgForms,
+) -> _MappedDgSolution:
+    source_cells, target_cells = prepared.source_cells, prepared.target_cells
+    masses, mixed, groups = forms.masses, forms.mixed, forms.groups
     rows, columns, coefficients = [], [], []
     condition, solve_defect, minimum_rank = 1.0, 0.0, float("inf")
     for key, cells in groups.items():
@@ -4017,7 +4644,9 @@ def _prepare_mapped_nested_dg_transfer(
         ranks = np.asarray(factor.rank())
         minimum_rank = min(minimum_rank, float(np.min(ranks)))
         if np.any(ranks != mass.shape[-1]):
-            raise ValueError("Mapped DG physical mass is rank deficient.")
+            raise ValueError(
+                "solve_mapped_dg_forms.configuration must have full rank; got Mapped DG physical mass is rank deficient."
+            )
         spectrum = np.asarray(factor.singular_values())
         condition = max(condition, float(np.max(spectrum[..., 0] / spectrum[..., -1])))
         # The native factor is batched by cell family; RHS widths may vary by patch.
@@ -4034,7 +4663,9 @@ def _prepare_mapped_nested_dg_transfer(
         if not bool(np.all(np.asarray(solved.successful))) or not np.all(
             np.isfinite(values)
         ):
-            raise ValueError("Mapped DG native local mass solve failed.")
+            raise ValueError(
+                "solve_mapped_dg_forms.configuration must pass the declared scientific certificate; got Mapped DG native local mass solve failed."
+            )
         solve_defect = max(solve_defect, float(np.max(np.abs(mass @ values - rhs))))
         for batch, cell in enumerate(cells):
             parents, count = ordered[batch]
@@ -4050,35 +4681,45 @@ def _prepare_mapped_nested_dg_transfer(
         np.concatenate(columns),
         np.concatenate(coefficients),
     )
-    amplification = max(condition * max(mass.shape[-1] ** 2 for mass in masses), 1.0)
-    primal = _coalesced_map(
-        rows,
-        columns,
-        coefficients,
-        target_size=target_size,
-        source_size=source_size,
-        properties=OperatorProperties(),
-        operator_id=canonical_fingerprint(
-            {
-                "kind": "mapped-nested-dg",
-                "source": source.prepared_id,
-                "target": target.prepared_id,
-                "field": name,
-                "source_geometry": cell_geometry_id(source_geometry),
-                "target_geometry": cell_geometry_id(target_geometry),
-                "coefficients": array_tree_fingerprint(coefficients),
-            }
-        ),
+    return _MappedDgSolution(
+        rows, columns, coefficients, condition, solve_defect, minimum_rank
     )
+
+
+def _certify_mapped_dg_transfer(
+    source_geometry: CellGeometrySpec,
+    target_geometry: CellGeometrySpec,
+    prepared: _MappedDgInput,
+    forms: _MappedDgForms,
+    solved: _MappedDgSolution,
+    primal: SparseLinearMap,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _MappedDgCertificate:
+    source_cells, target_cells = prepared.source_cells, prepared.target_cells
+    geometry_bound = prepared.geometry_bound
+    source_measures, target_measures = forms.source_measures, forms.target_measures
+    source_errors, target_errors = forms.source_errors, forms.target_errors
+    masses = forms.masses
+    integration_error = forms.integration_error
+    rows, columns, coefficients = solved.rows, solved.columns, solved.coefficients
+    condition, solve_defect, minimum_rank = (
+        solved.condition,
+        solved.solve_defect,
+        solved.minimum_rank,
+    )
+    source_size, target_size = source_measures.size, target_measures.size
+    amplification = max(condition * max(mass.shape[-1] ** 2 for mass in masses), 1.0)
     constant = np.asarray(primal.mv(jnp.ones(source_size)))
     exact_row_sums = [Fraction(0) for _ in range(target_size)]
     for row, value in zip(rows, coefficients, strict=True):
         exact_row_sums[int(row)] += Fraction(float(value))
     constant_bound = max(
-        _mapped_dg_constant_bound(source_cells, [Fraction(1)] * source_size),
-        _mapped_dg_constant_bound(target_cells, exact_row_sums),
+        _mapped_dg_constant_bound(
+            source_cells, [Fraction(1)] * source_size, budget=budget
+        ),
+        _mapped_dg_constant_bound(target_cells, exact_row_sums, budget=budget),
     )
-    from .._coordinate_enclosure import outward
 
     exact_content = [-Fraction(float(value)) for value in source_measures]
     for row, column, value in zip(rows, columns, coefficients, strict=True):
@@ -4086,7 +4727,8 @@ def _prepare_mapped_nested_dg_transfer(
             float(target_measures[int(row)])
         )
     coefficient_content_bound = max(
-        outward(abs(value), np.inf) for value in exact_content
+        fraction_endpoint(abs(value), upper=True, saturate=True)
+        for value in exact_content
     )
     scale = max(
         float(np.sum(np.abs(source_measures))),
@@ -4109,7 +4751,7 @@ def _prepare_mapped_nested_dg_transfer(
     integration_error = float(
         np.nextafter(integration_error / (1 - integration_roundoff), np.inf)
     )
-    tolerance = _CLAIM_ULPS * np.finfo(np.float64).eps * amplification
+    tolerance = CLAIM_ULPS * np.finfo(np.float64).eps * amplification
     geometry_scale = max(
         float(np.max(np.abs(np.asarray(source_geometry.coordinates)))),
         float(np.max(np.abs(np.asarray(target_geometry.coordinates)))),
@@ -4140,8 +4782,55 @@ def _prepare_mapped_nested_dg_transfer(
     )
     if not evidence.passed:
         raise ValueError(
-            "Mapped nested DG transfer failed its all-column physical content certificate."
+            "certify_mapped_dg_transfer.configuration must pass the declared scientific certificate; got Mapped nested DG transfer failed its all-column physical content certificate."
         )
+    return _MappedDgCertificate(evidence, amplification, geometry_scale)
+
+
+def _publish_mapped_dg_transfer(
+    source: _NestedFiniteElementDiscretization,
+    target: _NestedFiniteElementDiscretization,
+    source_geometry: CellGeometrySpec,
+    target_geometry: CellGeometrySpec,
+    prepared: _MappedDgInput,
+    forms: _MappedDgForms,
+    solved: _MappedDgSolution,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> FiniteElementFieldTransfer:
+    name = prepared.name
+    source_index, target_index = prepared.source_index, prepared.target_index
+    source_measures, target_measures = forms.source_measures, forms.target_measures
+    source_size, target_size = source_measures.size, target_measures.size
+    rows, columns, coefficients = solved.rows, solved.columns, solved.coefficients
+    primal = coalesced_map(
+        rows,
+        columns,
+        coefficients,
+        target_size=target_size,
+        source_size=source_size,
+        properties=OperatorProperties(),
+        operator_id=canonical_fingerprint(
+            {
+                "kind": "mapped-nested-dg",
+                "source": source.prepared_id,
+                "target": target.prepared_id,
+                "field": name,
+                "source_geometry": imported_cell_geometry_validity.cell_geometry_id(
+                    source_geometry
+                ),
+                "target_geometry": imported_cell_geometry_validity.cell_geometry_id(
+                    target_geometry
+                ),
+                "coefficients": array_tree_fingerprint(coefficients),
+            }
+        ),
+    )
+    certificate = _certify_mapped_dg_transfer(
+        source_geometry, target_geometry, prepared, forms, solved, primal, budget=budget
+    )
+    evidence, amplification = certificate.evidence, certificate.amplification
+    geometry_scale, geometry_bound = certificate.geometry_scale, prepared.geometry_bound
     transfer = FiniteElementTopologyTransfer(
         primal,
         source.mesh.topology_id,
@@ -4155,8 +4844,8 @@ def _prepare_mapped_nested_dg_transfer(
         target_measures=target_measures,
     )
     binding = TransferGeometryBinding(
-        cell_geometry_id(source_geometry),
-        cell_geometry_id(target_geometry),
+        imported_cell_geometry_validity.cell_geometry_id(source_geometry),
+        imported_cell_geometry_validity.cell_geometry_id(target_geometry),
         "exact-restriction" if geometry_bound == 0 else "bounded-reconstruction",
         source_topology_id=source.mesh.topology_id,
         target_topology_id=target.mesh.topology_id,
@@ -4173,28 +4862,91 @@ def _prepare_mapped_nested_dg_transfer(
     )
 
 
-def _bound_coordinate_spec(
+@checked
+def prepare_mapped_nested_dg_transfer(
+    source: _NestedFiniteElementDiscretization,
+    target: _NestedFiniteElementDiscretization,
+    source_geometry: CellGeometrySpec,
+    target_geometry: CellGeometrySpec,
+    /,
+    *,
+    field_name: str,
+    parent_cells: ArrayLike | None = None,
+    parent_reference_vertices: ArrayLike | None = None,
+    geometry_transition: CellGeometryTransition | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> FiniteElementFieldTransfer:
+    """Prepare physical cell-local L2 DG projection over certified nested patches.
+
+    Integration uses algebraic declared expressions (including collapsed pyramid
+    charts), with explicit outward publication errors. Local masses are batched
+    by represented field and geometry descriptors and solved by native SVD factors.
+    The sparse primal and its algebraic transpose preserve all payload axes.
+    """
+    with budget.measurement(), budget.temporary_scope():
+        try:
+            prepared = _mapped_dg_input(
+                source,
+                target,
+                source_geometry,
+                target_geometry,
+                field_name=field_name,
+                parent_cells=parent_cells,
+                parent_reference_vertices=parent_reference_vertices,
+                geometry_transition=geometry_transition,
+                budget=budget,
+            )
+            forms = _mapped_dg_cell_forms(source, target, prepared, budget=budget)
+            forms = _mapped_dg_patch_forms(source, prepared, forms, budget=budget)
+            solved = _solve_mapped_dg_forms(prepared, forms)
+            return _publish_mapped_dg_transfer(
+                source,
+                target,
+                source_geometry,
+                target_geometry,
+                prepared,
+                forms,
+                solved,
+                budget=budget,
+            )
+        except CoordinateEnclosureResourceError as error:
+            if (
+                source.mesh.topological_dimension == 2
+                and source.mesh.ambient_dimension == 3
+            ):
+                raise CellGeometryTransitionError(
+                    "resource_limit",
+                    "prepare_mapped_nested_dg_transfer.budget must fit the shared coefficient work and storage budget; got Mapped DG algebraic coefficient preparation exhausted its shared work/storage budget.",
+                    measured=float(error.requested),
+                    limit=float(error.limit),
+                ) from error
+            raise
+
+
+@checked
+def bound_coordinate_spec(
     discretization: _NestedFiniteElementDiscretization,
-    geometry: CellGeometrySpec | None,
+    geometry: imported_cell_geometry.CellGeometrySpec | None,
     role: str,
-) -> CellGeometrySpec:
-    from .._cell_geometry import (
-        BarycentricCellGeometryElement,
-        CellGeometrySpec,
-        RestrictedCellGeometryElement,
-    )
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> imported_cell_geometry.CellGeometrySpec:
 
     if geometry is None:
         if any(
             isinstance(
-                element, (BarycentricCellGeometryElement, RestrictedCellGeometryElement)
+                element,
+                (
+                    imported_cell_geometry.BarycentricCellGeometryElement,
+                    imported_cell_geometry.RestrictedCellGeometryElement,
+                ),
             )
             for element in discretization.coordinate_elements
         ):
             raise ValueError(
-                f"Mapped nested {role} requires its actual coordinate specification."
+                f"bound_coordinate_spec.role must provide its represented coordinate specification; got Mapped nested {role} requires its represented coordinate specification."
             )
-        geometry = CellGeometrySpec(
+        geometry = imported_cell_geometry.CellGeometrySpec(
             {
                 block.name: element
                 for block, element in zip(
@@ -4212,10 +4964,10 @@ def _bound_coordinate_spec(
                 )
             },
             discretization.default_runtime.coordinates,
+            budget=budget,
         )
-    if not isinstance(geometry, CellGeometrySpec):
-        raise TypeError(f"The {role} geometry must be CellGeometrySpec.")
-    elements, routes, values = geometry.resolve(discretization.mesh)
+
+    elements, routes, values = geometry.resolve(discretization.mesh, budget=budget)
     if any(
         actual.element_id != expected.element_id
         or not np.array_equal(actual_routes, expected_routes)
@@ -4228,7 +4980,7 @@ def _bound_coordinate_spec(
         )
     ) or not np.array_equal(values, discretization.default_runtime.coordinates):
         raise ValueError(
-            f"The {role} nested geometry differs from the actual prepared field map."
+            f"bound_coordinate_spec.geometry must agree with the declared geometry, topology, and field layout; got The {role} nested geometry differs from the represented prepared field map."
         )
     return geometry
 
@@ -4258,76 +5010,21 @@ def _reference_contains(
         )
     if kind in ("interval", "quadrilateral", "hexahedron"):
         return np.all((points >= -tolerance) & (points <= 1.0 + tolerance), axis=-1)
-    raise ValueError(f"No supported nested reference containment for {kind!r}.")
+    raise ValueError(
+        f"reference_contains.kind must select a supported declared route; got No supported nested reference containment for {kind!r}."
+    )
 
 
-def _prepare_mapped_nested_h1_transfer(
+def _mapped_h1_functional_rows(
     source: _NestedFiniteElementDiscretization,
     target: _NestedFiniteElementDiscretization,
-    source_geometry: CellGeometrySpec,
-    target_geometry: CellGeometrySpec,
-    /,
-    *,
-    field_name: str,
-    parent_cells: ArrayLike | None = None,
-    parent_reference_vertices: ArrayLike | None = None,
-    geometry_transition: CellGeometryTransition | None = None,
-) -> FiniteElementFieldTransfer:
-    """Actual target nodal functionals, including complete-patch coarsening.
-
-    Coarsening and family charts need not have a field-space inclusion. This
-    route therefore certifies nodal interpolation and shared trace agreement,
-    never claims full function reproduction or conserved H1 content.
-    """
-    from ...linalg import SmallLinearSolvePlan, solve_small_linear
-    from .._cell_geometry_transfer import _certify_nested_geometry_pairs
-    from .._cell_geometry_validity import cell_geometry_id
-    from .._nested_reference import _nested_reference_pairs
-    from ._reference import lagrange_element
-
-    name = canonical_identifier(field_name, "field_name")
-    source_index, target_index = source._field_index(name), target._field_index(name)
-    source_elements, target_elements = (
-        source.elements[source_index],
-        target.elements[target_index],
-    )
-    degrees = {element.degree for element in source_elements + target_elements}
-    if len(degrees) != 1 or any(
-        element.conformity != "H1"
-        or element.value_shape
-        or element.mapping != "identity"
-        or element.element_id
-        != lagrange_element(block.cell_kind, element.degree).element_id
-        for space, elements in ((source, source_elements), (target, target_elements))
-        for block, element in zip(space.mesh.blocks, elements, strict=True)
-    ):
-        raise ValueError(
-            "Mapped nested H1 transfer requires one degree of canonical nodal Lagrange fields."
-        )
-    source_space = source.field_spaces[source_index].vector_space
-    target_space = target.field_spaces[target_index].vector_space
-    if not isinstance(source_space, ArraySpace) or not isinstance(
-        target_space, ArraySpace
-    ):
-        raise TypeError("Mapped nested H1 transfer requires array coefficient spaces.")
-    if source_space.shape[1:] != target_space.shape[1:]:
-        raise ValueError("Mapped nested H1 component payloads differ.")
-    pairs = _nested_reference_pairs(
-        source.mesh,
-        source_geometry,
-        target.mesh,
-        target_geometry,
-        parent_cells=parent_cells,
-        parent_reference_vertices=parent_reference_vertices,
-        geometry_transition=geometry_transition,
-    )
-    geometry_bound = _certify_nested_geometry_pairs(
-        source.mesh, source_geometry, target.mesh, target_geometry, pairs
-    )
-    source_dofs, target_dofs = (
-        source.dof_maps[source_index],
-        target.dof_maps[target_index],
-    )
+    source_elements: tuple[FiniteElementSpec, ...],
+    target_elements: tuple[FiniteElementSpec, ...],
+    source_dofs: FiniteElementDofMap,
+    target_dofs: FiniteElementDofMap,
+    pairs: tuple[NestedReferencePair, ...],
+) -> tuple[np.ndarray, np.ndarray, float, float, int]:
+    """Evaluate oriented nodal functionals and reconcile shared target rows."""
     source_starts = np.cumsum(
         (0,) + tuple(block.cell_count for block in source.mesh.blocks)
     )
@@ -4355,27 +5052,31 @@ def _prepare_mapped_nested_h1_transfer(
         condition = _frame_condition(pair.matrix[None])
         frame_condition = max(frame_condition, condition)
         if pair.fine_is_source:
-            solve = solve_small_linear(
-                SmallLinearSolvePlan(pair.matrix.shape[0]),
+            solve = imported_linalg.solve_small_linear(
+                imported_linalg.SmallLinearSolvePlan(pair.matrix.shape[0]),
                 pair.matrix,
                 (nodes - pair.offset).T,
             )
             if not bool(np.all(np.asarray(solve.successful))):
-                raise ValueError("Mapped H1 coarsening has a singular reference witness.")
+                raise ValueError(
+                    "prepare_mapped_nested_h1_transfer.configuration must have a nonsingular chart with resolved orientation; got Mapped H1 coarsening has a singular reference chart."
+                )
             points = np.asarray(solve.value, dtype=np.float64).T
             selected = _reference_contains(
                 source_element.cell_kind,
                 points,
-                _CLAIM_ULPS * np.finfo(np.float64).eps * condition,
+                CLAIM_ULPS * np.finfo(np.float64).eps * condition,
             )
         else:
             points = nodes @ pair.matrix.T + pair.offset
             selected = np.ones(nodes.shape[0], dtype=np.bool_)
         if not np.any(selected):
             continue
-        values, _ = _tabulated(source_element, points[selected])
+        values, _ = tabulated(source_element, points[selected])
         if not np.all(np.isfinite(values)):
-            raise ValueError("Mapped H1 source nodal functionals are not finite.")
+            raise ValueError(
+                "prepare_mapped_nested_h1_transfer.source must be finite; got Mapped H1 source nodal functionals are not finite."
+            )
         columns = np.asarray(source_dofs.cell_dofs[source_block])[source_local]
         source_signs = np.asarray(source_dofs.orientations[source_block])[source_local]
         targets = np.asarray(target_dofs.cell_dofs[target_block])[target_local, selected]
@@ -4393,12 +5094,92 @@ def _prepare_mapped_nested_h1_transfer(
     ):
         columns[row, : indices.size] = indices
         coefficients[row, : values.size] = values
-    rows, values, continuity = _owned_rows(
+    rows, values, continuity = owned_rows(
         np.asarray(candidate_targets, dtype=np.int64)[:, None],
         columns,
         coefficients[:, None],
         target_dofs.global_dof_count,
         source_dofs.global_dof_count,
+    )
+    return rows, values, continuity, frame_condition, width
+
+
+def _prepare_mapped_nested_h1_transfer(
+    source: _NestedFiniteElementDiscretization,
+    target: _NestedFiniteElementDiscretization,
+    source_geometry: CellGeometrySpec,
+    target_geometry: CellGeometrySpec,
+    /,
+    *,
+    field_name: str,
+    parent_cells: ArrayLike | None = None,
+    parent_reference_vertices: ArrayLike | None = None,
+    geometry_transition: CellGeometryTransition | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> FiniteElementFieldTransfer:
+    """represented target nodal functionals, including full-patch coarsening.
+
+    Coarsening and family charts need not have a field-space inclusion. This
+    route therefore certifies nodal interpolation and shared trace agreement,
+    never claims full function reproduction or conserved H1 content.
+    """
+
+    name = canonical_identifier(field_name, "field_name")
+    source_index, target_index = source.field_index(name), target.field_index(name)
+    source_elements, target_elements = (
+        source.elements[source_index],
+        target.elements[target_index],
+    )
+    degrees = {element.degree for element in source_elements + target_elements}
+    if len(degrees) != 1 or any(
+        element.conformity != "H1"
+        or element.value_shape
+        or element.mapping != "identity"
+        or element.element_id
+        != imported_reference.lagrange_element(block.cell_kind, element.degree).element_id
+        for space, elements in ((source, source_elements), (target, target_elements))
+        for block, element in zip(space.mesh.blocks, elements, strict=True)
+    ):
+        raise ValueError(
+            "prepare_mapped_nested_h1_transfer.configuration must provide one degree of declared nodal Lagrange fields; got Mapped nested H1 transfer requires one degree of declared nodal Lagrange fields."
+        )
+    source_space = source.field_spaces[source_index].vector_space
+    target_space = target.field_spaces[target_index].vector_space
+    if not isinstance(source_space, ArraySpace) or not isinstance(
+        target_space, ArraySpace
+    ):
+        raise TypeError(
+            "prepare_mapped_nested_h1_transfer.configuration must provide array coefficient spaces; got Mapped nested H1 transfer requires array coefficient spaces."
+        )
+    if source_space.shape[1:] != target_space.shape[1:]:
+        raise ValueError(
+            "prepare_mapped_nested_h1_transfer.configuration must agree with the declared geometry, topology, and field layout; got Mapped nested H1 component payloads differ."
+        )
+    pairs = imported_nested_reference.nested_reference_pairs(
+        source.mesh,
+        source_geometry,
+        target.mesh,
+        target_geometry,
+        parent_cells=parent_cells,
+        parent_reference_vertices=parent_reference_vertices,
+        geometry_transition=geometry_transition,
+        budget=budget,
+    )
+    geometry_bound = mapped_measure_owner.certify_nested_geometry_pairs(
+        source.mesh, source_geometry, target.mesh, target_geometry, pairs, budget=budget
+    )
+    source_dofs, target_dofs = (
+        source.dof_maps[source_index],
+        target.dof_maps[target_index],
+    )
+    rows, values, continuity, frame_condition, width = _mapped_h1_functional_rows(
+        source,
+        target,
+        source_elements,
+        target_elements,
+        source_dofs,
+        target_dofs,
+        pairs,
     )
     condition = (
         frame_condition * max(float(np.max(np.sum(np.abs(values), axis=-1))), 1.0) * width
@@ -4408,7 +5189,7 @@ def _prepare_mapped_nested_h1_transfer(
         float(np.max(np.abs(np.asarray(target_geometry.coordinates)))),
         1.0,
     )
-    tolerance = _CLAIM_ULPS * np.finfo(np.float64).eps * max(condition, 1.0)
+    tolerance = CLAIM_ULPS * np.finfo(np.float64).eps * max(condition, 1.0)
     evidence = FiniteElementTransferEvidence(
         {
             "geometry": geometry_bound / coordinate_scale,
@@ -4419,7 +5200,9 @@ def _prepare_mapped_nested_h1_transfer(
         bounds={"geometry": geometry_bound},
     )
     if not evidence.passed:
-        raise ValueError(f"Mapped H1 nodal/trace transfer failed: {evidence.defects}.")
+        raise ValueError(
+            f"prepare_mapped_nested_h1_transfer.configuration must pass the declared scientific certificate; got Mapped H1 nodal/trace transfer failed: {evidence.defects}."
+        )
     primal = SparseLinearMap(
         RowRelation(rows.astype(np.int32), source_size=source_dofs.global_dof_count),
         values,
@@ -4429,8 +5212,12 @@ def _prepare_mapped_nested_h1_transfer(
                 "source": source.prepared_id,
                 "target": target.prepared_id,
                 "field": name,
-                "source_geometry": cell_geometry_id(source_geometry),
-                "target_geometry": cell_geometry_id(target_geometry),
+                "source_geometry": imported_cell_geometry_validity.cell_geometry_id(
+                    source_geometry
+                ),
+                "target_geometry": imported_cell_geometry_validity.cell_geometry_id(
+                    target_geometry
+                ),
                 "coefficients": array_tree_fingerprint(values),
                 "routes": array_tree_fingerprint(rows),
             }
@@ -4450,8 +5237,8 @@ def _prepare_mapped_nested_h1_transfer(
         source.field_spaces[source_index],
         target.field_spaces[target_index],
         TransferGeometryBinding(
-            cell_geometry_id(source_geometry),
-            cell_geometry_id(target_geometry),
+            imported_cell_geometry_validity.cell_geometry_id(source_geometry),
+            imported_cell_geometry_validity.cell_geometry_id(target_geometry),
             "exact-restriction",
             source_topology_id=source.mesh.topology_id,
             target_topology_id=target.mesh.topology_id,
@@ -4461,9 +5248,8 @@ def _prepare_mapped_nested_h1_transfer(
 
 
 def _coordinate_geometry_id(geometry: CellGeometrySpec) -> str:
-    from .._cell_geometry_validity import cell_geometry_id
 
-    return cell_geometry_id(geometry)
+    return imported_cell_geometry_validity.cell_geometry_id(geometry)
 
 
 def _mapped_nested_compatible_preparation(
@@ -4478,11 +5264,12 @@ def _mapped_nested_compatible_preparation(
     parent_reference_vertices: ArrayLike | None = None,
     geometry_transition: CellGeometryTransition | None = None,
     coarsening_witnesses: NestedReferenceWitnesses | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> _MappedNestedCompatiblePreparation:
     names = tuple(canonical_identifier(name, "field_name") for name in field_names)
     if not names or len(set(names)) != len(names):
         raise ValueError(
-            "Compatible field preparation requires unique ordered field roles."
+            "mapped_nested_compatible_preparation.configuration must provide unique ordered field roles; got Compatible field preparation requires unique ordered field roles."
         )
     bindings = tuple(
         (
@@ -4502,9 +5289,9 @@ def _mapped_nested_compatible_preparation(
             for element in source.elements[source_index] + target.elements[target_index]
         ):
             raise ValueError(
-                f"Field {name!r} is not a canonical compatible finite-element role."
+                f"mapped_nested_compatible_preparation.configuration must use a compatible form-basis field role; got Field {name!r} is not a declared compatible finite-element role."
             )
-    pairs, geometry_bound = _rooted_nested_reference_pairs(
+    pairs, geometry_bound = rooted_nested_reference_pairs(
         source.mesh,
         source_geometry,
         target.mesh,
@@ -4513,6 +5300,7 @@ def _mapped_nested_compatible_preparation(
         parent_reference_vertices=parent_reference_vertices,
         geometry_transition=geometry_transition,
         coarsening_witnesses=coarsening_witnesses,
+        budget=budget,
     )
     return _MappedNestedCompatiblePreparation(
         source.prepared_id,
@@ -4527,7 +5315,7 @@ def _mapped_nested_compatible_preparation(
     )
 
 
-def prepare_nested_compatible_field_transfers(
+def _prepare_nested_compatible_field_transfers(
     source: _NestedFiniteElementDiscretization,
     target: _NestedFiniteElementDiscretization,
     parent_cells: ArrayLike | None,
@@ -4541,16 +5329,16 @@ def prepare_nested_compatible_field_transfers(
     coarsening_witnesses: NestedReferenceWitnesses | None = None,
     maximum_work: int = 100_000_000,
     maximum_storage_bytes: int = 256_000_000,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[FiniteElementFieldTransfer, ...]:
     """Prepare ordered compatible fields from one authenticated nested substrate."""
-    if not isinstance(source, _NESTED_SPACE_TYPES) or not isinstance(
-        target, _NESTED_SPACE_TYPES
-    ):
-        raise TypeError(
-            "source and target must be finite-element or transfer-space preparations."
-        )
-    actual_source_geometry = _bound_coordinate_spec(source, source_geometry, "source")
-    actual_target_geometry = _bound_coordinate_spec(target, target_geometry, "target")
+
+    actual_source_geometry = bound_coordinate_spec(
+        source, source_geometry, "source", budget=budget
+    )
+    actual_target_geometry = bound_coordinate_spec(
+        target, target_geometry, "target", budget=budget
+    )
     names = tuple(field_names)
     preparation = _mapped_nested_compatible_preparation(
         source,
@@ -4562,6 +5350,7 @@ def prepare_nested_compatible_field_transfers(
         parent_reference_vertices=parent_reference_vertices,
         geometry_transition=geometry_transition,
         coarsening_witnesses=coarsening_witnesses,
+        budget=budget,
     )
     return tuple(
         _prepare_mapped_nested_compatible_transfer(
@@ -4573,6 +5362,7 @@ def prepare_nested_compatible_field_transfers(
             maximum_work=maximum_work,
             maximum_storage_bytes=maximum_storage_bytes,
             _reference_preparation=preparation,
+            budget=budget,
         )
         for name in names
     )
@@ -4593,11 +5383,11 @@ def _prepare_mapped_nested_compatible_transfer(
     maximum_work: int = 100_000_000,
     maximum_storage_bytes: int = 256_000_000,
     _reference_preparation: _MappedNestedCompatiblePreparation | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
-    from ._mapped_form_transfer import prepare_form_patch_actions
 
-    source_index = source._field_index(field_name)
-    target_index = target._field_index(field_name)
+    source_index = source.field_index(field_name)
+    target_index = target.field_index(field_name)
     preparation = _reference_preparation
     if preparation is None:
         preparation = _mapped_nested_compatible_preparation(
@@ -4610,24 +5400,28 @@ def _prepare_mapped_nested_compatible_transfer(
             parent_reference_vertices=parent_reference_vertices,
             geometry_transition=geometry_transition,
             coarsening_witnesses=coarsening_witnesses,
+            budget=budget,
         )
     preparation.require(source, target, source_geometry, target_geometry, field_name)
     pairs, geometry_bound = preparation.pairs, preparation.geometry_bound
-    candidate_targets, candidate_sources, local, defects, estimates = (
-        prepare_form_patch_actions(
-            source,
-            target,
-            source_index,
-            target_index,
-            pairs,
-            maximum_work=maximum_work,
-            maximum_storage_bytes=maximum_storage_bytes,
-        )
+    actions = imported_mapped_form_transfer.prepare_form_patch_actions(
+        source,
+        target,
+        source_index,
+        target_index,
+        pairs,
+        maximum_work=maximum_work,
+        maximum_storage_bytes=maximum_storage_bytes,
+        budget=budget,
     )
+    candidate_targets = actions.target_rows
+    candidate_sources = actions.source_rows
+    local = actions.coefficients
+    defects, estimates = actions.defects, actions.estimates
     source_dofs = source.dof_maps[source_index]
     target_dofs = target.dof_maps[target_index]
     element = source.elements[source_index][0]
-    rows, coefficients, continuity = _owned_rows(
+    rows, coefficients, continuity = owned_rows(
         candidate_targets[:, None],
         candidate_sources,
         local[:, None],
@@ -4646,14 +5440,14 @@ def _prepare_mapped_nested_compatible_transfer(
             "continuity": continuity,
             **defects,
         },
-        _CLAIM_ULPS * np.finfo(np.float64).eps * condition,
+        CLAIM_ULPS * np.finfo(np.float64).eps * condition,
         bounds={"geometry": geometry_bound, "moments": defects["integration"]},
         estimates=estimates,
     )
     if not evidence.passed:
         raise ValueError(
-            f"Mapped compatible field {field_name!r} failed its certificate: "
-            f"{evidence.defects}."
+            "mapped_nested_compatible_transfer.evidence must satisfy the field certificate within tolerance; got "
+            f"field={field_name!r}, defects={evidence.defects!r}, tolerance={evidence.tolerance!r}"
         )
     primal = SparseLinearMap(
         RowRelation(rows.astype(np.int32), source_size=source_dofs.global_dof_count),
@@ -4696,11 +5490,10 @@ def _prepare_mapped_nested_compatible_transfer(
 def _reference_join_isometry(
     source: CellMesh,
     target: CellMesh,
-    pair: _NestedReferencePair,
+    pair: NestedReferencePair,
     expected: NDArray[np.float64],
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Verify a chart image from scientific shared vertices and group members."""
-    from .._periodic_topology import _identification_id
 
     source_starts = np.cumsum((0,) + tuple(block.cell_count for block in source.blocks))
     target_starts = np.cumsum((0,) + tuple(block.cell_count for block in target.blocks))
@@ -4714,24 +5507,25 @@ def _reference_join_isometry(
     ]
     actual = np.asarray(source.coordinates)[source_vertices]
     scale = max(float(np.max(np.abs(actual))), float(np.max(np.abs(expected))), 1.0)
-    tolerance = _CLAIM_ULPS * np.finfo(np.float64).eps * scale
+    tolerance = CLAIM_ULPS * np.finfo(np.float64).eps * scale
     if np.max(np.abs(actual - expected)) <= tolerance:
         return np.eye(actual.shape[1]), np.zeros(actual.shape[1])
     first, second = source.periodic_topology, target.periodic_topology
     if (
         first is None
         or second is None
-        or _identification_id(first.cell) != _identification_id(second.cell)
+        or periodic_exact_owner.identification_id(first.cell)
+        != periodic_exact_owner.identification_id(second.cell)
     ):
         raise ValueError(
-            "Reference coarsening charts differ without one authoritative periodic group."
+            "reference_join_isometry.configuration must agree with the declared geometry, topology, and field layout; got Reference coarsening charts differ without one declared periodic group."
         )
     source_vertex_ids = np.asarray(source.vertex_global_ids)[source_vertices]
     target_vertex_ids = np.asarray(target.vertex_global_ids)[target_vertices]
     common = np.intersect1d(source_vertex_ids, target_vertex_ids)
     if common.size == 0:
         raise ValueError(
-            "Periodic chart relocation has no shared scientific anchor vertex."
+            "reference_join_isometry.configuration must select a supported declared route; got Periodic chart relocation has no shared scientific anchor vertex."
         )
     identifier = common[0]
     source_vertex = int(
@@ -4752,7 +5546,7 @@ def _reference_join_isometry(
         np.asarray(target.vertex_global_ids)[target_representative]
     ):
         raise ValueError(
-            "Periodic chart relocation has different scientific representative anchors."
+            "reference_join_isometry.configuration must agree with the declared geometry, topology, and field layout; got Periodic chart relocation has different scientific representative anchors."
         )
     dimension = actual.shape[1]
     source_map = first.orbit_isometries(0)[source_vertex]
@@ -4763,7 +5557,7 @@ def _reference_join_isometry(
     )
     if np.max(np.abs(actual @ rotation.T + shift - expected)) > tolerance:
         raise ValueError(
-            "Stored periodic isometries do not realize the coarsening chart."
+            "reference_join_isometry.configuration must realize the coarsening chart; got Stored periodic isometries do not realize the coarsening chart."
         )
     return rotation, shift
 
@@ -4777,28 +5571,32 @@ def _prepare_reference_coarsening_projection(
     *,
     field_name: str,
     coarsening_witnesses: NestedReferenceWitnesses,
+    budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
-    """Conservative/commuting projection on the actual retained reference join."""
-    from .._nested_reference import _nested_reference_pairs
-    from .._reference_cell import reference_cell_topology
+    """Conservative/commuting projection on the represented retained reference join."""
 
-    _require_affine_simplices(source, "source", "Reference coarsening projection")
-    _require_affine_simplices(target, "target", "Reference coarsening projection")
+    _require_coefficient_affine_simplices(
+        source, source_geometry, "source", budget=budget
+    )
+    _require_coefficient_affine_simplices(
+        target, target_geometry, "target", budget=budget
+    )
     source_index, target_index = (
-        source._field_index(field_name),
-        target._field_index(field_name),
+        source.field_index(field_name),
+        target.field_index(field_name),
     )
     element = _field_signature(source, source_index, target, target_index)
-    pairs = _nested_reference_pairs(
+    pairs = imported_nested_reference.nested_reference_pairs(
         source.mesh,
         source_geometry,
         target.mesh,
         target_geometry,
         coarsening_witnesses=coarsening_witnesses,
+        budget=budget,
     )
     if not all(pair.fine_is_source for pair in pairs):
         raise ValueError(
-            "Reference coarsening projection needs fine-source integration pieces."
+            "prepare_reference_coarsening_projection.source must provide fine-source integration pieces; got Reference coarsening projection needs fine-source integration pieces."
         )
     source_routes, source_signs = _cell_routes(source, source_index)
     target_routes, target_signs = _cell_routes(target, target_index)
@@ -4811,7 +5609,9 @@ def _prepare_reference_coarsening_projection(
     fine_origins = target_origins[parents] + np.asarray(
         ein.contract("pdm,pm->pd", target_frames[parents], offsets)
     )
-    vertices = np.asarray(reference_cell_topology(element.cell_kind).vertices)
+    vertices = np.asarray(
+        imported_reference_cell.reference_cell_topology(element.cell_kind).vertices
+    )
     for row, pair in enumerate(pairs):
         expected = fine_origins[row] + vertices @ fine_frames[row].T
         _reference_join_isometry(source.mesh, target.mesh, pair, expected)
@@ -4862,7 +5662,7 @@ def _prepare_reference_coarsening_projection(
             np.asarray(coarsening_witnesses.fine_reference_vertices)
         ),
     }
-    mixed = _coalesced_map(
+    mixed = coalesced_map(
         np.broadcast_to(target_routes[parents, :, None], local.shape).reshape(-1),
         np.broadcast_to(source_routes[fine_cells, None, :], local.shape).reshape(-1),
         local.reshape(-1),
@@ -4871,7 +5671,11 @@ def _prepare_reference_coarsening_projection(
         properties=OperatorProperties(),
         operator_id=canonical_fingerprint(identity),
     )
-    prepared = prepare_l2_projection_target(target, field_name=field_name)
+    # Coefficient-image authentication above already admits the target geometry.
+    _projection_field_elements(target, target_index, "target")
+    prepared = _factored_target(
+        target, field_name, None, constraint_policy=FactorizationPolicy("svd")
+    )
     projection = FiniteElementL2Projection(
         mixed,
         prepared,
@@ -4902,11 +5706,13 @@ def _prepare_reference_coarsening_projection(
         content = _relative(pulled - source_measures, source_measures)
         evidence = FiniteElementTransferEvidence(
             {"coverage": 0.0, "content": content},
-            _CLAIM_ULPS * np.finfo(np.float64).eps * transfer.action_condition,
+            CLAIM_ULPS * np.finfo(np.float64).eps * transfer.action_condition,
             bounds={"content": float(np.max(np.abs(pulled - source_measures)))},
         )
         if not evidence.passed:
-            raise ValueError("Scalar reference coarsening failed conservative content.")
+            raise ValueError(
+                "prepare_reference_coarsening_projection.configuration must pass the declared scientific certificate; got Scalar reference coarsening failed conservative content."
+            )
         return FiniteElementFieldTransfer(
             transfer,
             source.field_spaces[source_index],
@@ -4937,7 +5743,9 @@ def _prepare_reference_coarsening_projection(
         source, source_index, prepared, None, transfer, overlap
     )
     if not evidence.passed:
-        raise ValueError(f"Compatible reference coarsening failed: {evidence.defects}.")
+        raise ValueError(
+            f"prepare_reference_coarsening_projection.configuration must pass the declared scientific certificate; got Compatible reference coarsening failed: {evidence.defects}."
+        )
     return FiniteElementFieldTransfer(
         transfer,
         source.field_spaces[source_index],
@@ -4965,23 +5773,27 @@ def _realization_field_binding(
     source_geometry: CellGeometrySpec,
     target_geometry: CellGeometrySpec,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> TransferGeometryBinding:
-    from .._cell_geometry_transfer import _require_realization_reference_complex
-    from .._cell_geometry_validity import cell_geometry_id
 
-    _require_realization_reference_complex(source.mesh, target.mesh)
+    source_realization_owner.require_realization_reference_complex(
+        source.mesh, target.mesh
+    )
     realization.require_current()
-    _bound_coordinate_spec(source, source_geometry, "source")
-    _bound_coordinate_spec(target, target_geometry, "target")
+    bound_coordinate_spec(source, source_geometry, "source", budget=budget)
+    bound_coordinate_spec(target, target_geometry, "target", budget=budget)
     realization.source_embedding.binding.require(source.mesh, source_geometry)
     realization.target_embedding.binding.require(target.mesh, target_geometry)
     transition = realization.transition
     if transition.evidence.kind != "source_realization" or (
-        transition.source_geometry_id != cell_geometry_id(source_geometry)
-        or transition.target_geometry_id != cell_geometry_id(target_geometry)
+        transition.source_geometry_id
+        != imported_cell_geometry_validity.cell_geometry_id(source_geometry)
+        or transition.target_geometry_id
+        != imported_cell_geometry_validity.cell_geometry_id(target_geometry)
     ):
         raise ValueError(
-            "Material field transfer requires the actual source-realization maps."
+            "realization_field_binding.source must provide the represented source-realization maps; got Material field transfer requires the represented source-realization maps."
         )
     return TransferGeometryBinding(
         transition.source_geometry_id,
@@ -5001,7 +5813,7 @@ def _realization_reference_field_transfer(
     semantics: SourceRealizationFieldSemantics,
     /,
 ) -> FiniteElementFieldTransfer:
-    si, ti = source._field_index(field_name), target._field_index(field_name)
+    si, ti = source.field_index(field_name), target.field_index(field_name)
     old_map, new_map = source.dof_maps[si], target.dof_maps[ti]
     conformities = {
         value.conformity for value in source.elements[si] + target.elements[ti]
@@ -5010,7 +5822,7 @@ def _realization_reference_field_transfer(
     if compatible:
         if conformities not in ({"Hcurl"}, {"Hdiv"}):
             raise ValueError(
-                "Material-compatible realization requires an actual H(curl) or H(div) field."
+                "realization_reference_field_transfer.configuration must provide an represented H(curl) or H(div) field; got Material-compatible realization requires an represented H(curl) or H(div) field."
             )
         meaning: TransferSemantics = (
             "covariant-piola" if conformities == {"Hcurl"} else "contravariant-piola"
@@ -5018,7 +5830,7 @@ def _realization_reference_field_transfer(
     else:
         if not conformities <= {"H1", "L2"}:
             raise ValueError(
-                "Intensive material pullback requires scalar H1 or DG reference functionals."
+                "realization_reference_field_transfer.configuration must provide scalar H1 or DG reference functionals; got Intensive material pullback requires scalar H1 or DG reference functionals."
             )
         meaning = "material-pullback"
     correspondence: dict[int, int] = {}
@@ -5042,13 +5854,13 @@ def _realization_reference_field_transfer(
             np.asarray(old_transforms), np.asarray(new_transforms)
         ):
             raise ValueError(
-                "Geometry realization changes the oriented reference field functionals."
+                "realization_reference_field_transfer.configuration must preserve the oriented reference field functionals; got Geometry realization changes the oriented reference field functionals."
             )
         if not compatible and (
             old_element.mapping != "identity" or old_element.value_shape
         ):
             raise ValueError(
-                "Intensive material pullback requires actual scalar reference elements."
+                "realization_reference_field_transfer.configuration must provide represented scalar reference elements; got Intensive material pullback requires represented scalar reference elements."
             )
         for old, new in zip(
             np.asarray(old_routes).flat, np.asarray(new_routes).flat, strict=True
@@ -5057,20 +5869,20 @@ def _realization_reference_field_transfer(
             previous = correspondence.get(row)
             if previous is not None and previous != column:
                 raise ValueError(
-                    "Reference material transport disagrees at a shared field functional."
+                    "realization_reference_field_transfer.configuration must agree with the declared geometry, topology, and field layout; got Reference material transport disagrees at a shared field functional."
                 )
             correspondence[row] = column
     if set(correspondence) != set(range(new_map.global_dof_count)) or set(
         correspondence.values()
     ) != set(range(old_map.global_dof_count)):
         raise ValueError(
-            "Material reference transport does not cover every source and target functional."
+            "realization_reference_field_transfer.source must cover every source and target functional; got Material reference transport does not cover every source and target functional."
         )
     rows = np.arange(new_map.global_dof_count, dtype=np.int32)
     columns = np.asarray(
         [correspondence[row] for row in range(new_map.global_dof_count)], dtype=np.int32
     )
-    primal = _coalesced_map(
+    primal = coalesced_map(
         rows,
         columns,
         np.ones(rows.size, dtype=np.float64),
@@ -5123,29 +5935,24 @@ def _realization_density_forms(
     maximum_work: int,
     maximum_storage_bytes: int,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> FiniteElementFieldTransfer:
-    from .._cell_geometry_transfer import (
-        _certified_sqrt_mapped_integral_state,
-        _integrate_mapped_polynomial,
-        _mapped_density_expression,
-        _mapped_geometry_cells,
-    )
-    from .._coordinate_enclosure import (
-        chart_arguments,
-        compose,
-        constant,
-        CoordinateEnclosureBudget,
-        multiply,
-    )
-    from ._surface_chart_transfer import _finish_material_dg_projection
 
-    si, ti = source._field_index(field_name), target._field_index(field_name)
-    ledger = CoordinateEnclosureBudget(maximum_work, maximum_storage_bytes)
+    si, ti = source.field_index(field_name), target.field_index(field_name)
+    ledger = budget
     with ledger.activate():
-        sc, tc = _mapped_dg_cells(source, si), _mapped_dg_cells(target, ti)
+        sc, tc = (
+            mapped_dg_cells(source, si, budget=budget),
+            mapped_dg_cells(target, ti, budget=budget),
+        )
     sg, tg = (
-        _mapped_geometry_cells(source.mesh, source_geometry),
-        _mapped_geometry_cells(target.mesh, target_geometry),
+        mapped_measure_owner.mapped_geometry_cells(
+            source.mesh, source_geometry, budget=budget
+        ),
+        mapped_measure_owner.mapped_geometry_cells(
+            target.mesh, target_geometry, budget=budget
+        ),
     )
     sm = np.zeros(source.dof_maps[si].global_dof_count, dtype=np.float64)
     tm = np.zeros(target.dof_maps[ti].global_dof_count, dtype=np.float64)
@@ -5164,7 +5971,7 @@ def _realization_density_forms(
     ) in enumerate(zip(sc, tc, strict=True)):
         if old_element.element_id != new_element.element_id:
             raise ValueError(
-                "Realization density transfer changes its reference field owner."
+                "realization_density_forms.configuration must preserve the reference field element; got Realization density transfer changes its reference field owner."
             )
         with ledger.activate(), ledger.temporary_scope():
             embedded = (
@@ -5174,33 +5981,53 @@ def _realization_density_forms(
             densities: tuple[Expression, Expression] | None = None
             if not embedded and (
                 len(old_basis) != 1
-                or old_basis[0] != constant(1, old_element.topological_dimension)
+                or old_basis[0]
+                != imported_coordinate_enclosure.constant(
+                    1, old_element.topological_dimension, budget=budget
+                )
             ):
                 densities = (
-                    _mapped_density_expression(*sg[cell]),
-                    _mapped_density_expression(*tg[cell]),
+                    mapped_measure_owner.mapped_density_expression(
+                        *sg[cell], budget=budget
+                    ),
+                    mapped_measure_owner.mapped_density_expression(
+                        *tg[cell], budget=budget
+                    ),
                 )
 
             def integral(side: int, weight: Polynomial) -> tuple[float, float]:
                 if embedded:
                     geometry_element, values = (sg if side == 0 else tg)[cell]
-                    return _certified_sqrt_mapped_integral_state(
-                        geometry_element, values, weight, 1e-12, 1e-12, 10000, 32, work
+                    return mapped_measure_owner.certified_sqrt_mapped_integral_state(
+                        geometry_element,
+                        values,
+                        weight,
+                        1e-12,
+                        1e-12,
+                        10000,
+                        32,
+                        work,
+                        budget=budget,
                     )
                 if densities is None:
                     raise ValueError(
-                        "Nonconstant material projection lacks its prepared physical density."
+                        "integral.configuration must include prepared physical densities for nonconstant material projection; got Nonconstant material projection lacks its prepared physical density."
                     )
-                from .._coordinate_enclosure import expression_multiply
 
-                return _integrate_mapped_polynomial(
-                    expression_multiply(densities[side], weight), old_element.cell_kind
+                return mapped_measure_owner.integrate_mapped_polynomial(
+                    imported_coordinate_enclosure.expression_multiply(
+                        densities[side], weight, budget=budget
+                    ),
+                    old_element.cell_kind,
+                    budget=budget,
                 )
 
             # DG0 consumes the already-enclosed physical inventories directly.
             if len(old_basis) == len(new_basis) == 1 and old_basis[0] == new_basis[
                 0
-            ] == constant(1, old_element.topological_dimension):
+            ] == imported_coordinate_enclosure.constant(
+                1, old_element.topological_dimension, budget=budget
+            ):
                 old_value, old_error = old_values[cell], old_errors[cell]
                 new_value, new_error = new_values[cell], new_errors[cell]
                 sm[old_route], se[old_route] = old_value, old_error
@@ -5213,11 +6040,14 @@ def _realization_density_forms(
                     old_basis
                     if old_element.cell_kind == "pyramid"
                     else tuple(
-                        compose(
+                        imported_coordinate_enclosure.compose(
                             value,
-                            chart_arguments(
-                                old_element.cell_kind, old_element.topological_dimension
+                            imported_coordinate_enclosure.chart_arguments(
+                                old_element.cell_kind,
+                                old_element.topological_dimension,
+                                budget=budget,
                             ),
+                            budget=budget,
                         )
                         for value in old_basis
                     )
@@ -5226,11 +6056,14 @@ def _realization_density_forms(
                     new_basis
                     if new_element.cell_kind == "pyramid"
                     else tuple(
-                        compose(
+                        imported_coordinate_enclosure.compose(
                             value,
-                            chart_arguments(
-                                new_element.cell_kind, new_element.topological_dimension
+                            imported_coordinate_enclosure.chart_arguments(
+                                new_element.cell_kind,
+                                new_element.topological_dimension,
+                                budget=budget,
                             ),
+                            budget=budget,
                         )
                         for value in new_basis
                     )
@@ -5245,14 +6078,21 @@ def _realization_density_forms(
                 form = np.empty((len(new_basis), len(old_basis)), dtype=np.float64)
                 for first, a in enumerate(new_basis):
                     for second, b in enumerate(new_basis):
-                        mass[first, second], error = integral(1, multiply(a, b))
+                        mass[first, second], error = integral(
+                            1, imported_coordinate_enclosure.multiply(a, b, budget=budget)
+                        )
                         errors += error
                     for second, b in enumerate(old_basis):
-                        form[first, second], error = integral(0, multiply(a, b))
+                        form[first, second], error = integral(
+                            0, imported_coordinate_enclosure.multiply(a, b, budget=budget)
+                        )
                         errors += error
             masses.append(mass)
             mixed.append({cell: form})
-    return _finish_material_dg_projection(
+    # Lazy: fem._topology_transfer <-> _surface_chart_transfer import cycle.
+    from . import _surface_chart_transfer as imported_surface_chart_transfer
+
+    return imported_surface_chart_transfer.finish_material_dg_projection(
         source,
         target,
         realization,
@@ -5277,6 +6117,229 @@ def _realization_density_forms(
     )
 
 
+def _prepare_source_realization_field_transfer(
+    source: FiniteElementDiscretization,
+    target: FiniteElementDiscretization,
+    realization: SourceGeometryRealization,
+    /,
+    *,
+    field_name: str,
+    source_geometry: CellGeometrySpec,
+    target_geometry: CellGeometrySpec,
+    semantics: SourceRealizationFieldSemantics,
+    maximum_work: int = 100_000_000,
+    maximum_storage_bytes: int = 512 * 1024**2,
+    budget: CoordinateEnclosureBudget,
+) -> FiniteElementFieldTransfer:
+    """Material pullback or physical-density projection across changed domains.
+
+    No world-point reproduction or common physical coverage is inferred.
+    Compatible fields retain their represented oriented reference moments and Piola
+    interpretation; conservative scalar DG carries old/new physical inventories.
+    """
+    meaning = parse(semantics, SourceRealizationFieldSemantics, "semantics")
+    if maximum_work < 2 or maximum_storage_bytes < 1:
+        raise ValueError(
+            "prepare_source_realization_field_transfer.realization must provide positive work and storage budgets; got Source-realization transfer requires positive work and storage budgets."
+        )
+    binding = _realization_field_binding(
+        source, target, realization, source_geometry, target_geometry, budget=budget
+    )
+    if meaning == "conservative-density":
+        return _realization_density_forms(
+            source,
+            target,
+            realization,
+            source_geometry,
+            target_geometry,
+            field_name,
+            maximum_work,
+            maximum_storage_bytes,
+            budget=budget,
+        )
+    return _realization_reference_field_transfer(
+        source, target, binding, field_name, meaning
+    )
+
+
+@checked
+def prepare_nested_field_transfer(
+    source: _NestedFiniteElementDiscretization,
+    target: _NestedFiniteElementDiscretization,
+    parent_cells: ArrayLike | None,
+    /,
+    *,
+    field_name: str,
+    parent_reference_vertices: ArrayLike | None = None,
+    source_geometry: CellGeometrySpec | None = None,
+    target_geometry: CellGeometrySpec | None = None,
+    geometry_transition: CellGeometryTransition | None = None,
+    coarsening_witnesses: NestedReferenceWitnesses | None = None,
+    maximum_work: int = 100_000_000,
+    maximum_storage_bytes: int = 256_000_000,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> FiniteElementFieldTransfer:
+    """Prepare the algebraic transfer of one FE field onto a nested refinement.
+
+    ``parent_cells[t]`` is the source cell (concatenated block order) containing
+    target cell ``t``, the parent chart of a refinement lineage. The route is
+    selected by the field's element family and DOF functionals on both meshes,
+    never by array widths; an incompatible family raises ``ValueError``.
+
+    Without ``parent_reference_vertices`` both meshes must be affine simplices and
+    the child maps are recovered from physical corners. With it (``(C, d+1, d)``
+    target corners in parent reference coordinates, e.g.
+    ``MeshAdaptationResult.parent_reference_vertices``) the transfer is built in
+    reference coordinates, so curved Lagrange coordinate maps are admitted; the
+    ``geometry`` defect then certifies that the target map is the algebraic
+    restriction of the parent map at every target coordinate node.
+
+    Each target cell reconstructs the parent's basis functions in its own space,
+    ``M^{-1} B`` with the target Piola-mapped basis (identity for H1/L2 Lagrange,
+    covariant for H(curl) Nedelec, contravariant for H(div) RT/BDM).
+    Where the target space contains the source space this equals applying the
+    target DOF functionals (nodal values, edge circulation or face flux moments)
+    and reproduces every source field exactly. The evidence certifies it:
+    ``containment`` (the chart nests), ``reproduction`` (the space inclusion
+    holds), ``continuity`` (shared DOFs agree across cells, validating trace
+    continuity and orientation), and ``commuting`` for compatible fields (the
+    curl/divergence of the transfer equals the transferred curl/divergence).
+    Scalar Lagrange transfers then certify constant, linear, positivity, and
+    content conservation claims on affine maps (constants only on curved maps,
+    whose content measures this route does not integrate); a failed certificate
+    claims nothing and its epoch transition refuses the rebind.
+
+    Affine coefficient actions retain their rational source banks and material maps.
+    Refinement requires zero algebraic map difference under a full reference
+    partition; physical inventory weights come from the source-owned cell measure,
+    never determinants of rounded carrier corners. Carrier-affine projection and
+    whole-patch reference coarsening retain their bitwise FE/mesh agreement guard.
+
+    Declared mixed/restricted maps use explicit ``source_geometry`` and
+    ``target_geometry`` and immediate-parent reference witnesses. A bound
+    ``geometry_transition`` supplies full coarsening patches when
+    ``parent_cells`` is ``None``. H1 evaluates represented target nodal functionals
+    (without claiming general coarsening function/content reproduction); DG
+    projects with algebraic/enclosed physical forms and a conserved content ledger.
+    Restricted coordinate routes remain source coefficients. Declared form
+    fields apply their full entity functionals on certified reference
+    patches, including full-source coarsening. Compatible preparation obeys
+    cumulative ``maximum_work`` and ``maximum_storage_bytes`` bounds.
+
+    A supplied budget retains request accounting; otherwise the call owns one
+    ticket bounded by maximum_work and maximum_storage_bytes.
+    """
+    if budget is not None:
+        return _prepare_nested_field_transfer(
+            source,
+            target,
+            parent_cells,
+            field_name=field_name,
+            parent_reference_vertices=parent_reference_vertices,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            geometry_transition=geometry_transition,
+            coarsening_witnesses=coarsening_witnesses,
+            maximum_work=maximum_work,
+            maximum_storage_bytes=maximum_storage_bytes,
+            budget=budget,
+        )
+    with HostBatchTicket(
+        maximum_work,
+        queries_upper=field_transfer_query_upper(
+            maximum_work, source_geometry, target_geometry
+        ),
+        bytes_upper=maximum_storage_bytes,
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=maximum_work,
+            maximum_memory_bytes=maximum_storage_bytes,
+        )
+        with budget.activate():
+            return _prepare_nested_field_transfer(
+                source,
+                target,
+                parent_cells,
+                field_name=field_name,
+                parent_reference_vertices=parent_reference_vertices,
+                source_geometry=source_geometry,
+                target_geometry=target_geometry,
+                geometry_transition=geometry_transition,
+                coarsening_witnesses=coarsening_witnesses,
+                maximum_work=maximum_work,
+                maximum_storage_bytes=maximum_storage_bytes,
+                budget=budget,
+            )
+
+
+@checked
+def prepare_nested_compatible_field_transfers(
+    source: _NestedFiniteElementDiscretization,
+    target: _NestedFiniteElementDiscretization,
+    parent_cells: ArrayLike | None,
+    /,
+    *,
+    field_names: Sequence[str],
+    parent_reference_vertices: ArrayLike | None = None,
+    source_geometry: CellGeometrySpec | None = None,
+    target_geometry: CellGeometrySpec | None = None,
+    geometry_transition: CellGeometryTransition | None = None,
+    coarsening_witnesses: NestedReferenceWitnesses | None = None,
+    maximum_work: int = 100_000_000,
+    maximum_storage_bytes: int = 256_000_000,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> tuple[FiniteElementFieldTransfer, ...]:
+    """Prepare field-ordered compatible transfers on the declared nested geometry.
+
+    A supplied coordinate budget retains request accounting; otherwise the call
+    owns one ticket bounded by maximum_work and maximum_storage_bytes.
+    """
+    if budget is not None:
+        return _prepare_nested_compatible_field_transfers(
+            source,
+            target,
+            parent_cells,
+            field_names=field_names,
+            parent_reference_vertices=parent_reference_vertices,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            geometry_transition=geometry_transition,
+            coarsening_witnesses=coarsening_witnesses,
+            maximum_work=maximum_work,
+            maximum_storage_bytes=maximum_storage_bytes,
+            budget=budget,
+        )
+    with HostBatchTicket(
+        maximum_work,
+        queries_upper=field_transfer_query_upper(
+            maximum_work, source_geometry, target_geometry
+        ),
+        bytes_upper=maximum_storage_bytes,
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=maximum_work,
+            maximum_memory_bytes=maximum_storage_bytes,
+        )
+        with budget.activate():
+            return _prepare_nested_compatible_field_transfers(
+                source,
+                target,
+                parent_cells,
+                field_names=field_names,
+                parent_reference_vertices=parent_reference_vertices,
+                source_geometry=source_geometry,
+                target_geometry=target_geometry,
+                geometry_transition=geometry_transition,
+                coarsening_witnesses=coarsening_witnesses,
+                maximum_work=maximum_work,
+                maximum_storage_bytes=maximum_storage_bytes,
+                budget=budget,
+            )
+
+
+@checked
 def prepare_source_realization_field_transfer(
     source: FiniteElementDiscretization,
     target: FiniteElementDiscretization,
@@ -5289,32 +6352,107 @@ def prepare_source_realization_field_transfer(
     semantics: SourceRealizationFieldSemantics,
     maximum_work: int = 100_000_000,
     maximum_storage_bytes: int = 512 * 1024**2,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> FiniteElementFieldTransfer:
-    """Material pullback or physical-density projection across changed domains.
-
-    No world-point reproduction or common physical coverage is inferred.
-    Compatible fields retain their actual oriented reference moments and Piola
-    interpretation; conservative scalar DG carries old/new physical inventories.
-    """
-    meaning = parse(semantics, SourceRealizationFieldSemantics, "semantics")
-    if maximum_work < 2 or maximum_storage_bytes < 1:
-        raise ValueError(
-            "Source-realization transfer requires positive work and storage budgets."
-        )
-    binding = _realization_field_binding(
-        source, target, realization, source_geometry, target_geometry
-    )
-    if meaning == "conservative-density":
-        return _realization_density_forms(
+    """Prepare the request with one explicitly bounded host algebraic-work ticket."""
+    if budget is not None:
+        return _prepare_source_realization_field_transfer(
             source,
             target,
             realization,
-            source_geometry,
-            target_geometry,
-            field_name,
-            maximum_work,
-            maximum_storage_bytes,
+            field_name=field_name,
+            source_geometry=source_geometry,
+            target_geometry=target_geometry,
+            semantics=semantics,
+            maximum_work=maximum_work,
+            maximum_storage_bytes=maximum_storage_bytes,
+            budget=budget,
         )
-    return _realization_reference_field_transfer(
-        source, target, binding, field_name, meaning
+    with HostBatchTicket(
+        maximum_work,
+        queries_upper=field_transfer_query_upper(
+            maximum_work, source_geometry, target_geometry
+        ),
+        bytes_upper=maximum_storage_bytes,
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=maximum_work,
+            maximum_memory_bytes=maximum_storage_bytes,
+        )
+        with budget.activate():
+            return _prepare_source_realization_field_transfer(
+                source,
+                target,
+                realization,
+                field_name=field_name,
+                source_geometry=source_geometry,
+                target_geometry=target_geometry,
+                semantics=semantics,
+                maximum_work=maximum_work,
+                maximum_storage_bytes=maximum_storage_bytes,
+                budget=budget,
+            )
+
+
+@checked
+def prepare_projection_field_transfer(
+    source: FiniteElementDiscretization,
+    target: PreparedL2ProjectionTarget,
+    refinement: imported_geometry.PreparedCommonRefinement,
+    /,
+    *,
+    field_name: str,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> FiniteElementFieldTransfer:
+    """Prepare projection and algebraic source bindings within one explicit host request."""
+    if budget is not None:
+        return _prepare_projection_field_transfer(
+            source,
+            target,
+            refinement,
+            field_name=field_name,
+            budget=budget,
+        )
+    sources = []
+    for space in (source, target.discretization):
+        coordinates = np.asarray(space.default_runtime.coordinates, dtype=np.float64)
+        for element, routes in zip(
+            space.coordinate_elements, space.coordinate_dofs, strict=True
+        ):
+            for route in np.asarray(routes):
+                estimate = coordinate_polynomials_estimate(element, coordinates[route])
+                if estimate is not None:
+                    sources.append(estimate)
+    estimate = coordinate_estimate_bank(tuple(sources))
+    with HostBatchTicket(estimate.work_upper, bytes_upper=estimate.bytes_upper) as ticket:
+        ledger = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=estimate.work_upper,
+            maximum_memory_bytes=estimate.bytes_upper,
+        )
+        with ledger.activate():
+            return _prepare_projection_field_transfer(
+                source,
+                target,
+                refinement,
+                field_name=field_name,
+                budget=ledger,
+            )
+
+
+def field_transfer_query_upper(
+    maximum_work: int,
+    source_geometry: CellGeometrySpec | None,
+    target_geometry: CellGeometrySpec | None,
+    /,
+) -> int:
+    # Every completed positive-query source preparation performs positive algebraic
+    # work. The extra preparation covers its fail-fast refusal/invalidity prefix;
+    # copied restriction vertices need not themselves consume coefficient work.
+    source_queries = sum(
+        geometry.exact_source.preparation_query_upper()
+        for geometry in (source_geometry, target_geometry)
+        if geometry is not None and geometry.exact_source is not None
     )
+    return source_queries * (maximum_work + 1)

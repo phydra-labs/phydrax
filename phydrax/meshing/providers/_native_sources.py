@@ -4,11 +4,11 @@
 
 """Revision-bound source bindings admitted by the native meshing provider.
 
-Each binding attaches one immutable source revision to an existing geometry
-owner. It adds no geometry of its own: represented geometry, entity identity,
-and queries remain with ``phydrax.geometry``. Source entity identifiers used in
-published geometry associations are ``<revision>:<kind>:<index>`` strings of
-the kinds named on each binding.
+Each binding attaches one immutable source revision to a geometry owner.
+Represented geometry, entity identity, and queries remain with
+``phydrax.geometry``. Source entity identifiers used in published geometry
+associations are ``<revision>:<kind>:<index>`` strings of the kinds named on
+each binding.
 """
 
 from __future__ import annotations
@@ -19,40 +19,43 @@ import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
+import phydrax.discretization._cell_geometry as cell_geometry_owner
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.discretization._tensor_support as tensor_support_owner
+import phydrax.geometry._atlas as atlas_owner
+import phydrax.geometry._contracts as contracts_owner
+import phydrax.geometry.simplicial._regions as regions_owner
+from phydrax.geometry._source_boundary_records import SourceBoundaryQuery
+from phydrax.meshing._host_banks import family_host_array
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._meshcore import NativeExecutionScope
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
-from ...discretization import CellGeometrySpec, CellMesh, PreparedTensorGrid
+from ..._validation import normalized_identifier, positive_finite_float
 from ...discretization._cell_geometry import CellGeometryRestrictionSource
 from ...discretization._cell_geometry_validity import cell_geometry_id
-from ...geometry import BoundaryAtlas, CompiledGeometry, PlanarMeshRegion, SegmentMesh
 from ...geometry._compartments import CompartmentMeshingSource
+from ...geometry._domain_coverage import PiecewiseLinearDomain
 from ...geometry._mapped_reference_domain import MappedReferenceDomain
-from ...geometry._mesh_certificates import PiecewiseLinearDomain, SourceBoundaryQuery
 from ...geometry._meshing_domain import MeshingDomain
+from ...geometry.brep._model import BRepGeometry, BRepModel
 from ...geometry.multiregion_surface._label_extraction import LabelFieldVolumeBinding
 from ...typing import checked
+from .. import _surface_envelope as envelope_owner
 from .._boundary_layer import BoundaryLayerMesh
 from .._controls import BlockInterfaceControl
+from .._layer_core_regions import prepare_layer_region_identity
+from .._plc_source import PiecewiseLinearComplex
 from .._scope import MeshingEntityKind, MeshingScope
 from .._structured import TransfiniteBlock
-from .._surface_envelope import SurfaceEnvelope
 from .._sweep import SweepControl
-from .._volume_generation import declared_plc_domain, PiecewiseLinearComplex
-from ._native_periodic import NativePeriodicSource
-
-
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    identifier = value.strip()
-    if not identifier:
-        raise ValueError(f"{name} must be non-empty.")
-    return identifier
+from .._volume_generation import declared_plc_domain
+from . import _native_periodic as periodic_owner
 
 
 def source_entity_id(revision: str, kind: str, index: int, /) -> str:
-    """Canonical identifier of one native source entity."""
+    """Return the revision-bound identifier of one native source entity."""
 
     return f"{revision}:{kind}:{index}"
 
@@ -68,25 +71,23 @@ class NativePlanarSource(StrictModule, NonTrainableState):
     the generated mesh and must lie inside the region.
     """
 
-    region: PlanarMeshRegion
-    embedded: SegmentMesh | None
+    region: regions_owner.PlanarMeshRegion
+    embedded: regions_owner.SegmentMesh | None
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        region: PlanarMeshRegion,
+        region: regions_owner.PlanarMeshRegion,
         source_revision: str,
         /,
         *,
-        embedded: SegmentMesh | None = None,
+        embedded: regions_owner.SegmentMesh | None = None,
     ) -> None:
-        if not isinstance(region, PlanarMeshRegion):
-            raise TypeError("region must be PlanarMeshRegion.")
-        if embedded is not None and not isinstance(embedded, SegmentMesh):
-            raise TypeError("embedded must be SegmentMesh or None.")
-        revision = _identifier(source_revision, "source_revision")
+
+        revision = normalized_identifier(source_revision, "source_revision")
         self.region = region
         self.embedded = embedded
         self.source_id = region.feature_id
@@ -111,6 +112,23 @@ class NativePlanarSource(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[NativePlanarSource], value: NativePlanarSource, /
+    ) -> NativePlanarSource:
+        """Revalidate a stored planar source through its constructor."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"{cls.__name__}.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        fresh = cls(value.region, value.source_revision, embedded=value.embedded)
+        if (fresh.source_id, fresh.binding_id) != (value.source_id, value.binding_id):
+            raise ValueError(
+                f"{cls.__name__}.binding_id must match its stored source fields; got {value.binding_id}"
+            )
+        return fresh
+
 
 @final
 class NativeImplicitSource(StrictModule, NonTrainableState):
@@ -119,25 +137,25 @@ class NativeImplicitSource(StrictModule, NonTrainableState):
     The discovered zero set is the source entity ``implicit-zero-set``.
     """
 
-    geometry: CompiledGeometry
-    grid: PreparedTensorGrid
+    geometry: contracts_owner.CompiledGeometry
+    grid: tensor_support_owner.PreparedTensorGrid
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
 
     @checked
     def __init__(
         self,
-        geometry: CompiledGeometry,
-        grid: PreparedTensorGrid,
+        geometry: contracts_owner.CompiledGeometry,
+        grid: tensor_support_owner.PreparedTensorGrid,
         source_id: str,
         source_revision: str,
         /,
     ) -> None:
-        source = _identifier(source_id, "source_id")
+        source = normalized_identifier(source_id, "source_id")
         self.geometry = geometry
         self.grid = grid
         self.source_id = source
-        self.source_revision = _identifier(source_revision, "source_revision")
+        self.source_revision = normalized_identifier(source_revision, "source_revision")
 
 
 @final
@@ -151,29 +169,65 @@ class NativeCurveSource(StrictModule, NonTrainableState):
     ``curve:<id>``.
     """
 
-    curves: BoundaryAtlas | SegmentMesh
+    curves: atlas_owner.BoundaryAtlas | regions_owner.SegmentMesh
     ambient_dimension: int = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
+    gap_domain: MeshingDomain | None
 
+    @checked
     def __init__(
-        self, curves: BoundaryAtlas | SegmentMesh, source_revision: str, /
+        self,
+        curves: atlas_owner.BoundaryAtlas | regions_owner.SegmentMesh,
+        source_revision: str,
+        /,
+        *,
+        gap_domain: MeshingDomain | None = None,
     ) -> None:
         match curves:
-            case BoundaryAtlas():
+            case atlas_owner.BoundaryAtlas():
                 if curves.reference_dimension != 1:
-                    raise ValueError("Curve atlases must have one-dimensional charts.")
+                    raise ValueError(
+                        "NativeCurveSource.curves.reference_dimension must equal 1; got a different chart dimension."
+                    )
                 if curves.num_charts == 0:
-                    raise ValueError("Curve atlases must contain at least one chart.")
+                    raise ValueError(
+                        "NativeCurveSource.curves.num_charts must be positive; got zero charts."
+                    )
                 ambient = curves.ambient_dimension
-            case SegmentMesh():
+            case regions_owner.SegmentMesh():
                 ambient = curves.vertices.shape[1]
             case _:
-                raise TypeError("curves must be a BoundaryAtlas or SegmentMesh.")
+                raise TypeError(
+                    "NativeCurveSource.curves must be BoundaryAtlas or SegmentMesh; got an unsupported source kind."
+                )
+        if gap_domain is not None:
+            match gap_domain.brep_authority:
+                case BRepGeometry() as geometry:
+                    pass
+                case BRepModel() as model:
+                    geometry = model.require_geometry()
+                case None:
+                    geometry = None
+            if geometry is None or (
+                geometry.edge_vertex_gap_bounds is None
+                and geometry.edge_face_gap_bounds is None
+            ):
+                gap_domain = None
+            elif (
+                gap_domain.domain_id != gap_domain.content_domain_id()
+                or array_tree_fingerprint(curves)
+                != array_tree_fingerprint(gap_domain.curve_atlas)
+                or source_revision != gap_domain.source_revision
+            ):
+                raise ValueError(
+                    "NativeCurveSource.gap_domain must bind the current curve atlas and revision; got incompatible source"
+                )
         self.curves = curves
         self.ambient_dimension = ambient
         self.source_id = curves.source_id
-        self.source_revision = _identifier(source_revision, "source_revision")
+        self.source_revision = normalized_identifier(source_revision, "source_revision")
+        self.gap_domain = gap_domain
 
 
 @final
@@ -189,9 +243,9 @@ class NativeSurfaceSource(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, domain: MeshingDomain, /) -> None:
-        if not isinstance(domain, MeshingDomain):
-            raise TypeError("domain must be MeshingDomain.")
+
         self.domain = domain
         self.source_id = domain.source_id
         self.source_revision = domain.source_revision
@@ -215,13 +269,13 @@ class NativePlcSource(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, complex_: PiecewiseLinearComplex, source_id: str, source_revision: str, /
     ) -> None:
-        if not isinstance(complex_, PiecewiseLinearComplex):
-            raise TypeError("complex_ must be PiecewiseLinearComplex.")
-        source = _identifier(source_id, "source_id")
-        revision = _identifier(source_revision, "source_revision")
+
+        source = normalized_identifier(source_id, "source_id")
+        revision = normalized_identifier(source_revision, "source_revision")
         self.complex = complex_
         self.source_id = source
         self.source_revision = revision
@@ -233,6 +287,23 @@ class NativePlcSource(StrictModule, NonTrainableState):
                 "complex": complex_.complex_id,
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[NativePlcSource], value: NativePlcSource, /
+    ) -> NativePlcSource:
+        """Revalidate a stored PLC source through its constructor."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"{cls.__name__}.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        fresh = cls(value.complex, value.source_id, value.source_revision)
+        if fresh.binding_id != value.binding_id:
+            raise ValueError(
+                f"{cls.__name__}.binding_id must match its stored source fields; got {value.binding_id}"
+            )
+        return fresh
 
 
 @final
@@ -246,6 +317,7 @@ class NativePolyhedralSource(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         complex_: PiecewiseLinearComplex,
@@ -256,22 +328,27 @@ class NativePolyhedralSource(StrictModule, NonTrainableState):
         sites: ArrayLike,
         weights: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(complex_, PiecewiseLinearComplex):
-            raise TypeError("complex_ must be PiecewiseLinearComplex.")
-        source = _identifier(source_id, "source_id")
-        revision = _identifier(source_revision, "source_revision")
+
+        source = normalized_identifier(source_id, "source_id")
+        revision = normalized_identifier(source_revision, "source_revision")
         points = np.asarray(sites, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 3 or points.shape[0] == 0:
-            raise ValueError("sites must have nonempty shape (N, 3).")
+            raise ValueError(
+                "NativePolyhedralSource.sites must have nonempty shape (N, 3); got an incompatible shape."
+            )
         if not np.all(np.isfinite(points)):
-            raise ValueError("sites must be finite.")
+            raise ValueError(
+                "NativePolyhedralSource.sites must be finite; got nonfinite coordinates."
+            )
         values = (
             np.zeros(points.shape[0], dtype=np.float64)
             if weights is None
             else np.asarray(weights, dtype=np.float64)
         )
         if values.shape != (points.shape[0],) or not np.all(np.isfinite(values)):
-            raise ValueError("weights must be finite with one value per site.")
+            raise ValueError(
+                "NativePolyhedralSource.weights must be finite with one value per site; got an incompatible shape or nonfinite values."
+            )
         points = np.array(points, dtype=np.float64, copy=True)
         values = np.array(values, dtype=np.float64, copy=True)
         points.setflags(write=False)
@@ -287,6 +364,29 @@ class NativePolyhedralSource(StrictModule, NonTrainableState):
                 "power_sites": array_tree_fingerprint((points, values)),
             }
         )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[NativePolyhedralSource], value: NativePolyhedralSource, /
+    ) -> NativePolyhedralSource:
+        """Revalidate stored power sites and their PLC source binding."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"{cls.__name__}.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        fresh = cls(
+            value.complex,
+            value.source_id,
+            value.source_revision,
+            sites=value.sites,
+            weights=value.weights,
+        )
+        if fresh.binding_id != value.binding_id:
+            raise ValueError(
+                f"{cls.__name__}.binding_id must match its stored source fields; got {value.binding_id}"
+            )
+        return fresh
 
 
 def _layer_source_facets(
@@ -310,14 +410,20 @@ def _layer_source_facets(
         return None
     if not all(supplied):
         raise ValueError(
-            "Original layer source scope, domain, query and facet ancestry are required together."
+            "NativeLayerCoreSource.source_boundary_scope must be supplied with source_domain, fidelity_source, and core_facet_source_ids; got an incomplete source binding."
         )
-    if not isinstance(boundary, MeshingScope):
-        raise TypeError("source_boundary_scope must be MeshingScope.")
-    if not isinstance(domain, (MeshingDomain, PiecewiseLinearDomain)):
-        raise TypeError("source_domain must be MeshingDomain or PiecewiseLinearDomain.")
+    match (boundary, domain):
+        case (MeshingScope(), MeshingDomain() | PiecewiseLinearDomain()):
+            pass
+        case _:
+            raise TypeError(
+                "NativeLayerCoreSource.source_boundary_scope must be paired with a "
+                "source_domain; got an incomplete source binding."
+            )
     if not isinstance(query, SourceBoundaryQuery):
-        raise TypeError("fidelity_source must implement SourceBoundaryQuery.")
+        raise TypeError(
+            "NativeMeshingSource.fidelity_source must implement SourceBoundaryQuery; got an unsupported query."
+        )
     binding = (source_id, source_revision)
     if (
         (boundary.source_id, boundary.source_revision) != binding
@@ -328,31 +434,31 @@ def _layer_source_facets(
         or query.ambient_dimension != 3
     ):
         raise ValueError(
-            "Original layer source facts must share authoritative geometry identity and frame dimension."
+            "NativeLayerCoreSource.source_boundary_scope must share the source revision and 3D geometry frame with source_domain and fidelity_source; got mismatched source facts."
         )
     values = np.asarray(facet_ids)
     if values.shape != (complex_.facet_count,) or not np.issubdtype(
         values.dtype, np.integer
     ):
         raise TypeError(
-            "core_facet_source_ids must identify every core facet with integer source IDs."
+            "NativeLayerCoreSource.core_facet_source_ids must identify every core facet with integer source IDs; got an incompatible shape or dtype."
         )
     if np.any(values < -1) or not np.all(
         np.isin(values[values >= 0], np.asarray(boundary.entity_ids))
     ):
         raise ValueError(
-            "Core facet ancestry must name original boundary faces or generated caps."
+            "NativeLayerCoreSource.core_facet_source_ids must name source boundary faces or generated caps; got out-of-scope facet IDs."
         )
     cap_facets = np.unique(np.asarray(complex_.polygon_facets)[cap_polygons])
     if not np.array_equal(np.flatnonzero(values == -1), cap_facets):
         raise ValueError(
-            "Only exact generated cap facets may lack original source face IDs."
+            "NativeLayerCoreSource.core_facet_source_ids must omit source face IDs only for generated cap facets; got mismatched cap ancestry."
         )
     for facet in cap_facets:
         rows = np.flatnonzero(np.asarray(complex_.polygon_facets) == facet)
         if not np.all(np.isin(rows, cap_polygons)):
             raise ValueError(
-                "Generated cap facets cannot include original boundary polygons."
+                "NativeLayerCoreSource.cap_polygon_ids must include every polygon of each generated cap facet; got a mixed cap/source facet."
             )
     result = np.array(values, dtype=np.int64, copy=True)
     result.setflags(write=False)
@@ -360,10 +466,184 @@ def _layer_source_facets(
 
 
 @final
-class NativeLayerCoreSource(StrictModule, NonTrainableState):
-    """Certified layers and an exact PLC core with explicit shared identities.
+class _LayerIdentityMaps(StrictModule):
+    vertices: np.ndarray
+    polygons: np.ndarray
+    regions: np.ndarray
+    region_ids: tuple[str, ...] = eqx.field(static=True)
+    core_regions: np.ndarray
 
-    ``region_ids`` owns the complete composite material namespace;
+
+def _prepare_layer_identity_maps(
+    layers: BoundaryLayerMesh,
+    complex_: PiecewiseLinearComplex,
+    vertex_layer_ids: ArrayLike,
+    cap_polygon_ids: ArrayLike,
+    layer_regions: ArrayLike,
+    region_ids: tuple[str, ...] | None,
+    core_region_map: ArrayLike | None,
+    /,
+) -> _LayerIdentityMaps:
+    """Prepare identity arrays after validating layer/core incidence."""
+    vertices = np.asarray(vertex_layer_ids)
+    polygons = np.asarray(cap_polygon_ids)
+    regions = np.asarray(layer_regions)
+    for name, values in (
+        ("NativeLayerCoreSource.vertex_layer_ids", vertices),
+        ("NativeLayerCoreSource.cap_polygon_ids", polygons),
+        ("NativeLayerCoreSource.layer_regions", regions),
+    ):
+        if values.ndim != 1 or not np.issubdtype(values.dtype, np.integer):
+            raise TypeError(
+                f"{name} must be a rank-one integer array; "
+                f"got shape {values.shape} and dtype {values.dtype}."
+            )
+    cap_count = (
+        0 if layers.cap is None else sum(block.cell_count for block in layers.cap.blocks)
+    )
+    cell_count = sum(block.cell_count for block in layers.mesh.blocks)
+    if vertices.shape != (complex_.vertices.shape[0],) or np.any(
+        (vertices < -1) | (vertices >= layers.mesh.coordinates.shape[0])
+    ):
+        raise ValueError(
+            "NativeLayerCoreSource.vertex_layer_ids must map every PLC vertex to a "
+            f"layer vertex or -1; got shape {vertices.shape} or out-of-range IDs."
+        )
+    if polygons.shape != (cap_count,) or np.any(
+        (polygons < 0) | (polygons >= complex_.polygon_offsets.size - 1)
+    ):
+        raise ValueError(
+            "NativeLayerCoreSource.cap_polygon_ids must identify every cap polygon "
+            f"in block order; got shape {polygons.shape} or out-of-range IDs."
+        )
+    if regions.shape != (cell_count,):
+        raise ValueError(
+            "NativeLayerCoreSource.layer_regions must identify the composite region "
+            f"of every layer cell; got shape {regions.shape}, expected {(cell_count,)}."
+        )
+    composite_regions, core_regions = prepare_layer_region_identity(
+        complex_, regions, region_ids, core_region_map
+    )
+    return _LayerIdentityMaps(
+        vertices, polygons, regions, composite_regions, core_regions
+    )
+
+
+def _validate_layer_reference(
+    layers: BoundaryLayerMesh,
+    regions: np.ndarray,
+    composite_regions: tuple[str, ...],
+    reference_source: NativeLayerCoreSource | None,
+    mapped_domain: MappedReferenceDomain | None,
+    source_domain: MeshingDomain | PiecewiseLinearDomain | None,
+    fidelity_source: SourceBoundaryQuery | None,
+    source: str,
+    revision: str,
+    /,
+) -> None:
+    """Validate the independently declared reference columns and physical roots."""
+    if (reference_source is None) != (mapped_domain is None):
+        raise ValueError(
+            "NativeLayerCoreSource.reference_source must be supplied with "
+            "mapped_domain; got an incomplete reference binding."
+        )
+    if reference_source is None or mapped_domain is None:
+        return
+    if reference_source.reference_source is not None:
+        raise ValueError(
+            "NativeLayerCoreSource.reference_source must retain its reference partition "
+            "directly; got a nested reference source."
+        )
+    if (mapped_domain.source_id, mapped_domain.source_revision) != (source, revision):
+        raise ValueError(
+            "NativeLayerCoreSource.mapped_domain must bind the physical source identity "
+            f"and revision; got {(mapped_domain.source_id, mapped_domain.source_revision)!r}."
+        )
+    if (
+        reference_source.region_ids != composite_regions
+        or mapped_domain.region_ids != composite_regions
+    ):
+        raise ValueError(
+            "NativeLayerCoreSource.reference_source.region_ids must match the composite "
+            f"materials together with mapped_domain.region_ids; got {reference_source.region_ids!r} "
+            f"and {mapped_domain.region_ids!r}."
+        )
+    if source_domain is None or fidelity_source is None:
+        raise ValueError(
+            "NativeLayerCoreSource.source_domain must be supplied with fidelity_source "
+            "for mapped composition; got incomplete physical geometry."
+        )
+    if not np.array_equal(reference_source.layer_regions, regions):
+        raise ValueError(
+            "NativeLayerCoreSource.reference_source.layer_regions must match the "
+            "physical layer assignments; got different material arrays."
+        )
+    if not np.array_equal(
+        reference_source.layers.mesh.vertex_global_ids, layers.mesh.vertex_global_ids
+    ):
+        raise ValueError(
+            "NativeLayerCoreSource.reference_source.layers.mesh.vertex_global_ids must "
+            "match the physical registry; got different vertex IDs."
+        )
+    if not np.array_equal(
+        reference_source.layers.layer_index, layers.layer_index
+    ) or not np.array_equal(reference_source.layers.column_index, layers.column_index):
+        raise ValueError(
+            "NativeLayerCoreSource.reference_source.layers.layer_index must match the "
+            "physical intervals together with column_index; got different index arrays."
+        )
+
+
+@final
+class _LayerPeriodicAncestry(StrictModule):
+    representatives: np.ndarray | None
+    shifts: np.ndarray | None
+    polygon_pairs: np.ndarray | None
+
+
+def _prepare_layer_periodic_ancestry(
+    representatives: ArrayLike | None,
+    shifts: ArrayLike | None,
+    polygon_pairs: ArrayLike | None,
+    /,
+) -> _LayerPeriodicAncestry:
+    """Freeze the jointly supplied signed-integer seam ancestry."""
+    values = (representatives, shifts, polygon_pairs)
+    if any(value is None for value in values) and any(
+        value is not None for value in values
+    ):
+        raise ValueError(
+            "NativeLayerCoreSource.core_periodic_ancestry must include representatives, "
+            "shifts, and seam polygon pairs together; got an incomplete ancestry."
+        )
+    arrays: list[np.ndarray | None] = []
+    for value in values:
+        if value is None:
+            arrays.append(None)
+            continue
+        array = np.asarray(value)
+        if not np.issubdtype(array.dtype, np.integer):
+            raise TypeError(
+                "NativeLayerCoreSource.core_periodic_ancestry must use integer arrays; "
+                f"got dtype {array.dtype}."
+            )
+        storage = np.iinfo(np.int64)
+        if np.any(array < storage.min) or np.any(array > storage.max):
+            raise ValueError(
+                "NativeLayerCoreSource.core_periodic_ancestry must fit signed int64; "
+                "got out-of-range integers."
+            )
+        array = np.array(array, dtype=np.int64, copy=True)
+        array.setflags(write=False)
+        arrays.append(array)
+    return _LayerPeriodicAncestry(*arrays)
+
+
+@final
+class NativeLayerCoreSource(StrictModule, NonTrainableState):
+    """Bind certified layers to a PLC core through shared entity identities.
+
+    ``region_ids`` defines the composite material namespace;
     ``core_region_map`` maps each bounded core-local region into it, while
     ``layer_regions`` indexes it directly. Supplying neither declares the
     explicit identity composition of the core namespace. Wall-only materials
@@ -380,9 +660,9 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
 
     ``reference_source`` and ``mapped_domain`` jointly declare independent
     source roots for curved composition. Native fill retains every internal
-    root incidence sheet in the reference PLC; exact reference charts then
-    pull back the original root maps. ``layers`` remains the actual physical
-    wall/column realization, not an inverse-fitted or relabeled reference mesh.
+    root incidence sheet in the reference PLC; reference charts then pull back
+    the physical root maps. ``layers`` retains the physical wall/column
+    realization independently of the reference mesh.
 
     ``fidelity_source`` owns fixed scientific numerical state. Its arrays are
     dynamic PyTree leaves, not static structure or discoverable training
@@ -409,6 +689,7 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         layers: BoundaryLayerMesh,
@@ -432,102 +713,34 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
         reference_source: NativeLayerCoreSource | None = None,
         mapped_domain: MappedReferenceDomain | None = None,
     ) -> None:
-        if not isinstance(layers, BoundaryLayerMesh):
-            raise TypeError("layers must be BoundaryLayerMesh.")
-        if not isinstance(complex_, PiecewiseLinearComplex):
-            raise TypeError("complex_ must be PiecewiseLinearComplex.")
-        source = _identifier(source_id, "source_id")
-        revision = _identifier(source_revision, "source_revision")
-        vertices = np.asarray(vertex_layer_ids)
-        polygons = np.asarray(cap_polygon_ids)
-        regions = np.asarray(layer_regions)
-        for name, values in (
-            ("vertex_layer_ids", vertices),
-            ("cap_polygon_ids", polygons),
-            ("layer_regions", regions),
-        ):
-            if values.ndim != 1 or not np.issubdtype(values.dtype, np.integer):
-                raise TypeError(f"{name} must be a rank-one integer array.")
-        cap_count = (
-            0
-            if layers.cap is None
-            else sum(block.cell_count for block in layers.cap.blocks)
+        source = normalized_identifier(source_id, "source_id")
+        revision = normalized_identifier(source_revision, "source_revision")
+        identity = _prepare_layer_identity_maps(
+            layers,
+            complex_,
+            vertex_layer_ids,
+            cap_polygon_ids,
+            layer_regions,
+            region_ids,
+            core_region_map,
         )
-        cell_count = sum(block.cell_count for block in layers.mesh.blocks)
-        if vertices.shape != (complex_.vertices.shape[0],) or np.any(
-            (vertices < -1) | (vertices >= layers.mesh.coordinates.shape[0])
-        ):
-            raise ValueError(
-                "vertex_layer_ids must map every PLC vertex to a layer vertex or -1."
-            )
-        if polygons.shape != (cap_count,) or np.any(
-            (polygons < 0) | (polygons >= complex_.polygon_offsets.size - 1)
-        ):
-            raise ValueError(
-                "cap_polygon_ids must identify every cap polygon in block order."
-            )
-        if regions.shape != (cell_count,):
-            raise ValueError(
-                "layer_regions must identify the composite region of every layer cell."
-            )
-        from .._layer_core_regions import prepare_layer_region_identity
-
-        composite_regions, core_regions = prepare_layer_region_identity(
-            complex_, regions, region_ids, core_region_map
+        vertices, polygons, regions = (
+            identity.vertices,
+            identity.polygons,
+            identity.regions,
         )
-        if (reference_source is None) != (mapped_domain is None):
-            raise ValueError(
-                "Mapped layer/core composition requires its complete reference source and mapped domain together."
-            )
-        if reference_source is not None:
-            if not isinstance(reference_source, NativeLayerCoreSource) or not isinstance(
-                mapped_domain, MappedReferenceDomain
-            ):
-                raise TypeError(
-                    "Mapped layer/core composition requires NativeLayerCoreSource and MappedReferenceDomain."
-                )
-            if reference_source.reference_source is not None:
-                raise ValueError(
-                    "A layer/core reference source must own its original reference partition directly."
-                )
-            if (mapped_domain.source_id, mapped_domain.source_revision) != (
-                source,
-                revision,
-            ):
-                raise ValueError(
-                    "Mapped layer/core roots must bind the original physical source identity and revision."
-                )
-            if (
-                reference_source.region_ids != composite_regions
-                or mapped_domain.region_ids != composite_regions
-            ):
-                raise ValueError(
-                    "Mapped layer/core composition must retain every original material identity."
-                )
-            if source_domain is None or fidelity_source is None:
-                raise ValueError(
-                    "Mapped layer/core composition requires independent original physical geometry and fidelity."
-                )
-            if not np.array_equal(reference_source.layer_regions, regions):
-                raise ValueError(
-                    "Reference source columns must retain the actual physical layer material assignments."
-                )
-            if not np.array_equal(
-                reference_source.layers.mesh.vertex_global_ids,
-                layers.mesh.vertex_global_ids,
-            ):
-                raise ValueError(
-                    "Reference source columns must retain the actual physical layer vertex registry."
-                )
-            if not np.array_equal(
-                reference_source.layers.layer_index, layers.layer_index
-            ) or not np.array_equal(
-                reference_source.layers.column_index,
-                layers.column_index,
-            ):
-                raise ValueError(
-                    "Reference source columns must retain every actual physical interval and column identity."
-                )
+        composite_regions, core_regions = identity.region_ids, identity.core_regions
+        _validate_layer_reference(
+            layers,
+            regions,
+            composite_regions,
+            reference_source,
+            mapped_domain,
+            source_domain,
+            fidelity_source,
+            source,
+            revision,
+        )
         original_facets = _layer_source_facets(
             complex_,
             polygons,
@@ -543,33 +756,9 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
         regions = np.array(regions, dtype=np.int32, copy=True)
         for values in (vertices, polygons, regions):
             values.setflags(write=False)
-        periodic_values = (
-            core_vertex_representatives,
-            core_vertex_shifts,
-            core_seam_polygon_pairs,
+        periodic = _prepare_layer_periodic_ancestry(
+            core_vertex_representatives, core_vertex_shifts, core_seam_polygon_pairs
         )
-        if any(value is None for value in periodic_values) and any(
-            value is not None for value in periodic_values
-        ):
-            raise ValueError(
-                "Core periodic ancestry requires representatives, shifts, and explicit seam polygon pairs together."
-            )
-        periodic_arrays: list[np.ndarray | None] = []
-        for value in periodic_values:
-            if value is None:
-                periodic_arrays.append(None)
-            else:
-                array = np.asarray(value)
-                if not np.issubdtype(array.dtype, np.integer):
-                    raise TypeError("Core periodic ancestry must use integer arrays.")
-                storage = np.iinfo(np.int64)
-                if np.any(array < storage.min) or np.any(array > storage.max):
-                    raise ValueError(
-                        "Core periodic ancestry exceeds the canonical signed integer representation."
-                    )
-                array = np.array(array, dtype=np.int64, copy=True)
-                array.setflags(write=False)
-                periodic_arrays.append(array)
         self.layers = layers
         self.complex = complex_
         self.vertex_layer_ids = vertices
@@ -581,9 +770,9 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
         self.source_domain = source_domain
         self.fidelity_source = fidelity_source
         self.core_facet_source_ids = original_facets
-        self.core_vertex_representatives = periodic_arrays[0]
-        self.core_vertex_shifts = periodic_arrays[1]
-        self.core_seam_polygon_pairs = periodic_arrays[2]
+        self.core_vertex_representatives = periodic.representatives
+        self.core_vertex_shifts = periodic.shifts
+        self.core_seam_polygon_pairs = periodic.polygon_pairs
         self.reference_source = reference_source
         self.mapped_domain = mapped_domain
         self.source_id = source
@@ -605,7 +794,9 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
                 if source_domain is None
                 else source_domain.domain_id,
                 "core_facet_source_ids": array_tree_fingerprint(original_facets),
-                "core_periodic_ancestry": array_tree_fingerprint(tuple(periodic_arrays)),
+                "core_periodic_ancestry": array_tree_fingerprint(
+                    (periodic.representatives, periodic.shifts, periodic.polygon_pairs)
+                ),
                 "reference_source": None
                 if reference_source is None
                 else reference_source.binding_id,
@@ -615,53 +806,95 @@ class NativeLayerCoreSource(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[NativeLayerCoreSource], value: NativeLayerCoreSource, /
+    ) -> NativeLayerCoreSource:
+        """Revalidate stored layer/core incidence and source bindings."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"{cls.__name__}.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        fresh = cls(
+            value.layers,
+            value.complex,
+            value.source_id,
+            value.source_revision,
+            vertex_layer_ids=value.vertex_layer_ids,
+            cap_polygon_ids=value.cap_polygon_ids,
+            layer_regions=value.layer_regions,
+            region_ids=value.region_ids,
+            core_region_map=value.core_region_map,
+            source_boundary_scope=value.source_boundary_scope,
+            source_domain=value.source_domain,
+            fidelity_source=value.fidelity_source,
+            core_facet_source_ids=value.core_facet_source_ids,
+            core_vertex_representatives=value.core_vertex_representatives,
+            core_vertex_shifts=value.core_vertex_shifts,
+            core_seam_polygon_pairs=value.core_seam_polygon_pairs,
+            reference_source=value.reference_source,
+            mapped_domain=value.mapped_domain,
+        )
+        if fresh.binding_id != value.binding_id:
+            raise ValueError(
+                f"{cls.__name__}.binding_id must match its stored source fields; got {value.binding_id}"
+            )
+        return fresh
+
 
 @final
 class NativeSurfaceEnvelopeSource(StrictModule, NonTrainableState):
     """A certified envelope plus explicit solid-region identity for PLC fill."""
 
-    envelope: SurfaceEnvelope
+    envelope: envelope_owner.SurfaceEnvelope
     plc_source: NativePlcSource
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
-    def __init__(self, envelope: SurfaceEnvelope, region_id: str, /) -> None:
-        if not isinstance(envelope, SurfaceEnvelope):
-            raise TypeError("envelope must be SurfaceEnvelope.")
-        if not isinstance(region_id, str) or not region_id:
-            raise ValueError("region_id must be an explicit nonempty identifier.")
-        from ... import _meshcore
-        from .._quad_generation import _family_host_array
+    @checked
+    def __init__(
+        self, envelope: envelope_owner.SurfaceEnvelope, region_id: str, /
+    ) -> None:
+        if not isinstance(region_id, str):
+            raise TypeError(
+                "NativeSurfaceEnvelopeSource.region_id must be a string; "
+                f"got {type(region_id).__name__}."
+            )
+        if not region_id:
+            raise ValueError(
+                "NativeSurfaceEnvelopeSource.region_id must be nonempty; got ''."
+            )
 
-        storage = _meshcore.current_native_host_workspace()
-        if storage is not None:
-            storage.retain_owner(envelope)
-        model = envelope.repaired.model
-        points = np.asarray(model.mesh.coordinates, dtype=np.float64)
-        triangles = np.asarray(model.mesh.blocks[0].vertices, dtype=np.int64)
-        owners = _family_host_array((triangles.shape[0],), np.int64)
-        incidence = _family_host_array((triangles.shape[0], 2), np.int64)
-        budget = _meshcore.current_native_execution_budget()
-        if budget is not None:
-            budget.charge(work=triangles.shape[0])
-        for row in range(owners.size):
-            owners[row] = row
-        incidence[:, 0] = -1
-        incidence[:, 1] = 0
-        complex_ = PiecewiseLinearComplex(
-            points,
-            tuple(triangles),
-            owners,
-            incidence,
-            (region_id,),
-            boundary="conforming",
-        )
-        plc_source = NativePlcSource(
-            complex_, model.metadata.source_id, model.metadata.source_revision
-        )
-        if storage is not None:
-            storage.retain_owner(plc_source)
+        with (
+            NativeExecutionScope(envelope.policy.native_limits()) as scope,
+            scope.host_workspace() as workspace,
+        ):
+            workspace.retain_owner(envelope)
+            model = envelope.repaired.model
+            points = np.asarray(model.mesh.coordinates, dtype=np.float64)
+            triangles = np.asarray(model.mesh.blocks[0].vertices, dtype=np.int64)
+            owners = family_host_array((triangles.shape[0],), np.int64, scope=scope)
+            incidence = family_host_array((triangles.shape[0], 2), np.int64, scope=scope)
+            with scope.batch(triangles.shape[0]) as ticket:
+                for row in range(owners.size):
+                    owners[row] = row
+                ticket.consume(triangles.shape[0])
+                incidence[:, 0] = -1
+                incidence[:, 1] = 0
+            complex_ = PiecewiseLinearComplex(
+                points,
+                tuple(triangles),
+                owners,
+                incidence,
+                (region_id,),
+                boundary="conforming",
+            )
+            plc_source = NativePlcSource(
+                complex_, model.metadata.source_id, model.metadata.source_revision
+            )
+            workspace.retain_owner(plc_source)
         self.envelope, self.plc_source = envelope, plc_source
         self.source_id = plc_source.source_id
         self.source_revision = plc_source.source_revision
@@ -673,6 +906,32 @@ class NativeSurfaceEnvelopeSource(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[NativeSurfaceEnvelopeSource], value: NativeSurfaceEnvelopeSource, /
+    ) -> NativeSurfaceEnvelopeSource:
+        """Revalidate an envelope source and its declared solid region."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"{cls.__name__}.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        regions = value.plc_source.complex.region_ids
+        if len(regions) != 1:
+            raise ValueError(
+                f"{cls.__name__}.region_ids must contain one solid region; got {regions}"
+            )
+        fresh = cls(value.envelope, regions[0])
+        if (fresh.source_id, fresh.source_revision, fresh.binding_id) != (
+            value.source_id,
+            value.source_revision,
+            value.binding_id,
+        ):
+            raise ValueError(
+                f"{cls.__name__}.binding_id must match its stored source fields; got {value.binding_id}"
+            )
+        return fresh
+
 
 def _fidelity_binding(
     source: SourceBoundaryQuery,
@@ -682,15 +941,14 @@ def _fidelity_binding(
     /,
 ) -> float:
     if not isinstance(source, SourceBoundaryQuery):
-        raise TypeError("fidelity_source must implement SourceBoundaryQuery.")
+        raise TypeError(
+            "NativeMeshingSource.fidelity_source must implement SourceBoundaryQuery; got an unsupported query."
+        )
     if (source.source_id, source.source_revision) != (source_id, source_revision):
         raise ValueError(
-            "The fidelity query must bind the authoritative source revision."
+            "NativeMeshingSource.fidelity_source must bind the source identity and revision; got a different query binding."
         )
-    deviation = float(maximum_deviation)
-    if not np.isfinite(deviation) or deviation <= 0:
-        raise ValueError("maximum_deviation must be finite and positive.")
-    return deviation
+    return positive_finite_float(maximum_deviation, "maximum_deviation")
 
 
 def _approximation_binding(
@@ -702,21 +960,29 @@ def _approximation_binding(
     *,
     mapped: bool = False,
 ) -> tuple[tuple[str, str], ...]:
-    if domain is not None and not isinstance(
-        domain, (PiecewiseLinearDomain, MappedReferenceDomain)
-    ):
-        raise TypeError(
-            "domain must be PiecewiseLinearDomain, MappedReferenceDomain, or None."
-        )
-    if isinstance(domain, MappedReferenceDomain) and not mapped:
-        raise TypeError("This block source requires PiecewiseLinearDomain or None.")
-    if domain is None:
-        if block_regions:
-            raise ValueError("block_regions requires a declared approximation domain.")
-        return ()
+    match domain:
+        case None:
+            if block_regions:
+                raise ValueError(
+                    "NativeMeshingSource.block_regions must have a declared approximation "
+                    "domain; got region declarations without a domain."
+                )
+            return ()
+        case MappedReferenceDomain() if not mapped:
+            raise TypeError(
+                "NativeStructuredSource.domain must be PiecewiseLinearDomain or None; "
+                "got a mapped reference domain."
+            )
+        case PiecewiseLinearDomain() | MappedReferenceDomain():
+            pass
+        case _:
+            raise TypeError(
+                "NativeMeshingSource.domain must be PiecewiseLinearDomain, "
+                "MappedReferenceDomain, or None; got an unsupported domain kind."
+            )
     if domain.source_id != source_id:
         raise ValueError(
-            "The approximation domain must bind the declared source identity."
+            "NativeMeshingSource.domain.source_id must match the source binding; got a different approximation source."
         )
     if any(
         not isinstance(pair, tuple)
@@ -725,24 +991,30 @@ def _approximation_binding(
         for pair in block_regions
     ):
         raise TypeError(
-            "block_regions must contain pairs of block and region identifiers."
+            "NativeMeshingSource.block_regions must contain pairs of block and region identifiers; got a malformed declaration."
         )
     mapping = tuple(sorted(block_regions))
     if len({name for name, _ in mapping}) != len(mapping):
-        raise ValueError("Block region declarations must identify each block once.")
+        raise ValueError(
+            "NativeMeshingSource.block_regions must identify each block once; got duplicate block declarations."
+        )
     if any(
         name not in block_names or region not in domain.region_ids
         for name, region in mapping
     ):
-        raise ValueError("Block regions must name declared blocks and source regions.")
+        raise ValueError(
+            "NativeMeshingSource.block_regions must name declared blocks and source regions; got unknown identifiers."
+        )
     if len(domain.region_ids) > 1 and {name for name, _ in mapping} != set(block_names):
-        raise ValueError("A multimaterial approximation requires every block's region.")
+        raise ValueError(
+            "NativeMeshingSource.block_regions must identify every block for a multimaterial approximation; got missing block declarations."
+        )
     return mapping
 
 
 @final
 class NativeStructuredSource(StrictModule, NonTrainableState):
-    """Explicit blocks/gluing and an independently authoritative boundary query."""
+    """Bind blocks and gluing to an independently declared boundary query."""
 
     blocks: tuple[TransfiniteBlock, ...]
     interfaces: tuple[BlockInterfaceControl, ...]
@@ -754,6 +1026,7 @@ class NativeStructuredSource(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         blocks: tuple[TransfiniteBlock, ...],
@@ -768,15 +1041,21 @@ class NativeStructuredSource(StrictModule, NonTrainableState):
         block_regions: tuple[tuple[str, str], ...] = (),
     ) -> None:
         if not blocks or any(not isinstance(block, TransfiniteBlock) for block in blocks):
-            raise TypeError("blocks must contain TransfiniteBlock values.")
+            raise TypeError(
+                "NativeStructuredSource.blocks must contain at least one TransfiniteBlock; got empty blocks or an unsupported block kind."
+            )
         if any(
             not isinstance(interface, BlockInterfaceControl) for interface in interfaces
         ):
-            raise TypeError("interfaces must contain BlockInterfaceControl values.")
+            raise TypeError(
+                "NativeStructuredSource.interfaces must contain BlockInterfaceControl values; got an unsupported interface kind."
+            )
         if len({block.name for block in blocks}) != len(blocks):
-            raise ValueError("Structured block names must be unique.")
-        source = _identifier(source_id, "source_id")
-        revision = _identifier(source_revision, "source_revision")
+            raise ValueError(
+                "NativeStructuredSource.blocks.name must be unique; got duplicate block names."
+            )
+        source = normalized_identifier(source_id, "source_id")
+        revision = normalized_identifier(source_revision, "source_revision")
         deviation = _fidelity_binding(
             fidelity_source, source, revision, maximum_deviation
         )
@@ -809,10 +1088,10 @@ class NativeStructuredSource(StrictModule, NonTrainableState):
 
 @final
 class NativeSweepSource(StrictModule, NonTrainableState):
-    """A represented profile, sweep declaration and authoritative boundary query."""
+    """Bind a profile and sweep declaration to a source boundary query."""
 
-    profile: CellMesh
-    profile_geometry: CellGeometrySpec
+    profile: cell_mesh_owner.CellMesh
+    profile_geometry: cell_geometry_owner.CellGeometrySpec
     control: SweepControl
     fidelity_source: SourceBoundaryQuery
     maximum_deviation: float = eqx.field(static=True)
@@ -823,9 +1102,10 @@ class NativeSweepSource(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        profile: CellMesh,
+        profile: cell_mesh_owner.CellMesh,
         control: SweepControl,
         source_id: str,
         source_revision: str,
@@ -835,63 +1115,71 @@ class NativeSweepSource(StrictModule, NonTrainableState):
         maximum_deviation: float,
         domain: PiecewiseLinearDomain | MappedReferenceDomain | None = None,
         block_regions: tuple[tuple[str, str], ...] = (),
-        profile_geometry: CellGeometrySpec | None = None,
+        profile_geometry: cell_geometry_owner.CellGeometrySpec | None = None,
         root_correspondence: CellGeometryRestrictionSource | None = None,
     ) -> None:
-        if not isinstance(profile, CellMesh) or not isinstance(control, SweepControl):
-            raise TypeError("A sweep source requires CellMesh and SweepControl.")
+
         geometry = (
-            CellGeometrySpec.affine(profile)
+            cell_geometry_owner.CellGeometrySpec.affine(profile)
             if profile_geometry is None
             else profile_geometry
         )
-        if not isinstance(geometry, CellGeometrySpec):
-            raise TypeError("profile_geometry must be CellGeometrySpec or None.")
+
         geometry.resolve(profile)
-        source = _identifier(source_id, "source_id")
-        revision = _identifier(source_revision, "source_revision")
+        source = normalized_identifier(source_id, "source_id")
+        revision = normalized_identifier(source_revision, "source_revision")
         deviation = _fidelity_binding(
             fidelity_source, source, revision, maximum_deviation
         )
-        if (
-            isinstance(domain, MappedReferenceDomain)
-            and domain.source_revision != revision
-        ):
-            raise ValueError(
-                "The mapped sweep domain must bind the exact authored source revision."
-            )
-        if isinstance(domain, MappedReferenceDomain):
-            if not isinstance(root_correspondence, CellGeometryRestrictionSource):
+        match domain:
+            case MappedReferenceDomain():
+                if domain.source_revision != revision:
+                    raise ValueError(
+                        "NativeSweepSource.domain.source_revision must match source_revision; "
+                        f"got {domain.source_revision!r}, expected {revision!r}."
+                    )
+                if root_correspondence is None:
+                    raise TypeError(
+                        "NativeSweepSource.root_correspondence must be supplied for a "
+                        "mapped domain; got None."
+                    )
+                if (
+                    root_correspondence.source_geometry_id
+                    != cell_geometry_id(domain.source_geometry)
+                    or root_correspondence.source_topology_id
+                    != domain.reference_mesh.topology_id
+                ):
+                    raise ValueError(
+                        "NativeSweepSource.root_correspondence.source_geometry_id must "
+                        "match the mapped domain together with source_topology_id; got a different root binding."
+                    )
+                expected_names = {f"sweep:{block.name}" for block in profile.blocks}
+                if set(root_correspondence.block_names) != expected_names:
+                    raise ValueError(
+                        "NativeSweepSource.root_correspondence.block_names must name every "
+                        "generated block; got a different block registry."
+                    )
+                parents = root_correspondence.block_parent_cell_ids
+                if any(
+                    parents[f"sweep:{block.name}"].shape[0]
+                    != control.schedule.layer_count * block.cell_count
+                    for block in profile.blocks
+                ):
+                    raise ValueError(
+                        "NativeSweepSource.root_correspondence.block_parent_cell_ids must "
+                        "identify every layer-major column cell; got different cell counts."
+                    )
+            case PiecewiseLinearDomain() | None:
+                if root_correspondence is not None:
+                    raise ValueError(
+                        "NativeSweepSource.root_correspondence must have a mapped domain; "
+                        "got correspondence with an unmapped domain."
+                    )
+            case _:
                 raise TypeError(
-                    "Mapped sweeps require explicit canonical root_correspondence."
+                    "NativeSweepSource.domain must be PiecewiseLinearDomain, "
+                    f"MappedReferenceDomain, or None; got {type(domain).__name__}."
                 )
-            if (
-                root_correspondence.source_geometry_id
-                != cell_geometry_id(domain.source_geometry)
-                or root_correspondence.source_topology_id
-                != domain.reference_mesh.topology_id
-            ):
-                raise ValueError(
-                    "Sweep root correspondence must bind the independently authored mapped domain."
-                )
-            expected_names = {f"sweep:{block.name}" for block in profile.blocks}
-            if set(root_correspondence.block_names) != expected_names:
-                raise ValueError(
-                    "Sweep root correspondence must name every exact generated block."
-                )
-            parents = root_correspondence.block_parent_cell_ids
-            if any(
-                parents[f"sweep:{block.name}"].shape[0]
-                != control.schedule.layer_count * block.cell_count
-                for block in profile.blocks
-            ):
-                raise ValueError(
-                    "Sweep root correspondence must identify every layer-major source column cell."
-                )
-        elif root_correspondence is not None:
-            raise ValueError(
-                "Sweep root correspondence requires an independently authored mapped domain."
-            )
         regions = _approximation_binding(
             domain,
             block_regions,
@@ -925,8 +1213,35 @@ class NativeSweepSource(StrictModule, NonTrainableState):
 
 
 @final
+class _MappedHexBinding(StrictModule):
+    binding_id: str = eqx.field(static=True)
+
+
+def _prepare_mapped_hex_binding(
+    reference: NativePlcSource, domain: MappedReferenceDomain, /
+) -> _MappedHexBinding:
+    """Validate the declared reference PLC and derive the mapped binding."""
+    declared = declared_plc_domain(reference.complex, reference.source_id)
+    if declared.domain_id != domain.reference_domain.domain_id:
+        raise ValueError(
+            "NativeMappedHexSource.domain.reference_domain.domain_id must match the "
+            f"declared reference PLC; got {domain.reference_domain.domain_id!r}, "
+            f"expected {declared.domain_id!r}."
+        )
+    return _MappedHexBinding(
+        canonical_fingerprint(
+            {
+                "kind": "native-mapped-hex-source",
+                "reference": reference.binding_id,
+                "mapped_domain": domain.domain_id,
+            }
+        )
+    )
+
+
+@final
 class NativeMappedHexSource(StrictModule, NonTrainableState):
-    """Exact physical root maps over an independently declared reference PLC."""
+    """Bind physical root maps to an independently declared reference PLC."""
 
     reference: NativePlcSource
     domain: MappedReferenceDomain
@@ -934,27 +1249,14 @@ class NativeMappedHexSource(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, reference: NativePlcSource, domain: MappedReferenceDomain, /
     ) -> None:
-        if not isinstance(reference, NativePlcSource):
-            raise TypeError("reference must be NativePlcSource.")
-        if not isinstance(domain, MappedReferenceDomain):
-            raise TypeError("domain must be MappedReferenceDomain.")
-        declared = declared_plc_domain(reference.complex, reference.source_id)
-        if declared.domain_id != domain.reference_domain.domain_id:
-            raise ValueError(
-                "Mapped source maps must bind the independently declared reference PLC domain."
-            )
+        binding = _prepare_mapped_hex_binding(reference, domain)
         self.reference, self.domain = reference, domain
         self.source_id, self.source_revision = domain.source_id, domain.source_revision
-        self.binding_id = canonical_fingerprint(
-            {
-                "kind": "native-mapped-hex-source",
-                "reference": reference.binding_id,
-                "mapped_domain": domain.domain_id,
-            }
-        )
+        self.binding_id = binding.binding_id
 
 
 type NativeMeshingSource = (
@@ -965,7 +1267,7 @@ type NativeMeshingSource = (
     | NativeLayerCoreSource
     | NativeMappedHexSource
     | NativePlanarSource
-    | NativePeriodicSource
+    | periodic_owner.NativePeriodicSource
     | NativePlcSource
     | NativePolyhedralSource
     | NativeSurfaceSource

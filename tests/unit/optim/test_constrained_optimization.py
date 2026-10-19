@@ -410,3 +410,33 @@ def test_native_bound_methods_support_jvp_vmap_and_pytree_parameters() -> None:
         np.testing.assert_allclose(mapped, targets, atol=2e-6)
         np.testing.assert_allclose(value, 0.75, atol=2e-6)
         np.testing.assert_allclose(derivative, 0.2, atol=2e-6)
+
+
+def test_sqp_certifies_weakly_active_optimum_with_fresh_qp_multipliers() -> None:
+    # x >= 0 is active at (0, 1), but its true multiplier is zero.
+    tolerance = 1e-6
+    result = phx.optim.minimize(
+        _mixed_constraint_problem(),
+        jnp.array([0.5, 0.5]),
+        method=phx.optim.SQP(),
+        termination=_termination(steps=25, tolerance=tolerance),
+    )
+    assert result.status == phx.optim.OptimizationStatus.SUCCESS
+    np.testing.assert_allclose(result.parameters, jnp.array([0.0, 1.0]), atol=tolerance)
+    assert result.diagnostics.primal_feasibility <= tolerance
+    assert result.diagnostics.dual_feasibility <= tolerance
+    assert result.diagnostics.complementarity <= tolerance
+    evidence = result.method_evidence
+    assert isinstance(evidence, phx.optim.SQPEvidence)
+    assert evidence.status == phx.optim.OptimizationStatus.SUCCESS
+    assert (
+        evidence.termination_criterion
+        == phx.optim.SQPTerminationCriterion.FRESH_QP_MULTIPLIERS
+    )
+    assert evidence.primal_feasibility <= evidence.optimality_threshold
+    assert evidence.stationarity <= evidence.optimality_threshold
+    assert evidence.complementarity <= evidence.optimality_threshold
+    assert evidence.qp_absolute_tolerance == tolerance**2
+    certificate = result.certificate
+    assert isinstance(certificate, phx.optim.ConstrainedOptimalityCertificate)
+    assert jnp.max(jnp.abs(certificate.inequality_multipliers)) <= tolerance

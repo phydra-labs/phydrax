@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Native periodic construction and publication on the canonical quotient carrier.
+"""Native periodic construction and publication on the quotient carrier.
 
 Point-orbit sources use certified translational Delaunay construction. Explicit
 lifted simplex domains additionally admit finite rotational boundary isometries;
@@ -11,115 +11,137 @@ Material regions are represented source-cell assignments, never centroid guesses
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, ExitStack, nullcontext
+from fractions import Fraction
 from itertools import combinations
-from time import monotonic
-from typing import final
+from typing import assert_never, final
 
 import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._meshcore import current_native_execution_budget, MeshcoreError, MeshcoreStatus
-from ..._physical import SpatialCoordinateContract
-from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
-from ...discretization import (
-    CellGeometrySpec,
-    CellMesh,
-    periodic_orbit_measures,
-    PeriodicCell,
+import phydrax.discretization._cell_geometry as cell_geometry_owner
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.discretization._periodic_cell as periodic_cell_owner
+import phydrax.discretization._periodic_measures as periodic_measures_owner
+import phydrax.geometry._affine_mapped_contact as affine_mapped_contact_owner
+from phydrax.discretization._periodic_exact import (
+    identification_id,
+    PeriodicIsometryGroup,
 )
-from ...discretization._cell_geometry_transfer import is_affine_cell_geometry
-from ...discretization._periodic_topology import _identification_id, PeriodicIsometryGroup
-from ...geometry._mesh_certificates import _dyadic_integers
-from ...geometry._triangulation import (
-    PeriodicDelaunayTriangulation,
-    PeriodicImageBudgetError,
-)
-from ...typing import checked
-from .._association import (
-    _target_dimension,
+from phydrax.meshing._association_state import (
     GeometryAssociation,
     GeometryAssociationKind,
     GeometrySourceEntityRole,
-    PlcEntityClasses,
+    target_dimension,
 )
-from .._audit import CellMeshAuditPolicy
-from .._certification import MeshCertificationSchedule
-from .._contracts import (
-    MeshingDerivativeMode,
-    MeshingFailure,
-    MeshingFailureCategory,
+from phydrax.meshing._certification_schedule import MeshCertificationSchedule
+from phydrax.meshing._contracts import (
     MeshingLimits,
     MeshingProviderInfo,
     SurfaceMeshingSpec,
     VolumeMeshingSpec,
 )
-from .._controls import FeatureKind, PeriodicConstraint
-from .._lineage import MeshLineage
-from .._measurements import measure_phase, NativeMeshingPhaseRecorder
-from .._organization import MeshLabel, MeshZone, MeshZoneRole, RegionRole
-from .._periodic import (
-    _affine_periodic_source_support_boxes,
-    _interiors_overlap,
-    _periodic_overlap_image_exponents,
-    _PeriodicEmbeddingResourceError,
-    _PeriodicImageFrame,
-    _prepare_periodic_image_frame,
-    _require_periodic_topology,
-    _simplex_entity_corners,
-    certify_periodic_embedding,
-    periodic_delaunay_mesh,
-    periodic_edge_size_evidence,
-    PeriodicPointOrbits,
-    PeriodicQuotientEvidence,
-    publish_periodic_simplices,
-    refine_periodic_mesh,
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+from phydrax.meshing._host_banks import entity_key
+
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._meshcore import (
+    MeshcoreError,
+    MeshcoreStatus,
+    NativeExecutionScope,
+    NativeResourceFailure,
+    periodic_refine_2d,
+    PeriodicRefinement,
 )
+from ..._physical import SpatialCoordinateContract
+from ..._resource_ticket import BatchTicket
+from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
+from ..._validation import normalized_identifier
+from ...discretization._cell_geometry_transfer import is_affine_cell_geometry
+from ...discretization._cell_geometry_validity import cell_geometry_id
+from ...discretization._coordinate_budget import (
+    CoordinateEnclosureBudget,
+    CoordinateEnclosureResourceError,
+)
+from ...discretization._exact_algebraic_geometry import (
+    algebraic_source_limits,
+    coefficient_endpoint,
+    ExactAlgebraicCellGeometrySource,
+    RadicalElement,
+)
+from ...discretization._exact_rational_geometry import rational_source_layouts
+from ...geometry._periodic_image_frame import (
+    periodic_overlap_image_exponents,
+    PeriodicEmbeddingResourceError,
+    PeriodicImageFrame,
+    prepare_periodic_image_frame,
+)
+from ...geometry._triangulation import (
+    PeriodicDelaunayTriangulation,
+    PeriodicImageBudgetError,
+)
+from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import checked
+from .. import _periodic as periodic_owner
+from .._association_routes import PlcEntityClasses
+from .._controls import FeatureKind
+from .._lineage_records import MeshLineage
+from .._measurements import (
+    measure_phase,
+    NativeExecutionRecord,
+    NativeMeshingPhaseRecorder,
+)
+from .._native_preparation import native_preparation_ledger
+from .._organization_records import MeshLabel, MeshZone, MeshZoneRole, RegionRole
+from .._periodic_constraint import PeriodicConstraint
 from .._result import CellMeshingResult, MeshingComplianceReport
 from .._scope import MeshingEntityKind, MeshingScope
-from .._sizing import SizeCompliancePolicy, SizeControlStrength, UniformSizeControl
-from .._trace import MeshingStageKind, MeshingStageReport, MeshingStageStatus
-from .._volume_generation import _entity
-from ._native_periodic_constraints import (
-    bind_periodic_source_strata,
-    periodic_source_seed_points,
-    PeriodicConstructionImageBudgetError,
-    PeriodicSourceStrata,
-    PeriodicStratifiedTriangulation,
-    prepare_periodic_source_strata,
-    triangulate_periodic_source_strata,
+from .._sizing import (
+    size_statistic_quantile,
+    SizeCompliancePolicy,
+    SizeControlStrength,
+    UniformSizeControl,
 )
+from .._trace import MeshingStageKind, MeshingStageReport, MeshingStageStatus
+from . import _native_periodic_constraints as constraints_owner
 from ._native_periodic_size import (
     periodic_reference_lifts,
     PERIODIC_SIZE_EVIDENCE_FIELDS,
     PeriodicSizeRecord,
+    propose_periodic_rank_placement,
     propose_periodic_site_relocation,
     quotient_edge_lengths,
 )
 from ._native_publication import (
+    NativeCertificationRequest,
+    NativePublicationExecution,
+    NativePublicationOrganization,
+    publish_native_result,
+)
+from ._native_route_checks import (
     check_deadline,
     edge_growth_evidence,
-    NativeCertificationRequest,
-    publish_native_result,
     simplex_entity_limits,
     uniform_size_compliance,
 )
+from ._native_route_metadata import specification_scope
+from ._native_route_policy import publication_policy
+from ._native_support import format_support_issues, SupportIssue
 
 
 @final
 class NativePeriodicSource(StrictModule, NonTrainableState):
-    """Revision-bound torus seed or represented periodic simplex domain.
+    """Bind a torus seed or represented periodic simplex domain to its revision.
 
-    Source region IDs are the nonnegative entries in ``cell_regions`` (region
-    zero for a point-orbit source). Edge and vertex IDs of a represented domain
-    are its quotient entity positions, including distinct winding entities.
-    The supplied domain is an actual scientific source, not a construction ghost
-    tiling. Its material interface complex survives every refinement.
+    ``cell_regions`` contains nonnegative source-region IDs (region zero for a
+    point-orbit seed). A represented domain uses quotient entity positions,
+    including distinct winding entities, for edge and vertex IDs. Refinement
+    retains its material-interface complex.
     """
 
-    domain: PeriodicPointOrbits | CellMesh
+    domain: periodic_owner.PeriodicPointOrbits | cell_mesh_owner.CellMesh
     cell_regions: np.ndarray
     source_id: str = eqx.field(static=True)
     source_revision: str = eqx.field(static=True)
@@ -129,55 +151,59 @@ class NativePeriodicSource(StrictModule, NonTrainableState):
     @checked
     def __init__(
         self,
-        domain: PeriodicPointOrbits | CellMesh,
+        domain: periodic_owner.PeriodicPointOrbits | cell_mesh_owner.CellMesh,
         source_id: str,
         source_revision: str,
         /,
         *,
         cell_regions: ArrayLike | None = None,
     ) -> None:
-        if isinstance(domain, PeriodicPointOrbits):
-            dimension = domain.cell.ambient_dimension
-            if cell_regions is not None:
-                raise ValueError(
-                    "Seed orbits have no represented material-cell partition."
+        match domain:
+            case periodic_owner.PeriodicPointOrbits():
+                dimension = domain.cell.ambient_dimension
+                if cell_regions is not None:
+                    raise ValueError(
+                        "NativePeriodicSource.cell_regions must be absent for point-orbit seeds; got a represented partition"
+                    )
+                regions = np.zeros(1, dtype=np.int32)
+                identity = domain.orbits_id
+            case cell_mesh_owner.CellMesh():
+                if domain.periodic_topology is None or len(domain.blocks) != 1:
+                    raise ValueError(
+                        "NativePeriodicSource.domain must contain one bound periodic simplex block; got an unbound or multi-block mesh"
+                    )
+                dimension = domain.ambient_dimension
+                if domain.blocks[0].cell_kind != {2: "triangle", 3: "tetrahedron"}.get(
+                    dimension
+                ):
+                    raise ValueError(
+                        "NativePeriodicSource.domain must contain full-dimensional simplices; got an incompatible cell family"
+                    )
+                count = domain.blocks[0].cell_count
+                regions = (
+                    np.zeros(count, dtype=np.int32)
+                    if cell_regions is None
+                    else np.asarray(cell_regions)
                 )
-            regions = np.zeros(1, dtype=np.int32)
-            identity = domain.orbits_id
-        elif isinstance(domain, CellMesh):
-            if domain.periodic_topology is None or len(domain.blocks) != 1:
-                raise ValueError(
-                    "A represented periodic domain needs one bound simplex block."
-                )
-            dimension = domain.ambient_dimension
-            if domain.blocks[0].cell_kind != {2: "triangle", 3: "tetrahedron"}.get(
-                dimension
-            ):
-                raise ValueError(
-                    "Periodic source domains require full-dimensional simplices."
-                )
-            count = domain.blocks[0].cell_count
-            regions = (
-                np.zeros(count, dtype=np.int32)
-                if cell_regions is None
-                else np.asarray(cell_regions)
-            )
-            if (
-                regions.shape != (count,)
-                or not np.issubdtype(regions.dtype, np.integer)
-                or np.any(regions < 0)
-            ):
-                raise ValueError(
-                    "cell_regions must assign one nonnegative region ID per source cell."
-                )
-            identity = domain.mesh_id
-        else:
-            raise TypeError("domain must be PeriodicPointOrbits or a periodic CellMesh.")
-        source, revision = str(source_id).strip(), str(source_revision).strip()
-        if not source or not revision:
-            raise ValueError("Source and revision identities must be nonempty.")
+                if (
+                    regions.shape != (count,)
+                    or not np.issubdtype(regions.dtype, np.integer)
+                    or np.any(regions < 0)
+                ):
+                    raise ValueError(
+                        "NativePeriodicSource.cell_regions must assign one nonnegative integer per source cell; got an incompatible region array"
+                    )
+                identity = domain.mesh_id
+            case _ as invalid:
+                assert_never(invalid)
+        source = normalized_identifier(str(source_id), "NativePeriodicSource.source_id")
+        revision = normalized_identifier(
+            str(source_revision), "NativePeriodicSource.source_revision"
+        )
         if np.any(regions > np.iinfo(np.int64).max):
-            raise ValueError("Periodic region IDs exceed the canonical integer domain.")
+            raise ValueError(
+                "NativePeriodicSource.cell_regions must fit in int64; got a region ID outside int64"
+            )
         regions = np.ascontiguousarray(regions, dtype=np.int64)
         regions.setflags(write=False)
         self.domain, self.cell_regions = domain, regions
@@ -193,19 +219,45 @@ class NativePeriodicSource(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[NativePeriodicSource], value: NativePeriodicSource, /
+    ) -> NativePeriodicSource:
+        """Revalidate a stored periodic seed or represented domain."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"{cls.__name__}.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        match value.domain:
+            case periodic_owner.PeriodicPointOrbits():
+                regions = None
+            case cell_mesh_owner.CellMesh():
+                regions = value.cell_regions
+            case _ as invalid:
+                assert_never(invalid)
+        fresh = cls(
+            value.domain,
+            value.source_id,
+            value.source_revision,
+            cell_regions=regions,
+        )
+        if (
+            fresh.binding_id != value.binding_id
+            or fresh.ambient_dimension != value.ambient_dimension
+            or not np.array_equal(fresh.cell_regions, value.cell_regions)
+        ):
+            raise ValueError(
+                f"{cls.__name__}.stored_fields must match the periodic source binding; got changed regions or identity"
+            )
+        return fresh
 
-def _scope(specification: SurfaceMeshingSpec | VolumeMeshingSpec) -> MeshingScope:
-    return (
-        specification.scope
-        if isinstance(specification, SurfaceMeshingSpec)
-        else specification.boundary_scope
-    )
 
-
+@checked
 def periodic_support_issues(
     source: NativePeriodicSource, specification: SurfaceMeshingSpec | VolumeMeshingSpec, /
-) -> list[str]:
-    issues = []
+) -> tuple[SupportIssue, ...]:
+    issues: list[SupportIssue] = []
     dimension = source.ambient_dimension
     family = {2: "triangle", 3: "tetrahedron"}[dimension]
     target = specification.target
@@ -214,140 +266,208 @@ def periodic_support_issues(
         or target.ambient_dimension != dimension
         or target.geometry_order != 1
     ):
-        issues.append("full-dimensional affine periodic simplices")
+        issues.append(
+            SupportIssue("geometry", "full-dimensional affine periodic simplices")
+        )
     if (
         set((*target.cell_families.required, *target.cell_families.preferred)) != {family}
         or target.cell_families.allow_mixed
     ):
-        issues.append("the periodic simplex cell family")
+        issues.append(SupportIssue("cell-families", "the periodic simplex cell family"))
     if not specification.size_controls or any(
         not isinstance(control, UniformSizeControl)
         for control in specification.size_controls
     ):
-        issues.append("uniform periodic size controls")
+        issues.append(SupportIssue("size-control", "uniform periodic size controls"))
     regions = np.unique(source.cell_regions)
-    scope = _scope(specification)
+    scope = specification_scope(specification)
     if (
         scope.source_id != source.source_id
         or scope.source_revision != source.source_revision
     ):
-        issues.append("the bound periodic source revision")
+        issues.append(
+            SupportIssue("region-identity", "the bound periodic source revision")
+        )
     if isinstance(specification, SurfaceMeshingSpec) and (
         scope.entity_dimension != dimension
         or not np.array_equal(np.asarray(scope.entity_ids), regions)
     ):
-        issues.append("the complete represented periodic region scope")
+        issues.append(
+            SupportIssue("region-scope", "the complete represented periodic region scope")
+        )
     for control in specification.size_controls:
         if not isinstance(control, UniformSizeControl):
             continue
         if control.scope.entity_dimension != dimension or not np.array_equal(
             np.asarray(control.scope.entity_ids), regions
         ):
-            issues.append("size controls over all represented periodic regions")
+            issues.append(
+                SupportIssue(
+                    "size-control", "size controls over all represented periodic regions"
+                )
+            )
     for feature in specification.protected_features:
-        if not isinstance(source.domain, CellMesh) or feature.feature_kind not in (
-            FeatureKind.CORNER,
-            FeatureKind.CURVE,
-            FeatureKind.SURFACE,
-            FeatureKind.MATERIAL_INTERFACE,
-        ):
-            issues.append("represented periodic feature orbits")
-        elif feature.scope.entity_dimension >= dimension or np.any(
-            np.asarray(feature.scope.entity_ids)
-            >= _require_periodic_topology(source.domain)
-            .quotient.entities(feature.scope.entity_dimension)
-            .count
-        ):
-            issues.append("feature scopes naming source quotient entities")
+        match source.domain:
+            case periodic_owner.PeriodicPointOrbits():
+                issues.append(
+                    SupportIssue(
+                        "feature-identity", "represented periodic feature orbits"
+                    )
+                )
+            case cell_mesh_owner.CellMesh() as domain:
+                match feature.feature_kind:
+                    case (
+                        FeatureKind.CORNER
+                        | FeatureKind.CURVE
+                        | FeatureKind.SURFACE
+                        | FeatureKind.MATERIAL_INTERFACE
+                    ):
+                        if feature.scope.entity_dimension >= dimension or np.any(
+                            np.asarray(feature.scope.entity_ids)
+                            >= periodic_owner.require_periodic_topology(domain)
+                            .quotient.entities(feature.scope.entity_dimension)
+                            .count
+                        ):
+                            issues.append(
+                                SupportIssue(
+                                    "feature-scope",
+                                    "feature scopes naming source quotient entities",
+                                )
+                            )
+                    case _:
+                        issues.append(
+                            SupportIssue(
+                                "feature-identity", "represented periodic feature orbits"
+                            )
+                        )
+            case _ as invalid:
+                assert_never(invalid)
     for control in specification.region_controls:
         if not control.meshing_enabled or not np.all(
             np.isin(np.asarray(control.scope.entity_ids), regions)
         ):
-            issues.append("enabled represented material regions")
+            issues.append(
+                SupportIssue("disabled-region", "enabled represented material regions")
+            )
     if isinstance(specification, VolumeMeshingSpec) and (
         specification.region_seeds or specification.hole_seeds
     ):
         issues.append(
-            "regions and holes represented by the source quotient complex, not unbound seeds"
+            SupportIssue(
+                "region-semantics",
+                "regions and holes represented by the source quotient complex, not unbound seeds",
+            )
         )
     if specification.patch_controls or specification.layer_controls:
-        issues.append("periodic patch/layer construction")
+        issues.append(SupportIssue("layer-route", "periodic patch/layer construction"))
     # Identification is already part of the source topology. Additional boundary
     # constraints must not silently overwrite that scientific identity.
     if specification.periodic_constraints and (
-        not isinstance(source.domain, CellMesh)
+        not isinstance(source.domain, cell_mesh_owner.CellMesh)
         or any(
             constraint.source_entity_ids is None
             for constraint in specification.periodic_constraints
         )
     ):
         issues.append(
-            "explicit boundary-entity orbits of the represented periodic source"
+            SupportIssue(
+                "periodic-recovery",
+                "explicit boundary-entity orbits of the represented periodic source",
+            )
         )
-    return issues
+    return tuple(issues)
 
 
 def _bound_constraint_evidence(
     source: NativePeriodicSource, constraints: tuple[PeriodicConstraint, ...]
 ) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
-    """Check explicit source-geometry seam pairs against the bound quotient."""
+    """Check explicit source-geometry seam pairs against the bound quotient.
+
+    The relative transform is a native right solve, with failure diagnostics
+    reaching the provider refusal instead of applying an explicit inverse.
+    """
 
     requested, achieved = [], []
     if not constraints:
         return requested, achieved
     mesh = source.domain
-    if not isinstance(mesh, CellMesh):
-        raise ValueError("Bound seam constraints require a represented lifted source.")
-    topology = _require_periodic_topology(mesh)
+    match mesh:
+        case cell_mesh_owner.CellMesh():
+            pass
+        case periodic_owner.PeriodicPointOrbits():
+            raise ValueError(
+                "periodic.constraints.source must be a represented lifted CellMesh; got a point-orbit seed"
+            )
+        case _ as invalid:
+            assert_never(invalid)
+    topology = periodic_owner.require_periodic_topology(mesh)
+    solve_plan = SmallLinearSolvePlan(mesh.ambient_dimension + 1)
     for constraint in constraints:
         degree = constraint.source_scope.entity_dimension
         if degree >= mesh.topological_dimension:
             raise ValueError(
-                "Periodic boundary constraints must name vertices, edges or faces."
+                "periodic.constraints.scope must name boundary vertices, edges, or faces; got a full-dimensional scope"
             )
         entities = mesh.topology.entities(degree)
         identifiers = np.asarray(entities.entity_ids)
         lookup = {int(identifier): row for row, identifier in enumerate(identifiers)}
-        try:
-            first = np.asarray(
-                [
-                    lookup[int(value)]
-                    for value in np.asarray(constraint.source_entity_ids)
-                ],
-                dtype=np.int64,
-            )
-            second = np.asarray(
-                [
-                    lookup[int(value)]
-                    for value in np.asarray(constraint.target_scope.entity_ids)
-                ],
-                dtype=np.int64,
-            )
-        except KeyError as error:
+        first = np.asarray(
+            [
+                lookup.get(int(value), -1)
+                for value in np.asarray(constraint.source_entity_ids)
+            ],
+            dtype=np.int64,
+        )
+        if np.any(first < 0):
             raise ValueError(
-                "A bound periodic constraint names an unknown lifted entity."
-            ) from error
+                "periodic.constraints.entity_ids must name retained lifted entities; got an unknown entity ID"
+            )
+        second = np.asarray(
+            [
+                lookup.get(int(value), -1)
+                for value in np.asarray(constraint.target_scope.entity_ids)
+            ],
+            dtype=np.int64,
+        )
+        if np.any(second < 0):
+            raise ValueError(
+                "periodic.constraints.entity_ids must name retained lifted entities; got an unknown entity ID"
+            )
         orbit, orientations, _ = (np.asarray(value) for value in topology.orbits(degree))
         if np.any(orbit[first] != orbit[second]):
             raise ValueError(
-                "A periodic constraint pairs different quotient entity orbits."
+                "periodic.constraints.entity_pairs must share quotient entity orbits; got different orbit IDs"
             )
         if degree and np.any(
             np.asarray(constraint.orientations)
             != orientations[first] * orientations[second]
         ):
             raise ValueError(
-                "A periodic constraint contradicts the bound entity orientation."
+                "periodic.constraints.orientations must agree with the bound entity orientations; got a conflicting orientation"
             )
         maps = topology.orbit_isometries(degree)
-        expected = maps[second] @ np.linalg.inv(maps[first])
+        solved = solve_small_linear(
+            solve_plan,
+            np.swapaxes(maps[first], -1, -2),
+            np.swapaxes(maps[second], -1, -2),
+        )
+        if not np.all(np.asarray(solved.successful)):
+            raise ValueError(
+                "periodic.constraints.transform must yield a successful native relative-isometry solve; got "
+                f"status={np.asarray(solved.status)}, "
+                f"condition={np.asarray(solved.condition_estimate)}, "
+                f"residual={np.asarray(solved.residual_norm)}."
+            )
+        expected = np.swapaxes(np.asarray(solved.value), -1, -2)
         transform = np.asarray(constraint.transform)
         if transform.shape != expected.shape[1:]:
-            raise ValueError("A periodic constraint has the wrong ambient dimension.")
+            raise ValueError(
+                "periodic.constraints.transform must match the source ambient dimension; got an incompatible transform shape"
+            )
         residual = float(np.max(np.abs(expected - transform)))
         if residual > constraint.tolerance:
             raise ValueError(
-                "A periodic constraint contradicts the bound isometry cycle."
+                "periodic.constraints.transform must agree with the bound isometry cycle within tolerance; got an excessive residual"
             )
         requested.append(
             (f"periodic:{constraint.constraint_id}:tolerance", constraint.tolerance)
@@ -367,6 +487,7 @@ class PreparedPeriodicDomain(StrictModule, NonTrainableState):
     specification_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: NativePeriodicSource,
@@ -376,7 +497,8 @@ class PreparedPeriodicDomain(StrictModule, NonTrainableState):
         issues = periodic_support_issues(source, specification)
         if issues:
             raise MeshingFailure(
-                MeshingFailureCategory.UNSUPPORTED_COMBINATION, "; ".join(issues)
+                MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                format_support_issues(issues),
             )
         self.source = source
         self.specification_id = specification.specification_id
@@ -389,85 +511,7 @@ class PreparedPeriodicDomain(StrictModule, NonTrainableState):
         )
 
 
-def _feature_entity_mask(
-    source: CellMesh, target: CellMesh, identifiers: np.ndarray, degree: int
-) -> np.ndarray:
-    """Recognize exact affine source-edge/face subdivisions on every lifted copy."""
-    original = _require_periodic_topology(source)
-    orbit = np.asarray(original.orbits(degree)[0])
-    source_rows = _simplex_entity_corners(source, degree)
-    target_rows = _simplex_entity_corners(target, degree)
-    segments = np.asarray(source.coordinates)[source_rows[np.isin(orbit, identifiers)]]
-    corners = np.asarray(target.coordinates)[target_rows]
-    result = np.zeros(corners.shape[0], dtype=np.bool_)
-    for segment in segments:
-        # Refinement retains each parent's continuous lift. Check every displayed
-        # source copy directly; nearest-image shifts lose long winding features.
-        candidate = corners
-        # A zero-deviation protected segment is an exact represented constraint.
-        packed = np.concatenate(
-            (candidate.reshape((-1, source.ambient_dimension)), segment)
-        )
-        integers, _ = _dyadic_integers(packed)
-        corner_count = candidate.shape[0] * candidate.shape[1]
-        test = integers[:corner_count].reshape(candidate.shape)
-        original_corners = integers[corner_count : corner_count + segment.shape[0]]
-        result |= _source_entity_contains(test, original_corners)
-    return result
-
-
-def _source_entity_contains(corners: np.ndarray, source: np.ndarray, /) -> np.ndarray:
-    """Exact affine support predicate shared by feature and association publication."""
-    if source.shape[0] == 1:
-        return np.all(corners == source[0], axis=(1, 2))
-    start, stop = source[:2]
-    direction, delta = stop - start, corners - start
-    if source.shape[0] == 2:
-        squared = direction @ direction
-        if squared == 0:
-            return np.zeros(corners.shape[0], dtype=np.bool_)
-        parameter = delta @ direction
-        if source.shape[1] == 2:
-            collinear = delta[..., 0] * direction[1] == delta[..., 1] * direction[0]
-        else:
-            collinear = np.all(
-                np.stack(
-                    (
-                        delta[..., 1] * direction[2] - delta[..., 2] * direction[1],
-                        delta[..., 2] * direction[0] - delta[..., 0] * direction[2],
-                        delta[..., 0] * direction[1] - delta[..., 1] * direction[0],
-                    ),
-                    axis=-1,
-                )
-                == 0,
-                axis=-1,
-            )
-        return np.all(collinear & (parameter >= 0) & (parameter <= squared), axis=1)
-    second = source[2] - start
-    normal = np.asarray(
-        (
-            direction[1] * second[2] - direction[2] * second[1],
-            direction[2] * second[0] - direction[0] * second[2],
-            direction[0] * second[1] - direction[1] * second[0],
-        ),
-        dtype=object,
-    )
-    aa, ab, bb = direction @ direction, direction @ second, second @ second
-    denominator = aa * bb - ab * ab
-    if denominator == 0:
-        return np.zeros(corners.shape[0], dtype=np.bool_)
-    pa, pb = delta @ direction, delta @ second
-    first_parameter, second_parameter = pa * bb - pb * ab, pb * aa - pa * ab
-    return np.all(
-        (delta @ normal == 0)
-        & (first_parameter >= 0)
-        & (second_parameter >= 0)
-        & (first_parameter + second_parameter <= denominator),
-        axis=1,
-    )
-
-
-def _periodic_entity_rows(mesh: CellMesh, degree: int, /) -> np.ndarray:
+def _periodic_entity_rows(mesh: cell_mesh_owner.CellMesh, degree: int, /) -> np.ndarray:
     if degree == 0:
         return np.arange(mesh.coordinates.shape[0], dtype=np.int64)[:, None]
     if degree == mesh.topological_dimension:
@@ -485,16 +529,16 @@ def _periodic_entity_rows(mesh: CellMesh, degree: int, /) -> np.ndarray:
             ],
             dtype=np.int64,
         )
-    return _simplex_entity_corners(mesh, degree)
+    return periodic_owner.simplex_entity_corners(mesh, degree)
 
 
 def _periodic_region_incidence(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     regions: np.ndarray,
     /,
 ) -> tuple[tuple[tuple[int, ...], ...], ...]:
-    """Material incidence of every actual quotient entity, including seam copies."""
-    topology = _require_periodic_topology(mesh)
+    """Material incidence of every quotient entity, including seam copies."""
+    topology = periodic_owner.require_periodic_topology(mesh)
     cells = _periodic_entity_rows(mesh, mesh.topological_dimension)
     result: list[tuple[tuple[int, ...], ...]] = []
     for degree in range(mesh.topological_dimension):
@@ -519,10 +563,17 @@ def _periodic_source_strata(
     /,
 ) -> tuple[tuple[int, ...], ...]:
     domain = source.domain
-    if not isinstance(domain, CellMesh):
-        raise TypeError("Represented source strata require the authored CellMesh.")
+    match domain:
+        case cell_mesh_owner.CellMesh():
+            pass
+        case periodic_owner.PeriodicPointOrbits():
+            raise TypeError(
+                "periodic.source_strata.domain must be a represented CellMesh; got a point-orbit seed"
+            )
+        case _ as invalid:
+            assert_never(invalid)
     dimension = domain.topological_dimension
-    topology = _require_periodic_topology(domain)
+    topology = periodic_owner.require_periodic_topology(domain)
     block_ids = np.asarray(domain.blocks[0].global_ids)
     positions = {int(identifier): row for row, identifier in enumerate(block_ids)}
     regions = np.asarray(source.cell_regions)[
@@ -563,18 +614,27 @@ def _periodic_source_strata(
 
 
 class _PeriodicSupportAllowance:
-    """One support phase borrows the original native ledger without renewing it."""
+    """One support phase borrows the native ledger without renewing it."""
 
-    def __init__(self, limits: MeshingLimits, /) -> None:
+    def __init__(
+        self,
+        limits: MeshingLimits,
+        /,
+        *,
+        scope: NativeExecutionScope,
+        budget: CoordinateEnclosureBudget,
+    ) -> None:
         self.limits, self.work = limits, 0
-        self.budget = current_native_execution_budget()
-        self.started = monotonic()
+        self.scope = scope
+        self.budget = budget
+        self.ticket: BatchTicket | None = budget.ticket
+        self.started = scope.operation_started
 
     def spend(self, count: int, /) -> None:
         if self.work + count > self.limits.maximum_work_units:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Exact periodic source support exceeds its original work allowance.",
+                "periodic.source_support.work must fit the declared work allowance; got a request beyond the allowance",
                 requested=(("maximum_work_units", self.limits.maximum_work_units),),
                 achieved=(
                     ("source_support_work", self.work),
@@ -584,31 +644,47 @@ class _PeriodicSupportAllowance:
         if self.work + count > self.limits.maximum_geometry_queries:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Exact periodic source support exceeds its original geometry-query allowance.",
+                "periodic.source_support.queries must fit the declared query allowance; got a request beyond the allowance",
                 requested=(
                     ("maximum_geometry_queries", self.limits.maximum_geometry_queries),
                 ),
                 achieved=(("source_support_query_bound", self.work + count),),
             )
         check_deadline(self.started, self.limits, MeshingStageKind.GEOMETRY_ASSOCIATION)
-        if self.budget is not None:
-            self.budget.admit_work_bound(count)
-            from ...discretization._coordinate_enclosure import _COORDINATE_BUDGET
-
-            ledger = _COORDINATE_BUDGET.get()
-            if ledger is not None:
-                ledger.admit_work_bound(count)
-            self.budget.charge(work=count, geometry_queries=count)
+        if self.ticket is None:
+            raise RuntimeError(
+                "periodic.source_support.ticket must be admitted before consumption; got no phase ticket"
+            )
+        if (
+            count > self.ticket.remaining_work_units
+            or count > self.ticket.remaining_geometry_queries
+        ):
+            self.ticket.refuse(
+                self.ticket.work_units + count,
+                queries_upper=self.ticket.geometry_queries + count,
+            )
+        self.ticket.consume(count, geometry_queries=count)
         self.work += count
 
     def scratch(self, bound: int, /) -> None:
-        available = self.limits.maximum_scratch_bytes
-        if self.budget is not None:
-            available = min(available, self.budget.remaining().remaining_scratch_bytes)
+        ticket = self.ticket
+        managed = (
+            ticket.bytes_upper
+            if ticket is not None and not ticket.settled
+            else self.scope.remaining().remaining_managed_bytes
+        )
+        available = min(self.limits.maximum_scratch_bytes, managed)
+        if (
+            bound <= self.limits.maximum_scratch_bytes
+            and bound > available
+            and ticket is not None
+            and not ticket.settled
+        ):
+            ticket.refuse(ticket.work_upper, bytes_upper=bound)
         if bound > available:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Exact periodic source support exceeds its original scratch allowance.",
+                "periodic.source_support.storage must fit the remaining scratch allowance; got a request beyond the allowance",
                 requested=(
                     ("maximum_scratch_bytes", self.limits.maximum_scratch_bytes),
                     ("remaining_scratch_bytes", available),
@@ -616,120 +692,207 @@ class _PeriodicSupportAllowance:
                 achieved=(("source_support_scratch_bound", bound),),
             )
 
+    def batch(self, upper: int, /) -> BatchTicket:
+        if not self.budget.ticket.settled:
+            parent = self.budget.ticket
+            if (
+                upper > parent.remaining_work_units
+                or upper > parent.remaining_geometry_queries
+            ):
+                parent.refuse(
+                    parent.work_upper - parent.remaining_work_units + upper,
+                    queries_upper=(
+                        parent.queries_upper - parent.remaining_geometry_queries + upper
+                    ),
+                )
+        owner = self.scope if self.budget.ticket.settled else self.budget.ticket
+        self.ticket = owner.batch(upper, queries_upper=upper)
+        return self.ticket
+
+    def exact_phase(self) -> AbstractContextManager[CoordinateEnclosureBudget]:
+        if not self.budget.ticket.settled:
+            self.ticket = self.budget.ticket
+            return nullcontext(self.budget)
+        remaining = self.scope.remaining()
+        self.ticket = self.scope.batch(
+            min(self.limits.maximum_work_units, remaining.remaining_work_units),
+            queries_upper=min(
+                self.limits.maximum_geometry_queries,
+                remaining.remaining_geometry_queries,
+            ),
+            bytes_upper=min(
+                self.limits.maximum_scratch_bytes, remaining.remaining_managed_bytes
+            ),
+        )
+        return self.budget.bind_ticket(self.ticket)
+
 
 def _periodic_source_frame(
-    source: CellMesh,
-    target: CellMesh,
+    source: cell_mesh_owner.CellMesh,
+    target: cell_mesh_owner.CellMesh,
     allowance: _PeriodicSupportAllowance,
     /,
-) -> _PeriodicImageFrame:
-    original, successor = (
-        _require_periodic_topology(source),
-        _require_periodic_topology(target),
-    )
-    if _identification_id(original.cell) != _identification_id(successor.cell):
-        raise ValueError(
-            "Periodic source support must retain its actual identification group."
+    *,
+    geometry: cell_geometry_owner.CellGeometrySpec | None = None,
+) -> PeriodicImageFrame:
+    with ExitStack() as stack:
+        stack.enter_context(allowance.budget.measurement())
+        original, successor = (
+            periodic_owner.require_periodic_topology(source),
+            periodic_owner.require_periodic_topology(target),
         )
-    dimension = source.ambient_dimension
-    group_images = (
-        int(np.prod(original.cell.linear_orders, dtype=object))
-        if isinstance(original.cell, PeriodicIsometryGroup)
-        else 0
-    )
-    point_count = source.coordinates.shape[0] + target.coordinates.shape[0]
-    entity_count = sum(
-        mesh.entity_set(degree).count
-        for mesh in (source, target)
-        for degree in range(dimension + 1)
-    )
-    # Binary64 coordinates and two affine group products fit in 6400 integer
-    # bits. Include Python integer digits/pointers and bounded SAT/support
-    # temporaries before preparing the unbounded-precision host bank.
-    scratch = (
-        1024
-        * (
-            8 * point_count * dimension
-            + (group_images + 2 * point_count) * (dimension + 1) ** 2
-            + 4 * entity_count * (dimension + 1) * dimension
-        )
-        + 2**23
-    )
-    allowance.scratch(scratch)
-    from ...discretization._coordinate_enclosure import _COORDINATE_BUDGET
-
-    ledger = _COORDINATE_BUDGET.get()
-    if ledger is not None:
-        ledger.reserve(0, scratch)
-    allowance.spend(point_count + group_images)
-    coordinates = np.concatenate(
-        (np.asarray(source.coordinates), np.asarray(target.coordinates))
-    )
-    roots = np.concatenate(
-        (
-            np.asarray(original.vertex_representatives),
-            source.coordinates.shape[0] + np.asarray(successor.vertex_representatives),
-        )
-    )
-    shifts = np.concatenate(
-        (np.asarray(original.vertex_shifts), np.asarray(successor.vertex_shifts))
-    )
-    try:
-        image_exponents = None
-        if isinstance(original.cell, PeriodicIsometryGroup) and any(
-            order == 0 for order in original.cell.orders
-        ):
-            boxes = _affine_periodic_source_support_boxes(
-                coordinates, roots, shifts, original.cell
+        if identification_id(original.cell) != identification_id(successor.cell):
+            raise ValueError(
+                "periodic.source_support.identification must match the source identification group; got a changed identification"
             )
-            image_exponents = _periodic_overlap_image_exponents(
+        dimension = source.ambient_dimension
+        group_images = (
+            int(np.prod(original.cell.linear_orders, dtype=object))
+            if isinstance(original.cell, PeriodicIsometryGroup)
+            else 0
+        )
+        point_count = source.coordinates.shape[0] + target.coordinates.shape[0]
+        entity_count = sum(
+            mesh.entity_set(degree).count
+            for mesh in (source, target)
+            for degree in range(dimension + 1)
+        )
+        # Binary64 coordinates and two affine group products fit in 6400 integer
+        # bits. Include Python integer digits/pointers and bounded SAT/support
+        # temporaries before preparing the unbounded-precision host bank.
+        scratch = (
+            1024
+            * (
+                8 * point_count * dimension
+                + (group_images + 2 * point_count) * (dimension + 1) ** 2
+                + 4 * entity_count * (dimension + 1) * dimension
+            )
+            + 2**23
+        )
+        allowance.scratch(scratch)
+        with allowance.batch(point_count + group_images):
+            allowance.spend(point_count + group_images)
+        stack.enter_context(allowance.exact_phase())
+        allowance.budget.reserve(0, scratch)
+        coordinates = np.concatenate(
+            (np.asarray(source.coordinates), np.asarray(target.coordinates))
+        )
+        roots = np.concatenate(
+            (
+                np.asarray(original.vertex_representatives),
+                source.coordinates.shape[0]
+                + np.asarray(successor.vertex_representatives),
+            )
+        )
+        shifts = np.concatenate(
+            (np.asarray(original.vertex_shifts), np.asarray(successor.vertex_shifts))
+        )
+        exact_coordinates = (
+            None
+            if geometry is None
+            else periodic_owner.periodic_exact_coordinate_bank(
+                source, None, budget=allowance.budget
+            )
+            + periodic_owner.periodic_exact_coordinate_bank(
+                target, geometry, budget=allowance.budget
+            )
+        )
+        try:
+            image_exponents = None
+            if isinstance(original.cell, PeriodicIsometryGroup) and any(
+                order == 0 for order in original.cell.orders
+            ):
+                boxes = periodic_owner.affine_periodic_source_support_boxes(
+                    coordinates,
+                    roots,
+                    shifts,
+                    original.cell,
+                    budget=allowance.budget,
+                    exact_coordinates=exact_coordinates,
+                )
+                image_exponents = periodic_overlap_image_exponents(
+                    original.cell,
+                    boxes,
+                    allowance.limits.maximum_vertices,
+                    budget=allowance.budget,
+                )
+                actual_images = image_exponents.shape[0]
+                additional_storage = (
+                    1024 * (actual_images - group_images) * (dimension + 1) ** 2
+                )
+                allowance.scratch(scratch + additional_storage)
+                allowance.budget.reserve(0, additional_storage)
+                # Image storage is bounded by the explicit image-preparation owner.
+                allowance.spend(actual_images - group_images)
+            return prepare_periodic_image_frame(
+                coordinates,
+                roots,
+                shifts,
                 original.cell,
-                boxes,
                 allowance.limits.maximum_vertices,
+                image_exponents=image_exponents,
+                exact_coordinates=exact_coordinates,
+                budget=allowance.budget,
             )
-            actual_images = image_exponents.shape[0]
-            additional_storage = (
-                1024 * (actual_images - group_images) * (dimension + 1) ** 2
-            )
-            allowance.scratch(scratch + additional_storage)
-            if ledger is not None:
-                ledger.reserve(0, additional_storage)
-            allowance.spend(actual_images - group_images)
-        return _prepare_periodic_image_frame(
-            coordinates,
-            roots,
-            shifts,
-            original.cell,
-            allowance.limits.maximum_vertices,
-            image_exponents=image_exponents,
+        except PeriodicEmbeddingResourceError as error:
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                str(error),
+                stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
+            ) from error
+
+
+def _periodic_row_enclosures(
+    corners: np.ndarray, /, *, budget: CoordinateEnclosureBudget
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose each field-valued corner row with directed binary64 coordinate bounds."""
+    budget.reserve(corners.size, 16 * corners.shape[0] * corners.shape[2])
+
+    def endpoint(value: Fraction | RadicalElement, upper: bool) -> float:
+        # Only the binary64 result survives each scalar enclosure. The interval
+        # refinement fractions must not accumulate across unrelated rows.
+        with budget.temporary_scope():
+            return coefficient_endpoint(value, upper=upper, saturate=True, budget=budget)
+
+    bounds = [
+        np.asarray(
+            [
+                [endpoint(value, upper) for value in row]
+                for row in (np.max(corners, axis=1) if upper else np.min(corners, axis=1))
+            ],
+            dtype=np.float64,
         )
-    except _PeriodicEmbeddingResourceError as error:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            str(error),
-            stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
-        ) from error
+        for upper in (False, True)
+    ]
+    return bounds[0], bounds[1]
 
 
 def _periodic_source_regions(
     source: NativePeriodicSource,
-    target: CellMesh,
-    frame: _PeriodicImageFrame,
+    target: cell_mesh_owner.CellMesh,
+    frame: PeriodicImageFrame,
     allowance: _PeriodicSupportAllowance,
     /,
 ) -> np.ndarray:
     domain = source.domain
-    if not isinstance(domain, CellMesh):
-        raise TypeError(
-            "Periodic material support requires the original represented source."
-        )
+    match domain:
+        case cell_mesh_owner.CellMesh():
+            pass
+        case periodic_owner.PeriodicPointOrbits():
+            raise TypeError(
+                "periodic.material_support.domain must be a represented CellMesh; got a point-orbit seed"
+            )
+        case _ as invalid:
+            assert_never(invalid)
     source_rows = _periodic_entity_rows(domain, domain.topological_dimension)
     target_rows = _periodic_entity_rows(target, target.topological_dimension)
     count = domain.coordinates.shape[0]
     target_corners = frame.points[count:][target_rows]
+    algebraic = any(isinstance(value, RadicalElement) for value in target_corners.flat)
     target_lower, target_upper = (
-        np.min(target_corners, axis=1),
-        np.max(target_corners, axis=1),
+        _periodic_row_enclosures(target_corners, budget=allowance.budget)
+        if algebraic
+        else (np.min(target_corners, axis=1), np.max(target_corners, axis=1))
     )
     block_positions = {
         int(identifier): row
@@ -744,20 +907,61 @@ def _periodic_source_regions(
         ]
     ]
     members: list[set[int]] = [set() for _ in target_rows]
-    for image in frame.images():
-        allowance.spend(source_rows.shape[0] * target_rows.shape[0])
-        corners = frame.image_points(image, slice(0, count))[source_rows]
-        lower, upper = np.min(corners, axis=1), np.max(corners, axis=1)
-        for row, triangle in enumerate(target_corners):
-            possible = np.flatnonzero(
-                np.all(
-                    (target_upper[row] > lower) & (upper > target_lower[row]),
-                    axis=1,
-                )
+    # _periodic_source_frame reserves the SAT/support workspace for this phase.
+    # Borrow that storage while charging each prepared action's field work.
+    target_sat = (
+        tuple(
+            affine_mapped_contact_owner.prepare_triangle_sat(
+                triangle, budget=allowance.budget, storage_precharged=True
             )
-            for parent in possible:
-                if _interiors_overlap(triangle, corners[parent]):
-                    members[row].add(int(source_regions[parent]))
+            for triangle in target_corners
+        )
+        if target.topological_dimension == 2
+        else ()
+    )
+    for image in frame.images():
+        with allowance.budget.temporary_scope():
+            allowance.spend(source_rows.shape[0] * target_rows.shape[0])
+            corners = frame.image_points(image, slice(0, count), budget=allowance.budget)[
+                source_rows
+            ]
+            lower, upper = (
+                _periodic_row_enclosures(corners, budget=allowance.budget)
+                if algebraic
+                else (np.min(corners, axis=1), np.max(corners, axis=1))
+            )
+            source_sat = (
+                tuple(
+                    affine_mapped_contact_owner.prepare_triangle_sat(
+                        triangle, budget=allowance.budget, storage_precharged=True
+                    )
+                    for triangle in corners
+                )
+                if target_sat
+                else ()
+            )
+            for row, triangle in enumerate(target_corners):
+                possible = np.flatnonzero(
+                    np.all(
+                        (target_upper[row] > lower) & (upper > target_lower[row]),
+                        axis=1,
+                    )
+                )
+                for parent in possible:
+                    overlap = (
+                        affine_mapped_contact_owner.prepared_triangle_interiors_overlap(
+                            target_sat[row],
+                            source_sat[parent],
+                            budget=allowance.budget,
+                            storage_precharged=True,
+                        )
+                        if target_sat
+                        else affine_mapped_contact_owner.interiors_overlap(
+                            triangle, corners[parent]
+                        )
+                    )
+                    if overlap:
+                        members[row].add(int(source_regions[parent]))
     unresolved = tuple(
         int(identifier)
         for identifier, material in zip(
@@ -770,7 +974,7 @@ def _periodic_source_regions(
     if unresolved:
         raise MeshingFailure(
             MeshingFailureCategory.COMPLIANCE_FAILED,
-            "A periodic target cell crosses or loses an actual authored material stratum.",
+            "periodic.material_support.cells must retain one authored material stratum per cell; got unresolved material membership",
             stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
             entity_ids=unresolved,
         )
@@ -780,221 +984,351 @@ def _periodic_source_regions(
 def _periodic_seed_associations(
     source: NativePeriodicSource,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
-    target: CellMesh,
+    target: cell_mesh_owner.CellMesh,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+    geometry: cell_geometry_owner.CellGeometrySpec | None = None,
 ) -> tuple[GeometryAssociation, ...]:
-    domain = source.domain
-    if not isinstance(domain, PeriodicPointOrbits):
-        raise TypeError(
-            "Lattice-region authority requires the original periodic point-orbit source."
-        )
-    topology = _require_periodic_topology(target)
-    if _identification_id(topology.cell) != _identification_id(domain.cell):
-        raise ValueError(
-            "Periodic lattice-region authority must retain its original identification."
-        )
-    quotient = PeriodicQuotientEvidence(target)
-    if (
-        not quotient.all_cells_valid
-        or quotient.boundary_facet_count
-        or quotient.relative_coverage_defect is None
-        or quotient.relative_coverage_defect > 1.0e-10
-    ):
-        raise MeshingFailure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            "The periodic target does not cover its actual authored lattice region once.",
-            stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
-        )
-    allowance = _PeriodicSupportAllowance(specification.limits)
-    frame = _periodic_source_frame(target, target, allowance)
-    allowance.spend(target.blocks[0].cell_count ** 2 * frame.image_count)
-    certify_periodic_embedding(
-        target,
-        maximum_images=specification.limits.maximum_vertices,
-        maximum_pairs=specification.limits.maximum_work_units,
-    )
-    result: list[GeometryAssociation] = []
-    for degree in range(target.topological_dimension + 1):
-        entities = target.entity_set(degree)
-        count = entities.count
-        allowance.spend(count)
-        result.append(
-            GeometryAssociation(
-                GeometryAssociationKind.PIECEWISE_LINEAR,
-                source.source_id,
-                source.source_revision,
-                entities.entity_set_id,
-                entities.entity_ids,
-                (
-                    _entity(
-                        source.source_revision, GeometrySourceEntityRole.REGION.value, 0
-                    ),
+    with ExitStack() as stack:
+        domain = source.domain
+        match domain:
+            case periodic_owner.PeriodicPointOrbits():
+                pass
+            case cell_mesh_owner.CellMesh():
+                raise TypeError(
+                    "periodic.seed_support.domain must be PeriodicPointOrbits; got a represented CellMesh"
                 )
-                * count,
-                np.zeros(count, dtype=np.float64),
-                exact=True,
-                source_dimensions=np.full(
-                    count, target.topological_dimension, dtype=np.int8
-                ),
-                source_indices=np.zeros(count, dtype=np.int64),
-                source_entity_roles=(GeometrySourceEntityRole.REGION,) * count,
+            case _ as invalid:
+                assert_never(invalid)
+        topology = periodic_owner.require_periodic_topology(target)
+        if identification_id(topology.cell) != identification_id(domain.cell):
+            raise ValueError(
+                "periodic.seed_support.identification must match the source identification; got a changed identification"
+            )
+        quotient = periodic_owner.PeriodicQuotientEvidence(
+            target, geometry=geometry, budget=budget
+        )
+        if (
+            not quotient.all_cells_valid
+            or quotient.boundary_facet_count
+            or quotient.relative_coverage_defect is None
+            or quotient.relative_coverage_defect > 1.0e-10
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.COMPLIANCE_FAILED,
+                "periodic.seed_support.coverage must cover the source lattice region once with positive cells; got an invalid quotient cover",
+                stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
+            )
+        allowance = _PeriodicSupportAllowance(
+            specification.limits, scope=scope, budget=budget
+        )
+        periodic_owner.certify_periodic_embedding(
+            target,
+            maximum_images=specification.limits.maximum_vertices,
+            maximum_pairs=specification.limits.maximum_work_units,
+            scope=scope,
+            budget=allowance.budget,
+            geometry=geometry,
+        )
+        stack.enter_context(
+            allowance.batch(
+                sum(
+                    target.entity_set(degree).count
+                    for degree in range(target.topological_dimension + 1)
+                )
             )
         )
-    return tuple(result)
+        result: list[GeometryAssociation] = []
+        for degree in range(target.topological_dimension + 1):
+            entities = target.entity_set(degree)
+            count = entities.count
+            allowance.spend(count)
+            result.append(
+                GeometryAssociation(
+                    GeometryAssociationKind.PIECEWISE_LINEAR,
+                    source.source_id,
+                    source.source_revision,
+                    entities.entity_set_id,
+                    entities.entity_ids,
+                    (
+                        entity_key(
+                            source.source_revision,
+                            GeometrySourceEntityRole.REGION.value,
+                            0,
+                        ),
+                    )
+                    * count,
+                    np.zeros(count, dtype=np.float64),
+                    exact=True,
+                    source_dimensions=np.full(
+                        count, target.topological_dimension, dtype=np.int8
+                    ),
+                    source_indices=np.zeros(count, dtype=np.int64),
+                    source_entity_roles=(GeometrySourceEntityRole.REGION,) * count,
+                )
+            )
+        return tuple(result)
 
 
-def _periodic_source_associations(
+@final
+class _PeriodicSourceAssociationPreparation(StrictModule):
+    """Retain source-membership proof inputs and associated vertex strata."""
+
+    transfer_source: NativePeriodicSource
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec
+    result: CellMeshingResult
+    association: GeometryAssociation
+    associated_degrees: tuple[int, ...]
+
+    @classmethod
+    def from_stored_fields(
+        cls, value: _PeriodicSourceAssociationPreparation, /
+    ) -> _PeriodicSourceAssociationPreparation:
+        """Restore membership data without registering a live proof identity."""
+        return cls(
+            value.transfer_source,
+            value.specification,
+            value.result,
+            value.association,
+            value.associated_degrees,
+        )
+
+    @property
+    def prepared_id(self) -> str:
+        return self.result.result_id
+
+
+@checked
+def periodic_source_associations(
     source: NativePeriodicSource,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
-    target: CellMesh,
+    target: cell_mesh_owner.CellMesh,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+    geometry: cell_geometry_owner.CellGeometrySpec | None = None,
+    _prepared_cover: _PeriodicSourceAssociationPreparation | None = None,
 ) -> tuple[GeometryAssociation, ...]:
-    """Keep real source support storage alive through the complete membership phase."""
-    from ...discretization._coordinate_enclosure import (
-        coordinate_enclosure_budget,
-        CoordinateEnclosureResourceError,
-    )
+    """Keep source support storage alive through the membership phase."""
 
-    limits = specification.limits
-    ledger = coordinate_enclosure_budget(
-        limits.maximum_work_units, limits.maximum_scratch_bytes
-    )
     try:
-        with (
-            ledger.activate(),
-            ledger.bound_stage(
-                limits.maximum_work_units,
-                limits.maximum_scratch_bytes,
-                starting_work_units=ledger.work_units,
-            ),
-            ledger.temporary_scope(),
-        ):
-            try:
-                return _periodic_source_membership(source, specification, target)
-            finally:
-                ledger.charge_native_work(
-                    ledger.work_units - ledger.native_charged_work_units
-                )
+        with budget.measurement(), budget.temporary_scope():
+            return _periodic_source_membership(
+                source,
+                specification,
+                target,
+                scope=scope,
+                budget=budget,
+                geometry=geometry,
+                _prepared_cover=_prepared_cover,
+            )
     except CoordinateEnclosureResourceError as error:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Original periodic source support exhausted its exact work/storage allowance.",
+            "periodic.source_support.resources must fit the remaining work and storage allowances; got a resource refusal",
             stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
-            requested=((str(error.resource), error.requested), ("limit", error.limit)),
-            achieved=(("completed", error.completed),),
+            requested=(
+                (str(error.resource), float(error.requested)),
+                ("limit", float(error.limit)),
+            ),
+            achieved=(("completed", float(error.completed)),),
         ) from error
 
 
 def _periodic_source_membership(
     source: NativePeriodicSource,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
-    target: CellMesh,
+    target: cell_mesh_owner.CellMesh,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+    geometry: cell_geometry_owner.CellGeometrySpec | None = None,
+    _prepared_cover: _PeriodicSourceAssociationPreparation | None = None,
 ) -> tuple[GeometryAssociation, ...]:
-    domain = source.domain
-    if isinstance(domain, PeriodicPointOrbits):
-        return _periodic_seed_associations(source, specification, target)
-    allowance = _PeriodicSupportAllowance(specification.limits)
-    original = PeriodicQuotientEvidence(domain)
-    if not original.all_cells_valid or (
-        original.relative_coverage_defect is not None
-        and (original.boundary_facet_count or original.relative_coverage_defect > 1.0e-10)
-    ):
-        raise MeshingFailure(
-            MeshingFailureCategory.AUDIT_FAILED,
-            "The original periodic geometry authority fails its positive quotient coverage contract.",
+    with ExitStack() as stack:
+        domain = source.domain
+        match domain:
+            case periodic_owner.PeriodicPointOrbits():
+                return _periodic_seed_associations(
+                    source,
+                    specification,
+                    target,
+                    scope=scope,
+                    budget=budget,
+                    geometry=geometry,
+                )
+            case cell_mesh_owner.CellMesh():
+                pass
+            case _ as invalid:
+                assert_never(invalid)
+        allowance = _PeriodicSupportAllowance(
+            specification.limits, scope=scope, budget=budget
         )
-    frame = _periodic_source_frame(domain, target, allowance)
-    allowance.spend(domain.blocks[0].cell_count ** 2 * frame.image_count)
-    certify_periodic_embedding(
-        domain,
-        maximum_images=specification.limits.maximum_vertices,
-        maximum_pairs=specification.limits.maximum_work_units,
-    )
-    regions = _periodic_source_regions(source, target, frame, allowance)
-    incidence = _periodic_region_incidence(target, regions)
-    strata = _periodic_source_strata(source, specification)
-    topology = _require_periodic_topology(domain)
-    count, dimension = domain.coordinates.shape[0], domain.topological_dimension
-    roles = (
-        GeometrySourceEntityRole.VERTEX,
-        GeometrySourceEntityRole.EDGE,
-        GeometrySourceEntityRole.FACET,
-    )
-    associations: list[GeometryAssociation] = []
-    for degree in range(dimension + 1):
-        rows = _periodic_entity_rows(target, degree)
-        corners = frame.points[count:][rows]
-        classes = np.full(rows.shape[0], dimension, dtype=np.int8)
-        indices = np.asarray(
-            [material[0] if len(material) == 1 else -1 for material in incidence[degree]],
-            dtype=np.int64,
+        covered = (
+            _prepared_cover is not None
+            and _prepared_cover.transfer_source is source
+            and _prepared_cover.specification is specification
+            and native_preparation_ledger(scope).live_contains(_prepared_cover)
         )
-        entity_roles = [GeometrySourceEntityRole.REGION for _ in rows]
-        ambiguous = np.zeros(rows.shape[0], dtype=np.bool_)
-        for source_degree in range(degree, dimension):
-            source_rows = _periodic_entity_rows(domain, source_degree)
-            source_orbits = np.asarray(topology.orbits(source_degree)[0])
-            selected = np.flatnonzero(np.isin(source_orbits, strata[source_degree]))
-            for image in frame.images():
-                allowance.spend(rows.shape[0] * selected.size)
-                imaged = frame.image_points(image, slice(0, count))
-                for parent in selected:
-                    mask = np.empty(rows.shape[0], dtype=np.bool_)
-                    for begin in range(0, rows.shape[0], 32):
-                        end = min(begin + 32, rows.shape[0])
-                        mask[begin:end] = _source_entity_contains(
-                            corners[begin:end], imaged[source_rows[parent]]
+        if not covered:
+            original = periodic_owner.PeriodicQuotientEvidence(domain)
+            if not original.all_cells_valid or (
+                original.relative_coverage_defect is not None
+                and (
+                    original.boundary_facet_count
+                    or original.relative_coverage_defect > 1.0e-10
+                )
+            ):
+                raise MeshingFailure(
+                    MeshingFailureCategory.AUDIT_FAILED,
+                    "periodic.source_support.coverage must have positive cells and closed quotient coverage; got an invalid source cover",
+                )
+        frame = _periodic_source_frame(domain, target, allowance, geometry=geometry)
+        if not covered:
+            with allowance.batch(domain.blocks[0].cell_count ** 2 * frame.image_count):
+                allowance.spend(domain.blocks[0].cell_count ** 2 * frame.image_count)
+            periodic_owner.certify_periodic_embedding(
+                domain,
+                maximum_images=specification.limits.maximum_vertices,
+                maximum_pairs=specification.limits.maximum_work_units,
+                scope=scope,
+                budget=allowance.budget,
+            )
+        stack.enter_context(allowance.exact_phase())
+        regions = _periodic_source_regions(source, target, frame, allowance)
+        incidence = _periodic_region_incidence(target, regions)
+        strata = _periodic_source_strata(source, specification)
+        topology = periodic_owner.require_periodic_topology(domain)
+        count, dimension = domain.coordinates.shape[0], domain.topological_dimension
+        roles = (
+            GeometrySourceEntityRole.VERTEX,
+            GeometrySourceEntityRole.EDGE,
+            GeometrySourceEntityRole.FACET,
+        )
+        associations: list[GeometryAssociation] = []
+        # Keys index this frame's fixed source strata and target point bank.
+        # Entity support is the conjunction of its vertices' source support.
+        point_masks: dict[tuple[int, int, int], np.ndarray] = {}
+        points = frame.points[count:]
+        for degree in range(dimension + 1):
+            rows = _periodic_entity_rows(target, degree)
+            classes = np.full(rows.shape[0], dimension, dtype=np.int8)
+            indices = np.asarray(
+                [
+                    material[0] if len(material) == 1 else -1
+                    for material in incidence[degree]
+                ],
+                dtype=np.int64,
+            )
+            entity_roles = [GeometrySourceEntityRole.REGION for _ in rows]
+            ambiguous = np.zeros(rows.shape[0], dtype=np.bool_)
+            for source_degree in range(degree, dimension):
+                source_rows = _periodic_entity_rows(domain, source_degree)
+                source_orbits = np.asarray(topology.orbits(source_degree)[0])
+                selected = np.flatnonzero(np.isin(source_orbits, strata[source_degree]))
+                for image_index, image in enumerate(frame.images()):
+                    allowance.spend(rows.shape[0] * selected.size)
+                    imaged = frame.image_points(
+                        image, slice(0, count), budget=allowance.budget
+                    )
+                    for parent in selected:
+                        key = source_degree, image_index, int(parent)
+                        point_mask = point_masks.get(key)
+                        if point_mask is None:
+                            budget.reserve(0, 512 + points.shape[0])
+                            point_mask = np.empty(points.shape[0], dtype=np.bool_)
+                            for begin in range(0, points.shape[0], 32):
+                                end = min(begin + 32, points.shape[0])
+                                point_mask[begin:end] = (
+                                    periodic_owner.source_entity_contains(
+                                        points[begin:end, None, :],
+                                        imaged[source_rows[parent]],
+                                    )
+                                )
+                            point_masks[key] = point_mask
+                        mask = np.all(point_mask[rows], axis=1)
+                        ambiguous |= (
+                            mask
+                            & (classes == source_degree)
+                            & (indices != source_orbits[parent])
                         )
-                    ambiguous |= (
-                        mask
-                        & (classes == source_degree)
-                        & (indices != source_orbits[parent])
-                    )
-                    replace = mask & (classes > source_degree)
-                    classes[replace], indices[replace] = (
-                        source_degree,
-                        source_orbits[parent],
-                    )
-                    ambiguous[replace] = False
-                    for row in np.flatnonzero(replace):
-                        entity_roles[int(row)] = roles[source_degree]
-        bad = (indices < 0) | ambiguous
-        if np.any(bad):
-            raise MeshingFailure(
-                MeshingFailureCategory.COMPLIANCE_FAILED,
-                "Periodic geometry membership has an unresolved actual source stratum.",
-                stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
-                entity_ids=tuple(
-                    int(value)
-                    for value in np.asarray(target.entity_set(degree).entity_ids)[bad]
-                ),
+                        replace = mask & (classes > source_degree)
+                        classes[replace], indices[replace] = (
+                            source_degree,
+                            source_orbits[parent],
+                        )
+                        ambiguous[replace] = False
+                        for row in np.flatnonzero(replace):
+                            entity_roles[int(row)] = roles[source_degree]
+            bad = (indices < 0) | ambiguous
+            if np.any(bad):
+                raise MeshingFailure(
+                    MeshingFailureCategory.COMPLIANCE_FAILED,
+                    "periodic.source_support.membership must resolve each target entity to one source stratum; got ambiguous or absent source membership",
+                    stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
+                    entity_ids=tuple(
+                        int(value)
+                        for value in np.asarray(target.entity_set(degree).entity_ids)[bad]
+                    ),
+                )
+            source_ids = tuple(
+                entity_key(source.source_revision, role.value, int(index))
+                for role, index in zip(entity_roles, indices, strict=True)
             )
-        source_ids = tuple(
-            _entity(source.source_revision, role.value, int(index))
-            for role, index in zip(entity_roles, indices, strict=True)
-        )
-        associations.append(
-            GeometryAssociation(
-                GeometryAssociationKind.PIECEWISE_LINEAR,
-                source.source_id,
-                source.source_revision,
-                target.entity_set(degree).entity_set_id,
-                target.entity_set(degree).entity_ids,
-                source_ids,
-                np.zeros(rows.shape[0], dtype=np.float64),
-                exact=True,
-                source_dimensions=classes,
-                source_indices=indices,
-                source_entity_roles=tuple(entity_roles),
+            associations.append(
+                GeometryAssociation(
+                    GeometryAssociationKind.PIECEWISE_LINEAR,
+                    source.source_id,
+                    source.source_revision,
+                    target.entity_set(degree).entity_set_id,
+                    target.entity_set(degree).entity_ids,
+                    source_ids,
+                    np.zeros(rows.shape[0], dtype=np.float64),
+                    exact=True,
+                    source_dimensions=classes,
+                    source_indices=indices,
+                    source_entity_roles=tuple(entity_roles),
+                )
             )
+        return tuple(associations)
+
+
+@final
+class _PeriodicSourceAssociationReceipt(StrictModule):
+    """Bind ended preparation charges to retained source proof identities."""
+
+    proofs: tuple[_PeriodicSourceAssociationPreparation, ...]
+    evidence: NativeExecutionRecord
+    expires_at: float = eqx.field(static=True)
+
+    @classmethod
+    def from_stored_fields(
+        cls, value: _PeriodicSourceAssociationReceipt, /
+    ) -> _PeriodicSourceAssociationReceipt:
+        """Restore charges with proof copies detached from live authentication."""
+        return cls(
+            tuple(
+                _PeriodicSourceAssociationPreparation(
+                    proof.transfer_source,
+                    proof.specification,
+                    proof.result,
+                    proof.association,
+                    proof.associated_degrees,
+                )
+                for proof in value.proofs
+            ),
+            value.evidence,
+            value.expires_at,
         )
-    return tuple(associations)
 
 
 @final
 class PeriodicAssociationTransfer(StrictModule, NonTrainableState):
-    """Renew complete membership in the unchanged authored periodic geometry."""
+    """Renew membership in the unchanged authored periodic geometry."""
 
     source: NativePeriodicSource
     specification: SurfaceMeshingSpec | VolumeMeshingSpec
@@ -1009,7 +1343,7 @@ class PeriodicAssociationTransfer(StrictModule, NonTrainableState):
     ) -> None:
         issues = periodic_support_issues(source, specification)
         if issues:
-            raise ValueError("; ".join(issues))
+            raise ValueError(format_support_issues(issues))
         self.source, self.specification = source, specification
         self.transfer_id = canonical_fingerprint(
             {
@@ -1024,23 +1358,47 @@ class PeriodicAssociationTransfer(StrictModule, NonTrainableState):
         self,
         source: CellMeshingResult,
         /,
+        *,
+        scope: NativeExecutionScope,
+        budget: CoordinateEnclosureBudget,
+        _prepared_source: list[_PeriodicSourceAssociationPreparation] | None = None,
     ) -> tuple[GeometryAssociation, tuple[int, ...]]:
-        if not is_affine_cell_geometry(source.mesh, source.geometry):
+        allowance = _PeriodicSupportAllowance(
+            self.specification.limits, scope=scope, budget=budget
+        )
+        for prepared in () if _prepared_source is None else _prepared_source:
+            if (
+                prepared.transfer_source is self.source
+                and prepared.specification is self.specification
+                and prepared.result is source
+                and native_preparation_ledger(scope).live_contains(prepared)
+            ):
+                with allowance.exact_phase():
+                    budget.ticket.checkpoint()
+                return prepared.association, prepared.associated_degrees
+        with allowance.exact_phase():
+            affine = is_affine_cell_geometry(source.mesh, source.geometry, budget=budget)
+        if not affine:
             raise ValueError(
-                "Periodic source authority requires its actual affine quotient map."
+                "periodic.transfer.source_geometry must be the affine quotient map; got nonaffine geometry"
             )
         dimension = source.mesh.topological_dimension
         by_dimension = {
-            _target_dimension(source.mesh, item): item for item in source.associations
+            target_dimension(source.mesh, item): item for item in source.associations
         }
         if len(by_dimension) != len(source.associations) or set(by_dimension) != set(
             range(dimension + 1)
         ):
             raise ValueError(
-                "Periodic source requires one complete original association table per dimension."
+                "periodic.transfer.associations must have one source association table per dimension; got missing or duplicate dimensions"
             )
-        expected = _periodic_source_associations(
-            self.source, self.specification, source.mesh
+        expected = periodic_source_associations(
+            self.source,
+            self.specification,
+            source.mesh,
+            scope=scope,
+            budget=budget,
+            geometry=source.geometry,
         )
         for degree, proof in enumerate(expected):
             item = by_dimension[degree]
@@ -1052,8 +1410,8 @@ class PeriodicAssociationTransfer(StrictModule, NonTrainableState):
                 or item.source_revision != self.source.source_revision
                 or not item.exact
                 or not item.complete
-                or tuple(item.source_entity_ids[row] for row in rows)
-                != proof.source_entity_ids
+                or tuple(item.source_entities.entity_id(row) for row in rows)
+                != proof.source_entities.entity_ids()
                 or not np.array_equal(
                     np.asarray(item.source_dimensions)[rows],
                     np.asarray(proof.source_dimensions),
@@ -1062,30 +1420,58 @@ class PeriodicAssociationTransfer(StrictModule, NonTrainableState):
                     np.asarray(item.source_indices)[rows],
                     np.asarray(proof.source_indices),
                 )
-                or item.source_entity_roles is None
-                or tuple(item.source_entity_roles[row] for row in rows)
-                != proof.source_entity_roles
+                or not item.source_entities.indexed_roles
+                or tuple(item.source_entities.role(row) for row in rows)
+                != proof.source_entities.roles()
                 or np.any(np.asarray(item.residuals)[rows] != 0.0)
             ):
                 raise ValueError(
-                    "Periodic associations disagree with their unchanged exact original strata."
+                    "periodic.transfer.associations must agree with the unchanged source strata; got inconsistent source membership"
                 )
-        return by_dimension[0], tuple(range(1, dimension + 1))
+        association, degrees = by_dimension[0], tuple(range(1, dimension + 1))
+        if _prepared_source is not None:
+            with allowance.exact_phase():
+                # Retain proof identity in the request ledger; execution may
+                # borrow it only while the charged root request remains live.
+                budget.reserve(1, 512)
+                prepared = _PeriodicSourceAssociationPreparation(
+                    self.source,
+                    self.specification,
+                    source,
+                    association,
+                    degrees,
+                )
+            native_preparation_ledger(scope).remember_live(scope, prepared)
+            _prepared_source.append(prepared)
+        return association, degrees
 
     @checked
-    def classes(self, source: CellMeshingResult, /) -> tuple[PlcEntityClasses, ...]:
-        self.source_associations(source)
+    def classes(
+        self,
+        source: CellMeshingResult,
+        /,
+        *,
+        scope: NativeExecutionScope,
+        budget: CoordinateEnclosureBudget,
+        _prepared_source: list[_PeriodicSourceAssociationPreparation] | None = None,
+    ) -> tuple[PlcEntityClasses, ...]:
+        self.source_associations(
+            source, scope=scope, budget=budget, _prepared_source=_prepared_source
+        )
         domain = self.source.domain
         dimension = self.source.ambient_dimension
         namespaces: list[tuple[int, ...]]
-        if isinstance(domain, CellMesh):
-            topology = _require_periodic_topology(domain)
-            namespaces = [
-                tuple(range(topology.quotient.entities(degree).count))
-                for degree in range(dimension)
-            ]
-        else:
-            namespaces = [() for _ in range(dimension)]
+        match domain:
+            case cell_mesh_owner.CellMesh():
+                topology = periodic_owner.require_periodic_topology(domain)
+                namespaces = [
+                    tuple(range(topology.quotient.entities(degree).count))
+                    for degree in range(dimension)
+                ]
+            case periodic_owner.PeriodicPointOrbits():
+                namespaces = [() for _ in range(dimension)]
+            case _ as invalid:
+                assert_never(invalid)
         namespaces.append(
             tuple(int(region) for region in np.unique(self.source.cell_regions))
         )
@@ -1102,7 +1488,7 @@ class PeriodicAssociationTransfer(StrictModule, NonTrainableState):
             item = next(
                 item
                 for item in source.associations
-                if _target_dimension(source.mesh, item) == degree
+                if target_dimension(source.mesh, item) == degree
             )
             rows = item.target_rows(np.asarray(source.mesh.entity_set(degree).entity_ids))
             dimensions = np.asarray(item.source_dimensions, dtype=np.int64)[rows]
@@ -1126,24 +1512,45 @@ class PeriodicAssociationTransfer(StrictModule, NonTrainableState):
         self,
         source: CellMeshingResult,
         lineage: MeshLineage,
-        target: CellMesh,
+        target: cell_mesh_owner.CellMesh,
         /,
         *,
-        geometry: CellGeometrySpec,
+        geometry: cell_geometry_owner.CellGeometrySpec,
+        scope: NativeExecutionScope,
+        budget: CoordinateEnclosureBudget,
+        _prepared_source: tuple[_PeriodicSourceAssociationPreparation, ...] = (),
     ) -> tuple[GeometryAssociation, ...]:
         if (lineage.source_topology_id, lineage.target_topology_id) != (
             source.mesh.topology_id,
             target.topology_id,
         ):
             raise ValueError(
-                "Periodic source renewal requires its actual mesh transition lineage."
+                "periodic.transfer.lineage must bind the source and target topology IDs; got a different mesh transition"
             )
-        if not is_affine_cell_geometry(target, geometry):
+        allowance = _PeriodicSupportAllowance(
+            self.specification.limits, scope=scope, budget=budget
+        )
+        with allowance.exact_phase():
+            affine = is_affine_cell_geometry(target, geometry, budget=budget)
+        if not affine:
             raise ValueError(
-                "Represented periodic source renewal requires its admitted affine geometry."
+                "periodic.transfer.target_geometry must be the admitted affine geometry; got nonaffine geometry"
             )
-        self.source_associations(source)
-        return _periodic_source_associations(self.source, self.specification, target)
+        self.source_associations(
+            source, scope=scope, budget=budget, _prepared_source=list(_prepared_source)
+        )
+        prepared_cover = next(
+            (proof for proof in _prepared_source if proof.result is source), None
+        )
+        return periodic_source_associations(
+            self.source,
+            self.specification,
+            target,
+            scope=scope,
+            budget=budget,
+            geometry=geometry,
+            _prepared_cover=prepared_cover,
+        )
 
 
 class _SiteMesh:
@@ -1153,14 +1560,41 @@ class _SiteMesh:
         self,
         points: np.ndarray,
         vectors: np.ndarray,
-        triangulation: PeriodicDelaunayTriangulation | PeriodicStratifiedTriangulation,
+        triangulation: PeriodicDelaunayTriangulation
+        | constraints_owner.PeriodicStratifiedTriangulation
+        | PeriodicRefinement,
         /,
+        *,
+        source_support: constraints_owner.PeriodicStratifiedTriangulation | None = None,
     ) -> None:
         self.triangulation = triangulation
+        self.source_support = (
+            triangulation
+            if isinstance(
+                triangulation, constraints_owner.PeriodicStratifiedTriangulation
+            )
+            else source_support
+        )
+        self.protected_vertices = np.zeros(points.shape[0], dtype=np.bool_)
+        self.protected_edges: tuple[tuple[int, ...], ...] = ()
+        if self.source_support is not None:
+            protected = self.source_support.protected_vertices
+            self.protected_vertices[: protected.shape[0]] = protected
+            self.protected_edges = self.source_support.protected_edges
         self.sizing_evidence: tuple[PeriodicSizeRecord, ...] = ()
         self.image_refusals = 0
-        simplices = np.asarray(triangulation.simplices, dtype=np.int64)
-        shifts = np.asarray(triangulation.simplex_shifts, dtype=np.int64)
+        simplices = np.asarray(
+            triangulation.vertices
+            if isinstance(triangulation, PeriodicRefinement)
+            else triangulation.simplices,
+            dtype=np.int64,
+        )
+        shifts = np.asarray(
+            triangulation.shifts
+            if isinstance(triangulation, PeriodicRefinement)
+            else triangulation.simplex_shifts,
+            dtype=np.int64,
+        )
         self.simplices = simplices
         self.simplex_shifts = shifts
         rows = []
@@ -1173,7 +1607,7 @@ class _SiteMesh:
             leads = ~np.any(nonzero, axis=1) | (
                 difference[np.arange(difference.shape[0]), leading] > 0
             )
-            # The translation-invariant key of `_edge_key`: leader, follower, relative shift.
+            # The translation-invariant key of `edge_key`: leader, follower, relative shift.
             rows.append(
                 np.where(
                     leads[:, None],
@@ -1251,81 +1685,21 @@ class _SiteMesh:
                 )
         return issues, longer, deviation, -matched
 
-    def frontal_edges(self, size: float, /) -> np.ndarray:
-        """Edges of every triangle that still holds an edge longer than ``size``."""
-        open_cells = np.any(self.lengths[self.simplex_edges] > size, axis=0)
-        return np.unique(self.simplex_edges[:, open_cells])
-
-
-# Frontal apexes closer than this fraction of the target to an existing orbit
-# would only create sliver edges; they are not candidates.
-_MINIMUM_SITE_SEPARATION = 0.25
-
-
-def _frontal_site(
-    state: _SiteMesh, edge: int, side: float, size: float, /
-) -> np.ndarray | None:
-    """Fundamental representative of the frontal ideal point of one quotient edge.
-
-    This is the apex of the isosceles triangle with legs ``size`` over a
-    quotient edge no longer than ``2 size``, on the requested side.
-    """
-    vectors, key = state.vectors, state.keys[edge]
-    first = state.points[key[0]]
-    second = state.points[key[1]] + key[2:] @ vectors
-    direction = second - first
-    length = float(np.linalg.norm(direction))
-    if not 0.0 < length <= 2.0 * size:
-        return None
-    normal = side * np.asarray((-direction[1], direction[0])) / length
-    apex = 0.5 * (first + second) + normal * np.sqrt(size * size - 0.25 * length * length)
-    image = np.floor(np.linalg.solve(vectors.T, apex))
-    site = apex - image @ vectors
-    if side == 0.0:
-        return site
-    # Choose the representable frontal construction, not a relaxed comparison.
-    # Wrapping and subtraction can round an ideal target-length leg upward.
-    # Adjacent coordinate values are alternative constructions evaluated with
-    # precisely the quotient metric used by the compliance owner.
-    neighbors = [site]
-    lower, upper = site.copy(), site.copy()
-    for _ in range(2):
-        lower = np.nextafter(lower, -np.inf)
-        upper = np.nextafter(upper, np.inf)
-        neighbors.extend((lower, upper))
-    candidates = np.asarray(
-        [(x[0], y[1]) for x in neighbors for y in neighbors], dtype=np.float64
-    )
-    legs = np.stack(
-        (
-            candidates - first + image @ vectors,
-            candidates - state.points[key[1]] + (image - key[2:]) @ vectors,
-        ),
-        axis=1,
-    )
-    lengths = np.linalg.norm(legs, axis=2)
-    over = np.count_nonzero(lengths > size, axis=1)
-    exact = np.count_nonzero(lengths == size, axis=1)
-    deviation = np.sum(np.abs(lengths - size), axis=1)
-    selected = np.lexsort((deviation, -exact, over))[0]
-    return candidates[selected]
-
 
 def _source_growth_site(
     state: _SiteMesh, controls: list[UniformSizeControl], policy: SizeCompliancePolicy, /
 ) -> np.ndarray | None:
     """Remove unprotected fixed long edges, then make immutable quantiles feasible."""
-    construction = state.triangulation
-    if not isinstance(construction, PeriodicStratifiedTriangulation):
+    if state.source_support is None:
         raise TypeError(
-            "Source growth requires native constrained construction witnesses."
+            "periodic.site_growth.source_support must retain source strata; got no constrained construction"
         )
-    protected_edges = set(construction.protected_edges)
+    protected_edges = set(state.protected_edges)
     threshold = min(
         control.target_size + policy.tolerance(control.target_size)
         for control in controls
     )
-    fixed = np.all(construction.protected_vertices[state.keys[:, :2]], axis=1)
+    fixed = np.all(state.protected_vertices[state.keys[:, :2]], axis=1)
     for edge in np.argsort(-state.lengths, kind="stable"):
         key = tuple(int(value) for value in state.keys[edge])
         if fixed[edge] and state.lengths[edge] > threshold and key not in protected_edges:
@@ -1339,7 +1713,7 @@ def _source_growth_site(
         for index, row in enumerate(state.keys)
         if tuple(int(value) for value in row) in protected_edges
     )
-    quantile = max({"p50": 0.5, "p95": 0.95}[name] for name in policy.target_statistics)
+    quantile = max(size_statistic_quantile(name) for name in policy.target_statistics)
     required_edges = int(np.ceil(1.0 + immutable_over / (1.0 - quantile)))
     if state.keys.shape[0] >= required_edges:
         return None
@@ -1353,13 +1727,310 @@ def _source_growth_site(
             return candidate
     raise MeshingFailure(
         MeshingFailureCategory.COMPLIANCE_FAILED,
-        "No source-interior cavity can satisfy the immutable periodic rank budget.",
+        "periodic.site_growth.cavity must satisfy the immutable rank budget; got no admissible interior cavity",
     )
+
+
+type _SiteMerit = tuple[int, int, float, int]
+type _SiteScore = tuple[float, int, float, int]
+
+
+def _site_merit_score(merit: _SiteMerit, /) -> _SiteScore:
+    """Prioritize statistic deviation for protected source-stratum proposals."""
+    return merit[2], merit[0], float(merit[1]), merit[3]
+
+
+def _triangulate_target_size_sites(
+    points: np.ndarray,
+    vectors: np.ndarray,
+    cell: periodic_cell_owner.PeriodicCell,
+    limits: MeshingLimits,
+    stage: MeshingStageKind,
+    image_budget: int,
+    work: int,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    source_strata: constraints_owner.PeriodicSourceStrata | None,
+) -> tuple[_SiteMesh, int]:
+    """Construct one candidate and settle its work before the next candidate."""
+    if source_strata is not None:
+        constrained = constraints_owner.triangulate_periodic_source_strata(
+            points,
+            source_strata,
+            limits,
+            image_budget,
+            limits.maximum_work_units - work,
+            scope=scope,
+        )
+        work += constrained.work_units
+        return _SiteMesh(points, vectors, constrained), work
+    # Size native scratch to this candidate before escalating a refusal to limits.
+    images = min(image_budget, 27 * points.shape[0] + 4096)
+    for maximum_images, maximum_cells in (
+        (images, min(limits.maximum_cells, 64 * images)),
+        (image_budget, limits.maximum_cells),
+    ):
+        try:
+            triangulation = PeriodicDelaunayTriangulation(
+                points,
+                cell,
+                maximum_images=maximum_images,
+                maximum_simplices=maximum_cells,
+            )
+        except PeriodicImageBudgetError as error:
+            if (maximum_images, maximum_cells) == (
+                image_budget,
+                limits.maximum_cells,
+            ):
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    str(error),
+                    stage=stage.value,
+                ) from error
+            continue
+        work += triangulation.simplices.shape[0]
+        if work > limits.maximum_work_units:
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "periodic.site_insertion.work must fit the declared work budget; got a request beyond the budget",
+                stage=stage.value,
+            )
+        return _SiteMesh(points, vectors, triangulation), work
+    raise RuntimeError(
+        "periodic.site_insertion.triangulation must produce a result within the admitted escalation; got no result"
+    )
+
+
+def _relocate_target_size_sites(
+    state: _SiteMesh,
+    controls: list[UniformSizeControl],
+    policy: SizeCompliancePolicy,
+    limits: MeshingLimits,
+    started: float,
+    stage: MeshingStageKind,
+    size: float,
+    work: int,
+    current_score: _SiteScore,
+    /,
+    *,
+    source_binding_id: str,
+    scope: NativeExecutionScope,
+) -> tuple[tuple[_SiteMerit, _SiteMesh] | None, int]:
+    """Retain proposal/refusal evidence before accepting an improving relocation."""
+    try:
+        proposal = propose_periodic_site_relocation(
+            state.points,
+            state.keys,
+            state.simplices,
+            state.simplex_shifts,
+            state.vectors,
+            state.protected_vertices,
+            size,
+            policy.target_statistics,
+            limits.maximum_work_units - work,
+            limits.maximum_scratch_bytes,
+            lambda: check_deadline(started, limits, stage),
+            source_binding_id=source_binding_id,
+            maximum_size=min(
+                (
+                    control.maximum_size
+                    for control in controls
+                    if control.maximum_size is not None
+                ),
+                default=np.inf,
+            ),
+            minimum_size=max(
+                (
+                    control.minimum_size
+                    for control in controls
+                    if control.minimum_size is not None
+                ),
+                default=0.0,
+            ),
+            scope=scope,
+        )
+    except MeshingFailure as error:
+        if error.category is not MeshingFailureCategory.RESOURCE_EXHAUSTED:
+            raise
+        measured = (
+            ("candidate:p50_edge", float(np.quantile(state.lengths, 0.5))),
+            ("candidate:p95_edge", float(np.quantile(state.lengths, 0.95))),
+            ("candidate:maximum_edge", float(np.max(state.lengths))),
+            ("candidate:optimizer_calls", len(state.sizing_evidence)),
+        )
+        raise MeshingFailure(
+            error.category,
+            str(error),
+            requested=error.evidence.requested,
+            achieved=(*error.evidence.achieved, *measured),
+        ) from error
+    work += proposal.work_units
+    state.sizing_evidence = (*state.sizing_evidence, proposal.record)
+    check_deadline(started, limits, stage)
+    if proposal.points is not None:
+        corrected = _SiteMesh(
+            proposal.points,
+            state.vectors,
+            state.triangulation,
+            source_support=state.source_support,
+        )
+        measured = corrected.merit(controls, policy, quadratic=True)
+        if _site_merit_score(measured) < current_score:
+            corrected.sizing_evidence = state.sizing_evidence
+            corrected.image_refusals = state.image_refusals
+            return (measured, corrected), work
+    return None, work
+
+
+def _refine_target_size_sites(
+    state: _SiteMesh,
+    cell: periodic_cell_owner.PeriodicCell,
+    controls: list[UniformSizeControl],
+    policy: SizeCompliancePolicy,
+    limits: MeshingLimits,
+    started: float,
+    stage: MeshingStageKind,
+    image_budget: int,
+    work: int,
+    /,
+    *,
+    scope: NativeExecutionScope,
+) -> tuple[_SiteMesh, int]:
+    """Keep one native quotient owner through all read-only candidate batches."""
+    control_rows = np.asarray(
+        [
+            (
+                control.target_size,
+                np.nan if control.minimum_size is None else control.minimum_size,
+                np.nan if control.maximum_size is None else control.maximum_size,
+                np.nan
+                if control.maximum_growth_rate is None
+                else control.maximum_growth_rate,
+                float(control.strength is SizeControlStrength.HARD),
+            )
+            for control in controls
+        ],
+        dtype=np.float64,
+    )
+    check_deadline(started, limits, stage)
+    remaining = scope.remaining()
+    with (
+        scope.batch(
+            min(limits.maximum_work_units - work, remaining.remaining_work_units),
+            cavity_upper=min(
+                limits.maximum_cavity_cells, remaining.remaining_cavity_cells
+            ),
+            bytes_upper=min(
+                limits.maximum_scratch_bytes, remaining.remaining_managed_bytes
+            ),
+        ) as ticket,
+        ticket.native_target(),
+    ):
+        result = periodic_refine_2d(
+            state.points,
+            state.vectors,
+            np.asarray(cell.inverse_vectors, dtype=np.float64),
+            state.simplices,
+            state.simplex_shifts,
+            control_rows,
+            np.asarray(
+                [size_statistic_quantile(name) for name in policy.target_statistics],
+                dtype=np.float64,
+            ),
+            protected_edges=np.asarray(state.protected_edges, dtype=np.int32).reshape(
+                (-1, 4)
+            ),
+            absolute_tolerance=policy.absolute_tolerance,
+            relative_tolerance=policy.relative_tolerance,
+            max_vertices=limits.maximum_vertices,
+            max_cells=limits.maximum_cells,
+            max_images=image_budget,
+            max_work_units=limits.maximum_work_units - work,
+            max_cavity_cells=limits.maximum_cavity_cells,
+            max_scratch_bytes=limits.maximum_scratch_bytes,
+        )
+    work += result.counters.work_units
+    if result.status != MeshcoreStatus.OK:
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED
+            if result.status is MeshcoreStatus.CAPACITY_EXCEEDED
+            else MeshingFailureCategory.INVALID_SOURCE,
+            "periodic.site_insertion.native must admit the quotient cavity within the declared controls and limits; got "
+            + result.status.name,
+            stage=stage.value,
+            achieved=(
+                ("site_work", work),
+                ("site_candidates", result.counters.candidates),
+                ("site_commits", result.counters.commits),
+                ("site_image_refusals", result.counters.image_refusals),
+            ),
+        )
+    check_deadline(started, limits, stage)
+    if not np.array_equal(result.points[: state.points.shape[0]], state.points):
+        raise MeshingFailure(
+            MeshingFailureCategory.AUDIT_FAILED,
+            "periodic.site_insertion.points must retain the input root prefix; got changed source roots",
+            stage=stage.value,
+        )
+    refined = _SiteMesh(
+        result.points,
+        state.vectors,
+        result,
+        source_support=state.source_support,
+    )
+    refined.sizing_evidence = state.sizing_evidence
+    refined.image_refusals = state.image_refusals + result.counters.image_refusals
+    if result.counters.stop_reason == 2 and refined.merit(controls, policy)[0]:
+        target = min(control.target_size for control in controls)
+        proposal = propose_periodic_rank_placement(
+            refined.points,
+            refined.keys,
+            refined.simplices,
+            refined.simplex_shifts,
+            refined.vectors,
+            refined.protected_vertices,
+            target,
+            policy.target_statistics,
+            limits.maximum_work_units - work,
+            limits.maximum_scratch_bytes,
+            lambda: check_deadline(started, limits, stage),
+            scope=scope,
+            maximum_size=min(
+                (
+                    control.maximum_size
+                    for control in controls
+                    if control.maximum_size is not None
+                ),
+                default=np.inf,
+            ),
+            minimum_size=max(
+                (
+                    control.minimum_size
+                    for control in controls
+                    if control.minimum_size is not None
+                ),
+                default=0.0,
+            ),
+        )
+        work += proposal.work_units
+        if proposal.points is not None:
+            corrected = _SiteMesh(
+                proposal.points,
+                state.vectors,
+                result,
+                source_support=refined.source_support,
+            )
+            corrected.sizing_evidence = refined.sizing_evidence
+            corrected.image_refusals = refined.image_refusals
+            refined = corrected
+        refined.sizing_evidence = (*refined.sizing_evidence, proposal.record)
+    return refined, work
 
 
 def _realize_target_size_sites(
     points: np.ndarray,
-    cell: PeriodicCell,
+    cell: periodic_cell_owner.PeriodicCell,
     controls: list[UniformSizeControl],
     policy: SizeCompliancePolicy,
     limits: MeshingLimits,
@@ -1369,463 +2040,522 @@ def _realize_target_size_sites(
     /,
     *,
     source_binding_id: str,
-    source_strata: PeriodicSourceStrata | None = None,
+    scope: NativeExecutionScope,
+    source_strata: constraints_owner.PeriodicSourceStrata | None = None,
 ) -> tuple[_SiteMesh, int]:
-    """Insert frontal orbit sites until every hard uniform size statistic is met.
-
-    Each step tries the ideal frontal apex of every edge on the front (edges of
-    triangles that still hold an over-target edge), on both sides, triangulates
-    the actual periodic Delaunay candidate and accepts the one that most
-    reduces (hard issues, over-target edges, statistic deviation) while
-    maximizing target-length edges (within the policy's comparison
-    tolerance). Inserted sites are lattice orbits, so the quotient is
-    preserved by construction. Source-stratified construction uses the first
-    improving candidate after protected-orbit subdivision; this bounds native
-    constrained retriangulation work. A step without improvement stops the
-    realization; the unchanged hard compliance check then reports it.
-    """
+    """Realize hard statistics while retaining protected source-support evidence."""
     vectors = np.asarray(cell.vectors, dtype=np.float64)
+    state, work = _triangulate_target_size_sites(
+        points,
+        vectors,
+        cell,
+        limits,
+        stage,
+        image_budget,
+        0,
+        scope=scope,
+        source_strata=source_strata,
+    )
+    state, work = _refine_target_size_sites(
+        state,
+        cell,
+        controls,
+        policy,
+        limits,
+        started,
+        stage,
+        image_budget,
+        work,
+        scope=scope,
+    )
+    if source_strata is None:
+        return state, work
     size = min(control.target_size for control in controls)
-    work = 0
-
-    def triangulate(points: np.ndarray, /) -> _SiteMesh:
-        nonlocal work
-        if source_strata is not None:
-            constrained = triangulate_periodic_source_strata(
-                points,
-                source_strata,
-                limits,
-                image_budget,
-                limits.maximum_work_units - work,
-            )
-            work += constrained.work_units
-            return _SiteMesh(points, vectors, constrained)
-        # Native scratch is first sized to this candidate's site count; only a
-        # refusal at that size escalates to the request's enforced limits.
-        images = min(image_budget, 27 * points.shape[0] + 4096)
-        for maximum_images, maximum_cells in (
-            (images, min(limits.maximum_cells, 64 * images)),
-            (image_budget, limits.maximum_cells),
-        ):
-            try:
-                triangulation = PeriodicDelaunayTriangulation(
-                    points,
-                    cell,
-                    maximum_images=maximum_images,
-                    maximum_simplices=maximum_cells,
-                )
-            except PeriodicImageBudgetError as error:
-                if (maximum_images, maximum_cells) == (
-                    image_budget,
-                    limits.maximum_cells,
-                ):
-                    raise MeshingFailure(
-                        MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                        str(error),
-                        stage=stage.value,
-                    ) from error
-                continue
-            work += triangulation.simplices.shape[0]
-            if work > limits.maximum_work_units:
-                raise MeshingFailure(
-                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                    "Periodic target-size site insertion exceeds its work budget.",
-                    stage=stage.value,
-                )
-            return _SiteMesh(points, vectors, triangulation)
-        raise RuntimeError(
-            "Periodic site triangulation exhausted its escalation without a result."
-        )
-
-    state = triangulate(points)
-    image_refusals = 0
-    current = state.merit(controls, policy, quadratic=source_strata is not None)
+    current = state.merit(controls, policy, quadratic=True)
     while current[0]:
         if state.points.shape[0] + 1 > limits.maximum_vertices:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Periodic target-size site insertion exceeds the vertex budget.",
+                "periodic.site_insertion.vertices must fit the declared vertex budget; got a request beyond the budget",
                 stage=stage.value,
             )
-        current_score = (
-            (current[2], current[0], float(current[1]), current[3])
-            if source_strata is not None
-            else (float(current[0]), current[1], current[2], current[3])
+        growth = _source_growth_site(state, controls, policy)
+        if growth is not None:
+            enlarged, work = _triangulate_target_size_sites(
+                np.concatenate((state.points, growth[None])),
+                vectors,
+                cell,
+                limits,
+                stage,
+                image_budget,
+                work,
+                scope=scope,
+                source_strata=source_strata,
+            )
+            enlarged.sizing_evidence = state.sizing_evidence
+            enlarged.image_refusals = state.image_refusals
+            enlarged, work = _refine_target_size_sites(
+                enlarged,
+                cell,
+                controls,
+                policy,
+                limits,
+                started,
+                stage,
+                image_budget,
+                work,
+                scope=scope,
+            )
+            current, state = enlarged.merit(controls, policy, quadratic=True), enlarged
+            continue
+        relocated, work = _relocate_target_size_sites(
+            state,
+            controls,
+            policy,
+            limits,
+            started,
+            stage,
+            size,
+            work,
+            _site_merit_score(current),
+            source_binding_id=source_binding_id,
+            scope=scope,
         )
-        best: (
-            tuple[tuple[float, int, float, int], tuple[int, int, float, int], _SiteMesh]
-            | None
-        ) = None
-        front_edges = state.frontal_edges(size) if source_strata is None else ()
-        for edge in front_edges:
-            protected = source_strata is not None and any(
-                np.array_equal(state.keys[edge], key) for key in source_strata.edges
-            )
-            fronts = (
-                ((1.0, -1.0), (1.0,), (-1.0,))
-                if source_strata is not None
-                else ((1.0,), (-1.0,))
-            )
-            if protected:
-                fronts = ((0.0,), *fronts)
-            for sides in fronts:
-                check_deadline(started, limits, stage)
-                if state.points.shape[0] + len(sides) > limits.maximum_vertices:
-                    continue
-                sites: list[np.ndarray] = []
-                for side in sides:
-                    site = _frontal_site(state, int(edge), side, size)
-                    if site is None:
-                        break
-                    existing = (
-                        state.points
-                        if not sites
-                        else np.concatenate((state.points, np.stack(sites)))
-                    )
-                    gap = np.linalg.solve(vectors.T, (existing - site).T).T
-                    if (
-                        np.min(np.linalg.norm((gap - np.rint(gap)) @ vectors, axis=1))
-                        < _MINIMUM_SITE_SEPARATION * size
-                    ):
-                        break
-                    sites.append(site)
-                if len(sites) != len(sides):
-                    continue
-                try:
-                    candidate = triangulate(
-                        np.concatenate((state.points, np.stack(sites)))
-                    )
-                except PeriodicConstructionImageBudgetError as error:
-                    work += error.work_units
-                    image_refusals += 1
-                    continue
-                candidate.sizing_evidence = state.sizing_evidence
-                merit = candidate.merit(
-                    controls, policy, quadratic=source_strata is not None
-                )
-                score = (
-                    (merit[2], merit[0], float(merit[1]), merit[3])
-                    if source_strata is not None
-                    else (float(merit[0]), merit[1], merit[2], merit[3])
-                )
-                if best is None or score < best[0]:
-                    best = (score, merit, candidate)
-                if merit[0] == 0 or (source_strata is not None and score < current_score):
-                    break
-            if best is not None and (
-                best[1][0] == 0 or (source_strata is not None and best[0] < current_score)
-            ):
-                break
-        if best is None or best[0] >= current_score:
-            if source_strata is not None:
-                growth = _source_growth_site(state, controls, policy)
-                if growth is not None:
-                    enlarged = triangulate(np.concatenate((state.points, growth[None])))
-                    enlarged.sizing_evidence = state.sizing_evidence
-                    current, state = (
-                        enlarged.merit(controls, policy, quadratic=True),
-                        enlarged,
-                    )
-                    continue
-            if source_strata is not None and isinstance(
-                state.triangulation, PeriodicStratifiedTriangulation
-            ):
-                try:
-                    proposal = propose_periodic_site_relocation(
-                        state.points,
-                        state.keys,
-                        state.simplices,
-                        state.simplex_shifts,
-                        vectors,
-                        state.triangulation.protected_vertices,
-                        size,
-                        policy.target_statistics,
-                        limits.maximum_work_units - work,
-                        limits.maximum_scratch_bytes,
-                        lambda: check_deadline(started, limits, stage),
-                        source_binding_id=source_binding_id,
-                        maximum_size=min(
-                            (
-                                control.maximum_size
-                                for control in controls
-                                if control.maximum_size is not None
-                            ),
-                            default=np.inf,
-                        ),
-                        minimum_size=max(
-                            (
-                                control.minimum_size
-                                for control in controls
-                                if control.minimum_size is not None
-                            ),
-                            default=0.0,
-                        ),
-                    )
-                except MeshingFailure as error:
-                    if error.category is not MeshingFailureCategory.RESOURCE_EXHAUSTED:
-                        raise
-                    measured = (
-                        ("candidate:p50_edge", float(np.quantile(state.lengths, 0.5))),
-                        ("candidate:p95_edge", float(np.quantile(state.lengths, 0.95))),
-                        ("candidate:maximum_edge", float(np.max(state.lengths))),
-                        ("candidate:optimizer_calls", len(state.sizing_evidence)),
-                    )
-                    raise MeshingFailure(
-                        error.category,
-                        str(error),
-                        requested=error.evidence.requested,
-                        achieved=(*error.evidence.achieved, *measured),
-                    ) from error
-                work += proposal.work_units
-                state.sizing_evidence = (*state.sizing_evidence, proposal.record)
-                check_deadline(started, limits, stage)
-                if proposal.points is not None:
-                    corrected = _SiteMesh(proposal.points, vectors, state.triangulation)
-                    measured = corrected.merit(controls, policy, quadratic=True)
-                    if (
-                        measured[2],
-                        measured[0],
-                        float(measured[1]),
-                        measured[3],
-                    ) < current_score:
-                        corrected.sizing_evidence = state.sizing_evidence
-                        current, state = measured, corrected
-                        continue
+        if relocated is None:
             break
-        current, state = best[1], best[2]
-    state.image_refusals = image_refusals
+        current, state = relocated
     return state, work
 
 
-def execute_periodic_route(
+@final
+class _PeriodicConstruction(StrictModule):
+    """Retain constructed cells and their source inventory through certification."""
+
+    mesh: cell_mesh_owner.CellMesh
+    original_mesh: cell_mesh_owner.CellMesh
+    regions: np.ndarray
+    original_regions: np.ndarray
+    ancestry: tuple[tuple[int, ...], ...]
+    work: int
+    inserted_sites: int
+    sizing_evidence: tuple[PeriodicSizeRecord, ...]
+    image_refusals: int
+    stratified: bool
+    source_construction_images: int | None
+    geometry: cell_geometry_owner.CellGeometrySpec | None = None
+    construction_evidence: tuple[tuple[str, int], ...] = eqx.field(
+        static=True, default=()
+    )
+
+
+@final
+class _PeriodicCertification(StrictModule):
+    """Carry quotient and embedding evidence with phase-local work quantities."""
+
+    quotient: periodic_owner.PeriodicQuotientEvidence
+    embedding: periodic_owner.PeriodicEmbeddingEvidence
+    work_evidence: tuple[tuple[str, float], ...]
+
+
+@final
+class _PeriodicCompliance(StrictModule):
+    """Accumulate ordered requested quantities, measurements, and issues."""
+
+    requested: list[tuple[str, float]]
+    achieved: list[tuple[str, float]]
+    issues: list[str]
+
+
+def _construct_periodic_seed(
+    orbits: periodic_owner.PeriodicPointOrbits,
     source: NativePeriodicSource,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
-    prepared: PreparedPeriodicDomain,
-    coordinate_contract: SpatialCoordinateContract,
-    provider: MeshingProviderInfo,
-    plan_id: str,
-    /,
+    limits: MeshingLimits,
+    started: float,
+    stage: MeshingStageKind,
+    image_budget: int,
+    hard: list[UniformSizeControl],
     *,
-    record_phase: NativeMeshingPhaseRecorder | None = None,
-) -> CellMeshingResult:
-    if (
-        prepared.source.binding_id != source.binding_id
-        or prepared.specification_id != specification.specification_id
-    ):
-        raise ValueError("The prepared periodic route is bound to a different request.")
-    started = monotonic()
-    try:
-        constraint_requested, constraint_achieved = _bound_constraint_evidence(
-            source, specification.periodic_constraints
-        )
-    except ValueError as error:
-        raise MeshingFailure(
-            MeshingFailureCategory.COMPLIANCE_FAILED, str(error)
-        ) from error
-    limits = specification.limits
-    stage = (
-        MeshingStageKind.SURFACE_MESHING
-        if source.ambient_dimension == 2
-        else MeshingStageKind.VOLUME_FILL
-    )
-    image_budget = min(
-        limits.maximum_vertices,
-        limits.maximum_scratch_bytes // (8 * (source.ambient_dimension + 8)),
-    )
-    if image_budget <= 0:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Periodic construction has no image storage budget.",
-        )
-    controls: list[UniformSizeControl] = []
-    for control in specification.size_controls:
-        if not isinstance(control, UniformSizeControl):
-            raise TypeError("The prepared periodic route requires uniform size controls.")
-        controls.append(control)
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> _PeriodicConstruction:
     work = 0
     inserted_sites = 0
     sizing_evidence: tuple[PeriodicSizeRecord, ...] = ()
     image_refusals = 0
-    hard = [
-        control for control in controls if control.strength is SizeControlStrength.HARD
-    ]
     stratified = False
-    ancestry: tuple[tuple[int, ...], ...]
-    if isinstance(source.domain, PeriodicPointOrbits):
-        orbits = source.domain
-        with measure_phase(record_phase, "periodic_construction"):
-            if hard and source.ambient_dimension == 2:
-                site_mesh, work = _realize_target_size_sites(
-                    np.asarray(orbits.representatives),
-                    orbits.cell,
-                    hard,
-                    specification.size_compliance,
-                    limits,
-                    started,
-                    stage,
-                    image_budget,
-                    source_binding_id=source.binding_id,
-                )
-                inserted_sites = site_mesh.points.shape[0] - source.domain.orbit_count
-                mesh = publish_periodic_simplices(
-                    site_mesh.points,
-                    site_mesh.simplices,
-                    site_mesh.simplex_shifts,
-                    orbits.cell,
-                )
-            else:
-                try:
-                    construction = periodic_delaunay_mesh(
+    with measure_phase(record_phase, "periodic_construction"):
+        if hard and source.ambient_dimension == 2:
+            site_mesh, work = _realize_target_size_sites(
+                np.asarray(orbits.representatives),
+                orbits.cell,
+                hard,
+                specification.size_compliance,
+                limits,
+                started,
+                stage,
+                image_budget,
+                source_binding_id=source.binding_id,
+                scope=scope,
+            )
+            inserted_sites = site_mesh.points.shape[0] - orbits.orbit_count
+            sizing_evidence = site_mesh.sizing_evidence
+            image_refusals = site_mesh.image_refusals
+            mesh = periodic_owner.publish_periodic_simplices(
+                site_mesh.points,
+                site_mesh.simplices,
+                site_mesh.simplex_shifts,
+                orbits.cell,
+                scope=scope,
+                budget=budget,
+            )
+        else:
+            try:
+                with budget.measurement():
+                    construction = periodic_owner.periodic_delaunay_mesh(
                         orbits,
                         maximum_images=image_budget,
                         maximum_simplices=limits.maximum_cells,
+                        scope=scope,
+                        budget=budget,
                     )
-                except PeriodicImageBudgetError as error:
-                    evidence = error.evidence
-                    raise MeshingFailure(
-                        MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                        str(error),
-                        stage=stage.value,
-                        requested=(
-                            ("maximum_images", evidence.maximum_images),
-                            ("maximum_cells", evidence.maximum_cells),
-                        ),
-                        achieved=(
-                            ("image_count", evidence.image_count),
-                            ("finite_cell_slots", evidence.finite_cell_slots),
-                        ),
-                    ) from error
-                mesh = construction.mesh
-        regions = np.zeros(mesh.blocks[0].cell_count, dtype=np.int32)
-        original_mesh = mesh
-        original_regions = regions.copy()
-        ancestry = tuple((index,) for index in range(mesh.blocks[0].cell_count))
-    else:
-        mesh = source.domain
-        original_mesh = mesh
-        original_regions = np.asarray(source.cell_regions).copy()
-        regions = original_regions.copy()
-        ancestry = tuple((index,) for index in range(mesh.blocks[0].cell_count))
-        if (
-            hard
-            and source.ambient_dimension == 2
-            and isinstance(_require_periodic_topology(mesh).cell, PeriodicCell)
-        ):
-            with measure_phase(record_phase, "periodic_construction"):
-                strata = prepare_periodic_source_strata(
-                    mesh,
-                    regions,
-                    specification.protected_features,
-                )
-                minimum = max(
-                    control.minimum_size
-                    - specification.size_compliance.tolerance(control.minimum_size)
-                    if control.minimum_size is not None
-                    else 0.0
-                    for control in hard
-                )
-                seeds = periodic_source_seed_points(
-                    strata,
-                    min(
-                        (
-                            control.maximum_size
-                            for control in hard
-                            if control.maximum_size is not None
-                        ),
-                        default=np.inf,
+            except PeriodicImageBudgetError as error:
+                evidence = error.evidence
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    str(error),
+                    stage=stage.value,
+                    requested=(
+                        ("maximum_images", evidence.maximum_images),
+                        ("maximum_cells", evidence.maximum_cells),
                     ),
-                    minimum,
-                    limits.maximum_vertices,
+                    achieved=(
+                        ("image_count", evidence.image_count),
+                        ("finite_cell_slots", evidence.finite_cell_slots),
+                    ),
+                ) from error
+            mesh = construction.mesh
+    regions = np.zeros(mesh.blocks[0].cell_count, dtype=np.int32)
+    original_mesh = mesh
+    original_regions = regions.copy()
+    ancestry = tuple((index,) for index in range(mesh.blocks[0].cell_count))
+    return _PeriodicConstruction(
+        mesh,
+        original_mesh,
+        regions,
+        original_regions,
+        ancestry,
+        work,
+        inserted_sites,
+        sizing_evidence,
+        image_refusals,
+        stratified,
+        None,
+    )
+
+
+def _construct_algebraic_periodic_domain(
+    source: NativePeriodicSource,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> _PeriodicConstruction | None:
+    with budget.temporary_scope():
+        starting_work = budget.work_units
+        from ._native_periodic_algebraic import construct_exact_algebraic_carrier
+
+        try:
+            carrier = construct_exact_algebraic_carrier(
+                source, specification, scope=scope, budget=budget
+            )
+        except NativeResourceFailure as error:
+            raise MeshingFailure(
+                MeshingFailureCategory.TIMED_OUT
+                if error.status is MeshcoreStatus.TIMEOUT
+                else MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                str(error),
+                stage=MeshingStageKind.SURFACE_MESHING.value,
+                achieved=(
+                    ("native_status", float(error.status)),
+                    *tuple(
+                        (f"native_execution:{index}", float(value))
+                        for index, value in enumerate(error.work_evidence)
+                    ),
+                    *tuple(
+                        (f"native_memory:{name}", float(value))
+                        for name, value in error.memory_counters.items()
+                    ),
+                ),
+            ) from error
+        except CoordinateEnclosureResourceError as error:
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "periodic.algebraic.resources must fit the remaining work and storage allowances; got a resource refusal",
+                stage=MeshingStageKind.SURFACE_MESHING.value,
+                requested=(
+                    (str(error.resource), float(error.requested)),
+                    ("limit", float(error.limit)),
+                ),
+                achieved=(("completed", float(error.completed)),),
+            ) from error
+        if carrier is None:
+            return None
+        domain = source.domain
+        if not isinstance(domain, cell_mesh_owner.CellMesh):
+            raise TypeError(
+                "periodic.algebraic.domain must retain represented source cells; got point orbits"
+            )
+        topology = periodic_owner.require_periodic_topology(domain)
+        if not isinstance(topology.cell, periodic_cell_owner.PeriodicCell):
+            raise TypeError(
+                "periodic.algebraic.cell must be a translational periodic cell; got isometries"
+            )
+        block_name = domain.blocks[0].name
+        mesh = periodic_owner.publish_periodic_simplices(
+            carrier.points,
+            carrier.simplices,
+            carrier.shifts,
+            topology.cell,
+            block_name=block_name,
+            exact_coordinates=carrier.exact_coordinates,
+            scope=scope,
+            budget=budget,
+        )
+        allowance = _PeriodicSupportAllowance(
+            specification.limits, scope=scope, budget=budget
+        )
+        with allowance.exact_phase():
+            bank = periodic_owner.periodic_lifted_exact_coordinates(
+                carrier.exact_coordinates,
+                carrier.simplices,
+                carrier.shifts,
+                topology.cell,
+                budget=budget,
+            )
+            elements = {
+                block.name: cell_geometry_owner.coordinate_lagrange_element(
+                    block.cell_kind, 1
                 )
-                site_mesh, work = _realize_target_size_sites(
-                    seeds,
-                    strata.cell,
-                    hard,
-                    specification.size_compliance,
-                    limits,
-                    started,
-                    stage,
-                    image_budget,
-                    source_strata=strata,
-                    source_binding_id=source.binding_id,
+                for block in mesh.blocks
+            }
+            routes = {block.name: block.vertices for block in mesh.blocks}
+            source_work, bits = algebraic_source_limits(bank)
+            exact = ExactAlgebraicCellGeometrySource(
+                bank,
+                rational_source_layouts(elements, routes),
+                source_identity=carrier.source_identity,
+                maximum_work=source_work,
+                maximum_bits=bits,
+                budget=budget,
+            )
+            geometry = cell_geometry_owner.CellGeometrySpec(
+                elements, routes, mesh.coordinates, exact_source=exact, budget=budget
+            )
+            budget.retain_basis((mesh, geometry))
+        return _PeriodicConstruction(
+            mesh,
+            domain,
+            carrier.regions,
+            np.asarray(source.cell_regions).copy(),
+            carrier.ancestry,
+            budget.work_units - starting_work,
+            carrier.points.shape[0] - topology.quotient.entities(0).count,
+            (),
+            0,
+            True,
+            carrier.image_count,
+            geometry,
+            carrier.work_evidence,
+        )
+
+
+def _construct_represented_periodic_domain(
+    mesh: cell_mesh_owner.CellMesh,
+    source: NativePeriodicSource,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    limits: MeshingLimits,
+    started: float,
+    stage: MeshingStageKind,
+    image_budget: int,
+    hard: list[UniformSizeControl],
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> _PeriodicConstruction:
+    work = 0
+    inserted_sites = 0
+    sizing_evidence: tuple[PeriodicSizeRecord, ...] = ()
+    image_refusals = 0
+    stratified = False
+    source_construction_images: int | None = None
+    original_mesh = mesh
+    original_regions = np.asarray(source.cell_regions).copy()
+    regions = original_regions.copy()
+    ancestry = tuple((index,) for index in range(mesh.blocks[0].cell_count))
+    with measure_phase(record_phase, "periodic_construction"):
+        exact = _construct_algebraic_periodic_domain(
+            source, specification, scope=scope, budget=budget
+        )
+    if exact is not None:
+        return exact
+    if (
+        hard
+        and source.ambient_dimension == 2
+        and isinstance(
+            periodic_owner.require_periodic_topology(mesh).cell,
+            periodic_cell_owner.PeriodicCell,
+        )
+    ):
+        with measure_phase(record_phase, "periodic_construction"):
+            strata = constraints_owner.prepare_periodic_source_strata(
+                mesh,
+                regions,
+                specification.protected_features,
+            )
+            minimum = max(
+                control.minimum_size
+                - specification.size_compliance.tolerance(control.minimum_size)
+                if control.minimum_size is not None
+                else 0.0
+                for control in hard
+            )
+            seeds = constraints_owner.periodic_source_seed_points(
+                strata,
+                min(
+                    (
+                        control.maximum_size
+                        for control in hard
+                        if control.maximum_size is not None
+                    ),
+                    default=np.inf,
+                ),
+                minimum,
+                limits.maximum_vertices,
+            )
+            site_mesh, work = _realize_target_size_sites(
+                seeds,
+                strata.cell,
+                hard,
+                specification.size_compliance,
+                limits,
+                started,
+                stage,
+                image_budget,
+                source_strata=strata,
+                source_binding_id=source.binding_id,
+                scope=scope,
+            )
+            sizing_evidence = site_mesh.sizing_evidence
+            image_refusals = site_mesh.image_refusals
+            if site_mesh.source_support is None:
+                raise MeshingFailure(
+                    MeshingFailureCategory.AUDIT_FAILED,
+                    "periodic.source_strata.support must retain constrained construction evidence; got no source support",
+                    stage=stage.value,
                 )
-                sizing_evidence = site_mesh.sizing_evidence
-                image_refusals = site_mesh.image_refusals
-                regions, ancestry, certification_work = bind_periodic_source_strata(
+            source_construction_images = site_mesh.source_support.image_count
+            regions, ancestry, certification_work = (
+                constraints_owner.bind_periodic_source_strata(
                     site_mesh.points,
                     site_mesh.simplices,
                     site_mesh.simplex_shifts,
                     strata,
                     limits.maximum_work_units - work,
+                    scope=scope,
                 )
-                work += certification_work
-                inserted_sites = site_mesh.points.shape[0] - strata.points.shape[0]
-                mesh = publish_periodic_simplices(
-                    site_mesh.points,
-                    site_mesh.simplices,
-                    site_mesh.simplex_shifts,
-                    strata.cell,
-                    block_name=strata.block_name,
-                )
-                stratified = True
-    initial = PeriodicQuotientEvidence(original_mesh)
-    initial_measures = np.asarray(periodic_orbit_measures(original_mesh).orbit_measures)
-    threshold = min(
-        control.maximum_size
-        if control.maximum_size is not None
-        else control.target_size
-        * (1.0 + specification.size_compliance.relative_tolerance)
-        + specification.size_compliance.absolute_tolerance
-        for control in controls
+            )
+            work += certification_work
+            inserted_sites = site_mesh.points.shape[0] - strata.points.shape[0]
+            mesh = periodic_owner.publish_periodic_simplices(
+                site_mesh.points,
+                site_mesh.simplices,
+                site_mesh.simplex_shifts,
+                strata.cell,
+                block_name=strata.block_name,
+                scope=scope,
+                budget=budget,
+            )
+            stratified = True
+    return _PeriodicConstruction(
+        mesh,
+        original_mesh,
+        regions,
+        original_regions,
+        ancestry,
+        work,
+        inserted_sites,
+        sizing_evidence,
+        image_refusals,
+        stratified,
+        source_construction_images,
     )
-    while True:
-        check_deadline(started, limits, stage)
-        edges = _simplex_entity_corners(mesh, 1)
-        lengths, growth = periodic_edge_size_evidence(mesh)
-        if stratified or float(np.max(lengths)) <= threshold:
-            break
-        # Bound the entire orbit closure before allocating a successor.
-        count = mesh.blocks[0].cell_count
-        upper_cells = count * (4 if source.ambient_dimension == 2 else 64)
-        upper_vertices = mesh.coordinates.shape[0] + edges.shape[0] * (
-            source.ambient_dimension + 1
-        )
-        if (
-            upper_cells > limits.maximum_cells
-            or upper_vertices > limits.maximum_vertices
-            or upper_cells * (source.ambient_dimension + 1)
-            > limits.maximum_connectivity_entries
-        ):
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Periodic refinement exceeds its closure budget.",
+
+
+def _construct_periodic_domain(
+    source: NativePeriodicSource,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    limits: MeshingLimits,
+    started: float,
+    stage: MeshingStageKind,
+    image_budget: int,
+    hard: list[UniformSizeControl],
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> _PeriodicConstruction:
+    match source.domain:
+        case periodic_owner.PeriodicPointOrbits() as orbits:
+            return _construct_periodic_seed(
+                orbits,
+                source,
+                specification,
+                limits,
+                started,
+                stage,
+                image_budget,
+                hard,
+                scope=scope,
+                budget=budget,
+                record_phase=record_phase,
             )
-        work += upper_cells
-        if (
-            work > limits.maximum_work_units
-            or upper_cells * 128 + upper_vertices * 64 > limits.maximum_scratch_bytes
-        ):
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Periodic refinement exceeds its work/scratch budget.",
+        case cell_mesh_owner.CellMesh() as mesh:
+            return _construct_represented_periodic_domain(
+                mesh,
+                source,
+                specification,
+                limits,
+                started,
+                stage,
+                image_budget,
+                hard,
+                scope=scope,
+                budget=budget,
+                record_phase=record_phase,
             )
-        with measure_phase(record_phase, "refinement"):
-            refinement = refine_periodic_mesh(
-                mesh, source_geometry=CellGeometrySpec.affine(mesh)
-            )
-        regions = regions[np.asarray(refinement.parent_cells)]
-        ancestry = tuple(
-            ancestry[parent] for parent in np.asarray(refinement.parent_cells)
-        )
-        mesh = refinement.mesh
-    simplex_entity_limits(
-        np.asarray(mesh.coordinates),
-        np.asarray(mesh.blocks[0].vertices),
-        limits,
-        stage,
-        cell_kind=mesh.blocks[0].cell_kind,
+        case _ as invalid:
+            assert_never(invalid)
+
+
+def _certify_periodic_construction(
+    mesh: cell_mesh_owner.CellMesh,
+    initial: periodic_owner.PeriodicQuotientEvidence,
+    limits: MeshingLimits,
+    work: int,
+    image_budget: int,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+    record_phase: NativeMeshingPhaseRecorder | None,
+    geometry: cell_geometry_owner.CellGeometrySpec | None = None,
+) -> _PeriodicCertification:
+    quotient = periodic_owner.PeriodicQuotientEvidence(
+        mesh, geometry=geometry, budget=budget
     )
-    quotient = PeriodicQuotientEvidence(mesh)
     if (
         not quotient.all_cells_valid
         or abs(quotient.total_measure - initial.total_measure)
@@ -1833,14 +2563,14 @@ def execute_periodic_route(
     ):
         raise MeshingFailure(
             MeshingFailureCategory.AUDIT_FAILED,
-            "Periodic orbit subdivision changed source coverage.",
+            "periodic.refinement.coverage must preserve positive source coverage within tolerance; got invalid cells or changed measure",
         )
     if quotient.relative_coverage_defect is not None and (
         quotient.relative_coverage_defect > 1.0e-10 or quotient.boundary_facet_count
     ):
         raise MeshingFailure(
             MeshingFailureCategory.AUDIT_FAILED,
-            "The translational quotient is not a closed degree-one domain cover.",
+            "periodic.refinement.quotient must be a closed degree-one domain cover; got boundary facets or a coverage defect",
         )
     embedding_work: list[tuple[int, int, int]] = []
     embedding_unmanaged: list[tuple[str, float]] = []
@@ -1870,21 +2600,25 @@ def execute_periodic_route(
 
     with measure_phase(record_phase, "periodic_embedding"):
         try:
-            # Actual bounded BVH visits now debit the original native owner;
-            # candidate count is not a proxy for a fictitious all-cell scan.
-            embedding_budget = image_budget // mesh.coordinates.shape[0]
-            if embedding_budget <= 0 or limits.maximum_work_units <= work:
-                raise _PeriodicEmbeddingResourceError(
-                    "Periodic embedding has no remaining original image/work allowance."
+            with budget.measurement():
+                # Measured bounded BVH visits now debit the native owner;
+                # candidate count is not a proxy for a fictitious all-cell scan.
+                embedding_budget = image_budget // mesh.coordinates.shape[0]
+                if embedding_budget <= 0 or limits.maximum_work_units <= work:
+                    raise PeriodicEmbeddingResourceError(
+                        "periodic.embedding.resources must have positive remaining image and work allowances; got an exhausted allowance"
+                    )
+                embedding = periodic_owner.certify_periodic_embedding(
+                    mesh,
+                    maximum_images=embedding_budget,
+                    maximum_pairs=limits.maximum_work_units - work,
+                    record_work=record_embedding_work,
+                    record_unmanaged=record_embedding_unmanaged,
+                    scope=scope,
+                    budget=budget,
+                    geometry=geometry,
                 )
-            embedding = certify_periodic_embedding(
-                mesh,
-                maximum_images=embedding_budget,
-                maximum_pairs=limits.maximum_work_units - work,
-                record_work=record_embedding_work,
-                record_unmanaged=record_embedding_unmanaged,
-            )
-        except _PeriodicEmbeddingResourceError as error:
+        except PeriodicEmbeddingResourceError as error:
             raise MeshingFailure(
                 MeshingFailureCategory.RESOURCE_EXHAUSTED,
                 str(error),
@@ -1892,15 +2626,15 @@ def execute_periodic_route(
                 achieved=embedding_work_evidence(),
             ) from error
         except MeshcoreError as error:
-            if error.status not in (
-                MeshcoreStatus.CAPACITY_EXCEEDED,
-                MeshcoreStatus.TIMEOUT,
-            ):
-                raise
+            match error.status:
+                case MeshcoreStatus.CAPACITY_EXCEEDED:
+                    category = MeshingFailureCategory.RESOURCE_EXHAUSTED
+                case MeshcoreStatus.TIMEOUT:
+                    category = MeshingFailureCategory.TIMED_OUT
+                case _:
+                    raise
             raise MeshingFailure(
-                MeshingFailureCategory.TIMED_OUT
-                if error.status is MeshcoreStatus.TIMEOUT
-                else MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                category,
                 str(error),
                 stage=MeshingStageKind.CERTIFICATION.value,
                 achieved=embedding_work_evidence(),
@@ -1912,11 +2646,121 @@ def execute_periodic_route(
                 stage=MeshingStageKind.CERTIFICATION.value,
                 achieved=embedding_work_evidence(),
             ) from error
-    requested, achieved, issues = constraint_requested, constraint_achieved, []
+    return _PeriodicCertification(quotient, embedding, embedding_work_evidence())
+
+
+def _periodic_size_compliance(
+    mesh: cell_mesh_owner.CellMesh,
+    geometry: cell_geometry_owner.CellGeometrySpec | None,
+    control: UniformSizeControl,
+    policy: SizeCompliancePolicy,
+    lengths: np.ndarray,
+    growth: float,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[list[tuple[str, float]], list[tuple[str, float]], list[str]]:
+    requested, achieved, issues = uniform_size_compliance(
+        control, policy, lengths, growth
+    )
+    if geometry is None:
+        return requested, achieved, issues
+    prefix = f"size:{control.control_id}"
+    quantiles = tuple(size_statistic_quantile(name) for name in policy.target_statistics)
+    values = periodic_owner.periodic_edge_size_quantile(
+        mesh, np.asarray(quantiles, dtype=np.float64), geometry=geometry, budget=budget
+    )
+    replacements = {
+        f"{prefix}:{name}_edge": float(value)
+        for name, value in zip(policy.target_statistics, values, strict=True)
+    }
+    achieved = [(name, replacements.get(name, value)) for name, value in achieved]
+    if control.strength is not SizeControlStrength.HARD:
+        return requested, achieved, issues
+    issues = []
+    tolerance = policy.tolerance(control.target_size)
+    lower = Fraction(control.target_size) - Fraction(tolerance)
+    upper = Fraction(control.target_size) + Fraction(tolerance)
+    for name, quantile in zip(policy.target_statistics, quantiles, strict=True):
+        if (
+            periodic_owner.periodic_edge_size_quantile_compare(
+                mesh, quantile, lower, geometry=geometry, budget=budget
+            )
+            < 0
+            or periodic_owner.periodic_edge_size_quantile_compare(
+                mesh, quantile, upper, geometry=geometry, budget=budget
+            )
+            > 0
+        ):
+            issues.append(f"target_size_{name}:{control.control_id}")
+    squared = periodic_owner.periodic_edge_squared_lengths(
+        mesh, geometry=geometry, budget=budget
+    )
+    if control.minimum_size is not None:
+        bound = Fraction(control.minimum_size) - Fraction(
+            policy.tolerance(control.minimum_size)
+        )
+        if bound > 0 and min(squared) < bound * bound:
+            issues.append(f"minimum_size:{control.control_id}")
+    if control.maximum_size is not None:
+        bound = Fraction(control.maximum_size) + Fraction(
+            policy.tolerance(control.maximum_size)
+        )
+        if bound < 0 or max(squared) > bound * bound:
+            issues.append(f"maximum_size:{control.control_id}")
+    if control.maximum_growth_rate is not None:
+        bound = Fraction(control.maximum_growth_rate) + Fraction(
+            policy.tolerance(control.maximum_growth_rate)
+        )
+        topology = periodic_owner.require_periodic_topology(mesh)
+        leaders = np.asarray(topology.orbit_representatives(1))
+        edges = periodic_owner.simplex_entity_corners(mesh, 1)[leaders]
+        orbits = np.asarray(topology.orbits(0)[0])[edges]
+        exceeds = bound < 1
+        for vertex in np.unique(orbits):
+            incident = squared[np.any(orbits == vertex, axis=1)]
+            exceeds = exceeds or max(incident) > bound * bound * min(incident)
+        if exceeds:
+            issues.append(f"maximum_growth_rate:{control.control_id}")
+    return requested, achieved, issues
+
+
+def _periodic_compliance(
+    construction: _PeriodicConstruction,
+    mesh: cell_mesh_owner.CellMesh,
+    certification: _PeriodicCertification,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    controls: list[UniformSizeControl],
+    constraints: _PeriodicCompliance,
+    initial_measures: np.ndarray,
+    lengths: np.ndarray,
+    growth: float,
+    *,
+    record_phase: NativeMeshingPhaseRecorder | None,
+    budget: CoordinateEnclosureBudget,
+) -> _PeriodicCompliance:
+    quotient, embedding = certification.quotient, certification.embedding
+    inserted_sites, image_refusals = (
+        construction.inserted_sites,
+        construction.image_refusals,
+    )
+    sizing_evidence = construction.sizing_evidence
+    original_regions, regions = construction.original_regions, construction.regions
+    requested, achieved, issues = (
+        constraints.requested,
+        constraints.achieved,
+        constraints.issues,
+    )
     with measure_phase(record_phase, "compliance"):
         for control in controls:
-            expected, measured, failures = uniform_size_compliance(
-                control, specification.size_compliance, lengths, growth
+            expected, measured, failures = _periodic_size_compliance(
+                mesh,
+                construction.geometry,
+                control,
+                specification.size_compliance,
+                lengths,
+                growth,
+                budget=budget,
             )
             requested.extend(expected)
             achieved.extend(measured)
@@ -1930,10 +2774,20 @@ def execute_periodic_route(
             ("periodic:proposal_image_refusals", float(image_refusals)),
         )
     )
-    achieved.extend(embedding_work_evidence())
+    if construction.source_construction_images is not None:
+        achieved.append(
+            (
+                "periodic:source_construction_images",
+                float(construction.source_construction_images),
+            )
+        )
+    achieved.extend(certification.work_evidence)
     achieved.extend(
         (
-            ("periodic:coordinate_lift_residual", embedding.maximum_coordinate_residual),
+            (
+                "periodic:coordinate_lift_residual",
+                embedding.maximum_coordinate_residual,
+            ),
             (
                 "periodic:coordinate_lift_residual_bound",
                 embedding.coordinate_residual_bound,
@@ -1959,7 +2813,9 @@ def execute_periodic_route(
                     # The raw nonfinite value remains in the source record;
                     # a numeric compliance quantity cannot pretend it is known.
                     achieved.append((f"{key}_available", 0.0))
-    successor_measures = np.asarray(periodic_orbit_measures(mesh).orbit_measures)
+    successor_measures = np.asarray(
+        periodic_measures_owner.periodic_orbit_measures(mesh).orbit_measures
+    )
     with measure_phase(record_phase, "compliance"):
         for region in np.unique(original_regions):
             expected = float(np.sum(initial_measures[original_regions == region]))
@@ -1991,6 +2847,20 @@ def execute_periodic_route(
             and minimum < specification.quality_target.minimum_angle
         ):
             issues.append("quality:minimum_angle")
+    return _PeriodicCompliance(requested, achieved, issues)
+
+
+def _periodic_feature_labels(
+    original_mesh: cell_mesh_owner.CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    lengths: np.ndarray,
+    compliance: _PeriodicCompliance,
+    associations: tuple[GeometryAssociation, ...],
+    *,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> NativePublicationOrganization:
+    issues = compliance.issues
     labels = []
     if specification.protected_features:
         with measure_phase(record_phase, "organization"):
@@ -1998,20 +2868,36 @@ def execute_periodic_route(
                 ids = np.asarray(feature.scope.entity_ids)
                 degree = feature.scope.entity_dimension
                 if degree > 0:
-                    mask = _feature_entity_mask(original_mesh, mesh, ids, degree)
-                    source_rows = _simplex_entity_corners(original_mesh, degree)
+                    association = associations[degree]
+                    rows = association.target_rows(
+                        np.asarray(mesh.entity_set(degree).entity_ids)
+                    )
+                    mask = (
+                        np.asarray(association.source_dimensions)[rows] == degree
+                    ) & np.isin(np.asarray(association.source_indices)[rows], ids)
+                    source_rows = periodic_owner.simplex_entity_corners(
+                        original_mesh, degree
+                    )
                     source_corners = np.asarray(original_mesh.coordinates)[source_rows]
-                    target_rows = _simplex_entity_corners(mesh, degree)
+                    target_rows = periodic_owner.simplex_entity_corners(mesh, degree)
                     target_corners = np.asarray(mesh.coordinates)[target_rows]
                     if degree == 1:
-                        source_lengths, _ = periodic_edge_size_evidence(original_mesh)
+                        source_lengths, _ = periodic_owner.periodic_edge_size_evidence(
+                            original_mesh
+                        )
                         source_measures = source_lengths[
                             np.asarray(
-                                _require_periodic_topology(original_mesh).orbits(1)[0]
+                                periodic_owner.require_periodic_topology(
+                                    original_mesh
+                                ).orbits(1)[0]
                             )
                         ]
                         target_measures = lengths[
-                            np.asarray(_require_periodic_topology(mesh).orbits(1)[0])
+                            np.asarray(
+                                periodic_owner.require_periodic_topology(mesh).orbits(1)[
+                                    0
+                                ]
+                            )
                         ]
                     else:
                         source_measures = 0.5 * np.linalg.norm(
@@ -2029,12 +2915,14 @@ def execute_periodic_route(
                             axis=1,
                         )
                     leaders = np.asarray(
-                        _require_periodic_topology(original_mesh).orbit_representatives(
-                            degree
-                        )
+                        periodic_owner.require_periodic_topology(
+                            original_mesh
+                        ).orbit_representatives(degree)
                     )[ids]
                     target_leaders = np.asarray(
-                        _require_periodic_topology(mesh).orbit_representatives(degree)
+                        periodic_owner.require_periodic_topology(
+                            mesh
+                        ).orbit_representatives(degree)
                     )
                     covered = float(
                         np.sum(target_measures[target_leaders[mask[target_leaders]]])
@@ -2044,29 +2932,33 @@ def execute_periodic_route(
                         issues.append(f"feature_orbit_coverage:{feature.feature_id}")
                 else:
                     source_vertices = np.asarray(
-                        _require_periodic_topology(original_mesh).orbit_representatives(0)
+                        periodic_owner.require_periodic_topology(
+                            original_mesh
+                        ).orbit_representatives(0)
                     )[ids]
                     source_points = np.asarray(original_mesh.coordinates)[source_vertices]
                     points = np.asarray(mesh.coordinates)
                     mask = np.zeros(points.shape[0], dtype=np.bool_)
                     vertex_orbits = np.asarray(
-                        _require_periodic_topology(mesh).orbits(0)[0]
+                        periodic_owner.require_periodic_topology(mesh).orbits(0)[0]
                     )
                     leaders = np.asarray(
-                        _require_periodic_topology(mesh).orbit_representatives(0)
+                        periodic_owner.require_periodic_topology(
+                            mesh
+                        ).orbit_representatives(0)
                     )
                     for point in source_points:
                         matches = np.flatnonzero(np.all(points[leaders] == point, axis=1))
                         if matches.size != 1:
                             raise MeshingFailure(
                                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                                "A protected quotient corner has no unique retained representative.",
+                                "periodic.features.corner must have one retained quotient representative; got absent or ambiguous representatives",
                             )
                         mask |= vertex_orbits == matches[0]
                 if not np.any(mask):
                     raise MeshingFailure(
                         MeshingFailureCategory.COMPLIANCE_FAILED,
-                        "A protected periodic feature orbit is absent.",
+                        "periodic.features.orbit must contain a retained target entity; got an empty feature orbit",
                     )
                 entity_set = mesh.topology.entities(degree)
                 labels.append(
@@ -2082,6 +2974,19 @@ def execute_periodic_route(
                         ),
                     )
                 )
+    return NativePublicationOrganization(labels=tuple(labels))
+
+
+def _organize_periodic_domain(
+    source: NativePeriodicSource,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    mesh: cell_mesh_owner.CellMesh,
+    regions: np.ndarray,
+    features: NativePublicationOrganization,
+    associations: tuple[GeometryAssociation, ...],
+    *,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> NativePublicationOrganization:
     zones = []
     cell_set = mesh.topology.entities(mesh.topological_dimension)
     with measure_phase(record_phase, "organization"):
@@ -2095,7 +3000,7 @@ def execute_periodic_route(
             if len(materials) > 1:
                 raise MeshingFailure(
                     MeshingFailureCategory.COMPLIANCE_FAILED,
-                    "One periodic region has conflicting material assignments.",
+                    "periodic.regions.material_id must be unique within each region; got conflicting material assignments",
                 )
             control = matching[0] if matching else None
             zones.append(
@@ -2116,8 +3021,6 @@ def execute_periodic_route(
                     region_role=RegionRole.USER if control is None else control.role,
                 )
             )
-    with measure_phase(record_phase, "geometry_association"):
-        associations = _periodic_source_associations(source, specification, mesh)
     cell_association = associations[-1]
     associated_regions = np.asarray(cell_association.source_indices)[
         cell_association.target_rows(np.asarray(mesh.blocks[0].global_ids))
@@ -2125,13 +3028,38 @@ def execute_periodic_route(
     if not np.array_equal(associated_regions, regions):
         raise MeshingFailure(
             MeshingFailureCategory.COMPLIANCE_FAILED,
-            "Renewed original source membership changes the published material inventory.",
+            "periodic.associations.cell_regions must agree with the published material inventory; got changed source membership",
         )
+    return NativePublicationOrganization(
+        labels=features.labels, zones=tuple(zones), associations=associations
+    )
+
+
+def _publish_periodic_domain(
+    source: NativePeriodicSource,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    prepared: PreparedPeriodicDomain,
+    coordinate_contract: SpatialCoordinateContract,
+    provider: MeshingProviderInfo,
+    plan_id: str,
+    construction: _PeriodicConstruction,
+    mesh: cell_mesh_owner.CellMesh,
+    certification_data: _PeriodicCertification,
+    compliance_data: _PeriodicCompliance,
+    organization: NativePublicationOrganization,
+    stage: MeshingStageKind,
+    *,
+    execution: NativePublicationExecution,
+) -> CellMeshingResult:
+    limits, started = specification.limits, execution.scope.operation_started
+    embedding = certification_data.embedding
+    ancestry, regions = construction.ancestry, construction.regions
+    sizing_evidence, stratified = construction.sizing_evidence, construction.stratified
     compliance = MeshingComplianceReport(
         specification.specification_id,
-        requested=tuple(requested),
-        achieved=tuple(achieved),
-        issues=tuple(issues),
+        requested=tuple(compliance_data.requested),
+        achieved=tuple(compliance_data.achieved),
+        issues=tuple(compliance_data.issues),
     )
     certification = NativeCertificationRequest(
         MeshCertificationSchedule("periodic"),
@@ -2154,7 +3082,18 @@ def execute_periodic_route(
         ),
         provider,
         {
-            "route": "periodic_delaunay",
+            **(
+                {
+                    "declared_geometry": cell_geometry_id(construction.geometry),
+                    "exact_construction_work": dict(construction.construction_evidence),
+                    "exact_construction_inner_predicate_work_complete": False,
+                }
+                if construction.geometry is not None
+                else {}
+            ),
+            "route": "periodic_exact_source"
+            if construction.geometry is not None
+            else "periodic_delaunay",
             "plan": plan_id,
             "periodic_embedding": embedding.certificate_id,
             "periodic_coordinate_scope": embedding.coordinate_scope,
@@ -2176,8 +3115,10 @@ def execute_periodic_route(
                 }
                 for record in sizing_evidence
             ],
-            "construction": "translational_delaunay"
-            if isinstance(source.domain, PeriodicPointOrbits)
+            "construction": "source_identity_algebraic_circle_bands"
+            if construction.geometry is not None
+            else "translational_delaunay"
+            if isinstance(source.domain, periodic_owner.PeriodicPointOrbits)
             else (
                 "source_stratified_periodic_cdt"
                 if stratified
@@ -2185,27 +3126,291 @@ def execute_periodic_route(
             ),
         },
         certification,
-        audit_policy=CellMeshAuditPolicy(),
-        derivative_mode=MeshingDerivativeMode.NONDIFFERENTIABLE,
-        enforced_limits=(
-            "vertices",
-            "cells",
-            "edges",
-            "faces",
-            "connectivity_entries",
-            "data_bytes",
-            "scratch_bytes",
-            "work_units",
-            "wall_seconds",
-        )
-        + (("cavity_cells",) if stratified else ())
-        + ("geometry_queries",),
-        unenforced_limits=(() if stratified else ("cavity_cells",)),
-        labels=tuple(labels),
-        zones=tuple(zones),
-        associations=associations,
-        record_phase=record_phase,
+        policy=publication_policy("periodic_stratified" if stratified else "periodic"),
+        organization=organization,
+        execution=execution,
+        geometry=construction.geometry,
     )
+
+
+@final
+class _PeriodicRoutePreparation(StrictModule):
+    """Carry seam compliance and the admitted construction request."""
+
+    stage: MeshingStageKind
+    image_budget: int
+    controls: list[UniformSizeControl]
+    hard: list[UniformSizeControl]
+    constraints: _PeriodicCompliance
+
+
+def _prepare_periodic_route_request(
+    source: NativePeriodicSource, specification: SurfaceMeshingSpec | VolumeMeshingSpec, /
+) -> _PeriodicRoutePreparation:
+    try:
+        constraint_requested, constraint_achieved = _bound_constraint_evidence(
+            source, specification.periodic_constraints
+        )
+    except ValueError as error:
+        raise MeshingFailure(
+            MeshingFailureCategory.COMPLIANCE_FAILED, str(error)
+        ) from error
+    limits = specification.limits
+    stage = (
+        MeshingStageKind.SURFACE_MESHING
+        if source.ambient_dimension == 2
+        else MeshingStageKind.VOLUME_FILL
+    )
+    image_budget = min(
+        limits.maximum_vertices,
+        limits.maximum_scratch_bytes // (8 * (source.ambient_dimension + 8)),
+    )
+    if image_budget <= 0:
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "periodic.construction.maximum_images must be positive; got no image storage allowance",
+        )
+    controls: list[UniformSizeControl] = []
+    for control in specification.size_controls:
+        match control:
+            case UniformSizeControl():
+                controls.append(control)
+            case _:
+                raise TypeError(
+                    "periodic.size_controls must be uniform; got a nonuniform control"
+                )
+    hard = [
+        control for control in controls if control.strength is SizeControlStrength.HARD
+    ]
+    return _PeriodicRoutePreparation(
+        stage,
+        image_budget,
+        controls,
+        hard,
+        _PeriodicCompliance(constraint_requested, constraint_achieved, []),
+    )
+
+
+@checked
+def execute_periodic_route(
+    source: NativePeriodicSource,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    prepared: PreparedPeriodicDomain,
+    coordinate_contract: SpatialCoordinateContract,
+    provider: MeshingProviderInfo,
+    plan_id: str,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    record_phase: NativeMeshingPhaseRecorder | None = None,
+) -> CellMeshingResult:
+    with ExitStack() as stack:
+        if (
+            prepared.source.binding_id != source.binding_id
+            or prepared.specification_id != specification.specification_id
+        ):
+            raise ValueError(
+                "periodic.prepared must bind this source and specification; got a different request"
+            )
+        started = scope.operation_started
+        initial = scope.batch(0)
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=specification.limits.maximum_work_units,
+            maximum_memory_bytes=specification.limits.maximum_scratch_bytes,
+        )
+        initial.settle()
+        stack.enter_context(
+            budget.retained_storage(lambda bound: scope.batch(0, bytes_upper=bound))
+        )
+        workspace = stack.enter_context(scope.host_workspace())
+        request = _prepare_periodic_route_request(source, specification)
+        limits, stage = specification.limits, request.stage
+        image_budget, controls, hard = (
+            request.image_budget,
+            request.controls,
+            request.hard,
+        )
+        construction = _construct_periodic_domain(
+            source,
+            specification,
+            limits,
+            started,
+            stage,
+            image_budget,
+            hard,
+            scope=scope,
+            budget=budget,
+            record_phase=record_phase,
+        )
+        mesh, original_mesh = construction.mesh, construction.original_mesh
+        regions, ancestry = construction.regions, construction.ancestry
+        work, stratified = construction.work, construction.stratified
+        allowance = _PeriodicSupportAllowance(limits, scope=scope, budget=budget)
+        initial = periodic_owner.PeriodicQuotientEvidence(original_mesh)
+        initial_measures = np.asarray(
+            periodic_measures_owner.periodic_orbit_measures(original_mesh).orbit_measures
+        )
+        threshold = min(
+            control.maximum_size
+            if control.maximum_size is not None
+            else control.target_size
+            * (1.0 + specification.size_compliance.relative_tolerance)
+            + specification.size_compliance.absolute_tolerance
+            for control in controls
+        )
+        while True:
+            check_deadline(started, limits, stage)
+            edges = periodic_owner.simplex_entity_corners(mesh, 1)
+            with (
+                allowance.exact_phase()
+                if construction.geometry is not None
+                else nullcontext(),
+                budget.temporary_scope()
+                if construction.geometry is not None
+                else nullcontext(),
+            ):
+                if construction.geometry is None:
+                    lengths, growth = periodic_owner.periodic_edge_size_evidence(mesh)
+                else:
+                    size_evidence = periodic_owner.periodic_exact_edge_size_evidence(
+                        mesh, construction.geometry, budget=budget
+                    )
+                    budget.retain_basis((size_evidence,))
+                    lengths = size_evidence.representative_lengths
+                    growth = size_evidence.maximum_local_edge_ratio
+            if stratified or float(np.max(lengths)) <= threshold:
+                break
+            # Bound the entire orbit closure before allocating a successor.
+            count = mesh.blocks[0].cell_count
+            upper_cells = count * (4 if source.ambient_dimension == 2 else 64)
+            upper_vertices = mesh.coordinates.shape[0] + edges.shape[0] * (
+                source.ambient_dimension + 1
+            )
+            if (
+                upper_cells > limits.maximum_cells
+                or upper_vertices > limits.maximum_vertices
+                or upper_cells * (source.ambient_dimension + 1)
+                > limits.maximum_connectivity_entries
+            ):
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "periodic.refinement.closure must fit the entity and connectivity budgets; got a request beyond the budgets",
+                )
+            work += upper_cells
+            if (
+                work > limits.maximum_work_units
+                or upper_cells * 128 + upper_vertices * 64 > limits.maximum_scratch_bytes
+            ):
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "periodic.refinement.resources must fit the work and scratch budgets; got a request beyond the budgets",
+                )
+            with measure_phase(record_phase, "refinement"):
+                refinement = periodic_owner.refine_periodic_mesh(
+                    mesh,
+                    source_geometry=cell_geometry_owner.CellGeometrySpec.affine(mesh),
+                    scope=scope,
+                    budget=budget,
+                )
+            regions = regions[np.asarray(refinement.parent_cells)]
+            ancestry = tuple(
+                ancestry[parent] for parent in np.asarray(refinement.parent_cells)
+            )
+            mesh = refinement.mesh
+        simplex_entity_limits(
+            np.asarray(mesh.coordinates),
+            np.asarray(mesh.blocks[0].vertices),
+            limits,
+            stage,
+            cell_kind=mesh.blocks[0].cell_kind,
+        )
+        construction = eqx.tree_at(
+            lambda item: (item.mesh, item.regions, item.ancestry, item.work),
+            construction,
+            (mesh, regions, ancestry, work),
+        )
+        with (
+            allowance.exact_phase()
+            if construction.geometry is not None
+            else nullcontext(),
+            budget.temporary_scope()
+            if construction.geometry is not None
+            else nullcontext(),
+        ):
+            certification = _certify_periodic_construction(
+                mesh,
+                initial,
+                limits,
+                work,
+                image_budget,
+                scope=scope,
+                budget=budget,
+                record_phase=record_phase,
+                geometry=construction.geometry,
+            )
+            if construction.geometry is not None:
+                budget.retain_basis((certification,))
+        with (
+            allowance.exact_phase()
+            if construction.geometry is not None
+            else nullcontext()
+        ):
+            compliance = _periodic_compliance(
+                construction,
+                mesh,
+                certification,
+                specification,
+                controls,
+                request.constraints,
+                initial_measures,
+                lengths,
+                growth,
+                record_phase=record_phase,
+                budget=budget,
+            )
+        with measure_phase(record_phase, "geometry_association"):
+            associations = periodic_source_associations(
+                source,
+                specification,
+                mesh,
+                scope=scope,
+                budget=budget,
+                geometry=construction.geometry,
+            )
+        features = _periodic_feature_labels(
+            original_mesh,
+            mesh,
+            specification,
+            lengths,
+            compliance,
+            associations,
+            record_phase=record_phase,
+        )
+        organization = _organize_periodic_domain(
+            source,
+            specification,
+            mesh,
+            regions,
+            features,
+            associations,
+            record_phase=record_phase,
+        )
+        return _publish_periodic_domain(
+            source,
+            specification,
+            prepared,
+            coordinate_contract,
+            provider,
+            plan_id,
+            construction,
+            mesh,
+            certification,
+            compliance,
+            organization,
+            stage,
+            execution=NativePublicationExecution(scope, workspace, record_phase, budget),
+        )
 
 
 __all__ = [

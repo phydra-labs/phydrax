@@ -100,7 +100,7 @@ class FiniteElementMetricData(StrictModule):
         ambient_dimension = coordinates.shape[-1]
         if dimension < 1 or ambient_dimension < dimension:
             raise ValueError(
-                "Cell metrics require a nonempty immersion into an equal or higher-dimensional space."
+                f"CellMetric.dimensions must satisfy 1 <= reference <= ambient; got {(dimension, ambient_dimension)!r}"
             )
         physical_points = ein.contract("qi,cid->cqd", basis, coordinates)
         jacobian = ein.contract("qir,cid->cqdr", gradients, coordinates)

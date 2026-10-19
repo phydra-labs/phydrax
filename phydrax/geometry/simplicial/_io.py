@@ -34,7 +34,7 @@ def _canonical_faces(faces: np.ndarray) -> np.ndarray:
     return rotated[order]
 
 
-def _canonical_triangle_arrays(
+def canonical_triangle_arrays(
     vertices: np.ndarray,
     faces: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -42,14 +42,18 @@ def _canonical_triangle_arrays(
     faces_ = np.asarray(faces, dtype=np.int32)
     if vertices_.ndim != 2 or vertices_.shape[0] == 0 or vertices_.shape[1] < 2:
         raise ValueError(
-            "Mesh vertices must have shape (num_vertices > 0, dimension >= 2)."
+            f"triangle_arrays.vertices must have shape (num_vertices > 0, dimension >= 2); got {vertices_.shape}"
         )
     if not np.all(np.isfinite(vertices_)):
-        raise ValueError("Mesh vertices must contain only finite values.")
+        raise ValueError("triangle_arrays.vertices must be finite; got nonfinite values")
     if faces_.ndim != 2 or faces_.shape[0] == 0 or faces_.shape[1] != 3:
-        raise ValueError("Mesh faces must have shape (num_faces > 0, 3).")
+        raise ValueError(
+            f"triangle_arrays.faces must have shape (num_faces > 0, 3); got {faces_.shape}"
+        )
     if np.any(faces_ < 0) or np.any(faces_ >= vertices_.shape[0]):
-        raise ValueError("Mesh faces contain an out-of-range vertex index.")
+        raise ValueError(
+            "triangle_arrays.faces must reference existing vertices; got an out-of-range vertex index"
+        )
 
     referenced = np.unique(faces_.reshape((-1,)))
     old_to_referenced = np.full(vertices_.shape[0], -1, dtype=np.int32)
@@ -68,9 +72,13 @@ def _canonical_triangle_arrays(
         | (faces_[:, 1] == faces_[:, 2])
         | (faces_[:, 2] == faces_[:, 0])
     ):
-        raise ValueError("Vertex canonicalization produced a degenerate triangle.")
+        raise ValueError(
+            "triangle_arrays.faces must remain nondegenerate after vertex deduplication; got repeated triangle corners"
+        )
     if np.unique(np.sort(faces_, axis=1), axis=0).shape[0] != faces_.shape[0]:
-        raise ValueError("Mesh input contains duplicate triangle faces.")
+        raise ValueError(
+            "triangle_arrays.faces must be unique; got duplicate triangle faces"
+        )
     triangles = vertices_[faces_]
     if vertices_.shape[1] == 2:
         doubled_area = (triangles[:, 1, 0] - triangles[:, 0, 0]) * (
@@ -83,7 +91,9 @@ def _canonical_triangle_arrays(
             np.sqrt(np.finfo(np.float64).tiny),
         )
         if np.any(np.abs(doubled_area) <= 128.0 * np.finfo(np.float64).eps * scale**2):
-            raise ValueError("Mesh input contains a zero-area triangle.")
+            raise ValueError(
+                "triangle_arrays.faces must have area above the scale-dependent threshold; got a zero-area triangle"
+            )
     else:
         cross = np.cross(
             triangles[:, 1, :3] - triangles[:, 0, :3],
@@ -97,7 +107,9 @@ def _canonical_triangle_arrays(
             np.sum(cross * cross, axis=1)
             <= (128.0 * np.finfo(np.float64).eps * scale**2) ** 2
         ):
-            raise ValueError("Mesh input contains a zero-area triangle.")
+            raise ValueError(
+                "triangle_arrays.faces must have area above the scale-dependent threshold; got a zero-area triangle"
+            )
 
     faces_ = _canonical_faces(faces_)
     if vertices_.shape[1] >= 3:
@@ -154,7 +166,9 @@ def _meshio_triangles(mesh: meshio.Mesh) -> tuple[np.ndarray, np.ndarray]:
         if block.type == "triangle"
     ]
     if not blocks:
-        raise ValueError("Mesh input contains no triangle cells.")
+        raise ValueError(
+            "triangle_arrays.mesh must contain triangle cells; got no triangle blocks"
+        )
     return np.asarray(mesh.points, dtype=np.float64), np.concatenate(blocks, axis=0)
 
 
@@ -166,13 +180,13 @@ def triangle_arrays(source: Any, /) -> tuple[np.ndarray, np.ndarray]:
     """
 
     if isinstance(source, TriangleMesh):
-        return _canonical_triangle_arrays(source.vertices, source.faces)
+        return canonical_triangle_arrays(source.vertices, source.faces)
     if isinstance(source, tuple) and len(source) == 2:
-        return _canonical_triangle_arrays(source[0], source[1])
+        return canonical_triangle_arrays(source[0], source[1])
     import meshio
 
     if isinstance(source, meshio.Mesh):
-        return _canonical_triangle_arrays(*_meshio_triangles(source))
+        return canonical_triangle_arrays(*_meshio_triangles(source))
     if isinstance(source, (str, Path)):
         source_path = Path(source).expanduser().absolute()
         resource = read_bounded_resource(
@@ -189,9 +203,9 @@ def triangle_arrays(source: Any, /) -> tuple[np.ndarray, np.ndarray]:
         with TemporaryDirectory(prefix="phydrax-triangle-read-") as temporary:
             staged = Path(temporary) / source_path.name
             staged.write_bytes(resource.data)
-            return _canonical_triangle_arrays(*_meshio_triangles(meshio.read(staged)))
+            return canonical_triangle_arrays(*_meshio_triangles(meshio.read(staged)))
     raise TypeError(
-        "Mesh input must be a path, meshio.Mesh, TriangleMesh, or (vertices, faces) pair."
+        f"triangle_arrays.source must be a path, meshio.Mesh, TriangleMesh, or (vertices, faces) pair; got {type(source).__name__}"
     )
 
 
@@ -206,7 +220,9 @@ def mesh_region_from_source(
 
     vertices, faces = triangle_arrays(source)
     if vertices.shape[1] < 3:
-        raise ValueError("A 3D mesh must provide three-dimensional vertices.")
+        raise ValueError(
+            f"mesh_region_from_source.vertices must provide three-dimensional coordinates; got dimension {vertices.shape[1]}"
+        )
     vertices = vertices[:, :3]
     if recenter:
         vertices = vertices - 0.5 * (np.min(vertices, axis=0) + np.max(vertices, axis=0))
@@ -225,16 +241,20 @@ def planar_region_from_triangles(
 ) -> PlanarMeshRegion:
     """Recover oriented boundary loops from one connected triangle complex."""
 
-    vertices_, faces_ = _canonical_triangle_arrays(vertices, faces)
+    vertices_, faces_ = canonical_triangle_arrays(vertices, faces)
     coordinates = vertices_[:, :2]
     # ty: ignore[invalid-argument-type]
     topology = TriangleTopology(faces_, num_vertices=coordinates.shape[0])
     if topology.num_face_components != 1:
-        raise ValueError("Planar mesh must represent one connected polygonal region.")
+        raise ValueError(
+            f"planar_region_from_triangles.topology must represent one connected polygonal region; got {topology.num_face_components} components"
+        )
     offsets = np.asarray(topology.boundary_loop_offsets, dtype=np.int32)
     loop_vertices = np.asarray(topology.boundary_loop_vertices, dtype=np.int32)
     if offsets.shape[0] <= 1:
-        raise ValueError("Planar mesh has no boundary loops.")
+        raise ValueError(
+            "planar_region_from_triangles.topology must have boundary loops; got no loops"
+        )
     raw_loops = [
         coordinates[loop_vertices[offsets[index] : offsets[index + 1]]]
         for index in range(offsets.shape[0] - 1)
@@ -286,7 +306,9 @@ def planar_region_from_source(
 
     vertices, faces = triangle_arrays(source)
     if vertices.shape[1] >= 3 and not np.allclose(vertices[:, 2], vertices[0, 2]):
-        raise ValueError("A planar mesh must lie in one constant-z plane.")
+        raise ValueError(
+            "planar_region_from_source.vertices must lie in one constant-z plane; got varying z coordinates"
+        )
     return planar_region_from_triangles(
         vertices,
         faces,

@@ -2,27 +2,47 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Derived CAD tessellation through the canonical native surface scheduler.
+"""Derive shared-edge CAD triangles through the native surface scheduler.
 
-Exact model topology and carrier identity remain authoritative. This adapter
-only lowers the requested tessellation fidelity and capacity to the owning
-surface construction API; it has no independent triangulation or refinement.
+Carrier topology and model identity are unchanged by tessellation. The adapter
+prepares a bounded request, executes the scheduler, certifies its source cover,
+and expands authored occurrences without welding their vertices.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import final
 
+import equinox as eqx
 import numpy as np
 
-from ._model import BRepGeometry
+from ..._meshcore import NativeExecutionScope
+from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...meshing._contracts import (
+    CellFamilyPolicy,
+    CellMeshingTarget,
+    MeshingLimits,
+    SurfaceMeshingSpec,
+)
+from ...meshing._controls import FeatureKind, ProtectedFeature
+from ...meshing._failures import MeshingFailure, MeshingFailureCategory
+from ...meshing._scope import MeshingEntityKind, MeshingScope
+from ...meshing._sizing import SizeControlStrength, UniformSizeControl
+from ...meshing._surface_construction import SurfaceConstruction
+from ...meshing.providers._native_schedules import NativeSurfaceSchedule
+from ...typing import checked
+from .._domain_boundary import MeshingDomainBoundarySource
+from .._interval_enclosure import interval_add, interval_multiply
+from .._meshing_domain import MeshingDomain
+from .._rational import fraction_up, rational_dot, rational_vector
+from .._source_boundary_records import SourceBoundaryChartCover
+from ._constructors import BRepTessellationPolicy
+from ._model import BRepEntityId, BRepGeometry
 from ._patches import AbstractSurfacePatch
-
-
-if TYPE_CHECKING:
-    from ._constructors import BRepTessellationPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +63,176 @@ class BRepTessellation:
     triangle_occurrence_ids: np.ndarray
     vertex_occurrence_ids: np.ndarray
 
+    @classmethod
+    def empty(cls) -> BRepTessellation:
+        """Return an unrealized artifact with the published host shapes and dtypes."""
+        return cls(
+            vertices=np.empty((0, 3), dtype=np.float64),
+            triangles=np.empty((0, 3), dtype=np.int32),
+            face_ids=np.empty((0,), dtype=np.int32),
+            parameters=np.empty((0, 3, 2), dtype=np.float64),
+            deviation_bounds=np.empty((0,), dtype=np.float64),
+            normal_bounds=np.empty((0,), dtype=np.float64),
+            vertex_source_dimensions=np.empty((0,), dtype=np.int32),
+            vertex_source_indices=np.empty((0,), dtype=np.int64),
+            vertex_parameters=np.empty((0, 2), dtype=np.float64),
+            chart_restriction_vertices=np.empty((0,), dtype=np.int64),
+            chart_restriction_edges=np.empty((0, 2), dtype=np.int64),
+            chart_restriction_endpoint_parameters=np.empty((0, 2, 2), dtype=np.float64),
+            chart_restriction_parameters=np.empty((0, 2), dtype=np.int64),
+            triangle_occurrence_ids=np.empty((0,), dtype=np.int32),
+            vertex_occurrence_ids=np.empty((0,), dtype=np.int32),
+        )
+
+    def select(self, rows: np.ndarray, /) -> BRepTessellation:
+        """Select triangles, compact vertices, and preserve chart-root endpoints."""
+        used, inverse = np.unique(self.triangles[rows], return_inverse=True)
+        restriction_rows = np.flatnonzero(np.isin(self.chart_restriction_vertices, used))
+        restricted_vertices = self.chart_restriction_vertices[restriction_rows]
+        restricted_edges = self.chart_restriction_edges[restriction_rows]
+        if restricted_edges.size and not np.all(np.isin(restricted_edges, used)):
+            raise ValueError(
+                "BRepTessellation.chart_restriction_edges must retain both endpoints; "
+                "got an endpoint outside the selected vertices"
+            )
+        return BRepTessellation(
+            vertices=self.vertices[used],
+            triangles=inverse.reshape((-1, 3)).astype(np.int32),
+            face_ids=self.face_ids[rows],
+            parameters=self.parameters[rows],
+            deviation_bounds=self.deviation_bounds[rows],
+            normal_bounds=self.normal_bounds[rows],
+            vertex_source_dimensions=self.vertex_source_dimensions[used],
+            vertex_source_indices=self.vertex_source_indices[used],
+            vertex_parameters=self.vertex_parameters[used],
+            chart_restriction_vertices=np.searchsorted(used, restricted_vertices).astype(
+                np.int64
+            ),
+            chart_restriction_edges=np.searchsorted(used, restricted_edges).astype(
+                np.int64
+            ),
+            chart_restriction_endpoint_parameters=(
+                self.chart_restriction_endpoint_parameters[restriction_rows]
+            ),
+            chart_restriction_parameters=self.chart_restriction_parameters[
+                restriction_rows
+            ],
+            triangle_occurrence_ids=self.triangle_occurrence_ids[rows],
+            vertex_occurrence_ids=self.vertex_occurrence_ids[used],
+        )
+
+    @classmethod
+    def concatenate(cls, blocks: list[BRepTessellation], /) -> BRepTessellation:
+        """Join disjoint blocks whose connectivity already uses global offsets."""
+        return cls(
+            vertices=np.concatenate([block.vertices for block in blocks]),
+            triangles=np.concatenate([block.triangles for block in blocks]),
+            face_ids=np.concatenate([block.face_ids for block in blocks]),
+            parameters=np.concatenate([block.parameters for block in blocks]),
+            deviation_bounds=np.concatenate([block.deviation_bounds for block in blocks]),
+            normal_bounds=np.concatenate([block.normal_bounds for block in blocks]),
+            vertex_source_dimensions=np.concatenate(
+                [block.vertex_source_dimensions for block in blocks]
+            ),
+            vertex_source_indices=np.concatenate(
+                [block.vertex_source_indices for block in blocks]
+            ),
+            vertex_parameters=np.concatenate(
+                [block.vertex_parameters for block in blocks]
+            ),
+            chart_restriction_vertices=np.concatenate(
+                [block.chart_restriction_vertices for block in blocks]
+            ),
+            chart_restriction_edges=np.concatenate(
+                [block.chart_restriction_edges for block in blocks], axis=0
+            ),
+            chart_restriction_endpoint_parameters=np.concatenate(
+                [block.chart_restriction_endpoint_parameters for block in blocks], axis=0
+            ),
+            chart_restriction_parameters=np.concatenate(
+                [block.chart_restriction_parameters for block in blocks], axis=0
+            ),
+            triangle_occurrence_ids=np.concatenate(
+                [block.triangle_occurrence_ids for block in blocks]
+            ),
+            vertex_occurrence_ids=np.concatenate(
+                [block.vertex_occurrence_ids for block in blocks]
+            ),
+        )
+
+
+@final
+class BRepTessellationFailure(MeshingFailure):
+    """Refuse a tessellation bound with its measured value and qualified entity.
+
+    ``entity=None`` denotes a model-wide budget or source-cover obligation.
+    Bounds use source length units for deviation and radians for normal turn.
+    Native scheduler failures retain their existing ``MeshingFailure`` evidence.
+    """
+
+    @checked
+    def __init__(
+        self,
+        category: MeshingFailureCategory,
+        field: str,
+        measured_bound: float,
+        limit: float,
+        entity: BRepEntityId | None,
+        /,
+    ) -> None:
+        self.measured_bound = measured_bound
+        self.limit = limit
+        self.entity = entity
+        super().__init__(
+            category,
+            f"BRepTessellation.{field} must be at most {limit:.17g}; "
+            f"got {measured_bound:.17g}",
+            stage="brep-tessellation",
+            entity_ids=() if entity is None else (entity.index,),
+            requested=((field, limit),),
+            achieved=((field, measured_bound),),
+        )
+
+
+@final
+class _TessellationRequest(StrictModule, NonTrainableState):
+    domain: MeshingDomain
+    specification: SurfaceMeshingSpec
+    limits: MeshingLimits
+    source_revision: str = eqx.field(static=True)
+
+
+@final
+class _TessellationExecution(StrictModule, NonTrainableState):
+    construction: SurfaceConstruction
+    cover: SourceBoundaryChartCover
+
+
+@final
+class _TessellationCertification(StrictModule, NonTrainableState):
+    """Construction whose topology, source cover, and fidelity bounds passed."""
+
+    construction: SurfaceConstruction
+
+
+@dataclass(slots=True)
+class _CoverQueries:
+    """Track cover queries after construction against the same request allowance."""
+
+    count: int
+    maximum: int
+
+    def reserve(self, count: int, /) -> None:
+        if self.count + count > self.maximum:
+            raise BRepTessellationFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "geometry_queries",
+                float(self.count + count),
+                float(self.maximum),
+                None,
+            )
+        self.count += count
+
 
 def _pose_fidelity(
     points: np.ndarray,
@@ -54,22 +244,10 @@ def _pose_fidelity(
     normal: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Enclose the actual affine pose and its floating vertex evaluation error."""
-    from .._interval_enclosure import interval_add, interval_multiply
+    """Enclose affine pose stretch and floating vertex evaluation error."""
 
-    gram = [
-        [
-            sum(
-                (
-                    Fraction(float(rotation[k, i])) * Fraction(float(rotation[k, j]))
-                    for k in range(3)
-                ),
-                Fraction(0),
-            )
-            for j in range(3)
-        ]
-        for i in range(3)
-    ]
+    columns = tuple(rational_vector(rotation[:, axis]) for axis in range(3))
+    gram = [[rational_dot(first, second) for second in columns] for first in columns]
     upper = max(
         gram[i][i] + sum((abs(gram[i][j]) for j in range(3) if j != i), Fraction(0))
         for i in range(3)
@@ -79,12 +257,13 @@ def _pose_fidelity(
         for i in range(3)
     )
     if lower <= 0:
-        raise ValueError("A placed CAD artifact has no certified nonsingular pose.")
+        raise ValueError(
+            "BRepOccurrence.rotation must have a positive certified Gram lower bound; "
+            f"got {lower}"
+        )
 
     def square_root_upper(value: Fraction, /) -> float:
-        operand = float(value)
-        if Fraction(operand) < value:
-            operand = float(np.nextafter(operand, np.inf))
+        operand = fraction_up(value)
         result = float(np.sqrt(operand))
         return (
             float(np.nextafter(result, np.inf))
@@ -119,7 +298,7 @@ def _pose_fidelity(
 def _place_occurrences(
     template: BRepTessellation, geometry: BRepGeometry, maximum_triangles: int, /
 ) -> BRepTessellation:
-    """Expand definition artifacts by authored incidences; never weld placements."""
+    """Expand definition triangles by authored incidence without welding vertices."""
     if not geometry.occurrences:
         return template
     topology = geometry.topology()
@@ -135,34 +314,22 @@ def _place_occurrences(
     face_counts = np.bincount(template.face_ids, minlength=topology.num_faces)
     count = sum(int(np.sum(face_counts[list(faces)])) for _, faces in selections)
     if count > maximum_triangles:
-        raise ValueError("Placed CAD tessellation exceeds maximum_triangles.")
-    blocks = []
+        raise BRepTessellationFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "maximum_triangles",
+            float(count),
+            float(maximum_triangles),
+            None,
+        )
+    blocks: list[BRepTessellation] = []
     offset = 0
     for occurrence_index, faces in selections:
         rows = np.flatnonzero(np.isin(template.face_ids, faces))
         if not rows.size:
             continue
-        used, inverse = np.unique(template.triangles[rows], return_inverse=True)
-        triangles = inverse.reshape((-1, 3)).astype(np.int32) + offset
-        parameters = template.parameters[rows]
-        local_cells = inverse.reshape((-1, 3))
-        deviation, normal = template.deviation_bounds[rows], template.normal_bounds[rows]
-        points = template.vertices[used]
-        restriction_rows = np.flatnonzero(
-            np.isin(template.chart_restriction_vertices, used)
-        )
-        restricted_vertices = template.chart_restriction_vertices[restriction_rows]
-        restricted_edges = template.chart_restriction_edges[restriction_rows]
-        if restricted_edges.size and not np.all(np.isin(restricted_edges, used)):
-            raise ValueError(
-                "A placed tessellation lost an exact chart-restriction endpoint."
-            )
-        placed_restriction_vertices = (
-            np.searchsorted(used, restricted_vertices).astype(np.int64) + offset
-        )
-        placed_restriction_edges = (
-            np.searchsorted(used, restricted_edges).astype(np.int64) + offset
-        )
+        block = template.select(rows)
+        points, triangles, parameters = block.vertices, block.triangles, block.parameters
+        deviation, normal = block.deviation_bounds, block.normal_bounds
         if occurrence_index >= 0:
             occurrence = geometry.occurrences[occurrence_index]
             local = points
@@ -172,7 +339,7 @@ def _place_occurrences(
                 points,
                 np.asarray(occurrence.rotation, dtype=np.float64),
                 np.asarray(occurrence.translation, dtype=np.float64),
-                local_cells,
+                triangles,
                 deviation,
                 normal,
             )
@@ -184,53 +351,33 @@ def _place_occurrences(
                 )
             )
             reverse = np.asarray(
-                [sides[face] < 0 for face in template.face_ids[rows]],
-                dtype=np.bool_,
+                [sides[face] < 0 for face in block.face_ids], dtype=np.bool_
             )
             triangles[reverse] = triangles[reverse][:, (0, 2, 1)]
             parameters[reverse] = parameters[reverse][:, (0, 2, 1)]
         blocks.append(
-            BRepTessellation(
-                points,
-                triangles,
-                template.face_ids[rows],
-                parameters,
-                deviation,
-                normal,
-                template.vertex_source_dimensions[used],
-                template.vertex_source_indices[used],
-                template.vertex_parameters[used],
-                placed_restriction_vertices,
-                placed_restriction_edges,
-                template.chart_restriction_endpoint_parameters[restriction_rows],
-                template.chart_restriction_parameters[restriction_rows],
-                np.full((rows.size,), occurrence_index, dtype=np.int32),
-                np.full((used.size,), occurrence_index, dtype=np.int32),
+            replace(
+                block,
+                vertices=points,
+                triangles=triangles + offset,
+                parameters=parameters,
+                deviation_bounds=deviation,
+                normal_bounds=normal,
+                chart_restriction_vertices=block.chart_restriction_vertices + offset,
+                chart_restriction_edges=block.chart_restriction_edges + offset,
+                triangle_occurrence_ids=np.full(
+                    (rows.size,), occurrence_index, dtype=np.int32
+                ),
+                vertex_occurrence_ids=np.full(
+                    (points.shape[0],), occurrence_index, dtype=np.int32
+                ),
             )
         )
-        offset += used.size
-    return BRepTessellation(
-        np.concatenate([block.vertices for block in blocks]),
-        np.concatenate([block.triangles for block in blocks]),
-        np.concatenate([block.face_ids for block in blocks]),
-        np.concatenate([block.parameters for block in blocks]),
-        np.concatenate([block.deviation_bounds for block in blocks]),
-        np.concatenate([block.normal_bounds for block in blocks]),
-        np.concatenate([block.vertex_source_dimensions for block in blocks]),
-        np.concatenate([block.vertex_source_indices for block in blocks]),
-        np.concatenate([block.vertex_parameters for block in blocks]),
-        np.concatenate([block.chart_restriction_vertices for block in blocks]),
-        np.concatenate([block.chart_restriction_edges for block in blocks], axis=0),
-        np.concatenate(
-            [block.chart_restriction_endpoint_parameters for block in blocks], axis=0
-        ),
-        np.concatenate([block.chart_restriction_parameters for block in blocks], axis=0),
-        np.concatenate([block.triangle_occurrence_ids for block in blocks]),
-        np.concatenate([block.vertex_occurrence_ids for block in blocks]),
-    )
+        offset += points.shape[0]
+    return BRepTessellation.concatenate(blocks)
 
 
-def tessellate_brep(
+def _prepare_request(
     geometry: BRepGeometry,
     patches: tuple[AbstractSurfacePatch, ...],
     orientation: np.ndarray,
@@ -239,42 +386,7 @@ def tessellate_brep(
     *,
     source_id: str,
     source_revision: str,
-) -> BRepTessellation:
-    """Generate shared-edge, trim-conforming triangles with hard fidelity bounds."""
-    if not patches or not policy.realize:
-        return BRepTessellation(
-            np.empty((0, 3), dtype=np.float64),
-            np.empty((0, 3), dtype=np.int32),
-            np.empty((0,), dtype=np.int32),
-            np.empty((0, 3, 2), dtype=np.float64),
-            np.empty((0,), dtype=np.float64),
-            np.empty((0,), dtype=np.float64),
-            np.empty((0,), dtype=np.int32),
-            np.empty((0,), dtype=np.int64),
-            np.empty((0, 2), dtype=np.float64),
-            np.empty((0,), dtype=np.int64),
-            np.empty((0, 2), dtype=np.int64),
-            np.empty((0, 2, 2), dtype=np.float64),
-            np.empty((0, 2), dtype=np.int64),
-            np.empty((0,), dtype=np.int32),
-            np.empty((0,), dtype=np.int32),
-        )
-
-    from ...discretization._coordinate_enclosure import coordinate_enclosure_budget
-    from ...meshing._contracts import (
-        CellFamilyPolicy,
-        CellMeshingTarget,
-        MeshingLimits,
-        SurfaceMeshingSpec,
-    )
-    from ...meshing._controls import FeatureKind, ProtectedFeature
-    from ...meshing._domain import compile_surface_domain
-    from ...meshing._scope import MeshingEntityKind, MeshingScope
-    from ...meshing._sizing import SizeControlStrength, UniformSizeControl
-    from ...meshing._surface_generation import generate_surface
-    from ...meshing.providers._native_options import NativeSurfaceSchedule
-    from .._meshing_domain import MeshingDomain, MeshingDomainBoundarySource
-
+) -> _TessellationRequest:
     domain = MeshingDomain.from_brep_geometry(
         geometry,
         patches,
@@ -303,171 +415,332 @@ def tessellate_brep(
     specification = SurfaceMeshingSpec(
         CellMeshingTarget(2, 3, CellFamilyPolicy(required=("triangle",))),
         scope,
-        # CAD policy requests fidelity, not a statistical mesh density.
+        # Fidelity is a hard source obligation; density is only a soft request.
         size_controls=(
             UniformSizeControl(
-                scope,
-                domain.scale,
-                strength=SizeControlStrength.SOFT,
+                scope, domain.physical_extent, strength=SizeControlStrength.SOFT
             ),
         ),
         protected_features=(
             ProtectedFeature(
-                # The owning scheduler now charges the carrier and actual source
-                # trim homotopy against this one original physical allowance.
-                scope,
-                FeatureKind.SURFACE,
-                maximum_deviation=policy.linear_deflection,
+                scope, FeatureKind.SURFACE, maximum_deviation=policy.linear_deflection
             ),
         ),
         limits=limits,
     )
-    compiled = compile_surface_domain(domain, specification)
-    owner = coordinate_enclosure_budget(
-        limits.maximum_work_units, limits.maximum_scratch_bytes
+    return _TessellationRequest(
+        domain=domain,
+        specification=specification,
+        limits=limits,
+        source_revision=source_revision,
     )
-    with owner.activate():
-        construction = generate_surface(
-            compiled,
-            NativeSurfaceSchedule(quality_angle_degrees=0.0),
-            limits,
-            0.0,
-            maximum_normal_angle=policy.angular_deflection,
-        )
-        source = MeshingDomainBoundarySource(
-            domain,
-            tuple(compiled.patches.tolist()),
-            chart_triangulations=construction.chart_triangulations,
-        )
-        retained = sum(
-            array.nbytes
-            for array in (
-                construction.vertices,
-                construction.vertex_source_dimensions,
-                construction.vertex_source_indices,
-                construction.vertex_parameters,
-                construction.chart_restriction_vertices,
-                construction.chart_restriction_edges,
-                construction.chart_restriction_endpoint_parameters,
-                construction.chart_restriction_parameters,
-                construction.triangles,
-                construction.triangle_patches,
-                construction.triangle_charts,
-                construction.triangle_parameters,
-                construction.triangle_deviations,
-                construction.triangle_deviation_bounds,
-                construction.triangle_normal_bounds,
-                construction.curve_edges,
-                construction.curve_edge_curves,
-                construction.curve_edge_deviations,
-                construction.curve_edge_deviation_bounds,
-                construction.unresolved,
-                *(
-                    array
-                    for (
-                        _,
-                        charts,
-                        points,
-                        cells,
-                        boundary,
-                        provenance,
-                        restriction_required,
-                        restriction_vertices,
-                        restriction_edges,
-                        restriction_parameters,
-                    ) in construction.chart_triangulations
-                    for array in (
-                        charts,
-                        points,
-                        cells,
-                        boundary,
-                        provenance,
-                        restriction_required,
-                        restriction_vertices,
-                        restriction_edges,
-                        restriction_parameters,
-                    )
-                ),
-                *(array for _, array in construction.curve_parameters),
-            )
-        )
-        remaining_work = limits.maximum_work_units - construction.work_units
-        remaining_memory = max(0, limits.maximum_scratch_bytes - retained)
-        cover_queries = construction.geometry_queries
 
-        def reserve_queries(count: int) -> None:
-            nonlocal cover_queries
-            if cover_queries + count > limits.maximum_geometry_queries:
-                from ...meshing._contracts import MeshingFailure, MeshingFailureCategory
 
-                raise MeshingFailure(
-                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                    "Native CAD source cover exhausted the original geometry-query allowance.",
-                    requested=(
-                        ("maximum_geometry_queries", limits.maximum_geometry_queries),
-                    ),
-                    achieved=(("geometry_queries", cover_queries + count),),
+def _retained_bytes(construction: SurfaceConstruction, /) -> int:
+    """Count the retained scheduler buffers charged before source-cover work."""
+    return sum(
+        array.nbytes
+        for array in (
+            construction.vertices,
+            construction.vertex_source_dimensions,
+            construction.vertex_source_indices,
+            construction.vertex_parameters,
+            construction.chart_restriction_vertices,
+            construction.chart_restriction_edges,
+            construction.chart_restriction_endpoint_parameters,
+            construction.chart_restriction_parameters,
+            construction.triangles,
+            construction.triangle_patches,
+            construction.triangle_charts,
+            construction.triangle_parameters,
+            construction.triangle_deviations,
+            construction.triangle_deviation_bounds,
+            construction.triangle_normal_bounds,
+            construction.curve_edges,
+            construction.curve_edge_curves,
+            construction.curve_edge_deviations,
+            construction.curve_edge_deviation_bounds,
+            construction.unresolved,
+            *(
+                array
+                for (
+                    _,
+                    charts,
+                    points,
+                    cells,
+                    boundary,
+                    provenance,
+                    restriction_required,
+                    restriction_vertices,
+                    restriction_edges,
+                    restriction_parameters,
+                ) in construction.chart_triangulations
+                for array in (
+                    charts,
+                    points,
+                    cells,
+                    boundary,
+                    provenance,
+                    restriction_required,
+                    restriction_vertices,
+                    restriction_edges,
+                    restriction_parameters,
                 )
-            cover_queries += count
-
-        with owner.bound_stage(remaining_work, remaining_memory):
-            cover = source.boundary_chart_cover(
-                remaining_work,
-                budget=owner,
-                reserve_queries=reserve_queries,
-            )
-    covering_bound = float(np.max(cover.deviation_bounds, initial=0.0))
-    if (
-        np.any(construction.unresolved)
-        or not cover.complete
-        or cover.semantics != "certified"
-        or not np.isfinite(covering_bound)
-        or covering_bound > policy.linear_deflection
-        or np.any(construction.triangle_deviation_bounds > policy.linear_deflection)
-        or np.any(construction.curve_edge_deviation_bounds > policy.linear_deflection)
-        or np.any(construction.triangle_normal_bounds > policy.angular_deflection)
-    ):
-        raise ValueError(
-            "Native CAD tessellation exhausted its source fidelity or topology "
-            f"budget (unresolved={int(np.sum(construction.unresolved))}, "
-            f"cover_complete={cover.complete}, cover_semantics={cover.semantics!r}, "
-            f"cover_bound={covering_bound:.17g}, "
-            f"triangle_bound={float(np.max(construction.triangle_deviation_bounds, initial=0.0)):.17g}, "
-            f"curve_bound={float(np.max(construction.curve_edge_deviation_bounds, initial=0.0)):.17g}, "
-            f"normal_bound={float(np.max(construction.triangle_normal_bounds, initial=0.0)):.17g}, "
-            f"chart_restrictions={construction.chart_restriction_vertices.size})."
+            ),
+            *(array for _, array in construction.curve_parameters),
         )
+    )
+
+
+def _execute_request(
+    request: _TessellationRequest, policy: BRepTessellationPolicy, /
+) -> _TessellationExecution:
+    # Domain compilation and surface execution consume B-Rep query owners.
+    # Import these execution modules only after the unrealized return path.
+    from ...meshing import (
+        _domain as domain_owner,
+        _surface_generation as surface_generation_owner,
+    )
+
+    domain, limits = request.domain, request.limits
+    with NativeExecutionScope(limits.native_limits()) as execution_scope:
+        allowance = execution_scope.remaining()
+        with execution_scope.batch(
+            min(limits.maximum_work_units, allowance.remaining_work_units),
+            bytes_upper=min(
+                limits.maximum_scratch_bytes, allowance.remaining_managed_bytes
+            ),
+            queries_upper=min(
+                limits.maximum_geometry_queries, allowance.remaining_geometry_queries
+            ),
+        ) as preparation_ticket:
+            owner = CoordinateEnclosureBudget(
+                preparation_ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            with preparation_ticket.native_target(), owner.activate():
+                compiled = domain_owner.compile_surface_domain(
+                    domain, request.specification, budget=owner
+                )
+        with owner.retained_storage(
+            lambda size: execution_scope.batch(0, bytes_upper=size)
+        ):
+            construction = surface_generation_owner.generate_surface(
+                compiled,
+                NativeSurfaceSchedule(quality_angle_degrees=0.0),
+                limits,
+                0.0,
+                maximum_normal_angle=policy.angular_deflection,
+                scope=execution_scope,
+                budget=owner,
+            )
+            source = MeshingDomainBoundarySource(
+                domain,
+                tuple(compiled.patches.tolist()),
+                chart_triangulations=construction.chart_triangulations,
+            )
+            remaining_work = limits.maximum_work_units - construction.work_units
+            remaining_memory = max(
+                0, limits.maximum_scratch_bytes - _retained_bytes(construction)
+            )
+            queries = _CoverQueries(
+                construction.geometry_queries, limits.maximum_geometry_queries
+            )
+            allowance = execution_scope.remaining()
+            with owner.bind_ticket(
+                execution_scope.batch(
+                    min(remaining_work, allowance.remaining_work_units),
+                    bytes_upper=min(remaining_memory, allowance.remaining_managed_bytes),
+                    queries_upper=min(
+                        max(0, limits.maximum_geometry_queries - queries.count),
+                        allowance.remaining_geometry_queries,
+                    ),
+                )
+            ):
+                with (
+                    owner.ticket.native_target(),
+                    owner.bound_stage(remaining_work, remaining_memory),
+                ):
+                    cover = source.boundary_chart_cover(
+                        remaining_work, budget=owner, reserve_queries=queries.reserve
+                    )
+    return _TessellationExecution(construction=construction, cover=cover)
+
+
+def _certify_execution(
+    request: _TessellationRequest,
+    execution: _TessellationExecution,
+    policy: BRepTessellationPolicy,
+    /,
+) -> _TessellationCertification:
+    construction, cover = execution.construction, execution.cover
+    # Preserve source-obligation order: topology, cover, surface, edge, normal.
+    if np.any(construction.unresolved):
+        row = int(np.flatnonzero(construction.unresolved)[0])
+        raise BRepTessellationFailure(
+            MeshingFailureCategory.AUDIT_FAILED,
+            "unresolved",
+            float(np.sum(construction.unresolved)),
+            0.0,
+            BRepEntityId(
+                request.source_revision,
+                "face",
+                int(request.domain.source_indices[2][construction.triangle_patches[row]]),
+            ),
+        )
+    if not cover.complete or cover.semantics != "certified":
+        raise BRepTessellationFailure(
+            MeshingFailureCategory.AUDIT_FAILED,
+            "uncertified_cover",
+            1.0,
+            0.0,
+            None,
+        )
+    covering_bound = float(np.max(cover.deviation_bounds, initial=0.0))
+    if not np.isfinite(covering_bound) or covering_bound > policy.linear_deflection:
+        raise BRepTessellationFailure(
+            MeshingFailureCategory.COMPLIANCE_FAILED,
+            "cover_deviation",
+            covering_bound if np.isfinite(covering_bound) else np.inf,
+            policy.linear_deflection,
+            None,
+        )
+    for bounds, indices, dimension, kind, field, limit in (
+        (
+            construction.triangle_deviation_bounds,
+            construction.triangle_patches,
+            2,
+            "face",
+            "triangle_deviation",
+            policy.linear_deflection,
+        ),
+        (
+            construction.curve_edge_deviation_bounds,
+            construction.curve_edge_curves,
+            1,
+            "edge",
+            "curve_deviation",
+            policy.linear_deflection,
+        ),
+        (
+            construction.triangle_normal_bounds,
+            construction.triangle_patches,
+            2,
+            "face",
+            "normal_angle",
+            policy.angular_deflection,
+        ),
+    ):
+        if np.any(bounds > limit):
+            row = int(np.argmax(bounds))
+            raise BRepTessellationFailure(
+                MeshingFailureCategory.COMPLIANCE_FAILED,
+                field,
+                float(bounds[row]),
+                limit,
+                BRepEntityId(
+                    request.source_revision,
+                    kind,
+                    int(request.domain.source_indices[dimension][indices[row]]),
+                ),
+            )
+    return _TessellationCertification(construction=construction)
+
+
+def _assemble_template(
+    request: _TessellationRequest, certified: _TessellationCertification, /
+) -> BRepTessellation:
+    construction = certified.construction
     source_indices = construction.vertex_source_indices.copy()
     for dimension in range(3):
         selected = construction.vertex_source_dimensions == dimension
         source_indices[selected] = np.asarray(
-            domain.source_indices[dimension], dtype=np.int64
+            request.domain.source_indices[dimension], dtype=np.int64
         )[source_indices[selected]]
-    template = BRepTessellation(
-        construction.vertices,
-        construction.triangles.astype(np.int32),
-        construction.triangle_patches.astype(np.int32),
-        construction.triangle_parameters,
-        construction.triangle_deviation_bounds,
-        construction.triangle_normal_bounds,
-        construction.vertex_source_dimensions,
-        source_indices,
-        construction.vertex_parameters,
-        construction.chart_restriction_vertices,
-        construction.chart_restriction_edges,
-        construction.chart_restriction_endpoint_parameters,
-        construction.chart_restriction_parameters,
-        np.full((construction.triangles.shape[0],), -1, dtype=np.int32),
-        np.full((construction.vertices.shape[0],), -1, dtype=np.int32),
+    return BRepTessellation(
+        vertices=construction.vertices,
+        triangles=construction.triangles.astype(np.int32),
+        face_ids=construction.triangle_patches.astype(np.int32),
+        parameters=construction.triangle_parameters,
+        deviation_bounds=construction.triangle_deviation_bounds,
+        normal_bounds=construction.triangle_normal_bounds,
+        vertex_source_dimensions=construction.vertex_source_dimensions,
+        vertex_source_indices=source_indices,
+        vertex_parameters=construction.vertex_parameters,
+        chart_restriction_vertices=construction.chart_restriction_vertices,
+        chart_restriction_edges=construction.chart_restriction_edges,
+        chart_restriction_endpoint_parameters=construction.chart_restriction_endpoint_parameters,
+        chart_restriction_parameters=construction.chart_restriction_parameters,
+        triangle_occurrence_ids=np.full(
+            (construction.triangles.shape[0],), -1, dtype=np.int32
+        ),
+        vertex_occurrence_ids=np.full(
+            (construction.vertices.shape[0],), -1, dtype=np.int32
+        ),
     )
-    placed = _place_occurrences(template, geometry, policy.maximum_triangles)
-    if np.any(placed.deviation_bounds > policy.linear_deflection) or np.any(
-        placed.normal_bounds > policy.angular_deflection
+
+
+def _certify_placements(
+    placed: BRepTessellation,
+    geometry: BRepGeometry,
+    policy: BRepTessellationPolicy,
+    source_revision: str,
+    /,
+) -> BRepTessellation:
+    for bounds, field, limit in (
+        (placed.deviation_bounds, "placed_deviation", policy.linear_deflection),
+        (placed.normal_bounds, "placed_normal_angle", policy.angular_deflection),
     ):
-        raise ValueError(
-            "Placed CAD tessellation misses the requested continuous pose fidelity."
-        )
+        if np.any(bounds > limit):
+            row = int(np.argmax(bounds))
+            occurrence_index = int(placed.triangle_occurrence_ids[row])
+            path = (
+                geometry.occurrences[occurrence_index].path
+                if occurrence_index >= 0
+                else ()
+            )
+            raise BRepTessellationFailure(
+                MeshingFailureCategory.COMPLIANCE_FAILED,
+                field,
+                float(bounds[row]),
+                limit,
+                BRepEntityId(source_revision, "face", int(placed.face_ids[row]), path),
+            )
     return placed
 
 
-__all__ = ["BRepTessellation", "tessellate_brep"]
+@checked
+def tessellate_brep(
+    geometry: BRepGeometry,
+    patches: tuple[AbstractSurfacePatch, ...],
+    orientation: np.ndarray,
+    policy: BRepTessellationPolicy,
+    /,
+    *,
+    source_id: str,
+    source_revision: str,
+) -> BRepTessellation:
+    """Generate shared-edge, trim-conforming triangles with hard fidelity bounds.
+
+    Refusals carry ``MeshingFailure`` categories and requested/achieved quantities.
+    Post-generation bound refusals include the qualified entity when local.
+    """
+    if not patches or not policy.realize:
+        return BRepTessellation.empty()
+    request = _prepare_request(
+        geometry,
+        patches,
+        orientation,
+        policy,
+        source_id=source_id,
+        source_revision=source_revision,
+    )
+    execution = _execute_request(request, policy)
+    certified = _certify_execution(request, execution, policy)
+    template = _assemble_template(request, certified)
+    placed = _place_occurrences(template, geometry, policy.maximum_triangles)
+    return _certify_placements(placed, geometry, policy, source_revision)
+
+
+__all__ = ["BRepTessellation", "BRepTessellationFailure", "tessellate_brep"]

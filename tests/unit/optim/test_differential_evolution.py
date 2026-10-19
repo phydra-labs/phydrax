@@ -10,8 +10,8 @@ import pytest
 
 import phydrax as phx
 from phydrax.optim._differential_evolution import (
-    _bounded_differential_evolution,
     _reflect_unit_box,
+    bounded_differential_evolution,
 )
 
 
@@ -37,7 +37,7 @@ def test_differential_evolution_scenario_1() -> None:
     objective = lambda vector: jnp.sum(vector * vector)
 
     with pytest.raises(ValueError, match="one-dimensional"):
-        _bounded_differential_evolution(
+        bounded_differential_evolution(
             objective,
             jnp.zeros((1, 1)),
             jnp.zeros((1,)),
@@ -46,7 +46,7 @@ def test_differential_evolution_scenario_1() -> None:
             key=jr.key(0),
         )
     with pytest.raises(ValueError, match="at least one dimension"):
-        _bounded_differential_evolution(
+        bounded_differential_evolution(
             objective,
             jnp.zeros((0,)),
             jnp.zeros((0,)),
@@ -55,7 +55,7 @@ def test_differential_evolution_scenario_1() -> None:
             key=jr.key(0),
         )
     with pytest.raises(ValueError, match="identical shapes"):
-        _bounded_differential_evolution(
+        bounded_differential_evolution(
             objective,
             jnp.zeros((2,)),
             jnp.zeros((1,)),
@@ -64,7 +64,7 @@ def test_differential_evolution_scenario_1() -> None:
             key=jr.key(0),
         )
     with pytest.raises(ValueError, match="finite"):
-        _bounded_differential_evolution(
+        bounded_differential_evolution(
             objective,
             jnp.zeros((1,)),
             jnp.asarray([jnp.nan]),
@@ -73,7 +73,7 @@ def test_differential_evolution_scenario_1() -> None:
             key=jr.key(0),
         )
     with pytest.raises(ValueError, match="smaller"):
-        _bounded_differential_evolution(
+        bounded_differential_evolution(
             objective,
             jnp.zeros((1,)),
             jnp.ones((1,)),
@@ -82,7 +82,7 @@ def test_differential_evolution_scenario_1() -> None:
             key=jr.key(0),
         )
     with pytest.raises(ValueError, match="outside"):
-        _bounded_differential_evolution(
+        bounded_differential_evolution(
             objective,
             jnp.asarray([2.0]),
             jnp.zeros((1,)),
@@ -91,7 +91,7 @@ def test_differential_evolution_scenario_1() -> None:
             key=jr.key(0),
         )
     with pytest.raises(TypeError, match="real-valued"):
-        _bounded_differential_evolution(
+        bounded_differential_evolution(
             objective,
             jnp.asarray([0.0 + 0.0j]),
             jnp.asarray([-1.0 + 0.0j]),
@@ -117,9 +117,9 @@ def test_differential_evolution_scenario_1() -> None:
             search,
         )
 
-        result = _bounded_differential_evolution(*arguments, key=jr.key(42))
-        replay = _bounded_differential_evolution(*arguments, key=jr.key(42))
-        different = _bounded_differential_evolution(*arguments, key=jr.key(43))
+        result = bounded_differential_evolution(*arguments, key=jr.key(42))
+        replay = bounded_differential_evolution(*arguments, key=jr.key(42))
+        different = bounded_differential_evolution(*arguments, key=jr.key(43))
 
         assert result.generations == 3
         assert result.objective_evaluations == 8 * 4
@@ -148,7 +148,7 @@ def test_differential_evolution_scenario_2() -> None:
     search = phx.optim.DifferentialEvolutionSearch(4, 10)
     bounds = (jnp.asarray([-1.0]), jnp.asarray([1.0]))
 
-    converged = _bounded_differential_evolution(
+    converged = bounded_differential_evolution(
         lambda vector: jnp.asarray(1.0),
         jnp.asarray([0.0]),
         *bounds,
@@ -160,7 +160,7 @@ def test_differential_evolution_scenario_2() -> None:
     assert converged.objective_evaluations == 4
     assert converged.termination_reason == "initial_population_converged"
 
-    invalid = _bounded_differential_evolution(
+    invalid = bounded_differential_evolution(
         lambda vector: jnp.asarray(jnp.nan),
         jnp.asarray([0.0]),
         *bounds,

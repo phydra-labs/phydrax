@@ -51,7 +51,9 @@ class GeometryDomain(AbstractGeometry):
     @checked
     def __init__(self, geometry: CompiledGeometry, *, label: str = "x") -> None:
         if geometry.kind not in (GeometryKind.REGION, GeometryKind.MANIFOLD):
-            raise ValueError("GeometryDomain requires a region or manifold kernel.")
+            raise ValueError(
+                f"GeometryDomain.geometry.kind must be REGION or MANIFOLD; got {geometry.kind!r}."
+            )
         if not isinstance(label, str) or not label:
             raise ValueError("GeometryDomain label must be a non-empty string.")
         self.geometry = geometry

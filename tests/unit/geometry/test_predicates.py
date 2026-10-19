@@ -235,7 +235,7 @@ def test_missing_library_uses_exact_dyadic_host_fallback(
     assert int(exact.signs) == PredicateSign.ZERO
     filtered = orient2d([0.0, 0.0], [1.0, 1.0], [2.0, 2.0], mode=PredicateMode.FILTERED)
     assert int(filtered.signs) == PredicateSign.UNCERTAIN
-    with pytest.raises(ValueError, match="FILTERED or EXACT"):
+    with pytest.raises(ValueError, match=r"resolve_host_predicate_mode\.mode"):
         resolve_host_predicate_mode(PredicateMode.FILTERED_DEVICE)
 
 

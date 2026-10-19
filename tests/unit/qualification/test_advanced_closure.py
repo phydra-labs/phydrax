@@ -44,7 +44,7 @@ def test_advanced_closure_scenario_1() -> None:
             assert implementation_depth >= CapabilityDepth.SPATIAL_SINGLE_PHYSICS
     assert all(
         not resolution.release_authorized
-        for matrix in builtin
+        for matrix in matrices
         for resolution in matrix.resolutions
     )
     for declaration in declarations:

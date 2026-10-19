@@ -14,10 +14,10 @@ from __future__ import annotations
 import json
 
 import phydrax as phx
-from tools._hybrid_layer_source import (
+from phydrax.meshing.qualification import (
     AuthoredPeriodicLayerSource,
-    corrected_periodic_layer_source,
-    source_identity_record,
+    periodic_layer_source_identity_record,
+    prepare_corrected_periodic_layer_source,
 )
 
 
@@ -40,7 +40,7 @@ def generate_curved_periodic_layer_core(
         maximum_scratch_bytes=8192 * capacity,
         maximum_wall_seconds=timeout,
     )
-    authored = corrected_periodic_layer_source(limits=limits)
+    authored = prepare_corrected_periodic_layer_source(limits=limits)
     result = (
         phx.meshing.NativeMeshingProvider(authored.options)
         .plan(
@@ -63,7 +63,7 @@ def main() -> None:
     print(
         json.dumps(
             {
-                "source": source_identity_record(authored),
+                "source": periodic_layer_source_identity_record(authored),
                 "result_id": result.result_id,
                 "mesh_id": result.mesh.mesh_id,
                 "certification_id": certificate.report_id,

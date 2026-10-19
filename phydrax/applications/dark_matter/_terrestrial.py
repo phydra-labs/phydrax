@@ -27,6 +27,7 @@ from ...solver import (
 )
 from ...stochastic import PoissonClockRealization
 from ...typing import checked
+from ...units import METER
 from ._profiles import LayeredTerrestrialProfile
 from ._rates import spherical_surface_crossings, SurfaceCrossingMeasure
 from ._scattering import ElasticScatteringTable
@@ -328,7 +329,7 @@ class TerrestrialTransportPlan(StrictModule, NonTrainableState):
             (0.0, 0.0, 0.0),
             detector_radius,
             feature_id=f"{profile.frame_id}:detector-depth:{depth:.17g}",
-        ).compile()
+        ).compile(coordinate_unit=METER)
         specifications: list[tuple[str, CompiledGeometry, int, bool, int]] = []
         for index, boundary in enumerate(profile.boundaries[:-1]):
             specifications.append((f"layer:{index}", boundary, 0, False, 0))

@@ -19,16 +19,78 @@ import phydrax.linalg as la
 from phydrax.linalg._dense_pseudoinverse import (
     apply_connected_pseudoinverse,
     apply_pseudoinverse,
+    DensePseudoinverseFactors,
     factor_pseudoinverse,
 )
+
+
+# Empirical `test_connected_gram_matches_dense_global_rank_cutoff_and_condition`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_CONNECTED_GRAM_PSEUDOINVERSE_ACTION_RTOL = 1e-12
+# Empirical `test_connected_gram_matches_dense_global_rank_cutoff_and_condition`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_CONNECTED_GRAM_CONDITION_ESTIMATE_RTOL = 1e-12
+# Empirical `test_connected_gram_preserves_ragged_blocks_and_exact_tiny_links`: matched max |delta|=8.88178e-15; joint allowance fraction=3.56568e-05, margin=99.9964%.
+_RAGGED_GRAM_PSEUDOINVERSE_ACTION_RTOL = 1e-10
+# Empirical `test_connected_gram_preserves_ragged_blocks_and_exact_tiny_links`: matched max |delta|=8.88178e-15; joint allowance fraction=3.56568e-05, margin=99.9964%.
+_RAGGED_GRAM_PSEUDOINVERSE_ACTION_ATOL = 1e-12
+# Empirical `test_connected_gram_nonfinite_and_true_null_modes_refuse_or_match_dense`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_NULL_MODE_PSEUDOINVERSE_ACTION_RTOL = 1e-12
+# Empirical `test_connected_gram_nonfinite_and_true_null_modes_refuse_or_match_dense`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_NULL_MODE_PSEUDOINVERSE_ACTION_ATOL = 1e-14
 
 
 _RNG = np.random.default_rng(1001)
 _STEP = 1e-6
 
 
+@pytest.mark.parametrize(
+    ("largest", "floor", "cutoff", "retained", "solution", "condition"),
+    (
+        (0.5, None, 0.1875, (True, True, False), (2.0, 4.0, 0.0), 2.0),
+        (0.5, 1.0, 0.3125, (True, False, False), (2.0, 0.0, 0.0), 1.0),
+        (2.0, 1.0, 0.5625, (True, False, False), (0.5, 0.0, 0.0), 1.0),
+    ),
+    ids=("default-scale", "omitted-unit-scale", "computed-scale-larger-than-floor"),
+)
+@pytest.mark.parametrize("compiled", (False, True), ids=("eager", "jit"))
+def test_pseudoinverse_rank_scale_floor_preserves_additive_policy_and_condition(
+    largest: float,
+    floor: float | None,
+    cutoff: float,
+    retained: tuple[bool, bool, bool],
+    solution: tuple[float, float, float],
+    condition: float,
+    compiled: bool,
+) -> None:
+    # Binary diagonal entries make the original absolute + relative cutoff and
+    # the retained reciprocal action independently exact for every case.
+    matrix = jnp.diag(jnp.asarray((largest, 0.25, 0.125), dtype=jnp.float64))
+    policy = la.RankPolicy(relative_cutoff=0.25, absolute_cutoff=0.0625)
+
+    def factor(value: Array) -> DensePseudoinverseFactors:
+        return factor_pseudoinverse(value, policy, hermitian=True, rank_scale_floor=floor)
+
+    execute = jax.jit(factor) if compiled else factor
+    factors = execute(matrix)
+    np.testing.assert_array_equal(factors.rank_cutoff, cutoff)
+    np.testing.assert_array_equal(factors.retained, retained)
+    np.testing.assert_array_equal(factors.condition_estimate, condition)
+    np.testing.assert_array_equal(
+        apply_pseudoinverse(factors, jnp.ones((3,), dtype=jnp.float64)), solution
+    )
+
+
+@pytest.mark.parametrize("floor", (-1.0, np.inf, np.nan))
+def test_pseudoinverse_rejects_invalid_rank_scale_floor(floor: float) -> None:
+    with pytest.raises(ValueError, match="rank_scale_floor"):
+        factor_pseudoinverse(
+            jnp.eye(2, dtype=jnp.float64),
+            la.RankPolicy(),
+            rank_scale_floor=floor,
+        )
+
+
 def test_connected_gram_matches_dense_global_rank_cutoff_and_condition() -> None:
-    # Separate exact components have radically unequal scales. A per-block
+    # Separate diagonal components have radically unequal scales. A per-block
     # relative cutoff would incorrectly retain the small scalar component.
     matrix = jnp.diag(jnp.asarray((1e6, 2.0, 1e-4, 0.0)))
     rhs = jnp.asarray((1.0, 2.0, 3.0, 0.0))
@@ -42,12 +104,18 @@ def test_connected_gram_matches_dense_global_rank_cutoff_and_condition() -> None
     assert bool(result.finite)
     assert not bool(result.resource_refused)
     np.testing.assert_allclose(
-        result.value, apply_pseudoinverse(dense, rhs), rtol=1e-12, atol=0.0
+        result.value,
+        apply_pseudoinverse(dense, rhs),
+        rtol=_CONNECTED_GRAM_PSEUDOINVERSE_ACTION_RTOL,
+        atol=0.0,
     )
     np.testing.assert_array_equal(result.rank, dense.rank)
     np.testing.assert_allclose(result.rank_cutoff, dense.rank_cutoff, rtol=0.0, atol=0.0)
     np.testing.assert_allclose(
-        result.condition_estimate, dense.condition_estimate, rtol=1e-12, atol=0.0
+        result.condition_estimate,
+        dense.condition_estimate,
+        rtol=_CONNECTED_GRAM_CONDITION_ESTIMATE_RTOL,
+        atol=0.0,
     )
     assert float(result.value[2]) == 0.0
 
@@ -72,7 +140,10 @@ def test_connected_gram_preserves_ragged_blocks_and_exact_tiny_links() -> None:
         ].tolist()
     ) == [1, 23]
     np.testing.assert_allclose(
-        result.value, apply_pseudoinverse(dense, rhs), rtol=1e-10, atol=1e-12
+        result.value,
+        apply_pseudoinverse(dense, rhs),
+        rtol=_RAGGED_GRAM_PSEUDOINVERSE_ACTION_RTOL,
+        atol=_RAGGED_GRAM_PSEUDOINVERSE_ACTION_ATOL,
     )
     tiny = jnp.asarray(((1.0, 1e-16), (1e-16, 1.0)))
     linked = apply_connected_pseudoinverse(
@@ -118,7 +189,10 @@ def test_connected_gram_nonfinite_and_true_null_modes_refuse_or_match_dense() ->
     assert bool(result.finite)
     assert int(result.rank) == 2
     np.testing.assert_allclose(
-        result.value, apply_pseudoinverse(dense, rhs), rtol=1e-12, atol=1e-14
+        result.value,
+        apply_pseudoinverse(dense, rhs),
+        rtol=_NULL_MODE_PSEUDOINVERSE_ACTION_RTOL,
+        atol=_NULL_MODE_PSEUDOINVERSE_ACTION_ATOL,
     )
     failed = apply_connected_pseudoinverse(
         matrix.at[0, 0].set(jnp.nan), rhs, policy, active, jnp.asarray(1_000_000)

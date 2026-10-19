@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.meshing.providers._native_publication import uniform_size_compliance
+from phydrax.meshing.providers._native_route_checks import uniform_size_compliance
 
 
 def _scope(dimension: Any, ids: Any = (1,)) -> Any:

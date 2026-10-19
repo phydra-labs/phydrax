@@ -88,7 +88,9 @@ _SYMBOL_OWNERS: Final = MappingProxyType(
                     "weakest_level",
                 ),
             ),
-            ("._fingerprint", ("array_tree_fingerprint",)),
+            ("._fingerprint", ("array_tree_fingerprint", "canonical_fingerprint")),
+            ("._model._structure", ("model_array_bytes",)),
+            ("._resource_ticket", ("BatchTicket", "HostBatchTicket")),
             ("._execution_resources", ("ExecutionResourceEvidence",)),
             (
                 "._identity",
@@ -353,7 +355,7 @@ if TYPE_CHECKING:
         weakest_level,
     )
     from ._execution_resources import ExecutionResourceEvidence
-    from ._fingerprint import array_tree_fingerprint
+    from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
     from ._identity import (
         ArtifactBindingIdentity,
         callable_payload,
@@ -409,6 +411,7 @@ if TYPE_CHECKING:
         supports_derivative,
         ValuePort,
     )
+    from ._model._structure import model_array_bytes
     from ._physical import (
         DimensionalScaleContract,
         ElectromagneticScaleContract,
@@ -416,6 +419,7 @@ if TYPE_CHECKING:
         RelativityScaleContract,
         SpatialCoordinateContract,
     )
+    from ._resource_ticket import BatchTicket, HostBatchTicket
     from ._strict import StrictModule
     from ._trainable import (
         ArrayRole,
@@ -435,6 +439,8 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "canonical_fingerprint",
+    "model_array_bytes",
     "FourMomentum",
     "LorentzFrame",
     "LorentzSpectralTransform",
@@ -461,6 +467,7 @@ __all__ = [
     "ArrayPyTreeSchema",
     "ArrayRole",
     "ArtifactBindingIdentity",
+    "BatchTicket",
     "BranchDifferentiationPolicy",
     "CapabilityEvidenceKind",
     "CapabilityRequirement",
@@ -487,6 +494,7 @@ __all__ = [
     "ExplicitFreeze",
     "FrozenRealization",
     "GradientLevel",
+    "HostBatchTicket",
     "LaneLayout",
     "LengthCoordinateKind",
     "ModelExecutionContract",

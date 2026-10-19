@@ -379,7 +379,7 @@ def bspline_jet_stencil(
         maximum_order_,
     )
     offsets = jnp.arange(degree_ + 1, dtype=jnp.int32) - degree_
-    indices = spans_[..., None] + offsets
+    indices = spans_[..., None] + offsets.reshape((1,) * spans_.ndim + offsets.shape)
     return BSplineJetStencil(
         indices=indices,
         jets=jets,
@@ -543,7 +543,9 @@ def _insert_knot_bounds(
         denominator = knots[index + degree] - knots[index]
         denominator_lower = np.nextafter(denominator, -np.inf)
         if denominator_lower <= 0.0:
-            raise ValueError("Knot insertion denominator cannot be bounded positive.")
+            raise ValueError(
+                f"knot_insertion.denominator_lower must be positive; got {denominator_lower}."
+            )
         alpha_lower = np.nextafter(
             np.nextafter(numerator, -np.inf) / np.nextafter(denominator, np.inf), -np.inf
         )
@@ -629,7 +631,7 @@ def bezier_refinement(
     degree_ = int(degree)
     if exact and control_upper is not None:
         raise ValueError(
-            "Exact rational extraction cannot also take interval coefficients."
+            f"bezier_refinement.control_upper must be None for rational extraction; got shape={control_upper.shape}."
         )
     if exact:
         source = np.asarray(controls, dtype=object)
@@ -658,23 +660,33 @@ def bezier_refinement(
     if control_upper is not None:
         upper_values = np.moveaxis(np.asarray(control_upper, dtype=np.float64), axis, 0)
         if upper_values.shape != values.shape or np.any(values > upper_values):
-            raise ValueError("Bezier coefficient bounds are inconsistent.")
+            raise ValueError(
+                f"bezier_refinement.coefficient_bounds must have matching shapes and ordered endpoints; got lower_shape={values.shape}, upper_shape={upper_values.shape}."
+            )
         if not np.all(np.isfinite(values)) or not np.all(np.isfinite(upper_values)):
-            raise ValueError("Bezier coefficient bounds must be finite.")
+            raise ValueError(
+                f"bezier_refinement.coefficient_bounds must be finite; got lower={values}, upper={upper_values}."
+            )
     if degree_ < 1:
-        raise ValueError("Bezier extraction requires a positive degree.")
+        raise ValueError(f"bezier_refinement.degree must be positive; got {degree_}.")
     if knots_.size != values.shape[0] + degree_ + 1:
-        raise ValueError("Knot vector length is inconsistent with the control net.")
+        raise ValueError(
+            f"bezier_refinement.knots.size must equal control_count + degree + 1; got {knots_.size}, control_count={values.shape[0]}, degree={degree_}."
+        )
     if not np.all(np.isfinite(np.asarray(knots_, dtype=np.float64))) or np.any(
         np.diff(knots_) < 0
     ):
-        raise ValueError("B-spline knots must be finite and nondecreasing.")
+        raise ValueError(
+            f"bezier_refinement.knots must be finite and nondecreasing; got {knots_}."
+        )
     # Restrict the finite source domain [U[p], U[n+1]], not the exterior ghost
     # knots of a periodic/non-clamped representation. Boehm insertion in the
-    # owning arithmetic preserves the same homogeneous rational function.
+    # selected arithmetic preserves the same homogeneous rational function.
     lower, upper = knots_[degree_], knots_[-degree_ - 1]
     if not lower < upper:
-        raise ValueError("A spline source domain must have positive extent.")
+        raise ValueError(
+            f"bezier_refinement.domain must have positive extent; got lower={lower}, upper={upper}."
+        )
     for endpoint in (lower, upper):
         while int(np.count_nonzero(knots_ == endpoint)) < degree_ + 1:
             if upper_values is None:
@@ -701,7 +713,9 @@ def bezier_refinement(
     breaks = np.unique(knots_)
     count = breaks.size - 1
     if values.shape[0] != count * degree_ + 1:
-        raise ValueError("B-spline knots exceed the admissible interior multiplicity.")
+        raise ValueError(
+            f"bezier_refinement.knots must respect the interior multiplicity bound; got control_count={values.shape[0]}, span_count={count}, degree={degree_}."
+        )
     pieces = np.stack(
         [
             values[index * degree_ : index * degree_ + degree_ + 1]
@@ -724,9 +738,9 @@ def bezier_refinement(
 def exact_bezier_refinement(
     controls: np.ndarray, knots: np.ndarray, degree: int, axis: int, /
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Canonical Boehm extraction over Fraction coefficients and knot values.
+    """Extract Bezier pieces using Boehm insertion over Fraction values.
 
-    Input floats denote their exact binary rational values. Homogeneous products
+    Input floats denote their binary rational values. Homogeneous products
     must be formed as Fractions by the caller, not rounded before this function.
     This is a host construction route, not an exactness claim for device jets.
     """
@@ -738,11 +752,15 @@ def restrict_bernstein_bounds(
 ) -> tuple[np.ndarray, np.ndarray]:
     """De Casteljau restriction of coefficient enclosures to a subinterval."""
     if not 0.0 <= first <= last <= 1.0:
-        raise ValueError("Bernstein restriction must lie in [0, 1].")
+        raise ValueError(
+            f"restrict_bernstein_bounds.interval must lie in [0, 1] with ordered endpoints; got first={first}, last={last}."
+        )
     lower_ = np.moveaxis(np.asarray(lower, dtype=np.float64), axis, 0).copy()
     upper_ = np.moveaxis(np.asarray(upper, dtype=np.float64), axis, 0).copy()
     if lower_.shape != upper_.shape or np.any(lower_ > upper_):
-        raise ValueError("Bernstein coefficient bounds are inconsistent.")
+        raise ValueError(
+            f"restrict_bernstein_bounds.coefficients must have matching shapes and ordered endpoints; got lower={lower_}, upper={upper_}."
+        )
 
     def split(
         lo: np.ndarray, hi: np.ndarray, parameter: float

@@ -1,6 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+from collections.abc import Iterator
 from fractions import Fraction
 
 import jax
@@ -22,16 +23,40 @@ from phydrax.discretization._cell_geometry import (
 )
 from phydrax.discretization._cell_geometry_transfer import transition_nested_cell_geometry
 from phydrax.discretization._cell_mesh import CellMesh
-from phydrax.discretization.fem._reference import FiniteElementSpec
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
 from phydrax.discretization.fem._topology_transfer import (
-    _prepare_mapped_nested_dg_transfer,
+    prepare_mapped_nested_dg_transfer,
 )
 from phydrax.meshing._mixed_adaptation import (
     adapt_mixed_mesh,
     MixedAdaptationOutcome,
 )
 from phydrax.meshing._topology_edit import assemble_topology_edit
-from tests.unit.discretization.test_mapped_nested_dg import _content, _curved, _space
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.mapped_cells import (
+    curved_volume,
+    dg_content,
+    dg_space,
+)
+
+
+# Empirical `test_curved_q2_affine_composed_eight_child_dg1_conservation_coarsen_and_adjoint`: matched max |delta|=6.39488e-14; joint allowance fraction=2.91778e-08, margin=100%.
+_Q2_DG_CONTENT_ATOL = 3e-11
+# Empirical `test_curved_q2_affine_composed_eight_child_dg1_conservation_coarsen_and_adjoint`: matched max |delta|=1.06581e-14; joint allowance fraction=4.38263e-09, margin=100%.
+_Q2_DG_DUAL_PAIRING_ATOL = 3e-11
+# Empirical `test_curved_q2_affine_composed_eight_child_dg1_conservation_coarsen_and_adjoint`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_Q2_DG_JVP_ATOL = 2e-12
+# Empirical `test_curved_q2_affine_composed_eight_child_dg1_conservation_coarsen_and_adjoint`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_Q2_DG_PULLBACK_ATOL = 2e-12
+# Empirical `test_curved_q2_affine_composed_eight_child_dg1_conservation_coarsen_and_adjoint`: matched max |delta|=2.27374e-13; joint allowance fraction=7.82643e-07, margin=99.9999%.
+_Q2_DG_COARSENED_VALUES_ATOL = 3e-10
+# Empirical `test_affine_composed_3d_actual_source_bank_volume_jvp`: matched max |delta|=2.22045e-16; joint allowance fraction=2.01853e-09, margin=100%.
+_SOURCE_BANK_VOLUME_ATOL = 3e-12
+# Empirical `test_affine_composed_3d_actual_source_bank_volume_jvp`: matched max |delta|=1.11022e-16; joint allowance fraction=1.11019e-09, margin=100%.
+_SOURCE_BANK_VOLUME_JVP_ATOL = 3e-12
+# Empirical `test_affine_composed_3d_actual_source_bank_volume_jvp`: matched max |delta|=4.44089e-16; joint allowance fraction=4.44076e-09, margin=100%.
+_SOURCE_BANK_VOLUME_PULLBACK_ATOL = 3e-12
 
 
 def _exact_chart(
@@ -47,19 +72,21 @@ def _exact_chart(
     chart: FiniteElementSpec,
     values: NDArray[np.float64],
 ) -> PolynomialComposedCellGeometryElement:
-    fractions = [[Fraction(float(value)) for value in row] for row in values]
-    return PolynomialComposedCellGeometryElement(
-        source,
-        chart,
-        np.asarray(
-            [[value.numerator for value in row] for row in fractions],
-            dtype=object,
-        ),
-        np.asarray(
-            [[value.denominator for value in row] for row in fractions],
-            dtype=object,
-        ),
-    )
+    with coordinate_reference_budget() as budget:
+        fractions = [[Fraction(float(value)) for value in row] for row in values]
+        return PolynomialComposedCellGeometryElement(
+            source,
+            chart,
+            np.asarray(
+                [[value.numerator for value in row] for row in fractions],
+                dtype=object,
+            ),
+            np.asarray(
+                [[value.denominator for value in row] for row in fractions],
+                dtype=object,
+            ),
+            budget=budget,
+        )
 
 
 def _affine_children(
@@ -73,80 +100,85 @@ def _affine_children(
     NDArray[np.int64],
     NDArray[np.float64],
 ]:
-    mesh, geometry = _curved("hexahedron")
-    # Two genuine source banks, not a fit to target coordinate nodes. The Q2
-    # root has a nonconstant volume Jacobian as well as curved physical edges.
-    coordinates = np.asarray(geometry.coordinates).copy()
-    root = geometry.elements[0]
-    if not isinstance(root, FiniteElementSpec):
-        raise TypeError("Curved root fixture requires its finite-element chart.")
-    nodes = np.asarray(root.reference_nodes)
-    coordinates[:, 0] += scale * nodes[:, 0] ** 2
-    vertices = np.asarray(mesh.coordinates).copy()
-    vertices[:, 0] += scale * vertices[:, 0] ** 2
-    mesh = mesh.with_coordinates(vertices, numeric_version=f"curved-root-{scale}")
-    geometry = CellGeometrySpec(
-        {"volume": geometry.elements[0]},
-        {"volume": geometry.geometry_dofs[0]},
-        coordinates,
-    )
-    outcome = adapt_mixed_mesh(mesh, refine_cell_ids=np.asarray([17]))
-    fine_mesh, _, _ = assemble_topology_edit(
-        mesh, outcome.edit, numeric_version="composed-dg-fine"
-    )
-    transition = transition_nested_cell_geometry(
-        mesh,
-        geometry,
-        fine_mesh,
-        CellGeometrySpec.affine(fine_mesh),
-        refinement=outcome.edit.refinement,
-    )
-    restricted = transition.geometry
-    chart = coordinate_lagrange_element("hexahedron", 1)
-    if not isinstance(chart, FiniteElementSpec):
-        raise TypeError("Affine child fixture requires its Q1 chart.")
-    elements = {}
-    for block, element in zip(fine_mesh.blocks, restricted.elements, strict=True):
-        assert isinstance(element, RestrictedCellGeometryElement)
-        assert np.array_equal(np.asarray(element.matrix), 0.5 * np.eye(3))
-        values = np.asarray(chart.reference_nodes) @ np.asarray(
-            element.matrix
-        ).T + np.asarray(element.offset)
-        elements[block.name] = _exact_chart(element.source_element, chart, values)
-    composed = CellGeometrySpec(
-        elements,
-        {
-            block.name: route
-            for block, route in zip(
-                fine_mesh.blocks, restricted.geometry_dofs, strict=True
+    with coordinate_reference_budget() as budget:
+        mesh, geometry = curved_volume("hexahedron")
+        # Two source banks, not a fit to target coordinate nodes. The Q2
+        # root has a nonconstant volume Jacobian as well as curved physical edges.
+        coordinates = np.asarray(geometry.coordinates).copy()
+        root = geometry.elements[0]
+        if not isinstance(root, FiniteElementSpec):
+            raise TypeError(
+                f"fixture.root must be a FiniteElementSpec; got {type(root).__name__}"
             )
-        },
-        restricted.coordinates,
-        restriction_source=restricted.restriction_source,
-    )
-    parents = np.zeros(len(transition.target_cell_ids), dtype=np.int64)
-    return (
-        mesh,
-        geometry,
-        fine_mesh,
-        composed,
-        outcome,
-        parents,
-        np.asarray(transition.parent_reference_vertices),
-    )
+        nodes = np.asarray(root.reference_nodes)
+        coordinates[:, 0] += scale * nodes[:, 0] ** 2
+        vertices = np.asarray(mesh.coordinates).copy()
+        vertices[:, 0] += scale * vertices[:, 0] ** 2
+        mesh = mesh.with_coordinates(vertices, numeric_version=f"curved-root-{scale}")
+        geometry = CellGeometrySpec(
+            {"volume": geometry.elements[0]},
+            {"volume": geometry.geometry_dofs[0]},
+            coordinates,
+        )
+        outcome = adapt_mixed_mesh(mesh, refine_cell_ids=np.asarray([17]))
+        fine_mesh, _, _ = assemble_topology_edit(
+            mesh, outcome.edit, numeric_version="composed-dg-fine", budget=budget
+        )
+        transition = transition_nested_cell_geometry(
+            mesh,
+            geometry,
+            fine_mesh,
+            CellGeometrySpec.affine(fine_mesh),
+            refinement=outcome.edit.refinement,
+        )
+        restricted = transition.geometry
+        chart = coordinate_lagrange_element("hexahedron", 1)
+        if not isinstance(chart, FiniteElementSpec):
+            raise TypeError(
+                f"fixture.chart must be a Q1 FiniteElementSpec; got {type(chart).__name__}"
+            )
+        elements = {}
+        for block, element in zip(fine_mesh.blocks, restricted.elements, strict=True):
+            assert isinstance(element, RestrictedCellGeometryElement)
+            assert np.array_equal(np.asarray(element.matrix), 0.5 * np.eye(3))
+            values = np.asarray(chart.reference_nodes) @ np.asarray(
+                element.matrix
+            ).T + np.asarray(element.offset)
+            elements[block.name] = _exact_chart(element.source_element, chart, values)
+        composed = CellGeometrySpec(
+            elements,
+            {
+                block.name: route
+                for block, route in zip(
+                    fine_mesh.blocks, restricted.geometry_dofs, strict=True
+                )
+            },
+            restricted.coordinates,
+            restriction_source=restricted.restriction_source,
+        )
+        parents = np.zeros(len(transition.target_cell_ids), dtype=np.int64)
+        return (
+            mesh,
+            geometry,
+            fine_mesh,
+            composed,
+            outcome,
+            parents,
+            np.asarray(transition.parent_reference_vertices),
+        )
 
 
 @pytest.mark.parametrize("scale", [1 / 8, 0.1], ids=["binary-source", "nonbinary-source"])
 def test_curved_q2_affine_composed_eight_child_dg1_conservation_coarsen_and_adjoint(
-    scale: float,
+    scale: float, budget: CoordinateEnclosureBudget
 ) -> None:
     mesh, geometry, fine_mesh, composed, outcome, parents, corners = _affine_children(
         scale
     )
     before = np.asarray(geometry.coordinates).view(np.uint64).copy()
     child_before = np.asarray(composed.coordinates).view(np.uint64).copy()
-    source, fine = _space(mesh, geometry, 1), _space(fine_mesh, composed, 1)
-    prepared = _prepare_mapped_nested_dg_transfer(
+    source, fine = dg_space(mesh, geometry, 1), dg_space(fine_mesh, composed, 1)
+    prepared = prepare_mapped_nested_dg_transfer(
         source,
         fine,
         geometry,
@@ -154,6 +186,7 @@ def test_curved_q2_affine_composed_eight_child_dg1_conservation_coarsen_and_adjo
         field_name="u",
         parent_cells=parents,
         parent_reference_vertices=corners,
+        budget=budget,
     )
     assert len(parents) == 8
     assert prepared.evidence.passed
@@ -163,23 +196,27 @@ def test_curved_q2_affine_composed_eight_child_dg1_conservation_coarsen_and_adjo
     ).astype(np.float64)
     transferred = np.asarray(prepared.transfer.apply(values))
     np.testing.assert_allclose(
-        _content(fine, composed, transferred),
-        _content(source, geometry, values),
-        atol=3e-11,
+        dg_content(fine, composed, transferred),
+        dg_content(source, geometry, values),
+        atol=_Q2_DG_CONTENT_ATOL,
     )
     dual = np.sin(np.arange(transferred.size)).reshape(transferred.shape)
     np.testing.assert_allclose(
         np.vdot(transferred, dual),
         np.vdot(values, prepared.transfer.pullback(dual)),
-        atol=3e-11,
+        atol=_Q2_DG_DUAL_PAIRING_ATOL,
     )
     tangent = jnp.cos(jnp.arange(values.size)).reshape(values.shape)
     _, derivative = jax.jvp(prepared.transfer.apply, (jnp.asarray(values),), (tangent,))
-    np.testing.assert_allclose(derivative, prepared.transfer.apply(tangent), atol=2e-12)
+    np.testing.assert_allclose(
+        derivative, prepared.transfer.apply(tangent), atol=_Q2_DG_JVP_ATOL
+    )
     gradient = jax.grad(
         lambda coefficients: jnp.vdot(prepared.transfer.apply(coefficients), dual)
     )(jnp.asarray(values))
-    np.testing.assert_allclose(gradient, prepared.transfer.pullback(dual), atol=2e-12)
+    np.testing.assert_allclose(
+        gradient, prepared.transfer.pullback(dual), atol=_Q2_DG_PULLBACK_ATOL
+    )
     ids = np.concatenate([np.asarray(block.global_ids) for block in fine_mesh.blocks])
     coarsening = adapt_mixed_mesh(
         fine_mesh,
@@ -188,7 +225,7 @@ def test_curved_q2_affine_composed_eight_child_dg1_conservation_coarsen_and_adjo
         hierarchy=outcome.hierarchy,
     )
     coarse_mesh, _, _ = assemble_topology_edit(
-        fine_mesh, coarsening.edit, numeric_version="composed-dg-coarse"
+        fine_mesh, coarsening.edit, numeric_version="composed-dg-coarse", budget=budget
     )
     restoration = transition_nested_cell_geometry(
         fine_mesh,
@@ -198,21 +235,22 @@ def test_curved_q2_affine_composed_eight_child_dg1_conservation_coarsen_and_adjo
         refinement=coarsening.edit.refinement,
         coarsening=coarsening.edit.coarsening,
     )
-    coarse = _space(coarse_mesh, restoration.geometry, 1)
-    reverse = _prepare_mapped_nested_dg_transfer(
+    coarse = dg_space(coarse_mesh, restoration.geometry, 1)
+    reverse = prepare_mapped_nested_dg_transfer(
         fine,
         coarse,
         composed,
         restoration.geometry,
         field_name="u",
         geometry_transition=restoration,
+        budget=budget,
     )
     restored = np.asarray(reverse.transfer.apply(transferred))
-    np.testing.assert_allclose(restored, values, atol=3e-10)
+    np.testing.assert_allclose(restored, values, atol=_Q2_DG_COARSENED_VALUES_ATOL)
     np.testing.assert_allclose(
-        _content(coarse, restoration.geometry, restored),
-        _content(source, geometry, values),
-        atol=3e-11,
+        dg_content(coarse, restoration.geometry, restored),
+        dg_content(source, geometry, values),
+        atol=_Q2_DG_CONTENT_ATOL,
     )
     np.testing.assert_array_equal(
         np.asarray(geometry.coordinates).view(np.uint64), before
@@ -222,35 +260,44 @@ def test_curved_q2_affine_composed_eight_child_dg1_conservation_coarsen_and_adjo
     )
 
 
-def test_affine_composed_3d_dg_refuses_wrong_actual_parent_map_atomically() -> None:
+def test_affine_composed_3d_dg_refuses_wrong_actual_parent_map_atomically(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     mesh, geometry, fine_mesh, composed, _, parents, corners = _affine_children(0.1)
     before = np.asarray(geometry.coordinates).view(np.uint64).copy()
     wrong = corners.copy()
     wrong[0, :, 0] += 1 / 16
-    with pytest.raises(ValueError):
-        _prepare_mapped_nested_dg_transfer(
-            _space(mesh, geometry, 1),
-            _space(fine_mesh, composed, 1),
+    with pytest.raises(ValueError, match=r"nested_(reference|geometry)\."):
+        prepare_mapped_nested_dg_transfer(
+            dg_space(mesh, geometry, 1),
+            dg_space(fine_mesh, composed, 1),
             geometry,
             composed,
             field_name="u",
             parent_cells=parents,
             parent_reference_vertices=wrong,
+            budget=budget,
         )
     np.testing.assert_array_equal(
         np.asarray(geometry.coordinates).view(np.uint64), before
     )
 
 
-def test_genuine_nonlinear_3d_composed_dg_chart_remains_refused() -> None:
+def test_genuine_nonlinear_3d_composed_dg_chart_remains_refused(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     mesh, geometry, fine_mesh, composed, _, parents, corners = _affine_children(1 / 8)
     chart = coordinate_lagrange_element("hexahedron", 2)
     if not isinstance(chart, FiniteElementSpec):
-        raise TypeError("Nonlinear child fixture requires its Q2 chart.")
+        raise TypeError(
+            f"fixture.chart must be a Q2 FiniteElementSpec; got {type(chart).__name__}"
+        )
     elements = {}
     for block, element in zip(fine_mesh.blocks, composed.elements, strict=True):
         if not isinstance(element, PolynomialComposedCellGeometryElement):
-            raise TypeError("Nonlinear fixture requires affine composed child charts.")
+            raise TypeError(
+                f"fixture.element must be a PolynomialComposedCellGeometryElement; got {type(element).__name__}"
+            )
         nodes = np.asarray(chart.reference_nodes)
         lower = np.min(np.asarray(element.chart_coordinates), axis=0)
         values = lower + 0.5 * nodes
@@ -268,16 +315,17 @@ def test_genuine_nonlinear_3d_composed_dg_chart_remains_refused() -> None:
     before = np.asarray(geometry.coordinates).view(np.uint64).copy()
     with pytest.raises(
         ValueError,
-        match="Nonlinear reference transfer requires one common declared surface coordinate space",
+        match="nested_reference.dimension",
     ):
-        _prepare_mapped_nested_dg_transfer(
-            _space(mesh, geometry, 1),
-            _space(fine_mesh, nonlinear, 1),
+        prepare_mapped_nested_dg_transfer(
+            dg_space(mesh, geometry, 1),
+            dg_space(fine_mesh, nonlinear, 1),
             geometry,
             nonlinear,
             field_name="u",
             parent_cells=parents,
             parent_reference_vertices=corners,
+            budget=budget,
         )
     np.testing.assert_array_equal(
         np.asarray(geometry.coordinates).view(np.uint64), before
@@ -291,11 +339,11 @@ def test_affine_composed_3d_actual_source_bank_volume_jvp(
     import equinox as eqx
 
     from phydrax.discretization._cell_geometry import (
-        _require_scalar_coordinate_element,
+        require_scalar_coordinate_element,
     )
     from phydrax.discretization.fem import FiniteElementRuntimeData
-    from phydrax.discretization.fem._generic import _degree_aware_reference_rule
     from phydrax.discretization.fem._local_provider import FiniteElementGeometryActions
+    from phydrax.discretization.fem._reference_rules import degree_aware_reference_rule
 
     mesh, geometry, fine_mesh, composed, _, _, _ = _affine_children(scale)
     before = np.asarray(geometry.coordinates).view(np.uint64).copy()
@@ -303,10 +351,10 @@ def test_affine_composed_3d_actual_source_bank_volume_jvp(
     volumes = []
     for carrier, actual in ((mesh, geometry), (fine_mesh, composed)):
         elements, routes, bank = actual.resolve(carrier)
-        points, weights = _degree_aware_reference_rule("hexahedron", 8)
+        points, weights = degree_aware_reference_rule("hexahedron", 8)
         actions = []
         for element, route in zip(elements, routes, strict=True):
-            basis, gradients = _require_scalar_coordinate_element(
+            basis, gradients = require_scalar_coordinate_element(
                 element, "Source-bank volume JVP fixture"
             ).tabulate(points)
             actions.append(
@@ -332,10 +380,12 @@ def test_affine_composed_3d_actual_source_bank_volume_jvp(
                 )
             )
 
-        # Differentiate the original root coefficient bank, not chart samples.
+        # Differentiate the root coefficient bank, not chart samples.
         root = geometry.elements[0]
         if not isinstance(root, FiniteElementSpec):
-            raise TypeError("Source-bank volume JVP requires its finite-element root.")
+            raise TypeError(
+                f"fixture.root must be a FiniteElementSpec; got {type(root).__name__}"
+            )
         direction = (
             jnp.zeros_like(runtime.coordinates)
             .at[:, 0]
@@ -343,14 +393,24 @@ def test_affine_composed_3d_actual_source_bank_volume_jvp(
         )
         value, tangent = jax.jvp(volume, (runtime.coordinates,), (direction,))
         gradient = jax.grad(volume)(runtime.coordinates)
-        np.testing.assert_allclose(jnp.vdot(gradient, direction), tangent, atol=3e-12)
+        np.testing.assert_allclose(
+            jnp.vdot(gradient, direction), tangent, atol=_SOURCE_BANK_VOLUME_PULLBACK_ATOL
+        )
         volumes.append(value)
         derivatives.append(tangent)
         np.testing.assert_array_equal(
             np.asarray(runtime.coordinates).view(np.uint64), before
         )
-    np.testing.assert_allclose(volumes, [1 + scale, 1 + scale], atol=3e-12)
-    np.testing.assert_allclose(derivatives, [1.0, 1.0], atol=3e-12)
+    np.testing.assert_allclose(
+        volumes, [1 + scale, 1 + scale], atol=_SOURCE_BANK_VOLUME_ATOL
+    )
+    np.testing.assert_allclose(derivatives, [1.0, 1.0], atol=_SOURCE_BANK_VOLUME_JVP_ATOL)
     np.testing.assert_array_equal(
         np.asarray(geometry.coordinates).view(np.uint64), before
     )
+
+
+@pytest.fixture
+def budget() -> Iterator[CoordinateEnclosureBudget]:
+    with coordinate_reference_budget() as ledger:
+        yield ledger

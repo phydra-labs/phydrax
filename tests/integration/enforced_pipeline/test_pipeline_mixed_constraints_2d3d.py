@@ -23,6 +23,7 @@ from phydrax.enforcement import (
     EnforcementSpec,
     InteriorAnchors,
 )
+from phydrax.units import METER
 
 
 def _paired_batch(domain: Any, xs: Any, ts: Any) -> Any:
@@ -48,7 +49,7 @@ def _eval(domain: Any, u_enforced: Any, xs: Any, ts: Any) -> Any:
 
 def test_mixed_constraints_2d_transient() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
@@ -125,7 +126,7 @@ def test_mixed_constraints_2d_transient() -> None:
 
 def test_mixed_constraints_3d_transient() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time

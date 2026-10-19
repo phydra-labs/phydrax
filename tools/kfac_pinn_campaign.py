@@ -30,6 +30,7 @@ from phydrax.solver._functional_residual import (
     prepared_residual_loss_and_flat_gradient,
 )
 from phydrax.solver._functional_run import partition_functional_parameters
+from phydrax.units import METER
 
 
 CASES = (
@@ -116,7 +117,7 @@ def _poisson_1d(width: Any, depth: Any, samples: Any, key: Any) -> Any:
 
 def _poisson_2d(width: Any, depth: Any, samples: Any, key: Any) -> Any:
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     u = _network(domain, in_size=2, width=width, depth=depth, key=key)
     residual = _fixed_residual_term(

@@ -298,7 +298,7 @@ def _region_components(
     return np.bincount(keys[:, 0], minlength=region_count), component
 
 
-def _component_volumes(
+def component_volumes(
     points: np.ndarray, faces: np.ndarray, labels: np.ndarray, component: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
     """Signed enclosed volume and region of every face-side component.
@@ -500,7 +500,7 @@ def _self_intersections(
     """Bounded BVH broad phase plus exact narrow phase beyond shared features."""
     # The exact welded triangle-pair classifier is owned by the meshing audit;
     # importing it lazily keeps geometry importable before meshing.
-    from ...meshing._audit_topology import _triangle_pairs_intersect
+    from ...meshing._audit_topology import triangle_pairs_intersect
 
     selected = np.flatnonzero(valid)
     if selected.size < 2:
@@ -523,7 +523,7 @@ def _self_intersections(
             exceeded = True
         candidates += first.size
         if first.size:
-            hit, certain = _triangle_pairs_intersect(points, faces[first], faces[second])
+            hit, certain = triangle_pairs_intersect(points, faces[first], faces[second])
             intersecting += int(np.count_nonzero(hit & certain))
             uncertain += int(np.count_nonzero(~certain))
         if exceeded:
@@ -559,7 +559,7 @@ def _connectivity(
         topology.region_count,
     )
     counts, component = _region_components(labels, wedges.links, topology.region_count)
-    volumes, owner = _component_volumes(points, faces, labels, component)
+    volumes, owner = component_volumes(points, faces, labels, component)
     pieces = np.bincount(owner[volumes > 0.0], minlength=topology.region_count)
     finite = np.asarray(topology.region_finite[: topology.region_count])
     match profile:
@@ -624,7 +624,7 @@ def _status(
     return MultiRegionSurfaceStatus.ACCEPTED
 
 
-def _geometry_id(topology: MultiRegionSurfaceTopology, points: np.ndarray, /) -> str:
+def geometry_id(topology: MultiRegionSurfaceTopology, points: np.ndarray, /) -> str:
     """Canonical identity of one topology epoch at the given active positions."""
     return canonical_fingerprint(
         {
@@ -717,7 +717,7 @@ def validate_multiregion_surface(
         intersections,
         uncertain,
     )
-    geometry_id = _geometry_id(topology, points)
+    surface_geometry_id = geometry_id(topology, points)
     euler = _euler_characteristics(faces, labels, face_edges, finite_indices)
     return MultiRegionSurfaceEvidence(
         status=status,
@@ -753,11 +753,11 @@ def validate_multiregion_surface(
         capacity=topology.plan.capacity_evidence(topology.counts),
         topology_id=topology.topology_id,
         lineage_id=topology.lineage_id,
-        geometry_id=geometry_id,
+        geometry_id=surface_geometry_id,
         evidence_id=canonical_fingerprint(
             {
                 "kind": "multiregion-surface-evidence",
-                "geometry": geometry_id,
+                "geometry": surface_geometry_id,
                 "policy": policy_.policy_id,
                 "status": status.name,
             }

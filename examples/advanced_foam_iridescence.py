@@ -37,6 +37,7 @@ from phydrax.geometry.multiregion_surface import (
     seed_double_bubble,
     seed_sphere,
 )
+from phydrax.geometry.surface import SurfaceMetadata, SurfaceModel
 from phydrax.interfacial_transport import (
     FilmStepStatus,
     prepare_film_sheet_slots,
@@ -76,9 +77,7 @@ def _appearance() -> ThinFilmAppearancePlan:
     )
     return ThinFilmAppearancePlan(
         phx.optics.wave.ThinFilmInterferencePlan(wavelengths, 1.0, 1.33, 1.0),
-        phx.rendering.SpectralColorimetryPlan(
-            wavelengths, illuminant, exposure=4.0
-        ),
+        phx.rendering.SpectralColorimetryPlan(wavelengths, illuminant, exposure=4.0),
         two_sided=True,
     )
 
@@ -120,13 +119,13 @@ def _render_sheet(
     *,
     source_id: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    metadata = phx.geometry.surface.SurfaceMetadata(
+    metadata = SurfaceMetadata(
         source_id=source_id,
         source_revision="1",
         coordinate_contract=_CONTRACT,
         provenance=("synthetic-foam-iridescence-example",),
     )
-    realization = phx.geometry.surface.SurfaceModel.from_triangles(
+    realization = SurfaceModel.from_triangles(
         vertices,
         faces,
         metadata,
@@ -160,9 +159,7 @@ def _render_sheet(
         _CONTRACT,
         quantity,
         layout,
-        phx.measurement.SamplingSemantics(
-            phx.measurement.SpatialSamplingKind.POINT
-        ),
+        phx.measurement.SamplingSemantics(phx.measurement.SpatialSamplingKind.POINT),
     ).prepare()
     rendered = prepared.render(vertices, encoded_srgb, geometry_id=source_id)
     hit = np.asarray(rendered.hit)
@@ -365,9 +362,10 @@ def _foam_frame(
     for sheet_index, (view, surface) in enumerate(
         zip(film_slots.views.views, film_slots.surfaces, strict=True)
     ):
-        thickness = film_slots.sheet_content(
-            border_state.sheet_liquid_m3, sheet_index
-        ) / surface.vertex_area
+        thickness = (
+            film_slots.sheet_content(border_state.sheet_liquid_m3, sheet_index)
+            / surface.vertex_area
+        )
         vertices = np.asarray(surface.coordinates) @ rotation.T
         vertices = vertices + np.asarray((0.0, 0.0, 6.0))
         normals = np.asarray(surface.vertex_normal) @ rotation.T

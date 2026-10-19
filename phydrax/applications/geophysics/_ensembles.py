@@ -22,7 +22,7 @@ from ...dynamics import StateLayout
 from ...ein import contract
 from ...equations import DiscreteStateLayout
 from ...linalg import ArraySpace, FunctionLinearOperator
-from ...linalg._spaces import _coordinate_dtype
+from ...linalg._spaces import coordinate_dtype
 from ...metrix import EuclideanStateGeometry
 from ...stochastic import (
     AbstractStatePrior,
@@ -281,7 +281,7 @@ def prepare_geophysical_assimilation(
             "Observation source field support/representation does not match the model."
         )
     transfer = observations.operator.transfer
-    state_space = ArraySpace(shape, dtype=_coordinate_dtype(source.vector_space))
+    state_space = ArraySpace(shape, dtype=coordinate_dtype(source.vector_space))
     state_operator = FunctionLinearOperator(
         lambda state: transfer.primal_operator.mv(select(state)),
         source=state_space,

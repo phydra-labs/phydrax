@@ -1360,7 +1360,7 @@ def _sipg_constant_subspace(
 ) -> LinearSubspace:
     if len(form.field_names) != 1:
         raise ValueError("SIPG nullspace construction requires one field.")
-    field_index = discretization._field_index(form.field_names[0])
+    field_index = discretization.field_index(form.field_names[0])
     dof_map = discretization.dof_maps[field_index]
     if dof_map.component_shape:
         raise ValueError("SIPG nullspace construction requires a scalar field.")
@@ -1482,7 +1482,7 @@ def _assemble_tensor_diffusion_action(
     context: FiniteElementExecutionContext,
     /,
 ) -> SparseLinearMap:
-    field_index = discretization._field_index(action.field_name)
+    field_index = discretization.field_index(action.field_name)
     dof_map = discretization.dof_maps[field_index]
     if dof_map.component_shape:
         raise ValueError("TensorDiffusionAction requires a scalar finite-element field.")
@@ -1731,7 +1731,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         dirichlet_rows: list[Array | None] = []
         lifts = []
         for field_name in form.field_names:
-            field_index = discretization._field_index(field_name)
+            field_index = discretization.field_index(field_name)
             full_space = discretization.field_spaces[field_index].vector_space
             constraint_value = resolved_constraints.get(field_name)
             boundary_values = resolved_values.get(field_name)
@@ -1867,13 +1867,13 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     def field_index(self) -> int:
         if len(self.form.field_names) != 1:
             raise ValueError("field_index is ambiguous for a mixed form.")
-        return self.discretization._field_index(self.form.field_names[0])
+        return self.discretization.field_index(self.form.field_names[0])
 
     @property
     def full_space(self) -> AbstractVectorSpace:
         spaces = tuple(
             self.discretization.field_spaces[
-                self.discretization._field_index(name)
+                self.discretization.field_index(name)
             ].vector_space
             for name in self.form.field_names
         )
@@ -1888,7 +1888,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         spaces = tuple(
             (
                 self.discretization.field_spaces[
-                    self.discretization._field_index(name)
+                    self.discretization.field_index(name)
                 ].vector_space
                 if constraint is None
                 else constraint.reduced_space
@@ -2186,7 +2186,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         return tuple(item[3] for item in impositions)
 
     def _field_space_id(self, field_name: str, /) -> str:
-        index = self.discretization._field_index(field_name)
+        index = self.discretization.field_index(field_name)
         return self.discretization.field_spaces[index].field_space_id
 
     def _field_impositions(
@@ -2245,7 +2245,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         field_position = self._traced_field_position(trace)
         descriptor = trace.descriptor
         discretization = self.discretization
-        field_index = discretization._field_index(self.form.field_names[field_position])
+        field_index = discretization.field_index(self.form.field_names[field_position])
         if descriptor.domain_kind != "exterior_facet":
             raise ValueError(
                 "Residual reactions are published on exterior facets; interior "
@@ -2302,7 +2302,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         ]
         if len(positions) != 1:
             raise ValueError("The trace acts on a field that is not solved by this form.")
-        field_index = discretization._field_index(self.form.field_names[positions[0]])
+        field_index = discretization.field_index(self.form.field_names[positions[0]])
         if not discretization.field_spaces[field_index].vector_space.compatible(
             trace.coefficient_space
         ):
@@ -3091,7 +3091,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         mass_rules = {}
         # Unit-mass quadrature selection reads FE element storage; it is FE-only.
         discretization = cast(FiniteElementDiscretization, self.discretization)
-        field_index = discretization._field_index(self.form.field_name)
+        field_index = discretization.field_index(self.form.field_name)
         if policy.kind in ("exact", "lumped"):
             from ..integration import (
                 GaussLegendreRule,

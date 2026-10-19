@@ -24,6 +24,7 @@ from phydrax.enforcement import (
     EnforcementSpec,
 )
 from phydrax.solver import FunctionalSolver
+from phydrax.units import METER
 
 
 def _line_batch(domain: Any, xs: Any) -> Any:
@@ -122,7 +123,7 @@ def test_initial_overlay_boundary_gate_is_dimensionless_and_scale_invariant() ->
 
 def test_initial_overlay_gate_preserves_declared_normal_derivative() -> None:
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     ) @ TimeInterval(0.0, 1.0)
     boundary = domain.component({"x": Boundary()})
     initial = domain.component({"t": FixedStart()})
@@ -166,7 +167,7 @@ def test_initial_overlay_gate_preserves_declared_normal_derivative() -> None:
 
 def test_functional_solver_configures_cad_preservation_gate_extent() -> None:
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     ) @ TimeInterval(0.0, 1.0)
     boundary = domain.component({"x": Boundary()})
     initial = domain.component({"t": FixedStart()})

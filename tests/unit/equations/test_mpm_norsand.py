@@ -510,6 +510,17 @@ def test_float32_prestress_and_plastic_admission() -> None:
     )
     rest = evaluate(identity, initialized.state, par)
     assert bool(rest.successful)
+    assert int(rest.branch_code) == 0
+    assert not bool(rest.diagnostics["lode_defined"])
+    assert float(rest.diagnostics["plastic_multiplier"]) == 0
+    assert not bool(rest.diagnostics["tangent_successful"])
+    # The stress and scalar pressure root use the same 64-epsilon relative bound.
+    tolerance = 64 * np.finfo(np.float32).eps
+    assert abs(float(rest.diagnostics["pressure_root_residual"])) <= tolerance
+    np.testing.assert_allclose(rest.first_piola, -100 * identity, rtol=tolerance, atol=0)
+    np.testing.assert_allclose(
+        rest.trial_state, initialized.state, rtol=tolerance, atol=0
+    )
     deformation = jnp.diag(
         jnp.exp(jnp.asarray((-0.0005, 0.00025, 0.00025), dtype=jnp.float32))
     )
@@ -517,6 +528,49 @@ def test_float32_prestress_and_plastic_admission() -> None:
     assert bool(plastic.successful) and int(plastic.branch_code) == 1, plastic.diagnostics
     assert plastic.first_piola.dtype == jnp.float32
     assert np.all(np.isfinite(plastic.first_piola))
+
+
+def test_float32_stationary_prestress_has_strict_elastic_tangent() -> None:
+    reference = _Reference()
+    par = jax.tree.map(lambda leaf: leaf.astype(jnp.float32), reference.parameters())
+    plan = phx.applications.solid_mechanics.NorSandMPMConstitutivePlan()
+    identity = jnp.eye(3, dtype=jnp.float32)
+    initialized = jax.jit(
+        lambda stress, p: plan.initialize_state_from_stress(
+            stress,
+            p,
+            initial_void_ratio=reference.initial_void(-0.1),
+            overconsolidation_ratio=2.0,
+        )
+    )(-100 * identity, par)
+    assert bool(initialized.admissible)
+    result = jax.jit(
+        lambda f, h, p: plan.evaluate_linearized(
+            f, h, jnp.asarray(1800.0, dtype=jnp.float32), p, 0.0, 1.0
+        )
+    )(identity, initialized.state, par)
+    assert bool(result.response.successful) and int(result.response.branch_code) == 0
+    assert bool(result.tangent_successful)
+    assert np.all(np.isfinite(result.algorithmic_tangent))
+    # Independent isotropic hypoelastic tangent at F=I, including the prestress
+    # contribution from differentiating P=tau F^-T.
+    direction = jnp.asarray(
+        ((0.1, 0.03, 0), (0.02, -0.04, 0.015), (0, -0.01, 0.05)), dtype=jnp.float32
+    )
+    shear = reference.shear
+    bulk = 2 * shear * (1 + reference.poisson) / (3 * (1 - 2 * reference.poisson))
+    strain = 0.5 * (direction + direction.T)
+    expected = (
+        2 * shear * (strain - jnp.trace(strain) / 3 * identity)
+        + bulk * jnp.trace(strain) * identity
+        + reference.pressure * direction.T
+    )
+    predicted = (result.algorithmic_tangent.reshape(9, 9) @ direction.reshape(9)).reshape(
+        3, 3
+    )
+    np.testing.assert_allclose(
+        predicted, expected, rtol=64 * np.finfo(np.float32).eps, atol=0
+    )
 
 
 def test_image_strength_guard_and_semilog_identity() -> None:

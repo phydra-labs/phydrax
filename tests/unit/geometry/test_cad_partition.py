@@ -3,6 +3,7 @@
 #
 
 import math
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -10,31 +11,34 @@ import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry._cad_revision import CADOccurrence, CADRevision
-from phydrax.geometry.brep._boolean import BRepBooleanFailure
-from phydrax.geometry.brep._constructors import (
+from phydrax.geometry.brep import (
     brep_box,
     brep_cylinder,
     brep_sphere,
-    BRepTessellationPolicy,
-)
-from phydrax.geometry.brep._intersection_curve import IntersectionCurve
-from phydrax.geometry.brep._model import BRepModel
-from phydrax.geometry.brep._partition import (
+    BRepBooleanFailure,
+    BRepModel,
     BRepPartitionOperand,
     BRepPartitionPlan,
     BRepPartitionPolicy,
     BRepPartitionResult,
     BRepPartitionRole,
+    BRepTessellationPolicy,
+    IntersectionCurve,
     partition_brep,
+    prepare_brep_query,
 )
-from phydrax.geometry.brep._query import prepare_brep_query
 from phydrax.interchange._cad import CadInterchangeError
 from phydrax.interchange._cad_archive import load_brep_archive, save_brep_archive
+from phydrax.meshing.providers._gmsh import GmshProvider
 from phydrax.units import MILLIMETER
 
 
 _COORDINATES = SpatialCoordinateContract(MILLIMETER)
 _EXACT_SOURCE = BRepTessellationPolicy(realize=False)
+
+# Empirical volume threshold retained from the sphere/cylinder closed-form
+# partition fixtures below; this is an acceptance tolerance, not an enclosure.
+_CURVED_VOLUME_RELATIVE_TOLERANCE = 1e-6
 
 
 def _box(x: float, length: float = 1.0) -> BRepModel:
@@ -61,7 +65,7 @@ def _plan(
 def _region_volume(
     result: BRepPartitionResult, name: str, model: BRepModel | None = None
 ) -> float:
-    """Region volume from the native exact query of ``model`` (default: the result)."""
+    """Return region volume from the native query of model, or the result model."""
     measured = result.model if model is None else model
     volumes = np.asarray(prepare_brep_query(measured).measures.solid_volumes)
     return float(sum(volumes[entity.index] for entity in result.region(name).entity_ids))
@@ -93,6 +97,7 @@ def test_touching_regions_publish_exact_shared_interface(tmp_path: Path) -> None
     )
     interface = result.patch("interface:left:right")
     assert interface.adjacent_region_ids == ("left", "right")
+    assert sum(len(patch.adjacent_region_ids) == 2 for patch in result.patches) == 1
     assert len(interface.entity_ids) == 1
     interface_face = interface.entity_ids[0].index
     assert result.model.topology.face_solids[interface_face] == (0, 1)
@@ -105,6 +110,43 @@ def test_touching_regions_publish_exact_shared_interface(tmp_path: Path) -> None
     assert signs[0] == -signs[1]
     assert _region_volume(result, "left") == pytest.approx(1.0)
     assert _region_volume(result, "right") == pytest.approx(1.0)
+    assert result.model.topology.num_solids == 2
+    assert result.topological_dimension == 3
+    assert set(
+        entity for _, values in result.named_solid_entity_ids for entity in values
+    ) == set(result.model.solid_ids)
+    assert set(
+        entity for _, values in result.named_face_entity_ids for entity in values
+    ) == set(result.model.face_ids)
+    assert result.named_region_entity_ids == result.named_solid_entity_ids
+    assert result.named_patch_entity_ids == result.named_face_entity_ids
+    assert result.named_solid_entity_ids is result.named_region_entity_ids
+    assert result.named_face_entity_ids is result.named_patch_entity_ids
+    assert result.named_edge_entity_ids == ()
+    assert (
+        result.report.source_region_occurrences == result.report.source_solid_occurrences
+    )
+    assert result.report.source_patch_occurrences == result.report.source_face_occurrences
+    assert result.report.target_regions == result.model.topology.num_solids
+    assert result.report.target_patches == result.model.topology.num_faces
+    assert {entity.kind for region in result.regions for entity in region.entity_ids} == {
+        "solid"
+    }
+    assert {entity.kind for patch in result.patches for entity in patch.entity_ids} == {
+        "face"
+    }
+    assert result.region_entity_kind == "solid"
+    assert result.patch_entity_kind == "face"
+    assert {region.entity_kind for region in result.regions} == {"solid"}
+    assert {patch.entity_kind for patch in result.patches} == {"face"}
+    assert result.report.topological_dimension == 3
+    assert {region.topological_dimension for region in result.regions} == {3}
+    assert {patch.topological_dimension for patch in result.patches} == {3}
+    provider = GmshProvider()
+    left_scope = provider.entity_scope(result.model, result.region("left").entity_ids)
+    interface_scope = provider.entity_scope(result.model, interface.entity_ids)
+    assert left_scope.entity_dimension == 3
+    assert interface_scope.entity_dimension == 2
 
 
 def test_disjoint_regions_have_only_one_sided_boundaries(tmp_path: Path) -> None:
@@ -220,10 +262,9 @@ def test_revision_children_rejects_forged_parent_selector() -> None:
         "revision", "face", "face-entity", "face", ("solid", "face"), "solid"
     )
     revision = CADRevision("revision", "source", (parent, child), "provenance")
-    from dataclasses import replace
 
     forged = replace(revision.select("solid"), entity_id="forged")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="does not match the revision inventory"):
         revision.children(forged)
 
 
@@ -301,10 +342,10 @@ def test_overlapping_sphere_precedence_publishes_exact_curved_interface(
     )
     assert restored.source_revision == result.revision.revision_id
     assert _region_volume(result, "high", restored) == pytest.approx(
-        4.0 * math.pi / 3.0, rel=1e-6
+        4.0 * math.pi / 3.0, rel=_CURVED_VOLUME_RELATIVE_TOLERANCE
     )
     assert _region_volume(result, "low", restored) == pytest.approx(
-        11.0 * math.pi / 12.0, rel=1e-6
+        11.0 * math.pi / 12.0, rel=_CURVED_VOLUME_RELATIVE_TOLERANCE
     )
 
 
@@ -348,9 +389,11 @@ def test_contained_sphere_region_leaves_exact_cavity_in_cylinder(tmp_path: Path)
     geometry = result.model.geometry
     assert geometry is not None
     assert len(geometry.solid_shells[jacket_solid.index]) == 2
-    assert _region_volume(result, "core") == pytest.approx(4.0 * math.pi / 3.0, rel=1e-6)
+    assert _region_volume(result, "core") == pytest.approx(
+        4.0 * math.pi / 3.0, rel=_CURVED_VOLUME_RELATIVE_TOLERANCE
+    )
     assert _region_volume(result, "jacket") == pytest.approx(
-        16.0 * math.pi - 4.0 * math.pi / 3.0, rel=1e-6
+        16.0 * math.pi - 4.0 * math.pi / 3.0, rel=_CURVED_VOLUME_RELATIVE_TOLERANCE
     )
     coverage = result.association_graph.transaction.coverage
     assert coverage.source_exhaustive and coverage.target_exhaustive
@@ -360,10 +403,10 @@ def test_contained_sphere_region_leaves_exact_cavity_in_cylinder(tmp_path: Path)
     assert restored.geometry is not None
     assert restored.geometry.geometry_id == geometry.geometry_id
     assert _region_volume(result, "core", restored) == pytest.approx(
-        4.0 * math.pi / 3.0, rel=1e-6
+        4.0 * math.pi / 3.0, rel=_CURVED_VOLUME_RELATIVE_TOLERANCE
     )
     assert _region_volume(result, "jacket", restored) == pytest.approx(
-        16.0 * math.pi - 4.0 * math.pi / 3.0, rel=1e-6
+        16.0 * math.pi - 4.0 * math.pi / 3.0, rel=_CURVED_VOLUME_RELATIVE_TOLERANCE
     )
 
 
@@ -393,7 +436,7 @@ def test_curved_void_removes_only_its_target_material(tmp_path: Path) -> None:
     assert restored.model_id == result.model.model_id
     assert restored.chart_restriction_ids == result.model.chart_restriction_ids
     assert _region_volume(result, "body", restored) == pytest.approx(
-        119.0 * math.pi / 64.0, rel=1e-6
+        119.0 * math.pi / 64.0, rel=_CURVED_VOLUME_RELATIVE_TOLERANCE
     )
     graph = result.association_graph
     assert graph.transaction.coverage.source_exhaustive

@@ -8,7 +8,8 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
-from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+from phydrax.discretization._cell_mesh import CellMesh
+from phydrax.discretization._reference_cell_types import CellBlock
 from phydrax.discretization.fem._generic import FiniteElementFieldSpec, FiniteElementPlan
 from phydrax.discretization.fem._reference import discontinuous_element
 from phydrax.equations._hyperbolic_systems import EulerSystem

@@ -13,12 +13,12 @@ corresponding pair/triple/quadruple material point inside each tetrahedron. A
 triangle is emitted for every flag ``edge < face < tetrahedron`` whose edge
 endpoints carry different labels. This has no marching-cubes case-table
 ambiguity. Three labels on a primal face produce one shared valence-three edge,
-and four labels in a tetrahedron produce the complete six-sheet region graph.
+and four labels in a tetrahedron produce all six sheets of the region graph.
 
 Extraction is a host seeding/repair transaction. The source label state is read
 once and fingerprinted, but never retained or synchronized. A successful result
-owns a new :class:`MultiRegionSurfaceTopology` and state; exact multiregion
-validation, including collision certification, must accept before a prepared
+owns a new :class:`MultiRegionSurfaceTopology` and state; multiregion validation
+using exact predicates, including collision certification, must accept before a prepared
 surface is exposed.
 """
 
@@ -46,7 +46,7 @@ from ..._validation import (
     unique_identifiers,
 )
 from ...typing import checked, Dim, HostInt64, Identifier, parse, Scope
-from .._mesh_certificates import PiecewiseLinearDomain
+from .._domain_coverage import PiecewiseLinearDomain
 from ._contracts import (
     MultiRegionSurfaceCapacityEvidence,
     MultiRegionSurfaceCapacityPlan,
@@ -59,10 +59,12 @@ from ._geometry import PreparedMultiRegionSurface
 from ._seeding import MultiRegionSurfaceSeed
 from ._state import MultiRegionSurfaceState
 from ._topology import MultiRegionSurfaceTopology
-from ._validation import _geometry_id, validate_multiregion_surface
+from ._validation import geometry_id, validate_multiregion_surface
 
 
 if TYPE_CHECKING:
+    import phydrax.threshold_dynamics._contracts as contracts_owner
+
     from ...threshold_dynamics import LabelFieldState
 
 
@@ -132,9 +134,13 @@ class LabelFieldSurfaceLineage(StrictModule, NonTrainableState):
         candidate_seed_id: str | None,
     ) -> None:
         if len(source_label_counts) != len(source_label_ids):
-            raise ValueError("source_label_counts must follow source_label_ids.")
+            raise ValueError(
+                f"LabelFieldSurfaceLineage.source_label_counts must follow source_label_ids; got {len(source_label_counts)} counts for {len(source_label_ids)} labels"
+            )
         if len(region_source_label_indices) != len(region_ids):
-            raise ValueError("region_source_label_indices must follow region_ids.")
+            raise ValueError(
+                f"LabelFieldSurfaceLineage.region_source_label_indices must follow region_ids; got {len(region_source_label_indices)} indices for {len(region_ids)} regions"
+            )
         algorithm = "freudenthal-multilabel-marching-tetrahedra"
         self.source_label_ids = source_label_ids
         self.source_label_counts = source_label_counts
@@ -231,8 +237,7 @@ class LabelFieldSurfaceExtractionEvidence(StrictModule, NonTrainableState):
         validation: MultiRegionSurfaceEvidence | None,
         lineage_id: str,
     ) -> None:
-        if not isinstance(status, LabelFieldSurfaceExtractionStatus):
-            raise TypeError("status must be a LabelFieldSurfaceExtractionStatus.")
+        status = parse(status, LabelFieldSurfaceExtractionStatus, "status")
         route_ = parse(route, LabelFieldSurfaceExtractionRoute, "route")
         accepted = status is LabelFieldSurfaceExtractionStatus.ACCEPTED
         collision = bool(
@@ -283,11 +288,11 @@ class LabelFieldSurfaceExtractionEvidence(StrictModule, NonTrainableState):
 
 @final
 class LabelFieldSurfaceExtractionResult(StrictModule, NonTrainableState):
-    """Accepted explicit authority or a fail-closed extraction candidate.
+    """Return accepted explicit geometry or a fail-closed extraction candidate.
 
     A rejected result may expose ``candidate_seed`` for diagnostics or a later
-    repair attempt, but never exposes topology/state/preparation as an accepted
-    E authority. Successful results expose all four and are collision-certified.
+    repair attempt, but topology, state, and preparation remain absent.
+    Successful results expose all four and are collision-certified.
     """
 
     candidate_seed: MultiRegionSurfaceSeed | None
@@ -311,17 +316,25 @@ class LabelFieldSurfaceExtractionResult(StrictModule, NonTrainableState):
         authority = (topology, state, surface)
         if evidence.accepted:
             if topology is None:
-                raise TypeError("An accepted extraction needs a topology.")
+                raise TypeError(
+                    "LabelFieldSurfaceExtractionResult.topology must be present for accepted extraction; got None"
+                )
             if state is None:
-                raise TypeError("An accepted extraction needs a state.")
+                raise TypeError(
+                    "LabelFieldSurfaceExtractionResult.state must be present for accepted extraction; got None"
+                )
             if surface is None:
-                raise TypeError("An accepted extraction needs a prepared surface.")
+                raise TypeError(
+                    "LabelFieldSurfaceExtractionResult.surface must be present for accepted extraction; got None"
+                )
             if candidate_seed is None or not evidence.collision_certified:
                 raise ValueError(
-                    "An accepted extraction needs a collision-certified seed."
+                    "LabelFieldSurfaceExtractionResult.candidate_seed must be present with collision-certified evidence for accepted extraction; got absent seed or uncertified evidence"
                 )
         elif any(value is not None for value in authority):
-            raise ValueError("A refused extraction cannot expose a surface authority.")
+            raise ValueError(
+                "LabelFieldSurfaceExtractionResult.geometry must be absent for refused extraction; got topology, state, or prepared surface"
+            )
         self.candidate_seed = candidate_seed
         self.topology = topology
         self.state = state
@@ -334,7 +347,7 @@ class LabelFieldSurfaceExtractionResult(StrictModule, NonTrainableState):
         return self.evidence.accepted
 
     def validate_source_integrity(self) -> PreparedMultiRegionSurface | None:
-        """Validate the actual accepted authority and all prepared descendants."""
+        """Validate the accepted surface and its prepared descendants."""
         LabelFieldSurfaceExtractionResult(
             self.candidate_seed,
             self.topology,
@@ -346,7 +359,9 @@ class LabelFieldSurfaceExtractionResult(StrictModule, NonTrainableState):
         if not self.accepted:
             return None
         if self.topology is None or self.state is None or self.surface is None:
-            raise ValueError("An accepted extraction lost its retained authority.")
+            raise ValueError(
+                "LabelFieldSurfaceExtractionResult.geometry must retain topology, state, and surface for accepted extraction; got absent retained geometry"
+            )
         self.state.require_topology(self.topology)
         rebuilt = self.surface.validate_restored(self.topology, self.state)
         validation = self.evidence.validation
@@ -356,13 +371,15 @@ class LabelFieldSurfaceExtractionResult(StrictModule, NonTrainableState):
             or self.evidence.lineage_id != self.lineage.lineage_id
             or self.lineage.region_ids != self.topology.region_ids
         ):
-            raise ValueError("Label extraction evidence contradicts its retained source.")
+            raise ValueError(
+                "LabelFieldSurfaceExtractionResult.evidence must match retained validation, lineage, and regions; got inconsistent evidence"
+            )
         return rebuilt
 
 
 @final
 class LabelFieldVolumeBinding(StrictModule, NonTrainableState):
-    """Volume authority of an accepted shared reconstructed interface.
+    """Bind represented volume to an accepted shared reconstructed interface.
 
     The input is categorical lattice samples. The represented volume is the
     explicitly selected Freudenthal marching-tetrahedra reconstruction, not
@@ -382,25 +399,24 @@ class LabelFieldVolumeBinding(StrictModule, NonTrainableState):
     binding_id: str = eqx.field(static=True)
     interface_definitions: tuple[tuple[str, str, str, bool], ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         extraction: LabelFieldSurfaceExtractionResult,
         coordinate_contract: SpatialCoordinateContract,
         /,
     ) -> None:
-        if not isinstance(extraction, LabelFieldSurfaceExtractionResult):
-            raise TypeError("extraction must be LabelFieldSurfaceExtractionResult.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         extraction.validate_source_integrity()
         if not extraction.accepted or not extraction.evidence.collision_certified:
             raise ValueError(
-                "A volume binding requires accepted shared-interface extraction."
+                "LabelFieldVolumeBinding.extraction must be accepted and collision-certified; got refused or uncertified extraction"
             )
         topology = extraction.topology
         state = extraction.state
         if topology is None or state is None:
-            raise ValueError("An accepted extraction has no represented geometry.")
+            raise ValueError(
+                "LabelFieldVolumeBinding.extraction must retain represented topology and state; got absent geometry"
+            )
         state.require_topology(topology)
         for mask, count in (
             (topology.vertex_active, topology.vertex_count),
@@ -412,7 +428,7 @@ class LabelFieldVolumeBinding(StrictModule, NonTrainableState):
             active = np.asarray(mask, dtype=np.bool_)
             if not np.array_equal(active, np.arange(active.size) < count):
                 raise ValueError(
-                    "Reconstructed authority requires canonical active prefixes."
+                    f"LabelFieldVolumeBinding.active_masks must use active prefixes; got a mask inconsistent with count {count}"
                 )
         if (
             not np.array_equal(state.vertex_active, topology.vertex_active)
@@ -420,7 +436,7 @@ class LabelFieldVolumeBinding(StrictModule, NonTrainableState):
             or not np.array_equal(state.slot_active, topology.slot_active)
         ):
             raise ValueError(
-                "Reconstructed state masks contradict its topology authority."
+                "LabelFieldVolumeBinding.state_masks must match topology masks; got inconsistent vertex, region, or slot masks"
             )
         positions = np.asarray(state.positions[: topology.vertex_count], dtype=np.float64)
         validation = extraction.evidence.validation
@@ -428,19 +444,23 @@ class LabelFieldVolumeBinding(StrictModule, NonTrainableState):
             validation is None
             or validation.topology_id != topology.topology_id
             or validation.lineage_id != topology.lineage_id
-            or validation.geometry_id != _geometry_id(topology, positions)
+            or validation.geometry_id != geometry_id(topology, positions)
             or extraction.evidence.lineage_id != extraction.lineage.lineage_id
             or extraction.lineage.region_ids != topology.region_ids
         ):
-            raise ValueError("Reconstructed authority carries stale extraction evidence.")
+            raise ValueError(
+                "LabelFieldVolumeBinding.evidence must match reconstructed topology, geometry, lineage, and regions; got stale extraction evidence"
+            )
         boundary = extraction.lineage.boundary_region_id
         if boundary not in topology.region_ids:
             raise ValueError(
-                "The reconstructed volume requires explicit exterior identity."
+                f"LabelFieldVolumeBinding.boundary_region_id must identify an explicit exterior region; got {boundary!r}"
             )
         finite = tuple(value for value in topology.region_ids if value != boundary)
         if not finite:
-            raise ValueError("A reconstructed material volume needs a finite region.")
+            raise ValueError(
+                "LabelFieldVolumeBinding.regions must include a finite material region; got only the boundary region"
+            )
         mapping = np.asarray(
             [
                 -1 if value == boundary else finite.index(value)
@@ -518,7 +538,7 @@ class LabelFieldVolumeBinding(StrictModule, NonTrainableState):
         )
 
     def validate_source_integrity(self) -> None:
-        """Re-admit the actual retained extraction, not a reconstructed provenance ID."""
+        """Re-admit the retained extraction and compare its binding identity."""
         expected = LabelFieldVolumeBinding(self.extraction, self.coordinate_contract)
         if (
             expected.binding_id != self.binding_id
@@ -532,7 +552,9 @@ class LabelFieldVolumeBinding(StrictModule, NonTrainableState):
             or expected.extraction_evidence.evidence_id
             != self.extraction_evidence.evidence_id
         ):
-            raise ValueError("Reconstructed image volume source authority is stale.")
+            raise ValueError(
+                "LabelFieldVolumeBinding.restored must match retained extraction and binding identity; got stale binding"
+            )
 
 
 @final
@@ -575,35 +597,36 @@ class LabelFieldSurfaceExtractionPlan(StrictModule, NonTrainableState):
     ) -> None:
         ids = unique_identifiers(label_ids, "label_ids")
         if len(spacing) != 3:
-            raise ValueError("spacing must contain three Cartesian values.")
+            raise ValueError(
+                f"LabelFieldSurfaceExtractionPlan.spacing must contain three Cartesian values; got {spacing!r}"
+            )
         spacing_: tuple[float, float, float] = (
             positive_finite_float(spacing[0], "spacing[0]"),
             positive_finite_float(spacing[1], "spacing[1]"),
             positive_finite_float(spacing[2], "spacing[2]"),
         )
         if len(origin) != 3:
-            raise ValueError("origin must contain three Cartesian values.")
+            raise ValueError(
+                f"LabelFieldSurfaceExtractionPlan.origin must contain three Cartesian values; got {origin!r}"
+            )
         origin_: tuple[float, float, float] = (
             float(origin[0]),
             float(origin[1]),
             float(origin[2]),
         )
         if not all(math.isfinite(value) for value in origin_):
-            raise ValueError("origin values must be finite.")
+            raise ValueError(
+                f"LabelFieldSurfaceExtractionPlan.origin must be finite; got {origin_!r}"
+            )
         boundary = canonical_identifier(boundary_region_id, "boundary_region_id")
         policy = (
             MultiRegionSurfaceValidationPolicy()
             if validation_policy is None
             else validation_policy
         )
-        if not isinstance(policy, MultiRegionSurfaceValidationPolicy):
-            raise TypeError(
-                "validation_policy must be MultiRegionSurfaceValidationPolicy."
-            )
         if not policy.check_self_intersection:
             raise ValueError(
-                "Label-field extraction requires collision-certified validation; "
-                "check_self_intersection cannot be disabled."
+                "LabelFieldSurfaceExtractionPlan.validation_policy must enable collision certification; got check_self_intersection=False"
             )
         ambiguity = nonnegative_integer(
             maximum_ambiguous_cells, "maximum_ambiguous_cells"
@@ -646,7 +669,7 @@ class LabelFieldSurfaceExtractionPlan(StrictModule, NonTrainableState):
 
 @final
 class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
-    """Canonical source-site layout reusable across threshold epochs."""
+    """Prepare a deterministic source-site layout reusable across threshold epochs."""
 
     __strict_contract__ = True
 
@@ -669,14 +692,18 @@ class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
         site_coordinates: ArrayLike | None = None,
     ) -> None:
         if len(grid_shape) != 3:
-            raise ValueError("grid_shape must contain three dimensions.")
+            raise ValueError(
+                f"PreparedLabelFieldSurfaceExtraction.grid_shape must contain three dimensions; got {grid_shape!r}"
+            )
         shape: tuple[int, int, int] = (
             nonnegative_integer(grid_shape[0], "grid_shape[0]"),
             nonnegative_integer(grid_shape[1], "grid_shape[1]"),
             nonnegative_integer(grid_shape[2], "grid_shape[2]"),
         )
         if any(value == 0 for value in shape):
-            raise ValueError("grid_shape dimensions must be positive.")
+            raise ValueError(
+                f"PreparedLabelFieldSurfaceExtraction.grid_shape must have positive dimensions; got {shape!r}"
+            )
         if site_coordinates is None:
             coordinates = np.stack(
                 np.meshgrid(
@@ -692,20 +719,26 @@ class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
             raw = np.asarray(site_coordinates)
             if raw.ndim != 2 or raw.shape[1] != 3 or raw.dtype.kind not in "iu":
                 raise ValueError(
-                    "site_coordinates must be an integer array with shape (sites, 3)."
+                    f"PreparedLabelFieldSurfaceExtraction.site_coordinates must be an integer (sites, 3) array; got {raw.dtype} {raw.shape}"
                 )
             coordinates_ = raw.astype(np.int64)
             if coordinates_.shape[0] == 0:
-                raise ValueError("site_coordinates cannot be empty.")
+                raise ValueError(
+                    "PreparedLabelFieldSurfaceExtraction.site_coordinates must be nonempty; got zero sites"
+                )
             bounds = np.asarray(shape, dtype=np.int64)
             if np.any(coordinates_ < 0) or np.any(coordinates_ >= bounds):
-                raise ValueError("site_coordinates must lie inside grid_shape.")
+                raise ValueError(
+                    f"PreparedLabelFieldSurfaceExtraction.site_coordinates must lie inside grid_shape {shape!r}; got out-of-range coordinates"
+                )
             order = np.lexsort(
                 (coordinates_[:, 2], coordinates_[:, 1], coordinates_[:, 0])
             )
             coordinates = coordinates_[order]
             if np.any(np.all(coordinates[1:] == coordinates[:-1], axis=1)):
-                raise ValueError("site_coordinates must be unique.")
+                raise ValueError(
+                    "PreparedLabelFieldSurfaceExtraction.site_coordinates must be unique; got duplicate sites"
+                )
             source_shape = (coordinates.shape[0],)
             route = "sparse-grid"
         scope = Scope()
@@ -734,7 +767,7 @@ class PreparedLabelFieldSurfaceExtraction(StrictModule, NonTrainableState):
         )
 
     def extract(self, state: LabelFieldState, /) -> LabelFieldSurfaceExtractionResult:
-        """Extract, certify and transfer authority from one label-field epoch."""
+        """Extract and certify geometry from one label-field epoch."""
         return _extract(self, state)
 
 
@@ -780,30 +813,46 @@ _CUBE_EDGES = tuple(
 
 
 def _host_state(
-    prepared: PreparedLabelFieldSurfaceExtraction, state: LabelFieldState, /
+    prepared: PreparedLabelFieldSurfaceExtraction,
+    state: contracts_owner.LabelFieldState,
+    /,
 ) -> tuple[np.ndarray, np.ndarray, int, float]:
-    from ...threshold_dynamics._contracts import LabelFieldState
 
-    if not isinstance(state, LabelFieldState):
-        raise TypeError("state must be a LabelFieldState.")
-    if state.label_ids != prepared.plan.label_ids:
-        raise ValueError(
-            "state label_ids must exactly match the extraction plan label order."
-        )
-    labels = np.asarray(state.labels, dtype=np.int64)
-    if labels.shape != prepared.source_shape:
-        raise ValueError(
-            "state labels must have prepared source shape "
-            f"{prepared.source_shape}, got {labels.shape}."
-        )
-    flat = labels.reshape(-1)[prepared.source_order]
-    if np.any(flat < 0) or np.any(flat >= state.label_count):
-        raise ValueError("state labels must index the extraction plan label_ids.")
-    active = np.asarray(state.active_labels, dtype=np.bool_)
-    counts = np.bincount(flat, minlength=state.label_count)
-    if np.any((counts > 0) & ~active):
-        raise ValueError("A source label that owns sites cannot be inactive.")
-    return flat, active, int(np.asarray(state.epoch)), float(np.asarray(state.time))
+    # This optional source binding composes its geometry owner; resolve that upper-layer cycle only for the request.
+    import phydrax.threshold_dynamics._contracts as contracts_owner
+
+    match state:
+        case contracts_owner.LabelFieldState():
+            if state.label_ids != prepared.plan.label_ids:
+                raise ValueError(
+                    f"PreparedLabelFieldSurfaceExtraction.state_label_ids must match extraction plan label order {prepared.plan.label_ids!r}; got {state.label_ids!r}"
+                )
+            labels = np.asarray(state.labels, dtype=np.int64)
+            if labels.shape != prepared.source_shape:
+                raise ValueError(
+                    f"PreparedLabelFieldSurfaceExtraction.state_labels must have prepared source shape {prepared.source_shape}; got {labels.shape}"
+                )
+            flat = labels.reshape(-1)[prepared.source_order]
+            if np.any(flat < 0) or np.any(flat >= state.label_count):
+                raise ValueError(
+                    "PreparedLabelFieldSurfaceExtraction.state_labels must index extraction plan label_ids; got out-of-range labels"
+                )
+            active = np.asarray(state.active_labels, dtype=np.bool_)
+            counts = np.bincount(flat, minlength=state.label_count)
+            if np.any((counts > 0) & ~active):
+                raise ValueError(
+                    "PreparedLabelFieldSurfaceExtraction.active_labels must activate every label with source sites; got an inactive present label"
+                )
+            return (
+                flat,
+                active,
+                int(np.asarray(state.epoch)),
+                float(np.asarray(state.time)),
+            )
+        case _:
+            raise TypeError(
+                f"PreparedLabelFieldSurfaceExtraction.state must be a LabelFieldState; got {type(state).__name__}"
+            )
 
 
 def _region_map(
@@ -852,12 +901,16 @@ def _region_map(
                 int(upper[2] - offset[2] + 1),
             )
         case _:
-            raise RuntimeError(f"Unknown prepared extraction route {prepared.route!r}.")
+            raise RuntimeError(
+                f"PreparedLabelFieldSurfaceExtraction.route must select a supported grid route; got {prepared.route!r}"
+            )
     local_coordinates = coordinates - offset
     dense = np.full(dense_shape, boundary, dtype=np.int64)
     mapped = source_to_region[labels]
     if np.any(mapped < 0):
-        raise RuntimeError("A present source label was omitted from the region map.")
+        raise RuntimeError(
+            "PreparedLabelFieldSurfaceExtraction.region_map must include every present source label; got an unmapped label"
+        )
     dense[
         local_coordinates[:, 0],
         local_coordinates[:, 1],
@@ -980,7 +1033,9 @@ def _interface_centroid(
         if labels[first] != labels[second]
     ]
     if not transitions:
-        raise RuntimeError("An interface centroid needs at least one label transition.")
+        raise RuntimeError(
+            "LabelFieldSurfaceExtraction.interface_centroid must have at least one label transition; got no transitions"
+        )
     return np.mean(np.asarray(transitions), axis=0)
 
 
@@ -1001,7 +1056,7 @@ def _tetrahedron_dual_position(
         ]
         if len(triple_faces) != 2:
             raise RuntimeError(
-                "A three-label tetrahedron must have two triple-label faces."
+                f"LabelFieldSurfaceExtraction.triple_faces must contain two triple-label faces for a three-label tetrahedron; got {len(triple_faces)}"
             )
         return np.mean(
             np.asarray(
@@ -1011,7 +1066,105 @@ def _tetrahedron_dual_position(
         )
     if unique == 4:
         return np.mean(lattice[list(tetrahedron)], axis=0)
-    raise RuntimeError("A dual point needs between two and four tetrahedron labels.")
+    raise RuntimeError(
+        f"LabelFieldSurfaceExtraction.dual_point must have two to four tetrahedron labels; got {unique}"
+    )
+
+
+@final
+class _DualSurfaceWork(StrictModule):
+    """Host lattice and append-only interface ancestry in traversal order."""
+
+    lattice: np.ndarray
+    labels: np.ndarray
+    positions: list[np.ndarray]
+    faces: list[tuple[int, int, int]]
+    face_labels: list[tuple[int, int]]
+    edge_vertices: dict[tuple[int, ...], int]
+    face_vertices: dict[tuple[int, ...], int]
+
+
+def _prepare_dual_lattice(
+    labels: np.ndarray,
+    origin: tuple[float, float, float],
+    spacing: tuple[float, float, float],
+    /,
+) -> _DualSurfaceWork:
+    """Prepare Cartesian sample coordinates with the free-space collar offset."""
+    lattice = np.stack(
+        np.meshgrid(
+            *(np.arange(value, dtype=np.float64) for value in labels.shape),
+            indexing="ij",
+        ),
+        axis=-1,
+    ).reshape((-1, 3))
+    lattice = np.asarray(origin)[None, :] + (lattice - 1.0) * np.asarray(spacing)[None, :]
+    return _DualSurfaceWork(lattice, labels.reshape(-1), [], [], [], {}, {})
+
+
+def _dual_vertex(
+    key: tuple[int, ...],
+    table: dict[tuple[int, ...], int],
+    position: np.ndarray,
+    positions: list[np.ndarray],
+    /,
+) -> int:
+    """Share one interface vertex per primal edge or face identity."""
+    known = table.get(key)
+    if known is not None:
+        return known
+    index = len(positions)
+    positions.append(position)
+    table[key] = index
+    return index
+
+
+def _emit_dual_face(
+    work: _DualSurfaceWork,
+    tetrahedron: tuple[int, int, int, int],
+    local_face: tuple[int, int, int],
+    center: int,
+    /,
+) -> None:
+    """Emit oriented edge-face-tetrahedron flags for one material interface."""
+    lattice, flat_labels = work.lattice, work.labels
+    primal_face = tuple(sorted(tetrahedron[index] for index in local_face))
+    differing: list[tuple[int, int]] = []
+    for local_first, local_second in _FACE_EDGES:
+        first = tetrahedron[local_face[local_first]]
+        second = tetrahedron[local_face[local_second]]
+        if flat_labels[first] != flat_labels[second]:
+            differing.append((first, second))
+    if not differing:
+        return
+    face_center = _dual_vertex(
+        primal_face,
+        work.face_vertices,
+        _interface_centroid(primal_face, lattice, flat_labels),
+        work.positions,
+    )
+    for first, second in differing:
+        edge_key = sorted((first, second))
+        primal_edge = (edge_key[0], edge_key[1])
+        edge_center = _dual_vertex(
+            primal_edge,
+            work.edge_vertices,
+            0.5 * (lattice[first] + lattice[second]),
+            work.positions,
+        )
+        first_label = int(flat_labels[first])
+        second_label = int(flat_labels[second])
+        left, right = sorted((first_label, second_label))
+        left_vertex = first if first_label == left else second
+        right_vertex = second if first_label == left else first
+        triangle = [edge_center, face_center, center]
+        p0, p1, p2 = (work.positions[index] for index in triangle)
+        direction = lattice[right_vertex] - lattice[left_vertex]
+        orientation = float(np.dot(np.cross(p1 - p0, p2 - p0), direction))
+        if orientation < 0.0:
+            triangle[1], triangle[2] = triangle[2], triangle[1]
+        work.faces.append((triangle[0], triangle[1], triangle[2]))
+        work.face_labels.append((left, right))
 
 
 def _dual_surface(
@@ -1020,93 +1173,26 @@ def _dual_surface(
     spacing: tuple[float, float, float],
     /,
 ) -> _DualSurface:
+    """Extract shared material interfaces in lexicographic Freudenthal order."""
+    work = _prepare_dual_lattice(labels, origin, spacing)
     shape = labels.shape
-    lattice = np.stack(
-        np.meshgrid(
-            *(np.arange(value, dtype=np.float64) for value in shape),
-            indexing="ij",
-        ),
-        axis=-1,
-    ).reshape((-1, 3))
-    lattice = np.asarray(origin)[None, :] + (lattice - 1.0) * np.asarray(spacing)[None, :]
-    flat_labels = labels.reshape(-1)
-    positions: list[np.ndarray] = []
-    faces: list[tuple[int, int, int]] = []
-    face_labels: list[tuple[int, int]] = []
-    edge_vertices: dict[tuple[int, ...], int] = {}
-    face_vertices: dict[tuple[int, ...], int] = {}
-
-    def dual_vertex(
-        key: tuple[int, ...],
-        table: dict[tuple[int, ...], int],
-        position: np.ndarray,
-        /,
-    ) -> int:
-        known = table.get(key)
-        if known is not None:
-            return known
-        index = len(positions)
-        positions.append(position)
-        table[key] = index
-        return index
-
-    for i in range(shape[0] - 1):
-        for j in range(shape[1] - 1):
-            for k in range(shape[2] - 1):
-                base = (i, j, k)
-                for permutation in _TETRAHEDRON_PERMUTATIONS:
-                    tetrahedron = _tetrahedron_vertices(base, permutation, shape)
-                    tetrahedron_labels = flat_labels[list(tetrahedron)]
-                    if np.all(tetrahedron_labels == tetrahedron_labels[0]):
-                        continue
-                    center = len(positions)
-                    positions.append(
-                        _tetrahedron_dual_position(tetrahedron, lattice, flat_labels)
-                    )
-                    for local_face in _TETRAHEDRON_FACES:
-                        primal_face = tuple(
-                            sorted(tetrahedron[index] for index in local_face)
-                        )
-                        differing: list[tuple[int, int]] = []
-                        for local_first, local_second in _FACE_EDGES:
-                            first = tetrahedron[local_face[local_first]]
-                            second = tetrahedron[local_face[local_second]]
-                            if flat_labels[first] != flat_labels[second]:
-                                differing.append((first, second))
-                        if not differing:
-                            continue
-                        face_center = dual_vertex(
-                            primal_face,
-                            face_vertices,
-                            _interface_centroid(primal_face, lattice, flat_labels),
-                        )
-                        for first, second in differing:
-                            edge_key = sorted((first, second))
-                            primal_edge = (edge_key[0], edge_key[1])
-                            edge_center = dual_vertex(
-                                primal_edge,
-                                edge_vertices,
-                                0.5 * (lattice[first] + lattice[second]),
-                            )
-                            first_label = int(flat_labels[first])
-                            second_label = int(flat_labels[second])
-                            left, right = sorted((first_label, second_label))
-                            left_vertex = first if first_label == left else second
-                            right_vertex = second if first_label == left else first
-                            triangle = [edge_center, face_center, center]
-                            p0, p1, p2 = (positions[index] for index in triangle)
-                            direction = lattice[right_vertex] - lattice[left_vertex]
-                            orientation = float(
-                                np.dot(np.cross(p1 - p0, p2 - p0), direction)
-                            )
-                            if orientation < 0.0:
-                                triangle[1], triangle[2] = triangle[2], triangle[1]
-                            faces.append((triangle[0], triangle[1], triangle[2]))
-                            face_labels.append((left, right))
+    # Cartesian product has the same i, j, k order as the nested lattice loops.
+    for i, j, k in itertools.product(*(range(value - 1) for value in shape)):
+        for permutation in _TETRAHEDRON_PERMUTATIONS:
+            tetrahedron = _tetrahedron_vertices((i, j, k), permutation, shape)
+            tetrahedron_labels = work.labels[list(tetrahedron)]
+            if np.all(tetrahedron_labels == tetrahedron_labels[0]):
+                continue
+            center = len(work.positions)
+            work.positions.append(
+                _tetrahedron_dual_position(tetrahedron, work.lattice, work.labels)
+            )
+            for local_face in _TETRAHEDRON_FACES:
+                _emit_dual_face(work, tetrahedron, local_face, center)
     return _DualSurface(
-        positions=np.asarray(positions, dtype=np.float64),
-        faces=np.asarray(faces, dtype=np.int64),
-        face_labels=np.asarray(face_labels, dtype=np.int64),
+        positions=np.asarray(work.positions, dtype=np.float64),
+        faces=np.asarray(work.faces, dtype=np.int64),
+        face_labels=np.asarray(work.face_labels, dtype=np.int64),
     )
 
 

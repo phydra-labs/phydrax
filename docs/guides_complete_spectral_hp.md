@@ -73,6 +73,10 @@ triangle/tetrahedron nodes and orthonormal modal tabulation.
 pyramid bases with common simplex/tensor traces. Its `nodal_reference_labels()`
 returns exact logical dual labels in the existing basis order, including prism
 basis permutations and the pyramid's conforming triangular-interior node order.
+Its `tabulate(points)` returns `(values, gradients)`, matching the simplex and
+tensor reference families. Use the first result when only basis values are needed.
+Portable finite elements retain these families as dynamic numerical source leaves
+through `FiniteElementTabulator`; they do not recover a source by probing methods.
 Periodic H1 numbering consumes those labels and the actual edge/triangular-face/
 quadrilateral-face conventions; it never rounds Lobatto/warp-and-blend coordinates
 or pairs physical nodes by distance. Numerical nodes and basis coefficients

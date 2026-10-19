@@ -19,9 +19,9 @@ from .._strict import StrictModule
 from ..linalg import AbstractLinearOperator, JacobianLinearOperator, prepare_linearization
 from ._iterative import MinimizationProblem
 from ._nonlinear_constraints import (
-    _constraint_layout,
-    _ConstraintLayout,
     _flat_constraint_values,
+    constraint_layout,
+    ConstraintLayout,
 )
 
 
@@ -266,7 +266,7 @@ def prepare_constrained_model_evaluation(
     if not isinstance(policy, ConstraintScalingPolicy):
         raise TypeError("scaling must be ConstraintScalingPolicy or None.")
     coordinates, unflatten = ravel_pytree(parameters)
-    layout = _constraint_layout(problem, parameters, args)
+    layout = constraint_layout(problem, parameters, args)
     objective, gradient = jax.value_and_grad(
         lambda value: problem.value(unflatten(value), args)[0]
     )(coordinates)
@@ -306,7 +306,7 @@ def _make_constrained_model(
     problem: MinimizationProblem,
     coordinates: Array,
     unflatten: Any,
-    layout: _ConstraintLayout,
+    layout: ConstraintLayout,
     objective_scale: Array,
     constraint_scale: Array,
     *,
@@ -350,7 +350,7 @@ def prepare_constrained_model_actions(
     if not problem.constraints and problem.bounds is None:
         raise ValueError("A constrained model requires constraints or bounds.")
     coordinates, unflatten = ravel_pytree(parameters)
-    layout = _constraint_layout(problem, parameters, args)
+    layout = constraint_layout(problem, parameters, args)
     return _make_constrained_model(
         problem,
         coordinates,

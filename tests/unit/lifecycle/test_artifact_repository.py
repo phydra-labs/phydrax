@@ -5,18 +5,17 @@
 
 import hashlib
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from phydrax.lifecycle._chunk_repository import (
-    RepositoryConflictError,
-    RepositoryCorruptionError,
-    RetentionPolicy,
-    UnsupportedRepositoryProfileError,
-)
-from phydrax.lifecycle._repository import (
+from phydrax.lifecycle import (
+    admit_topology_restart,
     ArtifactGuardRecoveryAuthorization,
+    CanonicalRestartChunk,
+    ChunkRecord,
+    DestinationShard,
+    DirectRestorePlan,
+    execute_direct_restore,
     HPCFilesystemProfile,
     InMemoryConditionalObjectClient,
     ObjectNotFoundError,
@@ -24,18 +23,16 @@ from phydrax.lifecycle._repository import (
     ObjectStoreProfile,
     POSIXArtifactRepository,
     POSIXRepositoryPolicy,
-    S3ArtifactRepository,
-)
-from phydrax.lifecycle._restart_topology import (
-    admit_topology_restart,
-    CanonicalRestartChunk,
-    DestinationShard,
-    DirectRestorePlan,
-    execute_direct_restore,
     prepare_direct_restore,
+    RepositoryConflictError,
+    RepositoryCorruptionError,
+    RepositoryTransaction,
     RestartChunkMapping,
+    RetentionPolicy,
+    S3ArtifactRepository,
     TopologyRestartPolicy,
     TopologyRestartRelation,
+    UnsupportedRepositoryProfileError,
 )
 from phydrax.qualification._registry import SupportTuple
 
@@ -89,7 +86,7 @@ def _stage(
     /,
     *,
     started_at: int,
-) -> Any:
+) -> tuple[RepositoryTransaction, ChunkRecord]:
     transaction = repository.begin(
         artifact,
         "writer-a",
@@ -148,7 +145,10 @@ def test_posix_commit_crash_boundaries_are_recoverable_and_atomic(
     if visible:
         manifest = reopened.get_manifest("checkpoint-a")
         assert reopened.read_chunk(manifest, manifest.chunks[0]) == b"restart-state"
-        with pytest.raises(RepositoryConflictError, match="already committed"):
+        with pytest.raises(
+            RepositoryConflictError,
+            match=r"transaction\.transaction_id.*already committed",
+        ):
             reopened.commit(transaction, (chunk,), committed_at=20)
     else:
         with pytest.raises(ObjectNotFoundError):
@@ -172,12 +172,16 @@ def test_posix_reader_detects_chunk_and_commit_marker_corruption(
     manifest = repository.commit(transaction, (chunk,), committed_at=20)
     (root / chunk.object_key).write_bytes(b"corrupt")
 
-    with pytest.raises(RepositoryCorruptionError, match="size mismatch"):
+    with pytest.raises(
+        RepositoryCorruptionError, match=r"chunk\.encoded_size.*size mismatch"
+    ):
         repository.read_chunk(manifest, chunk)
 
     marker = root / "roots" / transaction.attempt_id / "COMMIT"
     marker.write_bytes(b"{}\n")
-    with pytest.raises(RepositoryCorruptionError, match="marker"):
+    with pytest.raises(
+        RepositoryCorruptionError, match=r"artifact\.commit_marker\.fields"
+    ):
         repository.get_manifest("checkpoint-a")
 
 
@@ -248,27 +252,37 @@ def test_duplicate_chunk_and_stale_writer_conflicts_are_fail_closed(
         b"stale",
         started_at=11,
     )
-    with pytest.raises(RepositoryConflictError, match="already exists"):
+    with pytest.raises(
+        RepositoryConflictError,
+        match=r"repository\.immutable_object\.key.*already exists",
+    ):
         repository.write_chunk(first, "state", 0, 0, b"duplicate")
     repository.commit(first, (first_chunk,), committed_at=20)
 
-    with pytest.raises(RepositoryConflictError, match="pointer changed"):
+    with pytest.raises(
+        RepositoryConflictError, match=r"transaction\.base_manifest_id.*pointer changed"
+    ):
         repository.commit(stale, (stale_chunk,), committed_at=21)
 
 
-def test_s3_contracts() -> None:
+def test_s3_conditional_object_tokens_refuse_stale_replacement() -> None:
     client = InMemoryConditionalObjectClient(maximum_object_bytes=64 * 1024)
     created = client.create_object("qualification/value", b"one")
-    with pytest.raises(ObjectPreconditionError, match="already exists"):
+    with pytest.raises(ObjectPreconditionError, match=r"object\.key.*already exists"):
         client.create_object("qualification/value", b"duplicate")
     replaced = client.replace_object("qualification/value", b"two", created.etag)
-    with pytest.raises(ObjectPreconditionError, match="conditional replace"):
+    with pytest.raises(
+        ObjectPreconditionError, match=r"object\.expected_etag.*conditional replace"
+    ):
         client.replace_object("qualification/value", b"three", created.etag)
     assert (
         client.read_object("qualification/value", maximum_bytes=3).metadata.etag
         == replaced.etag
     )
 
+
+def test_s3_repository_commit_refuses_stale_pointer() -> None:
+    client = InMemoryConditionalObjectClient(maximum_object_bytes=64 * 1024)
     repository = S3ArtifactRepository(
         client,
         _object_profile(),
@@ -290,8 +304,11 @@ def test_s3_contracts() -> None:
         started_at=11,
     )
     repository.commit(first, (first_chunk,), committed_at=20)
-    with pytest.raises(ObjectPreconditionError):
+    with pytest.raises(ObjectPreconditionError, match=r"object\.key.*already exists"):
         repository.commit(stale, (stale_chunk,), committed_at=21)
+
+
+def test_s3_guard_recovery_requires_fencing_and_preserves_active_lease() -> None:
     client = InMemoryConditionalObjectClient(maximum_object_bytes=64 * 1024)
     repository = S3ArtifactRepository(
         client,
@@ -323,14 +340,19 @@ def test_s3_contracts() -> None:
     )
 
     repository._acquire_artifact_guard("checkpoint-guarded")
-    with pytest.raises(RepositoryConflictError, match="metadata is being modified"):
+    with pytest.raises(
+        RepositoryConflictError,
+        match=r"artifact\.metadata_guard.*metadata is being modified",
+    ):
         repository.collect_garbage(now=30)
     assert (
         repository.read_bytes("checkpoint-guarded", "state", maximum_bytes=32)
         == b"guarded-state"
     )
     metadata = repository.artifact_guard_metadata("checkpoint-guarded")
-    with pytest.raises(ValueError, match="worker-fencing evidence"):
+    with pytest.raises(
+        ValueError, match=r"guard_authorization\.worker_fenced.*worker-fencing evidence"
+    ):
         ArtifactGuardRecoveryAuthorization(
             repository.provider_id,
             "checkpoint-guarded",
@@ -349,7 +371,10 @@ def test_s3_contracts() -> None:
         30,
         worker_fenced=True,
     )
-    with pytest.raises(RepositoryConflictError, match="changed after external fencing"):
+    with pytest.raises(
+        RepositoryConflictError,
+        match=r"guard_authorization\.guard_etag.*changed after external fencing",
+    ):
         repository.recover_artifact_guard(wrong)
     authorization = ArtifactGuardRecoveryAuthorization(
         repository.provider_id,
@@ -380,6 +405,9 @@ def test_s3_contracts() -> None:
     report = repository.collect_garbage(now=31)
     assert report.removed_artifact_ids == ("checkpoint-guarded",)
     assert report.removed_attempt_ids == ("attempt-guarded",)
+
+
+def test_s3_chunk_reads_enforce_integrity_and_plaintext_bounds() -> None:
     client = InMemoryConditionalObjectClient(maximum_object_bytes=64 * 1024)
     repository = S3ArtifactRepository(
         client,
@@ -398,13 +426,17 @@ def test_s3_contracts() -> None:
     value = client.read_object(chunk.object_key, maximum_bytes=1024)
     client.replace_object(chunk.object_key, b"bad", value.metadata.etag)
 
-    with pytest.raises(RepositoryCorruptionError, match="size mismatch"):
+    with pytest.raises(
+        RepositoryCorruptionError, match=r"chunk\.encoded_size.*size mismatch"
+    ):
         repository.read_chunk(manifest, chunk, maximum_plaintext_bytes=32)
     assert client.read_requests
     assert all(
         maximum > 0 and maximum <= 64 * 1024 for _, maximum in client.read_requests
     )
-    with pytest.raises(RepositoryCorruptionError, match="plaintext bound"):
+    with pytest.raises(
+        RepositoryCorruptionError, match=r"chunk\.plaintext_size.*plaintext bound"
+    ):
         repository.read_chunk(manifest, chunk, maximum_plaintext_bytes=4)
 
 
@@ -420,7 +452,10 @@ def test_provider_mismatch_and_unsupported_profiles_fail_closed(
         advisory_locking=False,
         attempt_private_staging=True,
     )
-    with pytest.raises(UnsupportedRepositoryProfileError, match="directory fsync"):
+    with pytest.raises(
+        UnsupportedRepositoryProfileError,
+        match=r"filesystem_profile\.features.*directory fsync",
+    ):
         POSIXRepositoryPolicy(bad_profile)
 
     first = POSIXArtifactRepository(tmp_path / "one", _posix_policy("posix.one"))
@@ -433,7 +468,7 @@ def test_provider_mismatch_and_unsupported_profiles_fail_closed(
         started_at=10,
     )
     manifest = first.commit(transaction, (chunk,), committed_at=20)
-    with pytest.raises(RepositoryConflictError, match="provider"):
+    with pytest.raises(RepositoryConflictError, match=r"manifest\.provider_id"):
         second.read_chunk(manifest, chunk)
 
     bad_object_profile = ObjectStoreProfile(
@@ -445,7 +480,10 @@ def test_provider_mismatch_and_unsupported_profiles_fail_closed(
         multipart_free_objects=True,
         maximum_object_bytes=1024,
     )
-    with pytest.raises(UnsupportedRepositoryProfileError, match="conditional replace"):
+    with pytest.raises(
+        UnsupportedRepositoryProfileError,
+        match=r"object_store_profile\.features.*conditional replace",
+    ):
         S3ArtifactRepository(
             InMemoryConditionalObjectClient(maximum_object_bytes=1024),
             bad_object_profile,
@@ -552,7 +590,9 @@ def test_posix_repository_rejects_symlinked_ancestors_and_replaced_layout(
     outside.mkdir()
     linked_parent = tmp_path / "linked-parent"
     linked_parent.symlink_to(outside, target_is_directory=True)
-    with pytest.raises(ValueError, match="real directories"):
+    with pytest.raises(
+        ValueError, match=r"repository\.root\.components.*real directories"
+    ):
         POSIXArtifactRepository(linked_parent / "repository", _posix_policy())
 
     root = tmp_path / "repository"
@@ -560,7 +600,7 @@ def test_posix_repository_rejects_symlinked_ancestors_and_replaced_layout(
     (root / "locks" / "repository.lock").unlink()
     (root / "locks").rmdir()
     (root / "locks").symlink_to(outside, target_is_directory=True)
-    with pytest.raises(RepositoryCorruptionError, match="layout"):
+    with pytest.raises(RepositoryCorruptionError, match=r"repository\.storage_layout"):
         repository.begin("checkpoint", "writer", started_at=1)
 
     second_root = tmp_path / "repository-replaced"
@@ -575,7 +615,7 @@ def test_posix_repository_rejects_symlinked_ancestors_and_replaced_layout(
     second.commit(transaction, (chunk,), committed_at=2)
     (second_root / "artifacts").rename(second_root / "artifacts-original")
     (second_root / "artifacts").mkdir()
-    with pytest.raises(RepositoryCorruptionError, match="layout"):
+    with pytest.raises(RepositoryCorruptionError, match=r"repository\.storage_layout"):
         second.get_manifest("checkpoint-a")
 
 
@@ -590,7 +630,7 @@ def _support(topology: str) -> SupportTuple:
     )
 
 
-def test_artifact_repository_scenario_1() -> None:
+def test_topology_restart_policy_distinguishes_supported_classes() -> None:
     source = _support("two-shards")
     target = _support("four-shards")
     same = TopologyRestartRelation(source, source, "bitwise")
@@ -619,6 +659,9 @@ def test_artifact_repository_scenario_1() -> None:
     assert not admit_topology_restart(changed, strict).admitted
     assert admit_topology_restart(changed, qualified).admitted
     assert not admit_topology_restart(unsupported, qualified).admitted
+
+
+def test_direct_restore_refuses_missing_and_overlapping_byte_coverage() -> None:
     support = _support("canonical")
     relation = TopologyRestartRelation(support, support, "bitwise")
     policy = TopologyRestartPolicy(allow_topology_change=False)
@@ -626,7 +669,7 @@ def test_artifact_repository_scenario_1() -> None:
     first = CanonicalRestartChunk("state", 0, 4, hashlib.sha256(b"abcd").hexdigest())
     hole = CanonicalRestartChunk("state", 5, 3, hashlib.sha256(b"fgh").hexdigest())
     destination = DestinationShard("destination", "state", 0, 8)
-    with pytest.raises(ValueError, match="hole"):
+    with pytest.raises(ValueError, match=r"restore_partition\.byte_intervals.*hole"):
         prepare_direct_restore(
             relation,
             policy,
@@ -639,7 +682,10 @@ def test_artifact_repository_scenario_1() -> None:
         RestartChunkMapping(first.chunk_id, 0, "destination", 0, 4),
         RestartChunkMapping(second.chunk_id, 0, "destination", 3, 4),
     )
-    with pytest.raises(ValueError, match="canonical payload coordinates|overlap"):
+    with pytest.raises(
+        ValueError,
+        match=r"restore_mapping\.payload_coordinates|restore_mapping\..*overlap",
+    ):
         DirectRestorePlan(
             relation,
             admission,
@@ -687,11 +733,11 @@ def test_direct_restore_repartitions_without_execution_cache_or_global_gather() 
     output = {item.shard_id: bytearray(item.byte_count) for item in destinations}
     requested: list[int] = []
 
-    def read_range(chunk: Any, offset: int, count: int) -> bytes:
+    def read_range(chunk: CanonicalRestartChunk, offset: int, count: int) -> bytes:
         requested.append(count)
         return source_data[chunk.chunk_id][offset : offset + count]
 
-    def write_range(shard: Any, offset: int, payload: bytes) -> None:
+    def write_range(shard: DestinationShard, offset: int, payload: bytes) -> None:
         output[shard.shard_id][offset : offset + len(payload)] = payload
 
     report = execute_direct_restore(plan, read_range, write_range)
@@ -702,3 +748,56 @@ def test_direct_restore_repartitions_without_execution_cache_or_global_gather() 
     assert bytes(output["destination-1"]) == b"defgh"
     assert report.transferred_bytes == 8
     assert max(requested) <= 4
+
+
+@pytest.mark.parametrize(
+    "member", ("manifest.json", "COMMIT"), ids=("manifest", "commit")
+)
+def test_s3_repeated_manifest_reads_revalidate_durable_content(member: str) -> None:
+    client = InMemoryConditionalObjectClient(maximum_object_bytes=64 * 1024)
+    repository = S3ArtifactRepository(
+        client, _object_profile(), "qualification/repository", maximum_chunk_bytes=1024
+    )
+    transaction, chunk = _stage(
+        repository, "checkpoint-a", "attempt-a", b"accepted-state", started_at=10
+    )
+    committed = repository.commit(transaction, (chunk,), committed_at=20)
+    for _ in range(3):
+        admitted = repository.get_manifest("checkpoint-a")
+        assert admitted.manifest_id == committed.manifest_id
+        assert repository.read_chunk(admitted, chunk) == b"accepted-state"
+    metadata = next(
+        item
+        for item in client.list_objects("qualification/repository/roots/")
+        if item.key.endswith(f"/{transaction.attempt_id}/{member}")
+    )
+    client.replace_object(metadata.key, b"{}\n", metadata.etag)
+    with pytest.raises(
+        RepositoryCorruptionError,
+        match=r"artifact\.(manifest_sha256|commit_marker\.fields)",
+    ):
+        repository.get_manifest("checkpoint-a")
+
+
+def test_s3_repeated_manifest_reads_follow_replacement_pointer() -> None:
+    client = InMemoryConditionalObjectClient(maximum_object_bytes=64 * 1024)
+    repository = S3ArtifactRepository(
+        client, _object_profile(), "qualification/repository", maximum_chunk_bytes=1024
+    )
+    first, first_chunk = _stage(
+        repository, "checkpoint-a", "attempt-first", b"first-state", started_at=10
+    )
+    committed = repository.commit(first, (first_chunk,), committed_at=20)
+    assert repository.get_manifest("checkpoint-a").manifest_id == committed.manifest_id
+    replacement, replacement_chunk = _stage(
+        repository,
+        "checkpoint-a",
+        "attempt-replacement",
+        b"replacement-state",
+        started_at=30,
+    )
+    replaced = repository.commit(replacement, (replacement_chunk,), committed_at=40)
+    current = repository.get_manifest("checkpoint-a")
+    assert current.manifest_id == replaced.manifest_id
+    assert current.manifest_id != committed.manifest_id
+    assert repository.read_chunk(current, replacement_chunk) == b"replacement-state"

@@ -2,35 +2,63 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Reserve accepted layer storage before allocating a native fixed-PLC core."""
+"""Bound layer source phases and reserve accepted storage before native PLC fill."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
-from .._meshcore import charge_native_geometry_queries
+import phydrax.meshing._boundary_layer as _dependency_phydrax_meshing__boundary_layer
+import phydrax.meshing._canonical as _dependency_phydrax_meshing__canonical
+import phydrax.meshing._contracts as _dependency_phydrax_meshing__contracts
+import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
+import phydrax.meshing._plc_source as plc_source_owner
+import phydrax.meshing._trace as _dependency_phydrax_meshing__trace
+
+from .._resource_ticket import BatchTicket
 from .._validation import nonnegative_integer, positive_integer
 from ..discretization import CellMesh
-from ._boundary_layer import BoundaryLayerMesh
-from ._canonical import _entity_vertex_keys
-from ._contracts import (
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingLimits,
-    VolumeMeshingSpec,
-)
-from ._trace import MeshingStageKind
-from ._volume_generation import PiecewiseLinearComplex
+from ..typing import checked
+from .providers import _native_sources as sources_owner
+
+
+@checked
+def layer_source_work_upper(
+    source: sources_owner.NativeLayerCoreSource,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
+    /,
+) -> int:
+    """Bound identity, orbit, seam, and full requested-pair source visits."""
+    periodic = source.layers.mesh.periodic_topology
+    rank = 0 if periodic is None else periodic.cell.rank
+    pairs = source.core_seam_polygon_pairs
+    seam_count = 0 if pairs is None else pairs.shape[0]
+    claims = sum(
+        np.asarray(constraint.target_scope.entity_ids).size
+        for constraint in specification.periodic_constraints
+    )
+    vertices = source.complex.vertices.shape[0]
+    entries = source.complex.polygon_vertices.size
+    polygons = source.complex.polygon_facets.size
+    return (
+        (8 + 2 * rank) * vertices
+        + source.layers.mesh.coordinates.shape[0]
+        + 3 * entries
+        + 5 * seam_count
+        + source.cap_polygon_ids.size
+        + claims * (2 * polygons + 2 * seam_count)
+    )
 
 
 @dataclass(slots=True)
 class LayerCoreSourceWork:
-    """Debit actual source records and consistency tests before dispatch."""
+    """Count source records locally on the request's admitted phase ticket."""
 
     maximum: int
     work_units: int = 0
+    ticket: BatchTicket = field(kw_only=True)
 
     def __post_init__(self) -> None:
         self.maximum = positive_integer(self.maximum, "maximum_work_units")
@@ -40,24 +68,25 @@ class LayerCoreSourceWork:
     def charge(self, count: int, /) -> None:
         count = nonnegative_integer(count, "source_work_units")
         if count > self.maximum - self.work_units:
-            raise MeshingFailure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Layer/core source preparation exhausted its original work budget.",
-                stage=MeshingStageKind.SOURCE_INSPECTION.value,
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                f"LayerCoreSourceWork.maximum must admit the next source records; got {self.work_units} consumed and {count} requested with maximum {self.maximum}",
+                stage=_dependency_phydrax_meshing__trace.MeshingStageKind.SOURCE_INSPECTION.value,
                 requested=(("maximum_work_units", self.maximum),),
                 achieved=(
                     ("work_units", self.work_units),
                     ("next_source_records", count),
                 ),
             )
-        charge_native_geometry_queries(0, work_units=count)
+        self.ticket.consume(count)
         self.work_units += count
 
 
-def _row_entity_vertex_keys(
+@checked
+def row_entity_vertex_keys(
     mesh: CellMesh, dimension: int, /
 ) -> tuple[tuple[int, ...], ...]:
-    """Lower authoritative global vertex keys onto the carrier's execution rows."""
+    """Lower declared global vertex keys onto the carrier's execution rows."""
     rows = {
         int(identifier): row
         for row, identifier in enumerate(np.asarray(mesh.vertex_global_ids))
@@ -69,17 +98,20 @@ def _row_entity_vertex_keys(
         )
     return tuple(
         tuple(sorted(rows[identifier] for identifier in key))
-        for key in _entity_vertex_keys(mesh, dimension)
+        for key in _dependency_phydrax_meshing__canonical.entity_vertex_keys(
+            mesh, dimension
+        )
     )
 
 
+@checked
 def reserve_layer_storage(
-    layers: BoundaryLayerMesh,
-    complex_: PiecewiseLinearComplex,
-    specification: VolumeMeshingSpec,
+    layers: _dependency_phydrax_meshing__boundary_layer.BoundaryLayerMesh,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    specification: _dependency_phydrax_meshing__contracts.VolumeMeshingSpec,
     vertex_layer_ids: np.ndarray,
     /,
-) -> VolumeMeshingSpec:
+) -> _dependency_phydrax_meshing__contracts.VolumeMeshingSpec:
     limits = specification.limits
     points = layers.mesh.coordinates.shape[0]
     shared = nonnegative_integer(
@@ -93,8 +125,8 @@ def reserve_layer_storage(
         for a, b in ((0, 1), (1, 2), (2, 0))
         if row[a] >= 0 and row[b] >= 0
     }
-    layer_edges = set(_row_entity_vertex_keys(layers.mesh, 1))
-    layer_faces = set(_row_entity_vertex_keys(layers.mesh, 2))
+    layer_edges = set(row_entity_vertex_keys(layers.mesh, 1))
+    layer_faces = set(row_entity_vertex_keys(layers.mesh, 2))
     shared_faces = {
         tuple(sorted(row.tolist())) for row in mapped if np.all(row >= 0)
     } & layer_faces
@@ -121,16 +153,16 @@ def reserve_layer_storage(
         any(value <= 0 for value in remaining.values())
         or remaining["vertices"] < complex_.vertices.shape[0]
     ):
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Accepted layers and immutable PLC consume the combined allocation budget before core fill.",
-            stage=MeshingStageKind.VOLUME_FILL.value,
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "VolumeMeshingSpec.limits must admit accepted layers and the remaining fixed PLC storage before core fill; got accepted layers and immutable PLC consume the combined allocation budget before core fill",
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.VOLUME_FILL.value,
             requested=tuple((f"maximum_{name}", value) for name, value in bounds.items()),
             achieved=tuple(
                 (f"reserved_layer_{name}", value) for name, value in reserved.items()
             ),
         )
-    core_limits = MeshingLimits(
+    core_limits = _dependency_phydrax_meshing__contracts.MeshingLimits(
         maximum_vertices=remaining["vertices"],
         maximum_edges=remaining["edges"],
         maximum_faces=remaining["faces"],
@@ -143,7 +175,7 @@ def reserve_layer_storage(
         maximum_scratch_bytes=limits.maximum_scratch_bytes,
         maximum_wall_seconds=limits.maximum_wall_seconds,
     )
-    return VolumeMeshingSpec(
+    return _dependency_phydrax_meshing__contracts.VolumeMeshingSpec(
         specification.target,
         specification.boundary_scope,
         specification.fill_strategy,

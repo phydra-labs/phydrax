@@ -50,6 +50,7 @@ Neither introduces another domain hierarchy.
 ```python
 import jax.numpy as jnp
 import phydrax as phx
+from phydrax.units import METER
 
 chart = phx.metrix.CoordinateChart("polar", ("r", "theta"))
 metric = phx.metrix.diagonal_metric(
@@ -58,7 +59,7 @@ metric = phx.metrix.diagonal_metric(
 )
 
 domain = phx.domain.GeometryDomain(
-    phx.geometry.Square(center=(2.0, 0.0), side=1.0).compile()
+    phx.geometry.Square(center=(2.0, 0.0), side=1.0).compile(coordinate_unit=METER)
 )
 
 

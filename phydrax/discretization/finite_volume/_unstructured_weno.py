@@ -23,7 +23,7 @@ from ._cell_polynomial import (
     CellPolynomialReconstructionPlan,
     PreparedCellPolynomialReconstruction,
 )
-from ._unstructured import UnstructuredFiniteVolumeDiscretization
+from ._unstructured_types import AbstractUnstructuredFiniteVolumeDiscretization
 
 
 UnstructuredWENOLimiter: TypeAlias = Literal["none", "cell_extrema"]
@@ -101,7 +101,7 @@ class UnstructuredWENOZReconstructionPlan(StrictModule, NonTrainableState):
         )
 
     def prepare(
-        self, discretization: UnstructuredFiniteVolumeDiscretization, /
+        self, discretization: AbstractUnstructuredFiniteVolumeDiscretization, /
     ) -> "PreparedUnstructuredWENOZReconstruction":
         return PreparedUnstructuredWENOZReconstruction(self, discretization)
 
@@ -122,7 +122,7 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
     def __init__(
         self,
         plan: UnstructuredWENOZReconstructionPlan,
-        discretization: UnstructuredFiniteVolumeDiscretization,
+        discretization: AbstractUnstructuredFiniteVolumeDiscretization,
         /,
     ) -> None:
         optimal = CellPolynomialReconstructionPlan(
@@ -176,7 +176,7 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
         )
 
     @property
-    def discretization(self) -> UnstructuredFiniteVolumeDiscretization:
+    def discretization(self) -> AbstractUnstructuredFiniteVolumeDiscretization:
         return self.optimal.discretization
 
     def candidate_coefficients(self, state: Array, /) -> Array:
@@ -258,9 +258,9 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
         traces = value[routes, None, ...] + ein.contract(
             "r...f,rqf->rq...", coefficients, basis
         )
-        return self._limit(value, traces, routes)
+        return self.limit_traces(value, traces, routes)
 
-    def _limit(self, state: Array, traces: Array, cell_routes: Array, /) -> Array:
+    def limit_traces(self, state: Array, traces: Array, cell_routes: Array, /) -> Array:
         if self.limiter == "none":
             return traces
         value = jnp.asarray(state)
@@ -297,8 +297,8 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
             value, coefficients, safe_neighbor, points
         )
         return (
-            self._limit(value, left, owner),
-            self._limit(value, right, safe_neighbor),
+            self.limit_traces(value, left, owner),
+            self.limit_traces(value, right, safe_neighbor),
         )
 
     def reconstruct(self, state: Array, /) -> tuple[Array, Array]:

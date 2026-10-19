@@ -7,6 +7,7 @@ import opt_einsum as oe
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _interval_function(function: Any) -> Any:
@@ -20,7 +21,7 @@ def _square_function(function: Any) -> Any:
             center=(0.0, 0.0),
             side=4.0,
             feature_id="stochastic-generator-square",
-        ).compile()
+        ).compile(coordinate_unit=METER)
     )
     return domain.Function("x")(function)
 

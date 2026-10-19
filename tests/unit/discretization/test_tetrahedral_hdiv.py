@@ -4,12 +4,13 @@ import numpy.typing as npt
 import pytest
 
 import phydrax as phx
-from phydrax.discretization.fem._form_elements import form_element, FormElementFamily
+from phydrax.discretization import FormElementFamily
+from phydrax.discretization.fem._form_elements import form_element
 from phydrax.discretization.fem._generic import (
     FiniteElementDiscretization,
     FiniteElementDofMap,
 )
-from phydrax.discretization.fem._reference import FiniteElementSpec
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
 
 
 _VERTICES = np.asarray(

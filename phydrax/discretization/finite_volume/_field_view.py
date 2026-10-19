@@ -4,7 +4,7 @@
 
 """Finite-volume cell reconstructions as evidenced coordinate field views.
 
-Structured grids locate points by exact index arithmetic on the prepared axis
+Structured grids locate points by certified index arithmetic on the prepared axis
 edges; unstructured meshes locate points with an explicit inverse cell map
 (`AbstractCellLocator`). Every finite-volume reconstruction is discontinuous
 across faces, so the trace policy is cell-sided: a point on a face lies in
@@ -15,15 +15,17 @@ cell; points outside every cell are `OUTSIDE_SUPPORT`.
 from __future__ import annotations
 
 from math import isfinite, prod
-from typing import Any, assert_never, final
+from typing import assert_never, final
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+import phydrax.discretization.fem._reference_types as reference_types_owner
 from phydrax.ein import contract
 
+from ... import geometry as imported_geometry
 from ..._differentiation import (
     branch_policy_contract,
     BranchDifferentiationPolicy,
@@ -37,8 +39,13 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import linear_apply, linear_transpose_apply
 from ...typing import checked, parse
+from .. import (
+    _cell_geometry as imported_cell_geometry,
+    _cell_geometry_validity as imported_cell_geometry_validity,
+)
 from .._cell_geometry import CellGeometrySpec
 from .._field_query import PreparedFieldQuery
+from .._reference_cell_types import CellGeometryElement
 from .._simplicial_locator import (
     AbstractCellLocator,
     CellLocationStatus,
@@ -60,6 +67,11 @@ from .._views import (
     FieldTraceSide,
     PreparedFieldReconstruction,
 )
+from ..fem import (
+    _cell_map as imported_fem__cell_map,
+    _generic as imported_fem__generic,
+    _reference as imported_fem__reference,
+)
 from ._cell_polynomial import PreparedCellPolynomialReconstruction
 from ._reconstruction import (
     AbstractFaceReconstructionPlan,
@@ -77,6 +89,7 @@ from ._triangle_fv import TriangleFiniteVolumeDiscretization
 from ._triangle_polynomial import TriangleKExactReconstructionPlan
 from ._triangle_reconstruction import TriangleMUSCLReconstructionPlan
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
+from ._unstructured_types import AbstractUnstructuredFiniteVolumeDiscretization
 from ._unstructured_weno import PreparedUnstructuredWENOZReconstruction
 
 
@@ -95,6 +108,44 @@ UnstructuredCellReconstruction = (
 _MeshDiscretization = (
     UnstructuredFiniteVolumeDiscretization | TriangleFiniteVolumeDiscretization
 )
+
+type CellReconstruction = UnstructuredCellReconstruction | AbstractFaceReconstructionPlan
+
+
+@final
+class _CellReconstructionPolicy(StrictModule):
+    reconstruction: UnstructuredCellReconstruction
+    regularity: DerivativeRegularity
+    maximum_order: int = eqx.field(static=True)
+    coefficient_linear: bool = eqx.field(static=True)
+
+
+def _mesh_coordinate_geometry(
+    discretization: _MeshDiscretization, /
+) -> CellGeometrySpec | None:
+    """Select the coordinate source supported by the finite-volume owner kind."""
+    match discretization:
+        case UnstructuredFiniteVolumeDiscretization():
+            return discretization.cell_geometry
+        case TriangleFiniteVolumeDiscretization():
+            return None
+        case _:
+            assert_never(discretization)
+
+
+def _corner_coordinate_element_matches(
+    element: CellGeometryElement, cell_kind: str, local_arity: int, /
+) -> bool:
+    """Admit vertex descriptors or degree-one coordinate interpolation."""
+    match element:
+        case imported_cell_geometry.CellVertexGeometryElement():
+            return (
+                element.cell_kind == cell_kind and element.local_dof_count == local_arity
+            )
+        case reference_types_owner.FiniteElementSpec():
+            return element.degree == 1
+        case _:
+            return False
 
 
 def _selection(accepted: Array, side: FieldSideBinding | None, /) -> tuple[Array, Array]:
@@ -130,7 +181,7 @@ def _masked_share(share: Array, status: Array, dtype: jnp.dtype, /) -> Array:
 def _require_value_order(derivative: tuple[int, ...], /) -> None:
     if any(derivative):
         raise ValueError(
-            "Piecewise-constant cell averages have no coordinate derivatives."
+            "finite_volume_field.derivative must have order zero for piecewise-constant averages; got a coordinate derivative."
         )
 
 
@@ -143,7 +194,7 @@ class StructuredFiniteVolumeFieldReconstructionKernel(
     A point is located by index arithmetic on the prepared axis edges: along
     each axis it lies in the cells whose closed intervals contain it (within an
     absolute `tolerance` per axis), so interior faces belong to both adjacent
-    cells. Face orientation is the canonical positive-axis one: the owner of an
+    cells. Face orientation is the prepared positive-axis one: the owner of an
     interior face is the lower cell along its normal axis.
     """
 
@@ -168,10 +219,14 @@ class StructuredFiniteVolumeFieldReconstructionKernel(
             or np.any(np.diff(values) <= 0.0)
             for values in axes
         ):
-            raise ValueError("Axis edges must be finite, increasing, and span a cell.")
+            raise ValueError(
+                "StructuredFiniteVolumeFieldReconstructionKernel.axis_edges must be finite, increasing, and span a cell; got invalid edges."
+            )
         tolerance = float(location_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
-            raise ValueError("location_tolerance must be finite and non-negative.")
+            raise ValueError(
+                "prepare_finite_volume_field_reconstruction.location_tolerance must be finite and non-negative; got an invalid tolerance."
+            )
         absolute = np.asarray(
             [tolerance * (values[-1] - values[0]) for values in axes], dtype=np.float64
         )
@@ -180,7 +235,7 @@ class StructuredFiniteVolumeFieldReconstructionKernel(
             for width, values in zip(absolute, axes, strict=True)
         ):
             raise ValueError(
-                "location_tolerance must be below half the smallest cell width."
+                "prepare_finite_volume_field_reconstruction.location_tolerance must be below half the smallest cell width; got an overlapping tolerance."
             )
         self.edges = tuple(jnp.asarray(values) for values in axes)
         self.tolerances = jnp.asarray(absolute)
@@ -297,24 +352,29 @@ class StructuredFiniteVolumeFieldReconstructionKernel(
             np.asarray(value) for value in self._candidates(jnp.asarray(sites))
         )
         if not np.all(inside):
-            raise ValueError("Every trace site must lie in the finite-volume grid.")
+            raise ValueError(
+                "finite_volume_field.trace_sites must lie in the grid; got sites outside support."
+            )
         containing = np.where(valid, cells, -1)
         if side == "average":
             if cell_ids is not None:
-                raise ValueError("Average traces combine every containing cell.")
+                raise ValueError(
+                    "finite_volume_field.cell_ids must be absent for average traces; got an explicit cell selection."
+                )
             return None, np.full(sites.shape[0], -1, dtype=np.int32)
         if cell_ids is None:
             site_cells = _oriented_side_cells(containing, side)
         else:
             if np.any(np.all(containing != cell_ids[:, None], axis=1)):
-                raise ValueError("cell_ids must name a cell containing each trace site.")
+                raise ValueError(
+                    "finite_volume_field.cell_ids must name a containing cell at each trace site; got an invalid cell selection."
+                )
             site_cells = cell_ids.astype(np.int32)
         mask = np.zeros((self.cell_count,), dtype=np.bool_)
         mask[site_cells] = True
         if np.any(np.sum(valid & mask[cells], axis=1) != 1):
             raise ValueError(
-                "The side cells do not resolve every trace site to exactly its "
-                "declared cell; the side region is ambiguous."
+                "finite_volume_field.cell_ids must resolve each trace site to its declared cell; got an ambiguous side region."
             )
         return mask, site_cells
 
@@ -338,11 +398,12 @@ def _oriented_side_cells(containing: np.ndarray, side: FieldTraceSide, /) -> np.
             resolved = count == 2
             cells = highest
         case _:
-            raise ValueError(f"Unknown trace side {side!r}.")
+            raise ValueError(
+                f"finite_volume_field.trace_side must be owner or neighbor; got {side!r}."
+            )
     if not np.all(resolved):
         raise ValueError(
-            f"{side!r} traces at sites on several faces (or without a neighbor "
-            "cell) require explicit cell_ids."
+            f"finite_volume_field.cell_ids must explicitly resolve {side!r} traces on ambiguous sites; got multiple faces or a missing neighbor."
         )
     return cells.astype(np.int32)
 
@@ -371,7 +432,7 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
 
     Points are located by an explicit `AbstractCellLocator` inverse cell map.
     Inside a cell the value is the prepared reconstruction: the cell average
-    (`PiecewiseConstantReconstruction`), the conservative k-exact polynomial
+    (`PiecewiseConstantReconstruction`), the conservative k-certified polynomial
     (`PreparedCellPolynomialReconstruction` or `TriangleKExactReconstructionPlan`,
     linear in the averages), the WLSQ MUSCL plane
     (`TriangleMUSCLReconstructionPlan`; linear when unlimited, otherwise scaled
@@ -412,11 +473,7 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
                 reconstruction_id = reconstruction.prepared_id
             case _:
                 raise TypeError(
-                    "reconstruction must be PiecewiseConstantReconstruction, "
-                    "PreparedCellPolynomialReconstruction, "
-                    "PreparedUnstructuredWENOZReconstruction, "
-                    "TriangleKExactReconstructionPlan, or "
-                    "TriangleMUSCLReconstructionPlan."
+                    "finite_volume_field.reconstruction must define a supported cell reconstruction; got an unsupported policy."
                 )
         self.locator = locator
         self.reconstruction = reconstruction
@@ -446,6 +503,7 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
     def support_coverage(self) -> str:
         return "complete"
 
+    @checked
     def prepare_packet_query(
         self,
         owner: PreparedFieldReconstruction,
@@ -454,14 +512,16 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
         admissible: Array,
         /,
     ) -> PreparedFieldQuery:
-        """Rebind only the chart; retain this owner's actual reconstruction policy.
+        """Rebind the chart while retaining this owner's reconstruction policy.
 
-        A donor's complete coefficient-read stencil must be active. In particular,
-        filtering the containing cell alone cannot authorize a k-exact neighbor
-        stencil to read a hole or fringe coefficient.
+        A donor's full coefficient-read stencil must be active. Filtering the
+        containing cell alone cannot authorize a degree-k neighbor stencil
+        to read a hole or fringe coefficient.
         """
         if owner.kernel is not self:
-            raise ValueError("Packet queries require the owning FV reconstruction.")
+            raise ValueError(
+                "finite_volume_field.packet_owner must bind this reconstruction kernel; got another kernel."
+            )
         located = _checked_locator(self.discretization, locator)
         kernel = UnstructuredFiniteVolumeFieldReconstructionKernel(
             located,
@@ -488,60 +548,58 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
         support = self.query_support_rows(query)
         if not np.all(np.asarray(admissible, dtype=np.bool_)[support]):
             raise ValueError(
-                "FV donor reconstruction reads an inactive hole/fringe source cell; "
-                "its full reconstruction stencil must be eligible."
+                "finite_volume_field.donor_stencil must contain only eligible source cells; got an inactive hole/fringe cell."
             )
         return query
 
+    @checked
     def query_support_rows(self, query: PreparedFieldQuery, /) -> np.ndarray:
-        """Actual coefficient-read cell scope, including nonlinear global reads."""
-        kernel = query.reconstruction.kernel
-        if (
-            not isinstance(kernel, UnstructuredFiniteVolumeFieldReconstructionKernel)
-            or kernel.reconstruction is not self.reconstruction
-            or kernel.discretization is not self.discretization
-        ):
-            raise ValueError(
-                "Query support must come from this actual FV reconstruction owner."
-            )
-        if isinstance(query.route, GatherStencil):
-            return np.unique(
-                np.asarray(query.route.indices)[np.asarray(query.route.valid)]
-            )
-        # WENO/MUSCL coefficients are computed by the owning global operator.
-        return np.arange(self.cell_count, dtype=np.int32)
+        """Return coefficient-read cells, including nonlinear global reads."""
+        match query.reconstruction.kernel:
+            case UnstructuredFiniteVolumeFieldReconstructionKernel() as kernel if (
+                kernel.reconstruction is self.reconstruction
+                and kernel.discretization is self.discretization
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "finite_volume_field.query_support must bind this reconstruction and discretization; got another query owner."
+                )
+        match query.route:
+            case GatherStencil() as route:
+                return np.unique(np.asarray(route.indices)[np.asarray(route.valid)])
+            case _WENORoute() | _TriangleMUSCLRoute():
+                # Both nonlinear policies compute coefficients from the global operator.
+                return np.arange(self.cell_count, dtype=np.int32)
+            case _:
+                raise ValueError(
+                    "finite_volume_field.query_support must contain a supported FV route; got another route kind."
+                )
 
+    @checked
     def require_source_geometry(self, geometry: CellGeometrySpec | None, /) -> None:
-        """Bind real vertex descriptors; refuse mapped-source corner erasure.
+        """Bind vertex geometry or the coordinate map used to prepare this field.
 
-        A CellVertexGeometryElement is the actual polygon/polyhedron vertex
-        source, not a degree-one FE element. Its kind, arity, coordinates and
-        routes must match. Mapped/restricted sources require owning cell_geometry.
+        Vertex descriptors must match the mesh kind, arity, coordinates, and
+        routes. Mapped sources must retain the prepared coordinate geometry.
         """
-        from .._cell_geometry import (
-            CellVertexGeometryElement,
-        )
-        from .._cell_geometry_validity import cell_geometry_id
-        from ..fem._reference import FiniteElementSpec
-
-        owning = getattr(self.discretization, "cell_geometry", None)
+        owning = _mesh_coordinate_geometry(self.discretization)
         if owning is not None:
-            if geometry is None or cell_geometry_id(owning) != cell_geometry_id(geometry):
-                raise ValueError("FV fields are bound to another source coordinate map.")
+            if geometry is None or imported_cell_geometry_validity.cell_geometry_id(
+                owning
+            ) != imported_cell_geometry_validity.cell_geometry_id(geometry):
+                raise ValueError(
+                    "finite_volume_field.cell_geometry must match the prepared source map; got a missing or different geometry ID."
+                )
             return
         if geometry is None:
             return
-        if not isinstance(geometry, CellGeometrySpec):
-            raise TypeError("Source geometry must be CellGeometrySpec or None.")
         if (
             geometry.exact_source is not None
             or any(
-                (
-                    element.cell_kind != block.cell_kind
-                    or element.local_dof_count != block.vertices.shape[1]
+                not _corner_coordinate_element_matches(
+                    element, block.cell_kind, block.vertices.shape[1]
                 )
-                if isinstance(element, CellVertexGeometryElement)
-                else (not isinstance(element, FiniteElementSpec) or element.degree != 1)
                 for element, block in zip(
                     geometry.elements, self.discretization.mesh.blocks, strict=True
                 )
@@ -557,8 +615,7 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
             )
         ):
             raise ValueError(
-                "FV fields on mapped/restricted donors require the actual owning "
-                "cell_geometry; a corner-only field is not that source coordinate map."
+                "finite_volume_field.cell_geometry must bind the mapped or restricted donor coordinate map; got a corner-only or different geometry."
             )
 
     def locate(
@@ -654,7 +711,9 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
                         cells, directions, share, not any(derivative)
                     )
             case _:
-                raise TypeError("Unknown unstructured finite-volume reconstruction.")
+                raise TypeError(
+                    "finite_volume_field.reconstruction must define a supported cell reconstruction; got an unsupported policy."
+                )
         return route, evidence
 
     def apply(
@@ -663,30 +722,30 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
         coefficients: Array,
         /,
     ) -> Array:
-        match route:
-            case GatherStencil():
+        match route, self.reconstruction:
+            case GatherStencil(), _:
                 # locate() binds gather stencils for linear reconstructions.
                 return linear_apply(route.relation, route.weights, coefficients)
-            case _WENORoute():
-                if not isinstance(
-                    self.reconstruction, PreparedUnstructuredWENOZReconstruction
-                ):
-                    raise RuntimeError(
-                        "Internal invariant failed: WENO routes need WENO-Z."
-                    )
-                modal = self.reconstruction.coefficients(coefficients)
+            case (
+                _WENORoute(),
+                PreparedUnstructuredWENOZReconstruction() as reconstruction,
+            ):
+                modal = reconstruction.coefficients(coefficients)
                 values = contract("pkf,pk...f->pk...", route.basis, modal[route.cells])
                 if route.constant:
                     values = values + coefficients[route.cells]
                 return contract("pk,pk...->p...", route.share, values)
-            case _TriangleMUSCLRoute():
-                if not isinstance(self.reconstruction, TriangleMUSCLReconstructionPlan):
-                    raise RuntimeError(
-                        "Internal invariant failed: limited routes need triangle MUSCL."
-                    )
+            case _WENORoute(), _:
+                raise RuntimeError(
+                    "finite_volume_field.route must pair a WENO route with WENO-Z reconstruction; got a different reconstruction."
+                )
+            case (
+                _TriangleMUSCLRoute(),
+                TriangleMUSCLReconstructionPlan() as reconstruction,
+            ):
                 flat = route.cells.reshape((-1,))
-                gradient = self.reconstruction.gradient.cell_gradients(coefficients, flat)
-                factor = self.reconstruction.cell_limiter_factors(coefficients, flat)
+                gradient = reconstruction.gradient.cell_gradients(coefficients, flat)
+                factor = reconstruction.cell_limiter_factors(coefficients, flat)
                 values = factor * contract(
                     "r...i,ri->r...",
                     gradient,
@@ -699,8 +758,14 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
                     route.share,
                     values.reshape(route.cells.shape + values.shape[1:]),
                 )
+            case _TriangleMUSCLRoute(), _:
+                raise RuntimeError(
+                    "finite_volume_field.route must pair a limited route with triangle MUSCL; got a different reconstruction."
+                )
             case _:
-                raise TypeError("Unknown unstructured finite-volume route.")
+                raise TypeError(
+                    "finite_volume_field.route must be a supported gather or nonlinear reconstruction route; got an unsupported route."
+                )
 
     def transpose(
         self,
@@ -713,11 +778,12 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
                 return linear_transpose_apply(route.relation, route.weights, cotangent)
             case _WENORoute() | _TriangleMUSCLRoute():
                 raise ValueError(
-                    "WENO-Z and limited MUSCL reconstructions are nonlinear in the "
-                    "cell averages and have no algebraic transpose."
+                    "finite_volume_field.reconstruction must be coefficient-linear for an algebraic transpose; got WENO-Z or limited MUSCL."
                 )
             case _:
-                raise TypeError("Unknown unstructured finite-volume route.")
+                raise TypeError(
+                    "finite_volume_field.route must be a supported gather or nonlinear reconstruction route; got an unsupported route."
+                )
 
     def bind_side(
         self,
@@ -728,11 +794,15 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
     ) -> tuple[np.ndarray | None, np.ndarray]:
         location = self.locator.locate(jnp.asarray(sites))
         if np.any(np.asarray(location.status) != int(CellLocationStatus.LOCATED)):
-            raise ValueError("Every trace site must lie in the finite-volume mesh.")
+            raise ValueError(
+                "finite_volume_field.trace_sites must lie in the mesh; got sites outside support."
+            )
         containing = np.asarray(location.candidate_cells)
         if side == "average":
             if cell_ids is not None:
-                raise ValueError("Average traces combine every containing cell.")
+                raise ValueError(
+                    "finite_volume_field.cell_ids must be absent for average traces; got an explicit cell selection."
+                )
             return None, np.full(sites.shape[0], -1, dtype=np.int32)
         if cell_ids is None:
             site_cells = _face_side_cells(
@@ -743,7 +813,9 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
             )
         else:
             if np.any(np.all(containing != cell_ids[:, None], axis=1)):
-                raise ValueError("cell_ids must name a cell containing each trace site.")
+                raise ValueError(
+                    "finite_volume_field.cell_ids must name a containing cell at each trace site; got an invalid cell selection."
+                )
             site_cells = cell_ids.astype(np.int32)
         mask = np.zeros((self._cell_count,), dtype=np.bool_)
         mask[site_cells] = True
@@ -752,8 +824,7 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
             np.asarray(masked.cell_ids) != site_cells
         ):
             raise ValueError(
-                "The side cells do not resolve every trace site to exactly its "
-                "declared cell; the side region is ambiguous."
+                "finite_volume_field.cell_ids must resolve each trace site to its declared cell; got an ambiguous side region."
             )
         return mask, site_cells
 
@@ -765,7 +836,7 @@ def _candidate_basis(
     cells: Array,
     /,
 ) -> Array:
-    """Exact basis derivatives of every candidate cell at its query point."""
+    """certified basis derivatives of every candidate cell at its query point."""
     count, width = cells.shape
     repeated = jnp.broadcast_to(points[:, None, :], (count, width, points.shape[1]))
     basis = polynomial.basis_derivative(
@@ -848,8 +919,7 @@ def _face_side_cells(
         oriented = faces.get(tuple(present)) if len(present) == 2 else None
         if oriented is None:
             raise ValueError(
-                f"{side!r} traces at sites that are not on exactly one face (or "
-                "without a neighbor cell) require explicit cell_ids."
+                f"finite_volume_field.cell_ids must explicitly resolve {side!r} traces on ambiguous sites; got multiple faces or a missing neighbor."
             )
         match side:
             case "owner":
@@ -857,7 +927,9 @@ def _face_side_cells(
             case "neighbor":
                 resolved.append(oriented[1])
             case _:
-                raise ValueError(f"Unknown trace side {side!r}.")
+                raise ValueError(
+                    f"finite_volume_field.trace_side must be owner or neighbor; got {side!r}."
+                )
     return np.asarray(resolved, dtype=np.int32)
 
 
@@ -866,32 +938,27 @@ def _default_locator(
     policy: SimplicialLocationPolicy | None,
     /,
 ) -> PreparedSimplicialCellLocator:
-    from ..fem._cell_map import PreparedFiniteElementCellMap
-    from ..fem._generic import FiniteElementFieldSpec, FiniteElementPlan
-    from ..fem._reference import discontinuous_element
 
     blocks = discretization.mesh.blocks
     if len(blocks) != 1 or blocks[0].cell_kind not in _SIMPLICES:
         raise ValueError(
-            "Arbitrary-point location on non-simplicial or mixed finite-volume meshes "
-            "requires an explicit AbstractCellLocator inverse provider."
+            "prepare_finite_volume_field_reconstruction.locator must be explicit for nonsimplicial or mixed meshes; got None."
         )
-    geometry = FiniteElementPlan(
+    geometry = imported_fem__generic.FiniteElementPlan(
         discretization.mesh,
-        FiniteElementFieldSpec(
-            "cell_average", discontinuous_element(blocks[0].cell_kind, 0)
+        imported_fem__generic.FiniteElementFieldSpec(
+            "cell_average",
+            imported_fem__reference.discontinuous_element(blocks[0].cell_kind, 0),
         ),
-        coordinate_spec=getattr(discretization, "cell_geometry", None),
+        coordinate_spec=_mesh_coordinate_geometry(discretization),
     ).prepare()
-    cell_map = PreparedFiniteElementCellMap(geometry, 0)
+    cell_map = imported_fem__cell_map.PreparedFiniteElementCellMap(geometry, 0)
     # Candidate capacity must cover every BVH leaf box around a query point.
     policy_ = (
         SimplicialLocationPolicy(min(cell_map.cell_count, 64), 16, 1)
         if policy is None
         else policy
     )
-    if not isinstance(policy_, SimplicialLocationPolicy):
-        raise TypeError("location_policy must be a SimplicialLocationPolicy or None.")
     return PreparedSimplicialCellLocator(
         cell_map, geometry.default_runtime.coordinates, policy_
     )
@@ -902,9 +969,7 @@ def _checked_locator(
     locator: AbstractCellLocator,
     /,
 ) -> AbstractCellLocator:
-    if not isinstance(locator, AbstractCellLocator):
-        raise TypeError("locator must be an AbstractCellLocator or None.")
-    geometry = getattr(discretization, "cell_geometry", None)
+    geometry = _mesh_coordinate_geometry(discretization)
     coordinates = discretization.vertices if geometry is None else geometry.coordinates
     if (
         locator.cell_map.topology_id != discretization.mesh.topology_id
@@ -915,52 +980,57 @@ def _checked_locator(
         )
         or not np.array_equal(np.asarray(locator.coordinates), np.asarray(coordinates))
     ):
-        raise ValueError("The locator does not invert this finite-volume mesh.")
+        raise ValueError(
+            "prepare_finite_volume_field_reconstruction.locator must invert the prepared coordinate map; got different topology, layout, or coordinates."
+        )
     return locator
 
 
 def _require_mesh(
-    prepared_on: FiniteVolumeDiscretization | _MeshDiscretization,
+    prepared_on: FiniteVolumeDiscretization
+    | AbstractUnstructuredFiniteVolumeDiscretization
+    | TriangleFiniteVolumeDiscretization,
     discretization: FiniteVolumeDiscretization | _MeshDiscretization,
     /,
 ) -> None:
-    if (
-        isinstance(discretization, FiniteVolumeDiscretization)
-        or prepared_on.prepared_id != discretization.prepared_id
-    ):
-        raise ValueError(
-            "The cell reconstruction was prepared on a different finite-volume "
-            "discretization."
-        )
+    match discretization:
+        case (
+            UnstructuredFiniteVolumeDiscretization()
+            | TriangleFiniteVolumeDiscretization()
+        ) if prepared_on.prepared_id == discretization.prepared_id:
+            return
+        case _:
+            raise ValueError(
+                "prepare_finite_volume_field_reconstruction.reconstruction must bind this FV discretization; got a structured endpoint or a different prepared ID."
+            )
 
 
 def _cell_reconstruction(
-    reconstruction: Any,
+    reconstruction: CellReconstruction,
     discretization: FiniteVolumeDiscretization | _MeshDiscretization,
     /,
-) -> tuple[DerivativeRegularity, int, bool]:
+) -> _CellReconstructionPolicy:
     """Regularity, maximum derivative order, and coefficient linearity."""
     branchwise = branch_policy_contract(
         _WENO_BRANCH_POLICY, surfaces=(DerivativeSurface.PRIMAL_STATE,)
     ).conditions
     match reconstruction:
         case PiecewiseConstantReconstruction():
-            return (
+            return _CellReconstructionPolicy(
+                reconstruction,
                 DerivativeRegularity.piecewise_polynomial(continuity=-1, degree_bound=0),
                 0,
                 True,
             )
         case AbstractFaceReconstructionPlan():
             raise ValueError(
-                "Directional face-trace plans (MUSCL, WENO, ...) reconstruct traces at "
-                "faces axis by axis and define no point reconstruction inside cells; "
-                "use PiecewiseConstantReconstruction, or a cell polynomial or WENO-Z "
-                "reconstruction on an unstructured mesh."
+                "prepare_finite_volume_field_reconstruction.reconstruction must define values inside cells; got a directional face-trace plan."
             )
         case PreparedCellPolynomialReconstruction():
             _require_mesh(reconstruction.discretization, discretization)
             degree = reconstruction.basis.degree
-            return (
+            return _CellReconstructionPolicy(
+                reconstruction,
                 DerivativeRegularity.piecewise_polynomial(
                     continuity=-1, degree_bound=degree
                 ),
@@ -971,11 +1041,10 @@ def _cell_reconstruction(
             _require_mesh(reconstruction.discretization, discretization)
             if reconstruction.limiter != "none":
                 raise ValueError(
-                    "A WENO-Z trace limiter scales each trace by its own evaluation "
-                    "point set and defines no point reconstruction; prepare the view "
-                    "with limiter='none'."
+                    "prepare_finite_volume_field_reconstruction.reconstruction.limiter must be 'none' for a WENO-Z point view; got a trace limiter."
                 )
-            return (
+            return _CellReconstructionPolicy(
+                reconstruction,
                 DerivativeRegularity.piecewise_smooth(
                     continuity=-1, conditions=branchwise
                 ),
@@ -984,7 +1053,8 @@ def _cell_reconstruction(
             )
         case TriangleKExactReconstructionPlan():
             _require_mesh(reconstruction.prepared.discretization, discretization)
-            return (
+            return _CellReconstructionPolicy(
+                reconstruction,
                 DerivativeRegularity.piecewise_polynomial(continuity=-1, degree_bound=2),
                 2,
                 True,
@@ -992,14 +1062,16 @@ def _cell_reconstruction(
         case TriangleMUSCLReconstructionPlan():
             _require_mesh(reconstruction.gradient.discretization, discretization)
             if reconstruction.limiter == "unlimited":
-                return (
+                return _CellReconstructionPolicy(
+                    reconstruction,
                     DerivativeRegularity.piecewise_polynomial(
                         continuity=-1, degree_bound=1
                     ),
                     1,
                     True,
                 )
-            return (
+            return _CellReconstructionPolicy(
+                reconstruction,
                 DerivativeRegularity.piecewise_smooth(
                     continuity=-1, conditions=branchwise
                 ),
@@ -1007,23 +1079,19 @@ def _cell_reconstruction(
                 False,
             )
         case _:
-            raise TypeError(
-                "reconstruction must be PiecewiseConstantReconstruction, "
-                "PreparedCellPolynomialReconstruction, "
-                "PreparedUnstructuredWENOZReconstruction, "
-                "TriangleKExactReconstructionPlan, or TriangleMUSCLReconstructionPlan."
-            )
+            assert_never(reconstruction)
 
 
+@checked
 def prepare_finite_volume_field_reconstruction(
     discretization: FiniteVolumeDiscretization | _MeshDiscretization,
-    reconstruction: Any,
+    reconstruction: CellReconstruction,
     /,
     *,
     locator: AbstractCellLocator | None = None,
     location_policy: SimplicialLocationPolicy | None = None,
     location_tolerance: float = 1.0e-12,
-    support_geometry: Any = None,
+    support_geometry: imported_geometry.CompiledGeometry | None = None,
     value_port: ValuePort | None = None,
     support_tolerance: float = 1.0e-9,
     layout: FiniteVolumeCoefficientLayout = "state",
@@ -1033,12 +1101,12 @@ def prepare_finite_volume_field_reconstruction(
     `reconstruction` is the explicit cell reconstruction policy:
     `PiecewiseConstantReconstruction()` (cell averages; `C^-1` degree zero, no
     coordinate derivatives), a `PreparedCellPolynomialReconstruction` or
-    `TriangleKExactReconstructionPlan` (k-exact, `C^-1` piecewise degree `k`,
-    exact derivatives through order `k`), a `TriangleMUSCLReconstructionPlan`
+    `TriangleKExactReconstructionPlan` (k-certified, `C^-1` piecewise degree `k`,
+    certified derivatives through order `k`), a `TriangleMUSCLReconstructionPlan`
     (WLSQ plane; linear when unlimited, otherwise scaled by the cell's limiter
     factor and nonlinear), or a `PreparedUnstructuredWENOZReconstruction` with
     `limiter="none"` (nonlinear in the averages, branchwise-differentiable,
-    exact coordinate derivatives through the candidate degree). Polynomial and
+    certified coordinate derivatives through the candidate degree). Polynomial and
     WENO-Z reconstructions exist on unstructured meshes and triangle
     reconstructions on triangular meshes; directional face-trace plans refuse.
 
@@ -1046,42 +1114,29 @@ def prepare_finite_volume_field_reconstruction(
     (closed intervals within `location_tolerance` of each axis extent) and
     cover the grid box. Unstructured and triangular meshes need an inverse cell
     map: single-block triangle/tetrahedron meshes build a
-    `PreparedSimplicialCellLocator` from `location_policy`, retaining the owning
+    `PreparedSimplicialCellLocator` from `location_policy`, retaining the bound
     `cell_geometry` when present. Other meshes need an explicit `locator` over
-    the same topology and actual coordinate source, not an affine corner
-    replacement. Polyhedral Cartesian locators retain their complete PLC
+    the same topology and represented coordinate source, not an affine corner
+    replacement. Polyhedral Cartesian locators retain their full PLC
     support. An explicit support geometry must be covered by the mesh.
     Coefficients are cell averages in the discretization's `state_shape`;
     packet rebinding preserves that reconstruction/operator and full layout.
     `layout="scalar"` reconstructs a one-component structured field from its
     cell coordinates (`finite_volume_scalar_space`) as a scalar-valued field.
     """
-    from ...geometry import CompiledGeometry
 
-    if not isinstance(
-        discretization,
-        (
-            FiniteVolumeDiscretization,
-            UnstructuredFiniteVolumeDiscretization,
-            TriangleFiniteVolumeDiscretization,
-        ),
-    ):
-        raise TypeError(
-            "discretization must be a FiniteVolumeDiscretization, an "
-            "UnstructuredFiniteVolumeDiscretization, or a "
-            "TriangleFiniteVolumeDiscretization."
-        )
     layout_ = parse(layout, FiniteVolumeCoefficientLayout, "layout")
-    regularity, maximum_order, linear = _cell_reconstruction(
-        reconstruction, discretization
-    )
+    policy = _cell_reconstruction(reconstruction, discretization)
+    reconstruction = policy.reconstruction
+    regularity = policy.regularity
+    maximum_order = policy.maximum_order
+    linear = policy.coefficient_linear
     field_space_id = finite_volume_field_space_id(discretization)
     match discretization:
         case FiniteVolumeDiscretization():
             if locator is not None or location_policy is not None:
                 raise ValueError(
-                    "Structured grids locate points by index arithmetic; locators "
-                    "apply to unstructured meshes."
+                    "prepare_finite_volume_field_reconstruction.locator must be absent for structured grids; got a locator or location policy."
                 )
             edges = structured_axis_edges(discretization)
             kernel = StructuredFiniteVolumeFieldReconstructionKernel(
@@ -1136,34 +1191,37 @@ def prepare_finite_volume_field_reconstruction(
             )
             tolerance = float(support_tolerance)
             if not isfinite(tolerance) or tolerance < 0.0:
-                raise ValueError("support_tolerance must be finite and non-negative.")
+                raise ValueError(
+                    "prepare_finite_volume_field_reconstruction.support_tolerance must be finite and non-negative; got an invalid tolerance."
+                )
             if support_geometry is None:
                 geometry = simplicial_mesh_support_geometry(located, support_id)
-            elif isinstance(support_geometry, CompiledGeometry):
+            else:
                 verify_mesh_support_geometry(
                     support_geometry, located, tolerance=tolerance
                 )
                 geometry = support_geometry
-            else:
-                raise TypeError("support_geometry must be a CompiledGeometry or None.")
             dimension = mesh_cell_dimension(discretization)
         case _:
-            raise TypeError(
-                "discretization must be a FiniteVolumeDiscretization or an "
-                "UnstructuredFiniteVolumeDiscretization."
-            )
+            assert_never(discretization)
     match layout_:
         case "state":
             components: tuple[int, ...] = (discretization.component_count,)
             coefficient_shape = discretization.state_shape
         case "scalar":
-            if not isinstance(discretization, FiniteVolumeDiscretization):
-                raise ValueError(
-                    "Scalar cell layouts are published by structured finite-volume "
-                    "grids; mesh owners reconstruct the cell-average state layout."
-                )
-            components = ()
-            coefficient_shape = finite_volume_scalar_space(discretization).shape
+            match discretization:
+                case FiniteVolumeDiscretization():
+                    components = ()
+                    coefficient_shape = finite_volume_scalar_space(discretization).shape
+                case (
+                    UnstructuredFiniteVolumeDiscretization()
+                    | TriangleFiniteVolumeDiscretization()
+                ):
+                    raise ValueError(
+                        "prepare_finite_volume_field_reconstruction.layout must use state for mesh discretizations; got scalar layout on an unstructured mesh."
+                    )
+                case _:
+                    assert_never(discretization)
         case _:
             assert_never(layout_)
     port = (
@@ -1177,11 +1235,9 @@ def prepare_finite_volume_field_reconstruction(
         if value_port is None
         else value_port
     )
-    if not isinstance(port, ValuePort):
-        raise TypeError("value_port must be a ValuePort or None.")
     if port.event_shape != components:
         raise ValueError(
-            "value_port event_shape must be the finite-volume component shape."
+            "prepare_finite_volume_field_reconstruction.value_port must have the FV component event_shape; got a different shape."
         )
     return PreparedFieldReconstruction(
         kernel,

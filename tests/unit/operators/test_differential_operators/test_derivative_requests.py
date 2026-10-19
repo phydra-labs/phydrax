@@ -16,6 +16,7 @@ from phydrax.operators.differential import (
     partial_n,
     trace_derivative_requests,
 )
+from phydrax.units import METER
 
 
 def _mlp_field(
@@ -39,7 +40,7 @@ def _laplacian_residual(fields: Any) -> Any:
 
 def test_trace_derivative_requests_keeps_laplacian_contracted() -> None:
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @domain.Function("x")

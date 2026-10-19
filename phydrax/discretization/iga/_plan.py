@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
+from typing import assert_never
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,8 +20,9 @@ from ..._interpolation._bspline_grid import BSplineGrid
 from ..._interpolation._rational_spline import RationalSplineJet
 from ..._interpolation._tensor_bspline import TensorBSplineJetPlan
 from ..._precision import PrecisionEvidenceEnvelope
+from ...geometry.brep import _patches as patches_owner
 from ...linalg import ArraySpace, BlockSpace, ConstraintMap
-from ...linalg._spaces import _coordinate_dtype
+from ...linalg._spaces import coordinate_dtype
 from ...sparse import EdgeRelation, SparseCoordinateOperator
 from ...typing import checked
 from .._core import (
@@ -231,13 +233,15 @@ def _common_overlay_breaks(
             axis = field.basis.axes[axis_index]
             if axis.parameter_interval != (lower, upper):
                 raise ValueError(
-                    "Geometry and field bases must share each parameter interval."
+                    f"IsogeometricPlan.field.basis must share geometry parameter intervals; got axis={axis_index}, field={axis.parameter_interval}, geometry={(lower, upper)}"
                 )
             values.append(np.asarray(axis.span_bounds).reshape((-1,)))
         breaks = np.unique(np.concatenate(values))
         breaks = breaks[(breaks >= lower) & (breaks <= upper)]
         if breaks.size < 2 or np.any(np.diff(breaks) <= 0.0):
-            raise ValueError("IGA common integration overlay has invalid span breaks.")
+            raise ValueError(
+                f"IsogeometricPlan.overlay_breaks must have at least two increasing values; got {breaks}"
+            )
         result.append(tuple(float(value) for value in breaks))
     return tuple(result)
 
@@ -313,30 +317,38 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
         qualification_policy: IsogeometricH1QualificationPolicy | None = None,
     ) -> None:
         if geometry.control_shape != basis.control_shape:
-            raise ValueError("IGA geometry and basis control shapes must match exactly.")
-        field_values = (
-            (fields,) if isinstance(fields, IsogeometricFieldSpec) else tuple(fields)
-        )
+            raise ValueError(
+                f"IsogeometricPlan.geometry must match basis control shape; got geometry={geometry.control_shape}, basis={basis.control_shape}"
+            )
+        match fields:
+            case IsogeometricFieldSpec():
+                field_values = (fields,)
+            case _:
+                field_values = tuple(fields)
         if not field_values or not all(
             isinstance(field, IsogeometricFieldSpec) for field in field_values
         ):
-            raise TypeError("fields must contain IsogeometricFieldSpec values.")
+            raise TypeError(
+                "IsogeometricPlan.fields must contain one or more IsogeometricFieldSpec values; got empty or untyped fields"
+            )
         if len({field.name for field in field_values}) != len(field_values):
-            raise ValueError("IGA field names must be unique.")
+            raise ValueError(
+                f"IsogeometricPlan.fields must have unique names; got {[field.name for field in field_values]}"
+            )
         if any(
             field.basis.parametric_dimension != basis.parametric_dimension
             or field.basis.axis_names != basis.axis_names
             for field in field_values
         ):
             raise ValueError(
-                "IGA field bases must have the geometry parameter dimension and axis names."
+                "IsogeometricPlan.fields must share geometry parameter dimension and axis names; got incompatible field bases"
             )
         if any(
             field.weights_from_geometry and field.basis.layout_id != basis.layout_id
             for field in field_values
         ):
             raise ValueError(
-                "Geometry-owned field weights require the geometry tensor layout."
+                "IsogeometricPlan.fields must use geometry tensor layout for geometry-derived weights; got mismatched basis layout"
             )
         precision = (
             FiniteElementPrecisionPolicy()
@@ -348,12 +360,6 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
             if qualification_policy is None
             else qualification_policy
         )
-        if not isinstance(precision, FiniteElementPrecisionPolicy):
-            raise TypeError(
-                "precision_policy must be FiniteElementPrecisionPolicy or None."
-            )
-        if not isinstance(qualification, IsogeometricH1QualificationPolicy):
-            raise TypeError("qualification_policy must be an IGA H1 policy or None.")
         self.basis = basis
         self.topology = SplineSpanTopology(basis)
         self.geometry = geometry
@@ -395,6 +401,7 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
         )
 
     @classmethod
+    @checked
     def isoparametric(
         cls,
         grids: BSplineGrid | Sequence[BSplineGrid],
@@ -407,7 +414,11 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
         precision_policy: FiniteElementPrecisionPolicy | None = None,
         qualification_policy: IsogeometricH1QualificationPolicy | None = None,
     ) -> IsogeometricPlan:
-        grid_values = (grids,) if isinstance(grids, BSplineGrid) else tuple(grids)
+        match grids:
+            case BSplineGrid():
+                grid_values = (grids,)
+            case _:
+                grid_values = tuple(grids)
         basis = TensorSplineBasisSpec(grid_values, axis_names=axis_names)
         return cls(
             basis,
@@ -423,9 +434,10 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
         )
 
     @classmethod
+    @checked
     def from_source(
         cls,
-        source: object,
+        source: patches_owner.BSplineCurve | patches_owner.BSplineSurfacePatch,
         /,
         *,
         field_name: str = "u",
@@ -440,19 +452,17 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
         retained. This does not lower trimmed faces, occurrences or periodic
         quotient spaces into an unqualified tensor H1 space.
         """
-        from ...geometry.brep._patches import BSplineCurve, BSplineSurfacePatch
 
-        if isinstance(source, BSplineCurve):
-            grids = (BSplineGrid(source.knots, source.degree),)
-        elif isinstance(source, BSplineSurfacePatch):
-            grids = (
-                BSplineGrid(source.u_knots, source.u_degree),
-                BSplineGrid(source.v_knots, source.v_degree),
-            )
-        else:
-            raise TypeError(
-                "IGA source binding requires an untrimmed native BSplineCurve or BSplineSurfacePatch."
-            )
+        match source:
+            case patches_owner.BSplineCurve():
+                grids = (BSplineGrid(source.knots, source.degree),)
+            case patches_owner.BSplineSurfacePatch():
+                grids = (
+                    BSplineGrid(source.u_knots, source.u_degree),
+                    BSplineGrid(source.v_knots, source.v_degree),
+                )
+            case unknown:
+                assert_never(unknown)
         return cls.isoparametric(
             grids,
             NURBSGeometryState(source.control_points, source.weights),
@@ -503,7 +513,9 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
     def __init__(self, plan: IsogeometricPlan, /, *, numeric_version: str = "0") -> None:
         version = str(numeric_version)
         if not version:
-            raise ValueError("numeric_version must be non-empty.")
+            raise ValueError(
+                f"PreparedIsogeometricDiscretization.numeric_version must be non-empty; got {version!r}"
+            )
         basis = plan.basis
         topology = plan.topology
         runtime = IsogeometricRuntimeData(
@@ -671,15 +683,9 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                 "numeric_version": version,
             }
         )
-        region = self.prepare_local_regions(
-            self.cell_domain,
-            field_names=(self.field_spaces[0].name,),
-            maximum_derivative_order=1,
-            kernel_mode="sum_factorized",
-        )[0]
-        geometry_actions = region.geometry_actions
-        if not isinstance(geometry_actions, IsogeometricGeometryActions):
-            raise TypeError("IGA regions require isogeometric geometry actions.")
+        geometry_actions = self._cell_geometry_actions(
+            self.cell_domain, np.asarray(self.cell_domain.entity_indices, dtype=np.int32)
+        )
         evidence = geometry_actions.evidence(self.default_runtime)
         self.default_geometry_evidence = self.qualification_policy.check(evidence)
         self.default_geometry_evidence.minimum_rank_ratio.block_until_ready()
@@ -699,12 +705,14 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             self.basis.parametric_dimension - 1
         ]
 
-    def _field_index(self, field_name: str, /) -> int:
+    def field_index(self, field_name: str, /) -> int:
         name = str(field_name)
         for index, field in enumerate(self.field_spaces):
             if field.name == name:
                 return index
-        raise KeyError(f"Unknown isogeometric field {name!r}.")
+        raise KeyError(
+            f"PreparedIsogeometricDiscretization.field_name must name a prepared field; got {name!r}"
+        )
 
     def local_variational_capabilities(self, /) -> LocalVariationalCapabilities:
         semantics = (
@@ -755,11 +763,16 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         )
 
     def local_field_binding(self, name: str, /) -> LocalFieldBinding:
-        return self.bindings[self._field_index(name)]
+        return self.bindings[self.field_index(name)]
 
     def validate_local_runtime(self, runtime: object, /) -> None:
-        if not isinstance(runtime, IsogeometricRuntimeData):
-            raise TypeError("IGA execution requires IsogeometricRuntimeData.")
+        match runtime:
+            case IsogeometricRuntimeData():
+                pass
+            case _:
+                raise TypeError(
+                    f"PreparedIsogeometricDiscretization.runtime must be IsogeometricRuntimeData; got {type(runtime).__name__}"
+                )
         if (
             runtime.topology_id != self.default_runtime.topology_id
             or runtime.geometry_layout_id != self.default_runtime.geometry_layout_id
@@ -767,9 +780,10 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             or runtime.weights.shape != self.default_runtime.weights.shape
         ):
             raise ValueError(
-                "IGA runtime does not match the prepared topology and layout."
+                f"PreparedIsogeometricDiscretization.runtime must match prepared topology and layout; got topology={runtime.topology_id}, layout={runtime.geometry_layout_id}"
             )
 
+    @checked
     def prepare_runtime(
         self, geometry: NURBSGeometryState | None = None, /, *, numeric_version: str
     ) -> IsogeometricRuntimeData:
@@ -789,6 +803,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         self.validate_local_runtime(result)
         return result
 
+    @checked
     def integration_domain(
         self, kind: str, selection: EntitySelection | None = None, /
     ) -> IntegrationDomain:
@@ -806,15 +821,14 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                 base = self.interior_facet_domain
             case _:
                 raise ValueError(
-                    "IGA integration domains are 'cell', 'exterior_facet', or "
-                    "'interior_facet'."
+                    f"PreparedIsogeometricDiscretization.kind must select cell, exterior_facet, or interior_facet; got {kind!r}"
                 )
         if selection is None:
             return base
-        if not isinstance(selection, EntitySelection):
-            raise TypeError("selection must be EntitySelection or None.")
         if selection.entity_set_id != base.entity_set_id:
-            raise ValueError("IGA selection does not match the requested domain.")
+            raise ValueError(
+                f"PreparedIsogeometricDiscretization.selection must match the domain entity set; got selection={selection.entity_set_id}, domain={base.entity_set_id}"
+            )
         rows = np.flatnonzero(
             np.asarray(selection.mask, dtype=np.bool_)[np.asarray(base.entity_indices)]
         )
@@ -831,10 +845,12 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         side: FieldTraceSide = "owner",
         runtime: IsogeometricRuntimeData | None = None,
     ) -> PreparedTraceAction:
-        """Prepare the exact trace of one field on selected patch facets.
+        """Prepare the trace of one field on selected patch facets.
 
         See `prepare_isogeometric_side_trace`.
         """
+        # The field-view boundary checks this plan's nominal runtime type, so
+        # importing the paired trace capability here avoids a module cycle.
         from ._field_view import prepare_isogeometric_side_trace
 
         return prepare_isogeometric_side_trace(
@@ -845,6 +861,38 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             quantity=quantity,
             side=side,
             runtime=runtime,
+        )
+
+    def _cell_geometry_actions(
+        self, domain: IntegrationDomain, rows: np.ndarray, /
+    ) -> IsogeometricGeometryActions:
+        """Prepare the geometry plan for a selected cell region."""
+        geometry_tensor, permutation, entity_shape, point_shape, reference_weights = (
+            _query_configuration(
+                self.basis,
+                self.quadrature_policy,
+                overlay_breaks=self.overlay_breaks,
+            )
+        )
+        parameter_scales = jnp.asarray(
+            [
+                axis.parameter_interval[1] - axis.parameter_interval[0]
+                for axis in self.basis.axes
+            ]
+        )
+        return IsogeometricGeometryActions(
+            geometry_tensor,
+            rows,
+            reference_weights[rows],
+            permutation,
+            entity_shape,
+            point_shape,
+            parameter_scales,
+            self.qualification_policy,
+            topology_id=self.default_runtime.topology_id,
+            runtime_layout_id=self.default_runtime.geometry_layout_id,
+            domain_kind="cell",
+            structural_id=domain.domain_id,
         )
 
     @checked
@@ -858,77 +906,61 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         kernel_mode: str,
     ) -> tuple[PreparedLocalRegion, ...]:
         if domain.support_id != self.support.support_id:
-            raise ValueError("IGA integration domain belongs to another support.")
+            raise ValueError(
+                f"PreparedIsogeometricDiscretization.domain must match the prepared support; got support_id={domain.support_id}"
+            )
         if str(kernel_mode) != "sum_factorized":
-            raise ValueError("S1 IGA supports only sum_factorized local kernels.")
+            raise ValueError(
+                f"PreparedIsogeometricDiscretization.kernel_mode must be sum_factorized; got {kernel_mode!r}"
+            )
         order = int(maximum_derivative_order)
         if order < 0 or order > 2:
-            raise ValueError("IGA supports local derivative orders zero through two.")
+            raise ValueError(
+                f"PreparedIsogeometricDiscretization.maximum_derivative_order must be zero through two; got {order}"
+            )
         names = tuple(str(name) for name in field_names)
         if not names or len(set(names)) != len(names):
-            raise ValueError("IGA local regions require unique non-empty field names.")
+            raise ValueError(
+                f"PreparedIsogeometricDiscretization.field_names must be nonempty and unique; got {names!r}"
+            )
         for name in names:
-            self._field_index(name)
-        parameter_scales = jnp.asarray(
-            [
-                axis.parameter_interval[1] - axis.parameter_interval[0]
-                for axis in self.basis.axes
-            ]
-        )
+            self.field_index(name)
         if domain.kind == "cell":
             if domain.entity_set_id != self.cell_domain.entity_set_id:
-                raise ValueError("IGA cell domain has an incompatible entity set.")
-            rows = np.asarray(domain.entity_indices, dtype=np.int32)
-            geometry_tensor, permutation, entity_shape, point_shape, reference_weights = (
-                _query_configuration(
-                    self.basis,
-                    self.quadrature_policy,
-                    overlay_breaks=self.overlay_breaks,
+                raise ValueError(
+                    f"PreparedIsogeometricDiscretization.domain must match the cell entity set; got entity_set_id={domain.entity_set_id}"
                 )
-            )
+            rows = np.asarray(domain.entity_indices, dtype=np.int32)
+            geometry = self._cell_geometry_actions(domain, rows)
             references = tuple(
                 IsogeometricReferenceActions(
                     _query_configuration(
-                        self.fields[self._field_index(name)].basis,
+                        self.fields[self.field_index(name)].basis,
                         self.quadrature_policy,
                         overlay_breaks=self.overlay_breaks,
                     )[0],
-                    self.fields[self._field_index(name)].weights,
+                    self.fields[self.field_index(name)].weights,
                     rows,
-                    permutation,
-                    entity_shape,
-                    point_shape,
+                    geometry.query_permutation,
+                    geometry.entity_shape,
+                    geometry.point_shape,
                     topology_id=self.default_runtime.topology_id,
                     geometry_layout_id=self.default_runtime.geometry_layout_id,
                     maximum_derivative_order=order,
                     structural_id=domain.domain_id,
                     is_trace=False,
                     field_weights_from_geometry=self.fields[
-                        self._field_index(name)
+                        self.field_index(name)
                     ].weights_from_geometry,
                 )
                 for name in names
-            )
-            geometry = IsogeometricGeometryActions(
-                geometry_tensor,
-                rows,
-                reference_weights[rows],
-                permutation,
-                entity_shape,
-                point_shape,
-                parameter_scales,
-                self.qualification_policy,
-                topology_id=self.default_runtime.topology_id,
-                runtime_layout_id=self.default_runtime.geometry_layout_id,
-                domain_kind="cell",
-                structural_id=domain.domain_id,
             )
             return (
                 PreparedLocalRegion(
                     domain,
                     names,
                     tuple(
-                        self.field_cell_gathers[self._field_index(name)][rows]
+                        self.field_cell_gathers[self.field_index(name)][rows]
                         for name in names
                     ),
                     references,
@@ -938,9 +970,19 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                 ),
             )
         if domain.kind != "exterior_facet":
-            raise ValueError("S1 IGA supports only cell and exterior-facet regions.")
+            raise ValueError(
+                f"PreparedIsogeometricDiscretization.domain.kind must be cell or exterior_facet; got {domain.kind!r}"
+            )
         if domain.entity_set_id != self.exterior_facet_domain.entity_set_id:
-            raise ValueError("IGA facet domain has an incompatible entity set.")
+            raise ValueError(
+                f"PreparedIsogeometricDiscretization.domain must match the facet entity set; got entity_set_id={domain.entity_set_id}"
+            )
+        parameter_scales = jnp.asarray(
+            [
+                axis.parameter_interval[1] - axis.parameter_interval[0]
+                for axis in self.basis.axes
+            ]
+        )
         selected = np.asarray(domain.entity_indices, dtype=np.int32)
         regions = []
         for axis, side, start, stop in self.facet_groups:
@@ -976,13 +1018,13 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             references = tuple(
                 IsogeometricReferenceActions(
                     _query_configuration(
-                        self.fields[self._field_index(name)].basis,
+                        self.fields[self.field_index(name)].basis,
                         self.quadrature_policy,
                         overlay_breaks=self.overlay_breaks,
                         facet_axis=axis,
                         facet_side=side,
                     )[0],
-                    self.fields[self._field_index(name)].weights,
+                    self.fields[self.field_index(name)].weights,
                     local_rows,
                     permutation,
                     entity_shape,
@@ -993,7 +1035,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                     structural_id=group_domain.domain_id,
                     is_trace=True,
                     field_weights_from_geometry=self.fields[
-                        self._field_index(name)
+                        self.field_index(name)
                     ].weights_from_geometry,
                 )
                 for name in names
@@ -1021,7 +1063,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                     group_domain,
                     names,
                     tuple(
-                        self.field_cell_gathers[self._field_index(name)][owners]
+                        self.field_cell_gathers[self.field_index(name)][owners]
                         for name in names
                     ),
                     references,
@@ -1041,14 +1083,16 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         *,
         runtime: IsogeometricRuntimeData | None = None,
     ) -> Array:
-        field_index = self._field_index(field_name)
+        field_index = self.field_index(field_name)
         field = self.fields[field_index]
         values = self.field_spaces[field_index].vector_space.validate(coefficients)
         queries = tuple(jnp.asarray(points) for points in axis_points)
         if len(queries) != field.basis.parametric_dimension or any(
             points.ndim != 1 or points.size == 0 for points in queries
         ):
-            raise ValueError("IGA reconstruction requires one nonempty rank-1 axis grid.")
+            raise ValueError(
+                f"PreparedIsogeometricDiscretization.axis_points must have one nonempty rank-1 grid per parameter axis; got shapes={[points.shape for points in queries]}"
+            )
         stencils = tuple(
             bspline_jet_stencil(axis.knots, points, degree=axis.degree, maximum_order=0)
             for axis, points in zip(field.basis.axes, queries, strict=True)
@@ -1069,20 +1113,15 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         )
         return RationalSplineJet(tensor, weights).apply(values)
 
+    @checked
     def geometry_evidence(
         self, runtime: IsogeometricRuntimeData | None = None, /
     ) -> IsogeometricGeometryEvidence:
         realized = self.default_runtime if runtime is None else runtime
         self.validate_local_runtime(realized)
-        region = self.prepare_local_regions(
-            self.cell_domain,
-            field_names=(self.field_spaces[0].name,),
-            maximum_derivative_order=1,
-            kernel_mode="sum_factorized",
-        )[0]
-        geometry_actions = region.geometry_actions
-        if not isinstance(geometry_actions, IsogeometricGeometryActions):
-            raise TypeError("IGA regions require isogeometric geometry actions.")
+        geometry_actions = self._cell_geometry_actions(
+            self.cell_domain, np.asarray(self.cell_domain.entity_indices, dtype=np.int32)
+        )
         return self.qualification_policy.check(geometry_actions.evidence(realized))
 
     def homogeneous_trace_constraint(self, field_name: str, /) -> ConstraintMap:
@@ -1091,7 +1130,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         The map embeds the free interior control coefficients, every component of
         each non-boundary site, into the field's full coefficient space.
         """
-        field_index = self._field_index(field_name)
+        field_index = self.field_index(field_name)
         field = self.fields[field_index]
         full_space = self.field_spaces[field_index].vector_space
         boundary = np.zeros(field.basis.control_shape, dtype=np.bool_)
@@ -1118,7 +1157,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         )
         operator = SparseCoordinateOperator(
             relation,
-            jnp.ones((free.size,), dtype=_coordinate_dtype(full_space)),
+            jnp.ones((free.size,), dtype=coordinate_dtype(full_space)),
             source=reduced_space,
             target=full_space,
             operator_id=canonical_fingerprint(

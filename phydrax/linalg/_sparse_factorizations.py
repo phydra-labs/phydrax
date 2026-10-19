@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum
 from hashlib import sha256
 from math import isfinite, prod
@@ -19,7 +19,7 @@ from jax import Array, core as jax_core
 from jax.typing import ArrayLike, DTypeLike
 
 from .._strict import StrictModule
-from ..typing import parse
+from ..typing import checked, parse
 from ._properties import LinearResourceLimitError
 from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ._sparse_ordering import (
@@ -150,6 +150,10 @@ class SparseFactorizationPlan(StrictModule):
     ``ordering_work`` is its share of ``symbolic_work``.
     ``value_dtype`` fixes the numeric dtype admitted by the resource estimate;
     numeric refresh cannot widen retained factor or workspace allocations.
+
+    ``factor_bytes`` counts the symbolic array payload plus factor values.
+    ``factor_storage_bytes_upper`` is the admission reservation, including
+    refresh-owned numeric caches; it is not measured retained storage.
     """
 
     permutation: Array
@@ -175,6 +179,7 @@ class SparseFactorizationPlan(StrictModule):
     input_nnz: int = eqx.field(static=True)
     factor_nnz: int = eqx.field(static=True)
     factor_bytes: int = eqx.field(static=True)
+    factor_storage_bytes_upper: int = eqx.field(static=True)
     symbolic_work: int = eqx.field(static=True)
     row_width: int = eqx.field(static=True)
     column_width: int = eqx.field(static=True)
@@ -195,7 +200,7 @@ class SparseFactorizationPlan(StrictModule):
         right_hand_side_dtype: DTypeLike,
         /,
     ) -> int:
-        """Actual dtype variant of the refresh-owned prepared substitution."""
+        """Return the substitution work bound for the promoted dtype."""
         promoted = jnp.result_type(coefficient_dtype, right_hand_side_dtype) != np.dtype(
             coefficient_dtype
         )
@@ -205,7 +210,9 @@ class SparseFactorizationPlan(StrictModule):
         lower = self.lower_analysis.solve_work_units_upper
         if self.kind == "lu":
             if self.upper_analysis is None:
-                raise ValueError("LU plan is missing upper triangular analysis.")
+                raise ValueError(
+                    f"SparseFactorizationPlan.upper_analysis must be present for LU; got {self.upper_analysis!r}."
+                )
             upper_analysis = self.upper_analysis
             upper = upper_analysis.solve_work_units_upper
         else:
@@ -228,7 +235,9 @@ class SparseFactorizationPlan(StrictModule):
         gathers = self.lower_positions.size
         if self.kind == "lu":
             if self.upper_analysis is None or self.upper_positions is None:
-                raise ValueError("LU plan is missing upper triangular analysis.")
+                raise ValueError(
+                    f"SparseFactorizationPlan.upper_analysis must have upper positions for LU; got analysis={self.upper_analysis!r}, positions={self.upper_positions!r}."
+                )
             upper = self.upper_analysis.numeric_preparation_work_units_upper
             gathers += self.upper_positions.size + 3 * self.lower_positions.size
         else:
@@ -239,7 +248,9 @@ class SparseFactorizationPlan(StrictModule):
         """Retained dynamic cache payload; not measured device/host memory."""
         if self.kind == "lu":
             if self.upper_analysis is None:
-                raise ValueError("LU plan is missing upper triangular analysis.")
+                raise ValueError(
+                    f"SparseFactorizationPlan.upper_analysis must be present for LU; got {self.upper_analysis!r}."
+                )
             entries = (
                 self.lower_analysis.schedule_positions.size
                 + self.upper_analysis.schedule_positions.size
@@ -250,6 +261,33 @@ class SparseFactorizationPlan(StrictModule):
                 + self.lower_analysis.transpose_schedule_positions.size
             )
         return prod(self.batch_shape) * ((entries + 4 * self.shape[0] + 4) * itemsize + 6)
+
+    def numeric_cache_storage_bytes_for(self, coefficient_dtype: DTypeLike, /) -> int:
+        """Return substitution, status, and diagnostics payload bytes for a value dtype."""
+        dtype = np.dtype(coefficient_dtype)
+        itemsize = dtype.itemsize
+        real_itemsize = (
+            itemsize // 2 if np.issubdtype(dtype, np.complexfloating) else itemsize
+        )
+        ratio_itemsize = np.dtype(jax.dtypes.canonicalize_dtype(np.float64)).itemsize
+        # Two cached minimum pivots are real, not coefficient-typed. Numeric
+        # evidence adds one real minimum, one default-float ratio, five int32
+        # status/count arrays, and one Boolean finite array per batch.
+        return self.numeric_substitution_storage_bytes_upper(itemsize) + prod(
+            self.batch_shape
+        ) * (-2 * (itemsize - real_itemsize) + real_itemsize + ratio_itemsize + 21)
+
+    def lu_congruence_storage_bytes_for(self, coefficient_dtype: DTypeLike, /) -> int:
+        """Return additional adjoint cache, inverse diagonal, and status payload bytes."""
+        dtype = np.dtype(coefficient_dtype)
+        itemsize = dtype.itemsize
+        real_itemsize = (
+            itemsize // 2 if np.issubdtype(dtype, np.complexfloating) else itemsize
+        )
+        # The cached minimum pivot and inverse absolute diagonal are real.
+        return self.lu_congruence_storage_bytes_upper(itemsize) - prod(
+            self.batch_shape
+        ) * (self.shape[0] + 1) * (itemsize - real_itemsize)
 
     def numeric_substitution_refresh_workspace_bytes_upper(self, itemsize: int, /) -> int:
         """Old-cache coexistence and new-orientation preparation temporaries."""
@@ -296,10 +334,10 @@ class SparseFactorizationPlan(StrictModule):
 
     @property
     def lu_congruence_preparation_work_units_upper(self) -> int:
-        """Additional adjoint preparation and absolute-diagonal certification."""
+        """Adjoint gathers reuse the current unit-lower pivot certification."""
         return prod(self.batch_shape) * (
-            self.lower_analysis.numeric_preparation_work_units_upper
-            + 4 * self.lower_positions.size
+            4 * self.lower_positions.size
+            + 4 * self.lower_analysis.transpose_schedule_positions.size
             + 24 * self.shape[0]
             + 64
         )
@@ -375,6 +413,23 @@ class PreparedSparseFactorization(StrictModule):
     factorization_id: str = eqx.field(static=True)
 
     @property
+    def numeric_cache_storage_bytes(self) -> int:
+        """Return retained substitution, status, and diagnostics array payload bytes."""
+        return _array_payload_bytes(
+            (
+                self.lower_substitution,
+                self.upper_substitution,
+                self.status,
+                self.diagnostics,
+            )
+        )
+
+    @property
+    def storage_bytes(self) -> int:
+        """Return retained symbolic, factor, cache, and evidence array payload bytes."""
+        return _array_payload_bytes(self)
+
+    @property
     def batch_shape(self) -> tuple[int, ...]:
         return self.plan.batch_shape
 
@@ -412,7 +467,9 @@ class PreparedSparseFactorization(StrictModule):
                 "right_hand_side must have shape (n,), (n, k), batch_shape + (n,), or batch_shape + (n, k)."
             )
         if not jnp.issubdtype(rhs.dtype, jnp.inexact):
-            raise TypeError("right_hand_side must use an inexact dtype.")
+            raise TypeError(
+                f"PreparedSparseFactorization.right_hand_side must use an inexact dtype; got {rhs.dtype}."
+            )
         batch_count = prod(self.batch_shape)
         factors = self.factor_values.reshape((batch_count, -1))
         statuses = self.status.reshape((batch_count,))
@@ -430,7 +487,9 @@ class PreparedSparseFactorization(StrictModule):
                 upper_analysis = self.plan.upper_analysis
                 upper_positions = self.plan.upper_positions
                 if upper_analysis is None or upper_positions is None:
-                    raise ValueError("LU plan is missing upper triangular analysis.")
+                    raise ValueError(
+                        f"SparseFactorizationPlan.upper_analysis must have upper positions for LU; got analysis={upper_analysis!r}, positions={upper_positions!r}."
+                    )
                 if adjoint:
                     # The prepared substitutions orient L and U for the forward
                     # solve; the conjugate-transpose solve U^H y = P b, L^H z = y
@@ -547,7 +606,7 @@ class PreparedSparseFactorCongruence(StrictModule):
     """Prepared native LU metric ``P.T L^-H |diag(U)|^-1 L^-1 P``.
 
     This is a factor congruence, not an absolute source Hessian or LDL factor.
-    The original factorization is the sole owner of its numeric factor leaves.
+    The factorization stores its numeric factor leaves.
     """
 
     factorization: PreparedSparseFactorization
@@ -578,10 +637,12 @@ class PreparedSparseFactorCongruence(StrictModule):
             vector_input = False
         else:
             raise ValueError(
-                "right_hand_side must have shape (n,), (n, k), batch_shape + (n,), or batch_shape + (n, k)."
+                f"PreparedSparseFactorCongruence.right_hand_side must have shape (n,), (n, k), batch_shape + (n,), or batch_shape + (n, k); got shape={rhs.shape}, n={size}, batch_shape={plan.batch_shape}."
             )
         if not jnp.issubdtype(rhs.dtype, jnp.inexact):
-            raise TypeError("right_hand_side must use an inexact dtype.")
+            raise TypeError(
+                f"PreparedSparseFactorCongruence.right_hand_side must use an inexact dtype; got {rhs.dtype}."
+            )
         count = prod(plan.batch_shape)
 
         def solve_one(
@@ -685,24 +746,28 @@ class PreparedSparseFactorCongruence(StrictModule):
         )
 
 
+@checked
 def prepare_sparse_factor_congruence(
     factorization: PreparedSparseFactorization,
     /,
 ) -> PreparedSparseFactorCongruence:
-    """Prepare the extra native LU adjoint cache once, without altering pivots."""
-    if not isinstance(factorization, PreparedSparseFactorization):
-        raise TypeError("factorization must be a PreparedSparseFactorization.")
+    """Prepare the LU adjoint schedule, reusing current lower pivot evidence."""
     plan = factorization.plan
     if plan.kind != "lu" or not plan.lower_analysis.unit_diagonal:
-        raise ValueError("LU congruence requires native LU with unit lower diagonal.")
+        raise ValueError(
+            f"prepare_sparse_factor_congruence.factorization.plan must specify LU with unit lower diagonal; got kind={plan.kind!r}, unit_diagonal={plan.lower_analysis.unit_diagonal!r}."
+        )
     if plan.policy.allow_pivot_replacement or plan.policy.diagonal_shift != 0.0:
-        raise ValueError("LU congruence forbids pivot replacement and diagonal shifts.")
+        raise ValueError(
+            f"prepare_sparse_factor_congruence.factorization.plan.policy must disable pivot replacement and diagonal shifts; got allow_pivot_replacement={plan.policy.allow_pivot_replacement!r}, diagonal_shift={plan.policy.diagonal_shift!r}."
+        )
     itemsize = factorization.factor_values.dtype.itemsize
-    required = plan.factor_bytes + plan.lu_congruence_storage_bytes_upper(itemsize)
+    required = plan.factor_storage_bytes_upper + plan.lu_congruence_storage_bytes_upper(
+        itemsize
+    )
     if required > plan.policy.max_factor_bytes:
         raise LinearResourceLimitError(
-            "Sparse LU congruence refused before additional cache allocation: "
-            f"factor_bytes requires {required}, exceeding limit {plan.policy.max_factor_bytes}.",
+            f"SparseFactorizationPolicy.max_factor_bytes must cover LU congruence storage before cache allocation; got required={required}, limit={plan.policy.max_factor_bytes}.",
             resource="sparse_factorization:factor_bytes",
             limit=plan.policy.max_factor_bytes,
             requested=required,
@@ -712,22 +777,41 @@ def prepare_sparse_factor_congruence(
         )
     count = prod(plan.batch_shape)
 
-    def prepare_one(values: Array) -> _PreparedTriangularSubstitution:
+    def prepare_one(
+        values: Array, forward: _PreparedTriangularSubstitution
+    ) -> _PreparedTriangularSubstitution:
         lower_values = values[plan.lower_positions]
         lower_values = jnp.where(
             plan.lower_analysis.row_indices == plan.lower_analysis.indices,
             jnp.ones((), dtype=values.dtype),
             lower_values,
         )
-        return _prepare_sparse_triangular_substitution(
-            plan.lower_analysis,
-            lower_values,
-            pivot_tolerance=plan.policy.pivot_tolerance,
-            adjoint=True,
+        analysis = plan.lower_analysis
+        lower_values = jnp.conj(lower_values[analysis.transpose_value_positions])
+        positions, valid = (
+            analysis.transpose_schedule_positions,
+            analysis.transpose_schedule_valid,
+        )
+        # Conjugation and permutation preserve finiteness. The unit diagonal
+        # is exactly the same ones bank already certified by numeric refresh.
+        return _PreparedTriangularSubstitution(
+            scheduled_values=jnp.where(
+                valid,
+                lower_values[jnp.where(valid, positions, 0)],
+                jnp.zeros((), dtype=values.dtype),
+            ),
+            diagonal=forward.diagonal,
+            safe_diagonal=forward.safe_diagonal,
+            finite_values=forward.finite_values,
+            finite_diagonal=forward.finite_diagonal,
+            zero_pivot=forward.zero_pivot,
+            minimum_pivot=forward.minimum_pivot,
+            pivot_tolerance=forward.pivot_tolerance,
         )
 
     adjoint = jax.vmap(prepare_one)(
         factorization.factor_values.reshape((count, plan.factor_nnz)),
+        factorization.lower_substitution,
     )
     magnitude = jnp.abs(factorization.factor_values[..., plan.diagonal_positions])
     valid = jnp.isfinite(magnitude) & (magnitude > 0)
@@ -809,7 +893,9 @@ class _SymbolicResourceTracker:
             case "symbolic_work":
                 completed = self.symbolic_work
             case _:
-                raise ValueError("Unknown native sparse resource metric.")
+                raise ValueError(
+                    f"_SparseResourceTracker.metric must be factor_nnz, factor_bytes, or symbolic_work; got {metric!r}."
+                )
         raise LinearResourceLimitError(
             "Sparse symbolic factorization refused before allocation: "
             f"{metric} requires {required}, exceeding limit {limit}; "
@@ -824,7 +910,7 @@ class _SymbolicResourceTracker:
             storage_bytes_upper=self.factor_bytes,
         )
 
-    def _retained_bytes(
+    def _storage_bytes_upper(
         self,
         factor_nnz: int,
         lower_nnz: int,
@@ -851,7 +937,7 @@ class _SymbolicResourceTracker:
         )
 
     def reserve_fixed_bytes(self, /) -> None:
-        required = self._retained_bytes(0, 0, 0, 0)
+        required = self._storage_bytes_upper(0, 0, 0, 0)
         if required > self.max_factor_bytes:
             self._refuse(
                 "factor_bytes",
@@ -888,7 +974,7 @@ class _SymbolicResourceTracker:
         projected_lower = self.lower_nnz + (column <= row)
         projected_strictly_lower = self.strictly_lower_nnz + (column < row)
         projected_upper = self.upper_nnz + (self.kind == "lu" and column >= row)
-        projected_bytes = self._retained_bytes(
+        projected_bytes = self._storage_bytes_upper(
             projected_nnz,
             projected_lower,
             projected_strictly_lower,
@@ -1189,9 +1275,9 @@ def _triangular_pattern(
     indptr = np.concatenate(
         ([0], np.cumsum([len(row) for row in selected], dtype=np.int64))
     )
-    # Admit complete scheduled structural grids and refresh-owned numeric grids
+    # Admit scheduled structural grids and refresh-owned numeric grids
     # before either host/JAX analysis allocates them. Each orientation has at
-    # most two scheduled row slots per original row.
+    # most two scheduled row slots per input row.
     size = len(rows)
     forward_width = int(np.max(np.diff(indptr), initial=0))
     transpose_width = int(np.max(np.bincount(indices, minlength=size), initial=0))
@@ -1218,6 +1304,70 @@ def _triangular_pattern(
         ),
         np.asarray(factor_positions, dtype=np.int64),
     )
+
+
+def _array_payload_bytes(tree: object, /) -> int:
+    """Count retained array payload once per array object, excluding metadata."""
+    arrays = {id(leaf): leaf for leaf in jax.tree.leaves(tree) if eqx.is_array(leaf)}
+    return sum(leaf.size * leaf.dtype.itemsize for leaf in arrays.values())
+
+
+def _factor_input_routes(
+    factor_size: int,
+    positions: dict[tuple[int, int], int],
+    entries: dict[tuple[int, int], tuple[int, bool]],
+    size: int,
+    tracker: _SymbolicResourceTracker,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Retain input-value scatter and conjugation routes in factor CSR order."""
+    input_positions = np.full(factor_size, -1, dtype=np.int64)
+    input_conjugate = np.zeros(factor_size, dtype=np.bool_)
+    for coordinate, factor_position in positions.items():
+        tracker.add_work()
+        route = entries.get(coordinate)
+        if route is not None:
+            input_positions[factor_position] = route[0]
+            input_conjugate[factor_position] = route[1]
+    diagonal = np.asarray([positions[(row, row)] for row in range(size)], dtype=np.int64)
+    return input_positions, input_conjugate, diagonal
+
+
+def _factor_triangular_patterns(
+    rows: list[dict[int, int]],
+    positions: dict[tuple[int, int], int],
+    kind: Literal["lu", "cholesky"],
+    index_dtype: DTypeLike,
+    tracker: _SymbolicResourceTracker,
+    /,
+) -> tuple[
+    SparseTriangularAnalysis,
+    np.ndarray,
+    SparseTriangularAnalysis | None,
+    np.ndarray | None,
+]:
+    """Analyze lower before upper, charging their symbolic resources in that order."""
+    lower_analysis, lower_positions = _triangular_pattern(
+        rows,
+        positions,
+        "lower",
+        index_dtype,
+        tracker,
+        unit_diagonal=kind == "lu",
+    )
+    if kind == "lu":
+        upper_analysis, upper_positions = _triangular_pattern(
+            rows,
+            positions,
+            "upper",
+            index_dtype,
+            tracker,
+            unit_diagonal=False,
+        )
+    else:
+        upper_analysis = None
+        upper_positions = None
+    return lower_analysis, lower_positions, upper_analysis, upper_positions
 
 
 # Symbolic planning reads concrete host patterns. Evaluate it eagerly even
@@ -1251,9 +1401,9 @@ def prepare_sparse_factorization(
     # numeric Jacobians carried through cond/while_loop, where even invariant
     # relation indices are traced arrays and cannot be converted to NumPy.
     from ..sparse._linear import (
-        _SparseStoragePlan,
         SparseCoordinateOperator,
         SparseLinearMap,
+        SparseStoragePlan,
     )
 
     if (
@@ -1262,7 +1412,7 @@ def prepare_sparse_factorization(
     ):
         storage_plan = operator._storage_plan
     elif isinstance(operator, (SparseCoordinateOperator, SparseLinearMap)):
-        storage_plan = _SparseStoragePlan(
+        storage_plan = SparseStoragePlan(
             operator.relation,
             block_shape=operator.block_shape
             if isinstance(operator, SparseCoordinateOperator)
@@ -1316,16 +1466,8 @@ def prepare_sparse_factorization(
         )
     )
     factor_indices, factor_indptr, positions = _csr_from_rows(rows, tracker)
-    input_positions = np.full(factor_indices.size, -1, dtype=np.int64)
-    input_conjugate = np.zeros(factor_indices.size, dtype=np.bool_)
-    for coordinate, factor_position in positions.items():
-        tracker.add_work()
-        route = entries.get(coordinate)
-        if route is not None:
-            input_positions[factor_position] = route[0]
-            input_conjugate[factor_position] = route[1]
-    diagonal = np.asarray(
-        [positions[(row, row)] for row in range(storage.shape[0])], dtype=np.int64
+    input_positions, input_conjugate, diagonal = _factor_input_routes(
+        factor_indices.size, positions, entries, storage.shape[0], tracker
     )
     (
         column_positions,
@@ -1334,26 +1476,12 @@ def prepare_sparse_factorization(
         column_width,
         upper_width,
     ) = _column_index(factor_indices, factor_indptr, diagonal, tracker)
-    lower_analysis, lower_positions = _triangular_pattern(
-        rows,
-        positions,
-        "lower",
-        storage.indices.dtype,
-        tracker,
-        unit_diagonal=kind == "lu",
-    )
-    if kind == "lu":
-        upper_analysis, upper_positions = _triangular_pattern(
-            rows,
-            positions,
-            "upper",
-            storage.indices.dtype,
-            tracker,
-            unit_diagonal=False,
-        )
-    else:
-        upper_analysis = None
-        upper_positions = None
+    (
+        lower_analysis,
+        lower_positions,
+        upper_analysis,
+        upper_positions,
+    ) = _factor_triangular_patterns(rows, positions, kind, storage.indices.dtype, tracker)
     plan_payload = b"|".join(
         (
             input_pattern_id.encode(),
@@ -1384,7 +1512,7 @@ def prepare_sparse_factorization(
         )
     )
     index_dtype = storage.indices.dtype
-    return SparseFactorizationPlan(
+    plan = SparseFactorizationPlan(
         permutation=jnp.asarray(permutation, dtype=index_dtype),
         inverse_permutation=jnp.asarray(inverse, dtype=index_dtype),
         factor_indices=jnp.asarray(factor_indices, dtype=index_dtype),
@@ -1417,7 +1545,8 @@ def prepare_sparse_factorization(
         plan_id=sha256(plan_payload).hexdigest(),
         input_nnz=input_indices.size,
         factor_nnz=tracker.factor_nnz,
-        factor_bytes=tracker.factor_bytes,
+        factor_bytes=0,
+        factor_storage_bytes_upper=tracker.factor_bytes,
         symbolic_work=tracker.symbolic_work,
         row_width=row_width,
         column_width=column_width,
@@ -1426,6 +1555,11 @@ def prepare_sparse_factorization(
         ordering_work=ordering_work,
         value_dtype=storage.values.dtype.name,
         storage_plan=storage_plan,
+    )
+    return replace(
+        plan,
+        factor_bytes=_array_payload_bytes(plan)
+        + prod(storage.batch_shape) * factor_indices.size * storage.values.dtype.itemsize,
     )
 
 
@@ -1493,6 +1627,25 @@ def _eliminate_pivot(
     is applied exactly where the symbolic pattern holds ``(i, j)``. Targets are
     unique within one pivot, which keeps the scatter deterministic.
     """
+    return jax.lax.cond(
+        plan.column_offsets[pivot] == plan.column_offsets[pivot + 1],
+        lambda operands: operands,
+        lambda operands: _eliminate_nonempty_pivot(
+            operands[0], operands[1], plan, pivot, denominator
+        ),
+        (values, marker),
+    )
+
+
+def _eliminate_nonempty_pivot(
+    values: Array,
+    marker: Array,
+    plan: SparseFactorizationPlan,
+    pivot: Array,
+    denominator: Array,
+    /,
+) -> tuple[Array, Array]:
+    """Apply the unchanged rank-one window only to a nonempty lower column."""
     size = values.size
     below, below_valid = _window(
         plan.column_offsets[pivot], plan.column_offsets[pivot + 1], plan.column_width
@@ -1576,6 +1729,185 @@ def refresh_sparse_factorization(
     return refresh_sparse_factorization_values(plan, storage.values)
 
 
+def _factor_sparse_values_one(
+    plan: SparseFactorizationPlan,
+    input_values: Array,
+) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+    """Factor one value bank with the plan's fixed pivot order and status precedence."""
+    safe_input = jnp.maximum(plan.input_positions, 0)
+    gathered = input_values[safe_input]
+    gathered = jnp.where(plan.input_conjugate, jnp.conj(gathered), gathered)
+    values = jnp.where(
+        plan.input_positions >= 0,
+        gathered,
+        jnp.zeros((), dtype=input_values.dtype),
+    )
+    values = values.at[plan.diagonal_positions].add(plan.policy.diagonal_shift)
+    initial = (
+        values,
+        jnp.full((plan.shape[0],), -1, dtype=plan.factor_indices.dtype),
+        jnp.asarray(int(SparseFactorizationStatus.SUCCESS), dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(jnp.inf, dtype=values.real.dtype),
+    )
+
+    def factor_step(
+        pivot_index: Array, carry: tuple[Array, Array, Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
+        current, marker, status, replaced, dropped, minimum_pivot = carry
+        if (
+            plan.policy.drop_tolerance > 0.0
+            or plan.policy.maximum_fill_per_row is not None
+        ):
+            current, row_dropped = _prune_row(current, plan, pivot_index)
+            dropped = dropped + row_dropped
+        pivot_position = plan.diagonal_positions[pivot_index]
+        pivot = current[pivot_position]
+        finite = jnp.isfinite(pivot)
+        if plan.kind == "cholesky":
+            real_pivot = jnp.real(pivot)
+            real_dtype = real_pivot.dtype
+            hermitian_roundoff = (
+                64.0
+                * jnp.finfo(real_dtype).eps
+                * jnp.maximum(
+                    jnp.ones((), dtype=real_dtype),
+                    jnp.abs(real_pivot),
+                )
+            )
+            imaginary_tolerance = jnp.maximum(
+                jnp.asarray(plan.policy.pivot_tolerance, dtype=real_dtype),
+                hermitian_roundoff,
+            )
+            acceptable = (
+                finite
+                & (real_pivot > plan.policy.pivot_tolerance)
+                & (jnp.abs(jnp.imag(pivot)) <= imaginary_tolerance)
+            )
+            failure_status = int(SparseFactorizationStatus.NONPOSITIVE_PIVOT)
+            replacement = jnp.asarray(
+                max(
+                    plan.policy.replacement_value,
+                    plan.policy.pivot_tolerance,
+                ),
+                dtype=current.dtype,
+            )
+        else:
+            acceptable = finite & (jnp.abs(pivot) > plan.policy.pivot_tolerance)
+            failure_status = int(SparseFactorizationStatus.ZERO_PIVOT)
+            phase = jnp.where(
+                jnp.abs(pivot) > 0.0,
+                pivot / jnp.abs(pivot),
+                jnp.ones((), dtype=current.dtype),
+            )
+            replacement = phase * jnp.asarray(
+                max(
+                    plan.policy.replacement_value,
+                    plan.policy.pivot_tolerance,
+                ),
+                dtype=current.dtype,
+            )
+        bad = ~acceptable
+        status = jnp.where(
+            ~finite,
+            int(SparseFactorizationStatus.NONFINITE),
+            jnp.where(
+                (status == int(SparseFactorizationStatus.SUCCESS)) & bad,
+                failure_status,
+                status,
+            ),
+        ).astype(jnp.int32)
+        use_replacement = bad & plan.policy.allow_pivot_replacement
+        effective_pivot = jnp.where(
+            acceptable,
+            pivot,
+            jnp.where(
+                use_replacement,
+                replacement,
+                jnp.ones((), dtype=current.dtype),
+            ),
+        )
+        replaced = replaced + use_replacement.astype(jnp.int32)
+        status = jnp.where(
+            use_replacement & (status == failure_status),
+            int(SparseFactorizationStatus.SUCCESS),
+            status,
+        ).astype(jnp.int32)
+        minimum_pivot = jnp.minimum(minimum_pivot, jnp.abs(effective_pivot))
+        if plan.kind == "cholesky":
+            factor_pivot = jnp.sqrt(jnp.real(effective_pivot)).astype(current.dtype)
+            current = current.at[pivot_position].set(factor_pivot)
+            denominator = factor_pivot
+        else:
+            current = current.at[pivot_position].set(effective_pivot)
+            denominator = effective_pivot
+        current, marker = _eliminate_pivot(
+            current, marker, plan, pivot_index, denominator
+        )
+        return current, marker, status, replaced, dropped, minimum_pivot
+
+    values, _, status, replaced, dropped, minimum_pivot = jax.lax.fori_loop(
+        0,
+        plan.shape[0],
+        factor_step,
+        initial,
+    )
+    finite = jnp.all(jnp.isfinite(values))
+    status = jnp.where(
+        ~finite,
+        int(SparseFactorizationStatus.NONFINITE),
+        status,
+    ).astype(jnp.int32)
+    factor_nonzeros = jnp.count_nonzero(values).astype(jnp.int32)
+    return (
+        values,
+        status,
+        minimum_pivot,
+        replaced,
+        dropped,
+        factor_nonzeros,
+        finite,
+    )
+
+
+def _prepare_factor_substitutions(
+    plan: SparseFactorizationPlan,
+    factor_values: Array,
+) -> tuple[_PreparedTriangularSubstitution, _PreparedTriangularSubstitution]:
+    """Prepare forward and adjoint triangular caches only after numeric factorization."""
+    lower_values = factor_values[plan.lower_positions]
+    if plan.kind == "lu":
+        lower_values = jnp.where(
+            plan.lower_analysis.row_indices == plan.lower_analysis.indices,
+            jnp.ones((), dtype=lower_values.dtype),
+            lower_values,
+        )
+    lower = _prepare_sparse_triangular_substitution(
+        plan.lower_analysis,
+        lower_values,
+        pivot_tolerance=plan.policy.pivot_tolerance,
+    )
+    if plan.kind == "lu":
+        if plan.upper_analysis is None or plan.upper_positions is None:
+            raise ValueError(
+                f"SparseFactorizationPlan.upper_analysis must have upper positions for LU; got analysis={plan.upper_analysis!r}, positions={plan.upper_positions!r}."
+            )
+        upper = _prepare_sparse_triangular_substitution(
+            plan.upper_analysis,
+            factor_values[plan.upper_positions],
+            pivot_tolerance=plan.policy.pivot_tolerance,
+        )
+    else:
+        upper = _prepare_sparse_triangular_substitution(
+            plan.lower_analysis,
+            lower_values,
+            pivot_tolerance=plan.policy.pivot_tolerance,
+            adjoint=True,
+        )
+    return lower, upper
+
+
 def refresh_sparse_factorization_values(
     plan: SparseFactorizationPlan,
     values: ArrayLike,
@@ -1601,145 +1933,6 @@ def refresh_sparse_factorization_values(
             f"({plan.value_dtype}); got {numeric_values.dtype.name}."
         )
 
-    def factor_one(
-        input_values: Array,
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
-        safe_input = jnp.maximum(plan.input_positions, 0)
-        gathered = input_values[safe_input]
-        gathered = jnp.where(plan.input_conjugate, jnp.conj(gathered), gathered)
-        values = jnp.where(
-            plan.input_positions >= 0,
-            gathered,
-            jnp.zeros((), dtype=input_values.dtype),
-        )
-        values = values.at[plan.diagonal_positions].add(plan.policy.diagonal_shift)
-        initial = (
-            values,
-            jnp.full((plan.shape[0],), -1, dtype=plan.factor_indices.dtype),
-            jnp.asarray(int(SparseFactorizationStatus.SUCCESS), dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(jnp.inf, dtype=values.real.dtype),
-        )
-
-        def factor_step(
-            pivot_index: Array, carry: tuple[Array, Array, Array, Array, Array, Array]
-        ) -> tuple[Array, Array, Array, Array, Array, Array]:
-            current, marker, status, replaced, dropped, minimum_pivot = carry
-            if (
-                plan.policy.drop_tolerance > 0.0
-                or plan.policy.maximum_fill_per_row is not None
-            ):
-                current, row_dropped = _prune_row(current, plan, pivot_index)
-                dropped = dropped + row_dropped
-            pivot_position = plan.diagonal_positions[pivot_index]
-            pivot = current[pivot_position]
-            finite = jnp.isfinite(pivot)
-            if plan.kind == "cholesky":
-                real_pivot = jnp.real(pivot)
-                real_dtype = real_pivot.dtype
-                hermitian_roundoff = (
-                    64.0
-                    * jnp.finfo(real_dtype).eps
-                    * jnp.maximum(
-                        jnp.ones((), dtype=real_dtype),
-                        jnp.abs(real_pivot),
-                    )
-                )
-                imaginary_tolerance = jnp.maximum(
-                    jnp.asarray(plan.policy.pivot_tolerance, dtype=real_dtype),
-                    hermitian_roundoff,
-                )
-                acceptable = (
-                    finite
-                    & (real_pivot > plan.policy.pivot_tolerance)
-                    & (jnp.abs(jnp.imag(pivot)) <= imaginary_tolerance)
-                )
-                failure_status = int(SparseFactorizationStatus.NONPOSITIVE_PIVOT)
-                replacement = jnp.asarray(
-                    max(
-                        plan.policy.replacement_value,
-                        plan.policy.pivot_tolerance,
-                    ),
-                    dtype=current.dtype,
-                )
-            else:
-                acceptable = finite & (jnp.abs(pivot) > plan.policy.pivot_tolerance)
-                failure_status = int(SparseFactorizationStatus.ZERO_PIVOT)
-                phase = jnp.where(
-                    jnp.abs(pivot) > 0.0,
-                    pivot / jnp.abs(pivot),
-                    jnp.ones((), dtype=current.dtype),
-                )
-                replacement = phase * jnp.asarray(
-                    max(
-                        plan.policy.replacement_value,
-                        plan.policy.pivot_tolerance,
-                    ),
-                    dtype=current.dtype,
-                )
-            bad = ~acceptable
-            status = jnp.where(
-                ~finite,
-                int(SparseFactorizationStatus.NONFINITE),
-                jnp.where(
-                    (status == int(SparseFactorizationStatus.SUCCESS)) & bad,
-                    failure_status,
-                    status,
-                ),
-            ).astype(jnp.int32)
-            use_replacement = bad & plan.policy.allow_pivot_replacement
-            effective_pivot = jnp.where(
-                acceptable,
-                pivot,
-                jnp.where(
-                    use_replacement,
-                    replacement,
-                    jnp.ones((), dtype=current.dtype),
-                ),
-            )
-            replaced = replaced + use_replacement.astype(jnp.int32)
-            status = jnp.where(
-                use_replacement & (status == failure_status),
-                int(SparseFactorizationStatus.SUCCESS),
-                status,
-            ).astype(jnp.int32)
-            minimum_pivot = jnp.minimum(minimum_pivot, jnp.abs(effective_pivot))
-            if plan.kind == "cholesky":
-                factor_pivot = jnp.sqrt(jnp.real(effective_pivot)).astype(current.dtype)
-                current = current.at[pivot_position].set(factor_pivot)
-                denominator = factor_pivot
-            else:
-                current = current.at[pivot_position].set(effective_pivot)
-                denominator = effective_pivot
-            current, marker = _eliminate_pivot(
-                current, marker, plan, pivot_index, denominator
-            )
-            return current, marker, status, replaced, dropped, minimum_pivot
-
-        values, _, status, replaced, dropped, minimum_pivot = jax.lax.fori_loop(
-            0,
-            plan.shape[0],
-            factor_step,
-            initial,
-        )
-        finite = jnp.all(jnp.isfinite(values))
-        status = jnp.where(
-            ~finite,
-            int(SparseFactorizationStatus.NONFINITE),
-            status,
-        ).astype(jnp.int32)
-        factor_nonzeros = jnp.count_nonzero(values).astype(jnp.int32)
-        return (
-            values,
-            status,
-            minimum_pivot,
-            replaced,
-            dropped,
-            factor_nonzeros,
-            finite,
-        )
-
     batch_count = prod(plan.batch_shape)
     flattened_input = numeric_values.reshape((batch_count, plan.input_nnz))
     (
@@ -1750,42 +1943,14 @@ def refresh_sparse_factorization_values(
         dropped,
         factor_nonzeros,
         finite,
-    ) = jax.vmap(factor_one)(flattened_input)
+    ) = jax.vmap(lambda input_values: _factor_sparse_values_one(plan, input_values))(
+        flattened_input
+    )
     factor_size = plan.factor_indices.size
 
-    def prepare_substitutions(
-        factor_values: Array,
-    ) -> tuple[_PreparedTriangularSubstitution, _PreparedTriangularSubstitution]:
-        lower_values = factor_values[plan.lower_positions]
-        if plan.kind == "lu":
-            lower_values = jnp.where(
-                plan.lower_analysis.row_indices == plan.lower_analysis.indices,
-                jnp.ones((), dtype=lower_values.dtype),
-                lower_values,
-            )
-        lower = _prepare_sparse_triangular_substitution(
-            plan.lower_analysis,
-            lower_values,
-            pivot_tolerance=plan.policy.pivot_tolerance,
-        )
-        if plan.kind == "lu":
-            if plan.upper_analysis is None or plan.upper_positions is None:
-                raise ValueError("LU plan is missing upper triangular analysis.")
-            upper = _prepare_sparse_triangular_substitution(
-                plan.upper_analysis,
-                factor_values[plan.upper_positions],
-                pivot_tolerance=plan.policy.pivot_tolerance,
-            )
-        else:
-            upper = _prepare_sparse_triangular_substitution(
-                plan.lower_analysis,
-                lower_values,
-                pivot_tolerance=plan.policy.pivot_tolerance,
-                adjoint=True,
-            )
-        return lower, upper
-
-    lower_substitution, upper_substitution = jax.vmap(prepare_substitutions)(values)
+    lower_substitution, upper_substitution = jax.vmap(
+        lambda factor_values: _prepare_factor_substitutions(plan, factor_values)
+    )(values)
     values = values.reshape(plan.batch_shape + (factor_size,))
     status = status.reshape(plan.batch_shape)
     minimum_pivot = minimum_pivot.reshape(plan.batch_shape)

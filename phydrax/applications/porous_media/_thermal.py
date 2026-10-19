@@ -13,7 +13,10 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
-from ...discretization.finite_volume._hybrid_diffusion import _positive_tensor, _tensor
+from ...discretization.finite_volume._hybrid_diffusion import (
+    diffusion_tensor,
+    positive_tensor,
+)
 from ...units import (
     convert_value,
     derived_unit,
@@ -81,7 +84,7 @@ class PorousThermalMaterial(StrictModule):
         self.dry_conductivity_W_m_K = _finite(dry, "dry conductivity")
         for value in (dry, saturated):
             count = value.shape[0] if value.ndim in (1, 3) else 1
-            _positive_tensor(_tensor(value, count))
+            positive_tensor(diffusion_tensor(value, count))
         self.solid_heat_capacity_J_m3_K = _finite(
             solid_heat_capacity_J_m3_K, "solid volumetric heat capacity", positive=True
         )
@@ -101,8 +104,8 @@ class PorousThermalMaterial(StrictModule):
 
     def conductivity(self, saturation: Array) -> Array:
         count = saturation.size
-        dry = _tensor(self.dry_conductivity_W_m_K, count)
-        saturated = _tensor(self.saturated_conductivity_W_m_K, count)
+        dry = diffusion_tensor(self.dry_conductivity_W_m_K, count)
+        saturated = diffusion_tensor(self.saturated_conductivity_W_m_K, count)
         return dry + saturation[:, None, None] * (saturated - dry)
 
     def enthalpy(self, temperature_K: ArrayLike) -> Array:

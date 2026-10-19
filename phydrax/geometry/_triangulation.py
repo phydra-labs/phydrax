@@ -2,23 +2,23 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Exact-predicate Delaunay, constrained Delaunay, Voronoi, and power diagrams.
+"""Delaunay, constrained Delaunay, Voronoi, and power diagrams using exact predicates.
 
 All constructions are host-only immutable preparation executed by the native
 meshcore library (adaptive expansion arithmetic with index-ordered symbolic
-perturbation).  Every combinatorial decision is exact for inputs inside the
-meshcore exact domain, results are canonically ordered and deterministic, and
-the native status plus library identity is retained as
-:class:`TriangulationEvidence`.
+perturbation). Every combinatorial decision is determined by exact predicates
+for inputs inside the supported meshcore coordinate-exponent range. Results
+are canonically ordered and deterministic, and the native status plus library
+identity is retained as :class:`TriangulationEvidence`.
 
 Voronoi and power cells are the generator's (weighted) bisector halfspaces
 towards its Delaunay/regular-triangulation neighbors, intersected with an
 axis-aligned box and optional convex-domain halfspaces ``{x : n . x <= h}``.
 The two cells sharing a bisector use exactly opposite plane coefficients, and
-every vertex classification in the clipper is exact, so cells cover the domain
-without overlap up to the rounding of constructed vertex coordinates.  Cells are
-stored as polygon/polyhedron CSR (:class:`DiagramCells`) with measures and
-centroids.
+clipper vertex classifications are determined by exact predicates, so cells
+cover the domain without overlap up to the rounding of constructed vertex
+coordinates. Cells are stored as polygon/polyhedron CSR
+(:class:`DiagramCells`) with measures and centroids.
 
 :class:`PeriodicDelaunayTriangulation` triangulates the lattice orbit of a
 point set on a flat torus from certified bounded image neighborhoods and keeps
@@ -29,19 +29,25 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from contextlib import nullcontext
+from fractions import Fraction
+from itertools import product
 from time import perf_counter
 from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import numpy as np
 import scipy
-from jax.typing import ArrayLike
 from numpy.typing import NDArray
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
+from scipy.spatial import Delaunay, QhullError
+
+import phydrax._meshcore as meshcore_owner
+import phydrax.geometry._periodic_power_preparation as power_preparation_owner
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._geometry_predicates import orient2d, orient3d, PredicateMode
+from .._geometry_predicates import orient2d_host, orient3d_host, PredicateMode
 from .._meshcore import (
     clip_box_halfplanes,
     clip_box_halfspaces,
@@ -51,8 +57,11 @@ from .._meshcore import (
     meshcore_identity,
     MeshcoreError,
     MeshcoreStatus,
+    NativeExecutionLimits,
+    NativeExecutionMemoryCounters,
+    NativeExecutionScope,
     periodic_delaunay,
-    PERIODIC_DELAUNAY_EVIDENCE,
+    PeriodicDelaunayEvidence,
     PlanarExecutionEvidence,
     regular_2d,
     regular_3d,
@@ -60,8 +69,15 @@ from .._meshcore import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_integer
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..discretization._periodic_cell import PeriodicCell
-from ..typing import parse
+from ..discretization._periodic_exact import (
+    identification_id,
+    PeriodicMeshIdentification,
+)
+from ..typing import checked, ConvertibleToArray, parse
+from ._triangulation_host import frozen_array, host_point_array
 
 
 _DEGENERATE_ALL_PAIRS_LIMIT = 512
@@ -110,11 +126,10 @@ class TriangulationEvidence(StrictModule, NonTrainableState):
         steiner_count: int,
         simplex_count: int,
         minimum_angle_degrees: float,
-        content: dict,
+        content: dict[str, object],
         provider: TriangulationProvider = "meshcore",
     ) -> None:
-        if not isinstance(status, MeshcoreStatus):
-            raise TypeError("status must be a MeshcoreStatus.")
+        status = parse(status, MeshcoreStatus, "TriangulationEvidence.status")
         provider_ = parse(provider, TriangulationProvider, "provider")
         counts = (
             input_point_count,
@@ -125,7 +140,9 @@ class TriangulationEvidence(StrictModule, NonTrainableState):
             simplex_count,
         )
         if any(count < 0 for count in counts):
-            raise ValueError("Triangulation counts must be nonnegative.")
+            raise ValueError(
+                f"TriangulationEvidence.counts must be nonnegative; got {counts}."
+            )
         match provider_:
             case "meshcore":
                 identity = meshcore_identity()
@@ -163,28 +180,6 @@ class TriangulationEvidence(StrictModule, NonTrainableState):
 # ------------------------------------------------------------------ helpers
 
 
-def _point_array(points: object, name: str, dimensions: tuple[int, ...], /) -> np.ndarray:
-    array = np.asarray(points)
-    if np.issubdtype(array.dtype, np.bool_) or not (
-        np.issubdtype(array.dtype, np.floating) or np.issubdtype(array.dtype, np.integer)
-    ):
-        raise TypeError(f"{name} must be a real floating or integer array.")
-    if array.ndim != 2 or array.shape[1] not in dimensions:
-        shapes = " or ".join(f"(n, {dimension})" for dimension in dimensions)
-        raise ValueError(f"{name} must have shape {shapes}.")
-    if not np.all(np.isfinite(array)):
-        raise ValueError(f"{name} must be finite.")
-    converted = np.array(array, dtype=np.float64, copy=True)
-    converted.setflags(write=False)
-    return converted
-
-
-def _frozen(array: np.ndarray, /) -> np.ndarray:
-    result = np.ascontiguousarray(array)
-    result.setflags(write=False)
-    return result
-
-
 def _minimum_angle_degrees(points: np.ndarray, triangles: np.ndarray, /) -> float:
     if triangles.shape[0] == 0:
         return math.nan
@@ -200,7 +195,7 @@ def _minimum_angle_degrees(points: np.ndarray, triangles: np.ndarray, /) -> floa
 
 
 def _spans_space(points: np.ndarray, /) -> bool:
-    """Exact test that the points affinely span their ambient space."""
+    """Test affine spanning with host exact predicates."""
 
     dimension = points.shape[1]
     if points.shape[0] <= dimension:
@@ -211,11 +206,11 @@ def _spans_space(points: np.ndarray, /) -> bool:
         return False
     second = points[distinct[0]]
     if dimension == 2:
-        turns = orient2d(origin, second, points, mode=PredicateMode.EXACT)
+        turns = orient2d_host(origin, second, points, mode=PredicateMode.EXACT)
         return bool(np.any(turns.signs != 0))
     collinear = np.ones(points.shape[0], dtype=np.bool_)
     for axes in ((1, 2), (2, 0), (0, 1)):
-        turns = orient2d(
+        turns = orient2d_host(
             origin[list(axes)],
             second[list(axes)],
             points[:, list(axes)],
@@ -226,7 +221,7 @@ def _spans_space(points: np.ndarray, /) -> bool:
     if off_line.size == 0:
         return False
     third = points[off_line[0]]
-    volumes = orient3d(origin, second, third, points, mode=PredicateMode.EXACT)
+    volumes = orient3d_host(origin, second, third, points, mode=PredicateMode.EXACT)
     return bool(np.any(volumes.signs != 0))
 
 
@@ -250,31 +245,37 @@ def _raise_for_items(status: np.ndarray, operation: str, /) -> None:
     code = MeshcoreStatus(int(status[failed[0]]))
     match code:
         case MeshcoreStatus.CAPACITY_EXCEEDED | MeshcoreStatus.INTERNAL_ERROR:
-            raise MeshcoreError(code, f"{operation}: cell {int(failed[0])} failed")
+            raise MeshcoreError(
+                code,
+                f"{operation}.cells must finish native clipping; got cell {int(failed[0])} status {code.name}.",
+            )
         case _:
             raise ValueError(
-                f"{operation}: cell {int(failed[0])} has invalid input ({code.name})."
+                f"{operation}.cells must have valid clipper inputs; got cell {int(failed[0])} status {code.name}."
             )
 
 
 def _qhull_delaunay(
     points: np.ndarray, max_simplices: int | None, /
 ) -> tuple[np.ndarray, np.ndarray, int, int]:
-    """SciPy Qhull Delaunay in the canonical simplex convention.
+    """Prepare SciPy Qhull Delaunay simplices with positive orientation.
 
     Rows are sorted, then the last two vertices swap where needed for positive
     orientation, and rows are ordered lexicographically. Points Qhull leaves
     out map to their nearest vertex (``Qc``); identical ones are duplicates.
     """
-    from scipy.spatial import Delaunay, QhullError
 
     count, dimension = points.shape
     if count <= dimension:
-        raise ValueError("Delaunay triangulation needs more points than dimensions.")
+        raise ValueError(
+            f"DelaunayTriangulation.points must contain more rows than dimensions; got {count} rows in dimension {dimension}."
+        )
     try:
         triangulation = Delaunay(points, qhull_options=_QHULL_OPTIONS)
     except QhullError as error:
-        raise ValueError(f"Qhull Delaunay triangulation failed: {error}") from error
+        raise ValueError(
+            f"DelaunayTriangulation.points must admit Qhull construction; got {error}."
+        ) from error
     simplices = np.sort(np.asarray(triangulation.simplices, dtype=np.int32), axis=1)
     vertices = points[simplices]
     volumes = np.linalg.det(np.swapaxes(vertices[:, 1:] - vertices[:, :1], 1, 2))
@@ -285,7 +286,7 @@ def _qhull_delaunay(
     if max_simplices is not None and simplices.shape[0] > max_simplices:
         raise MeshcoreError(
             MeshcoreStatus.CAPACITY_EXCEEDED,
-            f"qhull delaunay: {simplices.shape[0]} simplices exceed max_simplices",
+            f"DelaunayTriangulation.max_simplices must cover the Qhull output; got {simplices.shape[0]} simplices against {max_simplices}.",
         )
     vertex_map = np.arange(count, dtype=np.int32)
     duplicates = redundant = 0
@@ -305,9 +306,9 @@ class DelaunayTriangulation(StrictModule, NonTrainableState):
     """Delaunay triangulation (2D) or tetrahedralization (3D).
 
     ``simplices`` are positively oriented and canonically ordered. The
-    ``"meshcore"`` provider (default) is exact: cocircular and cospherical ties
-    are resolved by index-ordered symbolic perturbation. The ``"qhull"``
-    provider uses SciPy's Qhull (a core dependency) with the recorded options;
+    ``"meshcore"`` provider (default) uses exact predicates: cocircular and
+    cospherical ties are resolved by index-ordered symbolic perturbation.
+    The ``"qhull"`` provider uses SciPy's Qhull (a core dependency) with the recorded options;
     its floating-point ties are deterministic but not certified, so it suits
     auxiliary constructions that need no exact predicates. ``vertex_map``
     sends each input point to its triangulation vertex (the smallest index of
@@ -322,13 +323,13 @@ class DelaunayTriangulation(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        points: object,
+        points: ConvertibleToArray,
         /,
         *,
         max_simplices: int | None = None,
         provider: TriangulationProvider = "meshcore",
     ) -> None:
-        point_array = _point_array(points, "points", (2, 3))
+        point_array = host_point_array(points, "points", (2, 3))
         provider_ = parse(provider, TriangulationProvider, "provider")
         dimension = point_array.shape[1]
         count = point_array.shape[0]
@@ -342,7 +343,9 @@ class DelaunayTriangulation(StrictModule, NonTrainableState):
                     simplices, vertex_map = delaunay_3d(
                         point_array, max_tetrahedra=max_simplices
                     )
-                duplicates = int(np.count_nonzero(vertex_map != np.arange(count)))
+                duplicates = int(
+                    np.count_nonzero(vertex_map != np.arange(count, dtype=np.int64))
+                )
                 redundant = 0
             case "qhull":
                 simplices, vertex_map, duplicates, redundant = _qhull_delaunay(
@@ -351,8 +354,8 @@ class DelaunayTriangulation(StrictModule, NonTrainableState):
             case unreachable:
                 assert_never(unreachable)
         self.points = point_array
-        self.simplices = _frozen(simplices)
-        self.vertex_map = _frozen(vertex_map)
+        self.simplices = frozen_array(simplices)
+        self.vertex_map = frozen_array(vertex_map)
         self.evidence = TriangulationEvidence(
             route=f"delaunay_{dimension}d",
             status=MeshcoreStatus.OK,
@@ -390,9 +393,9 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
 
     ``max_cavity_cells``, ``maximum_work`` and ``max_scratch_bytes`` are hard
     nonnegative bounds (None selects signed-int64 maximum). Readonly uint64
-    ``work_evidence`` and ``memory_evidence`` retain actual native execution
-    measurements; resource refusals expose the same fields on
-    ``NativeResourceFailure`` instead of publishing a successful partial mesh.
+    ``work_evidence`` retains the distinct nine planar work measurements;
+    ``memory_counters`` owns native allocator measurements. Resource refusals
+    expose the same values on ``NativeResourceFailure`` instead of a partial mesh.
     """
 
     points: np.ndarray
@@ -401,15 +404,18 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
     input_point_count: int = eqx.field(static=True)
     evidence: TriangulationEvidence
     work_evidence: NDArray[np.uint64]
-    memory_evidence: NDArray[np.uint64]
+    memory_counters: NativeExecutionMemoryCounters
+    constraint_parents: np.ndarray
+    constraint_sources: np.ndarray
+    constraint_ratios: np.ndarray
 
     def __init__(
         self,
-        points: object,
-        segments: object,
+        points: ConvertibleToArray,
+        segments: ConvertibleToArray,
         /,
         *,
-        holes: object | None = None,
+        holes: ConvertibleToArray | None = None,
         keep_convex_hull: bool = False,
         min_angle: float = 0.0,
         max_area: float = math.inf,
@@ -419,9 +425,16 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
         maximum_work: int | None = None,
         max_scratch_bytes: int | None = None,
     ) -> None:
-        point_array = _point_array(points, "points", (2,))
+        point_array = host_point_array(points, "points", (2,))
         measurements: list[PlanarExecutionEvidence] = []
-        mesh_points, triangles, _, segment_ids, status = constrained_delaunay_2d(
+        witnesses: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+
+        def retain_witnesses(
+            parents: np.ndarray, sources: np.ndarray, ratios: np.ndarray
+        ) -> None:
+            witnesses.append((parents, sources, ratios))
+
+        result = constrained_delaunay_2d(
             point_array,
             segments,
             holes=holes,
@@ -434,15 +447,23 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
             max_work=maximum_work,
             max_scratch_bytes=max_scratch_bytes,
             record_native_resources=measurements.append,
+            record_constraint_witnesses=retain_witnesses,
         )
+        mesh_points = result.points
+        triangles = result.triangles
+        segment_ids = result.segment_ids
+        status = result.status
         count = point_array.shape[0]
         used = np.unique(triangles)
-        self.points = _frozen(mesh_points)
-        self.triangles = _frozen(triangles)
-        self.segment_ids = _frozen(segment_ids)
+        self.points = frozen_array(mesh_points)
+        self.triangles = frozen_array(triangles)
+        self.segment_ids = frozen_array(segment_ids)
         self.input_point_count = count
         self.work_evidence = measurements[0].work_evidence
-        self.memory_evidence = measurements[0].memory_evidence
+        self.memory_counters = measurements[0].memory_counters
+        self.constraint_parents, self.constraint_sources, self.constraint_ratios = (
+            witnesses[0]
+        )
         self.evidence = TriangulationEvidence(
             route="constrained_delaunay_2d",
             status=status,
@@ -457,6 +478,9 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
                 "points": array_tree_fingerprint(mesh_points),
                 "triangles": array_tree_fingerprint(triangles),
                 "segment_ids": array_tree_fingerprint(segment_ids),
+                "constraint_parents": array_tree_fingerprint(self.constraint_parents),
+                "constraint_sources": array_tree_fingerprint(self.constraint_sources),
+                "constraint_ratios": array_tree_fingerprint(self.constraint_ratios),
             },
         )
 
@@ -498,7 +522,7 @@ def _facet_neighbors(simplices: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     facets = np.sort(
         np.concatenate([np.delete(simplices, k, axis=1) for k in range(width)]), axis=1
     )
-    owners = np.tile(np.arange(count), width)
+    owners = np.tile(np.arange(count, dtype=np.int64), width)
     order = np.lexsort(facets.T[::-1])
     ordered = facets[order]
     shared = np.flatnonzero(np.all(ordered[1:] == ordered[:-1], axis=1))
@@ -511,7 +535,10 @@ def _facet_components(
     """Facet-connected component labels and the component count of ``members``."""
     inside = members[first] & members[second]
     graph = coo_matrix(
-        (np.ones(np.count_nonzero(inside)), (first[inside], second[inside])),
+        (
+            np.ones(np.count_nonzero(inside), dtype=np.float64),
+            (first[inside], second[inside]),
+        ),
         shape=(count, count),
     )
     _, labels = connected_components(graph, directed=False)
@@ -527,7 +554,7 @@ def _restorations(
     components: int,
     /,
 ) -> np.ndarray:
-    """Excluded usable simplices to restore in one round (empty when complete).
+    """Return usable simplices needed to restore vertex and component coverage.
 
     Uncovered vertices first receive their best incident simplex; once every
     vertex is covered, every component but the largest grows by its
@@ -600,29 +627,44 @@ class SimplexQualitySubcomplex(StrictModule, NonTrainableState):
     evidence: SimplexQualityEvidence
 
     def __init__(
-        self, points: object, simplices: object, /, *, minimum_quality: float
+        self,
+        points: ConvertibleToArray,
+        simplices: ConvertibleToArray,
+        /,
+        *,
+        minimum_quality: float,
     ) -> None:
-        point_array = _point_array(points, "points", (2, 3))
+        point_array = host_point_array(points, "points", (2, 3))
         dimension = point_array.shape[1]
         simplex_array = np.asarray(simplices)
         if not np.issubdtype(simplex_array.dtype, np.integer):
-            raise TypeError("simplices must be an integer array.")
+            raise TypeError(
+                f"SimplexQualitySubcomplex.simplices must be an integer array; got dtype {simplex_array.dtype}."
+            )
         if (
             simplex_array.ndim != 2
             or simplex_array.shape[1] != dimension + 1
             or simplex_array.shape[0] == 0
         ):
-            raise ValueError("simplices must have shape (n, dimension + 1) with n >= 1.")
+            raise ValueError(
+                f"SimplexQualitySubcomplex.simplices must have shape (n, dimension + 1) with n >= 1; got {simplex_array.shape}."
+            )
         if np.any(simplex_array < 0) or np.any(simplex_array >= point_array.shape[0]):
-            raise ValueError("simplices must index the points.")
+            raise ValueError(
+                "SimplexQualitySubcomplex.simplices must index the point bank; got out-of-range indices."
+            )
         threshold = float(minimum_quality)
         if not math.isfinite(threshold) or not 0.0 <= threshold < 1.0:
-            raise ValueError("minimum_quality must lie in [0, 1).")
+            raise ValueError(
+                f"SimplexQualitySubcomplex.minimum_quality must lie in [0, 1); got {threshold}."
+            )
         simplex_array = simplex_array.astype(np.int64)
         measures, quality = _simplex_quality(point_array, simplex_array)
         usable = quality > _DEGENERATE_QUALITY
         if not np.any(usable):
-            raise ValueError("No simplex carries a usable measure.")
+            raise ValueError(
+                "SimplexQualitySubcomplex.simplices must contain a positive usable measure; got only degenerate cells."
+            )
         retained = usable & (quality >= threshold)
         neighbors = _facet_neighbors(simplex_array)
         _, components = _facet_components(simplex_array.shape[0], *neighbors, usable)
@@ -635,9 +677,9 @@ class SimplexQualitySubcomplex(StrictModule, NonTrainableState):
         ):
             retained = retained | restore
         dropped = usable & ~retained
-        self.simplices = _frozen(simplex_array[retained].astype(np.int32))
-        self.quality = _frozen(quality)
-        self.retained = _frozen(retained)
+        self.simplices = frozen_array(simplex_array[retained].astype(np.int32))
+        self.quality = frozen_array(quality)
+        self.retained = frozen_array(retained)
         self.evidence = SimplexQualityEvidence(
             minimum_quality=threshold,
             simplex_count=simplex_array.shape[0],
@@ -692,19 +734,25 @@ class DiagramCells(StrictModule, NonTrainableState):
         if cell_vertex_offsets.shape != (cell_count + 1,) or cell_face_offsets.shape != (
             cell_count + 1,
         ):
-            raise ValueError("Cell offsets must have shape (cells + 1,).")
+            raise ValueError(
+                f"DiagramCells.cell_offsets must have shape (cells + 1,); got {cell_vertex_offsets.shape} and {cell_face_offsets.shape}."
+            )
         if face_vertex_offsets.shape != (face_labels.shape[0] + 1,):
-            raise ValueError("Face offsets must have shape (faces + 1,).")
+            raise ValueError(
+                f"DiagramCells.face_vertex_offsets must have shape (faces + 1,); got {face_vertex_offsets.shape}."
+            )
         if centroids.shape != (cell_count, vertices.shape[1]):
-            raise ValueError("Centroids must have shape (cells, dimension).")
-        self.vertices = _frozen(vertices)
-        self.cell_vertex_offsets = _frozen(cell_vertex_offsets)
-        self.cell_face_offsets = _frozen(cell_face_offsets)
-        self.face_vertex_offsets = _frozen(face_vertex_offsets)
-        self.face_vertices = _frozen(face_vertices)
-        self.face_labels = _frozen(face_labels)
-        self.measures = _frozen(measures)
-        self.centroids = _frozen(centroids)
+            raise ValueError(
+                f"DiagramCells.centroids must have shape (cells, dimension); got {centroids.shape}."
+            )
+        self.vertices = frozen_array(vertices)
+        self.cell_vertex_offsets = frozen_array(cell_vertex_offsets)
+        self.cell_face_offsets = frozen_array(cell_face_offsets)
+        self.face_vertex_offsets = frozen_array(face_vertex_offsets)
+        self.face_vertices = frozen_array(face_vertices)
+        self.face_labels = frozen_array(face_labels)
+        self.measures = frozen_array(measures)
+        self.centroids = frozen_array(centroids)
 
     @property
     def cell_count(self) -> int:
@@ -727,22 +775,13 @@ def _offsets(counts: np.ndarray, /) -> np.ndarray:
     return np.concatenate(([0], np.cumsum(counts))).astype(np.int64)
 
 
-class _Planes:
-    """Halfspace CSR per cell with global face labels."""
+class _Planes(StrictModule):
+    """Retain halfspace CSR per cell with global face labels."""
 
-    __slots__ = ("labels", "normals", "offsets", "values")
-
-    def __init__(
-        self,
-        offsets: np.ndarray,
-        normals: np.ndarray,
-        values: np.ndarray,
-        labels: np.ndarray,
-    ) -> None:
-        self.offsets = offsets
-        self.normals = normals
-        self.values = values
-        self.labels = labels
+    offsets: np.ndarray
+    normals: np.ndarray
+    values: np.ndarray
+    labels: np.ndarray
 
 
 def _cell_planes(
@@ -758,7 +797,8 @@ def _cell_planes(
 
     The (power) bisector of ``i`` towards ``j`` is ``(p_j - p_i) . x <=
     (p_j - p_i) . (p_i + p_j) / 2 - (w_j - w_i) / 2``; the reverse direction
-    evaluates to the exact negation, so neighboring cells share one plane.
+    uses sign reversal without further rounding, so neighboring cells share
+    one plane.
     """
 
     count, dimension = points.shape
@@ -790,7 +830,9 @@ def _cell_planes(
     if domain_count:
         cells = np.flatnonzero(active)
         base = offsets[cells] + neighbor_counts[cells]
-        rows = (base[:, None] + np.arange(domain_count)[None, :]).reshape((-1,))
+        rows = (base[:, None] + np.arange(domain_count, dtype=np.int64)[None, :]).reshape(
+            (-1,)
+        )
         normals[rows] = np.tile(domain_normals, (cells.size, 1))
         values[rows] = np.tile(domain_offsets, cells.size)
         labels[rows] = np.tile(
@@ -822,18 +864,24 @@ def _clip_chunk(
     label_table = np.zeros((cells.size, width), dtype=np.int32)
     label_table[row, column] = planes.labels[source]
     if dimension == 2:
-        vertices, edge_labels, vertex_counts, measure, moment, status = (
-            clip_box_halfplanes(box_lower, box_upper, normals, values, counts)
-        )
+        result = clip_box_halfplanes(box_lower, box_upper, normals, values, counts)
+        vertices = result.vertices
+        edge_labels = result.edge_labels
+        vertex_counts = result.vertex_counts
+        measure = result.area
+        moment = result.first_moment
+        status = result.status
         _raise_for_items(status, "VoronoiDiagram")
-        mask = np.arange(vertices.shape[1])[None, :] < vertex_counts[:, None]
+        mask = (
+            np.arange(vertices.shape[1], dtype=np.int64)[None, :] < vertex_counts[:, None]
+        )
         flat_vertices = vertices[mask]
         local = edge_labels[mask]
-        cell_rows = np.repeat(np.arange(cells.size), vertex_counts)
+        cell_rows = np.repeat(np.arange(cells.size, dtype=np.int64), vertex_counts)
         face_labels = np.where(
             local >= 0, label_table[cell_rows, np.maximum(local, 0)], local
         ).astype(np.int32)
-        position = np.arange(flat_vertices.shape[0]) - np.repeat(
+        position = np.arange(flat_vertices.shape[0], dtype=np.int64) - np.repeat(
             _offsets(vertex_counts)[:-1], vertex_counts
         )
         following = np.where(
@@ -852,28 +900,34 @@ def _clip_chunk(
             measure,
             moment,
         )
-    (
-        vertices,
-        vertex_counts,
-        face_offsets,
-        face_label_table,
-        face_vertices,
-        face_counts,
-        measure,
-        moment,
-        status,
-    ) = clip_box_halfspaces(box_lower, box_upper, normals, values, counts)
+    result = clip_box_halfspaces(box_lower, box_upper, normals, values, counts)
+    vertices = result.vertices
+    vertex_counts = result.vertex_counts
+    face_offsets = result.face_offsets
+    face_label_table = result.face_labels
+    face_vertices = result.face_vertices
+    face_counts = result.face_counts
+    measure = result.volume
+    moment = result.first_moment
+    status = result.status
     _raise_for_items(status, "VoronoiDiagram")
-    vertex_mask = np.arange(vertices.shape[1])[None, :] < vertex_counts[:, None]
-    face_mask = np.arange(face_label_table.shape[1])[None, :] < face_counts[:, None]
+    vertex_mask = (
+        np.arange(vertices.shape[1], dtype=np.int64)[None, :] < vertex_counts[:, None]
+    )
+    face_mask = (
+        np.arange(face_label_table.shape[1], dtype=np.int64)[None, :]
+        < face_counts[:, None]
+    )
     local = face_label_table[face_mask]
-    cell_rows = np.repeat(np.arange(cells.size), face_counts)
+    cell_rows = np.repeat(np.arange(cells.size, dtype=np.int64), face_counts)
     face_labels = np.where(
         local >= 0, label_table[cell_rows, np.maximum(local, 0)], local
     ).astype(np.int32)
     face_sizes = np.diff(face_offsets, axis=1)[face_mask].astype(np.int64)
-    used = face_offsets[np.arange(cells.size), face_counts]
-    incidence_mask = np.arange(face_vertices.shape[1])[None, :] < used[:, None]
+    used = face_offsets[np.arange(cells.size, dtype=np.int64), face_counts]
+    incidence_mask = (
+        np.arange(face_vertices.shape[1], dtype=np.int64)[None, :] < used[:, None]
+    )
     return (
         vertex_counts.astype(np.int64),
         vertices[vertex_mask],
@@ -965,22 +1019,28 @@ def _diagram_cells(
 
 def _domain(
     dimension: int,
-    box_lower: object,
-    box_upper: object,
-    domain_normals: object | None,
-    domain_offsets: object | None,
+    box_lower: ConvertibleToArray,
+    box_upper: ConvertibleToArray,
+    domain_normals: ConvertibleToArray | None,
+    domain_offsets: ConvertibleToArray | None,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     lower = np.asarray(box_lower, dtype=np.float64)
     upper = np.asarray(box_upper, dtype=np.float64)
     if lower.shape != (dimension,) or upper.shape != (dimension,):
-        raise ValueError(f"box bounds must have shape ({dimension},).")
+        raise ValueError(
+            f"Diagram.box_bounds must have shape ({dimension},); got {lower.shape} and {upper.shape}."
+        )
     if not (np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))):
-        raise ValueError("box bounds must be finite.")
+        raise ValueError("Diagram.box_bounds must be finite; got nonfinite entries.")
     if not np.all(lower < upper):
-        raise ValueError("box_lower must be strictly below box_upper.")
+        raise ValueError(
+            "Diagram.box_lower must be strictly below box_upper; got a nonpositive extent."
+        )
     if (domain_normals is None) != (domain_offsets is None):
-        raise ValueError("domain_normals and domain_offsets must be given together.")
+        raise ValueError(
+            "Diagram.domain_halfspaces must supply normals and offsets together; got one missing bank."
+        )
     if domain_normals is None:
         return (
             lower,
@@ -988,20 +1048,22 @@ def _domain(
             np.zeros((0, dimension), dtype=np.float64),
             np.zeros((0,), dtype=np.float64),
         )
-    normals = _point_array(domain_normals, "domain_normals", (dimension,))
+    normals = host_point_array(domain_normals, "domain_normals", (dimension,))
     offsets = np.asarray(domain_offsets, dtype=np.float64)
     if offsets.shape != (normals.shape[0],) or not np.all(np.isfinite(offsets)):
-        raise ValueError("domain_offsets must be a finite (k,) array.")
+        raise ValueError(
+            f"Diagram.domain_offsets must be a finite (k,) array; got shape {offsets.shape}."
+        )
     if np.any(np.all(normals == 0.0, axis=1)):
-        raise ValueError("domain_normals must be nonzero.")
+        raise ValueError("Diagram.domain_normals must be nonzero; got a zero normal.")
     return lower, upper, normals, offsets
 
 
 def _all_pairs(count: int, /) -> np.ndarray:
     if count > _DEGENERATE_ALL_PAIRS_LIMIT:
         raise ValueError(
-            "Generators that do not span the space use the all-pairs bisector route, "
-            f"limited to {_DEGENERATE_ALL_PAIRS_LIMIT} generators."
+            "Diagram.nonspanning_generators must fit the bounded all-pairs route; "
+            f"got {count} generators against {_DEGENERATE_ALL_PAIRS_LIMIT}."
         )
     first, second = np.triu_indices(count, k=1)
     return np.stack((first, second), axis=1).astype(np.int64)
@@ -1010,10 +1072,10 @@ def _all_pairs(count: int, /) -> np.ndarray:
 class VoronoiDiagram(StrictModule, NonTrainableState):
     """Bounded Voronoi cells of generators clipped to a box and convex domain.
 
-    Cells are dual to the exact Delaunay triangulation (``dual``).  Generators
-    that do not span the space use every generator pair as a bisector
-    candidate (bounded route, ``dual is None``).  Duplicate generators keep one
-    representative cell; the others are empty.
+    Cells are dual to Delaunay triangulation constructed with exact predicates
+    (``dual``). Generators that do not span the space use every generator pair
+    as a bisector candidate (bounded route, ``dual is None``). Duplicate
+    generators keep one representative cell; the others are empty.
     """
 
     points: np.ndarray
@@ -1023,15 +1085,15 @@ class VoronoiDiagram(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        points: object,
+        points: ConvertibleToArray,
         /,
         *,
-        box_lower: object,
-        box_upper: object,
-        domain_normals: object | None = None,
-        domain_offsets: object | None = None,
+        box_lower: ConvertibleToArray,
+        box_upper: ConvertibleToArray,
+        domain_normals: ConvertibleToArray | None = None,
+        domain_offsets: ConvertibleToArray | None = None,
     ) -> None:
-        point_array = _point_array(points, "points", (2, 3))
+        point_array = host_point_array(points, "points", (2, 3))
         count, dimension = point_array.shape
         lower, upper, normals, offsets = _domain(
             dimension, box_lower, box_upper, domain_normals, domain_offsets
@@ -1039,7 +1101,7 @@ class VoronoiDiagram(StrictModule, NonTrainableState):
         if _spans_space(point_array):
             dual = DelaunayTriangulation(point_array)
             neighbors = _simplex_edges(dual.simplices)
-            active = dual.vertex_map == np.arange(count)
+            active = dual.vertex_map == np.arange(count, dtype=np.int64)
             route = f"voronoi_{dimension}d"
         else:
             dual = None
@@ -1077,10 +1139,10 @@ class PowerDiagram(StrictModule, NonTrainableState):
     """Bounded power (Laguerre) cells of weighted generators.
 
     The power distance of ``x`` to generator ``i`` is ``|x - p_i|^2 - w_i``.
-    Cells are dual to the exact regular triangulation (``dual_simplices``);
-    redundant generators (``dual_vertex_map == -1``) and lighter coincident
-    generators have empty cells.  Generators that do not span the space use the
-    bounded all-pairs route.
+    Cells are dual to regular triangulation constructed with exact predicates
+    (``dual_simplices``); redundant generators (``dual_vertex_map == -1``)
+    and lighter coincident generators have empty cells. Generators that do not
+    span the space use the bounded all-pairs route.
     """
 
     points: np.ndarray
@@ -1092,26 +1154,30 @@ class PowerDiagram(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        points: object,
-        weights: object,
+        points: ConvertibleToArray,
+        weights: ConvertibleToArray,
         /,
         *,
-        box_lower: object,
-        box_upper: object,
-        domain_normals: object | None = None,
-        domain_offsets: object | None = None,
+        box_lower: ConvertibleToArray,
+        box_upper: ConvertibleToArray,
+        domain_normals: ConvertibleToArray | None = None,
+        domain_offsets: ConvertibleToArray | None = None,
         max_simplices: int | None = None,
     ) -> None:
-        point_array = _point_array(points, "points", (2, 3))
+        point_array = host_point_array(points, "points", (2, 3))
         count, dimension = point_array.shape
         weight_array = np.asarray(weights)
         if not (
             np.issubdtype(weight_array.dtype, np.floating)
             or np.issubdtype(weight_array.dtype, np.integer)
         ) or np.issubdtype(weight_array.dtype, np.bool_):
-            raise TypeError("weights must be a real floating or integer array.")
+            raise TypeError(
+                f"PowerDiagram.weights must be a real floating or integer array; got dtype {weight_array.dtype}."
+            )
         if weight_array.shape != (count,) or not np.all(np.isfinite(weight_array)):
-            raise ValueError("weights must be a finite (n,) array.")
+            raise ValueError(
+                f"PowerDiagram.weights must be a finite (n,) array; got shape {weight_array.shape}."
+            )
         weight_array = np.array(weight_array, dtype=np.float64, copy=True)
         weight_array.setflags(write=False)
         lower, upper, normals, offsets = _domain(
@@ -1127,13 +1193,15 @@ class PowerDiagram(StrictModule, NonTrainableState):
                     point_array, weight_array, max_tetrahedra=max_simplices
                 )
             neighbors = _simplex_edges(simplices)
-            active = vertex_map == np.arange(count)
-            dual_simplices: np.ndarray | None = _frozen(simplices)
-            dual_vertex_map: np.ndarray | None = _frozen(vertex_map)
+            active = vertex_map == np.arange(count, dtype=np.int64)
+            dual_simplices: np.ndarray | None = frozen_array(simplices)
+            dual_vertex_map: np.ndarray | None = frozen_array(vertex_map)
             route = f"power_{dimension}d"
         else:
             # Coincident generators: the heaviest (then smallest index) owns the cell.
-            order = np.lexsort((np.arange(count), -weight_array, *point_array.T[::-1]))
+            order = np.lexsort(
+                (np.arange(count, dtype=np.int64), -weight_array, *point_array.T[::-1])
+            )
             ordered = point_array[order]
             first = np.ones(count, dtype=np.bool_)
             first[1:] = np.any(ordered[1:] != ordered[:-1], axis=1)
@@ -1213,10 +1281,11 @@ class PeriodicTriangulationEvidence(StrictModule, NonTrainableState):
     simplex_count: int = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         status: MeshcoreStatus,
-        native: np.ndarray,
+        native: PeriodicDelaunayEvidence,
         /,
         *,
         dimension: int,
@@ -1224,13 +1293,11 @@ class PeriodicTriangulationEvidence(StrictModule, NonTrainableState):
         maximum_images: int,
         maximum_cells: int,
         simplex_count: int,
-        content: dict,
+        content: dict[str, object],
     ) -> None:
-        if not isinstance(status, MeshcoreStatus):
-            raise TypeError("status must be a MeshcoreStatus.")
-        values = dict(zip(PERIODIC_DELAUNAY_EVIDENCE, native.tolist(), strict=True))
+        status = parse(status, MeshcoreStatus, "PeriodicTriangulationEvidence.status")
         limit: PeriodicImageLimit
-        match int(values["exhausted_limit"]):
+        match int(native.exhausted_limit):
             case 0:
                 limit = "none"
             case 1:
@@ -1238,22 +1305,24 @@ class PeriodicTriangulationEvidence(StrictModule, NonTrainableState):
             case 2:
                 limit = "cells"
             case code:
-                raise ValueError(f"Unknown periodic image limit code {code}.")
+                raise ValueError(
+                    f"PeriodicTriangulationEvidence.exhausted_limit must identify a known native limit; got code {code}."
+                )
         identity = meshcore_identity()
         self.status = status.name.lower()
         self.meshcore_identity = identity
         self.dimension = dimension
         self.input_point_count = input_point_count
-        self.rounds = int(values["rounds"])
-        self.margin = float(values["margin"])
-        self.image_count = int(values["image_count"])
+        self.rounds = int(native.rounds)
+        self.margin = native.margin
+        self.image_count = int(native.image_count)
         self.maximum_images = maximum_images
-        self.uncertified_cell_count = int(values["uncertified_cells"])
-        self.required_margin = float(values["required_margin"])
-        self.finite_cell_slots = int(values["finite_cell_slots"])
+        self.uncertified_cell_count = int(native.uncertified_cells)
+        self.required_margin = native.required_margin
+        self.finite_cell_slots = int(native.finite_cell_slots)
         self.maximum_cells = maximum_cells
-        self.exact_evaluations = int(values["exact_evaluations"])
-        self.perturbed_decisions = int(values["perturbed_decisions"])
+        self.exact_evaluations = int(native.exact_evaluations)
+        self.perturbed_decisions = int(native.perturbed_decisions)
         self.exhausted_limit = limit
         self.simplex_count = simplex_count
         self.evidence_id = canonical_fingerprint(
@@ -1261,7 +1330,9 @@ class PeriodicTriangulationEvidence(StrictModule, NonTrainableState):
                 "kind": "periodic-triangulation-evidence",
                 "status": self.status,
                 "meshcore": identity,
-                "native": array_tree_fingerprint(native),
+                "native": array_tree_fingerprint(
+                    np.asarray([value for _, value in native.items()], dtype=np.float64)
+                ),
                 "budgets": [maximum_images, maximum_cells],
                 "content": content,
             }
@@ -1275,6 +1346,7 @@ class PeriodicImageBudgetError(MeshcoreError):
     need, the uncertified cells of the previous round and the exhausted limit.
     """
 
+    @checked
     def __init__(self, evidence: PeriodicTriangulationEvidence, /) -> None:
         super().__init__(
             MeshcoreStatus.CAPACITY_EXCEEDED,
@@ -1288,18 +1360,8 @@ class PeriodicImageBudgetError(MeshcoreError):
         self.evidence = evidence
 
 
-def _periodic_budget(value: int | None, default: int, name: str, /) -> int:
-    if value is None:
-        return default
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise TypeError(f"{name} must be an integer.")
-    if value < 1:
-        raise ValueError(f"{name} must be positive.")
-    return int(value)
-
-
 class PeriodicDelaunayTriangulation(StrictModule, NonTrainableState):
-    """Exact Delaunay triangulation of a translationally periodic point set.
+    """Triangulate a translationally periodic point set using exact predicates.
 
     The point set is the lattice orbit of ``points`` under a fully periodic
     full-rank :class:`~phydrax.discretization.PeriodicCell`; representatives
@@ -1309,7 +1371,7 @@ class PeriodicDelaunayTriangulation(StrictModule, NonTrainableState):
     simplex ``t`` lies at ``points[simplices[t, k]] + simplex_shifts[t, k] @
     cell.vectors``; the published member of each orbit is the one whose anchor
     corner (smallest representative, then smallest shift) is the anchor's
-    image in the fundamental cell. Predicates are exact on translated positions
+    image in the fundamental cell. Translated positions use exact predicates,
     and cospherical ties use a translation-invariant symbolic perturbation, so
     the triangulation is unique and lattice-invariant.
 
@@ -1328,9 +1390,10 @@ class PeriodicDelaunayTriangulation(StrictModule, NonTrainableState):
     simplex_shifts: np.ndarray
     evidence: PeriodicTriangulationEvidence
 
+    @checked
     def __init__(
         self,
-        points: object,
+        points: ConvertibleToArray,
         cell: PeriodicCell,
         /,
         *,
@@ -1338,20 +1401,20 @@ class PeriodicDelaunayTriangulation(StrictModule, NonTrainableState):
         maximum_images: int | None = None,
         maximum_simplices: int | None = None,
     ) -> None:
-        if not isinstance(cell, PeriodicCell):
-            raise TypeError("cell must be a PeriodicCell.")
-        point_array = _point_array(points, "points", (2, 3))
+        point_array = host_point_array(points, "points", (2, 3))
         count, dimension = point_array.shape
         if count == 0:
-            raise ValueError("A periodic triangulation requires at least one point.")
+            raise ValueError(
+                "PeriodicDelaunayTriangulation.points must contain at least one row; got an empty bank."
+            )
         if (
             cell.ambient_dimension != dimension
             or cell.rank != dimension
             or not cell.fully_periodic
         ):
             raise ValueError(
-                "Periodic Delaunay triangulation requires a fully periodic "
-                "full-rank lattice in the point dimension."
+                "PeriodicDelaunayTriangulation.cell must be a fully periodic "
+                "full-rank lattice in the point dimension; got incompatible lattice axes."
             )
         # Delaunay circumradii scale like the mean spacing n^(-1/d) in lattice units.
         margin = (
@@ -1360,13 +1423,23 @@ class PeriodicDelaunayTriangulation(StrictModule, NonTrainableState):
             else float(initial_margin)
         )
         if not math.isfinite(margin) or margin <= 0.0:
-            raise ValueError("initial_margin must be positive and finite.")
-        images = _periodic_budget(maximum_images, 27 * count + 4096, "maximum_images")
-        cells = _periodic_budget(maximum_simplices, 64 * images, "maximum_simplices")
+            raise ValueError(
+                f"PeriodicDelaunayTriangulation.initial_margin must be positive and finite; got {margin}."
+            )
+        images = (
+            27 * count + 4096
+            if maximum_images is None
+            else positive_integer(maximum_images, "maximum_images")
+        )
+        cells = (
+            64 * images
+            if maximum_simplices is None
+            else positive_integer(maximum_simplices, "maximum_simplices")
+        )
         vectors = np.asarray(cell.vectors, dtype=np.float64)
         inverse = np.asarray(cell.inverse_vectors, dtype=np.float64)
         fractional = (point_array - np.asarray(cell.origin, dtype=np.float64)) @ inverse
-        status, simplices, shifts, native = periodic_delaunay(
+        result = periodic_delaunay(
             point_array,
             fractional,
             vectors,
@@ -1375,6 +1448,10 @@ class PeriodicDelaunayTriangulation(StrictModule, NonTrainableState):
             max_images=images,
             max_cells=cells,
         )
+        status = result.status
+        simplices = result.vertices
+        shifts = result.shifts
+        native = result.evidence
         evidence = PeriodicTriangulationEvidence(
             status,
             native,
@@ -1396,18 +1473,19 @@ class PeriodicDelaunayTriangulation(StrictModule, NonTrainableState):
             case MeshcoreStatus.CAPACITY_EXCEEDED:
                 raise PeriodicImageBudgetError(evidence)
             case MeshcoreStatus.INVALID_INPUT:
-                duplicate = int(
-                    native[PERIODIC_DELAUNAY_EVIDENCE.index("duplicate_representative")]
-                )
+                duplicate = int(native.duplicate_representative)
                 raise ValueError(
-                    f"points[{duplicate}] lies in the lattice orbit of another point."
+                    f"PeriodicDelaunayTriangulation.points must have distinct lattice orbit representatives; got duplicate row {duplicate}."
                 )
             case _:
-                raise MeshcoreError(status, "periodic_delaunay: unexpected status")
+                raise MeshcoreError(
+                    status,
+                    f"PeriodicDelaunayTriangulation.status must identify a supported native outcome; got {status.name}.",
+                )
         self.cell = cell
         self.points = point_array
-        self.simplices = _frozen(simplices)
-        self.simplex_shifts = _frozen(shifts)
+        self.simplices = frozen_array(simplices)
+        self.simplex_shifts = frozen_array(shifts)
         self.evidence = evidence
 
     @property
@@ -1432,506 +1510,13 @@ __all__ = [
 ]
 
 
-def _exact_power_translation_dual(vectors: np.ndarray, /) -> np.ndarray:
-    """Rational dual of independent translation rows, including partial rank."""
-    from fractions import Fraction
-
-    from ..meshing._periodic import _periodic_exact_product, _reserve_periodic_exact_terms
-
-    rank = len(vectors)
-    gram = _periodic_exact_product(vectors, vectors.T)
-    _reserve_periodic_exact_terms(2 * rank * rank)
-    augmented = [
-        list(row) + [Fraction(int(i == j)) for j in range(rank)]
-        for i, row in enumerate(gram)
-    ]
-    for column in range(rank):
-        pivot = None
-        for candidate in range(column, rank):
-            _reserve_periodic_exact_terms(1)
-            if augmented[candidate][column]:
-                pivot = candidate
-                break
-        if pivot is None:
-            raise ValueError(
-                "Periodic power translation generators are exactly dependent."
-            )
-        augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
-        divisor = augmented[column][column]
-        _reserve_periodic_exact_terms(len(augmented[column]))
-        augmented[column] = [x / divisor for x in augmented[column]]
-        for row in range(rank):
-            if row != column:
-                factor = augmented[row][column]
-                _reserve_periodic_exact_terms(1)
-                if not factor:
-                    continue
-                _reserve_periodic_exact_terms(2 * len(augmented[row]))
-                augmented[row] = [
-                    x - factor * y
-                    for x, y in zip(augmented[row], augmented[column], strict=True)
-                ]
-    inverse = np.asarray([row[rank:] for row in augmented], dtype=object)
-    return _periodic_exact_product(vectors.T, inverse)
-
-
-class PeriodicPowerImageCapacityRefusal(MeshcoreError):
-    """Pre-materialization refusal retaining source and exact stage counts."""
-
-    def __init__(
-        self,
-        points: np.ndarray,
-        weights: np.ndarray,
-        domain: np.ndarray,
-        periodic_group: object,
-        requested: int,
-        maximum: int,
-        stage: str,
-        /,
-    ) -> None:
-        super().__init__(
-            MeshcoreStatus.CAPACITY_EXCEEDED,
-            f"Periodic power {stage} requires {requested} site images, exceeding {maximum}.",
-        )
-        self.points = _frozen(points.copy())
-        self.weights = _frozen(weights.copy())
-        self.domain_points = _frozen(domain.copy())
-        self.periodic_group = periodic_group
-        self.requested_images = requested
-        self.completed_images = 0
-        self.maximum_images = maximum
-        self.stage = stage
-
-
-class PeriodicPowerPreparation(StrictModule, NonTrainableState):
-    """Complete power-relevant image bank, retaining the original source axes.
-
-    ``image_sites`` indexes authored sites, never materialized coordinates.
-    ``image_exponents`` is the exact group action on that source. Numerical
-    image coordinates are deliberately not a substitute for this source law.
-    The bank includes every image capable of winning anywhere in the carrier
-    bounding box, including weighted sites outside that box.
-    """
-
-    points: np.ndarray
-    weights: np.ndarray
-    domain_points: np.ndarray
-    periodic_group: object
-    generators: np.ndarray
-    image_sites: np.ndarray
-    image_exponents: np.ndarray
-    image_coordinate_offsets: np.ndarray
-    image_coordinate_components: np.ndarray
-    orders: tuple[int, ...] = eqx.field(static=True)
-    source_id: str = eqx.field(static=True)
-    carrier_id: str = eqx.field(static=True)
-    identification_id: str = eqx.field(static=True)
-    preparation_id: str = eqx.field(static=True)
-    spent_work: int = eqx.field(static=True)
-    native_charged_work: int = eqx.field(static=True)
-    maximum_images: int = eqx.field(static=True)
-    maximum_work_units: int = eqx.field(static=True)
-
-    def __init__(
-        self,
-        points: object,
-        weights: object,
-        domain_points: object,
-        periodic_group: object,
-        /,
-        *,
-        maximum_images: int,
-        maximum_work_units: int = 1 << 26,
-    ) -> None:
-        from .._meshcore import current_native_execution_budget
-        from ..discretization._coordinate_enclosure import coordinate_enclosure_budget
-
-        work_limit = _periodic_budget(maximum_work_units, 1, "maximum_work_units")
-        self.maximum_images = _periodic_budget(maximum_images, 1, "maximum_images")
-        self.maximum_work_units = work_limit
-        native = current_native_execution_budget()
-        memory_limit = (
-            int(np.iinfo(np.intp).max)
-            if native is None
-            else native.remaining().remaining_scratch_bytes
-        )
-        ledger = coordinate_enclosure_budget(work_limit, memory_limit)
-        starting_work = ledger.work_units
-        starting_native = ledger.native_charged_work_units
-        with (
-            ledger.activate(),
-            ledger.bound_stage(
-                work_limit,
-                memory_limit,
-                starting_work_units=starting_work,
-            ),
-            ledger.temporary_scope(),
-        ):
-            try:
-                self._prepare(
-                    points,
-                    weights,
-                    domain_points,
-                    periodic_group,
-                    maximum_images=self.maximum_images,
-                )
-            finally:
-                ledger.charge_native_work(ledger.work_units - starting_work)
-        self.spent_work = ledger.work_units - starting_work
-        self.native_charged_work = ledger.native_charged_work_units - starting_native
-
-    def validate_restored(self) -> None:
-        """Authenticate source/control/bank law without replaying past receipts.
-
-        Revalidation performs real current work under the current original
-        ledger. Its receipt is distinct from the archived preparation receipt.
-        """
-        from ..discretization._periodic_topology import PeriodicIsometryGroup
-
-        if isinstance(self.periodic_group, (PeriodicCell, PeriodicIsometryGroup)):
-            self.periodic_group.validate_restored()
-        else:
-            raise TypeError(
-                "Restored periodic power requires its original periodic identification."
-            )
-        for value in (self.spent_work, self.native_charged_work):
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, (int, np.integer))
-                or value < 0
-            ):
-                raise ValueError(
-                    "Periodic power preparation receipts must be nonnegative integers."
-                )
-        if (
-            self.native_charged_work > self.spent_work
-            or self.spent_work > self.maximum_work_units
-        ):
-            raise ValueError(
-                "Periodic power preparation receipt exceeds its authored allowance."
-            )
-        replay = PeriodicPowerPreparation(
-            self.points,
-            self.weights,
-            self.domain_points,
-            self.periodic_group,
-            maximum_images=self.maximum_images,
-            maximum_work_units=self.maximum_work_units,
-        )
-        for name in (
-            "points",
-            "weights",
-            "domain_points",
-            "generators",
-            "image_sites",
-            "image_exponents",
-            "image_coordinate_offsets",
-            "image_coordinate_components",
-        ):
-            if array_tree_fingerprint(getattr(self, name)) != array_tree_fingerprint(
-                getattr(replay, name)
-            ):
-                raise ValueError(
-                    f"Restored periodic power {name} violates its original source law."
-                )
-        for name in (
-            "orders",
-            "source_id",
-            "carrier_id",
-            "identification_id",
-            "preparation_id",
-            "maximum_images",
-            "maximum_work_units",
-        ):
-            if getattr(self, name) != getattr(replay, name):
-                raise ValueError(f"Restored periodic power {name} is not authenticated.")
-        for name in (
-            "points",
-            "weights",
-            "domain_points",
-            "generators",
-            "image_sites",
-            "image_exponents",
-            "image_coordinate_offsets",
-            "image_coordinate_components",
-        ):
-            value = getattr(self, name)
-            if isinstance(value, np.ndarray):
-                value.setflags(write=False)
-
-    def _prepare(
-        self,
-        points: object,
-        weights: object,
-        domain_points: object,
-        periodic_group: object,
-        /,
-        *,
-        maximum_images: int,
-    ) -> None:
-        from fractions import Fraction
-        from itertools import product
-
-        from ..discretization._periodic_topology import (
-            _exact_periodic_generators,
-            PeriodicIsometryGroup,
-        )
-        from ..meshing._periodic import (
-            _exact_periodic_group_element,
-            _periodic_exact_product,
-            _prepare_periodic_image_frame,
-            _reserve_periodic_exact_terms,
-        )
-
-        sites = _point_array(points, "points", (3,))
-        domain = _point_array(domain_points, "domain_points", (3,))
-        values = np.asarray(weights, dtype=np.float64)
-        _reserve_periodic_exact_terms(sites.size + domain.size + values.size)
-        if not len(sites) or not len(domain):
-            raise ValueError("Periodic power preparation requires sites and a carrier.")
-        if values.shape != (len(sites),) or not np.all(np.isfinite(values)):
-            raise ValueError("weights must be finite with one value per authored site.")
-        limit = _periodic_budget(maximum_images, 1, "maximum_images")
-        if not isinstance(periodic_group, (PeriodicCell, PeriodicIsometryGroup)):
-            raise TypeError(
-                "periodic_group must be a PeriodicCell or PeriodicIsometryGroup."
-            )
-        if periodic_group.ambient_dimension != 3:
-            raise ValueError(
-                "Periodic restricted power requires ambient dimension three."
-            )
-        if len(sites) > limit:
-            raise PeriodicPowerImageCapacityRefusal(
-                sites,
-                values,
-                domain,
-                periodic_group,
-                len(sites),
-                limit,
-                "original-sites",
-            )
-        if isinstance(periodic_group, PeriodicCell):
-            if not periodic_group.fully_periodic:
-                raise ValueError(
-                    "Periodic power requires every declared lattice axis periodic."
-                )
-            vectors = np.asarray(periodic_group.vectors, dtype=np.float64)
-            generators = np.repeat(np.eye(4)[None], periodic_group.rank, axis=0)
-            generators[:, :3, 3] = vectors
-            orders = (0,) * periodic_group.rank
-            linear_orders = (1,) * periodic_group.rank
-            _reserve_periodic_exact_terms(sites.size)
-            finite_sites = np.asarray(
-                [[Fraction(float(x)) for x in site] for site in sites],
-                dtype=object,
-            )
-        else:
-            generators = np.asarray(periodic_group.generators, dtype=np.float64)
-            orders = periodic_group.orders
-            linear_orders = periodic_group.linear_orders
-            finite_count = math.prod(linear_orders)
-            if finite_count * len(sites) > limit:
-                raise PeriodicPowerImageCapacityRefusal(
-                    sites,
-                    values,
-                    domain,
-                    periodic_group,
-                    finite_count * len(sites),
-                    limit,
-                    "finite-orbits",
-                )
-            finite_sites_parts = []
-            _reserve_periodic_exact_terms(sites.size)
-            original = np.asarray(
-                [[Fraction(float(x)) for x in site] for site in sites],
-                dtype=object,
-            )
-            prepared_generators = _exact_periodic_generators(periodic_group)
-            for finite_action in product(*(range(order) for order in linear_orders)):
-                matrix = _exact_periodic_group_element(
-                    periodic_group,
-                    np.asarray(finite_action, dtype=np.int64),
-                    prepared_generators=prepared_generators,
-                )
-                _reserve_periodic_exact_terms(len(sites) * 3)
-                finite_sites_parts.append(
-                    _periodic_exact_product(original, matrix[:3, :3].T) + matrix[:3, 3]
-                )
-            finite_sites = np.concatenate(finite_sites_parts)
-        translations = [axis for axis, order in enumerate(orders) if order == 0]
-        ranges = [range(order) for order in linear_orders]
-        if translations:
-            _reserve_periodic_exact_terms(len(translations) * 3)
-            if isinstance(periodic_group, PeriodicCell):
-                vectors = np.asarray(
-                    [
-                        [Fraction(float(x)) for x in generators[axis, :3, 3]]
-                        for axis in translations
-                    ],
-                    dtype=object,
-                )
-            else:
-                vectors = np.asarray(
-                    [
-                        _exact_periodic_group_element(
-                            periodic_group,
-                            np.asarray(
-                                [
-                                    linear_orders[index] if index == axis else 0
-                                    for index in range(periodic_group.rank)
-                                ],
-                                dtype=np.int64,
-                            ),
-                            prepared_generators=prepared_generators,
-                        )[:3, 3]
-                        for axis in translations
-                    ],
-                    dtype=object,
-                )
-            dual = _exact_power_translation_dual(vectors)
-            lower, upper = np.min(domain, axis=0), np.max(domain, axis=0)
-            corners = tuple(product(*zip(lower, upper, strict=True)))
-            reference = [Fraction(float(x)) for x in sites[0]]
-            _reserve_periodic_exact_terms(len(corners) * 2 * 3 + len(values) + 2)
-            ceiling = (
-                max(
-                    sum(
-                        (Fraction(float(x)) - y) ** 2
-                        for x, y in zip(corner, reference, strict=True)
-                    )
-                    for corner in corners
-                )
-                - Fraction(float(values[0]))
-                + max(Fraction(float(w)) for w in values)
-            )
-            radius = math.isqrt(max(0, ceiling.numerator // ceiling.denominator))
-            if Fraction(radius * radius) < ceiling:
-                radius += 1
-            for column, axis in enumerate(translations):
-                coefficients = dual[:, column]
-                _reserve_periodic_exact_terms(3 * 3)
-                carrier_low = sum(
-                    a * Fraction(float(lower[i] if a >= 0 else upper[i]))
-                    for i, a in enumerate(coefficients)
-                )
-                carrier_high = sum(
-                    a * Fraction(float(upper[i] if a >= 0 else lower[i]))
-                    for i, a in enumerate(coefficients)
-                )
-                site_axis = _periodic_exact_product(finite_sites, coefficients)
-                _reserve_periodic_exact_terms(2 * len(site_axis) + 5)
-                reach = radius * sum(abs(a) for a in coefficients)
-                low = carrier_low - max(site_axis) - reach
-                high = carrier_high - min(site_axis) + reach
-                period = linear_orders[axis]
-                ranges[axis] = range(
-                    period * math.ceil(low),
-                    period * (math.floor(high) + 1),
-                )
-        actions = product(*ranges)
-        action_count = math.prod(len(value) for value in ranges)
-        required = action_count * len(sites)
-        if required > limit:
-            raise PeriodicPowerImageCapacityRefusal(
-                sites,
-                values,
-                domain,
-                periodic_group,
-                required,
-                limit,
-                "power-images",
-            )
-        # Authenticate the same exact authored group frame as source/embedding.
-        # Its overlap bank is not used as the power completeness bound above.
-        action_rows = np.asarray(tuple(actions), dtype=np.int64).reshape(
-            (action_count, periodic_group.rank)
-        )
-        frame = _prepare_periodic_image_frame(
-            sites,
-            np.arange(len(sites), dtype=np.int64),
-            np.zeros((len(sites), periodic_group.rank), dtype=np.int64),
-            periodic_group,
-            limit,
-            image_exponents=action_rows,
-        )
-        components: list[float] = []
-        coordinate_offsets = [0]
-        scale = Fraction(2) ** (
-            frame.exponent if frame.lattice is not None else 3 * frame.exponent
-        )
-        for index, action in enumerate(action_rows):
-            image = tuple(int(x) for x in action) if frame.lattice is not None else index
-            exact_coordinates = frame.image_points(image)
-            for integer in exact_coordinates.reshape(-1):
-                _reserve_periodic_exact_terms(1)
-                remaining = Fraction(int(integer)) * scale
-                coordinate: list[float] = []
-                while remaining:
-                    _reserve_periodic_exact_terms(2)
-                    component = float(remaining)
-                    if not math.isfinite(component) or component == 0.0:
-                        raise ValueError(
-                            "Exact periodic image exceeds binary64 expansion range."
-                        )
-                    coordinate.append(component)
-                    remaining -= Fraction(component)
-                components.extend(reversed(coordinate))
-                coordinate_offsets.append(len(components))
-        self.points = _frozen(sites.copy())
-        self.weights = _frozen(values.copy())
-        self.domain_points = _frozen(domain.copy())
-        self.periodic_group = periodic_group
-        self.generators = _frozen(generators.copy())
-        self.image_sites = _frozen(
-            np.tile(np.arange(len(sites), dtype=np.int32), action_count)
-        )
-        self.image_exponents = _frozen(np.repeat(action_rows, len(sites), axis=0))
-        self.image_coordinate_offsets = _frozen(
-            np.asarray(coordinate_offsets, dtype=np.int64)
-        )
-        self.image_coordinate_components = _frozen(
-            np.asarray(components, dtype=np.float64)
-        )
-        self.orders = orders
-        self.carrier_id = canonical_fingerprint(array_tree_fingerprint(domain))
-        self.identification_id = (
-            periodic_group.cell_id
-            if isinstance(periodic_group, PeriodicCell)
-            else periodic_group.group_id
-        )
-        self.source_id = canonical_fingerprint(
-            {
-                "kind": "periodic-power-source",
-                "points": array_tree_fingerprint(self.points),
-                "weights": array_tree_fingerprint(self.weights),
-                "generators": array_tree_fingerprint(self.generators),
-                "orders": orders,
-                "identification": self.identification_id,
-            }
-        )
-        self.preparation_id = canonical_fingerprint(
-            {
-                "kind": "periodic-power-preparation",
-                "source": self.source_id,
-                "carrier": array_tree_fingerprint(domain),
-                "site_axis": array_tree_fingerprint(self.image_sites),
-                "action_axis": array_tree_fingerprint(self.image_exponents),
-                "coordinate_offsets": array_tree_fingerprint(
-                    self.image_coordinate_offsets
-                ),
-                "coordinate_components": array_tree_fingerprint(
-                    self.image_coordinate_components
-                ),
-            }
-        )
-
-
 class PeriodicPowerSourceRefusal(MeshcoreError):
-    """Native/domain refusal retaining the actual immutable scientific source."""
+    """Retain the immutable power source and native refusal evidence."""
 
+    @checked
     def __init__(
         self,
-        preparation: PeriodicPowerPreparation,
+        preparation: power_preparation_owner.PeriodicPowerPreparation,
         refusal: MeshcoreError,
         maximum_work: int,
         /,
@@ -1941,9 +1526,9 @@ class PeriodicPowerSourceRefusal(MeshcoreError):
     ) -> None:
         super().__init__(
             refusal.status,
-            "Exact periodic power source refused construction",
-            work_evidence=refusal.work_evidence,
-            memory_evidence=refusal.memory_evidence,
+            "PeriodicPowerSourceRefusal.construction must finish within the source allowance; got a native refusal.",
+            work_counters=refusal.work_counters,
+            memory_counters=refusal.memory_counters,
         )
         self.preparation = preparation
         self.native_refusal = refusal
@@ -1953,20 +1538,20 @@ class PeriodicPowerSourceRefusal(MeshcoreError):
 
 
 def _restricted_periodic_power_construction(
-    preparation: PeriodicPowerPreparation,
+    preparation: power_preparation_owner.PeriodicPowerPreparation,
     split: np.ndarray,
     domain: np.ndarray,
-    tetrahedra: ArrayLike,
-    regions: ArrayLike,
-    facets: ArrayLike,
+    tetrahedra: np.ndarray,
+    regions: np.ndarray,
+    facets: np.ndarray,
     /,
     *,
     max_pieces: int,
     max_vertices: int,
     work_limit: int,
     record_native_phase: Callable[[str, float, int | None, int], None] | None,
+    scope: NativeExecutionScope,
 ) -> tuple[np.ndarray, np.ndarray, RestrictedPowerCells, int]:
-    from .._meshcore import current_native_execution_budget, restricted_power_cells_exact
 
     count = len(preparation.image_sites)
     adjacency_count = count * (count - 1)
@@ -1975,32 +1560,33 @@ def _restricted_periodic_power_construction(
             preparation,
             MeshcoreError(
                 MeshcoreStatus.CAPACITY_EXCEEDED,
-                "Exact periodic power adjacency exceeds the original work limit.",
+                f"RestrictedPowerDiagram.adjacency_work must stay below work_limit; got {adjacency_count} against {work_limit}.",
             ),
             work_limit,
             requested_work=adjacency_count + 1,
             completed_work=0,
         )
-    # A complete adjacency is an exact source candidate bank, not a rounded
-    # regular-triangulation proxy. Its actual materialization is bounded before
+    # Full adjacency retains all source candidates before clipping; no rounded
+    # regular triangulation determines the image bank. Materialization is bounded before
     # allocation and charged as host work, never as native geometric predicates.
-    budget = current_native_execution_budget()
-    if budget is not None:
-        budget.admit_work_bound(adjacency_count)
-    offsets = np.arange(count + 1, dtype=np.int64) * (count - 1)
-    neighbors = np.empty(adjacency_count, dtype=np.int32)
-    row = np.arange(count, dtype=np.int32)
-    materialized_work = 0
-    for image in range(count):
-        left, right = row[:image], row[image + 1 :]
-        row_work = len(left) + len(right)
-        if budget is not None:
-            budget.charge(work=row_work)
-        start = int(offsets[image])
-        neighbors[start : start + len(left)] = left
-        neighbors[start + len(left) : int(offsets[image + 1])] = right
-        materialized_work += row_work
-    construction = restricted_power_cells_exact(
+    array_bytes = (count + 1) * np.dtype(np.int64).itemsize + (
+        adjacency_count + count
+    ) * np.dtype(np.int32).itemsize
+    with scope.batch(adjacency_count, bytes_upper=array_bytes) as ticket:
+        ticket.consume(managed_bytes=array_bytes)
+        offsets = np.arange(count + 1, dtype=np.int64) * (count - 1)
+        neighbors = np.empty(adjacency_count, dtype=np.int32)
+        row = np.arange(count, dtype=np.int32)
+        materialized_work = 0
+        for image in range(count):
+            left, right = row[:image], row[image + 1 :]
+            row_work = len(left) + len(right)
+            ticket.consume(row_work)
+            start = int(offsets[image])
+            neighbors[start : start + len(left)] = left
+            neighbors[start + len(left) : int(offsets[image + 1])] = right
+            materialized_work += row_work
+    construction = meshcore_owner.restricted_power_cells_exact(
         preparation.points,
         preparation.weights,
         preparation.image_sites,
@@ -2021,12 +1607,375 @@ def _restricted_periodic_power_construction(
     return offsets, neighbors, construction, materialized_work
 
 
+class _RestrictedSource(StrictModule):
+    sites: np.ndarray
+    values: np.ndarray
+    domain: np.ndarray
+    split: np.ndarray
+    tetrahedra: np.ndarray
+    regions: np.ndarray
+    facets: np.ndarray
+
+
+class _RestrictedControls(StrictModule):
+    max_pieces: int = eqx.field(static=True)
+    max_vertices: int = eqx.field(static=True)
+    work_limit: int = eqx.field(static=True)
+    record_native_phase: Callable[[str, float, int | None, int], None] | None
+
+
+class _RestrictedConstruction(StrictModule):
+    points: np.ndarray
+    weights: np.ndarray
+    construction: RestrictedPowerCells
+    offsets: np.ndarray
+    neighbors: np.ndarray
+    preparation: power_preparation_owner.PeriodicPowerPreparation | None
+    preparation_work: int = eqx.field(static=True)
+    preparation_native_work: int = eqx.field(static=True)
+    adjacency_work: int = eqx.field(static=True)
+    guard_count: int = eqx.field(static=True)
+
+
+def _restricted_source(
+    points: ConvertibleToArray,
+    weights: ConvertibleToArray,
+    domain_points: ConvertibleToArray,
+    tetrahedra: ConvertibleToArray,
+    tetrahedron_regions: ConvertibleToArray,
+    tet_face_facets: ConvertibleToArray,
+    split_sites: ConvertibleToArray | None,
+) -> _RestrictedSource:
+    sites = host_point_array(points, "points", (3,))
+    if sites.shape[0] == 0:
+        raise ValueError(
+            "RestrictedPowerDiagram.points must contain at least one site; got an empty bank."
+        )
+    values = np.asarray(weights, dtype=np.float64)
+    if values.shape != (sites.shape[0],) or not np.all(np.isfinite(values)):
+        raise ValueError(
+            f"RestrictedPowerDiagram.weights must be a finite (site_count,) array; got shape {values.shape}."
+        )
+    domain = host_point_array(domain_points, "domain_points", (3,))
+    split = (
+        np.zeros(sites.shape[0], dtype=np.int8)
+        if split_sites is None
+        else np.asarray(split_sites, dtype=np.int8)
+    )
+    tetrahedra_ = np.asarray(tetrahedra)
+    tetrahedron_regions_ = np.asarray(tetrahedron_regions)
+    tet_face_facets_ = np.asarray(tet_face_facets)
+    if split.shape != (sites.shape[0],) or np.any((split != 0) & (split != 1)):
+        raise ValueError(
+            f"RestrictedPowerDiagram.split_sites must be a binary (site_count,) array; got shape {split.shape}."
+        )
+    return _RestrictedSource(
+        sites, values, domain, split, tetrahedra_, tetrahedron_regions_, tet_face_facets_
+    )
+
+
+def _prepare_restricted_periodic_source(
+    source: _RestrictedSource,
+    periodic_group: PeriodicMeshIdentification,
+    maximum_images: int | None,
+    controls: _RestrictedControls,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget | None,
+) -> power_preparation_owner.PeriodicPowerPreparation:
+    sites, values, domain = source.sites, source.values, source.domain
+    work_limit = controls.work_limit
+    if budget is not None and not budget.ticket.settled:
+        preparation = power_preparation_owner.PeriodicPowerPreparation(
+            sites,
+            values,
+            domain,
+            periodic_group,
+            maximum_images=(
+                27 * len(sites) + 4096
+                if maximum_images is None
+                else positive_integer(maximum_images, "maximum_images")
+            ),
+            maximum_work_units=work_limit,
+            budget=budget,
+        )
+    else:
+        remaining = scope.remaining()
+        work_ticket = scope.batch(
+            min(work_limit, remaining.remaining_work_units),
+            queries_upper=remaining.remaining_geometry_queries,
+            bytes_upper=remaining.remaining_managed_bytes,
+        )
+        if budget is None:
+            view = CoordinateEnclosureBudget(
+                work_ticket,
+                maximum_work_units=work_limit,
+                maximum_memory_bytes=int(np.iinfo(np.intp).max),
+            )
+            with work_ticket, view.activate():
+                preparation = power_preparation_owner.PeriodicPowerPreparation(
+                    sites,
+                    values,
+                    domain,
+                    periodic_group,
+                    maximum_images=(
+                        27 * len(sites) + 4096
+                        if maximum_images is None
+                        else positive_integer(maximum_images, "maximum_images")
+                    ),
+                    maximum_work_units=work_limit,
+                    budget=view,
+                )
+        else:
+            with budget.bind_ticket(work_ticket):
+                preparation = power_preparation_owner.PeriodicPowerPreparation(
+                    sites,
+                    values,
+                    domain,
+                    periodic_group,
+                    maximum_images=(
+                        27 * len(sites) + 4096
+                        if maximum_images is None
+                        else positive_integer(maximum_images, "maximum_images")
+                    ),
+                    maximum_work_units=work_limit,
+                    budget=budget,
+                )
+    return preparation
+
+
+def _authenticate_restricted_periodic_source(
+    source: _RestrictedSource,
+    preparation: power_preparation_owner.PeriodicPowerPreparation,
+    periodic_group: PeriodicMeshIdentification | None,
+    maximum_images: int | None,
+    work_limit: int,
+) -> None:
+    sites, values, domain = source.sites, source.values, source.domain
+    if (
+        array_tree_fingerprint(sites) != array_tree_fingerprint(preparation.points)
+        or array_tree_fingerprint(values) != array_tree_fingerprint(preparation.weights)
+        or canonical_fingerprint(array_tree_fingerprint(domain)) != preparation.carrier_id
+    ):
+        raise ValueError(
+            "RestrictedPowerDiagram.periodic_preparation.source must match the site, weight, and carrier bytes; got different content."
+        )
+    if maximum_images is not None and len(preparation.image_sites) > (
+        1
+        if maximum_images is None
+        else positive_integer(maximum_images, "maximum_images")
+    ):
+        raise PeriodicPowerSourceRefusal(
+            preparation,
+            power_preparation_owner.PeriodicPowerImageCapacityRefusal(
+                sites,
+                values,
+                domain,
+                periodic_group,
+                len(preparation.image_sites),
+                maximum_images,
+                "retained-images",
+            ),
+            work_limit,
+        )
+    if periodic_group is not None:
+        identity = identification_id(periodic_group)
+        if identity != preparation.identification_id:
+            raise ValueError(
+                "RestrictedPowerDiagram.periodic_preparation.identification_id must match the group identity; got a different identification."
+            )
+
+
+def _execute_restricted_periodic_source(
+    source: _RestrictedSource,
+    preparation: power_preparation_owner.PeriodicPowerPreparation,
+    preparation_work_units: int,
+    preparation_native_charged_work_units: int,
+    controls: _RestrictedControls,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget | None,
+) -> _RestrictedConstruction:
+    split, domain, tetrahedra_, tetrahedron_regions_, tet_face_facets_ = (
+        source.split,
+        source.domain,
+        source.tetrahedra,
+        source.regions,
+        source.facets,
+    )
+    max_pieces, max_vertices, work_limit, record_native_phase = (
+        controls.max_pieces,
+        controls.max_vertices,
+        controls.work_limit,
+        controls.record_native_phase,
+    )
+    try:
+        with nullcontext() if budget is None else budget.measurement():
+            construction_work_limit = work_limit - preparation_work_units
+            if construction_work_limit < 1:
+                raise PeriodicPowerSourceRefusal(
+                    preparation,
+                    MeshcoreError(
+                        MeshcoreStatus.CAPACITY_EXCEEDED,
+                        f"RestrictedPowerDiagram.preparation_work must leave construction allowance; got {preparation_work_units} against {work_limit}.",
+                    ),
+                    work_limit,
+                    requested_work=preparation_work_units + 1,
+                    completed_work=preparation_work_units,
+                )
+            offsets, neighbors, construction, adjacency_work_units = (
+                _restricted_periodic_power_construction(
+                    preparation,
+                    split,
+                    domain,
+                    tetrahedra_,
+                    tetrahedron_regions_,
+                    tet_face_facets_,
+                    max_pieces=max_pieces,
+                    max_vertices=max_vertices,
+                    work_limit=construction_work_limit,
+                    record_native_phase=record_native_phase,
+                    scope=scope,
+                )
+            )
+    except PeriodicPowerSourceRefusal:
+        raise
+    except MeshcoreError as refusal:
+        raise PeriodicPowerSourceRefusal(preparation, refusal, work_limit) from refusal
+    return _RestrictedConstruction(
+        preparation.points,
+        preparation.weights,
+        construction,
+        offsets,
+        neighbors,
+        preparation,
+        preparation_work_units,
+        preparation_native_charged_work_units,
+        adjacency_work_units,
+        0,
+    )
+
+
+def _execute_restricted_source(
+    source: _RestrictedSource, controls: _RestrictedControls
+) -> _RestrictedConstruction:
+    sites, values, domain, split, tetrahedra_, tetrahedron_regions_, tet_face_facets_ = (
+        source.sites,
+        source.values,
+        source.domain,
+        source.split,
+        source.tetrahedra,
+        source.regions,
+        source.facets,
+    )
+    max_pieces, max_vertices, work_limit, record_native_phase = (
+        controls.max_pieces,
+        controls.max_vertices,
+        controls.work_limit,
+        controls.record_native_phase,
+    )
+    guard_count = 0
+    if sites.shape[0] == 1:
+        prepared_sites, prepared_weights = sites, values
+        edges = np.zeros((0, 2), dtype=np.int32)
+    else:
+        prepared_sites, prepared_weights = sites, values
+        if not _spans_space(sites):
+            # Four remote weighted guards make a full-dimensional regular
+            # triangulation without a dense all-pairs degeneracy fallback.
+            # Their power distance exceeds site zero everywhere in the
+            # domain bounding box: the difference is affine, and its
+            # minimum is evaluated exactly at all eight box corners.
+            lower, upper = np.min(domain, axis=0), np.max(domain, axis=0)
+            scale = max(1.0, float(np.max(upper - lower)))
+            base = lower - 4.0 * scale
+            guards = base + 8.0 * scale * np.asarray(
+                ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)),
+                dtype=np.float64,
+            )
+            if not np.all(np.isfinite(guards)) or not _spans_space(guards):
+                raise ValueError(
+                    "RestrictedPowerDiagram.domain_points must admit finite spanning guards; got an unrepresentable domain scale."
+                )
+            reference = [Fraction(float(x)) for x in sites[0]]
+            reference_weight = Fraction(float(values[0]))
+            corners = tuple(product(*zip(lower, upper, strict=True)))
+            guard_weights = []
+            for guard in guards:
+                g = [Fraction(float(x)) for x in guard]
+                minimum = min(
+                    sum(
+                        (a - Fraction(float(x))) ** 2 - (b - Fraction(float(x))) ** 2
+                        for a, b, x in zip(g, reference, corner, strict=True)
+                    )
+                    + reference_weight
+                    for corner in corners
+                )
+                # Keep a strict normal-scale margin: for positive minimum
+                # the old subtraction cancelled to zero, whose nextafter
+                # value lies outside meshcore's supported weight-exponent range.
+                weight = float(minimum - max(Fraction(1), abs(minimum)) - 1)
+                weight = float(np.nextafter(weight, -np.inf))
+                if not math.isfinite(weight) or Fraction(weight) >= minimum:
+                    raise ValueError(
+                        "RestrictedPowerDiagram.guard_weights must establish a strict empty-cell power bound; got an unrepresentable bound."
+                    )
+                guard_weights.append(weight)
+            guard_count = 4
+            prepared_sites = np.concatenate((sites, guards))
+            prepared_weights = np.concatenate((values, guard_weights))
+        started = 0.0 if record_native_phase is None else perf_counter()
+        simplices, _ = regular_3d(
+            prepared_sites, prepared_weights, max_tetrahedra=max_pieces
+        )
+        edges = _simplex_edges(simplices)
+        if record_native_phase is not None:
+            record_native_phase(
+                "regular_triangulation", perf_counter() - started, None, 1
+            )
+    directed = np.concatenate((edges, edges[:, ::-1]), axis=0)
+    if directed.size:
+        directed = directed[np.lexsort((directed[:, 1], directed[:, 0]))]
+    counts = np.bincount(directed[:, 0], minlength=prepared_sites.shape[0])
+    offsets = _offsets(counts)
+    neighbors = directed[:, 1].astype(np.int32)
+    construction = meshcore_owner.restricted_power_cells(
+        prepared_sites,
+        prepared_weights,
+        offsets,
+        neighbors,
+        np.concatenate((split, np.zeros(guard_count, dtype=np.int8))),
+        domain,
+        tetrahedra_,
+        tetrahedron_regions_,
+        tet_face_facets_,
+        max_pieces=max_pieces,
+        max_vertices=max_vertices,
+        work_limit=work_limit,
+        record_native_phase=record_native_phase,
+    )
+    if np.any(construction.cell_sites >= sites.shape[0]):
+        raise RuntimeError(
+            "RestrictedPowerDiagram.construction.cell_sites must exclude certified empty guards; got a guard cell."
+        )
+    return _RestrictedConstruction(
+        sites,
+        frozen_array(values.copy()),
+        construction,
+        offsets,
+        neighbors,
+        None,
+        0,
+        0,
+        0,
+        guard_count,
+    )
+
+
 class RestrictedPowerDiagram(StrictModule, NonTrainableState):
     """Native connected power cells restricted to a constrained tet complex.
 
     Unlike the convex diagram contracts above this preserves disconnected site
     components and constrained material/sheet faces. ``construction`` carries
-    reciprocal faces and the site/tet/cell piece witness. This is construction
+    reciprocal faces and the site/tet/cell piece incidence. This is construction
     evidence, not an independent coverage certificate.
     """
 
@@ -2035,7 +1984,7 @@ class RestrictedPowerDiagram(StrictModule, NonTrainableState):
     construction: RestrictedPowerCells
     neighbor_offsets: np.ndarray
     neighbors: np.ndarray
-    periodic_preparation: PeriodicPowerPreparation | None
+    periodic_preparation: power_preparation_owner.PeriodicPowerPreparation | None
     preparation_work_units: int = eqx.field(static=True)
     preparation_native_charged_work_units: int = eqx.field(static=True)
     adjacency_work_units: int = eqx.field(static=True)
@@ -2046,266 +1995,116 @@ class RestrictedPowerDiagram(StrictModule, NonTrainableState):
     guard_count: int = eqx.field(static=True)
     meshcore_identity: str = eqx.field(static=True)
 
+    @staticmethod
+    def native_limits(work_limit: int, /) -> NativeExecutionLimits:
+        """Lower existing work/storage; no cavity control bounds this request."""
+        return NativeExecutionLimits(
+            work_limit,
+            work_limit,
+            int(np.iinfo(np.intp).max),
+            int(np.iinfo(np.intp).max),
+            math.inf,
+        )
+
+    @checked
     def __init__(
         self,
-        points: object,
-        weights: object,
-        domain_points: object,
-        tetrahedra: object,
-        tetrahedron_regions: object,
-        tet_face_facets: object,
+        points: ConvertibleToArray,
+        weights: ConvertibleToArray,
+        domain_points: ConvertibleToArray,
+        tetrahedra: ConvertibleToArray,
+        tetrahedron_regions: ConvertibleToArray,
+        tet_face_facets: ConvertibleToArray,
         /,
         *,
-        split_sites: object | None = None,
-        periodic_group: object | None = None,
-        periodic_preparation: PeriodicPowerPreparation | None = None,
+        split_sites: ConvertibleToArray | None = None,
+        periodic_group: PeriodicMeshIdentification | None = None,
+        periodic_preparation: power_preparation_owner.PeriodicPowerPreparation
+        | None = None,
         maximum_images: int | None = None,
         max_pieces: int = 1 << 20,
         max_vertices: int = 1 << 22,
         work_limit: int = 1 << 26,
         record_native_phase: Callable[[str, float, int | None, int], None] | None = None,
+        scope: NativeExecutionScope | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
-        from fractions import Fraction
-        from itertools import product
 
-        from .._meshcore import restricted_power_cells
-
-        sites = _point_array(points, "points", (3,))
-        if sites.shape[0] == 0:
-            raise ValueError("At least one site is required.")
-        values = np.asarray(weights, dtype=np.float64)
-        if values.shape != (sites.shape[0],) or not np.all(np.isfinite(values)):
-            raise ValueError("weights must be a finite (site_count,) array.")
-        domain = _point_array(domain_points, "domain_points", (3,))
-        split = (
-            np.zeros(sites.shape[0], dtype=np.int8)
-            if split_sites is None
-            else np.asarray(split_sites, dtype=np.int8)
+        source = _restricted_source(
+            points,
+            weights,
+            domain_points,
+            tetrahedra,
+            tetrahedron_regions,
+            tet_face_facets,
+            split_sites,
         )
-        tetrahedra_ = np.asarray(tetrahedra)
-        tetrahedron_regions_ = np.asarray(tetrahedron_regions)
-        tet_face_facets_ = np.asarray(tet_face_facets)
-        if split.shape != (sites.shape[0],) or np.any((split != 0) & (split != 1)):
-            raise ValueError("split_sites must be a binary (site_count,) array.")
-        if periodic_group is not None or periodic_preparation is not None:
+        controls = _RestrictedControls(
+            max_pieces, max_vertices, work_limit, record_native_phase
+        )
+        with (
+            NativeExecutionScope(self.native_limits(work_limit))
+            if scope is None
+            else nullcontext(scope)
+        ) as execution:
             preparation = periodic_preparation
-            preparation_work_units = 0
-            preparation_native_charged_work_units = 0
-            if preparation is None:
-                preparation = PeriodicPowerPreparation(
-                    sites,
-                    values,
-                    domain,
-                    periodic_group,
-                    maximum_images=_periodic_budget(
-                        maximum_images,
-                        27 * len(sites) + 4096,
-                        "maximum_images",
-                    ),
-                    maximum_work_units=work_limit,
+            preparation_work = preparation_native_work = 0
+            if preparation is None and periodic_group is not None:
+                preparation = _prepare_restricted_periodic_source(
+                    source, periodic_group, maximum_images, controls, execution, budget
                 )
-                preparation_work_units = preparation.spent_work
-                preparation_native_charged_work_units = preparation.native_charged_work
-            if (
-                array_tree_fingerprint(sites)
-                != array_tree_fingerprint(preparation.points)
-                or array_tree_fingerprint(values)
-                != array_tree_fingerprint(preparation.weights)
-                or canonical_fingerprint(array_tree_fingerprint(domain))
-                != preparation.carrier_id
-            ):
-                raise ValueError(
-                    "Periodic power preparation requires its original source and carrier bytes."
+                preparation_work = preparation.spent_work
+                preparation_native_work = preparation.native_charged_work
+            if preparation is not None:
+                _authenticate_restricted_periodic_source(
+                    source, preparation, periodic_group, maximum_images, work_limit
                 )
-            if maximum_images is not None and len(
-                preparation.image_sites
-            ) > _periodic_budget(
-                maximum_images,
-                1,
-                "maximum_images",
-            ):
-                raise PeriodicPowerSourceRefusal(
+                result = _execute_restricted_periodic_source(
+                    source,
                     preparation,
-                    PeriodicPowerImageCapacityRefusal(
-                        sites,
-                        values,
-                        domain,
-                        periodic_group,
-                        len(preparation.image_sites),
-                        maximum_images,
-                        "retained-images",
-                    ),
-                    work_limit,
+                    preparation_work,
+                    preparation_native_work,
+                    controls,
+                    execution,
+                    budget,
                 )
-            if periodic_group is not None:
-                from ..discretization._periodic_topology import PeriodicIsometryGroup
+            else:
+                result = _execute_restricted_source(source, controls)
+            self._commit(result)
 
-                if not isinstance(periodic_group, (PeriodicCell, PeriodicIsometryGroup)):
-                    raise TypeError(
-                        "periodic_group must be a PeriodicCell or PeriodicIsometryGroup."
-                    )
-                identity = (
-                    periodic_group.cell_id
-                    if isinstance(periodic_group, PeriodicCell)
-                    else periodic_group.group_id
-                )
-                if identity != preparation.identification_id:
-                    raise ValueError(
-                        "Periodic power preparation requires its original group identity."
-                    )
-            try:
-                construction_work_limit = work_limit - preparation_work_units
-                if construction_work_limit < 1:
-                    raise PeriodicPowerSourceRefusal(
-                        preparation,
-                        MeshcoreError(
-                            MeshcoreStatus.CAPACITY_EXCEEDED,
-                            "Periodic power preparation exhausts the original construction allowance.",
-                        ),
-                        work_limit,
-                        requested_work=preparation_work_units + 1,
-                        completed_work=preparation_work_units,
-                    )
-                offsets, neighbors, construction, adjacency_work_units = (
-                    _restricted_periodic_power_construction(
-                        preparation,
-                        split,
-                        domain,
-                        tetrahedra_,
-                        tetrahedron_regions_,
-                        tet_face_facets_,
-                        max_pieces=max_pieces,
-                        max_vertices=max_vertices,
-                        work_limit=construction_work_limit,
-                        record_native_phase=record_native_phase,
-                    )
-                )
-            except PeriodicPowerSourceRefusal:
-                raise
-            except MeshcoreError as refusal:
-                raise PeriodicPowerSourceRefusal(
-                    preparation, refusal, work_limit
-                ) from refusal
-            self.points = preparation.points
-            self.weights = preparation.weights
-            self.construction = construction
-            self.neighbor_offsets = _frozen(offsets)
-            self.neighbors = _frozen(neighbors)
-            self.periodic_preparation = preparation
-            self.preparation_work_units = preparation_work_units
-            self.preparation_native_charged_work_units = (
-                preparation_native_charged_work_units
-            )
-            self.adjacency_work_units = adjacency_work_units
-            self.cell_original_sites = _frozen(
+    def _commit(self, result: _RestrictedConstruction) -> None:
+        self.points = result.points
+        self.weights = result.weights
+        self.construction = result.construction
+        self.neighbor_offsets = frozen_array(result.offsets)
+        self.neighbors = frozen_array(result.neighbors)
+        self.periodic_preparation = result.preparation
+        self.preparation_work_units = result.preparation_work
+        self.preparation_native_charged_work_units = result.preparation_native_work
+        self.adjacency_work_units = result.adjacency_work
+        preparation = result.preparation
+        construction = result.construction
+        if preparation is not None:
+            self.cell_original_sites = frozen_array(
                 preparation.image_sites[construction.cell_sites]
             )
-            self.piece_original_sites = _frozen(
+            self.piece_original_sites = frozen_array(
                 preparation.image_sites[construction.piece_sites]
             )
-            self.cell_image_exponents = _frozen(
+            self.cell_image_exponents = frozen_array(
                 preparation.image_exponents[construction.cell_sites]
             )
-            self.piece_image_exponents = _frozen(
+            self.piece_image_exponents = frozen_array(
                 preparation.image_exponents[construction.piece_sites]
             )
-            self.guard_count = 0
-            self.meshcore_identity = meshcore_identity()
-            return
-        guard_count = 0
-        if sites.shape[0] == 1:
-            prepared_sites, prepared_weights = sites, values
-            edges = np.zeros((0, 2), dtype=np.int32)
         else:
-            prepared_sites, prepared_weights = sites, values
-            if not _spans_space(sites):
-                # Four remote weighted guards make a full-dimensional regular
-                # triangulation without a dense all-pairs degeneracy fallback.
-                # Their power distance exceeds site zero everywhere in the
-                # domain bounding box: the difference is affine, and its
-                # minimum is evaluated exactly at all eight box corners.
-                lower, upper = np.min(domain, axis=0), np.max(domain, axis=0)
-                scale = max(1.0, float(np.max(upper - lower)))
-                base = lower - 4.0 * scale
-                guards = base + 8.0 * scale * np.asarray(
-                    ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)),
-                    dtype=np.float64,
-                )
-                if not np.all(np.isfinite(guards)) or not _spans_space(guards):
-                    raise ValueError("Domain scale cannot represent spanning guards.")
-                reference = [Fraction(float(x)) for x in sites[0]]
-                reference_weight = Fraction(float(values[0]))
-                corners = tuple(product(*zip(lower, upper, strict=True)))
-                guard_weights = []
-                for guard in guards:
-                    g = [Fraction(float(x)) for x in guard]
-                    minimum = min(
-                        sum(
-                            (a - Fraction(float(x))) ** 2 - (b - Fraction(float(x))) ** 2
-                            for a, b, x in zip(g, reference, corner, strict=True)
-                        )
-                        + reference_weight
-                        for corner in corners
-                    )
-                    # Keep a strict normal-scale margin: for positive minimum
-                    # the old subtraction cancelled to zero, whose nextafter
-                    # value lies outside meshcore's exact weight domain.
-                    weight = float(minimum - max(Fraction(1), abs(minimum)) - 1)
-                    weight = float(np.nextafter(weight, -np.inf))
-                    if not math.isfinite(weight) or Fraction(weight) >= minimum:
-                        raise ValueError("Unable to establish empty-guard power bound.")
-                    guard_weights.append(weight)
-                guard_count = 4
-                prepared_sites = np.concatenate((sites, guards))
-                prepared_weights = np.concatenate((values, guard_weights))
-            started = 0.0 if record_native_phase is None else perf_counter()
-            simplices, _ = regular_3d(
-                prepared_sites, prepared_weights, max_tetrahedra=max_pieces
+            self.cell_original_sites = construction.cell_sites
+            self.piece_original_sites = construction.piece_sites
+            self.cell_image_exponents = frozen_array(
+                np.empty((len(construction.cell_sites), 0), dtype=np.int64)
             )
-            edges = _simplex_edges(simplices)
-            if record_native_phase is not None:
-                record_native_phase(
-                    "regular_triangulation", perf_counter() - started, None, 1
-                )
-        directed = np.concatenate((edges, edges[:, ::-1]), axis=0)
-        if directed.size:
-            directed = directed[np.lexsort((directed[:, 1], directed[:, 0]))]
-        counts = np.bincount(directed[:, 0], minlength=prepared_sites.shape[0])
-        offsets = _offsets(counts)
-        neighbors = directed[:, 1].astype(np.int32)
-        construction = restricted_power_cells(
-            prepared_sites,
-            prepared_weights,
-            offsets,
-            neighbors,
-            np.concatenate((split, np.zeros(guard_count, dtype=np.int8))),
-            domain,
-            tetrahedra_,
-            tetrahedron_regions_,
-            tet_face_facets_,
-            max_pieces=max_pieces,
-            max_vertices=max_vertices,
-            work_limit=work_limit,
-            record_native_phase=record_native_phase,
-        )
-        if np.any(construction.cell_sites >= sites.shape[0]):
-            raise RuntimeError("A certified empty guard produced a restricted cell.")
-        self.points = sites
-        self.weights = _frozen(values.copy())
-        self.construction = construction
-        self.neighbor_offsets = _frozen(offsets)
-        self.neighbors = _frozen(neighbors)
-        self.guard_count = guard_count
+            self.piece_image_exponents = frozen_array(
+                np.empty((len(construction.piece_sites), 0), dtype=np.int64)
+            )
+        self.guard_count = result.guard_count
         self.meshcore_identity = meshcore_identity()
-        self.periodic_preparation = None
-        self.preparation_work_units = 0
-        self.preparation_native_charged_work_units = 0
-        self.adjacency_work_units = 0
-        self.cell_original_sites = construction.cell_sites
-        self.piece_original_sites = construction.piece_sites
-        self.cell_image_exponents = _frozen(
-            np.empty((len(construction.cell_sites), 0), dtype=np.int64)
-        )
-        self.piece_image_exponents = _frozen(
-            np.empty((len(construction.piece_sites), 0), dtype=np.int64)
-        )

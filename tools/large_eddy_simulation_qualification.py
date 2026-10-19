@@ -37,8 +37,9 @@ from phydrax.applications.incompressible_flow._immersed_les import (
     compile_fixed_immersed_mac_les_flow,
     FixedImmersedMACLESPlan,
 )
-from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+from phydrax.discretization._cell_mesh import CellMesh
 from phydrax.discretization._conservation_boundary import ExtrapolationBoundary
+from phydrax.discretization._reference_cell_types import CellBlock
 from phydrax.discretization.fem._boundary import FiniteElementBoundarySet
 from phydrax.discretization.fem._generic import (
     FiniteElementFieldSpec,

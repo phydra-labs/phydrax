@@ -1,9 +1,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+import logging
 from typing import final
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -90,6 +92,127 @@ def test_constant_auxiliary_arrays_preserve_schema_and_metadata(
     np.testing.assert_allclose(
         prepared.vjp(direction), 4.0 * point * direction, atol=1e-14
     )
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("storage", ("store", "rematerialize"))
+def test_linearization_action_kernels_reuse_numerical_signature(
+    storage: RematerializationPolicy,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    point = jax.device_put(np.asarray((1.25, 2.5), dtype=np.float64))
+    equation = _Equation(
+        jax.device_put(np.asarray(3.0, dtype=np.float64)),
+        jax.device_put(np.asarray((1.0, 4.0), dtype=np.float64)),
+    )
+    space = ArraySpace((2,), dtype=np.float64)
+    first_direction = jax.device_put(np.asarray((0.5, -0.25), dtype=np.float64))
+    second_direction = jax.device_put(np.asarray((-0.75, 0.125), dtype=np.float64))
+    with jax.log_compiles(True), caplog.at_level(logging.WARNING):
+        prepared = prepare_linearization(
+            equation,
+            point,
+            source=space,
+            target=space,
+            has_aux=True,
+            policy=LinearizationPolicy(storage),
+        )
+        jax.block_until_ready(prepared.primal)
+        first_jvp = jax.block_until_ready(prepared.jvp(first_direction))
+        first_vjp = jax.block_until_ready(prepared.vjp(first_direction))
+    cold_kernels = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Finished XLA compilation")
+    ]
+    assert any("_evaluate_converted" in kernel for kernel in cold_kernels)
+    assert any("_linearized_pushforward" in kernel for kernel in cold_kernels)
+    assert any("_linearized_pullback" in kernel for kernel in cold_kernels)
+    assert all(
+        any(
+            name in kernel
+            for name in (
+                "_evaluate_converted",
+                "_linearized_pushforward",
+                "_linearized_pullback",
+            )
+        )
+        for kernel in cold_kernels
+    )
+    caplog.clear()
+    with jax.log_compiles(True), caplog.at_level(logging.WARNING):
+        second_jvp = jax.block_until_ready(prepared.jvp(second_direction))
+        second_vjp = jax.block_until_ready(prepared.vjp(second_direction))
+    assert not any(
+        record.getMessage().startswith("Finished XLA compilation")
+        for record in caplog.records
+    )
+    jacobian_diagonal = np.asarray((7.5, 15.0), dtype=np.float64)
+    np.testing.assert_array_equal(
+        first_jvp, jacobian_diagonal * np.asarray(first_direction)
+    )
+    np.testing.assert_array_equal(first_vjp, first_jvp)
+    np.testing.assert_array_equal(
+        second_jvp, jacobian_diagonal * np.asarray(second_direction)
+    )
+    np.testing.assert_array_equal(second_vjp, second_jvp)
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("storage", ("store", "rematerialize"))
+def test_linearization_mixed_captures_preserve_higher_derivatives(
+    storage: RematerializationPolicy,
+) -> None:
+    fixed_target = jax.device_put(np.asarray((1.0, 4.0), dtype=np.float64))
+    point = jax.device_put(np.asarray((1.25, 2.5), dtype=np.float64))
+    direction = jax.device_put(np.asarray((0.5, -0.25), dtype=np.float64))
+    scale = jax.device_put(np.asarray(3.0, dtype=np.float64))
+
+    @eqx.filter_jit
+    def actions(
+        traced_scale: Array, traced_point: Array
+    ) -> tuple[Array, Array, Array, _Auxiliary]:
+        def equation(state: Array) -> tuple[Array, _Auxiliary]:
+            return _Equation(traced_scale, fixed_target)(state)
+
+        prepared = prepare_linearization(
+            equation,
+            traced_point,
+            has_aux=True,
+            policy=LinearizationPolicy(storage),
+        )
+        auxiliary = prepared.auxiliary
+        if not isinstance(auxiliary, _Auxiliary):
+            raise TypeError(
+                f"linearization_mixed_captures.auxiliary must retain the declared auxiliary schema; got {type(auxiliary).__name__!r}"
+            )
+        return (
+            prepared.primal,
+            prepared.jvp(direction),
+            prepared.vjp(direction),
+            auxiliary,
+        )
+
+    primal, pushforward, pullback, auxiliary = actions(scale, point)
+    np.testing.assert_array_equal(primal, (1.6875, 6.75))
+    np.testing.assert_array_equal(pushforward, (3.75, -3.75))
+    np.testing.assert_array_equal(pullback, pushforward)
+    assert isinstance(auxiliary.admissible, Array)
+    assert isinstance(auxiliary.counter, Array)
+    assert auxiliary.literal_metadata == (True, 7)
+
+    def tangent_loss(traced_scale: Array, traced_point: Array) -> Array:
+        return jnp.sum(actions(traced_scale, traced_point)[1])
+
+    def adjoint_loss(traced_scale: Array, traced_point: Array) -> Array:
+        return jnp.sum(actions(traced_scale, traced_point)[2])
+
+    tangent_gradients = jax.grad(tangent_loss, argnums=(0, 1))(scale, point)
+    adjoint_gradients = jax.grad(adjoint_loss, argnums=(0, 1))(scale, point)
+    np.testing.assert_array_equal(tangent_gradients[0], 0.0)
+    np.testing.assert_array_equal(tangent_gradients[1], (3.0, -1.5))
+    np.testing.assert_array_equal(adjoint_gradients[0], tangent_gradients[0])
+    np.testing.assert_array_equal(adjoint_gradients[1], tangent_gradients[1])
 
 
 @pytest.mark.strict_jax

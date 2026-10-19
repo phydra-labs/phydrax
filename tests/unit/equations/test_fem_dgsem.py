@@ -8,7 +8,8 @@ import pytest
 
 import phydrax as phx
 from phydrax.discretization._cell_geometry import CellGeometrySpec
-from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+from phydrax.discretization._cell_mesh import CellMesh
+from phydrax.discretization._reference_cell_types import CellBlock
 from phydrax.discretization.fem._boundary import (
     FiniteElementBoundarySet,
     FiniteElementPeriodicFacetPair,

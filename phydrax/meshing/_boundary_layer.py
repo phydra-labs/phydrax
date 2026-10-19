@@ -12,7 +12,7 @@ normalized minimum-norm point of the convex hull of the sector's face normals,
 solved as a simplex-constrained QP by ``phydrax.optim``. Column heights follow
 the explicit schedule, scaled by smooth concave curvature and by BVH-nearest
 medial-crossing probes. Every layer is certified by Bernstein validity and by
-exact-predicate intersection of its cell faces against earlier layers, the wall,
+-predicate intersection of its cell faces against earlier layers, the wall,
 and the obstacles before it is accepted; collisions resolve only through the
 control's explicit collision policy, and every rejection carries the offending
 wall vertices and locations.
@@ -20,7 +20,7 @@ wall vertices and locations.
 Periodic source walls retain their declared identification in both the layer
 volume and cap. Smooth sectors join through quotient edge incidence; fan and
 corner columns retain construction ancestry, and schedule heights and collision
-reductions synchronize across complete column/vertex orbits. Source associations
+reductions synchronize across full column/vertex orbits. Source associations
 and material-domain ownership remain bound to ``BoundaryLayerMesh.source_wall``,
 ``wall_association`` and ``source_domain``, rather than inferred from coordinates.
 """
@@ -39,12 +39,25 @@ from jax import Array
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
+import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._periodic_topology as _owner_phydrax_discretization__periodic_topology
+import phydrax.geometry._domain_coverage as _dependency_phydrax_geometry__mesh_certificates
+import phydrax.geometry._embedding_state as _dependency_phydrax_geometry__embedding_state
+import phydrax.geometry._meshing_domain as _dependency_phydrax_geometry__meshing_domain
+import phydrax.meshing._association_state as association_state_owner
+import phydrax.meshing._audit_topology as _dependency_phydrax_meshing__audit_topology
+import phydrax.meshing._controls as _dependency_phydrax_meshing__controls
+import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
+import phydrax.meshing._reference_root_composition as _owner_phydrax_meshing__reference_root_composition
+import phydrax.meshing._scope as _dependency_phydrax_meshing__scope
+import phydrax.meshing._sweep as _dependency_phydrax_meshing__sweep
+
 from .._bvh import bvh_nearest_items, bvh_overlap_pairs_host, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._meshcore import load_meshcore
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .._validation import finite_real_scalar
+from .._validation import finite_real_scalar, positive_integer
 from ..discretization import (
     CellBlock,
     CellGeometrySpec,
@@ -55,9 +68,6 @@ from ..discretization import (
     certify_cell_geometry_validity,
     point_triangle_distance,
 )
-from ..discretization._cell_geometry_validity import cell_geometry_id
-from ..geometry._mesh_certificates import MeshCertificateLimits, PiecewiseLinearDomain
-from ..geometry._meshing_domain import MeshingDomain
 from ..optim import (
     AcceleratedProximalGradient,
     OptimizationStatus,
@@ -66,17 +76,6 @@ from ..optim import (
     SimplexIndicator,
 )
 from ..typing import checked
-from ._association import GeometryAssociation
-from ._audit_topology import _orient3d, _triangle_pairs_intersect
-from ._contracts import MeshingFailure, MeshingFailureCategory
-from ._controls import (
-    BoundaryLayerCollisionPolicy,
-    BoundaryLayerControl,
-    BoundaryLayerCornerPolicy,
-    BoundaryLayerRoute,
-)
-from ._scope import MeshingEntityKind
-from ._sweep import generate_sweep, SweepControl, SweepMapKind
 from ._trace import MeshingStageKind
 
 
@@ -112,6 +111,9 @@ _SECTOR, _FAN, _CENTER = 0, 1, 2
 # ---------------------------------------------------------------- public records
 
 
+import phydrax.discretization as _owner_phydrax_discretization
+
+
 class BoundaryLayerPolicy(StrictModule, NonTrainableState):
     """Execution bounds of native advancing-layer generation.
 
@@ -137,6 +139,7 @@ class BoundaryLayerPolicy(StrictModule, NonTrainableState):
     validity: CellValidityPolicy
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -156,10 +159,7 @@ class BoundaryLayerPolicy(StrictModule, NonTrainableState):
             ("maximum_collision_iterations", maximum_collision_iterations),
         )
         for name, value in counts:
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise TypeError(f"{name} must be an integer.")
-            if value < 1:
-                raise ValueError(f"{name} must be positive.")
+            value = positive_integer(value, name)
         fractions = {
             name: finite_real_scalar(value, name)
             for name, value in (
@@ -170,16 +170,18 @@ class BoundaryLayerPolicy(StrictModule, NonTrainableState):
         }
         if any(not 0.0 < value < 1.0 for value in fractions.values()):
             raise ValueError(
-                "proximity_fraction, curvature_fraction, and reduction_factor must lie in (0, 1)."
+                f"BoundaryLayerPolicy.fractions must lie in (0, 1); got {fractions!r}"
             )
         tolerance = finite_real_scalar(medial_tolerance, "medial_tolerance")
         if not 0.0 <= tolerance < 1.0:
-            raise ValueError("medial_tolerance must lie in [0, 1).")
+            raise ValueError(
+                f"BoundaryLayerPolicy.medial_tolerance must lie in [0, 1); got {tolerance!r}"
+            )
         if not isinstance(simplex_cap, bool):
-            raise TypeError("simplex_cap must be a bool.")
+            raise TypeError(
+                f"BoundaryLayerPolicy.simplex_cap must be a bool; got {simplex_cap!r}"
+            )
         validity_ = CellValidityPolicy() if validity is None else validity
-        if not isinstance(validity_, CellValidityPolicy):
-            raise TypeError("validity must be CellValidityPolicy or None.")
         self.visibility_iterations = visibility_iterations
         self.proximity_samples = proximity_samples
         self.proximity_fraction = fractions["proximity_fraction"]
@@ -206,7 +208,7 @@ class BoundaryLayerPolicy(StrictModule, NonTrainableState):
 class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     """Measured layer realization and collision-resolution evidence.
 
-    Thicknesses are measured as increments of the exact distance from each
+    Thicknesses are measured as increments of the distance from each
     column's layer vertices to the wall surface (BVH-nearest point-triangle
     distances); per-layer statistics cover every column that carries the layer.
     ``layer_active[k]`` is ``True`` iff at least one surviving column carries
@@ -242,7 +244,9 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     minimum_visibility: float = eqx.field(static=True)
     maximum_stretch: float = eqx.field(static=True)
     unconverged_visibility_count: int = eqx.field(static=True)
-    collision_policy: BoundaryLayerCollisionPolicy = eqx.field(static=True)
+    collision_policy: _dependency_phydrax_meshing__controls.BoundaryLayerCollisionPolicy = eqx.field(
+        static=True
+    )
     predicted_collision_vertex_count: int = eqx.field(static=True)
     detected_collision_count: int = eqx.field(static=True)
     resolution_iterations: int = eqx.field(static=True)
@@ -261,10 +265,14 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
             or not np.all(np.isfinite(requested))
             or np.any(np.asarray(requested) <= 0.0)
         ):
-            raise ValueError("requested_thicknesses must be finite and positive.")
+            raise ValueError(
+                "BoundaryLayerEvidence.requested_thicknesses must be finite and positive; got incompatible requested_thicknesses"
+            )
         layer_active = np.asarray(values["layer_active"], dtype=np.bool_)
         if layer_active.shape != (len(requested),):
-            raise ValueError("layer_active must hold one entry per requested layer.")
+            raise ValueError(
+                "BoundaryLayerEvidence.layer_active must hold one entry per requested layer; got incompatible layer_active"
+            )
         arrays = {
             name: np.asarray(values[name], dtype=np.float64)
             for name in (
@@ -279,7 +287,7 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
             "achieved_growth_rates"
         ].shape != (len(requested) - 1,):
             raise ValueError(
-                "Boundary-layer thickness and growth arrays have invalid shapes."
+                "BoundaryLayerEvidence.measurements must match the requested interval and growth counts; got invalid shapes"
             )
         for name in (
             "achieved_thicknesses",
@@ -291,7 +299,7 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
                 ~np.isnan(array[~layer_active])
             ):
                 raise ValueError(
-                    f"{name} must be finite on active layers and NaN otherwise."
+                    f"{'BoundaryLayerEvidence.' + name} must be finite on active layers and NaN otherwise; got incompatible active/inactive values"
                 )
         growth_active = layer_active[:-1] & layer_active[1:]
         growth = arrays["achieved_growth_rates"]
@@ -299,7 +307,7 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
             ~np.isnan(growth[~growth_active])
         ):
             raise ValueError(
-                "achieved_growth_rates must be finite between active layers and NaN otherwise."
+                "BoundaryLayerEvidence.achieved_growth_rates must be finite between active layers and NaN otherwise; got incompatible achieved_growth_rates"
             )
         column_active = np.asarray(values["column_active"], dtype=np.bool_)
         column_thicknesses = np.asarray(values["column_thicknesses"], dtype=np.float64)
@@ -309,7 +317,7 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
             or column_thicknesses.shape != column_shape
         ):
             raise ValueError(
-                "Measured column thickness and support arrays have invalid shapes."
+                "BoundaryLayerEvidence.column_thicknesses must match interval/column support dimensions; got invalid shapes"
             )
         if (
             np.any(~np.isfinite(column_thicknesses[column_active]))
@@ -318,16 +326,29 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
             or np.any(column_active[1:] & ~column_active[:-1])
         ):
             raise ValueError(
-                "Measured columns require finite carried intervals and nested active support."
+                "BoundaryLayerEvidence.column_active must contain finite carried intervals and nested active support; got incompatible thickness/support arrays"
             )
-        self.column_thicknesses = jnp.asarray(column_thicknesses)
-        self.column_active = jnp.asarray(column_active)
-        self.active_column_counts = jnp.asarray(
-            np.sum(column_active, axis=1), dtype=jnp.int64
+        _host_column_thicknesses = np.asarray(column_thicknesses)
+        _host_column_active = np.asarray(column_active)
+        _host_active_column_counts = np.asarray(
+            np.sum(column_active, axis=1), dtype=np.int64
         )
         for name, array in arrays.items():
-            setattr(self, name, jnp.asarray(array))
-        self.layer_active = jnp.asarray(layer_active)
+            setattr(self, name, np.asarray(array))
+        _host_layer_active = np.asarray(layer_active)
+        (
+            self.column_thicknesses,
+            self.column_active,
+            self.active_column_counts,
+            self.layer_active,
+        ) = jax.device_put(
+            (
+                _host_column_thicknesses,
+                _host_column_active,
+                _host_active_column_counts,
+                _host_layer_active,
+            )
+        )
         self.requested_thicknesses = requested
         integers = (
             "column_count",
@@ -350,8 +371,13 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
         for name in ("minimum_visibility", "maximum_stretch", "minimum_scale"):
             setattr(self, name, float(values[name]))
         policy = values["collision_policy"]
-        if not isinstance(policy, BoundaryLayerCollisionPolicy):
-            raise TypeError("collision_policy must be BoundaryLayerCollisionPolicy.")
+        match policy:
+            case _dependency_phydrax_meshing__controls.BoundaryLayerCollisionPolicy():
+                pass
+            case _:
+                raise TypeError(
+                    "BoundaryLayerEvidence.collision_policy must be BoundaryLayerCollisionPolicy; got an unsupported collision selector"
+                )
         self.collision_policy = policy
         self.cell_counts = tuple(
             (str(kind), int(count)) for kind, count in values["cell_counts"]
@@ -375,9 +401,66 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[BoundaryLayerEvidence], value: BoundaryLayerEvidence, /
+    ) -> BoundaryLayerEvidence:
+        """Revalidate stored measurements and their derived support and identity."""
+        if cls is not BoundaryLayerEvidence or type(value) is not BoundaryLayerEvidence:
+            raise TypeError(
+                "BoundaryLayerEvidence.restore_type must be the registered BoundaryLayerEvidence; "
+                f"got {type(value).__qualname__}"
+            )
+        rebuilt = cls(
+            requested_thicknesses=value.requested_thicknesses,
+            achieved_thicknesses=value.achieved_thicknesses,
+            minimum_thicknesses=value.minimum_thicknesses,
+            maximum_thicknesses=value.maximum_thicknesses,
+            achieved_growth_rates=value.achieved_growth_rates,
+            layer_active=value.layer_active,
+            column_thicknesses=value.column_thicknesses,
+            column_active=value.column_active,
+            column_count=value.column_count,
+            fan_column_count=value.fan_column_count,
+            corner_patch_count=value.corner_patch_count,
+            convex_ridge_count=value.convex_ridge_count,
+            concave_ridge_count=value.concave_ridge_count,
+            rim_vertex_count=value.rim_vertex_count,
+            minimum_visibility=value.minimum_visibility,
+            maximum_stretch=value.maximum_stretch,
+            unconverged_visibility_count=value.unconverged_visibility_count,
+            collision_policy=value.collision_policy,
+            predicted_collision_vertex_count=value.predicted_collision_vertex_count,
+            detected_collision_count=value.detected_collision_count,
+            resolution_iterations=value.resolution_iterations,
+            reduced_vertex_count=value.reduced_vertex_count,
+            terminated_vertex_count=value.terminated_vertex_count,
+            merged_vertex_count=value.merged_vertex_count,
+            minimum_scale=value.minimum_scale,
+            cell_counts=value.cell_counts,
+            certified_valid_count=value.certified_valid_count,
+        )
+        if not np.array_equal(rebuilt.active_column_counts, value.active_column_counts):
+            raise ValueError(
+                "BoundaryLayerEvidence.active_column_counts must match reconstructed interval support; "
+                "got mismatched counts"
+            )
+        if rebuilt.evidence_id != value.evidence_id:
+            raise ValueError(
+                "BoundaryLayerEvidence.evidence_id must match reconstructed measurements; "
+                f"got {value.evidence_id!r}"
+            )
+        return rebuilt
+
+    @checked
+    def validate_restored(self: BoundaryLayerEvidence) -> None:
+        """Validate restored measurements through the stored-field constructor."""
+        type(self).from_stored_fields(self)
+
 
 class BoundaryLayerMesh(StrictModule, NonTrainableState):
-    """Certified layer cells, the exact cap surface, and their evidence.
+    """Certified layer cells, the cap surface, and their evidence.
 
     ``cap`` is the outer front: a surface mesh whose vertex ``i`` is layer-mesh
     vertex ``cap_vertices[i]`` with bitwise-identical coordinates, oriented away
@@ -399,10 +482,14 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
     column_index: Array
     validity: CellValidityCertificate
     evidence: BoundaryLayerEvidence
-    control: BoundaryLayerControl
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl
     source_wall: CellMesh
-    wall_association: GeometryAssociation | None
-    source_domain: MeshingDomain | PiecewiseLinearDomain | None
+    wall_association: association_state_owner.GeometryAssociation | None
+    source_domain: (
+        _dependency_phydrax_geometry__meshing_domain.MeshingDomain
+        | _dependency_phydrax_geometry__mesh_certificates.PiecewiseLinearDomain
+        | None
+    )
     policy_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
@@ -419,10 +506,12 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         /,
         *,
         column_index: np.ndarray,
-        control: BoundaryLayerControl,
+        control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
         source_wall: CellMesh,
-        wall_association: GeometryAssociation | None,
-        source_domain: MeshingDomain | PiecewiseLinearDomain | None,
+        wall_association: association_state_owner.GeometryAssociation | None,
+        source_domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain
+        | _dependency_phydrax_geometry__mesh_certificates.PiecewiseLinearDomain
+        | None,
         policy_id: str,
     ) -> None:
         _wall_selection(source_wall, control, wall_association, source_domain)
@@ -434,7 +523,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             for value in (cap_input, wall_input, layer_input)
         ):
             raise TypeError(
-                "Layer/cap/wall identities and schedule intervals must be integers."
+                "BoundaryLayerMesh.wall_vertices must be integers; got incompatible Layer/cap/wall identities and schedule intervals"
             )
         cap_ids = cap_input.astype(np.int64, copy=False)
         wall_ids = wall_input.astype(np.int64, copy=False)
@@ -446,7 +535,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             or np.any(layers > len(evidence.requested_thicknesses))
         ):
             raise ValueError(
-                "layer_index must hold one declared interval per layer cell."
+                "BoundaryLayerMesh.layer_index must hold one declared interval per layer cell; got incompatible layer_index"
             )
         cell_columns = np.asarray(column_index)
         if (
@@ -455,8 +544,18 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             or np.any(cell_columns < 0)
         ):
             raise ValueError(
-                "column_index must identify the generated front face of every layer cell."
+                "BoundaryLayerMesh.column_index must identify the generated front face of every layer cell; got incompatible column_index"
             )
+        if (
+            cell_columns.dtype.kind == "u"
+            and cell_columns.dtype.itemsize >= np.dtype(np.int64).itemsize
+            and np.any(cell_columns > np.uint64(np.iinfo(np.int64).max))
+        ):
+            raise ValueError(
+                "BoundaryLayerMesh.column_index must fit nonnegative int64 column identities; "
+                "got an out-of-range unsigned value"
+            )
+        cell_columns = cell_columns.astype(np.int64, copy=False)
         vertex_count = mesh.coordinates.shape[0]
         if (
             wall_ids.shape != (source_wall.coordinates.shape[0],)
@@ -464,7 +563,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             or np.any(wall_ids >= vertex_count)
         ):
             raise ValueError(
-                "wall_vertices must hold layer vertex IDs or -1 for unused wall vertices."
+                "BoundaryLayerMesh.wall_vertices must hold layer vertex IDs or -1 for unused wall vertices; got incompatible wall_vertices"
             )
         if (
             np.any(cap_ids < 0)
@@ -472,7 +571,7 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             or np.unique(cap_ids).size != cap_ids.size
         ):
             raise ValueError(
-                "Cap vertex identities must be distinct declared layer vertices."
+                "BoundaryLayerMesh.cap_vertices must be distinct declared layer vertices; got incompatible Cap vertex identities"
             )
         cap_points = (
             np.empty((0, 3), dtype=np.float64)
@@ -483,7 +582,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             np.asarray(mesh.coordinates, dtype=np.float64)[cap_ids].view(np.uint64),
             cap_points.view(np.uint64),
         ):
-            raise ValueError("Cap vertices must be bitwise layer-mesh vertices.")
+            raise ValueError(
+                "BoundaryLayerMesh.cap_vertices must be bitwise layer-mesh vertices; got incompatible Cap vertices"
+            )
         used_wall = wall_ids >= 0
         if not np.array_equal(
             np.asarray(mesh.coordinates, dtype=np.float64)[wall_ids[used_wall]].view(
@@ -494,25 +595,43 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             ),
         ):
             raise ValueError(
-                "Realized wall identities must preserve their actual source coordinates bitwise."
+                "BoundaryLayerMesh.source_wall must preserve their realized source coordinates bitwise; got incompatible Realized wall identities"
             )
         if validity.certified_valid_count != cell_count:
-            raise ValueError("Every boundary-layer cell must be certified valid.")
+            raise ValueError(
+                "BoundaryLayerMesh.validity must be certified valid; got incompatible boundary-layer cell"
+            )
         geometry = CellGeometrySpec.affine(mesh)
         if (
             validity.topology_id != mesh.topology_id
             or validity.geometry_layout_id != geometry.geometry_layout_id
-            or validity.geometry_id != cell_geometry_id(geometry)
+            or validity.geometry_id
+            != _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                geometry
+            )
         ):
             raise ValueError(
-                "Layer validity must bind the actual coordinate map and topology."
+                "BoundaryLayerMesh.validity must bind the realized coordinate map and topology; got incompatible Layer validity"
             )
         self.mesh = mesh
         self.cap = cap
-        self.wall_vertices = jnp.asarray(wall_ids)
-        self.cap_vertices = jnp.asarray(cap_ids)
-        self.layer_index = jnp.asarray(layers)
-        self.column_index = jnp.asarray(cell_columns, dtype=jnp.int64)
+        _host_wall_vertices = np.asarray(wall_ids)
+        _host_cap_vertices = np.asarray(cap_ids)
+        _host_layer_index = np.asarray(layers)
+        _host_column_index = np.asarray(cell_columns, dtype=np.int64)
+        (
+            self.wall_vertices,
+            self.cap_vertices,
+            self.layer_index,
+            self.column_index,
+        ) = jax.device_put(
+            (
+                _host_wall_vertices,
+                _host_cap_vertices,
+                _host_layer_index,
+                _host_column_index,
+            )
+        )
         self.validity = validity
         self.evidence = evidence
         self.control = control
@@ -542,6 +661,44 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[BoundaryLayerMesh], value: BoundaryLayerMesh, /
+    ) -> BoundaryLayerMesh:
+        """Revalidate stored layer incidence, source binding, and result identity."""
+        if cls is not BoundaryLayerMesh or type(value) is not BoundaryLayerMesh:
+            raise TypeError(
+                "BoundaryLayerMesh.restore_type must be the registered BoundaryLayerMesh; "
+                f"got {type(value).__qualname__}"
+            )
+        rebuilt = cls(
+            value.mesh,
+            value.cap,
+            value.wall_vertices,
+            value.cap_vertices,
+            value.layer_index,
+            value.validity,
+            value.evidence,
+            column_index=np.asarray(value.column_index),
+            control=value.control,
+            source_wall=value.source_wall,
+            wall_association=value.wall_association,
+            source_domain=value.source_domain,
+            policy_id=value.policy_id,
+        )
+        if rebuilt.result_id != value.result_id:
+            raise ValueError(
+                "BoundaryLayerMesh.result_id must match reconstructed incidence and source binding; "
+                f"got {value.result_id!r}"
+            )
+        return rebuilt
+
+    @checked
+    def validate_restored(self: BoundaryLayerMesh) -> None:
+        """Validate restored layer incidence through the stored-field constructor."""
+        type(self).from_stored_fields(self)
+
     @property
     def control_id(self) -> str:
         return self.control.control_id
@@ -563,14 +720,14 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
 
 
 def _failure(
-    category: MeshingFailureCategory,
+    category: _leaf_phydrax_meshing__failures.MeshingFailureCategory,
     message: str,
     vertices: np.ndarray,
     points: np.ndarray,
     /,
-) -> MeshingFailure:
+) -> _leaf_phydrax_meshing__failures.MeshingFailure:
     identifiers = np.unique(np.asarray(vertices, dtype=np.int64))
-    return MeshingFailure(
+    return _leaf_phydrax_meshing__failures.MeshingFailure(
         category,
         message,
         stage=_STAGE,
@@ -595,7 +752,7 @@ def _mesh_faces(mesh: CellMesh, /) -> tuple[np.ndarray, np.ndarray]:
                 rows.append(np.asarray(block.vertices, dtype=np.int64))
             case kind:
                 raise ValueError(
-                    f"Boundary-layer surfaces admit triangles and quadrilaterals, not {kind!r}."
+                    f"BoundaryLayerMesh.source_wall must contain triangle or quadrilateral surface cells; got Boundary-layer surfaces admit triangles and quadrilaterals, not {kind!r}."
                 )
         identifiers.append(np.asarray(block.global_ids, dtype=np.int64))
     faces = np.concatenate(rows)
@@ -744,7 +901,7 @@ class _Wall:
     rim_vertex: np.ndarray
 
 
-def _analyze_wall(
+def analyze_wall(
     points: np.ndarray,
     faces: np.ndarray,
     arity: np.ndarray,
@@ -755,16 +912,16 @@ def _analyze_wall(
     normals, areas = _newell_normals(points, faces, arity)
     if np.any(areas[grow] <= 0.0):
         raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "Boundary-layer walls contain degenerate faces.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SOURCE,
+            "BoundaryLayerMesh.source_wall must have nondegenerate, edge-manifold, consistently oriented faces; got boundary-layer walls contain degenerate faces",
             faces[grow & (areas <= 0.0)][:, :3].reshape(-1),
             points,
         )
     (start, _, owner), edges, counts, inverse = _edge_table(faces, arity)
     if np.any(counts > 2):
         raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "Boundary-layer surfaces must be edge-manifold.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SOURCE,
+            "BoundaryLayerMesh.source_wall must be edge-manifold; got incompatible Boundary-layer surfaces",
             edges[counts > 2].reshape(-1),
             points,
         )
@@ -785,8 +942,8 @@ def _analyze_wall(
     inconsistent = interior & (edge_starts[:, 0] == edge_starts[:, 1])
     if np.any(inconsistent):
         raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "Boundary-layer wall faces must be consistently oriented.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SOURCE,
+            "BoundaryLayerMesh.source_wall must be consistently oriented; got incompatible Boundary-layer wall faces",
             edges[inconsistent].reshape(-1),
             points,
         )
@@ -825,21 +982,25 @@ def _analyze_wall(
     )
 
 
-def _split_ridges(wall: _Wall, corner: BoundaryLayerCornerPolicy, /) -> np.ndarray:
+def split_ridges(
+    wall: _Wall,
+    corner: _dependency_phydrax_meshing__controls.BoundaryLayerCornerPolicy,
+    /,
+) -> np.ndarray:
     feature = wall.convex | wall.concave
     match corner:
-        case BoundaryLayerCornerPolicy.REJECT:
+        case _dependency_phydrax_meshing__controls.BoundaryLayerCornerPolicy.REJECT:
             if np.any(feature):
                 raise _failure(
-                    MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    "The REJECT corner policy refuses wall feature edges beyond the feature angle.",
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                    "BoundaryLayerControl.corner must admit the wall ridge incidence; got the REJECT corner policy refuses wall feature edges beyond the feature angle",
                     wall.edges[feature].reshape(-1),
                     wall.points,
                 )
             return np.zeros_like(feature)
-        case BoundaryLayerCornerPolicy.SMOOTH:
+        case _dependency_phydrax_meshing__controls.BoundaryLayerCornerPolicy.SMOOTH:
             return np.zeros_like(feature)
-        case BoundaryLayerCornerPolicy.FAN:
+        case _dependency_phydrax_meshing__controls.BoundaryLayerCornerPolicy.FAN:
             split = wall.convex.copy()
             closed = ~wall.rim_vertex
             # Dangling ridge ends inside closed fans cannot separate sectors.
@@ -854,7 +1015,9 @@ def _split_ridges(wall: _Wall, corner: BoundaryLayerCornerPolicy, /) -> np.ndarr
                 split &= ~remove
             return split
         case _:
-            raise TypeError("corner must be BoundaryLayerCornerPolicy.")
+            raise TypeError(
+                "BoundaryLayerControl.corner must be BoundaryLayerCornerPolicy; got incompatible corner"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -896,7 +1059,7 @@ def _sectors(wall: _Wall, split: np.ndarray, /) -> _Sectors:
         shape=(keys.size, keys.size),
     )
     _, labels = connected_components(graph, directed=False)
-    # Canonical sector order: first incidence in (vertex, face) order.
+    # Standard sector order: first incidence in (vertex, face) order.
     _, first, relabel = np.unique(labels, return_index=True, return_inverse=True)
     rank = np.empty_like(first)
     rank[np.argsort(first, kind="stable")] = np.arange(first.size)
@@ -914,18 +1077,21 @@ def _periodic_sectors(
     feature_angle: float,
     /,
 ) -> tuple[_Sectors, np.ndarray]:
-    """Join smooth sector incidences through authoritative quotient edge orbits."""
-    from ..discretization._periodic_topology import _lifted_loops
+    """Join smooth sector incidences through declared quotient edge orbits."""
 
     topology = source.periodic_topology
     if topology is None:
-        raise ValueError("Periodic sectors require a bound source topology.")
+        raise ValueError(
+            "BoundaryLayerMesh.source_wall must provide a bound source topology; got missing or incompatible a bound source topology"
+        )
     orbit, _, _ = (np.asarray(value) for value in topology.orbits(1))
     vertex_roots = np.asarray(topology.vertex_representatives)
     rotations = topology.orbit_isometries(0)[:, :3, :3]
     edge_rows = {
         tuple(sorted(corners.tolist())): int(row)
-        for rows, loops in _lifted_loops(source, 1)
+        for rows, loops in _owner_phydrax_discretization__periodic_topology.lifted_loops(
+            source, 1
+        )
         for row, corners in zip(rows, loops, strict=True)
     }
     roots = np.arange(sectors.sector_vertex.size, dtype=np.int64)
@@ -981,8 +1147,8 @@ def _synchronize_periodic_directions(
     visibility = np.min(np.sum(directions.normals * direction[:, None], axis=-1), axis=1)
     if np.any(visibility <= 0.0):
         raise _failure(
-            MeshingFailureCategory.CONTROL_CONFLICT,
-            "Periodic wall sectors have no shared visible growth direction.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+            "BoundaryLayerMesh.source_wall must admit a shared visible periodic growth direction; got periodic wall sectors have no shared visible growth direction",
             sectors.sector_vertex[visibility <= 0.0],
             wall.points,
         )
@@ -1058,7 +1224,7 @@ def _apply_constraints(direction: np.ndarray, constraints: _Constraints, /) -> n
 def _sector_directions(
     wall: _Wall,
     sectors: _Sectors,
-    control: BoundaryLayerControl,
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
     policy: BoundaryLayerPolicy,
     /,
 ) -> _Directions:
@@ -1078,8 +1244,8 @@ def _sector_directions(
     constraints = _constraint_normals(wall, sectors, count)
     if np.any(constraints.count > 2):
         raise _failure(
-            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "Attached rim columns meet more than two adjacent surfaces.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            "BoundaryLayerMesh.source_wall must admit visible growth directions compatible with adjacent rim planes; got attached rim columns meet more than two adjacent surfaces",
             sectors.sector_vertex[constraints.count > 2],
             wall.points,
         )
@@ -1087,9 +1253,8 @@ def _sector_directions(
     visibility = np.min(np.sum(normals * direction[:, None, :], axis=-1), axis=1)
     if np.any(visibility <= 0.0):
         raise _failure(
-            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "No visible column direction exists at concave corners or folds "
-            f"(minimum visibility {float(np.min(visibility)):.6g}).",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            f"BoundaryLayerMesh.source_wall must admit a visible growth direction; got minimum visibility {float(np.min(visibility)):.6g} at concave corners or folds",
             sectors.sector_vertex[visibility <= 0.0],
             wall.points,
         )
@@ -1193,8 +1358,8 @@ def _fan_lists(
     )
     if np.any(sector_a == sector_b):
         raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            "A convex ridge does not separate wall sectors.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SOURCE,
+            "BoundaryLayerMesh.source_wall must admit separated, unfolded convex-ridge sectors; got a convex ridge does not separate wall sectors",
             ends[np.any(sector_a == sector_b, axis=1)].reshape(-1),
             wall.points,
         )
@@ -1203,8 +1368,8 @@ def _fan_lists(
     )
     if np.any(angle >= np.pi - 1.0e-6):
         raise _failure(
-            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "A convex ridge folds its sector directions back onto each other.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            "BoundaryLayerMesh.source_wall must admit separated, unfolded convex-ridge sectors; got a convex ridge folds its sector directions back onto each other",
             ends[np.any(angle >= np.pi - 1.0e-6, axis=1)].reshape(-1),
             wall.points,
         )
@@ -1233,7 +1398,7 @@ def _build_front(
     sectors: _Sectors,
     split: np.ndarray,
     directions: _Directions,
-    control: BoundaryLayerControl,
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
     /,
     *,
     sector_orbits: np.ndarray | None = None,
@@ -1407,8 +1572,8 @@ def _corner_patches(
             by_sector.setdefault(int(sector_b[index, side]), []).append((index, side))
         if any(len(values) != 2 for values in by_sector.values()):
             raise _failure(
-                MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "A wall corner does not form one closed cycle of ridges and sectors.",
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                "BoundaryLayerMesh.source_wall must have one closed ridge/sector cycle at each corner; got a wall corner does not form one closed cycle of ridges and sectors",
                 np.asarray([vertex]),
                 wall.points,
             )
@@ -1425,8 +1590,8 @@ def _corner_patches(
             current = following[0]
         if current != start or len(cycle) < 3:
             raise _failure(
-                MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                "A wall corner does not form one closed cycle of ridges and sectors.",
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                "BoundaryLayerMesh.source_wall must have one closed ridge/sector cycle at each corner; got a wall corner does not form one closed cycle of ridges and sectors",
                 np.asarray([vertex]),
                 wall.points,
             )
@@ -1496,8 +1661,8 @@ def _triangle_distance(triangles: np.ndarray) -> Any:
     return distance
 
 
-def _nearest_distances(triangles: np.ndarray, queries: np.ndarray, /) -> np.ndarray:
-    """Exact nearest point-triangle distances through a float64 BVH."""
+def nearest_distances(triangles: np.ndarray, queries: np.ndarray, /) -> np.ndarray:
+    """nearest point-triangle distances through a float64 BVH."""
     bvh = prepare_bvh(
         np.min(triangles, axis=1), np.max(triangles, axis=1), dtype=jnp.float64
     )
@@ -1547,7 +1712,7 @@ def _proximity_limits(
         origin[:, None, :]
         + heights[..., None] * front.column_direction[columns][:, None, :]
     )
-    nearest = _nearest_distances(triangles, probes.reshape(-1, 3)).reshape(
+    nearest = nearest_distances(triangles, probes.reshape(-1, 3)).reshape(
         columns.size, samples
     )
     own_corners = wall.points[grow_triangles[padded[front.column_vertex[columns]]]]
@@ -1700,7 +1865,7 @@ def _layer_cells(
     column_ids: np.ndarray,
     /,
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
-    """Standard collapse templates and their authoritative front-face columns."""
+    """Standard collapse templates and their declared front-face columns."""
     cells: dict[str, list[np.ndarray]] = {name: [] for name in _VOLUME_KINDS}
     owners: dict[str, list[np.ndarray]] = {name: [] for name in _VOLUME_KINDS}
 
@@ -1783,7 +1948,9 @@ def _layer_cells(
         ~none & ~(pair_v & pair_w) & ~((pair_v ^ pair_w) & (np.sum(v, axis=1) == 2))
     )
     if np.any(irregular):
-        raise ValueError("Quadrilateral front faces admit only paired side collapses.")
+        raise ValueError(
+            "BoundaryLayerMesh.source_wall must admit paired-side quadrilateral collapse templates; got quadrilateral front faces admit only paired side collapses"
+        )
     return (
         {
             name: np.concatenate(values).reshape(-1, _CELL_ARITY[name]).astype(np.int64)
@@ -1799,7 +1966,7 @@ def _layer_cells(
 def _cell_triangles(
     cells: dict[str, np.ndarray], /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Triangulated cell faces with owning (kind, row) pairs."""
+    """Triangulated cell faces with defining (kind, row) pairs."""
     triangles = []
     kinds = []
     owners = []
@@ -1855,7 +2022,7 @@ def _cell_mesh(
 
 
 @dataclass(frozen=True, slots=True)
-class _Environment:
+class Environment:
     """Fixed triangles the layers must not cross.
 
     Wall triangles index the leading wall vertices of the layer points (so shared
@@ -1870,11 +2037,11 @@ class _Environment:
     obstacle_triangles: np.ndarray
 
 
-def _certify_cells(
+def certify_cells(
     points: np.ndarray,
     cells: dict[str, np.ndarray],
     accepted: list[dict[str, np.ndarray]],
-    environment: _Environment,
+    environment: Environment,
     policy: BoundaryLayerPolicy,
     /,
 ) -> tuple[dict[str, np.ndarray], int]:
@@ -1911,7 +2078,7 @@ def _certify_cells(
     first, second = first[keep], second[keep]
     if not first.size:
         return bad, 0
-    hit, certain = _triangle_pairs_intersect(
+    hit, certain = _dependency_phydrax_meshing__audit_topology.triangle_pairs_intersect(
         combined_points, triangles[first], triangles[second]
     )
     side = np.zeros((triangles.shape[0],), dtype=np.bool_)
@@ -1924,11 +2091,12 @@ def _certify_cells(
         below = np.zeros((rows.size,), dtype=np.bool_)
         known_all = np.ones((rows.size,), dtype=np.bool_)
         for corner in range(3):
-            sign, known = _orient3d(
+            sign, known = _dependency_phydrax_meshing__audit_topology.orientation3d_signs(
                 combined_points[plane[:, 0]],
                 combined_points[plane[:, 1]],
                 combined_points[plane[:, 2]],
                 combined_points[triangles[first[rows], corner]],
+                budget=None,
             )
             above |= sign > 0
             below |= sign < 0
@@ -1965,8 +2133,8 @@ def _merge_pairs(
     unpaired = vertices[counts[vertices] != 1]
     if unpaired.size:
         raise _failure(
-            MeshingFailureCategory.CONTROL_CONFLICT,
-            "MERGE pairs smooth single-column fronts only; colliding feature vertices remain.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+            "BoundaryLayerControl.collision must admit smooth, mutually paired, aligned opposing fronts; got mERGE pairs smooth single-column fronts only; colliding feature vertices remain",
             unpaired,
             wall.points,
         )
@@ -1994,8 +2162,8 @@ def _merge_pairs(
     )
     if not np.all(valid):
         raise _failure(
-            MeshingFailureCategory.CONTROL_CONFLICT,
-            "MERGE requires mutually paired, antiparallel, aligned opposing columns.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+            "BoundaryLayerControl.collision must provide mutually paired, antiparallel, aligned opposing columns; got missing or incompatible mutually paired, antiparallel, aligned opposing columns",
             vertices[~valid],
             wall.points,
         )
@@ -2011,8 +2179,8 @@ def _merge_pairs(
             image = tuple(sorted(int(back[value]) for value in members))
             if image not in lookup:
                 raise _failure(
-                    MeshingFailureCategory.CONTROL_CONFLICT,
-                    "MERGE requires face-to-face paired opposing fronts.",
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+                    "BoundaryLayerControl.collision must provide face-to-face paired opposing fronts; got missing or incompatible face-to-face paired opposing fronts",
                     members,
                     wall.points,
                 )
@@ -2041,7 +2209,7 @@ def _initial_columns(
     limits: np.ndarray,
     medial: np.ndarray,
     curvature_limited: np.ndarray,
-    control: BoundaryLayerControl,
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
     graph: Any,
     /,
 ) -> tuple[_Columns, int]:
@@ -2059,39 +2227,37 @@ def _initial_columns(
     merged_top = np.full((front.column_vertex.size,), -1, dtype=np.int64)
     fraction = control.minimum_thickness_fraction
     match control.collision:
-        case BoundaryLayerCollisionPolicy.FAIL:
+        case _dependency_phydrax_meshing__controls.BoundaryLayerCollisionPolicy.FAIL:
             if np.any(predicted):
                 raise _failure(
-                    MeshingFailureCategory.CONTROL_CONFLICT,
-                    "Boundary-layer fronts collide with other walls or themselves "
-                    f"(minimum admissible scale {float(np.min(ratio)):.6g}).",
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+                    f"BoundaryLayerControl.schedule must fit curvature and surface-clearance bounds; got colliding fronts with minimum admissible scale {float(np.min(ratio)):.6g}",
                     np.flatnonzero(predicted),
                     wall.points,
                 )
-        case BoundaryLayerCollisionPolicy.REDUCE_THICKNESS:
+        case _dependency_phydrax_meshing__controls.BoundaryLayerCollisionPolicy.REDUCE_THICKNESS:
             scale = _smooth_scale(
                 np.minimum(1.0, ratio), graph, control.smoothing_iterations
             )
             if np.any(scale[wall.wall_vertices] < fraction):
                 raise _failure(
-                    MeshingFailureCategory.CONTROL_CONFLICT,
-                    "Thickness reduction below the minimum thickness fraction "
-                    f"(required scale {float(np.min(scale[wall.wall_vertices])):.6g} < {fraction:.6g}).",
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+                    f"BoundaryLayerControl.minimum_thickness_fraction must bound every reduced column; got required scale {float(np.min(scale[wall.wall_vertices])):.6g} < {fraction:.6g}",
                     wall.wall_vertices[scale[wall.wall_vertices] < fraction],
                     wall.points,
                 )
-        case BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY:
+        case _dependency_phydrax_meshing__controls.BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY:
             allowed = np.sum(
                 levels[None, 1:] <= ratio[:, None] * total * (1.0 + 1.0e-12), axis=1
             )
             count = _smooth_counts(np.minimum(count, allowed), graph)
             _require_first_layer(wall, count)
-        case BoundaryLayerCollisionPolicy.MERGE:
+        case _dependency_phydrax_meshing__controls.BoundaryLayerCollisionPolicy.MERGE:
             limited = predicted & curvature_limited
             if np.any(limited):
                 raise _failure(
-                    MeshingFailureCategory.CONTROL_CONFLICT,
-                    "MERGE joins opposing fronts only; curvature-limited fronts collide.",
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+                    "BoundaryLayerControl.minimum_thickness_fraction must admit the requested schedule under curvature and collision bounds; got mERGE joins opposing fronts only; curvature-limited fronts collide",
                     np.flatnonzero(limited),
                     wall.points,
                 )
@@ -2107,7 +2273,9 @@ def _initial_columns(
                     merged_top,
                 )
         case _:
-            raise TypeError("collision must be BoundaryLayerCollisionPolicy.")
+            raise TypeError(
+                "BoundaryLayerControl.collision must be BoundaryLayerCollisionPolicy; got an unsupported collision selector"
+            )
     return (
         _Columns(levels, stretch, scale, count, merged_top),
         int(np.count_nonzero(predicted)),
@@ -2133,8 +2301,8 @@ def _merge_template(
     scale[vertices] = 0.5 * gap[vertices] / column_height[column_of[vertices]]
     if np.any(scale[vertices] < fraction):
         raise _failure(
-            MeshingFailureCategory.CONTROL_CONFLICT,
-            "Merged fronts compress layers below the minimum thickness fraction.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+            "BoundaryLayerControl.minimum_thickness_fraction must bound every merged physical interval; got merged fronts compress layers below the minimum thickness fraction",
             vertices[scale[vertices] < fraction],
             wall.points,
         )
@@ -2146,8 +2314,8 @@ def _grow_layers(
     wall: _Wall,
     front: _Front,
     columns: _Columns,
-    environment: _Environment,
-    control: BoundaryLayerControl,
+    environment: Environment,
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
     policy: BoundaryLayerPolicy,
     graph: Any,
     /,
@@ -2185,7 +2353,7 @@ def _grow_layers(
                 _level_ids(front, columns, base, layer + 1),
                 column_ids,
             )
-            bad, hits = _certify_cells(points, cells, accepted, environment, policy)
+            bad, hits = certify_cells(points, cells, accepted, environment, policy)
             if any(np.any(mask) for mask in bad.values()):
                 break
             accepted.append(cells)
@@ -2205,7 +2373,7 @@ def _grow_layers(
         )
         vertices = vertices[np.isin(vertices, wall.wall_vertices)]
         match control.collision:
-            case BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY:
+            case _dependency_phydrax_meshing__controls.BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY:
                 count = columns.count.copy()
                 count[vertices] = np.minimum(count[vertices], layer)
                 count = _smooth_counts(count, graph)
@@ -2217,14 +2385,14 @@ def _grow_layers(
                     count,
                     columns.merged_top,
                 )
-            case BoundaryLayerCollisionPolicy.REDUCE_THICKNESS:
+            case _dependency_phydrax_meshing__controls.BoundaryLayerCollisionPolicy.REDUCE_THICKNESS:
                 scale = columns.scale.copy()
                 scale[vertices] *= policy.reduction_factor
                 scale = _smooth_scale(scale, graph, control.smoothing_iterations)
                 if np.any(scale[wall.wall_vertices] < control.minimum_thickness_fraction):
                     raise _failure(
-                        MeshingFailureCategory.CONTROL_CONFLICT,
-                        "Certified collisions persist at the minimum thickness fraction.",
+                        _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+                        "BoundaryLayerPolicy.maximum_collision_iterations must admit a collision-free, certified layer realization; got certified collisions persist at the minimum thickness fraction",
                         vertices,
                         wall.points,
                     )
@@ -2235,19 +2403,23 @@ def _grow_layers(
                     columns.count,
                     columns.merged_top,
                 )
-            case BoundaryLayerCollisionPolicy.FAIL | BoundaryLayerCollisionPolicy.MERGE:
+            case (
+                _dependency_phydrax_meshing__controls.BoundaryLayerCollisionPolicy.FAIL
+                | _dependency_phydrax_meshing__controls.BoundaryLayerCollisionPolicy.MERGE
+            ):
                 raise _failure(
-                    MeshingFailureCategory.CONTROL_CONFLICT,
-                    f"Layer {layer} cells intersect or are not certified valid "
-                    f"({hits} certified intersections).",
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+                    f"BoundaryLayerMesh.validity must certify every proposed layer cell; got layer {layer} with {hits} certified intersections or invalid cells",
                     vertices,
                     wall.points,
                 )
             case _:
-                raise TypeError("collision must be BoundaryLayerCollisionPolicy.")
+                raise TypeError(
+                    "BoundaryLayerControl.collision must be BoundaryLayerCollisionPolicy; got an unsupported collision selector"
+                )
     raise _failure(
-        MeshingFailureCategory.CONTROL_CONFLICT,
-        "Collision resolution did not converge within the iteration limit.",
+        _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+        "BoundaryLayerPolicy.maximum_collision_iterations must admit a collision-free, certified layer realization; got collision resolution did not converge within the iteration limit",
         wall.wall_vertices,
         wall.points,
     )
@@ -2258,8 +2430,8 @@ def _require_first_layer(wall: _Wall, count: np.ndarray, /) -> None:
     empty = wall.wall_vertices[count[wall.wall_vertices] < 1]
     if empty.size:
         raise _failure(
-            MeshingFailureCategory.CONTROL_CONFLICT,
-            "Local termination would remove the first layer; the first layer itself collides.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+            "BoundaryLayerMesh.source_wall must retain a collision-free first interval at every selected vertex; got local termination would remove the first layer; the first layer itself collides",
             empty,
             wall.points,
         )
@@ -2306,7 +2478,7 @@ def _cap_pyramids(
     cap: np.ndarray,
     arity: np.ndarray,
     accepted: list[dict[str, np.ndarray]],
-    environment: _Environment,
+    environment: Environment,
     policy: BoundaryLayerPolicy,
     /,
 ) -> tuple[np.ndarray, dict[str, np.ndarray], np.ndarray, np.ndarray]:
@@ -2329,7 +2501,7 @@ def _cap_pyramids(
         pyramids = np.concatenate((quads[:, (0, 1, 2, 3)], apex_ids[:, None]), axis=1)
         cells = dict(empty)
         cells["pyramid"] = pyramids
-        bad, _ = _certify_cells(candidate, cells, accepted, environment, policy)
+        bad, _ = certify_cells(candidate, cells, accepted, environment, policy)
         if not np.any(bad["pyramid"]):
             sides = np.concatenate(
                 [
@@ -2347,8 +2519,8 @@ def _cap_pyramids(
             return candidate, cells, faces, np.full((faces.shape[0],), 3)
         height = np.where(bad["pyramid"], 0.5 * height, height)
     raise _failure(
-        MeshingFailureCategory.CONTROL_CONFLICT,
-        "Transition pyramids on the layer cap collide or are not certified valid.",
+        _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+        "BoundaryLayerPolicy.simplex_cap must admit collision-free, certified transition pyramids; got transition pyramids on the layer cap collide or are not certified valid",
         quads[bad["pyramid"]].reshape(-1),
         points,
     )
@@ -2364,7 +2536,7 @@ def _measured_thicknesses(
     grow_triangles, _ = _split_polygons(wall.faces[wall.grow], wall.arity[wall.grow])
     total = front.column_vertex.size
     level_points = points[wall.points.shape[0] :].reshape(layers, total, 3)
-    distance = _nearest_distances(
+    distance = nearest_distances(
         wall.points[grow_triangles], level_points.reshape(-1, 3)
     ).reshape(layers, total)
     distance = np.concatenate((np.zeros((1, total)), distance))
@@ -2389,7 +2561,7 @@ def _require_measured_schedule(
     points: np.ndarray,
     column_vertices: np.ndarray,
     evidence: BoundaryLayerEvidence,
-    control: BoundaryLayerControl,
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
     /,
 ) -> None:
     """Apply physical thickness and growth bounds to every carried interval."""
@@ -2415,8 +2587,8 @@ def _require_measured_schedule(
     if np.any(bad):
         vertices = column_vertices[np.any(bad, axis=0)]
         raise _failure(
-            MeshingFailureCategory.CONTROL_CONFLICT,
-            "Measured active layer columns violate the requested physical thickness or growth bounds.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+            "BoundaryLayerControl.schedule must match carried physical thickness and growth bounds; got measured active layer columns violate the requested physical thickness or growth bounds",
             vertices,
             points,
         )
@@ -2431,7 +2603,9 @@ def _periodic_layer_vertices(
     """Propagate wall-orbit and schedule identities to every constructed vertex."""
     topology = source.periodic_topology
     if topology is None:
-        raise ValueError("Layer vertex orbits require periodic source topology.")
+        raise ValueError(
+            "BoundaryLayerMesh.source_wall must provide periodic source topology; got missing or incompatible periodic source topology"
+        )
     base = source.coordinates.shape[0]
     total = front.column_vertex.size
     roots = np.arange(point_count, dtype=np.int64)
@@ -2457,16 +2631,19 @@ def _bind_layer_periodic_mesh(
     /,
 ) -> CellMesh:
     """Bind a compact layer/cap carrier using construction identities, never proximity."""
-    from ..discretization import PeriodicMeshTopology
 
     topology = source.periodic_topology
     if topology is None:
-        raise ValueError("Periodic layer binding requires periodic source topology.")
+        raise ValueError(
+            "BoundaryLayerMesh.source_wall must provide periodic source topology; got missing or incompatible periodic source topology"
+        )
     labels = roots[retained]
     _, first, inverse = np.unique(labels, return_index=True, return_inverse=True)
     representatives = first[inverse]
     exponents = shifts[retained] - shifts[retained[representatives]]
-    descriptor = PeriodicMeshTopology(target, topology.cell, representatives, exponents)
+    descriptor = _owner_phydrax_discretization.PeriodicMeshTopology(
+        target, topology.cell, representatives, exponents
+    )
     return CellMesh(
         target.coordinates,
         target.blocks,
@@ -2475,20 +2652,23 @@ def _bind_layer_periodic_mesh(
     )
 
 
-def _grow_boundary_layers(
+@checked
+def grow_boundary_layers(
     points: np.ndarray,
     faces: np.ndarray,
     arity: np.ndarray,
     grow: np.ndarray,
     obstacle_points: np.ndarray,
     obstacle_triangles: np.ndarray,
-    control: BoundaryLayerControl,
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
     policy: BoundaryLayerPolicy,
     /,
     *,
     source_wall: CellMesh,
-    wall_association: GeometryAssociation | None,
-    source_domain: MeshingDomain | PiecewiseLinearDomain | None,
+    wall_association: association_state_owner.GeometryAssociation | None,
+    source_domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain
+    | _dependency_phydrax_geometry__mesh_certificates.PiecewiseLinearDomain
+    | None,
 ) -> BoundaryLayerMesh:
     """Grow certified layers from ``grow`` faces of one oriented surface mesh."""
     source_faces, source_arity = _mesh_faces(source_wall)
@@ -2504,14 +2684,16 @@ def _grow_boundary_layers(
         )
     ):
         raise ValueError(
-            "The raw layer front must bind its exact source wall and physical selection."
+            "grow_boundary_layers.source_wall must bind its source wall and physical selection; got incompatible raw layer front"
         )
     if not np.any(grow):
-        raise ValueError("Boundary layers require at least one wall face.")
-    # Layer certification decides exact coplanar contacts; no filtered fallback.
+        raise ValueError(
+            "grow_boundary_layers.source_wall must provide at least one wall face; got missing or incompatible at least one wall face"
+        )
+    # Layer certification decides coplanar contacts; no filtered fallback.
     load_meshcore()
-    wall = _analyze_wall(points, faces, arity, grow, control.feature_angle)
-    split = _split_ridges(wall, control.corner)
+    wall = analyze_wall(points, faces, arity, grow, control.feature_angle)
+    split = split_ridges(wall, control.corner)
     sectors = _sectors(wall, split)
     rotations = None
     if source_wall.periodic_topology is not None:
@@ -2530,10 +2712,8 @@ def _grow_boundary_layers(
     too_stretched = stretch > control.maximum_corner_stretch
     if np.any(too_stretched):
         raise _failure(
-            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-            "Concave corner columns need a height stretch of "
-            f"{float(np.max(stretch)):.6g} > maximum_corner_stretch "
-            f"{control.maximum_corner_stretch:.6g}.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+            f"BoundaryLayerControl.maximum_corner_stretch must bound the required column stretch; got {float(np.max(stretch)):.6g} > {control.maximum_corner_stretch:.6g}",
             front.column_vertex[too_stretched],
             points,
         )
@@ -2547,9 +2727,7 @@ def _grow_boundary_layers(
     )
     wall_triangles, _ = _split_polygons(faces, arity)
     grown = np.concatenate((grow[arity == 3], np.repeat(grow[arity == 4], 2)))
-    environment = _Environment(
-        wall_triangles, ~grown, obstacle_points, obstacle_triangles
-    )
+    environment = Environment(wall_triangles, ~grown, obstacle_points, obstacle_triangles)
     vertex_orbits = (
         None
         if source_wall.periodic_topology is None
@@ -2626,14 +2804,16 @@ def _assemble(
     stretch: np.ndarray,
     predicted: int,
     resolution: _Resolution,
-    environment: _Environment,
-    control: BoundaryLayerControl,
+    environment: Environment,
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
     policy: BoundaryLayerPolicy,
     /,
     *,
     source_wall: CellMesh,
-    wall_association: GeometryAssociation | None,
-    source_domain: MeshingDomain | PiecewiseLinearDomain | None,
+    wall_association: association_state_owner.GeometryAssociation | None,
+    source_domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain
+    | _dependency_phydrax_geometry__mesh_certificates.PiecewiseLinearDomain
+    | None,
 ) -> BoundaryLayerMesh:
     columns = resolution.columns
     layers = columns.levels.size - 1
@@ -2685,8 +2865,8 @@ def _assemble(
             ]
         )
         raise _failure(
-            MeshingFailureCategory.AUDIT_FAILED,
-            "Assembled boundary-layer cells are not all certified valid.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.AUDIT_FAILED,
+            "BoundaryLayerMesh.validity must certify every published layer cell; got assembled boundary-layer cells are not all certified valid",
             offending,
             all_points,
         )
@@ -2750,29 +2930,27 @@ def _assemble(
 
 def _wall_selection(
     wall: CellMesh,
-    control: BoundaryLayerControl,
-    association: GeometryAssociation | None,
-    domain: MeshingDomain | PiecewiseLinearDomain | None,
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
+    association: association_state_owner.GeometryAssociation | None,
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain
+    | _dependency_phydrax_geometry__mesh_certificates.PiecewiseLinearDomain
+    | None,
     /,
 ) -> np.ndarray:
     """Resolve physical wall identities against explicitly associated mesh cells."""
-    if domain is not None and not isinstance(
-        domain, (MeshingDomain, PiecewiseLinearDomain)
-    ):
-        raise TypeError(
-            "source_domain must be MeshingDomain, PiecewiseLinearDomain, or None."
-        )
     if wall.topological_dimension != 2 or wall.ambient_dimension != 3:
-        raise ValueError("The source wall must be a surface mesh in three dimensions.")
+        raise ValueError(
+            "BoundaryLayerControl.wall_scope must be a surface mesh in three dimensions; got incompatible source wall"
+        )
     cells = wall.entity_set(2)
     identifiers = np.sort(np.asarray(cells.entity_ids, dtype=np.int64))
     scope = control.wall_scope
     selected = np.asarray(scope.entity_ids, dtype=np.int64)
     if scope.entity_dimension != 2:
-        raise ValueError("A physical wall scope must select surface faces.")
+        raise ValueError(
+            "BoundaryLayerControl.wall_scope must select surface faces; got incompatible physical wall scope"
+        )
     if association is not None:
-        if not isinstance(association, GeometryAssociation):
-            raise TypeError("wall_association must be GeometryAssociation or None.")
         if (
             association.target_entity_set_id != cells.entity_set_id
             or not np.array_equal(
@@ -2781,27 +2959,30 @@ def _wall_selection(
             or not association.complete
         ):
             raise ValueError(
-                "A physical wall association must completely bind the actual source wall cells."
+                "BoundaryLayerControl.wall_scope must completely bind the realized source wall cells; got incompatible physical wall association"
             )
-    if scope.entity_kind is MeshingEntityKind.MESH:
+    if scope.entity_kind is _dependency_phydrax_meshing__scope.MeshingEntityKind.MESH:
         if (
             scope.source_id != wall.mesh_id
             or scope.source_revision != wall.numeric_version
             or scope.entity_set_id != cells.entity_set_id
         ):
-            raise ValueError("The mesh wall scope must bind its exact source wall mesh.")
+            raise ValueError(
+                "BoundaryLayerControl.wall_scope must bind its source wall mesh; got incompatible mesh wall scope"
+            )
         if np.setdiff1d(selected, identifiers).size:
             raise ValueError(
-                "The physical wall scope selects mesh cells absent from its source."
+                "BoundaryLayerControl.wall_scope must bind the selected source faces, revision, and association; got the physical wall scope selects mesh cells absent from its source"
             )
         return np.isin(identifiers, selected)
     if (
-        scope.entity_kind is not MeshingEntityKind.GEOMETRY
+        scope.entity_kind
+        is not _dependency_phydrax_meshing__scope.MeshingEntityKind.GEOMETRY
         or association is None
         or domain is None
     ):
         raise ValueError(
-            "Geometry wall scopes require their authoritative domain and source-to-wall cell association."
+            "BoundaryLayerControl.wall_scope must provide their declared domain and source-to-wall cell association; got missing or incompatible their declared domain and source-to-wall cell association"
         )
     if (
         association.source_id != scope.source_id
@@ -2810,52 +2991,57 @@ def _wall_selection(
         or np.any(np.asarray(association.source_indices) < 0)
     ):
         raise ValueError(
-            "The physical geometry wall scope must match the association's source revision and face identities."
+            "BoundaryLayerControl.wall_scope must match the association's source revision and face identities; got incompatible physical geometry wall scope"
         )
     if (
         domain.source_id != scope.source_id
         or domain.source_revision != scope.source_revision
     ):
         raise ValueError(
-            "The physical wall domain must bind the declared original source revision."
+            "BoundaryLayerControl.wall_scope must bind the declared source revision; got incompatible physical wall domain"
         )
-    if isinstance(domain, MeshingDomain):
-        if scope.entity_set_id != domain.entity_set_id(2):
-            raise ValueError(
-                "The wall scope must bind the domain's exact qualified face entity set."
+    match domain:
+        case _dependency_phydrax_geometry__meshing_domain.MeshingDomain():
+            if scope.entity_set_id != domain.entity_set_id(2):
+                raise ValueError(
+                    "BoundaryLayerControl.wall_scope must bind the domain's qualified face entity set; got incompatible wall scope"
+                )
+            slots = dict(
+                zip(
+                    zip(
+                        domain.source_indices[2],
+                        domain.source_occurrences[2],
+                        strict=True,
+                    ),
+                    domain.scope_indices(2),
+                    strict=True,
+                )
             )
-        slots = dict(
-            zip(
-                zip(domain.source_indices[2], domain.source_occurrences[2], strict=True),
-                domain.scope_indices(2),
-                strict=True,
+            classes = tuple(
+                zip(
+                    np.asarray(association.source_indices, dtype=np.int64).tolist(),
+                    association.source_entities.occurrence_paths(),
+                    strict=True,
+                )
             )
-        )
-        classes = tuple(
-            zip(
-                np.asarray(association.source_indices, dtype=np.int64).tolist(),
-                association.source_occurrence_paths,
-                strict=True,
-            )
-        )
-        if any(key not in slots for key in classes):
-            raise ValueError(
-                "The wall association names definition/occurrence faces absent from its actual domain."
-            )
-        source_indices = np.asarray([slots[key] for key in classes], dtype=np.int64)
-    else:
-        if any(association.source_occurrence_paths):
-            raise ValueError(
-                "Piecewise-linear source facets cannot carry CAD occurrence paths."
-            )
-        source_indices = np.asarray(association.source_indices, dtype=np.int64)
-        if np.any(source_indices >= domain.facets.shape[0]):
-            raise ValueError(
-                "The wall association names source facets absent from its declared domain."
-            )
+            if any(key not in slots for key in classes):
+                raise ValueError(
+                    "BoundaryLayerControl.wall_scope must bind the selected source faces, revision, and association; got the wall association names definition/occurrence faces absent from its realized domain"
+                )
+            source_indices = np.asarray([slots[key] for key in classes], dtype=np.int64)
+        case _:
+            if any(association.source_entities.occurrence_paths()):
+                raise ValueError(
+                    "BoundaryLayerControl.wall_scope must bind the selected source faces, revision, and association; got piecewise-linear source facets cannot carry CAD occurrence paths"
+                )
+            source_indices = np.asarray(association.source_indices, dtype=np.int64)
+            if np.any(source_indices >= domain.facets.shape[0]):
+                raise ValueError(
+                    "BoundaryLayerControl.wall_scope must bind the selected source faces, revision, and association; got the wall association names source facets absent from its declared domain"
+                )
     if np.setdiff1d(selected, source_indices).size:
         raise ValueError(
-            "Every requested physical wall face must occur in the source wall mesh."
+            "BoundaryLayerControl.wall_scope must occur in the source wall mesh; got incompatible requested physical wall face"
         )
     rows = np.argsort(np.asarray(association.target_global_ids), kind="stable")
     return np.isin(source_indices[rows], selected)
@@ -2869,16 +3055,16 @@ def _sweep_layer_evidence(
     level_points: np.ndarray,
     mesh: CellMesh,
     certificate: CellValidityCertificate,
-    control: BoundaryLayerControl,
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
     axis: np.ndarray,
     /,
 ) -> BoundaryLayerEvidence:
-    """Measure the swept carrier against its actual selected source triangles."""
+    """Measure the swept carrier against its realized selected source triangles."""
     points = np.asarray(wall.coordinates, dtype=np.float64)
     triangles, _ = _split_polygons(faces, arity)
-    distances = _nearest_distances(
-        points[triangles], level_points.reshape(-1, 3)
-    ).reshape(level_points.shape[:2])
+    distances = nearest_distances(points[triangles], level_points.reshape(-1, 3)).reshape(
+        level_points.shape[:2]
+    )
     thicknesses = np.diff(distances, axis=0)
     mean = np.mean(thicknesses, axis=1)
     normals, _ = _newell_normals(points, faces, arity)
@@ -2888,8 +3074,8 @@ def _sweep_layer_evidence(
     steps = np.linalg.norm(np.diff(level_points, axis=0), axis=-1)
     if np.any(thicknesses <= 0.0):
         raise _failure(
-            MeshingFailureCategory.CONTROL_CONFLICT,
-            "Exact sweep intervals must advance away from their selected wall.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.CONTROL_CONFLICT,
+            "BoundaryLayerControl.schedule must advance away from their selected wall; got incompatible  sweep intervals",
             source_vertices[np.any(thicknesses <= 0.0, axis=0)],
             points,
         )
@@ -2930,25 +3116,31 @@ def _sweep_layer_evidence(
 
 
 def _require_sweep_scope_binding(
-    domain: MeshingDomain | PiecewiseLinearDomain | None,
-    control: BoundaryLayerControl,
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain
+    | _dependency_phydrax_geometry__mesh_certificates.PiecewiseLinearDomain
+    | None,
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
     profile: CellMesh,
     cap_points: np.ndarray,
     /,
 ) -> None:
-    """Consume the exact wall/cap/volume declarations of the source slab."""
-    if not isinstance(domain, PiecewiseLinearDomain):
-        raise ValueError(
-            "Native EXACT_SWEEP requires its independently authored piecewise-linear source slab."
-        )
+    """Consume the wall/cap/volume declarations of the source slab."""
+    match domain:
+        case _dependency_phydrax_geometry__mesh_certificates.PiecewiseLinearDomain():
+            pass
+        case _:
+            raise ValueError(
+                "BoundaryLayerControl.wall_scope must provide its independently authored piecewise-linear source slab; got missing or incompatible its independently authored piecewise-linear source slab"
+            )
     cap, volume = control.cap_scope, control.volume_scope
     if (
         cap is None
         or volume is None
-        or control.wall_scope.entity_kind is not MeshingEntityKind.GEOMETRY
+        or control.wall_scope.entity_kind
+        is not _dependency_phydrax_meshing__scope.MeshingEntityKind.GEOMETRY
     ):
         raise ValueError(
-            "Native EXACT_SWEEP requires geometry-bound source wall, cap, and volume scopes."
+            "BoundaryLayerControl.wall_scope must provide geometry-bound source wall, cap, and volume scopes; got missing or incompatible geometry-bound source wall, cap, and volume scopes"
         )
     for scope in (control.wall_scope, cap, volume):
         if (scope.source_id, scope.source_revision) != (
@@ -2956,13 +3148,13 @@ def _require_sweep_scope_binding(
             domain.source_revision,
         ):
             raise ValueError(
-                "Exact sweep scopes must bind their actual source slab revision."
+                "BoundaryLayerControl.wall_scope must bind their realized source slab revision; got incompatible  sweep scopes"
             )
     if not np.array_equal(
         np.asarray(volume.entity_ids), np.arange(len(domain.region_ids), dtype=np.int64)
     ):
         raise ValueError(
-            "Exact sweep volume scope must cover every region of its source slab."
+            "BoundaryLayerControl.wall_scope must cover every region of its source slab; got incompatible  sweep volume scope"
         )
     faces, arity = _mesh_faces(profile)
     triangles, _ = _split_polygons(faces, arity)
@@ -2973,9 +3165,9 @@ def _require_sweep_scope_binding(
         source_rows = np.asarray(scope.entity_ids, dtype=np.int64)
         if np.any(source_rows < 0) or np.any(source_rows >= domain.facets.shape[0]):
             raise ValueError(
-                "Exact sweep wall/cap scope names facets absent from its source slab."
+                "BoundaryLayerControl.wall_scope must bind the declared slab wall, cap, and region inventory; got sweep wall/cap scope names facets absent from its source slab"
             )
-        # Vertex tuples are exact binary64 source values. Sorting removes only
+        # Vertex tuples are binary64 source values. Sorting removes only
         # face orientation, not geometry, triangulation, or multiplicity.
         actual = sorted(
             tuple(sorted(tuple(point) for point in points[row])) for row in triangles
@@ -2986,48 +3178,54 @@ def _require_sweep_scope_binding(
         )
         if actual != declared:
             raise ValueError(
-                "Exact swept wall and cap must retain every declared source facet exactly."
+                "BoundaryLayerControl.wall_scope must retain every declared source facet exactly; got incompatible  swept wall and cap"
             )
 
 
 def _prepare_swept_boundary_layers(
     wall: CellMesh,
-    control: BoundaryLayerControl,
-    sweep: SweepControl,
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
+    sweep: _dependency_phydrax_meshing__sweep.SweepControl,
     /,
     *,
-    wall_association: GeometryAssociation | None,
-    source_domain: MeshingDomain | PiecewiseLinearDomain | None,
+    wall_association: association_state_owner.GeometryAssociation | None,
+    source_domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain
+    | _dependency_phydrax_geometry__mesh_certificates.PiecewiseLinearDomain
+    | None,
     policy: BoundaryLayerPolicy | None,
-    certificate_limits: MeshCertificateLimits | None,
+    certificate_limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+    | None,
 ) -> BoundaryLayerMesh:
-    """Assemble an independent native extrusion with canonical layer identities."""
-    if not isinstance(sweep, SweepControl):
-        raise TypeError("sweep_control must be SweepControl.")
-    if sweep.kind is not SweepMapKind.EXTRUSION or sweep.closed:
-        raise ValueError("Exact boundary layers require an open native EXTRUSION.")
+    """Assemble an independent native extrusion with standard layer identities."""
+    if (
+        sweep.kind is not _dependency_phydrax_meshing__sweep.SweepMapKind.EXTRUSION
+        or sweep.closed
+    ):
+        raise ValueError(
+            "prepare_boundary_layers.sweep_control must provide an open native EXTRUSION; got missing or incompatible an open native EXTRUSION"
+        )
     if sweep.schedule.schedule_id != control.schedule.schedule_id:
         raise ValueError(
-            "The exact sweep must own the boundary-layer control's original schedule."
+            "prepare_boundary_layers.sweep_control must own the boundary-layer control's source schedule; got incompatible sweep"
         )
     policy_ = BoundaryLayerPolicy(simplex_cap=False) if policy is None else policy
-    if not isinstance(policy_, BoundaryLayerPolicy):
-        raise TypeError("policy must be BoundaryLayerPolicy or None.")
     if policy_.simplex_cap:
         raise ValueError(
-            "Exact sweep authoring retains its original cap rather than adding transition pyramids."
+            "prepare_boundary_layers.sweep_control must declare an open planar extrusion with matching schedule and cap; got sweep authoring retains its source cap rather than adding transition pyramids"
         )
     grow = _wall_selection(wall, control, wall_association, source_domain)
     faces, arity = _mesh_faces(wall)
     faces, arity = faces[grow], arity[grow]
     if not faces.shape[0]:
-        raise ValueError("An exact sweep requires selected source wall cells.")
+        raise ValueError(
+            "prepare_boundary_layers.sweep_control must provide selected source wall cells; got missing or incompatible selected source wall cells"
+        )
     points = np.asarray(wall.coordinates, dtype=np.float64)
     axis = np.asarray(sweep.axis, dtype=np.float64)
     normals, _ = _newell_normals(points, faces, arity)
     if not np.allclose(normals, axis[None, :], atol=1e-12, rtol=0.0):
         raise ValueError(
-            "Exact boundary-layer extrusion requires planar walls oriented along its declared axis."
+            "prepare_boundary_layers.sweep_control must provide planar walls oriented along its declared axis; got missing or incompatible planar walls oriented along its declared axis"
         )
     source_vertices = np.unique(faces[faces >= 0])
     local = np.full(points.shape[0], -1, dtype=np.int64)
@@ -3037,21 +3235,22 @@ def _prepare_swept_boundary_layers(
         for kind, size in (("triangle", 3), ("quadrilateral", 4))
         if np.any(arity == size)
     )
-    # Sweep profiles intentionally have no quotient descriptor: the exact
-    # station/source ancestry below lifts the original wall orbits to the volume.
+    # Sweep profiles intentionally have no quotient descriptor: the
+    # station/source ancestry below lifts the source wall orbits to the volume.
     profile = CellMesh(points[source_vertices], profile_blocks)
-    construction = generate_sweep(profile, sweep, certificate_limits=certificate_limits)
+    construction = _dependency_phydrax_meshing__sweep.generate_sweep(
+        profile, sweep, certificate_limits=certificate_limits
+    )
     level_points = np.asarray(construction.mesh.coordinates, dtype=np.float64).reshape(
         len(control.schedule.thicknesses) + 1,
         source_vertices.size,
         3,
     )
     _require_sweep_scope_binding(source_domain, control, profile, level_points[-1])
-    from ._reference_root_composition import affine_reference_root_frame
 
     for block in construction.mesh.blocks:
         for vertices in np.asarray(block.vertices):
-            affine_reference_root_frame(
+            _owner_phydrax_meshing__reference_root_composition.affine_reference_root_frame(
                 np.asarray(construction.mesh.coordinates)[vertices], block.cell_kind
             )
     cells = {
@@ -3126,17 +3325,21 @@ def _prepare_swept_boundary_layers(
     )
 
 
+@checked
 def prepare_boundary_layers(
     wall: CellMesh,
-    control: BoundaryLayerControl,
+    control: _dependency_phydrax_meshing__controls.BoundaryLayerControl,
     /,
     *,
-    wall_association: GeometryAssociation | None = None,
-    source_domain: MeshingDomain | PiecewiseLinearDomain | None = None,
+    wall_association: association_state_owner.GeometryAssociation | None = None,
+    source_domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain
+    | _dependency_phydrax_geometry__mesh_certificates.PiecewiseLinearDomain
+    | None = None,
     obstacles: CellMesh | None = None,
     policy: BoundaryLayerPolicy | None = None,
-    sweep_control: SweepControl | None = None,
-    certificate_limits: MeshCertificateLimits | None = None,
+    sweep_control: _dependency_phydrax_meshing__sweep.SweepControl | None = None,
+    certificate_limits: _dependency_phydrax_geometry__embedding_state.MeshCertificateLimits
+    | None = None,
 ) -> BoundaryLayerMesh:
     """Realize native ADVANCING or explicitly authored EXACT_SWEEP layers.
 
@@ -3145,41 +3348,42 @@ def prepare_boundary_layers(
     its cells. EXACT_SWEEP requires an EXTRUSION ``sweep_control`` with the same
     schedule; its independently authored stations are never obtained from
     numerically advanced physical columns. Both routes publish freshly measured
-    wall-distance evidence and retain authoritative wall/source ownership.
+    wall-distance evidence and retain declared wall/source ownership.
     """
-    if not isinstance(wall, CellMesh):
-        raise TypeError("wall must be CellMesh.")
-    if not isinstance(control, BoundaryLayerControl):
-        raise TypeError("control must be BoundaryLayerControl.")
-    if control.route is BoundaryLayerRoute.EXACT_SWEEP:
-        if sweep_control is None:
-            raise ValueError("EXACT_SWEEP requires its explicit native SweepControl.")
-        if obstacles is not None:
-            raise ValueError("EXACT_SWEEP does not admit advancing obstacle resolution.")
-        return _prepare_swept_boundary_layers(
-            wall,
-            control,
-            sweep_control,
-            wall_association=wall_association,
-            source_domain=source_domain,
-            policy=policy,
-            certificate_limits=certificate_limits,
-        )
-    if control.route is not BoundaryLayerRoute.ADVANCING:
-        raise ValueError(
-            "prepare_boundary_layers realizes ADVANCING and EXACT_SWEEP controls only."
-        )
+    match control.route:
+        case _dependency_phydrax_meshing__controls.BoundaryLayerRoute.EXACT_SWEEP:
+            if sweep_control is None:
+                raise ValueError(
+                    "prepare_boundary_layers.control must provide its explicit native SweepControl; got missing or incompatible its explicit native SweepControl"
+                )
+            if obstacles is not None:
+                raise ValueError(
+                    "prepare_boundary_layers.control must declare a compatible ADVANCING or EXACT_SWEEP wall request; got eXACT_SWEEP does not admit advancing obstacle resolution"
+                )
+            return _prepare_swept_boundary_layers(
+                wall,
+                control,
+                sweep_control,
+                wall_association=wall_association,
+                source_domain=source_domain,
+                policy=policy,
+                certificate_limits=certificate_limits,
+            )
+        case _dependency_phydrax_meshing__controls.BoundaryLayerRoute.ADVANCING:
+            pass
+        case _:
+            raise ValueError(
+                "prepare_boundary_layers.control must declare a compatible ADVANCING or EXACT_SWEEP wall request; got prepare_boundary_layers realizes ADVANCING and EXACT_SWEEP controls only"
+            )
     if sweep_control is not None or certificate_limits is not None:
         raise ValueError(
-            "Native sweep inputs require an EXACT_SWEEP boundary-layer control."
+            "prepare_boundary_layers.control must provide an EXACT_SWEEP boundary-layer control; got missing or incompatible an EXACT_SWEEP boundary-layer control"
         )
-    if obstacles is not None and not isinstance(obstacles, CellMesh):
-        raise TypeError("obstacles must be CellMesh or None.")
     policy_ = BoundaryLayerPolicy() if policy is None else policy
-    if not isinstance(policy_, BoundaryLayerPolicy):
-        raise TypeError("policy must be BoundaryLayerPolicy or None.")
     if wall.topological_dimension != 2 or wall.ambient_dimension != 3:
-        raise ValueError("Boundary-layer walls are surfaces in three dimensions.")
+        raise ValueError(
+            "prepare_boundary_layers.control must declare a compatible ADVANCING or EXACT_SWEEP wall request; got boundary-layer walls are surfaces in three dimensions"
+        )
     grow = _wall_selection(wall, control, wall_association, source_domain)
     faces, arity = _mesh_faces(wall)
     # Face rows and the resolved physical selection share global cell ID order.
@@ -3188,11 +3392,13 @@ def prepare_boundary_layers(
         obstacle_triangles = np.empty((0, 3), dtype=np.int64)
     else:
         if obstacles.topological_dimension != 2 or obstacles.ambient_dimension != 3:
-            raise ValueError("Obstacles are surfaces in three dimensions.")
+            raise ValueError(
+                "prepare_boundary_layers.control must declare a compatible ADVANCING or EXACT_SWEEP wall request; got obstacles are surfaces in three dimensions"
+            )
         obstacle_faces, obstacle_arity = _mesh_faces(obstacles)
         obstacle_points = np.asarray(obstacles.coordinates, dtype=np.float64)
         obstacle_triangles, _ = _split_polygons(obstacle_faces, obstacle_arity)
-    return _grow_boundary_layers(
+    return grow_boundary_layers(
         np.asarray(wall.coordinates, dtype=np.float64),
         faces,
         arity,

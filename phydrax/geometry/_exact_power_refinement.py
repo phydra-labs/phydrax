@@ -5,14 +5,20 @@ from __future__ import annotations
 
 import math
 import sys
+from enum import StrEnum
 from fractions import Fraction
 from typing import assert_never
 
 import numpy as np
 
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.geometry._embedding_state import boxes, candidate_pairs
+
+from .._strict import StrictModule
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellMesh
+from ..discretization._exact_algebraic_geometry import ExactAlgebraicCellGeometrySource
 from ..discretization._exact_plc_geometry import (
     ExactPlcCellGeometryConvexSource,
     ExactPlcCellGeometrySource,
@@ -22,22 +28,27 @@ from ..discretization._exact_power_geometry import (
     ExactPowerCellGeometryRestrictionSource,
     ExactPowerCellGeometrySource,
 )
+from ..discretization._exact_rational_geometry import ExactRationalCellGeometrySource
+from ..typing import checked
 from ._exact_polyhedral_geometry import (
-    determinant3,
     exact_vertices,
+    ExactOverlapRefusal,
+    ExactTetrahedronOverlap,
     star_tetrahedra,
+    StarTetrahedronPreparation,
+    tetrahedra_disjoint,
     Tetrahedron,
     tetrahedron_overlap,
+    TetrahedronPlanePreparation,
 )
-from ._mesh_certificates import _boxes, _candidate_pairs
 from ._supermesh import (
-    _Counts,
-    _Decomposition,
-    _Entries,
     CommonRefinementCoverage,
     CommonRefinementEvidence,
     CommonRefinementPolicy,
     CommonRefinementStatus,
+    Counts,
+    Decomposition,
+    Entries,
     PreparedCommonRefinement,
 )
 
@@ -48,24 +59,16 @@ def _rne_error(value: Fraction, /) -> float:
 
 
 def _cell_integrals(
-    stars: tuple[tuple[Tetrahedron, ...], ...], /
+    stars: tuple[tuple[Tetrahedron, ...], ...],
+    /,
+    *,
+    preparation: StarTetrahedronPreparation,
 ) -> tuple[tuple[Fraction, ...], tuple[tuple[Fraction, ...], ...]]:
     measures, moments = [], []
     for star in stars:
         volume, moment = Fraction(0), [Fraction(0)] * 3
         for tet in star:
-            measure = (
-                determinant3(
-                    *(
-                        tuple(
-                            value - base
-                            for value, base in zip(point, tet[0], strict=True)
-                        )
-                        for point in tet[1:]
-                    )
-                )
-                / 6
-            )
+            measure = preparation.determinant(tet) / 6
             volume += measure
             for axis in range(3):
                 moment[axis] += (
@@ -76,12 +79,28 @@ def _cell_integrals(
     return tuple(measures), tuple(moments)
 
 
+class _PowerDecomposition(StrictModule):
+    carrier: Decomposition
+    stars: tuple[tuple[Tetrahedron, ...], ...]
+    measures: tuple[Fraction, ...]
+
+
+class _PowerGeometries(StrictModule):
+    source: CellGeometrySpec
+    target: CellGeometrySpec
+
+
 def _decomposition(
-    mesh: CellMesh, geometry: CellGeometrySpec, /
-) -> tuple[_Decomposition, tuple[tuple[Tetrahedron, ...], ...], tuple[Fraction, ...]]:
-    points = exact_vertices(mesh, geometry)
-    stars = star_tetrahedra(mesh, points)
-    measures, moments = _cell_integrals(stars)
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> _PowerDecomposition:
+    points = exact_vertices(mesh, geometry, budget=budget)
+    preparation = StarTetrahedronPreparation(budget)
+    stars = star_tetrahedra(mesh, points, budget=budget, preparation=preparation)
+    measures, moments = _cell_integrals(stars, preparation=preparation)
     cell_rows = tuple(
         row[valid]
         for block in mesh.blocks
@@ -91,7 +110,7 @@ def _decomposition(
     )
     lower, upper = [], []
     for row in cell_rows:
-        low, high = _boxes(points, row[None, :])
+        low, high = boxes(points, row[None, :])
         lower.append(low[0])
         upper.append(high[0])
     offsets = np.concatenate(([0], np.cumsum(tuple(len(star) for star in stars)))).astype(
@@ -100,7 +119,7 @@ def _decomposition(
     identifiers = np.concatenate(
         tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
     )
-    part = _Decomposition(
+    part = Decomposition(
         len(stars),
         identifiers,
         np.asarray(tuple(tet for star in stars for tet in star), dtype=np.float64),
@@ -113,7 +132,7 @@ def _decomposition(
         0,
         0,
     )
-    return part, stars, measures
+    return _PowerDecomposition(part, stars, measures)
 
 
 def _fraction_bytes(stars: tuple[tuple[Tetrahedron, ...], ...], /) -> int:
@@ -137,14 +156,125 @@ def _fraction_bytes(stars: tuple[tuple[Tetrahedron, ...], ...], /) -> int:
     )
 
 
-def prepare_exact_power_refinement(
+class _PowerRefusal(StrEnum):
+    NONE = ""
+    DECOMPOSITION = (
+        "Exact power decomposition or candidates exceed their resource bounds."
+    )
+    WORK = "Exact power overlap coefficient work exhausted maximum_exact_work."
+    RATIONAL_STORAGE = (
+        "Exact power overlap rational working storage exhausted maximum_memory_bytes."
+    )
+    PAIRS = "Exact power overlap retained pairs exhausted maximum_accepted_pairs."
+    PUBLICATION = "Exact power overlap publication exhausted maximum_memory_bytes."
+    DOUBLE_COVERAGE = "Exact source common refinement proves double coverage."
+    COVERAGE_GAP = "Exact source common refinement proves incomplete coverage."
+
+
+class _PowerPair(StrictModule):
+    volume: Fraction
+    moment: tuple[Fraction, ...]
+    second_moment: tuple[tuple[Fraction, ...], ...] | None
+    pieces: tuple[Tetrahedron, ...]
+    work: int
+    piece_pairs: int
+    working_bytes: int
+    refusal: _PowerRefusal
+
+
+def _power_pair(
+    first: tuple[Tetrahedron, ...],
+    second: tuple[Tetrahedron, ...],
+    policy: CommonRefinementPolicy,
+    work: int,
+    base_bytes: int,
+    retained_bytes: int,
+    working_bytes: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparation: TetrahedronPlanePreparation,
+) -> _PowerPair:
+    volume, moment = Fraction(0), [Fraction(0)] * 3
+    second_moment = (
+        [[Fraction(0)] * 3 for _ in range(3)] if policy.second_moments else None
+    )
+    pieces: list[Tetrahedron] = []
+    consumed, piece_pairs = 0, 0
+    refusal = _PowerRefusal.NONE
+    for first_tet in first:
+        for second_tet in second:
+            piece_pairs += 1
+            if tetrahedra_disjoint(first_tet, second_tet):
+                continue
+            overlap = tetrahedron_overlap(
+                first_tet,
+                second_tet,
+                second_moments=policy.second_moments,
+                retain_simplices=policy.overlap_simplices,
+                maximum_work=policy.maximum_exact_work - work - consumed,
+                budget=budget,
+                preparation=preparation,
+            )
+            match overlap:
+                case ExactOverlapRefusal():
+                    refusal = _PowerRefusal.WORK
+                    break
+                case ExactTetrahedronOverlap():
+                    pass
+                case invalid:
+                    assert_never(invalid)
+            consumed += overlap.operation_count
+            if work + consumed > policy.maximum_exact_work:
+                refusal = _PowerRefusal.WORK
+                break
+            volume += overlap.volume
+            for axis in range(3):
+                moment[axis] += overlap.first_moment[axis]
+            if second_moment is not None and overlap.second_moment is not None:
+                for i in range(3):
+                    for j in range(3):
+                        second_moment[i][j] += overlap.second_moment[i][j]
+            if overlap.simplices is not None:
+                pieces.extend(overlap.simplices)
+            scalars = (
+                (volume, *moment, *(value for row in second_moment for value in row))
+                if second_moment is not None
+                else (volume, *moment)
+            )
+            transient_bytes = sum(
+                sys.getsizeof(value)
+                + sys.getsizeof(value.numerator)
+                + sys.getsizeof(value.denominator)
+                for value in scalars
+            ) + _fraction_bytes((tuple(pieces),))
+            working_bytes = max(
+                working_bytes, base_bytes + retained_bytes + transient_bytes
+            )
+            if working_bytes > policy.maximum_memory_bytes:
+                refusal = _PowerRefusal.RATIONAL_STORAGE
+                break
+        if refusal != _PowerRefusal.NONE:
+            break
+    return _PowerPair(
+        volume,
+        tuple(moment),
+        None if second_moment is None else tuple(tuple(row) for row in second_moment),
+        tuple(pieces),
+        consumed,
+        piece_pairs,
+        working_bytes,
+        refusal,
+    )
+
+
+def _power_geometries(
     source_mesh: CellMesh,
     target_mesh: CellMesh,
     source_geometry: CellGeometrySpec | None,
     target_geometry: CellGeometrySpec | None,
-    policy: CommonRefinementPolicy,
     /,
-) -> PreparedCommonRefinement:
+) -> _PowerGeometries:
     source_geometry = (
         CellGeometrySpec.affine(source_mesh)
         if source_geometry is None
@@ -164,10 +294,17 @@ def prepare_exact_power_refinement(
                 | ExactPowerCellGeometryLinearActionSource()
             ):
                 power = True
-            case ExactPlcCellGeometrySource() | ExactPlcCellGeometryConvexSource():
+            case ExactAlgebraicCellGeometrySource():
                 raise ValueError(
-                    "Source-aware polyhedral refinement refuses exact PLC "
-                    "sources; they are not power polyhedra."
+                    "common_refinement.geometry.exact_source must be a power source or None; got an algebraic nodal source"
+                )
+            case (
+                ExactPlcCellGeometrySource()
+                | ExactPlcCellGeometryConvexSource()
+                | ExactRationalCellGeometrySource()
+            ):
+                raise ValueError(
+                    "common_refinement.geometry.exact_source must be a power source or None; got PLC source"
                 )
             case None:
                 pass
@@ -175,10 +312,31 @@ def prepare_exact_power_refinement(
                 assert_never(invalid)
     if not power:
         raise ValueError(
-            "Source-aware polyhedral refinement requires an exact power construction on at least one side."
+            "common_refinement.geometry.exact_source must contain at least one power source; got none"
         )
-    first, first_stars, first_measures = _decomposition(source_mesh, source_geometry)
-    second, second_stars, second_measures = _decomposition(target_mesh, target_geometry)
+    return _PowerGeometries(source_geometry, target_geometry)
+
+
+@checked
+def prepare_exact_power_refinement(
+    source_mesh: CellMesh,
+    target_mesh: CellMesh,
+    source_geometry: CellGeometrySpec | None,
+    target_geometry: CellGeometrySpec | None,
+    policy: CommonRefinementPolicy,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> PreparedCommonRefinement:
+    """Prepare rational power-cell overlaps and their coverage evidence."""
+    geometries = _power_geometries(
+        source_mesh, target_mesh, source_geometry, target_geometry
+    )
+    source_geometry, target_geometry = geometries.source, geometries.target
+    source = _decomposition(source_mesh, source_geometry, budget=budget)
+    target = _decomposition(target_mesh, target_geometry, budget=budget)
+    first, first_stars, first_measures = source.carrier, source.stars, source.measures
+    second, second_stars, second_measures = target.carrier, target.stars, target.measures
     identities = (
         source_mesh.mesh_id,
         target_mesh.mesh_id,
@@ -202,7 +360,7 @@ def prepare_exact_power_refinement(
             )
         )
     )
-    first_cells, second_cells, exceeded = _candidate_pairs(
+    first_cells, second_cells, exceeded = candidate_pairs(
         first.bbox_min,
         first.bbox_max,
         policy.maximum_candidate_pairs,
@@ -218,97 +376,43 @@ def prepare_exact_power_refinement(
     records, error_bounds, simplex_rows, simplex_offsets = [], [], [], [0]
     work, piece_pairs = 0, 0
     working_bytes, retained_bytes = base_bytes, 0
-    status, reason = CommonRefinementStatus.SUCCESS, ""
+    status, reason = CommonRefinementStatus.SUCCESS, _PowerRefusal.NONE
     if exceeded or base_bytes > policy.maximum_memory_bytes:
         status, reason = (
             CommonRefinementStatus.RESOURCE_LIMIT,
-            "Exact power decomposition or candidates exceed their resource bounds.",
+            _PowerRefusal.DECOMPOSITION,
         )
+    preparation = TetrahedronPlanePreparation(budget)
     for target, source in candidates if status == CommonRefinementStatus.SUCCESS else ():
-        volume, moment = Fraction(0), [Fraction(0)] * 3
-        second_moment = (
-            [[Fraction(0)] * 3 for _ in range(3)] if policy.second_moments else None
+        pair = _power_pair(
+            first_stars[source],
+            second_stars[target],
+            policy,
+            work,
+            base_bytes,
+            retained_bytes,
+            working_bytes,
+            budget=budget,
+            preparation=preparation,
         )
-        pieces = []
-        for first_tet in first_stars[source]:
-            for second_tet in second_stars[target]:
-                piece_pairs += 1
-                if any(
-                    max(
-                        min(point[axis] for point in first_tet),
-                        min(point[axis] for point in second_tet),
-                    )
-                    >= min(
-                        max(point[axis] for point in first_tet),
-                        max(point[axis] for point in second_tet),
-                    )
-                    for axis in range(3)
-                ):
-                    continue
-                from ..discretization._coordinate_enclosure import (
-                    CoordinateEnclosureResourceError,
-                )
-
-                try:
-                    overlap = tetrahedron_overlap(
-                        first_tet,
-                        second_tet,
-                        second_moments=policy.second_moments,
-                        retain_simplices=policy.overlap_simplices,
-                        maximum_work=policy.maximum_exact_work - work,
-                    )
-                except CoordinateEnclosureResourceError:
-                    status, reason = (
-                        CommonRefinementStatus.RESOURCE_LIMIT,
-                        "Exact power overlap coefficient work exhausted maximum_exact_work.",
-                    )
-                    break
-                work += overlap.operation_count
-                if work > policy.maximum_exact_work:
-                    status, reason = (
-                        CommonRefinementStatus.RESOURCE_LIMIT,
-                        "Exact power overlap coefficient work exhausted maximum_exact_work.",
-                    )
-                    break
-                volume += overlap.volume
-                for axis in range(3):
-                    moment[axis] += overlap.first_moment[axis]
-                if second_moment is not None and overlap.second_moment is not None:
-                    for i in range(3):
-                        for j in range(3):
-                            second_moment[i][j] += overlap.second_moment[i][j]
-                if overlap.simplices is not None:
-                    pieces.extend(overlap.simplices)
-                exact_scalars = (
-                    (volume, *moment, *(value for row in second_moment for value in row))
-                    if second_moment is not None
-                    else (volume, *moment)
-                )
-                transient_bytes = sum(
-                    sys.getsizeof(value)
-                    + sys.getsizeof(value.numerator)
-                    + sys.getsizeof(value.denominator)
-                    for value in exact_scalars
-                ) + _fraction_bytes((tuple(pieces),))
-                working_bytes = max(
-                    working_bytes, base_bytes + retained_bytes + transient_bytes
-                )
-                if working_bytes > policy.maximum_memory_bytes:
-                    status, reason = (
-                        CommonRefinementStatus.RESOURCE_LIMIT,
-                        "Exact power overlap rational working storage exhausted maximum_memory_bytes.",
-                    )
-                    break
-            if status != CommonRefinementStatus.SUCCESS:
-                break
-        if status != CommonRefinementStatus.SUCCESS:
+        work += pair.work
+        piece_pairs += pair.piece_pairs
+        working_bytes = pair.working_bytes
+        if pair.refusal != _PowerRefusal.NONE:
+            status, reason = CommonRefinementStatus.RESOURCE_LIMIT, pair.refusal
             break
+        volume, moment, second_moment, pieces = (
+            pair.volume,
+            pair.moment,
+            pair.second_moment,
+            pair.pieces,
+        )
         if volume == 0:
             continue
         if len(records) >= policy.maximum_accepted_pairs:
             status, reason = (
                 CommonRefinementStatus.RESOURCE_LIMIT,
-                "Exact power overlap retained pairs exhausted maximum_accepted_pairs.",
+                _PowerRefusal.PAIRS,
             )
             break
         records.append(
@@ -333,7 +437,7 @@ def prepare_exact_power_refinement(
         if base_bytes + retained_bytes > policy.maximum_memory_bytes:
             status, reason = (
                 CommonRefinementStatus.RESOURCE_LIMIT,
-                "Exact power overlap publication exhausted maximum_memory_bytes.",
+                _PowerRefusal.PUBLICATION,
             )
             break
     first_defects = tuple(
@@ -348,7 +452,7 @@ def prepare_exact_power_refinement(
         if any(value > 0 for value in (*first_defects, *second_defects)):
             status, reason = (
                 CommonRefinementStatus.DOUBLE_COVERAGE,
-                "Exact source common refinement proves double coverage.",
+                _PowerRefusal.DOUBLE_COVERAGE,
             )
         elif (
             policy.coverage
@@ -361,9 +465,9 @@ def prepare_exact_power_refinement(
         ):
             status, reason = (
                 CommonRefinementStatus.COVERAGE_GAP,
-                "Exact source common refinement proves incomplete coverage.",
+                _PowerRefusal.COVERAGE_GAP,
             )
-    entries = _Entries(
+    entries = Entries(
         np.asarray(tuple(row[0] for row in records), dtype=np.int32),
         np.asarray(tuple(row[1] for row in records), dtype=np.int32),
         np.asarray(tuple(row[2] for row in records), dtype=np.float64),
@@ -389,14 +493,14 @@ def prepare_exact_power_refinement(
         np.add.at(target_errors, entries.target_cells, error_bounds)
     evidence = CommonRefinementEvidence(
         status=status,
-        reason=reason,
+        reason=reason.value,
         source_coverage_defects=np.asarray(first_defects, dtype=np.float64),
         target_coverage_defects=np.asarray(second_defects, dtype=np.float64),
         source_measures=first.measures,
         target_measures=second.measures,
         source_tolerances=source_errors,
         target_tolerances=target_errors,
-        counts=_Counts(len(candidates), len(records), piece_pairs, 0, 0, 0),
+        counts=Counts(len(candidates), len(records), piece_pairs, 0, 0, 0),
         retained_bytes=retained_bytes,
         working_bytes=working_bytes,
     )

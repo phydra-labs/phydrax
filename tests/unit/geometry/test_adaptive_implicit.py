@@ -10,6 +10,14 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
+
+
+# Empirical volume allowances retained from the pre-remediation sphere and
+# ring-torus discovery fixtures at their stated octree levels. Their oracles
+# are analytic volumes, independent of contour extraction and QEF placement.
+_COARSE_VOLUME_RTOL = 0.1
+_REFINED_VOLUME_RTOL = 0.02
 
 
 _G = phx.geometry
@@ -47,12 +55,15 @@ def _inside_any(boxes: np.ndarray, point: np.ndarray) -> bool:
 def test_certified_discovery_finds_component_inside_one_coarse_cell() -> None:
     # Radius 0.04 inside the level-2 cell [0, .5] x [0, .5] x [-.5, 0], away from
     # its corners and center: no coarse sample changes sign.
-    geometry = _G.Sphere((0.37, 0.13, -0.36), 0.04).compile()
+    geometry = _G.Sphere((0.37, 0.13, -0.36), 0.04).compile(coordinate_unit=METER)
     coarse = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformAxisSpec(5) for _ in range(3)),
         axis_names=("x", "y", "z"),
     ).prepare(jnp.asarray(_UNIT))
-    with pytest.raises(ValueError, match="no surface crossings"):
+    with pytest.raises(
+        ValueError,
+        match=r"ImplicitSurfaceDiscovery\.grid\.crossings.*zero crossings",
+    ):
         _G.discover_implicit_surface(geometry, coarse, source_id="fixed")
 
     result = _discover(
@@ -73,7 +84,7 @@ def test_certified_discovery_finds_component_inside_one_coarse_cell() -> None:
 
 
 def test_sampled_enclosure_is_reported_as_sampled_and_can_miss_components() -> None:
-    geometry = _G.Sphere((0.37, 0.13, -0.36), 0.04).compile()
+    geometry = _G.Sphere((0.37, 0.13, -0.36), 0.04).compile(coordinate_unit=METER)
 
     result = _discover(
         geometry,
@@ -98,7 +109,7 @@ def test_tangential_zero_without_sign_change_is_reported_not_empty() -> None:
     # nonnegative everywhere, so no sample can change sign.
     geometry = (
         _G.Sphere((-0.3, 0.0, 0.0), 0.3) & _G.Sphere((0.3, 0.0, 0.0), 0.3)
-    ).compile()
+    ).compile(coordinate_unit=METER)
 
     result = _discover(geometry, _UNIT + 0.0137, maximum_level=7)
 
@@ -112,7 +123,9 @@ def test_tangential_zero_without_sign_change_is_reported_not_empty() -> None:
 
 
 def test_certified_torus_has_genus_one() -> None:
-    geometry = _G.Torus((0.0123, -0.0071, 0.0173), 0.3, 0.9).compile()
+    geometry = _G.Torus((0.0123, -0.0071, 0.0173), 0.3, 0.9).compile(
+        coordinate_unit=METER
+    )
 
     result = _discover(geometry, 1.3 * _UNIT, maximum_level=8)
 
@@ -126,7 +139,7 @@ def test_certified_torus_has_genus_one() -> None:
 def test_nearly_touching_spheres_are_separated_when_resolved() -> None:
     geometry = (
         _G.Sphere((-0.41, 0.013, 0.007), 0.4) | _G.Sphere((0.41, 0.013, 0.007), 0.4)
-    ).compile()
+    ).compile(coordinate_unit=METER)
 
     result = _discover(geometry, 1.1 * _UNIT, maximum_level=10)
 
@@ -138,7 +151,7 @@ def test_nearly_touching_spheres_are_separated_when_resolved() -> None:
 def test_nearly_touching_spheres_are_reported_when_unresolved() -> None:
     geometry = (
         _G.Sphere((-0.41, 0.013, 0.007), 0.4) | _G.Sphere((0.41, 0.013, 0.007), 0.4)
-    ).compile()
+    ).compile(coordinate_unit=METER)
 
     result = _discover(geometry, 1.1 * _UNIT, maximum_level=5)
 
@@ -153,7 +166,7 @@ def test_exact_zero_lattice_samples_are_certified_by_perturbation() -> None:
     # |(0.25, 0.25, 0.25)| is the radius in floating point, so eight lattice
     # vertices lie exactly on the zero set.
     radius = float(np.sqrt(0.1875))
-    geometry = _G.Sphere((0.0, 0.0, 0.0), radius).compile()
+    geometry = _G.Sphere((0.0, 0.0, 0.0), radius).compile(coordinate_unit=METER)
     lattice = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformAxisSpec(9) for _ in range(3)),
         axis_names=("x", "y", "z"),
@@ -167,7 +180,7 @@ def test_exact_zero_lattice_samples_are_certified_by_perturbation() -> None:
     assert result.evidence.zero_vertex_count == 8
     assert result.mesh.topology.euler_characteristic == 2
     assert _signed_volume(result.mesh) == pytest.approx(
-        4.0 / 3.0 * math.pi * radius**3, rel=0.1
+        4.0 / 3.0 * math.pi * radius**3, rel=_COARSE_VOLUME_RTOL
     )
 
 
@@ -180,7 +193,9 @@ def test_exact_zero_lattice_samples_are_certified_by_perturbation() -> None:
     ids=["boxes", "evaluations"],
 )
 def test_budget_exhaustion_reports_unresolved_boxes(budget: Any, flag: str) -> None:
-    geometry = _G.Torus((0.0123, -0.0071, 0.0173), 0.3, 0.9).compile()
+    geometry = _G.Torus((0.0123, -0.0071, 0.0173), 0.3, 0.9).compile(
+        coordinate_unit=METER
+    )
 
     result = _discover(geometry, 1.3 * _UNIT, maximum_level=8, **budget)
 
@@ -196,7 +211,7 @@ def test_budget_exhaustion_reports_unresolved_boxes(budget: Any, flag: str) -> N
 
 
 def test_certified_sphere_is_outward_oriented_with_bounded_residuals() -> None:
-    geometry = _G.Sphere((0.013, -0.021, 0.007), 0.75).compile()
+    geometry = _G.Sphere((0.013, -0.021, 0.007), 0.75).compile(coordinate_unit=METER)
 
     result = _discover(geometry, 1.4 * _UNIT, maximum_level=7, flatness_tolerance=0.02)
 
@@ -207,12 +222,12 @@ def test_certified_sphere_is_outward_oriented_with_bounded_residuals() -> None:
     assert evidence.maximum_anchor_residual <= 1.0e-9
     assert evidence.maximum_vertex_residual <= evidence.maximum_surface_box_diagonal
     assert _signed_volume(result.mesh) == pytest.approx(
-        4.0 / 3.0 * math.pi * 0.75**3, rel=0.02
+        4.0 / 3.0 * math.pi * 0.75**3, rel=_REFINED_VOLUME_RTOL
     )
 
 
 def test_volume_query_classifies_points_and_boxes_with_enclosures() -> None:
-    geometry = _G.Sphere((0.013, -0.021, 0.007), 0.75).compile()
+    geometry = _G.Sphere((0.013, -0.021, 0.007), 0.75).compile(coordinate_unit=METER)
     volume = _discover(geometry, 1.4 * _UNIT, maximum_level=6).volume
 
     points = volume.classify_points(
@@ -234,7 +249,7 @@ def test_volume_query_classifies_points_and_boxes_with_enclosures() -> None:
 def test_sharp_union_crease_is_meshed_with_features_and_reported() -> None:
     geometry = (
         _G.Sphere((-0.2, 0.013, 0.007), 0.45) | _G.Sphere((0.25, 0.013, 0.007), 0.4)
-    ).compile()
+    ).compile(coordinate_unit=METER)
 
     result = _discover(geometry, 1.1 * _UNIT, maximum_level=7)
 
@@ -253,7 +268,7 @@ def test_sharp_union_crease_is_meshed_with_features_and_reported() -> None:
 
 
 def test_surface_reaching_the_domain_boundary_is_refused_as_open() -> None:
-    geometry = _G.Sphere((0.0, 0.0, 0.0), 0.75).compile()
+    geometry = _G.Sphere((0.0, 0.0, 0.0), 0.75).compile(coordinate_unit=METER)
 
     result = _discover(geometry, np.asarray([[-0.5, -1.0, -1.0], [1.0, 1.0, 1.0]]))
 
@@ -269,7 +284,7 @@ def test_surface_reaching_the_domain_boundary_is_refused_as_open() -> None:
 
 
 def test_lipschitz_enclosure_certifies_cover_but_not_topology() -> None:
-    geometry = _G.Sphere((0.013, -0.021, 0.007), 0.75).compile()
+    geometry = _G.Sphere((0.013, -0.021, 0.007), 0.75).compile(coordinate_unit=METER)
 
     result = _discover(geometry, 1.4 * _UNIT, enclosure="lipschitz", maximum_level=6)
 
@@ -282,9 +297,12 @@ def test_lipschitz_enclosure_certifies_cover_but_not_topology() -> None:
 def test_enclosure_selection_refuses_sources_without_valid_bounds() -> None:
     geometry = (
         _G.Sphere((-0.2, 0.0, 0.0), 0.45) | _G.Sphere((0.25, 0.0, 0.0), 0.4)
-    ).compile()
+    ).compile(coordinate_unit=METER)
 
-    with pytest.raises(ValueError, match="sampled"):
+    with pytest.raises(
+        ValueError,
+        match=r"LipschitzFieldBounds\.certificate.*unestablished bounds",
+    ):
         _discover(geometry, _UNIT, enclosure="lipschitz")
 
 

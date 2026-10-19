@@ -17,9 +17,9 @@ from jaxtyping import PyTree
 from .._fingerprint import canonical_fingerprint
 from ..typing import checked
 from ._operators import (
-    _materialize_by_basis,
     AbstractLinearOperator,
     DenseLinearOperator,
+    materialize_by_basis,
 )
 from ._properties import OperatorCapabilities, OperatorProperties
 from ._spaces import ArraySpace
@@ -203,7 +203,7 @@ class EmpiricalGramLinearOperator(AbstractLinearOperator):
         return self.mv(vector)
 
     def _materialize(self, /) -> Array:
-        return _materialize_by_basis(self)
+        return materialize_by_basis(self)
 
 
 __all__ = ["EmpiricalGramLinearOperator"]

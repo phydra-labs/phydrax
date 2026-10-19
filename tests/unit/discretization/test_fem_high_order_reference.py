@@ -4,14 +4,13 @@
 
 
 import math
-from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
 
-from phydrax.discretization.fem._generic import _degree_aware_reference_rule
+from phydrax.discretization import FiniteElementSpec
 from phydrax.discretization.fem._high_order import (
     lagrange_1d_tabulation,
     ReferenceNodalFamily,
@@ -22,7 +21,9 @@ from phydrax.discretization.fem._high_order import (
 from phydrax.discretization.fem._precision import FiniteElementPrecisionPolicy
 from phydrax.discretization.fem._reference_operator import (
     PreparedFiniteElementReference,
+    ReferenceAction,
 )
+from phydrax.discretization.fem._reference_rules import degree_aware_reference_rule
 from phydrax.integration._rules import (
     GaussLegendreRule,
     GaussLobattoLegendreRule,
@@ -67,7 +68,7 @@ def test_fem_high_order_reference_scenario_1() -> None:
                 atol=2.0e-11,
             )
     polynomial_degree = 4
-    points, weights = _degree_aware_reference_rule(
+    points, weights = degree_aware_reference_rule(
         "tetrahedron",
         polynomial_degree,
     )
@@ -237,13 +238,13 @@ def test_anisotropic_contracts() -> None:
     assert tuple(sorted(_flatten_entity_dofs(element))) == tuple(range(60))
 
 
-def _flatten_entity_dofs(element: Any) -> Any:
+def _flatten_entity_dofs(element: FiniteElementSpec) -> tuple[int, ...]:
     return tuple(
         dof for dimension in element.entity_dofs for entity in dimension for dof in entity
     )
 
 
-def _all_actions() -> Any:
+def _all_actions() -> tuple[ReferenceAction, ...]:
     return (
         "interpolate",
         "interpolate_transpose",
@@ -255,8 +256,12 @@ def _all_actions() -> Any:
 
 
 def _prepare_quad(
-    family: Any, *, actions: Any = None, precision: Any = None, volume_order: Any = 4
-) -> Any:
+    family: ReferenceNodalFamily,
+    *,
+    actions: tuple[ReferenceAction, ...] | None = None,
+    precision: FiniteElementPrecisionPolicy | None = None,
+    volume_order: int = 4,
+) -> PreparedFiniteElementReference:
     return PreparedFiniteElementReference(
         family.finite_element(),
         ReferenceQuadrilateralRule(GaussLegendreRule(volume_order)),
@@ -267,7 +272,7 @@ def _prepare_quad(
     )
 
 
-def _prepare_hex(family: Any) -> Any:
+def _prepare_hex(family: ReferenceNodalFamily) -> PreparedFiniteElementReference:
     return PreparedFiniteElementReference(
         family.finite_element(),
         ReferenceHexahedronRule(GaussLegendreRule(3)),
@@ -278,7 +283,7 @@ def _prepare_hex(family: Any) -> Any:
     )
 
 
-def test_fem_high_order_reference_scenario_2() -> None:
+def test_tensor_reference_actions_and_facet_adjoint_duality() -> None:
     for family, prepare in (
         (ReferenceNodalFamily("quadrilateral", (3, 2)), _prepare_quad),
         (ReferenceNodalFamily("hexahedron", (2, 2, 2)), _prepare_hex),
@@ -293,6 +298,7 @@ def test_fem_high_order_reference_scenario_2() -> None:
             0.4,
             volume_gradients.size,
         ).reshape(volume_gradients.shape)
+        assert prepared.tensor_tabulation is not None
         factorized = SumFactorizationPlan(prepared.tensor_tabulation)
 
         assert prepared.report.tensor_factorized
@@ -339,6 +345,9 @@ def test_fem_high_order_reference_scenario_2() -> None:
                 ),
                 atol=2.0e-10,
             )
+
+
+def test_reference_preparation_identity_canonicalizes_actions_and_binds_rules() -> None:
     family = ReferenceNodalFamily("quadrilateral", 3)
     baseline = _prepare_quad(family)
     reordered = _prepare_quad(family, actions=tuple(reversed(_all_actions())))
@@ -358,6 +367,9 @@ def test_fem_high_order_reference_scenario_2() -> None:
     assert baseline.prepared_id != other_precision.prepared_id
     assert baseline.report.report_id != fewer_actions.report.report_id
     assert baseline.report.precision_id != other_precision.report.precision_id
+
+
+def test_simplex_integer_points_preserve_tabulation_and_jvp() -> None:
     family = SimplexNodalFamily("triangle", 4)
     integer_points = jnp.asarray(((0, 0), (1, 0), (0, 1)), dtype=jnp.int32)
     floating_points = integer_points.astype("float64")
@@ -374,6 +386,9 @@ def test_fem_high_order_reference_scenario_2() -> None:
         floating_gradients[0],
         atol=2.0e-10,
     )
+
+
+def test_simplex_reference_reproduction_mass_and_facets() -> None:
     for cell, order in (("triangle", 5), ("tetrahedron", 3)):
         family = SimplexNodalFamily(cell, order)
         dimension = family.nodes.shape[1]

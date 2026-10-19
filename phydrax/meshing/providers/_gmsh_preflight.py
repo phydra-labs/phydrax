@@ -6,12 +6,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Set
 from typing import Any
 
 import numpy as np
 
+from ..._strict import StrictModule
 from ...geometry.brep import BRepModel, BRepSource
 from ...geometry.surface import SurfaceModel
+from ...typing import checked
 from .._contracts import (
     MeshingSourceDescriptor,
     SurfaceMeshingSpec,
@@ -28,7 +31,7 @@ from .._controls import (
     FeatureKind,
     SurfaceReconstructionControl,
 )
-from .._organization import RegionRole
+from .._organization_records import RegionRole
 from .._planar_bands import PlanarBandResult
 from .._scope import MeshingEntityKind, MeshingScope
 from .._sizing import (
@@ -38,7 +41,7 @@ from .._sizing import (
     SizeControlStrength,
     UniformSizeControl,
 )
-from ._gmsh_inventory import _cad_occurrence_inventory, _cad_scope_set
+from ._gmsh_inventory import cad_occurrence_inventory, cad_scope_set
 from ._gmsh_options import (
     GmshHighOrderOptimization,
     GmshSurfaceAlgorithm,
@@ -51,14 +54,14 @@ def _scope_indices(
 ) -> np.ndarray | None:
     if dimension not in (0, 1, 2, 3):
         return None
-    count = len(_cad_occurrence_inventory(source).entities[dimension])
+    count = len(cad_occurrence_inventory(source).entities[dimension])
     identifiers = np.asarray(scope.entity_ids, dtype=np.int64)
     if (
         scope.source_id != source.report.source_id
         or scope.source_revision != source.report.source_revision
         or scope.entity_kind is not MeshingEntityKind.GEOMETRY
         or scope.entity_dimension != dimension
-        or scope.entity_set_id != _cad_scope_set(source, dimension)
+        or scope.entity_set_id != cad_scope_set(source, dimension)
         or np.any(identifiers < 0)
         or np.any(identifiers >= count)
     ):
@@ -66,19 +69,25 @@ def _scope_indices(
     return identifiers
 
 
-def _sweep_preflight_issues(
+class _SweepAssignment(StrictModule):
+    controlled: dict[int, tuple[int, BoundaryLayerControl]]
+    face_roles: dict[tuple[int, int], str]
+    issues: tuple[str, ...]
+
+
+class _PreflightIssues(StrictModule):
+    issues: tuple[str, ...]
+
+
+def _sweep_assignment(
     source: BRepModel,
     controls: tuple[BoundaryLayerControl, ...],
-    requested_kinds: set[str],
-    geometry_order: int,
     /,
-) -> list[str]:
-    issues = []
-    if geometry_order != 1:
-        issues.append("Gmsh swept layers support affine order-one geometry only")
+) -> _SweepAssignment:
+    issues: list[str] = []
     controlled: dict[int, tuple[int, BoundaryLayerControl]] = {}
     face_roles: dict[tuple[int, int], str] = {}
-    topology = _cad_occurrence_inventory(source).topology
+    topology = cad_occurrence_inventory(source).topology
     for control_index, control in enumerate(controls):
         # ty: ignore[invalid-argument-type]
         volume_ids = _scope_indices(source, control.volume_scope, 3)
@@ -118,20 +127,20 @@ def _sweep_preflight_issues(
                 issues.append(
                     "Swept cap scopes must cover every controlled solid exactly once"
                 )
-    all_solids = set(range(topology.num_solids))
+    return _SweepAssignment(controlled, face_roles, tuple(issues))
+
+
+def _sweep_interfaces(
+    source: BRepModel,
+    assignment: _SweepAssignment,
+    /,
+) -> _PreflightIssues:
+    issues: list[str] = []
+    topology = cad_occurrence_inventory(source).topology
+    controlled = assignment.controlled
+    face_roles = assignment.face_roles
     selected_solids = set(controlled)
-    expected_kinds = (
-        {"prism"} if selected_solids == all_solids else {"prism", "tetrahedron"}
-    )
-    if requested_kinds != expected_kinds:
-        issues.append(
-            "Gmsh swept output requires exactly "
-            + (
-                "prism cells for complete volume coverage"
-                if expected_kinds == {"prism"}
-                else "prism and tetrahedron cells for a swept slab with an unswept remainder"
-            )
-        )
+    all_solids = set(range(topology.num_solids))
     swept_tet_caps = set()
     for solid, (_, control) in controlled.items():
         for face in topology.solid_faces[solid]:
@@ -165,13 +174,45 @@ def _sweep_preflight_issues(
         issues.append(
             "A partial swept slab must meet the tetrahedral remainder through a source or target cap"
         )
+    return _PreflightIssues(tuple(issues))
+
+
+def _sweep_preflight_issues(
+    source: BRepModel,
+    controls: tuple[BoundaryLayerControl, ...],
+    requested_kinds: Set[str],
+    geometry_order: int,
+    /,
+) -> list[str]:
+    issues: list[str] = []
+    if geometry_order != 1:
+        issues.append("Gmsh swept layers support affine order-one geometry only")
+    assignment = _sweep_assignment(source, controls)
+    issues.extend(assignment.issues)
+    topology = cad_occurrence_inventory(source).topology
+    controlled = assignment.controlled
+    all_solids = set(range(topology.num_solids))
+    selected_solids = set(controlled)
+    expected_kinds = (
+        {"prism"} if selected_solids == all_solids else {"prism", "tetrahedron"}
+    )
+    if requested_kinds != expected_kinds:
+        issues.append(
+            "Gmsh swept output requires exactly "
+            + (
+                "prism cells for complete volume coverage"
+                if expected_kinds == {"prism"}
+                else "prism and tetrahedron cells for a swept slab with an unswept remainder"
+            )
+        )
+    issues.extend(_sweep_interfaces(source, assignment).issues)
     return list(dict.fromkeys(issues))
 
 
 def _closed_wall(source: BRepModel, faces: np.ndarray, /) -> bool:
     """Every edge of the wall faces is shared only by wall faces."""
     wall = {int(face) for face in faces}
-    topology = _cad_occurrence_inventory(source).topology
+    topology = cad_occurrence_inventory(source).topology
     return all(
         set(topology.edge_faces[edge]) <= wall
         for face in wall
@@ -185,7 +226,7 @@ _LAYERED_VOLUME_KINDS = frozenset(("prism", "tetrahedron", "pyramid", "hexahedro
 def _layered_volume_issues(
     source: BRepModel,
     specification: VolumeMeshingSpec,
-    requested_kinds: set[str],
+    requested_kinds: Set[str],
     geometry_order: int,
     /,
 ) -> list[str]:
@@ -196,7 +237,7 @@ def _layered_volume_issues(
         issues.append("Gmsh grows one advancing or provider boundary-layer control")
     if specification.fill_strategy is not VolumeFillStrategy.SIMPLEX:
         issues.append("Advancing and provider layers fill their core with SIMPLEX cells")
-    if len(_cad_occurrence_inventory(source).entities[3]) != 1:
+    if len(cad_occurrence_inventory(source).entities[3]) != 1:
         issues.append("Advancing and provider layers require one source solid")
     if (
         specification.region_controls
@@ -246,7 +287,7 @@ def _layered_volume_issues(
 def _volume_layer_issues(
     source: BRepModel,
     specification: VolumeMeshingSpec,
-    requested_kinds: set[str],
+    requested_kinds: Set[str],
     geometry_order: int,
     /,
 ) -> list[str]:
@@ -274,13 +315,18 @@ def _volume_layer_issues(
                 source, specification, requested_kinds, geometry_order
             )
         case route:
-            raise TypeError(f"Unsupported boundary-layer route {route!r}.")
+            raise TypeError(
+                (
+                    "gmsh.volume_layer_issues must select a supported boundary-layer route; got "
+                    + f"Unsupported boundary-layer route {route!r}."
+                )
+            )
 
 
 def _surface_layer_issues(
     source: BRepModel,
     specification: SurfaceMeshingSpec,
-    requested_kinds: set[str],
+    requested_kinds: Set[str],
     planar_bands: bool,
     /,
 ) -> list[str]:
@@ -312,6 +358,65 @@ def _surface_layer_issues(
     return issues
 
 
+class _UniformInterval(StrictModule):
+    hard: tuple[UniformSizeControl, ...]
+    lower: float
+    upper: float
+
+
+class _UniformConflict(StrictModule):
+    conflicting: bool
+
+
+def _uniform_interval(active: tuple[UniformSizeControl, ...], /) -> _UniformInterval:
+    hard = tuple(
+        control for control in active if control.strength is SizeControlStrength.HARD
+    )
+    lower = max(
+        (control.minimum_size for control in hard if control.minimum_size is not None),
+        default=0.0,
+    )
+    upper = min(
+        (control.maximum_size for control in hard if control.maximum_size is not None),
+        default=np.inf,
+    )
+    return _UniformInterval(hard, lower, upper)
+
+
+def _uniform_entity_conflict(
+    active: tuple[UniformSizeControl, ...],
+    combination: SizeCombinationPolicy,
+    /,
+) -> _UniformConflict:
+    interval = _uniform_interval(active)
+    hard, lower, upper = interval.hard, interval.lower, interval.upper
+    if lower > upper:
+        return _UniformConflict(True)
+    pool = hard if hard else active
+    match combination:
+        case SizeCombinationPolicy.REJECT_HARD_CONFLICTS:
+            choices = tuple(
+                np.clip(control.target_size, lower, upper) for control in hard
+            )
+        case SizeCombinationPolicy.EXPLICIT_PRIORITY:
+            priority = max(control.priority for control in pool)
+            choices = tuple(
+                np.clip(control.target_size, lower, upper)
+                for control in pool
+                if control.priority == priority
+            )
+        case _:
+            raise ValueError(
+                (
+                    "gmsh.uniform_entity_conflict must be SizeCombinationPolicy; got "
+                    + f"size_combination must be SizeCombinationPolicy; got {combination!r}"
+                )
+            )
+    return _UniformConflict(
+        bool(choices and any(value != choices[0] for value in choices))
+    )
+
+
 def _uniform_control_conflicts(
     controls: tuple[UniformSizeControl, ...],
     combination: SizeCombinationPolicy,
@@ -338,44 +443,7 @@ def _uniform_control_conflicts(
                 for control in bound
                 if np.any(np.asarray(control.scope.entity_ids) == entity_id)
             )
-            hard = tuple(
-                control
-                for control in active
-                if control.strength is SizeControlStrength.HARD
-            )
-            lower = max(
-                (
-                    control.minimum_size
-                    for control in hard
-                    if control.minimum_size is not None
-                ),
-                default=0.0,
-            )
-            upper = min(
-                (
-                    control.maximum_size
-                    for control in hard
-                    if control.maximum_size is not None
-                ),
-                default=np.inf,
-            )
-            if lower > upper:
-                return True
-            pool = hard if hard else active
-            if combination is SizeCombinationPolicy.REJECT_HARD_CONFLICTS and hard:
-                choices = tuple(
-                    np.clip(control.target_size, lower, upper) for control in hard
-                )
-            elif combination is SizeCombinationPolicy.EXPLICIT_PRIORITY:
-                priority = max(control.priority for control in pool)
-                choices = tuple(
-                    np.clip(control.target_size, lower, upper)
-                    for control in pool
-                    if control.priority == priority
-                )
-            else:
-                choices = ()
-            if choices and any(value != choices[0] for value in choices):
+            if _uniform_entity_conflict(active, combination).conflicting:
                 return True
     return False
 
@@ -387,7 +455,7 @@ def _semantic_surface_issues(
     if not specification.region_controls:
         return ["Every planar source face requires an explicit RegionControl"]
     occupied: set[int] = set()
-    inventory = _cad_occurrence_inventory(source)
+    inventory = cad_occurrence_inventory(source)
     topology = inventory.topology
     face_regions = np.empty((len(inventory.entities[2]),), dtype=object)
     face_regions[:] = None
@@ -452,15 +520,24 @@ def _semantic_surface_issues(
     return issues
 
 
-def _semantic_region_issues(
-    specification: VolumeMeshingSpec, model: BRepModel, unsupported: list[str], /
-) -> None:
+class _RegionPartition(StrictModule):
+    occupied: set[int]
+    solid_region: dict[int, str]
+    issues: tuple[str, ...]
+
+
+def _region_partition(
+    specification: VolumeMeshingSpec,
+    model: BRepModel,
+    /,
+) -> _RegionPartition:
+    unsupported: list[str] = []
     if not specification.region_controls:
         unsupported.append("Every solid requires an explicit RegionControl")
     occupied: set[int] = set()
     region_names: set[str] = set()
     solid_region: dict[int, str] = {}
-    topology = _cad_occurrence_inventory(model).topology
+    topology = cad_occurrence_inventory(model).topology
     for control in specification.region_controls:
         identifiers = _scope_indices(model, control.scope, 3)
         if identifiers is None:
@@ -481,6 +558,18 @@ def _semantic_region_issues(
         unsupported.append(
             "RegionControl scopes must exhaustively cover all source solids"
         )
+    return _RegionPartition(occupied, solid_region, tuple(unsupported))
+
+
+def _region_interfaces(
+    specification: VolumeMeshingSpec,
+    model: BRepModel,
+    partition: _RegionPartition,
+    /,
+) -> _PreflightIssues:
+    unsupported: list[str] = []
+    topology = cad_occurrence_inventory(model).topology
+    occupied, solid_region = partition.occupied, partition.solid_region
     if occupied == set(range(topology.num_solids)):
         observed_internal_faces = {
             face
@@ -520,6 +609,15 @@ def _semantic_region_issues(
             unsupported.append(
                 f"Source BRep contains undeclared inter-region faces {sorted(unexpected)}"
             )
+    return _PreflightIssues(tuple(unsupported))
+
+
+def _semantic_region_issues(
+    specification: VolumeMeshingSpec, model: BRepModel, unsupported: list[str], /
+) -> None:
+    partition = _region_partition(specification, model)
+    unsupported.extend(partition.issues)
+    unsupported.extend(_region_interfaces(specification, model, partition).issues)
     uniform = tuple(
         control
         for control in specification.size_controls
@@ -537,13 +635,13 @@ def _validate_gmsh_semantics(
     model: Any,
     descriptor: MeshingSourceDescriptor,
     target: Any,
-    requested: set[str],
+    requested: Set[str],
     layers: Any,
     unsupported: list[str],
     /,
 ) -> bool:
     semantic_volume = False
-    topology = _cad_occurrence_inventory(model).topology
+    topology = cad_occurrence_inventory(model).topology
     if isinstance(specification, VolumeMeshingSpec):
         semantic_volume = bool(
             topology.num_solids > 1
@@ -785,7 +883,7 @@ def _validate_gmsh_size_controls(
             "Gmsh does not lower explicit priority across curvature and other controls"
         )
     if semantic_volume and covered_solids != set(
-        range(len(_cad_occurrence_inventory(model).entities[3]))
+        range(len(cad_occurrence_inventory(model).entities[3]))
     ):
         unsupported.append(
             "Solid-scoped UniformSizeControl values must cover every source solid"
@@ -812,7 +910,7 @@ def _protected_feature_issues(
     constrained = bool(
         (volume and specification.layer_controls) or specification.periodic_constraints
     )
-    topology = _cad_occurrence_inventory(model).topology
+    topology = cad_occurrence_inventory(model).topology
     for feature in specification.protected_features:
         dimension = _FEATURE_DIMENSIONS.get(feature.feature_kind)
         if dimension is None:
@@ -892,7 +990,12 @@ def _background_metric_issues(
         case BackgroundMetricMode.ANISOTROPIC:
             pass
         case _:
-            raise ValueError("Unsupported background metric mode.")
+            raise ValueError(
+                (
+                    "gmsh.background_metric_issues must select a supported background metric mode; got "
+                    + "Unsupported background metric mode."
+                )
+            )
     if isinstance(specification, VolumeMeshingSpec):
         issues.append(
             "Gmsh does not lower anisotropic volume metrics; use MmgProvider adaptation"
@@ -948,7 +1051,8 @@ def _generation_option_issues(options: Any, specification: Any, /) -> list[str]:
     return issues
 
 
-def _brep_support_issues(
+@checked
+def brep_support_issues(
     options: Any,
     source: Any,
     model: BRepModel,
@@ -965,7 +1069,7 @@ def _brep_support_issues(
         else specification.boundary_scope
     )
     dimension = target.topological_dimension
-    inventory = _cad_occurrence_inventory(model)
+    inventory = cad_occurrence_inventory(model)
     scope_ids = _scope_indices(model, scope, dimension)
     expected_ids = np.arange(
         len(inventory.entities[dimension]),
@@ -979,19 +1083,25 @@ def _brep_support_issues(
         unsupported.append(
             "Gmsh meshes the complete source; partial top-level scopes are unsupported"
         )
-    if isinstance(specification, SurfaceMeshingSpec):
-        if target.ambient_dimension == 2 and inventory.entities[3]:
-            unsupported.append(
-                "Ambient-dimension-two output requires a zero-solid planar BRep"
+    match specification:
+        case SurfaceMeshingSpec():
+            if target.ambient_dimension == 2 and inventory.entities[3]:
+                unsupported.append(
+                    "Ambient-dimension-two output requires a zero-solid planar BRep"
+                )
+            if target.ambient_dimension not in (2, 3):
+                unsupported.append(
+                    "Gmsh surface output supports ambient dimensions two and three"
+                )
+        case VolumeMeshingSpec():
+            if target.ambient_dimension != 3:
+                unsupported.append(
+                    "Gmsh volume output requires three-dimensional source coordinates"
+                )
+        case _:
+            raise TypeError(
+                f"gmsh.specification must be SurfaceMeshingSpec or VolumeMeshingSpec; got {type(specification).__name__}"
             )
-        if target.ambient_dimension not in (2, 3):
-            unsupported.append(
-                "Gmsh surface output supports ambient dimensions two and three"
-            )
-    elif target.ambient_dimension != 3:
-        unsupported.append(
-            "Gmsh volume output requires three-dimensional source coordinates"
-        )
     requested = {
         *target.cell_families.required,
         *target.cell_families.preferred,
@@ -1063,7 +1173,8 @@ def _brep_support_issues(
     return unsupported
 
 
-def _remeshing_support_issues(
+@checked
+def remeshing_support_issues(
     options: Any,
     source: SurfaceModel,
     specification: SurfaceRemeshingSpec,

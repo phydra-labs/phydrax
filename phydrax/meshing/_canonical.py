@@ -4,53 +4,64 @@
 
 from __future__ import annotations
 
+from typing import assert_never, final
+
+import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
+import phydrax.discretization._cell_complex as cell_complex_owner
+import phydrax.discretization._cell_geometry as cell_geometry_owner
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.discretization._periodic_topology as periodic_topology_owner
+import phydrax.discretization._reference_cell_types as reference_cell_types_owner
+from phydrax.meshing._association_state import GeometryAssociation
+from phydrax.meshing._contracts import (
+    MeshingCapability,
+    MeshingDerivativeMode,
+    MeshingExecutionMode,
+    MeshingOperation,
+    MeshingProviderInfo,
+    MeshingSourceKind,
+)
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
 from .._identity import SemanticProvenance
 from .._physical import SpatialCoordinateContract
-from ..discretization import (
-    CellBlock,
-    CellGeometrySpec,
-    CellMesh,
-    PeriodicMeshTopology,
-    PolyhedralBlock,
-    PolyhedralConnectivity,
-)
+from .._strict import StrictModule
 from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
 from ..discretization._cell_geometry_validity import (
     CellValidityCertificate,
     CellValidityStatus,
 )
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..discretization._exact_power_geometry import (
     ExactPowerCellGeometryLinearActionSource,
     ExactPowerCellGeometryRestrictionSource,
     ExactPowerCellGeometrySource,
 )
 from ..discretization._hexahedral import HexahedralConnectivity
-from ..geometry._mesh_certificates import (
-    DomainCoverageCertificate,
-    GlobalEmbeddingCertificate,
-    SourceFidelityCertificate,
-)
+from ..geometry._domain_coverage import DomainCoverageCertificate
+from ..geometry._global_embedding import GlobalEmbeddingCertificate
 from ..geometry._surface_source_support import SurfaceSourceCharts
 from ..geometry.surface import SurfaceModel
-from ._association import GeometryAssociation
-from ._audit import audit_cell_mesh, CellMeshAuditPolicy
-from ._certification import acceptance_stage_report, MeshCertificationPreparedEvidence
-from ._certification_inputs import MeshCertificationInputs
-from ._contracts import (
-    MeshingCapability,
-    MeshingDerivativeMode,
-    MeshingExecutionMode,
-    MeshingFailure,
-    MeshingFailureCategory,
-    MeshingOperation,
-    MeshingProviderInfo,
-    MeshingSourceKind,
+from ..typing import checked
+from ._audit import (
+    audit_cell_mesh,
+    CellMeshAuditPolicy,
+    CellMeshAuditReport,
+    required_audit_policy,
 )
-from ._lineage import MeshLineage
-from ._organization import (
+from ._certification import (
+    acceptance_stage_report,
+    MeshCertificationReport,
+    PreparedBoundaryAcceptance,
+    PreparedMeshingAcceptance,
+    PreparedVolumeAcceptance,
+)
+from ._certification_inputs import MeshCertificationInputs
+from ._lineage_records import MeshLineage
+from ._organization_records import (
     MeshAttribute,
     MeshAttributeProjection,
     MeshLabel,
@@ -101,7 +112,10 @@ _NATIVE_PROVIDER = MeshingProviderInfo(
 )
 
 
-def _entity_vertex_keys(mesh: CellMesh, dimension: int, /) -> tuple[tuple[int, ...], ...]:
+@checked
+def entity_vertex_keys(
+    mesh: cell_mesh_owner.CellMesh, dimension: int, /
+) -> tuple[tuple[int, ...], ...]:
     """Identify lifted lower-dimensional entities independently of traversal ordering.
 
     Lifted vertices keep distinct global IDs even when they share a periodic
@@ -110,32 +124,38 @@ def _entity_vertex_keys(mesh: CellMesh, dimension: int, /) -> tuple[tuple[int, .
     `_quotient_entity_ids`.
     """
     connectivity = mesh.connectivity
-    if dimension == 1:
-        if not isinstance(
-            connectivity,
-            (
-                PolygonalConnectivity,
-                TetrahedralConnectivity,
-                HexahedralConnectivity,
-                PolyhedralConnectivity,
-            ),
+    match (dimension, connectivity):
+        case (
+            1,
+            PolygonalConnectivity()
+            | TetrahedralConnectivity()
+            | HexahedralConnectivity()
+            | cell_complex_owner.PolyhedralConnectivity() as connectivity,
         ):
-            raise TypeError("Edge entities require polygonal or volume connectivity.")
-        rows = np.asarray(connectivity.edges)
-    elif dimension == 2:
-        if isinstance(connectivity, PolyhedralConnectivity):
+            rows = np.asarray(connectivity.edges)
+        case (1, _):
+            raise TypeError(
+                "mesh.connectivity must be polygonal or volumetric for edge keys; "
+                f"got {type(connectivity).__name__}"
+            )
+        case (2, cell_complex_owner.PolyhedralConnectivity() as connectivity):
             offsets = np.asarray(connectivity.face_vertex_offsets)
             values = np.asarray(connectivity.face_vertex_values)
             rows = tuple(
                 values[start:stop]
                 for start, stop in zip(offsets[:-1], offsets[1:], strict=True)
             )
-        elif isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity)):
+        case (2, TetrahedralConnectivity() | HexahedralConnectivity() as connectivity):
             rows = np.asarray(connectivity.faces)
-        else:
-            raise TypeError("Face entities require volume connectivity.")
-    else:
-        raise ValueError("Entity vertex keys require edge or face dimension.")
+        case (2, _):
+            raise TypeError(
+                "mesh.connectivity must be volumetric for face keys; "
+                f"got {type(connectivity).__name__}"
+            )
+        case _:
+            raise ValueError(
+                f"entity_vertex_keys.dimension must be 1 or 2; got {dimension!r}"
+            )
     vertex_ids = np.asarray(mesh.vertex_global_ids)
     return tuple(tuple(sorted(int(value) for value in vertex_ids[row])) for row in rows)
 
@@ -147,12 +167,17 @@ def _identifiers_by_key(
         key: int(identifier) for key, identifier in zip(keys, identifiers, strict=True)
     }
     if len(mapping) != len(keys):
-        raise ValueError("Canonical entity keys must identify distinct entities.")
+        raise ValueError(
+            "entity_vertex_keys.keys must identify distinct entities; "
+            f"got {len(mapping)} distinct keys for {len(keys)} entities"
+        )
     return mapping
 
 
 def _quotient_entity_ids(
-    source: PeriodicMeshTopology, target: PeriodicMeshTopology, /
+    source: periodic_topology_owner.PeriodicMeshTopology,
+    target: periodic_topology_owner.PeriodicMeshTopology,
+    /,
 ) -> dict[int, np.ndarray]:
     """Carry intermediate quotient IDs to a rebuilt descriptor by winding keys."""
 
@@ -169,8 +194,13 @@ def _quotient_entity_ids(
 
 
 def _periodic_rebuild(
-    mesh: CellMesh, lifted: CellMesh, entity_ids: dict[int, np.ndarray], /
-) -> CellMesh:
+    mesh: cell_mesh_owner.CellMesh,
+    lifted: cell_mesh_owner.CellMesh,
+    entity_ids: dict[int, np.ndarray],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> cell_mesh_owner.CellMesh:
     """Rebind the periodic descriptor of `mesh` to its reordered lifted carrier."""
 
     periodic = mesh.periodic_topology
@@ -188,23 +218,28 @@ def _periodic_rebuild(
             ),
         ):
             raise TypeError(
-                "Periodic canonicalization requires the retained exact vertex source owner."
+                "periodic.actual_geometry.exact_source must retain a power-geometry vertex source; "
+                f"got {type(source).__name__}"
             )
-        actual_geometry = CellGeometrySpec.power(lifted, source)
+        actual_geometry = cell_geometry_owner.CellGeometrySpec.power(
+            lifted, source, budget=budget
+        )
     arguments = (
         lifted,
         periodic.cell,
         periodic.vertex_representatives,
         periodic.vertex_shifts,
     )
-    candidate = PeriodicMeshTopology(*arguments, actual_geometry=actual_geometry)
+    candidate = periodic_topology_owner.PeriodicMeshTopology(
+        *arguments, actual_geometry=actual_geometry, budget=budget
+    )
     quotient_ids = _quotient_entity_ids(periodic, candidate)
     if candidate.allocator_next_ids != periodic.allocator_next_ids or not all(
         np.array_equal(values, np.asarray(candidate.quotient.entities(degree).entity_ids))
         for degree, values in quotient_ids.items()
     ):
         # Unresolved (-1) cursors stay unresolved: explicit IDs without history.
-        candidate = PeriodicMeshTopology(
+        candidate = periodic_topology_owner.PeriodicMeshTopology(
             *arguments,
             actual_geometry=actual_geometry,
             entity_global_ids=quotient_ids,
@@ -213,8 +248,9 @@ def _periodic_rebuild(
                 for degree, cursor in enumerate(periodic.allocator_next_ids)
                 if 0 < degree < periodic.topological_dimension and cursor >= 0
             },
+            budget=budget,
         )
-    return CellMesh(
+    return cell_mesh_owner.CellMesh(
         lifted.coordinates,
         lifted.blocks,
         vertex_global_ids=lifted.vertex_global_ids,
@@ -224,21 +260,26 @@ def _periodic_rebuild(
     )
 
 
-def canonicalize_cell_mesh(mesh: CellMesh, /) -> CellMesh:
+@checked
+def canonicalize_cell_mesh(
+    mesh: cell_mesh_owner.CellMesh, /, *, budget: CoordinateEnclosureBudget | None = None
+) -> cell_mesh_owner.CellMesh:
     """Return deterministic block/cell ordering without changing mesh geometry."""
 
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be CellMesh.")
     if mesh.storage is not None:
-        # These are prepared local slots of an already canonical logical mesh.
-        # Reordering them as a complete serial mesh would destroy routing.
+        # These are prepared local slots of an established logical mesh.
+        # Reordering them as a serial mesh would destroy routing.
         return mesh
-    if any(isinstance(block, PolyhedralBlock) for block in mesh.blocks):
+    if any(
+        isinstance(block, reference_cell_types_owner.PolyhedralBlock)
+        for block in mesh.blocks
+    ):
         for block in mesh.blocks:
             identifiers = np.asarray(block.global_ids, dtype=np.int64)
             if np.any(identifiers[:-1] > identifiers[1:]):
                 raise ValueError(
-                    "Face-defined polyhedral blocks must be globally ID ordered at construction."
+                    "block.global_ids must be ascending at construction for face-defined polyhedra; "
+                    f"got block={block.name!r} with out-of-order IDs"
                 )
         return mesh
     blocks = []
@@ -246,7 +287,7 @@ def canonicalize_cell_mesh(mesh: CellMesh, /) -> CellMesh:
         identifiers = np.asarray(block.global_ids, dtype=np.int64)
         order = np.argsort(identifiers, kind="stable")
         blocks.append(
-            CellBlock(
+            reference_cell_types_owner.CellBlock(
                 block.name,
                 block.cell_kind,
                 np.asarray(block.vertices)[order],
@@ -268,7 +309,7 @@ def canonicalize_cell_mesh(mesh: CellMesh, /) -> CellMesh:
         block.block_id for block in mesh.blocks
     ):
         return mesh
-    rebuilt = CellMesh(
+    rebuilt = cell_mesh_owner.CellMesh(
         mesh.coordinates,
         ordered,
         vertex_global_ids=mesh.vertex_global_ids,
@@ -277,152 +318,184 @@ def canonicalize_cell_mesh(mesh: CellMesh, /) -> CellMesh:
     entity_ids = {}
     for dimension in range(1, mesh.topological_dimension):
         identifiers = _identifiers_by_key(
-            _entity_vertex_keys(mesh, dimension),
+            entity_vertex_keys(mesh, dimension),
             np.asarray(mesh.entity_set(dimension).entity_ids),
         )
         entity_ids[dimension] = np.asarray(
-            [identifiers[key] for key in _entity_vertex_keys(rebuilt, dimension)],
+            [identifiers[key] for key in entity_vertex_keys(rebuilt, dimension)],
             dtype=np.int64,
         )
     if not all(
         np.array_equal(values, np.asarray(rebuilt.entity_set(dimension).entity_ids))
         for dimension, values in entity_ids.items()
     ):
-        rebuilt = CellMesh(
+        rebuilt = cell_mesh_owner.CellMesh(
             mesh.coordinates,
             ordered,
             vertex_global_ids=mesh.vertex_global_ids,
             entity_global_ids=entity_ids,
             numeric_version=mesh.numeric_version,
         )
-    return _periodic_rebuild(mesh, rebuilt, entity_ids)
+    return _periodic_rebuild(mesh, rebuilt, entity_ids, budget=budget)
 
 
-def certify_cell_mesh(
-    mesh: CellMesh,
-    coordinate_contract: SpatialCoordinateContract,
+@final
+class _CertificationTransition(StrictModule):
+    inputs: MeshCertificationInputs | None
+    lineage: MeshLineage | None
+    cell_regions: ArrayLike | None
+    junction_vertices: ArrayLike | None
+    prepared: PreparedMeshingAcceptance | None
+    audit_validity: CellValidityCertificate | None
+
+
+@final
+class _CertificationCarrier(StrictModule):
+    mesh: cell_mesh_owner.CellMesh
+    geometry: cell_geometry_owner.CellGeometrySpec
+    transition: _CertificationTransition
+
+
+@final
+class _CertificationVerdict(StrictModule):
+    report: MeshCertificationReport | None
+    stages: tuple[MeshingStageReport, ...]
+
+
+@final
+class _CertificationPublication(StrictModule):
+    compliance: MeshingComplianceReport
+    trace: MeshingTrace
+    provenance: SemanticProvenance
+    runtime: MeshingRuntimeInfo
+
+
+def _prepare_certification_transition(
+    inputs: MeshCertificationInputs | None,
+    lineage: MeshLineage | None,
+    cell_regions: ArrayLike | None,
+    junction_vertices: ArrayLike | None,
+    prepared: PreparedMeshingAcceptance | None,
+    audit_validity: CellValidityCertificate | None,
     /,
-    *,
-    geometry: CellGeometrySpec | None = None,
-    audit_policy: CellMeshAuditPolicy | None = None,
-    boundary: SurfaceModel | None = None,
-    patches: tuple[MeshPatch, ...] = (),
-    zones: tuple[MeshZone, ...] = (),
-    labels: tuple[MeshLabel, ...] = (),
-    attributes: tuple[MeshAttribute, ...] = (),
-    associations: tuple[GeometryAssociation, ...] = (),
-    region_evidence: RegionMeshingEvidence | None = None,
-    region_boundary_evidence: tuple[RegionBoundaryEvidence, ...] = (),
-    certification_inputs: MeshCertificationInputs | None = None,
-    lineage: MeshLineage | None = None,
-    certification_cell_regions: ArrayLike | None = None,
-    certification_junction_vertices: ArrayLike | None = None,
-    certification_prepared: MeshCertificationPreparedEvidence | None = None,
-    certification_prepared_embedding: GlobalEmbeddingCertificate | None = None,
-    certification_prepared_fidelity: SourceFidelityCertificate | None = None,
-    audit_prepared_validity: CellValidityCertificate | None = None,
-    surface_source: SurfaceSourceCharts | None = None,
-) -> CellMeshingResult:
-    """Canonicalize and certify one existing CellMesh through native substrates."""
-
-    mesh.require_dense("certify_cell_mesh")
-    if not isinstance(coordinate_contract, SpatialCoordinateContract):
-        raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
-    if boundary is not None:
-        if not isinstance(boundary, SurfaceModel):
-            raise TypeError("boundary must be SurfaceModel or None.")
-        if (
-            boundary.metadata.coordinate_contract.spatial_id
-            != coordinate_contract.spatial_id
-        ):
+) -> _CertificationTransition:
+    """Join transition inputs with prepared evidence before mesh preparation."""
+    if (inputs is None) != (lineage is None):
+        raise ValueError(
+            "certify_cell_mesh.certification_inputs must accompany lineage; "
+            f"got inputs={type(inputs).__name__}, lineage={type(lineage).__name__}"
+        )
+    if prepared is not None and inputs is None:
+        raise ValueError(
+            "certify_cell_mesh.certification_prepared must accompany certification_inputs; "
+            "got an absent transition request"
+        )
+    match prepared:
+        case PreparedVolumeAcceptance(volume=volume):
+            if (
+                audit_validity is not None
+                and volume.validity.certificate_id != audit_validity.certificate_id
+            ):
+                raise ValueError(
+                    "certify_cell_mesh.audit_prepared_validity must agree with certification_prepared.volume.validity; "
+                    f"got audit={audit_validity.certificate_id!r}, volume={volume.validity.certificate_id!r}"
+                )
+            audit_validity = volume.validity
+        case PreparedBoundaryAcceptance() | None:
+            pass
+        case invalid:
+            assert_never(invalid)
+    for name, supplied in (
+        ("certification_cell_regions", cell_regions is not None),
+        ("certification_junction_vertices", junction_vertices is not None),
+    ):
+        if supplied and inputs is None:
             raise ValueError(
-                "Boundary and target carrier require the exact same physical coordinate contract."
+                f"certify_cell_mesh.{name} must accompany certification_inputs; got an absent transition request"
             )
-    if certification_inputs is not None and not isinstance(
-        certification_inputs, MeshCertificationInputs
-    ):
-        raise TypeError("certification_inputs must be MeshCertificationInputs or None.")
-    if lineage is not None and not isinstance(lineage, MeshLineage):
-        raise TypeError("lineage must be MeshLineage or None.")
-    if (certification_inputs is None) != (lineage is None):
-        raise ValueError(
-            "Certification transition inputs and lineage must be supplied together."
-        )
-    if certification_prepared is not None and (
-        not isinstance(certification_prepared, MeshCertificationPreparedEvidence)
-        or certification_inputs is None
-    ):
-        raise ValueError(
-            "Prepared target evidence requires its owning transition request."
-        )
-    if certification_prepared_embedding is not None and (
-        not isinstance(certification_prepared_embedding, GlobalEmbeddingCertificate)
-        or certification_inputs is None
-    ):
-        raise ValueError(
-            "Prepared target embedding requires its owning transition request."
-        )
-    if certification_prepared_fidelity is not None and (
-        not isinstance(certification_prepared_fidelity, SourceFidelityCertificate)
-        or certification_inputs is None
-    ):
-        raise ValueError(
-            "Prepared target fidelity requires its owning transition request."
-        )
-    if audit_prepared_validity is not None and not isinstance(
-        audit_prepared_validity, CellValidityCertificate
-    ):
-        raise TypeError(
-            "audit_prepared_validity must be CellValidityCertificate or None."
-        )
-    if (
-        certification_prepared is not None
-        and audit_prepared_validity is not None
-        and certification_prepared.validity.certificate_id
-        != audit_prepared_validity.certificate_id
-    ):
-        raise ValueError("Audit and certification prepared validity evidence must agree.")
-    if certification_inputs is None and (
-        certification_cell_regions is not None
-        or certification_junction_vertices is not None
-    ):
-        raise ValueError("Target certification assignments require transition inputs.")
-    canonical = canonicalize_cell_mesh(mesh)
+    return _CertificationTransition(
+        inputs=inputs,
+        lineage=lineage,
+        cell_regions=cell_regions,
+        junction_vertices=junction_vertices,
+        prepared=prepared,
+        audit_validity=audit_validity,
+    )
+
+
+def _prepare_certification_carrier(
+    mesh: cell_mesh_owner.CellMesh,
+    geometry: cell_geometry_owner.CellGeometrySpec | None,
+    region_evidence: RegionMeshingEvidence | None,
+    transition: _CertificationTransition,
+    budget: CoordinateEnclosureBudget | None,
+    /,
+) -> _CertificationCarrier:
+    """Canonicalize only carriers whose supplied rows will remain aligned."""
+    canonical = canonicalize_cell_mesh(mesh, budget=budget)
     if region_evidence is not None and canonical is not mesh:
         raise ValueError(
-            "Canonicalization would reorder supplied region evidence; canonicalize "
-            "the mesh before constructing RegionMeshingEvidence."
+            "certify_cell_mesh.region_evidence must bind a mesh sorted before constructing RegionMeshingEvidence; "
+            "got canonicalization that would reorder supplied region evidence"
         )
     if geometry is not None and canonical is not mesh:
         raise ValueError(
-            "Canonicalization would reorder supplied geometry DOF rows; canonicalize "
-            "the mesh before constructing CellGeometrySpec."
+            "certify_cell_mesh.geometry must bind a mesh sorted before constructing CellGeometrySpec; "
+            "got canonicalization that would reorder supplied geometry DOF rows"
         )
-    geometry_ = CellGeometrySpec.affine(canonical) if geometry is None else geometry
-    if not isinstance(geometry_, CellGeometrySpec):
-        raise TypeError("geometry must be CellGeometrySpec or None.")
+    geometry_ = (
+        cell_geometry_owner.CellGeometrySpec.affine(canonical, budget=budget)
+        if geometry is None
+        else geometry
+    )
+    return _CertificationCarrier(
+        mesh=canonical, geometry=geometry_, transition=transition
+    )
+
+
+def _audit_certification_carrier(
+    carrier: _CertificationCarrier,
+    policy: CellMeshAuditPolicy | None,
+    boundary: SurfaceModel | None,
+    patches: tuple[MeshPatch, ...],
+    zones: tuple[MeshZone, ...],
+    labels: tuple[MeshLabel, ...],
+    attributes: tuple[MeshAttribute, ...],
+    associations: tuple[GeometryAssociation, ...],
+    budget: CoordinateEnclosureBudget | None,
+    /,
+) -> CellMeshAuditReport:
+    """Audit the ordered carrier and preserve failing-cell diagnostics."""
+    inputs = carrier.transition.inputs
+    if inputs is not None:
+        # A volume's boundary must close even when its coordinate map is curved.
+        # Execute the retained schedule's checks before renewing its acceptance.
+        policy = required_audit_policy(
+            CellMeshAuditPolicy() if policy is None else policy,
+            inputs.schedule.required_audit_checks,
+        )
     audit = audit_cell_mesh(
-        canonical,
-        geometry_,
-        policy=audit_policy,
+        carrier.mesh,
+        carrier.geometry,
+        policy=policy,
         boundary=boundary,
         patches=patches,
         associations=associations,
         attributes=attributes,
         zones=zones,
         labels=labels,
-        prepared_validity=(
-            certification_prepared.validity
-            if certification_prepared is not None
-            else audit_prepared_validity
-        ),
+        prepared_validity=carrier.transition.audit_validity,
+        budget=budget,
     )
     if not audit.passed:
         uncertified = (
             np.asarray(audit.validity.status) != CellValidityStatus.CERTIFIED_VALID
         )
         cell_ids = np.concatenate(
-            [np.asarray(block.global_ids, dtype=np.int64) for block in canonical.blocks]
+            [
+                np.asarray(block.global_ids, dtype=np.int64)
+                for block in carrier.mesh.blocks
+            ]
         )
         raise MeshingFailure(
             MeshingFailureCategory.AUDIT_FAILED,
@@ -434,22 +507,48 @@ def certify_cell_mesh(
                 else audit.quality.worst_cell_global_ids
             ),
         )
-    certification = None
-    certification_stages: tuple[MeshingStageReport, ...] = ()
-    if certification_inputs is not None and lineage is not None:
-        certification = certification_inputs.recertify_transition(
-            canonical,
-            geometry_,
-            audit,
-            lineage=lineage,
-            cell_regions=certification_cell_regions,
-            junction_vertices=certification_junction_vertices,
-            prepared=certification_prepared,
-            prepared_embedding=certification_prepared_embedding,
-            prepared_fidelity=certification_prepared_fidelity,
-        )
-        certification.require_passed()
-        certification_stages = (acceptance_stage_report(certification),)
+    return audit
+
+
+def _certify_transition(
+    carrier: _CertificationCarrier,
+    audit: CellMeshAuditReport,
+    budget: CoordinateEnclosureBudget | None,
+    /,
+) -> _CertificationVerdict:
+    """Renew retained acceptance after the ordered carrier passes its audit."""
+    transition = carrier.transition
+    if transition.inputs is None or transition.lineage is None:
+        return _CertificationVerdict(report=None, stages=())
+    certification = transition.inputs.recertify_transition(
+        carrier.mesh,
+        carrier.geometry,
+        audit,
+        lineage=transition.lineage,
+        cell_regions=transition.cell_regions,
+        junction_vertices=transition.junction_vertices,
+        prepared=transition.prepared,
+        budget=budget,
+    )
+    certification.require_passed()
+    return _CertificationVerdict(
+        report=certification, stages=(acceptance_stage_report(certification),)
+    )
+
+
+def _prepare_certification_publication(
+    mesh: cell_mesh_owner.CellMesh,
+    carrier: _CertificationCarrier,
+    coordinate_contract: SpatialCoordinateContract,
+    boundary: SurfaceModel | None,
+    audit: CellMeshAuditReport,
+    verdict: _CertificationVerdict,
+    /,
+) -> _CertificationPublication:
+    """Build trace and provenance without changing stage or fingerprint order."""
+    canonical = carrier.mesh
+    geometry_ = carrier.geometry
+    certification = verdict.report
     findings = audit.recorded
     audit_status = MeshingStageStatus.WARNING if findings else MeshingStageStatus.PASSED
     audit_diagnostics = (
@@ -490,7 +589,7 @@ def certify_cell_mesh(
             output_ids=(audit.report_id,),
             diagnostics=audit_diagnostics,
         ),
-        *certification_stages,
+        *verdict.stages,
         MeshingStageReport(
             MeshingStageKind.SPECIFICATION_COMPLIANCE,
             MeshingStageStatus.PASSED,
@@ -521,18 +620,91 @@ def certify_cell_mesh(
         deterministic=True,
         enforced_limits=("canonical_connectivity",),
     )
+    return _CertificationPublication(
+        compliance=compliance, trace=trace, provenance=provenance, runtime=runtime
+    )
+
+
+@checked
+def certify_cell_mesh(
+    mesh: cell_mesh_owner.CellMesh,
+    coordinate_contract: SpatialCoordinateContract,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+    geometry: cell_geometry_owner.CellGeometrySpec | None = None,
+    audit_policy: CellMeshAuditPolicy | None = None,
+    boundary: SurfaceModel | None = None,
+    patches: tuple[MeshPatch, ...] = (),
+    zones: tuple[MeshZone, ...] = (),
+    labels: tuple[MeshLabel, ...] = (),
+    attributes: tuple[MeshAttribute, ...] = (),
+    associations: tuple[GeometryAssociation, ...] = (),
+    region_evidence: RegionMeshingEvidence | None = None,
+    region_boundary_evidence: tuple[RegionBoundaryEvidence, ...] = (),
+    certification_inputs: MeshCertificationInputs | None = None,
+    lineage: MeshLineage | None = None,
+    certification_cell_regions: ArrayLike | None = None,
+    certification_junction_vertices: ArrayLike | None = None,
+    certification_prepared: PreparedMeshingAcceptance | None = None,
+    audit_prepared_validity: CellValidityCertificate | None = None,
+    surface_source: SurfaceSourceCharts | None = None,
+) -> CellMeshingResult:
+    """Canonicalize a cell mesh and publish its audited coordinate map.
+
+    ``certification_prepared`` selects volume or independent boundary evidence
+    for retained acceptance. Volume validity also feeds the audit; separately
+    supplied audit validity must identify that same certificate.
+    Retained schedules execute their required boundary-closure audit even when
+    ``audit_policy`` leaves that check skipped.
+    """
+
+    mesh.require_dense("certify_cell_mesh")
+    if boundary is not None and (
+        boundary.metadata.coordinate_contract.spatial_id != coordinate_contract.spatial_id
+    ):
+        raise ValueError(
+            "boundary.coordinate_contract must match coordinate_contract; "
+            f"got spatial_id={boundary.metadata.coordinate_contract.spatial_id!r}"
+        )
+    transition = _prepare_certification_transition(
+        certification_inputs,
+        lineage,
+        certification_cell_regions,
+        certification_junction_vertices,
+        certification_prepared,
+        audit_prepared_validity,
+    )
+    carrier = _prepare_certification_carrier(
+        mesh, geometry, region_evidence, transition, budget
+    )
+    audit = _audit_certification_carrier(
+        carrier,
+        audit_policy,
+        boundary,
+        patches,
+        zones,
+        labels,
+        attributes,
+        associations,
+        budget,
+    )
+    verdict = _certify_transition(carrier, audit, budget)
+    publication = _prepare_certification_publication(
+        mesh, carrier, coordinate_contract, boundary, audit, verdict
+    )
     return CellMeshingResult(
-        canonical,
-        geometry_,
+        carrier.mesh,
+        carrier.geometry,
         coordinate_contract,
         audit,
         audit.quality,
-        compliance,
-        trace,
+        publication.compliance,
+        publication.trace,
         _NATIVE_PROVIDER,
-        runtime,
+        publication.runtime,
         MeshingDerivativeMode.FIXED_TOPOLOGY_EXACT,
-        provenance,
+        publication.provenance,
         boundary=boundary,
         patches=patches,
         zones=zones,
@@ -541,19 +713,88 @@ def certify_cell_mesh(
         associations=associations,
         region_evidence=region_evidence,
         region_boundary_evidence=region_boundary_evidence,
-        certification=certification,
+        certification=verdict.report,
         surface_source=surface_source,
     )
 
 
+@final
+class _OwnerLocalScientificSource(StrictModule):
+    source_audit_id: str = eqx.field(static=True)
+    scientific_theorem_id: str = eqx.field(static=True)
+    storage_id: str = eqx.field(static=True)
+
+
+def _prepare_owner_local_scientific_source(
+    mesh: cell_mesh_owner.CellMesh,
+    source: CellMeshingResult,
+    collective_evidence: CollectiveMeshEvidence,
+    /,
+) -> _OwnerLocalScientificSource:
+    """Join source acceptance, subdivision evidence, and target storage."""
+    storage = mesh.storage
+    if storage is None:
+        raise ValueError("mesh.storage must provide owner-local storage; got None")
+    uniform = collective_evidence.uniform_refinement
+    original = require_original_meshing_source(
+        source if uniform is None else uniform.source
+    )
+    # Lazy: _canonical -> _initial_certification -> _adaptation -> _assembly import cycle.
+    from . import _initial_certification as initial_certification_owner
+
+    match original:
+        case initial_certification_owner.InitialCollectiveMeshEvidence():
+            original.require_passed()
+            source_audit_id = original.evidence_id
+            scientific_theorem_id = original.source_evidence_id
+        case CellMeshingResult():
+            embedding = collective_evidence.source_embedding
+            if embedding is None:
+                raise ValueError(
+                    "owner_local_source.embedding must carry its prepared proof; got absent evidence"
+                )
+            embedding.binding.require(original.mesh, original.geometry)
+            if (
+                embedding.status != "certified"
+                or embedding.validity_certificate_id
+                != original.audit.validity.certificate_id
+            ):
+                raise ValueError(
+                    "owner_local_source.embedding must certify the audited map; got mismatched evidence"
+                )
+            source_audit_id = original.audit.report_id
+            scientific_theorem_id = collective_evidence.source_premise_id
+        case invalid:
+            assert_never(invalid)
+    if (
+        collective_evidence.source_mesh_id != source.mesh.mesh_id
+        or collective_evidence.source_audit_id != source_audit_id
+        or collective_evidence.mesh_id != mesh.mesh_id
+        or collective_evidence.evidence_id != storage.evidence_id
+    ):
+        raise ValueError(
+            "certify_owner_local_cell_mesh.collective_evidence must join source acceptance and target storage; "
+            f"got source_mesh_id={collective_evidence.source_mesh_id!r}, "
+            f"target_mesh_id={collective_evidence.mesh_id!r}, evidence_id={collective_evidence.evidence_id!r}"
+        )
+    collective_evidence.require_passed()
+    return _OwnerLocalScientificSource(
+        source_audit_id=source_audit_id,
+        scientific_theorem_id=scientific_theorem_id,
+        storage_id=storage.storage_id,
+    )
+
+
+@checked
 def certify_owner_local_cell_mesh(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     source: CellMeshingResult,
     collective_evidence: CollectiveMeshEvidence,
     /,
     *,
+    budget: CoordinateEnclosureBudget | None = None,
     audit_policy: CellMeshAuditPolicy | None = None,
-    geometry: CellGeometrySpec | None = None,
+    geometry: cell_geometry_owner.CellGeometrySpec | None = None,
     patches: tuple[MeshPatch, ...] = (),
     zones: tuple[MeshZone, ...] = (),
     labels: tuple[MeshLabel, ...] = (),
@@ -573,46 +814,9 @@ def certify_owner_local_cell_mesh(
     comes from the accepted source plus the distributed subdivision witnesses;
     no copied source certificate is relabeled as a target global certificate.
     ``collective_certificates`` are the target-bound embedding and coverage
-    recertified collectively for this exact publication.
+    recertified collectively for this publication.
     """
-    if not isinstance(mesh, CellMesh) or mesh.storage is None:
-        raise ValueError(
-            "Owner-local certification requires canonical owner-local storage."
-        )
-    uniform = (
-        collective_evidence.uniform_refinement
-        if isinstance(collective_evidence, CollectiveMeshEvidence)
-        else None
-    )
-    original = require_original_meshing_source(
-        source if uniform is None else uniform.source
-    )
-    from ._initial_certification import InitialCollectiveMeshEvidence
-
-    if isinstance(original, InitialCollectiveMeshEvidence):
-        original.require_passed()
-        source_audit_id = original.evidence_id
-        scientific_theorem_id = original.source_evidence_id
-    else:
-        certification = original.certification
-        if certification is None or certification.embedding is None:
-            raise ValueError(
-                "Owner-local publication requires the original scientific embedding theorem."
-            )
-        certification.require_passed()
-        source_audit_id = original.audit.report_id
-        scientific_theorem_id = certification.report_id
-    if (
-        not isinstance(collective_evidence, CollectiveMeshEvidence)
-        or collective_evidence.source_mesh_id != source.mesh.mesh_id
-        or collective_evidence.source_audit_id != source_audit_id
-        or collective_evidence.mesh_id != mesh.mesh_id
-        or collective_evidence.evidence_id != mesh.storage.evidence_id
-    ):
-        raise ValueError(
-            "Collective subdivision witnesses do not join the source and target."
-        )
-    collective_evidence.require_passed()
+    scientific = _prepare_owner_local_scientific_source(mesh, source, collective_evidence)
     obligations = (
         (source.patches, patches, "patch"),
         (source.zones, zones, "zone"),
@@ -628,13 +832,18 @@ def certify_owner_local_cell_mesh(
     for before, after, name in obligations:
         if before and not after:
             raise ValueError(
-                f"Owner-local publication requires the inherited {name} coverage, not silent removal."
+                f"certify_owner_local_cell_mesh.organization must retain inherited {name} coverage; "
+                "got an empty target collection"
             )
     if source.region_evidence is not None and region_evidence is None:
         raise ValueError(
-            "Owner-local publication requires inherited authoritative region evidence."
+            "certify_owner_local_cell_mesh.region_evidence must retain source.region_evidence; got None"
         )
-    geometry = CellGeometrySpec.affine(mesh) if geometry is None else geometry
+    geometry = (
+        cell_geometry_owner.CellGeometrySpec.affine(mesh, budget=budget)
+        if geometry is None
+        else geometry
+    )
     audit = audit_cell_mesh(
         mesh,
         geometry,
@@ -644,6 +853,7 @@ def certify_owner_local_cell_mesh(
         labels=labels,
         attributes=attributes,
         associations=associations,
+        budget=budget,
     )
     audit.require_passed()
     audit.require_decided()
@@ -677,14 +887,14 @@ def certify_owner_local_cell_mesh(
                 MeshingStageStatus.PASSED,
                 input_ids=(source.result_id,),
                 output_ids=(
-                    scientific_theorem_id,
+                    scientific.scientific_theorem_id,
                     collective_evidence.source_evidence_id,
                 ),
             ),
             MeshingStageReport(
                 MeshingStageKind.GEOMETRY_AUDIT,
                 MeshingStageStatus.PASSED,
-                input_ids=(mesh.mesh_id, mesh.storage.storage_id),
+                input_ids=(mesh.mesh_id, scientific.storage_id),
                 output_ids=(audit.validity.certificate_id,),
             ),
             MeshingStageReport(
@@ -708,7 +918,7 @@ def certify_owner_local_cell_mesh(
             "kind": "owner-local-affine-bisection-publication",
             "source": source.result_id,
             "mesh": mesh.mesh_id,
-            "local_storage": mesh.storage.storage_id,
+            "local_storage": scientific.storage_id,
             "local_audit": audit.report_id,
             "collective_evidence": collective_evidence.evidence_id,
             "collective_certificates": None

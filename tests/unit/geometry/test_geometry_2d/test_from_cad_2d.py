@@ -14,6 +14,7 @@ from jax import numpy as jnp
 from numpy.typing import ArrayLike
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 @pytest.fixture
@@ -34,7 +35,7 @@ def geometry_from_square(simple_square_mesh: Any) -> Any:
     return phx.domain.GeometryDomain(
         phx.geometry.planar_region_from_source(
             simple_square_mesh, recenter=False
-        ).compile()
+        ).compile(coordinate_unit=METER)
     )
 
 
@@ -94,7 +95,7 @@ def test_boundary_atlas_partition_and_chart_lowering_match_boundary_measure(
 
 def test_curved_boundary_normals_obey_divergence_theorem() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile()
+        phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile(coordinate_unit=METER)
     )
     component = geom.component({"x": phx.domain.Boundary()})
     realization = phx.integration.materialize(
@@ -135,7 +136,7 @@ def test_geometry_from_cad_file(tmp_path: Any) -> None:
     mesh.export(mesh_file)
 
     geom = phx.domain.GeometryDomain(
-        phx.geometry.planar_region_from_source(mesh_file).compile()
+        phx.geometry.planar_region_from_source(mesh_file).compile(coordinate_unit=METER)
     )
     assert isinstance(geom, phx.domain.GeometryDomain)
     assert np.isclose(float(geom.area), mesh.area, atol=1e-6)

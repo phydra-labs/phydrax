@@ -14,6 +14,7 @@ from .._execution_resources import ResourceRequest
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer, positive_integer
 from ..qualification._registry import SupportTuple
 from ..typing import checked, parse
 
@@ -25,7 +26,7 @@ _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_TIMESTAMP = (1 << 63) - 1
 _MAX_MANIFEST_CHUNKS = 65_536
 _MAX_MANIFEST_METADATA_ITEMS = 4_096
-_MAX_METADATA_VALUE_BYTES = 1024 * 1024
+MAX_METADATA_VALUE_BYTES = 1024 * 1024
 
 
 class RepositoryError(RuntimeError):
@@ -74,7 +75,7 @@ class CheckpointResourcePolicy(StrictModule, NonTrainableState):
         maximum_outbox_bytes: int,
         maximum_json_nesting: int = 32,
     ) -> None:
-        resource = _identifier(resource_policy_id, "resource_policy_id")
+        resource = identifier(resource_policy_id, "resource_policy_id")
         names = (
             "maximum_manifest_bytes",
             "maximum_chunks",
@@ -86,24 +87,28 @@ class CheckpointResourcePolicy(StrictModule, NonTrainableState):
             "maximum_outbox_bytes",
             "maximum_json_nesting",
         )
-        values = tuple(
-            _positive_integer(value, name)
-            for value, name in zip(
-                (
-                    maximum_manifest_bytes,
-                    maximum_chunks,
-                    maximum_logical_payloads,
-                    maximum_logical_payload_bytes,
-                    maximum_total_plaintext_bytes,
-                    maximum_total_encoded_bytes,
-                    maximum_outbox_records,
-                    maximum_outbox_bytes,
-                    maximum_json_nesting,
-                ),
-                names,
-                strict=True,
-            )
-        )
+        validated_values = []
+        for value, name in zip(
+            (
+                maximum_manifest_bytes,
+                maximum_chunks,
+                maximum_logical_payloads,
+                maximum_logical_payload_bytes,
+                maximum_total_plaintext_bytes,
+                maximum_total_encoded_bytes,
+                maximum_outbox_records,
+                maximum_outbox_bytes,
+                maximum_json_nesting,
+            ),
+            names,
+            strict=True,
+        ):
+            if type(value) is not int:
+                raise ValueError(
+                    f"CheckpointResourcePolicy.{name} must be a positive integer; got {value!r}."
+                )
+            validated_values.append(positive_integer(value, name))
+        values = tuple(validated_values)
         if values[3] > values[4] or values[7] > values[4]:
             raise ValueError(
                 "Logical payload and outbox byte limits cannot exceed total plaintext."
@@ -152,8 +157,16 @@ class CheckpointResourcePolicy(StrictModule, NonTrainableState):
             raise ValueError(
                 "Checkpoint staging and outbox bounds cannot exceed requested memory."
             )
-        manifest = _positive_integer(maximum_manifest_bytes, "maximum_manifest_bytes")
-        chunk = _positive_integer(maximum_chunk_bytes, "maximum_chunk_bytes")
+        if type(maximum_manifest_bytes) is not int:
+            raise ValueError(
+                f"CheckpointResourcePolicy.maximum_manifest_bytes must be a positive integer; got {maximum_manifest_bytes!r}."
+            )
+        manifest = positive_integer(maximum_manifest_bytes, "maximum_manifest_bytes")
+        if type(maximum_chunk_bytes) is not int:
+            raise ValueError(
+                f"CheckpointResourcePolicy.maximum_chunk_bytes must be a positive integer; got {maximum_chunk_bytes!r}."
+            )
+        chunk = positive_integer(maximum_chunk_bytes, "maximum_chunk_bytes")
         if manifest > staging:
             raise ValueError(
                 "Repository manifest admission exceeds checkpoint staging resources."
@@ -273,10 +286,10 @@ class RepositoryTransaction(StrictModule, NonTrainableState):
         base_pointer_token: str | None,
         started_at: int,
     ) -> None:
-        provider = _identifier(provider_id, "provider_id")
-        artifact = _identifier(artifact_id, "artifact_id")
-        writer = _identifier(writer_id, "writer_id")
-        attempt = _identifier(attempt_id, "attempt_id")
+        provider = identifier(provider_id, "provider_id")
+        artifact = identifier(artifact_id, "artifact_id")
+        writer = identifier(writer_id, "writer_id")
+        attempt = identifier(attempt_id, "attempt_id")
         base = _optional_digest(base_manifest_id, "base_manifest_id")
         token = (
             None
@@ -353,16 +366,16 @@ class ChunkRecord(StrictModule, NonTrainableState):
         object_key: str,
         /,
     ) -> None:
-        transaction = _digest(transaction_id, "transaction_id")
-        logical = _identifier(logical_name, "logical_name")
-        index_ = _nonnegative(index, "index")
-        offset_ = _nonnegative(offset, "offset")
-        plaintext_size_ = _nonnegative(plaintext_size, "plaintext_size")
-        encoded_size_ = _nonnegative(encoded_size, "encoded_size")
-        plaintext_digest = _digest(plaintext_sha256, "plaintext_sha256")
-        encoded_digest = _digest(encoded_sha256, "encoded_sha256")
+        transaction = digest(transaction_id, "transaction_id")
+        logical = identifier(logical_name, "logical_name")
+        index_ = nonnegative_integer(index, "index")
+        offset_ = nonnegative_integer(offset, "offset")
+        plaintext_size_ = nonnegative_integer(plaintext_size, "plaintext_size")
+        encoded_size_ = nonnegative_integer(encoded_size, "encoded_size")
+        plaintext_digest = digest(plaintext_sha256, "plaintext_sha256")
+        encoded_digest = digest(encoded_sha256, "encoded_sha256")
         encoding = parse(encoding, ChunkEncoding, "encoding")
-        key = _object_key(object_key)
+        key = validate_object_key(object_key)
         self.transaction_id = transaction
         self.logical_name = logical
         self.index = index_
@@ -438,9 +451,9 @@ class ArtifactManifest(StrictModule, NonTrainableState):
         metadata: Mapping[str, str] | Sequence[tuple[str, str]] = (),
         committed_at: int,
     ) -> None:
-        provider = _identifier(provider_id, "provider_id")
-        artifact = _identifier(artifact_id, "artifact_id")
-        transaction = _digest(transaction_id, "transaction_id")
+        provider = identifier(provider_id, "provider_id")
+        artifact = identifier(artifact_id, "artifact_id")
+        transaction = digest(transaction_id, "transaction_id")
         base = _optional_digest(base_manifest_id, "base_manifest_id")
         if not isinstance(chunks, Sequence) or isinstance(chunks, (str, bytes)):
             raise TypeError("Artifact manifest chunks must be a sequence.")
@@ -535,10 +548,10 @@ class LeaseRecord(StrictModule, NonTrainableState):
         expires_at: int,
         /,
     ) -> None:
-        provider = _identifier(provider_id, "provider_id")
-        artifact = _identifier(artifact_id, "artifact_id")
-        holder = _identifier(holder_id, "holder_id")
-        lease = _identifier(lease_id, "lease_id")
+        provider = identifier(provider_id, "provider_id")
+        artifact = identifier(artifact_id, "artifact_id")
+        holder = identifier(holder_id, "holder_id")
+        lease = identifier(lease_id, "lease_id")
         issued = _timestamp(issued_at, "issued_at")
         expires = _timestamp(expires_at, "expires_at")
         if expires <= issued:
@@ -599,10 +612,10 @@ class LegalHoldRecord(StrictModule, NonTrainableState):
         placed_at: int,
         /,
     ) -> None:
-        provider = _identifier(provider_id, "provider_id")
-        artifact = _identifier(artifact_id, "artifact_id")
-        hold = _identifier(hold_id, "hold_id")
-        authority_ = _identifier(authority, "authority")
+        provider = identifier(provider_id, "provider_id")
+        artifact = identifier(artifact_id, "artifact_id")
+        hold = identifier(hold_id, "hold_id")
+        authority_ = identifier(authority, "authority")
         placed = _timestamp(placed_at, "placed_at")
         self.provider_id = provider
         self.artifact_id = artifact
@@ -654,9 +667,9 @@ class RetentionPolicy(StrictModule, NonTrainableState):
         minimum_age_seconds: int = 0,
         abandoned_attempt_grace_seconds: int = 3600,
     ) -> None:
-        keep = _nonnegative(keep_latest_commits, "keep_latest_commits")
-        age = _nonnegative(minimum_age_seconds, "minimum_age_seconds")
-        grace = _nonnegative(
+        keep = nonnegative_integer(keep_latest_commits, "keep_latest_commits")
+        age = nonnegative_integer(minimum_age_seconds, "minimum_age_seconds")
+        grace = nonnegative_integer(
             abandoned_attempt_grace_seconds, "abandoned_attempt_grace_seconds"
         )
         self.keep_latest_commits = keep
@@ -708,8 +721,8 @@ class TombstoneRecord(StrictModule, NonTrainableState):
         eligible_at: int,
         /,
     ) -> None:
-        provider = _identifier(provider_id, "provider_id")
-        artifact = _identifier(artifact_id, "artifact_id")
+        provider = identifier(provider_id, "provider_id")
+        artifact = identifier(artifact_id, "artifact_id")
         reason_ = str(reason).strip()
         if not reason_ or len(reason_.encode("utf-8")) > 4096:
             raise ValueError("Tombstone reason must be nonempty and at most 4096 bytes.")
@@ -770,7 +783,7 @@ class GarbageCollectionReport(StrictModule, NonTrainableState):
         expired_lease_ids: Sequence[str],
         /,
     ) -> None:
-        provider = _identifier(provider_id, "provider_id")
+        provider = identifier(provider_id, "provider_id")
         collected = _timestamp(collected_at, "collected_at")
         attempts = _identifiers(removed_attempt_ids, "removed_attempt_ids")
         artifacts = _identifiers(removed_artifact_ids, "removed_artifact_ids")
@@ -918,7 +931,7 @@ def _metadata(value: Mapping[str, str] | Sequence[tuple[str, str]], /) -> Metada
     normalized = tuple(
         sorted(
             (
-                _identifier(name, "metadata key"),
+                identifier(name, "metadata key"),
                 _metadata_value(item),
             )
             for name, item in records
@@ -932,14 +945,14 @@ def _metadata(value: Mapping[str, str] | Sequence[tuple[str, str]], /) -> Metada
 def _metadata_value(value: object, /) -> str:
     if not isinstance(value, str):
         raise TypeError("Artifact metadata values must be strings.")
-    if len(value.encode("utf-8")) > _MAX_METADATA_VALUE_BYTES:
+    if len(value.encode("utf-8")) > MAX_METADATA_VALUE_BYTES:
         raise ValueError(
-            f"Artifact metadata values must be at most {_MAX_METADATA_VALUE_BYTES} bytes."
+            f"artifact_metadata.value must encode to at most {MAX_METADATA_VALUE_BYTES} bytes; got {len(value.encode('utf-8'))} bytes."
         )
     return value
 
 
-def _identifier(value: str, name: str, /) -> str:
+def identifier(value: str, name: str, /) -> str:
     if not isinstance(value, str) or _IDENTIFIER.fullmatch(value) is None:
         raise ValueError(
             f"{name} must be a nonempty path-safe identifier of at most 256 characters."
@@ -959,23 +972,23 @@ def _opaque_token(value: str, name: str, /) -> str:
 
 
 def _identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
-    normalized = tuple(sorted(_identifier(item, name) for item in values))
+    normalized = tuple(sorted(identifier(item, name) for item in values))
     if len(set(normalized)) != len(normalized):
         raise ValueError(f"{name} must be unique.")
     return normalized
 
 
-def _digest(value: str, name: str, /) -> str:
+def digest(value: str, name: str, /) -> str:
     if not isinstance(value, str) or _DIGEST.fullmatch(value) is None:
         raise ValueError(f"{name} must be a lowercase SHA-256 digest.")
     return value
 
 
 def _optional_digest(value: str | None, name: str, /) -> str | None:
-    return None if value is None else _digest(value, name)
+    return None if value is None else digest(value, name)
 
 
-def _object_key(value: str, /) -> str:
+def validate_object_key(value: str, /) -> str:
     if not isinstance(value, str) or value.startswith("/") or "\\" in value:
         raise ValueError("Chunk object keys must be relative canonical paths.")
     segments = value.split("/")
@@ -991,19 +1004,6 @@ def _timestamp(value: int, name: str, /) -> int:
     normalized = int(value)
     if normalized < 0 or normalized > _MAX_TIMESTAMP:
         raise ValueError(f"{name} must be a non-negative signed 64-bit timestamp.")
-    return normalized
-
-
-def _positive_integer(value: int, name: str, /) -> int:
-    if type(value) is not int or value <= 0:
-        raise ValueError(f"{name} must be a positive integer.")
-    return value
-
-
-def _nonnegative(value: int, name: str, /) -> int:
-    normalized = int(value)
-    if normalized < 0:
-        raise ValueError(f"{name} must be nonnegative.")
     return normalized
 
 

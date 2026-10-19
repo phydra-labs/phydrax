@@ -17,7 +17,7 @@ from jax import Array
 from jax.typing import DTypeLike
 
 from ..._polynomial._cubature import CubatureReference
-from ...typing import PRNGKey
+from ...typing import checked, PRNGKey
 from .._atlas import (
     BoundaryAtlas,
     box_boundary_atlas,
@@ -45,10 +45,11 @@ from .._sampling import (
     RejectionSamplingPlan,
     SamplingResult,
 )
+from .._validity import GeometryValidityEvidence
 from ..design._schema import (
-    _ParameterCollector,
     DesignState,
     ParameterBinding,
+    ParameterCollector,
     ParameterId,
 )
 
@@ -196,7 +197,7 @@ def _finite_norm_jvp(
 
 
 def _compile_ball(
-    context: _ParameterCollector,
+    context: ParameterCollector,
     center_value: Array,
     radius_value: Array,
     *,
@@ -206,15 +207,17 @@ def _compile_ball(
         ParameterId(source_id, "center"),
         center_value,
         role="position",
+        unit=context.coordinate_unit,
     )
     radius = context.bind(
         ParameterId(source_id, "radius"),
         radius_value,
         role="length",
+        unit=context.coordinate_unit,
         physical_scale=float(radius_value),
         bounds=(0.0, None),
     )
-    return _BallKernel(
+    return BallKernel(
         center,
         radius,
         dimension=center_value.shape[0],
@@ -240,7 +243,7 @@ class Ball(GeometrySource):
         self.radius = _validate_positive_scalar(radius, name="radius")
         self.feature_id = _feature_id(feature_id, "ball")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         return _compile_ball(
             context,
             self.center,
@@ -267,7 +270,7 @@ class Circle(GeometrySource):
         self.radius = _validate_positive_scalar(radius, name="radius")
         self.feature_id = _feature_id(feature_id, "circle")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         return _compile_ball(
             context,
             self.center,
@@ -294,7 +297,7 @@ class Sphere(GeometrySource):
         self.radius = _validate_positive_scalar(radius, name="radius")
         self.feature_id = _feature_id(feature_id, "sphere")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         return _compile_ball(
             context,
             self.center,
@@ -303,7 +306,7 @@ class Sphere(GeometrySource):
         )
 
 
-class _BallKernel(GeometryKernel):
+class BallKernel(GeometryKernel):
     center: ParameterBinding = eqx.field(static=True)
     radius: ParameterBinding = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
@@ -355,6 +358,27 @@ class _BallKernel(GeometryKernel):
 
     def _parameters(self, state: DesignState) -> tuple[Array, Array]:
         return self.center.read(state), self.radius.read(state)
+
+    @checked
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
+        """Return ball validity with a strict positive-radius margin.
+
+        The margin is dimensionless, normalized by the radius binding's
+        physical scale. A restricted field certificate remains unresolved.
+        """
+        center, radius = self._parameters(state)
+        scale = jnp.asarray(
+            state.schema.spec(self.radius.parameter_id).physical_scale,
+            dtype=radius.dtype,
+        )
+        return GeometryValidityEvidence(
+            finite=jnp.all(jnp.isfinite(center)) & jnp.isfinite(radius),
+            conditions_satisfied=radius > 0.0,
+            resolved=self.field_certificate.validity_region == "all_space",
+            margins=jnp.atleast_1d(radius / scale),
+            margin_names=(f"{self.radius.parameter_id}:positive",),
+            contract_id="analytic_ball_positive_radius",
+        )
 
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, self.dimension)
@@ -509,7 +533,7 @@ class _BallKernel(GeometryKernel):
 
 
 def _compile_orthotope(
-    context: _ParameterCollector,
+    context: ParameterCollector,
     center_value: Array,
     size_value: Array,
     *,
@@ -519,15 +543,17 @@ def _compile_orthotope(
         ParameterId(source_id, "center"),
         center_value,
         role="position",
+        unit=context.coordinate_unit,
     )
     size = context.bind(
         ParameterId(source_id, "size"),
         size_value,
         role="length",
+        unit=context.coordinate_unit,
         physical_scale=float(jnp.min(size_value)),
         bounds=(0.0, None),
     )
-    return _OrthotopeKernel(
+    return OrthotopeKernel(
         center,
         size,
         dimension=center_value.shape[0],
@@ -559,7 +585,7 @@ class Orthotope(GeometrySource):
         self.size = size_
         self.feature_id = _feature_id(feature_id, "orthotope")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         return _compile_orthotope(
             context,
             self.center,
@@ -590,7 +616,7 @@ class Box(GeometrySource):
         self.size = size_
         self.feature_id = _feature_id(feature_id, "box")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         return _compile_orthotope(
             context,
             self.center,
@@ -599,7 +625,7 @@ class Box(GeometrySource):
         )
 
 
-class _OrthotopeKernel(GeometryKernel):
+class OrthotopeKernel(GeometryKernel):
     center: ParameterBinding = eqx.field(static=True)
     size: ParameterBinding = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
@@ -645,6 +671,26 @@ class _OrthotopeKernel(GeometryKernel):
 
     def _parameters(self, state: DesignState) -> tuple[Array, Array]:
         return self.center.read(state), self.size.read(state)
+
+    @checked
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
+        """Return orthotope validity with normalized positive-size margins."""
+        center, size = self._parameters(state)
+        scale = jnp.asarray(
+            state.schema.spec(self.size.parameter_id).physical_scale,
+            dtype=size.dtype,
+        )
+        return GeometryValidityEvidence(
+            finite=jnp.all(jnp.isfinite(center)) & jnp.all(jnp.isfinite(size)),
+            conditions_satisfied=jnp.all(size > 0.0),
+            resolved=self.field_certificate.validity_region == "all_space",
+            margins=size / scale,
+            margin_names=tuple(
+                f"{self.size.parameter_id}:positive:{axis}"
+                for axis in range(self.dimension)
+            ),
+            contract_id="analytic_orthotope_positive_extents",
+        )
 
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, self.dimension)

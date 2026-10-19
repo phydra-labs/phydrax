@@ -36,7 +36,7 @@ from ._runtime import (
     refresh as refresh_linear_solve,
     solve as solve_linear_system,
 )
-from ._spaces import _coordinate_dtype, AbstractVectorSpace, ArraySpace
+from ._spaces import AbstractVectorSpace, ArraySpace, coordinate_dtype
 
 
 MatrixEquationKind: TypeAlias = Literal[
@@ -130,8 +130,8 @@ class MatrixEquationLinearOperator(AbstractLinearOperator):
                 raise ValueError("All right terms must act on compatible column spaces.")
         inferred_dtype = jnp.result_type(
             *(
-                tuple(_coordinate_dtype(term.left.source) for term in terms_)
-                + tuple(_coordinate_dtype(term.right.source) for term in terms_)
+                tuple(coordinate_dtype(term.left.source) for term in terms_)
+                + tuple(coordinate_dtype(term.right.source) for term in terms_)
                 + tuple(term.coefficient.dtype for term in terms_)
             )
         )
@@ -782,7 +782,7 @@ def _promoted_coordinate_action(
     *,
     transpose: bool,
 ) -> Array:
-    native_dtype = _coordinate_dtype(operator.source)
+    native_dtype = coordinate_dtype(operator.source)
 
     def native_action(value: Array) -> Array:
         native = value.astype(native_dtype)

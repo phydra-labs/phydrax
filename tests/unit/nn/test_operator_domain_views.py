@@ -11,6 +11,7 @@ import pytest
 
 import phydrax as phx
 import phydrax.axes as cx
+from phydrax.units import METER
 
 
 def _points_batch() -> Any:
@@ -101,7 +102,7 @@ def test_operator_domain_views_scenario_1() -> None:
     nx = 8
     data = phx.domain.DatasetDomain(jnp.ones((3, nx)), label="data")
     geometry = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile(coordinate_unit=METER)
     )
     domain = data @ geometry
     sampled = domain.component().sample(

@@ -9,8 +9,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-# ty: ignore[unresolved-import]
-import cyipopt
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -141,6 +139,9 @@ def main() -> int:
     arguments = parser.parse_args()
     if any(intervals < 1 for intervals in arguments.intervals):
         raise ValueError("every interval count must be positive")
+    # Admit cyipopt only when running the Ipopt qualification.
+    import cyipopt  # ty: ignore[unresolved-import]
+
     records = []
     for intervals in arguments.intervals:
         for hessian in ("limited-memory", "exact-sparse"):

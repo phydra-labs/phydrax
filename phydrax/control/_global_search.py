@@ -17,7 +17,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..optim import DifferentialEvolutionSearch
-from ..optim._differential_evolution import _bounded_differential_evolution
+from ..optim._differential_evolution import bounded_differential_evolution
 from ..typing import PRNGKey
 from ._multiple_shooting import _evaluate_held_control
 from ._parameterization import (
@@ -330,7 +330,7 @@ def search_control(
         initial_coefficients,
     )
     objective = _ControlObjective(problem, parameterization, dict(solver_options))
-    result = _bounded_differential_evolution(
+    result = bounded_differential_evolution(
         objective,
         jnp.reshape(initial, (-1,)),
         jnp.reshape(lower, (-1,)),

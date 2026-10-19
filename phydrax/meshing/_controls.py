@@ -8,20 +8,24 @@ from enum import StrEnum
 from typing import final
 
 import equinox as eqx
-import jax.numpy as jnp
+import jax
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+
+import phydrax.discretization._cell_mesh as cell_mesh_owner
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
-from ..discretization import CellMesh
+from ..geometry._meshing_domain import MeshingDomain
 from ..geometry.brep._patches import AbstractCurve, AbstractSurfacePatch
-from ..typing import checked
-from . import _organization
+from ..geometry.brep._selection import RecipeSelectionBinding
+from ..geometry.design._naming import RecipeEntityNames
+from ..typing import checked, parse
+from . import _organization_records
 from ._metric import MeshMetricField
 from ._scope import MeshingEntityKind, MeshingScope
 
@@ -34,10 +38,10 @@ class FeatureKind(StrEnum):
 
 
 class BoundaryLayerRoute(StrEnum):
-    """Realization route of one boundary-layer control.
+    """Select the realization route for a boundary-layer control.
 
     ``EXACT_SWEEP`` meshes a pre-partitioned straight slab cap to cap;
-    ``CAD_EXTRUSION`` partitions the slab by exact CAD extrusion of planar walls
+    ``CAD_EXTRUSION`` partitions the slab by CAD extrusion of planar walls
     and then sweeps it; ``ADVANCING`` grows native layers from a closed wall
     surface mesh; ``PROVIDER`` lowers the schedule to the provider's own
     boundary-layer machinery and audits the measured result.
@@ -50,7 +54,7 @@ class BoundaryLayerRoute(StrEnum):
 
 
 class BoundaryLayerCollisionPolicy(StrEnum):
-    """Resolution of predicted or certified front collisions.
+    """Select how predicted or certified front collisions are resolved.
 
     ``FAIL`` rejects with evidence; ``TERMINATE_LOCALLY`` drops the colliding
     columns' outer layers (pyramid/tetrahedron terminations);
@@ -66,7 +70,7 @@ class BoundaryLayerCollisionPolicy(StrEnum):
 
 
 class BoundaryLayerCornerPolicy(StrEnum):
-    """Treatment of wall edges whose dihedral deviation exceeds the feature angle.
+    """Select treatment of wall edges exceeding the feature angle.
 
     ``FAN`` splits columns across convex ridges and fills the wedge with fan
     templates (corner patches where three or more ridges meet); ``SMOOTH``
@@ -97,11 +101,12 @@ class ProtectedFeature(StrictModule, NonTrainableState):
         maximum_deviation: float = 0.0,
         hard: bool = True,
     ) -> None:
-        if not isinstance(feature_kind, FeatureKind):
-            raise TypeError("feature_kind must be FeatureKind.")
+        feature_kind = parse(feature_kind, FeatureKind, "ProtectedFeature.feature_kind")
         deviation = float(maximum_deviation)
         if not np.isfinite(deviation) or deviation < 0.0:
-            raise ValueError("maximum_deviation must be finite and non-negative.")
+            raise ValueError(
+                f"ProtectedFeature.maximum_deviation must be finite and non-negative; got {deviation!r}."
+            )
         self.scope = scope
         self.feature_kind = feature_kind
         self.maximum_deviation = deviation
@@ -121,7 +126,7 @@ class RegionSeed(StrictModule, NonTrainableState):
     point: Array
     region_name: str = eqx.field(static=True)
     material_id: str = eqx.field(static=True)
-    role: _organization.RegionRole = eqx.field(static=True)
+    role: _organization_records.RegionRole = eqx.field(static=True)
     seed_id: str = eqx.field(static=True)
 
     def __init__(
@@ -129,7 +134,7 @@ class RegionSeed(StrictModule, NonTrainableState):
         point: ArrayLike,
         region_name: str,
         material_id: str,
-        role: _organization.RegionRole,
+        role: _organization_records.RegionRole,
         /,
     ) -> None:
         coordinates = np.asarray(point, dtype=np.float64)
@@ -140,12 +145,15 @@ class RegionSeed(StrictModule, NonTrainableState):
             or coordinates.size == 0
             or not np.all(np.isfinite(coordinates))
         ):
-            raise ValueError("Region seed point must be one finite coordinate vector.")
+            raise ValueError(
+                f"RegionSeed.point must be one finite coordinate vector; got shape={coordinates.shape}, dtype={coordinates.dtype}."
+            )
         if not region or not material:
-            raise ValueError("Region seed identities must be non-empty.")
-        if not isinstance(role, _organization.RegionRole):
-            raise TypeError("role must be RegionRole.")
-        self.point = jnp.asarray(coordinates)
+            raise ValueError(
+                f"RegionSeed.identities must be non-empty; got region_name={region!r}, material_id={material!r}."
+            )
+        role = parse(role, _organization_records.RegionRole, "RegionSeed.role")
+        self.point = jax.device_put(np.asarray(coordinates))
         self.region_name = region
         self.material_id = material
         self.role = role
@@ -173,8 +181,10 @@ class HoleSeed(StrictModule, NonTrainableState):
             or coordinates.size == 0
             or not np.all(np.isfinite(coordinates))
         ):
-            raise ValueError("Hole seed point must be one finite coordinate vector.")
-        self.point = jnp.asarray(coordinates)
+            raise ValueError(
+                f"HoleSeed.point must be one finite coordinate vector; got shape={coordinates.shape}, dtype={coordinates.dtype}."
+            )
+        self.point = jax.device_put(np.asarray(coordinates))
         self.scope = scope
         self.seed_id = canonical_fingerprint(
             {
@@ -189,7 +199,7 @@ class RegionControl(StrictModule, NonTrainableState):
     scope: MeshingScope
     region_name: str = eqx.field(static=True)
     material_id: str = eqx.field(static=True)
-    role: _organization.RegionRole = eqx.field(static=True)
+    role: _organization_records.RegionRole = eqx.field(static=True)
     meshing_enabled: bool = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
@@ -199,7 +209,7 @@ class RegionControl(StrictModule, NonTrainableState):
         scope: MeshingScope,
         region_name: str,
         material_id: str,
-        role: _organization.RegionRole,
+        role: _organization_records.RegionRole,
         /,
         *,
         meshing_enabled: bool = True,
@@ -207,9 +217,10 @@ class RegionControl(StrictModule, NonTrainableState):
         region = str(region_name).strip()
         material = str(material_id).strip()
         if not region or not material:
-            raise ValueError("Region identities must be non-empty.")
-        if not isinstance(role, _organization.RegionRole):
-            raise TypeError("role must be RegionRole.")
+            raise ValueError(
+                f"RegionControl.identities must be non-empty; got region_name={region!r}, material_id={material!r}."
+            )
+        role = parse(role, _organization_records.RegionRole, "RegionControl.role")
         self.scope = scope
         self.region_name = region
         self.material_id = material
@@ -228,13 +239,14 @@ class RegionControl(StrictModule, NonTrainableState):
 
 
 class PatchControl(StrictModule, NonTrainableState):
-    """Explicit codimension-one boundary or interface request."""
+    """Declare a codimension-one boundary or interface request."""
 
     name: str = eqx.field(static=True)
     scope: MeshingScope
     adjacent_region_names: tuple[str, ...] = eqx.field(static=True)
     required: bool = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
+    recipe_binding: RecipeSelectionBinding | None
 
     @checked
     def __init__(
@@ -245,23 +257,35 @@ class PatchControl(StrictModule, NonTrainableState):
         /,
         *,
         required: bool = True,
+        recipe_binding: RecipeSelectionBinding | None = None,
     ) -> None:
         value = str(name).strip()
         if not value:
-            raise ValueError("Patch control name must be non-empty.")
+            raise ValueError(f"PatchControl.name must be non-empty; got {value!r}.")
         if isinstance(adjacent_region_names, str):
-            raise TypeError("adjacent_region_names must be an iterable of region names.")
+            raise TypeError(
+                f"PatchControl.adjacent_region_names must be an iterable of region names; got {type(adjacent_region_names).__name__}."
+            )
         regions = tuple(sorted(str(region).strip() for region in adjacent_region_names))
         if len(regions) not in (1, 2):
-            raise ValueError("Patch controls require one or two adjacent region names.")
+            raise ValueError(
+                f"PatchControl.adjacent_region_names must contain one or two adjacent region names; got {regions!r}."
+            )
         if any(not region for region in regions) or len(set(regions)) != len(regions):
             raise ValueError(
-                "Patch controls require distinct non-empty adjacent region names."
+                f"PatchControl.adjacent_region_names must contain distinct non-empty adjacent region names; got {regions!r}."
             )
         self.name = value
         self.scope = scope
         self.adjacent_region_names = regions
         self.required = bool(required)
+        if recipe_binding is not None and scope.entity_dimension != (
+            2 if recipe_binding.kind == "face" else 1
+        ):
+            raise ValueError(
+                "PatchControl.recipe_binding must match the scope dimension; got a different entity family"
+            )
+        self.recipe_binding = recipe_binding
         self.control_id = canonical_fingerprint(
             {
                 "kind": "patch-control",
@@ -271,10 +295,37 @@ class PatchControl(StrictModule, NonTrainableState):
                 "required": bool(required),
             }
         )
+        if recipe_binding is not None:
+            self.control_id = canonical_fingerprint(
+                {
+                    "control": self.control_id,
+                    "recipe_membership": tuple(
+                        sorted(name.key for name in recipe_binding.names)
+                    ),
+                    "recipe_inventory": tuple(
+                        sorted(name.key for name in recipe_binding.inventory)
+                    ),
+                }
+            )
+
+    @checked
+    def rebind(self, names: RecipeEntityNames, domain: MeshingDomain, /) -> PatchControl:
+        """Resolve stable recipe membership on a topology-preserving realization."""
+        if self.recipe_binding is None:
+            raise ValueError(
+                "PatchControl.rebind must have a recipe-bound selection; got absent recipe binding"
+            )
+        return PatchControl(
+            self.name,
+            self.recipe_binding.scope(names, domain),
+            self.adjacent_region_names,
+            required=self.required,
+            recipe_binding=self.recipe_binding,
+        )
 
 
 class LayerSchedule(StrictModule, NonTrainableState):
-    """Exact layer thicknesses, ordered from the wall outward."""
+    """Store layer thicknesses in outward order from the wall."""
 
     thicknesses: tuple[float, ...] = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
@@ -282,15 +333,21 @@ class LayerSchedule(StrictModule, NonTrainableState):
     def __init__(self, thicknesses: ArrayLike, /) -> None:
         values = np.asarray(thicknesses)
         if values.ndim != 1 or values.size == 0:
-            raise ValueError("thicknesses must be one non-empty vector.")
+            raise ValueError(
+                f"LayerSchedule.thicknesses must be one non-empty vector; got shape={values.shape}."
+            )
         if not (
             np.issubdtype(values.dtype, np.integer)
             or np.issubdtype(values.dtype, np.floating)
         ):
-            raise TypeError("thicknesses must contain real numeric values.")
+            raise TypeError(
+                f"LayerSchedule.thicknesses must contain real numeric values; got dtype={values.dtype}."
+            )
         normalized = values.astype("float64", copy=False)
         if not np.all(np.isfinite(normalized)) or np.any(normalized <= 0.0):
-            raise ValueError("thicknesses must be finite and strictly positive.")
+            raise ValueError(
+                f"LayerSchedule.thicknesses must be finite and strictly positive; got {normalized!r}."
+            )
         explicit = tuple(float(value) for value in normalized)
         self.thicknesses = explicit
         self.schedule_id = canonical_fingerprint(
@@ -315,10 +372,14 @@ class LayerSchedule(StrictModule, NonTrainableState):
             or np.issubdtype(count_value.dtype, np.bool_)
             or not np.issubdtype(count_value.dtype, np.integer)
         ):
-            raise TypeError("layer_count must be an integer.")
+            raise TypeError(
+                f"LayerSchedule.layer_count must be an integer; got shape={count_value.shape}, dtype={count_value.dtype}."
+            )
         count = int(count_value)
         if count <= 0:
-            raise ValueError("layer_count must be positive.")
+            raise ValueError(
+                f"LayerSchedule.layer_count must be positive; got {count!r}."
+            )
         first_value = np.asarray(first_layer_thickness)
         growth_value = np.asarray(growth_rate)
         if any(
@@ -331,14 +392,18 @@ class LayerSchedule(StrictModule, NonTrainableState):
             for value in (first_value, growth_value)
         ):
             raise TypeError(
-                "first_layer_thickness and growth_rate must be real numeric scalars."
+                f"LayerSchedule.first_layer_thickness must be a real numeric scalar together with growth_rate; got first_shape={first_value.shape}, first_dtype={first_value.dtype}, growth_shape={growth_value.shape}, growth_dtype={growth_value.dtype}."
             )
         first = float(first_value)
         growth = float(growth_value)
         if not np.isfinite(first) or first <= 0.0:
-            raise ValueError("first_layer_thickness must be positive and finite.")
+            raise ValueError(
+                f"LayerSchedule.first_layer_thickness must be positive and finite; got {first!r}."
+            )
         if not np.isfinite(growth) or growth <= 0.0:
-            raise ValueError("growth_rate must be positive and finite.")
+            raise ValueError(
+                f"LayerSchedule.growth_rate must be positive and finite; got {growth!r}."
+            )
         # ty: ignore[invalid-argument-type]
         return cls(tuple(first * growth**index for index in range(count)))
 
@@ -352,7 +417,7 @@ class LayerSchedule(StrictModule, NonTrainableState):
 
     @property
     def growth_rates(self) -> tuple[float, ...]:
-        """Consecutive outward thickness ratios ``t[k + 1] / t[k]``."""
+        """Return consecutive outward thickness ratios ``t[k + 1] / t[k]``."""
         return tuple(
             outer / inner
             for inner, outer in zip(
@@ -376,42 +441,45 @@ def _layer_scope_dimensions(
     match route:
         case BoundaryLayerRoute.EXACT_SWEEP:
             valid = (wall, cap, volume) == (2, 2, 3)
-            message = "EXACT_SWEEP requires wall and cap face scopes and a volume scope."
+            message = "use wall and cap face scopes and a volume scope for EXACT_SWEEP"
         case BoundaryLayerRoute.CAD_EXTRUSION:
             valid = (wall, cap, volume) == (2, None, 3)
             message = (
-                "CAD_EXTRUSION requires a wall face scope, a volume scope, and no cap."
+                "use a wall face scope, a volume scope, and no cap for CAD_EXTRUSION"
             )
         case BoundaryLayerRoute.ADVANCING:
             valid = (wall, cap, volume) == (2, None, 3 if geometry else None)
-            message = (
-                "ADVANCING requires a wall face scope, no cap, and a volume scope "
-                "exactly for geometry-bound walls."
-            )
+            message = "use a wall face scope and no cap for ADVANCING, with a volume scope for geometry-bound walls"
         case BoundaryLayerRoute.PROVIDER:
             valid = (wall, cap, volume) in ((1, None, None), (2, None, 3))
-            message = (
-                "PROVIDER requires wall curves without a volume, or wall faces with "
-                "a volume scope; it takes no cap."
-            )
+            message = "use wall curves without a volume or wall faces with a volume scope for PROVIDER, with no cap"
         case _:
-            raise TypeError("route must be BoundaryLayerRoute.")
+            raise TypeError(
+                f"BoundaryLayerControl.route must be BoundaryLayerRoute; got {type(route).__name__}."
+            )
     if not valid:
-        raise ValueError(message)
+        raise ValueError(
+            f"BoundaryLayerControl.scopes must {message}; got wall_dimension={wall}, "
+            f"cap_dimension={cap}, volume_dimension={volume}, geometry_bound={geometry}."
+        )
     if cap_scope is not None:
         if cap_scope.entity_set_id != wall_scope.entity_set_id:
-            raise ValueError("Wall and cap face scopes must share one entity set.")
+            raise ValueError(
+                f"BoundaryLayerControl.wall_scope must share one entity set with cap_scope; got wall={wall_scope.entity_set_id!r}, cap={cap_scope.entity_set_id!r}."
+            )
         if np.intersect1d(
             np.asarray(wall_scope.entity_ids), np.asarray(cap_scope.entity_ids)
         ).size:
-            raise ValueError("Wall and cap face scopes must be disjoint.")
+            raise ValueError(
+                "BoundaryLayerControl.wall_scope must be disjoint from cap_scope; got overlapping entity IDs."
+            )
 
 
 class BoundaryLayerControl(StrictModule, NonTrainableState):
-    """One boundary-layer request grown from ``wall_scope`` by ``schedule``.
+    """Declare a boundary-layer request grown from ``wall_scope`` by ``schedule``.
 
     ``volume_scope`` names the solids receiving the layers and ``cap_scope`` the
-    exact target caps of an ``EXACT_SWEEP``. ``feature_angle`` (radians)
+    target caps of an ``EXACT_SWEEP``. ``feature_angle`` (radians)
     classifies wall edges and bounds each fan sector; ``maximum_corner_stretch``
     bounds the column height amplification ``1 / min(direction . face normal)``
     that keeps a concave corner admissible. ``growth_rate_bounds`` optionally
@@ -458,14 +526,11 @@ class BoundaryLayerControl(StrictModule, NonTrainableState):
         scopes = tuple(
             scope for scope in (wall_scope, volume_scope, cap_scope) if scope is not None
         )
-        if not all(isinstance(scope, MeshingScope) for scope in scopes):
-            raise TypeError("Boundary-layer scopes must be MeshingScope values or None.")
-        if not isinstance(route, BoundaryLayerRoute):
-            raise TypeError("route must be BoundaryLayerRoute.")
-        if not isinstance(collision, BoundaryLayerCollisionPolicy):
-            raise TypeError("collision must be BoundaryLayerCollisionPolicy.")
-        if not isinstance(corner, BoundaryLayerCornerPolicy):
-            raise TypeError("corner must be BoundaryLayerCornerPolicy.")
+        route = parse(route, BoundaryLayerRoute, "BoundaryLayerControl.route")
+        collision = parse(
+            collision, BoundaryLayerCollisionPolicy, "BoundaryLayerControl.collision"
+        )
+        corner = parse(corner, BoundaryLayerCornerPolicy, "BoundaryLayerControl.corner")
         binding = (
             wall_scope.source_id,
             wall_scope.source_revision,
@@ -475,48 +540,68 @@ class BoundaryLayerControl(StrictModule, NonTrainableState):
             (scope.source_id, scope.source_revision, scope.entity_kind) != binding
             for scope in scopes[1:]
         ):
-            raise ValueError("Boundary-layer scopes must share one source binding.")
+            raise ValueError(
+                "BoundaryLayerControl.scopes must share one source binding; got differing source identities or revisions."
+            )
         _layer_scope_dimensions(route, wall_scope, volume_scope, cap_scope)
         if (
             route is not BoundaryLayerRoute.ADVANCING
             and collision is not BoundaryLayerCollisionPolicy.FAIL
         ):
             raise ValueError(
-                "Only the ADVANCING route resolves collisions; other routes FAIL."
+                f"BoundaryLayerControl.collision must be FAIL outside the ADVANCING route; got route={route.value!r}, collision={collision.value!r}."
             )
         angle = finite_real_scalar(feature_angle, "feature_angle")
         if not 0.0 < angle < np.pi:
-            raise ValueError("feature_angle must lie strictly between zero and pi.")
+            raise ValueError(
+                f"BoundaryLayerControl.feature_angle must lie strictly between zero and pi; got {feature_angle!r}."
+            )
         fraction = finite_real_scalar(
             minimum_thickness_fraction, "minimum_thickness_fraction"
         )
         if not 0.0 < fraction <= 1.0:
-            raise ValueError("minimum_thickness_fraction must lie in (0, 1].")
+            raise ValueError(
+                f"BoundaryLayerControl.minimum_thickness_fraction must lie in (0, 1]; got {fraction!r}."
+            )
         stretch = finite_real_scalar(maximum_corner_stretch, "maximum_corner_stretch")
         if stretch < 1.0:
-            raise ValueError("maximum_corner_stretch must be at least one.")
+            raise ValueError(
+                f"BoundaryLayerControl.maximum_corner_stretch must be at least one; got {stretch!r}."
+            )
         if isinstance(smoothing_iterations, bool) or not isinstance(
             smoothing_iterations, int
         ):
-            raise TypeError("smoothing_iterations must be an integer.")
+            raise TypeError(
+                f"BoundaryLayerControl.smoothing_iterations must be an integer; got {type(smoothing_iterations).__name__}."
+            )
         if smoothing_iterations < 0:
-            raise ValueError("smoothing_iterations must be non-negative.")
+            raise ValueError(
+                f"BoundaryLayerControl.smoothing_iterations must be non-negative; got {smoothing_iterations!r}."
+            )
         bounds = None
         if growth_rate_bounds is not None:
             if len(growth_rate_bounds) != 2:
-                raise ValueError("growth_rate_bounds must be (lower, upper).")
+                raise ValueError(
+                    f"BoundaryLayerControl.growth_rate_bounds must be (lower, upper); got {growth_rate_bounds!r}."
+                )
             lower = finite_real_scalar(growth_rate_bounds[0], "growth_rate_bounds")
             upper = finite_real_scalar(growth_rate_bounds[1], "growth_rate_bounds")
             if not 0.0 < lower <= upper:
-                raise ValueError("growth_rate_bounds must satisfy 0 < lower <= upper.")
+                raise ValueError(
+                    f"BoundaryLayerControl.growth_rate_bounds must satisfy 0 < lower <= upper; got {(lower, upper)!r}."
+                )
             if any(not lower <= rate <= upper for rate in schedule.growth_rates):
-                raise ValueError("The schedule growth rates violate growth_rate_bounds.")
+                raise ValueError(
+                    f"BoundaryLayerControl.schedule must satisfy growth_rate_bounds; got rates={schedule.growth_rates!r}, bounds={(lower, upper)!r}."
+                )
             bounds = (lower, upper)
         core_size = None
         if core_maximum_size is not None:
             core_size = finite_real_scalar(core_maximum_size, "core_maximum_size")
             if core_size <= 0.0:
-                raise ValueError("core_maximum_size must be positive.")
+                raise ValueError(
+                    f"BoundaryLayerControl.core_maximum_size must be positive; got {core_size!r}."
+                )
         self.wall_scope = wall_scope
         self.schedule = schedule
         self.volume_scope = volume_scope
@@ -550,168 +635,23 @@ class BoundaryLayerControl(StrictModule, NonTrainableState):
         )
 
 
-def _bound_periodic_orbits(
-    source_scope: MeshingScope,
-    target_scope: MeshingScope,
-    source_entity_ids: ArrayLike | None,
-    orientations: ArrayLike | None,
-    identity: bool,
-    /,
-) -> tuple[np.ndarray | None, np.ndarray | None]:
-    """Validate explicit target-to-source entity orbits and their witnesses."""
-
-    if source_entity_ids is None:
-        if orientations is not None:
-            raise ValueError("Periodic orientations require explicit source_entity_ids.")
-        return None, None
-    targets = np.asarray(target_scope.entity_ids)
-    paired = np.asarray(source_entity_ids)
-    if not np.issubdtype(paired.dtype, np.integer) or paired.shape != targets.shape:
-        raise ValueError(
-            "source_entity_ids must hold one integer source entity per target entity."
-        )
-    paired = paired.astype(np.int64)
-    if (
-        source_scope.entity_dimension != target_scope.entity_dimension
-        or not np.array_equal(np.sort(paired), np.asarray(source_scope.entity_ids))
-    ):
-        raise ValueError(
-            "Bound periodic orbits must pair equal-dimension scopes bijectively."
-        )
-    if (
-        not identity
-        and source_scope.scope_id == target_scope.scope_id
-        and np.any(paired == targets)
-    ):
-        raise ValueError(
-            "A periodic entity cannot be its own image under a non-identity transform."
-        )
-    if source_scope.entity_dimension == 0:
-        if orientations is not None:
-            raise ValueError("Point orbits carry no orientation witnesses.")
-        return paired, None
-    if orientations is None:
-        raise ValueError("Bound edge and face orbits require orientation witnesses.")
-    signs = np.asarray(orientations)
-    if (
-        not np.issubdtype(signs.dtype, np.integer)
-        or signs.shape != targets.shape
-        or np.any(np.abs(signs) != 1)
-    ):
-        raise ValueError("Periodic orientation witnesses must be ±1 per bound pair.")
-    return paired, signs.astype(np.int32)
-
-
-class PeriodicConstraint(StrictModule, NonTrainableState):
-    """Periodic identification of two source scopes under one affine isometry.
-
-    ``transform`` maps source to target coordinates and must be a homogeneous
-    Euclidean isometry; ``orientation_preserving`` records whether its linear
-    part is proper. Optional ``source_entity_ids`` bind explicit entity orbits:
-    one source entity per target-scope entity, in target order, with ``±1``
-    ``orientations`` for edges and faces. Unbound constraints leave the pairing
-    to the realizing provider's geometric correspondence.
-    """
-
-    source_scope: MeshingScope
-    target_scope: MeshingScope
-    transform: Array
-    source_entity_ids: Array | None
-    orientations: Array | None
-    tolerance: float = eqx.field(static=True)
-    conforming_required: bool = eqx.field(static=True)
-    orientation_preserving: bool = eqx.field(static=True)
-    constraint_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        source_scope: MeshingScope,
-        target_scope: MeshingScope,
-        transform: ArrayLike,
-        /,
-        *,
-        tolerance: float = 1.0e-10,
-        conforming_required: bool = True,
-        source_entity_ids: ArrayLike | None = None,
-        orientations: ArrayLike | None = None,
-    ) -> None:
-        if not isinstance(source_scope, MeshingScope) or not isinstance(
-            target_scope, MeshingScope
-        ):
-            raise TypeError("Periodic scopes must be MeshingScope values.")
-        if source_scope.source_revision != target_scope.source_revision:
-            raise ValueError("Periodic scopes must share one source revision.")
-        matrix = np.asarray(transform, dtype=np.float64)
-        if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] < 2:
-            raise ValueError("Periodic transform must be one square homogeneous matrix.")
-        if not np.all(np.isfinite(matrix)) or not np.allclose(
-            matrix[-1],
-            np.eye(matrix.shape[0])[-1],
-        ):
-            raise ValueError("Periodic transform must be finite and homogeneous.")
-        linear = matrix[:-1, :-1]
-        determinant = np.linalg.det(linear)
-        if abs(determinant) <= np.finfo(np.float64).eps:
-            raise ValueError("Periodic transform must be invertible.")
-        # Periodic identification preserves lengths; the bound covers rounding
-        # of an orthonormal matrix assembled from trigonometric values.
-        if not np.allclose(
-            linear.T @ linear,
-            np.eye(linear.shape[0]),
-            rtol=0.0,
-            atol=128.0 * np.finfo(np.float64).eps,
-        ):
-            raise ValueError("Periodic transform must be a Euclidean isometry.")
-        threshold = float(tolerance)
-        if not np.isfinite(threshold) or threshold < 0.0:
-            raise ValueError("Periodic tolerance must be finite and non-negative.")
-        paired, signs = _bound_periodic_orbits(
-            source_scope,
-            target_scope,
-            source_entity_ids,
-            orientations,
-            bool(np.array_equal(matrix, np.eye(matrix.shape[0]))),
-        )
-        self.source_scope = source_scope
-        self.target_scope = target_scope
-        self.transform = jnp.asarray(matrix)
-        self.source_entity_ids = None if paired is None else jnp.asarray(paired)
-        self.orientations = None if signs is None else jnp.asarray(signs)
-        self.tolerance = threshold
-        self.conforming_required = bool(conforming_required)
-        self.orientation_preserving = bool(determinant > 0.0)
-        identity = {
-            "kind": "periodic-meshing-constraint",
-            "source_scope": source_scope.scope_id,
-            "target_scope": target_scope.scope_id,
-            "transform": array_tree_fingerprint(matrix),
-            "tolerance": threshold,
-            "conforming_required": bool(conforming_required),
-        }
-        if paired is not None:
-            identity["orbits"] = array_tree_fingerprint(
-                {"source_entity_ids": paired, "orientations": signs}
-            )
-        self.constraint_id = canonical_fingerprint(identity)
-
-
 class BackgroundMetricMode(StrEnum):
-    """How a Riemannian metric drives provider background sizing."""
+    """Select how a Riemannian metric drives provider background sizing."""
 
     ISOTROPIC = "isotropic"
     ANISOTROPIC = "anisotropic"
 
 
 class BackgroundMetricControl(StrictModule, NonTrainableState):
-    """Metric sizing sampled on one explicit affine simplex background mesh.
+    """Bind metric sizing to an affine simplex background mesh.
 
     `ISOTROPIC` lowers each vertex metric to its smallest directional size
     `1 / sqrt(lambda_max)`, so no metric direction is under-resolved. `ANISOTROPIC`
-    lowers the complete tensor. The `MeshMetricField` certifies its declared size
+    lowers the full tensor. The `MeshMetricField` certifies its declared size
     and anisotropy bounds at construction; this control never repairs a metric.
     """
 
-    mesh: CellMesh
+    mesh: cell_mesh_owner.CellMesh
     metric: MeshMetricField
     coordinate_contract: SpatialCoordinateContract
     mode: BackgroundMetricMode = eqx.field(static=True)
@@ -721,7 +661,7 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
     @checked
     def __init__(
         self,
-        mesh: CellMesh,
+        mesh: cell_mesh_owner.CellMesh,
         metric: MeshMetricField,
         coordinate_contract: SpatialCoordinateContract,
         /,
@@ -729,13 +669,12 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
         mode: BackgroundMetricMode = BackgroundMetricMode.ANISOTROPIC,
         maximum_metric_edge_length: float | None = None,
     ) -> None:
-        if not isinstance(mode, BackgroundMetricMode):
-            raise TypeError("mode must be BackgroundMetricMode.")
+        mode = parse(mode, BackgroundMetricMode, "BackgroundMetricControl.mode")
         kinds = {block.cell_kind for block in mesh.blocks}
         simplex = {2: "triangle", 3: "tetrahedron"}.get(mesh.topological_dimension)
         if kinds != {simplex}:
             raise ValueError(
-                "Background metric meshes must contain one affine triangle or tetrahedron family."
+                f"BackgroundMetricControl.mesh must contain one affine triangle or tetrahedron family; got families={sorted(kinds)!r}, dimension={mesh.topological_dimension}."
             )
         scope = metric.scope
         vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
@@ -748,11 +687,11 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
             or not np.array_equal(np.asarray(scope.entity_ids), np.sort(vertex_ids))
         ):
             raise ValueError(
-                "Background metric must bind every vertex of its exact mesh revision."
+                "BackgroundMetricControl.metric must bind every vertex of its mesh revision; got a different source, revision, entity inventory, or selection."
             )
         if metric.values.shape[1:] != (mesh.ambient_dimension, mesh.ambient_dimension):
             raise ValueError(
-                "Background metric tensors must match the mesh ambient dimension."
+                f"BackgroundMetricControl.metric.values must match the mesh ambient dimension; got tensor_shape={metric.values.shape[1:]}, ambient_dimension={mesh.ambient_dimension}."
             )
         maximum_length = (
             None
@@ -762,7 +701,9 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
         if maximum_length is not None and (
             not np.isfinite(maximum_length) or maximum_length <= 0.0
         ):
-            raise ValueError("maximum_metric_edge_length must be positive and finite.")
+            raise ValueError(
+                f"BackgroundMetricControl.maximum_metric_edge_length must be positive and finite; got {maximum_length!r}."
+            )
         self.mesh = mesh
         self.metric = metric
         self.coordinate_contract = coordinate_contract
@@ -781,7 +722,7 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
 
     @property
     def vertex_metrics(self) -> np.ndarray:
-        """Metric tensors in CellMesh vertex-row order."""
+        """Return metric tensors in CellMesh vertex-row order."""
         # MeshingScope sorts identifiers; metric rows follow that order.
         order = np.searchsorted(
             np.asarray(self.metric.scope.entity_ids, dtype=np.int64),
@@ -818,11 +759,17 @@ class SurfaceReconstructionControl(StrictModule, NonTrainableState):
         curve = float(curve_angle)
         deviation = float(maximum_deviation)
         if not np.isfinite(feature) or not 0.0 < feature < np.pi:
-            raise ValueError("feature_angle must lie strictly between zero and pi.")
+            raise ValueError(
+                f"SurfaceReconstructionControl.feature_angle must lie strictly between zero and pi; got {feature_angle!r}."
+            )
         if not np.isfinite(curve) or not 0.0 < curve <= np.pi:
-            raise ValueError("curve_angle must lie in (0, pi].")
+            raise ValueError(
+                f"SurfaceReconstructionControl.curve_angle must lie in (0, pi]; got {curve!r}."
+            )
         if not np.isfinite(deviation) or deviation <= 0.0:
-            raise ValueError("maximum_deviation must be positive and finite.")
+            raise ValueError(
+                f"SurfaceReconstructionControl.maximum_deviation must be positive and finite; got {deviation!r}."
+            )
         self.feature_angle = feature
         self.curve_angle = curve
         self.maximum_deviation = deviation
@@ -840,7 +787,7 @@ class SurfaceReconstructionControl(StrictModule, NonTrainableState):
 
 @final
 class TransfiniteCurveControl(StrictModule, NonTrainableState):
-    """An explicitly oriented, trimmed source curve and exact interval count."""
+    """Store an oriented, trimmed source curve and its interval count."""
 
     curve: AbstractCurve
     source_id: str = eqx.field(static=True)
@@ -849,6 +796,7 @@ class TransfiniteCurveControl(StrictModule, NonTrainableState):
     reversed: bool = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         curve: AbstractCurve,
@@ -859,16 +807,18 @@ class TransfiniteCurveControl(StrictModule, NonTrainableState):
         *,
         reversed: bool = False,
     ) -> None:
-        if not isinstance(curve, AbstractCurve):
-            raise TypeError("curve must be an AbstractCurve.")
         if not isinstance(source_id, str) or not isinstance(reversed, bool):
             raise TypeError(
-                "Curve source identity must be a string and reversed must be bool."
+                f"TransfiniteCurveControl.source_id must be a string and reversed must be bool; got source_type={type(source_id).__name__}, reversed_type={type(reversed).__name__}."
             )
         if not source_id.strip():
-            raise ValueError("A transfinite curve requires explicit source identity.")
+            raise ValueError(
+                f"TransfiniteCurveControl.source_id must be non-empty; got {source_id!r}."
+            )
         if isinstance(intervals, bool) or not isinstance(intervals, int) or intervals < 1:
-            raise ValueError("intervals must be a positive integer.")
+            raise ValueError(
+                f"TransfiniteCurveControl.intervals must be a positive integer; got {intervals!r}."
+            )
         bounds = curve.validate_range(*parameter_range)
         self.curve = curve
         self.source_id = source_id
@@ -889,7 +839,7 @@ class TransfiniteCurveControl(StrictModule, NonTrainableState):
 
 @final
 class TransfiniteSurfaceControl(StrictModule, NonTrainableState):
-    """A source face chart mapped to the two increasing logical face axes."""
+    """Bind a source face chart to the two increasing logical face axes."""
 
     surface: AbstractSurfacePatch
     parameter_box: Array
@@ -899,6 +849,7 @@ class TransfiniteSurfaceControl(StrictModule, NonTrainableState):
     flips: tuple[bool, bool] = eqx.field(static=True)
     control_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         surface: AbstractSurfacePatch,
@@ -910,29 +861,33 @@ class TransfiniteSurfaceControl(StrictModule, NonTrainableState):
         permutation: tuple[int, int] = (0, 1),
         flips: tuple[bool, bool] = (False, False),
     ) -> None:
-        if not isinstance(surface, AbstractSurfacePatch):
-            raise TypeError("surface must be an AbstractSurfacePatch.")
         if not isinstance(source_id, str):
-            raise TypeError("Surface source identity must be a string.")
+            raise TypeError(
+                f"TransfiniteSurfaceControl.source_id must be a string; got {type(source_id).__name__}."
+            )
         if any(
             isinstance(axis, bool) or not isinstance(axis, int) for axis in permutation
         ) or any(not isinstance(flip, bool) for flip in flips):
             raise TypeError(
-                "Surface permutations require integer axes and boolean flips."
+                f"TransfiniteSurfaceControl.permutation must contain integer axes and flips must contain boolean flips; got permutation={permutation!r}, flips={flips!r}."
             )
         if not source_id.strip():
-            raise ValueError("A transfinite face requires explicit source identity.")
+            raise ValueError(
+                f"TransfiniteSurfaceControl.source_id must be non-empty; got {source_id!r}."
+            )
         if len(intervals) != 2 or any(
             isinstance(n, bool) or not isinstance(n, int) or n < 1 for n in intervals
         ):
-            raise ValueError("Face intervals must be two positive integers.")
+            raise ValueError(
+                f"TransfiniteSurfaceControl.intervals must be two positive integers; got {intervals!r}."
+            )
         if sorted(permutation) != [0, 1] or len(flips) != 2:
             raise ValueError(
-                "Face orientation requires an axis permutation and two flips."
+                f"TransfiniteSurfaceControl.permutation must contain an axis permutation and flips must contain two flips; got permutation={permutation!r}, flips={flips!r}."
             )
         box = surface.validate_parameter_box(parameter_box)
         self.surface = surface
-        self.parameter_box = jnp.asarray(box, dtype=jnp.float64)
+        self.parameter_box = jax.device_put(np.asarray(box, dtype=np.float64))
         self.source_id = source_id
         self.intervals = intervals
         self.permutation = permutation
@@ -952,7 +907,7 @@ class TransfiniteSurfaceControl(StrictModule, NonTrainableState):
 
 @final
 class BlockInterfaceControl(StrictModule, NonTrainableState):
-    """Exact logical face gluing; no geometric proximity implies adjacency.
+    """Declare logical face gluing between two blocks.
 
     Faces are ``2 * axis + side``. The permutation transposes the second face
     into first-face axes; flips then reverse those axes. ``conforming=False``
@@ -984,31 +939,47 @@ class BlockInterfaceControl(StrictModule, NonTrainableState):
     ) -> None:
         dimension = len(permutation)
         if not isinstance(first_block, str) or not isinstance(second_block, str):
-            raise TypeError("Interface block identities must be strings.")
+            raise TypeError(
+                f"BlockInterfaceControl.first_block must be a string together with second_block; got first_type={type(first_block).__name__}, second_type={type(second_block).__name__}."
+            )
         if not isinstance(conforming, bool) or any(
             not isinstance(flip, bool) for flip in flips
         ):
-            raise TypeError("Interface conformity and flips must be boolean.")
+            raise TypeError(
+                f"BlockInterfaceControl.conforming must be boolean together with each flip; got conforming={conforming!r}, flips={flips!r}."
+            )
         if any(
             isinstance(axis, bool) or not isinstance(axis, int) for axis in permutation
         ):
-            raise TypeError("Interface permutations require integer axes.")
+            raise TypeError(
+                f"BlockInterfaceControl.permutation must contain integer axes; got {permutation!r}."
+            )
         if dimension not in (1, 2) or sorted(permutation) != list(range(dimension)):
-            raise ValueError("Interface permutation must contain each face axis once.")
+            raise ValueError(
+                f"BlockInterfaceControl.permutation must contain each face axis once; got {permutation!r}."
+            )
         if len(flips) != dimension:
-            raise ValueError("Interface flips must match the face dimension.")
+            raise ValueError(
+                f"BlockInterfaceControl.flips must match the face dimension; got flips={flips!r}, dimension={dimension}."
+            )
         if not first_block.strip() or not second_block.strip():
-            raise ValueError("Interfaces require explicit block names.")
+            raise ValueError(
+                f"BlockInterfaceControl.first_block must be non-empty together with second_block; got first={first_block!r}, second={second_block!r}."
+            )
         if any(
             isinstance(face, bool)
             or not isinstance(face, int)
             or not 0 <= face < 2 * (dimension + 1)
             for face in (first_face, second_face)
         ):
-            raise ValueError("Interface face is outside the logical block.")
+            raise ValueError(
+                f"BlockInterfaceControl.first_face must be inside the logical block together with second_face; got first={first_face!r}, second={second_face!r}, dimension={dimension}."
+            )
         tolerance_ = finite_real_scalar(tolerance, "tolerance")
         if tolerance_ < 0.0:
-            raise ValueError("tolerance must be nonnegative.")
+            raise ValueError(
+                f"BlockInterfaceControl.tolerance must be nonnegative; got {tolerance_!r}."
+            )
         self.first_block = first_block
         self.second_block = second_block
         self.first_face = first_face
@@ -1041,7 +1012,6 @@ __all__ = [
     "HoleSeed",
     "LayerSchedule",
     "PatchControl",
-    "PeriodicConstraint",
     "ProtectedFeature",
     "RegionControl",
     "RegionSeed",

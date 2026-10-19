@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from importlib import import_module
 from typing import Any
 
 from ..._jax_config import process_numerics
@@ -11,6 +12,18 @@ from ._schema import (
     ParameterId,
     ParameterSchema,
     ParameterSpec,
+)
+
+
+_NAMING_EXPORTS = frozenset(
+    {
+        "RecipeEntityKind",
+        "RecipeEntityName",
+        "RecipeEntityNames",
+        "RecipeNamingError",
+        "name_partition_entities",
+        "transport_recipe_names",
+    }
 )
 
 
@@ -79,6 +92,20 @@ _SKETCH_EXPORTS = frozenset(
         "Vertical",
     }
 )
+_SKETCH_CERTIFICATE_EXPORTS = frozenset(
+    {
+        "SketchCertificateStatus",
+        "SketchComponentDof",
+        "SketchDofCertificate",
+        "SketchCertifiedSolution",
+        "SketchCertifiedProfile",
+        "certify_sketch_solution",
+    }
+)
+_SKETCH_PRIORITY_EXPORTS = frozenset({"SketchPrioritySolution", "solve_priority_sketch"})
+_SKETCH_DIMENSION_EXPORTS = frozenset(
+    {"SketchDimensionDerivative", "sketch_dimension_derivatives"}
+)
 
 
 def __getattr__(name: str) -> Any:
@@ -86,19 +113,29 @@ def __getattr__(name: str) -> Any:
 
     with process_numerics():
         if name in _CONSTRAINT_EXPORTS:
-            from . import _constraints as module
+            module = import_module("phydrax.geometry.design._constraints")
         elif name in _CONTINUATION_EXPORTS:
-            from . import _continuation as module
+            module = import_module("phydrax.geometry.design._continuation")
         elif name in _SEARCH_EXPORTS:
-            from . import _search as module
+            module = import_module("phydrax.geometry.design._search_result")
         elif name in _QUALIFICATION_EXPORTS:
-            from . import _qualification as module
+            module = import_module("phydrax.geometry.design._qualification")
         elif name in _REDUCED_EXPORTS:
-            from . import _reduced as module
+            module = import_module("phydrax.geometry.design._reduced")
         elif name in _SKETCH_EXPORTS:
-            from . import _sketch as module
+            module = import_module("phydrax.geometry.design._sketch")
+        elif name in _NAMING_EXPORTS:
+            module = import_module("phydrax.geometry.design._naming")
+        elif name in _SKETCH_CERTIFICATE_EXPORTS:
+            module = import_module("phydrax.geometry.design._sketch_certificate")
+        elif name in _SKETCH_PRIORITY_EXPORTS:
+            module = import_module("phydrax.geometry.design._sketch_priority")
+        elif name in _SKETCH_DIMENSION_EXPORTS:
+            module = import_module("phydrax.geometry.design._sketch_dimensions")
         else:
-            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+            raise AttributeError(
+                f"geometry.design.exports.name must identify a declared export; got {name!r}"
+            )
         value = vars(module)[name]
         globals()[name] = value
         return value
@@ -140,6 +177,12 @@ __all__ = [
     "PointDistance",
     "PointOnLine",
     "Radius",
+    "RecipeEntityKind",
+    "RecipeEntityName",
+    "RecipeEntityNames",
+    "RecipeNamingError",
+    "name_partition_entities",
+    "transport_recipe_names",
     "Sketch",
     "SketchConstraint",
     "SketchSolution",
@@ -152,3 +195,6 @@ __all__ = [
     "ParameterSchema",
     "ParameterSpec",
 ]
+__all__ += sorted(
+    _SKETCH_CERTIFICATE_EXPORTS | _SKETCH_PRIORITY_EXPORTS | _SKETCH_DIMENSION_EXPORTS
+)

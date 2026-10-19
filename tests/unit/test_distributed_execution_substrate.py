@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from jax.sharding import Mesh, NamedSharding, PartitionSpec, SingleDeviceSharding
 
 import phydrax.lifecycle._distributed_checkpoint as checkpoint_module
 from phydrax import config as pxconfig
@@ -359,7 +359,7 @@ def test_generic_halo_shard_map_matches_forward_and_transpose_references() -> No
     devices = tuple(jax.devices()[:2])
     if len(devices) < 2:
         pytest.skip("requires two real or explicitly configured JAX devices")
-    halo = DistributedHaloPlan(
+    halo = DistributedHaloPlan.from_global(
         jnp.asarray([0, 0, 1, 1]),
         jnp.asarray([[1, 2]]),
         2,
@@ -545,14 +545,13 @@ def test_distributed_checkpoint_rejects_huge_declared_shape_before_device_alloca
         ),
     )
 
-    with pytest.raises(RepositoryCorruptionError, match="axis-length"):
+    with pytest.raises(RepositoryCorruptionError, match=r"checkpoint\.array\.shape"):
         restore_global_array_from_checkpoint(
             # ty: ignore[invalid-argument-type]
             object(),
             manifest,
             "['value']",
-            # ty: ignore[invalid-argument-type]
-            None,
+            SingleDeviceSharding(jax.devices()[0]),
         )
 
 

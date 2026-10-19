@@ -92,13 +92,29 @@ with phx.execution.PhaseMemorySampler("assemble", interval_seconds=0.005) as s:
     assemble()
 evidence = s.evidence
 evidence.sampled_peak_resident       # sampled maximum, never an upper bound
-evidence.resident_peak_upper_bound   # kernel high-water mark at phase end
-evidence.interval_peak_resident      # exact only if the high-water mark rose
+evidence.observed_peak_resident      # maximum raw/sampled observation, not exact
+evidence.resident_peak_upper_bound   # unavailable: no host peak bound is certified
 payload = evidence.to_payload()
 ```
 
 The sampler keeps constant-size state and reports its sample count and largest
-observed gap; transients shorter than the gap can be missed.
+observed gap; transients shorter than the gap can be missed. Raw `procfs_statm`,
+`mach_task_basic_info`, and `getrusage_max_rss` readings retain their source
+labels and values. Host RSS accounting is approximate: a kernel high-water
+reading does not certify an RSS upper bound or an exact phase peak. The
+`observed_peak_resident` combines the available bracketing current/high-water
+readings and sampled maximum as an observed process-lifetime maximum. It does
+not certify an upper or lower bound on true RSS; a historical high-water reading
+can predate the measured phase. When all
+sources are unavailable the observed value is `None`, never zero. The
+`resident_peak_upper_bound` record is explicitly unavailable, with a reason,
+alongside the raw readings in serialized phase evidence. The obsolete exact
+`interval_peak_resident` representation is removed, including stored benchmark
+phase records; recorded raw values and labels are unchanged.
+
+Linux documents [inaccurate procfs RSS accounting](https://man7.org/linux/man-pages/man5/proc_pid_statm.5.html)
+and [approximate resident high-water fields](https://man7.org/linux/man-pages/man5/proc_pid_status.5.html);
+counter resolution is not an accuracy guarantee.
 
 `discover_resource_inventory` attaches local host and device samples to the
 `ResourceInventory` as evidence excluded from `inventory_id`, and uses the

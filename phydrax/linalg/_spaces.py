@@ -462,7 +462,7 @@ class DualSpace(AbstractVectorSpace):
         return self.primal.unflatten(coordinates)
 
 
-def _coordinate_dtype(space: AbstractVectorSpace, /) -> np.dtype:
+def coordinate_dtype(space: AbstractVectorSpace, /) -> np.dtype:
     dtypes = {np.dtype(spec.dtype) for spec in jax.tree.leaves(space.structure())}
     if len(dtypes) != 1:
         raise TypeError("Vector space does not have one canonical coordinate dtype.")
@@ -482,7 +482,7 @@ def _coordinate_pairing_weights(space: AbstractVectorSpace, /) -> Array:
 
 def _coordinate_pairing_matrix(space: AbstractVectorSpace, /) -> Array:
     """Materialize the coordinate Gram matrix of one finite-dimensional pairing."""
-    basis = jnp.eye(space.size, dtype=_coordinate_dtype(space))
+    basis = jnp.eye(space.size, dtype=coordinate_dtype(space))
 
     def row(left_coordinates: Array) -> Array:
         left = space.unflatten(left_coordinates)

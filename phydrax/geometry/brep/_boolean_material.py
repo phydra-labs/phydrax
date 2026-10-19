@@ -2,16 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Enclosure-certified open-cell material labels and exhaustive solid ancestry.
+"""Certify open-cell material labels and exhaustive solid ancestry.
 
 An interior point is a proposal, never an absence proof. A non-boundary label
 requires a physical enclosure whose radius is strictly smaller than the native
-boundary-distance lower bound. The complete face-pair/DCEL premise then extends
+boundary-distance lower bound. The exhaustive face-pair/DCEL coverage then extends
 that local decision across its connected open cell. Coincident material sides
-come from exact chart correspondence and authored solid-face coorientation.
+come from chart correspondence and authored solid-face coorientation.
 
 Overlap is an open-volume question. Every source/target pair is scheduled, and
-absence requires checking both complete boundaries. Opposed coincident faces
+absence requires checking both exhaustive boundaries. Opposed coincident faces
 and isolated contacts do not create regularized material ancestry. This also
 finds contributors whose entire boundary was buried before boundary retention.
 """
@@ -24,14 +24,20 @@ from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 from fractions import Fraction
 from itertools import combinations
-from typing import Protocol, TYPE_CHECKING
+from typing import Protocol
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+import phydrax.geometry.brep._boolean_arrangement as boolean_arrangement_owner
+
 from ..._fingerprint import canonical_fingerprint
+from ..._strict import StrictModule
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked
 from .._atlas import AbstractTrimCurve
 from .._interval_enclosure import (
     interval_add,
@@ -40,40 +46,41 @@ from .._interval_enclosure import (
     prepare_interval_function,
     PreparedIntervalFunction,
 )
-from ._boolean import (
-    _material_owner,
-    _selection_payload,
-    _side_payload,
-    BRepBooleanFailure,
-)
-from ._boolean_cells import FaceArrangementCell, FaceArrangementCells
+from .._rational import fraction_endpoint
+from ._boolean_arrangement import Arrangement, FaceOwner, Piece
+from ._boolean_cells import FaceArrangementCell, FaceArrangementCells, scalar_phase
 from ._boolean_coincidence import (
     CoincidentFaceOverlay,
     CoincidentSurfaceCorrespondence,
     prove_surface_correspondence,
     transport_coincident_pcurve,
 )
+from ._boolean_core import (
+    BRepBooleanFailure,
+    material_owner,
+    selection_payload,
+    side_payload,
+)
 from ._containment import certify_solid_containment, SolidContainmentCertificate
+from ._coordinate_request import coordinate_source_request
 from ._intersection import SurfaceIntersectionResult
 from ._intersection_curve import (
     AffinePCurve,
-    coefficient_enclosures,
     CurveTrimSegment,
     pcurve_affine_correspondence,
     pcurve_surface_period_shifts,
     PeriodicPCurve,
     surface_pieces_for_box,
-    SurfaceEvaluator,
+    trim_source_join,
 )
+from ._interval_source import evaluate_interval
 from ._model import BRepEntityId, BRepModel
-from ._query import BRepQueryBudget, PreparedBRepQuery
+from ._patches import AbstractSurfacePatch, coefficient_enclosures
+from ._query import PreparedBRepQuery
+from ._query_types import BRepQueryBudget
+from ._request_preparations import TrimRequestPreparations
 
 
-if TYPE_CHECKING:
-    from ._boolean_arrangement import _Arrangement, _Piece
-
-
-type FaceOwner = tuple[int, int]
 type FacePair = tuple[FaceOwner, FaceOwner]
 type ParameterBox = tuple[tuple[float, float], tuple[float, float]]
 type PhysicalBox = tuple[tuple[float, float, float], tuple[float, float, float]]
@@ -129,7 +136,7 @@ class SolidMaterialLabel:
 
 @dataclass(frozen=True, slots=True)
 class FaceMaterialLabel:
-    """Material owner on each side of one complete source cell.
+    """Material owner on each side of one exhaustive source cell.
 
     The negative side lies against the source patch normal. Equal owners bury
     the cell; otherwise ``orientation`` is +1 when the negative side is owned.
@@ -212,7 +219,14 @@ class MaterialOverlapSchedule:
 
 
 @dataclass
-class _Work:
+class Work:
+    """Retain classification visits, query allowance, and solid-label evidence.
+
+    The shared scientific box cap belongs to the arrangement. Coordinate
+    expression work and temporary bytes belong to the request ticket, not
+    these evidence counters.
+    """
+
     budget: BooleanMaterialBudget
     classification_work_units: int = 0
     query_box_upper_bound: int = 0
@@ -223,7 +237,7 @@ class _Work:
             self.budget.consume(count)
         except BRepBooleanFailure as error:
             raise BRepBooleanFailure(
-                f"material classification shared budget exhausted ({error.reason})",
+                f"BRepBoolean.material.work must fit the shared box limit; got {error.reason}",
                 (cell, solid),
             ) from error
         if query:
@@ -237,8 +251,7 @@ class _Work:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class _SurfaceBox:
+class _SurfaceBox(StrictModule):
     lower: np.ndarray
     upper: np.ndarray
     value: PreparedIntervalFunction
@@ -247,8 +260,8 @@ class _SurfaceBox:
 
 @dataclass
 class _Context:
-    state: _Arrangement
-    work: _Work
+    state: Arrangement
+    work: Work
     completeness_id: str
     surface_boxes: dict[FaceOwner, tuple[_SurfaceBox, ...]] = field(default_factory=dict)
     correspondences: dict[
@@ -271,18 +284,27 @@ def _coverage_id(coverage: FaceArrangementCells) -> str:
 
 
 def _pair_evidence(
-    state: _Arrangement,
+    state: Arrangement,
     pair: FacePair,
     surface_results: Mapping[FacePair, SurfaceIntersectionResult],
     coincident_overlays: Mapping[FacePair, CoincidentFaceOverlay],
-    work: _Work,
+    work: Work,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> FacePairMaterialEvidence:
     first, second = pair
     models = state.models
     a, b = models[first[0]], models[second[0]]
     work.consume(1, f"face:{first}", f"face:{second}")
-    box_a = a.patches[first[1]].bounding_box(np.asarray(a.parameter_bounds)[first[1]])
-    box_b = b.patches[second[1]].bounding_box(np.asarray(b.parameter_bounds)[second[1]])
+    box_a = a.patches[first[1]].bounding_box(
+        np.asarray(a.parameter_bounds)[first[1]], preparations=preparations, budget=budget
+    )
+    box_b = b.patches[second[1]].bounding_box(
+        np.asarray(b.parameter_bounds)[second[1]],
+        preparations=preparations,
+        budget=budget,
+    )
     base = {"pair": pair, "revisions": (a.source_revision, b.source_revision)}
     if np.any(box_a[1] < box_b[0]) or np.any(box_b[1] < box_a[0]):
         return FacePairMaterialEvidence(
@@ -299,7 +321,7 @@ def _pair_evidence(
     if pair in state.source_adjacencies:
         if first[0] != second[0]:
             raise BRepBooleanFailure(
-                "Source adjacency cannot cross operand definitions.",
+                "BRepBoolean.source_adjacency must remain within one operand definition; got different operands",
                 (str(pair),),
             )
         edges = state.source_adjacencies[pair]
@@ -329,14 +351,16 @@ def _pair_evidence(
             or overlay.second_face_id != b.face_ids[second[1]]
         ):
             raise BRepBooleanFailure(
-                "coincident completion has stale source-face identity", (str(pair),)
+                "BRepBoolean.material.coincident_overlay must bind current source-face IDs; got stale IDs",
+                (str(pair),),
             )
         return FacePairMaterialEvidence(pair, overlay.certificate_id, ())
     if pair in state.source_pair_coverage:
         proof = state.source_pair_coverage[pair]
         if proof.faces != (a.face_ids[first[1]], b.face_ids[second[1]]):
             raise BRepBooleanFailure(
-                "source-edge completion has stale source-face identity", (str(pair),)
+                "BRepBoolean.material.source_edge_coverage must bind current source-face IDs; got stale IDs",
+                (str(pair),),
             )
         return FacePairMaterialEvidence(
             pair,
@@ -369,7 +393,7 @@ def _pair_evidence(
                 f"unresolved-pair-parameter-cell:{domains[0].tolist()}:{domains[1].tolist()}",
             )
         raise BRepBooleanFailure(
-            "complete all-source face-pair overlay is missing or unresolved",
+            "BRepBoolean.material.face_pairs must have resolved discovery evidence; got missing or unresolved overlay",
             (
                 f"{a.source_revision}:face:{first[1]}",
                 f"{b.source_revision}:face:{second[1]}",
@@ -378,7 +402,8 @@ def _pair_evidence(
         )
     if result.coincident:
         raise BRepBooleanFailure(
-            "coincident face-pair completion needs exact full-trim overlay", (str(pair),)
+            "BRepBoolean.material.coincident_faces must have a source-defined full-trim overlay; got no overlay",
+            (str(pair),),
         )
     contacts = tuple(
         canonical_fingerprint(
@@ -407,74 +432,97 @@ def _pair_evidence(
 
 
 def _verify_pair_graph(
-    state: _Arrangement,
+    state: Arrangement,
     pair: FacePair,
     coverage: Mapping[FaceOwner, FaceArrangementCells],
     result: SurfaceIntersectionResult | None,
     overlay: CoincidentFaceOverlay | None,
 ) -> None:
     if overlay is not None:
-        required = {
-            (source.face_id, source.coedge)
-            for loops in (overlay.first_loops, overlay.second_loops)
-            for loop in loops
-            for source in loop
-        }
-        for owner in pair:
-            actual = {
-                (source.face_id, source.coedge)
-                for source in coverage[owner].overlay_sources.values()
-            }
-            if not required.issubset(actual):
-                raise BRepBooleanFailure(
-                    "coincident cell graph omits authored overlay coedges", (str(owner),)
-                )
+        _verify_overlay_graph(pair, coverage, overlay)
         return
     if pair in state.source_adjacencies:
-        if pair[0][0] != pair[1][0]:
-            raise BRepBooleanFailure(
-                "Source adjacency cannot cross operand definitions.",
-                (str(pair),),
-            )
-        model_index = pair[0][0]
-        for owner in pair:
-            graph = coverage[owner]
-            tokens = {edge[0] for edge in graph.covered_halfedges}
-            tokens.update(
-                token for sources in graph.quotient_sources.values() for token in sources
-            )
-            for edge in state.source_adjacencies[pair]:
-                if not _source_edge_covered(
-                    state, graph, tokens, owner, (model_index, edge)
-                ):
-                    raise BRepBooleanFailure(
-                        "Complete cell graph omits an authoritative source adjacency.",
-                        (str(owner), f"edge:{edge}"),
-                    )
+        _verify_source_adjacency_graph(state, pair, coverage)
         return
     if pair in state.source_pair_coverage:
         proof = state.source_pair_coverage[pair]
         for owner in pair:
             graph = coverage[owner]
-            tokens = {edge[0] for edge in graph.covered_halfedges}
-            tokens.update(
-                token for sources in graph.quotient_sources.values() for token in sources
-            )
+            tokens = _graph_tokens(graph)
             if not _source_edge_covered(state, graph, tokens, owner, proof.source_edge):
                 raise BRepBooleanFailure(
-                    "complete cell graph omits its exact source-edge pair coverage",
+                    "BRepBoolean.cell_graph must cover its certified source-edge pair; got an omitted edge",
                     (str(owner), proof.certificate_id),
                 )
         return
     if result is None:
         return
+    _verify_branch_graph(state, pair, coverage, result)
+
+
+def _graph_tokens(graph: FaceArrangementCells) -> set[str]:
+    tokens = {edge[0] for edge in graph.covered_halfedges}
+    tokens.update(
+        token for sources in graph.quotient_sources.values() for token in sources
+    )
+    return tokens
+
+
+def _verify_overlay_graph(
+    pair: FacePair,
+    coverage: Mapping[FaceOwner, FaceArrangementCells],
+    overlay: CoincidentFaceOverlay,
+) -> None:
+    required = {
+        (source.face_id, source.coedge)
+        for loops in (overlay.first_loops, overlay.second_loops)
+        for loop in loops
+        for source in loop
+    }
+    for owner in pair:
+        actual = {
+            (source.face_id, source.coedge)
+            for source in coverage[owner].overlay_sources.values()
+        }
+        if not required.issubset(actual):
+            raise BRepBooleanFailure(
+                "BRepBoolean.cell_graph must cover every authored overlay coedge; got omitted coedges",
+                (str(owner),),
+            )
+
+
+def _verify_source_adjacency_graph(
+    state: Arrangement,
+    pair: FacePair,
+    coverage: Mapping[FaceOwner, FaceArrangementCells],
+) -> None:
+    if pair[0][0] != pair[1][0]:
+        raise BRepBooleanFailure(
+            "BRepBoolean.source_adjacency must remain within one operand definition; got different operands",
+            (str(pair),),
+        )
+    model_index = pair[0][0]
+    for owner in pair:
+        graph = coverage[owner]
+        tokens = _graph_tokens(graph)
+        for edge in state.source_adjacencies[pair]:
+            if not _source_edge_covered(state, graph, tokens, owner, (model_index, edge)):
+                raise BRepBooleanFailure(
+                    "BRepBoolean.cell_graph must cover every source adjacency; got an omitted edge",
+                    (str(owner), f"edge:{edge}"),
+                )
+
+
+def _verify_branch_graph(
+    state: Arrangement,
+    pair: FacePair,
+    coverage: Mapping[FaceOwner, FaceArrangementCells],
+    result: SurfaceIntersectionResult,
+) -> None:
     for curve in result.curves:
         for owner in pair:
             graph = coverage[owner]
-            tokens = {edge[0] for edge in graph.covered_halfedges}
-            tokens.update(
-                token for sources in graph.quotient_sources.values() for token in sources
-            )
+            tokens = _graph_tokens(graph)
             arcs = tuple(
                 arc
                 for arc in state.arcs[owner]
@@ -483,9 +531,7 @@ def _verify_pair_graph(
             if arcs:
                 covered = all(arc.token in tokens for arc in arcs)
             else:
-                # A side proved to BE a present source edge (the face's own or
-                # a coincident partner's overlay arc) is covered by that edge's
-                # arcs; anything else is an omitted branch.
+                # A branch may already be represented by a proved source edge.
                 covered = _source_edge_covered(
                     state,
                     graph,
@@ -495,16 +541,13 @@ def _verify_pair_graph(
                 )
             if not covered:
                 raise BRepBooleanFailure(
-                    "complete cell graph omits a certified boundary branch",
-                    (
-                        str(owner),
-                        curve.branch_id,
-                    ),
+                    "BRepBoolean.cell_graph must cover every certified boundary branch; got an omitted branch",
+                    (str(owner), curve.branch_id),
                 )
 
 
 def _source_edge_covered(
-    state: _Arrangement,
+    state: Arrangement,
     graph: FaceArrangementCells,
     tokens: set[str],
     owner: FaceOwner,
@@ -522,23 +565,26 @@ def _source_edge_covered(
     candidates += [
         token
         for token, source in graph.overlay_sources.items()
-        if ":atom:" not in token
+        if graph.parent_tokens.get(token, token) == token
         and source.edge_id.source_revision == revision
         and source.edge_id.index == index
     ]
     return any(
-        token == candidate or token.startswith(f"{candidate}:atom:")
+        graph.parent_tokens.get(token, token) == candidate
         for candidate in candidates
         for token in tokens
     )
 
 
 def _certify_overlay(
-    state: _Arrangement,
+    state: Arrangement,
     coverages: tuple[FaceArrangementCells, ...],
     surface_results: Mapping[FacePair, SurfaceIntersectionResult],
     coincident_overlays: Mapping[FacePair, CoincidentFaceOverlay],
-    work: _Work,
+    work: Work,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[tuple[FaceArrangementCell, ...], MaterialOverlayCompleteness]:
     expected = tuple(
         (operand, face)
@@ -550,7 +596,7 @@ def _certify_overlay(
     if supplied != expected:
         missing = tuple(str(owner) for owner in expected if owner not in supplied)
         raise BRepBooleanFailure(
-            "full material overlay must cover every source-solid boundary face once",
+            "BRepBoolean.material.overlay must cover every source-solid boundary face once; got missing or duplicate coverage",
             missing,
         )
     cells = []
@@ -563,7 +609,7 @@ def _certify_overlay(
         ):
             details = tuple(item.reason for item in coverage.unresolved_cells)
             raise BRepBooleanFailure(
-                "material overlay contains unresolved open cells or roots",
+                "BRepBoolean.material.overlay must resolve open cells and roots; got unresolved evidence",
                 (
                     str(coverage.owner),
                     *coverage.unresolved_roots,
@@ -572,12 +618,12 @@ def _certify_overlay(
             )
         if not coverage.cells:
             raise BRepBooleanFailure(
-                "nonempty source face has no complete open material cell",
+                "BRepBoolean.material.source_face must have open-cell coverage; got no cells",
                 (str(coverage.owner),),
             )
         if any(cell.owner != coverage.owner for cell in coverage.cells):
             raise BRepBooleanFailure(
-                "face-cell coverage changed its authoritative owner",
+                "BRepBoolean.material.face_coverage must retain its source owner; got a different owner",
                 (str(coverage.owner),),
             )
         coverage_ids.append((coverage.owner, _coverage_id(coverage)))
@@ -588,10 +634,19 @@ def _certify_overlay(
     keys = tuple(cell.classification_key for cell in cells_tuple)
     if len(set(keys)) != len(keys):
         raise BRepBooleanFailure(
-            "complete material cells have duplicate classification identity", keys
+            "BRepBoolean.material.cells must have unique classification identities; got duplicate identities",
+            keys,
         )
     pairs = tuple(
-        _pair_evidence(state, pair, surface_results, coincident_overlays, work)
+        _pair_evidence(
+            state,
+            pair,
+            surface_results,
+            coincident_overlays,
+            work,
+            preparations=preparations,
+            budget=budget,
+        )
         for pair in combinations(expected, 2)
     )
     by_owner = {coverage.owner: coverage for coverage in coverages}
@@ -618,24 +673,28 @@ def _certify_overlay(
     )
 
 
-def _normal_function(evaluator: SurfaceEvaluator, parameters: Array) -> Array:
+def _normal_function(evaluator: AbstractSurfacePatch, parameters: Array) -> Array:
     derivatives = jax.jacfwd(evaluator.evaluate)(parameters)
     return jnp.cross(derivatives[:, 0], derivatives[:, 1])
 
 
-def _surface_boxes(context: _Context, owner: FaceOwner) -> tuple[_SurfaceBox, ...]:
+def _surface_boxes(
+    context: _Context, owner: FaceOwner, *, budget: CoordinateEnclosureBudget
+) -> tuple[_SurfaceBox, ...]:
     if owner in context.surface_boxes:
         return context.surface_boxes[owner]
     model = context.state.models[owner[0]]
     pieces = surface_pieces_for_box(
-        model.patches[owner[1]], np.asarray(model.parameter_bounds)[owner[1]]
+        model.patches[owner[1]],
+        np.asarray(model.parameter_bounds)[owner[1]],
+        budget=budget,
     )
     boxes = []
     for piece in pieces:
         coefficients = coefficient_enclosures(piece.evaluator)
 
         def normal(
-            parameters: Array, evaluator: SurfaceEvaluator = piece.evaluator
+            parameters: Array, evaluator: AbstractSurfacePatch = piece.evaluator
         ) -> Array:
             return _normal_function(evaluator, parameters)
 
@@ -673,10 +732,23 @@ def _physical_tuple(box: np.ndarray) -> PhysicalBox:
 def _physical_enclosure(
     prepared: _SurfaceBox,
     parameter_box: np.ndarray,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> MaterialEnclosureEvidence | None:
-    lower, upper = prepared.value.evaluate(parameter_box[0][None], parameter_box[1][None])
-    normal_lower, normal_upper = prepared.normal.evaluate(
-        parameter_box[0][None], parameter_box[1][None]
+    lower, upper = evaluate_interval(
+        prepared.value,
+        parameter_box[0][None],
+        parameter_box[1][None],
+        budget=budget,
+        preparations=preparations,
+    )
+    normal_lower, normal_upper = evaluate_interval(
+        prepared.normal,
+        parameter_box[0][None],
+        parameter_box[1][None],
+        budget=budget,
+        preparations=preparations,
     )
     if not np.all(np.isfinite((lower, upper, normal_lower, normal_upper))) or not np.any(
         (normal_lower[0] > 0.0) | (normal_upper[0] < 0.0)
@@ -685,12 +757,17 @@ def _physical_enclosure(
     physical = np.stack((lower[0], upper[0]))
     center = 0.5 * physical[0] + 0.5 * physical[1]
     delta = interval_subtract((physical[0], physical[1]), (center, center))
-    radii = np.maximum(np.abs(delta[0]), np.abs(delta[1]))
+    delta_lower = np.asarray(delta[0], dtype=np.float64)
+    delta_upper = np.asarray(delta[1], dtype=np.float64)
+    radii = np.maximum(np.abs(delta_lower), np.abs(delta_upper))
     squares = interval_multiply((radii, radii), (radii, radii))
+    squares_lower = np.asarray(squares[0], dtype=np.float64)
+    squares_upper = np.asarray(squares[1], dtype=np.float64)
     total = np.asarray(0.0, dtype=np.float64), np.asarray(0.0, dtype=np.float64)
     for axis in range(3):
-        total = interval_add(total, (squares[0][axis], squares[1][axis]))
-    radius = float(np.nextafter(np.sqrt(total[1]), np.inf))
+        total = interval_add(total, (squares_lower[axis], squares_upper[axis]))
+    total_upper = np.asarray(total[1], dtype=np.float64)
+    radius = float(np.nextafter(np.sqrt(total_upper), np.inf))
     if not np.isfinite(radius):
         return None
     return MaterialEnclosureEvidence(
@@ -703,14 +780,6 @@ def _physical_enclosure(
     )
 
 
-def _fraction_endpoint(value: Fraction, *, upper: bool) -> float:
-    result = float(value)
-    represented = Fraction(result)
-    if (upper and represented < value) or (not upper and represented > value):
-        result = float(np.nextafter(result, np.inf if upper else -np.inf))
-    return result
-
-
 def _transport_box(proof: CoincidentSurfaceCorrespondence, box: np.ndarray) -> np.ndarray:
     result = np.empty((2, 2), dtype=np.float64)
     for row in range(2):
@@ -720,8 +789,8 @@ def _transport_box(proof: CoincidentSurfaceCorrespondence, box: np.ndarray) -> n
             last = proof.matrix[row][axis] * Fraction(float(box[1, axis]))
             lower += min(first, last)
             upper += max(first, last)
-        result[0, row] = _fraction_endpoint(lower, upper=False)
-        result[1, row] = _fraction_endpoint(upper, upper=True)
+        result[0, row] = fraction_endpoint(lower, upper=False)
+        result[1, row] = fraction_endpoint(upper, upper=True)
     return result
 
 
@@ -748,8 +817,10 @@ def _coorientations(
     solid: int,
     box: np.ndarray,
     known_faces: tuple[int, ...],
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[tuple[bool, bool], tuple[BRepEntityId, ...]] | None:
-    from ._boolean_arrangement import _trim_box_status
 
     signs = []
     supports = []
@@ -762,8 +833,11 @@ def _coorientations(
         if proof is None:
             continue
         if face not in known_faces:
-            decision = _trim_box_status(
-                query.faces[face].trim_domain, _transport_box(proof, box)
+            decision = boolean_arrangement_owner.trim_box_status(
+                query.faces[face].trim_domain,
+                _transport_box(proof, box),
+                preparations=preparations,
+                budget=budget,
             )
             if decision == 0:
                 return None
@@ -781,12 +855,12 @@ def _coorientations(
 def _validate_query(model: BRepModel, query: PreparedBRepQuery) -> None:
     if query.model_id != model.model_id or query.source_revision != model.source_revision:
         raise BRepBooleanFailure(
-            "material query is not bound to the exact model revision",
+            "BRepBoolean.material.query must bind model.source_revision; got a different revision",
             (model.source_revision,),
         )
     if not query.certify_on_host:
         raise BRepBooleanFailure(
-            "material classification requires native host-certified query evidence",
+            "BRepBoolean.material.query must carry host-certified evidence; got another query mode",
             (model.source_revision,),
         )
     present = {occurrence.solid for occurrence in query.occurrences}
@@ -797,14 +871,14 @@ def _validate_query(model: BRepModel, query: PreparedBRepQuery) -> None:
     )
     if missing:
         raise BRepBooleanFailure(
-            "material solid has no authoritative occurrence query", missing
+            "BRepBoolean.material.solid must have an occurrence query; got none", missing
         )
     for occurrence in query.occurrences:
         if not np.array_equal(
             np.asarray(occurrence.rotation), np.eye(3, dtype=np.float64)
         ) or np.any(np.asarray(occurrence.translation) != 0.0):
             raise BRepBooleanFailure(
-                "material face overlay needs occurrence-lowered exact charts",
+                "BRepBoolean.material.charts must be occurrence-lowered source charts; got an unlowered occurrence",
                 (
                     model.source_revision,
                     "/".join(occurrence.path),
@@ -830,6 +904,9 @@ def _query_separation(
     reference: MaterialSolid,
     query: PreparedBRepQuery,
     enclosure: MaterialEnclosureEvidence,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[bool, MaterialEnclosureEvidence] | None:
     faces = query.solid_faces[reference.entity.index]
     # Allocate a true owner-work allowance while retaining an independently
@@ -838,18 +915,20 @@ def _query_separation(
     available = min(query.policy.maximum_subdivisions, owner_allowance)
     if available < 1:
         raise BRepBooleanFailure(
-            "native distance query has no remaining shared material budget",
+            "BRepBoolean.material.distance_query must have remaining shared work; got exhausted material budget",
             (
                 cell.classification_key,
                 reference.source_id,
             ),
         )
     points = np.asarray(enclosure.center, dtype=np.float64)[None]
-    closest = query._closest_definition(
+    closest = query.closest_definition(
         jnp.asarray(points),
         faces,
         maximum_boxes=available,
         budget=BRepQueryBudget(owner_allowance),
+        preparations=preparations,
+        coordinate_budget=budget,
     )
     context.work.consume(
         int(np.asarray(closest.query_operations)[0]),
@@ -865,15 +944,14 @@ def _query_separation(
     )
     if available < 1:
         raise BRepBooleanFailure(
-            "native containment has no remaining shared material budget",
+            "BRepBoolean.material.containment must have remaining shared work; got exhausted material budget",
             (
                 cell.classification_key,
                 reference.source_id,
             ),
         )
-    # This is the same complete ray-parity owner used by PreparedBRepQuery.
-    # Calling it directly avoids contains' second hidden closest-point query
-    # and retains the actual bounded work and unresolved-face evidence.
+    # Use the ray-parity owner directly to avoid a second closest-point query
+    # while retaining bounded work and unresolved-face evidence.
     membership = certify_solid_containment(
         query.model,
         points[0],
@@ -881,6 +959,8 @@ def _query_separation(
         maximum_boxes=available,
         maximum_depth=query.policy.maximum_depth,
         maximum_operations=context.work.budget.remaining_boxes,
+        preparations=preparations,
+        budget=budget,
     )
     context.work.consume(
         membership.owner_operations,
@@ -937,22 +1017,27 @@ def _solid_label(
     query: PreparedBRepQuery,
     solid: int,
     known_faces: tuple[int, ...] = (),
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> SolidMaterialLabel:
-    from ._boolean_arrangement import _trim_box_status
 
     reference = MaterialSolid(model_index, model.solid_ids[solid])
     seed = np.asarray(cell.seed_box, dtype=np.float64)
     if (
         seed.shape != (2, 2)
         or np.any(seed[0] >= seed[1])
-        or _trim_box_status(cell.domain, seed) != 1
+        or boolean_arrangement_owner.trim_box_status(
+            cell.domain, seed, preparations=preparations, budget=budget
+        )
+        != 1
     ):
         raise BRepBooleanFailure(
-            "open material cell has no certified strict interior box",
+            "BRepBoolean.material.cell must have a certified strict interior box; got no box",
             (cell.classification_key,),
         )
     pending: deque[tuple[_SurfaceBox, np.ndarray, int]] = deque()
-    for prepared in _surface_boxes(context, cell.owner):
+    for prepared in _surface_boxes(context, cell.owner, budget=budget):
         lower, upper = (
             np.maximum(seed[0], prepared.lower),
             np.minimum(seed[1], prepared.upper),
@@ -962,10 +1047,20 @@ def _solid_label(
     while pending:
         prepared, box, depth = pending.popleft()
         context.work.consume(1, cell.classification_key, reference.source_id)
-        enclosure = _physical_enclosure(prepared, box)
+        enclosure = _physical_enclosure(
+            prepared, box, budget=budget, preparations=preparations
+        )
         if enclosure is not None:
             coorientation = _coorientations(
-                context, cell, model, query, solid, box, known_faces
+                context,
+                cell,
+                model,
+                query,
+                solid,
+                box,
+                known_faces,
+                preparations=preparations,
+                budget=budget,
             )
             if coorientation is not None:
                 sides, supports = coorientation
@@ -988,7 +1083,15 @@ def _solid_label(
                     (),
                     enclosure,
                 )
-            separated = _query_separation(context, cell, reference, query, enclosure)
+            separated = _query_separation(
+                context,
+                cell,
+                reference,
+                query,
+                enclosure,
+                preparations=preparations,
+                budget=budget,
+            )
             if separated is not None:
                 inside, proof = separated
                 return _make_label(
@@ -1011,7 +1114,7 @@ def _solid_label(
         first[1, axis], last[0, axis] = middle, middle
         pending.extend(((prepared, first, depth + 1), (prepared, last, depth + 1)))
     raise BRepBooleanFailure(
-        "material cell has no regular enclosure-separated or exact-cooriented label",
+        "BRepBoolean.material.cell must have a regular separated or cooriented label; got unresolved labeling",
         (
             cell.classification_key,
             reference.source_id,
@@ -1020,14 +1123,17 @@ def _solid_label(
     )
 
 
+@checked
 def classify_face_material_cells(
-    state: _Arrangement,
+    state: Arrangement,
     coverages: tuple[FaceArrangementCells, ...],
     /,
     *,
     surface_results: Mapping[FacePair, SurfaceIntersectionResult],
     coincident_overlays: Mapping[FacePair, CoincidentFaceOverlay],
     budget: BooleanMaterialBudget,
+    preparations: TrimRequestPreparations | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> FaceMaterialClassification:
     """Label every full source cell against every individual source solid.
 
@@ -1035,11 +1141,35 @@ def classify_face_material_cells(
     face pairs, including same-operand pairs. Discovery/extraction work must
     already be charged to ``budget``; this consumer charges its own work only.
     """
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if coordinate_budget is None:
+        with coordinate_source_request(
+            (
+                state,
+                coverages,
+            )
+        ) as coordinate_budget:
+            return classify_face_material_cells(
+                state,
+                coverages,
+                surface_results=surface_results,
+                coincident_overlays=coincident_overlays,
+                budget=budget,
+                preparations=preparations,
+                coordinate_budget=coordinate_budget,
+            )
     for model, query in zip(state.models, state.queries, strict=True):
         _validate_query(model, query)
-    work = _Work(budget)
+    work = Work(budget)
     cells, completeness = _certify_overlay(
-        state, coverages, surface_results, coincident_overlays, work
+        state,
+        coverages,
+        surface_results,
+        coincident_overlays,
+        work,
+        preparations=preparations,
+        budget=coordinate_budget,
     )
     context = _Context(state, work, completeness.certificate_id)
     labels = []
@@ -1053,11 +1183,13 @@ def classify_face_material_cells(
                 state.queries[operand],
                 solid,
                 (cell.owner[1],) if operand == cell.owner[0] else (),
+                preparations=preparations,
+                budget=coordinate_budget,
             )
             for operand, model in enumerate(state.models)
             for solid in range(model.topology.num_solids)
         )
-        negative = _material_owner(
+        negative = material_owner(
             state.selection,
             tuple(
                 (item.solid.model_index, item.solid.entity.index)
@@ -1065,7 +1197,7 @@ def classify_face_material_cells(
                 if item.negative_inside
             ),
         )
-        positive = _material_owner(
+        positive = material_owner(
             state.selection,
             tuple(
                 (item.solid.model_index, item.solid.entity.index)
@@ -1078,8 +1210,8 @@ def classify_face_material_cells(
             {
                 "cell": cell.classification_key,
                 "labels": tuple(item.certificate_id for item in individual),
-                "operation": _selection_payload(state.selection),
-                "selected": _side_payload(state.selection, negative, positive),
+                "operation": selection_payload(state.selection),
+                "selected": side_payload(state.selection, negative, positive),
             }
         )
         labels.append(
@@ -1106,11 +1238,10 @@ def classify_face_material_cells(
 
 
 def _fixed_phase_piece(
-    first: _Piece,
-    second: _Piece,
+    first: Piece,
+    second: Piece,
     proof: CoincidentSurfaceCorrespondence,
 ) -> bool:
-    from ._boolean_cells import _scalar_phase
 
     if any(
         cut.endpoint is not None
@@ -1126,7 +1257,7 @@ def _fixed_phase_piece(
             np.asarray(proof.offset, dtype=np.object_),
         ),
     )
-    phase = _scalar_phase(transported, second.arc)
+    phase = scalar_phase(transported, second.arc)
     if phase is None:
         return False
     a = (first.first, first.last) if first.sense > 0 else (first.last, first.first)
@@ -1138,13 +1269,13 @@ def _fixed_phase_piece(
 
 
 def _equivalent_piece(
-    first: _Piece,
-    second: _Piece,
+    first: Piece,
+    second: Piece,
     proof: CoincidentSurfaceCorrespondence,
-    work: _Work,
+    work: Work,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> bool:
-    from ._boolean_arrangement import _piece_trim
-    from ._intersection_curve import _trim_source_join
 
     work.consume(1, first.arc.token, second.arc.token)
     shifts = pcurve_surface_period_shifts(
@@ -1182,12 +1313,16 @@ def _equivalent_piece(
     if not all(cut.endpoint is not None for cut in cuts):
         return False
     # Root-bearing joins cannot fall through to the native affine-coordinate
-    # endpoint shortcut: both complete root/source transports are mandatory.
+    # endpoint shortcut: both root/source transports are mandatory.
     matrix = np.asarray(proof.matrix, dtype=np.object_)
     offset = np.asarray(proof.offset, dtype=np.object_)
-    transported = AffinePCurve(_piece_trim(first), matrix, offset)
+    transported = AffinePCurve(
+        boolean_arrangement_owner.piece_trim(first), matrix, offset
+    )
     reversed_transport = AffinePCurve(
-        _piece_trim(replace(first, sense=-first.sense)), matrix, offset
+        boolean_arrangement_owner.piece_trim(replace(first, sense=-first.sense)),
+        matrix,
+        offset,
     )
     a: AbstractTrimCurve = (
         PeriodicPCurve(transported, proof.second, shifts) if any(shifts) else transported
@@ -1197,16 +1332,23 @@ def _equivalent_piece(
         if any(shifts)
         else reversed_transport
     )
-    b = _piece_trim(second)
-    reversed_b = _piece_trim(replace(second, sense=-second.sense))
-    return _trim_source_join(a, reversed_b) and _trim_source_join(reversed_a, b)
+    b = boolean_arrangement_owner.piece_trim(second)
+    reversed_b = boolean_arrangement_owner.piece_trim(
+        replace(second, sense=-second.sense)
+    )
+    return trim_source_join(a, reversed_b, budget=budget) and trim_source_join(
+        reversed_a, b, budget=budget
+    )
 
 
-def _equivalent_cell(
-    state: _Arrangement,
+@checked
+def equivalent_cell(
+    state: Arrangement,
     first: FaceArrangementCell,
     second: FaceArrangementCell,
-    work: _Work,
+    work: Work,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> bool:
     first_patch = state.models[first.owner[0]].patches[first.owner[1]]
     second_patch = state.models[second.owner[0]].patches[second.owner[1]]
@@ -1226,7 +1368,11 @@ def _equivalent_cell(
             if any(
                 all(
                     _equivalent_piece(
-                        piece, candidate[(offset + ordinal) % len(candidate)], proof, work
+                        piece,
+                        candidate[(offset + ordinal) % len(candidate)],
+                        proof,
+                        work,
+                        budget=budget,
                     )
                     for ordinal, piece in enumerate(loop)
                 )
@@ -1240,8 +1386,12 @@ def _equivalent_cell(
     return True
 
 
-def _same_trim_segment(first: CurveTrimSegment, second: CurveTrimSegment) -> bool:
-    from ._intersection_curve import _trim_source_join
+def _same_trim_segment(
+    first: CurveTrimSegment,
+    second: CurveTrimSegment,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
 
     identity = (
         ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1))),
@@ -1263,22 +1413,26 @@ def _same_trim_segment(first: CurveTrimSegment, second: CurveTrimSegment) -> boo
         ):
             return False
     if first.first_root is not None and second.first_root is not None:
-        if not _trim_source_join(
-            replace(first, reversed=True), replace(second, reversed=False)
+        if not trim_source_join(
+            replace(first, reversed=True), replace(second, reversed=False), budget=budget
         ):
             return False
     if first.last_root is not None and second.last_root is not None:
-        if not _trim_source_join(
-            replace(first, reversed=False), replace(second, reversed=True)
+        if not trim_source_join(
+            replace(first, reversed=False), replace(second, reversed=True), budget=budget
         ):
             return False
     return True
 
 
 def _target_trim_copy(
-    cell: FaceArrangementCell, model: BRepModel, face: int, work: _Work
+    cell: FaceArrangementCell,
+    model: BRepModel,
+    face: int,
+    work: Work,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> bool:
-    from ._boolean_arrangement import _piece_trim
 
     geometry = model.geometry
     if geometry is None or len(geometry.face_loops[face]) != len(cell.loops):
@@ -1302,23 +1456,28 @@ def _target_trim_copy(
                 reversed=geometry.coedge_senses[coedge] < 0,
                 first_root=roots[0],
                 last_root=roots[1],
+                budget=budget,
             )
-            if not _same_trim_segment(_piece_trim(piece), target):
+            if not _same_trim_segment(
+                boolean_arrangement_owner.piece_trim(piece), target, budget=budget
+            ):
                 return False
     return True
 
 
 def _target_coverage(
-    state: _Arrangement,
+    state: Arrangement,
     classification: FaceMaterialClassification,
     model: BRepModel,
     face_cells: tuple[str, ...],
     representatives: Mapping[str, str],
-    work: _Work,
+    work: Work,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[dict[str, tuple[int, ...]], str]:
     if len(face_cells) != model.topology.num_faces:
         raise BRepBooleanFailure(
-            "target material coverage must bind every target face to a complete source cell"
+            "BRepBoolean.material.target_face_cells must bind every target face once; got a cardinality mismatch"
         )
     cells = {cell.classification_key: cell for cell in classification.cells}
     labels = {label.classification_key: label for label in classification.labels}
@@ -1327,7 +1486,8 @@ def _target_coverage(
         work.consume(1, key, f"{model.source_revision}:face:{face}")
         if key not in cells:
             raise BRepBooleanFailure(
-                "target face has no authoritative complete source-cell identity", (key,)
+                "BRepBoolean.material.target_face must retain its source-cell identity; got an unknown cell",
+                (key,),
             )
         cell = cells[key]
         original = state.models[cell.owner[0]].patches[cell.owner[1]]
@@ -1336,20 +1496,21 @@ def _target_coverage(
             proof is None
             or proof.matrix != ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1)))
             or proof.offset != (Fraction(0), Fraction(0))
-            or not _target_trim_copy(cell, model, face, work)
+            or not _target_trim_copy(cell, model, face, work, budget=budget)
         ):
             raise BRepBooleanFailure(
-                "target face is not an exact chart-and-trim copy of its complete source cell",
+                "BRepBoolean.material.target_face must preserve its source chart and full trim loops; got failed correspondence",
                 (key,),
             )
         if int(float(model.orientation[face])) != labels[key].orientation:
             raise BRepBooleanFailure(
-                "target face orientation contradicts complete Boolean material sides",
+                "BRepBoolean.material.target_face.orientation must match selected material sides; got a different orientation",
                 (key,),
             )
         if not model.topology.face_solids[face]:
             raise BRepBooleanFailure(
-                "published target face has no material solid owner", (key,)
+                "BRepBoolean.material.target_face must have a material solid owner; got no incident solid",
+                (key,),
             )
         bound.setdefault(key, []).append(face)
     expected = {
@@ -1359,21 +1520,21 @@ def _target_coverage(
     }
     if not set(bound).issubset(expected):
         raise BRepBooleanFailure(
-            "target boundary retained an unselected material cell",
+            "BRepBoolean.material.target_boundary must retain selected cells only; got an unselected cell",
             tuple(sorted(set(bound) - expected)),
         )
     missing = expected - set(bound)
     if set(representatives) != missing:
         raise BRepBooleanFailure(
-            "target boundary omits selected cells without exhaustive exact representatives",
+            "BRepBoolean.material.target_boundary must bind every omitted selected cell to a representative; got missing or extra representatives",
             tuple(sorted(missing)),
         )
     for key, representative in sorted(representatives.items()):
-        if representative not in bound or not _equivalent_cell(
-            state, cells[key], cells[representative], work
+        if representative not in bound or not equivalent_cell(
+            state, cells[key], cells[representative], work, budget=budget
         ):
             raise BRepBooleanFailure(
-                "coincident target-cell representative has no exact complete-loop proof",
+                "BRepBoolean.material.representative must preserve all source trim loops; got failed loop equality",
                 (key, representative),
             )
         first_label, second_label = labels[key], labels[representative]
@@ -1389,7 +1550,7 @@ def _target_coverage(
             second_sides if proof.orientation > 0 else second_sides[::-1]
         ):
             raise BRepBooleanFailure(
-                "coincident representative contradicts material coorientation",
+                "BRepBoolean.material.representative must preserve material sides under chart orientation; got different side owners",
                 (key, representative),
             )
     result = {key: tuple(faces) for key, faces in bound.items()}
@@ -1414,7 +1575,7 @@ def _joint_inside(first: SolidMaterialLabel, second: SolidMaterialLabel) -> bool
 def _pair_overlap(
     source: MaterialSolid,
     target: BRepEntityId,
-    state: _Arrangement,
+    state: Arrangement,
     classification: FaceMaterialClassification,
     target_labels: Mapping[str, tuple[SolidMaterialLabel, ...]],
     target_face_cells: tuple[str, ...],
@@ -1477,8 +1638,153 @@ def _pair_overlap(
     )
 
 
+class _TargetLabelPhase(StrictModule):
+    labels: tuple[TargetCellMaterialLabel, ...] = eqx.field(static=True)
+
+
+class _TargetCellLabelPhase(StrictModule):
+    label: TargetCellMaterialLabel = eqx.field(static=True)
+
+
+class _SelectedSourceMaterial(StrictModule):
+    source: FaceMaterialLabel = eqx.field(static=True)
+    owner: SolidMaterialLabel = eqx.field(static=True)
+
+
+def _selected_source_material(
+    state: Arrangement,
+    classification: FaceMaterialClassification,
+    cell: FaceArrangementCell,
+) -> _SelectedSourceMaterial:
+    source = next(
+        label
+        for label in classification.labels
+        if label.classification_key == cell.classification_key
+    )
+    owner = next(
+        label
+        for label in source.solids
+        if label.solid.model_index == cell.owner[0]
+        and cell.owner[1]
+        in state.models[cell.owner[0]].topology.solid_faces[label.solid.entity.index]
+    )
+    return _SelectedSourceMaterial(source=source, owner=owner)
+
+
+def _label_target_cell(
+    context: _Context,
+    classification: FaceMaterialClassification,
+    cell: FaceArrangementCell,
+    target_model: BRepModel,
+    target_query: PreparedBRepQuery,
+    bound: Mapping[str, tuple[int, ...]],
+    exact_regions: tuple[str, ...] | None,
+    *,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> _TargetCellLabelPhase:
+    state, work = context.state, context.work
+    if exact_regions is not None:
+        source = _selected_source_material(state, classification, cell)
+        labels = tuple(
+            _make_label(
+                context,
+                cell,
+                MaterialSolid(len(state.models), target_model.solid_ids[solid]),
+                (
+                    source.source.negative_owner == region,
+                    source.source.positive_owner == region,
+                ),
+                MaterialLabelRoute.BOOLEAN_SELECTION,
+                tuple(
+                    target_model.face_ids[face]
+                    for face in bound.get(cell.classification_key, ())
+                    if solid in target_model.topology.face_solids[face]
+                ),
+                source.owner.enclosure,
+            )
+            for solid, region in enumerate(exact_regions)
+        )
+        for label in labels:
+            work.consume(1, cell.classification_key, label.solid.source_id)
+    elif target_model.topology.num_solids == 1:
+        source = _selected_source_material(state, classification, cell)
+        # A bounded component inherits selected sides after oriented boundary
+        # equality has been proved, including buried source cells.
+        work.consume(1, cell.classification_key, f"operand:{len(state.models)}/solid:0")
+        labels = (
+            _make_label(
+                context,
+                cell,
+                MaterialSolid(len(state.models), target_model.solid_ids[0]),
+                (
+                    source.source.negative_selected,
+                    source.source.positive_selected,
+                ),
+                MaterialLabelRoute.BOOLEAN_SELECTION,
+                tuple(
+                    target_model.face_ids[face]
+                    for face in bound.get(cell.classification_key, ())
+                ),
+                source.owner.enclosure,
+            ),
+        )
+    else:
+        labels = tuple(
+            _solid_label(
+                context,
+                cell,
+                len(state.models),
+                target_model,
+                target_query,
+                solid,
+                bound.get(cell.classification_key, ()),
+                preparations=preparations,
+                budget=coordinate_budget,
+            )
+            for solid in range(target_model.topology.num_solids)
+        )
+    return _TargetCellLabelPhase(TargetCellMaterialLabel(cell.classification_key, labels))
+
+
+def _label_target_cells(
+    context: _Context,
+    classification: FaceMaterialClassification,
+    target_model: BRepModel,
+    target_query: PreparedBRepQuery | None,
+    bound: Mapping[str, tuple[int, ...]],
+    target_solid_regions: tuple[str, ...] | None,
+    *,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> _TargetLabelPhase:
+    target_labels = []
+    exact_regions = (
+        target_solid_regions
+        if target_solid_regions is not None
+        and len(set(target_solid_regions)) == len(target_solid_regions)
+        else None
+    )
+    if target_query is not None and target_model.topology.num_solids:
+        for cell in classification.cells:
+            phase = _label_target_cell(
+                context,
+                classification,
+                cell,
+                target_model,
+                target_query,
+                bound,
+                exact_regions,
+                preparations=preparations,
+                coordinate_budget=coordinate_budget,
+            )
+            target_labels.append(phase.label)
+    return _TargetLabelPhase(tuple(target_labels))
+
+
+@checked
 def prove_material_overlaps(
-    state: _Arrangement,
+    state: Arrangement,
     classification: FaceMaterialClassification,
     target_model: BRepModel,
     target_query: PreparedBRepQuery | None,
@@ -1488,43 +1794,68 @@ def prove_material_overlaps(
     budget: BooleanMaterialBudget,
     target_cell_representatives: Mapping[str, str],
     target_solid_regions: tuple[str, ...] | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> MaterialOverlapSchedule:
     """Schedule every individual source-solid/target-solid pair independently.
 
     Each target face must be copied from one full cell and retain that cell's
     classification identity. ``target_query`` is unnecessary only for an empty
-    target. Canonical pairs contain solid ancestry only; callers append exact
-    face lineage separately, including retained difference-subtractor faces.
+    target. pairs contain solid ancestry only; callers append face lineage separately, including retained difference-subtractor faces.
     ``target_cell_representatives`` must bind exactly the omitted selected
-    coincident cells to emitted cells; complete loop equality is proved here.
+    coincident cells to emitted cells; exhaustive loop equality is proved here.
     Supply an empty mapping when no physical boundary copies are suppressed.
     A bijective ``target_solid_regions`` tuple binds partition side owners
-    directly to target solids, avoiding an inexact distance query at exact
-    root-adjacent source cells.
+    directly to target solids, avoiding an inexact distance query at root-adjacent source cells.
     """
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if coordinate_budget is None:
+        with coordinate_source_request(
+            (
+                state,
+                classification,
+                target_model,
+                target_query,
+                target_face_cells,
+            )
+        ) as coordinate_budget:
+            return prove_material_overlaps(
+                state,
+                classification,
+                target_model,
+                target_query,
+                target_face_cells,
+                budget=budget,
+                target_cell_representatives=target_cell_representatives,
+                target_solid_regions=target_solid_regions,
+                preparations=preparations,
+                coordinate_budget=coordinate_budget,
+            )
     revisions = tuple(model.source_revision for model in state.models)
     if classification.completeness.source_revisions != revisions:
         raise BRepBooleanFailure(
-            "material classification belongs to stale source revisions", revisions
+            "BRepBoolean.material.classification must bind the current source revisions; got stale source revisions",
+            revisions,
         )
     if target_model.topology.num_solids:
         if target_query is None:
             raise BRepBooleanFailure(
-                "nonempty target material overlap requires its native certified query"
+                "BRepBoolean.material.target_query must be defined for nonempty targets; got None"
             )
         _validate_query(target_model, target_query)
     elif target_model.topology.num_faces:
         raise BRepBooleanFailure(
-            "empty regularized target still has unowned boundary faces"
+            "BRepBoolean.material.target must have no faces when it has no solids; got unowned boundary faces"
         )
     if (
         target_solid_regions is not None
         and len(target_solid_regions) != target_model.topology.num_solids
     ):
         raise BRepBooleanFailure(
-            "target solid-region authority must bind every target solid exactly once"
+            "BRepBoolean.material.target_solid_regions must bind every target solid once; got a cardinality mismatch"
         )
-    work = _Work(budget)
+    work = Work(budget)
     bound, target_completion = _target_coverage(
         state,
         classification,
@@ -1532,6 +1863,7 @@ def prove_material_overlaps(
         target_face_cells,
         target_cell_representatives,
         work,
+        budget=coordinate_budget,
     )
     context = _Context(
         state,
@@ -1544,89 +1876,16 @@ def prove_material_overlaps(
             }
         ),
     )
-    target_labels = []
-    exact_regions = (
-        target_solid_regions
-        if target_solid_regions is not None
-        and len(set(target_solid_regions)) == len(target_solid_regions)
-        else None
-    )
-    if target_query is not None and target_model.topology.num_solids:
-        for cell in classification.cells:
-            if exact_regions is not None or target_model.topology.num_solids == 1:
-                source_label = next(
-                    label
-                    for label in classification.labels
-                    if label.classification_key == cell.classification_key
-                )
-                owner_label = next(
-                    label
-                    for label in source_label.solids
-                    if label.solid.model_index == cell.owner[0]
-                    and cell.owner[1]
-                    in state.models[cell.owner[0]].topology.solid_faces[
-                        label.solid.entity.index
-                    ]
-                )
-            if exact_regions is not None:
-                labels = tuple(
-                    _make_label(
-                        context,
-                        cell,
-                        MaterialSolid(len(state.models), target_model.solid_ids[solid]),
-                        (
-                            source_label.negative_owner == region,
-                            source_label.positive_owner == region,
-                        ),
-                        MaterialLabelRoute.BOOLEAN_SELECTION,
-                        tuple(
-                            target_model.face_ids[face]
-                            for face in bound.get(cell.classification_key, ())
-                            if solid in target_model.topology.face_solids[face]
-                        ),
-                        owner_label.enclosure,
-                    )
-                    for solid, region in enumerate(exact_regions)
-                )
-                for label in labels:
-                    work.consume(1, cell.classification_key, label.solid.source_id)
-            elif target_model.topology.num_solids == 1:
-                # Exhaustive exact oriented boundary equality identifies the
-                # bounded regularized target with the selected material set.
-                # A single target component therefore inherits both Boolean
-                # sides, including buried source cells; no distance query on
-                # their coincident but excluded supporting faces is needed.
-                work.consume(
-                    1, cell.classification_key, f"operand:{len(state.models)}/solid:0"
-                )
-                labels = (
-                    _make_label(
-                        context,
-                        cell,
-                        MaterialSolid(len(state.models), target_model.solid_ids[0]),
-                        (source_label.negative_selected, source_label.positive_selected),
-                        MaterialLabelRoute.BOOLEAN_SELECTION,
-                        tuple(
-                            target_model.face_ids[face]
-                            for face in bound.get(cell.classification_key, ())
-                        ),
-                        owner_label.enclosure,
-                    ),
-                )
-            else:
-                labels = tuple(
-                    _solid_label(
-                        context,
-                        cell,
-                        len(state.models),
-                        target_model,
-                        target_query,
-                        solid,
-                        bound.get(cell.classification_key, ()),
-                    )
-                    for solid in range(target_model.topology.num_solids)
-                )
-            target_labels.append(TargetCellMaterialLabel(cell.classification_key, labels))
+    target_labels = _label_target_cells(
+        context,
+        classification,
+        target_model,
+        target_query,
+        bound,
+        target_solid_regions,
+        preparations=preparations,
+        coordinate_budget=coordinate_budget,
+    ).labels
     by_cell = {item.classification_key: item.solids for item in target_labels}
     sources = tuple(
         MaterialSolid(operand, model.solid_ids[solid])
@@ -1651,7 +1910,7 @@ def prove_material_overlaps(
         item.overlaps and item.source.model_index == 1 for item in overlaps
     ):
         raise BRepBooleanFailure(
-            "published difference target overlaps excluded subtractor material",
+            "BRepBoolean.material.difference must exclude subtractor interiors; got an overlapping target",
             tuple(
                 key
                 for item in overlaps

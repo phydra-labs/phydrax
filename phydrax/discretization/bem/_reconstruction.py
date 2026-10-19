@@ -22,8 +22,8 @@ from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, FunctionLinearOperator
 from ...typing import parse
 from .._views import (
-    _checked_queries,
     AbstractFieldReconstructionKernel,
+    checked_queries,
     FieldQueryEvidence,
     FieldQueryStatus,
     FieldSideBinding,
@@ -326,7 +326,7 @@ def prepare_boundary_form_query(
     elif cell_ids is not None:
         raise ValueError("cell_ids requires an explicit trace side.")
     route, evidence = kernel.locate(jnp.asarray(sites), derivative, binding)
-    _checked_queries(jnp.asarray(sites), evidence)
+    checked_queries(jnp.asarray(sites), evidence)
     identity = canonical_fingerprint(
         {
             "kind": "prepared-boundary-form-query",

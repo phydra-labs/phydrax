@@ -11,7 +11,9 @@ The report is read-only. For every module-level `Literal` alias it lists:
 - membership tests (`x in (...)`, `x not in (...)`) against an inline constant
   collection with exactly the alias members;
 - `if`/`elif` chains of three or more equality tests of one name against alias
-  members (candidates for an exhaustive `match`).
+  members (candidates for an exhaustive `match`);
+- `typing.get_args` applied to a `type X = Literal[...]` statement alias, which
+  returns an empty tuple at runtime and silently drops every option.
 
 Selectors are matched by their member sets; a context-specific subset of an alias
 is reported separately and is not a duplicate.
@@ -86,6 +88,16 @@ def _aliases(tree: ast.Module, /) -> dict[str, frozenset[object]]:
     return aliases
 
 
+def _type_statement_aliases(tree: ast.Module, /) -> dict[str, frozenset[object]]:
+    """Return `Literal` aliases declared with a `type` statement."""
+    return {
+        node.name.id: members
+        for node in tree.body
+        if isinstance(node, ast.TypeAlias)
+        and (members := _literal_members(node.value)) is not None
+    }
+
+
 def _equality_chain(node: ast.If, /) -> tuple[str, list[object]] | None:
     name: str | None = None
     values: list[object] = []
@@ -146,10 +158,12 @@ def _visible_aliases(
 def _findings(
     path: Path,
     registry: Mapping[str, Mapping[str, frozenset[object]]],
+    statements: Mapping[str, Mapping[str, frozenset[object]]],
     /,
 ) -> Iterator[Finding]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     aliases_by_name = _visible_aliases(path, tree, registry)
+    statement_aliases = _visible_aliases(path, tree, statements)
     if not aliases_by_name:
         return
     aliases = {
@@ -213,6 +227,20 @@ def _findings(
                 )
         if (
             isinstance(node, ast.Call)
+            and ast.unparse(node.func) in ("get_args", "typing.get_args")
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id in statement_aliases
+        ):
+            yield Finding(
+                relative,
+                node.lineno,
+                "type-statement-get-args",
+                node.args[0].id,
+                "declare the selector as `Name: TypeAlias = Literal[...]`",
+            )
+        if (
+            isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "parse"
             and len(node.args) >= 2
@@ -234,15 +262,17 @@ def audit(root: Path, /) -> list[Finding]:
     paths = tuple(
         path for path in sorted(root.rglob("*.py")) if "__pycache__" not in path.parts
     )
-    registry = {
-        _module_name(path): _aliases(
-            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        )
+    trees = {
+        path: ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for path in paths
+    }
+    registry = {_module_name(path): _aliases(tree) for path, tree in trees.items()}
+    statements = {
+        _module_name(path): _type_statement_aliases(tree) for path, tree in trees.items()
     }
     findings: list[Finding] = []
     for path in paths:
-        findings.extend(_findings(path, registry))
+        findings.extend(_findings(path, registry, statements))
     return sorted(findings)
 
 

@@ -109,9 +109,9 @@ void test_grid_bisection_finds_the_strip_cut() {
   // The optimal balanced bisection of a 32 x 32 grid cuts one 32-edge line.
   PHX_CHECK(cut(g, out.parts) <= 36);
   PHX_CHECK(within(part_weights(g, out.parts, 2), {537, 537}));
-  PHX_CHECK(out.counters[0] >= 1);
-  PHX_CHECK(out.counters[1] <= 40 * 2);
-  PHX_CHECK(out.counters[PHX_MC_GRAPH_PARTITION_VISITS] > 0);
+  PHX_CHECK(out.counters[PHX_MC_GRAPH_PARTITION_COARSENING_LEVELS] >= 1);
+  PHX_CHECK(out.counters[PHX_MC_GRAPH_PARTITION_COARSEST_VERTEX_COUNT] <= 40 * 2);
+  PHX_CHECK(out.counters[PHX_MC_GRAPH_PARTITION_ADJACENCY_VISITS] > 0);
 }
 
 void test_grid_four_way_is_balanced_and_near_quadrants() {
@@ -201,7 +201,7 @@ void test_work_limit_is_a_resource_refusal() {
   const Csr g = from_edges(32 * 32, grid_edges(32, 32, 0));
   const Outcome out = run(g, 2, {512, 512}, {537, 537}, 1, 100);
   PHX_CHECK(out.status == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(out.counters[PHX_MC_GRAPH_PARTITION_VISITS] + out.counters[10] > 100);
+  PHX_CHECK(out.counters[PHX_MC_GRAPH_PARTITION_ADJACENCY_VISITS] + out.counters[PHX_MC_GRAPH_PARTITION_CANDIDATE_EVALUATIONS] > 100);
   PHX_CHECK(std::all_of(out.parts.begin(), out.parts.end(), [](int32_t q) { return q == -1; }));
 }
 
@@ -211,7 +211,7 @@ void test_late_work_refusal_does_not_publish_a_partial_partition() {
   const std::vector<int64_t> targets{5, 4, 5, 4}, capacities(4, 5);
   const Outcome full = run(g, 4, targets, capacities);
   PHX_CHECK(full.status == PHX_MC_OK);
-  const int64_t budget = full.counters[PHX_MC_GRAPH_PARTITION_VISITS] + full.counters[10] - 1;
+  const int64_t budget = full.counters[PHX_MC_GRAPH_PARTITION_ADJACENCY_VISITS] + full.counters[PHX_MC_GRAPH_PARTITION_CANDIDATE_EVALUATIONS] - 1;
   const Outcome refused = run(g, 4, targets, capacities, 1, budget);
   PHX_CHECK(refused.status == PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(std::all_of(refused.parts.begin(), refused.parts.end(),
@@ -222,8 +222,8 @@ void test_isolated_vertex_work_is_bounded() {
   const Csr g = from_edges(100, {});
   const Outcome out = run(g, 2, {50, 50}, {50, 50}, 1, 5);
   PHX_CHECK(out.status == PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(out.counters[PHX_MC_GRAPH_PARTITION_VISITS] == 0);
-  PHX_CHECK(out.counters[10] > 5);
+  PHX_CHECK(out.counters[PHX_MC_GRAPH_PARTITION_ADJACENCY_VISITS] == 0);
+  PHX_CHECK(out.counters[PHX_MC_GRAPH_PARTITION_CANDIDATE_EVALUATIONS] > 5);
 }
 
 void test_weighted_disconnected_packing_respects_exact_capacity() {

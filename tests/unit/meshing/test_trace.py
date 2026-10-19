@@ -23,7 +23,7 @@ def test_failed_stage_terminates_trace_and_prevents_success() -> None:
         ),
     )
     assert not MeshingTrace((start, failed)).successful
-    with pytest.raises(ValueError, match="terminate"):
+    with pytest.raises(ValueError, match=r"MeshingTrace\.stages"):
         MeshingTrace((failed, start))
 
 
@@ -43,9 +43,9 @@ def test_unresolved_mandatory_check_is_terminal_and_carries_quantities() -> None
 
     assert diagnostic.quantities == (("mesh_to_source_deviation", 0.1, 0.25),)
     assert not MeshingTrace((start, unresolved)).successful
-    with pytest.raises(ValueError, match="terminate"):
+    with pytest.raises(ValueError, match=r"MeshingTrace\.stages"):
         MeshingTrace((unresolved, start))
-    with pytest.raises(ValueError, match="error diagnostic"):
+    with pytest.raises(ValueError, match=r"MeshingStageReport\.diagnostics"):
         MeshingStageReport(MeshingStageKind.CERTIFICATION, MeshingStageStatus.UNRESOLVED)
 
 

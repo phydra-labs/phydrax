@@ -61,6 +61,7 @@ def _region(case: str) -> Any:
         return phx.geometry.MeshRegion(vertices, faces)
     sphere_faces = _sphere_face_count(case)
     if sphere_faces is not None:
+        # The optional dependency is admitted when this workflow executes.
         import trimesh
 
         mesh = trimesh.creation.icosphere(
@@ -124,7 +125,10 @@ def _case(case: str) -> Any:
     action = prepared.strong_operator.mv(vector)
     jax.block_until_ready(action)
     action_seconds = time.perf_counter() - started
-    dense_error = float(jnp.max(jnp.abs(action - prepared.dense_oracle.matrix @ vector)))
+    dense_oracle = prepared.dense_oracle
+    if dense_oracle is None:
+        raise ValueError("laplace-capacitance.dense_oracle must be available; got None")
+    dense_error = float(jnp.max(jnp.abs(action - dense_oracle.matrix @ vector)))
 
     started = time.perf_counter()
     capacitance_plan = phx.solver.LaplaceCapacitancePlan3D(
@@ -154,8 +158,8 @@ def _case(case: str) -> Any:
     if not bool(jnp.all(jnp.isfinite(result.capacitance))):
         failure_codes.append("nonfinite-capacitance")
     if (
-        sphere_relative_error is not None
-        # ty: ignore[invalid-argument-type]
+        sphere_faces is not None
+        and sphere_relative_error is not None
         and sphere_relative_error > _SPHERE_ERROR_LIMITS[sphere_faces]
     ):
         failure_codes.append("sphere-capacitance")

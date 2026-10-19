@@ -32,14 +32,15 @@ from .._array_archive import (
     validate_json_nesting,
 )
 from .._frozendict import frozendict
-from .._strict import mark_strict_initialized, Strict
+from .._strict import mark_strict_initialized, Strict, StrictModule
 from .._typing_plan import validate_tree
-from ..typing import parse
+from ..typing import checked, parse, validate
 from ._artifacts import (
     artifact_value,
     artifact_value_codec,
     artifact_value_codec_for,
     artifact_value_id,
+    validate_restored_artifact_value,
 )
 
 
@@ -49,10 +50,10 @@ if TYPE_CHECKING:
 
 type _NonfiniteFloatToken = Literal["nan", "inf", "-inf"]
 # Python identity of each completed shared-capable object (array, PRNG key or
-# dataclass instance) -> (canonical ordinal, object). Retaining the object keeps
+# dataclass instance) -> (traversal ordinal, object). Retaining the object keeps
 # its identity from being reused while the recipe is encoded.
 type _SharedObjects = dict[int, tuple[int, Any]]
-type _RecipeNode = dict[str, Any]
+type RecipeNode = dict[str, Any]
 # Restores the array or PRNG key declared by node ``index`` of an admitted table.
 type _ArrayFactory = Callable[[int, Mapping[str, Any]], Any]
 
@@ -221,7 +222,9 @@ def deserialize_model_leaf(file: BinaryIO, value: Any, /) -> Any:
     restored = eqx.default_deserialise_filter_spec(file, value)
     if isinstance(value, np.ndarray):
         if not isinstance(restored, np.ndarray):
-            raise TypeError("A NumPy model leaf must restore its declared host backend.")
+            raise TypeError(
+                f"model.leaf.backend must restore as numpy; got {type(restored).__name__}"
+            )
         restored.setflags(write=value.flags.writeable)
     return restored
 
@@ -249,7 +252,7 @@ def model_array_bytes(value: object, /) -> int:
             else:
                 if current.dtype.hasobject:
                     raise TypeError(
-                        "Scientific buffer accounting refuses object-dtype arrays."
+                        f"model.buffer.dtype must exclude objects; got {current.dtype}"
                     )
                 total += current.nbytes
         else:
@@ -286,7 +289,7 @@ def model_structure_recipe(
 
     The recipe is a DAG over object identity. An array, PRNG key or dataclass
     instance reachable through several declared paths is encoded once, at its
-    first canonical occurrence; every later occurrence is
+    first traversal occurrence; every later occurrence is
     ``{"kind": "reference", "target": n}``, where ``n`` numbers those objects in
     the order restoration completes them. Values without shared objects keep
     their tree-shaped recipe unchanged.
@@ -294,6 +297,106 @@ def model_structure_recipe(
     return _structure_recipe(value, path, {})
 
 
+def prepare_model_recipe(
+    value: Any, /, *, prefix: str
+) -> tuple[dict[str, Any], dict[str, jax.Array | np.ndarray]]:
+    """Prepare portable structure and distinct live numerical bindings.
+
+    Runtime leaves precede static numerical fields in declared order. Archive
+    admission is performed by the serialization boundary, not by preparation.
+    """
+    if not isinstance(prefix, str) or not prefix:
+        raise ValueError(f"recipe.prefix must be nonempty text; got {prefix!r}")
+    shared: _SharedObjects = {}
+    recipe = _structure_recipe(value, "model", shared)
+    ordered: dict[int, jax.Array | np.ndarray] = {}
+    for _, _, leaf in _runtime_leaves(value):
+        if isinstance(leaf, (jax.Array, np.ndarray)):
+            ordered.setdefault(id(leaf), leaf)
+    for _, item in shared.values():
+        if isinstance(item, (jax.Array, np.ndarray)):
+            ordered.setdefault(id(item), item)
+    arrays = {
+        f"{prefix}/{position:06d}": jr.key_data(item) if _is_prng_key(item) else item
+        for position, item in enumerate(ordered.values())
+    }
+    return recipe, arrays
+
+
+def prepare_model_recipe_catalog(
+    value: Any,
+    /,
+    *,
+    prefix: str,
+    limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+) -> tuple[
+    dict[str, Any],
+    tuple[ModelRecipeArray, ...],
+    dict[str, jax.Array | np.ndarray],
+]:
+    """Admit live structure and name its distinct numerical bindings once.
+
+    Retained recipe ordinals bind the admitted table directly to live objects;
+    runtime leaves precede static numerical fields without restoring a template.
+    """
+    if not isinstance(prefix, str) or not prefix:
+        raise ValueError(f"recipe.prefix must be nonempty text; got {prefix!r}")
+    shared: _SharedObjects = {}
+    recipe = _structure_recipe(value, "model", shared)
+    table = _lower_recipe(recipe, limits)
+    objects = {table.ordinals[ordinal]: item for ordinal, item in shared.values()}
+    indices = {
+        id(item): index
+        for index, item in objects.items()
+        if table.nodes[index]["kind"] in _ARRAY_KINDS
+    }
+    catalog = _runtime_array_catalog(value, table, indices, prefix)
+    arrays = _bound_array_values(objects, catalog)
+    return (
+        recipe,
+        tuple(entry for entry, _ in catalog),
+        {
+            entry.name: payload
+            for (entry, _), payload in zip(catalog, arrays, strict=True)
+        },
+    )
+
+
+def _runtime_leaves(value: Any, /) -> Iterable[tuple[int, tuple[Any, ...], Any]]:
+    """Yield first-reached leaves with their conceptually expanded PyTree index.
+
+    Public one-level flattening preserves registered key paths and static-field
+    partitioning. Completed subtrees retain their objects and full leaf counts,
+    so repeated reaches advance indices without expanding shared descendants.
+    """
+    completed: dict[int, tuple[Any, int]] = {}
+    # A nonnegative start marks a subtree-completion frame.
+    pending: list[tuple[Any, tuple[Any, ...], int]] = [(value, (), -1)]
+    tree_index = 0
+    while pending:
+        current, path, start = pending.pop()
+        identity = id(current)
+        if start >= 0:
+            completed[identity] = (current, tree_index - start)
+            continue
+        if identity in completed:
+            tree_index += completed[identity][1]
+            continue
+        children, _ = jax.tree_util.tree_flatten_with_path(
+            current, is_leaf=lambda child: child is not current
+        )
+        if len(children) == 1 and not children[0][0] and children[0][1] is current:
+            completed[identity] = (current, 1)
+            yield tree_index, path, current
+            tree_index += 1
+            continue
+        pending.append((current, (), tree_index))
+        pending.extend(
+            (child, path + child_path, -1) for child_path, child in reversed(children)
+        )
+
+
+# Leaf selector precedence preserves recipe kinds before registered-owner traversal.
 def _structure_recipe(
     value: Any,
     path: str,
@@ -392,11 +495,24 @@ def _structure_recipe(
         return {"kind": "ellipsis"}
     if isinstance(value, type):
         return {"kind": "type", "value": artifact_value_id(value)}
+    return _structure_composite_recipe(value, path, shared)
+
+
+# Explicit owner/container dispatch preserves codec precedence and post-order shared-object completion.
+def _structure_composite_recipe(
+    value: Any,
+    path: str,
+    shared: _SharedObjects | None,
+    /,
+) -> dict[str, Any]:
+    """Encode registered owners and containers in their restoration order."""
     codec = artifact_value_codec_for(value)
     if codec is not None:
         payload = _structure_recipe(codec.encode_value(value), f"{path}.payload", None)
         if _recipe_contains_array(payload):
-            raise TypeError(f"{path} immutable value payload cannot contain arrays.")
+            raise TypeError(
+                f"{path}.payload must exclude arrays; got an array-containing recipe"
+            )
         return {"kind": "value", "type": codec.value_id, "payload": payload}
     if isinstance(value, tuple) and "_fields" in vars(type(value)):
         return {
@@ -449,36 +565,48 @@ def _structure_recipe(
             "items": encoded_items,
         }
     if isinstance(value, Mapping):
-        mapping_kind = (
-            "frozendict"
-            if isinstance(value, frozendict)
-            else "mappingproxy"
-            if isinstance(value, MappingProxyType)
-            else "mapping"
-        )
-        # Values encode in canonical key order, which is their restoration order.
-        encoded_keys = sorted(
-            (
-                (_structure_recipe(key, f"{path}.key", None), item)
-                for key, item in value.items()
-            ),
-            key=lambda pair: _canonical_recipe_payload(pair[0]),
-        )
-        key_payloads = [_canonical_recipe_payload(key) for key, _ in encoded_keys]
-        if len(set(key_payloads)) != len(key_payloads):
-            raise TypeError(f"{path} contains keys with the same canonical encoding.")
-        return {
-            "kind": mapping_kind,
-            "items": [
-                [key, _structure_recipe(item, f"{path}.value", shared)]
-                for key, item in encoded_keys
-            ],
-        }
+        return _structure_mapping_recipe(value, path, shared)
     if callable(value):
         return {"kind": "callable", "value": artifact_value_id(value)}
     raise TypeError(
         f"Portable model artifact cannot represent {path} of type {type(value).__name__}."
     )
+
+
+def _structure_mapping_recipe(
+    value: Mapping[Any, Any],
+    path: str,
+    shared: _SharedObjects | None,
+    /,
+) -> dict[str, Any]:
+    """Canonicalize unshared keys before encoding shared values."""
+    mapping_kind = (
+        "frozendict"
+        if isinstance(value, frozendict)
+        else "mappingproxy"
+        if isinstance(value, MappingProxyType)
+        else "mapping"
+    )
+    # Values encode in sorted key order, which is their restoration order.
+    encoded_keys = sorted(
+        (
+            (_structure_recipe(key, f"{path}.key", None), item)
+            for key, item in value.items()
+        ),
+        key=lambda pair: _canonical_recipe_payload(pair[0]),
+    )
+    key_payloads = [_canonical_recipe_payload(key) for key, _ in encoded_keys]
+    if len(set(key_payloads)) != len(key_payloads):
+        raise TypeError(
+            f"{path}.keys must have distinct recipe encodings; got {len(key_payloads)} keys with {len(set(key_payloads))} distinct encodings"
+        )
+    return {
+        "kind": mapping_kind,
+        "items": [
+            [key, _structure_recipe(item, f"{path}.value", shared)]
+            for key, item in encoded_keys
+        ],
+    }
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -583,9 +711,11 @@ def _admit_array_node(
             expected.add("writable")
         _recipe_fields(node, expected, path)
         if node["backend"] == "numpy" and type(node["writable"]) is not bool:
-            raise ValueError(f"{path} NumPy mutability metadata must be boolean.")
+            raise ValueError(f"{path}.writable must be boolean; got {node['writable']!r}")
         if node["backend"] not in ("jax", "numpy"):
-            raise ValueError(f"{path} has an invalid array backend.")
+            raise ValueError(
+                f"{path}.backend must be jax or numpy; got {node['backend']!r}"
+            )
         _, _, elements, byte_count = _recipe_array_spec(
             node["shape"], node["dtype"], limits, path
         )
@@ -596,15 +726,20 @@ def _admit_array_node(
         not isinstance(implementation, str)
         or implementation not in _PRNG_IMPLEMENTATION_WORDS
     ):
-        raise ValueError(f"{path} has an unsupported PRNG implementation.")
+        raise ValueError(
+            f"{path}.implementation must identify a supported PRNG; got {implementation!r}"
+        )
     shape, _, elements, byte_count = _recipe_array_spec(
         node["shape"], np.dtype(np.uint32).str, limits, path
     )
     if not shape or shape[-1] != _PRNG_IMPLEMENTATION_WORDS[implementation]:
-        raise ValueError(f"{path} PRNG key-data shape is incompatible.")
+        raise ValueError(
+            f"{path}.shape must end in {_PRNG_IMPLEMENTATION_WORDS[implementation]} PRNG words; got {shape!r}"
+        )
     return elements, byte_count
 
 
+# Static-kind admission validates the declared field set before value bounds or registered identity resolution.
 def _admit_static_node(
     node: Mapping[str, Any],
     kind: str,
@@ -627,62 +762,14 @@ def _admit_static_node(
             _recipe_fields(node, {"kind", "numerator", "denominator"}, path)
             numerator, denominator = node["numerator"], node["denominator"]
             if type(numerator) is not int or type(denominator) is not int:
-                raise TypeError(f"{path} fraction components must be exact integers.")
-            if denominator <= 0:
-                raise ValueError(f"{path} fraction denominator must be positive.")
-            # A decimal JSON integer fitting this limit cannot exceed four bits
-            # per byte; refuse oversized integers before exact reduction work.
-            if max(numerator.bit_length(), denominator.bit_length()) > (
-                4 * limits.max_manifest_bytes
-            ):
-                raise ValueError(f"{path} fraction exceeds the manifest byte limit.")
-            if gcd(numerator, denominator) != 1:
-                raise ValueError(
-                    f"{path} fraction must have reduced canonical components."
-                )
-        case "fraction_tuple":
-            _recipe_fields(node, {"kind", "values"}, path)
-            values = node["values"]
-            if (
-                not isinstance(values, list)
-                or not values
-                or any(
-                    not isinstance(pair, list)
-                    or len(pair) != 2
-                    or any(type(component) is not int for component in pair)
-                    for pair in values
-                )
-            ):
                 raise TypeError(
-                    f"{path} fraction tuple components must be exact integers."
+                    f"{path}.components must be integers; got numerator={numerator!r}, denominator={denominator!r}"
                 )
-            for numerator, denominator in values:
-                if denominator <= 0:
-                    raise ValueError(
-                        f"{path} fraction tuple denominator must be positive."
-                    )
-                if max(numerator.bit_length(), denominator.bit_length()) > (
-                    4 * limits.max_manifest_bytes
-                ):
-                    raise ValueError(
-                        f"{path} fraction tuple exceeds the manifest byte limit."
-                    )
-                if gcd(numerator, denominator) != 1:
-                    raise ValueError(
-                        f"{path} fraction tuple must have reduced canonical components."
-                    )
+            _require_reduced_fraction(numerator, denominator, limits, path)
+        case "fraction_tuple":
+            _admit_fraction_tuple(node, limits, path)
         case "literal_tuple":
-            _recipe_fields(node, {"kind", "values"}, path)
-            values = node["values"]
-            if not isinstance(values, list) or any(
-                value is not None and type(value) not in (str, bool, int, float)
-                for value in values
-            ):
-                raise TypeError(f"{path} literal tuple has an invalid component.")
-            if any(
-                isinstance(value, float) and not np.isfinite(value) for value in values
-            ):
-                raise ValueError(f"{path} literal tuple components must be finite.")
+            _admit_literal_tuple(node, path)
         case "complex":
             _recipe_fields(node, {"kind", "real", "imag"}, path)
             if any(
@@ -730,14 +817,77 @@ def _admit_static_node(
             if kind == "callable" and not callable(resolved):
                 raise TypeError(f"{path} does not resolve to a callable.")
         case _:
-            raise ValueError(f"Unknown model artifact recipe kind {kind!r}.")
+            raise ValueError(
+                f"recipe.kind must identify a supported model artifact node; got {kind!r}"
+            )
+
+
+def _require_reduced_fraction(
+    numerator: int,
+    denominator: int,
+    limits: ArrayArchiveLimits,
+    path: str,
+    /,
+) -> None:
+    """Bound integer work before checking that the fraction is reduced."""
+    if denominator <= 0:
+        raise ValueError(f"{path}.denominator must be positive; got {denominator!r}")
+    # A decimal JSON integer fitting this limit cannot exceed four bits per byte.
+    if max(numerator.bit_length(), denominator.bit_length()) > (
+        4 * limits.max_manifest_bytes
+    ):
+        raise ValueError(
+            f"{path}.components must fit the manifest bit limit {4 * limits.max_manifest_bytes}; got {max(numerator.bit_length(), denominator.bit_length())} bits"
+        )
+    if gcd(numerator, denominator) != 1:
+        raise ValueError(
+            f"{path}.components must be reduced; got numerator={numerator}, denominator={denominator}"
+        )
+
+
+def _admit_fraction_tuple(
+    node: Mapping[str, Any], limits: ArrayArchiveLimits, path: str, /
+) -> None:
+    """Validate every integer pair before checking component reduction."""
+    _recipe_fields(node, {"kind", "values"}, path)
+    values = node["values"]
+    if (
+        not isinstance(values, list)
+        or not values
+        or any(
+            not isinstance(pair, list)
+            or len(pair) != 2
+            or any(type(component) is not int for component in pair)
+            for pair in values
+        )
+    ):
+        raise TypeError(
+            f"{path}.values must be a nonempty list of integer pairs; got {values!r}"
+        )
+    for numerator, denominator in values:
+        _require_reduced_fraction(numerator, denominator, limits, path)
+
+
+def _admit_literal_tuple(node: Mapping[str, Any], path: str, /) -> None:
+    """Refuse unsupported literal kinds before checking float finiteness."""
+    _recipe_fields(node, {"kind", "values"}, path)
+    values = node["values"]
+    if not isinstance(values, list) or any(
+        value is not None and type(value) not in (str, bool, int, float)
+        for value in values
+    ):
+        raise TypeError(
+            f"{path}.values must contain supported literal types; got {values!r}"
+        )
+    if any(isinstance(value, float) and not np.isfinite(value) for value in values):
+        raise ValueError(f"{path}.values must contain finite floats; got {values!r}")
 
 
 def _admit_composite_node(node: Mapping[str, Any], kind: str, path: str, /) -> list[Any]:
     """Validate one composite record; return its raw children in traversal order.
 
     Dataclass fields follow their registered declaration order, which is the
-    order in which encoding and restoration complete shared objects.
+    order in which encoding and restoration finish shared objects.
     """
     match kind:
         case "slice":
@@ -746,7 +896,7 @@ def _admit_composite_node(node: Mapping[str, Any], kind: str, path: str, /) -> l
         case "value":
             _recipe_fields(node, {"kind", "type", "payload"}, path)
             if not isinstance(node["type"], str):
-                raise TypeError(f"{path} immutable value identity must be text.")
+                raise TypeError(f"{path}.type must be text; got {node['type']!r}")
             artifact_value_codec(node["type"])
             return [node["payload"]]
         case "namedtuple":
@@ -766,7 +916,7 @@ def _admit_composite_node(node: Mapping[str, Any], kind: str, path: str, /) -> l
                 raise TypeError(f"{path} identity does not resolve to a dataclass.")
             if not isinstance(items, list) or len(items) != len(dataclasses.fields(cls)):
                 raise ValueError(
-                    f"{path} dataclass field count does not match its registered type."
+                    f"{path}.items must match the registered dataclass field count {len(dataclasses.fields(cls))}; got {items!r}"
                 )
             return list(items)
         case "tuple" | "list" | "set" | "frozenset":
@@ -783,7 +933,9 @@ def _admit_composite_node(node: Mapping[str, Any], kind: str, path: str, /) -> l
                 raise TypeError(f"{path} mapping items must be key/value pairs.")
             return [entry for pair in items for entry in pair]
         case _:
-            raise ValueError(f"Unknown model artifact recipe kind {kind!r}.")
+            raise ValueError(
+                f"recipe.kind must identify a supported model artifact node; got {kind!r}"
+            )
 
 
 def _child_labels(node: Mapping[str, Any], /) -> list[tuple[str, bool]]:
@@ -822,7 +974,7 @@ def _child_labels(node: Mapping[str, Any], /) -> list[tuple[str, bool]]:
             return []
 
 
-def _table_children(node: Mapping[str, Any], /) -> list[int]:
+def table_children(node: Mapping[str, Any], /) -> list[int]:
     """Table indices of a lowered composite node, in traversal order."""
     match node["kind"]:
         case "slice":
@@ -839,7 +991,7 @@ def _table_children(node: Mapping[str, Any], /) -> list[int]:
             return []
 
 
-def _with_children(node: Mapping[str, Any], children: list[Any], /) -> _RecipeNode:
+def _with_children(node: Mapping[str, Any], children: list[Any], /) -> RecipeNode:
     """Rebuild one composite record with replacement children in traversal order."""
     match node["kind"]:
         case "slice":
@@ -866,11 +1018,13 @@ def _with_children(node: Mapping[str, Any], children: list[Any], /) -> _RecipeNo
                 ],
             }
         case kind:
-            raise ValueError(f"Unknown model artifact recipe kind {kind!r}.")
+            raise ValueError(
+                f"recipe.kind must identify a supported model artifact node; got {kind!r}"
+            )
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class _RecipeTable:
+class RecipeTable:
     """Admitted logical recipe lowered to a post-order node table.
 
     Children precede parents and each shared object, including every reference
@@ -878,28 +1032,28 @@ class _RecipeTable:
     ``ordinals`` maps each logical shared-object ordinal to its node.
     """
 
-    nodes: list[_RecipeNode]
+    nodes: list[RecipeNode]
     ordinals: list[int]
 
 
-def _lower_recipe(recipe: Any, limits: ArrayArchiveLimits, /) -> _RecipeTable:
-    """Admit a complete logical recipe iteratively before any reconstruction.
+# The admission stack preserves child order, completed-object ordinals, and refusal before reconstruction.
+@checked
+def _lower_recipe(recipe: Any, limits: ArrayArchiveLimits, /) -> RecipeTable:
+    """Admit a logical recipe iteratively before any reconstruction.
 
-    Admission bounds visited records, canonical bytes and every distinct array
+    Admission bounds visited records, serialized bytes and every distinct array
     before allocation; it refuses unknown kinds, unregistered types, inexact
     field sets, noncanonical set or mapping keys, arrays or references in
     unshared contexts and every reference that does not name an earlier
     completed object.
     """
-    if not isinstance(limits, ArrayArchiveLimits):
-        raise TypeError("limits must be an ArrayArchiveLimits instance.")
     recipe_bytes = len(_canonical_recipe_payload(recipe))
     if recipe_bytes > limits.max_manifest_bytes:
         raise ValueError(
-            "Model artifact recipe exceeds its manifest byte limit "
+            f"recipe.bytes must not exceed {limits.max_manifest_bytes}; got "
             f"({recipe_bytes} > {limits.max_manifest_bytes})."
         )
-    nodes: list[_RecipeNode] = []
+    nodes: list[RecipeNode] = []
     ordinals: list[int] = []
     statics: dict[bytes, int] = {}
     values: list[tuple[int, Mapping[str, Any], str]] = []
@@ -922,38 +1076,30 @@ def _lower_recipe(recipe: Any, limits: ArrayArchiveLimits, /) -> _RecipeTable:
             continue
         visits += 1
         if visits > limits.max_manifest_bytes:
-            raise ValueError("Model artifact recipe exceeds its node limit.")
+            raise ValueError(
+                f"recipe.nodes must not exceed {limits.max_manifest_bytes}; got {visits}"
+            )
         if not isinstance(node, dict):
-            raise TypeError(f"{path} must be a recipe object.")
+            raise TypeError(
+                f"{path}.node must be a recipe object; got {type(node).__name__}"
+            )
         kind = node.get("kind")
         if not isinstance(kind, str):
-            raise ValueError(f"{path} has no valid recipe kind.")
+            raise ValueError(f"{path}.kind must be text; got {kind!r}")
         if kind == "reference":
-            _recipe_fields(node, {"kind", "target"}, path)
-            target = node["target"]
-            if not shared:
-                raise ValueError(
-                    f"{path} unshared recipe positions cannot contain references."
-                )
-            if type(target) is not int or not 0 <= target < len(ordinals):
-                # Targets must be completed objects: no forward or ancestor cycles.
-                raise ValueError(
-                    "Model artifact recipe references must name an earlier completed object."
-                )
-            completed.append(ordinals[target])
+            completed.append(_admit_recipe_reference(node, kind, path, shared, ordinals))
         elif kind in _ARRAY_KINDS:
             elements, byte_count = _admit_array_node(node, kind, limits, path)
-            if not shared:
-                raise ValueError(
-                    f"{path} unshared recipe positions cannot contain arrays."
-                )
-            # References carry no bytes: limits apply to distinct stored objects.
-            if total_elements > limits.max_total_array_elements - elements:
-                raise ValueError("Model artifact recipe exceeds its total element limit.")
-            if total_bytes > limits.max_aggregate_bytes - byte_count:
-                raise ValueError(
-                    "Model artifact recipe exceeds its total array-byte limit."
-                )
+            _require_recipe_array_budget(
+                shared,
+                kind,
+                path,
+                elements,
+                byte_count,
+                total_elements,
+                total_bytes,
+                limits,
+            )
             total_elements += elements
             total_bytes += byte_count
             nodes.append(dict(node))
@@ -961,13 +1107,7 @@ def _lower_recipe(recipe: Any, limits: ArrayArchiveLimits, /) -> _RecipeTable:
             completed.append(len(nodes) - 1)
         elif kind in _COMPOSITE_KINDS:
             children = _admit_composite_node(node, kind, path)
-            if kind in ("set", "frozenset", "mapping", "frozendict", "mappingproxy"):
-                keys = children if kind in ("set", "frozenset") else children[::2]
-                payloads = [_canonical_recipe_payload(key) for key in keys]
-                if payloads != sorted(payloads) or len(payloads) != len(set(payloads)):
-                    raise ValueError(
-                        f"{path} set items or mapping keys are not uniquely canonical."
-                    )
+            _require_canonical_composite_keys(children, kind, path)
             pending.append((node, path, shared, len(completed)))
             pending.extend(
                 (child, f"{path}{label}", shared and child_shared, -1)
@@ -989,15 +1129,78 @@ def _lower_recipe(recipe: Any, limits: ArrayArchiveLimits, /) -> _RecipeTable:
                 statics[payload] = len(nodes) - 1
             completed.append(statics[payload])
     if completed != [len(nodes) - 1]:
-        raise ValueError("Model artifact recipe root must be one complete object.")
-    table = _RecipeTable(nodes, ordinals)
+        raise ValueError(
+            f"recipe.root must be one finished object at node {len(nodes) - 1}; got {completed!r}"
+        )
+    table = RecipeTable(nodes, ordinals)
     for index, node, path in values:
         _require_canonical_value(table, index, node, path)
     return table
 
 
+def _admit_recipe_reference(
+    node: Mapping[str, Any],
+    kind: str,
+    path: str,
+    shared: bool,
+    ordinals: list[int],
+    /,
+) -> int:
+    """Resolve only previously completed objects in shared positions."""
+    _recipe_fields(node, {"kind", "target"}, path)
+    target = node["target"]
+    if not shared:
+        raise ValueError(
+            f"{path}.kind must exclude references in unshared positions; got {kind!r}"
+        )
+    if type(target) is not int or not 0 <= target < len(ordinals):
+        raise ValueError(
+            f"{path}.target must name an earlier completed object in [0, {len(ordinals)}); got {target!r}"
+        )
+    return ordinals[target]
+
+
+def _require_recipe_array_budget(
+    shared: bool,
+    kind: str,
+    path: str,
+    elements: int,
+    byte_count: int,
+    total_elements: int,
+    total_bytes: int,
+    limits: ArrayArchiveLimits,
+    /,
+) -> None:
+    """Admit distinct stored buffers without counting reference reaches."""
+    if not shared:
+        raise ValueError(
+            f"{path}.kind must exclude arrays in unshared positions; got {kind!r}"
+        )
+    if total_elements > limits.max_total_array_elements - elements:
+        raise ValueError(
+            f"recipe.elements must not exceed {limits.max_total_array_elements}; got {total_elements + elements}"
+        )
+    if total_bytes > limits.max_aggregate_bytes - byte_count:
+        raise ValueError(
+            f"recipe.array_bytes must not exceed {limits.max_aggregate_bytes}; got {total_bytes + byte_count}"
+        )
+
+
+def _require_canonical_composite_keys(
+    children: list[Any], kind: str, path: str, /
+) -> None:
+    """Validate unshared key order before scheduling composite children."""
+    if kind in ("set", "frozenset", "mapping", "frozendict", "mappingproxy"):
+        keys = children if kind in ("set", "frozenset") else children[::2]
+        payloads = [_canonical_recipe_payload(key) for key in keys]
+        if payloads != sorted(payloads) or len(payloads) != len(set(payloads)):
+            raise ValueError(
+                f"{path}.keys must be unique and sorted by serialized content; got {payloads!r}"
+            )
+
+
 def _require_canonical_value(
-    table: _RecipeTable,
+    table: RecipeTable,
     index: int,
     node: Mapping[str, Any],
     path: str,
@@ -1006,16 +1209,18 @@ def _require_canonical_value(
     reached = {index}
     for position in range(index, -1, -1):
         if position in reached:
-            reached.update(_table_children(table.nodes[position]))
+            reached.update(table_children(table.nodes[position]))
 
     def refuse_array(_index: int, _node: Mapping[str, Any], /) -> NoReturn:
-        raise ValueError(f"{path} immutable value payload cannot contain arrays.")
+        raise ValueError(f"{path}.payload must exclude arrays; got array node {_index}")
 
-    value = _restore_nodes(table.nodes, refuse_array, sorted(reached))[index]
+    value = restore_nodes(table.nodes, refuse_array, sorted(reached))[index]
     if _canonical_recipe_payload(
         model_structure_recipe(value)
     ) != _canonical_recipe_payload(node):
-        raise ValueError(f"{path} immutable value payload is not canonical.")
+        raise ValueError(
+            f"{path}.payload must match its registered codec re-encoding; got {node!r}"
+        )
 
 
 def validate_model_structure_recipe(
@@ -1024,7 +1229,7 @@ def validate_model_structure_recipe(
     *,
     limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> None:
-    """Validate a complete recipe and every allocation bound without allocating."""
+    """Validate a recipe and every allocation bound without allocating."""
     _lower_recipe(recipe, limits)
 
 
@@ -1033,9 +1238,11 @@ def _admit_wire_table(
 ) -> list[Mapping[str, Any]]:
     """Admit wire JSON shape, child order and reachability before lifting."""
     if not isinstance(text, str):
-        raise TypeError("Model recipe wire encoding must be text.")
+        raise TypeError(f"recipe.wire must be text; got {type(text).__name__}")
     if len(text.encode("utf-8")) > limits.max_manifest_bytes:
-        raise ValueError("Model recipe wire encoding exceeds its manifest byte limit.")
+        raise ValueError(
+            f"recipe.wire_bytes must not exceed {limits.max_manifest_bytes}; got {len(text.encode('utf-8'))}"
+        )
     try:
         validate_json_nesting(text, limits.max_manifest_nesting)
         table = json.loads(
@@ -1050,36 +1257,46 @@ def _admit_wire_table(
         ValueError,
     ) as error:
         raise ValueError(
-            "Model recipe wire encoding is not bounded duplicate-free JSON."
+            f"recipe.wire must be bounded duplicate-free JSON; got {type(error).__name__}: {error}"
         ) from error
     if not isinstance(table, dict):
-        raise TypeError("Model recipe wire encoding must be a node-table object.")
+        raise TypeError(
+            f"recipe.wire must be a node-table object; got {type(table).__name__}"
+        )
     _recipe_fields(table, {"nodes", "root"}, "recipe")
     nodes, root = table["nodes"], table["root"]
     if not isinstance(nodes, list) or not nodes:
-        raise TypeError("Model recipe wire nodes must be a nonempty list.")
+        raise TypeError(f"recipe.nodes must be a nonempty list; got {nodes!r}")
     if type(root) is not int or root != len(nodes) - 1:
-        raise ValueError("Model recipe wire root must be its final node.")
+        raise ValueError(
+            f"recipe.root must be the final node {len(nodes) - 1}; got {root!r}"
+        )
     for index, node in enumerate(nodes):
         path = f"recipe.nodes[{index}]"
         if not isinstance(node, dict) or not isinstance(node.get("kind"), str):
-            raise TypeError(f"{path} must be a recipe object with a kind.")
+            raise TypeError(
+                f"{path}.node must be a recipe object with a text kind; got {node!r}"
+            )
         if node["kind"] in _COMPOSITE_KINDS:
             for child in _admit_composite_node(node, node["kind"], path):
                 # Children strictly precede parents: no cycle or forward reference.
                 if type(child) is not int or not 0 <= child < index:
-                    raise ValueError(f"{path} must reference an earlier recipe node.")
+                    raise ValueError(
+                        f"{path}.child must reference an earlier node in [0, {index}); got {child!r}"
+                    )
         elif node["kind"] == "reference":
-            raise ValueError(f"{path} wire tables express sharing by node index only.")
+            raise ValueError(
+                f"{path}.kind must express sharing by node index only; got reference"
+            )
     reachable = [False] * len(nodes)
     reachable[root] = True
     for index in range(root, -1, -1):
         if reachable[index]:
-            for child in _table_children(nodes[index]):
+            for child in table_children(nodes[index]):
                 reachable[child] = True
     if not all(reachable):
         raise ValueError(
-            "Model recipe wire table contains a node unreachable from its root."
+            f"recipe.nodes must all be reachable from root {root}; got reachability {reachable!r}"
         )
     return nodes
 
@@ -1122,18 +1339,20 @@ def _lift_wire_table(
                 static_sizes[index] = len(_canonical_recipe_payload(node))
             remaining_static_bytes -= static_sizes[index]
             if remaining_static_bytes < 0:
-                raise ValueError("Model artifact recipe exceeds its manifest byte limit.")
+                raise ValueError(
+                    f"recipe.static_bytes must not exceed {limits.max_manifest_bytes}; got {limits.max_manifest_bytes - remaining_static_bytes}"
+                )
             completed.append(dict(node))
             continue
         if index in visited:
             raise ValueError(
-                "Model recipe wire table shares a node outside canonical object identity."
+                f"recipe.nodes must share only arrays or dataclasses in shared contexts; got repeated node {index} of kind {kind!r}"
             )
         visited.add(index)
         if kind in _ARRAY_KINDS:
             if not shared:
                 raise ValueError(
-                    "Model recipe wire table holds an array in an unshared context."
+                    f"recipe.nodes must exclude arrays in unshared contexts; got node {index} of kind {kind!r}"
                 )
             ordinals[index] = len(ordinals)
             completed.append(dict(node))
@@ -1144,7 +1363,7 @@ def _lift_wire_table(
             for child, (_, child_shared) in reversed(
                 list(
                     zip(
-                        _table_children(node),
+                        table_children(node),
                         _child_labels(node),
                         strict=True,
                     )
@@ -1161,7 +1380,7 @@ def model_recipe_wire_json(
     *,
     limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> str:
-    """Encode an admitted logical recipe as its shallow canonical wire table.
+    """Encode an admitted logical recipe as its shallow wire table.
 
     The wire table has constant JSON nesting however deep the logical recipe
     is: shared objects appear once and references become node indices. It is
@@ -1174,18 +1393,19 @@ def model_recipe_wire_json(
     ).decode("ascii")
 
 
+@checked
 def model_recipe_from_wire_json(
     text: str,
     /,
     *,
     limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> dict[str, Any]:
-    """Admit wire text under byte and nesting limits; return its exact logical recipe."""
-    if not isinstance(limits, ArrayArchiveLimits):
-        raise TypeError("limits must be an ArrayArchiveLimits instance.")
+    """Admit wire text under byte and nesting limits; return its logical recipe."""
     recipe = _lift_wire_table(_admit_wire_table(text, limits), limits)
     if model_recipe_wire_json(recipe, limits=limits) != text:
-        raise ValueError("Model recipe wire encoding is not canonical.")
+        raise ValueError(
+            f"recipe.wire must match deterministic re-encoding; got {text!r}"
+        )
     return recipe
 
 
@@ -1193,37 +1413,84 @@ def _restore_dataclass(
     cls: type[DataclassInstance], items: list[int], restored: list[Any], /
 ) -> Any:
     if not isinstance(cls, type) or not dataclasses.is_dataclass(cls):
-        raise TypeError(
-            "Artifact reconstruction requires an exactly registered dataclass."
-        )
+        raise TypeError(f"artifact.cls must be a registered dataclass; got {cls!r}")
     if artifact_value(artifact_value_id(cls)) is not cls:
-        raise TypeError("Artifact reconstruction requires its exact registered type.")
+        raise TypeError(f"artifact.cls must match its registered type; got {cls!r}")
     declared = dataclasses.fields(cls)
     if len(items) != len(declared):
-        raise ValueError("Artifact field count does not match its registered type.")
+        raise ValueError(
+            f"artifact.items must match registered field count {len(declared)}; got {len(items)}"
+        )
     instance = object.__new__(cls)
     for field, item in zip(declared, items, strict=True):
         object.__setattr__(instance, field.name, restored[item])
-    if issubclass(cls, Strict):
+    return instance
+
+
+def restore_registered_fields[T](cls: type[T], stored: Mapping[str, Any], /) -> T:
+    """Restore authenticated fields of a registered dataclass.
+
+    The caller authenticates scientific bindings before entering this boundary.
+    All restored fields are checked before the Strict guard is restored.
+    """
+    if (
+        not dataclasses.is_dataclass(cls)
+        or artifact_value(artifact_value_id(cls)) is not cls
+    ):
+        raise TypeError(
+            f"stored_fields.owner must match its registered dataclass type; got {cls!r}"
+        )
+    declared = dataclasses.fields(cls)
+    names = tuple(member.name for member in declared)
+    if set(stored) != set(names):
+        raise ValueError(
+            f"stored_fields.{cls.__name__}.fields must match the registered field set; got {tuple(stored)!r}"
+        )
+    instance = _restore_dataclass(
+        cls, list(range(len(names))), [stored[name] for name in names]
+    )
+    validate(instance)
+    if isinstance(instance, Strict):
         mark_strict_initialized(instance)
     return instance
 
 
-def _restore_nodes(
-    nodes: list[_RecipeNode],
+def restore_nodes(
+    nodes: list[RecipeNode],
     array_factory: _ArrayFactory,
     indices: Iterable[int] | None = None,
     /,
+    *,
+    template: Literal["arrays", "descriptors"] | None = None,
 ) -> list[Any]:
     """Restore admitted table nodes in order, building each node exactly once.
 
     Children precede parents, so every path to a shared node receives the
     identical restored array or object. ``array_factory`` is called once per
-    array node, in logical restoration order.
+    array node, in logical restoration order. Numerical restores validate the
+    strict graph once before restoring guards and invoking registered
+    owners in post-order. Array templates check field contracts without numerical
+    owner validation; descriptor templates rely on recipe admission because
+    their metadata leaves are not numerical arrays.
     """
     restored: list[Any] = [None] * len(nodes)
+    root: Any = None
     for index in range(len(nodes)) if indices is None else indices:
-        restored[index] = _restore_node(nodes[index], index, restored, array_factory)
+        root = restored[index] = _restore_node(
+            nodes[index], index, restored, array_factory
+        )
+    if template != "descriptors":
+        if isinstance(root, StrictModule) and type(root)._strict_contract_:
+            validate(root)
+        else:
+            validate_tree(restored)
+    for node, instance in zip(nodes, restored, strict=True):
+        if node["kind"] != "dataclass" or instance is None:
+            continue
+        if isinstance(instance, Strict):
+            mark_strict_initialized(instance)
+        if template is None:
+            validate_restored_artifact_value(instance)
     return restored
 
 
@@ -1296,7 +1563,9 @@ def _restore_node(
                 return MappingProxyType(value)
             return value
         case kind:
-            raise ValueError(f"Unknown model artifact recipe kind {kind!r}.")
+            raise ValueError(
+                f"recipe.kind must identify a supported model artifact node; got {kind!r}"
+            )
 
 
 def _array_descriptor(node: Mapping[str, Any], /) -> _RecipeArrayDescriptor:
@@ -1324,7 +1593,9 @@ def model_recipe_template(
     """Construct a nonallocating structural template for serialized leaves."""
 
     nodes = _lower_recipe(recipe, limits).nodes
-    return _restore_nodes(nodes, lambda _index, node: _array_descriptor(node))[-1]
+    return restore_nodes(
+        nodes, lambda _index, node: _array_descriptor(node), template="descriptors"
+    )[-1]
 
 
 def _serialized_leaf_specification(
@@ -1392,7 +1663,7 @@ def deserialize_model_tree(
         zeros[index] = _zero_array(node)
         return zeros[index]
 
-    template = _restore_nodes(nodes, zero_array)[-1]
+    template = restore_nodes(nodes, zero_array, template="arrays")[-1]
     stored: dict[int, Any] = {}
     for leaf in jax.tree_util.tree_leaves(template):
         value = deserialize_model_leaf(file, leaf)
@@ -1401,7 +1672,7 @@ def deserialize_model_tree(
                 model_structure_recipe(value)
             ) != _canonical_recipe_payload(model_structure_recipe(leaf)):
                 raise ValueError(
-                    "A serialized static model leaf differs from its recipe."
+                    f"model.static_leaf must match recipe literal {leaf!r}; got {value!r}"
                 )
             continue
         first = stored.setdefault(id(leaf), value)
@@ -1413,18 +1684,17 @@ def deserialize_model_tree(
                 or expected.tobytes() != actual.tobytes()
             ):
                 raise ValueError(
-                    "A shared model array has inconsistent serialized payloads."
+                    f"model.shared_array must have bitwise-equal serialized payloads; got shapes {expected.shape}/{actual.shape}, dtypes {expected.dtype}/{actual.dtype} with unequal payloads"
                 )
-    restored = _restore_nodes(
+    restored = restore_nodes(
         nodes,
         lambda index, _node: stored.get(id(zeros[index]), zeros[index]),
     )[-1]
-    validate_tree(restored)
     return restored
 
 
-def _first_paths(nodes: list[_RecipeNode], /) -> dict[int, str]:
-    """Declared path of every node at its first canonical pre-order occurrence."""
+def _first_paths(nodes: list[RecipeNode], /) -> dict[int, str]:
+    """Return declared paths at each node's first pre-order occurrence."""
     paths: dict[int, str] = {}
     pending = [(len(nodes) - 1, "model")]
     while pending:
@@ -1438,7 +1708,7 @@ def _first_paths(nodes: list[_RecipeNode], /) -> dict[int, str]:
             for child, (label, _) in reversed(
                 list(
                     zip(
-                        _table_children(node),
+                        table_children(node),
                         _child_labels(node),
                         strict=True,
                     )
@@ -1448,16 +1718,16 @@ def _first_paths(nodes: list[_RecipeNode], /) -> dict[int, str]:
     return paths
 
 
-def _model_array_catalog(
+def model_array_catalog(
     recipe: Mapping[str, Any],
     /,
     *,
     prefix: str,
     limits: ArrayArchiveLimits,
-) -> tuple[_RecipeTable, tuple[tuple[ModelRecipeArray, int], ...]]:
+) -> tuple[RecipeTable, tuple[tuple[ModelRecipeArray, int], ...]]:
     """Name every distinct array node: runtime leaves first, then static fields."""
     if not isinstance(prefix, str) or not prefix:
-        raise ValueError("Recipe array prefix must be non-empty.")
+        raise ValueError(f"recipe.prefix must be nonempty text; got {prefix!r}")
     table = _lower_recipe(recipe, limits)
     descriptors: dict[int, int] = {}
 
@@ -1466,15 +1736,24 @@ def _model_array_catalog(
         descriptors[id(value)] = index
         return value
 
-    restored = _restore_nodes(table.nodes, descriptor)
+    restored = restore_nodes(table.nodes, descriptor, template="descriptors")
+    return table, _runtime_array_catalog(restored[-1], table, descriptors, prefix)
+
+
+def _runtime_array_catalog(
+    value: Any,
+    table: RecipeTable,
+    indices: Mapping[int, int],
+    prefix: str,
+    /,
+) -> tuple[tuple[ModelRecipeArray, int], ...]:
+    """Order admitted array nodes by runtime first occurrence, then declaration."""
     ordered: list[tuple[int, int, str]] = []
     visited: set[int] = set()
-    for tree_index, (path, leaf) in enumerate(
-        jax.tree_util.tree_flatten_with_path(restored[-1])[0]
-    ):
-        if not isinstance(leaf, _RecipeArrayDescriptor):
+    for tree_index, path, leaf in _runtime_leaves(value):
+        index = indices.get(id(leaf))
+        if index is None:
             continue
-        index = descriptors[id(leaf)]
         if index not in visited:
             ordered.append((index, tree_index, jax.tree_util.keystr(path) or "<root>"))
             visited.add(index)
@@ -1486,22 +1765,23 @@ def _model_array_catalog(
     )
     catalog: list[tuple[ModelRecipeArray, int]] = []
     for position, (index, tree_index, display_path) in enumerate(ordered):
-        declared = _array_descriptor(table.nodes[index])
+        node = table.nodes[index]
+        prng = node["kind"] == "prng_key"
         catalog.append(
             (
                 ModelRecipeArray(
                     name=f"{prefix}/{position:06d}",
                     tree_index=tree_index,
                     path=display_path,
-                    shape=declared.shape,
-                    dtype=declared.dtype,
-                    backend=declared.backend,
-                    implementation=declared.implementation,
+                    shape=tuple(node["shape"]),
+                    dtype=np.dtype(np.uint32 if prng else node["dtype"]).str,
+                    backend="prng_key" if prng else node["backend"],
+                    implementation=node["implementation"] if prng else None,
                 ),
                 index,
             )
         )
-    return table, tuple(catalog)
+    return tuple(catalog)
 
 
 def model_recipe_array_inventory(
@@ -1512,7 +1792,7 @@ def model_recipe_array_inventory(
     limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> tuple[ModelRecipeArray, ...]:
     """Inventory every scientific array without changing runtime PyTree leaves."""
-    _, catalog = _model_array_catalog(recipe, prefix=prefix, limits=limits)
+    _, catalog = model_array_catalog(recipe, prefix=prefix, limits=limits)
     return tuple(entry for entry, _ in catalog)
 
 
@@ -1524,8 +1804,8 @@ def model_recipe_array_values(
     prefix: str,
     limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> dict[str, jax.Array | np.ndarray]:
-    """Return exact numerical fields, retaining global shards and host backends."""
-    table, catalog = _model_array_catalog(recipe, prefix=prefix, limits=limits)
+    """Return numerical fields, retaining global shards and host backends."""
+    table, catalog = model_array_catalog(recipe, prefix=prefix, limits=limits)
     return {
         entry.name: payload
         for (entry, _), payload in zip(
@@ -1535,14 +1815,14 @@ def model_recipe_array_values(
 
 
 def _table_objects(
-    value: Any, recipe: Mapping[str, Any], table: _RecipeTable, /
+    value: Any, recipe: Mapping[str, Any], table: RecipeTable, /
 ) -> dict[int, Any]:
     """Bind every shared-capable node of an admitted recipe to the live object."""
     shared: _SharedObjects = {}
     encoded = _structure_recipe(value, "model", shared)
     if _canonical_recipe_payload(encoded) != _canonical_recipe_payload(recipe):
         raise TypeError(
-            "Value metadata and registered source structure differ from its recipe."
+            f"model.structure must match its recipe metadata; got {encoded!r}"
         )
     return {table.ordinals[ordinal]: item for ordinal, item in shared.values()}
 
@@ -1550,42 +1830,50 @@ def _table_objects(
 def _cataloged_array_values(
     value: Any,
     recipe: Mapping[str, Any],
-    table: _RecipeTable,
+    table: RecipeTable,
     catalog: tuple[tuple[ModelRecipeArray, int], ...],
     /,
 ) -> list[jax.Array | np.ndarray]:
-    leaves = _table_objects(value, recipe, table)
+    return _bound_array_values(_table_objects(value, recipe, table), catalog)
+
+
+def _bound_array_values(
+    leaves: Mapping[int, Any],
+    catalog: tuple[tuple[ModelRecipeArray, int], ...],
+    /,
+) -> list[jax.Array | np.ndarray]:
+    """Validate and expose each cataloged live payload without copying it."""
     arrays: list[jax.Array | np.ndarray] = []
     for entry, index in catalog:
         leaf = leaves[index]
         if entry.backend == "prng_key":
             if not _is_prng_key(leaf) or str(jr.key_impl(leaf)) != entry.implementation:
                 raise TypeError(
-                    "Scientific PRNG data differs from its declared implementation."
+                    f"{entry.name}.implementation must match {entry.implementation!r}; got source type {type(leaf).__name__} with a different PRNG implementation"
                 )
             payload = jr.key_data(leaf)
         elif entry.backend == "jax":
             if not isinstance(leaf, jax.Array):
                 raise TypeError(
-                    "A JAX scientific source field changed its numerical backend."
+                    f"{entry.name}.backend must be jax; got {type(leaf).__name__}"
                 )
             payload = leaf
         else:
             if not isinstance(leaf, np.ndarray):
                 raise TypeError(
-                    "A NumPy scientific source field changed its numerical backend."
+                    f"{entry.name}.backend must be numpy; got {type(leaf).__name__}"
                 )
             payload = leaf
         if payload.shape != entry.shape or payload.dtype.str != entry.dtype:
             raise TypeError(
-                "Scientific source array shape or dtype differs from its recipe."
+                f"{entry.name}.shape_dtype must match {entry.shape}/{entry.dtype}; got {payload.shape}/{payload.dtype.str}"
             )
         arrays.append(payload)
     return arrays
 
 
-def _content_forms(nodes: list[_RecipeNode], /) -> list[bytes]:
-    """Canonical content of every table node, independent of sharing.
+def _content_forms(nodes: list[RecipeNode], /) -> list[bytes]:
+    """Return serialized content of every table node, independent of sharing.
 
     A childless node embeds its record; a composite child contributes its
     content digest, so all forms together stay linear in the table size.
@@ -1593,7 +1881,7 @@ def _content_forms(nodes: list[_RecipeNode], /) -> list[bytes]:
     forms: list[bytes] = []
     tokens: list[Any] = []
     for node in nodes:
-        children = [tokens[index] for index in _table_children(node)]
+        children = [tokens[index] for index in table_children(node)]
         form = _canonical_recipe_payload(
             _with_children(node, children) if node["kind"] in _COMPOSITE_KINDS else node
         )
@@ -1608,16 +1896,14 @@ def _paired_children(node: Mapping[str, Any], /) -> list[int]:
     """Children compared positionally; set items and payloads compare by content."""
     match node["kind"]:
         case "slice" | "dataclass" | "tuple" | "list" | "namedtuple":
-            return _table_children(node)
+            return table_children(node)
         case "mapping" | "frozendict" | "mappingproxy":
             return [item for _, item in node["items"]]
         case _:
             return []
 
 
-def _paired_metadata(
-    nodes: list[_RecipeNode], forms: list[bytes], index: int, /
-) -> bytes:
+def _paired_metadata(nodes: list[RecipeNode], forms: list[bytes], index: int, /) -> bytes:
     # Object sharing is not compared; NumPy mutability is storage metadata.
     node = nodes[index]
     match node["kind"]:
@@ -1658,18 +1944,19 @@ def model_recipe_array_pairs(
     Agreement is over the trees the recipes unfold to: object sharing and NumPy
     mutability are storage metadata and do not participate. Returns ``None`` when
     the structures differ; otherwise each distinct pair of corresponding arrays
-    (PRNG keys as key data) once, in canonical first-correspondence order. Both
+    (PRNG keys as key data) once, in first-correspondence order. Both
     recipes are bounded by ``limits`` over their distinct arrays.
     """
-    sides: list[tuple[list[_RecipeNode], list[bytes], dict[int, Any]]] = []
+    sides: list[tuple[list[RecipeNode], list[bytes], dict[int, Any]]] = []
     for value in (first, second):
-        recipe = model_structure_recipe(value)
+        shared: _SharedObjects = {}
+        recipe = _structure_recipe(value, "model", shared)
         table = _lower_recipe(recipe, limits)
         sides.append(
             (
                 table.nodes,
                 _content_forms(table.nodes),
-                _table_objects(value, recipe, table),
+                {table.ordinals[ordinal]: item for ordinal, item in shared.values()},
             )
         )
     (left_nodes, left_forms, left_objects), (right_nodes, right_forms, right_objects) = (
@@ -1732,7 +2019,7 @@ def pack_model_array_tree(
         for value in values.values()
     ):
         raise ValueError(
-            "Host array packing requires explicit materialization; use logical source array values for shards."
+            f"model.arrays must be fully addressable for host packing; got sharded sources {tuple(name for name, value in values.items() if isinstance(value, jax.Array) and not value.is_fully_addressable)!r}"
         )
     return {name: np.asarray(value) for name, value in values.items()}
 
@@ -1746,7 +2033,7 @@ def _preflight_recipe_arrays(
 ) -> None:
     if set(arrays) != {entry.name for entry, _ in catalog}:
         raise ValueError(
-            "Source recipe numerical data does not cover its exact inventory."
+            f"recipe.arrays must cover the declared inventory {tuple(entry.name for entry, _ in catalog)!r}; got {tuple(arrays)!r}"
         )
     for entry, _ in catalog:
         payload = arrays[entry.name]
@@ -1754,7 +2041,7 @@ def _preflight_recipe_arrays(
             payload.shape != entry.shape or payload.dtype.str != entry.dtype
         ):
             raise ValueError(
-                "Source array shape/dtype is inconsistent with its exact recipe."
+                f"{entry.name}.payload must be an array with shape/dtype {entry.shape}/{entry.dtype}; got {payload!r}"
             )
         if (
             isinstance(payload, jax.Array)
@@ -1762,7 +2049,7 @@ def _preflight_recipe_arrays(
             and (host_materialization or entry.backend == "numpy")
         ):
             raise ValueError(
-                "Host recipe restoration requires explicit bounded materialization."
+                f"{entry.name}.payload must be fully addressable for host restoration; got a sharded JAX array"
             )
 
 
@@ -1776,7 +2063,7 @@ def model_from_array_recipe(
 ) -> Any:
     """Restore a model recipe from an exact, preflighted host-array inventory."""
 
-    _, catalog = _model_array_catalog(recipe, prefix=prefix, limits=limits)
+    _, catalog = model_array_catalog(recipe, prefix=prefix, limits=limits)
     _preflight_recipe_arrays(catalog, arrays, host_materialization=True)
     host = {name: np.asarray(value) for name, value in arrays.items()}
     return model_from_logical_array_recipe(recipe, host, prefix=prefix, limits=limits)
@@ -1790,8 +2077,8 @@ def model_from_logical_array_recipe(
     prefix: str,
     limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> Any:
-    """Restore every exact registered field with deliberate host/device placement."""
-    table, catalog = _model_array_catalog(recipe, prefix=prefix, limits=limits)
+    """Restore every registered field with deliberate host/device placement."""
+    table, catalog = model_array_catalog(recipe, prefix=prefix, limits=limits)
     _preflight_recipe_arrays(catalog, arrays)
     entries = {index: entry for entry, index in catalog}
 
@@ -1808,8 +2095,7 @@ def model_from_logical_array_recipe(
         host.setflags(write=node["writable"])
         return host
 
-    restored = _restore_nodes(table.nodes, restore_array)[-1]
-    validate_tree(restored)
+    restored = restore_nodes(table.nodes, restore_array)[-1]
     return restored
 
 
@@ -1836,9 +2122,9 @@ def model_from_structure_recipe(
     """Construct a bounded array-zeroed template from a validated recipe."""
 
     nodes = _lower_recipe(recipe, limits).nodes
-    restored = _restore_nodes(nodes, lambda _index, node: _zero_array(node))[-1]
-    validate_tree(restored)
-    return restored
+    return restore_nodes(
+        nodes, lambda _index, node: _zero_array(node), template="arrays"
+    )[-1]
 
 
 __all__ = [

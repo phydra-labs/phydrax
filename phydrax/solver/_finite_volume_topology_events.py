@@ -1589,7 +1589,7 @@ class FiniteVolumeTopologyEventTransactionResult:
     ``receipt`` is the composition rebind that staged the candidate topology
     epoch, its prepared finite-volume artifacts, and the transported content;
     ``None`` when the transaction refused before staging. A committed result
-    always carries a published receipt; an unpublished receipt carries the
+    always carries a published ``CompositionRebindReceipt``; an unpublished one carries the
     accepted source composition and its refused transport evidence.
     """
 
@@ -1669,7 +1669,7 @@ def _host_report_value(report: Any, name: str, /) -> np.ndarray | None:
 
 
 def _coverage_passed(remap: Any, tolerance: float, /) -> bool:
-    """Admit coverage residuals with the canonical certified measure intervals.
+    """Admit coverage residuals using certified measure intervals.
 
     The requested geometric-gap tolerance is distinct from outward integration
     errors: their explicit maximum/aggregate bounds accompany each residual.
@@ -1710,7 +1710,7 @@ def _coverage_passed(remap: Any, tolerance: float, /) -> bool:
             report.total_source_coverage_error_bound,
         )
         if remap.surface_chart_deformation is not None:
-            # Both UV domains have actual native coverage certificates. Old
+            # Both UV domains have native coverage certificates. Old
             # source contents minus new target areas is physical deformation,
             # not an uncovered-target geometric gap.
             checked_values = [checked_values[index] for index in (1, 3, 4)]
@@ -1953,7 +1953,7 @@ class FiniteVolumeRemeshArtifact:
 
             if not isinstance(self.adaptation, MeshAdaptationResult):
                 raise TypeError(
-                    "adaptation must be the actual preceding MeshAdaptationResult."
+                    f"FiniteVolumeRemeshArtifact.adaptation must be the preceding MeshAdaptationResult; got {type(self.adaptation).__name__}"
                 )
             if (
                 self.adaptation.transition is None
@@ -1961,7 +1961,7 @@ class FiniteVolumeRemeshArtifact:
                 != self.transition.transition_id
             ):
                 raise ValueError(
-                    "The remesh artifact does not bind its actual preceding mesh transition."
+                    f"FiniteVolumeRemeshArtifact.adaptation.transition must bind transition_id={self.transition.transition_id!r}; got {self.adaptation.transition!r}"
                 )
 
 
@@ -2185,7 +2185,7 @@ def _resolve_topology_event_candidate(
                 and self.adaptation.result_id != prepared.adaptation.result_id
             ):
                 raise ValueError(
-                    "The FV receipt and transaction name different preceding mesh adaptations."
+                    f"FiniteVolumeTopologyEventTransaction.adaptation.result_id must equal {prepared.adaptation.result_id!r}; got {self.adaptation.result_id!r}"
                 )
             self.adaptation = prepared.adaptation
         if self.target_geometry is None and prepared.target_geometry is not None:
@@ -2400,7 +2400,7 @@ class FiniteVolumeTopologyEventTransaction:
 
             if not isinstance(adaptation, MeshAdaptationResult):
                 raise TypeError(
-                    "adaptation must be the actual preceding MeshAdaptationResult or None."
+                    f"FiniteVolumeTopologyEventTransaction.adaptation must be the preceding MeshAdaptationResult or None; got {type(adaptation).__name__}"
                 )
         if not isinstance(remap_provenance, str):
             raise TypeError("remap_provenance must be a string.")
@@ -2606,9 +2606,9 @@ class FiniteVolumeTopologyEventTransaction:
     ) -> TopologyEventStatus | None:
         """Admit content using the existing epoch owner's quantitative budget.
 
-        For canonical FV remaps, physical measure errors and arithmetic roundoff
+        For unstructured FV remaps, physical measure errors and arithmetic roundoff
         are taken from ``TopologyEpochTransition.apply``. The later composition
-        transport still checks the complete staged image, not only its total.
+        transport still checks the staged image, not only its total.
         """
 
         conservation_tolerance = self.coverage_tolerance
@@ -2676,7 +2676,7 @@ class FiniteVolumeTopologyEventTransaction:
         candidate_epoch: TopologyEpoch,
         /,
     ) -> TopologyEpochTransition | TopologyEventStatus:
-        """Bind a complete remap to the actual accepted/candidate geometry epochs.
+        """Bind a remap to the accepted and candidate geometry epochs.
 
         Equal topology and volumes do not make a translated coordinate map the
         same scientific geometry. A stale supplied remap is a rollback status,
@@ -2725,7 +2725,7 @@ class FiniteVolumeTopologyEventTransaction:
     ) -> CompositionTransport | TopologyEventStatus:
         """Physical-remap evidence of the transferred content.
 
-        A complete conservative cell remap between distinct epochs contributes
+        A conservative cell remap between distinct epochs contributes
         its own topology-epoch transition, which succeeds only when the staged
         averages are the transition image of the accepted averages. Any other
         transfer (active-set regrids, sliding-map refreshes, owner repairs)
@@ -2852,8 +2852,8 @@ class FiniteVolumeTopologyEventTransaction:
     ) -> FiniteVolumeTopologyEventTransactionResult:
         """Stage the journal transition and composition rebind; publish them together.
 
-        The committed journal is published only with a published rebind receipt;
-        a refused receipt returns the failure outcome with the accepted content.
+        The committed journal is published only with a published ``CompositionRebindReceipt``;
+        a refused rebind returns the failure outcome with the accepted content.
         """
 
         try:

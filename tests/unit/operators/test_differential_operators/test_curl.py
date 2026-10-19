@@ -9,6 +9,7 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.differential import curl, scalar_curl_2d, vector_curl_2d
+from phydrax.units import METER
 
 
 def test_curl_point_values_planar_shapes_and_metadata(box3d: Any) -> None:
@@ -23,7 +24,7 @@ def test_curl_point_values_planar_shapes_and_metadata(box3d: Any) -> None:
     assert curl(annotated, var="x").metadata == annotated.metadata
 
     box2d = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @box2d.Function("x")

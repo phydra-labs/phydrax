@@ -15,6 +15,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..typing import checked
 from ._small_batched import determinant_small_linear, SmallLinearSolvePlan
 from .backends._jax_dense import _prepare_lu, dense_lu_slogdet
 
@@ -37,17 +38,19 @@ def _determinant_value(matrix: Array, /) -> Array:
 
 
 @jax.custom_jvp
-def _determinant(matrix: Array, /) -> Array:
+@checked
+def determinant(matrix: Array, /) -> Array:
+    """Return batched square-matrix determinants with singular-safe derivatives."""
     return _determinant_value(matrix)
 
 
-@_determinant.defjvp
+@determinant.defjvp
 def _determinant_jvp(
     primals: tuple[Array], tangents: tuple[Array], /
 ) -> tuple[Array, Array]:
     (matrix,), (tangent,) = primals, tangents
     size = matrix.shape[-1]
-    value = _determinant(matrix)
+    value = determinant(matrix)
     if size == 0:
         return value, jnp.zeros_like(value)
     if size == 1:
@@ -60,7 +63,7 @@ def _determinant_jvp(
     signs = jnp.asarray(1 - 2 * parity, dtype=matrix.dtype).reshape(
         (1,) * len(matrix.shape[:-2]) + (size, size)
     )
-    cofactors = _determinant(minors) * jnp.broadcast_to(signs, matrix.shape)
+    cofactors = determinant(minors) * jnp.broadcast_to(signs, matrix.shape)
     return value, jnp.sum(cofactors * tangent, axis=(-2, -1))
 
 
@@ -99,7 +102,7 @@ def compound_matrix(
         tuple(combinations(range(columns), degree)), dtype=np.int32
     )
     minors = value[..., row_indices[:, None, :, None], column_indices[None, :, None, :]]
-    return _determinant(minors)
+    return determinant(minors)
 
 
-__all__ = ["compound_matrix"]
+__all__ = ["compound_matrix", "determinant"]

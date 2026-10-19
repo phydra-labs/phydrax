@@ -320,11 +320,15 @@ class StructuredPLICPlan(StrictModule, NonTrainableState):
             offset = [0] * dimension
             for other, delta in zip(tangential, shift, strict=True):
                 offset[other] = delta - 1
-            total = jnp.zeros(self.discretization.cell_shape, dtype=padded.dtype)
+            column = []
             for level in (-1, 0, 1):
                 offset[axis] = level
-                total = total + self._shifted_view(padded, 1, tuple(offset))
-            sums[tuple(delta - 1 for delta in shift)] = total
+                column.append(self._shifted_view(padded, 1, tuple(offset)))
+            # Reflection swaps the outer samples. Pair them before adding the
+            # center so rounding cannot change the selected column at an axis tie.
+            sums[tuple(delta - 1 for delta in shift)] = (column[0] + column[2]) + column[
+                1
+            ]
         components = []
         center = (0,) * len(tangential)
         for other in range(dimension):
@@ -531,14 +535,10 @@ class StructuredPLICPlan(StrictModule, NonTrainableState):
             / self.discretization.cell_volumes.astype(value.dtype)
         )
         facet_supported = (
-            reconstruction.facet_valid
-            & jnp.isfinite(facet_delta)
-            & (facet_delta > 0.0)
+            reconstruction.facet_valid & jnp.isfinite(facet_delta) & (facet_delta > 0.0)
         )
         gradient_supported = (
-            reconstruction.mixed
-            & jnp.isfinite(gradient_delta)
-            & (gradient_delta > 0.0)
+            reconstruction.mixed & jnp.isfinite(gradient_delta) & (gradient_delta > 0.0)
         )
         supported = facet_supported | gradient_supported
         delta = jnp.where(

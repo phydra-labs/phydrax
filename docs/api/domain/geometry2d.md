@@ -7,13 +7,14 @@ the domain/component/sampling algebra.
 
 ```python
 import phydrax as phx
+from phydrax.units import METER
 
 source = phx.geometry.Circle(
     center=(0.0, 0.0),
     radius=1.0,
     feature_id="disk",
 )
-domain = phx.domain.GeometryDomain(source.compile(), label="x")
+domain = phx.domain.GeometryDomain(source.compile(coordinate_unit=METER), label="x")
 ```
 
 Compose CSG and transforms before compilation:
@@ -22,7 +23,7 @@ Compose CSG and transforms before compilation:
 left = phx.geometry.Circle((-0.35, 0.0), 0.75, feature_id="left")
 right = phx.geometry.Square((0.35, 0.0), 1.0, feature_id="right")
 source = (left | right).translated((0.0, 0.25))
-domain = phx.domain.GeometryDomain(source.compile())
+domain = phx.domain.GeometryDomain(source.compile(coordinate_unit=METER))
 ```
 
 Sharp `|`, `&`, and `-` operations preserve set membership and record their
@@ -56,10 +57,10 @@ points = [
     [0.0, 0.0],
 ]
 mesh_source = phx.geometry.planar_region_from_source(mesh)
-mesh_domain = phx.domain.GeometryDomain(mesh_source.compile())
+mesh_domain = phx.domain.GeometryDomain(mesh_source.compile(coordinate_unit=METER))
 
 reconstructed = phx.geometry.reconstruct_planar_region(points)
-point_domain = phx.domain.GeometryDomain(reconstructed.compile())
+point_domain = phx.domain.GeometryDomain(reconstructed.compile(coordinate_unit=METER))
 print(point_domain.reconstruction_report)
 ```
 

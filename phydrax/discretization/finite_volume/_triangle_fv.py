@@ -39,7 +39,7 @@ from .._topology import EntitySelection
 from .._triangular import triangle_connectivity, TriangleConnectivity
 from .._views import FieldTraceSide
 from ._geometry_protocol import FiniteVolumeFaceBlock
-from ._structured import _component_names
+from ._structured import normalize_component_names
 
 
 if TYPE_CHECKING:
@@ -216,7 +216,7 @@ class TriangleFiniteVolumePlan(AbstractDiscretizationPlan):
         field = str(field_name)
         if not field:
             raise ValueError("field_name must be non-empty.")
-        components = _component_names(component_names)
+        components = normalize_component_names(component_names)
         key = DiscretizationKey("triangle_finite_volume", DiscretizationRole.PHYSICAL)
         capabilities = (
             DiscretizationCapability.RECONSTRUCTION,

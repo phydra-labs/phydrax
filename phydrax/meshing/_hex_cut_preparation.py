@@ -1,82 +1,87 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Exact source-cell corner closure for convex balanced-grid cut pieces.
+"""Prepare face-conforming corner hexes from convex balanced-grid cut pieces.
 
-This owner does not project vertices, weld coordinates, or publish meshes. A
-prepared closure retains the original coordinate authority and scientific
-incidence; publication still requires independent map, embedding, source and
-coverage certificates. Nonsimple links have explicit witnesses and are not
-misrepresented as impossible all-hex domains.
+Source coefficients and scientific incidence determine every generated node.
+Publication requires independent map, embedding, fidelity, and coverage
+certificates. Nonsimple links retain their incident scientific entity IDs.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
 from fractions import Fraction
-from typing import Any, TYPE_CHECKING
 
+import equinox as eqx
+import jax
 import numpy as np
 
+from phydrax.discretization._reference_cell_types import CellBlock
+from phydrax.geometry._embedding_state import MeshCertificateLimits
+from phydrax.linalg._exact import determinant_exact
+from phydrax.meshing._host_banks import failure, family_host_array
+
 from .._fingerprint import canonical_fingerprint
-from .._meshcore import current_native_execution_budget, current_native_host_workspace
+from .._meshcore import (
+    NativeExecutionScope,
+    NativeHostStorageWorkspace,
+    polyhedron_corner_hexes,
+)
+from .._strict import StrictModule
 from ..discretization._cell_complex import PolyhedralConnectivity
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_geometry_validity import (
     cell_geometry_id,
     CellValidityCertificate,
+    certify_cell_geometry_validity,
 )
 from ..discretization._cell_mesh import CellMesh
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 from ..discretization._coordinate_enclosure import rounded_point
 from ..discretization._exact_plc_geometry import ExactPlcCellGeometryConvexSource
-from ..geometry._mapped_reference_domain import MappedReferenceDomain
-from ..geometry._mesh_certificates import (
+from ..discretization._exact_power_geometry import (
+    ExactPowerCellGeometryLinearActionSource,
+    ExactPowerCellGeometryRestrictionSource,
+    ExactPowerCellGeometrySource,
+)
+from ..geometry._domain_coverage import (
+    certify_domain_coverage,
     DomainCoverageCertificate,
-    GlobalEmbeddingCertificate,
-    MeshCertificateLimits,
     PiecewiseLinearDomain,
 )
+from ..geometry._global_embedding import (
+    certify_global_embedding,
+    GlobalEmbeddingCertificate,
+)
+from ..geometry._mapped_reference_domain import MappedReferenceDomain
+from ..geometry._rational import rational_cross
+from ..typing import checked
 from ._contracts import MeshingLimits
-from ._quad_generation import _budget, _failure, _family_host_array
-
-
-if TYPE_CHECKING:
-    from ._hex_generation import NativeHexGridSchedule
-
-
-@dataclass(frozen=True, slots=True)
-class CutCornerLinkWitness:
-    cell_id: int
-    vertex_id: int
-    edge_ids: tuple[int, ...]
-    face_ids: tuple[int, ...]
+from ._failures import CutCornerLinkIncidence
+from ._family_execution import check_family_limits, coordinate_phase, vertex_ids
+from ._hex_generation import exact_mapped_volume_quality, NativeHexGridSchedule
 
 
 class CutCornerLinkError(ValueError):
-    """An actual source-cell link needs a nonsimple conforming template.
+    """Report the source incidence that needs a nonsimple corner template."""
 
-    This is a capability obstruction, not a mathematical nonexistence theorem.
-    """
-
-    cut_failure_prefix: tuple[Any, ...] | None
-
-    def __init__(self, witness: CutCornerLinkWitness) -> None:
-        self.witness = witness
-        self.cut_failure_prefix = None
+    @checked
+    def __init__(self, witness: CutCornerLinkIncidence) -> None:
+        self.incidence = witness
         super().__init__(
-            f"Cut cell {witness.cell_id}, vertex {witness.vertex_id} has "
-            f"{len(witness.edge_ids)} incident edges and {len(witness.face_ids)} "
-            "incident faces; the three-direction corner template does not close this link."
+            f"CutCornerLinkError.link must have three incident edges and faces; got "
+            f"cell {witness.cell_id}, vertex {witness.vertex_id}, "
+            f"{len(witness.edge_ids)} edges and {len(witness.face_ids)} faces"
         )
 
 
-@dataclass(frozen=True, slots=True)
-class CutCornerHexPreparation:
+class CutCornerHexPreparation(StrictModule):
     source_mesh: CellMesh
     source_geometry: CellGeometrySpec
     coordinate_source: CellGeometrySpec | ExactPlcCellGeometryConvexSource
     exact_vertices: tuple[tuple[Fraction, ...], ...]
-    # Original-source coefficient combinations, never rounded coordinate keys.
+    # PLC source-coefficient combinations determine nodes without rounded point keys.
     support_offsets: np.ndarray
     support_vertices: np.ndarray
     support_denominators: np.ndarray
@@ -86,15 +91,7 @@ class CutCornerHexPreparation:
     parent_cells: np.ndarray
     corner_orientations: np.ndarray
     work_units: int
-    preparation_id: str
-
-
-def _cross(a: tuple[Fraction, ...], b: tuple[Fraction, ...]) -> tuple[Fraction, ...]:
-    return (
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    )
+    preparation_id: str = eqx.field(static=True)
 
 
 def _difference(a: tuple[Fraction, ...], b: tuple[Fraction, ...]) -> tuple[Fraction, ...]:
@@ -115,13 +112,16 @@ def _cut_host_scratch(
     supports_count = (
         nv + 2 * ne + int(connectivity.face_vertex_values.size) + corner_count
     )
-    bit_bound = (
-        geometry.maximum_bits
-        if isinstance(geometry, ExactPlcCellGeometryConvexSource)
-        else 1075
-        if geometry.exact_source is None
-        else geometry.exact_source.maximum_bits
-    )
+    match geometry:
+        case ExactPlcCellGeometryConvexSource():
+            bit_bound = geometry.maximum_bits
+        case CellGeometrySpec():
+            source = geometry.exact_source
+            bit_bound = 1075 if source is None else source.maximum_bits
+        case _:
+            raise TypeError(
+                f"cut_preparation.geometry must be a cut coordinate source; got {type(geometry).__name__}"
+            )
     maximum_support = max(
         2, connectivity.maximum_face_arity, connectivity.maximum_cell_vertices
     )
@@ -134,30 +134,61 @@ def _cut_host_scratch(
     )
 
 
-def _prepare_cut_corner_hexes(
+class _CutAdmission(StrictModule):
+    connectivity: PolyhedralConnectivity
+    face_ids: np.ndarray
+    corner_count: int = eqx.field(static=True)
+    output_vertices: int = eqx.field(static=True)
+    supports_count: int = eqx.field(static=True)
+    work_bound: int = eqx.field(static=True)
+
+
+class _CutSource(StrictModule):
+    vertices: tuple[tuple[Fraction, ...], ...]
+    geometry: CellGeometrySpec
+    binding: str = eqx.field(static=True)
+
+
+class _CutIncidence(StrictModule):
+    edges: np.ndarray
+    face_offsets: np.ndarray
+    face_vertices: np.ndarray
+    cell_offsets: np.ndarray
+    cell_faces: np.ndarray
+    vertex_offsets: np.ndarray
+    cell_vertices: np.ndarray
+    cell_ids: np.ndarray
+    vertex_ids: np.ndarray
+    edge_ids: np.ndarray
+    supports: tuple[tuple[int, ...], ...]
+
+
+class _CutTopology(StrictModule):
+    vertices: tuple[tuple[Fraction, ...], ...]
+    signs: np.ndarray
+    hexes: np.ndarray
+    parents: np.ndarray
+    work: int = eqx.field(static=True)
+
+
+def _admit_cut_corner_closure(
     mesh: CellMesh,
     geometry: CellGeometrySpec | ExactPlcCellGeometryConvexSource,
     limits: MeshingLimits,
-    /,
-    *,
-    immutable_face_ids: tuple[int, ...] = (),
-) -> CutCornerHexPreparation:
-    """Close each simple convex source cut polyhedron into actual corner hexes.
-
-    Every source face is quadrangulated identically by its authoritative edge
-    and face nodes. Thus cavities and material interfaces use the same nodes
-    on both sides without a coordinate tolerance. Source-face immutability is
-    explicit: this template subdivides every face and cannot retain it unchanged.
-    Exact convexity and corner orientation are prerequisites, not sampled fits.
-    """
+    immutable_face_ids: tuple[int, ...],
+) -> _CutAdmission:
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
-        raise TypeError("Cut corner closure requires canonical polyhedral incidence.")
+        raise TypeError(
+            "mesh.connectivity must be PolyhedralConnectivity; got another connectivity"
+        )
     if mesh.topology.dimension != 3 or mesh.coordinates.shape[1] != 3:
-        raise ValueError("Cut corner closure requires a three-dimensional volume.")
+        raise ValueError(
+            "mesh.dimension must be a three-dimensional volume in three coordinates; got incompatible dimensions"
+        )
     if mesh.periodic_topology is not None:
-        raise _failure(
-            "Cut corner closure requires retained quotient source-cell incidence."
+        raise failure(
+            "mesh.periodic_topology must have a supported quotient cut template; got unsupported periodic incidence"
         )
     nv, ne, nf, nc = (
         connectivity.vertex_count,
@@ -165,248 +196,371 @@ def _prepare_cut_corner_hexes(
         connectivity.face_count,
         connectivity.cell_count,
     )
-    face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
+    face_ids = np.asarray(jax.device_get(mesh.entity_set(2).entity_ids), dtype=np.int64)
     if immutable_face_ids:
-        unknown = set(immutable_face_ids).difference(face_ids.tolist())
-        if unknown:
-            raise ValueError(f"Immutable source faces are undeclared: {sorted(unknown)}.")
-        offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
-        nonquad = tuple(
-            (int(identifier), int(offsets[row + 1] - offsets[row]))
-            for row, identifier in enumerate(face_ids)
-            if identifier in immutable_face_ids and offsets[row + 1] - offsets[row] != 4
-        )
-        if nonquad:
-            raise _failure(
-                f"Immutable source faces (scientific ID, arity) {nonquad} cannot remain unchanged faces of a pure hex complex."
-            )
-        raise _failure(
-            f"This corner template subdivides immutable source faces {immutable_face_ids}; a boundary-preserving alternative template is required."
-        )
-    # Admission precedes the source bank, topology dictionaries and output banks.
-    face_entries = int(connectivity.face_vertex_values.size)
-    corner_count = int(connectivity.cell_vertex_values.size)
+        _refuse_immutable_cut_faces(connectivity, face_ids, immutable_face_ids)
+    face_entries = connectivity.face_vertex_values.size
+    corner_count = connectivity.cell_vertex_values.size
     output_vertices = nv + ne + nf + nc
     supports_count = nv + 2 * ne + face_entries + corner_count
     pair_work = nc * connectivity.maximum_cell_faces * connectivity.maximum_cell_vertices
     work_bound = 256 * (face_entries + corner_count + ne + nc + pair_work)
     scratch = _cut_host_scratch(connectivity, geometry)
-    _budget(limits, corner_count, output_vertices, 8 * corner_count, scratch, work_bound)
+    check_family_limits(
+        limits, corner_count, output_vertices, 8 * corner_count, scratch, work_bound
+    )
     if (
         12 * corner_count > limits.maximum_edges
         or 6 * corner_count > limits.maximum_faces
     ):
-        raise _failure(
-            "Cut corner closure edge/face admission exceeds original entity bounds.",
+        raise failure(
+            "cut_closure.entities must respect limits.maximum_edges and limits.maximum_faces; got oversized incidence",
             resource=True,
         )
     data_bound = 8 * (
         3 * output_vertices + 8 * corner_count + 3 * supports_count + 4 * output_vertices
     )
     if data_bound > limits.maximum_data_bytes:
-        raise _failure(
-            "Cut corner closure exceeds original publication bytes.", resource=True
+        raise failure(
+            "cut_closure.data_bytes must respect limits.maximum_data_bytes; got oversized publication banks",
+            resource=True,
         )
-    source: tuple[tuple[Fraction, ...], ...]
-    if isinstance(geometry, ExactPlcCellGeometryConvexSource):
-        parent_mesh, parent_geometry, target_mesh = geometry._owners()
-        if target_mesh.topology_id != mesh.topology_id:
-            raise ValueError(
-                "Cut coordinate authority names a different scientific source topology."
-            )
-        source = geometry.prepare(mesh.coordinates).vertices
-        original_geometry = parent_geometry
-        source_binding = geometry.source_id
-    elif isinstance(geometry, CellGeometrySpec):
-        source = tuple(
-            tuple(Fraction(value) for value in point)
-            for point in geometry.source_coordinates()
-        )
-        original_geometry = geometry
-        source_binding = cell_geometry_id(geometry)
-    else:
-        raise TypeError("Cut closure requires an actual owning coordinate source.")
-    if len(source) != nv or any(len(point) != 3 for point in source):
-        raise ValueError(
-            "Cut source geometry must bind its complete vertex coefficient bank."
-        )
-    if any(
-        not np.array_equal(rounded_point(point), np.asarray(mesh.coordinates)[row])
-        for row, point in enumerate(source)
-    ):
-        raise ValueError(
-            "Cut source carrier does not agree with its correctly rounded original coefficients."
-        )
-    edges = np.asarray(connectivity.edges, dtype=np.int64)
-    fo = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
-    fv = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
-    co = np.asarray(connectivity.cell_face_offsets, dtype=np.int64)
-    cf = np.asarray(connectivity.cell_face_values, dtype=np.int64)
-    vo = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int64)
-    vv = np.asarray(connectivity.cell_vertex_values, dtype=np.int64)
-    cell_ids = np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
-    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    edge_ids = np.asarray(mesh.entity_set(1).entity_ids, dtype=np.int64)
-    supports: list[tuple[int, ...]] = [(row,) for row in range(nv)]
-    supports.extend(tuple(int(v) for v in edge) for edge in edges)
-    supports.extend(tuple(int(v) for v in fv[fo[row] : fo[row + 1]]) for row in range(nf))
-    supports.extend(tuple(int(v) for v in vv[vo[row] : vo[row + 1]]) for row in range(nc))
-    exact: list[tuple[Fraction, ...]] = list(source)
-    work = 0
-    execution = current_native_execution_budget()
-
-    def charge(amount: int) -> None:
-        nonlocal work
-        if work + amount > limits.maximum_work_units:
-            raise _failure(
-                "Cut corner preparation exhausts original work.", resource=True
-            )
-        if execution is not None:
-            execution.charge(work=amount)
-        work += amount
-
-    for support in supports[nv:]:
-        charge(6 * len(support))
-        exact.append(
-            (
-                sum((source[v][0] for v in support), Fraction()) / len(support),
-                sum((source[v][1] for v in support), Fraction()) / len(support),
-                sum((source[v][2] for v in support), Fraction()) / len(support),
-            )
-        )
-    edge_lookup = {
-        tuple(sorted((int(edges[row, 0]), int(edges[row, 1])))): row
-        for row in range(edges.shape[0])
-    }
-    signs = _family_host_array((corner_count,), np.int8)
-    output = 0
-    for cell in range(nc):
-        vertices = vv[vo[cell] : vo[cell + 1]].tolist()
-        faces = cf[co[cell] : co[cell + 1]].tolist()
-        incident_faces = {vertex: [] for vertex in vertices}
-        incident_edges = {vertex: set() for vertex in vertices}
-        pair_faces: dict[tuple[int, int, int], int] = {}
-        for face in faces:
-            loop = fv[fo[face] : fo[face + 1]].tolist()
-            origin = exact[loop[0]]
-            normal = (Fraction(0),) * 3
-            for position in range(1, len(loop) - 1):
-                charge(30)
-                normal = _cross(
-                    _difference(exact[loop[position]], origin),
-                    _difference(exact[loop[position + 1]], origin),
-                )
-                if any(normal):
-                    break
-            if not any(normal):
-                raise _failure(
-                    f"Cut source cell {cell_ids[cell]} has a degenerate face {face_ids[face]}."
-                )
-            side = 0
-            for vertex in vertices:
-                charge(12)
-                distance = sum(
-                    (
-                        a * b
-                        for a, b in zip(
-                            normal, _difference(exact[vertex], origin), strict=True
-                        )
-                    ),
-                    Fraction(0),
-                )
-                if vertex in loop and distance:
-                    raise _failure(f"Cut face {face_ids[face]} is not exactly planar.")
-                sign = (distance > 0) - (distance < 0)
-                if sign and side and side != sign:
-                    raise _failure(
-                        f"Cut cell {cell_ids[cell]} is not convex at face {face_ids[face]}."
-                    )
-                side = sign or side
-            for position, vertex in enumerate(loop):
-                charge(8)
-                before, after = loop[position - 1], loop[(position + 1) % len(loop)]
-                first = edge_lookup[tuple(sorted((vertex, before)))]
-                second = edge_lookup[tuple(sorted((vertex, after)))]
-                incident_edges[vertex].update((first, second))
-                incident_faces[vertex].append(face)
-                key = (vertex, min(first, second), max(first, second))
-                if key in pair_faces:
-                    raise _failure(
-                        "Cut source corner link repeats an incident edge pair."
-                    )
-                pair_faces[key] = face
-        for vertex in vertices:
-            edge_rows = sorted(incident_edges[vertex])
-            face_rows = incident_faces[vertex]
-            if len(edge_rows) != 3 or len(face_rows) != 3:
-                raise CutCornerLinkError(
-                    CutCornerLinkWitness(
-                        int(cell_ids[cell]),
-                        int(vertex_ids[vertex]),
-                        tuple(int(edge_ids[row]) for row in edge_rows),
-                        tuple(int(face_ids[row]) for row in face_rows),
-                    )
-                )
-            directions = []
-            for edge in edge_rows:
-                a, b = edges[edge]
-                other = int(b if a == vertex else a)
-                directions.append(_difference(exact[other], exact[vertex]))
-            charge(40)
-            determinant = sum(
-                (
-                    a * b
-                    for a, b in zip(
-                        directions[0], _cross(directions[1], directions[2]), strict=True
-                    )
-                ),
-                Fraction(0),
-            )
-            if not determinant:
-                raise _failure(
-                    f"Cut cell {cell_ids[cell]} has a rank-deficient corner at vertex {vertex_ids[vertex]}."
-                )
-            signs[output] = 1 if determinant > 0 else -1
-            for first, second in (
-                (edge_rows[0], edge_rows[1]),
-                (edge_rows[0], edge_rows[2]),
-                (edge_rows[1], edge_rows[2]),
-            ):
-                if (vertex, min(first, second), max(first, second)) not in pair_faces:
-                    raise _failure("Cut source corner link is not a closed three-cycle.")
-            output += 1
-    from .._meshcore import polyhedron_corner_hexes
-
-    remaining = limits.maximum_work_units - work
-    if remaining <= 0:
-        raise _failure("Cut corner topology exhausts original work.", resource=True)
-    hexes, parents, native_work = polyhedron_corner_hexes(
-        edges,
-        fo,
-        fv,
-        co,
-        cf,
-        vo,
-        vv,
-        signs,
-        nv,
-        maximum_cells=limits.maximum_cells,
-        maximum_scratch_bytes=limits.maximum_scratch_bytes,
-        maximum_work_units=remaining,
+    return _CutAdmission(
+        connectivity, face_ids, corner_count, output_vertices, supports_count, work_bound
     )
-    work += native_work
-    offsets = _family_host_array((output_vertices + 1,), np.int64)
-    values = _family_host_array((supports_count,), np.int64)
-    denominators = _family_host_array((output_vertices,), np.int64)
-    dimensions = _family_host_array((output_vertices,), np.int8)
-    rows = _family_host_array((output_vertices,), np.int64)
+
+
+def _refuse_immutable_cut_faces(
+    connectivity: PolyhedralConnectivity,
+    face_ids: np.ndarray,
+    immutable_face_ids: tuple[int, ...],
+) -> None:
+    """Refuse unchanged faces before any coordinate preparation or subdivision."""
+    unknown = set(immutable_face_ids).difference(face_ids.tolist())
+    if unknown:
+        raise ValueError(
+            f"cut_preparation.immutable_face_ids must name declared source faces; got {sorted(unknown)}"
+        )
+    offsets = np.asarray(jax.device_get(connectivity.face_vertex_offsets), dtype=np.int64)
+    nonquad = tuple(
+        (int(identifier), int(offsets[row + 1] - offsets[row]))
+        for row, identifier in enumerate(face_ids)
+        if identifier in immutable_face_ids and offsets[row + 1] - offsets[row] != 4
+    )
+    if nonquad:
+        raise failure(
+            f"cut_preparation.immutable_face_ids must name quadrilateral faces for unchanged pure-hex closure; got {nonquad}"
+        )
+    raise failure(
+        f"cut_preparation.immutable_face_ids must permit face subdivision for the selected corner template; got unchanged faces {immutable_face_ids}"
+    )
+
+
+def _prepare_cut_source(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec | ExactPlcCellGeometryConvexSource,
+    vertex_count: int,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> _CutSource:
+    with coordinate_phase(scope=scope, budget=budget):
+        match geometry:
+            case ExactPlcCellGeometryConvexSource():
+                _, original_geometry, target_mesh = geometry.owners()
+                if target_mesh.topology_id != mesh.topology_id:
+                    raise ValueError(
+                        "geometry.target_mesh must match mesh.topology_id; got another source topology"
+                    )
+                source = geometry.prepare(mesh.coordinates, budget=budget).vertices
+                source_binding = geometry.source_id
+            case CellGeometrySpec():
+                source = geometry.rational_source_coordinates(budget=budget)
+                original_geometry = geometry
+                source_binding = cell_geometry_id(geometry)
+            case _:
+                raise TypeError(
+                    f"cut_preparation.geometry must be a supported cut coordinate source; got {type(geometry).__name__}"
+                )
+        if len(source) != vertex_count or any(len(point) != 3 for point in source):
+            raise ValueError(
+                "geometry.vertices must bind every three-coordinate source vertex; got incompatible coefficients"
+            )
+        coordinates = np.asarray(jax.device_get(mesh.coordinates))
+        if any(
+            not np.array_equal(rounded_point(point), coordinates[row])
+            for row, point in enumerate(source)
+        ):
+            raise ValueError(
+                "mesh.coordinates must equal the rounded source coefficients; got conflicting carrier points"
+            )
+    return _CutSource(source, original_geometry, source_binding)
+
+
+def _prepare_cut_incidence(mesh: CellMesh, admission: _CutAdmission) -> _CutIncidence:
+    connectivity = admission.connectivity
+    banks = jax.device_get(
+        (
+            connectivity.edges,
+            connectivity.face_vertex_offsets,
+            connectivity.face_vertex_values,
+            connectivity.cell_face_offsets,
+            connectivity.cell_face_values,
+            connectivity.cell_vertex_offsets,
+            connectivity.cell_vertex_values,
+            mesh.entity_set(3).entity_ids,
+            mesh.vertex_global_ids,
+            mesh.entity_set(1).entity_ids,
+        )
+    )
+    edges, fo, fv, co, cf, vo, vv, cell_ids, vertex_ids_, edge_ids = (
+        np.asarray(bank, dtype=np.int64) for bank in banks
+    )
+    supports: list[tuple[int, ...]] = [(row,) for row in range(connectivity.vertex_count)]
+    supports.extend(tuple(int(v) for v in edge) for edge in edges)
+    supports.extend(
+        tuple(int(v) for v in fv[fo[row] : fo[row + 1]])
+        for row in range(connectivity.face_count)
+    )
+    supports.extend(
+        tuple(int(v) for v in vv[vo[row] : vo[row + 1]])
+        for row in range(connectivity.cell_count)
+    )
+    return _CutIncidence(
+        edges, fo, fv, co, cf, vo, vv, cell_ids, vertex_ids_, edge_ids, tuple(supports)
+    )
+
+
+def _certify_cut_face(
+    exact: list[tuple[Fraction, ...]],
+    loop: list[int],
+    vertices: list[int],
+    cell_id: int,
+    face_id: int,
+    charge: Callable[[int], None],
+) -> None:
+    origin = exact[loop[0]]
+    normal = (Fraction(0),) * 3
+    for position in range(1, len(loop) - 1):
+        charge(30)
+        normal = rational_cross(
+            _difference(exact[loop[position]], origin),
+            _difference(exact[loop[position + 1]], origin),
+        )
+        if any(normal):
+            break
+    if not any(normal):
+        raise failure(
+            f"cut_face.normal must be nonzero; got cell {cell_id}, degenerate face {face_id}"
+        )
+    side = 0
+    for vertex in vertices:
+        charge(12)
+        distance = sum(
+            (
+                a * b
+                for a, b in zip(normal, _difference(exact[vertex], origin), strict=True)
+            ),
+            Fraction(0),
+        )
+        if vertex in loop and distance:
+            raise failure(
+                f"cut_face.vertices must be rationally planar; got nonplanar face {face_id}"
+            )
+        sign = (distance > 0) - (distance < 0)
+        if sign and side and side != sign:
+            raise failure(
+                f"cut_cell.faces must bound a convex cell; got cell {cell_id}, conflicting face {face_id}"
+            )
+        side = sign or side
+
+
+def _certify_cut_cell_links(
+    cell: int,
+    incidence: _CutIncidence,
+    admission: _CutAdmission,
+    exact: list[tuple[Fraction, ...]],
+    edge_lookup: dict[tuple[int, int], int],
+    charge: Callable[[int], None],
+) -> tuple[int, ...]:
+    vertices = incidence.cell_vertices[
+        incidence.vertex_offsets[cell] : incidence.vertex_offsets[cell + 1]
+    ].tolist()
+    faces = incidence.cell_faces[
+        incidence.cell_offsets[cell] : incidence.cell_offsets[cell + 1]
+    ].tolist()
+    incident_faces: dict[int, list[int]] = {vertex: [] for vertex in vertices}
+    incident_edges: dict[int, set[int]] = {vertex: set() for vertex in vertices}
+    pair_faces: dict[tuple[int, int, int], int] = {}
+    for face in faces:
+        loop = incidence.face_vertices[
+            incidence.face_offsets[face] : incidence.face_offsets[face + 1]
+        ].tolist()
+        _certify_cut_face(
+            exact,
+            loop,
+            vertices,
+            int(incidence.cell_ids[cell]),
+            int(admission.face_ids[face]),
+            charge,
+        )
+        for position, vertex in enumerate(loop):
+            charge(8)
+            before, after = loop[position - 1], loop[(position + 1) % len(loop)]
+            first = edge_lookup[(min(vertex, before), max(vertex, before))]
+            second = edge_lookup[(min(vertex, after), max(vertex, after))]
+            incident_edges[vertex].update((first, second))
+            incident_faces[vertex].append(face)
+            key = (vertex, min(first, second), max(first, second))
+            if key in pair_faces:
+                raise failure(
+                    "cut_link.edge_pairs must occur once; got repeated incident edges"
+                )
+            pair_faces[key] = face
+    signs = []
+    for vertex in vertices:
+        edge_rows = sorted(incident_edges[vertex])
+        face_rows = incident_faces[vertex]
+        if len(edge_rows) != 3 or len(face_rows) != 3:
+            raise CutCornerLinkError(
+                CutCornerLinkIncidence(
+                    int(incidence.cell_ids[cell]),
+                    int(incidence.vertex_ids[vertex]),
+                    tuple(int(incidence.edge_ids[row]) for row in edge_rows),
+                    tuple(int(admission.face_ids[row]) for row in face_rows),
+                )
+            )
+        directions = []
+        for edge in edge_rows:
+            a, b = incidence.edges[edge]
+            other = int(b if a == vertex else a)
+            directions.append(_difference(exact[other], exact[vertex]))
+        charge(40)
+        determinant = determinant_exact(directions)
+        if not determinant:
+            raise failure(
+                f"cut_corner.directions must have rank three; got cell {incidence.cell_ids[cell]}, vertex {incidence.vertex_ids[vertex]}"
+            )
+        signs.append(1 if determinant > 0 else -1)
+        for first, second in (
+            (edge_rows[0], edge_rows[1]),
+            (edge_rows[0], edge_rows[2]),
+            (edge_rows[1], edge_rows[2]),
+        ):
+            if (vertex, min(first, second), max(first, second)) not in pair_faces:
+                raise failure(
+                    "cut_link.edge_pairs must form a closed three-cycle; got missing pairs"
+                )
+    return tuple(signs)
+
+
+def _execute_cut_corner_topology(
+    admission: _CutAdmission,
+    source: _CutSource,
+    incidence: _CutIncidence,
+    limits: MeshingLimits,
+    *,
+    scope: NativeExecutionScope,
+) -> _CutTopology:
+    exact = list(source.vertices)
+    work = 0
+    host_ticket = scope.batch(
+        admission.work_bound,
+        bytes_upper=min(
+            limits.maximum_scratch_bytes, scope.remaining().remaining_managed_bytes
+        ),
+    )
+    with host_ticket:
+
+        def charge(amount: int) -> None:
+            nonlocal work
+            if work + amount > limits.maximum_work_units:
+                raise failure(
+                    "cut_preparation.work must respect limits.maximum_work_units; got exhausted work",
+                    resource=True,
+                )
+            host_ticket.consume(amount)
+            work += amount
+
+        for support in incidence.supports[admission.connectivity.vertex_count :]:
+            charge(6 * len(support))
+            exact.append(
+                (
+                    sum((source.vertices[v][0] for v in support), Fraction())
+                    / len(support),
+                    sum((source.vertices[v][1] for v in support), Fraction())
+                    / len(support),
+                    sum((source.vertices[v][2] for v in support), Fraction())
+                    / len(support),
+                )
+            )
+        edge_lookup: dict[tuple[int, int], int] = {}
+        for row, edge in enumerate(incidence.edges):
+            first, second = int(edge[0]), int(edge[1])
+            edge_lookup[(min(first, second), max(first, second))] = row
+        # Allocation belongs to the admitted ticket, not the unreserved root pool.
+        with host_ticket.native_target():
+            signs = family_host_array((admission.corner_count,), np.int8, scope=scope)
+        output = 0
+        for cell in range(admission.connectivity.cell_count):
+            local_signs = _certify_cut_cell_links(
+                cell, incidence, admission, exact, edge_lookup, charge
+            )
+            signs[output : output + len(local_signs)] = local_signs
+            output += len(local_signs)
+        remaining = limits.maximum_work_units - work
+        if remaining <= 0:
+            raise failure(
+                "cut_topology.work must respect limits.maximum_work_units; got exhausted work",
+                resource=True,
+            )
+        with host_ticket.native_target():
+            hexes, parents, native_work = polyhedron_corner_hexes(
+                incidence.edges,
+                incidence.face_offsets,
+                incidence.face_vertices,
+                incidence.cell_offsets,
+                incidence.cell_faces,
+                incidence.vertex_offsets,
+                incidence.cell_vertices,
+                signs,
+                admission.connectivity.vertex_count,
+                maximum_cells=limits.maximum_cells,
+                maximum_scratch_bytes=limits.maximum_scratch_bytes,
+                maximum_work_units=remaining,
+            )
+        work += native_work
+    return _CutTopology(tuple(exact), signs, hexes, parents, work)
+
+
+def _assemble_cut_corner_preparation(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec | ExactPlcCellGeometryConvexSource,
+    admission: _CutAdmission,
+    source: _CutSource,
+    incidence: _CutIncidence,
+    topology: _CutTopology,
+    *,
+    scope: NativeExecutionScope,
+) -> CutCornerHexPreparation:
+    offsets = family_host_array((admission.output_vertices + 1,), np.int64, scope=scope)
+    values = family_host_array((admission.supports_count,), np.int64, scope=scope)
+    denominators = family_host_array((admission.output_vertices,), np.int64, scope=scope)
+    dimensions = family_host_array((admission.output_vertices,), np.int8, scope=scope)
+    rows = family_host_array((admission.output_vertices,), np.int64, scope=scope)
     offsets[0] = 0
     cursor = 0
-    for row, support in enumerate(supports):
+    for row, support in enumerate(incidence.supports):
         values[cursor : cursor + len(support)] = support
         cursor += len(support)
         offsets[row + 1] = cursor
         denominators[row] = len(support)
+    nv, ne, nf, nc = (
+        admission.connectivity.vertex_count,
+        admission.connectivity.edge_count,
+        admission.connectivity.face_count,
+        admission.connectivity.cell_count,
+    )
     for dimension, start, count in (
         (0, 0, nv),
         (1, nv, ne),
@@ -419,33 +573,65 @@ def _prepare_cut_corner_hexes(
         {
             "kind": "exact-cut-corner-preparation",
             "source_topology": mesh.topology_id,
-            "source_geometry": source_binding,
-            "supports": tuple(supports),
-            "hexes": tuple(tuple(int(v) for v in row) for row in hexes),
+            "source_geometry": source.binding,
+            "supports": incidence.supports,
+            "hexes": tuple(tuple(int(v) for v in row) for row in topology.hexes),
         }
     )
-    for bank in (offsets, values, denominators, dimensions, rows, hexes, parents, signs):
-        bank.flags.writeable = False
-    return CutCornerHexPreparation(
-        mesh,
-        original_geometry,
-        geometry,
-        tuple(exact),
+    for bank in (
         offsets,
         values,
         denominators,
         dimensions,
         rows,
-        hexes,
-        parents,
-        signs,
-        work,
+        topology.hexes,
+        topology.parents,
+        topology.signs,
+    ):
+        bank.flags.writeable = False
+    return CutCornerHexPreparation(
+        mesh,
+        source.geometry,
+        geometry,
+        topology.vertices,
+        offsets,
+        values,
+        denominators,
+        dimensions,
+        rows,
+        topology.hexes,
+        topology.parents,
+        topology.signs,
+        topology.work,
         identity,
     )
 
 
-@dataclass(frozen=True, slots=True)
-class CutCornerHexConstruction:
+def _prepare_cut_corner_hexes(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec | ExactPlcCellGeometryConvexSource,
+    limits: MeshingLimits,
+    /,
+    *,
+    immutable_face_ids: tuple[int, ...] = (),
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> CutCornerHexPreparation:
+    """Prepare face-conforming corner hexes; unchanged source faces are refused."""
+    admission = _admit_cut_corner_closure(mesh, geometry, limits, immutable_face_ids)
+    source = _prepare_cut_source(
+        mesh, geometry, admission.connectivity.vertex_count, scope=scope, budget=budget
+    )
+    incidence = _prepare_cut_incidence(mesh, admission)
+    topology = _execute_cut_corner_topology(
+        admission, source, incidence, limits, scope=scope
+    )
+    return _assemble_cut_corner_preparation(
+        mesh, geometry, admission, source, incidence, topology, scope=scope
+    )
+
+
+class CutCornerHexConstruction(StrictModule):
     preparation: CutCornerHexPreparation
     mesh: CellMesh
     geometry: CellGeometrySpec
@@ -456,22 +642,25 @@ class CutCornerHexConstruction:
     aspect_ratio_upper: np.ndarray
 
 
+@checked
 def compose_original_plc_supports(
     prepared: CutCornerHexPreparation,
     /,
+    *,
+    scope: NativeExecutionScope,
 ) -> tuple[np.ndarray, np.ndarray, tuple[Fraction, ...]]:
-    """Compose actual cut barycenters into original PLC SCI corner coefficients."""
+    """Compose cut barycenters into PLC source-corner coefficients."""
     authority = prepared.coordinate_source
     if not isinstance(authority, ExactPlcCellGeometryConvexSource):
         raise TypeError(
-            "Original PLC support composition requires its actual cut-coordinate owner."
+            "prepared.coordinate_source must be ExactPlcCellGeometryConvexSource; got another source kind"
         )
     parent_offsets = np.asarray(authority.support_offsets, dtype=np.int64)
     parent_vertices = np.asarray(authority.support_vertices, dtype=np.int64)
     parent_coefficients = authority.support_coefficients
     count = len(prepared.exact_vertices)
-    offsets = _family_host_array((count + 1,), np.int64)
-    vertices = _family_host_array((4 * count,), np.int64)
+    offsets = family_host_array((count + 1,), np.int64, scope=scope)
+    vertices = family_host_array((4 * count,), np.int64, scope=scope)
     coefficients: list[Fraction] = []
     offsets[0] = 0
     cursor = 0
@@ -496,7 +685,7 @@ def compose_original_plc_supports(
             or min(weights.values()) <= 0
         ):
             raise ValueError(
-                "Actual cut barycenter has no convex original P1 source-cell support."
+                "cut_barycenter.support must be positive normalized P1 weights on at most four corners; got incompatible weights"
             )
         for original, coefficient in sorted(weights.items()):
             vertices[cursor] = original
@@ -506,40 +695,27 @@ def compose_original_plc_supports(
     return offsets, vertices[:cursor], tuple(coefficients)
 
 
+@checked
 def realize_cut_corner_hexes(
     prepared: CutCornerHexPreparation,
     limits: MeshingLimits,
     /,
     *,
     certificate_limits: MeshCertificateLimits,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
 ) -> CutCornerHexConstruction:
-    """Realize exact corner maps and certify positivity/global embedding.
+    """Realize corner maps and certify positivity, embedding, and map quality.
 
-    This does not certify original-domain coverage. The caller must compose the
-    independently retained cut/source-cell partition theorem with original PLC
-    source association and coverage before publication; no candidate-only route
-    success is returned here.
+    Domain coverage is certified against the retained source partition separately.
     """
-    from ..discretization._cell_geometry_validity import certify_cell_geometry_validity
-    from ..discretization._cell_mesh import CellBlock
-    from ..discretization._exact_power_geometry import (
-        ExactPowerCellGeometryLinearActionSource,
-        ExactPowerCellGeometryRestrictionSource,
-        ExactPowerCellGeometrySource,
-    )
-    from ..geometry._mesh_certificates import certify_global_embedding
-    from ._quad_generation import _vertex_ids
 
-    if not isinstance(certificate_limits, MeshCertificateLimits):
-        raise TypeError(
-            "Cut realization requires the original explicit certificate limits."
-        )
     authority = prepared.coordinate_source
     offsets = prepared.support_offsets
     count = len(prepared.exact_vertices)
     width = int(np.max(np.diff(offsets)))
     scratch = count * width * (8 + 256) + count * 24
-    _budget(
+    check_family_limits(
         limits,
         prepared.hexes.shape[0],
         count,
@@ -547,80 +723,86 @@ def realize_cut_corner_hexes(
         scratch,
         16 * count * width,
     )
-    coordinates = _family_host_array((count, 3), np.float64)
+    coordinates = family_host_array((count, 3), np.float64, scope=scope)
     for row, point in enumerate(prepared.exact_vertices):
         coordinates[row] = rounded_point(point)
     added = count - prepared.source_mesh.coordinates.shape[0]
     mesh = CellMesh(
         coordinates,
         (CellBlock("cut_hexes", "hexahedron", prepared.hexes),),
-        vertex_global_ids=_vertex_ids(prepared.source_mesh, added),
+        vertex_global_ids=vertex_ids(prepared.source_mesh, added),
         numeric_version=prepared.source_mesh.numeric_version,
     )
-    if isinstance(authority, ExactPlcCellGeometryConvexSource):
-        (
-            parent_mesh,
-            parent_geometry,
-            _,
-        ) = authority._owners()
-        original_offsets, original_vertices, original_coefficients = (
-            compose_original_plc_supports(prepared)
-        )
-        original_parents = np.asarray(authority.cell_parent_ids, dtype=np.int64)[
-            prepared.parent_cells
-        ]
-        source = ExactPlcCellGeometryConvexSource(
-            parent_mesh,
-            parent_geometry,
-            original_offsets,
-            original_vertices,
-            original_coefficients,
-            mesh,
-            original_parents,
-        )
-        geometry = CellGeometrySpec.plc(mesh, source)
-    else:
-        parent = authority.exact_source
-        if not isinstance(
-            parent,
+    with coordinate_phase(scope=scope, budget=budget):
+        if isinstance(authority, ExactPlcCellGeometryConvexSource):
             (
-                ExactPowerCellGeometrySource,
-                ExactPowerCellGeometryRestrictionSource,
-                ExactPowerCellGeometryLinearActionSource,
-            ),
-        ):
-            raise TypeError(
-                "Cut realization requires an actual exact cut-cell source, not an authored point proxy."
+                parent_mesh,
+                parent_geometry,
+                _,
+            ) = authority.owners()
+            original_offsets, original_vertices, original_coefficients = (
+                compose_original_plc_supports(prepared, scope=scope)
             )
-        parents = _family_host_array((count, width), np.int64)
-        parents.fill(-1)
-        coefficients = []
-        for row in range(count):
-            support = prepared.support_vertices[offsets[row] : offsets[row + 1]]
-            parents[row, : support.size] = support
-            coefficient = Fraction(1, int(prepared.support_denominators[row]))
-            coefficients.append(
-                (coefficient,) * support.size + (Fraction(0),) * (width - support.size)
+            original_parents = np.asarray(authority.cell_parent_ids, dtype=np.int64)[
+                prepared.parent_cells
+            ]
+            source = ExactPlcCellGeometryConvexSource(
+                parent_mesh,
+                parent_geometry,
+                original_offsets,
+                original_vertices,
+                original_coefficients,
+                mesh,
+                original_parents,
+                budget=budget,
             )
-        actions = _family_host_array((count, 0), np.int64)
-        source = ExactPowerCellGeometryLinearActionSource(
-            parent, parents, tuple(coefficients), actions, periodic_preparation=None
-        )
-        geometry = CellGeometrySpec.power(mesh, source)
-    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+            geometry = CellGeometrySpec.plc(mesh, source, budget=budget)
+        else:
+            parent = authority.exact_source
+            if not isinstance(
+                parent,
+                (
+                    ExactPowerCellGeometrySource,
+                    ExactPowerCellGeometryRestrictionSource,
+                    ExactPowerCellGeometryLinearActionSource,
+                ),
+            ):
+                raise TypeError(
+                    "coordinate_source.exact_source must be a supported power cut source; got another source kind"
+                )
+            parents = family_host_array((count, width), np.int64, scope=scope)
+            parents.fill(-1)
+            coefficients = []
+            for row in range(count):
+                support = prepared.support_vertices[offsets[row] : offsets[row + 1]]
+                parents[row, : support.size] = support
+                coefficient = Fraction(1, int(prepared.support_denominators[row]))
+                coefficients.append(
+                    (coefficient,) * support.size
+                    + (Fraction(0),) * (width - support.size)
+                )
+            actions = family_host_array((count, 0), np.int64, scope=scope)
+            source = ExactPowerCellGeometryLinearActionSource(
+                parent, parents, tuple(coefficients), actions, periodic_preparation=None
+            )
+            geometry = CellGeometrySpec.power(mesh, source, budget=budget)
+    with coordinate_phase(scope=scope, budget=budget):
+        validity = certify_cell_geometry_validity(geometry, mesh=mesh, budget=budget)
     if validity.invalid_count or validity.unresolved_count:
-        raise _failure(
-            "Exact cut-corner maps have invalid or unresolved whole-cell Jacobians."
+        raise failure(
+            "cut_geometry.validity must certify every whole-cell Jacobian; got invalid or unresolved cells"
         )
-    embedding = certify_global_embedding(
-        mesh, geometry, validity, limits=certificate_limits
-    )
+    with coordinate_phase(scope=scope, budget=budget):
+        embedding = certify_global_embedding(
+            mesh, geometry, validity, limits=certificate_limits, budget=budget
+        )
     if embedding.status != "certified":
         codes = tuple(finding.check for finding in embedding.findings)
-        raise _failure(f"Exact cut-corner global embedding is not certified: {codes}.")
-    from ._hex_generation import exact_mapped_volume_quality
+        raise failure(f"cut_embedding.status must be certified; got findings {codes}")
 
-    scaled, mean, aspect = exact_mapped_volume_quality(mesh, geometry)
+    scaled, mean, aspect = exact_mapped_volume_quality(
+        mesh, geometry, scope=scope, budget=budget
+    )
     for bank in (scaled, mean, aspect):
         bank.flags.writeable = False
     return CutCornerHexConstruction(
@@ -628,6 +810,7 @@ def realize_cut_corner_hexes(
     )
 
 
+@checked
 def prepare_cut_corner_hexes(
     mesh: CellMesh,
     geometry: CellGeometrySpec | ExactPlcCellGeometryConvexSource,
@@ -635,31 +818,38 @@ def prepare_cut_corner_hexes(
     /,
     *,
     immutable_face_ids: tuple[int, ...] = (),
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+    workspace: NativeHostStorageWorkspace,
 ) -> CutCornerHexPreparation:
-    """Prepare exact source corner closure inside the original host-storage owner."""
+    """Prepare source corner closure inside an admitted host-storage workspace.
+
+    This template subdivides every face. A nonempty ``immutable_face_ids``
+    therefore refuses: nonquadrilateral faces cannot remain pure-hex faces,
+    and quadrilateral faces require a boundary-preserving template.
+    Undeclared scientific IDs raise ``ValueError``. Refusal preserves the source
+    mesh and restores the caller's workspace bound.
+    """
     if not isinstance(mesh.connectivity, PolyhedralConnectivity):
-        raise TypeError("Cut corner closure requires canonical polyhedral incidence.")
-    execution = current_native_execution_budget()
-    if execution is None:
-        return _prepare_cut_corner_hexes(
-            mesh, geometry, limits, immutable_face_ids=immutable_face_ids
-        )
-    workspace = current_native_host_workspace()
-    if workspace is None:
-        raise _failure(
-            "Cut corner preparation requires the original native host-storage owner.",
-            resource=True,
+        raise TypeError(
+            "mesh.connectivity must be PolyhedralConnectivity; got another connectivity"
         )
     scratch = _cut_host_scratch(mesh.connectivity, geometry)
     if scratch > limits.maximum_scratch_bytes:
-        raise _failure(
-            "Cut corner preparation exceeds original host scratch.", resource=True
+        raise failure(
+            "cut_preparation.scratch_bytes must respect limits.maximum_scratch_bytes; got oversized host storage",
+            resource=True,
         )
     starting = workspace.bound
     workspace.set_bound(starting + scratch)
     try:
         prepared = _prepare_cut_corner_hexes(
-            mesh, geometry, limits, immutable_face_ids=immutable_face_ids
+            mesh,
+            geometry,
+            limits,
+            immutable_face_ids=immutable_face_ids,
+            scope=scope,
+            budget=budget,
         )
     finally:
         workspace.set_bound(starting)
@@ -667,6 +857,7 @@ def prepare_cut_corner_hexes(
     return prepared
 
 
+@checked
 def certify_cut_corner_coverage(
     construction: CutCornerHexConstruction,
     original_domain: PiecewiseLinearDomain | MappedReferenceDomain,
@@ -674,47 +865,50 @@ def certify_cut_corner_coverage(
     /,
     *,
     certificate_limits: MeshCertificateLimits,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[DomainCoverageCertificate, np.ndarray]:
-    """Certify the real hex maps against an independently retained original domain."""
-    from ..geometry._mesh_certificates import certify_domain_coverage
+    """Certify hex maps against the independently retained source domain."""
 
     regions = np.asarray(source_cell_regions, dtype=np.int64)
     connectivity = construction.preparation.source_mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
-        raise RuntimeError("Cut coverage source lost polyhedral connectivity.")
+        raise TypeError(
+            "construction.source_mesh.connectivity must be polyhedral; got another connectivity"
+        )
     source_count = connectivity.cell_count
     if regions.shape != (source_count,):
         raise ValueError(
-            "Original cut-source regions must name every source cell exactly once."
+            f"cut_coverage.source_cell_regions must name every cut source cell once; got shape {regions.shape}"
         )
-    target_regions = _family_host_array(
-        construction.preparation.parent_cells.shape, np.int64
+    target_regions = family_host_array(
+        construction.preparation.parent_cells.shape, np.int64, scope=scope
     )
     target_regions[:] = regions[construction.preparation.parent_cells]
-    coverage = certify_domain_coverage(
-        construction.mesh,
-        construction.geometry,
-        original_domain,
-        target_regions,
-        embedding=construction.embedding,
-        limits=certificate_limits,
-    )
+    with coordinate_phase(scope=scope, budget=budget):
+        coverage = certify_domain_coverage(
+            construction.mesh,
+            construction.geometry,
+            original_domain,
+            target_regions,
+            embedding=construction.embedding,
+            limits=certificate_limits,
+            budget=budget,
+        )
     if coverage.status != "certified":
         checks = tuple(finding.check for finding in coverage.findings)
-        raise _failure(f"Original-domain cut-corner coverage is not certified: {checks}.")
+        raise failure(f"cut_coverage.status must be certified; got findings {checks}")
     target_regions.flags.writeable = False
     return coverage, target_regions
 
 
+@checked
 def require_cut_corner_quality(
     construction: CutCornerHexConstruction,
     schedule: NativeHexGridSchedule,
 ) -> None:
-    """Enforce the unchanged selected portfolio's whole-map quality requirements."""
-    from ._hex_generation import NativeHexGridSchedule
+    """Enforce the selected portfolio's whole-map quality requirements."""
 
-    if not isinstance(schedule, NativeHexGridSchedule):
-        raise TypeError("Cut quality requires the original explicit hex grid schedule.")
     for name, bank, bound, lower in (
         (
             "scaled Jacobian",
@@ -736,6 +930,6 @@ def require_cut_corner_quality(
                 construction.mesh.entity_set(3).entity_ids, dtype=np.int64
             )
             evidence = tuple((int(cell_ids[row]), float(bank[row])) for row in failures)
-            raise _failure(
-                f"Exact cut-corner {name} conflicts with original bound {bound}: {evidence}."
+            raise failure(
+                f"cut_quality.{name} must respect bound {bound}; got cell values {evidence}"
             )

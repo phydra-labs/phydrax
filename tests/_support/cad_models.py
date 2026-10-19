@@ -4,6 +4,7 @@ import hashlib
 from dataclasses import replace
 from fractions import Fraction
 from functools import cache
+from typing import assert_never, Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -13,7 +14,6 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry.brep import (
     assemble_brep_model,
-    brep_box,
     brep_cone,
     brep_cylinder,
     brep_extrusion,
@@ -23,6 +23,7 @@ from phydrax.geometry.brep import (
     BRepGeometry,
     BRepModel,
     BRepOccurrence,
+    BRepTessellationPolicy,
     PlanarProfile,
     ProfileLoop,
     ProfilePlane,
@@ -44,6 +45,8 @@ from phydrax.geometry.brep._patches import (
 )
 from phydrax.geometry.brep._root_bindings import BRepRootSupport, BRepVertexRoot
 from phydrax.interchange._cad import CadImportPolicy, CadStage, StagedCoedge
+from phydrax.meshing.qualification import benchmark_box
+from phydrax.typing import parse
 
 
 CONTRACT = SpatialCoordinateContract.si()
@@ -58,39 +61,145 @@ EXACT_VOLUMES = {
     "ring": np.pi * (3.0**2 - 2.0**2) * 1.0,
 }
 
+# Closed forms for the BRep-text catalog; dimensions match independent OCCT fixtures.
+BREP_TEXT_SOLIDS = (
+    "box",
+    "cylinder",
+    "sphere",
+    "torus",
+    "plate-with-hole",
+    "revolved-ring",
+)
+BREP_TEXT_VOLUMES = {
+    "box": 6.0,
+    "cylinder": np.pi * 0.25 * 2.0,
+    "sphere": 4.0 / 3.0 * np.pi * 0.75**3,
+    "torus": 2.0 * np.pi**2 * 2.0 * 0.25,
+    "plate-with-hole": 8.0 - np.pi * 0.25 * 0.5,
+    "revolved-ring": np.pi * 3.0,
+}
+
+type NativeSolidCatalog = Literal["interchange", "geometry", "brep-text"]
+
 
 @cache
-def native_solid(name: str) -> BRepModel:
+def native_solid(
+    name: str,
+    *,
+    catalog: NativeSolidCatalog = "interchange",
+    tessellation: BRepTessellationPolicy | None = None,
+) -> BRepModel:
+    """Return a named closed native solid with SI coordinates and BRep topology.
+
+    The interchange catalog retains the STEP/IGES fixture dimensions. The
+    geometry catalog retains test_native_brep's dimensions and capped quarter
+    revolution. The BRep-text catalog retains its smaller conics and 4-by-4
+    perforated plate. Tessellation changes only the sampled carrier.
+    """
+    catalog = parse(catalog, NativeSolidCatalog, "cad_models.native_solid.catalog")
+    match catalog:
+        case "interchange":
+            cylinder_radius, sphere_radius, torus_radii = 1.0, 1.5, (3.0, 1.0)
+        case "geometry":
+            cylinder_radius, sphere_radius, torus_radii = 1.0, 1.0, (2.0, 0.5)
+        case "brep-text":
+            cylinder_radius, sphere_radius, torus_radii = 0.5, 0.75, (2.0, 0.5)
+        case _:
+            assert_never(catalog)
     match name:
         case "box":
-            return brep_box(
-                (0.0, 0.0, 0.0), (1.0, 2.0, 3.0), coordinate_contract=CONTRACT
-            )
+            return benchmark_box(tessellation=tessellation)
         case "cylinder":
-            return brep_cylinder(1.0, 2.0, coordinate_contract=CONTRACT)
+            return brep_cylinder(
+                cylinder_radius,
+                2.0,
+                coordinate_contract=CONTRACT,
+                tessellation=tessellation,
+            )
         case "sphere":
-            return brep_sphere(1.5, coordinate_contract=CONTRACT)
+            return brep_sphere(
+                sphere_radius, coordinate_contract=CONTRACT, tessellation=tessellation
+            )
         case "torus":
-            return brep_torus(3.0, 1.0, coordinate_contract=CONTRACT)
+            major, minor = torus_radii
+            return brep_torus(
+                major, minor, coordinate_contract=CONTRACT, tessellation=tessellation
+            )
         case "cone":
-            return brep_cone(1.0, 0.0, 2.0, coordinate_contract=CONTRACT)
-        case "plate":
+            return brep_cone(
+                1.0, 0.0, 2.0, coordinate_contract=CONTRACT, tessellation=tessellation
+            )
+        case "plate" if catalog == "interchange":
             profile = PlanarProfile(
                 ProfilePlane((0.0, 0.0, 0.0)),
                 ProfileLoop.polygon(((0.0, 0.0), (4.0, 0.0), (4.0, 3.0), (0.0, 3.0))),
                 (ProfileLoop.circle((2.0, 1.5), 0.5),),
             )
-            return brep_extrusion(profile, (0.0, 0.0, 0.5), coordinate_contract=CONTRACT)
-        case "ring":
+            return brep_extrusion(
+                profile,
+                (0.0, 0.0, 0.5),
+                coordinate_contract=CONTRACT,
+                tessellation=tessellation,
+            )
+        case "plate-with-hole" if catalog == "brep-text":
+            profile = PlanarProfile(
+                ProfilePlane((-2.0, -2.0, 0.0)),
+                ProfileLoop.polygon(((0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0))),
+                (ProfileLoop.circle((2.0, 2.0), 0.5),),
+            )
+            return brep_extrusion(
+                profile,
+                (0.0, 0.0, 0.5),
+                coordinate_contract=CONTRACT,
+                tessellation=tessellation,
+            )
+        case "extruded_plate" if catalog == "geometry":
+            profile = PlanarProfile(
+                ProfilePlane(),
+                ProfileLoop.polygon(((-2.0, -2.0), (2.0, -2.0), (2.0, 2.0), (-2.0, 2.0))),
+                (ProfileLoop.circle((0.0, 0.0), 1.0),),
+            )
+            return brep_extrusion(
+                profile,
+                (0.0, 0.0, 0.5),
+                coordinate_contract=CONTRACT,
+                tessellation=tessellation,
+            )
+        case "ring" if catalog == "interchange":
             profile = PlanarProfile(
                 ProfilePlane((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
                 ProfileLoop.polygon(((2.0, 0.0), (3.0, 0.0), (3.0, 1.0), (2.0, 1.0))),
             )
             return brep_revolution(
-                profile, (0.0, 0.0), (0.0, 1.0), coordinate_contract=CONTRACT
+                profile,
+                (0.0, 0.0),
+                (0.0, 1.0),
+                coordinate_contract=CONTRACT,
+                tessellation=tessellation,
             )
+        case "revolved_ring" | "revolved_quarter" if catalog == "geometry":
+            return _unit_inner_ring(name, tessellation)
+        case "revolved-ring" if catalog == "brep-text":
+            return _unit_inner_ring(name, tessellation)
         case _:
-            raise ValueError(name)
+            raise ValueError(
+                f"cad_models.native_solid.name must belong to {catalog!r}; got {name!r}"
+            )
+
+
+def _unit_inner_ring(name: str, tessellation: BRepTessellationPolicy | None) -> BRepModel:
+    profile = PlanarProfile(
+        ProfilePlane((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+        ProfileLoop.polygon(((1.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0))),
+    )
+    return brep_revolution(
+        profile,
+        (0.0, 0.0),
+        (0.0, 1.0),
+        angle=0.5 * np.pi if name == "revolved_quarter" else None,
+        coordinate_contract=CONTRACT,
+        tessellation=tessellation,
+    )
 
 
 QUARTER_TURN = ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
@@ -103,7 +212,9 @@ def native_assembly() -> BRepModel:
     geometries: list[BRepGeometry] = []
     for part in parts:
         if part.geometry is None:
-            raise ValueError("Native constructions require exact geometry.")
+            raise ValueError(
+                "cad_models.native_assembly.geometry must be present; got None"
+            )
         geometries.append(part.geometry)
     counts = np.zeros(5, dtype=np.int64)
     fields: dict[str, list] = {
@@ -202,11 +313,13 @@ def native_assembly() -> BRepModel:
 
 @cache
 def native_repeated_assembly(*, declared: bool = True) -> BRepModel:
-    """One exact box definition used twice under a nested assembly node."""
+    """Return one box definition used twice under a nested assembly node."""
     source = native_solid("box")
     original = source.geometry
     if original is None:
-        raise ValueError("Repeated assembly construction requires exact geometry.")
+        raise ValueError(
+            "cad_models.native_repeated_assembly.geometry must be present; got None"
+        )
     geometry = BRepGeometry(
         vertex_points=original.vertex_points,
         curves=original.curves,
@@ -256,7 +369,7 @@ def native_repeated_assembly(*, declared: bool = True) -> BRepModel:
 
 @cache
 def native_rational_spline_face() -> BRepModel:
-    """Exact quarter-cylinder strip, including rational boundary carriers."""
+    """Return a quarter-cylinder strip with rational boundary carriers."""
     poles = np.asarray(
         [[[x, y, z] for z in (0.0, 2.0)] for x, y in ((1.0, 0.0), (1.0, 1.0), (0.0, 1.0))]
     )
@@ -361,7 +474,9 @@ def native_rooted_sector_face() -> BRepModel:
     source = native_sector_face()
     original = source.geometry
     if original is None:
-        raise ValueError("Rooted sector construction requires exact geometry.")
+        raise ValueError(
+            "cad_models.native_rooted_sector_face.geometry must be present; got None"
+        )
     root = TrimIntersectionRoot(
         CurveTrimSegment(original.pcurves[2], 0.0, 1.0),
         CurveTrimSegment(original.pcurves[0], 0.0, 1.5 * np.pi),
@@ -429,7 +544,7 @@ def native_rooted_sector_face() -> BRepModel:
 
 @cache
 def native_empty_model() -> BRepModel:
-    """A real zero-entity exact model, not a placeholder solid or occurrence."""
+    """Return a zero-entity BRep model."""
     geometry = BRepGeometry(
         vertex_points=np.empty((0, 3)),
         curves=(),
@@ -461,7 +576,7 @@ def native_empty_model() -> BRepModel:
 
 @cache
 def native_intersection_cap(*, realize: bool = True) -> BRepModel:
-    """A real plane cap whose authoritative closed edge is a native branch."""
+    """Return a plane cap whose closed edge is a native intersection branch."""
     brep = phx.geometry.brep
     sphere = brep.SurfaceRegion(
         brep.SpherePatch([0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], 1.0),
@@ -512,7 +627,7 @@ def native_intersection_cap(*, realize: bool = True) -> BRepModel:
 
 
 def native_offset_plane(policy: CadImportPolicy) -> BRepModel:
-    """An authored plane offset with exact boundary carriers and source digest."""
+    """Return an authored plane offset with boundary carriers and a source digest."""
     base = PlanePatch((0, 0, 0.5), (1, 0, 0), (0, 1, 0))
     patch = OffsetSurface(base, 0.25)
     uv = np.asarray(((0, 0), (2, 0), (2, 1), (0, 1)))
@@ -563,3 +678,86 @@ def native_offset_plane(policy: CadImportPolicy) -> BRepModel:
 
 def solid_volumes(model: BRepModel) -> np.ndarray:
     return np.asarray(phx.geometry.brep.prepare_brep_query(model).measures.solid_volumes)
+
+
+def geometry_of(model: BRepModel, /) -> BRepGeometry:
+    """Return a fixture's retained carriers, refusing a tessellation-only model."""
+    geometry = model.geometry
+    assert geometry is not None
+    return geometry
+
+
+def native_brep_text_sheet(
+    policy: CadImportPolicy, *, free_edge: bool = False
+) -> BRepModel:
+    """Return a bilinear rational sheet with authored rational boundary carriers."""
+    controls = np.asarray(
+        (((0.0, 0.0, 0.0), (0.0, 2.0, 0.0)), ((3.0, 0.0, 0.0), (3.0, 2.0, 1.0)))
+    )
+    weights = np.asarray(((1.0, 2.0), (3.0, 1.0)))
+    knots = np.asarray((0.0, 0.0, 1.0, 1.0))
+    patch = BSplineSurfacePatch(controls, weights, knots, knots, 1, 1)
+    stage = CadStage(3.0, None)
+    vertices = [
+        stage.vertex(controls[i, j], f"corner:{i}:{j}")
+        for i, j in ((0, 0), (1, 0), (1, 1), (0, 1))
+    ]
+    boundaries = (
+        (controls[:, 0], weights[:, 0], 0, 1, LineCurve((0.0, 0.0), (1.0, 0.0)), 1),
+        (controls[1, :], weights[1, :], 1, 2, LineCurve((1.0, 0.0), (0.0, 1.0)), 1),
+        (controls[:, 1], weights[:, 1], 3, 2, LineCurve((0.0, 1.0), (1.0, 0.0)), -1),
+        (controls[0, :], weights[0, :], 0, 3, LineCurve((0.0, 0.0), (0.0, 1.0)), -1),
+    )
+    loop = []
+    for index, (points, row_weights, start, end, pcurve, sense) in enumerate(boundaries):
+        edge = stage.edge(
+            BSplineCurve(points, row_weights, knots, 1),
+            vertices[start],
+            vertices[end],
+            f"edge:{index}",
+            parameter_range=(0.0, 1.0),
+        )
+        loop.append(StagedCoedge(edge, sense, pcurve, f"edge:{index}"))
+    stage.face(patch, [loop], 1, "bspline", "rational-sheet", outer_known=True)
+    if free_edge:
+        start = stage.vertex(np.asarray((5.0, 0.0, 0.0)), "free-start")
+        end = stage.vertex(np.asarray((5.0, 2.0, 0.0)), "free-end")
+        stage.edge(
+            LineCurve((5.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+            start,
+            end,
+            "free-edge",
+            parameter_range=(0.0, 2.0),
+        )
+    return stage.publish(
+        coordinate_contract=policy.coordinate_contract,
+        source_id="rational-sheet",
+        source_format="native",
+        source_digest="0" * 64,
+        import_policy_id=policy.policy_id,
+        tessellation=None,
+        default_occurrences=True,
+    )
+
+
+def native_brep_text_assembly(
+    occurrences: tuple[BRepOccurrence, ...],
+    containers: tuple[BRepAssemblyContainer, ...],
+) -> BRepModel:
+    """Place the BRep-text box under caller-declared assembly membership."""
+    base = native_solid("box", catalog="brep-text")
+    geometry = replace(
+        geometry_of(base), occurrences=occurrences, assembly_containers=containers
+    )
+    return assemble_brep_model(
+        geometry,
+        base.patches,
+        base.parameter_bounds,
+        base.orientation,
+        base.physical_tags,
+        coordinate_contract=base.coordinate_contract,
+        source_id="declared-assembly",
+        source_format="native",
+        source_digest=base.source_digest,
+        import_policy_id=base.import_policy_id,
+    )

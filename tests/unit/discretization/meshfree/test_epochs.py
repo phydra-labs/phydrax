@@ -215,7 +215,10 @@ def test_epoch_rebuilds_every_dependency_and_remaps_every_live_history() -> None
     np.testing.assert_array_less(
         np.abs(receipt.conservation_residuals), receipt.content_tolerances + 1e-300
     )
-    with pytest.raises(ValueError, match="nondifferentiable"):
+    with pytest.raises(
+        ValueError,
+        match="must differentiate values only through frozen transfers or a fixed epoch",
+    ):
         receipt.require_differentiable_selection()
 
 
@@ -252,7 +255,7 @@ def test_refused_boundary_publishes_nothing() -> None:
 
 def test_every_live_history_needs_its_own_route() -> None:
     change = _change()
-    with pytest.raises(ValueError, match=r"own route \['history/1'\]"):
+    with pytest.raises(ValueError, match=r"unrouted=\['history/1'\]"):
         stage_meshfree_epoch(
             _composition(),
             change,
@@ -264,7 +267,7 @@ def test_every_live_history_needs_its_own_route() -> None:
 
 def test_every_epoch_bound_artifact_needs_a_target_rebuild() -> None:
     change = _change()
-    with pytest.raises(ValueError, match=r"rebuild \['metric/hodge'\]"):
+    with pytest.raises(ValueError, match=r"unbuilt=\['metric/hodge'\]"):
         stage_meshfree_epoch(
             _composition(),
             change,
@@ -384,5 +387,5 @@ def test_failed_remap_publishes_nan_and_refuses_reverse_maps() -> None:
         (jnp.ones(4),),
     )
     assert np.all(np.isnan(pushed))
-    with pytest.raises(ValueError, match="no value derivative"):
+    with pytest.raises(ValueError, match="MeshfreeHistoryRemap.routes"):
         remap.pullback([jnp.ones(3)] * 4)

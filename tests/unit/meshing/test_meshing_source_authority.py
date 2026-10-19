@@ -1,12 +1,14 @@
-"""Reject self-certified native closures with foreign original authorities."""
+"""Reject self-certified native closures with foreign source owners."""
 
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
+from collections.abc import Mapping
+from copy import copy
+from fractions import Fraction
 from pathlib import Path
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -14,36 +16,70 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
+from phydrax._frozendict import frozendict
 from phydrax._meshcore import meshcore_available
 from phydrax._trainable import ArrayRole, resolve_array_roles
 from phydrax.discretization import CellGeometrySpec, ExactPlcCellGeometrySource
+from phydrax.discretization._axis import UniformAxisSpec
+from phydrax.discretization._cell_geometry import cell_geometry_preparation_query_upper
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._periodic_cell import PeriodicCell
 from phydrax.discretization._reference_cell import reference_cell_topology
-from phydrax.geometry._mesh_certificates import PiecewiseLinearDomain, SourceBoundaryQuery
+from phydrax.discretization._tensor_support import PreparedTensorGrid
+from phydrax.discretization._topology import EntitySet, OrientedIncidence
+from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
 from phydrax.geometry._meshing_domain import (
-    _PhysicalCurveMap,
     MeshingDomain,
-    MeshingDomainBoundarySource,
+    PhysicalCurveMap,
 )
-from phydrax.lifecycle._meshing_source_families import native_family_audit_policy
+from phydrax.geometry._source_boundary_records import SourceBoundaryQuery
+from phydrax.geometry.simplicial._regions import PlanarMeshRegion
+from phydrax.geometry.surface._model import SurfaceRealization
 from phydrax.lifecycle._meshing_sources import (
+    admit_meshing_source_model,
+    MeshingSourceClosure,
+    native_family_audit_policy,
     read_meshing_source_closure,
+    source_content_equal,
     validate_meshing_source_closure,
     write_meshing_source_closure,
 )
-from phydrax.meshing._assembly import MeshPart
 from phydrax.meshing._contracts import VolumeMeshingSpec
+from phydrax.meshing._mesh_part import MeshPart
+from phydrax.meshing._periodic import PeriodicPointOrbits
 from phydrax.meshing._result import CellMeshingResult
+from phydrax.meshing._surface_envelope import wrap_surface_envelope
+from phydrax.meshing._tetra_metric import (
+    MetricOptimizerEvidence,
+    MetricRemeshingEvidence,
+    MetricRemeshingStatus,
+)
 from phydrax.meshing._trace import MeshingStageKind
 from phydrax.meshing._volume_generation import declared_plc_domain
 from phydrax.meshing.providers._native_options import NativeMeshingOptions
+from phydrax.meshing.providers._native_periodic import NativePeriodicSource
 from phydrax.meshing.providers._native_publication import (
     NativeCertificationRequest,
+    NativePublicationExecution,
+    NativePublicationOrganization,
     publish_native_result,
 )
+from phydrax.meshing.providers._native_route_policy import NativePublicationPolicy
 from phydrax.meshing.providers._native_sources import (
     NativeLayerCoreSource,
+    NativePlanarSource,
     NativePlcSource,
+    NativePolyhedralSource,
+    NativeSurfaceEnvelopeSource,
 )
+from phydrax.units._dimension import DimensionSignature
+from phydrax.units._unit import UnitDefinition
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.envelope_meshing import envelope_policy, envelope_sheet
+from tests._support.forced_devices import run_on_forced_devices
+from tests._support.native_family_generation import native_family_generation
+from tests._support.source_authority import _cube_domain, _cube_query
 
 
 if TYPE_CHECKING:
@@ -68,7 +104,7 @@ def _closure(
     report = result.certification
     if report is None:
         raise AssertionError(
-            "An actual native publication must retain its positive source theorem."
+            "fixture.certification must retain positive source evidence; got None"
         )
     return {
         "certification_inputs": report.request,
@@ -92,7 +128,7 @@ def _self_certified_carrier(
 ) -> CellMeshingResult:
     report = original.certification
     if report is None:
-        raise AssertionError("The actual original carrier must be certified.")
+        raise AssertionError("fixture.carrier.certification must exist; got None")
     request = report.request
     provenance = json.loads(original.provenance.content_json)
     assert provenance["kind"] == "mapping"
@@ -107,39 +143,47 @@ def _self_certified_carrier(
         if stage.stage
         not in (MeshingStageKind.GEOMETRY_AUDIT, MeshingStageKind.CERTIFICATION)
     )
-    result = publish_native_result(
-        original.mesh,
-        original.coordinate_contract,
-        original.compliance,
-        construction,
-        original.provider,
-        values,
-        NativeCertificationRequest(
-            request.schedule,
-            source.source_id,
-            source.source_revision,
-            specification.limits,
-            domain=domain,
-            cell_regions=None
-            if request.cell_regions is None
-            else np.asarray(request.cell_regions),
-            fidelity_source=query,
-            fidelity_tolerance=request.fidelity_tolerance,
-            junction_vertices=request.junction_vertices,
-            scoped_fidelity=request.scoped_fidelity,
-        ),
-        audit_policy=native_family_audit_policy(source, specification, original.mesh),
-        derivative_mode=original.derivative_mode,
-        enforced_limits=original.runtime.enforced_limits,
-        unenforced_limits=original.runtime.unenforced_limits,
-        geometry=geometry,
-        boundary=original.boundary,
-        patches=original.patches,
-        zones=original.zones,
-        labels=original.labels,
-        attributes=original.attributes,
-        associations=original.associations,
-    )
+    from tests._support.coordinate_references import native_meshing_request
+
+    with native_meshing_request(specification.limits) as (scope, _, workspace):
+        result = publish_native_result(
+            original.mesh,
+            original.coordinate_contract,
+            original.compliance,
+            construction,
+            original.provider,
+            values,
+            NativeCertificationRequest(
+                request.schedule,
+                source.source_id,
+                source.source_revision,
+                specification.limits,
+                domain=domain,
+                cell_regions=None
+                if request.cell_regions is None
+                else np.asarray(request.cell_regions),
+                fidelity_source=query,
+                fidelity_tolerance=request.fidelity_tolerance,
+                junction_vertices=request.junction_vertices,
+                scoped_fidelity=request.scoped_fidelity,
+            ),
+            policy=NativePublicationPolicy(
+                native_family_audit_policy(source, specification, original.mesh),
+                original.derivative_mode,
+                original.runtime.enforced_limits,
+                original.runtime.unenforced_limits,
+            ),
+            organization=NativePublicationOrganization(
+                boundary=original.boundary,
+                patches=original.patches,
+                zones=original.zones,
+                labels=original.labels,
+                attributes=original.attributes,
+                associations=original.associations,
+            ),
+            execution=NativePublicationExecution(scope, workspace, None, None),
+            geometry=geometry,
+        )
     assert (
         result.audit.passed
         and result.certification is not None
@@ -152,9 +196,8 @@ def _self_certified_carrier(
 def plc_generation() -> tuple[
     CellMeshingResult, NativePlcSource, VolumeMeshingSpec, NativeMeshingOptions
 ]:
-    from tests.unit.meshing.test_meshing_restart import _native_family_generation
 
-    part, source, specification, options = _native_family_generation("plc")
+    part, source, specification, options = native_family_generation("plc")
     assert isinstance(part.carrier, CellMeshingResult)
     assert isinstance(source, NativePlcSource) and isinstance(
         specification, VolumeMeshingSpec
@@ -167,7 +210,7 @@ def plc_generation() -> tuple[
 
 
 def _foreign_plc_source(
-    source: ExactPlcCellGeometrySource, change: str
+    source: ExactPlcCellGeometrySource, change: str, *, budget: CoordinateEnclosureBudget
 ) -> ExactPlcCellGeometrySource:
     points, triangles, segments = (
         np.asarray(source.source_points),
@@ -215,7 +258,9 @@ def _foreign_plc_source(
         case "segment-bounds":
             segment_bounds = segment_bounds + 0.01
         case _:
-            raise AssertionError(f"Unknown original bank change {change!r}.")
+            raise AssertionError(
+                f"fixture.change must name a source bank mutation; got {change!r}"
+            )
     return ExactPlcCellGeometrySource(
         points,
         triangles,
@@ -231,6 +276,7 @@ def _foreign_plc_source(
         source_segment_bounds=segment_bounds,
         maximum_work=source.maximum_work,
         maximum_bits=source.maximum_bits,
+        budget=budget,
     )
 
 
@@ -258,9 +304,18 @@ def test_archive_refuses_self_certified_foreign_plc_source(
     original, source, specification, options = plc_generation
     exact = original.geometry.exact_source
     assert isinstance(exact, ExactPlcCellGeometrySource)
-    altered = _foreign_plc_source(exact, change)
+    with coordinate_reference_budget() as budget:
+        altered = _foreign_plc_source(exact, change, budget=budget)
     geometry = CellGeometrySpec.plc(original.mesh, altered)
-    assert geometry.source_coordinates() == original.geometry.source_coordinates()
+    with coordinate_reference_budget(
+        queries_upper=(
+            cell_geometry_preparation_query_upper(geometry)
+            + cell_geometry_preparation_query_upper(original.geometry)
+        ),
+    ) as budget:
+        assert geometry.source_coordinates(
+            budget=budget
+        ) == original.geometry.source_coordinates(budget=budget)
     assert original.certification is not None and isinstance(
         original.certification.request.domain, PiecewiseLinearDomain
     )
@@ -273,108 +328,18 @@ def test_archive_refuses_self_certified_foreign_plc_source(
         original.certification.request.domain,
         None,
     )
+    expected_refusal = (
+        r"ExactPlcCellGeometrySource\.domain_source_id must bind the declared revision, points, and facets; got a mismatched domain binding"
+        if change == "points"
+        else r"source_closure\.geometry\.exact_source|exact PLC source does not bind"
+    )
     with pytest.raises(
-        ValueError, match="Registered exact PLC geometry|exact PLC source does not bind"
+        ValueError,
+        match=expected_refusal,
     ):
         write_meshing_source_closure(
             tmp_path / "foreign-plc", _closure(forged, source, specification, options)
         )
-
-
-def _cube_domain(
-    *, parameter_scale: float = 1.0, source_revision: str = "authored-box-planes"
-) -> MeshingDomain:
-    topology = reference_cell_topology("hexahedron")
-    points = np.asarray(topology.vertices, dtype=np.float64)
-    edges = topology.entities[1]
-    lookup = {tuple(sorted(edge)): index for index, edge in enumerate(edges)}
-    curve_endpoints: dict[int, tuple[int, int]] = {}
-    patches = []
-    for face_index, face in enumerate(topology.entities[2]):
-        scale = parameter_scale if face_index == 1 else 1.0
-        uv = np.asarray(
-            ((0.0, 0.0), (1.0 / scale, 0.0), (1.0 / scale, 1.0), (0.0, 1.0)),
-            dtype=np.float64,
-        )
-        uses = []
-        for position, start in enumerate(face):
-            end = face[(position + 1) % 4]
-            edge = lookup[tuple(sorted((start, end)))]
-            owner = curve_endpoints.setdefault(edge, (start, end))
-            forward = owner == (start, end)
-            first, last = (
-                (position, (position + 1) % 4)
-                if forward
-                else ((position + 1) % 4, position)
-            )
-            curve = phx.geometry.LineCurve(uv[first], uv[last] - uv[first])
-            uses.append(
-                phx.geometry.PatchCurveUse(
-                    edge, curve, 0.0 if forward else 1.0, 1.0 if forward else 0.0
-                )
-            )
-        plane = phx.geometry.PlanePatch(
-            points[face[0]],
-            scale * (points[face[1]] - points[face[0]]),
-            points[face[3]] - points[face[0]],
-        )
-        patches.append(phx.geometry.MeshingSurfacePatch(plane, (tuple(uses),)))
-    return MeshingDomain(
-        tuple(patches),
-        tuple(
-            phx.geometry.MeshingDomainCurve(*curve_endpoints[index])
-            for index in range(len(edges))
-        ),
-        8,
-        source_id="authored-layer-box",
-        source_revision=source_revision,
-        regions=(
-            phx.geometry.MeshingDomainRegion(
-                "fluid", tuple((index, 1) for index in range(6))
-            ),
-        ),
-    )
-
-
-def _cube_query(
-    domain: MeshingDomain, *, parameter_scale: float = 1.0
-) -> MeshingDomainBoundarySource:
-    topology = reference_cell_topology("hexahedron")
-    points = np.asarray(topology.vertices, dtype=np.float64)
-    cells = np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64)
-    boundary = np.asarray(((0, 1), (1, 2), (2, 3), (3, 0)), dtype=np.int64)
-    chains = []
-    for patch, face in enumerate(topology.entities[2]):
-        scale = parameter_scale if patch == 1 else 1.0
-        charts = np.asarray(
-            ((0.0, 0.0), (1.0 / scale, 0.0), (1.0 / scale, 1.0), (0.0, 1.0)),
-            dtype=np.float64,
-        )
-        provenance = []
-        for index, use in enumerate(domain.patches[patch].loops[0]):
-            if not isinstance(use, phx.geometry.PatchCurveUse):
-                raise AssertionError(
-                    "The authored plane box has four exact line coedges."
-                )
-            provenance.append((0, index, use.first, use.last))
-        count = charts.shape[0]
-        chains.append(
-            (
-                patch,
-                charts,
-                np.asarray(points[list(face)]),
-                cells,
-                boundary,
-                np.asarray(provenance, dtype=np.float64),
-                np.zeros((count,), dtype=np.bool_),
-                np.empty((0,), dtype=np.int64),
-                np.empty((0, 2), dtype=np.int64),
-                np.empty((0, 2), dtype=np.int64),
-            )
-        )
-    return MeshingDomainBoundarySource(
-        domain, tuple(range(6)), resolution=4, chart_triangulations=tuple(chains)
-    )
 
 
 @pytest.fixture(scope="module", params=("represented", "parametric"))
@@ -407,7 +372,7 @@ def layer_generation(
         physical.entity_set_id(2),
         physical.scope_indices(2),
     )
-    # Closed inward layers retain all six original boundary faces; every core
+    # Closed inward layers retain all six source boundary faces; every core
     # face is an explicitly shared generated cap, not an invented source face.
     triangles = np.asarray(
         tuple(
@@ -451,7 +416,9 @@ def layer_generation(
         wall, control, wall_association=association, source_domain=domain
     )
     if layers.cap is None:
-        raise AssertionError("Closed inward layers must retain their actual cap.")
+        raise AssertionError(
+            "fixture.layers.cap must exist for closed inward layers; got None"
+        )
     cap_rows = np.concatenate(
         [np.asarray(block.vertices, dtype=np.int64) for block in layers.cap.blocks]
     )
@@ -564,7 +531,7 @@ def test_archive_refuses_self_certified_foreign_layer_authority(
     forged = _self_certified_carrier(
         original, source, specification, options, original.geometry, domain, query
     )
-    with pytest.raises(ValueError, match="Layer certificate"):
+    with pytest.raises(ValueError, match=r"source_closure\.report\.request\.source"):
         write_meshing_source_closure(
             tmp_path / "foreign-layer", _closure(forged, source, specification, options)
         )
@@ -613,26 +580,16 @@ def test_original_curved_brep_domain_archive_fresh_process(
     )
     assert type(restored.curve_atlas.mapping) is type(domain.curve_atlas.mapping)
     assert type(restored.brep_authority) is type(domain.brep_authority)
-    code = """
-import json
-import sys
-from phydrax.geometry._meshing_domain import MeshingDomain
-from phydrax.geometry.brep._model import BRepModel
-from phydrax.lifecycle._meshing_sources import read_meshing_source_closure
-domain = read_meshing_source_closure(sys.argv[1], expected_content_id=sys.argv[2])
-if type(domain) is not MeshingDomain or type(domain.brep_authority) is not BRepModel:
-    raise TypeError("Fresh source restoration lost its exact domain or B-Rep owner.")
-print(json.dumps([domain.source_id, domain.source_revision, domain.domain_id,
-                  domain.authority_id, type(domain.curve_atlas.mapping).__name__,
-                  domain.brep_authority.model_id]))
-"""
-    completed = subprocess.run(
-        [sys.executable, "-c", code, str(receipt.path), receipt.content_id],
-        check=True,
-        capture_output=True,
-        text=True,
+    completed = run_on_forced_devices(
+        "tests._support.distributed_meshing.cold_lifecycle",
+        "curved_brep_domain",
+        (str(receipt.path), receipt.content_id),
+        devices=1,
+        env={},
     )
-    assert json.loads(completed.stdout) == [
+    assert completed["domain_type_exact"]
+    assert completed["brep_type_exact"]
+    assert completed["identity"] == [
         domain.source_id,
         domain.source_revision,
         domain.domain_id,
@@ -650,7 +607,9 @@ def test_original_curved_brep_geometry_domain_archive(
 
     model = original_curved_brep_domain.brep_authority
     if type(model) is not BRepModel or model.geometry is None:
-        raise AssertionError("Original source requires its full B-Rep geometry owner.")
+        raise AssertionError(
+            "fixture.brep_model.geometry must retain B-Rep geometry; got missing or incompatible owner"
+        )
     domain = MeshingDomain.from_brep_geometry(
         model.geometry,
         model.patches,
@@ -688,9 +647,9 @@ def test_original_curved_brep_domain_archive_refuses_wrong_domain(
             )
         case "edges":
             mapping = domain.curve_atlas.mapping
-            if type(mapping) is not _PhysicalCurveMap:
+            if type(mapping) is not PhysicalCurveMap:
                 raise AssertionError(
-                    "Original B-Rep edges must retain their physical source owner."
+                    "fixture.edge.mapping must retain its physical source map; got incompatible mapping"
                 )
             changed = eqx.tree_at(
                 lambda value: value.curve_atlas.mapping,
@@ -727,8 +686,10 @@ def test_original_curved_brep_domain_archive_refuses_wrong_domain(
                 is_leaf=lambda value: value is None,
             )
         case _:
-            raise AssertionError(f"Unknown authored domain change {change!r}.")
-    with pytest.raises(ValueError, match="freshly certified native source authority"):
+            raise AssertionError(
+                f"fixture.change must name a domain mutation; got {change!r}"
+            )
+    with pytest.raises(ValueError, match="stored_fields"):
         write_meshing_source_closure(tmp_path / f"wrong-domain-{change}", changed)
 
 
@@ -757,27 +718,26 @@ def test_current_native_recipe_requires_exact_registered_type_and_fieldset(
         recipe["items"].append({"kind": "literal", "value": None})
     else:
         recipe["type"] = "phydrax.meshing:UnregisteredNativeSource"
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError,
+        match="Unknown artifact value ID"
+        if change == "unknown-type"
+        else r"recipe\.items",
+    ):
         validate_model_structure_recipe(recipe)
 
 
 @pytest.mark.parametrize(
-    "field,value",
+    "owner,field,value",
     (
-        ("optimizer_method_id", "foreign-policy"),
-        ("optimizer_evaluations", -1),
-        ("native_work_units", 4),
+        ("optimizer", "method_id", "foreign-policy"),
+        ("optimizer", "evaluations", -1),
+        ("evidence", "native_work_units", 4),
     ),
 )
 def test_current_metric_evidence_archive_refuses_changed_policy_counts_and_work(
-    field: str, value: object
+    owner: Literal["optimizer", "evidence"], field: str, value: object
 ) -> None:
-    from copy import copy
-
-    from phydrax.meshing._tetra_metric import (
-        MetricRemeshingEvidence,
-        MetricRemeshingStatus,
-    )
 
     evidence = MetricRemeshingEvidence(
         MetricRemeshingStatus.COMPLETE,
@@ -787,12 +747,20 @@ def test_current_metric_evidence_archive_refuses_changed_policy_counts_and_work(
         work_units=3,
         lengths=np.asarray([1.0]),
         quality=np.asarray([1.0]),
-        optimizer_method_id="actual-policy",
+        optimizer=MetricOptimizerEvidence(method_id="bounded-policy"),
     )
     validate_meshing_source_closure(evidence)
     corrupted = copy(evidence)
-    object.__setattr__(corrupted, field, value)
-    with pytest.raises(ValueError):
+    match owner:
+        case "optimizer":
+            optimizer = copy(corrupted.optimizer)
+            object.__setattr__(optimizer, field, value)
+            object.__setattr__(corrupted, "optimizer", optimizer)
+        case "evidence":
+            object.__setattr__(corrupted, field, value)
+    with pytest.raises(
+        ValueError, match="MetricRemeshingEvidence|MetricOptimizerEvidence"
+    ):
         validate_meshing_source_closure(corrupted)
 
 
@@ -890,7 +858,7 @@ def test_coefficient_identity_bank_refuses_incomplete_or_foreign_owner_rows(
         rows = ((rows[0][0], rows[0][1], "foreign-scientific-coefficient"), *rows[1:])
     else:
         identity = "foreign-field-space"
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"MeshingCoefficientIdentityBank\.rows"):
         MeshingCoefficientIdentityBank(identity, rows).require_field_space(space)
 
 
@@ -923,3 +891,371 @@ def test_coefficient_identity_codec_refuses_noncanonical_or_unbounded_payload(
         ArrayArchiveCorruptionError if change == "deep-json" else ValueError
     ):
         _decode_coefficient_identity_bank(payload)
+
+
+class _ScaledMarker(phx.AbstractArrayModel):
+    weight: jax.Array
+    in_size: int = eqx.field(static=True)
+    out_size: str = eqx.field(static=True)
+
+    def __init__(self, weight: jax.Array) -> None:
+        self.weight = weight
+        self.in_size = weight.size
+        self.out_size = "scalar"
+
+    def __call__(self, x: jax.Array, /, *, key: jax.Array | None = None) -> jax.Array:
+        del key
+        return self.weight @ x
+
+
+def test_caller_model_closes_only_after_explicit_admission(tmp_path: Path) -> None:
+    model = _ScaledMarker(jax.numpy.asarray([0.5, -1.25], dtype=jax.numpy.float64))
+    with pytest.raises(TypeError, match="source"):
+        write_meshing_source_closure(tmp_path / "unadmitted", model)
+    admit_meshing_source_model("tests.meshing:ScaledMarker", _ScaledMarker)
+    receipt = write_meshing_source_closure(tmp_path / "admitted", model)
+    restored = read_meshing_source_closure(
+        tmp_path / "admitted", expected_content_id=receipt.content_id
+    )
+    assert type(restored) is _ScaledMarker and restored is not model
+    np.testing.assert_array_equal(restored.weight, model.weight)
+
+
+@pytest.fixture(scope="module")
+def envelope_source_record() -> NativeSurfaceEnvelopeSource:
+    return NativeSurfaceEnvelopeSource(
+        wrap_surface_envelope(envelope_sheet(), envelope_policy()), "material"
+    )
+
+
+@pytest.fixture(
+    scope="module", params=("planar", "plc", "polyhedral", "periodic", "envelope")
+)
+def native_source_record(
+    request: pytest.FixtureRequest,
+) -> (
+    NativePlanarSource
+    | NativePlcSource
+    | NativePolyhedralSource
+    | NativePeriodicSource
+    | NativeSurfaceEnvelopeSource
+):
+    match request.param:
+        case "planar":
+            region = PlanarMeshRegion(
+                np.asarray(
+                    ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), dtype=np.float64
+                ),
+                ((0, 1, 2, 3),),
+                feature_id="stored-planar",
+            )
+            return NativePlanarSource(region, "r1")
+        case "plc" | "polyhedral":
+            _, plc, _, _ = request.getfixturevalue("plc_generation")
+            if request.param == "plc":
+                return plc
+            return NativePolyhedralSource(
+                plc.complex,
+                "stored-power",
+                "r1",
+                sites=np.asarray(((0.25, 0.25, 0.25),), dtype=np.float64),
+            )
+        case "periodic":
+            cell = PeriodicCell(np.eye(2, dtype=np.float64))
+            points = PeriodicPointOrbits(
+                np.asarray(((0.25, 0.25), (0.75, 0.75)), dtype=np.float64), cell
+            )
+            return NativePeriodicSource(points, "stored-periodic", "r1")
+        case "envelope":
+            return request.getfixturevalue("envelope_source_record")
+        case _:
+            raise AssertionError(
+                f"fixture.request.param must name a native source; got {request.param!r}"
+            )
+
+
+def test_native_source_record_archive_round_trip_preserves_binding(
+    tmp_path: Path,
+    native_source_record: (
+        NativePlanarSource
+        | NativePlcSource
+        | NativePolyhedralSource
+        | NativePeriodicSource
+        | NativeSurfaceEnvelopeSource
+    ),
+) -> None:
+    receipt = write_meshing_source_closure(
+        tmp_path / "source-record", native_source_record
+    )
+    restored = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    assert type(restored) is type(native_source_record)
+    assert restored.binding_id == native_source_record.binding_id
+    assert source_content_equal(
+        restored, native_source_record, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS
+    )
+
+
+def test_native_source_record_archive_refuses_stale_binding(
+    tmp_path: Path,
+    native_source_record: (
+        NativePlanarSource
+        | NativePlcSource
+        | NativePolyhedralSource
+        | NativePeriodicSource
+        | NativeSurfaceEnvelopeSource
+    ),
+) -> None:
+    corrupted = copy(native_source_record)
+    object.__setattr__(corrupted, "binding_id", "foreign-stored-binding")
+    expected_refusal = (
+        r"NativePeriodicSource\.stored_fields must match the periodic source binding; got changed regions or identity"
+        if isinstance(native_source_record, NativePeriodicSource)
+        else "binding_id"
+    )
+    with pytest.raises(ValueError, match=expected_refusal):
+        write_meshing_source_closure(tmp_path / "source-record-invalid", corrupted)
+
+
+def test_layer_source_record_archive_round_trip_preserves_binding(
+    tmp_path: Path,
+    layer_generation: tuple[
+        CellMeshingResult, NativeLayerCoreSource, VolumeMeshingSpec, NativeMeshingOptions
+    ],
+) -> None:
+    _, source, _, _ = layer_generation
+    receipt = write_meshing_source_closure(tmp_path / "layer-source-record", source)
+    restored = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    assert type(restored) is NativeLayerCoreSource
+    assert restored.binding_id == source.binding_id
+    assert source_content_equal(restored, source, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS)
+
+
+def test_layer_source_record_archive_refuses_stale_binding(
+    tmp_path: Path,
+    layer_generation: tuple[
+        CellMeshingResult, NativeLayerCoreSource, VolumeMeshingSpec, NativeMeshingOptions
+    ],
+) -> None:
+    _, source, _, _ = layer_generation
+    corrupted = copy(source)
+    object.__setattr__(corrupted, "binding_id", "foreign-layer-binding")
+    with pytest.raises(ValueError, match="binding_id"):
+        write_meshing_source_closure(tmp_path / "layer-source-record-invalid", corrupted)
+
+
+@pytest.mark.parametrize("mapping_kind", ("mapping", "frozendict", "mappingproxy"))
+def test_typed_source_closure_preserves_persisted_roles_and_content(
+    tmp_path: Path,
+    plc_generation: tuple[
+        CellMeshingResult, NativePlcSource, VolumeMeshingSpec, NativeMeshingOptions
+    ],
+    mapping_kind: str,
+) -> None:
+    result, source, specification, options = plc_generation
+    values = _closure(result, source, specification, options)
+    values["source"] = None
+    records: Mapping[str, object]
+    match mapping_kind:
+        case "mapping":
+            records = values
+        case "frozendict":
+            records = frozendict(values)
+        case "mappingproxy":
+            records = MappingProxyType(values)
+        case _:
+            raise AssertionError(
+                f"fixture.mapping_kind must name a closure mapping; got {mapping_kind!r}"
+            )
+    closure = MeshingSourceClosure.from_records(records)
+    assert set(closure) == set(records)
+    assert "source" in closure and closure.source is None
+    assert type(closure.to_records()) is type(records)
+    raw_receipt = write_meshing_source_closure(tmp_path / "role-map", records)
+    typed_receipt = write_meshing_source_closure(tmp_path / "typed-roles", closure)
+    assert typed_receipt.content_id == raw_receipt.content_id
+    restored = read_meshing_source_closure(
+        typed_receipt.path, expected_content_id=typed_receipt.content_id
+    )
+    assert isinstance(restored, MeshingSourceClosure)
+    assert set(restored) == set(records)
+    assert restored.mapping_kind == mapping_kind
+    assert source_content_equal(restored, records, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS)
+
+
+def test_typed_source_closure_keeps_numerical_roles_dynamic() -> None:
+    values = jax.numpy.asarray((0.5, 1.25), dtype=jax.numpy.float64)
+    closure = MeshingSourceClosure(
+        accepted_data={"fields": {"temperature": values}},
+        present_roles=frozenset({"accepted_data"}),
+    )
+    leaves = jax.tree_util.tree_leaves(closure)
+    assert any(value is values for value in leaves)
+    filtered = eqx.filter(closure, eqx.is_array)
+    assert filtered.accepted_data["fields"]["temperature"] is values
+
+
+def test_typed_source_closure_refuses_unknown_roles() -> None:
+    with pytest.raises(ValueError, match=r"source_closure\.roles"):
+        MeshingSourceClosure.from_records({"unknown_producer": object()})
+
+
+def test_typed_source_closure_refuses_omitted_populated_roles() -> None:
+    with pytest.raises(ValueError, match=r"source_closure\.present_roles"):
+        MeshingSourceClosure(
+            accepted_data={"fields": {"temperature": np.ones(2, dtype=np.float64)}},
+            present_roles=frozenset(),
+        )
+
+
+@pytest.fixture(params=("dimension", "unit"))
+def unit_source_record(
+    request: pytest.FixtureRequest,
+) -> tuple[DimensionSignature | UnitDefinition, str]:
+    dimension = DimensionSignature({"length": Fraction(1, 2), "time": -1})
+    match request.param:
+        case "dimension":
+            return dimension, "dimension_id"
+        case "unit":
+            return UnitDefinition(
+                "scaled-root-length-rate", dimension, "reference-system", (2, 5)
+            ), "unit_id"
+        case _:
+            raise AssertionError(
+                f"fixture.request.param must name a unit source; got {request.param!r}"
+            )
+
+
+def test_unit_source_record_archive_round_trip_preserves_rational_identity(
+    tmp_path: Path, unit_source_record: tuple[DimensionSignature | UnitDefinition, str]
+) -> None:
+    value, _ = unit_source_record
+    receipt = write_meshing_source_closure(tmp_path / "unit-record", value)
+    restored = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    assert type(restored) is type(value)
+    assert source_content_equal(restored, value, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS)
+
+
+def test_unit_source_record_archive_refuses_stale_identity(
+    tmp_path: Path, unit_source_record: tuple[DimensionSignature | UnitDefinition, str]
+) -> None:
+    value, field = unit_source_record
+    corrupted = copy(value)
+    object.__setattr__(corrupted, field, "foreign-unit-identity")
+    with pytest.raises(ValueError, match=field):
+        write_meshing_source_closure(tmp_path / "unit-record-invalid", corrupted)
+
+
+def test_surface_realization_source_record_archive_round_trip(
+    tmp_path: Path,
+    envelope_source_record: NativeSurfaceEnvelopeSource,
+) -> None:
+    realization = envelope_source_record.envelope.repaired
+    receipt = write_meshing_source_closure(tmp_path / "surface-realization", realization)
+    restored = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    assert type(restored) is SurfaceRealization
+    assert source_content_equal(
+        restored, realization, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS
+    )
+
+
+def test_surface_realization_source_record_archive_refuses_stale_identity(
+    tmp_path: Path,
+    envelope_source_record: NativeSurfaceEnvelopeSource,
+) -> None:
+    corrupted = copy(envelope_source_record.envelope.repaired)
+    object.__setattr__(corrupted, "realization_id", "foreign-surface-realization")
+    with pytest.raises(ValueError, match="stored_fields"):
+        write_meshing_source_closure(tmp_path / "surface-realization-invalid", corrupted)
+
+
+@pytest.fixture(scope="module")
+def tensor_grid_source_record() -> PreparedTensorGrid:
+    lower = jax.numpy.asarray(0.0, dtype=jax.numpy.float64)
+    upper = jax.numpy.asarray(1.0, dtype=jax.numpy.float64)
+    axis = UniformAxisSpec(3).materialize(lower, upper)
+    return PreparedTensorGrid((axis,), axis_names=("longitudinal",))
+
+
+def test_tensor_grid_source_record_archive_round_trip(
+    tmp_path: Path, tensor_grid_source_record: PreparedTensorGrid
+) -> None:
+    receipt = write_meshing_source_closure(
+        tmp_path / "tensor-grid", tensor_grid_source_record
+    )
+    restored = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    assert type(restored) is PreparedTensorGrid
+    assert source_content_equal(
+        restored, tensor_grid_source_record, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS
+    )
+
+
+def test_tensor_grid_source_record_archive_refuses_changed_points(
+    tmp_path: Path, tensor_grid_source_record: PreparedTensorGrid
+) -> None:
+    corrupted = eqx.tree_at(
+        lambda grid: grid.points,
+        tensor_grid_source_record,
+        tensor_grid_source_record.points
+        + jax.numpy.asarray(0.25, dtype=jax.numpy.float64),
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"source_closure\.primary_entity_layout must retain its materialized tensor grid; got detached TensorEntityLayout",
+    ):
+        write_meshing_source_closure(tmp_path / "tensor-grid-invalid", corrupted)
+
+
+@pytest.fixture(scope="module")
+def incidence_source_record(
+    plc_generation: tuple[
+        CellMeshingResult, NativePlcSource, VolumeMeshingSpec, NativeMeshingOptions
+    ],
+) -> tuple[OrientedIncidence, EntitySet, EntitySet]:
+    result, _, _, _ = plc_generation
+    incidence = result.mesh.topology.incidences[0]
+    return (
+        incidence,
+        result.mesh.entity_set(incidence.degree - 1),
+        result.mesh.entity_set(incidence.degree),
+    )
+
+
+def test_incidence_source_archive_round_trip_retains_entity_bindings(
+    tmp_path: Path,
+    incidence_source_record: tuple[OrientedIncidence, EntitySet, EntitySet],
+) -> None:
+    receipt = write_meshing_source_closure(
+        tmp_path / "incidence-bindings", incidence_source_record
+    )
+    restored = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    assert source_content_equal(
+        restored, incidence_source_record, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS
+    )
+    incidence, lower, upper = restored
+    assert incidence.lower_entity_set_id == lower.entity_set_id
+    assert incidence.upper_entity_set_id == upper.entity_set_id
+
+
+def test_incidence_source_archive_refuses_foreign_entity_binding(
+    tmp_path: Path,
+    incidence_source_record: tuple[OrientedIncidence, EntitySet, EntitySet],
+) -> None:
+    incidence, lower, upper = incidence_source_record
+    corrupted = copy(incidence)
+    object.__setattr__(corrupted, "lower_entity_set_id", "foreign-lower-entities")
+    with pytest.raises(ValueError, match=r"OrientedIncidence\.entity_sets"):
+        write_meshing_source_closure(
+            tmp_path / "incidence-invalid", (corrupted, lower, upper)
+        )

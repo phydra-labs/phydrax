@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from ._intersection import PlaneSurfaceSection
 
 
-def _surface_connectivity(mesh: CellMesh, /) -> PolygonalConnectivity:
+def surface_connectivity(mesh: CellMesh, /) -> PolygonalConnectivity:
     connectivity = mesh.connectivity
     # Surface meshes are validated as two-dimensional, which builds polygonal connectivity.
     if not (isinstance(connectivity, PolygonalConnectivity)):
@@ -49,7 +49,7 @@ def _surface_connectivity(mesh: CellMesh, /) -> PolygonalConnectivity:
 
 
 def _triangle_faces(mesh: CellMesh, /) -> np.ndarray:
-    connectivity = _surface_connectivity(mesh)
+    connectivity = surface_connectivity(mesh)
     faces = np.asarray(connectivity.cell_vertices, dtype=np.int32)
     kinds = np.asarray(connectivity.cell_kinds, dtype=np.int32)
     if faces.ndim != 2 or kinds.shape != (faces.shape[0],) or np.any(kinds != 3):
@@ -140,7 +140,7 @@ def _orientation_solution(
     return signs, components, records
 
 
-def _repair_orientations(
+def repair_orientations(
     points: np.ndarray,
     faces: np.ndarray,
     /,
@@ -456,7 +456,7 @@ class _CellMeshTriangleMap(AbstractBoundaryMap):
         return 3
 
     def map(self, chart_indices: Array, reference: Array, /) -> Array:
-        faces = _surface_connectivity(self.mesh).cell_vertices[chart_indices, :3]
+        faces = surface_connectivity(self.mesh).cell_vertices[chart_indices, :3]
         triangles = self.mesh.coordinates[faces]
         first = reference[..., :1]
         second = reference[..., 1:2]
@@ -467,7 +467,7 @@ class _CellMeshTriangleMap(AbstractBoundaryMap):
         )
 
     def jacobian(self, chart_indices: Array, reference: Array, /) -> Array:
-        faces = _surface_connectivity(self.mesh).cell_vertices[chart_indices, :3]
+        faces = surface_connectivity(self.mesh).cell_vertices[chart_indices, :3]
         triangles = self.mesh.coordinates[faces]
         doubled_area = jnp.linalg.norm(
             jnp.cross(
@@ -575,7 +575,7 @@ class SurfaceModel(StrictModule, NonTrainableState):
         signs, _, _ = _orientation_solution(faces)
         repair = None
         if repair_orientation:
-            faces, repair = _repair_orientations(
+            faces, repair = repair_orientations(
                 points,
                 faces,
                 orient_closed_outward=bool(orient_closed_outward),
@@ -771,6 +771,18 @@ class SurfaceRealization(StrictModule, NonTrainableState):
             cell_entity_set_id=cell_entities.entity_set_id,
         )
         return cls(model, mesh, policy, report, certificate, chart_mapping)
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[SurfaceRealization], value: SurfaceRealization, /
+    ) -> SurfaceRealization:
+        """Revalidate a stored realization through its surface audit."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"{cls.__name__}.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        return cls._prepare(value.model, value.mesh, value.policy)
 
     @property
     def metadata(self) -> SurfaceMetadata:

@@ -10,7 +10,8 @@ from enum import Enum
 
 from ..._differentiation import DerivativeContract
 from ..._fingerprint import canonical_fingerprint
-from ...typing import checked
+from ..._validation import nonnegative_finite_float
+from ...typing import checked, parse
 
 
 class DerivativeTier(str, Enum):
@@ -60,11 +61,7 @@ class DesignQualificationEvidence:
     evidence_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        tier = (
-            self.tier
-            if isinstance(self.tier, DerivativeTier)
-            else DerivativeTier(self.tier)
-        )
+        tier = parse(self.tier, DerivativeTier, "DesignQualificationEvidence.tier")
         object.__setattr__(self, "tier", tier)
         identifiers = (
             self.analysis_plan_id,
@@ -73,7 +70,7 @@ class DesignQualificationEvidence:
         )
         if any(not isinstance(value, str) or not value for value in identifiers):
             raise ValueError(
-                "Analysis-plan, numeric-revision, and execution-plan IDs must be non-empty strings."
+                f"DesignQualificationEvidence.plan_ids must contain nonempty strings; got {identifiers}"
             )
 
         primal_residual = _nonnegative(self.primal_residual, "primal_residual")
@@ -90,16 +87,22 @@ class DesignQualificationEvidence:
         if self.taylor_slope is not None:
             slope = float(self.taylor_slope)
             if not math.isfinite(slope):
-                raise ValueError("taylor_slope must be finite.")
+                raise ValueError(
+                    f"DesignQualificationEvidence.taylor_slope must be finite; got {slope}"
+                )
             object.__setattr__(self, "taylor_slope", slope)
 
         margins = tuple(float(value) for value in self.event_margins)
         if any(not math.isfinite(value) for value in margins):
-            raise ValueError("event_margins must be finite.")
+            raise ValueError(
+                f"DesignQualificationEvidence.event_margins must be finite; got {margins}"
+            )
         event_ids = _identifiers(self.event_ids, "event_ids")
         diagnostics = _identifiers(self.diagnostic_ids, "diagnostic_ids")
         if margins and len(margins) != len(event_ids):
-            raise ValueError("event_margins and event_ids must have equal lengths.")
+            raise ValueError(
+                f"DesignQualificationEvidence.event_margins must align with event_ids; got {len(margins)} and {len(event_ids)}"
+            )
         object.__setattr__(self, "event_margins", margins)
         object.__setattr__(self, "event_ids", event_ids)
         object.__setattr__(self, "diagnostic_ids", diagnostics)
@@ -123,10 +126,14 @@ class DesignQualificationEvidence:
                 transition_id,
             )
         ):
-            raise ValueError("Q0 is value-only evidence.")
+            raise ValueError(
+                "DesignQualificationEvidence.Q0 must contain value-only evidence; got derivative or transition fields"
+            )
         if tier is DerivativeTier.Q6:
             if transfer_id is None or transition_id is None:
-                raise ValueError("Q6 requires transfer_plan_id and transition_event_id.")
+                raise ValueError(
+                    "DesignQualificationEvidence.Q6 must identify transfer and transition plans; got missing plan ID"
+                )
             if any(
                 value is not None
                 for value in (
@@ -136,9 +143,13 @@ class DesignQualificationEvidence:
                     self.shape_error,
                 )
             ):
-                raise ValueError("Q6 records a transition, not derivative evidence.")
+                raise ValueError(
+                    "DesignQualificationEvidence.Q6 must contain transition evidence; got derivative fields"
+                )
         elif transfer_id is not None or transition_id is not None:
-            raise ValueError("Transition identifiers are reserved for Q6 evidence.")
+            raise ValueError(
+                f"DesignQualificationEvidence.transition_ids must accompany Q6 evidence; got {tier.value}"
+            )
 
         payload = {
             "kind": "design-qualification-evidence",
@@ -163,7 +174,7 @@ class DesignQualificationEvidence:
 
     @checked
     def coarse_contract_allows(self, contract: DerivativeContract, /) -> bool:
-        """Check only the necessary coarse capability; this never replaces evidence."""
+        """Return whether the declared coarse derivative capability is present."""
         if not self.tier.is_derivative:
             return True
         return bool(contract.supported_surfaces)
@@ -172,18 +183,19 @@ class DesignQualificationEvidence:
 def _nonnegative(value: float | None, name: str, /) -> float | None:
     if value is None:
         return None
-    numeric = float(value)
-    if not math.isfinite(numeric) or numeric < 0.0:
-        raise ValueError(f"{name} must be finite and nonnegative.")
-    return numeric
+    return nonnegative_finite_float(value, f"DesignQualificationEvidence.{name}")
 
 
 def _identifiers(values: tuple[str, ...], name: str, /) -> tuple[str, ...]:
     identifiers = tuple(values)
     if any(not isinstance(value, str) or not value for value in identifiers):
-        raise ValueError(f"{name} must contain non-empty strings.")
+        raise ValueError(
+            f"DesignQualificationEvidence.identifiers must contain nonempty strings; got {name}={identifiers}"
+        )
     if len(set(identifiers)) != len(identifiers):
-        raise ValueError(f"{name} must not contain duplicates.")
+        raise ValueError(
+            f"DesignQualificationEvidence.identifiers must be unique; got {name}={identifiers}"
+        )
     return identifiers
 
 
@@ -191,7 +203,9 @@ def _optional_identifier(value: str | None, name: str, /) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str) or not value:
-        raise ValueError(f"{name} must be a non-empty string or None.")
+        raise ValueError(
+            f"DesignQualificationEvidence.identifier must be a nonempty string or None; got {name}={value!r}"
+        )
     return value
 
 

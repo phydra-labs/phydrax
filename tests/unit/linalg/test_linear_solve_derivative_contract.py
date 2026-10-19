@@ -18,7 +18,7 @@ from phydrax import (
     GradientLevel,
 )
 from phydrax.sparse import EdgeRelation, SparseCoordinateOperator
-from phydrax.sparse._linear import _SparseStoragePlan
+from phydrax.sparse._linear import SparseStoragePlan
 
 
 type DifferentiationMode = Literal["mathematical", "rhs-only", "algorithmic", "none"]
@@ -214,7 +214,7 @@ def test_nonsymmetric_sparse_factor_preconditioned_cotangents_match_dense() -> N
     sources = np.concatenate((diagonal, diagonal[:-1], diagonal[1:]))
     targets = np.concatenate((diagonal, diagonal[1:], diagonal[:-1]))
     relation = EdgeRelation(sources, targets, source_size=size, target_size=size)
-    storage_plan = _SparseStoragePlan(relation)
+    storage_plan = SparseStoragePlan(relation)
     space = la.ArraySpace((size,), dtype=jnp.float64)
     # Upwind advection-diffusion: a nonsymmetric, weakly dominant M-matrix.
     coefficients = jnp.asarray(

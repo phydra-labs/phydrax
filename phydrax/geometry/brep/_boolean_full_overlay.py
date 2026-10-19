@@ -2,11 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Complete native face overlays, regularized material, and Boolean publication.
+"""Construct exhaustive face overlays, regularized material, and Boolean lineage.
 
-Discovery includes all actual source face pairs, not just the operands' visible
-boundaries. The complete source graphs survive until solid ancestry has been
-proved. Construction consumes selected exact cells, while face provenance and
+Discovery includes all source face pairs, not just the operands' visible
+boundaries. The exhaustive source graphs survive until solid ancestry has been
+proved. Construction consumes selected cells, while face provenance and
 open-volume material provenance remain separate scientific relations.
 """
 
@@ -16,45 +16,42 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from itertools import combinations
 from types import MappingProxyType
+from typing import assert_never
 
+import equinox as eqx
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
+from ..._strict import StrictModule
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked
 from .._cad_revision import (
     AssociationCoverageEvidence,
     AssociationGraph,
     OccurrenceCorrespondence,
     OccurrenceCorrespondenceTransaction,
 )
-from ._boolean import (
-    _MaterialSelection,
-    _RegionSelection,
-    _selection_payload,
-    _source_revision,
-    BRepBooleanFailure,
-    BRepBooleanOperation,
-    BRepBooleanPolicy,
-    BRepBooleanResult,
-)
 from ._boolean_arrangement import (
-    _add_root_cut,
-    _Arc,
-    _Arrangement,
-    _boundary_spatial_events,
-    _branch_arc,
-    _build_boundary,
-    _BuiltBoundary,
-    _check_surface_result,
-    _event_vertex,
-    _FaceFragment,
-    _overlap,
-    _periodic_transition,
-    _propagate_branch_cuts,
-    _publish_curved,
-    _reconstruct_region_solids,
-    _reconstruct_solids,
-    _remaining_intersection_policy,
-    _source_arcs,
+    add_root_cut,
+    Arc,
+    Arrangement,
+    boundary_spatial_events,
+    branch_arc,
+    build_boundary,
+    BuiltBoundary,
+    check_surface_result,
+    event_vertex,
+    FaceFragment,
+    FaceOwner,
+    intersect_arc_pair,
+    overlap,
+    periodic_transition,
+    propagate_branch_cuts,
+    publish_curved,
+    reconstruct_region_solids,
+    reconstruct_solids,
+    remaining_intersection_policy,
+    source_arcs,
 )
 from ._boolean_cells import (
     extract_face_arrangement_cells,
@@ -69,29 +66,37 @@ from ._boolean_coincidence import (
     prove_source_ring_pair_coverage,
     prove_surface_correspondence,
 )
+from ._boolean_core import (
+    BRepBooleanFailure,
+    BRepBooleanOperation,
+    BRepBooleanPolicy,
+    BRepBooleanResult,
+    MaterialSelection,
+    RegionSelection,
+    selection_payload,
+    source_revision,
+)
 from ._boolean_material import (
-    _equivalent_cell,
-    _Work,
     classify_face_material_cells,
+    equivalent_cell,
     FaceMaterialClassification,
-    FaceOwner,
     FacePair,
     MaterialOverlapSchedule,
     prove_material_overlaps,
+    Work,
 )
+from ._coordinate_request import coordinate_source_request
 from ._intersection import (
-    _exact_source_lift,
-    _joint_root_parameter_image,
-    _krawczyk,
-    _native_edge_pcurve,
-    _prepare,
-    _same_geometry,
-    _TripleSurfaceSystem,
+    exact_source_lift,
     intersect_surface_regions,
-    intersect_trim_curves,
+    joint_root_parameter_image,
+    native_edge_pcurve,
+    prepare,
+    same_geometry,
     SurfaceIntersectionResult,
     TrimIntersectionRoot,
     TripleSurfaceIntersectionRoot,
+    TripleSurfaceSystem,
 )
 from ._intersection_curve import (
     IntersectionCurve,
@@ -99,18 +104,20 @@ from ._intersection_curve import (
     surface_pieces,
     SurfaceRegion,
 )
-from ._model import BRepModel
+from ._intersection_kernel import krawczyk
+from ._model import BRepCurve, BRepModel
 from ._patches import AbstractCurve, AbstractSurfacePatch
 from ._projection_contracts import brep_entity_id
 from ._query import prepare_brep_query
+from ._request_preparations import TrimRequestPreparations
+from ._revision import cad_revision_from_brep_model
 from ._root_bindings import BRepCurveSurfaceLift, BRepRootSupport, BRepVertexRoot
 
 
 type JointOwners = tuple[FaceOwner, FaceOwner, FaceOwner]
 
 
-@dataclass(frozen=True, slots=True)
-class _Discovery:
+class _Discovery(StrictModule):
     surface_results: Mapping[FacePair, SurfaceIntersectionResult]
     coincident_overlays: Mapping[FacePair, CoincidentFaceOverlay]
     owner_overlays: Mapping[FaceOwner, tuple[CoincidentFaceOverlay, ...]]
@@ -125,11 +132,29 @@ class _Joint:
 
 @dataclass
 class _RootClosure:
-    state: _Arrangement
+    state: Arrangement
     joints: dict[JointOwners, list[_Joint]] = field(default_factory=dict)
 
-    def bind(self, owners: JointOwners, record: _Joint) -> None:
+    def bind(
+        self,
+        owners: JointOwners,
+        record: _Joint,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> None:
         """Merge existing source vertices only through the joint source system."""
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    owners,
+                    record,
+                )
+            ) as budget:
+                return self.bind(owners, record, preparations=preparations, budget=budget)
         state = self.state
         joint = record.root
         matches = []
@@ -141,8 +166,12 @@ class _RootClosure:
                 model = state.models[operand]
                 geometry = model.geometry
                 if geometry is None:
-                    raise BRepBooleanFailure("joint source lift lost its exact geometry")
-                region = _source_region(state, (operand, face))
+                    raise BRepBooleanFailure(
+                        "BRepBoolean.joint_lift.geometry must be defined; got None"
+                    )
+                region = _source_region(
+                    state, (operand, face), preparations=preparations, budget=budget
+                )
                 for loop in geometry.face_loops[face]:
                     for coedge in loop:
                         edge = geometry.coedge_edges[coedge]
@@ -155,21 +184,37 @@ class _RootClosure:
                         if (
                             isinstance(curve, AbstractCurve)
                             and isinstance(pcurve, AbstractCurve)
-                            and _same_geometry(curve, spatial.curve)
-                            and _exact_source_lift(curve, pcurve, region, first, last)
+                            and same_geometry(curve, spatial.curve)
+                            and exact_source_lift(curve, pcurve, region, first, last)
                         ):
                             lift = BRepCurveSurfaceLift(
-                                curve, pcurve, region, first, last
+                                curve,
+                                pcurve,
+                                region,
+                                first,
+                                last,
+                                budget=budget,
+                                preparations=preparations,
                             )
                             lifts[lift.lift_id] = lift
-            if joint.certifies_root(spatial, source_edge_lifts=tuple(lifts.values())):
+            if joint.certifies_root(
+                spatial,
+                source_edge_lifts=tuple(lifts.values()),
+                preparations=preparations,
+                budget=budget,
+            ):
                 matches.append((vertex, spatial))
                 lifts_by_id.update(lifts)
         old_vertices = {vertex for vertex, _ in matches}
         supports = {support.root_id: support for support in record.supports}
         for vertex in old_vertices:
             for patch, root in state.vertex_aliases.get(vertex, ()):
-                supports.setdefault(root.root_id, BRepRootSupport(patch, root))
+                supports.setdefault(
+                    root.root_id,
+                    BRepRootSupport(
+                        patch, root, budget=budget, preparations=preparations
+                    ),
+                )
         record.supports = list(supports.values())
         spatial = matches[0][1] if matches else None
         binding = BRepVertexRoot(
@@ -177,6 +222,8 @@ class _RootClosure:
             aliases=tuple(record.supports),
             spatial_root=spatial,
             source_edge_lifts=tuple(lifts_by_id.values()),
+            budget=budget,
+            preparations=preparations,
         )
         for token, cuts in state.cuts.items():
             state.cuts[token] = [
@@ -201,30 +248,37 @@ class _RootClosure:
         state.vertex_lifts[record.vertex] = tuple(lifts_by_id.values())
 
 
-@dataclass(frozen=True, slots=True)
-class _SelectedCells:
+class _SelectedCells(StrictModule):
     cells: tuple[FaceArrangementCell, ...]
-    fragments: tuple[_FaceFragment, ...]
-    representatives: Mapping[str, str]
-    face_parents: tuple[tuple[FaceOwner, ...], ...]
+    fragments: tuple[FaceFragment, ...]
+    representatives: Mapping[str, str] = eqx.field(static=True)
+    face_parents: tuple[tuple[FaceOwner, ...], ...] = eqx.field(static=True)
 
 
-@dataclass(frozen=True, slots=True)
-class _BoundaryFacts:
+class _BoundaryFacts(StrictModule):
     sources: Mapping[str, CoincidentFaceArc]
-    vertex_aliases: Mapping[str, str]
+    vertex_aliases: Mapping[str, str] = eqx.field(static=True)
     bindings: Mapping[str, BRepVertexRoot | None]
 
 
-def _source_region(state: _Arrangement, owner: FaceOwner) -> SurfaceRegion:
+def _source_region(
+    state: Arrangement,
+    owner: FaceOwner,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> SurfaceRegion:
     model = state.models[owner[0]]
     return SurfaceRegion(
-        model.patches[owner[1]], np.asarray(model.parameter_bounds)[owner[1]]
+        model.patches[owner[1]],
+        np.asarray(model.parameter_bounds)[owner[1]],
+        preparations=preparations,
+        budget=budget,
     )
 
 
 def _register_branches(
-    state: _Arrangement,
+    state: Arrangement,
     result: SurfaceIntersectionResult,
     pair: FacePair,
 ) -> None:
@@ -232,7 +286,8 @@ def _register_branches(
         state.branches[curve.branch_id] = curve, pair[0], pair[1]
         if len(state.branches) > state.policy.maximum_cells:
             raise BRepBooleanFailure(
-                "full overlay intersection branch capacity exhausted", (curve.branch_id,)
+                "BRepBoolean.overlay.branches must fit maximum_cells; got branch capacity exhausted",
+                (curve.branch_id,),
             )
         # On a side where the branch is a proved source edge, that edge's
         # existing arc is the branch; no duplicate branch arc is created.
@@ -242,50 +297,69 @@ def _register_branches(
             *(
                 chart + 1
                 for chart in range(curve.num_charts - 1)
-                if _periodic_transition(curve, chart)
+                if periodic_transition(curve, chart)
             ),
             curve.num_charts,
         )
         for first, last in zip(boundaries[:-1], boundaries[1:], strict=True):
             if pair[0] not in edges:
-                _branch_arc(state, curve, pair[0], "first", first, last, owners=pair)
+                branch_arc(state, curve, pair[0], "first", first, last, owners=pair)
             if pair[1] not in edges:
-                _branch_arc(state, curve, pair[1], "second", first, last, owners=pair)
+                branch_arc(state, curve, pair[1], "second", first, last, owners=pair)
 
 
-# (source model, source edge), its p-curve on the owner face, its p-curve on
-# the opposite face, and the whole-edge parameter range.
-type _EdgeLift = tuple[tuple[int, int], AbstractCurve, AbstractCurve, float, float]
+class _EdgeLift(StrictModule):
+    edge: tuple[int, int] = eqx.field(static=True)
+    first_pcurve: AbstractCurve
+    second_pcurve: AbstractCurve
+    first: float = eqx.field(static=True)
+    last: float = eqx.field(static=True)
 
 
 def _source_lift(
-    curve: object,
+    curve: BRepCurve,
     patch: AbstractSurfacePatch,
     bounds: np.ndarray,
     first: float,
     last: float,
     /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
 ) -> AbstractCurve | None:
-    """Exact native lift of a source edge onto another face's surface, or None."""
-    if not isinstance(curve, AbstractCurve) or curve.ambient_dimension != 3:
-        return None
-    region = SurfaceRegion(patch, bounds)
-    pcurve = _native_edge_pcurve(curve, region)
-    if pcurve is None or not _exact_source_lift(curve, pcurve, region, first, last):
+    """Return a native source-edge lift onto another surface, or None."""
+    match curve:
+        case AbstractCurve():
+            if curve.ambient_dimension != 3:
+                return None
+        case IntersectionCurve():
+            return None
+        case _:
+            assert_never(curve)
+    region = SurfaceRegion(patch, bounds, preparations=preparations, budget=budget)
+    pcurve = native_edge_pcurve(curve, region)
+    if pcurve is None or not exact_source_lift(curve, pcurve, region, first, last):
         return None
     return pcurve
 
 
 def _face_edge_pcurve(
-    state: _Arrangement, face: FaceOwner, model_index: int, edge: int
+    state: Arrangement,
+    face: FaceOwner,
+    model_index: int,
+    edge: int,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
 ) -> AbstractCurve | None:
-    """The edge's exact p-curve on ``face``: its authored coedge or a native lift."""
+    """The edge's p-curve on ``face``: its authored coedge or a native lift."""
     geometry = state.models[model_index].geometry
     target = state.models[face[0]]
     target_geometry = target.geometry
     if geometry is None or target_geometry is None:
         raise BRepBooleanFailure(
-            "source edge identification requires exact geometry", (str(face),)
+            "BRepBoolean.source_edge.geometry must be defined for identification; got None",
+            (str(face),),
         )
     if model_index == face[0]:
         for loop in target_geometry.face_loops[face[1]]:
@@ -300,45 +374,73 @@ def _face_edge_pcurve(
         np.asarray(target.parameter_bounds)[face[1]],
         first,
         last,
+        preparations=preparations,
+        budget=budget,
     )
 
 
 def _edge_lifts(
-    state: _Arrangement,
+    state: Arrangement,
     owner: FaceOwner,
     other: FaceOwner,
     partners: tuple[FaceOwner, ...],
     /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[_EdgeLift, ...]:
-    """Source edges present on ``owner`` with exact p-curves on ``owner`` and ``other``.
+    """Source edges present on ``owner`` with p-curves on ``owner`` and ``other``.
 
     Present edges are the owner's own edges and those of faces proved
     coincident with it (their overlay arcs lie in the owner's chart). Authored
-    coedges are used where they exist; any other p-curve is an exact native lift.
+    coedges are used where they exist; any other p-curve is a native lift.
     """
     lifts: list[_EdgeLift] = []
     for face in (owner, *partners):
         geometry = state.models[face[0]].geometry
         if geometry is None:
             raise BRepBooleanFailure(
-                "source edge identification requires exact geometry", (str(face),)
+                "BRepBoolean.source_edge.geometry must be defined for identification; got None",
+                (str(face),),
             )
         for loop in geometry.face_loops[face[1]]:
             for coedge in loop:
                 edge = geometry.coedge_edges[coedge]
                 if geometry.edge_curves[edge] < 0:
                     continue
-                here = _face_edge_pcurve(state, owner, face[0], edge)
+                here = _face_edge_pcurve(
+                    state,
+                    owner,
+                    face[0],
+                    edge,
+                    preparations=preparations,
+                    budget=budget,
+                )
                 there = (
                     None
                     if here is None
-                    else _face_edge_pcurve(state, other, face[0], edge)
+                    else _face_edge_pcurve(
+                        state,
+                        other,
+                        face[0],
+                        edge,
+                        preparations=preparations,
+                        budget=budget,
+                    )
                 )
                 if here is not None and there is not None:
                     first, last = (
                         float(value) for value in np.asarray(geometry.edge_ranges)[edge]
                     )
-                    lifts.append(((face[0], edge), here, there, first, last))
+                    lifts.append(
+                        _EdgeLift(
+                            edge=(face[0], edge),
+                            first_pcurve=here,
+                            second_pcurve=there,
+                            first=first,
+                            last=last,
+                        )
+                    )
     return tuple(lifts)
 
 
@@ -349,6 +451,9 @@ def _subarc_in_box(
     last: float,
     boxes: tuple[np.ndarray, ...],
     /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> bool:
     """Some coupled source-edge sub-arc lies inside one certified chart box."""
     pending = [(first, last, 0)]
@@ -356,8 +461,16 @@ def _subarc_in_box(
         lower, upper, depth = pending.pop()
         image = np.concatenate(
             (
-                np.asarray(first_pcurve.bounding_box(lower, upper)),
-                np.asarray(second_pcurve.bounding_box(lower, upper)),
+                np.asarray(
+                    first_pcurve.bounding_box(
+                        lower, upper, preparations=preparations, budget=budget
+                    )
+                ),
+                np.asarray(
+                    second_pcurve.bounding_box(
+                        lower, upper, preparations=preparations, budget=budget
+                    )
+                ),
             ),
             axis=1,
         )
@@ -387,37 +500,52 @@ def _chart_boxes(curve: IntersectionCurve, chart: int, /) -> tuple[np.ndarray, .
         for shift in (-1.0, 1.0):
             moved = box.copy()
             moved[:, axis] += shift * float(period)
-            # Inward rounding keeps the moved box inside the exact period image.
+            # Inward rounding keeps the moved box inside its symbolic period image.
             moved[0, axis] = np.nextafter(np.nextafter(moved[0, axis], np.inf), np.inf)
             moved[1, axis] = np.nextafter(np.nextafter(moved[1, axis], -np.inf), -np.inf)
             boxes.append(moved)
     return tuple(boxes)
 
 
-def _branch_is_edge(curve: IntersectionCurve, lift: _EdgeLift, /) -> bool:
-    """Every certified chart's unique curve piece contains an exact edge sub-arc.
+def _branch_is_edge(
+    curve: IntersectionCurve,
+    lift: _EdgeLift,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> bool:
+    """Every certified chart's unique curve piece contains an edge sub-arc.
 
     The lifted edge solves the pair system for every parameter, and each
     certified chart box holds exactly one solution piece, so a contained
     sub-arc identifies that piece with the edge. No numerical proximity is used.
     """
-    _, first_pcurve, second_pcurve, first, last = lift
     return bool(curve.num_charts) and all(
         bool(curve.certified[chart])
         and _subarc_in_box(
-            first_pcurve, second_pcurve, first, last, _chart_boxes(curve, chart)
+            lift.first_pcurve,
+            lift.second_pcurve,
+            lift.first,
+            lift.last,
+            _chart_boxes(curve, chart),
+            preparations=preparations,
+            budget=budget,
         )
         for chart in range(curve.num_charts)
     )
 
 
 def _without_source_edge_branches(
-    state: _Arrangement,
+    state: Arrangement,
     pair: FacePair,
     result: SurfaceIntersectionResult,
     partners: Mapping[FaceOwner, tuple[FaceOwner, ...]],
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> SurfaceIntersectionResult:
-    """Identify branches that are exact source edges present on one or both faces.
+    """Identify branches that are source edges present on one or both faces.
 
     A branch that is a present source edge of BOTH faces (shared by adjacent
     faces of one operand, coincident edges of both operands, or an edge carried
@@ -428,20 +556,48 @@ def _without_source_edge_branches(
     if not result.curves:
         return result
     a, b = pair
-    first_edges = _edge_lifts(state, a, b, partners.get(a, ()))
+    first_edges = _edge_lifts(
+        state,
+        a,
+        b,
+        partners.get(a, ()),
+        preparations=preparations,
+        budget=budget,
+    )
     second_edges = tuple(
-        (edge, lift, pcurve, first, last)
-        for edge, pcurve, lift, first, last in _edge_lifts(
-            state, b, a, partners.get(b, ())
+        _EdgeLift(
+            edge=lift.edge,
+            first_pcurve=lift.second_pcurve,
+            second_pcurve=lift.first_pcurve,
+            first=lift.first,
+            last=lift.last,
+        )
+        for lift in _edge_lifts(
+            state,
+            b,
+            a,
+            partners.get(b, ()),
+            preparations=preparations,
+            budget=budget,
         )
     )
     kept = []
     for curve in result.curves:
         on_first = next(
-            (lift[0] for lift in first_edges if _branch_is_edge(curve, lift)), None
+            (
+                lift.edge
+                for lift in first_edges
+                if _branch_is_edge(curve, lift, preparations=preparations, budget=budget)
+            ),
+            None,
         )
         on_second = next(
-            (lift[0] for lift in second_edges if _branch_is_edge(curve, lift)), None
+            (
+                lift.edge
+                for lift in second_edges
+                if _branch_is_edge(curve, lift, preparations=preparations, budget=budget)
+            ),
+            None,
         )
         if on_first is not None and on_second is not None:
             continue
@@ -456,8 +612,8 @@ def _without_source_edge_branches(
     )
 
 
-def _represented_source_adjacency(state: _Arrangement, pair: FacePair, /) -> bool:
-    """Retain a same-operand edge already in its authoritative arrangement."""
+def _represented_source_adjacency(state: Arrangement, pair: FacePair, /) -> bool:
+    """Retain a same-operand edge already in its arrangement."""
     first, second = pair
     if first[0] != second[0]:
         return False
@@ -471,21 +627,41 @@ def _represented_source_adjacency(state: _Arrangement, pair: FacePair, /) -> boo
 
 
 def _cover_source_edge_pair(
-    state: _Arrangement,
+    state: Arrangement,
     pair: FacePair,
     partners: Mapping[FaceOwner, tuple[FaceOwner, ...]],
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
 ) -> bool:
-    """Discharge a pair only by an exact complete represented-edge theorem."""
+    """Prove face-pair coverage using a represented source edge."""
     first, second = pair
-    first_lifts = _edge_lifts(state, first, second, partners.get(first, ()))
-    second_lifts = _edge_lifts(state, second, first, partners.get(second, ()))
-    for edge, first_pcurve, _, _, _ in first_lifts:
-        for other_edge, second_pcurve, _, _, _ in second_lifts:
+    first_lifts = _edge_lifts(
+        state,
+        first,
+        second,
+        partners.get(first, ()),
+        preparations=preparations,
+        budget=budget,
+    )
+    second_lifts = _edge_lifts(
+        state,
+        second,
+        first,
+        partners.get(second, ()),
+        preparations=preparations,
+        budget=budget,
+    )
+    for first_lift in first_lifts:
+        for second_lift in second_lifts:
             state.consume(1)
-            if edge != other_edge:
+            if first_lift.edge != second_lift.edge:
                 continue
             proof = prove_source_ring_pair_coverage(
-                state.models, pair, edge, (first_pcurve, second_pcurve)
+                state.models,
+                pair,
+                first_lift.edge,
+                (first_lift.first_pcurve, second_lift.first_pcurve),
             )
             if proof is not None:
                 state.source_pair_coverage[pair] = proof
@@ -493,13 +669,23 @@ def _cover_source_edge_pair(
     return False
 
 
-def _discover_all_source_pairs(state: _Arrangement) -> _Discovery:
+def _discover_all_source_pairs(
+    state: Arrangement,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> _Discovery:
     surface_results: dict[FacePair, SurfaceIntersectionResult] = {}
     coincident: dict[FacePair, CoincidentFaceOverlay] = {}
     overlays: dict[FaceOwner, list[CoincidentFaceOverlay]] = {}
-    regions = {owner: _source_region(state, owner) for owner in sorted(state.arcs)}
+    regions = {
+        owner: _source_region(state, owner, preparations=preparations, budget=budget)
+        for owner in sorted(state.arcs)
+    }
     boxes = {
-        owner: region.patch.bounding_box(region.parameter_box)
+        owner: region.patch.bounding_box(
+            region.parameter_box, preparations=preparations, budget=budget
+        )
         for owner, region in regions.items()
     }
     candidates = []
@@ -507,7 +693,7 @@ def _discover_all_source_pairs(state: _Arrangement) -> _Discovery:
         if _represented_source_adjacency(state, pair):
             continue
         state.consume(1)
-        if not _overlap(boxes[pair[0]], boxes[pair[1]]):
+        if not overlap(boxes[pair[0]], boxes[pair[1]]):
             continue
         a, b = pair
         overlay = prepare_coincident_face_overlay(
@@ -529,7 +715,8 @@ def _discover_all_source_pairs(state: _Arrangement) -> _Discovery:
         )
         if reverse is None:
             raise BRepBooleanFailure(
-                "proved coincident correspondence lost its exact inverse", (str(pair),)
+                "BRepBoolean.coincident_correspondence must have an inverse chart map; got no inverse",
+                (str(pair),),
             )
         coincident[pair] = overlay
         overlays.setdefault(a, []).append(overlay)
@@ -542,13 +729,21 @@ def _discover_all_source_pairs(state: _Arrangement) -> _Discovery:
         partners[second] = (*partners.get(second, ()), first)
     for pair in candidates:
         a, b = pair
-        if _cover_source_edge_pair(state, pair, partners):
+        if _cover_source_edge_pair(
+            state, pair, partners, preparations=preparations, budget=budget
+        ):
             continue
         result = intersect_surface_regions(
-            regions[a], regions[b], policy=_remaining_intersection_policy(state)
+            regions[a],
+            regions[b],
+            policy=remaining_intersection_policy(state),
+            preparations=preparations,
+            coordinate_budget=budget,
         )
-        _check_surface_result(state, result, a, b)
-        result = _without_source_edge_branches(state, pair, result, partners)
+        check_surface_result(state, result, a, b)
+        result = _without_source_edge_branches(
+            state, pair, result, partners, preparations=preparations, budget=budget
+        )
         surface_results[pair] = result
         _register_branches(state, result, pair)
     return _Discovery(
@@ -559,49 +754,68 @@ def _discover_all_source_pairs(state: _Arrangement) -> _Discovery:
 
 
 def _joint_candidate(
-    state: _Arrangement,
+    state: Arrangement,
     owners: JointOwners,
     lower: np.ndarray,
     upper: np.ndarray,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> TripleSurfaceIntersectionRoot | None:
     state.consume(1)
     regions = (
         SurfaceRegion(
             state.models[owners[0][0]].patches[owners[0][1]],
             np.stack((lower[:2], upper[:2])),
+            budget=budget,
+            preparations=preparations,
         ),
         SurfaceRegion(
             state.models[owners[1][0]].patches[owners[1][1]],
             np.stack((lower[2:4], upper[2:4])),
+            budget=budget,
+            preparations=preparations,
         ),
         SurfaceRegion(
             state.models[owners[2][0]].patches[owners[2][1]],
             np.stack((lower[4:], upper[4:])),
+            budget=budget,
+            preparations=preparations,
         ),
     )
-    pieces = tuple(surface_pieces(region) for region in regions)
+    pieces = tuple(surface_pieces(region, budget=budget) for region in regions)
     if any(len(values) != 1 for values in pieces):
         return None
-    prepared = _prepare(
-        _TripleSurfaceSystem(
+    prepared = prepare(
+        TripleSurfaceSystem(
             pieces[0][0].evaluator, pieces[1][0].evaluator, pieces[2][0].evaluator
         ),
         6,
         1,
+        preparations=preparations,
     )
-    inclusion = _krawczyk(prepared, lower[None], upper[None])
+    inclusion = krawczyk(
+        prepared, lower[None], upper[None], budget=budget, preparations=preparations
+    )
     if not bool(inclusion.certified[0]):
         return None
     return TripleSurfaceIntersectionRoot(
-        *regions, parameter_lower=lower, parameter_upper=upper
+        *regions,
+        parameter_lower=lower,
+        parameter_upper=upper,
+        budget=budget,
+        preparations=preparations,
     )
 
 
 def _joint_vertex(
     closure: _RootClosure,
     root: TrimIntersectionRoot,
-    first: _Arc,
-    second: _Arc,
+    first: Arc,
+    second: Arc,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> str:
     state = closure.state
     first_pair = state.branch_owners[first.token]
@@ -609,40 +823,54 @@ def _joint_vertex(
     all_owners = tuple(sorted(set((*first_pair, *second_pair))))
     if len(all_owners) != 3:
         raise BRepBooleanFailure(
-            "branch junction has no three actual source-face owners", (root.root_id,)
+            "BRepBoolean.branch_junction.owners must contain three source faces; got another owner count",
+            (root.root_id,),
         )
     owners = all_owners[0], all_owners[1], all_owners[2]
     regions = (
-        _source_region(state, owners[0]),
-        _source_region(state, owners[1]),
-        _source_region(state, owners[2]),
+        _source_region(state, owners[0], preparations=preparations, budget=budget),
+        _source_region(state, owners[1], preparations=preparations, budget=budget),
+        _source_region(state, owners[2], preparations=preparations, budget=budget),
     )
-    image = _joint_root_parameter_image(root, regions)
+    image = joint_root_parameter_image(
+        root, regions, preparations=preparations, budget=budget
+    )
     if image is None:
         raise BRepBooleanFailure(
-            "branch junction has no complete native joint parameter image",
+            "BRepBoolean.branch_junction must have all joint parameter images; got a missing image",
             (root.root_id, str(owners)),
         )
-    support = BRepRootSupport(state.models[first.owner[0]].patches[first.owner[1]], root)
+    support = BRepRootSupport(
+        state.models[first.owner[0]].patches[first.owner[1]],
+        root,
+        budget=budget,
+        preparations=preparations,
+    )
     existing = closure.joints.setdefault(owners, [])
     for record in existing:
         state.consume(1)
         candidate = record.root
-        if not candidate.certifies_root(root):
+        if not candidate.certifies_root(root, preparations=preparations, budget=budget):
             lower = np.minimum(image[0], candidate.parameter_lower)
             upper = np.maximum(image[1], candidate.parameter_upper)
-            candidate_or_none = _joint_candidate(state, owners, lower, upper)
+            candidate_or_none = _joint_candidate(
+                state, owners, lower, upper, budget=budget, preparations=preparations
+            )
             if (
                 candidate_or_none is None
-                or not candidate_or_none.certifies_root(root)
-                or not candidate_or_none.certifies_root(record.root)
+                or not candidate_or_none.certifies_root(
+                    root, preparations=preparations, budget=budget
+                )
+                or not candidate_or_none.certifies_root(
+                    record.root, preparations=preparations, budget=budget
+                )
             ):
                 continue
             candidate = candidate_or_none
         record.root = candidate
         if all(item.root_id != support.root_id for item in record.supports):
             record.supports.append(support)
-        closure.bind(owners, record)
+        closure.bind(owners, record, preparations=preparations, budget=budget)
         return record.vertex
     margin = (
         256.0
@@ -653,10 +881,14 @@ def _joint_vertex(
         np.nextafter(image[0] - margin, -np.inf),
         np.nextafter(image[1] + margin, np.inf),
     )
-    joint = _joint_candidate(state, owners, lower, upper)
-    if joint is None or not joint.certifies_root(root):
+    joint = _joint_candidate(
+        state, owners, lower, upper, budget=budget, preparations=preparations
+    )
+    if joint is None or not joint.certifies_root(
+        root, preparations=preparations, budget=budget
+    ):
         raise BRepBooleanFailure(
-            "source-complete triple junction has no native unique-root certificate",
+            "BRepBoolean.triple_junction must have a native unique-root certificate; got failed certification",
             (
                 root.root_id,
                 str(owners),
@@ -666,11 +898,16 @@ def _joint_vertex(
     vertex = f"joint-root:{joint.root_id}"
     record = _Joint(joint, vertex, [support])
     existing.append(record)
-    closure.bind(owners, record)
+    closure.bind(owners, record, preparations=preparations, budget=budget)
     return vertex
 
 
-def _full_trim_events(state: _Arrangement) -> None:
+def _full_trim_events(
+    state: Arrangement,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> None:
     closure = _RootClosure(state)
     for owner, arcs in sorted(state.arcs.items()):
         for first, second in combinations(arcs, 2):
@@ -684,24 +921,25 @@ def _full_trim_events(state: _Arrangement) -> None:
                 continue
             if tuple(sorted((first.token, second.token))) in state.spatial_pairs:
                 continue
-            if not _overlap(
-                first.trim.enclosure(*first.trim.parameter_interval),
-                second.trim.enclosure(*second.trim.parameter_interval),
-            ):
+            result = intersect_arc_pair(
+                first,
+                second,
+                state,
+                preparations=preparations,
+                budget=budget,
+            ).result
+            if result is None:
                 continue
-            result = intersect_trim_curves(
-                first.trim, second.trim, policy=_remaining_intersection_policy(state)
-            )
             state.consume(result.work.boxes_processed)
             if not result.complete or result.coincident:
                 raise BRepBooleanFailure(
-                    "full source trim intersection is unresolved or lacks an exact quotient",
+                    "BRepBoolean.trim_intersection must resolve isolated roots or a scalar quotient; got unresolved or coincident curves",
                     (first.token, second.token),
                 )
             for point in result.points:
-                if point.kind != "transversal":
+                if point.kind != "crossing":
                     raise BRepBooleanFailure(
-                        "full source junction lacks a regular exact root",
+                        "BRepBoolean.trim_junction must have a transversal root; got a nontransversal contact",
                         (first.token, second.token, point.kind),
                     )
                 root = TrimIntersectionRoot(
@@ -713,28 +951,53 @@ def _full_trim_events(state: _Arrangement) -> None:
                 state.roots[root.root_id] = root
                 if len(state.roots) > state.policy.maximum_cells:
                     raise BRepBooleanFailure(
-                        "full source trim root capacity exhausted", (root.root_id,)
+                        "BRepBoolean.trim_roots must fit maximum_cells; got root capacity exhausted",
+                        (root.root_id,),
                     )
                 if first.branch is not None and second.branch is not None:
-                    vertex = _joint_vertex(closure, root, first, second)
+                    vertex = _joint_vertex(
+                        closure,
+                        root,
+                        first,
+                        second,
+                        preparations=preparations,
+                        budget=budget,
+                    )
                 else:
-                    vertex = _event_vertex(state, root, first, second)
-                _add_root_cut(state, first, root, 0, vertex)
-                _add_root_cut(state, second, root, 1, vertex)
+                    vertex = event_vertex(
+                        state,
+                        root,
+                        first,
+                        second,
+                        preparations=preparations,
+                        budget=budget,
+                    )
+                add_root_cut(state, first, root, 0, vertex)
+                add_root_cut(state, second, root, 1, vertex)
 
 
 def _complete_cells(
-    state: _Arrangement, discovery: _Discovery
+    state: Arrangement,
+    discovery: _Discovery,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> tuple[FaceArrangementCells, ...]:
     coverages = []
     for owner in sorted(state.arcs):
         workset = prepare_face_cell_workset(
-            state, owner, overlays=discovery.owner_overlays.get(owner, ())
+            state,
+            owner,
+            overlays=discovery.owner_overlays.get(owner, ()),
+            preparations=preparations,
+            budget=budget,
         )
-        coverage = extract_face_arrangement_cells(state, owner, workset=workset)
+        coverage = extract_face_arrangement_cells(
+            state, owner, workset=workset, preparations=preparations, budget=budget
+        )
         if not coverage.complete:
             raise BRepBooleanFailure(
-                "full source face-cell graph is unresolved",
+                "BRepBoolean.source_face.cell_graph must be resolved; got unresolved cells or roots",
                 (
                     str(owner),
                     *coverage.unresolved_roots,
@@ -757,14 +1020,16 @@ def _face_parents(
 
 
 def _select_cells(
-    state: _Arrangement,
+    state: Arrangement,
     discovery: _Discovery,
     classification: FaceMaterialClassification,
+    *,
+    budget: CoordinateEnclosureBudget,
 ) -> _SelectedCells:
     labels = {item.classification_key: item for item in classification.labels}
     emitted: list[FaceArrangementCell] = []
     representatives: dict[str, str] = {}
-    work = _Work(state)
+    work = Work(state)
     for cell in classification.cells:
         label = labels[cell.classification_key]
         if label.orientation == 0:
@@ -777,20 +1042,20 @@ def _select_cells(
                 and pair not in discovery.coincident_overlays
             ):
                 continue
-            if _equivalent_cell(state, cell, candidate, work):
+            if equivalent_cell(state, cell, candidate, work, budget=budget):
                 representative = candidate
                 break
         if representative is None:
             if len(emitted) >= state.policy.maximum_faces:
                 raise BRepBooleanFailure(
-                    "full Boolean selected face capacity exhausted",
+                    "BRepBoolean.selected_faces must fit maximum_faces; got selected face capacity exhausted",
                     (cell.classification_key,),
                 )
             emitted.append(cell)
         else:
             representatives[cell.classification_key] = representative.classification_key
     fragments = tuple(
-        _FaceFragment(
+        FaceFragment(
             cell.owner,
             cell.loops,
             cell.domain,
@@ -815,14 +1080,19 @@ def _binding_add(
         existing = bindings[key]
         if existing is not None and existing.root_id != binding.root_id:
             raise BRepBooleanFailure(
-                "source vertex identity has contradictory native root definitions", (key,)
+                "BRepBoolean.source_vertex.roots must agree on vertex identity; got contradictory root definitions",
+                (key,),
             )
     if key not in bindings or bindings[key] is None:
         bindings[key] = binding
 
 
 def _boundary_facts(
-    state: _Arrangement, coverages: tuple[FaceArrangementCells, ...]
+    state: Arrangement,
+    coverages: tuple[FaceArrangementCells, ...],
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
 ) -> _BoundaryFacts:
     sources: dict[str, CoincidentFaceArc] = {}
     aliases: dict[str, str] = {}
@@ -832,7 +1102,7 @@ def _boundary_facts(
         geometry = model.geometry
         if geometry is None:
             raise BRepBooleanFailure(
-                "full boundary has no authored source coedge inventory",
+                "BRepBoolean.source_boundary.geometry must define source coedges; got None",
                 (model.source_revision,),
             )
         identity = prove_surface_correspondence(
@@ -840,7 +1110,8 @@ def _boundary_facts(
         )
         if identity is None:
             raise BRepBooleanFailure(
-                "source chart has no exact identity correspondence", (str(owner),)
+                "BRepBoolean.source_chart must have an identity chart correspondence; got no correspondence",
+                (str(owner),),
             )
         for loop in geometry.face_loops[owner[1]]:
             for coedge in loop:
@@ -875,7 +1146,11 @@ def _boundary_facts(
         patch = state.models[coverage.owner[0]].patches[coverage.owner[1]]
         for root in coverage.intersection_roots.values():
             vertex = f"overlay-root:{root.root_id}:face:{coverage.owner}"
-            _binding_add(bindings, vertex, BRepVertexRoot(BRepRootSupport(patch, root)))
+            support = BRepRootSupport(
+                patch, root, preparations=preparations, budget=budget
+            )
+            binding = BRepVertexRoot(support, preparations=preparations, budget=budget)
+            _binding_add(bindings, vertex, binding)
     for vertex, binding in state.vertex_bindings.items():
         _binding_add(bindings, aliases.get(vertex, vertex), binding)
     return _BoundaryFacts(
@@ -885,7 +1160,7 @@ def _boundary_facts(
 
 def _canonical_fragments(
     selected: _SelectedCells, facts: _BoundaryFacts
-) -> tuple[_FaceFragment, ...]:
+) -> tuple[FaceFragment, ...]:
     fragments = []
     for fragment in selected.fragments:
         loops = tuple(
@@ -914,15 +1189,14 @@ def _canonical_fragments(
 
 
 def _association_graph(
-    state: _Arrangement,
+    state: Arrangement,
     model: BRepModel,
     selected: _SelectedCells,
     schedule: MaterialOverlapSchedule,
     certificate: str,
 ) -> AssociationGraph:
-    from ._partition import cad_revision_from_brep_model
 
-    source = _source_revision(state.models, certificate)
+    source = source_revision(state.models, certificate)
     target = cad_revision_from_brep_model(model)
     pairs = set(schedule.canonical_pairs)
     for target_solid, faces in enumerate(model.topology.solid_faces):
@@ -958,46 +1232,63 @@ def _association_graph(
 
 @dataclass(frozen=True, slots=True)
 class _MaterialOverlay:
-    state: _Arrangement
+    state: Arrangement
     classification: FaceMaterialClassification
     selected: _SelectedCells
-    built: _BuiltBoundary
+    built: BuiltBoundary
 
 
 def _material_overlay(
     models: tuple[BRepModel, ...],
-    selection: _MaterialSelection,
+    selection: MaterialSelection,
     policy: BRepBooleanPolicy,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> _MaterialOverlay:
-    """Complete source discovery, exact cells, side owners, and emitted boundary.
+    """exhaustive source discovery, cells, side owners, and emitted boundary.
 
     Call inside the invocation's branch preparation scope, which keeps every
     branch's programs and identical-query results through the caller's
     publication and target proof.
     """
-    state = _Arrangement(
-        models, selection, policy, tuple(prepare_brep_query(model) for model in models)
+    state = Arrangement(
+        models,
+        selection,
+        policy,
+        tuple(
+            prepare_brep_query(model, budget=budget, preparations=preparations)
+            for model in models
+        ),
     )
-    _source_arcs(state)
-    discovery = _discover_all_source_pairs(state)
-    _boundary_spatial_events(state)
-    _full_trim_events(state)
-    _propagate_branch_cuts(state)
-    coverages = _complete_cells(state, discovery)
+    source_arcs(state)
+    discovery = _discover_all_source_pairs(
+        state, preparations=preparations, budget=budget
+    )
+    boundary_spatial_events(state, preparations=preparations, budget=budget)
+    _full_trim_events(state, preparations=preparations, budget=budget)
+    propagate_branch_cuts(state)
+    coverages = _complete_cells(
+        state, discovery, preparations=preparations, budget=budget
+    )
     classification = classify_face_material_cells(
         state,
         coverages,
         surface_results=discovery.surface_results,
         coincident_overlays=discovery.coincident_overlays,
         budget=state,
+        preparations=preparations,
+        coordinate_budget=budget,
     )
-    selected = _select_cells(state, discovery, classification)
-    facts = _boundary_facts(state, coverages)
-    built = _build_boundary(
+    selected = _select_cells(state, discovery, classification, budget=budget)
+    facts = _boundary_facts(state, coverages, preparations=preparations, budget=budget)
+    built = build_boundary(
         state,
         _canonical_fragments(selected, facts),
         overlay_sources=facts.sources,
         vertex_bindings=facts.bindings,
+        preparations=preparations,
+        budget=budget,
     )
     return _MaterialOverlay(state, classification, selected, built)
 
@@ -1007,37 +1298,73 @@ def _target_schedule(
     model: BRepModel,
     *,
     solid_regions: tuple[str, ...] | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> MaterialOverlapSchedule:
     return prove_material_overlaps(
         overlay.state,
         overlay.classification,
         model,
-        prepare_brep_query(model) if model.topology.num_solids else None,
+        (
+            prepare_brep_query(model, budget=budget, preparations=preparations)
+            if model.topology.num_solids
+            else None
+        ),
         tuple(cell.classification_key for cell in overlay.selected.cells),
         budget=overlay.state,
         target_cell_representatives=overlay.selected.representatives,
         target_solid_regions=solid_regions,
+        preparations=preparations,
+        coordinate_budget=budget,
     )
 
 
+@checked
 def full_overlay_boolean_brep(
     models: tuple[BRepModel, BRepModel],
     operation: BRepBooleanOperation,
     policy: BRepBooleanPolicy,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> BRepBooleanResult:
-    """Compose complete native discovery, exact cells, material, and lineage."""
-    with original_trim_intersection_preparation(()):
-        return _full_overlay_boolean(models, operation, policy)
+    """Compose exhaustive source discovery, cells, material, and lineage."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                models,
+                operation,
+                policy,
+            )
+        ) as budget:
+            return full_overlay_boolean_brep(
+                models, operation, policy, preparations=preparations, budget=budget
+            )
+    with original_trim_intersection_preparation(
+        (), preparations=preparations
+    ) as preparations:
+        return _full_overlay_boolean(
+            models, operation, policy, preparations=preparations, budget=budget
+        )
 
 
 def _full_overlay_boolean(
     models: tuple[BRepModel, BRepModel],
     operation: BRepBooleanOperation,
     policy: BRepBooleanPolicy,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> BRepBooleanResult:
-    overlay = _material_overlay(models, operation, policy)
+    overlay = _material_overlay(
+        models, operation, policy, preparations=preparations, budget=budget
+    )
     state, selected = overlay.state, overlay.selected
-    geometry = _reconstruct_solids(state, overlay.built)
+    geometry = reconstruct_solids(
+        state, overlay.built, preparations=preparations, budget=budget
+    )
     geometry_certificate = canonical_fingerprint(
         {
             "kind": "native-complete-face-overlay-geometry",
@@ -1049,8 +1376,15 @@ def _full_overlay_boolean(
             "representatives": tuple(sorted(selected.representatives.items())),
         }
     )
-    model = _publish_curved(state, overlay.built, geometry, geometry_certificate)
-    schedule = _target_schedule(overlay, model)
+    model = publish_curved(
+        state,
+        overlay.built,
+        geometry,
+        geometry_certificate,
+        preparations=preparations,
+        budget=budget,
+    )
+    schedule = _target_schedule(overlay, model, preparations=preparations, budget=budget)
     certificate = canonical_fingerprint(
         {
             "kind": "native-complete-face-cell-boolean",
@@ -1073,7 +1407,7 @@ def _full_overlay_boolean(
 
 @dataclass(frozen=True, slots=True)
 class FullOverlayPartition:
-    """Exact shared-face partition cells, region owners, and native-index lineage.
+    """Retain shared-face cells, region owners, and native-index lineage.
 
     ``solid_pairs`` and ``face_pairs`` join source occurrence IDs of selected
     solids to target solid and ``(solid, face)`` indices of ``model``.
@@ -1087,11 +1421,11 @@ class FullOverlayPartition:
 
 
 def _verify_region_owners(
-    selection: _RegionSelection,
+    selection: RegionSelection,
     schedule: MaterialOverlapSchedule,
     solid_regions: tuple[str, ...],
 ) -> None:
-    """Every target solid descends from its owning region and no void removing it.
+    """Verify every target solid descends from its region and excludes targeted voids.
 
     Independent of the shared-face construction, open-volume overlap proves
     each published solid's owner against the declared selection.
@@ -1107,7 +1441,7 @@ def _verify_region_owners(
         region = solid_regions[item.target.index]
         if region in void_targets.get(operand_id, ()):
             raise BRepBooleanFailure(
-                "partition region overlaps a void that removes it",
+                "BRepPartition.region must exclude targeted void interiors; got an overlap with a removing void",
                 (
                     item.source.source_id,
                     f"solid:{item.target.index}",
@@ -1118,7 +1452,7 @@ def _verify_region_owners(
             owned.add(item.target.index)
     if owned != set(range(len(solid_regions))):
         raise BRepBooleanFailure(
-            "partition solid has no material ancestry in its owning region",
+            "BRepPartition.solid must have material ancestry in its region; got no regional ancestor",
             tuple(
                 f"solid:{index}"
                 for index in range(len(solid_regions))
@@ -1127,27 +1461,53 @@ def _verify_region_owners(
         )
 
 
+@checked
 def full_overlay_partition_brep(
     models: tuple[BRepModel, ...],
-    selection: _RegionSelection,
+    selection: RegionSelection,
     policy: BRepBooleanPolicy,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> FullOverlayPartition:
-    """Partition curved source solids on one complete native face-cell overlay.
+    """Partition curved source solids on one exhaustive face-cell overlay.
 
     Cells whose two material owners differ become faces shared by both owners'
     solids. Region solids, cavities, ancestry and face lineage reuse the
     Boolean overlay certificates; no source is tessellated or refitted.
     """
-    with original_trim_intersection_preparation(()):
-        return _full_overlay_partition(models, selection, policy)
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                models,
+                selection,
+                policy,
+            )
+        ) as budget:
+            return full_overlay_partition_brep(
+                models, selection, policy, preparations=preparations, budget=budget
+            )
+    with original_trim_intersection_preparation(
+        (), preparations=preparations
+    ) as preparations:
+        return _full_overlay_partition(
+            models, selection, policy, preparations=preparations, budget=budget
+        )
 
 
 def _full_overlay_partition(
     models: tuple[BRepModel, ...],
-    selection: _RegionSelection,
+    selection: RegionSelection,
     policy: BRepBooleanPolicy,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> FullOverlayPartition:
-    overlay = _material_overlay(models, selection, policy)
+    overlay = _material_overlay(
+        models, selection, policy, preparations=preparations, budget=budget
+    )
     state, selected = overlay.state, overlay.selected
     labels = {item.classification_key: item for item in overlay.classification.labels}
     sides = tuple(
@@ -1157,19 +1517,23 @@ def _full_overlay_partition(
         )
         for cell in selected.cells
     )
-    geometry, solid_regions = _reconstruct_region_solids(
+    geometry, solid_regions = reconstruct_region_solids(
         state,
         overlay.built,
         sides,
         selection.precedence,
+        preparations=preparations,
+        budget=budget,
     )
     if not solid_regions:
-        raise BRepBooleanFailure("partition has no surviving material region")
+        raise BRepBooleanFailure(
+            "BRepPartition.regions must contain surviving material; got no surviving material region"
+        )
     geometry_certificate = canonical_fingerprint(
         {
             "kind": "native-complete-face-overlay-partition-geometry",
             "sources": tuple(model.model_id for model in models),
-            "selection": _selection_payload(selection),
+            "selection": selection_payload(selection),
             "material": overlay.classification.certificate_id,
             "geometry": geometry.geometry_id,
             "selected_cells": tuple(cell.classification_key for cell in selected.cells),
@@ -1177,8 +1541,21 @@ def _full_overlay_partition(
             "solid_regions": solid_regions,
         }
     )
-    model = _publish_curved(state, overlay.built, geometry, geometry_certificate)
-    schedule = _target_schedule(overlay, model, solid_regions=solid_regions)
+    model = publish_curved(
+        state,
+        overlay.built,
+        geometry,
+        geometry_certificate,
+        preparations=preparations,
+        budget=budget,
+    )
+    schedule = _target_schedule(
+        overlay,
+        model,
+        solid_regions=solid_regions,
+        preparations=preparations,
+        budget=budget,
+    )
     _verify_region_owners(selection, schedule, solid_regions)
     certificate = canonical_fingerprint(
         {

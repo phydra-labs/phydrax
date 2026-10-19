@@ -14,6 +14,10 @@ from numpy.typing import NDArray
 import phydrax as phx
 
 
+# Empirical `test_cobyqa_concrete_host_bounds_and_nonlinear_values`: matched max |delta|=1.47416e-07; joint allowance fraction=0.00140396, margin=99.8596%.
+_COBYQA_CONSTRAINED_MINIMIZER_ATOL = 1e-4
+
+
 opt = phx.optim
 
 
@@ -563,7 +567,11 @@ def test_cobyqa_concrete_host_bounds_and_nonlinear_values() -> None:
     )
 
     assert bool(result.successful)
-    assert np.allclose(np.asarray(result.parameters["x"]), [0.25, -0.5], atol=1e-4)
+    assert np.allclose(
+        np.asarray(result.parameters["x"]),
+        [0.25, -0.5],
+        atol=_COBYQA_CONSTRAINED_MINIMIZER_ATOL,
+    )
     assert int(result.diagnostics.objective_evaluations) == calls["objective"]
     assert int(result.diagnostics.constraint_evaluations) == calls["constraint"]
     assert float(result.diagnostics.primal_feasibility) == 0.0

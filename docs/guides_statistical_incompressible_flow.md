@@ -54,7 +54,7 @@ All parameters below are explicitly chosen demonstration policies. Six members,
 two short steps, bounded chunks, and small Fourier grids keep this recipe small;
 they do not constitute statistical or spatial convergence evidence.
 
-```python executable
+```python {.executable}
 import jax
 
 from phydrax import config
@@ -180,7 +180,6 @@ scaling = flow.StructureFunctionScalingPlan((0.125, 0.35)).evaluate(
     tuple(moments), (coarse_space, fine_space)
 )
 assert all(fit.status in ("complete", "abstained") for fit in scaling.fits)
-print([(fit.status, fit.reason) for fit in scaling.fits])
 
 dataset = flow.periodic_flow_operator_dataset(
     wrappers[1],
@@ -200,6 +199,11 @@ groups = [
 assert groups[0].isdisjoint(groups[1])
 assert groups[0].isdisjoint(groups[2])
 assert groups[1].isdisjoint(groups[2])
+print("Campaign checks passed.")
+```
+
+```text {.output-expected}
+Campaign checks passed.
 ```
 
 ## What the distance records mean

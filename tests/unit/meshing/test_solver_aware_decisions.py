@@ -4,12 +4,9 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
-import sys
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Any, NamedTuple
 
 import jax
@@ -71,13 +68,77 @@ from phydrax.meshing._proposals import (
 )
 from phydrax.solver import FiniteElementAcceptedState, FiniteElementTopologyTransaction
 from tests._ported_models import full_port, in_order, PortedAffine
-from tests.unit.meshing.test_cell_geometry_transfer import (
-    _adapt,
-    _curved,
-    _shear,
-    _tetrahedra,
-    _triangles,
+from tests._support.cell_meshes import bisect, kuhn_cube, kuhn_cube_arrays
+from tests._support.forced_devices import run_on_forced_devices
+from tests._support.geometry_transfer_cases import (
+    curved_shear_source,
+    shear_term,
+    transfer_triangles,
 )
+from tests._support.solver_campaigns_common import (
+    error_and_integral,
+    exact,
+    HPHistoryTransfer,
+    HPPhysicalCertifier,
+    MetricPhysicalCertifier,
+    MetricPhysicalReanalysis,
+    pack,
+    peak_rss_bytes,
+    physical,
+    SolvedFieldRefresh,
+    source,
+    unpack,
+)
+from tests._support.solver_hp_campaign import (
+    HPSource,
+    HPTarget,
+    prepare_hp_source,
+    prepare_hp_target,
+    resume_hp,
+    run,
+)
+from tests._support.solver_metric_campaign import run_metric
+
+
+# Fixed empirical allowances from test_solver_aware_decisions.py
+# at a6827a9e5; no meshing acceptance policy is relaxed.
+# Projected learned coordinate displacement against the active bound 0.05.
+_LEARNED_DISPLACEMENT_ATOL = 1e-12
+# Family-preserving marked adaptation prolongation against the independent coarse-field
+# image.
+_FAMILY_TRANSFER_ATOL = 2e-12
+# Physical-field projection and transferred FE solution against the independent
+# stiffness-plus-mass reference.
+_PIPELINE_VALUE_ATOL = 3e-12
+# Remap-plus-PDE-refresh coefficients against the newly reanalyzed accepted field.
+_REANALYZED_FIELD_ATOL = 2e-11
+# Solution and primal/dual pairing of the scale-1.2 FE stiffness-plus-mass
+# continuation.
+_PIPELINE_VALUE_RTOL = 3e-11
+# JVP/VJP against independent dense sensitivity and adjoint solves at scale 1.2.
+_PIPELINE_DERIVATIVE_RTOL = 3e-9
+# JVP/VJP against independent dense sensitivity and adjoint solves at scale 1.2.
+_PIPELINE_DERIVATIVE_ATOL = 3e-11
+# Centered finite difference with step 1e-5 and tangent direction 0.37.
+_PIPELINE_DIFFERENCE_RTOL = 3e-7
+# Centered finite difference with step 1e-5 and tangent direction 0.37.
+_PIPELINE_DIFFERENCE_ATOL = 3e-9
+
+
+# Fixed empirical residual bounds from test_solver_aware_decisions.py
+# at a6827a9e5; each comparison retains its strictness.
+# HP/metric campaign field/integral and JVP/VJP/duality errors against independent
+# retained-field references.
+_CAMPAIGN_TRANSFER_RESIDUAL = 1e-10
+# Metric campaign JVP/VJP versus finite differences on the same fixed transfer route.
+_METRIC_TRANSFER_DIFFERENCE_RESIDUAL = 1e-7
+
+
+# Fixed scalar-reference allowances from test_solver_aware_decisions.py
+# at a6827a9e5; values and relative/absolute roles are unchanged.
+# Campaign solution/history integrals 1/3, 1/6, 2/3 and L2 errors sqrt(1/180),
+# sqrt(1/5) versus closed moments.
+_CAMPAIGN_CLOSED_MOMENT_ATOL = 1e-10
 
 
 def _error(
@@ -252,7 +313,7 @@ def test_cheap_inadmissible_candidate_cannot_win(failure: str, issue: str) -> No
     )
     assert decision.selected is feasible
     assert issue in dict(decision.dispositions)["cheap"]
-    with pytest.raises(ValueError, match="exact source, action, and target"):
+    with pytest.raises(ValueError, match="requested source, action, and target"):
         decision.require_selected("accepted", "cheap", "target/cheap")
 
 
@@ -266,7 +327,7 @@ def test_failed_trials_count_against_campaign_budget() -> None:
     )
     assert decision.selected is None
     assert "campaign-wall-budget" in dict(decision.dispositions)["feasible"]
-    with pytest.raises(ValueError, match="No admissible route"):
+    with pytest.raises(ValueError, match="got no selected route"):
         decision.require_selected("accepted", "feasible", "target/feasible")
 
 
@@ -284,7 +345,9 @@ def test_failed_and_coincident_trials_remain_in_observed_campaign_budget() -> No
 
 def test_observed_campaign_cannot_erase_priced_route_work() -> None:
     candidate = _candidate("feasible", AdaptationAction.P, seconds=0.4)
-    with pytest.raises(ValueError, match="omit priced candidate work"):
+    with pytest.raises(
+        ValueError, match=r"SolverAwareDecision\.observed_campaign_seconds"
+    ):
         SolverAwareDecision(
             _error("accepted"),
             _budget(),
@@ -322,7 +385,7 @@ def test_publication_rejects_undeclared_running_state(omitted: str) -> None:
         if pair[0] != omitted
     )
     route = _route("cheap", required=obligations, dispositions=proofs)
-    # Self-consistent advertised obligations still cannot omit actual running state.
+    # Self-consistent advertised obligations still cannot omit running state.
     assert route.issues == ()
     with pytest.raises(ValueError, match="accepted composition entries"):
         route.require_rebind(rebind)
@@ -524,7 +587,7 @@ def _metric_proposer() -> LearnedMeshProposer:
 
 def _planar_source() -> CellMeshingResult:
     return phx.meshing.certify_cell_mesh(
-        _triangles(1), phx.SpatialCoordinateContract.si()
+        transfer_triangles(1), phx.SpatialCoordinateContract.si()
     )
 
 
@@ -544,7 +607,7 @@ def test_learned_features_cannot_be_reused_after_geometry_revision() -> None:
         source.coordinate_contract,
     )
     assert moved.mesh.topology_id == source.mesh.topology_id
-    with pytest.raises(ValueError, match="stale source result"):
+    with pytest.raises(ValueError, match=r"MeshProposalFeatures\.source_result_id"):
         _metric_proposer().propose(moved, features)
 
 
@@ -634,7 +697,9 @@ def test_learned_coordinate_scores_preserve_protection_and_displacement_budget()
     assert target is not None
     np.testing.assert_array_equal(target[0], source.mesh.coordinates[0])
     displacement = np.linalg.norm(np.asarray(target - source.mesh.coordinates), axis=1)
-    np.testing.assert_allclose(displacement[1:], 0.05, rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        displacement[1:], 0.05, rtol=0.0, atol=_LEARNED_DISPLACEMENT_ATOL
+    )
 
 
 def test_untrusted_marking_uses_explicit_family_policy_without_simplex_substitution() -> (
@@ -673,7 +738,7 @@ def test_untrusted_marking_uses_explicit_family_policy_without_simplex_substitut
         maximum_size=2.0,
         maximum_displacement=0.1,
     )
-    with pytest.raises(ValueError, match="explicit qualified native policy"):
+    with pytest.raises(ValueError, match=r"MeshProposal\.native_policy"):
         prepare_mesh_proposal(source, proposal, safety)
     prepared = prepare_mesh_proposal(
         source,
@@ -700,7 +765,7 @@ def test_untrusted_marking_uses_explicit_family_policy_without_simplex_substitut
         - accepted.mesh.coordinates[:, 2]
     )
     np.testing.assert_allclose(
-        adaptation.transfer.apply(coarse), expected, rtol=0.0, atol=2e-12
+        adaptation.transfer.apply(coarse), expected, rtol=0.0, atol=_FAMILY_TRANSFER_ATOL
     )
     assert prepared.commit(source, accept=False) is source
 
@@ -741,7 +806,7 @@ def test_native_hp_hierarchy_cannot_repair_a_new_source_geometry_revision() -> N
     )
     assert source.mesh.topology_id == epoch.mesh.topology_id
     assert source.mesh.geometry_id != epoch.mesh.geometry_id
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"MeshAdaptation\.request\.hierarchy"):
         prepare_mesh_proposal(
             source,
             proposal,
@@ -766,13 +831,19 @@ class _NativeCase:
 
 
 def _native_case(dimension: int) -> _NativeCase:
-    mesh = _triangles(1) if dimension == 2 else _tetrahedra(1)
-    source = _curved(mesh, 2, _shear(2, dimension))
+    mesh = (
+        transfer_triangles(1) if dimension == 2 else kuhn_cube(1, orientation_swap=(0, 1))
+    )
+    source = curved_shear_source(mesh, 2, shear_term(2, dimension))
     if not isinstance(source, CellMeshingResult):
-        raise TypeError("Curved fixture must return a certified result.")
-    adaptation = _adapt(source, (0,))
+        raise TypeError(
+            "curved_shear_source.result must be a CellMeshingResult; got a different result kind."
+        )
+    adaptation = bisect(source, (0,))
     if not isinstance(adaptation, MeshAdaptationResult):
-        raise TypeError("Native fixture must return MeshAdaptationResult.")
+        raise TypeError(
+            "bisect.result must be a MeshAdaptationResult; got a different result kind."
+        )
     field = FiniteElementFieldSpec(
         "u", lagrange_element("triangle" if dimension == 2 else "tetrahedron", 2)
     )
@@ -817,13 +888,13 @@ def test_native_curved_transfer_reproduces_field_on_independent_coordinate_map(
     expected = case.target_space.project("u", _physical_field)
     actual = case.transfer.transfer.apply(original)
     assert case.adaptation.status.converged and case.transfer.evidence.passed
-    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=3e-12)
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=_PIPELINE_VALUE_ATOL)
     dual = jnp.linspace(-0.7, 1.3, actual.size, dtype=jnp.float64)
     np.testing.assert_allclose(
         jnp.vdot(actual, dual),
         jnp.vdot(original, case.transfer.transfer.pullback(dual)),
         rtol=0.0,
-        atol=3e-12,
+        atol=_PIPELINE_VALUE_ATOL,
     )
     assert not case.transfer.transfer.conservative
     geometry_transition = case.adaptation.geometry_transition
@@ -904,7 +975,7 @@ def _native_trial(
         del mesh, fields, materials, lineage, args
         return False
 
-    # A native prepared trial provides actual composition/transport identities.
+    # A native prepared trial provides composition/transport identities.
     trial = FiniteElementTopologyTransaction(
         reject_trial,
         fields=case.field,
@@ -967,7 +1038,9 @@ def test_independent_native_reanalysis_rejection_retains_accepted_objects_and_re
         del args
         assert mesh is native_3d.adaptation.target.mesh
         np.testing.assert_allclose(
-            fields[0], native_3d.target_space.project("u", _physical_field), atol=3e-12
+            fields[0],
+            native_3d.target_space.project("u", _physical_field),
+            atol=_PIPELINE_VALUE_ATOL,
         )
         assert materials is not None
         return _error(
@@ -1050,7 +1123,9 @@ def test_native_remap_then_pde_refresh_publishes_only_reanalyzed_state(
     assert bool(jnp.all(solved.successful))
     coefficients = compiled.expand(solved.value)
     expected = case.target_space.project("u", _physical_field)
-    np.testing.assert_allclose(coefficients, expected, rtol=0.0, atol=2e-11)
+    np.testing.assert_allclose(
+        coefficients, expected, rtol=0.0, atol=_REANALYZED_FIELD_ATOL
+    )
 
     def refresh(
         carried: tuple[Array, ...],
@@ -1070,7 +1145,9 @@ def test_native_remap_then_pde_refresh_publishes_only_reanalyzed_state(
         args: object,
     ) -> bool:
         del mesh, materials, lineage, args
-        np.testing.assert_allclose(fields[0], expected, rtol=0.0, atol=2e-11)
+        np.testing.assert_allclose(
+            fields[0], expected, rtol=0.0, atol=_REANALYZED_FIELD_ATOL
+        )
         return accept_reanalysis
 
     result = FiniteElementTopologyTransaction(
@@ -1080,13 +1157,15 @@ def test_native_remap_then_pde_refresh_publishes_only_reanalyzed_state(
         surface_chart_semantics=None if semantics is None else {"u": semantics},
     ).execute(accepted, case.source.mesh, case.adaptation)
     assert result.receipt is not None
-    # This actual P2 nested field transfer carries no physical content ledger.
+    # This P2 nested field transfer carries no physical content ledger.
     # The generic PDE re-solve may advance its field, but an explicit density
     # declaration must not promote interpolation to conserved material content.
     assert not result.transfers[0].transfer.conservative
     if accept_reanalysis and semantics != "conservative-density":
         assert bool(result.committed) and result.receipt.published
-        np.testing.assert_allclose(result.state.fields[0], expected, rtol=0.0, atol=2e-11)
+        np.testing.assert_allclose(
+            result.state.fields[0], expected, rtol=0.0, atol=_REANALYZED_FIELD_ATOL
+        )
         np.testing.assert_array_equal(accepted.fields[0], source_values)
     else:
         assert not bool(result.committed) and not result.receipt.published
@@ -1134,7 +1213,7 @@ def test_native_independent_reanalysis_publishes_one_atomic_epoch(
     np.testing.assert_allclose(
         result.state.fields[0],
         native_3d.target_space.project("u", _physical_field),
-        atol=3e-12,
+        atol=_PIPELINE_VALUE_ATOL,
     )
     assert accepted.materials is not None and result.state.materials is not None
     np.testing.assert_allclose(
@@ -1180,7 +1259,12 @@ def test_native_admission_rejects_mislabeled_actions_and_foreign_compiler_layout
             native_3d.adaptation.target.result_id, estimator="independent-owner"
         )
 
-    with pytest.raises(ValueError, match="action/route|certified compiled layouts"):
+    expected_field = (
+        r"SolverAwareDecision\.selected\.feasibility"
+        if mismatch == "compiled-layout"
+        else r"SolverAwareDecision\.selected must match action="
+    )
+    with pytest.raises(ValueError, match=expected_field):
         executor.execute(
             accepted,
             native_3d.source.mesh,
@@ -1270,8 +1354,15 @@ def fixed_pipeline(native_3d: _NativeCase) -> _DerivativeCase:
     scale = jnp.asarray(1.2, dtype=jnp.float64)
     value, tangent = jax.jvp(pipeline, (scale,), (jnp.asarray(1.0, dtype=jnp.float64),))
     expected, sensitivity = reference(1.2)
-    np.testing.assert_allclose(value, expected, rtol=3e-11, atol=3e-12)
-    np.testing.assert_allclose(tangent, sensitivity, rtol=3e-9, atol=3e-11)
+    np.testing.assert_allclose(
+        value, expected, rtol=_PIPELINE_VALUE_RTOL, atol=_PIPELINE_VALUE_ATOL
+    )
+    np.testing.assert_allclose(
+        tangent,
+        sensitivity,
+        rtol=_PIPELINE_DERIVATIVE_RTOL,
+        atol=_PIPELINE_DERIVATIVE_ATOL,
+    )
     gradient_error = float(np.max(np.abs(np.asarray(tangent) - sensitivity)))
     coercivity = float(
         np.min(np.linalg.eigvalsh(1.2 * base_stiffness + 1.2**3 * base_mass))
@@ -1333,12 +1424,22 @@ def test_fixed_route_geometry_pde_transfer_jvp_matches_independent_sensitivity(
     )
     _, tangent = jax.jvp(case.pipeline, (scale,), (direction,))
     _, expected = case.reference(1.2)
-    np.testing.assert_allclose(tangent, 0.37 * expected, rtol=3e-9, atol=3e-11)
+    np.testing.assert_allclose(
+        tangent,
+        0.37 * expected,
+        rtol=_PIPELINE_DERIVATIVE_RTOL,
+        atol=_PIPELINE_DERIVATIVE_ATOL,
+    )
     step = 1e-5
     finite_difference = (
         case.pipeline(scale + step * direction) - case.pipeline(scale - step * direction)
     ) / (2.0 * step)
-    np.testing.assert_allclose(tangent, finite_difference, rtol=3e-7, atol=3e-9)
+    np.testing.assert_allclose(
+        tangent,
+        finite_difference,
+        rtol=_PIPELINE_DIFFERENCE_RTOL,
+        atol=_PIPELINE_DIFFERENCE_ATOL,
+    )
 
 
 def test_fixed_route_geometry_pde_transfer_vjp_matches_independent_adjoint(
@@ -1349,14 +1450,19 @@ def test_fixed_route_geometry_pde_transfer_vjp_matches_independent_adjoint(
     value, pullback = jax.vjp(case.pipeline, scale)
     dual = jnp.linspace(-0.8, 0.9, value.size, dtype=jnp.float64)
     expected = case.adjoint(1.2, np.asarray(dual, dtype=np.float64))
-    np.testing.assert_allclose(pullback(dual)[0], expected, rtol=3e-9, atol=3e-11)
+    np.testing.assert_allclose(
+        pullback(dual)[0],
+        expected,
+        rtol=_PIPELINE_DERIVATIVE_RTOL,
+        atol=_PIPELINE_DERIVATIVE_ATOL,
+    )
     direction = jnp.asarray(0.37, dtype=jnp.float64)
     _, tangent = jax.jvp(case.pipeline, (scale,), (direction,))
     np.testing.assert_allclose(
         jnp.vdot(dual, tangent),
         jnp.vdot(pullback(dual)[0], direction),
-        rtol=3e-11,
-        atol=3e-12,
+        rtol=_PIPELINE_VALUE_RTOL,
+        atol=_PIPELINE_VALUE_ATOL,
     )
 
 
@@ -1413,7 +1519,7 @@ def test_fixed_route_derivative_rejects_wrong_stage_qualification(
     unrelated_pde = replace(
         case.qualifications[1], execution_plan_id="different-pde-discretization"
     )
-    with pytest.raises(ValueError, match="exact qualified execution plans"):
+    with pytest.raises(ValueError, match="qualified execution plans"):
         FixedEpochDerivativeEvidence(
             case.evidence.epoch_id,
             case.evidence.parameter_id,
@@ -1437,7 +1543,7 @@ def test_geometry_realization_invalidates_fixed_epoch_derivatives_without_retopo
     )
     assert "stopped-geometry-realization-event" in issues
     assert "stopped-topology-event" not in issues
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="stopped-geometry-realization-event"):
         case.evidence.require_valid(
             case.evidence.epoch_id,
             case.evidence.parameter_id,
@@ -1457,7 +1563,7 @@ def test_fixed_route_derivative_rejects_foreign_numeric_epoch(
     qualifications[stage] = replace(
         qualifications[stage], numeric_revision_id="foreign-epoch"
     )
-    with pytest.raises(ValueError, match="actual numeric epoch"):
+    with pytest.raises(ValueError, match="numeric epoch"):
         FixedEpochDerivativeEvidence(
             case.evidence.epoch_id,
             case.evidence.parameter_id,
@@ -1469,43 +1575,27 @@ def test_fixed_route_derivative_rejects_foreign_numeric_epoch(
 
 
 def _run_hp_campaign(p_degree: int, /) -> dict[str, Any]:
-    root = Path(__file__).resolve().parents[3]
-    completed = subprocess.run(
-        (
-            sys.executable,
-            str(root / "examples" / "hp_metric_order_adaptation.py"),
-            "--p-degree",
-            str(p_degree),
-            "--with-history",
-        ),
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
+    return run_on_forced_devices(
+        "tests._support.solver_hp_campaign",
+        "hp_campaign",
+        (str(p_degree),),
+        devices=1,
+        env={},
     )
-    if completed.returncode != 0:
-        raise RuntimeError(
-            "The isolated hp physical campaign failed:\n" + completed.stderr
-        )
-    result = json.loads(completed.stdout)
-    if not isinstance(result, dict):
-        raise TypeError("The hp physical campaign must return one JSON object.")
-    return result
 
 
-@pytest.mark.parametrize("p_degree", [2, 3], ids=["quadratic-field", "cubic-field"])
-def test_prepared_hp_physical_campaign_transports_named_field_histories(
-    p_degree: int,
-) -> None:
-    result = _run_hp_campaign(p_degree)
+def _assert_hp_campaign(result: Mapping[str, Any]) -> None:
     assert result["accepted_L2_error"] < result["tolerance"]
     assert result["accepted_L2_error"] < result["baseline_L2_error"]
-    assert result["transfer_integral_error"] < 1.0e-10
+    assert result["transfer_integral_error"] < _CAMPAIGN_TRANSFER_RESIDUAL
     assert set(result["history_integral_errors"]) == {
         "previous-reaction-state",
         "accumulated-reaction-state",
     }
-    assert all(error < 1.0e-10 for error in result["history_integral_errors"].values())
+    assert all(
+        error < _CAMPAIGN_TRANSFER_RESIDUAL
+        for error in result["history_integral_errors"].values()
+    )
     assert {trial["action"] for trial in result["trials"]} == {"h", "p"}
     assert all(sum(trial["phase_seconds"]) > 0.0 for trial in result["trials"])
     for trial in result["trials"]:
@@ -1518,23 +1608,48 @@ def test_prepared_hp_physical_campaign_transports_named_field_histories(
                     "duality_error",
                 )
             )
-            < 1.0e-10
+            < _CAMPAIGN_TRANSFER_RESIDUAL
         )
 
 
-def test_native_metric_physical_campaign_accepts_solve_and_rolls_back_rejected_reanalysis() -> (
-    None
-):
-    from examples.hp_metric_order_adaptation import run_metric
-
-    result = run_metric()
+def _assert_metric_campaign(result: Mapping[str, Any]) -> None:
     assert result["accepted_L2_error"] < result["tolerance"]
     assert result["accepted_L2_error"] < result["baseline_L2_error"]
-    assert result["integral_error"] < 1.0e-10
-    assert result["transfer_duality_error"] < 1.0e-10
-    assert result["transfer_JVP_finite_difference_error"] < 1.0e-7
-    assert result["transfer_VJP_finite_difference_error"] < 1.0e-7
+    assert result["integral_error"] < _CAMPAIGN_TRANSFER_RESIDUAL
+    assert result["transfer_duality_error"] < _CAMPAIGN_TRANSFER_RESIDUAL
+    assert (
+        result["transfer_JVP_finite_difference_error"]
+        < _METRIC_TRANSFER_DIFFERENCE_RESIDUAL
+    )
+    assert (
+        result["transfer_VJP_finite_difference_error"]
+        < _METRIC_TRANSFER_DIFFERENCE_RESIDUAL
+    )
     assert result["physical_reanalysis_rollback"]
+
+
+@pytest.fixture(scope="module")
+def hp_campaign_reports() -> dict[int, dict[str, Any]]:
+    return {degree: _run_hp_campaign(degree) for degree in (2, 3)}
+
+
+@pytest.fixture(scope="module")
+def metric_campaign_report() -> dict[str, Any]:
+    return run_metric()
+
+
+@pytest.mark.parametrize("p_degree", [2, 3], ids=["quadratic-field", "cubic-field"])
+def test_prepared_hp_physical_campaign_transports_named_field_histories(
+    p_degree: int,
+    hp_campaign_reports: dict[int, dict[str, Any]],
+) -> None:
+    _assert_hp_campaign(hp_campaign_reports[p_degree])
+
+
+def test_native_metric_physical_campaign_accepts_solve_and_rolls_back_rejected_reanalysis(
+    metric_campaign_report: dict[str, Any],
+) -> None:
+    _assert_metric_campaign(metric_campaign_report)
 
 
 def test_missing_native_engine_cannot_publish_a_learned_metric_proposal(
@@ -1542,10 +1657,10 @@ def test_missing_native_engine_cannot_publish_a_learned_metric_proposal(
 ) -> None:
     from phydrax import _meshcore
 
-    # Planar metric adaptation is genuinely JAX-owned and does not require this
+    # Planar metric adaptation is JAX-owned and does not require this
     # binary. The 3D route constructs TetMesh3D and must refuse its absence.
     source = phx.meshing.certify_cell_mesh(
-        _tetrahedra(1), phx.SpatialCoordinateContract.si()
+        kuhn_cube(1, orientation_swap=(0, 1)), phx.SpatialCoordinateContract.si()
     )
     features = MeshProposalFeatures(
         source,
@@ -1587,19 +1702,33 @@ def test_missing_native_engine_cannot_publish_a_learned_metric_proposal(
     np.testing.assert_array_equal(source.mesh.coordinates, source_coordinates)
 
 
-def test_hp_physical_campaign_archive_rebuilds_fields_and_integrator_histories(
-    tmp_path: Path,
+def _assert_restored_hp_campaign(
+    authored: Mapping[str, Any], restored: Mapping[str, Any]
 ) -> None:
-    from examples.hp_metric_order_adaptation import resume_hp, run
-
-    authored = run(p_degree=3, with_history=True, archive=tmp_path)
-    restored = resume_hp(tmp_path)
     assert restored["accepted_L2_error"] < authored["tolerance"]
     assert restored["independently_recomputed_L2_error"] < authored["tolerance"]
     assert set(restored["history_integral_errors"]) == set(
         authored["history_integral_errors"]
     )
-    assert all(error < 1.0e-10 for error in restored["history_integral_errors"].values())
+    assert all(
+        error < _CAMPAIGN_TRANSFER_RESIDUAL
+        for error in restored["history_integral_errors"].values()
+    )
+
+
+@pytest.fixture(scope="module")
+def archived_hp_campaign(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    archive = tmp_path_factory.mktemp("hp-campaign")
+    authored = run(p_degree=3, with_history=True, archive=archive)
+    return authored, resume_hp(archive)
+
+
+def test_hp_physical_campaign_archive_rebuilds_fields_and_integrator_histories(
+    archived_hp_campaign: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
+    _assert_restored_hp_campaign(*archived_hp_campaign)
 
 
 class _NativeMetricFVCase(NamedTuple):
@@ -1611,13 +1740,15 @@ class _NativeMetricFVCase(NamedTuple):
 
 @pytest.fixture(scope="module")
 def native_metric_fv_owners() -> _NativeMetricFVCase:
-    """Actual tetrahedral native event for resources, not chart qualification."""
+    """Return a tetrahedral native event for resource accounting."""
     from phydrax.discretization import UnstructuredFiniteVolumePlan
     from phydrax.meshing import MeshingLimits
     from phydrax.meshing._tetra_metric import MetricRemeshingEvidence
-    from tests.unit.meshing.test_tetra_metric import _box
 
-    source = phx.meshing.certify_cell_mesh(_box(), phx.SpatialCoordinateContract.si())
+    points, tetrahedra = kuhn_cube_arrays(orientation_swap=(0, 1))
+    points *= np.asarray((2.0, 0.5, 1.0), dtype=np.float64)
+    mesh = CellMesh(points, (CellBlock("box", "tetrahedron", tetrahedra),))
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     limits = MeshingLimits(
         maximum_work_units=640_000,
         maximum_geometry_queries=1_280_000,
@@ -1657,30 +1788,6 @@ def native_metric_fv_owners() -> _NativeMetricFVCase:
     previous = adaptation.evidence.execution_evidence
     assert previous is not None
     previous.require_valid()
-    import json
-
-    print(
-        "native-resource-source-receipt="
-        + json.dumps(
-            {
-                "source_result_id": source.result_id,
-                "source_mesh_id": source.mesh.mesh_id,
-                "source_geometry_layout_id": source.geometry.geometry_layout_id,
-                "adaptation_result_id": adaptation.result_id,
-                "target_result_id": adaptation.target.result_id,
-                "status": adaptation.status.value,
-                "route": adaptation.route.value,
-                "source_vertex_global_ids": np.asarray(
-                    source.mesh.vertex_global_ids
-                ).tolist(),
-                "source_cell_global_ids": np.asarray(
-                    source.mesh.blocks[0].global_ids
-                ).tolist(),
-                "execution": previous.to_record(),
-            },
-            sort_keys=True,
-        )
-    )
     assert adaptation.status.converged and trial.admissible
     old = UnstructuredFiniteVolumePlan.from_cell_mesh(source.mesh).prepare(
         cell_geometry=source.geometry
@@ -1694,10 +1801,10 @@ def native_metric_fv_owners() -> _NativeMetricFVCase:
 def test_native_remap_authenticated_root_retains_owners_and_physical_content(
     native_metric_fv_owners: _NativeMetricFVCase,
 ) -> None:
-    from phydrax._meshcore import current_native_host_workspace
-    from phydrax.discretization._coordinate_enclosure import CoordinateEnclosureBudget
+    from phydrax._meshcore import NativeExecutionScope
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
     from phydrax.discretization.finite_volume._automatic_remap import (
-        _bind_remap_execution,
+        bind_remap_execution,
         prepare_unstructured_conservative_remap,
     )
     from phydrax.meshing._measurements import NativeExecutionRecord
@@ -1708,20 +1815,24 @@ def test_native_remap_authenticated_root_retains_owners_and_physical_content(
     history = jnp.arange(old.cell_volumes.shape[0], dtype=jnp.float64)[:, None] + 0.5
     before = np.asarray(history).copy()
     assert previous.owner_id is not None
-    with native_volume_source_execution_budget(
-        adaptation.policy.limits,
-        previous,
-        previous.owner_id,
-    ) as native:
-        workspace = current_native_host_workspace()
+    with (
+        NativeExecutionScope(adaptation.policy.limits.native_limits()) as native,
+        native_volume_source_execution_budget(
+            adaptation.policy.limits, previous, previous.owner_id, scope=native
+        ),
+        native.host_workspace() as workspace,
+    ):
         assert workspace is not None
         workspace.retain_owner((old, new, density, history))
-        allowance = native.remaining()
+        ticket = native.batch(0)
+        ticket.settle()
         ledger = CoordinateEnclosureBudget(
-            allowance.remaining_work_units, allowance.remaining_scratch_bytes
+            ticket,
+            maximum_work_units=adaptation.policy.limits.maximum_work_units,
+            maximum_memory_bytes=adaptation.policy.limits.maximum_scratch_bytes,
         )
-        with ledger.activate():
-            assert workspace is not ledger._host_workspace
+        with ledger.retained_storage(lambda size: native.batch(0, bytes_upper=size)):
+            assert workspace is not ledger.storage_ticket
             owner_bound = workspace.bound
             prepared = prepare_unstructured_conservative_remap(
                 old,
@@ -1729,6 +1840,8 @@ def test_native_remap_authenticated_root_retains_owners_and_physical_content(
                 provenance="real-native-resource-owner-content",
                 adaptation=adaptation,
                 source_workspace=workspace,
+                scope=native,
+                budget=ledger,
             )
             assert prepared.execution_evidence is None and prepared.plan is not None
             target_density = prepared.plan.apply(density)
@@ -1747,7 +1860,7 @@ def test_native_remap_authenticated_root_retains_owners_and_physical_content(
     record = NativeExecutionRecord(
         native.evidence, owner_id=previous.owner_id, preparation_evidence=previous
     )
-    finalized = _bind_remap_execution(prepared, record)
+    finalized = bind_remap_execution(prepared, record)
     assert finalized.execution_evidence is not None
     finalized.execution_evidence.require_valid()
     assert finalized.execution_evidence.owner_id == record.owner_id
@@ -1765,7 +1878,8 @@ def test_native_remap_authenticated_root_retains_owners_and_physical_content(
 def test_native_remap_rejects_algebra_scratch_as_persistent_owner(
     native_metric_fv_owners: _NativeMetricFVCase,
 ) -> None:
-    from phydrax.discretization._coordinate_enclosure import CoordinateEnclosureBudget
+    from phydrax._meshcore import NativeExecutionScope
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
     from phydrax.discretization.finite_volume._automatic_remap import (
         prepare_unstructured_conservative_remap,
     )
@@ -1774,25 +1888,34 @@ def test_native_remap_rejects_algebra_scratch_as_persistent_owner(
     adaptation, previous, old, new = native_metric_fv_owners
     before = np.asarray(old.mesh.coordinates).copy()
     assert previous.owner_id is not None
-    with native_volume_source_execution_budget(
-        adaptation.policy.limits,
-        previous,
-        previous.owner_id,
-    ) as native:
-        allowance = native.remaining()
+    with (
+        NativeExecutionScope(adaptation.policy.limits.native_limits()) as native,
+        native_volume_source_execution_budget(
+            adaptation.policy.limits, previous, previous.owner_id, scope=native
+        ),
+    ):
+        ticket = native.batch(0)
+        ticket.settle()
         ledger = CoordinateEnclosureBudget(
-            allowance.remaining_work_units, allowance.remaining_scratch_bytes
+            ticket,
+            maximum_work_units=adaptation.policy.limits.maximum_work_units,
+            maximum_memory_bytes=adaptation.policy.limits.maximum_scratch_bytes,
         )
         with (
-            ledger.activate(),
-            pytest.raises(ValueError, match="persistent reservation separate"),
+            ledger.retained_storage(lambda size: native.batch(0, bytes_upper=size)),
+            pytest.raises(
+                TypeError,
+                match=r"prepare_unstructured_conservative_remap argument 'source_workspace'",
+            ),
         ):
             prepare_unstructured_conservative_remap(
                 old,
                 new,
                 provenance="invalid-scratch-owner",
                 adaptation=adaptation,
-                source_workspace=ledger._host_workspace,
+                source_workspace=ledger.storage_ticket,  # ty: ignore[invalid-argument-type]
+                scope=native,
+                budget=ledger,
             )
     np.testing.assert_array_equal(old.mesh.coordinates, before)
 
@@ -1800,8 +1923,13 @@ def test_native_remap_rejects_algebra_scratch_as_persistent_owner(
 def test_native_remap_unrelated_root_cannot_omit_actual_predecessor_cost(
     native_metric_fv_owners: _NativeMetricFVCase,
 ) -> None:
-    from phydrax._meshcore import MeshcoreError, MeshcoreStatus, NativeExecutionBudget
-    from phydrax.discretization._coordinate_enclosure import CoordinateEnclosureBudget
+    from phydrax._meshcore import (
+        MeshcoreError,
+        MeshcoreStatus,
+        NativeExecutionLimits,
+        NativeExecutionScope,
+    )
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
     from phydrax.discretization.finite_volume._automatic_remap import (
         prepare_unstructured_conservative_remap,
     )
@@ -1811,24 +1939,31 @@ def test_native_remap_unrelated_root_cannot_omit_actual_predecessor_cost(
     priced_work = int(np.asarray(previous.total_work_units))
     assert priced_work > 0
     before = np.asarray(old.mesh.coordinates).copy()
-    native = NativeExecutionBudget(
-        max_work=priced_work - 1,
-        max_geometry_queries=adaptation.policy.limits.maximum_geometry_queries,
-        max_cavity_cells=adaptation.policy.limits.maximum_cavity_cells,
-        max_scratch_bytes=adaptation.policy.limits.maximum_scratch_bytes,
-        max_wall_seconds=adaptation.policy.limits.maximum_wall_seconds,
-    )
-    ledger = CoordinateEnclosureBudget(
-        adaptation.policy.limits.maximum_work_units,
-        adaptation.policy.limits.maximum_scratch_bytes,
+    limits = adaptation.policy.limits
+    native = NativeExecutionScope(
+        NativeExecutionLimits(
+            maximum_work_units=priced_work - 1,
+            maximum_geometry_queries=limits.maximum_geometry_queries,
+            maximum_cavity_cells=limits.maximum_cavity_cells,
+            maximum_managed_bytes=limits.maximum_scratch_bytes,
+            maximum_seconds=limits.maximum_wall_seconds,
+        )
     )
     with pytest.raises((MeshingFailure, MeshcoreError)):
-        with native, ledger.activate():
+        with native, native.batch(0) as ticket:
+            ticket.settle()
+            ledger = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
             prepare_unstructured_conservative_remap(
                 old,
                 new,
                 provenance="unrelated-root-cannot-drop-source",
                 adaptation=adaptation,
+                scope=native,
+                budget=ledger,
             )
     assert native.evidence is not None
     assert native.evidence.status == MeshcoreStatus.CAPACITY_EXCEEDED
@@ -1838,8 +1973,8 @@ def test_native_remap_unrelated_root_cannot_omit_actual_predecessor_cost(
 def test_native_remap_invalid_provenance_remains_nonresource_exception(
     native_metric_fv_owners: _NativeMetricFVCase,
 ) -> None:
-    from phydrax._meshcore import current_native_host_workspace
-    from phydrax.discretization._coordinate_enclosure import CoordinateEnclosureBudget
+    from phydrax._meshcore import NativeExecutionScope
+    from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
     from phydrax.discretization.finite_volume._automatic_remap import (
         prepare_unstructured_conservative_remap,
     )
@@ -1849,24 +1984,30 @@ def test_native_remap_invalid_provenance_remains_nonresource_exception(
     before = np.asarray(old.cell_volumes).copy()
     assert previous.owner_id is not None
     with pytest.raises(ValueError, match="provenance"):
-        with native_volume_source_execution_budget(
-            adaptation.policy.limits,
-            previous,
-            previous.owner_id,
-        ) as native:
-            workspace = current_native_host_workspace()
+        with (
+            NativeExecutionScope(adaptation.policy.limits.native_limits()) as native,
+            native_volume_source_execution_budget(
+                adaptation.policy.limits, previous, previous.owner_id, scope=native
+            ),
+            native.host_workspace() as workspace,
+        ):
             assert workspace is not None
-            allowance = native.remaining()
+            ticket = native.batch(0)
+            ticket.settle()
             ledger = CoordinateEnclosureBudget(
-                allowance.remaining_work_units, allowance.remaining_scratch_bytes
+                ticket,
+                maximum_work_units=adaptation.policy.limits.maximum_work_units,
+                maximum_memory_bytes=adaptation.policy.limits.maximum_scratch_bytes,
             )
-            with ledger.activate():
+            with ledger.retained_storage(lambda size: native.batch(0, bytes_upper=size)):
                 prepare_unstructured_conservative_remap(
                     old,
                     new,
                     provenance="",
                     adaptation=adaptation,
                     source_workspace=workspace,
+                    scope=native,
+                    budget=ledger,
                 )
     np.testing.assert_array_equal(old.cell_volumes, before)
 
@@ -1875,20 +2016,24 @@ def test_native_remap_invalid_provenance_remains_nonresource_exception(
 def native_metric_geometry_receipt(
     native_metric_fv_owners: _NativeMetricFVCase,
 ) -> NativeExecutionRecord:
-    """Append actual native coordinate predicates, preserving the source chain."""
-    from phydrax._meshcore import current_native_host_workspace, exact_orient3d
+    """Append native coordinate predicates, preserving the source chain."""
+    from phydrax._meshcore import exact_orient3d, NativeExecutionScope
     from phydrax.meshing._volume_generation import native_volume_source_execution_budget
 
     case = native_metric_fv_owners
     cells = np.asarray(case.source.mesh.blocks[0].vertices)
     tetrahedra = np.asarray(case.source.mesh.coordinates)[cells]
     assert case.previous.owner_id is not None
-    with native_volume_source_execution_budget(
-        case.adaptation.policy.limits,
-        case.previous,
-        case.previous.owner_id,
-    ) as native:
-        workspace = current_native_host_workspace()
+    with (
+        NativeExecutionScope(case.adaptation.policy.limits.native_limits()) as native,
+        native_volume_source_execution_budget(
+            case.adaptation.policy.limits,
+            case.previous,
+            case.previous.owner_id,
+            scope=native,
+        ),
+        native.host_workspace() as workspace,
+    ):
         assert workspace is not None
         workspace.retain_owner((case.source, tetrahedra))
         sign = exact_orient3d(
@@ -1914,7 +2059,7 @@ def test_native_consumer_admission_cannot_renew_actual_source_query_or_clock_cos
     native_metric_geometry_receipt: NativeExecutionRecord,
     resource: str,
 ) -> None:
-    from phydrax._meshcore import current_native_host_workspace
+    from phydrax._meshcore import NativeExecutionScope
     from phydrax.meshing import MeshingFailure, MeshingLimits
     from phydrax.meshing._volume_generation import native_volume_source_execution_budget
 
@@ -1946,9 +2091,269 @@ def test_native_consumer_admission_cannot_renew_actual_source_query_or_clock_cos
     entered = False
     assert receipt.owner_id is not None
     with pytest.raises(MeshingFailure):
-        with native_volume_source_execution_budget(starved, receipt, receipt.owner_id):
+        with (
+            NativeExecutionScope(starved.native_limits()) as native,
+            native_volume_source_execution_budget(
+                starved, receipt, receipt.owner_id, scope=native
+            ),
+            native.host_workspace() as workspace,
+        ):
             entered = True
-            assert current_native_host_workspace() is not None
+            assert workspace is not None
     assert not entered
     receipt.require_valid()
     np.testing.assert_array_equal(case.source.cell_volumes, before)
+
+
+@pytest.fixture(scope="module")
+def campaign_oracle_source() -> HPSource:
+    return prepare_hp_source()
+
+
+@pytest.fixture(scope="module")
+def campaign_oracle_target(campaign_oracle_source: HPSource) -> HPTarget:
+    return prepare_hp_target(campaign_oracle_source, AdaptationAction.P, 2)
+
+
+def test_campaign_manufactured_source_and_observed_cost_have_independent_anchors() -> (
+    None
+):
+    points = jnp.asarray(((0.0, 0.2), (0.5, 0.8), (1.0, 0.4)), dtype=jnp.float64)
+    reference = np.asarray((0.0, 0.25, 1.0), dtype=np.float64)
+    np.testing.assert_array_equal(exact(points), reference)
+    np.testing.assert_array_equal(source(points, None), reference)
+    assert peak_rss_bytes() > 0
+
+
+def test_campaign_baseline_solve_matches_closed_reaction_projection(
+    campaign_oracle_source: HPSource,
+) -> None:
+    case = campaign_oracle_source
+    # Orthogonal projection of x² onto span{1, x}: x - 1/6.
+    # Its squared error integrates to 1/180 and its integral is exactly 1/3.
+    error, integral = error_and_integral(case.initial, case.values, 7)
+    assert error == pytest.approx(np.sqrt(1.0 / 180.0), abs=_CAMPAIGN_CLOSED_MOMENT_ATOL)
+    assert integral == pytest.approx(1.0 / 3.0, abs=_CAMPAIGN_CLOSED_MOMENT_ATOL)
+    evidence = physical(case.initial, case.values, "closed-reaction-projection", 7)
+    assert evidence.revision_id == case.initial.epoch_id
+    assert evidence.bound == pytest.approx(error, abs=_CAMPAIGN_CLOSED_MOMENT_ATOL)
+
+
+@pytest.mark.parametrize(
+    ("value", "squared_error", "integral"),
+    [(0.0, 1.0 / 5.0, 0.0), (1.0, 8.0 / 15.0, 1.0)],
+    ids=["zero-field-fault", "constant-field-fault"],
+)
+def test_campaign_physical_oracle_detects_wrong_fields_by_closed_moments(
+    campaign_oracle_target: HPTarget,
+    value: float,
+    squared_error: float,
+    integral: float,
+) -> None:
+    epoch = campaign_oracle_target.epoch
+    field = jnp.full(
+        (epoch.discretization.field_spaces[0].layout.size,), value, dtype=jnp.float64
+    )
+    error, actual_integral = error_and_integral(epoch, field, 7)
+    assert error == pytest.approx(
+        np.sqrt(squared_error), abs=_CAMPAIGN_CLOSED_MOMENT_ATOL
+    )
+    assert actual_integral == pytest.approx(integral, abs=_CAMPAIGN_CLOSED_MOMENT_ATOL)
+    assert error > 0.025
+
+
+def test_campaign_pack_unpack_and_refresh_retain_nonzero_field(
+    campaign_oracle_source: HPSource,
+) -> None:
+    case = campaign_oracle_source
+    packed = pack(case.initial, case.values, 4)
+    np.testing.assert_array_equal(unpack(case.initial, packed), case.values)
+    refreshed = SolvedFieldRefresh(packed)((jnp.zeros_like(packed),), None, None)
+    np.testing.assert_array_equal(refreshed[0], packed)
+    assert bool(jnp.any(refreshed[0] != 0))
+
+
+def test_campaign_named_history_transport_matches_closed_integrals(
+    campaign_oracle_source: HPSource,
+    campaign_oracle_target: HPTarget,
+) -> None:
+    initial, target = campaign_oracle_source.initial, campaign_oracle_target
+    transfer = phx.discretization.fem.finite_element_hp_transfer_plan(
+        initial, target.epoch, target.lineage, "u", target.kind
+    )
+    packed = pack(initial, campaign_oracle_source.values, transfer.primal.shape[2])
+    auxiliary, integrator = HPHistoryTransfer(transfer)(
+        (("previous-reaction-state", packed * 0.5),),
+        (("accumulated-reaction-state", packed * 2.0),),
+        None,
+        None,
+    )
+    assert auxiliary[0][0] == "previous-reaction-state"
+    assert integrator[0][0] == "accumulated-reaction-state"
+    assert error_and_integral(target.epoch, unpack(target.epoch, auxiliary[0][1]), 7)[
+        1
+    ] == pytest.approx(1.0 / 6.0, abs=_CAMPAIGN_CLOSED_MOMENT_ATOL)
+    assert error_and_integral(target.epoch, unpack(target.epoch, integrator[0][1]), 7)[
+        1
+    ] == pytest.approx(2.0 / 3.0, abs=_CAMPAIGN_CLOSED_MOMENT_ATOL)
+
+
+def test_campaign_publication_certifiers_reject_zero_field_fault(
+    campaign_oracle_target: HPTarget,
+) -> None:
+    epoch = campaign_oracle_target.epoch
+    values = epoch.discretization.project("u", source)
+    packed = pack(epoch, values, 9)
+    hp = HPPhysicalCertifier(packed, jnp.asarray(1.0 / 3.0), 0.025)
+    metric = MetricPhysicalCertifier(epoch.discretization, jnp.asarray(1.0 / 3.0), 0.025)
+    assert hp(epoch, (packed,), None, None, None)
+    assert metric(epoch.mesh, (values,), None, None, None)
+    assert not hp(epoch, (jnp.zeros_like(packed),), None, None, None)
+    assert not metric(epoch.mesh, (jnp.zeros_like(values),), None, None, None)
+    reanalysis = MetricPhysicalReanalysis(
+        epoch.discretization, epoch.epoch_id, "reaction-L2-error"
+    )
+    fault = reanalysis(epoch.mesh, (jnp.zeros_like(values),), None, None)
+    assert fault.bound == pytest.approx(
+        np.sqrt(1.0 / 5.0), abs=_CAMPAIGN_CLOSED_MOMENT_ATOL
+    )
+    assert fault.bound > 0.025
+
+
+@pytest.mark.parametrize(
+    ("helper", "field"),
+    [
+        ("exact", "accepted_L2_error"),
+        ("source", "accepted_L2_error"),
+        ("solve_problem", "accepted_L2_error"),
+        ("compile_and_solve", "accepted_L2_error"),
+        ("error_and_integral", "transfer_integral_error"),
+        ("pack", "transfer_integral_error"),
+        ("unpack", "transfer_integral_error"),
+        ("physical", "accepted_L2_error"),
+        ("SolvedFieldRefresh", "accepted_L2_error"),
+        ("HPHistoryTransfer", "history_integral_errors"),
+        ("HPPhysicalCertifier", "accepted_L2_error"),
+        ("hp_transfer_derivatives", "transfer_derivatives"),
+        ("prepare_hp_source", "accepted_L2_error"),
+        ("prepare_hp_target", "actions"),
+        ("stage_hp_trial", "history_integral_errors"),
+        ("stage_hp_trial.capture", "history_integral_errors"),
+        ("price_hp_trial", "phase_seconds"),
+        ("publish_hp_trial", "accepted_L2_error"),
+        ("hp_history_errors", "history_integral_errors"),
+        ("run", "accepted_L2_error"),
+        ("hp_campaign", "accepted_L2_error"),
+    ],
+    ids=[
+        "exact",
+        "source",
+        "solve",
+        "compile",
+        "physical-integral",
+        "pack",
+        "unpack",
+        "physical-evidence",
+        "field-refresh",
+        "hp-history",
+        "hp-certifier",
+        "hp-derivatives",
+        "hp-source",
+        "hp-target",
+        "hp-staging",
+        "hp-rebind",
+        "hp-pricing",
+        "hp-publication",
+        "hp-history-errors",
+        "hp-run",
+        "hp-child",
+    ],
+)
+def test_hp_campaign_oracle_rejects_corrupted_helper_output(
+    hp_campaign_reports: dict[int, dict[str, Any]],
+    helper: str,
+    field: str,
+) -> None:
+    del helper
+    published = hp_campaign_reports[2]
+    _assert_hp_campaign(published)
+    faulty = deepcopy(published)
+    match field:
+        case "accepted_L2_error" | "transfer_integral_error":
+            faulty[field] = 1.0
+        case "history_integral_errors":
+            faulty[field]["previous-reaction-state"] = 1.0
+        case "phase_seconds":
+            faulty["trials"][0]["phase_seconds"] = [0.0] * 6
+        case "actions":
+            faulty["trials"][0]["action"] = "metric"
+        case "transfer_derivatives":
+            faulty["trials"][0][field]["JVP_error"] = 1.0
+        case _:
+            raise AssertionError(
+                "campaign_fault.field must select a declared output invariant; got an unknown field"
+            )
+    with pytest.raises(AssertionError):
+        _assert_hp_campaign(faulty)
+
+
+@pytest.mark.parametrize(
+    ("helper", "field"),
+    [
+        ("MetricPhysicalCertifier", "accepted_L2_error"),
+        ("MetricPhysicalReanalysis", "accepted_L2_error"),
+        ("prepare_metric_source", "accepted_L2_error"),
+        ("stage_metric_trial", "integral_error"),
+        ("stage_metric_trial.capture", "integral_error"),
+        ("price_metric_trial", "accepted_L2_error"),
+        ("publish_metric_trial", "accepted_L2_error"),
+        ("refuse_metric_reanalysis", "physical_reanalysis_rollback"),
+        ("refuse_metric_reanalysis.reject", "physical_reanalysis_rollback"),
+        ("metric_transfer_derivatives", "transfer_JVP_finite_difference_error"),
+        ("run_metric", "accepted_L2_error"),
+    ],
+    ids=[
+        "metric-certifier",
+        "metric-reanalysis",
+        "metric-source",
+        "metric-staging",
+        "metric-rebind",
+        "metric-pricing",
+        "metric-publication",
+        "metric-refusal",
+        "metric-refusal-callback",
+        "metric-derivatives",
+        "metric-run",
+    ],
+)
+def test_metric_campaign_oracle_rejects_corrupted_helper_output(
+    metric_campaign_report: dict[str, Any],
+    helper: str,
+    field: str,
+) -> None:
+    del helper
+    _assert_metric_campaign(metric_campaign_report)
+    faulty = dict(metric_campaign_report)
+    faulty[field] = False if field == "physical_reanalysis_rollback" else 1.0
+    with pytest.raises(AssertionError):
+        _assert_metric_campaign(faulty)
+
+
+def test_hp_resume_oracle_rejects_corrupted_helper_output(
+    archived_hp_campaign: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
+    authored, restored = archived_hp_campaign
+    _assert_restored_hp_campaign(authored, restored)
+    faulty = dict(restored, independently_recomputed_L2_error=1.0)
+    with pytest.raises(AssertionError):
+        _assert_restored_hp_campaign(authored, faulty)
+
+
+def _assert_observed_peak_bytes(value: int) -> None:
+    assert value > 0
+
+
+def test_campaign_peak_rss_oracle_rejects_corrupted_helper_output() -> None:
+    _assert_observed_peak_bytes(peak_rss_bytes())
+    with pytest.raises(AssertionError):
+        _assert_observed_peak_bytes(0)

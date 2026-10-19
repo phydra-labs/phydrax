@@ -23,6 +23,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
+from phydrax.units import METER
 
 
 def _surface_case(count: int, *, warmup: int, repeats: int) -> Any:
@@ -30,7 +31,7 @@ def _surface_case(count: int, *, warmup: int, repeats: int) -> Any:
         (0.0, 0.0, 0.0),
         0.75,
         feature_id=f"sphere-{count}",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     grid = phx.discretization.TensorGridPlan(
         tuple(phx.discretization.UniformAxisSpec(count) for _ in range(3)),
         axis_names=("x", "y", "z"),

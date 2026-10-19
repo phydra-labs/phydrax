@@ -8,6 +8,7 @@ import pytest
 import phydrax as phx
 import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator
+from phydrax.units import METER
 
 
 class _EndpointSensitiveNormal(phx.uq.AbstractDistribution):
@@ -258,7 +259,7 @@ def test_stochastic_integration_scenario_3() -> None:
     assert estimate.error_estimate < 1e-10
     assert estimate.num_evaluations == 960
     square = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     vertices = jnp.asarray(
         [
@@ -324,7 +325,7 @@ def test_stochastic_integration_scenario_3() -> None:
 
 def test_stochastic_integration_scenario_4() -> None:
     square = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     vertices = jnp.asarray(
         [

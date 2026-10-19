@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from fractions import Fraction
 
 import equinox as eqx
@@ -16,6 +17,7 @@ from phydrax._model._structure import (
     model_recipe_array_values,
     model_structure_recipe,
 )
+from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization import (
     CellGeometrySpec,
     CellMesh,
@@ -30,22 +32,58 @@ from phydrax.discretization._cell_geometry import (
     RationalComposedCellGeometryElement,
 )
 from phydrax.discretization._cell_geometry_transfer import (
-    _certified_cell_measures,
     transition_displaced_cell_geometry,
 )
 from phydrax.discretization._cell_geometry_validity import (
     cell_geometry_id,
     certify_cell_geometry_validity,
 )
-from phydrax.discretization._coordinate_enclosure import (
+from phydrax.discretization._coordinate_budget import (
     CoordinateEnclosureBudget,
     CoordinateEnclosureResourceError,
 )
+from phydrax.discretization._mapped_geometry_measure import certified_cell_measures
 from phydrax.geometry._supermesh import prepare_common_refinement
 from phydrax.lifecycle._meshing_sources import (
     register_meshing_source_artifacts,
     validate_meshing_source_closure,
 )
+from tests._support.exact_power_geometry import periodic_power_source, power_source
+
+
+# Empirical `test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_PLC_PYRAMID_APEX_ATOL = 2e-16
+# Empirical `test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_PLC_PYRAMID_CONTROL_JVP_ATOL = 2e-15
+# Empirical `test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_PLC_PYRAMID_CONTROL_PULLBACK_ATOL = 2e-15
+# Empirical `test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_PLC_PYRAMID_REFERENCE_JACOBIAN_ATOL = 2e-15
+# Empirical `test_rational_plc_full_p1_action_and_original_chart_cache_are_authoritative`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_PLC_P1_APEX_ATOL = 2e-16
+# Empirical `test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives`: matched max |delta|=1.49012e-08; joint allowance fraction=0.149012, margin=85.0988%.
+_PLC_NEAR_APEX_POSITION_ATOL = 1e-7
+
+
+@pytest.fixture
+def budget() -> Iterator[CoordinateEnclosureBudget]:
+    from phydrax.geometry._embedding_state import MeshCertificateLimits
+
+    limits = MeshCertificateLimits()
+    ticket = HostBatchTicket(
+        limits.maximum_work_units,
+        bytes_upper=limits.maximum_scratch_bytes,
+        queries_upper=limits.maximum_work_units,
+    )
+    with (
+        ticket,
+        CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        ).activate() as ledger,
+    ):
+        yield ledger
 
 
 # Binary64 1/3. The Steiner vertex S = (3t, t, 0) on PLC edge (0,0,0)-(3,1,0)
@@ -55,7 +93,10 @@ _STEINER = (Fraction(_T) * 3, Fraction(_T), Fraction(0))
 
 
 def _plc_source(
-    *, parameters: np.ndarray | None = None, strata: np.ndarray | None = None
+    *,
+    parameters: np.ndarray | None = None,
+    strata: np.ndarray | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> ExactPlcCellGeometrySource:
     return ExactPlcCellGeometrySource(
         np.asarray(
@@ -75,7 +116,37 @@ def _plc_source(
         source_triangle_bounds=np.asarray([1e-15], dtype=np.float64),
         source_segment_ids=np.asarray([0], dtype=np.int64),
         source_segment_bounds=np.asarray([1e-15], dtype=np.float64),
+        budget=budget,
     )
+
+
+def test_exact_plc_source_host_banks_preserve_identity_without_compiles(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    from tools.compile_counter import CompileCounter
+
+    reference = _plc_source(budget=budget)
+    with CompileCounter() as compiler:
+        admitted = _plc_source(budget=budget)
+    assert compiler.count == 0
+    assert admitted.source_id == reference.source_id
+    for name in (
+        "source_points",
+        "source_triangles",
+        "source_segments",
+        "source_triangle_ids",
+        "source_triangle_bounds",
+        "source_segment_ids",
+        "source_segment_bounds",
+        "vertex_strata",
+        "vertex_rows",
+        "vertex_parameters",
+    ):
+        expected = np.asarray(getattr(reference, name))
+        observed = np.asarray(getattr(admitted, name))
+        assert expected.dtype == observed.dtype
+        assert expected.shape == observed.shape
+        assert expected.tobytes() == observed.tobytes()
 
 
 def _plc_mesh() -> CellMesh:
@@ -91,71 +162,20 @@ def _plc_mesh() -> CellMesh:
     return CellMesh.from_tetrahedra(carrier, np.asarray([[0, 1, 2, 3]], dtype=np.int64))
 
 
-def _power_source() -> ExactPowerCellGeometrySource:
-    return ExactPowerCellGeometrySource(
-        np.asarray([[0.0, 0.0, 0.0], [0.7, 0.6, 0.8]], dtype=np.float64),
-        np.asarray([0.03, -0.02], dtype=np.float64),
-        np.asarray(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            dtype=np.float64,
-        ),
-        np.asarray([[0, 1, 2, 3]], dtype=np.int32),
-        np.asarray([0, 1, 2, 3, 4, 6, 8, 10], dtype=np.int64),
-        np.asarray([0, 0, 0, 1, 0, 1, 0, 1, 0, 1], dtype=np.int32),
-        np.asarray(
-            [
-                [0, -1, -1, -1],
-                [1, -1, -1, -1],
-                [2, -1, -1, -1],
-                [3, -1, -1, -1],
-                [0, 3, -1, -1],
-                [1, 3, -1, -1],
-                [2, 3, -1, -1],
-            ],
-            dtype=np.int32,
-        ),
-    )
-
-
-def _periodic_power_source() -> ExactPowerCellGeometrySource:
-    from phydrax.discretization import PeriodicCell
-    from phydrax.geometry._triangulation import PeriodicPowerPreparation
-
-    points = np.asarray([[0.2, 0.2, 0.2]])
-    weights = np.zeros(1)
-    carrier = np.asarray(
-        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-    )
-    preparation = PeriodicPowerPreparation(
-        points, weights, carrier, PeriodicCell(4 * np.eye(3)), maximum_images=1000
-    )
-    original_image = int(
-        np.flatnonzero(np.all(preparation.image_exponents == 0, axis=1))[0]
-    )
-    return ExactPowerCellGeometrySource(
-        points,
-        weights,
-        carrier,
-        np.asarray([[0, 1, 2, 3]]),
-        np.arange(5),
-        np.full(4, original_image),
-        np.column_stack((np.arange(4), np.full((4, 3), -1))),
-        periodic_preparation=preparation,
-    )
-
-
-def test_periodic_exact_power_source_retains_image_axis_and_original_law() -> None:
-    source = _periodic_power_source()
-    prepared = source.prepare(source.carrier_points)
+def test_periodic_exact_power_source_retains_image_axis_and_original_law(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    source = periodic_power_source()
+    prepared = source.prepare(source.carrier_points, budget=budget)
     assert prepared.vertices == tuple(
         tuple(Fraction(float(value)) for value in row)
         for row in np.asarray(source.carrier_points)
     )
-    periodic = source._periodic_owner()
+    periodic = source.periodic_preparation
     if periodic is None:
-        raise RuntimeError("Periodic source lost its retained preparation.")
+        raise RuntimeError("fixture.periodic must retain its preparation; got None")
     assert periodic.points.shape == (1, 3)
-    with pytest.raises(ValueError, match="undeclared sites or images"):
+    with pytest.raises(ValueError, match=r"ExactPowerCellGeometrySource\.vertex_sites"):
         ExactPowerCellGeometrySource(
             source.site_points,
             source.site_weights,
@@ -169,12 +189,16 @@ def test_periodic_exact_power_source_retains_image_axis_and_original_law() -> No
     moved = eqx.tree_at(
         lambda value: value.site_points, source, source.site_points + 0.01
     )
-    with pytest.raises(ValueError, match="retained original preparation"):
-        moved.prepare()
+    with pytest.raises(
+        ValueError, match=r"ExactPowerCellGeometrySource\.periodic_preparation"
+    ):
+        moved.prepare(budget=budget)
 
 
-def test_exact_power_linear_action_uses_pretransform_exact_parent_coefficients() -> None:
-    source = _periodic_power_source()
+def test_exact_power_linear_action_uses_pretransform_exact_parent_coefficients(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    source = periodic_power_source()
     owner = ExactPowerCellGeometryLinearActionSource(
         source,
         np.asarray([[0, -1], [0, 1]]),
@@ -182,17 +206,21 @@ def test_exact_power_linear_action_uses_pretransform_exact_parent_coefficients()
         np.asarray([[0, 0, 0], [1, 0, 0]]),
         periodic_preparation=source.periodic_preparation,
     )
-    prepared = owner.prepare()
+    prepared = owner.prepare(budget=budget)
     assert prepared.vertices == (
         (Fraction(0),) * 3,
         (Fraction(14, 3), Fraction(0), Fraction(0)),
     )
-    owner.prepare(prepared.rounded_vertices)
+    owner.prepare(prepared.rounded_vertices, budget=budget)
     corrupted = prepared.rounded_vertices.copy()
     corrupted[1, 0] = np.nextafter(corrupted[1, 0], np.inf)
-    with pytest.raises(ValueError, match="not the RNE"):
-        owner.prepare(corrupted)
-    with pytest.raises(ValueError, match="convex unit"):
+    with pytest.raises(
+        ValueError, match=r"ExactPowerCellGeometryLinearActionSource\.rounded_vertices"
+    ):
+        owner.prepare(corrupted, budget=budget)
+    with pytest.raises(
+        ValueError, match=r"ExactPowerCellGeometryLinearActionSource\.vertex_coefficients"
+    ):
         ExactPowerCellGeometryLinearActionSource(
             source,
             np.asarray([[0, 1]]),
@@ -203,11 +231,15 @@ def test_exact_power_linear_action_uses_pretransform_exact_parent_coefficients()
     changed_parent = eqx.tree_at(
         lambda value: value.parent.site_weights, owner, np.ones(1)
     )
-    with pytest.raises(ValueError, match="immutable source"):
-        changed_parent.prepare()
+    with pytest.raises(
+        ValueError, match=r"ExactPowerCellGeometryLinearActionSource\.parent_source_id"
+    ):
+        changed_parent.prepare(budget=budget)
 
 
-def test_nonperiodic_exact_convex_source_defines_actual_q1_hexahedron() -> None:
+def test_nonperiodic_exact_convex_source_defines_actual_q1_hexahedron(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     from phydrax.discretization import CellBlock
     from phydrax.discretization._coordinate_enclosure import coordinate_corner_images
     from phydrax.discretization._reference_cell import reference_cell_topology
@@ -238,37 +270,43 @@ def test_nonperiodic_exact_convex_source_defines_actual_q1_hexahedron() -> None:
         coefficients,
         np.empty((8, 0), dtype=np.int64),
     )
-    prepared = source.prepare()
+    prepared = source.prepare(budget=budget)
     mesh = CellMesh(
         prepared.rounded_vertices,
         (CellBlock("hexes", "hexahedron", np.arange(8)[None, :]),),
     )
-    geometry = CellGeometrySpec.power(mesh, source)
+    geometry = CellGeometrySpec.power(mesh, source, budget=budget)
     exact = tuple(
         tuple(Fraction(0.3) * int(value) / 3 for value in corner) for corner in corners
     )
-    assert geometry.source_coordinates() == exact
+    assert geometry.source_coordinates(budget=budget) == exact
     element = geometry.elements[0]
     assert element.element_id == coordinate_lagrange_element("hexahedron", 1).element_id
-    assert coordinate_corner_images(element, exact) == exact
+    assert coordinate_corner_images(element, exact, budget=budget) == exact
     assert any(
         Fraction(float(value)) != ideal
         for row, exact_row in zip(prepared.rounded_vertices, exact, strict=True)
         for value, ideal in zip(row, exact_row, strict=True)
     )
-    certificate = certify_cell_geometry_validity(geometry, mesh=mesh)
+    certificate = certify_cell_geometry_validity(geometry, mesh=mesh, budget=budget)
     assert certificate.all_certified
-    volumes, errors, ideal_measure = _certified_cell_measures(mesh, geometry)
+    volumes, errors, ideal_measure = certified_cell_measures(
+        mesh, geometry, budget=budget
+    )
     assert ideal_measure
     expected = (Fraction(0.3) / 3) ** 3
     assert abs(Fraction(float(volumes[0])) - expected) <= Fraction(float(errors[0]))
-    with pytest.raises(ValueError, match="aligned parent and generator"):
+    with pytest.raises(
+        ValueError, match=r"ExactPowerCellGeometryLinearActionSource\.vertex_actions"
+    ):
         ExactPowerCellGeometryLinearActionSource(
             parent, np.asarray([[0]]), ((Fraction(1),),), np.zeros((1, 1), dtype=np.int64)
         )
 
 
-def test_exact_plc_q1_chart_retains_original_bank_and_refuses_outside_simplex() -> None:
+def test_exact_plc_q1_chart_retains_original_bank_and_refuses_outside_simplex(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     from phydrax.discretization import CellBlock
     from phydrax.discretization._coordinate_enclosure import (
         coordinate_corner_images,
@@ -276,17 +314,18 @@ def test_exact_plc_q1_chart_retains_original_bank_and_refuses_outside_simplex() 
     )
     from phydrax.discretization._reference_cell import reference_cell_topology
 
-    original_mesh, source = _plc_mesh(), _plc_source()
-    original_geometry = CellGeometrySpec.plc(original_mesh, source)
-    bank = original_geometry.source_coordinates()
+    original_mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    original_geometry = CellGeometrySpec.plc(original_mesh, source, budget=budget)
+    bank = original_geometry.source_coordinates(budget=budget)
     reference = np.asarray(reference_cell_topology("hexahedron").vertices, dtype=np.int64)
     element = PolynomialComposedCellGeometryElement(
         coordinate_lagrange_element("tetrahedron", 1),
         coordinate_lagrange_element("hexahedron", 1),
         reference,
         np.full((8, 3), 4, dtype=np.int64),
+        budget=budget,
     )
-    images = coordinate_corner_images(element, bank)
+    images = coordinate_corner_images(element, bank, budget=budget)
     assert images is not None
     mesh = CellMesh(
         np.asarray([[float(value) for value in row] for row in images]),
@@ -297,23 +336,31 @@ def test_exact_plc_q1_chart_retains_original_bank_and_refuses_outside_simplex() 
         {"hexes": np.arange(4)[None, :]},
         original_geometry.coordinates,
         exact_source=source,
+        budget=budget,
     )
-    geometry.resolve(mesh)
+    geometry.resolve(mesh, budget=budget)
     assert geometry.exact_source is source
-    assert geometry.source_coordinates() == bank
-    expressions = coordinate_expressions(element, bank)
+    assert geometry.source_coordinates(budget=budget) == bank
+    expressions = coordinate_expressions(element, bank, budget=budget)
     assert expressions is not None
     middle = (Fraction(1, 2),) * 3
     from phydrax.discretization._coordinate_enclosure import expression_evaluate
 
-    point = tuple(expression_evaluate(expression, middle) for expression in expressions)
+    point = tuple(
+        expression_evaluate(expression, middle, budget=budget)
+        for expression in expressions
+    )
     expected = tuple(
         sum((bank[index][axis] for index in (1, 2, 3)), Fraction(0)) / 8
         for axis in range(3)
     )
     assert point == expected
-    assert certify_cell_geometry_validity(geometry, mesh=mesh).all_certified
-    volumes, errors, exact_measure = _certified_cell_measures(mesh, geometry)
+    assert certify_cell_geometry_validity(
+        geometry, mesh=mesh, budget=budget
+    ).all_certified
+    volumes, errors, exact_measure = certified_cell_measures(
+        mesh, geometry, budget=budget
+    )
     assert exact_measure
     expected_volume = Fraction(_T) * 3 / 64
     assert abs(Fraction(float(volumes[0])) - expected_volume) <= Fraction(
@@ -327,48 +374,67 @@ def test_exact_plc_q1_chart_retains_original_bank_and_refuses_outside_simplex() 
             coordinate_lagrange_element("hexahedron", 1),
             invalid,
             np.full((8, 3), 4, dtype=np.int64),
+            budget=budget,
         )
-        with pytest.raises(ValueError, match="original source simplex"):
+        with pytest.raises(
+            ValueError, match=r"require_plc_source_layout\.inputs.*source simplex"
+        ):
             CellGeometrySpec(
                 {"hexes": wrong},
                 {"hexes": np.arange(4)[None, :]},
                 original_geometry.coordinates,
                 exact_source=source,
+                budget=budget,
             )
 
 
-def test_exact_plc_geometry_keeps_source_coordinates_distinct_from_carrier() -> None:
-    mesh, source = _plc_mesh(), _plc_source()
-    geometry = CellGeometrySpec.plc(mesh, source)
+def test_exact_plc_geometry_keeps_source_coordinates_distinct_from_carrier(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    geometry = CellGeometrySpec.plc(mesh, source, budget=budget)
     assert geometry.exact_source is source
-    assert source.prepare(mesh.coordinates).on_entity == (True, False, True, True)
+    assert source.prepare(mesh.coordinates, budget=budget).on_entity == (
+        True,
+        False,
+        True,
+        True,
+    )
     assert np.array_equal(
         np.asarray(geometry.coordinates).view(np.uint64),
         np.asarray(mesh.coordinates).view(np.uint64),
     )
-    exact = geometry.source_coordinates()
+    exact = geometry.source_coordinates(budget=budget)
     assert exact[1] == _STEINER
     assert exact[1][0] != Fraction(float(np.asarray(geometry.coordinates)[1, 0]))
-    assert geometry.source_execution_error(mesh) > 0.0
-    # The exact source volume t/2 is representable; the carrier volume 1/6 is not.
-    volumes, errors, exact_measure = _certified_cell_measures(mesh, geometry)
+    assert geometry.source_execution_error(mesh, budget=budget) > 0.0
+    # The source volume t/2 is representable; the carrier volume 1/6 is not.
+    volumes, errors, exact_measure = certified_cell_measures(
+        mesh, geometry, budget=budget
+    )
     assert volumes[0] == _T / 2 and errors[0] == 0.0 and exact_measure
     finite_volume = UnstructuredFiniteVolumePlan.from_cell_mesh(mesh).prepare(
         cell_geometry=geometry
     )
     assert float(finite_volume.cell_volumes[0]) == _T / 2
     assert float(finite_volume.cell_volume_error_bounds[0]) == 0.0
-    affine = CellGeometrySpec.affine(mesh)
+    affine = CellGeometrySpec.affine(mesh, budget=budget)
     assert affine.exact_source is None
     assert geometry.geometry_layout_id != affine.geometry_layout_id
 
 
-def test_exact_plc_witness_bank_refuses_before_storage_allocation() -> None:
-    mesh, source = _plc_mesh(), _plc_source()
-    geometry = CellGeometrySpec.plc(mesh, source)
-    budget = CoordinateEnclosureBudget(1_000_000, 1)
+def test_exact_plc_witness_bank_refuses_before_storage_allocation(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    geometry = CellGeometrySpec.plc(mesh, source, budget=budget)
+    budget = CoordinateEnclosureBudget(
+        HostBatchTicket(1_000_000, bytes_upper=1, queries_upper=1_000_000),
+        maximum_work_units=1_000_000,
+        maximum_memory_bytes=1,
+    )
     with budget.activate(), pytest.raises(CoordinateEnclosureResourceError) as refusal:
-        geometry.source_coordinates()
+        geometry.source_coordinates(budget=budget)
     assert refusal.value.resource == "polynomial_storage"
     assert refusal.value.limit == 1
     assert refusal.value.completed == 0
@@ -376,10 +442,12 @@ def test_exact_plc_witness_bank_refuses_before_storage_allocation() -> None:
     assert budget.retained_basis_bytes == 0
 
 
-def test_exact_plc_geometry_persistence_roundtrip_renews_source_authority() -> None:
+def test_exact_plc_geometry_persistence_roundtrip_renews_source_authority(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     register_meshing_source_artifacts()
-    mesh, source = _plc_mesh(), _plc_source()
-    geometry = CellGeometrySpec.plc(mesh, source)
+    mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    geometry = CellGeometrySpec.plc(mesh, source, budget=budget)
     validate_meshing_source_closure(geometry)
     recipe = model_structure_recipe(geometry)
     restored = model_from_array_recipe(
@@ -387,54 +455,69 @@ def test_exact_plc_geometry_persistence_roundtrip_renews_source_authority() -> N
     )
     validate_meshing_source_closure(restored)
     if not isinstance(restored.exact_source, ExactPlcCellGeometrySource):
-        raise AssertionError("The restored geometry lost its exact PLC source kind.")
+        raise AssertionError(
+            f"restored.exact_source must be an ExactPlcCellGeometrySource; got {type(restored.exact_source).__name__}"
+        )
     assert restored.exact_source.source_id == source.source_id
     assert restored.exact_source.domain_source_id == source.domain_source_id
     assert cell_geometry_id(restored) == cell_geometry_id(geometry)
-    assert restored.source_coordinates() == geometry.source_coordinates()
-    # A substituted witness is not the RNE ancestry of the published carrier.
+    assert restored.source_coordinates(budget=budget) == geometry.source_coordinates(
+        budget=budget
+    )
+    # A substituted parent mapping is not the RNE ancestry of the published carrier.
     forged = eqx.tree_at(
         lambda value: value.exact_source.vertex_parameters,
         restored,
         np.asarray([[0.0, 0.0], [0.25, 0.0], [1.0, 0.0], [0.0, 0.0]], dtype=np.float64),
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"source_closure\.exact_source\.stored_fields"):
         validate_meshing_source_closure(forged)
 
 
-def test_exact_source_slot_refuses_wrong_kind_family_and_foreign_authority() -> None:
-    mesh, source = _plc_mesh(), _plc_source()
+def test_exact_source_slot_refuses_wrong_kind_family_and_foreign_authority(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    mesh, source = _plc_mesh(), _plc_source(budget=budget)
     element = coordinate_lagrange_element("tetrahedron", 1)
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="exact_source|require_exact_source_layout"):
         CellGeometrySpec(
             {"tetrahedra": element},
             {"tetrahedra": mesh.blocks[0].vertices},
             mesh.coordinates,
             exact_source=object(),  # ty: ignore[invalid-argument-type]
+            budget=budget,
         )
-    with pytest.raises(TypeError):
-        CellGeometrySpec.power(mesh, source)  # ty: ignore[invalid-argument-type]
-    with pytest.raises(TypeError):
-        CellGeometrySpec.plc(mesh, _power_source())  # ty: ignore[invalid-argument-type]
-    power = _power_source()
-    with pytest.raises(ValueError, match="polyhedral layout"):
+    with pytest.raises(TypeError, match="source"):
+        CellGeometrySpec.power(mesh, source, budget=budget)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="source"):
+        CellGeometrySpec.plc(mesh, power_source(), budget=budget)  # ty: ignore[invalid-argument-type]
+    power = power_source()
+    with pytest.raises(
+        ValueError, match=r"require_exact_source_layout\.inputs.*polyhedral layouts"
+    ):
         CellGeometrySpec(
             {"tetrahedra": element},
             {"tetrahedra": mesh.blocks[0].vertices},
-            power.prepare().rounded_vertices,
+            power.prepare(budget=budget).rounded_vertices,
             exact_source=power,
+            budget=budget,
         )
     triangles = CellMesh.from_triangles(
         np.asarray(mesh.coordinates)[:3], np.asarray([[0, 1, 2]], dtype=np.int64)
     )
-    with pytest.raises(ValueError, match="direct global canonical carrier"):
-        CellGeometrySpec.plc(triangles, source)
-    with pytest.raises(ValueError, match="affine tetrahedral"):
+    with pytest.raises(
+        ValueError, match=r"CellGeometrySpec\.plc\.inputs.*direct global carrier"
+    ):
+        CellGeometrySpec.plc(triangles, source, budget=budget)
+    with pytest.raises(
+        ValueError, match=r"CellGeometrySpec\.elements.*affine tetrahedral"
+    ):
         CellGeometrySpec(
             {"tetrahedra": coordinate_lagrange_element("tetrahedron", 2)},
             {"tetrahedra": np.arange(10)[None]},
             np.zeros((10, 3), dtype=np.float64),
             exact_source=source,
+            budget=budget,
         )
     # Witnesses for a different carrier vertex count.
     short = ExactPlcCellGeometrySource(
@@ -450,32 +533,33 @@ def test_exact_source_slot_refuses_wrong_kind_family_and_foreign_authority() -> 
         source_triangle_bounds=source.source_triangle_bounds,
         source_segment_ids=source.source_segment_ids,
         source_segment_bounds=source.source_segment_bounds,
+        budget=budget,
     )
-    with pytest.raises(ValueError):
-        CellGeometrySpec.plc(mesh, short)
-    geometry = CellGeometrySpec.plc(mesh, source)
+    with pytest.raises(ValueError, match="ExactPlcCellGeometrySource.rounded_vertices"):
+        CellGeometrySpec.plc(mesh, short, budget=budget)
+    geometry = CellGeometrySpec.plc(mesh, source, budget=budget)
     moved = np.asarray(mesh.coordinates).copy()
     moved[1, 0] = np.nextafter(moved[1, 0], 0.0)
-    with pytest.raises(ValueError):
-        geometry.with_coordinates(moved)
+    with pytest.raises(ValueError, match="ExactPlcCellGeometrySource.rounded_vertices"):
+        geometry.with_coordinates(moved, budget=budget)
     foreign = mesh.with_coordinates(
         np.asarray(mesh.coordinates) * 2.0, numeric_version="foreign"
     )
-    with pytest.raises(ValueError, match="carrier differs"):
-        geometry.resolve(foreign)
+    with pytest.raises(ValueError, match=r"CellGeometrySpec\.resolve\.inputs"):
+        geometry.resolve(foreign, budget=budget)
     with pytest.raises(ValueError, match="quotient"):
-        geometry.with_periodic_source(mesh)
+        geometry.with_periodic_source(mesh, budget=budget)
     with pytest.raises(ValueError, match="PLC source ancestry"):
         transition_displaced_cell_geometry(mesh, geometry, mesh)
-    with pytest.raises(ValueError, match="not power polyhedra"):
+    with pytest.raises(ValueError, match=r"common_refinement\.geometry\.exact_source"):
         prepare_common_refinement(
             mesh, mesh, source_geometry=geometry, target_geometry=geometry
         )
 
 
-def test_unbounded_integer_reference_chart_keeps_exact_measure_and_archive_identity() -> (
-    None
-):
+def test_unbounded_integer_reference_chart_keeps_exact_measure_and_archive_identity(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     numerator, denominator = 2**150 + 7, 2**151 + 11
     ratio = Fraction(numerator, denominator)
     basis = coordinate_lagrange_element("tetrahedron", 1)
@@ -486,7 +570,11 @@ def test_unbounded_integer_reference_chart_keeps_exact_measure_and_archive_ident
         [[1, 1, 1], [denominator, 1, 1], [1, 1, 1], [1, 1, 1]], dtype=object
     )
     element = PolynomialComposedCellGeometryElement(
-        basis, basis, numerators, denominators
+        basis,
+        basis,
+        numerators,
+        denominators,
+        budget=budget,
     )
     original = np.asarray(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -497,16 +585,19 @@ def test_unbounded_integer_reference_chart_keeps_exact_measure_and_archive_ident
     mesh = CellMesh.from_tetrahedra(carrier, np.asarray([[0, 1, 2, 3]], dtype=np.int32))
     name = mesh.blocks[0].name
     geometry = CellGeometrySpec(
-        {name: element}, {name: mesh.blocks[0].vertices}, original
+        {name: element},
+        {name: mesh.blocks[0].vertices},
+        original,
+        budget=budget,
     )
-    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh, budget=budget)
     assert validity.all_certified
     assert (
         Fraction(float(validity.determinant_lower[0]))
         <= ratio
         <= Fraction(float(validity.determinant_upper[0]))
     )
-    measures, bounds, exact = _certified_cell_measures(mesh, geometry)
+    measures, bounds, exact = certified_cell_measures(mesh, geometry, budget=budget)
     assert exact
     assert abs(Fraction(float(measures[0])) - ratio / 6) <= Fraction(float(bounds[0]))
     register_meshing_source_artifacts()
@@ -518,8 +609,8 @@ def test_unbounded_integer_reference_chart_keeps_exact_measure_and_archive_ident
     )
     validate_meshing_source_closure(restored)
     assert cell_geometry_id(restored) == cell_geometry_id(geometry)
-    restored_measures, restored_bounds, restored_exact = _certified_cell_measures(
-        mesh, restored
+    restored_measures, restored_bounds, restored_exact = certified_cell_measures(
+        mesh, restored, budget=budget
     )
     assert restored_exact
     assert abs(Fraction(float(restored_measures[0])) - ratio / 6) <= Fraction(
@@ -530,33 +621,44 @@ def test_unbounded_integer_reference_chart_keeps_exact_measure_and_archive_ident
 @pytest.mark.parametrize("invalid", (True, Fraction(1, 2), np.int64(1), 1.0))
 def test_reference_chart_object_banks_refuse_non_python_integer_entries(
     invalid: object,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
     basis = coordinate_lagrange_element("tetrahedron", 1)
     numerator = np.zeros((4, 3), dtype=object)
     denominator = np.ones((4, 3), dtype=object)
     numerator[0, 0] = invalid
     with pytest.raises(TypeError, match="Python integers"):
-        PolynomialComposedCellGeometryElement(basis, basis, numerator, denominator)
+        PolynomialComposedCellGeometryElement(
+            basis, basis, numerator, denominator, budget=budget
+        )
 
 
-def test_plc_bank_refuses_tiny_active_memory_before_allocation_and_retains_lifetime() -> (
-    None
-):
-    mesh, source = _plc_mesh(), _plc_source()
-    geometry = CellGeometrySpec.plc(mesh, source)
+def test_plc_bank_refuses_tiny_active_memory_before_allocation_and_retains_lifetime(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    geometry = CellGeometrySpec.plc(mesh, source, budget=budget)
     identity = source.source_id
-    tiny = CoordinateEnclosureBudget(1_000_000, 1)
+    tiny = CoordinateEnclosureBudget(
+        HostBatchTicket(1_000_000, bytes_upper=1, queries_upper=1_000_000),
+        maximum_work_units=1_000_000,
+        maximum_memory_bytes=1,
+    )
     with tiny.activate(), pytest.raises(CoordinateEnclosureResourceError) as refusal:
-        geometry.source_coordinates()
+        geometry.source_coordinates(budget=tiny)
     assert refusal.value.resource == "polynomial_storage"
     assert refusal.value.completed == 0 and refusal.value.requested > 1
     assert tiny.peak_bytes_upper == 0
     assert source.source_id == identity
-    assert geometry.source_coordinates()[1] == _STEINER
+    assert geometry.source_coordinates(budget=budget)[1] == _STEINER
 
-    ledger = CoordinateEnclosureBudget(1_000_000, 1 << 24)
+    ledger = CoordinateEnclosureBudget(
+        HostBatchTicket(1_000_000, bytes_upper=1 << 24, queries_upper=1_000_000),
+        maximum_work_units=1_000_000,
+        maximum_memory_bytes=1 << 24,
+    )
     with ledger.activate():
-        bank = geometry.source_coordinates()
+        bank = geometry.source_coordinates(budget=ledger)
         assert bank[1] == _STEINER
         assert ledger.retained_basis_bytes > 0
         assert ledger.temporary_bytes_upper == 0
@@ -568,18 +670,18 @@ def test_plc_bank_refuses_tiny_active_memory_before_allocation_and_retains_lifet
 
 @pytest.mark.parametrize("resource", ("work", "memory"))
 def test_standalone_plc_certificate_scope_shares_request_resource_ledger(
-    resource: str,
+    resource: str, budget: CoordinateEnclosureBudget
 ) -> None:
-    from phydrax.geometry._mesh_certificates import (
+    from phydrax.geometry._domain_coverage import (
         certify_domain_coverage,
-        certify_global_embedding,
-        MeshCertificateLimits,
         PiecewiseLinearDomain,
     )
+    from phydrax.geometry._embedding_state import MeshCertificateLimits
+    from phydrax.geometry._global_embedding import certify_global_embedding
 
-    mesh, source = _plc_mesh(), _plc_source()
-    geometry = CellGeometrySpec.plc(mesh, source)
-    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    geometry = CellGeometrySpec.plc(mesh, source, budget=budget)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh, budget=budget)
     embedding = certify_global_embedding(mesh, geometry, validity)
     assert embedding.status == "certified"
     identity = source.source_id
@@ -619,30 +721,43 @@ def test_standalone_plc_certificate_scope_shares_request_resource_ledger(
     assert coverage.source_expression_peak_bytes is not None
     assert coverage.source_expression_peak_bytes <= limits.maximum_scratch_bytes
     assert source.source_id == identity
-    assert geometry.source_coordinates()[1] == _STEINER
+    assert geometry.source_coordinates(budget=budget)[1] == _STEINER
 
 
 @pytest.mark.skipif(not meshcore_available(), reason="native meshcore unavailable")
-def test_plc_bank_and_native_buffers_share_one_original_scratch_allowance() -> None:
-    from phydrax._meshcore import MeshcoreError, MeshcoreStatus, NativeExecutionBudget
+def test_plc_bank_and_native_buffers_share_one_original_scratch_allowance(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax._meshcore import (
+        MeshcoreError,
+        MeshcoreStatus,
+        NativeExecutionLimits,
+        NativeExecutionScope,
+    )
 
-    mesh, source = _plc_mesh(), _plc_source()
-    geometry = CellGeometrySpec.plc(mesh, source)
+    mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    geometry = CellGeometrySpec.plc(mesh, source, budget=budget)
     identity = source.source_id
-    ledger = CoordinateEnclosureBudget(1_000_000, 1 << 24)
-    native = NativeExecutionBudget(
-        max_work=1_000_000,
-        max_geometry_queries=1_000_000,
-        max_cavity_cells=1_000_000,
-        max_scratch_bytes=1 << 20,
-        max_wall_seconds=np.inf,
+    native = NativeExecutionScope(
+        NativeExecutionLimits(1_000_000, 1_000_000, 1_000_000, 1 << 20, np.inf)
     )
     with pytest.raises(MeshcoreError) as final_refusal, native:
-        with ledger.activate():
-            bank = geometry.source_coordinates()
+        ticket = native.batch(
+            1_000_000,
+            queries_upper=1_000_000,
+            bytes_upper=native.remaining().remaining_managed_bytes,
+        )
+        ledger = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=1_000_000,
+            maximum_memory_bytes=1 << 24,
+        )
+        with ticket, ledger.activate():
+            bank = geometry.source_coordinates(budget=ledger)
             assert bank[1] == _STEINER
-            available = native.remaining().remaining_scratch_bytes
+            available = native.remaining().remaining_managed_bytes
             assert available < (1 << 20) - ledger.retained_basis_bytes
+            assert ticket.bytes_upper + available <= 1 << 20
             with pytest.raises(MeshcoreError) as refusal:
                 native.allocate_host_array((available + 1,), np.uint8)
             assert refusal.value.status == MeshcoreStatus.CAPACITY_EXCEEDED
@@ -652,46 +767,57 @@ def test_plc_bank_and_native_buffers_share_one_original_scratch_allowance() -> N
     assert native.evidence is not None
     assert native.evidence.status == MeshcoreStatus.CAPACITY_EXCEEDED
     assert native.evidence.host_storage_live_bytes_upper == 0
-    assert native.evidence.host_storage_peak_bytes_upper >= ledger.retained_basis_bytes
-    assert native.evidence.memory_evidence[2] <= 1 << 20
+    assert ticket.managed_bytes >= ledger.retained_basis_bytes
+    assert native.evidence.memory_counters.peak_bytes <= 1 << 20
 
 
 @pytest.mark.skipif(not meshcore_available(), reason="native meshcore unavailable")
-def test_plc_bank_refuses_original_native_tiny_scratch_before_rational_allocation() -> (
-    None
-):
-    from phydrax._meshcore import MeshcoreError, MeshcoreStatus, NativeExecutionBudget
+def test_plc_bank_refuses_original_native_tiny_scratch_before_rational_allocation(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax._meshcore import (
+        MeshcoreError,
+        MeshcoreStatus,
+        NativeExecutionLimits,
+        NativeExecutionScope,
+    )
 
-    mesh, source = _plc_mesh(), _plc_source()
-    geometry = CellGeometrySpec.plc(mesh, source)
+    mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    geometry = CellGeometrySpec.plc(mesh, source, budget=budget)
     identity = source.source_id
-    ledger = CoordinateEnclosureBudget(1_000_000, 1 << 24)
-    native = NativeExecutionBudget(
-        max_work=1_000_000,
-        max_geometry_queries=1_000_000,
-        max_cavity_cells=1_000_000,
-        max_scratch_bytes=32,
-        max_wall_seconds=np.inf,
+    native = NativeExecutionScope(
+        NativeExecutionLimits(1_000_000, 1_000_000, 1_000_000, 32, np.inf)
     )
     with pytest.raises(MeshcoreError) as final_refusal, native:
-        with (
-            ledger.activate(),
-            pytest.raises(CoordinateEnclosureResourceError) as refusal,
-        ):
-            geometry.source_coordinates()
-        assert refusal.value.resource == "polynomial_storage"
-        assert refusal.value.requested > 32 and refusal.value.completed == 0
+        ticket = native.batch(1_000_000, queries_upper=1_000_000, bytes_upper=32)
+        ledger = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=1_000_000,
+            maximum_memory_bytes=1 << 24,
+        )
+        with ticket, ledger.activate(), pytest.raises(MeshcoreError) as refusal:
+            geometry.source_coordinates(budget=ledger)
+        assert refusal.value.status == MeshcoreStatus.CAPACITY_EXCEEDED
+        assert refusal.value.batch_requested_upper is not None
+        assert refusal.value.batch_refusal_evidence is not None
+        assert refusal.value.batch_requested_upper[3] > 32
+        assert refusal.value.batch_refusal_evidence[4] == 0
         assert ledger.retained_basis_bytes == 0 and ledger.peak_bytes_upper == 0
     assert final_refusal.value.status == MeshcoreStatus.CAPACITY_EXCEEDED
     assert native.evidence is not None
     assert native.evidence.status == MeshcoreStatus.CAPACITY_EXCEEDED
-    assert native.evidence.host_storage_peak_bytes_upper == 0
+    assert ticket.managed_bytes == 0
+    assert native.evidence.memory_counters.peak_bytes <= 32
     assert source.source_id == identity
-    assert geometry.source_coordinates()[1] == _STEINER
+    assert geometry.source_coordinates(budget=budget)[1] == _STEINER
 
 
 def test_coordinate_live_storage_escapes_nested_temporary_scopes_and_shrinks() -> None:
-    ledger = CoordinateEnclosureBudget(100, 4096)
+    ledger = CoordinateEnclosureBudget(
+        HostBatchTicket(100, bytes_upper=4096, queries_upper=100),
+        maximum_work_units=100,
+        maximum_memory_bytes=4096,
+    )
     with ledger.live_storage() as live:
         live.set_bound(128)
         with ledger.temporary_scope():
@@ -711,7 +837,11 @@ def test_coordinate_live_storage_escapes_nested_temporary_scopes_and_shrinks() -
 
 
 def test_coordinate_live_storage_refusal_and_exception_preserve_actual_bound() -> None:
-    ledger = CoordinateEnclosureBudget(100, 1024)
+    ledger = CoordinateEnclosureBudget(
+        HostBatchTicket(100, bytes_upper=1024, queries_upper=100),
+        maximum_work_units=100,
+        maximum_memory_bytes=1024,
+    )
     with ledger.live_storage() as live:
         live.set_bound(128)
         with pytest.raises(CoordinateEnclosureResourceError):
@@ -720,11 +850,13 @@ def test_coordinate_live_storage_refusal_and_exception_preserve_actual_bound() -
                 live.set_bound(1024)
         assert live.bound == 128
         assert ledger.temporary_bytes_upper == 128
-        with pytest.raises(ValueError, match="actual failure"):
+        with pytest.raises(ValueError, match=r"test\.coordinate_failure"):
             with ledger.temporary_scope():
                 live.set_bound(256)
                 ledger.reserve(1, 128)
-                raise ValueError("actual failure")
+                raise ValueError(
+                    "test.coordinate_failure must propagate; got deliberate failure"
+                )
         assert live.bound == 256
         assert ledger.temporary_bytes_upper == 256
         assert ledger.work_units == 2
@@ -733,34 +865,46 @@ def test_coordinate_live_storage_refusal_and_exception_preserve_actual_bound() -
 
 @pytest.mark.skipif(not meshcore_available(), reason="native meshcore unavailable")
 def test_coordinate_live_escape_resizes_actual_native_host_reservation() -> None:
-    from phydrax._meshcore import NativeExecutionBudget
+    from phydrax._meshcore import NativeExecutionLimits, NativeExecutionScope
 
-    ledger = CoordinateEnclosureBudget(100, 4096)
-    native = NativeExecutionBudget(
-        max_work=100,
-        max_geometry_queries=100,
-        max_cavity_cells=100,
-        max_scratch_bytes=4096,
-        max_wall_seconds=np.inf,
-    )
-    with native, ledger.activate(), ledger.live_storage() as live:
-        live.set_bound(128)
-        before = native.remaining().remaining_scratch_bytes + live.bound
-        with ledger.temporary_scope():
-            ledger.reserve(1, 512)
-            live.set_bound(256)
-        assert native.remaining().remaining_scratch_bytes == before - 256
-        live.set_bound(64)
-        assert native.remaining().remaining_scratch_bytes == before - 64
-        live.close()
-        assert native.remaining().remaining_scratch_bytes == before
+    native = NativeExecutionScope(NativeExecutionLimits(100, 100, 100, 4096, np.inf))
+    with native:
+        ticket = native.batch(100, bytes_upper=4096)
+        ledger = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=100, maximum_memory_bytes=4096
+        )
+        with ticket, ledger.activate(), ledger.live_storage() as live:
+            live.set_bound(128)
+            reserved_remaining = native.remaining().remaining_managed_bytes
+            assert reserved_remaining + ticket.bytes_upper <= 4096
+            with ledger.temporary_scope():
+                ledger.reserve(1, 512)
+                live.set_bound(256)
+            assert ledger.temporary_bytes_upper == 256
+            assert ticket.managed_bytes >= live.bound
+            assert native.remaining().remaining_managed_bytes == reserved_remaining
+            live.set_bound(64)
+            assert ledger.temporary_bytes_upper == 64
+            assert native.remaining().remaining_managed_bytes == reserved_remaining
+            with pytest.raises(CoordinateEnclosureResourceError):
+                live.set_bound(4097, work=1)
+            assert live.bound == 64 and ledger.work_units == 1
+            live.close()
+            assert ledger.temporary_bytes_upper == 0
+            assert native.remaining().remaining_managed_bytes == reserved_remaining
+        assert ticket.settled
     assert native.evidence is not None
     assert native.evidence.host_storage_live_bytes_upper == 0
-    assert native.evidence.host_storage_peak_bytes_upper == 768
+    assert ticket.managed_bytes == 768
+    assert native.evidence.memory_counters.peak_bytes <= 4096
 
 
 def test_coordinate_nested_live_owner_closes_without_erasing_outer_escape() -> None:
-    ledger = CoordinateEnclosureBudget(100, 4096)
+    ledger = CoordinateEnclosureBudget(
+        HostBatchTicket(100, bytes_upper=4096, queries_upper=100),
+        maximum_work_units=100,
+        maximum_memory_bytes=4096,
+    )
     with ledger.live_storage() as outer:
         outer.set_bound(128)
         with ledger.temporary_scope():
@@ -778,7 +922,9 @@ def test_coordinate_nested_live_owner_closes_without_erasing_outer_escape() -> N
     assert ledger.temporary_bytes_upper == 0
 
 
-def test_complete_coordinate_maps_reuse_exact_bank_but_not_equal_carriers() -> None:
+def test_complete_coordinate_maps_reuse_exact_bank_but_not_equal_carriers(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     from phydrax.discretization._coordinate_enclosure import coordinate_polynomials
 
     element = coordinate_lagrange_element("tetrahedron", 1)
@@ -792,37 +938,47 @@ def test_complete_coordinate_maps_reuse_exact_bank_but_not_equal_carriers() -> N
     np.testing.assert_array_equal(
         np.asarray(bank, dtype=np.float64), np.asarray(perturbed, dtype=np.float64)
     )
-    ledger = CoordinateEnclosureBudget(100_000, 1 << 20)
+    ledger = CoordinateEnclosureBudget(
+        HostBatchTicket(100_000, bytes_upper=1 << 20, queries_upper=100_000),
+        maximum_work_units=100_000,
+        maximum_memory_bytes=1 << 20,
+    )
     with ledger.activate():
-        original = coordinate_polynomials(element, bank)
+        original = coordinate_polynomials(element, bank, budget=ledger)
         assert original is not None
-        assert coordinate_polynomials(element, bank) is original
-        changed = coordinate_polynomials(element, perturbed)
+        assert coordinate_polynomials(element, bank, budget=ledger) is original
+        changed = coordinate_polynomials(element, perturbed, budget=ledger)
         assert changed is not None and changed != original
-        assert coordinate_polynomials(element, bank) is original
-        assert coordinate_polynomials(element, perturbed) is changed
+        assert coordinate_polynomials(element, bank, budget=ledger) is original
+        assert coordinate_polynomials(element, perturbed, budget=ledger) is changed
 
 
 @pytest.mark.skipif(not meshcore_available(), reason="native meshcore unavailable")
 def test_coordinate_live_native_refusal_rolls_back_scope_without_erasing_status() -> None:
-    from phydrax._meshcore import MeshcoreError, MeshcoreStatus, NativeExecutionBudget
-
-    ledger = CoordinateEnclosureBudget(100, 8192)
-    native = NativeExecutionBudget(
-        max_work=100,
-        max_geometry_queries=100,
-        max_cavity_cells=100,
-        max_scratch_bytes=4096,
-        max_wall_seconds=np.inf,
+    from phydrax._meshcore import (
+        MeshcoreError,
+        MeshcoreStatus,
+        NativeExecutionLimits,
+        NativeExecutionScope,
     )
+
+    native = NativeExecutionScope(NativeExecutionLimits(100, 100, 100, 4096, np.inf))
     with pytest.raises(MeshcoreError) as final_refusal, native:
-        with ledger.activate(), ledger.live_storage() as live:
+        ticket = native.batch(100, bytes_upper=4096)
+        ledger = CoordinateEnclosureBudget(
+            ticket, maximum_work_units=100, maximum_memory_bytes=8192
+        )
+        with ticket, ledger.activate(), ledger.live_storage() as live:
             live.set_bound(128)
-            with pytest.raises(CoordinateEnclosureResourceError) as refusal:
+            with pytest.raises(MeshcoreError) as refusal:
                 with ledger.temporary_scope():
                     ledger.reserve(1, 512)
                     live.set_bound(4096)
-            assert refusal.value.resource == "polynomial_storage"
+            assert refusal.value.status == MeshcoreStatus.CAPACITY_EXCEEDED
+            assert refusal.value.batch_requested_upper is not None
+            assert refusal.value.batch_refusal_evidence is not None
+            assert refusal.value.batch_requested_upper[3] > 4096
+            assert refusal.value.batch_refusal_evidence[4] == 1
             assert live.bound == 128
             assert ledger.temporary_bytes_upper == 128
             assert ledger.work_units == 1
@@ -833,7 +989,11 @@ def test_coordinate_live_native_refusal_rolls_back_scope_without_erasing_status(
 
 
 def test_coordinate_live_work_and_growth_admission_is_atomic_and_work_first() -> None:
-    ledger = CoordinateEnclosureBudget(2, 64)
+    ledger = CoordinateEnclosureBudget(
+        HostBatchTicket(2, bytes_upper=64, queries_upper=2),
+        maximum_work_units=2,
+        maximum_memory_bytes=64,
+    )
     with ledger.live_storage() as live:
         with pytest.raises(CoordinateEnclosureResourceError) as both:
             live.set_bound(128, work=3)
@@ -854,7 +1014,9 @@ def test_coordinate_live_work_and_growth_admission_is_atomic_and_work_first() ->
 
 
 @pytest.mark.parametrize("kind", ("triangle", "tetrahedron"))
-def test_full_barycentric_p1_source_preserves_every_offsum_weight(kind: str) -> None:
+def test_full_barycentric_p1_source_preserves_every_offsum_weight(
+    kind: str, budget: CoordinateEnclosureBudget
+) -> None:
     from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
     from phydrax.discretization._coordinate_enclosure import (
         coordinate_expressions,
@@ -880,17 +1042,24 @@ def test_full_barycentric_p1_source_preserves_every_offsum_weight(kind: str) -> 
         )
         for source in range(width)
     )
-    ledger = CoordinateEnclosureBudget(100_000, 1 << 24)
+    ledger = CoordinateEnclosureBudget(
+        HostBatchTicket(100_000, bytes_upper=1 << 24, queries_upper=100_000),
+        maximum_work_units=100_000,
+        maximum_memory_bytes=1 << 24,
+    )
     with ledger.activate(), ledger.temporary_scope():
-        basis = source_basis(action)
-        assert basis is not None and source_expressions(action) is basis
-        maps = coordinate_polynomials(action, controls)
-        assert maps is not None and coordinate_expressions(action, controls) is maps
+        basis = source_basis(action, budget=ledger)
+        assert basis is not None and source_expressions(action, budget=ledger) is basis
+        maps = coordinate_polynomials(action, controls, budget=ledger)
+        assert (
+            maps is not None
+            and coordinate_expressions(action, controls, budget=ledger) is maps
+        )
         for target, vertex in enumerate(reference_cell_topology(kind).vertices):
             point = tuple(Fraction(float(value)) for value in vertex)
-            assert tuple(evaluate(value, point) for value in basis) == tuple(
-                Fraction(float(value)) for value in weights[target]
-            )
+            assert tuple(
+                evaluate(value, point, budget=ledger) for value in basis
+            ) == tuple(Fraction(float(value)) for value in weights[target])
             expected = tuple(
                 sum(
                     (
@@ -901,28 +1070,35 @@ def test_full_barycentric_p1_source_preserves_every_offsum_weight(kind: str) -> 
                 )
                 for axis in range(original.topological_dimension)
             )
-            assert tuple(evaluate(value, point) for value in maps) == expected
+            assert (
+                tuple(evaluate(value, point, budget=ledger) for value in maps) == expected
+            )
         origin = (Fraction(0),) * original.topological_dimension
-        assert sum((evaluate(value, origin) for value in basis), Fraction(0)) == 1 + delta
+        assert (
+            sum((evaluate(value, origin, budget=ledger) for value in basis), Fraction(0))
+            == 1 + delta
+        )
         # A Cartesian restriction would silently replace W00 with 1-delta.
         cartesian = controls[0][0] * (1 - delta) + controls[1][0] * delta
-        assert evaluate(maps[0], origin) - cartesian == controls[0][0] * delta
+        assert (
+            evaluate(maps[0], origin, budget=ledger) - cartesian == controls[0][0] * delta
+        )
         changed_weights = weights.copy()
         changed_weights[0, 0] = np.nextafter(np.float64(1), np.float64(0))
         changed = BarycentricCellGeometryElement(original, changed_weights)
         assert coordinate_source_signature(changed) != coordinate_source_signature(action)
-        changed_maps = coordinate_polynomials(changed, controls)
+        changed_maps = coordinate_polynomials(changed, controls, budget=ledger)
         assert changed_maps is not None and changed_maps != maps
-        assert coordinate_polynomials(action, controls) is maps
+        assert coordinate_polynomials(action, controls, budget=ledger) is maps
     with pytest.raises(ValueError, match="Cartesian"):
-        coordinate_reference_chain(action)
+        coordinate_reference_chain(action, budget=budget)
     with pytest.raises(ValueError, match="Cartesian"):
-        coordinate_reference_chain(action, ancestor=original)
+        coordinate_reference_chain(action, ancestor=original, budget=budget)
 
 
 @pytest.mark.parametrize("kind", ("triangle", "tetrahedron"))
 def test_nested_full_coefficient_action_retains_exact_nonbinary_composition(
-    kind: str,
+    kind: str, budget: CoordinateEnclosureBudget
 ) -> None:
     from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
     from phydrax.discretization._coordinate_enclosure import evaluate, source_basis
@@ -937,9 +1113,13 @@ def test_nested_full_coefficient_action_retains_exact_nonbinary_composition(
     outer[0, :3] = (1.0, 0.5, 0.0)
     retained = BarycentricCellGeometryElement(original, inner)
     action = BarycentricCellGeometryElement(retained, outer)
-    ledger = CoordinateEnclosureBudget(100_000, 1 << 24)
+    ledger = CoordinateEnclosureBudget(
+        HostBatchTicket(100_000, bytes_upper=1 << 24, queries_upper=100_000),
+        maximum_work_units=100_000,
+        maximum_memory_bytes=1 << 24,
+    )
     with ledger.activate():
-        basis = source_basis(action)
+        basis = source_basis(action, budget=ledger)
         assert basis is not None
         origin = (Fraction(0),) * original.topological_dimension
         exact = tuple(
@@ -952,8 +1132,8 @@ def test_nested_full_coefficient_action_retains_exact_nonbinary_composition(
             )
             for column in range(width)
         )
-        assert tuple(evaluate(term, origin) for term in basis) == exact
-    # This input genuinely cannot be replaced by its binary64 matrix product.
+        assert tuple(evaluate(term, origin, budget=ledger) for term in basis) == exact
+    # This input cannot be replaced by its binary64 matrix product.
     assert exact[0] != Fraction(float((outer @ inner)[0, 0]))
     points = np.zeros((1, original.topological_dimension), dtype=np.float64)
     values, gradients = action.tabulate(points)
@@ -971,13 +1151,15 @@ def test_full_barycentric_action_does_not_extend_to_curved_source() -> None:
     from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
 
     curved = coordinate_lagrange_element("triangle", 2)
-    with pytest.raises(ValueError, match="canonical P1"):
+    with pytest.raises(ValueError, match=r"require_p1_cardinal_source\.inputs"):
         BarycentricCellGeometryElement(
             curved, np.eye(curved.local_dof_count, dtype=np.float64)
         )
 
 
-def _rational_plc_pyramid() -> tuple[
+def _rational_plc_pyramid(
+    *, budget: CoordinateEnclosureBudget
+) -> tuple[
     CellMesh,
     CellGeometrySpec,
     RationalComposedCellGeometryElement,
@@ -986,8 +1168,8 @@ def _rational_plc_pyramid() -> tuple[
     from phydrax.discretization import CellBlock
     from phydrax.discretization._coordinate_enclosure import coordinate_corner_images
 
-    original_mesh, source = _plc_mesh(), _plc_source()
-    original = CellGeometrySpec.plc(original_mesh, source)
+    original_mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    original = CellGeometrySpec.plc(original_mesh, source, budget=budget)
     chart = (
         (Fraction(0), Fraction(0), Fraction(0)),
         (Fraction(1, 4), Fraction(0), Fraction(0)),
@@ -1001,7 +1183,9 @@ def _rational_plc_pyramid() -> tuple[
         np.asarray([[x.numerator for x in row] for row in chart]),
         np.asarray([[x.denominator for x in row] for row in chart]),
     )
-    images = coordinate_corner_images(element, original.source_coordinates())
+    images = coordinate_corner_images(
+        element, original.source_coordinates(budget=budget), budget=budget
+    )
     assert images is not None
     mesh = CellMesh(
         np.asarray([[float(value) for value in row] for row in images]),
@@ -1012,29 +1196,32 @@ def _rational_plc_pyramid() -> tuple[
         {"pyramid": np.arange(4)[None, :]},
         original.coordinates,
         exact_source=source,
+        budget=budget,
     )
     return mesh, geometry, element, chart
 
 
-def test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives() -> None:
+def test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     import jax
     import jax.numpy as jnp
 
     from phydrax.discretization._coordinate_enclosure import (
-        _reference_image,
         coordinate_expressions,
         coordinate_reference_chain,
         expression_evaluate,
         RationalPolynomial,
+        reference_image,
     )
     from phydrax.geometry import certify_global_embedding
 
-    mesh, geometry, element, chart = _rational_plc_pyramid()
-    geometry.resolve(mesh)
-    bank = geometry.source_coordinates()
-    expressions = coordinate_expressions(element, bank)
+    mesh, geometry, element, chart = _rational_plc_pyramid(budget=budget)
+    geometry.resolve(mesh, budget=budget)
+    bank = geometry.source_coordinates(budget=budget)
+    expressions = coordinate_expressions(element, bank, budget=budget)
     assert expressions is not None
-    # The collapsed-cube pyramid chart of an exact PLC source is polynomial.
+    # The collapsed-cube pyramid chart of an PLC source is polynomial.
     polynomials = tuple(
         value for value in expressions if not isinstance(value, RationalPolynomial)
     )
@@ -1048,13 +1235,19 @@ def test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives()
         for axis in range(3)
     )
     assert (
-        tuple(expression_evaluate(value, (Fraction(1, 2),) * 3) for value in expressions)
+        tuple(
+            expression_evaluate(value, (Fraction(1, 2),) * 3, budget=budget)
+            for value in expressions
+        )
         == expected
     )
-    root, chain = coordinate_reference_chain(element)
+    root, chain = coordinate_reference_chain(element, budget=budget)
     assert root.element_id == coordinate_lagrange_element("tetrahedron", 1).element_id
     assert (
-        tuple(expression_evaluate(value, (Fraction(1, 2),) * 3) for value in chain)
+        tuple(
+            expression_evaluate(value, (Fraction(1, 2),) * 3, budget=budget)
+            for value in chain
+        )
         == source_reference
     )
     apex = tuple(
@@ -1062,13 +1255,18 @@ def test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives()
         for axis in range(3)
     )
     assert (
-        _reference_image(
-            polynomials, "pyramid", (Fraction(1, 2), Fraction(1, 2), Fraction(1))
+        reference_image(
+            polynomials,
+            "pyramid",
+            (Fraction(1, 2), Fraction(1, 2), Fraction(1)),
+            budget=budget,
         )
         == apex
     )
     with pytest.raises(ValueError, match="must be the apex"):
-        _reference_image(polynomials, "pyramid", (Fraction(0), Fraction(0), Fraction(1)))
+        reference_image(
+            polynomials, "pyramid", (Fraction(0), Fraction(0), Fraction(1)), budget=budget
+        )
     points = jnp.asarray([[0.5, 0.5, 0.5], [0.5, 0.5, 1.0]])
     np.testing.assert_array_equal(
         np.asarray(element.reference_derivative_status(points)), [True, False]
@@ -1081,7 +1279,7 @@ def test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives()
         np.asarray(values[1] @ geometry.coordinates),
         np.asarray([float(value) for value in apex]),
         rtol=0.0,
-        atol=2e-16,
+        atol=_PLC_PYRAMID_APEX_ATOL,
     )
     for u, v in ((0.1, 0.2), (0.8, 0.9)):
         height = 1 - 2.0**-24
@@ -1092,13 +1290,16 @@ def test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives()
             np.asarray(element.tabulate(near)[0] @ geometry.coordinates)[0],
             np.asarray([float(value) for value in apex]),
             rtol=0.0,
-            atol=1e-7,
+            atol=_PLC_NEAR_APEX_POSITION_ATOL,
         )
     tangent = jnp.arange(12, dtype=jnp.float64).reshape((4, 3)) / 10
     mapping = lambda coefficients: element.tabulate(points)[0] @ coefficients
     _, jvp = jax.jvp(mapping, (geometry.coordinates,), (tangent,))
     np.testing.assert_allclose(
-        np.asarray(jvp), np.asarray(values @ tangent), rtol=0.0, atol=2e-15
+        np.asarray(jvp),
+        np.asarray(values @ tangent),
+        rtol=0.0,
+        atol=_PLC_PYRAMID_CONTROL_JVP_ATOL,
     )
     cotangent = jnp.asarray([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
     _, pullback = jax.vjp(mapping, geometry.coordinates)
@@ -1106,7 +1307,7 @@ def test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives()
         np.asarray(pullback(cotangent)[0]),
         np.asarray(values.T @ cotangent),
         rtol=0.0,
-        atol=2e-15,
+        atol=_PLC_PYRAMID_CONTROL_PULLBACK_ATOL,
     )
     reference_jacobian = jax.jacfwd(
         lambda point: element.tabulate(point[None, :])[0][0] @ geometry.coordinates
@@ -1115,11 +1316,13 @@ def test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives()
         np.asarray(reference_jacobian),
         np.asarray(geometry.coordinates.T @ gradients[0]),
         rtol=0.0,
-        atol=2e-15,
+        atol=_PLC_PYRAMID_REFERENCE_JACOBIAN_ATOL,
     )
-    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh, budget=budget)
     assert validity.all_certified
-    volumes, errors, exact_measure = _certified_cell_measures(mesh, geometry)
+    volumes, errors, exact_measure = certified_cell_measures(
+        mesh, geometry, budget=budget
+    )
     assert exact_measure
     expected_volume = Fraction(9, 640) * Fraction(_T)
     assert abs(Fraction(float(volumes[0])) - expected_volume) <= Fraction(
@@ -1128,35 +1331,49 @@ def test_rational_plc_pyramid_exact_map_apex_measure_embedding_and_derivatives()
     embedding = certify_global_embedding(mesh, geometry, validity)
     assert embedding.status == "certified"
     assert (
-        geometry.source_coordinates()
-        == _plc_source().prepare(geometry.coordinates).vertices
+        geometry.source_coordinates(budget=budget)
+        == _plc_source(budget=budget)
+        .prepare(geometry.coordinates, budget=budget)
+        .vertices
     )
 
 
-def test_rational_plc_pyramid_source_refusals_preserve_original_resource_and_law() -> (
-    None
-):
+def test_rational_plc_pyramid_source_refusals_preserve_original_resource_and_law(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     from phydrax.discretization._coordinate_enclosure import source_expressions
 
-    _, _, element, chart = _rational_plc_pyramid()
+    _, _, element, chart = _rational_plc_pyramid(budget=budget)
     with (
-        CoordinateEnclosureBudget(0, 1_000_000).activate(),
+        CoordinateEnclosureBudget(
+            HostBatchTicket(0, bytes_upper=1_000_000, queries_upper=0),
+            maximum_work_units=0,
+            maximum_memory_bytes=1_000_000,
+        ).activate() as stage_budget,
         pytest.raises(CoordinateEnclosureResourceError),
     ):
-        source_expressions(element)
+        source_expressions(element, budget=stage_budget)
     with (
-        CoordinateEnclosureBudget(1_000_000, 1).activate(),
+        CoordinateEnclosureBudget(
+            HostBatchTicket(1_000_000, bytes_upper=1, queries_upper=1_000_000),
+            maximum_work_units=1_000_000,
+            maximum_memory_bytes=1,
+        ).activate() as stage_budget,
         pytest.raises(CoordinateEnclosureResourceError),
     ):
-        source_expressions(element)
+        source_expressions(element, budget=stage_budget)
     invalid = np.asarray([[value.numerator for value in row] for row in chart])
     denominators = np.asarray([[value.denominator for value in row] for row in chart])
     invalid[0, 0] = -1
-    with pytest.raises(ValueError, match="original source simplex"):
+    with pytest.raises(
+        ValueError, match=r"RationalComposedCellGeometryElement\.inputs.*source simplex"
+    ):
         RationalComposedCellGeometryElement(
             element.source_element, element.chart_element, invalid, denominators
         )
-    with pytest.raises(ValueError, match="five exact"):
+    with pytest.raises(
+        ValueError, match=r"RationalComposedCellGeometryElement\.inputs.*five"
+    ):
         RationalComposedCellGeometryElement(
             element.source_element,
             element.chart_element,
@@ -1166,18 +1383,21 @@ def test_rational_plc_pyramid_source_refusals_preserve_original_resource_and_law
     changed = eqx.tree_at(
         lambda value: value.chart_coordinates, element, element.chart_coordinates + 0.01
     )
-    with pytest.raises(ValueError, match="not the RNE"):
-        source_expressions(changed)
+    with pytest.raises(ValueError, match=r"coordinate_enclosure\.chart_coefficients"):
+        source_expressions(changed, budget=budget)
     with pytest.raises(ValueError, match="collapsed rational pyramid"):
         PolynomialComposedCellGeometryElement(
             element.source_element,
             element.chart_element,
             np.zeros((5, 3), dtype=np.int64),
             np.ones((5, 3), dtype=np.int64),
+            budget=budget,
         )
 
 
-def test_rational_plc_full_p1_action_and_original_chart_cache_are_authoritative() -> None:
+def test_rational_plc_full_p1_action_and_original_chart_cache_are_authoritative(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
     from phydrax.discretization._coordinate_enclosure import (
         coordinate_corner_images,
@@ -1185,7 +1405,7 @@ def test_rational_plc_full_p1_action_and_original_chart_cache_are_authoritative(
         source_expressions,
     )
 
-    _, geometry, rational, _ = _rational_plc_pyramid()
+    _, geometry, rational, _ = _rational_plc_pyramid(budget=budget)
     first = np.eye(4)
     first[1] = [0.25, 0.75, 0.0, 0.0]
     second = np.eye(4)
@@ -1199,8 +1419,8 @@ def test_rational_plc_full_p1_action_and_original_chart_cache_are_authoritative(
         np.asarray([[a for a, _ in row] for row in rational.chart_coefficients]),
         np.asarray([[b for _, b in row] for row in rational.chart_coefficients]),
     )
-    bank = geometry.source_coordinates()
-    images = coordinate_corner_images(element, bank)
+    bank = geometry.source_coordinates(budget=budget)
+    images = coordinate_corner_images(element, bank, budget=budget)
     assert images is not None
     chart_weights = tuple(Fraction(*pair) for pair in element.chart_coefficients[4])
     weights = np.asarray(
@@ -1211,30 +1431,36 @@ def test_rational_plc_full_p1_action_and_original_chart_cache_are_authoritative(
         element.tabulate(np.asarray([[0.5, 0.5, 1.0]]))[0] @ geometry.coordinates,
         expected[None, :],
         rtol=0.0,
-        atol=2e-16,
+        atol=_PLC_P1_APEX_ATOL,
     )
-    with CoordinateEnclosureBudget(1_000_000, 4_000_000).activate() as ledger:
-        original = source_expressions(element)
-        chart = reference_composition_arguments(element)
+    with CoordinateEnclosureBudget(
+        HostBatchTicket(1_000_000, bytes_upper=4_000_000, queries_upper=1_000_000),
+        maximum_work_units=1_000_000,
+        maximum_memory_bytes=4_000_000,
+    ).activate() as ledger:
+        original = source_expressions(element, budget=ledger)
+        chart = reference_composition_arguments(element, budget=ledger)
         work = ledger.work_units
-        assert source_expressions(element) is original
-        assert reference_composition_arguments(element) is chart
+        assert source_expressions(element, budget=ledger) is original
+        assert reference_composition_arguments(element, budget=ledger) is chart
         assert ledger.work_units == work
         changed = eqx.tree_at(
             lambda value: value.source_element.barycentric_weights,
             element,
             source.barycentric_weights.at[2, 2].set(0.75),
         )
-        assert source_expressions(changed) != original
+        assert source_expressions(changed, budget=ledger) != original
 
 
-def test_exact_plc_mixed_original_source_actions_have_independent_true_measures() -> None:
+def test_exact_plc_mixed_original_source_actions_have_independent_true_measures(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     from phydrax.discretization import CellBlock
     from phydrax.discretization._coordinate_enclosure import coordinate_corner_images
     from phydrax.discretization._reference_cell import reference_cell_topology
 
-    _, original, rational, pyramid_chart = _rational_plc_pyramid()
-    bank = original.source_coordinates()
+    _, original, rational, pyramid_chart = _rational_plc_pyramid(budget=budget)
+    bank = original.source_coordinates(budget=budget)
     charts = {
         "hex": tuple(
             tuple(Fraction(int(value), 8) for value in corner)
@@ -1259,18 +1485,22 @@ def test_exact_plc_mixed_original_source_actions_have_independent_true_measures(
         ("pyramid", "pyramid"),
     ):
         chart = charts[name]
-        constructor = (
-            RationalComposedCellGeometryElement
-            if kind == "pyramid"
-            else PolynomialComposedCellGeometryElement
-        )
-        element = constructor(
-            rational.source_element,
-            coordinate_lagrange_element(kind, 1),
-            np.asarray([[x.numerator for x in row] for row in chart]),
-            np.asarray([[x.denominator for x in row] for row in chart]),
-        )
-        images = coordinate_corner_images(element, bank)
+        chart_element = coordinate_lagrange_element(kind, 1)
+        numerators = np.asarray([[x.numerator for x in row] for row in chart])
+        denominators = np.asarray([[x.denominator for x in row] for row in chart])
+        if kind == "pyramid":
+            element = RationalComposedCellGeometryElement(
+                rational.source_element, chart_element, numerators, denominators
+            )
+        else:
+            element = PolynomialComposedCellGeometryElement(
+                rational.source_element,
+                chart_element,
+                numerators,
+                denominators,
+                budget=budget,
+            )
+        images = coordinate_corner_images(element, bank, budget=budget)
         assert images is not None
         offset = len(points)
         points.extend(tuple(float(value) for value in image) for image in images)
@@ -1285,11 +1515,19 @@ def test_exact_plc_mixed_original_source_actions_have_independent_true_measures(
         elements[name], routes[name] = element, np.arange(4)[None, :]
     mesh = CellMesh(np.asarray(points), tuple(blocks))
     geometry = CellGeometrySpec(
-        elements, routes, original.coordinates, exact_source=original.exact_source
+        elements,
+        routes,
+        original.coordinates,
+        exact_source=original.exact_source,
+        budget=budget,
     )
-    geometry.resolve(mesh)
-    assert certify_cell_geometry_validity(geometry, mesh=mesh).all_certified
-    volumes, errors, exact_measure = _certified_cell_measures(mesh, geometry)
+    geometry.resolve(mesh, budget=budget)
+    assert certify_cell_geometry_validity(
+        geometry, mesh=mesh, budget=budget
+    ).all_certified
+    volumes, errors, exact_measure = certified_cell_measures(
+        mesh, geometry, budget=budget
+    )
     assert exact_measure
     reference_measures = (Fraction(1, 512), Fraction(1, 3072), Fraction(3, 640))
     for volume, error, reference in zip(volumes, errors, reference_measures, strict=True):
@@ -1302,13 +1540,13 @@ def test_exact_plc_mixed_original_source_actions_have_independent_true_measures(
         model_recipe_array_values(geometry, recipe, prefix="rational-mixed"),
         prefix="rational-mixed",
     )
-    assert restored.source_coordinates() == bank
+    assert restored.source_coordinates(budget=budget) == bank
     assert restored.geometry_layout_id == geometry.geometry_layout_id
 
 
-def test_complete_noncommuting_p1_actions_contract_original_physical_bank_exactly() -> (
-    None
-):
+def test_complete_noncommuting_p1_actions_contract_original_physical_bank_exactly(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
     from phydrax.discretization._coordinate_enclosure import (
         coordinate_polynomials,
@@ -1329,8 +1567,12 @@ def test_complete_noncommuting_p1_actions_contract_original_physical_bank_exactl
         (Fraction(0), Fraction(1), Fraction(0)),
         (Fraction(0), Fraction(0), Fraction(1)),
     )
-    with CoordinateEnclosureBudget(100000, 4_000_000).activate():
-        expressions = coordinate_polynomials(element, bank)
+    with CoordinateEnclosureBudget(
+        HostBatchTicket(100000, bytes_upper=4_000_000, queries_upper=100000),
+        maximum_work_units=100000,
+        maximum_memory_bytes=4_000_000,
+    ).activate() as stage_budget:
+        expressions = coordinate_polynomials(element, bank, budget=stage_budget)
         assert expressions is not None
         for point in (
             (Fraction(1, 5), Fraction(1, 7), Fraction(1, 11)),
@@ -1364,24 +1606,31 @@ def test_complete_noncommuting_p1_actions_contract_original_physical_bank_exactl
                 )
                 for axis in range(3)
             )
-            assert tuple(evaluate(value, point) for value in expressions) == expected
+            assert (
+                tuple(
+                    evaluate(value, point, budget=stage_budget) for value in expressions
+                )
+                == expected
+            )
             assert not np.array_equal(outer @ inner, inner @ outer)
 
 
-def test_full_p1_affine_embedding_retains_nonbinary_source_and_mapped_identity() -> None:
+def test_full_p1_affine_embedding_retains_nonbinary_source_and_mapped_identity(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
     from phydrax.discretization._coordinate_enclosure import coordinate_corner_images
     from phydrax.geometry import certify_global_embedding
 
-    original_mesh, source = _plc_mesh(), _plc_source()
-    original = CellGeometrySpec.plc(original_mesh, source)
+    original_mesh, source = _plc_mesh(), _plc_source(budget=budget)
+    original = CellGeometrySpec.plc(original_mesh, source, budget=budget)
     action = np.eye(4)
     action[1] = [0.25, 0.75, 0.0, 0.0]
     element = BarycentricCellGeometryElement(
         coordinate_lagrange_element("tetrahedron", 1), action
     )
-    bank = original.source_coordinates()
-    corners = coordinate_corner_images(element, bank)
+    bank = original.source_coordinates(budget=budget)
+    corners = coordinate_corner_images(element, bank, budget=budget)
     assert corners is not None
     mesh = CellMesh.from_tetrahedra(
         np.asarray([[float(value) for value in point] for point in corners]),
@@ -1393,32 +1642,37 @@ def test_full_p1_affine_embedding_retains_nonbinary_source_and_mapped_identity()
         {name: np.arange(4)[None, :]},
         original.coordinates,
         exact_source=source,
+        budget=budget,
     )
-    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh, budget=budget)
     assert validity.all_certified
     embedding = certify_global_embedding(mesh, geometry, validity)
     assert embedding.status == "certified"
     assert embedding.binding.coordinate_scope == "mapped"
     assert "mapped_affine_source_maps" in embedding.evaluated_checks
-    assert geometry.source_coordinates() == bank
+    assert geometry.source_coordinates(budget=budget) == bank
     assert any(Fraction(float(value)) != value for point in corners for value in point)
 
 
-def test_rational_pyramid_face_restriction_preserves_source_dimension_and_apex() -> None:
+def test_rational_pyramid_face_restriction_preserves_source_dimension_and_apex(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     from phydrax.discretization._coordinate_enclosure import (
         coordinate_expressions,
         expression_reference_evaluate,
         restrict_chart_expressions,
     )
 
-    _, geometry, element, chart = _rational_plc_pyramid()
-    bank = geometry.source_coordinates()
-    source = coordinate_expressions(element, bank)
+    _, geometry, element, chart = _rational_plc_pyramid(budget=budget)
+    bank = geometry.source_coordinates(budget=budget)
+    source = coordinate_expressions(element, bank, budget=budget)
     assert source is not None
-    # Canonical triangular side: base corners 0/1 and apex 4.
+    # triangular side: base corners 0/1 and apex 4.
     origin = np.zeros(3)
     matrix = np.asarray([[1.0, 0.5], [0.0, 0.5], [0.0, 1.0]])
-    face = restrict_chart_expressions(source, "pyramid", "triangle", origin, matrix)
+    face = restrict_chart_expressions(
+        source, "pyramid", "triangle", origin, matrix, budget=budget
+    )
     images = tuple(
         tuple(
             sum((row[index - 1] * bank[index][axis] for index in (1, 2, 3)), Fraction(0))
@@ -1440,14 +1694,17 @@ def test_rational_pyramid_face_restriction_preserves_source_dimension_and_apex()
         )
         assert (
             tuple(
-                expression_reference_evaluate(value, point, "simplex") for value in face
+                expression_reference_evaluate(value, point, "simplex", budget=budget)
+                for value in face
             )
             == expected
         )
     assert all(not hasattr(value, "denominator") for value in face)
 
 
-def test_full_p1_embedded_affine_surface_uses_exact_shared_source_contacts() -> None:
+def test_full_p1_embedded_affine_surface_uses_exact_shared_source_contacts(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
     from phydrax.discretization._coordinate_enclosure import coordinate_corner_images
     from phydrax.geometry import certify_global_embedding
@@ -1458,15 +1715,17 @@ def test_full_p1_embedded_affine_surface_uses_exact_shared_source_contacts() -> 
     )
     numeric = np.asarray([[0.0, 0.0, 0.0], [0.7, 0.2, 0.4], [0.0, 0.6, 0.8]])
     bank = tuple(tuple(Fraction(float(value)) for value in row) for row in numeric)
-    corners = coordinate_corner_images(element, bank)
+    corners = coordinate_corner_images(element, bank, budget=budget)
     assert corners is not None
     mesh = CellMesh.from_triangles(
         np.asarray([[float(value) for value in point] for point in corners]),
         np.arange(3)[None, :],
     )
     name = mesh.blocks[0].name
-    geometry = CellGeometrySpec({name: element}, {name: np.arange(3)[None, :]}, numeric)
-    validity = certify_cell_geometry_validity(geometry, mesh=mesh)
+    geometry = CellGeometrySpec(
+        {name: element}, {name: np.arange(3)[None, :]}, numeric, budget=budget
+    )
+    validity = certify_cell_geometry_validity(geometry, mesh=mesh, budget=budget)
     assert validity.all_certified
     embedding = certify_global_embedding(mesh, geometry, validity)
     assert embedding.status == "certified"
@@ -1474,10 +1733,10 @@ def test_full_p1_embedded_affine_surface_uses_exact_shared_source_contacts() -> 
     assert "mapped_exact_affine_surface_contact" in embedding.evaluated_checks
 
 
-def test_exact_source_binary_predicate_view_proves_values_and_preserves_nonbinary_bank() -> (
-    None
-):
-    from phydrax.geometry._mesh_certificates import _exact_source_predicate_view
+def test_exact_source_binary_predicate_view_proves_values_and_preserves_nonbinary_bank(
+    budget: CoordinateEnclosureBudget,
+) -> None:
+    from phydrax.geometry._global_embedding import exact_source_predicate_view
 
     binary = np.asarray(
         (
@@ -1486,8 +1745,12 @@ def test_exact_source_binary_predicate_view_proves_values_and_preserves_nonbinar
         ),
         dtype=object,
     )
-    with CoordinateEnclosureBudget(1000, 1_000_000).activate() as ledger:
-        exported, exact = _exact_source_predicate_view(binary)
+    with CoordinateEnclosureBudget(
+        HostBatchTicket(1000, bytes_upper=1_000_000, queries_upper=1000),
+        maximum_work_units=1000,
+        maximum_memory_bytes=1_000_000,
+    ).activate() as ledger:
+        exported, exact = exact_source_predicate_view(binary, budget=ledger)
         assert exact
         assert exported.dtype == np.float64
         assert all(
@@ -1497,23 +1760,37 @@ def test_exact_source_binary_predicate_view_proves_values_and_preserves_nonbinar
         assert ledger.work_units > 0
     nonbinary = binary.copy()
     nonbinary[1, 2] = Fraction(1, 3)
-    with CoordinateEnclosureBudget(1000, 1_000_000).activate():
-        same, exact = _exact_source_predicate_view(nonbinary)
+    with CoordinateEnclosureBudget(
+        HostBatchTicket(1000, bytes_upper=1_000_000, queries_upper=1000),
+        maximum_work_units=1000,
+        maximum_memory_bytes=1_000_000,
+    ).activate() as stage_budget:
+        same, exact = exact_source_predicate_view(nonbinary, budget=stage_budget)
         assert not exact
         assert same is nonbinary
     with (
-        CoordinateEnclosureBudget(1, 1_000_000).activate(),
+        CoordinateEnclosureBudget(
+            HostBatchTicket(1, bytes_upper=1_000_000, queries_upper=1),
+            maximum_work_units=1,
+            maximum_memory_bytes=1_000_000,
+        ).activate() as stage_budget,
         pytest.raises(CoordinateEnclosureResourceError),
     ):
-        _exact_source_predicate_view(binary)
+        exact_source_predicate_view(binary, budget=stage_budget)
     with (
-        CoordinateEnclosureBudget(1000, 1).activate(),
+        CoordinateEnclosureBudget(
+            HostBatchTicket(1000, bytes_upper=1, queries_upper=1000),
+            maximum_work_units=1000,
+            maximum_memory_bytes=1,
+        ).activate() as stage_budget,
         pytest.raises(CoordinateEnclosureResourceError),
     ):
-        _exact_source_predicate_view(binary)
+        exact_source_predicate_view(binary, budget=stage_budget)
 
 
-def test_complete_p1_source_reference_requires_exact_partition_of_unity() -> None:
+def test_complete_p1_source_reference_requires_exact_partition_of_unity(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
     from phydrax.discretization._coordinate_enclosure import (
         coordinate_partition_unity_reference_chain,
@@ -1529,40 +1806,58 @@ def test_complete_p1_source_reference_requires_exact_partition_of_unity() -> Non
     action = BarycentricCellGeometryElement(
         BarycentricCellGeometryElement(root, inner), outer
     )
-    with CoordinateEnclosureBudget(100000, 4_000_000).activate():
+    with CoordinateEnclosureBudget(
+        HostBatchTicket(100000, bytes_upper=4_000_000, queries_upper=100000),
+        maximum_work_units=100000,
+        maximum_memory_bytes=4_000_000,
+    ).activate() as stage_budget:
         original, arguments = coordinate_partition_unity_reference_chain(
-            action, ancestor=root
+            action, ancestor=root, budget=stage_budget
         )
         assert original is root
-        basis = source_basis(action)
+        basis = source_basis(action, budget=stage_budget)
         assert basis is not None
         point = (Fraction(1, 5), Fraction(1, 7))
         from phydrax.discretization._coordinate_enclosure import (
             expression_evaluate,
         )
 
-        lambdas = tuple(expression_evaluate(value, point) for value in basis)
+        lambdas = tuple(
+            expression_evaluate(value, point, budget=stage_budget) for value in basis
+        )
         assert sum(lambdas) == 1
         assert lambdas[0] == 1 - sum(lambdas[1:])
         assert (
-            tuple(expression_evaluate(value, point) for value in arguments) == lambdas[1:]
+            tuple(
+                expression_evaluate(value, point, budget=stage_budget)
+                for value in arguments
+            )
+            == lambdas[1:]
         )
         with pytest.raises(ValueError, match="Cartesian"):
-            coordinate_reference_chain(action, ancestor=root)
+            coordinate_reference_chain(action, ancestor=root, budget=stage_budget)
     raw = np.eye(3)
     raw[0] = [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0]
     nonunit = BarycentricCellGeometryElement(root, raw)
     with (
-        CoordinateEnclosureBudget(100000, 4_000_000).activate(),
-        pytest.raises(ValueError, match="exact partition"),
+        CoordinateEnclosureBudget(
+            HostBatchTicket(100000, bytes_upper=4_000_000, queries_upper=100000),
+            maximum_work_units=100000,
+            maximum_memory_bytes=4_000_000,
+        ).activate() as stage_budget,
+        pytest.raises(ValueError, match=r"coordinate_enclosure\.reference_action"),
     ):
-        coordinate_partition_unity_reference_chain(nonunit, ancestor=root)
+        coordinate_partition_unity_reference_chain(
+            nonunit, ancestor=root, budget=stage_budget
+        )
     np.testing.assert_array_equal(
         np.asarray(nonunit.barycentric_weights).view(np.uint64), raw.view(np.uint64)
     )
 
 
-def test_full_nonunit_p1_packet_preserves_all_uv_columns_and_physical_remainder() -> None:
+def test_full_nonunit_p1_packet_preserves_all_uv_columns_and_physical_remainder(
+    budget: CoordinateEnclosureBudget,
+) -> None:
     from phydrax.discretization._cell_geometry import BarycentricCellGeometryElement
     from phydrax.discretization._coordinate_enclosure import (
         coordinate_expressions,
@@ -1579,8 +1874,12 @@ def test_full_nonunit_p1_packet_preserves_all_uv_columns_and_physical_remainder(
     uv = np.asarray([[2.0, 3.0], [4.0, 3.0], [2.0, 6.0]])
     xyz = np.asarray([[10.0, 20.0, 30.0], [12.0, 21.0, 30.0], [10.0, 23.0, 32.0]])
     ids = np.asarray([19, 7, 31], dtype=np.int64)
-    with CoordinateEnclosureBudget(100000, 4_000_000).activate():
-        original = coordinate_expressions(root, xyz)
+    with CoordinateEnclosureBudget(
+        HostBatchTicket(100000, bytes_upper=4_000_000, queries_upper=100000),
+        maximum_work_units=100000,
+        maximum_memory_bytes=4_000_000,
+    ).activate() as stage_budget:
+        original = coordinate_expressions(root, xyz, budget=stage_budget)
         assert original is not None
         actual_root, arguments, remainder = prepare_p1_source_packet_pullback(
             element,
@@ -1591,12 +1890,15 @@ def test_full_nonunit_p1_packet_preserves_all_uv_columns_and_physical_remainder(
             original,
             root_corner_ids=ids,
             retained_corner_ids=ids,
+            budget=stage_budget,
         )
         assert actual_root is root
-        basis = source_basis(element)
+        basis = source_basis(element, budget=stage_budget)
         assert basis is not None
         for point in ((Fraction(0), Fraction(0)), (Fraction(1, 5), Fraction(1, 7))):
-            weights = tuple(evaluate(value, point) for value in basis)
+            weights = tuple(
+                evaluate(value, point, budget=stage_budget) for value in basis
+            )
             actual_uv = tuple(
                 sum(
                     (
@@ -1608,7 +1910,10 @@ def test_full_nonunit_p1_packet_preserves_all_uv_columns_and_physical_remainder(
                 for axis in range(2)
             )
             expected_refs = ((actual_uv[0] - 2) / 2, (actual_uv[1] - 3) / 3)
-            assert tuple(evaluate(value, point) for value in arguments) == expected_refs
+            assert (
+                tuple(evaluate(value, point, budget=stage_budget) for value in arguments)
+                == expected_refs
+            )
             physical = tuple(
                 sum(
                     (
@@ -1620,10 +1925,12 @@ def test_full_nonunit_p1_packet_preserves_all_uv_columns_and_physical_remainder(
                 for axis in range(3)
             )
             root_image = tuple(
-                expression_evaluate(value, expected_refs) for value in original
+                expression_evaluate(value, expected_refs, budget=stage_budget)
+                for value in original
             )
             assert tuple(
-                expression_evaluate(value, point) for value in remainder
+                expression_evaluate(value, point, budget=stage_budget)
+                for value in remainder
             ) == tuple(a - b for a, b in zip(physical, root_image, strict=True))
         assert any(remainder)
         with pytest.raises(ValueError, match="corner SCI"):
@@ -1636,6 +1943,7 @@ def test_full_nonunit_p1_packet_preserves_all_uv_columns_and_physical_remainder(
                 original,
                 root_corner_ids=ids,
                 retained_corner_ids=ids[::-1],
+                budget=stage_budget,
             )
         with pytest.raises(ValueError, match="physical coefficient"):
             prepare_p1_source_packet_pullback(
@@ -1647,7 +1955,268 @@ def test_full_nonunit_p1_packet_preserves_all_uv_columns_and_physical_remainder(
                 original,
                 root_corner_ids=ids,
                 retained_corner_ids=ids,
+                budget=stage_budget,
             )
     np.testing.assert_array_equal(
         np.asarray(element.barycentric_weights).view(np.uint64), raw.view(np.uint64)
     )
+
+
+@pytest.mark.parametrize("operation", ("add", "multiply", "compose", "rational"))
+def test_structural_coordinate_estimates_cover_exact_operation_work_and_bytes(
+    operation: str,
+) -> None:
+    from phydrax.discretization._coordinate_enclosure import (
+        add,
+        compose,
+        coordinate_estimate_add,
+        coordinate_estimate_compose,
+        coordinate_estimate_multiply,
+        coordinate_estimate_rational,
+        coordinate_expression_estimate,
+        expression_evaluate,
+        multiply,
+        Polynomial,
+        rational_expression,
+    )
+
+    first: Polynomial = {(1,): Fraction(1), (0,): Fraction(1, 3)}
+    second: Polynomial = {(1,): Fraction(2), (0,): Fraction(1, 5)}
+    a, b = coordinate_expression_estimate(first), coordinate_expression_estimate(second)
+    point = (Fraction(1, 7),)
+    first_value, second_value = point[0] + Fraction(1, 3), 2 * point[0] + Fraction(1, 5)
+    match operation:
+        case "add":
+            estimate = coordinate_estimate_add(a, b)
+            expected = first_value + second_value
+        case "multiply":
+            estimate = coordinate_estimate_multiply(a, b)
+            expected = first_value * second_value
+        case "compose":
+            estimate = coordinate_estimate_compose(a, (b,))
+            expected = second_value + Fraction(1, 3)
+        case "rational":
+            estimate = coordinate_estimate_rational(a, b)
+            expected = first_value / second_value
+        case _:
+            raise AssertionError(
+                f"fixture.operation must be a supported coordinate estimate operation; got {operation!r}"
+            )
+    ticket = HostBatchTicket(estimate.work_upper, bytes_upper=estimate.bytes_upper)
+    ledger = CoordinateEnclosureBudget(
+        ticket,
+        maximum_work_units=estimate.work_upper,
+        maximum_memory_bytes=estimate.bytes_upper,
+    )
+    with ticket, ledger.activate():
+        match operation:
+            case "add":
+                result = add(first, second, budget=ledger)
+            case "multiply":
+                result = multiply(first, second, budget=ledger)
+            case "compose":
+                result = compose(first, (second,), budget=ledger)
+            case "rational":
+                result = rational_expression(first, second, budget=ledger)
+            case _:
+                raise AssertionError(
+                    f"fixture.operation must be a supported coordinate estimate operation; got {operation!r}"
+                )
+        assert expression_evaluate(result, point, budget=ledger) == expected
+    assert ledger.work_units <= estimate.work_upper
+    assert ledger.peak_bytes_upper <= estimate.bytes_upper
+    assert ticket.work_units == ledger.work_units
+    assert ledger.native_charged_work_units == 0
+
+
+@pytest.mark.parametrize(
+    "kind", ("triangle", "tetrahedron", "quadrilateral", "hexahedron", "prism", "pyramid")
+)
+def test_structural_lattice_estimate_covers_exact_fallback_preparation(kind: str) -> None:
+    from phydrax.discretization._coordinate_enclosure import (
+        coordinate_lattice_estimate,
+        evaluate_coordinate_lattice_basis,
+        prepare_coordinate_lattice_basis,
+    )
+    from phydrax.discretization._reference_cell import reference_cell_topology
+
+    estimate = coordinate_lattice_estimate(kind, 1)
+    ticket = HostBatchTicket(estimate.work_upper, bytes_upper=estimate.bytes_upper)
+    ledger = CoordinateEnclosureBudget(
+        ticket,
+        maximum_work_units=estimate.work_upper,
+        maximum_memory_bytes=estimate.bytes_upper,
+    )
+    with ticket, ledger.activate():
+        prepared = prepare_coordinate_lattice_basis(kind, 1, budget=ledger)
+    points = np.asarray(reference_cell_topology(kind).vertices, dtype=np.float64)
+    values, _ = evaluate_coordinate_lattice_basis(kind, 1, points, preparation=prepared)
+    np.testing.assert_array_equal(values, np.eye(len(points), dtype=np.float64))
+    assert ledger.work_units <= estimate.work_upper
+    assert ledger.peak_bytes_upper <= estimate.bytes_upper
+
+
+@pytest.mark.parametrize("kind", ("quadrilateral", "hexahedron", "tetrahedron"))
+def test_coordinate_lattice_execution_reuses_capacity_kernel(kind: str) -> None:
+    from jax import clear_caches
+
+    from phydrax.discretization._coordinate_enclosure import (
+        evaluate_coordinate_lattice_basis,
+        prepare_coordinate_lattice_basis,
+    )
+    from phydrax.discretization._reference_cell import reference_cell_topology
+    from tools.compile_counter import CompileCounter
+
+    ticket = HostBatchTicket(100_000, bytes_upper=1 << 24)
+    ledger = CoordinateEnclosureBudget(
+        ticket, maximum_work_units=100_000, maximum_memory_bytes=1 << 24
+    )
+    with ticket, ledger.activate():
+        preparation = prepare_coordinate_lattice_basis(kind, 1, budget=ledger)
+    points = np.asarray(reference_cell_topology(kind).vertices, dtype=np.float64)
+    clear_caches()
+    with CompileCounter() as compiler:
+        first, gradient = evaluate_coordinate_lattice_basis(
+            kind, 1, points, preparation=preparation
+        )
+        second, repeated_gradient = evaluate_coordinate_lattice_basis(
+            kind, 1, points.copy(), preparation=preparation
+        )
+        np.testing.assert_array_equal(first, second)
+        np.testing.assert_array_equal(gradient, repeated_gradient)
+    np.testing.assert_array_equal(first, np.eye(points.shape[0], dtype=np.float64))
+    assert compiler.count == 1
+    assert compiler.events[0].kernel_name == "jit(evaluate_coordinate_lattice_basis)"
+
+
+def test_coordinate_cache_storage_remains_reserved_between_explicit_work_phases() -> None:
+    parent = HostBatchTicket(1000, bytes_upper=1 << 20)
+    first = parent.batch(100, bytes_upper=1 << 20)
+    ledger = CoordinateEnclosureBudget(
+        first, maximum_work_units=1000, maximum_memory_bytes=1 << 20
+    )
+    source = (Fraction(1, 3),)
+    with parent:
+        with first, ledger.activate():
+            ledger.retain_basis(source)
+        with ledger.retained_storage(lambda size: parent.batch(0, bytes_upper=size)):
+            storage = ledger.storage_ticket
+            assert storage is not None and not storage.settled
+            assert (
+                storage.bytes_upper
+                == ledger.retained_basis_bytes + ledger.temporary_bytes_upper
+            )
+            with pytest.raises(RuntimeError):
+                parent.batch(0, bytes_upper=parent.bytes_upper - storage.bytes_upper + 1)
+            second = parent.batch(
+                100, bytes_upper=parent.bytes_upper - storage.bytes_upper
+            )
+            with ledger.bind_ticket(second):
+                ledger.retain_basis((Fraction(2, 5),))
+            assert second.settled
+            renewed = ledger.storage_ticket
+            assert renewed is not None and renewed.bytes_upper >= storage.bytes_upper
+            assert storage.settled
+            assert source[0] == Fraction(1, 3)
+        assert ledger.storage_ticket is None
+        assert parent.remaining_work_units == 1000 - ledger.work_units
+
+
+def test_host_ticket_managed_contributors_preserve_other_live_storage() -> None:
+    from phydrax._resource_ticket import HostBatchEstimateError
+
+    ticket = HostBatchTicket(100, bytes_upper=1024)
+    with ticket, ticket.managed_storage() as first, ticket.managed_storage() as second:
+        first.set_bound(128)
+        second.set_bound(256)
+        assert ticket.managed_bytes == 384
+        ticket.consume(managed_bytes=64)
+        assert ticket.managed_bytes == 448
+        first.set_bound(32)
+        assert first.bound == 32 and second.bound == 256
+        second.close()
+        assert second.bound == 0
+        with ticket.managed_storage() as excess:
+            with pytest.raises(HostBatchEstimateError) as refusal:
+                excess.set_bound(1024)
+            assert refusal.value.batch_requested_upper[3] == 1120
+            assert refusal.value.batch_refusal_evidence[4] == 0
+            assert excess.bound == 0
+        assert ticket.settled and ticket.work_units == 0
+    assert first.bound == 0 and second.bound == 0
+    assert ticket.managed_bytes == 448
+
+
+def test_host_ticket_cannot_claim_a_native_charge_target() -> None:
+    ticket = HostBatchTicket(0)
+    with pytest.raises(TypeError, match="native ticket"):
+        ticket.native_target()
+
+
+def test_explicit_expression_sequence_equality_preserves_identity_and_prefix_work() -> (
+    None
+):
+    from phydrax.discretization._coordinate_enclosure import (
+        expression_sequence_equal,
+        RationalPolynomial,
+    )
+
+    first = RationalPolynomial(
+        {(1,): Fraction(1)}, {(0,): Fraction(1), (1,): Fraction(1)}
+    )
+    equal = RationalPolynomial(
+        {(1,): Fraction(1)}, {(0,): Fraction(1), (1,): Fraction(1)}
+    )
+    ticket = HostBatchTicket(100_000, bytes_upper=1 << 20)
+    ledger = CoordinateEnclosureBudget(
+        ticket, maximum_work_units=100_000, maximum_memory_bytes=1 << 20
+    )
+    with ticket, ledger.activate():
+        before = ledger.work_units
+        assert expression_sequence_equal((first,), (first,), budget=ledger)
+        assert ledger.work_units == before
+        assert not expression_sequence_equal((first, {}), (equal,), budget=ledger)
+        assert ledger.work_units == before + 16
+
+
+def test_structural_coordinate_bank_bound_preserves_large_object_array_fractions() -> (
+    None
+):
+    from phydrax.discretization._coordinate_enclosure import (
+        coordinate_estimate_bank,
+        coordinate_map_expression_estimates,
+        coordinate_polynomials,
+        evaluate,
+    )
+
+    exact = Fraction(2**2048 + 7, 2**2063 + 11)
+    coefficients = np.asarray(
+        (
+            (Fraction(0), Fraction(0), Fraction(0)),
+            (exact, Fraction(0), Fraction(0)),
+            (Fraction(0), Fraction(1), Fraction(0)),
+            (Fraction(0), Fraction(0), Fraction(1)),
+        ),
+        dtype=object,
+    )
+    element = coordinate_lagrange_element("tetrahedron", 1)
+    outputs = coordinate_map_expression_estimates(element, coefficients)
+    assert outputs is not None
+    estimate = coordinate_estimate_bank(outputs)
+    ticket = HostBatchTicket(estimate.work_upper, bytes_upper=estimate.bytes_upper)
+    ledger = CoordinateEnclosureBudget(
+        ticket,
+        maximum_work_units=estimate.work_upper,
+        maximum_memory_bytes=estimate.bytes_upper,
+    )
+    with ticket, ledger.activate():
+        polynomials = coordinate_polynomials(element, coefficients, budget=ledger)
+        assert polynomials is not None
+        assert (
+            evaluate(
+                polynomials[0], (Fraction(1), Fraction(0), Fraction(0)), budget=ledger
+            )
+            == exact
+        )
+    assert ledger.work_units <= estimate.work_upper
+    assert ledger.peak_bytes_upper <= estimate.bytes_upper

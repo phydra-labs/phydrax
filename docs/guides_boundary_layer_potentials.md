@@ -19,7 +19,9 @@ Gauss–Legendre source nodes, normals, Jacobians, physical weights, panel IDs, 
 content-addressed singular-support identity.
 
 ```text
-geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+from phydrax.units import METER
+
+geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile(coordinate_unit=METER)
 panelization = phx.operators.BoundaryPanelization2D(
     geometry.boundary_atlas,
     panels_per_chart=8,

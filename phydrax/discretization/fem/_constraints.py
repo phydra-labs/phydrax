@@ -115,11 +115,11 @@ def dirichlet_constraint(
     boundary_selection: EntitySelection | None = None,
     components: Sequence[int] | None = None,
 ) -> FiniteElementDirichletConstraint:
-    """Resolve one reduced-coordinate strong Dirichlet constraint."""
+    """Resolve a nonempty strong Dirichlet set, including all field DOFs."""
 
     if not isinstance(discretization, FiniteElementDiscretization):
         raise TypeError("discretization must be FiniteElementDiscretization.")
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     field_space = discretization.field_spaces[field_index]
     dof_map = discretization.dof_maps[field_index]
     if not isinstance(field_space.vector_space, ArraySpace):
@@ -187,10 +187,8 @@ def dirichlet_constraint(
     flattened_mask = full_mask.reshape((-1,))
     constrained = np.flatnonzero(flattened_mask).astype(np.int32)
     free = np.flatnonzero(~flattened_mask).astype(np.int32)
-    if constrained.size == 0 or free.size == 0:
-        raise ValueError(
-            "Dirichlet constraints require a non-empty proper subset of DOFs."
-        )
+    if constrained.size == 0:
+        raise ValueError("fem.dirichlet.dofs must contain a constrained DOF; got 0.")
     full_space = field_space.vector_space
     reduced_space = ArraySpace((free.size,), dtype=full_space.dtype)
     free_array = jnp.asarray(free)
@@ -248,7 +246,7 @@ def affine_dof_constraint(
 
     if not isinstance(discretization, FiniteElementDiscretization):
         raise TypeError("discretization must be FiniteElementDiscretization.")
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     full_space = discretization.field_spaces[field_index].vector_space
     if isinstance(prolongation, AbstractLinearOperator):
         operator = prolongation
@@ -313,7 +311,7 @@ def periodic_constraint(
         raise ValueError("Periodic boundary set belongs to a different support.")
     if not boundary.periodic_pairs:
         raise ValueError("Periodic constraints require at least one facet pair.")
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     field_space = discretization.field_spaces[field_index]
     dof_map = discretization.dof_maps[field_index]
     if dof_map.association not in ("vertex", "entity"):
@@ -456,7 +454,7 @@ def finite_element_hp_constraint(
 
     if not isinstance(plan, FiniteElementHPTraceConstraintPlan):
         raise TypeError("plan must be FiniteElementHPTraceConstraintPlan.")
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     dof_map = discretization.dof_maps[field_index]
     full_space = discretization.field_spaces[field_index].vector_space
     if not isinstance(full_space, ArraySpace):

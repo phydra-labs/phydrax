@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def test_design_state_updates_preserve_schema_and_tree_structure() -> None:
@@ -18,7 +19,7 @@ def test_design_state_updates_preserve_schema_and_tree_structure() -> None:
         radius=1.0,
         feature_id="body",
     )
-    compiled = source.compile()
+    compiled = source.compile(coordinate_unit=METER)
     radius_id = phx.geometry.ParameterId("body", "radius")
     radius_index = compiled.schema.index(radius_id)
 
@@ -46,7 +47,7 @@ def test_geometry_substrate_scenario_1() -> None:
         1.0,
         feature_id="left",
     )
-    translated = left.translated((2.0, 0.0, 0.0)).compile()
+    translated = left.translated((2.0, 0.0, 0.0)).compile(coordinate_unit=METER)
     union = (
         left
         | phx.geometry.Sphere(
@@ -54,7 +55,7 @@ def test_geometry_substrate_scenario_1() -> None:
             1.0,
             feature_id="right",
         )
-    ).compile()
+    ).compile(coordinate_unit=METER)
 
     assert translated.field_certificate.is_signed_distance
     assert translated.field_certificate.provenance[-1] == "rigid_translation"
@@ -68,12 +69,14 @@ def test_geometry_substrate_scenario_1() -> None:
     assert union.contains(jnp.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])).all()
     with pytest.raises(NotImplementedError, match="signed_distance"):
         union.signed_distance(jnp.array([0.0, 0.0, 0.0]))
-    circle = phx.domain.GeometryDomain(phx.geometry.Circle((1.0, -1.0), 2.0).compile())
+    circle = phx.domain.GeometryDomain(
+        phx.geometry.Circle((1.0, -1.0), 2.0).compile(coordinate_unit=METER)
+    )
     sphere = phx.domain.GeometryDomain(
-        phx.geometry.Sphere((0.0, 0.0, 0.0), 2.0).compile()
+        phx.geometry.Sphere((0.0, 0.0, 0.0), 2.0).compile(coordinate_unit=METER)
     )
     box = phx.domain.GeometryDomain(
-        phx.geometry.Box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0)).compile()
+        phx.geometry.Box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0)).compile(coordinate_unit=METER)
     )
 
     assert circle.area == pytest.approx(4.0 * jnp.pi)
@@ -154,7 +157,7 @@ def test_boundary_atlas_integration_and_hard_constraint_work_end_to_end() -> Non
         1.5,
         feature_id="integration-circle",
     ).translated((2.0, -1.0))
-    geometry = phx.domain.GeometryDomain(source.compile())
+    geometry = phx.domain.GeometryDomain(source.compile(coordinate_unit=METER))
     boundary = geometry.component({"x": phx.domain.Boundary()})
     structure = phx.domain.SampleLayout((("x",),))
 

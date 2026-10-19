@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Original implicit-source authority and boundary-model lineage transport."""
+"""Implicit source identity and boundary-model lineage transport."""
 
 from __future__ import annotations
 
@@ -13,13 +13,20 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax.meshing._association_state import (
+    entity_rows,
+    GeometryAssociation,
+    GeometryAssociationKind,
+    GeometryAssociationProvenance,
+)
+
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_geometry_transfer import is_affine_cell_geometry
 from ..discretization._cell_mesh import CellMesh
-from ..geometry._mesh_certificates import ImplicitProjectionBoundarySource
+from ..geometry._source_fidelity import ImplicitProjectionBoundarySource
 from ..geometry.implicit._analytic_profile import AnalyticImplicitProfile
 from ..geometry.surface import (
     SurfaceInterface,
@@ -27,13 +34,14 @@ from ..geometry.surface import (
     SurfaceModel,
     SurfaceSelection,
 )
-from ._association import (
-    _entity_rows,
-    GeometryAssociation,
-    GeometryAssociationKind,
-    GeometryAssociationProvenance,
+from ..typing import checked
+from ._association_routes import (
+    boundary_mask,
+    ordered_vertices,
+    require_transfer_lineage,
 )
-from ._lineage import EntityLineageKind, inherit_scope, MeshLineage
+from ._lineage import inherit_scope
+from ._lineage_records import EntityLineageKind, MeshLineage
 from ._result import CellMeshingResult
 from ._scope import MeshingEntityKind, MeshingScope
 
@@ -63,31 +71,39 @@ def _inherited_surface_ids(
     return inherit_scope(scope, lineage, target, name).global_entity_ids
 
 
+def _implicit_face_ids(mesh: CellMesh, /) -> np.ndarray:
+    identifiers = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
+    return (
+        identifiers
+        if mesh.topological_dimension == 2
+        else identifiers[boundary_mask(mesh, 2)]
+    )
+
+
 @final
 class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
-    """Carry a certified analytic implicit surface through native carrier edits.
+    """Carry certified analytic implicit boundaries through native carrier edits.
 
-    The scalar source, state and revision remain authoritative. The independent
-    successor source-fidelity certificate, not sampled residuals, admits the
-    target. Surface metadata follows explicit cell lineage, never point matches.
+    The scalar source, state, and revision retain their declared identities.
+    The successor source-fidelity certificate admits the target. Surface metadata
+    and volume boundary associations follow explicit face lineage.
     """
 
     profile: AnalyticImplicitProfile
     maximum_queries: int = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, profile: AnalyticImplicitProfile, /, *, maximum_queries: int
     ) -> None:
-        if not isinstance(profile, AnalyticImplicitProfile):
-            raise TypeError(
-                "Implicit association transport requires its owning analytic source profile."
-            )
         if isinstance(maximum_queries, bool) or not isinstance(maximum_queries, int):
-            raise TypeError("maximum_queries must be an integer.")
+            raise TypeError(
+                f"ImplicitAssociationTransfer.maximum_queries must be an integer; got {maximum_queries!r}"
+            )
         if maximum_queries < 1:
             raise ValueError(
-                "Implicit association transport requires a positive authored query budget."
+                f"ImplicitAssociationTransfer.maximum_queries must be positive; got {maximum_queries}"
             )
         profile.validate_source_integrity()
         self.profile = profile
@@ -100,36 +116,42 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def source_associations(
         self, source: CellMeshingResult, /
     ) -> tuple[GeometryAssociation, tuple[int, ...]]:
         self.profile.require_bound(self.profile.geometry, source.coordinate_contract)
         mesh = source.mesh
-        if (mesh.topological_dimension, mesh.ambient_dimension) != (2, 3) or any(
-            block.cell_kind != "triangle" for block in mesh.blocks
+        top = mesh.topological_dimension
+        family = "triangle" if top == 2 else "tetrahedron"
+        if (top, mesh.ambient_dimension) not in ((2, 3), (3, 3)) or any(
+            block.cell_kind != family for block in mesh.blocks
         ):
             raise ValueError(
-                "Implicit boundary transport requires its actual triangular surface carrier."
+                f"ImplicitAssociationTransfer.source_mesh must be a triangular surface or tetrahedral volume in three dimensions; got dimensions {(top, mesh.ambient_dimension)!r}, cell kinds {tuple(block.cell_kind for block in mesh.blocks)!r}"
             )
         if not is_affine_cell_geometry(mesh, source.geometry):
             raise ValueError(
-                "An affine SurfaceModel cannot represent a curved implicit carrier."
+                f"ImplicitAssociationTransfer.source_geometry must be affine; got geometry {source.geometry.geometry_layout_id!r} on mesh {mesh.mesh_id!r}"
             )
         boundary = source.boundary
-        if boundary is None or boundary.mesh.mesh_id != mesh.mesh_id:
+        if top == 2 and (boundary is None or boundary.mesh.mesh_id != mesh.mesh_id):
             raise ValueError(
-                "Implicit boundary transport requires its exact original SurfaceModel carrier."
+                f"ImplicitAssociationTransfer.boundary must bind the source mesh; got boundary mesh {None if boundary is None else boundary.mesh.mesh_id!r}, expected {mesh.mesh_id!r}"
             )
-        if (boundary.metadata.source_id, boundary.metadata.source_revision) != (
+        if boundary is not None and (
+            boundary.metadata.source_id,
+            boundary.metadata.source_revision,
+        ) != (
             self.profile.source_id,
             self.profile.source_revision,
         ):
             raise ValueError(
-                "Implicit SurfaceModel refers to a different scalar source or revision."
+                f"ImplicitAssociationTransfer.boundary.metadata must identify the profile source and revision; got {(boundary.metadata.source_id, boundary.metadata.source_revision)!r}, expected {(self.profile.source_id, self.profile.source_revision)!r}"
             )
         if len(source.associations) != 1:
             raise ValueError(
-                "Implicit surface transport requires one complete original face association."
+                f"ImplicitAssociationTransfer.source_associations must contain one face table; got count {len(source.associations)}"
             )
         association = source.associations[0]
         if association.association_kind is not GeometryAssociationKind.IMPLICIT or (
@@ -137,20 +159,24 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             association.source_revision,
         ) != (self.profile.source_id, self.profile.source_revision):
             raise ValueError(
-                "Implicit association transport cannot replace source authority."
+                f"ImplicitAssociationTransfer.source_association must identify the profile zero set; got kind {association.association_kind!r}, source {(association.source_id, association.source_revision)!r}"
             )
         association.validate_target(mesh.entity_set(2))
+        expected = _implicit_face_ids(mesh)
         if (
             not association.complete
-            or association.source_entity_ids
+            or association.source_entities.entity_ids()
             != ("implicit-zero-set",) * association.target_global_ids.size
+            or not np.array_equal(
+                np.sort(np.asarray(association.target_global_ids)), np.sort(expected)
+            )
         ):
             raise ValueError(
-                "Implicit face authority must cover every original carrier cell."
+                f"ImplicitAssociationTransfer.source_association must resolve all cells as implicit-zero-set; got coverage {association.complete}, source entities {association.source_entities.entity_ids()!r}"
             )
         if source.certification is None or source.certification.request.source is None:
             raise ValueError(
-                "Implicit source transport requires original source-fidelity inputs."
+                f"ImplicitAssociationTransfer.source_certification must retain source-fidelity inputs; got certification present {source.certification is not None}, source input present {source.certification is not None and source.certification.request.source is not None}"
             )
         query = source.certification.request.source
         if (query.source_id, query.source_revision) != (
@@ -158,53 +184,76 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             self.profile.source_revision,
         ):
             raise ValueError(
-                "Implicit fidelity and face authority use different scalar sources."
+                f"ImplicitAssociationTransfer.fidelity_source must identify the profile source and revision; got {(query.source_id, query.source_revision)!r}, expected {(self.profile.source_id, self.profile.source_revision)!r}"
             )
-        actual_profile = (
-            query.profile
-            if isinstance(query, ImplicitProjectionBoundarySource)
-            else query
-        )
-        if not isinstance(actual_profile, AnalyticImplicitProfile):
-            raise TypeError(
-                "Implicit face transport requires the original source-owned analytic query."
-            )
+        match query:
+            case ImplicitProjectionBoundarySource():
+                actual_profile = query.profile
+            case _:
+                actual_profile = query
+        match actual_profile:
+            case AnalyticImplicitProfile():
+                pass
+            case _:
+                raise TypeError(
+                    f"ImplicitAssociationTransfer.fidelity_source must be an AnalyticImplicitProfile; got {type(actual_profile).__name__}"
+                )
         actual_profile.require_bound(self.profile.geometry, source.coordinate_contract)
         if actual_profile.profile_id != self.profile.profile_id:
             raise ValueError(
-                "Implicit transfer uses a different prepared scalar-source proof."
+                f"ImplicitAssociationTransfer.profile_id must match the fidelity profile; got {actual_profile.profile_id!r}, expected {self.profile.profile_id!r}"
             )
         return association, (2,)
 
     def classes(self, source: CellMeshingResult, /) -> tuple[ImplicitEntityClasses, ...]:
         self.source_associations(source)
-        return tuple(
-            ImplicitEntityClasses(
-                np.full(source.mesh.entity_set(degree).count, 2, dtype=np.int64),
-                np.zeros(source.mesh.entity_set(degree).count, dtype=np.int64),
-                np.ones(source.mesh.entity_set(degree).count, dtype=np.bool_),
-                np.zeros(source.mesh.entity_set(degree).count, dtype=np.int64),
+        mesh = source.mesh
+        result = []
+        for degree in range(mesh.topological_dimension + 1):
+            count = mesh.entity_set(degree).count
+            dimensions = (
+                np.full(count, 2, dtype=np.int64)
+                if mesh.topological_dimension == 2
+                else np.where(boundary_mask(mesh, degree), 2, 3).astype(np.int64)
             )
-            for degree in range(3)
-        )
+            result.append(
+                ImplicitEntityClasses(
+                    dimensions,
+                    np.zeros(count, dtype=np.int64),
+                    np.ones(count, dtype=np.bool_),
+                    np.zeros(count, dtype=np.int64),
+                )
+            )
+        return tuple(result)
 
     def _require_lineage(
         self, source: CellMeshingResult, lineage: MeshLineage, target: CellMesh
-    ) -> None:
-        self.source_associations(source)
+    ) -> GeometryAssociation:
+        association, _ = self.source_associations(source)
         record = lineage.entity_lineage(2)
+        require_transfer_lineage(
+            source.mesh,
+            lineage,
+            target,
+            message=f"ImplicitAssociationTransfer.lineage.topology_ids must bind source and target meshes; got lineage {(lineage.source_topology_id, lineage.target_topology_id)!r}, meshes {(source.mesh.topology_id, target.topology_id)!r}",
+        )
         if (
-            lineage.source_topology_id != source.mesh.topology_id
-            or lineage.target_topology_id != target.topology_id
-            or record.source_entity_set_id != source.mesh.entity_set(2).entity_set_id
+            record.source_entity_set_id != source.mesh.entity_set(2).entity_set_id
             or record.target_entity_set_id != target.entity_set(2).entity_set_id
         ):
             raise ValueError(
-                "Implicit transport requires the exact oriented source and target face lineage."
+                f"ImplicitAssociationTransfer.face_lineage must bind the source and target face sets; got {(record.source_entity_set_id, record.target_entity_set_id)!r}, expected {(source.mesh.entity_set(2).entity_set_id, target.entity_set(2).entity_set_id)!r}"
             )
-        if record.created_target_ids.size:
+        target_ids = _implicit_face_ids(target)
+        relevant = np.isin(np.asarray(record.target_global_ids), target_ids)
+        source_ids = np.asarray(association.target_global_ids)
+        if np.intersect1d(
+            np.asarray(record.created_target_ids), target_ids
+        ).size or np.any(
+            ~np.isin(np.asarray(record.source_global_ids)[relevant], source_ids)
+        ):
             raise ValueError(
-                "Implicit target faces require declared original-source lineage, not guessed ancestry."
+                f"ImplicitAssociationTransfer.face_lineage must derive every target face from declared parents; got created IDs {np.asarray(record.created_target_ids)!r}"
             )
         supported = np.asarray(
             (
@@ -215,16 +264,20 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             ),
             dtype=np.int32,
         )
-        if not np.all(np.isin(np.asarray(record.relation_kinds), supported)):
+        if not np.all(np.isin(np.asarray(record.relation_kinds)[relevant], supported)):
             raise ValueError(
-                "Implicit carrier transport lacks a supported face-preservation relation."
+                f"ImplicitAssociationTransfer.face_lineage.relation_kinds must preserve, refine, coarsen, or relocate faces; got {np.asarray(record.relation_kinds)!r}"
             )
         if not np.array_equal(
-            np.unique(np.asarray(record.target_global_ids)),
-            np.sort(np.asarray(target.entity_set(2).entity_ids)),
+            np.unique(np.asarray(record.target_global_ids)[relevant]),
+            np.sort(target_ids),
         ):
-            raise ValueError("Implicit face lineage leaves target authority incomplete.")
+            raise ValueError(
+                f"ImplicitAssociationTransfer.face_lineage.target_global_ids must cover every target face; got {np.asarray(record.target_global_ids)!r}, expected {np.asarray(target.entity_set(2).entity_ids)!r}"
+            )
+        return association
 
+    @checked
     def propagate(
         self,
         source: CellMeshingResult,
@@ -234,22 +287,22 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         *,
         geometry: CellGeometrySpec,
     ) -> tuple[GeometryAssociation, ...]:
-        self._require_lineage(source, lineage, target)
+        association = self._require_lineage(source, lineage, target)
         if not is_affine_cell_geometry(target, geometry):
             raise ValueError(
-                "An affine implicit boundary model cannot certify a curved successor."
+                f"ImplicitAssociationTransfer.target_geometry must be affine; got layout {geometry.geometry_layout_id!r}"
             )
-        count = target.entity_set(2).count
+        identifiers = _implicit_face_ids(target)
+        count = identifiers.size
         if count > self.maximum_queries:
             raise ValueError(
-                "Implicit association queries exceed their authored preallocation budget."
+                f"ImplicitAssociationTransfer.maximum_queries must admit target faces; got count {count}, limit {self.maximum_queries}"
             )
-        association, _ = self.source_associations(source)
         record = lineage.entity_lineage(2)
-        identifiers = np.asarray(target.entity_set(2).entity_ids, dtype=np.int64)
+        relevant = np.isin(np.asarray(record.target_global_ids), identifiers)
         source_ids, target_ids = (
-            np.asarray(record.source_global_ids),
-            np.asarray(record.target_global_ids),
+            np.asarray(record.source_global_ids)[relevant],
+            np.asarray(record.target_global_ids)[relevant],
         )
         association.target_rows(source_ids)
         parents = np.full(count, -1, dtype=np.int64)
@@ -257,16 +310,14 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             actual = np.unique(source_ids[target_ids == identifier])
             if actual.size == 1:
                 parents[row] = actual[0]
-        cells = np.concatenate(
-            [np.asarray(block.vertices, dtype=np.int32) for block in target.blocks]
-        )
+        faces = ordered_vertices(target, 2)
+        if faces is None:
+            raise ValueError(
+                "ImplicitAssociationTransfer.target_faces must provide simplex face incidence; got unsupported topology"
+            )
+        cells = faces[entity_rows(target, 2, identifiers)]
         centers = jnp.mean(target.coordinates[cells], axis=1)
-        block_ids = np.concatenate(
-            [np.asarray(block.global_ids, dtype=np.int64) for block in target.blocks]
-        )
-        residuals = jnp.abs(self.profile.geometry.boundary_field(centers))[
-            _entity_rows(target, 2, block_ids)
-        ]
+        residuals = jnp.abs(self.profile.geometry.boundary_field(centers))
         return (
             GeometryAssociation(
                 GeometryAssociationKind.IMPLICIT,
@@ -287,6 +338,7 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             ),
         )
 
+    @checked
     def remap_boundary(
         self,
         source: CellMeshingResult,
@@ -299,12 +351,12 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
         self._require_lineage(source, lineage, target)
         if not is_affine_cell_geometry(target, geometry):
             raise ValueError(
-                "An affine SurfaceModel cannot replace the actual curved successor map."
+                f"ImplicitAssociationTransfer.target_geometry must be affine for boundary remapping; got layout {geometry.geometry_layout_id!r}"
             )
         boundary = source.boundary
         if boundary is None:
             raise ValueError(
-                "Implicit surface transport lost its original boundary model."
+                f"ImplicitAssociationTransfer.boundary must retain a SurfaceModel; got {boundary!r}"
             )
         target_ids = np.asarray(target.entity_set(2).entity_ids, dtype=np.int64)
         tags: list[str | None] = [None] * target_ids.size
@@ -325,12 +377,12 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
                 for row in np.flatnonzero(np.isin(target_ids, inherited)):
                     if tags[row] is not None:
                         raise ValueError(
-                            "Implicit boundary tags overlap after a source-lineage merge."
+                            f"ImplicitAssociationTransfer.boundary.cell_tags must remain disjoint after lineage inheritance; got target row {row}, previous tag {tags[row]!r}, inherited tag {tag!r}"
                         )
                     tags[row] = tag
             if any(tag is None for tag in tags):
                 raise ValueError(
-                    "Implicit boundary lineage leaves original cell tags uncovered."
+                    f"ImplicitAssociationTransfer.boundary.cell_tags must cover every target cell; got uncovered rows {tuple(row for row, tag in enumerate(tags) if tag is None)!r}"
                 )
         ordered_tags = tuple(tag for tag in tags if tag is not None)
         raw_target_ids = np.concatenate(
@@ -347,11 +399,11 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
                 or np.any(positions >= sorted_ids.size)
             ):
                 raise ValueError(
-                    "Implicit target cell presentation does not cover its face SCI identities."
+                    f"ImplicitAssociationTransfer.target_cell_ids must uniquely cover the target face IDs; got block IDs {raw_target_ids!r}, face IDs {target_ids!r}"
                 )
             if not np.array_equal(sorted_ids[positions], raw_target_ids):
                 raise ValueError(
-                    "Implicit target cell presentation contains foreign face SCI identities."
+                    f"ImplicitAssociationTransfer.target_cell_ids must belong to the target face set; got block IDs {raw_target_ids!r}, face IDs {target_ids!r}"
                 )
             block_tags = tuple(ordered_tags[row] for row in order[positions])
         else:
@@ -388,8 +440,8 @@ class ImplicitAssociationTransfer(StrictModule, NonTrainableState):
             )
             for value in boundary.interfaces
         )
-        # Orientation repair remains the original source provenance, not an
-        # invented target repair. The exact native lineage carries its descendants.
+        # Orientation repair retains the source provenance, not an
+        # invented target repair. Native lineage carries the descendant relations.
         return SurfaceModel(
             target,
             metadata,

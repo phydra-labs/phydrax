@@ -122,9 +122,10 @@ def _source(
     )
 
 
-def _execute(
+def image_specification(
     source: CompartmentMeshingSource | LabelFieldVolumeBinding,
-) -> phx.meshing.CellMeshingResult:
+) -> phx.meshing.VolumeMeshingSpec:
+    """Return the whole-image simplex request used by material volume scenarios."""
     scope = phx.meshing.MeshingScope(
         source.source_id,
         source.source_revision,
@@ -133,7 +134,7 @@ def _execute(
         f"{source.source_id}:boundary",
         np.asarray((0,), dtype=np.int64),
     )
-    request = phx.meshing.VolumeMeshingSpec(
+    return phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(
             3, 3, phx.meshing.CellFamilyPolicy(required=("tetrahedron",))
         ),
@@ -145,6 +146,12 @@ def _execute(
             ),
         ),
     )
+
+
+def _execute(
+    source: CompartmentMeshingSource | LabelFieldVolumeBinding,
+) -> phx.meshing.CellMeshingResult:
+    request = image_specification(source)
     return (
         phx.meshing.NativeMeshingProvider(
             phx.meshing.NativeMeshingOptions("image_material_tetrahedral")

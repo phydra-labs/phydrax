@@ -678,6 +678,7 @@ graph_div = graph_divergence
 gradient = graph_gradient
 divergence = graph_divergence
 incidence_laplacian = graph_incidence_laplacian
+graph_degree = degree
 
 
 __all__ = [
@@ -687,6 +688,7 @@ __all__ = [
     "degree",
     "divergence",
     "graph_div",
+    "graph_degree",
     "graph_divergence",
     "graph_grad",
     "graph_gradient",

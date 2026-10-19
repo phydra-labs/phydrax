@@ -5,7 +5,7 @@
 """Finite-element point evaluation from native tabulation and DOF routes.
 
 `PreparedFiniteElementPointInterpolation` owns fixed host-cell routes (own
-quadrature or node points) and their exact transpose scatter. The field
+quadrature or node points) and their algebraic transpose scatter. The field
 reconstruction kernel evaluates the same route formula at arbitrary physical
 points located by an `AbstractCellLocator`; it never searches for a nearest
 cell.
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import Any, assert_never, final, Protocol
+from typing import assert_never, final, Protocol
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -23,8 +23,10 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
 from phydrax.ein import contract
 
+from ... import geometry as imported_geometry
 from ..._differentiation import DerivativeRegularity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation import GatherStencil
@@ -35,6 +37,12 @@ from ...exterior._algebra import map_reference_values
 from ...exterior._form_type import FormType, FormValueSpec
 from ...linalg import ArraySpace
 from ...typing import checked, parse
+from .. import (
+    _cell_geometry as imported_cell_geometry,
+    _simplicial_locator as simplicial_locator_owner,
+    _view_support as imported_view_support,
+    _view_support as view_support_owner,
+)
 from .._integration_domain import IntegrationDomain
 from .._reference_cell import FacetShape, reference_cell_topology, ReferenceCellTopology
 from .._side_actions import (
@@ -43,18 +51,6 @@ from .._side_actions import (
     SideActionDescriptor,
     SideGatherRoute,
     SideTraceQuantity,
-)
-from .._simplicial_locator import (
-    AbstractCellLocator,
-    CellLocationResult,
-    CellLocationStatus,
-    PreparedSimplicialCellLocator,
-    SimplicialLocationPolicy,
-)
-from .._view_support import (
-    cell_location_status,
-    simplicial_mesh_support_geometry,
-    verify_mesh_support_geometry,
 )
 from .._views import (
     AbstractFieldReconstructionKernel,
@@ -67,17 +63,12 @@ from .._views import (
     PreparedFieldReconstruction,
     transpose_duality_evidence,
 )
+from . import _generic as generic_owner
 from ._cell_map import PreparedFiniteElementCellMap
-from ._generic import (
-    _evaluate_paired_field_basis,
-    FiniteElementDiscretization,
-    FiniteElementRuntimeData,
-)
-from ._reference import FiniteElementSpec
 from ._reference_operator import (
-    _facet_corner_parameters,
-    _reference_facet_shape,
+    facet_corner_parameters,
     reference_facet_embedding,
+    reference_facet_shape,
 )
 
 
@@ -85,12 +76,12 @@ _SIMPLICES = ("triangle", "tetrahedron")
 
 
 def _point_basis_element(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     field_name: str,
     block_index: int,
     /,
 ) -> FiniteElementSpec:
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     element = discretization.elements[field_index][block_index]
     if element.form_basis is None and (
         element.mapping != "identity"
@@ -98,7 +89,7 @@ def _point_basis_element(
         or element.value_spec.form_type.twist == "twisted"
     ):
         raise ValueError(
-            "Mapped or twisted FE fields require canonical form-basis metadata."
+            "point_basis_element.configuration must provide declared form-basis metadata; got Mapped or twisted FE fields require declared form-basis metadata."
         )
     return element
 
@@ -144,13 +135,17 @@ def _transpose_point_weights(
 
 
 def _field_array_space(
-    discretization: FiniteElementDiscretization, field_name: str, /
+    discretization: generic_owner.FiniteElementDiscretization, field_name: str, /
 ) -> ArraySpace:
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     space = discretization.field_spaces[field_index].vector_space
-    if not isinstance(space, ArraySpace):
-        raise TypeError("FE point evaluation requires an array-valued FE field.")
-    return space
+    match space:
+        case ArraySpace():
+            return space
+        case _:
+            raise TypeError(
+                "field_array_space.configuration must provide an array-valued FE field; got FE point evaluation requires an array-valued FE field."
+            )
 
 
 def finite_element_point_weights(
@@ -173,7 +168,9 @@ def finite_element_point_weights(
     basis, gradients = element.tabulate(reference_points)
     if element.mapping != "identity" or element.value_spec.form_type.twist == "twisted":
         if jacobian is None:
-            raise TypeError("Mapped point weights require a coordinate Jacobian.")
+            raise TypeError(
+                "finite_element_point_weights.configuration must provide a coordinate Jacobian; got Mapped point weights require a coordinate Jacobian."
+            )
         basis = map_reference_values(basis, element.value_spec, jacobian[:, None])
         if derivative_axis is not None:
             gradients = jnp.stack(
@@ -189,7 +186,9 @@ def finite_element_point_weights(
         weights = basis
     else:
         if inverse_jacobian is None:
-            raise TypeError("derivative_axis requires inverse_jacobian.")
+            raise TypeError(
+                "finite_element_point_weights.inverse_jacobian must provide inverse_jacobian; got derivative_axis requires inverse_jacobian."
+            )
         flat = gradients.reshape(
             (gradients.shape[0], gradients.shape[1], -1, gradients.shape[-1])
         )
@@ -204,18 +203,20 @@ def finite_element_point_weights(
     )
 
 
-def _nodal_field(discretization: FiniteElementDiscretization, field_name: str, /) -> bool:
+def _nodal_field(
+    discretization: generic_owner.FiniteElementDiscretization, field_name: str, /
+) -> bool:
     return all(
         element.conformity in ("H1", "L2")
         and element.mapping == "identity"
         and not element.value_shape
         and element.representation == "point_value"
-        for element in discretization.elements[discretization._field_index(field_name)]
+        for element in discretization.elements[discretization.field_index(field_name)]
     )
 
 
 class FiniteElementPointRouteData(Protocol):
-    """Numerical data consumed by the owning FE gather/transpose kernels."""
+    """Numerical data consumed by the FE gather/transpose kernels."""
 
     @property
     def weights(self) -> Array: ...
@@ -235,17 +236,17 @@ class FiniteElementPointRouteData(Protocol):
 
 @final
 class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
-    """Fixed FE point routes with an exact algebraic transpose scatter.
+    """Fixed FE point routes with an algebraic transpose scatter.
 
     Routes evaluate the field (or its physical derivative along
     `derivative_axis`) at fixed cell/reference points of one block, such as the
     element's own quadrature or node points. Fields have coefficient shape
-    `(global_dof_count, *components)`. `dof_reference_positions` are actual
+    `(global_dof_count, *components)`. `dof_reference_positions` are represented
     physical nodal positions for scalar nodal fields; for compatible moment
     fields they are mapped reference representatives, not displacement nodes.
     """
 
-    discretization: FiniteElementDiscretization
+    discretization: generic_owner.FiniteElementDiscretization
     field_name: str = eqx.field(static=True)
     dof_routes: Array
     weights: Array
@@ -260,7 +261,7 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
     @checked
     def __init__(
         self,
-        discretization: FiniteElementDiscretization,
+        discretization: generic_owner.FiniteElementDiscretization,
         field_name: str,
         dof_routes: ArrayLike,
         weights: ArrayLike,
@@ -285,24 +286,34 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
             or not isinstance(derivative_axis, int)
             or not 0 <= derivative_axis < dimension
         ):
-            raise ValueError(f"derivative_axis must be None or in [0, {dimension}).")
+            raise ValueError(
+                f"PreparedFiniteElementPointInterpolation.derivative_axis must be None or in [0, the declared value); got derivative_axis must be None or in [0, {dimension})."
+            )
         if routes.ndim != 2 or routes.shape[0] == 0:
-            raise ValueError("Interpolation routes must be a nonempty rank-2 array.")
+            raise ValueError(
+                "PreparedFiniteElementPointInterpolation.configuration must be a nonempty rank-2 array; got Interpolation routes must be a nonempty rank-2 array."
+            )
         if weights_.shape[:2] != routes.shape:
-            raise ValueError("Interpolation weights must match fixed route shape.")
+            raise ValueError(
+                "PreparedFiniteElementPointInterpolation.weights must match fixed route shape; got Interpolation weights must match fixed route shape."
+            )
         basis_shape = weights_.shape[2:]
         supported_shapes = {
             _physical_basis_shape(element, dimension)
-            for element in discretization.elements[discretization._field_index(name)]
+            for element in discretization.elements[discretization.field_index(name)]
         }
         if basis_shape not in supported_shapes:
             raise ValueError(
-                "Interpolation weights must retain the FE basis value shape."
+                "PreparedFiniteElementPointInterpolation.weights must retain the FE basis value shape; got Interpolation weights must retain the FE basis value shape."
             )
         if positions.shape != (routes.shape[0], dimension):
-            raise ValueError("Reference points must match interpolation count/dimension.")
+            raise ValueError(
+                "PreparedFiniteElementPointInterpolation.configuration must match interpolation count/dimension; got Reference points must match interpolation count/dimension."
+            )
         if dof_positions.shape != (field_space.shape[0], dimension):
-            raise ValueError("DOF reference positions must match the FE field DOFs.")
+            raise ValueError(
+                "PreparedFiniteElementPointInterpolation.configuration must match the FE field DOFs; got DOF reference positions must match the FE field DOFs."
+            )
         if (
             np.any(routes < 0)
             or np.any(routes >= field_space.shape[0])
@@ -311,10 +322,12 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
             or np.any(~np.isfinite(dof_positions))
         ):
             raise ValueError(
-                "Interpolation routes and geometric data must be finite/valid."
+                "PreparedFiniteElementPointInterpolation.configuration must be finite/valid; got Interpolation routes and geometric data must be finite/valid."
             )
         if not isfinite(limit) or limit < 0.0:
-            raise ValueError("Interpolation tolerance must be finite and nonnegative.")
+            raise ValueError(
+                "PreparedFiniteElementPointInterpolation.tolerance must be finite and nonnegative; got Interpolation tolerance must be finite and nonnegative."
+            )
         # Only scalar nodal bases reproduce constants with all-one coefficients.
         if _nodal_field(discretization, name):
             target = 1.0 if derivative_axis is None else 0.0
@@ -322,7 +335,7 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
             partition_defect = np.max(np.abs(np.sum(weights_, axis=1) - target)) / scale
             if partition_defect > limit:
                 raise ValueError(
-                    "FE interpolation must reproduce constants within tolerance."
+                    "PreparedFiniteElementPointInterpolation.tolerance must reproduce constants within tolerance; got FE interpolation must reproduce constants within tolerance."
                 )
         generated = canonical_fingerprint(
             {
@@ -339,7 +352,9 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
         )
         identifier = generated if prepared_id is None else str(prepared_id)
         if not identifier:
-            raise ValueError("prepared_id must be non-empty or None.")
+            raise ValueError(
+                "PreparedFiniteElementPointInterpolation.prepared_id must be non-empty or None; got prepared_id must be non-empty or None."
+            )
         dtype = field_space.dtype
         self.discretization = discretization
         self.field_name = name
@@ -380,7 +395,9 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
     ) -> Array:
         dual = jnp.asarray(point_dual, dtype=self.weights.dtype)
         if dual.shape != (self.attachment_count, *self.value_shape):
-            raise ValueError("Point dual must match attachment count and value shape.")
+            raise ValueError(
+                "PreparedFiniteElementPointInterpolation.transpose_scatter.configuration must match attachment count and value shape; got Point dual must match attachment count and value shape."
+            )
         payload = _transpose_point_weights(self.weights, dual, self.field_space.shape[1:])
         return (
             jnp.zeros(self.field_space.shape, dtype=payload.dtype)
@@ -409,72 +426,82 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
             self.ambient_dimension,
         ):
             raise ValueError(
-                "DOF deformation requires nodal scalar-basis ambient displacement components."
+                "PreparedFiniteElementPointInterpolation.deformed_dof_positions.displacement must provide nodal scalar-basis ambient displacement components; got DOF deformation requires nodal scalar-basis ambient displacement components."
             )
         value = self.field_space.validate(displacement)
         return self.dof_reference_positions + value
 
 
 def _realized_runtime(
-    discretization: FiniteElementDiscretization,
-    runtime: FiniteElementRuntimeData | None,
+    discretization: generic_owner.FiniteElementDiscretization,
+    runtime: generic_owner.FiniteElementRuntimeData | None,
     /,
-) -> FiniteElementRuntimeData:
+) -> generic_owner.FiniteElementRuntimeData:
     realized = discretization.default_runtime if runtime is None else runtime
-    if not isinstance(realized, FiniteElementRuntimeData):
-        raise TypeError("runtime must be FiniteElementRuntimeData or None.")
     if (
         realized.topology_id != discretization.mesh.topology_id
         or realized.geometry_layout_id
         != discretization.default_runtime.geometry_layout_id
     ):
-        raise ValueError("Interpolation runtime does not match the FE discretization.")
+        raise ValueError(
+            "realized_runtime.discretization must match the FE discretization; got Interpolation runtime does not match the FE discretization."
+        )
     return realized
 
 
+@checked
 def prepare_finite_element_point_interpolation(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     field_name: str,
     block_name: str,
     cell_indices: ArrayLike,
     reference_points: ArrayLike,
     /,
     *,
-    runtime: FiniteElementRuntimeData | None = None,
+    runtime: generic_owner.FiniteElementRuntimeData | None = None,
     derivative_axis: int | None = None,
     tolerance: float = 1.0e-10,
 ) -> PreparedFiniteElementPointInterpolation:
     """Prepare fixed block-local cell/point routes from native tabulation.
 
-    With `derivative_axis`, the routes evaluate the exact physical derivative
+    With `derivative_axis`, the routes evaluate the algebraic physical derivative
     along that axis inside each named cell (the cell interior limit).
     """
-    if not isinstance(discretization, FiniteElementDiscretization):
-        raise TypeError("discretization must be FiniteElementDiscretization.")
-    field_index = discretization._field_index(field_name)
+
+    field_index = discretization.field_index(field_name)
     dof_map = discretization.dof_maps[field_index]
     block = str(block_name)
     if block not in dof_map.block_names:
-        raise KeyError(f"Unknown FE block {block!r} for field {field_name!r}.")
+        raise KeyError(
+            f"prepare_finite_element_point_interpolation.field_name must select a supported declared route; got Unknown FE block {block!r} for field {field_name!r}."
+        )
     block_index = dof_map.block_names.index(block)
     element = _point_basis_element(discretization, field_name, block_index)
     cells = np.asarray(cell_indices, dtype=np.int32)
     points = np.asarray(reference_points)
     cell_count = discretization.mesh.blocks[block_index].cell_count
     if cells.ndim != 1 or cells.size == 0:
-        raise ValueError("cell_indices must be a nonempty rank-1 array.")
+        raise ValueError(
+            "prepare_finite_element_point_interpolation.cell_indices must be a nonempty rank-1 array; got cell_indices must be a nonempty rank-1 array."
+        )
     if points.shape != (cells.size, element.topological_dimension):
-        raise ValueError("reference_points must provide one point per selected cell.")
+        raise ValueError(
+            "prepare_finite_element_point_interpolation.reference_points must provide one point per selected cell; got reference_points must provide one point per selected cell."
+        )
     if np.any(cells < 0) or np.any(cells >= cell_count) or np.any(~np.isfinite(points)):
-        raise ValueError("Interpolation cell routes/reference points are invalid.")
+        raise ValueError(
+            "prepare_finite_element_point_interpolation.configuration must have valid interpolation cell routes/reference points; got Interpolation cell routes/reference points are invalid."
+        )
     realized = _realized_runtime(discretization, runtime)
     cell_map = PreparedFiniteElementCellMap(discretization, block_index)
     evaluation = cell_map.evaluate(
         realized.coordinates, jnp.asarray(cells), jnp.asarray(points)
     )
     if not bool(np.all(np.asarray(evaluation.valid))):
-        raise ValueError("Interpolation cells have an invalid coordinate map.")
-    weights, valid = _evaluate_paired_field_basis(
+        raise ValueError(
+            "prepare_finite_element_point_interpolation.configuration must have valid interpolation cells; got Interpolation cells have an invalid coordinate map."
+        )
+    weights, valid = generic_owner.evaluate_paired_field_basis(
         discretization,
         field_name,
         block_index,
@@ -484,7 +511,9 @@ def prepare_finite_element_point_interpolation(
         derivative_axis=derivative_axis,
     )
     if not bool(np.all(np.asarray(valid))):
-        raise ValueError("Interpolation cells have an invalid mapped field basis.")
+        raise ValueError(
+            "prepare_finite_element_point_interpolation.configuration must have valid interpolation cells; got Interpolation cells have an invalid mapped field basis."
+        )
     routes = np.asarray(dof_map.cell_dofs[block_index])[cells]
     dof_positions = np.asarray(
         dof_map.evaluate_coordinates(discretization.mesh, realized.coordinates)
@@ -514,14 +543,14 @@ class FiniteElementFieldReconstructionKernel(
 
     Each query point is located by the block's `AbstractCellLocator`; every
     containing cell contributes a candidate route built from native tabulation
-    and oriented DOF routes. Values and first physical derivatives are exact
+    and oriented DOF routes. Values and first physical derivatives are algebraic
     inside cells. On a non-smooth locus (a point in several cells) a derivative
     above the field's continuity needs a bound trace side.
     """
 
-    locator: AbstractCellLocator
+    locator: simplicial_locator_owner.AbstractCellLocator
     element: FiniteElementSpec
-    discretization: FiniteElementDiscretization
+    discretization: generic_owner.FiniteElementDiscretization
     field_name: str = eqx.field(static=True)
     block_index: int | None = eqx.field(static=True)
     component_shape: tuple[int, ...] = eqx.field(static=True)
@@ -534,8 +563,8 @@ class FiniteElementFieldReconstructionKernel(
     @checked
     def __init__(
         self,
-        locator: AbstractCellLocator,
-        discretization: FiniteElementDiscretization,
+        locator: simplicial_locator_owner.AbstractCellLocator,
+        discretization: generic_owner.FiniteElementDiscretization,
         field_name: str,
         block_index: int | None,
         /,
@@ -545,7 +574,7 @@ class FiniteElementFieldReconstructionKernel(
         element = _point_basis_element(
             discretization, field_name, 0 if block_index is None else block_index
         )
-        field_index = discretization._field_index(field_name)
+        field_index = discretization.field_index(field_name)
         dof_map = discretization.dof_maps[field_index]
         routes = (
             jnp.concatenate(dof_map.cell_dofs, axis=0)
@@ -554,7 +583,9 @@ class FiniteElementFieldReconstructionKernel(
         )
         expected = (locator.cell_map.cell_count, element.local_dof_count)
         if routes.shape != expected:
-            raise ValueError("Cell DOF routes must be (cells, local).")
+            raise ValueError(
+                "FiniteElementFieldReconstructionKernel.configuration must be (cells, local); got Cell DOF routes must be (cells, local)."
+            )
         continuity = 0 if element.conformity == "H1" else -1
         self.locator = locator
         self.element = element
@@ -604,7 +635,7 @@ class FiniteElementFieldReconstructionKernel(
     @eqx.filter_jit
     def _prepare_located_route(
         self,
-        location: CellLocationResult,
+        location: simplicial_locator_owner.CellLocationResult,
         derivative: tuple[int, ...],
         side: FieldSideBinding | None,
         /,
@@ -620,7 +651,7 @@ class FiniteElementFieldReconstructionKernel(
         reference = location.candidate_reference.reshape(
             (-1, self.locator.cell_map.reference_dimension)
         )
-        weights, valid_basis = _evaluate_paired_field_basis(
+        weights, valid_basis = generic_owner.evaluate_paired_field_basis(
             self.discretization,
             self.field_name,
             self.block_index,
@@ -646,7 +677,7 @@ class FiniteElementFieldReconstructionKernel(
             weights * share.reshape(share.shape + (1,) * (weights.ndim - 2)),
         )
         ambiguous = (count > 1) & (order > self.continuity)
-        status = cell_location_status(location.status)
+        status = view_support_owner.cell_location_status(location.status)
         status = jnp.where(
             (status == int(FieldQueryStatus.VALID)) & basis_failed,
             int(FieldQueryStatus.ILL_CONDITIONED),
@@ -691,7 +722,7 @@ class FiniteElementFieldReconstructionKernel(
         return jnp.zeros(shape, dtype=payload.dtype).at[routes].add(payload)
 
     def scalar_query_stencil(self, route: _FiniteElementRoute, /) -> GatherStencil:
-        """Expose the exact fixed query action on flattened scalar coefficients.
+        """Expose the algebraic fixed query action on flattened scalar coefficients.
 
         Basis-value axes precede coefficient-component axes, exactly as in
         ``apply``. This bounded stencil admits sparse distributed support
@@ -730,26 +761,34 @@ class FiniteElementFieldReconstructionKernel(
     ) -> tuple[np.ndarray | None, np.ndarray]:
         location = self.locator.locate(jnp.asarray(sites))
         status = np.asarray(location.status)
-        if np.any(status != int(CellLocationStatus.LOCATED)):
-            raise ValueError("Every trace site must lie in the FE support.")
+        if np.any(status != int(simplicial_locator_owner.CellLocationStatus.LOCATED)):
+            raise ValueError(
+                "FiniteElementFieldReconstructionKernel.bind_side.configuration must lie in the FE support; got Every trace site must lie in the FE support."
+            )
         if not np.all(np.asarray(location.candidates_complete)):
-            raise ValueError("Trace binding requires complete containing-cell coverage.")
+            raise ValueError(
+                "FiniteElementFieldReconstructionKernel.bind_side.configuration must provide full containing-cell coverage; got Trace binding requires full containing-cell coverage."
+            )
         containing = np.asarray(location.candidate_cells)
         if side == "average":
             if cell_ids is not None:
-                raise ValueError("Average traces combine every containing cell.")
+                raise ValueError(
+                    "FiniteElementFieldReconstructionKernel.bind_side.configuration must include every containing cell for an average trace; got Average traces combine every containing cell."
+                )
             return None, np.full(sites.shape[0], -1, dtype=np.int32)
         if cell_ids is None:
             single = np.sum(containing >= 0, axis=1) == 1
             if side != "owner" or not np.all(single):
                 raise ValueError(
-                    f"{side!r} traces at sites shared by several cells (or without a "
-                    "neighbor cell) require explicit cell_ids."
+                    "FiniteElementFieldReconstructionKernel.bind_side.cell_ids must explicitly select a containing cell for this side; "
+                    f"got cell_ids={cell_ids!r}, side={side!r}, single_containing_cell={single!r}"
                 )
             site_cells = np.max(containing, axis=1).astype(np.int32)
         else:
             if np.any(np.all(containing != cell_ids[:, None], axis=1)):
-                raise ValueError("cell_ids must name a cell containing each trace site.")
+                raise ValueError(
+                    "FiniteElementFieldReconstructionKernel.bind_side.cell_ids must name a cell containing each trace site; got cell_ids must name a cell containing each trace site."
+                )
             site_cells = cell_ids
         mask = np.zeros((self.cell_count,), dtype=np.bool_)
         mask[site_cells] = True
@@ -758,31 +797,33 @@ class FiniteElementFieldReconstructionKernel(
             np.asarray(masked.cell_ids) != site_cells
         ):
             raise ValueError(
-                "The side cells do not resolve every trace site to exactly its "
-                "declared cell; the side region is ambiguous."
+                "FiniteElementFieldReconstructionKernel.bind_side.cell_ids must resolve every trace site to its declared cell; "
+                f"got declared={site_cells!r}, resolved={np.asarray(masked.cell_ids)!r}, "
+                f"candidate_count={np.asarray(masked.candidate_count)!r}"
             )
         return mask, site_cells
 
 
+@checked
 def prepare_finite_element_field_reconstruction(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     field_name: str,
     /,
     *,
     block_name: str | None = None,
-    locator: AbstractCellLocator | None = None,
-    location_policy: SimplicialLocationPolicy | None = None,
-    support_geometry: Any = None,
+    locator: simplicial_locator_owner.AbstractCellLocator | None = None,
+    location_policy: simplicial_locator_owner.SimplicialLocationPolicy | None = None,
+    support_geometry: imported_geometry.CompiledGeometry | None = None,
     value_port: ValuePort | None = None,
-    runtime: FiniteElementRuntimeData | None = None,
+    runtime: generic_owner.FiniteElementRuntimeData | None = None,
     support_tolerance: float = 1.0e-9,
 ) -> PreparedFieldReconstruction:
     """Prepare an evidenced coordinate reconstruction of one FE field.
 
-    The locator inverts the actual coordinate map; support describes its whole
+    The locator inverts the represented coordinate map; support describes its whole
     mapped domain. An explicit block name selects block-local support without
     changing the field's global coefficient layout. Compatible basis values
-    include the owning Piola/base transformations and separate DOF signs.
+    include the Piola/base transformations and separate DOF signs.
     Full vector values on shared facets require a cell side for Hcurl/Hdiv.
     Embedded cell supports retain their physical ambient coordinates and
     manifold charts; first physical derivatives use the chart's tangent map.
@@ -792,18 +833,17 @@ def prepare_finite_element_field_reconstruction(
     Regularity is `C^0` (H1) or `C^-1` (L2) with polynomial pieces of the element
     degree on affine cells and smooth pieces otherwise.
     """
-    from ...geometry import CompiledGeometry
 
-    if not isinstance(discretization, FiniteElementDiscretization):
-        raise TypeError("discretization must be FiniteElementDiscretization.")
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     dof_map = discretization.dof_maps[field_index]
     whole_mesh = block_name is None and len(dof_map.block_names) > 1
     if block_name is None:
         block_index = 0
     else:
         if block_name not in dof_map.block_names:
-            raise KeyError(f"Unknown FE block {block_name!r} for field {field_name!r}.")
+            raise KeyError(
+                f"prepare_finite_element_field_reconstruction.field_name must select a supported declared route; got Unknown FE block {block_name!r} for field {field_name!r}."
+            )
         block_index = dof_map.block_names.index(block_name)
     element = _point_basis_element(discretization, field_name, block_index)
     realized = _realized_runtime(discretization, runtime)
@@ -815,7 +855,7 @@ def prepare_finite_element_field_reconstruction(
             for other in discretization.elements[field_index]
         ):
             raise ValueError(
-                "A whole-support reconstruction requires one canonical reference field basis."
+                "prepare_finite_element_field_reconstruction.configuration must provide one declared reference field basis; got A whole-support reconstruction requires one declared reference field basis."
             )
         cell_map = PreparedFiniteElementCellMap(discretization, None)
     else:
@@ -826,13 +866,11 @@ def prepare_finite_element_field_reconstruction(
     )
     if locator is None:
         policy = (
-            SimplicialLocationPolicy(min(cell_map.cell_count, 16), 16, 1)
+            simplicial_locator_owner.SimplicialLocationPolicy(
+                min(cell_map.cell_count, 16), 16, 1
+            )
             if location_policy is None
             else location_policy
-        )
-        from .._cell_geometry import (
-            BarycentricCellGeometryElement,
-            RestrictedCellGeometryElement,
         )
 
         if (
@@ -840,22 +878,28 @@ def prepare_finite_element_field_reconstruction(
             and cell_map.ambient_dimension == cell_map.reference_dimension
             and not isinstance(
                 cell_map.coordinate_element,
-                (BarycentricCellGeometryElement, RestrictedCellGeometryElement),
+                (
+                    imported_cell_geometry.BarycentricCellGeometryElement,
+                    imported_cell_geometry.RestrictedCellGeometryElement,
+                ),
             )
         ):
-            locator = PreparedSimplicialCellLocator(
+            locator = simplicial_locator_owner.PreparedSimplicialCellLocator(
                 cell_map, realized.coordinates, policy
             )
         else:
-            from .._mapped_locator import PreparedMappedCellLocator
+            # Generic FEM → point interpolation → mapped locator → simplicial locator → generic FEM.
+            from .. import _mapped_locator as imported_mapped_locator
 
-            locator = PreparedMappedCellLocator(cell_map, realized.coordinates, policy)
-    elif not isinstance(locator, AbstractCellLocator):
-        raise TypeError("locator must be an AbstractCellLocator or None.")
+            locator = imported_mapped_locator.PreparedMappedCellLocator(
+                cell_map, realized.coordinates, policy
+            )
     elif locator.cell_map.cell_map_id != cell_map.cell_map_id or not np.array_equal(
         np.asarray(locator.coordinates), np.asarray(realized.coordinates)
     ):
-        raise ValueError("The locator does not invert this FE block and runtime.")
+        raise ValueError(
+            "prepare_finite_element_field_reconstruction.locator must invert this FE block and runtime; got The locator does not invert this FE block and runtime."
+        )
     space = _field_array_space(discretization, field_name)
     field_space_id = canonical_fingerprint(
         {
@@ -874,18 +918,18 @@ def prepare_finite_element_field_reconstruction(
     )
     if support_geometry is None:
         if simplex:
-            geometry = simplicial_mesh_support_geometry(locator, support_id)
+            geometry = view_support_owner.simplicial_mesh_support_geometry(
+                locator, support_id
+            )
         else:
-            from .._view_support import mapped_mesh_support_geometry
-
-            geometry = mapped_mesh_support_geometry(locator, support_id)
-    elif isinstance(support_geometry, CompiledGeometry):
-        verify_mesh_support_geometry(
+            geometry = imported_view_support.mapped_mesh_support_geometry(
+                locator, support_id
+            )
+    else:
+        view_support_owner.verify_mesh_support_geometry(
             support_geometry, locator, tolerance=support_tolerance
         )
         geometry = support_geometry
-    else:
-        raise TypeError("support_geometry must be a CompiledGeometry or None.")
     continuity = 0 if element.conformity == "H1" else -1
     affine = simplex and cell_map.coordinate_element.degree == 1
     if element.degree == 0 and element.mapping == "identity":
@@ -928,10 +972,10 @@ def prepare_finite_element_field_reconstruction(
         if value_port is None
         else value_port
     )
-    if not isinstance(port, ValuePort):
-        raise TypeError("value_port must be a ValuePort or None.")
     if port.event_shape != components:
-        raise ValueError("value_port event_shape must equal the FE component shape.")
+        raise ValueError(
+            "prepare_finite_element_field_reconstruction.value_port must equal the FE component shape; got value_port event_shape must equal the FE component shape."
+        )
     kernel = FiniteElementFieldReconstructionKernel(
         locator,
         discretization,
@@ -1003,20 +1047,20 @@ class _SideTabulation:
 
 
 def _side_trace_field(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     field_name: str,
     quantity: SideTraceQuantity,
     /,
 ) -> tuple[int, ArraySpace]:
     """Validate the traced field and the requested trace quantity."""
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     space = _field_array_space(discretization, field_name)
     components = discretization.elements[field_index][0].value_shape + space.shape[1:]
     dimension = discretization.mesh.ambient_dimension
     if discretization.mesh.topological_dimension != dimension:
         raise ValueError(
-            "Side traces require a mesh whose topological and ambient dimensions "
-            "agree; embedded manifolds have no unique facet normal."
+            "side_trace_field.mesh_dimensions must have equal topological and ambient dimensions; "
+            f"got topological={discretization.mesh.topological_dimension!r}, ambient={dimension!r}"
         )
     match quantity:
         case "value":
@@ -1024,13 +1068,13 @@ def _side_trace_field(
         case "normal" | "tangential":
             if components != (dimension,):
                 raise ValueError(
-                    f"{quantity!r} traces require a vector field with component "
-                    f"shape ({dimension},)."
+                    "side_trace_field.components must match the ambient vector shape "
+                    f"({dimension},) for {quantity!r} traces; got {components!r}"
                 )
         case "conormal-flux":
             raise ValueError(
-                "Conormal fluxes are published by compiled physics owners through "
-                "prepare_conormal_flux, not by the discretization."
+                "side_trace_field.quantity must select a geometric trace; "
+                f"got {quantity!r}; use compiled physics prepare_conormal_flux"
             )
         case _:
             assert_never(quantity)
@@ -1061,28 +1105,31 @@ def _require_own_facet_domain(
         )
     ):
         raise ValueError(
-            "The facet domain was not produced by this finite-element discretization."
+            "require_own_facet_domain.domain must match this discretization's facet domain routes; got The facet domain was not produced by this finite-element discretization."
         )
 
 
 def _side_trace_selection(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     domain: IntegrationDomain,
     side: FieldTraceSide,
     /,
 ) -> _SideSelection:
     """Verify the domain belongs to this discretization and resolve its side."""
-    if not isinstance(domain, IntegrationDomain):
-        raise TypeError("domain must be an IntegrationDomain.")
+
     if domain.entity_indices.size == 0:
-        raise ValueError("A side trace requires at least one selected facet.")
+        raise ValueError(
+            "side_trace_selection.side must provide at least one selected facet; got A side trace requires at least one selected facet."
+        )
     match domain.kind:
         case "exterior_facet":
             _require_own_facet_domain(domain, discretization.exterior_facet_domain)
         case "interior_facet":
             _require_own_facet_domain(domain, discretization.interior_facet_domain)
         case _:
-            raise ValueError("Side traces act on exterior or interior facet domains.")
+            raise ValueError(
+                "side_trace_selection.configuration must select exterior or interior facet domains; got Side traces act on exterior or interior facet domains."
+            )
     owner_cells = np.asarray(domain.owner_cells, dtype=np.int32)
     owner_local = np.asarray(domain.owner_local_entities, dtype=np.int32)
     match side:
@@ -1093,7 +1140,7 @@ def _side_trace_selection(
         case "neighbor":
             if domain.kind != "interior_facet":
                 raise ValueError(
-                    "Exterior facets have no neighbor side; trace the owner side."
+                    "side_trace_selection.side must select a supported declared route; got Exterior facets have no neighbor side; trace the owner side."
                 )
             return _SideSelection(
                 True,
@@ -1104,15 +1151,15 @@ def _side_trace_selection(
             )
         case "average":
             raise ValueError(
-                "Average side traces are not prepared; compose the owner and "
-                "neighbor traces of the interior facets instead."
+                "side_trace_selection.side must select owner or neighbor for a prepared side trace; "
+                f"got {side!r}; compose the owner and neighbor traces for an average"
             )
         case _:
             assert_never(side)
 
 
 def _cell_blocks(
-    discretization: FiniteElementDiscretization, cells: np.ndarray, /
+    discretization: generic_owner.FiniteElementDiscretization, cells: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
     """Map global cell indices to `(block index, block-local cell index)`."""
     counts = [block.cell_count for block in discretization.mesh.blocks]
@@ -1122,7 +1169,7 @@ def _cell_blocks(
 
 
 def _local_facet_vertices(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     cells: np.ndarray,
     local: np.ndarray,
     /,
@@ -1141,26 +1188,28 @@ def _local_facet_vertices(
 
 
 def _side_parameters(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     selection: _SideSelection,
     rule: FacetTraceRule,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[FacetShape, ...]]:
-    """Owner and traced-side facet parameters of the canonical sites.
+    """Owner and traced-side facet parameters of the declared sites.
 
-    The canonical sites are the owner cell's local-facet rule points. On the
+    The declared sites are the owner cell's local-facet rule points. On the
     neighbor side the same points are addressed through the affine
     (dihedral) map between the two local-facet parametrizations, fixed by the
     shared global facet vertices. Returns `(owner, side, rule_weights, shapes)`.
     """
     blocks, _ = _cell_blocks(discretization, selection.owner_cells)
     shapes = tuple(
-        _reference_facet_shape(discretization.mesh.blocks[block].cell_kind, int(local))
+        reference_facet_shape(discretization.mesh.blocks[block].cell_kind, int(local))
         for block, local in zip(blocks, selection.owner_local, strict=True)
     )
     references = {shape: rule.reference(shape) for shape in set(shapes)}
     if len({value[0].shape for value in references.values()}) != 1:
-        raise ValueError("The selected facets need one common rule site count.")
+        raise ValueError(
+            "side_parameters.rule must provide one common rule site count; got The selected facets need one common rule site count."
+        )
     owner = np.stack([references[shape][0] for shape in shapes])
     weights = np.stack([references[shape][1] for shape in shapes])
     if not selection.neighbor:
@@ -1177,10 +1226,10 @@ def _side_parameters(
     ):
         if sorted(first) != sorted(second):
             raise ValueError(
-                "Owner and neighbor local facets do not share their vertices; "
-                "periodic or nonconforming facets need an explicit transfer."
+                "side_parameters.facet_vertices must agree between owner and neighbor; "
+                f"got owner={first!r}, neighbor={second!r}"
             )
-        reference_corners = _facet_corner_parameters(shape)
+        reference_corners = facet_corner_parameters(shape)
         corners = reference_corners[[second.index(v) for v in first]]
         if isinstance(shape, ReferenceCellTopology):
             dimension = reference_corners.shape[1]
@@ -1207,7 +1256,7 @@ def _facet_support_columns(element: FiniteElementSpec, local_facet: int, /) -> n
     """
     if element.form_basis is not None:
         return np.arange(element.local_dof_count, dtype=np.int32)
-    shape = _reference_facet_shape(element.cell_kind, local_facet)
+    shape = reference_facet_shape(element.cell_kind, local_facet)
     probe, _ = FacetTraceRule(points=element.degree + 2).reference(shape)
     points, _ = reference_facet_embedding(element.cell_kind, local_facet, probe)
     values = np.abs(np.asarray(element.tabulate(points)[0]))
@@ -1228,8 +1277,8 @@ def _facet_support_columns(element: FiniteElementSpec, local_facet: int, /) -> n
     outside[columns] = False
     if np.any(nonzero & outside):
         raise ValueError(
-            "An H1 basis function outside the facet closure has a nonzero trace; "
-            "the element is not trace-conforming."
+            "facet_support_columns.basis must have zero trace outside the H1 facet closure; "
+            f"got nonzero columns={np.flatnonzero(nonzero & outside)!r}"
         )
     return columns
 
@@ -1282,11 +1331,13 @@ def _facet_trace_degree(
                 return None
             return 2 * element.degree
         case _:
-            raise ValueError(f"Unsupported facet shape {shape!r}.")
+            raise ValueError(
+                f"facet_trace_degree.shape must select a supported declared route; got Unsupported facet shape {shape!r}."
+            )
 
 
 def _side_geometry(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     coordinates: Array,
     block: int,
     block_cells: np.ndarray,
@@ -1318,7 +1369,9 @@ def _side_geometry(
         jnp.asarray(reference.reshape((-1, dimension))),
     )
     if not bool(np.all(np.asarray(evaluation.valid))):
-        raise ValueError("A side cell has an invalid coordinate map at its facet.")
+        raise ValueError(
+            "side_geometry.configuration must have valid a side cell; got A side cell has an invalid coordinate map at its facet."
+        )
     physical = contract(
         "p,pri,pr->pi",
         jnp.abs(evaluation.determinant),
@@ -1337,7 +1390,7 @@ def _side_geometry(
 
 
 def _block_side_gathers(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     field_index: int,
     block: int,
     block_cells: np.ndarray,
@@ -1377,7 +1430,7 @@ def _block_side_gathers(
 
 
 def _block_trace_degree(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     field_index: int,
     coordinates: np.ndarray,
     coordinate_degree: int,
@@ -1394,7 +1447,7 @@ def _block_trace_degree(
     for facet in np.unique(local).tolist():
         vertices = list(topology.entities[topology.dimension - 1][facet])
         corners = coordinates[geometry_dofs[local == facet][:, vertices]]
-        shape = _reference_facet_shape(element.cell_kind, facet)
+        shape = reference_facet_shape(element.cell_kind, facet)
         degrees.append(_facet_trace_degree(element, coordinate_degree, shape, corners))
     return _combined_degree(degrees)
 
@@ -1406,7 +1459,7 @@ def _combined_degree(degrees: list[int | None], /) -> int | None:
 
 
 def _side_tabulation(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     field_index: int,
     coordinates: Array,
     cells: np.ndarray,
@@ -1500,7 +1553,9 @@ def _trace_route_weights(
                     dimension,
                 )
             case "value" | "conormal-flux":
-                raise ValueError(f"{quantity!r} traces are not contracted routes.")
+                raise ValueError(
+                    f"trace_route_weights.quantity must select normal or tangential contracted routes; got {quantity!r} traces are not contracted routes."
+                )
             case _:
                 assert_never(quantity)
     match quantity:
@@ -1513,7 +1568,9 @@ def _trace_route_weights(
             projector = np.eye(dimension) - normals[..., :, None] * normals[..., None, :]
             return basis[..., None, None] * projector[:, :, None], (dimension,)
         case "value" | "conormal-flux":
-            raise ValueError(f"{quantity!r} traces are not contracted routes.")
+            raise ValueError(
+                f"trace_route_weights.quantity must select normal or tangential contracted routes; got {quantity!r} traces are not contracted routes."
+            )
         case _:
             assert_never(quantity)
 
@@ -1559,7 +1616,7 @@ def _trace_route(
 
 
 def _owner_site_agreement(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     field_index: int,
     coordinates: Array,
     selection: _SideSelection,
@@ -1581,14 +1638,15 @@ def _owner_site_agreement(
     scale = max(float(np.max(np.ptp(np.asarray(coordinates), axis=0))), 1.0)
     if np.max(np.abs(owner.sites - side.sites)) > 1.0e-10 * scale:
         raise ValueError(
-            "Owner and neighbor embeddings of the facet sites disagree; the mesh "
-            "geometry is not conforming across the selected facets."
+            "owner_site_agreement.sites must agree between owner and neighbor within "
+            f"{1.0e-10 * scale!r}; got maximum difference={np.max(np.abs(owner.sites - side.sites))!r}"
         )
     return owner.sites, owner.weights
 
 
+@checked
 def prepare_finite_element_side_trace(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     field_name: str,
     domain: IntegrationDomain,
     /,
@@ -1596,12 +1654,12 @@ def prepare_finite_element_side_trace(
     rule: FacetTraceRule,
     quantity: SideTraceQuantity = "value",
     side: FieldTraceSide = "owner",
-    runtime: FiniteElementRuntimeData | None = None,
+    runtime: generic_owner.FiniteElementRuntimeData | None = None,
 ) -> PreparedTraceAction:
-    """Prepare the exact trace of one FE field on selected exterior/interior facets.
+    """Prepare the algebraic trace of one FE field on selected exterior/interior facets.
 
     Supports scalar and compatible polynomial form fields of every degree on
-    simplex and tensor-product blocks. Piola values use the actual side runtime.
+    simplex and tensor-product blocks. Piola values use the represented side runtime.
     Sites are the owner cell's local-facet rule points, shared by the
     `"owner"` and `"neighbor"` sides of an interior facet; normals point out of
     the traced side cell and weights are the physical facet measure. `"value"`
@@ -1611,10 +1669,7 @@ def prepare_finite_element_side_trace(
     route gathers each facet's side-cell DOFs (facet-closure DOFs for H1); no
     global coefficient-by-site matrix is formed.
     """
-    if not isinstance(discretization, FiniteElementDiscretization):
-        raise TypeError("discretization must be FiniteElementDiscretization.")
-    if not isinstance(rule, FacetTraceRule):
-        raise TypeError("rule must be a FacetTraceRule.")
+
     quantity = parse(quantity, SideTraceQuantity, "quantity")
     side = parse(side, FieldTraceSide, "side")
     field_index, space = _side_trace_field(discretization, field_name, quantity)
@@ -1689,7 +1744,9 @@ def prepare_finite_element_side_trace(
     )
 
 
-def finite_element_side_revision(runtime: FiniteElementRuntimeData, /) -> str:
+def finite_element_side_revision(
+    runtime: generic_owner.FiniteElementRuntimeData, /
+) -> str:
     """Geometry revision of FE side actions prepared on one runtime realization."""
     return canonical_fingerprint(
         {
@@ -1707,7 +1764,7 @@ class FiniteElementSideGradient(StrictModule, NonTrainableState):
     `route` gathers every local DOF of each facet's side cell (a gradient on a
     facet depends on the whole cell, not only on its facet closure) and
     contracts it with the oriented physical basis gradients at the sites into
-    `(facets, sites, dimension)` values; `route.transpose` is its exact
+    `(facets, sites, dimension)` values; `route.transpose` is its algebraic
     scatter-add. `reference` holds the sites in the side cells' reference
     coordinates, `side_blocks`/`side_block_cells` locate the side cells in the
     mesh blocks, and `valid` marks the real local slots of padded cells.
@@ -1768,7 +1825,7 @@ def _gradient_degree(
 
 
 def _side_gradient_rows(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     field_index: int,
     coordinates: Array,
     cells: np.ndarray,
@@ -1834,15 +1891,16 @@ def _side_gradient_rows(
     )
 
 
+@checked
 def prepare_finite_element_side_gradient(
-    discretization: FiniteElementDiscretization,
+    discretization: generic_owner.FiniteElementDiscretization,
     field_name: str,
     domain: IntegrationDomain,
     /,
     *,
     rule: FacetTraceRule,
     side: FieldTraceSide = "owner",
-    runtime: FiniteElementRuntimeData | None = None,
+    runtime: generic_owner.FiniteElementRuntimeData | None = None,
 ) -> FiniteElementSideGradient:
     """Prepare the physical gradient of one scalar FE field on selected facets.
 
@@ -1850,14 +1908,13 @@ def prepare_finite_element_side_gradient(
     mapped into the neighbor on interior facets, as for side traces). Only
     identity-mapped scalar-basis H1/L2 fields are supported.
     """
-    if not isinstance(discretization, FiniteElementDiscretization):
-        raise TypeError("discretization must be FiniteElementDiscretization.")
-    if not isinstance(rule, FacetTraceRule):
-        raise TypeError("rule must be a FacetTraceRule.")
+
     side = parse(side, FieldTraceSide, "side")
     field_index, space = _side_trace_field(discretization, field_name, "value")
     if space.shape[1:]:
-        raise ValueError("Side gradients are prepared for scalar finite-element fields.")
+        raise ValueError(
+            "prepare_finite_element_side_gradient.configuration must use scalar finite-element fields; got Side gradients are prepared for scalar finite-element fields."
+        )
     selection = _side_trace_selection(discretization, domain, side)
     realized = _realized_runtime(discretization, runtime)
     _, parameters, rule_weights, shapes = _side_parameters(

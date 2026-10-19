@@ -2,50 +2,62 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native immutable layer/core admission and canonical provider execution."""
+"""Admit immutable layer/core requests and execute the native provider route."""
 
 from __future__ import annotations
 
+from contextlib import ExitStack
+from dataclasses import replace
 from typing import final
 
 import equinox as eqx
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
-from ..._meshcore import current_native_execution_budget, current_native_host_workspace
+from ..._meshcore import NativeExecutionScope, NativeHostStorageWorkspace
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...geometry._meshing_domain import MeshingDomain, MeshingDomainBoundarySource
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...geometry._domain_boundary import MeshingDomainBoundarySource
+from ...geometry._meshing_domain import MeshingDomain
+from ...typing import checked
 from .._contracts import MeshingProviderInfo, VolumeFillStrategy, VolumeMeshingSpec
 from .._controls import FeatureKind, ProtectedFeature, RegionControl
-from .._layer_core import _core_request, _prepare_identity, execute_layer_core_route
+from .._hex_generation import mapped_source_lipschitz_bound
+from .._layer_core import core_request, execute_layer_core_route
 from .._layer_core_controls import layer_control_issues
+from .._layer_core_mapped import (
+    execute_mapped_layer_core_route,
+    require_reference_root_sheets,
+    validate_layer_reference_columns,
+)
 from .._layer_core_periodic import (
     core_periodic_constraint_evidence,
     prepare_core_periodic,
 )
-from .._layer_core_resources import LayerCoreSourceWork, reserve_layer_storage
+from .._layer_core_resources import (
+    layer_source_work_upper,
+    LayerCoreSourceWork,
+    reserve_layer_storage,
+)
+from .._layer_core_topology import prepare_identity
 from .._measurements import NativeExecutionRecord, NativeMeshingPhaseRecorder
+from .._native_preparation import native_preparation_ledger
 from .._result import CellMeshingResult
 from .._scope import MeshingEntityKind, MeshingScope
 from .._sizing import UniformSizeControl
 from .._volume_generation import (
-    _import_native_preparation,
-    _native_live_preparation_is_active,
-    _native_volume_operation_started,
-    _remember_native_live_preparation,
-    _require_native_preparation_allowance,
-    native_volume_execution_budget,
     NativeVolumeSchedule,
+    require_native_preparation_allowance,
 )
-from ._native_sources import NativeLayerCoreSource
+from . import _native_sources as sources_owner
 
 
 def _lower_core_specification(
-    source: NativeLayerCoreSource, specification: VolumeMeshingSpec, /
+    source: sources_owner.NativeLayerCoreSource, specification: VolumeMeshingSpec, /
 ) -> VolumeMeshingSpec:
-    """Lower original physical face controls through the declared ancestry map."""
+    """Lower source face controls onto derived core facet scopes."""
     boundary = source.source_boundary_scope
     core_regions = tuple(
         RegionControl(
@@ -68,33 +80,31 @@ def _lower_core_specification(
         if control.region_name in source.complex.region_ids
     )
     if boundary is None:
-        return VolumeMeshingSpec(
-            specification.target,
-            specification.boundary_scope,
-            specification.fill_strategy,
-            size_controls=specification.size_controls,
-            protected_features=specification.protected_features,
+        return replace(
+            specification,
             region_controls=core_regions,
-            region_seeds=specification.region_seeds,
-            hole_seeds=specification.hole_seeds,
-            size_combination=specification.size_combination,
-            size_compliance=specification.size_compliance,
-            limits=specification.limits,
-            deterministic=specification.deterministic,
+            patch_controls=(),
+            layer_controls=(),
+            periodic_constraints=(),
         )
     domain = source.source_domain
     retained = source.layers.source_domain
     mapping = source.core_facet_source_ids
     if domain is None or retained is None or mapping is None:
         raise ValueError(
-            "Original layer controls require their retained domain and exact core facet ancestry."
+            "NativeLayerCoreSource.source_domain must be retained with layers.source_domain and core_facet_source_ids for source-face controls; got incomplete domain ancestry."
         )
-    if (
-        domain.domain_id != retained.domain_id
-        or boundary.scope_id != specification.boundary_scope.scope_id
-    ):
+    if domain.domain_id != retained.domain_id:
         raise ValueError(
-            "The layer/control/domain and original boundary request must bind the exact same scientific source."
+            "NativeLayerCoreSource.source_domain.domain_id must match "
+            f"layers.source_domain.domain_id; got {domain.domain_id!r}, "
+            f"expected {retained.domain_id!r}."
+        )
+    if boundary.scope_id != specification.boundary_scope.scope_id:
+        raise ValueError(
+            "VolumeMeshingSpec.boundary_scope.scope_id must match "
+            f"NativeLayerCoreSource.source_boundary_scope.scope_id; got "
+            f"{specification.boundary_scope.scope_id!r}, expected {boundary.scope_id!r}."
         )
     represented = np.unique(
         np.concatenate(
@@ -106,7 +116,7 @@ def _lower_core_specification(
     )
     if not np.array_equal(represented, np.asarray(boundary.entity_ids, dtype=np.int64)):
         raise ValueError(
-            "The original wall and remaining core facets must cover every requested original boundary face."
+            "NativeLayerCoreSource.core_facet_source_ids must cover VolumeMeshingSpec.boundary_scope.entity_ids together with layers.control.wall_scope.entity_ids; got missing or additional source faces."
         )
     original = specification.size_controls[0]
     if (
@@ -114,7 +124,7 @@ def _lower_core_specification(
         or len(specification.size_controls) != 1
     ):
         raise ValueError(
-            "A layer core requires one whole-original-boundary uniform size request."
+            "VolumeMeshingSpec.size_controls must contain one whole-boundary UniformSizeControl; got a different size request."
         )
     complex_ = source.complex
     scope = MeshingScope(
@@ -138,7 +148,7 @@ def _lower_core_specification(
     for feature in specification.protected_features:
         if feature.scope.entity_dimension != 2:
             raise ValueError(
-                "Original lower-dimensional features require explicit vertex/edge ancestry."
+                "VolumeMeshingSpec.protected_features.scope.entity_dimension must equal 2 without vertex/edge ancestry; got a lower-dimensional feature."
             )
         selected = np.flatnonzero(np.isin(mapping, np.asarray(feature.scope.entity_ids)))
         if selected.size:
@@ -159,24 +169,128 @@ def _lower_core_specification(
             )
     # The retained physical wall request has already produced the layers; it
     # must not grow another layer on the generated cap.
-    return VolumeMeshingSpec(
-        specification.target,
-        scope,
-        specification.fill_strategy,
+    return replace(
+        specification,
+        boundary_scope=scope,
         size_controls=(size,),
         protected_features=tuple(features),
         region_controls=core_regions,
-        region_seeds=specification.region_seeds,
-        hole_seeds=specification.hole_seeds,
-        size_combination=specification.size_combination,
-        size_compliance=specification.size_compliance,
-        limits=specification.limits,
-        deterministic=specification.deterministic,
+        patch_controls=(),
+        layer_controls=(),
+        periodic_constraints=(),
     )
 
 
+def _original_face_fidelity_issues(
+    source: sources_owner.NativeLayerCoreSource,
+    specification: VolumeMeshingSpec,
+    feature: ProtectedFeature,
+    boundary: MeshingScope,
+    /,
+) -> list[str]:
+    """Refuse scoped fidelity when retained faces lack nominal parametric queries."""
+    match (source.source_domain, source.fidelity_source):
+        case (MeshingDomain(), MeshingDomainBoundarySource()):
+            return []
+        case _:
+            issues: list[str] = []
+            whole = tuple(
+                protected.maximum_deviation
+                for protected in specification.protected_features
+                if protected.feature_kind is FeatureKind.SURFACE
+                and protected.scope.scope_id == boundary.scope_id
+            )
+            size = specification.size_controls[0]
+            match size:
+                case UniformSizeControl():
+                    if feature.maximum_deviation < min(whole, default=size.target_size):
+                        issues.append(
+                            "a nominal original parametric face query for scoped continuous fidelity"
+                        )
+                case _:
+                    pass
+            if feature.feature_kind is FeatureKind.MATERIAL_INTERFACE:
+                issues.append(
+                    "a nominal original parametric interface query for scoped continuous fidelity"
+                )
+            return issues
+
+
+def _layer_core_protected_feature_issues(
+    source: sources_owner.NativeLayerCoreSource,
+    specification: VolumeMeshingSpec,
+    boundary: MeshingScope,
+    /,
+) -> list[str]:
+    """Check feature ancestry and fidelity in the declared request order."""
+    issues: list[str] = []
+    counts = {
+        0: source.complex.vertices.shape[0],
+        1: source.complex.segments.shape[0],
+        2: source.complex.facet_count,
+    }
+    for feature in specification.protected_features:
+        dimension = feature.scope.entity_dimension
+        if source.source_boundary_scope is not None:
+            if dimension != 2:
+                issues.append(
+                    "explicit original vertex/edge ancestry for lower-dimensional protected features"
+                )
+            elif np.setdiff1d(
+                np.asarray(feature.scope.entity_ids), np.asarray(boundary.entity_ids)
+            ).size:
+                issues.append(
+                    "protected source faces contained in the original boundary scope"
+                )
+            else:
+                issues.extend(
+                    _original_face_fidelity_issues(
+                        source, specification, feature, boundary
+                    )
+                )
+        elif dimension not in counts or np.any(
+            np.asarray(feature.scope.entity_ids) >= counts[dimension]
+        ):
+            issues.append(
+                "protected features outside supplied PLC vertices, segments and facets"
+            )
+    return issues
+
+
+def _layer_core_boundary_control_issues(
+    source: sources_owner.NativeLayerCoreSource,
+    specification: VolumeMeshingSpec,
+    boundary: MeshingScope,
+    /,
+) -> list[str]:
+    """Require retained ancestry for every boundary facet and one whole-boundary size control."""
+    issues: list[str] = []
+    if source.source_boundary_scope is None:
+        if boundary.entity_dimension != 2 or not np.array_equal(
+            np.asarray(boundary.entity_ids, dtype=np.int64),
+            np.arange(source.complex.facet_count, dtype=np.int64),
+        ):
+            issues.append("a complete core PLC facet boundary scope")
+        if specification.layer_controls:
+            issues.append(
+                "original boundary/domain/fidelity facts and exact core facet ancestry for physical layer controls"
+            )
+    elif boundary.scope_id != source.source_boundary_scope.scope_id:
+        issues.append("the exact retained original boundary scope")
+    controls = specification.size_controls
+    match controls:
+        case (UniformSizeControl() as size,):
+            if size.scope.scope_id != boundary.scope_id:
+                issues.append("a whole-core size-control scope")
+        case _:
+            issues.append("one uniform core size control")
+    return issues
+
+
+# Retain target, boundary, control, feature, and region issue order at admission.
+@checked
 def layer_core_support_issues(
-    source: NativeLayerCoreSource, specification: VolumeMeshingSpec, /
+    source: sources_owner.NativeLayerCoreSource, specification: VolumeMeshingSpec, /
 ) -> list[str]:
     """Requests not enforced by the fixed-cap layer/core route remain explicit."""
     issues: list[str] = []
@@ -201,23 +315,7 @@ def layer_core_support_issues(
     if source.complex.boundary != "fixed":
         issues.append("a fixed immutable PLC core boundary")
     boundary = specification.boundary_scope
-    if source.source_boundary_scope is None:
-        if boundary.entity_dimension != 2 or not np.array_equal(
-            np.asarray(boundary.entity_ids, dtype=np.int64),
-            np.arange(source.complex.facet_count, dtype=np.int64),
-        ):
-            issues.append("a complete core PLC facet boundary scope")
-        if specification.layer_controls:
-            issues.append(
-                "original boundary/domain/fidelity facts and exact core facet ancestry for physical layer controls"
-            )
-    elif boundary.scope_id != source.source_boundary_scope.scope_id:
-        issues.append("the exact retained original boundary scope")
-    controls = specification.size_controls
-    if len(controls) != 1 or not isinstance(controls[0], UniformSizeControl):
-        issues.append("one uniform core size control")
-    elif controls[0].scope.scope_id != boundary.scope_id:
-        issues.append("a whole-core size-control scope")
+    issues.extend(_layer_core_boundary_control_issues(source, specification, boundary))
     issues.extend(layer_control_issues(source, specification))
     if (
         specification.periodic_constraints
@@ -231,50 +329,7 @@ def layer_core_support_issues(
         issues.append(
             "layer controls different from the supplied accepted layer realization"
         )
-    counts = {
-        0: source.complex.vertices.shape[0],
-        1: source.complex.segments.shape[0],
-        2: source.complex.facet_count,
-    }
-    for feature in specification.protected_features:
-        dimension = feature.scope.entity_dimension
-        if source.source_boundary_scope is not None:
-            if dimension != 2:
-                issues.append(
-                    "explicit original vertex/edge ancestry for lower-dimensional protected features"
-                )
-            elif np.setdiff1d(
-                np.asarray(feature.scope.entity_ids), np.asarray(boundary.entity_ids)
-            ).size:
-                issues.append(
-                    "protected source faces contained in the original boundary scope"
-                )
-            elif not isinstance(source.source_domain, MeshingDomain) or not isinstance(
-                source.fidelity_source, MeshingDomainBoundarySource
-            ):
-                whole = tuple(
-                    protected.maximum_deviation
-                    for protected in specification.protected_features
-                    if protected.feature_kind is FeatureKind.SURFACE
-                    and protected.scope.scope_id == boundary.scope_id
-                )
-                size = specification.size_controls[0]
-                if isinstance(
-                    size, UniformSizeControl
-                ) and feature.maximum_deviation < min(whole, default=size.target_size):
-                    issues.append(
-                        "a nominal original parametric face query for scoped continuous fidelity"
-                    )
-                if feature.feature_kind is FeatureKind.MATERIAL_INTERFACE:
-                    issues.append(
-                        "a nominal original parametric interface query for scoped continuous fidelity"
-                    )
-        elif dimension not in counts or np.any(
-            np.asarray(feature.scope.entity_ids) >= counts[dimension]
-        ):
-            issues.append(
-                "protected features outside supplied PLC vertices, segments and facets"
-            )
+    issues.extend(_layer_core_protected_feature_issues(source, specification, boundary))
     if any(
         seed.region_name not in source.complex.region_ids
         for seed in specification.region_seeds
@@ -284,32 +339,39 @@ def layer_core_support_issues(
 
 
 def _mapped_reference_request(
-    source: NativeLayerCoreSource,
+    source: sources_owner.NativeLayerCoreSource,
     specification: VolumeMeshingSpec,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    scope: NativeExecutionScope,
 ) -> VolumeMeshingSpec:
-    """Lower physical placement through the exact source-wide Jacobian bound."""
-    from .._hex_generation import mapped_source_lipschitz_bound
+    """Lower physical placement through the source-wide Jacobian bound."""
 
     reference, domain = source.reference_source, source.mapped_domain
     if reference is None or domain is None:
         raise ValueError(
-            "Mapped layer/core placement requires its independently declared reference source and roots."
+            "NativeLayerCoreSource.reference_source must be supplied with mapped_domain for mapped placement; got incomplete reference roots."
         )
     if specification.region_seeds or specification.hole_seeds:
         raise ValueError(
-            "Physical seed coordinates cannot be reinterpreted as authored reference seed coordinates."
+            "VolumeMeshingSpec.region_seeds must be empty together with hole_seeds for mapped reference placement; got physical seed coordinates."
         )
-    physical_core = _core_request(
+    physical_core = core_request(
         _lower_core_specification(source, specification), source.layers.control
     )
     original = physical_core.size_controls[0]
     if not isinstance(original, UniformSizeControl):
         raise TypeError(
-            "Mapped layer/core placement requires the original uniform size control."
+            "VolumeMeshingSpec.size_controls must contain UniformSizeControl for mapped placement; got a different size control."
         )
-    bound = mapped_source_lipschitz_bound(domain.reference_mesh, domain.source_geometry)
-    scope = MeshingScope(
+    bound = mapped_source_lipschitz_bound(
+        domain.reference_mesh,
+        domain.source_geometry,
+        budget=budget,
+        scope=scope,
+    )
+    boundary_scope = MeshingScope(
         reference.source_id,
         reference.source_revision,
         MeshingEntityKind.GEOMETRY,
@@ -318,7 +380,7 @@ def _mapped_reference_request(
         np.arange(reference.complex.facet_count, dtype=np.int64),
     )
     size = UniformSizeControl(
-        scope,
+        boundary_scope,
         original.target_size / bound,
         minimum_size=None
         if original.minimum_size is None
@@ -350,22 +412,23 @@ def _mapped_reference_request(
         for control in specification.region_controls
         if control.region_name in reference.complex.region_ids
     )
-    return VolumeMeshingSpec(
-        specification.target,
-        scope,
-        specification.fill_strategy,
+    return replace(
+        specification,
+        boundary_scope=boundary_scope,
         size_controls=(size,),
         region_controls=regions,
-        size_combination=specification.size_combination,
-        size_compliance=specification.size_compliance,
-        limits=specification.limits,
-        deterministic=specification.deterministic,
+        protected_features=(),
+        patch_controls=(),
+        region_seeds=(),
+        hole_seeds=(),
+        layer_controls=(),
+        periodic_constraints=(),
     )
 
 
 @final
 class PreparedLayerCore(StrictModule, NonTrainableState):
-    """Validated exact identity handoff and the immutable numerical schedule."""
+    """Retain validated layer/core identity and its numerical schedule."""
 
     schedule: NativeVolumeSchedule
     core_specification: VolumeMeshingSpec
@@ -376,94 +439,127 @@ class PreparedLayerCore(StrictModule, NonTrainableState):
     specification_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        source: NativeLayerCoreSource,
+        source: sources_owner.NativeLayerCoreSource,
         specification: VolumeMeshingSpec,
         schedule: NativeVolumeSchedule,
         /,
+        *,
+        scope: NativeExecutionScope,
     ) -> None:
-        if not isinstance(source, NativeLayerCoreSource):
-            raise TypeError("source must be NativeLayerCoreSource.")
-        if not isinstance(specification, VolumeMeshingSpec) or not isinstance(
-            schedule, NativeVolumeSchedule
-        ):
-            raise TypeError(
-                "A layer core requires VolumeMeshingSpec and NativeVolumeSchedule."
-            )
-        issues = layer_core_support_issues(source, specification)
-        if issues:
-            raise ValueError(
-                "Unsupported native layer/core request: " + "; ".join(issues)
-            )
-        work = LayerCoreSourceWork(specification.limits.maximum_work_units)
-        mapping, _, polygons, points = _prepare_identity(
-            source.layers,
-            source.complex,
-            source.vertex_layer_ids,
-            source.cap_polygon_ids,
-            work=work,
-        )
-        prepare_core_periodic(source, mapping, polygons, points, work=work)
-        core_periodic_constraint_evidence(source, specification, work=work)
-        core_specification = _lower_core_specification(source, specification)
-        reserve_layer_storage(
-            source.layers,
-            source.complex,
-            _core_request(core_specification, source.layers.control),
-            source.vertex_layer_ids,
-        )
-        reference_specification = None
-        reference_prepared = None
-        if source.reference_source is not None:
-            from .._layer_core_mapped import (
-                require_reference_root_sheets,
-                validate_layer_reference_columns,
-            )
-
-            if source.mapped_domain is None:
+        with ExitStack() as resources:
+            issues = layer_core_support_issues(source, specification)
+            if issues:
                 raise ValueError(
-                    "Mapped layer/core source lost its original source roots."
+                    "PreparedLayerCore.specification must be supported by the layer/core "
+                    f"route; got {'; '.join(issues)}."
                 )
-            validate_layer_reference_columns(
-                source.layers, source.reference_source.layers, source.mapped_domain, work
+            limits = specification.limits
+            allowance = scope.remaining()
+            upper = (
+                min(limits.maximum_work_units, allowance.remaining_work_units)
+                if source.reference_source is not None
+                or source.layers.mesh.periodic_topology is not None
+                else layer_source_work_upper(source, specification)
             )
-            require_reference_root_sheets(
-                source.reference_source, source.mapped_domain, work
+            ticket = resources.enter_context(
+                scope.batch(
+                    upper,
+                    bytes_upper=min(
+                        limits.maximum_scratch_bytes, allowance.remaining_managed_bytes
+                    ),
+                    queries_upper=min(
+                        limits.maximum_geometry_queries,
+                        allowance.remaining_geometry_queries,
+                    ),
+                )
             )
-            reference_specification = _mapped_reference_request(source, specification)
-            reference_prepared = PreparedLayerCore(
-                source.reference_source, reference_specification, schedule
+            work = LayerCoreSourceWork(limits.maximum_work_units, ticket=ticket)
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
             )
-            work.work_units += reference_prepared.source_work_units
-            work.charge(0)
-        self.schedule = schedule
-        self.core_specification = core_specification
-        self.reference_specification = reference_specification
-        self.reference_prepared = reference_prepared
-        self.source_work_units = work.work_units
-        self.source_binding_id = source.binding_id
-        self.specification_id = specification.specification_id
-        self.prepared_id = canonical_fingerprint(
-            {
-                "kind": "prepared-native-layer-core",
-                "source": source.binding_id,
-                "specification": specification.specification_id,
-                "schedule": schedule.schedule_id,
-                "core_specification": core_specification.specification_id,
-                "source_work_units": work.work_units,
-                "reference_specification": None
-                if reference_specification is None
-                else reference_specification.specification_id,
-                "reference_prepared": None
-                if reference_prepared is None
-                else reference_prepared.prepared_id,
-            }
-        )
+            resources.enter_context(budget.activate())
+            mapping, _, polygons, points = prepare_identity(
+                source.layers,
+                source.complex,
+                source.vertex_layer_ids,
+                source.cap_polygon_ids,
+                work=work,
+            )
+            prepare_core_periodic(
+                source, mapping, polygons, points, work=work, budget=budget
+            )
+            core_periodic_constraint_evidence(
+                source, specification, work=work, budget=budget
+            )
+            core_specification = _lower_core_specification(source, specification)
+            reserve_layer_storage(
+                source.layers,
+                source.complex,
+                core_request(core_specification, source.layers.control),
+                source.vertex_layer_ids,
+            )
+            reference_specification = None
+            reference_prepared = None
+            if source.reference_source is not None:
+                if source.mapped_domain is None:
+                    raise ValueError(
+                        "NativeLayerCoreSource.mapped_domain must be supplied with reference_source; got None."
+                    )
+                validate_layer_reference_columns(
+                    source.layers,
+                    source.reference_source.layers,
+                    source.mapped_domain,
+                    work,
+                    budget=budget,
+                )
+                require_reference_root_sheets(
+                    source.reference_source, source.mapped_domain, work
+                )
+                reference_specification = _mapped_reference_request(
+                    source, specification, budget=budget, scope=scope
+                )
+                resources.close()
+                del budget
+                reference_prepared = PreparedLayerCore(
+                    source.reference_source,
+                    reference_specification,
+                    schedule,
+                    scope=scope,
+                )
+                work.work_units += reference_prepared.source_work_units
+            self.schedule = schedule
+            self.core_specification = core_specification
+            self.reference_specification = reference_specification
+            self.reference_prepared = reference_prepared
+            self.source_work_units = work.work_units
+            self.source_binding_id = source.binding_id
+            self.specification_id = specification.specification_id
+            self.prepared_id = canonical_fingerprint(
+                {
+                    "kind": "prepared-native-layer-core",
+                    "source": source.binding_id,
+                    "specification": specification.specification_id,
+                    "schedule": schedule.schedule_id,
+                    "core_specification": core_specification.specification_id,
+                    "source_work_units": work.work_units,
+                    "reference_specification": None
+                    if reference_specification is None
+                    else reference_specification.specification_id,
+                    "reference_prepared": None
+                    if reference_prepared is None
+                    else reference_prepared.prepared_id,
+                }
+            )
 
 
+@checked
 def execute_layer_route(
-    source: NativeLayerCoreSource,
+    source: sources_owner.NativeLayerCoreSource,
     specification: VolumeMeshingSpec,
     prepared: PreparedLayerCore,
     coordinate_contract: SpatialCoordinateContract,
@@ -471,88 +567,40 @@ def execute_layer_route(
     plan_id: str,
     /,
     *,
+    scope: NativeExecutionScope,
+    workspace: NativeHostStorageWorkspace,
     record_phase: NativeMeshingPhaseRecorder | None = None,
     preparation_evidence: NativeExecutionRecord | None = None,
 ) -> CellMeshingResult:
-    """Execute only the exact source/specification pair admitted by the plan."""
-    if (
-        prepared.source_binding_id != source.binding_id
-        or prepared.specification_id != specification.specification_id
-    ):
+    """Execute the source/specification pair admitted by the plan."""
+    if prepared.source_binding_id != source.binding_id:
         raise ValueError(
-            "The prepared layer/core route binds another source or specification."
+            "PreparedLayerCore.source_binding_id must match NativeLayerCoreSource.binding_id; "
+            f"got {prepared.source_binding_id!r}, expected {source.binding_id!r}."
         )
-    active = current_native_execution_budget()
-    if active is None or preparation_evidence is not None:
-        from time import monotonic
-
-        from ._native_publication import bind_native_execution_result
-
-        if type(preparation_evidence) is not NativeExecutionRecord:
-            raise ValueError(
-                "Standalone prepared layer execution requires its actual preparation receipt."
-            )
+    if prepared.specification_id != specification.specification_id:
+        raise ValueError(
+            "PreparedLayerCore.specification_id must match VolumeMeshingSpec.specification_id; "
+            f"got {prepared.specification_id!r}, expected {specification.specification_id!r}."
+        )
+    if preparation_evidence is not None:
         preparation_evidence.require_valid()
         if preparation_evidence.owner_id != plan_id:
             raise ValueError(
-                "Layer preparation receipt binds another native meshing plan."
+                "execute_layer_route.preparation_evidence.owner_id must match plan_id; "
+                f"got {preparation_evidence.owner_id!r}, expected {plan_id!r}."
             )
-        _require_native_preparation_allowance(specification.limits, preparation_evidence)
-        work = int(np.asarray(preparation_evidence.total_work_units))
-        queries = int(np.asarray(preparation_evidence.total_geometry_queries))
-        seconds = float(np.asarray(preparation_evidence.total_elapsed_seconds))
-        started = monotonic() - seconds
-        parent_started = _native_volume_operation_started()
-        if parent_started is not None:
-            started = min(started, parent_started)
-        if active is not None:
-            storage = current_native_host_workspace()
-            if storage is None:
-                raise RuntimeError(
-                    "Layer preparation import lost its original host workspace."
-                )
-            _import_native_preparation(active, storage, preparation_evidence)
-        with native_volume_execution_budget(
-            specification.limits,
-            source_work_units=work,
-            source_geometry_queries=queries,
-            operation_started=started,
-            borrow_active=False,
-        ) as budget:
-            storage = current_native_host_workspace()
-            if storage is None:
-                raise RuntimeError(
-                    "Standalone layer execution lost its original host workspace."
-                )
-            storage.retain_owner((source, specification, prepared, preparation_evidence))
-            _remember_native_live_preparation(budget, storage, prepared)
-            result = execute_layer_route(
-                source,
-                specification,
-                prepared,
-                coordinate_contract,
-                provider,
-                plan_id,
-                record_phase=record_phase,
-            )
-        if budget.evidence is None:
-            raise RuntimeError(
-                "Standalone layer execution lost its ended original-scope receipt."
-            )
-        return bind_native_execution_result(
-            result,
-            budget.evidence,
-            specification.limits,
-            started,
-            preparation_evidence=preparation_evidence,
-        )
-    if not _native_live_preparation_is_active(prepared):
+        require_native_preparation_allowance(specification.limits, preparation_evidence)
+        workspace.retain_owner((source, specification, prepared, preparation_evidence))
+        ledger = native_preparation_ledger(scope)
+        ledger.import_receipt(scope, preparation_evidence)
+        ledger.remember_live(scope, prepared)
+    if not native_preparation_ledger(scope).live_contains(prepared):
         raise ValueError(
-            "Scoped layer execution requires its exact live prepared owner or its actual preparation receipt."
+            "execute_layer_route.prepared must be live in the scope or have ended "
+            f"preparation evidence; got an unregistered owner {prepared.prepared_id!r}."
         )
     if source.reference_source is not None:
-        from .._layer_core_mapped import execute_mapped_layer_core_route
-
         return execute_mapped_layer_core_route(
             source,
             specification,
@@ -561,6 +609,8 @@ def execute_layer_route(
             provider,
             plan_id,
             record_phase=record_phase,
+            scope=scope,
+            workspace=workspace,
         )
     return execute_layer_core_route(
         source.layers,
@@ -571,6 +621,8 @@ def execute_layer_route(
         provider,
         plan_id,
         vertex_layer_ids=source.vertex_layer_ids,
+        scope=scope,
+        workspace=workspace,
         cap_polygon_ids=source.cap_polygon_ids,
         layer_regions=source.layer_regions,
         source_id=source.source_id,

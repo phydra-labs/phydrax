@@ -7,7 +7,7 @@
 A seed is an immutable host triangulation with region labels, stable global
 ids and named vertex sets, from which fixed-capacity topologies and states are
 built. Seeds come from explicit converters (3D polyhedral vertex tissues) and
-from canonical reference geometries (sphere, standard double bubble, catenoid
+from reference geometries (sphere, standard double bubble, catenoid
 band); `MultiRegionSurfaceSeed.subdivided` refines any seed conservatively in
 topology (edge midpoints are shared by every incident face, so non-manifold
 junction edges stay junction edges).
@@ -43,11 +43,13 @@ from ._contracts import (
     MultiRegionSurfaceCounts,
 )
 from ._state import MultiRegionSurfaceState
-from ._topology import _host_incidence, MultiRegionSurfaceTopology
+from ._topology import host_incidence, MultiRegionSurfaceTopology
 
 
 if TYPE_CHECKING:
-    from ...applications.cellular_mechanics import VertexTissuePlan
+    import phydrax.applications.cellular_mechanics as cellular_mechanics_owner
+
+    pass
 
 
 class _SeedVertexDim(Dim, minimum=3):
@@ -94,7 +96,9 @@ def _vertex_sets(
     for name in sorted(names):
         members = tuple(sorted({int(value) for value in sets[name]}))
         if not members or not set(members) <= known:
-            raise ValueError(f"vertex set {name!r} must list known global vertex ids.")
+            raise ValueError(
+                f"MultiRegionSurfaceSeed.vertex_sets must list nonempty sets of known global vertex ids; got {name!r}={members!r}"
+            )
         result.append((name, members))
     return tuple(result)
 
@@ -160,9 +164,13 @@ class MultiRegionSurfaceSeed(StrictModule, NonTrainableState):
             for index, kind in enumerate(region_kinds)
         )
         if len(kinds) != len(ids):
-            raise ValueError("region_kinds must give one kind per region id.")
+            raise ValueError(
+                f"MultiRegionSurfaceSeed.region_kinds must give one kind per region id; got {len(kinds)} kinds for {len(ids)} ids"
+            )
         if not np.all(np.isfinite(points)):
-            raise ValueError("Seed positions must be finite.")
+            raise ValueError(
+                "MultiRegionSurfaceSeed.positions must be finite; got nonfinite coordinates"
+            )
         vertex_ids = (
             np.arange(points.shape[0], dtype=np.int64)
             if vertex_global_ids is None
@@ -206,11 +214,13 @@ class MultiRegionSurfaceSeed(StrictModule, NonTrainableState):
         for key, members in self.vertex_sets:
             if key == name:
                 return members
-        raise ValueError(f"Unknown vertex set {name!r}.")
+        raise ValueError(
+            f"MultiRegionSurfaceSeed.vertex_set must name an existing set; got {name!r}"
+        )
 
     def counts(self) -> MultiRegionSurfaceCounts:
-        """Exact counts and valence maxima this seed requires."""
-        incidence = _host_incidence(self.faces, self.face_labels, self.positions.shape[0])
+        """Return the entity counts and valence maxima this seed requires."""
+        incidence = host_incidence(self.faces, self.face_labels, self.positions.shape[0])
         return MultiRegionSurfaceCounts(
             vertex=self.positions.shape[0],
             edge=incidence.edges.shape[0],
@@ -233,7 +243,9 @@ class MultiRegionSurfaceSeed(StrictModule, NonTrainableState):
         """Capacity plan fitting this seed with entity-count ``headroom`` >= 1."""
         factor = positive_finite_float(headroom, "headroom")
         if factor < 1.0:
-            raise ValueError("headroom must be at least one.")
+            raise ValueError(
+                f"MultiRegionSurfaceSeed.headroom must be at least one; got {factor!r}"
+            )
         counts = self.counts()
 
         def grown(value: int, /) -> int:
@@ -275,7 +287,9 @@ class MultiRegionSurfaceSeed(StrictModule, NonTrainableState):
             np.asarray(topology.vertex_global_ids[: topology.vertex_count]),
             self.vertex_global_ids,
         ):
-            raise ValueError("topology was not built from this seed.")
+            raise ValueError(
+                f"MultiRegionSurfaceSeed.topology must retain the seed's vertex count and global ids; got vertex count {topology.vertex_count}"
+            )
         padded = np.zeros((topology.vertex_capacity, 3), dtype=np.float64)
         padded[: self.positions.shape[0]] = self.positions
         return MultiRegionSurfaceState(topology, padded)
@@ -285,7 +299,9 @@ class MultiRegionSurfaceSeed(StrictModule, NonTrainableState):
         lookup = {int(value): index for index, value in enumerate(self.vertex_global_ids)}
         missing = [value for value in global_ids if int(value) not in lookup]
         if missing:
-            raise ValueError(f"Unknown global vertex ids {missing[:4]}.")
+            raise ValueError(
+                f"MultiRegionSurfaceSeed.global_ids must identify seed vertices; got unknown ids {missing[:4]!r}"
+            )
         return np.asarray([lookup[int(value)] for value in global_ids], dtype=np.int64)
 
     def subdivided(self, levels: int = 1, /) -> MultiRegionSurfaceSeed:
@@ -368,6 +384,62 @@ def _oriented(
     return result
 
 
+def sphere_direction_lattice(frequency: int, /) -> tuple[np.ndarray, np.ndarray]:
+    """Triangulate the icosahedral cones at an integer edge frequency.
+
+    Shared points are keyed by their integer barycentric source support,
+    never by rounded coordinate equality. This host proposal preparation
+    does not establish a source-fidelity or domain-coverage certificate.
+    """
+    count = positive_integer(frequency, "sphere_direction_lattice.frequency")
+    unit = _ICOSAHEDRON_VERTICES / np.linalg.norm(_ICOSAHEDRON_VERTICES, axis=1)[:, None]
+    positions = [row for row in unit]
+    identities: dict[tuple[tuple[int, int], ...], int] = {
+        ((vertex, count),): vertex for vertex in range(unit.shape[0])
+    }
+    triangles: list[tuple[int, int, int]] = []
+    for face in _ICOSAHEDRON_FACES.tolist():
+        local: dict[tuple[int, int], int] = {}
+        for first in range(count + 1):
+            for second in range(count - first + 1):
+                weights = (count - first - second, first, second)
+                key = tuple(
+                    sorted(
+                        (vertex, weight)
+                        for vertex, weight in zip(face, weights, strict=True)
+                        if weight
+                    )
+                )
+                identifier = identities.get(key)
+                if identifier is None:
+                    direction = np.zeros((3,), dtype=np.float64)
+                    for vertex, weight in key:
+                        direction += weight * unit[vertex]
+                    direction /= np.linalg.norm(direction)
+                    identifier = len(positions)
+                    identities[key] = identifier
+                    positions.append(direction)
+                local[first, second] = identifier
+        for first in range(count):
+            for second in range(count - first):
+                triangles.append(
+                    (
+                        local[first, second],
+                        local[first + 1, second],
+                        local[first, second + 1],
+                    )
+                )
+                if first + second + 1 < count:
+                    triangles.append(
+                        (
+                            local[first + 1, second],
+                            local[first + 1, second + 1],
+                            local[first, second + 1],
+                        )
+                    )
+    return np.stack(positions), np.asarray(triangles, dtype=np.int64)
+
+
 def seed_sphere(
     radius: float,
     /,
@@ -382,7 +454,9 @@ def seed_sphere(
     levels = nonnegative_integer(subdivisions, "subdivisions")
     center_ = np.asarray([finite_real_scalar(value, "center") for value in center])
     if center_.shape != (3,):
-        raise ValueError("center must have three coordinates.")
+        raise ValueError(
+            f"seed_sphere.center must have three coordinates; got shape {center_.shape}"
+        )
     unit = _ICOSAHEDRON_VERTICES / np.linalg.norm(_ICOSAHEDRON_VERTICES, axis=1)[:, None]
     seed = MultiRegionSurfaceSeed(
         center_ + radius_ * unit,
@@ -574,7 +648,9 @@ def seed_double_bubble(
     second = positive_finite_float(radius_second, "radius_second")
     count = positive_integer(ring_points, "ring_points")
     if count < 6:
-        raise ValueError("ring_points must be at least six.")
+        raise ValueError(
+            f"seed_double_bubble.ring_points must be at least six; got {count}"
+        )
     distance = math.sqrt(first * first + second * second - first * second)
     offset = (distance * distance + first * first - second * second) / (2.0 * distance)
     ring_radius = math.sqrt(first * first - offset * offset)
@@ -685,7 +761,9 @@ def seed_catenoid(
     count = positive_integer(ring_points, "ring_points")
     levels = positive_integer(rows, "rows")
     if count < 6 or levels < 2:
-        raise ValueError("A catenoid band needs ring_points >= 6 and rows >= 2.")
+        raise ValueError(
+            f"seed_catenoid.resolution must have ring_points >= 6 and rows >= 2; got {(count, levels)}"
+        )
     neck = (
         radius
         if neck_radius is None
@@ -754,7 +832,7 @@ def _tissue_face_owners(
 
 
 def seed_from_vertex_tissue(
-    plan: VertexTissuePlan,
+    plan: cellular_mechanics_owner.VertexTissuePlan,
     positions: ArrayLike,
     /,
     *,
@@ -773,73 +851,89 @@ def seed_from_vertex_tissue(
     ``F`` gets global id ``F * max_triangles + k``. The tissue is not modified;
     its constitutive data are not converted.
     """
-    from ...applications.cellular_mechanics import VertexTissuePlan
 
-    if not isinstance(plan, VertexTissuePlan):
-        raise TypeError("plan must be a VertexTissuePlan.")
-    if plan.dimension != 3:
-        raise ValueError(
-            "Only 3D polyhedral vertex tissues convert to multiregion seeds."
-        )
-    prefix = canonical_identifier(region_prefix, "region_prefix")
-    coordinates = np.asarray(positions, dtype=np.float64)
-    if coordinates.shape != (plan.vertex_capacity, 3):
-        raise ValueError("positions must have shape (vertex_capacity, 3).")
-    face_active = np.asarray(plan.face_active)
-    cell_active = np.asarray(plan.cell_active)
-    vertex_active = np.asarray(plan.vertex_active)
-    loops = np.asarray(plan.face_vertex_indices, dtype=np.int64)
-    owners, owner_signs = _tissue_face_owners(
-        np.asarray(plan.cell_face_indices, dtype=np.int64),
-        np.asarray(plan.cell_face_orientations, dtype=np.int64),
-        loops.shape[0],
-    )
-    cell_ids = np.asarray(plan.cell_ids, dtype=np.int64)
-    active_cells = np.flatnonzero(cell_active)
-    region_ids = tuple(f"{prefix}{int(cell_ids[cell])}" for cell in active_cells) + (
-        canonical_identifier(ambient_id, "ambient_id"),
-    )
-    region_of_cell = np.full((cell_active.size,), -1, dtype=np.int64)
-    region_of_cell[active_cells] = np.arange(active_cells.size)
-    ambient = active_cells.size
-    active_vertices = np.flatnonzero(vertex_active)
-    compact = np.full((vertex_active.size,), -1, dtype=np.int64)
-    compact[active_vertices] = np.arange(active_vertices.size)
-    width = loops.shape[1]
-    triangles, labels, face_ids = [], [], []
-    tissue_face_ids = np.asarray(plan.face_ids, dtype=np.int64)
-    for face in np.flatnonzero(face_active):
-        loop = loops[face][loops[face] >= 0]
-        first_sign = owner_signs[face, 0]
-        second_owner = owners[face, 1]
-        # The stored loop is outward for the owner with orientation +1, which
-        # is therefore the left label; a lone inward owner reverses the loop.
-        if second_owner >= 0:
-            left_cell = owners[face, 0] if first_sign > 0 else second_owner
-            right_region = region_of_cell[
-                second_owner if first_sign > 0 else owners[face, 0]
-            ]
-        else:
-            left_cell = owners[face, 0]
-            right_region = ambient
-            if first_sign < 0:
-                loop = loop[::-1]
-        fan = np.stack((np.full(loop.size - 2, loop[0]), loop[1:-1], loop[2:]), axis=1)
-        triangles.append(compact[fan])
-        labels.append(
-            np.broadcast_to((region_of_cell[left_cell], right_region), (loop.size - 2, 2))
-        )
-        face_ids.append(tissue_face_ids[face] * (width - 2) + np.arange(loop.size - 2))
-    return MultiRegionSurfaceSeed(
-        coordinates[active_vertices],
-        np.concatenate(triangles),
-        np.concatenate(labels),
-        region_ids,
-        ("finite",) * active_cells.size + ("boundary",),
-        source="vertex-tissue",
-        vertex_global_ids=np.asarray(plan.vertex_ids, dtype=np.int64)[active_vertices],
-        face_global_ids=np.concatenate(face_ids),
-    )
+    # This optional source binding composes its geometry owner; resolve that upper-layer cycle only for the request.
+    import phydrax.applications.cellular_mechanics as cellular_mechanics_owner
+
+    match plan:
+        case cellular_mechanics_owner.VertexTissuePlan():
+            if plan.dimension != 3:
+                raise ValueError(
+                    f"seed_from_vertex_tissue.plan must describe a 3D polyhedral vertex tissue; got dimension {plan.dimension}"
+                )
+            prefix = canonical_identifier(region_prefix, "region_prefix")
+            coordinates = np.asarray(positions, dtype=np.float64)
+            if coordinates.shape != (plan.vertex_capacity, 3):
+                raise ValueError(
+                    f"seed_from_vertex_tissue.positions must have shape ({plan.vertex_capacity}, 3); got {coordinates.shape}"
+                )
+            face_active = np.asarray(plan.face_active)
+            cell_active = np.asarray(plan.cell_active)
+            vertex_active = np.asarray(plan.vertex_active)
+            loops = np.asarray(plan.face_vertex_indices, dtype=np.int64)
+            owners, owner_signs = _tissue_face_owners(
+                np.asarray(plan.cell_face_indices, dtype=np.int64),
+                np.asarray(plan.cell_face_orientations, dtype=np.int64),
+                loops.shape[0],
+            )
+            cell_ids = np.asarray(plan.cell_ids, dtype=np.int64)
+            active_cells = np.flatnonzero(cell_active)
+            region_ids = tuple(
+                f"{prefix}{int(cell_ids[cell])}" for cell in active_cells
+            ) + (canonical_identifier(ambient_id, "ambient_id"),)
+            region_of_cell = np.full((cell_active.size,), -1, dtype=np.int64)
+            region_of_cell[active_cells] = np.arange(active_cells.size)
+            ambient = active_cells.size
+            active_vertices = np.flatnonzero(vertex_active)
+            compact = np.full((vertex_active.size,), -1, dtype=np.int64)
+            compact[active_vertices] = np.arange(active_vertices.size)
+            width = loops.shape[1]
+            triangles, labels, face_ids = [], [], []
+            tissue_face_ids = np.asarray(plan.face_ids, dtype=np.int64)
+            for face in np.flatnonzero(face_active):
+                loop = loops[face][loops[face] >= 0]
+                first_sign = owner_signs[face, 0]
+                second_owner = owners[face, 1]
+                # The stored loop is outward for the owner with orientation +1, which
+                # is therefore the left label; a lone inward owner reverses the loop.
+                if second_owner >= 0:
+                    left_cell = owners[face, 0] if first_sign > 0 else second_owner
+                    right_region = region_of_cell[
+                        second_owner if first_sign > 0 else owners[face, 0]
+                    ]
+                else:
+                    left_cell = owners[face, 0]
+                    right_region = ambient
+                    if first_sign < 0:
+                        loop = loop[::-1]
+                fan = np.stack(
+                    (np.full(loop.size - 2, loop[0]), loop[1:-1], loop[2:]), axis=1
+                )
+                triangles.append(compact[fan])
+                labels.append(
+                    np.broadcast_to(
+                        (region_of_cell[left_cell], right_region), (loop.size - 2, 2)
+                    )
+                )
+                face_ids.append(
+                    tissue_face_ids[face] * (width - 2) + np.arange(loop.size - 2)
+                )
+            return MultiRegionSurfaceSeed(
+                coordinates[active_vertices],
+                np.concatenate(triangles),
+                np.concatenate(labels),
+                region_ids,
+                ("finite",) * active_cells.size + ("boundary",),
+                source="vertex-tissue",
+                vertex_global_ids=np.asarray(plan.vertex_ids, dtype=np.int64)[
+                    active_vertices
+                ],
+                face_global_ids=np.concatenate(face_ids),
+            )
+        case _:
+            raise TypeError(
+                f"seed_from_vertex_tissue.plan must be a VertexTissuePlan; got {type(plan).__name__}"
+            )
 
 
 __all__ = [

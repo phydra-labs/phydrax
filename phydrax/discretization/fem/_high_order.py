@@ -17,6 +17,11 @@ from jax import Array
 from jax.typing import ArrayLike
 
 import phydrax.ein as ein
+from phydrax.discretization.fem._reference_types import (
+    AbstractFiniteElementTabulationSource,
+    FiniteElementSpec,
+    FiniteElementTabulator,
+)
 
 from ..._dtype_names import inexact_result_type
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -29,7 +34,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...exterior import FormType, FormValueSpec
 from ...typing import checked
-from ._reference import FiniteElementSpec
+from .. import _reference_cell as reference_cell_owner
 
 
 NodeSet = Literal["equispaced", "gauss-lobatto"]
@@ -43,24 +48,32 @@ def _normalize_orders(
     dimensions = {"interval": 1, "quadrilateral": 2, "hexahedron": 3}
     if cell not in dimensions:
         raise ValueError(
-            "Tensor nodal families require interval, quadrilateral, or hexahedron."
+            "ReferenceNodalFamily.cell_kind must be interval, quadrilateral, or hexahedron; got an unsupported cell"
         )
-    if isinstance(order, bool):
-        raise TypeError("Tensor polynomial orders must be integers.")
-    if isinstance(order, Integral):
-        orders = (int(order),) * dimensions[cell]
-    elif isinstance(order, tuple):
-        if len(order) != dimensions[cell] or any(
-            isinstance(value, bool) or not isinstance(value, Integral) for value in order
-        ):
-            raise ValueError(
-                "Anisotropic polynomial orders must match the cell dimension."
+    match order:
+        case bool():
+            raise TypeError(
+                "ReferenceNodalFamily.order must contain integers; got a boolean order"
             )
-        orders = tuple(order)
-    else:
-        raise TypeError("Tensor polynomial order must be an integer or integer tuple.")
+        case Integral():
+            orders = (int(order),) * dimensions[cell]
+        case tuple():
+            if len(order) != dimensions[cell] or any(
+                isinstance(value, bool) or not isinstance(value, Integral)
+                for value in order
+            ):
+                raise ValueError(
+                    "ReferenceNodalFamily.order must contain one integer per cell dimension; got incompatible orders"
+                )
+            orders = tuple(order)
+        case _:
+            raise TypeError(
+                "ReferenceNodalFamily.order must be an integer or integer tuple; got an unsupported object"
+            )
     if any(value < 0 for value in orders):
-        raise ValueError("Tensor polynomial orders must be nonnegative.")
+        raise ValueError(
+            "ReferenceNodalFamily.order must be nonnegative; got a negative order"
+        )
     return cell, orders
 
 
@@ -68,24 +81,28 @@ def _axis_data(
     order: int, node_set: NodeSet, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     count = order + 1
-    if node_set == "equispaced":
-        nodes = np.linspace(0.0, 1.0, count)
-        barycentric = np.asarray(
-            [(-1.0) ** index * comb(order, index) for index in range(count)],
-            dtype=np.float64,
-        )
-        barycentric /= np.max(np.abs(barycentric))
-        return nodes, barycentric, None
-    if node_set == "gauss-lobatto":
-        rule = legendre_rule_data(count, "lobatto")
-        nodes = 0.5 * (np.asarray(rule.nodes, dtype=np.float64) + 1.0)
-        quadrature = 0.5 * np.asarray(rule.weights, dtype=np.float64)
-        barycentric = (-1.0) ** np.arange(count) * np.sqrt(
-            np.asarray(rule.weights, dtype=np.float64)
-        )
-        barycentric /= np.max(np.abs(barycentric))
-        return nodes, barycentric, quadrature
-    raise ValueError("Unknown nodal point set.")
+    match node_set:
+        case "equispaced":
+            nodes = np.linspace(0.0, 1.0, count)
+            barycentric = np.asarray(
+                [(-1.0) ** index * comb(order, index) for index in range(count)],
+                dtype=np.float64,
+            )
+            barycentric /= np.max(np.abs(barycentric))
+            return nodes, barycentric, None
+        case "gauss-lobatto":
+            rule = legendre_rule_data(count, "lobatto")
+            nodes = 0.5 * (np.asarray(rule.nodes, dtype=np.float64) + 1.0)
+            quadrature = 0.5 * np.asarray(rule.weights, dtype=np.float64)
+            barycentric = (-1.0) ** np.arange(count) * np.sqrt(
+                np.asarray(rule.weights, dtype=np.float64)
+            )
+            barycentric /= np.max(np.abs(barycentric))
+            return nodes, barycentric, quadrature
+        case _:
+            raise ValueError(
+                "ReferenceNodalFamily.node_set must select equispaced or gauss-lobatto nodes; got an unsupported point set"
+            )
 
 
 def _default_barycentric_weights(nodes: Array, /) -> Array:
@@ -108,7 +125,9 @@ def lagrange_1d_tabulation(
     nodes_ = jnp.asarray(nodes)
     points_ = jnp.asarray(points).reshape((-1,))
     if nodes_.ndim != 1 or nodes_.shape[0] == 0:
-        raise ValueError("Lagrange nodes must be a nonempty vector.")
+        raise ValueError(
+            "lagrange_1d_tabulation.nodes must be a nonempty vector; got incompatible shape"
+        )
     dtype = inexact_result_type(nodes_, points_)
     nodes_ = nodes_.astype(dtype)
     points_ = points_.astype(dtype)
@@ -118,7 +137,9 @@ def lagrange_1d_tabulation(
         else jnp.asarray(barycentric_weights, dtype=dtype)
     )
     if weights.shape != nodes_.shape:
-        raise ValueError("Barycentric weights must match the Lagrange nodes.")
+        raise ValueError(
+            "lagrange_1d_tabulation.barycentric_weights must match the nodes; got incompatible shape"
+        )
     values = jax.vmap(barycentric_basis, in_axes=(0, None, None))(
         points_, nodes_, weights
     )
@@ -147,7 +168,9 @@ def _dense_tensor_tabulation(
             ein.contract("qi,qj,qk->qijk", basis[0], basis[1], gradients[2]),
         )
     else:
-        raise ValueError("Tensor tabulation requires one, two, or three axes.")
+        raise ValueError(
+            "tensor_tabulation.basis must contain one, two, or three axes; got an unsupported axis count"
+        )
     point_count = values.shape[0]
     return values.reshape((point_count, -1)), jnp.stack(
         tuple(component.reshape((point_count, -1)) for component in components),
@@ -228,7 +251,7 @@ def _interval_entity_dofs(
 
 
 @final
-class ReferenceNodalFamily(StrictModule, NonTrainableState):
+class ReferenceNodalFamily(AbstractFiniteElementTabulationSource):
     """An anisotropic tensor-product nodal family on interval, quad, or hex."""
 
     cell_kind: str = eqx.field(static=True)
@@ -291,7 +314,7 @@ class ReferenceNodalFamily(StrictModule, NonTrainableState):
         points_ = jnp.asarray(points)
         if points_.ndim != 2 or points_.shape[1] != self.dimension:
             raise ValueError(
-                "Tensor reference points must have shape (count, cell_dimension)."
+                "ReferenceNodalFamily.points must have shape (count, cell_dimension); got incompatible shape"
             )
         factors = tuple(
             lagrange_1d_tabulation(
@@ -336,7 +359,7 @@ class ReferenceNodalFamily(StrictModule, NonTrainableState):
             ),
             continuity="conforming",
             representation="point_value",
-            tabulator=self.tabulate,
+            tabulator=FiniteElementTabulator(self),
             tabulator_id=self.family_id,
         )
 
@@ -359,10 +382,14 @@ class TensorProductTabulation(StrictModule, NonTrainableState):
             not isinstance(points_by_axis, tuple)
             or len(points_by_axis) != family.dimension
         ):
-            raise ValueError("Tensor points must be one tuple entry per cell axis.")
+            raise ValueError(
+                "TensorProductTabulation.points_by_axis must contain one tuple entry per cell axis; got incompatible entries"
+            )
         point_arrays = tuple(jnp.asarray(points) for points in points_by_axis)
         if any(points.ndim != 1 or points.shape[0] == 0 for points in point_arrays):
-            raise ValueError("Tensor point factors must be nonempty vectors.")
+            raise ValueError(
+                "TensorProductTabulation.points_by_axis must contain nonempty vectors; got incompatible shapes"
+            )
         factors = tuple(
             lagrange_1d_tabulation(
                 nodes,
@@ -413,7 +440,9 @@ def _factorized_forward(factors: tuple[Array, ...], values: Array, /) -> Array:
             factors[1],
             factors[2],
         )
-    raise ValueError("Factorized actions require one, two, or three tensor axes.")
+    raise ValueError(
+        "factorized_action.factors must contain one, two, or three tensor axes; got an unsupported axis count"
+    )
 
 
 def _factorized_transpose(factors: tuple[Array, ...], values: Array, /) -> Array:
@@ -429,7 +458,9 @@ def _factorized_transpose(factors: tuple[Array, ...], values: Array, /) -> Array
             factors[1],
             factors[2],
         )
-    raise ValueError("Factorized actions require one, two, or three tensor axes.")
+    raise ValueError(
+        "factorized_action.factors must contain one, two, or three tensor axes; got an unsupported axis count"
+    )
 
 
 class SumFactorizationPlan(StrictModule, NonTrainableState):
@@ -448,7 +479,9 @@ class SumFactorizationPlan(StrictModule, NonTrainableState):
     def interpolate(self, coefficients: ArrayLike, /) -> Array:
         values = jnp.asarray(coefficients)
         if values.shape[-self.tabulation.dimension :] != self.tabulation.nodal_shape:
-            raise ValueError("Tensor coefficients have incompatible nodal axes.")
+            raise ValueError(
+                "SumFactorizationPlan.coefficients must match the nodal axes; got incompatible shape"
+            )
         return _factorized_forward(self.tabulation.basis_factors, values)
 
     def interpolate_transpose(self, values: ArrayLike, /) -> Array:
@@ -457,13 +490,17 @@ class SumFactorizationPlan(StrictModule, NonTrainableState):
             quadrature.shape[-self.tabulation.dimension :]
             != self.tabulation.evaluation_shape
         ):
-            raise ValueError("Tensor quadrature values have incompatible axes.")
+            raise ValueError(
+                "SumFactorizationPlan.values must match the evaluation axes; got incompatible shape"
+            )
         return _factorized_transpose(self.tabulation.basis_factors, quadrature)
 
     def gradient(self, coefficients: ArrayLike, /) -> Array:
         values = jnp.asarray(coefficients)
         if values.shape[-self.tabulation.dimension :] != self.tabulation.nodal_shape:
-            raise ValueError("Tensor coefficients have incompatible nodal axes.")
+            raise ValueError(
+                "SumFactorizationPlan.coefficients must match the nodal axes; got incompatible shape"
+            )
         components = []
         for axis in range(self.tabulation.dimension):
             factors = list(self.tabulation.basis_factors)
@@ -475,7 +512,9 @@ class SumFactorizationPlan(StrictModule, NonTrainableState):
         gradient = jnp.asarray(values)
         expected = self.tabulation.evaluation_shape + (self.tabulation.dimension,)
         if gradient.shape[-len(expected) :] != expected:
-            raise ValueError("Tensor quadrature gradients have incompatible axes.")
+            raise ValueError(
+                "SumFactorizationPlan.gradients must match the evaluation and gradient axes; got incompatible shape"
+            )
         terms = []
         for axis in range(self.tabulation.dimension):
             factors = list(self.tabulation.basis_factors)
@@ -491,7 +530,9 @@ class QuadratureChunkPolicy(StrictModule, NonTrainableState):
     def __init__(self, chunk_size: int, /) -> None:
         size = int(chunk_size)
         if size <= 0:
-            raise ValueError("Quadrature chunk size must be positive.")
+            raise ValueError(
+                "QuadratureChunkPolicy.chunk_size must be positive; got a nonpositive size"
+            )
         self.chunk_size = size
         self.policy_id = canonical_fingerprint(
             {"kind": "quadrature-chunk-policy", "chunk_size": size}
@@ -500,7 +541,9 @@ class QuadratureChunkPolicy(StrictModule, NonTrainableState):
     def chunks(self, count: int, /) -> tuple[tuple[int, int], ...]:
         count_ = int(count)
         if count_ < 0:
-            raise ValueError("Quadrature count must be non-negative.")
+            raise ValueError(
+                "QuadratureChunkPolicy.count must be nonnegative; got a negative count"
+            )
         return tuple(
             (start, min(start + self.chunk_size, count_))
             for start in range(0, count_, self.chunk_size)
@@ -513,7 +556,9 @@ def local_diagonal(
     matrices = jnp.asarray(local_matrices)
     dofs = jnp.asarray(local_dofs, dtype=jnp.int32)
     if matrices.shape[:2] != dofs.shape or matrices.shape[-1] != dofs.shape[-1]:
-        raise ValueError("Local matrices/DOF routes have incompatible shapes.")
+        raise ValueError(
+            "local_diagonal.local_matrices must match the DOF-route axes; got incompatible shapes"
+        )
     diagonal = jnp.diagonal(matrices, axis1=-2, axis2=-1)
     return jnp.zeros((int(size),), dtype=matrices.dtype).at[dofs].add(diagonal)
 
@@ -567,7 +612,7 @@ _EQUILATERAL_VERTICES = {
 }
 
 
-def _simplex_node_tuples(order: int, dimension: int, /) -> tuple[tuple[int, ...], ...]:
+def simplex_node_tuples(order: int, dimension: int, /) -> tuple[tuple[int, ...], ...]:
     def generate(maximum: int, length: int) -> Iterator[tuple[int, ...]]:
         if length == 0:
             yield ()
@@ -603,7 +648,9 @@ def _equilateral_to_unit(equilateral: np.ndarray, /) -> np.ndarray:
         )
         offset = np.asarray((-0.5, -0.5, -0.5))
     else:
-        raise ValueError("Warp-and-blend nodes require dimension two or three.")
+        raise ValueError(
+            "warp_and_blend.dimension must be two or three; got an unsupported dimension"
+        )
     return matrix @ equilateral + offset[:, None]
 
 
@@ -714,16 +761,18 @@ def _warp_and_blend_nodes(
         return _warp_and_blend_nodes_2d(order, node_tuples)
     if dimension == 3:
         return _warp_and_blend_nodes_3d(order, node_tuples)
-    raise ValueError("Warp-and-blend nodes require dimension two or three.")
+    raise ValueError(
+        "warp_and_blend.dimension must be two or three; got an unsupported dimension"
+    )
 
 
 @final
-class SimplexNodalFamily(StrictModule, NonTrainableState):
+class SimplexNodalFamily(AbstractFiniteElementTabulationSource):
     """Warp-and-blend simplex nodes with one common triangular trace convention.
 
     Tetrahedral boundaries use the triangle family's warp parameter; interior
     blending retains the three-dimensional parameter. Modal tabulation remains
-    orthonormal on the owning reference simplex.
+    orthonormal on the reference simplex.
     """
 
     cell_kind: str = eqx.field(static=True)
@@ -740,9 +789,9 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
         dimension = {"triangle": 2, "tetrahedron": 3}.get(cell)
         if dimension is None or p < 0:
             raise ValueError(
-                "Simplex nodal families require triangle/tetrahedron and p>=0."
+                "SimplexNodalFamily.cell_kind_order must select triangle or tetrahedron with nonnegative order; got an unsupported cell or negative order"
             )
-        node_tuples = _simplex_node_tuples(p, dimension)
+        node_tuples = simplex_node_tuples(p, dimension)
         space_dimension = comb(p + dimension, dimension)
         if p == 0:
             nodes = np.full((1, dimension), 1.0 / (dimension + 1.0))
@@ -796,7 +845,9 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
         points_ = jnp.asarray(points)
         dimension = {"triangle": 2, "tetrahedron": 3}[self.cell_kind]
         if points_.ndim != 2 or points_.shape[-1] != dimension:
-            raise ValueError("Simplex tabulation points have incompatible shape.")
+            raise ValueError(
+                "SimplexNodalFamily.points must match the reference dimension; got incompatible shape"
+            )
         if not jnp.issubdtype(points_.dtype, jnp.inexact):
             points_ = points_.astype("float64")
         barycentric = jnp.concatenate(
@@ -848,9 +899,8 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
         return values, gradients
 
     def finite_element(self) -> FiniteElementSpec:
-        from .._reference_cell import reference_cell_topology
 
-        topology = reference_cell_topology(self.cell_kind)
+        topology = reference_cell_owner.reference_cell_topology(self.cell_kind)
         entity_dofs = [[[] for _ in entities] for entities in topology.entities]
         entity_sets = [
             tuple(frozenset(entity) for entity in entities)
@@ -872,7 +922,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
                 ),
                 continuity="discontinuous",
                 representation="point_value",
-                tabulator=self.tabulate,
+                tabulator=FiniteElementTabulator(self),
                 tabulator_id=self.family_id,
             )
         for dof, alpha in enumerate(self.multiindices):
@@ -904,7 +954,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
             ),
             continuity="conforming",
             representation="point_value",
-            tabulator=self.tabulate,
+            tabulator=FiniteElementTabulator(self),
             tabulator_id=self.family_id,
         )
 

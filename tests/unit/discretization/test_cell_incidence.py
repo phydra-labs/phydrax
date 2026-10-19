@@ -75,19 +75,27 @@ def test_cell_incidence_scenario_1() -> None:
     boundary = topology.incidences[1].scipy_boundary() @ np.ones(4)
     np.testing.assert_array_equal(boundary != 0.0, counts == 1)
 
-    with pytest.raises(ValueError, match="edge-manifold"):
+    with pytest.raises(ValueError, match=r"polygonal_connectivity\.cells.*edge-manifold"):
         polygonal_connectivity(np.asarray([[0, 1, 2], [1, 0, 3], [0, 1, 4]]), None, 5)
-    with pytest.raises(ValueError, match="opposite orientation"):
+    with pytest.raises(
+        ValueError, match=r"polygonal_connectivity\.cells.*opposite orientation"
+    ):
         polygonal_connectivity(np.asarray([[0, 1, 2]]), np.asarray([[2, 3, 4, 1]]), 5)
-    with pytest.raises(ValueError, match="duplicate cells"):
+    with pytest.raises(
+        ValueError, match=r"polygonal_connectivity\.cells.*duplicate cells"
+    ):
         polygonal_connectivity(
             np.asarray([[0, 1, 2]]), None, 3, polygons=(np.asarray([[2, 0, 1]]),)
         )
-    with pytest.raises(ValueError, match="face-manifold"):
+    with pytest.raises(
+        ValueError, match=r"tetrahedral_connectivity\.tetrahedra.*face-manifold"
+    ):
         tetrahedral_connectivity(
             np.asarray([[0, 1, 2, 3], [0, 2, 1, 4], [0, 1, 2, 5]]), 6
         )
-    with pytest.raises(ValueError, match="opposite orientation"):
+    with pytest.raises(
+        ValueError, match=r"tetrahedral_connectivity\.tetrahedra.*opposite orientation"
+    ):
         tetrahedral_connectivity(np.asarray([[0, 1, 2, 3], [0, 1, 2, 4]]), 5)
     lower = np.arange(8)
     upper = np.arange(8) + 4
@@ -159,7 +167,6 @@ def test_cell_incidence_scenario_2() -> None:
     first = ((0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3))
     # The shared face (1, 2, 3) appears reversed and rotated as (3, 2, 1).
     second = ((3, 2, 1), (3, 1, 4), (2, 3, 4), (1, 2, 4))
-    # ty: ignore[invalid-argument-type]
     connectivity = polyhedral_connectivity((first, second), 5)
     counts = np.asarray(connectivity.face_cell_counts)
     assert np.count_nonzero(counts == 2) == 1
@@ -175,20 +182,20 @@ def test_cell_incidence_scenario_2() -> None:
     np.testing.assert_array_equal(boundary != 0.0, counts == 1)
 
     inward = tuple(face[::-1] for face in second)
-    with pytest.raises(ValueError, match="Shared polyhedral faces must have opposite"):
-        # ty: ignore[invalid-argument-type]
+    with pytest.raises(
+        ValueError, match=r"polyhedral_connectivity\.cells.*opposite orientation"
+    ):
         polyhedral_connectivity((first, inward), 5)
-    with pytest.raises(ValueError, match="closed oriented two-manifold"):
-        # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match=r"polyhedral_connectivity\.cells\.shell"):
         polyhedral_connectivity((first, ((1, 2, 3),) + second[1:]), 5)
 
     three_faces = first[:3]
     non_simple = first[:3] + ((2, 0, 3, 0),)
-    with pytest.raises(ValueError, match="at least four faces"):
-        # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match=r"polyhedral_connectivity\.cells\.face_count"):
         polyhedral_connectivity((three_faces, non_simple), 5)
-    with pytest.raises(ValueError, match="must be simple"):
-        # ty: ignore[invalid-argument-type]
+    with pytest.raises(
+        ValueError, match=r"polyhedral_connectivity\.cells\.face_simplicity"
+    ):
         polyhedral_connectivity((non_simple, three_faces), 5)
     points = np.asarray(
         [

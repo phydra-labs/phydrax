@@ -2,16 +2,27 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import os
-import subprocess
-import sys
-import textwrap
 from collections.abc import Callable
 
 import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
+from tests._support.import_isolation import run_without_imports
+
+
+# Empirical allowances retained from this module's pre-remediation sphere,
+# torus, capless-sphere, large-offset, and terrain fixtures. Analytic volume,
+# source-sample distance, and planar-prism volume supply independent oracles;
+# sample counts, grid resolution, and noise amplitudes are specified per case.
+_VOLUME_RTOL_9 = 1e-9
+_VOLUME_RTOL_10 = 1e-10
+_COORDINATE_ATOL = 1e-12
+_RECONSTRUCTION_RTOL_3_PERCENT = 0.03
+_RECONSTRUCTION_RTOL_4_PERCENT = 0.04
+_INCOMPLETE_SAMPLING_RTOL = 0.2
+_SAMPLE_DISTANCE_ATOL = 0.08
 
 
 # Analytic references: the unit sphere and the torus with major radius 1 and
@@ -100,11 +111,13 @@ def test_noisy_nonuniform_sphere_reconstructs_closed_genus_zero_surface() -> Non
         ]
     )
     assert deviation.surface_to_sample_max == pytest.approx(
-        float(np.max(nearest_sample)), rel=1e-9
+        float(np.max(nearest_sample)), rel=_VOLUME_RTOL_9
     )
     assert deviation.surface_to_sample_max <= 1.5 * spacing
-    domain = phx.domain.GeometryDomain(source.compile())
-    assert float(domain.volume) == pytest.approx(4.0 * np.pi / 3.0, rel=0.03)
+    domain = phx.domain.GeometryDomain(source.compile(coordinate_unit=METER))
+    assert float(domain.volume) == pytest.approx(
+        4.0 * np.pi / 3.0, rel=_RECONSTRUCTION_RTOL_3_PERCENT
+    )
     assert report.outlier_evidence is None
     assert report.thin_feature_evidence is not None
     assert report.thin_feature_evidence.thin_samples == 0
@@ -146,7 +159,7 @@ def test_supplied_orientation_keeps_inconsistent_normals_and_reports_conflicts()
         points, normals=supplied, orientation="supplied"
     )
 
-    np.testing.assert_allclose(kept.normals, supplied, atol=1e-12)
+    np.testing.assert_allclose(kept.normals, supplied, atol=_COORDINATE_ATOL)
     assert kept.evidence.reoriented_count == 0
     assert kept.evidence.conflicting_neighbor_edges > 0
 
@@ -181,9 +194,11 @@ def test_disjoint_sample_components_reconstruct_separate_closed_surfaces() -> No
     assert report.normal_evidence.graph_components == 2
     assert report.connected_components == 2
     assert report.euler_characteristic == 4
-    domain = phx.domain.GeometryDomain(source.compile())
+    domain = phx.domain.GeometryDomain(source.compile(coordinate_unit=METER))
     expected = 4.0 * np.pi / 3.0 * (1.0 + 0.6**3)
-    assert float(domain.volume) == pytest.approx(expected, rel=0.04)
+    assert float(domain.volume) == pytest.approx(
+        expected, rel=_RECONSTRUCTION_RTOL_4_PERCENT
+    )
 
 
 @pytest.mark.parametrize("discretization", ["octree", "regular"])
@@ -258,8 +273,10 @@ def test_octree_level_set_is_closed_across_refinement_levels() -> None:
     assert poisson is not None and poisson.hanging_nodes > 0
     assert report.watertight and report.connected_components == 1
     assert report.euler_characteristic == 2
-    domain = phx.domain.GeometryDomain(source.compile())
-    assert float(domain.volume) == pytest.approx(4.0 * np.pi / 3.0, rel=0.03)
+    domain = phx.domain.GeometryDomain(source.compile(coordinate_unit=METER))
+    assert float(domain.volume) == pytest.approx(
+        4.0 * np.pi / 3.0, rel=_RECONSTRUCTION_RTOL_3_PERCENT
+    )
 
 
 def test_statistical_outlier_removal_drops_exactly_the_injected_outliers() -> None:
@@ -283,8 +300,10 @@ def test_statistical_outlier_removal_drops_exactly_the_injected_outliers() -> No
     )
     assert report.input_points == 3060 and report.retained_points == 3000
     assert report.watertight and report.euler_characteristic == 2
-    domain = phx.domain.GeometryDomain(source.compile())
-    assert float(domain.volume) == pytest.approx(4.0 * np.pi / 3.0, rel=0.03)
+    domain = phx.domain.GeometryDomain(source.compile(coordinate_unit=METER))
+    assert float(domain.volume) == pytest.approx(
+        4.0 * np.pi / 3.0, rel=_RECONSTRUCTION_RTOL_3_PERCENT
+    )
 
 
 def _capless_sphere() -> tuple[np.ndarray, float]:
@@ -312,14 +331,18 @@ def test_incompletely_sampled_region_is_reported_on_the_closed_surface() -> None
     assert coverage.unsupported_patches == 1
     angle = rim - 2.0 * np.arcsin(0.5 * coverage.coverage_distance)
     expected = 2.0 * np.pi * (1.0 - np.cos(angle))
-    assert coverage.unsupported_area == pytest.approx(expected, rel=0.2)
+    assert coverage.unsupported_area == pytest.approx(
+        expected, rel=_INCOMPLETE_SAMPLING_RTOL
+    )
     assert any("farther than" in warning for warning in report.warnings)
 
 
 def test_incompletely_sampled_region_is_refused_under_refuse_policy() -> None:
     points, _ = _capless_sphere()
 
-    with pytest.raises(phx.geometry.ReconstructionFailure, match="Incomplete") as error:
+    with pytest.raises(
+        phx.geometry.ReconstructionFailure, match=r"SurfaceReconstruction\.coverage"
+    ) as error:
         phx.geometry.reconstruct_surface_region(
             points,
             robustness=phx.geometry.ReconstructionRobustness(
@@ -348,7 +371,9 @@ def test_density_trimming_opens_the_unsampled_cap() -> None:
     assert np.max(vertices[:, 2]) <= np.cos(angle) + 0.5 * coverage.coverage_distance
     assert np.max(np.abs(np.linalg.norm(vertices, axis=1) - 1.0)) <= 0.05
     expected = 4.0 * np.pi - 2.0 * np.pi * (1.0 - np.cos(angle))
-    assert float(trimmed.surface.measure) == pytest.approx(expected, rel=0.03)
+    assert float(trimmed.surface.measure) == pytest.approx(
+        expected, rel=_RECONSTRUCTION_RTOL_3_PERCENT
+    )
 
 
 def test_unresolvable_component_is_refused_with_fit_evidence() -> None:
@@ -357,7 +382,9 @@ def test_unresolvable_component_is_refused_with_fit_evidence() -> None:
     unresolved = 0.02 * _sphere_samples(rng, 200) + np.asarray((3.0, 0.0, 0.0))
     points = np.concatenate((resolved, unresolved), axis=0)
 
-    with pytest.raises(phx.geometry.ReconstructionFailure, match="not fit") as error:
+    with pytest.raises(
+        phx.geometry.ReconstructionFailure, match=r"SurfaceReconstruction\.component_fit"
+    ) as error:
         phx.geometry.reconstruct_surface_region(points)
 
     fit = error.value.report.component_evidence
@@ -386,7 +413,7 @@ def test_thin_plate_is_reported_with_its_sheet_separation() -> None:
     assert thin is not None and poisson is not None
     assert thin.thin_feature_distance == pytest.approx(2.0 * poisson.grid_spacing)
     assert thickness < thin.thin_feature_distance
-    assert thin.minimum_separation == pytest.approx(thickness, rel=1e-9)
+    assert thin.minimum_separation == pytest.approx(thickness, rel=_VOLUME_RTOL_9)
     assert thin.thin_samples > 5400
     assert any("stacked sheet" in warning for warning in report.warnings)
 
@@ -445,10 +472,14 @@ def _zero_supplied_normals(points: np.ndarray) -> object:
 @pytest.mark.parametrize(
     ("request_normals", "message"),
     [
-        pytest.param(_without_normals_supplied, "requires normals", id="no-normals"),
+        pytest.param(
+            _without_normals_supplied, r"estimate_point_normals\.normals", id="no-normals"
+        ),
         pytest.param(_unknown_orientation, "orientation", id="bad-selector"),
         pytest.param(_empty_neighborhood, "positive", id="empty-neighborhood"),
-        pytest.param(_zero_supplied_normals, "nonzero", id="zero-supplied-normals"),
+        pytest.param(
+            _zero_supplied_normals, r"PointNormals\.normals", id="zero-supplied-normals"
+        ),
     ],
 )
 def test_normal_estimation_refuses_invalid_requests(
@@ -474,8 +505,8 @@ def test_planar_reconstruction_covers_alpha_filtered_concave_domain() -> None:
     report = source.report
     assert report.algorithm == "native_delaunay_2d_native_boundary"
     assert report.parameters == (("alpha", "0.2"), ("tolerance", "1e-05"))
-    domain = phx.domain.GeometryDomain(source.compile())
-    assert float(domain.volume) == pytest.approx(3.0, abs=0.08)
+    domain = phx.domain.GeometryDomain(source.compile(coordinate_unit=METER))
+    assert float(domain.volume) == pytest.approx(3.0, abs=_SAMPLE_DISTANCE_ATOL)
 
 
 def test_dem_reconstruction_extrudes_terrain_into_exact_prism_volume() -> None:
@@ -490,59 +521,14 @@ def test_dem_reconstruction_extrudes_terrain_into_exact_prism_volume() -> None:
     assert report.connected_components == 1
     assert report.euler_characteristic == 2
     assert report.deviation_evidence is None
-    domain = phx.domain.GeometryDomain(source.compile())
-    assert float(domain.volume) == pytest.approx(0.25 * 4.0 * 3.0, rel=1e-10)
+    domain = phx.domain.GeometryDomain(source.compile(coordinate_unit=METER))
+    assert float(domain.volume) == pytest.approx(0.25 * 4.0 * 3.0, rel=_VOLUME_RTOL_10)
 
 
 def test_native_reconstruction_loads_no_external_reconstruction_engine() -> None:
-    script = textwrap.dedent(
-        """
-        import importlib.abc
-        import sys
-
-        import numpy as np
-
-        import phydrax as phx
-
-        # Module import time is outside this contract (lazy facades defer it);
-        # resolve the owner first so only reconstruction calls are measured.
-        phx.geometry.reconstruct_surface_region
-
-        BLOCKED = ("pyvista", "vtk", "vtkmodules", "scipy.spatial")
-
-        def blocked(name):
-            return any(name == root or name.startswith(root + ".") for root in BLOCKED)
-
-        class Refuse(importlib.abc.MetaPathFinder):
-            def find_spec(self, name, path=None, target=None):
-                if blocked(name):
-                    raise ImportError(f"native reconstruction imported {name}")
-                return None
-
-        for name in [name for name in sys.modules if blocked(name)]:
-            del sys.modules[name]
-        sys.meta_path.insert(0, Refuse())
-
-        rng = np.random.default_rng(0)
-        sphere = rng.normal(size=(800, 3))
-        sphere /= np.linalg.norm(sphere, axis=1, keepdims=True)
-        surface = phx.geometry.reconstruct_surface_region(sphere)
-        planar = phx.geometry.reconstruct_planar_region(rng.uniform(size=(200, 2)))
-        grid = np.sin(np.linspace(0.0, 3.0, 12))[None, :] * np.ones((10, 1))
-        terrain = phx.geometry.reconstruct_dem_region(grid)
-        assert surface.report.euler_characteristic == 2
-        assert not [name for name in sys.modules if blocked(name)]
-        print("isolated")
-        """
+    run_without_imports(
+        "tests._support.reconstruction_scenarios",
+        "native_reconstruction",
+        ("pyvista", "vtk", "vtkmodules", "scipy.spatial"),
+        prepare="prepare_native_reconstruction",
     )
-    completed = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=dict(os.environ),
-        timeout=600,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip().endswith("isolated")

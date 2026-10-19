@@ -4,11 +4,11 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from typing import TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
@@ -21,6 +21,7 @@ from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation, RowRelation, SparseLinearMap, SparseRelation
 from ..typing import checked
 from ._core import nonempty_identifier, resolved_identifier
+from ._topology_rows import row_order
 from .spatial._dyadic import DyadicCellTopology
 
 
@@ -32,39 +33,7 @@ def _bool_array(name: str, value: ArrayLike, shape: tuple[int, ...], /) -> Array
     array = np.asarray(value, dtype=np.bool_)
     if array.shape != shape:
         raise ValueError(f"{name} must have shape {shape}; got {array.shape}.")
-    return jnp.asarray(array)
-
-
-def _row_order(rows: np.ndarray, /) -> np.ndarray:
-    """Return the stable lexicographic order of rank-2 integer rows.
-
-    Rows whose per-column value spans fit one mixed-radix int64 key sort in a
-    single stable pass; wider rows fall back to a column-wise lexicographic sort.
-    """
-
-    if rows.size == 0:
-        return np.arange(rows.shape[0], dtype=np.int64)
-    lows = np.min(rows, axis=0).astype(np.int64)
-    spans = np.max(rows, axis=0).astype(np.int64) - lows + 1
-    if math.prod(int(span) for span in spans) > np.iinfo(np.int64).max:
-        return np.lexsort(rows.T[::-1])
-    key = np.zeros((rows.shape[0],), dtype=np.int64)
-    for column, low, span in zip(rows.T, lows, spans, strict=True):
-        key *= span
-        key += column.astype(np.int64) - low
-    return np.argsort(key, kind="stable")
-
-
-def _row_run_starts(ordered: np.ndarray, /) -> np.ndarray:
-    starts = np.ones((ordered.shape[0],), dtype=np.bool_)
-    np.any(ordered[1:] != ordered[:-1], axis=1, out=starts[1:])
-    return starts
-
-
-def _has_duplicate_rows(rows: np.ndarray, /) -> bool:
-    """Return whether any two rows of a rank-2 integer array are equal."""
-
-    return not np.all(_row_run_starts(rows[_row_order(rows)]))
+    return jax.device_put(array)
 
 
 class EntitySubset(StrictModule, NonTrainableState):
@@ -87,7 +56,7 @@ class EntitySubset(StrictModule, NonTrainableState):
         if mask_.ndim != 1:
             raise ValueError("Entity subset masks must be rank-1.")
         self.name = name_
-        self.mask = jnp.asarray(mask_)
+        self.mask = jax.device_put(mask_)
         self.subset_id = resolved_identifier(
             "subset_id",
             subset_id,
@@ -162,8 +131,7 @@ class EntitySet(StrictModule, NonTrainableState):
         self.name = name_
         self.intrinsic_dimension = dimension
         self.count = count
-        self.entity_ids = jnp.asarray(identifiers, dtype=jnp.int64)
-        self.active_mask = jnp.asarray(active)
+        self.entity_ids, self.active_mask = jax.device_put((identifiers, active))
         self.subsets = subsets_
         self.entity_set_id = resolved_identifier(
             "entity_set_id",
@@ -224,8 +192,7 @@ class EntitySelection(StrictModule, NonTrainableState):
         if np.any(mask_ & ~active):
             raise ValueError("Entity selections cannot include inactive entities.")
         self.entity_set_id = entity_set_id
-        self.mask = jnp.asarray(mask_)
-        self.active_mask = jnp.asarray(active)
+        self.mask, self.active_mask = jax.device_put((mask_, active))
         self.selection_id = resolved_identifier(
             "selection_id",
             selection_id,
@@ -364,7 +331,7 @@ class OrientedIncidence(StrictModule, NonTrainableState):
             axis=1,
         )
         # Preserve attaching-face multiplicity, including repeated signed routes.
-        canonical_incidence = canonical_incidence[_row_order(canonical_incidence)]
+        canonical_incidence = canonical_incidence[row_order(canonical_incidence)]
         self.degree = degree_
         self.lower_entity_set_id = lower.entity_set_id
         self.upper_entity_set_id = upper.entity_set_id
@@ -380,6 +347,34 @@ class OrientedIncidence(StrictModule, NonTrainableState):
                 "upper": upper.entity_set_id,
                 "canonical_incidence": _array_digest(canonical_incidence),
             },
+        )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls,
+        value: OrientedIncidence,
+        /,
+        *,
+        lower: EntitySet,
+        upper: EntitySet,
+    ) -> OrientedIncidence:
+        """Revalidate stored signed routes against their retained entity bindings."""
+        if (
+            lower.entity_set_id != value.lower_entity_set_id
+            or upper.entity_set_id != value.upper_entity_set_id
+        ):
+            raise ValueError(
+                "OrientedIncidence.entity_bindings must match stored entity identities; "
+                f"got lower={lower.entity_set_id!r}, upper={upper.entity_set_id!r}."
+            )
+        return cls(
+            value.degree,
+            lower,
+            upper,
+            value.relation,
+            value.signs,
+            incidence_id=value.incidence_id,
         )
 
     def exterior_derivative(self, /) -> SparseLinearMap:

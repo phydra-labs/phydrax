@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 
@@ -26,6 +27,7 @@ from phydrax.execution import (
     HostMemorySample,
     MemoryEnvelope,
     MemoryMeasurement,
+    PhaseMemoryEvidence,
     PhaseMemorySampler,
     resolve_execution_plan,
     ResourceInventory,
@@ -43,7 +45,7 @@ _MIB = 1 << 20
 
 
 @requires_host_probe
-def test_host_sample_reports_resident_memory_within_kernel_and_host_bounds() -> None:
+def test_host_sample_preserves_labeled_resident_sources_and_host_bounds() -> None:
     sample = sample_host_memory()
 
     resident = sample.process_resident.value_bytes
@@ -51,12 +53,16 @@ def test_host_sample_reports_resident_memory_within_kernel_and_host_bounds() -> 
     total = sample.host_total.value_bytes
     available = sample.host_available.value_bytes
     assert resident is not None and resident > 0
-    assert peak is not None and total is not None and available is not None
-    # The kernel high-water mark bounds every instantaneous RSS reading.
-    assert resident <= peak + sample.process_peak_resident.resolution_bytes
+    assert peak is not None and peak > 0
+    assert total is not None and available is not None
+    assert sample.process_resident.method == (
+        "procfs_statm" if sys.platform.startswith("linux") else "mach_task_basic_info"
+    )
+    assert sample.process_peak_resident.method == "getrusage_max_rss"
+    assert sample.process_peak_resident.scope == "peak"
     assert resident < total
     assert 0 < available <= total
-    assert sample.process_peak_resident.is_upper_bound
+    assert not sample.process_peak_resident.is_upper_bound
     assert not sample.process_resident.is_upper_bound
     assert sample.timestamp_ns > 0
 
@@ -92,19 +98,92 @@ def test_phase_sampler_captures_a_deliberate_allocation() -> None:
 
     evidence = sampler.evidence
     increase = evidence.sampled_peak_increase_bytes
-    assert increase is not None and increase >= 0.9 * allocation_bytes
+    # Two sub-page array boundaries and two rounded RSS readings contribute at
+    # most four pages; retain the full committed allocation as the reference.
+    page_allowance = 4 * os.sysconf("SC_PAGE_SIZE")
+    assert increase is not None and increase >= allocation_bytes - page_allowance
     assert evidence.sample_count > 2
     sampled = evidence.sampled_peak_resident
     assert sampled.method == "interval_sampling"
     assert sampled.scope == "peak"
     assert not sampled.is_upper_bound
     bound = evidence.resident_peak_upper_bound
-    assert bound.is_upper_bound
-    assert bound.value_bytes is not None and sampled.value_bytes is not None
-    assert sampled.value_bytes <= bound.value_bytes + bound.resolution_bytes
+    assert not bound.available and not bound.is_upper_bound
+    assert bound.value_bytes is None and bound.resolution_bytes is None
+    assert bound.unavailable_reason is not None
+    assert evidence.observed_peak_resident.method == "observed_peak"
+    assert not evidence.observed_peak_resident.is_upper_bound
+    observed = evidence.observed_peak_resident.value_bytes
+    baseline = evidence.baseline.process_resident.value_bytes
+    assert observed is not None and baseline is not None
+    assert observed - baseline >= allocation_bytes - page_allowance
+    for sample in (evidence.baseline, evidence.final):
+        assert sample.process_peak_resident.method == "getrusage_max_rss"
+        assert sample.process_peak_resident.value_bytes is not None
     assert evidence.to_payload()["sampled_peak_resident"] == sampled.to_payload()
+    assert evidence.to_payload()["resident_peak_upper_bound"] == bound.to_payload()
+    assert evidence.to_payload()["observed_peak_resident"] == (
+        evidence.observed_peak_resident.to_payload()
+    )
     with pytest.raises(RuntimeError, match="single-use"):
         sampler.__enter__()
+
+
+def test_missing_resident_observations_remain_unavailable_not_zero() -> None:
+    resident = MemoryMeasurement.unavailable(
+        "procfs_statm", "baseline", "resident probe unavailable"
+    )
+    peak = MemoryMeasurement.unavailable(
+        "getrusage_max_rss", "peak", "peak probe unavailable"
+    )
+    host = HostMemorySample(
+        "unsupported",
+        0,
+        1,
+        resident,
+        peak,
+        MemoryMeasurement.unavailable(
+            "sysconf_physical_pages", "baseline", "total probe unavailable"
+        ),
+        MemoryMeasurement.unavailable(
+            "procfs_meminfo_available", "baseline", "available probe unavailable"
+        ),
+    )
+    evidence = PhaseMemoryEvidence(
+        "unavailable",
+        0.002,
+        0.01,
+        2,
+        0.002,
+        host,
+        host,
+        MemoryMeasurement.unavailable(
+            "interval_sampling", "peak", "resident probe unavailable"
+        ),
+    )
+    assert evidence.sampled_peak_increase_bytes is None
+    for measurement in (
+        evidence.observed_peak_resident,
+        evidence.resident_peak_upper_bound,
+        host.process_resident,
+        host.process_peak_resident,
+    ):
+        assert measurement.value_bytes is None
+        assert measurement.resolution_bytes is None
+        assert measurement.unavailable_reason is not None
+        assert not measurement.available and not measurement.is_upper_bound
+
+
+@pytest.mark.parametrize("reported_bytes", (1, 1 << 40))
+def test_raw_kernel_peak_cannot_certify_a_resident_upper_bound(
+    reported_bytes: int,
+) -> None:
+    measurement = MemoryMeasurement.measured(
+        "getrusage_max_rss", "peak", reported_bytes, 1024
+    )
+    assert measurement.value_bytes == reported_bytes
+    assert measurement.method == "getrusage_max_rss"
+    assert not measurement.is_upper_bound
 
 
 def _measured(value: int | None) -> MemoryMeasurement:

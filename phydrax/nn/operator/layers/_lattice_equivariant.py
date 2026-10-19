@@ -260,7 +260,10 @@ class InvariantFilterBasis(StrictModule, NonTrainableState):
 
 
 class LatticeEquivariantConvND(StrictModule):
-    """Periodic measure-aware convolution parameterized only in an invariant basis."""
+    """Periodic measure-aware convolution parameterized only in an invariant basis.
+
+    Kernels are synthesized in the joint input and parameter precision.
+    """
 
     invariant_basis: InvariantFilterBasis
     coefficients: Array
@@ -381,7 +384,9 @@ class LatticeEquivariantConvND(StrictModule):
             jnp.where(source_valid[..., None], inputs, jnp.zeros_like(inputs))
             * measure[..., None]
         )
-        numerator = self._convolve(measured, self.kernel().astype(compute_dtype))
+        # Promote before synthesis so a wider input retains the invariant basis precision.
+        kernel = self.invariant_basis.synthesize(self.coefficients.astype(compute_dtype))
+        numerator = self._convolve(measured, kernel)
         support = jnp.where(source_valid, measure, jnp.zeros_like(measure))
         support_kernel = jnp.ones(
             self.invariant_basis.kernel_shape + (1, 1), dtype=compute_dtype

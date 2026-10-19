@@ -15,6 +15,7 @@ import jax.random as jr
 
 import phydrax as phx
 from benchmarks._runtime import logical_array_bytes, measure_repeated
+from phydrax.units import METER
 
 
 def _measure(operation: Callable[[], Any], /, *, repeats: int) -> tuple[Any, float]:
@@ -40,7 +41,7 @@ def run_benchmarks(
             center=(0.0, 0.0),
             side=2.0,
             feature_id="domain-benchmark-square",
-        ).compile()
+        ).compile(coordinate_unit=METER)
     )
     domain = geometry @ phx.domain.TimeInterval(0.0, 1.0)
     component = domain.component()

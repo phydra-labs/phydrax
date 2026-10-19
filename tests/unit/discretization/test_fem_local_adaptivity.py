@@ -14,6 +14,14 @@ from jax import Array
 import phydrax as phx
 
 
+# Empirical `test_sparse_cell_operators_use_prepared_routes_under_jit`: matched max |delta|=2.77556e-17; joint allowance fraction=1.87346e-08, margin=100%.
+_LOCAL_MASS_IMAGE_ATOL = 1e-14
+# Empirical `test_sparse_cell_operators_use_prepared_routes_under_jit`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_LOCAL_STIFFNESS_IMAGE_ATOL = 1e-14
+# Empirical `test_topology_transaction_moves_each_field_by_its_declared_family`: matched max |delta|=6.10623e-15; joint allowance fraction=6.10622e-08, margin=100%.
+_TRANSACTION_FIELD_VALUES_ATOL = 1e-13
+
+
 def _mesh() -> Any:
     vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.5, 0.5]])
     cells = jnp.asarray([[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]], dtype=jnp.int32)
@@ -186,7 +194,9 @@ def test_topology_transaction_moves_each_field_by_its_declared_family() -> None:
         fields, functions, result.state.fields, strict=True
     ):
         np.testing.assert_allclose(
-            value, target.project(field.name, function), atol=1e-13
+            value,
+            target.project(field.name, function),
+            atol=_TRANSACTION_FIELD_VALUES_ATOL,
         )
     assert result.state.transition_id == result.receipt.receipt_id
 
@@ -321,7 +331,7 @@ def test_certified_conservative_transfer_forms_an_accepted_epoch_transition(
     assert bool(result.successful)
     # Admitted content drift stays a tiny relative fraction at every measure scale.
     assert float(result.content_tolerance) <= 1e-9 * content
-    with pytest.raises(ValueError, match="not conserved by this transfer"):
+    with pytest.raises(ValueError, match=r"epoch_transition\.measures"):
         transfer.epoch_transition(
             space(source_epoch),
             space(target_epoch),
@@ -363,7 +373,11 @@ def test_sparse_cell_operators_use_prepared_routes_under_jit() -> None:
     mass_image, stiffness_image = actions(prepared, values)
     local_mass = np.asarray(((2.0, 1.0, 1.0), (1.0, 2.0, 1.0), (1.0, 1.0, 2.0))) / 24
     gradients = np.asarray(((-1.0, -1.0), (1.0, 0.0), (0.0, 1.0)))
-    np.testing.assert_allclose(mass_image, local_mass @ np.asarray(values), atol=1e-14)
     np.testing.assert_allclose(
-        stiffness_image, 0.5 * gradients @ gradients.T @ np.asarray(values), atol=1e-14
+        mass_image, local_mass @ np.asarray(values), atol=_LOCAL_MASS_IMAGE_ATOL
+    )
+    np.testing.assert_allclose(
+        stiffness_image,
+        0.5 * gradients @ gradients.T @ np.asarray(values),
+        atol=_LOCAL_STIFFNESS_IMAGE_ATOL,
     )

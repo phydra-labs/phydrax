@@ -2,20 +2,19 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Mesh-side attachments of authoritative geometry interfaces.
+"""Defines mesh-side attachments to declared geometry interfaces.
 
-An attachment links exact entities of one named, revision-bound
-:class:`MeshPart` to declared authoritative geometry entities through the
-carrier's certified :class:`GeometryAssociation`. It does not classify
-entities itself: classification, residuals, and the orientation relation of
-each entity's canonical vertex order come from the association owner.
+An attachment links every requested entity of one named, revision-bound
+:class:`MeshPart` to declared geometry entities through the carrier's certified
+:class:`GeometryAssociation`. Classification, residuals, and the orientation
+relation of each entity's vertex order are provided by the association holder.
 
-A *sided* attachment additionally records which side of the authoritative
-oriented normal the attached cells lie on. The authoritative normal is the
-oriented B-Rep face normal in three dimensions and the B-Rep edge tangent
-rotated clockwise, ``(t_y, -t_x)``, in two dimensions; ``orientation = +1``
-means the outward normal of the attached side equals that normal (the side is
-the one the normal points out of) and ``-1`` means it is opposed.
+A *sided* attachment also records which side of the declared oriented normal
+contains the attached cells. The oriented normal is the B-Rep face normal in
+three dimensions and the B-Rep edge tangent rotated clockwise,
+``(t_y, -t_x)``, in two dimensions. ``orientation = +1`` means the attached
+side's outward normal equals that normal, so the side is the one from which the
+normal points outward; ``orientation = -1`` means the normals are opposed.
 """
 
 from __future__ import annotations
@@ -25,22 +24,21 @@ from typing import assert_never, final
 import equinox as eqx
 import numpy as np
 
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+from phydrax.meshing._association_state import entity_rows, GeometryAssociation
+
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CellMesh
+from .._validation import nonnegative_finite_float
 from ..geometry.surface import InterfaceSide
 from ..typing import checked
-from ._assembly import MeshPart
-from ._association import (
-    _centroids,
-    _entity_rows,
-    _incidence_pairs,
-    _ordered_vertices,
-    GeometryAssociation,
-)
-from ._lineage import inherit_scope, MeshLineage
-from ._organization import MeshLabel, MeshPatch, MeshZone
+from ._association import centroids
+from ._association_routes import incidence_pairs, ordered_vertices
+from ._lineage import inherit_scope
+from ._lineage_records import MeshLineage
+from ._mesh_part import MeshPart
+from ._organization_records import MeshLabel, MeshPatch, MeshZone
 from ._result import CellMeshingResult
 from ._scope import MeshingScope
 
@@ -49,13 +47,10 @@ type MeshAttachmentScope = MeshingScope | MeshPatch | MeshZone | MeshLabel
 
 
 def _carrier(part: MeshPart, /) -> CellMeshingResult:
-    if not isinstance(part, MeshPart):
-        raise TypeError("part must be MeshPart.")
     carrier = part.carrier
     if not isinstance(carrier, CellMeshingResult):
         raise ValueError(
-            "Interface attachments require a certified cell carrier with geometry "
-            "associations."
+            "MeshInterfaceAttachment.part.carrier must be CellMeshingResult with geometry associations; got another carrier kind."
         )
     return carrier
 
@@ -91,7 +86,7 @@ def _part_scope(
             identifier, members = _member(value, carrier)
             if identifier not in members:
                 raise ValueError(
-                    f"{name} is not organization evidence of the part's certified carrier."
+                    f"{'MeshInterfaceAttachment.' + name} must identify a scope, patch, zone, or label in the carrier organization; got an absent identifier."
                 )
             scope = value.scope
             return (
@@ -104,18 +99,24 @@ def _part_scope(
             )
         case _:
             raise TypeError(
-                f"{name} must be MeshingScope, MeshPatch, MeshZone, or MeshLabel."
+                f"{'MeshInterfaceAttachment.' + name} must resolve to a MeshingScope, MeshPatch, MeshZone, or MeshLabel; got an unsupported part-scope value."
             )
 
 
 def _entity_ids(values: tuple[str, ...], /) -> tuple[str, ...]:
     if isinstance(values, str) or not isinstance(values, tuple):
-        raise TypeError("geometry_entity_ids must be a tuple of entity IDs.")
+        raise TypeError(
+            "MeshInterfaceAttachment.geometry_entity_ids must be a tuple of entity IDs; got a string or non-tuple value."
+        )
     identifiers = tuple(str(value).strip() for value in values)
     if not identifiers or any(not value for value in identifiers):
-        raise ValueError("geometry_entity_ids must contain non-empty entity IDs.")
+        raise ValueError(
+            "MeshInterfaceAttachment.geometry_entity_ids must contain at least one entity ID and every ID must be non-empty; got an empty tuple or empty ID."
+        )
     if len(set(identifiers)) != len(identifiers):
-        raise ValueError("geometry_entity_ids must be unique.")
+        raise ValueError(
+            "MeshInterfaceAttachment.geometry_entity_ids must contain unique entity IDs; got duplicate IDs."
+        )
     return tuple(sorted(identifiers))
 
 
@@ -128,39 +129,37 @@ def _witness_rows(
     /,
 ) -> tuple[np.ndarray, float]:
     """Certified association rows of the scope, classified on the declared entities."""
-    if not isinstance(association, GeometryAssociation):
-        raise TypeError("association must be GeometryAssociation.")
     if association.association_id not in {
         value.association_id for value in carrier.associations
     }:
         raise ValueError(
-            "The geometry association is not certified evidence of the part's carrier."
+            "MeshInterfaceAttachment.association must be listed in MeshInterfaceAttachment.carrier.associations; got an association outside the carrier."
         )
     if association.target_entity_set_id != scope.entity_set_id:
-        raise ValueError("The geometry association classifies another entity set.")
+        raise ValueError(
+            "MeshInterfaceAttachment.association.target_entity_set_id must equal scope.entity_set_id; got an association for another entity set."
+        )
     rows = association.target_rows(np.asarray(scope.entity_ids))
     if not np.all(np.asarray(association.resolved)[rows]) or np.any(
         np.asarray(association.ambiguous)[rows]
     ):
         raise ValueError(
-            "Attached entities have unresolved or ambiguous geometry classification."
+            "MeshInterfaceAttachment.association.resolved must be true and MeshInterfaceAttachment.association.ambiguous must be false for every attached row; got an unresolved or ambiguous row."
         )
-    classes = {association.source_entity_ids[row] for row in rows.tolist()}
+    classes = {association.source_entities.entity_id(row) for row in rows.tolist()}
     declared = set(entity_ids)
     if not classes <= declared:
         raise ValueError(
-            "Attached entities are classified on geometry outside the declared "
-            f"interface entities: {sorted(classes - declared)!r}."
+            f"MeshInterfaceAttachment.association must classify attached entities on declared geometry entities; got undeclared classifications {sorted(classes - declared)!r}."
         )
     if not declared <= classes:
         raise ValueError(
-            "Declared interface entities have no attached mesh entity: "
-            f"{sorted(declared - classes)!r}."
+            f"MeshInterfaceAttachment.association must cover declared interface entities; got unclassified entities {sorted(declared - classes)!r}"
         )
     residual = float(np.max(np.asarray(association.residuals)[rows]))
     if residual > tolerance:
         raise ValueError(
-            f"Attached geometry residual {residual:.3e} exceeds tolerance {tolerance:.3e}."
+            f"MeshInterfaceAttachment.association.residuals must be no greater than MeshInterfaceAttachment.tolerance; got residual {residual:.3e} and tolerance {tolerance:.3e}."
         )
     return rows, residual
 
@@ -174,22 +173,23 @@ def _uniform_sign(relation: np.ndarray, message: str, /) -> int:
 
 
 def _outward_relation(
-    mesh: CellMesh, facet_rows: np.ndarray, cell_rows: np.ndarray, /
+    mesh: cell_mesh_owner.CellMesh, facet_rows: np.ndarray, cell_rows: np.ndarray, /
 ) -> np.ndarray:
-    """Sign of each facet's canonical normal against its attached cell's outward normal."""
+    """Returns the sign of every facet's vertex-order normal relative to its attached
+    cell's outward normal.
+    """
     top = mesh.topological_dimension
-    ordered = _ordered_vertices(mesh, top - 1)
+    ordered = ordered_vertices(mesh, top - 1)
     if mesh.ambient_dimension != top or top not in (2, 3) or ordered is None:
         raise ValueError(
-            "Sided attachments require simplex facets of a volume carrier in its own "
-            "ambient dimension."
+            "MeshInterfaceAttachment.region must select cells of a full-dimensional simplex volume carrier; got incompatible dimensions or topology."
         )
-    pairs = _incidence_pairs(mesh, top - 1, top)
+    pairs = incidence_pairs(mesh, top - 1, top)
     pairs = pairs[np.isin(pairs[:, 0], facet_rows) & np.isin(pairs[:, 1], cell_rows)]
     counts = np.bincount(pairs[:, 0], minlength=mesh.entity_set(top - 1).count)
     if np.any(counts[facet_rows] != 1):
         raise ValueError(
-            "Every attached facet must bound exactly one cell of the attached side."
+            "MeshInterfaceAttachment.scope must attach each facet to one cell of region; got a different attached-side cell count."
         )
     adjacent = np.empty_like(counts)
     adjacent[pairs[:, 0]] = pairs[:, 1]
@@ -200,8 +200,8 @@ def _outward_relation(
         normal = np.stack((first[:, 1], -first[:, 0]), axis=1)
     else:
         normal = np.cross(first, corners[:, 2] - corners[:, 0])
-    cells = _centroids(
-        mesh, _incidence_pairs(mesh, 0, top)[:, ::-1], mesh.entity_set(top).count
+    cells = centroids(
+        mesh, incidence_pairs(mesh, 0, top)[:, ::-1], mesh.entity_set(top).count
     )[adjacent[facet_rows]]
     # A simplex centroid lies strictly inside, so the facet-centroid offset
     # has a positive component along the cell's outward facet normal.
@@ -219,53 +219,65 @@ def _orientation(
     carrier_side: InterfaceSide | None,
     /,
 ) -> int:
-    """Relation of the attached side's outward normal to the authoritative normal."""
+    """Returns the relation of the attached side's outward normal to the declared oriented
+    normal.
+    """
     mesh = carrier.mesh
     if region is None and carrier_side is None:
         return 0
     if region is not None and carrier_side is not None:
-        raise ValueError("Declare either region or carrier_side, not both.")
+        raise ValueError(
+            "MeshInterfaceAttachment.region must be omitted when carrier_side is specified; got both side declarations."
+        )
     witness = np.asarray(association.orientations, dtype=np.int64)[rows]
     if np.any(witness == 0):
         raise ValueError(
-            "The geometry association records no orientation for the attached entities."
+            "MeshInterfaceAttachment.association.orientation must be nonzero for every attached entity; got a zero orientation."
         )
     top = mesh.topological_dimension
     if carrier_side is not None:
         if not isinstance(carrier_side, InterfaceSide):
-            raise TypeError("carrier_side must be InterfaceSide or None.")
+            raise TypeError(
+                "MeshInterfaceAttachment.carrier_side must be an InterfaceSide or None; got another value type."
+            )
         if scope.entity_dimension != top or mesh.ambient_dimension != top + 1:
             raise ValueError(
-                "carrier_side declares the side of a codimension-one carrier's own cells."
+                "MeshInterfaceAttachment.carrier_side must describe the side of a codimension-one carrier's cells; got incompatible entity and ambient dimensions."
             )
         relation = _uniform_sign(
-            witness, "Attached carrier cells disagree with the authoritative normal."
+            witness,
+            "MeshInterfaceAttachment.carrier_side must select cells with a uniform geometry normal relation; got disagreeing carrier-cell orientations.",
         )
         return relation if carrier_side is InterfaceSide.MINUS else -relation
-    if not isinstance(region, MeshingScope):
-        raise TypeError("region must resolve to a MeshingScope.")
+    if region is None:
+        raise TypeError(
+            "MeshInterfaceAttachment.region must resolve to a MeshingScope; got a non-MeshingScope region."
+        )
     if scope.entity_dimension != top - 1 or region.entity_dimension != top:
-        raise ValueError("A sided region attaches facets to the cells on one side.")
-    facet_rows = _entity_rows(mesh, top - 1, np.asarray(scope.entity_ids))
-    cell_rows = _entity_rows(mesh, top, np.asarray(region.entity_ids))
+        raise ValueError(
+            "MeshInterfaceAttachment.region must be a top-dimensional cell scope paired with a codimension-one attachment scope; got incompatible scope dimensions."
+        )
+    facet_rows = entity_rows(mesh, top - 1, np.asarray(scope.entity_ids))
+    cell_rows = entity_rows(mesh, top, np.asarray(region.entity_ids))
     return _uniform_sign(
         witness * _outward_relation(mesh, facet_rows, cell_rows),
-        "Attached facets disagree on the side of the authoritative normal.",
+        "MeshInterfaceAttachment.region must select facets with a uniform geometry normal relation; got disagreeing facet-side orientations.",
     )
 
 
 @final
 class MeshInterfaceAttachment(StrictModule, NonTrainableState):
-    """Exact entities of one mesh part attached to authoritative geometry entities.
+    """Represents every requested entity of one mesh part attached to declared geometry
+    entities.
 
-    ``scope`` holds the attached entities and ``region`` the cells of the attached
-    side (sided volume attachments only). ``organization_ids`` name the certified
-    patch/zone/label evidence the scopes came from. ``association_id`` is the
-    witness: a certified association of the part's carrier classifying every
-    attached entity on the declared ``geometry_entity_ids`` of
-    ``geometry_source_revision`` within ``tolerance``. ``orientation`` relates
-    the attached side's outward normal to the authoritative oriented normal
-    (``+1`` aligned, ``-1`` opposed, ``0`` for an unsided attachment).
+    ``scope`` contains the attached entities, and ``region`` contains the cells on
+    the attached side for sided volume attachments. ``organization_ids`` identify
+    the certified patch, zone, or label evidence from which the scopes came.
+    ``association_id`` identifies a certified association of the part's carrier
+    that classifies every attached entity on the declared ``geometry_entity_ids``
+    of ``geometry_source_revision`` within ``tolerance``. ``orientation`` relates
+    the attached side's outward normal to the declared oriented normal: ``+1`` for
+    aligned, ``-1`` for opposed, and ``0`` for an unsided attachment.
     """
 
     part_name: str = eqx.field(static=True)
@@ -284,6 +296,7 @@ class MeshInterfaceAttachment(StrictModule, NonTrainableState):
     orientation: int = eqx.field(static=True)
     attachment_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         part: MeshPart,
@@ -297,9 +310,9 @@ class MeshInterfaceAttachment(StrictModule, NonTrainableState):
         carrier_side: InterfaceSide | None = None,
     ) -> None:
         carrier = _carrier(part)
-        tolerance_ = float(tolerance)
-        if not np.isfinite(tolerance_) or tolerance_ < 0.0:
-            raise ValueError("tolerance must be finite and non-negative.")
+        tolerance_ = nonnegative_finite_float(
+            tolerance, "MeshInterfaceAttachment.tolerance"
+        )
         entity_ids = _entity_ids(geometry_entity_ids)
         attached, attached_members = _part_scope(part, carrier, scope, "scope")
         side, side_members = (
@@ -350,40 +363,40 @@ class MeshInterfaceAttachment(StrictModule, NonTrainableState):
 
     @checked
     def require_current(self, part: MeshPart, /) -> None:
-        """Refuse a part that is not the exact revision this attachment binds."""
+        """Refuses a part unless its revision is the revision bound by this attachment."""
         if part.name != self.part_name:
             raise ValueError(
-                f"Mesh part {part.name!r} does not own attachment of {self.part_name!r}."
+                f"MeshInterfaceAttachment.part_name must match the supplied mesh part name; got {part.name!r} for attachment {self.part_name!r}."
             )
         if part.part_id != self.part_revision:
             raise ValueError(
-                f"Interface attachment of mesh part {self.part_name!r} is stale: the "
-                "part revision changed."
+                f"MeshInterfaceAttachment.part_revision must match the supplied part revision; got a stale attachment for {self.part_name!r}."
             )
 
+    @checked
     def oriented_simplices(
         self, part: MeshPart, /
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Entity rows, simplex corners, and authoritative normals of the attachment.
+        """Returns entity rows, simplex corners, and declared oriented normals for every
+        requested attachment entity.
 
-        Rows index the carrier's entity set ``scope.entity_set_id`` in the order
-        of ``scope.entity_ids``; ``corners`` has shape ``(entities, d, d)`` (segment
-        ends in two dimensions, triangle corners in three). ``normals`` are the
-        unit authoritative oriented normals: each entity's canonical vertex-order
-        normal (tangent rotated clockwise in 2-D, ``(v1 - v0) x (v2 - v0)`` in
-        3-D) times the association's orientation witness, so the attached side's
-        outward normal has sign ``orientation`` against them.
+        Rows index the carrier's entity set ``scope.entity_set_id`` in the order of
+        ``scope.entity_ids``. ``corners`` has shape ``(entities, d, d)``: segment ends
+        in two dimensions and triangle corners in three dimensions. ``normals`` are
+        unit declared oriented normals. Each is the entity's vertex-order normal—the
+        tangent rotated clockwise in 2-D or ``(v1 - v0) x (v2 - v0)`` in 3-D—multiplied
+        by the association's orientation relation, so the attached side's outward
+        normal has sign ``orientation`` relative to it.
         """
         self.require_current(part)
         carrier = _carrier(part)
         mesh = carrier.mesh
         dimension = self.scope.entity_dimension
         ambient = mesh.ambient_dimension
-        ordered = _ordered_vertices(mesh, dimension)
+        ordered = ordered_vertices(mesh, dimension)
         if ambient not in (2, 3) or dimension != ambient - 1 or ordered is None:
             raise ValueError(
-                "Oriented attachment geometry requires codimension-one simplex "
-                "entities in two or three dimensions."
+                f"MeshInterfaceAttachment.geometry must use codimension-one simplex entities in two or three dimensions; got entity dimension {dimension}, ambient dimension {ambient}, and ordered vertices available={ordered is not None}"
             )
         association = None
         for value in carrier.associations:
@@ -391,10 +404,10 @@ class MeshInterfaceAttachment(StrictModule, NonTrainableState):
                 association = value
         if association is None:
             raise ValueError(
-                "The attachment's geometry association is not evidence of the part."
+                "MeshInterfaceAttachment.association must belong to the attached part's carrier; got an association outside the part."
             )
         ids = np.asarray(self.scope.entity_ids, dtype=np.int64)
-        rows = _entity_rows(mesh, dimension, ids)
+        rows = entity_rows(mesh, dimension, ids)
         witness = np.asarray(association.orientations, dtype=np.int64)[
             association.target_rows(ids)
         ]
@@ -408,6 +421,7 @@ class MeshInterfaceAttachment(StrictModule, NonTrainableState):
         return rows, corners, witness[:, None].astype(np.float64) * normal
 
 
+@checked
 def transition_interface_attachment(
     attachment: MeshInterfaceAttachment,
     source: MeshPart,
@@ -415,30 +429,31 @@ def transition_interface_attachment(
     lineage: MeshLineage,
     /,
 ) -> MeshInterfaceAttachment:
-    """Rebind one attachment to the successor revision of its part.
+    """Rebinds an attachment to the successor revision of its part.
 
-    ``source`` must be the exact revision the attachment binds and ``lineage``
-    the topology transition from its carrier to ``target``'s. The attached and
-    sided scopes are remapped through the lineage, the successor carrier's one
-    association of the same geometry source revision witnesses them again, and
-    the side relation must survive unchanged. Mixed membership, a missing or
-    ambiguous successor association, or a changed side refuses the rebind; a
-    stale attachment is never copied.
+    ``source`` must be the revision bound by the attachment, and ``lineage`` must
+    be the topology transition from its carrier to the carrier of ``target``. The
+    function remaps every requested entity in the attached and sided scopes through
+    the lineage, requires the successor carrier's single association for the same
+    geometry source revision to classify them again, and requires the side relation
+    to remain unchanged. It refuses the rebind for mixed membership, a missing or
+    ambiguous successor association, or a changed side, and does not copy a stale
+    attachment.
     """
 
-    if not isinstance(attachment, MeshInterfaceAttachment):
-        raise TypeError("attachment must be MeshInterfaceAttachment.")
-    if not isinstance(lineage, MeshLineage):
-        raise TypeError("lineage must be MeshLineage.")
     attachment.require_current(source)
     carrier = _carrier(target)
     if target.name != source.name:
-        raise ValueError("An attachment transition keeps its part name.")
+        raise ValueError(
+            "transition_interface_attachment.target.name must equal transition_interface_attachment.source.name; got a changed part name."
+        )
     if (
         lineage.source_topology_id != _carrier(source).mesh.topology_id
         or lineage.target_topology_id != carrier.mesh.topology_id
     ):
-        raise ValueError("The lineage must join the source and target carriers.")
+        raise ValueError(
+            "transition_interface_attachment.lineage must join the source and target carrier topology IDs; got a mismatched source or target topology ID."
+        )
     mesh = carrier.mesh
     remapped = inherit_scope(attachment.scope, lineage, mesh, "attachment scope")
     scope = target.scope(remapped.entity_dimension, remapped.entity_ids)
@@ -455,8 +470,7 @@ def transition_interface_attachment(
     )
     if len(associations) != 1:
         raise ValueError(
-            "The successor carrier needs exactly one association of the attached "
-            f"geometry revision and entities; found {len(associations)}."
+            f"transition_interface_attachment.target.associations must contain one association for the attachment geometry revision and entities; got {len(associations)} matches."
         )
     sides: tuple[InterfaceSide | None, ...] = (
         (None,)
@@ -475,7 +489,9 @@ def transition_interface_attachment(
         )
         if candidate.orientation == attachment.orientation:
             return candidate
-    raise ValueError("The successor attachment changed its side relation.")
+    raise ValueError(
+        "transition_interface_attachment.side_relation must remain equal between source and successor attachments; got a changed successor side relation."
+    )
 
 
 __all__ = ["MeshInterfaceAttachment", "transition_interface_attachment"]

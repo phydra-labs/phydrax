@@ -112,7 +112,7 @@ from ._complexes import (
     PreparedHodgeDecomposition,
     stiffness_form,
 )
-from ._compound import compound_matrix
+from ._compound import compound_matrix, determinant
 from ._constraint_operators import (
     ConstraintFactorizationKind,
     ConstraintOperatorEvidence,
@@ -122,7 +122,11 @@ from ._constraint_operators import (
     PreparedConstraintOperator,
     refresh_constraint_operator,
 )
-from ._constraints import compose_constraint_maps, ConstraintMap
+from ._constraints import (
+    compose_constraint_maps,
+    ConstraintMap,
+    OrthogonalHyperplaneConstraint,
+)
 from ._costs import (
     LinearCostEstimate,
     OperatorActionCostEstimate,
@@ -579,6 +583,7 @@ from ._resilience import (
     solve_resilient,
 )
 from ._results import (
+    AggregateLinearSolveResult,
     InitialGuessDiagnostics,
     linear_status_message,
     LinearIterationMetrics,
@@ -603,6 +608,7 @@ from ._runtime import (
     solve,
     solve_adjoint,
     solve_adjoint_checked,
+    solve_aggregate,
     solve_checked,
     solve_many,
     solve_recycled,
@@ -643,6 +649,7 @@ from ._spaces import (
     AbstractVectorSpace,
     ArraySpace,
     BlockSpace,
+    coordinate_dtype,
     DualSpace,
     PyTreeSpace,
     RHSLayout,
@@ -822,6 +829,7 @@ __all__ = [
     "AdditiveSubspaceCorrectionBuilder",
     "AdditiveSubspaceCorrectionPreconditioner",
     "AdjointLinearOperator",
+    "AggregateLinearSolveResult",
     "AlgebraActionSide",
     "AlgebraArraySpace",
     "AlgebraCoefficientPairing",
@@ -1090,6 +1098,7 @@ __all__ = [
     "OperatorPairing",
     "OperatorPreconditioner",
     "OperatorProperties",
+    "OrthogonalHyperplaneConstraint",
     "OrthogonalTransformKind",
     "OrthonormalFrameResult",
     "PCG",
@@ -1320,9 +1329,11 @@ __all__ = [
     "compound_matrix",
     "continuous_lyapunov_equation",
     "contract_block_scaled",
+    "coordinate_dtype",
     "coordinate_operator",
     "coordinate_space",
     "dense_low_rank_update",
+    "determinant",
     "determinant_small_linear",
     "discrete_lyapunov_equation",
     "dual_transpose",
@@ -1447,6 +1458,7 @@ __all__ = [
     "solve",
     "solve_adjoint",
     "solve_adjoint_checked",
+    "solve_aggregate",
     "solve_block_banded_least_squares",
     "solve_checked",
     "solve_distributed_block_krylov",

@@ -441,6 +441,8 @@ charts exposed by a geometry cubature atlas. The default positive degree-5 and
 degree-10 rules form a paired error indicator:
 
 ```python
+from phydrax.units import METER
+
 mesh_vertices = jnp.asarray(
     (
         (0.0, 0.0, 0.0),
@@ -451,7 +453,7 @@ mesh_vertices = jnp.asarray(
 )
 mesh_faces = jnp.asarray(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)))
 mesh_domain = phx.domain.GeometryDomain(
-    phx.geometry.MeshRegion(mesh_vertices, mesh_faces).compile()
+    phx.geometry.MeshRegion(mesh_vertices, mesh_faces).compile(coordinate_unit=METER)
 )
 mesh_boundary = mesh_domain.component({"x": phx.domain.Boundary()})
 surface_field = mesh_domain.Function("x")(lambda x: jnp.sum(x * x))

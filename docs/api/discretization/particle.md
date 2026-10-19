@@ -81,11 +81,15 @@ is a separate, complete enumeration: it returns a `PeriodicImageStencil` holding
 every integer translation `n` for which `d = x_receiver - x_source + n @ H` can
 satisfy `|d| < radius`. It bounds the extent on each periodic axis by
 `floor(fractional_excursion + radius * ||H^+[:, a]||)` using the host right
-inverse. Nonperiodic axes have zero extent. The cell's condition certificate
-applies, and a stencil larger than `maximum_image_count` is refused rather than
-truncated. `lattice_right_inverse_with_status` and `lattice_measure` are the
-traced, non-raising lattice solve and `sqrt(det(H @ H.T))` measure; both return
-a status flag in place of a substitute value.
+inverse. Immutable host lattice-coordinate preparation uses native DenseLU with
+`DifferentiationPolicy("none")`: deriving image and candidate budgets must not
+trace unused mathematical derivative graphs before resource admission.
+Nonperiodic axes have zero extent. The cell's condition certificate applies,
+and a stencil larger than `maximum_image_count` is refused rather than
+truncated. `lattice_right_inverse_with_status` and `lattice_measure` remain the
+native traced, non-raising lattice solve and `sqrt(det(H @ H.T))` measure; both
+return a status flag in place of a substitute value, and runtime mathematical
+differentiation is unchanged.
 
 `ParticleImageRelation` is directed and image-aware. Route `e` is identified by
 the stable tuple `(source id, receiver id, n, case)` and has displacement

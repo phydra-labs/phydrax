@@ -30,7 +30,7 @@ from ._preconditioner_properties import PreconditionerProperties
 from ._preconditioners import AbstractPreconditioner
 from ._preconditioning import AbstractPreconditionerBuilder
 from ._randomized import ProbeRefresh, random_probes
-from ._spaces import _coordinate_dtype, ArraySpace, PyTreeSpace
+from ._spaces import ArraySpace, coordinate_dtype, PyTreeSpace
 
 
 def _adjoint(value: Array, /) -> Array:
@@ -190,7 +190,7 @@ class RandomizedNystromPreconditioner(AbstractPreconditioner, NonTrainableState)
         space = _euclidean_space(setup_operator)
         if not space.compatible(self.space):
             raise ValueError("Prepared Nyström action and setup operator spaces differ.")
-        itemsize = _coordinate_dtype(space).itemsize
+        itemsize = coordinate_dtype(space).itemsize
         dimension, rank = self.basis.shape
         return PreconditionerCostEstimate(
             component=self.preconditioner_id,
@@ -309,7 +309,7 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
     ) -> PreconditionerCostEstimate:
         del materialization
         space = self._validated_space(setup_operator)
-        itemsize = _coordinate_dtype(space).itemsize
+        itemsize = coordinate_dtype(space).itemsize
         dimension = space.size
         sketch = self.rank + self.oversampling
         return PreconditionerCostEstimate(
@@ -331,7 +331,7 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
         refresh_count: int,
     ) -> RandomizedNystromPreconditioner:
         space = self._validated_space(setup_operator)
-        dtype = _coordinate_dtype(space)
+        dtype = coordinate_dtype(space)
         sketch_size = self.rank + self.oversampling
         address = refresh_count if self.probe_refresh == "redraw" else 0
         key = jr.fold_in(jr.key(self.seed), address)

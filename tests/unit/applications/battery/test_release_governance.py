@@ -381,7 +381,12 @@ def test_unknown_released_battery_coordinates_are_refused(
         release_evidence=profile.release_evidence,
         released=True,
     )
-    with pytest.raises(ValueError):
+    expected_refusal = (
+        "support_tuple_id must identify a released profile"
+        if mutation == "support"
+        else "Unknown released battery profile coordinates"
+    )
+    with pytest.raises(ValueError, match=expected_refusal):
         validate_battery_candidate_profile(substituted, support)
 
 
@@ -408,7 +413,7 @@ def test_same_named_release_cannot_substitute_scientific_citations(
         release_evidence=(substituted_gate,),
         released=True,
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="content, citations or expiry were substituted"):
         replace(proof, profile=substituted).verify(policy, at_time=100)
 
 

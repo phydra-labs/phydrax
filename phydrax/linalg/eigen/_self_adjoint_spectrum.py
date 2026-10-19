@@ -19,7 +19,7 @@ from ..._strict import StrictModule
 from ...typing import checked
 from .._materialization import MaterializationPolicy
 from .._policies import FailurePolicy
-from .._spaces import _coordinate_dtype, _has_euclidean_pairing
+from .._spaces import _has_euclidean_pairing, coordinate_dtype
 from ._plans import EigenCostEstimate, EigenSolvePlan
 from ._policies import (
     DenseEigh,
@@ -269,17 +269,17 @@ def plan_self_adjoint_spectrum(
     source_cost = next(
         estimate for estimate in eigen_plan.candidates if estimate.accepted
     )
-    coordinate_dtype = np.dtype(_coordinate_dtype(problem.operator.source))
-    real_dtype = np.empty((), dtype=coordinate_dtype).real.dtype
+    stored_dtype = np.dtype(coordinate_dtype(problem.operator.source))
+    real_dtype = np.empty((), dtype=stored_dtype).real.dtype
     n = problem.dimension
     batch_count = int(np.prod(problem.batch_shape)) if problem.batch_shape else 1
     extra_retained = batch_count * (
-        3 * n * n * coordinate_dtype.itemsize + n * real_dtype.itemsize
+        3 * n * n * stored_dtype.itemsize + n * real_dtype.itemsize
     )
     retained = source_cost.storage_bytes + extra_retained
     workspace = (
         source_cost.preparation_workspace_bytes
-        + 2 * batch_count * n * n * coordinate_dtype.itemsize
+        + 2 * batch_count * n * n * stored_dtype.itemsize
     )
     if retained > selected.max_retained_bytes:
         raise ValueError(

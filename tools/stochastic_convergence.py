@@ -13,6 +13,7 @@ from jaxtyping import Key
 
 import phydrax as phx
 import phydrax.ein as ein
+from phydrax.units import METER
 
 
 @dataclass(frozen=True)
@@ -391,7 +392,7 @@ def run_stochastic_advection_diffusion_benchmark(
     )
 
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=4.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=4.0).compile(coordinate_unit=METER)
     )
     zero_drift = domain.Function("x")(lambda x: jnp.zeros((2,)))
     rotation = jnp.asarray([[0.0, -1.0], [1.0, 0.0]])

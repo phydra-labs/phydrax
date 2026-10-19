@@ -1,8 +1,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Actual cylinder-source Q1 partitions with compatible circulation/flux."""
+"""Cylinder-source Q1 partitions with compatible circulation and flux."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from fractions import Fraction
 
 import equinox as eqx
@@ -11,21 +12,32 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from phydrax._resource_ticket import HostBatchTicket
 from phydrax.discretization import (
     FiniteElementDiscretization,
     FiniteElementFieldSpec,
     FiniteElementPlan,
 )
-from phydrax.discretization._cell_geometry_transfer import NestedReferenceWitnesses
+from phydrax.discretization._cell_geometry_transition_types import (
+    NestedReferenceWitnesses,
+)
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
 from phydrax.discretization._coordinate_enclosure import evaluate
-from phydrax.discretization._nested_reference import _rooted_nested_reference_pairs
+from phydrax.discretization._nested_reference import rooted_nested_reference_pairs
 from phydrax.discretization._reference_cell import reference_cell_topology
 from phydrax.discretization.fem import form_element, prepare_nested_field_transfer
 from phydrax.discretization.fem._exact_form_moments import reference_arguments
-from phydrax.discretization.fem._generic import _degree_aware_reference_rule
+from phydrax.discretization.fem._reference_rules import degree_aware_reference_rule
 from phydrax.exterior._form_type import FormProxy, FormTwist
 from phydrax.linalg import DenseLinearOperator, FactorizationPolicy, factorize, RHSLayout
-from tests.unit.discretization.test_rational_embedded_measure import _cylinder, _six_quads
+from tests._support.rational_mapped_cells import cylinder_source, six_quad_source
+
+
+# Unit-scale accuracy allocations are 2**22 binary64 eps for two moment
+# solves and 2**15 eps for six-cell contractions/adjoints. Preserve the
+# stricter decimal accuracy requirements of the analytic cylinder scenario.
+_MOMENT_SOLVE_ACCURACY = 5e-10
+_CONTRACTION_ACCURACY = 5e-12
 
 
 def _density_content(
@@ -41,8 +53,8 @@ def _density_content(
     ):
         basis = element.form_basis
         if basis is None:
-            raise AssertionError("Compatible field must retain its actual form owner.")
-        points, weights = _degree_aware_reference_rule(element.cell_kind, 10)
+            raise AssertionError("fixture.basis must be present; got None")
+        points, weights = degree_aware_reference_rule(element.cell_kind, 10)
         _, gradient = basis.tabulate_components(points)
         density = np.asarray(gradient)[..., 1, 0] - np.asarray(gradient)[..., 0, 1]
         for route, transform in zip(
@@ -60,20 +72,27 @@ def _density_content(
 def test_authored_six_quad_compatible_refine_complete_coarsen(
     twist: FormTwist,
     proxy: FormProxy,
+    budget: CoordinateEnclosureBudget,
 ) -> None:
-    mesh, geometry, root, controls = _cylinder()
-    fine_mesh, fine_geometry = _six_quads(mesh, geometry, root, controls)
+    mesh, geometry, root, controls = cylinder_source()
+    fine_mesh, fine_geometry = six_quad_source(mesh, geometry, root, controls)
     parents = np.zeros(6, dtype=np.int64)
-    pairs, _ = _rooted_nested_reference_pairs(
-        mesh, geometry, fine_mesh, fine_geometry, parent_cells=parents
+    pairs, _ = rooted_nested_reference_pairs(
+        mesh, geometry, fine_mesh, fine_geometry, parent_cells=parents, budget=budget
     )
     vertices = reference_cell_topology("quadrilateral").vertices
     corners = np.asarray(
         [
             [
                 [
-                    float(evaluate(value, tuple(Fraction(float(x)) for x in vertex)))
-                    for value in reference_arguments(pair)
+                    float(
+                        evaluate(
+                            value,
+                            tuple(Fraction(float(x)) for x in vertex),
+                            budget=budget,
+                        )
+                    )
+                    for value in reference_arguments(pair, budget=budget)
                 ]
                 for vertex in vertices
             ]
@@ -98,7 +117,7 @@ def test_authored_six_quad_compatible_refine_complete_coarsen(
     ).prepare()
     basis = element.form_basis
     if basis is None:
-        raise AssertionError("Canonical compatible source is required.")
+        raise AssertionError("fixture.basis must be present; got None")
     points = np.asarray(basis.functional_points)
     fields = np.stack(
         (
@@ -134,21 +153,25 @@ def test_authored_six_quad_compatible_refine_complete_coarsen(
     )
     fine_values = np.asarray(forward.transfer.apply(values))
     restored = np.asarray(reverse.transfer.apply(fine_values))
-    np.testing.assert_allclose(restored, values, atol=5e-10, rtol=5e-10)
     np.testing.assert_allclose(
-        _density_content(fine, fine_values), (0.0, 2.0), atol=5e-12
+        restored, values, atol=_MOMENT_SOLVE_ACCURACY, rtol=_MOMENT_SOLVE_ACCURACY
     )
-    np.testing.assert_allclose(_density_content(source, restored), (0.0, 2.0), atol=5e-12)
+    np.testing.assert_allclose(
+        _density_content(fine, fine_values), (0.0, 2.0), atol=_CONTRACTION_ACCURACY
+    )
+    np.testing.assert_allclose(
+        _density_content(source, restored), (0.0, 2.0), atol=_CONTRACTION_ACCURACY
+    )
     dual = np.random.default_rng(31).normal(size=fine_values.shape)
     np.testing.assert_allclose(
         np.vdot(fine_values, dual),
         np.vdot(values, forward.transfer.pullback(dual)),
-        atol=5e-12,
+        atol=_CONTRACTION_ACCURACY,
     )
     np.testing.assert_allclose(
         eqx.filter_jit(forward.transfer.apply)(jnp.asarray(values)),
         fine_values,
-        atol=5e-12,
+        atol=_CONTRACTION_ACCURACY,
     )
     assert forward.evidence.passed and reverse.evidence.passed
     before = np.asarray(fine_geometry.coordinates).copy()
@@ -168,3 +191,15 @@ def test_authored_six_quad_compatible_refine_complete_coarsen(
             coarsening_witnesses=gap,
         )
     np.testing.assert_array_equal(fine_geometry.coordinates, before)
+
+
+@pytest.fixture
+def budget() -> Iterator[CoordinateEnclosureBudget]:
+    with HostBatchTicket(100_000_000, bytes_upper=256_000_000) as ticket:
+        ledger = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=100_000_000,
+            maximum_memory_bytes=256_000_000,
+        )
+        with ledger.activate():
+            yield ledger

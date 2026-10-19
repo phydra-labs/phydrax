@@ -9,8 +9,8 @@ For a ring torus the two relevant singular loci are its core circle and axis;
 the reach is min(r, R-r). In a signed-distance tube of radius d below that
 reach, the Hessian eigenvalues are bounded by 1/(reach-d): the meridional
 curvature is bounded by 1/(r-d), and the azimuthal curvature by
-1/(R-r-d). These facts derive from the owning nominal kernel formulas, not a
-user declaration, a sampled topology or a theorem-name string.
+1/(R-r-d). These facts derive from the nominal kernel formulas, not a
+user declaration, a sampled topology or an unchecked declaration.
 """
 
 from __future__ import annotations
@@ -25,25 +25,31 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax.geometry._source_boundary_records import (
+    SourceBoundaryDistance,
+    SourceBoundarySamples,
+)
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._meshcore import charge_native_geometry_queries, current_native_execution_budget
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier, positive_integer
-from ...typing import HostFloat64, parse
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...typing import checked, HostFloat64, parse
 from .._atlas import BoundaryAtlas
 from .._certified_implicit import implicit_state_id
 from .._contracts import CompiledGeometry
-from .._mesh_certificates import SourceBoundaryDistance, SourceBoundarySamples
-from ..analytic._extended import _TorusKernel
-from ..analytic._primitives import _BallKernel
+from ..analytic._extended import TorusKernel
+from ..analytic._primitives import BallKernel
 from ._enclosure import (
-    _BOX_CHUNK,
-    _derived_interval_program,
-    _IntervalFieldBounds,
-    _IntervalProgram,
+    BOX_CHUNK,
+    consume_queries,
+    derived_interval_program,
     ENCLOSURE_ROUNDING_MODEL,
+    IntervalFieldBounds,
+    IntervalProgram,
+    query_budget,
 )
 
 
@@ -53,14 +59,18 @@ AnalyticImplicitFamily: TypeAlias = Literal["sphere", "ring-torus"]
 def _lower_fraction(value: Fraction, /) -> float:
     result = float(value)
     if not math.isfinite(result):
-        raise ValueError("An analytic source bound exceeds binary64 range.")
+        raise ValueError(
+            "AnalyticImplicitProfile.bound must be representable in binary64; got a nonfinite rounded bound"
+        )
     return float(np.nextafter(result, -np.inf)) if Fraction(result) > value else result
 
 
 def _upper_fraction(value: Fraction, /) -> float:
     result = float(value)
     if not math.isfinite(result):
-        raise ValueError("An analytic source bound exceeds binary64 range.")
+        raise ValueError(
+            "AnalyticImplicitProfile.bound must be representable in binary64; got a nonfinite rounded bound"
+        )
     return float(np.nextafter(result, np.inf)) if Fraction(result) < value else result
 
 
@@ -87,6 +97,7 @@ def _schema_id(geometry: CompiledGeometry, /) -> str:
                     spec.shape,
                     spec.dtype,
                     spec.role,
+                    spec.unit.unit_id,
                     spec.physical_scale,
                     spec.bounds,
                     spec.trainable,
@@ -100,24 +111,26 @@ def _schema_id(geometry: CompiledGeometry, /) -> str:
 def _kernel_id(geometry: CompiledGeometry, /) -> str:
     kernel = geometry.kernel
     match kernel:
-        case _BallKernel():
-            if type(kernel) is not _BallKernel:
+        case BallKernel():
+            if type(kernel) is not BallKernel:
                 raise ValueError(
-                    "A derived ball kernel cannot inherit analytic source facts."
+                    "AnalyticImplicitProfile.kernel must be the nominal BallKernel; got a derived ball kernel"
                 )
             bindings = (kernel.center, kernel.radius)
             names = ("center", "radius")
             structural = ("sphere", kernel.dimension)
-        case _TorusKernel():
-            if type(kernel) is not _TorusKernel:
+        case TorusKernel():
+            if type(kernel) is not TorusKernel:
                 raise ValueError(
-                    "A derived torus kernel cannot inherit analytic source facts."
+                    "AnalyticImplicitProfile.kernel must be the nominal TorusKernel; got a derived torus kernel"
                 )
             bindings = (kernel.center, kernel.major, kernel.minor, kernel.angle)
             names = ("center", "major_radius", "minor_radius", "angle")
             structural = ("ring-torus", kernel.full)
         case _:
-            raise ValueError("The nominal kernel has no analytic implicit profile.")
+            raise ValueError(
+                f"AnalyticImplicitProfile.kernel must be a supported nominal ball or ring torus; got {type(kernel).__name__}"
+            )
     if any(
         binding.parameter_id.feature_id != kernel.source_id
         or binding.parameter_id.name != name
@@ -125,7 +138,7 @@ def _kernel_id(geometry: CompiledGeometry, /) -> str:
         for binding, name in zip(bindings, names, strict=True)
     ):
         raise ValueError(
-            "Analytic parameter bindings contradict the source design schema."
+            "AnalyticImplicitProfile.bindings must match source IDs, parameter names and schema indices; got inconsistent bindings"
         )
     return canonical_fingerprint(
         {
@@ -145,7 +158,7 @@ def _kernel_id(geometry: CompiledGeometry, /) -> str:
 
 
 class AnalyticBoundaryCoverCapacityError(ValueError):
-    """A complete cover exists but cannot meet the requested radius in budget."""
+    """An exhaustive cover exists but cannot meet the requested radius in budget."""
 
     requested_radius: float
     achieved_radius: float
@@ -165,28 +178,25 @@ class AnalyticBoundaryCoverCapacityError(ValueError):
 
 @final
 class _BoundaryMapBounds(StrictModule, NonTrainableState):
-    """Reuse the owning outward-rounded JAX-expression interpreter for charts."""
+    """Reuse the outward-rounded JAX-expression interpreter for charts."""
 
     atlas: BoundaryAtlas
     point_dtype: str = eqx.field(static=True)
     value_dtype: str = eqx.field(static=True)
     rounding_model: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, atlas: BoundaryAtlas, /) -> None:
-        if (
-            not isinstance(atlas, BoundaryAtlas)
-            or atlas.reference_dimension != 2
-            or atlas.ambient_dimension != 3
-        ):
+        if atlas.reference_dimension != 2 or atlas.ambient_dimension != 3:
             raise TypeError(
-                "Analytic boundary bounds require an actual two-to-three-dimensional atlas."
+                "analytic_bounds.atlas must map two reference dimensions to three spatial dimensions; got incompatible dimensions"
             )
 
         def point_map(reference: Array) -> Array:
             return atlas.map(jnp.zeros((1,), dtype=jnp.int32), reference[None, :])[0]
 
         point_dtype = np.dtype(np.float64).name
-        program = _derived_interval_program(
+        program = derived_interval_program(
             atlas,
             point_map,
             (id(type(atlas).map), id(type(atlas.mapping).map)),
@@ -200,7 +210,7 @@ class _BoundaryMapBounds(StrictModule, NonTrainableState):
         self.value_dtype = program.value_dtype
         self.rounding_model = ENCLOSURE_ROUNDING_MODEL
 
-    def _validated_program(self) -> _IntervalProgram:
+    def _validated_program(self) -> IntervalProgram:
         if (
             not isinstance(self.atlas, BoundaryAtlas)
             or self.atlas.reference_dimension != 2
@@ -209,15 +219,15 @@ class _BoundaryMapBounds(StrictModule, NonTrainableState):
             or self.rounding_model != ENCLOSURE_ROUNDING_MODEL
         ):
             raise ValueError(
-                "The restored analytic map's dimension or precision is invalid."
+                "AnalyticBoundaryMap.state must retain a two-to-three dimensional atlas and binary64 rounding model; got invalid restored dimensions or precision"
             )
 
         def point_map(reference: Array) -> Array:
-            # The sphere square is the continuous extension of the same two
-            # owning triangular charts; no independent map formula is authored.
+            # The sphere square continuously extends the same two triangular
+            # charts through their shared atlas map.
             return self.atlas.map(jnp.zeros((1,), dtype=jnp.int32), reference[None, :])[0]
 
-        return _derived_interval_program(
+        return derived_interval_program(
             self.atlas,
             point_map,
             (id(type(self.atlas).map), id(type(self.atlas.mapping).map)),
@@ -232,42 +242,38 @@ class _BoundaryMapBounds(StrictModule, NonTrainableState):
         self._validated_program()
 
     def boxes(
-        self, lower: np.ndarray, upper: np.ndarray, /
+        self,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
     ) -> tuple[np.ndarray, np.ndarray]:
-        execution = current_native_execution_budget()
-        if execution is not None:
-            execution.charge()
+        consume_queries(budget, 0, work_units=1)
         program = self._validated_program()
         if lower.ndim != 2 or lower.shape[1] != 2 or upper.shape != lower.shape:
-            raise ValueError("Analytic parameter boxes must have shape (N,2).")
-        charge_native_geometry_queries(lower.shape[0])
-        mapped_lower = (
-            np.empty((lower.shape[0], 3), dtype=np.float64)
-            if execution is None
-            else execution.allocate_host_array((lower.shape[0], 3), np.float64)
-        )
-        mapped_upper = (
-            np.empty_like(mapped_lower)
-            if execution is None
-            else execution.allocate_host_array(mapped_lower.shape, np.float64)
-        )
-        for start in range(0, lower.shape[0], _BOX_CHUNK):
-            stop = min(start + _BOX_CHUNK, lower.shape[0])
+            raise ValueError(
+                f"AnalyticBoundaryMap.boxes must have matching shape (N, 2); got {lower.shape} and {upper.shape}"
+            )
+        consume_queries(budget, lower.shape[0])
+        mapped_lower = np.empty((lower.shape[0], 3), dtype=np.float64)
+        mapped_upper = np.empty_like(mapped_lower)
+        for start in range(0, lower.shape[0], BOX_CHUNK):
+            stop = min(start + BOX_CHUNK, lower.shape[0])
             low, high, _, _ = program.evaluate(
                 jnp.asarray(lower[start:stop]), jnp.asarray(upper[start:stop])
             )
             mapped_lower[start:stop] = np.asarray(low, dtype=np.float64)
             mapped_upper[start:stop] = np.asarray(high, dtype=np.float64)
-            if execution is not None:
-                execution.charge()
+            consume_queries(budget, 0, work_units=1)
         return mapped_lower, mapped_upper
 
 
 @final
 class AnalyticImplicitProfile(StrictModule, NonTrainableState):
-    """Source-established complete topology, reach and rigorous distance queries.
+    """Establish topology, reach and rigorous distance queries.
 
-    Only actual three-dimensional ball kernels and full ring-torus kernels
+    Three-dimensional ball kernels and full ring-torus kernels
     qualify. Boolean expressions, transformed wrappers, arbitrary callables,
     sectors and singular horn/spindle tori cannot inherit these facts. Radius
     values and the full sweep are read from the current DesignState; the static
@@ -278,7 +284,7 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
 
     geometry: CompiledGeometry
     coordinate_contract: SpatialCoordinateContract
-    field_bounds: _IntervalFieldBounds
+    field_bounds: IntervalFieldBounds
     map_bounds: _BoundaryMapBounds
     center: HostFloat64[Literal[3]]
     boundary_bounds: HostFloat64[Literal[2], Literal[3]]
@@ -305,6 +311,7 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
     rounding_model: str = eqx.field(static=True)
     profile_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         geometry: CompiledGeometry,
@@ -315,23 +322,20 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
         cover_radius: float | None = None,
         source_id: str | None = None,
         source_revision: str | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
-        if not isinstance(geometry, CompiledGeometry):
-            raise TypeError("geometry must be CompiledGeometry.")
-        if not isinstance(coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         validity = geometry.validity()
         if not bool(np.asarray(validity.accepted)):
             raise ValueError(
-                "An analytic profile requires an established valid DesignState."
+                "AnalyticImplicitProfile.geometry must have accepted DesignState validity; got a rejected state"
             )
         kernel = geometry.kernel
         kernel_id = _kernel_id(geometry)
         match kernel:
-            case _BallKernel():
+            case BallKernel():
                 if kernel.dimension != 3:
                     raise ValueError(
-                        "Analytic volume profiles require a three-dimensional sphere."
+                        f"AnalyticImplicitProfile.kernel.dimension must be three for a sphere volume; got {kernel.dimension}"
                     )
                 center = np.asarray(kernel.center.read(geometry.state), dtype=np.float64)
                 radius = float(np.asarray(kernel.radius.read(geometry.state)))
@@ -341,14 +345,14 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
                 outer = reach
                 genus = 0
                 witness = center.copy()
-            case _TorusKernel():
+            case TorusKernel():
                 center = np.asarray(kernel.center.read(geometry.state), dtype=np.float64)
                 radius = float(np.asarray(kernel.minor.read(geometry.state)))
                 major = float(np.asarray(kernel.major.read(geometry.state)))
                 angle = float(np.asarray(kernel.angle.read(geometry.state)))
                 if not kernel.full or angle != 2.0 * math.pi or not major > radius > 0.0:
                     raise ValueError(
-                        "Analytic torus profiles require a full nonsingular ring torus."
+                        f"AnalyticImplicitProfile.kernel must be a full nonsingular ring torus; got full={kernel.full}, angle={angle}, major={major}, minor={radius}"
                     )
                 family = "ring-torus"
                 reach = min(Fraction(radius), Fraction(major) - Fraction(radius))
@@ -358,7 +362,7 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
                 witness[0] += major
             case _:
                 raise ValueError(
-                    "The source kernel has no established analytic global profile."
+                    f"AnalyticImplicitProfile.kernel must have a supported analytic global profile; got {type(kernel).__name__}"
                 )
         if (
             center.shape != (3,)
@@ -366,10 +370,14 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             or not math.isfinite(radius)
             or radius <= 0.0
         ):
-            raise ValueError("Analytic profile parameters must be finite and regular.")
+            raise ValueError(
+                f"AnalyticImplicitProfile.parameters must have a finite three-dimensional center and positive finite radius; got center shape {center.shape} and radius {radius}"
+            )
         reach_low = _lower_fraction(reach)
         if reach_low <= 0.0:
-            raise ValueError("A positive reach lower bound is not representable.")
+            raise ValueError(
+                f"AnalyticImplicitProfile.reach_lower must be positive in binary64; got {reach_low}"
+            )
         tube = (
             _lower_fraction(Fraction(reach_low) / 4)
             if tube_radius is None
@@ -377,11 +385,13 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
         )
         if not math.isfinite(tube) or not 0.0 < tube < reach_low:
             raise ValueError(
-                "tube_radius must be positive and strictly below the established reach."
+                f"AnalyticImplicitProfile.tube_radius must be finite, positive and below reach {reach_low}; got {tube}"
             )
         cover = tube / 4 if cover_radius is None else float(cover_radius)
         if not math.isfinite(cover) or cover <= 0.0:
-            raise ValueError("cover_radius must be a finite positive query precision.")
+            raise ValueError(
+                f"AnalyticImplicitProfile.cover_radius must be finite and positive; got {cover}"
+            )
         hessian = _upper_fraction(1 / (reach - Fraction(tube)))
         extents = (
             (outer, outer, Fraction(radius)) if family == "ring-torus" else (outer,) * 3
@@ -399,12 +409,12 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             ],
             dtype=np.float64,
         )
-        field_bounds = _IntervalFieldBounds(geometry)
-        _, upper = field_bounds.point_values(witness[None, :])
+        field_bounds = IntervalFieldBounds(geometry)
+        _, upper = field_bounds.point_values(witness[None, :], budget=budget)
         margin = float(-upper[0])
         if not math.isfinite(margin) or margin <= 0.0:
             raise ValueError(
-                "No represented interior witness is certified for this source state."
+                f"AnalyticImplicitProfile.interior_margin must establish positive finite interior separation; got {margin}"
             )
         state_id = implicit_state_id(geometry)
         schema_id = _schema_id(geometry)
@@ -485,8 +495,10 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
     def ambient_dimension(self) -> int:
         return 3
 
-    def validate_source_integrity(self) -> None:
-        """Reestablish every restored source fact; no graph or ID is authority."""
+    def validate_source_integrity(
+        self, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> None:
+        """Recompute restored source facts and compare their retained values."""
         self.field_bounds.validate_source_integrity()
         self.map_bounds.validate_source_integrity()
         expected = AnalyticImplicitProfile(
@@ -496,10 +508,11 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             cover_radius=self.cover_radius,
             source_id=self.source_id,
             source_revision=self.source_revision,
+            budget=budget,
         )
         if not bool(np.asarray(eqx.tree_equal(self, expected, typematch=True))):
             raise ValueError(
-                "The restored analytic source profile has inconsistent scientific facts."
+                "AnalyticImplicitProfile.state must match recomputed scientific facts; got inconsistent scientific facts"
             )
 
     def require_bound(
@@ -507,6 +520,8 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
         geometry: CompiledGeometry,
         coordinate_contract: SpatialCoordinateContract,
         /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
         if (
             implicit_state_id(geometry) != self.state_id
@@ -516,38 +531,50 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             or type(geometry.kernel) is not type(self.geometry.kernel)
         ):
             raise ValueError(
-                "The analytic profile is stale for this source, DesignState or physical contract."
+                "AnalyticImplicitProfile.binding must match source, DesignState and physical contract; got a stale source, DesignState or physical contract"
             )
-        self.validate_source_integrity()
+        self.validate_source_integrity(budget=budget)
 
-    def boundary_distance(self, points: ArrayLike, /) -> SourceBoundaryDistance:
-        self.require_bound(self.geometry, self.coordinate_contract)
+    def boundary_distance(
+        self, points: ArrayLike, /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> SourceBoundaryDistance:
         values = np.asarray(points, dtype=np.float64)
         if values.ndim != 2 or values.shape[1] != 3 or not np.all(np.isfinite(values)):
             raise ValueError(
-                "Boundary-distance queries require finite points of shape (N,3)."
+                f"AnalyticImplicitProfile.points must be finite with shape (N, 3); got shape {values.shape} or nonfinite coordinates"
             )
-        lower, upper = self.field_bounds.point_values(values)
-        crosses = (lower <= 0.0) & (upper >= 0.0)
-        distance_lower = np.where(crosses, 0.0, np.minimum(np.abs(lower), np.abs(upper)))
-        return SourceBoundaryDistance(
-            distance_lower, np.maximum(np.abs(lower), np.abs(upper)), "certified"
-        )
+        with query_budget(
+            budget, work_upper=0, queries_upper=values.shape[0] + 1
+        ) as query:
+            self.require_bound(self.geometry, self.coordinate_contract, budget=query)
+            lower, upper = self.field_bounds.point_values(values, budget=query)
+            crosses = (lower <= 0.0) & (upper >= 0.0)
+            distance_lower = np.where(
+                crosses, 0.0, np.minimum(np.abs(lower), np.abs(upper))
+            )
+            return SourceBoundaryDistance(
+                distance_lower, np.maximum(np.abs(lower), np.abs(upper)), "certified"
+            )
 
     def normal_variation_upper(self, distance: float, /) -> float:
         value = float(distance)
         if not math.isfinite(value) or value < 0.0:
             raise ValueError(
-                "A normal-variation separation must be finite and nonnegative."
+                f"AnalyticImplicitProfile.separation must be finite and nonnegative; got {value}"
             )
         return _upper_fraction(
             min(Fraction(2), Fraction(self.normal_lipschitz_upper) * Fraction(value))
         )
 
     def _sample_grid(
-        self, first_count: int, second_count: int, /
+        self,
+        first_count: int,
+        second_count: int,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
     ) -> SourceBoundarySamples:
-        """Enclose every rectangle in one complete periodic/polar parameter grid."""
+        """Enclose every rectangle in one exhaustive periodic/polar parameter grid."""
         match self.family:
             case "sphere":
                 polar = np.linspace(0.0, math.pi, second_count + 1, dtype=np.float64)
@@ -556,20 +583,21 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             case "ring-torus":
                 second = np.linspace(0.0, 1.0, second_count + 1, dtype=np.float64)
             case _:
-                raise ValueError("The analytic profile family is invalid.")
+                raise ValueError(
+                    f"AnalyticImplicitProfile.family must select a supported profile; got {self.family!r}"
+                )
         first = np.linspace(0.0, 1.0, first_count + 1, dtype=np.float64)
         if np.any(np.diff(first) <= 0.0) or np.any(np.diff(second) <= 0.0):
             raise ValueError(
-                "The requested atlas sample grid is not representably ordered."
+                "AnalyticImplicitProfile.sample_grid must have strictly increasing representable coordinates; got a collapsed interval"
             )
         count = first_count * second_count
-        charge_native_geometry_queries(count)
-        execution = current_native_execution_budget()
-        points_buffer = (
-            None
-            if execution is None
-            else execution.allocate_host_array((count, 3), np.float64)
-        )
+        consume_queries(budget, count)
+        # Interval-map outputs, points, radii and errors remain live together.
+        storage = 88 * count
+        if storage > budget.ticket.bytes_upper:
+            budget.ticket.refuse(0, bytes_upper=storage)
+        budget.ticket.consume(managed_bytes=storage)
         lower = np.stack(
             np.meshgrid(first[:-1], second[:-1], indexing="ij"), axis=-1
         ).reshape((-1, 2))
@@ -581,12 +609,8 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             jnp.zeros((reference.shape[0],), dtype=jnp.int32),
             jnp.asarray(reference),
         )
-        if points_buffer is None:
-            points = np.asarray(mapped, dtype=np.float64)
-        else:
-            points_buffer[:] = np.asarray(mapped, dtype=np.float64)
-            points = points_buffer
-        image_lower, image_upper = self.map_bounds.boxes(lower, upper)
+        points = np.asarray(mapped, dtype=np.float64)
+        image_lower, image_upper = self.map_bounds.boxes(lower, upper, budget=budget)
         displacement = np.maximum(
             np.abs(points - image_lower), np.abs(image_upper - points)
         )
@@ -600,22 +624,13 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
             else Fraction(self.major_radius) + 2 * Fraction(self.radius)
         )
         gap = _upper_fraction(period_error * scale)
-        if execution is None:
-            radius = np.nextafter(radius + gap, np.inf)
-        else:
-            radius_buffer = execution.allocate_host_array((count,), np.float64)
-            np.nextafter(radius + gap, np.inf, out=radius_buffer)
-            radius = radius_buffer
-        if execution is None:
-            errors = self.boundary_distance(points).upper
-        else:
-            errors = execution.allocate_host_array((count,), np.float64)
-            errors[:] = self.boundary_distance(points).upper
+        radius = np.nextafter(radius + gap, np.inf)
+        errors = self.boundary_distance(points, budget=budget).upper
         return SourceBoundarySamples(points, radius, errors, "certified", complete=True)
 
     def _precision_grid(self, maximum_radius: float, /) -> tuple[int, int]:
-        # This is a work estimate only. Actual interval images establish the
-        # achieved cover radius before the query may report precision success.
+        # Interval images establish the achieved cover radius; this estimate
+        # bounds the work admitted before checking precision.
         pi_upper = Fraction(float(np.nextafter(math.pi, np.inf)))
         precision = Fraction(maximum_radius)
         match self.family:
@@ -631,7 +646,9 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
                 )
                 second = 2 * pi_upper * Fraction(self.radius) / precision
             case _:
-                raise ValueError("The analytic profile family is invalid.")
+                raise ValueError(
+                    f"AnalyticImplicitProfile.family must select a supported profile; got {self.family!r}"
+                )
         return max(1, math.ceil(first)), max(1, math.ceil(second))
 
     def _budget_grid(self, maximum_samples: int, /) -> tuple[int, int]:
@@ -651,45 +668,69 @@ class AnalyticImplicitProfile(StrictModule, NonTrainableState):
                 )
                 second = max(1, maximum_samples // first)
             case _:
-                raise ValueError("The analytic profile family is invalid.")
+                raise ValueError(
+                    f"AnalyticImplicitProfile.family must select a supported profile; got {self.family!r}"
+                )
         return first, second
 
     def boundary_cover(
-        self, maximum_radius: float, maximum_samples: int, /
+        self,
+        maximum_radius: float,
+        maximum_samples: int,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> SourceBoundarySamples:
-        """Establish a requested physical-radius cover or report exact capacity."""
-        self.require_bound(self.geometry, self.coordinate_contract)
+        """Establish a requested physical-radius cover or report counted capacity."""
         requested = float(maximum_radius)
         if not math.isfinite(requested) or requested <= 0.0:
-            raise ValueError("maximum_radius must be finite and positive.")
-        budget = positive_integer(maximum_samples, "maximum_samples")
-        first, second = self._precision_grid(requested)
-        while first * second <= budget:
-            samples = self._sample_grid(first, second)
+            raise ValueError(
+                f"AnalyticImplicitProfile.maximum_radius must be finite and positive; got {requested}"
+            )
+        capacity = positive_integer(maximum_samples, "maximum_samples")
+        # Trial grids grow by four: their total plus the fallback is < 7N/3.
+        with query_budget(
+            budget,
+            work_upper=2 * capacity + 2 * capacity.bit_length(),
+            queries_upper=7 * capacity + 2 * capacity.bit_length(),
+            bytes_upper=88 * capacity,
+        ) as query:
+            self.require_bound(self.geometry, self.coordinate_contract, budget=query)
+            first, second = self._precision_grid(requested)
+            while first * second <= capacity:
+                samples = self._sample_grid(first, second, budget=query)
+                achieved = float(np.max(samples.covering_radius))
+                if achieved <= requested:
+                    return samples
+                first *= 2
+                second *= 2
+            first, second = self._budget_grid(capacity)
+            samples = self._sample_grid(first, second, budget=query)
             achieved = float(np.max(samples.covering_radius))
             if achieved <= requested:
                 return samples
-            first *= 2
-            second *= 2
-        first, second = self._budget_grid(budget)
-        samples = self._sample_grid(first, second)
-        achieved = float(np.max(samples.covering_radius))
-        if achieved <= requested:
-            return samples
-        raise AnalyticBoundaryCoverCapacityError(requested, achieved, budget)
+            raise AnalyticBoundaryCoverCapacityError(requested, achieved, capacity)
 
-    def boundary_samples(self, maximum_samples: int, /) -> SourceBoundarySamples:
-        """Protocol query: complete covers retain their achieved coarse bounds."""
-        self.require_bound(self.geometry, self.coordinate_contract)
-        budget = positive_integer(maximum_samples, "maximum_samples")
-        first, second = self._precision_grid(self.cover_radius)
-        while first * second <= budget:
-            samples = self._sample_grid(first, second)
-            if float(np.max(samples.covering_radius)) <= self.cover_radius:
-                return samples
-            first *= 2
-            second *= 2
-        return self._sample_grid(*self._budget_grid(budget))
+    def boundary_samples(
+        self, maximum_samples: int, /, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> SourceBoundarySamples:
+        """Protocol query: exhaustive covers retain their achieved coarse bounds."""
+        capacity = positive_integer(maximum_samples, "maximum_samples")
+        with query_budget(
+            budget,
+            work_upper=2 * capacity + 2 * capacity.bit_length(),
+            queries_upper=7 * capacity + 2 * capacity.bit_length(),
+            bytes_upper=88 * capacity,
+        ) as query:
+            self.require_bound(self.geometry, self.coordinate_contract, budget=query)
+            first, second = self._precision_grid(self.cover_radius)
+            while first * second <= capacity:
+                samples = self._sample_grid(first, second, budget=query)
+                if float(np.max(samples.covering_radius)) <= self.cover_radius:
+                    return samples
+                first *= 2
+                second *= 2
+            return self._sample_grid(*self._budget_grid(capacity), budget=query)
 
 
 __all__ = [

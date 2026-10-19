@@ -12,6 +12,7 @@ from typing import Any
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 ARTIFACTS = (
@@ -286,7 +287,7 @@ def _domain_metrics() -> Any:
 
 
 def _contact_field_metrics() -> Any:
-    geometry = phx.geometry.Circle((0.0, 0.0), 0.5).compile()
+    geometry = phx.geometry.Circle((0.0, 0.0), 0.5).compile(coordinate_unit=METER)
     contact = phx.discretization.RigidMPMContactPlan(
         geometry,
         phx.discretization.SharpCoulombMPMFrictionPlan(0.25),

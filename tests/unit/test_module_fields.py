@@ -20,6 +20,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._strict import StrictModule
+from phydrax.units import METER
 from tests._support.package_modules import import_phydrax_modules
 
 
@@ -157,7 +158,9 @@ def _round_trip_modules() -> Any:
         # ty: ignore[invalid-argument-type]
         phx.domain.HyperRectangle([0.0, -1.0], [1.0, 1.0]),
         phx.domain.GeometryDomain(
-            phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+            phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(
+                coordinate_unit=METER
+            )
         ),
         phx.optim.ReducedAdjoint(),
         # ty: ignore[missing-argument]

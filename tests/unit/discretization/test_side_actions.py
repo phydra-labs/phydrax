@@ -33,13 +33,14 @@ from phydrax.linalg import (
     OperatorProperties,
     prepare,
 )
+from tests._support.iga_fields import quarter_annulus_trace
 
 
 pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _monomial_integral(shape: str, exponents: tuple[int, ...]) -> float:
-    """Exact integral of one monomial over the unit reference facet."""
+    """Analytic integral of one monomial over the unit reference facet."""
     match shape:
         case "edge":
             return 1.0 / (exponents[0] + 1)
@@ -814,11 +815,11 @@ def test_fe_side_traces_and_reactions_refuse_unsupported_requests() -> None:
 
     with pytest.raises(ValueError, match="no neighbor side"):
         discretization.prepare_side_trace("u", exterior, rule=rule, side="neighbor")
-    with pytest.raises(ValueError, match="compose the owner and neighbor"):
+    with pytest.raises(ValueError, match=r"side_trace_selection\.side"):
         discretization.prepare_side_trace("u", interior, rule=rule, side="average")
     with pytest.raises(ValueError, match="not produced by this finite-element"):
         discretization.prepare_side_trace("u", other.exterior_facet_domain, rule=rule)
-    with pytest.raises(ValueError, match="vector field"):
+    with pytest.raises(ValueError, match=r"side_trace_field\.components"):
         discretization.prepare_side_trace("u", exterior, rule=rule, quantity="normal")
     with pytest.raises(ValueError, match="exterior facets"):
         compiled.prepare_conormal_flux(
@@ -868,7 +869,7 @@ def _cell_loops(mesh: Any) -> list[np.ndarray]:
 
 
 def _convex_polygon_mean(vertices: np.ndarray, function: Any) -> Any:
-    """Mean over a convex polygon; the edge-midpoint rule is exact for quadratics."""
+    """Mean over a convex polygon using a quadrature rule that integrates quadratics."""
     total = 0.0
     area = 0.0
     for index in range(1, vertices.shape[0] - 1):
@@ -1310,17 +1311,17 @@ def test_polygon_side_traces_refuse_undefined_traces_and_sides() -> None:
         phx.discretization.ExplicitPolygonH1FieldSpec("u"),
     ).prepare()
 
-    with pytest.raises(ValueError, match="no L2 boundary trace"):
+    with pytest.raises(ValueError, match="VirtualElementDiscretization.trace_kind"):
         discontinuous.prepare_side_trace(
             "u", discontinuous.exterior_facet_domain, rule=rule
         )
     with pytest.raises(ValueError, match="value traces only"):
         h1.prepare_side_trace("u", h1.exterior_facet_domain, rule=rule, quantity="normal")
-    with pytest.raises(ValueError, match="publish 'value' traces"):
+    with pytest.raises(ValueError, match="VirtualElementDiscretization.quantity"):
         vem.prepare_side_trace(
             "u", vem.exterior_facet_domain, rule=rule, quantity="tangential"
         )
-    with pytest.raises(ValueError, match="publish 'normal' traces"):
+    with pytest.raises(ValueError, match="VirtualElementDiscretization.quantity"):
         hdiv.prepare_side_trace("u", hdiv.exterior_facet_domain, rule=rule)
     for space in (h1, vem):
         with pytest.raises(ValueError, match="no neighbor side"):
@@ -1473,7 +1474,7 @@ def test_fd_trace_load_duality_and_sbp_hilbert_adjoint() -> None:
         atol=1e-12,
     )
     # The load of g = y^2 pulled back through the SBP boundary quadrature sums
-    # to the exact boundary integral: 8/3 on each x face, 0 + 4 on the y faces.
+    # to the analytic boundary integral: 8/3 on each x face, 0 + 4 on the y faces.
     load = trace.inject_load(jnp.asarray(sites[:, 1:2] ** 2))
     np.testing.assert_allclose(jnp.sum(load), 2.0 * 8.0 / 3.0 + 4.0, rtol=1e-12)
     np.testing.assert_allclose(
@@ -1726,56 +1727,10 @@ def test_spectral_side_traces_refuse_periodic_sine_and_undefined_requests() -> N
 
 
 # --- Isogeometric analysis ---
-# An exact rational quarter annulus 1 <= r <= 2 (first quadrant) with one
+# A rational quarter annulus 1 <= r <= 2 (first quadrant) with one
 # interior knot per axis. References are analytic arc and edge lengths,
 # outward normals, boundary integrals of physical-linear fields, and the
 # divergence theorem for v(x) = x.
-
-_IGA_HALF = np.sqrt(0.5)
-
-
-def _iga_annulus(*, vector: bool = False) -> tuple[Any, np.ndarray]:
-    """Prepared quarter annulus with an isoparametric scalar or vector field."""
-    from phydrax.discretization.iga._basis import (
-        IsogeometricFieldSpec,
-        TensorSplineBasisSpec,
-    )
-
-    iga = phx.discretization.iga
-    # Boehm insertion of theta = 1/2 into the quadratic quarter circle.
-    homogeneous = np.asarray(((1.0, 0.0, 1.0), (_IGA_HALF, _IGA_HALF, _IGA_HALF)))
-    homogeneous = np.concatenate((homogeneous, ((0.0, 1.0, 1.0),)))
-    refined = np.stack(
-        (
-            homogeneous[0],
-            0.5 * (homogeneous[0] + homogeneous[1]),
-            0.5 * (homogeneous[1] + homogeneous[2]),
-            homogeneous[2],
-        )
-    )
-    arc, arc_weights = refined[:, :2] / refined[:, 2:], refined[:, 2]
-    radii = 1.0 + np.asarray((0.0, 0.25, 0.75, 1.0))
-    controls = radii[:, None, None] * arc[None, :, :]
-    knots = jnp.asarray((0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0))
-    basis = TensorSplineBasisSpec(
-        (iga.BSplineGrid(knots, 2), iga.BSplineGrid(knots, 2)), axis_names=("r", "t")
-    )
-    geometry = iga.NURBSGeometryState(
-        jnp.asarray(controls), jnp.asarray(np.ones(4)[:, None] * arc_weights)
-    )
-    field = IsogeometricFieldSpec(
-        "v" if vector else "u",
-        basis,
-        component_shape=(2,) if vector else (),
-        weights_from_geometry=True,
-    )
-    plan = iga.IsogeometricPlan(
-        basis,
-        geometry,
-        field,
-        quadrature_policy=iga.IsogeometricQuadraturePolicy(3),
-    )
-    return plan.prepare(numeric_version="annulus"), controls
 
 
 def _iga_annulus_normals(sites: np.ndarray) -> np.ndarray:
@@ -1790,7 +1745,8 @@ def _iga_annulus_normals(sites: np.ndarray) -> np.ndarray:
 
 
 def test_isogeometric_exterior_traces_have_analytic_lengths_normals_and_values() -> None:
-    prepared, controls = _iga_annulus()
+    fixture = quarter_annulus_trace()
+    prepared, controls = fixture.prepared, fixture.controls
     domain = prepared.exterior_facet_domain
     trace = prepared.prepare_side_trace("u", domain, rule=FacetTraceRule(points=6))
     a, b, c = 0.5, 2.0, -3.0
@@ -1829,7 +1785,8 @@ def test_isogeometric_exterior_traces_have_analytic_lengths_normals_and_values()
 
 
 def test_isogeometric_vector_traces_contract_the_outward_normal() -> None:
-    prepared, controls = _iga_annulus(vector=True)
+    fixture = quarter_annulus_trace(vector=True)
+    prepared, controls = fixture.prepared, fixture.controls
     domain = prepared.exterior_facet_domain
     rule = FacetTraceRule(points=6)
     state = jnp.asarray(controls)  # v(x) = x on the (4, 4, 2) control layout
@@ -1854,12 +1811,16 @@ def test_isogeometric_vector_traces_contract_the_outward_normal() -> None:
         flux.reshape((4, 2)).sum(axis=1), (0.0, 0.0, 1.5, -1.5), atol=1e-10
     )
     assert normal.descriptor.orientation == "outward"
-    with pytest.raises(ValueError, match="vector field"):
-        _iga_annulus()[0].prepare_side_trace("u", domain, rule=rule, quantity="normal")
+    with pytest.raises(
+        ValueError, match="prepare_isogeometric_side_trace.field.component_shape"
+    ):
+        quarter_annulus_trace().prepared.prepare_side_trace(
+            "u", domain, rule=rule, quantity="normal"
+        )
 
 
 def test_isogeometric_interior_knot_faces_share_sites_and_oppose_normals() -> None:
-    prepared, _ = _iga_annulus()
+    prepared = quarter_annulus_trace().prepared
     domain = prepared.integration_domain("interior_facet")
     rule = FacetTraceRule(points=6)
     owner = prepared.prepare_side_trace("u", domain, rule=rule)
@@ -1903,7 +1864,8 @@ def test_isogeometric_interior_knot_faces_share_sites_and_oppose_normals() -> No
 
 
 def test_isogeometric_side_traces_refuse_undefined_sides_and_foreign_domains() -> None:
-    prepared, controls = _iga_annulus()
+    fixture = quarter_annulus_trace()
+    prepared, controls = fixture.prepared, fixture.controls
     rule = FacetTraceRule(points=3)
     exterior = prepared.exterior_facet_domain
     foreign = IntegrationDomain(
@@ -1927,19 +1889,21 @@ def test_isogeometric_side_traces_refuse_undefined_sides_and_foreign_domains() -
     trace.require_revision(trace.descriptor.revision_id)
     with pytest.raises(ValueError, match="another geometry revision"):
         trace.require_revision(refreshed.descriptor.revision_id)
-    with pytest.raises(ValueError, match="no neighbor side"):
+    with pytest.raises(ValueError, match="prepare_isogeometric_side_trace.side"):
         prepared.prepare_side_trace("u", exterior, rule=rule, side="neighbor")
-    with pytest.raises(ValueError, match="compose the owner and neighbor"):
+    with pytest.raises(ValueError, match="prepare_isogeometric_side_trace.side"):
         prepared.prepare_side_trace(
             "u", prepared.interior_facet_domain, rule=rule, side="average"
         )
-    with pytest.raises(ValueError, match="compiled physics owners"):
+    with pytest.raises(ValueError, match="prepare_isogeometric_side_trace.quantity"):
         prepared.prepare_side_trace("u", exterior, rule=rule, quantity="conormal-flux")
-    with pytest.raises(ValueError, match="exterior or interior facet"):
+    with pytest.raises(ValueError, match="prepare_isogeometric_side_trace.domain.kind"):
         prepared.prepare_side_trace("u", prepared.cell_domain, rule=rule)
-    with pytest.raises(ValueError, match="not produced by this isogeometric"):
+    with pytest.raises(ValueError, match="prepare_isogeometric_side_trace.domain"):
         prepared.prepare_side_trace("u", foreign, rule=rule)
-    with pytest.raises(ValueError, match="S1 IGA supports only cell and exterior"):
+    with pytest.raises(
+        ValueError, match="PreparedIsogeometricDiscretization.domain.kind"
+    ):
         prepared.prepare_local_regions(
             prepared.interior_facet_domain,
             field_names=("u",),
@@ -2109,7 +2073,7 @@ def _fv_quadratic(points: np.ndarray) -> np.ndarray:
 def _fv_triangle_averages(
     vertices: np.ndarray, triangles: np.ndarray, function: Any
 ) -> np.ndarray:
-    """Exact cell averages of polynomials through degree two (edge midpoints)."""
+    """Polynomial cell averages of polynomials through degree two (edge midpoints)."""
     corners = vertices[triangles]
     midpoints = 0.5 * (corners + np.roll(corners, -1, axis=1))
     return np.mean(function(midpoints), axis=1)

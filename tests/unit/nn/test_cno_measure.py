@@ -11,7 +11,7 @@ import pytest
 import phydrax as phx
 from phydrax.nn.operator.architectures import ConvolutionAxisPolicy
 from phydrax.nn.operator.architectures.spectral._cno import _coordinate_features
-from tests.unit.nn.test_operator_task_bundle import _trained
+from tests._support.periodic_operator_cases import trained_operator
 
 
 def _batch(
@@ -448,7 +448,7 @@ def test_bias_free_linear_operator_superposition_and_artifact(
     assert jnp.allclose(
         evaluate(-2.5 * first), -2.5 * evaluate(first), atol=2e-12, rtol=2e-12
     )
-    trained = _trained(
+    trained = trained_operator(
         model=model,
         dtype_policy=phx.nn.operator.training.OperatorDTypePolicy(
             parameter_dtype="float64", compute_dtype="float64", reduction_dtype="float64"
@@ -472,17 +472,18 @@ def test_bias_free_linear_operator_superposition_and_artifact(
     )
 
 
+# DAG recipes now use positional dataclass items and shared references.
 @pytest.mark.parametrize(
     ("architecture", "recipe_id", "artifact_id"),
     (
         (
             "CNO",
-            "e7988660c27675a8485df0f9e3b2f03c05760d90be9e3caf84e3e0a261481ea3",
+            "b7f29c9b6a93d2c453e6c8f54fbf8174afa0920dd3b7de600bd0b65f3a490f78",
             "ebc38d2f17ff06c5b2e22f2f9d3436b2f3a2ba62765aa1dddea1746ede742804",
         ),
         (
             "UNO",
-            "2336510af15cf047bdfd68c745185d52cd033a577962f613796facd427e6719e",
+            "266738ba9c6987fd0d464f26de65d0a319c9ba8c99782e1c0f5bfb6d3a8ebccd",
             "33da864ecbcaa3b703557a6c73e4cfdb56f844a5963964e6751b5f6b1cc42897",
         ),
     ),
@@ -497,7 +498,7 @@ def test_default_cno_recipe_and_artifact_preserve_merge_base_identity(
         else phx.nn.operator.architectures.UNO(spatial_ndim=1, widths=(4, 6))
     )
     destination = phx.nn.operator.training.save_operator_artifact(
-        tmp_path, _trained(model=model)
+        tmp_path, trained_operator(model=model)
     )
     manifest = phx.nn.operator.training.load_operator_artifact_manifest(destination)
     recipe_bytes = json.dumps(

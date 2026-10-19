@@ -20,14 +20,11 @@ from ..discretization._oriented_path import (
 from ..discretization._spaces import DiscreteFieldSpace, EntityDofLayout
 from ..discretization._support import DiscreteSupport
 from ..discretization._topology import CellComplexTopology
+from ..linalg._compound import determinant
 from ..linalg._spaces import ArraySpace
-from ..metrix import (
-    AbstractLieGroup,
-    LieGroupStateGeometry,
-    PointwiseStateGeometry,
-    SpecialUnitaryGroup,
-    UnitaryGroup,
-)
+from ..metrix._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
+from ..metrix._lie_group import AbstractLieGroup, LieGroupStateGeometry
+from ..metrix._state_geometry import PointwiseStateGeometry
 from ..typing import checked
 
 
@@ -50,7 +47,9 @@ class MatrixGaugeLinkSpace(StrictModule, NonTrainableState):
     @checked
     def __init__(self, topology: CellComplexTopology, group: AbstractLieGroup, /) -> None:
         if topology.dimension < 1:
-            raise ValueError("Matrix gauge links require topology degree one.")
+            raise ValueError(
+                "MatrixGaugeLinkSpace.topology must include degree-one entities; got dimension zero"
+            )
         tails, heads = oriented_edge_endpoints(topology)
         num_vertices = topology.entities(0).count
         num_edges = topology.entities(1).count
@@ -138,22 +137,21 @@ class MatrixGaugeLinkSpace(StrictModule, NonTrainableState):
         values = jnp.asarray(links)
         if values.shape != self.configuration_shape:
             return jnp.asarray(False)
-        if isinstance(self.group, (UnitaryGroup, SpecialUnitaryGroup)):
-            identity = jnp.eye(self.point_shape[0], dtype=values.dtype)
-            gram = jnp.swapaxes(jnp.conj(values), -1, -2) @ values
-            tolerance = jnp.maximum(
-                jnp.asarray(float(self.group.tolerance), dtype=values.real.dtype),
-                64.0 * jnp.finfo(values.real.dtype).eps,
-            )
-            finite = jnp.all(jnp.isfinite(values))
-            unitary = jnp.max(jnp.abs(gram - identity)) <= tolerance
-            special = (
-                jnp.max(jnp.abs(jnp.linalg.det(values) - 1.0)) <= tolerance
-                if isinstance(self.group, SpecialUnitaryGroup)
-                else jnp.asarray(True)
-            )
-            return finite & unitary & special
-        return self.geometry.contains(values)
+        match self.group:
+            case SpecialUnitaryGroup():
+                return _unitary_membership(
+                    values, self.point_shape[0], self.group.tolerance, special=True
+                )
+            case UnitaryGroup():
+                return _unitary_membership(
+                    values, self.point_shape[0], self.group.tolerance, special=False
+                )
+            case AbstractLieGroup():
+                return self.geometry.contains(values)
+            case _:
+                raise TypeError(
+                    "MatrixGaugeLinkSpace.group must be AbstractLieGroup; got invalid stored group"
+                )
 
     def identity(self, /) -> Array:
         return jnp.broadcast_to(
@@ -162,17 +160,37 @@ class MatrixGaugeLinkSpace(StrictModule, NonTrainableState):
         )
 
 
+def _unitary_membership(
+    values: Array, dimension: int, tolerance: float, /, *, special: bool
+) -> Array:
+    identity = jnp.eye(dimension, dtype=values.dtype)
+    gram = jnp.swapaxes(jnp.conj(values), -1, -2) @ values
+    # Preserve the membership floor of 64 dtype ulps for accumulated matrix
+    # products; the declared group tolerance applies when it is larger.
+    tolerance_array = jnp.maximum(
+        jnp.asarray(float(tolerance), dtype=values.real.dtype),
+        64.0 * jnp.finfo(values.real.dtype).eps,
+    )
+    finite = jnp.all(jnp.isfinite(values))
+    unitary = jnp.max(jnp.abs(gram - identity)) <= tolerance_array
+    determinant_valid = (
+        jnp.max(jnp.abs(determinant(values) - 1.0)) <= tolerance_array
+        if special
+        else jnp.asarray(True)
+    )
+    return finite & unitary & determinant_valid
+
+
 def _links(space: MatrixGaugeLinkSpace, links: ArrayLike, /) -> Array:
-    if not isinstance(space, MatrixGaugeLinkSpace):
-        raise TypeError("space must be MatrixGaugeLinkSpace.")
     values = jnp.asarray(links)
     if values.shape != space.configuration_shape:
         raise ValueError(
-            f"links must have shape {space.configuration_shape}; got {values.shape}."
+            f"MatrixGaugeLinkSpace.links must have shape {space.configuration_shape}; got {values.shape}."
         )
     return values
 
 
+@checked
 def gauge_transform_links(
     space: MatrixGaugeLinkSpace,
     links: ArrayLike,
@@ -184,7 +202,9 @@ def gauge_transform_links(
     vertices = jnp.asarray(vertex_elements)
     expected = (space.num_vertices,) + space.point_shape
     if vertices.shape != expected:
-        raise ValueError(f"vertex_elements must have shape {expected}.")
+        raise ValueError(
+            f"gauge_transform_links.vertex_elements must have shape {expected}; got {vertices.shape}"
+        )
     tails = vertices[space.tail_vertices]
     heads = vertices[space.head_vertices]
     return space.group.compose(
@@ -193,6 +213,7 @@ def gauge_transform_links(
     )
 
 
+@checked
 def closed_path_trace(
     space: MatrixGaugeLinkSpace,
     links: ArrayLike,
@@ -203,10 +224,14 @@ def closed_path_trace(
 ) -> Array:
     """Return complex traces of paths certified closed by their plan."""
     if not paths.require_closed:
-        raise ValueError("closed_path_trace requires paths prepared as closed.")
+        raise ValueError(
+            "closed_path_trace.paths must be prepared as closed; got open paths"
+        )
     values = _links(space, links)
     if paths.topology_id != space.topology.topology_id:
-        raise ValueError("Gauge-link space and path topology identities must agree.")
+        raise ValueError(
+            "closed_path_trace.paths.topology_id must equal the gauge-link topology ID; got different identities"
+        )
     holonomy = ordered_path_transport(paths, values)
     trace = jnp.trace(holonomy, axis1=-2, axis2=-1)
     return trace / space.point_shape[0] if normalized else trace

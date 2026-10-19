@@ -40,7 +40,7 @@ from ..linalg import (
 )
 from ..typing import checked, parse
 from ._views import (
-    _checked_queries,
+    checked_queries,
     FieldApproximation,
     FieldQueryEvidence,
     FieldSideBinding,
@@ -114,7 +114,7 @@ class PreparedFieldQuery(StrictModule, NonTrainableState):
         admitted = np.flatnonzero(valid).astype(np.int32)
         match coverage_:
             case "complete":
-                _checked_queries(query, evidence)
+                checked_queries(query, evidence)
             case "masked":
                 if admitted.size == 0:
                     raise ValueError(

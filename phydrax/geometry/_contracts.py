@@ -18,6 +18,7 @@ from jax import Array
 from .._mass import ExactMass, known_mass_value, Mass
 from .._strict import StrictModule
 from ..typing import PRNGKey
+from ..units import UnitDefinition
 from ._capabilities import (
     ClosestPointProvider,
     ContactCurvatureProvider,
@@ -30,12 +31,7 @@ from ._validity import (
     parameter_validity,
     representation_validity,
 )
-from .design._schema import (
-    _ParameterCollector,
-    DesignState,
-    ParameterId,
-    ParameterSchema,
-)
+from .design._schema import DesignState, ParameterCollector, ParameterId, ParameterSchema
 
 
 if TYPE_CHECKING:
@@ -539,15 +535,16 @@ class AbstractGeometrySource(StrictModule):
     def compile(
         self,
         *,
+        coordinate_unit: UnitDefinition,
         tolerance: GeometryTolerance = GeometryTolerance(),
     ) -> CompiledGeometry:
-        context = _ParameterCollector()
+        context = ParameterCollector(coordinate_unit)
         kernel = self._compile(context)
         _, state = context.finish()
         return CompiledGeometry(kernel, state, tolerance=tolerance)
 
     @abstractmethod
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         raise NotImplementedError
 
     def translated(self, offset: Any, /) -> GeometrySource:

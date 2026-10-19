@@ -49,7 +49,7 @@ from ._least_squares import (
     GaussNewton,
 )
 from ._newton_krylov import NewtonKrylov
-from ._nonlinear_constraints import _canonical_constraints, _constraint_layout
+from ._nonlinear_constraints import _canonical_constraints, constraint_layout
 from ._scalar import _run_scalar_iterations
 
 
@@ -269,7 +269,7 @@ def implicit_least_squares(
     )
     if problem.trial_policy is not None:
         raise ValueError(
-            "Implicit least-squares derivatives require a regular smooth residual model."
+            f"implicit_least_squares.problem.trial_policy must be None for smooth residual derivatives; got {type(problem.trial_policy).__name__}."
         )
     method_ = GaussNewton() if method is None else method
     termination_ = OptimizationTermination() if termination is None else termination
@@ -487,7 +487,7 @@ def implicit_constrained_minimize(
         name="initial_parameters",
     )
     flat_initial, unravel = ravel_pytree(initial)
-    layout = _constraint_layout(problem, initial, args)
+    layout = constraint_layout(problem, initial, args)
     parameter_size = flat_initial.size
     equality_size = layout.equality_indices.size
     inequality_size = layout.lower_indices.size + layout.upper_indices.size

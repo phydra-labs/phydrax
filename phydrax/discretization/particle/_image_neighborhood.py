@@ -19,7 +19,14 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ...linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    DifferentiationPolicy,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve,
+)
 from ...sparse import EdgeRelation, KeyGroupPlan
 from ...typing import checked
 from .._core import (
@@ -539,16 +546,26 @@ class AbstractImageRouteSearch(StrictModule, NonTrainableState):
 def _host_reach(vectors: np.ndarray, /) -> np.ndarray:
     matrices = np.asarray(vectors, dtype=np.float64)
     if matrices.ndim != 3 or np.any(~np.isfinite(matrices)):
-        raise ValueError("Reference lattices must be finite (case, rank, d) arrays.")
+        raise ValueError(
+            "_host_reach.reference_vectors must be finite (case, rank, d) arrays; "
+            "got a nonfinite or nonmatrix lattice bank"
+        )
     reach = []
     for matrix in matrices:
         singular_values = np.linalg.svd(matrix, compute_uv=False)
         if singular_values[-1] <= np.finfo(np.float64).eps * max(singular_values[0], 1.0):
-            raise ValueError("Reference lattice is rank deficient.")
+            raise ValueError(
+                "_host_reach.reference_vectors must have full row rank; "
+                "got a deficient reference lattice"
+            )
+        # Stencil admission needs host coordinates, not a traced derivative
+        # graph that could exhaust memory before the scalar quota refusal.
         coordinate_solve = solve(
             LinearSystem(DenseLinearOperator(matrix @ matrix.T)),
             matrix,
-            policy=LinearSolvePolicy(DenseLU()),
+            policy=LinearSolvePolicy(
+                DenseLU(), differentiation=DifferentiationPolicy("none")
+            ),
         )
         inverse = np.asarray(coordinate_solve.value).T
         reach.append(np.sqrt(np.sum(inverse * inverse, axis=0)))

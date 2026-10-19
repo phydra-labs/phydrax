@@ -42,8 +42,8 @@ from ._geometry_protocol import (
     FiniteVolumeStageMetrics,
 )
 from ._unstructured import (
-    _TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC,
     evaluate_unstructured_fv_geometry,
+    TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC,
     UnstructuredFiniteVolumePlan,
 )
 
@@ -240,7 +240,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         elif isinstance(connectivity, TetrahedralConnectivity):
             face_vertices = jnp.asarray(connectivity.faces, dtype=jnp.int32)
             quadrature_vertex_weights = jnp.asarray(
-                _TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC,
+                TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC,
                 dtype=base_plan.vertices.dtype,
             )
         else:

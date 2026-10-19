@@ -8,22 +8,23 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING
+from typing import Any, final, TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import ArrayLike
+
+import phydrax.discretization._cell_geometry as cell_geometry_owner
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.discretization._reference_cell_types as reference_cell_types_owner
+import phydrax.discretization.fem._reference as reference_owner
+import phydrax.discretization.fem._reference_types as reference_types_owner
 
 from .._external_resource import open_bounded_resource, ResourceLimits
 from .._mesh_file_profiles import resolve_mesh_file_profile
 from .._physical import SpatialCoordinateContract
 from .._publication import publish_bytes
-from ..discretization import (
-    CellBlock,
-    CellGeometrySpec,
-    CellMesh,
-    FiniteElementSpec,
-    lagrange_element,
-)
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ..discretization._cell_ordering import MESHIO_CELL_TYPES, reference_node_permutation
 from ..interchange import (
     AdapterCapability,
@@ -37,7 +38,8 @@ from ..interchange import (
     MeshArrayField,
 )
 from ..interchange._mesh_arrays import MeshArraySelection
-from ._organization import (
+from ..typing import checked
+from ._organization_records import (
     MeshAttribute,
     MeshAttributeRole,
     MeshLabel,
@@ -74,29 +76,37 @@ class MeshInteropPolicy:
 
     def __post_init__(self) -> None:
         if not isinstance(self.coordinate_contract, SpatialCoordinateContract):
-            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
+            raise TypeError(
+                f"MeshInteropPolicy.coordinate_contract must be SpatialCoordinateContract; got {type(self.coordinate_contract).__name__}."
+            )
         if not isinstance(self.allow_lossy, bool):
-            raise TypeError("allow_lossy must be a boolean.")
-        for value in (
-            self.maximum_file_bytes,
-            self.maximum_data_bytes,
-            self.maximum_vertices,
-            self.maximum_cells,
+            raise TypeError(
+                f"MeshInteropPolicy.allow_lossy must be a boolean; got {type(self.allow_lossy).__name__}."
+            )
+        for name, value in (
+            ("maximum_file_bytes", self.maximum_file_bytes),
+            ("maximum_data_bytes", self.maximum_data_bytes),
+            ("maximum_vertices", self.maximum_vertices),
+            ("maximum_cells", self.maximum_cells),
         ):
             if (
                 isinstance(value, (bool, np.bool_))
                 or not isinstance(value, (int, np.integer))
                 or value <= 0
             ):
-                raise ValueError("Mesh interchange limits must be positive integers.")
+                raise ValueError(
+                    f"MeshInteropPolicy.{name} must be positive integers; got {value!r}."
+                )
         if self.file_profile is not None and not str(self.file_profile).strip():
-            raise ValueError("file_profile must be non-empty when supplied.")
+            raise ValueError(
+                f"MeshInteropPolicy.file_profile must be non-empty when supplied; got {self.file_profile!r}."
+            )
 
 
 @dataclass(frozen=True, slots=True)
 class CellMeshImportResult:
-    mesh: CellMesh
-    geometry: CellGeometrySpec
+    mesh: cell_mesh_owner.CellMesh
+    geometry: cell_geometry_owner.CellGeometrySpec
     attributes: tuple[MeshAttribute, ...]
     artifact: MeshArrayArtifact
     report: AdapterReport
@@ -109,6 +119,13 @@ class CellMeshImportResult:
 class CellMeshExportResult:
     path: Path
     report: AdapterReport
+
+
+def _meshio_module() -> Any:
+    # The optional codec is loaded only at an external-file boundary.
+    import meshio
+
+    return meshio
 
 
 def _decoded_bytes(source: meshio.Mesh) -> int:
@@ -154,7 +171,7 @@ def _require_permission(
     changing = tuple(loss for loss in losses if loss.changes_interpretation)
     if changing and not policy.allow_lossy:
         raise ValueError(
-            "Mesh interchange requires explicit loss permission for "
+            "MeshInteropPolicy.allow_lossy must permit semantic losses; got False for "
             + ", ".join(loss.path for loss in changing)
             + "."
         )
@@ -205,12 +222,16 @@ def _report(
 
 def _check_array_limits(artifact: MeshArrayArtifact, policy: MeshInteropPolicy) -> None:
     if artifact.points.shape[0] > policy.maximum_vertices:
-        raise ValueError("Mesh artifact exceeds maximum_vertices.")
+        raise ValueError(
+            "MeshArrayArtifact.points must satisfy maximum_vertices; got a vertex count above the configured limit."
+        )
     if (
         sum(block.connectivity.shape[0] for block in artifact.blocks)
         > policy.maximum_cells
     ):
-        raise ValueError("Mesh artifact exceeds maximum_cells.")
+        raise ValueError(
+            "MeshArrayArtifact.blocks must satisfy maximum_cells; got an excessive cell count."
+        )
     arrays = [artifact.points, artifact.point_global_ids]
     for block in artifact.blocks:
         arrays.extend((block.connectivity, block.global_ids))
@@ -228,17 +249,17 @@ def _check_array_limits(artifact: MeshArrayArtifact, policy: MeshInteropPolicy) 
     if artifact.vertex_coordinates is not None:
         arrays.append(artifact.vertex_coordinates)
     if sum(array.nbytes for array in arrays) > policy.maximum_data_bytes:
-        raise ValueError("Mesh artifact exceeds maximum_data_bytes.")
+        raise ValueError(
+            "MeshArrayArtifact.arrays must satisfy maximum_data_bytes; got excessive array bytes."
+        )
 
 
+@checked
 def read_mesh_array_artifact(
     path: str | Path, policy: MeshInteropPolicy, /
 ) -> tuple[MeshArrayArtifact, AdapterReport]:
     """Decode numeric meshio arrays; unsupported external semantics are explicit losses."""
-    import meshio
-
-    if not isinstance(policy, MeshInteropPolicy):
-        raise TypeError("policy must be MeshInteropPolicy.")
+    meshio = _meshio_module()
     source_path = Path(path).expanduser().absolute()
     profile = resolve_mesh_file_profile(
         source_path,
@@ -247,7 +268,7 @@ def read_mesh_array_artifact(
     )
     if profile.carrier != "single-file":
         raise ValueError(
-            f"Mesh profile {profile.profile_id!r} requires a resource-set reader."
+            f"MeshInteropPolicy.file_profile must use a single-file reader; got profile={profile.profile_id!r}, carrier={profile.carrier!r}."
         )
     limits = ResourceLimits(
         policy.maximum_file_bytes,
@@ -271,14 +292,22 @@ def read_mesh_array_artifact(
         source = meshio.read(staged, file_format=profile.meshio_format)
         source_manifest_id = resource.manifest.manifest_id
     if _decoded_bytes(source) > policy.maximum_data_bytes:
-        raise ValueError("Decoded mesh artifact exceeds maximum_data_bytes.")
+        raise ValueError(
+            "MeshArrayArtifact.decoded_arrays must satisfy maximum_data_bytes; got excessive decoded array bytes."
+        )
     points = np.asarray(source.points)
     if points.ndim != 2 or 0 in points.shape or not np.all(np.isfinite(points)):
-        raise ValueError("Mesh artifact points must be one non-empty finite matrix.")
+        raise ValueError(
+            f"MeshArrayArtifact.points must be one non-empty finite matrix; got shape={points.shape}, dtype={points.dtype}."
+        )
     if points.shape[0] > policy.maximum_vertices:
-        raise ValueError("Mesh artifact exceeds maximum_vertices.")
+        raise ValueError(
+            "MeshArrayArtifact.points must satisfy maximum_vertices; got a vertex count above the configured limit."
+        )
     if sum(len(block.data) for block in source.cells) > policy.maximum_cells:
-        raise ValueError("Mesh artifact exceeds maximum_cells.")
+        raise ValueError(
+            "MeshArrayArtifact.blocks must satisfy maximum_cells; got an excessive cell count."
+        )
     point_ids = source.point_data.get(_POINT_IDS)
     losses = []
     if point_ids is None:
@@ -310,7 +339,7 @@ def read_mesh_array_artifact(
     for name, values in source.cell_data.items():
         if len(values) != len(source.cells):
             raise ValueError(
-                f"Cell data {name!r} must contain one array per source block."
+                f"MeshArrayArtifact.cell_data must contain one array per source block; got field={name!r}, count={len(values)}, blocks={len(source.cells)}."
             )
     blocks, supported = [], []
     offset = 0
@@ -349,7 +378,9 @@ def read_mesh_array_artifact(
         supported.append(index)
         offset += count
     if not blocks:
-        raise ValueError("Mesh artifact contains no supported CellMesh blocks.")
+        raise ValueError(
+            "MeshArrayArtifact.blocks must contain supported CellMesh blocks; got no supported blocks."
+        )
     fields = []
     for name, values in source.point_data.items():
         if name != _POINT_IDS:
@@ -389,73 +420,150 @@ def read_mesh_array_artifact(
 
 
 def _scope(
-    mesh: CellMesh, dimension: int, identifiers: np.ndarray, kind: str = "mesh"
+    mesh: cell_mesh_owner.CellMesh,
+    dimension: int,
+    identifiers: np.ndarray,
+    kind: str = "mesh",
 ) -> MeshingScope:
     entity_set = mesh.entity_set(dimension)
     if not np.all(np.isin(identifiers, np.asarray(entity_set.entity_ids))):
-        raise ValueError("Mesh interchange scope indexes undeclared entity IDs.")
+        raise ValueError(
+            "MeshInterop.scope.entity_ids must select declared entity IDs; got undeclared entity IDs."
+        )
+    entity_kind = MeshingEntityKind(kind)
+    if entity_kind is not MeshingEntityKind.MESH:
+        raise ValueError(f"MeshInterop.scope.entity_kind must be mesh; got {kind!r}.")
     return MeshingScope(
         mesh.mesh_id,
         mesh.numeric_version,
-        MeshingEntityKind(kind),
+        entity_kind,
         dimension,
         entity_set.entity_set_id,
         identifiers,
     )
 
 
-def _validate_scope(scope: MeshingScope, mesh: CellMesh) -> None:
+def _validate_scope(scope: MeshingScope, mesh: cell_mesh_owner.CellMesh) -> None:
     if scope.source_id != mesh.mesh_id or scope.source_revision != mesh.numeric_version:
-        raise ValueError("Mesh interchange scope has a stale or foreign source binding.")
+        raise ValueError(
+            "MeshInterop.scope.source_id must match the mesh binding together with source_revision; got a stale or foreign source binding."
+        )
     entity_set = mesh.entity_set(scope.entity_dimension)
     if scope.entity_set_id != entity_set.entity_set_id or not np.all(
         np.isin(np.asarray(scope.entity_ids), np.asarray(entity_set.entity_ids))
     ):
-        raise ValueError("Mesh interchange scope has a foreign entity set binding.")
+        raise ValueError(
+            "MeshInterop.scope.entity_set_id must match the mesh inventory together with entity_ids; got a foreign entity set binding."
+        )
 
 
+@checked
 def import_cell_mesh(
     path: str | Path | MeshArrayArtifact, policy: MeshInteropPolicy, /
 ) -> CellMeshImportResult:
     """Construct a CellMesh from either a native artifact or external numeric arrays."""
-    if not isinstance(policy, MeshInteropPolicy):
-        raise TypeError("policy must be MeshInteropPolicy.")
-    if isinstance(path, MeshArrayArtifact):
-        artifact = path
-        if (
-            artifact.coordinate_contract.spatial_id
-            != policy.coordinate_contract.spatial_id
-        ):
-            raise ValueError(
-                "Native artifact coordinate contract conflicts with import policy."
+    source = _import_source(path, policy)
+    topology = _import_topology(source.artifact)
+    fields = _import_fields(source.artifact, topology)
+    organization = _import_organization(source.artifact, topology.mesh)
+    report = _report(
+        source.source_format,
+        "phydrax-cell-mesh",
+        source.source_id,
+        topology.mesh.mesh_id,
+        (*source.losses, *fields.losses),
+        policy,
+        preserved=(
+            field.name
+            for field in source.artifact.fields
+            if field.name not in fields.projected_fields
+        ),
+        native=source.native,
+        assumptions=source.assumptions,
+    )
+    return CellMeshImportResult(
+        topology.mesh,
+        topology.geometry,
+        fields.attributes,
+        source.artifact,
+        report,
+        organization.zones,
+        organization.labels,
+        organization.patches,
+    )
+
+
+@final
+class _ImportedSource(StrictModule, NonTrainableState):
+    artifact: MeshArrayArtifact
+    losses: tuple[AdapterLoss, ...]
+    source_format: str
+    source_id: str
+    assumptions: tuple[str, ...]
+    native: bool
+
+
+def _import_source(
+    path: str | Path | MeshArrayArtifact, policy: MeshInteropPolicy
+) -> _ImportedSource:
+    match path:
+        case MeshArrayArtifact():
+            artifact = path
+            if (
+                artifact.coordinate_contract.spatial_id
+                != policy.coordinate_contract.spatial_id
+            ):
+                raise ValueError(
+                    "MeshArrayArtifact.coordinate_contract must match the import policy coordinate contract; got conflicting spatial identities."
+                )
+            losses = ()
+            source_format, source_id = "phydrax-mesh-arrays", artifact.artifact_id
+            assumptions = ()
+            native = True
+        case _:
+            artifact, source_report = read_mesh_array_artifact(path, policy)
+            losses = source_report.losses
+            source_format, source_id = (
+                source_report.source_format,
+                source_report.source_id,
             )
-        losses = []
-        source_format, source_id = "phydrax-mesh-arrays", artifact.artifact_id
-        assumptions = ()
-    else:
-        artifact, source_report = read_mesh_array_artifact(path, policy)
-        losses = list(source_report.losses)
-        source_format, source_id = source_report.source_format, source_report.source_id
-        assumptions = source_report.assumptions
+            assumptions = source_report.assumptions
+            native = False
     _check_array_limits(artifact, policy)
+    return _ImportedSource(
+        artifact, losses, source_format, source_id, assumptions, native
+    )
+
+
+@final
+class _ImportedTopology(StrictModule, NonTrainableState):
+    mesh: cell_mesh_owner.CellMesh
+    geometry: cell_geometry_owner.CellGeometrySpec
+    corner_nodes: np.ndarray
+    dimension: int
+
+
+def _import_topology(artifact: MeshArrayArtifact) -> _ImportedTopology:
     dimensions = set()
     corner_sets = []
     elements, routes = {}, {}
     for block in artifact.blocks:
         if block.source_cell_type not in MESHIO_CELL_TYPES:
             raise ValueError(
-                f"Unsupported native source cell type {block.source_cell_type!r}."
+                f"MeshArrayBlock.source_cell_type must have a supported cell ordering; got {block.source_cell_type!r}."
             )
         kind, order, count = MESHIO_CELL_TYPES[block.source_cell_type]
         if (kind, order) != (block.cell_kind, block.geometry_order):
-            raise ValueError("Native cell kind/order contradicts its source cell type.")
-        element = lagrange_element(kind, order)
+            raise ValueError(
+                f"MeshArrayBlock.cell_kind must match source_cell_type together with geometry_order; got kind={block.cell_kind!r}, order={block.geometry_order}, source_type={block.source_cell_type!r}."
+            )
+        element = reference_owner.lagrange_element(kind, order)
         permutation = reference_node_permutation(
             block.source_cell_type, element.reference_nodes
         )
         if block.connectivity.shape[1] != permutation.size:
             raise ValueError(
-                "Geometry connectivity width does not match its reference cell ordering."
+                f"MeshArrayBlock.connectivity must have a connectivity width matching its reference cell ordering; got width={block.connectivity.shape[1]}, expected={permutation.size}."
             )
         dimensions.add(
             1 if kind == "interval" else 2 if kind in ("triangle", "quadrilateral") else 3
@@ -464,7 +572,9 @@ def import_cell_mesh(
         elements[block.name] = element
         routes[block.name] = block.connectivity[:, permutation]
     if len(dimensions) != 1:
-        raise ValueError("CellMesh import requires one topological dimension.")
+        raise ValueError(
+            f"MeshArrayArtifact.blocks must share one topological dimension; got {sorted(dimensions)!r}."
+        )
     dimension = dimensions.pop()
     corner_nodes = artifact.vertex_point_indices
     if corner_nodes is None:
@@ -476,11 +586,13 @@ def import_cell_mesh(
             np.concatenate([values.reshape(-1) for values in corner_sets]), corner_nodes
         )
     ):
-        raise ValueError("Native vertex point mapping omits cell corners.")
+        raise ValueError(
+            "MeshArrayArtifact.vertex_point_indices must include cell corners; got omitted cell corners."
+        )
     source_to_corner = np.full(artifact.points.shape[0], -1, dtype=np.int64)
     source_to_corner[corner_nodes] = np.arange(corner_nodes.size)
     blocks = [
-        CellBlock(
+        reference_cell_types_owner.CellBlock(
             block.name,
             block.cell_kind,
             source_to_corner[corners],
@@ -490,7 +602,7 @@ def import_cell_mesh(
     ]
     if dimension == 2:
         blocks.sort(key=lambda block: block.arity)
-    mesh = CellMesh(
+    mesh = cell_mesh_owner.CellMesh(
         artifact.points[corner_nodes]
         if artifact.vertex_coordinates is None
         else artifact.vertex_coordinates,
@@ -499,7 +611,26 @@ def import_cell_mesh(
         entity_global_ids=dict(artifact.entity_global_ids),
         numeric_version=artifact.numeric_version,
     )
-    geometry = CellGeometrySpec(elements, routes, artifact.points)
+    geometry = cell_geometry_owner.CellGeometrySpec(elements, routes, artifact.points)
+    return _ImportedTopology(mesh, geometry, corner_nodes, dimension)
+
+
+@final
+class _ImportedFields(StrictModule, NonTrainableState):
+    attributes: tuple[MeshAttribute, ...]
+    projected_fields: frozenset[str]
+    losses: tuple[AdapterLoss, ...]
+
+
+def _import_fields(
+    artifact: MeshArrayArtifact, topology: _ImportedTopology
+) -> _ImportedFields:
+    mesh, corner_nodes, dimension = (
+        topology.mesh,
+        topology.corner_nodes,
+        topology.dimension,
+    )
+    losses = []
     attributes = []
     projected_fields = set()
     block_by_name = {block.name: block for block in mesh.blocks}
@@ -520,7 +651,9 @@ def import_cell_mesh(
         elif field.association is MeshArrayAssociation.CELL:
             block_name = field.block_name
             if block_name is None:
-                raise ValueError("Cell fields require a block_name.")
+                raise ValueError(
+                    "MeshArrayField.block_name must be supplied for cell fields; got None."
+                )
             identifiers = np.asarray(block_by_name[block_name].global_ids)
             values = field.values
             entity_dimension = dimension
@@ -531,7 +664,9 @@ def import_cell_mesh(
                 field.entity_dimension,
             )
             if identifiers is None or entity_dimension is None:
-                raise ValueError("Entity fields require a dimension and scoped IDs.")
+                raise ValueError(
+                    "MeshArrayField.entity_dimension must be supplied together with entity_ids for entity fields; got a missing dimension or scoped IDs."
+                )
         order = np.argsort(identifiers, kind="stable")
         attributes.append(
             MeshAttribute(
@@ -542,6 +677,19 @@ def import_cell_mesh(
                 unit=field.unit,
             )
         )
+    return _ImportedFields(tuple(attributes), frozenset(projected_fields), tuple(losses))
+
+
+@final
+class _ImportedOrganization(StrictModule, NonTrainableState):
+    zones: tuple[MeshZone, ...]
+    labels: tuple[MeshLabel, ...]
+    patches: tuple[MeshPatch, ...]
+
+
+def _import_organization(
+    artifact: MeshArrayArtifact, mesh: cell_mesh_owner.CellMesh
+) -> _ImportedOrganization:
     zones = validate_mesh_zones(
         tuple(
             MeshZone(
@@ -595,35 +743,16 @@ def import_cell_mesh(
         for patch in patches
         if patch.adjacent_zone_ids
     ):
-        raise ValueError("Mesh array patch references an undeclared adjacent zone.")
-    report = _report(
-        source_format,
-        "phydrax-cell-mesh",
-        source_id,
-        mesh.mesh_id,
-        losses,
-        policy,
-        preserved=(
-            field.name for field in artifact.fields if field.name not in projected_fields
-        ),
-        native=isinstance(path, MeshArrayArtifact),
-        assumptions=assumptions,
-    )
-    return CellMeshImportResult(
-        mesh,
-        geometry,
-        tuple(attributes),
-        artifact,
-        report,
-        zones,
-        labels,
-        patches,
-    )
+        raise ValueError(
+            "MeshArrayArtifact.patches.adjacent_zone_ids must select declared zones; got an undeclared adjacent zone."
+        )
+    return _ImportedOrganization(zones, labels, patches)
 
 
+@checked
 def export_mesh_array_artifact(
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
+    mesh: cell_mesh_owner.CellMesh,
+    geometry: cell_geometry_owner.CellGeometrySpec,
     policy: MeshInteropPolicy,
     /,
     *,
@@ -638,29 +767,32 @@ def export_mesh_array_artifact(
     Supply point_global_ids from an imported artifact to retain identities of
     non-vertex geometry nodes, which CellGeometrySpec itself does not own.
     """
-    if not isinstance(mesh, CellMesh) or not isinstance(geometry, CellGeometrySpec):
-        raise TypeError("mesh and geometry must be CellMesh and CellGeometrySpec.")
-    if not isinstance(policy, MeshInteropPolicy):
-        raise TypeError("policy must be MeshInteropPolicy.")
     elements, routes, points = geometry.resolve(mesh)
     points = np.asarray(points)
     if (
         points.shape[0] > policy.maximum_vertices
         or sum(block.cell_count for block in mesh.blocks) > policy.maximum_cells
     ):
-        raise ValueError("Mesh export exceeds maximum_vertices or maximum_cells.")
+        raise ValueError(
+            "MeshInterop.export_arrays must satisfy maximum_vertices and maximum_cells; got an excessive vertex or cell count."
+        )
     reverse_types = {
         (kind, order): source for source, (kind, order, _) in MESHIO_CELL_TYPES.items()
     }
     blocks, vertices, nodes = [], [], []
     for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
-        if not isinstance(element, FiniteElementSpec):
-            raise TypeError(
-                "Mesh export requires FiniteElementSpec coordinate elements with a supported meshio ordering."
-            )
+        match element:
+            case reference_types_owner.FiniteElementSpec():
+                pass
+            case _:
+                raise TypeError(
+                    f"MeshInterop.geometry.elements must contain FiniteElementSpec coordinate elements with a supported meshio ordering; got {type(element).__name__}."
+                )
         key = (block.cell_kind, element.degree)
         if key not in reverse_types:
-            raise ValueError(f"No meshio cell ordering for geometry tuple {key!r}.")
+            raise ValueError(
+                f"MeshInterop.geometry.element must have a meshio cell ordering; got geometry tuple {key!r}."
+            )
         source_type = reverse_types[key]
         permutation = reference_node_permutation(source_type, element.reference_nodes)
         connectivity = np.asarray(route)[:, np.argsort(permutation)]
@@ -682,7 +814,9 @@ def export_mesh_array_artifact(
         np.unique(pairs[:, 0]).size != pairs.shape[0]
         or np.unique(pairs[:, 1]).size != pairs.shape[0]
     ):
-        raise ValueError("Geometry corners must map mesh vertices one-to-one.")
+        raise ValueError(
+            "MeshInterop.geometry.corners must map mesh vertices one-to-one; got repeated vertex or node mappings."
+        )
     vertex_nodes = np.full(mesh.coordinates.shape[0], -1, dtype=np.int64)
     vertex_nodes[pairs[:, 0]] = pairs[:, 1]
     missing = np.flatnonzero(vertex_nodes < 0)
@@ -692,7 +826,9 @@ def export_mesh_array_artifact(
             or not np.array_equal(points, np.asarray(mesh.coordinates))
             or np.any(np.isin(missing, pairs[:, 1]))
         ):
-            raise ValueError("Geometry does not identify isolated mesh vertices.")
+            raise ValueError(
+                "MeshInterop.geometry.vertex_mapping must identify isolated mesh vertices; got unbound isolated mesh vertices."
+            )
         vertex_nodes[missing] = missing
     losses = []
     if point_global_ids is None:
@@ -721,12 +857,14 @@ def export_mesh_array_artifact(
             point_ids[vertex_nodes], np.asarray(mesh.vertex_global_ids)
         ):
             raise ValueError(
-                "Geometry point IDs must preserve the mesh vertex identities."
+                "MeshInterop.point_global_ids must preserve the mesh vertex identities; got a mismatched point count or vertex identity."
             )
     fields = []
     for attribute in attributes:
         if not isinstance(attribute, MeshAttribute):
-            raise TypeError("attributes must contain MeshAttribute values.")
+            raise TypeError(
+                f"MeshInterop.attributes must contain MeshAttribute values; got {type(attribute).__name__}."
+            )
         _validate_scope(attribute.scope, mesh)
         fields.append(
             MeshArrayField(
@@ -744,7 +882,9 @@ def export_mesh_array_artifact(
     labels = validate_mesh_labels(tuple(labels))
     patches = tuple(patches)
     if not all(isinstance(patch, MeshPatch) for patch in patches):
-        raise TypeError("patches must contain MeshPatch values.")
+        raise TypeError(
+            "MeshInterop.patches must contain MeshPatch values; got a non-MeshPatch value."
+        )
     for value in (*zones, *labels, *patches):
         _validate_scope(value.scope, mesh)
 
@@ -820,7 +960,9 @@ def _external_fields(
     groups = {}
     for field in artifact.fields:
         if field.name in (_POINT_IDS, _CELL_IDS):
-            raise ValueError("Mesh attribute name collides with reserved identity data.")
+            raise ValueError(
+                f"MeshArrayField.name must not collide with reserved identity data; got {field.name!r}."
+            )
         if field.role != MeshAttributeRole.USER.value:
             losses.append(
                 _loss(
@@ -860,13 +1002,15 @@ def _external_fields(
         scoped_ids = []
         for field in fields:
             if field.entity_ids is None:
-                raise ValueError("External attributes require scoped entity IDs.")
+                raise ValueError(
+                    "MeshArrayField.entity_ids must supply scoped entity IDs for external attributes; got None."
+                )
             scoped_ids.append(field.entity_ids)
         identifiers = np.concatenate(scoped_ids)
         shapes = {(field.values.shape[1:], field.values.dtype.str) for field in fields}
         if len(shapes) != 1 or np.unique(identifiers).size != identifiers.size:
             raise ValueError(
-                "Same-name external attributes require disjoint scopes and identical value layouts."
+                "MeshInterop.attributes must have disjoint scopes and identical value layouts when names match; got overlapping scopes or incompatible value layouts."
             )
         values = np.concatenate([field.values for field in fields])
         if values.ndim > 2 or 0 in values.shape:
@@ -918,7 +1062,7 @@ def _external_fields(
 
 
 def _written_array_losses(target: meshio.Mesh, decoded: meshio.Mesh) -> list[AdapterLoss]:
-    """Check the actual codec rather than assuming all meshio writers preserve data."""
+    """Compare decoded codec arrays with the arrays submitted to the writer."""
     losses = []
     expected_points = target.points
     actual_points = np.asarray(decoded.points)
@@ -995,10 +1139,11 @@ def _written_array_losses(target: meshio.Mesh, decoded: meshio.Mesh) -> list[Ada
     return losses
 
 
+@checked
 def export_cell_mesh(
     path: str | Path,
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
+    mesh: cell_mesh_owner.CellMesh,
+    geometry: cell_geometry_owner.CellGeometrySpec,
     policy: MeshInteropPolicy,
     /,
     *,
@@ -1009,7 +1154,7 @@ def export_cell_mesh(
     point_global_ids: ArrayLike | None = None,
 ) -> CellMeshExportResult:
     """Write meshio arrays with explicit accounting for native semantic losses."""
-    import meshio
+    meshio = _meshio_module()
 
     artifact, native_report = export_mesh_array_artifact(
         mesh,
@@ -1021,6 +1166,57 @@ def export_cell_mesh(
         patches=patches,
         point_global_ids=point_global_ids,
     )
+    fields = _prepare_external_fields(
+        artifact, mesh.topological_dimension, native_report, policy
+    )
+    destination = Path(path).expanduser().absolute()
+    encoded = _encode_external_mesh(destination, artifact, fields, policy)
+    receipt = publish_bytes(
+        destination,
+        encoded.payload,
+        maximum_bytes=policy.maximum_file_bytes,
+        mode="atomic_replace",
+    )
+    written_losses = _written_array_losses(
+        meshio.Mesh(
+            artifact.points,
+            [(block.source_cell_type, block.connectivity) for block in artifact.blocks],
+            point_data=fields.point_data,
+            cell_data=fields.cell_data,
+        ),
+        encoded.decoded,
+    )
+    changed_names = {
+        loss.path.split(".", 1)[1]
+        for loss in written_losses
+        if loss.path.startswith(("point_data.", "cell_data."))
+    }
+    report = _report(
+        "phydrax-cell-mesh",
+        encoded.profile_id,
+        mesh.mesh_id,
+        receipt.receipt_id,
+        (*fields.losses, *written_losses),
+        policy,
+        preserved=(name for name in fields.preserved if name not in changed_names),
+    )
+    return CellMeshExportResult(destination, report)
+
+
+@final
+class _ExternalFields(StrictModule, NonTrainableState):
+    point_data: dict[str, ArrayLike]
+    cell_data: dict[str, list[ArrayLike]]
+    preserved: tuple[str, ...]
+    losses: tuple[AdapterLoss, ...]
+
+
+def _prepare_external_fields(
+    artifact: MeshArrayArtifact,
+    dimension: int,
+    native_report: AdapterReport,
+    policy: MeshInteropPolicy,
+) -> _ExternalFields:
     losses = list(native_report.losses)
     losses.extend(
         (
@@ -1041,11 +1237,11 @@ def export_cell_mesh(
             ),
         )
     )
-    for dimension, _ in artifact.entity_global_ids:
-        if dimension not in (0, mesh.topological_dimension):
+    for entity_dimension, _ in artifact.entity_global_ids:
+        if entity_dimension not in (0, dimension):
             losses.append(
                 _loss(
-                    f"entity_global_ids[{dimension}]",
+                    f"entity_global_ids[{entity_dimension}]",
                     "export",
                     "meshio top-dimensional cells do not serialize lower-dimensional entity IDs.",
                 )
@@ -1094,7 +1290,7 @@ def export_cell_mesh(
     )
     if vertex_coordinates is None or vertex_point_indices is None:
         raise ValueError(
-            "Native mesh export requires vertex coordinates and their geometry point mapping."
+            "MeshArrayArtifact.vertex_coordinates must be supplied together with vertex_point_indices for mesh export; got a missing coordinate or geometry point mapping."
         )
     if not np.array_equal(vertex_coordinates, artifact.points[vertex_point_indices]):
         losses.append(
@@ -1124,11 +1320,25 @@ def export_cell_mesh(
                 "The external file does not encode the native vertex ordering or isolated vertex membership.",
             )
         )
-    point_data, cell_data, preserved = _external_fields(
-        artifact, mesh.topological_dimension, losses
-    )
+    point_data, cell_data, preserved = _external_fields(artifact, dimension, losses)
     _require_permission(losses, policy)
-    destination = Path(path).expanduser().absolute()
+    return _ExternalFields(point_data, cell_data, tuple(preserved), tuple(losses))
+
+
+@final
+class _EncodedMesh(StrictModule, NonTrainableState):
+    payload: bytes
+    decoded: Any
+    profile_id: str
+
+
+def _encode_external_mesh(
+    destination: Path,
+    artifact: MeshArrayArtifact,
+    fields: _ExternalFields,
+    policy: MeshInteropPolicy,
+) -> _EncodedMesh:
+    meshio = _meshio_module()
     profile = resolve_mesh_file_profile(
         destination,
         policy.file_profile,
@@ -1136,11 +1346,11 @@ def export_cell_mesh(
     )
     if profile.carrier != "single-file":
         raise ValueError(
-            f"Mesh profile {profile.profile_id!r} requires a resource-set writer."
+            f"MeshInteropPolicy.file_profile must use a single-file writer; got profile={profile.profile_id!r}, carrier={profile.carrier!r}."
         )
     if artifact.points.shape[1] > 3:
         raise ValueError(
-            "External meshio export supports at most three coordinate dimensions."
+            f"MeshArrayArtifact.points must have at most three coordinate dimensions for external meshio export; got dimension={artifact.points.shape[1]}."
         )
     external_points = np.zeros((artifact.points.shape[0], 3), dtype=artifact.points.dtype)
     external_points[:, : artifact.points.shape[1]] = artifact.points
@@ -1152,55 +1362,31 @@ def export_cell_mesh(
             for block in artifact.blocks
         ],
         point_data={
-            name: np.array(value, copy=True) for name, value in point_data.items()
+            name: np.array(value, copy=True) for name, value in fields.point_data.items()
         },
         cell_data={
             name: [np.array(value, copy=True) for value in values]
-            for name, values in cell_data.items()
+            for name, values in fields.cell_data.items()
         },
     )
     if _decoded_bytes(target) > policy.maximum_data_bytes:
-        raise ValueError("Mesh export exceeds maximum_data_bytes.")
+        raise ValueError(
+            "MeshInterop.export_arrays must satisfy maximum_data_bytes; got excessive export array bytes."
+        )
     with TemporaryDirectory(prefix="phydrax-mesh-write-") as temporary:
         staged = Path(temporary) / destination.name
         meshio.write(staged, target, file_format=profile.meshio_format)
         if staged.stat().st_size > policy.maximum_file_bytes:
-            raise ValueError("Mesh export exceeds maximum_file_bytes.")
+            raise ValueError(
+                "MeshInterop.export_file must satisfy maximum_file_bytes; got excessive staged file bytes."
+            )
         decoded = meshio.read(staged, file_format=profile.meshio_format)
         if _decoded_bytes(decoded) > policy.maximum_data_bytes:
-            raise ValueError("Decoded mesh export exceeds maximum_data_bytes.")
+            raise ValueError(
+                "MeshInterop.decoded_arrays must satisfy maximum_data_bytes; got excessive decoded export array bytes."
+            )
         encoded = staged.read_bytes()
-    receipt = publish_bytes(
-        destination,
-        encoded,
-        maximum_bytes=policy.maximum_file_bytes,
-        mode="atomic_replace",
-    )
-    written_losses = _written_array_losses(
-        meshio.Mesh(
-            artifact.points,
-            [(block.source_cell_type, block.connectivity) for block in artifact.blocks],
-            point_data=point_data,
-            cell_data=cell_data,
-        ),
-        decoded,
-    )
-    losses.extend(written_losses)
-    changed_names = {
-        loss.path.split(".", 1)[1]
-        for loss in written_losses
-        if loss.path.startswith(("point_data.", "cell_data."))
-    }
-    report = _report(
-        "phydrax-cell-mesh",
-        profile.profile_id,
-        mesh.mesh_id,
-        receipt.receipt_id,
-        losses,
-        policy,
-        preserved=(name for name in preserved if name not in changed_names),
-    )
-    return CellMeshExportResult(destination, report)
+    return _EncodedMesh(encoded, decoded, profile.profile_id)
 
 
 __all__ = [

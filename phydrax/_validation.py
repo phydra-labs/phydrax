@@ -19,18 +19,20 @@ def is_canonical_identifier(value: str, /) -> bool:
 
 def canonical_identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
+        raise TypeError(f"{name} must be a string; got {type(value).__name__}.")
     if not is_canonical_identifier(value):
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
+        raise ValueError(
+            f"{name} must be a non-empty identifier without surrounding whitespace; got {value!r}."
+        )
     return value
 
 
 def normalized_identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
+        raise TypeError(f"{name} must be a string; got {type(value).__name__}.")
     result = value.strip()
     if not result:
-        raise ValueError(f"{name} must be non-empty.")
+        raise ValueError(f"{name} must be non-empty; got {value!r}.")
     return result
 
 
@@ -47,10 +49,12 @@ def unique_identifiers(
     sort: bool = False,
 ) -> tuple[str, ...]:
     if isinstance(values, (str, bytes)):
-        raise TypeError(f"{name} must be a sequence of identifiers.")
+        raise TypeError(
+            f"{name} must be a sequence of identifiers; got {type(values).__name__}."
+        )
     result = tuple(canonical_identifier(value, name) for value in values)
     if not allow_empty and not result:
-        raise ValueError(f"{name} must be non-empty.")
+        raise ValueError(f"{name} must be non-empty; got 0 identifiers.")
     if len(set(result)) != len(result):
         raise ValueError(f"{name} must contain unique identifiers.")
     return tuple(sorted(result)) if sort else result
@@ -58,10 +62,28 @@ def unique_identifiers(
 
 def finite_real_scalar(value: object, name: str, /) -> float:
     if isinstance(value, bool) or not isinstance(value, Real):
-        raise TypeError(f"{name} must be a finite real number.")
+        raise TypeError(
+            f"{name} must be a finite real number; got {type(value).__name__}."
+        )
     result = float(value)
     if not math.isfinite(result):
-        raise ValueError(f"{name} must be finite.")
+        raise ValueError(f"{name} must be finite; got {result}.")
+    return result
+
+
+def nonnegative_real_scalar(value: object, name: str, /) -> float:
+    """Require a finite, non-boolean real number of at least zero."""
+    result = finite_real_scalar(value, name)
+    if result < 0.0:
+        raise ValueError(f"{name} must be nonnegative; got {result}.")
+    return result
+
+
+def positive_real_scalar(value: object, name: str, /) -> float:
+    """Require a finite, non-boolean real number greater than zero."""
+    result = finite_real_scalar(value, name)
+    if result <= 0.0:
+        raise ValueError(f"{name} must be positive; got {result}.")
     return result
 
 
@@ -71,35 +93,53 @@ def positive_finite_float(
     """Convert `value` with `float` and require a finite, strictly positive result."""
     result = float(value)
     if not math.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
+        raise ValueError(f"{name} must be finite and positive; got {result}.")
+    return result
+
+
+def nonnegative_finite_float(
+    value: SupportsFloat | SupportsIndex | str, name: str, /
+) -> float:
+    """Convert `value` with `float` and require a finite, nonnegative result."""
+    result = float(value)
+    if not math.isfinite(result) or result < 0.0:
+        raise ValueError(f"{name} must be finite and nonnegative; got {result}.")
     return result
 
 
 def positive_integer(value: object, name: str, /) -> int:
     """Require an integral, non-boolean value of at least one."""
     if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
+        raise TypeError(f"{name} must be an integer; got {type(value).__name__}.")
     result = int(value)
     if result < 1:
-        raise ValueError(f"{name} must be positive.")
+        raise ValueError(f"{name} must be positive; got {result}.")
     return result
 
 
 def nonnegative_integer(value: object, name: str, /) -> int:
     """Require an integral, non-boolean value of at least zero."""
     if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
+        raise TypeError(f"{name} must be an integer; got {type(value).__name__}.")
     result = int(value)
     if result < 0:
-        raise ValueError(f"{name} must be nonnegative.")
+        raise ValueError(f"{name} must be nonnegative; got {result}.")
     return result
 
 
 def integer(value: object, name: str, /) -> int:
     """Require an integral, non-boolean value; signed indices are admitted."""
     if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
+        raise TypeError(f"{name} must be an integer; got {type(value).__name__}.")
     return int(value)
+
+
+def bounded_integer(value: object, name: str, /, *, lower: int, upper: int) -> int:
+    """Require an integral, non-boolean value within inclusive bounds."""
+    result = integer(value, name)
+    if not lower <= result <= upper:
+        raise ValueError(f"{name} must lie in [{lower}, {upper}]; got {result}.")
+    return result
 
 
 def real_number_array(values: object, name: str, /) -> np.ndarray:
@@ -115,13 +155,17 @@ def real_number_array(values: object, name: str, /) -> np.ndarray:
 
 
 __all__ = [
+    "bounded_integer",
     "canonical_identifier",
     "finite_real_scalar",
     "integer",
     "is_canonical_identifier",
     "nonnegative_integer",
+    "nonnegative_finite_float",
+    "nonnegative_real_scalar",
     "normalized_identifier",
     "optional_identifier",
+    "positive_real_scalar",
     "positive_finite_float",
     "positive_integer",
     "real_number_array",

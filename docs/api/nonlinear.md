@@ -96,6 +96,18 @@ Neither choice changes the physical residual or switches derivative sources.
 finite-difference step or sparse plan, explicit provider's qualified source location,
 and linearization storage policy; dynamic provider/state arrays remain numerical data.
 
+Autodiff preparation shares a compiled boundary only when callback execution and
+`args` are proven to depend on keyed PyTree state. The admitted callback form is a
+callable module with declared numerical fields and straight-line field reads and
+arithmetic; its immutable call code is also part of the compilation key. Explicit
+array leaves remain dynamic, so changing their values can reuse warm compilation.
+Plain Python functions, opaque arguments, global or closure reads, helper calls,
+and other unproven callback forms use request-local compilation. This conservative
+policy rereads external Python state on each host preparation request without
+retaining global-state snapshots. It does not detect Python mutation inside an
+already staged outer `jax.jit`; pass changing numerical state as explicit PyTree
+inputs there. Sparse topology and explicit provider preparation remain host-owned.
+
 `RootLineSearch` and `RootTrustRegion` expose every globalization constant. Domain
 rejections, nonfinite trials, accepted/rejected steps, Jacobian preparations, linear
 iterations, and refresh counts are returned in `NonlinearDiagnostics`.

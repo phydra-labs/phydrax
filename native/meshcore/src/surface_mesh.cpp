@@ -29,8 +29,11 @@
 
 #include "bounded_memory.hpp"
 #include "capi_guard.hpp"
+#include "counter_records.hpp"
+#include "geometry3.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
+#include "topology_keys.hpp"
 
 namespace phx::mc {
 namespace {
@@ -42,19 +45,9 @@ using Flags = std::array<int8_t, 3>;
 // margin, so cocircular quadrilaterals never oscillate.
 constexpr double kFlipMargin = 1.0e-12;
 
-struct Vector3 {
-  double x;
-  double y;
-  double z;
-};
-
-Vector3 operator-(const Vector3& a, const Vector3& b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-
-double dot(const Vector3& a, const Vector3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-
-Vector3 cross(const Vector3& a, const Vector3& b) {
-  return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
+using geometry::Vector3;
+using geometry::cross;
+using geometry::dot;
 
 double metric_dot(const Vector3& a, const Vector3& b, const double* metric) {
   if (metric == nullptr) {
@@ -94,14 +87,6 @@ bool metric_valid(const double* metric) {
   return metric[8] - third * third - last * last > 0.0;
 }
 
-struct Counters {
-  int64_t inserted = 0;
-  int64_t refused = 0;
-  int64_t flips = 0;
-  int64_t walk_steps = 0;
-  int64_t work = 0;
-  int64_t exhausted = 0;
-};
 
 class SurfaceTriangulation {
  public:
@@ -164,7 +149,7 @@ class SurfaceTriangulation {
     }
     return -1;
   }
-  Counters counters;
+  SurfaceCounters counters;
 
   const double* chart(int32_t vertex) const { return charts.data() + 2 * vertex; }
 
@@ -215,14 +200,13 @@ class SurfaceTriangulation {
       std::fill(vertex_cells.begin(), vertex_cells.end(), -1);
     }
     struct Side {
-      int64_t key;
+      uint64_t key;
       int32_t cell;
       int32_t index;
       bool forward;
     };
     std::pmr::vector<Side> sides{scratch_memory_resource()};
     sides.reserve(3 * count);
-    const int64_t width = static_cast<int64_t>(charts.size() / 2);
     for (std::size_t cell = 0; cell < count; ++cell) {
       const Triangle& t = cells[cell];
       remember_cell(static_cast<int32_t>(cell));
@@ -232,9 +216,8 @@ class SurfaceTriangulation {
       for (int index = 0; index < 3; ++index) {
         const int32_t a = t[(index + 1) % 3];
         const int32_t b = t[(index + 2) % 3];
-        const int64_t low = std::min(a, b);
-        const int64_t high = std::max(a, b);
-        sides.push_back({low * width + high, static_cast<int32_t>(cell), index, a < b});
+        sides.push_back({topology::undirected_edge(a, b), static_cast<int32_t>(cell),
+                         index, a < b});
       }
     }
     std::sort(sides.begin(), sides.end(), [](const Side& left, const Side& right) {
@@ -374,8 +357,8 @@ class SurfaceTriangulation {
     const Vector3 nb = vertex_normal(b);
     const Vector3 nc = vertex_normal(c);
     const Vector3 nd = vertex_normal(d);
-    const bool first_consistent = valid(old_first, {nc, na, nb});
-    const bool second_consistent = valid(old_second, {nd, nb, na});
+    const bool first_consistent = agrees(old_first, {nc, na, nb});
+    const bool second_consistent = agrees(old_second, {nd, nb, na});
     // Every supplied source normal remains authoritative even when both old
     // triangles are coarse or folded. A flip may repair them, but it cannot
     // publish another nondegenerate triangle on the wrong side of the source.
@@ -556,14 +539,6 @@ class SurfaceTriangulation {
     return false;
   }
 
-  bool aligned(const Vector3& parent, std::initializer_list<Vector3> children) const {
-    for (const Vector3& child : children) {
-      if (!(dot(child, parent) > 0.0)) {
-        return false;
-      }
-    }
-    return true;
-  }
 
   // Oriented source normal at a vertex (zero when the source supplied none).
   Vector3 vertex_normal(int32_t vertex) const {
@@ -584,9 +559,6 @@ class SurfaceTriangulation {
     return true;
   }
 
-  static bool valid(const Vector3& triangle, std::initializer_list<Vector3> at_vertices) {
-    return agrees(triangle, at_vertices);
-  }
 
   // Only a declared source pole may retain a collapsed chart child. Exact
   // physical coincidence also has to hold; ordinary equal coordinates never
@@ -624,6 +596,51 @@ class SurfaceTriangulation {
                              : agrees(second, {nc, inserted_normal, nb}));
   }
 
+
+  struct OrientedChild {
+    Vector3 normal;
+    std::array<Vector3, 3> source_normals;
+  };
+
+  static bool children_agree(std::initializer_list<OrientedChild> children) {
+    for (const OrientedChild& child : children) {
+      const auto& n = child.source_normals;
+      if (!agrees(child.normal, {n[0], n[1], n[2]})) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool children_aligned(const Vector3& parent,
+                               std::initializer_list<OrientedChild> children) {
+    for (const OrientedChild& child : children) {
+      if (!(dot(child.normal, parent) > 0.0)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // A consistent parent preserves child orientation and, without supplied
+  // normals, its physical side. An inconsistent parent still preserves every
+  // supplied normal; only a declared radial complex can retain a collapsed child.
+  bool split_children_legal(const Vector3& parent,
+                            const std::array<Vector3, 3>& source_normals,
+                            const Vector3& inserted_normal,
+                            std::initializer_list<OrientedChild> children,
+                            const Rotated* radial = nullptr) const {
+    const auto& n = source_normals;
+    if (agrees(parent, {n[0], n[1], n[2]})) {
+      return children_agree(children) &&
+             (!bare({n[0], n[1], n[2], inserted_normal}) ||
+              children_aligned(parent, children));
+    }
+    return (radial != nullptr &&
+            radial_children(*radial, children.begin()[0].normal,
+                            children.begin()[1].normal, inserted_normal)) ||
+           children_agree(children);
+  }
 
   int32_t append_vertex(const double* uv, const double* xyz, const double* n) {
     const int32_t vertex = static_cast<int32_t>(charts.size() / 2);
@@ -704,184 +721,224 @@ class SurfaceTriangulation {
     return p;
   }
 
-  // Inserts one point; returns its vertex id or -1 with `status` set.
-  int32_t insert(const double* uv, const double* xyz, const double* n, double spacing,
-                 int32_t hint, const int32_t* requested, bool legalize_edges,
-                 int64_t max_cells, int32_t& status) {
-    status = PHX_MC_OK;
-    if (static_cast<int64_t>(cells.size()) + 2 > max_cells) {
-      status = PHX_MC_CAPACITY_EXCEEDED;
-      return -1;
-    }
-    int on_edges = 0;
+  struct InsertionResult {
+    int32_t vertex = -1;
+    int32_t status = PHX_MC_OK;
+  };
+
+  struct InsertionSite {
+    int32_t status = PHX_MC_OK;
+    int32_t cell = -1;
     int edge = -1;
-    const bool explicit_edge = requested != nullptr && requested[0] != -1;
-    const int32_t cell = explicit_edge
-        ? requested_edge(requested[0], requested[1], hint, edge)
-        : locate(uv, hint, on_edges, edge);
-    if (explicit_edge) on_edges = 1;
-    if (cell == -2) {
-      status = PHX_MC_CAPACITY_EXCEEDED;
-      return -1;
+    int on_edges = 0;
+    bool explicit_edge = false;
+    Vector3 point{};
+  };
+
+  // Capacity, chart location and physical spacing are checked before admitting
+  // the cavity. A selected edge is never reinterpreted as a generic insertion.
+  InsertionSite insertion_site(const double* uv, const double* xyz, double spacing,
+                               int32_t hint, const int32_t* requested,
+                               int64_t max_cells) {
+    if (static_cast<int64_t>(cells.size()) + 2 > max_cells) {
+      return {PHX_MC_CAPACITY_EXCEEDED};
     }
-    if (cell < 0) {
-      status = PHX_MC_INVALID_INPUT;
-      return -1;
+    InsertionSite site;
+    site.explicit_edge = requested != nullptr && requested[0] != -1;
+    site.cell = site.explicit_edge
+        ? requested_edge(requested[0], requested[1], hint, site.edge)
+        : locate(uv, hint, site.on_edges, site.edge);
+    if (site.explicit_edge) site.on_edges = 1;
+    if (site.cell == -2) {
+      return {PHX_MC_CAPACITY_EXCEEDED};
     }
-    if (on_edges >= 2) {
-      status = PHX_MC_DEGENERATE_INPUT;
-      return -1;
+    if (site.cell < 0) {
+      return {PHX_MC_INVALID_INPUT};
     }
-    const Vector3 p{xyz[0], xyz[1], xyz[2]};
-    const std::array<int32_t, 4> star{cell, neighbors[cell][0], neighbors[cell][1],
-                                       neighbors[cell][2]};
-    if (too_close(p, star, spacing)) {
-      status = PHX_MC_DEGENERATE_INPUT;
-      return -1;
+    if (site.on_edges >= 2) {
+      return {PHX_MC_DEGENERATE_INPUT};
+    }
+    site.point = {xyz[0], xyz[1], xyz[2]};
+    const std::array<int32_t, 4> star{site.cell, neighbors[site.cell][0],
+                                    neighbors[site.cell][1], neighbors[site.cell][2]};
+    if (too_close(site.point, star, spacing)) {
+      return {PHX_MC_DEGENERATE_INPUT};
+    }
+    return site;
+  }
+
+  struct EdgeInsertion {
+    int32_t status = PHX_MC_OK;
+    Rotated first{};
+    Rotated second{};
+    int32_t other = -1;
+    bool rounded_exact_restriction = false;
+  };
+
+  // A terminal producer restriction may use a rounded, noncollinear chart
+  // representative only inside the endpoint bounds and away from both endpoints.
+  bool rounded_restriction(const double* uv, int32_t a, int32_t b,
+                           bool explicit_edge, bool legalize_edges) const {
+    const double* chart_a = chart(a);
+    const double* chart_b = chart(b);
+    return explicit_edge && !legalize_edges &&
+           uv[0] >= std::min(chart_a[0], chart_b[0]) &&
+           uv[0] <= std::max(chart_a[0], chart_b[0]) &&
+           uv[1] >= std::min(chart_a[1], chart_b[1]) &&
+           uv[1] <= std::max(chart_a[1], chart_b[1]) &&
+           (uv[0] != chart_a[0] || uv[1] != chart_a[1]) &&
+           (uv[0] != chart_b[0] || uv[1] != chart_b[1]);
+  }
+
+  EdgeInsertion prepare_edge_insertion(const InsertionSite& site, const double* uv,
+                                       bool legalize_edges) const {
+    if (constrained[site.cell][site.edge] != 0) {
+      return {PHX_MC_CONSTRAINT_INTERSECTION};
+    }
+    EdgeInsertion pair;
+    pair.first = rotated(site.cell, site.edge);
+    pair.other = pair.first.adjacent[0];
+    const auto& t = pair.first;
+    const int back = pair.other >= 0
+        ? opposite_index(pair.other, t.vertices[1], t.vertices[2]) : -1;
+    if (back < 0 || neighbors[pair.other][back] != site.cell ||
+        cells[pair.other][(back + 1) % 3] != t.vertices[2] ||
+        cells[pair.other][(back + 2) % 3] != t.vertices[1] ||
+        constrained[pair.other][back] != 0) {
+      return {PHX_MC_INVALID_INPUT};
+    }
+    pair.second = rotated(pair.other, back);
+    const int32_t d = pair.second.vertices[0];
+    const int32_t c = t.vertices[0];
+    const int32_t a = t.vertices[1];
+    const int32_t b = t.vertices[2];
+    pair.rounded_exact_restriction =
+        rounded_restriction(uv, a, b, site.explicit_edge, legalize_edges);
+    if (!pair.rounded_exact_restriction &&
+        (orient2d(chart(c), chart(a), uv) <= 0 ||
+         orient2d(chart(c), uv, chart(b)) <= 0 ||
+         orient2d(chart(d), chart(b), uv) <= 0 ||
+         orient2d(chart(d), uv, chart(a)) <= 0)) {
+      return {PHX_MC_DEGENERATE_INPUT};
+    }
+    return pair;
+  }
+
+  // All four outer sides must remain reciprocal boundary sides before any
+  // vertex append or topology mutation. Each side visit retains its work charge.
+  int32_t check_edge_boundary(int32_t cell, const EdgeInsertion& pair) {
+    for (int owner_index = 0; owner_index < 2; ++owner_index) {
+      const int32_t owner_cell = owner_index == 0 ? cell : pair.other;
+      const Rotated& owner = owner_index == 0 ? pair.first : pair.second;
+      for (int side = 1; side <= 2; ++side) {
+        if (!charge()) {
+          return PHX_MC_CAPACITY_EXCEEDED;
+        }
+        const int32_t adjacent = owner.adjacent[side];
+        if (adjacent < 0) {
+          if (owner.flags[side] != 0) continue;
+        } else if (adjacent != cell && adjacent != pair.other) {
+          const int32_t first = owner.vertices[(side + 1) % 3];
+          const int32_t second = owner.vertices[(side + 2) % 3];
+          const int reciprocal = opposite_index(adjacent, first, second);
+          if (reciprocal >= 0 && neighbors[adjacent][reciprocal] == owner_cell &&
+              cells[adjacent][(reciprocal + 1) % 3] == second &&
+              cells[adjacent][(reciprocal + 2) % 3] == first &&
+              constrained[adjacent][reciprocal] == owner.flags[side]) continue;
+        }
+        return PHX_MC_INVALID_INPUT;
+      }
+    }
+    return PHX_MC_OK;
+  }
+
+  bool edge_children_legal(const EdgeInsertion& pair, const Vector3& p,
+                           const double* n) const {
+    const Rotated& t = pair.first;
+    const Rotated& u = pair.second;
+    const int32_t d = u.vertices[0];
+    const int32_t c = t.vertices[0];
+    const int32_t a = t.vertices[1];
+    const int32_t b = t.vertices[2];
+    const Vector3 pc = point(c);
+    const Vector3 pd = point(d);
+    const Vector3 ca = cross(point(a) - pc, p - pc);
+    const Vector3 pb = cross(p - pc, point(b) - pc);
+    const Vector3 db = cross(point(b) - pd, p - pd);
+    const Vector3 pa = cross(p - pd, point(a) - pd);
+    const Vector3 parent_t = normal(c, a, b);
+    const Vector3 parent_u = normal(d, b, a);
+    const Vector3 np{n[0], n[1], n[2]};
+    const Vector3 nc = vertex_normal(c);
+    const Vector3 na = vertex_normal(a);
+    const Vector3 nb = vertex_normal(b);
+    const Vector3 nd = vertex_normal(d);
+    const bool legal_t = split_children_legal(
+        parent_t, {nc, na, nb}, np, {{ca, {nc, na, np}}, {pb, {nc, np, nb}}}, &t);
+    const bool legal_u = split_children_legal(
+        parent_u, {nd, nb, na}, np, {{db, {nd, nb, np}}, {pa, {nd, np, na}}}, &u);
+    // The producer validates terminal radial restrictions against its rational
+    // chart and continuous source; the rounded view cannot own sign decisions.
+    const bool rounded_pole_restriction =
+        pair.rounded_exact_restriction && (declared_radial(t) || declared_radial(u));
+    return rounded_pole_restriction || (legal_t && legal_u);
+  }
+
+  bool cell_children_legal(int32_t cell, const Vector3& p, const double* n) const {
+    const Triangle& t = cells[cell];
+    const Vector3 parent = normal(t[0], t[1], t[2]);
+    const Vector3 first = cross(point(t[1]) - point(t[0]), p - point(t[0]));
+    const Vector3 second = cross(point(t[2]) - point(t[1]), p - point(t[1]));
+    const Vector3 third = cross(point(t[0]) - point(t[2]), p - point(t[2]));
+    const Vector3 np{n[0], n[1], n[2]};
+    const Vector3 n0 = vertex_normal(t[0]);
+    const Vector3 n1 = vertex_normal(t[1]);
+    const Vector3 n2 = vertex_normal(t[2]);
+    return split_children_legal(
+        parent, {n0, n1, n2}, np,
+        {{first, {n0, n1, np}}, {second, {n1, n2, np}}, {third, {n2, n0, np}}});
+  }
+
+  // Inserts only after location, cavity admission, reciprocal-side validation
+  // and physical-child legality; refusals return status without mutating topology.
+  InsertionResult insert(const double* uv, const double* xyz, const double* n,
+                          double spacing, int32_t hint, const int32_t* requested,
+                          bool legalize_edges, int64_t max_cells) {
+    const InsertionSite site = insertion_site(uv, xyz, spacing, hint, requested, max_cells);
+    if (site.status != PHX_MC_OK) {
+      return {-1, site.status};
     }
     std::pmr::vector<std::array<int32_t, 3>> stack{scratch_memory_resource()};
-    if (!native_execution_cavity(on_edges == 1 ? 4 : 3)) {
-      status = PHX_MC_CAPACITY_EXCEEDED;
-      return -1;
+    if (!native_execution_cavity(site.on_edges == 1 ? 4 : 3)) {
+      return {-1, PHX_MC_CAPACITY_EXCEEDED};
     }
     int32_t vertex = -1;
-    if (on_edges == 1) {
-      if (constrained[cell][edge] != 0) {
-        status = PHX_MC_CONSTRAINT_INTERSECTION;
-        return -1;
+    if (site.on_edges == 1) {
+      const EdgeInsertion pair = prepare_edge_insertion(site, uv, legalize_edges);
+      if (pair.status != PHX_MC_OK) {
+        return {-1, pair.status};
       }
-      const Rotated t = rotated(cell, edge);
-      const int32_t other = t.adjacent[0];
-      const int back = other >= 0 ? opposite_index(other, t.vertices[1], t.vertices[2]) : -1;
-      if (back < 0 || neighbors[other][back] != cell ||
-          cells[other][(back + 1) % 3] != t.vertices[2] ||
-          cells[other][(back + 2) % 3] != t.vertices[1] ||
-          constrained[other][back] != 0) {
-        status = PHX_MC_INVALID_INPUT;
-        return -1;
+      const int32_t boundary_status = check_edge_boundary(site.cell, pair);
+      if (boundary_status != PHX_MC_OK) {
+        return {-1, boundary_status};
       }
-      const Rotated u = rotated(other, back);
-      const int32_t d = u.vertices[0];
-      const int32_t c = t.vertices[0];
-      const int32_t a = t.vertices[1];
-      const int32_t b = t.vertices[2];
-      const double* chart_a = chart(a);
-      const double* chart_b = chart(b);
-      const bool rounded_exact_restriction =
-          explicit_edge && !legalize_edges &&
-          uv[0] >= std::min(chart_a[0], chart_b[0]) &&
-          uv[0] <= std::max(chart_a[0], chart_b[0]) &&
-          uv[1] >= std::min(chart_a[1], chart_b[1]) &&
-          uv[1] <= std::max(chart_a[1], chart_b[1]) &&
-          (uv[0] != chart_a[0] || uv[1] != chart_a[1]) &&
-          (uv[0] != chart_b[0] || uv[1] != chart_b[1]);
-      if (!rounded_exact_restriction &&
-          (orient2d(chart(c), chart(a), uv) <= 0 ||
-           orient2d(chart(c), uv, chart(b)) <= 0 ||
-           orient2d(chart(d), chart(b), uv) <= 0 ||
-           orient2d(chart(d), uv, chart(a)) <= 0)) {
-        status = PHX_MC_DEGENERATE_INPUT;
-        return -1;
+      if (!edge_children_legal(pair, site.point, n)) {
+        return {-1, PHX_MC_DEGENERATE_INPUT};
       }
-      // Prove all four outer sides are conserved reciprocal boundary sides
-      // before append_vertex or any topology mutation.
-      for (int owner_index = 0; owner_index < 2; ++owner_index) {
-        const int32_t owner_cell = owner_index == 0 ? cell : other;
-        const Rotated& owner = owner_index == 0 ? t : u;
-        for (int side = 1; side <= 2; ++side) {
-          if (!charge()) {
-            status = PHX_MC_CAPACITY_EXCEEDED;
-            return -1;
-          }
-          const int32_t adjacent = owner.adjacent[side];
-          if (adjacent < 0) {
-            if (owner.flags[side] != 0) continue;
-          } else if (adjacent != cell && adjacent != other) {
-            const int32_t first = owner.vertices[(side + 1) % 3];
-            const int32_t second = owner.vertices[(side + 2) % 3];
-            const int reciprocal = opposite_index(adjacent, first, second);
-            if (reciprocal >= 0 && neighbors[adjacent][reciprocal] == owner_cell &&
-                cells[adjacent][(reciprocal + 1) % 3] == second &&
-                cells[adjacent][(reciprocal + 2) % 3] == first &&
-                constrained[adjacent][reciprocal] == owner.flags[side]) continue;
-          }
-          status = PHX_MC_INVALID_INPUT;
-          return -1;
-        }
-      }
-      const Vector3 pc = point(c);
-      const Vector3 pd = point(d);
-      // Sub-triangles (c, a, p), (c, p, b) and (d, b, p), (d, p, a).
-      const Vector3 ca = cross(point(a) - pc, p - pc);
-      const Vector3 pb = cross(p - pc, point(b) - pc);
-      const Vector3 db = cross(point(b) - pd, p - pd);
-      const Vector3 pa = cross(p - pd, point(a) - pd);
-      const Vector3 parent_t = normal(c, a, b);
-      const Vector3 parent_u = normal(d, b, a);
-      const Vector3 np{n[0], n[1], n[2]};
-      const Vector3 nc = vertex_normal(c);
-      const Vector3 na = vertex_normal(a);
-      const Vector3 nb = vertex_normal(b);
-      const Vector3 nd = vertex_normal(d);
-      // Children of a surface-consistent parent stay consistent and, without
-      // source normals, on the parent's side. Children of a coarse or folded
-      // parent still honor every supplied source normal; nondegeneracy alone
-      // cannot establish physical orientation. A terminal exact restriction
-      // on a declared radial pole complex is validated against its authoritative
-      // chart and continuous source by the producer after this topology-only
-      // split; its rounded execution view cannot own these sign decisions.
-      const bool legal_t =
-          valid(parent_t, {nc, na, nb})
-              ? agrees(ca, {nc, na, np}) && agrees(pb, {nc, np, nb}) &&
-                    (!bare({nc, na, nb, np}) || aligned(parent_t, {ca, pb}))
-              : radial_children(t, ca, pb, np) ||
-                    (agrees(ca, {nc, na, np}) && agrees(pb, {nc, np, nb}));
-      const bool legal_u =
-          valid(parent_u, {nd, nb, na})
-              ? agrees(db, {nd, nb, np}) && agrees(pa, {nd, np, na}) &&
-                    (!bare({nd, nb, na, np}) || aligned(parent_u, {db, pa}))
-              : radial_children(u, db, pa, np) ||
-                    (agrees(db, {nd, nb, np}) && agrees(pa, {nd, np, na}));
-      const bool rounded_pole_restriction =
-          rounded_exact_restriction && (declared_radial(t) || declared_radial(u));
-      if (!rounded_pole_restriction && (!legal_t || !legal_u)) {
-        status = PHX_MC_DEGENERATE_INPUT;
-        return -1;
-      }
-      vertex = split_edge(cell, edge, uv, xyz, n, stack);
+      vertex = split_edge(site.cell, site.edge, uv, xyz, n, stack);
     } else {
-      const Triangle& t = cells[cell];
-      const Vector3 parent = normal(t[0], t[1], t[2]);
-      const Vector3 first = cross(point(t[1]) - point(t[0]), p - point(t[0]));
-      const Vector3 second = cross(point(t[2]) - point(t[1]), p - point(t[1]));
-      const Vector3 third = cross(point(t[0]) - point(t[2]), p - point(t[2]));
-      const Vector3 np{n[0], n[1], n[2]};
-      const Vector3 n0 = vertex_normal(t[0]);
-      const Vector3 n1 = vertex_normal(t[1]);
-      const Vector3 n2 = vertex_normal(t[2]);
-      const bool legal =
-          valid(parent, {n0, n1, n2})
-              ? agrees(first, {n0, n1, np}) && agrees(second, {n1, n2, np}) &&
-                    agrees(third, {n2, n0, np}) &&
-                    (!bare({n0, n1, n2, np}) || aligned(parent, {first, second, third}))
-              : agrees(first, {n0, n1, np}) && agrees(second, {n1, n2, np}) &&
-                    agrees(third, {n2, n0, np});
-      if (!legal) {
-        status = PHX_MC_DEGENERATE_INPUT;
-        return -1;
+      if (!cell_children_legal(site.cell, site.point, n)) {
+        return {-1, PHX_MC_DEGENERATE_INPUT};
       }
-      vertex = split_cell(cell, uv, xyz, n, stack);
+      vertex = split_cell(site.cell, uv, xyz, n, stack);
     }
     ++counters.inserted;
-    // An owning exact restriction calls with `sweep == 0`: the rounded chart
-    // point is only an execution representative, so neither local nor final
-    // Lawson flips may change its authoritative rational complex. Ordinary
-    // requested edges and generic insertions retain physical Delaunay
-    // legalization.
+    // Terminal rational restrictions retain their paired topology. Ordinary
+    // insertions and requested edges retain physical Delaunay legalization.
     if (legalize_edges) {
       legalize(stack);
     }
-    return vertex;
+    return {vertex, PHX_MC_OK};
   }
 
  private:
@@ -893,181 +950,250 @@ bool chart_in_domain(const double* uv) {
          coordinate_in_domain(uv[1]);
 }
 
+// Count bounds and addressability precede every allocation and buffer access.
+bool reconnect_dimensions_valid(const phx_mc_surface_reconnect_request& r) {
+  return !(r.vertex_count < 3 || r.vertex_count >= INT32_MAX || r.triangle_count < 1 ||
+           r.insert_count < 0 || r.insert_count >= INT32_MAX || r.work_limit < 0 ||
+           r.max_triangles < r.triangle_count || r.max_triangles >= INT32_MAX ||
+           r.vertex_count + r.insert_count >= INT32_MAX ||
+           !addressable(r.vertex_count, 3, sizeof(double)) ||
+           !addressable(r.max_triangles, 3, sizeof(int32_t)) ||
+           !addressable(r.insert_count, 3, sizeof(double)));
+}
+
+bool reconnect_source_buffers_valid(const phx_mc_surface_reconnect_request& r) {
+  return !(r.charts == nullptr ||
+           (r.vertex_metrics == nullptr) != (r.insert_metrics == nullptr) ||
+           (r.vertex_metrics != nullptr &&
+            !addressable(r.vertex_count + r.insert_count, 9, sizeof(double))) ||
+           !addressable(r.vertex_count + r.insert_count, 1, sizeof(int64_t)) ||
+           r.points == nullptr || r.normals == nullptr || r.triangles == nullptr ||
+           r.constrained == nullptr);
+}
+
+bool reconnect_result_buffers_valid(const phx_mc_surface_reconnect_request& r) {
+  return !(r.triangles_out == nullptr || r.constrained_out == nullptr ||
+           r.triangle_count_out == nullptr || r.counters == nullptr ||
+           (r.insert_count > 0 &&
+            (r.insert_charts == nullptr || r.insert_points == nullptr ||
+             r.insert_normals == nullptr || r.insert_spacing == nullptr ||
+             r.insert_hints == nullptr || r.vertex_ids == nullptr || r.item_status == nullptr)));
+}
+
+// Preserve reservation order and source metadata refusals before geometry
+// validation. Explicit edge intent alone requires the incident-fan index.
+int32_t load_surface_vertices(SurfaceTriangulation& surface,
+                              const phx_mc_surface_reconnect_request& r) {
+  const int64_t vertex_capacity = r.vertex_count + r.insert_count;
+  const int64_t cell_capacity = std::min(r.max_triangles, r.triangle_count + 2 * r.insert_count);
+  surface.charts.reserve(static_cast<std::size_t>(2 * vertex_capacity));
+  surface.points.reserve(static_cast<std::size_t>(3 * vertex_capacity));
+  surface.normals.reserve(static_cast<std::size_t>(3 * vertex_capacity));
+  surface.pole_ids.reserve(static_cast<std::size_t>(vertex_capacity));
+  if (r.insert_edges != nullptr &&
+      std::any_of(r.insert_edges, r.insert_edges + 2 * r.insert_count,
+                  [](int32_t vertex) { return vertex >= 0; })) {
+    surface.vertex_cells.reserve(static_cast<std::size_t>(vertex_capacity));
+    surface.vertex_cells.assign(static_cast<std::size_t>(r.vertex_count), -1);
+  }
+  if (r.vertex_pole_ids == nullptr) {
+    surface.pole_ids.assign(static_cast<std::size_t>(r.vertex_count), -1);
+  } else {
+    for (int64_t vertex = 0; vertex < r.vertex_count; ++vertex) {
+      if (r.vertex_pole_ids[vertex] < -1) {
+        return PHX_MC_INVALID_INPUT;
+      }
+    }
+    surface.pole_ids.assign(r.vertex_pole_ids, r.vertex_pole_ids + r.vertex_count);
+  }
+  surface.cells.reserve(static_cast<std::size_t>(cell_capacity));
+  surface.neighbors.reserve(static_cast<std::size_t>(cell_capacity));
+  surface.constrained.reserve(static_cast<std::size_t>(cell_capacity));
+  surface.charts.assign(r.charts, r.charts + 2 * r.vertex_count);
+  surface.points.assign(r.points, r.points + 3 * r.vertex_count);
+  surface.normals.assign(r.normals, r.normals + 3 * r.vertex_count);
+  if (r.vertex_metrics != nullptr) {
+    for (int64_t vertex = 0; vertex < r.vertex_count; ++vertex) {
+      if (!metric_valid(r.vertex_metrics + 9 * vertex)) {
+        return PHX_MC_INVALID_INPUT;
+      }
+    }
+    surface.metrics.reserve(static_cast<std::size_t>(9 * vertex_capacity));
+    surface.metrics.assign(r.vertex_metrics, r.vertex_metrics + 9 * r.vertex_count);
+  }
+  return PHX_MC_OK;
+}
+
+int32_t check_surface_coordinates(const phx_mc_surface_reconnect_request& r) {
+  for (int64_t vertex = 0; vertex < r.vertex_count; ++vertex) {
+    if (!chart_in_domain(r.charts + 2 * vertex)) {
+      return std::isfinite(r.charts[2 * vertex]) && std::isfinite(r.charts[2 * vertex + 1])
+                 ? PHX_MC_RANGE_ERROR
+                 : PHX_MC_NONFINITE_INPUT;
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      if (!std::isfinite(r.points[3 * vertex + axis]) ||
+          !std::isfinite(r.normals[3 * vertex + axis])) {
+        return PHX_MC_NONFINITE_INPUT;
+      }
+    }
+  }
+  return PHX_MC_OK;
+}
+
+int32_t load_surface_cells(SurfaceTriangulation& surface,
+                           const phx_mc_surface_reconnect_request& r) {
+  surface.cells.resize(static_cast<std::size_t>(r.triangle_count));
+  surface.constrained.resize(static_cast<std::size_t>(r.triangle_count));
+  for (int64_t cell = 0; cell < r.triangle_count; ++cell) {
+    for (int k = 0; k < 3; ++k) {
+      const int32_t vertex = r.triangles[3 * cell + k];
+      if (vertex < 0 || vertex >= r.vertex_count) {
+        return PHX_MC_INVALID_INPUT;
+      }
+      surface.cells[cell][k] = vertex;
+      surface.constrained[cell][k] = r.constrained[3 * cell + k] != 0 ? 1 : 0;
+    }
+    const auto& t = surface.cells[cell];
+    if (t[0] == t[1] || t[1] == t[2] || t[0] == t[2]) {
+      return PHX_MC_INVALID_INPUT;
+    }
+  }
+  return PHX_MC_OK;
+}
+
+struct SurfaceInsertion {
+  const double* chart;
+  const double* point;
+  const double* normal;
+  double spacing;
+  const int32_t* requested;
+};
+
+bool insertion_coordinates_valid(const SurfaceInsertion& input) {
+  const double* uv = input.chart;
+  const double* xyz = input.point;
+  const double* n = input.normal;
+  return !(!std::isfinite(uv[0]) || !std::isfinite(uv[1]) || !std::isfinite(xyz[0]) ||
+           !std::isfinite(xyz[1]) || !std::isfinite(xyz[2]) || !std::isfinite(n[0]) ||
+           !std::isfinite(n[1]) || !std::isfinite(n[2]) || !std::isfinite(input.spacing) ||
+           input.spacing < 0.0);
+}
+
+// Endpoints refer to source rows, even after earlier items append vertices.
+bool requested_edge_valid(const int32_t* requested, int64_t vertex_count) {
+  return requested == nullptr ||
+         ((requested[0] == -1 && requested[1] == -1) ||
+          (requested[0] >= 0 && requested[1] >= 0 &&
+           requested[0] < vertex_count && requested[1] < vertex_count &&
+           requested[0] != requested[1]));
+}
+
+// Value and intent errors take precedence over an already-exhausted work budget.
+int32_t insertion_context_status(const SurfaceTriangulation& surface,
+                                 const SurfaceInsertion& input, int64_t vertex_count) {
+  if (surface.insertion_metric != nullptr && !metric_valid(surface.insertion_metric)) {
+    return PHX_MC_NONFINITE_INPUT;
+  }
+  if (surface.insertion_pole_id < -1) {
+    return PHX_MC_INVALID_INPUT;
+  }
+  if (!chart_in_domain(input.chart)) {
+    return PHX_MC_RANGE_ERROR;
+  }
+  if (!requested_edge_valid(input.requested, vertex_count)) {
+    return PHX_MC_INVALID_INPUT;
+  }
+  if (surface.counters.exhausted != 0) {
+    return PHX_MC_CAPACITY_EXCEEDED;
+  }
+  return PHX_MC_OK;
+}
+
+void execute_surface_insertions(SurfaceTriangulation& surface,
+                                const phx_mc_surface_reconnect_request& r) {
+  int32_t last = 0;
+  for (int64_t item = 0; item < r.insert_count; ++item) {
+    const SurfaceInsertion input{
+        r.insert_charts + 2 * item, r.insert_points + 3 * item,
+        r.insert_normals + 3 * item, r.insert_spacing[item],
+        r.insert_edges == nullptr ? nullptr : r.insert_edges + 2 * item};
+    surface.insertion_metric =
+        r.insert_metrics == nullptr ? nullptr : r.insert_metrics + 9 * item;
+    surface.insertion_pole_id = r.insert_pole_ids == nullptr ? -1 : r.insert_pole_ids[item];
+    const int32_t status = insertion_coordinates_valid(input)
+        ? insertion_context_status(surface, input, r.vertex_count) : PHX_MC_NONFINITE_INPUT;
+    SurfaceTriangulation::InsertionResult result{-1, status};
+    if (status == PHX_MC_OK) {
+      const int32_t hint = r.insert_hints[item] >= 0 ? r.insert_hints[item] : last;
+      result = surface.insert(input.chart, input.point, input.normal, input.spacing,
+                              hint, input.requested, r.sweep != 0, r.max_triangles);
+      if (result.vertex >= 0) {
+        last = static_cast<int32_t>(surface.cells.size()) - 1;
+      }
+    }
+    if (result.vertex < 0) {
+      ++surface.counters.refused;
+    }
+    r.vertex_ids[item] = result.vertex;
+    r.item_status[item] = result.status;
+  }
+}
+
+void publish_surface_topology(const SurfaceTriangulation& surface,
+                              const phx_mc_surface_reconnect_request& r) {
+  native_execution_charge(0);
+  const std::size_t produced = surface.cells.size();
+  for (std::size_t cell = 0; cell < produced; ++cell) {
+    for (int k = 0; k < 3; ++k) {
+      r.triangles_out[3 * cell + k] = surface.cells[cell][k];
+      r.constrained_out[3 * cell + k] = surface.constrained[cell][k];
+    }
+  }
+  *r.triangle_count_out = static_cast<int64_t>(produced);
+}
+
 }  // namespace
 }  // namespace phx::mc
 
 extern "C" {
 
-int32_t phx_mc_surface_reconnect(int64_t vertex_count, const double* charts, const double* points,
-                                 const double* normals, const double* vertex_metrics,
-                                 const int64_t* vertex_pole_ids,
-                                 int64_t triangle_count,
-                                 const int32_t* triangles, const int8_t* constrained,
-                                 int64_t insert_count, const double* insert_charts,
-                                 const double* insert_points, const double* insert_normals,
-                                 const double* insert_metrics,
-                                 const int64_t* insert_pole_ids,
-                                 const double* insert_spacing, const int32_t* insert_hints,
-                                 const int32_t* insert_edges,
-                                 int32_t sweep, int64_t max_triangles, int64_t work_limit,
-                                 int32_t* triangles_out, int8_t* constrained_out,
-                                 int64_t* triangle_count_out, int32_t* vertex_ids,
-                                 int32_t* item_status, int64_t* counters) {
+int32_t phx_mc_surface_reconnect(
+    const phx_mc_surface_reconnect_request* request) {
+  if (request == nullptr) return PHX_MC_INVALID_ARGUMENT;
   return phx::mc::guarded([&]() -> int32_t {
     using phx::mc::SurfaceTriangulation;
-    if (vertex_count < 3 || vertex_count >= INT32_MAX || triangle_count < 1 ||
-        insert_count < 0 || insert_count >= INT32_MAX || work_limit < 0 ||
-        max_triangles < triangle_count || max_triangles >= INT32_MAX ||
-        vertex_count + insert_count >= INT32_MAX ||
-        !phx::mc::addressable(vertex_count, 3, sizeof(double)) ||
-        !phx::mc::addressable(max_triangles, 3, sizeof(int32_t)) ||
-        !phx::mc::addressable(insert_count, 3, sizeof(double)) || charts == nullptr ||
-        (vertex_metrics == nullptr) != (insert_metrics == nullptr) ||
-        (vertex_metrics != nullptr &&
-         (!phx::mc::addressable(vertex_count + insert_count, 9, sizeof(double)))) ||
-        !phx::mc::addressable(vertex_count + insert_count, 1, sizeof(int64_t)) ||
-        points == nullptr || normals == nullptr || triangles == nullptr || constrained == nullptr ||
-        triangles_out == nullptr || constrained_out == nullptr ||
-        triangle_count_out == nullptr || counters == nullptr ||
-        (insert_count > 0 &&
-         (insert_charts == nullptr || insert_points == nullptr || insert_normals == nullptr ||
-          insert_spacing == nullptr ||
-          insert_hints == nullptr || vertex_ids == nullptr || item_status == nullptr))) {
+    const auto& r = *request;
+    if (!phx::mc::reconnect_dimensions_valid(r) ||
+        !phx::mc::reconnect_source_buffers_valid(r) ||
+        !phx::mc::reconnect_result_buffers_valid(r)) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     phx::mc::native_execution_charge(0);
-    SurfaceTriangulation surface(work_limit);
-    const int64_t vertex_capacity = vertex_count + insert_count;
-    const int64_t cell_capacity = std::min(max_triangles, triangle_count + 2 * insert_count);
-    surface.charts.reserve(static_cast<std::size_t>(2 * vertex_capacity));
-    surface.points.reserve(static_cast<std::size_t>(3 * vertex_capacity));
-    surface.normals.reserve(static_cast<std::size_t>(3 * vertex_capacity));
-    surface.pole_ids.reserve(static_cast<std::size_t>(vertex_capacity));
-    if (insert_edges != nullptr &&
-        std::any_of(insert_edges, insert_edges + 2 * insert_count,
-                    [](int32_t vertex) { return vertex >= 0; })) {
-      surface.vertex_cells.reserve(static_cast<std::size_t>(vertex_capacity));
-      surface.vertex_cells.assign(static_cast<std::size_t>(vertex_count), -1);
+    SurfaceTriangulation surface(r.work_limit);
+    phx::mc::CounterPublisher publisher{surface.counters, r.counters, false};
+    const int32_t vertices = phx::mc::load_surface_vertices(surface, r);
+    if (vertices != PHX_MC_OK) {
+      return vertices;
     }
-    if (vertex_pole_ids == nullptr) {
-      surface.pole_ids.assign(static_cast<std::size_t>(vertex_count), -1);
-    } else {
-      for (int64_t vertex = 0; vertex < vertex_count; ++vertex) {
-        if (vertex_pole_ids[vertex] < -1) {
-          return PHX_MC_INVALID_INPUT;
-        }
-      }
-      surface.pole_ids.assign(vertex_pole_ids, vertex_pole_ids + vertex_count);
+    const int32_t coordinates = phx::mc::check_surface_coordinates(r);
+    if (coordinates != PHX_MC_OK) {
+      return coordinates;
     }
-    surface.cells.reserve(static_cast<std::size_t>(cell_capacity));
-    surface.neighbors.reserve(static_cast<std::size_t>(cell_capacity));
-    surface.constrained.reserve(static_cast<std::size_t>(cell_capacity));
-    surface.charts.assign(charts, charts + 2 * vertex_count);
-    surface.points.assign(points, points + 3 * vertex_count);
-    surface.normals.assign(normals, normals + 3 * vertex_count);
-    if (vertex_metrics != nullptr) {
-      for (int64_t vertex = 0; vertex < vertex_count; ++vertex) {
-        if (!phx::mc::metric_valid(vertex_metrics + 9 * vertex)) {
-          return PHX_MC_INVALID_INPUT;
-        }
-      }
-      surface.metrics.reserve(static_cast<std::size_t>(9 * vertex_capacity));
-      surface.metrics.assign(vertex_metrics, vertex_metrics + 9 * vertex_count);
-    }
-    for (int64_t vertex = 0; vertex < vertex_count; ++vertex) {
-      if (!phx::mc::chart_in_domain(charts + 2 * vertex)) {
-        return std::isfinite(charts[2 * vertex]) && std::isfinite(charts[2 * vertex + 1])
-                   ? PHX_MC_RANGE_ERROR
-                   : PHX_MC_NONFINITE_INPUT;
-      }
-      for (int axis = 0; axis < 3; ++axis) {
-        if (!std::isfinite(points[3 * vertex + axis]) ||
-            !std::isfinite(normals[3 * vertex + axis])) {
-          return PHX_MC_NONFINITE_INPUT;
-        }
-      }
-    }
-    surface.cells.resize(static_cast<std::size_t>(triangle_count));
-    surface.constrained.resize(static_cast<std::size_t>(triangle_count));
-    for (int64_t cell = 0; cell < triangle_count; ++cell) {
-      for (int k = 0; k < 3; ++k) {
-        const int32_t vertex = triangles[3 * cell + k];
-        if (vertex < 0 || vertex >= vertex_count) {
-          return PHX_MC_INVALID_INPUT;
-        }
-        surface.cells[cell][k] = vertex;
-        surface.constrained[cell][k] = constrained[3 * cell + k] != 0 ? 1 : 0;
-      }
-      const auto& t = surface.cells[cell];
-      if (t[0] == t[1] || t[1] == t[2] || t[0] == t[2]) {
-        return PHX_MC_INVALID_INPUT;
-      }
+    const int32_t cells = phx::mc::load_surface_cells(surface, r);
+    if (cells != PHX_MC_OK) {
+      return cells;
     }
     const int32_t prepared = surface.prepare();
     if (prepared != PHX_MC_OK && prepared != PHX_MC_CAPACITY_EXCEEDED) {
       return prepared;
     }
-    int32_t last = 0;
-    for (int64_t item = 0; item < insert_count; ++item) {
-      const double* uv = insert_charts + 2 * item;
-      const double* xyz = insert_points + 3 * item;
-      const double spacing = insert_spacing[item];
-      int32_t status = PHX_MC_OK;
-      int32_t vertex = -1;
-      const double* n = insert_normals + 3 * item;
-      const int32_t* requested = insert_edges == nullptr ? nullptr : insert_edges + 2 * item;
-      surface.insertion_metric = insert_metrics == nullptr ? nullptr : insert_metrics + 9 * item;
-      surface.insertion_pole_id = insert_pole_ids == nullptr ? -1 : insert_pole_ids[item];
-      if (!std::isfinite(uv[0]) || !std::isfinite(uv[1]) || !std::isfinite(xyz[0]) ||
-          !std::isfinite(xyz[1]) || !std::isfinite(xyz[2]) || !std::isfinite(n[0]) ||
-          !std::isfinite(n[1]) || !std::isfinite(n[2]) || !std::isfinite(spacing) ||
-          spacing < 0.0) {
-        status = PHX_MC_NONFINITE_INPUT;
-      } else if (surface.insertion_metric != nullptr &&
-                 !phx::mc::metric_valid(surface.insertion_metric)) {
-        status = PHX_MC_NONFINITE_INPUT;
-      } else if (surface.insertion_pole_id < -1) {
-        status = PHX_MC_INVALID_INPUT;
-      } else if (!phx::mc::chart_in_domain(uv)) {
-        status = PHX_MC_RANGE_ERROR;
-      } else if (requested != nullptr &&
-                 !((requested[0] == -1 && requested[1] == -1) ||
-                   (requested[0] >= 0 && requested[1] >= 0 &&
-                    requested[0] < vertex_count && requested[1] < vertex_count &&
-                    requested[0] != requested[1]))) {
-        status = PHX_MC_INVALID_INPUT;
-      } else if (surface.counters.exhausted != 0) {
-        status = PHX_MC_CAPACITY_EXCEEDED;
-      } else {
-        const int32_t hint = insert_hints[item] >= 0 ? insert_hints[item] : last;
-        vertex = surface.insert(uv, xyz, insert_normals + 3 * item, spacing, hint, requested,
-                                sweep != 0, max_triangles, status);
-        if (vertex >= 0) {
-          last = static_cast<int32_t>(surface.cells.size()) - 1;
-        }
-      }
-      if (vertex < 0) {
-        ++surface.counters.refused;
-      }
-      vertex_ids[item] = vertex;
-      item_status[item] = status;
-    }
-    if (sweep != 0 && surface.counters.exhausted == 0) {
+    phx::mc::execute_surface_insertions(surface, r);
+    if (r.sweep != 0 && surface.counters.exhausted == 0) {
       surface.sweep();
     }
-    phx::mc::native_execution_charge(0);
-    const std::size_t produced = surface.cells.size();
-    for (std::size_t cell = 0; cell < produced; ++cell) {
-      for (int k = 0; k < 3; ++k) {
-        triangles_out[3 * cell + k] = surface.cells[cell][k];
-        constrained_out[3 * cell + k] = surface.constrained[cell][k];
-      }
-    }
-    *triangle_count_out = static_cast<int64_t>(produced);
-    const phx::mc::Counters& c = surface.counters;
-    const int64_t values[PHX_MC_SURFACE_COUNTERS] = {c.inserted, c.refused,   c.flips,
-                                                     c.walk_steps, c.work, c.exhausted};
-    std::copy(values, values + PHX_MC_SURFACE_COUNTERS, counters);
+    phx::mc::publish_surface_topology(surface, r);
+    publisher.enabled = true;
     return PHX_MC_OK;
   });
 }

@@ -125,7 +125,7 @@ def test_finite_volume_flux_ledger_scenario_1() -> None:
 
     assert ledger.evidence_policy_id == "evidence-policy:ale-gcl"
     assert int(ledger.evidence_version) == 9
-    with pytest.raises(ValueError, match="nonempty canonical string"):
+    with pytest.raises(ValueError, match="evidence_policy_id"):
         _stage(
             [[1.0], [2.0]],
             [[0.0], [0.0]],
@@ -163,7 +163,7 @@ def test_finite_volume_flux_ledger_scenario_1() -> None:
     assert float(first.end_time) == pytest.approx(1.75)
     assert int(first.accepted_step) == 8
     assert first.ledger_id == second.ledger_id
-    with pytest.raises(Exception, match="exactly zero on inactive cells"):
+    with pytest.raises(Exception, match=r"source_integral.*zero on inactive cells"):
         AcceptedConservationIntegralLedger(
             (),
             jnp.asarray([[0.0], [1.0]]),
@@ -363,7 +363,10 @@ def test_ssprk33_contracts() -> None:
     changed_family = _stage(
         **common, geometry_version=2, geometry_family_id="geometry-family:other"
     )
-    with pytest.raises(ValueError, match="share one geometry family"):
+    with pytest.raises(
+        ValueError,
+        match="AcceptedConservationIntegralLedger\\.stages.*geometry_family_id",
+    ):
         _integrate(stage1, changed_family, stage3, start_version=1, end_version=4)
     stage1 = _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=1)
     changed_layout = _stage(
@@ -386,11 +389,20 @@ def test_ssprk33_contracts() -> None:
         neighbor=(0, -1),
     )
 
-    with pytest.raises(ValueError, match="one geometry layout"):
+    with pytest.raises(
+        ValueError,
+        match="AcceptedConservationIntegralLedger\\.stages.*geometry_layout_id",
+    ):
         _integrate(stage1, changed_layout, stage1, start_version=1)
-    with pytest.raises(ValueError, match="one evidence policy"):
+    with pytest.raises(
+        ValueError,
+        match="AcceptedConservationIntegralLedger\\.stages.*evidence_policy_id",
+    ):
         _integrate(stage1, changed_policy, stage1, start_version=1)
-    with pytest.raises(ValueError, match="identical block IDs, block kinds, and routes"):
+    with pytest.raises(
+        ValueError,
+        match="AcceptedConservationIntegralLedger\\.stages.*block IDs, kinds, and routes",
+    ):
         _integrate(stage1, changed_route, stage1, start_version=1)
     stage1 = _stage([[1.0], [2.0]], [[0.0], [0.0]], geometry_version=1)
     changed_stage = _stage(
@@ -400,7 +412,9 @@ def test_ssprk33_contracts() -> None:
         topology_epoch_id="topology:changed",
     )
 
-    with pytest.raises(ValueError, match="one topology epoch"):
+    with pytest.raises(
+        ValueError, match="AcceptedConservationIntegralLedger\\.stages.*topology_epoch_id"
+    ):
         _integrate(stage1, changed_stage, stage1, start_version=1)
     with pytest.raises(ValueError, match="end_topology_epoch_id"):
         AcceptedConservationIntegralLedger.integrate_ssprk33(
@@ -418,7 +432,9 @@ def test_ssprk33_contracts() -> None:
             end_time=jnp.asarray(0.1),
             accepted_step=jnp.asarray(1),
         )
-    with pytest.raises(ValueError, match="cannot span a topology epoch change"):
+    with pytest.raises(
+        ValueError, match="AcceptedConservationIntegralLedger\\.end_topology_epoch_id"
+    ):
         AcceptedConservationIntegralLedger(
             (),
             jnp.zeros((2, 1)),
@@ -528,7 +544,7 @@ def test_finite_volume_flux_ledger_scenario_2() -> None:
         "topology_epoch_id": "topology:0",
     }
 
-    with pytest.raises(ValueError, match="IDs must be unique"):
+    with pytest.raises(ValueError, match="conservation_ledger\\.block_ids"):
         ConservationStageLedger(
             (first, repeated_id),
             jnp.zeros((2, 1)),
@@ -536,7 +552,7 @@ def test_finite_volume_flux_ledger_scenario_2() -> None:
             # ty: ignore[invalid-argument-type]
             **kwargs,
         )
-    with pytest.raises(ValueError, match="routes must be unique"):
+    with pytest.raises(ValueError, match="conservation_ledger\\.route_ids"):
         ConservationStageLedger(
             (first, repeated_route),
             jnp.zeros((2, 1)),
@@ -553,7 +569,7 @@ def test_finite_volume_flux_ledger_scenario_2() -> None:
             "faces:a",
             "physical",
         )
-    with pytest.raises(ValueError, match="connect a cell to itself"):
+    with pytest.raises(ValueError, match="conservation_ledger\\.neighbor_cells"):
         ConservationStageFluxRateBlock(
             jnp.ones((1, 2)),
             jnp.asarray([0], dtype=jnp.int32),
@@ -570,7 +586,7 @@ def test_finite_volume_flux_ledger_scenario_2() -> None:
         _stage([[1.0], [2.0]], [[0.0], [0.0]], active_cell_mask=(1, 1))
     with pytest.raises(ValueError, match="one value per cell"):
         _stage([[1.0], [2.0]], [[0.0], [0.0]], active_cell_mask=(True,))
-    with pytest.raises(Exception, match="active route through an inactive cell"):
+    with pytest.raises(Exception, match=r"conservation_ledger\.active_cell_mask"):
         _stage(
             [[1.0], [0.0]],
             [[0.0], [0.0]],
@@ -596,7 +612,7 @@ def test_finite_volume_flux_ledger_scenario_2() -> None:
 def test_stage_ledger_rejects_every_nonzero_source_rate_on_inactive_cells(
     source_rate: Any,
 ) -> None:
-    with pytest.raises(Exception, match="exactly zero on inactive cells"):
+    with pytest.raises(Exception, match=r"source_rate.*zero on inactive cells"):
         _stage(
             [[2.0], [0.0]],
             source_rate,

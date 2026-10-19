@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 
@@ -21,13 +21,16 @@ _FRAME_TOLERANCE = 128.0 * np.finfo(np.float64).eps
 def _vector3(value: Sequence[float], name: str) -> tuple[float, float, float]:
     array = np.asarray(value, dtype=np.float64)
     if array.shape != (3,) or not np.all(np.isfinite(array)):
-        raise ValueError(f"{name} must be a finite three-vector.")
+        field = f"PlanarEmbedding.{name}"
+        raise ValueError(
+            f"{field} must be a finite three-vector; got shape={array.shape}"
+        )
     return (float(array[0]), float(array[1]), float(array[2]))
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class PlanarEmbedding:
-    """Exact affine embedding of planar coordinates in one world frame."""
+    """Embed planar coordinates in a finite right-handed orthonormal frame."""
 
     origin: tuple[float, float, float]
     x_axis: tuple[float, float, float]
@@ -50,18 +53,22 @@ class PlanarEmbedding:
         frame = np.stack((x_axis_, y_axis_, normal_))
         if not np.allclose(
             frame @ frame.T,
-            np.eye(3),
+            np.eye(3, dtype=np.float64),
             rtol=0.0,
             atol=_FRAME_TOLERANCE,
         ):
-            raise ValueError("Planar embedding axes must be orthonormal unit vectors.")
+            raise ValueError(
+                "PlanarEmbedding.axes must be orthonormal unit vectors; got nonorthonormal frame"
+            )
         if not np.allclose(
             np.cross(frame[0], frame[1]),
             frame[2],
             rtol=0.0,
             atol=_FRAME_TOLERANCE,
         ):
-            raise ValueError("Planar embedding axes must form a right-handed frame.")
+            raise ValueError(
+                "PlanarEmbedding.axes must form a right-handed frame; got reversed normal"
+            )
         embedding_id = canonical_fingerprint(
             {
                 "kind": "planar-embedding",
@@ -77,37 +84,51 @@ class PlanarEmbedding:
         object.__setattr__(self, "normal", normal_)
         object.__setattr__(self, "embedding_id", embedding_id)
 
-    def to_world(self, coordinates: Any, /) -> np.ndarray:
+    def to_world(self, coordinates: ArrayLike, /) -> np.ndarray:
         """Map coordinates with trailing dimension two into the world frame."""
 
         planar = np.asarray(coordinates, dtype=np.float64)
         if planar.ndim == 0 or planar.shape[-1] != 2:
-            raise ValueError("Planar coordinates must have trailing dimension two.")
+            raise ValueError(
+                f"PlanarEmbedding.coordinates must have trailing dimension two; got shape={planar.shape}"
+            )
         if not np.all(np.isfinite(planar)):
-            raise ValueError("Planar coordinates must be finite.")
+            raise ValueError(
+                "PlanarEmbedding.coordinates must be finite; got nonfinite values"
+            )
         basis = np.stack((self.x_axis, self.y_axis), axis=0)
-        return np.asarray(self.origin) + planar @ basis
+        return np.asarray(self.origin, dtype=np.float64) + planar @ basis
 
-    def to_planar(self, points: Any, /) -> np.ndarray:
-        """Return the exact frame coordinates of world points on the plane."""
+    def to_planar(self, points: ArrayLike, /) -> np.ndarray:
+        """Return world points projected onto the two planar frame axes."""
 
         world = np.asarray(points, dtype=np.float64)
         if world.ndim == 0 or world.shape[-1] != 3:
-            raise ValueError("World points must have trailing dimension three.")
+            raise ValueError(
+                f"PlanarEmbedding.points must have trailing dimension three; got shape={world.shape}"
+            )
         if not np.all(np.isfinite(world)):
-            raise ValueError("World points must be finite.")
+            raise ValueError(
+                "PlanarEmbedding.points must be finite; got nonfinite values"
+            )
         basis = np.stack((self.x_axis, self.y_axis), axis=1)
-        return (world - np.asarray(self.origin)) @ basis
+        return (world - np.asarray(self.origin, dtype=np.float64)) @ basis
 
-    def plane_residual(self, points: Any, /) -> np.ndarray:
+    def plane_residual(self, points: ArrayLike, /) -> np.ndarray:
         """Return the signed world-frame residual along the plane normal."""
 
         world = np.asarray(points, dtype=np.float64)
         if world.ndim == 0 or world.shape[-1] != 3:
-            raise ValueError("World points must have trailing dimension three.")
+            raise ValueError(
+                f"PlanarEmbedding.points must have trailing dimension three; got shape={world.shape}"
+            )
         if not np.all(np.isfinite(world)):
-            raise ValueError("World points must be finite.")
-        return (world - np.asarray(self.origin)) @ np.asarray(self.normal)
+            raise ValueError(
+                "PlanarEmbedding.points must be finite; got nonfinite values"
+            )
+        return (world - np.asarray(self.origin, dtype=np.float64)) @ np.asarray(
+            self.normal, dtype=np.float64
+        )
 
 
 __all__ = ["PlanarEmbedding"]

@@ -23,7 +23,7 @@ from ._constrained_sensitivity import (
     ConstrainedSensitivityRoute,
 )
 from ._iterative import Bounds, MinimizationProblem, NonlinearConstraint
-from ._nonlinear_constraints import _canonical_constraints, _constraint_layout
+from ._nonlinear_constraints import _canonical_constraints, constraint_layout
 from ._structured_nonlinear import (
     PreparedStructuredNonlinearProgram,
     StructuredNonlinearResult,
@@ -197,7 +197,7 @@ def structured_parameter_continuation(
         )
     generic = _generic_problem(prepared)
     coordinates = jnp.asarray(result.parameters)
-    layout = _constraint_layout(generic, coordinates, prepared.args)
+    layout = constraint_layout(generic, coordinates, prepared.args)
     warm = result.warm_start
     equality = warm.constraint_multipliers[prepared.program.equality_indices]
     lower_constraints = -warm.constraint_multipliers[prepared.program.lower_indices]

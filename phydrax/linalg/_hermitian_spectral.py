@@ -9,6 +9,7 @@ import sys
 from collections.abc import Callable
 from fractions import Fraction
 from functools import partial
+from types import ModuleType
 from typing import (
     assert_never,
     final,
@@ -24,16 +25,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.core import Tracer
 from jax.typing import ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..typing import checked, parse
-from ._hermitian_precision import HermitianPrecisionPolicy
+from ._hermitian_precision import _effective_dtype, HermitianPrecisionPolicy
 
 
 if TYPE_CHECKING:
-    from ..discretization._coordinate_enclosure import CoordinateEnclosureBudget
+    from ..discretization._coordinate_budget import CoordinateEnclosureBudget
 
 
 P = TypeVar("P")
@@ -43,6 +45,143 @@ type _FunctionKind = Literal["log", "exp", "sqrt", "inverse_sqrt"]
 
 def _adjoint(value: Array, /) -> Array:
     return jnp.swapaxes(jnp.conj(value), -1, -2)
+
+
+def _spectral_cast(
+    xp: ModuleType, value: ArrayLike, requested: str | None, /, *, decision: bool = False
+) -> Array | np.ndarray:
+    array = xp.asarray(value)
+    if xp is np:
+        array = array.astype(jax.typeof(array).dtype, copy=False)
+    if requested is None:
+        return array
+    if decision:
+        return array.astype(jax.dtypes.canonicalize_dtype(requested), copy=False)
+    if not jax.dtypes.issubdtype(array.dtype, jnp.inexact):
+        return array
+    return array.astype(
+        jax.dtypes.canonicalize_dtype(_effective_dtype(requested, array.dtype.name)),
+        copy=False,
+    )
+
+
+@eqx.filter_jit
+def _spectral_boolean_device(value: Array, /) -> Array:
+    return value.astype(np.bool_)
+
+
+def _spectral_leaf(value: ArrayLike, /, *, boolean: bool = False) -> Array:
+    match value:
+        case Array() | Tracer():
+            if boolean and value.dtype != np.bool_:
+                return _spectral_boolean_device(value)
+            return value
+        case _:
+            host = np.asarray(value, dtype=np.bool_ if boolean else None)
+            return jax.device_put(_spectral_cast(np, host, None))
+
+
+def _spectrum_kernel(
+    original: ArrayLike,
+    precision: HermitianPrecisionPolicy,
+    tolerance: ArrayLike,
+    xp: ModuleType,
+    /,
+) -> tuple[Array | np.ndarray, ...]:
+    value = _spectral_cast(xp, original, precision.compute_dtype)
+    adjoint = xp.swapaxes(xp.conj(value), -1, -2)
+    hermitian = _spectral_cast(
+        xp, 0.5 * value + 0.5 * adjoint, precision.factorization_dtype
+    )
+    eigenvalues, eigenvectors = xp.linalg.eigh(hermitian)
+    differences = xp.abs(eigenvalues[..., 1:] - eigenvalues[..., :-1])
+    minimum_gap = (
+        xp.min(differences, axis=-1)
+        if value.shape[-1] > 1
+        else xp.full(value.shape[:-2], xp.inf, dtype=eigenvalues.dtype)
+    )
+    magnitude = _spectral_cast(
+        xp, xp.max(xp.abs(eigenvalues), axis=-1), precision.decision_dtype, decision=True
+    )
+    threshold_tolerance = _spectral_cast(
+        xp, tolerance, precision.decision_dtype, decision=True
+    )
+    if xp is np and precision.decision_dtype is None:
+        # A Python tolerance is weakly typed in JAX; NumPy scalar tolerances
+        # retain their explicitly requested component precision.
+        match tolerance:
+            case np.floating():
+                pass
+            case _:
+                threshold_tolerance = threshold_tolerance.astype(magnitude.dtype)
+    threshold = threshold_tolerance * xp.maximum(magnitude, 1.0)
+    rank = xp.sum(xp.abs(eigenvalues) > threshold[..., None], axis=-1)
+    minimum_absolute = _spectral_cast(
+        xp, xp.min(xp.abs(eigenvalues), axis=-1), precision.decision_dtype, decision=True
+    )
+    condition = magnitude / xp.maximum(
+        minimum_absolute, jax.dtypes.finfo(eigenvalues.dtype).tiny
+    )
+    residual = _spectral_cast(
+        xp,
+        xp.max(
+            xp.abs(_spectral_cast(xp, value - adjoint, precision.accumulation_dtype)),
+            axis=(-2, -1),
+        ),
+        precision.decision_dtype,
+        decision=True,
+    )
+    minimum = _spectral_cast(
+        xp, xp.min(eigenvalues, axis=-1), precision.decision_dtype, decision=True
+    )
+    gap = _spectral_cast(xp, minimum_gap, precision.decision_dtype, decision=True)
+    condition = _spectral_cast(xp, condition, precision.decision_dtype, decision=True)
+    valid = (
+        xp.all(xp.isfinite(value), axis=(-2, -1))
+        & (residual <= tolerance)
+        & xp.all(xp.isfinite(eigenvalues), axis=-1)
+    )
+    return (
+        hermitian,
+        eigenvalues,
+        eigenvectors,
+        residual,
+        minimum,
+        gap,
+        rank,
+        condition,
+        valid,
+    )
+
+
+_spectrum_device = eqx.filter_jit(_spectrum_kernel)
+
+
+def _prepare_spectrum(
+    matrix: ArrayLike,
+    precision: HermitianPrecisionPolicy,
+    tolerance: float | np.floating,
+    /,
+) -> tuple[Array | np.ndarray, ...]:
+    match matrix:
+        case Array() | Tracer():
+            original = matrix
+            kernel = _spectrum_device
+            xp = jnp
+        case _:
+            original = np.asarray(matrix)
+            jax.typeof(original)
+            kernel = _spectrum_kernel
+            xp = np
+    if original.ndim < 2 or original.shape[-2] != original.shape[-1]:
+        raise ValueError(
+            f"HermitianSpectrum.matrix must have square trailing axes; got shape {original.shape}"
+        )
+    if tolerance < 0.0:
+        raise ValueError(
+            f"HermitianSpectrum.tolerance must be non-negative; got {tolerance!r}"
+        )
+    return kernel(original, precision, tolerance, xp)
 
 
 class HermitianSpectrum(StrictModule):
@@ -61,6 +200,7 @@ class HermitianSpectrum(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         matrix: ArrayLike,
@@ -69,53 +209,24 @@ class HermitianSpectrum(StrictModule):
         tolerance: float | np.floating = 1e-10,
         precision: HermitianPrecisionPolicy | None = None,
     ) -> None:
-        original = jnp.asarray(matrix)
         precision_ = HermitianPrecisionPolicy() if precision is None else precision
-        if not isinstance(precision_, HermitianPrecisionPolicy):
-            raise TypeError("precision must be a HermitianPrecisionPolicy or None.")
-        value = precision_.compute(original)
-        if value.ndim < 2 or value.shape[-2] != value.shape[-1]:
-            raise ValueError("Hermitian spectrum requires square trailing matrix axes.")
-        if tolerance < 0.0:
-            raise ValueError("tolerance must be non-negative.")
-        hermitian = precision_.factorization(0.5 * value + 0.5 * _adjoint(value))
-        eigenvalues, eigenvectors = jnp.linalg.eigh(hermitian)
-        differences = jnp.abs(eigenvalues[..., 1:] - eigenvalues[..., :-1])
-        minimum_gap = (
-            jnp.min(differences, axis=-1)
-            if value.shape[-1] > 1
-            else jnp.full(value.shape[:-2], jnp.inf, dtype=eigenvalues.dtype)
-        )
-        magnitude = precision_.decision(jnp.max(jnp.abs(eigenvalues), axis=-1))
-        threshold = precision_.decision(tolerance) * jnp.maximum(magnitude, 1.0)
-        rank = jnp.sum(jnp.abs(eigenvalues) > threshold[..., None], axis=-1)
-        minimum_absolute = precision_.decision(jnp.min(jnp.abs(eigenvalues), axis=-1))
-        condition = magnitude / jnp.maximum(
-            minimum_absolute, jnp.finfo(eigenvalues.dtype).tiny
-        )
-        residual = precision_.decision(
-            jnp.max(
-                jnp.abs(precision_.accumulation(value - _adjoint(value))),
-                axis=(-2, -1),
-            )
-        )
-        self.matrix = hermitian
-        self.eigenvalues = eigenvalues
-        self.eigenvectors = eigenvectors
-        self.hermiticity_residual = residual
-        self.minimum_eigenvalue = precision_.decision(jnp.min(eigenvalues, axis=-1))
-        self.minimum_gap = precision_.decision(minimum_gap)
-        self.numerical_rank = rank
-        self.condition_number = precision_.decision(condition)
+        prepared = _prepare_spectrum(matrix, precision_, tolerance)
+        (
+            self.matrix,
+            self.eigenvalues,
+            self.eigenvectors,
+            self.hermiticity_residual,
+            self.minimum_eigenvalue,
+            self.minimum_gap,
+            self.numerical_rank,
+            self.condition_number,
+            self.valid,
+        ) = (jax.device_put(value) for value in prepared)
         self.precision = precision_
-        self.precision_evidence = precision_.evidence_for(original)
-        self.valid = (
-            jnp.all(jnp.isfinite(value), axis=(-2, -1))
-            & (residual <= tolerance)
-            & jnp.all(jnp.isfinite(eigenvalues), axis=-1)
-        )
+        self.precision_evidence = precision_.evidence_for(matrix)
         self.tolerance = float(tolerance)
 
+    @eqx.filter_jit
     def reconstruct(self) -> Array:
         return (self.eigenvectors * self.eigenvalues[..., None, :]) @ _adjoint(
             self.eigenvectors
@@ -142,10 +253,10 @@ class HermitianFunctionResult(StrictModule):
         valid: ArrayLike,
         derivative_valid: ArrayLike,
     ) -> None:
-        self.value = jnp.asarray(value)
+        self.value = _spectral_leaf(value)
         self.spectrum = spectrum
-        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
-        self.derivative_valid = jnp.asarray(derivative_valid, dtype=jnp.bool_)
+        self.valid = _spectral_leaf(valid, boolean=True)
+        self.derivative_valid = _spectral_leaf(derivative_valid, boolean=True)
         self.function_id = str(function_id)
 
 
@@ -189,7 +300,7 @@ def _divided_difference(values: Array, kind: _FunctionKind) -> Array:
 def _function_value(
     matrix: Array, values: Array, vectors: Array, kind: _FunctionKind
 ) -> Array:
-    # Reuse the stopped diagnostic factorization; matrix owns its exact JVP.
+    # Reuse the stopped diagnostic factorization; matrix supplies its JVP.
     del matrix
     transformed = _function_values(values, kind).astype(vectors.dtype)
     result = (vectors * transformed[..., None, :]) @ _adjoint(vectors)
@@ -369,7 +480,7 @@ def _principal_outputs(
         or principal.shape[0] < 1
     ):
         raise ValueError(
-            "eigenvalue_map principal output must have shape (k, n), k >= 1."
+            f"hermitian_spectral_map.eigenvalue_map.principal must have shape (k, {eigenvalues.shape[0]}) with k >= 1; got shape {principal.shape}"
         )
     return principal, invariants
 
@@ -439,7 +550,7 @@ def hermitian_spectral_map(
     tolerance: float = 1e-10,
     precision: HermitianPrecisionPolicy | None = None,
 ) -> HermitianSpectralMapResult[Q]:
-    """Evaluate a permutation-equivariant principal map with exact first-order AD.
+    """Evaluate a permutation-equivariant principal map with first-order AD.
 
     The static, hashable callback receives (n,) eigenvalues and dynamic shared
     parameters; it returns (k,n) principal outputs and permutation-invariant
@@ -511,10 +622,10 @@ class SylvesterSolveResult(StrictModule):
         precision_evidence: PrecisionEvidenceEnvelope,
         /,
     ) -> None:
-        self.value = jnp.asarray(value)
-        self.residual_norm = jnp.asarray(residual_norm)
-        self.minimum_denominator = jnp.asarray(minimum_denominator)
-        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.value = _spectral_leaf(value)
+        self.residual_norm = _spectral_leaf(residual_norm)
+        self.minimum_denominator = _spectral_leaf(minimum_denominator)
+        self.valid = _spectral_leaf(valid, boolean=True)
         self.precision_evidence = precision_evidence
 
 
@@ -526,6 +637,7 @@ class HermitianSylvesterOperator(StrictModule):
     tolerance: float = eqx.field(static=True)
     precision: HermitianPrecisionPolicy
 
+    @checked
     def __init__(
         self,
         matrix: ArrayLike,
@@ -535,8 +647,6 @@ class HermitianSylvesterOperator(StrictModule):
         precision: HermitianPrecisionPolicy | None = None,
     ) -> None:
         precision_ = HermitianPrecisionPolicy() if precision is None else precision
-        if not isinstance(precision_, HermitianPrecisionPolicy):
-            raise TypeError("precision must be a HermitianPrecisionPolicy or None.")
         spectrum = HermitianSpectrum(
             matrix,
             tolerance=tolerance,
@@ -550,13 +660,17 @@ class HermitianSylvesterOperator(StrictModule):
     def mv(self, value: ArrayLike, /) -> Array:
         operand = jnp.asarray(value)
         if operand.shape != self.matrix.shape:
-            raise ValueError("Sylvester operand must match the matrix shape.")
+            raise ValueError(
+                f"HermitianSylvesterOperator.mv.value must have shape {self.matrix.shape}; got shape {operand.shape}"
+            )
         return self.matrix @ operand + operand @ self.matrix
 
     def solve(self, right_hand_side: ArrayLike, /) -> SylvesterSolveResult:
         right = self.precision.factorization(right_hand_side)
         if right.shape != self.matrix.shape:
-            raise ValueError("Sylvester right-hand side must match the matrix shape.")
+            raise ValueError(
+                f"HermitianSylvesterOperator.solve.right_hand_side must have shape {self.matrix.shape}; got shape {right.shape}"
+            )
         vectors = self.spectrum.eigenvectors
         local = _adjoint(vectors) @ right @ vectors
         denominators = (
@@ -587,7 +701,9 @@ class TracelessHermitianSpace(StrictModule):
     def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
         if dimension_ < 2:
-            raise ValueError("Density tangent dimension must be at least two.")
+            raise ValueError(
+                f"TracelessHermitianSpace.dimension must be at least two; got {dimension_!r}"
+            )
         self.dimension = dimension_
         self.space_id = f"traceless-hermitian:{dimension_}"
 
@@ -598,7 +714,9 @@ class TracelessHermitianSpace(StrictModule):
     def project(self, value: ArrayLike, /) -> Array:
         matrix = jnp.asarray(value)
         if matrix.shape[-2:] != self.shape:
-            raise ValueError(f"Matrix must have trailing shape {self.shape}.")
+            raise ValueError(
+                f"TracelessHermitianSpace.project.value must have trailing shape {self.shape}; got shape {matrix.shape}"
+            )
         hermitian = 0.5 * (matrix + _adjoint(matrix))
         trace = jnp.trace(hermitian, axis1=-2, axis2=-1) / float(self.dimension)
         identity = jnp.eye(self.dimension, dtype=hermitian.dtype)
@@ -608,24 +726,29 @@ class TracelessHermitianSpace(StrictModule):
         return jnp.real(jnp.vdot(self.project(left), self.project(right)))
 
 
-def _reserve_fraction_work(
+def fraction_storage_upper(count: int, bits: int, /) -> int:
+    """Bound CPython Fraction objects and their temporary reference slots."""
+    digits = (
+        max(bits, 1) + sys.int_info.bits_per_digit - 1
+    ) // sys.int_info.bits_per_digit
+    fraction_upper = 256 + 2 * (sys.getsizeof(0) + digits * sys.int_info.sizeof_digit)
+    return 256 + count * (fraction_upper + 16)
+
+
+def reserve_fraction_work(
     budget: CoordinateEnclosureBudget | None,
     work: int,
     count: int,
     bits: int,
     /,
 ) -> None:
-    """Admit exact term visits and a CPython-object upper bound, never native RSS."""
+    """Admit term visits and a CPython-object storage upper bound."""
     if budget is None:
         return
-    digits = (
-        max(bits, 1) + sys.int_info.bits_per_digit - 1
-    ) // sys.int_info.bits_per_digit
-    fraction_upper = 256 + 2 * (sys.getsizeof(0) + digits * sys.int_info.sizeof_digit)
-    budget.reserve(work, 256 + count * (fraction_upper + 16))
+    budget.reserve(work, fraction_storage_upper(count, bits))
 
 
-def _fraction_matrix_profile(
+def fraction_matrix_profile(
     matrices: tuple[tuple[tuple[Fraction, ...], ...], ...],
     budget: CoordinateEnclosureBudget | None,
     /,
@@ -654,15 +777,15 @@ def _fraction_matrix_profile(
     )
 
 
-def _fraction_sqrt_interval(
+def fraction_sqrt_interval(
     value: Fraction,
     /,
     *,
-    coordinate_budget: CoordinateEnclosureBudget | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[Fraction, Fraction]:
-    """Rational endpoints proved by squaring, not a libm accuracy assumption."""
-    _reserve_fraction_work(
-        coordinate_budget,
+    """Return rational square-root endpoints proved by squaring."""
+    reserve_fraction_work(
+        budget,
         2,
         8,
         max(abs(value.numerator).bit_length(), value.denominator.bit_length(), 1075),
@@ -674,23 +797,42 @@ def _fraction_sqrt_interval(
     ):
         root = Fraction(numerator, denominator)
         return root, root
-    central = math.sqrt(float(value))
+    try:
+        nominal = float(value)
+    except OverflowError:
+        nominal = math.inf
+    if not math.isfinite(nominal) or nominal < np.finfo(np.float64).tiny:
+        # Scale the rational before binary64 conversion: a squared norm can
+        # underflow even when its square root is an ordinary finite number.
+        reserve_fraction_work(
+            budget,
+            6,
+            12,
+            2 * max(value.numerator.bit_length(), value.denominator.bit_length(), 1075),
+        )
+        exponent = (value.numerator.bit_length() - value.denominator.bit_length()) // 2
+        scale = Fraction(2) ** exponent
+        lower, upper = fraction_sqrt_interval(value / (scale * scale), budget=budget)
+        return lower * scale, upper * scale
+    central = math.sqrt(nominal)
     if not math.isfinite(central) or central == 0:
-        raise ValueError("Embedded measure exceeds certified binary64 arithmetic range.")
+        raise ValueError(
+            f"fraction_sqrt_interval.value must have a finite nonzero binary64 square root; got root {central!r} for {value!r}"
+        )
     lower = upper = central
     while Fraction(lower) ** 2 > value:
-        if coordinate_budget is not None:
-            coordinate_budget.reserve(1)
+        if budget is not None:
+            budget.reserve(1)
         lower = float(np.nextafter(lower, -math.inf))
     while Fraction(upper) ** 2 < value:
-        if coordinate_budget is not None:
-            coordinate_budget.reserve(1)
+        if budget is not None:
+            budget.reserve(1)
         upper = float(np.nextafter(upper, math.inf))
     return Fraction(lower), Fraction(upper)
 
 
 class HermitianFunctionEnclosure(NamedTuple):
-    """Immutable host certificate: exact rational nominal matrix and norm radius."""
+    """Store a rational nominal matrix and an operator-norm error radius."""
 
     matrix: tuple[tuple[Fraction, ...], ...]
     error: Fraction
@@ -701,21 +843,19 @@ def _exact_matrix_product(
     second: tuple[tuple[Fraction, ...], ...],
     /,
     *,
-    coordinate_budget: CoordinateEnclosureBudget | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[tuple[Fraction, ...], ...]:
     dimension = len(first)
-    if coordinate_budget is not None:
-        numerator_bits, denominator_bits = _fraction_matrix_profile(
-            (first, second), coordinate_budget
+    if budget is not None:
+        numerator_bits, denominator_bits = fraction_matrix_profile(
+            (first, second), budget
         )
         result_bits = (
             2 * dimension * (numerator_bits + denominator_bits)
             + dimension.bit_length()
             + 4
         )
-        _reserve_fraction_work(
-            coordinate_budget, 2 * dimension**3, dimension**2 + 3, result_bits
-        )
+        reserve_fraction_work(budget, 2 * dimension**3, dimension**2 + 3, result_bits)
     return tuple(
         tuple(
             sum((first[i][k] * second[k][j] for k in range(dimension)), Fraction(0))
@@ -725,26 +865,24 @@ def _exact_matrix_product(
     )
 
 
-def _matrix_norm_enclosure(
+def matrix_norm_enclosure(
     matrix: tuple[tuple[Fraction, ...], ...],
     /,
     *,
-    coordinate_budget: CoordinateEnclosureBudget | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> Fraction:
-    if coordinate_budget is not None:
-        numerator_bits, denominator_bits = _fraction_matrix_profile(
-            (matrix,), coordinate_budget
-        )
+    if budget is not None:
+        numerator_bits, denominator_bits = fraction_matrix_profile((matrix,), budget)
         count = sum(len(row) for row in matrix)
-        _reserve_fraction_work(
-            coordinate_budget,
+        reserve_fraction_work(
+            budget,
             2 * count,
             4,
             2 * count * (numerator_bits + denominator_bits) + count.bit_length() + 4,
         )
-    return _fraction_sqrt_interval(
+    return fraction_sqrt_interval(
         sum((value * value for row in matrix for value in row), Fraction(0)),
-        coordinate_budget=coordinate_budget,
+        budget=budget,
     )[1]
 
 
@@ -752,13 +890,13 @@ def _scalar_log_enclosure(
     value: Fraction,
     /,
     *,
-    coordinate_budget: CoordinateEnclosureBudget | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[Fraction, Fraction]:
-    """Exact atanh series after dyadic scaling; no libm accuracy premise."""
+    """Enclose the logarithm with an atanh series after dyadic scaling."""
     if value <= 0:
-        raise ValueError("A metric logarithm requires positive scalar eigenvalues.")
-    _reserve_fraction_work(
-        coordinate_budget,
+        raise ValueError(f"_scalar_log_enclosure.value must be positive; got {value!r}")
+    reserve_fraction_work(
+        budget,
         8,
         14,
         140 * (abs(value.numerator).bit_length() + value.denominator.bit_length()) + 512,
@@ -766,13 +904,13 @@ def _scalar_log_enclosure(
     power = value.numerator.bit_length() - value.denominator.bit_length()
     factor = Fraction(2) ** power
     while value < factor:
-        if coordinate_budget is not None:
-            coordinate_budget.reserve(1)
+        if budget is not None:
+            budget.reserve(1)
         power -= 1
         factor /= 2
     while value >= 2 * factor:
-        if coordinate_budget is not None:
-            coordinate_budget.reserve(1)
+        if budget is not None:
+            budget.reserve(1)
         power += 1
         factor *= 2
     ratio = value / factor
@@ -782,8 +920,8 @@ def _scalar_log_enclosure(
         squared = argument * argument
         term, total = argument, Fraction(0)
         for index in range(32):
-            if coordinate_budget is not None:
-                coordinate_budget.reserve(4)
+            if budget is not None:
+                budget.reserve(4)
             total += 2 * term / (2 * index + 1)
             term *= squared
         tail = 2 * term / (65 * (1 - squared))
@@ -808,12 +946,12 @@ def _source_spectral_enclosure(
     original: tuple[tuple[Fraction, ...], ...],
     /,
     *,
-    coordinate_budget: CoordinateEnclosureBudget | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> _HermitianSpectralEnclosure:
-    """Exact residual/polar enclosure around the native numerical eigenframe."""
+    """Enclose residual and polar errors around the numerical eigenframe."""
     dimension = len(original)
-    _reserve_fraction_work(
-        coordinate_budget,
+    reserve_fraction_work(
+        budget,
         dimension**2 + dimension,
         2 * dimension**2 + dimension + 3,
         1075,
@@ -821,11 +959,13 @@ def _source_spectral_enclosure(
     floating = np.asarray(original, dtype=np.float64)
     if not np.all(np.isfinite(floating)):
         raise ValueError(
-            "The exact Hermitian source exceeds finite numerical spectral admission."
+            f"_source_spectral_enclosure.original must convert to finite binary64 entries; got {floating!r}"
         )
     spectrum = HermitianSpectrum(jnp.asarray(floating, dtype=jnp.float64))
     if not bool(np.asarray(spectrum.valid)):
-        raise ValueError("The native Hermitian spectrum is invalid.")
+        raise ValueError(
+            f"_source_spectral_enclosure.spectrum.valid must be true; got {spectrum.valid!r}"
+        )
     values = tuple(Fraction(float(value)) for value in np.asarray(spectrum.eigenvalues))
     q = tuple(
         tuple(Fraction(float(value)) for value in row)
@@ -835,38 +975,35 @@ def _source_spectral_enclosure(
     identity = tuple(
         tuple(Fraction(int(i == j)) for j in range(dimension)) for i in range(dimension)
     )
-    gram = _exact_matrix_product(transpose, q, coordinate_budget=coordinate_budget)
-    orthogonality = _matrix_norm_enclosure(
+    gram = _exact_matrix_product(transpose, q, budget=budget)
+    orthogonality = matrix_norm_enclosure(
         tuple(
             tuple(gram[i][j] - identity[i][j] for j in range(dimension))
             for i in range(dimension)
         ),
-        coordinate_budget=coordinate_budget,
+        budget=budget,
     )
     if orthogonality >= 1:
-        raise ValueError("The native Hermitian eigenframe has no certified polar factor.")
-    norm_q = _fraction_sqrt_interval(
-        1 + orthogonality, coordinate_budget=coordinate_budget
-    )[1]
+        raise ValueError(
+            f"_source_spectral_enclosure.orthogonality must be less than one for a certified polar factor; got {orthogonality!r}"
+        )
+    norm_q = fraction_sqrt_interval(1 + orthogonality, budget=budget)[1]
     polar_error = orthogonality / (
-        1
-        + _fraction_sqrt_interval(1 - orthogonality, coordinate_budget=coordinate_budget)[
-            0
-        ]
+        1 + fraction_sqrt_interval(1 - orthogonality, budget=budget)[0]
     )
     reconstruction = _exact_matrix_product(
         tuple(
             tuple(q[i][j] * values[j] for j in range(dimension)) for i in range(dimension)
         ),
         transpose,
-        coordinate_budget=coordinate_budget,
+        budget=budget,
     )
-    residual = _matrix_norm_enclosure(
+    residual = matrix_norm_enclosure(
         tuple(
             tuple(original[i][j] - reconstruction[i][j] for j in range(dimension))
             for i in range(dimension)
         ),
-        coordinate_budget=coordinate_budget,
+        budget=budget,
     )
     residual += max(abs(value) for value in values) * polar_error * (norm_q + 1)
     return _HermitianSpectralEnclosure(values, q, norm_q, polar_error, residual)
@@ -876,16 +1013,14 @@ def _scalar_exp_enclosure(
     value: Fraction,
     /,
     *,
-    coordinate_budget: CoordinateEnclosureBudget | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[Fraction, Fraction]:
     radius = abs(value)
     terms = max(32, 4 * math.ceil(radius) + 16)
     if terms > 512:
-        raise ValueError(
-            "Hermitian exponential exceeds its bounded scalar enclosure order."
-        )
-    _reserve_fraction_work(
-        coordinate_budget,
+        raise ValueError(f"_scalar_exp_enclosure.terms must be at most 512; got {terms}")
+    reserve_fraction_work(
+        budget,
         3 * terms + 4,
         8,
         (terms + 2)
@@ -913,16 +1048,18 @@ def hermitian_log_enclosure(
     values: ArrayLike,
     /,
     *,
-    coordinate_budget: CoordinateEnclosureBudget | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> HermitianFunctionEnclosure:
-    """Certify the matrix logarithm using the native spectral owner's residual.
+    """Certify the matrix logarithm using the numerical spectral residual.
 
     The returned rational matrix is an approximation, with an operator-norm
     enclosure covering scalar log tails, nonorthogonal numerical eigenvectors,
-    and the exact residual against the original tensor values.
+    and the rational residual against the input tensor values.
     """
     if np.iscomplexobj(values):
-        raise TypeError("This host enclosure accepts real symmetric matrices.")
+        raise TypeError(
+            f"hermitian_log_enclosure.values must be real-valued; got dtype {np.asarray(values).dtype}"
+        )
     metric = np.asarray(values, dtype=np.float64)
     if (
         metric.ndim != 2
@@ -932,28 +1069,25 @@ def hermitian_log_enclosure(
         or not np.array_equal(metric, metric.T)
     ):
         raise ValueError(
-            "Hermitian logarithm enclosure requires a finite symmetric matrix of order 1–16."
+            f"hermitian_log_enclosure.values must be a finite symmetric square matrix of order 1–16; got {metric!r} with shape {metric.shape}"
         )
     dimension = metric.shape[0]
-    _reserve_fraction_work(
-        coordinate_budget, dimension**2, dimension**2 + dimension + 2, 1075
-    )
+    reserve_fraction_work(budget, dimension**2, dimension**2 + dimension + 2, 1075)
     original = tuple(tuple(Fraction(float(value)) for value in row) for row in metric)
-    enclosure = _source_spectral_enclosure(original, coordinate_budget=coordinate_budget)
+    enclosure = _source_spectral_enclosure(original, budget=budget)
     eigenvalues, q, norm_q, polar_error, residual = enclosure
     if min(eigenvalues) <= 0:
         raise ValueError(
-            "Hermitian logarithm enclosure requires a positive native spectrum."
+            f"hermitian_log_enclosure.eigenvalues must be positive; got minimum {min(eigenvalues)!r}"
         )
     transpose = tuple(zip(*q, strict=True))
     minimum = min(eigenvalues) - residual
     if minimum <= 0:
         raise ValueError(
-            "Metric spectral residual does not establish a positive logarithm domain."
+            f"hermitian_log_enclosure.minimum must be positive after subtracting the spectral residual; got {minimum!r}"
         )
     intervals = tuple(
-        _scalar_log_enclosure(value, coordinate_budget=coordinate_budget)
-        for value in eigenvalues
+        _scalar_log_enclosure(value, budget=budget) for value in eigenvalues
     )
     centers = tuple((low + high) / 2 for low, high in intervals)
     matrix = _exact_matrix_product(
@@ -962,7 +1096,7 @@ def hermitian_log_enclosure(
             for i in range(dimension)
         ),
         transpose,
-        coordinate_budget=coordinate_budget,
+        budget=budget,
     )
     scalar_error = max((high - low) / 2 for low, high in intervals)
     logarithm_norm = max(max(abs(low), abs(high)) for low, high in intervals)
@@ -979,11 +1113,13 @@ def hermitian_exp_enclosure(
     logarithm: HermitianFunctionEnclosure,
     /,
     *,
-    coordinate_budget: CoordinateEnclosureBudget | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[tuple[tuple[Fraction, ...], ...], Fraction]:
     """Enclose the exponential of a Hermitian matrix ball using its native spectrum."""
     if not isinstance(logarithm, HermitianFunctionEnclosure):
-        raise TypeError("logarithm must be HermitianFunctionEnclosure.")
+        raise TypeError(
+            f"hermitian_exp_enclosure.logarithm must be HermitianFunctionEnclosure; got {type(logarithm).__name__}"
+        )
     dimension = len(logarithm.matrix)
     if (
         not 1 <= dimension <= 16
@@ -991,22 +1127,19 @@ def hermitian_exp_enclosure(
         or logarithm.error < 0
     ):
         raise ValueError(
-            "Hermitian exponential enclosure requires a bounded square host certificate."
+            f"hermitian_exp_enclosure.logarithm must have a square matrix of order 1–16 and a non-negative error radius; got row lengths {tuple(len(row) for row in logarithm.matrix)} and error {logarithm.error!r}"
         )
     if any(
         logarithm.matrix[i][j] != logarithm.matrix[j][i]
         for i in range(dimension)
         for j in range(dimension)
     ):
-        raise ValueError("The exact exponential source must be symmetric.")
-    spectral = _source_spectral_enclosure(
-        logarithm.matrix, coordinate_budget=coordinate_budget
-    )
+        raise ValueError(
+            f"hermitian_exp_enclosure.logarithm.matrix must be symmetric; got {logarithm.matrix!r}"
+        )
+    spectral = _source_spectral_enclosure(logarithm.matrix, budget=budget)
     values, q, norm_q, polar_error, residual = spectral
-    intervals = tuple(
-        _scalar_exp_enclosure(value, coordinate_budget=coordinate_budget)
-        for value in values
-    )
+    intervals = tuple(_scalar_exp_enclosure(value, budget=budget) for value in values)
     centers = tuple(value for value, _ in intervals)
     transpose = tuple(zip(*q, strict=True))
     result = _exact_matrix_product(
@@ -1015,16 +1148,14 @@ def hermitian_exp_enclosure(
             for i in range(dimension)
         ),
         transpose,
-        coordinate_budget=coordinate_budget,
+        budget=budget,
     )
     error = max(error for _, error in intervals) * norm_q * norm_q
     exponential_norm = max(value + error for value, error in intervals)
     error += exponential_norm * polar_error * (norm_q + 1)
     source_radius = residual + logarithm.error
     exponent = max(0, math.ceil(max(values) + source_radius))
-    _reserve_fraction_work(
-        coordinate_budget, exponent.bit_length() + 1, 3, 2 * exponent + 2
-    )
+    reserve_fraction_work(budget, exponent.bit_length() + 1, 3, 2 * exponent + 2)
     exponential_upper = Fraction(3) ** exponent
     bound = error + exponential_upper * source_radius
     return result, bound

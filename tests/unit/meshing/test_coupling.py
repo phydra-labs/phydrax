@@ -1,18 +1,24 @@
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.meshing._assembly import MeshAssembly, MeshPart
+from phydrax.meshing._assembly import MeshAssembly
 from phydrax.meshing._coupling import (
     ConformalCoupling,
     ContactCoupling,
     OversetCoupling,
     PeriodicCoupling,
 )
+from phydrax.meshing._mesh_part import MeshPart
+
+
+# Empirical `test_periodic_coupling_transforms_rank_two_tensors`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+PERIODIC_TENSOR_COMPONENT_ATOL = 1e-14
 
 
 def _part(name: Any, coordinates: Any = None, cells: Any = None) -> Any:
@@ -42,7 +48,7 @@ def test_coupling_scenario_1() -> None:
     np.testing.assert_array_equal(coupling.transfer(jnp.asarray([3.0, 8.0])), [8.0, 3.0])
     np.testing.assert_array_equal(coupling.transpose(jnp.asarray([2.0, 7.0])), [7.0, 2.0])
     moved = _part("right", ((2.0, 0.0), (1.0, 0.0), (1.0, 1.0)), ((1, 0, 2),))
-    with pytest.raises(ValueError, match="stale"):
+    with pytest.raises(ValueError, match=r"MeshPart\.scope"):
         MeshAssembly((source, moved), couplings=(coupling,))
     with pytest.raises(ValueError, match="coincide"):
         ConformalCoupling(source, target, source_scope, target_scope)
@@ -132,7 +138,7 @@ def test_coupling_scenario_2() -> None:
         np.asarray([[0]]),
         np.asarray([[1.0]]),
     )
-    with pytest.raises(ValueError, match="exactly one"):
+    with pytest.raises(ValueError, match=r"MeshAssembly\.couplings"):
         MeshAssembly((source, target, duplicate_donor), couplings=(overlay, duplicate))
     source, target = _part("source"), _part("target")
     args = (source, target, source.scope(0, [0, 1]), target.scope(0, [0]))
@@ -301,7 +307,7 @@ def test_periodic_coupling_binds_oriented_edge_orbits() -> None:
     np.testing.assert_array_equal(
         horizontal.transfer_oriented(jnp.asarray((5.0,))), (5.0,)
     )
-    with pytest.raises(ValueError, match="do not match"):
+    with pytest.raises(ValueError, match=r"PeriodicCoupling\.entity_pair_corners"):
         PeriodicCoupling(
             part,
             part,
@@ -331,7 +337,9 @@ def test_periodic_coupling_transforms_rank_two_tensors() -> None:
 
     expected = np.stack([rotation @ tensor @ rotation.T for tensor in tensors])
     np.testing.assert_allclose(
-        coupling.transfer_tensors(jnp.asarray(tensors)), expected, atol=1e-14
+        coupling.transfer_tensors(jnp.asarray(tensors)),
+        expected,
+        atol=PERIODIC_TENSOR_COMPONENT_ATOL,
     )
 
 
@@ -355,7 +363,7 @@ def test_periodic_coupling_refuses_quotient_orbit_reidentification() -> None:
         ),
     )
 
-    with pytest.raises(ValueError, match="already identifies"):
+    with pytest.raises(ValueError, match=r"PeriodicCoupling\.entity_pairs"):
         PeriodicCoupling(
             torus,
             torus,
@@ -403,3 +411,88 @@ def test_periodic_constraint_binds_explicit_entity_orbits() -> None:
     scaled[0, 0] = 2.0
     with pytest.raises(ValueError, match="isometry"):
         phx.meshing.PeriodicConstraint(left, right, scaled)
+
+
+def _stored_contact_fixture() -> tuple[ContactCoupling, MeshPart, MeshPart]:
+    source = _part("contact-source")
+    target = _part(
+        "contact-target",
+        np.asarray(((0.0, -0.1), (1.0, -0.1), (0.0, 0.9)), dtype=np.float64),
+    )
+    value = ContactCoupling(
+        source,
+        target,
+        source.scope(0, [0]),
+        target.scope(0, [0]),
+        np.asarray(((0.0, 1.000001),), dtype=np.float64),
+        tolerance=1.0e-4,
+    )
+    return value, source, target
+
+
+def test_contact_stored_fields_preserve_tolerance_scope_and_physical_force() -> None:
+    value, source, target = _stored_contact_fixture()
+    restored = ContactCoupling.from_stored_fields(value, source=source, target=target)
+    assert restored is not value
+    assert restored.coupling_id == value.coupling_id
+    assert restored.tolerance == value.tolerance == 1.0e-4
+    assert restored.source_scope.scope_id == value.source_scope.scope_id
+    assert restored.target_scope.scope_id == value.target_scope.scope_id
+    np.testing.assert_array_equal(restored.source_rows, value.source_rows)
+    np.testing.assert_array_equal(restored.normals, value.normals)
+    np.testing.assert_array_equal(restored.reference_gap, value.reference_gap)
+    left, right = restored.penalty_forces(
+        np.zeros((1, 2), dtype=np.float64),
+        np.asarray(((0.0, -0.4),), dtype=np.float64),
+        10.0,
+    )
+    expected = np.asarray(((0.0, 10.0 * 0.5000005 * 1.000001),), dtype=np.float64)
+    # The gap and penalty chain has fewer than eight scalar operations; 64 eps
+    # bounds accumulated relative rounding without cancellation in the force.
+    np.testing.assert_allclose(
+        right, expected, rtol=64 * np.finfo(np.float64).eps, atol=0.0
+    )
+    np.testing.assert_array_equal(left, -right)
+
+
+def _corrupt_stored_contact(value: ContactCoupling, fault: str) -> ContactCoupling:
+    match fault:
+        case "row-range":
+            return eqx.tree_at(
+                lambda item: item.source_rows,
+                value,
+                jnp.full_like(value.source_rows, value.source_scope.entity_ids.size),
+            )
+        case "row-dtype":
+            return eqx.tree_at(
+                lambda item: item.source_rows,
+                value,
+                value.source_rows.astype(jnp.float64),
+            )
+        case "normal":
+            return eqx.tree_at(lambda item: item.normals, value, 2 * value.normals)
+        case "gap":
+            return eqx.tree_at(
+                lambda item: item.reference_gap, value, value.reference_gap + 0.01
+            )
+        case _:
+            raise ValueError(
+                f"fixture.fault must name a contact corruption; got {fault!r}"
+            )
+
+
+@pytest.mark.parametrize(
+    ("fault", "field"),
+    (
+        ("row-range", "source_rows"),
+        ("row-dtype", "source_rows"),
+        ("normal", "normals"),
+        ("gap", "stored_fields"),
+    ),
+    ids=("source-row-range", "source-row-dtype", "unit-normal", "physical-gap"),
+)
+def test_contact_stored_fields_refuse_corrupt_state(fault: str, field: str) -> None:
+    value, source, target = _stored_contact_fixture()
+    corrupted = _corrupt_stored_contact(value, fault)
+    with pytest.raises(ValueError, match=rf"ContactCoupling\.{field}"):
+        ContactCoupling.from_stored_fields(corrupted, source=source, target=target)

@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _problem() -> Any:
@@ -12,7 +13,9 @@ def _problem() -> Any:
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
     faces = jnp.asarray(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)))
-    domain = phx.domain.GeometryDomain(phx.geometry.MeshRegion(vertices, faces).compile())
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.MeshRegion(vertices, faces).compile(coordinate_unit=METER)
+    )
     boundary = domain.component({"x": phx.domain.Boundary()})
     return domain, boundary
 

@@ -17,9 +17,11 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, ConstraintMap, FunctionLinearOperator
+from ...typing import checked
 from .._cell_complex import PolygonalConnectivity
 from .._integration_domain import IntegrationDomain
 from ._space import VirtualElementDiscretization
+from ._spec import VirtualElementTraceKind
 
 
 class VirtualElementDirichletConstraint(StrictModule, NonTrainableState):
@@ -29,14 +31,14 @@ class VirtualElementDirichletConstraint(StrictModule, NonTrainableState):
     free_dofs: Array
     trace_modes: Array
     dof_coordinates: Array
-    trace_kind: str = eqx.field(static=True)
+    trace_kind: VirtualElementTraceKind = eqx.field(static=True)
     field_space_id: str = eqx.field(static=True)
     constraint_id: str = eqx.field(static=True)
 
     def lift(self, values: ArrayLike | Callable[[Array], ArrayLike], /) -> Array:
         if callable(values) and self.trace_kind != "value":
             raise ValueError(
-                "Moment-trace Dirichlet lifts require prescribed DOF moments, not point samples."
+                f"VirtualElementDirichletConstraint.values must prescribe DOF moments for moment traces; got callable for trace_kind={self.trace_kind}"
             )
         if callable(values):
             evaluator = cast(Callable[[Array], ArrayLike], values)
@@ -45,7 +47,9 @@ class VirtualElementDirichletConstraint(StrictModule, NonTrainableState):
             raw = jnp.asarray(values)
         full_space = self.constraint_map.full_space
         if not isinstance(full_space, ArraySpace):
-            raise TypeError("VEM Dirichlet lifts require ArraySpace.")
+            raise TypeError(
+                "VirtualElementDirichletConstraint.full_space must be ArraySpace; got non-array vector space"
+            )
         full_size = full_space.size
         if raw.shape == ():
             constrained_values = (
@@ -59,7 +63,7 @@ class VirtualElementDirichletConstraint(StrictModule, NonTrainableState):
             constrained_values = raw.reshape((-1,))[self.constrained_dofs]
         else:
             raise ValueError(
-                "VEM Dirichlet values must be scalar, full-space, or constrained-size."
+                f"VirtualElementDirichletConstraint.values must be scalar, full-space, or constrained-size; got shape={raw.shape}"
             )
         return (
             jnp.zeros((full_size,), dtype=constrained_values.dtype)
@@ -95,6 +99,7 @@ def _component_roots(discretization: VirtualElementDiscretization, /) -> np.ndar
     return np.asarray([root(index) for index in range(vertex_count)], dtype=np.int32)
 
 
+@checked
 def virtual_element_dirichlet_constraint(
     discretization: VirtualElementDiscretization,
     field_name: str,
@@ -103,24 +108,32 @@ def virtual_element_dirichlet_constraint(
     boundary_mask: ArrayLike | None = None,
     domain: IntegrationDomain | None = None,
 ) -> VirtualElementDirichletConstraint:
-    if not isinstance(discretization, VirtualElementDiscretization):
-        raise TypeError("discretization must be VirtualElementDiscretization.")
     if str(field_name) != discretization.field.name:
-        raise KeyError(f"Unknown virtual-element field {field_name!r}.")
+        raise KeyError(
+            f"virtual_element_dirichlet_constraint.field_name must match the prepared field; got {field_name!r}"
+        )
     if discretization.field.element.trace_kind == "none":
-        raise ValueError("Discontinuous L2 virtual elements have no boundary trace.")
+        raise ValueError(
+            "VirtualElementDiscretization.trace_kind must support a boundary trace; got discontinuous L2 cell moments"
+        )
     if boundary_mask is not None and domain is not None:
-        raise ValueError("Specify boundary_mask or domain, not both.")
+        raise ValueError(
+            "virtual_element_dirichlet_constraint.selection must supply boundary_mask or domain, not both; got both selectors"
+        )
     mask = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=np.bool_)
     if domain is not None:
         if domain.kind != "exterior_facet":
-            raise ValueError("VEM Dirichlet domains must select exterior facets.")
+            raise ValueError(
+                f"virtual_element_dirichlet_constraint.domain must select exterior facets; got kind={domain.kind}"
+            )
         if (
             domain.support_id != discretization.mesh.support.support_id
             or domain.entity_set_id
             != discretization.mesh.topology.entity_sets[1].entity_set_id
         ):
-            raise ValueError("VEM Dirichlet domain belongs to another facet support.")
+            raise ValueError(
+                f"virtual_element_dirichlet_constraint.domain must match the facet support; got support_id={domain.support_id}, entity_set_id={domain.entity_set_id}"
+            )
         mask = np.zeros_like(mask)
         # VirtualElementPlan rejects meshes without PolygonalConnectivity.
         connectivity = cast(PolygonalConnectivity, discretization.mesh.connectivity)
@@ -135,7 +148,7 @@ def virtual_element_dirichlet_constraint(
             edge_route = np.asarray(periodic.orbits(1)[0])
             if np.any(~physical_boundary[edge_route[selected]]):
                 raise ValueError(
-                    "Periodic cut facets are not physical Dirichlet boundaries."
+                    "virtual_element_dirichlet_constraint.domain must select physical boundaries; got periodic cut facets"
                 )
             selected_vertices = np.asarray(periodic.orbits(0)[0])[selected_vertices]
             selected = edge_route[selected]
@@ -152,14 +165,20 @@ def virtual_element_dirichlet_constraint(
     elif boundary_mask is not None:
         mask = np.asarray(boundary_mask, dtype=np.bool_)
         if mask.shape != (discretization.dof_map.global_dof_count,):
-            raise ValueError("boundary_mask must have global VEM DOF shape.")
+            raise ValueError(
+                f"virtual_element_dirichlet_constraint.boundary_mask must have global VEM DOF shape; got {mask.shape}"
+            )
         boundary = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=np.bool_)
         if np.any(mask & ~boundary):
-            raise ValueError("boundary_mask may select only VEM boundary-trace DOFs.")
+            raise ValueError(
+                "virtual_element_dirichlet_constraint.boundary_mask must select boundary-trace DOFs only; got interior DOFs"
+            )
     constrained = np.flatnonzero(mask).astype(np.int32)
     free = np.flatnonzero(~mask).astype(np.int32)
     if constrained.size == 0 or free.size == 0:
-        raise ValueError("VEM Dirichlet constraints require a nonempty proper subset.")
+        raise ValueError(
+            f"virtual_element_dirichlet_constraint.boundary_mask must select a nonempty proper subset; got constrained={constrained.size}, free={free.size}"
+        )
     if discretization.field.element.family == "ConformingH1":
         roots = _component_roots(discretization)
         component_roots = set(int(value) for value in roots)
@@ -168,7 +187,7 @@ def virtual_element_dirichlet_constraint(
         ]
         if {int(roots[index]) for index in constrained_vertices} != component_roots:
             raise ValueError(
-                "VEM Dirichlet constraints must anchor every mesh component."
+                "virtual_element_dirichlet_constraint.boundary_mask must anchor every mesh component; got unanchored components"
             )
     if discretization.field.element.trace_kind in ("normal", "tangential"):
         edge_width = discretization.field.element.edge_dofs_per_entity
@@ -177,7 +196,9 @@ def virtual_element_dirichlet_constraint(
         trace_modes = np.full(constrained.shape, -1, dtype=np.int32)
     full_space = discretization.field_space.vector_space
     if not isinstance(full_space, ArraySpace):
-        raise TypeError("VEM Dirichlet constraints require ArraySpace.")
+        raise TypeError(
+            "virtual_element_dirichlet_constraint.full_space must be ArraySpace; got non-array vector space"
+        )
     reduced_space = ArraySpace((free.size,), pairing=None)
     free_array = jnp.asarray(free)
     prolongation = FunctionLinearOperator(

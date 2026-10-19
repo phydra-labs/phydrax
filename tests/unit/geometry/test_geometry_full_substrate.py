@@ -21,6 +21,11 @@ from phydrax.geometry.brep import (
     BRepBoundaryMap,
     BRepTessellationPolicy,
 )
+from phydrax.units import METER
+
+
+# Empirical `test_sketch_and_design_constraint_solvers_lower_to_geometry`: matched max |delta|=1.51021e-10; joint allowance fraction=0.0151021, margin=98.4898%.
+_SKETCH_SOLVED_RADIUS_ATOL = 1e-8
 
 
 _SI_COORDINATES = phx.SpatialCoordinateContract.si()
@@ -59,8 +64,8 @@ def _read_native_occt_fixture(
     angular_deflection: float,
     relative_geometric_tolerance: float,
 ) -> Any:
-    # The optional bridge only produces the external file. Its live-shape
-    # model is not authoritative geometry for either native source.
+    # The optional bridge produces the external file; native sources decode
+    # their geometry from that file rather than the bridge's live-shape model.
     phx.interchange.persist_occt_shape(
         shape,
         path,
@@ -103,7 +108,9 @@ def _conformal_two_box_partition(occt: Any) -> Any:
     )
     splitter.Perform()
     if splitter.HasErrors():
-        raise RuntimeError("OCCT failed to build the exact two-solid partition fixture.")
+        raise RuntimeError(
+            "occt.splitter must build the two-solid partition fixture; got construction errors"
+        )
     return splitter.Shape()
 
 
@@ -132,7 +139,9 @@ def test_topology_rejects_nonmanifold_and_inconsistent_orientation() -> None:
 
 def test_mesh_and_planar_regions_have_explicit_signed_queries() -> None:
     vertices, faces = _tetrahedron()
-    region = phx.geometry.MeshRegion(vertices, faces, feature_id="tet").compile()
+    region = phx.geometry.MeshRegion(vertices, faces, feature_id="tet").compile(
+        coordinate_unit=METER
+    )
     query = jax.jit(lambda value: region.boundary_field(value))(
         jnp.asarray([[0.1, 0.1, 0.1], [1.0, 1.0, 1.0]])
     )
@@ -154,7 +163,7 @@ def test_mesh_and_planar_regions_have_explicit_signed_queries() -> None:
         ],
         ((0, 1, 2, 3), (4, 5, 6, 7)),
         feature_id="with-hole",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     assert float(planar.measure) == pytest.approx(3.0)
     assert np.array_equal(
         np.asarray(planar.contains(jnp.asarray([[0.25, 0.25], [1.0, 1.0]]))),
@@ -163,7 +172,9 @@ def test_mesh_and_planar_regions_have_explicit_signed_queries() -> None:
 
 
 def test_boundary_atlas_frames_selection_and_sampling_metadata() -> None:
-    box = phx.geometry.Box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0)).compile()
+    box = phx.geometry.Box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0)).compile(
+        coordinate_unit=METER
+    )
     selected = box.boundary_atlas.select(tags=("x_min",))
     assert selected.num_charts == 1
     frame = jax.jit(lambda index, ref: selected.frame(index, ref))(
@@ -178,7 +189,11 @@ def test_boundary_atlas_frames_selection_and_sampling_metadata() -> None:
 
 
 def test_sphere_boundary_atlas_uses_trimmed_triangular_charts() -> None:
-    atlas = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile().boundary_atlas
+    atlas = (
+        phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0)
+        .compile(coordinate_unit=METER)
+        .boundary_atlas
+    )
     charts = jnp.asarray([0, 0, 1, 1], dtype=jnp.int32)
     references = jnp.asarray([[0.25, 0.25], [0.75, 0.75], [0.25, 0.25], [0.75, 0.75]])
     mask = atlas.reference_mask(charts, references)
@@ -233,7 +248,7 @@ def test_native_brep_preserves_topology_patches_and_boundary_identity() -> None:
         phx.geometry.BRepEntityId(model.source_revision, "solid", 0),
     )
 
-    geometry = phx.geometry.BRepSource(model).compile()
+    geometry = phx.geometry.BRepSource(model).compile(coordinate_unit=METER)
     assert float(geometry.measure) == pytest.approx(6.0)
     assert geometry.boundary_atlas.num_charts == model.topology.num_faces
     selected = geometry.boundary_atlas.select(entity_ids=(0,))
@@ -247,7 +262,9 @@ def test_native_brep_preserves_topology_patches_and_boundary_identity() -> None:
     assert np.all(np.isfinite(np.asarray(direct_normal_jacobian)))
     assert np.allclose(np.asarray(direct_normal_jacobian), 0.0)
 
-    differentiable = phx.geometry.FixedTopologyBRepSource(model).compile()
+    differentiable = phx.geometry.FixedTopologyBRepSource(model).compile(
+        coordinate_unit=METER
+    )
     differentiable_gradient = jax.grad(differentiable.boundary_field)(face_point)
     assert np.all(np.isfinite(np.asarray(differentiable_gradient)))
     assert float(jnp.linalg.norm(differentiable_gradient)) == pytest.approx(1.0)
@@ -304,12 +321,26 @@ def test_brep_identity_separates_physical_source_from_query_representation(
 
     assert baseline.source_digest == source_digest
     assert baseline.coordinate_contract.spatial_id == _SI_COORDINATES.spatial_id
+    exact = brep_box(
+        (0.0, 0.0, 0.0), (1.0, 2.0, 3.0), coordinate_contract=_SI_COORDINATES
+    )
+    assert exact.geometry is not None
+    assert exact.topology.num_solids == 1
+    assert len(exact.trim_domains) == exact.topology.num_faces
+    assert (
+        phx.geometry.BRepSource(exact).coordinate_contract.spatial_id
+        == _SI_COORDINATES.spatial_id
+    )
+    with pytest.raises(ValueError, match=r"BRepModel\.geometry"):
+        phx.geometry.BRepSource(baseline)
+    with pytest.raises(ValueError, match=r"BRepModel\.geometry"):
+        phx.geometry.FixedTopologyBRepSource(baseline)
     assert baseline.geometry is None
     assert baseline.source_id != relocated.source_id
     assert baseline.source_revision == relocated.source_revision
     assert baseline.source_revision == refined.source_revision
     # Query tessellation resolution is derived data: it changes the
-    # tessellation identity, never the exact model identity.
+    # tessellation identity, never the B-Rep model identity.
     assert baseline.model_id == refined.model_id
     assert baseline.tessellation_id != refined.tessellation_id
     assert baseline.import_policy_id == refined.import_policy_id
@@ -321,8 +352,8 @@ def test_brep_entity_ids_reject_ambiguous_identity_components() -> None:
     with pytest.raises(ValueError, match="source_revision"):
         phx.geometry.BRepEntityId("", "face", 0)
     with pytest.raises(ValueError, match="kind"):
-        phx.geometry.BRepEntityId("revision", "shell", 0)
-    with pytest.raises(ValueError, match="non-negative"):
+        phx.geometry.BRepEntityId("revision", "wire", 0)
+    with pytest.raises(ValueError, match=r"BRepEntityId\.index"):
         phx.geometry.BRepEntityId("revision", "face", -1)
 
 
@@ -711,11 +742,9 @@ def test_occt_bspline_import_matches_native_surface_differential(
     assert model.topology.face_solids == ((),)
     assert model.report.num_solids == 0
     assert model.solid_ids == ()
-    # Exact surface charts do not define an enclosed region, independently
-    # of any derived query mesh's watertightness.
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="BRepSource.model.topology"):
         phx.geometry.BRepSource(model)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="BRepSource.model.topology"):
         phx.geometry.FixedTopologyBRepSource(model)
 
     normalized = np.asarray([[0.0, 0.0], [0.2, 0.3], [0.5, 0.5], [1.0, 0.6], [0.4, 1.0]])
@@ -792,7 +821,7 @@ def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch(
         linear_deflection=0.1,
         angular_deflection=0.25,
         # This explicit source correspondence allowance is independent of
-        # tessellation deflection; represented carriers remain exact.
+        # tessellation deflection; represented carriers remain unchanged.
         relative_geometric_tolerance=2e-6,
     )
     model = imported.model
@@ -806,7 +835,7 @@ def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch(
     assert len(spline_faces) == 1
     assert sum(isinstance(patch, phx.geometry.PlanePatch) for patch in model.patches) == 2
 
-    geometry = phx.geometry.BRepSource(model).compile()
+    geometry = phx.geometry.BRepSource(model).compile(coordinate_unit=METER)
     assert float(geometry.measure) > 0.0
     references = jnp.asarray([[0.0, 0.0], [0.5, 0.5], [1.0, 0.4], [0.3, 1.0]])
     indices = jnp.full((references.shape[0],), spline_faces[0], dtype=jnp.int32)
@@ -814,7 +843,9 @@ def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch(
     assert np.all(np.isfinite(np.asarray(frame.normal)))
     assert np.all(np.asarray(frame.jacobian) > 0.0)
 
-    differentiable = phx.geometry.FixedTopologyBRepSource(model).compile()
+    differentiable = phx.geometry.FixedTopologyBRepSource(model).compile(
+        coordinate_unit=METER
+    )
     control_index = next(
         index
         for index, spec in enumerate(differentiable.schema.specs)
@@ -842,11 +873,16 @@ def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch(
     assert np.all(np.isfinite(np.asarray(realized_frame.normal)))
     assert np.all(np.asarray(realized_frame.jacobian) > 0.0)
     assert np.isfinite(float(realization.seam_residual))
+    assert np.isfinite(float(realization.seam_bound))
+    assert float(realization.seam_bound) >= 0.0
+    # An independent boundary-control edit opens this diagnostic realization.
+    # Its certificate must distinguish that gap from numerical evaluation error.
+    assert float(realization.seam_residual) > float(realization.seam_bound)
 
 
 def test_level_set_domain_ansatz_factor_has_unit_boundary_jet() -> None:
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Ellipse((0.0, 0.0), (2.0, 1.0)).compile()
+        phx.geometry.Ellipse((0.0, 0.0), (2.0, 1.0)).compile(coordinate_unit=METER)
     )
     factor = domain.boundary_ansatz_factor
     boundary_point = jnp.asarray([2.0, 0.0])
@@ -866,7 +902,7 @@ def test_fixed_topology_brep_preserves_connectivity_and_shape_gradients() -> Non
         ),
     )
     assert model.geometry is not None
-    geometry = phx.geometry.FixedTopologyBRepSource(model).compile()
+    geometry = phx.geometry.FixedTopologyBRepSource(model).compile(coordinate_unit=METER)
     radius_index = next(
         index
         for index, spec in enumerate(geometry.schema.specs)
@@ -892,7 +928,6 @@ def test_sketch_and_design_constraint_solvers_lower_to_geometry() -> None:
         jnp.asarray([[0.0, 0.0], [1.2, 0.1], [1.1, 1.0], [0.0, 0.9]]),
         lines=jnp.asarray([[0, 1], [1, 2], [2, 3], [3, 0]]),
         constraints=(
-            # ty: ignore[invalid-argument-type]
             phx.geometry.FixedPoint(0, (0.0, 0.0)),
             phx.geometry.Horizontal(0),
             phx.geometry.Vertical(1),
@@ -905,11 +940,11 @@ def test_sketch_and_design_constraint_solvers_lower_to_geometry() -> None:
     sketch_solution = sketch.solve()
     assert bool(sketch_solution.converged)
     assert float(sketch_solution.residual_norm) < 1e-8
-    assert float(sketch.to_source(sketch_solution).compile().measure) == pytest.approx(
-        1.0, abs=1e-8
-    )
+    assert float(
+        sketch.to_source(sketch_solution).compile(coordinate_unit=METER).measure
+    ) == pytest.approx(1.0, abs=_SKETCH_SOLVED_RADIUS_ATOL)
 
-    sphere = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile()
+    sphere = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile(coordinate_unit=METER)
     target_radius = 1.5
     target_volume = 4.0 * np.pi * target_radius**3 / 3.0
     system = phx.geometry.DesignConstraintSystem(
@@ -955,7 +990,7 @@ def test_affine_geometry_preserves_boundary_tags_and_exact_atlas_measure() -> No
         .rotated((0.0, 0.0, 1.0), 0.3)
         .scaled(2.0)
         .translated((1.0, -2.0, 0.5))
-        .compile()
+        .compile(coordinate_unit=METER)
     )
     atlas = transformed.boundary_atlas
     assert atlas.physical_tags == (

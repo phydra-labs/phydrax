@@ -200,7 +200,7 @@ def test_masked_plan_rejects_non_vertex_degrees_and_foreign_buckets() -> None:
     other, _ = _masked_layout(points, cells, 13, 10, 0)
     plan = phx.discretization.MaskedFiniteElementPlan(mesh)
 
-    with pytest.raises(ValueError, match="vertex DOFs only"):
+    with pytest.raises(ValueError, match="MaskedFiniteElementPlan.degree"):
         phx.discretization.MaskedFiniteElementPlan(mesh, degree=2)
     with pytest.raises(ValueError, match="capacity bucket"):
         phx.discretization.assemble_masked_finite_element(plan, other)

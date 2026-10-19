@@ -12,6 +12,7 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Interval1d, TimeInterval
 from phydrax.operators.delay import delay
+from phydrax.units import METER
 
 
 def test_delay_time_only_scalar_point() -> None:
@@ -117,7 +118,7 @@ def test_spatially_varying_delay_preserves_coord_separable_axes() -> None:
             center=(0.0, 0.0),
             side=2.0,
             feature_id="delay-grid",
-        ).compile()
+        ).compile(coordinate_unit=METER)
     )
     domain = spatial @ TimeInterval(0.0, 2.0)
     field = domain.Function("t")(lambda t: t)

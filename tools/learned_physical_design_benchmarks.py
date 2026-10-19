@@ -32,6 +32,7 @@ from phydrax.optim._state_design_linearization import (
     prepare_state_design_linearization,
     state_design_response_vjp,
 )
+from phydrax.units import METER
 
 
 sm = phx.applications.solid_mechanics
@@ -240,6 +241,7 @@ def build_shape_case(segments: Any = 3) -> Any:
                 coordinates.shape,
                 str(coordinates.dtype),
                 "mesh-geometry",
+                unit=METER,
                 bounds=(-1.0, float(segments + 1)),
             ),
         )

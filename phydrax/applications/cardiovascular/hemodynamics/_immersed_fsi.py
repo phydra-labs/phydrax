@@ -23,7 +23,7 @@ from ....discretization.lattice_boltzmann._discretization import (
     LatticeBoltzmannDiscretization,
 )
 from ....linalg import ArraySpace, SmallLinearSolvePlan, solve_small_linear
-from ....linalg._spaces import _coordinate_dtype
+from ....linalg._spaces import coordinate_dtype
 from ....nonlinear import FixedPointIteration, NonlinearTermination
 from ....solver._partitioned_coupling_graph import (
     CouplingGraph,
@@ -145,7 +145,7 @@ class SparseMarkerTransferPlan(StrictModule, NonTrainableState):
         dimension = discretization.velocity_set.dimension
         capacity = identifiers.size
         route_width = width**dimension
-        itemsize = _coordinate_dtype(discretization.velocity_space.vector_space).itemsize
+        itemsize = coordinate_dtype(discretization.velocity_space.vector_space).itemsize
         relation_bytes = (
             capacity
             * route_width

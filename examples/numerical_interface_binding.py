@@ -86,7 +86,11 @@ def attach(
     part = phx.meshing.MeshPart(
         name, phx.meshing.certify_cell_mesh(mesh, CONTRACT, associations=(vertex, edges))
     )
-    rows = [row for row, value in enumerate(edges.source_entity_ids) if value == wall]
+    rows = [
+        row
+        for row, value in enumerate(edges.source_entities.entity_ids())
+        if value == wall
+    ]
     attachment = phx.meshing.MeshInterfaceAttachment(
         part,
         part.scope(1, np.asarray(edges.target_global_ids)[rows]),

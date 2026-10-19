@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -14,14 +13,11 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 
-from ...units import UnitDefinition
-
-
-if TYPE_CHECKING:
-    from ...interchange._cad import CadImportPolicy
-
 from ..._physical import SpatialCoordinateContract
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
+from ...interchange._cad import CadImportPolicy
 from ...typing import checked
+from ...units import UnitDefinition
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -43,10 +39,12 @@ from .._sampling import (
     sample_boundary_atlas,
     SamplingResult,
 )
-from ..design._schema import _ParameterCollector, DesignState
+from ..design._schema import DesignState, ParameterCollector
+from ._coordinate_request import coordinate_source_request
 from ._model import BRepImportReport, BRepModel
 from ._projection_contracts import BRepProjectionStatus
 from ._query import prepare_brep_query, PreparedBRepQuery
+from ._request_preparations import TrimRequestPreparations
 
 
 @jax.custom_jvp
@@ -87,15 +85,14 @@ def _oriented_boundary_field_jvp(
     return value, tangent
 
 
-def _require_closed_solid(model: BRepModel) -> None:
-    """Require authoritative exact geometry with closed, consistently oriented shells."""
-    geometry = model.geometry
-    if geometry is None:
-        raise ValueError(
-            "A native BRepSource requires authoritative exact curves and trims."
-        )
+@checked
+def require_closed_solid(model: BRepModel) -> None:
+    """Require curve/trim geometry with closed, consistently oriented solid shells."""
+    geometry = model.require_geometry()
     if model.topology.num_solids == 0:
-        raise ValueError("A BRepSource requires at least one solid.")
+        raise ValueError(
+            "BRepSource.model.topology must contain at least one solid; got 0."
+        )
     for solid in range(model.topology.num_solids):
         balance = geometry.edge_use_balance(model.orientation, solid=solid)
         if any(
@@ -103,22 +100,29 @@ def _require_closed_solid(model: BRepModel) -> None:
             for value, degenerate in zip(balance, geometry.degenerate_edges, strict=True)
         ):
             raise ValueError(
-                "A BRepSource requires closed, consistently oriented region shells."
+                "BRepSource.model.geometry must have closed, consistently oriented "
+                f"region shells; got edge-use balance {balance!r} for solid {solid}."
             )
 
 
 class BRepSource(GeometrySource):
-    """Direct CAD source preserving B-Rep topology and parametric face charts.
+    """Query CAD curves, trimmed faces, and placed occurrences as a spatial source.
 
-    Native exact curves, trimmed faces and occurrence placements are authoritative;
-    derived tessellation never decides membership or closest points.
+    Membership and closest points use the source geometry; the tessellation
+    supplies boundary sampling and chart connectivity.
     """
 
     model: BRepModel
 
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[BRepSource], value: BRepSource, /) -> BRepSource:
+        """Rebuild a stored source through closed-shell admission."""
+        return cls(value.model)
+
     @checked
     def __init__(self, model: BRepModel) -> None:
-        _require_closed_solid(model)
+        require_closed_solid(model)
         self.model = model
 
     @property
@@ -129,7 +133,7 @@ class BRepSource(GeometrySource):
     def coordinate_contract(self) -> SpatialCoordinateContract:
         return self.model.coordinate_contract
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         del context
         return _NativeBRepKernel(self.model, prepare_brep_query(self.model))
 
@@ -149,8 +153,30 @@ _CAPABILITIES = frozenset(
 )
 
 
-class _NativeBRepKernel(GeometryKernel):
-    """Exact-geometry kernel over prepared native B-Rep queries."""
+class BRepGeometryKernel(GeometryKernel):
+    """Share the spatial region contract of native and realized B-Rep kernels."""
+
+    __strict_abstract__ = True
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 3
+
+    @property
+    def intrinsic_dimension(self) -> int:
+        return 3
+
+    @property
+    def kind(self) -> GeometryKind:
+        return GeometryKind.REGION
+
+    @property
+    def capabilities(self) -> frozenset[GeometryCapability]:
+        return _CAPABILITIES
+
+
+class _NativeBRepKernel(BRepGeometryKernel):
+    """Query source curves and trims with prepared native plans."""
 
     model: BRepModel
     query: PreparedBRepQuery
@@ -158,12 +184,17 @@ class _NativeBRepKernel(GeometryKernel):
     atlas: BoundaryAtlas
     boundary_definition_faces: Array
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[_NativeBRepKernel], value: _NativeBRepKernel, /
+    ) -> _NativeBRepKernel:
+        """Rebuild derived source-query metadata through kernel preparation."""
+        return cls(value.model, value.query)
+
+    @checked
     def __init__(self, model: BRepModel, query: PreparedBRepQuery) -> None:
-        geometry = model.geometry
-        if geometry is None:
-            raise ValueError(
-                "A native B-Rep kernel requires authoritative source geometry."
-            )
+        geometry = model.require_geometry()
         inventory = {
             entity: index for index, entity in enumerate(model.qualified_face_ids)
         }
@@ -185,7 +216,7 @@ class _NativeBRepKernel(GeometryKernel):
         definition_faces = np.asarray(
             [
                 model.qualified_face_ids[index].index
-                for index in np.asarray(atlas.source_entity_ids)
+                for index in np.asarray(jax.device_get(atlas.source_entity_ids))
             ],
             dtype=np.int32,
         )
@@ -193,22 +224,6 @@ class _NativeBRepKernel(GeometryKernel):
         self.face_entity_codes = jnp.asarray(codes, dtype=jnp.int32)
         self.atlas = atlas
         self.boundary_definition_faces = jnp.asarray(definition_faces, dtype=jnp.int32)
-
-    @property
-    def ambient_dimension(self) -> int:
-        return 3
-
-    @property
-    def intrinsic_dimension(self) -> int:
-        return 3
-
-    @property
-    def kind(self) -> GeometryKind:
-        return GeometryKind.REGION
-
-    @property
-    def capabilities(self) -> frozenset[GeometryCapability]:
-        return _CAPABILITIES
 
     @property
     def field_certificate(self) -> FieldCertificate:
@@ -230,16 +245,43 @@ class _NativeBRepKernel(GeometryKernel):
         points_ = jnp.asarray(points, dtype=jnp.float64)
         return points_.reshape((-1, 3)), points_.shape[:-1]
 
-    def contains(self, state: DesignState, points: Array, /) -> Array:
+    def contains(
+        self,
+        state: DesignState,
+        points: Array,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        coordinate_budget: CoordinateEnclosureBudget | None = None,
+    ) -> Array:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if coordinate_budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    state,
+                    points,
+                )
+            ) as coordinate_budget:
+                return self.contains(
+                    state,
+                    points,
+                    preparations=preparations,
+                    coordinate_budget=coordinate_budget,
+                )
         del state
         flat, leading = self._flat(points)
         inside = jnp.zeros((flat.shape[0],), dtype=jnp.bool_)
         resolved = jnp.ones((flat.shape[0],), dtype=jnp.bool_)
-        geometry = self.model.geometry
-        if geometry is None:
-            raise RuntimeError("A native B-Rep kernel lost its exact geometry.")
+        geometry = self.model.require_geometry()
         for occurrence in geometry.occurrences:
-            result = self.query.contains(flat, path=occurrence.path)
+            result = self.query.contains(
+                flat,
+                path=occurrence.path,
+                preparations=preparations,
+                coordinate_budget=coordinate_budget,
+            )
             boundary = result.distances <= self.query.tolerances.classifier
             resolved &= (result.status == BRepProjectionStatus.UNIQUE) | boundary
             inside |= result.inside
@@ -250,26 +292,108 @@ class _NativeBRepKernel(GeometryKernel):
         )
         return inside.reshape(leading)
 
-    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
+    def boundary_field(
+        self,
+        state: DesignState,
+        points: Array,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> Array:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    state,
+                    points,
+                )
+            ) as budget:
+                return self.boundary_field(
+                    state, points, preparations=preparations, budget=budget
+                )
         flat, leading = self._flat(points)
-        closest = jax.lax.stop_gradient(self.query.closest_point(flat))
+        closest = jax.lax.stop_gradient(
+            self.query.closest_point(
+                flat, preparations=preparations, coordinate_budget=budget
+            )
+        )
         return _oriented_boundary_field(
             flat,
             closest.points,
             closest.normals,
-            self.contains(state, flat),
+            self.contains(
+                state, flat, preparations=preparations, coordinate_budget=budget
+            ),
         ).reshape(leading)
 
-    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
+    def boundary_normal(
+        self,
+        state: DesignState,
+        points: Array,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> Array:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    state,
+                    points,
+                )
+            ) as budget:
+                return self.boundary_normal(
+                    state, points, preparations=preparations, budget=budget
+                )
         del state
         flat, leading = self._flat(points)
-        normals = jax.lax.stop_gradient(self.query.closest_point(flat).normals)
+        normals = jax.lax.stop_gradient(
+            self.query.closest_point(
+                flat, preparations=preparations, coordinate_budget=budget
+            ).normals
+        )
         return normals.reshape((*leading, 3))
 
-    def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
+    def closest_point(
+        self,
+        state: DesignState,
+        points: Array,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        coordinate_budget: CoordinateEnclosureBudget | None = None,
+    ) -> ClosestPointResult:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if coordinate_budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    state,
+                    points,
+                )
+            ) as coordinate_budget:
+                return self.closest_point(
+                    state,
+                    points,
+                    preparations=preparations,
+                    coordinate_budget=coordinate_budget,
+                )
         flat, leading = self._flat(points)
-        closest = jax.lax.stop_gradient(self.query.closest_point(flat))
-        inside = self.contains(state, flat)
+        closest = jax.lax.stop_gradient(
+            self.query.closest_point(
+                flat, preparations=preparations, coordinate_budget=coordinate_budget
+            )
+        )
+        inside = self.contains(
+            state, flat, preparations=preparations, coordinate_budget=coordinate_budget
+        )
         on_boundary = closest.distances <= self.query.tolerances.classifier
         coordinate = jnp.where(
             on_boundary,
@@ -304,9 +428,7 @@ class _NativeBRepKernel(GeometryKernel):
 
     def measure(self, state: DesignState, /) -> Array:
         del state
-        geometry = self.model.geometry
-        if geometry is None:
-            raise RuntimeError("A native B-Rep kernel lost its exact geometry.")
+        geometry = self.model.require_geometry()
         solids = jnp.asarray(
             [occurrence.solid for occurrence in geometry.occurrences], dtype=jnp.int32
         )
@@ -324,7 +446,27 @@ class _NativeBRepKernel(GeometryKernel):
         *,
         key: Array,
         plan: RejectionSamplingPlan | None = None,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> SamplingResult:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    state,
+                    num_points,
+                )
+            ) as budget:
+                return self.sample_interior(
+                    state,
+                    num_points,
+                    key=key,
+                    plan=plan,
+                    preparations=preparations,
+                    budget=budget,
+                )
         bounds = self.bounds(state)
         plan_ = RejectionSamplingPlan() if plan is None else plan
         return bounded_rejection_sample(
@@ -335,7 +477,9 @@ class _NativeBRepKernel(GeometryKernel):
                 maxval=bounds[1],
                 dtype=bounds.dtype,
             ),
-            lambda values: self.contains(state, values),
+            lambda values: self.contains(
+                state, values, preparations=preparations, coordinate_budget=budget
+            ),
             num_points=num_points,
             point_dimension=3,
             key=key,
@@ -359,6 +503,7 @@ class _NativeBRepKernel(GeometryKernel):
         return self.atlas
 
 
+@checked
 def BRep(
     path: str | Path,
     policy: CadImportPolicy,
@@ -367,10 +512,12 @@ def BRep(
     trusted_root: str | Path,
     source_length_unit: UnitDefinition | None = None,
 ) -> BRepSource:
-    """Decode an exact native CAD source under explicit units and resource policy."""
-    from ...interchange._cad_io import read_cad
+    """Decode a native CAD source under explicit units and resource policy."""
 
-    result = read_cad(
+    # File-backed construction alone needs the optional format-reader modules.
+    import phydrax.interchange._cad_io as cad_io_owner
+
+    result = cad_io_owner.read_cad(
         path,
         policy,
         trusted_root=trusted_root,
@@ -379,4 +526,4 @@ def BRep(
     return BRepSource(result.model)
 
 
-__all__ = ["BRep", "BRepSource"]
+__all__ = ["BRep", "BRepSource", "require_closed_solid"]

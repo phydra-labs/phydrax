@@ -9,12 +9,10 @@ from typing import Any
 import numpy as np
 import pytest
 
-from phydrax import SpatialCoordinateContract
 from phydrax._meshcore import (
     clip_box_halfspaces,
     IntersectionClass,
     meshcore_available,
-    tetrahedron_intersection_moments,
     triangle_intersection_classes,
 )
 from phydrax.geometry.surface import (
@@ -22,9 +20,26 @@ from phydrax.geometry.surface import (
     SurfaceArrangementLimits,
     SurfaceBooleanError,
     SurfaceBooleanOperation,
-    SurfaceMetadata,
-    SurfaceModel,
 )
+from tests._support.surface_boolean_reference import (
+    clipped_volume_reference,
+    cone_tetrahedra,
+    cube_surface,
+    icosphere,
+    rotation_matrix,
+    signed_volume_reference,
+    surface_area_reference,
+    surface_model,
+)
+
+
+# Empirical binary64 allowances retained from the pre-remediation unit-cube,
+# rotated-cube, tangent-contact, and icosphere fixtures. Closed-form volumes,
+# rational oriented volume, and independent cone clipping supply the oracles.
+_REFERENCE_ATOL_12 = 1e-12
+_REFERENCE_ATOL_13 = 1e-13
+_REFERENCE_ATOL_14 = 1e-14
+_REFERENCE_ATOL_15 = 1e-15
 
 
 pytestmark = [
@@ -39,158 +54,9 @@ UNION = SurfaceBooleanOperation.UNION
 INTERSECTION = SurfaceBooleanOperation.INTERSECTION
 DIFFERENCE = SurfaceBooleanOperation.DIFFERENCE
 
-_CUBE_VERTICES = np.asarray(
-    (
-        (0.0, 0.0, 0.0),
-        (1.0, 0.0, 0.0),
-        (1.0, 1.0, 0.0),
-        (0.0, 1.0, 0.0),
-        (0.0, 0.0, 1.0),
-        (1.0, 0.0, 1.0),
-        (1.0, 1.0, 1.0),
-        (0.0, 1.0, 1.0),
-    )
-)
-_CUBE_FACES = np.asarray(
-    (
-        (0, 2, 1),
-        (0, 3, 2),
-        (4, 5, 6),
-        (4, 6, 7),
-        (0, 1, 5),
-        (0, 5, 4),
-        (3, 7, 6),
-        (3, 6, 2),
-        (0, 4, 7),
-        (0, 7, 3),
-        (1, 2, 6),
-        (1, 6, 5),
-    ),
-    dtype=np.int64,
-)
-
-
-def _rotation(axis: Any, angle: float) -> np.ndarray:
-    unit = np.asarray(axis, dtype=np.float64) / np.linalg.norm(axis)
-    cross = np.asarray(
-        (
-            (0.0, -unit[2], unit[1]),
-            (unit[2], 0.0, -unit[0]),
-            (-unit[1], unit[0], 0.0),
-        )
-    )
-    return np.eye(3) + math.sin(angle) * cross + (1.0 - math.cos(angle)) * cross @ cross
-
-
-def _model(vertices: np.ndarray, faces: np.ndarray, name: str) -> SurfaceModel:
-    return SurfaceModel.from_triangles(
-        vertices,
-        faces,
-        SurfaceMetadata(
-            source_id=name,
-            source_revision="0",
-            coordinate_contract=SpatialCoordinateContract.si(),
-            provenance=("unit-test",),
-        ),
-    )
-
-
-def _cube(
-    offset: Any = (0.0, 0.0, 0.0), size: float = 1.0, rotation: Any = None
-) -> tuple[np.ndarray, np.ndarray]:
-    centered = (_CUBE_VERTICES - 0.5) * size
-    if rotation is not None:
-        centered = centered @ np.asarray(rotation).T
-    return centered + 0.5 * size + np.asarray(offset, dtype=np.float64), _CUBE_FACES
-
-
-def _icosphere(level: int) -> tuple[np.ndarray, np.ndarray]:
-    golden = (1.0 + math.sqrt(5.0)) / 2.0
-    points = [
-        np.asarray(point, dtype=np.float64)
-        for point in (
-            (-1, golden, 0),
-            (1, golden, 0),
-            (-1, -golden, 0),
-            (1, -golden, 0),
-            (0, -1, golden),
-            (0, 1, golden),
-            (0, -1, -golden),
-            (0, 1, -golden),
-            (golden, 0, -1),
-            (golden, 0, 1),
-            (-golden, 0, -1),
-            (-golden, 0, 1),
-        )
-    ]
-    points = [point / np.linalg.norm(point) for point in points]
-    faces = [
-        (0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11),
-        (1, 5, 9), (5, 11, 4), (11, 10, 2), (10, 7, 6), (7, 1, 8),
-        (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9),
-        (4, 9, 5), (2, 4, 11), (6, 2, 10), (8, 6, 7), (9, 8, 1),
-    ]  # fmt: skip
-    for _ in range(level):
-        middles: dict[tuple[int, int], int] = {}
-
-        def middle(first: int, second: int) -> int:
-            key = (min(first, second), max(first, second))
-            if key not in middles:
-                point = points[first] + points[second]
-                points.append(point / np.linalg.norm(point))
-                middles[key] = len(points) - 1
-            return middles[key]
-
-        refined = []
-        for a, b, c in faces:
-            ab, bc, ca = middle(a, b), middle(b, c), middle(c, a)
-            refined += [(a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)]
-        faces = refined
-    return np.asarray(points), np.asarray(faces, dtype=np.int64)
-
-
-def _signed_volume(vertices: np.ndarray, faces: np.ndarray) -> float:
-    corners = vertices[faces]
-    return float(np.sum(corners[:, 0] * np.cross(corners[:, 1], corners[:, 2])) / 6.0)
-
-
-def _area(vertices: np.ndarray, faces: np.ndarray) -> float:
-    corners = vertices[faces]
-    return float(
-        np.sum(
-            np.linalg.norm(
-                np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]),
-                axis=1,
-            )
-        )
-        / 2.0
-    )
-
-
-def _cone_tetrahedra(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
-    """Tetrahedra coning a closed star-shaped surface from its vertex centroid."""
-
-    apex = np.mean(vertices, axis=0)
-    return np.concatenate(
-        (np.repeat(apex[None, None], faces.shape[0], axis=0), vertices[faces]), axis=1
-    )
-
-
-def _clipped_volume(first: np.ndarray, second: np.ndarray) -> float:
-    """Independent reference: exact pairwise tetrahedron clipping of two cones."""
-
-    rows, columns = np.meshgrid(
-        np.arange(first.shape[0]), np.arange(second.shape[0]), indexing="ij"
-    )
-    volume, _, status = tetrahedron_intersection_moments(
-        first[rows.reshape(-1)], second[columns.reshape(-1)]
-    )
-    assert np.all(status == 0)
-    return float(np.sum(volume))
-
 
 def _assert_watertight_embedding(result: Any, *, manifold: bool = True) -> None:
-    """Independent half-edge pairing and exact pairwise non-intersection."""
+    """Check half-edge pairing and pairwise non-intersection independently."""
 
     faces = result.triangles
     directed = np.concatenate((faces[:, (0, 1)], faces[:, (1, 2)], faces[:, (2, 0)]))
@@ -242,13 +108,13 @@ def _assert_ancestry(
         offsets = np.abs(
             np.sum((corners[rows] - source[:, None, 0]) * unit[:, None], axis=-1)
         )
-        assert np.max(offsets, initial=0.0) <= 1e-12
+        assert np.max(offsets, initial=0.0) <= _REFERENCE_ATOL_12
         basis = np.stack((source[:, 1] - source[:, 0], source[:, 2] - source[:, 0]), -1)
         gram = np.swapaxes(basis, 1, 2) @ basis
         moments = (corners[rows] - source[:, None, 0]) @ basis
         local = np.linalg.solve(gram[:, None], moments[..., None])[..., 0]
         barycentric = np.concatenate((1.0 - np.sum(local, -1, keepdims=True), local), -1)
-        assert np.min(barycentric, initial=0.0) >= -1e-12
+        assert np.min(barycentric, initial=0.0) >= -_REFERENCE_ATOL_12
         agrees = np.sum(normals[rows] * source_normal, axis=1) > 0.0
         np.testing.assert_array_equal(agrees, ~result.reversed[rows])
 
@@ -259,7 +125,7 @@ def _run(
     operation: SurfaceBooleanOperation,
 ) -> Any:
     result = surface_boolean(
-        _model(*first, "first"), _model(*second, "second"), operation
+        surface_model(*first, "first"), surface_model(*second, "second"), operation
     )
     _assert_ancestry(result, (first, second))
     return result
@@ -276,10 +142,10 @@ _OVERLAP = 0.5 * 0.75 * 0.75
 def test_overlapping_cubes_match_box_volumes(
     operation: SurfaceBooleanOperation, volume: float
 ) -> None:
-    result = _run(_cube(), _cube((0.5, 0.25, 0.25)), operation)
+    result = _run(cube_surface(), cube_surface((0.5, 0.25, 0.25)), operation)
 
-    assert _signed_volume(result.vertices, result.triangles) == pytest.approx(
-        volume, abs=1e-14
+    assert signed_volume_reference(result.vertices, result.triangles) == pytest.approx(
+        volume, abs=_REFERENCE_ATOL_14
     )
     _assert_watertight_embedding(result)
     assert result.closure.closed and result.closure.vertex_manifold
@@ -299,42 +165,48 @@ def test_overlapping_cubes_match_box_volumes(
 def test_coplanar_faces_are_emitted_once(
     operation: SurfaceBooleanOperation, volume: float, area: float
 ) -> None:
-    result = _run(_cube(), _cube((0.5, 0.0, 0.0)), operation)
+    result = _run(cube_surface(), cube_surface((0.5, 0.0, 0.0)), operation)
 
     # Box areas fail if a shared coplanar region is duplicated or dropped.
-    assert _signed_volume(result.vertices, result.triangles) == pytest.approx(
-        volume, abs=1e-14
+    assert signed_volume_reference(result.vertices, result.triangles) == pytest.approx(
+        volume, abs=_REFERENCE_ATOL_14
     )
-    assert _area(result.vertices, result.triangles) == pytest.approx(area, abs=1e-13)
+    assert surface_area_reference(result.vertices, result.triangles) == pytest.approx(
+        area, abs=_REFERENCE_ATOL_13
+    )
     _assert_watertight_embedding(result)
 
 
 def test_face_tangent_cubes_merge_and_touch() -> None:
-    first, second = _cube(), _cube((1.0, 0.0, 0.0))
+    first, second = cube_surface(), cube_surface((1.0, 0.0, 0.0))
 
     union = _run(first, second, UNION)
     intersection = _run(first, second, INTERSECTION)
     difference = _run(first, second, DIFFERENCE)
 
-    assert _signed_volume(union.vertices, union.triangles) == pytest.approx(2.0)
-    assert _area(union.vertices, union.triangles) == pytest.approx(10.0)
+    assert signed_volume_reference(union.vertices, union.triangles) == pytest.approx(2.0)
+    assert surface_area_reference(union.vertices, union.triangles) == pytest.approx(10.0)
     _assert_watertight_embedding(union)
     assert union.closure.component_count == 1
     assert intersection.empty and intersection.surface is None
-    assert _signed_volume(difference.vertices, difference.triangles) == pytest.approx(1.0)
+    assert signed_volume_reference(
+        difference.vertices, difference.triangles
+    ) == pytest.approx(1.0)
     assert set(difference.source_operand.tolist()) == {0}
 
 
 def test_point_and_edge_tangent_unions_report_nonmanifold_contacts() -> None:
-    vertex_touch = _run(_cube(), _cube((1.0, 1.0, 1.0)), UNION)
-    edge_touch = _run(_cube(), _cube((1.0, 1.0, 0.0)), UNION)
+    vertex_touch = _run(cube_surface(), cube_surface((1.0, 1.0, 1.0)), UNION)
+    edge_touch = _run(cube_surface(), cube_surface((1.0, 1.0, 0.0)), UNION)
 
-    assert _signed_volume(vertex_touch.vertices, vertex_touch.triangles) == pytest.approx(
-        2.0
-    )
+    assert signed_volume_reference(
+        vertex_touch.vertices, vertex_touch.triangles
+    ) == pytest.approx(2.0)
     assert vertex_touch.closure.closed and vertex_touch.closure.edge_manifold
     assert vertex_touch.closure.nonmanifold_vertices == 1
-    assert _signed_volume(edge_touch.vertices, edge_touch.triangles) == pytest.approx(2.0)
+    assert signed_volume_reference(
+        edge_touch.vertices, edge_touch.triangles
+    ) == pytest.approx(2.0)
     assert edge_touch.closure.closed
     assert edge_touch.closure.nonmanifold_edges == 1
     assert edge_touch.surface is None and not edge_touch.empty
@@ -342,18 +214,18 @@ def test_point_and_edge_tangent_unions_report_nonmanifold_contacts() -> None:
 
 
 def test_rotated_square_prism_matches_regular_octagon() -> None:
-    rotated = _cube(rotation=_rotation((0.0, 0.0, 1.0), math.pi / 4.0))
+    rotated = cube_surface(rotation=rotation_matrix((0.0, 0.0, 1.0), math.pi / 4.0))
     octagon = 8.0 * 0.25 * math.tan(math.pi / 8.0)
 
     volumes = {
-        operation: _signed_volume(result.vertices, result.triangles)
+        operation: signed_volume_reference(result.vertices, result.triangles)
         for operation in (UNION, INTERSECTION, DIFFERENCE)
-        for result in (_run(_cube(), rotated, operation),)
+        for result in (_run(cube_surface(), rotated, operation),)
     }
 
-    assert volumes[INTERSECTION] == pytest.approx(octagon, abs=1e-14)
-    assert volumes[UNION] == pytest.approx(2.0 - octagon, abs=1e-14)
-    assert volumes[DIFFERENCE] == pytest.approx(1.0 - octagon, abs=1e-14)
+    assert volumes[INTERSECTION] == pytest.approx(octagon, abs=_REFERENCE_ATOL_14)
+    assert volumes[UNION] == pytest.approx(2.0 - octagon, abs=_REFERENCE_ATOL_14)
+    assert volumes[DIFFERENCE] == pytest.approx(1.0 - octagon, abs=_REFERENCE_ATOL_14)
 
 
 @pytest.mark.parametrize(
@@ -364,15 +236,15 @@ def test_rotated_square_prism_matches_regular_octagon() -> None:
 def test_obliquely_rotated_cubes_match_tetrahedral_clipping(
     operation: SurfaceBooleanOperation,
 ) -> None:
-    first = _cube()
-    second = _cube((0.3, 0.1, 0.2), rotation=_rotation((1.0, 2.0, 0.5), 0.7))
-    common = _clipped_volume(_cone_tetrahedra(*first), _cone_tetrahedra(*second))
+    first = cube_surface()
+    second = cube_surface((0.3, 0.1, 0.2), rotation=rotation_matrix((1.0, 2.0, 0.5), 0.7))
+    common = clipped_volume_reference(cone_tetrahedra(*first), cone_tetrahedra(*second))
     expected = {UNION: 2.0 - common, INTERSECTION: common, DIFFERENCE: 1.0 - common}
 
     result = _run(first, second, operation)
 
-    assert _signed_volume(result.vertices, result.triangles) == pytest.approx(
-        expected[operation], abs=1e-13
+    assert signed_volume_reference(result.vertices, result.triangles) == pytest.approx(
+        expected[operation], abs=_REFERENCE_ATOL_13
     )
     _assert_watertight_embedding(result)
 
@@ -385,12 +257,12 @@ def test_obliquely_rotated_cubes_match_tetrahedral_clipping(
 def test_tessellated_spheres_match_tetrahedral_clipping(
     operation: SurfaceBooleanOperation,
 ) -> None:
-    vertices, faces = _icosphere(2)
-    rotation = _rotation((0.3, -1.0, 0.8), 0.9)
+    vertices, faces = icosphere(2)
+    rotation = rotation_matrix((0.3, -1.0, 0.8), 0.9)
     first = (vertices, faces)
     second = (vertices @ rotation.T + np.asarray((0.7, 0.35, 0.2)), faces)
-    sphere = _signed_volume(*first)
-    common = _clipped_volume(_cone_tetrahedra(*first), _cone_tetrahedra(*second))
+    sphere = signed_volume_reference(*first)
+    common = clipped_volume_reference(cone_tetrahedra(*first), cone_tetrahedra(*second))
     expected = {
         UNION: 2.0 * sphere - common,
         INTERSECTION: common,
@@ -399,40 +271,42 @@ def test_tessellated_spheres_match_tetrahedral_clipping(
 
     result = _run(first, second, operation)
 
-    assert _signed_volume(result.vertices, result.triangles) == pytest.approx(
-        expected[operation], abs=1e-12
+    assert signed_volume_reference(result.vertices, result.triangles) == pytest.approx(
+        expected[operation], abs=_REFERENCE_ATOL_12
     )
     _assert_watertight_embedding(result)
-    assert result.arrangement.maximum_construction_bound < 1e-14
+    assert result.arrangement.maximum_construction_bound < _REFERENCE_ATOL_14
     assert set(result.source_operand.tolist()) == {0, 1}
 
 
 def test_nested_operands_give_inner_solid_and_cavity() -> None:
-    outer, inner = _cube(), _cube((0.25, 0.25, 0.25), size=0.5)
+    outer, inner = cube_surface(), cube_surface((0.25, 0.25, 0.25), size=0.5)
 
     union = _run(outer, inner, UNION)
     intersection = _run(outer, inner, INTERSECTION)
     cavity = _run(outer, inner, DIFFERENCE)
 
     assert set(union.source_operand.tolist()) == {0}
-    assert _signed_volume(union.vertices, union.triangles) == pytest.approx(1.0)
+    assert signed_volume_reference(union.vertices, union.triangles) == pytest.approx(1.0)
     assert set(intersection.source_operand.tolist()) == {1}
-    assert _signed_volume(intersection.vertices, intersection.triangles) == pytest.approx(
-        0.125
-    )
+    assert signed_volume_reference(
+        intersection.vertices, intersection.triangles
+    ) == pytest.approx(0.125)
     assert cavity.closure.component_count == 2
-    assert _signed_volume(cavity.vertices, cavity.triangles) == pytest.approx(0.875)
+    assert signed_volume_reference(cavity.vertices, cavity.triangles) == pytest.approx(
+        0.875
+    )
     np.testing.assert_array_equal(cavity.reversed, cavity.source_operand == 1)
 
 
 def test_disjoint_operands_give_disconnected_union_and_empty_intersection() -> None:
-    first, second = _cube(), _cube((2.0, 0.5, 0.0))
+    first, second = cube_surface(), cube_surface((2.0, 0.5, 0.0))
 
     union = _run(first, second, UNION)
     intersection = _run(first, second, INTERSECTION)
 
     assert union.closure.component_count == 2
-    assert _signed_volume(union.vertices, union.triangles) == pytest.approx(2.0)
+    assert signed_volume_reference(union.vertices, union.triangles) == pytest.approx(2.0)
     assert intersection.empty
     assert intersection.surface is None
     assert intersection.vertices.shape == (0, 3)
@@ -440,8 +314,8 @@ def test_disjoint_operands_give_disconnected_union_and_empty_intersection() -> N
 
 
 def test_identical_operands_resolve_by_coplanar_orientation() -> None:
-    union = _run(_cube(), _cube(), UNION)
-    difference = _run(_cube(), _cube(), DIFFERENCE)
+    union = _run(cube_surface(), cube_surface(), UNION)
+    difference = _run(cube_surface(), cube_surface(), DIFFERENCE)
 
     assert union.triangles.shape[0] == 12
     assert set(union.source_operand.tolist()) == {0}
@@ -449,7 +323,7 @@ def test_identical_operands_resolve_by_coplanar_orientation() -> None:
 
 
 def test_source_corner_values_reproduce_affine_fields() -> None:
-    first, second = _cube(), _cube((0.5, 0.25, 0.25))
+    first, second = cube_surface(), cube_surface((0.5, 0.25, 0.25))
     first_values = 2.0 * first[0] @ np.asarray((1.0, -1.0, 0.5))
     second_values = second[0] @ np.asarray((0.0, 3.0, 1.0)) - 7.0
 
@@ -462,16 +336,16 @@ def test_source_corner_values_reproduce_affine_fields() -> None:
         2.0 * corners @ np.asarray((1.0, -1.0, 0.5)),
         corners @ np.asarray((0.0, 3.0, 1.0)) - 7.0,
     )
-    np.testing.assert_allclose(values, expected, atol=1e-12)
+    np.testing.assert_allclose(values, expected, atol=_REFERENCE_ATOL_12)
     assert set(result.source_operand.tolist()) == {0, 1}
-    with pytest.raises(ValueError, match="one row per vertex"):
+    with pytest.raises(ValueError, match=r"SurfaceBooleanResult\.operand_values"):
         result.source_corner_values(first_values, np.zeros((8, 2)))
 
 
 def test_boolean_is_deterministic() -> None:
-    vertices, faces = _icosphere(1)
-    first = _model(vertices, faces, "first")
-    second = _model(vertices + 0.6, faces, "second")
+    vertices, faces = icosphere(1)
+    first = surface_model(vertices, faces, "first")
+    second = surface_model(vertices + 0.6, faces, "second")
 
     results = [surface_boolean(first, second, DIFFERENCE) for _ in range(2)]
 
@@ -481,23 +355,27 @@ def test_boolean_is_deterministic() -> None:
 
 
 def test_open_operand_is_refused() -> None:
-    vertices, faces = _cube()
-    sheet = _model(vertices, faces[:-1], "sheet")
+    vertices, faces = cube_surface()
+    sheet = surface_model(vertices, faces[:-1], "sheet")
 
-    with pytest.raises(SurfaceBooleanError, match="closed") as refused:
-        surface_boolean(_model(*_cube((0.5, 0.0, 0.0)), "solid"), sheet, UNION)
+    with pytest.raises(
+        SurfaceBooleanError, match=r"surface_boolean\.operands"
+    ) as refused:
+        surface_boolean(
+            surface_model(*cube_surface((0.5, 0.0, 0.0)), "solid"), sheet, UNION
+        )
 
     assert refused.value.status == "open_operand"
     assert refused.value.operand == 1
 
 
 def test_inverted_operand_is_refused() -> None:
-    vertices, faces = _cube()
+    vertices, faces = cube_surface()
 
     with pytest.raises(SurfaceBooleanError) as refused:
         surface_boolean(
-            _model(vertices, faces[:, ::-1].copy(), "inverted"),
-            _model(*_cube((0.5, 0.0, 0.0)), "solid"),
+            surface_model(vertices, faces[:, ::-1].copy(), "inverted"),
+            surface_model(*cube_surface((0.5, 0.0, 0.0)), "solid"),
             UNION,
         )
 
@@ -506,18 +384,20 @@ def test_inverted_operand_is_refused() -> None:
 
 
 def test_hollow_operand_requires_inward_cavity_shell() -> None:
-    outer_vertices, outer_faces = _cube((-1.0, -1.0, -1.0), size=3.0)
-    inner_vertices, inner_faces = _cube()
+    outer_vertices, outer_faces = cube_surface((-1.0, -1.0, -1.0), size=3.0)
+    inner_vertices, inner_faces = cube_surface()
     vertices = np.concatenate((outer_vertices, inner_vertices))
-    hollow = _model(
+    hollow = surface_model(
         vertices, np.concatenate((outer_faces, inner_faces[:, ::-1] + 8)), "hollow"
     )
-    nested = _model(vertices, np.concatenate((outer_faces, inner_faces + 8)), "nested")
-    probe = _model(*_cube((0.5, 0.25, 0.25)), "probe")
+    nested = surface_model(
+        vertices, np.concatenate((outer_faces, inner_faces + 8)), "nested"
+    )
+    probe = surface_model(*cube_surface((0.5, 0.25, 0.25)), "probe")
 
     result = surface_boolean(hollow, probe, INTERSECTION)
 
-    assert _signed_volume(result.vertices, result.triangles) == pytest.approx(
+    assert signed_volume_reference(result.vertices, result.triangles) == pytest.approx(
         1.0 - _OVERLAP
     )
     with pytest.raises(SurfaceBooleanError) as refused:
@@ -528,8 +408,8 @@ def test_hollow_operand_requires_inward_cavity_shell() -> None:
 def test_classification_budget_is_refused() -> None:
     with pytest.raises(SurfaceBooleanError) as refused:
         surface_boolean(
-            _model(*_cube(), "first"),
-            _model(*_cube((0.5, 0.25, 0.25)), "second"),
+            surface_model(*cube_surface(), "first"),
+            surface_model(*cube_surface((0.5, 0.25, 0.25)), "second"),
             UNION,
             limits=SurfaceArrangementLimits(maximum_winding_evaluations=1),
         )
@@ -559,7 +439,7 @@ def _ray_membership(
     direction = np.asarray((1.0, 0.371391, 0.173219), dtype=np.float64)
     cross = np.cross(direction, second)
     determinant = np.sum(first * cross, axis=1)
-    eligible = np.abs(determinant) > 1e-13
+    eligible = np.abs(determinant) > _REFERENCE_ATOL_13
     denominator = np.where(eligible, determinant, 1.0)
     offset = points[:, None] - corners[None, :, 0]
     u = np.sum(offset * cross[None], axis=-1) / denominator
@@ -578,12 +458,14 @@ def _ray_membership(
 def test_nary_rotated_cube_sphere_regions_preserve_original_ancestry(
     operation: SurfaceBooleanOperation,
 ) -> None:
-    first = _cube(rotation=_rotation((1.0, 2.0, 3.0), 0.19))
-    second = _cube((0.37, 0.17, -0.09), rotation=_rotation((3.0, -1.0, 2.0), -0.23))
-    sphere_points, sphere_faces = _icosphere(1)
+    first = cube_surface(rotation=rotation_matrix((1.0, 2.0, 3.0), 0.19))
+    second = cube_surface(
+        (0.37, 0.17, -0.09), rotation=rotation_matrix((3.0, -1.0, 2.0), -0.23)
+    )
+    sphere_points, sphere_faces = icosphere(1)
     third = (sphere_points * 0.65 + np.asarray((0.65, 0.59, 0.47)), sphere_faces)
     inputs = (first, second, third)
-    models = tuple(_model(*data, f"original-{i}") for i, data in enumerate(inputs))
+    models = tuple(surface_model(*data, f"original-{i}") for i, data in enumerate(inputs))
     result = surface_boolean(models[0], models[1], operation, operands=(models[2],))
     probes = np.stack(
         np.meshgrid(
@@ -628,14 +510,14 @@ def test_nary_rotated_cube_sphere_regions_preserve_original_ancestry(
         * np.stack(coefficients)[result.source_operand, None],
         axis=-1,
     )
-    np.testing.assert_allclose(transferred, expected_values, atol=1e-12)
+    np.testing.assert_allclose(transferred, expected_values, atol=_REFERENCE_ATOL_12)
 
 
 def test_nary_coplanar_duplicate_faces_emit_once_and_difference_is_empty() -> None:
-    models = tuple(_model(*_cube(), f"coincident-{i}") for i in range(3))
+    models = tuple(surface_model(*cube_surface(), f"coincident-{i}") for i in range(3))
     union = surface_boolean(models[0], models[1], UNION, operands=(models[2],))
     difference = surface_boolean(models[0], models[1], DIFFERENCE, operands=(models[2],))
-    assert _signed_volume(union.vertices, union.triangles) == pytest.approx(1.0)
+    assert signed_volume_reference(union.vertices, union.triangles) == pytest.approx(1.0)
     assert union.closure.closed and union.closure.edge_manifold
     np.testing.assert_array_equal(
         union.source_operand, np.zeros(union.triangles.shape[0], dtype=np.int64)
@@ -645,11 +527,17 @@ def test_nary_coplanar_duplicate_faces_emit_once_and_difference_is_empty() -> No
 
 def test_chained_csg_reuses_original_features_without_accumulating_roundoff() -> None:
     inputs = (
-        _cube(rotation=_rotation((1.0, 2.0, 3.0), 0.19)),
-        _cube((0.37, 0.17, -0.09), rotation=_rotation((3.0, -1.0, 2.0), -0.23)),
-        _cube((0.19, -0.11, 0.33), rotation=_rotation((2.0, 1.0, -1.0), 0.31)),
+        cube_surface(rotation=rotation_matrix((1.0, 2.0, 3.0), 0.19)),
+        cube_surface(
+            (0.37, 0.17, -0.09), rotation=rotation_matrix((3.0, -1.0, 2.0), -0.23)
+        ),
+        cube_surface(
+            (0.19, -0.11, 0.33), rotation=rotation_matrix((2.0, 1.0, -1.0), 0.31)
+        ),
     )
-    models = tuple(_model(*data, f"chain-source-{i}") for i, data in enumerate(inputs))
+    models = tuple(
+        surface_model(*data, f"chain-source-{i}") for i, data in enumerate(inputs)
+    )
     first = surface_boolean(models[0], models[1], UNION)
     chained = surface_boolean(first, models[2], UNION)
     simultaneous = surface_boolean(models[0], models[1], UNION, operands=(models[2],))
@@ -662,12 +550,18 @@ def test_chained_csg_reuses_original_features_without_accumulating_roundoff() ->
 
 
 def test_chained_difference_preserves_nonassociative_region_expression() -> None:
-    inputs = (_cube(), _cube((0.5, 0.0, 0.0)), _cube((0.75, 0.25, 0.25), size=0.5))
-    models = tuple(_model(*data, f"nested-csg-{i}") for i, data in enumerate(inputs))
+    inputs = (
+        cube_surface(),
+        cube_surface((0.5, 0.0, 0.0)),
+        cube_surface((0.75, 0.25, 0.25), size=0.5),
+    )
+    models = tuple(
+        surface_model(*data, f"nested-csg-{i}") for i, data in enumerate(inputs)
+    )
     united = surface_boolean(models[0], models[1], UNION)
     cavity = surface_boolean(united, models[2], DIFFERENCE)
-    assert _signed_volume(cavity.vertices, cavity.triangles) == pytest.approx(
-        1.5 - 0.125, abs=1e-13
+    assert signed_volume_reference(cavity.vertices, cavity.triangles) == pytest.approx(
+        1.5 - 0.125, abs=_REFERENCE_ATOL_13
     )
     assert cavity.closure.closed and cavity.closure.edge_manifold
     assert cavity.closure.component_count == 2
@@ -677,12 +571,15 @@ def test_chained_difference_preserves_nonassociative_region_expression() -> None
 
 def test_empty_chained_operand_cannot_steal_surviving_source_properties() -> None:
     models = tuple(
-        _model(*_cube(), name) for name in ("canceled-a", "canceled-b", "surviving-c")
+        surface_model(*cube_surface(), name)
+        for name in ("canceled-a", "canceled-b", "surviving-c")
     )
     empty = surface_boolean(models[0], models[1], DIFFERENCE)
     surviving = surface_boolean(empty, models[2], UNION)
     assert empty.empty
-    assert _signed_volume(surviving.vertices, surviving.triangles) == pytest.approx(1.0)
+    assert signed_volume_reference(
+        surviving.vertices, surviving.triangles
+    ) == pytest.approx(1.0)
     np.testing.assert_array_equal(
         surviving.source_operand,
         np.full(surviving.triangles.shape[0], 2, dtype=np.int64),
@@ -694,7 +591,9 @@ def test_empty_chained_operand_cannot_steal_surviving_source_properties() -> Non
     )
     np.testing.assert_array_equal(transferred, np.full_like(transferred, 9.0))
     if surviving.surface is None:
-        raise RuntimeError("The nonempty surviving solid must publish its surface.")
+        raise RuntimeError(
+            "surviving.surface must be present for a nonempty solid; got None"
+        )
     assert set(surviving.surface.metadata.cell_tags) == {"surviving-c"}
 
 
@@ -718,7 +617,7 @@ def _convex_common_volume(operands: tuple[tuple[np.ndarray, np.ndarray], ...]) -
         np.concatenate(offsets)[None],
         np.asarray((stacked.shape[1],), dtype=np.int32),
     )
-    volume, status = clipped[6], clipped[8]
+    volume, status = clipped.volume, clipped.status
     assert status[0] == 0
     return float(volume[0])
 
@@ -735,9 +634,9 @@ def _convex_union_volume(operands: tuple[tuple[np.ndarray, np.ndarray], ...]) ->
 
 def _rotated_cubes(count: int) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
     return tuple(
-        _cube(
+        cube_surface(
             (0.1 * index, 0.07 * index, -0.05 * index),
-            rotation=_rotation(
+            rotation=rotation_matrix(
                 (1.0 + index, 2.0 - index, 0.5 + 0.3 * index), 0.17 + 0.29 * index
             ),
         )
@@ -747,12 +646,14 @@ def _rotated_cubes(count: int) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
 
 def test_union_of_five_rotated_cubes_matches_inclusion_exclusion() -> None:
     inputs = _rotated_cubes(5)
-    models = tuple(_model(*data, f"rotated-{index}") for index, data in enumerate(inputs))
+    models = tuple(
+        surface_model(*data, f"rotated-{index}") for index, data in enumerate(inputs)
+    )
 
     result = surface_boolean(models[0], models[1], UNION, operands=models[2:])
 
-    assert _signed_volume(result.vertices, result.triangles) == pytest.approx(
-        _convex_union_volume(inputs), abs=1e-13
+    assert signed_volume_reference(result.vertices, result.triangles) == pytest.approx(
+        _convex_union_volume(inputs), abs=_REFERENCE_ATOL_13
     )
     _assert_watertight_embedding(result)
     _assert_ancestry(result, inputs)
@@ -764,7 +665,7 @@ def test_union_of_five_rotated_cubes_matches_inclusion_exclusion() -> None:
 def test_union_minus_third_with_triple_contacts_matches_inclusion_exclusion() -> None:
     first, second, third = _rotated_cubes(3)
     models = tuple(
-        _model(*data, f"triple-{index}")
+        surface_model(*data, f"triple-{index}")
         for index, data in enumerate((first, second, third))
     )
     expected = (
@@ -778,8 +679,8 @@ def test_union_minus_third_with_triple_contacts_matches_inclusion_exclusion() ->
         surface_boolean(models[0], models[1], UNION), models[2], DIFFERENCE
     )
 
-    assert _signed_volume(result.vertices, result.triangles) == pytest.approx(
-        expected, abs=1e-13
+    assert signed_volume_reference(result.vertices, result.triangles) == pytest.approx(
+        expected, abs=_REFERENCE_ATOL_13
     )
     _assert_watertight_embedding(result)
     _assert_ancestry(result, (first, second, third))
@@ -789,7 +690,7 @@ def test_union_minus_third_with_triple_contacts_matches_inclusion_exclusion() ->
 
 
 def test_union_of_six_spheres_matches_inclusion_exclusion_deterministically() -> None:
-    vertices, faces = _icosphere(1)
+    vertices, faces = icosphere(1)
     centers = (
         (0.0, 0.0, 0.0),
         (0.7, 0.1, 0.0),
@@ -799,7 +700,9 @@ def test_union_of_six_spheres_matches_inclusion_exclusion_deterministically() ->
         (0.4, -0.5, 0.3),
     )
     inputs = tuple((vertices * 0.6 + np.asarray(center), faces) for center in centers)
-    models = tuple(_model(*data, f"sphere-{index}") for index, data in enumerate(inputs))
+    models = tuple(
+        surface_model(*data, f"sphere-{index}") for index, data in enumerate(inputs)
+    )
 
     runs = [
         surface_boolean(models[0], models[1], UNION, operands=models[2:])
@@ -807,8 +710,8 @@ def test_union_of_six_spheres_matches_inclusion_exclusion_deterministically() ->
     ]
 
     result = runs[0]
-    assert _signed_volume(result.vertices, result.triangles) == pytest.approx(
-        _convex_union_volume(inputs), abs=1e-13
+    assert signed_volume_reference(result.vertices, result.triangles) == pytest.approx(
+        _convex_union_volume(inputs), abs=_REFERENCE_ATOL_13
     )
     _assert_watertight_embedding(result)
     _assert_ancestry(result, inputs)
@@ -821,7 +724,7 @@ def test_union_of_six_spheres_matches_inclusion_exclusion_deterministically() ->
 @pytest.mark.parametrize("exponent", [-30, -45, -52], ids=["2^-30", "2^-45", "2^-52"])
 def test_nearly_coincident_faces_are_classified_exactly(exponent: int) -> None:
     gap = float(np.ldexp(np.float64(1.0), exponent))
-    first, second = _cube(), _cube((0.5, 0.25, gap))
+    first, second = cube_surface(), cube_surface((0.5, 0.25, gap))
 
     result = _run(first, second, INTERSECTION)
 
@@ -834,6 +737,6 @@ def test_nearly_coincident_faces_are_classified_exactly(exponent: int) -> None:
     np.testing.assert_array_equal(result.source_operand[bottom], 1)
     np.testing.assert_array_equal(result.source_operand[top], 0)
     _assert_watertight_embedding(result)
-    assert _signed_volume(result.vertices, result.triangles) == pytest.approx(
-        0.5 * 0.75 * (1.0 - gap), abs=1e-15
+    assert signed_volume_reference(result.vertices, result.triangles) == pytest.approx(
+        0.5 * 0.75 * (1.0 - gap), abs=_REFERENCE_ATOL_15
     )

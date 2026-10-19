@@ -53,17 +53,17 @@ from ...lifecycle import (
     CompositionRebindReceipt,
     CompositionTransport,
 )
-from ...lifecycle._composition_rebind import _carries_state
+from ...lifecycle._composition_rebind import carries_state
 from ...sparse import EdgeRelation
-from ...typing import Bool, Dim, Float64, Int32, Int64
+from ...typing import Bool, checked, Dim, Float64, Int32, Int64, parse
 from .._topology_epoch import (
     TopologyEpoch,
     TopologyEpochTransition,
     TopologyEpochTransitionResult,
 )
+from .._transfer import TransferGeometryBinding
 from ._adaptivity import MeshfreeAdaptationProposal
 from ._resampling import SurfaceResamplingResult
-from .._transfer import TransferGeometryBinding
 from ._transfer import PointTransferPlan, PointTransferRequest, PreparedPointTransfer
 
 
@@ -130,12 +130,13 @@ class MeshfreeHistoryRemap(StrictModule):
     ) -> tuple[Array, ...]:
         if not self.successful:
             raise ValueError(
-                f"Live-history remap failed for histories {self.failed}; no value "
-                "derivative crosses a refused epoch."
+                f"MeshfreeHistoryRemap.routes must have successful routes before computing a value derivative; got {self.failed!r}"
             )
         items = tuple(cotangents)
         if len(items) != len(self.routes):
-            raise ValueError("Every live history requires exactly one cotangent.")
+            raise ValueError(
+                f"MeshfreeHistoryRemap.reverse.cotangents must provide exactly one cotangent; got {type(cotangents).__name__}"
+            )
         return tuple(
             route.adjoint(item) if adjoint else route.pullback(item)
             for route, item in zip(self.routes, items, strict=True)
@@ -151,17 +152,19 @@ class MeshfreeHistoryRemap(StrictModule):
 
 
 def _same_change(transitions: Sequence[TopologyEpochTransition]) -> None:
-    if not transitions or any(
-        not isinstance(item, TopologyEpochTransition) for item in transitions
-    ):
-        raise TypeError("Live-history remap needs TopologyEpochTransition routes.")
+    if not transitions:
+        raise TypeError(
+            f"epochs.same_change.transitions must provide TopologyEpochTransition routes; got {type(transitions).__name__}"
+        )
     first = transitions[0]
     if any(
         item.source.epoch_id != first.source.epoch_id
         or item.target.epoch_id != first.target.epoch_id
         for item in transitions
     ):
-        raise ValueError("Every live-history route must cross the same epoch change.")
+        raise ValueError(
+            f"epochs.same_change.transitions must cross the same epoch change; got {type(transitions).__name__}"
+        )
 
 
 def remap_live_histories(
@@ -180,7 +183,9 @@ def remap_live_histories(
     _same_change(routes)
     fields = tuple(concentrations)
     if len(fields) != len(routes):
-        raise ValueError("Every live history requires exactly one route.")
+        raise ValueError(
+            f"epochs.remap_live_histories.transitions must provide exactly one route; got {type(transitions).__name__}"
+        )
     results = tuple(
         route.apply(field) for route, field in zip(routes, fields, strict=True)
     )
@@ -226,9 +231,8 @@ class MeshfreeEventLineage(StrictModule):
     topology_changed: bool = eqx.field(static=True)
     lineage_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(self, result: SurfaceEventPassResult, /) -> None:
-        if not isinstance(result, SurfaceEventPassResult):
-            raise TypeError("Physical lineage needs a SurfaceEventPassResult.")
         evidence = result.evidence
         lineage = evidence.lineage
         if (
@@ -239,8 +243,7 @@ class MeshfreeEventLineage(StrictModule):
             or evidence.transaction_id is None
         ):
             raise ValueError(
-                "A meshfree surface event requires a committed multiregion pass; "
-                "sample insertion or removal never manufactures a physical event."
+                f"MeshfreeEventLineage.result must provide a committed multiregion pass; sample insertion or removal never manufactures a physical event; got {lineage!r}"
             )
         records = tuple(record for record in evidence.records if record.accepted)
         self.ccd_time_of_impact = jnp.asarray(
@@ -285,6 +288,7 @@ class MeshfreeEpochChange(StrictModule):
     proposal_id: str | None = eqx.field(static=True)
     change_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source: TopologyEpoch,
@@ -295,50 +299,46 @@ class MeshfreeEpochChange(StrictModule):
         lineage: MeshfreeEventLineage | None = None,
         proposal: SurfaceResamplingResult | MeshfreeAdaptationProposal | None = None,
     ) -> None:
-        if not isinstance(source, TopologyEpoch) or not isinstance(target, TopologyEpoch):
-            raise TypeError("Epoch changes connect TopologyEpoch values.")
         if target.index != source.index + 1 or source.epoch_id == target.epoch_id:
-            raise ValueError("Epoch changes connect consecutive distinct epochs.")
-        match cause:
-            case "sample-repair":
-                if lineage is not None or not isinstance(
-                    proposal, SurfaceResamplingResult
-                ):
-                    raise ValueError(
-                        "A sample repair follows one resampling proposal and carries "
-                        "no physical lineage."
-                    )
+            raise ValueError(
+                f"MeshfreeEpochChange.target must connect consecutive distinct epochs; got {type(target).__name__}"
+            )
+        cause = parse(cause, MeshfreeEpochCause, "cause")
+        match (cause, lineage, proposal):
+            case ("sample-repair", None, SurfaceResamplingResult() as proposal):
                 if not proposal.converged or proposal.capacity_refused:
                     raise ValueError(
-                        "Only a converged, capacity-admitted resampling proposal can "
-                        "become an epoch."
+                        f"MeshfreeEpochChange.proposal must be converged and capacity-admitted before epoch publication; got {type(proposal).__name__}"
                     )
                 identity = proposal.proposal_id
-            case "surface-event":
-                if proposal is not None or not isinstance(lineage, MeshfreeEventLineage):
-                    raise ValueError(
-                        "A surface event follows committed multiregion lineage only."
-                    )
+            case ("sample-repair", _, _):
+                raise ValueError(
+                    f"MeshfreeEpochChange.lineage must carry one resampling proposal and no physical lineage for sample repair; got {type(lineage).__name__}"
+                )
+            case ("surface-event", MeshfreeEventLineage() as lineage, None):
                 if (
                     lineage.source_epoch.epoch_id != source.epoch_id
                     or lineage.target_epoch.epoch_id != target.epoch_id
                 ):
-                    raise ValueError("Event lineage belongs to different epochs.")
-                identity = lineage.lineage_id
-            case "adaptive-refinement":
-                if lineage is not None or not isinstance(
-                    proposal, MeshfreeAdaptationProposal
-                ):
                     raise ValueError(
-                        "An adaptive refinement follows one adaptation proposal and "
-                        "carries no physical lineage."
+                        f"MeshfreeEpochChange.lineage must belong to the bound epochs; got {type(lineage).__name__}"
                     )
+                identity = lineage.lineage_id
+            case ("surface-event", _, _):
+                raise ValueError(
+                    f"MeshfreeEpochChange.lineage must carry committed multiregion lineage and no resampling proposal; got {type(lineage).__name__}"
+                )
+            case ("adaptive-refinement", None, MeshfreeAdaptationProposal() as proposal):
                 if not proposal.admitted:
                     raise ValueError(
-                        "Only an admitted adaptation proposal can become an epoch."
+                        f"MeshfreeEpochChange.proposal must be an admitted adaptation proposal before epoch publication; got {type(proposal).__name__}"
                     )
                 identity = proposal.proposal_id
-            case unknown:
+            case ("adaptive-refinement", _, _):
+                raise ValueError(
+                    f"MeshfreeEpochChange.lineage must carry one adaptation proposal and no physical lineage for adaptive refinement; got {type(lineage).__name__}"
+                )
+            case (unknown, _, _):
                 assert_never(unknown)
         self.source, self.target, self.lineage = source, target, lineage
         self.cause = cause
@@ -390,7 +390,7 @@ class MeshfreeEpochCandidate(StrictModule):
 
 @final
 class MeshfreeEpochReceipt(StrictModule):
-    """Published (or refused) epoch with its complete account.
+    """Published (or refused) epoch with its full account.
 
     On refusal ``composition`` is the unchanged source object. Value
     derivatives through the frozen routes are available exactly when the epoch
@@ -412,8 +412,7 @@ class MeshfreeEpochReceipt(StrictModule):
 
     def require_differentiable_selection(self) -> None:
         raise ValueError(
-            "Meshfree epoch selection is nondifferentiable; differentiate values "
-            "through its frozen transfers or within one fixed epoch."
+            "MeshfreeEpochReceipt.require_differentiable_selection.state must differentiate values only through frozen transfers or a fixed epoch; got unavailable transaction state"
         )
 
 
@@ -429,7 +428,7 @@ def _check_epoch_entry(
         or entry.structure_id != change.source.epoch_id
     ):
         raise ValueError(
-            f"Entry {epoch_entry!r} is not the source topology epoch of this change."
+            f"epochs.check_epoch_entry.source must be the source topology epoch of this change; got {type(source).__name__}; context {epoch_entry!r}"
         )
     return entry
 
@@ -445,28 +444,30 @@ def _dispositions(
     """Every epoch-bound state has its own route and every artifact a rebuild."""
     unrouted, unbuilt = [], []
     for entry_id in closure:
-        state = _carries_state(source.entry(entry_id).role)
+        state = carries_state(source.entry(entry_id).role)
         if state and entry_id not in remap:
             unrouted.append(entry_id)
         if not state and entry_id not in staged:
             unbuilt.append(entry_id)
     if unrouted or unbuilt:
         raise ValueError(
-            "Epoch-bound entries lack a disposition; state needs its own route "
-            f"{unrouted} and derived artifacts a target-epoch rebuild {unbuilt}."
+            f"meshfree.epoch.dispositions must route every bound state and rebuild every derived artifact; got unrouted={unrouted}, unbuilt={unbuilt}"
         )
     for entry_id, route in remap.items():
         if entry_id not in closure:
-            raise ValueError(f"Remapped entry {entry_id!r} is not bound to the epoch.")
-        if not isinstance(route, TopologyEpochTransition):
-            raise TypeError("Remap routes must be TopologyEpochTransition values.")
+            raise ValueError(
+                f"epochs.dispositions.closure must be bound to the epoch; got {type(closure).__name__}; context {entry_id!r}"
+            )
         if (
             route.source.epoch_id != change.source.epoch_id
             or route.target.epoch_id != change.target.epoch_id
         ):
-            raise ValueError(f"Route of {entry_id!r} crosses another epoch change.")
+            raise ValueError(
+                f"epochs.dispositions.change must cross the declared source and target epochs; got {type(change).__name__}"
+            )
 
 
+@checked
 def stage_meshfree_epoch(
     source: Composition,
     change: MeshfreeEpochChange,
@@ -476,7 +477,7 @@ def stage_meshfree_epoch(
     remap: Mapping[str, TopologyEpochTransition],
     reprepare: Sequence[CompositionEntry],
 ) -> MeshfreeEpochCandidate:
-    """Stage one complete epoch change without publishing anything.
+    """Stage one full epoch change without publishing anything.
 
     ``remap`` assigns every epoch-bound state entry (current fields, every
     live history, predictors) its own frozen route; ``reprepare`` holds the
@@ -484,14 +485,16 @@ def stage_meshfree_epoch(
     Entries independent of the epoch are retained. Missing routes or rebuilds
     are refused before staging.
     """
-    if not isinstance(source, Composition) or not isinstance(change, MeshfreeEpochChange):
-        raise TypeError("Staging needs a Composition and a MeshfreeEpochChange.")
     epoch = _check_epoch_entry(source, change, epoch_entry)
     staged = {item.entry_id: item for item in reprepare}
     if len(staged) != len(tuple(reprepare)) or epoch_entry in staged:
-        raise ValueError("Rebuilds must be unique and exclude the epoch entry.")
+        raise ValueError(
+            f"epochs.stage_meshfree_epoch.epoch_entry must be unique and exclude the epoch entry; got {epoch_entry!r}"
+        )
     if any(item in staged for item in remap):
-        raise ValueError("An entry is either remapped or reprepared, not both.")
+        raise ValueError(
+            f"epochs.stage_meshfree_epoch.remap must have one disposition, either remapping or preparation; got {type(remap).__name__}"
+        )
     closure = _dependency_closure(source, epoch_entry)
     _dispositions(source, closure, remap, staged, change)
     target_epoch = CompositionEntry(
@@ -565,8 +568,6 @@ def commit_meshfree_epoch(
     candidate: MeshfreeEpochCandidate, /, *, accepted_boundary: bool
 ) -> MeshfreeEpochReceipt:
     """Publish the staged epoch only if every route and the boundary are accepted."""
-    if not isinstance(candidate, MeshfreeEpochCandidate):
-        raise TypeError("candidate must be a MeshfreeEpochCandidate.")
     receipt = commit_composition_rebind(
         candidate.rebind, accepted_boundary=accepted_boundary
     )
@@ -614,13 +615,10 @@ class MeshfreeSheetSupport(StrictModule):
     slot_capacity: int = eqx.field(static=True)
     support_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self, topology: MultiRegionSurfaceTopology, state: MultiRegionSurfaceState, /
     ) -> None:
-        if not isinstance(topology, MultiRegionSurfaceTopology) or not isinstance(
-            state, MultiRegionSurfaceState
-        ):
-            raise TypeError("Sheet supports need a multiregion topology and state.")
         positions = np.asarray(state.positions, dtype=np.float64)
         areas = np.asarray(
             PreparedMultiRegionSurface(topology, state).slot_areas(state.positions)
@@ -628,7 +626,9 @@ class MeshfreeSheetSupport(StrictModule):
         active = np.asarray(topology.slot_active).reshape(-1)
         slots = np.flatnonzero(active)
         if np.any(areas[slots] <= 0) or not np.all(np.isfinite(areas[slots])):
-            raise ValueError("Active sheet slots need positive finite areas.")
+            raise ValueError(
+                f"MeshfreeSheetSupport.topology must provide positive finite areas; got {type(topology).__name__}"
+            )
         width = topology.slot_width
         vertices = slots // width
         pairs = np.asarray(topology.vertex_pair_slots).reshape(-1)[slots]
@@ -653,7 +653,9 @@ class MeshfreeSheetSupport(StrictModule):
         """Compact concentration of capacity-shaped ``(vertex, slot)`` content."""
         content = jnp.asarray(sheet_content).reshape(-1)
         if content.shape != (self.slot_capacity,):
-            raise ValueError("Sheet content must match the slot capacity layout.")
+            raise ValueError(
+                f"MeshfreeSheetSupport.concentration.sheet_content must match the slot capacity layout; got {content.shape!r}"
+            )
         return content[self.slots] / self.measures
 
 
@@ -662,7 +664,7 @@ class MeshfreeSurfaceEventEpoch(StrictModule):
     """A committed multiregion event pass consumed as one meshfree epoch change.
 
     ``transfer`` is the audited concentration form ``diag(1/m_new) P diag(m_old)``
-    of the authority's own extensive sheet transfer ``P``: conservative and
+    of the support's own extensive sheet transfer ``P``: conservative and
     nonnegative by construction. Constant reproduction is measured, not
     claimed; a physical event that changes area cannot have it.
     """
@@ -676,6 +678,7 @@ class MeshfreeSurfaceEventEpoch(StrictModule):
         return self.transfer.epoch_transition(self.change.source, self.change.target)
 
 
+@checked
 def surface_event_epoch(
     source_topology: MultiRegionSurfaceTopology,
     source_state: MultiRegionSurfaceState,
@@ -688,14 +691,18 @@ def surface_event_epoch(
     lineage = MeshfreeEventLineage(result)
     sheet = result.sheet_transfer
     if sheet is None:
-        raise ValueError("A committed event pass must expose its sheet transfer.")
+        raise ValueError(
+            f"epochs.surface_event_epoch.source_topology must expose the committed sheet transfer; got {sheet!r}"
+        )
     source = MeshfreeSheetSupport(source_topology, source_state)
     target = MeshfreeSheetSupport(result.topology, result.state)
     if (
         source.epoch.epoch_id != lineage.source_epoch.epoch_id
         or target.epoch.epoch_id != lineage.target_epoch.epoch_id
     ):
-        raise ValueError("The event pass was not applied to this source geometry.")
+        raise ValueError(
+            f"epochs.surface_event_epoch.source_topology must retain the source sheet geometry identity; got {type(source_topology).__name__}"
+        )
     valid = np.asarray(sheet.relation.valid)
     routes = np.asarray(sheet.relation.source_indices)[valid]
     receivers = np.asarray(sheet.relation.target_indices)[valid]
@@ -706,7 +713,9 @@ def surface_event_epoch(
     target_compact[np.asarray(target.slots)] = np.arange(target.slots.shape[0])
     columns, rows = source_compact[routes], target_compact[receivers]
     if np.any(columns < 0) or np.any(rows < 0):
-        raise ValueError("The sheet transfer routes inactive slots.")
+        raise ValueError(
+            f"epochs.surface_event_epoch.source_topology must route only active source and target sheet slots; got {type(source_topology).__name__}"
+        )
     old, new = np.asarray(source.measures), np.asarray(target.measures)
     transfer = PointTransferPlan(
         EdgeRelation(columns, rows, source_size=old.size, target_size=new.size),

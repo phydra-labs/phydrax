@@ -23,7 +23,7 @@ import numpy as np
 from jax import Array
 
 from phydrax.geometry.simplicial import TriangleBVH, TriangleMesh
-from phydrax.geometry.simplicial._mesh import _closest_points_on_triangles
+from phydrax.geometry.simplicial._mesh import closest_points_on_triangles
 from phydrax.typing import parse
 
 from ._io import write_json_atomic
@@ -95,7 +95,7 @@ def box_mesh(count: int) -> TriangleMesh:
 def dense_nearest(vertices: Array, faces: Array, points: Array) -> tuple[Array, ...]:
     """Existing fixed-topology nearest plus full second-distance sort."""
     triangles = vertices[faces]
-    closest_by_face = jax.vmap(_closest_points_on_triangles, in_axes=(0, None))(
+    closest_by_face = jax.vmap(closest_points_on_triangles, in_axes=(0, None))(
         points, triangles
     )
     squared = jnp.sum((closest_by_face - points[:, None]) ** 2, axis=-1)
@@ -112,7 +112,7 @@ def candidate_nearest(tree: TriangleBVH, points: Array) -> tuple[Array, ...]:
     """Select IDs only through traversal; differentiate selected projections outside it."""
     selected = jax.lax.stop_gradient(tree.nearest_faces(points, k=2).items)
     triangles = tree.vertices[tree.faces[selected]]
-    closest = jax.vmap(_closest_points_on_triangles)(points, triangles)
+    closest = jax.vmap(closest_points_on_triangles)(points, triangles)
     second = jnp.sum((closest[:, 1] - points) ** 2, axis=-1)
     triangle = triangles[:, 0]
     normal = jnp.cross(triangle[:, 1] - triangle[:, 0], triangle[:, 2] - triangle[:, 0])

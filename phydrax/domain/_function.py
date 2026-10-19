@@ -98,7 +98,7 @@ def _rank1_leading_broadcast_op(
     return op(left, right)
 
 
-class _ConstCallable(StrictModule, NonTrainableState):
+class ConstCallable(StrictModule, NonTrainableState):
     value: jax.Array
 
     def __init__(self, value: ArrayLike | None) -> None:
@@ -120,7 +120,7 @@ class _ConstCallable(StrictModule, NonTrainableState):
         return jnp.broadcast_to(self.value, grid_shape + self.value.shape)
 
 
-class _TrainableConstCallable(StrictModule, ParameterOwner):
+class TrainableConstCallable(StrictModule, ParameterOwner):
     value: jax.Array
 
     def __init__(self, value: ArrayLike | None) -> None:
@@ -598,7 +598,7 @@ class DomainFunction(StrictModule):
             )
         self.deps = deps_
 
-        self.func = func if callable(func) else _ConstCallable(func)
+        self.func = func if callable(func) else ConstCallable(func)
 
         self.metadata = frozendict({} if metadata is None else metadata)
         self.explicit_derivative_rule = derivative_rule

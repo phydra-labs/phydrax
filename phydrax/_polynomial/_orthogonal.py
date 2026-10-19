@@ -8,6 +8,7 @@ from numbers import Integral
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -88,8 +89,7 @@ class OrthogonalRuleData(StrictModule, NonTrainableState):
         tolerance = 64.0 * np.finfo(weights_host.dtype).eps * max(1, weights_host.size)
         if not np.isclose(np.sum(weights_host), mass, rtol=tolerance, atol=tolerance):
             raise ValueError("Orthogonal rule weights do not have their declared mass.")
-        self.nodes = jnp.asarray(nodes_host)
-        self.weights = jnp.asarray(weights_host)
+        self.nodes, self.weights = jax.device_put((nodes_host, weights_host))
         self.exact_degree = int(exact_degree)
         self.family = family
         self.node_rule = str(node_rule)

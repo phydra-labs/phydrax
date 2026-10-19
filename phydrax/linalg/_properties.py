@@ -53,7 +53,7 @@ class LinearResourceLimitError(LinearCapabilityError):
             for value in (limit, requested, completed, symbolic_work, storage_bytes_upper)
         ):
             raise ValueError(
-                "Linear resource refusal requires a named nonnegative allowance and evidence."
+                f"LinearResourceLimitError.resource must be named with nonnegative allowance and evidence; got resource={resource!r}, limit={limit!r}, requested={requested!r}, completed={completed!r}, symbolic_work={symbolic_work!r}, storage_bytes_upper={storage_bytes_upper!r}."
             )
         super().__init__(message)
         self.resource = resource

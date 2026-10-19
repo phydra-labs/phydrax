@@ -47,7 +47,15 @@ def _quad_mesh() -> Any:
     )
 
 
-def test_spectral_hp_completion_scenario_1() -> None:
+@pytest.fixture(scope="module")
+def completion_interval_nodes() -> tuple[np.ndarray, np.ndarray]:
+    return (
+        np.asarray(((0.0,), (1.0,))),
+        np.asarray(((0.0,), (0.5,), (1.0,))),
+    )
+
+
+def test_completion_forest_refinement_resize_and_compaction() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), (3, 2), 8)
     pattern = AnisotropicHPattern(2, (0,))
     refined = refine_anisotropic_hp_cells(
@@ -68,8 +76,12 @@ def test_spectral_hp_completion_scenario_1() -> None:
     assert compacted.active_count == 2
     assert compacted_geometry.geometry_id
     assert np.count_nonzero(np.asarray(routes) >= 0) == 3
-    source_nodes = np.asarray(((0.0,), (1.0,)))
-    target_nodes = np.asarray(((0.0,), (0.5,), (1.0,)))
+
+
+def test_completion_geometry_order_interpolation(
+    completion_interval_nodes: tuple[np.ndarray, np.ndarray],
+) -> None:
+    source_nodes, target_nodes = completion_interval_nodes
     coordinates = np.asarray((((0.0, 0.0), (1.0, 0.2)),))
     adaptation = GeometryOrderAdaptation(
         source_nodes, target_nodes, (1,), (2,), coordinates
@@ -78,6 +90,11 @@ def test_spectral_hp_completion_scenario_1() -> None:
     assert target.shape == (1, 3, 2)
     assert adaptation.curvature_indicator >= 0.0
 
+
+def test_completion_irregular_mortar_reproduction(
+    completion_interval_nodes: tuple[np.ndarray, np.ndarray],
+) -> None:
+    source_nodes, _ = completion_interval_nodes
     mortar = NIrregularMortarPlan(
         source_nodes,
         (np.asarray(((0.0,), (0.25,))), np.asarray(((0.5,), (0.75,), (1.0,)))),
@@ -86,10 +103,14 @@ def test_spectral_hp_completion_scenario_1() -> None:
     assert len(mortar.coarse_to_patch) == 2
     assert mortar.reproduction_error == 0.0
 
+
+def test_completion_level_set_cut_fraction() -> None:
     points = jnp.linspace(-1.0, 1.0, 9)[:, None]
     cut = LevelSetCutQuadrature(points, jnp.ones((9,)), points[:, 0])
     assert 0.0 < cut.volume_fraction < 1.0
 
+
+def test_completion_covariant_and_contravariant_values() -> None:
     jacobian = jnp.asarray(((2.0, 0.0), (0.0, 3.0)))
     value = jnp.asarray((1.0, 2.0))
     covariant = map_reference_values(
@@ -105,6 +126,8 @@ def test_spectral_hp_completion_scenario_1() -> None:
     np.testing.assert_allclose(np.asarray(covariant), (0.5, 2.0 / 3.0))
     np.testing.assert_allclose(np.asarray(contravariant), (1.0 / 3.0, 1.0))
 
+
+def test_spectral_hp_completion_scenario_1() -> None:
     triangle = SimplexNodalFamily("triangle", 3)
     tetrahedron = SimplexNodalFamily("tetrahedron", 2)
     np.testing.assert_allclose(
@@ -118,12 +141,12 @@ def test_spectral_hp_completion_scenario_1() -> None:
     prism = HybridReferenceFamily("prism", 2)
     pyramid = HybridReferenceFamily("pyramid", 1)
     np.testing.assert_allclose(
-        np.asarray(prism.tabulate(prism.nodes)),
+        np.asarray(prism.tabulate(prism.nodes)[0]),
         np.eye(prism.nodes.shape[0]),
         atol=2.0e-11,
     )
     np.testing.assert_allclose(
-        np.asarray(pyramid.tabulate(pyramid.nodes)),
+        np.asarray(pyramid.tabulate(pyramid.nodes)[0]),
         np.eye(pyramid.nodes.shape[0]),
         atol=2.0e-11,
     )
@@ -131,7 +154,7 @@ def test_spectral_hp_completion_scenario_1() -> None:
     assert anisotropic_prism.orders == (2, 3)
     assert anisotropic_prism.nodes.shape == (24, 3)
     np.testing.assert_allclose(
-        np.asarray(anisotropic_prism.tabulate(anisotropic_prism.nodes)),
+        np.asarray(anisotropic_prism.tabulate(anisotropic_prism.nodes)[0]),
         np.eye(24),
         atol=3.0e-10,
     )
@@ -148,9 +171,7 @@ def test_spectral_hp_completion_scenario_1() -> None:
         high_order_pyramid = HybridReferenceFamily("pyramid", order)
         expected = (order + 1) * (order + 2) * (2 * order + 3) // 6
         assert high_order_pyramid.nodes.shape == (expected, 3)
-        values, gradients = high_order_pyramid.tabulate_with_gradients(
-            high_order_pyramid.nodes
-        )
+        values, gradients = high_order_pyramid.tabulate(high_order_pyramid.nodes)
         np.testing.assert_allclose(values, np.eye(expected), atol=2.0e-8)
         assert jnp.all(jnp.isfinite(gradients))
         h1_pyramid = high_order_pyramid.finite_element(conformity="H1")
@@ -221,7 +242,7 @@ def test_spectral_hp_completion_scenario_2() -> None:
     )
     for kind, points in (("prism", prism_points), ("pyramid", pyramid_points)):
         family = HybridReferenceFamily(kind, 1)
-        values, gradients = family.tabulate_with_gradients(family.nodes)
+        values, gradients = family.tabulate(family.nodes)
         np.testing.assert_allclose(values, np.eye(points.shape[0]), atol=3.0e-10)
         assert jnp.all(jnp.isfinite(gradients))
         mesh = CellMesh(
@@ -246,13 +267,16 @@ def test_spectral_hp_completion_scenario_2() -> None:
         )
 
 
-def test_physical_mass_projection_rejects_failed_column_solves() -> None:
-    source = jnp.ones((2, 1))
+@pytest.mark.parametrize("source_width", (1, 3), ids=("one-rhs", "multiple-rhs"))
+def test_physical_mass_projection_rejects_failed_column_solves(
+    source_width: int,
+) -> None:
+    source = jnp.ones((2, source_width))
     singular_target = jnp.ones((2, 2))
 
     with pytest.raises(
         (ValueError, eqx.EquinoxRuntimeError),
-        match="Physical mass-projection solve failed",
+        match="physical_mass_projection.solve",
     ):
         physical_mass_projection(
             source,
@@ -260,3 +284,23 @@ def test_physical_mass_projection_rejects_failed_column_solves() -> None:
             jnp.ones((2,)),
             jnp.ones((2,)),
         ).block_until_ready()
+
+
+def test_physical_mass_projection_preserves_all_rhs_moments() -> None:
+    points = jnp.asarray((-1.0, 0.0, 1.0), dtype=jnp.float64)
+    target = jnp.stack((jnp.ones_like(points), points), axis=1)
+    source = jnp.stack((jnp.ones_like(points), points, points**2), axis=1)
+    result = physical_mass_projection(
+        source,
+        target,
+        jnp.asarray((1.0 / 3.0, 4.0 / 3.0, 1.0 / 3.0), dtype=jnp.float64),
+        jnp.asarray((2.0, 3.0, 4.0), dtype=jnp.float64),
+    )
+    # Weighted moments are M=[[6,2/3],[2/3,2]], with the quadratic RHS
+    # (2,2/3); eliminating the two equations gives (4/13,3/13).
+    expected = np.asarray(((1.0, 0.0, 4.0 / 13.0), (0.0, 1.0, 3.0 / 13.0)))
+    # cond(M)<4; 64 ulps times that bound cover the tiny native solve and
+    # publication of the three independent coefficient columns.
+    np.testing.assert_allclose(
+        result, expected, rtol=0.0, atol=256.0 * np.finfo(np.float64).eps
+    )

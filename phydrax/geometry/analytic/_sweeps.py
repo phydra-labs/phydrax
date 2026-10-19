@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from fractions import Fraction
+from typing import Any, final
 
 import equinox as eqx
 import jax
@@ -12,6 +13,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
+from jax.typing import ArrayLike
 
 from ..._mass import ExactMass, Mass, product_mass, scale_mass, sum_mass
 from ...typing import checked, PRNGKey
@@ -21,18 +23,30 @@ from .._certificate import (
     DistanceSemantics,
     FieldCertificate,
     FieldRegularity,
+    SignReliability,
+    ZeroSetAccuracy,
 )
 from .._contracts import GeometryKernel, GeometryKind, GeometrySource
+from .._rational import fraction_endpoint
 from .._sampling import RejectionSamplingPlan, SamplingReport, SamplingResult
 from .._validity import (
     combine_validity,
     GeometryValidityEvidence,
     representation_validity,
 )
+from ..brep._analytic_cylinder_closest import sqrt_bounds
+from ..brep._coordinate_request import coordinate_source_request
+from ..brep._intersection_curve import CurveRange
+from ..brep._parameter_range import (
+    attach_parameter_range,
+    CertifiedParameterRange,
+    unknown_parameter_range,
+)
+from ..brep._patches import CircleCurve, LineCurve
 from ..design._schema import (
-    _ParameterCollector,
     DesignState,
     ParameterBinding,
+    ParameterCollector,
     ParameterId,
 )
 from ._primitives import _check_points, _feature_id, _finite_norm
@@ -104,7 +118,7 @@ class Extrusion(GeometrySource):
         self.height = jnp.asarray(height_host, dtype=jnp.float64)
         self.feature_id = _feature_id(feature_id, "extrusion")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         profile = self.profile._compile(context)
         if (
             profile.ambient_dimension != profile.intrinsic_dimension
@@ -115,6 +129,7 @@ class Extrusion(GeometrySource):
             ParameterId(self.feature_id, "height"),
             self.height,
             role="extrusion_height",
+            unit=context.coordinate_unit,
             bounds=(0.0, None),
         )
         return _ExtrusionKernel(profile, height)
@@ -353,7 +368,7 @@ class Revolution(GeometrySource):
         self.profile = profile
         self.feature_id = _feature_id(feature_id, "revolution")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         profile = self.profile._compile(context)
         if (
             profile.ambient_dimension != 2
@@ -495,4 +510,344 @@ class _RevolutionKernel(GeometryKernel):
         )
 
 
-__all__ = ["Extrusion", "Revolution"]
+__all__ = ["Extrusion", "Revolution", "Tube"]
+
+
+def _tube_reach(path: CurveRange | CircleCurve) -> float:
+    """Prove reach for a convex segment or an exactly orthonormal circle."""
+    if type(path) is CurveRange and type(path.curve) is LineCurve:
+        return np.inf
+    if type(path) is not CircleCurve:
+        error = ValueError(
+            f"Tube.path must use a supported line segment or full circle; got unsupported {type(path).__name__}."
+        )
+        raise attach_parameter_range(error, unknown_parameter_range("radius", str(error)))
+    first = tuple(Fraction(float(x)) for x in np.asarray(path.first_axis))
+    second = tuple(Fraction(float(x)) for x in np.asarray(path.second_axis))
+    if (
+        sum(x * x for x in first) != 1
+        or sum(x * x for x in second) != 1
+        or sum(x * y for x, y in zip(first, second, strict=True)) != 0
+    ):
+        error = ValueError(
+            "Tube.path must have orthonormal binary circle axes; got unsupported nonorthonormal axes."
+        )
+        raise attach_parameter_range(error, unknown_parameter_range("radius", str(error)))
+    # |c'| = R and |c''| = R give curvature 1/R exactly.
+    # The only doubly critical chords are diameters of length 2R.
+    return float(path.radius)
+
+
+def _tube_parameter_range(reach: float) -> CertifiedParameterRange:
+    """Publish the reach certificate without admitting the limiting radius."""
+    return CertifiedParameterRange(
+        "radius",
+        (0.0, reach),
+        end_status=("attained_exactly", "attained_exactly"),
+        constraints=("parameter_domain", "reach"),
+        evidence=(
+            "Tube radius is strictly positive and strictly below the exact path reach.",
+            (
+                "A convex line segment has unique Euclidean projection everywhere and infinite reach."
+                if np.isinf(reach)
+                else "An exactly orthonormal full circle has curvature radius equal to half its doubly critical diameter."
+            ),
+        ),
+    )
+
+
+@final
+class Tube(GeometrySource):
+    """Constant-radius neighborhood of a certified segment or full circle.
+
+    A line ``CurveRange`` includes round endpoint caps. Other curve families
+    refuse explicitly; a sampled curvature or separation never certifies reach.
+
+    ``include_parameter_range`` publishes the certified open radius interval
+    ``(0, reach)``. Constructor refusals retain certified or explicitly unknown
+    range evidence regardless of that opt-in.
+    """
+
+    path: CurveRange | CircleCurve
+    radius: Array
+    reach: float = eqx.field(static=True)
+    feature_id: str = eqx.field(static=True)
+    parameter_range: CertifiedParameterRange | None = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        path: CurveRange | CircleCurve,
+        radius: ArrayLike,
+        *,
+        feature_id: str | None = None,
+        include_parameter_range: bool = False,
+    ) -> None:
+        with coordinate_source_request((path,)) as budget:
+            budget.admit_work_bound(128)
+            budget.reserve(128, 16384)
+            reach = _tube_reach(path)
+        value = np.asarray(radius, dtype=np.float64)
+        if value.shape != () or not np.isfinite(value) or not 0 < value < reach:
+            raise attach_parameter_range(
+                ValueError(
+                    f"Tube.radius must be finite, positive, and strictly below reach; got {value!r} with reach {reach}."
+                ),
+                _tube_parameter_range(reach),
+            )
+        if path.ambient_dimension != 3:
+            error = ValueError(
+                f"Tube.path must have ambient dimension three; got {path.ambient_dimension}."
+            )
+            raise attach_parameter_range(
+                error, unknown_parameter_range("radius", str(error))
+            )
+        self.path = path
+        self.radius = jnp.asarray(value, dtype=jnp.float64)
+        self.reach = reach
+        self.feature_id = _feature_id(feature_id, "tube")
+        self.parameter_range = (
+            _tube_parameter_range(reach) if include_parameter_range else None
+        )
+
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
+        radius = context.bind(
+            ParameterId(self.feature_id, "radius"),
+            self.radius,
+            role="tube_radius",
+            unit=context.coordinate_unit,
+            bounds=(0.0, self.reach if np.isfinite(self.reach) else None),
+        )
+        return _TubeKernel(self.path, radius, self.reach)
+
+    def distance_bounds(self, points: ArrayLike) -> np.ndarray:
+        """Enclose host path distances with outward rounding of binary inputs."""
+        values = np.asarray(points, dtype=np.float64)
+        if values.ndim < 1 or values.shape[-1] != 3 or not np.all(np.isfinite(values)):
+            raise ValueError(
+                f"Tube.distance_bounds.points must be finite with trailing dimension three; got shape {values.shape}."
+            )
+        with coordinate_source_request((self.path, values)) as budget:
+            count = values.size // 3
+            budget.admit_work_bound(256 * count)
+            budget.reserve(256 * count, 16384 * count)
+            result = np.empty((count, 2), dtype=np.float64)
+            for index, point in enumerate(values.reshape((-1, 3))):
+                lower, upper = _tube_exact_distance(self.path, point)
+                result[index] = (
+                    fraction_endpoint(lower, upper=False),
+                    fraction_endpoint(upper, upper=True),
+                )
+        return result.reshape((*values.shape[:-1], 2))
+
+
+def _tube_exact_distance(
+    path: CurveRange | CircleCurve,
+    point: np.ndarray,
+) -> tuple[Fraction, Fraction]:
+    coordinates = tuple(Fraction(float(x)) for x in point)
+    if isinstance(path, CurveRange):
+        curve = path.curve
+        if not isinstance(curve, LineCurve):
+            raise ValueError(
+                f"Tube.path must use a supported line segment; got unsupported {type(curve).__name__}."
+            )
+        origin = tuple(Fraction(float(x)) for x in np.asarray(curve.origin))
+        direction = tuple(Fraction(float(x)) for x in np.asarray(curve.direction))
+        delta = tuple(x - y for x, y in zip(coordinates, origin, strict=True))
+        parameter = sum(
+            (x * y for x, y in zip(delta, direction, strict=True)), Fraction(0)
+        ) / sum((x * x for x in direction), Fraction(0))
+        parameter = max(Fraction(path.first), min(Fraction(path.last), parameter))
+        residual = tuple(x - parameter * y for x, y in zip(delta, direction, strict=True))
+        return sqrt_bounds(sum((x * x for x in residual), Fraction(0)))
+    return _tube_circle_distance(path, coordinates)
+
+
+def _tube_circle_distance(
+    path: CircleCurve,
+    coordinates: tuple[Fraction, ...],
+) -> tuple[Fraction, Fraction]:
+    """Enclose the radial and axial terms without canceling square roots."""
+    center = tuple(Fraction(float(x)) for x in np.asarray(path.center))
+    delta = tuple(x - y for x, y in zip(coordinates, center, strict=True))
+    first = tuple(Fraction(float(x)) for x in np.asarray(path.first_axis))
+    second = tuple(Fraction(float(x)) for x in np.asarray(path.second_axis))
+    x = sum((a * b for a, b in zip(delta, first, strict=True)), Fraction(0))
+    y = sum((a * b for a, b in zip(delta, second, strict=True)), Fraction(0))
+    radial = sqrt_bounds(x * x + y * y)
+    radius = Fraction(float(path.radius))
+    lo, hi = radial[0] - radius, radial[1] - radius
+    minimum = Fraction(0) if lo <= 0 <= hi else min(abs(lo), abs(hi))
+    maximum = max(abs(lo), abs(hi))
+    axial_squared = sum((a * a for a in delta), Fraction(0)) - x * x - y * y
+    return (
+        sqrt_bounds(minimum * minimum + axial_squared)[0],
+        sqrt_bounds(maximum * maximum + axial_squared)[1],
+    )
+
+
+@final
+class _TubeKernel(GeometryKernel):
+    path: CurveRange | CircleCurve
+    radius: ParameterBinding = eqx.field(static=True)
+    reach: float = eqx.field(static=True)
+
+    def __init__(
+        self, path: CurveRange | CircleCurve, radius: ParameterBinding, reach: float
+    ) -> None:
+        self.path = path
+        self.radius = radius
+        self.reach = reach
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 3
+
+    @property
+    def intrinsic_dimension(self) -> int:
+        return 3
+
+    @property
+    def kind(self) -> GeometryKind:
+        return GeometryKind.REGION
+
+    @property
+    def capabilities(self) -> frozenset[GeometryCapability]:
+        return frozenset(
+            (
+                GeometryCapability.REGION_QUERY,
+                GeometryCapability.SIGNED_DISTANCE,
+                GeometryCapability.BOUNDARY_NORMAL,
+            )
+        )
+
+    @property
+    def field_certificate(self) -> FieldCertificate:
+        return FieldCertificate(
+            ZeroSetAccuracy.EXACT,
+            SignReliability.RELIABLE,
+            DistanceSemantics.EXACT,
+            FieldRegularity.PIECEWISE_SMOOTH,
+            1.0,
+            "positive radius strictly below certified path reach",
+            True,
+            provenance=("certified_tube",),
+            lipschitz_upper_bound=1.0,
+        )
+
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
+        radius = self.radius.read(state)
+        return GeometryValidityEvidence(
+            finite=jnp.isfinite(radius),
+            conditions_satisfied=(radius > 0) & (radius < self.reach),
+            resolved=True,
+            margins=jnp.stack((radius, self.reach - radius)),
+            margin_names=("radius", "reach_margin"),
+            contract_id="certified_tube_reach",
+        )
+
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
+        points = _check_points(points, 3)
+        if isinstance(self.path, CurveRange):
+            curve = self.path.curve
+            if not isinstance(curve, LineCurve):
+                raise ValueError(
+                    f"Tube.path must use a supported line segment; got unsupported {type(curve).__name__}."
+                )
+            delta = points - curve.origin
+            parameter = jnp.sum(delta * curve.direction, axis=-1) / jnp.sum(
+                curve.direction**2
+            )
+            parameter = jnp.clip(parameter, self.path.first, self.path.last)
+            distance = _finite_norm(delta - parameter[..., None] * curve.direction)
+        else:
+            delta = points - self.path.center
+            x = jnp.sum(delta * self.path.first_axis, axis=-1)
+            y = jnp.sum(delta * self.path.second_axis, axis=-1)
+            radial = _finite_norm(jnp.stack((x, y), axis=-1))
+            axial = (
+                delta
+                - x[..., None] * self.path.first_axis
+                - y[..., None] * self.path.second_axis
+            )
+            distance = _finite_norm(
+                jnp.concatenate(((radial - self.path.radius)[..., None], axial), axis=-1)
+            )
+        return distance - self.radius.read(state)
+
+    def contains(self, state: DesignState, points: Array, /) -> Array:
+        return self.boundary_field(state, points) <= 0
+
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
+        points = _check_points(points, 3)
+
+        def field(point: Array) -> Array:
+            return self.boundary_field(state, point)
+
+        gradient = jax.vmap(jax.grad(field))(points.reshape((-1, 3)))
+        return (
+            gradient
+            / jnp.maximum(
+                _finite_norm(gradient)[..., None], jnp.finfo(gradient.dtype).tiny
+            )
+        ).reshape(points.shape)
+
+    def bounds(self, state: DesignState, /) -> Array:
+        if isinstance(self.path, CurveRange):
+            curve = self.path.curve
+            if not isinstance(curve, LineCurve):
+                raise ValueError(
+                    f"Tube.path must use a supported line segment; got unsupported {type(curve).__name__}."
+                )
+            endpoints = curve.evaluate(
+                jnp.asarray((self.path.first, self.path.last), dtype=jnp.float64)
+            )
+            lower, upper = jnp.min(endpoints, axis=0), jnp.max(endpoints, axis=0)
+        else:
+            extent = self.path.radius * jnp.sqrt(
+                self.path.first_axis**2 + self.path.second_axis**2
+            )
+            lower, upper = self.path.center - extent, self.path.center + extent
+        radius = self.radius.read(state)
+        return jnp.stack((lower - radius, upper + radius))
+
+    def measure(self, state: DesignState, /) -> Array:
+        raise NotImplementedError(
+            "Tube.measure must have an interior-measure capability; got unsupported capability."
+        )
+
+    def boundary_measure(self, state: DesignState, /) -> Array:
+        raise NotImplementedError(
+            "Tube.boundary_measure must have a boundary-measure capability; got unsupported capability."
+        )
+
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: PRNGKey,
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
+        raise NotImplementedError(
+            "Tube.sample_interior must have an interior-sampling capability; got unsupported capability."
+        )
+
+    def sample_boundary(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: PRNGKey,
+    ) -> SamplingResult:
+        raise NotImplementedError(
+            "Tube.sample_boundary must have a boundary-sampling capability; got unsupported capability."
+        )
+
+    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
+        raise NotImplementedError(
+            "Tube.boundary_atlas must have an atlas capability; got unsupported capability."
+        )

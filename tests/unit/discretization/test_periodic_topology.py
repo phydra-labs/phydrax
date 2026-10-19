@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from itertools import permutations
 from pathlib import Path
 
@@ -10,6 +12,7 @@ from jax import Array, Device
 from jax.typing import ArrayLike
 
 import phydrax as phx
+from phydrax._meshcore import NativeExecutionScope
 from phydrax.discretization import (
     CellBlock,
     CellMesh,
@@ -18,17 +21,96 @@ from phydrax.discretization import (
     PeriodicCell,
     PeriodicMeshTopology,
 )
-from phydrax.discretization._periodic_topology import PeriodicIsometryGroup
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.discretization._periodic_exact import (
+    owned_periodic_preparation,
+    PeriodicIsometryGroup,
+)
+from phydrax.discretization._periodic_topology import periodic_preparation_bounds
 from phydrax.meshing._periodic import (
-    _require_periodic_topology,
-    _simplex_entity_corners,
     certify_periodic_embedding,
     refine_periodic_mesh,
+    require_periodic_topology,
+    simplex_entity_corners,
 )
 from phydrax.meshing.providers._native_periodic import (
     NativePeriodicSource,
     PeriodicAssociationTransfer,
 )
+
+
+# Empirical `test_two_triangle_torus_integrates_each_orbit_once`: matched max |delta|=1.11022e-16; joint allowance fraction=0.0222045, margin=97.7796%.
+_TORUS_ORBIT_AREA_RTOL = 1.0e-14
+# Empirical `test_two_triangle_torus_integrates_each_orbit_once`: matched max |delta|=2.22045e-16; joint allowance fraction=0.0222045, margin=97.7796%.
+_TORUS_TOTAL_AREA_RTOL = 1.0e-14
+# Empirical `test_kuhn_three_torus_quotient_complex`: matched max |delta|=3.33067e-16; joint allowance fraction=0.00333067, margin=99.6669%.
+_KUHN_TORUS_VOLUME_RTOL = 1.0e-13
+# Empirical `test_quotient_pk_trace_nodes_match_every_seam_isometry`: matched max |delta|=3.21965e-15; joint allowance fraction=3.25284e-07, margin=100%.
+_QUOTIENT_TRACE_VALUES_ATOL = 2.0e-12
+# Empirical `test_rotational_wedge_uses_actual_vector_isometry`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_WEDGE_ISOMETRY_VALUES_ATOL = 1.0e-13
+# Empirical `test_rotational_wedge_uses_actual_vector_isometry`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_WEDGE_VECTOR_VALUES_ATOL = 1.0e-13
+# Empirical `test_rotational_wedge_uses_actual_vector_isometry`: matched max |delta|=4.44089e-16; joint allowance fraction=1.4803e-09, margin=100%.
+_WEDGE_REFINED_MEASURE_ATOL = 1.0e-13
+# Empirical `test_rotational_h1_quotient_reproduces_and_transfers_invariant_scalar`: matched max |delta|=4.44089e-16; joint allowance fraction=4.50084e-09, margin=100%.
+_ROTATIONAL_H1_VALUES_ATOL = 1.0e-12
+# Empirical `test_rotational_h1_quotient_reproduces_and_transfers_invariant_scalar`: matched max |delta|=3.33067e-14; joint allowance fraction=3.33064e-07, margin=100%.
+_ROTATIONAL_H1_TRANSFER_ATOL = 1.0e-12
+# Empirical `test_rotational_h1_quotient_reproduces_and_transfers_invariant_scalar`: matched max |delta|=8.88178e-15; joint allowance fraction=2.26039e-07, margin=100%.
+_ROTATIONAL_H1_DUAL_PAIRING_ATOL = 1.0e-11
+# Empirical `test_native_periodic_material_and_feature_orbits_survive_size_refinement`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_MATERIAL_FEATURE_EDGE_LENGTH_ATOL = 1.0e-13
+# Empirical `test_native_periodic_material_and_feature_orbits_survive_size_refinement`: matched max |delta|=2.42861e-16; joint allowance fraction=0.000166533, margin=99.9833%.
+_MATERIAL_ORBIT_FLUX_TRANSFER_ATOL = 1.0e-12
+# Empirical `test_periodic_adaptation_refine_coarsen_restores_scientific_quotient`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_ADAPTED_QUOTIENT_MEASURE_ATOL = 1.0e-12
+# Empirical `test_decimal_image_rounding_is_bound_without_false_quotient_overlap`: matched max |delta|=2.22045e-16; joint allowance fraction=2.22045e-09, margin=100%.
+_DECIMAL_QUOTIENT_MEASURE_ATOL = 1.0e-14
+# Empirical `test_rotational_orbit_refinement_transfers_compatible_fields`: matched max |delta|=2.10942e-15; joint allowance fraction=2.30123e-05, margin=99.9977%.
+_ROTATIONAL_COMPATIBLE_TRANSFER_ATOL = 1.0e-12
+# Empirical `test_rotational_orbit_refinement_transfers_compatible_fields`: matched max |delta|=2.13163e-14; joint allowance fraction=8.82716e-09, margin=100%.
+_ROTATIONAL_COMPATIBLE_DUAL_PAIRING_ATOL = 1.0e-11
+# Empirical `test_high_order_rotational_moments_reproduce_equivariant_fields`: matched max |delta|=3.41949e-14; joint allowance fraction=2.50995e-07, margin=100%.
+_HIGH_ORDER_ROTATIONAL_VALUES_ATOL = 2.0e-10
+# Empirical `test_tensor_quotient_face_moments_use_canonical_cube_charts`: matched max |delta|=1.11022e-15; joint allowance fraction=9.2517e-09, margin=100%.
+_TENSOR_QUOTIENT_VALUES_ATOL = 2.0e-12
+# Empirical `test_high_order_rotation_translation_combination`: matched max |delta|=2.88658e-15; joint allowance fraction=7.02673e-08, margin=100%.
+_COMBINED_ISOMETRY_VALUES_ATOL = 2.0e-11
+# Empirical `test_coordinate_lattice_node_order_lowers_to_consistent_quotient`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_COORDINATE_LATTICE_VALUES_ATOL = 2.0e-12
+# Empirical `test_native_rotational_publication_transfers_high_order_fields`: matched max |delta|=6.23945e-14; joint allowance fraction=0.00012872, margin=99.9871%.
+_NATIVE_HIGH_ORDER_TRANSFER_ATOL = 2.0e-11
+# Empirical `test_native_rotational_publication_transfers_high_order_fields`: matched max |delta|=3.55271e-14; joint allowance fraction=8.88318e-09, margin=100%.
+_NATIVE_HIGH_ORDER_DUAL_PAIRING_ATOL = 2.0e-11
+# Empirical `test_native_rotational_publication_transfers_high_order_fields`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_NATIVE_HIGH_ORDER_MEASURE_ATOL = 2.0e-12
+# Empirical `_check_native_periodic_transfer_actions`: matched max |delta|=1.06581e-14; joint allowance fraction=3.54056e-09, margin=100%.
+_NATIVE_TRANSFER_DUAL_PAIRING_ATOL = 2.0e-11
+# Empirical `test_native_mixed_isometry_publication_keeps_original_field_source`: matched max |delta|=1.24345e-14; joint allowance fraction=8.18913e-09, margin=100%.
+_MIXED_ISOMETRY_DUAL_PAIRING_ATOL = 2.0e-11
+# Empirical `test_native_periodic_material_and_feature_orbits_survive_size_refinement`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_MATERIAL_INTERFACE_SIZE_ATOL = 1.0e-12
+# Empirical `test_gmsh_actual_node_orbits_match_native_reference_numbering`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_GMSH_NODE_ISOMETRY_ATOL = 2.0e-12
+# Empirical `_check_native_periodic_transfer_actions`: matched max |delta|=1.77636e-15; joint allowance fraction=9.2504e-08, margin=100%.
+_NATIVE_OWNED_TRANSFER_VALUES_ATOL = 2.0e-11
+
+
+@contextmanager
+def _periodic_request(
+    limits: phx.meshing.MeshingLimits,
+) -> Iterator[tuple[NativeExecutionScope, CoordinateEnclosureBudget]]:
+    with NativeExecutionScope(limits.native_limits()) as scope:
+        initial = scope.batch(0)
+        budget = CoordinateEnclosureBudget(
+            initial,
+            maximum_work_units=limits.maximum_work_units,
+            maximum_memory_bytes=limits.maximum_scratch_bytes,
+        )
+        initial.settle()
+        with budget.retained_storage(lambda bound: scope.batch(0, bytes_upper=bound)):
+            yield scope, budget
 
 
 def _periodic(
@@ -135,11 +217,129 @@ def test_two_triangle_torus_publishes_winding_quotient() -> None:
 def test_two_triangle_torus_integrates_each_orbit_once() -> None:
     report = periodic_orbit_measures(_two_triangle_torus())
 
-    np.testing.assert_allclose(report.orbit_measures, (0.5, 0.5), rtol=1.0e-14)
-    np.testing.assert_allclose(report.total_measure, 1.0, rtol=1.0e-14)
+    np.testing.assert_allclose(
+        report.orbit_measures, (0.5, 0.5), rtol=_TORUS_ORBIT_AREA_RTOL
+    )
+    np.testing.assert_allclose(report.total_measure, 1.0, rtol=_TORUS_TOTAL_AREA_RTOL)
     assert np.all(np.asarray(report.valid))
     assert report.relative_coverage_defect is not None
     assert report.relative_coverage_defect < 1.0e-14
+
+
+@pytest.mark.parametrize("subdivide", (False, True))
+def test_homogeneous_multiblock_orbit_measures_preserve_cell_order_and_validity(
+    subdivide: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.discretization._cell_geometry import CellGeometrySpec
+    from phydrax.discretization.fem import (
+        _cell_map as cell_map_owner,
+        _generic as generic_owner,
+        _reference as reference_owner,
+        _reference_rules as reference_rules_owner,
+    )
+
+    source = _two_triangle_torus()
+    expected: tuple[float, ...] = (0.5, 0.5)
+    if subdivide:
+        points = np.concatenate(
+            (np.asarray(source.coordinates), np.asarray(((0.375, 0.625),))), axis=0
+        )
+        source = _periodic(
+            points,
+            CellBlock(
+                "fan",
+                "triangle",
+                np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=np.int32),
+                global_ids=np.asarray((7, 3, 17, 11), dtype=np.int64),
+            ),
+            np.asarray((0, 0, 0, 0, 4), dtype=np.int64),
+            np.asarray(((0, 0), (1, 0), (1, 1), (0, 1), (0, 0)), dtype=np.int64),
+            PeriodicCell(np.eye(2)),
+        )
+        # Exact rational triangle areas: y/2,(1-x)/2,(1-y)/2,x/2.
+        expected = (0.3125, 0.3125, 0.1875, 0.1875)
+    topology = require_periodic_topology(source)
+    blocks = tuple(
+        CellBlock(
+            name,
+            "triangle",
+            source.blocks[0].vertices[rows],
+            global_ids=source.blocks[0].global_ids[rows],
+        )
+        for name, rows in (("first", slice(0, 1)), ("second", slice(1, None)))
+    )
+    carrier = CellMesh(source.coordinates, blocks)
+    periodic = PeriodicMeshTopology(
+        carrier, topology.cell, topology.vertex_representatives, topology.vertex_shifts
+    )
+    mesh = CellMesh(source.coordinates, blocks, periodic_topology=periodic)
+    calls: list[int] = []
+    original = cell_map_owner.PreparedFiniteElementCellMap.evaluate
+
+    def evaluate(
+        self: cell_map_owner.PreparedFiniteElementCellMap,
+        coordinates: ArrayLike,
+        cell_indices: ArrayLike,
+        reference_points: ArrayLike,
+    ) -> cell_map_owner.FiniteElementCellMapEvaluation:
+        calls.append(self.cell_count)
+        return original(self, coordinates, cell_indices, reference_points)
+
+    monkeypatch.setattr(cell_map_owner.PreparedFiniteElementCellMap, "evaluate", evaluate)
+    report = periodic_orbit_measures(mesh)
+    assert calls == [source.blocks[0].cell_count]
+    monkeypatch.setattr(cell_map_owner.PreparedFiniteElementCellMap, "evaluate", original)
+
+    plan = generic_owner.FiniteElementPlan(
+        mesh,
+        generic_owner.FiniteElementFieldSpec(
+            "periodic-measure",
+            {
+                block.name: reference_owner.discontinuous_element(block.cell_kind, 0)
+                for block in blocks
+            },
+        ),
+        coordinate_spec=CellGeometrySpec.affine(mesh),
+    ).prepare()
+    reference_measures = []
+    reference_valid = []
+    for index, block in enumerate(blocks):
+        cell_map = cell_map_owner.PreparedFiniteElementCellMap(plan, index)
+        points, weights = reference_rules_owner.degree_aware_reference_rule(
+            block.cell_kind,
+            cell_map.reference_dimension * cell_map.coordinate_element.degree,
+        )
+        evaluation = original(
+            cell_map,
+            plan.default_runtime.coordinates,
+            np.repeat(np.arange(block.cell_count, dtype=np.int32), weights.shape[0]),
+            np.tile(points, (block.cell_count, 1)),
+        )
+        density = evaluation.measure.reshape((block.cell_count, weights.shape[0]))
+        reference_measures.append(np.asarray(density @ weights))
+        reference_valid.append(
+            np.asarray(evaluation.valid).reshape(density.shape).all(axis=1)
+        )
+    reference = np.concatenate(reference_measures)
+    if subdivide:
+        # A nonuniform batch changes the floating kernel's leading dimension.
+        # Compare both routes to rational dyadic areas under the existing unit-torus
+        # integration allowance, rather than require identical rounding.
+        np.testing.assert_allclose(
+            report.orbit_measures, reference, rtol=_TORUS_ORBIT_AREA_RTOL, atol=0.0
+        )
+        np.testing.assert_allclose(
+            reference, expected, rtol=_TORUS_ORBIT_AREA_RTOL, atol=0.0
+        )
+    else:
+        np.testing.assert_array_equal(report.orbit_measures, reference)
+    np.testing.assert_array_equal(report.valid, np.concatenate(reference_valid))
+    np.testing.assert_allclose(
+        report.orbit_measures, expected, rtol=_TORUS_ORBIT_AREA_RTOL
+    )
+    assert report.geometry_layout_id == plan.default_runtime.geometry_layout_id
+    assert report.periodic_topology_id == periodic.periodic_topology_id
 
 
 def test_kuhn_three_torus_quotient_complex() -> None:
@@ -154,7 +354,7 @@ def test_kuhn_three_torus_quotient_complex() -> None:
     for degree in (1, 2, 3):
         assert _cochain_map_defect(mesh, degree, degree) < 1.0e-13
     report = periodic_orbit_measures(mesh)
-    np.testing.assert_allclose(report.total_measure, 1.0, rtol=1.0e-13)
+    np.testing.assert_allclose(report.total_measure, 1.0, rtol=_KUHN_TORUS_VOLUME_RTOL)
 
 
 def test_periodic_topology_is_part_of_mesh_identity() -> None:
@@ -173,7 +373,7 @@ def test_periodic_topology_is_part_of_mesh_identity() -> None:
     # Moving one lattice image alone breaks the lift of its representative.
     stretched = np.asarray(mesh.coordinates).copy()
     stretched[1, 0] += 0.1
-    with pytest.raises(ValueError, match="inconsistent"):
+    with pytest.raises(ValueError, match="PeriodicMeshTopology\\.vertex_shifts"):
         mesh.with_coordinates(stretched, numeric_version="2")
 
 
@@ -183,13 +383,13 @@ def test_inconsistent_lattice_shifts_are_refused() -> None:
     wrong = shifts.copy()
     wrong[2] = (1, 0)
 
-    with pytest.raises(ValueError, match="inconsistent"):
+    with pytest.raises(ValueError, match="PeriodicMeshTopology\\.vertex_shifts"):
         PeriodicMeshTopology(
             lifted, PeriodicCell(np.eye(2)), np.zeros(4, dtype=np.int64), wrong
         )
     shifted_representative = shifts.copy()
     shifted_representative[0] = (1, 0)
-    with pytest.raises(ValueError, match="zero shift"):
+    with pytest.raises(ValueError, match="PeriodicMeshTopology\\.vertex_representatives"):
         PeriodicMeshTopology(
             lifted,
             PeriodicCell(np.eye(2)),
@@ -207,7 +407,7 @@ def test_orientation_conflict_across_the_seam_is_refused() -> None:
     shifts = points.astype(np.int64)
     lifted = CellMesh.from_triangles(points, np.asarray(((0, 1, 2), (3, 5, 4))))
 
-    with pytest.raises(ValueError, match="orientation conflict"):
+    with pytest.raises(ValueError, match="PeriodicMeshTopology\\.quotient"):
         PeriodicMeshTopology(
             lifted, PeriodicCell(np.eye(2)), np.asarray((0, 0, 0, 0, 0, 0)), shifts
         )
@@ -219,7 +419,7 @@ def test_repeated_top_cell_orbit_is_refused() -> None:
     shifts = np.asarray(((0, 0), (0, 0), (0, 0), (1, 0), (1, 0), (1, 0)))
     lifted = CellMesh.from_triangles(points, np.asarray(((0, 1, 2), (3, 4, 5))))
 
-    with pytest.raises(ValueError, match="exactly once"):
+    with pytest.raises(ValueError, match="PeriodicMeshTopology\\.quotient"):
         PeriodicMeshTopology(
             lifted, PeriodicCell(np.eye(2)), np.asarray((0, 1, 2, 0, 1, 2)), shifts
         )
@@ -230,8 +430,36 @@ def test_descriptor_is_bound_to_its_lifted_topology() -> None:
     points, _ = _square_lift()
 
     other = CellMesh.from_triangles(points, np.asarray(((0, 1, 3), (1, 2, 3))))
-    with pytest.raises(ValueError, match="not prepared"):
+    with pytest.raises(ValueError, match=r"CellMesh\.periodic_topology"):
         CellMesh(points, other.blocks, periodic_topology=periodic)
+
+
+def test_stored_periodic_descriptor_rejects_an_unbound_carrier() -> None:
+    mesh = _two_triangle_torus()
+    topology = mesh.periodic_topology
+    assert topology is not None
+    points, _ = _square_lift()
+    other = CellMesh.from_triangles(points, np.asarray(((0, 1, 3), (1, 2, 3))))
+    with pytest.raises(ValueError, match=r"PeriodicMeshTopology\.lifted_topology_id"):
+        PeriodicMeshTopology.from_stored_fields(topology, lifted=other)
+
+
+def test_stored_periodic_descriptor_revalidates_group_shifts() -> None:
+    import equinox as eqx
+
+    mesh = _two_triangle_torus()
+    topology = mesh.periodic_topology
+    assert topology is not None
+    lifted = CellMesh(
+        mesh.coordinates, mesh.blocks, vertex_global_ids=mesh.vertex_global_ids
+    )
+    changed = eqx.tree_at(
+        lambda value: value.vertex_shifts,
+        topology,
+        topology.vertex_shifts.at[2, 0].add(1),
+    )
+    with pytest.raises(ValueError, match=r"PeriodicMeshTopology\.vertex_shifts"):
+        PeriodicMeshTopology.from_stored_fields(changed, lifted=lifted)
 
 
 def _rotational_wedge() -> CellMesh:
@@ -342,7 +570,7 @@ def test_quotient_pk_trace_nodes_match_every_seam_isometry(degree: int) -> None:
     np.testing.assert_allclose(
         periodic_values(local),
         periodic_values(nodes)[np.asarray(dofs.cell_dofs[0])],
-        atol=2.0e-12,
+        atol=_QUOTIENT_TRACE_VALUES_ATOL,
     )
     assert not np.any(np.asarray(dofs.boundary_dof_mask))
 
@@ -397,10 +625,12 @@ def test_rotational_wedge_uses_actual_vector_isometry(
         "cqiv,ci->cqv", basis, coefficients[np.asarray(dofs.cell_dofs[0])]
     )
     master, target = vectors[0, 0], vectors[-1, 1]
-    np.testing.assert_allclose(target, rotation @ master, atol=1.0e-13)
+    np.testing.assert_allclose(
+        target, rotation @ master, atol=_WEDGE_ISOMETRY_VALUES_ATOL
+    )
     assert not np.allclose(target, master)
     np.testing.assert_allclose(
-        vectors, field(geometry.physical_points, None), atol=1.0e-13
+        vectors, field(geometry.physical_points, None), atol=_WEDGE_VECTOR_VALUES_ATOL
     )
     report = certify_periodic_embedding(mesh)
     assert report.image_count == image_count
@@ -408,7 +638,7 @@ def test_rotational_wedge_uses_actual_vector_isometry(
     np.testing.assert_allclose(
         refined.quotient.total_measure,
         periodic_orbit_measures(mesh).total_measure,
-        atol=1.0e-13,
+        atol=_WEDGE_REFINED_MEASURE_ATOL,
     )
     certify_periodic_embedding(refined.mesh)
 
@@ -451,7 +681,9 @@ def test_rotational_h1_quotient_reproduces_and_transfers_invariant_scalar(
     basis = np.asarray(geometry.basis_values)
     evaluated = np.einsum("qi,ci->cq", basis, coefficients[np.asarray(dofs.cell_dofs[0])])
     np.testing.assert_allclose(
-        evaluated, invariant(geometry.physical_points, None), atol=1.0e-12
+        evaluated,
+        invariant(geometry.physical_points, None),
+        atol=_ROTATIONAL_H1_VALUES_ATOL,
     )
     transfer = D.prepare_nested_field_transfer(
         source,
@@ -466,7 +698,7 @@ def test_rotational_h1_quotient_reproduces_and_transfers_invariant_scalar(
     np.testing.assert_allclose(
         transfer.transfer.apply(coefficients),
         target.project("u", invariant),
-        atol=1.0e-12,
+        atol=_ROTATIONAL_H1_TRANSFER_ATOL,
     )
     rng = np.random.default_rng(29)
     primal = rng.normal(size=(source.dof_maps[0].global_dof_count, 2))
@@ -474,14 +706,14 @@ def test_rotational_h1_quotient_reproduces_and_transfers_invariant_scalar(
     np.testing.assert_allclose(
         np.vdot(transfer.transfer.apply(primal), dual),
         np.vdot(primal, transfer.transfer.pullback(dual)),
-        atol=1.0e-11,
+        atol=_ROTATIONAL_H1_DUAL_PAIRING_ATOL,
     )
 
 
 def test_noncommuting_rotation_translation_cycles_are_refused() -> None:
     rotation = np.asarray(((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)))
     translation = np.asarray(((1.0, 0.0, 1.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="must commute in rational arithmetic"):
         PeriodicIsometryGroup(np.stack((rotation, translation)))
 
 
@@ -489,7 +721,7 @@ def test_periodic_embedding_checks_nontrivial_self_images() -> None:
     mesh = _two_triangle_torus()
     report = certify_periodic_embedding(mesh)
     assert report.image_count == 9
-    with pytest.raises(ValueError, match="exceeding"):
+    with pytest.raises(ValueError, match=r"PeriodicImageFrame\.image_count"):
         certify_periodic_embedding(mesh, maximum_images=8)
 
 
@@ -555,7 +787,7 @@ def test_native_periodic_material_and_feature_orbits_survive_size_refinement(
 
     certification = result.certification
     if certification is None:
-        raise AssertionError("Accepted periodic publication requires its certification.")
+        raise AssertionError("publication.certification must be present; got None")
     assert result.audit.passed and certification.passed
     assert {zone.material_id for zone in result.zones} == {"fluid", "solid"}
     achieved, requested = (
@@ -564,31 +796,34 @@ def test_native_periodic_material_and_feature_orbits_survive_size_refinement(
     )
     for region in (0, 1):
         key = f"periodic:region:{region}:measure"
-        np.testing.assert_allclose(achieved[key], requested[key], atol=1.0e-12)
+        np.testing.assert_allclose(
+            achieved[key], requested[key], atol=_MATERIAL_INTERFACE_SIZE_ATOL
+        )
     assert len(result.labels) == 1
     label_ids = np.asarray(result.labels[0].scope.entity_ids)
     entities = result.mesh.topology.entities(1)
     mask = np.isin(np.asarray(entities.entity_ids), label_ids)
-    orbit = np.asarray(_require_periodic_topology(result.mesh).orbits(1)[0])
+    orbit = np.asarray(require_periodic_topology(result.mesh).orbits(1)[0])
     assert np.all(mask == np.isin(orbit, orbit[mask]))
-    leaders = np.asarray(_require_periodic_topology(result.mesh).orbit_representatives(1))
-    edges = np.asarray(result.mesh.coordinates)[_simplex_entity_corners(result.mesh, 1)]
+    leaders = np.asarray(require_periodic_topology(result.mesh).orbit_representatives(1))
+    edges = np.asarray(result.mesh.coordinates)[simplex_entity_corners(result.mesh, 1)]
     lengths = np.linalg.norm(edges[:, 1] - edges[:, 0], axis=1)
     source_leader = int(
-        np.asarray(_require_periodic_topology(domain).orbit_representatives(1))[0]
+        np.asarray(require_periodic_topology(domain).orbit_representatives(1))[0]
     )
     source_edge = np.asarray(domain.coordinates)[
-        _simplex_entity_corners(domain, 1)[source_leader]
+        simplex_entity_corners(domain, 1)[source_leader]
     ]
     np.testing.assert_allclose(
         np.sum(lengths[leaders[mask[leaders]]]),
         np.linalg.norm(source_edge[1] - source_edge[0]),
-        atol=1.0e-13,
+        atol=_MATERIAL_FEATURE_EDGE_LENGTH_ATOL,
     )
     assert len(result.associations) == 3
     assert all(item.complete and item.exact for item in result.associations)
     transfer = PeriodicAssociationTransfer(source, specification)
-    transfer.source_associations(result)
+    with _periodic_request(specification.limits) as (native_scope, budget):
+        transfer.source_associations(result, scope=native_scope, budget=budget)
     refined = M.execute_mesh_adaptation(
         M.prepare_mesh_adaptation(
             result,
@@ -606,19 +841,20 @@ def test_native_periodic_material_and_feature_orbits_survive_size_refinement(
     )
     assert refined.status is M.MeshAdaptationStatus.COMPLETE
     assert len(refined.target.associations) == 3
-    transfer.source_associations(refined.target)
-    before_group = _require_periodic_topology(domain).cell
-    after_group = _require_periodic_topology(refined.target.mesh).cell
+    with _periodic_request(specification.limits) as (native_scope, budget):
+        transfer.source_associations(refined.target, scope=native_scope, budget=budget)
+    before_group = require_periodic_topology(domain).cell
+    after_group = require_periodic_topology(refined.target.mesh).cell
     assert type(after_group) is type(before_group)
     if isinstance(before_group, PeriodicIsometryGroup):
         if not isinstance(after_group, PeriodicIsometryGroup):
             raise AssertionError(
-                "Finite rotational source identity must remain finite rotational."
+                f"fixture.after_group must be a PeriodicIsometryGroup; got {type(after_group).__name__}"
             )
         assert after_group.group_id == before_group.group_id
         assert after_group.orders == before_group.orders
 
-    # Exercise compatible transfer on the actual material/feature publication,
+    # Exercise compatible transfer on the material/feature publication,
     # not on a separately refined unlabeled rotational fixture.
     import jax.numpy as jnp
 
@@ -658,7 +894,7 @@ def test_native_periodic_material_and_feature_orbits_survive_size_refinement(
     np.testing.assert_allclose(
         field_transfer.transfer.apply(source_field.project("flux", compatible_flux)),
         target_field.project("flux", compatible_flux),
-        atol=1.0e-12,
+        atol=_MATERIAL_ORBIT_FLUX_TRANSFER_ATOL,
     )
 
 
@@ -703,7 +939,7 @@ def test_periodic_adaptation_refine_coarsen_restores_scientific_quotient(
     np.testing.assert_allclose(
         periodic_orbit_measures(refined.target.mesh).total_measure,
         periodic_orbit_measures(source.mesh).total_measure,
-        atol=1.0e-12,
+        atol=_ADAPTED_QUOTIENT_MEASURE_ATOL,
     )
     coarsened = M.execute_mesh_adaptation(
         M.prepare_mesh_adaptation(
@@ -726,8 +962,8 @@ def test_periodic_adaptation_refine_coarsen_restores_scientific_quotient(
         coarsened.target.mesh.vertex_global_ids, source.mesh.vertex_global_ids
     )
     for degree in range(source.mesh.topological_dimension + 1):
-        original = _require_periodic_topology(source.mesh).quotient.entities(degree)
-        restored = _require_periodic_topology(coarsened.target.mesh).quotient.entities(
+        original = require_periodic_topology(source.mesh).quotient.entities(degree)
+        restored = require_periodic_topology(coarsened.target.mesh).quotient.entities(
             degree
         )
         np.testing.assert_array_equal(restored.entity_ids, original.entity_ids)
@@ -742,7 +978,7 @@ def test_periodic_orbit_bisection_refuses_label_conforming_closure() -> None:
         M.MeshAdaptationRoute.NATIVE_BISECTION,
         compatibility=M.BisectionCompatibility.CONFORMING_CLOSURE,
     )
-    with pytest.raises(ValueError, match="consumes no Maubach labels"):
+    with pytest.raises(ValueError, match=r"MeshAdaptationPolicy\.compatibility"):
         M.prepare_mesh_adaptation(
             source,
             M.MarkedMeshAdaptation(
@@ -771,7 +1007,9 @@ def test_decimal_image_rounding_is_bound_without_false_quotient_overlap() -> Non
         0.0 < evidence.maximum_coordinate_residual <= evidence.coordinate_residual_bound
     )
     np.testing.assert_allclose(
-        periodic_orbit_measures(mesh).total_measure, 1.0, atol=1.0e-14
+        periodic_orbit_measures(mesh).total_measure,
+        1.0,
+        atol=_DECIMAL_QUOTIENT_MEASURE_ATOL,
     )
 
 
@@ -822,7 +1060,7 @@ def test_rotational_orbit_refinement_transfers_compatible_fields(
     np.testing.assert_allclose(
         transfer.transfer.apply(source.project("v", function)),
         target.project("v", function),
-        atol=1.0e-12,
+        atol=_ROTATIONAL_COMPATIBLE_TRANSFER_ATOL,
     )
     assert transfer.evidence.defect("commuting") <= transfer.evidence.tolerance
     rng = np.random.default_rng(37)
@@ -831,7 +1069,7 @@ def test_rotational_orbit_refinement_transfers_compatible_fields(
     np.testing.assert_allclose(
         np.vdot(transfer.transfer.apply(primal), dual),
         np.vdot(primal, transfer.transfer.pullback(dual)),
-        atol=1.0e-11,
+        atol=_ROTATIONAL_COMPATIBLE_DUAL_PAIRING_ATOL,
     )
 
 
@@ -883,7 +1121,9 @@ def test_high_order_rotational_moments_reproduce_equivariant_fields(
         "cqiv,ci->cqv", basis, coefficients[np.asarray(dofs.cell_dofs[0])]
     )
     np.testing.assert_allclose(
-        evaluated, field(geometry.physical_points, None), atol=2.0e-10
+        evaluated,
+        field(geometry.physical_points, None),
+        atol=_HIGH_ORDER_ROTATIONAL_VALUES_ATOL,
     )
 
 
@@ -904,7 +1144,7 @@ def test_tensor_quotient_face_moments_use_canonical_cube_charts(form_degree: int
             (0.0, 1.0, 1.0),
         )
     )
-    # Row numbering changes each face's canonical chart but not the geometry.
+    # Row numbering changes each face's chart but not the geometry.
     order = np.asarray((6, 2, 5, 0, 7, 1, 4, 3))
     points = points[order]
     mesh = _periodic(
@@ -948,14 +1188,16 @@ def test_tensor_quotient_face_moments_use_canonical_cube_charts(form_degree: int
         "cqiv,ci->cqv", basis, coefficients[np.asarray(dofs.cell_dofs[0])]
     )
     np.testing.assert_allclose(
-        evaluated, field(geometry.physical_points, None), atol=2.0e-12
+        evaluated,
+        field(geometry.physical_points, None),
+        atol=_TENSOR_QUOTIENT_VALUES_ATOL,
     )
     assert not np.any(np.asarray(dofs.boundary_dof_mask))
 
 
 def test_periodic_lift_refusals_leave_the_caller_reusable() -> None:
     mesh = _two_triangle_torus()
-    topology = _require_periodic_topology(mesh)
+    topology = require_periodic_topology(mesh)
     original_id = topology.periodic_topology_id
     coordinates = np.asarray(mesh.coordinates).copy()
     coordinates[1, 0] = np.nan
@@ -963,7 +1205,7 @@ def test_periodic_lift_refusals_leave_the_caller_reusable() -> None:
         topology.require_lift(coordinates)
     coordinates[1] = np.asarray(mesh.coordinates)[1]
     topology.require_lift(coordinates)
-    with pytest.raises(ValueError, match="exceeding"):
+    with pytest.raises(ValueError, match=r"PeriodicImageFrame\.image_count"):
         certify_periodic_embedding(mesh, maximum_images=8)
     assert certify_periodic_embedding(mesh).image_count == 9
     assert topology.periodic_topology_id == original_id
@@ -977,7 +1219,7 @@ def test_periodic_shift_storage_refuses_winding_truncation() -> None:
     lifted = CellMesh(points, (block,))
     authored = shifts.copy()
     authored[1, 0] = 1 << 32
-    with pytest.raises(ValueError, match="int32 image representation"):
+    with pytest.raises(ValueError, match="PeriodicMeshTopology\\.vertex_shifts"):
         PeriodicMeshTopology(
             lifted, PeriodicCell(np.eye(2)), np.zeros(4, dtype=np.int64), authored
         )
@@ -1061,11 +1303,15 @@ def test_high_order_rotation_translation_combination(family: str) -> None:
         )
         evaluated = np.einsum("cqiv,ci->cqv", basis, local)
     np.testing.assert_allclose(
-        evaluated, field(geometry.physical_points, None), atol=2.0e-11
+        evaluated,
+        field(geometry.physical_points, None),
+        atol=_COMBINED_ISOMETRY_VALUES_ATOL,
     )
-    cell = _require_periodic_topology(mesh).cell
+    cell = require_periodic_topology(mesh).cell
     if not isinstance(cell, D.PeriodicIsometryGroup):
-        raise TypeError("The wedge must retain its authored rotation/translation group.")
+        raise TypeError(
+            f"fixture.cell must be a PeriodicIsometryGroup; got {type(cell).__name__}"
+        )
     assert cell.orders == (4, 0)
 
 
@@ -1084,7 +1330,9 @@ def test_coordinate_lattice_node_order_lowers_to_consistent_quotient(
     local = np.einsum("ia,cad->cid", np.asarray(dofs.cell_coordinate_weights[0]), lifted)
     quotient = np.asarray(dofs.dof_coordinates)[np.asarray(dofs.cell_dofs[0])]
     np.testing.assert_allclose(
-        np.cos(2.0 * np.pi * local), np.cos(2.0 * np.pi * quotient), atol=2.0e-12
+        np.cos(2.0 * np.pi * local),
+        np.cos(2.0 * np.pi * quotient),
+        atol=_COORDINATE_LATTICE_VALUES_ATOL,
     )
     assert not np.any(np.asarray(dofs.boundary_dof_mask))
 
@@ -1095,7 +1343,7 @@ def test_gmsh_actual_node_orbits_match_native_reference_numbering(
     degree: int,
     rotational: bool,
 ) -> None:
-    """Compare actual external node pairs, not a fitted coordinate pairing."""
+    """Compare external node pairs, not a fitted coordinate pairing."""
     gmsh = pytest.importorskip(
         "gmsh", reason="optional Gmsh orbit reference is not installed"
     )
@@ -1104,7 +1352,7 @@ def test_gmsh_actual_node_orbits_match_native_reference_numbering(
     element = D.lagrange_element("triangle", degree)
     dofs = D.FiniteElementDofMap(mesh, (element,))
     routes = np.asarray(dofs.cell_dofs[0])
-    # Canonical entity ownership gives the authored edge charts directly:
+    # entity ownership gives the authored edge charts directly:
     # source 0->1 and target 2->1. Floating reference coordinates are not
     # scientific identity and may retain roundoff at reference boundaries.
     vertex_rows = tuple(entity[0] for entity in element.entity_dofs[0])
@@ -1179,7 +1427,9 @@ def test_gmsh_actual_node_orbits_match_native_reference_numbering(
             target_point = np.asarray(gmsh.model.mesh.getNode(int(target_tag))[0])
             source_point = np.asarray(gmsh.model.mesh.getNode(int(source_tag))[0])
             np.testing.assert_allclose(
-                target_point, action[:3, :3] @ source_point + action[:3, 3], atol=2.0e-12
+                target_point,
+                action[:3, :3] @ source_point + action[:3, 3],
+                atol=_GMSH_NODE_ISOMETRY_ATOL,
             )
     finally:
         gmsh.model.remove()
@@ -1206,7 +1456,7 @@ def test_native_rotational_publication_transfers_high_order_fields(
     )
     if not isinstance(source_owner.domain, CellMesh):
         raise TypeError(
-            "The rotational native source must retain its actual lifted carrier."
+            f"source_owner.domain must be a CellMesh; got {type(source_owner.domain).__name__}"
         )
     assert publication.audit.passed
     assert publication.certification is not None and publication.certification.passed
@@ -1214,13 +1464,13 @@ def test_native_rotational_publication_transfers_high_order_fields(
     original_coordinates = np.asarray(mesh.coordinates).copy()
     original_regions = source_owner.cell_regions.copy()
     source_binding = source_owner.binding_id
-    topology_id = _require_periodic_topology(mesh).periodic_topology_id
+    topology_id = require_periodic_topology(mesh).periodic_topology_id
     from phydrax.meshing._periodic import PeriodicRefinement
 
     refinement = adaptation.hierarchy
     if not isinstance(refinement, PeriodicRefinement):
         raise TypeError(
-            "Native orbit adaptation must retain its actual periodic reference ancestry."
+            f"adaptation.hierarchy must be a PeriodicRefinement; got {type(refinement).__name__}"
         )
     assert refinement.mesh.mesh_id == adaptation.target.mesh.mesh_id
     element = (
@@ -1263,7 +1513,7 @@ def test_native_rotational_publication_transfers_high_order_fields(
     np.testing.assert_allclose(
         transfer.transfer.apply(source.project("u", equivariant)),
         target.project("u", equivariant),
-        atol=2.0e-11,
+        atol=_NATIVE_HIGH_ORDER_TRANSFER_ATOL,
     )
     if family != "H1":
         assert transfer.evidence.defect("commuting") <= transfer.evidence.tolerance
@@ -1273,16 +1523,16 @@ def test_native_rotational_publication_transfers_high_order_fields(
     np.testing.assert_allclose(
         np.vdot(transfer.transfer.apply(primal), dual),
         np.vdot(primal, transfer.transfer.pullback(dual)),
-        atol=2.0e-11,
+        atol=_NATIVE_HIGH_ORDER_DUAL_PAIRING_ATOL,
     )
     np.testing.assert_array_equal(mesh.coordinates, original_coordinates)
     np.testing.assert_array_equal(source_owner.cell_regions, original_regions)
     assert source_owner.binding_id == source_binding
-    assert _require_periodic_topology(mesh).periodic_topology_id == topology_id
+    assert require_periodic_topology(mesh).periodic_topology_id == topology_id
     np.testing.assert_allclose(
         refinement.quotient.total_measure,
         periodic_orbit_measures(mesh).total_measure,
-        atol=2.0e-12,
+        atol=_NATIVE_HIGH_ORDER_MEASURE_ATOL,
     )
 
 
@@ -1299,7 +1549,7 @@ def _exact_periodic_rounding_fixture() -> tuple[
         ExactPowerCellGeometryLinearActionSource,
         ExactPowerCellGeometrySource,
     )
-    from phydrax.geometry._triangulation import PeriodicPowerPreparation
+    from phydrax.geometry._periodic_power_preparation import PeriodicPowerPreparation
 
     sites = np.asarray(((1.0, 0.0, 0.0), (1.0, 3.0, 0.0)))
     weights = np.asarray((0.0, 7.0))
@@ -1354,7 +1604,14 @@ def _exact_periodic_rounding_fixture() -> tuple[
         np.asarray(((0,), (1,), (0,), (0,)), dtype=np.int64),
         periodic_preparation=preparation,
     )
-    exact = source.prepare()
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    with coordinate_reference_budget(
+        queries_upper=parent.vertex_carriers.shape[0]
+        + preparation.image_sites.size
+        + source.vertex_parents.shape[0]
+    ) as budget:
+        exact = source.prepare(budget=budget)
     assert exact.vertices[0] == (Fraction(4, 3), Fraction(1, 3), Fraction(0))
     assert exact.vertices[1] == (Fraction(1, 3), Fraction(1, 3), Fraction(0))
     faces = ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3))
@@ -1382,7 +1639,7 @@ def test_exact_periodic_source_admits_independently_rounded_group_images(
 
     lifted, geometry, group, representatives, shifts = _exact_periodic_rounding_fixture()
     original_bits = np.asarray(lifted.coordinates).view(np.uint64).copy()
-    with pytest.raises(ValueError, match="inconsistent"):
+    with pytest.raises(ValueError, match="PeriodicMeshTopology\\.vertex_shifts"):
         PeriodicMeshTopology(lifted, group, representatives, shifts)
     topology = PeriodicMeshTopology(
         lifted,
@@ -1396,7 +1653,7 @@ def test_exact_periodic_source_admits_independently_rounded_group_images(
     connectivity = lifted.connectivity
     if not isinstance(connectivity, phx.discretization.PolyhedralConnectivity):
         raise TypeError(
-            "The exact periodic source requires packed polyhedral connectivity."
+            f"fixture.connectivity must be a PolyhedralConnectivity; got {type(connectivity).__name__}"
         )
     mesh = CellMesh(
         lifted.coordinates,
@@ -1406,7 +1663,7 @@ def test_exact_periodic_source_admits_independently_rounded_group_images(
         periodic_topology=topology,
     )
     canonical = phx.meshing.canonicalize_cell_mesh(mesh)
-    authority = _require_periodic_topology(canonical).actual_geometry
+    authority = require_periodic_topology(canonical).actual_geometry
     assert authority is not None and authority.exact_source is not None
     assert geometry.exact_source is not None
     assert authority.exact_source.source_id == geometry.exact_source.source_id
@@ -1420,10 +1677,18 @@ def test_exact_periodic_source_admits_independently_rounded_group_images(
         receipt.path,
         expected_content_id=receipt.content_id,
     )
-    rebuilt = restored.rebuilt(restored_lifted)
+    rebuilt = PeriodicMeshTopology.from_stored_fields(restored, lifted=restored_lifted)
     assert rebuilt.periodic_topology_id == topology.periodic_topology_id
     assert rebuilt.actual_geometry is not None
-    assert rebuilt.actual_geometry.source_coordinates() == geometry.source_coordinates()
+    work_upper, bytes_upper, queries_upper = periodic_preparation_bounds(
+        group, lifted.coordinates.shape[0], shifts, actual_geometry=geometry
+    )
+    with owned_periodic_preparation(
+        2 * work_upper, 2 * bytes_upper, queries_upper=2 * queries_upper
+    ) as budget:
+        assert rebuilt.actual_geometry.source_coordinates(
+            budget=budget
+        ) == geometry.source_coordinates(budget=budget)
     rebuilt.require_lift(restored_lifted.coordinates)
     np.testing.assert_array_equal(
         np.asarray(restored_lifted.coordinates).view(np.uint64), original_bits
@@ -1437,7 +1702,7 @@ def test_exact_periodic_source_refuses_changed_rne_and_false_orbit() -> None:
     altered = np.asarray(geometry.coordinates).copy()
     altered[1, 0] = np.nextafter(altered[1, 0], np.inf)
     wrong_geometry = eqx.tree_at(lambda value: value.coordinates, geometry, altered)
-    with pytest.raises(ValueError, match="RNE carrier"):
+    with pytest.raises(ValueError, match="PeriodicMeshTopology\\.actual_geometry"):
         PeriodicMeshTopology(
             lifted,
             group,
@@ -1447,7 +1712,7 @@ def test_exact_periodic_source_refuses_changed_rne_and_false_orbit() -> None:
         )
     wrong_shifts = shifts.copy()
     wrong_shifts[1] = 2
-    with pytest.raises(ValueError, match="authored periodic group lifts"):
+    with pytest.raises(ValueError, match="PeriodicMeshTopology\\.vertex_shifts"):
         PeriodicMeshTopology(
             lifted,
             group,
@@ -1525,7 +1790,7 @@ def test_periodic_cell_restoration_rejects_forged_derived_or_control_fields(
     else:
         altered = value + 1
     object.__setattr__(malformed, field, altered)
-    with pytest.raises(ValueError, match="Restored PeriodicCell"):
+    with pytest.raises(ValueError, match="PeriodicCell\\."):
         malformed.validate_restored()
     cell.validate_restored()
 
@@ -1632,17 +1897,23 @@ def test_native_rotational_distribution_transfers_actual_source_frames() -> None
     )
 
 
-def _check_native_distributed_periodic_transfer(
+@dataclass(frozen=True)
+class _NativePeriodicTransferPreparation:
+    source: phx.discretization.FiniteElementDiscretization
+    target: phx.discretization.FiniteElementDiscretization
+    transfer: phx.discretization.FiniteElementFieldTransfer
+    source_closures: phx.discretization.FiniteElementClosurePreparation
+    target_closures: phx.discretization.FiniteElementClosurePreparation
+
+
+def _prepare_native_distributed_periodic_transfer(
     source_distribution: phx.meshing.MeshDistribution,
     target_distribution: phx.meshing.MeshDistribution,
     element: FiniteElementSpec,
     parent_cells: ArrayLike,
     reference_vertices: ArrayLike,
     limits: phx.meshing.MeshingLimits,
-    devices: tuple[Device, ...],
-) -> None:
-    import jax.numpy as jnp
-
+) -> _NativePeriodicTransferPreparation:
     D = phx.discretization
     original, successor = (
         source_distribution.part.carrier,
@@ -1721,6 +1992,25 @@ def _check_native_distributed_periodic_transfer(
             ]
         )
         np.testing.assert_array_equal(np.sort(owned), np.asarray(authority.global_ids))
+    return _NativePeriodicTransferPreparation(
+        source, target, transfer, source_preparation, target_preparation
+    )
+
+
+def _check_native_periodic_transfer_actions(
+    prepared: _NativePeriodicTransferPreparation,
+    element: FiniteElementSpec,
+    limits: phx.meshing.MeshingLimits,
+    devices: tuple[Device, ...],
+) -> None:
+    import jax.numpy as jnp
+
+    D = phx.discretization
+    source, target, transfer = prepared.source, prepared.target, prepared.transfer
+    source_authority = prepared.source_closures.authority
+    source_programs = prepared.source_closures.programs
+    target_authority = prepared.target_closures.authority
+    target_programs = prepared.target_closures.programs
     paired = D.prepare_owner_local_finite_element_transfer(
         transfer,
         source_authority,
@@ -1789,7 +2079,7 @@ def _check_native_distributed_periodic_transfer(
             np.testing.assert_allclose(
                 actual[: len(rows)],
                 np.where(np.asarray(program.owned_mask)[:, None], reference[rows], 0),
-                atol=2.0e-11,
+                atol=_NATIVE_OWNED_TRANSFER_VALUES_ATOL,
             )
             np.testing.assert_array_equal(actual[len(rows) :], 0.0)
     forward_pairing = sum(
@@ -1800,7 +2090,29 @@ def _check_native_distributed_periodic_transfer(
         np.vdot(values[rows], np.asarray(transpose)[rank, : len(rows)])
         for rank, rows in enumerate(source_rows)
     )
-    np.testing.assert_allclose(forward_pairing, reverse_pairing, atol=2.0e-11)
+    np.testing.assert_allclose(
+        forward_pairing, reverse_pairing, atol=_NATIVE_TRANSFER_DUAL_PAIRING_ATOL
+    )
+
+
+def _check_native_distributed_periodic_transfer(
+    source_distribution: phx.meshing.MeshDistribution,
+    target_distribution: phx.meshing.MeshDistribution,
+    element: FiniteElementSpec,
+    parent_cells: ArrayLike,
+    reference_vertices: ArrayLike,
+    limits: phx.meshing.MeshingLimits,
+    devices: tuple[Device, ...],
+) -> None:
+    prepared = _prepare_native_distributed_periodic_transfer(
+        source_distribution,
+        target_distribution,
+        element,
+        parent_cells,
+        reference_vertices,
+        limits,
+    )
+    _check_native_periodic_transfer_actions(prepared, element, limits, devices)
 
 
 @pytest.mark.parametrize(
@@ -1810,7 +2122,7 @@ def test_exact_periodic_fixed_flags_do_not_hide_composed_stabilizers(
     axis_vertex: bool,
 ) -> None:
     from phydrax.discretization._exact_power_geometry import ExactPowerCellGeometrySource
-    from phydrax.discretization._periodic_topology import PeriodicIsometryIdentityError
+    from phydrax.discretization._periodic_exact import PeriodicIsometryIdentityError
 
     points = (
         np.asarray(((0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (0.0, 1.0, 1.0), (0.0, 0.0, 2.0)))
@@ -1829,10 +2141,15 @@ def test_exact_periodic_fixed_flags_do_not_hide_composed_stabilizers(
         np.c_[np.arange(4, dtype=np.int64), np.full((4, 3), -1, dtype=np.int64)],
     )
     faces = ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3))
-    lifted = CellMesh.from_polyhedra(
-        source.prepare().rounded_vertices,
-        (tuple(np.asarray(face, dtype=np.int64) for face in faces),),
-    )
+    from tests._support.coordinate_references import coordinate_reference_budget
+
+    with coordinate_reference_budget(
+        queries_upper=source.vertex_carriers.shape[0]
+    ) as budget:
+        lifted = CellMesh.from_polyhedra(
+            source.prepare(budget=budget).rounded_vertices,
+            (tuple(np.asarray(face, dtype=np.int64) for face in faces),),
+        )
     geometry = phx.discretization.CellGeometrySpec.power(lifted, source)
     group = PeriodicIsometryGroup(
         np.stack((np.diag((1.0, -1.0, -1.0, 1.0)), np.diag((-1.0, 1.0, -1.0, 1.0)))),
@@ -1842,7 +2159,8 @@ def test_exact_periodic_fixed_flags_do_not_hide_composed_stabilizers(
     shifts = np.zeros((4, 2), dtype=np.int64)
     if axis_vertex:
         with pytest.raises(
-            PeriodicIsometryIdentityError, match="composed vertex stabilizer"
+            PeriodicIsometryIdentityError,
+            match="PeriodicMeshTopology\\.vertex_fixed_generators",
         ):
             PeriodicMeshTopology(
                 lifted, group, representatives, shifts, actual_geometry=geometry
@@ -1867,10 +2185,10 @@ def _native_periodic_volume_material_fixture(
 ]:
     M = phx.meshing
     extruded = _rotation_translation_wedge()
-    original_group = _require_periodic_topology(extruded).cell
+    original_group = require_periodic_topology(extruded).cell
     assert isinstance(original_group, PeriodicIsometryGroup)
     if mixed:
-        topology = _require_periodic_topology(extruded)
+        topology = require_periodic_topology(extruded)
         domain = extruded
     else:
         # An independent finite-group family has physical top/bottom caps;
@@ -1916,7 +2234,7 @@ def _native_periodic_volume_material_fixture(
         scope(2, np.asarray(topology.quotient.entities(2).entity_ids)),
         M.VolumeFillStrategy.SIMPLEX,
         # The lifecycle fixture below owns the refinement transition. Keep this
-        # publication on the original six-cell source instead of pre-refining it.
+        # publication on the six-cell source instead of pre-refining it.
         size_controls=(
             M.UniformSizeControl(
                 regions, 3.0, maximum_size=3.0, strength=M.SizeControlStrength.SOFT
@@ -1966,13 +2284,18 @@ def test_periodic_exact_material_binding_preserves_wide_scientific_region_ids() 
     original_regions = np.asarray((3 << 35, 7 << 40), dtype=np.int64)
     snapshot = original_regions.copy()
     strata = prepare_periodic_source_strata(source, original_regions, ())
-    regions, ancestry, work = bind_periodic_source_strata(
-        strata.points,
-        strata.cells,
-        strata.shifts,
-        strata,
-        256,
-    )
+    with _periodic_request(phx.meshing.MeshingLimits(maximum_work_units=256)) as (
+        native_scope,
+        _,
+    ):
+        regions, ancestry, work = bind_periodic_source_strata(
+            strata.points,
+            strata.cells,
+            strata.shifts,
+            strata,
+            256,
+            scope=native_scope,
+        )
     np.testing.assert_array_equal(regions, original_regions)
     np.testing.assert_array_equal(strata.regions, snapshot)
     assert ancestry == ((0,), (1,))
@@ -1983,7 +2306,7 @@ def test_periodic_exact_material_binding_preserves_wide_scientific_region_ids() 
 def test_nondiscrete_exact_proper_rotation_is_not_promoted_by_tolerance(
     tolerance: float,
 ) -> None:
-    # Two exact dyadic reflections compose to a proper rotation with
+    # Two dyadic reflections compose to a proper rotation with
     # cos(angle)=1/8. A rational cosine other than 0, +/-1/2, +/-1
     # cannot have finite rotational order; its zero-pitch powers are nondiscrete.
     direction = np.asarray((0.75, 0.25, 0.25, 0.25, 0.5))
@@ -1992,7 +2315,7 @@ def test_nondiscrete_exact_proper_rotation_is_not_promoted_by_tolerance(
     generator = np.eye(6)
     generator[:5, :5] = reflection @ coordinate_reflection
     source_bits = generator.view(np.uint64).copy()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="PeriodicIsometryGroup"):
         PeriodicIsometryGroup(generator[None], tolerance=tolerance)
     np.testing.assert_array_equal(generator.view(np.uint64), source_bits)
 
@@ -2014,13 +2337,13 @@ def test_native_mixed_isometry_publication_keeps_original_field_source(
         )
     )
     assert isinstance(source_owner.domain, CellMesh)
-    original_topology = _require_periodic_topology(source_owner.domain)
+    original_topology = require_periodic_topology(source_owner.domain)
     original_group = original_topology.cell
     assert isinstance(original_group, PeriodicIsometryGroup)
     assert original_group.orders == (4, 0)
-    # Equality binds the original generators/exponent axes, not a substituted
+    # Equality binds the generators/exponent axes, not a substituted
     # independent finite rotation plus a different translation generator.
-    target_group = _require_periodic_topology(adaptation.target.mesh).cell
+    target_group = require_periodic_topology(adaptation.target.mesh).cell
     assert isinstance(target_group, PeriodicIsometryGroup)
     assert target_group.group_id == original_group.group_id
     np.testing.assert_array_equal(target_group.generators, original_group.generators)
@@ -2063,7 +2386,9 @@ def test_native_mixed_isometry_publication_keeps_original_field_source(
     forward = np.asarray(transfer.transfer.apply(primal))
     pulled = np.asarray(transfer.transfer.pullback(dual))
     np.testing.assert_allclose(
-        np.vdot(forward, dual), np.vdot(primal, pulled), atol=2.0e-11
+        np.vdot(forward, dual),
+        np.vdot(primal, pulled),
+        atol=_MIXED_ISOMETRY_DUAL_PAIRING_ATOL,
     )
 
 
@@ -2125,7 +2450,7 @@ def test_affinity_admission_proves_tensor_map_not_degree_or_layout(warped: bool)
 
 
 def test_original_periodic_source_membership_covers_every_scientific_cell_block() -> None:
-    from phydrax.meshing.providers._native_periodic import _periodic_source_associations
+    from phydrax.meshing.providers._native_periodic import periodic_source_associations
 
     owner, specification, publication = _native_periodic_material_fixture(
         _rotational_wedge()
@@ -2146,7 +2471,7 @@ def test_original_periodic_source_membership_covers_every_scientific_cell_block(
         grouped_blocks,
         vertex_global_ids=source.vertex_global_ids,
     )
-    original = _require_periodic_topology(source)
+    original = require_periodic_topology(source)
     topology = PeriodicMeshTopology(
         lifted,
         original.cell,
@@ -2159,7 +2484,10 @@ def test_original_periodic_source_membership_covers_every_scientific_cell_block(
         vertex_global_ids=lifted.vertex_global_ids,
         periodic_topology=topology,
     )
-    associations = _periodic_source_associations(owner, specification, target)
+    with _periodic_request(specification.limits) as (native_scope, budget):
+        associations = periodic_source_associations(
+            owner, specification, target, scope=native_scope, budget=budget
+        )
     cell_association = associations[-1]
     actual_ids = np.asarray(target.entity_set(target.topological_dimension).entity_ids)
     rows = cell_association.target_rows(actual_ids)
@@ -2188,18 +2516,22 @@ def test_periodic_history_authenticates_retained_reference_and_sibling_banks() -
         parent_reference_vertices: np.ndarray = history.parent_reference_vertices,
         parent_cells: np.ndarray = history.parent_cells,
     ) -> PeriodicRefinement:
-        return PeriodicRefinement(
-            mesh=history.mesh,
-            source=history.source,
-            source_geometry=source_geometry,
-            parent_reference_vertices=parent_reference_vertices,
-            parent_cells=parent_cells,
-            cell_generations=history.cell_generations,
-            bisected_edges=history.bisected_edges,
-            quotient=history.quotient,
-            previous=history.previous,
-            retired=history.retired,
-        )
+        from tests._support.coordinate_references import coordinate_reference_budget
+
+        with coordinate_reference_budget() as budget:
+            return PeriodicRefinement(
+                mesh=history.mesh,
+                source=history.source,
+                source_geometry=source_geometry,
+                parent_reference_vertices=parent_reference_vertices,
+                parent_cells=parent_cells,
+                cell_generations=history.cell_generations,
+                bisected_edges=history.bisected_edges,
+                quotient=history.quotient,
+                previous=history.previous,
+                retired=history.retired,
+                budget=budget,
+            )
 
     renewed = renew()
     assert renewed.refinement_id == history.refinement_id
@@ -2268,10 +2600,10 @@ def test_native_periodic_history_pairs_actual_grouped_carrier_rows() -> None:
         target_geometry=adaptation.target.geometry,
     )
     assert transfer.evidence.passed
-    # A global-SCI sort is not the actual coefficient-action block row order.
+    # A global-SCI sort is not the coefficient-action block row order.
     misaligned = np.argsort(target_ids, kind="stable")
     assert not np.array_equal(source_ids[history.parent_cells[misaligned]], retained)
-    with pytest.raises(ValueError, match="scientific root identities"):
+    with pytest.raises(ValueError, match=r"nested_geometry\.source_root"):
         D.prepare_nested_field_transfer(
             source,
             target,
@@ -2300,7 +2632,7 @@ def _grouped_periodic_domain(domain: CellMesh) -> CellMesh:
     lifted = CellMesh(
         domain.coordinates, blocks, vertex_global_ids=domain.vertex_global_ids
     )
-    periodic = _require_periodic_topology(domain).rebuilt(lifted)
+    periodic = require_periodic_topology(domain).rebuilt(lifted)
     return CellMesh(
         domain.coordinates,
         blocks,
@@ -2317,14 +2649,14 @@ def _grouped_periodic_domain(domain: CellMesh) -> CellMesh:
 def test_grouped_periodic_refinement_selects_late_source_cohort(
     domain_factory: Callable[[], CellMesh],
 ) -> None:
-    from phydrax.meshing._periodic import _periodic_vertex_stencils
+    from phydrax.meshing._periodic import periodic_vertex_stencils
 
     source = _grouped_periodic_domain(domain_factory())
     late = source.blocks[0].cell_count
     refined = refine_periodic_mesh(source, cells=np.asarray((late,), dtype=np.int64))
     assert any(block.name == "last-source-cohort" for block in refined.mesh.blocks)
     assert np.any((refined.parent_cells >= late) & (refined.cell_generations > 0))
-    supports, weights = _periodic_vertex_stencils(refined)
+    supports, weights = periodic_vertex_stencils(refined)
     assert supports.shape[0] == refined.mesh.coordinates.shape[0]
     np.testing.assert_array_equal(np.sum(weights, axis=1), np.ones(weights.shape[0]))
     assert np.all(np.isin(supports[weights != 0], np.asarray(source.vertex_global_ids)))
@@ -2391,10 +2723,10 @@ def test_grouped_periodic_native_cycle_preserves_retired_scientific_orbits(
     assert coarsened.hierarchy.retired is refined.hierarchy
     for degree in range(3):
         np.testing.assert_array_equal(
-            _require_periodic_topology(repeated.target.mesh)
+            require_periodic_topology(repeated.target.mesh)
             .quotient.entities(degree)
             .entity_ids,
-            _require_periodic_topology(refined.target.mesh)
+            require_periodic_topology(refined.target.mesh)
             .quotient.entities(degree)
             .entity_ids,
         )
@@ -2407,10 +2739,14 @@ def test_owner_local_periodic_mesh_default_source_archive_preserves_actual_proje
 
     import jax
 
-    from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
+    from phydrax._array_archive import (
+        ArrayArchiveLimits,
+        DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    )
     from phydrax.lifecycle._meshing_sources import (
-        _native_authority_equal,
         read_meshing_source_closure,
+        reconstruct_meshing_source,
+        source_content_equal,
         validate_meshing_source_closure,
         write_meshing_source_closure,
     )
@@ -2442,10 +2778,18 @@ def test_owner_local_periodic_mesh_default_source_archive_preserves_actual_proje
     )
     local = closure.programs[0].local_discretization.mesh
     assert local.storage is not None and local.periodic_topology is not None
+    with pytest.raises(ValueError, match=r"CellMesh\.storage"):
+        CellMesh.lifted_from_stored_fields(local)
     receipt = write_meshing_source_closure(
         tmp_path / "actual-local-periodic-source",
         (source_owner, specification, source, local),
     )
+    with pytest.raises(ValueError, match="array-byte limit"):
+        reconstruct_meshing_source(
+            local.periodic_topology,
+            meshes=(local,),
+            limits=ArrayArchiveLimits(max_member_bytes=1),
+        )
     restored_owner, restored_specification, restored_source, restored = (
         read_meshing_source_closure(
             receipt.path,
@@ -2456,12 +2800,25 @@ def test_owner_local_periodic_mesh_default_source_archive_preserves_actual_proje
     assert restored_specification.specification_id == specification.specification_id
     assert restored_source.result_id == source.result_id
     assert restored.storage.storage_id == local.storage.storage_id
-    assert _native_authority_equal(local, restored, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS)
-    assert _native_authority_equal(
+    assert source_content_equal(local, restored, limits=DEFAULT_ARRAY_ARCHIVE_LIMITS)
+    assert source_content_equal(
         local.periodic_topology,
         restored.periodic_topology,
         limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
     )
+    validate_meshing_source_closure((source_owner, specification, source, closure))
+    changed_runtime = copy(prepared.default_runtime)
+    object.__setattr__(
+        changed_runtime,
+        "coordinates",
+        changed_runtime.coordinates.at[0, 0].add(1),
+    )
+    changed_prepared = copy(prepared)
+    object.__setattr__(changed_prepared, "default_runtime", changed_runtime)
+    with pytest.raises(ValueError, match=r"finite_element\.restored_state"):
+        validate_meshing_source_closure(
+            (source_owner, specification, source, changed_prepared)
+        )
     missing = copy(local)
     object.__setattr__(missing, "periodic_topology", None)
     missing_discretization = copy(closure.programs[0].local_discretization)
@@ -2472,7 +2829,10 @@ def test_owner_local_periodic_mesh_default_source_archive_preserves_actual_proje
     object.__setattr__(
         missing_closure, "programs", (missing_program, *closure.programs[1:])
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError,
+        match=r"finite_element\.restored_state.*mesh\.periodic_topology",
+    ):
         validate_meshing_source_closure(
             (source_owner, specification, source, missing_closure)
         )
@@ -2484,5 +2844,5 @@ def test_owner_local_periodic_mesh_default_source_archive_preserves_actual_proje
     )
     bad = copy(local)
     object.__setattr__(bad, "periodic_topology", corrupted)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="periodic|Periodic"):
         validate_meshing_source_closure(bad)

@@ -11,7 +11,6 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
-import trimesh
 
 from phydrax.geometry import MeshRegion
 from phydrax.operators.integral.layer_potential._free_surface_green3d import (
@@ -58,6 +57,9 @@ def _policy(face_count: int, *, smoke: bool) -> Any:
 
 
 def _case(*, depth: float | None, smoke: bool) -> Any:
+    # Admit trimesh only when constructing a hydrodynamics benchmark case.
+    import trimesh
+
     mesh = trimesh.creation.icosphere(subdivisions=0 if smoke else 1, radius=0.5)
     mesh.apply_translation((0.0, 0.0, -2.0))
     region = MeshRegion(

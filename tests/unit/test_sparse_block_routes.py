@@ -25,7 +25,7 @@ from phydrax.sparse import (
     SparseCoordinateOperator,
     SparseLinearMap,
 )
-from phydrax.sparse._linear import _SparseStoragePlan
+from phydrax.sparse._linear import SparseStoragePlan
 from phydrax.sparse._ops import (
     block_linear_adjoint_apply,
     block_linear_apply,
@@ -388,7 +388,7 @@ def test_real_coefficients_preserve_complex_coordinate_vectors(
 
 def test_prepared_block_storage_refresh_is_traceable_without_host_pattern_reads() -> None:
     operator, matrix = _rectangular_operator()
-    storage_plan = _SparseStoragePlan(operator.relation, block_shape=operator.block_shape)
+    storage_plan = SparseStoragePlan(operator.relation, block_shape=operator.block_shape)
     bound = SparseCoordinateOperator(
         operator.relation,
         operator.coefficients,

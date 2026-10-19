@@ -2,44 +2,58 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native existing-mesh P1 zero interfaces and conservative W08 transitions.
+"""Insert P1 zero interfaces into existing meshes with conservative W08 transitions.
 
-The scalar is the declared piecewise-affine vertex field, not a sampled oracle
-claiming hidden-component completeness. Native roots split protected source
-strata through meshcore cavity transactions. Material identity is orthogonal to
-level-set side identity: material assignments inherit exact cell lineage.
-Accepted moving interfaces bind the explicit target numerical revision even
-when coordinates and connectivity, and therefore content identity, are unchanged.
-Tangential zero faces remain interface patches without declaring distinct-zone
-adjacency when both incident cells belong to the same side.
+Native roots split the declared piecewise-affine vertex field through meshcore
+cavity transactions. Material assignments inherit cell lineage independently
+of level-set side identities. Moving interfaces bind the target numerical
+revision even when coordinates, connectivity, and content identity are unchanged.
+Tangential zero faces remain interface patches without distinct-zone adjacency
+when both incident cells belong to the same side.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager, ExitStack
+from itertools import combinations
 from typing import final, NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
-import jax.numpy as jnp
+import jax
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.discretization._reference_cell_types as reference_cell_types_owner
+import phydrax.meshing._periodic as periodic_owner
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import exact_orient3d, load_meshcore, MeshcoreError, MeshcoreStatus
+from .._meshcore import (
+    exact_orient3d,
+    level_set_split_3d,
+    LevelSetCounters,
+    LevelSetSplitRequest,
+    MeshcoreError,
+    MeshcoreStatus,
+    NativeBatchTicket,
+    NativeExecutionScope,
+)
+from .._resource_ticket import HostBatchTicket
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CellBlock, CellMesh
 from ..discretization._cell_complex import TetrahedralConnectivity
-from ..discretization._cell_geometry_transfer import (
-    is_affine_cell_geometry,
-    NestedReferenceWitnesses,
-)
-from ._lineage import EntityLineageKind, MeshTransitionKind
-from ._organization import MeshLabel, MeshPatch, MeshZone, MeshZoneRole
+from ..discretization._cell_geometry_transfer import is_affine_cell_geometry
+from ..discretization._cell_geometry_transition_types import NestedReferenceWitnesses
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..typing import checked
+from ._entity_keys import entity_keys
+from ._lineage_records import EntityLineageKind, MeshTransitionKind
+from ._organization_records import MeshLabel, MeshPatch, MeshZone, MeshZoneRole
 from ._scope import MeshingEntityKind, MeshingScope, resolve_mesh_scope
 from ._topology_edit import (
     CellTopologyEdit,
-    entity_keys,
     EntityRelations,
     nested_reference_vertices,
     TopologyEditBlock,
@@ -47,15 +61,38 @@ from ._topology_edit import (
 
 
 if TYPE_CHECKING:
-    from ._adaptation import _RouteOutcome, PreparedMeshAdaptation
+    from . import _adaptation as adaptation_owner
+    from ._adaptation import PreparedMeshAdaptation
+
+
+@contextmanager
+def _level_set_coordinate_budget(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> Iterator[CoordinateEnclosureBudget]:
+    """Reserve a bounded host phase before native topology execution."""
+    limits = prepared.policy.limits
+    remaining = scope.remaining()
+    ticket = scope.batch(
+        min(limits.maximum_work_units, remaining.remaining_work_units),
+        queries_upper=min(
+            limits.maximum_geometry_queries, remaining.remaining_geometry_queries
+        ),
+        bytes_upper=min(limits.maximum_scratch_bytes, remaining.remaining_managed_bytes),
+    )
+    with budget.bind_ticket(ticket):
+        yield budget
 
 
 @final
 class LevelSetMeshAdaptation(StrictModule, NonTrainableState):
     """Insert the zero set of one mesh-bound scalar P1 field.
 
-    ``values`` follow ``scope.entity_ids``, not incidental mesh row order. Exact
-    zero samples remain existing vertices. ``previous`` binds the last accepted
+    ``values`` follow ``scope.entity_ids``, not incidental mesh row order. Samples
+    equal to zero remain existing vertices. ``previous`` binds the last accepted
     interface to this source; changing its topology requires explicit consent.
     """
 
@@ -68,6 +105,7 @@ class LevelSetMeshAdaptation(StrictModule, NonTrainableState):
     accept_topology_change: bool = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         scope: MeshingScope,
@@ -80,39 +118,41 @@ class LevelSetMeshAdaptation(StrictModule, NonTrainableState):
         previous: LevelSetEvidence | None = None,
         accept_topology_change: bool = False,
     ) -> None:
-        if not isinstance(scope, MeshingScope):
-            raise TypeError("scope must be MeshingScope.")
         if scope.entity_kind is not MeshingEntityKind.MESH or scope.entity_dimension != 0:
-            raise ValueError("A level set must be bound to mesh vertices.")
+            raise ValueError(
+                "LevelSetMeshAdaptation.scope must be bound to mesh vertices; got a non-mesh or non-vertex scope."
+            )
         scalar = np.asarray(values, dtype=np.float64)
         if scalar.shape != scope.entity_ids.shape or not np.all(np.isfinite(scalar)):
             raise ValueError(
-                "Level-set values must be one finite scalar per scoped vertex."
+                "LevelSetMeshAdaptation.values must be one finite scalar per scoped vertex; got nonfinite values or a different vertex count."
             )
         identities = (inside_region_id, outside_region_id, interface_id)
         if any(not isinstance(value, str) for value in identities):
-            raise TypeError("Level-set identities must be strings.")
+            raise TypeError(
+                "LevelSetMeshAdaptation.region_ids must be strings together with interface_id; got a non-string identity."
+            )
         if (
             any(not value.strip() or value != value.strip() for value in identities)
             or len(set(identities)) != 3
         ):
             raise ValueError(
-                "Inside, outside and interface identities must be distinct nonempty identifiers."
+                f"LevelSetMeshAdaptation.region_ids must be distinct nonempty identifiers together with interface_id; got {identities!r}."
             )
-        if previous is not None and not isinstance(previous, LevelSetEvidence):
-            raise TypeError("previous must be LevelSetEvidence or None.")
         if not isinstance(accept_topology_change, bool):
-            raise TypeError("accept_topology_change must be bool.")
+            raise TypeError(
+                f"LevelSetMeshAdaptation.accept_topology_change must be bool; got {type(accept_topology_change).__name__}."
+            )
         if previous is not None and identities != (
             previous.inside_region_id,
             previous.outside_region_id,
             previous.interface_id,
         ):
             raise ValueError(
-                "A moving level set must preserve its scientific region/interface identity."
+                "LevelSetMeshAdaptation.region_ids must preserve the previous region/interface identity together with interface_id; got different identities."
             )
         self.scope = scope
-        self.values = jnp.asarray(scalar, dtype=jnp.float64)
+        self.values = jax.device_put(np.asarray(scalar, dtype=np.float64))
         self.inside_region_id, self.outside_region_id, self.interface_id = identities
         self.previous = previous
         self.accept_topology_change = accept_topology_change
@@ -134,16 +174,16 @@ class _Split(NamedTuple):
     parents: np.ndarray
     sources: np.ndarray
     weights: np.ndarray
-    counters: np.ndarray
+    counters: LevelSetCounters
 
 
 @final
 class LevelSetEvidence(StrictModule, NonTrainableState):
-    """P1 partition, oriented zero facets, root residuals and topology events.
+    """Record P1 partitions, oriented zero facets, root residuals and topology events.
 
     ``topology_signature`` records strict inside/outside component counts, zero
     complex component count, Euler characteristic and maximum stratum dimension.
-    Exact-zero isolated vertices/edges and tangential zero faces are retained.
+    Isolated vertices/edges equal to zero and tangential zero faces are retained.
     Zero face orientation is ±1 inside-to-outside, or 0 for a nonseparating face.
     """
 
@@ -172,9 +212,9 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
     def __init__(
         self,
         prepared: PreparedMeshAdaptation,
-        mesh: CellMesh,
+        mesh: cell_mesh_owner.CellMesh,
         edit: CellTopologyEdit,
-        counters: np.ndarray,
+        counters: LevelSetCounters,
         /,
     ) -> None:
         request = _request(prepared)
@@ -184,7 +224,7 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
         changed = previous is not None and signature != previous.topology_signature
         if changed and not request.accept_topology_change:
             raise ValueError(
-                "The moving zero set changes topology; explicit accept_topology_change is required."
+                "LevelSetMeshAdaptation.accept_topology_change must be True when the moving zero set changes topology; got False."
             )
         self.source_mesh_id = prepared.source.mesh.mesh_id
         self.request_id = request.request_id
@@ -193,24 +233,29 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
         self.inside_region_id = request.inside_region_id
         self.outside_region_id = request.outside_region_id
         self.interface_id = request.interface_id
-        self.cell_global_ids = jnp.asarray(mesh.entity_set(3).entity_ids, dtype=jnp.int64)
-        self.cell_sides = jnp.asarray(sides, dtype=jnp.int8)
-        self.interface_facet_global_ids = jnp.asarray(
-            np.asarray(mesh.entity_set(2).entity_ids)[facets], dtype=jnp.int64
+        self.cell_global_ids = jax.device_put(
+            np.asarray(mesh.entity_set(3).entity_ids, dtype=np.int64)
         )
-        self.interface_orientations = jnp.asarray(
-            _interface_orientations(mesh, sides, facets), dtype=jnp.int8
+        self.cell_sides = jax.device_put(np.asarray(sides, dtype=np.int8))
+        self.interface_facet_global_ids = jax.device_put(
+            np.asarray(np.asarray(mesh.entity_set(2).entity_ids)[facets], dtype=np.int64)
         )
-        self.zero_vertex_global_ids = jnp.asarray(
-            np.asarray(mesh.vertex_global_ids)[values == 0.0], dtype=jnp.int64
+        self.interface_orientations = jax.device_put(
+            np.asarray(_interface_orientations(mesh, sides, facets), dtype=np.int8)
         )
-        self.counters = jnp.asarray(counters, dtype=jnp.int64)
+        self.zero_vertex_global_ids = jax.device_put(
+            np.asarray(np.asarray(mesh.vertex_global_ids)[values == 0.0], dtype=np.int64)
+        )
+        counter_values = np.asarray(
+            [value for _, value in counters.items()], dtype=np.int64
+        )
+        self.counters = jax.device_put(np.asarray(counter_values, dtype=np.int64))
         self.topology_signature = signature
         self.topology_changed = changed
         self.topology_event_accepted = changed and request.accept_topology_change
-        self.inserted_roots = int(counters[2])
-        self.exact_zero_samples = int(counters[3])
-        self.work_units = int(counters[4])
+        self.inserted_roots = counters.inserted
+        self.exact_zero_samples = counters.zero_vertices
+        self.work_units = counters.work_units
         source_ids = np.asarray(prepared.source.mesh.vertex_global_ids)
         order = np.argsort(source_ids)
         rows = order[np.searchsorted(source_ids[order], edit.stencil_sources)]
@@ -232,7 +277,7 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
                 "zero_vertices": array_tree_fingerprint(self.zero_vertex_global_ids),
                 "topology": signature,
                 "event_accepted": self.topology_event_accepted,
-                "counters": array_tree_fingerprint(counters),
+                "counters": array_tree_fingerprint(counter_values),
                 "maximum_root_residual": self.maximum_root_residual,
             }
         )
@@ -251,7 +296,7 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
             or self.maximum_root_residual < 0.0
         ):
             raise ValueError(
-                "Level-set evidence has inconsistent retained counters or events."
+                "LevelSetEvidence.counters must be consistent with the retained topology signature together with topology_events; got inconsistent retained counters or events."
             )
         expected = canonical_fingerprint(
             {
@@ -272,12 +317,13 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
             }
         )
         if expected != self.evidence_id:
-            raise ValueError("Level-set evidence scientific identity is stale.")
+            raise ValueError(
+                "LevelSetEvidence.evidence_id must match the retained scientific content; got a stale scientific identity."
+            )
 
-    def require_current(self, mesh: CellMesh, /) -> None:
-        """Refuse any other mesh or revision; content-equal simplex meshes share ``mesh_id``."""
-        if not isinstance(mesh, CellMesh):
-            raise TypeError("mesh must be CellMesh.")
+    @checked
+    def require_current(self, mesh: cell_mesh_owner.CellMesh, /) -> None:
+        """Require matching mesh content identity and numerical revision."""
         self.validate_source_integrity()
         if (
             mesh.mesh_id != self.target_mesh_id
@@ -287,7 +333,9 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
                 np.asarray(self.cell_global_ids),
             )
         ):
-            raise ValueError("Level-set evidence is stale or belongs to another mesh.")
+            raise ValueError(
+                "LevelSetEvidence.target_mesh_id must match the queried mesh together with target_numeric_version; got stale evidence or another mesh."
+            )
         sides = np.asarray(self.cell_sides)
         zero_vertices = np.isin(
             np.asarray(mesh.vertex_global_ids), np.asarray(self.zero_vertex_global_ids)
@@ -317,14 +365,18 @@ class LevelSetEvidence(StrictModule, NonTrainableState):
             or int(self.counters[1]) != mesh.entity_set(3).count
         ):
             raise ValueError(
-                "Level-set evidence contradicts its retained target partition."
+                "LevelSetEvidence.partition must match the retained target partition; got contradictory sides, interface facets, adjacency, or topology."
             )
 
 
 def _request(prepared: PreparedMeshAdaptation, /) -> LevelSetMeshAdaptation:
-    if not isinstance(prepared.request, LevelSetMeshAdaptation):
-        raise TypeError("The native level-set route requires LevelSetMeshAdaptation.")
-    return prepared.request
+    match prepared.request:
+        case LevelSetMeshAdaptation() as request:
+            return request
+        case _:
+            raise TypeError(
+                f"PreparedMeshAdaptation.request must be LevelSetMeshAdaptation for the native level-set route; got {type(prepared.request).__name__}."
+            )
 
 
 def _source_values(prepared: PreparedMeshAdaptation, /) -> np.ndarray:
@@ -333,75 +385,128 @@ def _source_values(prepared: PreparedMeshAdaptation, /) -> np.ndarray:
     resolve_mesh_scope(mesh, request.scope)
     ids = np.asarray(request.scope.entity_ids, dtype=np.int64)
     if ids.size != mesh.coordinates.shape[0]:
-        raise ValueError("A level set must cover every source vertex.")
+        raise ValueError(
+            "LevelSetMeshAdaptation.scope must cover every source vertex; got a different vertex count."
+        )
     return np.asarray(request.values, dtype=np.float64)[
         np.searchsorted(ids, np.asarray(mesh.vertex_global_ids))
     ]
 
 
-def validate_level_set_adaptation(prepared: PreparedMeshAdaptation, /) -> None:
-    """Admission called by the canonical adaptation preparation boundary."""
-    mesh = prepared.source.mesh
-    request = _request(prepared)
-    if (
-        mesh.topological_dimension != 3
-        or mesh.ambient_dimension != 3
-        or any(block.cell_kind != "tetrahedron" for block in mesh.blocks)
-    ):
-        raise ValueError("Native level-set insertion requires a tetrahedral volume mesh.")
-    if not is_affine_cell_geometry(mesh, prepared.source.geometry):
-        raise ValueError("P1 zero insertion requires affine source geometry.")
-    values = _source_values(prepared)
-    if any(
-        np.any(np.all(values[np.asarray(block.vertices)] == 0.0, axis=1))
-        for block in mesh.blocks
-    ):
-        raise ValueError(
-            "An identically zero source cell has no exclusive inside/outside assignment."
-        )
-    previous = request.previous
-    if previous is not None:
-        previous.require_current(mesh)
-    existing = {
-        value.name
-        for value in (
-            *prepared.source.patches,
-            *prepared.source.zones,
-            *prepared.source.labels,
-        )
-    }
-    previous_names = (
-        set()
-        if previous is None
-        else {
-            previous.inside_region_id,
-            previous.outside_region_id,
-            previous.interface_id,
+def validate_level_set_adaptation(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> None:
+    """Validate the level-set request at the adaptation preparation boundary."""
+    with ExitStack() as owner:
+        if budget is None:
+            limits = prepared.policy.limits
+            ticket = owner.enter_context(
+                HostBatchTicket(
+                    limits.maximum_work_units,
+                    queries_upper=limits.maximum_geometry_queries,
+                    bytes_upper=limits.maximum_scratch_bytes,
+                )
+            )
+            budget = CoordinateEnclosureBudget(
+                ticket,
+                maximum_work_units=limits.maximum_work_units,
+                maximum_memory_bytes=limits.maximum_scratch_bytes,
+            )
+            owner.enter_context(budget.activate())
+        mesh = prepared.source.mesh
+        request = _request(prepared)
+        if (
+            mesh.topological_dimension != 3
+            or mesh.ambient_dimension != 3
+            or any(block.cell_kind != "tetrahedron" for block in mesh.blocks)
+        ):
+            raise ValueError(
+                "PreparedMeshAdaptation.source.mesh must be a tetrahedral volume mesh for native level-set insertion; got an unsupported mesh dimension or family."
+            )
+        if not is_affine_cell_geometry(mesh, prepared.source.geometry, budget=budget):
+            raise ValueError(
+                "PreparedMeshAdaptation.source.geometry must be affine for P1 zero insertion; got non-affine source geometry."
+            )
+        values = _source_values(prepared)
+        if any(
+            np.any(np.all(values[np.asarray(block.vertices)] == 0.0, axis=1))
+            for block in mesh.blocks
+        ):
+            raise ValueError(
+                "LevelSetMeshAdaptation.values must permit an exclusive inside/outside assignment per source cell; got an identically zero source cell."
+            )
+        previous = request.previous
+        if previous is not None:
+            ticket = budget.ticket
+            if isinstance(ticket, NativeBatchTicket):
+                # Replay predicates must consume the reserved execution phase,
+                # not the scope's unreserved remainder.
+                with ticket.native_target():
+                    previous.require_current(mesh)
+            else:
+                previous.require_current(mesh)
+        existing = {
+            value.name
+            for value in (
+                *prepared.source.patches,
+                *prepared.source.zones,
+                *prepared.source.labels,
+            )
         }
-    )
-    if (
-        existing.intersection(
-            (request.inside_region_id, request.outside_region_id, request.interface_id)
+        previous_names = (
+            set()
+            if previous is None
+            else {
+                previous.inside_region_id,
+                previous.outside_region_id,
+                previous.interface_id,
+            }
         )
-        - previous_names
-    ):
-        raise ValueError("Level-set identities collide with existing mesh organization.")
-    periodic = mesh.periodic_topology
-    if periodic is not None and not np.array_equal(
-        values, values[np.asarray(periodic.vertex_representatives)]
-    ):
-        raise ValueError("Periodic level-set values must agree exactly on vertex orbits.")
+        if (
+            existing.intersection(
+                (
+                    request.inside_region_id,
+                    request.outside_region_id,
+                    request.interface_id,
+                )
+            )
+            - previous_names
+        ):
+            raise ValueError(
+                "LevelSetMeshAdaptation.region_ids must avoid existing mesh organization identities together with interface_id; got an identity collision."
+            )
+        periodic = mesh.periodic_topology
+        if periodic is not None and not np.array_equal(
+            values, values[np.asarray(periodic.vertex_representatives)]
+        ):
+            raise ValueError(
+                "LevelSetMeshAdaptation.values must agree on periodic vertex orbits; got unequal orbit values."
+            )
 
 
-def _tetrahedral_connectivity(mesh: CellMesh, /) -> TetrahedralConnectivity:
+def _tetrahedral_connectivity(
+    mesh: cell_mesh_owner.CellMesh, /
+) -> TetrahedralConnectivity:
     """Narrow the admitted volume carrier at each native topology boundary."""
-    connectivity = mesh.connectivity
-    if not isinstance(connectivity, TetrahedralConnectivity):
-        raise ValueError("Native level-set topology requires tetrahedral connectivity.")
-    return connectivity
+    match mesh.connectivity:
+        case TetrahedralConnectivity() as connectivity:
+            return connectivity
+        case _:
+            raise ValueError(
+                "CellMesh.connectivity must be tetrahedral for native level-set topology; got a different connectivity kind."
+            )
 
 
-def _native_split(prepared: PreparedMeshAdaptation, /) -> _Split:
+def _native_split(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> _Split:
     mesh = prepared.source.mesh
     connectivity = _tetrahedral_connectivity(mesh)
     points = np.ascontiguousarray(mesh.coordinates, dtype=np.float64)
@@ -448,55 +553,70 @@ def _native_split(prepared: PreparedMeshAdaptation, /) -> _Split:
     )
     if scratch_bound > limits.maximum_scratch_bytes:
         raise ValueError(
-            "Native level-set working storage exceeds maximum_scratch_bytes."
+            f"LevelSetMeshAdaptation.working_storage must satisfy maximum_scratch_bytes; got required={scratch_bound}, capacity={limits.maximum_scratch_bytes}."
         )
-    output_points = np.empty((vertex_capacity, 3), dtype=np.float64)
-    output_cells = np.empty((cell_capacity, 4), dtype=np.int32)
-    parents = np.empty((cell_capacity,), dtype=np.int32)
-    sources = np.empty((vertex_capacity, 2), dtype=np.int32)
-    weights = np.empty((vertex_capacity, 2), dtype=np.float64)
-    counters = np.zeros((6,), dtype=np.int64)
-    status = MeshcoreStatus(
-        load_meshcore()["phx_mc_level_set_split_3d"](
-            points.shape[0],
-            points.ctypes.data,
-            values.ctypes.data,
-            cells.shape[0],
-            cells.ctypes.data,
-            faces.shape[0],
-            faces.ctypes.data,
-            edges.shape[0],
-            edges.ctypes.data,
-            protection.ctypes.data,
-            vertex_capacity,
-            cell_capacity,
-            limits.maximum_work_units,
-            limits.maximum_cavity_cells,
-            output_points.ctypes.data,
-            output_cells.ctypes.data,
-            parents.ctypes.data,
-            sources.ctypes.data,
-            weights.ctypes.data,
-            counters.ctypes.data,
-        )
+    remaining = scope.remaining()
+    ticket = scope.batch(
+        min(limits.maximum_work_units, remaining.remaining_work_units),
+        bytes_upper=scratch_bound,
+        cavity_upper=min(limits.maximum_cavity_cells, remaining.remaining_cavity_cells),
     )
-    if status is not MeshcoreStatus.OK:
-        raise MeshcoreError(
-            status,
-            f"Native zero insertion refused source edge {counters[5]}; work={counters[4]}.",
+    with budget.bind_ticket(ticket):
+        output_points = np.empty((vertex_capacity, 3), dtype=np.float64)
+        output_cells = np.empty((cell_capacity, 4), dtype=np.int32)
+        parents = np.empty((cell_capacity,), dtype=np.int32)
+        sources = np.empty((vertex_capacity, 2), dtype=np.int32)
+        weights = np.empty((vertex_capacity, 2), dtype=np.float64)
+        counter_slots = np.zeros((6,), dtype=np.int64)
+        budget.retain_basis(
+            (output_points, output_cells, parents, sources, weights, counter_slots)
         )
-    nv, nc = int(counters[0]), int(counters[1])
-    return _Split(
-        output_points[:nv],
-        output_cells[:nc],
-        parents[:nc],
-        sources[:nv],
-        weights[:nv],
-        counters,
-    )
+        with ticket.native_target():
+            run = level_set_split_3d(
+                LevelSetSplitRequest(
+                    points=points,
+                    values=values,
+                    cells=cells,
+                    faces=faces,
+                    edges=edges,
+                    protected_edges=protection,
+                    max_vertices=vertex_capacity,
+                    max_cells=cell_capacity,
+                    work_limit=ticket.remaining_work_units,
+                    cavity_limit=limits.maximum_cavity_cells,
+                    output_points=output_points,
+                    output_cells=output_cells,
+                    output_parents=parents,
+                    output_sources=sources,
+                    output_weights=weights,
+                    counter_slots=counter_slots,
+                )
+            )
+        status = run.status
+        counters = run.counters
+        if status is not MeshcoreStatus.OK:
+            raise MeshcoreError(
+                status,
+                f"LevelSetMeshAdaptation.native_split must satisfy its declared native contracts; got status={status.name}, failed_edge={counters.failed_edge}, work={counters.work_units}.",
+            )
+        nv, nc = counters.vertices, counters.cells
+        return _Split(
+            output_points[:nv],
+            output_cells[:nc],
+            parents[:nc],
+            sources[:nv],
+            weights[:nv],
+            counters,
+        )
 
 
-def _edit(prepared: PreparedMeshAdaptation, split: _Split, /) -> CellTopologyEdit:
+def _edit(
+    prepared: PreparedMeshAdaptation,
+    split: _Split,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> CellTopologyEdit:
     mesh = prepared.source.mesh
     old_vertices = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     nv = old_vertices.size
@@ -573,12 +693,10 @@ def _edit(prepared: PreparedMeshAdaptation, split: _Split, /) -> CellTopologyEdi
     )
     periodic_orbits = None
     if mesh.periodic_topology is not None:
-        from ._periodic import periodic_vertex_orbit_witness
-
-        carrier = CellMesh(
+        carrier = cell_mesh_owner.CellMesh(
             split.coordinates,
             tuple(
-                CellBlock(
+                reference_cell_types_owner.CellBlock(
                     block.name, block.cell_kind, block.cells, global_ids=block.cell_ids
                 )
                 for block in blocks
@@ -586,8 +704,8 @@ def _edit(prepared: PreparedMeshAdaptation, split: _Split, /) -> CellTopologyEdi
             vertex_global_ids=vertex_ids,
         )
         representative_ids, exponents = _periodic_target_orbits(mesh, vertex_ids, sources)
-        periodic_orbits = periodic_vertex_orbit_witness(
-            mesh, carrier, representative_ids, exponents, None
+        periodic_orbits = periodic_owner.periodic_vertex_orbit_witness(
+            mesh, carrier, representative_ids, exponents, None, budget=budget
         )
     return CellTopologyEdit(
         "nested_refinement",
@@ -604,7 +722,7 @@ def _edit(prepared: PreparedMeshAdaptation, split: _Split, /) -> CellTopologyEdi
 
 
 def _support_relations(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     degree: int,
     cells: np.ndarray,
     vertex_ids: np.ndarray,
@@ -619,7 +737,6 @@ def _support_relations(
             np.zeros((0, 1), dtype=np.int64),
             np.zeros((0,), dtype=np.int32),
         )
-    from itertools import combinations
 
     keys = {
         tuple(sorted(vertex_ids[cell[list(local)]]))
@@ -652,23 +769,27 @@ def _support_relations(
 
 
 def _periodic_target_orbits(
-    source: CellMesh, vertex_ids: np.ndarray, sources: np.ndarray, /
+    source: cell_mesh_owner.CellMesh, vertex_ids: np.ndarray, sources: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Global representative IDs and group exponents of every zero-insertion target row.
+    """Return global representative IDs and group exponents for zero-insertion rows.
 
     Old rows keep their scientific quotient membership. A born vertex lies on a
     split source edge; all born vertices of one quotient-edge orbit form one new
-    vertex orbit whose canonical representative is its smallest (first issued)
+    vertex orbit whose representative is its smallest (first issued)
     global ID.
     """
     periodic = source.periodic_topology
     if periodic is None:
-        raise ValueError("Periodic zero-insertion orbits require a periodic source.")
+        raise ValueError(
+            "CellMesh.periodic_topology must be supplied for periodic zero-insertion orbits; got None."
+        )
     old_ids = np.asarray(source.vertex_global_ids, dtype=np.int64)
     count = old_ids.size
     old_shifts = np.asarray(periodic.vertex_shifts, dtype=np.int64)
     if old_shifts.ndim != 2 or old_shifts.shape[0] != count:
-        raise ValueError("Periodic vertex shifts must have one exponent row per vertex.")
+        raise ValueError(
+            f"CellMesh.periodic_topology.vertex_shifts must have one exponent row per vertex; got shape={old_shifts.shape}, vertices={count}."
+        )
     roots = np.asarray(periodic.vertex_representatives, dtype=np.int64)
     representatives = np.empty(vertex_ids.shape, dtype=np.int64)
     shifts = np.zeros((vertex_ids.size, old_shifts.shape[1]), dtype=np.int64)
@@ -702,7 +823,10 @@ def _periodic_target_orbits(
 
 
 def _partition(
-    prepared: PreparedMeshAdaptation, mesh: CellMesh, edit: CellTopologyEdit, /
+    prepared: PreparedMeshAdaptation,
+    mesh: cell_mesh_owner.CellMesh,
+    edit: CellTopologyEdit,
+    /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     connectivity = _tetrahedral_connectivity(mesh)
     values = np.concatenate(
@@ -720,7 +844,7 @@ def _partition(
     low, high = np.min(cell_values, axis=1), np.max(cell_values, axis=1)
     if np.any((low < 0.0) & (high > 0.0)) or np.any((low == 0.0) & (high == 0.0)):
         raise ValueError(
-            "Native zero insertion did not produce an exclusive side partition."
+            "LevelSetMeshAdaptation.target_partition must have an exclusive side partition; got a crossing or identically zero target cell."
         )
     block_sides = np.where(low < 0.0, -1, 1).astype(np.int8)
     order = np.argsort(ids)
@@ -744,14 +868,16 @@ def _partition(
     separating = (negative & positive)[orbit]
     facets = np.all(values[np.asarray(connectivity.faces)] == 0.0, axis=1)
     if np.any(separating & ~facets):
-        raise ValueError("Inside/outside adjacency is not supported by a zero facet.")
+        raise ValueError(
+            "LevelSetMeshAdaptation.target_partition must support inside/outside adjacency with a zero facet; got separating cells without a zero facet."
+        )
     return values, sides, facets
 
 
 def _interface_orientations(
-    mesh: CellMesh, sides: np.ndarray, facets: np.ndarray, /
+    mesh: cell_mesh_owner.CellMesh, sides: np.ndarray, facets: np.ndarray, /
 ) -> np.ndarray:
-    """Inside-to-outside signs; zero marks tangential, nonseparating zero faces."""
+    """Return inside-to-outside signs, with zero for nonseparating faces."""
     connectivity = _tetrahedral_connectivity(mesh)
     selected_faces = np.flatnonzero(facets)
     if selected_faces.size == 0:
@@ -792,7 +918,9 @@ def _interface_orientations(
         triangles[:, 0], triangles[:, 1], triangles[:, 2], points[apex]
     )
     if np.any(signs == 0):
-        raise ValueError("A zero interface has degenerate incident geometry.")
+        raise ValueError(
+            "LevelSetMeshAdaptation.interface_geometry must be nondegenerate; got degenerate incident geometry."
+        )
     separating = np.asarray(
         [len(incident_sides[int(orbit[face])]) == 2 for face in selected_faces]
     )
@@ -819,7 +947,11 @@ def _components(nodes: set[int], links: list[tuple[int, int]], /) -> int:
 
 
 def _topology_signature(
-    mesh: CellMesh, values: np.ndarray, sides: np.ndarray, facets: np.ndarray, /
+    mesh: cell_mesh_owner.CellMesh,
+    values: np.ndarray,
+    sides: np.ndarray,
+    facets: np.ndarray,
+    /,
 ) -> tuple[int, int, int, int, int]:
     connectivity = _tetrahedral_connectivity(mesh)
     relation = mesh.topology.incidences[2].relation
@@ -877,11 +1009,11 @@ def _topology_signature(
 
 
 def _interface_adjacent_sides(
-    mesh: CellMesh, sides: np.ndarray, facets: np.ndarray, /
+    mesh: cell_mesh_owner.CellMesh, sides: np.ndarray, facets: np.ndarray, /
 ) -> tuple[int, ...]:
-    """Distinct sides every zero facet bounds with exactly one incident cell each.
+    """Return distinct sides bounded by each zero facet with one incident cell per side.
 
-    Tangential or mixed facets have no exact zone adjacency, so none is declared.
+    Tangential or mixed facets have no distinct-zone adjacency, so none is declared.
     """
     relation = mesh.topology.incidences[2].relation
     valid = np.asarray(relation.valid)
@@ -900,14 +1032,14 @@ def _interface_adjacent_sides(
 
 def level_set_organization(
     prepared: PreparedMeshAdaptation,
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     patches: tuple[MeshPatch, ...],
     zones: tuple[MeshZone, ...],
     labels: tuple[MeshLabel, ...],
     edit: CellTopologyEdit,
     /,
 ) -> tuple[tuple[MeshPatch, ...], tuple[MeshZone, ...], tuple[MeshLabel, ...]]:
-    """Canonical organization hook run before target certification."""
+    """Construct level-set organization before target certification."""
     request = _request(prepared)
     values, sides, facets = _partition(prepared, mesh, edit)
     previous = request.previous
@@ -918,7 +1050,7 @@ def level_set_organization(
         and not request.accept_topology_change
     ):
         raise ValueError(
-            "The moving zero set changes topology; explicit accept_topology_change is required."
+            "LevelSetMeshAdaptation.accept_topology_change must be True when the moving zero set changes topology; got False."
         )
     retired = (
         set()
@@ -977,15 +1109,30 @@ def level_set_organization(
     return patches, zones + tuple(new_zones), labels + tuple(new_labels)
 
 
-def execute_level_set_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
-    """Route executor; public execution remains execute_mesh_adaptation."""
-    from ._adaptation import _finalize_native, _RouteOutcome, MeshAdaptationStatus
+def execute_level_set_route(
+    prepared: PreparedMeshAdaptation,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: CoordinateEnclosureBudget,
+) -> adaptation_owner.RouteOutcome:
+    """Execute the level-set route admitted by execute_mesh_adaptation."""
 
-    validate_level_set_adaptation(prepared)
-    split = _native_split(prepared)
-    edit = _edit(prepared, split)
-    native = _finalize_native(
-        prepared, edit, MeshTransitionKind.REFINE, conservative=True
+    # Lazy: _level_set <-> _adaptation import cycle.
+    from . import _adaptation as adaptation_owner
+
+    with _level_set_coordinate_budget(prepared, scope=scope, budget=budget):
+        validate_level_set_adaptation(prepared, budget=budget)
+    split = _native_split(prepared, scope=scope, budget=budget)
+    with _level_set_coordinate_budget(prepared, scope=scope, budget=budget):
+        edit = _edit(prepared, split, budget=budget)
+    native = adaptation_owner.finalize_native(
+        prepared,
+        edit,
+        MeshTransitionKind.REFINE,
+        conservative=True,
+        scope=scope,
+        budget=budget,
     )
     evidence = LevelSetEvidence(prepared, native.target.mesh, edit, split.counters)
     limits = prepared.policy.limits
@@ -993,14 +1140,18 @@ def execute_level_set_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcom
         native.target.mesh.entity_set(1).count > limits.maximum_edges
         or native.target.mesh.entity_set(2).count > limits.maximum_faces
     ):
-        raise ValueError("The level-set partition exceeds edge/face limits.")
+        raise ValueError(
+            "LevelSetMeshAdaptation.target_partition must satisfy edge/face limits; got excessive target edges or faces."
+        )
     data_bytes = native.target.mesh.coordinates.size * 8 + sum(
         block.vertices.size * 8 for block in native.target.mesh.blocks
     )
     if data_bytes > limits.maximum_data_bytes:
-        raise ValueError("The level-set partition exceeds maximum_data_bytes.")
-    return _RouteOutcome(
-        MeshAdaptationStatus.COMPLETE,
+        raise ValueError(
+            f"LevelSetMeshAdaptation.target_partition must satisfy maximum_data_bytes; got bytes={data_bytes}, capacity={limits.maximum_data_bytes}."
+        )
+    return adaptation_owner.RouteOutcome(
+        adaptation_owner.MeshAdaptationStatus.COMPLETE,
         native.target,
         native.transition,
         native.lineage,

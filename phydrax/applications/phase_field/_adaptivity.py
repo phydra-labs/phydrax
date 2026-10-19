@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, assert_never
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -152,6 +152,16 @@ class PhaseFieldAdaptationResult(StrictModule, NonTrainableState):
     receipt: CompositionRebindReceipt | None
 
 
+# Staging retains transfer provenance and reclosed fields until the rebind commits.
+type _PhaseFieldCandidate = tuple[
+    PhaseFieldAdaptiveEpoch,
+    FiniteElementFieldTransfer,
+    tuple[tuple[str, Array, FiniteElementFieldTransfer], ...],
+    tuple[Array, ...],
+    tuple[tuple[str, Array, Array], ...],
+]
+
+
 class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
     """Gradient-marked native bisection with transfer and acceptance evidence.
 
@@ -232,6 +242,7 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
         marked_cell_ids: ArrayLike | None = None,
         /,
     ) -> PhaseFieldAdaptationResult:
+        """Mark the mesh, stage its successor fields, then commit conservation evidence."""
         method = epoch.method
         state = epoch.state
         mesh = method.discretization.mesh
@@ -275,25 +286,85 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
             return PhaseFieldAdaptationResult(
                 epoch, epoch, adaptation, None, evidence, jnp.asarray(False), None
             )
-        target_mesh = adaptation.target.mesh
-        if not isinstance(adaptation.hierarchy, BisectionHierarchy):
-            raise RuntimeError(
-                "Native bisection adaptation did not provide a bisection hierarchy."
-            )
-        parents = refinement_parent_cells(adaptation)
-        if parents is None:
-            raise RuntimeError("Native bisection adaptation did not nest its cells.")
-        source_discretization = method.discretization
+        candidate_epoch, transfer, transported, staged, reclosed = (
+            _prepare_phase_field_candidate(epoch, adaptation)
+        )
+        candidate_method = candidate_epoch.method
+        candidate_state = candidate_epoch.state
+        mass_defect = jnp.abs(candidate_state.mass - state.mass)
+        energy_defect = candidate_state.energy - state.energy
+        finite = jnp.isfinite(mass_defect) & jnp.isfinite(energy_defect)
+        mass_required = isinstance(method, PreparedCahnHilliardFEM)
+        successful = (
+            finite
+            & candidate_method.resolution.passed
+            & ((not mass_required) | (mass_defect <= self.mass_tolerance))
+            & (energy_defect <= self.energy_tolerance)
+        )
+        receipt = _commit_phase_field_rebind(
+            epoch,
+            candidate_epoch,
+            transported,
+            staged,
+            reclosed,
+            bool(successful),
+        )
+        selected = candidate_epoch if receipt.published else epoch
+        evidence = PhaseFieldAdaptivityEvidence(
+            indicator,
+            jnp.isin(jnp.asarray(cell_ids), jnp.asarray(marked)),
+            state.mass,
+            candidate_state.mass,
+            mass_defect,
+            state.energy,
+            candidate_state.energy,
+            energy_defect,
+            jnp.asarray(candidate_method.resolution.passed),
+            finite,
+            successful & receipt.published,
+        )
+        return PhaseFieldAdaptationResult(
+            selected,
+            candidate_epoch,
+            adaptation,
+            transfer,
+            evidence,
+            jnp.asarray(receipt.published),
+            receipt,
+        )
 
-        def field_spec(name: str) -> FiniteElementFieldSpec:
-            elements = source_discretization.elements[
-                source_discretization._field_index(name)
-            ]
-            return FiniteElementFieldSpec(name, elements[0])
 
-        if isinstance(method, PreparedAllenCahnFEM):
+def _prepare_phase_field_candidate(
+    epoch: PhaseFieldAdaptiveEpoch,
+    adaptation: MeshAdaptationResult,
+) -> _PhaseFieldCandidate:
+    """Transfer the primary field and reclose method-owned algebraic state."""
+    method = epoch.method
+    state = epoch.state
+    target_mesh = adaptation.target.mesh
+    if not isinstance(adaptation.hierarchy, BisectionHierarchy):
+        raise RuntimeError(
+            "adaptation.hierarchy must be a BisectionHierarchy for native bisection transfer; "
+            f"got {type(adaptation.hierarchy).__name__}"
+        )
+    parents = refinement_parent_cells(adaptation)
+    if parents is None:
+        raise RuntimeError(
+            f"adaptation.parent_cells must provide nested source-cell routes; got {parents!r}"
+        )
+    source_discretization = method.discretization
+
+    def field_spec(name: str) -> FiniteElementFieldSpec:
+        elements = source_discretization.elements[source_discretization.field_index(name)]
+        return FiniteElementFieldSpec(name, elements[0])
+
+    match method:
+        case PreparedAllenCahnFEM():
             if not isinstance(state, AllenCahnAcceptedState):
-                raise TypeError("Allen-Cahn adaptive epoch state is incompatible.")
+                raise TypeError(
+                    "PhaseFieldAdaptiveEpoch.state must be an AllenCahnAcceptedState for PreparedAllenCahnFEM; "
+                    f"got {type(state).__name__}"
+                )
             discretization = FiniteElementPlan(
                 target_mesh, field_spec(method.field_name)
             ).prepare()
@@ -315,9 +386,12 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
             )
             reclosed: tuple[tuple[str, Array, Array], ...] = ()
             staged = (candidate_state.phase,)
-        elif isinstance(method, PreparedCahnHilliardFEM):
+        case PreparedCahnHilliardFEM():
             if not isinstance(state, CahnHilliardAcceptedState):
-                raise TypeError("Cahn-Hilliard adaptive epoch state is incompatible.")
+                raise TypeError(
+                    "PhaseFieldAdaptiveEpoch.state must be a CahnHilliardAcceptedState for PreparedCahnHilliardFEM; "
+                    f"got {type(state).__name__}"
+                )
             discretization = FiniteElementPlan(
                 target_mesh,
                 (
@@ -376,55 +450,15 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
                 ),
             )
             staged = (candidate_state.concentration,)
-        else:
-            raise TypeError("Unsupported adaptive phase-field method.")
-        candidate_epoch = PhaseFieldAdaptiveEpoch(
-            candidate_method,
-            candidate_state,
-            epoch.epoch_index + 1,
-            hierarchy=adaptation.hierarchy,
-        )
-        mass_defect = jnp.abs(candidate_state.mass - state.mass)
-        energy_defect = candidate_state.energy - state.energy
-        finite = jnp.isfinite(mass_defect) & jnp.isfinite(energy_defect)
-        mass_required = isinstance(method, PreparedCahnHilliardFEM)
-        successful = (
-            finite
-            & candidate_method.resolution.passed
-            & ((not mass_required) | (mass_defect <= self.mass_tolerance))
-            & (energy_defect <= self.energy_tolerance)
-        )
-        receipt = _commit_phase_field_rebind(
-            epoch,
-            candidate_epoch,
-            transported,
-            staged,
-            reclosed,
-            bool(successful),
-        )
-        selected = candidate_epoch if receipt.published else epoch
-        evidence = PhaseFieldAdaptivityEvidence(
-            indicator,
-            jnp.isin(jnp.asarray(cell_ids), jnp.asarray(marked)),
-            state.mass,
-            candidate_state.mass,
-            mass_defect,
-            state.energy,
-            candidate_state.energy,
-            energy_defect,
-            jnp.asarray(candidate_method.resolution.passed),
-            finite,
-            successful & receipt.published,
-        )
-        return PhaseFieldAdaptationResult(
-            selected,
-            candidate_epoch,
-            adaptation,
-            transfer,
-            evidence,
-            jnp.asarray(receipt.published),
-            receipt,
-        )
+        case _:
+            assert_never(method)
+    candidate_epoch = PhaseFieldAdaptiveEpoch(
+        candidate_method,
+        candidate_state,
+        epoch.epoch_index + 1,
+        hierarchy=adaptation.hierarchy,
+    )
+    return candidate_epoch, transfer, transported, staged, reclosed
 
 
 _PHASE_FIELD_OWNER = "phase-field-adaptivity"

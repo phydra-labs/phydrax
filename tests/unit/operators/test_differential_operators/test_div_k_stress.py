@@ -12,11 +12,12 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.differential import div_cauchy_stress
+from phydrax.units import METER
 
 
 def test_div_cauchy_stress_zero_for_linear_u() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")
@@ -31,7 +32,7 @@ def test_div_cauchy_stress_zero_for_linear_u() -> None:
 
 def test_div_cauchy_stress_quadratic_u_constant() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")
@@ -46,7 +47,7 @@ def test_div_cauchy_stress_quadratic_u_constant() -> None:
 
 def test_div_cauchy_stress_coord_separable(sample_grid: Any) -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     component = geom.component()
     batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
@@ -63,7 +64,7 @@ def test_div_cauchy_stress_coord_separable(sample_grid: Any) -> None:
 
 def test_div_cauchy_stress_spacetime_broadcasts(sample_batch: Any) -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 
@@ -81,7 +82,7 @@ def test_div_cauchy_stress_spacetime_broadcasts(sample_batch: Any) -> None:
 
 def test_div_cauchy_stress_preserves_metadata() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     u = geom.Function("x")(lambda x: jnp.array([x[0], x[1]])).with_metadata(**{"tag": 3})
     assert div_cauchy_stress(u, lambda_=1.0, mu=2.0).metadata == u.metadata

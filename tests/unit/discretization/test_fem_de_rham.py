@@ -12,9 +12,8 @@ from scipy.linalg import eigvalsh
 from scipy.sparse import bmat, coo_matrix, csc_matrix
 from scipy.sparse.linalg import spsolve
 
-from phydrax.discretization import CellBlock, CellMesh
+from phydrax.discretization import CellBlock, CellMesh, FormElementFamily
 from phydrax.discretization.fem._de_rham import FiniteElementDeRhamComplex
-from phydrax.discretization.fem._form_elements import FormElementFamily
 from phydrax.exterior import hodge_laplacian_eigenbasis
 from phydrax.exterior._algebra import form_to_vector
 from phydrax.exterior._complex import ComplexBoundary

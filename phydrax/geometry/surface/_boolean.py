@@ -2,18 +2,17 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native Booleans of closed oriented triangle surfaces.
+"""Compute native Booleans of closed oriented triangle surfaces.
 
-All operands join one exact arrangement over their original source features;
-there are no rounded intermediate binary Booleans. Fragments of one operand
-form components bounded by contact curves, and the native arrangement decides
-each component's membership in every other operand exactly: the winding
-number is counted along a symbolically perturbed ray from the centroid of the
-component's implicit corners with filtered and exact dyadic predicates.
-Coplanar coverage uses native exact orientation and emits a region once, from
-the lowest-index contributing original operand. Empty and disconnected results
-are legitimate; canceled subexpressions cannot own surviving face properties.
-"""
+All operands join one joint rational arrangement over their source features;
+coordinates are rounded only when that arrangement is published. Fragments of
+one operand form components bounded by contact curves. The native arrangement
+decides each component's membership in every other operand by counting winding
+along a symbolically perturbed ray from the centroid of its implicit corners,
+using filtered and exact predicates on dyadic coordinates. Coplanar coverage
+uses orientation signs from exact predicates and emits each region once, from
+the lowest-index contributing source operand. Empty and disconnected results
+are admitted; canceled subexpressions contribute no surviving face properties."""
 
 from __future__ import annotations
 
@@ -35,10 +34,10 @@ from ..._meshcore import (
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
-from ...typing import Dim, HostBool, HostFloat64, HostInt64, parse, Scope
+from ...typing import checked, Dim, HostBool, HostFloat64, HostInt64, parse, Scope
 from ._arrangement import (
-    _arrange,
-    _require_published_embedded,
+    arrange_classified_surfaces,
+    require_published_embedded,
     SurfaceArrangement,
     SurfaceArrangementEvidence,
     SurfaceArrangementLimits,
@@ -57,7 +56,7 @@ class SurfaceBooleanOperation(StrEnum):
 
 @final
 class _RegionExpression(StrictModule, NonTrainableState):
-    """Immutable original-operand CSG tree, independent of rounded output."""
+    """Immutable source-operand CSG tree, independent of rounded output."""
 
     operation: SurfaceBooleanOperation | None = eqx.field(static=True)
     operand_index: int | None = eqx.field(static=True)
@@ -72,20 +71,28 @@ class _RegionExpression(StrictModule, NonTrainableState):
         children: tuple[_RegionExpression, ...] = (),
     ) -> None:
         if not isinstance(children, tuple):
-            raise TypeError("CSG children must be an immutable tuple.")
+            raise TypeError(
+                f"RegionExpression.children must be an immutable tuple; got {type(children).__name__}"
+            )
         if operand_index is not None and (
             isinstance(operand_index, bool) or not isinstance(operand_index, int)
         ):
-            raise TypeError("An original-operand index must be an integer.")
+            raise TypeError(
+                f"RegionExpression.operand_index must be an integer when supplied; got {operand_index!r}"
+            )
         if operation is None:
             if operand_index is None or operand_index < 0 or children:
                 raise ValueError(
-                    "An original-operand leaf requires one nonnegative index."
+                    f"RegionExpression.operand_index must supply one nonnegative index for a leaf with no children; got index={operand_index!r}, children={len(children)}"
                 )
         elif operand_index is not None or len(children) < 2:
-            raise ValueError("A CSG operation requires two or more child expressions.")
+            raise ValueError(
+                f"RegionExpression.children must contain at least two child expressions for an operation with no operand index; got index={operand_index!r}, children={len(children)}"
+            )
         if not all(isinstance(child, _RegionExpression) for child in children):
-            raise TypeError("CSG children must be original-feature region expressions.")
+            raise TypeError(
+                f"RegionExpression.children must contain source-operand region expressions; got child_types={tuple(type(child).__name__ for child in children)!r}"
+            )
         operation_ = (
             None
             if operation is None
@@ -120,11 +127,15 @@ def _expression_region(
     index = expression.operand_index
     if index is not None:
         if index >= occupancy.shape[1]:
-            raise ValueError("CSG expression references a missing original operand.")
+            raise ValueError(
+                f"RegionExpression.operand_index must index an occupancy operand; got index={index}, operands={occupancy.shape[1]}"
+            )
         return occupancy[:, index]
     operation = expression.operation
     if operation is None:
-        raise ValueError("A CSG operation node is missing its operation.")
+        raise ValueError(
+            "RegionExpression.operation must identify the CSG operation at an operation node; got None"
+        )
     return _region(
         operation,
         np.stack(
@@ -211,10 +222,14 @@ class SurfaceClosureEvidence(StrictModule, NonTrainableState):
             int(nonmanifold_vertices),
         )
         if min(counts) < 0:
-            raise ValueError("Surface closure counts must be nonnegative.")
+            raise ValueError(
+                f"SurfaceClosureEvidence.counts must be nonnegative; got {counts!r}"
+            )
         volume = float(signed_volume)
         if not np.isfinite(volume):
-            raise ValueError("signed_volume must be finite.")
+            raise ValueError(
+                f"SurfaceClosureEvidence.signed_volume must be finite; got {volume!r}"
+            )
         (
             self.triangle_count,
             self.component_count,
@@ -249,7 +264,7 @@ class SurfaceClosureEvidence(StrictModule, NonTrainableState):
 def _undirected_edges(
     triangles: np.ndarray, vertex_count: int, /
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Edge keys ``low * n + high``, owning triangles and directions of all sides."""
+    "Return edge keys ``low * n + high``, incident triangles, and side directions."
 
     directed = np.concatenate(
         (triangles[:, (0, 1)], triangles[:, (1, 2)], triangles[:, (2, 0)])
@@ -341,7 +356,7 @@ def _winding_numbers(
     if work > budget[0]:
         raise SurfaceBooleanError(
             "limit_exceeded",
-            "Boolean classification exceeds maximum_winding_evaluations.",
+            f"surface_boolean.maximum_winding_evaluations must admit point-triangle classification work; got requested={work}, remaining={budget[0]}",
         )
     budget[0] -= work
     values = np.zeros((points.shape[0],), dtype=np.float64)
@@ -393,23 +408,20 @@ def _require_solid(
     if not evidence.closed:
         raise SurfaceBooleanError(
             "open_operand",
-            f"Volumetric Boolean operands must be closed; operand {index} has "
-            f"{evidence.boundary_edges} unpaired directed edges. Open sheets are "
-            "split with arrange_triangle_surfaces.",
+            f"surface_boolean.operands must be closed for volumetric Boolean classification; got operand={index}, unpaired_directed_edges={evidence.boundary_edges}; use arrange_triangle_surfaces for open sheets",
             operand=index,
         )
     if not evidence.edge_manifold:
         raise SurfaceBooleanError(
             "nonmanifold_operand",
-            f"Boolean operand {index} has {evidence.nonmanifold_edges} edges not "
-            "shared by exactly two consistently oriented triangles.",
+            f"surface_boolean.operands must have every edge shared by two consistently oriented triangles; got operand={index}, nonmanifold_edges={evidence.nonmanifold_edges}",
             operand=index,
         )
     volumes = np.bincount(labels, weights=_signed_volumes(vertices, triangles))
     if np.any(volumes == 0.0) or np.sum(volumes) <= 0.0:
         raise SurfaceBooleanError(
             "operand_not_solid",
-            f"Boolean operand {index} does not enclose a positive oriented volume.",
+            f"surface_boolean.operands must have nonzero component volumes and positive total oriented volume; got operand={index}, component_volumes={volumes.tolist()!r}",
             operand=index,
         )
     if volumes.size == 1:
@@ -430,8 +442,7 @@ def _require_solid(
         if abs(winding - expected) > _WINDING_MARGIN:
             raise SurfaceBooleanError(
                 "operand_not_solid",
-                f"Boolean operand {index} has nested shells with inconsistent "
-                "orientation (winding numbers outside {0, 1}).",
+                f"surface_boolean.operands must orient nested shells with winding counts in 0,1; got operand={index}, winding={winding!r}, expected={expected}",
                 operand=index,
             )
 
@@ -439,11 +450,11 @@ def _require_solid(
 def _classify(
     arrangement: SurfaceArrangement, classification: ArrangementClassification, /
 ) -> tuple[np.ndarray, int]:
-    """Exact inside flags ``(fragments, operands)`` and the component count.
+    """Return inside flags ``(fragments, operands)`` from native winding counts.
 
-    A fragment has a membership in every operand other than its own and those
+    A fragment has membership in every operand other than its own and those
     it is coplanar with; coplanar fragments follow the coverage orientation.
-    """
+    The result also includes the component count."""
 
     windings = classification.component_windings[classification.fragment_components]
     classified = windings != ARRANGEMENT_UNCLASSIFIED
@@ -452,13 +463,13 @@ def _classify(
     expected[rows, arrangement.source_surface] = False
     if np.any(classified != expected):
         raise RuntimeError(
-            "Native fragment components disagree with the exact coplanar coverage."
+            f"surface_boolean.classification must agree with coplanar coverage; got classified_shape={classified.shape}, expected_shape={expected.shape}"
         )
     invalid = classified & (windings != 0) & (windings != 1)
     if np.any(invalid):
         raise SurfaceBooleanError(
             "operand_not_solid",
-            "A Boolean operand has exact winding numbers outside {0, 1}.",
+            f"surface_boolean.operands must have winding counts in 0,1; got invalid_counts={windings[invalid].tolist()!r}",
             operand=int(np.flatnonzero(np.any(invalid, axis=0))[0]),
         )
     return windings == 1, classification.component_windings.shape[0]
@@ -473,7 +484,9 @@ def _region(operation: SurfaceBooleanOperation, occupancy: np.ndarray, /) -> np.
         case SurfaceBooleanOperation.DIFFERENCE:
             return occupancy[:, 0] & ~np.any(occupancy[:, 1:], axis=1)
         case _:
-            raise ValueError(f"Unknown surface Boolean operation {operation!r}.")
+            raise ValueError(
+                f"surface_boolean.operation must identify a supported Boolean operation; got {operation!r}"
+            )
 
 
 def _boundary_sources(
@@ -482,12 +495,11 @@ def _boundary_sources(
     front: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Keep ancestry only through subexpressions whose region actually changes.
+    """Keep ancestry through subexpressions whose region membership changes.
 
-    For example, coincident A and B cancel in ``(A - B) union C``. Their
-    geometrically covering faces must not steal C's properties just because
-    their original operand indices precede C.
-    """
+    Coincident A and B cancel in ``(A - B) union C``. Their covering faces
+    contribute no surviving boundary, so C's faces retain their properties
+    independently of the ordering of A and B's source operand indices."""
     sides: dict[str, tuple[np.ndarray, np.ndarray]] = {}
     pending: list[tuple[_RegionExpression, bool]] = [(expression, False)]
     while pending:
@@ -501,7 +513,9 @@ def _boundary_sources(
             continue
         operation = node.operation
         if operation is None:
-            raise ValueError("A CSG operation node is missing its operation.")
+            raise ValueError(
+                "RegionExpression.operation must identify the CSG operation at an operation node; got None"
+            )
         if not expanded:
             pending.append((node, True))
             pending.extend((child, False) for child in reversed(node.children))
@@ -580,30 +594,32 @@ def _barycentric(points: np.ndarray, triangles: np.ndarray, /) -> np.ndarray:
     solved = solve_small_linear(_BARYCENTRIC_PLAN, gram, right)
     if not np.all(np.asarray(solved.successful)):
         # Degenerate source faces are refused by the arrangement beforehand.
-        raise RuntimeError("Source-face barycentric weights met a degenerate face.")
+        raise RuntimeError(
+            f"SurfaceBooleanResult.source_barycentric must use nondegenerate source faces; got failed_rows={np.flatnonzero(~np.asarray(solved.successful)).tolist()!r}"
+        )
     weights = np.asarray(solved.value, dtype=np.float64)
     return np.concatenate((1.0 - np.sum(weights, axis=1, keepdims=True), weights), 1)
 
 
 @final
 class SurfaceBooleanResult(StrictModule, NonTrainableState):
-    """Oriented Boolean output with exact source-face ancestry.
+    """Oriented Boolean output with rational source-face ancestry.
 
     Triangle ``t`` lies in the face with cell global id
     ``source_cell_global_ids[t]`` of operand ``source_operand[t]``, whose
-    explicit original model identity is ``operand_ids[source_operand[t]]``.
-    Its orientation is reversed when ``reversed[t]``. ``source_vertices[t]`` are that face's
-    operand vertex indices and ``source_barycentric[t, c]`` the weights of
-    corner ``c`` in it.  ``surface`` carries the same triangles and vertices
-    (cell and vertex global ids equal their row) for a nonempty edge-manifold
-    result and is ``None`` otherwise; ``closure`` states why.
-    Original models remain in the CSG expression even when a subexpression
+    source model identity is ``operand_ids[source_operand[t]]``.
+    Its orientation is reversed when ``reversed[t]``. ``source_vertices[t]``
+    are that face's operand vertex indices and ``source_barycentric[t, c]``
+    gives the weights of corner ``c`` in it. ``surface`` carries the same
+    triangles and vertices, with cell and vertex global IDs equal to their
+    rows, for a nonempty edge-manifold result. It is ``None`` otherwise;
+    ``closure`` states why.
+    Source models remain in the CSG expression even when a subexpression
     cancels, but ancestry passes only through changing region boundaries.
-    ``classified_components`` fragment components were classified exactly;
-    ``classification_pair_scans`` representative/triangle pairs and
-    ``classification_matrix_entries`` winding entries were the admitted
-    classification work (operand validation work is not included).
-    """
+    ``classified_components`` fragment components have memberships decided
+    by native winding counts. ``classification_pair_scans`` counts the
+    admitted representative/triangle pairs and ``classification_matrix_entries``
+    counts the admitted winding entries, excluding operand validation work."""
 
     __strict_contract__ = True
 
@@ -628,6 +644,7 @@ class SurfaceBooleanResult(StrictModule, NonTrainableState):
     publication_candidate_pairs: int = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -657,11 +674,7 @@ class SurfaceBooleanResult(StrictModule, NonTrainableState):
             or not all(isinstance(model, SurfaceModel) for model in source_models)
         ):
             raise TypeError(
-                "source_models must retain an immutable tuple of original SurfaceModel values."
-            )
-        if not isinstance(region_expression, _RegionExpression):
-            raise TypeError(
-                "region_expression must preserve the original CSG expression."
+                f"SurfaceBooleanResult.source_models must contain an immutable tuple of at least two SurfaceModel values; got {type(source_models).__name__}"
             )
         operand_ids = tuple(model.model_id for model in source_models)
         _expression_region(
@@ -716,16 +729,14 @@ class SurfaceBooleanResult(StrictModule, NonTrainableState):
             scope=scope,
         )
         operation_ = parse(operation, SurfaceBooleanOperation, "operation")
-        if surface is not None and not isinstance(surface, SurfaceModel):
-            raise TypeError("surface must be a SurfaceModel or None.")
-        if not isinstance(arrangement, SurfaceArrangementEvidence):
-            raise TypeError("arrangement must be SurfaceArrangementEvidence.")
-        if not isinstance(closure, SurfaceClosureEvidence):
-            raise TypeError("closure must be SurfaceClosureEvidence.")
         if not np.all(np.isfinite(points)) or not np.all(np.isfinite(weights)):
-            raise ValueError("Boolean vertices and barycentric weights must be finite.")
+            raise ValueError(
+                f"SurfaceBooleanResult.vertices must be finite together with source barycentric weights; got points_shape={points.shape}, weights_shape={weights.shape}"
+            )
         if np.any(faces < 0) or np.any(faces >= points.shape[0]):
-            raise ValueError("Boolean triangles index missing vertices.")
+            raise ValueError(
+                f"SurfaceBooleanResult.triangles must index declared vertices; got vertices={points.shape[0]}, triangles_shape={faces.shape}"
+            )
         if (
             len(operand_ids) < 2
             or np.any(operands < 0)
@@ -733,14 +744,15 @@ class SurfaceBooleanResult(StrictModule, NonTrainableState):
             or np.any(corners < 0)
         ):
             raise ValueError(
-                "Boolean ancestry names an explicit original operand and its vertices."
+                f"SurfaceBooleanResult.source_operand must name an explicit source operand with nonnegative source vertices; got operands={len(operand_ids)}, source_shape={operands.shape}, corners_shape={corners.shape}"
             )
         if not np.all(np.isfinite(bounds)) or np.any(bounds < 0.0):
-            raise ValueError("Boolean publication bounds must be finite and nonnegative.")
+            raise ValueError(
+                f"SurfaceBooleanResult.vertex_bounds must be finite and nonnegative; got shape={bounds.shape}"
+            )
         if (surface is None) == (faces.shape[0] > 0 and closure.edge_manifold):
             raise ValueError(
-                "A Boolean surface is published exactly for nonempty edge-manifold "
-                "results."
+                f"SurfaceBooleanResult.surface must be present exactly for nonempty edge-manifold results; got present={surface is not None}, triangles={faces.shape[0]}, edge_manifold={closure.edge_manifold}"
             )
         self.vertices = points
         self.vertex_bounds = bounds
@@ -809,16 +821,20 @@ class SurfaceBooleanResult(StrictModule, NonTrainableState):
             value.ndim == 0 or value.shape[1:] != values[0].shape[1:] for value in values
         ):
             raise ValueError(
-                "Operand values need one row per vertex and one shape for every operand."
+                f"SurfaceBooleanResult.operand_values must supply one vertex array per operand with matching component shapes; got arrays={len(values)}, operands={len(self.operand_ids)}, shapes={tuple(value.shape for value in values)!r}"
             )
         if not all(np.all(np.isfinite(value)) for value in values):
-            raise ValueError("Operand values must be finite.")
+            raise ValueError(
+                "SurfaceBooleanResult.operand_values must contain finite values; got nonfinite operand data"
+            )
         component = values[0].shape[1:]
         result = np.zeros((self.triangles.shape[0], 3, *component), dtype=np.float64)
         for operand, value in enumerate(values):
             rows = self.source_operand == operand
             if np.any(self.source_vertices[rows] >= value.shape[0]):
-                raise ValueError(f"Operand {operand} values miss source vertices.")
+                raise ValueError(
+                    f"SurfaceBooleanResult.operand_values must include every source vertex; got operand={operand}, rows={value.shape[0]}"
+                )
             source = value[self.source_vertices[rows]]
             weights = self.source_barycentric[rows]
             result[rows] = np.sum(
@@ -872,6 +888,7 @@ def _output_surface(
     )
 
 
+@checked
 def surface_boolean(
     first: SurfaceModel | SurfaceBooleanResult,
     second: SurfaceModel | SurfaceBooleanResult,
@@ -881,64 +898,58 @@ def surface_boolean(
     operands: tuple[SurfaceModel | SurfaceBooleanResult, ...] = (),
     limits: SurfaceArrangementLimits | None = None,
 ) -> SurfaceBooleanResult:
-    """Union, intersection or first-minus-all-later difference of closed solids.
+    """Compute union, intersection or first-minus-all-later difference of closed solids.
 
-    Operands must be closed, edge-manifold, embedded and outward oriented
-    (winding numbers in {0, 1}); open or inconsistent operands are refused with
-    :class:`SurfaceBooleanError`.  Arrangement refusals raise
-    :class:`SurfaceArrangementError`.  Input selections and interfaces are not
+    Operands must be closed, edge-manifold, embedded and outward oriented,
+    with winding counts in {0, 1}. Open or inconsistent operands are refused
+    with :class:`SurfaceBooleanError`; arrangement refusals raise
+    :class:`SurfaceArrangementError`. Input selections and interfaces are not
     inherited; per-face cell tags follow source-face ancestry.
-    Chained results retain their original operands and region expression:
-    the next operation recomputes one exact arrangement of those originals,
-    rather than treating rounded published coordinates as exact new sources.
-    Consequently publication error is bounded once, not silently accumulated,
-    and source-face ancestry always reaches the original model.
-    """
+    Chained results retain their source operands and region expression. Each
+    subsequent operation reconstructs one rational arrangement directly from
+    those source features, then rounds it once on publication. This bounds
+    publication error once and preserves ancestry to the source model."""
 
     originals: list[SurfaceModel] = []
     expressions: list[_RegionExpression] = []
     for operand in (first, second, *operands):
-        if isinstance(operand, SurfaceModel):
-            expressions.append(_RegionExpression(operand_index=len(originals)))
-            originals.append(operand)
-        elif isinstance(operand, SurfaceBooleanResult):
-            expressions.append(
-                _shift_expression(operand.region_expression, len(originals))
-            )
-            originals.extend(operand.source_models)
-        else:
-            raise TypeError(
-                "Boolean operands must be SurfaceModel or SurfaceBooleanResult values."
-            )
+        match operand:
+            case SurfaceModel():
+                expressions.append(_RegionExpression(operand_index=len(originals)))
+                originals.append(operand)
+            case SurfaceBooleanResult():
+                expressions.append(
+                    _shift_expression(operand.region_expression, len(originals))
+                )
+                originals.extend(operand.source_models)
+            case _:
+                raise TypeError(
+                    f"surface_boolean.operands must contain SurfaceModel or SurfaceBooleanResult values; got {type(operand).__name__}"
+                )
     operands_ = tuple(originals)
     operation_ = parse(operation, SurfaceBooleanOperation, "operation")
     expression = _RegionExpression(operation=operation_, children=tuple(expressions))
     limits_ = SurfaceArrangementLimits() if limits is None else limits
-    if not isinstance(limits_, SurfaceArrangementLimits):
-        raise TypeError("limits must be SurfaceArrangementLimits or None.")
     if any(
         surface.metadata.coordinate_contract.spatial_id
         != operands_[0].metadata.coordinate_contract.spatial_id
         for surface in operands_
     ):
         raise ValueError(
-            "Boolean operands require identical spatial coordinate contracts."
+            f"surface_boolean.coordinate_contract must match across operands; got spatial_ids={tuple(surface.metadata.coordinate_contract.spatial_id for surface in operands_)!r}"
         )
     arrays = tuple(_operand_arrays(surface) for surface in operands_)
     budget = [limits_.maximum_winding_evaluations]
     for index, (vertices, triangles, _) in enumerate(arrays):
         _require_solid(vertices, triangles, index, budget)
-    arrangement, classification = _arrange(
+    classified = arrange_classified_surfaces(
         tuple((points, faces) for points, faces, _ in arrays), limits_, budget[0]
     )
-    if classification is None:
-        raise RuntimeError("The native arrangement omitted the requested classification.")
+    arrangement, classification = classified.arrangement, classified.classification
     if classification.status == MeshcoreStatus.CAPACITY_EXCEEDED:
         raise SurfaceBooleanError(
             "limit_exceeded",
-            "Boolean classification needs "
-            f"{classification.matrix_entries} matrix entries and at least "
-            f"{classification.pair_scans} pair scans beyond maximum_winding_evaluations.",
+            f"surface_boolean.maximum_winding_evaluations must admit native classification; got matrix_entries={classification.matrix_entries}, pair_scans={classification.pair_scans}",
         )
     inside, components = _classify(arrangement, classification)
     rows, flipped = _emission(arrangement, inside, expression)
@@ -972,7 +983,7 @@ def surface_boolean(
     )
     # Offending faces of a refused publication are result triangle rows.
     publication_pairs = (
-        _require_published_embedded(
+        require_published_embedded(
             vertices,
             triangles,
             np.arange(rows.size, dtype=np.int64),

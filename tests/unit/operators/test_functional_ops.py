@@ -14,6 +14,7 @@ from phydrax.operators.functional import (
     spatial_l2_norm,
     spatial_mean,
 )
+from phydrax.units import METER
 
 
 def test_spatial_mean_constant_matches_constant(sample_batch: Any) -> None:
@@ -61,7 +62,7 @@ def test_spatial_inner_product_constant(sample_batch: Any) -> None:
 
 def test_spatial_l2_norm_constant_matches_closed_form(sample_batch: Any) -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )  # area=4
     component = geom.component()
     batch = sample_batch(component, blocks=(("x",),), num_points=2048, key=3)

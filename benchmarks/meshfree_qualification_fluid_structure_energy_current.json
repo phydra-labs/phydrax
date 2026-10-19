@@ -791,16 +791,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037364078283000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.45199887501075864,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 2143698944
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.45199887501075864,
                   "phase": "assembly",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 41,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -935,16 +942,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037355197423000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.4025598749285564,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 1896038400
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.4025598749285564,
                   "phase": "local-fit",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 233,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -1063,16 +1077,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037380675452000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.055222957977093756,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 2446229504
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.055222957977093756,
                   "phase": "output",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 7,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -1191,16 +1212,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037380267822000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.513159624999389,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 2440773632
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.513159624999389,
                   "phase": "solve",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 239,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -1393,16 +1421,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037402044589000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.4558732920559123,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 2941632512
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.4558732920559123,
                   "phase": "assembly",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 30,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -1537,16 +1572,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037392860323000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.0646030839998275,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 2772074496
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.0646030839998275,
                   "phase": "local-fit",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 222,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -1665,16 +1707,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037418195187000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.055447209044359624,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 3265085440
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.055447209044359624,
                   "phase": "output",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 8,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -1793,16 +1842,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037417774866000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.6273035410558805,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 3262742528
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.6273035410558805,
                   "phase": "solve",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 233,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -1995,16 +2051,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037449355794000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.5006420419085771,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 3779706880
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.5006420419085771,
                   "phase": "assembly",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 33,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -2139,16 +2202,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037435299802000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.08123733289539814,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 3613900800
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.08123733289539814,
                   "phase": "local-fit",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 308,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -2267,16 +2337,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037466236773000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.05684662505518645,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 4215390208
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.05684662505518645,
                   "phase": "output",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 8,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -2395,16 +2472,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037465805600000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.7723425829317421,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 4212768768
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.7723425829317421,
                   "phase": "solve",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 239,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -2597,16 +2681,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037519814608000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.40011670906096697,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 4873338880
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.40011670906096697,
                   "phase": "assembly",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 43,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -2741,16 +2832,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037494591421000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.06779991707298905,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 4612849664
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.06779991707298905,
                   "phase": "local-fit",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 501,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -2869,16 +2967,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037539926875000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 0.05768329103011638,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 6057639936
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 0.05768329103011638,
                   "phase": "output",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 9,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",
@@ -2997,16 +3102,23 @@
                     "provider": "darwin_mach",
                     "timestamp_ns": 1791037539426655000
                   },
-                  "interval_peak_resident": {
-                    "method": "getrusage_max_rss",
+                  "interval_seconds": 0.05,
+                  "maximum_sample_gap_seconds": 1.048603625036776,
+                  "observed_peak_resident": {
+                    "method": "observed_peak",
                     "resolution_bytes": 1,
                     "scope": "peak",
                     "unavailable_reason": null,
                     "value_bytes": 6055346176
                   },
-                  "interval_seconds": 0.05,
-                  "maximum_sample_gap_seconds": 1.048603625036776,
                   "phase": "solve",
+                  "resident_peak_upper_bound": {
+                    "method": "getrusage_max_rss",
+                    "resolution_bytes": null,
+                    "scope": "peak",
+                    "unavailable_reason": "kernel RSS accounting does not establish a peak upper bound",
+                    "value_bytes": null
+                  },
                   "sample_count": 282,
                   "sampled_peak_resident": {
                     "method": "interval_sampling",

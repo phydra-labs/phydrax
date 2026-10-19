@@ -11,21 +11,20 @@ from typing import Any
 
 import numpy as np
 
-from ...discretization import CellMesh
-from ...discretization._reference_cell import reference_cell_topology
+import phydrax.discretization as cell_mesh_owner
+from phydrax.meshing._contracts import SurfaceMeshingSpec, VolumeMeshingSpec
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
+from ...discretization import reference_cell_topology
 from ...geometry.brep import BRepModel
-from .._contracts import (
-    MeshingFailure,
-    MeshingFailureCategory,
-    SurfaceMeshingSpec,
-    VolumeMeshingSpec,
-)
+from ...typing import checked
 from .._controls import BackgroundMetricControl, BackgroundMetricMode
-from .._metric import _host_spectrum
+from .._metric import host_spectrum
 from .._sizing import (
     CurvatureSizeControl,
     ProximitySizeControl,
     resolve_size_controls,
+    size_statistic_quantile,
     SizeCombinationPolicy,
     SizeCompliancePolicy,
     SizeControlStrength,
@@ -33,8 +32,8 @@ from .._sizing import (
     UniformSizeControl,
 )
 from .._trace import MeshingStageKind
-from ._gmsh_evidence import _EvidenceSection
-from ._gmsh_import import _CadEntityMap, _resolve_entities, _source_scale
+from ._gmsh_evidence import EvidenceSection
+from ._gmsh_import import CadEntityMap, resolve_entities, source_scale
 
 
 _LIST_NAMES = {
@@ -45,7 +44,8 @@ _LIST_NAMES = {
 }
 
 
-def _size_values(specification: SurfaceMeshingSpec | VolumeMeshingSpec, /) -> Any:
+@checked
+def size_values(specification: SurfaceMeshingSpec | VolumeMeshingSpec, /) -> Any:
     top_scope = (
         specification.scope
         if isinstance(specification, SurfaceMeshingSpec)
@@ -105,7 +105,7 @@ def _uniform_size_fields(
     source: BRepModel,
     shape: Any,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
-    cad_entities: _CadEntityMap | None,
+    cad_entities: CadEntityMap | None,
     outside_size: float,
     /,
 ) -> list[int]:
@@ -123,7 +123,10 @@ def _uniform_size_fields(
         if cad_entities is None:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
-                "Semantic solid size fields require resolved CAD volume identities.",
+                (
+                    "gmsh.uniform_size_fields must bind resolved source CAD volumes; got "
+                    + "Semantic solid size fields require resolved CAD volume identities."
+                ),
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
         solid_ids = np.arange(source.topology.num_solids, dtype=np.int64)
@@ -170,7 +173,7 @@ def _uniform_size_fields(
                 tags = (
                     tuple(tag for _, tag in gmsh.model.getEntities(dimension))
                     if control.scope.scope_id == top_scope.scope_id
-                    else _resolve_entities(gmsh, source, control.scope)
+                    else resolve_entities(gmsh, source, control.scope)
                 )
                 groups.append((control.target_size, tags, dimension))
     fields = []
@@ -240,7 +243,10 @@ def _proximity_gap(
     if not np.isfinite(gap) or gap <= tolerance:
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SPECIFICATION,
-            "ProximitySizeControl scopes touch or overlap; no positive gap exists.",
+            (
+                "gmsh.proximity_gap must have a positive facing CAD gap; got "
+                + "ProximitySizeControl scopes touch or overlap; no positive gap exists."
+            ),
             stage=MeshingStageKind.SIZE_FIELD_RESOLUTION.value,
         )
     chord = (points[1] - points[0]) / gap
@@ -250,7 +256,10 @@ def _proximity_gap(
     ):
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SPECIFICATION,
-            "ProximitySizeControl scopes do not face each other across their closest gap.",
+            (
+                "gmsh.proximity_gap must have a positive facing CAD gap; got "
+                + "ProximitySizeControl scopes do not face each other across their closest gap."
+            ),
             stage=MeshingStageKind.SIZE_FIELD_RESOLUTION.value,
         )
     return gap
@@ -261,9 +270,9 @@ def _proximity_field(
 ) -> _ProximityField:
     """Local gap width is the sum of distances to both walls; size is gap / count."""
     dimension = control.source_scope.entity_dimension
-    scale = _source_scale(source)
-    sources = _resolve_entities(gmsh, source, control.source_scope)
-    targets = _resolve_entities(gmsh, source, control.target_scope)
+    scale = source_scale(source)
+    sources = resolve_entities(gmsh, source, control.source_scope)
+    targets = resolve_entities(gmsh, source, control.target_scope)
     gap = _proximity_gap(
         gmsh,
         dimension,
@@ -298,7 +307,8 @@ class _BackgroundView:
     field: int
 
 
-def _background_view(gmsh: Any, control: BackgroundMetricControl, /) -> _BackgroundView:
+@checked
+def background_view(gmsh: Any, control: BackgroundMetricControl, /) -> _BackgroundView:
     """Lower a vertex metric to a Gmsh list-data post-processing view."""
     mesh = control.mesh
     coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
@@ -308,14 +318,19 @@ def _background_view(gmsh: Any, control: BackgroundMetricControl, /) -> _Backgro
     metrics = control.vertex_metrics
     match control.mode:
         case BackgroundMetricMode.ISOTROPIC:
-            eigenvalues, _ = _host_spectrum(metrics)
+            eigenvalues, _ = host_spectrum(metrics)
             values = (1.0 / np.sqrt(eigenvalues[:, -1]))[:, None]
             prefix = "S"
         case BackgroundMetricMode.ANISOTROPIC:
             values = metrics.reshape((metrics.shape[0], -1))
             prefix = "T"
         case _:
-            raise ValueError("Unsupported background metric mode.")
+            raise ValueError(
+                (
+                    "gmsh.background_metric_issues must select a supported background metric mode; got "
+                    + "Unsupported background metric mode."
+                )
+            )
     suffix = {"triangle": "T", "tetrahedron": "S"}[mesh.blocks[0].cell_kind]
     element_coordinates = np.swapaxes(coordinates[cells], 1, 2).reshape(
         (cells.shape[0], -1)
@@ -332,32 +347,33 @@ def _background_view(gmsh: Any, control: BackgroundMetricControl, /) -> _Backgro
 
 
 @dataclass(frozen=True, slots=True)
-class _SizeFields:
+class SizeFields:
     field_ids: tuple[int, ...]
     proximity: tuple[_ProximityField, ...]
     background: _BackgroundView | None
 
 
-def _apply_size_fields(
+@checked
+def apply_size_fields(
     gmsh: Any,
     source: BRepModel,
     shape: Any,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
-    cad_entities: _CadEntityMap | None,
+    cad_entities: CadEntityMap | None,
     outside_size: float,
     background: BackgroundMetricControl | None,
     /,
-) -> _SizeFields:
+) -> SizeFields:
     """Install one background field: the minimum of every scalar size request.
 
     An anisotropic tensor metric cannot enter a scalar minimum; preflight admits
     it only as the sole field, with every uniform target dominated by it.
     """
-    view = None if background is None else _background_view(gmsh, background)
+    view = None if background is None else background_view(gmsh, background)
     # ty: ignore[unresolved-attribute]
     if view is not None and background.mode is BackgroundMetricMode.ANISOTROPIC:
         gmsh.model.mesh.field.setAsBackgroundMesh(view.field)
-        return _SizeFields((view.field,), (), view)
+        return SizeFields((view.field,), (), view)
     fields = _uniform_size_fields(
         gmsh, source, shape, specification, cad_entities, outside_size
     )
@@ -370,16 +386,17 @@ def _apply_size_fields(
     if view is not None:
         fields.append(view.field)
     if not fields:
-        return _SizeFields((), (), None)
+        return SizeFields((), (), None)
     active = fields[0]
     if len(fields) > 1:
         active = gmsh.model.mesh.field.add("Min")
         gmsh.model.mesh.field.setNumbers(active, "FieldsList", fields)
     gmsh.model.mesh.field.setAsBackgroundMesh(active)
-    return _SizeFields(tuple(fields), proximity, view)
+    return SizeFields(tuple(fields), proximity, view)
 
 
-def _edge_size_evidence(
+@checked
+def edge_size_evidence(
     control: UniformSizeControl,
     edges: np.ndarray,
     points: np.ndarray,
@@ -393,7 +410,10 @@ def _edge_size_evidence(
     if not lengths.size:
         raise MeshingFailure(
             MeshingFailureCategory.COMPLIANCE_FAILED,
-            "A size control has no generated mesh edges.",
+            (
+                "gmsh.edge_size_evidence must contain generated mesh edges; got "
+                + "A size control has no generated mesh edges."
+            ),
             stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
         )
     vertex_minimum = np.full((points.shape[0],), np.inf)
@@ -414,7 +434,7 @@ def _edge_size_evidence(
         (f"{key}:maximum_local_edge_ratio", growth),
     ]
     for statistic in specification.size_compliance.target_statistics:
-        quantile = {"p50": 0.5, "p95": 0.95}[statistic]
+        quantile = size_statistic_quantile(statistic)
         achieved.append(
             (f"{key}:{statistic}_edge", float(np.quantile(lengths, quantile)))
         )
@@ -444,8 +464,9 @@ def _edge_size_evidence(
     return issues, tuple(requested), tuple(achieved)
 
 
-def _semantic_size_compliance(
-    mesh: CellMesh,
+@checked
+def semantic_size_compliance(
+    mesh: cell_mesh_owner.CellMesh,
     specification: VolumeMeshingSpec,
     cell_solid_ids: np.ndarray,
     /,
@@ -474,11 +495,14 @@ def _semantic_size_compliance(
         if not selected_edges:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "A solid-scoped size control has no generated cells.",
+                (
+                    "gmsh.semantic_size_compliance must bind populated generated cells; got "
+                    + "A solid-scoped size control has no generated cells."
+                ),
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         local_edges = np.concatenate(selected_edges)
-        local_issues, local_requested, local_achieved = _edge_size_evidence(
+        local_issues, local_requested, local_achieved = edge_size_evidence(
             control, local_edges, points, specification
         )
         issues.extend(local_issues)
@@ -506,17 +530,17 @@ def _wall_distance(
     return distance
 
 
-def _proximity_evidence(
+def proximity_evidence(
     gmsh: Any,
     fields: tuple[_ProximityField, ...],
     edges: np.ndarray,
     points: np.ndarray,
     policy: SizeCompliancePolicy,
     /,
-) -> _EvidenceSection:
-    """Check every edge against the exact CAD local gap at its midpoint."""
+) -> EvidenceSection:
+    """Check every edge against the CAD local gap at its midpoint."""
     if not fields:
-        return _EvidenceSection()
+        return EvidenceSection()
     unique = _unique_edges(edges)
     lengths = np.linalg.norm(points[unique[:, 1]] - points[unique[:, 0]], axis=1)
     midpoints = 0.5 * (points[unique[:, 0]] + points[unique[:, 1]])
@@ -560,10 +584,10 @@ def _proximity_evidence(
         )
         if control.strength is SizeControlStrength.HARD and np.any(lengths > allowed):
             issues.append(f"proximity:{control.control_id}")
-    return _EvidenceSection(tuple(requested), tuple(achieved), tuple(issues))
+    return EvidenceSection(tuple(requested), tuple(achieved), tuple(issues))
 
 
-def _background_metric_evidence(
+def background_metric_evidence(
     gmsh: Any,
     view: _BackgroundView | None,
     edges: np.ndarray,
@@ -571,10 +595,10 @@ def _background_metric_evidence(
     policy: SizeCompliancePolicy,
     tolerance: float,
     /,
-) -> _EvidenceSection:
+) -> EvidenceSection:
     """Measure every generated edge in the metric Gmsh interpolates from the view."""
     if view is None:
-        return _EvidenceSection()
+        return EvidenceSection()
     unique = _unique_edges(edges)
     vectors = points[unique[:, 1]] - points[unique[:, 0]]
     midpoints = 0.5 * (points[unique[:, 0]] + points[unique[:, 1]])
@@ -587,7 +611,10 @@ def _background_metric_evidence(
         if len(values) != width or float(distance) > tolerance:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
-                "The background metric does not cover a generated mesh edge.",
+                (
+                    "gmsh.background_metric_evidence must cover every generated mesh edge; got "
+                    + "The background metric does not cover a generated mesh edge."
+                ),
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         samples[index] = values
@@ -609,10 +636,10 @@ def _background_metric_evidence(
     )
     bound = control.maximum_metric_edge_length
     if bound is None:
-        return _EvidenceSection((), achieved)
+        return EvidenceSection((), achieved)
     issues = ()
     if float(np.max(lengths)) > bound * (1.0 + policy.relative_tolerance) + (
         policy.absolute_tolerance
     ):
         issues = (f"background_metric:{control.control_id}",)
-    return _EvidenceSection(((f"{key}:maximum_edge_length", bound),), achieved, issues)
+    return EvidenceSection(((f"{key}:maximum_edge_length", bound),), achieved, issues)

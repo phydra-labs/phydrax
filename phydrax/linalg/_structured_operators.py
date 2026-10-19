@@ -25,7 +25,6 @@ from ..typing import checked, parse
 from ._operators import (
     _array_value,
     _assemble_operator_diagonal,
-    _generic_adjoint,
     _id,
     _validate_action_dtype,
     _validate_properties,
@@ -35,6 +34,7 @@ from ._operators import (
     ComposedLinearOperator,
     DenseLinearOperator,
     DiagonalLinearOperator,
+    generic_adjoint,
     IdentityLinearOperator,
     ScaledLinearOperator,
 )
@@ -47,13 +47,13 @@ from ._properties import (
 )
 from ._space_extensions import TensorProductSpace
 from ._spaces import (
-    _coordinate_dtype,
     _coordinate_pairing_weights,
     _has_diagonal_pairing,
     _has_euclidean_pairing,
     AbstractVectorSpace,
     ArraySpace,
     BlockSpace,
+    coordinate_dtype,
 )
 from ._sparse_contract import AbstractSparseLinearOperator
 from ._tree import TreeLinearOperator
@@ -205,18 +205,18 @@ class PermutationLinearOperator(AbstractLinearOperator):
         )
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         dtype = self.source.structure()
-        coordinate_dtype = jax.tree.leaves(dtype)[0].dtype
-        return jnp.eye(self.source.size, dtype=coordinate_dtype)[self.permutation]
+        stored_dtype = jax.tree.leaves(dtype)[0].dtype
+        return jnp.eye(self.source.size, dtype=stored_dtype)[self.permutation]
 
     def _assemble_diagonal(self, /) -> Array:
         dtype = self.source.structure()
-        coordinate_dtype = jax.tree.leaves(dtype)[0].dtype
+        stored_dtype = jax.tree.leaves(dtype)[0].dtype
         identity = jnp.arange(self.source.size, dtype=self.permutation.dtype)
-        return (self.permutation == identity).astype(coordinate_dtype)
+        return (self.permutation == identity).astype(stored_dtype)
 
 
 class TriangularLinearOperator(AbstractLinearOperator):
@@ -288,7 +288,7 @@ class TriangularLinearOperator(AbstractLinearOperator):
         return _apply_matrix(self.matrix.T, self.target, self.source, vector)
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         return self.matrix
@@ -362,7 +362,7 @@ class TridiagonalLinearOperator(AbstractLinearOperator):
         return self.source.unflatten(y)
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         matrix = jnp.diag(self.diagonal)
@@ -507,7 +507,7 @@ class BandedLinearOperator(AbstractLinearOperator):
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         if _has_euclidean_pairing(self.source):
             return self._array_action(vector, transpose=True, conjugate=True)
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         size = self.source.size
@@ -665,7 +665,7 @@ class LocalBlockDiagonalLinearOperator(AbstractLinearOperator):
         if not (
             _has_diagonal_pairing(self.source) and _has_diagonal_pairing(self.target)
         ):
-            return _generic_adjoint(self, vector)
+            return generic_adjoint(self, vector)
         value, rhs_shape = _array_value(self.target, (), vector, "vector")
         target_weights = _coordinate_pairing_weights(self.target).reshape(
             self.target.shape + (1,) * len(rhs_shape)
@@ -768,7 +768,7 @@ class BlockDiagonalLinearOperator(AbstractLinearOperator):
         )
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> tuple[PyTree[Array], ...]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         rows = []
@@ -854,7 +854,7 @@ class LowRankLinearOperator(AbstractLinearOperator):
         )
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         return self.left_factor @ jnp.conj(self.right_factor.T)
@@ -952,7 +952,7 @@ class SymmetricLowRankLinearOperator(AbstractLinearOperator):
         )
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         return (self.factor * self.weights[None, :]) @ jnp.conj(self.factor.T)
@@ -995,8 +995,8 @@ class TwoSidedScaledLinearOperator(AbstractLinearOperator):
             raise ValueError("A general two-sided transform requires right_scale.")
         left = jnp.asarray(left_scale)
         right = left if congruence else jnp.asarray(right_scale)
-        dtype = _coordinate_dtype(operator.source)
-        if _coordinate_dtype(operator.target) != dtype:
+        dtype = coordinate_dtype(operator.source)
+        if coordinate_dtype(operator.target) != dtype:
             raise TypeError("Source and target coordinate dtypes must match.")
         if congruence and (
             not operator.source.compatible(operator.target)
@@ -1147,7 +1147,7 @@ class BasePlusLowRankLinearOperator(AbstractLinearOperator):
             raise ValueError("Low-rank factors must contain at least one column.")
         if left.shape[0] != base.source.size:
             raise ValueError("Low-rank factor rows must match the base dimension.")
-        dtype = _coordinate_dtype(base.source)
+        dtype = coordinate_dtype(base.source)
         if np.dtype(left.dtype) != dtype or np.dtype(right.dtype) != dtype:
             raise TypeError("Low-rank factor dtype must match the base coordinate dtype.")
         rank = left.shape[1]
@@ -1215,7 +1215,7 @@ class BasePlusLowRankLinearOperator(AbstractLinearOperator):
         return self.source.unflatten(base_value + update)
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         return self.base._materialize() + self.left_factor @ (
@@ -1295,7 +1295,7 @@ class DiagonalPlusLowRankLinearOperator(AbstractLinearOperator):
         return self.source.unflatten(y)
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         return jnp.diag(self.diagonal) + self.left_factor @ jnp.conj(self.right_factor.T)
@@ -1374,7 +1374,7 @@ class KroneckerLinearOperator(AbstractLinearOperator):
         return self._apply(vector, "transpose")
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         result = jnp.asarray([[1.0]], dtype=self.source.structure().dtype)
@@ -1424,10 +1424,10 @@ class EmbeddedTensorProductLinearOperator(AbstractLinearOperator):
             raise ValueError(
                 "local_operator source and target sizes must match the selected factors."
             )
-        ambient_dtype = _coordinate_dtype(ambient_space)
+        ambient_dtype = coordinate_dtype(ambient_space)
         if (
-            _coordinate_dtype(local_operator.source) != ambient_dtype
-            or _coordinate_dtype(local_operator.target) != ambient_dtype
+            coordinate_dtype(local_operator.source) != ambient_dtype
+            or coordinate_dtype(local_operator.target) != ambient_dtype
         ):
             raise TypeError(
                 "local_operator and ambient_space must share one coordinate dtype."
@@ -1546,8 +1546,8 @@ class EmbeddedTensorProductLinearOperator(AbstractLinearOperator):
         return self._apply(vector, "adjoint")
 
     def _materialize(self, /) -> Array:
-        coordinate_dtype = _coordinate_dtype(self.source)
-        basis = jnp.eye(self.source.size, dtype=coordinate_dtype)
+        stored_dtype = coordinate_dtype(self.source)
+        basis = jnp.eye(self.source.size, dtype=stored_dtype)
 
         def apply_column(coordinates: Array) -> Array:
             vector = self.source.unflatten(coordinates)
@@ -1671,7 +1671,7 @@ class KroneckerSumLinearOperator(AbstractLinearOperator):
         return self._apply(vector, "transpose")
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         sizes = tuple(factor.source.size for factor in self.factors)
@@ -1702,7 +1702,7 @@ def _diagonal_factor(operator: AbstractLinearOperator, /) -> Array | None:
     if isinstance(operator, DiagonalLinearOperator) and not operator.batch_shape:
         return operator.diagonal.reshape((-1,))
     if isinstance(operator, IdentityLinearOperator):
-        return jnp.ones((operator.source.size,), dtype=_coordinate_dtype(operator.source))
+        return jnp.ones((operator.source.size,), dtype=coordinate_dtype(operator.source))
     if isinstance(operator, ScaledLinearOperator) and not operator.batch_shape:
         inner = _diagonal_factor(operator.operator)
         return None if inner is None else operator.scalar * inner
@@ -1888,7 +1888,7 @@ class RowGramLinearOperator(AbstractLinearOperator):
             raise LinearCapabilityError(
                 "Row Gram diagonal assembly needs explicit or diagonally scaled entries."
             )
-        dtype = _coordinate_dtype(self.source)
+        dtype = coordinate_dtype(self.source)
         return (target_weights * squares).astype(dtype)
 
 
@@ -1997,7 +1997,7 @@ class StackedLinearOperator(AbstractLinearOperator):
         return result
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         matrices = tuple(operator._materialize() for operator in self.operators)

@@ -22,11 +22,32 @@ pytestmark = pytest.mark.skipif(
     not meshcore_available(), reason="native meshcore library is unavailable"
 )
 
-# Box domains on [0, 1]^3 with dyadic coordinates, so exact midpoints and
+# Box domains on [0, 1]^3 with dyadic coordinates, so midpoints and
 # in-plane circumcenters of the axis-aligned constraints are representable.
 # Oracles are independent of the mesher: coordinates on the side planes,
 # exact orientation, analytic volumes/areas and numpy circumballs.
 _INTERFACE = 6
+
+
+# Fixed empirical allowances from test_native_volume_quality.py
+# at a6827a9e5; no meshing acceptance policy is relaxed.
+# Native unmet radius/edge ratios versus independent NumPy circumball solves on fixed-
+# boundary tetrahedra.
+_RADIUS_EDGE_REFERENCE_RTOL = 1e-9
+
+
+# Fixed scalar-reference allowances from test_native_volume_quality.py
+# at a6827a9e5; values and relative/absolute roles are unchanged.
+# Unit-box total volume, per-side unit areas and half-volume material regions.
+_BOX_DOMAIN_MEASURE_ATOL = 1e-12
+# Reported minimum dihedral degrees versus independently computed face-normal angles.
+_DIHEDRAL_DEGREES_ATOL = 1e-9
+# Inverse face/edge flips and curve relocation preserve volumes 1/3, 1/6 and authored
+# side areas.
+_LOCAL_TETRA_MEASURE_ATOL = 1e-15
+# Rotated nondyadic PLC volume versus the independent signed determinant divided by
+# six.
+_ROTATED_PLC_VOLUME_ATOL = 1e-14
 
 
 def _box_points(per_side: int, interior: int, seed: int) -> np.ndarray:
@@ -143,7 +164,7 @@ def _assert_exact_domain(arrays: TetMeshArrays, split: float | None = None) -> N
     )
     sides = [_side(arrays.points[face], split) for face in arrays.faces]
     np.testing.assert_array_equal(sides, arrays.face_sources)
-    assert _volumes(arrays).sum() == pytest.approx(1.0, abs=1e-12)
+    assert _volumes(arrays).sum() == pytest.approx(1.0, abs=_BOX_DOMAIN_MEASURE_ATOL)
 
 
 def _minimum_dihedral_degrees(arrays: TetMeshArrays) -> float:
@@ -168,7 +189,9 @@ def test_refined_cube_point_set_meets_the_radius_edge_bound() -> None:
     assert run.status == MeshcoreStatus.OK
     assert _radius_edge(arrays).max() <= 2.0 + 1e-9
     _assert_exact_domain(arrays)
-    assert _areas(arrays) == pytest.approx({side: 1.0 for side in range(6)}, abs=1e-12)
+    assert _areas(arrays) == pytest.approx(
+        {side: 1.0 for side in range(6)}, abs=_BOX_DOMAIN_MEASURE_ATOL
+    )
     assert mesh.unmet().tetrahedra.shape == (0, 4)
 
 
@@ -196,12 +219,12 @@ def test_two_region_box_keeps_its_interface_and_region_volumes() -> None:
     volumes = _volumes(arrays)
     for region in (0, 1):
         assert volumes[arrays.tetrahedron_regions == region].sum() == pytest.approx(
-            0.5, abs=1e-12
+            0.5, abs=_BOX_DOMAIN_MEASURE_ATOL
         )
     x = arrays.points[arrays.tetrahedra][..., 0]
     assert np.all(x[arrays.tetrahedron_regions == 0] <= 0.5)
     assert np.all(x[arrays.tetrahedron_regions == 1] >= 0.5)
-    assert _areas(arrays)[_INTERFACE] == pytest.approx(1.0, abs=1e-12)
+    assert _areas(arrays)[_INTERFACE] == pytest.approx(1.0, abs=_BOX_DOMAIN_MEASURE_ATOL)
 
 
 def test_analytic_size_field_is_sampled_in_batches_of_new_vertices() -> None:
@@ -240,13 +263,15 @@ def test_improvement_raises_the_smallest_dihedral_angle_to_the_target() -> None:
     assert run.status == MeshcoreStatus.OK
     assert _minimum_dihedral_degrees(improved) >= 15.0
     assert quality.minimum_dihedral == pytest.approx(
-        _minimum_dihedral_degrees(improved), abs=1e-9
+        _minimum_dihedral_degrees(improved), abs=_DIHEDRAL_DEGREES_ATOL
     )
     assert quality.slivers == 0
     assert quality.dihedral_histogram.sum() == improved.tetrahedra.shape[0]
     np.testing.assert_array_equal(improved.segments, refined.segments)
     _assert_exact_domain(improved)
-    assert _areas(improved) == pytest.approx(_areas(refined), abs=1e-12)
+    assert _areas(improved) == pytest.approx(
+        _areas(refined), abs=_BOX_DOMAIN_MEASURE_ATOL
+    )
 
 
 def test_fixed_boundary_is_never_split_and_blocked_cells_are_reported() -> None:
@@ -264,7 +289,9 @@ def test_fixed_boundary_is_never_split_and_blocked_cells_are_reported() -> None:
     reasons = Counter(TET_MESH_UNMET_REASONS[reason] for reason in unmet.reasons)
     assert reasons["fixed_boundary"] > 0
     np.testing.assert_allclose(
-        unmet.values, _radius_edge(after)[_rows_of(after, unmet.tetrahedra)], rtol=1e-9
+        unmet.values,
+        _radius_edge(after)[_rows_of(after, unmet.tetrahedra)],
+        rtol=_RADIUS_EDGE_REFERENCE_RTOL,
     )
     _assert_exact_domain(after)
 
@@ -337,7 +364,7 @@ def test_invalid_domains_are_refused(damage: str) -> None:
 
 
 def test_unknown_boundary_policy_is_refused() -> None:
-    with pytest.raises(ValueError, match="boundary policy"):
+    with pytest.raises(ValueError, match=r"TetMesh3D\.boundary_policy"):
         _mesh(_box_domain(_box_points(3, 5, 2)), "sliding")  # ty: ignore[invalid-argument-type]
 
 
@@ -374,7 +401,9 @@ def test_face_flip_and_edge_removal_are_inverse_operations(
     assert flipped.tetrahedra.shape == (3, 4)
     rows = flipped.tetrahedra
     assert np.all((rows == 3).any(axis=1) & (rows == 4).any(axis=1))
-    assert _volumes(flipped).sum() == pytest.approx(1.0 / 3.0, abs=1e-15)
+    assert _volumes(flipped).sum() == pytest.approx(
+        1.0 / 3.0, abs=_LOCAL_TETRA_MEASURE_ATOL
+    )
 
     assert mesh.remove_edge(3, 4)
     np.testing.assert_array_equal(mesh.arrays().tetrahedra, original)
@@ -445,7 +474,7 @@ def test_scheduled_curve_relocation_preserves_exact_original_source() -> None:
     )
     after = mesh.arrays()
     assert run.status == MeshcoreStatus.REFINEMENT_LIMIT
-    assert run.counters[2] > 0
+    assert run.counters.relocations > 0
     assert after.vertex_dimension[inserted] == 1
     assert 0.0 < after.points[inserted, 0] < 1.0
     assert after.points[inserted, 0] != 0.5
@@ -459,8 +488,10 @@ def test_scheduled_curve_relocation_preserves_exact_original_source() -> None:
     assert np.all(
         exact_orient3d(corners[:, 0], corners[:, 1], corners[:, 2], corners[:, 3]) > 0
     )
-    assert _volumes(after).sum() == pytest.approx(1.0 / 6.0, abs=1e-15)
-    assert _areas(after) == pytest.approx(_areas(before), abs=1e-15)
+    assert _volumes(after).sum() == pytest.approx(
+        1.0 / 6.0, abs=_LOCAL_TETRA_MEASURE_ATOL
+    )
+    assert _areas(after) == pytest.approx(_areas(before), abs=_LOCAL_TETRA_MEASURE_ATOL)
     for face, source in zip(after.faces, after.face_sources, strict=True):
         original = points[faces[source]]
         candidate = after.points[face]
@@ -541,7 +572,8 @@ def test_rotated_decimal_edge_split_retains_exact_source_planes() -> None:
             == 0
         )
     assert _volumes(after).sum() == pytest.approx(
-        np.linalg.det(points[cells[0, 1:]] - points[cells[0, 0]]) / 6.0, abs=1e-14
+        np.linalg.det(points[cells[0, 1:]] - points[cells[0, 0]]) / 6.0,
+        abs=_ROTATED_PLC_VOLUME_ATOL,
     )
 
 

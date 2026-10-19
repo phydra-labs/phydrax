@@ -815,7 +815,9 @@ def _expected_archive_inventory(
     /,
 ) -> dict[str, tuple[tuple[int, ...], np.dtype[Any] | None]]:
     if not isinstance(expected_inventory, Mapping):
-        raise TypeError("expected_inventory must be a mapping or None.")
+        raise TypeError(
+            f"read_array_archive.expected_inventory must be a mapping; got {type(expected_inventory).__name__}."
+        )
     expected: dict[str, tuple[tuple[int, ...], np.dtype[Any] | None]] = {}
     for name, specification in expected_inventory.items():
         if (
@@ -824,12 +826,16 @@ def _expected_archive_inventory(
             or not isinstance(specification, tuple)
             or len(specification) != 2
         ):
-            raise TypeError("Expected archive inventory is invalid.")
+            raise TypeError(
+                f"read_array_archive.expected_inventory.entry must pair a non-empty string name with a two-item specification; got {(name, specification)!r}."
+            )
         shape, dtype = specification
         if not isinstance(shape, tuple) or any(
             type(extent) is not int or extent < 0 for extent in shape
         ):
-            raise TypeError("Expected archive shapes must be integer tuples.")
+            raise TypeError(
+                f"read_array_archive.expected_inventory.shape must be a tuple of non-negative integers; got {shape!r}."
+            )
         expected[name] = (
             shape,
             None if dtype is None else np.dtype(dtype),
@@ -850,7 +856,7 @@ def read_array_archive(
     The default limits admit untrusted archives conservatively. Pass ``None``
     explicitly only for a trusted local archive that must retain legacy,
     effectively unbounded size limits. ``admit_manifest`` validates the parsed
-    manifest and returns the exact expected inventory before any member is
+    manifest and returns the expected inventory before any member is
     checksummed or loaded.
     """
     return _read_array_archive(
@@ -874,7 +880,9 @@ def _read_array_archive(
     source = Path(os.fspath(path))
     policy = _resolved_archive_limits(limits)
     if expected_inventory is not None and admit_manifest is not None:
-        raise TypeError("Use either expected_inventory or admit_manifest, not both.")
+        raise TypeError(
+            f"read_array_archive.expected_inventory must be None when admit_manifest is supplied; got {type(expected_inventory).__name__}."
+        )
     expected = (
         None
         if expected_inventory is None

@@ -15,22 +15,18 @@ from phydrax.lifecycle._meshing_sources import (
     write_meshing_source_closure,
 )
 from phydrax.meshing._level_set import LevelSetEvidence, LevelSetMeshAdaptation
+from tests._support.meshing_fixtures import mesh_scope
 
 
 M = phx.meshing
 
 
-def _scope(
-    mesh: phx.discretization.CellMesh, degree: int, ids: np.ndarray
-) -> M.MeshingScope:
-    return M.MeshingScope(
-        mesh.mesh_id,
-        mesh.numeric_version,
-        M.MeshingEntityKind.MESH,
-        degree,
-        mesh.entity_set(degree).entity_set_id,
-        ids,
-    )
+# Fixed empirical allowances from test_native_level_set.py
+# at a6827a9e5; no meshing acceptance policy is relaxed.
+# Affine density 2 + (0.2, 0.3, 0.4).x and volume-weighted unit-simplex inventories.
+_SIMPLEX_TRANSFER_ATOL = 1e-14
+# Periodic edge-root transfer of the fixture inventory 5.0 over its quotient cells.
+_PERIODIC_INVENTORY_ATOL = 1e-13
 
 
 def _tetrahedron(vertex_ids: tuple[int, ...] | None = None) -> M.CellMeshingResult:
@@ -72,7 +68,7 @@ def _request(
 ) -> LevelSetMeshAdaptation:
     ids = np.asarray(source.mesh.vertex_global_ids)
     return LevelSetMeshAdaptation(
-        _scope(source.mesh, 0, ids),
+        mesh_scope(source.mesh, 0, ids),
         values[np.argsort(ids)],
         previous=previous,
         accept_topology_change=accept_topology_change,
@@ -126,7 +122,9 @@ def test_exact_zero_samples_define_shared_interface_without_duplicate_roots() ->
     )
     connectivity = adapted.target.mesh.connectivity
     if not isinstance(connectivity, TetrahedralConnectivity):
-        raise ValueError("The level-set fixture must publish tetrahedral connectivity.")
+        raise ValueError(
+            "adapted.target.mesh.connectivity must be tetrahedral; got non-tetrahedral connectivity."
+        )
     corners = np.asarray(adapted.target.mesh.coordinates)[
         np.asarray(connectivity.faces)[rows]
     ]
@@ -180,16 +178,39 @@ def test_native_inserted_roots_conform_and_preserve_conservative_inventory(
         target_density,
         2.0 + np.asarray(target.coordinates) @ np.asarray((0.2, 0.3, 0.4)),
         rtol=0.0,
-        atol=1e-14,
+        atol=_SIMPLEX_TRANSFER_ATOL,
     )
     np.testing.assert_allclose(
         _inventory(target, target_density),
         _inventory(source.mesh, density),
         rtol=0.0,
-        atol=1e-14,
+        atol=_SIMPLEX_TRANSFER_ATOL,
     )
     assert adapted.parent_reference_vertices.shape == (target.entity_set(3).count, 4, 3)
     assert np.all(adapted.parent_cells == 0)
+
+
+def test_root_parameter_survives_overflowing_endpoint_sum() -> None:
+    # |f(a)| + |f(b)| overflows binary64; each crossing still has its representable
+    # midpoint root on every platform.
+    source = _tetrahedron()
+    values = np.asarray((-1.5e308, 1.5e308, 1.5e308, 1.5e308), dtype=np.float64)
+    adapted = _execute(source, _request(source, values))
+    evidence = adapted.evidence
+    assert isinstance(evidence, LevelSetEvidence)
+    assert evidence.inserted_roots == 3
+    target = adapted.target.mesh
+    root_rows = np.flatnonzero(
+        np.isin(
+            np.asarray(target.vertex_global_ids),
+            np.asarray(evidence.zero_vertex_global_ids),
+        )
+    )
+    assert set(map(tuple, np.asarray(target.coordinates)[root_rows])) == {
+        (0.5, 0.0, 0.0),
+        (0.0, 0.5, 0.0),
+        (0.0, 0.0, 0.5),
+    }
 
 
 def test_moving_zero_set_transfers_every_field_and_history_payload() -> None:
@@ -217,14 +238,16 @@ def test_moving_zero_set_transfers_every_field_and_history_payload() -> None:
         fields = np.asarray(transfer.apply(fields))
         target_points = np.asarray(adapted.target.mesh.coordinates)
         expected = offsets + np.einsum("vd,hfd->vhf", target_points, gradients)
-        np.testing.assert_allclose(fields, expected, rtol=0.0, atol=1e-14)
+        np.testing.assert_allclose(
+            fields, expected, rtol=0.0, atol=_SIMPLEX_TRANSFER_ATOL
+        )
         for history in range(offsets.shape[0]):
             for field in range(offsets.shape[1]):
                 np.testing.assert_allclose(
                     _inventory(adapted.target.mesh, fields[:, history, field]),
                     _inventory(initial_mesh, initial[:, history, field]),
                     rtol=0.0,
-                    atol=1e-14,
+                    atol=_SIMPLEX_TRANSFER_ATOL,
                 )
         previous = adapted.evidence
         assert isinstance(previous, LevelSetEvidence)
@@ -270,14 +293,14 @@ def test_archived_moving_zero_set_replays_current_evidence_and_transfer(
         carried,
         np.stack((2.0 + target_points[:, 0], 3.0 + target_points[:, 1]), axis=1),
         rtol=0.0,
-        atol=1e-14,
+        atol=_SIMPLEX_TRANSFER_ATOL,
     )
     for field in range(fields.shape[1]):
         np.testing.assert_allclose(
             _inventory(second.target.mesh, carried[:, field]),
             _inventory(first.target.mesh, fields[:, field]),
             rtol=0.0,
-            atol=1e-14,
+            atol=_SIMPLEX_TRANSFER_ATOL,
         )
 
 
@@ -303,7 +326,7 @@ def test_level_set_evidence_refuses_changed_scientific_payload(change: str) -> N
             evidence,
             -evidence.cell_sides,
         )
-    with pytest.raises(ValueError, match="Level-set evidence"):
+    with pytest.raises(ValueError, match=r"LevelSetEvidence\."):
         changed.require_current(adapted.target.mesh)
     evidence.require_current(adapted.target.mesh)
 
@@ -343,7 +366,7 @@ def test_moving_zero_set_component_deletion_requires_accepted_topology_event() -
         _inventory(accepted.target.mesh, np.asarray(transfer.apply(density))),
         _inventory(first.target.mesh, density),
         rtol=0.0,
-        atol=1e-14,
+        atol=_SIMPLEX_TRANSFER_ATOL,
     )
     with pytest.raises(ValueError, match="stale"):
         previous.require_current(accepted.target.mesh)
@@ -363,7 +386,9 @@ def test_source_material_assignments_survive_level_set_partition_as_orthogonal_l
     mesh = _bipyramid()
     ids = np.asarray(mesh.entity_set(3).entity_ids)
     zones = tuple(
-        M.MeshZone(name, M.MeshZoneRole.REGION, _scope(mesh, 3, ids[index : index + 1]))
+        M.MeshZone(
+            name, M.MeshZoneRole.REGION, mesh_scope(mesh, 3, ids[index : index + 1])
+        )
         for index, name in enumerate(("material-left", "material-right"))
     )
     source = M.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si(), zones=zones)
@@ -395,8 +420,10 @@ def test_source_material_assignments_survive_level_set_partition_as_orthogonal_l
 def test_protected_crossing_is_refused_without_mutating_source() -> None:
     source = _tetrahedron()
     mesh_id = source.mesh.mesh_id
-    protected = _scope(source.mesh, 1, np.asarray(source.mesh.entity_set(1).entity_ids))
-    with pytest.raises(MeshcoreError, match="refused source edge"):
+    protected = mesh_scope(
+        source.mesh, 1, np.asarray(source.mesh.entity_set(1).entity_ids)
+    )
+    with pytest.raises(MeshcoreError, match=r"LevelSetMeshAdaptation\.native_split"):
         _execute(
             source,
             _request(source, np.sum(np.asarray(source.mesh.coordinates), axis=1) - 0.5),
@@ -466,7 +493,10 @@ def test_periodic_edge_root_orbits_preserve_quotient_and_inventory() -> None:
     assert transfer is not None and transfer.conservative
     density = 2.0 + points[:, 2]
     np.testing.assert_allclose(
-        _inventory(target, np.asarray(transfer.apply(density))), 5.0, rtol=0.0, atol=1e-13
+        _inventory(target, np.asarray(transfer.apply(density))),
+        5.0,
+        rtol=0.0,
+        atol=_PERIODIC_INVENTORY_ATOL,
     )
 
 

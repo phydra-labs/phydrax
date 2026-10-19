@@ -22,12 +22,14 @@ from phydrax.geometry.surface import (
 from phydrax.geometry.surface._contracts import (
     InterfaceSide,
     SurfaceAuditPolicy,
+    SurfaceAuditReport,
     SurfaceInterface,
     SurfaceMetadata,
     SurfacePreparationError,
     SurfacePreparationStatus,
 )
 from phydrax.geometry.surface._model import SurfaceModel
+from phydrax.lifecycle._meshing_sources import validate_meshing_source_closure
 from phydrax.units import METER
 
 
@@ -54,6 +56,23 @@ def _tetrahedron() -> Any:
         ((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)), dtype=np.int32
     )
     return points, outward_faces
+
+
+def test_surface_audit_stored_replay_requires_retained_policy() -> None:
+    points, faces = _tetrahedron()
+    realization = SurfaceModel.from_triangles(
+        points[:3], faces[:1], _metadata()
+    ).prepare()
+    rebuilt = SurfaceAuditReport.from_stored_fields(
+        realization.audit, policy=realization.policy
+    )
+    assert rebuilt.report_id == realization.audit.report_id
+    assert bool(rebuilt.valid)
+    validate_meshing_source_closure(realization)
+    with pytest.raises(ValueError, match=r"stored_fields\.SurfaceAuditReport.*policy_id"):
+        SurfaceAuditReport.from_stored_fields(
+            realization.audit, policy=SurfaceAuditPolicy(require_closed=True)
+        )
 
 
 def test_surface_model_scenario_1() -> None:

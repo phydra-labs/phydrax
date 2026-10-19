@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
 from ._cell_complex import (
     IntervalConnectivity,
     PolygonalConnectivity,
@@ -22,11 +23,12 @@ from ._cell_complex import (
     TetrahedralConnectivity,
 )
 from ._cell_mesh import CellMesh, CellMeshStorage
+from ._distributed_preparation import owner_local_host_array
 from ._hexahedral import HexahedralConnectivity
 
 
 class CellPartition(StrictModule, NonTrainableState):
-    """Solver-neutral exactly-once cell ownership in canonical local cell order."""
+    """Solver-neutral exactly-once cell ownership in local cell order."""
 
     cell_owner: Array
     part_count: int = eqx.field(static=True)
@@ -34,6 +36,7 @@ class CellPartition(StrictModule, NonTrainableState):
     storage_id: str | None = eqx.field(static=True)
     global_cell_count: int = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         cell_owner: ArrayLike,
@@ -42,27 +45,31 @@ class CellPartition(StrictModule, NonTrainableState):
         *,
         storage: CellMeshStorage | None = None,
     ) -> None:
-        owner = np.asarray(cell_owner)
+        owner = owner_local_host_array(cell_owner)
         count = operator.index(part_count)
         if owner.ndim != 1 or not np.issubdtype(owner.dtype, np.integer):
-            raise TypeError("Cell ownership must be an integer vector.")
+            raise TypeError(
+                "CellPartition.cell_owner must be an integer vector; got a noninteger or nonvector input"
+            )
         if (
             isinstance(part_count, bool)
             or count <= 0
             or np.any(owner < 0)
             or np.any(owner >= count)
         ):
-            raise ValueError("Cell ownership or part_count is invalid.")
+            raise ValueError(
+                "CellPartition.cell_owner must name valid partitions under a positive part_count; got invalid owners or partition count"
+            )
         if storage is None:
             if np.unique(owner).size != count:
-                raise ValueError("Every serial partition must own at least one cell.")
-        elif (
-            not isinstance(storage, CellMeshStorage)
-            or storage.partition_count != count
-            or not np.array_equal(owner, np.asarray(storage.entity_owner[-1]))
+                raise ValueError(
+                    "CellPartition.cell_owner must cover every serial partition; got an empty partition"
+                )
+        elif storage.partition_count != count or not np.array_equal(
+            owner, owner_local_host_array(storage.entity_owner[-1])
         ):
             raise ValueError(
-                "Owner-local partition ownership must match its canonical storage route."
+                "CellPartition.storage must match cell ownership and partition count; got incompatible storage routing"
             )
         owner = owner.astype(np.int32, copy=False)
         self.cell_owner = jnp.asarray(owner)
@@ -90,20 +97,22 @@ class CellPartition(StrictModule, NonTrainableState):
             )
 
 
+@checked
 def partition_cells_contiguous(mesh: CellMesh, part_count: int, /) -> CellPartition:
-    """Partition the canonical concatenated block ordering without splitting cells."""
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be CellMesh.")
+    """Partition the concatenated block ordering without splitting cells."""
+
     count = sum(block.cell_count for block in mesh.blocks)
     parts = operator.index(part_count)
     if isinstance(part_count, bool) or parts <= 0 or parts > count:
-        raise ValueError("part_count must lie between one and the cell count.")
+        raise ValueError(
+            "partition_cells_contiguous.part_count must lie between one and the cell count; got an out-of-range partition count"
+        )
     owner = np.arange(count, dtype=np.int64) * parts // count
     return CellPartition(owner, parts)
 
 
 class CellAdjacency(StrictModule, NonTrainableState):
-    """Symmetric cell graph in canonical CSR order (row, then neighbor index).
+    """Symmetric cell graph in CSR order (row, then neighbor index).
 
     Duplicate and reversed pairs collapse to one undirected edge; self pairs are
     rejected because a cell is never its own face neighbor.
@@ -115,23 +124,29 @@ class CellAdjacency(StrictModule, NonTrainableState):
     adjacency_id: str = eqx.field(static=True)
 
     def __init__(self, pairs: ArrayLike, cell_count: int, /) -> None:
-        values = np.asarray(pairs)
+        values = owner_local_host_array(pairs)
         count = operator.index(cell_count)
         if isinstance(cell_count, bool) or count <= 0:
-            raise ValueError("Cell adjacency requires a positive cell count.")
+            raise ValueError(
+                "CellAdjacency.cell_count must be positive; got a nonpositive count"
+            )
         if values.size == 0:
             values = np.zeros((0, 2), dtype=np.int64)
         if not np.issubdtype(values.dtype, np.integer):
-            raise TypeError("Cell adjacency pairs must be integer cell indices.")
+            raise TypeError(
+                "CellAdjacency.pairs must contain integer cell indices; got noninteger values"
+            )
         if values.ndim != 2 or values.shape[1] != 2:
-            raise ValueError("Cell adjacency pairs must have shape (pairs, 2).")
+            raise ValueError(
+                "CellAdjacency.pairs must have shape (pairs, 2); got incompatible rank or width"
+            )
         if (
             np.any(values < 0)
             or np.any(values >= count)
             or np.any(values[:, 0] == values[:, 1])
         ):
             raise ValueError(
-                "Cell adjacency pairs must join two distinct in-range cells."
+                "CellAdjacency.pairs must join distinct in-range cells; got invalid endpoints"
             )
         directed = np.concatenate((values, values[:, ::-1])).astype(np.int64)
         keys = np.unique(directed[:, 0] * count + directed[:, 1])
@@ -152,9 +167,9 @@ class CellAdjacency(StrictModule, NonTrainableState):
 
     def undirected_pairs(self) -> np.ndarray:
         """Return each edge once as ``(lower, upper)`` cell rows in CSR order."""
-        offsets = np.asarray(self.offsets)
+        offsets = owner_local_host_array(self.offsets)
         rows = np.repeat(np.arange(self.cell_count, dtype=np.int32), np.diff(offsets))
-        neighbors = np.asarray(self.neighbors)
+        neighbors = owner_local_host_array(self.neighbors)
         upper = rows < neighbors
         return np.stack((rows[upper], neighbors[upper]), axis=1)
 
@@ -171,31 +186,33 @@ def _expand_adjacency(
     return np.repeat(np.arange(cells.size), degree), neighbors[entries + shift]
 
 
+@checked
 def mesh_cell_adjacency(mesh: CellMesh, /) -> CellAdjacency:
-    """Facet-sharing adjacency in canonical concatenated block cell order."""
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be CellMesh.")
+    """Facet-sharing adjacency in concatenated block cell order."""
+
     cell_count = sum(block.cell_count for block in mesh.blocks)
     connectivity = mesh.connectivity
     match connectivity:
         case PolyhedralConnectivity():
-            owner = np.asarray(connectivity.face_owner, dtype=np.int64)
-            neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int64)
+            owner = owner_local_host_array(connectivity.face_owner, dtype=np.int64)
+            neighbor = owner_local_host_array(connectivity.face_neighbor, dtype=np.int64)
             interior = neighbor >= 0
             return CellAdjacency(
                 np.stack((owner[interior], neighbor[interior]), axis=1), cell_count
             )
         case IntervalConnectivity():
-            incidence = np.asarray(connectivity.cell_vertices, dtype=np.int64)
+            incidence = owner_local_host_array(connectivity.cell_vertices, dtype=np.int64)
             valid = np.ones(incidence.shape, dtype=np.bool_)
         case PolygonalConnectivity():
-            incidence = np.asarray(connectivity.cell_edges, dtype=np.int64)
-            valid = np.asarray(connectivity.cell_edge_valid, dtype=np.bool_)
+            incidence = owner_local_host_array(connectivity.cell_edges, dtype=np.int64)
+            valid = owner_local_host_array(connectivity.cell_edge_valid, dtype=np.bool_)
         case TetrahedralConnectivity() | HexahedralConnectivity():
-            incidence = np.asarray(connectivity.cell_faces, dtype=np.int64)
+            incidence = owner_local_host_array(connectivity.cell_faces, dtype=np.int64)
             valid = np.ones(incidence.shape, dtype=np.bool_)
         case _:
-            raise TypeError("Unsupported cell connectivity for adjacency.")
+            raise TypeError(
+                "mesh_cell_adjacency.mesh.connectivity must support facet incidence; got an unsupported connectivity kind"
+            )
     cells = np.broadcast_to(
         np.arange(incidence.shape[0], dtype=np.int64)[:, None], incidence.shape
     )[valid]
@@ -204,22 +221,32 @@ def mesh_cell_adjacency(mesh: CellMesh, /) -> CellAdjacency:
     facets, cells = facets[order], cells[order]
     shared = facets[1:] == facets[:-1]
     if np.any(shared[1:] & shared[:-1]):
-        raise ValueError("A cell facet is shared by more than two cells.")
+        raise ValueError(
+            "mesh_cell_adjacency.mesh.connectivity must share each facet with at most two cells; got nonmanifold facet incidence"
+        )
     return CellAdjacency(
         np.stack((cells[:-1][shared], cells[1:][shared]), axis=1), cell_count
     )
 
 
 def _validated_cell_ids(value: ArrayLike | None, count: int, /) -> np.ndarray:
-    identifiers = np.arange(count, dtype=np.int64) if value is None else np.asarray(value)
+    identifiers = (
+        np.arange(count, dtype=np.int64)
+        if value is None
+        else owner_local_host_array(value)
+    )
     if not np.issubdtype(identifiers.dtype, np.integer):
-        raise TypeError("Cell global IDs must be integers.")
+        raise TypeError(
+            "CellPartitionHalo.cell_global_ids must contain integers; got noninteger IDs"
+        )
     if (
         identifiers.shape != (count,)
         or np.any(identifiers < 0)
         or np.unique(identifiers).size != count
     ):
-        raise ValueError("Cell global IDs must be unique, non-negative, one per cell.")
+        raise ValueError(
+            "CellPartitionHalo.cell_global_ids must contain unique nonnegative IDs, one per cell; got incompatible IDs"
+        )
     return identifiers.astype(np.int64, copy=False)
 
 
@@ -235,11 +262,13 @@ def padded_part_table(offsets: ArrayLike, values: ArrayLike, /) -> np.ndarray:
     The capacity is the largest group, never the global cell count, so balanced
     partitions stay near ``cells / parts`` columns.
     """
-    starts = np.asarray(offsets, dtype=np.int64)
-    entries = np.asarray(values, dtype=np.int32)
+    starts = owner_local_host_array(offsets, dtype=np.int64)
+    entries = owner_local_host_array(values, dtype=np.int32)
     counts = np.diff(starts)
     if starts.ndim != 1 or entries.shape != (starts[-1],) or np.any(counts < 0):
-        raise ValueError("Part groups must be CSR offsets over their values.")
+        raise ValueError(
+            "padded_part_table.offsets must describe nondecreasing CSR groups over values; got incompatible offsets or values"
+        )
     table = np.full((counts.size, np.max(counts, initial=0)), -1, dtype=np.int32)
     columns = np.arange(entries.size) - np.repeat(starts[:-1], counts)
     table[np.repeat(np.arange(counts.size), counts), columns] = entries
@@ -268,6 +297,7 @@ class CellPartitionHalo(StrictModule, NonTrainableState):
     adjacency_id: str = eqx.field(static=True)
     halo_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         partition: CellPartition,
@@ -277,20 +307,21 @@ class CellPartitionHalo(StrictModule, NonTrainableState):
         layers: int,
         cell_global_ids: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(partition, CellPartition) or not isinstance(
-            adjacency, CellAdjacency
-        ):
-            raise TypeError("Partition halos require CellPartition and CellAdjacency.")
+
         depth = operator.index(layers)
         if isinstance(layers, bool) or depth < 0:
-            raise ValueError("Ghost layer count must be a non-negative integer.")
-        owner = np.asarray(partition.cell_owner, dtype=np.int64)
+            raise ValueError(
+                "CellPartitionHalo.layers must be a nonnegative integer; got invalid ghost depth"
+            )
+        owner = owner_local_host_array(partition.cell_owner, dtype=np.int64)
         count = owner.size
         if adjacency.cell_count != count:
-            raise ValueError("Cell adjacency and partition cover different cells.")
+            raise ValueError(
+                "CellPartitionHalo.adjacency must cover the partition cells; got a different cell count"
+            )
         identifiers = _validated_cell_ids(cell_global_ids, count)
-        offsets = np.asarray(adjacency.offsets)
-        neighbors = np.asarray(adjacency.neighbors, dtype=np.int64)
+        offsets = owner_local_host_array(adjacency.offsets)
+        neighbors = owner_local_host_array(adjacency.neighbors, dtype=np.int64)
         # Breadth-first search over (part, cell) keys for all parts at once; each
         # layer expands the previous frontier through the CSR rows in one pass.
         visited = np.sort(owner * count + np.arange(count, dtype=np.int64))
@@ -345,17 +376,19 @@ class CellPartitionHalo(StrictModule, NonTrainableState):
     def _part(self, part: int, /) -> int:
         index = operator.index(part)
         if not 0 <= index < self.part_count:
-            raise ValueError("Partition index is out of range.")
+            raise ValueError(
+                "CellPartitionHalo.part must name a declared partition; got an out-of-range index"
+            )
         return index
 
     def owned(self, part: int, /) -> Array:
         index = self._part(part)
-        offsets = np.asarray(self.owned_offsets)
+        offsets = owner_local_host_array(self.owned_offsets)
         return self.owned_cells[offsets[index] : offsets[index + 1]]
 
     def halo(self, part: int, /) -> Array:
         index = self._part(part)
-        offsets = np.asarray(self.halo_offsets)
+        offsets = owner_local_host_array(self.halo_offsets)
         return self.halo_cells[offsets[index] : offsets[index + 1]]
 
 
@@ -372,9 +405,9 @@ def inherit_cell_owners(
     part, -1 without routes) and the number of distinct inherited owners, so
     callers decide whether merged cells may straddle parts.
     """
-    owners_by_source = np.asarray(source_owner, dtype=np.int64)
-    sources = np.asarray(source_rows, dtype=np.int64)
-    targets = np.asarray(target_rows, dtype=np.int64)
+    owners_by_source = owner_local_host_array(source_owner, dtype=np.int64)
+    sources = owner_local_host_array(source_rows, dtype=np.int64)
+    targets = owner_local_host_array(target_rows, dtype=np.int64)
     count = operator.index(target_count)
     if (
         owners_by_source.ndim != 1
@@ -386,10 +419,14 @@ def inherit_cell_owners(
         or np.any(targets < 0)
         or np.any(targets >= count)
     ):
-        raise ValueError("Ownership inheritance routes are out of range.")
+        raise ValueError(
+            "inherit_cell_owners.routes must map in-range source and target cells; got invalid route shapes or endpoints"
+        )
     inherited = owners_by_source[sources]
     if np.any(inherited < 0):
-        raise ValueError("Ownership inheritance routes read an unowned source cell.")
+        raise ValueError(
+            "inherit_cell_owners.source_owner must own every routed source cell; got an unowned source row"
+        )
     owner = np.full((count,), -1, dtype=np.int32)
     if targets.size == 0:
         return owner, np.zeros((count,), dtype=np.int32)

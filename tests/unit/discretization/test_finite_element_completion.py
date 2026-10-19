@@ -3,14 +3,23 @@
 #
 
 
-from typing import Any
+from typing import Any, Literal
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
+
+
+# Empirical `test_resolved_affine_geometry_preserves_measure_and_linear_gradient`: matched max |delta|=8.27181e-25; joint allowance fraction=0.000165436, margin=99.9835%.
+_AFFINE_MEASURE_RTOL = 1e-12
+# Empirical `test_resolved_affine_geometry_preserves_measure_and_linear_gradient`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_AFFINE_LINEAR_GRADIENT_RTOL = 1e-12
+# Empirical `test_resolved_affine_geometry_preserves_measure_and_linear_gradient`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_AFFINE_LINEAR_GRADIENT_ATOL = 1e-12
 
 
 def _square_mesh() -> Any:
@@ -72,7 +81,9 @@ def test_resolved_affine_geometry_preserves_measure_and_linear_gradient(
     space = phx.discretization.FiniteElementPlan(mesh, field).prepare()
     geometry = space.block_geometries[0][0]
     expected_measure = 1e-8 / (2.0 if dimension == 2 else 6.0)
-    np.testing.assert_allclose(geometry.measure, expected_measure, rtol=1e-12, atol=0.0)
+    np.testing.assert_allclose(
+        geometry.measure, expected_measure, rtol=_AFFINE_MEASURE_RTOL, atol=0.0
+    )
     dof_map = space.dof_maps[0]
     nodal_x = np.asarray(dof_map.dof_coordinates)[:, 0]
     local_x = nodal_x[np.asarray(dof_map.cell_dofs[0])]
@@ -80,7 +91,12 @@ def test_resolved_affine_geometry_preserves_measure_and_linear_gradient(
     gradient = np.sum(local_x[:, None, :, None] * physical_gradients, axis=-2)
     expected_gradient = np.zeros_like(gradient)
     expected_gradient[..., 0] = 1.0
-    np.testing.assert_allclose(gradient, expected_gradient, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        gradient,
+        expected_gradient,
+        rtol=_AFFINE_LINEAR_GRADIENT_RTOL,
+        atol=_AFFINE_LINEAR_GRADIENT_ATOL,
+    )
 
 
 def test_runtime_geometry_precision_identity_and_projection_are_operational() -> None:
@@ -475,3 +491,233 @@ def test_adaptivity_embedding_partition_and_io_contracts(tmp_path: Any) -> None:
     assert partition.global_inner(jnp.ones(5), jnp.ones(5)) == 3.0
     assert distributed_constraint.partition_id == partition.partition_id
     assert output_path.exists()
+
+
+@pytest.mark.parametrize("transfer_only", (False, True))
+def test_multifield_preparation_resolves_coordinates_once(
+    monkeypatch: pytest.MonkeyPatch, transfer_only: bool
+) -> None:
+    mesh = _square_mesh()
+    D = phx.discretization
+    geometry = D.CellGeometrySpec.affine(mesh)
+    fields = (
+        D.FiniteElementFieldSpec("u", D.lagrange_element("triangle", 1)),
+        D.FiniteElementFieldSpec("v", D.lagrange_element("triangle", 2)),
+    )
+    expected = tuple(
+        D.FiniteElementPlan(mesh, field, coordinate_spec=geometry).prepare()
+        for field in fields
+    )
+    plan = D.FiniteElementPlan(mesh, fields, coordinate_spec=geometry)
+    resolve = D.CellGeometrySpec.resolve
+    calls = 0
+
+    def observe(
+        spec: phx.discretization.CellGeometrySpec,
+        carrier: phx.discretization.CellMesh,
+        **kwargs: Any,
+    ) -> Any:
+        nonlocal calls
+        if spec is geometry:
+            calls += 1
+        return resolve(spec, carrier, **kwargs)
+
+    monkeypatch.setattr(D.CellGeometrySpec, "resolve", observe)
+    prepared = plan.prepare_transfer() if transfer_only else plan.prepare()
+    assert calls == 1
+    for index, reference in enumerate(expected):
+        assert prepared.dof_maps[index].dof_map_id == reference.dof_maps[0].dof_map_id
+        assert (
+            prepared.field_spaces[index].field_space_id
+            == reference.field_spaces[0].field_space_id
+        )
+        np.testing.assert_array_equal(
+            prepared.dof_maps[index].dof_coordinates,
+            reference.dof_maps[0].dof_coordinates,
+        )
+        if isinstance(prepared, phx.discretization.FiniteElementDiscretization):
+            for actual_block, expected_block in zip(
+                prepared.block_geometries[index],
+                reference.block_geometries[0],
+                strict=True,
+            ):
+                for actual, wanted in zip(
+                    jax.tree_util.tree_leaves(actual_block),
+                    jax.tree_util.tree_leaves(expected_block),
+                    strict=True,
+                ):
+                    np.testing.assert_array_equal(actual, wanted)
+
+
+def test_coordinate_preparation_refuses_foreign_immutable_inputs() -> None:
+    from phydrax.discretization.fem._assembly import _PreparedCoordinateMaps
+
+    mesh = _square_mesh()
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    prepared = _PreparedCoordinateMaps.prepare(mesh, geometry, budget=None)
+    with pytest.raises(ValueError, match="coordinate_preparation.binding"):
+        prepared.require(_square_mesh(), geometry)
+    with pytest.raises(ValueError, match="coordinate_preparation.binding"):
+        prepared.require(mesh, phx.discretization.CellGeometrySpec.affine(mesh))
+
+
+@pytest.mark.parametrize("proxy", ("scalar", "circulation", "flux"))
+@pytest.mark.parametrize("retained_action", (False, True))
+def test_prepared_geometry_padding_retains_bitwise_cell_tables(
+    proxy: Literal["scalar", "circulation", "flux"],
+    retained_action: bool,
+) -> None:
+    from phydrax.discretization._cell_geometry import (
+        BarycentricCellGeometryElement,
+        coordinate_lagrange_element,
+    )
+    from phydrax.discretization.fem._generic import _prepare_block_geometry
+
+    D = phx.discretization
+    square = _square_mesh()
+    mesh = D.CellMesh.from_triangles(
+        np.asarray(square.coordinates),
+        np.asarray(square.blocks[0].vertices)[:3],
+    )
+    element = D.form_element(
+        "triangle",
+        0 if proxy == "scalar" else 1,
+        1,
+        family="trimmed",
+        proxy=proxy,
+        twist="twisted" if proxy == "flux" else "untwisted",
+    )
+    precision = D.FiniteElementPrecisionPolicy()
+    coordinate_element = (
+        BarycentricCellGeometryElement(
+            coordinate_lagrange_element("triangle", 1),
+            np.asarray(
+                ((1.0, 0.0, 0.0), (0.25, 0.75, 0.0), (0.125, 0.375, 0.5)),
+                dtype=np.float64,
+            ),
+        )
+        if retained_action
+        else None
+    )
+    coordinates = (
+        np.asarray(mesh.coordinates) * np.asarray((1.1, 1.3), dtype=np.float64)
+        + np.asarray((0.123, 0.234), dtype=np.float64)
+        if retained_action
+        else mesh.coordinates
+    )
+    reference = _prepare_block_geometry(
+        mesh,
+        mesh.blocks[0],
+        element,
+        precision_policy=precision,
+        coordinate_element=coordinate_element,
+        coordinates=coordinates,
+    )
+    bucketed = _prepare_block_geometry(
+        mesh,
+        mesh.blocks[0],
+        element,
+        precision_policy=precision,
+        coordinate_element=coordinate_element,
+        coordinates=coordinates,
+        _preparation_bucket=True,
+    )
+    assert bucketed.physical_points.shape[0] == 3
+    for actual, expected in zip(
+        jax.tree_util.tree_leaves(bucketed),
+        jax.tree_util.tree_leaves(reference),
+        strict=True,
+    ):
+        np.testing.assert_array_equal(actual, expected)
+
+
+@eqx.filter_jit
+def _ungrouped_local_tensors(
+    geometries: tuple[Any, ...], *, mass: bool
+) -> tuple[jax.Array, ...]:
+    from phydrax.discretization.fem._assembly import (
+        local_mass_tensor,
+        local_stiffness_tensor,
+    )
+
+    return tuple(
+        local_mass_tensor(block) if mass else local_stiffness_tensor(block)
+        for block in geometries
+    )
+
+
+@pytest.mark.parametrize("mass", (False, True))
+@pytest.mark.parametrize("proxy", ("scalar", "circulation", "flux"))
+def test_cell_worksets_preserve_interleaved_block_coefficients(
+    mass: bool, proxy: Literal["scalar", "circulation", "flux"]
+) -> None:
+    from phydrax.discretization.fem._assembly import (
+        _transformed_local_values,
+        geometry_local_tensors,
+    )
+
+    D = phx.discretization
+    mesh = _square_mesh()
+    element = D.form_element(
+        "triangle",
+        0 if proxy == "scalar" else 1,
+        1,
+        family="trimmed",
+        proxy=proxy,
+        twist="twisted" if proxy == "flux" else "untwisted",
+    )
+    space = D.FiniteElementPlan(mesh, D.FiniteElementFieldSpec("u", element)).prepare()
+    geometry = space.block_geometries[0][0]
+    cellwise_basis = geometry.basis_values.ndim != 2
+    blocks = tuple(
+        eqx.tree_at(
+            lambda value: (
+                value.physical_weights,
+                value.physical_gradients,
+                value.physical_points,
+                value.measure,
+                *((value.basis_values,) if cellwise_basis else ()),
+            ),
+            geometry,
+            (
+                geometry.physical_weights[start:stop],
+                geometry.physical_gradients[start:stop],
+                geometry.physical_points[start:stop],
+                geometry.measure[start:stop],
+                *((geometry.basis_values[start:stop],) if cellwise_basis else ()),
+            ),
+        )
+        for start, stop in ((0, 1), (1, 4), (0, 2))
+    )
+    local = geometry_local_tensors(blocks, mass=mass)
+    reference = _ungrouped_local_tensors(blocks, mass=mass)
+    for block, actual, expected in zip(blocks, local, reference, strict=True):
+        if proxy == "scalar" and mass:
+            # P1 simplex moment integrals do not share tensor quadrature.
+            analytic = (
+                np.asarray(block.measure)[:, None, None]
+                * (np.ones((3, 3), dtype=np.float64) + np.eye(3, dtype=np.float64))
+                / 12.0
+            )
+            # Two products per quadrature term and its reduction, plus scaling.
+            operations = 3 * block.physical_weights.shape[1] + 2
+            epsilon = np.finfo(np.float64).eps
+            gamma = operations * epsilon / (1.0 - operations * epsilon)
+            np.testing.assert_allclose(actual, analytic, rtol=gamma, atol=0.0)
+            np.testing.assert_allclose(expected, analytic, rtol=gamma, atol=0.0)
+        else:
+            np.testing.assert_array_equal(actual, expected)
+    width = local[0].shape[-1]
+    transforms = tuple(
+        jnp.broadcast_to(jnp.eye(width, dtype=jnp.float64)[:, ::-1], values.shape)
+        for values in local
+    )
+    transformed = _transformed_local_values(transforms, local)
+    for actual, values, transform in zip(transformed, local, transforms, strict=True):
+        # Independently apply each signed/permuted local coefficient map.
+        expected = (
+            np.swapaxes(np.asarray(transform), -1, -2)
+            @ np.asarray(values)
+            @ np.asarray(transform)
+        )
+        np.testing.assert_array_equal(actual, expected)

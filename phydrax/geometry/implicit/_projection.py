@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 
 import equinox as eqx
 import jax
@@ -25,7 +25,7 @@ from ._policy import ImplicitProjectionPolicy, ImplicitProjectionStatus
 _DEFAULT_PROJECTION_POLICY = ImplicitProjectionPolicy()
 
 
-def _field_and_gradient(
+def field_and_gradient(
     kernel: GeometryKernel,
     state: DesignState,
     points: Array,
@@ -70,7 +70,7 @@ def _attach_normal_gauge_jvp(
     )
     if field_tangent is None:
         field_tangent = jnp.zeros(points.shape[:-1], dtype=points.dtype)
-    _, gradient = _field_and_gradient(kernel, state, points)
+    _, gradient = field_and_gradient(kernel, state, points)
     squared_norm = jnp.sum(gradient * gradient, axis=-1)
     usable = squared_norm >= float(minimum_gradient_norm) ** 2
     tangent = (
@@ -158,9 +158,16 @@ class ImplicitPointProjectionResult(StrictModule):
         safe = jnp.asarray(points, dtype=proposed.dtype)
         normals_ = jnp.asarray(normals, dtype=proposed.dtype)
         if proposed.ndim != 2 or safe.shape != proposed.shape:
-            raise ValueError("Projection points must have matching shape (points, dim).")
+            raise ValueError(
+                "ImplicitPointProjectionResult.points must have matching shape "
+                f"(points, dim); got proposed_points.shape={proposed.shape} "
+                f"and points.shape={safe.shape}"
+            )
         if normals_.shape != proposed.shape:
-            raise ValueError("Projection normals must match the point shape.")
+            raise ValueError(
+                "ImplicitPointProjectionResult.normals must match the point shape; "
+                f"got normals.shape={normals_.shape} and points.shape={proposed.shape}"
+            )
         self.proposed_points = proposed
         self.points = safe
         self.normals = normals_
@@ -204,7 +211,10 @@ class ImplicitPointProjectionPlan(StrictModule):
         plan_id: str | None = None,
     ) -> None:
         if not source_id:
-            raise ValueError("source_id must be non-empty.")
+            raise ValueError(
+                "ImplicitPointProjectionPlan.source_id must be non-empty; "
+                f"got {source_id!r}"
+            )
         anchors_host = np.asarray(anchors, dtype=np.float64)
         if (
             anchors_host.ndim != 2
@@ -213,7 +223,9 @@ class ImplicitPointProjectionPlan(StrictModule):
             or not np.all(np.isfinite(anchors_host))
         ):
             raise ValueError(
-                "anchors must be a non-empty finite array with shape (points, dim)."
+                "ImplicitPointProjectionPlan.anchors must be a non-empty finite "
+                f"array with shape (points, {geometry.ambient_dimension}); "
+                f"got shape={anchors_host.shape} and values={anchors_host!r}"
             )
         trust_host = np.asarray(trust_radii, dtype=np.float64)
         if trust_host.shape == ():
@@ -223,10 +235,17 @@ class ImplicitPointProjectionPlan(StrictModule):
             or not np.all(np.isfinite(trust_host))
             or np.any(trust_host <= 0.0)
         ):
-            raise ValueError("trust_radii must be positive with one value per anchor.")
+            raise ValueError(
+                "ImplicitPointProjectionPlan.trust_radii must be positive and finite "
+                "with one value per anchor; "
+                f"got shape={trust_host.shape} and values={trust_host!r}"
+            )
         if not bool(np.asarray(geometry.validity().accepted)):
-            raise ValueError("Projection discovery geometry must be valid.")
-        values, gradients = _field_and_gradient(
+            raise ValueError(
+                "ImplicitPointProjectionPlan.geometry must be valid for projection "
+                "discovery; got accepted=False"
+            )
+        values, gradients = field_and_gradient(
             geometry.kernel,
             geometry.state,
             jnp.asarray(anchors_host),
@@ -235,23 +254,32 @@ class ImplicitPointProjectionPlan(StrictModule):
         minimum_gradient = float(np.min(np.linalg.norm(np.asarray(gradients), axis=-1)))
         if residual > policy.root_tolerance:
             raise ValueError(
-                "Projection anchors must lie on the discovery zero set within root_tolerance."
+                "ImplicitPointProjectionPlan.anchors must lie on the discovery zero "
+                "set within root_tolerance; "
+                f"got residual={residual} and root_tolerance={policy.root_tolerance}"
             )
         if minimum_gradient < policy.minimum_gradient_norm:
-            raise ValueError("Projection anchors must be regular field points.")
+            raise ValueError(
+                "ImplicitPointProjectionPlan.anchors must be regular field points; "
+                f"got minimum_gradient_norm={minimum_gradient} and "
+                f"required_minimum={policy.minimum_gradient_norm}"
+            )
         identifier = plan_id or canonical_fingerprint(
             {
                 "kind": "implicit-point-projection",
                 "source_id": source_id,
                 "kernel": type(geometry.kernel).__qualname__,
-                "schema": [str(item.parameter_id) for item in geometry.schema.specs],
+                "schema": geometry.schema.schema_id,
                 "anchors": anchors_host,
                 "trust_radii": trust_host,
                 "policy": repr(policy),
             }
         )
         if not identifier:
-            raise ValueError("plan_id must be non-empty.")
+            raise ValueError(
+                "ImplicitPointProjectionPlan.plan_id must be non-empty; "
+                f"got {identifier!r}"
+            )
         self.kernel = geometry.kernel
         self.anchors = jnp.asarray(anchors_host)
         self.trust_radii = jnp.asarray(trust_host)
@@ -260,6 +288,19 @@ class ImplicitPointProjectionPlan(StrictModule):
         self.policy = policy
         self.source_id = source_id
         self.plan_id = identifier
+
+    @classmethod
+    @checked
+    def from_stored_fields(cls, value: Self, /, *, geometry: CompiledGeometry) -> Self:
+        """Rebuild retained projection inputs against the discovery geometry."""
+        return cls(
+            geometry,
+            value.anchors,
+            value.trust_radii,
+            policy=value.policy,
+            source_id=value.source_id,
+            plan_id=value.plan_id,
+        )
 
     @property
     def mapping_id(self) -> str:
@@ -271,13 +312,16 @@ class ImplicitPointProjectionPlan(StrictModule):
 
     def realize(self, state: DesignState, /) -> ImplicitPointProjectionResult:
         if not isinstance(state, DesignState) or state.schema != self.schema:
-            raise ValueError("Projection state must use the discovery parameter schema.")
+            raise ValueError(
+                "ImplicitPointProjectionPlan.state must use the discovery parameter "
+                f"schema; got incompatible state={state!r}"
+            )
         policy = self.policy
         minimum_squared = float(policy.minimum_gradient_norm) ** 2
 
         def step(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             points, trust_hit = carry
-            values, gradient = _field_and_gradient(self.kernel, state, points)
+            values, gradient = field_and_gradient(self.kernel, state, points)
             squared_norm = jnp.sum(gradient * gradient, axis=-1)
             usable = squared_norm >= minimum_squared
             increment = (
@@ -311,7 +355,7 @@ class ImplicitPointProjectionPlan(StrictModule):
             jax.lax.stop_gradient(projected),
             policy.minimum_gradient_norm,
         )
-        values, gradient = _field_and_gradient(self.kernel, state, proposed)
+        values, gradient = field_and_gradient(self.kernel, state, proposed)
         gradient_norm = jnp.sqrt(jnp.sum(gradient * gradient, axis=-1))
         displacement = jnp.sqrt(jnp.sum((proposed - self.anchors) ** 2, axis=-1))
         displacement_ratio = displacement / self.trust_radii

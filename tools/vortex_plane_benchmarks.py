@@ -42,8 +42,8 @@ def _case(count: int) -> Any:
     target = phx.discretization.VortexTargetState(targets)
     plane = phx.operators.VortexFMMPlan(
         sources,
-        (-1.0, -1.0, -1.0),
-        (1.0, 1.0, 1.0),
+        jnp.asarray((-1.0, -1.0, -1.0), dtype=jnp.float64),
+        jnp.asarray((1.0, 1.0, 1.0), dtype=jnp.float64),
         plane_opening_angle=0.3,
         reference_targets=targets,
         depth=4,

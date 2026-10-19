@@ -25,7 +25,7 @@ a node (finer neighbor) is split into its four quarter faces, each fanned from
 its center; any other face is fanned from its center through its corners and
 present edge midpoints. Both sides of a shared face therefore produce the same
 triangles, and every face or body center takes the average of the nodal values
-spanning it in a canonical order, which equals the conforming indicator there.
+spanning it in canonical ordering, which equals the conforming indicator there.
 The piecewise-linear field is thus globally conforming across levels and its
 level set is crack free.
 """
@@ -44,15 +44,15 @@ from ...discretization.spatial._morton import (
 )
 from ...linalg import linear_status_message
 from ._poisson import (
-    _CORNERS,
-    _shape_values,
-    _SOLVER_STEPS_PER_GRID_EXTENT,
-    _STIFFNESS,
     cell_divergence,
+    CORNERS,
     iso_statistics,
     PoissonIndicator,
     PoissonSolveEvidence,
+    REFERENCE_STIFFNESS,
+    shape_values,
     solve_indicator,
+    SOLVER_STEPS_PER_GRID_EXTENT,
     splat_field,
     TetrahedralField,
 )
@@ -70,7 +70,7 @@ _HALF_POINTS = np.asarray(
     ],
     dtype=np.int64,
 )
-_HALF_WEIGHTS = _shape_values(0.5 * _HALF_POINTS.astype(np.float64))
+_HALF_WEIGHTS = shape_values(0.5 * _HALF_POINTS.astype(np.float64))
 
 
 def _half_slot(offset: list[int], /) -> int:
@@ -204,7 +204,7 @@ class _Octree:
         codes = morton_encode_integer_host(cells, self.depth)
         leaves = np.searchsorted(self.code_starts, codes, side="right") - 1
         local = (scaled - self.corners[leaves]) / self.sizes[leaves, None]
-        return leaves, _shape_values(np.clip(local, 0.0, 1.0))
+        return leaves, shape_values(np.clip(local, 0.0, 1.0))
 
 
 def _refinement(cells: np.ndarray, depth: int, /) -> list[np.ndarray]:
@@ -258,7 +258,7 @@ def _resolved_constraints(
         )
         masters = np.concatenate((masters[~chained], masters[position]))
     raise RuntimeError(
-        "Hanging-node constraints did not resolve within the octree depth."
+        f"PoissonOctree.constraints must resolve within octree depth {depth}; got unresolved hanging masters"
     )
 
 
@@ -277,8 +277,7 @@ def build_octree(
     depth = max(2, int(np.ceil(np.log2(extent / spacing))))
     if depth > _MAXIMUM_DEPTH:
         raise ValueError(
-            f"Poisson octree needs depth {depth}, above {_MAXIMUM_DEPTH}; "
-            "increase sample_spacing."
+            f"PoissonOctree.depth must not exceed {_MAXIMUM_DEPTH}; got {depth}"
         )
     side = spacing * float(1 << depth)
     origin = 0.5 * (lower + upper) - 0.5 * side
@@ -292,7 +291,7 @@ def build_octree(
     corners = corners.astype(np.int64)
     sizes = np.left_shift(np.int64(1), depth - levels.astype(np.int64))
     extent_nodes = (1 << depth) + 1
-    lattice = corners[:, None, :] + _CORNERS[None, :, :] * sizes[:, None, None]
+    lattice = corners[:, None, :] + CORNERS[None, :, :] * sizes[:, None, None]
     keys = (lattice[..., 0] * extent_nodes + lattice[..., 1]) * extent_nodes + lattice[
         ..., 2
     ]
@@ -316,9 +315,7 @@ def build_octree(
     free_count = node_keys.size - hanging_nodes.size
     if free_count > maximum_unknowns:
         raise ValueError(
-            f"Poisson octree needs {free_count} unknowns, above "
-            f"maximum_grid_nodes={maximum_unknowns}; increase sample_spacing or the "
-            "node budget."
+            f"PoissonOctree.unknowns must not exceed maximum_grid_nodes={maximum_unknowns}; got {free_count}"
         )
     constraint_weights = _HALF_WEIGHTS[slot]
     has_weight = constraint_weights > 0.0
@@ -390,7 +387,7 @@ def _reduced_operator(
     widths = tree.spacing * tree.sizes.astype(np.float64)
     element_rows = np.broadcast_to(tree.leaf_nodes[:, :, None], (widths.size, 8, 8))
     element_columns = np.broadcast_to(tree.leaf_nodes[:, None, :], (widths.size, 8, 8))
-    element_values = widths[:, None, None] * _STIFFNESS[None, :, :]
+    element_values = widths[:, None, None] * REFERENCE_STIFFNESS[None, :, :]
     sample_nodes = tree.leaf_nodes[leaves]
     sample_values = (
         screening_weights[:, None, None] * weights[:, :, None] * weights[:, None, :]
@@ -464,7 +461,9 @@ def _node_averages(
             (lattice4[index] + offset * tree.sizes[leaves[index]][:, None]) // 4
         )
         if np.any(spanning < 0):
-            raise RuntimeError("A face center is not spanned by octree nodes.")
+            raise RuntimeError(
+                "PoissonOctree.face_center must be spanned by octree nodes; got absent spanning nodes"
+            )
         total = total + nodal[spanning]
     values[index] = 0.25 * total
     return values
@@ -543,7 +542,7 @@ def solve_octree_poisson(
         columns,
         values,
         rhs,
-        _SOLVER_STEPS_PER_GRID_EXTENT * (1 << tree.depth),
+        SOLVER_STEPS_PER_GRID_EXTENT * (1 << tree.depth),
     )
     nodal = tree.prolong(record.values)
     sampled = np.sum(nodal[tree.leaf_nodes[leaves]] * weights, axis=1)

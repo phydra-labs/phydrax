@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def test_cached_rolling_curved_wall_rollout_preserves_replay_and_energy_evidence() -> (
@@ -25,7 +26,7 @@ def test_cached_rolling_curved_wall_rollout_preserves_replay_and_energy_evidence
         rolling_friction=jnp.asarray([[0.05]]),
     )
     barrier = phx.discretization.ImplicitDEMBarrier(
-        phx.geometry.Circle((0.0, 0.0), 2.0).compile(),
+        phx.geometry.Circle((0.0, 0.0), 2.0).compile(coordinate_unit=METER),
         phx.discretization.DEMBarrierSide.INTERIOR,
         0,
         barrier_id="curved-container",

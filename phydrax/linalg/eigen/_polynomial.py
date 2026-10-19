@@ -22,7 +22,7 @@ from .._operators import (
     BlockLinearOperator,
     IdentityLinearOperator,
 )
-from .._spaces import _coordinate_dtype, AbstractVectorSpace, BlockSpace
+from .._spaces import AbstractVectorSpace, BlockSpace, coordinate_dtype
 from ._general import (
     _operator_coordinate_action,
     _unflatten_complex_columns,
@@ -569,7 +569,7 @@ def _original_residuals(
 
 
 def _coordinate_norm(space: AbstractVectorSpace, coordinates: Array, /) -> Array:
-    dtype = np.dtype(_coordinate_dtype(space))
+    dtype = np.dtype(coordinate_dtype(space))
     if np.issubdtype(dtype, np.complexfloating):
         vector = space.unflatten(coordinates.astype(dtype))
         return jnp.sqrt(jnp.maximum(jnp.real(space.inner(vector, vector)), 0.0))

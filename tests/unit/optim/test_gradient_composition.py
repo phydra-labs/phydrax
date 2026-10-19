@@ -19,6 +19,20 @@ from phydrax.optim import (
 )
 
 
+# Empirical `test_active_bank_composes_every_signed_row_and_preserves_equality`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_ACTIVE_BANK_DIRECTION_NORM_RTOL = 1e-12
+# Empirical `test_active_bank_exact_components_follow_equality_projection_coupling`: matched max |delta|=2.77556e-17; joint allowance fraction=0.0001833, margin=99.9817%.
+_PROJECTED_ACTIVE_BANK_DIRECTION_RTOL = 1e-12
+# Empirical `test_active_bank_exact_components_follow_equality_projection_coupling`: matched max |delta|=2.77556e-17; joint allowance fraction=0.0001833, margin=99.9817%.
+_PROJECTED_ACTIVE_BANK_DIRECTION_ATOL = 1e-14
+# Empirical `test_active_bank_raw_targets_preserve_unequal_requested_projection_ratios`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_ACTIVE_BANK_PROJECTION_RATIO_RTOL = 1e-12
+# Empirical `test_active_bank_raw_targets_preserve_unequal_requested_projection_ratios`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_RESCALED_ACTIVE_BANK_DIRECTION_RTOL = 1e-12
+# Empirical `test_active_bank_raw_targets_preserve_unequal_requested_projection_ratios`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_RESCALED_ACTIVE_BANK_DIRECTION_ATOL = 1e-14
+
+
 def test_gradient_composition_scenario_1() -> None:
     result = conflict_free_gradient((jnp.asarray((1.0, 0.0)), jnp.asarray((0.0, 1.0))))
 
@@ -108,7 +122,10 @@ def test_active_bank_composes_every_signed_row_and_preserves_equality() -> None:
     assert bool(jnp.all(result.projections[:5] > 0.0))
     assert abs(float(result.equality_projections[5])) <= 1e-10
     np.testing.assert_allclose(
-        jnp.linalg.norm(result.direction), 0.1, rtol=1e-12, atol=0.0
+        jnp.linalg.norm(result.direction),
+        0.1,
+        rtol=_ACTIVE_BANK_DIRECTION_NORM_RTOL,
+        atol=0.0,
     )
     assert int(result.bucket) == 8
     assert int(result.equality_bucket) == 4
@@ -172,7 +189,12 @@ def test_active_bank_exact_components_follow_equality_projection_coupling() -> N
     assert bool(jnp.all(result.projections[:2] > 0.0))
     assert abs(float(result.equality_projections[2])) <= 1e-10
     expected = np.asarray((1.0, 1.0)) * (0.2 / np.sqrt(2.0))
-    np.testing.assert_allclose(result.direction, expected, rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(
+        result.direction,
+        expected,
+        rtol=_PROJECTED_ACTIVE_BANK_DIRECTION_RTOL,
+        atol=_PROJECTED_ACTIVE_BANK_DIRECTION_ATOL,
+    )
 
 
 def test_active_bank_raw_targets_preserve_unequal_requested_projection_ratios() -> None:
@@ -201,12 +223,15 @@ def test_active_bank_raw_targets_preserve_unequal_requested_projection_ratios() 
     np.testing.assert_allclose(
         result.projections[0] / result.projections[1],
         targets[0] / targets[1],
-        rtol=1e-12,
+        rtol=_ACTIVE_BANK_PROJECTION_RATIO_RTOL,
         atol=0.0,
     )
     assert abs(float(result.equality_projections[2])) <= 1e-10
     np.testing.assert_allclose(
-        jnp.linalg.norm(result.direction), 0.5, rtol=1e-12, atol=0.0
+        jnp.linalg.norm(result.direction),
+        0.5,
+        rtol=_ACTIVE_BANK_DIRECTION_NORM_RTOL,
+        atol=0.0,
     )
     # A primitive row-unit change must change its raw target with it. This
     # is physical row-dot-direction equivalence, not a unit-margin proxy.
@@ -214,7 +239,10 @@ def test_active_bank_raw_targets_preserve_unequal_requested_projection_ratios() 
     rescaled = evaluate(gradients * row_scale[:, None], targets * row_scale)
     assert bool(rescaled.valid)
     np.testing.assert_allclose(
-        rescaled.direction, result.direction, rtol=1e-12, atol=1e-14
+        rescaled.direction,
+        result.direction,
+        rtol=_RESCALED_ACTIVE_BANK_DIRECTION_RTOL,
+        atol=_RESCALED_ACTIVE_BANK_DIRECTION_ATOL,
     )
 
 
@@ -256,7 +284,9 @@ def test_active_bank_rejects_nonzero_equality_target_and_mismatched_target_shape
     )
     assert not bool(result.valid)
     assert not bool(result.resource_refused)
-    with pytest.raises(ValueError, match="targets"):
+    with pytest.raises(
+        ValueError, match=r"compose_active_gradient_bank\.raw_improvement_targets"
+    ):
         compose_active_gradient_bank(
             gradients,
             jnp.ones((3,)),

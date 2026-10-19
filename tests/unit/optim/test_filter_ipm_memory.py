@@ -15,7 +15,6 @@ from phydrax import optim
 from phydrax.linalg import prepare_linearization
 from phydrax.optim._constrained_model import prepare_constrained_model_evaluation
 from phydrax.optim._filter_ipm import _select_derivative_trial
-from phydrax.optim._nonlinear_constraints import _constraint_layout
 from phydrax.optim._primal_dual import _build_kkt_system, PrimalDualNewtonKrylov
 
 
@@ -203,10 +202,10 @@ def test_prepared_kkt_actions_match_point_specific_analytic_curvature(
 
     derivative = prepare_linearization(constraints, point)
     method = PrimalDualNewtonKrylov()
-    system = _build_kkt_system(
+    system, _, _ = _build_kkt_system(
         method,
         problem,
-        _constraint_layout(problem, point, None),
+        optim.constraint_layout(problem, point, None),
         lambda value: value,
         None,
         point,

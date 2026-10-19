@@ -10,6 +10,10 @@
  * batched functions additionally report one item status per entry.  No C++
  * exception crosses the ABI: a failed allocation reports
  * PHX_MC_CAPACITY_EXCEEDED and any other escaped failure PHX_MC_INTERNAL_ERROR.
+ * Request structs borrow every input and output buffer for the duration of the
+ * call. Their fields use the platform's natural C layout (no packing); const
+ * request pointers do not make the pointed-to output buffers immutable.
+ * A null request returns PHX_MC_INVALID_ARGUMENT without writing any output.
  */
 #ifndef PHYDRAX_MESHCORE_H
 #define PHYDRAX_MESHCORE_H
@@ -58,17 +62,246 @@ PHX_MC_API const char* phx_mc_build_hash(void);
 PHX_MC_API const char* phx_mc_build_configuration(void);
 PHX_MC_API void phx_mc_exact_domain(int32_t* min_exponent, int32_t* max_exponent);
 
+/* Lower one native execution policy on the creating thread. Logical chunks,
+ * arena bounds, admission, and serial commit belong to the individual batch.
+ * parallelism is positive; maximum_seconds is nonnegative or +INFINITY.
+ * Policies nest in LIFO order. end restores the previous policy even when
+ * TIMEOUT reports an expired execution/publication deadline. Pool threads
+ * are created only when an admitted region needs more than one participant.
+ * A process must use spawn rather than fork after a region initializes the pool. */
+PHX_MC_API int32_t phx_mc_parallel_begin(
+    int32_t parallelism, double maximum_seconds, void** policy);
+PHX_MC_API int32_t phx_mc_parallel_end(void* policy);
+
 typedef struct phx_mc_tet_mesh phx_mc_tet_mesh;
 #define PHX_MC_EXECUTION_COUNTERS 9
 #define PHX_MC_EXECUTION_MEMORY_VALUES 8
+#define PHX_MC_EXECUTION_BATCH_REFUSAL_VALUES 8
+#define PHX_MC_PLC3D_PHASE_VALIDATION 0
+#define PHX_MC_PLC3D_PHASE_PREPARATION 1
+#define PHX_MC_PLC3D_PHASE_BOUNDARY_RECOVERY 2
+#define PHX_MC_PLC3D_PHASE_CLASSIFICATION 3
+#define PHX_MC_PLC3D_PHASE_PUBLICATION 4
+#define PHX_MC_PLC3D_PHASE_VALUES 5
+#define PHX_MC_RESOURCE_WORK 0
+#define PHX_MC_RESOURCE_QUERIES 1
+#define PHX_MC_RESOURCE_CAVITY 2
+#define PHX_MC_RESOURCE_BYTES 3
+#define PHX_MC_EXECUTION_RESOURCE_VALUES 4
+
+#define PHX_MC_PLC3D_SOURCE_REFUSAL_CERTIFIED_DEVIATION 0
+#define PHX_MC_PLC3D_SOURCE_REFUSAL_DECLARED_BOUND 1
+#define PHX_MC_PLC3D_SOURCE_REFUSAL_VALUES 2
+
+#define PHX_MC_TET_MESH_COUNT_VERTICES 0
+#define PHX_MC_TET_MESH_COUNT_TETRAHEDRA 1
+#define PHX_MC_TET_MESH_COUNT_FACES 2
+#define PHX_MC_TET_MESH_COUNT_SEGMENTS 3
+#define PHX_MC_TET_MESH_COUNT_UNMET_RECORDS 4
+#define PHX_MC_TET_MESH_COUNT_WORK_UNITS 5
+
+#define PHX_MC_ARRANGEMENT_CLASSIFICATION_COMPONENTS 0
+#define PHX_MC_ARRANGEMENT_CLASSIFICATION_OPERANDS 1
+#define PHX_MC_ARRANGEMENT_CLASSIFICATION_PAIR_SCANS 2
+#define PHX_MC_ARRANGEMENT_CLASSIFICATION_MATRIX_ENTRIES 3
+#define PHX_MC_ARRANGEMENT_CLASSIFICATION_VALUES 4
+/* Named ABI evidence slots; their order is stable across return paths. */
+#define PHX_MC_EXECUTION_CONSTRUCTION_WORK 0
+#define PHX_MC_EXECUTION_SOURCE_QUERIES 1
+#define PHX_MC_EXECUTION_PEAK_CAVITY 2
+#define PHX_MC_EXECUTION_WORK_REFUSALS 3
+#define PHX_MC_EXECUTION_QUERY_REFUSALS 4
+#define PHX_MC_EXECUTION_CAVITY_REFUSALS 5
+#define PHX_MC_EXECUTION_EXTERNAL_WORK 6
+#define PHX_MC_EXECUTION_EXTERNAL_QUERIES 7
+#define PHX_MC_EXECUTION_PRIMITIVE_QUERIES 8
+
+#define PHX_MC_MEMORY_LIMIT_BYTES 0
+#define PHX_MC_MEMORY_LIVE_BYTES 1
+#define PHX_MC_MEMORY_PEAK_BYTES 2
+#define PHX_MC_MEMORY_REQUESTED_BYTES 3
+#define PHX_MC_MEMORY_ALLOCATIONS 4
+#define PHX_MC_MEMORY_REFUSALS 5
+#define PHX_MC_MEMORY_VALUES 6
+
+#define PHX_MC_EXECUTION_MEMORY_LIMIT_BYTES 0
+#define PHX_MC_EXECUTION_MEMORY_LIVE_BYTES 1
+#define PHX_MC_EXECUTION_MEMORY_PEAK_BYTES 2
+#define PHX_MC_EXECUTION_MEMORY_REQUESTED_BYTES 3
+#define PHX_MC_EXECUTION_MEMORY_ALLOCATIONS 4
+#define PHX_MC_EXECUTION_MEMORY_REFUSALS 5
+#define PHX_MC_EXECUTION_MEMORY_EXTERNAL_LIVE_UPPER_BYTES 6
+#define PHX_MC_EXECUTION_MEMORY_EXTERNAL_PEAK_UPPER_BYTES 7
+
+#define PHX_MC_PLANAR_WORK_UNITS 0
+#define PHX_MC_PLANAR_ORIENT_REQUESTS 1
+#define PHX_MC_PLANAR_INCIRCLE_REQUESTS 2
+#define PHX_MC_PLANAR_POWER_REQUESTS 3
+#define PHX_MC_PLANAR_INSERTIONS 4
+#define PHX_MC_PLANAR_FLIPS 5
+#define PHX_MC_PLANAR_PEAK_CAVITY_CELLS 6
+#define PHX_MC_PLANAR_WORK_REFUSALS 7
+#define PHX_MC_PLANAR_CAVITY_REFUSALS 8
+#define PHX_MC_PLANAR_COUNTERS 9
+
+#define PHX_MC_GRAPH_PARTITION_COARSENING_LEVELS 0
+#define PHX_MC_GRAPH_PARTITION_COARSEST_VERTEX_COUNT 1
+#define PHX_MC_GRAPH_PARTITION_MATCHED_PAIRS 2
+#define PHX_MC_GRAPH_PARTITION_BISECTION_TRIALS 3
+#define PHX_MC_GRAPH_PARTITION_REFINEMENT_PASSES 4
+#define PHX_MC_GRAPH_PARTITION_MOVES_COMMITTED 5
+#define PHX_MC_GRAPH_PARTITION_MOVES_ROLLED_BACK 6
+#define PHX_MC_GRAPH_PARTITION_BALANCE_MOVES 7
+#define PHX_MC_GRAPH_PARTITION_NONEMPTY_REPAIRS 8
+#define PHX_MC_GRAPH_PARTITION_ADJACENCY_VISITS 9
+#define PHX_MC_GRAPH_PARTITION_CANDIDATE_EVALUATIONS 10
+
+#define PHX_MC_SURFACE_INSERTED 0
+#define PHX_MC_SURFACE_REFUSED 1
+#define PHX_MC_SURFACE_FLIPS 2
+#define PHX_MC_SURFACE_WALK_STEPS 3
+#define PHX_MC_SURFACE_WORK 4
+#define PHX_MC_SURFACE_EXHAUSTED 5
+
+#define PHX_MC_TET_MESH_REFINE_CIRCUMCENTER_INSERTIONS 0
+#define PHX_MC_TET_MESH_REFINE_SUBFACET_SPLITS 1
+#define PHX_MC_TET_MESH_REFINE_SUBSEGMENT_SPLITS 2
+#define PHX_MC_TET_MESH_REFINE_ENCROACHMENT_DEFERRALS 3
+#define PHX_MC_TET_MESH_REFINE_REFUSED_INSERTIONS 4
+#define PHX_MC_TET_MESH_REFINE_QUEUE_POPS 5
+#define PHX_MC_TET_MESH_REFINE_UNMET_CELLS 6
+#define PHX_MC_TET_MESH_REFINE_WORK_UNITS 7
+#define PHX_MC_TET_MESH_REFINE_LARGEST_CAVITY 8
+#define PHX_MC_TET_MESH_REFINE_VERTICES 9
+
+#define PHX_MC_TET_MESH_IMPROVE_FACE_REMOVALS 0
+#define PHX_MC_TET_MESH_IMPROVE_EDGE_REMOVALS 1
+#define PHX_MC_TET_MESH_IMPROVE_RELOCATIONS 2
+#define PHX_MC_TET_MESH_IMPROVE_VERTEX_REMOVALS 3
+#define PHX_MC_TET_MESH_IMPROVE_PASSES 4
+#define PHX_MC_TET_MESH_IMPROVE_ATTEMPTS 5
+#define PHX_MC_TET_MESH_IMPROVE_REMAINING_SLIVERS 6
+#define PHX_MC_TET_MESH_IMPROVE_WORK_UNITS 7
+#define PHX_MC_TET_MESH_IMPROVE_VERTEX_INSERTIONS 8
+#define PHX_MC_TET_MESH_IMPROVE_MULTIFACE_REMOVALS 9
+
+#define PHX_MC_TET_MESH_EXUDE_TRIALS 0
+#define PHX_MC_TET_MESH_EXUDE_FLIPS 1
+#define PHX_MC_TET_MESH_EXUDE_WEIGHTED_VERTICES 2
+#define PHX_MC_TET_MESH_EXUDE_PASSES 3
+#define PHX_MC_TET_MESH_EXUDE_REMAINING_SLIVERS 4
+#define PHX_MC_TET_MESH_EXUDE_WORK_UNITS 5
+#define PHX_MC_TET_MESH_EXUDE_COUNTERS 6
+
+#define PHX_MC_PLC3D_ROUNDS 0
+#define PHX_MC_PLC3D_INPUT_TRIANGLES 1
+#define PHX_MC_PLC3D_FACET_GROUPS 2
+#define PHX_MC_PLC3D_PLC_EDGES 3
+#define PHX_MC_PLC3D_PROTECTED_VERTICES 4
+#define PHX_MC_PLC3D_SEGMENT_STEINER_POINTS 5
+#define PHX_MC_PLC3D_FACET_STEINER_POINTS 6
+#define PHX_MC_PLC3D_CAVITIES 7
+#define PHX_MC_PLC3D_LARGEST_CAVITY 8
+#define PHX_MC_PLC3D_GIFT_WRAP_CANDIDATES 9
+#define PHX_MC_PLC3D_CONTACT_TESTS 10
+#define PHX_MC_PLC3D_WORK_UNITS 11
+#define PHX_MC_PLC3D_PEAK_RETAINED_BYTES 12
+#define PHX_MC_PLC3D_INTERIOR_STEINER_POINTS 13
+
+#define PHX_MC_PLC3D_FAILURE_REASON 0
+#define PHX_MC_PLC3D_FAILURE_FIRST_KIND 1
+#define PHX_MC_PLC3D_FAILURE_FIRST_ID 2
+#define PHX_MC_PLC3D_FAILURE_SECOND_KIND 3
+#define PHX_MC_PLC3D_FAILURE_SECOND_ID 4
+
+#define PHX_MC_POWER_CELLS_CLIPS 0
+#define PHX_MC_POWER_CELLS_PIECES 1
+#define PHX_MC_POWER_CELLS_EMPTY_CLIPS 2
+#define PHX_MC_POWER_CELLS_WALK_STEPS 3
+#define PHX_MC_POWER_CELLS_MERGED_LINKS 4
+#define PHX_MC_POWER_CELLS_UNMERGED_FRAGMENT_GROUPS 5
+#define PHX_MC_POWER_CELLS_REMOVED_COLLINEAR_VERTICES 6
+#define PHX_MC_POWER_CELLS_CELLS 7
+#define PHX_MC_POWER_CELLS_FACES 8
+#define PHX_MC_POWER_CELLS_VERTICES 9
+
+#define PHX_MC_POWER_CELLS_FAILURE_REASON 0
+#define PHX_MC_POWER_CELLS_FAILURE_SITE 1
+#define PHX_MC_POWER_CELLS_FAILURE_TET 2
+#define PHX_MC_POWER_CELLS_FAILURE_CLIP_STATUS 3
+
+#define PHX_MC_ARRANGEMENT_PAIR_COUNT 0
+#define PHX_MC_ARRANGEMENT_CONTACT_PAIRS 1
+#define PHX_MC_ARRANGEMENT_COPLANAR_PAIRS 2
+#define PHX_MC_ARRANGEMENT_COINCIDENT_VERTICES 3
+#define PHX_MC_ARRANGEMENT_EDGE_PLANE_VERTICES 4
+#define PHX_MC_ARRANGEMENT_EDGE_EDGE_VERTICES 5
+#define PHX_MC_ARRANGEMENT_TRIPLE_PLANE_VERTICES 6
+#define PHX_MC_ARRANGEMENT_SPLIT_FACES 7
+#define PHX_MC_ARRANGEMENT_FRAGMENTS 8
+#define PHX_MC_ARRANGEMENT_FILTERED_PREDICATES 9
+#define PHX_MC_ARRANGEMENT_EXACT_PREDICATES 10
+#define PHX_MC_ARRANGEMENT_COUNTERS 11
+
+#define PHX_MC_LEVEL_SET_VERTICES 0
+#define PHX_MC_LEVEL_SET_CELLS 1
+#define PHX_MC_LEVEL_SET_INSERTED 2
+#define PHX_MC_LEVEL_SET_ZERO_VERTICES 3
+#define PHX_MC_LEVEL_SET_WORK_UNITS 4
+#define PHX_MC_LEVEL_SET_FAILED_EDGE 5
+#define PHX_MC_LEVEL_SET_COUNTERS 6
+
+#define PHX_MC_RESTRICTED_DUAL_WORK_UNITS 0
+#define PHX_MC_RESTRICTED_DUAL_INTERIOR_FACETS 1
+#define PHX_MC_RESTRICTED_DUAL_HULL_FACETS 2
+#define PHX_MC_RESTRICTED_DUAL_DEGENERATE_FACETS 3
+#define PHX_MC_RESTRICTED_DUAL_COUNTERS 4
+
+#define PHX_MC_PERIODIC_ROUNDS 0
+#define PHX_MC_PERIODIC_MARGIN 1
+#define PHX_MC_PERIODIC_IMAGES 2
+#define PHX_MC_PERIODIC_UNCERTIFIED 3
+#define PHX_MC_PERIODIC_REQUIRED_MARGIN 4
+#define PHX_MC_PERIODIC_FINITE_CELLS 5
+#define PHX_MC_PERIODIC_EXACT_EVALUATIONS 6
+#define PHX_MC_PERIODIC_PERTURBED_DECISIONS 7
+#define PHX_MC_PERIODIC_EXHAUSTED_LIMIT 8
+#define PHX_MC_PERIODIC_DUPLICATE_POINT 9
+
+
+#define PHX_MC_SURFACE_ENVELOPE_SURFACE_VERTICES 0
+#define PHX_MC_SURFACE_ENVELOPE_SURFACE_TRIANGLES 1
+#define PHX_MC_SURFACE_ENVELOPE_GRID_SAMPLES 2
+#define PHX_MC_SURFACE_ENVELOPE_WORK_UNITS 3
+#define PHX_MC_SURFACE_ENVELOPE_SOURCE_SAMPLES 4
+#define PHX_MC_SURFACE_ENVELOPE_VOLUME_VERTICES 5
+#define PHX_MC_SURFACE_ENVELOPE_TETRAHEDRA 6
+#define PHX_MC_SURFACE_ENVELOPE_COUNTS 7
+
+#define PHX_MC_EDGE_INSERTION_REMOVED 0
+#define PHX_MC_EDGE_INSERTION_PROPOSED 1
+#define PHX_MC_EDGE_INSERTION_KIND 2
+#define PHX_MC_EDGE_INSERTION_GENERATION 3
+#define PHX_MC_EDGE_INSERTION_COUNTS 4
+#define PHX_MC_BATCH_REMAINING_WORK 0
+#define PHX_MC_BATCH_REMAINING_QUERIES 1
+#define PHX_MC_BATCH_REMAINING_CAVITY 2
+#define PHX_MC_BATCH_REMAINING_BYTES 3
+#define PHX_MC_BATCH_CONSUMED_WORK 4
+#define PHX_MC_BATCH_CONSUMED_QUERIES 5
+#define PHX_MC_BATCH_PEAK_CAVITY 6
+#define PHX_MC_BATCH_PEAK_BYTES 7
 /* Thread-local, nestable execution phase. Every zero cap is a hard bound.
- * Handles must be ended in LIFO order on the creating thread. Counters are
+ * Handles must be ended in LIFO order on the creating thread after all batch
+ * tickets settle. Ending a scope with live tickets returns INVALID_ARGUMENT.
+ * Counters are
  * [construction work, source geometry queries, peak cavity cells,
  * work/query/cavity refusals, externally charged work, externally charged
  * source queries, internal geometric primitive telemetry]; memory has
- * PHX_MC_EXECUTION_MEMORY_VALUES entries: actual native allocator
+ * PHX_MC_EXECUTION_MEMORY_VALUES entries: exact managed resource requests
  * [limit, live, peak, request, allocations, refusals], then separately the
- * conservative external host [live upper, peak upper during this scope].
+ * external host [live upper including unused batch reservations, peak upper].
+ * Allocator bookkeeping headers are separate from these payload byte values.
  * wall_seconds may be +infinity. The scope does not publish partial candidates. */
 PHX_MC_API int32_t phx_mc_execution_begin(
     uint64_t work_limit, uint64_t query_limit, uint64_t cavity_limit,
@@ -76,10 +309,116 @@ PHX_MC_API int32_t phx_mc_execution_begin(
     void** scope);
 PHX_MC_API int32_t phx_mc_execution_end(
     void* scope, uint64_t* counters, uint64_t* memory, double* seconds);
+/* Observe current allocator bookkeeping bytes in this scope's retained pool,
+ * separately from numerical payload requests and their managed cap. Scope must
+ * remain live; may be observed on any thread. No counters/reservations change. */
+PHX_MC_API int32_t phx_mc_execution_allocator_bookkeeping(void* scope, uint64_t* live_bytes);
 /* Admit a separately owned host/device numerical batch on the creating thread.
  * Work/query counts must be charged before the batch, never copied from native
  * owner deltas already charged inside this scope. */
 PHX_MC_API int32_t phx_mc_execution_charge(void* scope, uint64_t work, uint64_t queries);
+/* Atomically reserve work/source-query upper bounds and simultaneous
+ * cavity/managed-byte capacities. parent_ticket is null for a scope reservation;
+ * otherwise the child borrows only that ticket, not the scope allowance again.
+ * Work/source queries are cumulative; cavity/bytes are released capacities.
+ * Every cap is a hard bound. Failure clears *out_ticket without reserving any
+ * resource and records the scope's usual capacity/timeout refusal.
+ * Admission may run on any thread with an explicit live scope. Scope lifetime
+ * and parent lifetime must enclose all their tickets; a handle is used by only
+ * one settling thread. An explicit native target spends this reservation.
+ * Deadline sampling occurs at admission and every 1024 native logical charges
+ * (including the first charge). */
+PHX_MC_API int32_t phx_mc_execution_batch_admit(
+    void* scope, void* parent_ticket, uint64_t work, uint64_t queries,
+    uint64_t cavity, uint64_t bytes, void** out_ticket);
+/* Commit own host measured work/source queries and peaks, adding native target
+ * usage and settled children exactly once, and release unused reservation.
+ * Native work remains native (not externally charged host work). Native payload
+ * peaks remain allocator evidence; bytes here are host-only peaks.
+ * Settlement is allowed on workers and after refusal, including exception
+ * paths. Success destroys the ticket. Live children/targets return
+ * INVALID_ARGUMENT. Host consumption above the complete upper returns
+ * INTERNAL_ERROR without mutation; corrected settlement may retry.
+ * Null/stale/settled handles must not be reused. */
+PHX_MC_API int32_t phx_mc_execution_batch_settle(
+    void* ticket, uint64_t work, uint64_t queries, uint64_t cavity, uint64_t bytes);
+/* Explicit deadline checkpoint for host batches that do not issue native
+ * logical charges. No counters/reservations change; the ticket remains live. */
+PHX_MC_API int32_t phx_mc_execution_batch_checkpoint(void* ticket);
+/* Ticket-owned aligned uint64 counter view. Native-owned fields are updated
+ * with lock-free native atomic operations; readers use atomic uint64 loads.
+ * Only the affine target thread may write host_* fields, between native calls;
+ * foreign bindings must reject wrong-thread host mutations before writing.
+ * Work/query counters are monotone; exact at checkpoint/settlement boundaries.
+ * imported_* records explicit external/import charges, not native payload work.
+ * children_work/queries includes complete child totals; children_native_* is
+ * native-only. children_live_bytes includes retained child managed capacity;
+ * retained_host_bytes is this ticket's conservative retained host-token bound.
+ * Managed capacity checks include these, host/native live bytes, and reserved
+ * bytes. Live cavity/bytes and reservation fields may decrease.
+ * The view remains valid until successful settlement/refusal destroys ticket.
+ * Parent host writers must quiesce while admitting children. */
+typedef struct phx_mc_execution_usage {
+  uint64_t host_work, host_queries, host_cavity, host_bytes;
+  uint64_t host_peak_cavity, host_peak_bytes;
+  uint64_t native_work, native_queries, native_cavity, native_bytes;
+  uint64_t native_peak_cavity, native_peak_bytes;
+  uint64_t reserved_work, reserved_queries, reserved_cavity, reserved_bytes;
+  uint64_t children_work, children_queries;
+  uint64_t children_peak_cavity, children_peak_bytes;
+  uint64_t imported_work, imported_queries;
+  uint64_t children_native_work, children_native_queries;
+  uint64_t children_live_bytes;
+  uint64_t retained_host_bytes;
+  uint64_t combined_peak_cavity, combined_peak_bytes;
+} phx_mc_execution_usage;
+/* Map an inactive ticket's usage without installing a native target. This is
+ * needed before child reservations so retained child allocations remain visible.
+ * The writer is thread-affine; view lifetime ends at settlement/refusal. */
+PHX_MC_API int32_t phx_mc_execution_batch_usage(
+    void* ticket, phx_mc_execution_usage** out_usage);
+/* A ticket has at most one live target, on one thread. Workers use explicit
+ * child tickets. Begin installs ticket execution/memory ownership; end is
+ * creating-thread LIFO, after borrowed scopes end, and restores all prior TLS.
+ * Valid end destroys target even after refusal and returns scope status.
+ * Scope/ticket owners must outlive targets; live targets prevent settlement.
+ * Child scopes opened under a target borrow its reservation, report their own
+ * phase evidence, and commit native charges into the ticket only once. */
+PHX_MC_API int32_t phx_mc_execution_target_begin(
+    void* ticket, void** out_target, phx_mc_execution_usage** out_usage);
+PHX_MC_API int32_t phx_mc_execution_target_end(void* target);
+/* Atomically settle own host measurements plus native/child usage, then refuse
+ * requested_upper against the resulting parent allowance (scope for a root,
+ * ticket for a child), without making a reservation. Four input slots are
+ * [work, queries, cavity, bytes]; out_refusal has the eight named slots above.
+ * A proven refusal commits/releases and destroys ticket, returning CAPACITY
+ * (or TIMEOUT). A request that fits returns INTERNAL_ERROR without changing
+ * the ticket, counters, reservations, snapshot, or output. Invalid lifetime or
+ * input returns INVALID_ARGUMENT. Safe on workers; outputs are written only
+ * for the committed refusal. */
+PHX_MC_API int32_t phx_mc_execution_batch_refuse(
+    void* ticket, const uint64_t* actual_host, const uint64_t* requested_upper,
+    uint64_t* out_refusal);
+/* Read the first refused batch admission's snapshot, captured atomically and
+ * unchanged by subsequent settlement. values has
+ * PHX_MC_EXECUTION_BATCH_REFUSAL_VALUES slots as named above: remaining parent
+ * allowance (scope or ticket), consumed scope work/source queries including
+ * settled child totals for a ticket parent, and cavity/external-byte peaks.
+ * Capacity and timeout admission refusals both produce snapshots.
+ * An explicit live scope may be queried from any thread. A successful probe
+ * returns OK even after refusal; null inputs or no snapshot return
+ * INVALID_ARGUMENT without writing values. */
+PHX_MC_API int32_t phx_mc_execution_batch_refusal(void* scope, uint64_t* values);
+/* Observe the attempted [work, queries, cavity, bytes] request associated with
+ * the first refusal snapshot. Native work/query increments, cavity replacement
+ * capacities, allocation byte requests, and host-token replacement bounds are
+ * recorded at the refusing call. Batch admission/refusal records its complete
+ * requested_upper. Borrowed child refusals propagate to the ticket scope.
+ * The request is immutable with its snapshot; no counters/reservations change.
+ * No snapshot/request, null inputs, or a timeout without an attempted resource
+ * request returns INVALID_ARGUMENT without writing output. Scope remains live;
+ * this error-path observation may run on any thread. */
+PHX_MC_API int32_t phx_mc_execution_refusal_request(void* scope, uint64_t* requested_upper);
 /* Import an actual ended predecessor receipt atomically. Work/source queries
  * debit the active scope and all parents once. Its measured prior duration
  * shortens every native steady-clock deadline; raw scope elapsed is unchanged.
@@ -95,8 +434,8 @@ PHX_MC_API int32_t phx_mc_execution_admit_work_bound(void* scope, uint64_t maxim
 /* Bind the actual touched-cell count of one externally owned local edit to
  * the same nested cavity allowance, deadline, peak and refusal ledger. */
 PHX_MC_API int32_t phx_mc_execution_admit_cavity(void* scope, uint64_t cells);
-/* Observe [remaining construction work, remaining source queries, local
- * cavity limit, actual available managed bytes] and native wall allowance.
+/* Observe [unreserved construction work, unreserved source queries, unreserved
+ * cavity capacity, available managed bytes] and native wall allowance.
  * Minimum across all parent scopes; no allowance is renewed or consumed. */
 PHX_MC_API int32_t phx_mc_execution_remaining(
     void* scope, uint64_t* remaining, double* wall_seconds);
@@ -127,8 +466,11 @@ PHX_MC_API void phx_mc_execution_free_host_array(void* owner);
  * a live token belonging to the active pool is atomically resized to the
  * requested TOTAL bytes_upper. Refusal preserves its previous bound/token.
  * Shrinking an existing token is allowed during resource/deadline refusal.
- * Token metadata itself is a real managed allocation. The token retains its
- * pool until release, so its bound may outlive the originating scope. */
+ * Token metadata itself is a real managed allocation. Under a native target,
+ * metadata and bound draw the ticket reservation; shrinking/free restores its
+ * credit while open. Bound evidence remains external host storage. Tokens
+ * retain their pool and ticket allocation state after lexical scope ends.
+ * Growing a token from a different target cannot borrow that target's credit. */
 PHX_MC_API int32_t phx_mc_execution_reserve_host_storage(
     void* execution, uint64_t bytes_upper, void** reservation);
 /* Release exactly once, on any thread, without requiring a live scope.
@@ -240,7 +582,7 @@ PHX_MC_API int32_t phx_mc_clip_box_halfplanes(
  * the first three must be positive multiples of (-1,0,0), (0,-1,0),
  * (1,1,1). Eighteen signed little-endian uint32 magnitudes use offsets[19].
  * Fractions are cleared by positive row denominators before this API.
- * Outputs authoritative original supporting-plane pairs (V,2), outgoing
+ * Outputs original supporting-plane pairs (V,2), outgoing
  * edge plane labels (V), and vertex count; numerical vertices are NOT output.
  * scratch_limit bounds a conservative arbitrary-integer resident footprint
  * before allocation; work_limit bounds exact arithmetic action count. */
@@ -256,13 +598,27 @@ PHX_MC_API int32_t phx_mc_clip_reference_triangle_exact(
  * Outputs source support triplets (V,3), complete incident plane masks (V),
  * oriented face CSR/plane labels, actual work; no numerical vertices.
  * Capacities V>=16, F>=10, face entries>=48. Counts commit only on success. */
+typedef struct phx_mc_clip_reference_tetrahedron_exact_request {
+  const uint32_t* words;
+  int64_t word_count;
+  const int64_t* offsets;
+  const int8_t* signs;
+  int64_t scratch_limit;
+  int64_t work_limit;
+  int32_t vertex_capacity;
+  int32_t face_capacity;
+  int32_t entry_capacity;
+  int32_t* supporting_planes;
+  uint16_t* incident_planes;
+  int32_t* face_offsets;
+  int32_t* face_planes;
+  int32_t* face_vertices;
+  int32_t* vertex_count;
+  int32_t* face_count;
+  int64_t* work_units;
+} phx_mc_clip_reference_tetrahedron_exact_request;
 PHX_MC_API int32_t phx_mc_clip_reference_tetrahedron_exact(
-    const uint32_t* words, int64_t word_count, const int64_t* offsets,
-    const int8_t* signs, int64_t scratch_limit, int64_t work_limit,
-    int32_t vertex_capacity, int32_t face_capacity, int32_t entry_capacity,
-    int32_t* supporting_planes, uint16_t* incident_planes,
-    int32_t* face_offsets, int32_t* face_planes, int32_t* face_vertices,
-    int32_t* vertex_count, int32_t* face_count, int64_t* work_units);
+    const phx_mc_clip_reference_tetrahedron_exact_request* request);
 
 /* Axis-aligned box (3,) clipped by halfspaces per item.  Outputs a closed
  * polyhedron: vertices (count, vertex_capacity, 3), vertex_counts (count,),
@@ -271,13 +627,29 @@ PHX_MC_API int32_t phx_mc_clip_reference_tetrahedron_exact(
  * using the labels of phx_mc_clip_box_halfplanes, face_counts (count,).
  * Faces are sorted by label; each face loop is counterclockwise seen from
  * outside and starts at its smallest vertex index. */
+typedef struct phx_mc_clip_box_halfspaces_request {
+  int64_t count;
+  const double* box_lower;
+  const double* box_upper;
+  int32_t plane_capacity;
+  const double* normals;
+  const double* offsets;
+  const int32_t* plane_counts;
+  int32_t vertex_capacity;
+  int32_t face_capacity;
+  int32_t face_vertex_capacity;
+  double* vertices;
+  int32_t* vertex_counts;
+  int32_t* face_offsets;
+  int32_t* face_labels;
+  int32_t* face_vertices;
+  int32_t* face_counts;
+  double* volumes;
+  double* first_moments;
+  int32_t* item_status;
+} phx_mc_clip_box_halfspaces_request;
 PHX_MC_API int32_t phx_mc_clip_box_halfspaces(
-    int64_t count, const double* box_lower, const double* box_upper, int32_t plane_capacity,
-    const double* normals, const double* offsets, const int32_t* plane_counts,
-    int32_t vertex_capacity, int32_t face_capacity, int32_t face_vertex_capacity,
-    double* vertices, int32_t* vertex_counts, int32_t* face_offsets, int32_t* face_labels,
-    int32_t* face_vertices, int32_t* face_counts, double* volumes, double* first_moments,
-    int32_t* item_status);
+    const phx_mc_clip_box_halfspaces_request* request);
 
 /* ------------------------------------------------------------- contacts in 3D
  * Exact contact classification of triangle pairs (count, 3, 3) and
@@ -380,27 +752,65 @@ PHX_MC_API int32_t phx_mc_regular_3d(int64_t point_count, const double* points,
  * each cell vertex, the input segment index it lies on or -1.  Returns
  * PHX_MC_REFINEMENT_LIMIT with a valid conforming mesh when the quality targets
  * are unmet after max_steiner insertions, and PHX_MC_CONSTRAINT_INTERSECTION when
- * two segments cross in their interiors. */
+ * two segments cross in their interiors.
+ *
+ * Optional split witnesses are caller-owned buffers with witness_capacity rows:
+ * witness_parents (N, 2), witness_segments (N), witness_ratios (N), where N is
+ * the returned mesh point count. Capacity 0 with all three pointers NULL omits
+ * witnesses; otherwise all pointers must be non-NULL and capacity must be at
+ * least point_count + max_steiner (insufficient capacity returns
+ * PHX_MC_CAPACITY_EXCEEDED). Only N rows are written, and only when a mesh is
+ * returned (PHX_MC_OK or PHX_MC_REFINEMENT_LIMIT); failures leave them unchanged.
+ * Input and free Steiner rows have parents/segment -1 and ratio 0. Constrained
+ * Steiner rows contain immediate, earlier vertex indices (a, b), the input
+ * segment index (or -2 for a hull-only constraint), and the binary64 construction
+ * ratio r before coordinate rounding and carrier search. Interpreted exactly,
+ * the construction is (1-r)*a + r*b, composable through this acyclic parent graph;
+ * it is not a claim that the carrier coordinates lie on that exact segment.
+ * Midpoints store r=0.5. Shell splits orient parents from the shared input
+ * endpoint and store the raw ratio: reversing them using binary64 1-r could
+ * lose the exact rational complement. */
+typedef struct phx_mc_constrained_delaunay_2d_request {
+  int64_t point_count;
+  const double* points;
+  int64_t segment_count;
+  const int32_t* segments;
+  int64_t hole_count;
+  const double* holes;
+  int32_t keep_convex_hull;
+  double min_angle_degrees;
+  double max_area;
+  int64_t max_steiner;
+  int64_t max_triangles;
+  int64_t max_cavity_cells;
+  int64_t max_work;
+  int64_t max_scratch_bytes;
+  uint64_t* work_evidence;
+  uint64_t* memory_evidence;
+  int64_t witness_capacity;
+  int32_t* witness_parents;
+  int32_t* witness_segments;
+  double* witness_ratios;
+  phx_mc_mesh** mesh;
+} phx_mc_constrained_delaunay_2d_request;
 PHX_MC_API int32_t phx_mc_constrained_delaunay_2d(
-    int64_t point_count, const double* points, int64_t segment_count, const int32_t* segments,
-    int64_t hole_count, const double* holes, int32_t keep_convex_hull, double min_angle_degrees,
-    double max_area, int64_t max_steiner, int64_t max_triangles,
-    int64_t max_cavity_cells, int64_t max_work, int64_t max_scratch_bytes,
-    uint64_t* work_evidence, uint64_t* memory_evidence, phx_mc_mesh** mesh);
+    const phx_mc_constrained_delaunay_2d_request* request);
 
+/* Copy getters return INVALID_ARGUMENT for a null handle or a missing output
+ * for a nonempty bank; empty banks may omit their output. */
 PHX_MC_API int32_t phx_mc_mesh_dimension(const phx_mc_mesh* mesh);
 PHX_MC_API int64_t phx_mc_mesh_point_count(const phx_mc_mesh* mesh);
 PHX_MC_API int64_t phx_mc_mesh_cell_count(const phx_mc_mesh* mesh);
 PHX_MC_API int64_t phx_mc_mesh_input_point_count(const phx_mc_mesh* mesh);
-PHX_MC_API void phx_mc_mesh_copy_points(const phx_mc_mesh* mesh, double* points);
-PHX_MC_API void phx_mc_mesh_copy_cells(const phx_mc_mesh* mesh, int32_t* cells);
-PHX_MC_API void phx_mc_mesh_copy_vertex_map(const phx_mc_mesh* mesh, int32_t* vertex_map);
+PHX_MC_API int32_t phx_mc_mesh_copy_points(const phx_mc_mesh* mesh, double* points);
+PHX_MC_API int32_t phx_mc_mesh_copy_cells(const phx_mc_mesh* mesh, int32_t* cells);
+PHX_MC_API int32_t phx_mc_mesh_copy_vertex_map(const phx_mc_mesh* mesh, int32_t* vertex_map);
 /* (cell_count, dimension + 1): the constraint reference of the edge (2D) or
  * facet (3D) opposite each cell vertex; filled with -1 without constraints. */
-PHX_MC_API void phx_mc_mesh_copy_cell_constraints(const phx_mc_mesh* mesh,
+PHX_MC_API int32_t phx_mc_mesh_copy_cell_constraints(const phx_mc_mesh* mesh,
                                                   int32_t* cell_constraints);
 /* (cell_count,): region labels; filled with -1 without labels. */
-PHX_MC_API void phx_mc_mesh_copy_cell_regions(const phx_mc_mesh* mesh, int32_t* cell_regions);
+PHX_MC_API int32_t phx_mc_mesh_copy_cell_regions(const phx_mc_mesh* mesh, int32_t* cell_regions);
 PHX_MC_API void phx_mc_mesh_free(phx_mc_mesh* mesh);
 
 /* ------------------------------------------- prepared incremental 3D Delaunay
@@ -510,7 +920,6 @@ PHX_MC_API void phx_mc_triangulation_3d_free(phx_mc_triangulation_3d* triangulat
  * the caller measures them.  Decisions use integer gains and IEEE binary64
  * target scaling only, so the result depends on the inputs alone. */
 #define PHX_MC_GRAPH_PARTITION_COUNTERS 11
-#define PHX_MC_GRAPH_PARTITION_VISITS 9
 PHX_MC_API int32_t phx_mc_graph_partition(
     int64_t vertex_count, const int64_t* offsets, const int32_t* neighbors,
     const int64_t* edge_weights, const int64_t* vertex_weights, int32_t part_count,
@@ -576,16 +985,37 @@ PHX_MC_API int32_t phx_mc_graph_partition(
  * (PHX_MC_SURFACE_COUNTERS,): inserted, refused, flips, walk steps, work,
  * exhausted (0 or 1). */
 #define PHX_MC_SURFACE_COUNTERS 6
+typedef struct phx_mc_surface_reconnect_request {
+  int64_t vertex_count;
+  const double* charts;
+  const double* points;
+  const double* normals;
+  const double* vertex_metrics;
+  const int64_t* vertex_pole_ids;
+  int64_t triangle_count;
+  const int32_t* triangles;
+  const int8_t* constrained;
+  int64_t insert_count;
+  const double* insert_charts;
+  const double* insert_points;
+  const double* insert_normals;
+  const double* insert_metrics;
+  const int64_t* insert_pole_ids;
+  const double* insert_spacing;
+  const int32_t* insert_hints;
+  const int32_t* insert_edges;
+  int32_t sweep;
+  int64_t max_triangles;
+  int64_t work_limit;
+  int32_t* triangles_out;
+  int8_t* constrained_out;
+  int64_t* triangle_count_out;
+  int32_t* vertex_ids;
+  int32_t* item_status;
+  int64_t* counters;
+} phx_mc_surface_reconnect_request;
 PHX_MC_API int32_t phx_mc_surface_reconnect(
-    int64_t vertex_count, const double* charts, const double* points, const double* normals,
-    const double* vertex_metrics, const int64_t* vertex_pole_ids,
-    int64_t triangle_count, const int32_t* triangles, const int8_t* constrained,
-    int64_t insert_count, const double* insert_charts, const double* insert_points,
-    const double* insert_normals, const double* insert_metrics, const int64_t* insert_pole_ids,
-    const double* insert_spacing, const int32_t* insert_hints, const int32_t* insert_edges,
-    int32_t sweep, int64_t max_triangles, int64_t work_limit,
-    int32_t* triangles_out, int8_t* constrained_out, int64_t* triangle_count_out,
-    int32_t* vertex_ids, int32_t* item_status, int64_t* counters);
+    const phx_mc_surface_reconnect_request* request);
 
 /* ----------------------------------------------------------- periodic Delaunay
  * Delaunay triangulation (dimension 2) or tetrahedralization (dimension 3) of
@@ -627,9 +1057,73 @@ PHX_MC_API int32_t phx_mc_periodic_delaunay(int32_t dimension, int64_t point_cou
                                             int64_t max_cells, double* evidence,
                                             phx_mc_periodic_triangulation** triangulation);
 PHX_MC_API int64_t phx_mc_periodic_cell_count(const phx_mc_periodic_triangulation* triangulation);
-PHX_MC_API void phx_mc_periodic_copy_cells(const phx_mc_periodic_triangulation* triangulation,
+PHX_MC_API int32_t phx_mc_periodic_copy_cells(const phx_mc_periodic_triangulation* triangulation,
                                            int32_t* vertices, int32_t* shifts);
 PHX_MC_API void phx_mc_periodic_free(phx_mc_periodic_triangulation* triangulation);
+
+/* Incremental 2-D quotient refinement. Initial cells must be a certified,
+ * positively oriented periodic Delaunay triangulation. Lattice vectors are
+ * rows; fractional coordinates are points @ inverse. The initial certificate
+ * remains the caller's evidence. No constrained/source-stratum edges are
+ * accepted here; those remain with their constrained construction owner.
+ *
+ * controls is (control_count,5): target, minimum, maximum, maximum growth,
+ * hard (exactly 0 or 1). NaN denotes an absent optional bound. quantiles is
+ * the configured target-statistic bank, in policy order, in [0,1].
+ * Tolerance at x is absolute_tolerance + relative_tolerance * abs(x).
+ * max_images bounds distinct lifted vertices in a candidate cavity, not a
+ * rebuilt covering triangulation. Limits are never increased internally.
+ *
+ * The owner generates both frontal sides in canonical quotient-edge order,
+ * evaluates immutable local cavities in the scoped native parallel policy,
+ * and serially commits only a strictly improving merit. No step limit changes
+ * the stop rule. Source-constrained requests bind protected_edges as canonical
+ * [first representative, second representative, relative shift x, relative
+ * shift y] rows of the input quotient. Their exact lifted segments are never
+ * split or flipped; candidates on them are refused before mutation. Every
+ * retained edge is checked again before publication. On failure the handle
+ * is NULL; counters still report work.
+ * Counter slots: work, candidates, cavity evaluations, removed cavity cells,
+ * commits, image refusals, steps, final hard issues, final edges, stop reason
+ * (0 compliant, 1 no improvement, 2 representable-rank continuation required).
+ * Copies use caller-sized output banks. */
+#define PHX_MC_PERIODIC_REFINEMENT_COUNTERS 10
+typedef struct phx_mc_periodic_refinement_input {
+  int64_t point_count;
+  const double* points;
+  const double* lattice;
+  const double* inverse;
+  int64_t cell_count;
+  const int32_t* vertices;
+  const int32_t* shifts;
+  int64_t control_count;
+  const double* controls;
+  int64_t statistic_count;
+  const double* quantiles;
+  double absolute_tolerance;
+  double relative_tolerance;
+  int64_t max_vertices;
+  int64_t max_cells;
+  int64_t max_images;
+  int64_t max_work_units;
+  int64_t max_cavity_cells;
+  uint64_t max_scratch_bytes;
+  int64_t protected_edge_count;
+  const int32_t* protected_edges;
+} phx_mc_periodic_refinement_input;
+typedef struct phx_mc_periodic_refinement phx_mc_periodic_refinement;
+PHX_MC_API int32_t phx_mc_periodic_refine_2d(
+    const phx_mc_periodic_refinement_input* input, uint64_t* counters,
+    phx_mc_periodic_refinement** refinement);
+PHX_MC_API int64_t phx_mc_periodic_refinement_point_count(
+    const phx_mc_periodic_refinement* refinement);
+PHX_MC_API int64_t phx_mc_periodic_refinement_cell_count(
+    const phx_mc_periodic_refinement* refinement);
+PHX_MC_API int32_t phx_mc_periodic_refinement_copy_points(
+    const phx_mc_periodic_refinement* refinement, double* points);
+PHX_MC_API int32_t phx_mc_periodic_refinement_copy_cells(
+    const phx_mc_periodic_refinement* refinement, int32_t* vertices, int32_t* shifts);
+PHX_MC_API void phx_mc_periodic_refinement_free(phx_mc_periodic_refinement* refinement);
 
 /* ------------------------------------------------ constrained tetrahedral mesh
  * An owned tetrahedral mesh of a constrained piecewise-linear domain for
@@ -756,19 +1250,40 @@ PHX_MC_API int32_t phx_mc_tet_mesh_set_memory_limit(
 PHX_MC_API int32_t phx_mc_tet_mesh_memory_evidence(
     const phx_mc_tet_mesh* mesh, uint64_t* values);
 
+typedef struct phx_mc_tet_mesh_create_request {
+  int64_t point_count;
+  const double* points;
+  int64_t tet_count;
+  const int32_t* tets;
+  const int32_t* tet_regions;
+  int64_t face_count;
+  const int32_t* faces;
+  const int32_t* face_sources;
+  int64_t segment_count;
+  const int32_t* segments;
+  const int32_t* segment_sources;
+  const double* protection_radii;
+  int64_t source_point_count;
+  const double* source_points;
+  int64_t source_face_count;
+  const int32_t* source_faces;
+  const int32_t* source_face_group_rows;
+  const double* source_face_tolerances;
+  int64_t source_segment_count;
+  const int32_t* source_segments;
+  const int32_t* source_segment_group_rows;
+  const double* source_segment_tolerances;
+  const int8_t* witness_strata;
+  const int32_t* witness_entities;
+  const double* witness_parameters;
+  int32_t boundary_policy;
+  int64_t max_vertices;
+  int64_t max_tetrahedra;
+  int64_t max_scratch_bytes;
+  phx_mc_tet_mesh** mesh;
+} phx_mc_tet_mesh_create_request;
 PHX_MC_API int32_t phx_mc_tet_mesh_create(
-    int64_t point_count, const double* points, int64_t tet_count, const int32_t* tets,
-    const int32_t* tet_regions, int64_t face_count, const int32_t* faces,
-    const int32_t* face_sources, int64_t segment_count, const int32_t* segments,
-    const int32_t* segment_sources, const double* protection_radii,
-    int64_t source_point_count, const double* source_points,
-    int64_t source_face_count, const int32_t* source_faces, const int32_t* source_face_group_rows,
-    const double* source_face_tolerances, int64_t source_segment_count,
-    const int32_t* source_segments, const int32_t* source_segment_group_rows,
-    const double* source_segment_tolerances, const int8_t* witness_strata,
-    const int32_t* witness_entities, const double* witness_parameters,
-    int32_t boundary_policy, int64_t max_vertices, int64_t max_tetrahedra,
-    int64_t max_scratch_bytes, phx_mc_tet_mesh** mesh);
+    const phx_mc_tet_mesh_create_request* request);
 PHX_MC_API int32_t phx_mc_tet_mesh_refine(phx_mc_tet_mesh* mesh, const double* sizes,
                                           double radius_edge_bound, int64_t max_insertions,
                                           int64_t work_limit, int64_t* counters);
@@ -809,7 +1324,7 @@ PHX_MC_API int32_t phx_mc_tet_mesh_quality(const phx_mc_tet_mesh* mesh, double s
  * [0, 1) and 0 evaluates no floor.
  * work_limit >= 0 additionally caps this query's coordinate-validation visits,
  * index visits, cell shape evaluations and floor evaluations, charged to
- * counts()[5] through the existing owner allowance. Neither allowance is reset;
+ * counts()[PHX_MC_TET_MESH_COUNT_WORK_UNITS] through the existing owner allowance. Neither allowance is reset;
  * capacity/allocation refusal leaves geometry intact and writes no result. */
 PHX_MC_API int32_t phx_mc_tet_mesh_proposal_shape(
     phx_mc_tet_mesh* mesh, int64_t point_count, const double* points,
@@ -871,19 +1386,42 @@ PHX_MC_API void phx_mc_tet_mesh_free(phx_mc_tet_mesh* mesh);
 #define PHX_MC_PLC3D_FIXED 0
 #define PHX_MC_PLC3D_CONFORMING 1
 #define PHX_MC_PLC3D_SIZES 6
+#define PHX_MC_PLC3D_SIZE_POINTS 0
+#define PHX_MC_PLC3D_SIZE_TETRAHEDRA 1
+#define PHX_MC_PLC3D_SIZE_FACES 2
+#define PHX_MC_PLC3D_SIZE_SEGMENTS 3
+#define PHX_MC_PLC3D_SIZE_PLC_EDGES 4
+#define PHX_MC_PLC3D_SIZE_INPUT_TRIANGLES 5
 #define PHX_MC_PLC3D_FAILURE 5
 #define PHX_MC_PLC3D_COUNTERS 14
 typedef struct phx_mc_plc3d phx_mc_plc3d;
+typedef struct phx_mc_plc3d_recover_request {
+  int64_t point_count;
+  const double* points;
+  int64_t polygon_count;
+  const int64_t* polygon_offsets;
+  const int32_t* polygon_vertices;
+  const int32_t* polygon_facets;
+  int64_t facet_count;
+  const int32_t* facet_regions;
+  int64_t segment_count;
+  const int32_t* segments;
+  int64_t seed_count;
+  const double* seeds;
+  const int32_t* seed_regions;
+  int32_t boundary_policy;
+  const double* facet_tolerances;
+  const double* segment_tolerances;
+  int64_t max_vertices;
+  int64_t max_tetrahedra;
+  int64_t work_limit;
+  uint64_t maximum_scratch_bytes;
+  int32_t measure_phases;
+  phx_mc_plc3d** result;
+} phx_mc_plc3d_recover_request;
 PHX_MC_API int32_t phx_mc_plc3d_recover(
-    int64_t point_count, const double* points, int64_t polygon_count,
-    const int64_t* polygon_offsets, const int32_t* polygon_vertices,
-    const int32_t* polygon_facets, int64_t facet_count, const int32_t* facet_regions,
-    int64_t segment_count, const int32_t* segments, int64_t seed_count, const double* seeds,
-    const int32_t* seed_regions, int32_t boundary_policy, const double* facet_tolerances,
-    const double* segment_tolerances, int64_t max_vertices,
-    int64_t max_tetrahedra, int64_t work_limit, uint64_t maximum_scratch_bytes,
-    int32_t measure_phases, phx_mc_plc3d** result);
-/* Prepare the authoritative source constraints through the same exact PLC
+    const phx_mc_plc3d_recover_request* request);
+/* Prepare source constraints through the same exact PLC
  * validation and polygon triangulation used by recovery, without tetrahedral
  * fill, feature protection, or region classification. On success sizes are
  * (original points, 0, 0, 0, PLC edges, input triangles); export supplies those
@@ -897,16 +1435,19 @@ PHX_MC_API int32_t phx_mc_plc3d_source_constraints(
     const int32_t* polygon_facets, int64_t facet_count, const int32_t* facet_regions,
     int64_t segment_count, const int32_t* segments, int64_t work_limit,
     uint64_t maximum_scratch_bytes, int32_t measure_phases, phx_mc_plc3d** result);
-PHX_MC_API void phx_mc_plc3d_sizes(const phx_mc_plc3d* result, int64_t* sizes);
-PHX_MC_API void phx_mc_plc3d_counters(const phx_mc_plc3d* result, int64_t* counters);
-PHX_MC_API void phx_mc_plc3d_failure(const phx_mc_plc3d* result, int64_t* failure);
-PHX_MC_API void phx_mc_plc3d_export(const phx_mc_plc3d* result, double* points, int32_t* tets,
+/* Getters return INVALID_ARGUMENT for a null result or a required output.
+ * Array outputs are required only when the corresponding result bank is nonempty. */
+PHX_MC_API int32_t phx_mc_plc3d_sizes(const phx_mc_plc3d* result, int64_t* sizes);
+PHX_MC_API int32_t phx_mc_plc3d_counters(const phx_mc_plc3d* result, int64_t* counters);
+PHX_MC_API int32_t phx_mc_plc3d_failure(const phx_mc_plc3d* result, int64_t* failure);
+PHX_MC_API int32_t phx_mc_plc3d_export(const phx_mc_plc3d* result, double* points, int32_t* tets,
                                     int32_t* tet_regions, int32_t* faces,
                                     int32_t* face_sources, int32_t* segments,
                                     int32_t* segment_sources, double* protection,
                                     int32_t* plc_edges, int8_t* vertex_dimension,
                                     int32_t* input_triangles, int32_t* input_polygons);
-PHX_MC_API void phx_mc_plc3d_source_witnesses(const phx_mc_plc3d* result, int8_t* strata,
+/* refusal may be omitted when only witness banks are requested. */
+PHX_MC_API int32_t phx_mc_plc3d_source_witnesses(const phx_mc_plc3d* result, int8_t* strata,
                                               int32_t* entities, double* parameters,
                                               double* deviations, double* refusal);
 PHX_MC_API void phx_mc_plc3d_free(phx_mc_plc3d* result);
@@ -964,63 +1505,96 @@ PHX_MC_API int32_t phx_mc_tet_mesh_execution_times(
 #define PHX_MC_POWER_CELLS_FAILURE 4
 #define PHX_MC_POWER_CELLS_COUNTERS 10
 typedef struct phx_mc_power_cells phx_mc_power_cells;
+typedef struct phx_mc_restricted_power_cells_request {
+  int64_t site_count;
+  const double* sites;
+  const double* weights;
+  const int64_t* neighbor_offsets;
+  const int32_t* neighbors;
+  const int8_t* split_sites;
+  int64_t point_count;
+  const double* points;
+  int64_t tet_count;
+  const int32_t* tets;
+  const int32_t* tet_regions;
+  const int32_t* tet_face_facets;
+  int64_t max_pieces;
+  int64_t max_vertices;
+  int64_t work_limit;
+  int8_t record_phases;
+  phx_mc_power_cells** result;
+} phx_mc_restricted_power_cells_request;
 PHX_MC_API int32_t phx_mc_restricted_power_cells(
-    int64_t site_count, const double* sites, const double* weights,
-    const int64_t* neighbor_offsets, const int32_t* neighbors, const int8_t* split_sites,
-    int64_t point_count, const double* points, int64_t tet_count, const int32_t* tets,
-    const int32_t* tet_regions, const int32_t* tet_face_facets, int64_t max_pieces,
-    int64_t max_vertices, int64_t work_limit, int8_t record_phases,
-    phx_mc_power_cells** result);
+    const phx_mc_restricted_power_cells_request* request);
 /* Exact prepared image coordinates are nonoverlapping, ascending-magnitude
  * expansion components. Offsets have 3*image_count+1 entries; site witnesses
  * and exported cell/piece site IDs use the image axis, whose original owner
  * is image_site_owners. No rounded image-site carrier defines a bisector. */
+typedef struct phx_mc_restricted_power_cells_exact_request {
+  int64_t original_site_count;
+  const double* original_sites;
+  const double* original_weights;
+  int64_t image_count;
+  const int32_t* image_site_owners;
+  const int64_t* image_coordinate_offsets;
+  int64_t component_count;
+  const double* image_coordinate_components;
+  const int64_t* neighbor_offsets;
+  const int32_t* neighbors;
+  const int8_t* split_sites;
+  int64_t point_count;
+  const double* points;
+  int64_t tet_count;
+  const int32_t* tets;
+  const int32_t* tet_regions;
+  const int32_t* tet_face_facets;
+  int64_t max_pieces;
+  int64_t max_vertices;
+  int64_t work_limit;
+  int8_t record_phases;
+  phx_mc_power_cells** result;
+} phx_mc_restricted_power_cells_exact_request;
 PHX_MC_API int32_t phx_mc_restricted_power_cells_exact(
-    int64_t original_site_count, const double* original_sites,
-    const double* original_weights, int64_t image_count,
-    const int32_t* image_site_owners, const int64_t* image_coordinate_offsets,
-    int64_t component_count, const double* image_coordinate_components,
-    const int64_t* neighbor_offsets, const int32_t* neighbors, const int8_t* split_sites,
-    int64_t point_count, const double* points, int64_t tet_count, const int32_t* tets,
-    const int32_t* tet_regions, const int32_t* tet_face_facets, int64_t max_pieces,
-    int64_t max_vertices, int64_t work_limit, int8_t record_phases,
-    phx_mc_power_cells** result);
-PHX_MC_API void phx_mc_power_cells_sizes(const phx_mc_power_cells* result, int64_t* sizes);
-PHX_MC_API void phx_mc_power_cells_counters(const phx_mc_power_cells* result, int64_t* counters);
+    const phx_mc_restricted_power_cells_exact_request* request);
+PHX_MC_API int32_t phx_mc_power_cells_sizes(const phx_mc_power_cells* result, int64_t* sizes);
+PHX_MC_API int32_t phx_mc_power_cells_counters(const phx_mc_power_cells* result, int64_t* counters);
 /* Actual charged source-validation/expansion-decode visits, including a
  * refused prefix. The ordinary binary64 source path reports zero. */
 PHX_MC_API int64_t phx_mc_power_cells_source_work_units(const phx_mc_power_cells* result);
-PHX_MC_API void phx_mc_power_cells_failure(const phx_mc_power_cells* result, int64_t* failure);
-PHX_MC_API void phx_mc_power_cells_export(
+PHX_MC_API int32_t phx_mc_power_cells_failure(const phx_mc_power_cells* result, int64_t* failure);
+PHX_MC_API int32_t phx_mc_power_cells_export(
     const phx_mc_power_cells* result, double* vertices, int64_t* face_offsets,
     int32_t* face_vertices, int32_t* face_cells, int32_t* face_facets, int32_t* cell_sites,
     int32_t* cell_regions, double* cell_volumes, double* cell_moments,
     double* cell_second_moments, int32_t* piece_sites, int32_t* piece_tets,
     int32_t* piece_cells, double* piece_volumes);
 PHX_MC_API void phx_mc_power_cells_free(phx_mc_power_cells* result);
-PHX_MC_API void phx_mc_power_cells_export_vertex_carriers(
+PHX_MC_API int32_t phx_mc_power_cells_export_vertex_carriers(
     const phx_mc_power_cells* result, int32_t* vertex_carriers);
 /* One sorted equal-power site CSR row per compacted output vertex. Carrier
  * simplex rows share that exact same vertex order. */
 PHX_MC_API int64_t phx_mc_power_cells_site_witness_size(const phx_mc_power_cells* result);
-PHX_MC_API void phx_mc_power_cells_export_vertex_sites(
+PHX_MC_API int32_t phx_mc_power_cells_export_vertex_sites(
     const phx_mc_power_cells* result, int64_t* offsets, int32_t* sites);
-PHX_MC_API void phx_mc_power_cells_phase_seconds(
+PHX_MC_API int32_t phx_mc_power_cells_phase_seconds(
     const phx_mc_power_cells* result, double* seconds);
 
 /* Simultaneous exact indirect-predicate triangle arrangements.
  * sizes: vertices, fragments, contact edges, coplanar rows, location rows.
  * Failed calls never publish a successful partial arrangement. */
+/* Construction/publication use addressable, count-bounded host containers.
+ * Their storage is not included in ambient managed-byte evidence; exact limbs
+ * and classification use the managed pool. */
 typedef struct phx_mc_arrangement phx_mc_arrangement;
 PHX_MC_API int32_t phx_mc_arrange_triangles(
     int64_t vertex_count, const double* vertices, int64_t triangle_count,
     const int64_t* triangles, const int32_t* surfaces, int64_t pair_count,
     const int64_t* pairs, int64_t max_points, int64_t max_fragments,
     int64_t* failed_face, phx_mc_arrangement** result);
-PHX_MC_API void phx_mc_arrangement_sizes(const phx_mc_arrangement*, int64_t*);
-PHX_MC_API void phx_mc_arrangement_counters(const phx_mc_arrangement*, int64_t*);
-PHX_MC_API void phx_mc_arrangement_export(
-    const phx_mc_arrangement*, double* vertices, double* bounds,
+PHX_MC_API int32_t phx_mc_arrangement_sizes(const phx_mc_arrangement* result, int64_t* sizes);
+PHX_MC_API int32_t phx_mc_arrangement_counters(const phx_mc_arrangement* result, int64_t* counters);
+PHX_MC_API int32_t phx_mc_arrangement_export(
+    const phx_mc_arrangement* result, double* vertices, double* bounds,
     int8_t* constructions, int64_t* origins, int64_t* fragments,
     int64_t* fragment_faces, int64_t* contact_edges, int64_t* coplanar,
     int64_t* locations);
@@ -1042,10 +1616,10 @@ PHX_MC_API void phx_mc_arrangement_export(
 PHX_MC_API int32_t phx_mc_arrangement_classify(phx_mc_arrangement* result,
                                                int64_t operand_count, int64_t work_limit,
                                                int64_t* failed_face, int64_t* sizes);
-PHX_MC_API void phx_mc_arrangement_export_classification(const phx_mc_arrangement* result,
+PHX_MC_API int32_t phx_mc_arrangement_export_classification(const phx_mc_arrangement* result,
                                                          int64_t* fragment_components,
                                                          int32_t* component_windings);
-PHX_MC_API void phx_mc_arrangement_free(phx_mc_arrangement*);
+PHX_MC_API void phx_mc_arrangement_free(phx_mc_arrangement* result);
 
 /* Allocation-free barycentric dual connectivity over shared entity IDs. */
 PHX_MC_API int32_t phx_mc_triangle_dual_quads(
@@ -1061,34 +1635,82 @@ PHX_MC_API int32_t phx_mc_tetrahedron_dual_hexes(
  * On a nonsimple link REFINEMENT_LIMIT publishes zero hexes and witness
  * (original cell row, vertex row, edge degree, face degree), not nonexistence.
  * Original scratch/work caps and actual performed work are mandatory. */
+typedef struct phx_mc_polyhedron_corner_hexes_request {
+  int64_t nv;
+  int64_t ne;
+  int64_t nf;
+  int64_t nc;
+  int64_t face_entries;
+  int64_t cell_face_entries;
+  int64_t corner_entries;
+  const int64_t* edges;
+  const int64_t* face_offsets;
+  const int64_t* face_vertices;
+  const int64_t* cell_offsets;
+  const int64_t* cell_faces;
+  const int64_t* vertex_offsets;
+  const int64_t* cell_vertices;
+  const int8_t* corner_orientations;
+  int64_t vertex_count;
+  int64_t hex_capacity;
+  int64_t scratch_limit;
+  int64_t work_limit;
+  int64_t* hexes;
+  int64_t* parent_cells;
+  int64_t* hex_count;
+  int64_t* witness;
+  int64_t* work_units;
+} phx_mc_polyhedron_corner_hexes_request;
 PHX_MC_API int32_t phx_mc_polyhedron_corner_hexes(
-    int64_t nv, int64_t ne, int64_t nf, int64_t nc,
-    int64_t face_entries, int64_t cell_face_entries, int64_t corner_entries,
-    const int64_t* edges, const int64_t* face_offsets, const int64_t* face_vertices,
-    const int64_t* cell_offsets, const int64_t* cell_faces,
-    const int64_t* vertex_offsets, const int64_t* cell_vertices,
-    const int8_t* corner_orientations, int64_t vertex_count,
-    int64_t hex_capacity, int64_t scratch_limit, int64_t work_limit, int64_t* hexes,
-    int64_t* parent_cells, int64_t* hex_count, int64_t* witness, int64_t* work_units);
+    const phx_mc_polyhedron_corner_hexes_request* request);
 
 /* P1 level-set insertion; counts carry committed sizes and failed-edge evidence. */
+typedef struct phx_mc_level_set_split_3d_request {
+  int64_t point_count;
+  const double* points;
+  const double* values;
+  int64_t cell_count;
+  const int32_t* cells;
+  int64_t face_count;
+  const int32_t* faces;
+  int64_t edge_count;
+  const int32_t* edges;
+  const int8_t* protected_edges;
+  int64_t max_vertices;
+  int64_t max_cells;
+  int64_t work_limit;
+  int64_t cavity_limit;
+  double* out_points;
+  int32_t* out_cells;
+  int32_t* out_parents;
+  int32_t* out_sources;
+  double* out_weights;
+  int64_t* counters;
+} phx_mc_level_set_split_3d_request;
 PHX_MC_API int32_t phx_mc_level_set_split_3d(
-    int64_t point_count, const double* points, const double* values,
-    int64_t cell_count, const int32_t* cells, int64_t face_count,
-    const int32_t* faces, int64_t edge_count, const int32_t* edges,
-    const int8_t* protected_edges, int64_t max_vertices, int64_t max_cells,
-    int64_t work_limit, int64_t cavity_limit, double* out_points,
-    int32_t* out_cells, int32_t* out_parents, int32_t* out_sources,
-    double* out_weights, int64_t* counters);
+    const phx_mc_level_set_split_3d_request* request);
 
 /* Explicit distance-envelope surface construction with two-sided bounds. */
+typedef struct phx_mc_surface_envelope_create_request {
+  const double* vertices;
+  int64_t vertex_count;
+  const int64_t* faces;
+  int64_t face_count;
+  double offset;
+  double spacing;
+  double certificate_spacing;
+  int64_t sample_limit;
+  int64_t work_limit;
+  int64_t surface_vertex_capacity;
+  int64_t surface_triangle_capacity;
+  int64_t volume_vertex_capacity;
+  int64_t tetrahedron_capacity;
+  void** result;
+  int64_t* counts;
+  double* bounds;
+} phx_mc_surface_envelope_create_request;
 PHX_MC_API int32_t phx_mc_surface_envelope_create(
-    const double* vertices, int64_t vertex_count, const int64_t* faces,
-    int64_t face_count, double offset, double spacing,
-    double certificate_spacing, int64_t sample_limit, int64_t work_limit,
-    int64_t surface_vertex_capacity, int64_t surface_triangle_capacity,
-    int64_t volume_vertex_capacity, int64_t tetrahedron_capacity,
-    void** result, int64_t* counts, double* bounds);
+    const phx_mc_surface_envelope_create_request* request);
 PHX_MC_API int32_t phx_mc_surface_envelope_arrays(
     void* result, double* surface_vertices, int64_t* surface_triangles,
     double* volume_vertices, int64_t* tetrahedra);
@@ -1100,6 +1722,19 @@ PHX_MC_API int32_t phx_mc_restricted_dual_3d(
     const int32_t* tets, const double* domain, int64_t max_facets,
     int64_t work_limit, int32_t* facets, int32_t* cells, double* endpoints,
     int32_t* kinds, int32_t* item_status, int64_t* facet_count, int64_t* counters);
+
+typedef enum phx_mc_mixed_cell_kind {
+  PHX_MC_MIXED_TETRAHEDRON = 0,
+  PHX_MC_MIXED_HEXAHEDRON = 1,
+  PHX_MC_MIXED_PRISM = 2,
+  PHX_MC_MIXED_PYRAMID = 3,
+  PHX_MC_MIXED_QUADRILATERAL = 4
+} phx_mc_mixed_cell_kind;
+
+#define PHX_MC_MIXED_TEMPLATE_COUNT 0
+#define PHX_MC_MIXED_CHILD_COUNT 1
+#define PHX_MC_MIXED_CORNER_COUNT 2
+#define PHX_MC_MIXED_TEMPLATE_COUNTS 3
 
 /* Same-family affine reference refinement templates; canonical status codes. */
 PHX_MC_API int32_t phx_mc_mixed_template_counts(
@@ -1147,13 +1782,26 @@ PHX_MC_API int32_t phx_mc_tet_mesh_inspect_edge_insertion(
     int32_t* removed_tetrahedra, int32_t* proposed_tetrahedra, int64_t* counts);
 /* Reprepare and compare the actual inspected final cavity/source witness, then
  * commit once. Different/stale tuples refuse without changing accepted geometry. */
+typedef struct phx_mc_tet_mesh_commit_edge_insertion_request {
+  phx_mc_tet_mesh* mesh;
+  int32_t first;
+  int32_t second;
+  const double* split_position;
+  const double* final_position;
+  double source_fraction;
+  int64_t maximum_cavity_cells;
+  int32_t insertion_kind;
+  int64_t accepted_generation;
+  int64_t removed_count;
+  const int32_t* removed_tetrahedra;
+  int64_t proposed_count;
+  const int32_t* proposed_tetrahedra;
+  double target_size;
+  int64_t work_limit;
+  int32_t* inserted_vertex;
+} phx_mc_tet_mesh_commit_edge_insertion_request;
 PHX_MC_API int32_t phx_mc_tet_mesh_commit_edge_insertion(
-    phx_mc_tet_mesh*, int32_t first, int32_t second, const double* split_position,
-    const double* final_position, double source_fraction, int64_t maximum_cavity_cells, int32_t insertion_kind,
-    int64_t accepted_generation,
-    int64_t removed_count, const int32_t* removed_tetrahedra, int64_t proposed_count,
-    const int32_t* proposed_tetrahedra, double target_size, int64_t work_limit,
-    int32_t* inserted_vertex);
+    const phx_mc_tet_mesh_commit_edge_insertion_request* request);
 PHX_MC_API int32_t phx_mc_tet_mesh_collapse_edge(
     phx_mc_tet_mesh*, int32_t remove, int32_t keep, int32_t require_improvement,
     int64_t work_limit, int32_t* applied);
@@ -1212,15 +1860,23 @@ PHX_MC_API int32_t phx_mc_tet_mesh_construct_curve_points(
     double* positions, double* coordinates, int32_t* constructed);
 /* Source evidence: values (2,) the largest declared row bound and the achieved
  * bound (the largest certified deviation of a live vertex, 0 when exact);
- * face_ancestors (faces,) / segment_ancestors (segments,) the source row of
- * each exported face/segment (-1: none); per vertex the witness stratum,
- * row, parameters (vertices, 2) and certified deviation.  source_refusals()
+ * face_ancestor_offsets (faces + 1,) and face_ancestor_rows (count,) are CSR
+ * positive-area contributors from the immutable source primitive bank,
+ * sorted within each face. Every face has exact complete nonoverlapping
+ * coverage by its explicit logical source. Bounded carriers retain one convex
+ * primitive ancestor. segment_ancestors (segments,) retain one source row
+ * (-1: none); per vertex the independent primitive witness stratum, row,
+ * parameters (vertices, 2) and certified deviation are unchanged. count (1,)
+ * always receives the required contributor capacity. All evidence arrays NULL
+ * requests only count; otherwise capacity >= count and every array is required.
+ * source_refusals()
  * writes count (1,) and, when the arrays are non-NULL with capacity >= count,
  * the refused bounded carriers of the latest refinement: represented edges
  * (count, 2), stratum, source row and values (count, 2) = (certified
  * deviation, declared bound). */
 PHX_MC_API int32_t phx_mc_tet_mesh_source_evidence(
-    const phx_mc_tet_mesh*, double* values, int32_t* face_ancestors,
+    const phx_mc_tet_mesh*, int64_t capacity, int64_t* count, double* values,
+    int64_t* face_ancestor_offsets, int32_t* face_ancestor_rows,
     int32_t* segment_ancestors, int8_t* witness_strata, int32_t* witness_entities,
     double* witness_parameters, double* witness_deviations);
 PHX_MC_API int32_t phx_mc_tet_mesh_source_refusals(

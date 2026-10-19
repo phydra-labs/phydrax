@@ -5,7 +5,6 @@
 """Whole mapped-domain membership, inverse statuses and field evaluation."""
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -13,7 +12,7 @@ from jax import Array
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
-from phydrax import discretization as D
+from phydrax import config as pxconfig, discretization as D
 from phydrax.discretization._cell_complex import (
     PolygonalConnectivity,
     TetrahedralConnectivity,
@@ -40,11 +39,52 @@ from phydrax.discretization.fem import (
     prepare_finite_element_field_reconstruction,
 )
 from phydrax.discretization.fem._generic import FiniteElementDiscretization
-from phydrax.discretization.fem._reference import FiniteElementSpec
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
 from phydrax.geometry import GeometryCapability, Orthotope
+from phydrax.units import METER
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
+
+
+# Empirical `test_curved_simplex_support_keeps_image_beyond_all_coordinate_nodes`: matched max |delta|=5.55112e-17; joint allowance fraction=3.46945e-08, margin=100%.
+_CURVED_SIMPLEX_INVERSE_ATOL = 2e-10
+# Empirical `test_hybrid_and_tensor_queries_use_actual_reference_domain_and_coordinate_map`: matched max |delta|=2.22045e-16; joint allowance fraction=2.46169e-09, margin=100%.
+_HYBRID_TENSOR_INVERSE_ATOL = 2e-10
+# Empirical `test_hybrid_and_tensor_queries_use_actual_reference_domain_and_coordinate_map`: matched max |delta|=4.44089e-16; joint allowance fraction=1.2329e-09, margin=100%.
+_HYBRID_TENSOR_FIELD_VALUES_ATOL = 2e-10
+# Empirical `test_exact_restricted_child_keeps_parent_coefficients_and_child_membership`: matched max |delta|=8.67362e-19; joint allowance fraction=1.38756e-09, margin=100%.
+_RESTRICTED_CHILD_IMAGE_ATOL = 1e-13
+# Empirical `test_exact_restricted_child_keeps_parent_coefficients_and_child_membership`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_RESTRICTED_CHILD_INVERSE_ATOL = 2e-10
+# Empirical `test_exact_restricted_child_keeps_parent_coefficients_and_child_membership`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_RESTRICTED_CHILD_FIELD_VALUES_ATOL = 2e-10
+# Empirical `test_exact_restricted_child_keeps_parent_coefficients_and_child_membership`: matched max |delta|=4.44089e-16; joint allowance fraction=2.21823e-09, margin=100%.
+_RESTRICTED_CHILD_FIELD_DERIVATIVE_ATOL = 2e-10
+# Empirical `test_rational_pyramid_child_uses_parent_enclosure_but_actual_restricted_inverse`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_PYRAMID_CHILD_IMAGE_ATOL = 2e-12
+# Empirical `test_rational_pyramid_child_uses_parent_enclosure_but_actual_restricted_inverse`: matched max |delta|=1.11022e-16; joint allowance fraction=1.84422e-09, margin=100%.
+_PYRAMID_CHILD_INVERSE_ATOL = 2e-10
+# Empirical `test_boundary_atlas_keeps_curved_source_image_jacobian_and_outward_orientation`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_BOUNDARY_ATLAS_IMAGE_ATOL = 2e-12
+# Empirical `test_boundary_atlas_keeps_curved_source_image_jacobian_and_outward_orientation`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_BOUNDARY_ATLAS_JACOBIAN_ATOL = 2e-12
+# Empirical `test_boundary_atlas_keeps_curved_source_image_jacobian_and_outward_orientation`: matched max |delta|=1.11022e-16; joint allowance fraction=3.46945e-06, margin=99.9997%.
+_BOUNDARY_ATLAS_NORMAL_ATOL = 2e-12
+# Empirical `test_restricted_boundary_atlas_evaluates_full_parent_source_and_child_chain`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_RESTRICTED_ATLAS_IMAGE_ATOL = 2e-12
+# Empirical `test_restricted_boundary_atlas_evaluates_full_parent_source_and_child_chain`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_RESTRICTED_ATLAS_JACOBIAN_ATOL = 2e-12
+# Empirical `test_restricted_boundary_atlas_evaluates_full_parent_source_and_child_chain`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_RESTRICTED_ATLAS_NORMAL_ATOL = 2e-12
+# Empirical `test_atlas_omits_only_exact_matching_shared_traces_not_curved_coordinate_gaps`: matched max |delta|=2.22045e-16; joint allowance fraction=1.11022e-06, margin=99.9999%.
+_GAPPED_TRACE_FIELD_ATOL = 2e-10
+# Empirical `test_rational_spline_locator_and_field_preserve_original_control_map`: matched max |delta|=4.97716e-11; joint allowance fraction=0.248858, margin=75.1142%.
+_RATIONAL_SPLINE_INVERSE_ATOL = 2e-10
+# Empirical `test_rational_spline_locator_and_field_preserve_original_control_map`: matched max |delta|=1.11022e-16; joint allowance fraction=0.0555112, margin=94.4489%.
+_RATIONAL_SPLINE_RADIUS_SQUARED_ATOL = 2e-15
+# Empirical `test_rational_spline_locator_and_field_preserve_original_control_map`: matched max |delta|=2.22045e-16; joint allowance fraction=1.11022e-06, margin=99.9999%.
+_RATIONAL_SPLINE_FIELD_VALUES_ATOL = 2e-10
 
 
 def _prepare(
@@ -88,7 +128,7 @@ def _prepare(
     ).prepare()
     if not isinstance(prepared, FiniteElementDiscretization):
         raise TypeError(
-            "Mapped support fixtures require a finite-element discretization."
+            f"fixture.prepared must be a FiniteElementDiscretization; got {type(prepared).__name__}"
         )
     return prepared
 
@@ -128,7 +168,9 @@ def test_curved_simplex_support_keeps_image_beyond_all_coordinate_nodes(
     result = eqx.filter_jit(lambda owner, points: owner.locate(points))(locator, physical)
     assert result.status.tolist() == [int(CellLocationStatus.LOCATED)]
     assert result.candidates_complete.tolist() == [True]
-    np.testing.assert_allclose(result.reference_coordinates, reference, atol=2e-10)
+    np.testing.assert_allclose(
+        result.reference_coordinates, reference, atol=_CURVED_SIMPLEX_INVERSE_ATOL
+    )
     assert float(result.geometry_residual[0]) <= locator.policy.residual_tolerance
     support = simplicial_mesh_support_geometry(locator, "curved-support")
     query = eqx.filter_jit(mapped_mesh_support_query)(support, physical)
@@ -168,13 +210,15 @@ def test_hybrid_and_tensor_queries_use_actual_reference_domain_and_coordinate_ma
     physical = _image(locator, jnp.asarray((reference,)))
     location = locator.locate(physical)
     assert location.inside.tolist() == [True]
-    np.testing.assert_allclose(location.reference_coordinates, (reference,), atol=2e-10)
+    np.testing.assert_allclose(
+        location.reference_coordinates, (reference,), atol=_HYBRID_TENSOR_INVERSE_ATOL
+    )
     assert np.isfinite(np.asarray(location.jacobian_condition)).all()
     support = mapped_mesh_support_geometry(locator, "hybrid-support")
     assert eqx.filter_jit(lambda geometry, points: geometry.contains(points))(
         support, physical
     ).tolist() == [True]
-    # A reference-linear field must be evaluated on the inverse of the actual
+    # A reference-linear field must be evaluated on the inverse of the source
     # map, not on a tetrahedron made from a few physical corners.
     field = prepared.elements[0][0]
     routes = np.asarray(prepared.dof_maps[0].cell_dofs[0])[0]
@@ -190,7 +234,7 @@ def test_hybrid_and_tensor_queries_use_actual_reference_domain_and_coordinate_ma
     np.testing.assert_allclose(
         values,
         (1.0 + np.asarray(reference) @ np.arange(1.0, len(reference) + 1.0),),
-        atol=2e-10,
+        atol=_HYBRID_TENSOR_FIELD_VALUES_ATOL,
     )
     if kind == "pyramid":
         cube_only = _image(locator, jnp.asarray(((0.05, 0.5, 0.8),)))
@@ -217,11 +261,15 @@ def test_exact_restricted_child_keeps_parent_coefficients_and_child_membership()
     source_reference = reference @ np.asarray(child.matrix).T + np.asarray(child.offset)
     expected = source_reference.copy()
     expected[:, 1] += 0.4 * source_reference[:, 0] * (source_reference[:, 0] - 0.75)
-    np.testing.assert_allclose(_image(locator, reference), expected, atol=1e-13)
+    np.testing.assert_allclose(
+        _image(locator, reference), expected, atol=_RESTRICTED_CHILD_IMAGE_ATOL
+    )
     location = locator.locate(expected)
-    np.testing.assert_allclose(location.reference_coordinates, reference, atol=2e-10)
+    np.testing.assert_allclose(
+        location.reference_coordinates, reference, atol=_RESTRICTED_CHILD_INVERSE_ATOL
+    )
     assert location.status.tolist() == [int(CellLocationStatus.LOCATED)]
-    # Inside the source triangle, outside this exact restricted child.
+    # Inside the source triangle, outside this restricted child.
     parent_only = np.asarray(((0.7, 0.05 + 0.4 * 0.7 * (0.7 - 0.75)),))
     assert locator.locate(parent_only).status.tolist() == [
         int(CellLocationStatus.OUTSIDE)
@@ -235,11 +283,17 @@ def test_exact_restricted_child_keeps_parent_coefficients_and_child_membership()
     coefficients[routes] = 1.0 + np.asarray(field.reference_nodes) @ (1.0, 2.0)
     reconstruction = prepare_finite_element_field_reconstruction(prepared, "u")
     query = reconstruction.prepare_query(expected)
-    np.testing.assert_allclose(query.apply(coefficients), (1.95,), atol=2e-10)
+    np.testing.assert_allclose(
+        query.apply(coefficients), (1.95,), atol=_RESTRICTED_CHILD_FIELD_VALUES_ATOL
+    )
     derivative = reconstruction.prepare_query(expected, derivative=(1, 0))
     # source x=.375 makes the source shear derivative zero; the child
     # horizontal chart scale is .5, so the physical derivative is 2.
-    np.testing.assert_allclose(derivative.apply(coefficients), (2.0,), atol=2e-10)
+    np.testing.assert_allclose(
+        derivative.apply(coefficients),
+        (2.0,),
+        atol=_RESTRICTED_CHILD_FIELD_DERIVATIVE_ATOL,
+    )
 
 
 def test_rational_pyramid_child_uses_parent_enclosure_but_actual_restricted_inverse() -> (
@@ -261,13 +315,17 @@ def test_rational_pyramid_child_uses_parent_enclosure_but_actual_restricted_inve
         * (parent[:, 1] - 0.5 * parent[:, 2])
         / (1.0 - parent[:, 2])
     )
-    # The perturbed apex is also an authoritative source coefficient: its
+    # The perturbed apex is also an source coefficient: its
     # contribution is 0.2 * 0.5 * 0.5 times the apex weight z.
     expected[:, 0] += 0.05 * parent[:, 2]
-    np.testing.assert_allclose(_image(locator, reference), expected, atol=2e-12)
+    np.testing.assert_allclose(
+        _image(locator, reference), expected, atol=_PYRAMID_CHILD_IMAGE_ATOL
+    )
     location = locator.locate(expected)
     assert location.status.tolist() == [int(CellLocationStatus.LOCATED)]
-    np.testing.assert_allclose(location.reference_coordinates, reference, atol=2e-10)
+    np.testing.assert_allclose(
+        location.reference_coordinates, reference, atol=_PYRAMID_CHILD_INVERSE_ATOL
+    )
     support = mapped_mesh_support_geometry(locator, "rational-child")
     assert support.contains(jnp.asarray(expected)).tolist() == [True]
     parent_only = np.asarray(((0.9, 0.05, 0.05),))
@@ -338,7 +396,9 @@ def test_explicit_support_requires_whole_source_binding_and_rejects_stale_boxes(
     moved = coordinates.copy()
     moved[:, 0] += 0.1
     revised = PreparedMappedCellLocator(locator.cell_map, moved, locator.policy)
-    with pytest.raises(ValueError, match="source revision"):
+    with pytest.raises(
+        ValueError, match=r"mapped_support\.support_geometry.*source revision"
+    ):
         verify_mesh_support_geometry(support, revised, tolerance=0.0)
     stale = eqx.tree_at(
         lambda geometry: geometry.state, support, support.state.replace_at(0, moved)
@@ -351,9 +411,11 @@ def test_explicit_support_requires_whole_source_binding_and_rejects_stale_boxes(
     ]
     assert query.successful.tolist() == [False]
     assert np.isnan(np.asarray(stale.bounds)).all()
-    with pytest.raises(ValueError, match="whole mapped source"):
+    with pytest.raises(
+        ValueError, match=r"mesh_support\.support_geometry.*whole mapped source"
+    ):
         verify_mesh_support_geometry(
-            Orthotope((0.6, 0.5, 0.5), (1.2, 1.0, 1.0)).compile(),
+            Orthotope((0.6, 0.5, 0.5), (1.2, 1.0, 1.0)).compile(coordinate_unit=METER),
             locator,
             tolerance=1e-10,
         )
@@ -363,7 +425,9 @@ def test_source_enclosure_capacity_and_unknown_tabulator_refuse_preparation() ->
     element = coordinate_lagrange_element("triangle", 2)
     coordinates = np.asarray(element.reference_nodes).copy()
     locator = _locator(_prepare("triangle", element, coordinates))
-    with pytest.raises(ValueError, match="source-bound coefficient capacity"):
+    with pytest.raises(
+        ValueError, match="PreparedMappedCellLocator\\.maximum_bound_coefficients"
+    ):
         PreparedMappedCellLocator(
             locator.cell_map, coordinates, locator.policy, maximum_bound_coefficients=1
         )
@@ -384,7 +448,7 @@ def test_source_enclosure_capacity_and_unknown_tabulator_refuse_preparation() ->
     opaque = eqx.tree_at(
         lambda cell_map: cell_map.coordinate_element, locator.cell_map, unsupported
     )
-    with pytest.raises(ValueError, match="source is unsupported"):
+    with pytest.raises(ValueError, match=r"Locator\.coordinate_source"):
         PreparedMappedCellLocator(opaque, coordinates, locator.policy)
 
 
@@ -404,7 +468,9 @@ def test_boundary_atlas_keeps_curved_source_image_jacobian_and_outward_orientati
     connectivity = mesh.connectivity
     if kind == "triangle":
         if not isinstance(connectivity, PolygonalConnectivity):
-            raise TypeError("Triangle boundary fixtures require polygonal connectivity.")
+            raise TypeError(
+                f"fixture.connectivity must be a PolygonalConnectivity; got {type(connectivity).__name__}"
+            )
         facets = np.asarray(connectivity.edges)
         slot = int(np.flatnonzero(np.all(np.sort(facets, axis=1) == (0, 1), axis=1))[0])
         parameters = jnp.asarray(((0.375,),))
@@ -414,7 +480,7 @@ def test_boundary_atlas_keeps_curved_source_image_jacobian_and_outward_orientati
     else:
         if not isinstance(connectivity, TetrahedralConnectivity):
             raise TypeError(
-                "Tetrahedron boundary fixtures require tetrahedral connectivity."
+                f"fixture.connectivity must be a TetrahedralConnectivity; got {type(connectivity).__name__}"
             )
         facets = np.asarray(connectivity.faces)
         slot = int(
@@ -433,12 +499,14 @@ def test_boundary_atlas_keeps_curved_source_image_jacobian_and_outward_orientati
         jnp.asarray(chart),
         jnp.asarray(parameters),
     )
-    np.testing.assert_allclose(mapped, expected, atol=2e-12)
-    np.testing.assert_allclose(atlas.jacobian(chart, parameters), density, atol=2e-12)
+    np.testing.assert_allclose(mapped, expected, atol=_BOUNDARY_ATLAS_IMAGE_ATOL)
+    np.testing.assert_allclose(
+        atlas.jacobian(chart, parameters), density, atol=_BOUNDARY_ATLAS_JACOBIAN_ATOL
+    )
     frame = atlas.frame(chart, parameters)
     assert frame.regular.tolist() == [True]
     assert frame.jacobian_consistent.tolist() == [True]
-    np.testing.assert_allclose(frame.normal, normal, atol=2e-12)
+    np.testing.assert_allclose(frame.normal, normal, atol=_BOUNDARY_ATLAS_NORMAL_ATOL)
 
 
 def test_restricted_boundary_atlas_evaluates_full_parent_source_and_child_chain() -> None:
@@ -453,18 +521,26 @@ def test_restricted_boundary_atlas_evaluates_full_parent_source_and_child_chain(
     mesh = locator.cell_map.mesh
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolygonalConnectivity):
-        raise TypeError("Triangle boundary fixtures require polygonal connectivity.")
+        raise TypeError(
+            f"fixture.connectivity must be a PolygonalConnectivity; got {type(connectivity).__name__}"
+        )
     facets = np.asarray(connectivity.edges)
     slot = int(np.flatnonzero(np.all(np.sort(facets, axis=1) == (0, 1), axis=1))[0])
     entity_id = int(mesh.entity_set(1).entity_ids[slot])
     chart = jnp.asarray(np.flatnonzero(np.asarray(atlas.source_entity_ids) == entity_id))
     parameters = jnp.asarray(((0.75,),))
     np.testing.assert_allclose(
-        atlas.map(chart, parameters), ((0.375, -0.05625),), atol=2e-12
+        atlas.map(chart, parameters),
+        ((0.375, -0.05625),),
+        atol=_RESTRICTED_ATLAS_IMAGE_ATOL,
     )
-    np.testing.assert_allclose(atlas.jacobian(chart, parameters), (0.5,), atol=2e-12)
     np.testing.assert_allclose(
-        atlas.frame(chart, parameters).normal, ((0.0, -1.0),), atol=2e-12
+        atlas.jacobian(chart, parameters), (0.5,), atol=_RESTRICTED_ATLAS_JACOBIAN_ATOL
+    )
+    np.testing.assert_allclose(
+        atlas.frame(chart, parameters).normal,
+        ((0.0, -1.0),),
+        atol=_RESTRICTED_ATLAS_NORMAL_ATOL,
     )
 
 
@@ -496,7 +572,9 @@ def test_atlas_omits_only_exact_matching_shared_traces_not_curved_coordinate_gap
     geometry = mapped_mesh_support_geometry(locator, "continuous-union")
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolygonalConnectivity):
-        raise TypeError("Triangle boundary fixtures require polygonal connectivity.")
+        raise TypeError(
+            f"fixture.connectivity must be a PolygonalConnectivity; got {type(connectivity).__name__}"
+        )
     boundary_ids = np.asarray(mesh.entity_set(1).entity_ids)[
         np.asarray(connectivity.boundary_edges)
     ]
@@ -512,17 +590,15 @@ def test_atlas_omits_only_exact_matching_shared_traces_not_curved_coordinate_gap
         geometry, points
     )
     assert float(field[0]) < -0.25
-    np.testing.assert_allclose(field[1], 0.0, atol=2e-10)
+    np.testing.assert_allclose(field[1], 0.0, atol=_GAPPED_TRACE_FIELD_ATOL)
     assert float(field[2]) > 0.0
-    # Same topological/corner mesh, but the complete shared diagonal sources
+    # Same topological/corner mesh, but the shared diagonal sources
     # disagree at their midpoint. Erasing that face would lose real support.
     moved = coordinates.copy()
     midpoint = int(np.flatnonzero(np.all(reference == (0.5, 0.0), axis=1))[0])
     moved[6 + midpoint, 1] += 0.1
     gap = PreparedMappedCellLocator(locator.cell_map, moved, locator.policy)
-    with pytest.raises(
-        ValueError, match="nonmatching full coordinate-source facet traces"
-    ):
+    with pytest.raises(ValueError, match=r"mapped_support\.facet_traces.*nonmatching"):
         mapped_mesh_support_geometry(gap, "source-gap")
 
 
@@ -561,14 +637,22 @@ def test_rational_spline_locator_and_field_preserve_original_control_map() -> No
     location = locator.locate(points)
     np.testing.assert_array_equal(location.status, [int(CellLocationStatus.LOCATED)] * 2)
     np.testing.assert_allclose(
-        location.reference_coordinates, reference, rtol=0.0, atol=2e-10
+        location.reference_coordinates,
+        reference,
+        rtol=0.0,
+        atol=_RATIONAL_SPLINE_INVERSE_ATOL,
     )
     np.testing.assert_allclose(
-        np.sum(np.asarray(points[:, 1:]) ** 2, axis=1), 1.0, rtol=0.0, atol=2e-15
+        np.sum(np.asarray(points[:, 1:]) ** 2, axis=1),
+        1.0,
+        rtol=0.0,
+        atol=_RATIONAL_SPLINE_RADIUS_SQUARED_ATOL,
     )
     reconstruction = prepare_finite_element_field_reconstruction(
         prepared, "u", locator=locator
     )
     query = reconstruction.prepare_query(points)
     values = query.apply(prepared.dof_maps[0].dof_coordinates[:, 0])
-    np.testing.assert_allclose(values, reference[:, 0], rtol=0.0, atol=2e-10)
+    np.testing.assert_allclose(
+        values, reference[:, 0], rtol=0.0, atol=_RATIONAL_SPLINE_FIELD_VALUES_ATOL
+    )

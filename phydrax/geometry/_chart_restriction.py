@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Exact rational chart restrictions with bounded binary64 execution views."""
+"""Rational chart restrictions with bounded binary64 execution views."""
 
 from __future__ import annotations
 
@@ -11,11 +11,15 @@ from fractions import Fraction
 from typing import final
 
 import equinox as eqx
+import jax
 import numpy as np
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import checked
+from ._rational import upper_float
 
 
 type ExactChartCoordinate = tuple[Fraction, Fraction]
@@ -40,29 +44,21 @@ def _coordinate(value: tuple[Fraction, Fraction], name: str, /) -> ExactChartCoo
     if len(value) != 2 or any(
         not isinstance(coordinate, Fraction) for coordinate in value
     ):
-        raise TypeError(f"{name} must contain two exact Fraction coordinates.")
+        raise TypeError(
+            f"ExactRationalChartRestriction.edge_coordinates must contain two Fraction coordinates per endpoint; got {name}={value!r}"
+        )
     return value
-
-
-def _upper_float(value: Fraction, /) -> float:
-    """Smallest practical binary64 upper bound of one nonnegative rational."""
-    if value < 0:
-        raise ValueError("An upper-bound conversion requires a nonnegative rational.")
-    result = float(value)
-    if not np.isfinite(result):
-        raise ValueError("An exact chart-coordinate error exceeds binary64 range.")
-    return float(np.nextafter(result, np.inf)) if Fraction(result) < value else result
 
 
 @final
 class ExactRationalChartRestriction(StrictModule, NonTrainableState):
     """One source-bound affine edge root and its rounded execution coordinate.
 
-    The authoritative coordinate is ``(1-t) * start + t * end`` with rational
-    ``t``. ``root_coefficients`` and ``isolation`` are mandatory exact evidence
-    that this parameter is the unique root of a primitive affine source
-    equation. The binary64 coordinate is only an execution view and must be the
-    correctly rounded image of the exact coordinate.
+    The rational coordinate is ``(1-t) * start + t * end`` with parameter
+    ``t``. ``root_coefficients`` and ``isolation`` prove that this parameter is
+    the unique root of a primitive affine source equation. The binary64
+    coordinate is an execution view and must be the
+    correctly rounded image of the rational coordinate.
     """
 
     source_revision: str = eqx.field(static=True)
@@ -79,6 +75,7 @@ class ExactRationalChartRestriction(StrictModule, NonTrainableState):
     execution_coordinate: np.ndarray
     restriction_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         source_revision: str,
@@ -87,7 +84,7 @@ class ExactRationalChartRestriction(StrictModule, NonTrainableState):
         edge_vertices: tuple[int, int],
         edge_coordinates: tuple[ExactChartCoordinate, ExactChartCoordinate],
         parameter: Fraction,
-        execution_coordinate: np.ndarray,
+        execution_coordinate: ArrayLike,
         /,
         *,
         root_coefficients: tuple[int, int],
@@ -95,14 +92,16 @@ class ExactRationalChartRestriction(StrictModule, NonTrainableState):
     ) -> None:
         revision = str(source_revision).strip()
         if not revision:
-            raise ValueError("An exact chart restriction requires a source revision.")
+            raise ValueError(
+                f"ExactRationalChartRestriction.source_revision must be nonempty; got {source_revision!r}"
+            )
         if isinstance(patch, bool) or not isinstance(patch, int) or patch < 0:
             raise ValueError(
-                "An exact chart restriction requires a nonnegative patch index."
+                f"ExactRationalChartRestriction.patch must be a nonnegative integer; got {patch!r}"
             )
         if isinstance(vertex, bool) or not isinstance(vertex, int) or vertex < 0:
             raise ValueError(
-                "An exact chart restriction requires a nonnegative vertex index."
+                f"ExactRationalChartRestriction.vertex must be a nonnegative integer; got {vertex!r}"
             )
         if (
             len(edge_vertices) != 2
@@ -116,62 +115,66 @@ class ExactRationalChartRestriction(StrictModule, NonTrainableState):
             or max(edge_vertices) >= vertex
         ):
             raise ValueError(
-                "An exact chart restriction must reference two distinct earlier vertices."
+                f"ExactRationalChartRestriction.edge_vertices must reference two distinct earlier vertices; got {edge_vertices!r}"
             )
         if len(edge_coordinates) != 2:
-            raise TypeError("edge_coordinates must contain the two exact edge endpoints.")
+            raise TypeError(
+                f"ExactRationalChartRestriction.edge_coordinates must contain two endpoints; got {edge_coordinates!r}"
+            )
         start = _coordinate(edge_coordinates[0], "edge start")
         end = _coordinate(edge_coordinates[1], "edge end")
         if start == end:
             raise ValueError(
-                "An exact chart restriction requires a nonempty source edge."
-            )
-        if not isinstance(parameter, Fraction):
-            raise TypeError(
-                "An exact chart restriction parameter requires Fraction authority."
+                f"ExactRationalChartRestriction.edge_coordinates must describe a nonempty edge; got {edge_coordinates!r}"
             )
         if not Fraction(0) < parameter < Fraction(1):
             raise ValueError(
-                "An exact chart restriction root must lie inside its source edge."
+                f"ExactRationalChartRestriction.parameter must lie inside (0, 1); got {parameter!r}"
             )
         if len(root_coefficients) != 2 or any(
             isinstance(value, bool) or not isinstance(value, int)
             for value in root_coefficients
         ):
-            raise TypeError("root_coefficients must be two exact integers.")
+            raise TypeError(
+                f"ExactRationalChartRestriction.root_coefficients must contain two integers; got {root_coefficients!r}"
+            )
         constant, linear = root_coefficients
         if linear <= 0 or math.gcd(abs(constant), linear) != 1:
             raise ValueError(
-                "The affine chart root equation must be primitive with positive slope."
+                f"ExactRationalChartRestriction.root_coefficients must be primitive with positive slope; got {root_coefficients!r}"
             )
         if Fraction(-constant, linear) != parameter:
             raise ValueError(
-                "The affine chart root equation does not prove its parameter."
+                f"ExactRationalChartRestriction.root_coefficients must prove parameter {parameter!r}; got {root_coefficients!r}"
             )
         if len(isolation) != 2 or any(
             not isinstance(value, Fraction) for value in isolation
         ):
-            raise TypeError("isolation must contain two exact Fraction endpoints.")
+            raise TypeError(
+                f"ExactRationalChartRestriction.isolation must contain two Fraction endpoints; got {isolation!r}"
+            )
         lower, upper = isolation
         if not lower < parameter < upper:
             raise ValueError(
-                "The exact chart root is not strictly isolated by its interval."
+                f"ExactRationalChartRestriction.isolation must strictly contain parameter {parameter!r}; got {isolation!r}"
             )
         if constant + linear * lower >= 0 or constant + linear * upper <= 0:
             raise ValueError(
-                "The affine chart root interval does not prove a unique crossing."
+                f"ExactRationalChartRestriction.isolation must prove a unique crossing; got {isolation!r}"
             )
         exact = (
             (Fraction(1) - parameter) * start[0] + parameter * end[0],
             (Fraction(1) - parameter) * start[1] + parameter * end[1],
         )
-        execution = np.asarray(execution_coordinate, dtype=np.float64)
+        execution = np.asarray(jax.device_get(execution_coordinate), dtype=np.float64)
         if execution.shape != (2,) or not np.all(np.isfinite(execution)):
-            raise ValueError("An execution chart coordinate must be one finite 2-vector.")
+            raise ValueError(
+                f"ExactRationalChartRestriction.execution_coordinate must be a finite 2-vector; got shape {execution.shape}"
+            )
         represented = np.asarray([float(value) for value in exact], dtype=np.float64)
         if not np.array_equal(execution, represented):
             raise ValueError(
-                "The execution chart coordinate is not the correctly rounded exact restriction."
+                f"ExactRationalChartRestriction.execution_coordinate must equal the rounded rational coordinate; got {execution!r}"
             )
         self.source_revision = revision
         self.patch = patch
@@ -205,7 +208,7 @@ class ExactRationalChartRestriction(StrictModule, NonTrainableState):
         """Outward coordinatewise error of the rounded execution view."""
         return np.asarray(
             [
-                _upper_float(abs(Fraction(float(realized)) - exact))
+                upper_float(abs(Fraction(float(realized)) - exact))
                 for realized, exact in zip(
                     self.execution_coordinate, self.exact_coordinate, strict=True
                 )
@@ -215,13 +218,15 @@ class ExactRationalChartRestriction(StrictModule, NonTrainableState):
 
 
 def empty_chart_restrictions(vertex_count: int, /) -> ChartRestrictionArrays:
-    """Canonical empty restriction banks for ``vertex_count`` chart vertices."""
+    """Return empty restriction banks for ``vertex_count`` chart vertices."""
     if (
         isinstance(vertex_count, bool)
         or not isinstance(vertex_count, int)
         or vertex_count < 0
     ):
-        raise ValueError("vertex_count must be a nonnegative integer.")
+        raise ValueError(
+            f"ChartRestriction.vertex_count must be a nonnegative integer; got {vertex_count!r}"
+        )
     return (
         np.zeros((vertex_count,), dtype=np.bool_),
         np.empty((0,), dtype=np.int64),
@@ -232,23 +237,26 @@ def empty_chart_restrictions(vertex_count: int, /) -> ChartRestrictionArrays:
 
 
 def validate_chart_restrictions(
-    charts: np.ndarray,
-    required: np.ndarray,
-    vertices: np.ndarray,
-    edges: np.ndarray,
-    endpoint_charts: np.ndarray,
-    parameters: np.ndarray,
+    charts: ArrayLike,
+    required: ArrayLike,
+    vertices: ArrayLike,
+    edges: ArrayLike,
+    endpoint_charts: ArrayLike,
+    parameters: ArrayLike,
     source_revision: str,
     patch: int,
     /,
 ) -> tuple[np.ndarray, tuple[ExactRationalChartRestriction, ...], np.ndarray]:
-    """Validate complete rational authority and return exact coordinates/errors.
+    """Validate rational restrictions and return rational coordinates/errors.
 
     Rows are topologically ordered: every restriction references earlier chart
-    vertices. Missing, duplicated, noncanonical, nonunique, or stale authority
-    is refused. Ordinary vertices retain their exact binary64 values as dyadic
+    vertices. Missing, duplicated, nonprimitive, nonunique, or stale evidence
+    is refused. Ordinary vertices retain their binary64 values as dyadic
     rationals; restricted vertices recursively retain their source-edge roots.
     """
+    charts, required, vertices, edges, endpoint_charts, parameters = jax.device_get(
+        (charts, required, vertices, edges, endpoint_charts, parameters)
+    )
     chart_values = np.asarray(charts)
     required_values = np.asarray(required)
     vertex_values = np.asarray(vertices)
@@ -257,32 +265,42 @@ def validate_chart_restrictions(
     parameter_values = np.asarray(parameters)
     count = chart_values.shape[0] if chart_values.ndim == 2 else -1
     if chart_values.dtype != np.float64 or chart_values.shape != (count, 2):
-        raise TypeError("Chart restriction coordinates must be a float64 (n, 2) array.")
+        raise TypeError(
+            f"ChartRestriction.charts must be a float64 (n, 2) array; got {chart_values.dtype} {chart_values.shape}"
+        )
     if not np.all(np.isfinite(chart_values)):
-        raise ValueError("Chart restriction coordinates must be finite.")
+        raise ValueError(
+            "ChartRestriction.charts must be finite; got nonfinite coordinates"
+        )
     if required_values.dtype != np.bool_ or required_values.shape != (count,):
-        raise TypeError("Chart restriction requirements must be a bool (n,) array.")
+        raise TypeError(
+            f"ChartRestriction.required must be a bool ({count},) array; got {required_values.dtype} {required_values.shape}"
+        )
     for name, value, shape in (
         ("vertices", vertex_values, (vertex_values.size,)),
         ("edges", edge_values, (vertex_values.size, 2)),
         ("parameters", parameter_values, (vertex_values.size, 2)),
     ):
         if value.dtype != np.int64 or value.shape != shape:
-            raise TypeError(f"Chart restriction {name} must be a canonical int64 array.")
+            raise TypeError(
+                f"ChartRestriction.banks must store {name} as an int64 array with shape {shape}; got {value.dtype} {value.shape}"
+            )
     if endpoint_values.dtype != np.float64 or endpoint_values.shape != (
         vertex_values.size,
         2,
         2,
     ):
         raise TypeError(
-            "Chart restriction endpoint coordinates must be a float64 (r, 2, 2) array."
+            f"ChartRestriction.endpoint_charts must be a float64 (r, 2, 2) array; got {endpoint_values.dtype} {endpoint_values.shape}"
         )
     if not np.all(np.isfinite(endpoint_values)):
-        raise ValueError("Chart restriction endpoint coordinates must be finite.")
+        raise ValueError(
+            "ChartRestriction.endpoint_charts must be finite; got nonfinite coordinates"
+        )
     expected = np.flatnonzero(required_values).astype(np.int64)
     if not np.array_equal(vertex_values, expected):
         raise ValueError(
-            "Every rounded chart vertex must carry exactly one canonical rational authority."
+            f"ChartRestriction.vertices must provide one rational restriction per required vertex in canonical ordering; got {vertex_values!r}"
         )
     exact = np.empty((count, 2), dtype=object)
     for row in range(count):
@@ -301,11 +319,11 @@ def validate_chart_restrictions(
             or vertex >= count
         ):
             raise ValueError(
-                "A chart restriction must reference two distinct earlier chart vertices."
+                f"ChartRestriction.edges must reference two distinct earlier vertices; got {(first, second)} for vertex {vertex}"
             )
         if not np.array_equal(endpoint_values[record], chart_values[[first, second]]):
             raise ValueError(
-                "A chart restriction endpoint bank differs from its execution topology."
+                f"ChartRestriction.endpoint_charts must match execution topology; got a mismatch at record {record}"
             )
         numerator, denominator = (int(value) for value in parameter_values[record])
         if (
@@ -314,7 +332,7 @@ def validate_chart_restrictions(
             or math.gcd(numerator, denominator) != 1
         ):
             raise ValueError(
-                "A chart restriction parameter must be a reduced open-unit rational."
+                f"ChartRestriction.parameters must be reduced open-unit rationals; got {(numerator, denominator)}"
             )
         parameter = Fraction(numerator, denominator)
         edge_coordinates = (

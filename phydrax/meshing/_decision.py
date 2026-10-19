@@ -2,12 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Host admission of finite, independently evaluated adaptation alternatives.
+"""Admit independently evaluated adaptation alternatives on the host.
 
-Estimator, native route, compiler, transfer, and reanalysis owners produce the
-inputs. This owner neither estimates a PDE error nor predicts a measured cost.
-A candidate denotes the complete prepared route to the requested tolerance,
-not a promise that repeating a cheap local edit will eventually get there.
+Estimator, native route, compiler, transfer, and reanalysis owners provide the
+evidence for each prepared route to the requested tolerance.
 """
 
 from __future__ import annotations
@@ -20,18 +18,26 @@ from typing import final, Literal, TYPE_CHECKING
 
 import equinox as eqx
 
-from .._fingerprint import canonical_fingerprint
+import phydrax.geometry._contracts as contracts_owner
+
+from .._fingerprint import canonical_fingerprint, logical_array_value_collection_digest
+from .._meshcore import NativeExecutionScope
+from .._model._structure import model_recipe_array_pairs
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .._validation import canonical_identifier, finite_real_scalar, nonnegative_integer
+from .._validation import (
+    canonical_identifier,
+    nonnegative_integer,
+    nonnegative_real_scalar,
+)
 from ..geometry.design._qualification import DesignQualificationEvidence
-from ..typing import parse
+from ..geometry.implicit import AdaptiveImplicitSurfacePolicy, ImplicitSurfacePolicy
+from ..lifecycle import CompositionRebind
+from ..typing import checked, parse
 
 
 if TYPE_CHECKING:
     from ..discretization.fem import FiniteElementDiscretization, FiniteElementFieldSpec
-    from ..geometry import CompiledGeometry
-    from ..lifecycle import CompositionRebind
     from ..solver import FiniteElementAcceptedState
     from ._adaptation import MeshAdaptationResult
     from ._contracts import SurfaceMeshingSpec
@@ -56,13 +62,6 @@ class AdaptationAction(StrEnum):
     RELOCATION = "relocation"
 
 
-def _nonnegative(value: float, name: str, /) -> float:
-    result = finite_real_scalar(value, name)
-    if result < 0.0:
-        raise ValueError(f"{name} must be nonnegative.")
-    return result
-
-
 def _bindings(
     values: Sequence[tuple[str, str]], name: str, /
 ) -> tuple[tuple[str, str], ...]:
@@ -73,19 +72,19 @@ def _bindings(
         )
     )
     if len({key for key, _ in result}) != len(result):
-        raise ValueError(f"{name} must have unique scientific entry identities.")
+        raise ValueError(
+            f"Decision.{name} must have unique scientific entry identities; got repeated entry keys."
+        )
     return result
 
 
 @final
 class PhysicalErrorEvidence(StrictModule, NonTrainableState):
-    """Owner-produced objective assessment with independent physical contributions.
+    """Record objective assessments with independent physical contributions.
 
-    Components use the units of the identified objective and account for
-    pollution; signed QoI cancellation is not an error bound. The summed
-    assessment does not promote residual indicators or quadrature diagnostics
-    to rigorous bounds. Publication still requires independent physical
-    reanalysis, and no estimator value establishes learned superiority.
+    Components use the identified objective's units and account for pollution.
+    The bound sums physical contributions without signed QoI cancellation.
+    Publication requires independent physical reanalysis.
     """
 
     revision_id: str = eqx.field(static=True)
@@ -123,13 +122,15 @@ class PhysicalErrorEvidence(StrictModule, NonTrainableState):
             else canonical_identifier(qoi_certificate_id, "qoi_certificate_id")
         )
         if quantity_ == "qoi" and certificate is None:
-            raise ValueError("QoI error requires its owning well-posedness certificate.")
+            raise ValueError(
+                "PhysicalErrorEvidence.qoi_certificate_id must identify a well-posedness certificate for QoI error; got None."
+            )
         if quantity_ == "physical-error" and certificate is not None:
             raise ValueError(
-                "A QoI certificate cannot identify a physical-error objective."
+                "PhysicalErrorEvidence.qoi_certificate_id must be absent for a physical-error objective; got a QoI certificate."
             )
         components = tuple(
-            _nonnegative(value, name)
+            nonnegative_real_scalar(value, name)
             for name, value in (
                 ("field_error", field_error),
                 ("geometry_error", geometry_error),
@@ -138,7 +139,9 @@ class PhysicalErrorEvidence(StrictModule, NonTrainableState):
             )
         )
         if not isfinite(sum(components)):
-            raise ValueError("The total physical-error bound must be finite.")
+            raise ValueError(
+                "PhysicalErrorEvidence.components must have a finite total physical-error bound; got a nonfinite sum."
+            )
         self.revision_id, self.objective_id, self.estimator_id = (
             revision,
             objective,
@@ -191,11 +194,11 @@ class DecisionBudget(StrictModule, NonTrainableState):
         maximum_dofs: int,
         maximum_condition: float,
     ) -> None:
-        tolerance_ = _nonnegative(tolerance, "tolerance")
-        wall = _nonnegative(maximum_wall_seconds, "maximum_wall_seconds")
+        tolerance_ = nonnegative_real_scalar(tolerance, "tolerance")
+        wall = nonnegative_real_scalar(maximum_wall_seconds, "maximum_wall_seconds")
         memory = nonnegative_integer(maximum_memory_bytes, "maximum_memory_bytes")
         dofs = nonnegative_integer(maximum_dofs, "maximum_dofs")
-        condition = _nonnegative(maximum_condition, "maximum_condition")
+        condition = nonnegative_real_scalar(maximum_condition, "maximum_condition")
         if (
             tolerance_ <= 0.0
             or wall <= 0.0
@@ -204,7 +207,7 @@ class DecisionBudget(StrictModule, NonTrainableState):
             or condition < 1.0
         ):
             raise ValueError(
-                "Decision budgets must be positive and condition at least one."
+                "DecisionBudget.limits must be positive and condition at least one; got an invalid tolerance, wall-time limit, or condition bound."
             )
         self.tolerance, self.maximum_wall_seconds = tolerance_, wall
         self.maximum_memory_bytes, self.maximum_dofs, self.maximum_condition = (
@@ -226,10 +229,12 @@ class DecisionBudget(StrictModule, NonTrainableState):
 
 @final
 class MeasuredAdaptationCost(StrictModule, NonTrainableState):
-    """Observed complete-route cost, including compile/transfer/reanalysis.
+    """Record observed route costs, including compilation, transfer, and reanalysis.
 
-    Zero compile time is valid only when the trial really reused a compiled
-    layout. Peak bytes are measured for the trial, not an element-count guess.
+    Zero compilation time denotes reuse of a compiled layout. Peak memory is
+    observed process-lifetime RSS evidence; it certifies neither the trial's
+    peak nor an upper bound. Exceeding a memory budget refuses the route; a lower
+    observation does not certify that unobserved memory stayed within the budget.
     """
 
     sample_id: str = eqx.field(static=True)
@@ -255,7 +260,7 @@ class MeasuredAdaptationCost(StrictModule, NonTrainableState):
         sample = canonical_identifier(sample_id, "sample_id")
         candidate = canonical_identifier(candidate_id, "candidate_id")
         phases = tuple(
-            _nonnegative(value, name)
+            nonnegative_real_scalar(value, name)
             for name, value in (
                 ("preparation_seconds", preparation_seconds),
                 ("compilation_seconds", compilation_seconds),
@@ -268,7 +273,7 @@ class MeasuredAdaptationCost(StrictModule, NonTrainableState):
         memory = nonnegative_integer(peak_memory_bytes, "peak_memory_bytes")
         if not isfinite(sum(phases)) or sum(phases) <= 0.0 or memory == 0:
             raise ValueError(
-                "A measured route requires positive total time and peak memory."
+                f"MeasuredAdaptationCost.phase_seconds must have positive total time and peak_memory_bytes must be positive; got phases={phases!r}, peak_memory_bytes={memory}."
             )
         self.sample_id, self.candidate_id = sample, candidate
         self.phase_seconds, self.peak_memory_bytes = phases, memory
@@ -282,6 +287,28 @@ class MeasuredAdaptationCost(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[MeasuredAdaptationCost], value: MeasuredAdaptationCost, /
+    ) -> MeasuredAdaptationCost:
+        """Rebuild measured costs from the six retained lifecycle phases."""
+        if len(value.phase_seconds) != 6:
+            raise ValueError(
+                f"MeasuredAdaptationCost.phase_seconds must contain the six-entry phase table; got count={len(value.phase_seconds)}."
+            )
+        return cls(
+            value.sample_id,
+            value.candidate_id,
+            preparation_seconds=value.phase_seconds[0],
+            compilation_seconds=value.phase_seconds[1],
+            solve_seconds=value.phase_seconds[2],
+            transfer_seconds=value.phase_seconds[3],
+            reanalysis_seconds=value.phase_seconds[4],
+            decision_seconds=value.phase_seconds[5],
+            peak_memory_bytes=value.peak_memory_bytes,
+        )
+
     @property
     def total_seconds(self) -> float:
         return sum(self.phase_seconds)
@@ -289,10 +316,9 @@ class MeasuredAdaptationCost(StrictModule, NonTrainableState):
 
 @final
 class RouteFeasibility(StrictModule, NonTrainableState):
-    """Exact prepared route/layout and every required state disposition.
+    """Record prepared route/layout identities and required state dispositions.
 
-    These are owner-produced identities, not learned capability flags. A failed
-    native/compiler/transfer admission is represented by issues and is retained
+    Failed native/compiler/transfer admission is recorded as issues and retained
     as a rejected alternative. State entries without transport/recompute proof
     cannot be selected, including materials, histories, RNG and solver artifacts.
     """
@@ -353,11 +379,13 @@ class RouteFeasibility(StrictModule, NonTrainableState):
         )
         if not families or not layouts or len(set(required)) != len(required):
             raise ValueError(
-                "Family/layout identities and unique state obligations are required."
+                "RouteFeasibility.cell_families must contain family identities, field_layouts must contain layout identities, and required_state_ids must contain unique state obligations; got empty identities or repeated state obligations."
             )
         dispositions = _bindings(state_dispositions, "state_dispositions")
         if not set(key for key, _ in dispositions).issubset(required):
-            raise ValueError("State dispositions must name declared composition entries.")
+            raise ValueError(
+                "RouteFeasibility.state_dispositions must name declared composition entries; got undeclared entry identities."
+            )
         certificates = tuple(
             None if value is None else canonical_identifier(value, name)
             for name, value in (
@@ -367,10 +395,10 @@ class RouteFeasibility(StrictModule, NonTrainableState):
             )
         )
         dofs_ = nonnegative_integer(dofs, "dofs")
-        condition = _nonnegative(condition_estimate, "condition_estimate")
+        condition = nonnegative_real_scalar(condition_estimate, "condition_estimate")
         if dofs_ == 0 or condition < 1.0:
             raise ValueError(
-                "Route DOFs must be positive and measured condition at least one."
+                f"RouteFeasibility.dofs must be positive and condition_estimate must be at least one; got dofs={dofs_}, condition_estimate={condition!r}."
             )
         issues_ = set(canonical_identifier(value, "issues") for value in issues)
         for name, certificate in zip(
@@ -424,12 +452,10 @@ class RouteFeasibility(StrictModule, NonTrainableState):
         )
 
     @staticmethod
+    @checked
     def rebind_dispositions(rebind: CompositionRebind, /) -> tuple[tuple[str, str], ...]:
-        """Content-address every actual disposition of the accepted composition."""
-        from ..lifecycle import CompositionRebind
+        """Content-address each disposition of the accepted composition."""
 
-        if not isinstance(rebind, CompositionRebind):
-            raise TypeError("Decision admission requires CompositionRebind.")
         transported = {
             entry_id: transport.transport_id
             for transport in rebind.transports
@@ -448,12 +474,15 @@ class RouteFeasibility(StrictModule, NonTrainableState):
             result.append((entry.entry_id, proof))
         return tuple(result)
 
+    @checked
     def require_rebind(self, rebind: CompositionRebind, /) -> None:
         if rebind.source.entry_ids != self.required_state_ids:
-            raise ValueError("Decision omits or invents accepted composition entries.")
+            raise ValueError(
+                "RouteFeasibility.required_state_ids must match accepted composition entries; got omitted or additional entries."
+            )
         if self.rebind_dispositions(rebind) != self.state_dispositions:
             raise ValueError(
-                "Decision does not certify the actual staged state/artifact dispositions."
+                "Decision.state_dispositions must match staged state/artifact dispositions; got a different disposition."
             )
 
 
@@ -466,6 +495,7 @@ class SolverAwareCandidate(StrictModule, NonTrainableState):
     cost: MeasuredAdaptationCost
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         action: AdaptationAction,
@@ -478,20 +508,12 @@ class SolverAwareCandidate(StrictModule, NonTrainableState):
         action_ = parse(action, AdaptationAction, "action")
         candidate = canonical_identifier(candidate_id, "candidate_id")
         if (
-            not isinstance(feasibility, RouteFeasibility)
-            or not isinstance(error, PhysicalErrorEvidence)
-            or not isinstance(cost, MeasuredAdaptationCost)
-        ):
-            raise TypeError(
-                "Candidate requires route, physical error, and measured cost evidence."
-            )
-        if (
             candidate != feasibility.candidate_id
             or candidate != cost.candidate_id
             or error.revision_id != feasibility.target_revision_id
         ):
             raise ValueError(
-                "Candidate evidence must bind the identical prepared route and target."
+                "SolverAwareCandidate.evidence must bind the identical prepared route and target; got a differing candidate or target revision."
             )
         self.action, self.candidate_id = action_, candidate
         self.feasibility, self.error, self.cost = feasibility, error, cost
@@ -517,9 +539,9 @@ def _objective_matches(
 
 @final
 class SolverAwareDecision(StrictModule, NonTrainableState):
-    """Minimum observed cost to tolerance over admissible prepared alternatives.
+    """Select the lowest observed cost to tolerance among admissible prepared routes.
 
-    No selection means target failure, not a successful mesh-quality improvement.
+    An absent selection records failure to attain the physical target.
     Trial costs include failed alternatives in the campaign budget; they cannot
     be hidden by selecting the nominally cheapest successful candidate.
     """
@@ -533,6 +555,7 @@ class SolverAwareDecision(StrictModule, NonTrainableState):
     observed_campaign_seconds: float = eqx.field(static=True)
     decision_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         baseline: PhysicalErrorEvidence,
@@ -542,32 +565,36 @@ class SolverAwareDecision(StrictModule, NonTrainableState):
         *,
         observed_campaign_seconds: float | None = None,
     ) -> None:
-        if not isinstance(baseline, PhysicalErrorEvidence) or not isinstance(
-            budget, DecisionBudget
-        ):
-            raise TypeError("Decision requires physical baseline and explicit budget.")
         alternatives = tuple(candidates)
         if any(
             not isinstance(candidate, SolverAwareCandidate) for candidate in alternatives
         ):
-            raise TypeError("Decision alternatives must be SolverAwareCandidate values.")
+            raise TypeError(
+                "SolverAwareDecision.candidates must contain SolverAwareCandidate values; got a different candidate kind."
+            )
         alternatives = tuple(
             sorted(alternatives, key=lambda candidate: candidate.candidate_id)
         )
         if len({candidate.candidate_id for candidate in alternatives}) != len(
             alternatives
         ):
-            raise ValueError("Decision candidate identities must be unique.")
+            raise ValueError(
+                "SolverAwareDecision.candidates.candidate_id must be unique; got repeated candidate identities."
+            )
         dispositions: list[tuple[str, tuple[str, ...]]] = []
         admitted: list[SolverAwareCandidate] = []
         priced_seconds = sum(candidate.cost.total_seconds for candidate in alternatives)
         observed_seconds = (
             priced_seconds
             if observed_campaign_seconds is None
-            else _nonnegative(observed_campaign_seconds, "observed_campaign_seconds")
+            else nonnegative_real_scalar(
+                observed_campaign_seconds, "observed_campaign_seconds"
+            )
         )
         if observed_seconds < priced_seconds:
-            raise ValueError("Observed campaign time cannot omit priced candidate work.")
+            raise ValueError(
+                f"SolverAwareDecision.observed_campaign_seconds must include priced candidate work; got observed={observed_seconds!r}, priced={priced_seconds!r}."
+            )
         campaign_overrun = observed_seconds > budget.maximum_wall_seconds
         for candidate in alternatives:
             feasibility, error, cost = (
@@ -635,20 +662,21 @@ class SolverAwareDecision(StrictModule, NonTrainableState):
     ) -> SolverAwareCandidate:
         selected = self.selected
         if selected is None:
-            raise ValueError("No admissible route attains the declared physical target.")
+            raise ValueError(
+                "SolverAwareDecision.selected must identify an admissible route attaining the declared physical target; got no selected route."
+            )
         if (source_revision_id, candidate_id, target_revision_id) != (
             self.source_revision_id,
             selected.candidate_id,
             selected.feasibility.target_revision_id,
         ):
             raise ValueError(
-                "Decision does not select this exact source, action, and target revision."
+                "SolverAwareDecision.selected must match the requested source, action, and target revision; got a different selected route."
             )
         return selected
 
+    @checked
     def reanalysis_issues(self, actual: PhysicalErrorEvidence, /) -> tuple[str, ...]:
-        if not isinstance(actual, PhysicalErrorEvidence):
-            raise TypeError("Independent reanalysis must return PhysicalErrorEvidence.")
         selected = self.selected
         if selected is None:
             return ("decision-target-unmet",)
@@ -665,18 +693,22 @@ class SolverAwareDecision(StrictModule, NonTrainableState):
             issues.append("physical-reanalysis-rejected")
         return tuple(issues)
 
+    @checked
     def require_reanalysis(self, actual: PhysicalErrorEvidence, /) -> None:
         issues = self.reanalysis_issues(actual)
         if issues:
-            raise ValueError("Decision reanalysis failed: " + "; ".join(issues))
+            raise ValueError(
+                "SolverAwareDecision.reanalysis must satisfy identity, independence, and physical-error requirements; got "
+                + "; ".join(issues)
+            )
 
 
 @final
 class FixedEpochDerivativeEvidence(StrictModule, NonTrainableState):
-    """Composition of qualified geometry/PDE/transfer derivatives, never topology.
+    """Bind geometry, PDE and transfer derivative qualifications to a fixed epoch.
 
     Numerical JVP/VJP operators stay with their owners. This record gates their
-    fixed-route composition and records the exact parameter/epoch identities.
+    fixed-route composition and records the declared parameter/epoch identities.
     Acceptance, retopology, classification, Boolean and donor switches stop the
     route: consumers must prepare and qualify a new record after those events.
     """
@@ -687,6 +719,7 @@ class FixedEpochDerivativeEvidence(StrictModule, NonTrainableState):
     qualifications: tuple[DesignQualificationEvidence, ...] = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         epoch_id: str,
@@ -702,22 +735,16 @@ class FixedEpochDerivativeEvidence(StrictModule, NonTrainableState):
         parameter = canonical_identifier(parameter_id, "parameter_id")
         routes_ = _bindings(routes, "routes")
         qualifications = (geometry, pde, transfer)
-        if any(
-            not isinstance(value, DesignQualificationEvidence) for value in qualifications
-        ):
-            raise TypeError(
-                "Fixed-route derivatives require their owner's qualification evidence."
-            )
         route_table = dict(routes_)
         if set(route_table) != {"geometry", "pde", "transfer"}:
             raise ValueError(
-                "Fixed-route evidence requires exactly geometry, PDE and transfer stages."
+                "FixedEpochDerivativeEvidence.routes must identify exactly geometry, PDE and transfer stages; got missing or additional stages."
             )
         if any(
             qualification.numeric_revision_id != epoch for qualification in qualifications
         ):
             raise ValueError(
-                "Fixed-route qualifications must bind the actual numeric epoch."
+                f"FixedEpochDerivativeEvidence.qualifications must bind the numeric epoch; got a qualification outside epoch={epoch!r}."
             )
         if any(
             route_table.get(stage) != qualification.execution_plan_id
@@ -726,7 +753,7 @@ class FixedEpochDerivativeEvidence(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "Fixed-route stages must identify their exact qualified execution plans."
+                "FixedEpochDerivativeEvidence.routes must identify their qualified execution plans; got a stage with a different execution plan."
             )
         self.epoch_id, self.parameter_id, self.routes, self.qualifications = (
             epoch,
@@ -742,6 +769,25 @@ class FixedEpochDerivativeEvidence(StrictModule, NonTrainableState):
                 "routes": routes_,
                 "qualifications": [value.evidence_id for value in qualifications],
             }
+        )
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[FixedEpochDerivativeEvidence], value: FixedEpochDerivativeEvidence, /
+    ) -> FixedEpochDerivativeEvidence:
+        """Rebuild derivative evidence from geometry, PDE and transfer qualifications."""
+        if len(value.qualifications) != 3:
+            raise ValueError(
+                f"FixedEpochDerivativeEvidence.qualifications must contain all three stage qualifications; got count={len(value.qualifications)}."
+            )
+        return cls(
+            value.epoch_id,
+            value.parameter_id,
+            geometry=value.qualifications[0],
+            pde=value.qualifications[1],
+            transfer=value.qualifications[2],
+            routes=value.routes,
         )
 
     def invalidation_issues(
@@ -773,7 +819,9 @@ class FixedEpochDerivativeEvidence(StrictModule, NonTrainableState):
             )
         )
         if len({name for name, _ in current}) != len(current):
-            raise ValueError("Event margins must have unique event identities.")
+            raise ValueError(
+                "FixedEpochDerivativeEvidence.event_margins must have unique event identities; got repeated event identities."
+            )
         expected: dict[str, float] = {}
         for qualification in self.qualifications:
             if not qualification.valid or not qualification.tier.is_derivative:
@@ -814,21 +862,21 @@ class FixedEpochDerivativeEvidence(StrictModule, NonTrainableState):
             geometry_realization_id=geometry_realization_id,
         )
         if issues:
-            raise ValueError("Fixed-epoch derivative invalidated: " + "; ".join(issues))
+            raise ValueError(
+                "FixedEpochDerivativeEvidence.binding must retain its qualified epoch, routes, and event margins; got "
+                + "; ".join(issues)
+            )
 
 
 @dataclass(frozen=True, kw_only=True)
 class NativeDesignSourceState:
-    """Exact original design-source checkpoint, not a solver-template echo.
+    """Retain design sources, accepted fields and learned model state for cold replay.
 
-    The fixed implicit preparation, accepted fields and learned numerical model
-    are retained as their actual owners. PDE executable caches and host recorder
-    callbacks are deliberately absent; the cold consumer reprepares their owning
-    FE problem from this source and field specification. Source1 has no authored
-    constitutive history or carried RNG, so neither is fabricated here.
+    The consumer prepares its FE problem from the source and field specification.
+    PDE executable caches and host recorder callbacks are excluded from the checkpoint.
     """
 
-    geometry: CompiledGeometry
+    geometry: contracts_owner.CompiledGeometry
     source: NativeImplicitSource
     specification: SurfaceMeshingSpec
     options: NativeMeshingOptions
@@ -851,7 +899,7 @@ class NativeDesignSourceState:
     def __post_init__(self) -> None:
         if tuple(field.name for field in self.field_specs) != ("u", "density", "history"):
             raise ValueError(
-                "Original design state requires its actual three declared fields."
+                "NativeDesignSourceState.field_specs must declare u, density, and history in order; got a different field inventory."
             )
         for state, carrier, prepared in (
             (self.initial_state, self.initial, self.source_fields),
@@ -865,7 +913,7 @@ class NativeDesignSourceState:
                 != carrier.geometry.geometry_layout_id
             ):
                 raise ValueError(
-                    "Archived accepted state differs from its actual source/field epoch."
+                    "NativeDesignSourceState.accepted_state must match its source topology and field epoch; got a different topology, preparation, field count, or geometry layout."
                 )
         if (
             self.source.source_revision != self.plan.source.source_revision
@@ -877,7 +925,7 @@ class NativeDesignSourceState:
             or self.derivative.epoch_id != self.initial.result_id
         ):
             raise ValueError(
-                "Original design checkpoint source, proposal or derivative ownership is stale."
+                "NativeDesignSourceState.bindings must match its source, plan, proposal, and derivative epoch; got stale bindings."
             )
         self.decision.require_selected(
             self.initial.result_id,
@@ -888,8 +936,7 @@ class NativeDesignSourceState:
 
     def validate_source_integrity(self) -> None:
         """Rebuild the fixed implicit preparation through its source owner."""
-        from .._fingerprint import logical_array_value_collection_digest
-        from .._model._structure import model_recipe_array_pairs
+        # Decision/source integrity ↔ implicit publication: prepare only during the integrity check.
         from .providers._implicit import (
             prepare_adaptive_implicit_route,
             prepare_implicit_route,
@@ -903,28 +950,32 @@ class NativeDesignSourceState:
             or renewed.proposer_id != recorded.proposer_id
         ):
             raise ValueError(
-                "Restored learned numerical model/features changed the original evaluated proposal."
+                "NativeDesignSourceState.learned_transaction must retain the evaluated proposal identity; got a different proposer or proposal identity."
             )
         policy = self.options.implicit_policy
         if policy is None:
-            raise ValueError("Original implicit design source lost its owning policy.")
-        from ..geometry.implicit import (
-            AdaptiveImplicitSurfacePolicy,
-            ImplicitSurfacePolicy,
-        )
-
-        if isinstance(policy, ImplicitSurfacePolicy):
-            expected = prepare_implicit_route(self.source, self.specification, policy)
-        elif isinstance(policy, AdaptiveImplicitSurfacePolicy):
-            expected = prepare_adaptive_implicit_route(
-                self.source, self.specification, policy
+            raise ValueError(
+                "NativeDesignSourceState.options.implicit_policy must retain the source preparation policy; got None."
             )
-        else:
-            raise TypeError("Original implicit design policy changed type.")
+
+        match policy:
+            case ImplicitSurfacePolicy():
+                expected = prepare_implicit_route(self.source, self.specification, policy)
+            case AdaptiveImplicitSurfacePolicy():
+                with NativeExecutionScope(
+                    self.specification.limits.native_limits()
+                ) as scope:
+                    expected = prepare_adaptive_implicit_route(
+                        self.source, self.specification, policy, scope=scope
+                    )
+            case _:
+                raise TypeError(
+                    f"NativeDesignSourceState.options.implicit_policy must be ImplicitSurfacePolicy or AdaptiveImplicitSurfacePolicy; got {type(policy).__name__}."
+                )
         pairs = model_recipe_array_pairs(self.plan.prepared, expected)
         if pairs is None:
             raise ValueError(
-                "Restored implicit preparation differs from its original source structure."
+                "NativeDesignSourceState.plan.prepared must retain the source structure; got a different restored preparation structure."
             )
         before = logical_array_value_collection_digest(
             {str(index): first for index, (first, _) in enumerate(pairs)},
@@ -934,7 +985,7 @@ class NativeDesignSourceState:
         )
         if before != after:
             raise ValueError(
-                "Restored implicit preparation changed an original numerical source field."
+                "NativeDesignSourceState.plan.prepared must retain the numerical source fields; got different restored array content."
             )
 
 

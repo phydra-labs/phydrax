@@ -14,29 +14,59 @@ relations, frames, and status reduction) is vectorized NumPy.
 
 from __future__ import annotations
 
+# This provider module is loaded lazily by the interchange facade; OCP stays optional.
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, final
+from typing import Any, final, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+from OCP.Bnd import Bnd_Box
+from OCP.BRep import BRep_Tool
+from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
+from OCP.BRepBndLib import BRepBndLib
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
+from OCP.BRepClass import BRepClass_FaceClassifier
+from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+from OCP.BRepTools import BRepTools
+from OCP.GeomAPI import GeomAPI_ProjectPointOnCurve, GeomAPI_ProjectPointOnSurf
+from OCP.GeomLProp import GeomLProp_SLProps
+from OCP.gp import gp_Pnt, gp_Pnt2d, gp_Vec
+from OCP.ShapeAnalysis import ShapeAnalysis_Surface
+from OCP.TopAbs import (
+    TopAbs_EDGE,
+    TopAbs_FACE,
+    TopAbs_IN,
+    TopAbs_ON,
+    TopAbs_SOLID,
+    TopAbs_VERTEX,
+)
+from OCP.TopExp import TopExp
+from OCP.TopoDS import TopoDS, TopoDS_Shape
 
 from .._bvh import bvh_overlap_pairs_host, prepare_bvh
 from .._fingerprint import canonical_fingerprint
 from ..geometry._planar_embedding import PlanarEmbedding
 from ..geometry.brep._model import BRepModel
 from ..geometry.brep._projection_contracts import (
-    _closure_codes,
     AbstractBRepProjection,
     BRepEntityDimension,
     BRepProjectionPolicy,
     BRepProjectionResult,
     BRepProjectionStatus,
+    closure_codes,
 )
-from ._cad_occt import _explore_unique, _shape_digest, _shape_index, read_occt_shape
+from ..typing import checked
+from ._cad_occt import explore_unique, read_occt_shape, shape_digest, shape_index
+
+
+if TYPE_CHECKING:
+    from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+    from ..geometry.brep._request_preparations import TrimRequestPreparations
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -80,8 +110,6 @@ def _xyz(value: Any, /) -> np.ndarray:
 
 
 def _box(shape: Any, /) -> np.ndarray:
-    from OCP.Bnd import Bnd_Box
-    from OCP.BRepBndLib import BRepBndLib
 
     box = Bnd_Box()
     BRepBndLib.Add_s(shape, box)
@@ -89,21 +117,24 @@ def _box(shape: Any, /) -> np.ndarray:
     return np.stack((_xyz(box.CornerMin()), _xyz(box.CornerMax())))
 
 
-def _bound_shape(model: BRepModel, source: Any, /) -> Any:
-    """Load the OCCT shape and prove it is the model's exact persisted revision."""
-    from OCP.TopoDS import TopoDS_Shape
-
-    if isinstance(source, (str, Path)):
-        shape, _, digest = read_occt_shape(source)
-    elif isinstance(source, TopoDS_Shape):
-        if source.IsNull():
-            raise ValueError("Cannot bind a null OCCT shape.")
-        shape, digest = source, _shape_digest(source)
-    else:
-        raise TypeError("source must be an OCCT TopoDS_Shape or a CAD file path.")
+def _bound_shape(model: BRepModel, source: str | Path | TopoDS_Shape, /) -> TopoDS_Shape:
+    """Load the OCCT shape and prove it matches the persisted model revision."""
+    match source:
+        case str() | Path():
+            shape, _, digest = read_occt_shape(source)
+        case TopoDS_Shape():
+            if source.IsNull():
+                raise ValueError(
+                    "prepare_occt_projection.source must be a nonnull OCCT shape; got a null shape"
+                )
+            shape, digest = source, shape_digest(source)
+        case _:
+            raise TypeError(
+                f"prepare_occt_projection.source must be TopoDS_Shape or a CAD file path; got {type(source).__name__}"
+            )
     if digest != model.source_digest:
         raise ValueError(
-            "The OCCT source does not match the B-Rep model's persisted revision digest."
+            f"prepare_occt_projection.source must match the persisted model source digest; got digest={digest!r}, expected={model.source_digest!r}"
         )
     return shape
 
@@ -145,25 +176,20 @@ class PreparedOcctProjection(AbstractBRepProjection):
     qualified_entity_boxes: Array
     qualified_closure_codes: Array
 
+    @checked
     def __init__(
         self,
         model: BRepModel,
-        shape: Any,
+        shape: TopoDS_Shape,
         policy: BRepProjectionPolicy,
         embedding: PlanarEmbedding | None,
         /,
     ) -> None:
-        from OCP.BRep import BRep_Tool
-        from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
-        from OCP.BRepTools import BRepTools
-        from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_SOLID, TopAbs_VERTEX
-        from OCP.TopExp import TopExp
-        from OCP.TopoDS import TopoDS
 
-        faces = tuple(_explore_unique(shape, TopAbs_FACE, TopoDS.Face))
-        edges = tuple(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge))
-        vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex)
-        solids = tuple(_explore_unique(shape, TopAbs_SOLID, TopoDS.Solid))
+        faces = tuple(explore_unique(shape, TopAbs_FACE, TopoDS.Face))
+        edges = tuple(explore_unique(shape, TopAbs_EDGE, TopoDS.Edge))
+        vertices = explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex)
+        solids = tuple(explore_unique(shape, TopAbs_SOLID, TopoDS.Solid))
         topology = model.topology
         if (len(faces), len(edges), len(vertices), len(solids)) != (
             topology.num_faces,
@@ -171,7 +197,9 @@ class PreparedOcctProjection(AbstractBRepProjection):
             topology.num_vertices,
             topology.num_solids,
         ):
-            raise ValueError("The OCCT shape topology does not match the B-Rep model.")
+            raise ValueError(
+                f"PreparedOcctProjection.entity_counts must match model topology counts; got faces={len(faces)}, edges={len(edges)}, vertices={len(vertices)}, solids={len(solids)}; expected={(topology.num_faces, topology.num_edges, topology.num_vertices, topology.num_solids)!r}"
+            )
         vertex_points = np.asarray(
             [_xyz(BRep_Tool.Pnt_s(vertex)) for vertex in vertices], dtype=np.float64
         ).reshape(-1, 3)
@@ -183,9 +211,9 @@ class PreparedOcctProjection(AbstractBRepProjection):
         for row, edge in enumerate(edges):
             first, last = TopExp.FirstVertex_s(edge), TopExp.LastVertex_s(edge)
             if not first.IsNull():
-                edge_vertices[row, 0] = _shape_index(vertices, first)
+                edge_vertices[row, 0] = shape_index(vertices, first)
             if not last.IsNull():
-                edge_vertices[row, 1] = _shape_index(vertices, last)
+                edge_vertices[row, 1] = shape_index(vertices, last)
             degenerate[row] = BRep_Tool.Degenerated_s(edge)
             adaptor = BRepAdaptor_Curve(edge)
             ranges[row] = (adaptor.FirstParameter(), adaptor.LastParameter())
@@ -236,14 +264,14 @@ class PreparedOcctProjection(AbstractBRepProjection):
         )
         ambient = 3
         if embedding is not None:
-            if not isinstance(embedding, PlanarEmbedding):
-                raise TypeError("embedding must be PlanarEmbedding or None.")
             if solids:
-                raise ValueError("A planar embedding binds face-only B-Rep revisions.")
+                raise ValueError(
+                    f"PreparedOcctProjection.embedding must bind a face-only revision; got solids={len(solids)}"
+                )
             residual = np.max(np.abs(embedding.plane_residual(vertex_points)))
             if residual > policy.classifier_tolerance:
                 raise ValueError(
-                    "The B-Rep revision does not lie on its planar embedding."
+                    f"PreparedOcctProjection.embedding must contain the source vertices within classifier tolerance={policy.classifier_tolerance}; got maximum_plane_residual={residual}"
                 )
             ambient = 2
         self.source_id = model.source_id
@@ -265,7 +293,7 @@ class PreparedOcctProjection(AbstractBRepProjection):
             np.asarray(periods, dtype=np.float64).reshape(-1, 2)
         )
         self.entity_counts = counts
-        self.closure_codes = jnp.asarray(_closure_codes(topology, edge_vertices, counts))
+        self.closure_codes = jnp.asarray(closure_codes(topology, edge_vertices, counts))
         self.entity_boxes = jnp.asarray(boxes)
         self.occurrence_paths = ()
         self.entity_occurrences = tuple((-1,) for _ in range(sum(counts)))
@@ -294,6 +322,8 @@ class PreparedOcctProjection(AbstractBRepProjection):
         /,
         *,
         occurrence_paths: tuple[tuple[str, ...], ...] | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+        preparations: TrimRequestPreparations | None = None,
     ) -> BRepProjectionResult:
         """Closest point of each query on its own vertex, edge, or face."""
         queries = self._queries(points, "Projection queries")
@@ -301,21 +331,29 @@ class PreparedOcctProjection(AbstractBRepProjection):
             len(occurrence_paths) != queries.shape[0] or any(occurrence_paths)
         ):
             raise ValueError(
-                "The external comparison shape exposes only root-qualified entities."
+                f"PreparedOcctProjection.occurrence_paths must have one root-qualified empty path per query; got query_count={queries.shape[0]}, paths={occurrence_paths!r}"
             )
         dims = np.asarray(dimensions)
         rows = np.asarray(indices)
         if not np.issubdtype(dims.dtype, np.integer) or not np.issubdtype(
             rows.dtype, np.integer
         ):
-            raise TypeError("Projection entity dimensions and indices must be integers.")
+            raise TypeError(
+                f"PreparedOcctProjection.project.dimensions must use integer dtype together with indices; got dimensions_dtype={dims.dtype}, indices_dtype={rows.dtype}"
+            )
         if dims.shape != (queries.shape[0],) or rows.shape != dims.shape:
-            raise ValueError("One entity dimension and index is required per query.")
+            raise ValueError(
+                f"PreparedOcctProjection.project.indices must contain one index per dimension and query; got queries={queries.shape[0]}, dimensions_shape={dims.shape}, indices_shape={rows.shape}"
+            )
         if np.any((dims < 0) | (dims > 2)):
-            raise ValueError("Projection targets vertices, edges, or faces only.")
+            raise ValueError(
+                f"PreparedOcctProjection.project.dimensions must target vertices, edges or faces; got {dims!r}"
+            )
         limits = np.asarray(self.entity_counts[:3])[dims]
         if np.any((rows < 0) | (rows >= limits)):
-            raise ValueError("Projection entity indices are out of range.")
+            raise ValueError(
+                f"PreparedOcctProjection.project.indices must stay within the corresponding entity counts; got indices={rows!r}, limits={limits!r}"
+            )
         world = self._world(queries)
         state = _Rows.empty(queries.shape[0])
         vertex = np.flatnonzero(dims == BRepEntityDimension.VERTEX)
@@ -339,14 +377,14 @@ class PreparedOcctProjection(AbstractBRepProjection):
                 case BRepEntityDimension.FACE:
                     self._project_face(entity, world, selected, state)
                 case _:
-                    raise ValueError("Unsupported projection entity dimension.")
+                    raise ValueError(
+                        f"PreparedOcctProjection.project.dimensions must select a supported entity dimension; got {dimension}"
+                    )
         return self._result(dims, rows, queries, state)
 
     def _project_edge(
         self, edge: int, queries: np.ndarray, selected: np.ndarray, state: _Rows, /
     ) -> None:
-        from OCP.GeomAPI import GeomAPI_ProjectPointOnCurve
-        from OCP.gp import gp_Pnt, gp_Vec
 
         tolerance = self.policy.ambiguity_tolerance
         if bool(np.asarray(self.edge_degenerate)[edge]):
@@ -412,12 +450,6 @@ class PreparedOcctProjection(AbstractBRepProjection):
     def _project_face(
         self, face: int, queries: np.ndarray, selected: np.ndarray, state: _Rows, /
     ) -> None:
-        from OCP.BRepClass import BRepClass_FaceClassifier
-        from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
-        from OCP.GeomLProp import GeomLProp_SLProps
-        from OCP.gp import gp_Pnt, gp_Pnt2d
-        from OCP.ShapeAnalysis import ShapeAnalysis_Surface
-        from OCP.TopAbs import TopAbs_IN, TopAbs_ON
 
         tolerance = self.policy.ambiguity_tolerance
         classifier_tolerance = self.policy.classifier_tolerance
@@ -441,7 +473,7 @@ class PreparedOcctProjection(AbstractBRepProjection):
                     parameters.append((u, v))
             if not candidates:
                 # No surface extremum inside the trim (or a continuum of minima):
-                # the exact trimmed-face distance comes from BRepExtrema.
+                # BRepExtrema evaluates the distance to the trimmed face.
                 candidates, parameters = _trimmed_candidates(
                     shape, analysis, query, classifier_tolerance
                 )
@@ -560,19 +592,18 @@ class PreparedOcctProjection(AbstractBRepProjection):
         Points on a shared solid interface or in several solids are AMBIGUOUS;
         points in no solid are FAILED. Residuals are zero for contained points.
         """
-        from OCP.BRepClass3d import BRepClass3d_SolidClassifier
-        from OCP.gp import gp_Pnt
-        from OCP.TopAbs import TopAbs_IN, TopAbs_ON
 
         queries = self._queries(points, "Solid location queries")
         if occurrence_paths is not None and (
             len(occurrence_paths) != queries.shape[0] or any(occurrence_paths)
         ):
             raise ValueError(
-                "The external comparison shape exposes only root-qualified entities."
+                f"PreparedOcctProjection.occurrence_paths must have one root-qualified empty path per query; got query_count={queries.shape[0]}, paths={occurrence_paths!r}"
             )
         if self.entity_counts[3] == 0:
-            raise ValueError("The B-Rep revision has no solids.")
+            raise ValueError(
+                f"PreparedOcctProjection.entity_counts must include solids for solid location; got solid_count={self.entity_counts[3]}"
+            )
         count = queries.shape[0]
         boxes = np.asarray(self.entity_boxes)[sum(self.entity_counts[:3]) :]
         tolerance = self.policy.classifier_tolerance
@@ -640,9 +671,6 @@ def _select(query: np.ndarray, candidates: np.ndarray, tolerance: float, /) -> A
 def _trimmed_candidates(
     face: Any, analysis: Any, query: np.ndarray, tolerance: float, /
 ) -> tuple[list[np.ndarray], list[tuple[float, float]]]:
-    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
-    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
-    from OCP.gp import gp_Pnt
 
     extrema = BRepExtrema_DistShapeShape(
         BRepBuilderAPI_MakeVertex(gp_Pnt(*query)).Vertex(), face
@@ -658,20 +686,17 @@ def _trimmed_candidates(
     return points, parameters
 
 
+@checked
 def prepare_occt_projection(
     model: BRepModel,
-    source: Any,
+    source: str | Path | TopoDS_Shape,
     /,
     *,
     policy: BRepProjectionPolicy | None = None,
     embedding: PlanarEmbedding | None = None,
 ) -> PreparedOcctProjection:
     """Bind explicit external queries to the verified persisted source revision."""
-    if not isinstance(model, BRepModel):
-        raise TypeError("model must be BRepModel.")
     policy_ = BRepProjectionPolicy() if policy is None else policy
-    if not isinstance(policy_, BRepProjectionPolicy):
-        raise TypeError("policy must be BRepProjectionPolicy or None.")
     return PreparedOcctProjection(model, _bound_shape(model, source), policy_, embedding)
 
 

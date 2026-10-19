@@ -28,7 +28,14 @@ namespace {
 
 using namespace phx::mc;
 
-// While set, every global allocation of this process is refused.
+// Historical empirical allowance for the determinant-based sum of the two
+// represented sides of the 2-by-2 interface in the constrained insertion test.
+// The independent analytic area is 8; this is not an incidence tolerance.
+constexpr double kInterfaceAreaTolerance = 1e-12;
+
+// While set, every global allocation of this process is refused. Both the
+// plain and the aligned overloads are replaced: libstdc++'s
+// std::pmr::new_delete_resource allocates through the aligned ones.
 std::atomic<bool> refuse_allocations{false};
 
 void* allocate_bytes(std::size_t size) {
@@ -36,6 +43,18 @@ void* allocate_bytes(std::size_t size) {
     throw std::bad_alloc();
   }
   if (void* memory = std::malloc(size == 0 ? 1 : size)) {
+    return memory;
+  }
+  throw std::bad_alloc();
+}
+
+void* allocate_aligned(std::size_t size, std::align_val_t alignment) {
+  if (refuse_allocations.load(std::memory_order_relaxed)) {
+    throw std::bad_alloc();
+  }
+  const auto align = static_cast<std::size_t>(alignment);
+  const std::size_t rounded = size == 0 ? align : (size + align - 1) / align * align;
+  if (void* memory = std::aligned_alloc(align, rounded)) {
     return memory;
   }
   throw std::bad_alloc();
@@ -405,11 +424,11 @@ Mesh read(phx_mc_mesh* mesh) {
   result.regions.resize(static_cast<std::size_t>(cells));
   result.vertex_map.resize(static_cast<std::size_t>(phx_mc_mesh_input_point_count(mesh)));
   result.points.resize(static_cast<std::size_t>(3 * phx_mc_mesh_point_count(mesh)));
-  phx_mc_mesh_copy_cells(mesh, result.cells.data());
-  phx_mc_mesh_copy_cell_constraints(mesh, result.constraints.data());
-  phx_mc_mesh_copy_cell_regions(mesh, result.regions.data());
-  phx_mc_mesh_copy_vertex_map(mesh, result.vertex_map.data());
-  phx_mc_mesh_copy_points(mesh, result.points.data());
+  PHX_CHECK(phx_mc_mesh_copy_cells(mesh, result.cells.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_cell_constraints(mesh, result.constraints.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_cell_regions(mesh, result.regions.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_vertex_map(mesh, result.vertex_map.data()) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_mesh_copy_points(mesh, result.points.data()) == PHX_MC_OK);
   phx_mc_mesh_free(mesh);
   return result;
 }
@@ -653,7 +672,7 @@ void test_prepared_constrained_plane_and_regions() {
     }
   }
   // Both sides of the plane carry the constraint: twice the 2 x 2 square.
-  PHX_CHECK(std::fabs(constrained_area - 8.0) < 1e-12);
+  PHX_CHECK(std::fabs(constrained_area - 8.0) < kInterfaceAreaTolerance);
   PHX_CHECK(wrong_region == 0);
   std::sort(facet_list.begin(), facet_list.end());
   for (std::size_t i = 0; i + 1 < facet_list.size(); ++i) {
@@ -714,6 +733,20 @@ void operator delete(void* memory) noexcept { std::free(memory); }
 void operator delete[](void* memory) noexcept { std::free(memory); }
 void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
 void operator delete[](void* memory, std::size_t) noexcept { std::free(memory); }
+void* operator new(std::size_t size, std::align_val_t alignment) {
+  return allocate_aligned(size, alignment);
+}
+void* operator new[](std::size_t size, std::align_val_t alignment) {
+  return allocate_aligned(size, alignment);
+}
+void operator delete(void* memory, std::align_val_t) noexcept { std::free(memory); }
+void operator delete[](void* memory, std::align_val_t) noexcept { std::free(memory); }
+void operator delete(void* memory, std::size_t, std::align_val_t) noexcept {
+  std::free(memory);
+}
+void operator delete[](void* memory, std::size_t, std::align_val_t) noexcept {
+  std::free(memory);
+}
 
 int main() {
   test_flip_validation_matches_geometry();

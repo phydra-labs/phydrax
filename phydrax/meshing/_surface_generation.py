@@ -7,25 +7,27 @@
 Feature curves are discretized once (the native arc-length curve route) and
 their vertices shared by every patch that uses them, so shared curves,
 periodic seams and closed surfaces are conforming by construction rather than
-welded by proximity. Each patch is then triangulated in its chart: the exact
-constrained Delaunay triangulation of its boundary loops, followed by batched
-physical-space refinement. A round measures every triangle on the physical
+welded by proximity. Each patch is triangulated in an affine execution chart
+conditioned by RMS first-order physical speeds and one common length. The
+source UVs stay unchanged for evaluation and certification. Constrained
+Delaunay triangulation of its boundary loops precedes batched physical-space
+refinement. A round measures every triangle on the physical
 surface (effective edge length through the chart midpoint, minimum physical
 angle, sampled deviation from the surface, agreement with the oriented source
 normal), places one chart point per violating triangle, evaluates the batch
 through the source query and inserts it with the native bounded
-reconnection kernel (exact chart validity, physical Delaunay flips). Chart
+reconnection kernel (predicate chart validity, physical Delaunay flips). Chart
 orientation is revalidated with exact predicates after every batch.
 
-A declared pole keeps one physical corner identity and its complete chart
+A declared pole keeps one physical corner identity and its full chart
 chain. Source-bound ring depths and shared adjacent seam nodes prepare its
 fan before CDT. Further pole refinement splits legal radial edges, never
-inserts a centroid into a physically collapsed triangle. A terminal exact
+inserts a centroid into a physically collapsed triangle. A terminal certified
 rational pole split opens into the physical fan by exactly convex flips, so
-its authority is published rather than left in zero-width children.
-Continuous source interpolation, exact trim-homotopy composition and
+its root binding is published rather than left in zero-width children.
+Continuous source interpolation, certified trim-homotopy composition and
 normal-turn bounds remain independent of sampled checks and share the
-original physical allowance.
+source physical allowance.
 """
 
 from __future__ import annotations
@@ -33,69 +35,60 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from fractions import Fraction
-from time import monotonic
 from typing import final
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
-from .._meshcore import exact_orient2d, MeshcoreError, MeshcoreStatus, surface_reconnect
+import phydrax.discretization._cell_geometry_validity as _owner_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.geometry._domain_chart_chain as domain_chart_chain
+import phydrax.geometry._domain_numerics as domain_numerics
+import phydrax.geometry._embedding_state as _dependency_phydrax_geometry__embedding_state
+import phydrax.geometry._meshing_domain as _dependency_phydrax_geometry__meshing_domain
+import phydrax.geometry._source_interpolation as _dependency_phydrax_geometry__source_interpolation
+import phydrax.geometry.brep._patches as _dependency_phydrax_geometry_brep__patches
+import phydrax.geometry.brep._placed as _dependency_phydrax_geometry_brep__placed
+import phydrax.meshing._contracts as _dependency_phydrax_meshing__contracts
+import phydrax.meshing._domain as _dependency_phydrax_meshing__domain
+import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
+import phydrax.meshing._metric as _dependency_phydrax_meshing__metric
+import phydrax.meshing._sizing as _dependency_phydrax_meshing__sizing
+import phydrax.meshing._surface_construction as surface_construction_owner
+import phydrax.meshing.providers._native_curve as _dependency_phydrax_meshing_providers__native_curve
+import phydrax.meshing.providers._native_planar_domain as _dependency_phydrax_meshing_providers__native_planar
+import phydrax.meshing.providers._native_route_checks as _dependency_phydrax_meshing_providers__native_publication
+import phydrax.meshing.providers._native_schedules as _dependency_phydrax_meshing_providers__native_schedules
+import phydrax.meshing.providers._native_sources as _dependency_phydrax_meshing_providers__native_sources
+
+from .._meshcore import (
+    exact_orient2d,
+    MeshcoreError,
+    MeshcoreStatus,
+    NativeExecutionScope,
+    NativeResourceFailure,
+    surface_reconnect,
+)
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
 from ..geometry import ConstrainedDelaunayTriangulation
+from ..geometry._atlas import AbstractTrimCurve, CurveTrimLoop
 from ..geometry._chart_restriction import (
     empty_chart_restrictions,
     ExactRationalChartRestriction,
     validate_chart_restrictions,
 )
-from ..geometry._mesh_certificates import MeshCertificateFinding
-from ..geometry._meshing_domain import (
-    _differential,
-    _full_sphere_frame,
-    _sphere_triangle_distance_bounds,
-    _sphere_triangle_normal_bounds,
-    _verify_chart_chain,
-    MeshingDomain,
-    PatchCurveUse,
-    PatchPoleUse,
-)
-from ..geometry._source_interpolation import SourceInterpolationFailure
-from ..geometry.brep._patches import (
-    PlanePatch,
-    shared_meridian_jets,
-    source_bernstein_restriction_scope,
-)
-from ..geometry.brep._placed import PlacedSurface
-from ._contracts import MeshingFailure, MeshingFailureCategory, MeshingLimits
-from ._domain import CompiledSurfaceDomain
+from ..geometry._rational import fraction_down, fraction_up
+from ..typing import checked
 from ._measurements import (
     measure_phase,
     NativeMeshingPhaseRecorder,
     phase_started,
     record_elapsed,
 )
-from ._metric import interpolate_mesh_metric, metric_edge_lengths
-from ._sizing import (
-    CurvatureSizeControl,
-    ProximitySizeControl,
-    SizeCompliancePolicy,
-    SizeControlStrength,
-    UniformSizeControl,
-)
 from ._trace import MeshingStageKind
-from .providers._native_curve import (
-    _curve_points,
-    _CurveCharts,
-    _discretize,
-    _QueryLedger,
-    PreparedCurveNetwork,
-)
-from .providers._native_options import NativeSurfaceSchedule
-from .providers._native_planar import _interior_point
-from .providers._native_publication import check_deadline
-from .providers._native_sources import NativeCurveSource
 
 
 # Tangent-fan angle represented by one collapsed pole segment.
@@ -113,63 +106,74 @@ _SEED_AXIS = 64
 
 
 @final
-class SurfaceConstruction(StrictModule, NonTrainableState):
-    """Host arrays and evidence of one generated surface triangulation.
+@dataclass(slots=True)
+class RefinementTotals:
+    """Accumulate committed surface refinement work in patch order."""
 
-    ``triangles`` are counterclockwise about the oriented source normal;
-    ``triangle_patches`` and ``triangle_charts`` (chart centroid) locate each
-    triangle on its patch and ``triangle_deviations`` is its sampled deviation
-    from the source. ``curve_edges`` are the published edges on feature curves
-    with their curve, mid-parameter point on the curve and ``curve_directions``
-    (the curve tangent sense from the first to the second vertex).
-    ``chart_restriction_*`` retains exact affine source roots whenever the
-    correctly rounded chart execution coordinate is not itself authoritative.
-    """
+    rounds: int = 0
+    inserted: int = 0
+    refused: int = 0
+    flips: int = 0
+    incomplete: int = 0
 
-    vertices: np.ndarray
-    vertex_source_dimensions: np.ndarray
-    vertex_source_indices: np.ndarray
-    vertex_parameters: np.ndarray
-    chart_restriction_vertices: np.ndarray
-    chart_restriction_edges: np.ndarray
-    chart_restriction_endpoint_parameters: np.ndarray
-    chart_restriction_parameters: np.ndarray
-    triangles: np.ndarray
-    triangle_patches: np.ndarray
-    triangle_charts: np.ndarray
-    triangle_parameters: np.ndarray
-    triangle_deviations: np.ndarray
-    triangle_deviation_bounds: np.ndarray
-    triangle_normal_bounds: np.ndarray
-    curve_edges: np.ndarray
-    curve_edge_curves: np.ndarray
-    curve_edge_deviations: np.ndarray
-    curve_edge_deviation_bounds: np.ndarray
+
+@final
+class RestrictionBatch(StrictModule):
+    """Carry one insertion batch with aligned rational edge restrictions."""
+
+    charts: np.ndarray
+    spacing: np.ndarray
+    hints: np.ndarray
+    parents: np.ndarray
+    hard: np.ndarray
     unresolved: np.ndarray
-    chart_triangulations: tuple[
-        tuple[
-            int,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-        ],
-        ...,
-    ]
-    curve_parameters: tuple[tuple[int, np.ndarray], ...]
-    minimum_angle: float = eqx.field(static=True)
-    rounds: int = eqx.field(static=True)
-    inserted: int = eqx.field(static=True)
-    refused: int = eqx.field(static=True)
-    flips: int = eqx.field(static=True)
-    geometry_queries: int = eqx.field(static=True)
-    work_units: int = eqx.field(static=True)
-    incomplete_refinement: bool = eqx.field(static=True)
+    insert_edges: np.ndarray
+    required: np.ndarray
+    edges: np.ndarray
+    parameters: np.ndarray
+
+    def __init__(
+        self,
+        charts: np.ndarray,
+        spacing: np.ndarray,
+        hints: np.ndarray,
+        parents: np.ndarray,
+        hard: np.ndarray,
+        unresolved: np.ndarray,
+        insert_edges: np.ndarray,
+        required: np.ndarray,
+        edges: np.ndarray,
+        parameters: np.ndarray,
+        /,
+    ) -> None:
+        count = hints.size
+        if (
+            required.shape != (count,)
+            or required.dtype != np.bool_
+            or edges.shape != (count, 2)
+            or edges.dtype != np.int64
+            or parameters.shape != (count, 2)
+            or parameters.dtype != np.int64
+            or not np.array_equal(edges[required], insert_edges[required])
+            or np.any(edges[~required] != -1)
+            or np.any(parameters[~required] != 0)
+        ):
+            raise ValueError(
+                "RestrictionBatch.restrictions must align with rational edge insertions; "
+                f"got required={required.shape}/{required.dtype}, "
+                f"edges={edges.shape}/{edges.dtype}, "
+                f"parameters={parameters.shape}/{parameters.dtype}."
+            )
+        self.charts = charts
+        self.spacing = spacing
+        self.hints = hints
+        self.parents = parents
+        self.hard = hard
+        self.unresolved = unresolved
+        self.insert_edges = insert_edges
+        self.required = required
+        self.edges = edges
+        self.parameters = parameters
 
 
 @final
@@ -228,7 +232,7 @@ class _Patch:
 
 
 def _patch_restrictions(
-    domain: MeshingDomain, state: _Patch, /
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain, state: _Patch, /
 ) -> tuple[np.ndarray, tuple[ExactRationalChartRestriction, ...], np.ndarray]:
     vertices = np.flatnonzero(state.restriction_required).astype(np.int64)
     edges = state.restriction_edges[vertices]
@@ -237,7 +241,9 @@ def _patch_restrictions(
         or np.any(edges < 0)
         or np.any(edges >= state.charts.shape[0])
     ):
-        raise ValueError("Chart restriction edges leave the live patch topology.")
+        raise ValueError(
+            f"SurfaceConstruction.restriction_edges must index live patch vertices; got shape={edges.shape}, vertices={state.charts.shape[0]}."
+        )
     endpoint_charts = (
         state.charts[edges] if vertices.size else np.empty((0, 2, 2), dtype=np.float64)
     )
@@ -253,7 +259,14 @@ def _patch_restrictions(
     )
 
 
-def _restriction_orientation_signs(domain: MeshingDomain, state: _Patch, /) -> np.ndarray:
+def _restriction_orientation_signs(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: _Patch,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> np.ndarray:
     exact, _, _ = _patch_restrictions(domain, state)
     triangles = state.triangles
     affected = np.any(state.restriction_required[triangles], axis=1)
@@ -273,18 +286,21 @@ def _restriction_orientation_signs(domain: MeshingDomain, state: _Patch, /) -> n
 
 
 def _fraction_bounds(value: Fraction, /) -> tuple[float, float]:
-    represented = float(value)
-    if not np.isfinite(represented):
-        raise ValueError("An exact chart restriction exceeds binary64 range.")
-    difference = Fraction(represented) - value
-    if difference > 0:
-        return float(np.nextafter(represented, -np.inf)), represented
-    if difference < 0:
-        return represented, float(np.nextafter(represented, np.inf))
-    return represented, represented
+    if not np.isfinite(float(value)):
+        raise ValueError(
+            f"SurfaceConstruction.restriction_coordinate must fit binary64 range; got {value}."
+        )
+    return fraction_down(value), fraction_up(value)
 
 
-def _restriction_physical_errors(domain: MeshingDomain, state: _Patch, /) -> np.ndarray:
+def _restriction_physical_errors(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: _Patch,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> np.ndarray:
     exact, _, coordinate_errors = _patch_restrictions(domain, state)
     result = np.zeros((state.charts.shape[0],), dtype=np.float64)
     rows = np.flatnonzero(state.restriction_required)
@@ -308,7 +324,7 @@ def _restriction_physical_errors(domain: MeshingDomain, state: _Patch, /) -> np.
             )
         )
     lower, upper = domain.patches[state.index].surface.derivative_bounds_batch(
-        np.asarray(boxes), order=1
+        np.asarray(boxes), order=1, budget=budget
     )
     jacobian = np.linalg.norm(np.maximum(np.abs(lower), np.abs(upper)), axis=1)
     result[rows] = np.nextafter(
@@ -319,35 +335,15 @@ def _restriction_physical_errors(domain: MeshingDomain, state: _Patch, /) -> np.
     return result
 
 
-def _local_boundary_ribbon_bounds(
-    cells: np.ndarray,
-    boundary: np.ndarray,
-    ribbon_bounds: np.ndarray,
-    /,
-) -> np.ndarray:
-    if ribbon_bounds.shape != (boundary.shape[0],):
-        raise ValueError("Boundary ribbon bounds must align with source boundary edges.")
-    by_edge = {
-        tuple(sorted((int(edge[0]), int(edge[1])))): float(bound)
-        for edge, bound in zip(boundary, ribbon_bounds, strict=True)
-    }
-    result = np.zeros((cells.shape[0],), dtype=np.float64)
-    for row, cell in enumerate(cells):
-        result[row] = max(
-            (
-                by_edge.get(
-                    tuple(sorted((int(cell[first]), int(cell[second])))),
-                    0.0,
-                )
-                for first, second in ((0, 1), (1, 2), (2, 0))
-            ),
-            default=0.0,
-        )
-    return result
-
-
 def _vertex_normals(
-    domain: MeshingDomain, patch: int, charts: np.ndarray, center: np.ndarray, /
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    patch: int,
+    charts: np.ndarray,
+    center: np.ndarray,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> np.ndarray:
     """Chart-order source normals, with limits at collapsed sides.
 
@@ -358,14 +354,15 @@ def _vertex_normals(
     """
 
     rows = np.full((charts.shape[0],), patch)
-    normals, regular = domain.oriented_normals(rows, charts)
+    normals, regular = domain.oriented_normals(rows, charts, budget=budget)
     if not np.all(regular):
-        limits, found = domain.oriented_pole_limits(patch, charts[~regular], center)
+        limits, found = domain.oriented_pole_limits(
+            patch, charts[~regular], center, budget=budget
+        )
         if not np.all(found):
             raise _failure(
-                MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                f"Patch {patch} has a singular chart without a declared source "
-                "normal limit.",
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                f"SurfaceConstruction.source_normals must resolve singular charts through a declared limit; got patch {patch} without a source normal limit.",
                 entity_ids=(patch,),
             )
         normals[~regular] = limits
@@ -373,16 +370,20 @@ def _vertex_normals(
 
 
 def _failure(
-    category: MeshingFailureCategory,
+    category: _leaf_phydrax_meshing__failures.MeshingFailureCategory,
     message: str,
     /,
     *,
     entity_ids: tuple[int, ...] = (),
-    requested: tuple[tuple[str, float], ...] = (),
-    achieved: tuple[tuple[str, float], ...] = (),
+    requested: tuple[
+        tuple[str, _leaf_phydrax_meshing__failures.FailureQuantity], ...
+    ] = (),
+    achieved: tuple[
+        tuple[str, _leaf_phydrax_meshing__failures.FailureQuantity], ...
+    ] = (),
     provider_code: str = "",
-) -> MeshingFailure:
-    return MeshingFailure(
+) -> _leaf_phydrax_meshing__failures.MeshingFailure:
+    return _leaf_phydrax_meshing__failures.MeshingFailure(
         category,
         message,
         stage=MeshingStageKind.SURFACE_MESHING.value,
@@ -395,46 +396,51 @@ def _failure(
 
 @contextmanager
 def _interpolation_bounds(
-    domain: MeshingDomain,
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     patch: int,
     charts: np.ndarray,
-    ledger: _QueryLedger,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
     scratch_bytes: int,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    restriction_bank: _dependency_phydrax_geometry_brep__patches.BernsteinRestrictionBank
+    | None = None,
+    meridian_jets: list[_dependency_phydrax_geometry_brep__patches.MeridianOverlaps]
+    | None = None,
 ) -> Iterator[np.ndarray]:
-    """Borrow the original exact-source allowance beneath the surface ledger."""
-    from ..discretization._coordinate_enclosure import (
-        coordinate_enclosure_budget,
-        CoordinateEnclosureResourceError,
-    )
-
-    maximum_work = ledger.limits.maximum_work_units - ledger.work
-    maximum_scratch = max(0, ledger.limits.maximum_scratch_bytes - scratch_bytes)
-    owner = ledger.interpolation_budget
-    if owner is None:
-        owner = coordinate_enclosure_budget(maximum_work, maximum_scratch)
-        ledger.interpolation_budget = owner
+    """Borrow the source-bound allowance beneath the surface ledger."""
+    owner = budget
     start = owner.work_units
 
     def queries(count: int) -> None:
-        ledger.reserve(count, 0, MeshingStageKind.SURFACE_MESHING)
+        ledger.observe_native(count, 0, MeshingStageKind.SURFACE_MESHING)
 
     try:
-        with (
-            owner.activate(),
-            owner.bound_stage(maximum_work, maximum_scratch, starting_work_units=start),
-            owner.temporary_scope(),
-        ):
-            result = domain.interpolation_bounds(
-                patch, charts, budget=owner, reserve_queries=queries
-            )
-            owner.charge_native_work(owner.work_units - owner.native_charged_work_units)
-            yield result
-            del result
-    except CoordinateEnclosureResourceError as error:
+        with owner.measurement() as phase:
+            with _source_bound_scope(
+                ledger,
+                scratch_bytes,
+                stage=MeshingStageKind.SURFACE_MESHING,
+                scope=scope,
+                budget=budget,
+            ):
+                result = domain.interpolation_bounds(
+                    patch,
+                    charts,
+                    budget=owner,
+                    reserve_queries=queries,
+                    restriction_bank=restriction_bank,
+                    meridian_jets=meridian_jets,
+                )
+
+                yield result
+                del result
+    except _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError as error:
         raise _failure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            f"Patch {patch} exhausted its original source interpolation allowance.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            f"SurfaceConstruction.source_interpolation must fit the source allowance; got exhausted patch {patch}, resource={error.resource}.",
             entity_ids=(patch,),
             requested=((error.resource, error.limit),),
             achieved=(
@@ -442,13 +448,15 @@ def _interpolation_bounds(
                 ("completed_source_work", error.completed),
                 ("geometry_queries", ledger.queries),
                 ("work_units", ledger.work + owner.work_units - start),
-                ("source_peak_scratch_bytes", owner.peak_bytes_upper),
+                ("source_peak_scratch_bytes", phase.peak_bytes_upper),
             ),
         ) from error
-    except SourceInterpolationFailure as error:
+    except (
+        _dependency_phydrax_geometry__source_interpolation.SourceInterpolationFailure
+    ) as error:
         raise _failure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            f"Patch {patch} failed {error.check} for its original source interpolation.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+            f"SurfaceConstruction.source_interpolation must satisfy the source bound check; got patch {patch}, check={error.check}.",
             entity_ids=(patch,),
             provider_code=error.check,
             achieved=(
@@ -460,34 +468,46 @@ def _interpolation_bounds(
                 ("work_units", ledger.work + owner.work_units - start),
             ),
         ) from error
-    finally:
-        ledger.reserve(0, owner.work_units - start, MeshingStageKind.SURFACE_MESHING)
 
 
 @contextmanager
 def _source_bound_scope(
-    ledger: _QueryLedger,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
     scratch_bytes: int,
     /,
     *,
     stage: MeshingStageKind = MeshingStageKind.CURVE_MESHING,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> Iterator[None]:
-    """Keep canonical source spans on the realization's existing source owner."""
-    from ..discretization._coordinate_enclosure import (
-        coordinate_enclosure_budget,
-        CoordinateEnclosureResourceError,
-    )
-
+    """Bind source bounds to the realization's coordinate budget."""
     maximum_work = ledger.limits.maximum_work_units - ledger.work
     maximum_scratch = max(0, ledger.limits.maximum_scratch_bytes - scratch_bytes)
-    owner = ledger.interpolation_budget
-    if owner is None:
-        owner = coordinate_enclosure_budget(maximum_work, maximum_scratch)
-        ledger.interpolation_budget = owner
+    if not budget.ticket.settled:
+        with (
+            budget.measurement(),
+            budget.bound_stage(
+                maximum_work,
+                maximum_scratch,
+                starting_work_units=budget.work_units,
+            ),
+            budget.temporary_scope(),
+        ):
+            yield
+        return
+    remaining = scope.remaining()
+    owner = budget
     start = owner.work_units
+    ticket = scope.batch(
+        min(maximum_work, remaining.remaining_work_units),
+        queries_upper=remaining.remaining_geometry_queries,
+        bytes_upper=min(maximum_scratch, remaining.remaining_managed_bytes),
+    )
     try:
         with (
-            owner.activate(),
+            owner.measurement() as phase,
+            owner.bind_ticket(ticket),
+            budget.ticket.native_target(),
             owner.bound_stage(
                 maximum_work,
                 maximum_scratch,
@@ -496,22 +516,21 @@ def _source_bound_scope(
             owner.temporary_scope(),
         ):
             yield
-            owner.charge_native_work(owner.work_units - owner.native_charged_work_units)
-    except CoordinateEnclosureResourceError as error:
+    except _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError as error:
         raise _failure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Source fidelity exhausted its original source-bound allowance.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            f"SurfaceConstruction.source_bounds must fit the source allowance; got exhausted resource={error.resource}.",
             requested=((error.resource, error.limit),),
             achieved=(
                 (error.resource, error.requested),
                 ("completed_source_work", error.completed),
                 ("geometry_queries", ledger.queries),
                 ("work_units", ledger.work + owner.work_units - start),
-                ("source_peak_scratch_bytes", owner.peak_bytes_upper),
+                ("source_peak_scratch_bytes", phase.peak_bytes_upper),
             ),
         ) from error
     finally:
-        ledger.reserve(0, owner.work_units - start, stage)
+        ledger.observe_exact(owner.work_units - start, stage)
 
 
 def _bisection_rows(split: np.ndarray, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -528,21 +547,197 @@ def _bisection_rows(split: np.ndarray, /) -> tuple[np.ndarray, np.ndarray, np.nd
     return value_rows, interval_rows[~split], fresh
 
 
+@final
+class _CurveConstraints(StrictModule):
+    owner: _dependency_phydrax_geometry__meshing_domain.PatchCurveUse
+    angular_uses: tuple[
+        tuple[int, _dependency_phydrax_geometry__meshing_domain.PatchCurveUse, float], ...
+    ]
+
+
+@final
+class _CurveIntervalState(StrictModule):
+    """Retain measured intervals and stalled-ribbon evidence across bisection."""
+
+    ribbons: list[np.ndarray]
+    turns: list[np.ndarray]
+    points: np.ndarray
+    known: np.ndarray
+    previous_ribbons: dict[int, float] = eqx.field(static=True)
+    stagnant_ribbons: dict[int, int] = eqx.field(static=True)
+
+
+@final
+class _CurveSplit(StrictModule):
+    split: np.ndarray
+
+
+def _prepare_curve_constraints(
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    curve: int,
+    angular_required: bool,
+    maximum_normal_angle: float,
+    /,
+) -> _CurveConstraints:
+    """Prepare incident angular targets without changing shared curve ownership."""
+    domain = compiled.domain
+    owner_patch, owner_loop, owner_position = domain.curve_owners[curve]
+    owner = domain.patches[owner_patch].loops[owner_loop][owner_position]
+    match owner:
+        case _dependency_phydrax_geometry__meshing_domain.PatchCurveUse():
+            pass
+        case _:
+            raise TypeError(
+                f"MeshingDomain.curve_owners must select a PatchCurveUse; got {type(owner).__name__}."
+            )
+    angular_uses: list[
+        tuple[int, _dependency_phydrax_geometry__meshing_domain.PatchCurveUse, float]
+    ] = []
+    if angular_required:
+        for patch, use in domain.curve_uses(curve):
+            row = np.searchsorted(compiled.patches, patch)
+            target_angle = maximum_normal_angle
+            if row < compiled.patches.size and compiled.patches[row] == patch:
+                target_angle = min(target_angle, float(compiled.patch_normal_angles[row]))
+            angular_uses.append((patch, use, target_angle))
+    return _CurveConstraints(owner, tuple(angular_uses))
+
+
+def _measure_curve_ribbons(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    prepared: _dependency_phydrax_meshing_providers__native_curve.PreparedCurveNetwork,
+    curve_row: int,
+    curve: int,
+    values: np.ndarray,
+    constraints: _CurveConstraints,
+    ribbon_targets: list[
+        tuple[int, _dependency_phydrax_geometry__meshing_domain.PatchCurveUse, float]
+    ],
+    measured: np.ndarray,
+    state: _CurveIntervalState,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    split: np.ndarray,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _CurveSplit:
+    """Measure new trim ribbons and refuse a repeatedly stagnant local bound."""
+    owner = constraints.owner
+    points, known, ribbons = state.points, state.known, state.ribbons
+    previous_ribbons, stagnant_ribbons = state.previous_ribbons, state.stagnant_ribbons
+    missing = np.flatnonzero(~known)
+    ledger.reserve(missing.size, 0, MeshingStageKind.CURVE_MESHING)
+    if missing.size:
+        points[missing] = (
+            _dependency_phydrax_meshing_providers__native_curve.curve_points(
+                prepared.charts, curve_row, values[missing]
+            )
+        )
+    known[:] = True
+    for use_row, (
+        incident_patch,
+        incident_use,
+        ribbon_target,
+    ) in enumerate(ribbon_targets):
+        order = np.arange(values.size)
+        reversed_use = incident_use.first != owner.first
+        if reversed_use:
+            order = order[::-1]
+        actual = owner.first + values[order] * (owner.last - owner.first)
+        actual[0], actual[-1] = incident_use.first, incident_use.last
+        ledger.reserve(2 * measured.size, 0, MeshingStageKind.CURVE_MESHING)
+        if measured.size:
+            ribbons[use_row][measured] = domain.trim_ribbon_bounds(
+                incident_patch,
+                incident_use,
+                actual,
+                points[order],
+                intervals=values.size - 2 - measured if reversed_use else measured,
+                budget=budget,
+            )
+        local = ribbons[use_row]
+        local_split = local > ribbon_target
+        split |= local_split
+        maximum = float(np.max(local[local_split], initial=0.0))
+        if maximum == 0.0:
+            previous_ribbons.pop(use_row, None)
+            stagnant_ribbons.pop(use_row, None)
+            continue
+        previous = previous_ribbons.get(use_row, np.inf)
+        # An unbounded interval enclosure that bisection turns
+        # finite is progress; only a finite bound can stagnate.
+        # Persistently unbounded intervals still terminate
+        # through the ledger and deadline.
+        stagnant = (
+            stagnant_ribbons.get(use_row, 0) + 1
+            if np.isfinite(maximum) and maximum >= previous
+            else 0
+        )
+        previous_ribbons[use_row] = maximum
+        stagnant_ribbons[use_row] = stagnant
+        if stagnant >= 2:
+            raise _failure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                f"SurfaceConstruction.curve_trim_ribbon must decrease under interval bisection; got unrecoverable local trim ribbon on curve {curve}.",
+                entity_ids=(curve, incident_patch),
+                requested=(("maximum_deviation", ribbon_target),),
+                achieved=(("local_trim_ribbon", maximum),),
+            )
+    return _CurveSplit(split)
+
+
+def _measure_curve_turns(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    values: np.ndarray,
+    constraints: _CurveConstraints,
+    measured: np.ndarray,
+    state: _CurveIntervalState,
+    split: np.ndarray,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _CurveSplit:
+    """Measure new source-normal spans while retaining corner angular headroom."""
+    owner, angular_uses, turns = constraints.owner, constraints.angular_uses, state.turns
+    actual = owner.first + values * (owner.last - owner.first)
+    actual[0], actual[-1] = owner.first, owner.last
+    for turn, (patch, use, target_angle) in zip(turns, angular_uses, strict=True):
+        if measured.size:
+            boxes = []
+            for first, last in zip(actual[measured], actual[measured + 1], strict=True):
+                first_, last_ = sorted((float(first), float(last)))
+                box = use.pcurve.bounding_box(first_, last_)
+                boxes.append(np.stack((box[0], box[1], box[0])))
+            turn[measured] = domain.normal_turn_bounds(
+                patch, np.asarray(boxes), budget=budget
+            )
+        # A corner triangle retains two constrained source
+        # edges. Leave angular room for its interior span;
+        # neither edge can be split by patch-local recovery.
+        split |= turn > 0.5 * target_angle
+    return _CurveSplit(split)
+
+
 def _bisect_curve(
-    compiled: CompiledSurfaceDomain,
-    prepared: PreparedCurveNetwork,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    prepared: _dependency_phydrax_meshing_providers__native_curve.PreparedCurveNetwork,
     curve_row: int,
     curve: int,
     values: np.ndarray,
     target: float,
-    ribbon_targets: list[tuple[int, PatchCurveUse, float]],
+    ribbon_targets: list[
+        tuple[int, _dependency_phydrax_geometry__meshing_domain.PatchCurveUse, float]
+    ],
     angular_required: bool,
     maximum_normal_angle: float,
-    ledger: _QueryLedger,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
     started: float,
     reserved_bytes: int,
     count: int,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> np.ndarray:
     """Bisect one shared curve until every incident source bound is met.
 
@@ -553,135 +748,76 @@ def _bisect_curve(
     intervals are retained; only bisected children are measured again.
     """
     domain = compiled.domain
-    owner_patch, owner_loop, owner_position = domain.curve_owners[curve]
-    owner = domain.patches[owner_patch].loops[owner_loop][owner_position]
-    if not isinstance(owner, PatchCurveUse):
-        raise TypeError("A curve owner must be a PatchCurveUse.")
+    constraints = _prepare_curve_constraints(
+        compiled, curve, angular_required, maximum_normal_angle
+    )
     fresh = np.ones((values.size - 1,), dtype=np.bool_)
     ribbons = [np.zeros((values.size - 1,), dtype=np.float64) for _ in ribbon_targets]
-    angular_uses: list[tuple[int, PatchCurveUse, float]] = []
-    if angular_required:
-        for patch, use in domain.curve_uses(curve):
-            row = np.searchsorted(compiled.patches, patch)
-            target_angle = maximum_normal_angle
-            if row < compiled.patches.size and compiled.patches[row] == patch:
-                target_angle = min(target_angle, float(compiled.patch_normal_angles[row]))
-            angular_uses.append((patch, use, target_angle))
-    turns = [np.zeros((values.size - 1,), dtype=np.float64) for _ in angular_uses]
+    turns = [
+        np.zeros((values.size - 1,), dtype=np.float64) for _ in constraints.angular_uses
+    ]
     points = np.empty((values.size, 3), dtype=np.float64)
     known = np.zeros((values.size,), dtype=np.bool_)
     previous_ribbons: dict[int, float] = {}
     stagnant_ribbons: dict[int, int] = {}
+    state = _CurveIntervalState(
+        ribbons, turns, points, known, previous_ribbons, stagnant_ribbons
+    )
     while True:
-        check_deadline(started, ledger.limits, MeshingStageKind.CURVE_MESHING)
+        _dependency_phydrax_meshing_providers__native_publication.check_deadline(
+            started, ledger.limits, MeshingStageKind.CURVE_MESHING
+        )
         measured = np.flatnonzero(fresh)
-        with _source_bound_scope(ledger, reserved_bytes + values.nbytes):
-            bounds = domain.curve_interpolation_bounds(curve, values)
+        with _source_bound_scope(
+            ledger, reserved_bytes + values.nbytes, scope=scope, budget=budget
+        ):
+            bounds = domain.curve_interpolation_bounds(curve, values, budget=budget)
             if np.isfinite(target) and np.any(~np.isfinite(bounds)):
                 raise _failure(
-                    MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                    f"Curve {curve} has no continuous interpolation bound.",
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                    f"SurfaceConstruction.curve_interpolation must provide a continuous bound; got unbounded curve {curve}.",
                     entity_ids=(curve,),
                 )
             split = bounds > target
             if ribbon_targets:
-                missing = np.flatnonzero(~known)
-                ledger.reserve(missing.size, 0, MeshingStageKind.CURVE_MESHING)
-                if missing.size:
-                    points[missing] = _curve_points(
-                        prepared.charts, curve_row, values[missing]
-                    )
-                known[:] = True
-                for use_row, (
-                    incident_patch,
-                    incident_use,
-                    ribbon_target,
-                ) in enumerate(ribbon_targets):
-                    order = np.arange(values.size)
-                    reversed_use = incident_use.first != owner.first
-                    if reversed_use:
-                        order = order[::-1]
-                    actual = owner.first + values[order] * (owner.last - owner.first)
-                    actual[0], actual[-1] = incident_use.first, incident_use.last
-                    ledger.reserve(2 * measured.size, 0, MeshingStageKind.CURVE_MESHING)
-                    if measured.size:
-                        ribbons[use_row][measured] = domain.trim_ribbon_bounds(
-                            incident_patch,
-                            incident_use,
-                            actual,
-                            points[order],
-                            intervals=values.size - 2 - measured
-                            if reversed_use
-                            else measured,
-                        )
-                    local = ribbons[use_row]
-                    local_split = local > ribbon_target
-                    split |= local_split
-                    maximum = float(np.max(local[local_split], initial=0.0))
-                    if maximum == 0.0:
-                        previous_ribbons.pop(use_row, None)
-                        stagnant_ribbons.pop(use_row, None)
-                        continue
-                    previous = previous_ribbons.get(use_row, np.inf)
-                    # An unbounded interval enclosure that bisection turns
-                    # finite is progress; only a finite bound can stagnate.
-                    # Persistently unbounded intervals still terminate
-                    # through the ledger and deadline.
-                    stagnant = (
-                        stagnant_ribbons.get(use_row, 0) + 1
-                        if np.isfinite(maximum) and maximum >= previous
-                        else 0
-                    )
-                    previous_ribbons[use_row] = maximum
-                    stagnant_ribbons[use_row] = stagnant
-                    if stagnant >= 2:
-                        raise _failure(
-                            MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                            f"Curve {curve} has an unrecoverable local "
-                            "trim ribbon under exact interval bisection.",
-                            entity_ids=(curve, incident_patch),
-                            requested=(("maximum_deviation", ribbon_target),),
-                            achieved=(("local_trim_ribbon", maximum),),
-                        )
-            if angular_uses:
-                actual = owner.first + values * (owner.last - owner.first)
-                actual[0], actual[-1] = owner.first, owner.last
-                for turn, (patch, use, target_angle) in zip(
-                    turns, angular_uses, strict=True
-                ):
-                    if measured.size:
-                        boxes = []
-                        for first, last in zip(
-                            actual[measured], actual[measured + 1], strict=True
-                        ):
-                            first_, last_ = sorted((float(first), float(last)))
-                            box = (
-                                use.pcurve.bounding_box(first_, last_)
-                                if hasattr(use.pcurve, "bounding_box")
-                                else use.pcurve.enclosure(first_, last_)
-                            )
-                            boxes.append(np.stack((box[0], box[1], box[0])))
-                        turn[measured] = domain.normal_turn_bounds(
-                            patch, np.asarray(boxes)
-                        )
-                    # A corner triangle retains two constrained source
-                    # edges. Leave angular room for its interior span;
-                    # neither edge can be split by patch-local recovery.
-                    split |= turn > 0.5 * target_angle
+                split = _measure_curve_ribbons(
+                    domain,
+                    prepared,
+                    curve_row,
+                    curve,
+                    values,
+                    constraints,
+                    ribbon_targets,
+                    measured,
+                    state,
+                    ledger,
+                    split,
+                    budget=budget,
+                ).split
+            if constraints.angular_uses:
+                split = _measure_curve_turns(
+                    domain,
+                    values,
+                    constraints,
+                    measured,
+                    state,
+                    split,
+                    budget=budget,
+                ).split
         if not np.any(split):
             return values
+        del state
         ledger.reserve(0, values.size, MeshingStageKind.CURVE_MESHING)
         if count + values.size + int(np.sum(split)) > ledger.limits.maximum_vertices:
             raise _failure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Curve fidelity refinement exceeds the vertex budget.",
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "SurfaceConstruction.curve_vertices must fit the vertex budget; got oversized curve fidelity refinement.",
             )
         middle = 0.5 * (values[:-1][split] + values[1:][split])
         if np.any((middle == values[:-1][split]) | (middle == values[1:][split])):
             raise _failure(
-                MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-                f"Curve {curve} has no distinct execution parameter for "
-                "an exact local trim-ribbon bisection.",
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                f"SurfaceConstruction.curve_parameter must distinguish bisected interval children; got no distinct execution parameter on curve {curve}.",
                 entity_ids=(curve,),
             )
         value_rows, retained, fresh = _bisection_rows(split)
@@ -697,122 +833,415 @@ def _bisect_curve(
         carried_known = np.zeros((values.size,), dtype=np.bool_)
         carried_known[value_rows] = known
         known = carried_known
+        state = _CurveIntervalState(
+            ribbons, turns, points, known, previous_ribbons, stagnant_ribbons
+        )
 
 
-def _curve_vertices(
-    compiled: CompiledSurfaceDomain,
-    schedule: NativeSurfaceSchedule,
-    ledger: _QueryLedger,
+def _split_source_loop_parameters(
+    uses: tuple[_dependency_phydrax_geometry__meshing_domain.PatchCurveUse, ...],
+    partitions: list[np.ndarray],
+    reversed_uses: tuple[bool, ...],
+    parameters: dict[int, np.ndarray],
+    split: set[int],
+    patch: int,
+    /,
+) -> None:
+    """Publish distinct named source children in the shared owner orientation."""
+    offset = 0
+    for use, values, reversed_use in zip(uses, partitions, reversed_uses, strict=True):
+        selected = [row for row in range(values.size - 1) if offset + row in split]
+        offset += values.size - 1
+        if not selected:
+            continue
+        middle = 0.5 * (values[:-1][selected] + values[1:][selected])
+        if np.any((middle == values[:-1][selected]) | (middle == values[1:][selected])):
+            raise _failure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                "SurfaceConstruction.source_loop_parameter must distinguish topology children; got no distinct source parameter.",
+                entity_ids=(use.curve, patch),
+            )
+        normalized = 1.0 - middle if reversed_use else middle
+        parameters[use.curve] = np.unique(
+            np.concatenate((parameters[use.curve], normalized))
+        )
+
+
+def _source_loop_chord_chain(
+    uses: tuple[_dependency_phydrax_geometry__meshing_domain.PatchCurveUse, ...],
+    partitions: list[np.ndarray],
+    patch: int,
+    remaining_pairs: int,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+) -> tuple[np.ndarray, int, int]:
+    """Build a noncrossing source chord chain within arc and pair allowances."""
+    count = sum(values.size - 1 for values in partitions)
+    if count > 65_536 or remaining_pairs < 1:
+        raise _failure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "SurfaceConstruction.source_loop_topology must fit the trim arc and pair allowances; got exhausted source partition.",
+            entity_ids=(patch,),
+            requested=(
+                ("source_trim_arcs", 65_536),
+                ("source_trim_pairs", 200_000),
+            ),
+            achieved=(
+                ("source_trim_arcs", count),
+                ("source_trim_pairs", 200_000 - remaining_pairs),
+            ),
+        )
+    ledger.reserve(4 * count, count, MeshingStageKind.CURVE_MESHING)
+    chords = np.concatenate(
+        [
+            use.charts(use.first + values[:-1] * (use.last - use.first))
+            for use, values in zip(uses, partitions, strict=True)
+        ]
+    )
+    vertices = np.arange(count)
+    boundary = np.column_stack((vertices, np.roll(vertices, -1)))
+    simple, pair_work, exhausted = domain_chart_chain._simple_boundary(
+        chords, boundary, remaining_pairs
+    )
+    remaining_pairs -= pair_work
+    ledger.reserve(0, pair_work, MeshingStageKind.CURVE_MESHING)
+    if exhausted or remaining_pairs < 1:
+        raise _failure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "SurfaceConstruction.source_loop_topology must fit its pair allowance; got exhausted chord checks.",
+            entity_ids=(patch,),
+            achieved=(("source_trim_pairs", 200_000 - remaining_pairs),),
+        )
+    if not simple:
+        raise ValueError(
+            "SurfaceConstruction.source_loop_chords must not cross; got a crossing source-bound chord chain."
+        )
+    return chords, count, remaining_pairs
+
+
+def _certify_source_loop_parameters(
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    patch: int,
+    uses: tuple[_dependency_phydrax_geometry__meshing_domain.PatchCurveUse, ...],
+    curves: tuple[AbstractTrimCurve, ...],
+    reversed_uses: tuple[bool, ...],
+    parameters: dict[int, np.ndarray],
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    started: float,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> None:
+    """Earn one loop's source/chord certificate within its existing allowances."""
+    domain = compiled.domain
+    boxes = [curve.enclosure(0.0, 1.0, budget=budget) for curve in curves]
+    tolerance = max(
+        float(
+            np.nextafter(
+                max(np.linalg.norm(upper - lower) for lower, upper in boxes),
+                np.inf,
+            )
+        ),
+        np.finfo(np.float64).tiny,
+    )
+    remaining_pairs = 200_000
+    for depth in range(33):
+        _dependency_phydrax_meshing_providers__native_publication.check_deadline(
+            started, ledger.limits, MeshingStageKind.CURVE_MESHING
+        )
+        partitions = [
+            1.0 - parameters[use.curve][::-1] if reversed_use else parameters[use.curve]
+            for use, reversed_use in zip(uses, reversed_uses, strict=True)
+        ]
+        chords, count, remaining_pairs = _source_loop_chord_chain(
+            uses, partitions, patch, remaining_pairs, ledger
+        )
+        cover = CurveTrimLoop(
+            curves,
+            tolerance=tolerance,
+            maximum_arcs=65_536,
+            arc_parameters=partitions,
+            chord_vertices=chords,
+            relative_closure_tolerance=domain.tolerance,
+            budget=budget,
+        )
+        topology = cover.certify_topology(maximum_pairs=remaining_pairs, budget=budget)
+        remaining_pairs -= topology.pairs_checked
+        ledger.reserve(0, topology.pairs_checked, MeshingStageKind.CURVE_MESHING)
+        if topology.certified:
+            return
+        if topology.budget_exhausted or depth == 32:
+            raise _failure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED
+                if topology.budget_exhausted
+                else _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                "SurfaceConstruction.source_loop_topology must certify its shared source partition; got unresolved trim topology.",
+                entity_ids=(patch,),
+                achieved=(
+                    ("source_trim_arcs", count),
+                    ("source_trim_pairs", 200_000 - remaining_pairs),
+                ),
+            )
+        split = domain_chart_chain._trim_proof_splits(chords, topology.unresolved_pairs)
+        vertices = compiled.corners.size + sum(
+            values.size - 2 for values in parameters.values()
+        )
+        if (
+            count + len(split) > 65_536
+            or vertices + len(split) > ledger.limits.maximum_vertices
+        ):
+            raise _failure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "SurfaceConstruction.source_loop_vertices must fit the shared boundary capacity; got oversized topology refinement.",
+                entity_ids=(patch,),
+            )
+        _split_source_loop_parameters(
+            uses, partitions, reversed_uses, parameters, split, patch
+        )
+
+
+def _refine_source_loop_parameters(
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    parameters: dict[int, np.ndarray],
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    started: float,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> None:
+    """Refine only named curved source/chord relations before shared publication.
+
+    Density alone can prescribe one chord for a curved source use. Its isotopy
+    need not have disjoint homotopy boxes, even when the source loop is simple.
+    Refine the shared source partition, not the target or the proof's affine
+    chord. Straight loops and the separately prepared pole fans are unchanged.
+    """
+    domain = compiled.domain
+    for patch in compiled.patches.tolist():
+        source = domain.patches[patch]
+        for loop in source.loops:
+            if any(
+                not isinstance(
+                    use, _dependency_phydrax_geometry__meshing_domain.PatchCurveUse
+                )
+                for use in loop
+            ):
+                continue
+            uses = tuple(
+                use
+                for use in loop
+                if isinstance(
+                    use, _dependency_phydrax_geometry__meshing_domain.PatchCurveUse
+                )
+            )
+            missing = tuple(use.curve for use in uses if use.curve not in parameters)
+            if missing:
+                raise _failure(
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+                    "SurfaceConstruction.source_loop_parameters must bind every named curve; got an incomplete chart boundary.",
+                    entity_ids=(patch, *missing),
+                )
+            # Existing multi-chord source uses keep their proof-only
+            # cover. Only a newly admitted single curved chord needs topology
+            # to earn source subdivisions independently of the density target.
+            if all(
+                parameters[use.curve].size > 2
+                or (
+                    isinstance(
+                        use.pcurve, _dependency_phydrax_geometry_brep__patches.LineCurve
+                    )
+                    and use.first_root is None
+                    and use.last_root is None
+                )
+                for use in uses
+            ):
+                continue
+            curves = tuple(
+                _dependency_phydrax_geometry__meshing_domain.domain_trim_curve(
+                    source, use
+                )
+                for use in uses
+            )
+            reversed_uses = tuple(
+                use.first
+                != _prepare_curve_constraints(
+                    compiled, use.curve, False, math.inf
+                ).owner.first
+                for use in uses
+            )
+            _certify_source_loop_parameters(
+                compiled,
+                patch,
+                uses,
+                curves,
+                reversed_uses,
+                parameters,
+                ledger,
+                started,
+                budget=budget,
+            )
+
+
+@checked
+def curve_vertices(
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    schedule: _dependency_phydrax_meshing_providers__native_schedules.NativeSurfaceSchedule,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
     started: float,
     maximum_normal_angle: float,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, dict[int, np.ndarray], dict[int, np.ndarray], dict[int, int]]:
     """Shared vertices: corners, then curve interiors; curve parameters and ids."""
 
-    domain = compiled.domain
-    if compiled.corners.size > ledger.limits.maximum_vertices:
-        raise _failure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Declared surface corners exceed the vertex capacity before boundary allocation.",
-            requested=(("maximum_vertices", ledger.limits.maximum_vertices),),
-            achieved=(("corner_vertices", int(compiled.corners.size)),),
-        )
-    request = compiled.curve_request
-    prepared = PreparedCurveNetwork(
-        NativeCurveSource(domain.curve_atlas, domain.source_revision),
-        request,
-        schedule.curve_schedule,
-    )
-    rows, parameters, _, _ = _discretize(prepared, request, ledger, started)
-    pole_parameters = _pole_curve_parameters(
-        compiled, maximum_normal_angle, ledger, started
-    )
-    corner_ids = {int(corner): row for row, corner in enumerate(compiled.corners)}
-    coordinates = [domain.corner_points[compiled.corners]]
-    count = compiled.corners.size
-    curve_parameters: dict[int, np.ndarray] = {}
-    curve_ids: dict[int, np.ndarray] = {}
-    angular_required = math.isfinite(maximum_normal_angle) or bool(
-        np.any(np.isfinite(compiled.patch_normal_angles))
-    )
-    for curve_row, curve in enumerate(prepared.curves.tolist()):
-        values = parameters[rows == curve_row]
-        values = np.unique(
-            np.concatenate(
-                (
-                    values,
-                    domain.curve_breakpoints(curve),
-                    pole_parameters.get(curve, np.empty((0,), dtype=np.float64)),
-                )
+    with _source_bound_scope(
+        ledger, 0, stage=MeshingStageKind.SURFACE_MESHING, scope=scope, budget=budget
+    ):
+        domain = compiled.domain
+        if compiled.corners.size > ledger.limits.maximum_vertices:
+            raise _failure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "SurfaceConstruction.corner_vertices must fit the vertex capacity before allocation; got oversized declared-corner bank.",
+                requested=(("maximum_vertices", ledger.limits.maximum_vertices),),
+                achieved=(("corner_vertices", int(compiled.corners.size)),),
+            )
+        request = compiled.curve_request
+        preparation_work, preparation_queries = (
+            _dependency_phydrax_meshing_providers__native_curve.curve_preparation_upper(
+                request
             )
         )
-        # Shared source edges cannot be changed by patch-local interior
-        # refinement. Bisect each offending source interval here, before every
-        # incident patch reconnects through its CDT, so all uses retain one
-        # conforming curve vertex and interval ledger.
-        target = 0.25 * compiled.curve_deviations[np.searchsorted(compiled.curves, curve)]
-        ribbon_targets = []
-        for incident_patch, incident_use in domain.curve_uses(curve):
-            patch_row = int(np.searchsorted(compiled.patches, incident_patch))
-            if (
-                patch_row < compiled.patches.size
-                and compiled.patches[patch_row] == incident_patch
-                and np.isfinite(compiled.patch_deviations[patch_row])
-            ):
-                ribbon_targets.append(
+        with budget.ticket.batch(
+            preparation_work, queries_upper=preparation_queries
+        ) as preparation_ticket:
+            prepared = _dependency_phydrax_meshing_providers__native_curve.PreparedCurveNetwork(
+                _dependency_phydrax_meshing_providers__native_sources.NativeCurveSource(
+                    domain.curve_atlas, domain.source_revision, gap_domain=domain
+                ),
+                request,
+                schedule.curve_schedule,
+                ticket=preparation_ticket,
+                gap_budget=budget,
+            )
+        rows, parameters, _, _ = (
+            _dependency_phydrax_meshing_providers__native_curve.discretize(
+                prepared, request, ledger, started
+            )
+        )
+        pole_parameters = _pole_curve_parameters(
+            compiled, maximum_normal_angle, ledger, started, scope=scope, budget=budget
+        )
+        corner_ids = {int(corner): row for row, corner in enumerate(compiled.corners)}
+        coordinates = [domain.corner_points[compiled.corners]]
+        count = compiled.corners.size
+        curve_parameters: dict[int, np.ndarray] = {}
+        curve_ids: dict[int, np.ndarray] = {}
+        angular_required = math.isfinite(maximum_normal_angle) or bool(
+            np.any(np.isfinite(compiled.patch_normal_angles))
+        )
+        for curve_row, curve in enumerate(prepared.curves.tolist()):
+            values = parameters[rows == curve_row]
+            values = np.unique(
+                np.concatenate(
                     (
-                        incident_patch,
-                        incident_use,
-                        float(compiled.patch_deviations[patch_row]),
+                        values,
+                        domain.curve_breakpoints(curve),
+                        pole_parameters.get(curve, np.empty((0,), dtype=np.float64)),
                     )
                 )
-        if np.isfinite(target) or angular_required or ribbon_targets:
-            values = _bisect_curve(
-                compiled,
-                prepared,
-                curve_row,
-                curve,
-                values,
-                target,
-                ribbon_targets,
-                angular_required,
-                maximum_normal_angle,
-                ledger,
-                started,
-                parameters.nbytes + rows.nbytes,
-                count,
             )
-        interior = values[1:-1]
-        if count + interior.size > ledger.limits.maximum_vertices:
-            raise _failure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                "Shared surface curve vertices exceed their capacity before coordinate allocation.",
-                entity_ids=(curve,),
-                requested=(("maximum_vertices", ledger.limits.maximum_vertices),),
-                achieved=(("boundary_vertices", int(count + interior.size)),),
-            )
-        ledger.reserve(interior.size, 0, MeshingStageKind.CURVE_MESHING)
-        points = (
-            _curve_points(prepared.charts, curve_row, interior)
-            if interior.size
-            else np.empty((0, 3), dtype=np.float64)
+            curve_parameters[curve] = values
+        _refine_source_loop_parameters(
+            compiled, curve_parameters, ledger, started, budget=budget
         )
-        ids = np.concatenate(
-            (
-                (corner_ids[domain.curves[curve].start],),
-                count + np.arange(interior.size),
-                (corner_ids[domain.curves[curve].end],),
+        for curve_row, curve in enumerate(prepared.curves.tolist()):
+            values = curve_parameters[curve]
+            # Shared source edges cannot be changed by patch-local interior
+            # refinement. Bisect each offending source interval here, before every
+            # incident patch reconnects through its CDT, so all uses retain one
+            # conforming curve vertex and interval ledger.
+            target = (
+                0.25 * compiled.curve_deviations[np.searchsorted(compiled.curves, curve)]
             )
-        ).astype(np.int64)
-        coordinates.append(points)
-        count += interior.size
-        curve_parameters[curve] = values
-        curve_ids[curve] = ids
-    return np.concatenate(coordinates, axis=0), curve_parameters, curve_ids, corner_ids
+            ribbon_targets = []
+            for incident_patch, incident_use in domain.curve_uses(curve):
+                patch_row = int(np.searchsorted(compiled.patches, incident_patch))
+                if (
+                    patch_row < compiled.patches.size
+                    and compiled.patches[patch_row] == incident_patch
+                    and np.isfinite(compiled.patch_deviations[patch_row])
+                ):
+                    ribbon_targets.append(
+                        (
+                            incident_patch,
+                            incident_use,
+                            float(compiled.patch_deviations[patch_row]),
+                        )
+                    )
+            if np.isfinite(target) or angular_required or ribbon_targets:
+                values = _bisect_curve(
+                    compiled,
+                    prepared,
+                    curve_row,
+                    curve,
+                    values,
+                    target,
+                    ribbon_targets,
+                    angular_required,
+                    maximum_normal_angle,
+                    ledger,
+                    started,
+                    parameters.nbytes + rows.nbytes,
+                    count,
+                    scope=scope,
+                    budget=budget,
+                )
+            interior = values[1:-1]
+            if count + interior.size > ledger.limits.maximum_vertices:
+                raise _failure(
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "SurfaceConstruction.curve_vertices must fit capacity before coordinate allocation; got oversized shared curve bank.",
+                    entity_ids=(curve,),
+                    requested=(("maximum_vertices", ledger.limits.maximum_vertices),),
+                    achieved=(("boundary_vertices", int(count + interior.size)),),
+                )
+            ledger.reserve(interior.size, 0, MeshingStageKind.CURVE_MESHING)
+            points = (
+                _dependency_phydrax_meshing_providers__native_curve.curve_points(
+                    prepared.charts, curve_row, interior
+                )
+                if interior.size
+                else np.empty((0, 3), dtype=np.float64)
+            )
+            ids = np.concatenate(
+                (
+                    (corner_ids[domain.curves[curve].start],),
+                    count + np.arange(interior.size),
+                    (corner_ids[domain.curves[curve].end],),
+                )
+            ).astype(np.int64)
+            coordinates.append(points)
+            count += interior.size
+            curve_parameters[curve] = values
+            curve_ids[curve] = ids
+        return (
+            np.concatenate(coordinates, axis=0),
+            curve_parameters,
+            curve_ids,
+            corner_ids,
+        )
 
 
 def _pole_segments(
-    domain: MeshingDomain, patch: int, use: PatchPoleUse, maximum_normal_angle: float, /
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    patch: int,
+    use: _dependency_phydrax_geometry__meshing_domain.PatchPoleUse,
+    maximum_normal_angle: float,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> int:
     """Resolve the tangent fan and the source's nonvanishing pole Gauss map."""
 
@@ -822,14 +1251,14 @@ def _pole_segments(
     inward = 1.0e-4 * np.asarray((-along[1], along[0]))
     fractions = np.linspace(0.0, 1.0, _POLE_SAMPLES)
     charts = use.charts(fractions) + inward
-    rays = domain.evaluate(np.full((fractions.size,), patch), charts)
+    rays = domain.evaluate(np.full((fractions.size,), patch), charts, budget=budget)
     rays -= domain.corner_points[use.corner]
     rays /= np.linalg.norm(rays, axis=1, keepdims=True)
     cosines = np.clip(np.sum(rays[1:] * rays[:-1], axis=1), -1.0, 1.0)
     fan = float(np.sum(np.arccos(cosines)))
     pieces = max(1, math.ceil(fan / _POLE_FAN_ANGLE - 1.0e-9))
     chart = np.stack((start, end, 0.5 * (start + end)))[None]
-    turning = float(domain.normal_turn_bounds(patch, chart)[0])
+    turning = float(domain.normal_turn_bounds(patch, chart, budget=budget)[0])
     if np.isfinite(turning):
         angle = min(maximum_normal_angle, _POLE_FAN_ANGLE)
         pieces = max(pieces, math.ceil(turning / angle))
@@ -837,16 +1266,19 @@ def _pole_segments(
 
 
 def _pole_ring(
-    domain: MeshingDomain,
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     patch: int,
-    use: PatchPoleUse,
+    use: _dependency_phydrax_geometry__meshing_domain.PatchPoleUse,
     pieces: int,
     size: float,
     deviation: float,
     maximum_normal_angle: float,
-    ledger: _QueryLedger,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
     reach: float,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> np.ndarray:
     """Fan seeds whose entire collapsed strip satisfies the source bounds."""
 
@@ -857,15 +1289,15 @@ def _pole_ring(
     probes = start + 0.5 * along + depths[:, None] * inward
     ledger.reserve(depths.size, depths.size, MeshingStageKind.SURFACE_MESHING)
     distance = np.linalg.norm(
-        domain.evaluate(np.full((depths.size,), patch), probes)
+        domain.evaluate(np.full((depths.size,), patch), probes, budget=budget)
         - domain.corner_points[use.corner],
         axis=1,
     )
     depth = float(depths[int(np.argmin(np.abs(distance - 0.9 * size)))])
     fractions = (np.arange(pieces, dtype=np.float64) + 0.5) / pieces
     pole = use.charts(np.linspace(0.0, 1.0, pieces + 1))
-    sphere_frame = _full_sphere_frame(domain, patch)
-    # Collapsed strips are prepared before the actual trim-homotopy remainder
+    sphere_frame = domain_numerics.full_sphere_frame(domain, patch, budget=budget)
+    # Collapsed strips are prepared before the measured trim-homotopy remainder
     # is available. Leave room for that source-bound contribution: a later
     # interior insertion cannot refine a physically collapsed chart triangle.
     strip_deviation = 0.25 * deviation
@@ -886,21 +1318,28 @@ def _pole_ring(
             strips,
             ledger,
             sum(array.nbytes for array in (pole, ring, strips)),
+            scope=scope,
+            budget=budget,
         ) as position_bounds:
             if sphere_frame is not None:
                 ledger.reserve(3 * strips.shape[0], 0, MeshingStageKind.SURFACE_MESHING)
                 physical = domain.evaluate(
-                    np.full((3 * strips.shape[0],), patch), strips.reshape((-1, 2))
+                    np.full((3 * strips.shape[0],), patch),
+                    strips.reshape((-1, 2)),
+                    budget=budget,
                 ).reshape((-1, 3, 3))
                 physical[:pieces, :2] = domain.corner_points[use.corner]
                 position_bounds = np.minimum(
                     position_bounds,
-                    _sphere_triangle_distance_bounds(sphere_frame, physical),
+                    domain_numerics.sphere_triangle_distance_bounds(
+                        sphere_frame, physical
+                    ),
                 )
-            normal_bounds = domain.normal_turn_bounds(patch, strips)
+            normal_bounds = domain.normal_turn_bounds(patch, strips, budget=budget)
             if sphere_frame is not None:
                 normal_bounds = np.minimum(
-                    normal_bounds, _sphere_triangle_normal_bounds(sphere_frame, physical)
+                    normal_bounds,
+                    domain_numerics.sphere_triangle_normal_bounds(sphere_frame, physical),
                 )
             passed = np.all(position_bounds <= strip_deviation) and np.all(
                 normal_bounds <= maximum_normal_angle
@@ -910,18 +1349,21 @@ def _pole_ring(
                 return ring
         depth *= 0.5
     raise _failure(
-        MeshingFailureCategory.UNSUPPORTED_COMBINATION,
-        f"Pole {use.corner} has no finite source-bound preparation strip.",
+        _leaf_phydrax_meshing__failures.MeshingFailureCategory.UNSUPPORTED_COMBINATION,
+        f"SurfaceConstruction.pole_strip must meet finite source bounds; got pole {use.corner} without a finite preparation strip.",
         entity_ids=(patch, use.corner),
     )
 
 
 def _pole_curve_parameters(
-    compiled: CompiledSurfaceDomain,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
     maximum_normal_angle: float,
-    ledger: _QueryLedger,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
     started: float,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> dict[int, np.ndarray]:
     """Share straight seam nodes at every prepared pole-ring endpoint."""
     domain = compiled.domain
@@ -932,9 +1374,13 @@ def _pole_curve_parameters(
         reach = 0.4 * float(np.max(np.ptp(outer, axis=0)))
         for loop in source.loops:
             for position, use in enumerate(loop):
-                if not isinstance(use, PatchPoleUse):
+                if not isinstance(
+                    use, _dependency_phydrax_geometry__meshing_domain.PatchPoleUse
+                ):
                     continue
-                check_deadline(started, ledger.limits, MeshingStageKind.SURFACE_MESHING)
+                _dependency_phydrax_meshing_providers__native_publication.check_deadline(
+                    started, ledger.limits, MeshingStageKind.SURFACE_MESHING
+                )
                 ledger.reserve(
                     _POLE_SAMPLES, _POLE_SAMPLES, MeshingStageKind.SURFACE_MESHING
                 )
@@ -943,6 +1389,8 @@ def _pole_curve_parameters(
                     patch,
                     use,
                     min(maximum_normal_angle, float(compiled.patch_normal_angles[row])),
+                    scope=scope,
+                    budget=budget,
                 )
                 ring = _pole_ring(
                     domain,
@@ -954,6 +1402,8 @@ def _pole_curve_parameters(
                     min(maximum_normal_angle, float(compiled.patch_normal_angles[row])),
                     ledger,
                     reach,
+                    scope=scope,
+                    budget=budget,
                 )
                 along = np.asarray(use.end) - np.asarray(use.start)
                 offset = ring[0] - use.charts(np.asarray((0.5 / pieces,)))[0]
@@ -961,11 +1411,14 @@ def _pole_curve_parameters(
                     (loop[(position - 1) % len(loop)], np.asarray(use.start) + offset),
                     (loop[(position + 1) % len(loop)], np.asarray(use.end) + offset),
                 ):
-                    if not isinstance(neighbor, PatchCurveUse):
+                    if not isinstance(
+                        neighbor,
+                        _dependency_phydrax_geometry__meshing_domain.PatchCurveUse,
+                    ):
                         continue
                     # Any p-curve affine in its parameter (a line, or a line in
                     # a native period gauge) is inverted by its chart chord;
-                    # the exact source evaluation must reproduce the endpoint.
+                    # the certified source evaluation must reproduce the endpoint.
                     first, last = neighbor.charts(
                         np.asarray((neighbor.first, neighbor.last))
                     )
@@ -984,8 +1437,13 @@ def _pole_curve_parameters(
                         neighbor.curve
                     ]
                     owner = domain.patches[owner_patch].loops[owner_loop][owner_position]
-                    if not isinstance(owner, PatchCurveUse):
-                        raise TypeError("A curve owner must be a PatchCurveUse.")
+                    match owner:
+                        case _dependency_phydrax_geometry__meshing_domain.PatchCurveUse():
+                            pass
+                        case _:
+                            raise TypeError(
+                                f"MeshingDomain.curve_owners must select a PatchCurveUse; got {type(owner).__name__}."
+                            )
                     value = (parameter - owner.first) / (owner.last - owner.first)
                     additions.setdefault(neighbor.curve, []).append(
                         (value, tolerance / float(np.linalg.norm(chord)))
@@ -1003,7 +1461,7 @@ def _pole_curve_parameters(
 
 
 def _boundary(
-    domain: MeshingDomain,
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     patch: int,
     size: float,
     curve_parameters: dict[int, np.ndarray],
@@ -1011,12 +1469,23 @@ def _boundary(
     corner_ids: dict[int, int],
     deviation: float,
     maximum_normal_angle: float,
-    ledger: _QueryLedger,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    local_limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[
-    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
 ]:
-    """Source chart boundary, shared ids, holes, pole seeds and initial ray edges."""
+    """Source chart boundary, shared ids, holes, pole seeds, rays and strips."""
 
     outer = np.concatenate(
         [_use_charts(use) for use in domain.patches[patch].loops[0]], axis=0
@@ -1025,6 +1494,7 @@ def _boundary(
     rings: list[np.ndarray] = [np.zeros((0, 2), dtype=np.float64)]
     pole_rays: list[np.ndarray] = []
     ring_chords: list[np.ndarray] = []
+    pole_strips: list[np.ndarray] = []
 
     charts: list[np.ndarray] = []
     identities: list[np.ndarray] = []
@@ -1038,13 +1508,18 @@ def _boundary(
         loop_ids: list[np.ndarray] = []
         for use_index, use in enumerate(loop):
             match use:
-                case PatchCurveUse():
+                case _dependency_phydrax_geometry__meshing_domain.PatchCurveUse():
                     owner_patch, owner_loop, owner_position = domain.curve_owners[
                         use.curve
                     ]
                     owner = domain.patches[owner_patch].loops[owner_loop][owner_position]
-                    if not isinstance(owner, PatchCurveUse):
-                        raise TypeError("A curve owner must be a PatchCurveUse.")
+                    match owner:
+                        case _dependency_phydrax_geometry__meshing_domain.PatchCurveUse():
+                            pass
+                        case _:
+                            raise TypeError(
+                                f"MeshingDomain.curve_owners must select a PatchCurveUse; got {type(owner).__name__}."
+                            )
                     values = curve_parameters[use.curve]
                     order = np.arange(values.size)
                     if use.first != owner.first:
@@ -1065,11 +1540,18 @@ def _boundary(
                             )
                         )
                     )
-                case PatchPoleUse():
+                case _dependency_phydrax_geometry__meshing_domain.PatchPoleUse():
                     ledger.reserve(
                         _POLE_SAMPLES, _POLE_SAMPLES, MeshingStageKind.SURFACE_MESHING
                     )
-                    pieces = _pole_segments(domain, patch, use, maximum_normal_angle)
+                    pieces = _pole_segments(
+                        domain,
+                        patch,
+                        use,
+                        maximum_normal_angle,
+                        scope=scope,
+                        budget=budget,
+                    )
                     # A chart copy at each ring ray supplies an exactly
                     # axis-aligned radial split, without a second physical pole.
                     rays = (np.arange(pieces, dtype=np.float64) + 0.5) / pieces
@@ -1118,21 +1600,33 @@ def _boundary(
                     # pole gauge to a deeper seed past the next ray; the chart
                     # cell stays positive while its physical apex cell inverts.
                     ring_chords.append(np.column_stack((ring_ids[:-1], ring_ids[1:])))
-                    rings.append(
-                        _pole_ring(
-                            domain,
-                            patch,
-                            use,
-                            pieces,
-                            size,
-                            deviation,
-                            maximum_normal_angle,
-                            ledger,
-                            0.4 * extent,
+                    ring = _pole_ring(
+                        domain,
+                        patch,
+                        use,
+                        pieces,
+                        size,
+                        deviation,
+                        maximum_normal_angle,
+                        ledger,
+                        0.4 * extent,
+                        scope=scope,
+                        budget=budget,
+                    )
+                    rings.append(ring)
+                    pole_strips.append(
+                        np.stack(
+                            (
+                                np.asarray(use.start, dtype=np.float64),
+                                np.asarray(use.end, dtype=np.float64),
+                                ring[0] - use.charts(rays[:1])[0],
+                            )
                         )
                     )
                 case _:
-                    raise TypeError("Patch boundary uses are curve or pole uses.")
+                    raise TypeError(
+                        f"MeshingDomain.patch_boundary must contain curve or pole uses; got {type(use).__name__}."
+                    )
         points = np.concatenate(loop_charts, axis=0)
         for prepared in pole_rays[first_ray:]:
             prepared[prepared[:, 0] == offset + points.shape[0], 0] = offset
@@ -1141,7 +1635,11 @@ def _boundary(
         identities.append(np.concatenate(loop_ids).astype(np.int64))
         segments.append(np.stack((local, np.roll(local, -1)), axis=1) + offset)
         if position > 0:
-            holes.append(_interior_point(points, local))
+            holes.append(
+                _dependency_phydrax_meshing_providers__native_planar.interior_point(
+                    points, local, local_limits
+                )
+            )
         offset += points.shape[0]
     radial = np.concatenate(pole_rays) if pole_rays else np.empty((0, 2), dtype=np.int64)
     radial[:, 1] += offset
@@ -1155,21 +1653,28 @@ def _boundary(
         np.concatenate(rings, axis=0),
         np.concatenate(provenance, axis=0),
         radial,
+        np.asarray(pole_strips, dtype=np.float64).reshape((-1, 3, 2)),
     )
 
 
-def _use_charts(use: PatchCurveUse | PatchPoleUse, /) -> np.ndarray:
+def _use_charts(
+    use: _dependency_phydrax_geometry__meshing_domain.PatchCurveUse
+    | _dependency_phydrax_geometry__meshing_domain.PatchPoleUse,
+    /,
+) -> np.ndarray:
     match use:
-        case PatchCurveUse():
+        case _dependency_phydrax_geometry__meshing_domain.PatchCurveUse():
             return use.charts(np.linspace(use.first, use.last, _POLE_SAMPLES))
-        case PatchPoleUse():
+        case _dependency_phydrax_geometry__meshing_domain.PatchPoleUse():
             return use.charts(np.asarray((0.0, 1.0)))
         case _:
-            raise TypeError("Patch boundary uses are curve or pole uses.")
+            raise TypeError(
+                f"MeshingDomain.patch_boundary must contain curve or pole uses; got {type(use).__name__}."
+            )
 
 
 def _fidelity_seed_counts(
-    domain: MeshingDomain,
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     patch: int,
     lower: np.ndarray,
     upper: np.ndarray,
@@ -1177,8 +1682,11 @@ def _fidelity_seed_counts(
     counts: np.ndarray,
     deviation: float,
     normal_angle: float,
-    ledger: _QueryLedger,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> np.ndarray:
     """Seed hard fidelity at chart scale before irregular reconnects are needed."""
     position_requested = np.isfinite(deviation)
@@ -1209,8 +1717,10 @@ def _fidelity_seed_counts(
                 cells,
                 ledger,
                 cells.nbytes + origins.nbytes + probes.nbytes,
+                scope=scope,
+                budget=budget,
             ) as positional:
-                frame = _full_sphere_frame(domain, patch)
+                frame = domain_numerics.full_sphere_frame(domain, patch, budget=budget)
                 if frame is not None:
                     ledger.reserve(
                         3 * cells.shape[0], 0, MeshingStageKind.SURFACE_MESHING
@@ -1218,14 +1728,17 @@ def _fidelity_seed_counts(
                     physical = domain.evaluate(
                         np.full((3 * cells.shape[0],), patch),
                         cells.reshape((-1, 2)),
+                        budget=budget,
                     ).reshape((-1, 3, 3))
                     positional = np.minimum(
-                        positional, _sphere_triangle_distance_bounds(frame, physical)
+                        positional,
+                        domain_numerics.sphere_triangle_distance_bounds(frame, physical),
                     )
                 position_ok = np.max(positional) <= 0.25 * deviation
                 del positional
         normal_ok = not normal_requested or (
-            np.max(domain.normal_turn_bounds(patch, cells)) <= 0.5 * normal_angle
+            np.max(domain.normal_turn_bounds(patch, cells, budget=budget))
+            <= 0.5 * normal_angle
         )
         if position_ok and normal_ok:
             break
@@ -1233,27 +1746,41 @@ def _fidelity_seed_counts(
     return counts
 
 
+@final
+class _InteriorSeeds(StrictModule):
+    """Chart seeds and RMS physical speeds of the two parameter axes."""
+
+    charts: np.ndarray
+    axis_speeds: np.ndarray
+
+
 def _interior_seeds(
-    domain: MeshingDomain,
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     patch: int,
     size: float,
     boundary: np.ndarray,
     segments: np.ndarray,
     fixed: np.ndarray,
-    ledger: _QueryLedger,
-    local_limits: MeshingLimits,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    local_limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
     deviation: float,
     maximum_normal_angle: float,
     /,
     *,
-    compiled: CompiledSurfaceDomain,
-) -> np.ndarray:
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    pole_strips: np.ndarray,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _InteriorSeeds:
     """A coarse chart grid of about twice the target size inside the loops.
 
     Seeds keep the initial triangulation local, so no initial triangle joins
     two chart copies of one physical vertex across a periodic chart. Grid steps
     follow the largest chart speeds; seeds within 0.75 steps (in step units)
-    of a boundary segment or a fixed seed are dropped.
+    of a boundary segment or a fixed seed are dropped. Certified pole strips
+    retain their prepared fan rather than admitting unrelated interior seeds.
+    Soft density retains at least four grid steps per axis for quality recovery;
+    hard uniform density starts from its target-sized grid.
     """
 
     lower = np.min(boundary, axis=0)
@@ -1263,34 +1790,33 @@ def _interior_seeds(
         axis=-1,
     ).reshape((-1, 2))
     ledger.reserve(probes.shape[0], probes.shape[0], MeshingStageKind.SURFACE_MESHING)
-    differential = _differential(domain.patches[patch].surface, probes)
-    speeds = np.max(np.linalg.norm(differential, axis=1), axis=0)
+    differential = domain_numerics.host_surface_differential(
+        domain.patches[patch].surface, probes
+    )
+    axis_norms = np.linalg.norm(differential, axis=1)
+    speeds = np.max(axis_norms, axis=0)
+    axis_speeds = np.sqrt(np.mean(axis_norms**2, axis=0))
     # Resolve the authored physical controls, not only the coarse patch
     # envelope. An empty coarse grid can connect antipodal poles before local
     # recovery has any legal source-bound children to refine.
     ledger.reserve(probes.shape[0], probes.shape[0], MeshingStageKind.SURFACE_MESHING)
-    images = domain.evaluate(np.full(probes.shape[0], patch), probes)
+    images = domain.evaluate(np.full(probes.shape[0], patch), probes, budget=budget)
     seed_size = min(
         size,
         float(
             np.min(
                 compiled.source_sizing.evaluate(
-                    domain,
-                    patch,
-                    probes,
-                    images,
+                    domain, patch, probes, images, budget=budget
                 )
             )
         ),
     )
     counts = np.clip(
-        np.ceil((upper - lower) * speeds / (2.0 * seed_size)), 4, _SEED_AXIS
+        np.ceil((upper - lower) * speeds / (2.0 * seed_size)), 1, _SEED_AXIS
     ).astype(np.int64)
-    # Boundary clearance removes the outermost grid rows. Four rows are the
-    # minimum that retain an interior row; along a periodic source coordinate,
-    # eight rows keep retained neighbours strictly below a half-period apart.
-    # Otherwise a valid coarse envelope may seed no points at all and native
-    # chart Delaunay edges can join opposite physical poles across the chart.
+    # Nonperiodic charts need no interior row when the target spans the patch.
+    # Periodic charts still need retained neighbors strictly below half a
+    # period, so CDT cannot join two chart copies of the same physical point.
     for axis, period in enumerate(domain.patches[patch].surface.periods):
         if period is not None:
             counts[axis] = min(
@@ -1302,14 +1828,19 @@ def _interior_seeds(
             )
     source_face = domain.source_indices[2][patch]
     hard_density = any(
-        isinstance(control, UniformSizeControl)
-        and control.strength is SizeControlStrength.HARD
+        isinstance(control, _dependency_phydrax_meshing__sizing.UniformSizeControl)
+        and control.strength
+        is _dependency_phydrax_meshing__sizing.SizeControlStrength.HARD
         and source_face in np.asarray(control.scope.global_entity_ids)
         for control in compiled.source_sizing.controls
     )
     # A hard density request starts from its own chart-sized grid; additional
     # accuracy is recovered locally, not by pre-filling an excessively fine grid.
     if not hard_density:
+        # Soft density leaves quality recovery in charge of the final mesh.
+        # Retain its local chart scaffold rather than forcing quality recovery
+        # to grow from a coarse target's empty interior.
+        counts = np.maximum(counts, 4)
         counts = _fidelity_seed_counts(
             domain,
             patch,
@@ -1320,14 +1851,16 @@ def _interior_seeds(
             deviation,
             maximum_normal_angle,
             ledger,
+            scope=scope,
+            budget=budget,
         )
     count = int(np.prod(counts))
-    pairs = count * (segments.shape[0] + fixed.shape[0])
+    pairs = count * (segments.shape[0] + fixed.shape[0] + pole_strips.shape[0])
     scratch = 96 * pairs + 128 * (boundary.shape[0] + count)
     if scratch > local_limits.maximum_scratch_bytes:
         raise _failure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Pole/seam chart seed preparation exceeds its resident scratch capacity.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "SurfaceConstruction.seed_scratch must fit the resident scratch limit; got oversized pole/seam chart seeds.",
             requested=(("maximum_scratch_bytes", local_limits.maximum_scratch_bytes),),
             achieved=(("scratch_bytes", scratch),),
         )
@@ -1352,6 +1885,17 @@ def _interior_seeds(
         end[None, :, 0] - start[None, :, 0]
     ) / np.where(crossing, end[None, :, 1] - start[None, :, 1], 1.0)
     inside = np.sum(crossing & (along > scaled[:, None, 0]), axis=1) % 2 == 1
+    for pole_start, pole_end, inward in pole_strips:
+        tangent = pole_end - pole_start
+        relative = grid - pole_start
+        along_pole = relative @ tangent
+        depth = relative @ inward
+        inside &= ~(
+            (along_pole >= 0.0)
+            & (along_pole <= tangent @ tangent)
+            & (depth >= 0.0)
+            & (depth <= inward @ inward)
+        )
     direction = end - start
     offset = scaled[:, None, :] - start[None]
     squared = np.maximum(np.sum(direction * direction, axis=1), 1e-300)
@@ -1366,11 +1910,45 @@ def _interior_seeds(
                 np.linalg.norm(scaled[:, None] - (fixed / steps)[None], axis=2), axis=1
             ),
         )
-    return grid[inside & (clearance >= 0.75)]
+    return _InteriorSeeds(grid[inside & (clearance >= 0.75)], axis_speeds)
 
 
-def _initial_patch(
-    domain: MeshingDomain,
+@final
+class _InitialChart(StrictModule):
+    """Retain prepared chart buffers and the simultaneous CDT scratch allowance."""
+
+    charts: np.ndarray
+    topology_charts: np.ndarray
+    topology_holes: np.ndarray
+    points: np.ndarray
+    identities: np.ndarray
+    boundary: np.ndarray
+    segments: np.ndarray
+    holes: np.ndarray
+    provenance: np.ndarray
+    chart_segments: np.ndarray
+    retained_buffers: tuple[np.ndarray, ...]
+    triangle_capacity: int = eqx.field(static=True)
+    host_scratch: int = eqx.field(static=True)
+    result_scratch: int = eqx.field(static=True)
+    native_scratch: int = eqx.field(static=True)
+
+
+@final
+class _InitialTopology(StrictModule):
+    triangles: np.ndarray
+    constrained: np.ndarray
+    triangulation: ConstrainedDelaunayTriangulation
+
+
+@final
+class _InitialTrim(StrictModule):
+    ribbon: np.ndarray
+    normals: np.ndarray
+
+
+def _prepare_initial_chart(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     patch: int,
     size: float,
     vertices: np.ndarray,
@@ -1379,69 +1957,115 @@ def _initial_patch(
     corner_ids: dict[int, int],
     deviation: float,
     maximum_normal_angle: float,
-    ledger: _QueryLedger,
-    local_limits: MeshingLimits,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    local_limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
     /,
     *,
-    compiled: CompiledSurfaceDomain,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
     record_phase: NativeMeshingPhaseRecorder | None = None,
-) -> _Patch:
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _InitialChart:
     preparation_start = phase_started(record_phase)
-    boundary, shared, segments, holes, rings, provenance, pole_rays = _boundary(
-        domain,
-        patch,
-        size,
-        curve_parameters,
-        curve_ids,
-        corner_ids,
-        deviation,
-        maximum_normal_angle,
-        ledger,
-    )
-    rings = np.concatenate(
+    with _source_bound_scope(
+        ledger, 0, stage=MeshingStageKind.SURFACE_MESHING, scope=scope, budget=budget
+    ):
         (
+            boundary,
+            shared,
+            segments,
+            holes,
             rings,
-            _interior_seeds(
-                domain,
-                patch,
-                size,
-                boundary,
-                segments,
-                rings,
-                ledger,
-                local_limits,
-                deviation,
-                maximum_normal_angle,
-                compiled=compiled,
+            provenance,
+            pole_rays,
+            pole_strips,
+        ) = _boundary(
+            domain,
+            patch,
+            size,
+            curve_parameters,
+            curve_ids,
+            corner_ids,
+            deviation,
+            maximum_normal_angle,
+            ledger,
+            local_limits,
+            scope=scope,
+            budget=budget,
+        )
+        seeds = _interior_seeds(
+            domain,
+            patch,
+            size,
+            boundary,
+            segments,
+            rings,
+            ledger,
+            local_limits,
+            deviation,
+            maximum_normal_angle,
+            compiled=compiled,
+            pole_strips=pole_strips,
+            scope=scope,
+            budget=budget,
+        )
+        rings = np.concatenate((rings, seeds.charts), axis=0)
+        axis_speeds = seeds.axis_speeds
+        del seeds
+        del pole_strips
+        # These are preparation edges, not authored protected features. Chart CDT
+        # alone can connect the collapsed side directly to deeper grid points and
+        # discard the prepared source strip. Its prepared radial rays and ring chords
+        # keep that strip present initially; subsequent physical reconnection may
+        # split them.
+        chart_segments = np.concatenate((segments, pole_rays), axis=0)
+        chart_count = boundary.shape[0] + rings.shape[0]
+        native_capacity = 2 * chart_count + 16
+        _surface_capacity(
+            boundary.shape[0] + rings.shape[0], native_capacity, 0, local_limits
+        )
+        ledger.reserve(
+            boundary.shape[0] + 2 * rings.shape[0], 0, MeshingStageKind.SURFACE_MESHING
+        )
+        charts = np.concatenate((boundary, rings), axis=0)
+        identities = np.concatenate(
+            (shared, np.full((rings.shape[0],), -1, dtype=np.int64))
+        )
+        points = np.concatenate(
+            (
+                vertices[shared],
+                domain.evaluate(np.full((rings.shape[0],), patch), rings, budget=budget),
             ),
-        ),
-        axis=0,
-    )
-    # These are preparation edges, not authored protected features. Chart CDT
-    # alone can connect the collapsed side directly to deeper grid points and
-    # discard the prepared source strip. Its exact radial rays and ring chords
-    # keep that strip present initially; subsequent physical reconnection may
-    # split them.
-    chart_segments = np.concatenate((segments, pole_rays), axis=0)
-    chart_count = boundary.shape[0] + rings.shape[0]
-    native_capacity = 2 * chart_count + 16
-    _surface_capacity(
-        boundary.shape[0] + rings.shape[0], native_capacity, 0, local_limits
-    )
-    ledger.reserve(
-        boundary.shape[0] + 2 * rings.shape[0], 0, MeshingStageKind.SURFACE_MESHING
-    )
-    charts = np.concatenate((boundary, rings), axis=0)
-    identities = np.concatenate((shared, np.full((rings.shape[0],), -1, dtype=np.int64)))
-    points = np.concatenate(
-        (vertices[shared], domain.evaluate(np.full((rings.shape[0],), patch), rings)),
-        axis=0,
-    )
+            axis=0,
+        )
+    chart_lower = np.min(charts, axis=0)
+    chart_extent = np.ptp(charts, axis=0)
+    if np.any(chart_extent <= 0.0) or not np.all(
+        np.isfinite(axis_speeds) & (axis_speeds > 0.0)
+    ):
+        raise ValueError(
+            "SurfaceConstruction.chart_metric must span two finite positive physical axes; "
+            f"got extent={chart_extent.tolist()}, speeds={axis_speeds.tolist()}."
+        )
+    physical_extent = chart_extent * axis_speeds
+    characteristic_length = np.max(physical_extent)
+    relative_extent = physical_extent / characteristic_length
+    # RMS physical axis speeds condition CDT's affine execution chart.
+    # Source UVs remain unchanged for evaluation, restrictions, and proofs.
+    topology_charts = (charts - chart_lower) / chart_extent * relative_extent
+    topology_holes = (holes - chart_lower) / chart_extent * relative_extent
     triangle_capacity = min(local_limits.maximum_faces, native_capacity)
     host_scratch = sum(
         array.nbytes
         for array in (
             charts,
+            topology_charts,
+            topology_holes,
+            axis_speeds,
+            chart_lower,
+            chart_extent,
+            physical_extent,
+            relative_extent,
             points,
             identities,
             boundary,
@@ -1465,8 +2089,8 @@ def _initial_patch(
     )
     if native_scratch <= 0:
         raise _failure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Initial chart buffers leave no native constrained-triangulation scratch.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "SurfaceConstruction.initial_scratch must leave native CDT storage; got exhausted chart-buffer allowance.",
             entity_ids=(patch,),
             requested=(("maximum_scratch_bytes", local_limits.maximum_scratch_bytes),),
             achieved=(
@@ -1477,6 +2101,46 @@ def _initial_patch(
             ),
         )
     record_elapsed(record_phase, "native_preparation", preparation_start)
+    return _InitialChart(
+        charts,
+        topology_charts,
+        topology_holes,
+        points,
+        identities,
+        boundary,
+        segments,
+        holes,
+        provenance,
+        chart_segments,
+        (shared, rings, pole_rays),
+        triangle_capacity,
+        host_scratch,
+        result_scratch,
+        native_scratch,
+    )
+
+
+def _triangulate_initial_chart(
+    prepared: _InitialChart,
+    patch: int,
+    local_limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    record_phase: NativeMeshingPhaseRecorder | None,
+    /,
+) -> _InitialTopology:
+    """Execute bounded CDT and retain its native refusal evidence."""
+    charts, chart_segments, holes = (
+        prepared.topology_charts,
+        prepared.chart_segments,
+        prepared.topology_holes,
+    )
+    segments = prepared.segments
+    triangle_capacity = prepared.triangle_capacity
+    host_scratch, result_scratch, native_scratch = (
+        prepared.host_scratch,
+        prepared.result_scratch,
+        prepared.native_scratch,
+    )
     topology_start = phase_started(record_phase)
     try:
         triangulation = ConstrainedDelaunayTriangulation(
@@ -1492,7 +2156,8 @@ def _initial_patch(
     except MeshcoreError as error:
         if error.status != MeshcoreStatus.CAPACITY_EXCEEDED:
             raise
-        work, memory = error.work_evidence, error.memory_evidence
+        work = error.work_evidence if isinstance(error, NativeResourceFailure) else None
+        memory = error.memory_counters
         record_elapsed(
             record_phase,
             "topology_construction",
@@ -1501,27 +2166,27 @@ def _initial_patch(
         )
         if work is None or memory is None:
             raise RuntimeError(
-                "Bounded initial CDT refused without native resource evidence."
+                f"ConstrainedDelaunayTriangulation.refusal must carry native resource evidence; got work={work}, memory={memory}."
             ) from error
-        ledger.reserve(0, int(work[0]), MeshingStageKind.SURFACE_MESHING)
+        ledger.observe_native(0, int(work[0]), MeshingStageKind.SURFACE_MESHING)
         raise _failure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Initial constrained chart triangulation exhausted its native resource budget.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "SurfaceConstruction.initial_triangulation must fit the native resource budget; got exhausted constrained chart CDT.",
             entity_ids=(patch,),
             achieved=(
                 ("work_units", ledger.work),
                 ("peak_cavity_cells", int(work[6])),
-                ("native_peak_scratch_bytes", int(memory[2])),
+                ("native_peak_scratch_bytes", memory.peak_bytes),
                 (
                     "simultaneous_scratch_bound",
                     host_scratch
                     + result_scratch
                     + 8 * segments.shape[0]
-                    + int(memory[2]),
+                    + memory.peak_bytes,
                 ),
             ),
         ) from error
-    ledger.reserve(
+    ledger.observe_native(
         0, int(triangulation.work_evidence[0]), MeshingStageKind.SURFACE_MESHING
     )
     record_elapsed(
@@ -1534,36 +2199,47 @@ def _initial_patch(
         np.unique(charts, axis=0).shape[0] != charts.shape[0]
     ):
         raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            f"The boundary loops of patch {patch} are not a simple chart polygon.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SOURCE,
+            f"SurfaceConstruction.boundary_loops must form a simple chart polygon; got invalid loops on patch {patch}.",
             entity_ids=(patch,),
         )
     triangles = np.asarray(triangulation.triangles, dtype=np.int64)
     segment_ids = np.asarray(triangulation.segment_ids, dtype=np.int64)
     constrained = (segment_ids >= 0) & (segment_ids < segments.shape[0])
-    declared_poles = [
-        corner_ids[use.corner]
-        for loop in domain.patches[patch].loops
-        for use in loop
-        if isinstance(use, PatchPoleUse)
-    ]
-    pole_ids = np.where(np.isin(identities, declared_poles), identities, -1).astype(
-        np.int64
-    )
-    restriction_required = np.zeros((charts.shape[0],), dtype=np.bool_)
-    restriction_edges = np.full((charts.shape[0], 2), -1, dtype=np.int64)
-    restriction_parameters = np.zeros((charts.shape[0], 2), dtype=np.int64)
+    return _InitialTopology(triangles, constrained, triangulation)
+
+
+def _certify_initial_trim(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    prepared: _InitialChart,
+    topology: _InitialTopology,
+    patch: int,
+    deviation: float,
+    restriction_required: np.ndarray,
+    local_limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _InitialTrim:
+    """Certify the boundary chain and evaluate normals before refinement starts."""
+    charts, points, boundary = prepared.charts, prepared.points, prepared.boundary
+    segments, provenance = prepared.segments, prepared.provenance
+    triangles = topology.triangles
     # The carrier interpolation and trim homotopy are one continuous physical
-    # request. Reserving their actual composition avoids a successful nodal
+    # request. Reserving their measured composition avoids a successful nodal
     # mesh that the independent two-sided cover must subsequently refuse.
     _surface_capacity(
         charts.shape[0], triangles.shape[0], segments.shape[0], local_limits
     )
 
     def reserve_queries(count: int) -> None:
-        ledger.reserve(count, 0, MeshingStageKind.SURFACE_MESHING)
+        ledger.observe_native(count, 0, MeshingStageKind.SURFACE_MESHING)
 
-    findings: list[MeshCertificateFinding] = []
+    findings: list[
+        _dependency_phydrax_geometry__embedding_state.MeshCertificateFinding
+    ] = []
     resources: list[tuple[str, int, int]] = []
     with _source_bound_scope(
         ledger,
@@ -1573,8 +2249,10 @@ def _initial_patch(
         + segments.nbytes
         + provenance.nbytes,
         stage=MeshingStageKind.SURFACE_MESHING,
+        scope=scope,
+        budget=budget,
     ):
-        valid, _, ribbon, _ = _verify_chart_chain(
+        valid, _, ribbon, _ = domain_chart_chain.verify_chart_chain(
             domain,
             patch,
             charts,
@@ -1589,14 +2267,15 @@ def _initial_patch(
             findings,
             resources,
             reserve_queries=reserve_queries,
+            budget=budget,
         )
     if not valid:
         exhausted = any("capacity" in finding.check for finding in findings)
         raise _failure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED
             if exhausted
-            else MeshingFailureCategory.COMPLIANCE_FAILED,
-            f"Patch {patch} lacks an exact source-bound trim chain before refinement.",
+            else _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+            f"SurfaceConstruction.trim_chain must certify its source-bound chain before refinement; got unresolved patch {patch}.",
             entity_ids=(patch,),
             requested=tuple((name, limit) for name, _, limit in resources)
             + (
@@ -1613,9 +2292,8 @@ def _initial_patch(
         row = int(np.argmax(ribbon))
         interval = provenance[row, 2:]
         raise _failure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            f"Patch {patch} retains an unrecoverable local trim ribbon after "
-            "boundary-interval refinement.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+            f"SurfaceConstruction.trim_ribbon must meet the deviation bound after boundary refinement; got unrecoverable local trim ribbon on patch {patch}.",
             entity_ids=(patch,),
             requested=(("maximum_deviation", deviation),),
             achieved=(
@@ -1624,18 +2302,100 @@ def _initial_patch(
                 ("source_parameter_last", float(interval[1])),
             ),
         )
+    with _source_bound_scope(
+        ledger,
+        0,
+        stage=MeshingStageKind.SURFACE_MESHING,
+        scope=scope,
+        budget=budget,
+    ):
+        normals = _vertex_normals(
+            domain,
+            patch,
+            charts,
+            np.mean(boundary, axis=0),
+            scope=scope,
+            budget=budget,
+        )
+    return _InitialTrim(ribbon, normals)
+
+
+def _initial_patch(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    patch: int,
+    size: float,
+    vertices: np.ndarray,
+    curve_parameters: dict[int, np.ndarray],
+    curve_ids: dict[int, np.ndarray],
+    corner_ids: dict[int, int],
+    deviation: float,
+    maximum_normal_angle: float,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    local_limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    /,
+    *,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    record_phase: NativeMeshingPhaseRecorder | None = None,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _Patch:
+    prepared = _prepare_initial_chart(
+        domain,
+        patch,
+        size,
+        vertices,
+        curve_parameters,
+        curve_ids,
+        corner_ids,
+        deviation,
+        maximum_normal_angle,
+        ledger,
+        local_limits,
+        compiled=compiled,
+        record_phase=record_phase,
+        scope=scope,
+        budget=budget,
+    )
+    topology = _triangulate_initial_chart(
+        prepared, patch, local_limits, ledger, record_phase
+    )
+    charts, identities = prepared.charts, prepared.identities
+    declared_poles = [
+        corner_ids[use.corner]
+        for loop in domain.patches[patch].loops
+        for use in loop
+        if isinstance(use, _dependency_phydrax_geometry__meshing_domain.PatchPoleUse)
+    ]
+    pole_ids = np.where(np.isin(identities, declared_poles), identities, -1).astype(
+        np.int64
+    )
+    restriction_required = np.zeros((charts.shape[0],), dtype=np.bool_)
+    restriction_edges = np.full((charts.shape[0], 2), -1, dtype=np.int64)
+    restriction_parameters = np.zeros((charts.shape[0], 2), dtype=np.int64)
+    trim = _certify_initial_trim(
+        domain,
+        prepared,
+        topology,
+        patch,
+        deviation,
+        restriction_required,
+        local_limits,
+        ledger,
+        scope=scope,
+        budget=budget,
+    )
     return _Patch(
         patch,
-        charts,
-        points,
-        _vertex_normals(domain, patch, charts, np.mean(boundary, axis=0)),
+        prepared.charts,
+        prepared.points,
+        trim.normals,
         identities,
         pole_ids,
-        triangles,
-        constrained,
-        segments,
-        provenance,
-        ribbon,
+        topology.triangles,
+        topology.constrained,
+        prepared.segments,
+        prepared.provenance,
+        trim.ribbon,
         restriction_required,
         restriction_edges,
         restriction_parameters,
@@ -1655,7 +2415,11 @@ def _angles(corners: np.ndarray, /) -> np.ndarray:
 
 
 def _surface_capacity(
-    vertices: int, triangles: int, candidates: int, limits: MeshingLimits, /
+    vertices: int,
+    triangles: int,
+    candidates: int,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    /,
 ) -> None:
     """Reserve all live host/native surface buffers before materializing them."""
     scratch = 2048 * (vertices + candidates) + 4096 * (triangles + 2 * candidates)
@@ -1669,15 +2433,15 @@ def _surface_capacity(
     for name, required, maximum in capacities:
         if required > maximum:
             raise _failure(
-                MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                f"Surface construction exceeds its {name} capacity before allocation.",
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                f"SurfaceConstruction.capacity must fit {name} limit {maximum} before allocation; got {required}.",
                 requested=((f"maximum_{name}", maximum),),
                 achieved=((name, required),),
             )
 
 
 def _restriction_collapsed_pole_cells(state: _Patch, /) -> np.ndarray:
-    """Cells confined to an exact pole-edge restriction have zero chart width."""
+    """Identify cells confined to a zero-width rational pole-edge restriction."""
     triangles = state.triangles
     collapsed = np.zeros((triangles.shape[0],), dtype=np.bool_)
     for vertex in np.flatnonzero(state.restriction_required):
@@ -1702,7 +2466,7 @@ _CELL_KEY = np.dtype([("first", np.int64), ("second", np.int64), ("third", np.in
 class _MetricsCache:
     """Chart-only source measurements of the cells of one refining patch.
 
-    Native reconnection appends vertex rows and never moves one, so an exact
+    Native reconnection appends vertex rows and never moves one, so an certified
     ordered vertex triple fixes a cell's chart corners and, with them, its
     sampled source images, centroid normal and continuous interpolation and
     normal-turn bounds. Vertex nodal errors are likewise fixed per row. A
@@ -1746,12 +2510,16 @@ class _MetricsCache:
 
     def measure(
         self,
-        domain: MeshingDomain,
+        domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
         state: _Patch,
-        ledger: _QueryLedger,
+        ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
         samples: np.ndarray,
         centroid_charts: np.ndarray,
         /,
+        *,
+        scope: NativeExecutionScope,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+        restriction_bank: _dependency_phydrax_geometry_brep__patches.BernsteinRestrictionBank,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Samples, centroid normals/regularity, interpolation, turn, node errors."""
         if not self._retained(state):
@@ -1786,29 +2554,52 @@ class _MetricsCache:
             surface[fresh] = domain.evaluate(
                 np.full((4 * fresh.size,), state.index),
                 samples[fresh].reshape((-1, 2)),
+                budget=budget,
             ).reshape((fresh.size, 4, 3))
             normals[fresh], regular[fresh] = domain.oriented_normals(
-                np.full((fresh.size,), state.index), centroid_charts[fresh]
+                np.full((fresh.size,), state.index), centroid_charts[fresh], budget=budget
             )
             charts = state.charts[triangles[fresh]]
             # Both bounds of the same fresh cells restrict one set of meridian
             # span overlaps; shared jets are enclosed and charged once.
-            with shared_meridian_jets():
+            with (
+                _dependency_phydrax_geometry_brep__patches.shared_meridian_jets() as jets
+            ):
                 with _interpolation_bounds(
-                    domain, state.index, charts, ledger, scratch
+                    domain,
+                    state.index,
+                    charts,
+                    ledger,
+                    scratch,
+                    scope=scope,
+                    budget=budget,
+                    restriction_bank=restriction_bank,
+                    meridian_jets=jets,
                 ) as bounds:
                     interpolation[fresh] = bounds
                     del bounds
                 with _source_bound_scope(
-                    ledger, scratch, stage=MeshingStageKind.SURFACE_MESHING
+                    ledger,
+                    scratch,
+                    stage=MeshingStageKind.SURFACE_MESHING,
+                    scope=scope,
+                    budget=budget,
                 ):
-                    normal_turn[fresh] = domain.normal_turn_bounds(state.index, charts)
+                    normal_turn[fresh] = domain.normal_turn_bounds(
+                        state.index,
+                        charts,
+                        budget=budget,
+                        restriction_bank=restriction_bank,
+                        meridian_jets=jets,
+                    )
         known = self.node_errors.size
         node_errors = self.node_errors
         if state.charts.shape[0] > known:
             added = state.charts.shape[0] - known
             ledger.reserve(added, 0, MeshingStageKind.SURFACE_MESHING)
-            nodal = domain.evaluate(np.full((added,), state.index), state.charts[known:])
+            nodal = domain.evaluate(
+                np.full((added,), state.index), state.charts[known:], budget=budget
+            )
             node_errors = np.concatenate(
                 (node_errors, np.linalg.norm(nodal - state.points[known:], axis=1))
             )
@@ -1852,46 +2643,54 @@ class _Metrics:
 
     def __init__(
         self,
-        domain: MeshingDomain,
+        domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
         state: _Patch,
-        ledger: _QueryLedger,
-        compiled: CompiledSurfaceDomain,
+        ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+        compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
         cache: _MetricsCache,
         /,
         *,
         sphere_frame: tuple[np.ndarray, float, float] | None = None,
+        scope: NativeExecutionScope,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
     ) -> None:
-        from ..discretization._coordinate_enclosure import coordinate_enclosure_budget
-
-        owner = ledger.interpolation_budget
-        if owner is None:
-            owner = coordinate_enclosure_budget(
-                ledger.limits.maximum_work_units - ledger.work,
-                ledger.limits.maximum_scratch_bytes,
-            )
-            ledger.interpolation_budget = owner
-        # Native surface generation may have no ambient coefficient owner yet.
-        # Bind the actual original source ledger before any cache population.
         with (
-            owner.activate(),
-            owner.temporary_scope(),
-            source_bernstein_restriction_scope(),
+            _source_bound_scope(
+                ledger,
+                0,
+                stage=MeshingStageKind.SURFACE_MESHING,
+                scope=scope,
+                budget=budget,
+            ),
+            _dependency_phydrax_geometry_brep__patches.source_bernstein_restriction_scope(
+                budget=budget
+            ) as restriction_bank,
         ):
             self._initialize(
-                domain, state, ledger, compiled, cache, sphere_frame=sphere_frame
+                domain,
+                state,
+                ledger,
+                compiled,
+                cache,
+                sphere_frame=sphere_frame,
+                scope=scope,
+                budget=budget,
+                restriction_bank=restriction_bank,
             )
-            owner.charge_native_work(owner.work_units - owner.native_charged_work_units)
 
     def _initialize(
         self,
-        domain: MeshingDomain,
+        domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
         state: _Patch,
-        ledger: _QueryLedger,
-        compiled: CompiledSurfaceDomain,
+        ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+        compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
         cache: _MetricsCache,
         /,
         *,
         sphere_frame: tuple[np.ndarray, float, float] | None = None,
+        scope: NativeExecutionScope,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+        restriction_bank: _dependency_phydrax_geometry_brep__patches.BernsteinRestrictionBank,
     ) -> None:
         triangles = state.triangles
         _surface_capacity(state.points.shape[0], triangles.shape[0], 0, ledger.limits)
@@ -1912,11 +2711,20 @@ class _Metrics:
         samples = np.concatenate((centroid_charts[:, None], midpoint_charts), axis=1)
         count = triangles.shape[0]
         surface, normals, regular, interpolation, normal_turn, node_errors = (
-            cache.measure(domain, state, ledger, samples, centroid_charts)
+            cache.measure(
+                domain,
+                state,
+                ledger,
+                samples,
+                centroid_charts,
+                scope=scope,
+                budget=budget,
+                restriction_bank=restriction_bank,
+            )
         )
-        ledger.reserve(count * 3, 0, MeshingStageKind.SURFACE_MESHING)
+        ledger.observe_native(count * 3, 0, MeshingStageKind.SURFACE_MESHING)
         self.size_limits = compiled.source_sizing.evaluate(
-            domain, state.index, centroid_charts, surface[:, 0]
+            domain, state.index, centroid_charts, surface[:, 0], budget=budget
         )
         flat_mid = 0.5 * (np.roll(corners, -1, axis=1) + np.roll(corners, -2, axis=1))
         flat = np.concatenate((np.mean(corners, axis=1)[:, None], flat_mid), axis=1)
@@ -1931,8 +2739,8 @@ class _Metrics:
         if np.any(active & ~regular):
             rows = np.flatnonzero(active & ~regular)
             raise _failure(
-                MeshingFailureCategory.INVALID_SOURCE,
-                f"Patch {state.index} is singular inside its chart domain.",
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SOURCE,
+                f"SurfaceConstruction.source_differential must be regular inside the chart; got singular patch {state.index}.",
                 entity_ids=(state.index,),
                 achieved=(("singular_samples", float(rows.size)),),
             )
@@ -1951,7 +2759,9 @@ class _Metrics:
         if metric is not None:
             ledger.reserve(state.points.shape[0], 0, MeshingStageKind.SURFACE_MESHING)
             values, work = metric.sample(
-                state.points, ledger.limits.maximum_work_units - ledger.work
+                state.points,
+                ledger.limits.maximum_work_units - ledger.work,
+                budget=budget,
             )
             ledger.reserve(0, work, MeshingStageKind.SURFACE_MESHING)
             self.vertex_metrics = values
@@ -1961,12 +2771,15 @@ class _Metrics:
             bound = metric.control.maximum_metric_edge_length or 1.0
             self.metric_lengths = (
                 np.asarray(
-                    metric_edge_lengths(values, state.points, edges), dtype=np.float64
+                    _dependency_phydrax_meshing__metric.metric_edge_lengths(
+                        values, state.points, edges
+                    ),
+                    dtype=np.float64,
                 ).reshape((-1, 3))
                 / bound
             )
             mean = np.asarray(
-                interpolate_mesh_metric(
+                _dependency_phydrax_meshing__metric.interpolate_mesh_metric(
                     values[triangles], np.full(triangles.shape, 1 / 3, dtype=np.float64)
                 ),
                 dtype=np.float64,
@@ -1990,7 +2803,9 @@ class _Metrics:
             self.metric_angles = np.arccos(np.clip(cosine, -1, 1))
         self.deviation = np.max(distances, axis=1)
         restriction_error = np.max(
-            _restriction_physical_errors(domain, state)[triangles],
+            _restriction_physical_errors(domain, state, scope=scope, budget=budget)[
+                triangles
+            ],
             axis=1,
         )
         node_error = np.max(node_errors[triangles], axis=1) + restriction_error
@@ -1998,7 +2813,7 @@ class _Metrics:
         # and independently certified ribbon. Only its incident simplex is
         # charged; unrelated boundary arcs and interior cells receive no
         # patch-global maximum.
-        trim_bound = _local_boundary_ribbon_bounds(
+        trim_bound = domain_chart_chain.boundary_cell_ribbon_bounds(
             triangles,
             state.boundary_edges,
             state.trim_deviation_bounds,
@@ -2011,7 +2826,7 @@ class _Metrics:
         )
         if sphere_frame is not None:
             analytic = (
-                _sphere_triangle_distance_bounds(sphere_frame, corners)
+                domain_numerics.sphere_triangle_distance_bounds(sphere_frame, corners)
                 + restriction_error
                 + trim_bound
             )
@@ -2019,13 +2834,13 @@ class _Metrics:
         self.normal_bound = normal_turn
         if sphere_frame is not None:
             self.normal_bound = np.minimum(
-                self.normal_bound, _sphere_triangle_normal_bounds(sphere_frame, corners)
+                self.normal_bound,
+                domain_numerics.sphere_triangle_normal_bounds(sphere_frame, corners),
             )
         self.worst_sample = samples[np.arange(count), np.argmax(distances, axis=1)]
         self.midpoint_charts = midpoint_charts
-        from ..discretization._cell_geometry_validity import CellValidityPolicy
 
-        relative_floor = CellValidityPolicy().relative_determinant_floor
+        relative_floor = _owner_phydrax_discretization__cell_geometry_validity.CellValidityPolicy().relative_determinant_floor
         edge_scale = np.max(
             np.sum((ends_first - ends_second) ** 2, axis=2),
             axis=1,
@@ -2093,11 +2908,11 @@ def _patch_edge_lengths(state: _Patch, metrics: _Metrics, /) -> np.ndarray:
 
 
 def _required_size_refinement(
-    domain: MeshingDomain,
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     state: _Patch,
     metrics: _Metrics,
-    compiled: CompiledSurfaceDomain,
-    policy: SizeCompliancePolicy | None,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    policy: _dependency_phydrax_meshing__sizing.SizeCompliancePolicy | None,
     /,
 ) -> np.ndarray:
     """Select only size growth that can satisfy the authored hard obligations."""
@@ -2111,12 +2926,18 @@ def _required_size_refinement(
     source_face = int(domain.source_indices[2][state.index])
     applicable = []
     for control in compiled.source_sizing.controls:
-        if isinstance(control, ProximitySizeControl):
-            scopes = (control.source_scope, control.target_scope)
-        elif isinstance(control, (UniformSizeControl, CurvatureSizeControl)):
-            scopes = (control.scope,)
-        else:
-            raise TypeError("A surface size field contains an unknown control.")
+        match control:
+            case _dependency_phydrax_meshing__sizing.ProximitySizeControl():
+                scopes = (control.source_scope, control.target_scope)
+            case (
+                _dependency_phydrax_meshing__sizing.UniformSizeControl()
+                | _dependency_phydrax_meshing__sizing.CurvatureSizeControl()
+            ):
+                scopes = (control.scope,)
+            case _:
+                raise TypeError(
+                    f"CompiledSurfaceDomain.source_sizing.controls must contain a supported size control; got {type(control).__name__}."
+                )
         if any(
             scope.entity_dimension == 2
             and source_face in np.asarray(scope.global_entity_ids)
@@ -2126,11 +2947,13 @@ def _required_size_refinement(
     hard_uniform = tuple(
         control
         for control in applicable
-        if isinstance(control, UniformSizeControl)
-        and control.strength is SizeControlStrength.HARD
+        if isinstance(control, _dependency_phydrax_meshing__sizing.UniformSizeControl)
+        and control.strength
+        is _dependency_phydrax_meshing__sizing.SizeControlStrength.HARD
     )
     if not hard_uniform or any(
-        not isinstance(control, UniformSizeControl) for control in applicable
+        not isinstance(control, _dependency_phydrax_meshing__sizing.UniformSizeControl)
+        for control in applicable
     ):
         return local
     required = active & (np.max(metrics.metric_lengths, axis=1) > _METRIC_AIM)
@@ -2143,7 +2966,9 @@ def _required_size_refinement(
             maximum = control.maximum_size + policy.tolerance(control.maximum_size)
             required |= active & (np.max(metrics.lengths, axis=1) > maximum)
         for statistic in policy.target_statistics:
-            quantile = {"p50": 0.5, "p95": 0.95}[statistic]
+            quantile = _dependency_phydrax_meshing__sizing.size_statistic_quantile(
+                statistic
+            )
             if float(np.quantile(lengths, quantile)) > (
                 control.target_size + policy.tolerance(control.target_size)
             ):
@@ -2263,8 +3088,8 @@ def _candidates(
     insert_edges = np.full((rows.size, 2), -1, dtype=np.int32)
     # A required angle is a Ruppert/Chew condition: an obtuse triangle's
     # circumcenter lies across its longest edge, and a clamped point next to
-    # that edge only shortens the edge or is refused. Insert the actual
-    # circumcenter, located by the exact chart walk; a walk blocked by a
+    # that edge only shortens the edge or is refused. Insert the measured
+    # circumcenter, located by the predicate chart walk; a walk blocked by a
     # constrained edge or the chart domain retries at the clamped interior point.
     hard = np.flatnonzero(
         active[rows]
@@ -2308,7 +3133,7 @@ def _candidates(
         last = state.charts[triangles[np.arange(selected.size), (edge[selected] + 2) % 3]]
         midpoint = 0.5 * (first + last)
         # Endpoint identity, not rounded chart collinearity, selects the
-        # complete native paired-edge cavity.
+        # full native paired-edge cavity.
         represented = np.any(midpoint != first, axis=1) & np.any(midpoint != last, axis=1)
         points[pending[selected[represented]]] = midpoint[represented]
         insert_edges[pending[selected[represented]]] = np.stack(
@@ -2342,33 +3167,49 @@ def _candidates(
     return points, interior, spacing, rows.astype(np.int32), unresolved, insert_edges
 
 
-def _validate_charts(domain: MeshingDomain, state: _Patch, /) -> None:
+def _validate_charts(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: _Patch,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> None:
     try:
-        signs = _restriction_orientation_signs(domain, state)
+        signs = _restriction_orientation_signs(domain, state, scope=scope, budget=budget)
     except (TypeError, ValueError) as error:
         raise _failure(
-            MeshingFailureCategory.INVALID_SOURCE,
-            f"Patch {state.index} lost exact rational chart authority: {error}",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.INVALID_SOURCE,
+            f"SurfaceConstruction.chart_restrictions must retain rational source roots; got patch {state.index}: {error}.",
             entity_ids=(state.index,),
         ) from error
     if np.any(signs <= 0):
         raise _failure(
-            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            f"Surface reconnection left an inverted authoritative chart triangle "
-            f"on patch {state.index}.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            f"SurfaceConstruction.chart_orientation must stay positive after reconnection; got inverted chart triangle on patch {state.index}.",
             entity_ids=(state.index,),
         )
 
 
+@final
+class _RationalRestrictions(StrictModule):
+    """Bind rounded insertion coordinates to their rational source edge roots."""
+
+    charts: np.ndarray
+    required: np.ndarray
+    edges: np.ndarray
+    parameters: np.ndarray
+
+
 def _rational_edge_candidates(
-    domain: MeshingDomain,
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     state: _Patch,
     charts: np.ndarray,
     hints: np.ndarray,
     insert_edges: np.ndarray,
     /,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Bind collapsed-pole radial splits to unique exact rational roots."""
+) -> _RationalRestrictions:
+    """Bind collapsed-pole radial splits to unique rational roots."""
     result = charts.copy()
     required = np.zeros((charts.shape[0],), dtype=np.bool_)
     authority_edges = np.full((charts.shape[0], 2), -1, dtype=np.int64)
@@ -2394,15 +3235,14 @@ def _rational_edge_candidates(
                     break
             if selected_edge is None:
                 raise _failure(
-                    MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                    "A collapsed pole triangle has no unconstrained radial "
-                    "source edge to restrict.",
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                    "SurfaceConstruction.pole_triangle must have an unconstrained radial source edge; got no restrictable radial edge.",
                     entity_ids=(state.index,),
                 )
             insert_edges[row] = selected_edge
             authority_edges[row] = selected_edge
             required[row] = True
-            # The exact affine midpoint is canonical even when neither of its
+            # The rational affine midpoint defines the source root even when neither of its
             # rational UV coordinates has a binary64 representation.
             parameters[row] = np.asarray((1, 2), dtype=np.int64)
             break
@@ -2422,16 +3262,15 @@ def _rational_edge_candidates(
             result[row], state.charts[last]
         ):
             raise _failure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                "An exact rational edge root has no distinct rounded execution "
-                "representative.",
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                "SurfaceConstruction.restriction_coordinate must distinguish its edge endpoints after rounding; got no distinct binary64 representative.",
                 entity_ids=(state.index,),
             )
-    return result, required, authority_edges, parameters
+    return _RationalRestrictions(result, required, authority_edges, parameters)
 
 
 def _missing_pole_split_hints(state: _Patch, /) -> np.ndarray:
-    """One canonical collapsed triangle for each pole lacking rational authority."""
+    """Return the first collapsed triangle per pole lacking a rational root binding."""
     covered = {
         int(state.pole_ids[endpoint])
         for vertex in np.flatnonzero(state.restriction_required)
@@ -2459,65 +3298,62 @@ def _missing_pole_split_hints(state: _Patch, /) -> np.ndarray:
     return np.asarray([hints[pole] for pole in sorted(hints)], dtype=np.int32)
 
 
-def _reconnect_batch(
-    domain: MeshingDomain,
+@final
+class _InsertionGeometry(StrictModule):
+    """Bind insertion coordinates, source normals, and scheduling spacing."""
+
+    points: np.ndarray
+    normals: np.ndarray
+    spacing: np.ndarray
+    vertex_metrics: np.ndarray | None
+
+
+def _prepare_insertion_geometry(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     state: _Patch,
     metrics: _Metrics,
-    compiled: CompiledSurfaceDomain,
-    limits: MeshingLimits,
-    ledger: _QueryLedger,
-    totals: dict[str, int],
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
     record_phase: NativeMeshingPhaseRecorder | None,
-    charts: np.ndarray,
-    spacing: np.ndarray,
-    hints: np.ndarray,
-    parents: np.ndarray,
-    hard: np.ndarray,
-    unresolved: np.ndarray,
-    insert_edges: np.ndarray,
-    restriction_required: np.ndarray,
-    restriction_edges: np.ndarray,
-    restriction_parameters: np.ndarray,
+    batch: RestrictionBatch,
     /,
-) -> np.ndarray:
-    """Insert one batch of chart points and commit the reconnected patch.
-
-    ``parents`` are the vertex triples of the refined triangles at candidate
-    selection; returns the accepted mask of the batch.
-    """
-    if (
-        restriction_required.shape != (hints.size,)
-        or restriction_required.dtype != np.bool_
-        or restriction_edges.shape != (hints.size, 2)
-        or restriction_edges.dtype != np.int64
-        or restriction_parameters.shape != (hints.size, 2)
-        or restriction_parameters.dtype != np.int64
-        or not np.array_equal(
-            restriction_edges[restriction_required], insert_edges[restriction_required]
-        )
-        or np.any(restriction_edges[~restriction_required] != -1)
-        or np.any(restriction_parameters[~restriction_required] != 0)
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _InsertionGeometry:
+    """Evaluate a bounded insertion batch and retain hard-criterion spacing."""
+    charts, hints, spacing = batch.charts, batch.hints, batch.spacing
+    parents, hard = batch.parents, batch.hard
+    with _source_bound_scope(
+        ledger, 0, stage=MeshingStageKind.SURFACE_MESHING, scope=scope, budget=budget
     ):
-        raise ValueError(
-            "Surface edge insertions require complete aligned rational authority."
+        _surface_capacity(
+            state.points.shape[0], state.triangles.shape[0], hints.size, limits
         )
-    _surface_capacity(state.points.shape[0], state.triangles.shape[0], hints.size, limits)
-    ledger.reserve(hints.size, 0, MeshingStageKind.SURFACE_MESHING)
-    with measure_phase(record_phase, "geometry_evaluation"):
-        points = domain.evaluate(np.full((hints.size,), state.index), charts)
-        normals = _vertex_normals(
-            domain, state.index, charts, np.mean(state.charts, axis=0)
-        )
-    insert_metrics = None
-    if compiled.source_sizing.metric is not None:
-        ledger.reserve(points.shape[0], 0, MeshingStageKind.SURFACE_MESHING)
-        insert_metrics, metric_work = compiled.source_sizing.metric.sample(
-            points, limits.maximum_work_units - ledger.work
-        )
-        ledger.reserve(0, metric_work, MeshingStageKind.SURFACE_MESHING)
+        ledger.reserve(hints.size, 0, MeshingStageKind.SURFACE_MESHING)
+        with measure_phase(record_phase, "geometry_evaluation"):
+            points = domain.evaluate(
+                np.full((hints.size,), state.index), charts, budget=budget
+            )
+            normals = _vertex_normals(
+                domain,
+                state.index,
+                charts,
+                np.mean(state.charts, axis=0),
+                scope=scope,
+                budget=budget,
+            )
+        insert_metrics = None
+        if compiled.source_sizing.metric is not None:
+            ledger.reserve(points.shape[0], 0, MeshingStageKind.SURFACE_MESHING)
+            insert_metrics, metric_work = compiled.source_sizing.metric.sample(
+                points, limits.maximum_work_units - ledger.work, budget=budget
+            )
+            ledger.reserve(0, metric_work, MeshingStageKind.SURFACE_MESHING)
     # Scheduling separation must not refuse a scientifically necessary
     # insertion merely because its parent has a long edge and small altitude.
-    # The native queue retains its exact chart and source-normal legality.
+    # The native queue retains its certified chart and source-normal legality.
     spacing = spacing.copy()
     for row in np.flatnonzero(hard):
         offset = points[row] - state.points[parents[row]]
@@ -2531,10 +3367,58 @@ def _reconnect_batch(
                 )
             )
         spacing[row] = min(spacing[row], 0.25 * float(np.min(distance)))
+    return _InsertionGeometry(points, normals, spacing, insert_metrics)
+
+
+def _reconnect_batch(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: _Patch,
+    metrics: _Metrics,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    totals: RefinementTotals,
+    record_phase: NativeMeshingPhaseRecorder | None,
+    batch: RestrictionBatch,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Insert one batch of chart points and commit the reconnected patch.
+
+    ``parents`` are the vertex triples of the refined triangles at candidate
+    selection; returns the accepted mask of the batch.
+    """
+    charts = batch.charts
+    hints = batch.hints
+    unresolved = batch.unresolved
+    insert_edges = batch.insert_edges
+    restriction_required = batch.required
+    restriction_edges = batch.edges
+    restriction_parameters = batch.parameters
+    prepared = _prepare_insertion_geometry(
+        domain,
+        state,
+        metrics,
+        compiled,
+        limits,
+        ledger,
+        record_phase,
+        batch,
+        scope=scope,
+        budget=budget,
+    )
+    points, normals, spacing, insert_metrics = (
+        prepared.points,
+        prepared.normals,
+        prepared.spacing,
+        prepared.vertex_metrics,
+    )
     remaining = limits.maximum_work_units - ledger.work
     capacity = min(limits.maximum_faces, state.triangles.shape[0] + 2 * hints.size)
     reconnect_start = phase_started(record_phase)
-    triangles, constrained, ids, status, counters = surface_reconnect(
+    native = surface_reconnect(
         state.charts,
         state.points,
         state.normals,
@@ -2553,16 +3437,19 @@ def _reconnect_batch(
         vertex_pole_ids=state.pole_ids,
         insert_edges=insert_edges,
     )
-    record_elapsed(
-        record_phase, "refinement", reconnect_start, work_units=int(counters[4])
-    )
-    ledger.reserve(0, int(counters[4]), MeshingStageKind.SURFACE_MESHING)
+    triangles = native.triangles
+    constrained = native.constrained
+    ids = native.vertex_ids
+    status = native.item_status
+    counters = native.counters
+    record_elapsed(record_phase, "refinement", reconnect_start, work_units=counters.work)
+    ledger.observe_native(0, counters.work, MeshingStageKind.SURFACE_MESHING)
     accepted = ids >= 0
     previous_count = state.charts.shape[0]
     expected_ids = previous_count + np.arange(int(np.sum(accepted)), dtype=np.int64)
     if not np.array_equal(ids[accepted], expected_ids):
         raise RuntimeError(
-            "Native surface reconnection returned noncanonical inserted vertex rows."
+            f"surface_reconnect.vertex_ids must append contiguous vertex rows; got {ids[accepted].tolist()}, expected {expected_ids.tolist()}."
         )
     state.charts = np.concatenate((state.charts, charts[accepted]), axis=0)
     state.points = np.concatenate((state.points, points[accepted]), axis=0)
@@ -2589,14 +3476,14 @@ def _reconnect_batch(
         )
     state.triangles = triangles.astype(np.int64)
     state.constrained = constrained
-    totals["inserted"] += int(counters[0])
-    totals["refused"] += int(counters[1])
-    totals["flips"] += int(counters[2])
-    _validate_charts(domain, state)
-    if counters[5] or np.any(status == MeshcoreStatus.CAPACITY_EXCEEDED):
+    totals.inserted += counters.inserted
+    totals.refused += counters.refused
+    totals.flips += counters.flips
+    _validate_charts(domain, state, scope=scope, budget=budget)
+    if counters.exhausted or np.any(status == MeshcoreStatus.CAPACITY_EXCEEDED):
         raise _failure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            f"Surface refinement of patch {state.index} exceeds its work or face budget.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            f"SurfaceConstruction.refinement must fit its work and face budgets; got exhausted refinement on patch {state.index}.",
             entity_ids=(state.index,),
             requested=(
                 ("maximum_work_units", limits.maximum_work_units),
@@ -2611,33 +3498,45 @@ def _reconnect_batch(
     return accepted
 
 
-def _requires_exact_pole_restrictions(domain: MeshingDomain, patch: int, /) -> bool:
+def _requires_exact_pole_restrictions(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain, patch: int, /
+) -> bool:
     """Whether a pole patch is cut by a curve owned by another source face."""
     source = domain.patches[patch]
-    if not any(isinstance(use, PatchPoleUse) for loop in source.loops for use in loop):
+    if not any(
+        isinstance(use, _dependency_phydrax_geometry__meshing_domain.PatchPoleUse)
+        for loop in source.loops
+        for use in loop
+    ):
         return False
     return any(
         incident_patch != patch
         for loop in source.loops
         for use in loop
-        if isinstance(use, PatchCurveUse)
+        if isinstance(use, _dependency_phydrax_geometry__meshing_domain.PatchCurveUse)
         for incident_patch, _ in domain.curve_uses(use.curve)
     )
 
 
 def _open_pole_restriction_fans(
-    domain: MeshingDomain, state: _Patch, vertices: np.ndarray, /
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: _Patch,
+    vertices: np.ndarray,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> int:
-    """Rotate the zero-width children of exact pole splits into the physical fan.
+    """Rotate zero-width children of rational pole splits into the physical fan.
 
     Splitting a declared radial edge ``(P, R)`` at ``m`` leaves children
     ``(Q, m, R)`` whose pole copy ``Q`` gives them zero width in the pole gauge
     (``_restriction_collapsed_pole_cells``). A split radial edge between two
     such children therefore leaves ``m`` outside every physical cell, so its
-    exact authority is never published. Each child flips its edge ``(Q, R)``
+    rational root binding is never published. Each child flips its edge ``(Q, R)``
     toward the opposite apex ``X`` into ``(m, Q, X)`` and ``(m, X, R)`` until
     ``m`` splits the physical cells on both sides of the pole segment. Flip
-    legality uses the exact rational chart coordinates; any impossible flip
+    legality uses the rational chart coordinates; any impossible flip
     refuses. Returns the number of flips.
     """
     exact, _, _ = _patch_restrictions(domain, state)
@@ -2672,9 +3571,8 @@ def _open_pole_restriction_fans(
             neighbors = neighbors[neighbors != cell]
             if neighbors.size != 1 or state.constrained[cell, index]:
                 raise _failure(
-                    MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                    f"Patch {state.index} has no free radial pole edge to open an "
-                    "exact pole split into its physical fan.",
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                    f"SurfaceConstruction.pole_fan must expose a free radial edge for the split; got no free radial edge on patch {state.index}.",
                     entity_ids=(state.index,),
                 )
             other = int(neighbors[0])
@@ -2693,9 +3591,8 @@ def _open_pole_restriction_fans(
                 or (dx - mx) * (by - my) - (dy - my) * (bx - mx) <= 0
             ):
                 raise _failure(
-                    MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                    f"Patch {state.index} cannot open an exact pole split into "
-                    "its physical fan by an exactly convex radial flip.",
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                    f"SurfaceConstruction.pole_fan must permit a convex rational radial flip; got illegal pole split on patch {state.index}.",
                     entity_ids=(state.index,),
                 )
             # Edge flags are indexed by their opposite vertex.
@@ -2710,31 +3607,33 @@ def _open_pole_restriction_fans(
             flips += 1
         else:
             raise _failure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                f"Patch {state.index} keeps an exact pole split outside its "
-                "physical fan.",
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                f"SurfaceConstruction.pole_restriction must belong to the physical fan; got split outside patch {state.index}.",
                 entity_ids=(state.index,),
             )
-    _validate_charts(domain, state)
+    _validate_charts(domain, state, scope=scope, budget=budget)
     return flips
 
 
 def _insert_missing_pole_restrictions(
-    domain: MeshingDomain,
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     state: _Patch,
     metrics: _Metrics,
-    compiled: CompiledSurfaceDomain,
-    limits: MeshingLimits,
-    ledger: _QueryLedger,
-    totals: dict[str, int],
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    totals: RefinementTotals,
     record_phase: NativeMeshingPhaseRecorder | None,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> bool:
     """Commit all missing pole carriers in one terminal native reconnect."""
     hints = _missing_pole_split_hints(state)
     if not hints.size:
         return False
-    charts, required, authority_edges, parameters = _rational_edge_candidates(
+    restrictions = _rational_edge_candidates(
         domain,
         state,
         np.mean(state.charts[state.triangles[hints]], axis=1),
@@ -2752,151 +3651,229 @@ def _insert_missing_pole_restrictions(
         ledger,
         totals,
         record_phase,
-        charts,
-        np.zeros((hints.size,), dtype=np.float64),
-        hints,
-        parents,
-        np.ones((hints.size,), dtype=np.bool_),
-        np.zeros((state.triangles.shape[0],), dtype=np.bool_),
-        authority_edges,
-        required,
-        authority_edges,
-        parameters,
+        RestrictionBatch(
+            restrictions.charts,
+            np.zeros((hints.size,), dtype=np.float64),
+            hints,
+            parents,
+            np.ones((hints.size,), dtype=np.bool_),
+            np.zeros((state.triangles.shape[0],), dtype=np.bool_),
+            restrictions.edges,
+            restrictions.required,
+            restrictions.edges,
+            restrictions.parameters,
+        ),
+        scope=scope,
+        budget=budget,
     )
     if not np.all(accepted):
         raise _failure(
-            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            f"Patch {state.index} refused a canonical exact rational pole "
-            "split without changing its source authority.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+            f"SurfaceConstruction.pole_restriction must accept a rational radial split; got refused split on patch {state.index}.",
             entity_ids=(state.index,),
         )
-    totals["flips"] += _open_pole_restriction_fans(
+    totals.flips += _open_pole_restriction_fans(
         domain,
         state,
         previous_count + np.flatnonzero(state.restriction_required[previous_count:]),
+        scope=scope,
+        budget=budget,
     )
-    totals["rounds"] += 1
+    totals.rounds += 1
     return True
 
 
-def _refine(
-    domain: MeshingDomain,
+@final
+class _RefinementPolicy(StrictModule):
+    """Keep one patch's physical bounds and scheduling policy together."""
+
+    size: float = eqx.field(static=True)
+    deviation: float = eqx.field(static=True)
+    aim: float = eqx.field(static=True)
+    maximum_normal_angle: float = eqx.field(static=True)
+    schedule: _dependency_phydrax_meshing_providers__native_schedules.NativeSurfaceSchedule = eqx.field(
+        static=True
+    )
+    required_minimum_angle: float = eqx.field(static=True)
+    size_compliance: _dependency_phydrax_meshing__sizing.SizeCompliancePolicy | None = (
+        eqx.field(static=True)
+    )
+
+
+@final
+class _RefinementPreparation(StrictModule):
+    sphere_frame: tuple[np.ndarray, float, float] | None
+    planar_centroids: bool = eqx.field(static=True)
+    exact_pole_restrictions: bool = eqx.field(static=True)
+
+
+@final
+class _RefinementCandidates(StrictModule):
+    physical: np.ndarray
+    charts: np.ndarray
+    interior: np.ndarray
+    spacing: np.ndarray
+    hints: np.ndarray
+    unresolved: np.ndarray
+    insert_edges: np.ndarray
+
+
+@final
+class _RefinementInsertion(StrictModule):
+    batch: RestrictionBatch | None
+    interior: np.ndarray
+
+
+@final
+class _RefinementCommit(StrictModule):
+    accepted: np.ndarray
+
+
+@final
+class _RefinementCompletion(StrictModule):
+    metrics: _Metrics
+
+
+def _prepare_refinement(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
     state: _Patch,
-    size: float,
-    deviation: float,
-    aim: float,
-    maximum_normal_angle: float,
-    schedule: NativeSurfaceSchedule,
-    limits: MeshingLimits,
-    ledger: _QueryLedger,
-    started: float,
-    totals: dict[str, int],
-    compiled: CompiledSurfaceDomain,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    policy: _RefinementPolicy,
     /,
     *,
-    record_phase: NativeMeshingPhaseRecorder | None = None,
-    required_minimum_angle: float = 0.0,
-    size_compliance: SizeCompliancePolicy | None = None,
-) -> _Metrics:
-    """Batched physical-space refinement of one patch; returns final metrics."""
-
-    sphere_frame = _full_sphere_frame(domain, state.index)
-    cache = _MetricsCache()
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _RefinementPreparation:
+    """Prepare sphere bounds, planar scheduling, and cross-face pole obligations."""
+    with _source_bound_scope(
+        ledger,
+        0,
+        stage=MeshingStageKind.SURFACE_MESHING,
+        scope=scope,
+        budget=budget,
+    ):
+        sphere_frame = domain_numerics.full_sphere_frame(
+            domain, state.index, budget=budget
+        )
     surface = domain.patches[state.index].surface
-    planar_centroids = (
-        isinstance(surface, PlanePatch)
-        or isinstance(surface, PlacedSurface)
-        and isinstance(surface.definition, PlanePatch)
-    )
+    match surface:
+        case _dependency_phydrax_geometry_brep__patches.PlanePatch():
+            planar_centroids = True
+        case _dependency_phydrax_geometry_brep__placed.PlacedSurface(
+            definition=_dependency_phydrax_geometry_brep__patches.PlanePatch()
+        ):
+            planar_centroids = True
+        case _:
+            planar_centroids = False
     exact_pole_restrictions = np.isfinite(
-        maximum_normal_angle
+        policy.maximum_normal_angle
     ) and _requires_exact_pole_restrictions(domain, state.index)
+    return _RefinementPreparation(
+        sphere_frame, planar_centroids, bool(exact_pole_restrictions)
+    )
 
-    for _ in range(schedule.maximum_rounds):
-        check_deadline(started, limits, MeshingStageKind.SURFACE_MESHING)
-        with measure_phase(record_phase, "feature_certification"):
-            metrics = _Metrics(
-                domain, state, ledger, compiled, cache, sphere_frame=sphere_frame
-            )
-        required_size = _required_size_refinement(
-            domain, state, metrics, compiled, size_compliance
+
+def _select_refinement_candidates(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: _Patch,
+    metrics: _Metrics,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    policy: _RefinementPolicy,
+    prepared: _RefinementPreparation,
+    /,
+) -> _RefinementCandidates:
+    """Select hard physical violations separately from optional shape work."""
+    size, deviation, aim = policy.size, policy.deviation, policy.aim
+    maximum_normal_angle, required_minimum_angle = (
+        policy.maximum_normal_angle,
+        policy.required_minimum_angle,
+    )
+    schedule, size_compliance, planar_centroids = (
+        policy.schedule,
+        policy.size_compliance,
+        prepared.planar_centroids,
+    )
+    required_size = _required_size_refinement(
+        domain, state, metrics, compiled, size_compliance
+    )
+    physical = _physical_refinement_mask(
+        metrics,
+        deviation,
+        maximum_normal_angle,
+        required_minimum_angle,
+        required_size=required_size,
+    )
+    charts, interior, spacing, hints, unresolved, insert_edges = _candidates(
+        state,
+        metrics,
+        size,
+        deviation,
+        aim,
+        schedule.spacing_fraction,
+        maximum_normal_angle,
+        required_minimum_angle=required_minimum_angle,
+        planar_centroids=planar_centroids,
+        required_mask=physical,
+    )
+    return _RefinementCandidates(
+        physical, charts, interior, spacing, hints, unresolved, insert_edges
+    )
+
+
+def _prepare_refinement_insertion(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: _Patch,
+    metrics: _Metrics,
+    selected: _RefinementCandidates,
+    policy: _RefinementPolicy,
+    totals: RefinementTotals,
+    /,
+) -> _RefinementInsertion:
+    """Defer rational pole requests and bind ordinary insertions to parent triangles."""
+    charts, interior, spacing, hints = (
+        selected.charts,
+        selected.interior,
+        selected.spacing,
+        selected.hints,
+    )
+    insert_edges, unresolved = selected.insert_edges, selected.unresolved
+    deviation, maximum_normal_angle, required_minimum_angle = (
+        policy.deviation,
+        policy.maximum_normal_angle,
+        policy.required_minimum_angle,
+    )
+    if hints.size == 0:
+        return _RefinementInsertion(None, interior)
+    restrictions = _rational_edge_candidates(domain, state, charts, hints, insert_edges)
+    charts = restrictions.charts
+    restriction_required = restrictions.required
+    restriction_edges = restrictions.edges
+    restriction_parameters = restrictions.parameters
+    del restrictions
+    if np.any(restriction_required):
+        ordinary = ~restriction_required
+        if not np.any(ordinary):
+            return _RefinementInsertion(None, interior)
+        charts = charts[ordinary]
+        interior = interior[ordinary]
+        spacing = spacing[ordinary]
+        hints = hints[ordinary]
+        insert_edges = insert_edges[ordinary]
+        restriction_required = restriction_required[ordinary]
+        restriction_edges = restriction_edges[ordinary]
+        restriction_parameters = restriction_parameters[ordinary]
+    totals.rounds += 1
+    hard_geometry_or_angle = (
+        (metrics.deviation_bound[hints] > deviation)
+        | (metrics.normal_bound[hints] > maximum_normal_angle)
+        | (
+            (~metrics.collapsed[hints])
+            & (np.min(metrics.angles[hints], axis=1) < required_minimum_angle)
         )
-        physical = _physical_refinement_mask(
-            metrics,
-            deviation,
-            maximum_normal_angle,
-            required_minimum_angle,
-            required_size=required_size,
-        )
-        charts, interior, spacing, hints, unresolved, insert_edges = _candidates(
-            state,
-            metrics,
-            size,
-            deviation,
-            aim,
-            schedule.spacing_fraction,
-            maximum_normal_angle,
-            required_minimum_angle=required_minimum_angle,
-            planar_centroids=planar_centroids,
-            required_mask=physical,
-        )
-        # Required growth still permits shape-improving reconnection flips.
-        # Optional poor-angle nodes must not destroy a hard lower-size statistic;
-        # retain their unresolved evidence without adding those material points.
-        if not np.any(physical):
-            if exact_pole_restrictions and _insert_missing_pole_restrictions(
-                domain,
-                state,
-                metrics,
-                compiled,
-                limits,
-                ledger,
-                totals,
-                record_phase,
-            ):
-                break
-            if np.any(unresolved):
-                totals["incomplete"] += 1
-            return metrics
-        if hints.size == 0:
-            break
-        (
-            charts,
-            restriction_required,
-            restriction_edges,
-            restriction_parameters,
-        ) = _rational_edge_candidates(domain, state, charts, hints, insert_edges)
-        if np.any(restriction_required):
-            ordinary = ~restriction_required
-            if not np.any(ordinary):
-                break
-            charts = charts[ordinary]
-            interior = interior[ordinary]
-            spacing = spacing[ordinary]
-            hints = hints[ordinary]
-            insert_edges = insert_edges[ordinary]
-            restriction_required = restriction_required[ordinary]
-            restriction_edges = restriction_edges[ordinary]
-            restriction_parameters = restriction_parameters[ordinary]
-        totals["rounds"] += 1
-        hard_geometry_or_angle = (
-            (metrics.deviation_bound[hints] > deviation)
-            | (metrics.normal_bound[hints] > maximum_normal_angle)
-            | (
-                (~metrics.collapsed[hints])
-                & (np.min(metrics.angles[hints], axis=1) < required_minimum_angle)
-            )
-        )
-        parents = state.triangles[hints]
-        accepted = _reconnect_batch(
-            domain,
-            state,
-            metrics,
-            compiled,
-            limits,
-            ledger,
-            totals,
-            record_phase,
+    )
+    parents = state.triangles[hints]
+    return _RefinementInsertion(
+        RestrictionBatch(
             charts,
             spacing,
             hints,
@@ -2907,25 +3884,62 @@ def _refine(
             restriction_required,
             restriction_edges,
             restriction_parameters,
-        )
-        # A refused hard-geometry edge request may schedule a distinct generic
-        # interior-point request. The native refusal itself never changes intent.
-        retry = np.flatnonzero(
-            ~accepted
-            & hard_geometry_or_angle
-            & ~metrics.collapsed[hints]
-            & np.any(interior != charts, axis=1)
-        )
-        if retry.size:
-            accepted[retry] = _reconnect_batch(
-                domain,
-                state,
-                metrics,
-                compiled,
-                limits,
-                ledger,
-                totals,
-                record_phase,
+        ),
+        interior,
+    )
+
+
+def _execute_refinement_round(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: _Patch,
+    metrics: _Metrics,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    totals: RefinementTotals,
+    record_phase: NativeMeshingPhaseRecorder | None,
+    batch: RestrictionBatch,
+    interior: np.ndarray,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _RefinementCommit:
+    """Reconnect a batch, then schedule distinct interior requests for refused hard edges."""
+    charts, hints, parents = batch.charts, batch.hints, batch.parents
+    hard_geometry_or_angle, unresolved = batch.hard, batch.unresolved
+    accepted = _reconnect_batch(
+        domain,
+        state,
+        metrics,
+        compiled,
+        limits,
+        ledger,
+        totals,
+        record_phase,
+        batch,
+        scope=scope,
+        budget=budget,
+    )
+    # A refused hard-geometry edge request may schedule a distinct generic
+    # interior-point request. The native refusal itself never changes intent.
+    retry = np.flatnonzero(
+        ~accepted
+        & hard_geometry_or_angle
+        & ~metrics.collapsed[hints]
+        & np.any(interior != charts, axis=1)
+    )
+    if retry.size:
+        accepted[retry] = _reconnect_batch(
+            domain,
+            state,
+            metrics,
+            compiled,
+            limits,
+            ledger,
+            totals,
+            record_phase,
+            RestrictionBatch(
                 interior[retry],
                 np.zeros((retry.size,), dtype=np.float64),
                 hints[retry],
@@ -2936,25 +3950,35 @@ def _refine(
                 np.zeros((retry.size,), dtype=np.bool_),
                 np.full((retry.size, 2), -1, dtype=np.int64),
                 np.zeros((retry.size, 2), dtype=np.int64),
-            )
-        if not np.any(accepted):
-            break
-    if exact_pole_restrictions:
-        check_deadline(started, limits, MeshingStageKind.SURFACE_MESHING)
-        _insert_missing_pole_restrictions(
-            domain,
-            state,
-            metrics,
-            compiled,
-            limits,
-            ledger,
-            totals,
-            record_phase,
+            ),
+            scope=scope,
+            budget=budget,
         )
-    with measure_phase(record_phase, "feature_certification"):
-        metrics = _Metrics(
-            domain, state, ledger, compiled, cache, sphere_frame=sphere_frame
-        )
+    return _RefinementCommit(accepted)
+
+
+def _certify_refinement_completion(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: _Patch,
+    metrics: _Metrics,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    totals: RefinementTotals,
+    policy: _RefinementPolicy,
+    prepared: _RefinementPreparation,
+    /,
+) -> _RefinementCompletion:
+    """Refuse unresolved hard criteria and retain soft scheduling evidence."""
+    size, deviation, aim = policy.size, policy.deviation, policy.aim
+    maximum_normal_angle, required_minimum_angle = (
+        policy.maximum_normal_angle,
+        policy.required_minimum_angle,
+    )
+    schedule, size_compliance, planar_centroids = (
+        policy.schedule,
+        policy.size_compliance,
+        prepared.planar_centroids,
+    )
     _, _, _, hints, unresolved, _ = _candidates(
         state,
         metrics,
@@ -2977,19 +4001,13 @@ def _refine(
     )
     if np.any(physical):
         raise _failure(
-            MeshingFailureCategory.COMPLIANCE_FAILED,
-            f"Patch {state.index} retains unresolved physical criteria after "
-            f"refinement (invalid={int(np.sum(metrics.invalid))}, "
-            f"misoriented={int(np.sum(metrics.misoriented))}, "
-            f"deviating={int(np.sum(metrics.deviation_bound > deviation))}, "
-            f"turning={int(np.sum(metrics.normal_bound > maximum_normal_angle))}, "
-            f"max_deviation={float(np.max(metrics.deviation_bound)):.17g}, "
-            f"max_normal={float(np.max(metrics.normal_bound)):.17g}).",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+            f"SurfaceConstruction.physical_criteria must be resolved after refinement; got patch {state.index} with invalid={int(np.sum(metrics.invalid))}, misoriented={int(np.sum(metrics.misoriented))}, deviating={int(np.sum(metrics.deviation_bound > deviation))}, turning={int(np.sum(metrics.normal_bound > maximum_normal_angle))}, max_deviation={float(np.max(metrics.deviation_bound)):.17g}, max_normal={float(np.max(metrics.normal_bound)):.17g}.",
             entity_ids=(state.index,),
             provider_code="surface_refinement_incomplete",
             requested=(("maximum_rounds", schedule.maximum_rounds),),
             achieved=(
-                ("rounds", totals["rounds"]),
+                ("rounds", totals.rounds),
                 ("unresolved_triangles", int(np.sum(unresolved))),
                 ("geometry_queries", ledger.queries),
                 ("work_units", ledger.work),
@@ -3022,20 +4040,137 @@ def _refine(
             ),
         )
     if hints.size:
-        totals["incomplete"] += 1
-    return metrics
+        totals.incomplete += 1
+    return _RefinementCompletion(metrics)
+
+
+def _refine(
+    domain: _dependency_phydrax_geometry__meshing_domain.MeshingDomain,
+    state: _Patch,
+    policy: _RefinementPolicy,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
+    started: float,
+    totals: RefinementTotals,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    /,
+    *,
+    record_phase: NativeMeshingPhaseRecorder | None = None,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _Metrics:
+    """Refine one patch by measured, committed, and certified rounds."""
+    prepared = _prepare_refinement(
+        domain, state, ledger, policy, scope=scope, budget=budget
+    )
+    cache = _MetricsCache()
+    for _ in range(policy.schedule.maximum_rounds):
+        _dependency_phydrax_meshing_providers__native_publication.check_deadline(
+            started, limits, MeshingStageKind.SURFACE_MESHING
+        )
+        with measure_phase(record_phase, "feature_certification"):
+            metrics = _Metrics(
+                domain,
+                state,
+                ledger,
+                compiled,
+                cache,
+                sphere_frame=prepared.sphere_frame,
+                scope=scope,
+                budget=budget,
+            )
+        selected = _select_refinement_candidates(
+            domain, state, metrics, compiled, policy, prepared
+        )
+        # Soft shape work must not destroy a hard lower-size statistic.
+        if not np.any(selected.physical):
+            if prepared.exact_pole_restrictions and _insert_missing_pole_restrictions(
+                domain,
+                state,
+                metrics,
+                compiled,
+                limits,
+                ledger,
+                totals,
+                record_phase,
+                scope=scope,
+                budget=budget,
+            ):
+                break
+            if np.any(selected.unresolved):
+                totals.incomplete += 1
+            return metrics
+        insertion = _prepare_refinement_insertion(
+            domain, state, metrics, selected, policy, totals
+        )
+        del selected
+        if insertion.batch is None:
+            break
+        committed = _execute_refinement_round(
+            domain,
+            state,
+            metrics,
+            compiled,
+            limits,
+            ledger,
+            totals,
+            record_phase,
+            insertion.batch,
+            insertion.interior,
+            scope=scope,
+            budget=budget,
+        )
+        if not np.any(committed.accepted):
+            break
+    if prepared.exact_pole_restrictions:
+        _dependency_phydrax_meshing_providers__native_publication.check_deadline(
+            started, limits, MeshingStageKind.SURFACE_MESHING
+        )
+        _insert_missing_pole_restrictions(
+            domain,
+            state,
+            metrics,
+            compiled,
+            limits,
+            ledger,
+            totals,
+            record_phase,
+            scope=scope,
+            budget=budget,
+        )
+    with measure_phase(record_phase, "feature_certification"):
+        metrics = _Metrics(
+            domain,
+            state,
+            ledger,
+            compiled,
+            cache,
+            sphere_frame=prepared.sphere_frame,
+            scope=scope,
+            budget=budget,
+        )
+    return _certify_refinement_completion(
+        domain,
+        state,
+        metrics,
+        compiled,
+        ledger,
+        totals,
+        policy,
+        prepared,
+    ).metrics
 
 
 def _remaining_surface_limits(
-    limits: MeshingLimits,
-    compiled: CompiledSurfaceDomain,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
     blocks: list[tuple[_Patch, _Metrics]],
     patch: int,
     vertices: np.ndarray,
     curve_ids: dict[int, np.ndarray],
     corner_ids: dict[int, int],
     /,
-) -> MeshingLimits:
+) -> _dependency_phydrax_meshing__contracts.MeshingLimits:
     shared = {
         identifier
         for curve in compiled.domain.patch_curves(patch).tolist()
@@ -3045,7 +4180,7 @@ def _remaining_surface_limits(
         corner_ids[use.corner]
         for loop in compiled.domain.patches[patch].loops
         for use in loop
-        if isinstance(use, PatchPoleUse)
+        if isinstance(use, _dependency_phydrax_geometry__meshing_domain.PatchPoleUse)
     )
     used_vertices = (
         vertices.shape[0]
@@ -3082,8 +4217,8 @@ def _remaining_surface_limits(
     remaining_scratch = limits.maximum_scratch_bytes - scratch
     if min(remaining_vertices, remaining_faces, remaining_cells, remaining_scratch) <= 0:
         raise _failure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Retained source patches exhaust the next patch's construction capacity.",
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "SurfaceConstruction.patch_capacity must accommodate the next patch; got exhausted retained-source capacity.",
             entity_ids=(patch,),
             achieved=(
                 ("retained_vertices", used_vertices),
@@ -3091,7 +4226,7 @@ def _remaining_surface_limits(
                 ("retained_scratch_bytes", scratch),
             ),
         )
-    return MeshingLimits(
+    return _dependency_phydrax_meshing__contracts.MeshingLimits(
         maximum_vertices=remaining_vertices,
         maximum_edges=limits.maximum_edges,
         maximum_faces=remaining_faces,
@@ -3106,26 +4241,30 @@ def _remaining_surface_limits(
     )
 
 
+@checked
 def generate_surface(
-    compiled: CompiledSurfaceDomain,
-    schedule: NativeSurfaceSchedule,
-    limits: MeshingLimits,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
+    schedule: _dependency_phydrax_meshing_providers__native_schedules.NativeSurfaceSchedule,
+    limits: _dependency_phydrax_meshing__contracts.MeshingLimits,
     minimum_angle: float,
-    started: float | None = None,
     /,
     *,
     maximum_normal_angle: float = math.inf,
     required_minimum_angle: float = 0.0,
-    size_compliance: SizeCompliancePolicy | None = None,
+    size_compliance: _dependency_phydrax_meshing__sizing.SizeCompliancePolicy
+    | None = None,
     record_phase: NativeMeshingPhaseRecorder | None = None,
-    boundary_compiled: CompiledSurfaceDomain | None = None,
+    boundary_compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain
+    | None = None,
     prepared_boundary: tuple[
         np.ndarray, dict[int, np.ndarray], dict[int, np.ndarray], dict[int, int]
     ]
     | None = None,
     boundary_queries: int = 0,
     boundary_work: int = 0,
-) -> SurfaceConstruction:
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> surface_construction_owner.SurfaceConstruction:
     """Discretize shared curves, triangulate and refine every selected patch.
 
     ``minimum_angle`` (radians) is the scheduling aim. A separately declared
@@ -3133,17 +4272,19 @@ def generate_surface(
     shape aim is reported rather than driving uncontrolled node growth.
     Invalid triangles or triangles opposed to the source normal refuse construction.
     ``prepared_boundary`` is admitted only after the distributed owner has
-    validated its exact source evaluations, corner/curve incidence and original
-    size/fidelity bounds. Its actual prior query/work counts are charged here.
+    validated its certified source evaluations, corner/curve incidence and source
+    size/fidelity bounds. Its measured prior query/work counts are charged here.
     """
 
-    started_ = monotonic() if started is None else started
+    if not budget.ticket.settled:
+        raise RuntimeError(
+            "generate_surface.budget must follow source ticket settlement; got live ticket."
+        )
+    started_ = scope.operation_started
     if maximum_normal_angle <= 0 or math.isnan(maximum_normal_angle):
-        raise ValueError("maximum_normal_angle must be positive or infinity.")
-    if size_compliance is not None and not isinstance(
-        size_compliance, SizeCompliancePolicy
-    ):
-        raise TypeError("size_compliance must be SizeCompliancePolicy or None.")
+        raise ValueError(
+            f"generate_surface.maximum_normal_angle must be positive or infinity; got {maximum_normal_angle}."
+        )
     domain = compiled.domain
     boundary = compiled if boundary_compiled is None else boundary_compiled
     if (
@@ -3154,48 +4295,60 @@ def generate_surface(
         or not np.all(np.isin(compiled.patches, boundary.patches))
     ):
         raise ValueError(
-            "Boundary closure must preserve source authority, controls and exact incident curve/corner identities."
+            f"generate_surface.boundary_compiled must preserve source, controls, and incident entity identities; got domain={boundary.domain.domain_id}, specification={boundary.specification_id}."
         )
-    ledger = _QueryLedger(limits)
-    ledger.reserve(
+    ledger = _dependency_phydrax_meshing_providers__native_curve.QueryLedger(
+        limits, budget=budget
+    )
+    ledger.observe_native(
         compiled.source_sizing.geometry_queries, 0, MeshingStageKind.SOURCE_INSPECTION
     )
     boundary_start = phase_started(record_phase)
     if prepared_boundary is None:
         if boundary_queries or boundary_work:
-            raise ValueError("Boundary accounting requires an actual prepared boundary.")
-        vertices, curve_parameters, curve_ids, corner_ids = _curve_vertices(
-            boundary, schedule, ledger, started_, maximum_normal_angle
+            raise ValueError(
+                f"generate_surface.boundary_accounting must accompany a prepared boundary; got queries={boundary_queries}, work={boundary_work}, prepared_boundary=None."
+            )
+        vertices, curve_parameters, curve_ids, corner_ids = curve_vertices(
+            boundary,
+            schedule,
+            ledger,
+            started_,
+            maximum_normal_angle,
+            scope=scope,
+            budget=budget,
         )
     else:
         if (
             isinstance(boundary_queries, bool)
             or not isinstance(boundary_queries, int)
             or isinstance(boundary_work, bool)
-            or not isinstance(boundary_work, int)
-            or min(boundary_queries, boundary_work) < 0
+            or (not isinstance(boundary_work, int))
+            or (min(boundary_queries, boundary_work) < 0)
         ):
             raise ValueError(
-                "Prepared boundary query/work accounting must be nonnegative integers."
+                f"generate_surface.boundary_accounting must contain nonnegative integer counts; got queries={boundary_queries!r}, work={boundary_work!r}."
             )
         vertices, curve_parameters, curve_ids, corner_ids = prepared_boundary
         if (
             set(curve_parameters) != set(compiled.curves.tolist())
             or set(curve_ids) != set(curve_parameters)
             or set(corner_ids) != set(compiled.corners.tolist())
-            or vertices.dtype != np.float64
-            or vertices.ndim != 2
-            or vertices.shape[1] != 3
-            or not np.all(np.isfinite(vertices))
+            or (vertices.dtype != np.float64)
+            or (vertices.ndim != 2)
+            or (vertices.shape[1] != 3)
+            or (not np.all(np.isfinite(vertices)))
         ):
             raise ValueError(
-                "Prepared boundary does not match the exact authored source closure."
+                f"generate_surface.prepared_boundary must match the authored source closure; got curve_rows={tuple(sorted(curve_parameters))}, corner_rows={tuple(sorted(corner_ids))}, vertices={vertices.shape}."
             )
-        ledger.reserve(boundary_queries, boundary_work, MeshingStageKind.CURVE_MESHING)
+        ledger.observe_native(
+            boundary_queries, boundary_work, MeshingStageKind.CURVE_MESHING
+        )
     record_elapsed(
         record_phase, "boundary_recovery", boundary_start, work_units=ledger.work
     )
-    totals = {"rounds": 0, "inserted": 0, "refused": 0, "flips": 0, "incomplete": 0}
+    totals = RefinementTotals()
     blocks = []
     for row, patch in enumerate(compiled.patches.tolist()):
         local_limits = _remaining_surface_limits(
@@ -3218,30 +4371,35 @@ def generate_surface(
             local_limits,
             compiled=compiled,
             record_phase=record_phase,
+            scope=scope,
+            budget=budget,
         )
         metrics = _refine(
             domain,
             state,
-            float(compiled.patch_sizes[row]),
-            float(compiled.patch_deviations[row]),
-            minimum_angle,
-            patch_normal_angle,
-            schedule,
+            _RefinementPolicy(
+                float(compiled.patch_sizes[row]),
+                float(compiled.patch_deviations[row]),
+                minimum_angle,
+                patch_normal_angle,
+                schedule,
+                required_minimum_angle,
+                size_compliance,
+            ),
             local_limits,
             ledger,
             started_,
             totals,
             compiled,
             record_phase=record_phase,
-            required_minimum_angle=required_minimum_angle,
-            size_compliance=size_compliance,
+            scope=scope,
+            budget=budget,
         )
         broken = metrics.invalid | metrics.misoriented
         if np.any(broken):
             raise _failure(
-                MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-                f"Patch {patch} keeps triangles spanning a seam or opposing the "
-                "source normal after refinement.",
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
+                f"SurfaceConstruction.triangles must stay within the seam and source-normal orientation; got invalid patch {patch} after refinement.",
                 entity_ids=(patch,),
                 achieved=(("invalid_triangles", int(np.sum(broken))),),
             )
@@ -3249,8 +4407,8 @@ def generate_surface(
             metrics.normal_bound > maximum_normal_angle
         ):
             raise _failure(
-                MeshingFailureCategory.COMPLIANCE_FAILED,
-                f"Patch {patch} misses its continuous normal-turn bound.",
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED,
+                f"SurfaceConstruction.normal_turn must meet its continuous bound; got unresolved normal-turn bound on patch {patch}.",
                 entity_ids=(patch,),
                 requested=(("maximum_normal_angle", maximum_normal_angle),),
                 achieved=(("maximum_normal_bound", float(np.max(metrics.normal_bound))),),
@@ -3258,175 +4416,200 @@ def generate_surface(
         blocks.append((state, metrics))
     with measure_phase(record_phase, "native_publication"):
         return _assemble(
-            compiled, vertices, curve_parameters, curve_ids, blocks, totals, ledger
+            compiled,
+            vertices,
+            curve_parameters,
+            curve_ids,
+            blocks,
+            totals,
+            ledger,
+            scope=scope,
+            budget=budget,
         )
 
 
 def _assemble(
-    compiled: CompiledSurfaceDomain,
+    compiled: _dependency_phydrax_meshing__domain.CompiledSurfaceDomain,
     vertices: np.ndarray,
     curve_parameters: dict[int, np.ndarray],
     curve_ids: dict[int, np.ndarray],
     blocks: list[tuple[_Patch, _Metrics]],
-    totals: dict[str, int],
-    ledger: _QueryLedger,
+    totals: RefinementTotals,
+    ledger: _dependency_phydrax_meshing_providers__native_curve.QueryLedger,
     /,
-) -> SurfaceConstruction:
-    domain = compiled.domain
-    coordinates = [vertices]
-    count = vertices.shape[0]
-    dimensions = np.full((count,), 1, dtype=np.int8)
-    source_indices = np.full((count,), -1, dtype=np.int64)
-    parameters = np.full((count, 2), np.nan)
-    dimensions[: compiled.corners.size] = 0
-    source_indices[: compiled.corners.size] = compiled.corners
-    for curve in compiled.curves.tolist():
-        ids = curve_ids[curve][1:-1]
-        source_indices[ids] = curve
-        patch, loop, position = domain.curve_owners[curve]
-        use = domain.patches[patch].loops[loop][position]
-        parameters[ids, 0] = use.first + curve_parameters[curve][1:-1] * (
-            use.last - use.first
-        )
-    vertex_dimensions = [dimensions]
-    vertex_indices = [source_indices]
-    vertex_parameters = [parameters]
-    (
-        triangles,
-        patches,
-        charts,
-        chart_corners,
-        deviations,
-        deviation_bounds,
-        unresolved,
-        angles,
-    ) = [], [], [], [], [], [], [], []
-    normal_bounds = []
-    restriction_vertices: list[np.ndarray] = []
-    restriction_edges: list[np.ndarray] = []
-    restriction_endpoint_parameters: list[np.ndarray] = []
-    restriction_parameters: list[np.ndarray] = []
-    for state, metrics in blocks:
-        interior = state.identities < 0
-        identities = state.identities.copy()
-        identities[interior] = count + np.arange(int(np.sum(interior)))
-        count += int(np.sum(interior))
-        coordinates.append(state.points[interior])
-        vertex_dimensions.append(np.full((int(np.sum(interior)),), 2, dtype=np.int8))
-        vertex_indices.append(
-            np.full((int(np.sum(interior)),), state.index, dtype=np.int64)
-        )
-        vertex_parameters.append(state.charts[interior])
-        restricted = np.flatnonzero(state.restriction_required)
-        if restricted.size:
-            local_edges = state.restriction_edges[restricted]
-            restriction_vertices.append(identities[restricted])
-            restriction_edges.append(identities[local_edges])
-            restriction_endpoint_parameters.append(state.charts[local_edges])
-            restriction_parameters.append(state.restriction_parameters[restricted])
-        keep = ~metrics.collapsed
-        cells = identities[state.triangles[keep]]
-        if domain.patches[state.index].reversed:
-            cells = cells[:, [0, 2, 1]]
-        local_charts = state.charts[state.triangles[keep]]
-        if domain.patches[state.index].reversed:
-            local_charts = local_charts[:, [0, 2, 1]]
-        chart_corners.append(local_charts)
-        triangles.append(cells)
-        patches.append(np.full((cells.shape[0],), state.index, dtype=np.int64))
-        charts.append(np.mean(state.charts[state.triangles[keep]], axis=1))
-        deviations.append(metrics.deviation[keep])
-        deviation_bounds.append(metrics.deviation_bound[keep])
-        normal_bounds.append(metrics.normal_bound[keep])
-        angles.append(np.min(metrics.angles[keep], axis=1))
-        unresolved.append(
-            (
-                np.max(metrics.lengths[keep], axis=1)
-                > metrics.size_limits[keep] * (1 + _SIZE_SLACK)
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> surface_construction_owner.SurfaceConstruction:
+    with _source_bound_scope(
+        ledger, 0, stage=MeshingStageKind.SURFACE_MESHING, scope=scope, budget=budget
+    ):
+        domain = compiled.domain
+        coordinates = [vertices]
+        count = vertices.shape[0]
+        dimensions = np.full((count,), 1, dtype=np.int8)
+        source_indices = np.full((count,), -1, dtype=np.int64)
+        parameters = np.full((count, 2), np.nan)
+        dimensions[: compiled.corners.size] = 0
+        source_indices[: compiled.corners.size] = compiled.corners
+        for curve in compiled.curves.tolist():
+            ids = curve_ids[curve][1:-1]
+            source_indices[ids] = curve
+            patch, loop, position = domain.curve_owners[curve]
+            use = domain.patches[patch].loops[loop][position]
+            parameters[ids, 0] = use.first + curve_parameters[curve][1:-1] * (
+                use.last - use.first
             )
-            | (np.max(metrics.metric_lengths[keep], axis=1) > _METRIC_AIM)
-        )
-    edges, edge_curves, edge_deviations, edge_bounds = [], [], [], []
-    curve_charts = _CurveCharts(domain.curve_atlas, jnp.asarray(compiled.curves))
-    # Curve vertices are the shared prefix of the assembled vertex array.
-    for curve_row, curve in enumerate(compiled.curves.tolist()):
-        ids = curve_ids[curve]
-        values = curve_parameters[curve]
-        middle = 0.5 * (values[:-1] + values[1:])
-        ledger.reserve(middle.size, 0, MeshingStageKind.CURVE_MESHING)
-        on_curve = _curve_points(curve_charts, curve_row, middle)
-        chord = 0.5 * (vertices[ids[:-1]] + vertices[ids[1:]])
-        edges.append(np.stack((ids[:-1], ids[1:]), axis=1))
-        edge_curves.append(np.full((middle.size,), curve, dtype=np.int64))
-        edge_deviations.append(np.linalg.norm(on_curve - chord, axis=1))
-        with _source_bound_scope(
-            ledger,
-            2048 * count + 4096 * sum(state.triangles.shape[0] for state, _ in blocks),
-            stage=MeshingStageKind.CURVE_MESHING,
-        ):
-            edge_bounds.append(domain.curve_interpolation_bounds(curve, values))
-    if restriction_vertices:
-        assembled_restriction_vertices = np.concatenate(restriction_vertices)
-        assembled_restriction_edges = np.concatenate(restriction_edges, axis=0)
-        assembled_restriction_endpoint_parameters = np.concatenate(
-            restriction_endpoint_parameters, axis=0
-        )
-        assembled_restriction_parameters = np.concatenate(restriction_parameters, axis=0)
-    else:
+        vertex_dimensions = [dimensions]
+        vertex_indices = [source_indices]
+        vertex_parameters = [parameters]
         (
-            _,
+            triangles,
+            patches,
+            charts,
+            chart_corners,
+            deviations,
+            deviation_bounds,
+            unresolved,
+            angles,
+        ) = [], [], [], [], [], [], [], []
+        normal_bounds = []
+        restriction_vertices: list[np.ndarray] = []
+        restriction_edges: list[np.ndarray] = []
+        restriction_endpoint_parameters: list[np.ndarray] = []
+        restriction_parameters: list[np.ndarray] = []
+        for state, metrics in blocks:
+            interior = state.identities < 0
+            identities = state.identities.copy()
+            identities[interior] = count + np.arange(int(np.sum(interior)))
+            count += int(np.sum(interior))
+            coordinates.append(state.points[interior])
+            vertex_dimensions.append(np.full((int(np.sum(interior)),), 2, dtype=np.int8))
+            vertex_indices.append(
+                np.full((int(np.sum(interior)),), state.index, dtype=np.int64)
+            )
+            vertex_parameters.append(state.charts[interior])
+            restricted = np.flatnonzero(state.restriction_required)
+            if restricted.size:
+                local_edges = state.restriction_edges[restricted]
+                restriction_vertices.append(identities[restricted])
+                restriction_edges.append(identities[local_edges])
+                restriction_endpoint_parameters.append(state.charts[local_edges])
+                restriction_parameters.append(state.restriction_parameters[restricted])
+            keep = ~metrics.collapsed
+            cells = identities[state.triangles[keep]]
+            if domain.patches[state.index].reversed:
+                cells = cells[:, [0, 2, 1]]
+            local_charts = state.charts[state.triangles[keep]]
+            if domain.patches[state.index].reversed:
+                local_charts = local_charts[:, [0, 2, 1]]
+            chart_corners.append(local_charts)
+            triangles.append(cells)
+            patches.append(np.full((cells.shape[0],), state.index, dtype=np.int64))
+            charts.append(np.mean(state.charts[state.triangles[keep]], axis=1))
+            deviations.append(metrics.deviation[keep])
+            deviation_bounds.append(metrics.deviation_bound[keep])
+            normal_bounds.append(metrics.normal_bound[keep])
+            angles.append(np.min(metrics.angles[keep], axis=1))
+            unresolved.append(
+                (
+                    np.max(metrics.lengths[keep], axis=1)
+                    > metrics.size_limits[keep] * (1 + _SIZE_SLACK)
+                )
+                | (np.max(metrics.metric_lengths[keep], axis=1) > _METRIC_AIM)
+            )
+        edges, edge_curves, edge_deviations, edge_bounds = [], [], [], []
+        curve_charts = _dependency_phydrax_meshing_providers__native_curve.CurveCharts(
+            domain.curve_atlas, jnp.asarray(compiled.curves)
+        )
+        # Curve vertices are the shared prefix of the assembled vertex array.
+        for curve_row, curve in enumerate(compiled.curves.tolist()):
+            ids = curve_ids[curve]
+            values = curve_parameters[curve]
+            middle = 0.5 * (values[:-1] + values[1:])
+            ledger.reserve(middle.size, 0, MeshingStageKind.CURVE_MESHING)
+            on_curve = _dependency_phydrax_meshing_providers__native_curve.curve_points(
+                curve_charts, curve_row, middle
+            )
+            chord = 0.5 * (vertices[ids[:-1]] + vertices[ids[1:]])
+            edges.append(np.stack((ids[:-1], ids[1:]), axis=1))
+            edge_curves.append(np.full((middle.size,), curve, dtype=np.int64))
+            edge_deviations.append(np.linalg.norm(on_curve - chord, axis=1))
+            with _source_bound_scope(
+                ledger,
+                2048 * count
+                + 4096 * sum(state.triangles.shape[0] for state, _ in blocks),
+                stage=MeshingStageKind.CURVE_MESHING,
+                scope=scope,
+                budget=budget,
+            ):
+                edge_bounds.append(
+                    domain.curve_interpolation_bounds(curve, values, budget=budget)
+                )
+        if restriction_vertices:
+            assembled_restriction_vertices = np.concatenate(restriction_vertices)
+            assembled_restriction_edges = np.concatenate(restriction_edges, axis=0)
+            assembled_restriction_endpoint_parameters = np.concatenate(
+                restriction_endpoint_parameters, axis=0
+            )
+            assembled_restriction_parameters = np.concatenate(
+                restriction_parameters, axis=0
+            )
+        else:
+            (
+                _,
+                assembled_restriction_vertices,
+                assembled_restriction_edges,
+                assembled_restriction_endpoint_parameters,
+                assembled_restriction_parameters,
+            ) = empty_chart_restrictions(count)
+        all_angles = np.concatenate(angles)
+        return surface_construction_owner.SurfaceConstruction(
+            np.concatenate(coordinates, axis=0),
+            np.concatenate(vertex_dimensions),
+            np.concatenate(vertex_indices),
+            np.concatenate(vertex_parameters, axis=0),
             assembled_restriction_vertices,
             assembled_restriction_edges,
             assembled_restriction_endpoint_parameters,
             assembled_restriction_parameters,
-        ) = empty_chart_restrictions(count)
-    all_angles = np.concatenate(angles)
-    return SurfaceConstruction(
-        np.concatenate(coordinates, axis=0),
-        np.concatenate(vertex_dimensions),
-        np.concatenate(vertex_indices),
-        np.concatenate(vertex_parameters, axis=0),
-        assembled_restriction_vertices,
-        assembled_restriction_edges,
-        assembled_restriction_endpoint_parameters,
-        assembled_restriction_parameters,
-        np.concatenate(triangles, axis=0),
-        np.concatenate(patches),
-        np.concatenate(charts, axis=0),
-        np.concatenate(chart_corners, axis=0),
-        np.concatenate(deviations),
-        np.concatenate(deviation_bounds),
-        np.concatenate(normal_bounds),
-        np.concatenate(edges, axis=0),
-        np.concatenate(edge_curves),
-        np.concatenate(edge_deviations),
-        np.concatenate(edge_bounds),
-        np.concatenate(unresolved),
-        tuple(
-            (
-                state.index,
-                state.charts,
-                state.points,
-                state.triangles,
-                state.boundary_edges,
-                state.boundary_uses,
-                state.restriction_required,
-                np.flatnonzero(state.restriction_required).astype(np.int64),
-                state.restriction_edges[state.restriction_required],
-                state.restriction_parameters[state.restriction_required],
-            )
-            for state, _ in blocks
-        ),
-        tuple((curve, curve_parameters[curve]) for curve in compiled.curves.tolist()),
-        float(np.min(all_angles)),
-        totals["rounds"],
-        totals["inserted"],
-        totals["refused"],
-        totals["flips"],
-        ledger.queries,
-        ledger.work,
-        bool(totals["incomplete"]),
-    )
+            np.concatenate(triangles, axis=0),
+            np.concatenate(patches),
+            np.concatenate(charts, axis=0),
+            np.concatenate(chart_corners, axis=0),
+            np.concatenate(deviations),
+            np.concatenate(deviation_bounds),
+            np.concatenate(normal_bounds),
+            np.concatenate(edges, axis=0),
+            np.concatenate(edge_curves),
+            np.concatenate(edge_deviations),
+            np.concatenate(edge_bounds),
+            np.concatenate(unresolved),
+            tuple(
+                (
+                    state.index,
+                    state.charts,
+                    state.points,
+                    state.triangles,
+                    state.boundary_edges,
+                    state.boundary_uses,
+                    state.restriction_required,
+                    np.flatnonzero(state.restriction_required).astype(np.int64),
+                    state.restriction_edges[state.restriction_required],
+                    state.restriction_parameters[state.restriction_required],
+                )
+                for state, _ in blocks
+            ),
+            tuple((curve, curve_parameters[curve]) for curve in compiled.curves.tolist()),
+            float(np.min(all_angles)),
+            totals.rounds,
+            totals.inserted,
+            totals.refused,
+            totals.flips,
+            ledger.queries,
+            ledger.work,
+            bool(totals.incomplete),
+        )
 
 
-__all__ = ["SurfaceConstruction", "generate_surface"]
+__all__ = ["generate_surface"]

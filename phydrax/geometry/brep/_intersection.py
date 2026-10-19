@@ -24,9 +24,8 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from fractions import Fraction
+from fractions import Fraction, Fraction as F
 from itertools import combinations
 from typing import Literal, Protocol, TypeAlias
 
@@ -36,66 +35,88 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+import phydrax.geometry.brep._intersection_curve as intersection_curve_owner
+import phydrax.geometry.brep._placed as placed_owner
+import phydrax.geometry.brep._source_correspondence as source_correspondence_owner
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import nonnegative_integer, positive_integer
+from ...discretization._coordinate_budget import CoordinateEnclosureBudget
 from ...linalg import (
-    DenseLinearOperator,
-    DenseLU,
     inverse_small_linear,
-    LinearSolvePolicy,
-    LinearSystem,
     orthonormal_frame,
     SmallLinearSolvePlan,
-    solve,
     solve_small_linear,
 )
+from ...linalg._exact import solve_exact
 from ...nonlinear import VectorLocalRootPlan
-from ...typing import ConvertibleToArray, Dim, HostBool, HostFloat64, parse, Scope
+from ...typing import (
+    checked,
+    ConvertibleToArray,
+    Dim,
+    HostBool,
+    HostFloat64,
+    parse,
+    Scope,
+)
 from .._atlas import AbstractTrimCurve
 from .._interval_enclosure import (
     interval_add,
     interval_divide,
+    interval_dot,
     interval_multiply,
     interval_subtract,
     prepare_interval_function,
     PreparedIntervalFunction,
 )
-from ._intersection_curve import (
-    _PeriodOffset,
-    _trim_source_jet,
-    BernsteinSurfacePiece,
-    coefficient_enclosures,
-    curve_pieces,
-    CurveEvaluator,
-    CurveRange,
-    CurveTrimSegment,
-    encode_geometry,
-    IntersectionCurve,
-    IntersectionEndpointKind,
-    IntersectionPCurve,
-    surface_pieces,
-    surface_pieces_for_box,
-    SurfaceEvaluator,
-    SurfacePairSystem,
-    SurfacePiece,
-    SurfaceRegion,
+from .._rational import (
+    fraction_down,
+    fraction_up,
+    rational_cross,
+    rational_dot,
+    rational_vector,
+    RationalVector,
+)
+from ._carrier_pieces import SurfacePiece
+from ._contact_indicatrix import contact_indicatrix
+from ._coordinate_request import coordinate_source_request
+from ._intersection_kernel import (
+    approximate_inverses,
+    interval_magnitude,
+    interval_times_interval,
+    krawczyk,
+    KrawczykEvaluator,
+    point_times_interval,
+    round_interval,
+)
+from ._interval_source import (
+    evaluate_interval,
 )
 from ._patches import (
     AbstractCurve,
     AbstractSurfacePatch,
+    BernsteinSurfacePiece,
+    BSplineCurve,
     CircleCurve,
+    closure_tangent_continuous,
+    coefficient_enclosures,
     CylinderPatch,
     ExtrusionSurface,
     LineCurve,
+    OffsetSurface,
     PlanePatch,
     RevolutionSurface,
     SpherePatch,
     SurfaceIsoparametricCurve,
 )
-from ._placed import PlacedCurve, PlacedSurface, same_source_pose
+from ._request_preparations import TrimRequestPreparations
+from ._trim_helpers import period_offset, period_scalar_bounds, PeriodOffset
 
 
-ParametricIntersectionKind: TypeAlias = Literal["transversal", "tangent", "singular"]
+ParametricIntersectionKind: TypeAlias = Literal[
+    "crossing", "tangent_point", "tangent_curve", "singular_point"
+]
 ParametricIntersectionCertificate: TypeAlias = Literal[
     "krawczyk", "tangency-krawczyk", "proximity-krawczyk", "analytic-contact"
 ]
@@ -106,13 +127,13 @@ UnresolvedIntersectionReason: TypeAlias = Literal[
 
 class _SourceCurveSurfaceLift(Protocol):
     @property
-    def curve(self) -> AbstractCurve | IntersectionCurve: ...
+    def curve(self) -> AbstractCurve | intersection_curve_owner.IntersectionCurve: ...
 
     @property
-    def pcurve(self) -> CurveEvaluator: ...
+    def pcurve(self) -> intersection_curve_owner.CurveEvaluator: ...
 
     @property
-    def surface(self) -> SurfaceRegion: ...
+    def surface(self) -> intersection_curve_owner.SurfaceRegion: ...
 
     @property
     def first(self) -> float: ...
@@ -179,8 +200,7 @@ class ParametricIntersectionPolicy(StrictModule):
             ("maximum_march_steps", maximum_march_steps),
             ("batch", batch),
         ):
-            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                raise ValueError(f"{name} must be a positive integer.")
+            positive_integer(value, name)
         for name, value in (
             ("relative_resolution", relative_resolution),
             ("relative_probe", relative_probe),
@@ -192,11 +212,16 @@ class ParametricIntersectionPolicy(StrictModule):
             ("relative_junction", relative_junction),
         ):
             if not math.isfinite(value) or value <= 0.0:
-                raise ValueError(f"{name} must be finite and positive.")
+                field = f"ParametricIntersectionPolicy.{name}"
+                raise ValueError(f"{field} must be finite and positive; got {value}")
         if not relative_resolution < relative_probe:
-            raise ValueError("relative_resolution must be smaller than relative_probe.")
+            raise ValueError(
+                "ParametricIntersectionPolicy.relative_resolution must be smaller than relative_probe; got invalid ordering"
+            )
         if not relative_minimum_step < relative_step:
-            raise ValueError("relative_minimum_step must be smaller than relative_step.")
+            raise ValueError(
+                "ParametricIntersectionPolicy.relative_minimum_step must be smaller than relative_step; got invalid ordering"
+            )
         self.maximum_boxes = maximum_boxes
         self.relative_resolution = float(relative_resolution)
         self.relative_probe = float(relative_probe)
@@ -251,10 +276,9 @@ class ParametricIntersectionWork(StrictModule):
 
 
 class TrimIntersectionRoot(StrictModule):
-    """Authoritative UV junction: source curves plus a unique interval root box.
+    """Enclose a UV junction by its source curves and unique interval root box.
 
-    Numerical parameters/points are bounded realizations, not exact floating
-    constructions. Foot-point/tangency residuals are not exact junctions.
+    Numerical parameters and points remain bounded realizations of that root.
     """
 
     __strict_contract__ = True
@@ -268,136 +292,192 @@ class TrimIntersectionRoot(StrictModule):
     contraction: float = eqx.field(static=True)
     root_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         first: AbstractTrimCurve,
         second: AbstractTrimCurve,
         /,
         *,
-        parameter_lower: np.ndarray,
-        parameter_upper: np.ndarray,
+        parameter_lower: ConvertibleToArray,
+        parameter_upper: ConvertibleToArray,
+        budget: CoordinateEnclosureBudget | None = None,
+        preparations: TrimRequestPreparations | None = None,
     ) -> None:
-        if not isinstance(first, AbstractTrimCurve) or not isinstance(
-            second, AbstractTrimCurve
-        ):
-            raise TypeError("Trim roots require exact native trim-curve definitions.")
-        lower = parse(
-            np.asarray(parameter_lower, dtype=np.float64),
-            HostFloat64[Literal[2]],
-            "parameter_lower",
-        )
-        upper = parse(
-            np.asarray(parameter_upper, dtype=np.float64),
-            HostFloat64[Literal[2]],
-            "parameter_upper",
-        )
-        if (
-            not np.all(np.isfinite(lower))
-            or not np.all(np.isfinite(upper))
-            or np.any(lower >= upper)
-        ):
-            raise ValueError("A trim root requires a finite nonempty parameter box.")
-        prepared = _prepare(_CurvePairSystem(first, second), 2, 1)
-        inclusion = _krawczyk(prepared, lower[None], upper[None])
-        for factor in (32.0, 256.0, 2048.0):
-            if bool(inclusion.certified[0]):
-                break
-            radius = factor * _UNIT * (1 + np.maximum(np.abs(lower), np.abs(upper)))
-            lower = np.nextafter(lower - radius, -np.inf)
-            upper = np.nextafter(upper + radius, np.inf)
-            inclusion = _krawczyk(prepared, lower[None], upper[None])
-        if not bool(inclusion.certified[0]):
-            raise ValueError(
-                "The trim junction has no regular unique source root certificate."
-            )
-        roots, _, _, _ = prepared.newton(
-            jnp.asarray((0.5 * (lower + upper))[None]),
-            VectorLocalRootPlan(
-                2, maximum_steps=40, tolerance=1e-13, plan_id="trim-junction"
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        with coordinate_source_request(
+            (
+                first,
+                second,
+                parameter_lower,
+                parameter_upper,
             ),
-        )
-        self.first, self.second = first, second
-        self.parameter_lower, self.parameter_upper = lower, upper
-        self.parameters = np.clip(np.asarray(roots)[0], lower, upper)
-        self.preconditioner = inclusion.preconditioner[0]
-        self.contraction = float(inclusion.contraction[0])
-        self.root_id = canonical_fingerprint(
-            {
-                "kind": "trim-intersection-root",
-                "curves": array_tree_fingerprint((first, second)),
-                "box": array_tree_fingerprint((lower, upper)),
-            }
+            budget=budget,
+        ) as budget:
+            lower = parse(
+                np.asarray(parameter_lower, dtype=np.float64),
+                HostFloat64[Literal[2]],
+                "parameter_lower",
+            )
+            upper = parse(
+                np.asarray(parameter_upper, dtype=np.float64),
+                HostFloat64[Literal[2]],
+                "parameter_upper",
+            )
+            if (
+                not np.all(np.isfinite(lower))
+                or not np.all(np.isfinite(upper))
+                or np.any(lower >= upper)
+            ):
+                raise ValueError(
+                    "TrimIntersectionRoot.parameter_box must be finite and nonempty; got invalid bounds"
+                )
+            prepared = prepare(
+                _CurvePairSystem(first, second), 2, 1, preparations=preparations
+            )
+            inclusion = krawczyk(
+                prepared,
+                lower[None],
+                upper[None],
+                budget=budget,
+                preparations=preparations,
+            )
+            for factor in (32.0, 256.0, 2048.0):
+                if bool(inclusion.certified[0]):
+                    break
+                radius = factor * _UNIT * (1 + np.maximum(np.abs(lower), np.abs(upper)))
+                lower = np.nextafter(lower - radius, -np.inf)
+                upper = np.nextafter(upper + radius, np.inf)
+                inclusion = krawczyk(
+                    prepared,
+                    lower[None],
+                    upper[None],
+                    budget=budget,
+                    preparations=preparations,
+                )
+            if not bool(inclusion.certified[0]):
+                raise ValueError(
+                    "TrimIntersectionRoot.parameter_box must certify a regular unique root; got unresolved inclusion"
+                )
+            roots, _, _, _ = prepared.newton(
+                jnp.asarray((0.5 * (lower + upper))[None]),
+                VectorLocalRootPlan(
+                    2, maximum_steps=40, tolerance=1e-13, plan_id="trim-junction"
+                ),
+            )
+            self.first, self.second = first, second
+            self.parameter_lower, self.parameter_upper = lower, upper
+            self.parameters = np.clip(np.asarray(roots)[0], lower, upper)
+            self.preconditioner = inclusion.preconditioner[0]
+            self.contraction = float(inclusion.contraction[0])
+            self.root_id = canonical_fingerprint(
+                {
+                    "kind": "trim-intersection-root",
+                    "curves": array_tree_fingerprint((first, second)),
+                    "box": array_tree_fingerprint((lower, upper)),
+                }
+            )
+
+    def parameter_enclosure(
+        self,
+        /,
+        *,
+        maximum_steps: int = 16,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self,)) as budget:
+                return self.parameter_enclosure(
+                    maximum_steps=maximum_steps, preparations=preparations, budget=budget
+                )
+        maximum_steps = nonnegative_integer(maximum_steps, "maximum_steps")
+        return _trim_root_parameter_enclosure(
+            self, maximum_steps, preparations=preparations, budget=budget
         )
 
-    def parameter_enclosure(self, /, *, maximum_steps: int = 16) -> np.ndarray:
-        if type(maximum_steps) is not int or maximum_steps < 0:
-            raise ValueError("Refinement steps must be nonnegative integers.")
-        return _trim_root_parameter_enclosure(self, maximum_steps)
-
-    def point_enclosure(self, /, *, maximum_steps: int = 16) -> np.ndarray:
-        parameters = self.parameter_enclosure(maximum_steps=maximum_steps)
+    def point_enclosure(
+        self,
+        /,
+        *,
+        maximum_steps: int = 16,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self,)) as budget:
+                return self.point_enclosure(
+                    maximum_steps=maximum_steps, preparations=preparations, budget=budget
+                )
+        parameters = self.parameter_enclosure(
+            maximum_steps=maximum_steps, preparations=preparations, budget=budget
+        )
         first = np.stack(
-            _trim_source_jet(
-                self.first, float(parameters[0, 0]), float(parameters[1, 0]), 0
+            intersection_curve_owner.trim_source_jet(
+                self.first,
+                float(parameters[0, 0]),
+                float(parameters[1, 0]),
+                0,
+                preparations=preparations,
+                budget=budget,
             )
         )
         second = np.stack(
-            _trim_source_jet(
-                self.second, float(parameters[0, 1]), float(parameters[1, 1]), 0
+            intersection_curve_owner.trim_source_jet(
+                self.second,
+                float(parameters[0, 1]),
+                float(parameters[1, 1]),
+                0,
+                preparations=preparations,
+                budget=budget,
             )
         )
         lower, upper = np.maximum(first[0], second[0]), np.minimum(first[1], second[1])
         if np.any(lower > upper):
-            raise ValueError("The certified junction lost its source point enclosure.")
+            raise ValueError(
+                "TrimIntersectionRoot.point_enclosure must intersect both source images; got disjoint enclosures"
+            )
         return np.stack((lower, upper))
 
     def evaluate(self) -> tuple[np.ndarray, float, bool]:
-        point = np.asarray(self.first.evaluate(jnp.asarray(self.parameters[0])))
-        box = self.point_enclosure()
-        bound = float(np.max(np.nextafter(np.abs(box - point), np.inf)))
-        return point, bound, True
-
-
-_TRIM_ROOT_PREPARATIONS: ContextVar[
-    dict[
-        int,
-        tuple[TrimIntersectionRoot, _Prepared | None, dict[int, np.ndarray]],
-    ]
-    | None
-] = ContextVar("original_trim_root_preparations", default=None)
+        with coordinate_source_request((self,)) as budget:
+            point = np.asarray(self.first.evaluate(jnp.asarray(self.parameters[0])))
+            box = self.point_enclosure(budget=budget)
+            bound = float(np.max(np.nextafter(np.abs(box - point), np.inf)))
+            return point, bound, True
 
 
 @contextmanager
-def _original_trim_root_preparation_scope(
-    curves: tuple[AbstractTrimCurve, ...], /
-) -> Iterator[None]:
-    """Retain root programs and contractions for one immutable trim workset."""
+def original_trim_root_preparation_scope(
+    curves: tuple[AbstractTrimCurve, ...],
+    /,
+    *,
+    preparations: TrimRequestPreparations,
+) -> Iterator[TrimRequestPreparations]:
+    """Register trim roots in the explicitly borrowed request mapping."""
     sources = jax.tree_util.tree_leaves(
         curves, is_leaf=lambda value: isinstance(value, TrimIntersectionRoot)
     )
-    owners = {
-        id(source): (source, None, {})
-        for source in sources
-        if isinstance(source, TrimIntersectionRoot)
-    }
-    active = _TRIM_ROOT_PREPARATIONS.get()
-    if active is not None:
-        for source in sources:
-            if isinstance(source, TrimIntersectionRoot):
-                active.setdefault(id(source), (source, None, {}))
-        yield
-        return
-    token = _TRIM_ROOT_PREPARATIONS.set(owners)
-    try:
-        yield
-    finally:
-        _TRIM_ROOT_PREPARATIONS.reset(token)
+    for source in sources:
+        if isinstance(source, TrimIntersectionRoot):
+            preparations.trim_roots.setdefault(id(source), (source, None, {}))
+    yield preparations
 
 
 def _trim_root_parameter_enclosure(
-    root: TrimIntersectionRoot, maximum_steps: int, /
+    root: TrimIntersectionRoot,
+    maximum_steps: int,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> np.ndarray:
-    owners = _TRIM_ROOT_PREPARATIONS.get()
+    owners = None if preparations is None else preparations.trim_roots
     entry = None if owners is None else owners.get(id(root))
     if entry is not None and entry[0] is root:
         cached = entry[2].get(maximum_steps)
@@ -407,7 +487,9 @@ def _trim_root_parameter_enclosure(
     else:
         prepared = None
     if prepared is None:
-        prepared = _prepare(_CurvePairSystem(root.first, root.second), 2, 1)
+        prepared = prepare(
+            _CurvePairSystem(root.first, root.second), 2, 1, preparations=preparations
+        )
         if owners is not None and entry is not None and entry[0] is root:
             entry = (root, prepared, entry[2])
             owners[id(root)] = entry
@@ -416,6 +498,8 @@ def _trim_root_parameter_enclosure(
         root.parameter_lower[None],
         root.parameter_upper[None],
         maximum_steps=maximum_steps,
+        budget=budget,
+        preparations=preparations,
     )
     result = np.stack((lower[0], upper[0]))
     if entry is not None and entry[0] is root:
@@ -428,8 +512,8 @@ class CurveSurfaceIntersectionRoot(StrictModule):
 
     __strict_contract__ = True
 
-    curve: AbstractCurve | IntersectionCurve
-    surface: SurfaceRegion
+    curve: AbstractCurve | intersection_curve_owner.IntersectionCurve
+    surface: intersection_curve_owner.SurfaceRegion
     parameter_lower: HostFloat64[Literal[3]]
     parameter_upper: HostFloat64[Literal[3]]
     parameters: HostFloat64[Literal[3]]
@@ -437,183 +521,279 @@ class CurveSurfaceIntersectionRoot(StrictModule):
     contraction: float = eqx.field(static=True)
     root_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        curve: AbstractCurve | IntersectionCurve,
-        surface: SurfaceRegion,
+        curve: AbstractCurve | intersection_curve_owner.IntersectionCurve,
+        surface: intersection_curve_owner.SurfaceRegion,
         /,
         *,
-        parameter_lower: np.ndarray,
-        parameter_upper: np.ndarray,
+        parameter_lower: ConvertibleToArray,
+        parameter_upper: ConvertibleToArray,
+        budget: CoordinateEnclosureBudget | None = None,
+        preparations: TrimRequestPreparations | None = None,
     ) -> None:
-        if (
-            not isinstance(curve, (AbstractCurve, IntersectionCurve))
-            or curve.ambient_dimension != 3
-            or not isinstance(surface, SurfaceRegion)
-        ):
-            raise TypeError("Spatial roots require a native 3D curve and SurfaceRegion.")
-        lower = parse(
-            np.asarray(parameter_lower, dtype=np.float64),
-            HostFloat64[Literal[3]],
-            "parameter_lower",
-        )
-        upper = parse(
-            np.asarray(parameter_upper, dtype=np.float64),
-            HostFloat64[Literal[3]],
-            "parameter_upper",
-        )
-        if (
-            not np.all(np.isfinite(lower))
-            or not np.all(np.isfinite(upper))
-            or np.any(lower >= upper)
-        ):
-            raise ValueError("A spatial root requires a finite nonempty parameter box.")
-        if isinstance(curve, IntersectionCurve):
-            evaluator = curve
-        else:
-            pieces = curve_pieces(CurveRange(curve, float(lower[0]), float(upper[0])))
-            if len(pieces) != 1:
-                raise ValueError(
-                    "A spatial root witness must lie in one canonical source curve span."
-                )
-            evaluator = pieces[0].evaluator
-        # The canonical span is that of the root's own source box: a root on a
-        # region wall (shared with a neighboring face) belongs to the patch law.
-        spans = surface_pieces_for_box(surface.patch, np.stack((lower[1:], upper[1:])))
-        if len(spans) != 1:
-            raise ValueError(
-                "A spatial root witness must lie in one canonical source surface span."
-            )
-        prepared = _prepare(_CurveSurfaceSystem(evaluator, spans[0].evaluator), 3, 1)
-        inclusion = _krawczyk(prepared, lower[None], upper[None])
-        # Contracted event boxes can meet their outward rounding floor and no
-        # longer pass a STRICT re-inclusion on restoration. Re-isolate in a
-        # slightly larger source box; only a fresh inclusion admits the root.
-        for factor in (32.0, 256.0, 2048.0):
-            if bool(inclusion.certified[0]):
-                break
-            radius = factor * _UNIT * (1 + np.maximum(np.abs(lower), np.abs(upper)))
-            lower = np.nextafter(lower - radius, -np.inf)
-            upper = np.nextafter(upper + radius, np.inf)
-            inclusion = _krawczyk(prepared, lower[None], upper[None])
-        if not bool(inclusion.certified[0]):
-            raise ValueError(
-                "The spatial junction has no regular unique source root certificate."
-            )
-        roots, _, _, _ = prepared.newton(
-            jnp.asarray((0.5 * (lower + upper))[None]),
-            VectorLocalRootPlan(
-                3, maximum_steps=40, tolerance=1e-13, plan_id="spatial-junction"
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        with coordinate_source_request(
+            (
+                curve,
+                surface,
+                parameter_lower,
+                parameter_upper,
             ),
-        )
-        self.curve, self.surface = curve, surface
-        self.parameter_lower, self.parameter_upper = lower, upper
-        self.parameters = np.clip(np.asarray(roots)[0], lower, upper)
-        self.preconditioner = inclusion.preconditioner[0]
-        self.contraction = float(inclusion.contraction[0])
-        self.root_id = canonical_fingerprint(
-            {
-                "kind": "curve-surface-intersection-root",
-                "sources": array_tree_fingerprint((curve, surface)),
-                "box": array_tree_fingerprint((lower, upper)),
-            }
-        )
+            budget=budget,
+        ) as budget:
+            if curve.ambient_dimension != 3:
+                raise TypeError(
+                    f"CurveSurfaceIntersectionRoot.curve must have dimension three; got {curve.ambient_dimension}"
+                )
+            lower = parse(
+                np.asarray(parameter_lower, dtype=np.float64),
+                HostFloat64[Literal[3]],
+                "parameter_lower",
+            )
+            upper = parse(
+                np.asarray(parameter_upper, dtype=np.float64),
+                HostFloat64[Literal[3]],
+                "parameter_upper",
+            )
+            if (
+                not np.all(np.isfinite(lower))
+                or not np.all(np.isfinite(upper))
+                or np.any(lower >= upper)
+            ):
+                raise ValueError(
+                    "CurveSurfaceIntersectionRoot.parameter_box must be finite and nonempty; got invalid bounds"
+                )
+            if isinstance(curve, intersection_curve_owner.IntersectionCurve):
+                evaluator = curve
+            else:
+                pieces = intersection_curve_owner.curve_pieces(
+                    intersection_curve_owner.CurveRange(
+                        curve, float(lower[0]), float(upper[0])
+                    ),
+                    budget=budget,
+                )
+                if len(pieces) != 1:
+                    raise ValueError(
+                        "CurveSurfaceIntersectionRoot.parameter_box must lie in one curve span; got multiple spans"
+                    )
+                evaluator = pieces[0].evaluator
+            # The span is selected by the root's source box: a root on a
+            # region wall (shared with a neighboring face) belongs to the patch law.
+            spans = intersection_curve_owner.surface_pieces_for_box(
+                surface.patch, np.stack((lower[1:], upper[1:])), budget=budget
+            )
+            if len(spans) != 1:
+                raise ValueError(
+                    "CurveSurfaceIntersectionRoot.parameter_box must lie in one surface span; got multiple spans"
+                )
+            prepared = prepare(
+                CurveSurfaceSystem(evaluator, spans[0].evaluator),
+                3,
+                1,
+                preparations=preparations,
+            )
+            inclusion = krawczyk(
+                prepared,
+                lower[None],
+                upper[None],
+                budget=budget,
+                preparations=preparations,
+            )
+            # Contracted event boxes can meet their outward rounding floor and no
+            # longer pass a STRICT re-inclusion on restoration. Re-isolate in a
+            # slightly larger source box; only a fresh inclusion admits the root.
+            for factor in (32.0, 256.0, 2048.0):
+                if bool(inclusion.certified[0]):
+                    break
+                radius = factor * _UNIT * (1 + np.maximum(np.abs(lower), np.abs(upper)))
+                lower = np.nextafter(lower - radius, -np.inf)
+                upper = np.nextafter(upper + radius, np.inf)
+                inclusion = krawczyk(
+                    prepared,
+                    lower[None],
+                    upper[None],
+                    budget=budget,
+                    preparations=preparations,
+                )
+            if not bool(inclusion.certified[0]):
+                raise ValueError(
+                    "CurveSurfaceIntersectionRoot.parameter_box must certify a regular unique root; got unresolved inclusion"
+                )
+            roots, _, _, _ = prepared.newton(
+                jnp.asarray((0.5 * (lower + upper))[None]),
+                VectorLocalRootPlan(
+                    3, maximum_steps=40, tolerance=1e-13, plan_id="spatial-junction"
+                ),
+            )
+            self.curve, self.surface = curve, surface
+            self.parameter_lower, self.parameter_upper = lower, upper
+            self.parameters = np.clip(np.asarray(roots)[0], lower, upper)
+            self.preconditioner = inclusion.preconditioner[0]
+            self.contraction = float(inclusion.contraction[0])
+            self.root_id = canonical_fingerprint(
+                {
+                    "kind": "curve-surface-intersection-root",
+                    "sources": array_tree_fingerprint((curve, surface)),
+                    "box": array_tree_fingerprint((lower, upper)),
+                }
+            )
 
-    def parameter_enclosure(self, /, *, maximum_steps: int = 16) -> np.ndarray:
-        prepared = _curve_surface_root_preparation(self)
+    def parameter_enclosure(
+        self,
+        /,
+        *,
+        maximum_steps: int = 16,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self,)) as budget:
+                return self.parameter_enclosure(
+                    maximum_steps=maximum_steps, preparations=preparations, budget=budget
+                )
+        prepared = _curve_surface_root_preparation(
+            self, preparations=preparations, budget=budget
+        )
         lower, upper = _contract(
             prepared,
             self.parameter_lower[None],
             self.parameter_upper[None],
             maximum_steps=maximum_steps,
+            budget=budget,
+            preparations=preparations,
         )
         return np.stack((lower[0], upper[0]))
 
-    def point_enclosure(self, /, *, maximum_steps: int = 16) -> np.ndarray:
-        parameters = self.parameter_enclosure(maximum_steps=maximum_steps)
-        curve_box = np.asarray(
-            self.curve.bounding_box(float(parameters[0, 0]), float(parameters[1, 0]))
+    def point_enclosure(
+        self,
+        /,
+        *,
+        maximum_steps: int = 16,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self,)) as budget:
+                return self.point_enclosure(
+                    maximum_steps=maximum_steps, preparations=preparations, budget=budget
+                )
+        parameters = self.parameter_enclosure(
+            maximum_steps=maximum_steps, preparations=preparations, budget=budget
         )
-        surface_box = np.asarray(self.surface.patch.bounding_box(parameters[:, 1:]))
+        curve_box = np.asarray(
+            self.curve.bounding_box(
+                float(parameters[0, 0]),
+                float(parameters[1, 0]),
+                preparations=preparations,
+                budget=budget,
+            )
+        )
+        surface_box = np.asarray(
+            self.surface.patch.bounding_box(
+                parameters[:, 1:], preparations=preparations, budget=budget
+            )
+        )
         lower, upper = (
             np.maximum(curve_box[0], surface_box[0]),
             np.minimum(curve_box[1], surface_box[1]),
         )
         if np.any(lower > upper):
             raise ValueError(
-                "The certified spatial junction lost its source point enclosure."
+                "CurveSurfaceIntersectionRoot.point_enclosure must intersect both source images; got disjoint enclosures"
             )
         return np.stack((lower, upper))
 
     def evaluate(self) -> tuple[np.ndarray, float, bool]:
-        if isinstance(self.curve, IntersectionCurve):
-            point = np.asarray(self.curve.evaluate(jnp.asarray(self.parameters[0])).point)
-        else:
-            point = np.asarray(self.curve.evaluate(jnp.asarray(self.parameters[0])))
-        return (
-            point,
-            float(np.max(np.nextafter(np.abs(self.point_enclosure() - point), np.inf))),
-            True,
-        )
-
-
-_CURVE_SURFACE_ROOT_PREPARATIONS: ContextVar[
-    dict[int, tuple[CurveSurfaceIntersectionRoot, _Prepared | None]] | None
-] = ContextVar("original_curve_surface_root_preparations", default=None)
+        with coordinate_source_request((self,)) as budget:
+            if isinstance(self.curve, intersection_curve_owner.IntersectionCurve):
+                point = np.asarray(
+                    self.curve.evaluate(
+                        jnp.asarray(self.parameters[0]), budget=budget
+                    ).point
+                )
+            else:
+                point = np.asarray(self.curve.evaluate(jnp.asarray(self.parameters[0])))
+            return (
+                point,
+                float(
+                    np.max(
+                        np.nextafter(
+                            np.abs(self.point_enclosure(budget=budget) - point), np.inf
+                        )
+                    )
+                ),
+                True,
+            )
 
 
 @contextmanager
 def original_curve_surface_root_preparation(
     endpoints: tuple[RootEndpoint | None, ...],
     /,
-) -> Iterator[None]:
-    """Borrow root programs only during one immutable original trim workset."""
+    *,
+    preparations: TrimRequestPreparations | None = None,
+) -> Iterator[TrimRequestPreparations]:
+    """Register spatial roots in one explicitly owned request mapping."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
     sources = jax.tree_util.tree_leaves(
         endpoints,
         is_leaf=lambda value: isinstance(value, CurveSurfaceIntersectionRoot),
     )
-    owners = {
-        id(source): (source, None)
-        for source in sources
-        if isinstance(source, CurveSurfaceIntersectionRoot)
-    }
-    token = _CURVE_SURFACE_ROOT_PREPARATIONS.set(owners)
-    try:
-        yield
-    finally:
-        _CURVE_SURFACE_ROOT_PREPARATIONS.reset(token)
+    request = TrimRequestPreparations() if preparations is None else preparations
+    for source in sources:
+        if isinstance(source, CurveSurfaceIntersectionRoot):
+            request.curve_surface_roots.setdefault(id(source), (source, None))
+    yield request
 
 
-def _curve_surface_root_preparation(root: CurveSurfaceIntersectionRoot, /) -> _Prepared:
-    owners = _CURVE_SURFACE_ROOT_PREPARATIONS.get()
+def _curve_surface_root_preparation(
+    root: CurveSurfaceIntersectionRoot,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> Prepared:
+    owners = None if preparations is None else preparations.curve_surface_roots
     entry = None if owners is None else owners.get(id(root))
     if entry is not None and entry[0] is root and entry[1] is not None:
         return entry[1]
     curve = root.curve
-    if not isinstance(curve, IntersectionCurve):
-        curve = curve_pieces(
-            CurveRange(
+    if not isinstance(curve, intersection_curve_owner.IntersectionCurve):
+        curve = intersection_curve_owner.curve_pieces(
+            intersection_curve_owner.CurveRange(
                 curve,
                 float(root.parameter_lower[0]),
                 float(root.parameter_upper[0]),
-            )
+            ),
+            budget=budget,
         )[0].evaluator
-    surface = surface_pieces_for_box(
+    surface = intersection_curve_owner.surface_pieces_for_box(
         root.surface.patch,
         np.stack((root.parameter_lower[1:], root.parameter_upper[1:])),
+        budget=budget,
     )[0].evaluator
-    prepared = _prepare(_CurveSurfaceSystem(curve, surface), 3, 1)
+    prepared = prepare(
+        CurveSurfaceSystem(curve, surface), 3, 1, preparations=preparations
+    )
     if owners is not None and entry is not None and entry[0] is root:
         owners[id(root)] = (root, prepared)
     return prepared
 
 
 class IntersectionCurvePointRoot(StrictModule):
-    """An exact source graph point at one fixed curve parameter atom."""
+    """Define a source graph point at one fixed curve parameter atom."""
 
     __strict_contract__ = True
 
-    curve: IntersectionCurve
+    curve: intersection_curve_owner.IntersectionCurve
     parameter: float = eqx.field(static=True)
     parameters: HostFloat64[Literal[1]]
     parameter_lower: HostFloat64[Literal[1]]
@@ -621,11 +801,18 @@ class IntersectionCurvePointRoot(StrictModule):
     root_id: str = eqx.field(static=True)
     point_id: str = eqx.field(static=True)
 
-    def __init__(self, curve: IntersectionCurve, parameter: float, /) -> None:
-        if not isinstance(curve, IntersectionCurve) or not curve.fully_certified:
-            raise ValueError("A fixed point root requires a certified shared-node atlas.")
+    @checked
+    def __init__(
+        self, curve: intersection_curve_owner.IntersectionCurve, parameter: float, /
+    ) -> None:
+        if not curve.fully_certified:
+            raise ValueError(
+                "IntersectionCurvePointRoot.curve must have a certified shared-node atlas; got uncertified charts"
+            )
         if not math.isfinite(parameter) or not 0 <= parameter <= curve.num_charts:
-            raise ValueError("A fixed source parameter must lie inside its curve domain.")
+            raise ValueError(
+                "IntersectionCurvePointRoot.parameter must be finite and lie inside the curve domain; got an invalid parameter"
+            )
         self.curve, self.parameter = curve, float(parameter)
         self.parameters = self.parameter_lower = self.parameter_upper = np.asarray(
             [self.parameter], dtype=np.float64
@@ -646,21 +833,58 @@ class IntersectionCurvePointRoot(StrictModule):
             }
         )
 
-    def parameter_enclosure(self, /, *, maximum_steps: int = 16) -> np.ndarray:
+    def parameter_enclosure(
+        self,
+        /,
+        *,
+        maximum_steps: int = 16,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self,)) as budget:
+                return self.parameter_enclosure(
+                    maximum_steps=maximum_steps, preparations=preparations, budget=budget
+                )
         if maximum_steps < 0:
-            raise ValueError("Refinement steps must be nonnegative.")
+            raise ValueError(
+                "root.maximum_steps must be nonnegative; got a negative count"
+            )
         return np.stack((self.parameter_lower, self.parameter_upper))
 
-    def point_enclosure(self) -> np.ndarray:
-        return self.curve.bounding_box(self.parameter, self.parameter)
+    def point_enclosure(
+        self,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self,)) as budget:
+                return self.point_enclosure(preparations=preparations, budget=budget)
+        return self.curve.bounding_box(
+            self.parameter, self.parameter, preparations=preparations, budget=budget
+        )
 
     def evaluate(self) -> tuple[np.ndarray, float, bool]:
-        point = np.asarray(self.curve.evaluate(jnp.asarray(self.parameter)).point)
-        return (
-            point,
-            float(np.max(np.nextafter(np.abs(self.point_enclosure() - point), np.inf))),
-            True,
-        )
+        with coordinate_source_request((self,)) as budget:
+            point = np.asarray(
+                self.curve.evaluate(jnp.asarray(self.parameter), budget=budget).point
+            )
+            return (
+                point,
+                float(
+                    np.max(
+                        np.nextafter(
+                            np.abs(self.point_enclosure(budget=budget) - point), np.inf
+                        )
+                    )
+                ),
+                True,
+            )
 
 
 class TripleSurfaceIntersectionRoot(StrictModule):
@@ -668,9 +892,9 @@ class TripleSurfaceIntersectionRoot(StrictModule):
 
     __strict_contract__ = True
 
-    first: SurfaceRegion
-    second: SurfaceRegion
-    third: SurfaceRegion
+    first: intersection_curve_owner.SurfaceRegion
+    second: intersection_curve_owner.SurfaceRegion
+    third: intersection_curve_owner.SurfaceRegion
     parameter_lower: HostFloat64[Literal[6]]
     parameter_upper: HostFloat64[Literal[6]]
     parameters: HostFloat64[Literal[6]]
@@ -678,77 +902,118 @@ class TripleSurfaceIntersectionRoot(StrictModule):
     contraction: float = eqx.field(static=True)
     root_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        first: SurfaceRegion,
-        second: SurfaceRegion,
-        third: SurfaceRegion,
+        first: intersection_curve_owner.SurfaceRegion,
+        second: intersection_curve_owner.SurfaceRegion,
+        third: intersection_curve_owner.SurfaceRegion,
         /,
         *,
-        parameter_lower: np.ndarray,
-        parameter_upper: np.ndarray,
+        parameter_lower: ConvertibleToArray,
+        parameter_upper: ConvertibleToArray,
+        budget: CoordinateEnclosureBudget | None = None,
+        preparations: TrimRequestPreparations | None = None,
     ) -> None:
-        if not all(
-            isinstance(region, SurfaceRegion) for region in (first, second, third)
-        ):
-            raise TypeError(
-                "Joint surface roots require three native SurfaceRegion values."
-            )
-        lower = parse(
-            np.asarray(parameter_lower, dtype=np.float64),
-            HostFloat64[Literal[6]],
-            "parameter_lower",
-        )
-        upper = parse(
-            np.asarray(parameter_upper, dtype=np.float64),
-            HostFloat64[Literal[6]],
-            "parameter_upper",
-        )
-        if (
-            not np.all(np.isfinite(lower))
-            or not np.all(np.isfinite(upper))
-            or np.any(lower >= upper)
-        ):
-            raise ValueError("A joint root requires a finite nonempty six-parameter box.")
-        evaluators = []
-        for index, region in enumerate((first, second, third)):
-            lo, hi = lower[2 * index : 2 * index + 2], upper[2 * index : 2 * index + 2]
-            pieces = [
-                piece
-                for piece in surface_pieces(region)
-                if np.all(lo >= piece.lower) and np.all(hi <= piece.upper)
-            ]
-            if len(pieces) != 1:
-                raise ValueError(
-                    "Each joint root witness must lie in one canonical source span."
-                )
-            evaluators.append(pieces[0].evaluator)
-        prepared = _prepare(_TripleSurfaceSystem(*evaluators), 6, 1)
-        inclusion = _krawczyk(prepared, lower[None], upper[None])
-        if not bool(inclusion.certified[0]):
-            raise ValueError(
-                "The six-variable source system has no unique regular root certificate."
-            )
-        roots, _, _, _ = prepared.newton(
-            jnp.asarray((0.5 * (lower + upper))[None]),
-            VectorLocalRootPlan(
-                6, maximum_steps=40, tolerance=1e-13, plan_id="triple-surface-junction"
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        with coordinate_source_request(
+            (
+                first,
+                second,
+                third,
+                parameter_lower,
+                parameter_upper,
             ),
-        )
-        self.first, self.second, self.third = first, second, third
-        self.parameter_lower, self.parameter_upper = lower, upper
-        self.parameters = np.clip(np.asarray(roots)[0], lower, upper)
-        self.preconditioner = inclusion.preconditioner[0]
-        self.contraction = float(inclusion.contraction[0])
-        self.root_id = canonical_fingerprint(
-            {
-                "kind": "triple-surface-intersection-root",
-                "sources": array_tree_fingerprint((first, second, third)),
-                "box": array_tree_fingerprint((lower, upper)),
-            }
-        )
+            budget=budget,
+        ) as budget:
+            lower = parse(
+                np.asarray(parameter_lower, dtype=np.float64),
+                HostFloat64[Literal[6]],
+                "parameter_lower",
+            )
+            upper = parse(
+                np.asarray(parameter_upper, dtype=np.float64),
+                HostFloat64[Literal[6]],
+                "parameter_upper",
+            )
+            if (
+                not np.all(np.isfinite(lower))
+                or not np.all(np.isfinite(upper))
+                or np.any(lower >= upper)
+            ):
+                raise ValueError(
+                    "TripleSurfaceIntersectionRoot.parameter_box must be finite and nonempty with six parameters; got invalid bounds"
+                )
+            evaluators = []
+            for index, region in enumerate((first, second, third)):
+                lo, hi = (
+                    lower[2 * index : 2 * index + 2],
+                    upper[2 * index : 2 * index + 2],
+                )
+                pieces = [
+                    piece
+                    for piece in intersection_curve_owner.surface_pieces(
+                        region, budget=budget
+                    )
+                    if np.all(lo >= piece.lower) and np.all(hi <= piece.upper)
+                ]
+                if len(pieces) != 1:
+                    raise ValueError(
+                        "TripleSurfaceIntersectionRoot.parameter_box must lie in one span per surface; got multiple spans"
+                    )
+                evaluators.append(pieces[0].evaluator)
+            prepared = prepare(
+                TripleSurfaceSystem(*evaluators), 6, 1, preparations=preparations
+            )
+            inclusion = krawczyk(
+                prepared,
+                lower[None],
+                upper[None],
+                budget=budget,
+                preparations=preparations,
+            )
+            if not bool(inclusion.certified[0]):
+                raise ValueError(
+                    "TripleSurfaceIntersectionRoot.parameter_box must certify a regular unique root; got unresolved inclusion"
+                )
+            roots, _, _, _ = prepared.newton(
+                jnp.asarray((0.5 * (lower + upper))[None]),
+                VectorLocalRootPlan(
+                    6,
+                    maximum_steps=40,
+                    tolerance=1e-13,
+                    plan_id="triple-surface-junction",
+                ),
+            )
+            self.first, self.second, self.third = first, second, third
+            self.parameter_lower, self.parameter_upper = lower, upper
+            self.parameters = np.clip(np.asarray(roots)[0], lower, upper)
+            self.preconditioner = inclusion.preconditioner[0]
+            self.contraction = float(inclusion.contraction[0])
+            self.root_id = canonical_fingerprint(
+                {
+                    "kind": "triple-surface-intersection-root",
+                    "sources": array_tree_fingerprint((first, second, third)),
+                    "box": array_tree_fingerprint((lower, upper)),
+                }
+            )
 
-    def parameter_enclosure(self, /, *, maximum_steps: int = 16) -> np.ndarray:
+    def parameter_enclosure(
+        self,
+        /,
+        *,
+        maximum_steps: int = 16,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self,)) as budget:
+                return self.parameter_enclosure(
+                    maximum_steps=maximum_steps, preparations=preparations, budget=budget
+                )
         evaluators = []
         for index, region in enumerate((self.first, self.second, self.third)):
             lower = self.parameter_lower[2 * index : 2 * index + 2]
@@ -756,20 +1021,36 @@ class TripleSurfaceIntersectionRoot(StrictModule):
             evaluators.append(
                 next(
                     piece.evaluator
-                    for piece in surface_pieces(region)
+                    for piece in intersection_curve_owner.surface_pieces(
+                        region, budget=budget
+                    )
                     if np.all(lower >= piece.lower) and np.all(upper <= piece.upper)
                 )
             )
-        prepared = _prepare(_TripleSurfaceSystem(*evaluators), 6, 1)
+        prepared = prepare(
+            TripleSurfaceSystem(*evaluators), 6, 1, preparations=preparations
+        )
         lower, upper = _contract(
             prepared,
             self.parameter_lower[None],
             self.parameter_upper[None],
             maximum_steps=maximum_steps,
+            budget=budget,
+            preparations=preparations,
         )
         return np.stack((lower[0], upper[0]))
 
-    def point_enclosure(self) -> np.ndarray:
+    def point_enclosure(
+        self,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self,)) as budget:
+                return self.point_enclosure(preparations=preparations, budget=budget)
         boxes = []
         for index, region in enumerate((self.first, self.second, self.third)):
             boxes.append(
@@ -780,23 +1061,36 @@ class TripleSurfaceIntersectionRoot(StrictModule):
                                 self.parameter_lower[2 * index : 2 * index + 2],
                                 self.parameter_upper[2 * index : 2 * index + 2],
                             )
-                        )
+                        ),
+                        preparations=preparations,
+                        budget=budget,
                     )
                 )
             )
         boxes_ = np.asarray(boxes)
         lower, upper = np.max(boxes_[:, 0], axis=0), np.min(boxes_[:, 1], axis=0)
         if np.any(lower > upper):
-            raise ValueError("The joint root lost its common source point enclosure.")
+            raise ValueError(
+                "TripleSurfaceIntersectionRoot.point_enclosure must intersect all source images; got disjoint enclosures"
+            )
         return np.stack((lower, upper))
 
     def evaluate(self) -> tuple[np.ndarray, float, bool]:
-        point = np.asarray(self.first.patch.evaluate(jnp.asarray(self.parameters[:2])))
-        return (
-            point,
-            float(np.max(np.nextafter(np.abs(self.point_enclosure() - point), np.inf))),
-            True,
-        )
+        with coordinate_source_request((self,)) as budget:
+            point = np.asarray(
+                self.first.patch.evaluate(jnp.asarray(self.parameters[:2]))
+            )
+            return (
+                point,
+                float(
+                    np.max(
+                        np.nextafter(
+                            np.abs(self.point_enclosure(budget=budget) - point), np.inf
+                        )
+                    )
+                ),
+                True,
+            )
 
     def certifies_root(
         self,
@@ -806,17 +1100,36 @@ class TripleSurfaceIntersectionRoot(StrictModule):
         /,
         *,
         source_edge_lifts: Sequence[_SourceCurveSurfaceLift] = (),
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> bool:
         """Prove equation identity and full source-parameter image inclusion.
 
-        Original edges use exact construction identities or supplied whole-edge
-        lifts. Neither point-box overlap nor a small numerical gap is evidence.
+        Source edges use construction identities or supplied whole-edge lifts;
+        point-box overlap and numerical gap alone do not establish identity.
         """
-        box = _joint_root_parameter_image(
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    root,
+                )
+            ) as budget:
+                return self.certifies_root(
+                    root,
+                    source_edge_lifts=source_edge_lifts,
+                    preparations=preparations,
+                    budget=budget,
+                )
+        box = joint_root_parameter_image(
             root,
             (self.first, self.second, self.third),
             source_edge_lifts=source_edge_lifts,
             joint_box=np.stack((self.parameter_lower, self.parameter_upper)),
+            preparations=preparations,
+            budget=budget,
         )
         return box is not None and bool(
             np.all(box[0] >= self.parameter_lower)
@@ -824,19 +1137,23 @@ class TripleSurfaceIntersectionRoot(StrictModule):
         )
 
 
-def _surface_definition_key(region: SurfaceRegion, /) -> str:
-    return canonical_fingerprint(encode_geometry(region.patch))
+def _surface_definition_key(region: intersection_curve_owner.SurfaceRegion, /) -> str:
+    return canonical_fingerprint(intersection_curve_owner.encode_geometry(region.patch))
 
 
-def _same_geometry(first: object, second: object, /) -> bool:
-    return canonical_fingerprint(encode_geometry(first)) == canonical_fingerprint(
-        encode_geometry(second)
-    )
+@checked
+def same_geometry(
+    first: intersection_curve_owner.GeometryDefinition,
+    second: intersection_curve_owner.GeometryDefinition,
+    /,
+) -> bool:
+    return canonical_fingerprint(
+        intersection_curve_owner.encode_geometry(first)
+    ) == canonical_fingerprint(intersection_curve_owner.encode_geometry(second))
 
 
 def _analytic_isoline_curve(curve: SurfaceIsoparametricCurve, /) -> AbstractCurve | None:
-    """Exact analytic specialization of a native isoline, with the SAME t atom."""
-    from fractions import Fraction as F
+    """Specialize an analytic isoline while retaining its parameter atom."""
 
     patch = curve.surface
     if isinstance(patch, CylinderPatch):
@@ -889,9 +1206,9 @@ def _analytic_isoline_curve(curve: SurfaceIsoparametricCurve, /) -> AbstractCurv
 
 def _common_source_pose(
     curve: AbstractCurve,
-    region: SurfaceRegion,
+    region: intersection_curve_owner.SurfaceRegion,
     /,
-) -> tuple[AbstractCurve, SurfaceRegion] | None:
+) -> tuple[AbstractCurve, intersection_curve_owner.SurfaceRegion] | None:
     """Source definitions of a placed edge and placed support under one pose.
 
     ``R c(t) + t0 == R s(p(t)) + t0`` iff ``c(t) == s(p(t))`` for the proved
@@ -899,307 +1216,363 @@ def _common_source_pose(
     """
     patch = region.patch
     if (
-        isinstance(curve, PlacedCurve)
+        isinstance(curve, placed_owner.PlacedCurve)
         and isinstance(curve.definition, AbstractCurve)
-        and isinstance(patch, PlacedSurface)
-        and same_source_pose(curve, patch)
+        and isinstance(patch, placed_owner.PlacedSurface)
+        and placed_owner.same_source_pose(curve, patch)
     ):
-        return curve.definition, SurfaceRegion(patch.definition, region.parameter_box)
+        return curve.definition, intersection_curve_owner.SurfaceRegion(
+            patch.definition, region.parameter_box
+        )
     return None
 
 
-def _exact_source_lift(
-    curve: AbstractCurve,
-    pcurve: CurveEvaluator,
-    region: SurfaceRegion,
+type _AffineCoefficients = tuple[tuple[Fraction, ...], tuple[Fraction, ...]]
+
+
+def _isoline_source_lift(
+    curve: SurfaceIsoparametricCurve,
+    pcurve: AbstractCurve,
+    region: intersection_curve_owner.SurfaceRegion,
+    coefficients: _AffineCoefficients | None,
     first: float,
     last: float,
     /,
 ) -> bool:
-    """An exact whole-interval construction identity, never sampled residuals."""
-    from fractions import Fraction
+    surface = region.patch
+    if same_geometry(curve.surface, surface) and same_geometry(curve.p_curve(), pcurve):
+        return True
+    # Offset normals agree across a swept profile closure only at a certified
+    # tangent-continuous join, not merely at matching profile positions.
+    base = surface.base if isinstance(surface, OffsetSurface) else surface
+    expected = intersection_curve_owner.affine_curve_coefficients(
+        curve.p_curve(), np.zeros(2, dtype=np.float64)
+    )
+    fixed, free = curve.fixed_axis, 1 - curve.fixed_axis
+    if (
+        same_geometry(curve.surface, surface)
+        and isinstance(base, (RevolutionSurface, ExtrusionSurface))
+        and isinstance(base.curve, BSplineCurve)
+        and coefficients is not None
+        and expected is not None
+        and coefficients[1] == expected[1]
+        and coefficients[0][free] == expected[0][free]
+    ):
+        lower, upper = base.curve.parameter_domain
+        if {coefficients[0][fixed], expected[0][fixed]} == {
+            Fraction(lower),
+            Fraction(upper),
+        } and closure_tangent_continuous(
+            base, fixed, lower, upper, tangent=isinstance(surface, OffsetSurface)
+        ):
+            return True
+    analytic = _analytic_isoline_curve(curve)
+    return analytic is not None and exact_source_lift(
+        analytic, pcurve, region, first, last
+    )
 
-    from ._correspondence import _circle_correspondence, _plane_correspondence
-    from ._intersection_curve import _affine_curve_coefficients, pcurve_periodic_source
-    from ._patches import _closure_tangent_continuous, BSplineCurve, OffsetSurface
 
-    if not isinstance(curve, AbstractCurve) or not isinstance(pcurve, AbstractCurve):
+def _cylinder_affine_lift(
+    curve: AbstractCurve, surface: CylinderPatch, coefficients: _AffineCoefficients, /
+) -> bool:
+    constant, derivative = coefficients
+    if constant[0] != 0 or derivative[0] != 0:
+        return False
+    actual = intersection_curve_owner.affine_curve_coefficients(
+        curve, np.zeros(3, dtype=np.float64)
+    )
+    if actual is None:
+        return False
+    radius = Fraction(float(surface.radius))
+    origin = tuple(
+        Fraction(float(a))
+        + radius * Fraction(float(b))
+        + constant[1] * Fraction(float(c))
+        for a, b, c in zip(
+            np.asarray(surface.origin),
+            np.asarray(surface.first_axis),
+            np.asarray(surface.axis),
+            strict=True,
+        )
+    )
+    tangent = tuple(
+        derivative[1] * value for value in rational_vector(np.asarray(surface.axis))
+    )
+    return actual == (origin, tangent)
+
+
+def _sphere_circle_lift(
+    curve: CircleCurve, surface: SpherePatch, coefficients: _AffineCoefficients, /
+) -> bool:
+    return (
+        coefficients[0] == (Fraction(0), Fraction(0))
+        and coefficients[1][0] == 0
+        and abs(coefficients[1][1]) == 1
+        and np.array_equal(np.asarray(curve.center), np.asarray(surface.center))
+        and np.array_equal(np.asarray(curve.radius), np.asarray(surface.radius))
+        and np.array_equal(np.asarray(curve.first_axis), np.asarray(surface.first_axis))
+        and np.array_equal(
+            np.asarray(curve.second_axis),
+            int(coefficients[1][1]) * np.asarray(surface.axis),
+        )
+    )
+
+
+def _analytic_source_lift(
+    curve: AbstractCurve,
+    surface: AbstractSurfacePatch,
+    coefficients: _AffineCoefficients,
+    /,
+) -> bool:
+    constant, derivative = coefficients
+    match surface:
+        case ExtrusionSurface():
+            return (
+                constant == (Fraction(0), Fraction(0))
+                and derivative == (Fraction(1), Fraction(0))
+                and same_geometry(curve, surface.curve)
+            )
+        case RevolutionSurface():
+            return (
+                constant == (Fraction(0), Fraction(0))
+                and derivative == (Fraction(0), Fraction(1))
+                and same_geometry(curve, surface.curve)
+            )
+        case CylinderPatch():
+            return _cylinder_affine_lift(curve, surface, coefficients)
+        case SpherePatch() if isinstance(curve, CircleCurve):
+            return _sphere_circle_lift(curve, surface, coefficients)
+        case _:
+            return False
+
+
+@checked
+def exact_source_lift(
+    curve: AbstractCurve,
+    pcurve: intersection_curve_owner.CurveEvaluator,
+    region: intersection_curve_owner.SurfaceRegion,
+    first: float,
+    last: float,
+    /,
+) -> bool:
+    """Prove a whole-interval carrier construction identity."""
+    if not isinstance(pcurve, AbstractCurve):
         return False
     common = _common_source_pose(curve, region)
     if common is not None:
-        return _exact_source_lift(common[0], pcurve, common[1], first, last)
+        return exact_source_lift(common[0], pcurve, common[1], first, last)
     curve.validate_query_range(first, last)
     pcurve.validate_query_range(first, last)
-    source = pcurve_periodic_source(pcurve, region.patch)
+    source = intersection_curve_owner.pcurve_periodic_source(pcurve, region.patch)
     if source is None or not isinstance(source[0], AbstractCurve):
         return False
     pcurve = source[0]
     surface = region.patch
-    coefficients = _affine_curve_coefficients(pcurve, np.zeros(2))
+    coefficients = intersection_curve_owner.affine_curve_coefficients(
+        pcurve, np.zeros(2, dtype=np.float64)
+    )
     if isinstance(curve, SurfaceIsoparametricCurve):
-        if _same_geometry(curve.surface, surface) and _same_geometry(
-            curve.p_curve(), pcurve
-        ):
-            return True
-        # The isoline at the opposite end of an exactly closed swept profile
-        # is the same physical curve. An offset's normals also agree there
-        # only across an exact tangent-continuous (G1) closure.
-        base = surface.base if isinstance(surface, OffsetSurface) else surface
-        expected = _affine_curve_coefficients(curve.p_curve(), np.zeros(2))
-        fixed, free = curve.fixed_axis, 1 - curve.fixed_axis
-        if (
-            _same_geometry(curve.surface, surface)
-            and isinstance(base, (RevolutionSurface, ExtrusionSurface))
-            and isinstance(base.curve, BSplineCurve)
-            and coefficients is not None
-            and expected is not None
-            and coefficients[1] == expected[1]
-            and coefficients[0][free] == expected[0][free]
-        ):
-            lower, upper = base.curve.parameter_domain
-            if {coefficients[0][fixed], expected[0][fixed]} == {
-                Fraction(lower),
-                Fraction(upper),
-            } and _closure_tangent_continuous(
-                base,
-                fixed,
-                lower,
-                upper,
-                tangent=isinstance(surface, OffsetSurface),
-            ):
-                return True
-        analytic = _analytic_isoline_curve(curve)
-        return analytic is not None and _exact_source_lift(
-            analytic, pcurve, region, first, last
-        )
-    if coefficients is not None:
-        constant, derivative = coefficients
-        if isinstance(surface, ExtrusionSurface):
-            if (
-                constant == (Fraction(0), Fraction(0))
-                and derivative == (Fraction(1), Fraction(0))
-                and _same_geometry(curve, surface.curve)
-            ):
-                return True
-        if isinstance(surface, RevolutionSurface):
-            if (
-                constant == (Fraction(0), Fraction(0))
-                and derivative == (Fraction(0), Fraction(1))
-                and _same_geometry(curve, surface.curve)
-            ):
-                return True
-        if isinstance(surface, CylinderPatch) and constant[0] == 0 and derivative[0] == 0:
-            actual = _affine_curve_coefficients(curve, np.zeros(3))
-            if actual is not None:
-                radius = Fraction(float(surface.radius))
-                origin = tuple(
-                    Fraction(float(a))
-                    + radius * Fraction(float(b))
-                    + constant[1] * Fraction(float(c))
-                    for a, b, c in zip(
-                        np.asarray(surface.origin),
-                        np.asarray(surface.first_axis),
-                        np.asarray(surface.axis),
-                        strict=True,
-                    )
-                )
-                tangent = tuple(
-                    derivative[1] * Fraction(float(value))
-                    for value in np.asarray(surface.axis)
-                )
-                if actual == (origin, tangent):
-                    return True
-    if (
-        isinstance(surface, SpherePatch)
-        and isinstance(curve, CircleCurve)
-        and coefficients is not None
-    ):
-        if (
-            coefficients[0] == (Fraction(0), Fraction(0))
-            and coefficients[1][0] == 0
-            and abs(coefficients[1][1]) == 1
-            and np.array_equal(np.asarray(curve.center), np.asarray(surface.center))
-            and np.array_equal(np.asarray(curve.radius), np.asarray(surface.radius))
-            and np.array_equal(
-                np.asarray(curve.first_axis), np.asarray(surface.first_axis)
-            )
-            and np.array_equal(
-                np.asarray(curve.second_axis),
-                int(coefficients[1][1]) * np.asarray(surface.axis),
-            )
-        ):
-            return True
-    if _circle_correspondence(curve, pcurve, surface) == 0.0:
+        return _isoline_source_lift(curve, pcurve, region, coefficients, first, last)
+    if coefficients is not None and _analytic_source_lift(curve, surface, coefficients):
+        return True
+    if source_correspondence_owner.circle_correspondence(curve, pcurve, surface) == 0.0:
         return True
     return (
         isinstance(surface, PlanePatch)
-        and _plane_correspondence(
-            curve,
-            pcurve,
-            surface,
-            first,
-            last,
-            np.zeros(3),
+        and source_correspondence_owner.plane_correspondence(
+            curve, pcurve, surface, first, last, np.zeros(3, dtype=np.float64)
         )
         == 0.0
     )
 
 
-def _native_edge_pcurve(
-    curve: AbstractCurve, region: SurfaceRegion, /
+def _cylinder_line_pcurve(
+    curve: LineCurve,
+    region: intersection_curve_owner.SurfaceRegion,
+    patch: CylinderPatch,
+    /,
 ) -> AbstractCurve | None:
-    """Recover only exact native support constructions, retaining source phase."""
-    from fractions import Fraction as F
-
-    common = _common_source_pose(curve, region)
-    if common is not None:
-        return _native_edge_pcurve(common[0], common[1])
-    patch = region.patch
-    if isinstance(curve, SurfaceIsoparametricCurve) and _same_geometry(
-        curve.surface, patch
-    ):
-        return curve.p_curve()
-    if isinstance(curve, SurfaceIsoparametricCurve):
-        analytic = _analytic_isoline_curve(curve)
-        return None if analytic is None else _native_edge_pcurve(analytic, region)
-    if isinstance(patch, ExtrusionSurface) and _same_geometry(curve, patch.curve):
-        return LineCurve(np.zeros(2), np.asarray((1.0, 0.0)))
-    if isinstance(patch, RevolutionSurface) and _same_geometry(curve, patch.curve):
-        return LineCurve(np.zeros(2), np.asarray((0.0, 1.0)))
-    if isinstance(curve, CircleCurve) and isinstance(patch, SpherePatch):
-        for sign in (1.0, -1.0):
-            candidate = LineCurve(np.zeros(2), np.asarray((0.0, sign)))
-            if _exact_source_lift(curve, candidate, region, 0.0, 1.0):
-                return candidate
-    if isinstance(curve, LineCurve) and isinstance(patch, CylinderPatch):
-        axis = tuple(F(float(value)) for value in np.asarray(patch.axis))
-        nonzero = next((index for index, value in enumerate(axis) if value), None)
-        if nonzero is not None:
-            delta = tuple(
-                F(float(a)) - F(float(b)) - F(float(patch.radius)) * F(float(c))
-                for a, b, c in zip(
-                    np.asarray(curve.origin),
-                    np.asarray(patch.origin),
-                    np.asarray(patch.first_axis),
-                    strict=True,
-                )
-            )
-            tangent = tuple(F(float(value)) for value in np.asarray(curve.direction))
-            offset, scale = (
-                delta[nonzero] / axis[nonzero],
-                tangent[nonzero] / axis[nonzero],
-            )
-            if scale and F(float(offset)) == offset and F(float(scale)) == scale:
-                candidate = LineCurve(
-                    np.asarray((0.0, float(offset))), np.asarray((0.0, float(scale)))
-                )
-                if _exact_source_lift(curve, candidate, region, 0.0, 1.0):
-                    return candidate
-    if isinstance(curve, CircleCurve) and isinstance(patch, CylinderPatch):
-        delta = [
-            F(float(a)) - F(float(b))
-            for a, b in zip(
-                np.asarray(curve.center), np.asarray(patch.origin), strict=True
-            )
-        ]
-        direction = [F(float(a)) for a in np.asarray(patch.axis)]
-        axis = next((i for i, value in enumerate(direction) if value), None)
-        if axis is not None:
-            height = delta[axis] / direction[axis]
-            if (
-                all(a == height * b for a, b in zip(delta, direction, strict=True))
-                and F(float(height)) == height
-            ):
-                candidate = LineCurve(
-                    np.asarray((0.0, float(height))), np.asarray((1.0, 0.0))
-                )
-                if _exact_source_lift(curve, candidate, region, 0.0, 1.0):
-                    return candidate
-    if isinstance(patch, PlanePatch) and isinstance(curve, (LineCurve, CircleCurve)):
-        axes = [
-            [F(float(value)) for value in np.asarray(axis)]
-            for axis in (patch.first_axis, patch.second_axis)
-        ]
-        gram = [
-            [sum((a * b for a, b in zip(x, y, strict=True)), F(0)) for y in axes]
-            for x in axes
-        ]
-        determinant = gram[0][0] * gram[1][1] - gram[0][1] * gram[1][0]
-        if not determinant:
-            return None
-
-        def coordinates(vector: np.ndarray, translated: bool) -> np.ndarray | None:
-            values = [
-                F(float(value)) - (F(float(origin)) if translated else F(0))
-                for value, origin in zip(vector, np.asarray(patch.origin), strict=True)
-            ]
-            dots = [
-                sum((a * b for a, b in zip(axis, values, strict=True)), F(0))
-                for axis in axes
-            ]
-            uv = (
-                (dots[0] * gram[1][1] - dots[1] * gram[0][1]) / determinant,
-                (dots[1] * gram[0][0] - dots[0] * gram[1][0]) / determinant,
-            )
-            if any(F(float(value)) != value for value in uv):
-                return None
-            return np.asarray(tuple(float(value) for value in uv))
-
-        origin = coordinates(
-            np.asarray(curve.origin if isinstance(curve, LineCurve) else curve.center),
-            True,
+    axis = rational_vector(np.asarray(patch.axis))
+    nonzero = next((index for index, value in enumerate(axis) if value), None)
+    if nonzero is None:
+        return None
+    delta = tuple(
+        F(float(a)) - F(float(b)) - F(float(patch.radius)) * F(float(c))
+        for a, b, c in zip(
+            np.asarray(curve.origin),
+            np.asarray(patch.origin),
+            np.asarray(patch.first_axis),
+            strict=True,
         )
-        first = coordinates(
-            np.asarray(
-                curve.direction if isinstance(curve, LineCurve) else curve.first_axis
-            ),
-            False,
-        )
-        if origin is None or first is None or not np.any(first):
-            # A direction normal to the plane has no planar lift.
-            return None
-        if isinstance(curve, LineCurve):
-            return LineCurve(origin, first)
-        second = coordinates(np.asarray(curve.second_axis), False)
-        if second is not None and np.any(second):
-            return CircleCurve(origin, first, second, curve.radius)
-    return None
+    )
+    tangent = rational_vector(np.asarray(curve.direction))
+    offset, scale = delta[nonzero] / axis[nonzero], tangent[nonzero] / axis[nonzero]
+    if not scale or F(float(offset)) != offset or F(float(scale)) != scale:
+        return None
+    candidate = LineCurve(
+        np.asarray((0.0, float(offset))), np.asarray((0.0, float(scale)))
+    )
+    return candidate if exact_source_lift(curve, candidate, region, 0.0, 1.0) else None
 
 
-def _source_pcurve_image(
-    curve: CurveEvaluator, first: float, last: float, /
-) -> np.ndarray:
-    """Preserve exact constant chart walls in affine source-coordinate images."""
-    from fractions import Fraction as F
+def _cylinder_circle_pcurve(
+    curve: CircleCurve,
+    region: intersection_curve_owner.SurfaceRegion,
+    patch: CylinderPatch,
+    /,
+) -> AbstractCurve | None:
+    delta = tuple(
+        F(float(a)) - F(float(b))
+        for a, b in zip(np.asarray(curve.center), np.asarray(patch.origin), strict=True)
+    )
+    direction = rational_vector(np.asarray(patch.axis))
+    axis = next((i for i, value in enumerate(direction) if value), None)
+    if axis is None:
+        return None
+    height = delta[axis] / direction[axis]
+    if not all(a == height * b for a, b in zip(delta, direction, strict=True)):
+        return None
+    if F(float(height)) != height:
+        return None
+    candidate = LineCurve(np.asarray((0.0, float(height))), np.asarray((1.0, 0.0)))
+    return candidate if exact_source_lift(curve, candidate, region, 0.0, 1.0) else None
 
-    from ._intersection_curve import (
-        _affine_curve_coefficients,
-        pcurve_periodic_source,
-        PeriodicPCurve,
+
+def _plane_curve_coordinates(
+    vector: np.ndarray,
+    translated: bool,
+    patch: PlanePatch,
+    axes: tuple[RationalVector, RationalVector],
+    gram: list[list[Fraction]],
+    /,
+) -> np.ndarray | None:
+    values = tuple(
+        F(float(value)) - (F(float(origin)) if translated else F(0))
+        for value, origin in zip(vector, np.asarray(patch.origin), strict=True)
+    )
+    dots = [rational_dot(axis, values) for axis in axes]
+    solution = solve_exact(gram, [[dots[0]], [dots[1]]])
+    uv = (solution[0][0], solution[1][0])
+    if any(F(float(value)) != value for value in uv):
+        return None
+    return np.asarray(tuple(float(value) for value in uv))
+
+
+def _plane_native_pcurve(
+    curve: LineCurve | CircleCurve, patch: PlanePatch, /
+) -> AbstractCurve | None:
+    axes = (
+        rational_vector(np.asarray(patch.first_axis)),
+        rational_vector(np.asarray(patch.second_axis)),
+    )
+    gram = [[rational_dot(x, y) for y in axes] for x in axes]
+    if not gram[0][0] * gram[1][1] - gram[0][1] * gram[1][0]:
+        return None
+    origin = _plane_curve_coordinates(
+        np.asarray(curve.origin if isinstance(curve, LineCurve) else curve.center),
+        True,
+        patch,
+        axes,
+        gram,
+    )
+    first = _plane_curve_coordinates(
+        np.asarray(curve.direction if isinstance(curve, LineCurve) else curve.first_axis),
+        False,
+        patch,
+        axes,
+        gram,
+    )
+    if origin is None or first is None or not np.any(first):
+        return None
+    if isinstance(curve, LineCurve):
+        return LineCurve(origin, first)
+    second = _plane_curve_coordinates(
+        np.asarray(curve.second_axis), False, patch, axes, gram
+    )
+    return (
+        CircleCurve(origin, first, second, curve.radius)
+        if second is not None and np.any(second)
+        else None
     )
 
-    if isinstance(curve, PeriodicPCurve):
-        source = pcurve_periodic_source(curve, curve.patch)
+
+@checked
+def native_edge_pcurve(
+    curve: AbstractCurve, region: intersection_curve_owner.SurfaceRegion, /
+) -> AbstractCurve | None:
+    """Recover native support constructions while retaining the source parameter."""
+    common = _common_source_pose(curve, region)
+    if common is not None:
+        return native_edge_pcurve(common[0], common[1])
+    patch = region.patch
+    match curve, patch:
+        case SurfaceIsoparametricCurve(), _:
+            if same_geometry(curve.surface, patch):
+                return curve.p_curve()
+            analytic = _analytic_isoline_curve(curve)
+            return None if analytic is None else native_edge_pcurve(analytic, region)
+        case _, ExtrusionSurface() if same_geometry(curve, patch.curve):
+            return LineCurve(np.zeros(2, dtype=np.float64), np.asarray((1.0, 0.0)))
+        case _, RevolutionSurface() if same_geometry(curve, patch.curve):
+            return LineCurve(np.zeros(2, dtype=np.float64), np.asarray((0.0, 1.0)))
+        case CircleCurve(), SpherePatch():
+            for sign in (1.0, -1.0):
+                candidate = LineCurve(
+                    np.zeros(2, dtype=np.float64), np.asarray((0.0, sign))
+                )
+                if exact_source_lift(curve, candidate, region, 0.0, 1.0):
+                    return candidate
+            return None
+        case LineCurve(), CylinderPatch():
+            return _cylinder_line_pcurve(curve, region, patch)
+        case CircleCurve(), CylinderPatch():
+            return _cylinder_circle_pcurve(curve, region, patch)
+        case ((LineCurve() | CircleCurve()), PlanePatch()):
+            return _plane_native_pcurve(curve, patch)
+        case _:
+            return None
+
+
+@checked
+def source_pcurve_image(
+    curve: intersection_curve_owner.CurveEvaluator,
+    first: float,
+    last: float,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> np.ndarray:
+    """Preserve constant chart walls in affine source-coordinate images."""
+
+    if isinstance(curve, intersection_curve_owner.PeriodicPCurve):
+        source = intersection_curve_owner.pcurve_periodic_source(curve, curve.patch)
         if source is None:
             raise ValueError(
-                "The p-curve has no exact native periodic source factorization."
+                "source_pcurve_image.curve must have a periodic source factorization; got unsupported source"
             )
         base, shifts = source
-        image = _source_pcurve_image(base, first, last)
+        image = source_pcurve_image(
+            base, first, last, preparations=preparations, budget=budget
+        )
         if any(shifts):
-            offset = PeriodicPCurve(base, curve.patch, shifts).period_offset_bounds()
+            offset = intersection_curve_owner.PeriodicPCurve(
+                base, curve.patch, shifts
+            ).period_offset_bounds()
             image = np.stack(interval_add((image[0], image[1]), (offset[0], offset[1])))
         return image
     coefficients = (
-        _affine_curve_coefficients(curve, np.zeros(2))
+        intersection_curve_owner.affine_curve_coefficients(
+            curve, np.zeros(2, dtype=np.float64)
+        )
         if isinstance(curve, AbstractCurve)
         else None
     )
     if coefficients is None:
         return np.asarray(
-            curve.enclosure(first, last)
+            curve.enclosure(first, last, preparations=preparations, budget=budget)
             if isinstance(curve, AbstractTrimCurve)
-            else curve.bounding_box(first, last)
+            else curve.bounding_box(first, last, preparations=preparations, budget=budget)
         )
     values = []
     for constant, derivative in zip(*coefficients, strict=True):
@@ -1215,50 +1588,47 @@ def _source_pcurve_image(
 
 
 def _joint_coordinate_image(
-    region: SurfaceRegion,
-    regions: tuple[SurfaceRegion, ...],
+    region: intersection_curve_owner.SurfaceRegion,
+    regions: tuple[intersection_curve_owner.SurfaceRegion, ...],
     box: np.ndarray,
     /,
 ) -> np.ndarray:
-    """Intersect joint components with exact native plane-support equations."""
-    from fractions import Fraction as F
+    """Intersect joint components with rational plane-support equations."""
 
     result = box.copy()
     patch = region.patch
     if not isinstance(patch, (CylinderPatch, PlanePatch)):
         return result
 
-    def rational(vector: object) -> tuple[F, ...]:
-        return tuple(F(float(value)) for value in np.asarray(vector))
-
-    def dot(first: tuple[F, ...], second: tuple[F, ...]) -> F:
-        return sum((a * b for a, b in zip(first, second, strict=True)), F(0))
-
     for supporting in regions:
         plane = supporting.patch
         if not isinstance(plane, PlanePatch):
             continue
-        a, b = rational(plane.first_axis), rational(plane.second_axis)
-        normal = (
-            a[1] * b[2] - a[2] * b[1],
-            a[2] * b[0] - a[0] * b[2],
-            a[0] * b[1] - a[1] * b[0],
-        )
+        a = rational_vector(np.asarray(plane.first_axis))
+        b = rational_vector(np.asarray(plane.second_axis))
+        normal = rational_cross(a, b)
         delta = tuple(
             a - b
-            for a, b in zip(rational(patch.origin), rational(plane.origin), strict=True)
+            for a, b in zip(
+                rational_vector(np.asarray(patch.origin)),
+                rational_vector(np.asarray(plane.origin)),
+                strict=True,
+            )
         )
-        constant = dot(normal, delta)
+        constant = rational_dot(normal, delta)
         if isinstance(patch, CylinderPatch):
-            if dot(normal, rational(patch.first_axis)) or dot(
-                normal, rational(patch.second_axis)
-            ):
+            if rational_dot(
+                normal, rational_vector(np.asarray(patch.first_axis))
+            ) or rational_dot(normal, rational_vector(np.asarray(patch.second_axis))):
                 continue
-            axis, coefficient = 1, dot(normal, rational(patch.axis))
+            axis, coefficient = (
+                1,
+                rational_dot(normal, rational_vector(np.asarray(patch.axis))),
+            )
         else:
             coefficients = (
-                dot(normal, rational(patch.first_axis)),
-                dot(normal, rational(patch.second_axis)),
+                rational_dot(normal, rational_vector(np.asarray(patch.first_axis))),
+                rational_dot(normal, rational_vector(np.asarray(patch.second_axis))),
             )
             active = [index for index, value in enumerate(coefficients) if value]
             if len(active) != 1:
@@ -1268,25 +1638,23 @@ def _joint_coordinate_image(
         if not coefficient:
             continue
         exact = -constant / coefficient
-        lower = upper = float(exact)
-        if F(lower) > exact:
-            lower = np.nextafter(lower, -np.inf)
-        if F(upper) < exact:
-            upper = np.nextafter(upper, np.inf)
+        lower, upper = fraction_down(exact), fraction_up(exact)
         result[0, axis] = max(result[0, axis], lower)
         result[1, axis] = min(result[1, axis], upper)
         if result[0, axis] > result[1, axis]:
             raise ValueError(
-                "A joint root component contradicts its exact support equation."
+                "joint_root.parameters must intersect the support equation; got disjoint enclosures"
             )
     return result
 
 
 def _curve_plane_coordinate_image(
-    curve: AbstractCurve, region: SurfaceRegion, box: np.ndarray, /
+    curve: AbstractCurve,
+    region: intersection_curve_owner.SurfaceRegion,
+    box: np.ndarray,
+    /,
 ) -> np.ndarray:
-    """Exact constant planar UV components implied by the spatial source edge."""
-    from fractions import Fraction as F
+    """Return constant planar UV components implied by the spatial source edge."""
 
     if isinstance(curve, SurfaceIsoparametricCurve):
         analytic = _analytic_isoline_curve(curve)
@@ -1300,29 +1668,18 @@ def _curve_plane_coordinate_image(
         curve, (LineCurve, CircleCurve)
     ):
         return box
-    axes = np.asarray(
-        [
-            [F(float(value)) for value in np.asarray(axis)]
-            for axis in (plane.first_axis, plane.second_axis)
-        ],
-        dtype=object,
+    axes = (
+        rational_vector(np.asarray(plane.first_axis)),
+        rational_vector(np.asarray(plane.second_axis)),
     )
-    gram = axes @ axes.T
-    determinant = gram[0, 0] * gram[1, 1] - gram[0, 1] * gram[1, 0]
-    if not determinant:
+    gram = [[rational_dot(x, y) for y in axes] for x in axes]
+    if not gram[0][0] * gram[1][1] - gram[0][1] * gram[1][0]:
         return box
-    inverse = (
-        np.asarray(((gram[1, 1], -gram[0, 1]), (-gram[1, 0], gram[0, 0])), dtype=object)
-        / determinant
-    )
-    dual = inverse @ axes
+    dual = tuple(tuple(row) for row in solve_exact(gram, [list(axis) for axis in axes]))
     origin = curve.origin if isinstance(curve, LineCurve) else curve.center
-    relative = np.asarray(
-        [
-            F(float(a)) - F(float(b))
-            for a, b in zip(np.asarray(origin), np.asarray(plane.origin), strict=True)
-        ],
-        dtype=object,
+    relative = tuple(
+        F(float(a)) - F(float(b))
+        for a, b in zip(np.asarray(origin), np.asarray(plane.origin), strict=True)
     )
     varying = (
         (curve.direction,)
@@ -1332,41 +1689,32 @@ def _curve_plane_coordinate_image(
     result = box.copy()
     for coordinate in range(2):
         if any(
-            sum(
-                (
-                    a * F(float(b))
-                    for a, b in zip(dual[coordinate], np.asarray(vector), strict=True)
-                ),
-                F(0),
-            )
+            rational_dot(dual[coordinate], rational_vector(np.asarray(vector)))
             for vector in varying
         ):
             continue
-        exact = sum(
-            (a * b for a, b in zip(dual[coordinate], relative, strict=True)), F(0)
-        )
-        lower = upper = float(exact)
-        if F(lower) > exact:
-            lower = np.nextafter(lower, -np.inf)
-        if F(upper) < exact:
-            upper = np.nextafter(upper, np.inf)
+        exact = rational_dot(dual[coordinate], relative)
+        lower, upper = fraction_down(exact), fraction_up(exact)
         result[0, coordinate] = max(result[0, coordinate], lower)
         result[1, coordinate] = min(result[1, coordinate], upper)
         if result[0, coordinate] > result[1, coordinate]:
             raise ValueError(
-                "A spatial root contradicts its exact planar source coordinate."
+                "spatial_root.parameters must intersect planar source coordinates; got disjoint enclosures"
             )
     return result
 
 
 def _pcurve_source_chart(
-    curve: CurveEvaluator,
+    curve: intersection_curve_owner.CurveEvaluator,
     /,
-) -> tuple[CurveEvaluator, np.ndarray, np.ndarray, np.ndarray, tuple[str, ...]]:
-    """Original chart, exact affine operation and independent symbolic periods."""
-    from fractions import Fraction
-
-    from ._intersection_curve import AffinePCurve, PeriodicPCurve
+) -> tuple[
+    intersection_curve_owner.CurveEvaluator,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    tuple[str, ...],
+]:
+    """Return the source chart, rational affine map and symbolic periods."""
 
     matrix = np.asarray(
         ((Fraction(1), Fraction(0)), (Fraction(0), Fraction(1))), dtype=object
@@ -1374,37 +1722,76 @@ def _pcurve_source_chart(
     offset = np.asarray((Fraction(0), Fraction(0)), dtype=object)
     periods = np.asarray((Fraction(0), Fraction(0)), dtype=object)
     patches = []
-    while isinstance(curve, (CurveTrimSegment, AffinePCurve, PeriodicPCurve)):
-        if isinstance(curve, AffinePCurve):
-            offset = offset + matrix @ np.asarray(curve.offset, dtype=object)
-            matrix = matrix @ np.asarray(curve.matrix, dtype=object)
-            curve = curve.curve
-        elif isinstance(curve, PeriodicPCurve):
-            periods = periods + matrix @ np.asarray(curve.period_shifts, dtype=object)
-            patches.append(canonical_fingerprint(encode_geometry(curve.patch)))
-            curve = curve.source_curve
-        else:
-            curve = curve.curve
+    while isinstance(
+        curve,
+        (
+            intersection_curve_owner.CurveTrimSegment,
+            intersection_curve_owner.AffinePCurve,
+            intersection_curve_owner.PeriodicPCurve,
+        ),
+    ):
+        match curve:
+            case intersection_curve_owner.AffinePCurve():
+                offset = offset + matrix @ np.asarray(curve.offset, dtype=object)
+                matrix = matrix @ np.asarray(curve.matrix, dtype=object)
+                curve = curve.curve
+            case intersection_curve_owner.PeriodicPCurve():
+                periods = periods + matrix @ np.asarray(curve.period_shifts, dtype=object)
+                patches.append(
+                    canonical_fingerprint(
+                        intersection_curve_owner.encode_geometry(curve.patch)
+                    )
+                )
+                curve = curve.source_curve
+            case intersection_curve_owner.CurveTrimSegment():
+                curve = curve.curve
     return curve, matrix, offset, periods, tuple(patches)
 
 
 def _pcurve_parameter_image(
-    curve: CurveEvaluator, lower: float, upper: float, /
-) -> tuple[SurfaceRegion, SurfaceRegion, np.ndarray] | None:
-    """Actual source coordinates behind a bounded p-curve root parameter."""
-    from ._intersection_curve import AffinePCurve, PeriodicPCurve
+    curve: intersection_curve_owner.CurveEvaluator,
+    lower: float,
+    upper: float,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> (
+    tuple[
+        intersection_curve_owner.SurfaceRegion,
+        intersection_curve_owner.SurfaceRegion,
+        np.ndarray,
+    ]
+    | None
+):
+    """Return source coordinates behind a bounded p-curve root parameter."""
 
     source_first: float | None = None
     source_last: float | None = None
-    while isinstance(curve, (CurveTrimSegment, AffinePCurve, PeriodicPCurve)):
-        if isinstance(curve, CurveTrimSegment):
+    while isinstance(
+        curve,
+        (
+            intersection_curve_owner.CurveTrimSegment,
+            intersection_curve_owner.AffinePCurve,
+            intersection_curve_owner.PeriodicPCurve,
+        ),
+    ):
+        if isinstance(curve, intersection_curve_owner.CurveTrimSegment):
             source_first, source_last = curve.first, curve.last
             interval = curve.carrier_parameter_enclosure(
-                lower, upper, source_extension=True
+                lower,
+                upper,
+                source_extension=True,
+                preparations=preparations,
+                budget=budget,
             )
             lower, upper = float(interval[0]), float(interval[1])
-        curve = curve.source_curve if isinstance(curve, PeriodicPCurve) else curve.curve
-    if not isinstance(curve, IntersectionPCurve):
+        curve = (
+            curve.source_curve
+            if isinstance(curve, intersection_curve_owner.PeriodicPCurve)
+            else curve.curve
+        )
+    if not isinstance(curve, intersection_curve_owner.IntersectionPCurve):
         return None
     if curve.reversed:
         total = interval_add(
@@ -1413,9 +1800,8 @@ def _pcurve_parameter_image(
         )
         image = interval_subtract(total, (np.asarray(lower), np.asarray(upper)))
         lower, upper = float(image[0]), float(image[1])
-    from ._intersection_curve import _pcurve_chart_support
 
-    head, tail = _pcurve_chart_support(
+    head, tail = intersection_curve_owner.pcurve_chart_support(
         curve,
         curve.first if source_first is None else source_first,
         curve.last if source_last is None else source_last,
@@ -1426,121 +1812,246 @@ def _pcurve_parameter_image(
         minimum_chart=head,
         maximum_chart=tail,
         source_extension=True,
+        preparations=preparations,
+        budget=budget,
     )
     box = np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0)))
     return curve.curve.first, curve.curve.second, box
 
 
-def _joint_root_parameter_image(
+def _image_in_joint_box(
+    image: np.ndarray, index: int, joint_box: np.ndarray | None, /
+) -> bool:
+    return joint_box is None or bool(
+        np.all(image[0] >= joint_box[0, 2 * index : 2 * index + 2])
+        and np.all(image[1] <= joint_box[1, 2 * index : 2 * index + 2])
+    )
+
+
+class _RootContributions(StrictModule):
+    images: dict[str, list[np.ndarray]]
+
+
+def _native_curve_root_images(
+    root: CurveSurfaceIntersectionRoot,
+    curve: AbstractCurve,
+    parameters: np.ndarray,
+    regions: tuple[
+        intersection_curve_owner.SurfaceRegion,
+        intersection_curve_owner.SurfaceRegion,
+        intersection_curve_owner.SurfaceRegion,
+    ],
+    lifts: Sequence[_SourceCurveSurfaceLift],
+    joint_box: np.ndarray | None,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> _RootContributions:
+    contributions: dict[str, list[np.ndarray]] = {}
+    first, last = float(parameters[0, 0]), float(parameters[1, 0])
+    for index, region in enumerate(regions):
+        key = _surface_definition_key(region)
+        if key == _surface_definition_key(root.surface):
+            continue
+        images: list[np.ndarray] = []
+        pcurve = native_edge_pcurve(curve, region)
+        if pcurve is not None and exact_source_lift(curve, pcurve, region, first, last):
+            images.append(
+                source_pcurve_image(
+                    pcurve, first, last, preparations=preparations, budget=budget
+                )
+            )
+        for lift in lifts:
+            if (
+                _surface_definition_key(lift.surface) == key
+                and same_geometry(lift.curve, curve)
+                and lift.first <= first <= last <= lift.last
+                and exact_source_lift(curve, lift.pcurve, region, lift.first, lift.last)
+            ):
+                images.append(
+                    source_pcurve_image(
+                        lift.pcurve, first, last, preparations=preparations, budget=budget
+                    )
+                )
+        for image in images:
+            # Declared UV sheets are alternatives, not intersectable copies.
+            if _image_in_joint_box(image, index, joint_box):
+                contributions.setdefault(key, []).append(image)
+    return _RootContributions(images=contributions)
+
+
+def _curve_surface_root_images(
+    root: CurveSurfaceIntersectionRoot,
+    parameters: np.ndarray,
+    regions: tuple[
+        intersection_curve_owner.SurfaceRegion,
+        intersection_curve_owner.SurfaceRegion,
+        intersection_curve_owner.SurfaceRegion,
+    ],
+    lifts: Sequence[_SourceCurveSurfaceLift],
+    joint_box: np.ndarray | None,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> _RootContributions:
+    match root.curve:
+        case intersection_curve_owner.IntersectionCurve() as curve:
+            boxes = curve.parameter_enclosures(
+                float(parameters[0, 0]),
+                float(parameters[1, 0]),
+                source_extension=True,
+                preparations=preparations,
+                budget=budget,
+            )
+            coupled = np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0)))
+            contributions: dict[str, list[np.ndarray]] = {}
+            for region, image in (
+                (curve.first, coupled[:, :2]),
+                (curve.second, coupled[:, 2:]),
+            ):
+                contributions.setdefault(_surface_definition_key(region), []).append(
+                    image
+                )
+        case AbstractCurve() as curve:
+            phase = _native_curve_root_images(
+                root,
+                curve,
+                parameters,
+                regions,
+                lifts,
+                joint_box,
+                preparations=preparations,
+                budget=budget,
+            )
+            contributions = phase.images
+        case _:
+            raise TypeError(
+                f"root.curve must be a supported carrier; got {type(root.curve).__name__}"
+            )
+    contributions.setdefault(_surface_definition_key(root.surface), []).append(
+        parameters[:, 1:]
+    )
+    return _RootContributions(images=contributions)
+
+
+def _intersection_trim_root_images(
+    root: TrimIntersectionRoot,
+    parameters: np.ndarray,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> _RootContributions | None:
+    images: list[
+        tuple[
+            intersection_curve_owner.SurfaceRegion,
+            intersection_curve_owner.SurfaceRegion,
+            np.ndarray,
+        ]
+    ] = []
+    anchors: list[str] = []
+    maps: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for index, source in enumerate((root.first, root.second)):
+        image = _pcurve_parameter_image(
+            source,
+            float(parameters[0, index]),
+            float(parameters[1, index]),
+            preparations=preparations,
+            budget=budget,
+        )
+        if image is None:
+            return None
+        first, second, box = image
+        underlying, matrix, offset, periods, patches = _pcurve_source_chart(source)
+        if not isinstance(underlying, intersection_curve_owner.IntersectionPCurve):
+            return None
+        maps.append((matrix, offset, periods))
+        anchor = first if underlying.side == "first" else second
+        if any(patch != _surface_definition_key(anchor) for patch in patches):
+            return None
+        anchors.append(_surface_definition_key(anchor))
+        images.append((first, second, box))
+    if anchors[0] != anchors[1] or not all(
+        np.array_equal(first, second)
+        for first, second in zip(maps[0], maps[1], strict=True)
+    ):
+        return None
+    contributions: dict[str, list[np.ndarray]] = {}
+    for first, second, box in images:
+        for region, image in ((first, box[:, :2]), (second, box[:, 2:])):
+            contributions.setdefault(_surface_definition_key(region), []).append(image)
+    if (
+        np.array_equal(maps[0][0], np.eye(2, dtype=np.int64))
+        and not np.any(maps[0][1])
+        and not np.any(maps[0][2])
+    ):
+        contributions[anchors[0]] = [
+            root.point_enclosure(preparations=preparations, budget=budget)
+        ]
+    return _RootContributions(images=contributions)
+
+
+@checked
+def joint_root_parameter_image(
     root: TrimIntersectionRoot
     | CurveSurfaceIntersectionRoot
     | TripleSurfaceIntersectionRoot,
-    regions: tuple[SurfaceRegion, SurfaceRegion, SurfaceRegion],
+    regions: tuple[
+        intersection_curve_owner.SurfaceRegion,
+        intersection_curve_owner.SurfaceRegion,
+        intersection_curve_owner.SurfaceRegion,
+    ],
     /,
     *,
     source_edge_lifts: Sequence[_SourceCurveSurfaceLift] = (),
     joint_box: np.ndarray | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
 ) -> np.ndarray | None:
-    """Equation identity plus parameter inclusion, not point-box coincidence."""
-    contributions: dict[str, list[np.ndarray]] = {}
-    parameters = root.parameter_enclosure()
-
-    def add(region: SurfaceRegion, box: np.ndarray) -> None:
-        contributions.setdefault(_surface_definition_key(region), []).append(box)
-
-    if isinstance(root, TripleSurfaceIntersectionRoot):
-        for index, region in enumerate((root.first, root.second, root.third)):
-            add(region, parameters[:, 2 * index : 2 * index + 2])
-    elif isinstance(root, CurveSurfaceIntersectionRoot):
-        if isinstance(root.curve, IntersectionCurve):
-            boxes = root.curve.parameter_enclosures(
-                float(parameters[0, 0]), float(parameters[1, 0]), source_extension=True
+    """Enclose joint parameters using carrier identities and parameter inclusion."""
+    parameters = root.parameter_enclosure(preparations=preparations, budget=budget)
+    match root:
+        case TripleSurfaceIntersectionRoot():
+            contributions: dict[str, list[np.ndarray]] = {}
+            for index, region in enumerate((root.first, root.second, root.third)):
+                contributions.setdefault(_surface_definition_key(region), []).append(
+                    parameters[:, 2 * index : 2 * index + 2]
+                )
+        case CurveSurfaceIntersectionRoot():
+            phase = _curve_surface_root_images(
+                root,
+                parameters,
+                regions,
+                source_edge_lifts,
+                joint_box,
+                preparations=preparations,
+                budget=budget,
             )
-            coupled = np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0)))
-            add(root.curve.first, coupled[:, :2])
-            add(root.curve.second, coupled[:, 2:])
-        elif isinstance(root.curve, AbstractCurve):
-            first, last = float(parameters[0, 0]), float(parameters[1, 0])
-            for index, region in enumerate(regions):
-                images: list[np.ndarray] = []
-                if _surface_definition_key(region) == _surface_definition_key(
-                    root.surface
-                ):
-                    continue
-                pcurve = _native_edge_pcurve(root.curve, region)
-                if pcurve is not None and _exact_source_lift(
-                    root.curve, pcurve, region, first, last
-                ):
-                    images.append(_source_pcurve_image(pcurve, first, last))
-                for lift in source_edge_lifts:
-                    if (
-                        isinstance(getattr(lift, "surface", None), SurfaceRegion)
-                        and _surface_definition_key(lift.surface)
-                        == _surface_definition_key(region)
-                        and _same_geometry(lift.curve, root.curve)
-                        and lift.first <= first <= last <= lift.last
-                        and _exact_source_lift(
-                            root.curve, lift.pcurve, region, lift.first, lift.last
-                        )
-                    ):
-                        images.append(_source_pcurve_image(lift.pcurve, first, last))
-                for image in images:
-                    # Distinct declared UV sheets are alternatives, not boxes
-                    # whose overlap may be mistaken for parameter equality.
-                    if joint_box is None or (
-                        np.all(image[0] >= joint_box[0, 2 * index : 2 * index + 2])
-                        and np.all(image[1] <= joint_box[1, 2 * index : 2 * index + 2])
-                    ):
-                        add(region, image)
-        else:
-            return None
-        add(root.surface, parameters[:, 1:])
-    elif (
-        isinstance(root, TrimIntersectionRoot)
-        and (
-            native := _native_trim_root_contributions(
-                root, regions, source_edge_lifts, joint_box
+            contributions = phase.images
+        case TrimIntersectionRoot():
+            native = _native_trim_root_contributions(
+                root,
+                regions,
+                source_edge_lifts,
+                joint_box,
+                preparations=preparations,
+                budget=budget,
             )
-        )
-        is not None
-    ):
-        contributions = native
-    elif isinstance(root, TrimIntersectionRoot):
-        images = []
-        anchors = []
-        maps = []
-        for index, source in enumerate((root.first, root.second)):
-            image = _pcurve_parameter_image(
-                source, float(parameters[0, index]), float(parameters[1, index])
+            if native is not None:
+                contributions = native
+            else:
+                phase = _intersection_trim_root_images(
+                    root, parameters, preparations=preparations, budget=budget
+                )
+                if phase is None:
+                    return None
+                contributions = phase.images
+        case _:
+            raise TypeError(
+                f"joint_root.root must be a supported junction; got {type(root).__name__}"
             )
-            if image is None:
-                return None
-            first, second, box = image
-            underlying, matrix, offset, periods, patches = _pcurve_source_chart(source)
-            if not isinstance(underlying, IntersectionPCurve):
-                return None
-            maps.append((matrix, offset, periods))
-            anchor = first if underlying.side == "first" else second
-            if any(patch != _surface_definition_key(anchor) for patch in patches):
-                return None
-            anchors.append(_surface_definition_key(anchor))
-            images.append((first, second, box))
-        if anchors[0] != anchors[1] or not all(
-            np.array_equal(first, second)
-            for first, second in zip(maps[0], maps[1], strict=True)
-        ):
-            return None
-        for first, second, box in images:
-            add(first, box[:, :2])
-            add(second, box[:, 2:])
-        if (
-            np.array_equal(maps[0][0], np.eye(2, dtype=int))
-            and not np.any(maps[0][1])
-            and not np.any(maps[0][2])
-        ):
-            contributions[anchors[0]] = [root.point_enclosure()]
-    else:
-        return None
     return _intersect_contributions(
         contributions, [_surface_definition_key(region) for region in regions]
     )
@@ -1561,132 +2072,192 @@ def _intersect_contributions(
     return np.concatenate(result, axis=1)
 
 
-def _native_trim_root_contributions(
-    root: TrimIntersectionRoot,
-    regions: tuple[SurfaceRegion, SurfaceRegion, SurfaceRegion],
-    lifts: Sequence[_SourceCurveSurfaceLift],
-    joint_box: np.ndarray | None,
-    /,
-) -> dict[str, list[np.ndarray]] | None:
-    """A UV junction of two native source p-curves on one face, through exact lifts.
+class _NativeTrimOperands(StrictModule):
+    carriers: tuple[tuple[AbstractCurve, float, float], ...]
 
-    Supplied lifts only name the source edge behind each operand's p-curve;
-    every edge/face identity is re-proved exactly over the root's own carrier
-    parameter enclosure. The face contributes the root's UV enclosure and each
-    edge its exact native p-curve image on every other face it lies on.
-    """
+
+def _native_trim_operands(
+    root: TrimIntersectionRoot,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> _NativeTrimOperands | None:
     operands: list[tuple[AbstractCurve, float, float]] = []
     for operand in ("first", "second"):
         endpoint = TrimRootEndpoint(root, operand)
         carrier = endpoint.carrier
         if not isinstance(carrier, AbstractCurve) or carrier.ambient_dimension != 2:
             return None
-        if isinstance(_pcurve_source_chart(carrier)[0], IntersectionPCurve):
+        if isinstance(
+            _pcurve_source_chart(carrier)[0], intersection_curve_owner.IntersectionPCurve
+        ):
             return None
-        lower, upper = endpoint.parameter_enclosure()
+        lower, upper = endpoint.parameter_enclosure(
+            preparations=preparations, budget=budget
+        )
         operands.append((carrier, lower, upper))
+    return _NativeTrimOperands(carriers=tuple(operands))
+
+
+def _trim_face_edges(
+    phase: _NativeTrimOperands,
+    region: intersection_curve_owner.SurfaceRegion,
+    key: str,
+    lifts: Sequence[_SourceCurveSurfaceLift],
+    /,
+) -> tuple[AbstractCurve, ...]:
+    edges: list[AbstractCurve] = []
+    for carrier, lower, upper in phase.carriers:
+        edge = next(
+            (
+                lift.curve
+                for lift in lifts
+                if isinstance(lift.curve, AbstractCurve)
+                and _surface_definition_key(lift.surface) == key
+                and same_geometry(lift.pcurve, carrier)
+                and exact_source_lift(lift.curve, carrier, region, lower, upper)
+            ),
+            None,
+        )
+        if edge is None:
+            break
+        edges.append(edge)
+    return tuple(edges)
+
+
+def _native_trim_face_images(
+    face: int,
+    edges: tuple[AbstractCurve, ...],
+    operands: _NativeTrimOperands,
+    uv: np.ndarray,
+    regions: tuple[
+        intersection_curve_owner.SurfaceRegion,
+        intersection_curve_owner.SurfaceRegion,
+        intersection_curve_owner.SurfaceRegion,
+    ],
+    keys: list[str],
+    lifts: Sequence[_SourceCurveSurfaceLift],
+    joint_box: np.ndarray | None,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> _RootContributions:
+    contributions: dict[str, list[np.ndarray]] = {keys[face]: [uv]}
+    for edge, (_, lower, upper) in zip(edges, operands.carriers, strict=True):
+        for index, other in enumerate(regions):
+            if index == face:
+                continue
+            candidates = [
+                lift.pcurve
+                for lift in lifts
+                if isinstance(lift.pcurve, AbstractCurve)
+                and _surface_definition_key(lift.surface) == keys[index]
+                and same_geometry(lift.curve, edge)
+            ]
+            native = native_edge_pcurve(edge, other)
+            if native is not None:
+                candidates.append(native)
+            for pcurve in candidates:
+                if not exact_source_lift(edge, pcurve, other, lower, upper):
+                    continue
+                image = source_pcurve_image(
+                    pcurve, lower, upper, preparations=preparations, budget=budget
+                )
+                if _image_in_joint_box(image, index, joint_box):
+                    contributions.setdefault(keys[index], []).append(image)
+    return _RootContributions(images=contributions)
+
+
+def _native_trim_root_contributions(
+    root: TrimIntersectionRoot,
+    regions: tuple[
+        intersection_curve_owner.SurfaceRegion,
+        intersection_curve_owner.SurfaceRegion,
+        intersection_curve_owner.SurfaceRegion,
+    ],
+    lifts: Sequence[_SourceCurveSurfaceLift],
+    joint_box: np.ndarray | None,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> dict[str, list[np.ndarray]] | None:
+    """Enclose a native UV root by proving its source edges on each support."""
+    operands = _native_trim_operands(root, preparations=preparations, budget=budget)
+    if operands is None:
+        return None
     keys = [_surface_definition_key(region) for region in regions]
     if len(set(keys)) != 3:
         return None
-
-    def inside(image: np.ndarray, index: int) -> bool:
-        return joint_box is None or bool(
-            np.all(image[0] >= joint_box[0, 2 * index : 2 * index + 2])
-            and np.all(image[1] <= joint_box[1, 2 * index : 2 * index + 2])
-        )
-
-    uv = root.point_enclosure()
+    uv = root.point_enclosure(preparations=preparations, budget=budget)
     for face, region in enumerate(regions):
-        if not inside(uv, face):
+        if not _image_in_joint_box(uv, face, joint_box):
             continue
-        edges: list[AbstractCurve] = []
-        for carrier, lower, upper in operands:
-            edge = next(
-                (
-                    lift.curve
-                    for lift in lifts
-                    if isinstance(lift.curve, AbstractCurve)
-                    and _surface_definition_key(lift.surface) == keys[face]
-                    and _same_geometry(lift.pcurve, carrier)
-                    and _exact_source_lift(lift.curve, carrier, region, lower, upper)
-                ),
-                None,
-            )
-            if edge is None:
-                break
-            edges.append(edge)
+        edges = _trim_face_edges(operands, region, keys[face], lifts)
         if len(edges) != 2:
             continue
-        contributions: dict[str, list[np.ndarray]] = {keys[face]: [uv]}
-        for edge, (_, lower, upper) in zip(edges, operands, strict=True):
-            for index, other in enumerate(regions):
-                if index == face:
-                    continue
-                candidates = [
-                    lift.pcurve
-                    for lift in lifts
-                    if isinstance(lift.pcurve, AbstractCurve)
-                    and _surface_definition_key(lift.surface) == keys[index]
-                    and _same_geometry(lift.curve, edge)
-                ]
-                native = _native_edge_pcurve(edge, other)
-                if native is not None:
-                    candidates.append(native)
-                for pcurve in candidates:
-                    if not _exact_source_lift(edge, pcurve, other, lower, upper):
-                        continue
-                    image = _source_pcurve_image(pcurve, lower, upper)
-                    if inside(image, index):
-                        contributions.setdefault(keys[index], []).append(image)
-        box = _intersect_contributions(contributions, keys)
+        phase = _native_trim_face_images(
+            face,
+            edges,
+            operands,
+            uv,
+            regions,
+            keys,
+            lifts,
+            joint_box,
+            preparations=preparations,
+            budget=budget,
+        )
+        box = _intersect_contributions(phase.images, keys)
         if box is not None and (
             joint_box is None
             or bool(np.all(box[0] >= joint_box[0]) and np.all(box[1] <= joint_box[1]))
         ):
-            return contributions
+            return phase.images
     return None
 
 
 class TrimRootEndpoint(StrictModule):
-    """A source root's scalar atom, optionally lifted to its exact native p-curve."""
+    """Define a source root's scalar atom, optionally lifted to its p-curve."""
 
     root: TrimIntersectionRoot | CurveSurfaceIntersectionRoot | IntersectionCurvePointRoot
-    operand: Literal["first", "second"] = eqx.field(static=True)
+    operand: intersection_curve_owner.IntersectionCurveSide = eqx.field(static=True)
     affine_parameter_offset: float = eqx.field(static=True)
     affine_parameter_scale: float = eqx.field(static=True)
     affine_transforms: tuple[tuple[float, float], ...] = eqx.field(static=True)
-    source_pcurve: AbstractCurve | IntersectionPCurve | None
-    source_surface: SurfaceRegion | None
+    source_pcurve: AbstractCurve | intersection_curve_owner.IntersectionPCurve | None
+    source_surface: intersection_curve_owner.SurfaceRegion | None
 
+    @checked
     def __init__(
         self,
         root: TrimIntersectionRoot
         | CurveSurfaceIntersectionRoot
         | IntersectionCurvePointRoot,
-        operand: Literal["first", "second"],
+        operand: intersection_curve_owner.IntersectionCurveSide,
         /,
         *,
         affine_parameter_offset: float = 0.0,
         affine_parameter_scale: float = 1.0,
         affine_transforms: tuple[tuple[float, float], ...] = (),
-        source_pcurve: AbstractCurve | IntersectionPCurve | None = None,
-        source_surface: SurfaceRegion | None = None,
+        source_pcurve: AbstractCurve
+        | intersection_curve_owner.IntersectionPCurve
+        | None = None,
+        source_surface: intersection_curve_owner.SurfaceRegion | None = None,
     ) -> None:
-        if not isinstance(
-            root,
-            (
-                TrimIntersectionRoot,
-                CurveSurfaceIntersectionRoot,
-                IntersectionCurvePointRoot,
-            ),
-        ) or operand not in ("first", "second"):
-            raise TypeError("A root endpoint requires a canonical root and one operand.")
+        operand = parse(
+            operand,
+            intersection_curve_owner.IntersectionCurveSide,
+            "TrimRootEndpoint.operand",
+        )
         if (
             isinstance(root, (CurveSurfaceIntersectionRoot, IntersectionCurvePointRoot))
             and operand != "first"
         ):
             raise ValueError(
-                "Spatial endpoint expressions select the source edge parameter only."
+                "TrimRootEndpoint.operand must select first for a spatial root; got another operand"
             )
         if (
             not math.isfinite(affine_parameter_offset)
@@ -1694,46 +2265,42 @@ class TrimRootEndpoint(StrictModule):
             or affine_parameter_scale == 0
         ):
             raise ValueError(
-                "Root endpoint affine expressions must be finite with nonzero scale."
+                "TrimRootEndpoint.affine_expression must be finite with nonzero scale; got invalid coefficients"
             )
         if (source_pcurve is None) != (source_surface is None):
             raise ValueError(
-                "A lifted scalar endpoint requires both its p-curve and source surface."
+                "TrimRootEndpoint.source_lift must contain both a p-curve and a surface; got an incomplete lift"
             )
         if source_pcurve is not None and source_surface is not None:
             if not isinstance(root, CurveSurfaceIntersectionRoot):
                 raise ValueError(
-                    "Only a spatial source root needs a native p-curve lift."
-                )
-            if not isinstance(
-                source_pcurve, (AbstractCurve, IntersectionPCurve)
-            ) or not isinstance(source_surface, SurfaceRegion):
-                raise TypeError(
-                    "A scalar endpoint lift requires native p-curve and surface definitions."
+                    "TrimRootEndpoint.root must be a curve-surface root for a p-curve lift; got another root kind"
                 )
             if source_pcurve.ambient_dimension != 2:
                 raise ValueError(
-                    "A lifted scalar endpoint requires a two-dimensional p-curve."
+                    "TrimRootEndpoint.source_pcurve must have dimension two; got another dimension"
                 )
-            if isinstance(root.curve, IntersectionCurve):
+            if isinstance(root.curve, intersection_curve_owner.IntersectionCurve):
                 generating = (
                     (
                         source_pcurve.curve.first
                         if source_pcurve.side == "first"
                         else source_pcurve.curve.second
                     )
-                    if isinstance(source_pcurve, IntersectionPCurve)
+                    if isinstance(
+                        source_pcurve, intersection_curve_owner.IntersectionPCurve
+                    )
                     else None
                 )
                 valid = (
-                    isinstance(source_pcurve, IntersectionPCurve)
+                    isinstance(source_pcurve, intersection_curve_owner.IntersectionPCurve)
                     and source_pcurve.curve.branch_id == root.curve.branch_id
                     and generating is not None
                     and _surface_definition_key(generating)
                     == _surface_definition_key(source_surface)
                 )
             else:
-                valid = _exact_source_lift(
+                valid = exact_source_lift(
                     root.curve,
                     source_pcurve,
                     source_surface,
@@ -1742,7 +2309,7 @@ class TrimRootEndpoint(StrictModule):
                 )
             if not valid:
                 raise ValueError(
-                    "The scalar endpoint has no exact source edge/p-curve/support identity."
+                    "TrimRootEndpoint.source_pcurve must represent the source carrier on its support; got unproved construction identity"
                 )
         self.source_pcurve, self.source_surface = source_pcurve, source_surface
         self.root, self.operand = root, operand
@@ -1753,7 +2320,7 @@ class TrimRootEndpoint(StrictModule):
             for scale, offset in affine_transforms
         ):
             raise ValueError(
-                "Composed root affine transforms must be finite and nonsingular."
+                "TrimRootEndpoint.affine_transforms must be finite and nonsingular; got invalid coefficients"
             )
         self.affine_transforms = tuple(
             (float(scale), float(offset)) for scale, offset in affine_transforms
@@ -1764,13 +2331,21 @@ class TrimRootEndpoint(StrictModule):
         return self.root.root_id
 
     def _expression(
-        self, *, maximum_steps: int = 16
-    ) -> tuple[CurveEvaluator | IntersectionCurve, tuple[np.ndarray, np.ndarray]]:
+        self,
+        *,
+        maximum_steps: int = 16,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget,
+    ) -> tuple[
+        intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve,
+        tuple[np.ndarray, np.ndarray],
+    ]:
         if maximum_steps < 0:
-            raise ValueError("Refinement steps must be nonnegative.")
+            raise ValueError(
+                "root.maximum_steps must be nonnegative; got a negative count"
+            )
         if isinstance(self.root, IntersectionCurvePointRoot):
-            from fractions import Fraction
-
             value = Fraction(self.root.parameter) * Fraction(
                 self.affine_parameter_scale
             ) + Fraction(self.affine_parameter_offset)
@@ -1798,30 +2373,49 @@ class TrimRootEndpoint(StrictModule):
         )
         if self.source_pcurve is not None:
             curve = self.source_pcurve
-        parameters = self.root.parameter_enclosure(maximum_steps=maximum_steps)
+        parameters = self.root.parameter_enclosure(
+            maximum_steps=maximum_steps, preparations=preparations, budget=budget
+        )
         interval = (np.asarray(parameters[0, index]), np.asarray(parameters[1, index]))
-        from ._intersection_curve import AffinePCurve, PeriodicPCurve
 
-        operations: list[AffinePCurve | PeriodicPCurve] = []
-        while isinstance(curve, (CurveTrimSegment, AffinePCurve, PeriodicPCurve)):
-            if isinstance(curve, CurveTrimSegment):
-                interval = curve.carrier_parameter_enclosure(
-                    float(interval[0]), float(interval[1]), source_extension=True
-                )
-                curve = curve.curve
-            elif isinstance(curve, PeriodicPCurve):
-                operations.append(curve)
-                curve = curve.source_curve
-            else:
-                operations.append(curve)
-                curve = curve.curve
-        if isinstance(curve, IntersectionPCurve) and curve.reversed:
+        operations: list[
+            intersection_curve_owner.AffinePCurve
+            | intersection_curve_owner.PeriodicPCurve
+        ] = []
+        while isinstance(
+            curve,
+            (
+                intersection_curve_owner.CurveTrimSegment,
+                intersection_curve_owner.AffinePCurve,
+                intersection_curve_owner.PeriodicPCurve,
+            ),
+        ):
+            match curve:
+                case intersection_curve_owner.CurveTrimSegment():
+                    interval = curve.carrier_parameter_enclosure(
+                        float(interval[0]),
+                        float(interval[1]),
+                        source_extension=True,
+                        preparations=preparations,
+                        budget=budget,
+                    )
+                    curve = curve.curve
+                case intersection_curve_owner.PeriodicPCurve():
+                    operations.append(curve)
+                    curve = curve.source_curve
+                case intersection_curve_owner.AffinePCurve():
+                    operations.append(curve)
+                    curve = curve.curve
+        if (
+            isinstance(curve, intersection_curve_owner.IntersectionPCurve)
+            and curve.reversed
+        ):
             constant = interval_add(
                 (np.asarray(curve.first), np.asarray(curve.first)),
                 (np.asarray(curve.last), np.asarray(curve.last)),
             )
             interval = interval_subtract(constant, interval)
-            curve = IntersectionPCurve(
+            curve = intersection_curve_owner.IntersectionPCurve(
                 curve.curve, curve.side, first=curve.first, last=curve.last
             )
         interval = interval_add(
@@ -1845,25 +2439,61 @@ class TrimRootEndpoint(StrictModule):
         for operation in reversed(operations):
             if not isinstance(curve, (AbstractCurve, AbstractTrimCurve)):
                 raise TypeError(
-                    "A UV source operation requires its original p-curve carrier."
+                    "TrimRootEndpoint.carrier must support the UV operation; got unsupported carrier"
                 )
-            if isinstance(operation, AffinePCurve):
-                curve = AffinePCurve(curve, operation.matrix, operation.offset)
+            if isinstance(operation, intersection_curve_owner.AffinePCurve):
+                curve = intersection_curve_owner.AffinePCurve(
+                    curve, operation.matrix, operation.offset
+                )
             else:
-                curve = PeriodicPCurve(curve, operation.patch, operation.period_shifts)
-        return curve, interval
+                curve = intersection_curve_owner.PeriodicPCurve(
+                    curve, operation.patch, operation.period_shifts
+                )
+        return curve, (
+            np.asarray(interval[0], dtype=np.float64),
+            np.asarray(interval[1], dtype=np.float64),
+        )
 
     @property
-    def carrier(self) -> CurveEvaluator | IntersectionCurve:
-        return self._expression(maximum_steps=0)[0]
+    def carrier(
+        self,
+    ) -> (
+        intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve
+    ):
+        preparations = TrimRequestPreparations()
+        with coordinate_source_request((self,)) as budget:
+            return self._expression(
+                maximum_steps=0, preparations=preparations, budget=budget
+            )[0]
 
     @property
     def parameter(self) -> float:
-        lower, upper = self.parameter_enclosure()
-        return 0.5 * (lower + upper)
+        preparations = TrimRequestPreparations()
+        with coordinate_source_request((self,)) as budget:
+            lower, upper = self.parameter_enclosure(
+                preparations=preparations, budget=budget
+            )
+            return 0.5 * (lower + upper)
 
-    def parameter_enclosure(self, /, *, maximum_steps: int = 16) -> tuple[float, float]:
-        _, bounds = self._expression(maximum_steps=maximum_steps)
+    def parameter_enclosure(
+        self,
+        /,
+        *,
+        maximum_steps: int = 16,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[float, float]:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self,)) as budget:
+                return self.parameter_enclosure(
+                    maximum_steps=maximum_steps, preparations=preparations, budget=budget
+                )
+        _, bounds = self._expression(
+            maximum_steps=maximum_steps, preparations=preparations, budget=budget
+        )
         return float(bounds[0]), float(bounds[1])
 
     def affine(self, scale: float, offset: float, /) -> TrimRootEndpoint:
@@ -1879,7 +2509,7 @@ class TrimRootEndpoint(StrictModule):
 
 
 class BranchRootEndpoint(StrictModule):
-    """Exact chart scalar transport of a spatial or joint source root.
+    """Transport a spatial or joint source root into a chart scalar expression.
 
     The expression is ``chart + (q_axis - node_start)/(node_end-node_start)``.
     Both node coordinates remain source-root expressions, not floating chart
@@ -1887,242 +2517,336 @@ class BranchRootEndpoint(StrictModule):
     """
 
     root: CurveSurfaceIntersectionRoot | TripleSurfaceIntersectionRoot
-    curve: IntersectionCurve
+    curve: intersection_curve_owner.IntersectionCurve
     chart: int = eqx.field(static=True)
     source_pcurve: AbstractCurve | None
-    source_side: Literal["first", "second"] | None = eqx.field(static=True)
+    source_side: intersection_curve_owner.IntersectionCurveSide | None = eqx.field(
+        static=True
+    )
     source_first: float | None = eqx.field(static=True)
     source_last: float | None = eqx.field(static=True)
     periodic_shifts: tuple[int, int, int, int] = eqx.field(static=True)
     affine_transforms: tuple[tuple[float, float], ...] = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         root: CurveSurfaceIntersectionRoot | TripleSurfaceIntersectionRoot,
-        curve: IntersectionCurve,
+        curve: intersection_curve_owner.IntersectionCurve,
         chart: int,
         /,
         *,
         source_pcurve: AbstractCurve | None = None,
-        source_side: Literal["first", "second"] | None = None,
+        source_side: intersection_curve_owner.IntersectionCurveSide | None = None,
         source_first: float | None = None,
         source_last: float | None = None,
         periodic_shifts: tuple[int, int, int, int] = (0, 0, 0, 0),
         affine_transforms: tuple[tuple[float, float], ...] = (),
+        budget: CoordinateEnclosureBudget | None = None,
+        preparations: TrimRequestPreparations | None = None,
     ) -> None:
-        if not isinstance(
-            root, (CurveSurfaceIntersectionRoot, TripleSurfaceIntersectionRoot)
-        ):
-            raise TypeError(
-                "Branch endpoints require an authoritative spatial or joint root."
-            )
-        if not isinstance(curve, IntersectionCurve) or not curve.fully_certified:
-            raise ValueError("Branch endpoints require a fully certified source atlas.")
-        if type(chart) is not int or not 0 <= chart < curve.num_charts:
-            raise ValueError("A branch endpoint must select an actual source chart.")
-        if len(periodic_shifts) != 4 or any(
-            type(value) is not int for value in periodic_shifts
-        ):
-            raise TypeError("Branch endpoint gauge shifts must be four exact integers.")
-        if any(
-            not math.isfinite(scale) or not math.isfinite(offset) or scale == 0
-            for scale, offset in affine_transforms
-        ):
-            raise ValueError("Endpoint affine transforms must be finite and nonsingular.")
-        self.root, self.curve, self.chart = root, curve, chart
-        self.source_pcurve, self.source_side = source_pcurve, source_side
-        self.source_first, self.source_last = source_first, source_last
-        self.periodic_shifts = tuple(periodic_shifts)
-        self.affine_transforms = tuple(
-            (float(scale), float(offset)) for scale, offset in affine_transforms
-        )
-        if isinstance(root, TripleSurfaceIntersectionRoot):
-            if any(
-                value is not None
-                for value in (source_pcurve, source_side, source_first, source_last)
-            ):
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        with coordinate_source_request(
+            (
+                root,
+                curve,
+                chart,
+                source_pcurve,
+                source_side,
+                source_first,
+                source_last,
+                periodic_shifts,
+                affine_transforms,
+            ),
+            budget=budget,
+        ) as budget:
+            if not curve.fully_certified:
                 raise ValueError(
-                    "Joint roots transport their generating UV components directly."
+                    "BranchRootEndpoint.curve must have certified charts; got an uncertified atlas"
                 )
-        elif isinstance(root.curve, IntersectionCurve):
-            if (
-                source_pcurve is not None
-                or source_side is not None
-                or source_first is not None
-                or source_last is not None
-            ):
+            if type(chart) is not int or not 0 <= chart < curve.num_charts:
                 raise ValueError(
-                    "A coupled source branch already owns its exact UV images."
+                    "BranchRootEndpoint.chart must select a source chart; got an out-of-range index"
                 )
-            if {
-                _surface_definition_key(root.curve.first),
-                _surface_definition_key(root.curve.second),
-            } != {
-                _surface_definition_key(curve.first),
-                _surface_definition_key(curve.second),
-            }:
-                raise ValueError(
-                    "The spatial source branch does not generate the target surfaces."
-                )
-        else:
-            if source_side not in ("first", "second") or not isinstance(
-                source_pcurve, AbstractCurve
+            if len(periodic_shifts) != 4 or any(
+                type(value) is not int for value in periodic_shifts
             ):
                 raise TypeError(
-                    "An original edge requires its exact pcurve and generating support side."
+                    "BranchRootEndpoint.periodic_shifts must contain four integers; got invalid coefficients"
                 )
-            source = curve.first if source_side == "first" else curve.second
-            opposite = curve.second if source_side == "first" else curve.first
-            if _surface_definition_key(root.surface) != _surface_definition_key(opposite):
-                raise ValueError(
-                    "The spatial root does not intersect the opposite generating surface."
-                )
-            first = (
-                float(root.parameter_lower[0])
-                if source_first is None
-                else float(source_first)
-            )
-            last = (
-                float(root.parameter_upper[0])
-                if source_last is None
-                else float(source_last)
-            )
-            if (
-                not math.isfinite(first)
-                or not math.isfinite(last)
-                or not first < last
-                or not first <= root.parameter_lower[0] <= root.parameter_upper[0] <= last
+            if any(
+                not math.isfinite(scale) or not math.isfinite(offset) or scale == 0
+                for scale, offset in affine_transforms
             ):
                 raise ValueError(
-                    "The whole-edge lift must cover the source root parameter box."
+                    "BranchRootEndpoint.affine_transforms must be finite and nonsingular; got invalid coefficients"
                 )
-            if not _exact_source_lift(root.curve, source_pcurve, source, first, last):
-                raise ValueError(
-                    "The source edge/pcurve/support have no exact construction identity."
-                )
-            self.source_first, self.source_last = first, last
-        image = self._source_image(maximum_steps=16)
-        if not np.all(image[0] >= curve.box_lower[chart]) or not np.all(
-            image[1] <= curve.box_upper[chart]
-        ):
-            raise ValueError(
-                "The full source parameter image is not inside the unique target chart box."
+            self.root, self.curve, self.chart = root, curve, chart
+            self.source_pcurve, self.source_side = source_pcurve, source_side
+            self.source_first, self.source_last = source_first, source_last
+            self.periodic_shifts = tuple(periodic_shifts)
+            self.affine_transforms = tuple(
+                (float(scale), float(offset)) for scale, offset in affine_transforms
             )
-        self.parameter_enclosure(maximum_steps=0)
+            match root:
+                case TripleSurfaceIntersectionRoot():
+                    if any(
+                        value is not None
+                        for value in (
+                            source_pcurve,
+                            source_side,
+                            source_first,
+                            source_last,
+                        )
+                    ):
+                        raise ValueError(
+                            "BranchRootEndpoint.source_lift must be absent for a joint root; got an additional lift"
+                        )
+                case CurveSurfaceIntersectionRoot(
+                    curve=intersection_curve_owner.IntersectionCurve() as source_branch
+                ):
+                    if (
+                        source_pcurve is not None
+                        or source_side is not None
+                        or source_first is not None
+                        or source_last is not None
+                    ):
+                        raise ValueError(
+                            "BranchRootEndpoint.source_pcurve must be absent for a coupled branch; got an additional UV image"
+                        )
+                    if {
+                        _surface_definition_key(source_branch.first),
+                        _surface_definition_key(source_branch.second),
+                    } != {
+                        _surface_definition_key(curve.first),
+                        _surface_definition_key(curve.second),
+                    }:
+                        raise ValueError(
+                            "BranchRootEndpoint.root.curve must generate the target surfaces; got different carrier definitions"
+                        )
+                case CurveSurfaceIntersectionRoot(curve=AbstractCurve() as source_curve):
+                    if source_side is None or source_pcurve is None:
+                        raise TypeError(
+                            "BranchRootEndpoint.source_lift must describe the generating support; got an incomplete lift"
+                        )
+                    source_side = parse(
+                        source_side,
+                        intersection_curve_owner.IntersectionCurveSide,
+                        "BranchRootEndpoint.source_side",
+                    )
+                    source = curve.first if source_side == "first" else curve.second
+                    opposite = curve.second if source_side == "first" else curve.first
+                    if _surface_definition_key(root.surface) != _surface_definition_key(
+                        opposite
+                    ):
+                        raise ValueError(
+                            "BranchRootEndpoint.root.surface must match the opposite generating surface; got different carrier definitions"
+                        )
+                    first = (
+                        float(root.parameter_lower[0])
+                        if source_first is None
+                        else float(source_first)
+                    )
+                    last = (
+                        float(root.parameter_upper[0])
+                        if source_last is None
+                        else float(source_last)
+                    )
+                    if (
+                        not math.isfinite(first)
+                        or not math.isfinite(last)
+                        or not first < last
+                        or not first
+                        <= root.parameter_lower[0]
+                        <= root.parameter_upper[0]
+                        <= last
+                    ):
+                        raise ValueError(
+                            "BranchRootEndpoint.source_range must cover the root parameter box; got uncovered parameters"
+                        )
+                    if not exact_source_lift(
+                        source_curve, source_pcurve, source, first, last
+                    ):
+                        raise ValueError(
+                            "BranchRootEndpoint.source_pcurve must represent the carrier on its support; got unproved construction identity"
+                        )
+                    self.source_first, self.source_last = first, last
+                case _:
+                    raise TypeError(
+                        f"BranchRootEndpoint.root must have a supported carrier; got {type(root).__name__}"
+                    )
+            image = self.source_image(
+                maximum_steps=16, budget=budget, preparations=preparations
+            )
+            if not np.all(image[0] >= curve.box_lower[chart]) or not np.all(
+                image[1] <= curve.box_upper[chart]
+            ):
+                raise ValueError(
+                    "BranchRootEndpoint.source_image must lie inside the target chart box; got uncovered parameters"
+                )
+            self.parameter_enclosure(
+                maximum_steps=0, budget=budget, preparations=preparations
+            )
 
     @property
     def root_id(self) -> str:
         return self.root.root_id
 
     @property
-    def carrier(self) -> IntersectionCurve:
+    def carrier(self) -> intersection_curve_owner.IntersectionCurve:
         return self.curve
 
-    def _source_image(
-        self, /, *, maximum_steps: int, include_periodic_shifts: bool = True
-    ) -> np.ndarray:
-        parameters = self.root.parameter_enclosure(maximum_steps=maximum_steps)
-        if isinstance(self.root, TripleSurfaceIntersectionRoot):
-            regions = (self.root.first, self.root.second, self.root.third)
-            columns = []
-            for target in (self.curve.first, self.curve.second):
-                matches = [
-                    index
-                    for index, region in enumerate(regions)
-                    if _surface_definition_key(region) == _surface_definition_key(target)
-                ]
-                if len(matches) != 1:
-                    raise ValueError(
-                        "The joint root has no unique generating patch definition."
-                    )
-                index = matches[0]
-                columns.append(
-                    _joint_coordinate_image(
-                        target, regions, parameters[:, 2 * index : 2 * index + 2]
-                    )
-                )
-            image = np.concatenate(columns, axis=1)
-        elif isinstance(self.root.curve, IntersectionCurve):
-            boxes = self.root.curve.parameter_enclosures(
-                float(parameters[0, 0]), float(parameters[1, 0])
+    def native_source_lift(
+        self,
+    ) -> tuple[AbstractCurve, intersection_curve_owner.IntersectionCurveSide]:
+        """Return the native edge lift after checking its required source metadata."""
+        pcurve, side = self.source_pcurve, self.source_side
+        if pcurve is None or side is None:
+            raise ValueError(
+                "BranchRootEndpoint.source_lift must describe the spatial edge; got an incomplete lift"
             )
-            coupled = np.stack((np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0)))
-            columns = []
-            for target in (self.curve.first, self.curve.second):
-                offset = (
-                    0
-                    if _surface_definition_key(target)
-                    == _surface_definition_key(self.root.curve.first)
-                    else 2
-                )
-                columns.append(coupled[:, offset : offset + 2])
-            image = np.concatenate(columns, axis=1)
-        else:
-            from ._intersection_curve import pcurve_periodic_source
+        return pcurve, side
 
-            pcurve = self.source_pcurve
-            if pcurve is None or self.source_side not in ("first", "second"):
-                raise ValueError(
-                    "An original spatial edge requires its exact source p-curve."
+    def source_image(
+        self,
+        /,
+        *,
+        maximum_steps: int,
+        include_periodic_shifts: bool = True,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget,
+    ) -> np.ndarray:
+        parameters = self.root.parameter_enclosure(
+            maximum_steps=maximum_steps, preparations=preparations, budget=budget
+        )
+        match self.root:
+            case TripleSurfaceIntersectionRoot():
+                regions = (self.root.first, self.root.second, self.root.third)
+                columns = []
+                for target in (self.curve.first, self.curve.second):
+                    matches = [
+                        index
+                        for index, region in enumerate(regions)
+                        if _surface_definition_key(region)
+                        == _surface_definition_key(target)
+                    ]
+                    if len(matches) != 1:
+                        raise ValueError(
+                            "BranchRootEndpoint.root must have a unique generating patch definition; got ambiguous support"
+                        )
+                    index = matches[0]
+                    columns.append(
+                        _joint_coordinate_image(
+                            target, regions, parameters[:, 2 * index : 2 * index + 2]
+                        )
+                    )
+                image = np.concatenate(columns, axis=1)
+            case CurveSurfaceIntersectionRoot(
+                curve=intersection_curve_owner.IntersectionCurve() as source_branch
+            ):
+                boxes = source_branch.parameter_enclosures(
+                    float(parameters[0, 0]),
+                    float(parameters[1, 0]),
+                    preparations=preparations,
+                    budget=budget,
                 )
-            patch = (
-                self.curve.first.patch
-                if self.source_side == "first"
-                else self.curve.second.patch
-            )
-            factorization = pcurve_periodic_source(pcurve, patch)
-            if factorization is None:
-                raise ValueError("The source p-curve has no exact integer native gauge.")
-            source = _source_pcurve_image(
-                factorization[0], float(parameters[0, 0]), float(parameters[1, 0])
-            )
-            opposite = _curve_plane_coordinate_image(
-                self.root.curve, self.root.surface, parameters[:, 1:]
-            )
-            image = np.concatenate(
-                (source, opposite) if self.source_side == "first" else (opposite, source),
-                axis=1,
-            )
-        gauges = self._source_gauges()
-        lower, upper = self.curve._shift_bounds(gauges)
+                coupled = np.stack(
+                    (np.min(boxes[:, 0], axis=0), np.max(boxes[:, 1], axis=0))
+                )
+                columns = []
+                for target in (self.curve.first, self.curve.second):
+                    offset = (
+                        0
+                        if _surface_definition_key(target)
+                        == _surface_definition_key(source_branch.first)
+                        else 2
+                    )
+                    columns.append(coupled[:, offset : offset + 2])
+                image = np.concatenate(columns, axis=1)
+            case CurveSurfaceIntersectionRoot(curve=AbstractCurve() as source_curve):
+                pcurve, side = self.native_source_lift()
+                patch = (
+                    self.curve.first.patch if side == "first" else self.curve.second.patch
+                )
+                factorization = intersection_curve_owner.pcurve_periodic_source(
+                    pcurve, patch
+                )
+                if factorization is None:
+                    raise ValueError(
+                        "BranchRootEndpoint.source_pcurve must have an integer periodic gauge; got unsupported factorization"
+                    )
+                source = source_pcurve_image(
+                    factorization[0],
+                    float(parameters[0, 0]),
+                    float(parameters[1, 0]),
+                    preparations=preparations,
+                    budget=budget,
+                )
+                opposite = _curve_plane_coordinate_image(
+                    source_curve, self.root.surface, parameters[:, 1:]
+                )
+                image = np.concatenate(
+                    (source, opposite) if side == "first" else (opposite, source),
+                    axis=1,
+                )
+            case _:
+                raise TypeError(
+                    f"BranchRootEndpoint.root must have a supported carrier; got {type(self.root).__name__}"
+                )
+        gauges = self.source_gauges()
+        lower, upper = self.curve.shift_parameter_bounds(gauges)
         if include_periodic_shifts and np.any(gauges):
             image = np.stack(interval_add((image[0], image[1]), (lower, upper)))
         return image
 
-    def _source_gauges(self) -> np.ndarray:
+    def source_gauges(self) -> np.ndarray:
         """Compose explicit source-sheet and branch gauges before realization."""
-        from ._intersection_curve import pcurve_periodic_source
 
         shifts = np.asarray(self.periodic_shifts, dtype=np.int64).copy()
         if isinstance(self.root, CurveSurfaceIntersectionRoot) and not isinstance(
-            self.root.curve, IntersectionCurve
+            self.root.curve, intersection_curve_owner.IntersectionCurve
         ):
-            pcurve = self.source_pcurve
-            if pcurve is None or self.source_side not in ("first", "second"):
-                raise ValueError(
-                    "An original spatial edge requires its exact source p-curve."
-                )
-            patch = (
-                self.curve.first.patch
-                if self.source_side == "first"
-                else self.curve.second.patch
-            )
-            source = pcurve_periodic_source(pcurve, patch)
+            pcurve, side = self.native_source_lift()
+            patch = self.curve.first.patch if side == "first" else self.curve.second.patch
+            source = intersection_curve_owner.pcurve_periodic_source(pcurve, patch)
             if source is None:
-                raise ValueError("The source p-curve has no exact integer native gauge.")
-            offset = 0 if self.source_side == "first" else 2
+                raise ValueError(
+                    "BranchRootEndpoint.source_pcurve must have an integer periodic gauge; got unsupported factorization"
+                )
+            offset = 0 if side == "first" else 2
             shifts[offset : offset + 2] += np.asarray(source[1], dtype=np.int64)
         return shifts
 
     def certifies_point_root(
-        self, point_root: IntersectionCurvePointRoot, /, *, maximum_steps: int = 16
+        self,
+        point_root: IntersectionCurvePointRoot,
+        /,
+        *,
+        maximum_steps: int = 16,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> bool:
-        """Prove a source spatial root is this exact shared-node point atom.
+        """Prove that a spatial source root defines this shared-node point atom.
 
-        The source must satisfy the node's actual coordinate constraint and
-        lie wholly inside its unique source-system witness. Scalar interval
-        overlap, representative equality and spatial boxes are not used.
+        The source must satisfy the node's coordinate constraint and lie inside
+        its unique source-system enclosure.
         """
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    point_root,
+                )
+            ) as budget:
+                return self.certifies_point_root(
+                    point_root,
+                    maximum_steps=maximum_steps,
+                    preparations=preparations,
+                    budget=budget,
+                )
         if (
             not isinstance(point_root, IntersectionCurvePointRoot)
             or point_root.curve.branch_id != self.curve.branch_id
@@ -2132,8 +2856,11 @@ class BranchRootEndpoint(StrictModule):
             return False
         target = int(point_root.parameter)
         reference = int(self.curve.node_references[target])
-        image = self._source_image(
-            maximum_steps=maximum_steps, include_periodic_shifts=False
+        image = self.source_image(
+            maximum_steps=maximum_steps,
+            include_periodic_shifts=False,
+            preparations=preparations,
+            budget=budget,
         )
         for node in (self.chart, self.chart + 1):
             if int(self.curve.node_references[node]) != reference:
@@ -2150,10 +2877,10 @@ class BranchRootEndpoint(StrictModule):
                                 / period
                             )
                         )
-            difference = self._source_gauges() - shifts
+            difference = self.source_gauges() - shifts
             transported = image
             if np.any(difference):
-                lower, upper = self.curve._shift_bounds(difference)
+                lower, upper = self.curve.shift_parameter_bounds(difference)
                 transported = np.stack(interval_add((image[0], image[1]), (lower, upper)))
             axis = int(self.curve.node_axes[reference])
             value = self.curve.node_values[reference]
@@ -2166,10 +2893,25 @@ class BranchRootEndpoint(StrictModule):
                 return True
         return False
 
-    def parameter_enclosure(self, /, *, maximum_steps: int = 16) -> tuple[float, float]:
-        if type(maximum_steps) is not int or maximum_steps < 0:
-            raise ValueError("Refinement steps must be nonnegative integers.")
-        image = self._source_image(maximum_steps=maximum_steps)
+    def parameter_enclosure(
+        self,
+        /,
+        *,
+        maximum_steps: int = 16,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[float, float]:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self,)) as budget:
+                return self.parameter_enclosure(
+                    maximum_steps=maximum_steps, preparations=preparations, budget=budget
+                )
+        maximum_steps = nonnegative_integer(maximum_steps, "maximum_steps")
+        image = self.source_image(
+            maximum_steps=maximum_steps, preparations=preparations, budget=budget
+        )
         axis = int(self.curve.chart_axes[self.chart])
         start = (
             self.curve.chart_start_lower[self.chart, axis],
@@ -2179,10 +2921,14 @@ class BranchRootEndpoint(StrictModule):
             self.curve.chart_end_lower[self.chart, axis],
             self.curve.chart_end_upper[self.chart, axis],
         )
-        advance = interval_subtract(end, start)
+        advance_lower, advance_upper = interval_subtract(end, start)
+        advance = (
+            np.asarray(advance_lower, dtype=np.float64),
+            np.asarray(advance_upper, dtype=np.float64),
+        )
         if advance[0] <= 0 <= advance[1]:
             raise ValueError(
-                "The exact source chart has no separated endpoint coordinates."
+                "BranchRootEndpoint.chart must have separated endpoint coordinates; got an interval containing zero advance"
             )
         scalar = interval_add(
             interval_divide(
@@ -2199,8 +2945,12 @@ class BranchRootEndpoint(StrictModule):
 
     @property
     def parameter(self) -> float:
-        lower, upper = self.parameter_enclosure()
-        return 0.5 * (lower + upper)
+        preparations = TrimRequestPreparations()
+        with coordinate_source_request((self,)) as budget:
+            lower, upper = self.parameter_enclosure(
+                preparations=preparations, budget=budget
+            )
+            return 0.5 * (lower + upper)
 
     def affine(self, scale: float, offset: float, /) -> BranchRootEndpoint:
         return BranchRootEndpoint(
@@ -2217,28 +2967,24 @@ class BranchRootEndpoint(StrictModule):
 
 
 def _within_derived_native_period(
-    curve: CurveEvaluator | IntersectionCurve,
-    value: Fraction | _PeriodOffset,
+    curve: intersection_curve_owner.CurveEvaluator
+    | intersection_curve_owner.IntersectionCurve,
+    value: Fraction | PeriodOffset,
     /,
 ) -> bool | None:
-    """Exact inclusion in a carrier domain that is one native period by construction.
+    """Test inclusion in a carrier domain defined by one symbolic period.
 
-    Only a derived isoline (no authored ``parameter_range``) along a proved
-    native 2*pi surface axis has the exact domain ``[0, 2*pi]``; its binary
+    A derived isoline with no authored ``parameter_range`` along a proved
+    native 2*pi surface axis has domain ``[0, 2*pi]``; its binary
     domain endpoint is merely that period's representative. ``None`` means the
     carrier has an authored domain, whose binary bounds are never read as tau.
     """
-    from ._intersection_curve import (
-        _native_curve_period_symbol,
-        _period_offset,
-        _period_scalar_bounds,
-    )
 
-    source = curve.definition if isinstance(curve, PlacedCurve) else curve
+    source = curve.definition if isinstance(curve, placed_owner.PlacedCurve) else curve
     if (
         not isinstance(source, SurfaceIsoparametricCurve)
         or source.parameter_range is not None
-        or _native_curve_period_symbol(source) != "two_pi"
+        or source.native_period_symbol() != "two_pi"
     ):
         return None
     rational, turns = (
@@ -2251,7 +2997,7 @@ def _within_derived_native_period(
         if not scalar_turns:
             return scalar_rational >= 0
         return (
-            float(_period_scalar_bounds(_period_offset(scalar_rational, scalar_turns))[0])
+            float(period_scalar_bounds(period_offset(scalar_rational, scalar_turns))[0])
             >= 0.0
         )
 
@@ -2262,96 +3008,112 @@ class NativePeriodEndpoint(StrictModule):
     """Authored source parameter in Q + Q*(2*pi), not a floating root.
 
     ``patch`` and ``axis`` prove a surface period when supplied; otherwise the
-    original curve must own a proved mathematical period. Numerical
+    source curve must have a proved mathematical period. Numerical
     representatives never change a separately authored binary64 endpoint.
     """
 
-    curve: CurveEvaluator | IntersectionCurve
+    curve: (
+        intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve
+    )
     patch: AbstractSurfacePatch | None
     axis: Literal[0, 1] | None = eqx.field(static=True)
     rational: Fraction = eqx.field(static=True)
     turns: Fraction = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        curve: CurveEvaluator | IntersectionCurve,
+        curve: intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve,
         patch: AbstractSurfacePatch | None = None,
         axis: Literal[0, 1] | None = None,
         /,
         *,
         rational: Fraction | int = 0,
         turns: Fraction | int = 1,
+        budget: CoordinateEnclosureBudget | None = None,
+        preparations: TrimRequestPreparations | None = None,
     ) -> None:
-        from ._intersection_curve import (
-            _native_curve_period_symbol,
-            _native_period_symbols,
-        )
-
-        if not isinstance(curve, (AbstractCurve, AbstractTrimCurve, IntersectionCurve)):
-            raise TypeError(
-                "A native-period endpoint requires its original source curve."
-            )
-        if patch is None:
-            if axis is not None:
-                raise ValueError("Curve-owned period authority has no surface axis.")
-            if (
-                not isinstance(curve, (AbstractCurve, IntersectionCurve))
-                or _native_curve_period_symbol(curve) != "two_pi"
-            ):
-                raise ValueError(
-                    "The original source curve has no proved mathematical native period."
-                )
-        else:
-            if (
-                not isinstance(patch, AbstractSurfacePatch)
-                or type(axis) is not int
-                or axis not in (0, 1)
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        with coordinate_source_request(
+            (
+                curve,
+                patch,
+                axis,
+                rational,
+                turns,
+            ),
+            budget=budget,
+        ) as budget:
+            if patch is None:
+                if axis is not None:
+                    raise ValueError(
+                        "NativePeriodEndpoint.axis must be absent for a curve-owned period; got a surface axis"
+                    )
+                if (
+                    not isinstance(
+                        curve, (AbstractCurve, intersection_curve_owner.IntersectionCurve)
+                    )
+                    or curve.native_period_symbol() != "two_pi"
+                ):
+                    raise ValueError(
+                        "NativePeriodEndpoint.curve must have a proved mathematical period; got unsupported carrier"
+                    )
+            else:
+                if type(axis) is not int or axis not in (0, 1):
+                    raise TypeError(
+                        "NativePeriodEndpoint.surface_coordinate must select a patch and axis; got invalid selection"
+                    )
+                if patch.native_period_symbols()[axis] != "two_pi":
+                    raise ValueError(
+                        "NativePeriodEndpoint.axis must have a proved mathematical period; got unsupported coordinate"
+                    )
+            if any(
+                not isinstance(value, (Fraction, int)) or isinstance(value, bool)
+                for value in (rational, turns)
             ):
                 raise TypeError(
-                    "A native-period endpoint requires a native surface and axis zero or one."
+                    "NativePeriodEndpoint.coefficients must be rationals or integers; got invalid coefficients"
                 )
-            if _native_period_symbols(patch)[axis] != "two_pi":
+            self.curve, self.patch, self.axis = curve, patch, axis
+            self.rational, self.turns = Fraction(rational), Fraction(turns)
+            lower, upper = self.parameter_enclosure(
+                budget=budget, preparations=preparations
+            )
+            if not (math.isfinite(lower) and math.isfinite(upper)):
                 raise ValueError(
-                    "The selected source axis has no proved mathematical native period."
+                    "NativePeriodEndpoint.parameter_enclosure must be finite; got unbounded values"
                 )
-        if any(
-            not isinstance(value, (Fraction, int)) or isinstance(value, bool)
-            for value in (rational, turns)
-        ):
-            raise TypeError(
-                "Native-period scalar coefficients must be exact rationals or integers."
+            domain = (
+                (0.0, float(curve.num_charts))
+                if isinstance(curve, intersection_curve_owner.IntersectionCurve)
+                else curve.parameter_domain
             )
-        self.curve, self.patch, self.axis = curve, patch, axis
-        self.rational, self.turns = Fraction(rational), Fraction(turns)
-        lower, upper = self.parameter_enclosure()
-        if not (math.isfinite(lower) and math.isfinite(upper)):
-            raise ValueError(
-                "Native-period endpoints require finite numerical enclosures."
-            )
-        domain = (
-            (0.0, float(curve.num_charts))
-            if isinstance(curve, IntersectionCurve)
-            else curve.parameter_domain
-        )
-        derived = _within_derived_native_period(curve, self.exact_parameter)
-        if derived is False or (
-            derived is None
-            and domain is not None
-            and not domain[0] <= lower <= upper <= domain[1]
-        ):
-            raise ValueError(
-                "The exact native-period endpoint lies outside its source curve domain."
-            )
+            derived = _within_derived_native_period(curve, self.exact_parameter)
+            if derived is False or (
+                derived is None
+                and domain is not None
+                and not domain[0] <= lower <= upper <= domain[1]
+            ):
+                raise ValueError(
+                    "NativePeriodEndpoint.parameter must lie within the carrier domain; got an out-of-domain enclosure"
+                )
 
     @property
-    def carrier(self) -> CurveEvaluator | IntersectionCurve:
+    def carrier(
+        self,
+    ) -> (
+        intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve
+    ):
         return self.curve
 
     @property
-    def exact_parameter(self) -> Fraction | _PeriodOffset:
-        from ._intersection_curve import _period_offset
+    def exact_parameter(self) -> Fraction | PeriodOffset:
 
-        return _period_offset(self.rational, self.turns)
+        return period_offset(self.rational, self.turns)
 
     @property
     def parameter(self) -> float:
@@ -2359,24 +3121,36 @@ class NativePeriodEndpoint(StrictModule):
 
     @property
     def root_id(self) -> str:
-        return canonical_fingerprint(encode_geometry(self))
+        return canonical_fingerprint(intersection_curve_owner.encode_geometry(self))
 
     @property
     def affine_transforms(self) -> tuple[tuple[float, float], ...]:
         return ()
 
-    def parameter_enclosure(self, /, *, maximum_steps: int = 16) -> tuple[float, float]:
-        from ._intersection_curve import _period_scalar_bounds
+    def parameter_enclosure(
+        self,
+        /,
+        *,
+        maximum_steps: int = 16,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> tuple[float, float]:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request((self,)) as budget:
+                return self.parameter_enclosure(
+                    maximum_steps=maximum_steps, preparations=preparations, budget=budget
+                )
 
-        if type(maximum_steps) is not int or maximum_steps < 0:
-            raise ValueError("Refinement steps must be nonnegative integers.")
-        lower, upper = _period_scalar_bounds(self.exact_parameter)
+        maximum_steps = nonnegative_integer(maximum_steps, "maximum_steps")
+        lower, upper = period_scalar_bounds(self.exact_parameter)
         return float(lower), float(upper)
 
     def affine(self, scale: float, offset: float, /) -> NativePeriodEndpoint:
         if not math.isfinite(scale) or not math.isfinite(offset) or scale == 0:
             raise ValueError(
-                "Endpoint affine expressions must be finite with nonzero scale."
+                "NativePeriodEndpoint.affine_expression must be finite with nonzero scale; got invalid coefficients"
             )
         return NativePeriodEndpoint(
             self.curve,
@@ -2394,12 +3168,10 @@ class ParametricIntersectionPoint(StrictModule):
     """One isolated intersection event with its parameter enclosure.
 
     ``parameters`` concatenates the operands' parameters (first operand first).
-    ``transversal`` events are unique regular roots certified inside
-    ``[parameter_lower, parameter_upper]``. ``tangent`` events are certified
-    unique foot-point/parallel-tangent critical points whose operand gap is at
-    most ``gap_bound``; ``singular`` events are such contacts where an operand's
-    parametrization is degenerate or where branches of a surface intersection
-    meet.
+    ``crossing`` events are unique regular roots certified inside the parameter
+    enclosure. ``tangent_point`` denotes isolated contact, ``tangent_curve`` a
+    certified contact continuum, and ``singular_point`` a branch junction.
+    Degenerate or uncertified contact neighborhoods are reported as unresolved.
     """
 
     __strict_contract__ = True
@@ -2412,6 +3184,7 @@ class ParametricIntersectionPoint(StrictModule):
     point: HostFloat64[AmbientDim]
     gap_bound: float = eqx.field(static=True)
     condition_estimate: float = eqx.field(static=True)
+    branch_count: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -2424,8 +3197,13 @@ class ParametricIntersectionPoint(StrictModule):
         point: np.ndarray,
         gap_bound: float,
         condition_estimate: float,
+        branch_count: int = -1,
     ) -> None:
         scope = Scope()
+        if branch_count < -1:
+            raise ValueError(
+                f"ParametricIntersectionPoint.branch_count must be nonnegative or -1 (unresolved); got {branch_count}"
+            )
         self.kind = parse(kind, ParametricIntersectionKind, "kind")
         self.certificate = parse(
             certificate, ParametricIntersectionCertificate, "certificate"
@@ -2453,6 +3231,7 @@ class ParametricIntersectionPoint(StrictModule):
         )
         self.gap_bound = float(gap_bound)
         self.condition_estimate = float(condition_estimate)
+        self.branch_count = branch_count
 
 
 class CoincidentParameterRegion(StrictModule):
@@ -2560,7 +3339,7 @@ class CurveIntersectionResult(StrictModule):
 class SurfaceIntersectionResult(StrictModule):
     """Branches, isolated contacts and coincident regions of two surfaces."""
 
-    curves: tuple[IntersectionCurve, ...]
+    curves: tuple[intersection_curve_owner.IntersectionCurve, ...]
     points: tuple[ParametricIntersectionPoint, ...]
     coincident: tuple[CoincidentParameterRegion, ...]
     unresolved: tuple[UnresolvedParameterRegion, ...]
@@ -2568,7 +3347,7 @@ class SurfaceIntersectionResult(StrictModule):
 
     def __init__(
         self,
-        curves: Sequence[IntersectionCurve],
+        curves: Sequence[intersection_curve_owner.IntersectionCurve],
         points: Sequence[ParametricIntersectionPoint],
         coincident: Sequence[CoincidentParameterRegion],
         unresolved: Sequence[UnresolvedParameterRegion],
@@ -2599,25 +3378,39 @@ class SurfaceIntersectionResult(StrictModule):
 # ------------------------------------------------------------ equation systems
 
 
-def _curve_value(curve: CurveEvaluator | IntersectionCurve, parameter: Array, /) -> Array:
-    if isinstance(curve, IntersectionCurve):
+def _curve_value(
+    curve: intersection_curve_owner.CurveEvaluator
+    | intersection_curve_owner.IntersectionCurve,
+    parameter: Array,
+    /,
+) -> Array:
+    if isinstance(curve, intersection_curve_owner.IntersectionCurve):
         return curve.evaluate(parameter).point
     return curve.evaluate(parameter)
 
 
 def _curve_derivative(
-    curve: CurveEvaluator | IntersectionCurve, parameter: Array, /
+    curve: intersection_curve_owner.CurveEvaluator
+    | intersection_curve_owner.IntersectionCurve,
+    parameter: Array,
+    /,
 ) -> Array:
     return jax.jacfwd(lambda value: _curve_value(curve, value))(parameter)
 
 
-def _surface_derivative(surface: SurfaceEvaluator, parameters: Array, /) -> Array:
+def _surface_derivative(surface: AbstractSurfacePatch, parameters: Array, /) -> Array:
     return jax.jacfwd(surface.evaluate)(parameters)
 
 
 class _CurvePairSystem(StrictModule):
-    first: CurveEvaluator | IntersectionCurve
-    second: CurveEvaluator | IntersectionCurve
+    first: (
+        intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve
+    )
+    second: (
+        intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve
+    )
 
     def residual(self, parameters: Array, /) -> Array:
         return _curve_value(self.first, parameters[0]) - _curve_value(
@@ -2628,8 +3421,14 @@ class _CurvePairSystem(StrictModule):
 class _CurveProximitySystem(StrictModule):
     """Stationarity of ``|c1(s) - c2(t)|^2`` for space curves."""
 
-    first: CurveEvaluator | IntersectionCurve
-    second: CurveEvaluator | IntersectionCurve
+    first: (
+        intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve
+    )
+    second: (
+        intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve
+    )
 
     def residual(self, parameters: Array, /) -> Array:
         gap = _curve_value(self.first, parameters[0]) - _curve_value(
@@ -2646,8 +3445,14 @@ class _CurveProximitySystem(StrictModule):
 class _PlanarCurveTangencySystem(StrictModule):
     """Foot point of ``c1(s)`` on ``c2`` with parallel tangents."""
 
-    first: CurveEvaluator | IntersectionCurve
-    second: CurveEvaluator | IntersectionCurve
+    first: (
+        intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve
+    )
+    second: (
+        intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve
+    )
 
     def residual(self, parameters: Array, /) -> Array:
         gap = _curve_value(self.first, parameters[0]) - _curve_value(
@@ -2664,10 +3469,10 @@ class _PlanarCurveTangencySystem(StrictModule):
         )
 
 
-class _TripleSurfaceSystem(StrictModule):
-    first: SurfaceEvaluator
-    second: SurfaceEvaluator
-    third: SurfaceEvaluator
+class TripleSurfaceSystem(StrictModule):
+    first: AbstractSurfacePatch
+    second: AbstractSurfacePatch
+    third: AbstractSurfacePatch
 
     def residual(self, parameters: Array, /) -> Array:
         point = self.first.evaluate(parameters[:2])
@@ -2679,12 +3484,15 @@ class _TripleSurfaceSystem(StrictModule):
         )
 
 
-class _CurveSurfaceSystem(StrictModule):
-    curve: CurveEvaluator | IntersectionCurve
-    surface: SurfaceEvaluator
+class CurveSurfaceSystem(StrictModule):
+    curve: (
+        intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve
+    )
+    surface: AbstractSurfacePatch
 
     def residual(self, parameters: Array, /) -> Array:
-        if isinstance(self.curve, IntersectionCurve):
+        if isinstance(self.curve, intersection_curve_owner.IntersectionCurve):
             point = self.curve.evaluate(parameters[0]).point
         else:
             point = self.curve.evaluate(parameters[0])
@@ -2694,8 +3502,11 @@ class _CurveSurfaceSystem(StrictModule):
 class _CurveSurfaceTangencySystem(StrictModule):
     """Foot point of ``c(t)`` on the surface with the curve tangent in its plane."""
 
-    curve: CurveEvaluator | IntersectionCurve
-    surface: SurfaceEvaluator
+    curve: (
+        intersection_curve_owner.CurveEvaluator
+        | intersection_curve_owner.IntersectionCurve
+    )
+    surface: AbstractSurfacePatch
 
     def residual(self, parameters: Array, /) -> Array:
         gap = _curve_value(self.curve, parameters[0]) - self.surface.evaluate(
@@ -2716,7 +3527,7 @@ class _CurveSurfaceTangencySystem(StrictModule):
 class _SurfaceTangencySystem(StrictModule):
     """Foot point of ``S1(p)`` on ``S2`` with parallel normals."""
 
-    pair: SurfacePairSystem
+    pair: intersection_curve_owner.SurfacePairSystem
 
     def residual(self, parameters: Array, /) -> Array:
         gap = self.pair.residual(parameters)
@@ -2749,7 +3560,7 @@ class _TurningSystem(StrictModule):
     the surface frames and normals.
     """
 
-    pair: SurfacePairSystem
+    pair: intersection_curve_owner.SurfacePairSystem
     direction: Array
 
     def residual(self, parameters: Array, /) -> Array:
@@ -2770,7 +3581,7 @@ class _TurningSystem(StrictModule):
 class _FaceSystem(StrictModule):
     """A surface pair restricted to one face of the coupled parameter box."""
 
-    pair: SurfacePairSystem
+    pair: intersection_curve_owner.SurfacePairSystem
     axis: int = eqx.field(static=True)
     value: Array
 
@@ -2784,7 +3595,7 @@ class _FaceSystem(StrictModule):
 class _CorrectorSystem(StrictModule):
     """Branch equations plus the hyperplane through a predictor."""
 
-    pair: SurfacePairSystem
+    pair: intersection_curve_owner.SurfacePairSystem
     normal: Array
     anchor: Array
 
@@ -2801,14 +3612,14 @@ type _System = (
     _CurvePairSystem
     | _CurveProximitySystem
     | _PlanarCurveTangencySystem
-    | _CurveSurfaceSystem
+    | CurveSurfaceSystem
     | _CurveSurfaceTangencySystem
     | _SurfaceTangencySystem
     | _TurningSystem
     | _FaceSystem
     | _CorrectorSystem
-    | SurfacePairSystem
-    | _TripleSurfaceSystem
+    | intersection_curve_owner.SurfacePairSystem
+    | TripleSurfaceSystem
     | _JunctionSystem
 )
 
@@ -2851,27 +3662,9 @@ _newton = eqx.filter_jit(_newton_values)
 
 
 @eqx.filter_jit
-def _inverses(matrices: Array, plan: SmallLinearSolvePlan) -> Array:
-    return inverse_small_linear(plan, matrices).value
-
-
-@eqx.filter_jit
-def _dense_inverses(matrices: Array) -> Array:
-    def one(matrix: Array) -> Array:
-        result = solve(
-            LinearSystem(DenseLinearOperator(matrix)),
-            jnp.eye(matrix.shape[0], dtype=matrix.dtype),
-            policy=LinearSolvePolicy(DenseLU()),
-        )
-        return jnp.where(
-            jnp.all(result.successful), result.value, jnp.zeros_like(result.value)
-        )
-
-    return jax.vmap(one)(matrices)
-
-
-@eqx.filter_jit
-def _branch_tangent(pair: SurfacePairSystem, point: Array, reference: Array) -> Array:
+def _branch_tangent(
+    pair: intersection_curve_owner.SurfacePairSystem, point: Array, reference: Array
+) -> Array:
     jacobian = jax.jacfwd(pair.residual)(point)
     matrix = jnp.concatenate((jacobian, reference[None]), axis=0)
     right = jnp.zeros((4,), dtype=point.dtype).at[3].set(1.0)
@@ -2881,7 +3674,7 @@ def _branch_tangent(pair: SurfacePairSystem, point: Array, reference: Array) -> 
 
 @eqx.filter_jit
 def _march_step(
-    pair: SurfacePairSystem,
+    pair: intersection_curve_owner.SurfacePairSystem,
     point: Array,
     tangent: Array,
     step: Array,
@@ -2927,64 +3720,8 @@ def _padded_call(
 _UNIT = np.finfo(np.float64).eps
 
 
-def _mid_rad(lower: np.ndarray, upper: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-    middle = 0.5 * (lower + upper)
-    radius = np.nextafter(np.maximum(middle - lower, upper - middle), np.inf)
-    return middle, radius
-
-
-def _round(lower: np.ndarray, upper: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-    # Indeterminate midpoint products arise for valid unbounded enclosures
-    # (for example, a coarse rational denominator interval straddling zero).
-    # They mean no information, NEVER an exclusion certificate.
-    lower = np.where(np.isnan(lower), -np.inf, lower)
-    upper = np.where(np.isnan(upper), np.inf, upper)
-    return np.nextafter(lower, -np.inf), np.nextafter(upper, np.inf)
-
-
-def _point_times_interval(
-    matrix: np.ndarray, lower: np.ndarray, upper: np.ndarray, /
-) -> tuple[np.ndarray, np.ndarray]:
-    """``matrix @ [lower, upper]`` for batched point matrices ``(B, m, k)``."""
-    middle, radius = _mid_rad(lower, upper)
-    absolute = np.abs(matrix)
-    center = matrix @ middle
-    width = absolute @ radius
-    length = matrix.shape[-1] + 1
-    gamma = length * _UNIT / (1.0 - length * _UNIT)
-    width = np.nextafter(width + gamma * (absolute @ np.abs(middle) + width), np.inf)
-    return _round(center - width, center + width)
-
-
-def _interval_times_interval(
-    first_lower: np.ndarray,
-    first_upper: np.ndarray,
-    second_lower: np.ndarray,
-    second_upper: np.ndarray,
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
-    first_mid, first_rad = _mid_rad(first_lower, first_upper)
-    second_mid, second_rad = _mid_rad(second_lower, second_upper)
-    center = first_mid @ second_mid
-    width = (
-        np.abs(first_mid) @ second_rad
-        + first_rad @ np.abs(second_mid)
-        + first_rad @ second_rad
-    )
-    length = first_mid.shape[-1] + 1
-    gamma = length * _UNIT / (1.0 - length * _UNIT)
-    width = np.nextafter(
-        width + gamma * (np.abs(first_mid) @ np.abs(second_mid) + width), np.inf
-    )
-    return _round(center - width, center + width)
-
-
 def _contains_zero(lower: np.ndarray, upper: np.ndarray, /) -> np.ndarray:
     return np.all((lower <= 0.0) & (upper >= 0.0), axis=-1)
-
-
-def _magnitude(lower: np.ndarray, upper: np.ndarray, /) -> np.ndarray:
-    return np.maximum(np.abs(lower), np.abs(upper))
 
 
 @dataclass
@@ -3028,25 +3765,43 @@ class _CurveCapabilityIntervals:
             return (dimension, 2) if self.jacobian else (dimension,)
         return (2, 2) if self.jacobian else (2,)
 
-    def evaluate(
-        self, lower: np.ndarray, upper: np.ndarray, /
+    def evaluate_scope(
+        self,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+        preparations: TrimRequestPreparations | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         def jet(
-            curve: CurveEvaluator | IntersectionCurve,
+            curve: intersection_curve_owner.CurveEvaluator
+            | intersection_curve_owner.IntersectionCurve,
             first: float,
             last: float,
             order: int,
+            *,
+            preparations: TrimRequestPreparations | None = preparations,
+            budget: CoordinateEnclosureBudget = budget,
         ) -> tuple[np.ndarray, np.ndarray]:
-            if isinstance(curve, IntersectionCurve):
+            if preparations is None:
+                preparations = TrimRequestPreparations()
+            if isinstance(curve, intersection_curve_owner.IntersectionCurve):
                 domain = curve.parameter_domain
                 if first < domain[0] or last > domain[1]:
                     return np.full(3, -np.inf), np.full(3, np.inf)
                 if order == 0:
-                    box = curve.bounding_box(first, last)
+                    box = curve.bounding_box(
+                        first, last, preparations=preparations, budget=budget
+                    )
                     return box[0], box[1]
-                return curve.derivative_bounds(first, last, order=order)
+                return curve.derivative_bounds(
+                    first, last, order=order, preparations=preparations, budget=budget
+                )
             if isinstance(curve, AbstractTrimCurve):
-                return _trim_source_jet(curve, first, last, order)
+                return intersection_curve_owner.trim_source_jet(
+                    curve, first, last, order, preparations=preparations, budget=budget
+                )
             derivative = curve.evaluate
             for _ in range(order):
                 derivative = jax.jacfwd(derivative)
@@ -3056,79 +3811,148 @@ class _CurveCapabilityIntervals:
                 batch_capacity=1,
                 constant_bounds=coefficient_enclosures(curve),
             )
-            lo, hi = prepared.evaluate(np.asarray([[first]]), np.asarray([[last]]))
+            lo, hi = evaluate_interval(
+                prepared,
+                np.asarray([[first]]),
+                np.asarray([[last]]),
+                budget=budget,
+                preparations=preparations,
+            )
             return lo[0], hi[0]
-
-        def dot(
-            a: tuple[np.ndarray, np.ndarray], b: tuple[np.ndarray, np.ndarray]
-        ) -> tuple[np.ndarray, np.ndarray]:
-            product = interval_multiply(a, b)
-            lo = np.nextafter(
-                np.sum(product[0]) - 8 * _UNIT * np.sum(np.abs(product[0])), -np.inf
-            )
-            hi = np.nextafter(
-                np.sum(product[1]) + 8 * _UNIT * np.sum(np.abs(product[1])), np.inf
-            )
-            return lo, hi
 
         def determinant(
             a: tuple[np.ndarray, np.ndarray], b: tuple[np.ndarray, np.ndarray]
         ) -> tuple[np.ndarray, np.ndarray]:
-            return interval_subtract(
+            bounds = interval_subtract(
                 interval_multiply((a[0][0], a[1][0]), (b[0][1], b[1][1])),
                 interval_multiply((a[0][1], a[1][1]), (b[0][0], b[1][0])),
+            )
+            return (
+                np.asarray(bounds[0], dtype=np.float64),
+                np.asarray(bounds[1], dtype=np.float64),
             )
 
         lower_outputs, upper_outputs = [], []
         for lo, hi in zip(lower, upper, strict=True):
-            a = jet(self.system.first, float(lo[0]), float(hi[0]), 0)
-            b = jet(self.system.second, float(lo[1]), float(hi[1]), 0)
+            a = jet(
+                self.system.first,
+                float(lo[0]),
+                float(hi[0]),
+                0,
+                budget=budget,
+                preparations=preparations,
+            )
+            b = jet(
+                self.system.second,
+                float(lo[1]),
+                float(hi[1]),
+                0,
+                budget=budget,
+                preparations=preparations,
+            )
             gap = interval_subtract(a, b)
             if isinstance(self.system, _CurvePairSystem) and not self.jacobian:
                 result = gap
             else:
-                da = jet(self.system.first, float(lo[0]), float(hi[0]), 1)
-                db = jet(self.system.second, float(lo[1]), float(hi[1]), 1)
-                if isinstance(self.system, _CurvePairSystem):
-                    result = (
-                        np.stack((da[0], -db[1]), axis=1),
-                        np.stack((da[1], -db[0]), axis=1),
-                    )
-                elif isinstance(self.system, _CurveProximitySystem):
-                    if not self.jacobian:
-                        first_value, second_value = dot(gap, da), dot(gap, db)
+                da = jet(
+                    self.system.first,
+                    float(lo[0]),
+                    float(hi[0]),
+                    1,
+                    budget=budget,
+                    preparations=preparations,
+                )
+                db = jet(
+                    self.system.second,
+                    float(lo[1]),
+                    float(hi[1]),
+                    1,
+                    budget=budget,
+                    preparations=preparations,
+                )
+                match self.system:
+                    case _CurvePairSystem():
                         result = (
-                            np.asarray((first_value[0], second_value[0])),
-                            np.asarray((first_value[1], second_value[1])),
+                            np.stack((da[0], -db[1]), axis=1),
+                            np.stack((da[1], -db[0]), axis=1),
                         )
-                    else:
-                        dda = jet(self.system.first, float(lo[0]), float(hi[0]), 2)
-                        ddb = jet(self.system.second, float(lo[1]), float(hi[1]), 2)
-                        aa = interval_add(dot(da, da), dot(gap, dda))
-                        ab = dot(da, db)
-                        bb = dot(db, db)
-                        bb = interval_add((-bb[1], -bb[0]), dot(gap, ddb))
+                    case _CurveProximitySystem():
+                        if not self.jacobian:
+                            first_value, second_value = (
+                                interval_dot(gap, da),
+                                interval_dot(gap, db),
+                            )
+                            result = (
+                                np.asarray((first_value[0], second_value[0])),
+                                np.asarray((first_value[1], second_value[1])),
+                            )
+                        else:
+                            dda = jet(
+                                self.system.first,
+                                float(lo[0]),
+                                float(hi[0]),
+                                2,
+                                budget=budget,
+                                preparations=preparations,
+                            )
+                            ddb = jet(
+                                self.system.second,
+                                float(lo[1]),
+                                float(hi[1]),
+                                2,
+                                budget=budget,
+                                preparations=preparations,
+                            )
+                            aa = interval_add(
+                                interval_dot(da, da), interval_dot(gap, dda)
+                            )
+                            ab = tuple(
+                                np.asarray(value, dtype=np.float64)
+                                for value in interval_dot(da, db)
+                            )
+                            bb = tuple(
+                                np.asarray(value, dtype=np.float64)
+                                for value in interval_dot(db, db)
+                            )
+                            bb = interval_add((-bb[1], -bb[0]), interval_dot(gap, ddb))
+                            result = (
+                                np.asarray(((aa[0], -ab[1]), (ab[0], bb[0]))),
+                                np.asarray(((aa[1], -ab[0]), (ab[1], bb[1]))),
+                            )
+                    case _PlanarCurveTangencySystem() if not self.jacobian:
+                        value_a, value_b = interval_dot(gap, db), determinant(da, db)
                         result = (
-                            np.asarray(((aa[0], -ab[1]), (ab[0], bb[0]))),
-                            np.asarray(((aa[1], -ab[0]), (ab[1], bb[1]))),
+                            np.asarray((value_a[0], value_b[0])),
+                            np.asarray((value_a[1], value_b[1])),
                         )
-                elif not self.jacobian:
-                    value_a, value_b = dot(gap, db), determinant(da, db)
-                    result = (
-                        np.asarray((value_a[0], value_b[0])),
-                        np.asarray((value_a[1], value_b[1])),
-                    )
-                else:
-                    dda = jet(self.system.first, float(lo[0]), float(hi[0]), 2)
-                    ddb = jet(self.system.second, float(lo[1]), float(hi[1]), 2)
-                    aa = dot(da, db)
-                    bb = dot(db, db)
-                    ab = interval_add((-bb[1], -bb[0]), dot(gap, ddb))
-                    ba, bb = determinant(dda, db), determinant(da, ddb)
-                    result = (
-                        np.asarray(((aa[0], ab[0]), (ba[0], bb[0]))),
-                        np.asarray(((aa[1], ab[1]), (ba[1], bb[1]))),
-                    )
+                    case _PlanarCurveTangencySystem():
+                        dda = jet(
+                            self.system.first,
+                            float(lo[0]),
+                            float(hi[0]),
+                            2,
+                            budget=budget,
+                            preparations=preparations,
+                        )
+                        ddb = jet(
+                            self.system.second,
+                            float(lo[1]),
+                            float(hi[1]),
+                            2,
+                            budget=budget,
+                            preparations=preparations,
+                        )
+                        aa = interval_dot(da, db)
+                        bb = tuple(
+                            np.asarray(value, dtype=np.float64)
+                            for value in interval_dot(db, db)
+                        )
+                        ab = interval_add((-bb[1], -bb[0]), interval_dot(gap, ddb))
+                        ba, bb = determinant(dda, db), determinant(da, ddb)
+                        result = (
+                            np.asarray(((aa[0], ab[0]), (ba[0], bb[0]))),
+                            np.asarray(((aa[1], ab[1]), (ba[1], bb[1]))),
+                        )
             lower_outputs.append(result[0])
             upper_outputs.append(result[1])
         return np.asarray(lower_outputs), np.asarray(upper_outputs)
@@ -3139,7 +3963,9 @@ def _vector_interval_dot(
     second: tuple[np.ndarray, np.ndarray],
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    product = interval_multiply(first, second)
+    product = tuple(
+        np.asarray(value, dtype=np.float64) for value in interval_multiply(first, second)
+    )
     return (
         np.asarray(
             np.nextafter(
@@ -3180,25 +4006,33 @@ def _vector_interval_cross(
 
 @dataclass(frozen=True)
 class _IntersectionSurfaceIntervals:
-    """Spatial source branch bounds composed with a canonical surface evaluator."""
+    """Compose spatial source branch bounds with a surface evaluator."""
 
-    system: _CurveSurfaceSystem | _CurveSurfaceTangencySystem
+    system: CurveSurfaceSystem | _CurveSurfaceTangencySystem
     jacobian: bool
 
     @property
     def output_shape(self) -> tuple[int, ...]:
         return (3, 3) if self.jacobian else (3,)
 
-    def evaluate(
-        self, lower: np.ndarray, upper: np.ndarray, /
+    def evaluate_scope(
+        self,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+        preparations: TrimRequestPreparations | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         curve = self.system.curve
-        if not isinstance(curve, IntersectionCurve):
+        if not isinstance(curve, intersection_curve_owner.IntersectionCurve):
             raise TypeError(
-                "Source branch interval preparation requires an IntersectionCurve."
+                "source_intervals.curve must be an intersection branch; got another carrier"
             )
         if isinstance(self.system, _CurveSurfaceTangencySystem):
-            return self._tangency_enclosures(lower, upper)
+            return self._tangency_enclosures(
+                lower, upper, budget=budget, preparations=preparations
+            )
         surface_function = (
             jax.jacfwd(self.system.surface.evaluate)
             if self.jacobian
@@ -3217,14 +4051,27 @@ class _IntersectionSurfaceIntervals:
                 lows.append(np.full(self.output_shape, -np.inf))
                 highs.append(np.full(self.output_shape, np.inf))
                 continue
-            surface_lo, surface_hi = prepared.evaluate(lo[None, 1:], hi[None, 1:])
+            surface_lo, surface_hi = evaluate_interval(
+                prepared,
+                lo[None, 1:],
+                hi[None, 1:],
+                budget=budget,
+                preparations=preparations,
+            )
             if self.jacobian:
                 first, last = float(lo[0]), float(hi[0])
-                curve_lo, curve_hi = curve.derivative_bounds(first, last)
+                curve_lo, curve_hi = curve.derivative_bounds(
+                    first, last, budget=budget, preparations=preparations
+                )
                 lows.append(np.concatenate((curve_lo[:, None], -surface_hi[0]), axis=1))
                 highs.append(np.concatenate((curve_hi[:, None], -surface_lo[0]), axis=1))
             else:
-                box = curve.bounding_box(float(lo[0]), float(hi[0]))
+                box = curve.bounding_box(
+                    float(lo[0]),
+                    float(hi[0]),
+                    budget=budget,
+                    preparations=preparations,
+                )
                 value_lo, value_hi = interval_subtract(
                     (box[0], box[1]), (surface_lo[0], surface_hi[0])
                 )
@@ -3233,12 +4080,20 @@ class _IntersectionSurfaceIntervals:
         return np.asarray(lows), np.asarray(highs)
 
     def _tangency_enclosures(
-        self, lower: np.ndarray, upper: np.ndarray, /
+        self,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Differentiate the actual gap/frame/tangent equations by source jets."""
+        """Differentiate gap/frame/tangent equations using source jets."""
         curve = self.system.curve
-        if not isinstance(curve, IntersectionCurve):
-            raise TypeError("Source tangency intervals require an IntersectionCurve.")
+        if not isinstance(curve, intersection_curve_owner.IntersectionCurve):
+            raise TypeError(
+                "source_tangency.curve must be an intersection branch; got another carrier"
+            )
         surface = self.system.surface
         coefficients = coefficient_enclosures(self.system)
         values = prepare_interval_function(
@@ -3268,14 +4123,36 @@ class _IntersectionSurfaceIntervals:
                 highs.append(np.full(self.output_shape, np.inf))
                 continue
             first, last = float(lo[0]), float(hi[0])
-            box = curve.bounding_box(first, last)
-            surface_lo, surface_hi = values.evaluate(lo[None, 1:], hi[None, 1:])
-            gap = interval_subtract((box[0], box[1]), (surface_lo[0], surface_hi[0]))
-            frame_lo, frame_hi = frames.evaluate(lo[None, 1:], hi[None, 1:])
+            box = curve.bounding_box(
+                first, last, preparations=preparations, budget=budget
+            )
+            surface_lo, surface_hi = evaluate_interval(
+                values,
+                lo[None, 1:],
+                hi[None, 1:],
+                budget=budget,
+                preparations=preparations,
+            )
+            gap_lower, gap_upper = interval_subtract(
+                (box[0], box[1]), (surface_lo[0], surface_hi[0])
+            )
+            gap = (
+                np.asarray(gap_lower, dtype=np.float64),
+                np.asarray(gap_upper, dtype=np.float64),
+            )
+            frame_lo, frame_hi = evaluate_interval(
+                frames,
+                lo[None, 1:],
+                hi[None, 1:],
+                budget=budget,
+                preparations=preparations,
+            )
             u = (frame_lo[0, :, 0], frame_hi[0, :, 0])
             v = (frame_lo[0, :, 1], frame_hi[0, :, 1])
             normal = _vector_interval_cross(u, v)
-            tangent = curve.derivative_bounds(first, last)
+            tangent = curve.derivative_bounds(
+                first, last, preparations=preparations, budget=budget
+            )
             if not self.jacobian:
                 rows = (
                     _vector_interval_dot(gap, u),
@@ -3287,10 +4164,18 @@ class _IntersectionSurfaceIntervals:
                 continue
             if hessians is None:
                 raise TypeError(
-                    "Source tangency Jacobians require native surface Hessians."
+                    "source_tangency.surface must provide Hessian enclosures; got missing derivative evidence"
                 )
-            hessian_lo, hessian_hi = hessians.evaluate(lo[None, 1:], hi[None, 1:])
-            curvature = curve.derivative_bounds(first, last, order=2)
+            hessian_lo, hessian_hi = evaluate_interval(
+                hessians,
+                lo[None, 1:],
+                hi[None, 1:],
+                budget=budget,
+                preparations=preparations,
+            )
+            curvature = curve.derivative_bounds(
+                first, last, order=2, preparations=preparations, budget=budget
+            )
             matrix_lo, matrix_hi = np.empty((3, 3)), np.empty((3, 3))
             t_rows = (
                 _vector_interval_dot(tangent, u),
@@ -3312,9 +4197,13 @@ class _IntersectionSurfaceIntervals:
                     matrix_lo[row, column + 1], matrix_hi[row, column + 1] = bounds
                 u_derivative = (hessian_lo[0, :, 0, column], hessian_hi[0, :, 0, column])
                 v_derivative = (hessian_lo[0, :, 1, column], hessian_hi[0, :, 1, column])
-                normal_derivative = interval_add(
+                normal_lower, normal_upper = interval_add(
                     _vector_interval_cross(u_derivative, v),
                     _vector_interval_cross(u, v_derivative),
+                )
+                normal_derivative = (
+                    np.asarray(normal_lower, dtype=np.float64),
+                    np.asarray(normal_upper, dtype=np.float64),
                 )
                 bounds = _vector_interval_dot(tangent, normal_derivative)
                 matrix_lo[2, column + 1], matrix_hi[2, column + 1] = bounds
@@ -3323,24 +4212,8 @@ class _IntersectionSurfaceIntervals:
         return np.asarray(lows), np.asarray(highs)
 
 
-class IntervalEvaluator(Protocol):
-    def evaluate(
-        self, lower: np.ndarray, upper: np.ndarray, /
-    ) -> tuple[np.ndarray, np.ndarray]: ...
-
-
-class KrawczykEvaluator(Protocol):
-    @property
-    def value(self) -> IntervalEvaluator: ...
-
-    @property
-    def jacobian(self) -> IntervalEvaluator: ...
-
-    def point_jacobians(self, points: np.ndarray, /) -> np.ndarray: ...
-
-
 @dataclass(frozen=True)
-class _Prepared:
+class Prepared:
     """Interval and point evaluation of one system."""
 
     system: _System
@@ -3374,7 +4247,14 @@ class _Prepared:
         )
         return values
 
-    def point_jacobians(self, points: np.ndarray, /) -> np.ndarray:
+    def point_jacobians(
+        self,
+        points: np.ndarray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget,
+        preparations: TrimRequestPreparations | None = None,
+    ) -> np.ndarray:
         (values,) = _padded_call(
             lambda chunk: (
                 self.source_jacobians(jnp.asarray(chunk))
@@ -3394,12 +4274,8 @@ class _Prepared:
         return _newton(self.system, points, plan)
 
 
-_PAIR_PREPARATION_CACHE: dict[tuple[str, int], _Prepared] = {}
-_SOURCE_PREPARATION_CACHE: dict[tuple[str, str, int, int], _Prepared] = {}
-
-
 class _AxialRevolutionEvaluator(AbstractSurfacePatch):
-    """Exact original-angle harmonic law of an on-axis native circle sweep."""
+    """Evaluate an on-axis circle sweep with its authored angular parameter."""
 
     source: RevolutionSurface
     profile: CircleCurve
@@ -3412,11 +4288,15 @@ class _AxialRevolutionEvaluator(AbstractSurfacePatch):
 
     def __init__(self, source: RevolutionSurface, /) -> None:
         if not isinstance(source.curve, CircleCurve):
-            raise TypeError("An axial revolution evaluator requires its original circle.")
+            raise TypeError(
+                "axial_revolution.source.curve must be a circle; got unsupported profile"
+            )
         axis = np.asarray(source.axis_direction)
         active = np.flatnonzero(axis)
         if active.size != 1 or abs(axis[active[0]]) != 1.0:
-            raise ValueError("Exact harmonic lowering requires a signed coordinate axis.")
+            raise ValueError(
+                "axial_revolution.source.axis_direction must be a signed coordinate axis; got another axis"
+            )
         index = int(active[0])
         if any(
             np.asarray(source.curve.center)[i] != np.asarray(source.axis_origin)[i]
@@ -3424,7 +4304,7 @@ class _AxialRevolutionEvaluator(AbstractSurfacePatch):
             if i != index
         ):
             raise ValueError(
-                "The source circle center must lie exactly on its rotation axis."
+                "axial_revolution.source.curve.center must lie on the rotation axis; got an off-axis center"
             )
         self.source, self.profile = source, source.curve
         first, second = (
@@ -3433,7 +4313,10 @@ class _AxialRevolutionEvaluator(AbstractSurfacePatch):
         )
         radial_first, radial_second = first.copy(), second.copy()
         radial_first[index] = radial_second[index] = 0.0
-        axial_first, axial_second = np.zeros(3), np.zeros(3)
+        axial_first, axial_second = (
+            np.zeros(3, dtype=np.float64),
+            np.zeros(3, dtype=np.float64),
+        )
         axial_first[index], axial_second[index] = first[index], second[index]
         self.radial_first, self.radial_second = (
             jnp.asarray(radial_first),
@@ -3462,11 +4345,46 @@ class _AxialRevolutionEvaluator(AbstractSurfacePatch):
             + axial
         )
 
-    def bounding_box(self, parameter_box: ConvertibleToArray, /) -> np.ndarray:
-        return self.source.bounding_box(parameter_box)
+    def bounding_box(
+        self,
+        parameter_box: ConvertibleToArray,
+        /,
+        *,
+        preparations: TrimRequestPreparations | None = None,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if preparations is None:
+            preparations = TrimRequestPreparations()
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    parameter_box,
+                )
+            ) as budget:
+                return self.bounding_box(
+                    parameter_box, preparations=preparations, budget=budget
+                )
+        return self.source.bounding_box(
+            parameter_box, preparations=preparations, budget=budget
+        )
 
-    def validate_parameter_box(self, parameter_box: ConvertibleToArray, /) -> np.ndarray:
-        return self.source.validate_parameter_box(parameter_box)
+    def validate_parameter_box(
+        self,
+        parameter_box: ConvertibleToArray,
+        /,
+        *,
+        budget: CoordinateEnclosureBudget | None = None,
+    ) -> np.ndarray:
+        if budget is None:
+            with coordinate_source_request(
+                (
+                    self,
+                    parameter_box,
+                )
+            ) as budget:
+                return self.validate_parameter_box(parameter_box, budget=budget)
+        return self.source.validate_parameter_box(parameter_box, budget=budget)
 
     def degenerate_isolines(
         self, parameter_box: ConvertibleToArray, /
@@ -3474,20 +4392,21 @@ class _AxialRevolutionEvaluator(AbstractSurfacePatch):
         return self.source.degenerate_isolines(parameter_box)
 
 
-def _canonical_surface_evaluator(surface: SurfaceEvaluator, /) -> SurfaceEvaluator:
-    """Lower a proved Rodrigues law at its ORIGINAL (u, source-t).
+def _canonical_surface_evaluator(
+    surface: AbstractSurfacePatch, /
+) -> AbstractSurfacePatch:
+    """Lower a proved Rodrigues law at its authored (u, source-t) coordinates.
 
-    This is evaluator simplification only. Regions, topology, source records,
-    parameter domains and native period declarations remain authoritative.
+    Evaluator simplification preserves regions, topology, source records,
+    parameter domains and period declarations.
     """
-    from fractions import Fraction as F
 
     if not isinstance(surface, RevolutionSurface) or not isinstance(
         surface.curve, CircleCurve
     ):
         return surface
     profile = surface.curve
-    axis = tuple(F(float(value)) for value in np.asarray(surface.axis_direction))
+    axis = rational_vector(np.asarray(surface.axis_direction))
     active = [index for index, value in enumerate(axis) if value]
     if len(active) != 1 or abs(axis[active[0]]) != 1:
         return surface
@@ -3500,8 +4419,8 @@ def _canonical_surface_evaluator(surface: SurfaceEvaluator, /) -> SurfaceEvaluat
     )
     if any(value for i, value in enumerate(delta) if i != index):
         return surface
-    first = tuple(F(float(value)) for value in np.asarray(profile.first_axis))
-    second = tuple(F(float(value)) for value in np.asarray(profile.second_axis))
+    first = rational_vector(np.asarray(profile.first_axis))
+    second = rational_vector(np.asarray(profile.second_axis))
     opposite = tuple(-value for value in axis)
     if (
         (second == axis or second == opposite)
@@ -3518,44 +4437,46 @@ def _canonical_surface_evaluator(surface: SurfaceEvaluator, /) -> SurfaceEvaluat
             profile.second_axis,
             profile.radius,
         )
-    # No unit-frame/angle inference: keep every ORIGINAL float coefficient.
+    # Preserve the authored angle and each binary64 coefficient.
     # Axial terms are collected before evaluating u, removing the artificial
     # dependency in cos(u)*axial + (1-cos(u))*axial exactly.
     return _AxialRevolutionEvaluator(surface)
 
 
 def _pose_cancelled_pair(
-    system: SurfacePairSystem, /
-) -> tuple[SurfacePairSystem, np.ndarray] | None:
-    """Exact common-pose cancellation of a placed plane/plane equation.
+    system: intersection_curve_owner.SurfacePairSystem, /
+) -> tuple[intersection_curve_owner.SurfacePairSystem, np.ndarray] | None:
+    """Cancel a common pose in a placed plane/plane equation.
 
     ``(R f(p) + t) - (R g(q) + t) = R (f(p) - g(q))`` holds in the authored
     operation tree, and ``same_source_pose`` proves one identical ``R, t``
     with positive determinant, so both equations have one zero set. Only the
     equations are prepared in the shared source frame: regions, curves, roots
-    and point maps keep the original placed carriers. The returned rotation
+    and point maps keep the placed carriers. The returned rotation
     maps source-frame residual bounds back to world bounds.
     """
     first, second = system.first, system.second
-    if not (isinstance(first, PlacedSurface) and isinstance(second, PlacedSurface)):
+    if not (
+        isinstance(first, placed_owner.PlacedSurface)
+        and isinstance(second, placed_owner.PlacedSurface)
+    ):
         return None
     if not (
         isinstance(first.definition, PlanePatch)
         and isinstance(second.definition, PlanePatch)
     ):
         return None
-    if not same_source_pose(first, second):
+    if not placed_owner.same_source_pose(first, second):
         return None
-    return SurfacePairSystem(first.definition, second.definition), np.asarray(
-        first.rotation
-    )
+    return intersection_curve_owner.SurfacePairSystem(
+        first.definition, second.definition
+    ), np.asarray(first.rotation)
 
 
 def _source_frame_scales(scales: _Scales, rotation: np.ndarray, /) -> _Scales:
     """World residual tolerances, rounded inward through the pose operator bound."""
-    from ._correspondence import placed_deviation_bound
 
-    norm = placed_deviation_bound(rotation, 1.0)
+    norm = source_correspondence_owner.placed_deviation_bound(rotation, 1.0)
     return replace(
         scales,
         coincidence=float(np.nextafter(scales.coincidence / norm, 0.0)),
@@ -3563,78 +4484,98 @@ def _source_frame_scales(scales: _Scales, rotation: np.ndarray, /) -> _Scales:
     )
 
 
-def _prepare(system: _System, dimension: int, batch: int, /) -> _Prepared:
-    if isinstance(system, SurfacePairSystem):
-        cancelled = _pose_cancelled_pair(system)
-        if cancelled is not None:
-            system = cancelled[0]
-        first, second = (
-            _canonical_surface_evaluator(system.first),
-            _canonical_surface_evaluator(system.second),
-        )
-        if first is not system.first or second is not system.second:
-            system = SurfacePairSystem(first, second)
-    elif isinstance(system, _CurveSurfaceSystem):
-        surface = _canonical_surface_evaluator(system.surface)
-        if surface is not system.surface:
-            system = _CurveSurfaceSystem(system.curve, surface)
-    elif isinstance(system, _CurveSurfaceTangencySystem):
-        surface = _canonical_surface_evaluator(system.surface)
-        if surface is not system.surface:
-            system = _CurveSurfaceTangencySystem(system.curve, surface)
-    elif isinstance(system, _TripleSurfaceSystem):
-        first = _canonical_surface_evaluator(system.first)
-        second = _canonical_surface_evaluator(system.second)
-        third = _canonical_surface_evaluator(system.third)
-        if (
-            first is not system.first
-            or second is not system.second
-            or third is not system.third
-        ):
-            system = _TripleSurfaceSystem(first, second, third)
+def prepare(
+    system: _System,
+    dimension: int,
+    batch: int,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+) -> Prepared:
+    request = TrimRequestPreparations() if preparations is None else preparations
+    match system:
+        case intersection_curve_owner.SurfacePairSystem():
+            cancelled = _pose_cancelled_pair(system)
+            if cancelled is not None:
+                system = cancelled[0]
+            first, second = (
+                _canonical_surface_evaluator(system.first),
+                _canonical_surface_evaluator(system.second),
+            )
+            if first is not system.first or second is not system.second:
+                system = intersection_curve_owner.SurfacePairSystem(first, second)
+        case CurveSurfaceSystem():
+            surface = _canonical_surface_evaluator(system.surface)
+            if surface is not system.surface:
+                system = CurveSurfaceSystem(system.curve, surface)
+        case _CurveSurfaceTangencySystem():
+            surface = _canonical_surface_evaluator(system.surface)
+            if surface is not system.surface:
+                system = _CurveSurfaceTangencySystem(system.curve, surface)
+        case TripleSurfaceSystem():
+            first = _canonical_surface_evaluator(system.first)
+            second = _canonical_surface_evaluator(system.second)
+            third = _canonical_surface_evaluator(system.third)
+            if (
+                first is not system.first
+                or second is not system.second
+                or third is not system.third
+            ):
+                system = TripleSurfaceSystem(first, second, third)
     pair_key = None
-    if isinstance(system, SurfacePairSystem):
+    source_key = None
+    if isinstance(system, intersection_curve_owner.SurfacePairSystem):
         pair_key = (canonical_fingerprint(array_tree_fingerprint(system)), batch)
-        cached = _PAIR_PREPARATION_CACHE.get(pair_key)
-        if cached is not None:
-            return cached
-    capability_system = (
-        isinstance(system, (_CurveSurfaceSystem, _CurveSurfaceTangencySystem))
-        and isinstance(system.curve, IntersectionCurve)
-    ) or (
-        isinstance(
-            system, (_CurvePairSystem, _CurveProximitySystem, _PlanarCurveTangencySystem)
-        )
-        and (
-            isinstance(system.first, (AbstractTrimCurve, IntersectionCurve))
-            or isinstance(system.second, (AbstractTrimCurve, IntersectionCurve))
-        )
-    )
-    if capability_system:
-        # Close over source definitions before JAX tracing. Passing them as a
-        # dynamic module tree would trace host chart/span identities as arrays.
-        key = (
+        cached = request.pair_programs.get(pair_key)
+    else:
+        source_key = (
             str(jax.tree_util.tree_structure(system)),
             canonical_fingerprint(array_tree_fingerprint(system)),
             dimension,
             batch,
         )
-        cached = _SOURCE_PREPARATION_CACHE.get(key)
-        if cached is not None:
-            return cached
+        cached = request.source_programs.get(source_key)
+    if cached is not None:
+        return cached
+    capability_system = (
+        isinstance(system, (CurveSurfaceSystem, _CurveSurfaceTangencySystem))
+        and isinstance(system.curve, intersection_curve_owner.IntersectionCurve)
+    ) or (
+        isinstance(
+            system, (_CurvePairSystem, _CurveProximitySystem, _PlanarCurveTangencySystem)
+        )
+        and (
+            isinstance(
+                system.first,
+                (AbstractTrimCurve, intersection_curve_owner.IntersectionCurve),
+            )
+            or isinstance(
+                system.second,
+                (AbstractTrimCurve, intersection_curve_owner.IntersectionCurve),
+            )
+        )
+    )
+    if capability_system:
+        # Close over source definitions before JAX tracing. Passing them as a
+        # dynamic module tree would trace host chart/span identities as arrays.
         value: _IntersectionSurfaceIntervals | _CurveCapabilityIntervals
         jacobian: _IntersectionSurfaceIntervals | _CurveCapabilityIntervals
-        if isinstance(system, (_CurveSurfaceSystem, _CurveSurfaceTangencySystem)):
-            value = _IntersectionSurfaceIntervals(system, False)
-            jacobian = _IntersectionSurfaceIntervals(system, True)
-        elif isinstance(
-            system, (_CurvePairSystem, _CurveProximitySystem, _PlanarCurveTangencySystem)
-        ):
-            value = _CurveCapabilityIntervals(system, False)
-            jacobian = _CurveCapabilityIntervals(system, True)
-        else:
-            raise TypeError("The source capability system has no native interval owner.")
-        prepared = _Prepared(
+        match system:
+            case CurveSurfaceSystem() | _CurveSurfaceTangencySystem():
+                value = _IntersectionSurfaceIntervals(system, False)
+                jacobian = _IntersectionSurfaceIntervals(system, True)
+            case (
+                _CurvePairSystem()
+                | _CurveProximitySystem()
+                | _PlanarCurveTangencySystem()
+            ):
+                value = _CurveCapabilityIntervals(system, False)
+                jacobian = _CurveCapabilityIntervals(system, True)
+            case _:
+                raise TypeError(
+                    "intersection_preparation.system must support interval evaluation; got an unsupported system"
+                )
+        prepared = Prepared(
             system,
             value,
             jacobian,
@@ -3644,141 +4585,34 @@ def _prepare(system: _System, dimension: int, batch: int, /) -> _Prepared:
             jax.jit(jax.vmap(jax.jacfwd(system.residual))),
             eqx.filter_jit(lambda points, plan: _newton_values(system, points, plan)),
         )
-        if len(_SOURCE_PREPARATION_CACHE) >= 128:
-            del _SOURCE_PREPARATION_CACHE[next(iter(_SOURCE_PREPARATION_CACHE))]
-        _SOURCE_PREPARATION_CACHE[key] = prepared
-        return prepared
-    coefficients = coefficient_enclosures(system)
-    prepared = _Prepared(
-        system,
-        prepare_interval_function(
-            system.residual, dimension, batch_capacity=batch, constant_bounds=coefficients
-        ),
-        prepare_interval_function(
-            jax.jacfwd(system.residual),
+    else:
+        coefficients = coefficient_enclosures(system)
+        prepared = Prepared(
+            system,
+            prepare_interval_function(
+                system.residual,
+                dimension,
+                batch_capacity=batch,
+                constant_bounds=coefficients,
+            ),
+            prepare_interval_function(
+                jax.jacfwd(system.residual),
+                dimension,
+                batch_capacity=batch,
+                constant_bounds=coefficients,
+            ),
             dimension,
-            batch_capacity=batch,
-            constant_bounds=coefficients,
-        ),
-        dimension,
-        batch,
-    )
-    if pair_key is not None:
-        if len(_PAIR_PREPARATION_CACHE) >= 128:
-            del _PAIR_PREPARATION_CACHE[next(iter(_PAIR_PREPARATION_CACHE))]
-        _PAIR_PREPARATION_CACHE[pair_key] = prepared
-    return prepared
-
-
-def _approximate_inverses(matrices: np.ndarray, /) -> np.ndarray:
-    """Floating preconditioners for Krawczyk; any matrix keeps the test sound."""
-    dimension = matrices.shape[-1]
-    count = matrices.shape[0]
-    batch = 64
-    parts = []
-    for start in range(0, count, batch):
-        chunk = matrices[start : start + batch]
-        padding = batch - chunk.shape[0]
-        padded = np.concatenate(
-            (chunk, np.repeat(np.eye(dimension)[None], padding, axis=0))
+            batch,
         )
-        if dimension <= 4:
-            inverse = _inverses(jnp.asarray(padded), SmallLinearSolvePlan(dimension))
-        else:
-            inverse = _dense_inverses(jnp.asarray(padded))
-        parts.append(np.asarray(inverse)[: chunk.shape[0]])
-    inverses = np.concatenate(parts) if parts else np.zeros_like(matrices)
-    return np.where(np.isfinite(inverses), inverses, 0.0)
-
-
-@dataclass(frozen=True)
-class _Krawczyk:
-    certified: np.ndarray
-    excluded: np.ndarray
-    lower: np.ndarray
-    upper: np.ndarray
-    preconditioner: np.ndarray
-    contraction: np.ndarray
-
-
-def _krawczyk(
-    prepared: KrawczykEvaluator,
-    lower: np.ndarray,
-    upper: np.ndarray,
-    /,
-    *,
-    parameter_axis: int | None = None,
-) -> _Krawczyk:
-    """(Parametric) Krawczyk inclusion over batched boxes.
-
-    Without a parameter axis the system is square; with one, the chart axis is
-    an interval parameter and inclusion certifies a unique graph point for every
-    parameter value.
-    """
-    dimension = lower.shape[1]
-    free = np.asarray(
-        [axis for axis in range(dimension) if axis != parameter_axis], dtype=np.int64
-    )
-    center = 0.5 * (lower + upper)
-    center_lower = center.copy()
-    center_upper = center.copy()
-    if parameter_axis is not None:
-        center_lower[:, parameter_axis] = lower[:, parameter_axis]
-        center_upper[:, parameter_axis] = upper[:, parameter_axis]
-    value_lower, value_upper = prepared.value.evaluate(center_lower, center_upper)
-    jacobian_lower, jacobian_upper = prepared.jacobian.evaluate(lower, upper)
-    jacobian_lower = jacobian_lower[:, :, free]
-    jacobian_upper = jacobian_upper[:, :, free]
-    point_jacobian = prepared.point_jacobians(center)[:, :, free]
-    preconditioner = _approximate_inverses(point_jacobian)
-    shift_lower, shift_upper = _point_times_interval(
-        preconditioner, value_lower[..., None], value_upper[..., None]
-    )
-    product_lower, product_upper = _point_times_interval(
-        preconditioner, jacobian_lower, jacobian_upper
-    )
-    identity = np.eye(free.shape[0])[None]
-    residual_lower, residual_upper = _round(
-        identity - product_upper, identity - product_lower
-    )
-    offset_lower = (lower - center)[:, free, None]
-    offset_upper = (upper - center)[:, free, None]
-    spread_lower, spread_upper = _interval_times_interval(
-        residual_lower, residual_upper, offset_lower, offset_upper
-    )
-    base = center[:, free]
-    result_lower, result_upper = _round(
-        base - shift_upper[..., 0] + spread_lower[..., 0],
-        base - shift_lower[..., 0] + spread_upper[..., 0],
-    )
-    finite = np.all(np.isfinite(result_lower) & np.isfinite(result_upper), axis=1)
-    box_lower = lower[:, free]
-    box_upper = upper[:, free]
-    certified = (
-        finite
-        & np.all(result_lower > box_lower, axis=1)
-        & np.all(result_upper < box_upper, axis=1)
-    )
-    excluded = finite & np.any(
-        (result_upper < box_lower) | (result_lower > box_upper), axis=1
-    )
-    contraction = np.max(
-        np.nextafter(
-            np.sum(_magnitude(residual_lower, residual_upper), axis=2)
-            * (1.0 + 8.0 * _UNIT),
-            np.inf,
-        ),
-        axis=1,
-    )
-    certified &= contraction < 1.0
-    return _Krawczyk(
-        certified,
-        excluded,
-        np.where(finite[:, None], result_lower, box_lower),
-        np.where(finite[:, None], result_upper, box_upper),
-        preconditioner,
-        contraction,
-    )
+    if source_key is not None:
+        if len(request.source_programs) >= 128:
+            del request.source_programs[next(iter(request.source_programs))]
+        request.source_programs[source_key] = prepared
+    if pair_key is not None:
+        if len(request.pair_programs) >= 128:
+            del request.pair_programs[next(iter(request.pair_programs))]
+        request.pair_programs[pair_key] = prepared
+    return prepared
 
 
 # ------------------------------------------------------------ root isolation
@@ -3813,11 +4647,11 @@ class _Problem:
     neighborhood summarized by a certified singular contact.
     """
 
-    system: _Prepared
+    system: Prepared
     point: Callable[[np.ndarray], np.ndarray]
-    pair: _Prepared | None
+    pair: Prepared | None
     layout: _Layout | None
-    tangency: _Prepared | None
+    tangency: Prepared | None
     proximity: bool
     excluded: tuple[np.ndarray, np.ndarray] | None = None
     junction: np.ndarray | None = None
@@ -3827,7 +4661,10 @@ def _image_size(
     jacobian_lower: np.ndarray, jacobian_upper: np.ndarray, widths: np.ndarray, /
 ) -> np.ndarray:
     return np.max(
-        np.sum(_magnitude(jacobian_lower, jacobian_upper) * widths[:, None, :], axis=2),
+        np.sum(
+            interval_magnitude(jacobian_lower, jacobian_upper) * widths[:, None, :],
+            axis=2,
+        ),
         axis=1,
     )
 
@@ -3860,6 +4697,9 @@ def _coincidence(
     tolerance: float,
     /,
     anchor: np.ndarray | None = None,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Normal-distance and projection coverage against an affine partner.
 
@@ -3882,14 +4722,19 @@ def _coincidence(
         return none, none, np.full((count,), np.inf)
     target_ = np.asarray(target)
     system = pair.system
-    if isinstance(system, _CurveSurfaceSystem):
-        target_evaluator = system.surface
-    elif isinstance(system, (_CurvePairSystem, _CurveProximitySystem, SurfacePairSystem)):
-        target_evaluator = system.second if sign > 0 else system.first
-    elif isinstance(system, _FaceSystem):
-        target_evaluator = system.pair.second if sign > 0 else system.pair.first
-    else:
-        return none, none, np.full((count,), np.inf)
+    match system:
+        case CurveSurfaceSystem():
+            target_evaluator = system.surface
+        case (
+            _CurvePairSystem()
+            | _CurveProximitySystem()
+            | intersection_curve_owner.SurfacePairSystem()
+        ):
+            target_evaluator = system.second if sign > 0 else system.first
+        case _FaceSystem():
+            target_evaluator = system.pair.second if sign > 0 else system.pair.first
+        case _:
+            return none, none, np.full((count,), np.inf)
     if not isinstance(target_evaluator, (LineCurve, PlanePatch)):
         return none, none, np.full((count,), np.inf)
     center = 0.5 * (lower + upper) if anchor is None else anchor
@@ -3897,10 +4742,12 @@ def _coincidence(
     probe_upper = upper.copy()
     probe_lower[:, target_] = center[:, target_]
     probe_upper[:, target_] = center[:, target_]
-    gap_lower, gap_upper = pair.value.evaluate(probe_lower, probe_upper)
+    gap_lower, gap_upper = evaluate_interval(
+        pair.value, probe_lower, probe_upper, budget=budget, preparations=preparations
+    )
     if sign < 0.0:
         gap_lower, gap_upper = -gap_upper, -gap_lower
-    jacobian = pair.point_jacobians(center)
+    jacobian = pair.point_jacobians(center, budget=budget, preparations=preparations)
     frame = -sign * jacobian[:, :, target_]
     tangents = jacobian[:, :, np.asarray(source)]
     if ambient == 2:
@@ -3910,13 +4757,13 @@ def _coincidence(
     length = np.linalg.norm(normal, axis=1, keepdims=True)
     regular = length[:, 0] > 0.0
     normal = normal / np.where(length > 0.0, length, 1.0)
-    distance_lower, distance_upper = _point_times_interval(
+    distance_lower, distance_upper = point_times_interval(
         normal[:, None, :], gap_lower[..., None], gap_upper[..., None]
     )
-    distance = _magnitude(distance_lower, distance_upper)[:, 0, 0]
+    distance = interval_magnitude(distance_lower, distance_upper)[:, 0, 0]
     gram = np.swapaxes(frame, 1, 2) @ frame
-    projector = _approximate_inverses(gram) @ np.swapaxes(frame, 1, 2)
-    step_lower, step_upper = _point_times_interval(
+    projector = approximate_inverses(gram) @ np.swapaxes(frame, 1, 2)
+    step_lower, step_upper = point_times_interval(
         projector, gap_lower[..., None], gap_upper[..., None]
     )
     projected_lower = center[:, target_] + step_lower[..., 0]
@@ -3950,6 +4797,9 @@ def _record_root(
     tight: tuple[np.ndarray, np.ndarray],
     tolerance: float,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> None:
     """Record a certified root unless its uniqueness box already holds one."""
     for existing_lower, existing_upper in isolated.root_boxes:
@@ -3957,15 +4807,21 @@ def _record_root(
             return
     isolated.root_boxes.append(unique)
     pair = problem.pair if problem.pair is not None else problem.system
-    value_lower, value_upper = pair.value.evaluate(tight[0][None], tight[1][None])
-    gap = float(np.linalg.norm(_magnitude(value_lower, value_upper)[0]))
+    value_lower, value_upper = evaluate_interval(
+        pair.value,
+        tight[0][None],
+        tight[1][None],
+        budget=budget,
+        preparations=preparations,
+    )
+    gap = float(np.linalg.norm(interval_magnitude(value_lower, value_upper)[0]))
     if problem.proximity and gap > tolerance:
         # A certified critical point of the operand distance with a positive gap
         # is not an intersection; its box is still accounted as decided.
         return
     isolated.roots.append(
         ParametricIntersectionPoint(
-            kind="transversal",
+            kind="crossing",
             certificate="proximity-krawczyk" if problem.proximity else "krawczyk",
             parameters=np.clip(point, tight[0], tight[1]),
             parameter_lower=tight[0],
@@ -3984,16 +4840,15 @@ def _contract(
     /,
     *,
     maximum_steps: int = 8,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Iterate Krawczyk on certified boxes; every iterate still holds the root."""
-    if (
-        isinstance(maximum_steps, bool)
-        or not isinstance(maximum_steps, int)
-        or maximum_steps < 0
-    ):
-        raise ValueError("Refinement steps must be a nonnegative integer.")
+    maximum_steps = nonnegative_integer(maximum_steps, "maximum_steps")
     for _ in range(maximum_steps):
-        result = _krawczyk(prepared, lower, upper)
+        result = krawczyk(
+            prepared, lower, upper, budget=budget, preparations=preparations
+        )
         shrink = result.certified[:, None]
         new_lower = np.where(shrink, np.maximum(lower, result.lower), lower)
         new_upper = np.where(shrink, np.minimum(upper, result.upper), upper)
@@ -4004,10 +4859,13 @@ def _contract(
 
 
 def _certify_near(
-    prepared: _Prepared,
+    prepared: Prepared,
     points: np.ndarray,
     widths: np.ndarray,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]:
     """epsilon-inflation Krawczyk around converged Newton points.
 
@@ -4017,7 +4875,7 @@ def _certify_near(
     certified = np.zeros((count,), dtype=np.bool_)
     lower = points.copy()
     upper = points.copy()
-    seed = _krawczyk(prepared, points, points)
+    seed = krawczyk(prepared, points, points, budget=budget, preparations=preparations)
     seed_radius = np.maximum(np.abs(seed.lower - points), np.abs(seed.upper - points))
     seed_radius = np.where(
         np.isfinite(seed_radius), np.nextafter(2.0 * seed_radius, np.inf), 0.0
@@ -4035,7 +4893,9 @@ def _certify_near(
         radius = np.maximum(radius, seed_radius[pending])
         trial_lower = points[pending] - radius
         trial_upper = points[pending] + radius
-        result = _krawczyk(prepared, trial_lower, trial_upper)
+        result = krawczyk(
+            prepared, trial_lower, trial_upper, budget=budget, preparations=preparations
+        )
         rows = np.flatnonzero(pending)[result.certified]
         certified[rows] = True
         lower[rows] = trial_lower[result.certified]
@@ -4043,7 +4903,13 @@ def _certify_near(
     if not np.any(certified):
         empty = (lower[certified], upper[certified])
         return certified, empty, empty
-    tight = _contract(prepared, lower[certified], upper[certified])
+    tight = _contract(
+        prepared,
+        lower[certified],
+        upper[certified],
+        budget=budget,
+        preparations=preparations,
+    )
     return certified, (lower[certified], upper[certified]), tight
 
 
@@ -4054,6 +4920,9 @@ def _tangency_probe(
     widths: np.ndarray,
     tolerance: float,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> None:
     tangency = problem.tangency
     if tangency is None:
@@ -4073,7 +4942,9 @@ def _tangency_probe(
     usable &= np.all(np.abs(roots - centers) <= 4.0 * widths + 1.0e-300, axis=1)
     if not np.any(usable):
         return
-    certified, unique, tight = _certify_near(tangency, roots[usable], widths[usable])
+    certified, unique, tight = _certify_near(
+        tangency, roots[usable], widths[usable], budget=budget, preparations=preparations
+    )
     for point, estimate, unique_lower, unique_upper, tight_lower, tight_upper in zip(
         roots[usable][certified],
         condition[usable][certified],
@@ -4087,8 +4958,14 @@ def _tangency_probe(
         ):
             continue
         pair = problem.pair if problem.pair is not None else problem.system
-        gap_lower, gap_upper = pair.value.evaluate(tight_lower[None], tight_upper[None])
-        gap = float(np.linalg.norm(_magnitude(gap_lower, gap_upper)[0]))
+        gap_lower, gap_upper = evaluate_interval(
+            pair.value,
+            tight_lower[None],
+            tight_upper[None],
+            budget=budget,
+            preparations=preparations,
+        )
+        gap = float(np.linalg.norm(interval_magnitude(gap_lower, gap_upper)[0]))
         if gap > tolerance:
             # A distance-critical point with a positive gap proves nothing about
             # nearby roots of the operand equations; subdivision continues.
@@ -4103,7 +4980,11 @@ def _tangency_probe(
             )
         isolated.contacts.append(
             ParametricIntersectionPoint(
-                kind="singular" if _operand_degenerate(problem, point) else "tangent",
+                kind="singular_point"
+                if _operand_degenerate(
+                    problem, point, budget=budget, preparations=preparations
+                )
+                else "tangent_point",
                 certificate="tangency-krawczyk",
                 parameters=representative,
                 parameter_lower=tight_lower,
@@ -4115,13 +4996,22 @@ def _tangency_probe(
         )
 
 
-def _operand_degenerate(problem: _Problem, point: np.ndarray, /) -> bool:
+def _operand_degenerate(
+    problem: _Problem,
+    point: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
+) -> bool:
     """Whether an operand's parametrization loses rank at ``point``."""
     pair = problem.pair if problem.pair is not None else problem.system
     layout = problem.layout
     if layout is None:
         return False
-    jacobian = pair.point_jacobians(point[None])[0]
+    jacobian = pair.point_jacobians(
+        point[None], budget=budget, preparations=preparations
+    )[0]
     scale = max(float(np.max(np.abs(jacobian))), np.finfo(np.float64).tiny)
     for columns in (layout.first, layout.second):
         block = jacobian[:, np.asarray(columns)]
@@ -4149,6 +5039,9 @@ def _isolate(
     budget: _Budget,
     batch: int,
     /,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> _Isolated:
     """Bounded subdivision with exclusion, Krawczyk, probes and explicit leftovers."""
     isolated = _Isolated()
@@ -4194,6 +5087,8 @@ def _isolate(
                 budget,
                 newton_plan,
                 parameter_widths,
+                coordinate_budget=coordinate_budget,
+                preparations=preparations,
             )
             queue_lower.append(split_lower)
             queue_upper.append(split_upper)
@@ -4212,25 +5107,48 @@ def _process(
     newton_plan: VectorLocalRootPlan,
     parameter_widths: np.ndarray,
     /,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     prepared = problem.system
-    value_lower, value_upper = prepared.value.evaluate(lower, upper)
+    value_lower, value_upper = evaluate_interval(
+        prepared.value, lower, upper, budget=coordinate_budget, preparations=preparations
+    )
     alive = _contains_zero(value_lower, value_upper)
     if problem.pair is not None and problem.proximity:
-        gap_lower, gap_upper = problem.pair.value.evaluate(lower, upper)
+        gap_lower, gap_upper = evaluate_interval(
+            problem.pair.value,
+            lower,
+            upper,
+            budget=coordinate_budget,
+            preparations=preparations,
+        )
         alive &= np.all(
             (gap_lower <= scales.tangency) & (gap_upper >= -scales.tangency), axis=1
         )
-    jacobian_lower, jacobian_upper = prepared.jacobian.evaluate(lower, upper)
+    jacobian_lower, jacobian_upper = evaluate_interval(
+        prepared.jacobian,
+        lower,
+        upper,
+        budget=coordinate_budget,
+        preparations=preparations,
+    )
     center = 0.5 * (lower + upper)
-    center_lower, center_upper = prepared.value.evaluate(center, center)
-    spread_lower, spread_upper = _interval_times_interval(
+    center_lower, center_upper = evaluate_interval(
+        prepared.value,
+        center,
+        center,
+        budget=coordinate_budget,
+        preparations=preparations,
+    )
+    spread_lower, spread_upper = interval_times_interval(
         jacobian_lower,
         jacobian_upper,
         (lower - center)[..., None],
         (upper - center)[..., None],
     )
-    centered_lower, centered_upper = _round(
+    centered_lower, centered_upper = round_interval(
         center_lower + spread_lower[..., 0], center_upper + spread_upper[..., 0]
     )
     alive &= _contains_zero(centered_lower, centered_upper)
@@ -4244,14 +5162,20 @@ def _process(
     # auxiliary turning/tangency rows whose units differ.
     gap_rows = _gap_rows(problem)
     size = _image_size(jacobian_lower[:, :gap_rows], jacobian_upper[:, :gap_rows], widths)
-    krawczyk = _krawczyk(prepared, lower, upper)
-    budget.excluded += int(np.sum(krawczyk.excluded))
-    certified_rows = np.flatnonzero(krawczyk.certified)
+    krawczyk_bank = krawczyk(
+        prepared, lower, upper, budget=coordinate_budget, preparations=preparations
+    )
+    budget.excluded += int(np.sum(krawczyk_bank.excluded))
+    certified_rows = np.flatnonzero(krawczyk_bank.certified)
     budget.certified += certified_rows.shape[0]
     if certified_rows.shape[0]:
         unique = (lower[certified_rows], upper[certified_rows])
         tight = _contract(
-            prepared, krawczyk.lower[certified_rows], krawczyk.upper[certified_rows]
+            prepared,
+            krawczyk_bank.lower[certified_rows],
+            krawczyk_bank.upper[certified_rows],
+            budget=coordinate_budget,
+            preparations=preparations,
         )
         points, conditions = _refine(problem, 0.5 * (tight[0] + tight[1]), newton_plan)
         for index in range(certified_rows.shape[0]):
@@ -4263,17 +5187,26 @@ def _process(
                 (unique[0][index], unique[1][index]),
                 (tight[0][index], tight[1][index]),
                 scales.tangency,
+                budget=coordinate_budget,
+                preparations=preparations,
             )
-    undecided = ~krawczyk.certified & ~krawczyk.excluded
+    undecided = ~krawczyk_bank.certified & ~krawczyk_bank.excluded
     # Krawczyk contraction: intersect with the image when it shrinks the box.
-    contracted_lower = np.maximum(lower, krawczyk.lower)
-    contracted_upper = np.minimum(upper, krawczyk.upper)
+    contracted_lower = np.maximum(lower, krawczyk_bank.lower)
+    contracted_upper = np.minimum(upper, krawczyk_bank.upper)
     lower = np.where(undecided[:, None], contracted_lower, lower)[undecided]
     upper = np.where(undecided[:, None], contracted_upper, upper)[undecided]
     size = size[undecided]
     if lower.shape[0] == 0:
         return lower, upper
-    full, partial, distance = _coincidence(problem, lower, upper, scales.coincidence)
+    full, partial, distance = _coincidence(
+        problem,
+        lower,
+        upper,
+        scales.coincidence,
+        budget=coordinate_budget,
+        preparations=preparations,
+    )
     # Boxes far below the probe scale can meet the distance test at a tangency;
     # a coincident component is claimed only on boxes of at least probe size.
     claimable = size > 0.25 * scales.probe
@@ -4287,7 +5220,16 @@ def _process(
     lower, upper, size = lower[remaining], upper[remaining], size[remaining]
     small = size <= scales.probe
     if np.any(small):
-        _probe(problem, isolated, lower[small], upper[small], newton_plan, scales)
+        _probe(
+            problem,
+            isolated,
+            lower[small],
+            upper[small],
+            newton_plan,
+            scales,
+            budget=coordinate_budget,
+            preparations=preparations,
+        )
         keep = ~_inside_any(lower, upper, isolated.root_boxes)
         lower, upper, size = lower[keep], upper[keep], size[keep]
     leaf = size <= scales.resolution
@@ -4297,10 +5239,17 @@ def _process(
     lower, upper = lower[~leaf], upper[~leaf]
     if lower.shape[0] == 0:
         return lower, upper
-    jacobian_lower, jacobian_upper = prepared.jacobian.evaluate(lower, upper)
+    jacobian_lower, jacobian_upper = evaluate_interval(
+        prepared.jacobian,
+        lower,
+        upper,
+        budget=coordinate_budget,
+        preparations=preparations,
+    )
     gap_rows = _gap_rows(problem)
     contribution = np.max(
-        _magnitude(jacobian_lower[:, :gap_rows], jacobian_upper[:, :gap_rows]), axis=1
+        interval_magnitude(jacobian_lower[:, :gap_rows], jacobian_upper[:, :gap_rows]),
+        axis=1,
     ) * (upper - lower)
     axis = np.argmax(contribution, axis=1)
     # Unbounded rational interval jets carry no sensitivity ordering. Always
@@ -4355,6 +5304,9 @@ def _probe(
     plan: VectorLocalRootPlan,
     scales: _Scales,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> None:
     """Newton plus epsilon-inflation certification in small undecided boxes."""
     center = 0.5 * (lower + upper)
@@ -4372,7 +5324,11 @@ def _probe(
     regular = np.zeros_like(usable)
     if np.any(usable):
         certified, unique, tight = _certify_near(
-            problem.system, roots[usable], widths[usable]
+            problem.system,
+            roots[usable],
+            widths[usable],
+            budget=budget,
+            preparations=preparations,
         )
         regular[np.flatnonzero(usable)[certified]] = True
         if np.any(certified):
@@ -4394,13 +5350,21 @@ def _probe(
                     (unique[0][index], unique[1][index]),
                     (tight[0][index], tight[1][index]),
                     scales.tangency,
+                    budget=budget,
+                    preparations=preparations,
                 )
     # Newton failed or its limit is not a certifiable regular root: probe for a
     # certified tangential contact instead.
     singular = ~regular
     if np.any(singular):
         _tangency_probe(
-            problem, isolated, center[singular], widths[singular], scales.tangency
+            problem,
+            isolated,
+            center[singular],
+            widths[singular],
+            scales.tangency,
+            budget=budget,
+            preparations=preparations,
         )
 
 
@@ -4486,47 +5450,75 @@ def _components(
 
 
 @eqx.filter_jit
-def _evaluate_curves(evaluator: CurveEvaluator, parameters: Array) -> Array:
+def _evaluate_curves(
+    evaluator: intersection_curve_owner.CurveEvaluator, parameters: Array
+) -> Array:
     return jax.vmap(evaluator.evaluate)(parameters)
 
 
 def _curve_point_map(
-    curve: CurveEvaluator | IntersectionCurve, /
+    curve: intersection_curve_owner.CurveEvaluator
+    | intersection_curve_owner.IntersectionCurve,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations,
 ) -> Callable[[np.ndarray], np.ndarray]:
-    if isinstance(curve, IntersectionCurve):
+    if isinstance(curve, intersection_curve_owner.IntersectionCurve):
         return lambda parameters: np.asarray(
-            curve.evaluate(jnp.asarray(parameters[0])).point
+            curve.evaluate(
+                jnp.asarray(parameters[0]), budget=budget, preparations=preparations
+            ).point
         )
     if isinstance(curve, AbstractTrimCurve):
         # Chart identities are host preparation, not dynamic JIT arguments.
-        return lambda parameters: np.asarray(curve.evaluate(jnp.asarray(parameters[0])))
+        return lambda parameters: np.asarray(
+            curve.evaluate(
+                jnp.asarray(parameters[0]), budget=budget, preparations=preparations
+            )
+        )
     return lambda parameters: np.asarray(
         _evaluate_curves(curve, jnp.asarray(parameters[:1]))
     )[0]
 
 
+@checked
 def intersect_trim_curves(
     first: AbstractTrimCurve,
     second: AbstractTrimCurve,
     /,
     *,
     policy: ParametricIntersectionPolicy | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> CurveIntersectionResult:
-    """Bounded trim/trim events in the operands' actual parameter intervals."""
-    if not isinstance(first, AbstractTrimCurve) or not isinstance(
-        second, AbstractTrimCurve
-    ):
-        raise TypeError("Trim intersections require two native AbstractTrimCurve values.")
-    return intersect_curve_ranges(CurveRange(first), CurveRange(second), policy=policy)
+    """Return bounded trim/trim events in the operand parameter intervals."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if budget is None:
+        with coordinate_source_request(
+            (
+                first,
+                second,
+            )
+        ) as budget:
+            return intersect_trim_curves(
+                first, second, policy=policy, preparations=preparations, budget=budget
+            )
+    return intersect_curve_ranges(
+        intersection_curve_owner.CurveRange(first),
+        intersection_curve_owner.CurveRange(second),
+        policy=policy,
+        preparations=preparations,
+        coordinate_budget=budget,
+    )
 
 
 def _exact_unit_axes(axes: Sequence[np.ndarray]) -> bool:
-    from fractions import Fraction
 
-    vectors = [[Fraction(float(value)) for value in axis] for axis in axes]
+    vectors = [rational_vector(axis) for axis in axes]
     return all(
-        sum(a * b for a, b in zip(vectors[i], vectors[j], strict=True))
-        == (1 if i == j else 0)
+        rational_dot(vectors[i], vectors[j]) == (1 if i == j else 0)
         for i in range(len(vectors))
         for j in range(len(vectors))
     )
@@ -4536,7 +5528,7 @@ def _analytic_point(
     parameters: np.ndarray,
     point: np.ndarray,
     gap: float,
-    kind: ParametricIntersectionKind = "tangent",
+    kind: ParametricIntersectionKind = "tangent_point",
 ) -> ParametricIntersectionPoint:
     radius = 32 * _UNIT * (1 + np.abs(parameters))
     return ParametricIntersectionPoint(
@@ -4548,20 +5540,22 @@ def _analytic_point(
         point=point,
         gap_bound=gap,
         condition_estimate=math.inf,
+        branch_count=0,
     )
 
 
 def _analytic_line_circle(
-    first: CurveRange, second: CurveRange
+    first: intersection_curve_owner.CurveRange,
+    second: intersection_curve_owner.CurveRange,
 ) -> CurveIntersectionResult | None:
-    from fractions import Fraction as F
 
-    if isinstance(first.curve, LineCurve) and isinstance(second.curve, CircleCurve):
-        line_range, circle_range, reversed_ = first, second, False
-    elif isinstance(second.curve, LineCurve) and isinstance(first.curve, CircleCurve):
-        line_range, circle_range, reversed_ = second, first, True
-    else:
-        return None
+    match first.curve, second.curve:
+        case LineCurve(), CircleCurve():
+            line_range, circle_range, reversed_ = first, second, False
+        case CircleCurve(), LineCurve():
+            line_range, circle_range, reversed_ = second, first, True
+        case _:
+            return None
     line, circle = line_range.curve, circle_range.curve
     if not isinstance(line, LineCurve) or not isinstance(circle, CircleCurve):
         return None
@@ -4618,10 +5612,11 @@ def _analytic_line_circle(
 
 
 def _analytic_circle_circle(
-    first: CurveRange, second: CurveRange, /
+    first: intersection_curve_owner.CurveRange,
+    second: intersection_curve_owner.CurveRange,
+    /,
 ) -> CurveIntersectionResult | None:
-    """Prove a tangent contact of two complete coplanar exact circles."""
-    from fractions import Fraction as F
+    """Prove a tangent contact of two full-period coplanar circles."""
 
     if (
         not isinstance(first.curve, CircleCurve)
@@ -4640,22 +5635,15 @@ def _analytic_circle_circle(
     )
     if not _exact_unit_axes(axes[:2]) or not _exact_unit_axes(axes[2:]):
         return None
-    exact_axes = tuple(tuple(F(float(value)) for value in axis) for axis in axes)
-    normal = (
-        exact_axes[0][1] * exact_axes[1][2] - exact_axes[0][2] * exact_axes[1][1],
-        exact_axes[0][2] * exact_axes[1][0] - exact_axes[0][0] * exact_axes[1][2],
-        exact_axes[0][0] * exact_axes[1][1] - exact_axes[0][1] * exact_axes[1][0],
-    )
-    centers = tuple(
-        tuple(F(float(value)) for value in np.asarray(curve.center)) for curve in (a, b)
-    )
+    exact_axes = tuple(rational_vector(axis) for axis in axes)
+    normal = rational_cross(exact_axes[0], exact_axes[1])
+    centers = tuple(rational_vector(np.asarray(curve.center)) for curve in (a, b))
     delta = tuple(y - x for x, y in zip(*centers, strict=True))
-    if sum(n * d for n, d in zip(normal, delta, strict=True)) != 0 or any(
-        sum(n * value for n, value in zip(normal, axis, strict=True)) != 0
-        for axis in exact_axes[2:]
+    if rational_dot(normal, delta) != 0 or any(
+        rational_dot(normal, axis) != 0 for axis in exact_axes[2:]
     ):
         return None
-    length_squared = sum(value * value for value in delta)
+    length_squared = rational_dot(delta, delta)
     radii = F(float(a.radius)), F(float(b.radius))
     if length_squared == 0 or length_squared not in (
         (radii[0] + radii[1]) ** 2,
@@ -4701,9 +5689,9 @@ def _analytic_circle_circle(
 
 
 def _analytic_sphere_contact(
-    first: SurfaceRegion, second: SurfaceRegion
+    first: intersection_curve_owner.SurfaceRegion,
+    second: intersection_curve_owner.SurfaceRegion,
 ) -> SurfaceIntersectionResult | None:
-    from fractions import Fraction as F
 
     a, b = first.patch, second.patch
     if not isinstance(a, SpherePatch) or not isinstance(b, SpherePatch):
@@ -4735,7 +5723,6 @@ def _analytic_sphere_contact(
     factor = (length_squared + ra * ra - rb * rb) / (2 * length_squared)
     exact_point = [x + factor * d for x, d in zip(center_a, delta, strict=True)]
     parameters = []
-    singular = False
     for patch, center, radius in ((a, center_a, ra), (b, center_b, rb)):
         local = [(p - c) / radius for p, c in zip(exact_point, center, strict=True)]
         coordinates = [
@@ -4749,30 +5736,28 @@ def _analytic_sphere_contact(
             float(coordinates[2]),
             math.hypot(float(coordinates[0]), float(coordinates[1])),
         )
-        singular |= coordinates[0] == 0 and coordinates[1] == 0
         parameters.extend((longitude, latitude))
     point = np.asarray([float(value) for value in exact_point])
     gap = 256 * _UNIT * (1 + np.linalg.norm(point) + float(a.radius) + float(b.radius))
     budget = _Budget(1)
     budget.processed = budget.certified = 1
-    event = _analytic_point(
-        np.asarray(parameters), point, gap, "singular" if singular else "tangent"
-    )
+    event = _analytic_point(np.asarray(parameters), point, gap, "tangent_point")
     return SurfaceIntersectionResult((), (event,), (), (), budget.work())
 
 
 def _analytic_plane_sphere_contact(
-    first: SurfaceRegion, second: SurfaceRegion
+    first: intersection_curve_owner.SurfaceRegion,
+    second: intersection_curve_owner.SurfaceRegion,
 ) -> SurfaceIntersectionResult | None:
-    """Exact represented quadric support equality, not a gap-only tangency."""
-    from fractions import Fraction as F
+    """Prove represented quadric support equality at a tangent contact."""
 
-    if isinstance(first.patch, PlanePatch) and isinstance(second.patch, SpherePatch):
-        plane_region, sphere_region, reverse = first, second, False
-    elif isinstance(second.patch, PlanePatch) and isinstance(first.patch, SpherePatch):
-        plane_region, sphere_region, reverse = second, first, True
-    else:
-        return None
+    match first.patch, second.patch:
+        case PlanePatch(), SpherePatch():
+            plane_region, sphere_region, reverse = first, second, False
+        case SpherePatch(), PlanePatch():
+            plane_region, sphere_region, reverse = second, first, True
+        case _:
+            return None
     plane, sphere = plane_region.patch, sphere_region.patch
     if not isinstance(plane, PlanePatch) or not isinstance(sphere, SpherePatch):
         return None
@@ -4840,29 +5825,44 @@ def _analytic_plane_sphere_contact(
     )
     world = np.asarray([float(value) for value in point])
     gap = 512 * _UNIT * (1 + np.linalg.norm(world) + float(sphere.radius))
-    event = _analytic_point(
-        parameters, world, gap, "singular" if unit[0] == 0 and unit[1] == 0 else "tangent"
-    )
+    event = _analytic_point(parameters, world, gap, "tangent_point")
     work.certified = 1
     return SurfaceIntersectionResult((), (event,), (), (), work.work())
 
 
+@checked
 def intersect_curve_ranges(
-    first: CurveRange,
-    second: CurveRange,
+    first: intersection_curve_owner.CurveRange,
+    second: intersection_curve_owner.CurveRange,
     /,
     *,
     policy: ParametricIntersectionPolicy | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CurveIntersectionResult:
-    """Intersect two exact curves of equal dimension (planar p-curves or space curves).
+    """Intersect curves of equal dimension (planar p-curves or space curves).
 
     Planar events are certified roots of ``c1(s) = c2(t)``. Space curves meet
     only non-generically, so their events are certified distance-critical points
     whose gap is at most the policy's tangency tolerance.
     """
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if coordinate_budget is None:
+        with coordinate_source_request(
+            (
+                first,
+                second,
+            )
+        ) as coordinate_budget:
+            return intersect_curve_ranges(
+                first,
+                second,
+                policy=policy,
+                preparations=preparations,
+                coordinate_budget=coordinate_budget,
+            )
     policy_ = ParametricIntersectionPolicy() if policy is None else policy
-    if not isinstance(first, CurveRange) or not isinstance(second, CurveRange):
-        raise TypeError("intersect_curves requires two CurveRange operands.")
     analytic = _analytic_line_circle(first, second)
     if analytic is not None:
         return analytic
@@ -4871,12 +5871,30 @@ def intersect_curve_ranges(
         return analytic
     ambient = first.ambient_dimension
     if second.ambient_dimension != ambient or ambient not in (2, 3):
-        raise ValueError("Curve operands must share dimension two or three.")
-    first_pieces = curve_pieces(first)
-    second_pieces = curve_pieces(second)
+        raise ValueError(
+            "intersect_curve_ranges.operands must share dimension two or three; got incompatible dimensions"
+        )
+    first_pieces = intersection_curve_owner.curve_pieces(first, budget=coordinate_budget)
+    second_pieces = intersection_curve_owner.curve_pieces(
+        second, budget=coordinate_budget
+    )
     boxes = [
-        np.asarray(first.curve.bounding_box(first.first, first.last)),
-        np.asarray(second.curve.bounding_box(second.first, second.last)),
+        np.asarray(
+            first.curve.bounding_box(
+                first.first,
+                first.last,
+                preparations=preparations,
+                budget=coordinate_budget,
+            )
+        ),
+        np.asarray(
+            second.curve.bounding_box(
+                second.first,
+                second.last,
+                preparations=preparations,
+                budget=coordinate_budget,
+            )
+        ),
     ]
     scales = _scales(policy_, _scale(boxes))
     budget = _Budget(policy_.maximum_boxes)
@@ -4887,29 +5905,36 @@ def intersect_curve_ranges(
     bound = 0.0
     for piece_a in first_pieces:
         for piece_b in second_pieces:
-            pair = _prepare(
-                _CurvePairSystem(piece_a.evaluator, piece_b.evaluator), 2, policy_.batch
+            pair = prepare(
+                _CurvePairSystem(piece_a.evaluator, piece_b.evaluator),
+                2,
+                policy_.batch,
+                preparations=preparations,
             )
-            point_map = _curve_point_map(piece_a.evaluator)
+            point_map = _curve_point_map(
+                piece_a.evaluator, budget=coordinate_budget, preparations=preparations
+            )
             if ambient == 2:
                 problem = _Problem(
                     pair,
                     point_map,
                     pair,
                     _Layout((0,), (1,), 2),
-                    _prepare(
+                    prepare(
                         _PlanarCurveTangencySystem(piece_a.evaluator, piece_b.evaluator),
                         2,
                         policy_.batch,
+                        preparations=preparations,
                     ),
                     False,
                 )
             else:
                 problem = _Problem(
-                    _prepare(
+                    prepare(
                         _CurveProximitySystem(piece_a.evaluator, piece_b.evaluator),
                         2,
                         policy_.batch,
+                        preparations=preparations,
                     ),
                     point_map,
                     pair,
@@ -4924,6 +5949,8 @@ def intersect_curve_ranges(
                 scales,
                 budget,
                 policy_.batch,
+                coordinate_budget=coordinate_budget,
+                preparations=preparations,
             )
             points.extend(isolated.roots)
             contacts.extend(isolated.contacts)
@@ -4942,22 +5969,52 @@ def intersect_curve_ranges(
     )
 
 
+@checked
 def intersect_curve_region(
-    curve: CurveRange,
-    surface: SurfaceRegion,
+    curve: intersection_curve_owner.CurveRange,
+    surface: intersection_curve_owner.SurfaceRegion,
     /,
     *,
     policy: ParametricIntersectionPolicy | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> CurveIntersectionResult:
-    """Intersect an exact space curve with an exact surface region."""
+    """Intersect a space curve with a surface region."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if coordinate_budget is None:
+        with coordinate_source_request(
+            (
+                curve,
+                surface,
+            )
+        ) as coordinate_budget:
+            return intersect_curve_region(
+                curve,
+                surface,
+                policy=policy,
+                preparations=preparations,
+                coordinate_budget=coordinate_budget,
+            )
     policy_ = ParametricIntersectionPolicy() if policy is None else policy
-    if not isinstance(curve, CurveRange) or not isinstance(surface, SurfaceRegion):
-        raise TypeError("intersect_curve_surface requires CurveRange and SurfaceRegion.")
     if curve.ambient_dimension != 3:
-        raise ValueError("Curve/surface intersection requires a space curve.")
+        raise ValueError(
+            "intersect_curve_region.curve must have dimension three; got another dimension"
+        )
     boxes = [
-        np.asarray(curve.curve.bounding_box(curve.first, curve.last)),
-        np.asarray(surface.patch.bounding_box(surface.parameter_box)),
+        np.asarray(
+            curve.curve.bounding_box(
+                curve.first,
+                curve.last,
+                preparations=preparations,
+                budget=coordinate_budget,
+            )
+        ),
+        np.asarray(
+            surface.patch.bounding_box(
+                surface.parameter_box, preparations=preparations, budget=coordinate_budget
+            )
+        ),
     ]
     scales = _scales(policy_, _scale(boxes))
     budget = _Budget(policy_.maximum_boxes)
@@ -4965,23 +6022,29 @@ def intersect_curve_region(
     cells: list[tuple[np.ndarray, np.ndarray, bool]] = []
     unresolved: list[UnresolvedParameterRegion] = []
     bound = 0.0
-    for piece_a in curve_pieces(curve):
-        for piece_b in surface_pieces(surface):
-            pair = _prepare(
-                _CurveSurfaceSystem(piece_a.evaluator, piece_b.evaluator),
+    for piece_a in intersection_curve_owner.curve_pieces(curve, budget=coordinate_budget):
+        for piece_b in intersection_curve_owner.surface_pieces(
+            surface, budget=coordinate_budget
+        ):
+            pair = prepare(
+                CurveSurfaceSystem(piece_a.evaluator, piece_b.evaluator),
                 3,
                 policy_.batch,
+                preparations=preparations,
             )
-            point_map = _curve_point_map(piece_a.evaluator)
+            point_map = _curve_point_map(
+                piece_a.evaluator, budget=coordinate_budget, preparations=preparations
+            )
             problem = _Problem(
                 pair,
                 point_map,
                 pair,
                 _Layout((0,), (1, 2), 3),
-                _prepare(
+                prepare(
                     _CurveSurfaceTangencySystem(piece_a.evaluator, piece_b.evaluator),
                     3,
                     policy_.batch,
+                    preparations=preparations,
                 ),
                 False,
             )
@@ -4992,6 +6055,8 @@ def intersect_curve_region(
                 scales,
                 budget,
                 policy_.batch,
+                coordinate_budget=coordinate_budget,
+                preparations=preparations,
             )
             points.extend(isolated.roots + isolated.contacts)
             cells.extend(isolated.coincident)
@@ -5026,19 +6091,20 @@ class _Start:
     consumed: bool = False
 
 
-@dataclass
-class _Chart:
-    axis: int
+class _Chart(StrictModule):
+    axis: int = eqx.field(static=True)
     start: np.ndarray
     end: np.ndarray
     lower: np.ndarray
     upper: np.ndarray
     preconditioner: np.ndarray
-    contraction: float
-    certified: bool
+    contraction: float = eqx.field(static=True)
+    certified: bool = eqx.field(static=True)
 
 
-type _Endpoint = tuple[IntersectionEndpointKind, tuple[int, int] | None, np.ndarray]
+type _Endpoint = tuple[
+    intersection_curve_owner.IntersectionEndpointKind, tuple[int, int] | None, np.ndarray
+]
 
 
 @dataclass
@@ -5053,26 +6119,35 @@ class _Segment:
 @dataclass(frozen=True)
 class _PairContext:
     index: int
-    pair: _Prepared
+    pair: Prepared
     lower: np.ndarray
     upper: np.ndarray
     pieces: tuple[int, int]
 
     @property
-    def system(self) -> SurfacePairSystem:
+    def system(self) -> intersection_curve_owner.SurfacePairSystem:
         system = self.pair.system
-        if not isinstance(system, SurfacePairSystem):
+        if not isinstance(system, intersection_curve_owner.SurfacePairSystem):
             raise TypeError(
-                "A surface continuation context requires its canonical surface pair."
+                "surface_continuation.system must be a surface pair; got another system"
             )
         return system
 
 
 def _certify_chart(
-    context: _PairContext, start: np.ndarray, end: np.ndarray, scale: float, /
+    context: _PairContext,
+    start: np.ndarray,
+    end: np.ndarray,
+    scale: float,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> _Chart:
     """Parametric Krawczyk chart for the branch arc between two nodes."""
-    jacobian = context.pair.point_jacobians(start[None])[0]
+    jacobian = context.pair.point_jacobians(
+        start[None], budget=budget, preparations=preparations
+    )[0]
     speed = np.linalg.norm(jacobian, axis=0)
     axis = int(np.argmax(np.abs(end - start) * speed))
     free = [index for index in range(4) if index != axis]
@@ -5095,7 +6170,14 @@ def _certify_chart(
         if isinstance(context.system.second, BernsteinSurfacePiece):
             lower[2:] = np.maximum(lower[2:], context.lower[2:])
             upper[2:] = np.minimum(upper[2:], context.upper[2:])
-        result = _krawczyk(context.pair, lower[None], upper[None], parameter_axis=axis)
+        result = krawczyk(
+            context.pair,
+            lower[None],
+            upper[None],
+            parameter_axis=axis,
+            budget=budget,
+            preparations=preparations,
+        )
         if bool(result.certified[0]):
             return _Chart(
                 axis,
@@ -5108,7 +6190,7 @@ def _certify_chart(
                 True,
             )
     del scale
-    return _Chart(axis, start, end, lower, upper, np.eye(3), 1.0, False)
+    return _Chart(axis, start, end, lower, upper, np.eye(3, dtype=np.float64), 1.0, False)
 
 
 def _surface_discovery(
@@ -5119,6 +6201,9 @@ def _surface_discovery(
     point_map: Callable[[np.ndarray], np.ndarray],
     junction_radius: np.ndarray,
     /,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> tuple[
     list[_Start], list[_Start], list[_Start], list[ParametricIntersectionPoint], _Isolated
 ]:
@@ -5128,7 +6213,15 @@ def _surface_discovery(
     pair_system = context.system
     layout = _Layout((0, 1), (2, 3), 3)
     pair_problem = _Problem(context.pair, point_map, context.pair, layout, None, False)
-    cells, bound = _coincident_cells(pair_problem, context, scales, budget, batch)
+    cells, bound = _coincident_cells(
+        pair_problem,
+        context,
+        scales,
+        budget,
+        batch,
+        coordinate_budget=coordinate_budget,
+        preparations=preparations,
+    )
     collected.coincident.extend(cells)
     collected.coincidence_bound = bound
     cell_lower = np.asarray([cell[0] for cell in cells]).reshape((-1, 4))
@@ -5137,7 +6230,7 @@ def _surface_discovery(
         for side, value in enumerate((context.lower[axis], context.upper[axis])):
             face = _FaceSystem(pair_system, axis, jnp.asarray(value))
             free = [index for index in range(4) if index != axis]
-            prepared = _prepare(face, 3, batch)
+            prepared = prepare(face, 3, batch, preparations=preparations)
 
             def full(x: np.ndarray, axis: int = axis, value: float = value) -> np.ndarray:
                 return np.insert(x, axis, value)
@@ -5157,7 +6250,14 @@ def _surface_discovery(
                 excluded=(cell_lower[touching][:, free], cell_upper[touching][:, free]),
             )
             isolated = _isolate(
-                problem, context.lower[free], context.upper[free], scales, budget, batch
+                problem,
+                context.lower[free],
+                context.upper[free],
+                scales,
+                budget,
+                batch,
+                coordinate_budget=coordinate_budget,
+                preparations=preparations,
             )
             boundary.extend(
                 _Start(
@@ -5174,7 +6274,13 @@ def _surface_discovery(
             # intersection branch, traced from its boundary-system starts.
             for low, high, partial in isolated.coincident:
                 cell = full(low), full(high)
-                if _certified_transversal(context.pair, cell[0], cell[1]):
+                if _certified_transversal(
+                    context.pair,
+                    cell[0],
+                    cell[1],
+                    budget=coordinate_budget,
+                    preparations=preparations,
+                ):
                     continue
                 collected.coincident.append((cell[0], cell[1], partial))
                 collected.coincidence_bound = max(
@@ -5188,20 +6294,30 @@ def _surface_discovery(
             )
     widths = context.upper - context.lower
     problem = _Problem(
-        _prepare(
+        prepare(
             _TurningSystem(pair_system, jnp.asarray(_TURNING_DIRECTION / widths)),
             4,
             batch,
+            preparations=preparations,
         ),
         point_map,
         context.pair,
         layout,
-        _prepare(_SurfaceTangencySystem(pair_system), 4, batch),
+        prepare(_SurfaceTangencySystem(pair_system), 4, batch, preparations=preparations),
         False,
         excluded=(cell_lower, cell_upper),
         junction=junction_radius,
     )
-    isolated = _isolate(problem, context.lower, context.upper, scales, budget, batch)
+    isolated = _isolate(
+        problem,
+        context.lower,
+        context.upper,
+        scales,
+        budget,
+        batch,
+        coordinate_budget=coordinate_budget,
+        preparations=preparations,
+    )
     interior = [
         _Start(root.parameters, root.parameter_lower, root.parameter_upper, None)
         for root in isolated.roots
@@ -5221,6 +6337,8 @@ def _surface_discovery(
             budget,
             batch,
             point_map,
+            coordinate_budget=coordinate_budget,
+            preparations=preparations,
         )
         junctions.extend(
             _Start(
@@ -5234,6 +6352,30 @@ def _surface_discovery(
             for root in found
         )
         collected.unresolved.extend(unresolved)
+        certificate = contact_indicatrix(
+            context.system.first,
+            context.system.second,
+            contact.parameter_lower,
+            contact.parameter_upper,
+            budget=coordinate_budget,
+        )
+        if (
+            certificate.kind != "unresolved"
+            and len(found) == certificate.branches
+            and not unresolved
+        ):
+            isolated.contacts[index] = ParametricIntersectionPoint(
+                kind=certificate.kind,
+                certificate=contact.certificate,
+                parameters=contact.parameters,
+                parameter_lower=contact.parameter_lower,
+                parameter_upper=contact.parameter_upper,
+                point=contact.point,
+                gap_bound=contact.gap_bound,
+                condition_estimate=contact.condition_estimate,
+                branch_count=certificate.branches,
+            )
+            continue
         # Auxiliary critical-point uniqueness does not prove absence of a tiny
         # closed component wholly inside the removed junction neighborhood.
         collected.unresolved.append(
@@ -5250,7 +6392,7 @@ def _surface_discovery(
 class _JunctionSystem(StrictModule):
     """Branch points on the scaled sphere bounding a junction neighborhood."""
 
-    pair: SurfacePairSystem
+    pair: intersection_curve_owner.SurfacePairSystem
     center: Array
     inverse_radius: Array
 
@@ -5270,22 +6412,36 @@ def _junction_starts(
     batch: int,
     point_map: Callable[[np.ndarray], np.ndarray],
     /,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> tuple[list[ParametricIntersectionPoint], list[UnresolvedParameterRegion]]:
     """Isolate every branch leaving a certified contact's neighborhood."""
     system = _JunctionSystem(
         context.system, jnp.asarray(center), jnp.asarray(1.0 / radius)
     )
-    prepared = _prepare(system, 4, batch)
+    prepared = prepare(system, 4, batch, preparations=preparations)
     problem = _Problem(prepared, point_map, context.pair, None, None, False)
     lower = np.maximum(center - 1.25 * radius, context.lower)
     upper = np.minimum(center + 1.25 * radius, context.upper)
-    isolated = _isolate(problem, lower, upper, scales, budget, batch)
+    isolated = _isolate(
+        problem,
+        lower,
+        upper,
+        scales,
+        budget,
+        batch,
+        coordinate_budget=coordinate_budget,
+        preparations=preparations,
+    )
     return isolated.roots, isolated.unresolved
 
 
 @eqx.filter_jit
 def _foot_points(
-    pair: SurfacePairSystem, anchors: Array, plan: VectorLocalRootPlan
+    pair: intersection_curve_owner.SurfacePairSystem,
+    anchors: Array,
+    plan: VectorLocalRootPlan,
 ) -> tuple[Array, Array]:
     """Closest-point candidates on the second surface of first-surface points."""
 
@@ -5307,6 +6463,9 @@ def _coincident_cells(
     budget: _Budget,
     batch: int,
     /,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> tuple[list[tuple[np.ndarray, np.ndarray, bool]], float]:
     """Cells of the first surface lying on the second within the tolerance.
 
@@ -5352,9 +6511,21 @@ def _coincident_cells(
         )
         anchor = np.concatenate((center, feet), axis=1)
         full, partial, distance = _coincidence(
-            problem, lower, upper, scales.coincidence, anchor=anchor
+            problem,
+            lower,
+            upper,
+            scales.coincidence,
+            anchor=anchor,
+            budget=coordinate_budget,
+            preparations=preparations,
         )
-        jacobian_lower, jacobian_upper = problem.system.jacobian.evaluate(lower, upper)
+        jacobian_lower, jacobian_upper = evaluate_interval(
+            problem.system.jacobian,
+            lower,
+            upper,
+            budget=coordinate_budget,
+            preparations=preparations,
+        )
         size = _image_size(
             jacobian_lower[:, :, :2],
             jacobian_upper[:, :, :2],
@@ -5384,11 +6555,15 @@ def _coincident_cells(
 
 
 def _pair_coordinate_bounds(context: _PairContext, /) -> np.ndarray:
-    """Intersect chart walls with exact native support equations."""
+    """Intersect chart walls with rational support equations."""
     pair = context.system
     regions = (
-        SurfaceRegion(pair.first, np.stack((context.lower[:2], context.upper[:2]))),
-        SurfaceRegion(pair.second, np.stack((context.lower[2:], context.upper[2:]))),
+        intersection_curve_owner.SurfaceRegion(
+            pair.first, np.stack((context.lower[:2], context.upper[:2]))
+        ),
+        intersection_curve_owner.SurfaceRegion(
+            pair.second, np.stack((context.lower[2:], context.upper[2:]))
+        ),
     )
     return np.concatenate(
         [
@@ -5451,13 +6626,23 @@ def _land(
     span: float,
     scale: float,
     /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> tuple[_Chart, _Start] | None:
     """Certify a final chart onto the start point nearest ``target``."""
     widths = context.upper - context.lower
     index = _nearest_start(candidates, target, widths, 1.5 * span + 1.0e-9)
     if index is None:
         return None
-    chart = _certify_chart(context, point, candidates[index].point, scale)
+    chart = _certify_chart(
+        context,
+        point,
+        candidates[index].point,
+        scale,
+        budget=budget,
+        preparations=preparations,
+    )
     if not chart.certified:
         return None
     candidates[index].consumed = True
@@ -5474,6 +6659,9 @@ def _march(
     scale: float,
     budget: _Budget,
     /,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> tuple[list[_Chart], _Endpoint]:
     """Certified predictor/corrector continuation from one start point.
 
@@ -5515,19 +6703,44 @@ def _march(
         if accepted and closable and len(charts) >= 2:
             near_origin = float(np.max(np.abs(origin - point) / widths)) <= 1.5 * span
             if near_origin and float(np.dot(origin - point, tangent)) > 0.0:
-                chart = _certify_chart(context, point, origin, scale)
+                chart = _certify_chart(
+                    context,
+                    point,
+                    origin,
+                    scale,
+                    budget=coordinate_budget,
+                    preparations=preparations,
+                )
                 if chart.certified:
                     charts.append(chart)
                     return charts, ("closed", None, origin)
         if accepted and _entered_junction(starts, root):
-            landed = _land(context, point, starts.junctions, root, span, scale)
+            landed = _land(
+                context,
+                point,
+                starts.junctions,
+                root,
+                span,
+                scale,
+                budget=coordinate_budget,
+                preparations=preparations,
+            )
             if landed is not None:
                 charts.append(landed[0])
                 _consume(starts.interior, landed[0])
                 return charts, ("singular", None, landed[1].point)
             accepted = False
         if accepted and np.any(_outside(context, root)):
-            landed = _land(context, point, starts.boundary, root, span, scale)
+            landed = _land(
+                context,
+                point,
+                starts.boundary,
+                root,
+                span,
+                scale,
+                budget=coordinate_budget,
+                preparations=preparations,
+            )
             if landed is not None:
                 charts.append(landed[0])
                 _consume(starts.interior, landed[0])
@@ -5537,7 +6750,14 @@ def _march(
                 return charts, ("boundary", landed[1].face, landed[1].point)
             accepted = False
         if accepted:
-            chart = _certify_chart(context, point, root, scale)
+            chart = _certify_chart(
+                context,
+                point,
+                root,
+                scale,
+                budget=coordinate_budget,
+                preparations=preparations,
+            )
             accepted = chart.certified
         if not accepted:
             step *= 0.5
@@ -5558,6 +6778,9 @@ def _trace(
     scale: float,
     budget: _Budget,
     /,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> list[_Segment]:
     """March every unconsumed start: boundary, then junction, then turning points."""
     if not (starts.boundary or starts.interior or starts.junctions):
@@ -5585,7 +6808,16 @@ def _trace(
             continue
         tangent = tangent * np.sign(tangent[axis] * (1.0 if side == 0 else -1.0))
         charts, end = _march(
-            context, start.point, tangent, starts, False, policy, scale, budget
+            context,
+            start.point,
+            tangent,
+            starts,
+            False,
+            policy,
+            scale,
+            budget,
+            coordinate_budget=coordinate_budget,
+            preparations=preparations,
         )
         if charts:
             # Padding may contain an endpoint before the march reaches its
@@ -5610,6 +6842,8 @@ def _trace(
             policy,
             scale,
             budget,
+            coordinate_budget=coordinate_budget,
+            preparations=preparations,
         )
         segments.append(
             _Segment(context.index, charts, ("singular", None, start.point), end)
@@ -5620,7 +6854,16 @@ def _trace(
         start.consumed = True
         tangent = tangent_at(start.point)
         forward, forward_end = _march(
-            context, start.point, tangent, starts, True, policy, scale, budget
+            context,
+            start.point,
+            tangent,
+            starts,
+            True,
+            policy,
+            scale,
+            budget,
+            coordinate_budget=coordinate_budget,
+            preparations=preparations,
         )
         if forward_end[0] == "closed":
             segments.append(
@@ -5628,7 +6871,16 @@ def _trace(
             )
             continue
         backward, backward_end = _march(
-            context, start.point, -tangent, starts, False, policy, scale, budget
+            context,
+            start.point,
+            -tangent,
+            starts,
+            False,
+            policy,
+            scale,
+            budget,
+            coordinate_budget=coordinate_budget,
+            preparations=preparations,
         )
         segments.append(
             _Segment(
@@ -5647,68 +6899,153 @@ def _trace(
     return segments
 
 
-def _glue(
+type _EndpointKey = tuple[int, int]
+
+
+class _EndpointBox(StrictModule):
+    key: _EndpointKey = eqx.field(static=True)
+    lower: np.ndarray
+    upper: np.ndarray
+    partner_lower: np.ndarray
+    partner_upper: np.ndarray
+
+
+class _BranchLinks(StrictModule):
+    pairs: tuple[tuple[_EndpointKey, _EndpointKey], ...] = eqx.field(static=True)
+    unresolved: tuple[UnresolvedParameterRegion, ...]
+
+
+class _BranchTraversal(StrictModule):
+    steps: tuple[tuple[int, bool], ...] = eqx.field(static=True)
+    closed: bool = eqx.field(static=True)
+
+
+class _BranchCharts(StrictModule):
+    charts: tuple[_Chart, ...]
+    pieces: np.ndarray
+    transitions: np.ndarray
+    node_axes: np.ndarray
+    node_values: np.ndarray
+    closed: bool = eqx.field(static=True)
+    start_kind: intersection_curve_owner.IntersectionEndpointKind = eqx.field(static=True)
+    end_kind: intersection_curve_owner.IntersectionEndpointKind = eqx.field(static=True)
+
+
+class _BranchAssembly(StrictModule):
+    curves: tuple[intersection_curve_owner.IntersectionCurve, ...]
+    unresolved: tuple[UnresolvedParameterRegion, ...]
+
+
+def _segment_endpoint(segment: _Segment, side: int, /) -> _Endpoint:
+    return segment.start if side == 0 else segment.end
+
+
+def _endpoint_boxes(
     segments: list[_Segment],
     contexts: list[_PairContext],
-    first: SurfaceRegion,
-    second: SurfaceRegion,
+    first: intersection_curve_owner.SurfaceRegion,
+    second: intersection_curve_owner.SurfaceRegion,
     /,
-) -> list[IntersectionCurve]:
-    """Join segments across periodic seams and spline-span faces into branches.
-
-    Segment endpoints on identified faces are linked regardless of marching
-    direction; chains traverse segments forward or reversed accordingly.
-    """
+) -> tuple[list[_EndpointBox], list[UnresolvedParameterRegion]]:
     region_lower = np.asarray((*first.lower, *second.lower))
     region_upper = np.asarray((*first.upper, *second.upper))
     periodic = (*first.periodic, *second.periodic)
-    widths = region_upper - region_lower
-    tolerance = 1.0e-8 * np.maximum(widths, 1.0)
-
-    def endpoint(index: int, side: int) -> _Endpoint:
-        segment = segments[index]
-        return segment.start if side == 0 else segment.end
-
-    def partners(index: int, side: int) -> list[np.ndarray]:
-        kind, face, point = endpoint(index, side)
-        if kind != "boundary" or face is None:
-            return []
-        axis, _ = face
-        at_lower = abs(point[axis] - region_lower[axis]) <= tolerance[axis]
-        at_upper = abs(point[axis] - region_upper[axis]) <= tolerance[axis]
-        if not (at_lower or at_upper):
-            return [point]
-        if not periodic[axis]:
-            return []
-        shift = np.zeros((4,))
-        shift[axis] = widths[axis] if at_lower else -widths[axis]
-        return [point + shift]
-
-    links: dict[tuple[int, int], tuple[int, int]] = {}
+    boxes: list[_EndpointBox] = []
+    unresolved: list[UnresolvedParameterRegion] = []
     for index, segment in enumerate(segments):
         if segment.closed:
             continue
+        context = contexts[segment.pair_index]
         for side in (0, 1):
-            if (index, side) in links:
+            kind, face, _ = _segment_endpoint(segment, side)
+            if kind != "boundary" or face is None:
                 continue
-            for candidate in partners(index, side):
-                for other, following in enumerate(segments):
-                    if following.closed:
-                        continue
-                    for other_side in (0, 1):
-                        key = (other, other_side)
-                        if key == (index, side) or key in links:
-                            continue
-                        kind, _, point = endpoint(other, other_side)
-                        if kind == "boundary" and np.all(
-                            np.abs(point - candidate) <= tolerance
-                        ):
-                            links[(index, side)] = key
-                            links[key] = (index, side)
-                            break
-                    if (index, side) in links:
-                        break
-    curves: list[IntersectionCurve] = []
+            axis, face_side = face
+            value = (context.lower if face_side == 0 else context.upper)[axis]
+            exterior = value == region_lower[axis] or value == region_upper[axis]
+            if exterior and not periodic[axis]:
+                continue
+            if not segment.charts:
+                unresolved.append(
+                    UnresolvedParameterRegion(
+                        context.lower, context.upper, "continuation"
+                    )
+                )
+                continue
+            chart = segment.charts[0 if side == 0 else -1]
+            if not chart.certified or not chart.lower[axis] <= value <= chart.upper[axis]:
+                unresolved.append(
+                    UnresolvedParameterRegion(chart.lower, chart.upper, "continuation")
+                )
+                continue
+            # Slice the certified chart at its represented boundary atom.
+            # No coordinate-distance threshold can identify another branch.
+            lower, upper = chart.lower.copy(), chart.upper.copy()
+            lower[axis] = upper[axis] = value
+            partner_lower, partner_upper = lower.copy(), upper.copy()
+            if exterior:
+                shift = np.zeros(4, dtype=np.float64)
+                shift[axis] = (
+                    region_upper[axis] - region_lower[axis]
+                    if value == region_lower[axis]
+                    else region_lower[axis] - region_upper[axis]
+                )
+                shifted_lower, shifted_upper = interval_add(
+                    (lower, upper), (shift, shift)
+                )
+                partner_lower = np.asarray(shifted_lower, dtype=np.float64)
+                partner_upper = np.asarray(shifted_upper, dtype=np.float64)
+                # The seam atom is represented by the opposite domain boundary.
+                partner_lower[axis] = partner_upper[axis] = (
+                    region_upper[axis] if face_side == 0 else region_lower[axis]
+                )
+            boxes.append(
+                _EndpointBox(
+                    key=(index, side),
+                    lower=lower,
+                    upper=upper,
+                    partner_lower=partner_lower,
+                    partner_upper=partner_upper,
+                )
+            )
+    return boxes, unresolved
+
+
+def _link_segments(
+    segments: list[_Segment],
+    contexts: list[_PairContext],
+    first: intersection_curve_owner.SurfaceRegion,
+    second: intersection_curve_owner.SurfaceRegion,
+    /,
+) -> _BranchLinks:
+    boxes, unresolved = _endpoint_boxes(segments, contexts, first, second)
+    candidates = {
+        box.key: tuple(
+            other.key
+            for other in boxes
+            if other.key != box.key
+            and np.all(box.partner_lower <= other.upper)
+            and np.all(other.lower <= box.partner_upper)
+        )
+        for box in boxes
+    }
+    pairs: list[tuple[_EndpointKey, _EndpointKey]] = []
+    for box in boxes:
+        partners = candidates[box.key]
+        if len(partners) == 1 and candidates[partners[0]] == (box.key,):
+            if box.key < partners[0]:
+                pairs.append((box.key, partners[0]))
+        else:
+            unresolved.append(
+                UnresolvedParameterRegion(box.lower, box.upper, "continuation")
+            )
+    return _BranchLinks(pairs=tuple(pairs), unresolved=tuple(unresolved))
+
+
+def _traverse_segments(
+    segments: list[_Segment], phase: _BranchLinks, /
+) -> tuple[_BranchTraversal, ...]:
+    links = {key: partner for pair in phase.pairs for key, partner in (pair, pair[::-1])}
     visited: set[int] = set()
     heads = [
         index
@@ -5716,15 +7053,12 @@ def _glue(
         if segment.closed or (index, 0) not in links or (index, 1) not in links
     ]
     heads += list(range(len(segments)))
+    traversals: list[_BranchTraversal] = []
     for head in heads:
         if head in visited:
             continue
         closed = segments[head].closed
-        forward = True
-        if (head, 0) not in links:
-            forward = True
-        elif (head, 1) not in links:
-            forward = False
+        forward = (head, 0) not in links or (head, 1) in links
         traversal: list[tuple[int, bool]] = []
         current: tuple[int, bool] | None = (head, forward)
         while current is not None:
@@ -5733,8 +7067,7 @@ def _glue(
             traversal.append(current)
             if segments[index].closed:
                 break
-            exit_side = 1 if direction else 0
-            link = links.get((index, exit_side))
+            link = links.get((index, 1 if direction else 0))
             if link is None:
                 current = None
             elif link[0] == head:
@@ -5744,73 +7077,131 @@ def _glue(
                 current = None
             else:
                 current = (link[0], link[1] == 0)
-        charts: list[_Chart] = []
-        chart_pieces: list[tuple[int, int]] = []
-        transitions: list[np.ndarray] = []
-        node_axes: list[int] = []
-        node_values: list[float] = []
-        for index, direction in traversal:
-            segment = segments[index]
-            ordered = segment.charts if direction else _reverse_charts(segment.charts)
-            pieces = contexts[segment.pair_index].pieces
-            entry = segment.start if direction else segment.end
-            exit_ = segment.end if direction else segment.start
-            if not charts and ordered:
-                axis = (
-                    entry[1][0]
-                    if entry[0] == "boundary" and entry[1] is not None
-                    else ordered[0].axis
-                )
-                node_axes.append(axis)
-                node_values.append(float(ordered[0].start[axis]))
-            if charts and ordered:
-                transitions[-1] = ordered[0].start - charts[-1].end
-            for position, chart in enumerate(ordered):
-                charts.append(chart)
-                chart_pieces.append(pieces)
-                transitions.append(np.zeros((4,)))
-                boundary = (
-                    position == len(ordered) - 1
-                    and exit_[0] == "boundary"
-                    and exit_[1] is not None
-                )
-                axis = exit_[1][0] if boundary else chart.axis
-                node_axes.append(axis)
-                node_values.append(float(chart.end[axis]))
-        if not charts:
-            continue
-        if closed and not segments[head].closed:
-            transitions[-1] = charts[0].start - charts[-1].end
-        first_index, first_direction = traversal[0]
-        last_index, last_direction = traversal[-1]
-        start_kind = (
-            "closed" if closed else endpoint(first_index, 0 if first_direction else 1)[0]
-        )
-        end_kind = (
-            "closed" if closed else endpoint(last_index, 1 if last_direction else 0)[0]
-        )
-        curves.append(
-            IntersectionCurve(
-                first,
-                second,
-                chart_axes=np.asarray([chart.axis for chart in charts], dtype=np.int32),
-                chart_start=np.stack([chart.start for chart in charts]),
-                chart_end=np.stack([chart.end for chart in charts]),
-                chart_pieces=np.asarray(chart_pieces, dtype=np.int32),
-                box_lower=np.stack([chart.lower for chart in charts]),
-                box_upper=np.stack([chart.upper for chart in charts]),
-                preconditioners=np.stack([chart.preconditioner for chart in charts]),
-                contraction=np.asarray([chart.contraction for chart in charts]),
-                certified=np.asarray([chart.certified for chart in charts]),
-                transition_shifts=np.stack(transitions),
-                closed=closed,
-                start_kind=start_kind,
-                end_kind=end_kind,
-                node_axes=np.asarray(node_axes, dtype=np.int32),
-                node_values=np.asarray(node_values, dtype=np.float64),
+        traversals.append(_BranchTraversal(steps=tuple(traversal), closed=closed))
+    return tuple(traversals)
+
+
+def _accumulate_branch(
+    traversal: _BranchTraversal,
+    segments: list[_Segment],
+    contexts: list[_PairContext],
+    /,
+) -> _BranchCharts | None:
+    charts: list[_Chart] = []
+    chart_pieces: list[tuple[int, int]] = []
+    transitions: list[np.ndarray] = []
+    node_axes: list[int] = []
+    node_values: list[float] = []
+    for index, direction in traversal.steps:
+        segment = segments[index]
+        ordered = segment.charts if direction else _reverse_charts(segment.charts)
+        pieces = contexts[segment.pair_index].pieces
+        entry = segment.start if direction else segment.end
+        exit_ = segment.end if direction else segment.start
+        if not charts and ordered:
+            axis = (
+                entry[1][0]
+                if entry[0] == "boundary" and entry[1] is not None
+                else ordered[0].axis
             )
-        )
-    return curves
+            node_axes.append(axis)
+            node_values.append(float(ordered[0].start[axis]))
+        if charts and ordered:
+            transitions[-1] = ordered[0].start - charts[-1].end
+        for position, chart in enumerate(ordered):
+            charts.append(chart)
+            chart_pieces.append(pieces)
+            transitions.append(np.zeros((4,), dtype=np.float64))
+            axis = chart.axis
+            if (
+                position == len(ordered) - 1
+                and exit_[0] == "boundary"
+                and exit_[1] is not None
+            ):
+                axis = exit_[1][0]
+            node_axes.append(axis)
+            node_values.append(float(chart.end[axis]))
+    if not charts:
+        return None
+    if traversal.closed and not segments[traversal.steps[0][0]].closed:
+        transitions[-1] = charts[0].start - charts[-1].end
+    first_index, first_direction = traversal.steps[0]
+    last_index, last_direction = traversal.steps[-1]
+    return _BranchCharts(
+        charts=tuple(charts),
+        pieces=np.asarray(chart_pieces, dtype=np.int32),
+        transitions=np.stack(transitions),
+        node_axes=np.asarray(node_axes, dtype=np.int32),
+        node_values=np.asarray(node_values, dtype=np.float64),
+        closed=traversal.closed,
+        start_kind=(
+            "closed"
+            if traversal.closed
+            else _segment_endpoint(segments[first_index], 0 if first_direction else 1)[0]
+        ),
+        end_kind=(
+            "closed"
+            if traversal.closed
+            else _segment_endpoint(segments[last_index], 1 if last_direction else 0)[0]
+        ),
+    )
+
+
+def _build_branch(
+    phase: _BranchCharts,
+    first: intersection_curve_owner.SurfaceRegion,
+    second: intersection_curve_owner.SurfaceRegion,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None,
+    budget: CoordinateEnclosureBudget,
+) -> intersection_curve_owner.IntersectionCurve:
+    charts = phase.charts
+    return intersection_curve_owner.IntersectionCurve(
+        first,
+        second,
+        chart_axes=np.asarray([chart.axis for chart in charts], dtype=np.int32),
+        chart_start=np.stack([chart.start for chart in charts]),
+        chart_end=np.stack([chart.end for chart in charts]),
+        chart_pieces=phase.pieces,
+        box_lower=np.stack([chart.lower for chart in charts]),
+        box_upper=np.stack([chart.upper for chart in charts]),
+        preconditioners=np.stack([chart.preconditioner for chart in charts]),
+        contraction=np.asarray([chart.contraction for chart in charts]),
+        certified=np.asarray([chart.certified for chart in charts]),
+        transition_shifts=phase.transitions,
+        closed=phase.closed,
+        start_kind=phase.start_kind,
+        end_kind=phase.end_kind,
+        node_axes=phase.node_axes,
+        node_values=phase.node_values,
+        budget=budget,
+        preparations=preparations,
+    )
+
+
+def _glue(
+    segments: list[_Segment],
+    contexts: list[_PairContext],
+    first: intersection_curve_owner.SurfaceRegion,
+    second: intersection_curve_owner.SurfaceRegion,
+    /,
+    *,
+    preparations: TrimRequestPreparations | None = None,
+    budget: CoordinateEnclosureBudget,
+) -> _BranchAssembly:
+    """Assemble branches only across uniquely overlapping certified chart slices."""
+    links = _link_segments(segments, contexts, first, second)
+    curves: list[intersection_curve_owner.IntersectionCurve] = []
+    for traversal in _traverse_segments(segments, links):
+        phase = _accumulate_branch(traversal, segments, contexts)
+        if phase is not None:
+            curves.append(
+                _build_branch(
+                    phase, first, second, preparations=preparations, budget=budget
+                )
+            )
+    return _BranchAssembly(curves=tuple(curves), unresolved=links.unresolved)
 
 
 def _reverse_charts(charts: list[_Chart], /) -> list[_Chart]:
@@ -5830,30 +7221,151 @@ def _reverse_charts(charts: list[_Chart], /) -> list[_Chart]:
 
 
 @eqx.filter_jit
-def _evaluate_surface(evaluator: SurfaceEvaluator, parameters: Array) -> Array:
+def _evaluate_surface(evaluator: AbstractSurfacePatch, parameters: Array) -> Array:
     return jax.vmap(evaluator.evaluate)(parameters)
 
 
+class _SurfacePairPhase(StrictModule):
+    segments: tuple[_Segment, ...]
+    contacts: tuple[ParametricIntersectionPoint, ...]
+    cells: tuple[tuple[np.ndarray, np.ndarray, bool], ...]
+    unresolved: tuple[UnresolvedParameterRegion, ...]
+    coincidence_bound: float = eqx.field(static=True)
+
+
+def _execute_surface_pair(
+    context: _PairContext,
+    system: intersection_curve_owner.SurfacePairSystem,
+    first_piece: SurfacePiece[AbstractSurfacePatch],
+    policy: ParametricIntersectionPolicy,
+    scales: _Scales,
+    scale: float,
+    budget: _Budget,
+    /,
+    *,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> _SurfacePairPhase | None:
+    cancelled = _pose_cancelled_pair(system)
+    pose = None if cancelled is None else cancelled[1]
+    value_lower, value_upper = evaluate_interval(
+        context.pair.value,
+        context.lower[None],
+        context.upper[None],
+        budget=coordinate_budget,
+        preparations=preparations,
+    )
+    budget.processed += 1
+    if not bool(_contains_zero(value_lower, value_upper)[0]):
+        budget.excluded += 1
+        return None
+    point_map = _surface_point_map(first_piece)
+    radius = policy.relative_junction * (context.upper - context.lower)
+    boundary, interior, junctions, pair_contacts, collected = _surface_discovery(
+        context,
+        scales if pose is None else _source_frame_scales(scales, pose),
+        budget,
+        policy.batch,
+        point_map,
+        radius,
+        coordinate_budget=coordinate_budget,
+        preparations=preparations,
+    )
+    if pose is not None:
+        pair_contacts = [_world_gap_contact(contact, pose) for contact in pair_contacts]
+        collected.coincidence_bound = _world_gap(pose, collected.coincidence_bound)
+    segments = _trace(
+        context,
+        _Starts(boundary, interior, junctions, radius),
+        policy,
+        scale,
+        budget,
+        coordinate_budget=coordinate_budget,
+        preparations=preparations,
+    )
+    for segment in segments:
+        if segment.start[0] == "uncertified" or segment.end[0] == "uncertified":
+            collected.unresolved.append(
+                UnresolvedParameterRegion(context.lower, context.upper, "continuation")
+            )
+            budget.unresolved += 1
+    branched = {start.junction for start in junctions}
+    return _SurfacePairPhase(
+        segments=tuple(segments),
+        contacts=tuple(
+            _junction_contact(contact, radius) if index in branched else contact
+            for index, contact in enumerate(pair_contacts)
+        ),
+        cells=tuple(collected.coincident),
+        unresolved=tuple(collected.unresolved),
+        coincidence_bound=collected.coincidence_bound,
+    )
+
+
+@checked
 def intersect_surface_regions(
-    first: SurfaceRegion,
-    second: SurfaceRegion,
+    first: intersection_curve_owner.SurfaceRegion,
+    second: intersection_curve_owner.SurfaceRegion,
     /,
     *,
     policy: ParametricIntersectionPolicy | None = None,
+    preparations: TrimRequestPreparations | None = None,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
 ) -> SurfaceIntersectionResult:
-    """Intersect two exact surface regions into certified branches and contacts."""
+    """Intersect surface regions into certified branches and contacts."""
+    if preparations is None:
+        preparations = TrimRequestPreparations()
+    if coordinate_budget is None:
+        with coordinate_source_request(
+            (
+                first,
+                second,
+            )
+        ) as coordinate_budget:
+            return intersect_surface_regions(
+                first,
+                second,
+                policy=policy,
+                preparations=preparations,
+                coordinate_budget=coordinate_budget,
+            )
     policy_ = ParametricIntersectionPolicy() if policy is None else policy
-    if not isinstance(first, SurfaceRegion) or not isinstance(second, SurfaceRegion):
-        raise TypeError("intersect_surfaces requires two SurfaceRegion operands.")
     analytic = _analytic_sphere_contact(first, second)
     if analytic is not None:
         return analytic
     analytic = _analytic_plane_sphere_contact(first, second)
     if analytic is not None:
         return analytic
+    return _execute_surface_intersection(
+        first,
+        second,
+        policy_,
+        preparations=preparations,
+        coordinate_budget=coordinate_budget,
+    )
+
+
+def _execute_surface_intersection(
+    first: intersection_curve_owner.SurfaceRegion,
+    second: intersection_curve_owner.SurfaceRegion,
+    policy_: ParametricIntersectionPolicy,
+    /,
+    *,
+    preparations: TrimRequestPreparations,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> SurfaceIntersectionResult:
+    """Execute certified subdivision and continuation for a surface pair."""
     boxes = [
-        np.asarray(first.patch.bounding_box(first.parameter_box)),
-        np.asarray(second.patch.bounding_box(second.parameter_box)),
+        np.asarray(
+            first.patch.bounding_box(
+                first.parameter_box, preparations=preparations, budget=coordinate_budget
+            )
+        ),
+        np.asarray(
+            second.patch.bounding_box(
+                second.parameter_box, preparations=preparations, budget=coordinate_budget
+            )
+        ),
     ]
     scale = _scale(boxes)
     scales = _scales(policy_, scale)
@@ -5864,77 +7376,80 @@ def intersect_surface_regions(
     cells: list[tuple[np.ndarray, np.ndarray, bool]] = []
     unresolved: list[UnresolvedParameterRegion] = []
     bound = 0.0
-    for piece_a in surface_pieces(first):
-        for piece_b in surface_pieces(second):
-            pair_system = SurfacePairSystem(piece_a.evaluator, piece_b.evaluator)
-            cancelled = _pose_cancelled_pair(pair_system)
-            pose = None if cancelled is None else cancelled[1]
+    for piece_a in intersection_curve_owner.surface_pieces(
+        first, budget=coordinate_budget
+    ):
+        for piece_b in intersection_curve_owner.surface_pieces(
+            second, budget=coordinate_budget
+        ):
+            pair_system = intersection_curve_owner.SurfacePairSystem(
+                piece_a.evaluator, piece_b.evaluator
+            )
+            # Preparation preserves the source pose identity used by execution.
             context = _PairContext(
                 len(contexts),
-                _prepare(pair_system, 4, policy_.batch),
+                prepare(pair_system, 4, policy_.batch, preparations=preparations),
                 np.concatenate((piece_a.lower, piece_b.lower)),
                 np.concatenate((piece_a.upper, piece_b.upper)),
                 (piece_a.index, piece_b.index),
             )
             contexts.append(context)
-            value_lower, value_upper = context.pair.value.evaluate(
-                context.lower[None], context.upper[None]
-            )
-            budget.processed += 1
-            if not bool(_contains_zero(value_lower, value_upper)[0]):
-                budget.excluded += 1
-                continue
-            point_map = _surface_point_map(piece_a)
-            radius = policy_.relative_junction * (context.upper - context.lower)
-            boundary, interior, junctions, pair_contacts, collected = _surface_discovery(
+            phase = _execute_surface_pair(
                 context,
-                scales if pose is None else _source_frame_scales(scales, pose),
+                pair_system,
+                piece_a,
+                policy_,
+                scales,
+                scale,
                 budget,
-                policy_.batch,
-                point_map,
-                radius,
+                preparations=preparations,
+                coordinate_budget=coordinate_budget,
             )
-            if pose is not None:
-                pair_contacts = [
-                    _world_gap_contact(contact, pose) for contact in pair_contacts
-                ]
-                collected.coincidence_bound = _world_gap(
-                    pose, collected.coincidence_bound
-                )
-            cells.extend(collected.coincident)
-            bound = max(bound, collected.coincidence_bound)
-            unresolved.extend(collected.unresolved)
-            segments.extend(
-                _trace(
-                    context,
-                    _Starts(boundary, interior, junctions, radius),
-                    policy_,
-                    scale,
-                    budget,
-                )
-            )
-            for segment in segments:
-                if segment.pair_index != context.index:
-                    continue
-                if segment.start[0] == "uncertified" or segment.end[0] == "uncertified":
-                    unresolved.append(
-                        UnresolvedParameterRegion(
-                            context.lower, context.upper, "continuation"
-                        )
-                    )
-                    budget.unresolved += 1
-            branched = {start.junction for start in junctions}
-            contacts.extend(
-                _junction_contact(contact, radius) if index in branched else contact
-                for index, contact in enumerate(pair_contacts)
-            )
-    curves = _glue(segments, contexts, first, second)
-    # A certified chart box holds exactly one solution piece, its branch; an
-    # undecided leaf inside one (e.g. a wall contact of that very branch) has
-    # no other solution and is decided by the traced branch.
+            if phase is None:
+                continue
+            cells.extend(phase.cells)
+            bound = max(bound, phase.coincidence_bound)
+            unresolved.extend(phase.unresolved)
+            segments.extend(phase.segments)
+            contacts.extend(phase.contacts)
+    assembly = _glue(
+        segments,
+        contexts,
+        first,
+        second,
+        preparations=preparations,
+        budget=coordinate_budget,
+    )
+    return _finish_surface_intersection(
+        assembly,
+        contacts,
+        cells,
+        unresolved,
+        bound,
+        budget,
+        first,
+        second,
+        coordinate_budget=coordinate_budget,
+    )
+
+
+def _finish_surface_intersection(
+    assembly: _BranchAssembly,
+    contacts: list[ParametricIntersectionPoint],
+    cells: list[tuple[np.ndarray, np.ndarray, bool]],
+    unresolved: list[UnresolvedParameterRegion],
+    bound: float,
+    budget: _Budget,
+    first: intersection_curve_owner.SurfaceRegion,
+    second: intersection_curve_owner.SurfaceRegion,
+    /,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> SurfaceIntersectionResult:
+    # A unique certified graph covers undecided leaves within its chart.
     charts = [
         (curve.box_lower[chart], curve.box_upper[chart])
-        for curve in curves
+        for curve in assembly.curves
         for chart in range(curve.num_charts)
         if curve.certified[chart]
     ]
@@ -5946,30 +7461,139 @@ def intersect_surface_regions(
             for lower, upper in charts
         )
     ]
-    points = contacts
+    # Assembly ambiguity is not settled by coverage of either candidate chart.
+    unresolved.extend(assembly.unresolved)
+    budget.unresolved += len(assembly.unresolved)
     periods = tuple(
         region.upper[axis] - region.lower[axis] if region.periodic[axis] else None
         for region in (first, second)
         for axis in range(2)
     )
+    contacts = _dedupe_points(contacts, periods)
+    contacts, unresolved = _certify_published_junctions(
+        assembly.curves,
+        contacts,
+        unresolved,
+        first,
+        second,
+        periods,
+        coordinate_budget=coordinate_budget,
+    )
     return SurfaceIntersectionResult(
-        curves,
-        _dedupe_points(points, periods),
+        assembly.curves,
+        contacts,
         _components(cells, bound),
         unresolved,
         budget.work(),
     )
 
 
+def _junction_box_contains(
+    contact: ParametricIntersectionPoint,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    periods: tuple[float | None, ...],
+) -> bool:
+    center = (lower + upper) / 2
+    shift = np.zeros(4, dtype=np.float64)
+    for axis, period in enumerate(periods):
+        if period is not None:
+            shift[axis] = (
+                np.rint((contact.parameters[axis] - center[axis]) / period) * period
+            )
+    return bool(
+        np.all(lower + shift >= contact.parameter_lower)
+        and np.all(upper + shift <= contact.parameter_upper)
+    )
+
+
+def _published_junction_counts(
+    curves: tuple[intersection_curve_owner.IntersectionCurve, ...],
+    contacts: list[ParametricIntersectionPoint],
+    periods: tuple[float | None, ...],
+) -> list[int]:
+    counts = [0] * len(contacts)
+    for curve in curves:
+        for node, kind in ((0, curve.start_kind), (-1, curve.end_kind)):
+            if kind != "singular" or not curve.fully_certified:
+                continue
+            center = (curve.node_lower[node] + curve.node_upper[node]) / 2
+            candidates = [
+                index
+                for index, contact in enumerate(contacts)
+                if _junction_box_contains(contact, center, center, periods)
+            ]
+            if len(candidates) == 1:
+                counts[candidates[0]] += 1
+    return counts
+
+
+def _certify_published_junctions(
+    curves: tuple[intersection_curve_owner.IntersectionCurve, ...],
+    contacts: list[ParametricIntersectionPoint],
+    unresolved: list[UnresolvedParameterRegion],
+    first: intersection_curve_owner.SurfaceRegion,
+    second: intersection_curve_owner.SurfaceRegion,
+    periods: tuple[float | None, ...],
+    *,
+    coordinate_budget: CoordinateEnclosureBudget,
+) -> tuple[list[ParametricIntersectionPoint], list[UnresolvedParameterRegion]]:
+    """Reconcile half-branches across source-piece and periodic seam cuts."""
+    counts = _published_junction_counts(curves, contacts, periods)
+    certified_boxes = []
+    for index, contact in enumerate(contacts):
+        if contact.kind != "singular_point" or contact.branch_count >= 0:
+            continue
+        certificate = contact_indicatrix(
+            first.patch,
+            second.patch,
+            contact.parameter_lower,
+            contact.parameter_upper,
+            budget=coordinate_budget,
+        )
+        if certificate.kind == "unresolved" or counts[index] != certificate.branches:
+            continue
+        contacts[index] = ParametricIntersectionPoint(
+            kind=certificate.kind,
+            certificate=contact.certificate,
+            parameters=contact.parameters,
+            parameter_lower=contact.parameter_lower,
+            parameter_upper=contact.parameter_upper,
+            point=contact.point,
+            gap_bound=contact.gap_bound,
+            condition_estimate=contact.condition_estimate,
+            branch_count=certificate.branches,
+        )
+        certified_boxes.append(contact)
+    retained = [
+        region
+        for region in unresolved
+        if region.reason != "singular"
+        or not any(
+            _junction_box_contains(contact, region.lower, region.upper, periods)
+            for contact in certified_boxes
+        )
+    ]
+    return contacts, retained
+
+
 def _certified_transversal(
-    pair: _Prepared, lower: np.ndarray, upper: np.ndarray, /
+    pair: Prepared,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: TrimRequestPreparations | None = None,
 ) -> bool:
     """Outward interval proof that the 3x4 pair Jacobian has rank 3 on a cell.
 
     Some 3x3 minor whose interval determinant excludes zero certifies that the
     two surface normals are independent throughout the cell.
     """
-    jacobian_lower, jacobian_upper = pair.jacobian.evaluate(lower[None], upper[None])
+    jacobian_lower, jacobian_upper = evaluate_interval(
+        pair.jacobian, lower[None], upper[None], budget=budget, preparations=preparations
+    )
     low, high = np.asarray(jacobian_lower)[0], np.asarray(jacobian_upper)[0]
     if low.shape != (3, 4):
         return False
@@ -5979,9 +7603,13 @@ def _certified_transversal(
 
     def minor(first: int, second: int) -> tuple[np.ndarray, np.ndarray]:
         # Rows 1 and 2 of columns ``first`` and ``second``.
-        return interval_subtract(
+        bounds = interval_subtract(
             interval_multiply(entry(1, first), entry(2, second)),
             interval_multiply(entry(1, second), entry(2, first)),
+        )
+        return (
+            np.asarray(bounds[0], dtype=np.float64),
+            np.asarray(bounds[1], dtype=np.float64),
         )
 
     for a, b, c in combinations(range(4), 3):
@@ -5999,9 +7627,8 @@ def _certified_transversal(
 
 def _world_gap(rotation: np.ndarray, gap: float, /) -> float:
     """Bound the world residual of a pose-cancelled source-frame residual."""
-    from ._correspondence import placed_deviation_bound
 
-    return placed_deviation_bound(rotation, gap)
+    return source_correspondence_owner.placed_deviation_bound(rotation, gap)
 
 
 def _world_gap_contact(
@@ -6016,6 +7643,7 @@ def _world_gap_contact(
         point=contact.point,
         gap_bound=_world_gap(rotation, contact.gap_bound),
         condition_estimate=contact.condition_estimate,
+        branch_count=contact.branch_count,
     )
 
 
@@ -6024,7 +7652,7 @@ def _junction_contact(
 ) -> ParametricIntersectionPoint:
     """A contact where branches meet; its enclosure is the junction neighborhood."""
     return ParametricIntersectionPoint(
-        kind="singular",
+        kind="singular_point" if contact.branch_count == -1 else contact.kind,
         certificate=contact.certificate,
         parameters=contact.parameters,
         parameter_lower=np.minimum(contact.parameter_lower, contact.parameters - radius),
@@ -6032,10 +7660,13 @@ def _junction_contact(
         point=contact.point,
         gap_bound=contact.gap_bound,
         condition_estimate=contact.condition_estimate,
+        branch_count=contact.branch_count,
     )
 
 
-def _surface_point_map(piece: SurfacePiece, /) -> Callable[[np.ndarray], np.ndarray]:
+def _surface_point_map(
+    piece: SurfacePiece[AbstractSurfacePatch], /
+) -> Callable[[np.ndarray], np.ndarray]:
     evaluator = piece.evaluator
 
     def evaluate(parameters: np.ndarray) -> np.ndarray:

@@ -33,6 +33,7 @@ from phydrax.discretization.meshfree import (
     SmoothSupportEnvelope,
 )
 from phydrax.discretization.meshfree._types import StencilWeightKernel
+from phydrax.units import METER
 
 
 RADIUS = 1.0
@@ -327,7 +328,9 @@ def test_point_cloud_reconstruction_coordinate_sensitivity() -> None:
     spacing = 1.0 / 8.0
     count = points.shape[0]
     cloud = PointCloudPlan(points, np.full(count, 1.0 / count)).prepare()
-    support = phx.geometry.Rectangle((0.5, 0.5), (1.4, 1.4)).compile()
+    support = phx.geometry.Rectangle((0.5, 0.5), (1.4, 1.4)).compile(
+        coordinate_unit=METER
+    )
     envelope = 0.1 * spacing
     reconstruction = phx.discretization.prepare_point_cloud_field_reconstruction(
         cloud,

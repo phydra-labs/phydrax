@@ -18,6 +18,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import CompiledGeometry, Sphere
 from ...qualification import ReferenceArtifactManifest
+from ...units import METER
 
 
 _GRAVITATIONAL_CONSTANT_M3_KG_S2 = 6.67430e-11
@@ -163,7 +164,7 @@ class LayeredTerrestrialProfile(StrictModule, NonTrainableState):
                 (0.0, 0.0, 0.0),
                 float(radius),
                 feature_id=f"{frame}:layer-boundary:{index}",
-            ).compile()
+            ).compile(coordinate_unit=METER)
             for index, radius in enumerate(radii)
         )
         self.profile_id = canonical_fingerprint(
@@ -350,7 +351,7 @@ class SmoothStellarRadialProfile(StrictModule, NonTrainableState):
         self.requested_use = requested
         self.boundary = Sphere(
             (0.0, 0.0, 0.0), float(radii[-1]), feature_id=f"{frame}:surface"
-        ).compile()
+        ).compile(coordinate_unit=METER)
         self.profile_id = canonical_fingerprint(
             {
                 "kind": "smooth-stellar-radial-profile",

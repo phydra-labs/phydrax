@@ -31,6 +31,7 @@ from jax.typing import ArrayLike
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
+from phydrax.discretization.fem._reference_rules import degree_aware_reference_rule
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -80,11 +81,7 @@ from .._motion_validity import (
     MotionValidityStatus,
 )
 from .._reference_cell import reference_cell_topology
-from ._generic import (
-    _degree_aware_reference_rule,
-    FiniteElementDiscretization,
-    FiniteElementRuntimeData,
-)
+from ._generic import FiniteElementDiscretization, FiniteElementRuntimeData
 from ._reference import lagrange_element
 
 
@@ -493,7 +490,7 @@ def _reference_gradients(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Physical P1/Q1 gradients, |det J|, and weights at reference quadrature."""
 
-    points, weights = _degree_aware_reference_rule(kind, degree)
+    points, weights = degree_aware_reference_rule(kind, degree)
     _, gradients = lagrange_element(kind, 1).tabulate(points)
     dimension = reference.shape[1]
     jacobian = contract("cla,qlb->cqab", jnp.asarray(reference[cells]), gradients)
@@ -657,7 +654,7 @@ class _DirichletExtension(StrictModule, NonTrainableState):
 
 
 def _reference_cell_measure(kind: str, /) -> float:
-    return float(np.sum(np.asarray(_degree_aware_reference_rule(kind, 0)[1])))
+    return float(np.sum(np.asarray(degree_aware_reference_rule(kind, 0)[1])))
 
 
 class _CornerEnergy(StrictModule, NonTrainableState):

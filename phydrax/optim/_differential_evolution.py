@@ -730,7 +730,7 @@ def search_differential_evolution(
     )
 
 
-def _bounded_differential_evolution(
+def bounded_differential_evolution(
     objective: Callable[[Array], Array],
     initial_vector: ArrayLike,
     lower_bounds: ArrayLike,

@@ -6,6 +6,7 @@ import jax
 import numpy as np
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 def _fibonacci_sphere(n: int) -> np.ndarray:
@@ -29,7 +30,7 @@ def test_geometry3d_from_lidar_scene_basic() -> None:
             pts,
             roi=(-1.2, 1.2, -1.2, 1.2, -1.2, 1.2),
             voxel_size=0.05,
-        ).compile()
+        ).compile(coordinate_unit=METER)
     )
 
     assert isinstance(geom, phx.domain.GeometryDomain)

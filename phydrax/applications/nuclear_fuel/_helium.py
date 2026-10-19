@@ -169,6 +169,19 @@ _HELIUM_OPPOSITE_FACE_DEFICIT_SERIES = tuple(
 )
 
 
+def _helium_balance_roundoff(radial_cell_count: int) -> float:
+    """Dimension-scaled gamma bound for shell-balance arithmetic."""
+
+    # Two degree-12 Horner evaluations cost 4*degree operations on a weight
+    # path. Another 48 cover coefficient rounding, weight/flux construction,
+    # reaction reconstruction and residual evaluation; two length-N inventory
+    # reductions add at most 2*N. Using eps, rather than eps/2, also allows one
+    # ulp for the elementary exponential functions in the large-eta branch.
+    operations = 4 * _HELIUM_SERIES_DEGREE + 48 + 2 * radial_cell_count
+    scaled_eps = operations * float(np.finfo(np.float64).eps)
+    return scaled_eps / (1.0 - scaled_eps)
+
+
 class _HeliumShellFactors(NamedTuple):
     """Positive spherical-shell Helmholtz weights at ``eta = kappa (r_u - r_l)``.
 
@@ -256,12 +269,28 @@ class HeliumGasSiteState(StrictModule):
 
 @final
 class HeliumGasStepResult(StrictModule):
-    """Helium candidate state, signed transfers, sampled fields and solve status."""
+    """Helium candidate state, signed inventory transfers, fields and solve status.
+
+    ``released_increment`` closes the reference-volume inventory balance;
+    ``diffusion_to_boundary`` excludes ``grain_growth_sweeping`` from it.
+    ``boundary_flux_transfer`` is the independently evaluated surface flux
+    integrated over the step, not the inventory-ledger transfer. The two agree
+    in exact arithmetic when the reaction and interface residuals vanish.
+    ``interface_residual_norm`` is the unscaled Euclidean residual of the
+    shell-face flux-continuity system; ``linear_solve_residual_norm`` is its
+    maximum with the reaction-system residual. Negative transfers are uptake.
+
+    ``boundary_transfer_error_bound`` bounds the balance-versus-flux discrepancy
+    by dimension-scaled roundoff on gross arithmetic magnitudes plus the
+    reaction and interface residual contributions. Admissibility requires the
+    discrepancy to satisfy that bound, in addition to successful native solves.
+    """
 
     __strict_contract__ = True
     state: HeliumGasSiteState
     released_increment: Float64[SiteDims]
     diffusion_to_boundary: Float64[SiteDims]
+    boundary_flux_transfer: Float64[SiteDims]
     grain_growth_sweeping: Float64[SiteDims]
     retained_total: Float64[SiteDims]
     intragranular_swelling: Float64[SiteDims]
@@ -273,6 +302,8 @@ class HeliumGasStepResult(StrictModule):
     linear_solve_condition_estimate: Float64[SiteDims]
     linear_solve_conditioning_available: Bool[SiteDims]
     linear_solve_residual_norm: Float64[SiteDims]
+    interface_residual_norm: Float64[SiteDims]
+    boundary_transfer_error_bound: Float64[SiteDims]
     admissible: Bool[SiteDims]
     in_range: Bool[SiteDims]
 
@@ -283,13 +314,15 @@ class _HeliumShellUpdate(StrictModule):
     trapped: Array
     dissolved_concentration: Array
     trapped_concentration: Array
-    boundary_transfer: Array
+    boundary_flux_transfer: Array
     physical_support: Array
     successful: Array
     status: Array
     condition_estimate: Array
     conditioning_available: Array
     residual_norm: Array
+    interface_residual_norm: Array
+    transfer_error_bound: Array
 
 
 class _HeliumShellSolution(NamedTuple):
@@ -297,10 +330,11 @@ class _HeliumShellSolution(NamedTuple):
     trapped: Array  # shell means [atoms/m^3]
     dissolved_concentration: Array  # center, shell midpoints, surface
     trapped_concentration: Array  # center, shell midpoints, surface
-    boundary_transfer: Array  # signed outward release [atoms/m^3]
+    boundary_flux_transfer: Array  # signed outward flux integral [atoms/m^3]
     physical_support: Array
     interface_successful: Array
     interface_residual: Array
+    roundoff_scale: Array
 
 
 class _HeliumCoefficients(NamedTuple):
@@ -402,6 +436,7 @@ class HeliumGasModel(StrictModule):
             {
                 "kind": "helium-transport",
                 "spatial_closure": "exact-shell-spherical-helmholtz",
+                "boundary_transfer": "inventory-balance-with-surface-flux-certificate",
                 "parameters": parameters,
                 "radial_cell_count": radial_cell_count,
                 "cell_faces": faces.tolist(),
@@ -547,6 +582,18 @@ class HeliumGasModel(StrictModule):
 
         ``reaction_factor = 1 + dt g / (1 + dt b)`` and ``diffusion_dt = D dt``
         [m^2] set the shell Helmholtz number ``eta``.
+
+        Write ``v = (r_u^3 - r_l^3) / 3`` and ``d = D dt / a^2``, with
+        dimensionless shell radii and physical grain radius ``a``. The mean
+        weights obey ``L + R + S = 1``, ``reaction_factor v L = d source_lower``
+        and ``reaction_factor v R = d source_upper``. Summing the two reaction
+        equations gives the old inventory plus production minus the new
+        inventory as ``reaction_factor (particular - dissolved)``.
+        Consequently shell balances telescope to the surface flux. For traces
+        with interface residual ``r = A traces - rhs``, the inventory-derived
+        transfer minus the surface-flux transfer is ``-3 d sum(r)`` before
+        reaction-solve and shell-weight rounding. Thus zero interface residual
+        conserves exactly; a floating-point flux is an independent diagnostic.
         """
 
         lower, upper = self.cell_faces[:-1], self.cell_faces[1:]
@@ -623,7 +670,8 @@ class HeliumGasModel(StrictModule):
             )
             + dt_trapping * dissolved_samples
         ) / (1.0 + dt_resolution)
-        # Integrated outward flux, without large boundary-lifting cancellation.
+        # Independent outward flux; near equilibrium the two differences can
+        # cancel, and interface-solve residuals prevent telescoping.
         transfer = 3.0 * (
             diffusion_dt
             / grain_radius**2
@@ -634,12 +682,31 @@ class HeliumGasModel(StrictModule):
             * right_weight[-1]
             * (particular[-1] - surface_concentration)
         )
+        # Gross (not canceled) magnitudes cover face-difference arithmetic,
+        # independently rounded shell weights and trapped-field reconstruction.
+        roundoff_scale = (
+            reaction_factor
+            * ((jnp.abs(particular) + jnp.abs(dissolved)) @ self.cell_volume_weights)
+            + 3.0
+            * diffusion_dt
+            / grain_radius**2
+            * jnp.sum(
+                transmission * (jnp.abs(traces[:-1]) + jnp.abs(traces[1:]))
+                + source_lower * (jnp.abs(particular) + jnp.abs(traces[:-1]))
+                + source_upper * (jnp.abs(particular) + jnp.abs(traces[1:]))
+            )
+            + (
+                (jnp.abs(previous_trapped) + jnp.abs(dt_trapping * dissolved))
+                / (1.0 + dt_resolution)
+            )
+            @ self.cell_volume_weights
+        )
         return _HeliumShellSolution(
             dissolved=dissolved,
             trapped=trapped,
             dissolved_concentration=dissolved_samples,
             trapped_concentration=trapped_samples,
-            boundary_transfer=transfer,
+            boundary_flux_transfer=transfer,
             physical_support=jnp.all(particular >= 0.0)
             & jnp.all(traces >= 0.0)
             & jnp.all(source_weight >= 0.0)
@@ -647,6 +714,7 @@ class HeliumGasModel(StrictModule):
             & jnp.all(right_weight >= 0.0),
             interface_successful=interface_successful,
             interface_residual=interface_residual,
+            roundoff_scale=roundoff_scale,
         )
 
     def _site_update(
@@ -676,6 +744,20 @@ class HeliumGasModel(StrictModule):
         particular = reaction.value[0]
         reaction_factor = 1.0 + dt_trapping / (1.0 + dt_resolution)
         diffusion_dt = dt * diffusivity
+        # Elimination uses e_1 + dt_resolution/(1+dt_resolution)*e_2.
+        # Cauchy-Schwarz therefore bounds its weighted sum by
+        # sqrt(2)*||weights||_2*||reaction residual||_2. Gross matrix/RHS
+        # magnitudes also cover roundoff in evaluating that residual.
+        reaction_residual_bound = (
+            jnp.sqrt(2.0 * jnp.sum(self.cell_volume_weights**2)) * reaction.residual_norm
+        )
+        reaction_roundoff_scale = (
+            jnp.abs(dissolved + production_rate * dt)
+            + jnp.abs(trapped)
+            + (1.0 + 2.0 * jnp.abs(dt_trapping)) * jnp.abs(reaction.value[0])
+            + (1.0 + 2.0 * jnp.abs(dt_resolution)) * jnp.abs(reaction.value[1])
+        ) @ self.cell_volume_weights
+        roundoff = _helium_balance_roundoff(self.radial_cell_count)
 
         def diffusion(_: None) -> _HeliumShellUpdate:
             shells = self._diffusive_shells(
@@ -696,7 +778,7 @@ class HeliumGasModel(StrictModule):
                 trapped=shells.trapped,
                 dissolved_concentration=shells.dissolved_concentration,
                 trapped_concentration=shells.trapped_concentration,
-                boundary_transfer=shells.boundary_transfer,
+                boundary_flux_transfer=shells.boundary_flux_transfer,
                 physical_support=shells.physical_support,
                 successful=reaction.successful & shells.interface_successful,
                 status=jnp.bitwise_or(reaction.status, interface_status),
@@ -712,6 +794,15 @@ class HeliumGasModel(StrictModule):
                 residual_norm=jnp.maximum(
                     reaction.residual_norm, shells.interface_residual
                 ),
+                interface_residual_norm=shells.interface_residual,
+                # |sum(r)| <= sqrt(N-1)*||r||_2 for the N-1 interfaces.
+                transfer_error_bound=reaction_residual_bound
+                + 3.0
+                * diffusion_dt
+                / grain_radius**2
+                * math.sqrt(self.radial_cell_count - 1)
+                * shells.interface_residual
+                + roundoff * (reaction_roundoff_scale + shells.roundoff_scale),
             )
 
         def immobile(_: None) -> _HeliumShellUpdate:
@@ -728,7 +819,7 @@ class HeliumGasModel(StrictModule):
                 trapped_concentration=jnp.concatenate(
                     [trapped_cells[:1], trapped_cells, surface_trapped[None]]
                 ),
-                boundary_transfer=jnp.zeros_like(grain_radius),
+                boundary_flux_transfer=jnp.zeros_like(grain_radius),
                 physical_support=jnp.all(dissolved_cells >= 0.0)
                 & jnp.all(trapped_cells >= 0.0)
                 & (surface_concentration >= 0.0),
@@ -737,6 +828,9 @@ class HeliumGasModel(StrictModule):
                 condition_estimate=reaction.condition_estimate,
                 conditioning_available=jnp.asarray(True, dtype=jnp.bool_),
                 residual_norm=reaction.residual_norm,
+                interface_residual_norm=jnp.zeros_like(grain_radius),
+                transfer_error_bound=reaction_residual_bound
+                + roundoff * reaction_roundoff_scale,
             )
 
         return domain_cond(diffusion_dt > 0.0, diffusion, immobile)
@@ -818,7 +912,27 @@ class HeliumGasModel(StrictModule):
             lambda value: value.reshape((*shape, *value.shape[1:])), flat_update
         )
         retained = (updated.dissolved + updated.trapped) @ self.cell_volume_weights
-        released = swept + updated.boundary_transfer
+        produced_increment = production_rate * dt
+        # Summed reaction balances and continuous shell-face fluxes imply this
+        # transfer in exact arithmetic. Use the inventory balance for accounting
+        # so independently rounded interface traces/fluxes do not create atoms;
+        # retain the surface-flux evaluation and its residual as separate evidence.
+        released = (retained_start - retained) + produced_increment
+        diffusion_to_boundary = released - swept
+        boundary_transfer_error_bound = (
+            updated.transfer_error_bound
+            + _helium_balance_roundoff(self.radial_cell_count)
+            * (
+                jnp.abs(retained_start)
+                + jnp.abs(retained)
+                + jnp.abs(produced_increment)
+                + jnp.abs(swept)
+            )
+        )
+        flux_balance_supported = jnp.isfinite(boundary_transfer_error_bound) & (
+            jnp.abs(diffusion_to_boundary - updated.boundary_flux_transfer)
+            <= boundary_transfer_error_bound
+        )
         endpoint = jnp.stack(
             [
                 retained,
@@ -839,11 +953,12 @@ class HeliumGasModel(StrictModule):
                 dissolved_cells=updated.dissolved,
                 trapped_cells=updated.trapped,
                 grain_radius=radius,
-                produced=state.produced + production_rate * dt,
+                produced=state.produced + produced_increment,
                 net_released=state.net_released + released,
             ),
             released_increment=released,
-            diffusion_to_boundary=updated.boundary_transfer,
+            diffusion_to_boundary=diffusion_to_boundary,
+            boundary_flux_transfer=updated.boundary_flux_transfer,
             grain_growth_sweeping=swept,
             retained_total=retained,
             intragranular_swelling=self.bubble_atomic_volume
@@ -856,6 +971,8 @@ class HeliumGasModel(StrictModule):
             linear_solve_condition_estimate=updated.condition_estimate,
             linear_solve_conditioning_available=updated.conditioning_available,
             linear_solve_residual_norm=updated.residual_norm,
+            interface_residual_norm=updated.interface_residual_norm,
+            boundary_transfer_error_bound=boundary_transfer_error_bound,
             admissible=_helium_candidate_admissible(
                 updated,
                 endpoint,
@@ -863,7 +980,8 @@ class HeliumGasModel(StrictModule):
                 grain_radius=radius,
                 temperature=temperature_,
                 packing=coefficients.packing,
-            ),
+            )
+            & flux_balance_supported,
             in_range=self.validity.contains(temperature=temperature_),
         )
 

@@ -28,8 +28,8 @@ def _hydrogen_dimer() -> Any:
     )
     basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
         [11, 17],
-        [_H_EXPONENTS, _H_EXPONENTS],
-        [_H_COEFFICIENTS, _H_COEFFICIENTS],
+        np.asarray([_H_EXPONENTS, _H_EXPONENTS], dtype=np.float64),
+        np.asarray([_H_COEFFICIENTS, _H_COEFFICIENTS], dtype=np.float64),
         source_id="sto-3g-hydrogen-fixture",
     ).prepare(system)
     return units, structure, system, basis
@@ -45,7 +45,7 @@ def test_contracted_gaussian_integrals_obey_normalization_and_permutation_symmet
     integrals = phx.operators.quantum.gaussian.molecular_integrals(
         basis,
         positions_bohr,
-        [1.0, 1.0],
+        np.asarray([1.0, 1.0], dtype=np.float64),
     )
 
     np.testing.assert_allclose(np.diag(integrals.overlap), 1.0, atol=2.0e-7)

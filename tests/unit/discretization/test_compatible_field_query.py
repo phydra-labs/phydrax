@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.discretization._cell_geometry import (
     coordinate_lagrange_element,
     RestrictedCellGeometryElement,
@@ -19,11 +20,24 @@ from phydrax.discretization.fem import (
     prepare_finite_element_field_reconstruction,
     prepare_finite_element_point_interpolation,
 )
-from phydrax.discretization.fem._generic import _evaluate_paired_field_basis
+from phydrax.discretization.fem._generic import evaluate_paired_field_basis
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 D = phx.discretization
+
+# Empirical binary64 allowances retained from this module's curved
+# quadratic-coordinate regression matrix (S2-008); these are not certified
+# error bounds. Fixed-reference algebra excludes the inverse-location solve.
+_FIXED_REFERENCE_ACCURACY = 2e-12
+# Differentiating the curved fixed-reference basis adds Piola/chain-rule work.
+_FIXED_DERIVATIVE_ACCURACY = 2e-11
+# Located scalar values and adjoints include the physical-to-reference solve.
+_LOCATED_SCALAR_ACCURACY = 2e-10
+_LOCATED_SCALAR_DERIVATIVE_ACCURACY = 3e-10
+# Dense tetrahedral moment transforms amplify inverse-location residuals.
+_LOCATED_PIOLA_ACCURACY = 2e-9
+_LOCATED_PIOLA_DERIVATIVE_ACCURACY = 3e-8
 
 
 def _curved(
@@ -125,32 +139,38 @@ def test_curved_scalar_polynomial_components_and_transpose(
     reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
     query = reconstruction.prepare_query(physical(reference))
     np.testing.assert_allclose(
-        query.apply(coefficients), polynomial(reference), atol=2e-10
+        query.apply(coefficients), polynomial(reference), atol=_LOCATED_SCALAR_ACCURACY
     )
     np.testing.assert_allclose(
         query.apply(coefficients),
         _owner_values(discretization, reference, coefficients),
-        atol=2e-10,
+        atol=_LOCATED_SCALAR_ACCURACY,
     )
     dual = jnp.asarray(((0.7, -0.4), (1.3, 0.2)))
     np.testing.assert_allclose(
         jnp.vdot(query.apply(coefficients), dual),
         jnp.vdot(coefficients, query.transpose(dual)),
-        atol=2e-12,
+        atol=_FIXED_REFERENCE_ACCURACY,
     )
     _, pullback = jax.vjp(query.apply, jnp.asarray(coefficients))
-    np.testing.assert_allclose(query.transpose(dual), pullback(dual)[0], atol=2e-12)
+    np.testing.assert_allclose(
+        query.transpose(dual), pullback(dual)[0], atol=_FIXED_REFERENCE_ACCURACY
+    )
     cells = np.zeros(len(reference), dtype=np.int32)
     fixed = prepare_finite_element_point_interpolation(
         discretization, "u", "cells", cells, reference
     )
     np.testing.assert_allclose(
-        fixed.interpolate(coefficients), polynomial(reference), atol=2e-12
+        fixed.interpolate(coefficients),
+        polynomial(reference),
+        atol=_FIXED_REFERENCE_ACCURACY,
     )
     np.testing.assert_allclose(
-        fixed.transpose_scatter(dual), query.transpose(dual), atol=2e-10
+        fixed.transpose_scatter(dual),
+        query.transpose(dual),
+        atol=_LOCATED_SCALAR_ACCURACY,
     )
-    # x_d = xi_d + 0.08 xi_0 (1-xi_0): use the known exact inverse chain,
+    # x_d = xi_d + 0.08 xi_0 (1-xi_0): use the known inverse chain,
     # not the query's own derivative weights, as the physical-gradient oracle.
     inverse = np.broadcast_to(
         np.eye(dimension), (len(reference), dimension, dimension)
@@ -180,15 +200,19 @@ def test_curved_scalar_polynomial_components_and_transpose(
             derivative_axis=axis,
         )
         np.testing.assert_allclose(
-            derivative_query.apply(coefficients), expected, atol=3e-10
+            derivative_query.apply(coefficients),
+            expected,
+            atol=_LOCATED_SCALAR_DERIVATIVE_ACCURACY,
         )
         np.testing.assert_allclose(
-            fixed_derivative.interpolate(coefficients), expected, atol=2e-11
+            fixed_derivative.interpolate(coefficients),
+            expected,
+            atol=_FIXED_DERIVATIVE_ACCURACY,
         )
         np.testing.assert_allclose(
             jnp.vdot(derivative_query.apply(coefficients), dual),
             jnp.vdot(coefficients, derivative_query.transpose(dual)),
-            atol=2e-10,
+            atol=_LOCATED_SCALAR_ACCURACY,
         )
 
 
@@ -221,23 +245,29 @@ def test_curved_piola_and_restricted_child_values_derivatives_and_adjoint(
     points = physical(reference)
     query = reconstruction.prepare_query(points)
     expected = _owner_values(discretization, reference, coefficients)
-    np.testing.assert_allclose(fixed.interpolate(coefficients), expected, atol=2e-11)
-    np.testing.assert_allclose(query.apply(coefficients), expected, atol=2e-9)
+    np.testing.assert_allclose(
+        fixed.interpolate(coefficients), expected, atol=_FIXED_DERIVATIVE_ACCURACY
+    )
+    np.testing.assert_allclose(
+        query.apply(coefficients), expected, atol=_LOCATED_PIOLA_ACCURACY
+    )
     dual = jnp.asarray(((0.7, -0.4, 0.3), (1.3, 0.2, -0.6), (-0.2, 0.8, 0.5)))
     np.testing.assert_allclose(
         jnp.vdot(query.apply(coefficients), dual),
         jnp.vdot(coefficients, query.transpose(dual)),
-        atol=2e-10,
+        atol=_LOCATED_SCALAR_ACCURACY,
     )
     np.testing.assert_allclose(
-        fixed.transpose_scatter(dual), query.transpose(dual), atol=2e-9
+        fixed.transpose_scatter(dual), query.transpose(dual), atol=_LOCATED_PIOLA_ACCURACY
     )
     _, pullback = jax.vjp(query.apply, coefficients)
-    np.testing.assert_allclose(query.transpose(dual), pullback(dual)[0], atol=2e-12)
+    np.testing.assert_allclose(
+        query.transpose(dual), pullback(dual)[0], atol=_FIXED_REFERENCE_ACCURACY
+    )
     local = coefficients[dof_map.cell_dofs[0][0]]
     for axis in range(3):
         derivative = tuple(int(index == axis) for index in range(3))
-        basis, valid = _evaluate_paired_field_basis(
+        basis, valid = evaluate_paired_field_basis(
             discretization,
             "u",
             0,
@@ -250,12 +280,14 @@ def test_curved_piola_and_restricted_child_values_derivatives_and_adjoint(
         expected_derivative = jnp.einsum("pnv,n->pv", basis, local)
         derivative_query = reconstruction.prepare_query(points, derivative=derivative)
         np.testing.assert_allclose(
-            derivative_query.apply(coefficients), expected_derivative, atol=3e-8
+            derivative_query.apply(coefficients),
+            expected_derivative,
+            atol=_LOCATED_PIOLA_DERIVATIVE_ACCURACY,
         )
         np.testing.assert_allclose(
             jnp.vdot(derivative_query.apply(coefficients), dual),
             jnp.vdot(coefficients, derivative_query.transpose(dual)),
-            atol=2e-10,
+            atol=_LOCATED_SCALAR_ACCURACY,
         )
 
 
@@ -291,13 +323,13 @@ def test_compatible_shared_facet_requires_side_and_masked_query_retains_status(
     np.testing.assert_allclose(
         masked.apply(coefficients),
         reconstruction.evaluate(coefficients, points[2:]).values,
-        atol=2e-12,
+        atol=_FIXED_REFERENCE_ACCURACY,
     )
     dual = jnp.asarray(((-0.1, 0.6),))
     np.testing.assert_allclose(
         jnp.vdot(masked.apply(coefficients), dual),
         jnp.vdot(coefficients, masked.transpose(dual)),
-        atol=2e-12,
+        atol=_FIXED_REFERENCE_ACCURACY,
     )
     facet = points[:1]
     owner = reconstruction.prepare_query(facet, side="owner", cell_ids=np.asarray((0,)))
@@ -308,17 +340,17 @@ def test_compatible_shared_facet_requires_side_and_masked_query_retains_status(
     np.testing.assert_allclose(
         average.apply(coefficients),
         0.5 * (owner.apply(coefficients) + neighbor.apply(coefficients)),
-        atol=2e-12,
+        atol=_FIXED_REFERENCE_ACCURACY,
     )
     np.testing.assert_allclose(
         average.transpose(dual[:1]),
         0.5 * (owner.transpose(dual[:1]) + neighbor.transpose(dual[:1])),
-        atol=2e-12,
+        atol=_FIXED_REFERENCE_ACCURACY,
     )
     # A regular exterior facet belongs to one cell and needs no arbitrary side.
     boundary = reconstruction.prepare_query(jnp.asarray(((0.5, 0.0),)))
     assert bool(jnp.all(boundary.evidence.valid))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="No prepared query point is valid"):
         reconstruction.prepare_query(points[:2], coverage="masked")
 
 
@@ -370,7 +402,9 @@ def test_mixed_block_view_keeps_global_coefficients_and_other_block_identity() -
         discretization, "u", block_name="tetrahedra"
     )
     query = prism.prepare_query(points)
-    np.testing.assert_allclose(query.apply(coefficients), (0.72,), atol=2e-12)
+    np.testing.assert_allclose(
+        query.apply(coefficients), (0.72,), atol=_FIXED_REFERENCE_ACCURACY
+    )
     assert query.transpose(jnp.asarray((1.0,))).shape == coefficients.shape
     np.testing.assert_allclose(query.transpose(jnp.asarray((1.0,)))[6], 0.0)
     assert tetrahedron.validity(points).status.tolist() == [
@@ -386,7 +420,7 @@ def test_mixed_block_view_keeps_global_coefficients_and_other_block_identity() -
     # Preparing only the prism still describes global DOFs, including the
     # tetrahedron-only vertex and the correctly averaged shared face nodes.
     np.testing.assert_allclose(
-        interpolation.dof_reference_positions, vertices, atol=2e-12
+        interpolation.dof_reference_positions, vertices, atol=_FIXED_REFERENCE_ACCURACY
     )
 
 
@@ -410,9 +444,12 @@ def test_candidate_capacity_cannot_certify_a_partial_compatible_trace() -> None:
     assert bounded.validity(facet).status.tolist() == [
         int(D.FieldQueryStatus.LOCATION_FAILED)
     ]
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="LOCATION_FAILED"):
         bounded.prepare_query(facet)
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError,
+        match=r"FiniteElementFieldReconstructionKernel\.bind_side\.configuration",
+    ):
         bounded.prepare_query(facet, side="average")
 
 
@@ -438,14 +475,14 @@ def test_actual_mapped_nodal_positions_drive_displacement(
     np.testing.assert_allclose(
         interpolation.dof_reference_positions[routes],
         expected_nodes,
-        atol=2e-12,
+        atol=_FIXED_REFERENCE_ACCURACY,
     )
     displacement = np.zeros(discretization.field_spaces[0].vector_space.shape)
     displacement[routes] = 0.1 * expected_nodes**2 + np.asarray((0.03, -0.02, 0.01))
     np.testing.assert_allclose(
         interpolation.deformed_dof_positions(displacement)[routes],
         expected_nodes + displacement[routes],
-        atol=2e-12,
+        atol=_FIXED_REFERENCE_ACCURACY,
     )
 
 
@@ -460,7 +497,7 @@ def test_compatible_moments_are_not_displacement_nodes() -> None:
         np.asarray((0,), dtype=np.int32),
         np.asarray(((0.13, 0.17, 0.19),)),
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="deformed_dof_positions.displacement"):
         interpolation.deformed_dof_positions(
             np.zeros(discretization.dof_maps[0].global_dof_count)
         )

@@ -35,11 +35,11 @@ from ._operators import AbstractLinearOperator
 from ._preconditioner_properties import PreconditionerProperties
 from ._properties import PropertyEvidence
 from ._spaces import (
-    _coordinate_dtype,
     _coordinate_pairing_weights,
     _has_diagonal_pairing,
     AbstractVectorSpace,
     ArraySpace,
+    coordinate_dtype,
 )
 
 
@@ -62,7 +62,7 @@ def _coerce_coefficients(
     name: str,
     /,
 ) -> Array:
-    space_dtype = _coordinate_dtype(space)
+    space_dtype = coordinate_dtype(space)
     result_dtype = np.dtype(
         jax.dtypes.canonicalize_dtype(jnp.result_type(value.dtype, space_dtype))
     )
@@ -110,7 +110,7 @@ def _prepared_action_cost(
         apply_workspace_bytes_per_rhs=(
             apply_workspace_multiplier
             * setup_operator.source.size
-            * _coordinate_dtype(setup_operator.source).itemsize
+            * coordinate_dtype(setup_operator.source).itemsize
         ),
         reason=reason,
     )
@@ -256,7 +256,7 @@ class PrecisionCastPreconditioner(AbstractPreconditioner):
         )
         solved = self.inner.apply(lowered, iteration=iteration)
         restored = jax.tree.map(
-            lambda leaf: leaf.astype(_coordinate_dtype(self.space)),
+            lambda leaf: leaf.astype(coordinate_dtype(self.space)),
             solved,
         )
         return self.space.validate(restored)

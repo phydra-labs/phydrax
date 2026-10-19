@@ -418,6 +418,53 @@ def test_seeded_amplification_spectrum_matches_linear_theory() -> None:
     assert float(result.ledger.relative_defect) < 1.0e-6
 
 
+def test_beam_energy_ledger_resolves_particle_energy_changes() -> None:
+    lattice = _lattice(12, step=PERIOD)
+    wavelength = lattice.resonant_wavelength(GAMMA)
+    count = 8
+    slices = _slices(count, wavelength, current=3.0, emittance=1.0e-10)
+    currents = np.linspace(1.0, 3.0, count)
+    slices = eqx.tree_at(lambda beam: beam.currents, slices, jnp.asarray(currents))
+    loading = FELLoading(4, 4, shot_noise="quiet")
+    plan = FELTimeDependentPlan(
+        FELPlan(lattice, wavelength, loading=loading),
+        slippage="commensurate",
+        boundary="periodic",
+        pulse_seed=_plane_wave_seed(
+            np.full(count, 1.0e6), wavelength, _frequency(wavelength)
+        ),
+    )
+    result = _solve(plan, slices)
+    initial = np.asarray(result.initial_particles.lorentz_factors)
+    final = np.asarray(result.particles.lorentz_factors)
+    # Sterbenz's lemma makes these nearby particlewise subtractions exact.
+    # math.fsum supplies an independent, accurately rounded weighted sum.
+    changes = [
+        current * (float(after) - float(before))
+        for current, entrance, exit_ in zip(currents, initial, final, strict=True)
+        for before, after in zip(entrance, exit_, strict=True)
+    ]
+    energy_scale = (
+        MASS * LIGHT**2 / CHARGE * (wavelength / LIGHT) / loading.particle_count
+    )
+    expected = energy_scale * math.fsum(changes)
+    # γ₁₆ bounds weighted products, two pairwise reductions (16 particles,
+    # 8 slices), and the scalar energy conversion in binary64 arithmetic.
+    epsilon = np.finfo(np.float64).eps
+    roundoff_bound = (
+        16.0
+        / (1.0 - 16.0 * epsilon)
+        * epsilon
+        * energy_scale
+        * math.fsum(abs(change) for change in changes)
+    )
+    assert abs(expected) > roundoff_bound
+    assert float(result.ledger.beam_energy_change) == pytest.approx(
+        expected, rel=0.0, abs=roundoff_bound
+    )
+    assert int(result.evidence.status) == FELStatus.SUCCESS
+
+
 # ------------------------------------------------------------------- SASE
 
 

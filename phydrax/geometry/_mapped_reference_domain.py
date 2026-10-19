@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Independent mapped-volume declarations with authoritative reference charts."""
+"""Independent mapped-volume declarations with declared reference charts."""
 
 from __future__ import annotations
 
@@ -12,53 +12,23 @@ import equinox as eqx
 import numpy as np
 from jax.typing import ArrayLike
 
+import phydrax.discretization._cell_geometry as cell_geometry_owner
+import phydrax.discretization._cell_geometry_validity as cell_geometry_validity_owner
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.discretization._coordinate_enclosure as coordinate_enclosure_owner
+import phydrax.geometry._domain_coverage as domain_coverage_owner
+import phydrax.geometry._embedding_state as embedding_state_owner
+import phydrax.geometry._mapped_coverage as mapped_coverage_owner
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .._validation import canonical_identifier
+from .._validation import canonical_identifier, integer
 from ..discretization._cell_geometry import CellGeometrySpec
 from ..discretization._cell_mesh import CellMesh
-from ..typing import Dim, HostInt64, parse
-from ._mesh_certificates import PiecewiseLinearDomain
-
-
-def mapped_source_corner_coordinates(
-    reference_mesh: CellMesh, source_geometry: CellGeometrySpec
-) -> np.ndarray:
-    """Validate the exact physical corner view shared by independent root maps."""
-    from ..discretization import _coordinate_enclosure as algebra
-
-    elements, routes, _ = source_geometry.resolve(reference_mesh)
-    values = source_geometry.source_coordinates()
-    ids = np.asarray(reference_mesh.vertex_global_ids, dtype=np.int64)
-    positions: dict[int, tuple[Fraction, ...]] = {}
-    for block, element, route in zip(
-        reference_mesh.blocks, elements, routes, strict=True
-    ):
-        local_values = tuple(
-            tuple(values[index] for index in row)
-            for row in np.asarray(route, dtype=np.int64)
-        )
-        for local, row in zip(local_values, np.asarray(block.vertices), strict=True):
-            images = algebra.coordinate_corner_images(element, local)
-            if images is None:
-                raise ValueError(
-                    "Mapped source roots require authoritative exact coordinate expressions."
-                )
-            for vertex, image in zip(ids[row], images, strict=True):
-                if int(vertex) in positions and positions[int(vertex)] != image:
-                    raise ValueError(
-                        "Mapped source roots disagree at a declared shared corner."
-                    )
-                positions[int(vertex)] = image
-    if any(int(vertex) not in positions for vertex in ids):
-        raise ValueError(
-            "Mapped reference mesh contains vertices without an authoritative source chart."
-        )
-    return np.asarray(
-        tuple(tuple(float(value) for value in positions[int(vertex)]) for vertex in ids),
-        dtype=np.float64,
-    )
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..typing import checked, Dim, HostInt64, parse
+from ._mapped_corners import mapped_source_corner_coordinates
 
 
 class _MappedSourceCellDim(Dim, minimum=1):
@@ -70,14 +40,14 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
     """A declared reference domain and its independently owned physical maps.
 
     Source identity is explicit and distinct from any target approximation.
-    Coverage requires exact root restrictions, independent reference coverage,
+    Coverage requires rational root restrictions, independent reference coverage,
     source physical embedding and target physical embedding. It does not imply
     equivalence of these physical maps to a CAD or implicit source.
     """
 
     __strict_contract__ = True
 
-    reference_domain: PiecewiseLinearDomain
+    reference_domain: domain_coverage_owner.PiecewiseLinearDomain
     reference_mesh: CellMesh
     source_geometry: CellGeometrySpec
     cell_regions: HostInt64[_MappedSourceCellDim]
@@ -85,32 +55,23 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
     source_revision: str = eqx.field(static=True)
     domain_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
-        reference_domain: PiecewiseLinearDomain,
-        reference_mesh: CellMesh,
-        source_geometry: CellGeometrySpec,
+        reference_domain: domain_coverage_owner.PiecewiseLinearDomain,
+        reference_mesh: cell_mesh_owner.CellMesh,
+        source_geometry: cell_geometry_owner.CellGeometrySpec,
         cell_regions: ArrayLike,
         /,
         *,
         source_id: str,
         source_revision: str,
+        budget: CoordinateEnclosureBudget | None = None,
     ) -> None:
-        from ..discretization import _coordinate_enclosure as algebra
-        from ..discretization._cell_geometry import CellGeometrySpec
-        from ..discretization._cell_geometry_validity import cell_geometry_id
-        from ..discretization._cell_mesh import CellMesh
-        from ._mesh_certificates import PiecewiseLinearDomain
 
-        if not isinstance(reference_domain, PiecewiseLinearDomain):
-            raise TypeError("reference_domain must be PiecewiseLinearDomain.")
-        if not isinstance(reference_mesh, CellMesh):
-            raise TypeError("reference_mesh must be CellMesh.")
-        if not isinstance(source_geometry, CellGeometrySpec):
-            raise TypeError("source_geometry must be CellGeometrySpec.")
         if reference_mesh.storage is not None or source_geometry.storage is not None:
             raise ValueError(
-                "Mapped source declarations require independent global reference charts."
+                "MappedReferenceDomain.reference_mesh must be serial with serial source geometry; got owner-local storage"
             )
         dimension = reference_mesh.topological_dimension
         if (
@@ -119,15 +80,15 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
             or dimension != reference_domain.ambient_dimension
         ):
             raise ValueError(
-                "Mapped source reference charts must be two- or three-dimensional volumes."
+                "MappedReferenceDomain.reference_mesh must have matching volume and domain dimensions of two or three; got incompatible dimensions"
             )
         if source_geometry.coordinates.shape[1] != dimension:
             raise ValueError(
-                "Mapped physical coordinates must have the declared volume dimension."
+                "MappedReferenceDomain.source_geometry.coordinates must have the declared volume dimension; got incompatible ambient dimension"
             )
         if source_geometry.restriction_source is not None:
             raise ValueError(
-                "Mapped source declarations must own their roots independently of target restrictions."
+                "MappedReferenceDomain.source_geometry must declare unrestricted roots; got target restriction ancestry"
             )
         regions = parse(
             np.asarray(cell_regions, dtype=np.int64),
@@ -141,66 +102,79 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
             or np.any(regions >= len(reference_domain.region_ids))
         ):
             raise ValueError(
-                "Mapped source cell regions must assign every declared root."
+                "MappedReferenceDomain.cell_regions must assign a declared region to every root; got invalid shape or region index"
             )
-        elements, routes, _ = source_geometry.resolve(reference_mesh)
-        values = source_geometry.source_coordinates()
-        for block, element, route in zip(
-            reference_mesh.blocks, elements, routes, strict=True
-        ):
-            if (
-                block.cell_kind
-                not in (
-                    "triangle",
-                    "quadrilateral",
-                    "tetrahedron",
-                    "hexahedron",
-                    "prism",
-                    "pyramid",
-                )
-                or element.cell_kind != block.cell_kind
+        with embedding_state_owner.coordinate_certificate_request(
+            embedding_state_owner.MeshCertificateLimits(), budget=budget
+        ) as budget:
+            elements, routes, _ = source_geometry.resolve(reference_mesh)
+            values = source_geometry.source_coordinates(budget=budget)
+            for block, element, route in zip(
+                reference_mesh.blocks, elements, routes, strict=True
             ):
-                raise ValueError(
-                    "Mapped source roots require corresponding standard reference cells."
-                )
-            for local in (
-                tuple(values[index] for index in row)
-                for row in np.asarray(route, dtype=np.int64)
-            ):
-                if algebra.coordinate_polynomials(element, local) is None:
-                    raise ValueError(
-                        "Mapped source roots require authoritative exact coordinate expressions."
+                if (
+                    block.cell_kind
+                    not in (
+                        "triangle",
+                        "quadrilateral",
+                        "tetrahedron",
+                        "hexahedron",
+                        "prism",
+                        "pyramid",
                     )
-        mapped_source_corner_coordinates(reference_mesh, source_geometry)
-        source = canonical_identifier(source_id, "source_id")
-        revision = canonical_identifier(source_revision, "source_revision")
-        self.reference_domain = reference_domain
-        self.reference_mesh = reference_mesh
-        self.source_geometry = source_geometry
-        self.cell_regions = regions
-        self.source_id = source
-        self.source_revision = revision
-        self.domain_id = canonical_fingerprint(
-            {
-                "kind": "mapped-reference-domain",
-                "source": source,
-                "revision": revision,
-                "reference_domain": reference_domain.domain_id,
-                "reference_topology": reference_mesh.topology_id,
-                "reference_coordinates": array_tree_fingerprint(
-                    np.asarray(reference_mesh.coordinates)
-                ),
-                "source_geometry": cell_geometry_id(source_geometry),
-                "cell_regions": array_tree_fingerprint(regions),
-            }
-        )
+                    or element.cell_kind != block.cell_kind
+                ):
+                    raise ValueError(
+                        "MappedReferenceDomain.roots must match supported reference cell kinds; got an unsupported or mismatched cell map"
+                    )
+                for local in (
+                    tuple(values[index] for index in row)
+                    for row in np.asarray(route, dtype=np.int64)
+                ):
+                    if (
+                        coordinate_enclosure_owner.coordinate_polynomials(
+                            element, local, budget=budget
+                        )
+                        is None
+                    ):
+                        raise ValueError(
+                            "MappedReferenceDomain.source_geometry must resolve coordinate polynomials for every root; got unresolved source expressions"
+                        )
+            mapped_source_corner_coordinates(
+                reference_mesh, source_geometry, budget=budget
+            )
+            source = canonical_identifier(source_id, "source_id")
+            revision = canonical_identifier(source_revision, "source_revision")
+            self.reference_domain = reference_domain
+            self.reference_mesh = reference_mesh
+            self.source_geometry = source_geometry
+            self.cell_regions = regions
+            self.source_id = source
+            self.source_revision = revision
+            self.domain_id = canonical_fingerprint(
+                {
+                    "kind": "mapped-reference-domain",
+                    "source": source,
+                    "revision": revision,
+                    "reference_domain": reference_domain.domain_id,
+                    "reference_topology": reference_mesh.topology_id,
+                    "reference_coordinates": array_tree_fingerprint(
+                        np.asarray(reference_mesh.coordinates)
+                    ),
+                    "source_geometry": cell_geometry_validity_owner.cell_geometry_id(
+                        source_geometry
+                    ),
+                    "cell_regions": array_tree_fingerprint(regions),
+                }
+            )
 
     def entity_set_id(self, dimension: int) -> str:
-        """Scientific image identity of one actual reference entity set."""
-        if isinstance(dimension, bool) or not isinstance(dimension, (int, np.integer)):
-            raise TypeError("dimension must be an integer.")
+        """Scientific image identity of one measured reference entity set."""
+        dimension = integer(dimension, "MappedReferenceDomain.dimension")
         if dimension < 0 or dimension > self.reference_mesh.topological_dimension:
-            raise ValueError("dimension must name an actual reference entity set.")
+            raise ValueError(
+                "MappedReferenceDomain.dimension must name a reference entity set; got an out-of-range dimension"
+            )
         entities = self.reference_mesh.entity_set(int(dimension))
         return canonical_fingerprint(
             {
@@ -214,13 +188,12 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
     def image_entity_id(self, dimension: int, root_global_id: int) -> str:
         """Bind a physical image to a validated, explicitly declared source entity."""
         image_set = self.entity_set_id(dimension)
-        if isinstance(root_global_id, bool) or not isinstance(
-            root_global_id, (int, np.integer)
-        ):
-            raise TypeError("root_global_id must be an integer.")
+        root_global_id = integer(root_global_id, "MappedReferenceDomain.root_global_id")
         entities = self.reference_mesh.entity_set(int(dimension))
         if not np.any(np.asarray(entities.entity_ids, dtype=np.int64) == root_global_id):
-            raise ValueError("root_global_id must identify an actual reference entity.")
+            raise ValueError(
+                "MappedReferenceDomain.root_global_id must identify a reference entity; got an absent scientific ID"
+            )
         return canonical_fingerprint(
             {
                 "kind": "mapped-reference-image-entity",
@@ -242,39 +215,53 @@ class MappedReferenceDomain(StrictModule, NonTrainableState):
 
     @property
     def facets(self) -> np.ndarray:
-        """Authoritative reference-fragment rows; they are not planar physical facets."""
+        """Declared reference-fragment rows; they are not planar physical facets."""
         return self.reference_domain.facets
 
-    def exact_region_measures(self) -> tuple[Fraction, ...]:
+    def exact_region_measures(
+        self, *, budget: CoordinateEnclosureBudget | None = None
+    ) -> tuple[Fraction, ...]:
         """Integrate the physical root Jacobians, including collapsed pyramids."""
-        from ..discretization import _coordinate_enclosure as algebra
-        from ._mapped_coverage import integrate, map_domain
 
-        elements, routes, _ = self.source_geometry.resolve(self.reference_mesh)
-        values = self.source_geometry.source_coordinates()
-        totals = [Fraction(0) for _ in self.region_ids]
-        cursor = 0
-        for block, element, route in zip(
-            self.reference_mesh.blocks, elements, routes, strict=True
-        ):
-            for local in (
-                tuple(values[index] for index in row)
-                for row in np.asarray(route, dtype=np.int64)
+        with embedding_state_owner.coordinate_certificate_request(
+            embedding_state_owner.MeshCertificateLimits(), budget=budget
+        ) as budget:
+            elements, routes, _ = self.source_geometry.resolve(self.reference_mesh)
+            values = self.source_geometry.source_coordinates(budget=budget)
+            totals = [Fraction(0) for _ in self.region_ids]
+            cursor = 0
+            for block, element, route in zip(
+                self.reference_mesh.blocks, elements, routes, strict=True
             ):
-                polynomial = algebra.coordinate_polynomials(element, local)
-                if polynomial is None:
-                    raise ValueError("Mapped source coordinate expression is absent.")
-                jacobian = tuple(
-                    tuple(
-                        algebra.derivative(value, axis)
-                        for axis in range(self.ambient_dimension)
+                for local in (
+                    tuple(values[index] for index in row)
+                    for row in np.asarray(route, dtype=np.int64)
+                ):
+                    polynomial = coordinate_enclosure_owner.coordinate_polynomials(
+                        element, local, budget=budget
                     )
-                    for value in polynomial
-                )
-                totals[int(self.cell_regions[cursor])] += integrate(
-                    algebra.determinant(jacobian),
-                    map_domain(block.cell_kind),
-                    self.ambient_dimension,
-                )
-                cursor += 1
-        return tuple(totals)
+                    if polynomial is None:
+                        raise ValueError(
+                            "MappedReferenceDomain.source_geometry must resolve coordinate polynomials; got absent source expressions"
+                        )
+                    jacobian = tuple(
+                        tuple(
+                            coordinate_enclosure_owner.derivative(
+                                value, axis, budget=budget
+                            )
+                            for axis in range(self.ambient_dimension)
+                        )
+                        for value in polynomial
+                    )
+                    totals[int(self.cell_regions[cursor])] += (
+                        mapped_coverage_owner.integrate(
+                            coordinate_enclosure_owner.determinant(
+                                jacobian, budget=budget
+                            ),
+                            mapped_coverage_owner.map_domain(block.cell_kind),
+                            self.ambient_dimension,
+                            budget=budget,
+                        )
+                    )
+                    cursor += 1
+            return tuple(totals)

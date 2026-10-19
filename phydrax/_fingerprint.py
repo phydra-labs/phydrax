@@ -8,8 +8,8 @@ import hashlib
 import io
 import json
 import operator
-from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass, fields, is_dataclass
 from math import prod
 from typing import Any
 
@@ -30,7 +30,7 @@ def canonical_json(value: Any, /) -> str:
 
 
 def canonical_fingerprint(value: Any, /) -> str:
-    """Return SHA-256 of canonical JSON, content-addressing numeric array leaves."""
+    """Return SHA-256 of deterministic JSON with content-addressed array leaves."""
     return hashlib.sha256(
         canonical_json(_canonical_payload(value)).encode("utf-8")
     ).hexdigest()
@@ -39,7 +39,9 @@ def canonical_fingerprint(value: Any, /) -> str:
 def iter_array_bytes(value: np.ndarray, /) -> Iterator[memoryview]:
     """Yield bounded C-order byte views; consume each before advancing."""
     if value.dtype.hasobject:
-        raise TypeError("Object arrays cannot be hashed as canonical bytes.")
+        raise TypeError(
+            f"iter_array_bytes.value.dtype must exclude object references; got {value.dtype!r}."
+        )
     if value.nbytes == 0:
         return
     if value.flags.c_contiguous:
@@ -67,7 +69,7 @@ def array_bytes_digest(value: np.ndarray, /) -> str:
 
 
 def canonical_array_hex_fingerprint(value: np.ndarray, /) -> str:
-    """Fingerprint the canonical JSON string of C-order hexadecimal bytes."""
+    """Fingerprint the JSON string of C-order hexadecimal bytes."""
     digest = hashlib.sha256(b'"')
     for chunk in iter_array_bytes(value):
         digest.update(chunk.hex().encode("ascii"))
@@ -121,7 +123,7 @@ def _iter_array_list_payload_json(value: Any, /) -> Iterator[str]:
 
 
 def canonical_array_list_fingerprint(value: Any, /) -> str:
-    """Fingerprint canonical JSON with arrays represented by legacy nested lists."""
+    """Fingerprint deterministic JSON with arrays represented by nested lists."""
     digest = hashlib.sha256()
     for chunk in _iter_array_list_payload_json(value):
         digest.update(chunk.encode("utf-8"))
@@ -172,6 +174,137 @@ def array_tree_fingerprint(tree: PyTree[Any], /) -> dict[str, Any]:
     }
 
 
+type _ArrayEqual = Callable[[jax.Array | np.ndarray, jax.Array | np.ndarray], bool]
+
+
+def tree_content_equal(
+    first: PyTree[Any],
+    second: PyTree[Any],
+    /,
+    *,
+    array_equal: _ArrayEqual | None = None,
+) -> bool:
+    """Whether two PyTrees have equal structure, static metadata and leaf content.
+
+    Numerical leaves and numerical static metadata (arrays, NumPy scalars,
+    Python floats and complexes) are equal when type, shape, dtype and C-order
+    bytes agree, so identical NaN payloads compare equal and any changed bit
+    does not. Dataclass fields are compared recursively, including fields excluded
+    from generated equality. Other leaves and static values must have the same
+    type and compare equal.
+
+    ``array_equal`` may authenticate array bytes through an admitted distributed
+    bank. Array type, shape and dtype equality, and every nonarray or static
+    comparison, remain this function's responsibility; the default is host-local.
+
+    Shared subtrees are compared once per distinct pair of objects, so aliased
+    subgraphs cost their distinct size rather than their expanded size.
+    """
+    # Proven pairs are retained for the whole comparison so their identities
+    # cannot be reused by temporary children created during flattening.
+    proven: dict[tuple[int, int], tuple[object, object]] = {}
+    return _tree_equal(first, second, array_equal, proven)
+
+
+def _tree_equal(
+    first: object,
+    second: object,
+    array_equal: _ArrayEqual | None,
+    proven: dict[tuple[int, int], tuple[object, object]],
+    /,
+) -> bool:
+    if first is second or (id(first), id(second)) in proven:
+        return True
+    first_children, first_node = jax.tree_util.tree_flatten(
+        first, is_leaf=lambda node: node is not first
+    )
+    second_children, second_node = jax.tree_util.tree_flatten(
+        second, is_leaf=lambda node: node is not second
+    )
+    first_leaf = jax.tree_util.treedef_is_leaf(first_node)
+    if first_leaf or jax.tree_util.treedef_is_leaf(second_node):
+        equal = (
+            first_leaf
+            and jax.tree_util.treedef_is_leaf(second_node)
+            and _static_equal(first, second, array_equal)
+        )
+    else:
+        equal = (
+            _node_data_equal(first_node, second_node, array_equal)
+            and len(first_children) == len(second_children)
+            and all(
+                _tree_equal(left, right, array_equal, proven)
+                for left, right in zip(first_children, second_children, strict=True)
+            )
+        )
+    if equal:
+        proven[(id(first), id(second))] = (first, second)
+    return equal
+
+
+def _node_data_equal(
+    first: jax.tree_util.PyTreeDef,
+    second: jax.tree_util.PyTreeDef,
+    array_equal: _ArrayEqual | None,
+    /,
+) -> bool:
+    # PyTreeDef equality compares static metadata with ``==``: a NaN static
+    # value makes bitwise-identical trees unequal and signed zeros compare
+    # equal, so node metadata is compared bitwise instead.
+    first_data, second_data = first.node_data(), second.node_data()
+    if first_data is None or second_data is None:
+        return first_data is None and second_data is None
+    return first_data[0] is second_data[0] and _static_equal(
+        first_data[1], second_data[1], array_equal
+    )
+
+
+def _static_equal(
+    first: Any, second: Any, /, array_equal: _ArrayEqual | None = None
+) -> bool:
+    if type(first) is not type(second):
+        return False
+    if array_equal is not None and isinstance(first, (jax.Array, np.ndarray)):
+        return (
+            first.shape == second.shape
+            and first.dtype == second.dtype
+            and array_equal(first, second)
+        )
+    if isinstance(first, (jax.Array, np.ndarray, np.generic, float, complex)):
+        # Shapes are compared before `ascontiguousarray`, which promotes a 0-d
+        # value to one element and would equate a scalar with a length-one axis.
+        left_value, right_value = np.asarray(first), np.asarray(second)
+        if left_value.shape != right_value.shape or left_value.dtype != right_value.dtype:
+            return False
+        left = np.ascontiguousarray(left_value).reshape(-1).view(np.uint8)
+        right = np.ascontiguousarray(right_value).reshape(-1).view(np.uint8)
+        return np.array_equal(left, right)
+    if is_dataclass(first) and not isinstance(first, type):
+        return all(
+            _static_equal(
+                getattr(first, field.name), getattr(second, field.name), array_equal
+            )
+            for field in fields(first)
+        )
+    if isinstance(first, (tuple, list)):
+        return len(first) == len(second) and all(
+            _static_equal(left, right, array_equal)
+            for left, right in zip(first, second, strict=True)
+        )
+    if isinstance(first, Mapping):
+        if first.keys() != second.keys():
+            return False
+        # Python equality merges `1`, `1.0` and `True` keys; each key must match
+        # its counterpart's type and bits.
+        second_keys = {key: key for key in second}
+        return all(
+            _static_equal(key, second_keys[key], array_equal)
+            and _static_equal(first[key], second[key], array_equal)
+            for key in first
+        )
+    return bool(first == second)
+
+
 def _canonical_payload(value: Any, /) -> Any:
     if isinstance(value, (jax.Array, np.ndarray, np.generic)):
         return {"__array__": array_tree_fingerprint(np.asarray(value))}
@@ -186,7 +319,9 @@ def canonical_mapping(value: Mapping[str, Any], /) -> dict[str, Any]:
     """Return an independent JSON-normalized mapping or reject unsupported values."""
     normalized = json.loads(canonical_json(dict(value)))
     if not isinstance(normalized, dict):
-        raise TypeError("Canonical mapping input must serialize to a JSON object.")
+        raise TypeError(
+            f"canonical_mapping.value must serialize to a JSON object; got {type(normalized).__qualname__}."
+        )
     return normalized
 
 
@@ -200,7 +335,7 @@ def _array_records(tree: PyTree[Any], /) -> list[tuple[str, np.ndarray]]:
         if value.dtype.hasobject:
             if isinstance(leaf, np.ndarray):
                 raise TypeError(
-                    f"Array leaf {jax.tree_util.keystr(path) or '<root>'} has object dtype and cannot be fingerprinted."
+                    f"array_tree_fingerprint.leaf.dtype must exclude objects; got path={jax.tree_util.keystr(path) or '<root>'}, dtype={value.dtype}."
                 )
             continue
         records.append((jax.tree_util.keystr(path) or "<root>", value))
@@ -209,7 +344,7 @@ def _array_records(tree: PyTree[Any], /) -> list[tuple[str, np.ndarray]]:
 
 @dataclass(frozen=True, slots=True)
 class LogicalArrayChunk:
-    """One bounded canonical C-order byte interval, independent of placement."""
+    """One bounded C-order byte interval, independent of placement."""
 
     offset: int
     payload: bytes
@@ -220,7 +355,7 @@ class LogicalArrayContent:
     """Globally logical array specification and an explicitly ordered byte stream.
 
     A distributed producer reconciles addressable shards into C-order intervals;
-    this boundary never converts a global JAX array or retains the complete array.
+    this boundary never converts a global JAX array or retains the whole array.
     Chunk boundaries do not participate in scientific identity.
     """
 
@@ -235,9 +370,9 @@ def logical_array_collection_digest(
     *,
     maximum_chunk_bytes: int = 1 << 20,
 ) -> str:
-    """Hash canonical logical content with the lifecycle archive's exact recipe.
+    """Hash logical content with the lifecycle archive's byte recipe.
 
-    Coverage is exact, disjoint and ordered: gaps, overlaps, duplicated intervals,
+    Coverage is disjoint and ordered: gaps, overlaps, duplicated intervals,
     truncated streams and trailing bytes are rejected. The caller explicitly owns
     interprocess byte routing; a set of rank-local hashes is not a substitute.
     Serial and repartitioned streams produce the same ``array_collection_digest``.
@@ -245,24 +380,32 @@ def logical_array_collection_digest(
 
     limit = operator.index(maximum_chunk_bytes)
     if isinstance(maximum_chunk_bytes, bool) or limit <= 0:
-        raise ValueError("maximum_chunk_bytes must be a positive integer.")
+        raise ValueError(
+            f"logical_array_collection_digest.maximum_chunk_bytes must be a positive integer; got {maximum_chunk_bytes!r}."
+        )
     if any(not isinstance(name, str) or not name for name in arrays):
-        raise TypeError("Logical array names must be non-empty strings.")
+        raise TypeError(
+            f"logical_array_collection_digest.arrays.keys must be nonempty strings; got {tuple(arrays)!r}."
+        )
     digest = hashlib.sha256()
     for name in sorted(arrays):
         content = arrays[name]
         if not isinstance(content, LogicalArrayContent):
-            raise TypeError("Logical arrays require LogicalArrayContent.")
+            raise TypeError(
+                f"logical_array_collection_digest.content must be LogicalArrayContent; got {type(content).__qualname__}."
+            )
         shape = tuple(operator.index(size) for size in content.shape)
         if len(shape) > 32 or any(
             isinstance(size, bool) or size < 0 for size in content.shape
         ):
             raise ValueError(
-                "Logical array shapes require at most 32 non-negative extents."
+                f"logical_array_collection_digest.content.shape must have at most 32 nonnegative extents; got {content.shape!r}."
             )
         dtype = np.dtype(content.dtype)
         if dtype.kind not in "biufc" or dtype.hasobject:
-            raise TypeError("Logical array content must have a primitive numeric dtype.")
+            raise TypeError(
+                f"logical_array_collection_digest.content.dtype must be primitive numeric; got {dtype}."
+            )
         header = io.BytesIO()
         np.lib.format.write_array_header_1_0(
             header,
@@ -282,7 +425,9 @@ def logical_array_collection_digest(
         cursor = 0
         for chunk in content.chunks:
             if not isinstance(chunk, LogicalArrayChunk):
-                raise TypeError("Logical content streams require LogicalArrayChunk.")
+                raise TypeError(
+                    f"logical_array_collection_digest.chunk must be LogicalArrayChunk; got {type(chunk).__qualname__}."
+                )
             if (
                 isinstance(chunk.offset, bool)
                 or operator.index(chunk.offset) != cursor
@@ -291,13 +436,105 @@ def logical_array_collection_digest(
                 or cursor + len(chunk.payload) > byte_count
             ):
                 raise ValueError(
-                    "Logical array chunks do not provide bounded exact coverage."
+                    f"logical_array_collection_digest.chunk must provide bounded contiguous coverage; got offset={chunk.offset!r}, payload_type={type(chunk.payload).__qualname__}, cursor={cursor}, byte_count={byte_count}, limit={limit}."
                 )
             digest.update(chunk.payload)
             cursor += len(chunk.payload)
         if cursor != byte_count:
-            raise ValueError("Logical array chunks leave incomplete content coverage.")
+            raise ValueError(
+                f"logical_array_collection_digest.chunks must cover all content bytes; got covered={cursor}, expected={byte_count}."
+            )
     return digest.hexdigest()
+
+
+def _logical_array_shard_intervals(
+    value: jax.Array, /
+) -> dict[tuple[int, int], jax.Device]:
+    """Select one replica per contiguous shard and require global coverage."""
+    intervals: dict[tuple[int, int], jax.Device] = {}
+    for device, index in value.sharding.devices_indices_map(value.shape).items():
+        if not value.shape:
+            start, stop = 0, 1
+        else:
+            if (
+                len(index) != value.ndim
+                or any(
+                    not isinstance(entry, slice) or entry.indices(size) != (0, size, 1)
+                    for entry, size in zip(index[1:], value.shape[1:], strict=True)
+                )
+                or not isinstance(index[0], slice)
+            ):
+                raise ValueError(
+                    f"logical_array_value_collection_digest.shard.index must select a contiguous leading-axis shard; got {index!r}, shape={value.shape}."
+                )
+            start, stop, step = index[0].indices(value.shape[0])
+            if step != 1:
+                raise ValueError(
+                    f"logical_array_value_collection_digest.shard.step must be one; got {step}."
+                )
+        key = (start, stop)
+        previous = intervals.get(key)
+        if previous is None or (device.process_index, device.id) < (
+            previous.process_index,
+            previous.id,
+        ):
+            intervals[key] = device
+    cursor = 0
+    for start, stop in sorted(intervals):
+        if start != cursor or stop < start:
+            raise ValueError(
+                f"logical_array_value_collection_digest.shard.intervals must provide disjoint contiguous coverage; got start={start}, stop={stop}, cursor={cursor}."
+            )
+        cursor = stop
+    if cursor != (value.shape[0] if value.shape else 1):
+        raise ValueError(
+            f"logical_array_value_collection_digest.shard.intervals must cover the global leading axis; got covered={cursor}, shape={value.shape}."
+        )
+    return intervals
+
+
+def _logical_shard_array_chunks(
+    value: jax.Array,
+    shape: tuple[int, ...],
+    intervals: dict[tuple[int, int], jax.Device],
+    local: dict[jax.Device, jax.Array],
+    trailing: int,
+    elements_per_chunk: int,
+    broadcast: Callable[..., np.ndarray],
+    /,
+) -> Iterable[LogicalArrayChunk]:
+    """Stream the selected replicas in global C order with bounded transfers."""
+    offset = 0
+    for interval, device in sorted(intervals.items()):
+        stop = min(interval[1], shape[0]) if shape else interval[1]
+        count = max(0, stop - interval[0]) * trailing
+        source = device.process_index == jax.process_index()
+        shard = local.get(device) if source else None
+        if source and shard is None:
+            raise ValueError(
+                f"logical_array_value_collection_digest.shard.payload must be addressable on the selected process; got device={device}, process={jax.process_index()}."
+            )
+        # CPU shard buffers already live in host memory: a zero-copy view
+        # replaces per-chunk device slicing, which compiles one program per
+        # distinct chunk bound. Accelerator shards keep bounded device slices.
+        host_view = (
+            np.asarray(shard).reshape(-1)
+            if shard is not None and device.platform == "cpu"
+            else None
+        )
+        for first in range(0, count, elements_per_chunk):
+            last = min(first + elements_per_chunk, count)
+            if host_view is not None:
+                payload = host_view[first:last]
+            elif shard is not None:
+                payload = np.asarray(shard.reshape(-1)[first:last])
+            else:
+                payload = np.empty((last - first,), dtype=value.dtype)
+            if jax.process_count() > 1 and not value.is_fully_addressable:
+                payload = broadcast(payload, is_source=source)
+            encoded = np.ascontiguousarray(payload).tobytes(order="C")
+            yield LogicalArrayChunk(offset, encoded)
+            offset += len(encoded)
 
 
 def logical_array_value_collection_digest(
@@ -307,30 +544,36 @@ def logical_array_value_collection_digest(
     maximum_chunk_bytes: int = 1 << 20,
     logical_shapes: Mapping[str, tuple[int, ...]] | None = None,
 ) -> str:
-    """Bounded canonical hashing of host source data and logical JAX shards.
+    """Hash host source data and logical JAX shards with bounded byte chunks.
 
     NumPy sources stream C-order buffers without a device roundtrip or whole
     contiguous copy. JAX requires contiguous leading-axis shards; replicas are
     read once. Global byte traffic is explicit, not a parallel scaling claim.
-    Tiled execution layouts require an explicit canonical redistribution.
+    Tiled execution layouts require an explicit C-order redistribution.
     """
 
     from jax.experimental.multihost_utils import broadcast_one_to_all
 
     limit = operator.index(maximum_chunk_bytes)
     if isinstance(maximum_chunk_bytes, bool) or limit <= 0:
-        raise ValueError("maximum_chunk_bytes must be a positive integer.")
+        raise ValueError(
+            f"logical_array_value_collection_digest.maximum_chunk_bytes must be a positive integer; got {maximum_chunk_bytes!r}."
+        )
     shapes = {} if logical_shapes is None else dict(logical_shapes)
     if set(shapes) - set(arrays):
-        raise ValueError("Logical shape overrides refer to undeclared arrays.")
+        raise ValueError(
+            f"logical_array_value_collection_digest.logical_shapes must refer to declared arrays; got undeclared={set(shapes) - set(arrays)!r}."
+        )
 
     def content(name: str, value: jax.Array | np.ndarray) -> LogicalArrayContent:
         if not isinstance(value, (jax.Array, np.ndarray)):
             raise TypeError(
-                "Logical numerical hashing accepts canonical JAX or NumPy arrays."
+                f"logical_array_value_collection_digest.value must be a JAX or NumPy array; got {type(value).__qualname__}."
             )
         if value.dtype.itemsize > limit:
-            raise ValueError("The chunk capacity must hold at least one array element.")
+            raise ValueError(
+                f"logical_array_value_collection_digest.maximum_chunk_bytes must hold one array element; got limit={limit}, itemsize={value.dtype.itemsize}."
+            )
         shape = shapes.get(name, value.shape)
         if (
             len(shape) != value.ndim
@@ -341,7 +584,7 @@ def logical_array_value_collection_digest(
             )
         ):
             raise ValueError(
-                "Logical shapes may trim only canonical leading-axis capacity padding."
+                f"logical_array_value_collection_digest.logical_shapes must trim only leading-axis capacity padding; got logical={shape}, stored={value.shape}."
             )
         if isinstance(value, np.ndarray):
             host = value[: shape[0]] if shape else value
@@ -361,70 +604,23 @@ def logical_array_value_collection_digest(
                     offset += len(encoded)
 
             return LogicalArrayContent(shape, value.dtype.str, host_chunks())
-        intervals: dict[tuple[int, int], jax.Device] = {}
-        for device, index in value.sharding.devices_indices_map(value.shape).items():
-            if not value.shape:
-                start, stop = 0, 1
-            else:
-                if (
-                    len(index) != value.ndim
-                    or any(
-                        not isinstance(entry, slice)
-                        or entry.indices(size) != (0, size, 1)
-                        for entry, size in zip(index[1:], value.shape[1:], strict=True)
-                    )
-                    or not isinstance(index[0], slice)
-                ):
-                    raise ValueError(
-                        "Logical hashing requires contiguous leading-axis shards."
-                    )
-                start, stop, step = index[0].indices(value.shape[0])
-                if step != 1:
-                    raise ValueError("Logical hashing does not admit strided shards.")
-            key = (start, stop)
-            previous = intervals.get(key)
-            if previous is None or (device.process_index, device.id) < (
-                previous.process_index,
-                previous.id,
-            ):
-                intervals[key] = device
-        cursor = 0
-        for start, stop in sorted(intervals):
-            if start != cursor or stop < start:
-                raise ValueError(
-                    "Logical JAX shard intervals overlap or leave coverage gaps."
-                )
-            cursor = stop
-        if cursor != (value.shape[0] if value.shape else 1):
-            raise ValueError("Logical JAX shards leave incomplete global coverage.")
+        intervals = _logical_array_shard_intervals(value)
         local = {shard.device: shard.data for shard in value.addressable_shards}
         trailing = prod(value.shape[1:]) if value.shape else 1
         elements_per_chunk = limit // value.dtype.itemsize
-
-        def chunks() -> Iterable[LogicalArrayChunk]:
-            offset = 0
-            for interval, device in sorted(intervals.items()):
-                stop = min(interval[1], shape[0]) if shape else interval[1]
-                count = max(0, stop - interval[0]) * trailing
-                source = device.process_index == jax.process_index()
-                for first in range(0, count, elements_per_chunk):
-                    last = min(first + elements_per_chunk, count)
-                    if source:
-                        shard = local.get(device)
-                        if shard is None:
-                            raise ValueError(
-                                "Canonical shard owner has no addressable payload."
-                            )
-                        payload = np.asarray(shard.reshape(-1)[first:last])
-                    else:
-                        payload = np.empty((last - first,), dtype=value.dtype)
-                    if jax.process_count() > 1 and not value.is_fully_addressable:
-                        payload = broadcast_one_to_all(payload, is_source=source)
-                    encoded = np.ascontiguousarray(payload).tobytes(order="C")
-                    yield LogicalArrayChunk(offset, encoded)
-                    offset += len(encoded)
-
-        return LogicalArrayContent(shape, value.dtype.str, chunks())
+        return LogicalArrayContent(
+            shape,
+            value.dtype.str,
+            _logical_shard_array_chunks(
+                value,
+                shape,
+                intervals,
+                local,
+                trailing,
+                elements_per_chunk,
+                broadcast_one_to_all,
+            ),
+        )
 
     return logical_array_collection_digest(
         {name: content(name, value) for name, value in arrays.items()},

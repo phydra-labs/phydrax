@@ -5,11 +5,14 @@ owns one or more public labels, its support, reference-coordinate transport, and
 base measure. This distinction preserves intrinsically coupled coordinates—such
 as trajectory row and time—without treating every label as independent.
 
-```python executable
+Expected standard output: none.
+
+```python {.executable}
 import phydrax as phx
+from phydrax.units import METER
 
 space = phx.domain.GeometryDomain(
-    phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(),
+    phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER),
     label="x",
 )
 time = phx.domain.TimeInterval(0.0, 1.0)

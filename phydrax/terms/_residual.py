@@ -340,7 +340,9 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         if not bool(jnp.isfinite(coefficient)) or float(coefficient) < 0.0:
             raise ValueError("Term scale must be finite and nonnegative.")
         if density is not None and not density.domain.same_support(condition.on.domain):
-            raise ValueError("Penalty density domain is incompatible with the condition.")
+            raise ValueError(
+                f"ResidualPenalty.density.domain must share the condition domain support; got {density.domain!r}."
+            )
         accuracy_eps = float(data_accuracy_eps)
         if not bool(jnp.isfinite(accuracy_eps)) or accuracy_eps <= 0.0:
             raise ValueError("data_accuracy_eps must be finite and positive.")

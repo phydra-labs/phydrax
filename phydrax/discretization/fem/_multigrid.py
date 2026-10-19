@@ -12,6 +12,8 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from phydrax.discretization.fem._reference_types import FiniteElementSpec
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -23,7 +25,6 @@ from ...linalg import (
     OperatorProperties,
 )
 from ._high_order import ReferenceNodalFamily
-from ._reference import FiniteElementSpec
 
 
 def quadrilateral_p_transfer(

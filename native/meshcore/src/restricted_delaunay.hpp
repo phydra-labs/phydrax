@@ -7,6 +7,22 @@
 
 #include "phydrax_meshcore.h"
 
+namespace phx::mc::restricted_layout {
+inline constexpr int kDimensions = 3;
+inline constexpr int kTetVertices = 4;
+inline constexpr int kFacetVertices = 3;
+inline constexpr int kIncidentCells = 2;
+inline constexpr int kUpper = kDimensions;
+inline constexpr int kCenterBounds = 2 * kDimensions;
+inline constexpr int kDualEndpoints = 2 * kDimensions;
+inline constexpr int kRayEndpointBounds = 2 * kCenterBounds;
+inline constexpr int kRayEndLower = kCenterBounds;
+inline constexpr int kRayEndUpper = kCenterBounds + kDimensions;
+inline constexpr int32_t kSegment = 0;
+inline constexpr int32_t kRay = 1;
+inline constexpr int32_t kDisjoint = 2;
+}  // namespace phx::mc::restricted_layout
+
 // Canonical primal facets and their numerical Voronoi duals, recomputed from
 // one complete native Delaunay snapshot. This is a geometry request workset,
 // not a certificate of source intersection or restricted-domain coverage.
@@ -24,6 +40,9 @@
 // and local weak Delaunay legality. Bounds/capacity refusal occurs before any
 // output is changed. Work units: one per cell, primal half-facet and unique
 // facet. counters (4): work, finite dual segments, hull rays, failed rows.
+// Scratch vectors are bounded by the validated input/output counts and work
+// allowance, but are not charged to the ambient managed-byte ceiling. Allocation
+// failures use the C ABI guard; a byte-budgeted cutover changes refusal semantics.
 extern "C" PHX_MC_API int32_t phx_mc_restricted_dual_3d(
     int64_t point_count, const double* points, int64_t tet_count,
     const int32_t* tets, const double* domain, int64_t max_facets,

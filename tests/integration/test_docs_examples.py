@@ -37,7 +37,7 @@ def _extract_python_blocks(markdown: str) -> list[str]:
         stripped = line.strip()
 
         if not in_block:
-            if stripped == "```python executable":
+            if stripped == "```python {.executable}":
                 in_block = True
                 cur = []
             continue
@@ -53,6 +53,20 @@ def _extract_python_blocks(markdown: str) -> list[str]:
         cur.append(line)
 
     return blocks
+
+
+def _expected_stdout(markdown: str) -> str:
+    """Unmarked examples are silent; output fences specify printed lines."""
+    outputs = re.findall(
+        r"^```text \{\.output-expected\}\n(.*?)^```\s*$", markdown, re.M | re.S
+    )
+    return "".join(output for output in outputs)
+
+
+def _assert_documented_stdout(stdout: str, markdown: str) -> None:
+    assert stdout == _expected_stdout(markdown), (
+        "Printed values differ from the documented output"
+    )
 
 
 def _dedent_python_block(code: str) -> str:
@@ -127,10 +141,43 @@ def test_docs_python_examples_run(tmp_path: Path, md_path: Path) -> None:
     relative_path = md_path.relative_to(_REPO_ROOT)
     timeout_s = 60 * (20 if relative_path in _LONG_RUNNING_DOCS else 10)
 
-    subprocess.run(
+    completed = subprocess.run(
         [sys.executable, str(script_path)],
         cwd=str(_REPO_ROOT),
         env=env,
-        check=True,
+        check=False,
+        capture_output=True,
+        text=True,
         timeout=timeout_s,
     )
+    assert completed.returncode == 0, (
+        f"{relative_path}: example exited with {completed.returncode}\n"
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+    _assert_documented_stdout(completed.stdout, md_path.read_text(encoding="utf-8"))
+
+
+def test_expected_output_preserves_printed_values() -> None:
+    markdown = "```text {.output-expected}\nvalue: 3\n```\n"
+    assert _expected_stdout(markdown) == "value: 3\n"
+    assert _expected_stdout("```python {.executable}\nassert 2 + 2 == 4\n```\n") == ""
+
+
+def test_documented_output_refuses_mismatched_values() -> None:
+    markdown = "```text {.output-expected}\nvalue: 3\n```\n"
+    with pytest.raises(AssertionError, match="Printed values differ"):
+        _assert_documented_stdout("value: 4\n", markdown)
+    with pytest.raises(AssertionError, match="Printed values differ"):
+        _assert_documented_stdout("unexpected output\n", "")
+    _assert_documented_stdout("value: 3\n", markdown)
+
+
+def test_example_markers_render_as_code_blocks() -> None:
+    markdown = pytest.importorskip("markdown")
+    pytest.importorskip("pymdownx.superfences")
+    for fence in ("```python {.executable}", "```text {.output-expected}"):
+        html = markdown.markdown(
+            f"Text\n\n{fence}\nvalue = rows[0][:3]\n```\n\n## Next heading\n",
+            extensions=["pymdownx.superfences", "attr_list"],
+        )
+        assert "<pre>" in html and "<h2>Next heading</h2>" in html, fence

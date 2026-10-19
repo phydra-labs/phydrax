@@ -3,6 +3,7 @@
 #
 
 from collections.abc import Callable
+from typing import assert_type
 
 import jax.numpy as jnp
 import numpy as np
@@ -18,9 +19,11 @@ from phydrax.discretization.vem import (
     discontinuous_l2_virtual_element,
     prepare_polyhedral_h1_virtual_element_3d,
     VirtualElementDiscretization,
+    VirtualElementFamily,
     VirtualElementFieldSpec,
     VirtualElementPlan,
     VirtualElementSpec,
+    VirtualElementTraceKind,
 )
 from phydrax.equations.vem import (
     prepare_virtual_element_field_reconstruction,
@@ -197,7 +200,7 @@ def test_projected_values_reproduce_declared_scalar_and_compatible_forms(
 def test_element_refuses_incompatible_form_semantics(
     family: str, value_spec: FormValueSpec
 ) -> None:
-    with pytest.raises(ValueError, match="qualified planar"):
+    with pytest.raises(ValueError, match="VirtualElementSpec.value_spec"):
         VirtualElementSpec(family, 1, value_spec=value_spec)
 
 
@@ -240,7 +243,9 @@ def test_polyhedral_scalar_form_reproduces_affine_energy_and_limits_degree() -> 
     np.testing.assert_allclose(
         affine @ prepared.mv(affine), slope @ slope / 6.0, atol=1e-11
     )
-    with pytest.raises(ValueError, match="degree one"):
+    with pytest.raises(
+        ValueError, match="prepare_polyhedral_h1_virtual_element_3d.degree"
+    ):
         prepare_polyhedral_h1_virtual_element_3d(mesh, degree=2)
 
 
@@ -253,3 +258,78 @@ def test_obsolete_conformity_selector_is_refused() -> None:
             value_spec=spec.value_spec,
             conformity="Hdiv",  # ty: ignore[unknown-argument]
         )
+
+
+def test_point_only_coordinate_refresh_accepts_matching_embedded_point_shape() -> None:
+    space = _square_space(conforming_h1_virtual_element)
+    curve_mesh = CellMesh.from_simplices(
+        space.mesh.coordinates,
+        np.asarray(((0, 1), (1, 2), (2, 3)), dtype=np.int32),
+        dimension=1,
+        vertex_global_ids=space.mesh.vertex_global_ids,
+    )
+    points = space.mesh.coordinates + jnp.asarray((0.125, -0.25))
+    refreshed = space.dof_map.evaluate_point_coordinates(points, curve_mesh)
+    np.testing.assert_array_equal(refreshed, points)
+
+
+def test_edge_coordinate_refresh_refuses_nonpolygonal_connectivity() -> None:
+    space = _square_space(conforming_hdiv_virtual_element)
+    curve_mesh = CellMesh.from_simplices(
+        space.mesh.coordinates,
+        np.asarray(((0, 1), (1, 2), (2, 3)), dtype=np.int32),
+        dimension=1,
+        vertex_global_ids=space.mesh.vertex_global_ids,
+    )
+    with pytest.raises(TypeError, match="VirtualElementDofMap.mesh.connectivity"):
+        space.dof_map.evaluate_point_coordinates(space.mesh.coordinates, curve_mesh)
+
+
+@pytest.mark.parametrize(
+    ("factory", "family", "trace_kind"),
+    (
+        pytest.param(
+            conforming_h1_virtual_element, "ConformingH1", "value", id="h1-value"
+        ),
+        pytest.param(
+            conforming_hdiv_virtual_element, "ConformingHdiv", "normal", id="hdiv-normal"
+        ),
+        pytest.param(
+            conforming_hcurl_virtual_element,
+            "ConformingHcurl",
+            "tangential",
+            id="hcurl-tangential",
+        ),
+        pytest.param(
+            discontinuous_l2_virtual_element,
+            "DiscontinuousL2",
+            "none",
+            id="l2-cell-moments",
+        ),
+    ),
+)
+def test_virtual_element_families_publish_typed_trace_selectors(
+    factory: Callable[[int], VirtualElementSpec],
+    family: VirtualElementFamily,
+    trace_kind: VirtualElementTraceKind,
+) -> None:
+    element = factory(1)
+
+    assert_type(element.family, VirtualElementFamily)
+    assert_type(element.trace_kind, VirtualElementTraceKind)
+    assert element.family == family
+    assert element.trace_kind == trace_kind
+    restored_declaration = VirtualElementSpec(
+        element.family,
+        element.degree,
+        value_spec=element.value_spec,
+        enhanced=element.enhanced,
+    )
+    assert restored_declaration.element_id == element.element_id
+
+
+def test_virtual_element_refuses_an_unknown_family_at_its_selector_boundary() -> None:
+    value_spec = conforming_h1_virtual_element(1).value_spec
+
+    with pytest.raises(ValueError, match="VirtualElementSpec.family"):
+        VirtualElementSpec("unknown-family", 1, value_spec=value_spec)

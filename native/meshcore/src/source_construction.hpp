@@ -32,7 +32,9 @@ enum class SourceStratum : int8_t { kNone = 0, kSegment = 1, kFacet = 2 };
 struct SourceWitness {
   SourceStratum stratum = SourceStratum::kNone;
   int32_t entity = -1;               // source segment or triangle row; -1 when unnamed
-  double parameters[2] = {0.0, 0.0};  // t, or (l1, l2)
+  // The ABI publishes this homogeneous pair: t/0 for a segment, l1/l2 for
+  // a facet. The named stratum determines its scientific interpretation.
+  double parameters[2] = {0.0, 0.0};
   double deviation = 0.0;            // outward bound; 0 iff exact membership
 };
 

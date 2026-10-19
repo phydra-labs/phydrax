@@ -1019,6 +1019,15 @@ unconstrained inner method. `SQP` forms explicit local QP subproblems through
 `solve_quadratic_program`. Its optional filter keeps objective and violation dominance
 separate; its second-order correction relinearizes constraints at the trial point to
 address the Maratos effect. Elastic restoration has a distinct failure status.
+SQP caps inequality QPs' residual tolerance at the square of its first-order tolerance:
+weakly active constraints can otherwise leave first-order errors proportional
+to the square root of the barrier complementarity residual. Equality-only QPs
+request first-order residual accuracy directly. Before requiring a descent step,
+SQP checks the current nonlinear KKT residuals using the fresh QP multipliers
+against its unchanged optimality threshold. `SQPEvidence` records
+the successful `SQPTerminationCriterion`, final nonlinear residuals, threshold,
+and requested QP accuracy; a stationary weakly active point need not take a
+non-descent barrier step merely to refresh its multipliers.
 `PrimalDualInteriorPoint` is the single native primal-dual method. Its explicit
 `mode` selects dense filter, matrix-free centered, matrix-free predictor-corrector,
 or exact sparse augmented KKT execution. The dense and matrix-free modes preserve
@@ -1738,6 +1747,10 @@ single-process measurements, not backend-independent performance claims.
 ---
 
 ::: phydrax.optim.SQP
+
+::: phydrax.optim.SQPEvidence
+
+::: phydrax.optim.SQPTerminationCriterion
 
 ---
 

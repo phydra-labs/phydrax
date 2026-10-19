@@ -8,20 +8,50 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.meshing.providers._vorocrust import _polyhedra
-
-
-manifold3d = pytest.importorskip("manifold3d")
+from phydrax.meshing.providers._vorocrust import polyhedra
 
 
 _DIGEST = "a" * 64
+# Historical half-box volume agreement bound from this fixture at d2dfcb941;
+# normalization retains the same coordinate values and float64 reduction path.
+_EXTRACTION_VOLUME_RTOL = 1.0e-12
 
 
 def _cube_surface() -> Any:
-    arrays = manifold3d.Manifold.cube().to_mesh64()
+    # An outward-oriented unit cube needs no optional fixture provider.
+    vertices = np.asarray(
+        (
+            (0, 0, 0),
+            (1, 0, 0),
+            (1, 1, 0),
+            (0, 1, 0),
+            (0, 0, 1),
+            (1, 0, 1),
+            (1, 1, 1),
+            (0, 1, 1),
+        ),
+        dtype=np.float64,
+    )
+    triangles = np.asarray(
+        (
+            (0, 3, 2),
+            (0, 2, 1),
+            (4, 5, 6),
+            (4, 6, 7),
+            (0, 1, 5),
+            (0, 5, 4),
+            (1, 2, 6),
+            (1, 6, 5),
+            (2, 3, 7),
+            (2, 7, 6),
+            (3, 0, 4),
+            (3, 4, 7),
+        ),
+        dtype=np.int32,
+    )
     return phx.geometry.SurfaceModel.from_triangles(
-        arrays.vert_properties[:, :3],
-        arrays.tri_verts,
+        vertices,
+        triangles,
         phx.geometry.SurfaceMetadata(
             source_id="cube",
             source_revision="0",
@@ -92,7 +122,7 @@ def test_real_vorocrust_preserves_closed_cube_volume() -> None:
     assert result.derivative_mode is phx.meshing.MeshingDerivativeMode.NONDIFFERENTIABLE
 
 
-def test_vorocrust_contracts() -> None:
+def test_vorocrust_fixture_qualification_keeps_surface_trace_and_refuses_tpfa() -> None:
     coordinates = np.asarray(
         (
             (0, 0, 0),
@@ -117,7 +147,6 @@ def test_vorocrust_contracts() -> None:
         ),
     )
     base = phx.meshing.certify_cell_mesh(
-        # ty: ignore[invalid-argument-type]
         phx.discretization.CellMesh.from_polyhedra(coordinates, cells),
         phx.SpatialCoordinateContract.si(),
     )
@@ -168,7 +197,10 @@ def test_vorocrust_contracts() -> None:
     assert not qualified.tpfa_certified
     with pytest.raises(ValueError, match="does not certify TPFA"):
         qualified.require_tpfa()
-    mesh, merged, collapsed = _polyhedra(
+
+
+def test_vorocrust_extraction_normalizes_aliases_without_losing_cells() -> None:
+    mesh, merged, collapsed = polyhedra(
         _two_box_extraction(), phx.meshing.MeshingLimits(), 1e-12
     )
     certified = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
@@ -180,16 +212,21 @@ def test_vorocrust_contracts() -> None:
         np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks]), (0, 1)
     )
     np.testing.assert_allclose(
-        np.asarray(certified.quality.evaluation.measures), (0.5, 0.5), rtol=1e-12
+        np.asarray(certified.quality.evaluation.measures),
+        (0.5, 0.5),
+        rtol=_EXTRACTION_VOLUME_RTOL,
     )
     assert certified.audit.passed
+
+
+def test_vorocrust_extraction_refuses_transitive_alias_tolerance_overflow() -> None:
     # Consecutive chain members lie within the tolerance of each other, but
     # the chain end is farther than the tolerance from its representative.
     step = 0.6 * 1e-9 * np.sqrt(3.0)
     arrays = _two_box_extraction(((step, 0.0, 0.0), (2 * step, 0.0, 0.0)))
 
     with pytest.raises(phx.meshing.MeshingFailure) as failure:
-        _polyhedra(arrays, phx.meshing.MeshingLimits(), 1e-9)
+        polyhedra(arrays, phx.meshing.MeshingLimits(), 1e-9)
 
     assert failure.value.category is phx.meshing.MeshingFailureCategory.CONVERSION_FAILED
 

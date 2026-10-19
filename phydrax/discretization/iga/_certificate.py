@@ -8,11 +8,15 @@ from dataclasses import dataclass
 from enum import Enum
 from itertools import combinations, permutations
 from math import comb, isfinite
+from typing import assert_never, Literal, TypeAlias
 
 import numpy as np
+from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation._bspline import bezier_refinement
+from ..._strict import StrictModule
+from ...typing import checked, parse
 from ._geometry import NURBSGeometryState
 from ._volume import (
     aabbs_strictly_separated,
@@ -22,8 +26,11 @@ from ._volume import (
 )
 
 
+_JacobianTheorem: TypeAlias = Literal["determinant", "surface-gram"]
+
+
 class CertificateDisposition(str, Enum):
-    """Closed three-way outcome of a theorem-backed decision procedure."""
+    """Return one of three certificate decision outcomes."""
 
     PASS = "pass"
     COUNTEREXAMPLE = "counterexample"
@@ -43,7 +50,9 @@ class IntervalBound:
             or not isfinite(self.upper)
             or self.lower > self.upper
         ):
-            raise ValueError("Interval bounds must be finite and ordered.")
+            raise ValueError(
+                f"IntervalBound.bounds must be finite and ordered; got lower={self.lower}, upper={self.upper}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,12 +66,14 @@ class CertificateDiagnostic:
 
     def __post_init__(self) -> None:
         if not self.code or not self.message:
-            raise ValueError("Certificate diagnostics require a code and message.")
+            raise ValueError(
+                f"CertificateDiagnostic.fields must have nonempty code and message; got code={self.code!r}, message={self.message!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
 class CellJacobianEvidence:
-    """Bernstein convex-hull bounds over one exact knot-span sub-box."""
+    """Bernstein convex-hull bounds over one knot-span sub-box."""
 
     block_id: str
     span_index: tuple[int, ...]
@@ -96,13 +107,21 @@ class TensorNURBSCertificatePolicy:
 
     def __post_init__(self) -> None:
         if self.maximum_subdivision_depth < 0:
-            raise ValueError("maximum_subdivision_depth must be non-negative.")
+            raise ValueError(
+                f"TensorNURBSCertificatePolicy.maximum_subdivision_depth must be non-negative; got {self.maximum_subdivision_depth}"
+            )
         if self.maximum_subboxes < 1:
-            raise ValueError("maximum_subboxes must be positive.")
+            raise ValueError(
+                f"TensorNURBSCertificatePolicy.maximum_subboxes must be positive; got {self.maximum_subboxes}"
+            )
         if not isfinite(self.positive_margin) or self.positive_margin < 0.0:
-            raise ValueError("positive_margin must be finite and non-negative.")
+            raise ValueError(
+                f"TensorNURBSCertificatePolicy.positive_margin must be finite and non-negative; got {self.positive_margin}"
+            )
         if self.roundoff_operation_budget < 64:
-            raise ValueError("roundoff_operation_budget must be at least 64.")
+            raise ValueError(
+                f"TensorNURBSCertificatePolicy.roundoff_operation_budget must be at least 64; got {self.roundoff_operation_budget}"
+            )
         if not self.policy_id:
             object.__setattr__(
                 self,
@@ -220,7 +239,7 @@ class DeformedJacobianCertificate:
 
 @dataclass(frozen=True, slots=True)
 class BoundaryInjectivityCertificate:
-    """Exact-incidence and convex-hull separation proof for a block boundary."""
+    """Incidence and convex-hull separation proof for a block boundary."""
 
     disposition: CertificateDisposition
     incidence_ids: tuple[str, ...]
@@ -307,7 +326,9 @@ def _poly_add(
     second_scale: float = 1.0,
 ) -> _BernsteinPolynomial:
     if first.coefficients.shape != second.coefficients.shape:
-        raise ValueError("Bernstein polynomial degrees do not agree.")
+        raise ValueError(
+            f"BernsteinPolynomial.coefficients must have matching shapes for addition; got first={first.coefficients.shape}, second={second.coefficients.shape}"
+        )
     return _BernsteinPolynomial(first.coefficients + second_scale * second.coefficients)
 
 
@@ -317,7 +338,9 @@ def _poly_product(
     first_degrees = first.degrees
     second_degrees = second.degrees
     if len(first_degrees) != len(second_degrees):
-        raise ValueError("Bernstein polynomial dimensions do not agree.")
+        raise ValueError(
+            f"BernsteinPolynomial.degrees must have matching dimensions for multiplication; got first={first_degrees}, second={second_degrees}"
+        )
     result_degrees = tuple(
         first_degree + second_degree
         for first_degree, second_degree in zip(first_degrees, second_degrees, strict=True)
@@ -360,7 +383,9 @@ def _poly_derivative(
 ) -> _BernsteinPolynomial:
     degree = value.degrees[axis]
     if degree < 1:
-        raise ValueError("A constant Bernstein axis has no first derivative.")
+        raise ValueError(
+            f"BernsteinPolynomial.degree must be positive for differentiation; got degree={degree}, axis={axis}"
+        )
     return _BernsteinPolynomial(
         np.diff(value.coefficients, axis=axis) * (degree / parameter_width)
     )
@@ -369,6 +394,10 @@ def _poly_derivative(
 def _determinant(
     polynomials: list[list[_BernsteinPolynomial]], /
 ) -> _BernsteinPolynomial:
+    # Entries are Bernstein coefficient polynomials, not scalar matrices.
+    # Their degree-elevating products and fixed coefficient accumulation order
+    # belong to this certificate algebra, so scalar determinant plans do not
+    # represent this operation.
     dimension = len(polynomials)
     result: _BernsteinPolynomial | None = None
     for route in permutations(range(dimension)):
@@ -385,7 +414,9 @@ def _determinant(
         else:
             result = _poly_add(result, term, second_scale=-1.0 if inversions % 2 else 1.0)
     if result is None:
-        raise ValueError("A polynomial determinant requires positive dimension.")
+        raise ValueError(
+            f"BernsteinPolynomial.matrix must have positive dimension; got {dimension}"
+        )
     return result
 
 
@@ -400,7 +431,9 @@ def _bezier_homogeneous_cells(
     points = np.asarray(volume.geometry.control_points, dtype=np.float64)
     weights = np.asarray(volume.geometry.weights, dtype=np.float64)
     if not np.all(np.isfinite(points)) or not np.all(np.isfinite(weights)):
-        raise ValueError("Certification requires concrete finite NURBS data.")
+        raise ValueError(
+            "TensorNURBSVolume.geometry must contain finite NURBS data for certification; got nonfinite controls or weights"
+        )
     homogeneous = np.concatenate(
         (points * weights[..., None], weights[..., None]), axis=-1
     )
@@ -415,7 +448,9 @@ def _bezier_homogeneous_cells(
         )
         refined = np.moveaxis(pieces, 0, axis_index)
         if span_bounds.shape != (volume.basis.span_shape[axis_index], 2):
-            raise RuntimeError("Bezier extraction produced inconsistent knot spans.")
+            raise RuntimeError(
+                f"TensorNURBSVolume.span_bounds must match basis spans; got shape={span_bounds.shape}"
+            )
         extracted_bounds.append(span_bounds)
     cells: list[tuple[np.ndarray, tuple[tuple[float, float], ...], tuple[int, ...]]] = []
     for span_index in np.ndindex(volume.basis.span_shape):
@@ -423,7 +458,7 @@ def _bezier_homogeneous_cells(
         expected = tuple(axis.degree + 1 for axis in volume.basis.axes)
         if controls.shape[:-1] != expected:
             raise RuntimeError(
-                "Bezier extraction produced an inconsistent cell control net."
+                f"TensorNURBSVolume.bezier_controls must match the cell degrees; got controls={controls.shape}, expected={expected}"
             )
         bounds = tuple(
             _float_pair(axis_bounds[index])
@@ -468,7 +503,9 @@ def _outward_coefficients_bound(
 
 def _positive_power_interval(bound: IntervalBound, exponent: int, /) -> IntervalBound:
     if bound.lower <= 0.0:
-        raise ValueError("A positive denominator bound is required.")
+        raise ValueError(
+            f"IntervalBound.lower must be positive for exponentiation; got {bound.lower}"
+        )
     return IntervalBound(bound.lower**exponent, bound.upper**exponent)
 
 
@@ -476,7 +513,9 @@ def _divide_intervals(
     numerator: IntervalBound, denominator: IntervalBound, /
 ) -> IntervalBound:
     if denominator.lower <= 0.0:
-        raise ValueError("Interval division requires a positive denominator.")
+        raise ValueError(
+            f"IntervalBound.denominator must have positive lower bound for division; got {denominator.lower}"
+        )
     values = (
         numerator.lower / denominator.lower,
         numerator.lower / denominator.upper,
@@ -522,36 +561,42 @@ def _jacobian_measure_polynomial(
 ) -> tuple[_BernsteinPolynomial, _BernsteinPolynomial, int]:
     weight, numerator = _numerator_jacobian(homogeneous, bounds, ambient_dimension)
     dimension = len(bounds)
-    if theorem == "determinant":
-        if ambient_dimension != dimension:
-            raise ValueError("A determinant certificate requires a square geometry map.")
-        measure = _determinant(numerator)
-        denominator_exponent = 2 * dimension
-    elif theorem == "surface-gram":
-        if dimension != 2 or ambient_dimension != 3:
-            raise ValueError("The surface embedding theorem requires a 2D map into 3D.")
-        first = _poly_add(
-            _poly_product(numerator[1][0], numerator[2][1]),
-            _poly_product(numerator[2][0], numerator[1][1]),
-            second_scale=-1.0,
-        )
-        second = _poly_add(
-            _poly_product(numerator[2][0], numerator[0][1]),
-            _poly_product(numerator[0][0], numerator[2][1]),
-            second_scale=-1.0,
-        )
-        third = _poly_add(
-            _poly_product(numerator[0][0], numerator[1][1]),
-            _poly_product(numerator[1][0], numerator[0][1]),
-            second_scale=-1.0,
-        )
-        measure = _poly_add(
-            _poly_add(_poly_product(first, first), _poly_product(second, second)),
-            _poly_product(third, third),
-        )
-        denominator_exponent = 8
-    else:
-        raise ValueError(f"Unknown Jacobian theorem {theorem!r}.")
+    theorem = parse(theorem, _JacobianTheorem, "JacobianCertificate.theorem")
+    match theorem:
+        case "determinant":
+            if ambient_dimension != dimension:
+                raise ValueError(
+                    f"JacobianCertificate.dimensions must define a square map; got ambient={ambient_dimension}, parametric={dimension}"
+                )
+            measure = _determinant(numerator)
+            denominator_exponent = 2 * dimension
+        case "surface-gram":
+            if dimension != 2 or ambient_dimension != 3:
+                raise ValueError(
+                    f"JacobianCertificate.dimensions must define a 2D map into 3D; got ambient={ambient_dimension}, parametric={dimension}"
+                )
+            first = _poly_add(
+                _poly_product(numerator[1][0], numerator[2][1]),
+                _poly_product(numerator[2][0], numerator[1][1]),
+                second_scale=-1.0,
+            )
+            second = _poly_add(
+                _poly_product(numerator[2][0], numerator[0][1]),
+                _poly_product(numerator[0][0], numerator[2][1]),
+                second_scale=-1.0,
+            )
+            third = _poly_add(
+                _poly_product(numerator[0][0], numerator[1][1]),
+                _poly_product(numerator[1][0], numerator[0][1]),
+                second_scale=-1.0,
+            )
+            measure = _poly_add(
+                _poly_add(_poly_product(first, first), _poly_product(second, second)),
+                _poly_product(third, third),
+            )
+            denominator_exponent = 8
+        case unknown:
+            assert_never(unknown)
     return weight, measure, denominator_exponent
 
 
@@ -727,6 +772,7 @@ def _certify_local(
     return disposition, tuple(leaves), tuple(diagnostics), counterexample
 
 
+@checked
 def certify_tensor_nurbs(
     volume: TensorNURBSVolume,
     /,
@@ -734,13 +780,11 @@ def certify_tensor_nurbs(
     policy: TensorNURBSCertificatePolicy | None = None,
 ) -> LocalGeometryCertificate:
     """Certify positive W and detJ on every knot cell without point sampling."""
-    if not isinstance(volume, TensorNURBSVolume):
-        raise TypeError("volume must be a TensorNURBSVolume.")
     if volume.parametric_dimension != volume.ambient_dimension:
-        raise ValueError("CERT-C1 requires equal parametric and ambient dimensions.")
+        raise ValueError(
+            f"certify_tensor_nurbs.volume must have equal parametric and ambient dimensions; got parametric={volume.parametric_dimension}, ambient={volume.ambient_dimension}"
+        )
     policy_ = TensorNURBSCertificatePolicy() if policy is None else policy
-    if not isinstance(policy_, TensorNURBSCertificatePolicy):
-        raise TypeError("policy must be a TensorNURBSCertificatePolicy.")
     disposition, cells, diagnostics, counterexample = _certify_local(
         volume, policy_, "determinant"
     )
@@ -757,6 +801,7 @@ def certify_tensor_nurbs(
     )
 
 
+@checked
 def certify_surface_embedding(
     surface: TensorNURBSVolume,
     /,
@@ -764,11 +809,9 @@ def certify_surface_embedding(
     policy: TensorNURBSCertificatePolicy | None = None,
 ) -> SurfaceEmbeddingCertificate:
     """Certify positive surface Gram determinant by rational Bernstein bounds."""
-    if not isinstance(surface, TensorNURBSVolume):
-        raise TypeError("surface must be a TensorNURBSVolume.")
     if surface.parametric_dimension != 2 or surface.ambient_dimension != 3:
         raise ValueError(
-            "Surface embedding certification requires a 2D NURBS map into 3D."
+            f"certify_surface_embedding.surface must be a 2D NURBS map into 3D; got parametric={surface.parametric_dimension}, ambient={surface.ambient_dimension}"
         )
     policy_ = TensorNURBSCertificatePolicy() if policy is None else policy
     disposition, cells, diagnostics, counterexample = _certify_local(
@@ -788,28 +831,31 @@ def certify_surface_embedding(
     )
 
 
+@checked
 def certify_deformed_tensor_nurbs(
     reference: TensorNURBSVolume,
-    displacement_control_points: object,
+    displacement_control_points: ArrayLike,
     /,
     *,
     load_factor: float = 1.0,
     policy: TensorNURBSCertificatePolicy | None = None,
 ) -> DeformedJacobianCertificate:
-    """Certify reference and deformed Jacobians from exact control-net algebra."""
-    if not isinstance(reference, TensorNURBSVolume):
-        raise TypeError("reference must be a TensorNURBSVolume.")
+    """Certify reference and deformed Jacobians from control-net algebra."""
     factor = float(load_factor)
     if not isfinite(factor):
-        raise ValueError("load_factor must be finite.")
+        raise ValueError(
+            f"certify_deformed_tensor_nurbs.load_factor must be finite; got {factor}"
+        )
     displacement = np.asarray(displacement_control_points, dtype=np.float64)
     reference_points = np.asarray(reference.geometry.control_points, dtype=np.float64)
     if displacement.shape != reference_points.shape:
         raise ValueError(
-            "Displacement control points must match the geometry control net."
+            f"certify_deformed_tensor_nurbs.displacement_control_points must match the geometry control net; got displacement={displacement.shape}, reference={reference_points.shape}"
         )
     if not np.all(np.isfinite(displacement)):
-        raise ValueError("Displacement control points must be finite.")
+        raise ValueError(
+            "certify_deformed_tensor_nurbs.displacement_control_points must be finite; got nonfinite displacement values"
+        )
     geometry = NURBSGeometryState(
         reference_points + factor * displacement,
         np.asarray(reference.geometry.weights),
@@ -891,45 +937,18 @@ def _p_matrix_proved(
     return True, None
 
 
-def certify_global_injectivity(
+class _GlobalBoundaryProof(StrictModule):
+    disposition: CertificateDisposition
+    incidence_ids: tuple[str, ...]
+    separation_pairs: tuple[tuple[str, str], ...]
+
+
+def _certify_global_boundary(
     complex_: BlockComplex,
+    disposition: CertificateDisposition,
+    diagnostics: list[CertificateDiagnostic],
     /,
-    *,
-    policy: TensorNURBSCertificatePolicy | None = None,
-) -> GlobalInjectivityCertificate:
-    """Certify F1 using local orientation, univalence, incidence, and separation."""
-    if not isinstance(complex_, BlockComplex):
-        raise TypeError("complex_ must be a BlockComplex.")
-    policy_ = TensorNURBSCertificatePolicy() if policy is None else policy
-    local = tuple(
-        certify_tensor_nurbs(volume, policy=policy_) for volume in complex_.volumes
-    )
-    diagnostics: list[CertificateDiagnostic] = [
-        diagnostic for certificate in local for diagnostic in certificate.diagnostics
-    ]
-    counterexample = next(
-        (
-            certificate.counterexample
-            for certificate in local
-            if certificate.counterexample is not None
-        ),
-        None,
-    )
-    disposition = (
-        CertificateDisposition.COUNTEREXAMPLE
-        if counterexample is not None
-        else CertificateDisposition.PASS
-    )
-    if disposition is CertificateDisposition.PASS and not all(
-        value.accepted for value in local
-    ):
-        disposition = CertificateDisposition.INCONCLUSIVE
-    for volume in complex_.volumes:
-        proved, diagnostic = _p_matrix_proved(volume, policy_)
-        if not proved and disposition is CertificateDisposition.PASS:
-            disposition = CertificateDisposition.INCONCLUSIVE
-        if diagnostic is not None:
-            diagnostics.append(diagnostic)
+) -> _GlobalBoundaryProof:
     incidence_ids: list[str] = []
     for incidence, check in zip(
         complex_.incidences, complex_.exact_incidence_checks(), strict=True
@@ -1005,6 +1024,53 @@ def certify_global_injectivity(
         )
         if disposition is CertificateDisposition.PASS:
             disposition = CertificateDisposition.INCONCLUSIVE
+    return _GlobalBoundaryProof(
+        disposition, tuple(incidence_ids), tuple(separation_pairs)
+    )
+
+
+@checked
+def certify_global_injectivity(
+    complex_: BlockComplex,
+    /,
+    *,
+    policy: TensorNURBSCertificatePolicy | None = None,
+) -> GlobalInjectivityCertificate:
+    """Certify F1 using local orientation, univalence, incidence, and separation."""
+    policy_ = TensorNURBSCertificatePolicy() if policy is None else policy
+    local = tuple(
+        certify_tensor_nurbs(volume, policy=policy_) for volume in complex_.volumes
+    )
+    diagnostics: list[CertificateDiagnostic] = [
+        diagnostic for certificate in local for diagnostic in certificate.diagnostics
+    ]
+    counterexample = next(
+        (
+            certificate.counterexample
+            for certificate in local
+            if certificate.counterexample is not None
+        ),
+        None,
+    )
+    disposition = (
+        CertificateDisposition.COUNTEREXAMPLE
+        if counterexample is not None
+        else CertificateDisposition.PASS
+    )
+    if disposition is CertificateDisposition.PASS and not all(
+        value.accepted for value in local
+    ):
+        disposition = CertificateDisposition.INCONCLUSIVE
+    for volume in complex_.volumes:
+        proved, diagnostic = _p_matrix_proved(volume, policy_)
+        if not proved and disposition is CertificateDisposition.PASS:
+            disposition = CertificateDisposition.INCONCLUSIVE
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+    boundary_proof = _certify_global_boundary(complex_, disposition, diagnostics)
+    disposition = boundary_proof.disposition
+    incidence_ids = list(boundary_proof.incidence_ids)
+    separation_pairs = list(boundary_proof.separation_pairs)
     boundary_disposition = (
         CertificateDisposition.PASS
         if disposition is CertificateDisposition.PASS
@@ -1069,6 +1135,7 @@ def certify_global_injectivity(
     )
 
 
+@checked
 def tensor_nurbs_cell_bounds(
     volume: TensorNURBSVolume,
     /,
@@ -1076,8 +1143,6 @@ def tensor_nurbs_cell_bounds(
     policy: TensorNURBSCertificatePolicy | None = None,
 ) -> tuple[CellJacobianEvidence, ...]:
     """Expose one nonadaptive analytic bound pass for barrier parameterization."""
-    if not isinstance(volume, TensorNURBSVolume):
-        raise TypeError("volume must be a TensorNURBSVolume.")
     policy_ = (
         TensorNURBSCertificatePolicy(
             maximum_subdivision_depth=0,

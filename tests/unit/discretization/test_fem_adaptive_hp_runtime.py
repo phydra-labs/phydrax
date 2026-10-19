@@ -12,7 +12,7 @@ import pytest
 
 import phydrax as phx
 from phydrax.discretization import CellBlock, CellMesh
-from phydrax.discretization._hexahedral import _FACES
+from phydrax.discretization._hexahedral import HEXAHEDRAL_FACES
 from phydrax.discretization.fem import (
     balanced_hp_refinement_ids,
     certify_finite_element_hp_geometry,
@@ -36,7 +36,11 @@ from phydrax.discretization.fem import (
     tensor_modal_decay_estimate,
     tensor_trace_interpolation,
 )
-from phydrax.discretization.fem._hp_runtime import _facet_vertices
+from phydrax.discretization.fem._hp_runtime import facet_vertices
+
+
+# Empirical `test_residual_jump_ledger_accounts_each_physical_facet_once`: matched max |delta|=3.55271e-15; joint allowance fraction=0.014803, margin=98.5197%.
+_RESIDUAL_JUMP_ESTIMATE_RTOL = 1.0e-14
 
 
 def _quad_mesh() -> Any:
@@ -85,7 +89,7 @@ def _hex_mesh(*, global_id: Any = 30) -> Any:
     )
 
 
-def test_fem_adaptive_hp_runtime_scenario_1() -> None:
+def test_quad_hp_refinement_coarsening_preserves_forest_metadata() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), (2, 3), 16)
     initial_interfaces = finite_element_hp_interface_plan(topology, geometry)
     balanced_ids, closure = balanced_hp_refinement_ids(
@@ -131,6 +135,9 @@ def test_fem_adaptive_hp_runtime_scenario_1() -> None:
         np.asarray(coarsened.topology.cell_degrees)[:2],
         np.asarray(((2, 3), (2, 3))),
     )
+
+
+def test_hex_hp_exterior_routes_match_oriented_cell_facets() -> None:
     topology, geometry = initial_finite_element_hp_topology(_hex_mesh(), 2, 12)
     epoch = prepare_finite_element_hp_epoch(topology, geometry, "u")
     _, exterior = finite_element_hp_domains(epoch)
@@ -139,15 +146,20 @@ def test_fem_adaptive_hp_runtime_scenario_1() -> None:
     for row, interface_row in enumerate(np.asarray(exterior.entity_indices)):
         slot = int(np.asarray(epoch.interfaces.owner_slots)[interface_row])
         local_facet = int(np.asarray(exterior.owner_local_entities)[row])
-        hp_points = _facet_vertices(topology, geometry, slot, local_facet)
+        hp_points = facet_vertices(topology, geometry, slot, local_facet)
         owner_cell = int(np.asarray(exterior.owner_cells)[row])
         mesh_points = np.asarray(epoch.mesh.coordinates)[
-            np.asarray(block.vertices)[owner_cell, np.asarray(_FACES[local_facet])]
+            np.asarray(block.vertices)[
+                owner_cell, np.asarray(HEXAHEDRAL_FACES[local_facet])
+            ]
         ]
 
         assert {tuple(point) for point in hp_points} == {
             tuple(point) for point in mesh_points
         }
+
+
+def test_rotated_hex_hp_interfaces_and_balance_refusal() -> None:
     topology, geometry = initial_finite_element_hp_topology(
         _rotated_hex_pair_mesh(), 1, 40
     )
@@ -172,10 +184,13 @@ def test_fem_adaptive_hp_runtime_scenario_1() -> None:
     assert certify_finite_element_hp_geometry(
         deeper.topology, deeper.geometry, deeper_interfaces
     ).passed
-    with pytest.raises(ValueError, match="2:1 balance"):
+    with pytest.raises(ValueError, match="refine_tensor_hp_cells.configuration"):
         refine_tensor_hp_cells(
             deeper.topology, deeper.geometry, jnp.asarray((58,), dtype=jnp.int64)
         )
+
+
+def test_hp_coarsening_refuses_foreign_geometry() -> None:
     topology, geometry = initial_finite_element_hp_topology(_hex_mesh(), 2, 12)
     refined = refine_tensor_hp_cells(
         topology,
@@ -188,12 +203,15 @@ def test_fem_adaptive_hp_runtime_scenario_1() -> None:
         12,
     )
 
-    with pytest.raises(ValueError, match="identities disagree"):
+    with pytest.raises(ValueError, match="coarsen_tensor_hp_cells.topology"):
         coarsen_tensor_hp_cells(
             refined.topology,
             foreign_geometry,
             jnp.asarray((30,), dtype=jnp.int64),
         )
+
+
+def test_hp_coarsening_projects_with_physical_l2_mass() -> None:
     mesh = CellMesh(
         jnp.asarray(((0.0, 0.0), (2.0, 0.0), (1.5, 1.0), (0.0, 1.0))),
         (
@@ -267,6 +285,9 @@ def test_fem_adaptive_hp_runtime_scenario_1() -> None:
     )
     np.testing.assert_allclose(residual, 0.0, atol=1.0e-12)
     assert not np.allclose(nodal[parent, :parent_count], projected[parent, :parent_count])
+
+
+def test_hp_epoch_binds_topology_and_worksets() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 8)
     interfaces = finite_element_hp_interface_plan(topology, geometry)
     epoch = FiniteElementHPEpoch(_quad_mesh(), topology, geometry, interfaces)
@@ -295,7 +316,7 @@ def test_hex_refinement_allocates_eight_curved_children() -> None:
     assert np.all(np.isfinite(np.asarray(refined.geometry.cell_vertices)[1:9]))
 
 
-def test_fem_adaptive_hp_runtime_scenario_2() -> None:
+def test_tensor_modal_decay_resolves_quadratic_field() -> None:
     nodes = np.linspace(-1.0, 1.0, 4)
     x, y = np.meshgrid(nodes, nodes, indexing="ij")
     decay = tensor_modal_decay_estimate(
@@ -305,6 +326,8 @@ def test_fem_adaptive_hp_runtime_scenario_2() -> None:
     )
     np.testing.assert_array_less(np.asarray(decay), 1.0e-20)
 
+
+def test_hp_decision_selects_anisotropic_p_increment() -> None:
     topology, _ = initial_finite_element_hp_topology(_quad_mesh(), 2, 8)
     estimate = FiniteElementHPErrorEstimate(
         topology,
@@ -325,6 +348,9 @@ def test_fem_adaptive_hp_runtime_scenario_2() -> None:
     decision = finite_element_hp_decision(topology, estimate, maximum_degree=5)
     assert tuple(np.asarray(decision.target_degrees)[0]) == (3, 2)
     assert not bool(np.asarray(decision.refine)[0])
+
+
+def test_hp_dg_epoch_preserves_degree_buckets_and_domains() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
     refined = refine_tensor_hp_cells(
         topology,
@@ -345,6 +371,9 @@ def test_fem_adaptive_hp_runtime_scenario_2() -> None:
     assert interior.kind == "interior_facet"
     assert exterior.kind == "exterior_facet"
     assert np.count_nonzero(np.asarray(epoch.interfaces.relation_mask("mortar"))) == 2
+
+
+def test_hp_h1_trace_constraints_preserve_constants_and_uniform_layout() -> None:
     topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
     refined = refine_tensor_hp_cells(
         topology,
@@ -378,6 +407,9 @@ def test_fem_adaptive_hp_runtime_scenario_2() -> None:
         np.asarray(uniform_plan.prolongation.as_dense()),
         np.eye(15),
     )
+
+
+def test_hp_master_trace_interpolation_and_raw_adjoint() -> None:
     master_nodes = jnp.asarray(((0.0,), (0.5,), (1.0,)))
     p_slave_nodes = jnp.linspace(0.0, 1.0, 5)[:, None]
     interpolation = tensor_trace_interpolation(master_nodes, p_slave_nodes)
@@ -643,7 +675,9 @@ def test_residual_jump_ledger_accounts_each_physical_facet_once(kind: str) -> No
     )
     assert ledger.estimate is not None
     expected = 4.0 * np.count_nonzero(selected)
-    np.testing.assert_allclose(ledger.estimate.global_estimate**2, expected, rtol=1.0e-14)
+    np.testing.assert_allclose(
+        ledger.estimate.global_estimate**2, expected, rtol=_RESIDUAL_JUMP_ESTIMATE_RTOL
+    )
 
 
 def test_prepared_residual_estimator_keeps_physics_dynamic_and_nontrainable() -> None:
@@ -696,7 +730,7 @@ def test_invalid_active_estimator_data_cannot_become_admissible_physical_error(
         )
         estimate = ledger.estimate
         if estimate is None:
-            raise RuntimeError("Residual estimator fixture lost its estimate.")
+            raise RuntimeError("fixture.estimate must be present; got None")
     contributions = phx.meshing.PhysicalErrorEvidence(
         "physical-epoch",
         "energy-error",
@@ -706,5 +740,5 @@ def test_invalid_active_estimator_data_cannot_become_admissible_physical_error(
         algebraic_error=0.0,
         transfer_error=0.0,
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="field_error"):
         estimate.physical_evidence("physical-epoch", "energy-error", contributions)

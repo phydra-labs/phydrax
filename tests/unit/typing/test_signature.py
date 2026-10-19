@@ -6,7 +6,7 @@ import threading
 import weakref
 from collections.abc import Callable
 from types import FunctionType, ModuleType
-from typing import Literal
+from typing import Literal, TypedDict
 
 import equinox as eqx
 import jax
@@ -138,6 +138,21 @@ def test_selector_scalar_and_conversion_annotations_stay_with_their_owner() -> N
 def test_static_only_union_member_does_not_partially_enforce_the_union() -> None:
     unchecked = "not checked"
     assert lenient(unchecked, (), np.ones(2)) is unchecked  # ty: ignore[invalid-argument-type]
+
+
+class _Declaration(TypedDict):
+    region: str
+    density: float
+
+
+@pt.checked
+def _declared_density(declaration: _Declaration, /) -> float:
+    return declaration["density"]
+
+
+def test_typed_dict_annotation_is_structural_and_left_to_the_owner() -> None:
+    # A TypedDict cannot be an isinstance target; the boundary forwards the mapping.
+    assert _declared_density({"region": "core", "density": 2.0}) == 2.0
 
 
 def test_shared_dimension_binds_across_arguments_within_one_call() -> None:

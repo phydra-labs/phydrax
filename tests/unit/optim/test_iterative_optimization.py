@@ -15,6 +15,14 @@ from jax import Array, lax, tree
 import phydrax as phx
 
 
+# Empirical `test_lm_accepts_resolved_decrease_below_total_objective_rounding`: matched max |delta|=1.55431e-14; joint allowance fraction=1.53892e-07, margin=100%.
+_LM_SMALL_DECREASE_MINIMIZER_ATOL = 1.0e-9
+# Empirical `test_lm_trial_policy_scales_actual_step_with_dynamic_state`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_LM_DYNAMIC_TRIAL_STEP_RTOL = 1e-8
+# Empirical `test_lm_trial_policy_uses_returned_direction_for_proposal_model_and_norm`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_LM_RETURNED_TRIAL_STEP_RTOL = 1e-8
+
+
 def _termination(*, steps: Any = 50, tolerance: Any = 1e-8) -> Any:
     return phx.optim.OptimizationTermination(
         absolute_optimality=tolerance,
@@ -162,7 +170,9 @@ def test_lm_accepts_resolved_decrease_below_total_objective_rounding(
         ),
     )
     np.testing.assert_allclose(
-        result.parameters, np.ones(1, dtype=np.float64), atol=1.0e-9
+        result.parameters,
+        np.ones(1, dtype=np.float64),
+        atol=_LM_SMALL_DECREASE_MINIMIZER_ATOL,
     )
     assert result.status == phx.optim.OptimizationStatus.SUCCESS
     assert result.diagnostics.accepted_steps > 0
@@ -235,7 +245,9 @@ def test_lm_trial_policy_scales_actual_step_with_dynamic_state(scale: float) -> 
             termination=_termination(steps=1, tolerance=0.0),
         )
     )(problem, jnp.ones(1))
-    np.testing.assert_allclose(result.parameters, (scale / 101.0,), rtol=1e-8, atol=0.0)
+    np.testing.assert_allclose(
+        result.parameters, (scale / 101.0,), rtol=_LM_DYNAMIC_TRIAL_STEP_RTOL, atol=0.0
+    )
     assert int(result.diagnostics.accepted_steps) == 1
     assert int(result.diagnostics.linear_solves) == 1
     assert float(result.diagnostics.accepted_step_size) == scale
@@ -271,7 +283,7 @@ def test_lm_trial_policy_rejects_outgoing_ascent_without_false_success() -> None
     assert int(result.method_evidence["trial_policy_jvp_actions"]) == 4
     assert int(result.method_evidence["trial_policy_vjp_actions"]) == 0
     # Refused policies still performed their declared derivative action, but
-    # never invoked the actual residual at an inadmissible proposed point.
+    # never invoked the residual function at an inadmissible proposed point.
     assert int(result.diagnostics.globalization_evaluations) == 0
 
 
@@ -337,7 +349,9 @@ def test_lm_trial_policy_uses_returned_direction_for_proposal_model_and_norm() -
         method=phx.optim.LevenbergMarquardt(initial_damping=100.0, maximum_trials=4),
         termination=_termination(steps=1, tolerance=0.0),
     )
-    np.testing.assert_allclose(result.parameters, (1.0 / 101.0,), rtol=1e-8, atol=0.0)
+    np.testing.assert_allclose(
+        result.parameters, (1.0 / 101.0,), rtol=_LM_RETURNED_TRIAL_STEP_RTOL, atol=0.0
+    )
     np.testing.assert_allclose(
         result.diagnostics.final_step_norm,
         jnp.linalg.norm(result.parameters),

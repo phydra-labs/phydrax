@@ -2,52 +2,50 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Native reader/writer of the external OCCT BRep text format (``.brep``/``.brp``).
+"""Read and write external OCCT BRep text files (``.brep``/``.brp``).
 
-This implements the ``CASCADE Topology`` V1/V2/V3 text profiles written by
-``BRepTools::Write`` (optionally headed by ``DBRep_DrawableShape``) as a file
-format only; no OCCT algorithm is used. The external format identity is kept:
-the profile names its OCCT topology revision.
+The supported ``CASCADE Topology`` V1/V2/V3 profiles are those written by
+``BRepTools::Write``, optionally headed by ``DBRep_DrawableShape``. Parsing and
+native construction do not invoke OCCT algorithms.
 
-Coverage (read):
+Reader coverage:
 
-* Locations: elementary 3x4 matrices (proper rigid only) and powered products.
-* Curve2ds/Curves: line, circle, ellipse, parabola, hyperbola, exact right-normal
-  offsets, Bezier, rational B-splines (periodic splines unrolled exactly over
-  one finite period) and trimmed curves lowered to their basis carrier with
-  enforced trim ranges. Operation trees retain the original basis parameter.
-* Surfaces: plane, cylinder, cone (OCCT's slant parameter rescaled exactly to
-  the native axial parameter), sphere, torus, linear extrusion, revolution,
-  Bezier, rational B-spline and rectangular trimmed surfaces. Periodic spline
-  axes are unrolled exactly; offsets retain their exact normal-operation trees.
-  Nested operation bases are validated as curves or surfaces before construction;
-  export preparation must likewise produce concrete curve and p-curve carriers.
-* Polygon3D, PolygonOnTriangulations and Triangulations are derived data:
-  parsed completely (so malformed data is refused) and ignored with a declared
-  ``dropped`` loss.
-* TShapes Ve, Ed, Wi, Fa, Sh, So, CS, Co with FORWARD/REVERSED orientations
-  and locations, shared face incidences with per-shell senses, and exact empty
-  compounds. Actual compound membership and nested child containers are explicit;
-  placements or path prefixes never manufacture assembly relationships.
-  Free edges and vertices retain exact geometry and empty face incidence.
-  INTERNAL/EXTERNAL uses, free wires, reversed compound/free-entity uses,
-  non-same-parameter edges and unsupported boundaryless surfaces refuse.
+* Locations: proper-rigid 3x4 matrices and powered location products.
+* Curve2ds/Curves: lines, conics, right-normal offsets, Bezier and rational
+  B-splines, with periodic splines expanded over one finite period. Trimmed
+  curves retain admissible ranges and the basis carrier's parameterization.
+* Surfaces: planes, cylinders, cones, spheres, tori, extrusions, revolutions,
+  Bezier and rational B-splines, rectangular trims and normal offsets.
+  Periodic spline axes expand without fitting; nested operation bases retain
+  their curve/surface type checks.
+* Polygon3D, PolygonOnTriangulations and Triangulations: bounded parsing,
+  followed by a reported derived-data loss and native tessellation.
+* TShapes Ve, Ed, Wi, Fa, Sh, So, CS and Co: forward/reversed orientations,
+  locations, shared face incidences with per-shell senses, empty compounds,
+  declared nested container membership, and free edges and vertices.
 
-The format carries no length unit or scientific occurrence/container names.
-Readers declare units; writers declare path-name normalization losses. Exact
-carriers are exported by default, with plane/line/cone/extrusion parameter maps
-applied to p-curves. An explicit intersection-approximation policy substitutes
-coupled splines and reports sampled residuals, never continuous tube guarantees.
-Authoritative trims must match the exported coedges; unsupported required
-geometry refuses rather than disappearing. A forest of independent solid roots
-cannot be encoded by inventing membership under this single-root file format.
+Internal/external uses, free wires, reversed compound/free-entity uses,
+non-same-parameter edges and unsupported boundaryless surfaces refuse.
+The format carries neither units nor scientific occurrence/container names:
+readers declare length units; writers report path-name normalization losses.
+Plane, line, cone and extrusion parameter maps preserve p-curves. Declared
+trims must match exported coedges. Independent roots cannot be encoded by
+inventing membership under this single-root format.
 
-Import/export provenance maps native inventory indices to actual ``TShapes#N``
-declarations. Qualified import labels retain nonzero source location-reference
-chains; occurrence/root entries retain the raw ``orientation+number location``
-reference syntax. Synthesized natural-boundary entities have no source
-declaration and no identity mapping; coordinates and geometry digests never
-stand in for unavailable external entity references.
+Written vertex, edge and face tolerances enclose certified incidence gap
+bounds and continuous intersection-substitution bounds, rounded upward to
+17 significant decimal digits. Missing or unbounded export evidence refuses.
+Imports retain every tolerance declaration under its external reference in raw
+source units, including unused declarations, and summarize the maximum in target
+units. Entity tolerance evidence carries the maximum of certified and declared
+values. A source declaration above the model's enforced tolerance limit is
+reported without changing native geometry or spending the discarded-field
+allowance; declarations within that limit do not create loss.
+
+Provenance maps native inventory indices to ``TShapes#N`` declarations.
+Located import labels retain nonzero source location-reference chains;
+occurrence/root entries retain raw orientation/number/location references.
+Synthesized natural-boundary entities have no external declaration mapping.
 """
 
 from __future__ import annotations
@@ -56,23 +54,24 @@ import os
 import re
 from dataclasses import dataclass, field
 from fractions import Fraction
+from functools import partial
 from math import cos, isfinite, pi
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
-import jax.numpy as jnp
+import equinox as eqx
 import numpy as np
 
 from .._external_resource import (
     account_bounded_resource,
-    bounded_resource_from_bytes,
     BoundedResource,
-    read_bounded_resource,
     ResourceReadError,
 )
 from .._fingerprint import canonical_fingerprint
 from .._publication import PublicationMode, publish_bytes
+from .._strict import StrictModule
 from ..geometry.brep._model import (
     BRepAssemblyContainer,
+    BRepEntityId,
     BRepGeometry,
     BRepModel,
     BRepOccurrence,
@@ -84,6 +83,7 @@ from ..geometry.brep._patches import (
     BSplineSurfacePatch,
     CircleCurve,
     ConePatch,
+    curve_evaluate_host,
     CylinderPatch,
     EllipseCurve,
     ExtrusionSurface,
@@ -97,18 +97,21 @@ from ..geometry.brep._patches import (
     SpherePatch,
     TorusPatch,
 )
-from ..typing import parse
-from ..units import UnitDefinition
+from ..typing import checked, parse
+from ..units._unit import UnitDefinition
 from ._cad import (
-    _export_loss_waivers,
-    approximation_export_qualifiers,
+    build_cad_export_report,
+    build_cad_import_tolerance_evidence,
     CadCurveApproximation,
     CadExportPolicy,
     CadExportResult,
+    CadExportTolerances,
     CadImportPolicy,
     CadImportResult,
+    CadImportToleranceEvidence,
     CadInterchangeError,
     CadStage,
+    certified_cad_export_tolerances,
     explicit_carrier,
     length_factor,
     prepare_cad_export_geometry,
@@ -117,6 +120,7 @@ from ._cad import (
     resource_refusal,
     StagedCoedge,
     transform_pcurve,
+    unrepresentable_cad_tolerance_loss,
 )
 from ._cad_carriers import (
     orthonormal_frame,
@@ -125,6 +129,7 @@ from ._cad_carriers import (
     RigidPlacement,
     surface_tag,
 )
+from ._cad_io import decode_cad_bytes, read_cad_file
 from ._report import AdapterFormatProfile, AdapterLoss, AdapterReport, AdapterStatus
 
 
@@ -162,7 +167,7 @@ def _profile(version: BRepTextVersion, /) -> AdapterFormatProfile:
 
 
 class _Scanner:
-    """Bounded token scanner over the exact file bytes (OCCT stream semantics)."""
+    """Scan bounded OCCT tokens while retaining source-byte positions."""
 
     def __init__(self, data: bytes, policy: CadImportPolicy) -> None:
         self.data = data
@@ -174,16 +179,26 @@ class _Scanner:
         self.label = "header"
 
     def _fail(self, message: str) -> Exception:
-        return refuse("malformed", self.label, f"{message} at byte {self.position}.")
+        return refuse(
+            "malformed",
+            self.label,
+            f"{message} at byte {self.position}",
+        )
 
     def _match(self, pattern: re.Pattern[bytes], what: str) -> bytes:
         found = pattern.match(self.data, self.position)
         if found is None:
-            raise self._fail(f"Expected {what}")
+            raise self._fail(
+                f"{self.label}.token must parse as {what}; got {self.peek_word()!r}"
+            )
         self.position = found.end()
         self.attributes += 1
         if self.attributes > self.limits.max_attributes:
-            raise refuse("limit", self.label, "The file exceeds the attribute limit.")
+            raise refuse(
+                "limit",
+                self.label,
+                f"resource.attributes must not exceed max_attributes={self.limits.max_attributes}; got {self.attributes}",
+            )
         return found.group(1)
 
     def integer(self) -> int:
@@ -192,7 +207,7 @@ class _Scanner:
     def real(self) -> float:
         value = float(self._match(_REAL, "a real number"))
         if not isfinite(value):
-            raise self._fail("A real number is not finite")
+            raise self._fail(f"{self.label}.number must be finite; got {value!r}")
         return value
 
     def reals(self, count: int) -> np.ndarray:
@@ -204,22 +219,28 @@ class _Scanner:
     def keyword(self, expected: str) -> None:
         found = self.word()
         if found != expected:
-            raise self._fail(f"Expected {expected!r}, found {found!r}")
+            raise self._fail(
+                f"{self.label}.keyword must equal {expected!r}; got {found!r}"
+            )
 
     def count(self, name: str) -> int:
         self.keyword(name)
         value = self.integer()
         if value < 0:
-            raise self._fail(f"Negative {name} count")
+            raise self._fail(f"{name}.count must be nonnegative; got {value}")
         self.nodes += value
         if self.nodes > self.limits.max_nodes:
-            raise refuse("limit", name, "The file exceeds the entity limit.")
+            raise refuse(
+                "limit",
+                name,
+                f"resource.nodes must not exceed max_nodes={self.limits.max_nodes}; got {self.nodes}",
+            )
         return value
 
     def boolean(self) -> bool:
         value = self.integer()
         if value not in (0, 1):
-            raise self._fail("Expected a 0/1 flag")
+            raise self._fail(f"{self.label}.flag must be 0 or 1; got {value}")
         return value == 1
 
     def regularity(self) -> str:
@@ -230,7 +251,9 @@ class _Scanner:
             if self.data.startswith(token.encode(), end):
                 self.position = end + len(token)
                 return token
-        raise self._fail("Expected a regularity (C0..CN)")
+        raise self._fail(
+            f"{self.label}.regularity must be one of {_REGULARITIES!r}; got {self.peek_word()!r}"
+        )
 
     def line(self) -> str:
         end = self.data.find(b"\n", self.position)
@@ -247,8 +270,7 @@ class _Scanner:
 # ---------------------------------------------------------------- geometry
 
 
-@dataclass(frozen=True, slots=True)
-class _Carrier:
+class _Carrier(StrictModule):
     """Decoded curve/surface: a native carrier or a deferred refusal.
 
     ``trim`` bounds admissible curve parameters. Surface and curve parameter
@@ -256,14 +278,16 @@ class _Carrier:
     retains rectangular surface trims instead of silently dropping them.
     """
 
-    label: str
+    label: str = eqx.field(static=True)
     value: AbstractCurve | AbstractSurfacePatch | None
-    refusal: str | None = None
-    trim: tuple[float, float] | None = None
-    v_factor: float = 1.0
-    parameter_factor: float = 1.0
-    u_factor: float = 1.0
-    surface_trim: tuple[float, float, float, float] | None = None
+    refusal: str | None = eqx.field(static=True, default=None)
+    trim: tuple[float, float] | None = eqx.field(static=True, default=None)
+    v_factor: float = eqx.field(static=True, default=1.0)
+    parameter_factor: float = eqx.field(static=True, default=1.0)
+    u_factor: float = eqx.field(static=True, default=1.0)
+    surface_trim: tuple[float, float, float, float] | None = eqx.field(
+        static=True, default=None
+    )
 
 
 def _unsupported(label: str, reason: str) -> _Carrier:
@@ -286,9 +310,11 @@ class _GeometryReader:
         vector = self.scanner.reals(dimension)
         norm = float(np.linalg.norm(vector))
         if not norm > 0.0:
-            raise self.scanner._fail("A direction is zero")
+            raise self.scanner._fail(
+                f"{self.scanner.label}.direction must have positive norm; got norm={norm!r}"
+            )
         # OCCT normalizes directions; values already unit within rounding keep
-        # their exact bits so exported native carriers re-read identically.
+        # their bits so exported native carriers re-read identically.
         return vector if _unit_speed(vector) == 1.0 else vector / norm
 
     def _spline_poles(
@@ -299,7 +325,9 @@ class _GeometryReader:
             points.append(self._point(dimension))
             weights.append(self.scanner.real() if rational else 1.0)
             if weights[-1] <= 0.0:
-                raise self.scanner._fail("A rational spline weight must be positive")
+                raise self.scanner._fail(
+                    f"{self.scanner.label}.weights must be positive; got pole={len(weights) - 1}, weight={weights[-1]!r}"
+                )
         return np.asarray(points), np.asarray(weights)
 
     def _knots(self, count: int) -> tuple[np.ndarray, list[int]]:
@@ -308,7 +336,9 @@ class _GeometryReader:
             values.append(self.scanner.real())
             multiplicities.append(self.scanner.integer())
         if any(value < 1 for value in multiplicities):
-            raise self.scanner._fail("A knot multiplicity is not positive")
+            raise self.scanner._fail(
+                f"{self.scanner.label}.multiplicities must be positive; got {multiplicities!r}"
+            )
         self._budget(sum(multiplicities), self.scanner.label)
         return np.asarray(values), multiplicities
 
@@ -321,18 +351,20 @@ class _GeometryReader:
         periodic: bool,
         label: str,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """OCCT's exact finite-period knot and cyclic-pole expansion.
+        """Expand OCCT's finite-period knots and cyclic poles without fitting.
 
         BSplCLib::KnotSequence/Unperiodize append cyclic poles without rotating
         their origin. No fitting, sampling or OCCT runtime algorithm is used.
         https://github.com/Open-Cascade-SAS/OCCT/blob/V7_8_1/src/BSplCLib/BSplCLib.cxx
         """
         if np.any(np.diff(values) <= 0.0):
-            raise self.scanner._fail("Distinct spline knots must strictly increase")
+            raise self.scanner._fail(
+                f"{label}.knots must strictly increase; got {values!r}"
+            )
         if not periodic:
             if sum(multiplicities) != poles + degree + 1:
                 raise self.scanner._fail(
-                    "Spline multiplicities disagree with its pole count"
+                    f"{label}.multiplicities must sum to poles + degree + 1; got sum={sum(multiplicities)}, poles={poles}, degree={degree}"
                 )
             return _expanded_knots(values, multiplicities), np.arange(poles)
         seam = multiplicities[0]
@@ -342,7 +374,7 @@ class _GeometryReader:
             or sum(multiplicities[:-1]) != poles
         ):
             raise self.scanner._fail(
-                "Inconsistent periodic spline multiplicities or pole count"
+                f"{label}.periodic_multiplicities must match at the seam, not exceed degree and sum without the final seam to poles; got multiplicities={multiplicities!r}, degree={degree}, poles={poles}"
             )
         padding = degree + 1 - seam
         total_knots = sum(multiplicities) + 2 * padding
@@ -355,7 +387,7 @@ class _GeometryReader:
         expanded = np.concatenate((before, base, after))
         if not np.all(np.isfinite(expanded)):
             raise self.scanner._fail(
-                "Periodic knot expansion overflows finite parameters"
+                f"{label}.expanded_knots must remain finite; got first={expanded[0]!r}, last={expanded[-1]!r}, period={period!r}"
             )
         return expanded, np.arange(expanded_poles) % poles
 
@@ -363,7 +395,11 @@ class _GeometryReader:
         scanner = self.scanner
         scanner.depth = max(scanner.depth, depth + 1)
         if depth + 1 > scanner.limits.max_depth:
-            raise refuse("limit", label, "Nested basis curves exceed the depth limit.")
+            raise refuse(
+                "limit",
+                label,
+                f"{label}.curve_depth must not exceed max_depth={scanner.limits.max_depth}; got {depth + 1}",
+            )
         kind = scanner.integer()
         match kind:
             case 1:
@@ -382,7 +418,9 @@ class _GeometryReader:
                     dimension == 3
                     and np.max(np.abs(np.cross(first, second) - normal)) > 1.0e-9
                 ):
-                    raise scanner._fail("A conic frame has inconsistent handedness")
+                    raise scanner._fail(
+                        f"{label}.frame must have cross(first_axis, second_axis) equal normal within 1e-9; got residual={np.max(np.abs(np.cross(first, second) - normal)):.17g}"
+                    )
                 if kind == 2:
                     radius = scanner.real() * self.factor
                     return _Carrier(label, CircleCurve(center, first, second, radius))
@@ -404,7 +442,9 @@ class _GeometryReader:
                 rational = scanner.boolean()
                 degree = scanner.integer()
                 if not 1 <= degree <= 25:
-                    raise scanner._fail("Bezier degree out of range")
+                    raise scanner._fail(
+                        f"{label}.degree must be between 1 and 25; got {degree}"
+                    )
                 points, weights = self._spline_poles(degree + 1, dimension, rational)
                 return _Carrier(label, BSplineCurve.bezier(points, weights))
             case 7:
@@ -415,7 +455,9 @@ class _GeometryReader:
                     scanner.integer(),
                 )
                 if not (1 <= degree <= 25 and poles > degree and knots >= 2):
-                    raise scanner._fail("Inconsistent B-spline curve header")
+                    raise scanner._fail(
+                        f"{label}.spline_header must have degree in [1, 25], poles greater than degree and at least two distinct knots; got degree={degree}, poles={poles}, knots={knots}"
+                    )
                 self._budget(poles * (dimension + 1) + 2 * knots, label)
                 points, weights = self._spline_poles(poles, dimension, rational)
                 values, multiplicities = self._knots(knots)
@@ -437,14 +479,18 @@ class _GeometryReader:
                 basis = self.curve(dimension, label, depth + 1)
                 bounds = (first * basis.parameter_factor, last * basis.parameter_factor)
                 if not bounds[1] > bounds[0]:
-                    raise scanner._fail("A trimmed curve range must increase")
+                    raise scanner._fail(
+                        f"{label}.trim must have increasing endpoints; got {bounds!r}"
+                    )
                 if basis.trim is not None:
                     bounds = (
                         max(bounds[0], basis.trim[0]),
                         min(bounds[1], basis.trim[1]),
                     )
                     if not bounds[1] > bounds[0]:
-                        raise scanner._fail("Nested curve trims do not overlap")
+                        raise scanner._fail(
+                            f"{label}.trim must overlap its basis trim; got intersection={bounds!r}"
+                        )
                 return _Carrier(
                     label,
                     basis.value,
@@ -464,8 +510,13 @@ class _GeometryReader:
                         basis.trim,
                         parameter_factor=basis.parameter_factor,
                     )
-                if not isinstance(basis.value, AbstractCurve):
-                    raise scanner._fail("An offset curve basis must be a curve")
+                match basis.value:
+                    case AbstractCurve():
+                        pass
+                    case _:
+                        raise scanner._fail(
+                            f"{label}.offset_basis must be a curve; got {type(basis.value).__name__}"
+                        )
                 return _Carrier(
                     label,
                     OffsetCurve(basis.value, distance, direction),
@@ -473,24 +524,53 @@ class _GeometryReader:
                     parameter_factor=basis.parameter_factor,
                 )
             case _:
-                raise scanner._fail(f"Unknown curve type {kind}")
+                raise scanner._fail(
+                    f"{label}.curve_kind must be between 1 and 9; got {kind}"
+                )
 
     def _budget(self, count: int, label: str) -> None:
         if count > self.scanner.limits.max_attributes:
-            raise refuse("limit", label, "A spline exceeds the attribute limit.")
+            raise refuse(
+                "limit",
+                label,
+                f"{label}.spline_attributes must not exceed max_attributes={self.scanner.limits.max_attributes}; got {count}",
+            )
 
     def surface(self, label: str, depth: int) -> _Carrier:
         scanner = self.scanner
         scanner.depth = max(scanner.depth, depth + 1)
         if depth + 1 > scanner.limits.max_depth:
-            raise refuse("limit", label, "Nested basis surfaces exceed the depth limit.")
+            raise refuse(
+                "limit",
+                label,
+                f"{label}.surface_depth must not exceed max_depth={scanner.limits.max_depth}; got {depth + 1}",
+            )
         kind = scanner.integer()
-        if 1 <= kind <= 5:
-            origin = self._point(3)
-            axis, first, second = (self._direction(3) for _ in range(3))
-            cross = np.cross(first, second)
-            if min(np.max(np.abs(cross - axis)), np.max(np.abs(cross + axis))) > 1.0e-9:
-                raise scanner._fail("A surface frame has inconsistent orthogonality")
+        match kind:
+            case 1 | 2 | 3 | 4 | 5:
+                return self._analytic_surface(kind, label)
+            case 6 | 7:
+                return self._swept_surface(kind, label, depth)
+            case 8 | 9:
+                return self._spline_surface(kind, label)
+            case 10:
+                return self._trimmed_surface(label, depth)
+            case 11:
+                return self._offset_surface(label, depth)
+            case _:
+                raise scanner._fail(
+                    f"{label}.surface_kind must be between 1 and 11; got {kind}"
+                )
+
+    def _analytic_surface(self, kind: int, label: str) -> _Carrier:
+        scanner = self.scanner
+        origin = self._point(3)
+        axis, first, second = (self._direction(3) for _ in range(3))
+        cross = np.cross(first, second)
+        if min(np.max(np.abs(cross - axis)), np.max(np.abs(cross + axis))) > 1.0e-9:
+            raise scanner._fail(
+                f"{label}.frame must have cross(first_axis, second_axis) equal axis or its negative within 1e-9; got residual={min(np.max(np.abs(cross - axis)), np.max(np.abs(cross + axis))):.17g}"
+            )
         match kind:
             case 1:
                 return _Carrier(
@@ -521,13 +601,29 @@ class _GeometryReader:
                 return _Carrier(
                     label, TorusPatch(origin, first, second, axis, major, minor)
                 )
+            case _:
+                raise scanner._fail(
+                    f"{label}.analytic_surface_kind must be between 1 and 5; got {kind}"
+                )
+
+    def _swept_surface(self, kind: int, label: str, depth: int) -> _Carrier:
+        scanner = self.scanner
+        match kind:
             case 6:
                 direction = self._direction(3)
                 basis = self.curve(3, label, depth + 1)
                 if basis.value is None:
-                    return _unsupported(label, f"Extrusion basis: {basis.refusal}")
-                if not isinstance(basis.value, AbstractCurve):
-                    raise scanner._fail("An extrusion basis must be a curve")
+                    return _unsupported(
+                        label,
+                        f"{label}.extrusion_basis must decode to a supported curve; got {basis.refusal!r}",
+                    )
+                match basis.value:
+                    case AbstractCurve():
+                        pass
+                    case _:
+                        raise scanner._fail(
+                            f"{label}.extrusion_basis must be a curve; got {type(basis.value).__name__}"
+                        )
                 return _Carrier(
                     label,
                     ExtrusionSurface(basis.value, direction),
@@ -546,9 +642,17 @@ class _GeometryReader:
                 origin, direction = self._point(3), self._direction(3)
                 basis = self.curve(3, label, depth + 1)
                 if basis.value is None:
-                    return _unsupported(label, f"Revolution basis: {basis.refusal}")
-                if not isinstance(basis.value, AbstractCurve):
-                    raise scanner._fail("A revolution basis must be a curve")
+                    return _unsupported(
+                        label,
+                        f"{label}.revolution_basis must decode to a supported curve; got {basis.refusal!r}",
+                    )
+                match basis.value:
+                    case AbstractCurve():
+                        pass
+                    case _:
+                        raise scanner._fail(
+                            f"{label}.revolution_basis must be a curve; got {type(basis.value).__name__}"
+                        )
                 return _Carrier(
                     label,
                     RevolutionSurface(basis.value, origin, direction),
@@ -562,11 +666,21 @@ class _GeometryReader:
                         basis.trim[1],
                     ),
                 )
+            case _:
+                raise scanner._fail(
+                    f"{label}.swept_surface_kind must be 6 or 7; got {kind}"
+                )
+
+    def _spline_surface(self, kind: int, label: str) -> _Carrier:
+        scanner = self.scanner
+        match kind:
             case 8:
                 u_rational, v_rational = scanner.boolean(), scanner.boolean()
                 u_degree, v_degree = scanner.integer(), scanner.integer()
                 if not (1 <= u_degree <= 25 and 1 <= v_degree <= 25):
-                    raise scanner._fail("Bezier surface degree out of range")
+                    raise scanner._fail(
+                        f"{label}.degrees must each be between 1 and 25; got u={u_degree}, v={v_degree}"
+                    )
                 count = (u_degree + 1) * (v_degree + 1)
                 points, weights = self._spline_poles(count, 3, u_rational or v_rational)
                 u_knots = np.repeat((0.0, 1.0), u_degree + 1)
@@ -596,7 +710,9 @@ class _GeometryReader:
                     and u_count >= 2
                     and v_count >= 2
                 ):
-                    raise scanner._fail("Inconsistent B-spline surface header")
+                    raise scanner._fail(
+                        f"{label}.spline_header must have degrees in [1, 25], pole counts above degrees and at least two distinct knots per axis; got degrees={(u_degree, v_degree)!r}, poles={(u_poles, v_poles)!r}, knots={(u_count, v_count)!r}"
+                    )
                 self._budget(u_poles * v_poles * 4 + 2 * (u_count + v_count), label)
                 points, weights = self._spline_poles(
                     u_poles * v_poles, 3, u_rational or v_rational
@@ -638,49 +754,65 @@ class _GeometryReader:
                         v_degree,
                     ),
                 )
-            case 10:
-                u0, u1, v0, v1 = scanner.reals(4)
-                basis = self.surface(label, depth + 1)
-                bounds = (
-                    float(u0 * basis.u_factor),
-                    float(u1 * basis.u_factor),
-                    float(v0 * basis.v_factor),
-                    float(v1 * basis.v_factor),
-                )
-                if basis.surface_trim is not None:
-                    inner = basis.surface_trim
-                    bounds = (
-                        max(bounds[0], inner[0]),
-                        min(bounds[1], inner[1]),
-                        max(bounds[2], inner[2]),
-                        min(bounds[3], inner[3]),
-                    )
-                if not bounds[1] > bounds[0] or not bounds[3] > bounds[2]:
-                    raise scanner._fail("A trimmed surface has an empty parameter domain")
-                return _Carrier(
-                    label,
-                    basis.value,
-                    basis.refusal,
-                    v_factor=basis.v_factor,
-                    u_factor=basis.u_factor,
-                    surface_trim=bounds,
-                )
-            case 11:
-                distance = scanner.real() * self.factor
-                basis = self.surface(label, depth + 1)
-                if basis.value is None:
-                    return _unsupported(label, f"Offset basis: {basis.refusal}")
-                if not isinstance(basis.value, AbstractSurfacePatch):
-                    raise scanner._fail("An offset basis must be a surface")
-                return _Carrier(
-                    label,
-                    OffsetSurface(basis.value, distance),
-                    u_factor=basis.u_factor,
-                    v_factor=basis.v_factor,
-                    surface_trim=basis.surface_trim,
-                )
             case _:
-                raise scanner._fail(f"Unknown surface type {kind}")
+                raise scanner._fail(
+                    f"{label}.spline_surface_kind must be 8 or 9; got {kind}"
+                )
+
+    def _trimmed_surface(self, label: str, depth: int) -> _Carrier:
+        scanner = self.scanner
+        u0, u1, v0, v1 = scanner.reals(4)
+        basis = self.surface(label, depth + 1)
+        bounds = (
+            float(u0 * basis.u_factor),
+            float(u1 * basis.u_factor),
+            float(v0 * basis.v_factor),
+            float(v1 * basis.v_factor),
+        )
+        if basis.surface_trim is not None:
+            inner = basis.surface_trim
+            bounds = (
+                max(bounds[0], inner[0]),
+                min(bounds[1], inner[1]),
+                max(bounds[2], inner[2]),
+                min(bounds[3], inner[3]),
+            )
+        if not bounds[1] > bounds[0] or not bounds[3] > bounds[2]:
+            raise scanner._fail(
+                f"{label}.surface_trim must have increasing bounds on both axes after basis intersection; got {bounds!r}"
+            )
+        return _Carrier(
+            label,
+            basis.value,
+            basis.refusal,
+            v_factor=basis.v_factor,
+            u_factor=basis.u_factor,
+            surface_trim=bounds,
+        )
+
+    def _offset_surface(self, label: str, depth: int) -> _Carrier:
+        scanner = self.scanner
+        distance = scanner.real() * self.factor
+        basis = self.surface(label, depth + 1)
+        if basis.value is None:
+            return _unsupported(
+                label,
+                f"{label}.offset_basis must decode to a supported surface; got {basis.refusal!r}",
+            )
+        match basis.value:
+            case AbstractSurfacePatch():
+                pass
+            case _:
+                raise scanner._fail(
+                    f"{label}.offset_basis must be a surface; got {type(basis.value).__name__}"
+                )
+        return _Carrier(
+            label,
+            OffsetSurface(basis.value, distance),
+            u_factor=basis.u_factor,
+            v_factor=basis.v_factor,
+            surface_trim=basis.surface_trim,
+        )
 
 
 # ---------------------------------------------------------------- topology
@@ -708,6 +840,7 @@ class _CurveRepresentation:
 class _TShape:
     kind: str
     number: int
+    tolerance: float | None = None
     point: np.ndarray | None = None
     same_parameter: bool = True
     same_range: bool = True
@@ -755,23 +888,29 @@ def _read_locations(scanner: _Scanner, factor: float) -> list[RigidPlacement]:
                     raise refuse(
                         "dangling-reference",
                         scanner.label,
-                        f"Location factor {factor_index} is not defined before use.",
+                        f"{scanner.label}.factor_reference must lie between 1 and {index - 1}; got {factor_index}",
                     )
                 depth = max(depth, depths[factor_index] + 1)
                 if depth > scanner.limits.max_depth:
                     raise refuse(
                         "limit",
                         scanner.label,
-                        "Location references exceed the depth limit.",
+                        f"{scanner.label}.reference_depth must not exceed max_depth={scanner.limits.max_depth}; got {depth}",
                     )
                 if abs(power) > 64:
-                    raise refuse("limit", scanner.label, "A location power exceeds 64.")
+                    raise refuse(
+                        "limit",
+                        scanner.label,
+                        f"{scanner.label}.power must have absolute value at most 64; got {power}",
+                    )
                 placement = locations[factor_index].power(power).compose(placement)
                 factor_index = scanner.integer()
             locations.append(placement)
             depths.append(depth)
         else:
-            raise scanner._fail(f"Unknown location type {kind}")
+            raise scanner._fail(
+                f"{scanner.label}.location_kind must be 1 or 2; got {kind}"
+            )
         scanner.depth = max(scanner.depth, depths[-1])
     return locations
 
@@ -783,7 +922,7 @@ def _skip_derived(scanner: _Scanner) -> dict[str, int]:
         scanner.label = f"Polygon3D#{index + 1}"
         nodes, has_parameters = scanner.integer(), scanner.boolean()
         if nodes < 0:
-            raise scanner._fail("Negative polygon size")
+            raise scanner._fail(f"{scanner.label}.nodes must be nonnegative; got {nodes}")
         scanner.real()
         scanner.reals(3 * nodes + (nodes if has_parameters else 0))
     derived["Polygon3D"] = count
@@ -792,7 +931,7 @@ def _skip_derived(scanner: _Scanner) -> dict[str, int]:
         scanner.label = f"PolygonOnTriangulations#{index + 1}"
         nodes = scanner.integer()
         if nodes < 0:
-            raise scanner._fail("Negative polygon size")
+            raise scanner._fail(f"{scanner.label}.nodes must be nonnegative; got {nodes}")
         for _ in range(nodes):
             scanner.integer()
         scanner.keyword("p")
@@ -810,7 +949,9 @@ def _skip_triangulations(scanner: _Scanner, version: BRepTextVersion) -> int:
         nodes, triangles, has_uv = scanner.integer(), scanner.integer(), scanner.boolean()
         has_normals = scanner.boolean() if version == "V3" else False
         if nodes < 0 or triangles < 0:
-            raise scanner._fail("Negative triangulation size")
+            raise scanner._fail(
+                f"{scanner.label}.sizes must be nonnegative; got nodes={nodes}, triangles={triangles}"
+            )
         scanner.real()
         scanner.reals(3 * nodes + (2 * nodes if has_uv else 0))
         for _ in range(3 * triangles):
@@ -820,10 +961,19 @@ def _skip_triangulations(scanner: _Scanner, version: BRepTextVersion) -> int:
     return count
 
 
+def _read_tolerance(scanner: _Scanner) -> float:
+    tolerance = scanner.real()
+    if tolerance < 0.0:
+        raise scanner._fail(
+            f"{scanner.label}.tolerance must be nonnegative; got {tolerance!r}"
+        )
+    return tolerance
+
+
 def _read_edge_geometry(
     scanner: _Scanner, shape: _TShape, version: BRepTextVersion
 ) -> None:
-    scanner.real()
+    shape.tolerance = _read_tolerance(scanner)
     shape.same_parameter = scanner.boolean()
     shape.same_range = scanner.boolean()
     shape.degenerated = scanner.boolean()
@@ -864,7 +1014,9 @@ def _read_edge_geometry(
                     scanner.integer()
                 scanner.integer(), scanner.integer()
             case _:
-                raise scanner._fail(f"Unknown edge representation {kind}")
+                raise scanner._fail(
+                    f"{shape.label}.representation_kind must be between 0 and 7; got {kind}"
+                )
 
 
 def _read_shape_geometry(
@@ -872,7 +1024,7 @@ def _read_shape_geometry(
 ) -> None:
     match shape.kind:
         case "Ve":
-            scanner.real()
+            shape.tolerance = _read_tolerance(scanner)
             shape.point = scanner.reals(3) * factor
             while True:
                 scanner.real()
@@ -888,13 +1040,15 @@ def _read_shape_geometry(
                         scanner.real()
                         scanner.integer()
                     case _:
-                        raise scanner._fail(f"Unknown vertex representation {kind}")
+                        raise scanner._fail(
+                            f"{shape.label}.representation_kind must be between 0 and 3; got {kind}"
+                        )
                 scanner.integer()
         case "Ed":
             _read_edge_geometry(scanner, shape, version)
         case "Fa":
             scanner.boolean()
-            scanner.real()
+            shape.tolerance = _read_tolerance(scanner)
             shape.surface, shape.surface_location = scanner.integer(), scanner.integer()
             if scanner.peek_word() == "2":
                 scanner.integer(), scanner.integer()
@@ -913,13 +1067,17 @@ def _read_shapes(
         scanner.label = f"TShapes#{number}"
         kind = scanner.word()
         if kind not in _KINDS:
-            raise scanner._fail(f"Unknown shape type {kind!r}")
+            raise scanner._fail(
+                f"{scanner.label}.shape_kind must be one of {_KINDS!r}; got {kind!r}"
+            )
         shape = _TShape(kind, number)
         scanner.label = shape.label
         _read_shape_geometry(scanner, shape, version, factor)
         flags = scanner.word()
         if len(flags) != 7 or set(flags) - {"0", "1"}:
-            raise scanner._fail(f"Malformed shape flags {flags!r}")
+            raise scanner._fail(
+                f"{shape.label}.flags must contain seven binary digits; got {flags!r}"
+            )
         children = []
         while scanner.peek_word() != "*":
             children.append(_read_reference(scanner, count, number))
@@ -927,7 +1085,11 @@ def _read_shapes(
         shape.children = tuple(children)
         depth = 1 + max((depths[child.number] for child in children), default=0)
         if depth > scanner.limits.max_depth:
-            raise refuse("limit", shape.label, "Shape references exceed the depth limit.")
+            raise refuse(
+                "limit",
+                shape.label,
+                f"{shape.label}.reference_depth must not exceed max_depth={scanner.limits.max_depth}; got {depth}",
+            )
         depths[number] = depth
         scanner.depth = max(scanner.depth, depth)
         shapes[number] = shape
@@ -938,18 +1100,22 @@ def _read_reference(scanner: _Scanner, count: int, owner: int | None) -> _Refere
     token = scanner.word()
     orientation, digits = token[:1], token[1:]
     if orientation not in ("+", "-", "i", "e") or not digits.isdigit():
-        raise scanner._fail(f"Malformed shape reference {token!r}")
+        raise scanner._fail(
+            f"{scanner.label}.reference must contain an orientation and unsigned shape number; got {token!r}"
+        )
     number = int(digits)
     location = scanner.integer()
     if not 0 < number <= count:
         raise refuse(
-            "dangling-reference", scanner.label, f"Shape reference {number} is undefined."
+            "dangling-reference",
+            scanner.label,
+            f"{scanner.label}.shape_reference must lie between 1 and {count}; got {number}",
         )
     if owner is not None and number <= owner:
         raise refuse(
             "cyclic-reference",
             scanner.label,
-            f"Shape reference {number} is not defined before its owner.",
+            f"{scanner.label}.shape_reference must be greater than owner={owner} in reverse declaration order; got {number}",
         )
     return _Reference(orientation, number, location)
 
@@ -966,7 +1132,11 @@ def _decode(
         while not header and scanner.position < len(data):
             header = scanner.line()
     if header not in _HEADERS:
-        raise refuse("malformed", "header", f"Unrecognized BRep text header {header!r}.")
+        raise refuse(
+            "malformed",
+            "header",
+            f"brep.header must equal one of {tuple(_HEADERS)!r}; got {header!r}",
+        )
     version = _HEADERS[header]
     locations = _read_locations(scanner, factor)
     geometry = _GeometryReader(scanner, factor)
@@ -989,7 +1159,9 @@ def _decode(
     scanner.label = "root"
     root = _read_reference(scanner, len(shapes), None)
     if scanner.peek_word():
-        raise scanner._fail("Unexpected trailing content")
+        raise scanner._fail(
+            f"brep.trailing_content must be empty after the root reference; got {scanner.peek_word()!r}"
+        )
     return (
         _Decoded(version, locations, curves2d, curves, surfaces, shapes, root, derived),
         scanner,
@@ -1009,12 +1181,12 @@ def _sign(orientation: str, label: str, /) -> int:
             raise refuse(
                 "unsupported-entity",
                 label,
-                "INTERNAL/EXTERNAL sub-shapes have no native boundary semantics.",
+                f"{label}.orientation must be FORWARD or REVERSED at the native boundary; got {orientation!r}",
             )
 
 
 class _Resolver:
-    """Lower the located TShape graph to one exact native stage."""
+    """Lower the located TShape graph to a native carrier/topology stage."""
 
     def __init__(self, decoded: _Decoded, policy: CadImportPolicy, factor: float) -> None:
         self.decoded = decoded
@@ -1044,7 +1216,7 @@ class _Resolver:
 
     @staticmethod
     def _reference_label(shape: _TShape, location_path: tuple[int, ...]) -> str:
-        """Qualify a declaration with actual source location references, not coordinates."""
+        """Qualify a declaration with source location references."""
         locations = tuple(location for location in location_path if location != 0)
         suffix = (
             "" if not locations else f" [location refs:{','.join(map(str, locations))}]"
@@ -1053,7 +1225,11 @@ class _Resolver:
 
     def _location(self, index: int, label: str) -> RigidPlacement:
         if not 0 <= index < len(self.decoded.locations):
-            raise refuse("dangling-reference", label, f"Location {index} is undefined.")
+            raise refuse(
+                "dangling-reference",
+                label,
+                f"{label}.location_reference must lie between 0 and {len(self.decoded.locations) - 1}; got {index}",
+            )
         return self.decoded.locations[index]
 
     def _shape(self, reference: _Reference, kind: str, chain: tuple[str, ...]) -> _TShape:
@@ -1062,7 +1238,7 @@ class _Resolver:
             raise refuse(
                 "malformed",
                 shape.label,
-                f"Expected a {kind} sub-shape, found {shape.kind}.",
+                f"{shape.label}.subshape_kind must equal {kind!r}; got {shape.kind!r}",
                 chain,
             )
         self.counts[kind] = self.counts.get(kind, 0) + 1
@@ -1070,7 +1246,7 @@ class _Resolver:
             raise refuse(
                 "limit",
                 shape.label,
-                "Expanded shape uses exceed the entity limit.",
+                f"resource.shape_uses must not exceed max_nodes={self.policy.limits.max_nodes}; got {sum(self.counts.values())}",
                 chain,
             )
         return shape
@@ -1080,7 +1256,10 @@ class _Resolver:
     ) -> _Carrier:
         if not 1 <= index <= len(table):
             raise refuse(
-                "dangling-reference", chain[-1], f"{what} {index} is undefined.", chain
+                "dangling-reference",
+                chain[-1],
+                f"{chain[-1]}.{what.lower()}_reference must lie between 1 and {len(table)}; got {index}",
+                chain,
             )
         carrier = table[index - 1]
         if carrier.value is None:
@@ -1100,7 +1279,9 @@ class _Resolver:
         key = (reference.number, located.key())
         if key not in self.vertices:
             if shape.point is None:
-                raise RuntimeError("Decoded vertices carry a point.")
+                raise RuntimeError(
+                    f"{shape.label}.point must be present after decoding; got None"
+                )
             self.created.append(
                 ("Ve", reference.number, reference, placement, chain, location_path)
             )
@@ -1128,7 +1309,7 @@ class _Resolver:
             raise refuse(
                 "unsupported-entity",
                 shape.label,
-                "Edges whose p-curves are not same-parameter are not admitted.",
+                f"{shape.label}.same_parameter must be true for supplied p-curves; got {shape.same_parameter!r}",
                 chain,
             )
         starts = [child for child in shape.children if child.orientation == "+"]
@@ -1137,7 +1318,7 @@ class _Resolver:
             raise refuse(
                 "unsupported-entity",
                 shape.label,
-                "An edge needs exactly one FORWARD and one REVERSED vertex.",
+                f"{shape.label}.vertices must contain one FORWARD and one REVERSED use; got forward={len(starts)}, reversed={len(ends)}, total={len(shape.children)}",
                 chain,
             )
         uses = (*location_path, reference.location)
@@ -1149,13 +1330,16 @@ class _Resolver:
                 raise refuse(
                     "malformed",
                     shape.label,
-                    "A degenerated edge has two vertices.",
+                    f"{shape.label}.degenerated_vertices must resolve to one vertex; got start={start}, end={end}",
                     chain,
                 )
             surfaces = [r for r in shape.representations if r.kind in (2, 3)]
             if not surfaces:
                 raise refuse(
-                    "malformed", shape.label, "A degenerated edge has no p-curve.", chain
+                    "malformed",
+                    shape.label,
+                    f"{shape.label}.degenerated_pcurves must contain a surface representation; got count={len(surfaces)}",
+                    chain,
                 )
             index = self.stage.degenerate(start, surfaces[0].first, surfaces[0].last)
             self.stage.provenance.append(
@@ -1168,15 +1352,20 @@ class _Resolver:
                 raise refuse(
                     "unsupported-entity",
                     shape.label,
-                    "An edge needs exactly one 3D curve representation.",
+                    f"{shape.label}.spatial_curves must contain one 3D representation; got count={len(curves)}",
                     chain,
                 )
             representation = curves[0]
             carrier = self._carrier(
                 self.decoded.curves, representation.curve, (*chain, "Curves"), "Curve"
             )
-            if not isinstance(carrier.value, AbstractCurve):
-                raise RuntimeError("Curve tables hold curves.")
+            match carrier.value:
+                case AbstractCurve():
+                    pass
+                case _:
+                    raise RuntimeError(
+                        f"{carrier.label}.carrier must be a curve; got {type(carrier.value).__name__}"
+                    )
             curve = place_curve(
                 carrier.value,
                 located.compose(self._location(representation.location, shape.label)),
@@ -1191,7 +1380,7 @@ class _Resolver:
                 raise refuse(
                     "inconsistent-geometry",
                     carrier.label,
-                    "An edge range leaves its trimmed curve.",
+                    f"{shape.label}.parameter_range must lie within its carrier trim with 1e-9 endpoint allowance; got range={(first, last)!r}, trim={carrier.trim!r}",
                     chain,
                 )
             try:
@@ -1246,7 +1435,7 @@ class _Resolver:
                 raise refuse(
                     "unsupported-entity",
                     shape.label,
-                    "P-curve ranges differing from the 3D range are not admitted.",
+                    f"{shape.label}.pcurve_range must equal its 3D representation range; got pcurve={(representation.first, representation.last)!r}, spatial={(edge_curves[0].first, edge_curves[0].last)!r}",
                     chain,
                 )
             if carrier.trim is not None and (
@@ -1256,12 +1445,17 @@ class _Resolver:
                 raise refuse(
                     "inconsistent-geometry",
                     carrier.label,
-                    "A p-curve range leaves its trim.",
+                    f"{shape.label}.pcurve_range must lie within its carrier trim; got range={(representation.first, representation.last)!r}, trim={carrier.trim!r}",
                     (*chain, shape.label, "Curve2ds"),
                 )
             pcurve = carrier.value
-            if not isinstance(pcurve, AbstractCurve):
-                raise RuntimeError("Curve2d tables hold curves.")
+            match pcurve:
+                case AbstractCurve():
+                    pass
+                case _:
+                    raise RuntimeError(
+                        f"{carrier.label}.carrier must be a parameter curve; got {type(pcurve).__name__}"
+                    )
             return pcurve, representation.first, representation.last
         spatial = [r for r in shape.representations if r.kind == 1]
         if len(spatial) == 1 and not shape.degenerated:
@@ -1269,7 +1463,7 @@ class _Resolver:
         raise refuse(
             "unsupported-entity",
             shape.label,
-            "An edge without a p-curve requires a nondegenerate explicit 3D carrier.",
+            f"{shape.label}.omitted_pcurve must have one nondegenerate explicit 3D carrier; got spatial_count={len(spatial)}, degenerated={shape.degenerated!r}",
             chain,
         )
 
@@ -1283,7 +1477,7 @@ class _Resolver:
         raise refuse(
             "unsupported-entity",
             shape.label,
-            "An edge needs exactly one FORWARD and one REVERSED vertex.",
+            f"{shape.label}.vertex_uses must include orientation {orientation!r}; got orientations={tuple(child.orientation for child in shape.children)!r}",
         )
 
     def wire(
@@ -1333,7 +1527,7 @@ class _Resolver:
                     raise refuse(
                         "unsupported-entity",
                         shape.label,
-                        "A collapsed edge requires a declared p-curve.",
+                        f"{shape.label}.collapsed_pcurve must be declared; got pcurve=None, curve_index={curve_index}",
                         (*chain, wire.label),
                     )
                 native_first, native_last = self.stage.edge_ranges[edge]
@@ -1353,11 +1547,14 @@ class _Resolver:
                         str(error),
                         (*chain, wire.label),
                     ) from error
-                ends = np.asarray(
-                    recovered.curve.evaluate(jnp.asarray((native_first, native_last)))
+                ends = curve_evaluate_host(
+                    recovered.curve,
+                    np.asarray((native_first, native_last), dtype=np.float64),
                 )
             else:
-                ends = np.asarray(pcurve.evaluate(jnp.asarray((first, last))))
+                ends = curve_evaluate_host(
+                    pcurve, np.asarray((first, last), dtype=np.float64)
+                )
             keys = (
                 self._vertex_key(shape, edge_located, "+"),
                 self._vertex_key(shape, edge_located, "-"),
@@ -1366,7 +1563,12 @@ class _Resolver:
                 ends, keys = ends[::-1], keys[::-1]
             uses.append((edge_reference, shape, sense, pcurve, ends, keys))
         if not uses:
-            raise refuse("malformed", wire.label, "A wire has no edges.", chain)
+            raise refuse(
+                "malformed",
+                wire.label,
+                f"{wire.label}.edges must be nonempty; got count={len(uses)}",
+                chain,
+            )
         order = [0]
         remaining = set(range(1, len(uses)))
         while remaining:
@@ -1381,7 +1583,7 @@ class _Resolver:
                 raise refuse(
                     "inconsistent-geometry",
                     wire.label,
-                    "The wire does not form one unambiguous connected loop.",
+                    f"{wire.label}.successor must be unique at the current endpoint; got candidates={len(candidates)}, continuous={len(continuous)}, selected={len(chosen)}",
                     chain,
                 )
             order.append(chosen[0])
@@ -1436,8 +1638,13 @@ class _Resolver:
         )
         surface = located.compose(self._location(shape.surface_location, shape.label))
         raw = carrier.value
-        if not isinstance(raw, AbstractSurfacePatch):
-            raise RuntimeError("Surface tables hold surfaces.")
+        match raw:
+            case AbstractSurfacePatch():
+                pass
+            case _:
+                raise RuntimeError(
+                    f"{carrier.label}.carrier must be a surface; got {type(raw).__name__}"
+                )
         patch = place_surface(raw, surface, carrier.label)
         loops = []
         for wire_reference in shape.children:
@@ -1467,7 +1674,7 @@ class _Resolver:
                         raise refuse(
                             "inconsistent-geometry",
                             shape.label,
-                            "A rectangular surface trim requires an explicit p-curve.",
+                            f"{shape.label}.surface_trim_pcurve must be declared; got coedge={coedge.label!r}, pcurve=None",
                             chain,
                         )
                     box = np.asarray(coedge.pcurve.bounding_box(first, last))
@@ -1475,7 +1682,7 @@ class _Resolver:
                         raise refuse(
                             "inconsistent-geometry",
                             shape.label,
-                            "A face boundary leaves its rectangular surface trim.",
+                            f"{shape.label}.pcurve_bounds must lie inside its rectangular trim with 1e-9 coordinate allowance; got box={box!r}, trim={carrier.surface_trim!r}",
                             chain,
                         )
         index = self.stage.face(
@@ -1514,7 +1721,12 @@ class _Resolver:
             faces.append(face)
             orientations.append(use * self.stage.faces[face].orientation)
         if not faces:
-            raise refuse("malformed", shape.label, "A shell has no faces.", chain)
+            raise refuse(
+                "malformed",
+                shape.label,
+                f"{shape.label}.faces must be nonempty; got count={len(faces)}",
+                chain,
+            )
         self.stage.shells.append((faces, True))
         self.stage.shell_orientations[len(self.stage.shells) - 1] = orientations
         self.stage.provenance.append(
@@ -1538,7 +1750,7 @@ class _Resolver:
             raise refuse(
                 "unsupported-entity",
                 shape.label,
-                "A REVERSED solid use is not admitted.",
+                f"{shape.label}.solid_orientation must be FORWARD; got {reference.orientation!r}",
                 chain,
             )
         located = placement.compose(self._location(reference.location, shape.label))
@@ -1549,7 +1761,12 @@ class _Resolver:
                 for child in shape.children
             ]
             if not shells:
-                raise refuse("malformed", shape.label, "A solid has no shells.", chain)
+                raise refuse(
+                    "malformed",
+                    shape.label,
+                    f"{shape.label}.shells must be nonempty; got count={len(shells)}",
+                    chain,
+                )
             shells.sort(key=lambda shell: -self._shell_extent(shell))
             self.stage.solids.append(shells)
             self.solids[reference.number] = len(self.stage.solids) - 1
@@ -1572,7 +1789,9 @@ class _Resolver:
             )
         if len(self.solid_uses) > self.policy.maximum_occurrences:
             raise refuse(
-                "limit", shape.label, "Solid occurrences exceed the policy limit."
+                "limit",
+                shape.label,
+                f"model.occurrences must not exceed maximum_occurrences={self.policy.maximum_occurrences}; got {len(self.solid_uses)}",
             )
 
     def _shell_extent(self, shell: int) -> float:
@@ -1598,7 +1817,10 @@ class _Resolver:
         shape = self.decoded.shapes[reference.number]
         if depth > self.policy.limits.max_depth:
             raise refuse(
-                "limit", shape.label, "Compound nesting exceeds the depth limit.", chain
+                "limit",
+                shape.label,
+                f"{shape.label}.compound_depth must not exceed max_depth={self.policy.limits.max_depth}; got {depth}",
+                chain,
             )
         match shape.kind:
             case "Co" | "CS":
@@ -1607,7 +1829,7 @@ class _Resolver:
                     raise refuse(
                         "unsupported-entity",
                         shape.label,
-                        "Reversed compound uses have no native occurrence orientation.",
+                        f"{shape.label}.compound_orientation must be FORWARD; got {reference.orientation!r}",
                         chain,
                     )
                 located = placement.compose(
@@ -1662,7 +1884,7 @@ class _Resolver:
                     raise refuse(
                         "unsupported-entity",
                         shape.label,
-                        "A reversed free entity has no native use-orientation field.",
+                        f"{shape.label}.free_orientation must be FORWARD; got {reference.orientation!r}",
                         chain,
                     )
                 if shape.kind == "Ed":
@@ -1673,12 +1895,12 @@ class _Resolver:
                 raise refuse(
                     "unsupported-entity",
                     shape.label,
-                    f"Free {shape.kind} shapes have no native boundary representation.",
+                    f"{shape.label}.free_kind must have a native boundary representation; got {shape.kind!r}",
                     chain,
                 )
 
     def occurrences(self) -> bool:
-        """Stage explicit source occurrences and actual compound relationships."""
+        """Stage explicit source occurrences and declared compound relationships."""
         uses: dict[int, list[RigidPlacement]] = {}
         for solid, placement in self.solid_uses:
             uses.setdefault(solid, []).append(placement)
@@ -1722,6 +1944,81 @@ class _Resolver:
 # ------------------------------------------------------------------ reader
 
 
+class _SourceTolerances(StrictModule):
+    maximum: float | None = eqx.field(static=True)
+    evidence: CadImportToleranceEvidence = eqx.field(static=True)
+    declarations: tuple[tuple[str, float], ...] = eqx.field(static=True)
+    unrepresentable_count: int = eqx.field(static=True)
+
+
+def _source_tolerances(
+    decoded: _Decoded,
+    model: BRepModel,
+    provenance: list[tuple[str, str]],
+    factor: float,
+    unit: UnitDefinition,
+) -> _SourceTolerances:
+    """Retain source declarations and compare them with the enforced model limit."""
+    declared: list[tuple[BRepEntityId | None, float]] = []
+    unrepresentable: dict[str, AdapterLoss] = {}
+    converted_bounds: list[float] = []
+    for label, external in provenance:
+        if not external.startswith("TShapes#"):
+            continue
+        kind, _, native_index = label.partition(":")
+        match kind:
+            case "vertex":
+                entity = model.vertex_ids[int(native_index)]
+            case "edge":
+                entity = model.edge_ids[int(native_index)]
+            case "face":
+                entity = model.face_ids[int(native_index)]
+            case _:
+                continue
+        number = int(external.split(" ", 1)[0].removeprefix("TShapes#"))
+        declaration = decoded.shapes[number].tolerance
+        if declaration is None:
+            continue
+        converted = declaration * factor
+        if isfinite(converted):
+            declared.append((entity, converted))
+        else:
+            unrepresentable[external] = unrepresentable_cad_tolerance_loss(
+                f"{label} ({external})",
+                declaration,
+                f"{unit.symbol} ({unit.unit_id})",
+                model.report.curve_surface_tolerance,
+            )
+    declarations = tuple(
+        (shape.label, shape.tolerance)
+        for shape in decoded.shapes.values()
+        if shape.tolerance is not None
+    )
+    for external, value in declarations:
+        converted = value * factor
+        if isfinite(converted):
+            converted_bounds.append(converted)
+        elif external not in unrepresentable:
+            unrepresentable[external] = unrepresentable_cad_tolerance_loss(
+                external,
+                value,
+                f"{unit.symbol} ({unit.unit_id})",
+                model.report.curve_surface_tolerance,
+            )
+    return _SourceTolerances(
+        max(converted_bounds, default=None),
+        build_cad_import_tolerance_evidence(
+            model,
+            declared,
+            unrepresentable_losses=tuple(
+                unrepresentable[external] for external in sorted(unrepresentable)
+            ),
+        ),
+        declarations,
+        len(unrepresentable),
+    )
+
+
 def _import(
     resource: BoundedResource, policy: CadImportPolicy, unit: UnitDefinition, /
 ) -> CadImportResult:
@@ -1729,7 +2026,7 @@ def _import(
     factor = length_factor(unit_meters, policy.coordinate_contract)
     decoded, scanner = _decode(resource.data, policy, factor)
     # Stage vertices and edges in file (TShape) order, not traversal order, so
-    # exported native models re-read with their exact entity numbering.
+    # exported native models retain their source entity numbering.
     survey = _Resolver(decoded, policy, factor)
     survey.walk(decoded.root, RigidPlacement.identity(), (), 0)
     resolver = _Resolver(decoded, policy, factor)
@@ -1755,7 +2052,7 @@ def _import(
     )
     geometry = model.geometry
     if geometry is None:
-        raise RuntimeError("Publishing an exact CAD stage must produce geometry.")
+        raise RuntimeError("CadStage.publish.geometry must be present; got None")
     dropped = {name: count for name, count in decoded.derived.items() if count}
     losses = [
         AdapterLoss(
@@ -1767,12 +2064,19 @@ def _import(
         )
         for name, count in sorted(dropped.items())
     ]
+    discarded_loss_count = len(losses)
+    tolerances = _source_tolerances(
+        decoded, model, resolver.stage.provenance, factor, unit
+    )
+    losses.extend(tolerances.evidence.losses)
     resource = account_bounded_resource(
         resource,
         depth=scanner.depth,
         nodes=scanner.nodes,
         attributes=scanner.attributes,
-        losses=len(losses),
+        # Retained finite declarations do not consume loss allowance. Absent
+        # converted bounds and discarded derived records do.
+        losses=discarded_loss_count + tolerances.unrepresentable_count,
     )
     report = AdapterReport(
         AdapterStatus.DECLARED_LOSS if losses else AdapterStatus.LOSSLESS,
@@ -1802,6 +2106,10 @@ def _import(
     for shape in decoded.shapes.values():
         counts[shape.kind] = counts.get(shape.kind, 0) + 1
     return CadImportResult(
+        entity_metadata=None,
+        source_tolerance=tolerances.maximum,
+        source_tolerances=tolerances.declarations,
+        tolerance_evidence=tolerances.evidence,
         model=model,
         format=_FORMAT,
         schema=f"cascade-topology-{decoded.version}",
@@ -1843,6 +2151,7 @@ def _import(
     )
 
 
+@checked
 def decode_brep_text_resource(
     resource: BoundedResource,
     policy: CadImportPolicy,
@@ -1850,21 +2159,21 @@ def decode_brep_text_resource(
     *,
     source_length_unit: UnitDefinition,
 ) -> CadImportResult:
-    """Decode one bounded OCCT BRep text resource into a native exact `BRepModel`.
+    """Decode a bounded OCCT BRep text resource into a native `BRepModel`.
 
-    ``source_length_unit`` declares the unitless file's length unit; values are
-    converted exactly to ``policy.coordinate_contract``. File same-parameter
-    ranges and p-curves are preserved by exact unit/parameter maps, including
-    degenerate pole edges; unsupported maps are refused rather than discarded.
+    ``source_length_unit`` supplies the file's length unit. Carrier and p-curve
+    parameter maps retain same-parameter ranges and degenerate pole edges.
+    ``source_tolerances`` retains every raw source declaration by external
+    reference; ``source_tolerance`` summarizes their maximum in target units.
+    Entity evidence carries both declared tolerance and certified gap bounds.
+    Only declarations above the enforced model limit or entities that cannot
+    carry the declaration create a tolerance loss. Discarded derived fields,
+    not retained declarations, spend the semantic-loss allowance.
     """
-    if not isinstance(resource, BoundedResource):
-        raise TypeError("resource must be a BoundedResource.")
-    if not isinstance(policy, CadImportPolicy):
-        raise TypeError("policy must be a CadImportPolicy.")
-    if not isinstance(source_length_unit, UnitDefinition):
-        raise TypeError("source_length_unit must be a UnitDefinition.")
     if resource.manifest.limits != policy.limits:
-        raise ValueError("The bounded resource and import policy limits must match.")
+        raise ValueError(
+            f"resource.manifest.limits must equal policy.limits; got {resource.manifest.limits!r}"
+        )
     try:
         return _import(resource, policy, source_length_unit)
     except CadInterchangeError as error:
@@ -1886,17 +2195,12 @@ def decode_brep_text_bytes(
     source_length_unit: UnitDefinition,
     source_path: str | None = None,
 ) -> CadImportResult:
-    """Bound and decode exact in-memory OCCT BRep text bytes."""
-    if not isinstance(policy, CadImportPolicy):
-        raise TypeError("policy must be a CadImportPolicy.")
-    try:
-        resource = bounded_resource_from_bytes(
-            data, limits=policy.limits, source_path=source_path
-        )
-    except ResourceReadError as error:
-        resource_refusal(error)
-    return decode_brep_text_resource(
-        resource, policy, source_length_unit=source_length_unit
+    """Bound and decode in-memory OCCT BRep text bytes."""
+    return decode_cad_bytes(
+        data,
+        policy,
+        decoder=partial(decode_brep_text_resource, source_length_unit=source_length_unit),
+        source_path=source_path,
     )
 
 
@@ -1909,16 +2213,11 @@ def read_brep_text(
     source_length_unit: UnitDefinition,
 ) -> CadImportResult:
     """Descriptor-read and decode one bounded local OCCT BRep text file."""
-    if not isinstance(policy, CadImportPolicy):
-        raise TypeError("policy must be a CadImportPolicy.")
-    try:
-        resource = read_bounded_resource(
-            path, trusted_root=trusted_root, limits=policy.limits
-        )
-    except ResourceReadError as error:
-        resource_refusal(error)
-    return decode_brep_text_resource(
-        resource, policy, source_length_unit=source_length_unit
+    return read_cad_file(
+        path,
+        policy,
+        decoder=partial(decode_brep_text_resource, source_length_unit=source_length_unit),
+        trusted_root=trusted_root,
     )
 
 
@@ -1928,7 +2227,9 @@ def read_brep_text(
 def _number(value: float, /) -> str:
     value_ = float(value)
     if not isfinite(value_):
-        raise refuse("inexact-export", "number", "Non-finite values cannot be exported.")
+        raise refuse(
+            "inexact-export", "number", f"export.number must be finite; got {value_!r}"
+        )
     return repr(value_)
 
 
@@ -1937,7 +2238,7 @@ def _numbers(values: object, /) -> str:
 
 
 def _unit_speed(vector: np.ndarray, /) -> float:
-    """Line speed, treating one within four ulps of unity as exactly unit."""
+    """Return speed with a four-ulp unit-direction normalization allowance."""
     speed = float(np.linalg.norm(vector))
     return 1.0 if abs(speed - 1.0) <= 4.0 * np.finfo(np.float64).eps else speed
 
@@ -1953,7 +2254,9 @@ def _curve_record(curve: AbstractCurve, label: str, /) -> str:
         case LineCurve():
             direction = np.asarray(curve.direction)
             if _unit_speed(direction) != 1.0:
-                raise RuntimeError("Lines are normalized before encoding.")
+                raise RuntimeError(
+                    f"{label}.direction must have unit speed after normalization; got {_unit_speed(direction)!r}"
+                )
             return f"1 {_numbers(curve.origin)} {_numbers(direction)}"
         case CircleCurve() | EllipseCurve() | ParabolaCurve() | HyperbolaCurve():
             first, second, normal = orthonormal_frame(
@@ -1963,24 +2266,26 @@ def _curve_record(curve: AbstractCurve, label: str, /) -> str:
                 frame = f"{_numbers(normal)} {_numbers(first)} {_numbers(second)}"
             else:
                 frame = f"{_numbers(first)} {_numbers(second)}"
-            if isinstance(curve, CircleCurve):
-                return (
-                    f"2 {_numbers(curve.center)} {frame} {_number(float(curve.radius))}"
-                )
-            if isinstance(curve, ParabolaCurve):
-                return f"4 {_numbers(curve.vertex)} {frame} {_number(float(curve.focal_length))}"
-            if isinstance(curve, HyperbolaCurve):
-                return f"5 {_numbers(curve.center)} {frame} {_number(float(curve.first_radius))} {_number(float(curve.second_radius))}"
-            if float(curve.first_radius) < float(curve.second_radius):
-                raise refuse(
-                    "inexact-export",
-                    label,
-                    "OCCT ellipses require the first radius to be the major radius.",
-                )
-            return (
-                f"3 {_numbers(curve.center)} {frame} {_number(float(curve.first_radius))} "
-                f"{_number(float(curve.second_radius))}"
-            )
+            match curve:
+                case CircleCurve():
+                    return f"2 {_numbers(curve.center)} {frame} {_number(float(curve.radius))}"
+                case ParabolaCurve():
+                    return f"4 {_numbers(curve.vertex)} {frame} {_number(float(curve.focal_length))}"
+                case HyperbolaCurve():
+                    return f"5 {_numbers(curve.center)} {frame} {_number(float(curve.first_radius))} {_number(float(curve.second_radius))}"
+                case EllipseCurve():
+                    if float(curve.first_radius) < float(curve.second_radius):
+                        raise refuse(
+                            "inexact-export",
+                            label,
+                            f"{label}.first_radius must be at least second_radius for an OCCT ellipse; got first={float(curve.first_radius)!r}, second={float(curve.second_radius)!r}",
+                        )
+                    return (
+                        f"3 {_numbers(curve.center)} {frame} {_number(float(curve.first_radius))} "
+                        f"{_number(float(curve.second_radius))}"
+                    )
+                case _:
+                    assert_never(curve)
         case OffsetCurve():
             direction = "" if curve.direction is None else f" {_numbers(curve.direction)}"
             return f"9 {_number(float(curve.distance))}{direction}\n{_curve_record(curve.base, label)}"
@@ -2005,12 +2310,12 @@ def _curve_record(curve: AbstractCurve, label: str, /) -> str:
             raise refuse(
                 "inexact-export",
                 label,
-                f"{type(curve).__name__} carriers have no exact OCCT entity.",
+                f"{label}.carrier must have an OCCT representation; got {type(curve).__name__}",
             )
 
 
 def _surface_record(patch: AbstractSurfacePatch, label: str, /) -> tuple[str, np.ndarray]:
-    """OCCT surface record and its exact native-to-external parameter map."""
+    """Return an OCCT surface record and its native-to-external parameter map."""
     match patch:
         case OffsetSurface():
             basis, parameter_map = _surface_record(patch.base, label)
@@ -2040,15 +2345,17 @@ def _surface_record(patch: AbstractSurfacePatch, label: str, /) -> tuple[str, np
                 raise refuse(
                     "inexact-export",
                     label,
-                    "The surface axis must be orthogonal to its chart.",
+                    f"{label}.axis must match its chart normal or its negative within 1e-9; got residual={min(np.max(np.abs(normal - axis)), np.max(np.abs(normal + axis))):.17g}",
                 )
             # OCCT Ax3 supports direct and indirect orthonormal frames.
             normal = axis
-            origin = (
-                patch.center
-                if isinstance(patch, (SpherePatch, TorusPatch))
-                else patch.origin
-            )
+            match patch:
+                case SpherePatch() | TorusPatch():
+                    origin = patch.center
+                case CylinderPatch() | ConePatch():
+                    origin = patch.origin
+                case _:
+                    assert_never(patch)
             frame = f"{_numbers(origin)} {_numbers(normal)} {_numbers(first)} {_numbers(second)}"
             match patch:
                 case CylinderPatch():
@@ -2061,35 +2368,37 @@ def _surface_record(patch: AbstractSurfacePatch, label: str, /) -> tuple[str, np
                     )
                 case SpherePatch():
                     return f"4 {frame} {_number(float(patch.radius))}", np.eye(2)
-                case _:
+                case TorusPatch():
                     return (
                         f"5 {frame} {_number(float(patch.major_radius))} {_number(float(patch.minor_radius))}",
                         np.eye(2),
                     )
+                case _:
+                    assert_never(patch)
         case ExtrusionSurface():
             direction = np.asarray(patch.direction)
             speed = float(np.linalg.norm(direction))
-            if (
-                isinstance(patch.curve, LineCurve)
-                and _unit_speed(np.asarray(patch.curve.direction)) != 1.0
-            ):
-                raise refuse(
-                    "inexact-export",
-                    label,
-                    "An extrusion of a non-unit-speed line is not exported.",
-                )
+            match patch.curve:
+                case LineCurve() if _unit_speed(np.asarray(patch.curve.direction)) != 1.0:
+                    raise refuse(
+                        "inexact-export",
+                        label,
+                        f"{label}.extrusion_basis.direction must have unit speed for a line carrier; got speed={_unit_speed(np.asarray(patch.curve.direction))!r}",
+                    )
+                case _:
+                    pass
             basis = _curve_record(patch.curve, label)
             return f"6 {_numbers(direction / speed)}\n{basis}", np.diag((1.0, speed))
         case RevolutionSurface():
-            if (
-                isinstance(patch.curve, LineCurve)
-                and _unit_speed(np.asarray(patch.curve.direction)) != 1.0
-            ):
-                raise refuse(
-                    "inexact-export",
-                    label,
-                    "A revolution of a non-unit-speed line is not exported.",
-                )
+            match patch.curve:
+                case LineCurve() if _unit_speed(np.asarray(patch.curve.direction)) != 1.0:
+                    raise refuse(
+                        "inexact-export",
+                        label,
+                        f"{label}.revolution_basis.direction must have unit speed for a line carrier; got speed={_unit_speed(np.asarray(patch.curve.direction))!r}",
+                    )
+                case _:
+                    pass
             basis = _curve_record(patch.curve, label)
             return (
                 f"7 {_numbers(patch.axis_origin)} {_numbers(patch.axis_direction)}\n{basis}",
@@ -2124,21 +2433,23 @@ def _surface_record(patch: AbstractSurfacePatch, label: str, /) -> tuple[str, np
             raise refuse(
                 "inexact-export",
                 label,
-                f"{type(patch).__name__} surfaces have no exact OCCT entity.",
+                f"{label}.surface must have an OCCT representation; got {type(patch).__name__}",
             )
 
 
 def _normalized_line(curve: AbstractCurve, label: str, /) -> tuple[AbstractCurve, float]:
     """Unit-speed OCCT form of a carrier and its parameter factor ``s = factor t``."""
-    if isinstance(curve, OffsetCurve):
-        basis, factor = _normalized_line(curve.base, label)
-        return OffsetCurve(basis, curve.distance, curve.direction), factor
-    if isinstance(curve, LineCurve):
-        speed = _unit_speed(np.asarray(curve.direction))
-        if speed != 1.0:
-            return LineCurve(curve.origin, np.asarray(curve.direction) / speed), speed
-    del label
-    return curve, 1.0
+    match curve:
+        case OffsetCurve():
+            basis, factor = _normalized_line(curve.base, label)
+            return OffsetCurve(basis, curve.distance, curve.direction), factor
+        case LineCurve():
+            speed = _unit_speed(np.asarray(curve.direction))
+            if speed != 1.0:
+                return LineCurve(curve.origin, np.asarray(curve.direction) / speed), speed
+            return curve, 1.0
+        case _:
+            return curve, 1.0
 
 
 def _export_pcurve(
@@ -2178,17 +2489,52 @@ def _export_pcurve(
             raise refuse(
                 "inexact-export",
                 label,
-                "This p-curve has no exact native carrier under the oblique plane chart map.",
+                f"{label}.pcurve must support the oblique plane chart map; got {type(curve).__name__}",
                 ("surface-parameter-map",),
             )
 
 
 def _pcurve_record(curve: AbstractCurve, first: float, last: float, label: str, /) -> str:
-    if isinstance(curve, LineCurve) and _unit_speed(np.asarray(curve.direction)) != 1.0:
-        origin, direction = np.asarray(curve.origin), np.asarray(curve.direction)
-        start, end = origin + first * direction, origin + last * direction
-        return f"7 0 0 1 2 2 {_numbers(start)} {_numbers(end)} {_number(first)} 2 {_number(last)} 2"
-    return _curve_record(curve, label)
+    match curve:
+        case LineCurve() if _unit_speed(np.asarray(curve.direction)) != 1.0:
+            origin, direction = np.asarray(curve.origin), np.asarray(curve.direction)
+            start, end = origin + first * direction, origin + last * direction
+            return f"7 0 0 1 2 2 {_numbers(start)} {_numbers(end)} {_number(first)} 2 {_number(last)} 2"
+        case _:
+            return _curve_record(curve, label)
+
+
+class _AssemblyPlan(StrictModule):
+    containers: dict[tuple[str, ...], BRepAssemblyContainer] = eqx.field(static=True)
+    roots: tuple[tuple[str, ...], ...] = eqx.field(static=True)
+    independent: tuple[BRepOccurrence, ...]
+
+
+class _AssemblyReferences(StrictModule):
+    references: dict[tuple[str, ...], tuple[str, int, int]] = eqx.field(static=True)
+    by_path: dict[tuple[str, ...], BRepOccurrence]
+
+
+class _AssemblyRoot(StrictModule):
+    reference: tuple[str, int, int] = eqx.field(static=True)
+    order: tuple[BRepOccurrence, ...]
+
+
+class _PreparedCarriers(StrictModule):
+    geometry: BRepGeometry
+    normalized: tuple[tuple[AbstractCurve, float], ...]
+    surface_factors: tuple[np.ndarray, ...]
+    tolerances: CadExportTolerances
+
+
+class _EncodedLowerEntities(StrictModule):
+    vertices: tuple[int, ...] = eqx.field(static=True)
+    edges: tuple[int, ...] = eqx.field(static=True)
+
+
+class _EncodedTopology(StrictModule):
+    solids: tuple[int, ...] = eqx.field(static=True)
+    loose: tuple[tuple[str, int, int], ...] = eqx.field(static=True)
 
 
 @dataclass(slots=True)
@@ -2211,7 +2557,7 @@ class _Writer:
     reference_records: list[tuple[str, str, int, int]] = field(default_factory=list)
 
     def provenance(self) -> tuple[tuple[str, str], ...]:
-        """Native inventory indices to actual emitted declarations/reference tokens."""
+        """Return native inventory mappings to emitted declarations and references."""
         count = len(self.records)
         definitions = tuple(
             (label, f"TShapes#{count - record} {self.records[record][0]}")
@@ -2223,52 +2569,59 @@ class _Writer:
         )
         return (*definitions, *uses)
 
-    def _assembly_root(
+    def _validate_assembly(
         self,
         geometry: BRepGeometry,
-        solids: list[int],
-        loose: list[tuple[str, int, int]],
-    ) -> tuple[str, int, int]:
-        """Emit only declared container relationships, never name/placement groups."""
+        solids: tuple[int, ...],
+        loose: tuple[tuple[str, int, int], ...],
+    ) -> _AssemblyPlan:
+        """Admit one declared root before emitting locations or container records."""
         containers = {
             container.path: container for container in geometry.assembly_containers
         }
         children = {
             path for container in containers.values() for path in container.child_paths
         }
-        roots = [
+        roots = tuple(
             container.path
             for container in geometry.assembly_containers
             if container.path not in children
-        ]
+        )
         members = {
             path for container in containers.values() for path in container.member_paths
         }
-        independent = [
+        independent = tuple(
             occurrence
             for occurrence in geometry.occurrences
             if occurrence.path not in members
-        ]
+        )
         if containers and (len(roots) != 1 or independent):
             raise refuse(
                 "inexact-export",
                 "assembly",
-                "BRep text has one root: disconnected containers or independent occurrence "
-                "roots require an explicitly declared parent container, never an inferred one.",
+                "assembly.roots must have one declared container without independent "
+                f"occurrences; got roots={len(roots)}, independent={len(independent)}",
             )
         if not containers and (len(independent) > 1 or (independent and loose)):
             raise refuse(
                 "inexact-export",
                 "assembly",
-                "Multiple independent roots cannot be exported without inventing container membership.",
+                "assembly.roots must have one independent occurrence or only loose entities; "
+                f"got independent={len(independent)}, loose={len(loose)}",
             )
         used_solids = {occurrence.solid for occurrence in geometry.occurrences}
         if used_solids != set(range(len(solids))):
             raise refuse(
                 "inexact-export",
                 "assembly",
-                "Uninstantiated solid definitions cannot be silently activated as root occurrences.",
+                "assembly.occurrences must instantiate every solid definition; "
+                f"got used={sorted(used_solids)}, defined={len(solids)}",
             )
+        return _AssemblyPlan(containers, roots, independent)
+
+    def _occurrence_references(
+        self, geometry: BRepGeometry, solids: tuple[int, ...]
+    ) -> _AssemblyReferences:
         references: dict[tuple[str, ...], tuple[str, int, int]] = {}
         by_path = {occurrence.path: occurrence for occurrence in geometry.occurrences}
         for index, occurrence in enumerate(geometry.occurrences):
@@ -2291,49 +2644,75 @@ class _Writer:
                     location,
                 )
             )
+        return _AssemblyReferences(references, by_path)
+
+    def _emit_containers(
+        self,
+        geometry: BRepGeometry,
+        plan: _AssemblyPlan,
+        uses: _AssemblyReferences,
+        loose: tuple[tuple[str, int, int], ...],
+    ) -> _AssemblyRoot:
+        containers, roots = plan.containers, plan.roots
+        references, by_path = uses.references, uses.by_path
         order: list[BRepOccurrence] = []
-        if containers:
-            pending: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
-                (roots[0], ("model",))
-            ]
-            while pending:
-                path, canonical = pending.pop()
-                container = containers[path]
-                if path != canonical:
-                    self.path_normalizations.append(("container", path, canonical))
-                order.extend(by_path[member] for member in container.member_paths)
-                pending.extend(
-                    (child, (*canonical, f"container{index}"))
-                    for index, child in reversed(tuple(enumerate(container.child_paths)))
-                )
-            records: dict[tuple[str, ...], int] = {}
-            pending_records = [(roots[0], False)]
-            while pending_records:
-                path, ready = pending_records.pop()
-                container = containers[path]
-                if not ready:
-                    pending_records.append((path, True))
-                    pending_records.extend(
-                        (child, False) for child in reversed(container.child_paths)
-                    )
-                    continue
-                uses = [references[member] for member in container.member_paths]
-                uses.extend(("+", records[child], 0) for child in container.child_paths)
-                if path == roots[0]:
-                    uses.extend(loose)
-                records[path] = self.record("Co", "", uses)
-            self.entity_records.extend(
-                (f"container:{index}", records[container.path])
-                for index, container in enumerate(geometry.assembly_containers)
+        pending: list[tuple[tuple[str, ...], tuple[str, ...]]] = [(roots[0], ("model",))]
+        while pending:
+            path, canonical = pending.pop()
+            container = containers[path]
+            if path != canonical:
+                self.path_normalizations.append(("container", path, canonical))
+            order.extend(by_path[member] for member in container.member_paths)
+            pending.extend(
+                (child, (*canonical, f"container{index}"))
+                for index, child in reversed(tuple(enumerate(container.child_paths)))
             )
-            root = ("+", records[roots[0]], 0)
+        records: dict[tuple[str, ...], int] = {}
+        pending_records = [(roots[0], False)]
+        while pending_records:
+            path, ready = pending_records.pop()
+            container = containers[path]
+            if not ready:
+                pending_records.append((path, True))
+                pending_records.extend(
+                    (child, False) for child in reversed(container.child_paths)
+                )
+                continue
+            children = [references[member] for member in container.member_paths]
+            children.extend(("+", records[child], 0) for child in container.child_paths)
+            if path == roots[0]:
+                children.extend(loose)
+            records[path] = self.record("Co", "", children)
+        self.entity_records.extend(
+            (f"container:{index}", records[container.path])
+            for index, container in enumerate(geometry.assembly_containers)
+        )
+        return _AssemblyRoot(("+", records[roots[0]], 0), tuple(order))
+
+    def _assembly_root(
+        self,
+        geometry: BRepGeometry,
+        topology: _EncodedTopology,
+    ) -> _AssemblyRoot:
+        plan = self._validate_assembly(geometry, topology.solids, topology.loose)
+        uses = self._occurrence_references(geometry, topology.solids)
+        independent, loose = plan.independent, topology.loose
+        if plan.containers:
+            emitted = self._emit_containers(geometry, plan, uses, loose)
+            root, order = emitted.reference, emitted.order
         elif independent:
             order = independent
-            root = references[independent[0].path]
+            root = uses.references[independent[0].path]
         elif len(loose) == 1:
+            order = ()
             root = loose[0]
         else:
-            root = ("+", self.record("Co", "", loose), 0)
+            order = ()
+            root = ("+", self.record("Co", "", list(loose)), 0)
+        self._normalize_occurrence_paths(order)
+        return _AssemblyRoot(root, order)
+
+    def _normalize_occurrence_paths(self, order: tuple[BRepOccurrence, ...]) -> None:
         totals: dict[int, int] = {}
         for occurrence in order:
             totals[occurrence.solid] = totals.get(occurrence.solid, 0) + 1
@@ -2349,7 +2728,6 @@ class _Writer:
                 self.path_normalizations.append(
                     ("occurrence", occurrence.path, canonical)
                 )
-        return root
 
     def record(
         self, kind: str, geometry: str, children: list[tuple[str, int, int]]
@@ -2362,16 +2740,20 @@ class _Writer:
             + len(self.surfaces)
             + len(self.locations)
         ) > self.policy.maximum_entities:
-            raise refuse("limit", kind, "The export exceeds the total entity limit.")
+            raise refuse(
+                "limit",
+                kind,
+                f"export.entities must not exceed maximum_entities={self.policy.maximum_entities}; got records={len(self.records)}, curves2d={len(self.curves2d)}, curves={len(self.curves)}, surfaces={len(self.surfaces)}, locations={len(self.locations)}",
+            )
         return len(self.records) - 1
 
-    def encode(self) -> bytes:
+    def _prepare_carriers(self) -> _PreparedCarriers:
         geometry = self.model.geometry
         if geometry is None:
             raise refuse(
                 "inexact-export",
                 self.model.source_id,
-                "Only models with exact native geometry can be exported.",
+                "model.geometry must retain native carriers; got None",
             )
         carrier_count = (
             len(geometry.curves)
@@ -2381,7 +2763,9 @@ class _Writer:
         )
         if carrier_count > self.policy.maximum_entities:
             raise refuse(
-                "limit", "geometry", "The export carriers exceed the entity limit."
+                "limit",
+                "geometry",
+                f"export.carriers must not exceed maximum_entities={self.policy.maximum_entities}; got {carrier_count}",
             )
         geometry, _, self.approximations = prepare_cad_export_geometry(
             self.model,
@@ -2391,13 +2775,15 @@ class _Writer:
         )
         normalized: list[tuple[AbstractCurve, float]] = []
         for index, curve in enumerate(geometry.curves):
-            if not isinstance(curve, AbstractCurve):
-                raise refuse(
-                    "inexact-export",
-                    f"curve:{index}",
-                    "Export preparation must produce a concrete curve carrier.",
-                )
-            normalized.append(_normalized_line(curve, f"curve:{index}"))
+            match curve:
+                case AbstractCurve():
+                    normalized.append(_normalized_line(curve, f"curve:{index}"))
+                case _:
+                    raise refuse(
+                        "inexact-export",
+                        f"curve:{index}",
+                        f"curve:{index}.carrier must be concrete after export preparation; got {type(curve).__name__}",
+                    )
         for curve, _ in normalized:
             self.curves.append(_curve_record(curve, "curve"))
         surface_factors = []
@@ -2405,14 +2791,25 @@ class _Writer:
             text, factor = _surface_record(patch, f"face:{face}")
             self.surfaces.append(text)
             surface_factors.append(factor)
+        tolerances = certified_cad_export_tolerances(self.model, self.approximations)
+        return _PreparedCarriers(
+            geometry, tuple(normalized), tuple(surface_factors), tolerances
+        )
+
+    def _encode_lower_entities(
+        self, prepared: _PreparedCarriers
+    ) -> _EncodedLowerEntities:
+        geometry = prepared.geometry
         vertices = [
-            self.record("Ve", f"1e-07\n{_numbers(point)}\n0 0", [])
-            for point in np.asarray(geometry.vertex_points)
+            self.record(
+                "Ve",
+                f"{prepared.tolerances.vertex_bounds[vertex]:.17g}\n{_numbers(point)}\n0 0",
+                [],
+            )
+            for vertex, point in enumerate(np.asarray(geometry.vertex_points))
         ]
+        normalized, surface_factors = prepared.normalized, prepared.surface_factors
         ranges = np.asarray(geometry.edge_ranges)
-        orientation = np.asarray(self.model.orientation)
-        # Native loops run about the parametric normal, exactly like OCCT's
-        # stored (TShape-level) wires; face orientations go on shell uses.
         uses: dict[int, list[tuple[int, int]]] = {}
         for face, loops in enumerate(geometry.face_loops):
             for loop in loops:
@@ -2432,49 +2829,80 @@ class _Writer:
             by_face: dict[int, list[int]] = {}
             for face, coedge in uses.get(edge, []):
                 by_face.setdefault(face, []).append(coedge)
-            for face, coedges in sorted(by_face.items()):
-                indices = {}
-                for coedge in coedges:
-                    raw_pcurve = geometry.pcurves[coedge]
-                    if not isinstance(raw_pcurve, AbstractCurve):
-                        raise refuse(
-                            "inexact-export",
-                            f"coedge:{coedge}",
-                            "Export preparation must produce a concrete parameter curve.",
-                        )
-                    pcurve = _export_pcurve(
-                        raw_pcurve,
-                        surface_factors[face],
-                        factor,
-                        f"coedge:{coedge}",
-                    )
-                    self.curves2d.append(
-                        _pcurve_record(pcurve, first, last, f"coedge:{coedge}")
-                    )
-                    indices[geometry.coedge_senses[coedge]] = len(self.curves2d)
-                    points = np.asarray(pcurve.evaluate(jnp.asarray((first, last))))
-                if len(coedges) == 1:
-                    head = f"2 {len(self.curves2d)}"
-                elif len(coedges) == 2 and set(indices) == {-1, 1}:
-                    head = f"3 {indices[1]} {indices[-1]} CN"
-                else:
-                    raise refuse(
-                        "non-manifold",
-                        f"edge:{edge}",
-                        "An edge is used more than twice or twice in one sense by a face.",
-                    )
-                lines.append(f"{head} {face + 1} 0 {_number(first)} {_number(last)}")
-                if self.version == "V2":
-                    lines.append(_numbers(points))
+            lines.extend(
+                self._encode_edge_pcurves(
+                    geometry, edge, by_face, surface_factors, factor, first, last
+                )
+            )
             lines.append("0")
             flag = int(curve_index == -1)
             edges.append(
                 self.record(
                     "Ed",
-                    f" 1e-07 1 1 {flag}\n" + "\n".join(lines),
+                    f" {prepared.tolerances.edge_bounds[edge]:.17g} 1 1 {flag}\n"
+                    + "\n".join(lines),
                     [("+", vertices[start], 0), ("-", vertices[end], 0)],
                 )
             )
+        return _EncodedLowerEntities(tuple(vertices), tuple(edges))
+
+    def _encode_edge_pcurves(
+        self,
+        geometry: BRepGeometry,
+        edge: int,
+        by_face: dict[int, list[int]],
+        surface_factors: tuple[np.ndarray, ...],
+        factor: float,
+        first: float,
+        last: float,
+    ) -> list[str]:
+        lines: list[str] = []
+        for face, coedges in sorted(by_face.items()):
+            indices: dict[int, int] = {}
+            points = np.empty((0, 2), dtype=np.float64)
+            for coedge in coedges:
+                raw_pcurve = geometry.pcurves[coedge]
+                match raw_pcurve:
+                    case AbstractCurve():
+                        pcurve = _export_pcurve(
+                            raw_pcurve, surface_factors[face], factor, f"coedge:{coedge}"
+                        )
+                    case _:
+                        raise refuse(
+                            "inexact-export",
+                            f"coedge:{coedge}",
+                            f"coedge:{coedge}.pcurve must be concrete after export preparation; got {type(raw_pcurve).__name__}",
+                        )
+                self.curves2d.append(
+                    _pcurve_record(pcurve, first, last, f"coedge:{coedge}")
+                )
+                indices[geometry.coedge_senses[coedge]] = len(self.curves2d)
+                points = curve_evaluate_host(
+                    pcurve, np.asarray((first, last), dtype=np.float64)
+                )
+            if len(coedges) == 1:
+                head = f"2 {len(self.curves2d)}"
+            elif len(coedges) == 2 and set(indices) == {-1, 1}:
+                head = f"3 {indices[1]} {indices[-1]} CN"
+            else:
+                raise refuse(
+                    "non-manifold",
+                    f"edge:{edge}",
+                    f"edge:{edge}.face_uses must contain one coedge or two opposite coedges; got face={face}, coedges={len(coedges)}, senses={tuple(indices)!r}",
+                )
+            lines.append(f"{head} {face + 1} 0 {_number(first)} {_number(last)}")
+            if self.version == "V2":
+                lines.append(_numbers(points))
+        return lines
+
+    def _encode_topology(
+        self,
+        geometry: BRepGeometry,
+        lower: _EncodedLowerEntities,
+        tolerances: CadExportTolerances,
+    ) -> _EncodedTopology:
+        vertices, edges = lower.vertices, lower.edges
+        orientation = np.asarray(self.model.orientation)
         faces = []
         for face, loops in enumerate(geometry.face_loops):
             wires = [
@@ -2494,7 +2922,9 @@ class _Writer:
             ]
             faces.append(
                 self.record(
-                    "Fa", f"0 1e-07 {face + 1} 0", [("+", wire, 0) for wire in wires]
+                    "Fa",
+                    f"0 {tolerances.face_bounds[face]:.17g} {face + 1} 0",
+                    [("+", wire, 0) for wire in wires],
                 )
             )
         shells = []
@@ -2547,9 +2977,16 @@ class _Writer:
             for index, vertex in enumerate(vertices)
             if index not in bound_vertices
         )
-        orientation_, root, location = self._assembly_root(geometry, solids, roots)
-        self.reference_records.append(("root", orientation_, root, location))
-        return self._text(root, orientation_, location)
+        return _EncodedTopology(tuple(solids), tuple(roots))
+
+    def encode(self) -> bytes:
+        prepared = self._prepare_carriers()
+        geometry = prepared.geometry
+        lower = self._encode_lower_entities(prepared)
+        topology = self._encode_topology(geometry, lower, prepared.tolerances)
+        orientation, root, location = self._assembly_root(geometry, topology).reference
+        self.reference_records.append(("root", orientation, root, location))
+        return self._text(root, orientation, location)
 
     def _text(self, root: int, orientation: str, location: int) -> bytes:
         count = len(self.records)
@@ -2586,10 +3023,15 @@ class _Writer:
             parts.extend((kind, geometry, "", flags[kind], f"{references} *".lstrip()))
         parts.extend(("", f"{orientation}{count - root} {location}", ""))
         if sum(map(len, parts)) + len(parts) - 1 > self.policy.maximum_bytes:
-            raise refuse("limit", "resource", "The export exceeds the byte limit.")
+            raise refuse(
+                "limit",
+                "resource",
+                f"export.bytes must not exceed maximum_bytes={self.policy.maximum_bytes}; got {sum(map(len, parts)) + len(parts) - 1}",
+            )
         return "\n".join(parts).encode("ascii")
 
 
+@checked
 def write_brep_text(
     model: BRepModel,
     path: str | os.PathLike[str],
@@ -2599,19 +3041,16 @@ def write_brep_text(
     version: BRepTextVersion = "V3",
     mode: PublicationMode = "exclusive",
 ) -> CadExportResult:
-    """Atomically publish a native exact model as an OCCT BRep text file.
+    """Atomically publish native carriers as an OCCT BRep text file.
 
-    Coordinates are written in the model's length unit (the format has none).
-    Plane charts, lines, cones and extrusions use OCCT's parameterization, with
-    their p-curves mapped exactly. Only declared container relationships are
-    emitted; scientific path names normalize with declared loss. Intersections
-    require explicit coupled approximation policy and sampled-error evidence.
+    Coordinates use the model's length unit; the format does not record units.
+    Surface and curve parameter maps preserve p-curves. Entity tolerances come
+    from certified incidence gap bounds, plus continuous substitution bounds,
+    rounded upward to 17 decimal digits. Missing or unbounded evidence refuses.
+    Declared container membership is preserved; scientific path names normalize
+    with reported loss. Intersection fitting requires an explicit policy.
     """
-    if not isinstance(model, BRepModel):
-        raise TypeError("model must be a BRepModel.")
     policy_ = CadExportPolicy() if policy is None else policy
-    if not isinstance(policy_, CadExportPolicy):
-        raise TypeError("policy must be a CadExportPolicy or None.")
     version_ = parse(version, BRepTextVersion, "version")
     writer = _Writer(model, version_, policy_)
     try:
@@ -2638,34 +3077,22 @@ def write_brep_text(
             changes_interpretation=True,
         )
         for kind, source, target in writer.path_normalizations
-    ) + tuple(
-        AdapterLoss(
-            f"intersection:{approximation.branch_id}",
-            "export",
-            "transformed",
-            f"New approximation {approximation.approximation_id}; continuous 3D "
-            f"deviation bound {approximation.continuous_evidence.distance_bound:.17g}, "
-            f"UV deviation bound {approximation.continuous_evidence.parameter_bound:.17g}, "
-            f"surface-lift bounds ({approximation.continuous_evidence.first_correspondence_bound:.17g}, "
-            f"{approximation.continuous_evidence.second_correspondence_bound:.17g}); "
-            "continuous embedded source-fit homotopy and exported trim separation.",
-            changes_interpretation=True,
-        )
-        for approximation in writer.approximations
     )
-    report = AdapterReport(
-        AdapterStatus.DECLARED_LOSS if losses else AdapterStatus.LOSSLESS,
-        "phydrax-brep",
-        _FORMAT,
-        source_id=model.model_id,
+    report = build_cad_export_report(
+        model,
+        receipt,
+        policy_,
+        writer.approximations,
+        format_name=_FORMAT,
+        qualifiers={
+            "profile": f"cascade-topology-{version_}",
+            "entity-tolerance-evidence": "certified-brep-gaps; outward decimal rounding",
+        },
         target_id=receipt.receipt_id,
-        target_profile=AdapterFormatProfile(
-            _FORMAT,
-            qualifiers={
-                "profile": f"cascade-topology-{version_}",
-                **approximation_export_qualifiers(writer.approximations),
-            },
-        ),
+        stage="adapter",
+        loss_field_prefix="intersection:",
+        extra_losses=losses,
+        waiver_format_name="OCCT BRep text",
         coordinate_mapping=(
             f"length unit {model.coordinate_contract.length_unit.symbol} (not recorded by the format)",
         ),
@@ -2677,8 +3104,6 @@ def write_brep_text(
             )
             + ("oriented-topology", "occurrence-placements", "assembly-membership")
         ),
-        losses=losses,
-        waivers=_export_loss_waivers(losses, policy_, "OCCT BRep text"),
         assumptions=(
             "planes, lines, cones and extrusions are written in OCCT's parameterization",
             canonical_fingerprint(

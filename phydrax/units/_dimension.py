@@ -49,6 +49,23 @@ class DimensionSignature(StrictModule, NonTrainableState):
             {"kind": "dimension_signature", "terms": canonical}
         )
 
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[DimensionSignature], value: DimensionSignature, /
+    ) -> DimensionSignature:
+        """Revalidate the stored rational powers of physical dimensions."""
+        if type(value) is not cls:
+            raise TypeError(
+                f"DimensionSignature.stored_fields must have the registered type; got {type(value).__name__}"
+            )
+        fresh = cls(value._fraction_terms())
+        if fresh.terms != value.terms or fresh.dimension_id != value.dimension_id:
+            raise ValueError(
+                f"DimensionSignature.dimension_id must match its stored rational powers; got {value.dimension_id}"
+            )
+        return fresh
+
     @property
     def is_dimensionless(self) -> bool:
         return not self.terms

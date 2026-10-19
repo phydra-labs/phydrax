@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Capacity-bounded tetrahedral metric bisection and complete-family coarsening.
+"""Capacity-bounded tetrahedral metric bisection and sibling-family coarsening.
 
 This route reuses Maubach conformity closure and the persistent sibling forest;
 it is not general tetrahedral edge collapse, cavity swapping or relocation.
-Compiled edits remain provisional until the process-local exact barrier returns.
-The canonical adaptation owner retains geometry/lineage/transfer publication.
+Compiled edits remain provisional until the process-local predicate barrier returns.
+The adaptation owner retains geometry/lineage/transfer publication.
 """
 
 from __future__ import annotations
@@ -32,7 +32,15 @@ from ..discretization._adaptive_simplex import (
     coarsen_adaptive_simplex,
     refine_adaptive_simplex,
 )
+from ..typing import checked
 from ._metric import interpolate_mesh_metric, metric_edge_lengths
+
+
+# Fixed tetrahedral incidence is host preparation shared by both compiled phases.
+_TETRA_EDGE_PAIRS = np.asarray(
+    ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int32
+)
+_TETRA_EDGE_PAIRS.setflags(write=False)
 
 
 @final
@@ -43,6 +51,7 @@ class DeviceTetraMetricLayout(StrictModule, NonTrainableState):
     lower_length: float = eqx.field(static=True)
     upper_length: float = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         simplex: AdaptiveSimplexLayout,
@@ -51,11 +60,10 @@ class DeviceTetraMetricLayout(StrictModule, NonTrainableState):
         lower_length: float = 1.0 / np.sqrt(2.0),
         upper_length: float = np.sqrt(2.0),
     ) -> None:
-        if not isinstance(simplex, AdaptiveSimplexLayout):
-            raise TypeError("simplex must be AdaptiveSimplexLayout.")
         if simplex.dimension != 3 or simplex.ambient_dimension != 3:
             raise ValueError(
-                "Device tetra metric adaptation requires physical tetrahedra."
+                f"DeviceTetraMetricLayout.simplex must have dimension (3, 3); got "
+                f"{(simplex.dimension, simplex.ambient_dimension)}"
             )
         if (
             not np.isfinite(lower_length)
@@ -63,7 +71,8 @@ class DeviceTetraMetricLayout(StrictModule, NonTrainableState):
             or not 0 < lower_length < upper_length
         ):
             raise ValueError(
-                "Metric thresholds must satisfy 0 < lower_length < upper_length."
+                "DeviceTetraMetricLayout.thresholds must be finite and satisfy "
+                f"0 < lower_length < upper_length; got {(lower_length, upper_length)}"
             )
         self.simplex = simplex
         self.lower_length = float(lower_length)
@@ -86,7 +95,7 @@ class DeviceTetraMetricReport(StrictModule):
 
 @final
 class DeviceTetraMetricEvidence(StrictModule, NonTrainableState):
-    """Actual process-local host barrier work; no all-device claim."""
+    """Measured process-local barrier work and commit status."""
 
     status: int = eqx.field(static=True)
     exact_resolution_count: int = eqx.field(static=True)
@@ -108,49 +117,53 @@ class _Provisional(StrictModule):
     report: DeviceTetraMetricReport
 
 
+@checked
 def prepare_device_tetra_metric(
     layout: DeviceTetraMetricLayout,
     state: AdaptiveSimplexState,
     metric: NDArray[np.float64],
     /,
 ) -> DeviceTetraMetricState:
-    """Bind already prepared tetrahedral ancestry to owner-local vertex metrics.
+    """Bind a full-capacity SPD metric to owner-local tetrahedral ancestry.
 
-    Supply a full-capacity SPD metric, including inactive slots. No geometry is
-    downgraded here: the caller must use the canonical adaptation preparation
-    and commit its accepted simplex state through that owner.
+    Inactive vertex slots retain their metrics. Preparation checks the host bank;
+    the simplex owner commits the accepted geometry and lineage.
     """
-    if not isinstance(layout, DeviceTetraMetricLayout) or not isinstance(
-        state, AdaptiveSimplexState
-    ):
-        raise TypeError("Expected a tetra metric layout and adaptive simplex state.")
     if state.mesh.signature_id != layout.simplex.mesh_signature_id:
-        raise ValueError("The state does not belong to this tetra metric bucket.")
+        raise ValueError(
+            "prepare_device_tetra_metric.state must match the simplex bucket; got a foreign signature"
+        )
+    # NDArray is static-only at checked signatures; this boundary retains its
+    # host kind/dtype/shape validation and its TypeError refusal category.
     if (
         not isinstance(metric, np.ndarray)
         or metric.dtype != np.float64
         or metric.shape != (layout.simplex.vertex_capacity, 3, 3)
     ):
-        raise TypeError("metric must be a float64 (vertex_capacity, 3, 3) host array.")
+        raise TypeError(
+            "prepare_device_tetra_metric.metric must be a host float64 bank with shape "
+            f"{(layout.simplex.vertex_capacity, 3, 3)}; got incompatible array metadata"
+        )
     if (
         not np.all(np.isfinite(metric))
         or not np.array_equal(metric, np.swapaxes(metric, -1, -2))
         or np.any(np.linalg.eigvalsh(metric) <= 0)
     ):
         raise ValueError(
-            "Every vertex-slot metric must be finite, symmetric and positive definite."
+            "prepare_device_tetra_metric.metric must be finite, symmetric and positive "
+            "definite in every slot; got an inadmissible tensor"
         )
     if state.mesh.coordinates.dtype != jnp.float64:
         raise TypeError(
-            "Tetra metric worksets use explicit float64 coordinates and metrics."
+            "prepare_device_tetra_metric.state.coordinates must have dtype float64; "
+            f"got {state.mesh.coordinates.dtype}"
         )
     return DeviceTetraMetricState(state, jnp.asarray(metric))
 
 
 def _lengths(state: DeviceTetraMetricState, /) -> Array:
     mesh = state.simplex.mesh
-    pairs = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int32)
-    edges = mesh.cells[:, pairs].reshape((-1, 2))
+    edges = mesh.cells[:, _TETRA_EDGE_PAIRS].reshape((-1, 2))
     return metric_edge_lengths(state.metric, mesh.coordinates, edges).reshape((-1, 6))
 
 
@@ -186,15 +199,14 @@ def _adapt(
     refined = refine_adaptive_simplex(layout.simplex, source.simplex, marks)
     middle = DeviceTetraMetricState(refined.state, _issued_metrics(source, refined.state))
     lengths = _lengths(middle)
-    # Only complete ancestral families are restored by the substrate. A parent
-    # edge between the siblings must ALSO be short; child edges alone can hide it.
+    # The substrate restores a parent only with its sibling family. Parent edges
+    # must also be short; child edge lengths alone can conceal a long parent edge.
     parents = jnp.maximum(middle.simplex.parents, 0)
     parent_rows = middle.simplex.mesh.cells[parents]
-    pairs = np.asarray(((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)), dtype=np.int32)
     parent_lengths = metric_edge_lengths(
         middle.metric,
         middle.simplex.mesh.coordinates,
-        parent_rows[:, pairs].reshape((-1, 2)),
+        parent_rows[:, _TETRA_EDGE_PAIRS].reshape((-1, 2)),
     ).reshape((-1, 6))
     small = (
         jnp.maximum(jnp.max(lengths, axis=1), jnp.max(parent_lengths, axis=1))
@@ -228,31 +240,32 @@ _TERMINAL = int(
 )
 
 
+@checked
 def adapt_device_tetra_metric(
     layout: DeviceTetraMetricLayout,
     state: DeviceTetraMetricState,
     /,
 ) -> DeviceTetraMetricUpdate:
-    """One compiled refine/coarsen cycle followed by one explicit exact barrier.
+    """Execute one compiled refine/coarsen cycle and one host transaction barrier.
 
-    Failure of either phase rolls the ENTIRE cycle back, including newly issued
-    metrics, and retains terminal status on the rejected epoch. This function is
-    process-local; distributed cavity resolution/collective commit is not implied.
+    A rejected phase rolls back the cycle, including issued metrics, and retains
+    terminal status. Inputs must be process-local.
     """
-    if not isinstance(layout, DeviceTetraMetricLayout) or not isinstance(
-        state, DeviceTetraMetricState
-    ):
-        raise TypeError("Expected tetra metric layout and state.")
     if (
         state.simplex.mesh.signature_id != layout.simplex.mesh_signature_id
         or state.metric.shape != (layout.simplex.vertex_capacity, 3, 3)
     ):
-        raise ValueError("The tetra metric state does not belong to this layout.")
+        raise ValueError(
+            "adapt_device_tetra_metric.state must match the layout and metric axes; "
+            "got an incompatible bucket"
+        )
     if any(
         isinstance(leaf, Array) and not leaf.is_fully_addressable
         for leaf in jax.tree_util.tree_leaves(state)
     ):
-        raise ValueError("Tetra metric exact barriers require process-local arrays.")
+        raise ValueError(
+            "adapt_device_tetra_metric.state must have process-local arrays; got remote shards"
+        )
     pending = _compiled_adapt(layout, state)
     # One explicit process-local transaction barrier, never one transfer per cell.
     host = jax.device_get(pending)

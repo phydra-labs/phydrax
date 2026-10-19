@@ -21,7 +21,7 @@ from ..._trainable import NonTrainableState
 from ..._validation import positive_integer
 from ...typing import checked
 from ._geometry_protocol import FiniteVolumeStageMetrics
-from ._unstructured import UnstructuredFiniteVolumeDiscretization
+from ._unstructured_types import AbstractUnstructuredFiniteVolumeDiscretization
 
 
 def _monomials(values: np.ndarray, exponents: np.ndarray, /) -> np.ndarray:
@@ -33,7 +33,7 @@ def _jax_monomials(values: Array, exponents: Array, /) -> Array:
 
 
 def _adjacency(
-    discretization: UnstructuredFiniteVolumeDiscretization, /
+    discretization: AbstractUnstructuredFiniteVolumeDiscretization, /
 ) -> list[set[int]]:
     adjacency: list[set[int]] = [set() for _ in range(discretization.cell_count)]
     owner = np.asarray(discretization.owner_cells, dtype=np.int32)
@@ -64,7 +64,7 @@ def _bfs_order(adjacency: list[set[int]], cell: int, /) -> list[tuple[int, int]]
 
 
 def _cell_moments(
-    discretization: UnstructuredFiniteVolumeDiscretization,
+    discretization: AbstractUnstructuredFiniteVolumeDiscretization,
     basis: "CellPolynomialBasis",
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -80,7 +80,7 @@ def _cell_moments(
 
 
 def _design_rows(
-    discretization: UnstructuredFiniteVolumeDiscretization,
+    discretization: AbstractUnstructuredFiniteVolumeDiscretization,
     basis: "CellPolynomialBasis",
     moments: np.ndarray,
     lengths: np.ndarray,
@@ -99,7 +99,7 @@ def _design_rows(
 
 
 def _selected_stencils(
-    discretization: UnstructuredFiniteVolumeDiscretization,
+    discretization: AbstractUnstructuredFiniteVolumeDiscretization,
     basis: "CellPolynomialBasis",
     moments: np.ndarray,
     lengths: np.ndarray,
@@ -167,7 +167,7 @@ def _selected_stencils(
 
 
 def _smoothness_gram(
-    discretization: UnstructuredFiniteVolumeDiscretization,
+    discretization: AbstractUnstructuredFiniteVolumeDiscretization,
     basis: "CellPolynomialBasis",
     lengths: np.ndarray,
     /,
@@ -295,7 +295,7 @@ class CellPolynomialReconstructionPlan(StrictModule, NonTrainableState):
 
     def prepare(
         self,
-        discretization: UnstructuredFiniteVolumeDiscretization,
+        discretization: AbstractUnstructuredFiniteVolumeDiscretization,
         /,
         *,
         stencil_direction: ArrayLike | None = None,
@@ -310,7 +310,7 @@ class CellPolynomialReconstructionPlan(StrictModule, NonTrainableState):
 class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
     """Fixed-capacity cell-average polynomial reconstruction."""
 
-    discretization: UnstructuredFiniteVolumeDiscretization
+    discretization: AbstractUnstructuredFiniteVolumeDiscretization
     basis: CellPolynomialBasis
     moments: Array
     characteristic_lengths: Array
@@ -326,7 +326,7 @@ class PreparedCellPolynomialReconstruction(StrictModule, NonTrainableState):
     def __init__(
         self,
         plan: CellPolynomialReconstructionPlan,
-        discretization: UnstructuredFiniteVolumeDiscretization,
+        discretization: AbstractUnstructuredFiniteVolumeDiscretization,
         /,
         *,
         stencil_direction: ArrayLike | None = None,

@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Synthetic substrate checks and genuine native compartment transport evidence.
+"""Synthetic substrate checks and native compartment transport evidence.
 
 Run ``JAX_ENABLE_X64=1 python -m tools.neurofluid_qualification
 --scenario native-generated-transport --size 2 --repeats 3 --steps 5 --dt 0.01``.
@@ -29,7 +29,7 @@ from itertools import combinations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
-from typing import Any
+from typing import Any, Required, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -39,16 +39,182 @@ import phydrax as phx
 from benchmarks._runtime import (
     capture_benchmark_identity,
     capture_environment,
+    CompilationTiming,
     compiler_evidence,
+    CompilerEvidence,
+    DurationDistribution,
     logical_array_bytes,
     measure_lower_and_compile,
     measure_repeated,
     measure_synchronized,
 )
-from phydrax._fingerprint import array_tree_fingerprint
-from phydrax._meshcore import meshcore_identity, meshcore_runtime_identity, MeshcoreStatus
-from phydrax.meshing._measurements import NativeMeshingPhaseMeasurement
+from phydrax import array_tree_fingerprint, ArrayArchiveLimits
+from phydrax.lifecycle import (
+    MeshingSourceClosure,
+    read_meshing_source_closure,
+    recertify_restored_meshing_source,
+    write_meshing_source_closure,
+)
+from phydrax.meshing import (
+    meshcore_identity,
+    meshcore_runtime_identity,
+    MeshcoreStatus,
+    NativeExecutionInterchange,
+    NativeMeshingPhaseMeasurement,
+)
 from tools._meshing_cases import python_source_revision
+from tools.meshing_qualification._records import _record_mapping
+
+
+class _TransportGeometry(TypedDict):
+    compartment_volumes: list[float]
+    volume_error: float
+    interface_area: float | np.float64
+    interface_facets: int
+    adjacency_pairs: tuple[tuple[str, str], ...]
+
+
+class _TransportInvariants(_TransportGeometry):
+    accepted_steps: list[bool]
+    independent_inventory_initial: float
+    independent_inventory_final: float
+    inventory_error: float
+    local_balance_error: float
+    interface_inventory_balance_error: float
+    material_interface_flux_samples: list[float]
+    bulk_network_exchange_samples: list[list[float]]
+    compartment_ids: tuple[str, str]
+    compartment_inventory_final: list[float]
+    network_inventory_final: float
+    reservoir_inventory_final: float
+    transfer_error: float
+    minimum_concentration: float
+    physical_error: float
+    physical_reference: str
+    successful: bool
+
+
+class _TransportIdentities(TypedDict, total=False):
+    mesh_id: str
+    result_id: str
+    request_id: str
+    region_evidence_id: str
+    coverage_id: str
+    case_revision: str
+    network_id: str
+    transport_plan_id: str
+    runtime_id: str
+    transfer_id: str
+    meshcore: str
+    provider: str
+
+
+class _TransportTiming(TypedDict, total=False):
+    source_preparation_seconds: float
+    geometry_preparation_seconds: float
+    generation_publication_seconds: float
+    readmission_seconds: float
+    transport_transfer_preparation_seconds: float
+    lowering_seconds: float
+    compilation_seconds: float
+    first_execution_seconds: float
+    warmed: dict[str, int | float | list[float] | None]
+    independent_certification_seconds: float
+    end_to_end_seconds: float
+    explicit_primary_transport_compilations: int
+    elapsed_before_failure_seconds: float
+
+
+class _TransportMemory(TypedDict):
+    compiler: dict[str, object]
+    logical_retained_bytes: int
+    logical_output_bytes: int
+    process_peak_resident_bytes: int
+    process_peak_scope: str
+    device: list[dict[str, object]]
+
+
+class _TransportLifecycle(TypedDict):
+    passed: bool
+    field_names: tuple[str, ...]
+    material_parameter_id: str
+    accepted_history_steps: int
+    AD: dict[str, float]
+    hot_continuation_seconds: float
+    hot_continuation_relative_physical_error: float
+    hot_continuation_inventory_defect: float
+    atomic_rollback: dict[str, bool | int]
+    cold: dict[str, object]
+
+
+class _NativeTransportContext(TypedDict, total=False):
+    native_phase_measurements: list[dict[str, object]]
+    source: dict[str, str]
+    native_execution: NativeExecutionInterchange
+    identities: _TransportIdentities
+    cold_process: dict[str, str | int]
+
+
+class NativeTransportRecord(_NativeTransportContext, total=False):
+    """Transport evidence; success-only fields are absent on phase failure."""
+
+    successful: Required[bool]
+    scenario: str
+    status: str
+    failure: dict[str, object]
+    controls: dict[str, int | float]
+    targets: dict[str, float]
+    units: dict[str, str]
+    timing: _TransportTiming
+    memory: _TransportMemory
+    invariants: _TransportInvariants
+    lifecycle: _TransportLifecycle
+    native_execution_scope: str
+    original_native_limits: dict[str, object]
+    comparison: dict[str, str]
+    native_build_identity: dict[str, str]
+    loaded_python_source_digest: str
+    build_identity: dict[str, object]
+    runtime_identity: dict[str, object]
+
+
+type _TransportTrajectory = tuple[
+    phx.equations.MixedDimensionalTransportState,
+    tuple[phx.equations.MixedDimensionalTransportState, jax.Array],
+]
+
+
+class _TransportGeneration(TypedDict):
+    source: phx.geometry.CompartmentMeshingSource
+    network: phx.discretization.PreparedMetricNetwork
+    request: phx.meshing.VolumeMeshingSpec
+    options: phx.meshing.NativeMeshingOptions
+    plan: phx.meshing.NativeMeshingPlan
+    result: phx.meshing.CellMeshingResult
+    native_execution: NativeExecutionInterchange
+    native_phases: list[dict[str, object]]
+    source_seconds: float
+    geometry_preparation: float
+    generation: float
+
+
+class _TransportAcceptedExecution(TypedDict):
+    case: phx.applications.neurofluid.NeurofluidCase
+    readmitted: phx.applications.neurofluid.NeurofluidCase
+    transport_plan: phx.applications.neurofluid.NeurofluidTransportPlan
+    runtime: phx.equations.PreparedMixedDimensionalTransport
+    evidence: phx.meshing.RegionMeshingEvidence
+    initial: phx.equations.MixedDimensionalTransportState
+    first: _TransportTrajectory
+    admission: float
+    preparation: float
+    compilation: CompilationTiming
+    first_seconds: float
+    warmed: DurationDistribution
+    compiler: CompilerEvidence
+    certification: float
+    invariants: _TransportInvariants
+    lifecycle: _TransportLifecycle
 
 
 def manifest(payload: bytes) -> Any:
@@ -190,7 +356,13 @@ def qualify() -> dict[str, object]:
         normal_boundaries=(normal_boundary,),
     ).prepare()
     zero_velocity, pressure, multiplier = hdiv.state_space.zeros()
-    velocity = hdiv.normal_flux_operator.adjoint_mv(np.asarray((1.0 / 6.0,)))
+    # The adjoint is not a unit-flux lift: its normalization depends on the
+    # prepared BDM basis. Solve the outward-flux constraint instead.
+    flux_factorization = phx.linalg.factorize(
+        hdiv.normal_flux_operator, phx.linalg.FactorizationPolicy("svd")
+    )
+    flux_lift = flux_factorization.solve(hdiv.normal_flux_target)
+    velocity = flux_lift.value
     normal_flow_error = float(
         np.max(np.abs(np.asarray(hdiv.normal_flux(velocity)) - 1.0))
     )
@@ -206,16 +378,16 @@ def qualify() -> dict[str, object]:
     constraint_error = float(
         np.max(np.abs(np.asarray(hdiv.residual((velocity, pressure, multiplier))[2])))
     )
-    if (
-        not complex_.adjacency.successful
-        or flux_error > 1.0e-12
-        or not bool(hdiv.evidence.successful)
-        or normal_flow_error > 1.0e-12
-        or resistance_power_error > 1.0e-12
-        or constraint_error > 1.0e-12
-    ):
-        raise RuntimeError("Neurofluid synthetic qualification failed.")
-    return {
+    contracts = {
+        "adjacency": bool(complex_.adjacency.successful),
+        "rt0_flux": flux_error <= 1.0e-12,
+        "hdiv_preparation": bool(hdiv.evidence.successful),
+        "normal_flux_lift": bool(flux_lift.successful),
+        "normal_flow": normal_flow_error <= 1.0e-12,
+        "resistance_power": resistance_power_error <= 1.0e-12,
+        "normal_constraint": constraint_error <= 1.0e-12,
+    }
+    record: dict[str, object] = {
         "scenario": "synthetic",
         "compartments": len(complex_.compartments),
         "interfaces": len(surfaces.surfaces),
@@ -226,8 +398,27 @@ def qualify() -> dict[str, object]:
         "normal_flow_error": normal_flow_error,
         "resistance_power_error": resistance_power_error,
         "normal_constraint_error": constraint_error,
-        "successful": True,
+        "adjacency_successful": contracts["adjacency"],
+        "hdiv_preparation_successful": contracts["hdiv_preparation"],
+        "normal_flux_lift": {
+            "status": int(flux_lift.status),
+            "successful": bool(flux_lift.successful),
+            "residual_norm": float(flux_lift.diagnostics.residual_norm),
+            "normal_residual_norm": float(flux_lift.diagnostics.normal_residual_norm),
+            "rank": int(flux_lift.diagnostics.rank),
+        },
+        "successful": all(contracts.values()),
     }
+    if not record["successful"]:
+        record["status"] = "failed"
+        record["failure"] = {
+            "phase": "synthetic-invariants",
+            "message": "Neurofluid synthetic qualification failed.",
+            "failed_contracts": [
+                name for name, successful in contracts.items() if not successful
+            ],
+        }
+    return record
 
 
 def _native_source(
@@ -319,11 +510,13 @@ def _transport_parameters(
     )
 
 
-def _independent_bulk(result: Any, size: int) -> tuple[Any, Any, Any, dict[str, object]]:
+def _independent_bulk(result: Any, size: int) -> tuple[Any, Any, Any, _TransportGeometry]:
     """Integrate tetrahedra and build material fluxes from vertex incidence."""
     evidence = result.region_evidence
     if evidence is None:
-        raise RuntimeError("Native compartment route omitted required region evidence.")
+        raise RuntimeError(
+            "transport.region_evidence must contain compartment assignments; got None"
+        )
     cells = np.concatenate([np.asarray(block.vertices) for block in result.mesh.blocks])
     points = np.asarray(result.mesh.coordinates, dtype=np.float64)
     tetrahedra = points[cells]
@@ -334,14 +527,17 @@ def _independent_bulk(result: Any, size: int) -> tuple[Any, Any, Any, dict[str, 
         dtype=np.int64,
     )
     if set(evidence.cell_region_ids) != {"first", "second"}:
-        raise RuntimeError("Native route lost authoritative compartment identities.")
+        raise RuntimeError(
+            "transport.cell_region_ids must retain both declared compartments; "
+            f"got {tuple(sorted(set(evidence.cell_region_ids)))!r}"
+        )
     split = size // 2 - 0.5
     tolerance = 1.0e-10
     if np.any(tetrahedra[regions == 0, :, 0] > split + tolerance) or np.any(
         tetrahedra[regions == 1, :, 0] < split - tolerance
     ):
         raise RuntimeError(
-            "A generated tetrahedron crosses the source material interface."
+            "transport.tetrahedra must stay within their source material; got interface crossings"
         )
     region_volumes = np.bincount(regions, weights=volumes, minlength=2)
     expected = np.asarray((size // 2, size - size // 2), dtype=np.float64) * size**2
@@ -360,7 +556,10 @@ def _independent_bulk(result: Any, size: int) -> tuple[Any, Any, Any, dict[str, 
         if len(adjacent) == 1:
             continue
         if len(adjacent) != 2:
-            raise RuntimeError("Generated compartment mesh has nonmanifold faces.")
+            raise RuntimeError(
+                "transport.face_incidence must contain at most two cells per face; "
+                f"got {len(adjacent)}"
+            )
         owner, neighbor = adjacent
         vertices = points[np.asarray(face, dtype=np.int64)]
         normal = np.cross(vertices[1] - vertices[0], vertices[2] - vertices[0])
@@ -385,7 +584,11 @@ def _independent_bulk(result: Any, size: int) -> tuple[Any, Any, Any, dict[str, 
         or interface_count != len(evidence.interface_facets)
         or evidence.adjacency_pairs != (("first", "second"),)
     ):
-        raise RuntimeError("Independent material coverage or interface adjacency failed.")
+        raise RuntimeError(
+            "transport.material_coverage must match independent volumes and adjacency; "
+            f"got volume_error={volume_error}, interface_area={interface_area}, "
+            f"interface_count={interface_count}"
+        )
     return (
         volumes * 0.8,
         stiffness,
@@ -404,7 +607,7 @@ def _independent_system(
     result: Any,
     runtime: Any,
     size: int,
-) -> tuple[Any, Any, Any, Any, dict[str, object]]:
+) -> tuple[Any, Any, Any, Any, _TransportGeometry]:
     bulk_mass, bulk_matrix, interface, geometry = _independent_bulk(result, size)
     transfer = runtime.exchange.transfer
     stencil = transfer.sampling.stencil
@@ -452,7 +655,7 @@ def _transport_invariants(
     dt: float,
     target_error: float,
     balance_tolerance: float,
-) -> tuple[dict[str, object], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+) -> tuple[_TransportInvariants, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
     mass, matrix, average, interface, geometry = _independent_system(
         result, runtime, size
     )
@@ -478,7 +681,7 @@ def _transport_invariants(
     inventory_error = float(np.max(np.abs(independent_inventory - first @ mass)))
     balance_error = float(np.max(np.abs(residuals)))
     source_transfer = runtime.exchange.transfer.average(initial.bulk)
-    # Both averaging circles lie wholly inside their authoritative material;
+    # Both averaging circles lie wholly inside their declared material;
     # the initial field is constant there, independent of prepared route weights.
     expected_average = np.asarray((3.0, 2.0), dtype=np.float64)
     transfer_error = float(
@@ -576,7 +779,8 @@ def _network_source_plan(network: Any) -> phx.discretization.MetricNetworkPlan:
     )
     if plan.prepare().network_id != network.network_id:
         raise RuntimeError(
-            "The original network constructor facts do not reproduce its scientific identity."
+            "transport.network_id must survive reconstruction from its constructor facts; "
+            "got a different prepared identity"
         )
     return plan
 
@@ -584,17 +788,12 @@ def _network_source_plan(network: Any) -> phx.discretization.MetricNetworkPlan:
 def _transport_cold_worker(
     path: str, content_id: str, expected: str
 ) -> dict[str, object]:
-    from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        recertify_restored_meshing_source,
-        write_meshing_source_closure,
-    )
 
     records = read_meshing_source_closure(path, expected_content_id=content_id)
     if array_tree_fingerprint(records) != json.loads(expected):
         raise RuntimeError(
-            "Cold transport lost original source, material, allfield, history or clock facts."
+            "transport.cold_closure must preserve source, material, fields, history, and clocks; "
+            "got a different content fingerprint"
         )
     checkpoint = records["accepted_data"]["neurofluid_transport"]
     source, result = checkpoint.source, checkpoint.result
@@ -602,14 +801,14 @@ def _transport_cold_worker(
     result.region_evidence.require_source(source.compartments)
     if result.certification is None:
         raise RuntimeError(
-            "Cold transport requires the original complete source theorem."
+            "transport.cold_certification must retain the complete source theorem; got None"
         )
     renewed = recertify_restored_meshing_source(
         result.certification.request,
         result.mesh,
         result.geometry,
         result.audit,
-        archive_limits=DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        archive_limits=ArrayArchiveLimits(),
     )
     renewed.require_passed()
     network = checkpoint.network_plan.prepare()
@@ -622,7 +821,8 @@ def _transport_cold_worker(
     runtime = plan.prepare()
     if (case.case_revision, plan.plan_id, runtime.runtime_id) != checkpoint.physics_ids:
         raise RuntimeError(
-            "Cold preparation changed the original source-qualified physics identity."
+            "transport.cold_physics must preserve case, plan, and runtime identities; "
+            "got different reconstructed identities"
         )
     steps, dt = checkpoint.steps, checkpoint.dt
     execute = jax.jit(
@@ -631,7 +831,7 @@ def _transport_cold_worker(
     continued = jax.block_until_ready(execute(runtime, checkpoint.final))
     if not bool(jnp.all(continued[1][1])):
         raise RuntimeError(
-            "The cold continued native PDE rejected an original physical step."
+            "transport.cold_continuation must accept every physical step; got a rejected step"
         )
     hot = checkpoint.continued
     error = max(
@@ -643,7 +843,8 @@ def _transport_cold_worker(
     )
     if error > checkpoint.balance_tolerance:
         raise RuntimeError(
-            "Cold continued native physics differs from the actual hot accepted fields."
+            "transport.cold_continuation must match the accepted hot fields; "
+            f"got error={error}, allowance={checkpoint.balance_tolerance}"
         )
     restored, _ = _transport_invariants(
         result,
@@ -659,13 +860,15 @@ def _transport_cold_worker(
     )
     if not restored["successful"]:
         raise RuntimeError(
-            "Cold material and full accepted history failed the original independent physical gates."
+            "transport.cold_history must pass the independent physical gates; "
+            f"got {restored!r}"
         )
     with TemporaryDirectory(prefix="phydrax-neurofluid-cold-rearchive-") as directory:
         replay = write_meshing_source_closure(Path(directory) / "replayed.zip", records)
         if replay.content_id != content_id:
             raise RuntimeError(
-                "Cold source/allfield/history rearchive changed the canonical scientific closure."
+                "transport.cold_rearchive must preserve the scientific closure; "
+                f"got content_id={replay.content_id!r}, expected={content_id!r}"
             )
     return {
         "passed": True,
@@ -683,10 +886,61 @@ def _transport_cold_worker(
         "continued_step_cursor": checkpoint.step_cursor + steps,
         "continued_time": checkpoint.time + steps * dt,
         "prepared_runtime_serialized": False,
-        "default_max_members": DEFAULT_ARRAY_ARCHIVE_LIMITS.max_members,
-        "default_max_nesting": DEFAULT_ARRAY_ARCHIVE_LIMITS.max_manifest_nesting,
-        "default_max_rank": DEFAULT_ARRAY_ARCHIVE_LIMITS.max_array_rank,
+        "default_max_members": ArrayArchiveLimits().max_members,
+        "default_max_nesting": ArrayArchiveLimits().max_manifest_nesting,
+        "default_max_rank": ArrayArchiveLimits().max_array_rank,
     }
+
+
+def _publish_transport_checkpoint(
+    records: MeshingSourceClosure,
+    *,
+    phase: Callable[[str], None],
+    context: _NativeTransportContext,
+) -> dict[str, object]:
+    """Archive accepted physics and admit its fresh-process continuation evidence."""
+
+    with TemporaryDirectory(prefix="phydrax-neurofluid-source-state-") as directory:
+        receipt = write_meshing_source_closure(Path(directory) / "state.zip", records)
+        expected_identity = json.dumps(array_tree_fingerprint(records), sort_keys=True)
+        phase("fresh-default-cold-allfield-history-continued-native-PDE")
+        script = (
+            "import json,sys; from tools.neurofluid_qualification import _transport_cold_worker; "
+            "print(json.dumps(_transport_cold_worker(sys.argv[1],sys.argv[2],sys.argv[3]),sort_keys=True))"
+        )
+        started = perf_counter()
+        cold = subprocess.run(
+            (
+                sys.executable,
+                "-c",
+                script,
+                str(receipt.path),
+                receipt.content_id,
+                expected_identity,
+            ),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        context["cold_process"] = {
+            "returncode": cold.returncode,
+            "stdout": cold.stdout,
+            "stderr": cold.stderr,
+        }
+        if cold.returncode != 0:
+            raise RuntimeError(
+                "transport.cold_process must finish source, field, and history continuation; "
+                f"got stderr={cold.stderr!r}"
+            )
+        # The fresh-process stdout is foreign JSON, unlike the local evidence below.
+        cold_evidence = _record_mapping(
+            json.loads(cold.stdout), "Neurofluid fresh source/allfield continuation"
+        )
+        cold_evidence.update(
+            content_id=receipt.content_id, elapsed_seconds=perf_counter() - started
+        )
+    return cold_evidence
 
 
 def _transport_lifecycle(
@@ -710,9 +964,8 @@ def _transport_lifecycle(
     target_error: float,
     balance_tolerance: float,
     phase: Callable[[str], None],
-    context: dict[str, object],
-) -> dict[str, object]:
-    from phydrax.lifecycle._meshing_sources import write_meshing_source_closure
+    context: _NativeTransportContext,
+) -> _TransportLifecycle:
 
     final, (history, accepted) = first
     mass, _, eigenvalues, eigenvectors = reference
@@ -761,7 +1014,8 @@ def _transport_lifecycle(
         or primal_defect > balance_tolerance
     ):
         raise RuntimeError(
-            "Actual native PDE AD failed the unchanged independent physical/inventory gates."
+            "transport.AD must pass independent physical and inventory gates; "
+            f"got error={error}, inventory_defect={inventory_defect}, primal_defect={primal_defect}"
         )
     phase("continued-hot-native-transport")
     continued, continuation_seconds = measure_synchronized(
@@ -769,7 +1023,7 @@ def _transport_lifecycle(
     )
     if not bool(jnp.all(continued[1][1])):
         raise RuntimeError(
-            "The continued original native transport rejected a physical step."
+            "transport.hot_continuation must accept every physical step; got a rejected step"
         )
     final_flat = np.asarray(runtime.flatten(final))
     expected_continued = (
@@ -791,7 +1045,8 @@ def _transport_lifecycle(
         or continued_inventory_defect > balance_tolerance
     ):
         raise RuntimeError(
-            "Continued native PDE failed the original independent physical/inventory gates."
+            "transport.hot_continuation must pass independent physical and inventory gates; "
+            f"got error={continued_error}, inventory_defect={continued_inventory_defect}"
         )
     phase("allfield-history-native-resource-rollback")
     before = array_tree_fingerprint((initial, history, accepted, final, parameters))
@@ -810,7 +1065,7 @@ def _transport_lifecycle(
     rejected = jax.block_until_ready(rejected)
     if bool(rejected.accepted):
         raise RuntimeError(
-            "A native PDE step with no solver storage was incorrectly accepted."
+            "transport.storage_refusal must reject a step with no solver storage; got accepted"
         )
     if array_tree_fingerprint(
         (initial, history, accepted, final, parameters)
@@ -821,7 +1076,8 @@ def _transport_lifecycle(
         )
     ):
         raise RuntimeError(
-            "Native refusal failed atomic preservation of all accepted fields/material/history."
+            "transport.storage_refusal must preserve accepted fields, material, and history; "
+            "got changed state"
         )
     phase("default-source-allfield-material-history-checkpoint")
     checkpoint = phx.applications.neurofluid.NeurofluidTransportCheckpoint(
@@ -850,59 +1106,26 @@ def _transport_lifecycle(
         target_error=target_error,
         balance_tolerance=balance_tolerance,
     )
-    records = {
-        "certification_inputs": result.certification.request,
-        "report": result.certification,
-        "associations": result.associations,
-        "generation_part": phx.meshing.MeshPart(
-            "image", result, coordinate_contract=result.coordinate_contract
-        ),
-        "generation_source": source,
-        "generation_specification": request,
-        "generation_options": options,
-        "accepted_target": result,
-        "accepted_data": {"neurofluid_transport": checkpoint},
-    }
-    with TemporaryDirectory(prefix="phydrax-neurofluid-source-state-") as directory:
-        receipt = write_meshing_source_closure(Path(directory) / "state.zip", records)
-        expected_identity = json.dumps(array_tree_fingerprint(records), sort_keys=True)
-        phase("fresh-default-cold-allfield-history-continued-native-PDE")
-        script = (
-            "import json,sys; from tools.neurofluid_qualification import _transport_cold_worker; "
-            "print(json.dumps(_transport_cold_worker(sys.argv[1],sys.argv[2],sys.argv[3]),sort_keys=True))"
-        )
-        started = perf_counter()
-        cold = subprocess.run(
-            (
-                sys.executable,
-                "-c",
-                script,
-                str(receipt.path),
-                receipt.content_id,
-                expected_identity,
+    records = MeshingSourceClosure.from_records(
+        {
+            "certification_inputs": result.certification.request,
+            "report": result.certification,
+            "associations": result.associations,
+            "generation_part": phx.meshing.MeshPart(
+                "image", result, coordinate_contract=result.coordinate_contract
             ),
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        context["cold_process"] = {
-            "returncode": cold.returncode,
-            "stdout": cold.stdout,
-            "stderr": cold.stderr,
+            "generation_source": source,
+            "generation_specification": request,
+            "generation_options": options,
+            "accepted_data": {"neurofluid_transport": checkpoint},
         }
-        if cold.returncode != 0:
-            raise RuntimeError(
-                "Fresh original source/allfield/history continuation failed: "
-                + cold.stderr
-            )
-        cold_evidence = json.loads(cold.stdout)
-        cold_evidence.update(
-            content_id=receipt.content_id, elapsed_seconds=perf_counter() - started
-        )
+    )
+    cold_evidence = _publish_transport_checkpoint(records, phase=phase, context=context)
     return {
         "passed": True,
-        "field_names": ("bulk", "network", "reservoirs"),
+        "field_names": tuple(
+            template["name"] for template in native_transport_field_templates()
+        ),
         "material_parameter_id": parameters.parameter_id,
         "accepted_history_steps": steps,
         "AD": {
@@ -925,22 +1148,16 @@ def _transport_lifecycle(
     }
 
 
-def _execute_native_transport(
+def _prepare_transport_generation(
     *,
-    size: int = 2,
-    repeats: int = 3,
-    steps: int = 5,
-    dt: float = 0.01,
-    target_error: float = 0.05,
-    balance_tolerance: float = 1.0e-9,
-    maximum_cells: int = 4096,
-    maximum_vertices: int = 4096,
-    oracle_capacity: int = 2048,
+    size: int,
+    maximum_cells: int,
+    maximum_vertices: int,
     phase: Callable[[str], None],
-    context: dict[str, object],
-) -> dict[str, object]:
-    """Generate, re-admit, transfer, solve, and independently certify one case."""
-    campaign_started = perf_counter()
+    context: _NativeTransportContext,
+) -> _TransportGeneration:
+    """Prepare source geometry and publish bounded native generation evidence."""
+
     started = perf_counter()
     native_phases: list[dict[str, object]] = []
     context["native_phase_measurements"] = native_phases
@@ -994,12 +1211,13 @@ def _execute_native_transport(
     execution = result.execution_evidence
     if execution is None:
         raise RuntimeError(
-            "Original native transport requires its actual ended generation resource receipt."
+            "transport.generation.execution_evidence must contain completed resource evidence; got None"
         )
     execution.require_valid()
     if int(execution.status) != int(MeshcoreStatus.OK):
         raise RuntimeError(
-            "Original generation did not end with a passing native resource status."
+            "transport.generation.status must report successful native execution; "
+            f"got {execution.status!r}"
         )
     native_execution = execution.to_record()
     context["native_execution"] = native_execution
@@ -1009,109 +1227,62 @@ def _execute_native_transport(
         "request_id": request.specification_id,
         "provider": result.provider.name,
     }
-    phase("oracle-capacity-admission")
-    count = result.mesh.entity_set(3).count
-    if count + 3 > oracle_capacity:
-        raise ValueError(
-            "Generated transport state exceeds the declared independent dense oracle capacity."
-        )
-    phase("case-readmission")
-    started = perf_counter()
-    case = phx.applications.neurofluid.NeurofluidCase(
-        "native-generated-transport", source.labels, source.compartments, result, network
-    )
-    readmitted = phx.applications.neurofluid.NeurofluidCase(
-        case.case_id, case.segmentation, case.compartments, case.bulk_mesh, case.network
-    )
-    admission = perf_counter() - started
-    phase("transport-transfer-preparation")
-    parameters = _transport_parameters(result)
-    transport_plan = phx.applications.neurofluid.NeurofluidTransportPlan(
-        readmitted, parameters
-    )
-    runtime, preparation = measure_synchronized(transport_plan.prepare)
-    evidence = result.region_evidence
-    if evidence is None:
-        raise RuntimeError(
-            "Generated compartment transport requires exact region evidence."
-        )
-    initial = phx.equations.MixedDimensionalTransportState(
-        jnp.asarray(
-            [3.0 if region == "first" else 2.0 for region in evidence.cell_region_ids],
-            dtype=jnp.float64,
-        ),
-        jnp.asarray((1.0, 1.5), dtype=jnp.float64),
-        jnp.asarray((0.5,), dtype=jnp.float64),
-    )
+    return {
+        "source": source,
+        "network": network,
+        "request": request,
+        "options": options,
+        "plan": plan,
+        "result": result,
+        "native_execution": native_execution,
+        "native_phases": native_phases,
+        "source_seconds": source_seconds,
+        "geometry_preparation": geometry_preparation,
+        "generation": generation,
+    }
 
-    def loop(current_runtime: Any, state: Any) -> Any:
-        return _transport_loop(current_runtime, state, steps=steps, dt=dt)
 
-    execute = jax.jit(loop)
-
-    def lower() -> Any:
-        phase("lowering")
-        return execute.lower(runtime, initial)
-
-    def compile_lowered(lowered: Any) -> Any:
-        phase("compilation")
-        return lowered.compile()
-
-    executable, compilation = measure_lower_and_compile(lower, compile_lowered)
-    phase("first-execution")
-    first, first_seconds = measure_synchronized(lambda: executable(runtime, initial))
-    phase("warmed-execution")
-    _, warmed = measure_repeated(
-        lambda: executable(runtime, initial), warmup=0, repeats=repeats
+def _report_native_transport(
+    generated: _TransportGeneration,
+    executed: _TransportAcceptedExecution,
+    *,
+    campaign_started: float,
+    size: int,
+    repeats: int,
+    steps: int,
+    dt: float,
+    target_error: float,
+    balance_tolerance: float,
+    maximum_cells: int,
+    maximum_vertices: int,
+    oracle_capacity: int,
+    phase: Callable[[str], None],
+) -> NativeTransportRecord:
+    """Report physical acceptance, allocation evidence, and loaded build identity."""
+    source, network = generated["source"], generated["network"]
+    request, plan, result = generated["request"], generated["plan"], generated["result"]
+    native_execution, native_phases = (
+        generated["native_execution"],
+        generated["native_phases"],
     )
-    phase("compiler-evidence")
-    compiler = compiler_evidence(
-        executable.cost_analysis(),
-        executable.memory_analysis(),
-        source="jax-compiled-executable",
-        unavailable_reason="Backend did not expose compiler cost or memory analysis.",
+    source_seconds = generated["source_seconds"]
+    geometry_preparation = generated["geometry_preparation"]
+    generation = generated["generation"]
+    case, readmitted = executed["case"], executed["readmitted"]
+    transport_plan, runtime = executed["transport_plan"], executed["runtime"]
+    evidence, initial, first = (
+        executed["evidence"],
+        executed["initial"],
+        executed["first"],
     )
-    phase("independent-certification")
-    started = perf_counter()
-    _, (history, accepted) = first
-    invariants, reference = _transport_invariants(
-        result,
-        runtime,
-        initial,
-        history,
-        accepted,
-        size=size,
-        steps=steps,
-        dt=dt,
-        target_error=target_error,
-        balance_tolerance=balance_tolerance,
-    )
-    certification = perf_counter() - started
-    lifecycle = _transport_lifecycle(
-        source,
-        request,
-        options,
-        result,
-        readmitted,
-        network,
-        parameters,
-        runtime,
-        initial,
-        first,
-        executable,
-        loop,
-        reference,
-        size=size,
-        steps=steps,
-        dt=dt,
-        target_error=target_error,
-        balance_tolerance=balance_tolerance,
-        phase=phase,
-        context=context,
-    )
+    admission, preparation = executed["admission"], executed["preparation"]
+    compilation, first_seconds = executed["compilation"], executed["first_seconds"]
+    warmed, compiler = executed["warmed"], executed["compiler"]
+    certification = executed["certification"]
+    invariants, lifecycle = executed["invariants"], executed["lifecycle"]
     phase("memory-evidence")
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    device_memory = []
+    device_memory: list[dict[str, object]] = []
     for device in jax.local_devices():
         stats = device.memory_stats()
         device_memory.append(
@@ -1125,7 +1296,7 @@ def _execute_native_transport(
                 ),
             }
         )
-    record = {
+    record: NativeTransportRecord = {
         "scenario": "native-generated-transport",
         "controls": {
             "size": size,
@@ -1226,6 +1397,212 @@ def _execute_native_transport(
     return record
 
 
+class NativeTransportFieldTemplate(TypedDict):
+    name: str
+    space_family: str
+    degree: int
+    continuity: str
+    component_shape: tuple[int, ...]
+    role: str
+
+
+def native_transport_field_templates() -> tuple[NativeTransportFieldTemplate, ...]:
+    """Declare the bulk, network, and reservoir concentration fields."""
+    return (
+        {
+            "name": "bulk",
+            "space_family": "finite-volume",
+            "degree": 0,
+            "continuity": "cell-local",
+            "component_shape": (),
+            "role": "conservative-density",
+        },
+        {
+            "name": "network",
+            "space_family": "metric-network",
+            "degree": 1,
+            "continuity": "continuous",
+            "component_shape": (),
+            "role": "conservative-density",
+        },
+        {
+            "name": "reservoirs",
+            "space_family": "reservoir",
+            "degree": 0,
+            "continuity": "discrete",
+            "component_shape": (),
+            "role": "conservative-density",
+        },
+    )
+
+
+def _execute_native_transport(
+    *,
+    size: int = 2,
+    repeats: int = 3,
+    steps: int = 5,
+    dt: float = 0.01,
+    target_error: float = 0.05,
+    balance_tolerance: float = 1.0e-9,
+    maximum_cells: int = 4096,
+    maximum_vertices: int = 4096,
+    oracle_capacity: int = 2048,
+    phase: Callable[[str], None],
+    context: _NativeTransportContext,
+) -> NativeTransportRecord:
+    """Generate, re-admit, transfer, solve, and independently certify one case."""
+    campaign_started = perf_counter()
+    generated = _prepare_transport_generation(
+        size=size,
+        maximum_cells=maximum_cells,
+        maximum_vertices=maximum_vertices,
+        phase=phase,
+        context=context,
+    )
+    source, network = generated["source"], generated["network"]
+    request, options = generated["request"], generated["options"]
+    result = generated["result"]
+    phase("oracle-capacity-admission")
+    count = result.mesh.entity_set(3).count
+    if count + 3 > oracle_capacity:
+        raise ValueError(
+            "transport.oracle_capacity must admit the generated transport state; "
+            f"got requested={count + 3}, limit={oracle_capacity}"
+        )
+    phase("case-readmission")
+    started = perf_counter()
+    case = phx.applications.neurofluid.NeurofluidCase(
+        "native-generated-transport", source.labels, source.compartments, result, network
+    )
+    readmitted = phx.applications.neurofluid.NeurofluidCase(
+        case.case_id, case.segmentation, case.compartments, case.bulk_mesh, case.network
+    )
+    admission = perf_counter() - started
+    phase("transport-transfer-preparation")
+    parameters = _transport_parameters(result)
+    transport_plan = phx.applications.neurofluid.NeurofluidTransportPlan(
+        readmitted, parameters
+    )
+    runtime, preparation = measure_synchronized(transport_plan.prepare)
+    evidence = result.region_evidence
+    if evidence is None:
+        raise RuntimeError(
+            "transport.region_evidence must contain compartment assignments; got None"
+        )
+    initial_values = {
+        "bulk": jnp.asarray(
+            [3.0 if region == "first" else 2.0 for region in evidence.cell_region_ids],
+            dtype=jnp.float64,
+        ),
+        "network": jnp.asarray((1.0, 1.5), dtype=jnp.float64),
+        "reservoirs": jnp.asarray((0.5,), dtype=jnp.float64),
+    }
+    initial = phx.equations.MixedDimensionalTransportState(
+        **{
+            template["name"]: initial_values[template["name"]]
+            for template in native_transport_field_templates()
+        }
+    )
+
+    def loop(current_runtime: Any, state: Any) -> Any:
+        return _transport_loop(current_runtime, state, steps=steps, dt=dt)
+
+    execute = jax.jit(loop)
+
+    def lower() -> Any:
+        phase("lowering")
+        return execute.lower(runtime, initial)
+
+    def compile_lowered(lowered: Any) -> Any:
+        phase("compilation")
+        return lowered.compile()
+
+    executable, compilation = measure_lower_and_compile(lower, compile_lowered)
+    phase("first-execution")
+    first, first_seconds = measure_synchronized(lambda: executable(runtime, initial))
+    phase("warmed-execution")
+    _, warmed = measure_repeated(
+        lambda: executable(runtime, initial), warmup=0, repeats=repeats
+    )
+    phase("compiler-evidence")
+    compiler = compiler_evidence(
+        executable.cost_analysis(),
+        executable.memory_analysis(),
+        source="jax-compiled-executable",
+        unavailable_reason="Backend did not expose compiler cost or memory analysis.",
+    )
+    phase("independent-certification")
+    started = perf_counter()
+    _, (history, accepted) = first
+    invariants, reference = _transport_invariants(
+        result,
+        runtime,
+        initial,
+        history,
+        accepted,
+        size=size,
+        steps=steps,
+        dt=dt,
+        target_error=target_error,
+        balance_tolerance=balance_tolerance,
+    )
+    certification = perf_counter() - started
+    lifecycle = _transport_lifecycle(
+        source,
+        request,
+        options,
+        result,
+        readmitted,
+        network,
+        parameters,
+        runtime,
+        initial,
+        first,
+        executable,
+        loop,
+        reference,
+        size=size,
+        steps=steps,
+        dt=dt,
+        target_error=target_error,
+        balance_tolerance=balance_tolerance,
+        phase=phase,
+        context=context,
+    )
+    return _report_native_transport(
+        generated,
+        {
+            "case": case,
+            "readmitted": readmitted,
+            "transport_plan": transport_plan,
+            "runtime": runtime,
+            "evidence": evidence,
+            "initial": initial,
+            "first": first,
+            "admission": admission,
+            "preparation": preparation,
+            "compilation": compilation,
+            "first_seconds": first_seconds,
+            "warmed": warmed,
+            "compiler": compiler,
+            "certification": certification,
+            "invariants": invariants,
+            "lifecycle": lifecycle,
+        },
+        campaign_started=campaign_started,
+        size=size,
+        repeats=repeats,
+        steps=steps,
+        dt=dt,
+        target_error=target_error,
+        balance_tolerance=balance_tolerance,
+        maximum_cells=maximum_cells,
+        maximum_vertices=maximum_vertices,
+        oracle_capacity=oracle_capacity,
+        phase=phase,
+    )
+
+
 def native_transport(
     *,
     size: int = 2,
@@ -1238,10 +1615,10 @@ def native_transport(
     maximum_vertices: int = 4096,
     oracle_capacity: int = 2048,
     phase_callback: Callable[[str], None] | None = None,
-) -> dict[str, object]:
-    """Preserve failed native attempts and exact failure phases without fallback."""
+) -> NativeTransportRecord:
+    """Preserve failed native attempts and their failure phases without fallback."""
     started = perf_counter()
-    context: dict[str, object] = {}
+    context: _NativeTransportContext = {}
     current_phase = "source-preparation"
 
     def phase(name: str) -> None:

@@ -71,7 +71,7 @@ A completed run is required where a gate cites lifecycle evidence. Planned, queu
 
 ## Versions and evidence lifetime
 
-Support follows an explicitly released profile version, not the latest branch. Any change to a tuple coordinate, dependency, build, SBOM, license determination, notice audit, data rights, validation domain, security posture, or evidence validity may require a new profile and release decision.
+Support follows an explicitly released profile, not the latest branch. Any change to a tuple coordinate, dependency, build, SBOM, license determination, notice audit, data rights, validation domain, security posture, or evidence validity may require a new profile and release decision.
 
 Evidence is accepted only within its issued and expiry times and any stricter trust-policy age. When the earliest gate, artifact reference, signed non-claim, or dependency profile expires, create a new candidate and repeat independent review. Do not extend dates in place or reinterpret an expired record.
 

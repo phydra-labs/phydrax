@@ -15,28 +15,32 @@ construction invariants and are always evaluated.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
+from jax.typing import ArrayLike
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
+
+import phydrax.discretization._cell_complex as cell_complex_owner
+import phydrax.discretization._cell_mesh as cell_mesh_owner
 
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._geometry_predicates import (
     orient2d,
-    orient3d,
-    polygon_simplicity_2d,
-    PolygonSimplicityStatus,
+    orient3d as predicate_orient3d,
     PredicateMode,
-    PredicateSign,
+    PredicateResult,
     resolve_host_predicate_mode,
     segment_intersections_2d,
     SegmentIntersectionStatus,
 )
-from ..discretization import CellMesh, PolyhedralConnectivity
 from ..discretization._cell_geometry_validity import polyhedral_star_tables
+from ..discretization._coordinate_budget import CoordinateEnclosureBudget
+from ..discretization._periodic_topology import lifted_loops, PeriodicMeshTopology
 from ..discretization._reference_cell import reference_cell_topology
-from ..discretization.spatial._morton import morton_encode_integer
+from ..discretization.spatial._morton import morton_encode_integer_host
+from ..geometry._polygon_triangulation import polygon_loop_triangles
+from ..typing import checked
 
 
 _MORTON_BITS = {1: 62, 2: 31, 3: 21}
@@ -84,7 +88,7 @@ def _coincident_representatives(
     cells = np.minimum(
         np.floor((points - lower) / width).astype(np.int64), (1 << bits) - 2
     )
-    codes = np.asarray(morton_encode_integer(cells, bits)).astype(np.uint64)
+    codes = morton_encode_integer_host(cells, bits)
     order = np.argsort(codes, kind="stable")
     sorted_codes = codes[order]
     firsts = []
@@ -93,9 +97,7 @@ def _coincident_representatives(
     for offset in np.ndindex(*(3,) * dimension):
         neighbor = cells + np.asarray(offset) - 1
         inside = np.all(neighbor >= 0, axis=1)
-        neighbor_codes = np.asarray(
-            morton_encode_integer(np.maximum(neighbor, 0), bits)
-        ).astype(np.uint64)
+        neighbor_codes = morton_encode_integer_host(np.maximum(neighbor, 0), bits)
         start = np.searchsorted(sorted_codes, neighbor_codes, side="left")
         stop = np.searchsorted(sorted_codes, neighbor_codes, side="right")
         spans = np.where(inside, stop - start, 0)
@@ -155,7 +157,7 @@ class _Complex:
     edge_cells: np.ndarray
 
 
-def _welded_complex(mesh: CellMesh, welded: np.ndarray, /) -> _Complex:
+def _welded_complex(mesh: cell_mesh_owner.CellMesh, welded: np.ndarray, /) -> _Complex:
     """Cells, oriented facet occurrences, and (3-D) cell edges in welded ids."""
 
     connectivity = mesh.connectivity
@@ -167,7 +169,9 @@ def _welded_complex(mesh: CellMesh, welded: np.ndarray, /) -> _Complex:
             or any(entities.count != 0 for entities in mesh.topology.entity_sets)
         ):
             raise ValueError(
-                "An empty welded complex requires an exact zero-resident distributed mesh."
+                "mesh.blocks must accompany zero resident topology and distributed storage when empty; "
+                f"got resident counts={tuple(entities.count for entities in mesh.topology.entity_sets)!r}, "
+                f"storage={type(mesh.storage).__name__}, welded.shape={welded.shape!r}"
             )
         return _Complex(
             np.empty((0, 0), dtype=np.int64),
@@ -186,7 +190,7 @@ def _welded_complex(mesh: CellMesh, welded: np.ndarray, /) -> _Complex:
     cursor = 0
     tables = (
         polyhedral_star_tables(connectivity)
-        if isinstance(connectivity, PolyhedralConnectivity)
+        if isinstance(connectivity, cell_complex_owner.PolyhedralConnectivity)
         else None
     )
     for block in mesh.blocks:
@@ -327,9 +331,9 @@ def _star_components(
     """Count entities whose incident cells split into several link components.
 
     ``links`` holds ``(entity keys, first cell, second cell)``: the two cells
-    share a facet containing that entity. ``complete`` marks owner-local cells
-    whose every facet is matched or physical boundary. An entity is judged only
-    when all its resident incident cells are complete: then walking across
+    share a facet containing that entity. The neighborhood mask marks owner-local
+    cells whose every facet is matched or physical boundary. An entity is judged
+    only when all its resident incident cells satisfy that condition: then walking across
     facets through it cannot leave the resident set, so its resident star is
     its whole star. A star truncated at an artificial halo boundary carries no
     manifold evidence either way.
@@ -371,7 +375,9 @@ def _lookup(table: np.ndarray, rows: np.ndarray, /) -> np.ndarray:
     order = np.argsort(view, kind="stable")
     position = order[np.searchsorted(view[order], query)]
     if not np.array_equal(table[position], rows):
-        raise ValueError("Welded star links reference unknown incidences.")
+        raise ValueError(
+            "welded_star.links must reference declared incidences; got undeclared incidence rows"
+        )
     return position
 
 
@@ -383,7 +389,9 @@ def _facet_links(inverse: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     return order[:-1][same], order[1:][same]
 
 
-def _vertex_links(complex_: _Complex, first: np.ndarray, second: np.ndarray, /) -> Any:
+def _vertex_links(
+    complex_: _Complex, first: np.ndarray, second: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     facets = complex_.facets[first]
     slots = facets >= 0
     return (
@@ -393,7 +401,92 @@ def _vertex_links(complex_: _Complex, first: np.ndarray, second: np.ndarray, /) 
     )
 
 
-def _edge_links(complex_: _Complex, first: np.ndarray, second: np.ndarray, /) -> Any:
+def _periodic_facet_vertex_positions(
+    mesh: cell_mesh_owner.CellMesh, topology: PeriodicMeshTopology, /
+) -> dict[tuple[int, ...], tuple[int, dict[int, int]]]:
+    """Index facet corners by quotient orbit and relative-image correspondence."""
+    degree = mesh.topological_dimension - 1
+    orbits = np.asarray(topology.orbits(degree)[0], dtype=np.int64)
+    permutations = topology.entity_vertex_permutations(mesh, degree)
+    result = {}
+    for rows, corners in lifted_loops(mesh, degree):
+        for row, loop in zip(rows, corners, strict=True):
+            permutation = permutations[row]
+            result[tuple(sorted(int(vertex) for vertex in loop))] = (
+                int(orbits[row]),
+                {
+                    int(vertex): int(position)
+                    for vertex, position in zip(loop, permutation, strict=True)
+                },
+            )
+    return result
+
+
+def _periodic_vertex_star_components(
+    mesh: cell_mesh_owner.CellMesh,
+    topology: PeriodicMeshTopology,
+    complex_: _Complex,
+    welded: np.ndarray,
+    physical_links: tuple[np.ndarray, np.ndarray, np.ndarray],
+    complete: np.ndarray | None,
+    /,
+) -> int:
+    """Count disconnected quotient vertex stars without collapsing winding corners."""
+    original = (
+        complex_
+        if np.array_equal(welded, np.arange(welded.size, dtype=np.int64))
+        else _welded_complex(mesh, np.arange(welded.size, dtype=np.int64))
+    )
+    slots = complex_.cells >= 0
+    owners = np.broadcast_to(
+        np.arange(complex_.cells.shape[0], dtype=np.int64)[:, None], complex_.cells.shape
+    )[slots]
+    nodes = np.unique(np.stack((owners, complex_.cells[slots]), axis=1), axis=0)
+    indices = {
+        (int(owner), int(vertex)): index for index, (owner, vertex) in enumerate(nodes)
+    }
+    representatives = np.asarray(topology.vertex_representatives, dtype=np.int64)
+    roots = representatives[nodes[:, 1]]
+    facets = _periodic_facet_vertex_positions(mesh, topology)
+    occurrences: dict[tuple[int, int, int], list[int]] = {}
+    for facet, owner in zip(original.facets, original.facet_cells, strict=True):
+        vertices = tuple(int(vertex) for vertex in facet if vertex >= 0)
+        orbit, positions = facets[tuple(sorted(vertices))]
+        for vertex in vertices:
+            node = indices[(int(owner), int(welded[vertex]))]
+            occurrences.setdefault(
+                (int(roots[node]), orbit, positions[vertex]), []
+            ).append(node)
+    keys: list[tuple[int]] = []
+    first_nodes: list[int] = []
+    second_nodes: list[int] = []
+    for (root, _, _), group in sorted(occurrences.items()):
+        for first, second in zip(group[:-1], group[1:], strict=True):
+            keys.append((root,))
+            first_nodes.append(first)
+            second_nodes.append(second)
+    # Explicit geometric welding can add facet adjacency beyond the authored
+    # periodic descriptor. Keep that adjacency alongside quotient gluing.
+    vertices, first_cells, second_cells = physical_links
+    for (vertex,), first, second in zip(vertices, first_cells, second_cells, strict=True):
+        keys.append((int(representatives[vertex]),))
+        first_nodes.append(indices[(int(first), int(vertex))])
+        second_nodes.append(indices[(int(second), int(vertex))])
+    return _star_components(
+        roots[:, None],
+        np.arange(nodes.shape[0], dtype=np.int64),
+        (
+            np.asarray(keys, dtype=np.int64).reshape((-1, 1)),
+            np.asarray(first_nodes, dtype=np.int64),
+            np.asarray(second_nodes, dtype=np.int64),
+        ),
+        None if complete is None else complete[nodes[:, 0]],
+    )
+
+
+def _edge_links(
+    complex_: _Complex, first: np.ndarray, second: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     facets = complex_.facets[first]
     lengths = np.sum(facets >= 0, axis=1)
     width = facets.shape[1]
@@ -438,36 +531,56 @@ def _open_boundary_count(
 # Self-intersection ---------------------------------------------------------------
 
 
-def _signs(result: Any) -> tuple[np.ndarray, np.ndarray]:
+def _signs(result: PredicateResult) -> tuple[np.ndarray, np.ndarray]:
     return np.asarray(result.signs, dtype=np.int8), np.asarray(
         result.certain, dtype=np.bool_
     )
 
 
-# Meshcore adaptive predicates are used when available; the exact dyadic host
-# route resolves filtered-uncertain signs otherwise.
-def _orient3d(a: Any, b: Any, c: Any, d: Any, /) -> tuple[np.ndarray, np.ndarray]:
+# Meshcore adaptive predicates are used when available; dyadic host arithmetic
+# resolves filtered-uncertain signs otherwise.
+@checked
+def orientation3d_signs(
+    a: ArrayLike,
+    b: ArrayLike,
+    c: ArrayLike,
+    d: ArrayLike,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[np.ndarray, np.ndarray]:
     mode = resolve_host_predicate_mode(PredicateMode.EXACT)
-    return _signs(orient3d(a, b, c, d, mode=mode))
+    return _signs(predicate_orient3d(a, b, c, d, mode=mode, budget=budget))
 
 
-def _orient2d(a: Any, b: Any, c: Any, /) -> tuple[np.ndarray, np.ndarray]:
+def _orient2d(
+    a: np.ndarray,
+    b: np.ndarray,
+    c: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[np.ndarray, np.ndarray]:
     mode = resolve_host_predicate_mode(PredicateMode.EXACT)
-    return _signs(orient2d(a, b, c, mode=mode))
+    return _signs(orient2d(a, b, c, mode=mode, budget=budget))
 
 
 def _segment_crosses_triangle(
-    segment: Any, triangle: Any, /
+    segment: tuple[np.ndarray, np.ndarray],
+    triangle: tuple[np.ndarray, np.ndarray, np.ndarray],
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Closed segment/triangle contact for segments not lying in the plane."""
 
     a, b = segment
     p, q, r = triangle
-    side_a, certain_a = _orient3d(p, q, r, a)
-    side_b, certain_b = _orient3d(p, q, r, b)
-    first, certain_1 = _orient3d(a, b, p, q)
-    second, certain_2 = _orient3d(a, b, q, r)
-    third, certain_3 = _orient3d(a, b, r, p)
+    side_a, certain_a = orientation3d_signs(p, q, r, a, budget=budget)
+    side_b, certain_b = orientation3d_signs(p, q, r, b, budget=budget)
+    first, certain_1 = orientation3d_signs(a, b, p, q, budget=budget)
+    second, certain_2 = orientation3d_signs(a, b, q, r, budget=budget)
+    third, certain_3 = orientation3d_signs(a, b, r, p, budget=budget)
     edges = np.stack((first, second, third), axis=1).astype(np.int16)
     straddles = (side_a.astype(np.int16) * side_b <= 0) & ~((side_a == 0) & (side_b == 0))
     inside = np.all(edges >= 0, axis=1) | np.all(edges <= 0, axis=1)
@@ -494,12 +607,19 @@ def _project(points: np.ndarray, axes: np.ndarray, /) -> np.ndarray:
     return np.take_along_axis(points, axes, axis=1)
 
 
-def _inside_triangle_2d(point: Any, triangle: Any, /, *, strict: bool) -> Any:
+def _inside_triangle_2d(
+    point: np.ndarray,
+    triangle: tuple[np.ndarray, np.ndarray, np.ndarray],
+    /,
+    *,
+    strict: bool,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[np.ndarray, np.ndarray]:
     p, q, r = triangle
     signs = []
     certainties = []
     for start, stop in ((p, q), (q, r), (r, p)):
-        sign, known = _orient2d(start, stop, point)
+        sign, known = _orient2d(start, stop, point, budget=budget)
         signs.append(sign.astype(np.int16))
         certainties.append(known)
     stacked = np.stack(signs, axis=1)
@@ -519,8 +639,13 @@ def _inside_triangle_2d(point: Any, triangle: Any, /, *, strict: bool) -> Any:
 
 
 def _coplanar_overlap(
-    first: np.ndarray, second: np.ndarray, shared: np.ndarray, /
-) -> Any:
+    first: np.ndarray,
+    second: np.ndarray,
+    shared: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Closed coplanar triangle overlap away from shared vertices.
 
     Pairs sharing a vertex are reordered so that it sits at local index zero of
@@ -546,6 +671,7 @@ def _coplanar_overlap(
                     two[:, other],
                     two[:, (other + 1) % 3],
                     mode=mode,
+                    budget=budget,
                 ).status
             )
             # Edges through the shared vertex meet there by construction; only
@@ -558,18 +684,30 @@ def _coplanar_overlap(
             certain &= status != SegmentIntersectionStatus.UNCERTAIN
     for index in range(3):
         inside_two, known_two = _inside_triangle_2d(
-            one[:, index], (two[:, 0], two[:, 1], two[:, 2]), strict=True
+            one[:, index],
+            (two[:, 0], two[:, 1], two[:, 2]),
+            strict=True,
+            budget=budget,
         )
         inside_one, known_one = _inside_triangle_2d(
-            two[:, index], (one[:, 0], one[:, 1], one[:, 2]), strict=True
+            two[:, index],
+            (one[:, 0], one[:, 1], one[:, 2]),
+            strict=True,
+            budget=budget,
         )
         hit |= inside_two | inside_one
         certain &= known_two & known_one
     return hit, certain
 
 
-def _triangle_pairs_intersect(
-    points: np.ndarray, first: np.ndarray, second: np.ndarray, /
+@checked
+def triangle_pairs_intersect(
+    points: np.ndarray,
+    first: np.ndarray,
+    second: np.ndarray,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Intersection of triangle pairs beyond their shared (welded) vertices."""
 
@@ -590,15 +728,32 @@ def _triangle_pairs_intersect(
     plane_signs = []
     plane_known = np.ones(first.shape[0], dtype=np.bool_)
     for index in range(3):
-        sign, known = _orient3d(
-            tri_one[:, 0], tri_one[:, 1], tri_one[:, 2], tri_two[:, index]
+        sign, known = orientation3d_signs(
+            tri_one[:, 0],
+            tri_one[:, 1],
+            tri_one[:, 2],
+            tri_two[:, index],
+            budget=budget,
         )
         plane_signs.append(sign)
         plane_known &= known
-    coplanar = np.all(np.stack(plane_signs, axis=1) == 0, axis=1)
+    signs = np.stack(plane_signs, axis=1)
+    coplanar = np.all(signs == 0, axis=1)
+    shared_second = np.any(one[:, :, None] == two[:, None, :], axis=1)
+    # Strict same-side nonshared vertices can meet the first plane only at
+    # declared shared vertices. Convexity certifies disjointness beyond those
+    # permitted features without segment or projected-overlap predicates.
+    separated = (
+        plane_known
+        & np.any(~shared_second, axis=1)
+        & (
+            np.all((signs > 0) | shared_second, axis=1)
+            | np.all((signs < 0) | shared_second, axis=1)
+        )
+    )
     certain &= plane_known
 
-    edge_share = shared == 2
+    edge_share = (shared == 2) & ~separated
     if np.any(edge_share):
         rows = np.flatnonzero(edge_share)
         # Two shared vertices: after rotation vertex 0 is shared; the other
@@ -614,18 +769,26 @@ def _triangle_pairs_intersect(
         d = other[free_second]
         axes = _projection_axes(tri)
         side_c, known_c = _orient2d(
-            _project(a, axes), _project(b, axes), _project(c, axes)
+            _project(a, axes),
+            _project(b, axes),
+            _project(c, axes),
+            budget=budget,
         )
         side_d, known_d = _orient2d(
-            _project(a, axes), _project(b, axes), _project(d, axes)
+            _project(a, axes),
+            _project(b, axes),
+            _project(d, axes),
+            budget=budget,
         )
         folded = coplanar[rows] & (side_c == side_d) & (side_c != 0)
         hit[rows] = folded
         certain[rows] &= known_c & known_d
-    general = shared <= 1
+    general = (shared <= 1) & ~separated
     if np.any(general & coplanar):
         rows = np.flatnonzero(general & coplanar)
-        overlap, known = _coplanar_overlap(tri_one[rows], tri_two[rows], shared[rows])
+        overlap, known = _coplanar_overlap(
+            tri_one[rows], tri_two[rows], shared[rows], budget=budget
+        )
         hit[rows] = overlap
         certain[rows] &= known
     crossing_rows = np.flatnonzero(general & ~coplanar)
@@ -642,11 +805,16 @@ def _triangle_pairs_intersect(
                 # A shared vertex (local zero) touches the other triangle by
                 # construction; only the opposite edge carries new contact.
                 relevant = (start == 0) | (index == 1)
+                rows = np.flatnonzero(relevant)
+                if not rows.size:
+                    continue
                 result, certain_ = _segment_crosses_triangle(
-                    (begin, end), (target[:, 0], target[:, 1], target[:, 2])
+                    (begin[rows], end[rows]),
+                    (target[rows, 0], target[rows, 1], target[rows, 2]),
+                    budget=budget,
                 )
-                contact |= relevant & result
-                known &= ~relevant | certain_
+                contact[rows] |= result
+                known[rows] &= certain_
         hit[crossing_rows] = contact
         certain[crossing_rows] &= known
     unresolved = np.flatnonzero(~certain)
@@ -658,6 +826,7 @@ def _triangle_pairs_intersect(
             tri_one[unresolved],
             tri_two[unresolved],
             shared[unresolved],
+            budget=budget,
         )
         hit[unresolved[disjoint]] = False
         certain[unresolved[disjoint]] = True
@@ -672,29 +841,37 @@ def _projected_disjoint(
     tri_two: np.ndarray,
     shared: np.ndarray,
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> np.ndarray:
     """Certified disjointness beyond shared features from one coordinate projection.
 
     On a coordinate plane where both triangles project nondegenerately each
     triangle is a graph, so projections meeting only at shared features imply
-    3D intersection only there, whatever the exact coplanarity. This decides
+    3D intersection only there, whether the triangles are coplanar or not. This decides
     near-coplanar pairs (flat sheets) left unresolved by filtered 3D signs.
     """
     axes = _projection_axes(tri_one)
     projected_one = np.stack([_project(tri_one[:, index], axes) for index in range(3)], 1)
     projected_two = np.stack([_project(tri_two[:, index], axes) for index in range(3)], 1)
     sign_one, known_one = _orient2d(
-        projected_one[:, 0], projected_one[:, 1], projected_one[:, 2]
+        projected_one[:, 0],
+        projected_one[:, 1],
+        projected_one[:, 2],
+        budget=budget,
     )
     sign_two, known_two = _orient2d(
-        projected_two[:, 0], projected_two[:, 1], projected_two[:, 2]
+        projected_two[:, 0],
+        projected_two[:, 1],
+        projected_two[:, 2],
+        budget=budget,
     )
     graphs = known_one & known_two & (sign_one != 0) & (sign_two != 0)
     disjoint = np.zeros(first.shape[0], dtype=np.bool_)
     general = np.flatnonzero(graphs & (shared <= 1))
     if general.size:
         overlap, known = _coplanar_overlap(
-            tri_one[general], tri_two[general], shared[general]
+            tri_one[general], tri_two[general], shared[general], budget=budget
         )
         disjoint[general] = known & ~overlap
     edge_rows = np.flatnonzero(graphs & (shared == 2))
@@ -706,143 +883,15 @@ def _projected_disjoint(
         local_axes = axes[edge_rows]
         start = _project(points[common[:, 0]], local_axes)
         stop = _project(points[common[:, 1]], local_axes)
-        side_one, known_side_one = _orient2d(start, stop, _project(free_one, local_axes))
-        side_two, known_side_two = _orient2d(start, stop, _project(free_two, local_axes))
+        side_one, known_side_one = _orient2d(
+            start, stop, _project(free_one, local_axes), budget=budget
+        )
+        side_two, known_side_two = _orient2d(
+            start, stop, _project(free_two, local_axes), budget=budget
+        )
         opposite = side_one.astype(np.int16) * side_two < 0
         disjoint[edge_rows] = known_side_one & known_side_two & opposite
     return disjoint
-
-
-_EAR_WORKING_ENTRIES = 1 << 20
-
-
-def _ear_blocked(
-    loops: Any,
-    before: Any,
-    after: Any,
-    alive: Any,
-    predecessor: Any,
-    successor: Any,
-    sign: Any,
-    mode: Any,
-    /,
-) -> Any:
-    """Candidate ears containing another live vertex, or not decided exactly."""
-
-    count, corner_count, _ = loops.shape
-    apex = loops[:, :, None]
-    left = before[:, :, None]
-    right = after[:, :, None]
-    other = loops[:, None, :]
-    inside = np.ones((count, corner_count, corner_count), dtype=np.bool_)
-    known = np.ones((count, corner_count, corner_count), dtype=np.bool_)
-    for start, stop in ((left, apex), (apex, right), (right, left)):
-        side = orient2d(start, stop, other, mode=mode)
-        inside &= np.asarray(side.signs, dtype=np.int16) * sign[:, :, None] >= 0
-        known &= np.asarray(side.certain)
-    local = np.arange(corner_count)
-    candidate = (
-        alive[:, None, :]
-        & (local[None, None, :] != local[None, :, None])
-        & (local[None, None, :] != predecessor[:, :, None])
-        & (local[None, None, :] != successor[:, :, None])
-    )
-    return np.any(candidate & (inside | ~known), axis=2)
-
-
-def _ear_clip(
-    loops: np.ndarray, orientation: np.ndarray, mode: PredicateMode, /
-) -> tuple[np.ndarray, np.ndarray]:
-    """Exact ear clipping of simple planar loops ``(count, n, 2)``.
-
-    An ear is a strictly convex live vertex whose closed triangle holds no other
-    live vertex; simple loops always have one (Meisters' two-ears theorem).
-    Returns local triangles ``(count, n - 2, 3)`` and whether every ear decision
-    of a loop was certified; uncertified loops must be discarded.
-    """
-
-    count, corner_count, _ = loops.shape
-    rows = np.arange(count)
-    local = np.arange(corner_count)
-    successor = np.tile((local + 1) % corner_count, (count, 1))
-    predecessor = np.tile((local - 1) % corner_count, (count, 1))
-    alive = np.ones((count, corner_count), dtype=np.bool_)
-    certified = np.ones((count,), dtype=np.bool_)
-    triangles = np.empty((count, corner_count - 2, 3), dtype=np.int64)
-    sign = orientation.astype(np.int16)[:, None]
-    for step in range(corner_count - 3):
-        before = loops[rows[:, None], predecessor]
-        after = loops[rows[:, None], successor]
-        turn = orient2d(before, loops, after, mode=mode)
-        convex = (
-            alive
-            & np.asarray(turn.certain)
-            & (np.asarray(turn.signs, dtype=np.int16) * sign > 0)
-        )
-        ear = convex & ~_ear_blocked(
-            loops, before, after, alive, predecessor, successor, sign, mode
-        )
-        found = np.any(ear, axis=1)
-        certified &= found
-        choice = np.argmax(np.where(found[:, None], ear, alive), axis=1)
-        left = predecessor[rows, choice]
-        right = successor[rows, choice]
-        triangles[:, step] = np.stack((left, choice, right), axis=1)
-        alive[rows, choice] = False
-        successor[rows, left] = right
-        predecessor[rows, right] = left
-    last = np.argmax(alive, axis=1)
-    middle = successor[rows, last]
-    triangles[:, -1] = np.stack((last, middle, successor[rows, middle]), axis=1)
-    return triangles, certified
-
-
-def _polygon_loop_triangles(
-    points: np.ndarray, loops: np.ndarray, candidate_capacity: int, /
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, bool]:
-    """Exact triangles and bounded simplicity evidence of polygon loops.
-
-    Returns the triangles in global vertex rows, the loop row owning each
-    triangle, masks of self-intersecting and undecided loops, the polygon edge
-    candidates spent and whether that capacity was exhausted.
-    """
-
-    corner_count = loops.shape[1]
-    mode = resolve_host_predicate_mode(PredicateMode.EXACT)
-    corners = points[loops]
-    centered = corners - np.mean(corners, axis=1, keepdims=True)
-    normal = np.sum(np.cross(centered, np.roll(centered, -1, axis=1)), axis=1)
-    axes = np.asarray(((1, 2), (0, 2), (0, 1)))[np.argmax(np.abs(normal), axis=1)]
-    planar = np.take_along_axis(corners, axes[:, None, :], axis=2)
-    simplicity = polygon_simplicity_2d(
-        planar, mode=mode, maximum_candidate_pairs=candidate_capacity
-    )
-    status = np.asarray(simplicity.status)
-    orientation = np.asarray(simplicity.orientation)
-    ready = orientation != PredicateSign.UNCERTAIN
-    triangles = []
-    owners = []
-    undecided = (status == PolygonSimplicityStatus.UNCERTAIN) | (
-        (status == PolygonSimplicityStatus.SIMPLE) & ~ready
-    )
-    selected = np.flatnonzero(ready)
-    chunk = max(1, _EAR_WORKING_ENTRIES // (corner_count * corner_count))
-    for start in range(0, selected.size, chunk):
-        rows = selected[start : start + chunk]
-        local, certified = _ear_clip(planar[rows], orientation[rows], mode)
-        undecided[rows[~certified]] = True
-        global_rows = loops[rows[certified]]
-        cells = np.arange(global_rows.shape[0])[:, None, None]
-        triangles.append(global_rows[cells, local[certified]].reshape((-1, 3)))
-        owners.append(np.repeat(rows[certified], corner_count - 2))
-    return (
-        np.concatenate(triangles) if triangles else np.empty((0, 3), dtype=np.int64),
-        np.concatenate(owners) if owners else np.empty((0,), dtype=np.int64),
-        status == PolygonSimplicityStatus.SELF_INTERSECTING,
-        undecided,
-        simplicity.candidate_pair_count,
-        simplicity.candidate_capacity_exceeded,
-    )
 
 
 def _surface_triangles(
@@ -851,6 +900,8 @@ def _surface_triangles(
     boundary: np.ndarray | None,
     candidate_capacity: int,
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> tuple[np.ndarray, int, int, int, bool]:
     """Triangles of the tested surface under one polygon-candidate budget."""
 
@@ -868,8 +919,8 @@ def _surface_triangles(
             polygon_rows = rows[~collapsed]
             remaining = candidate_capacity - candidate_count
             if polygon_rows.size and remaining > 0:
-                clipped, _, crossing, unknown, used, exhausted = _polygon_loop_triangles(
-                    points, polygon_rows, remaining
+                clipped, _, crossing, unknown, used, exhausted = polygon_loop_triangles(
+                    points, polygon_rows, remaining, budget=budget
                 )
                 triangles.append(clipped)
                 intersecting += int(np.count_nonzero(crossing))
@@ -898,6 +949,8 @@ def _self_intersections(
     dimension: int,
     candidate_capacity: int,
     /,
+    *,
+    budget: CoordinateEnclosureBudget | None,
 ) -> tuple[int, int, bool]:
     """Return bounded intersection count, unresolved count, and capacity status."""
 
@@ -906,11 +959,11 @@ def _self_intersections(
     match (points.shape[1], dimension):
         case (3, 2):
             triangles, loops, undecided, used, exceeded = _surface_triangles(
-                points, complex_, None, candidate_capacity
+                points, complex_, None, candidate_capacity, budget=budget
             )
         case (3, 3):
             triangles, loops, undecided, used, exceeded = _surface_triangles(
-                points, complex_, boundary, candidate_capacity
+                points, complex_, boundary, candidate_capacity, budget=budget
             )
         case _:
             return 0, 0, False
@@ -931,8 +984,8 @@ def _self_intersections(
             exceeded = True
         remaining -= first.size
         if first.size:
-            hit, certain = _triangle_pairs_intersect(
-                points, triangles[first], triangles[second]
+            hit, certain = triangle_pairs_intersect(
+                points, triangles[first], triangles[second], budget=budget
             )
             intersections += int(np.count_nonzero(hit & certain))
             undecided += int(np.count_nonzero(~certain))
@@ -945,8 +998,9 @@ def _self_intersections(
 # Entry point ---------------------------------------------------------------------
 
 
+@checked
 def audit_welded_topology(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     points: np.ndarray,
     /,
     *,
@@ -956,6 +1010,7 @@ def audit_welded_topology(
     check_manifold: bool,
     check_watertight: bool,
     check_self_intersection: bool,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> WeldedTopologyEvidence:
     """Evaluate the welded-topology checks of one mesh with host coordinates.
 
@@ -963,7 +1018,10 @@ def audit_welded_topology(
     disables welding.
     """
     if candidate_capacity <= 0 or intersection_candidate_capacity <= 0:
-        raise ValueError("Topology-audit candidate capacities must be positive.")
+        raise ValueError(
+            "audit_welded_topology.candidate_capacity must be positive along with intersection_candidate_capacity; "
+            f"got coincidence={candidate_capacity}, intersection={intersection_candidate_capacity}"
+        )
     if points.shape[0] == 0 and (
         mesh.storage is None
         or mesh.storage.global_entity_counts[mesh.topological_dimension] <= 0
@@ -971,7 +1029,9 @@ def audit_welded_topology(
         or any(entities.count != 0 for entities in mesh.topology.entity_sets)
     ):
         raise ValueError(
-            "Empty topology audits require an actual zero-resident distributed mesh."
+            "mesh.blocks must accompany zero resident topology and distributed storage when empty; "
+            f"got resident counts={tuple(entities.count for entities in mesh.topology.entity_sets)!r}, "
+            f"storage={type(mesh.storage).__name__}, points.shape={points.shape!r}"
         )
 
     if coincident_tolerance is None:
@@ -1015,18 +1075,22 @@ def audit_welded_topology(
         )
         if complete is not None and complete.shape != (cell_vertices.shape[0],):
             raise ValueError(
-                "Owner-local neighborhood completeness must label every resident cell."
+                "mesh.storage.local_neighborhood_complete must label every resident cell; "
+                f"got shape={complete.shape!r}, resident_cells={cell_vertices.shape[0]}"
             )
         slots = cell_vertices >= 0
         owners = np.broadcast_to(
             np.arange(cell_vertices.shape[0])[:, None], cell_vertices.shape
         )[slots]
-        nonmanifold_vertices = _star_components(
-            cell_vertices[slots][:, None],
-            owners,
-            _vertex_links(complex_, first, second),
-            complete,
-        )
+        vertex_links = _vertex_links(complex_, first, second)
+        if mesh.periodic_topology is None:
+            nonmanifold_vertices = _star_components(
+                cell_vertices[slots][:, None], owners, vertex_links, complete
+            )
+        else:
+            nonmanifold_vertices = _periodic_vertex_star_components(
+                mesh, mesh.periodic_topology, complex_, welded, vertex_links, complete
+            )
         if mesh.topological_dimension == 3:
             nonmanifold_edges = _star_components(
                 np.sort(complex_.edges, axis=1),
@@ -1049,6 +1113,7 @@ def audit_welded_topology(
             boundary,
             mesh.topological_dimension,
             intersection_candidate_capacity,
+            budget=budget,
         )
         if intersection_exceeded:
             unresolved.append("self_intersection_capacity")

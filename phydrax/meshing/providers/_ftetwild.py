@@ -12,21 +12,13 @@ from importlib import import_module, metadata
 import jax.numpy as jnp
 import numpy as np
 
-from ..._fingerprint import canonical_fingerprint
-from ..._identity import SemanticProvenance
-from ...discretization import CellMesh, PolygonalConnectivity, TetrahedralConnectivity
-from ...geometry.simplicial import TriangleMesh, TriangleMeshQueryIndex
-from ...geometry.surface import SurfaceMetadata, SurfaceModel
-from ...logging import emit
-from ...typing import checked
-from .._association import GeometryAssociation, GeometryAssociationKind
-from .._audit import CellMeshAuditPolicy
-from .._canonical import certify_cell_mesh
-from .._contracts import (
+from phydrax.meshing._association_state import (
+    GeometryAssociation,
+    GeometryAssociationKind,
+)
+from phydrax.meshing._contracts import (
     MeshingDerivativeMode,
     MeshingExecutionMode,
-    MeshingFailure,
-    MeshingFailureCategory,
     MeshingOperation,
     MeshingProviderInfo,
     MeshingSourceDescriptor,
@@ -35,6 +27,17 @@ from .._contracts import (
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
+from phydrax.meshing._failures import MeshingFailure, MeshingFailureCategory
+
+from ..._fingerprint import canonical_fingerprint
+from ..._identity import SemanticProvenance
+from ...discretization import CellMesh, PolygonalConnectivity, TetrahedralConnectivity
+from ...geometry.simplicial import TriangleMesh, TriangleMeshQueryIndex
+from ...geometry.surface import SurfaceMetadata, SurfaceModel
+from ...logging import emit
+from ...typing import checked
+from .._audit import CellMeshAuditPolicy
+from .._canonical import certify_cell_mesh
 from .._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
 from .._scope import MeshingEntityKind, MeshingScope
 from .._sizing import SizeControlStrength, UniformSizeControl

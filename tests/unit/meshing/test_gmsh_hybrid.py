@@ -47,7 +47,9 @@ def _split_boxes(
     splitter.AddArgument(second)
     splitter.Perform()
     if splitter.HasErrors():
-        raise RuntimeError("OCCT failed to build the conformal hybrid fixture.")
+        raise RuntimeError(
+            "fixture.splitter must build the conformal hybrid; got OCCT errors"
+        )
     return splitter.Shape()
 
 
@@ -361,7 +363,9 @@ def test_schedule_total_mismatch_fails_before_gmsh_mesh_generation(
     )
 
     def unexpected_generation(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError("mesh generation must not run for a mismatched schedule")
+        raise AssertionError(
+            "fixture.generation must remain uncalled for a mismatched schedule; got call"
+        )
 
     monkeypatch.setattr(gmsh.model.mesh, "generate", unexpected_generation)
     with pytest.raises(phx.meshing.MeshingFailure) as failure:

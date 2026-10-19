@@ -1059,7 +1059,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             raise ValueError("DGSEM mesh and conservation-system dimensions must match.")
         if len(discretization.field_spaces) != 1:
             raise ValueError("Initial DGSEM requires exactly one conserved FE field.")
-        field_index = discretization._field_index(discretization.field_spaces[0].name)
+        field_index = discretization.field_index(discretization.field_spaces[0].name)
         if field_index != 0:
             raise ValueError("DGSEM conserved field ordering is inconsistent.")
         dof_map = discretization.dof_maps[field_index]

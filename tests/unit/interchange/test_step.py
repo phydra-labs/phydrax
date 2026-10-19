@@ -6,8 +6,11 @@ topology counts and OCCT `GProp` volumes.
 """
 
 import builtins
+import json
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 from types import ModuleType
 from typing import Literal
@@ -20,6 +23,7 @@ import phydrax as phx
 from phydrax._external_resource import ResourceLimits
 from phydrax.geometry._atlas import PolygonTrimLoop, TrimDomain
 from phydrax.geometry.brep._model import BRepAssemblyContainer
+from phydrax.interchange._cad_carriers import RigidPlacement
 from phydrax.units import MILLIMETER
 from tests._support.cad_models import (
     CONTRACT,
@@ -34,6 +38,34 @@ from tests._support.cad_models import (
     solid_volumes,
     SOLIDS,
 )
+
+
+# Empirical `test_native_solid_round_trips_to_canonical_fixed_point`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_STEP_ROUNDTRIP_VERTEX_POINT_ATOL = 1e-15
+# Empirical `test_two_solid_assembly_round_trips_occurrences`: matched max |delta|=8.88178e-16; joint allowance fraction=1.4803e-06, margin=99.9999%.
+_STEP_ASSEMBLY_SOLID_VOLUME_RTOL = 1e-10
+# Empirical `test_independent_offset_surface_source_retains_tree_without_fitted_pcurves`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_STEP_OFFSET_SURFACE_POINT_ATOL = 1e-14
+# Empirical `test_native_solid_round_trips_to_canonical_fixed_point`: matched max |delta|=1.42109e-14; joint allowance fraction=2.39936e-06, margin=99.9998%.
+_STEP_ROUNDTRIP_SOLID_VOLUME_RTOL = 1e-10
+# Empirical `test_units_are_converted_exactly_into_the_target_contract`: matched max |delta|=8.27181e-25; joint allowance fraction=8.2718e-13, margin=100%.
+_STEP_UNIT_CONVERTED_VOLUME_RTOL = 1e-10
+# Empirical `test_native_rational_spline_round_trip_without_optional_kernel`: matched max |delta|=8.88178e-16; joint allowance fraction=2.82626e-07, margin=100%.
+_STEP_RATIONAL_SPLINE_AREA_RTOL = 1e-9
+# Empirical `test_trimmed_long_arc_preserves_range_pcurve_and_area`: matched max |delta|=4.44089e-16; joint allowance fraction=1.88397e-07, margin=100%.
+_STEP_LONG_ARC_AREA_RTOL = 1e-9
+# Empirical `test_occt_written_step_matches_native_reading`: matched max |delta|=3.55271e-15; joint allowance fraction=2.9601e-07, margin=100%.
+_OCCT_WRITTEN_SOLID_VOLUME_RTOL = 1e-9
+# Empirical `test_native_step_is_read_by_occt`: matched max |delta|=3.8147e-06; joint allowance fraction=3.40154e-07, margin=100%.
+_OCCT_READ_SOLID_VOLUME_RTOL = 1e-9
+# Empirical `test_occt_step_without_pcurves_recovers_exact_pcurves`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+_STEP_RECOVERED_CYLINDER_VOLUME_RTOL = 1e-9
+# Empirical `test_rational_spline_face_round_trips_exactly`: matched max |delta|=2.92211e-11; joint allowance fraction=0.0092984, margin=99.0702%.
+_STEP_RATIONAL_FACE_AREA_RTOL = 1e-9
+# Empirical `test_periodic_spline_solid_retains_exact_source_and_topology`: matched max |delta|=1.89004e-12; joint allowance fraction=3.00805e-05, margin=99.997%.
+_STEP_PERIODIC_SPLINE_VOLUME_RTOL = 1e-8
+# Empirical `test_independent_offset_surface_source_retains_tree_without_fitted_pcurves`: matched max |delta|=4.44089e-16; joint allowance fraction=2.2094e-06, margin=99.9998%.
+_STEP_OFFSET_SURFACE_AREA_RTOL = 1e-10
 
 
 interchange = phx.interchange
@@ -111,7 +143,7 @@ def test_native_solid_round_trips_to_canonical_fixed_point(
     second = _read(second_bytes)
     assert native.geometry is not None and first.model.geometry is not None
     assert second.model.geometry is not None
-    # One write/read reaches the documented canonical form; it is then stable.
+    # One write/read reaches the documented serialization form; it is then stable.
     assert second.model.geometry.geometry_id == first.model.geometry.geometry_id
     assert _write(second.model, tmp_path / "third.step") == second_bytes
     assert _counts(first.model.geometry) == _counts(native.geometry)
@@ -119,9 +151,11 @@ def test_native_solid_round_trips_to_canonical_fixed_point(
         np.sort(np.asarray(first.model.geometry.vertex_points), axis=0),
         np.sort(np.asarray(native.geometry.vertex_points), axis=0),
         rtol=0.0,
-        atol=1e-15,
+        atol=_STEP_ROUNDTRIP_VERTEX_POINT_ATOL,
     )
-    assert solid_volumes(first.model)[0] == pytest.approx(EXACT_VOLUMES[name], rel=1e-10)
+    assert solid_volumes(first.model)[0] == pytest.approx(
+        EXACT_VOLUMES[name], rel=_STEP_ROUNDTRIP_SOLID_VOLUME_RTOL
+    )
     assert first.report.status == interchange.AdapterStatus.LOSSLESS
     assert first.coverage.pcurves_fitted == 0
 
@@ -156,7 +190,7 @@ def test_two_solid_assembly_round_trips_occurrences(tmp_path: Path) -> None:
     np.testing.assert_allclose(
         solid_volumes(result.model),
         [EXACT_VOLUMES["box"], EXACT_VOLUMES["cylinder"]],
-        rtol=1e-10,
+        rtol=_STEP_ASSEMBLY_SOLID_VOLUME_RTOL,
     )
 
 
@@ -252,7 +286,9 @@ def test_units_are_converted_exactly_into_the_target_contract(tmp_path: Path) ->
         np.max(np.asarray(metres.model.geometry.vertex_points), axis=0),
         [0.001, 0.002, 0.003],
     )
-    assert solid_volumes(metres.model)[0] == pytest.approx(6e-9, rel=1e-10)
+    assert solid_volumes(metres.model)[0] == pytest.approx(
+        6e-9, rel=_STEP_UNIT_CONVERTED_VOLUME_RTOL
+    )
 
 
 @pytest.mark.parametrize("schema", ["AP203", "AP214", "AP242"])
@@ -275,7 +311,7 @@ def test_native_rational_spline_round_trip_without_optional_kernel(
     area = float(
         phx.geometry.brep.prepare_brep_query(result.model).measures.face_areas[0]
     )
-    assert area == pytest.approx(np.pi, rel=1e-9)
+    assert area == pytest.approx(np.pi, rel=_STEP_RATIONAL_SPLINE_AREA_RTOL)
 
 
 def test_trimmed_long_arc_preserves_range_pcurve_and_area(tmp_path: Path) -> None:
@@ -287,7 +323,7 @@ def test_trimmed_long_arc_preserves_range_pcurve_and_area(tmp_path: Path) -> Non
     area = float(
         phx.geometry.brep.prepare_brep_query(result.model).measures.face_areas[0]
     )
-    assert area == pytest.approx(0.75 * np.pi, rel=1e-9)
+    assert area == pytest.approx(0.75 * np.pi, rel=_STEP_LONG_ARC_AREA_RTOL)
 
 
 def test_cartesian_trim_selectors_retain_the_long_arc(tmp_path: Path) -> None:
@@ -308,7 +344,7 @@ def test_cartesian_trim_selectors_retain_the_long_arc(tmp_path: Path) -> None:
     assert restored.geometry is not None
     np.testing.assert_array_equal(restored.geometry.edge_ranges[0], [0.0, 1.5 * np.pi])
     area = float(phx.geometry.brep.prepare_brep_query(restored).measures.face_areas[0])
-    assert area == pytest.approx(0.75 * np.pi, rel=1e-9)
+    assert area == pytest.approx(0.75 * np.pi, rel=_STEP_LONG_ARC_AREA_RTOL)
 
 
 def test_reversed_trim_preserves_oriented_edge_incidence(tmp_path: Path) -> None:
@@ -731,7 +767,9 @@ def test_occt_written_step_matches_native_reading(
         level: int = 0,
     ) -> ModuleType:
         if name == "OCP" or name.startswith("OCP."):
-            raise AssertionError("Native STEP decoding must not import OCP algorithms.")
+            raise AssertionError(
+                f"step.decoder.imports must exclude OCP algorithms; got {name}"
+            )
         return original_import(name, globals, locals, fromlist, level)
 
     with monkeypatch.context() as guard:
@@ -748,7 +786,9 @@ def test_occt_written_step_matches_native_reading(
     placed = solid_volumes(result.model)[
         [occurrence.solid for occurrence in geometry.occurrences]
     ]
-    assert float(np.sum(placed)) == pytest.approx(volume, rel=1e-9)
+    assert float(np.sum(placed)) == pytest.approx(
+        volume, rel=_OCCT_WRITTEN_SOLID_VOLUME_RTOL
+    )
     assert result.schema == "AP214"
 
 
@@ -760,7 +800,9 @@ def test_native_step_is_read_by_occt(occt: object, name: str, tmp_path: Path) ->
     solids, faces, volume, valid = _occt_facts(_occt_read(path))
     assert valid
     assert (solids, faces) == (model.topology.num_solids, model.topology.num_faces)
-    assert volume == pytest.approx(1e9 * float(np.sum(solid_volumes(model))), rel=1e-9)
+    assert volume == pytest.approx(
+        1e9 * float(np.sum(solid_volumes(model))), rel=_OCCT_READ_SOLID_VOLUME_RTOL
+    )
 
 
 def test_occt_step_without_pcurves_recovers_exact_pcurves(
@@ -771,7 +813,7 @@ def test_occt_step_without_pcurves_recovers_exact_pcurves(
     assert result.coverage.pcurves_honored == 0
     assert result.coverage.pcurves_exact > 0 and result.coverage.pcurves_fitted == 0
     assert solid_volumes(result.model)[0] == pytest.approx(
-        EXACT_VOLUMES["cylinder"], rel=1e-9
+        EXACT_VOLUMES["cylinder"], rel=_STEP_RECOVERED_CYLINDER_VOLUME_RTOL
     )
 
 
@@ -823,8 +865,8 @@ def test_rational_spline_face_round_trips_exactly(occt: object, tmp_path: Path) 
             np.asarray(getattr(patch, field)), np.asarray(getattr(again, field))
         )
     area = float(phx.geometry.brep.prepare_brep_query(first).measures.face_areas[0])
-    assert area == pytest.approx(properties.Mass(), rel=1e-9)
-    assert area == pytest.approx(np.pi / 2 * 2.0, rel=1e-9)
+    assert area == pytest.approx(properties.Mass(), rel=_STEP_RATIONAL_FACE_AREA_RTOL)
+    assert area == pytest.approx(np.pi / 2 * 2.0, rel=_STEP_RATIONAL_FACE_AREA_RTOL)
 
 
 def test_periodic_spline_solid_retains_exact_source_and_topology(
@@ -840,7 +882,9 @@ def test_periodic_spline_solid_retains_exact_source_and_topology(
         isinstance(patch, phx.geometry.BSplineSurfacePatch)
         for patch in imported.model.patches
     )
-    assert solid_volumes(imported.model)[0] == pytest.approx(2.0 * np.pi, rel=1e-8)
+    assert solid_volumes(imported.model)[0] == pytest.approx(
+        2.0 * np.pi, rel=_STEP_PERIODIC_SPLINE_VOLUME_RTOL
+    )
     restored = interchange.load_brep_archive(
         interchange.save_brep_archive(imported.model, tmp_path / "periodic.phx").path
     )
@@ -927,12 +971,14 @@ END-ISO-10303-21;
         patch.evaluate(jnp.asarray([[0.2, 0.7], [1.7, 0.2]], dtype=jnp.float64) * factor),
         np.asarray([[0.2, 0.7, 0.75], [1.7, 0.2, 0.75]]) * factor,
         rtol=0.0,
-        atol=1e-14,
+        atol=_STEP_OFFSET_SURFACE_POINT_ATOL,
     )
     assert imported.model.topology.num_faces == 1
     assert imported.model.topology.num_edges == 4
     area = phx.geometry.prepare_brep_query(imported.model).measures.face_areas[0]
-    assert float(area) == pytest.approx(2.0 * factor**2, rel=1e-10)
+    assert float(area) == pytest.approx(
+        2.0 * factor**2, rel=_STEP_OFFSET_SURFACE_AREA_RTOL
+    )
     receipt = interchange.save_brep_archive(
         imported.model, tmp_path / "independent-offset.phx"
     )
@@ -944,3 +990,305 @@ END-ISO-10303-21;
         restored.patches[0].evaluate(jnp.asarray([0.3, 0.4], dtype=jnp.float64) * factor),
         patch.evaluate(jnp.asarray([0.3, 0.4], dtype=jnp.float64) * factor),
     )
+
+
+def test_step_uncertainty_is_recorded_and_larger_source_bound_declared(
+    cylinder_step: str,
+) -> None:
+    text, count = re.subn(
+        r"UNCERTAINTY_MEASURE_WITH_UNIT\(LENGTH_MEASURE\([^)]+\)",
+        "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(0.125)",
+        cylinder_step,
+        count=1,
+    )
+    assert count == 1
+    imported = _read(text.encode())
+    assert imported.source_tolerance == 0.125
+    assert imported.source_tolerances
+    assert max(value for _, value in imported.source_tolerances) == 0.125
+    assert imported.report.status == interchange.AdapterStatus.DECLARED_LOSS
+    assert any(loss.path == "source-tolerance:global" for loss in imported.report.losses)
+    assert imported.tolerance_evidence is not None
+    assert imported.source_tolerance is not None
+    assert imported.source_tolerance > imported.tolerance_evidence.declared_limit
+    assert all(
+        "entity=" in loss.rationale
+        and "declared=" in loss.rationale
+        and "limit=" in loss.rationale
+        for loss in imported.tolerance_evidence.losses
+    )
+    evidence = imported.tolerance_evidence
+    loss = next(
+        item for item in evidence.losses if item.path == "source-tolerance:global"
+    )
+    assert "entity=global" in loss.rationale
+    assert "declared=0.125" in loss.rationale
+    assert f"limit={evidence.declared_limit:.17g}" in loss.rationale
+    assert evidence.source_bounds == (0.125,) * len(evidence.entities)
+    assert evidence.upper_bounds == tuple(
+        max(certified, 0.125) if certified is not None else 0.125
+        for certified in evidence.certified_bounds
+    )
+    assert imported.report.source_profile is not None
+    recorded = json.loads(
+        dict(imported.report.source_profile.qualifiers)["source-uncertainties"]
+    )
+    assert recorded and max(value for _, value in recorded) == 0.125
+
+
+def test_step_ignored_geometry_representation_is_declared(cylinder_step: str) -> None:
+    text = cylinder_step.replace(
+        "ENDSEC;\nEND-ISO",
+        "#90001=TESSELLATED_SHAPE_REPRESENTATION('derived',(),$);\nENDSEC;\nEND-ISO",
+        1,
+    )
+    imported = _read(text.encode())
+    assert imported.report.status == interchange.AdapterStatus.DECLARED_LOSS
+    assert any(
+        "TESSELLATED_SHAPE_REPRESENTATION" in loss.rationale
+        for loss in imported.report.losses
+    )
+    assert imported.report.source_profile is not None
+    ignored = json.loads(
+        dict(imported.report.source_profile.qualifiers)["coverage-ignored-by-design"]
+    )
+    assert any("TESSELLATED_SHAPE_REPRESENTATION" in entity for entity in ignored)
+
+
+def test_step_tessellation_only_file_refuses(cylinder_step: str) -> None:
+    text = cylinder_step.replace(
+        "ADVANCED_BREP_SHAPE_REPRESENTATION(", "TESSELLATED_SHAPE_REPRESENTATION("
+    )
+    assert _refusal(text.encode()).reason == "unsupported-entity"
+
+
+def test_step_context_extra_unit_is_classified(cylinder_step: str) -> None:
+    imported = _read(cylinder_step.encode())
+    assert imported.report.source_profile is not None
+    ignored = json.loads(
+        dict(imported.report.source_profile.qualifiers)["coverage-ignored-by-design"]
+    )
+    assert any("SOLID_ANGLE_UNIT" in entity for entity in ignored)
+
+
+def test_step_written_uncertainty_is_certified_maximum(tmp_path: Path) -> None:
+    model = native_solid("box")
+    evidence = phx.geometry.brep.certify_brep_gaps(model)
+    bound = float(np.max(evidence.upper_bounds))
+    text = _write(model, tmp_path / "certified.step").decode()
+    match = re.search(r"UNCERTAINTY_MEASURE_WITH_UNIT\(LENGTH_MEASURE\(([^)]+)\)", text)
+    assert match is not None
+    written = match[1]
+    assert Fraction(written) >= Fraction(bound)
+    assert float(written) <= float(np.nextafter(bound, np.inf))
+
+
+def test_step_success_classifies_every_instance(cylinder_step: str) -> None:
+    imported = _read(cylinder_step.encode())
+    assert imported.report.source_profile is not None
+    qualifiers = dict(imported.report.source_profile.qualifiers)
+    classified = json.loads(qualifiers["coverage-consumed"]) + json.loads(
+        qualifiers["coverage-ignored-by-design"]
+    )
+    identifiers = re.findall(r"^#(\d+)=", cylinder_step, re.MULTILINE)
+    reported = [re.match(r"#(\d+) ", label) for label in classified]
+    assert all(match is not None for match in reported)
+    reported_ids = [match[1] for match in reported if match is not None]
+    assert len(reported_ids) == len(set(reported_ids))
+    assert set(reported_ids) == set(identifiers)
+
+
+def test_step_empty_shape_does_not_admit_tessellation_only_data(tmp_path: Path) -> None:
+    text = _write(native_empty_model(), tmp_path / "empty.step").decode()
+    text = text.replace(
+        "ENDSEC;\nEND-ISO",
+        "#90001=TESSELLATED_SHAPE_REPRESENTATION('derived',(),$);\nENDSEC;\nEND-ISO",
+        1,
+    )
+    assert _refusal(text.encode()).reason == "unsupported-entity"
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    (
+        ("LENGTH_UNIT()", "LENGTH_UNIT() MASS_UNIT()"),
+        ("SI_UNIT($,.METRE.)", "SI_UNIT(17,.METRE.)"),
+    ),
+    ids=("unsupported-partial-unit", "invalid-prefix-kind"),
+)
+def test_step_reached_units_do_not_silently_drop_semantics(
+    cylinder_step: str, old: str, new: str
+) -> None:
+    text = cylinder_step.replace(old, new, 1)
+    assert text != cylinder_step
+    assert _refusal(text.encode()).reason == "units"
+
+
+def test_step_retains_unreferenced_uncertainty_declarations(cylinder_step: str) -> None:
+    match = re.search(
+        r"UNCERTAINTY_MEASURE_WITH_UNIT\(LENGTH_MEASURE\([^)]+\),#(\d+)",
+        cylinder_step,
+    )
+    assert match is not None
+    text = cylinder_step.replace(
+        "ENDSEC;\nEND-ISO",
+        f"#90001=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(0.125),#{match[1]},'unused','source');\nENDSEC;\nEND-ISO",
+        1,
+    )
+    imported = _read(text.encode())
+    assert dict(imported.source_tolerances)["#90001"] == 0.125
+    assert imported.report.source_profile is not None
+    units = dict(
+        json.loads(
+            dict(imported.report.source_profile.qualifiers)[
+                "source-uncertainty-length-units-m"
+            ]
+        )
+    )
+    assert units[90001] == imported.source_length_unit_meters
+
+
+def test_step_carries_uncertainty_within_import_limit_without_loss(
+    cylinder_step: str,
+) -> None:
+    # Larger than the fixture's numerical gap, smaller than its declared limit.
+    declared = 1.0e-10
+    text, count = re.subn(
+        r"UNCERTAINTY_MEASURE_WITH_UNIT\(LENGTH_MEASURE\([^)]+\)",
+        "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(0.0000000001)",
+        cylinder_step,
+        count=1,
+    )
+    assert count == 1
+    imported = _read(text.encode())
+    assert imported.report.status == interchange.AdapterStatus.LOSSLESS
+    evidence = imported.tolerance_evidence
+    assert evidence is not None
+    assert declared <= evidence.declared_limit
+    assert evidence.source_tolerance == declared
+    assert evidence.entities and evidence.losses == ()
+    assert all(bound == declared for bound in evidence.source_bounds)
+    assert any(
+        bound is not None and bound < declared for bound in evidence.certified_bounds
+    )
+    assert evidence.upper_bounds == tuple(
+        max(certified, declared) if certified is not None else declared
+        for certified in evidence.certified_bounds
+    )
+
+
+@pytest.mark.parametrize("loss_limit", (0, 8), ids=("refused-budget", "declared-loss"))
+def test_step_declares_unrepresentable_converted_uncertainty(
+    tmp_path: Path, loss_limit: int
+) -> None:
+    source = _write(native_solid("box"), tmp_path / "overflow-source.step").decode()
+    text, count = re.subn(
+        r"UNCERTAINTY_MEASURE_WITH_UNIT\(LENGTH_MEASURE\([^)]+\)",
+        "UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E+308)",
+        source,
+        count=1,
+    )
+    assert count == 1
+    policy = interchange.CadImportPolicy(
+        phx._physical.SpatialCoordinateContract(MILLIMETER),
+        replace(LIMITS, max_losses=loss_limit),
+    )
+    if loss_limit == 0:
+        assert _refusal(text.encode(), policy).reason == "limit"
+        return
+    imported = _read(text.encode(), policy)
+    assert imported.report.status == interchange.AdapterStatus.DECLARED_LOSS
+    assert imported.source_tolerance is None
+    assert tuple(value for _, value in imported.source_tolerances) == (1.0e308,)
+    assert imported.resource_manifest.observed_losses == 1
+    evidence = imported.tolerance_evidence
+    assert evidence is not None
+    assert evidence.source_bounds == (None,) * len(evidence.entities)
+    assert evidence.upper_bounds == evidence.certified_bounds
+    assert len(evidence.losses) == 1
+    loss = evidence.losses[0]
+    assert "entity=global (#" in loss.rationale
+    assert f"declared={1.0e308:.17g}" in loss.rationale
+    assert "source-unit=#" in loss.rationale
+    assert f"limit={evidence.declared_limit:.17g}" in loss.rationale
+    assert imported.report.source_profile is not None
+    converted = json.loads(
+        dict(imported.report.source_profile.qualifiers)["source-uncertainties"]
+    )
+    assert len(converted) == 1 and converted[0][1] is None
+
+
+def _mapped_assembly(data: bytes, scale: float = 1.0) -> bytes:
+    """Independent two-level Part 21 mapping fixture, built around one solid."""
+    text = data.decode()
+    match = re.search(r"#(\d+)=ADVANCED_BREP_SHAPE_REPRESENTATION\((.*)\);", text)
+    if match is None:
+        raise ValueError(
+            "MappedFixture.representation must contain a solid; got no solid representation"
+        )
+    identifier, body = match.groups()
+    context = re.search(r",(#\d+)$", body)
+    if context is None:
+        raise ValueError(
+            "MappedFixture.context must contain a representation context; got none"
+        )
+    base = max(int(value) for value in re.findall(r"#(\d+)=", text)) + 1
+    refs = [f"#{base + i}" for i in range(12)]
+    original = f"{refs[0]}=ADVANCED_BREP_SHAPE_REPRESENTATION({body});"
+    records = [
+        original,
+        f"{refs[1]}=CARTESIAN_POINT('',(0.,0.,0.));",
+        f"{refs[2]}=AXIS2_PLACEMENT_3D('',{refs[1]},$,$);",
+        f"{refs[3]}=REPRESENTATION_MAP({refs[2]},{refs[0]});",
+        f"{refs[4]}=CARTESIAN_POINT('',(1.,0.,0.));",
+        f"{refs[5]}=CARTESIAN_TRANSFORMATION_OPERATOR_3D('',$,$,{refs[4]},{scale},$);",
+        f"{refs[6]}=MAPPED_ITEM('',{refs[3]},{refs[5]});",
+        f"{refs[7]}=SHAPE_REPRESENTATION('',({refs[6]}),{context.group(1)});",
+        f"{refs[8]}=REPRESENTATION_MAP({refs[2]},{refs[7]});",
+        f"{refs[9]}=CARTESIAN_POINT('',(0.,2.,0.));",
+        f"{refs[10]}=CARTESIAN_TRANSFORMATION_OPERATOR_3D('',$,$,{refs[9]},1.,$);",
+        f"{refs[11]}=MAPPED_ITEM('',{refs[8]},{refs[10]});",
+    ]
+    text = (
+        text[: match.start()]
+        + f"#{identifier}=SHAPE_REPRESENTATION('',({refs[11]}),{context.group(1)});"
+        + text[match.end() :]
+    )
+    return text.replace(
+        "ENDSEC;\nEND-ISO-10303-21;", "\n".join(records) + "\nENDSEC;\nEND-ISO-10303-21;"
+    ).encode()
+
+
+def test_two_level_mapped_assembly_has_composed_placement(tmp_path: Path) -> None:
+    model = _read(
+        _mapped_assembly(_write(native_solid("box"), tmp_path / "mapped.step"))
+    ).model
+    geometry = model.require_geometry()
+    assert len(geometry.occurrences) == 1
+    np.testing.assert_array_equal(geometry.occurrences[0].rotation, np.eye(3))
+    np.testing.assert_array_equal(geometry.occurrences[0].translation, [1.0, 2.0, 0.0])
+
+
+def test_scaled_mapped_assembly_refuses(tmp_path: Path) -> None:
+    refusal = _refusal(
+        _mapped_assembly(_write(native_solid("box"), tmp_path / "scaled.step"), 2.0)
+    )
+    assert refusal.reason == "unsupported-entity"
+
+
+@pytest.mark.parametrize(
+    "rotation",
+    [
+        np.asarray(
+            ((1.0, np.nextafter(0.0, 1.0), 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        ),
+        np.diag((np.nextafter(1.0, 2.0), 1.0, 1.0)),
+        np.diag((-1.0, 1.0, 1.0)),
+    ],
+    ids=("subnormal-shear", "near-unit-scale", "reflection"),
+)
+def test_certified_rigid_placement_refuses_nonrigid(rotation: np.ndarray) -> None:
+    matrix = np.concatenate((rotation, np.zeros((3, 1), dtype=np.float64)), axis=1)
+    with pytest.raises(interchange.CadInterchangeError) as caught:
+        RigidPlacement.from_certified_matrix(matrix, "operator")
+    assert caught.value.refusal.reason == "unsupported-entity"

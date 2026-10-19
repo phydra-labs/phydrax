@@ -29,9 +29,11 @@ _IMPORT_POLICY = phx.interchange.CadImportPolicy(
     ),
 )
 
+# Empirical `_channel_walls`: rejected min |delta|=0.45; allowance separation=4.5e+08 times (margin=100%).
+CHANNEL_WALL_HEIGHT_ATOL = 1e-9
+
 
 def _face(points: Any) -> Any:
-    pytest.importorskip("OCP")
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon
     from OCP.gp import gp_Pnt
 
@@ -162,7 +164,6 @@ def test_real_anisotropic_background_metric_stretches_cells_along_the_metric(
 
 
 def test_gmsh_preflight_routes_anisotropic_volume_metrics_away(tmp_path: Any) -> None:
-    pytest.importorskip("OCP")
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 
     cube = phx.geometry.BRepSource(
@@ -200,7 +201,7 @@ def _channel_walls(provider: Any, source: Any) -> Any:
             parameters = np.linspace(interval[0], interval[1], 3)
             points = np.asarray(geometry.curves[curve_index].evaluate(parameters))
         for height, selected in walls.items():
-            if np.allclose(points[:, 1], height, atol=1.0e-9, rtol=0.0):
+            if np.allclose(points[:, 1], height, atol=CHANNEL_WALL_HEIGHT_ATOL, rtol=0.0):
                 selected.append(source.edge_ids[index])
     assert all(len(selected) == 1 for selected in walls.values())
     return tuple(provider.entity_scope(source, walls[height]) for height in (0.45, 0.55))
@@ -256,7 +257,6 @@ def test_real_proximity_control_refines_a_narrow_channel(tmp_path: Any) -> None:
 
 
 def test_real_protected_free_curve_is_embedded_as_mesh_edges(tmp_path: Any) -> None:
-    pytest.importorskip("OCP")
     from OCP.BRep import BRep_Builder
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
     from OCP.gp import gp_Pnt
@@ -375,7 +375,6 @@ def _tetrahedron_rule(count: Any) -> Any:
 def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(
     tmp_path: Any, order: Any
 ) -> None:
-    pytest.importorskip("OCP")
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
 
     source = phx.geometry.BRepSource(
@@ -413,7 +412,7 @@ def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(
     assert achieved["gmsh_minimum_scaled_inverse_condition"] > 0.0
     assert achieved["gmsh_minimum_scaled_inverse_gradient_error"] > 0.0
     assert achieved["minimum_curved_jacobian_determinant"] > 0.0
-    # The curved map interpolates the canonical corners and recovers the CAD volume.
+    # The curved map interpolates the reference corners and recovers the CAD volume.
     np.testing.assert_allclose(np.asarray(values) @ nodes, corners, atol=1.0e-12)
     assert abs(curved_volume - np.pi) < 0.1 * abs(straight_volume - np.pi)
 
@@ -421,7 +420,6 @@ def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(
 def test_real_session_import_cache_is_bound_to_immutable_native_revisions(
     tmp_path: Any,
 ) -> None:
-    pytest.importorskip("OCP")
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 
     path = tmp_path / "cube.brep"
@@ -462,12 +460,12 @@ def test_real_session_import_cache_is_bound_to_immutable_native_revisions(
         assert (session.import_cache_misses, session.import_cache_hits) == (2, 2)
 
     assert all(result.compliance.passed for result in (first, second, third, fourth))
+    assert first.mesh.mesh_id != second.mesh.mesh_id
     assert third.mesh.mesh_id != first.mesh.mesh_id
     assert fourth.mesh.mesh_id == first.mesh.mesh_id
 
 
 def test_real_hxt_threads_follow_the_explicit_resource_policy(tmp_path: Any) -> None:
-    pytest.importorskip("OCP")
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 
     source = phx.geometry.BRepSource(

@@ -11,6 +11,7 @@ from phydrax.geometry.design import (
     ParameterTarget,
     prepare_csg_continuation,
 )
+from phydrax.units import METER
 
 
 def test_csg_continuation_scenario_1() -> None:
@@ -24,6 +25,7 @@ def test_csg_continuation_scenario_1() -> None:
         source,
         (ParameterTarget(ParameterId("left", "center"), (0.0, 0.0)),),
         policy,
+        coordinate_unit=METER,
     )
     assert len(prepared.width_parameter_ids) == 2
     assert all(

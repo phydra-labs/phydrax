@@ -26,6 +26,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
+from ..typing import checked
 
 
 _CHECKSUM_LENGTHS = {"sha256": 64, "sha384": 96, "sha512": 128}
@@ -237,6 +238,14 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
                 "Serialized reference-artifact manifest has an invalid content address."
             )
         return value
+
+    @classmethod
+    @checked
+    def from_stored_fields(
+        cls: type[ReferenceArtifactManifest], value: ReferenceArtifactManifest, /
+    ) -> ReferenceArtifactManifest:
+        """Revalidate retained scales, rights, and the manifest content address."""
+        return cls.from_record(value.to_record())
 
     def require_uncertainty(self, /) -> tuple[tuple[str, float], ...]:
         """Require quantified uncertainty independently of requested-use rights.

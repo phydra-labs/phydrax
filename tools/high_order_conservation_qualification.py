@@ -290,7 +290,9 @@ def _production_extension_checks(lane: Any) -> Any:
         pyramid = phx.discretization.fem.HybridReferenceFamily("pyramid", 3)
         pyramid_identity = float(
             jnp.max(
-                jnp.abs(pyramid.tabulate(pyramid.nodes) - jnp.eye(pyramid.nodes.shape[0]))
+                jnp.abs(
+                    pyramid.tabulate(pyramid.nodes)[0] - jnp.eye(pyramid.nodes.shape[0])
+                )
             )
         )
         checks["pyramid_order_three_identity_defect"] = pyramid_identity

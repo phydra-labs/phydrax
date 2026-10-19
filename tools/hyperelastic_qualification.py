@@ -19,6 +19,7 @@ import numpy as np
 import optax
 
 import phydrax as phx
+from phydrax.units import METER
 
 
 @dataclass(frozen=True)
@@ -313,7 +314,7 @@ def _solve_finite_element(configuration: CaseConfiguration, refinement: int) -> 
 
 def _neural_problem(configuration: CaseConfiguration, seed: int) -> Any:
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.5, 0.5), side=1.0).compile()
+        phx.geometry.Square(center=(0.5, 0.5), side=1.0).compile(coordinate_unit=METER)
     )
     model = phx.nn.models.MLP(
         in_size=2,
@@ -509,7 +510,9 @@ def _solve_neural(configuration: Any, seed: Any, reference: Any) -> Any:
 
 def _affine_evidence(configuration: CaseConfiguration) -> Any:
     domain = phx.domain.GeometryDomain(
-        phx.geometry.Box(center=(0.0, 0.0, 0.0), size=(2.0, 2.0, 2.0)).compile()
+        phx.geometry.Box(center=(0.0, 0.0, 0.0), size=(2.0, 2.0, 2.0)).compile(
+            coordinate_unit=METER
+        )
     )
     gradient = jnp.asarray([[0.08, 0.02, 0.01], [0.03, -0.04, 0.02], [0.0, 0.01, 0.05]])
 

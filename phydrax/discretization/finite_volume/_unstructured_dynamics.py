@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.sharding import PartitionSpec
-from jaxtyping import PyTree
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 import phydrax.linalg as la
@@ -24,7 +24,14 @@ from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
+from ..._validation import positive_finite_float
 from ...ein import contract
+from ...equations import (
+    _multiphase as multiphase_owner,
+    _vof_phase_change as vof_phase_change_owner,
+)
+from ...equations._hyperbolic_systems import AbstractConservationSystem
+from ...solver import _finite_volume_content as finite_volume_content_owner
 from ...typing import checked
 from .._conservation_boundary import (
     AbstractConservationBoundary,
@@ -53,6 +60,7 @@ from ._embedded_dynamics import (
 )
 from ._geometry_protocol import (
     FiniteVolumeGeometryStatus,
+    FiniteVolumeStageFaceBlock,
     FiniteVolumeStageFaceLayout,
     FiniteVolumeStageMetrics,
     lower_static_unstructured_stage_metrics,
@@ -73,17 +81,18 @@ from ._riemann import (
 )
 from ._small_cell import ConservativeSmallCellRedistributionPlan
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
-from ._unstructured_overset import PeriodicSlidingCoupling
+from ._unstructured_overset import PeriodicSlidingCoupling, UnstructuredOversetPlan
+from ._unstructured_vof import JAXPLICStageReconstruction, UnstructuredVOFPlan
 from ._unstructured_weno import PreparedUnstructuredWENOZReconstruction
 
 
-PreparedUnstructuredReconstruction = (
+type PreparedUnstructuredReconstruction = (
     PreparedCellPolynomialReconstruction | PreparedUnstructuredWENOZReconstruction
 )
 
 
 class UnstructuredFiniteVolumeBoundarySet(StrictModule, NonTrainableState):
-    """Complete named physical-boundary ownership for an unstructured mesh."""
+    """Bind mesh patches to named physical-boundary policies."""
 
     patch_names: tuple[str, ...] = eqx.field(static=True)
     boundaries: tuple[AbstractConservationBoundary, ...]
@@ -98,22 +107,25 @@ class UnstructuredFiniteVolumeBoundarySet(StrictModule, NonTrainableState):
         names = tuple(patch_names)
         if set(boundaries) != set(names):
             raise ValueError(
-                "Unstructured FV boundaries must cover every mesh patch exactly."
+                "dynamics.boundaries must cover every mesh patch; got mismatched patch sets."
             )
         values = tuple(boundaries[name] for name in names)
-        allowed = (
-            ConstantStateBoundary,
-            ExtrapolationBoundary,
-            PrescribedStateBoundary,
-            MovingSlipWallBoundary,
-            SlipWallBoundary,
-            SupersonicInflowBoundary,
-            SupersonicOutflowBoundary,
-        )
-        if any(not isinstance(value, allowed) for value in values):
-            raise TypeError(
-                "Unstructured FV boundaries require normal-oriented exterior-state policies."
-            )
+        for value in values:
+            match value:
+                case (
+                    ConstantStateBoundary()
+                    | ExtrapolationBoundary()
+                    | PrescribedStateBoundary()
+                    | MovingSlipWallBoundary()
+                    | SlipWallBoundary()
+                    | SupersonicInflowBoundary()
+                    | SupersonicOutflowBoundary()
+                ):
+                    pass
+                case _:
+                    raise TypeError(
+                        "dynamics.boundaries must declare normal-oriented exterior-state policies; got an unsupported policy."
+                    )
         self.patch_names = names
         self.boundaries = values
         self.boundary_set_id = canonical_fingerprint(
@@ -145,11 +157,18 @@ class UnstructuredFiniteVolumeMethodPlan(StrictModule):
         *,
         closure: AbstractFaceClosurePlan | None = None,
     ) -> None:
-        reconstruction_id = (
-            reconstruction.plan_id
-            if isinstance(reconstruction, PiecewiseConstantReconstruction)
-            else reconstruction.prepared_id
-        )
+        match reconstruction:
+            case PiecewiseConstantReconstruction():
+                reconstruction_id = reconstruction.plan_id
+            case (
+                PreparedCellPolynomialReconstruction()
+                | PreparedUnstructuredWENOZReconstruction()
+            ):
+                reconstruction_id = reconstruction.prepared_id
+            case _:
+                raise TypeError(
+                    "dynamics.reconstruction must be a supported reconstruction; got an unsupported kind."
+                )
         self.reconstruction = reconstruction
         self.interface_solver = interface_solver
         self.closure = closure
@@ -184,10 +203,580 @@ class UnstructuredFiniteVolumeStageEvaluation(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
 
 
+class _CouplingBinding(StrictModule):
+    coupling: PreparedUnstructuredFiniteVolumeCoupling
+
+
+class _DynamicsBinding(StrictModule):
+    neighbor_state_action: Array | None
+    state_action_id: str = eqx.field(static=True)
+    coupling: PreparedUnstructuredFiniteVolumeCoupling
+    source_id: str | None = eqx.field(static=True)
+    precision: FiniteVolumePrecisionPolicy
+
+
+class _OversetMasks(StrictModule):
+    donor_active: np.ndarray
+    donor_hole: np.ndarray
+    donor_eligible: np.ndarray
+    receptor_active: np.ndarray
+    receptor_hole: np.ndarray
+    receptor_fringe: np.ndarray
+    active_cell_mask: np.ndarray
+
+
+class _OversetPreparation(StrictModule):
+    template: ConservationStageFluxRateBlock | None
+    active_cell_mask: np.ndarray
+    effective_cell_volumes: Array
+    policy_id: str | None = eqx.field(static=True)
+    mapping_id: str | None = eqx.field(static=True)
+    epoch_id: str | None = eqx.field(static=True)
+
+
+class _StageRoutePreparation(StrictModule):
+    boundary_face_indices: tuple[Array, ...]
+    rate_templates: tuple[ConservationStageFluxRateBlock, ...]
+    boundary_routes: tuple[tuple[Array, ...], ...]
+    source_cell_indices: Array
+
+
+def _prepare_coupling_binding(
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
+    method: UnstructuredFiniteVolumeMethodPlan,
+    reconstruction: PiecewiseConstantReconstruction | PreparedUnstructuredReconstruction,
+    coupling: PreparedUnstructuredFiniteVolumeCoupling | None,
+    /,
+) -> _CouplingBinding:
+    coupling_ = (
+        UnstructuredFiniteVolumeCouplingPlan().prepare(discretization)
+        if coupling is None
+        else coupling
+    )
+    if (
+        coupling_.topology_id != discretization.topology_id
+        or coupling_.geometry_id != discretization.geometry_id
+        or coupling_.discretization_id != discretization.prepared_id
+    ):
+        raise ValueError(
+            "dynamics.coupling must bind the prepared topology and geometry; got mismatched IDs."
+        )
+    if coupling_.motion is not None:
+        match reconstruction:
+            case PiecewiseConstantReconstruction():
+                moving_supported = True
+            case PreparedCellPolynomialReconstruction():
+                moving_supported = reconstruction.basis.degree in (1, 2)
+            case PreparedUnstructuredWENOZReconstruction():
+                moving_supported = reconstruction.optimal.basis.degree in (1, 2)
+            case _:
+                raise TypeError(
+                    "dynamics.reconstruction must be a supported reconstruction; got an unsupported kind."
+                )
+        if not moving_supported:
+            raise ValueError(
+                f"dynamics.reconstruction must be piecewise constant or stage-refreshable degree-one/two cell-polynomial or WENO-Z for motion; got {type(reconstruction).__name__} (coupling={coupling_.prepared_id}, method={method.method_id})."
+            )
+    if coupling_.motion is not None or coupling_.overset is not None:
+        match method.interface_solver:
+            case AbstractArbitraryNormalALENumericalFluxPlan():
+                pass
+            case AbstractArbitraryNormalNumericalFluxPlan():
+                raise ValueError(
+                    f"dynamics.interface_solver must declare an arbitrary-normal ALE numerical flux for moving or overset routes; got {type(method.interface_solver).__name__} (coupling={coupling_.prepared_id}, method={method.method_id})."
+                )
+            case _:
+                raise TypeError(
+                    "dynamics.interface_solver must declare an arbitrary-normal flux; got an unsupported solver."
+                )
+    return _CouplingBinding(coupling_)
+
+
+def _prepare_dynamics_binding(
+    system: AbstractConservationSystem,
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
+    method: UnstructuredFiniteVolumeMethodPlan,
+    boundaries: UnstructuredFiniteVolumeBoundarySet,
+    source: SourceFunction | None,
+    source_id: str | None,
+    precision: FiniteVolumePrecisionPolicy | None,
+    coupling: PreparedUnstructuredFiniteVolumeCoupling | None,
+) -> _DynamicsBinding:
+    if boundaries.patch_names != discretization.boundary_patch_names:
+        raise ValueError(
+            "dynamics.boundaries.patch_names must match the prepared mesh patches; got mismatched names."
+        )
+    if (
+        system.dimension != discretization.cell_dimension
+        or system.component_count != discretization.component_count
+    ):
+        raise ValueError(
+            "dynamics.system must match the geometry dimension and component count; got incompatible dimensions or components."
+        )
+    state_action = None
+    state_action_id = "identity"
+    match discretization:
+        case UnstructuredFiniteVolumeDiscretization():
+            if discretization.mesh.periodic_topology is not None:
+                dimension = discretization.cell_dimension
+                state_action = system.proper_isometry_state_matrix(
+                    discretization.neighbor_frame_maps[:, :dimension, :dimension]
+                )
+                state_action_id = canonical_fingerprint(
+                    {
+                        "system": system.system_id,
+                        "periodic": discretization.mesh.periodic_topology.periodic_topology_id,
+                    }
+                )
+            if discretization.partition_count > 1:
+                if type(method.reconstruction) is not PiecewiseConstantReconstruction:
+                    raise ValueError(
+                        "dynamics.reconstruction must be piecewise constant for owner-local neighborhoods; got a higher-order reconstruction."
+                    )
+                if coupling is not None:
+                    raise ValueError(
+                        "dynamics.coupling must be absent for owner-local geometry; got a supplied coupling."
+                    )
+        case DyadicFiniteVolumeDiscretization():
+            pass
+        case _:
+            raise TypeError(
+                "dynamics.discretization must declare unstructured or dyadic geometry; got an unsupported kind."
+            )
+    if method.closure is not None:
+        method.closure.admit_system(system)
+    reconstruction = method.reconstruction
+    match reconstruction:
+        case PiecewiseConstantReconstruction():
+            pass
+        case (
+            PreparedCellPolynomialReconstruction()
+            | PreparedUnstructuredWENOZReconstruction()
+        ):
+            if reconstruction.discretization.prepared_id != discretization.prepared_id:
+                raise ValueError(
+                    "dynamics.reconstruction must bind the prepared geometry; got a different discretization ID."
+                )
+        case _:
+            raise TypeError(
+                "dynamics.reconstruction must be a supported reconstruction; got an unsupported kind."
+            )
+    coupling_binding = _prepare_coupling_binding(
+        discretization, method, reconstruction, coupling
+    )
+    coupling_ = coupling_binding.coupling
+    source_identifier = None if source_id is None else str(source_id)
+    if (source is None) != (source_identifier is None) or source_identifier == "":
+        raise ValueError(
+            "dynamics.source_id must identify exactly one source callable; got missing, empty, or unpaired source metadata."
+        )
+    precision_ = (
+        FiniteVolumePrecisionPolicy(jnp.dtype(discretization.cell_volumes.dtype).name)
+        if precision is None
+        else precision
+    )
+    return _DynamicsBinding(
+        state_action, state_action_id, coupling_, source_identifier, precision_
+    )
+
+
+def _prepare_overset_masks(
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
+    overset: UnstructuredOversetPlan,
+    /,
+) -> _OversetMasks:
+    donor_count = np.asarray(overset.donor_covered_measures).size
+    if donor_count != discretization.cell_count:
+        raise ValueError(
+            "dynamics.overset must share one donor and receptor content axis; got different cell counts."
+        )
+    donor_active = np.asarray(overset.donor_active_mask)
+    donor_hole = np.asarray(overset.donor_hole_mask)
+    donor_eligible = np.asarray(overset.donor_eligible_mask)
+    receptor_active = np.asarray(overset.receptor_active_mask)
+    receptor_hole = np.asarray(overset.receptor_hole_mask)
+    masks = (
+        donor_active,
+        donor_hole,
+        donor_eligible,
+        receptor_active,
+        receptor_hole,
+    )
+    if any(value.dtype.kind != "b" for value in masks):
+        raise TypeError(
+            "dynamics.overset.masks must have Boolean dtype; got a non-Boolean activity or hole mask."
+        )
+    donor_active = donor_active & ~donor_hole
+    donor_eligible = donor_eligible & ~donor_hole
+    receptor_active = receptor_active & ~receptor_hole
+    receptor_fringe = np.asarray(overset.receptor_fringe_mask)
+    if receptor_fringe.dtype.kind != "b":
+        raise TypeError(
+            "dynamics.overset.receptor_fringe_mask must have Boolean dtype; got a non-Boolean mask."
+        )
+    if (
+        donor_active.shape != (donor_count,)
+        or donor_hole.shape != (donor_count,)
+        or donor_eligible.shape != (donor_count,)
+        or receptor_active.shape != (discretization.cell_count,)
+        or receptor_hole.shape != (discretization.cell_count,)
+        or receptor_fringe.shape != (discretization.cell_count,)
+        or np.any(receptor_fringe & receptor_hole)
+        or np.any(receptor_fringe & ~receptor_active)
+    ):
+        raise ValueError(
+            "dynamics.overset.masks must agree on active, hole, and fringe ownership; got incompatible masks."
+        )
+    overset_active_cell_mask = receptor_active & ~receptor_hole
+    return _OversetMasks(
+        donor_active,
+        donor_hole,
+        donor_eligible,
+        receptor_active,
+        receptor_hole,
+        receptor_fringe,
+        overset_active_cell_mask,
+    )
+
+
+def _prepare_overset_routes(
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
+    coupling_: PreparedUnstructuredFiniteVolumeCoupling,
+    precision_: FiniteVolumePrecisionPolicy,
+) -> _OversetPreparation:
+    overset = coupling_.overset
+    overset_rate_block_template = None
+    overset_policy_id = coupling_.overset_policy_id
+    overset_mapping_id = coupling_.overset_mapping_id
+    overset_epoch_id = coupling_.overset_epoch_id
+    if overset is None:
+        overset_active_cell_mask = np.ones((discretization.cell_count,), dtype=np.bool_)
+        overset_effective_cell_volumes = jnp.asarray(discretization.cell_volumes)
+    else:
+        masks = _prepare_overset_masks(discretization, overset)
+        donor_active, donor_hole, donor_eligible = (
+            masks.donor_active,
+            masks.donor_hole,
+            masks.donor_eligible,
+        )
+        receptor_fringe = masks.receptor_fringe
+        overset_active_cell_mask = masks.active_cell_mask
+        donor_indices = np.asarray(overset.donor_indices, dtype=np.int32)
+        receptor_cells = np.asarray(overset.receptor_cells, dtype=np.int32)
+        receptor_routes = np.asarray(overset.receptor_routes, dtype=np.int32)
+        sliding_coupling = coupling_.sliding_coupling
+        if sliding_coupling is None:
+            template_owner_cells = donor_indices
+            template_neighbor_cells = receptor_cells[receptor_routes]
+            if overset.receptor_face_cells is not None:
+                certified_face_cells = np.asarray(
+                    overset.receptor_face_cells,
+                    dtype=np.int32,
+                )
+                if (
+                    certified_face_cells.shape != template_neighbor_cells.shape
+                    or not np.array_equal(
+                        certified_face_cells,
+                        template_neighbor_cells,
+                    )
+                ):
+                    raise ValueError(
+                        "dynamics.overset.receptor_face_cells must match the mapped receptor routes in order; got mismatched cells."
+                    )
+            sliding_coupling_id = None
+        else:
+            if overset.receptor_face_cells is None:
+                raise ValueError(
+                    "dynamics.overset.receptor_face_cells must certify sliding receptor faces; got None."
+                )
+            left_routes = np.asarray(sliding_coupling.left_routes, dtype=np.int32)
+            right_routes = np.asarray(sliding_coupling.right_routes, dtype=np.int32)
+            face_cells = np.asarray(overset.receptor_face_cells, dtype=np.int32)
+            template_owner_cells = donor_indices[left_routes]
+            template_neighbor_cells = face_cells[right_routes]
+            sliding_coupling_id = sliding_coupling.coupling_id
+        route_active = (
+            donor_active[template_owner_cells]
+            & donor_eligible[template_owner_cells]
+            & ~donor_hole[template_owner_cells]
+            & overset_active_cell_mask[template_neighbor_cells]
+            & receptor_fringe[template_neighbor_cells]
+            & (template_owner_cells != template_neighbor_cells)
+        )
+        overset_rate_block_template = ConservationStageFluxRateBlock(
+            jnp.zeros(
+                (template_owner_cells.size, discretization.component_count),
+                dtype=jnp.dtype(precision_.reduction_dtype),
+            ),
+            template_owner_cells,
+            template_neighbor_cells,
+            route_active,
+            canonical_fingerprint(
+                {
+                    "kind": "unstructured-overset-correction-route",
+                    "mapping": coupling_.overset_mapping_id,
+                    "epoch": coupling_.overset_epoch_id,
+                    "sliding_coupling": sliding_coupling_id,
+                }
+            ),
+            "overset-correction",
+        )
+        overset_effective_cell_volumes = jnp.where(
+            jnp.asarray(overset_active_cell_mask),
+            jnp.asarray(discretization.cell_volumes),
+            jnp.zeros_like(discretization.cell_volumes),
+        )
+    return _OversetPreparation(
+        overset_rate_block_template,
+        overset_active_cell_mask,
+        overset_effective_cell_volumes,
+        overset_policy_id,
+        overset_mapping_id,
+        overset_epoch_id,
+    )
+
+
+def _prepare_stage_routes(
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
+    boundaries: UnstructuredFiniteVolumeBoundarySet,
+    coupling_: PreparedUnstructuredFiniteVolumeCoupling,
+    precision_: FiniteVolumePrecisionPolicy,
+    overset_active_cell_mask: np.ndarray,
+    state_action: Array | None,
+    state_action_id: str,
+) -> _StageRoutePreparation:
+    if coupling_.motion is not None:
+        stage_layouts = (coupling_.motion.face_layout,)
+    elif coupling_.embedded_metrics is not None:
+        embedded_boundaries = coupling_.embedded_boundaries
+        match embedded_boundaries:
+            case UnstructuredEmbeddedBoundarySet():
+                pass
+            case _:
+                raise TypeError(
+                    "dynamics.coupling.embedded_boundaries must contain an embedded boundary set; got an unsupported owner."
+                )
+        embedded_stage = lower_embedded_stage_metrics(
+            discretization,
+            coupling_.embedded_metrics,
+            embedded_boundaries,
+            discretization.topology_id,
+            0,
+            0,
+            time=0.0,
+        )
+        stage_layouts = tuple(block.layout for block in embedded_stage.face_blocks)
+    else:
+        match discretization:
+            case UnstructuredFiniteVolumeDiscretization() if (
+                discretization.partition_count > 1
+            ):
+                # Owner-local execution consumes the certified face routes directly;
+                # it never lowers ghost closure measures into serial stage metrics.
+                stage_layouts = tuple(
+                    FiniteVolumeStageFaceLayout(
+                        face_ids=block.face_ids,
+                        owner_cells=block.owner_cells,
+                        neighbor_cells=block.neighbor_cells,
+                        boundary_policy_ids=block.boundary_patch_ids,
+                        boundary_policy_count=len(discretization.boundary_patch_names),
+                        active_mask=block.active_mask,
+                        block_kind="physical",
+                        spatial_shape=tuple(block.face_centers.shape),
+                        quadrature_shape=tuple(
+                            discretization.face_quadrature_weights[block.face_ids].shape
+                        ),
+                        block_id=block.block_id,
+                    )
+                    for block in discretization.face_blocks
+                )
+            case (
+                UnstructuredFiniteVolumeDiscretization()
+                | DyadicFiniteVolumeDiscretization()
+            ):
+                static_stage = lower_static_unstructured_stage_metrics(discretization)
+                stage_layouts = tuple(block.layout for block in static_stage.face_blocks)
+            case _:
+                raise TypeError(
+                    "dynamics.discretization must declare unstructured or dyadic geometry; got an unsupported kind."
+                )
+    embedded_policy_count = (
+        0
+        if coupling_.embedded_boundaries is None
+        else len(coupling_.embedded_boundaries.boundaries)
+    )
+    for layout in stage_layouts:
+        policy_count = (
+            len(boundaries.boundaries)
+            if layout.block_kind == "physical"
+            else embedded_policy_count
+        )
+        layout.validate_boundary_policy_count(policy_count)
+    stage_rate_block_templates = tuple(
+        ConservationStageFluxRateBlock(
+            jnp.zeros(
+                (layout.face_count, discretization.component_count),
+                dtype=jnp.dtype(precision_.reduction_dtype),
+            ),
+            layout.owner_cells,
+            layout.neighbor_cells,
+            np.asarray(layout.active_mask)
+            & np.asarray(overset_active_cell_mask)[np.asarray(layout.owner_cells)]
+            & (
+                (np.asarray(layout.neighbor_cells) < 0)
+                | np.asarray(overset_active_cell_mask)[
+                    np.maximum(np.asarray(layout.neighbor_cells), 0)
+                ]
+            ),
+            layout.block_id,
+            layout.block_kind,
+            neighbor_state_action=None
+            if state_action is None
+            else state_action[layout.face_ids],
+            state_action_id=state_action_id,
+        )
+        for layout in stage_layouts
+    )
+    stage_boundary_face_indices = tuple(
+        tuple(
+            jnp.asarray(
+                np.flatnonzero(np.asarray(layout.boundary_policy_ids) == policy_id),
+                dtype=jnp.int32,
+            )
+            for policy_id in range(layout.boundary_policy_count)
+        )
+        for layout in stage_layouts
+    )
+    boundary_face_indices = tuple(
+        jnp.asarray(
+            np.flatnonzero(np.asarray(discretization.boundary_patch_ids) == patch_id),
+            dtype=jnp.int32,
+        )
+        for patch_id in range(len(boundaries.patch_names))
+    )
+    source_active_cell_mask = np.asarray(overset_active_cell_mask, dtype=np.bool_)
+    if coupling_.embedded_metrics is not None:
+        source_active_cell_mask = source_active_cell_mask & np.asarray(
+            coupling_.embedded_metrics.active_fluid_cells,
+            dtype=np.bool_,
+        )
+    source_cell_indices = jnp.asarray(
+        np.flatnonzero(source_active_cell_mask),
+        dtype=jnp.int32,
+    )
+    return _StageRoutePreparation(
+        boundary_face_indices,
+        stage_rate_block_templates,
+        stage_boundary_face_indices,
+        source_cell_indices,
+    )
+
+
+class _ConstantStageReconstruction(StrictModule):
+    state: Array
+
+
+class _FixedPolynomialStageReconstruction(StrictModule):
+    state: Array
+    polynomial: PreparedCellPolynomialReconstruction
+    coefficients: Array
+    limiter: PreparedUnstructuredWENOZReconstruction | None
+
+
+class _MovingPolynomialStageReconstruction(StrictModule):
+    state: Array
+    polynomial: PreparedCellPolynomialReconstruction
+    coefficients: Array
+    lengths: Array
+    metrics: FiniteVolumeStageMetrics
+    limiter: PreparedUnstructuredWENOZReconstruction | None
+
+
+type _StageReconstruction = (
+    _ConstantStageReconstruction
+    | _FixedPolynomialStageReconstruction
+    | _MovingPolynomialStageReconstruction
+)
+
+
+class _TracePair(StrictModule):
+    left: Array
+    right: Array
+
+
+class _BoundaryStageState(StrictModule):
+    right: Array
+    normal: Array
+
+
+class _OversetFaceGeometry(StrictModule):
+    cells: Array
+    points: Array
+    normals: Array
+    weights: Array
+    grid_velocity: Array
+    face_measures: Array
+
+
+class _OversetCorrection(StrictModule):
+    block: ConservationStageFluxRateBlock | None
+    signal_speed: Array
+    route_measures: Array
+
+
+class _OversetPhaseFlux(StrictModule):
+    flux_rate: Array
+
+
+class _VOFStage(StrictModule):
+    system: multiphase_owner.TwoMaterialVOFSystem
+    plan: UnstructuredVOFPlan
+    plic: JAXPLICStageReconstruction
+    primitive: Array
+
+
+class _VOFFaceFlux(StrictModule):
+    flux_rate: Array
+    volume_divergence: Array
+
+
+class _StageFaceRate(StrictModule):
+    block: ConservationStageFluxRateBlock
+    signal_speed: Array
+    relative_rate: Array
+    volume_divergence: Array
+
+
+class _StageSourceRate(StrictModule):
+    source_rate: Array
+
+
+class _PhaseChangeSourceRate(StrictModule):
+    source_rate: Array
+    phase_change_step: Array
+    thermal_step: Array
+
+
+class _CapillarySourceRate(StrictModule):
+    source_rate: Array
+    capillary_step: Array
+
+
+class _FaceStageState(StrictModule):
+    left: Array
+    right: Array
+    normal: Array
+
+
 class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     """Single-device conservative dynamics over explicit unstructured faces."""
 
-    system: Any
+    system: AbstractConservationSystem
     discretization: (
         UnstructuredFiniteVolumeDiscretization | DyadicFiniteVolumeDiscretization
     )
@@ -213,7 +802,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     @checked
     def __init__(
         self,
-        system: Any,
+        system: AbstractConservationSystem,
         discretization: (
             UnstructuredFiniteVolumeDiscretization | DyadicFiniteVolumeDiscretization
         ),
@@ -226,348 +815,29 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         precision: FiniteVolumePrecisionPolicy | None = None,
         coupling: PreparedUnstructuredFiniteVolumeCoupling | None = None,
     ) -> None:
-        if boundaries.patch_names != discretization.boundary_patch_names:
-            raise ValueError("Boundary patch names must match prepared mesh patches.")
-        if (
-            system.dimension != discretization.cell_dimension
-            or system.component_count != discretization.component_count
-        ):
-            raise ValueError(
-                "Unstructured FV system dimension/components do not match geometry."
-            )
-        state_action = None
-        state_action_id = "identity"
-        if (
-            isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
-            and discretization.mesh.periodic_topology is not None
-        ):
-            dimension = discretization.cell_dimension
-            state_action = system.proper_isometry_state_matrix(
-                discretization.neighbor_frame_maps[:, :dimension, :dimension]
-            )
-            state_action_id = canonical_fingerprint(
-                {
-                    "system": system.system_id,
-                    "periodic": discretization.mesh.periodic_topology.periodic_topology_id,
-                }
-            )
-        self.neighbor_state_action = state_action
-        if (
-            isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
-            and discretization.partition_count > 1
-        ):
-            if type(method.reconstruction) is not PiecewiseConstantReconstruction:
-                raise ValueError(
-                    "Owner-local FV requires certified piecewise-constant neighborhoods."
-                )
-            if coupling is not None:
-                raise ValueError("Owner-local FV requires stationary uncoupled geometry.")
-        if method.closure is not None:
-            method.closure.admit_system(system)
-        reconstruction = method.reconstruction
-        if (
-            isinstance(
-                reconstruction,
-                (
-                    PreparedCellPolynomialReconstruction,
-                    PreparedUnstructuredWENOZReconstruction,
-                ),
-            )
-            and reconstruction.discretization.prepared_id != discretization.prepared_id
-        ):
-            raise ValueError("Reconstruction belongs to a different geometry.")
-        coupling_ = (
-            UnstructuredFiniteVolumeCouplingPlan().prepare(discretization)
-            if coupling is None
-            else coupling
+        binding = _prepare_dynamics_binding(
+            system,
+            discretization,
+            method,
+            boundaries,
+            source,
+            source_id,
+            precision,
+            coupling,
         )
-        if (
-            coupling_.topology_id != discretization.topology_id
-            or coupling_.geometry_id != discretization.geometry_id
-            or coupling_.discretization_id != discretization.prepared_id
-        ):
-            raise ValueError("Coupling belongs to a different prepared geometry.")
-        if coupling_.motion is not None:
-            moving_polynomial = isinstance(
-                reconstruction, PreparedCellPolynomialReconstruction
-            ) and reconstruction.basis.degree in (1, 2)
-            moving_weno = isinstance(
-                reconstruction, PreparedUnstructuredWENOZReconstruction
-            ) and reconstruction.optimal.basis.degree in (1, 2)
-            if (
-                type(reconstruction) is not PiecewiseConstantReconstruction
-                and not moving_polynomial
-                and not moving_weno
-            ):
-                raise ValueError(
-                    "Moving unstructured finite-volume reconstruction requires "
-                    "piecewise constant or stage-refreshable degree-one/two "
-                    "cell-polynomial or WENO-Z reconstruction "
-                    f"(coupling={coupling_.prepared_id}, method={method.method_id}, "
-                    f"reconstruction={type(reconstruction).__name__})."
-                )
-        if (
-            coupling_.motion is not None or coupling_.overset is not None
-        ) and not isinstance(
-            method.interface_solver, AbstractArbitraryNormalALENumericalFluxPlan
-        ):
-            raise ValueError(
-                "Moving and overset unstructured finite-volume routes require an "
-                "arbitrary-normal ALE numerical flux "
-                f"(coupling={coupling_.prepared_id}, method={method.method_id}, "
-                f"flux={type(method.interface_solver).__name__})."
-            )
-        source_identifier = None if source_id is None else str(source_id)
-        if (source is None) != (source_identifier is None) or source_identifier == "":
-            raise ValueError(
-                "A source callable requires exactly one non-empty source_id."
-            )
-        precision_ = (
-            FiniteVolumePrecisionPolicy(jnp.dtype(discretization.cell_volumes.dtype).name)
-            if precision is None
-            else precision
-        )
-        overset = coupling_.overset
-        overset_rate_block_template = None
-        overset_policy_id = coupling_.overset_policy_id
-        overset_mapping_id = coupling_.overset_mapping_id
-        overset_epoch_id = coupling_.overset_epoch_id
-        if overset is None:
-            overset_active_cell_mask = np.ones(
-                (discretization.cell_count,), dtype=np.bool_
-            )
-            overset_effective_cell_volumes = jnp.asarray(discretization.cell_volumes)
-        else:
-            donor_count = np.asarray(overset.donor_covered_measures).size
-            if donor_count != discretization.cell_count:
-                raise ValueError(
-                    "Overset dynamics require donor and receptor cell layouts to share one single-device content axis."
-                )
-            donor_active = np.asarray(overset.donor_active_mask)
-            donor_hole = np.asarray(overset.donor_hole_mask)
-            donor_eligible = np.asarray(overset.donor_eligible_mask)
-            receptor_active = np.asarray(overset.receptor_active_mask)
-            receptor_hole = np.asarray(overset.receptor_hole_mask)
-            masks = (
-                donor_active,
-                donor_hole,
-                donor_eligible,
-                receptor_active,
-                receptor_hole,
-            )
-            if any(value.dtype.kind != "b" for value in masks):
-                raise TypeError("Overset activity and hole masks must be Boolean.")
-            donor_active = donor_active & ~donor_hole
-            donor_eligible = donor_eligible & ~donor_hole
-            receptor_active = receptor_active & ~receptor_hole
-            receptor_fringe = np.asarray(overset.receptor_fringe_mask)
-            if receptor_fringe.dtype.kind != "b":
-                raise TypeError("Overset receptor fringe mask must be Boolean.")
-            if (
-                donor_active.shape != (donor_count,)
-                or donor_hole.shape != (donor_count,)
-                or donor_eligible.shape != (donor_count,)
-                or receptor_active.shape != (discretization.cell_count,)
-                or receptor_hole.shape != (discretization.cell_count,)
-                or receptor_fringe.shape != (discretization.cell_count,)
-                or np.any(donor_active & donor_hole)
-                or np.any(donor_eligible & donor_hole)
-                or np.any(receptor_active & receptor_hole)
-                or np.any(receptor_fringe & receptor_hole)
-                or np.any(receptor_fringe & ~receptor_active)
-            ):
-                raise ValueError("Overset active/hole/fringe ownership is invalid.")
-            overset_active_cell_mask = receptor_active & ~receptor_hole
-            donor_indices = np.asarray(overset.donor_indices, dtype=np.int32)
-            receptor_cells = np.asarray(overset.receptor_cells, dtype=np.int32)
-            receptor_routes = np.asarray(overset.receptor_routes, dtype=np.int32)
-            sliding_coupling = coupling_.sliding_coupling
-            if sliding_coupling is None:
-                template_owner_cells = donor_indices
-                template_neighbor_cells = receptor_cells[receptor_routes]
-                if overset.receptor_face_cells is not None:
-                    certified_face_cells = np.asarray(
-                        overset.receptor_face_cells,
-                        dtype=np.int32,
-                    )
-                    if (
-                        certified_face_cells.shape != template_neighbor_cells.shape
-                        or not np.array_equal(
-                            certified_face_cells,
-                            template_neighbor_cells,
-                        )
-                    ):
-                        raise ValueError(
-                            "Non-sliding overset receptor faces must match mapped receptor routes in order."
-                        )
-                sliding_coupling_id = None
-            else:
-                if overset.receptor_face_cells is None:
-                    raise ValueError(
-                        "Sliding overset correction requires certified receptor faces."
-                    )
-                left_routes = np.asarray(sliding_coupling.left_routes, dtype=np.int32)
-                right_routes = np.asarray(sliding_coupling.right_routes, dtype=np.int32)
-                face_cells = np.asarray(overset.receptor_face_cells, dtype=np.int32)
-                template_owner_cells = donor_indices[left_routes]
-                template_neighbor_cells = face_cells[right_routes]
-                sliding_coupling_id = sliding_coupling.coupling_id
-            route_active = (
-                donor_active[template_owner_cells]
-                & donor_eligible[template_owner_cells]
-                & ~donor_hole[template_owner_cells]
-                & overset_active_cell_mask[template_neighbor_cells]
-                & receptor_fringe[template_neighbor_cells]
-                & (template_owner_cells != template_neighbor_cells)
-            )
-            overset_rate_block_template = ConservationStageFluxRateBlock(
-                jnp.zeros(
-                    (template_owner_cells.size, discretization.component_count),
-                    dtype=jnp.dtype(precision_.reduction_dtype),
-                ),
-                template_owner_cells,
-                template_neighbor_cells,
-                route_active,
-                canonical_fingerprint(
-                    {
-                        "kind": "unstructured-overset-correction-route",
-                        "mapping": coupling_.overset_mapping_id,
-                        "epoch": coupling_.overset_epoch_id,
-                        "sliding_coupling": sliding_coupling_id,
-                    }
-                ),
-                "overset-correction",
-            )
-            overset_effective_cell_volumes = jnp.where(
-                jnp.asarray(overset_active_cell_mask),
-                jnp.asarray(discretization.cell_volumes),
-                jnp.zeros_like(discretization.cell_volumes),
-            )
-        if overset is not None and not isinstance(
-            reconstruction, PiecewiseConstantReconstruction
-        ):
-            for name in (
-                "operator_geometry_id",
-                "trace_operator_geometry_id",
-                "geometry_bound_operator_id",
-            ):
-                operator_geometry_id = getattr(overset, name, None)
-                if operator_geometry_id is not None and operator_geometry_id not in (
-                    discretization.prepared_id,
-                    discretization.geometry_id,
-                ):
-                    raise ValueError(
-                        "High-order mapped overset traces require current geometry-bound operators."
-                    )
-        if not isinstance(precision_, FiniteVolumePrecisionPolicy):
-            raise TypeError("precision must be FiniteVolumePrecisionPolicy.")
-        if coupling_.motion is not None:
-            stage_layouts = (coupling_.motion.face_layout,)
-        elif coupling_.embedded_metrics is not None:
-            embedded_boundaries = coupling_.embedded_boundaries
-            if not isinstance(embedded_boundaries, UnstructuredEmbeddedBoundarySet):
-                raise TypeError(
-                    "Prepared embedded coupling requires embedded boundary ownership."
-                )
-            embedded_stage = lower_embedded_stage_metrics(
-                discretization,
-                coupling_.embedded_metrics,
-                embedded_boundaries,
-                discretization.topology_id,
-                0,
-                0,
-                time=0.0,
-            )
-            stage_layouts = tuple(block.layout for block in embedded_stage.face_blocks)
-        elif (
-            isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
-            and discretization.partition_count > 1
-        ):
-            # Owner-local execution consumes the certified face routes directly;
-            # it never lowers ghost closure measures into serial stage metrics.
-            stage_layouts = tuple(
-                FiniteVolumeStageFaceLayout(
-                    face_ids=block.face_ids,
-                    owner_cells=block.owner_cells,
-                    neighbor_cells=block.neighbor_cells,
-                    boundary_policy_ids=block.boundary_patch_ids,
-                    boundary_policy_count=len(discretization.boundary_patch_names),
-                    active_mask=block.active_mask,
-                    block_kind="physical",
-                    spatial_shape=tuple(block.face_centers.shape),
-                    quadrature_shape=tuple(
-                        discretization.face_quadrature_weights[block.face_ids].shape
-                    ),
-                    block_id=block.block_id,
-                )
-                for block in discretization.face_blocks
-            )
-        else:
-            static_stage = lower_static_unstructured_stage_metrics(discretization)
-            stage_layouts = tuple(block.layout for block in static_stage.face_blocks)
-        embedded_policy_count = (
-            0
-            if coupling_.embedded_boundaries is None
-            else len(coupling_.embedded_boundaries.boundaries)
-        )
-        for layout in stage_layouts:
-            policy_count = (
-                len(boundaries.boundaries)
-                if layout.block_kind == "physical"
-                else embedded_policy_count
-            )
-            layout.validate_boundary_policy_count(policy_count)
-        stage_rate_block_templates = tuple(
-            ConservationStageFluxRateBlock(
-                jnp.zeros(
-                    (layout.face_count, discretization.component_count),
-                    dtype=jnp.dtype(precision_.reduction_dtype),
-                ),
-                layout.owner_cells,
-                layout.neighbor_cells,
-                np.asarray(layout.active_mask)
-                & np.asarray(overset_active_cell_mask)[np.asarray(layout.owner_cells)]
-                & (
-                    (np.asarray(layout.neighbor_cells) < 0)
-                    | np.asarray(overset_active_cell_mask)[
-                        np.maximum(np.asarray(layout.neighbor_cells), 0)
-                    ]
-                ),
-                layout.block_id,
-                layout.block_kind,
-                neighbor_state_action=None
-                if state_action is None
-                else state_action[layout.face_ids],
-                state_action_id=state_action_id,
-            )
-            for layout in stage_layouts
-        )
-        stage_boundary_face_indices = tuple(
-            tuple(
-                jnp.asarray(
-                    np.flatnonzero(np.asarray(layout.boundary_policy_ids) == policy_id),
-                    dtype=jnp.int32,
-                )
-                for policy_id in range(layout.boundary_policy_count)
-            )
-            for layout in stage_layouts
-        )
-        boundary_face_indices = tuple(
-            jnp.asarray(
-                np.flatnonzero(np.asarray(discretization.boundary_patch_ids) == patch_id),
-                dtype=jnp.int32,
-            )
-            for patch_id in range(len(boundaries.patch_names))
-        )
-        source_active_cell_mask = np.asarray(overset_active_cell_mask, dtype=np.bool_)
-        if coupling_.embedded_metrics is not None:
-            source_active_cell_mask = source_active_cell_mask & np.asarray(
-                coupling_.embedded_metrics.active_fluid_cells,
-                dtype=np.bool_,
-            )
-        source_cell_indices = jnp.asarray(
-            np.flatnonzero(source_active_cell_mask),
-            dtype=jnp.int32,
+        self.neighbor_state_action = binding.neighbor_state_action
+        coupling_ = binding.coupling
+        precision_ = binding.precision
+        source_identifier = binding.source_id
+        overset_routes = _prepare_overset_routes(discretization, coupling_, precision_)
+        stage_routes = _prepare_stage_routes(
+            discretization,
+            boundaries,
+            coupling_,
+            precision_,
+            overset_routes.active_cell_mask,
+            binding.neighbor_state_action,
+            binding.state_action_id,
         )
         self.system = system
         self.discretization = discretization
@@ -577,17 +847,19 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         self.precision = precision_
         self.source = source
         self.source_id = source_identifier
-        self.boundary_face_indices = boundary_face_indices
-        self.stage_rate_block_templates = stage_rate_block_templates
-        self.stage_boundary_face_indices = stage_boundary_face_indices
-        self.source_cell_indices = source_cell_indices
-        self.overset_rate_block_template = overset_rate_block_template
-        self.overset_active_cell_mask = jnp.asarray(overset_active_cell_mask)
+        self.boundary_face_indices = stage_routes.boundary_face_indices
+        self.stage_rate_block_templates = stage_routes.rate_templates
+        self.stage_boundary_face_indices = stage_routes.boundary_routes
+        self.source_cell_indices = stage_routes.source_cell_indices
+        self.overset_rate_block_template = overset_routes.template
+        self.overset_active_cell_mask = jnp.asarray(overset_routes.active_cell_mask)
 
-        self.overset_effective_cell_volumes = jnp.asarray(overset_effective_cell_volumes)
-        self.overset_policy_id = overset_policy_id
-        self.overset_mapping_id = overset_mapping_id
-        self.overset_epoch_id = overset_epoch_id
+        self.overset_effective_cell_volumes = jnp.asarray(
+            overset_routes.effective_cell_volumes
+        )
+        self.overset_policy_id = overset_routes.policy_id
+        self.overset_mapping_id = overset_routes.mapping_id
+        self.overset_epoch_id = overset_routes.epoch_id
         self.dynamics_id = canonical_fingerprint(
             {
                 "kind": "prepared-unstructured-fv-dynamics",
@@ -597,13 +869,14 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 "coupling": coupling_.prepared_id,
                 "boundaries": boundaries.boundary_set_id,
                 "precision": precision_.policy_id,
-                "overset_policy": overset_policy_id,
-                "overset_mapping": overset_mapping_id,
-                "overset_epoch": overset_epoch_id,
+                "overset_policy": overset_routes.policy_id,
+                "overset_mapping": overset_routes.mapping_id,
+                "overset_epoch": overset_routes.epoch_id,
                 "source": source_identifier,
             }
         )
 
+    @checked
     def with_sliding_coupling(
         self,
         sliding_coupling: PeriodicSlidingCoupling,
@@ -626,13 +899,17 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             coupling=coupling,
         )
 
+    @checked
     def make_fallback_dynamics(
         self, fallback_flux: AbstractNumericalFluxPlan, /
     ) -> "PreparedUnstructuredFiniteVolumeDynamics":
-        if not isinstance(fallback_flux, AbstractArbitraryNormalNumericalFluxPlan):
-            raise TypeError(
-                "Unstructured FV requires an arbitrary-normal numerical flux."
-            )
+        match fallback_flux:
+            case AbstractArbitraryNormalNumericalFluxPlan():
+                pass
+            case _:
+                raise TypeError(
+                    "dynamics.fallback_flux must declare an arbitrary-normal numerical flux; got an unsupported flux."
+                )
         return PreparedUnstructuredFiniteVolumeDynamics(
             self.system,
             self.discretization,
@@ -664,14 +941,19 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         carry placeholder geometry in the closure context and no correction.
         """
         solver = self.method.interface_solver
-        if isinstance(solver, AbstractArbitraryNormalALENumericalFluxPlan):
-            result = solver.normal_ale_face_flux(
-                self.system, left, right, normal, grid_normal_velocity, args
-            )
-        else:
-            # Preparation admits stationary-only fluxes only without motion or
-            # overset coupling, where every stage grid-normal velocity is zero.
-            result = solver.normal_face_flux(self.system, left, right, normal, args)
+        match solver:
+            case AbstractArbitraryNormalALENumericalFluxPlan():
+                result = solver.normal_ale_face_flux(
+                    self.system, left, right, normal, grid_normal_velocity, args
+                )
+            case AbstractArbitraryNormalNumericalFluxPlan():
+                # Preparation admits stationary-only fluxes only without motion or
+                # overset coupling, where every stage grid-normal velocity is zero.
+                result = solver.normal_face_flux(self.system, left, right, normal, args)
+            case _:
+                raise TypeError(
+                    "dynamics.interface_solver must declare an arbitrary-normal flux; got an unsupported solver."
+                )
         if self.method.closure is None:
             return result
         placeholder = jnp.zeros((normal.shape[-1],), dtype=normal.dtype).at[0].set(1.0)
@@ -692,7 +974,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
 
     def _stage_route_active(
         self,
-        layout: Any,
+        layout: FiniteVolumeStageFaceLayout,
         active_cell_mask: Array,
         /,
     ) -> Array:
@@ -712,7 +994,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     ) -> tuple[ConservationStageFluxRateBlock, ...]:
         if len(metrics.face_blocks) != len(self.stage_rate_block_templates):
             raise ValueError(
-                "Stage geometry does not match the prepared face-block layout."
+                "stage.metrics.face_blocks must match the prepared block count; got a different count."
             )
         templates: list[ConservationStageFluxRateBlock] = []
         for geometry_block, prepared in zip(
@@ -726,7 +1008,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 or layout.face_count != prepared.flux_rate.shape[0]
             ):
                 raise ValueError(
-                    "Stage geometry face-block kind/shape does not match the dynamics."
+                    "stage.metrics.face_blocks must match prepared block kinds and capacities; got a different kind or shape."
                 )
             active = self._stage_route_active(layout, metrics.active_cell_mask)
             zero_rate = eqx.error_if(
@@ -743,31 +1025,38 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     @checked
     def _validated_stage_average(
         self,
-        content_state: Any,
+        content_state: finite_volume_content_owner.FiniteVolumeConservativeContentState,
         metrics: FiniteVolumeStageMetrics,
         /,
     ) -> Array:
-        from ...solver._finite_volume_content import (
-            FiniteVolumeConservativeContentState,
-        )
 
-        if not isinstance(content_state, FiniteVolumeConservativeContentState):
-            raise TypeError("content_state must be FiniteVolumeConservativeContentState.")
         if content_state.precision.policy_id != self.precision.policy_id:
-            raise ValueError("Stage content precision does not match the dynamics.")
+            raise ValueError(
+                "stage.content.precision must match the dynamics precision policy; got a different policy ID."
+            )
         if content_state.topology_epoch_id != metrics.topology_epoch_id:
-            raise ValueError("Stage content and geometry must share one topology epoch.")
+            raise ValueError(
+                "stage.content.topology_epoch_id must match the stage geometry; got a different epoch."
+            )
         if content_state.geometry_family_id != metrics.geometry_family_id:
-            raise ValueError("Stage content and geometry must share one geometry family.")
+            raise ValueError(
+                "stage.content.geometry_family_id must match the stage geometry; got a different family."
+            )
         if content_state.geometry_layout_id != metrics.geometry_layout_id:
-            raise ValueError("Stage content and geometry must share one geometry layout.")
+            raise ValueError(
+                "stage.content.geometry_layout_id must match the stage geometry; got a different layout."
+            )
         if content_state.evidence_policy_id != metrics.evidence.policy_id:
-            raise ValueError("Stage content and geometry must share one evidence policy.")
+            raise ValueError(
+                "stage.content.evidence_policy_id must match the stage geometry; got a different policy."
+            )
         if (
             content_state.cell_count != metrics.cell_count
             or content_state.component_shape != (self.discretization.component_count,)
         ):
-            raise ValueError("Stage content has incompatible cell/component shape.")
+            raise ValueError(
+                "stage.content must match the cell count and component shape; got an incompatible shape."
+            )
         self._stage_rate_templates(metrics)
 
         average = content_state.cell_average()
@@ -796,196 +1085,159 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         self.precision.validate_state(average)
         return average
 
-    def _stage_face_states(
+    def _prepare_stage_reconstruction(
+        self, state: Array, metrics: FiniteVolumeStageMetrics, /
+    ) -> _StageReconstruction:
+        match self.method.reconstruction:
+            case PiecewiseConstantReconstruction():
+                return _ConstantStageReconstruction(state)
+            case PreparedCellPolynomialReconstruction() as polynomial:
+                if self.coupling.motion is None:
+                    return _FixedPolynomialStageReconstruction(
+                        state, polynomial, polynomial.coefficients(state), None
+                    )
+                coefficients, lengths = polynomial.stage_coefficients(state, metrics)
+                return _MovingPolynomialStageReconstruction(
+                    state, polynomial, coefficients, lengths, metrics, None
+                )
+            case PreparedUnstructuredWENOZReconstruction() as weno:
+                coefficients = weno.coefficients(state)
+                if self.coupling.motion is None:
+                    return _FixedPolynomialStageReconstruction(
+                        state, weno.optimal, coefficients, weno
+                    )
+                _, lengths = weno.optimal.stage_coefficients(state, metrics)
+                return _MovingPolynomialStageReconstruction(
+                    state, weno.optimal, coefficients, lengths, metrics, weno
+                )
+            case _:
+                raise TypeError(
+                    "dynamics.reconstruction must contain a supported prepared reconstruction; got an unsupported kind."
+                )
+
+    def _evaluate_stage_trace(
+        self, prepared: _StageReconstruction, cells: Array, points: Array, /
+    ) -> Array:
+        match prepared:
+            case _ConstantStageReconstruction():
+                return jnp.broadcast_to(
+                    prepared.state[cells, None, :],
+                    (*points.shape[:-1], prepared.state.shape[-1]),
+                )
+            case _FixedPolynomialStageReconstruction():
+                value = prepared.polynomial.evaluate_coefficients(
+                    prepared.state, prepared.coefficients, cells, points
+                )
+            case _MovingPolynomialStageReconstruction():
+                value = prepared.polynomial.evaluate_stage_coefficients(
+                    prepared.state,
+                    prepared.coefficients,
+                    prepared.lengths,
+                    prepared.metrics,
+                    cells,
+                    points,
+                )
+            case _:
+                raise TypeError(
+                    "dynamics.reconstruction must contain a supported prepared reconstruction; got an unsupported kind."
+                )
+        return value
+
+    def _evaluate_stage_trace_pair(
         self,
-        state: Array,
+        prepared: _StageReconstruction,
+        left_cells: Array,
+        left_points: Array,
+        right_cells: Array,
+        right_points: Array,
+        /,
+    ) -> _TracePair:
+        left = self._evaluate_stage_trace(prepared, left_cells, left_points)
+        right = self._evaluate_stage_trace(prepared, right_cells, right_points)
+        match prepared:
+            case _ConstantStageReconstruction():
+                pass
+            case (
+                _FixedPolynomialStageReconstruction()
+                | _MovingPolynomialStageReconstruction()
+            ):
+                if prepared.limiter is not None:
+                    left = prepared.limiter.limit_traces(prepared.state, left, left_cells)
+                    right = prepared.limiter.limit_traces(
+                        prepared.state, right, right_cells
+                    )
+            case _:
+                raise TypeError(
+                    "dynamics.reconstruction must contain a supported prepared reconstruction; got an unsupported kind."
+                )
+        return _TracePair(left, right)
+
+    def _apply_stage_boundaries(
+        self,
+        geometry_block: FiniteVolumeStageFaceBlock,
+        policy_indices: tuple[Array, ...],
         metrics: FiniteVolumeStageMetrics,
+        points: Array,
+        left: Array,
+        right: Array,
+        route_active: Array,
         args: Any,
         /,
-    ) -> tuple[tuple[Array, Array, Array], ...]:
-        reconstruction = self.method.reconstruction
-        active_mask = metrics.active_cell_mask
-        safe_seed = state[jnp.argmax(active_mask)]
-        safe_state = jnp.where(active_mask[:, None], state, safe_seed[None, :])
-        reconstruction_state = self.precision.reconstruction(safe_state)
-        coefficients: Array | None = None
-        stage_lengths: Array | None = None
-        outputs: list[tuple[Array, Array, Array]] = []
-        for block_index, geometry_block in enumerate(metrics.face_blocks):
-            layout = geometry_block.layout
-            policy_indices = self.stage_boundary_face_indices[block_index]
-            owner = layout.owner_cells
-            neighbor = layout.neighbor_cells
-            safe_neighbor = jnp.maximum(neighbor, 0)
-            route_active = self._stage_route_active(layout, metrics.active_cell_mask)
-            points = self.precision.reconstruction(geometry_block.quadrature_points)
-            neighbor_points = points
-            if self.neighbor_state_action is not None:
-                if not isinstance(
-                    self.discretization, UnstructuredFiniteVolumeDiscretization
-                ):
-                    raise TypeError(
-                        "Periodic frame actions require unstructured finite-volume geometry."
-                    )
-                maps = self.discretization.neighbor_frame_maps[layout.face_ids]
-                dimension = self.discretization.cell_dimension
-                neighbor_points = (
-                    contract(
-                        "fij,fqj->fqi",
-                        maps[:, :dimension, :dimension],
-                        points,
-                    )
-                    + maps[:, None, :dimension, dimension]
-                )
-            if isinstance(reconstruction, PiecewiseConstantReconstruction):
-                quadrature_count = layout.quadrature_count
-                left = jnp.broadcast_to(
-                    reconstruction_state[owner, None, :],
-                    (layout.face_count, quadrature_count, state.shape[-1]),
-                )
-                right = jnp.broadcast_to(
-                    reconstruction_state[safe_neighbor, None, :],
-                    left.shape,
-                )
-            elif isinstance(reconstruction, PreparedCellPolynomialReconstruction):
-                if coefficients is None:
-                    if self.coupling.motion is None:
-                        coefficients = reconstruction.coefficients(reconstruction_state)
-                    else:
-                        coefficients, stage_lengths = reconstruction.stage_coefficients(
-                            reconstruction_state, metrics
-                        )
-                if stage_lengths is None:
-                    left = reconstruction.evaluate_coefficients(
-                        reconstruction_state,
-                        coefficients,
-                        owner,
-                        points,
-                    )
-                    right = reconstruction.evaluate_coefficients(
-                        reconstruction_state,
-                        coefficients,
-                        safe_neighbor,
-                        neighbor_points,
-                    )
-                else:
-                    left = reconstruction.evaluate_stage_coefficients(
-                        reconstruction_state,
-                        coefficients,
-                        stage_lengths,
-                        metrics,
-                        owner,
-                        points,
-                    )
-                    right = reconstruction.evaluate_stage_coefficients(
-                        reconstruction_state,
-                        coefficients,
-                        stage_lengths,
-                        metrics,
-                        safe_neighbor,
-                        neighbor_points,
-                    )
-            elif isinstance(reconstruction, PreparedUnstructuredWENOZReconstruction):
-                if coefficients is None:
-                    coefficients = reconstruction.coefficients(reconstruction_state)
-                    if self.coupling.motion is not None:
-                        _, stage_lengths = reconstruction.optimal.stage_coefficients(
-                            reconstruction_state, metrics
-                        )
-                if stage_lengths is None:
-                    left = reconstruction.optimal.evaluate_coefficients(
-                        reconstruction_state,
-                        coefficients,
-                        owner,
-                        points,
-                    )
-                    right = reconstruction.optimal.evaluate_coefficients(
-                        reconstruction_state,
-                        coefficients,
-                        safe_neighbor,
-                        neighbor_points,
-                    )
-                else:
-                    left = reconstruction.optimal.evaluate_stage_coefficients(
-                        reconstruction_state,
-                        coefficients,
-                        stage_lengths,
-                        metrics,
-                        owner,
-                        points,
-                    )
-                    right = reconstruction.optimal.evaluate_stage_coefficients(
-                        reconstruction_state,
-                        coefficients,
-                        stage_lengths,
-                        metrics,
-                        safe_neighbor,
-                        neighbor_points,
-                    )
-                left = reconstruction._limit(reconstruction_state, left, owner)
-                right = reconstruction._limit(
-                    reconstruction_state,
-                    right,
-                    safe_neighbor,
-                )
-            else:
-                raise TypeError("Unsupported prepared unstructured reconstruction.")
-            if self.neighbor_state_action is not None:
-                right = contract(
-                    "fji,fqj->fqi", self.neighbor_state_action[layout.face_ids], right
-                )
-
-            safe_measures = jnp.where(
-                route_active,
-                geometry_block.face_measures,
-                jnp.ones_like(geometry_block.face_measures),
-            )
-            normal = geometry_block.area_vectors / safe_measures[:, None]
-            normal = jnp.where(
-                route_active[:, None],
-                normal,
-                jnp.zeros_like(normal),
-            )
-            normal = jnp.broadcast_to(normal[:, None, :], points.shape)
-            grid_velocity = geometry_block.quadrature_grid_normal_velocity
-            if grid_velocity is None:
-                if self.coupling.motion is not None:
-                    raise ValueError(
-                        "Moving stage geometry must provide grid-normal velocity."
-                    )
-                grid_velocity = jnp.zeros_like(geometry_block.quadrature_weights)
-            grid_normal = self.precision.reconstruction(grid_velocity)
-            if layout.block_kind == "physical":
-                policies = self.boundaries.boundaries
-            elif layout.block_kind == "cut":
-                embedded_boundaries = self.coupling.embedded_boundaries
-                if not isinstance(
-                    embedded_boundaries,
-                    UnstructuredEmbeddedBoundarySet,
-                ):
-                    raise TypeError(
-                        "Cut stage blocks require embedded boundary ownership."
-                    )
-                policies = embedded_boundaries.boundaries
-            else:
-                raise ValueError(f"Unsupported stage block kind {layout.block_kind!r}.")
-            if len(policies) != len(policy_indices):
+    ) -> _BoundaryStageState:
+        layout = geometry_block.layout
+        safe_measures = jnp.where(
+            route_active,
+            geometry_block.face_measures,
+            jnp.ones_like(geometry_block.face_measures),
+        )
+        normal = geometry_block.area_vectors / safe_measures[:, None]
+        normal = jnp.where(
+            route_active[:, None],
+            normal,
+            jnp.zeros_like(normal),
+        )
+        normal = jnp.broadcast_to(normal[:, None, :], points.shape)
+        grid_velocity = geometry_block.quadrature_grid_normal_velocity
+        if grid_velocity is None:
+            if self.coupling.motion is not None:
                 raise ValueError(
-                    "Stage boundary policy routes do not match prepared ownership."
+                    "stage.metrics.grid_normal_velocity must be present for moving geometry; got None."
                 )
-
-            motion_plan_id = (
-                self.coupling.motion.plan_id
-                if self.coupling.motion is not None
-                else self.coupling.prepared_id
+            grid_velocity = jnp.zeros_like(geometry_block.quadrature_weights)
+        grid_normal = self.precision.reconstruction(grid_velocity)
+        match layout.block_kind:
+            case "physical":
+                policies = self.boundaries.boundaries
+            case "cut":
+                match self.coupling.embedded_boundaries:
+                    case UnstructuredEmbeddedBoundarySet() as embedded_boundaries:
+                        policies = embedded_boundaries.boundaries
+                    case _:
+                        raise TypeError(
+                            "stage.cut.embedded_boundaries must contain an embedded boundary set; got an unsupported owner."
+                        )
+            case _:
+                raise ValueError(
+                    f"stage.face_block.kind must declare physical or cut geometry; got {layout.block_kind!r}."
+                )
+        if len(policies) != len(policy_indices):
+            raise ValueError(
+                "stage.boundary_routes must match the prepared policy count; got a different count."
             )
-            for policy, indices in zip(policies, policy_indices, strict=True):
-                if indices.shape[0] == 0:
-                    continue
-                patch_points = points[indices]
-                patch_normal = normal[indices]
-                patch_grid_velocity = grid_normal[indices, :, None] * patch_normal
-                if isinstance(policy, MovingSlipWallBoundary):
+
+        motion_plan_id = (
+            self.coupling.motion.plan_id
+            if self.coupling.motion is not None
+            else self.coupling.prepared_id
+        )
+        for policy, indices in zip(policies, policy_indices, strict=True):
+            if indices.shape[0] == 0:
+                continue
+            patch_points = points[indices]
+            patch_normal = normal[indices]
+            patch_grid_velocity = grid_normal[indices, :, None] * patch_normal
+            match policy:
+                case MovingSlipWallBoundary():
                     context = policy.make_context(
                         metrics.time,
                         patch_points,
@@ -998,7 +1250,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         face_block_id=layout.block_id,
                         motion_plan_id=motion_plan_id,
                     )
-                else:
+                case AbstractConservationBoundary():
                     context_dtype = jnp.result_type(
                         patch_points.dtype,
                         patch_normal.dtype,
@@ -1024,48 +1276,101 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         face_block_id=layout.block_id,
                         motion_plan_id=motion_plan_id,
                     )
-                patch_interior = context.validate_consumer_identity(
-                    left[indices],
-                    topology_epoch_id=metrics.topology_epoch_id,
-                    geometry_layout_id=metrics.geometry_layout_id,
-                    geometry_version=metrics.geometry_version,
-                    face_block_id=layout.block_id,
-                    motion_plan_id=motion_plan_id,
-                )
-                exterior = policy.ale_exterior_state(
-                    self.system,
-                    patch_interior,
-                    context,
-                    0,
-                )
-                right = right.at[indices].set(exterior)
-            outputs.append((left, right, normal))
-        return tuple(outputs)
+                case _:
+                    raise TypeError(
+                        "stage.boundary must declare an exterior-state policy; got unsupported boundary."
+                    )
+            patch_interior = context.validate_consumer_identity(
+                left[indices],
+                topology_epoch_id=metrics.topology_epoch_id,
+                geometry_layout_id=metrics.geometry_layout_id,
+                geometry_version=metrics.geometry_version,
+                face_block_id=layout.block_id,
+                motion_plan_id=motion_plan_id,
+            )
+            exterior = policy.ale_exterior_state(
+                self.system,
+                patch_interior,
+                context,
+                0,
+            )
+            right = right.at[indices].set(exterior)
+        return _BoundaryStageState(right, normal)
 
-    def _overset_correction(
+    def _stage_face_states(
         self,
         state: Array,
         metrics: FiniteVolumeStageMetrics,
         args: Any,
-        stage_plic: Any = None,
         /,
-    ) -> tuple[ConservationStageFluxRateBlock | None, Array, Array]:
-        """Evaluate one moved, stage-bound conservative sliding correction."""
-
-        template = self.overset_rate_block_template
-        overset = self.coupling.overset
-        reduction_dtype = jnp.dtype(self.precision.reduction_dtype)
-        if template is None or overset is None:
-            return (
-                None,
-                jnp.zeros((), dtype=reduction_dtype),
-                jnp.zeros((0,), dtype=reduction_dtype),
+    ) -> tuple[_FaceStageState, ...]:
+        active_mask = metrics.active_cell_mask
+        safe_seed = state[jnp.argmax(active_mask)]
+        safe_state = jnp.where(active_mask[:, None], state, safe_seed[None, :])
+        reconstruction_state = self.precision.reconstruction(safe_state)
+        prepared_reconstruction: _StageReconstruction | None = None
+        outputs: list[_FaceStageState] = []
+        for block_index, geometry_block in enumerate(metrics.face_blocks):
+            layout = geometry_block.layout
+            policy_indices = self.stage_boundary_face_indices[block_index]
+            owner = layout.owner_cells
+            neighbor = layout.neighbor_cells
+            safe_neighbor = jnp.maximum(neighbor, 0)
+            route_active = self._stage_route_active(layout, metrics.active_cell_mask)
+            points = self.precision.reconstruction(geometry_block.quadrature_points)
+            neighbor_points = points
+            if self.neighbor_state_action is not None:
+                match self.discretization:
+                    case UnstructuredFiniteVolumeDiscretization() as geometry:
+                        maps = geometry.neighbor_frame_maps[layout.face_ids]
+                    case _:
+                        raise TypeError(
+                            "stage.periodic_frame_action must bind unstructured finite-volume geometry; got another geometry kind."
+                        )
+                dimension = self.discretization.cell_dimension
+                neighbor_points = (
+                    contract(
+                        "fij,fqj->fqi",
+                        maps[:, :dimension, :dimension],
+                        points,
+                    )
+                    + maps[:, None, :dimension, dimension]
+                )
+            if prepared_reconstruction is None:
+                prepared_reconstruction = self._prepare_stage_reconstruction(
+                    reconstruction_state, metrics
+                )
+            traces = self._evaluate_stage_trace_pair(
+                prepared_reconstruction, owner, points, safe_neighbor, neighbor_points
             )
+            left, right = traces.left, traces.right
+            if self.neighbor_state_action is not None:
+                right = contract(
+                    "fji,fqj->fqi", self.neighbor_state_action[layout.face_ids], right
+                )
+
+            boundary_state = self._apply_stage_boundaries(
+                geometry_block,
+                policy_indices,
+                metrics,
+                points,
+                left,
+                right,
+                route_active,
+                args,
+            )
+            right, normal = boundary_state.right, boundary_state.normal
+            outputs.append(_FaceStageState(left, right, normal))
+        return tuple(outputs)
+
+    def _overset_face_geometry(
+        self, overset: UnstructuredOversetPlan, metrics: FiniteVolumeStageMetrics, /
+    ) -> _OversetFaceGeometry:
         face_ids = overset.receptor_face_ids
         face_cells = overset.receptor_face_cells
         if face_ids is None or face_cells is None or overset.face_artifact_id is None:
             raise ValueError(
-                "Overset correction requires a certified receptor-face artifact with explicit physical face IDs."
+                "stage.overset.receptor_faces must retain certified face IDs, cells, and artifact identity; got missing face metadata."
             )
         physical_blocks = tuple(
             block
@@ -1074,7 +1379,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         )
         if len(physical_blocks) != 1:
             raise ValueError(
-                "Overset correction requires exactly one physical stage face block."
+                "stage.overset.face_blocks must contain one physical block; got a different physical block count."
             )
         physical = physical_blocks[0]
         layout = physical.layout
@@ -1110,8 +1415,105 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         grid_velocity = self.precision.flux(
             physical.quadrature_grid_normal_velocity[positions] * orientation[:, None]
         )
+        return _OversetFaceGeometry(
+            cells,
+            points_array,
+            normals_array,
+            measures_array,
+            grid_velocity,
+            face_measures,
+        )
 
-        reconstruction = self.method.reconstruction
+    def _overset_phase_flux(
+        self,
+        system: multiphase_owner.TwoMaterialVOFSystem,
+        vof_plan: UnstructuredVOFPlan,
+        stage_plic: JAXPLICStageReconstruction | None,
+        route_flux: Array,
+        route_donor_trace: Array,
+        route_donor_cells: Array,
+        route_points: Array,
+        normals_array: Array,
+        grid_velocity: Array,
+        measures_array: Array,
+        route_right: Array,
+        route_fraction: Array,
+        /,
+    ) -> _OversetPhaseFlux:
+        if stage_plic is None or stage_plic.plan_id != vof_plan.plan_id:
+            raise ValueError(
+                "stage.overset.plic must bind the current VOF plan; got missing or mismatched PLIC."
+            )
+        donor_primitive = system.conserved_to_primitive(route_donor_trace)
+        donor_velocity = donor_primitive[..., 2 : 2 + system.dimension]
+        receptor_normals = normals_array[route_right]
+        relative_normal_velocity = (
+            ein.contract(
+                "fqd,fqd->fq",
+                donor_velocity,
+                receptor_normals,
+            )
+            - grid_velocity[route_right]
+        )
+        canonical_volume_flux = -relative_normal_velocity
+        donor_normals = stage_plic.normals[route_donor_cells]
+        donor_offsets = stage_plic.offsets[route_donor_cells]
+        signed_phase0 = donor_offsets[:, None] - ein.contract(
+            "fd,fqd->fq",
+            donor_normals,
+            route_points,
+        )
+        donor_phase0_aperture = (signed_phase0 >= 0.0).astype(canonical_volume_flux.dtype)
+        route_quadrature_measures = measures_array[route_right] * route_fraction[:, None]
+        phase0_mass_flux = jnp.sum(
+            route_quadrature_measures
+            * canonical_volume_flux
+            * donor_primitive[..., 0]
+            * donor_phase0_aperture,
+            axis=1,
+        )
+        phase1_mass_flux = jnp.sum(
+            route_quadrature_measures
+            * canonical_volume_flux
+            * donor_primitive[..., 1]
+            * (1.0 - donor_phase0_aperture),
+            axis=1,
+        )
+        alpha_flux = jnp.sum(
+            route_quadrature_measures * canonical_volume_flux * donor_phase0_aperture,
+            axis=1,
+        )
+        route_flux = route_flux.at[:, 0].set(phase0_mass_flux)
+        route_flux = route_flux.at[:, 1].set(phase1_mass_flux)
+        route_flux = route_flux.at[:, system.alpha_index].set(alpha_flux)
+        return _OversetPhaseFlux(route_flux)
+
+    def _overset_correction(
+        self,
+        state: Array,
+        metrics: FiniteVolumeStageMetrics,
+        args: Any,
+        stage_plic: JAXPLICStageReconstruction | None = None,
+        /,
+    ) -> _OversetCorrection:
+        """Evaluate one moved, stage-bound conservative sliding correction."""
+
+        template = self.overset_rate_block_template
+        overset = self.coupling.overset
+        reduction_dtype = jnp.dtype(self.precision.reduction_dtype)
+        if template is None or overset is None:
+            return _OversetCorrection(
+                None,
+                jnp.zeros((), dtype=reduction_dtype),
+                jnp.zeros((0,), dtype=reduction_dtype),
+            )
+        face_geometry = self._overset_face_geometry(overset, metrics)
+        cells, points_array = face_geometry.cells, face_geometry.points
+        normals_array, measures_array = face_geometry.normals, face_geometry.weights
+        grid_velocity, face_measures = (
+            face_geometry.grid_velocity,
+            face_geometry.face_measures,
+        )
         reconstructed = self.precision.reconstruction(state)
         donor_indices = jnp.asarray(overset.donor_indices, dtype=jnp.int32)
         sliding = self.coupling.sliding_coupling
@@ -1121,7 +1523,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             route_fraction = jnp.ones((cells.size,), dtype=reduction_dtype)
             if donor_indices.shape[0] != cells.shape[0]:
                 raise ValueError(
-                    "Non-sliding overset face routes must pair donors and receptors."
+                    "stage.overset.face_routes must pair donors and receptors without sliding; got different route counts."
                 )
         else:
             route_left = jnp.asarray(sliding.left_routes, dtype=jnp.int32)
@@ -1132,105 +1534,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             )
         route_donor_cells = donor_indices[route_left]
         route_points = points_array[route_right]
-        if isinstance(reconstruction, PiecewiseConstantReconstruction):
-            route_donor_trace = jnp.broadcast_to(
-                reconstructed[route_donor_cells, None, :],
-                (
-                    route_donor_cells.shape[0],
-                    points_array.shape[1],
-                    reconstructed.shape[-1],
-                ),
-            )
-            receptor_interior = jnp.broadcast_to(
-                reconstructed[cells, None, :],
-                (
-                    cells.shape[0],
-                    points_array.shape[1],
-                    reconstructed.shape[-1],
-                ),
-            )
-        elif isinstance(reconstruction, PreparedCellPolynomialReconstruction):
-            if self.coupling.motion is None:
-                coefficients = reconstruction.coefficients(reconstructed)
-                route_donor_trace = reconstruction.evaluate_coefficients(
-                    reconstructed,
-                    coefficients,
-                    route_donor_cells,
-                    route_points,
-                )
-                receptor_interior = reconstruction.evaluate_coefficients(
-                    reconstructed,
-                    coefficients,
-                    cells,
-                    points_array,
-                )
-            else:
-                coefficients, stage_lengths = reconstruction.stage_coefficients(
-                    reconstructed, metrics
-                )
-                route_donor_trace = reconstruction.evaluate_stage_coefficients(
-                    reconstructed,
-                    coefficients,
-                    stage_lengths,
-                    metrics,
-                    route_donor_cells,
-                    route_points,
-                )
-                receptor_interior = reconstruction.evaluate_stage_coefficients(
-                    reconstructed,
-                    coefficients,
-                    stage_lengths,
-                    metrics,
-                    cells,
-                    points_array,
-                )
-        elif isinstance(reconstruction, PreparedUnstructuredWENOZReconstruction):
-            coefficients = reconstruction.coefficients(reconstructed)
-            if self.coupling.motion is None:
-                route_donor_trace = reconstruction.optimal.evaluate_coefficients(
-                    reconstructed,
-                    coefficients,
-                    route_donor_cells,
-                    route_points,
-                )
-                receptor_interior = reconstruction.optimal.evaluate_coefficients(
-                    reconstructed,
-                    coefficients,
-                    cells,
-                    points_array,
-                )
-            else:
-                _, stage_lengths = reconstruction.optimal.stage_coefficients(
-                    reconstructed, metrics
-                )
-                route_donor_trace = reconstruction.optimal.evaluate_stage_coefficients(
-                    reconstructed,
-                    coefficients,
-                    stage_lengths,
-                    metrics,
-                    route_donor_cells,
-                    route_points,
-                )
-                receptor_interior = reconstruction.optimal.evaluate_stage_coefficients(
-                    reconstructed,
-                    coefficients,
-                    stage_lengths,
-                    metrics,
-                    cells,
-                    points_array,
-                )
-            route_donor_trace = reconstruction._limit(
-                reconstructed,
-                route_donor_trace,
-                route_donor_cells,
-            )
-            receptor_interior = reconstruction._limit(
-                reconstructed,
-                receptor_interior,
-                cells,
-            )
-        else:
-            raise TypeError("Unsupported prepared unstructured reconstruction.")
+        prepared_reconstruction = self._prepare_stage_reconstruction(
+            reconstructed, metrics
+        )
+        traces = self._evaluate_stage_trace_pair(
+            prepared_reconstruction, route_donor_cells, route_points, cells, points_array
+        )
+        route_donor_trace, receptor_interior = traces.left, traces.right
         if sliding is None:
             donor_trace = route_donor_trace
         else:
@@ -1273,58 +1583,27 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         # receptor-neighbor. Canonicalize to that opposite positive direction.
         route_flux = -integrated_face_flux[route_right] * route_fraction[:, None]
         if self.coupling.vof is not None:
-            from ...equations._multiphase import TwoMaterialVOFSystem
-
-            if not isinstance(self.system, TwoMaterialVOFSystem):
-                raise TypeError("VOF overset correction requires TwoMaterialVOFSystem.")
-            if stage_plic is None or stage_plic.plan_id != self.coupling.vof.plan_id:
-                raise ValueError("VOF overset correction requires current stage PLIC.")
-            donor_primitive = self.system.conserved_to_primitive(route_donor_trace)
-            donor_velocity = donor_primitive[..., 2 : 2 + self.system.dimension]
-            receptor_normals = normals_array[route_right]
-            relative_normal_velocity = (
-                ein.contract(
-                    "fqd,fqd->fq",
-                    donor_velocity,
-                    receptor_normals,
-                )
-                - grid_velocity[route_right]
-            )
-            canonical_volume_flux = -relative_normal_velocity
-            donor_normals = stage_plic.normals[route_donor_cells]
-            donor_offsets = stage_plic.offsets[route_donor_cells]
-            signed_phase0 = donor_offsets[:, None] - ein.contract(
-                "fd,fqd->fq",
-                donor_normals,
-                route_points,
-            )
-            donor_phase0_aperture = (signed_phase0 >= 0.0).astype(
-                canonical_volume_flux.dtype
-            )
-            route_quadrature_measures = (
-                measures_array[route_right] * route_fraction[:, None]
-            )
-            phase0_mass_flux = jnp.sum(
-                route_quadrature_measures
-                * canonical_volume_flux
-                * donor_primitive[..., 0]
-                * donor_phase0_aperture,
-                axis=1,
-            )
-            phase1_mass_flux = jnp.sum(
-                route_quadrature_measures
-                * canonical_volume_flux
-                * donor_primitive[..., 1]
-                * (1.0 - donor_phase0_aperture),
-                axis=1,
-            )
-            alpha_flux = jnp.sum(
-                route_quadrature_measures * canonical_volume_flux * donor_phase0_aperture,
-                axis=1,
-            )
-            route_flux = route_flux.at[:, 0].set(phase0_mass_flux)
-            route_flux = route_flux.at[:, 1].set(phase1_mass_flux)
-            route_flux = route_flux.at[:, self.system.alpha_index].set(alpha_flux)
+            match self.system:
+                case multiphase_owner.TwoMaterialVOFSystem() as system:
+                    phase_flux = self._overset_phase_flux(
+                        system,
+                        self.coupling.vof,
+                        stage_plic,
+                        route_flux,
+                        route_donor_trace,
+                        route_donor_cells,
+                        route_points,
+                        normals_array,
+                        grid_velocity,
+                        measures_array,
+                        route_right,
+                        route_fraction,
+                    )
+                    route_flux = phase_flux.flux_rate
+                case _:
+                    raise TypeError(
+                        "stage.overset.system must declare TwoMaterialVOFSystem for VOF transport; got another system kind."
+                    )
         route_flux = jnp.where(
             template.active_mask[:, None],
             route_flux,
@@ -1338,7 +1617,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             jnp.where(template.active_mask, face_speed[route_right], 0.0)
         )
         route_measures = face_measures[route_right] * route_fraction
-        return template.with_flux_rate(route_flux), route_speed, route_measures
+        return _OversetCorrection(
+            template.with_flux_rate(route_flux), route_speed, route_measures
+        )
 
     def _append_overset_block(
         self,
@@ -1369,15 +1650,16 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         embedded = self.coupling.embedded_metrics is not None
         if embedded != (redistribution is not None):
             raise ValueError(
-                "Embedded stages require exactly one prepared small-cell "
-                "redistribution plan; non-embedded stages require none."
+                f"stage.redistribution must be present exactly for embedded geometry; got embedded={embedded}, redistribution={type(redistribution).__name__}."
             )
         if redistribution is None:
             return ledger
         if redistribution.evidence.prepared_geometry_id != (
             self.discretization.prepared_id
         ):
-            raise ValueError("Small-cell redistribution belongs to another geometry.")
+            raise ValueError(
+                "stage.redistribution must bind the prepared geometry; got a different discretization ID."
+            )
         block = redistribution.redistribution_flux_rate_block(
             ledger.scatter_content_rate()
         )
@@ -1430,43 +1712,28 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         ledger = self._append_overset_block(ledger, zero_overset)
         return self._append_redistribution_block(ledger, redistribution)
 
-    def evaluate_stage(
-        self,
-        content_state: Any,
-        metrics: FiniteVolumeStageMetrics,
-        args: Any = None,
-        /,
-        *,
-        cfl: float = 0.45,
-        redistribution: ConservativeSmallCellRedistributionPlan | None = None,
-    ) -> UnstructuredFiniteVolumeStageEvaluation:
-        """Evaluate one certified quadrature-integrated ALE content rate."""
-        self._require_serial_entrypoint()
-
-        cfl_ = float(cfl)
-        if not np.isfinite(cfl_) or cfl_ <= 0.0:
-            raise ValueError("cfl must be positive and finite.")
-        average = self._validated_stage_average(content_state, metrics)
+    def _prepare_vof_stage(
+        self, average: Array, metrics: FiniteVolumeStageMetrics, /
+    ) -> _VOFStage | None:
         vof_plan = self.coupling.vof
-        stage_plic = None
-        primitive = None
-        cell_volume_divergence = jnp.zeros(
-            (metrics.cell_count,),
-            dtype=jnp.dtype(self.precision.reduction_dtype),
-        )
         if vof_plan is not None:
-            from ...equations._multiphase import TwoMaterialVOFSystem
-
-            if not isinstance(self.system, TwoMaterialVOFSystem):
-                raise TypeError("VOF stage coupling requires TwoMaterialVOFSystem.")
-            alpha = average[:, self.system.layout.alpha_index]
+            match self.system:
+                case multiphase_owner.TwoMaterialVOFSystem() as system:
+                    pass
+                case _:
+                    raise TypeError(
+                        "stage.vof.system must declare TwoMaterialVOFSystem; got another system kind."
+                    )
+            alpha = average[:, system.layout.alpha_index]
             normal_override = None
             override_mask = None
             contact_angles = self.coupling.contact_angles
             embedded_metrics = self.coupling.embedded_metrics
             if contact_angles is not None:
                 if embedded_metrics is None:
-                    raise ValueError("Contact-angle coupling requires embedded metrics.")
+                    raise ValueError(
+                        "stage.contact_angles.embedded_metrics must be present; got None."
+                    )
                 contact_angles.validate_bindings(
                     embedded_metrics.geometry_id,
                     vof_plan.plan_id,
@@ -1513,216 +1780,227 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 normal_override=normal_override,
                 override_mask=override_mask,
             )
-            primitive = self.system.conserved_to_primitive(average)
-        traces = self._stage_face_states(average, metrics, args)
-        templates = self._stage_rate_templates(metrics)
-        blocks: list[ConservationStageFluxRateBlock] = []
-        speeds: list[Array] = []
-        cell_rate = jnp.zeros(
-            (metrics.cell_count,),
-            dtype=jnp.dtype(self.precision.reduction_dtype),
+            primitive = system.conserved_to_primitive(average)
+            return _VOFStage(system, vof_plan, stage_plic, primitive)
+        return None
+
+    def _physical_vof_face_flux(
+        self,
+        material: _VOFStage,
+        layout: FiniteVolumeStageFaceLayout,
+        flux_rate: Array,
+        normal_flux: Array,
+        right: Array,
+        weights: Array,
+        active_quadrature: Array,
+        cell_volume_divergence: Array,
+        /,
+    ) -> _VOFFaceFlux:
+        system, vof_plan = material.system, material.plan
+        stage_plic, primitive = material.plic, material.primitive
+        face_ids = layout.face_ids
+        total_mass_flux = flux_rate[:, 0] + flux_rate[:, 1]
+        full_total_mass = (
+            jnp.zeros(
+                (self.discretization.face_measures.size,),
+                dtype=total_mass_flux.dtype,
+            )
+            .at[face_ids]
+            .set(total_mass_flux)
         )
-        for geometry_block, template, (left, right, normal) in zip(
-            metrics.face_blocks,
-            templates,
-            traces,
-            strict=True,
-        ):
-            grid_velocity = geometry_block.quadrature_grid_normal_velocity
-            if grid_velocity is None:
-                if self.coupling.motion is not None:
-                    raise ValueError(
-                        "Moving stage geometry must provide grid-normal velocity."
-                    )
-                grid_velocity = jnp.zeros_like(geometry_block.quadrature_weights)
-            site_shape = geometry_block.quadrature_weights.shape
-            route_active = self._stage_route_active(
-                geometry_block.layout, metrics.active_cell_mask
-            )
-            result = self._stage_normal_flux(
-                self.precision.flux(left),
-                self.precision.flux(right),
-                self.precision.flux(normal),
-                self.precision.flux(grid_velocity),
-                jnp.broadcast_to(
-                    self.precision.flux(geometry_block.face_measures)[:, None],
-                    site_shape,
-                ),
-                jnp.broadcast_to(route_active[:, None], site_shape),
-                metrics.geometry_layout_id,
-                args,
-            )
-            layout = geometry_block.layout
-            active_quadrature = template.active_mask[:, None]
-            normal_flux = jnp.where(
-                active_quadrature[..., None],
-                self.precision.reduction(result.normal_flux),
-                jnp.zeros((), dtype=jnp.dtype(self.precision.reduction_dtype)),
-            )
-            signal_speed = jnp.where(
-                active_quadrature,
-                self.precision.reduction(result.max_speed),
-                jnp.zeros((), dtype=jnp.dtype(self.precision.reduction_dtype)),
-            )
-            weights = self.precision.reduction(geometry_block.quadrature_weights)
-            flux_rate = ein.contract(
-                "fq,fqc->fc",
-                weights,
+        donor_apertures = vof_plan.donor_phase_apertures(full_total_mass, stage_plic)[
+            face_ids
+        ]
+        owner = layout.owner_cells
+        neighbor = layout.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
+        donor_left = total_mass_flux >= 0.0
+        boundary_inflow = (neighbor < 0) & ~donor_left
+        rho0 = jnp.where(
+            donor_left,
+            primitive[owner, 0],
+            primitive[safe_neighbor, 0],
+        )
+        rho1 = jnp.where(
+            donor_left,
+            primitive[owner, 1],
+            primitive[safe_neighbor, 1],
+        )
+        mixture_density = donor_apertures[:, 0] * rho0 + donor_apertures[:, 1] * rho1
+        checked_mixture_density = jnp.where(
+            boundary_inflow,
+            jnp.ones_like(mixture_density),
+            mixture_density,
+        )
+        checked_mixture_density = eqx.error_if(
+            checked_mixture_density,
+            jnp.any(
+                ~boundary_inflow
+                & (
+                    ~jnp.isfinite(checked_mixture_density)
+                    | (checked_mixture_density <= system.eos.density_floor)
+                )
+            ),
+            "PLIC donor face mixture density is invalid.",
+        )
+        volume_flux = total_mass_flux / checked_mixture_density
+        mass0_flux = donor_apertures[:, 0] * rho0 * volume_flux
+        alpha_flux = donor_apertures[:, 0] * volume_flux
+
+        right_primitive = system.conserved_to_primitive(right)
+        exterior_alpha = right_primitive[..., system.layout.alpha_index]
+        exterior_rho0 = right_primitive[..., 0]
+        exterior_rho1 = right_primitive[..., 1]
+        exterior_mixture_density = (
+            exterior_alpha * exterior_rho0 + (1.0 - exterior_alpha) * exterior_rho1
+        )
+        active_boundary_inflow = boundary_inflow[:, None] & active_quadrature
+        exterior_mixture_density = jnp.where(
+            active_boundary_inflow,
+            exterior_mixture_density,
+            jnp.ones_like(exterior_mixture_density),
+        )
+        exterior_mixture_density = eqx.error_if(
+            exterior_mixture_density,
+            jnp.any(
+                active_boundary_inflow
+                & (
+                    ~jnp.isfinite(exterior_mixture_density)
+                    | (exterior_mixture_density <= system.eos.density_floor)
+                )
+            ),
+            "Exterior VOF inflow mixture density is invalid.",
+        )
+        exterior_total_mass_flux = normal_flux[..., 0] + normal_flux[..., 1]
+        exterior_volume_flux_density = exterior_total_mass_flux / exterior_mixture_density
+        exterior_volume_flux = ein.contract(
+            "fq,fq->f",
+            weights,
+            exterior_volume_flux_density,
+        )
+        exterior_mass0_flux = ein.contract(
+            "fq,fq->f",
+            weights,
+            exterior_alpha * exterior_rho0 * exterior_volume_flux_density,
+        )
+        exterior_alpha_flux = ein.contract(
+            "fq,fq->f",
+            weights,
+            exterior_alpha * exterior_volume_flux_density,
+        )
+        volume_flux = jnp.where(
+            boundary_inflow,
+            exterior_volume_flux,
+            volume_flux,
+        )
+        mass0_flux = jnp.where(
+            boundary_inflow,
+            exterior_mass0_flux,
+            mass0_flux,
+        )
+        alpha_flux = jnp.where(
+            boundary_inflow,
+            exterior_alpha_flux,
+            alpha_flux,
+        )
+        mass1_flux = total_mass_flux - mass0_flux
+        flux_rate = flux_rate.at[:, 0].set(mass0_flux)
+        flux_rate = flux_rate.at[:, 1].set(mass1_flux)
+        flux_rate = flux_rate.at[:, system.layout.alpha_index].set(alpha_flux)
+        cell_volume_divergence = cell_volume_divergence.at[owner].add(volume_flux)
+        cell_volume_divergence = cell_volume_divergence.at[safe_neighbor].add(
+            jnp.where(neighbor >= 0, -volume_flux, 0.0)
+        )
+        return _VOFFaceFlux(flux_rate, cell_volume_divergence)
+
+    def _evaluate_stage_face_rate(
+        self,
+        geometry_block: FiniteVolumeStageFaceBlock,
+        template: ConservationStageFluxRateBlock,
+        trace: _FaceStageState,
+        material: _VOFStage | None,
+        metrics: FiniteVolumeStageMetrics,
+        cell_volume_divergence: Array,
+        args: Any,
+        /,
+    ) -> _StageFaceRate:
+        left, right, normal = trace.left, trace.right, trace.normal
+        grid_velocity = geometry_block.quadrature_grid_normal_velocity
+        if grid_velocity is None:
+            if self.coupling.motion is not None:
+                raise ValueError(
+                    "stage.metrics.grid_normal_velocity must be present for moving geometry; got None."
+                )
+            grid_velocity = jnp.zeros_like(geometry_block.quadrature_weights)
+        site_shape = geometry_block.quadrature_weights.shape
+        route_active = self._stage_route_active(
+            geometry_block.layout, metrics.active_cell_mask
+        )
+        result = self._stage_normal_flux(
+            self.precision.flux(left),
+            self.precision.flux(right),
+            self.precision.flux(normal),
+            self.precision.flux(grid_velocity),
+            jnp.broadcast_to(
+                self.precision.flux(geometry_block.face_measures)[:, None],
+                site_shape,
+            ),
+            jnp.broadcast_to(route_active[:, None], site_shape),
+            metrics.geometry_layout_id,
+            args,
+        )
+        layout = geometry_block.layout
+        active_quadrature = template.active_mask[:, None]
+        normal_flux = jnp.where(
+            active_quadrature[..., None],
+            self.precision.reduction(result.normal_flux),
+            jnp.zeros((), dtype=jnp.dtype(self.precision.reduction_dtype)),
+        )
+        signal_speed = jnp.where(
+            active_quadrature,
+            self.precision.reduction(result.max_speed),
+            jnp.zeros((), dtype=jnp.dtype(self.precision.reduction_dtype)),
+        )
+        weights = self.precision.reduction(geometry_block.quadrature_weights)
+        flux_rate = ein.contract(
+            "fq,fqc->fc",
+            weights,
+            normal_flux,
+        )
+        if material is not None and layout.block_kind == "physical":
+            phase_flux = self._physical_vof_face_flux(
+                material,
+                layout,
+                flux_rate,
                 normal_flux,
-            )
-            if vof_plan is not None and layout.block_kind == "physical":
-                if stage_plic is None or primitive is None:
-                    raise RuntimeError("VOF stage reconstruction was not prepared.")
-                face_ids = layout.face_ids
-                total_mass_flux = flux_rate[:, 0] + flux_rate[:, 1]
-                full_total_mass = (
-                    jnp.zeros(
-                        (self.discretization.face_measures.size,),
-                        dtype=total_mass_flux.dtype,
-                    )
-                    .at[face_ids]
-                    .set(total_mass_flux)
-                )
-                donor_apertures = vof_plan.donor_phase_apertures(
-                    full_total_mass, stage_plic
-                )[face_ids]
-                owner = layout.owner_cells
-                neighbor = layout.neighbor_cells
-                safe_neighbor = jnp.maximum(neighbor, 0)
-                donor_left = total_mass_flux >= 0.0
-                boundary_inflow = (neighbor < 0) & ~donor_left
-                rho0 = jnp.where(
-                    donor_left,
-                    primitive[owner, 0],
-                    primitive[safe_neighbor, 0],
-                )
-                rho1 = jnp.where(
-                    donor_left,
-                    primitive[owner, 1],
-                    primitive[safe_neighbor, 1],
-                )
-                mixture_density = (
-                    donor_apertures[:, 0] * rho0 + donor_apertures[:, 1] * rho1
-                )
-                checked_mixture_density = jnp.where(
-                    boundary_inflow,
-                    jnp.ones_like(mixture_density),
-                    mixture_density,
-                )
-                checked_mixture_density = eqx.error_if(
-                    checked_mixture_density,
-                    jnp.any(
-                        ~boundary_inflow
-                        & (
-                            ~jnp.isfinite(checked_mixture_density)
-                            | (checked_mixture_density <= self.system.eos.density_floor)
-                        )
-                    ),
-                    "PLIC donor face mixture density is invalid.",
-                )
-                volume_flux = total_mass_flux / checked_mixture_density
-                mass0_flux = donor_apertures[:, 0] * rho0 * volume_flux
-                alpha_flux = donor_apertures[:, 0] * volume_flux
-
-                right_primitive = self.system.conserved_to_primitive(right)
-                exterior_alpha = right_primitive[..., self.system.layout.alpha_index]
-                exterior_rho0 = right_primitive[..., 0]
-                exterior_rho1 = right_primitive[..., 1]
-                exterior_mixture_density = (
-                    exterior_alpha * exterior_rho0
-                    + (1.0 - exterior_alpha) * exterior_rho1
-                )
-                active_boundary_inflow = boundary_inflow[:, None] & active_quadrature
-                exterior_mixture_density = jnp.where(
-                    active_boundary_inflow,
-                    exterior_mixture_density,
-                    jnp.ones_like(exterior_mixture_density),
-                )
-                exterior_mixture_density = eqx.error_if(
-                    exterior_mixture_density,
-                    jnp.any(
-                        active_boundary_inflow
-                        & (
-                            ~jnp.isfinite(exterior_mixture_density)
-                            | (exterior_mixture_density <= self.system.eos.density_floor)
-                        )
-                    ),
-                    "Exterior VOF inflow mixture density is invalid.",
-                )
-                exterior_total_mass_flux = normal_flux[..., 0] + normal_flux[..., 1]
-                exterior_volume_flux_density = (
-                    exterior_total_mass_flux / exterior_mixture_density
-                )
-                exterior_volume_flux = ein.contract(
-                    "fq,fq->f",
-                    weights,
-                    exterior_volume_flux_density,
-                )
-                exterior_mass0_flux = ein.contract(
-                    "fq,fq->f",
-                    weights,
-                    exterior_alpha * exterior_rho0 * exterior_volume_flux_density,
-                )
-                exterior_alpha_flux = ein.contract(
-                    "fq,fq->f",
-                    weights,
-                    exterior_alpha * exterior_volume_flux_density,
-                )
-                volume_flux = jnp.where(
-                    boundary_inflow,
-                    exterior_volume_flux,
-                    volume_flux,
-                )
-                mass0_flux = jnp.where(
-                    boundary_inflow,
-                    exterior_mass0_flux,
-                    mass0_flux,
-                )
-                alpha_flux = jnp.where(
-                    boundary_inflow,
-                    exterior_alpha_flux,
-                    alpha_flux,
-                )
-                mass1_flux = total_mass_flux - mass0_flux
-                flux_rate = flux_rate.at[:, 0].set(mass0_flux)
-                flux_rate = flux_rate.at[:, 1].set(mass1_flux)
-                flux_rate = flux_rate.at[:, self.system.layout.alpha_index].set(
-                    alpha_flux
-                )
-                cell_volume_divergence = cell_volume_divergence.at[owner].add(volume_flux)
-                cell_volume_divergence = cell_volume_divergence.at[safe_neighbor].add(
-                    jnp.where(neighbor >= 0, -volume_flux, 0.0)
-                )
-            face_rate = ein.contract(
-                "fq,fq->f",
+                right,
                 weights,
-                signal_speed,
+                active_quadrature,
+                cell_volume_divergence,
             )
-            blocks.append(template.with_flux_rate(flux_rate))
-            speeds.append(self.precision.decision(signal_speed))
-            owner = layout.owner_cells
-            neighbor = layout.neighbor_cells
-            cell_rate = cell_rate.at[owner].add(face_rate)
-            cell_rate = cell_rate.at[jnp.maximum(neighbor, 0)].add(
-                jnp.where(neighbor >= 0, face_rate, 0.0)
-            )
-        (
-            overset_block,
-            overset_speed,
-            overset_route_measures,
-        ) = self._overset_correction(average, metrics, args, stage_plic)
-        if overset_block is not None:
-            speeds.append(overset_speed)
-            overset_face_rate = overset_speed * overset_route_measures
-            cell_rate = cell_rate.at[overset_block.owner_cells].add(overset_face_rate)
-            cell_rate = cell_rate.at[jnp.maximum(overset_block.neighbor_cells, 0)].add(
-                jnp.where(
-                    overset_block.neighbor_cells >= 0,
-                    overset_face_rate,
-                    0.0,
-                )
-            )
+            flux_rate = phase_flux.flux_rate
+            cell_volume_divergence = phase_flux.volume_divergence
+        face_rate = ein.contract(
+            "fq,fq->f",
+            weights,
+            signal_speed,
+        )
+        return _StageFaceRate(
+            template.with_flux_rate(flux_rate),
+            self.precision.decision(signal_speed),
+            face_rate,
+            cell_volume_divergence,
+        )
 
+    def _integrate_stage_source(
+        self,
+        average: Array,
+        metrics: FiniteVolumeStageMetrics,
+        material: _VOFStage | None,
+        cell_volume_divergence: Array,
+        args: Any,
+        /,
+    ) -> _StageSourceRate:
         source_rate = jnp.zeros_like(
             self.precision.reduction(average),
             dtype=jnp.dtype(self.precision.reduction_dtype),
@@ -1740,7 +2018,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             )
             if source_value.shape != source_average.shape:
                 raise ValueError(
-                    "Unstructured FV source must match the active state shape."
+                    "stage.source must match the active state shape; got an incompatible shape."
                 )
             active_source_rate = self.precision.reduction(
                 source_value
@@ -1748,28 +2026,44 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 metrics.effective_cell_volumes[self.source_cell_indices, None]
             )
             source_rate = source_rate.at[self.source_cell_indices].set(active_source_rate)
-        if vof_plan is not None:
-            from ...equations._multiphase import TwoMaterialVOFSystem
-
-            if not isinstance(self.system, TwoMaterialVOFSystem):
-                raise TypeError("VOF source requires TwoMaterialVOFSystem.")
-            alpha = average[:, self.system.layout.alpha_index]
+        if material is not None:
+            system = material.system
+            alpha = average[:, system.layout.alpha_index]
             volumes = self.precision.reduction(metrics.effective_cell_volumes)
             divergence = cell_volume_divergence / volumes
-            alpha_source = self.system.volume_fraction_source(
+            alpha_source = system.volume_fraction_source(
                 alpha,
                 divergence,
                 average,
             )
-            source_rate = source_rate.at[:, self.system.layout.alpha_index].add(
+            source_rate = source_rate.at[:, system.layout.alpha_index].add(
                 self.precision.reduction(alpha_source) * volumes
             )
+        return _StageSourceRate(source_rate)
+
+    def _integrate_phase_change_source(
+        self,
+        average: Array,
+        metrics: FiniteVolumeStageMetrics,
+        material: _VOFStage | None,
+        source_rate: Array,
+        /,
+    ) -> _PhaseChangeSourceRate:
         phase_change_step = jnp.asarray(jnp.inf, dtype=average.dtype)
         thermal_step = jnp.asarray(jnp.inf, dtype=average.dtype)
         phase_change = self.coupling.phase_change
         if phase_change is not None:
-            if stage_plic is None:
-                raise ValueError("VOF phase change requires stage PLIC reconstruction.")
+            match material:
+                case _VOFStage():
+                    stage_plic, system = material.plic, material.system
+                case None:
+                    raise ValueError(
+                        "stage.phase_change.material must contain PLIC reconstruction; got no VOF stage."
+                    )
+                case _:
+                    raise TypeError(
+                        "stage.material must contain VOF reconstruction; got unsupported material."
+                    )
             volumes = self.precision.reduction(metrics.effective_cell_volumes)
             area_density = self.precision.flux(stage_plic.interface_measures / volumes)
             heat_flux0 = jnp.zeros_like(area_density)
@@ -1777,9 +2071,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             thermal_diffusion = phase_change.thermal_diffusion
             if thermal_diffusion is not None:
                 thermal = thermal_diffusion.evaluate(
-                    self.system, average, stage_metrics=metrics
+                    system, average, stage_metrics=metrics
                 )
-                source_rate = source_rate.at[:, self.system.layout.energy_index].add(
+                source_rate = source_rate.at[:, system.layout.energy_index].add(
                     self.precision.reduction(thermal.cell_energy_rate)
                 )
                 thermal_step = self.precision.decision(thermal.explicit_step_restriction)
@@ -1788,26 +2082,27 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     ~thermal.successful,
                     "Two-material thermal diffusion evaluation failed.",
                 )
-                from ...equations._vof_phase_change import (
-                    StefanHeatFluxPhaseChangePlan,
-                )
 
-                if isinstance(
-                    phase_change.phase_change.rate_law,
-                    StefanHeatFluxPhaseChangePlan,
-                ):
-                    stefan_flux = phase_change.stefan_heat_fluxes(
-                        thermal.temperature,
-                        stage_plic,
-                        cell_centers=metrics.cell_centers,
-                    )
-                    heat_flux0 = stefan_flux.phase0_normal_heat_flux
-                    heat_flux1 = stefan_flux.phase1_normal_heat_flux
-                    source_rate = eqx.error_if(
-                        source_rate,
-                        ~stefan_flux.successful,
-                        "Stefan one-sided heat-flux reconstruction failed.",
-                    )
+                match phase_change.phase_change.rate_law:
+                    case vof_phase_change_owner.StefanHeatFluxPhaseChangePlan():
+                        stefan_flux = phase_change.stefan_heat_fluxes(
+                            thermal.temperature,
+                            stage_plic,
+                            cell_centers=metrics.cell_centers,
+                        )
+                        heat_flux0 = stefan_flux.phase0_normal_heat_flux
+                        heat_flux1 = stefan_flux.phase1_normal_heat_flux
+                        source_rate = eqx.error_if(
+                            source_rate,
+                            ~stefan_flux.successful,
+                            "Stefan one-sided heat-flux reconstruction failed.",
+                        )
+                    case vof_phase_change_owner.AbstractVOFMassTransferPlan():
+                        pass
+                    case _:
+                        raise TypeError(
+                            "phase_change.rate_law must declare a mass-transfer law; got unsupported law."
+                        )
             phase_source = phase_change.phase_change.differential_source(
                 self.precision.flux(average),
                 interface_area_density=area_density,
@@ -1826,23 +2121,44 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 ~jnp.all(phase_source.successful),
                 "VOF phase-change source evaluation failed.",
             )
+        return _PhaseChangeSourceRate(source_rate, phase_change_step, thermal_step)
+
+    def _integrate_capillary_source(
+        self,
+        average: Array,
+        metrics: FiniteVolumeStageMetrics,
+        material: _VOFStage | None,
+        source_rate: Array,
+        /,
+    ) -> _CapillarySourceRate:
         capillary_step = jnp.asarray(jnp.inf, dtype=average.dtype)
         capillarity = self.coupling.capillarity
         if capillarity is not None:
-            if stage_plic is None or primitive is None:
-                raise ValueError("Capillarity requires a stage PLIC reconstruction.")
-            if not isinstance(self.system, TwoMaterialVOFSystem):
-                raise TypeError("Capillarity requires TwoMaterialVOFSystem.")
+            match material:
+                case _VOFStage():
+                    stage_plic, primitive, system = (
+                        material.plic,
+                        material.primitive,
+                        material.system,
+                    )
+                case None:
+                    raise ValueError(
+                        "stage.capillarity.material must contain PLIC reconstruction; got no VOF stage."
+                    )
+                case _:
+                    raise TypeError(
+                        "stage.material must contain VOF reconstruction; got unsupported material."
+                    )
             density = average[:, 0] + average[:, 1]
-            velocity = primitive[:, 2 : 2 + self.system.dimension]
-            alpha = average[:, self.system.layout.alpha_index]
+            velocity = primitive[:, 2 : 2 + system.dimension]
+            alpha = average[:, system.layout.alpha_index]
             capillary_block = capillarity.face_rate_block(stage_plic, alpha, velocity)
             momentum_rate = capillary_block.cell_momentum_rate(metrics.cell_count)
             energy_rate = capillary_block.cell_energy_rate(metrics.cell_count)
             source_rate = source_rate.at[
-                :, self.system.layout.momentum_start : self.system.layout.momentum_stop
+                :, system.layout.momentum_start : system.layout.momentum_stop
             ].add(self.precision.reduction(momentum_rate))
-            source_rate = source_rate.at[:, self.system.layout.energy_index].add(
+            source_rate = source_rate.at[:, system.layout.energy_index].add(
                 self.precision.reduction(energy_rate)
             )
             cell_size = jnp.sqrt(metrics.effective_cell_volumes)
@@ -1851,6 +2167,27 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 density,
                 interface_active=stage_plic.interface_active,
             )
+        return _CapillarySourceRate(source_rate, capillary_step)
+
+    def _finish_stage_evaluation(
+        self,
+        blocks: tuple[ConservationStageFluxRateBlock, ...],
+        source_rate: Array,
+        metrics: FiniteVolumeStageMetrics,
+        speeds: tuple[Array, ...],
+        cell_rate: Array,
+        overset_block: ConservationStageFluxRateBlock | None,
+        redistribution: ConservativeSmallCellRedistributionPlan | None,
+        cfl_: float,
+        phase_change: _PhaseChangeSourceRate,
+        capillary: _CapillarySourceRate,
+        /,
+    ) -> UnstructuredFiniteVolumeStageEvaluation:
+        phase_change_step, thermal_step = (
+            phase_change.phase_change_step,
+            phase_change.thermal_step,
+        )
+        capillary_step = capillary.capillary_step
         ledger = ConservationStageLedger(
             tuple(blocks),
             source_rate,
@@ -1870,7 +2207,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             stabilization = self.coupling.embedded_stabilization_policy
             if stabilization is None:
                 raise ValueError(
-                    "Embedded dynamics require a stabilization policy for CFL."
+                    "stage.cfl.embedded_stabilization_policy must be present; got None."
                 )
             cfl_volumes = jnp.maximum(
                 cfl_volumes,
@@ -1913,9 +2250,101 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             precision_evidence=self.precision.evidence(),
         )
 
+    @checked
+    def evaluate_stage(
+        self,
+        content_state: finite_volume_content_owner.FiniteVolumeConservativeContentState,
+        metrics: FiniteVolumeStageMetrics,
+        args: Any = None,
+        /,
+        *,
+        cfl: float = 0.45,
+        redistribution: ConservativeSmallCellRedistributionPlan | None = None,
+    ) -> UnstructuredFiniteVolumeStageEvaluation:
+        """Evaluate one certified quadrature-integrated ALE content rate."""
+        self._require_serial_entrypoint()
+
+        cfl_ = positive_finite_float(cfl, "stage.cfl")
+        average = self._validated_stage_average(content_state, metrics)
+        cell_volume_divergence = jnp.zeros(
+            (metrics.cell_count,), dtype=jnp.dtype(self.precision.reduction_dtype)
+        )
+        material = self._prepare_vof_stage(average, metrics)
+        stage_plic = None if material is None else material.plic
+        traces = self._stage_face_states(average, metrics, args)
+        templates = self._stage_rate_templates(metrics)
+        blocks: list[ConservationStageFluxRateBlock] = []
+        speeds: list[Array] = []
+        cell_rate = jnp.zeros(
+            (metrics.cell_count,),
+            dtype=jnp.dtype(self.precision.reduction_dtype),
+        )
+        for geometry_block, template, trace in zip(
+            metrics.face_blocks,
+            templates,
+            traces,
+            strict=True,
+        ):
+            face = self._evaluate_stage_face_rate(
+                geometry_block,
+                template,
+                trace,
+                material,
+                metrics,
+                cell_volume_divergence,
+                args,
+            )
+            cell_volume_divergence = face.volume_divergence
+            blocks.append(face.block)
+            speeds.append(face.signal_speed)
+            owner = geometry_block.layout.owner_cells
+            neighbor = geometry_block.layout.neighbor_cells
+            cell_rate = cell_rate.at[owner].add(face.relative_rate)
+            cell_rate = cell_rate.at[jnp.maximum(neighbor, 0)].add(
+                jnp.where(neighbor >= 0, face.relative_rate, 0.0)
+            )
+        overset_correction = self._overset_correction(average, metrics, args, stage_plic)
+        overset_block = overset_correction.block
+        overset_speed = overset_correction.signal_speed
+        overset_route_measures = overset_correction.route_measures
+        if overset_block is not None:
+            speeds.append(overset_speed)
+            overset_face_rate = overset_speed * overset_route_measures
+            cell_rate = cell_rate.at[overset_block.owner_cells].add(overset_face_rate)
+            cell_rate = cell_rate.at[jnp.maximum(overset_block.neighbor_cells, 0)].add(
+                jnp.where(
+                    overset_block.neighbor_cells >= 0,
+                    overset_face_rate,
+                    0.0,
+                )
+            )
+
+        source = self._integrate_stage_source(
+            average, metrics, material, cell_volume_divergence, args
+        )
+        phase_change = self._integrate_phase_change_source(
+            average, metrics, material, source.source_rate
+        )
+        capillary = self._integrate_capillary_source(
+            average, metrics, material, phase_change.source_rate
+        )
+        source_rate = capillary.source_rate
+        return self._finish_stage_evaluation(
+            tuple(blocks),
+            source_rate,
+            metrics,
+            tuple(speeds),
+            cell_rate,
+            overset_block,
+            redistribution,
+            cfl_,
+            phase_change,
+            capillary,
+        )
+
     def _centroid_face_states(
         self, time: Array, state: Array, args: Any, /
-    ) -> tuple[Array, Array, Array]:
+    ) -> _FaceStageState:
         owner = self.discretization.owner_cells
         neighbor = self.discretization.neighbor_cells
         safe_neighbor = jnp.maximum(neighbor, 0)
@@ -1939,20 +2368,16 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 args,
             )
             right = jnp.where(patch_mask[:, None], exterior, right)
-        return left, right, normal
+        return _FaceStageState(left, right, normal)
 
     def _quadrature_face_states(
-        self, time: Array, state: Array, args: Any, /
-    ) -> tuple[Array, Array, Array]:
-        reconstruction = self.method.reconstruction
-        if not isinstance(
-            reconstruction,
-            (
-                PreparedCellPolynomialReconstruction,
-                PreparedUnstructuredWENOZReconstruction,
-            ),
-        ):
-            raise TypeError("Quadrature traces require a prepared cell polynomial.")
+        self,
+        reconstruction: PreparedUnstructuredReconstruction,
+        time: Array,
+        state: Array,
+        args: Any,
+        /,
+    ) -> _FaceStageState:
         points = self.precision.reconstruction(self.discretization.face_quadrature_points)
         left, right = reconstruction.reconstruct_at(
             self.precision.reconstruction(state), points
@@ -1975,7 +2400,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 args,
             )
             right = jnp.where(patch_mask[:, None, None], exterior, right)
-        return left, right, normal
+        return _FaceStageState(left, right, normal)
 
     def _static_normal_flux(
         self,
@@ -2021,42 +2446,54 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         value = jnp.asarray(state)
         if value.shape != self.discretization.state_shape:
             raise ValueError(
-                f"Unstructured FV state must have shape {self.discretization.state_shape}."
+                f"dynamics.state must have shape {self.discretization.state_shape}; got {value.shape}."
             )
         self.precision.validate_state(value)
-        if isinstance(
-            self.method.reconstruction,
-            (
-                PreparedCellPolynomialReconstruction,
-                PreparedUnstructuredWENOZReconstruction,
-            ),
-        ):
-            left, right, normal = self._quadrature_face_states(time, value, args)
-            normal_flux, max_speed = self._static_normal_flux(left, right, normal, args)
-            integrated = jnp.sum(
-                self.precision.reduction(
-                    self.discretization.face_quadrature_weights[..., None]
+        match self.method.reconstruction:
+            case (
+                PreparedCellPolynomialReconstruction()
+                | PreparedUnstructuredWENOZReconstruction() as reconstruction
+            ):
+                trace = self._quadrature_face_states(reconstruction, time, value, args)
+                left, right, normal = trace.left, trace.right, trace.normal
+                normal_flux, max_speed = self._static_normal_flux(
+                    left, right, normal, args
                 )
-                * self.precision.reduction(normal_flux),
-                axis=1,
-            )
-            average_flux = integrated / self.precision.reduction(
-                self.discretization.face_measures[:, None]
-            )
-            return self.precision.flux(average_flux), self.precision.decision(
-                jnp.max(max_speed, axis=1)
-            )
-        left, right, normal = self._centroid_face_states(time, value, args)
-        normal_flux, max_speed = self._static_normal_flux(left, right, normal, args)
-        return self.precision.flux(normal_flux), self.precision.decision(max_speed)
+                integrated = jnp.sum(
+                    self.precision.reduction(
+                        self.discretization.face_quadrature_weights[..., None]
+                    )
+                    * self.precision.reduction(normal_flux),
+                    axis=1,
+                )
+                average_flux = integrated / self.precision.reduction(
+                    self.discretization.face_measures[:, None]
+                )
+                return self.precision.flux(average_flux), self.precision.decision(
+                    jnp.max(max_speed, axis=1)
+                )
+            case PiecewiseConstantReconstruction():
+                trace = self._centroid_face_states(time, value, args)
+                left, right, normal = trace.left, trace.right, trace.normal
+                normal_flux, max_speed = self._static_normal_flux(
+                    left, right, normal, args
+                )
+                return self.precision.flux(normal_flux), self.precision.decision(
+                    max_speed
+                )
+            case _:
+                raise TypeError(
+                    "dynamics.reconstruction must be a supported reconstruction; got an unsupported kind."
+                )
 
-    def _content_rate_from_fluxes(self, normal_flux: Array, /) -> Array:
+    def _content_rate_from_fluxes(
+        self, normal_flux: Array, /, *, active_mask: Array | None
+    ) -> Array:
         integrated = self.precision.reduction(normal_flux) * self.precision.reduction(
             self.discretization.face_measures[:, None]
         )
-        integrated = jnp.where(
-            self.discretization.face_block.active_mask[:, None], integrated, 0.0
-        )
+        if active_mask is not None:
+            integrated = jnp.where(active_mask[:, None], integrated, 0.0)
         owner = self.discretization.owner_cells
         neighbor = self.discretization.neighbor_cells
         safe_neighbor = jnp.maximum(neighbor, 0)
@@ -2079,24 +2516,35 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     def residual_from_fluxes(self, normal_flux: Array, /) -> Array:
         self._require_serial_entrypoint()
         return self.precision.storage(
-            self._content_rate_from_fluxes(normal_flux)
+            self._content_rate_from_fluxes(
+                normal_flux, active_mask=self.discretization.face_block.active_mask
+            )
             / self.precision.reduction(self.discretization.cell_volumes[:, None])
         )
 
     def _require_serial_entrypoint(self) -> None:
-        if (
-            isinstance(self.discretization, UnstructuredFiniteVolumeDiscretization)
-            and self.discretization.partition_count > 1
-        ):
-            raise ValueError(
-                "Owner-local FV requires owner_local_residual/owner_local_advance "
-                "with certified named-axis halo communication."
-            )
+        match self.discretization:
+            case UnstructuredFiniteVolumeDiscretization() if (
+                self.discretization.partition_count > 1
+            ):
+                raise ValueError(
+                    "dynamics.entrypoint must use owner-local execution with certified named-axis halo communication; got a serial entrypoint for partitioned geometry."
+                )
+            case (
+                UnstructuredFiniteVolumeDiscretization()
+                | DyadicFiniteVolumeDiscretization()
+            ):
+                pass
+            case _:
+                raise TypeError(
+                    "dynamics.discretization must declare unstructured or dyadic geometry; got an unsupported kind."
+                )
 
+    @checked
     def owner_local_residual(
         self,
-        time: Array,
-        state: Array,
+        time: ArrayLike,
+        state: ArrayLike,
         halo: DistributedHaloPlan,
         /,
         *,
@@ -2109,21 +2557,25 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         their owners, and equal/opposite ghost contributions are returned
         through the halo transpose; no global field is materialized.
         """
-        geometry = self.discretization
-        if not isinstance(geometry, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError("Owner-local FV requires canonical CellMesh geometry.")
-        if not isinstance(halo, DistributedHaloPlan) or halo.local_global_ids.ndim != 1:
-            raise TypeError("Owner-local FV requires an owner-local DistributedHaloPlan.")
+        geometry = _owner_local_geometry(self)
+        if halo.local_global_ids.ndim != 1:
+            raise TypeError(
+                "dynamics.halo.local_global_ids must have an owner-local rank-one layout; got another layout."
+            )
         if (
             halo.entity_count != geometry.global_entity_counts[geometry.cell_dimension]
             or halo.part_count != geometry.partition_count
             or halo.local_global_ids.shape != geometry.cell_global_ids.shape
             or halo.evidence_id != geometry.closure_evidence_id
         ):
-            raise ValueError("Owner-local FV halo disagrees with logical cell storage.")
+            raise ValueError(
+                "dynamics.halo must agree with logical cell storage and closure evidence; got mismatched metadata."
+            )
         value = jnp.asarray(state)
         if value.shape != geometry.state_shape:
-            raise ValueError("Owner-local FV state must match the local closure.")
+            raise ValueError(
+                "dynamics.state must match the local closure shape; got another shape."
+            )
         self.precision.validate_state(value)
         route_valid = halo.partition_index == geometry.partition_index
         owners = geometry.cell_owner
@@ -2145,7 +2597,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         )
         part = jnp.asarray(geometry.partition_index, dtype=jnp.int32)
         exchanged = halo.exchange(value, part, axis_name=axis_name)
-        left, right, normal = self._centroid_face_states(time, exchanged, args)
+        time_ = jnp.asarray(time)
+        trace = self._centroid_face_states(time_, exchanged, args)
+        left, right, normal = trace.left, trace.right, trace.normal
         faces = geometry.owned_face_indices
         if geometry.owned_face_buffered:
 
@@ -2192,11 +2646,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 )
             )
         )
-        content_rate = self._content_rate_from_fluxes(face_flux)
+        # The sparse buffer already contains only this owner's valid facets;
+        # the unmapped face block can retain another owner's activity mask.
+        content_rate = self._content_rate_from_fluxes(face_flux, active_mask=None)
         accumulated = halo.accumulate_halo(content_rate, part, axis_name=axis_name)
         residual = accumulated / self.precision.reduction(geometry.cell_volumes[:, None])
         residual = residual + self.precision.reduction(
-            self.source_value(time, exchanged, args)
+            self.source_value(time_, exchanged, args)
         )
         return self.precision.storage(
             jnp.where(
@@ -2206,11 +2662,12 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             )
         )
 
+    @checked
     def owner_local_advance(
         self,
-        time: Array,
-        state: Array,
-        step: Array,
+        time: ArrayLike,
+        state: ArrayLike,
+        step: ArrayLike,
         halo: DistributedHaloPlan,
         /,
         *,
@@ -2236,7 +2693,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             )
         )
         if value.shape != state.shape:
-            raise ValueError("Unstructured FV source must match the state shape.")
+            raise ValueError(
+                "dynamics.source must match the state shape; got another shape."
+            )
         return self.precision.storage(value)
 
     def __call__(self, time: Array, state: Array, args: Any = None) -> Array:
@@ -2281,9 +2740,9 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     def linearize(
         self, time: Array, state: Array, args: Any = None, /
     ) -> tuple[
-        PyTree[Array],
-        Callable[[PyTree[Any]], PyTree[Array]],
-        Callable[[PyTree[Any]], tuple[PyTree[Array]]],
+        Array,
+        Callable[[Array], Array],
+        Callable[[Array], tuple[Array]],
     ]:
         linearization = la.prepare_linearization(
             lambda value: self(time, value, args), state
@@ -2329,7 +2788,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
 
 
 class OwnerLocalFiniteVolumeAdvance(StrictModule):
-    """Actual owner-local advance with globally reduced owned content.
+    """Retain an owner-local advance and globally reduced owned content.
 
     Byte counts describe the supplied arrays, not a measured allocator peak.
     Admissibility is meaningful only when ``admissibility_checked`` is true.
@@ -2346,15 +2805,211 @@ class OwnerLocalFiniteVolumeAdvance(StrictModule):
     logical_state_bytes: int = eqx.field(static=True)
 
 
+class _OwnerExecutionData(StrictModule):
+    system: AbstractConservationSystem
+    method: UnstructuredFiniteVolumeMethodPlan
+    boundaries: UnstructuredFiniteVolumeBoundarySet
+    precision: FiniteVolumePrecisionPolicy
+    cell_volumes: Array
+    cell_centers: Array
+    face_centers: Array
+    area_vectors: Array
+    face_measures: Array
+    owner_cells: Array
+    neighbor_cells: Array
+    boundary_patch_ids: Array
+    cell_owned: Array
+    cell_owner: Array
+    cell_global_ids: Array
+    owned_face_indices: Array
+    owned_face_valid: Array
+    partition_index: Array
+    halo: DistributedHaloPlan
+
+
+class _OwnerProgramPlacement(StrictModule):
+    ordered: tuple[
+        tuple[PreparedUnstructuredFiniteVolumeDynamics, DistributedHaloPlan], ...
+    ]
+    prototype: PreparedUnstructuredFiniteVolumeDynamics
+    prototype_halo: DistributedHaloPlan
+    geometry: UnstructuredFiniteVolumeDiscretization
+    local_parts: tuple[int, ...] = eqx.field(static=True)
+    parts: int = eqx.field(static=True)
+
+
+class _OwnerExecutionArrays(StrictModule):
+    static: _OwnerExecutionData
+    structure: jax.tree_util.PyTreeDef = eqx.field(static=True)
+    numeric: tuple[Array, ...]
+    specifications: tuple[PartitionSpec, ...] = eqx.field(static=True)
+    local_leaves: tuple[tuple[Array, ...], ...]
+
+
+def _owner_local_geometry(
+    dynamics: PreparedUnstructuredFiniteVolumeDynamics, /
+) -> UnstructuredFiniteVolumeDiscretization:
+    match dynamics.discretization:
+        case UnstructuredFiniteVolumeDiscretization() as geometry:
+            return geometry
+        case DyadicFiniteVolumeDiscretization():
+            raise TypeError(
+                "owner_local.programs.geometry must contain CellMesh finite-volume geometry; got another geometry kind."
+            )
+        case _:
+            raise TypeError(
+                "owner_local.programs.geometry must contain CellMesh finite-volume geometry; got another geometry kind."
+            )
+
+
+def _prepare_owner_program_placement(
+    programs: tuple[
+        tuple[PreparedUnstructuredFiniteVolumeDynamics, DistributedHaloPlan], ...
+    ],
+    state: Array,
+    execution_group: ExecutionGroup,
+    axis_name: str,
+    /,
+) -> _OwnerProgramPlacement:
+    mesh = execution_group.mesh
+    if tuple(mesh.axis_names) != (axis_name,):
+        raise ValueError(
+            "owner_local.execution_group must contain one explicit partition axis; got a different mesh axis layout."
+        )
+    if not programs:
+        raise ValueError(
+            "owner_local.programs must contain addressable owner programs; got an empty tuple."
+        )
+    by_part: dict[
+        int, tuple[PreparedUnstructuredFiniteVolumeDynamics, DistributedHaloPlan]
+    ] = {}
+    for dynamics, halo in programs:
+        match dynamics:
+            case PreparedUnstructuredFiniteVolumeDynamics():
+                pass
+            case _:
+                raise TypeError(
+                    "owner_local.programs.dynamics must contain prepared finite-volume dynamics; got another kind."
+                )
+        geometry = _owner_local_geometry(dynamics)
+        match halo:
+            case DistributedHaloPlan() if halo.owner_local:
+                pass
+            case _:
+                raise TypeError(
+                    "owner_local.programs.halo must contain an owner-local sparse halo; got another kind or mode."
+                )
+        rank = int(np.asarray(geometry.partition_index))
+        if rank in by_part:
+            raise ValueError(
+                "owner_local.programs must have unique semantic partition indices; got a duplicate index."
+            )
+        by_part[rank] = (dynamics, halo)
+    local_parts = tuple(
+        index
+        for index, device in enumerate(execution_group.devices)
+        if device.process_index == jax.process_index()
+    )
+    if set(by_part) != set(local_parts):
+        raise ValueError(
+            "owner_local.programs must cover the addressable group ranks; got a mismatched partition set."
+        )
+    ordered = tuple(by_part[rank] for rank in local_parts)
+    prototype, prototype_halo = ordered[0]
+    geometry = _owner_local_geometry(prototype)
+    parts = mesh.shape[axis_name]
+    if geometry.partition_count != parts:
+        raise ValueError(
+            "owner_local.execution_group must preserve the certified partition count; got a different count."
+        )
+    match state:
+        case Array() if state.shape == (parts, *geometry.state_shape):
+            pass
+        case _:
+            raise ValueError(
+                "owner_local.state must use the certified global closure layout; got a different shape."
+            )
+    return _OwnerProgramPlacement(
+        ordered, prototype, prototype_halo, geometry, local_parts, parts
+    )
+
+
+def _prepare_owner_execution_arrays(
+    placement: _OwnerProgramPlacement, execution_group: ExecutionGroup, axis_name: str, /
+) -> _OwnerExecutionArrays:
+    prototype, prototype_halo, geometry = (
+        placement.prototype,
+        placement.prototype_halo,
+        placement.geometry,
+    )
+    ordered, local_parts, parts = (
+        placement.ordered,
+        placement.local_parts,
+        placement.parts,
+    )
+    execution = _owner_local_execution_data(prototype, prototype_halo)
+    static = eqx.filter(execution, lambda value: not eqx.is_array(value))
+    first_leaves, structure = jax.tree_util.tree_flatten(
+        eqx.filter(execution, eqx.is_array)
+    )
+    signature = tuple((leaf.shape, leaf.dtype) for leaf in first_leaves)
+    local_leaves = []
+    for dynamics, halo in ordered:
+        other = _owner_local_geometry(dynamics)
+        if (
+            other.partition_count != parts
+            or other.state_shape != geometry.state_shape
+            or other.component_names != geometry.component_names
+            or other.boundary_patch_names != geometry.boundary_patch_names
+            or other.owned_face_buffered != geometry.owned_face_buffered
+            or type(dynamics.system) is not type(prototype.system)
+            or type(dynamics.method.interface_solver)
+            is not type(prototype.method.interface_solver)
+            or dynamics.source_id != prototype.source_id
+        ):
+            raise ValueError(
+                "owner_local.programs must share one compatible execution family; got incompatible metadata or system types."
+            )
+        leaves = jax.tree_util.tree_leaves(
+            eqx.filter(_owner_local_execution_data(dynamics, halo), eqx.is_array)
+        )
+        if tuple((leaf.shape, leaf.dtype) for leaf in leaves) != signature:
+            raise ValueError(
+                "owner_local.programs.buffers must share local capacities and dtypes; got incompatible signatures."
+            )
+        if any(not leaf.is_fully_addressable for leaf in leaves):
+            raise ValueError(
+                "owner_local.programs.buffers must be process-addressable; got a non-addressable array."
+            )
+        local_leaves.append(leaves)
+    numeric = tuple(
+        make_owner_local_field_array(
+            tuple(leaves[index] for leaves in local_leaves),
+            local_parts,
+            execution_group.devices,
+            axis_name=axis_name,
+        )
+        for index in range(len(first_leaves))
+    )
+    specifications = tuple(
+        PartitionSpec(axis_name, *(None for _ in leaf.shape)) for leaf in first_leaves
+    )
+    return _OwnerExecutionArrays(
+        static,
+        structure,
+        numeric,
+        specifications,
+        tuple(tuple(leaves) for leaves in local_leaves),
+    )
+
+
 def _owner_local_execution_data(
     dynamics: PreparedUnstructuredFiniteVolumeDynamics,
     halo: DistributedHaloPlan,
     /,
-) -> tuple[Any, ...]:
-    geometry = dynamics.discretization
-    if not isinstance(geometry, UnstructuredFiniteVolumeDiscretization):
-        raise TypeError("Owner-local FV programs require canonical CellMesh geometry.")
-    return (
+) -> _OwnerExecutionData:
+    geometry = _owner_local_geometry(dynamics)
+    return _OwnerExecutionData(
         dynamics.system,
         dynamics.method,
         dynamics.boundaries,
@@ -2377,13 +3032,14 @@ def _owner_local_execution_data(
     )
 
 
+@checked
 def execute_owner_local_finite_volume_advance(
     programs: tuple[
         tuple[PreparedUnstructuredFiniteVolumeDynamics, DistributedHaloPlan], ...
     ],
     state: Array,
-    time: Array,
-    step: Array,
+    time: ArrayLike,
+    step: ArrayLike,
     execution_group: ExecutionGroup,
     /,
     *,
@@ -2397,111 +3053,20 @@ def execute_owner_local_finite_volume_advance(
     This boundary does not infer stable IDs as global slots or repartition a
     changed partition count. Supply the separately certified lowering for that
     operation. Only local numerical execution leaves enter the mapped program;
-    canonical mesh and logical checkpoint arrays never become map arguments.
+    mesh topology and logical checkpoint arrays never become map arguments.
     """
-    if not isinstance(execution_group, ExecutionGroup):
-        raise TypeError("Owner-local FV execution requires an ExecutionGroup.")
+    placement = _prepare_owner_program_placement(
+        programs, state, execution_group, axis_name
+    )
+    prepared = _prepare_owner_execution_arrays(placement, execution_group, axis_name)
+    prototype, geometry = placement.prototype, placement.geometry
+    static, structure = prepared.static, prepared.structure
+    numeric, specifications = prepared.numeric, prepared.specifications
+    local_leaves = prepared.local_leaves
     mesh = execution_group.mesh
-    if tuple(mesh.axis_names) != (axis_name,):
-        raise ValueError("Owner-local FV execution requires one explicit partition axis.")
-    if not programs:
-        raise ValueError("Owner-local FV execution requires addressable owner programs.")
-    by_part: dict[
-        int, tuple[PreparedUnstructuredFiniteVolumeDynamics, DistributedHaloPlan]
-    ] = {}
-    for dynamics, halo in programs:
-        if not isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics):
-            raise TypeError(
-                "Owner-local FV programs require prepared finite-volume dynamics."
-            )
-        geometry = dynamics.discretization
-        if not isinstance(geometry, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError(
-                "Owner-local FV programs require canonical CellMesh geometry."
-            )
-        if not isinstance(halo, DistributedHaloPlan) or not halo.owner_local:
-            raise TypeError("Owner-local FV programs require owner-local sparse halos.")
-        rank = int(np.asarray(geometry.partition_index))
-        if rank in by_part:
-            raise ValueError("Owner-local FV semantic partition programs must be unique.")
-        by_part[rank] = (dynamics, halo)
-    local_parts = tuple(
-        index
-        for index, device in enumerate(execution_group.devices)
-        if device.process_index == jax.process_index()
-    )
-    if set(by_part) != set(local_parts):
-        raise ValueError(
-            "Owner-local FV programs must cover exactly the addressable group ranks."
-        )
-    ordered = tuple(by_part[rank] for rank in local_parts)
-    prototype, prototype_halo = ordered[0]
-    geometry = prototype.discretization
-    if not isinstance(geometry, UnstructuredFiniteVolumeDiscretization):
-        raise TypeError("Owner-local FV programs require canonical CellMesh geometry.")
-    parts = mesh.shape[axis_name]
-    if geometry.partition_count != parts:
-        raise ValueError(
-            "Owner-local FV execution cannot change the certified partition count."
-        )
-    if not isinstance(state, Array) or state.shape != (parts, *geometry.state_shape):
-        raise ValueError(
-            "Owner-local FV state must use the certified global closure layout."
-        )
-    execution = _owner_local_execution_data(prototype, prototype_halo)
-    static = eqx.filter(execution, lambda value: not eqx.is_array(value))
-    first_leaves, structure = jax.tree_util.tree_flatten(
-        eqx.filter(execution, eqx.is_array)
-    )
-    signature = tuple((leaf.shape, leaf.dtype) for leaf in first_leaves)
-    local_leaves = []
-    for dynamics, halo in ordered:
-        other = dynamics.discretization
-        if not isinstance(other, UnstructuredFiniteVolumeDiscretization):
-            raise TypeError(
-                "Owner-local FV programs require canonical CellMesh geometry."
-            )
-        if (
-            other.partition_count != parts
-            or other.state_shape != geometry.state_shape
-            or other.component_names != geometry.component_names
-            or other.boundary_patch_names != geometry.boundary_patch_names
-            or other.owned_face_buffered != geometry.owned_face_buffered
-            or type(dynamics.system) is not type(prototype.system)
-            or type(dynamics.method.interface_solver)
-            is not type(prototype.method.interface_solver)
-            or dynamics.source_id != prototype.source_id
-        ):
-            raise ValueError(
-                "Owner-local FV programs require one compatible execution family."
-            )
-        leaves = jax.tree_util.tree_leaves(
-            eqx.filter(_owner_local_execution_data(dynamics, halo), eqx.is_array)
-        )
-        if tuple((leaf.shape, leaf.dtype) for leaf in leaves) != signature:
-            raise ValueError(
-                "Owner-local FV buffers must have agreed local capacities and dtypes."
-            )
-        if any(not leaf.is_fully_addressable for leaf in leaves):
-            raise ValueError(
-                "Owner-local FV execution leaves must be process-addressable."
-            )
-        local_leaves.append(leaves)
-    numeric = tuple(
-        make_owner_local_field_array(
-            tuple(leaves[index] for leaves in local_leaves),
-            local_parts,
-            execution_group.devices,
-            axis_name=axis_name,
-        )
-        for index in range(len(first_leaves))
-    )
-    specifications = tuple(
-        PartitionSpec(axis_name, *(None for _ in leaf.shape)) for leaf in first_leaves
-    )
     state_spec = PartitionSpec(axis_name, None, None)
     placed_state = jax.device_put(state, execution_group.named_sharding(state_spec))
-    checked = callable(getattr(prototype.system, "admissible", None))
+    admissibility_checked = True
 
     def advance(
         local_numeric: tuple[Array, ...], local_state: Array
@@ -2512,7 +3077,24 @@ def execute_owner_local_finite_volume_advance(
             ),
             static,
         )
-        system, method, boundaries, precision, *values, halo = data
+        system, method = data.system, data.method
+        boundaries, precision, halo = data.boundaries, data.precision, data.halo
+        values = (
+            data.cell_volumes,
+            data.cell_centers,
+            data.face_centers,
+            data.area_vectors,
+            data.face_measures,
+            data.owner_cells,
+            data.neighbor_cells,
+            data.boundary_patch_ids,
+            data.cell_owned,
+            data.cell_owner,
+            data.cell_global_ids,
+            data.owned_face_indices,
+            data.owned_face_valid,
+            data.partition_index,
+        )
         local_geometry = eqx.tree_at(
             lambda value: (
                 value.cell_volumes,
@@ -2560,10 +3142,8 @@ def execute_owner_local_finite_volume_advance(
         finite = jax.lax.pmin(
             jnp.all(jnp.isfinite(after)).astype(jnp.int32), axis_name
         ).astype(jnp.bool_)
-        admissible = (
-            jnp.all(jnp.where(local_geometry.cell_owned, system.admissible(after), True))
-            if checked
-            else jnp.asarray(False, dtype=jnp.bool_)
+        admissible = jnp.all(
+            jnp.where(local_geometry.cell_owned, system.admissible(after), True)
         )
         admissible = jax.lax.pmin(admissible.astype(jnp.int32), axis_name).astype(
             jnp.bool_
@@ -2590,7 +3170,7 @@ def execute_owner_local_finite_volume_advance(
         inventory_change=after - before,
         finite=finite,
         admissible=admissible,
-        admissibility_checked=checked,
+        admissibility_checked=admissibility_checked,
         process_execution_bytes=sum(
             leaf.size * leaf.dtype.itemsize for leaves in local_leaves for leaf in leaves
         ),

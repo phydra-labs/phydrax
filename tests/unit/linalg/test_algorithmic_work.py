@@ -14,6 +14,26 @@ import pytest
 import phydrax as phx
 
 
+# Empirical `test_gated_off_lanes_never_feed_the_operator_invalid_inputs_in_reverse_mode`: matched max |delta|=2.36549e-11; joint allowance fraction=0.0611109, margin=93.8889%.
+_KRYLOV_GATED_GRADIENT_RTOL = 1e-10
+# Empirical `test_gated_off_lanes_never_feed_the_operator_invalid_inputs_in_reverse_mode`: matched max |delta|=2.36549e-11; joint allowance fraction=0.0611109, margin=93.8889%.
+_KRYLOV_GATED_GRADIENT_ATOL = 1e-12
+# Empirical `test_gated_off_lanes_never_feed_the_operator_invalid_inputs_in_reverse_mode`: matched max |delta|=2.13705e-11; joint allowance fraction=0.0448254, margin=95.5175%.
+_KRYLOV_GATED_GRADIENT_SUM_RTOL = 1e-10
+# Empirical `test_gated_off_decomposition_lanes_never_feed_the_action_invalid_inputs`: matched max |delta|=1.13687e-13; joint allowance fraction=2.3558e-06, margin=99.9998%.
+_DECOMPOSITION_GATED_GRADIENT_RTOL = 1e-10
+# Empirical `test_gated_off_decomposition_lanes_never_feed_the_action_invalid_inputs`: matched max |delta|=1.13687e-13; joint allowance fraction=2.3558e-06, margin=99.9998%.
+_DECOMPOSITION_GATED_GRADIENT_ATOL = 1e-12
+# Empirical `test_gated_off_decomposition_lanes_never_feed_the_action_invalid_inputs`: matched max |delta|=2.27374e-13; joint allowance fraction=3.44061e-06, margin=99.9997%.
+_DECOMPOSITION_GATED_GRADIENT_SUM_RTOL = 1e-10
+# Empirical `test_block_arnoldi_reverse_mode_differentiates_the_retained_subspace`: matched max |delta|=9.99348e-08; joint allowance fraction=0.000134423, margin=99.9866%.
+_BLOCK_ARNOLDI_FINITE_DIFFERENCE_RTOL = 1e-6
+# Empirical `test_gated_off_lobpcg_lanes_never_feed_the_operator_invalid_inputs`: matched max |delta|=4.88498e-15; joint allowance fraction=2.34902e-06, margin=99.9998%.
+_LOBPCG_GATED_GRADIENT_RTOL = 1e-9
+# Empirical `test_gated_off_lobpcg_lanes_never_feed_the_operator_invalid_inputs`: matched max |delta|=4.88498e-15; joint allowance fraction=2.34902e-06, margin=99.9998%.
+_LOBPCG_GATED_GRADIENT_ATOL = 1e-11
+
+
 la = phx.linalg
 SIZE = 12
 _RANDOM = np.random.default_rng(7)
@@ -286,11 +306,18 @@ def test_gated_off_lanes_never_feed_the_operator_invalid_inputs_in_reverse_mode(
     assert np.all(iterations[1] > 1)
     assert np.all(iterations[2] == 0)
     assert np.all(np.isfinite(unbatched))
-    np.testing.assert_allclose(mapped, unbatched, rtol=1e-10, atol=1e-12)
-    np.testing.assert_allclose(summed, np.sum(unbatched), rtol=1e-10)
+    np.testing.assert_allclose(
+        mapped,
+        unbatched,
+        rtol=_KRYLOV_GATED_GRADIENT_RTOL,
+        atol=_KRYLOV_GATED_GRADIENT_ATOL,
+    )
+    np.testing.assert_allclose(
+        summed, np.sum(unbatched), rtol=_KRYLOV_GATED_GRADIENT_SUM_RTOL
+    )
 
 
-# SPD with coordinates 0 and 1 decoupled: e0 and e1 are exact eigenvectors, so a
+# SPD with coordinates 0 and 1 decoupled: e0 and e1 are eigenvectors, so a
 # decomposition started from them breaks down exactly after one step.
 _DECOUPLED = SPD.at[:2, :].set(0.0).at[:, :2].set(0.0) + jnp.diag(
     jnp.zeros(SIZE).at[:2].set(jnp.diag(SPD)[:2])
@@ -343,8 +370,15 @@ def test_gated_off_decomposition_lanes_never_feed_the_action_invalid_inputs(
     )(scale)
 
     assert np.all(np.isfinite(unbatched))
-    np.testing.assert_allclose(mapped, unbatched, rtol=1e-10, atol=1e-12)
-    np.testing.assert_allclose(summed, np.sum(unbatched), rtol=1e-10)
+    np.testing.assert_allclose(
+        mapped,
+        unbatched,
+        rtol=_DECOMPOSITION_GATED_GRADIENT_RTOL,
+        atol=_DECOMPOSITION_GATED_GRADIENT_ATOL,
+    )
+    np.testing.assert_allclose(
+        summed, np.sum(unbatched), rtol=_DECOMPOSITION_GATED_GRADIENT_SUM_RTOL
+    )
 
 
 @pytest.mark.parametrize(
@@ -374,7 +408,11 @@ def test_block_arnoldi_reverse_mode_differentiates_the_retained_subspace(
     gradient = jax.jit(jax.grad(loss))(1.3)
 
     assert np.isfinite(gradient)
-    np.testing.assert_allclose(gradient, _central_difference(loss, 1.3), rtol=1e-6)
+    np.testing.assert_allclose(
+        gradient,
+        _central_difference(loss, 1.3),
+        rtol=_BLOCK_ARNOLDI_FINITE_DIFFERENCE_RTOL,
+    )
 
 
 _SPD_PROPERTIES = la.OperatorProperties(
@@ -421,4 +459,9 @@ def test_gated_off_lobpcg_lanes_never_feed_the_operator_invalid_inputs() -> None
     mapped = jax.jit(jax.vmap(_lobpcg_eigenvalues))(lanes)
 
     assert np.all(np.isfinite(unbatched))
-    np.testing.assert_allclose(mapped, unbatched, rtol=1e-9, atol=1e-11)
+    np.testing.assert_allclose(
+        mapped,
+        unbatched,
+        rtol=_LOBPCG_GATED_GRADIENT_RTOL,
+        atol=_LOBPCG_GATED_GRADIENT_ATOL,
+    )

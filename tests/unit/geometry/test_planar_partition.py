@@ -5,7 +5,6 @@
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pytest
@@ -14,6 +13,8 @@ from phydrax._physical import SpatialCoordinateContract
 from phydrax.geometry import PlanarEmbedding
 from phydrax.geometry._cad_revision import AssociationStatus, CADSelectionSet
 from phydrax.geometry.brep import (
+    BRepEntityId,
+    BRepModel,
     BRepPartitionPolicy,
     BRepPartitionResult,
     BRepPartitionRole,
@@ -22,7 +23,6 @@ from phydrax.geometry.brep import (
     PlanarPartitionPlan,
     prepare_brep_query,
 )
-from phydrax.geometry.brep._model import BRepEntityId, BRepModel
 from phydrax.geometry.simplicial import PlanarMeshRegion
 from phydrax.units import METER, MILLIMETER
 
@@ -133,7 +133,7 @@ def test_embedding_roundtrip_and_signed_plane_residual() -> None:
 
 
 def test_adjacent_regions_publish_shared_edges_with_opposite_incidence(
-    tmp_path: Any,
+    tmp_path: Path,
 ) -> None:
     result = _execute(
         _plan(
@@ -170,6 +170,8 @@ def test_adjacent_regions_publish_shared_edges_with_opposite_incidence(
     assert signs[0] == -signs[1]
     assert result.named_region_entity_ids == result.named_face_entity_ids
     assert result.named_patch_entity_ids == result.named_edge_entity_ids
+    assert result.named_face_entity_ids is result.named_region_entity_ids
+    assert result.named_edge_entity_ids is result.named_patch_entity_ids
     assert result.named_solid_entity_ids == ()
     assert {entity.kind for region in result.regions for entity in region.entity_ids} == {
         "face"
@@ -188,7 +190,7 @@ def test_adjacent_regions_publish_shared_edges_with_opposite_incidence(
     assert {patch.topological_dimension for patch in result.patches} == {2}
 
 
-def test_oriented_hole_is_preserved_as_exact_face_wires(tmp_path: Any) -> None:
+def test_oriented_hole_is_preserved_as_exact_face_wires(tmp_path: Path) -> None:
     region = PlanarMeshRegion(
         np.asarray(
             (
@@ -217,7 +219,7 @@ def test_oriented_hole_is_preserved_as_exact_face_wires(tmp_path: Any) -> None:
     assert set(result.model.topology.edge_faces) == {(face_index,)}
 
 
-def test_precedence_is_independent_of_planar_operand_order(tmp_path: Any) -> None:
+def test_precedence_is_independent_of_planar_operand_order(tmp_path: Path) -> None:
     high = _rectangle(0.0, 2.0, feature_id="high")
     low = _rectangle(1.0, 3.0, feature_id="low")
     forward = _execute(
@@ -241,7 +243,7 @@ def test_precedence_is_independent_of_planar_operand_order(tmp_path: Any) -> Non
     assert _region_area(forward, "low") == pytest.approx(1.0)
 
 
-def test_void_subtracts_only_its_declared_planar_target(tmp_path: Any) -> None:
+def test_void_subtracts_only_its_declared_planar_target(tmp_path: Path) -> None:
     result = _execute(
         _plan(
             (
@@ -288,7 +290,7 @@ def test_void_empties_winning_planar_region_without_lower_refill(tmp_path: Path)
 
 
 def test_exact_face_and_edge_histories_cover_split_and_deleted_sources(
-    tmp_path: Any,
+    tmp_path: Path,
 ) -> None:
     result = _execute(
         _plan(
@@ -341,7 +343,7 @@ def test_exact_face_and_edge_histories_cover_split_and_deleted_sources(
     )
 
 
-def test_persisted_root_faces_reenter_the_same_partition_contract(tmp_path: Any) -> None:
+def test_persisted_root_faces_reenter_the_same_partition_contract(tmp_path: Path) -> None:
     first = _execute(
         _plan(
             (_operand("source", _rectangle(0.0, 2.0, feature_id="source")),),
@@ -377,7 +379,7 @@ def test_persisted_root_faces_reenter_the_same_partition_contract(tmp_path: Any)
         )
 
 
-def test_planar_sources_must_share_the_declared_embedding_plane(tmp_path: Any) -> None:
+def test_planar_sources_must_share_the_declared_embedding_plane(tmp_path: Path) -> None:
     first = _execute(
         _plan(
             (_operand("source", _rectangle(0.0, 1.0, feature_id="source")),),
@@ -392,7 +394,7 @@ def test_planar_sources_must_share_the_declared_embedding_plane(tmp_path: Any) -
         (0.0, 0.0, 1.0),
     )
 
-    with pytest.raises(ValueError, match="not coplanar"):
+    with pytest.raises(ValueError, match=r"planar_arrangement\.patch"):
         _execute(
             _plan((_operand("source", first.model),), ("source",), embedding=displaced),
             tmp_path / "wrong-plane.brep",
@@ -400,7 +402,7 @@ def test_planar_sources_must_share_the_declared_embedding_plane(tmp_path: Any) -
     assert not (tmp_path / "wrong-plane.brep").exists()
 
 
-def test_holes_must_be_strictly_inside_the_outer_loop(tmp_path: Any) -> None:
+def test_holes_must_be_strictly_inside_the_outer_loop(tmp_path: Path) -> None:
     invalid = PlanarMeshRegion(
         np.asarray(
             (

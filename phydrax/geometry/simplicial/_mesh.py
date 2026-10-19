@@ -13,17 +13,18 @@ import numpy as np
 import numpy.typing as npt
 from jax import Array
 
+import phydrax.discretization._cell_mesh as cell_mesh_owner
+import phydrax.discretization._support as support_owner
+
 from ..._polynomial._cubature import CubatureReference
 from ..._strict import StrictModule
 from ...typing import checked
-from .._atlas import BoundaryAtlas, BoundaryMap
+from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._cubature import AbstractCubatureMap, CubatureAtlas, CubatureMapEvaluation
 from ._topology import TriangleTopology
 
 
 if TYPE_CHECKING:
-    from ...discretization._cell_mesh import CellMesh
-    from ...discretization._support import DiscreteSupport
     from ._bvh import TriangleBVH
 
 
@@ -67,23 +68,35 @@ class TriangleMesh(StrictModule):
         vertices_host = np.asarray(vertices, dtype=np.float64)
         faces_host = np.asarray(faces, dtype=np.int32)
         if vertices_host.ndim != 2 or vertices_host.shape[1] != 3:
-            raise ValueError("vertices must have shape (num_vertices, 3).")
+            raise ValueError(
+                f"TriangleMesh.vertices must have shape (num_vertices, 3); got {vertices_host.shape}"
+            )
         if faces_host.ndim != 2 or faces_host.shape[1] != 3:
-            raise ValueError("faces must have shape (num_faces, 3).")
+            raise ValueError(
+                f"TriangleMesh.faces must have shape (num_faces, 3); got {faces_host.shape}"
+            )
         if vertices_host.shape[0] == 0:
-            raise ValueError("TriangleMesh requires at least one vertex.")
+            raise ValueError(
+                "TriangleMesh.vertices must contain at least one vertex; got zero vertices"
+            )
         if faces_host.shape[0] == 0:
-            raise ValueError("TriangleMesh requires at least one face.")
+            raise ValueError(
+                "TriangleMesh.faces must contain at least one face; got zero faces"
+            )
         if not np.all(np.isfinite(vertices_host)):
-            raise ValueError("vertices must contain only finite values.")
+            raise ValueError("TriangleMesh.vertices must be finite; got nonfinite values")
         if np.any(faces_host < 0) or np.any(faces_host >= vertices_host.shape[0]):
-            raise ValueError("faces contain out-of-range vertex indices.")
+            raise ValueError(
+                "TriangleMesh.faces must reference existing vertices; got out-of-range vertex indices"
+            )
         if np.any(
             (faces_host[:, 0] == faces_host[:, 1])
             | (faces_host[:, 1] == faces_host[:, 2])
             | (faces_host[:, 2] == faces_host[:, 0])
         ):
-            raise ValueError("Every triangle must reference three distinct vertices.")
+            raise ValueError(
+                "TriangleMesh.faces must reference three distinct vertices per triangle; got repeated vertices"
+            )
         triangles = vertices_host[faces_host]
         doubled_area = np.linalg.norm(
             np.cross(
@@ -108,9 +121,13 @@ class TriangleMesh(StrictModule):
         )
         tolerance = np.finfo(np.float64).eps * edge_scale_squared * 64.0
         if np.any(doubled_area <= tolerance):
-            raise ValueError("TriangleMesh contains a degenerate face.")
+            raise ValueError(
+                "TriangleMesh.faces must be nondegenerate at the scale-dependent area threshold; got a degenerate face"
+            )
         if source_id is not None and not source_id:
-            raise ValueError("source_id must be non-empty.")
+            raise ValueError(
+                f"TriangleMesh.source_id must be nonempty when provided; got {source_id!r}"
+            )
         self.vertices = jnp.asarray(vertices_host, dtype=jnp.float64)
         self.faces = jnp.asarray(faces_host, dtype=jnp.int32)
         # ty: ignore[invalid-argument-type]
@@ -121,21 +138,19 @@ class TriangleMesh(StrictModule):
     def triangles(self) -> Array:
         return self.vertices[self.faces]
 
-    def discrete_support(self, /) -> DiscreteSupport:
-        """Return canonical topology bound to this immutable embedding."""
-        from ...discretization._support import DiscreteSupport
+    def discrete_support(self, /) -> support_owner.DiscreteSupport:
+        """Return topology bound to this immutable embedding."""
 
-        return DiscreteSupport(
+        return support_owner.DiscreteSupport(
             self.topology.cell_complex_topology(),
             3,
             self.source_id,
         )
 
-    def as_cell_mesh(self, /) -> CellMesh:
+    def as_cell_mesh(self, /) -> cell_mesh_owner.CellMesh:
         """Return the shared computational realization of this surface mesh."""
-        from ...discretization._cell_mesh import CellMesh
 
-        return CellMesh.from_triangles(
+        return cell_mesh_owner.CellMesh.from_triangles(
             self.vertices,
             self.faces,
             vertex_global_ids=jnp.arange(self.vertices.shape[0], dtype=jnp.int64),
@@ -187,7 +202,7 @@ class TriangleMesh(StrictModule):
         return TriangleMeshQueryIndex(self)
 
 
-class _TriangleSurfaceMap(BoundaryMap):
+class _TriangleSurfaceMap(AbstractBoundaryMap):
     vertices: Array
     faces: Array
 
@@ -284,7 +299,7 @@ class _TriangleCubatureMap(AbstractCubatureMap):
 def _closest_segment(point: Array, start: Array, end: Array) -> Array:
     # An edge shared by adjacent faces appears with opposite orientations. Orient
     # each segment lexicographically and return clamped endpoints exactly so
-    # both faces produce bitwise-identical closest points; exact distance ties
+    # both faces produce bitwise-identical closest points; equal-distance ties
     # then resolve by face index on every evaluation route.
     axis = jnp.argmax(start != end, axis=-1)[..., None]
     swap = jnp.take_along_axis(end, axis, axis=-1) < jnp.take_along_axis(
@@ -305,7 +320,8 @@ def _closest_segment(point: Array, start: Array, end: Array) -> Array:
     )
 
 
-def _closest_points_on_triangles(point: Array, triangles: Array) -> Array:
+def closest_points_on_triangles(point: Array, triangles: Array) -> Array:
+    """Return closest points on triangles using fixed barycentric region order."""
     a = triangles[:, 0]
     b = triangles[:, 1]
     c = triangles[:, 2]
@@ -343,16 +359,19 @@ def _closest_points_on_triangles(point: Array, triangles: Array) -> Array:
 
 
 class TriangleMeshQueryIndex(StrictModule):
-    """Canonical exact BVH query preparation for one immutable triangle mesh."""
+    """Prepare BVH nearest-triangle queries for one immutable triangle mesh."""
 
     mesh: TriangleMesh
     bvh: TriangleBVH
 
     @checked
     def __init__(self, mesh: TriangleMesh) -> None:
-        from ._bvh import TriangleBVH
 
         self.mesh = mesh
+        # `_bvh` imports this module's query records at its top, so the BVH owner
+        # loads only when an index is built.
+        from ._bvh import TriangleBVH
+
         self.bvh = TriangleBVH(mesh)
 
     def query(self, points: Array, /) -> MeshQueryResult:

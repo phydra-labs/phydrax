@@ -3,49 +3,173 @@
 #
 from __future__ import annotations
 
+from time import perf_counter
+
+
+_IMPORT_STARTED = perf_counter()
 import argparse
 import json
+import os
 import resource
 import shutil
-import subprocess
-import sys
+import tracemalloc
+from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from time import perf_counter
-from typing import Any, NoReturn
+from typing import Any, final
 
 import equinox as eqx
 import jax
 import numpy as np
 
 import phydrax as phx
-from phydrax._bvh import (
-    bvh_nearest_items,
-    bvh_overlap_pairs,
-    bvh_overlap_pairs_host,
-    BVHBuildKind,
-    BVHBuildPolicy,
-    prepare_bvh,
-    refit_packed_bvh_bounds,
+from phydrax import canonical_fingerprint
+from phydrax.meshing import (
+    BisectionCompatibility,
+    meshcore_available,
+    metis_identity,
+    metis_partition,
 )
-from phydrax._fingerprint import canonical_fingerprint
-from phydrax.meshing._quality import _standard_block_quality
+from phydrax.meshing.qualification import (
+    benchmark_adapted_quality,
+    benchmark_bisection_compilation_counts,
+    benchmark_boundary_layer_quality,
+    benchmark_device_metric_compilation_count,
+    benchmark_projection_compilation_counts,
+    BenchmarkProviderKind,
+    execute_benchmark_device_metric,
+    execute_benchmark_optimization,
+    measure_bisection_compilation,
+    measure_projection_compilation,
+    prepare_benchmark_provider_input,
+    prepare_squeezed_benchmark_geometry,
+    qualify_bvh_scaling,
+    qualify_overlap_pair_scaling,
+)
+from phydrax.units import METER
 from tools._meshing_cases import (
     CASE_NAMES,
-    corpus_identity,
-    load_corpus_registration,
-    MANDATORY_WORKFLOWS,
-    meshing_case,
+    original_wall_layer_schedule,
     POLYHEDRAL_CASE_NAMES,
-    polyhedral_identity,
 )
+from tools.compile_counter import CompileCounter
+from tools.meshing_qualification._campaign import (
+    _benchmark_registered_native_corpus,
+    _native_driver_controls,
+    benchmark_native_lifecycle,
+    load_native_campaign_registration,
+)
+from tools.meshing_qualification._controls import (
+    _NATIVE_DRIVER_ARGUMENTS,
+    BenchmarkControls,
+    FAMILY_CASES,
+    HYBRID_PROFILES,
+    SURFACE_CASES,
+)
+from tools.meshing_qualification._fixtures import (
+    _HEXAHEDRON_CORNERS,
+    _jittered_unit_square_triangles,
+    _kuhn_tetrahedra,
+    _planar_triangles,
+    _remap_field,
+)
+from tools.meshing_qualification._records import _corpus_profiles
+from tools.meshing_qualification._runtime import (
+    _contract,
+    peak_resident_bytes,
+    qualification_failure,
+)
+from tools.meshing_qualification.brep_performance import (
+    benchmark_brep_containment,
+    benchmark_brep_moments,
+    benchmark_brep_orientation_audit,
+)
+from tools.meshing_qualification.kernel_performance import (
+    benchmark_fresh_imports,
+    benchmark_parallel_batches,
+)
+from tools.meshing_qualification.scenarios.boundary_layer import (
+    _advancing_layer_control,
+    _layer_box_wall,
+)
+from tools.meshing_qualification.scenarios.layout import _hybrid_gmsh_result
 
 
-def _contract() -> phx.SpatialCoordinateContract:
-    return phx.SpatialCoordinateContract(phx.units.MILLIMETER)
+_IMPORT_SECONDS = perf_counter() - _IMPORT_STARTED
 
 
-def _timed(call: Any) -> Any:
+def _measured_benchmark_case(
+    name: str, call: Callable[[], dict[str, object]]
+) -> dict[str, object]:
+    """Attach compile-diagnostic timing metadata without replacing case evidence.
+
+    Compile counts and seconds come from completed JAX compiler events; import
+    seconds measure this module's first import. Peak RSS is process-lifetime
+    high-water RSS in bytes, not an incremental per-case allocation. Legacy
+    microcases do not enable an accounting profiler: their accounting seconds
+    are None with an explicit reason code. Lifecycle and diagnostic-capable
+    cases publish measured accounting only in a separate process launched with
+    PHYDRAX_MESHING_ACCOUNTING_DIAGNOSTICS=1; those timings are not headline
+    samples.
+    """
+    stage = f"benchmark_case.{name}"
+    started = perf_counter()
+    with CompileCounter(stage=stage) as compiler:
+        result: dict[str, Any] = call()
+    measured = {
+        "wall_seconds": perf_counter() - started,
+        "timing_policy": "compile-instrumented-diagnostic-not-headline",
+        "eager_xla_compile_count": compiler.count,
+        "eager_xla_compile_seconds": compiler.seconds,
+        "compile_events": [event.to_record() for event in compiler.events],
+        "python_resource_accounting_seconds": None,
+        "python_resource_accounting_measurement": "unmeasured-clean-timing-no-accounting-profiler",
+        "peak_resident_bytes": peak_resident_bytes(),
+        "peak_resident_unit": "bytes",
+    }
+    return {
+        **result,
+        "import_seconds": _IMPORT_SECONDS,
+        "peak_resident_unit": "bytes",
+        "stage_measurements": {
+            **result.get("stage_measurements", {}),
+            stage: measured,
+        },
+    }
+
+
+def _clean_benchmark_case(
+    name: str, call: Callable[[], dict[str, object]]
+) -> dict[str, object]:
+    """Measure clean timing, or collect compiler diagnostics in a separate run."""
+    if os.environ.get("PHYDRAX_MESHING_ACCOUNTING_DIAGNOSTICS") == "1":
+        return _measured_benchmark_case(name, call)
+    started = perf_counter()
+    result: dict[str, Any] = call()
+    measured = {
+        "wall_seconds": perf_counter() - started,
+        "timing_policy": "clean-no-compile-or-accounting-instrumentation",
+        "eager_xla_compile_count": None,
+        "eager_xla_compile_seconds": None,
+        "compile_events": None,
+        "compile_measurement": "unmeasured-run-separate-diagnostic-invocation",
+        "python_resource_accounting_seconds": None,
+        "python_resource_accounting_measurement": "unmeasured-clean-timing-no-accounting-profiler",
+        "peak_resident_bytes": peak_resident_bytes(),
+        "peak_resident_unit": "bytes",
+    }
+    return {
+        **result,
+        "import_seconds": _IMPORT_SECONDS,
+        "peak_resident_unit": "bytes",
+        "stage_measurements": {
+            **result.get("stage_measurements", {}),
+            f"benchmark_case.{name}": measured,
+        },
+    }
+
+
+def _timed[T](call: Callable[[], T]) -> tuple[T, float]:
     started = perf_counter()
     result = call()
     return result, perf_counter() - started
@@ -54,14 +178,18 @@ def _timed(call: Any) -> Any:
 def _range(values: Any) -> dict[str, float]:
     samples = np.asarray(tuple(values), dtype="float64")
     if samples.ndim != 1 or not samples.size:
-        raise ValueError("Benchmark ranges require one nonempty scalar sequence.")
+        raise ValueError(
+            f"_range.samples must be a nonempty one-dimensional scalar sequence; got {samples!r}."
+        )
     return {"minimum": float(np.min(samples)), "maximum": float(np.max(samples))}
 
 
 def _integer_range(values: Any) -> dict[str, int]:
     samples = np.asarray(tuple(values), dtype=np.int64)
     if samples.ndim != 1 or not samples.size:
-        raise ValueError("Benchmark ranges require one nonempty integer sequence.")
+        raise ValueError(
+            f"_integer_range.samples must be a nonempty one-dimensional integer sequence; got {samples!r}."
+        )
     return {"minimum": int(np.min(samples)), "maximum": int(np.max(samples))}
 
 
@@ -106,6 +234,8 @@ def _persist_shape(
 
 
 def _cad_partition(count: int, destination: Path) -> Any:
+
+    # Optional provider imports are admitted only for this fixture workflow.
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
 
@@ -132,8 +262,8 @@ def _cad_partition(count: int, destination: Path) -> Any:
 
 
 def _layout_bytes(count: int) -> bytes:
-    # ty: ignore[unresolved-import]
-    import gdstk
+    # The optional dependency is admitted when this workflow executes.
+    import gdstk  # ty: ignore[unresolved-import]
 
     with TemporaryDirectory(prefix="phydrax-layout-benchmark-") as temporary:
         path = Path(temporary) / "benchmark.gds"
@@ -208,8 +338,10 @@ def benchmark_native_meshing(resolution: int, repeats: int) -> dict[str, object]
         )
     )
     if not result.audit.passed or error > 1e-12:
-        raise RuntimeError(
-            "Native meshing benchmark failed certification or linear transfer."
+        raise qualification_failure(
+            "benchmark_native_meshing",
+            ("Native meshing benchmark failed certification or linear transfer."),
+            {"error": error, "result": result},
         )
     return {
         "resolution": resolution,
@@ -242,7 +374,11 @@ def benchmark_cad_partition(resolution: int) -> dict[str, object]:
         root = Path(temporary)
         (plan, result), total_seconds = _timed(lambda: _cad_partition(count, root))
     if result.topological_dimension != 3 or not result.named_solid_entity_ids:
-        raise RuntimeError("CAD partition benchmark did not create solid regions.")
+        raise qualification_failure(
+            "benchmark_cad_partition",
+            ("CAD partition benchmark did not create solid regions."),
+            {"result": result},
+        )
     return {
         "resolution": resolution,
         "stages_seconds": {"persist_and_partition": total_seconds},
@@ -308,7 +444,11 @@ def benchmark_planar_semantic(resolution: int) -> dict[str, object]:
         or not mesh_result.audit.passed
         or not mesh_result.compliance.passed
     ):
-        raise RuntimeError("Planar benchmark failed semantic mesh qualification.")
+        raise qualification_failure(
+            "benchmark_planar_semantic",
+            ("Planar benchmark failed semantic mesh qualification."),
+            {"mesh_result": mesh_result, "partition": partition},
+        )
     return {
         "resolution": resolution,
         "stages_seconds": {
@@ -362,7 +502,11 @@ def benchmark_layout_decode(resolution: int) -> dict[str, object]:
         not result.report.valid
         or result.source_digest != result.resource_manifest.content_sha256
     ):
-        raise RuntimeError("Layout benchmark lost decoder validity or source identity.")
+        raise qualification_failure(
+            "benchmark_layout_decode",
+            ("Layout benchmark lost decoder validity or source identity."),
+            {"result": result},
+        )
     return {
         "resolution": resolution,
         "stages_seconds": {
@@ -444,7 +588,11 @@ def benchmark_planar_band(resolution: int) -> dict[str, object]:
         or not mesh_result.audit.passed
         or not mesh_result.compliance.passed
     ):
-        raise RuntimeError("Planar-band benchmark failed exact mesh qualification.")
+        raise qualification_failure(
+            "benchmark_planar_band",
+            ("Planar-band benchmark failed mesh qualification."),
+            {"band_result": band_result, "mesh_result": mesh_result},
+        )
     achieved = dict(mesh_result.compliance.achieved)
     residuals = tuple(
         achieved[
@@ -479,7 +627,6 @@ def benchmark_planar_band(resolution: int) -> dict[str, object]:
 
 
 def benchmark_hybrid_slab(resolution: int) -> dict[str, object]:
-    from tools.meshing_qualification import _hybrid_gmsh_result
 
     layer_count = max(1, resolution)
     schedule = phx.meshing.LayerSchedule.geometric(
@@ -505,7 +652,11 @@ def benchmark_hybrid_slab(resolution: int) -> dict[str, object]:
         lambda: phx.discretization.FiniteElementPlan(result.mesh, field).prepare()
     )
     if not result.audit.passed or not result.compliance.passed:
-        raise RuntimeError("Hybrid slab benchmark failed mesh audit or compliance.")
+        raise qualification_failure(
+            "benchmark_hybrid_slab",
+            ("Hybrid slab benchmark failed mesh audit or compliance."),
+            {"result": result},
+        )
     achieved = dict(result.compliance.achieved)
     return {
         "resolution": resolution,
@@ -554,7 +705,7 @@ def benchmark_implicit_discovery(resolution: int) -> dict[str, object]:
         (0.013, -0.007, 0.011),
         0.75,
         feature_id="benchmark-sphere",
-    ).compile()
+    ).compile(coordinate_unit=METER)
     plan, discovery_seconds = _timed(
         lambda: phx.geometry.discover_implicit_surface(
             geometry,
@@ -572,7 +723,11 @@ def benchmark_implicit_discovery(resolution: int) -> dict[str, object]:
         lambda: jax.block_until_ready(_realize_implicit_surface(plan, geometry.state))
     )
     if not bool(np.asarray(cold.accepted)) or not bool(np.asarray(warm.accepted)):
-        raise RuntimeError("Implicit discovery benchmark realization was rejected.")
+        raise qualification_failure(
+            "benchmark_implicit_discovery",
+            ("Implicit discovery benchmark realization was rejected."),
+            {"cold": cold, "warm": warm},
+        )
     return {
         "resolution": resolution,
         "stages_seconds": {
@@ -600,150 +755,6 @@ def benchmark_implicit_discovery(resolution: int) -> dict[str, object]:
     }
 
 
-def _clustered_boxes(count: int, seed: int, /) -> tuple[np.ndarray, np.ndarray]:
-    """Boxes around Gaussian clusters, so hierarchy quality matters."""
-    rng = np.random.default_rng(seed)
-    centers = rng.random((max(1, count // 256), 3))
-    lower = centers[rng.integers(0, centers.shape[0], count)] + 0.02 * (
-        rng.standard_normal((count, 3))
-    )
-    return lower, lower + 0.004 + 0.004 * rng.random((count, 3))
-
-
-@eqx.filter_jit
-def _refit_and_query(bvh: Any, lower: Any, upper: Any, queries: Any) -> Any:
-    refitted = refit_packed_bvh_bounds(bvh, lower, upper)
-    return bvh_nearest_items(refitted, queries, k=4)
-
-
-def benchmark_lbvh(resolution: int) -> dict[str, object]:
-    """Scale every BVH build strategy, refit, and exact kNN with the item count."""
-    item_count = 1024 * resolution
-    lower, upper = _clustered_boxes(item_count, resolution)
-    moved_lower = lower + 0.001
-    queries = np.random.default_rng(7).random((1024, 3))
-    stages: dict[str, float] = {}
-    quality: dict[str, int] = {}
-    for kind in BVHBuildKind:
-        policy = BVHBuildPolicy(kind, leaf_size=8)
-        bvh, stages[f"build_{kind.value}"] = _timed(
-            lambda policy=policy: prepare_bvh(lower, upper, policy=policy)
-        )
-        _, stages[f"refit_query_cold_{kind.value}"] = _timed(
-            lambda bvh=bvh: jax.block_until_ready(
-                _refit_and_query(bvh, moved_lower, moved_lower + 0.006, queries)
-            )
-        )
-        _, stages[f"refit_query_warm_{kind.value}"] = _timed(
-            lambda bvh=bvh: jax.block_until_ready(
-                _refit_and_query(bvh, moved_lower, moved_lower + 0.006, queries)
-            )
-        )
-        quality[f"depth_{kind.value}"] = bvh.max_depth
-        quality[f"nodes_{kind.value}"] = bvh.node_count
-    return {
-        "resolution": resolution,
-        "stages_seconds": stages,
-        "quality": quality,
-        "counts": {"items": item_count, "queries": queries.shape[0]},
-    }
-
-
-@eqx.filter_jit
-def _device_overlap_pairs(first: Any, second: Any, *, capacity: Any) -> Any:
-    return bvh_overlap_pairs(first, second, capacity=capacity)
-
-
-def benchmark_overlap_pairs(resolution: int) -> dict[str, object]:
-    """Scale exact host and bounded device BVH pair search with the item count."""
-    item_count = 1024 * resolution
-    first_lower, first_upper = _clustered_boxes(item_count, resolution)
-    # The second set jitters the first, so both share clusters and overlap densely.
-    second_lower = first_lower + 0.004 * np.random.default_rng(
-        resolution
-    ).standard_normal(first_lower.shape)
-    second_upper = second_lower + (first_upper - first_lower)
-    policy = BVHBuildPolicy(BVHBuildKind.SAH, leaf_size=8)
-    first = prepare_bvh(first_lower, first_upper, policy=policy, dtype=np.float64)
-    second = prepare_bvh(second_lower, second_upper, policy=policy, dtype=np.float64)
-    (host_first, _), host_seconds = _timed(lambda: bvh_overlap_pairs_host(first, second))
-    capacity = max(1, 2 * host_first.shape[0])
-    _, device_cold = _timed(
-        lambda: jax.block_until_ready(
-            _device_overlap_pairs(first, second, capacity=capacity)
-        )
-    )
-    device, device_warm = _timed(
-        lambda: jax.block_until_ready(
-            _device_overlap_pairs(first, second, capacity=capacity)
-        )
-    )
-    if bool(device.overflow) or int(device.count) != host_first.shape[0]:
-        raise RuntimeError("Device overlap pairs disagree with the exact host search.")
-    return {
-        "resolution": resolution,
-        "stages_seconds": {
-            "host": host_seconds,
-            "device_cold": device_cold,
-            "device_warm": device_warm,
-        },
-        "counts": {"items": item_count, "pairs": host_first.shape[0]},
-    }
-
-
-_HEXAHEDRON_CORNERS = np.asarray(
-    (
-        (0, 0, 0),
-        (1, 0, 0),
-        (1, 1, 0),
-        (0, 1, 0),
-        (0, 0, 1),
-        (1, 0, 1),
-        (1, 1, 1),
-        (0, 1, 1),
-    )
-)
-_KUHN_TETRAHEDRA = np.asarray(
-    ((0, 1, 2, 6), (0, 2, 3, 6), (0, 3, 7, 6), (0, 7, 4, 6), (0, 4, 5, 6), (0, 5, 1, 6))
-)
-
-
-def _kuhn_tetrahedra(cells_per_axis: int, /) -> tuple[np.ndarray, np.ndarray]:
-    """Positively oriented Kuhn tetrahedra of a unit-cube lattice."""
-    count = cells_per_axis
-    axis = np.linspace(0.0, 1.0, count + 1)
-    points = np.stack(np.meshgrid(axis, axis, axis, indexing="ij"), axis=-1).reshape(
-        (-1, 3)
-    )
-    index = np.arange((count + 1) ** 3, dtype=np.int32).reshape((count + 1,) * 3)
-    corners = np.stack(
-        [
-            index[a : a + count, b : b + count, c : c + count].reshape((-1,))
-            for a, b, c in _HEXAHEDRON_CORNERS
-        ],
-        axis=1,
-    )
-    tetrahedra = corners[:, _KUHN_TETRAHEDRA].reshape((-1, 4))
-    first, second, third, fourth = (points[tetrahedra[:, i]] for i in range(4))
-    volume = np.sum(np.cross(second - first, third - first) * (fourth - first), axis=1)
-    tetrahedra[volume < 0.0] = tetrahedra[volume < 0.0][:, [1, 0, 2, 3]]
-    return points, tetrahedra
-
-
-def _planar_triangles(cells_per_axis: int, /) -> np.ndarray:
-    """Counterclockwise triangles of a square lattice disk."""
-    index = np.arange((cells_per_axis + 1) ** 2, dtype=np.int32).reshape(
-        (cells_per_axis + 1, cells_per_axis + 1)
-    )
-    lower = index[:-1, :-1].reshape((-1,))
-    right = index[1:, :-1].reshape((-1,))
-    upper = index[1:, 1:].reshape((-1,))
-    left = index[:-1, 1:].reshape((-1,))
-    return np.concatenate(
-        (np.stack((lower, right, upper), axis=1), np.stack((lower, upper, left), axis=1))
-    )
-
-
 def _array_bytes(tree: Any) -> int:
     """Bytes of the distinct array leaves a result retains."""
     leaves = {id(leaf): leaf for leaf in jax.tree.leaves(eqx.filter(tree, eqx.is_array))}
@@ -751,7 +762,7 @@ def _array_bytes(tree: Any) -> int:
 
 
 def benchmark_incidence(resolution: int) -> dict[str, object]:
-    """Scale canonical incidence construction with about `resolution` cells."""
+    """Scale incidence construction with about `resolution` cells."""
     points, tetrahedra = _kuhn_tetrahedra(max(1, round((resolution / 6) ** (1 / 3))))
     triangles = _planar_triangles(max(1, round((resolution / 2) ** 0.5)))
     vertex_count = points.shape[0]
@@ -776,7 +787,11 @@ def benchmark_incidence(resolution: int) -> dict[str, object]:
         lambda: mesh.with_coordinates(1.5 * points, numeric_version="1")
     )
     if moved.topology_id != mesh.topology_id:
-        raise RuntimeError("Coordinate refresh changed the mesh topology.")
+        raise qualification_failure(
+            "benchmark_incidence",
+            ("Coordinate refresh changed the mesh topology."),
+            {"mesh": mesh, "moved": moved},
+        )
     surface, surface_seconds = _timed(
         # ty: ignore[invalid-argument-type]
         lambda: phx.geometry.simplicial.TriangleTopology(triangles)
@@ -808,18 +823,6 @@ def benchmark_incidence(resolution: int) -> dict[str, object]:
     }
 
 
-def _jittered_unit_square_triangles(cells_per_axis: int, seed: int, /) -> Any:
-    """Counterclockwise lattice triangles with interior vertices jittered in place."""
-    axis = np.linspace(0.0, 1.0, cells_per_axis + 1)
-    points = np.stack(np.meshgrid(axis, axis, indexing="ij"), axis=-1).reshape((-1, 2))
-    interior = np.all((points > 0.0) & (points < 1.0), axis=1)
-    jitter = np.random.default_rng(seed).uniform(-0.2, 0.2, points.shape)
-    points[interior] += jitter[interior] / cells_per_axis
-    return phx.discretization.CellMesh.from_triangles(
-        points, _planar_triangles(cells_per_axis)
-    )
-
-
 def _cube_tetrahedra(cells_per_axis: int, /) -> Any:
     points, tetrahedra = _kuhn_tetrahedra(cells_per_axis)
     return phx.discretization.CellMesh.from_tetrahedra(points, tetrahedra)
@@ -849,7 +852,11 @@ def benchmark_supermesh(resolution: int) -> dict[str, object]:
             )
         )
         if not refinement.succeeded:
-            raise RuntimeError(f"{name} common refinement failed: {refinement.status}.")
+            raise qualification_failure(
+                "benchmark_supermesh",
+                (f"{name} common refinement failed: {refinement.status}."),
+                {"refinement": refinement},
+            )
         evidence = refinement.evidence
         stages[name] = seconds
         counts[name] = {
@@ -866,11 +873,6 @@ def benchmark_supermesh(resolution: int) -> dict[str, object]:
             ),
         }
     return {"resolution": resolution, "stages_seconds": stages, "counts": counts}
-
-
-def _remap_field(points: np.ndarray, /) -> np.ndarray:
-    x, y = points[..., 0], points[..., 1]
-    return np.sin(2.0 * np.pi * x) * np.cos(np.pi * y) + x * x
 
 
 def _finite_volume_averages(discretization: Any, /) -> np.ndarray:
@@ -909,12 +911,37 @@ def _overlap_refinement(source_mesh: Any, target_mesh: Any, /) -> Any:
         policy=phx.geometry.CommonRefinementPolicy(overlap_simplices=True),
     )
     if not refinement.succeeded:
-        raise RuntimeError(f"L2 projection refinement failed: {refinement.status}.")
+        raise qualification_failure(
+            "_overlap_refinement",
+            (f"L2 projection refinement failed: {refinement.status}."),
+            {"refinement": refinement},
+        )
     return refinement
 
 
+def _l2_projection_operator(
+    transfer: phx.discretization.FiniteElementTopologyTransfer, /
+) -> phx.discretization.FiniteElementL2Projection:
+    """Return the Galerkin operator required for mixed-mass benchmark evidence."""
+    match transfer.primal:
+        case phx.discretization.FiniteElementL2Projection() as projection:
+            return projection
+        case primal:
+            raise qualification_failure(
+                "_benchmark_l2_projection",
+                (
+                    "L2 projection transfer.primal must expose Galerkin mixed mass; "
+                    f"got {type(primal).__name__}."
+                ),
+                {"transfer": transfer},
+            )
+
+
 def _l2_projection_residuals(
-    source: Any, target: Any, transfer: Any, /
+    source: Any,
+    target: Any,
+    transfer: phx.discretization.FiniteElementTopologyTransfer,
+    /,
 ) -> dict[str, float]:
     """Conservation, Galerkin orthogonality, and transpose duality of one transfer."""
     values = jax.numpy.asarray(
@@ -927,7 +954,7 @@ def _l2_projection_residuals(
     source_mass = np.asarray(source.mass.mv(jax.numpy.ones((transfer.source_size,))))
     target_mass = np.asarray(target.mass.mv(jax.numpy.ones((transfer.target_size,))))
     integral = float(source_mass @ np.asarray(values))
-    mixed = np.asarray(transfer.primal.mixed_mass.mv(values))
+    mixed = np.asarray(_l2_projection_operator(transfer).mixed_mass.mv(values))
     galerkin = mixed - np.asarray(target.mass.mv(projected))
     pairing = float(jax.numpy.vdot(projected, dual))
     return {
@@ -945,15 +972,6 @@ def _l2_projection_residuals(
     }
 
 
-_L2_PROJECTION_KERNELS = (
-    "_factor_target_mass",
-    "_mass_condition",
-    "_mixed_mass_action",
-    "_target_mass_solve",
-    "_tabulate_values",
-)
-
-
 def _benchmark_l2_projection(
     target_mesh: Any, moved_mesh: Any, source_mesh: Any, /
 ) -> dict:
@@ -967,13 +985,6 @@ def _benchmark_l2_projection(
     target-solve, and bucketed tabulation kernels (zero when the refresh reuses
     every compiled kernel).
     """
-    from phydrax.discretization.fem import _topology_transfer as projection_kernels
-
-    def kernel_compilations() -> Any:
-        return {
-            name: getattr(projection_kernels, name)._cached._cache_size()
-            for name in _L2_PROJECTION_KERNELS
-        }
 
     source, target, moved = map(_p1_space, (source_mesh, target_mesh, moved_mesh))
     refinements = (
@@ -992,24 +1003,15 @@ def _benchmark_l2_projection(
     block = jax.numpy.asarray(
         np.stack((_remap_field(points), points[:, 0], np.ones(points.shape[0])), -1)
     )
-    mixed_mass = transfer.primal.mixed_mass
-    compiled = {
-        "l2_mixed_mass_action_block3": _compiled_cost(
-            projection_kernels._mixed_mass_action,
-            mixed_mass.relation,
-            mixed_mass.coefficients,
-            block,
-        ),
-        "l2_target_solve_block3": _compiled_cost(
-            projection_kernels._target_mass_solve,
-            prepared.factorization,
-            jax.numpy.zeros((transfer.target_size, block.shape[1])),
-        ),
-    }
+    projection = _l2_projection_operator(transfer)
+    mixed_mass = projection.mixed_mass
+    compiled = measure_projection_compilation(
+        prepared, projection, block, transfer.target_size, compiler=_compiled_cost
+    )
     _, action_first = _timed(lambda: jax.block_until_ready(transfer.apply(block)))
     _, action_warm = _timed(lambda: jax.block_until_ready(transfer.apply(block)))
-    # Snapshot only after every original-target action has compiled and run.
-    before_refresh = kernel_compilations()
+    # Snapshot only after every source-target action has compiled and run.
+    before_refresh = benchmark_projection_compilation_counts()
     refreshed, target_refresh = _timed(
         lambda: phx.discretization.refresh_l2_projection_target(prepared, moved)
     )
@@ -1026,7 +1028,7 @@ def _benchmark_l2_projection(
     )
     compilations = {
         name: count - before_refresh[name]
-        for name, count in kernel_compilations().items()
+        for name, count in benchmark_projection_compilation_counts().items()
     }
     residuals = (
         _l2_projection_residuals(source, target, transfer),
@@ -1100,17 +1102,37 @@ def benchmark_remap(resolution: int) -> dict[str, object]:
         )
     )
     if not remap.succeeded:
-        raise RuntimeError(f"Remap preparation failed: {remap.status}.")
+        raise qualification_failure(
+            "benchmark_remap.remap.status",
+            "be SUCCESS",
+            {"status": remap.status, "reason": remap.reason},
+        )
+    remap_plan = remap.plan
+    if remap_plan is None:
+        raise qualification_failure(
+            "benchmark_remap.remap.plan",
+            "be present after successful preparation",
+            {"remap": remap},
+        )
+    match remap.route:
+        case phx.geometry.PreparedCommonRefinement() as refinement:
+            pass
+        case route:
+            raise qualification_failure(
+                "benchmark_remap.remap.route",
+                "be a common refinement for second-order reconstruction",
+                {"route": type(route).__name__},
+            )
     _, first_cold = _timed(
-        lambda: jax.block_until_ready(_first_order_remap(remap.plan, values))
+        lambda: jax.block_until_ready(_first_order_remap(remap_plan, values))
     )
     first, first_warm = _timed(
-        lambda: jax.block_until_ready(_first_order_remap(remap.plan, values))
+        lambda: jax.block_until_ready(_first_order_remap(remap_plan, values))
     )
 
-    def second_order_plan() -> Any:
+    def second_order_plan() -> phx.discretization.UnstructuredSecondOrderRemapPlan:
         return phx.discretization.UnstructuredSecondOrderRemapPlan(
-            remap.plan, remap.refinement, source
+            remap_plan, refinement, source
         )
 
     _, second_prepare_cold = _timed(second_order_plan)
@@ -1145,7 +1167,7 @@ def benchmark_remap(resolution: int) -> dict[str, object]:
         "counts": {
             "source_cells": source.cell_count,
             "target_cells": target.cell_count,
-            "entries": remap.refinement.entry_count,
+            "entries": refinement.entry_count,
             "limited_cells": int(second.limited_count),
             **projection["counts"],
         },
@@ -1232,7 +1254,11 @@ def benchmark_gmsh_semantic(
         result, execute_seconds = _timed(plan.execute)
         timings["execute"].append(execute_seconds)
         if not result.audit.passed or not result.compliance.passed:
-            raise RuntimeError("Semantic Gmsh benchmark failed audit or compliance.")
+            raise qualification_failure(
+                "benchmark_gmsh_semantic",
+                ("Semantic Gmsh benchmark failed audit or compliance."),
+                {"result": result},
+            )
         samples.append(
             {
                 "mesh": result.mesh.mesh_id,
@@ -1313,8 +1339,6 @@ def benchmark_device_bisection(resolution: int) -> dict[str, object]:
     every entry point after the cycles (one compilation per entry means no
     recompilation inside the bucket).
     """
-    from phydrax.discretization import _adaptive_simplex as simplex
-    from phydrax.discretization.fem import _generic as finite_element
 
     capacity = 1000 * resolution
     side = max(2, round((capacity / 32) ** 0.5))
@@ -1334,18 +1358,9 @@ def benchmark_device_bisection(resolution: int) -> dict[str, object]:
     layout, state = prepared.layout, prepared.state
     empty = jax.numpy.zeros((layout.cell_capacity,), dtype=jax.numpy.bool_)
     plan = phx.discretization.MaskedFiniteElementPlan(state.mesh)
-    entries = {
-        "refine": simplex._compiled_refine,
-        "coarsen": simplex._compiled_coarsen,
-        "masked_fe_assembly": finite_element.assemble_masked_finite_element,
-    }
-    costs = {
-        "refine": _compiled_cost(entries["refine"], layout, state, empty),
-        "coarsen": _compiled_cost(entries["coarsen"], layout, state, empty),
-        "masked_fe_assembly": _compiled_cost(
-            entries["masked_fe_assembly"], plan, state.mesh
-        ),
-    }
+    costs = measure_bisection_compilation(
+        layout, state, plan, empty, compiler=_compiled_cost
+    )
     cycles = []
     for cycle in range(5):
         center = jax.numpy.asarray((0.2 + 0.15 * cycle, 0.5))
@@ -1355,18 +1370,20 @@ def benchmark_device_bisection(resolution: int) -> dict[str, object]:
         coarsen_marks = ~inside & state.mesh.cell_active
         refined, refine_seconds = _timed(
             lambda state=state, refine_marks=refine_marks: jax.block_until_ready(
-                simplex.refine_adaptive_simplex(layout, state, refine_marks)
+                phx.discretization.refine_adaptive_simplex(layout, state, refine_marks)
             )
         )
         coarsened, coarsen_seconds = _timed(
             lambda refined=refined, coarsen_marks=coarsen_marks: jax.block_until_ready(
-                simplex.coarsen_adaptive_simplex(layout, refined.state, coarsen_marks)
+                phx.discretization.coarsen_adaptive_simplex(
+                    layout, refined.state, coarsen_marks
+                )
             )
         )
         state = coarsened.state
         _, assembly_seconds = _timed(
             lambda state=state: jax.block_until_ready(
-                finite_element.assemble_masked_finite_element(plan, state.mesh)
+                phx.discretization.assemble_masked_finite_element(plan, state.mesh)
             )
         )
         cycles.append(
@@ -1382,8 +1399,7 @@ def benchmark_device_bisection(resolution: int) -> dict[str, object]:
                 "allocated_cells": int(state.cursors[1]),
             }
         )
-    # ty: ignore[unresolved-attribute]
-    compilations = {name: entry._cached._cache_size() for name, entry in entries.items()}
+    compilations = benchmark_bisection_compilation_counts()
     result, commit_seconds = _timed(
         lambda: phx.meshing.commit_adaptive_simplex(prepared, state)
     )
@@ -1422,7 +1438,6 @@ def benchmark_local_metric(resolution: int) -> dict[str, object]:
     source: host preparation, lowering, compile, cold and warm execution, the
     host commit, compiler memory, and retained device state bytes.
     """
-    from phydrax.meshing import _device_metric as device_metric
 
     side = max(2, round((resolution / 2) ** 0.5))
     axis = np.linspace(0.0, 1.0, side + 1)
@@ -1481,23 +1496,39 @@ def benchmark_local_metric(resolution: int) -> dict[str, object]:
         )
     )
     layout, state = prepared.layout, prepared.state
-    cost = _compiled_cost(device_metric._compiled_adapt, layout, state)
-    cold, cold_seconds = _timed(
-        lambda: jax.block_until_ready(phx.meshing.adapt_device_metric(layout, state))
+    execution = execute_benchmark_device_metric(
+        layout, state, measure=_timed, compiler=_compiled_cost
     )
-    warm, warm_seconds = _timed(
-        lambda: jax.block_until_ready(phx.meshing.adapt_device_metric(layout, state))
-    )
+    cost, cold, warm = execution.cost, execution.cold, execution.warm
+    cold_seconds, warm_seconds = execution.cold_seconds, execution.warm_seconds
     report = jax.device_get(warm.report)
     if bool(report.failed):
-        raise RuntimeError(
-            f"Device metric passes failed with status {int(report.status)}."
+        raise qualification_failure(
+            "benchmark_local_metric",
+            (f"Device metric passes failed with status {int(report.status)}."),
+            {"report": report},
         )
     device, commit_seconds = _timed(
         lambda: phx.meshing.commit_device_metric_adaptation(prepared, warm.state)
     )
     if not native.target.audit.passed or not device.target.audit.passed:
-        raise RuntimeError("A local metric adaptation target failed certification.")
+        raise qualification_failure(
+            "benchmark_local_metric",
+            ("A local metric adaptation target failed certification."),
+            {"device": device, "native": native},
+        )
+    match native.evidence:
+        case phx.meshing.LocalMetricEvidence() as native_evidence:
+            pass
+        case evidence:
+            raise qualification_failure(
+                "benchmark_local_metric",
+                (
+                    "Native metric adaptation.evidence must be LocalMetricEvidence; "
+                    f"got {type(evidence).__name__}."
+                ),
+                {"native": native},
+            )
     return {
         "resolution": resolution,
         "source": {"vertices": vertex_count, "cells": cell_count},
@@ -1506,12 +1537,12 @@ def benchmark_local_metric(resolution: int) -> dict[str, object]:
             "status": native.status.value,
             "vertices": native.target.mesh.coordinates.shape[0],
             "cells": native.target.mesh.entity_set(2).count,
-            "passes": native.evidence.passes,
-            "splits": native.evidence.splits,
-            "collapses": native.evidence.collapses,
-            "flips": native.evidence.flips,
-            "relocations": native.evidence.relocations,
-            "unit_fraction": native.evidence.unit_fraction,
+            "passes": native_evidence.passes,
+            "splits": native_evidence.splits,
+            "collapses": native_evidence.collapses,
+            "flips": native_evidence.flips,
+            "relocations": native_evidence.relocations,
+            "unit_fraction": native_evidence.unit_fraction,
         },
         "device": {
             "status": device.status.value,
@@ -1532,8 +1563,7 @@ def benchmark_local_metric(resolution: int) -> dict[str, object]:
             ),
         },
         "compiled": {"adapt_device_metric": cost},
-        # ty: ignore[unresolved-attribute]
-        "compilations_after_calls": device_metric._compiled_adapt._cached._cache_size(),
+        "compilations_after_calls": benchmark_device_metric_compilation_count(),
         "stages_seconds": {
             "host_preparation": host_preparation,
             "native_host_execution": native_execution,
@@ -1552,28 +1582,19 @@ def benchmark_local_metric(resolution: int) -> dict[str, object]:
     }
 
 
-@eqx.filter_jit
-def _boundary_layer_cell_quality(coordinates: Any, connectivity: Any) -> Any:
-    return {
-        kind: _standard_block_quality(kind, coordinates[rows], None)
-        for kind, rows in connectivity.items()
-    }
-
-
 def benchmark_boundary_layer(resolution: int) -> dict[str, object]:
     """Grow native advancing layers from a box wall of about `resolution` triangles.
 
     The closed box wall has convex ridges and corners, so growth exercises fan
     columns and corner patches. Wall construction and `prepare_boundary_layers`
-    (visibility QP, proximity probes, exact certification) are host-only NumPy
+    (visibility QP, proximity probes, certification) are host-only NumPy
     stages timed as host preparation and host execution. The compiled consumer is
     the sampled quality evaluation of every layer cell through one module-level
     entry, which reports lowering, compile, cold, and warm execution.
     """
-    from tools.meshing_qualification import _advancing_layer_control, _layer_box_wall
 
     count = max(1, round((resolution / 12) ** 0.5))
-    schedule = phx.meshing.LayerSchedule.geometric(3, 0.01, growth_rate=1.2)
+    schedule = original_wall_layer_schedule()
     wall, wall_seconds = _timed(lambda: _layer_box_wall(0.3, count))
     control = _advancing_layer_control(
         wall,
@@ -1589,15 +1610,15 @@ def benchmark_boundary_layer(resolution: int) -> dict[str, object]:
         block.cell_kind: jax.numpy.asarray(block.vertices, dtype=jax.numpy.int32)
         for block in layers.mesh.blocks
     }
-    compiled = _compiled_cost(_boundary_layer_cell_quality, coordinates, connectivity)
+    compiled = _compiled_cost(benchmark_boundary_layer_quality, coordinates, connectivity)
     _, cold_seconds = _timed(
         lambda: jax.block_until_ready(
-            _boundary_layer_cell_quality(coordinates, connectivity)
+            benchmark_boundary_layer_quality(coordinates, connectivity)
         )
     )
     quality, warm_seconds = _timed(
         lambda: jax.block_until_ready(
-            _boundary_layer_cell_quality(coordinates, connectivity)
+            benchmark_boundary_layer_quality(coordinates, connectivity)
         )
     )
     evidence = layers.evidence
@@ -1615,7 +1636,17 @@ def benchmark_boundary_layer(resolution: int) -> dict[str, object]:
         or scaled_jacobian <= 0.0
         or thickness_error > 1.0e-9
     ):
-        raise RuntimeError("Boundary-layer benchmark lost certification or schedule.")
+        raise qualification_failure(
+            "benchmark_boundary_layer",
+            ("Boundary-layer benchmark lost certification or schedule."),
+            {
+                "cells": cells,
+                "layers": layers,
+                "quality": quality,
+                "scaled_jacobian": scaled_jacobian,
+                "thickness_error": thickness_error,
+            },
+        )
     return {
         "resolution": resolution,
         "stages_seconds": {
@@ -1706,8 +1737,42 @@ def benchmark_host_bisection(resolution: int) -> dict[str, object]:
             result.status is not phx.meshing.MeshAdaptationStatus.COMPLETE
             or not result.target.audit.passed
         ):
-            raise RuntimeError(f"Host bisection of the {name} failed.")
+            raise qualification_failure(
+                "benchmark_host_bisection",
+                (f"Host bisection of the {name} failed."),
+                {"result": result},
+            )
         transfer = result.transfer
+        if transfer is None:
+            raise qualification_failure(
+                "benchmark_host_bisection",
+                (f"Host bisection of the {name} must provide a P1 transfer; got None."),
+                {"result": result},
+            )
+        match result.evidence:
+            case phx.meshing.BisectionEvidence() as bisection_evidence:
+                pass
+            case evidence:
+                raise qualification_failure(
+                    "benchmark_host_bisection",
+                    (
+                        "Host bisection adaptation.evidence must be BisectionEvidence; "
+                        f"got {type(evidence).__name__}."
+                    ),
+                    {"result": result},
+                )
+        match transfer.primal:
+            case phx.sparse.SparseLinearMap() as primal:
+                transfer_entries = primal.coefficients.size
+            case primal:
+                raise qualification_failure(
+                    "benchmark_host_bisection",
+                    (
+                        "Host bisection transfer.primal must expose sparse coefficients; "
+                        f"got {type(primal).__name__}."
+                    ),
+                    {"result": result},
+                )
         slope = np.linspace(0.5, 1.5, coordinates.shape[1])
         values = jax.numpy.asarray(coordinates @ slope)
         compiled[name] = _compiled_cost(_bisection_transfer_apply, transfer, values)
@@ -1723,7 +1788,11 @@ def benchmark_host_bisection(resolution: int) -> dict[str, object]:
         )
         expected = np.asarray(result.target.mesh.coordinates) @ slope
         if float(np.max(np.abs(np.asarray(moved) - expected))) > 1.0e-12:
-            raise RuntimeError(f"The {name} bisection transfer lost P1 reproduction.")
+            raise qualification_failure(
+                "benchmark_host_bisection",
+                (f"The {name} bisection transfer lost P1 reproduction."),
+                {"expected": expected, "moved": moved},
+            )
         stages |= {
             f"{name}_host_certify": certify_seconds,
             f"{name}_host_prepare": prepare_seconds,
@@ -1744,9 +1813,9 @@ def benchmark_host_bisection(resolution: int) -> dict[str, object]:
             "marked_cells": marks.shape[0],
             "target_vertices": result.target.mesh.coordinates.shape[0],
             "target_cells": result.target.mesh.blocks[0].cell_count,
-            "bisections": result.evidence.bisections,
-            "closure_iterations": result.evidence.closure_iterations,
-            "transfer_entries": transfer.primal.coefficients.size,
+            "bisections": bisection_evidence.bisections,
+            "closure_iterations": bisection_evidence.closure_iterations,
+            "transfer_entries": transfer_entries,
         }
     return {
         "resolution": resolution,
@@ -1785,7 +1854,6 @@ def benchmark_repartition(resolution: int) -> dict[str, object]:
     ``_migrate_cell_data``: lowering,
     compile, cold and warm execution, and compiler memory.
     """
-    from phydrax.meshing._metis import metis_identity
 
     side = max(2, round((resolution / 2) ** 0.5))
     source, certification_seconds = _timed(lambda: _lattice_square(side))
@@ -1836,14 +1904,19 @@ def benchmark_repartition(resolution: int) -> dict[str, object]:
             )
         )
     )
-    if adaptation.lineage is None:
-        raise RuntimeError("Repartition benchmark refinement left the mesh unchanged.")
+    lineage = adaptation.lineage
+    if lineage is None:
+        raise qualification_failure(
+            "benchmark_repartition",
+            ("Repartition benchmark refinement left the mesh unchanged."),
+            {"adaptation": adaptation},
+        )
     hilbert = distributions[kind.HILBERT]
     transition, stages["host_transition"] = _timed(
         lambda: phx.meshing.prepare_distribution_transition(
             hilbert,
             phx.meshing.MeshPart(part.name, adaptation.target),
-            adaptation.lineage,
+            lineage,
             policy=phx.meshing.MeshPartitionPolicy(kind.HILBERT, parts),
         )
     )
@@ -1862,7 +1935,11 @@ def benchmark_repartition(resolution: int) -> dict[str, object]:
     if not np.array_equal(np.asarray(moved), reference) or not np.all(
         reference[np.asarray(transition.target_defined)] >= 1.0
     ):
-        raise RuntimeError("Compiled migration disagreed with the eager transfer.")
+        raise qualification_failure(
+            "benchmark_repartition",
+            ("Compiled migration disagreed with the eager transfer."),
+            {"moved": moved, "reference": reference, "transition": transition},
+        )
     stages.update(
         lowering=compiled["migrate_cell_data"]["lowering_seconds"],
         compile=compiled["migrate_cell_data"]["compile_seconds"],
@@ -1899,13 +1976,13 @@ def benchmark_repartition(resolution: int) -> dict[str, object]:
     }
 
 
-_PROVIDER_WORKERS: tuple[tuple[phx.config.WorkerSetting, str], ...] = (
+_PROVIDER_WORKERS: tuple[tuple[BenchmarkProviderKind, str], ...] = (
     ("mmg", "phydrax-mmg-worker"),
     ("omega_h", "phydrax-omega-h-worker"),
 )
 
 
-def _provider_worker() -> tuple[str, str] | None:
+def _provider_worker() -> tuple[BenchmarkProviderKind, str] | None:
     """First installed provider worker, resolved exactly as its provider does."""
     workers = phx.config.snapshot().workers
     for provider, default in _PROVIDER_WORKERS:
@@ -1916,14 +1993,6 @@ def _provider_worker() -> tuple[str, str] | None:
     return None
 
 
-@eqx.filter_jit
-def _adapted_quality(coordinates: Any, connectivity: Any) -> Any:
-    return {
-        kind: _standard_block_quality(kind, coordinates[rows], None)
-        for kind, rows in connectivity.items()
-    }
-
-
 def benchmark_provider_worker(resolution: int) -> dict[str, object]:
     """Cold (fresh launch per call) versus persistent (reused session) worker calls.
 
@@ -1932,11 +2001,15 @@ def benchmark_provider_worker(resolution: int) -> dict[str, object]:
     spacing. Host-only stages: preparation, worker launch with its identity
     probe, and every worker call (exchange write, native adaptation, verified
     exchange read, certification). The compiled consumer is quality evaluation
-    of the adapted mesh through ``_adapted_quality``.
+    of the adapted mesh through ``benchmark_adapted_quality``.
     """
     route = _provider_worker()
     if route is None:
-        raise RuntimeError("No provider worker is installed.")
+        raise qualification_failure(
+            "benchmark_provider_worker",
+            ("No provider worker is installed."),
+            {"route": route},
+        )
     provider_name, executable = route
     side = max(2, round((resolution / 2) ** 0.5))
     size = 0.5 / side
@@ -1950,15 +2023,10 @@ def benchmark_provider_worker(resolution: int) -> dict[str, object]:
             minimum_size=size,
             maximum_size=size,
         )
-        if provider_name == "mmg":
-            plan = phx.meshing.MmgProvider(executable=executable).plan(
-                source, metric=metric
-            )
-            return source, plan, plan._encoding.arrays
-        from phydrax.meshing.providers._omega_h import _carrier
-
-        arrays = _carrier(source, metric, (), phx.meshing.OmegaHOptions()).arrays
-        return source, metric, arrays
+        prepared = prepare_benchmark_provider_input(
+            source, metric, provider_name, executable
+        )
+        return source, prepared.request, prepared.arrays
 
     (source, request, arrays), preparation_seconds = _timed(prepare)
 
@@ -1992,7 +2060,11 @@ def benchmark_provider_worker(resolution: int) -> dict[str, object]:
         or not adapted.audit.passed
         or adapted.mesh.entity_set(2).count <= source.mesh.entity_set(2).count
     ):
-        raise RuntimeError("Persistent provider worker relaunched or did not refine.")
+        raise qualification_failure(
+            "benchmark_provider_worker",
+            ("Persistent provider worker relaunched or did not refine."),
+            {"adapted": adapted, "calls": calls, "source": source, "worker": worker},
+        )
     mesh = adapted.mesh
     connectivity = {
         block.cell_kind: jax.numpy.asarray(block.vertices, dtype=jax.numpy.int32)
@@ -2000,14 +2072,18 @@ def benchmark_provider_worker(resolution: int) -> dict[str, object]:
     }
     compiled = {
         "adapted_quality": _compiled_cost(
-            _adapted_quality, mesh.coordinates, connectivity
+            benchmark_adapted_quality, mesh.coordinates, connectivity
         )
     }
     _, cold_quality = _timed(
-        lambda: jax.block_until_ready(_adapted_quality(mesh.coordinates, connectivity))
+        lambda: jax.block_until_ready(
+            benchmark_adapted_quality(mesh.coordinates, connectivity)
+        )
     )
     _, warm_quality = _timed(
-        lambda: jax.block_until_ready(_adapted_quality(mesh.coordinates, connectivity))
+        lambda: jax.block_until_ready(
+            benchmark_adapted_quality(mesh.coordinates, connectivity)
+        )
     )
     cold_seconds = cold_launch + cold_call
     warm_seconds = float(np.mean(warm_calls))
@@ -2087,7 +2163,6 @@ def benchmark_optimization(resolution: int) -> dict[str, object]:
     compile are measured explicitly; cold and warm execution time the public call
     (the cold call compiles), and warm minimization times the compiled entry alone.
     """
-    from phydrax.meshing._optimization import _minimize_free_coordinates
 
     planar = max(3, round((resolution / 2) ** 0.5))
     spatial = max(3, round((resolution / 6) ** (1 / 3)))
@@ -2117,32 +2192,38 @@ def benchmark_optimization(resolution: int) -> dict[str, object]:
             )
         )
         free = jax.numpy.asarray(np.flatnonzero(~fixed), dtype=jax.numpy.int32)
-        arguments = (
-            plan.energy,
-            plan.method,
-            plan.termination,
-            jax.numpy.asarray(mesh.coordinates, dtype=jax.numpy.float64),
-            free,
-            plan.lower[free],
-            plan.upper[free],
+        execution = execute_benchmark_optimization(
+            plan, mesh, free, contract, measure=_timed, compiler=_compiled_cost
         )
-        cost = _compiled_cost(_minimize_free_coordinates, *arguments)
-        result, cold = _timed(
-            lambda plan=plan: phx.meshing.optimize_cell_mesh(plan, contract)
-        )
-        _, warm = _timed(lambda plan=plan: phx.meshing.optimize_cell_mesh(plan, contract))
-        _, warm_minimization = _timed(
-            lambda arguments=arguments: jax.block_until_ready(
-                _minimize_free_coordinates(*arguments)
-            )
-        )
+        cost, result = execution.cost, execution.result
+        cold, warm = execution.cold_seconds, execution.warm_seconds
+        warm_minimization = execution.minimization_seconds
         before = float(
             np.min(np.asarray(phx.meshing.evaluate_cell_quality(mesh).mean_ratios))
         )
-        if not result.accepted or result.result.quality.minimum_mean_ratio <= before:
-            raise RuntimeError(
-                f"{name} optimization failed or did not improve the minimum mean "
-                f"ratio: {result.status.value}."
+        optimized = result.result
+        if (
+            not result.accepted
+            or optimized is None
+            or optimized.quality.minimum_mean_ratio <= before
+        ):
+            raise qualification_failure(
+                "benchmark_optimization",
+                (
+                    f"{name} optimization failed or did not improve the minimum mean "
+                    f"ratio: {result.status.value}."
+                ),
+                {"before": before, "result": result},
+            )
+        optimizer_status = result.optimizer_status
+        if optimizer_status is None:
+            raise qualification_failure(
+                "benchmark_optimization",
+                (
+                    f"{name} optimization.optimizer_status must report native "
+                    "termination evidence; got None."
+                ),
+                {"result": result},
             )
         stages.update(
             {
@@ -2157,14 +2238,14 @@ def benchmark_optimization(resolution: int) -> dict[str, object]:
         compiled[name] = {"minimize_free_coordinates": cost}
         retained[name] = {
             "plan": _array_bytes(plan),
-            "result": _array_bytes(result.result),
+            "result": _array_bytes(optimized),
         }
         counts[name] = {
             "cells": mesh.blocks[0].cell_count,
             "vertices": mesh.coordinates.shape[0],
             "free_vertices": free.shape[0],
         }
-        after = result.result.quality
+        after = optimized.quality
         quality[name] = {
             "minimum_mean_ratio_before": before,
             "minimum_mean_ratio_after": after.minimum_mean_ratio,
@@ -2172,7 +2253,7 @@ def benchmark_optimization(resolution: int) -> dict[str, object]:
         }
         minimization[name] = {
             "status": result.status.value,
-            "optimizer_status": result.optimizer_status.name,
+            "optimizer_status": optimizer_status.name,
             "iterations": result.iterations,
             "accepted_steps": result.accepted_steps,
             "initial_objective": result.initial_objective,
@@ -2187,18 +2268,6 @@ def benchmark_optimization(resolution: int) -> dict[str, object]:
         "quality": quality,
         "minimization": minimization,
     }
-
-
-def _squeezed(points: np.ndarray, /) -> np.ndarray:
-    """Gaussian contraction toward the unit-cube center.
-
-    Its radial stretch ``1 - 1.2 exp(-8 r^2) (1 - 16 r^2)`` inverts a small core
-    and nearly degenerates a surrounding shell, so certification exercises valid,
-    invalid, and subdivided cells.
-    """
-    offset = points - 0.5
-    weight = np.exp(-8.0 * np.sum(offset * offset, axis=1, keepdims=True))
-    return points - 1.2 * offset * weight
 
 
 def _cube_hexahedra(cells_per_axis: int, /) -> phx.discretization.CellMesh:
@@ -2231,18 +2300,9 @@ def _mapped_cell_measures(discretization: Any, coordinates: Any) -> Any:
 
 def _certification_route(mesh: Any, degree: int, name: str, /) -> Any:
     """Host certification and compiled measure consumer of one curved geometry."""
-    from phydrax.meshing._curving import _straight_geometry
-
-    def prepare() -> Any:
-        straight = _straight_geometry(mesh, degree)
-        names = straight.block_names
-        return phx.discretization.CellGeometrySpec(
-            dict(zip(names, straight.elements, strict=True)),
-            dict(zip(names, straight.geometry_dofs, strict=True)),
-            _squeezed(np.asarray(straight.coordinates, dtype=np.float64)),
-        )
-
-    geometry, preparation = _timed(prepare)
+    geometry, preparation = _timed(
+        lambda: prepare_squeezed_benchmark_geometry(mesh, degree)
+    )
     certificate, certification = _timed(
         lambda: phx.discretization.certify_cell_geometry_validity(geometry, mesh=mesh)
     )
@@ -2275,7 +2335,11 @@ def _certification_route(mesh: Any, degree: int, name: str, /) -> Any:
     slack = 1.0e-9 * upper
     outside = (measure < lower - slack) | (measure > upper + slack)
     if np.any(lower <= 0.0) or np.any(outside):
-        raise RuntimeError(f"{name}: a certified measure leaves its enclosure.")
+        raise qualification_failure(
+            "_certification_route",
+            (f"{name}: a certified measure leaves its enclosure."),
+            {"lower": lower, "outside": outside},
+        )
     depth = np.asarray(certificate.depth)
     stages = {
         "host_preparation": preparation,
@@ -2306,7 +2370,7 @@ def benchmark_high_order_certification(resolution: int) -> dict[str, object]:
 
     About ``resolution`` Kuhn tetrahedra (P2 and P3) and hexahedra (Q2) of the
     unit cube get straight Lagrange geometry nodes moved by the smooth
-    `_squeezed` map. Geometry preparation and `certify_cell_geometry_validity`
+    Gaussian squeeze. Geometry preparation and `certify_cell_geometry_validity`
     (adaptive Bernstein subdivision) are host-only NumPy and timed as host
     stages. The compiled consumer is the exactly integrated mapped cell measure
     of the curved geometry (`FiniteElementDiscretization.evaluate_geometry`)
@@ -2368,7 +2432,7 @@ _PREDICATE_ROUTES = {
 
 
 def _predicate_queries(count: int, seed: int, /) -> dict[str, tuple[np.ndarray, ...]]:
-    """Random predicate rows; a quarter are rounded exact degeneracies.
+    """Generate random predicate rows with one quarter rounded to zero determinant.
 
     The nearly degenerate quarter rounds points on a segment, a plane, the unit
     circle, or the unit sphere, so the floating-point filters leave rows uncertain.
@@ -2408,7 +2472,11 @@ def _predicate_stages(
         filtered.certain & (filtered.signs != exact.signs)
     )
     if wrong or not np.all(exact.certain):
-        raise RuntimeError(f"{name}: a filter certified a sign that EXACT contradicts.")
+        raise qualification_failure(
+            "_predicate_stages",
+            (f"{name}: a filter certified a sign that EXACT contradicts."),
+            {"exact": exact, "wrong": wrong},
+        )
     stages = {
         f"{name}_lowering": compiled["lowering_seconds"],
         f"{name}_compile": compiled["compile_seconds"],
@@ -2437,12 +2505,15 @@ def benchmark_predicates(resolution: int) -> dict[str, object]:
     execution. Delaunay 2D/3D construction of `resolution` random points is a
     host-only meshcore stage timed as host preparation.
     """
-    from phydrax._meshcore import meshcore_available
 
     if not meshcore_available():
-        raise RuntimeError(
-            "The predicates benchmark requires the native meshcore library; set "
-            "PHYDRAX_MESHCORE_LIBRARY or install phydrax[meshcore]."
+        raise qualification_failure(
+            "benchmark_predicates",
+            (
+                "The predicates benchmark requires the native meshcore library; set "
+                "PHYDRAX_MESHCORE_LIBRARY or install phydrax[meshcore]."
+            ),
+            {"meshcore_available": meshcore_available},
         )
     count = max(16, resolution)
     queries, preparation = _timed(lambda: _predicate_queries(count, resolution))
@@ -2599,11 +2670,15 @@ def _partition_graphs(resolution: int, /) -> dict[str, phx.graph.WeightedCSRGrap
 def _partition_measure(
     graph: phx.graph.WeightedCSRGraph, parts: np.ndarray, part_count: int, /
 ) -> dict[str, float | int | bool]:
-    """Independent acceptance of exact capacities and required nonempty parts."""
+    """Independent acceptance of capacities and required nonempty parts."""
     if parts.shape != (graph.vertex_count,) or parts.dtype.kind not in "iu":
-        raise ValueError("Provider returned an invalid ownership shape or dtype.")
+        raise ValueError(
+            f"_partition_measure.parts must have one integer owner per graph vertex; got {(parts.shape, parts.dtype)!r}."
+        )
     if np.any((parts < 0) | (parts >= part_count)):
-        raise ValueError("Provider returned an invalid ownership index.")
+        raise ValueError(
+            f"_partition_measure.parts must contain owner indices in [0, part_count); got {parts!r}."
+        )
     rows = np.repeat(
         np.arange(graph.vertex_count, dtype=np.int64), np.diff(graph.offsets)
     )
@@ -2630,11 +2705,6 @@ def _partition_route(
     graph: phx.graph.WeightedCSRGraph, plan: phx.graph.GraphPartitionPlan, route: str, /
 ) -> dict[str, Any]:
     """Measure execution/audit phases and truthful process/Python memory."""
-    import resource
-    import sys
-    import tracemalloc
-
-    from phydrax.meshing._metis import metis_partition
 
     tracing = tracemalloc.is_tracing()
     if not tracing:
@@ -2674,7 +2744,9 @@ def _partition_route(
             )
             record["status"] = "returned"
         else:
-            raise ValueError(f"Unknown partition comparison route: {route}.")
+            raise ValueError(
+                f"_partition_route.route must identify a partition comparison route; got {route!r}."
+            )
         execution_seconds = perf_counter() - started
         record["stages_seconds"] = {"execute_with_boundary_evidence": execution_seconds}
         phase = "independent_audit"
@@ -2701,10 +2773,7 @@ def _partition_route(
         record["memory_bytes"] = {
             "python_retained_delta": current - before_bytes,
             "python_traced_peak_cumulative": peak,
-            "process_peak_rss_cumulative": resource.getrusage(
-                resource.RUSAGE_SELF
-            ).ru_maxrss
-            * (1 if sys.platform == "darwin" else 1024),
+            "process_peak_rss_cumulative": peak_resident_bytes(resource.RUSAGE_SELF),
             "graph_retained": sum(
                 array.nbytes
                 for array in (
@@ -2722,7 +2791,6 @@ def _partition_route(
 
 def benchmark_graph_partition(resolution: int) -> dict[str, object]:
     """Record every case/failure at fixed tolerance; never drop quality tails."""
-    from phydrax.meshing._metis import metis_identity
 
     try:
         metis = metis_identity()
@@ -2816,6 +2884,63 @@ def benchmark_graph_partition(resolution: int) -> dict[str, object]:
     }
 
 
+def benchmark_scope_construction(resolution: int, repeats: int, /) -> dict[str, object]:
+    """Measure scope admission separately from import and diagnostic profiling."""
+    if resolution < 1 or repeats < 1:
+        raise ValueError(
+            "ScopeBenchmark.controls must contain positive capacity and repeats; "
+            f"got {(resolution, repeats)!r}."
+        )
+    identifiers = np.arange(resolution, dtype=np.int64)
+
+    def construct() -> phx.meshing.MeshingScope:
+        return phx.meshing.MeshingScope(
+            "benchmark-scope",
+            "fixed-scope-revision",
+            phx.meshing.MeshingEntityKind.MESH,
+            2,
+            "scope-entities",
+            identifiers,
+        )
+
+    started = perf_counter()
+    scope = construct()
+    first_seconds = perf_counter() - started
+    constructions_per_sample = 1000
+    batches = []
+    for _ in range(repeats):
+        started = perf_counter()
+        for _ in range(constructions_per_sample):
+            scope = construct()
+        batches.append(perf_counter() - started)
+    samples = np.asarray(batches, dtype=np.float64) / constructions_per_sample
+    diagnostic_mode = os.environ.get("PHYDRAX_MESHING_ACCOUNTING_DIAGNOSTICS") == "1"
+    diagnostics: dict[str, Any] = {}
+    if diagnostic_mode:
+        from tools.meshing_qualification._runtime import StageLedger
+
+        StageLedger(diagnostics).run("warm_scope_diagnostic", construct)
+    return {
+        "resolution": resolution,
+        "repeats": repeats,
+        "capacity_bucket": resolution,
+        "scope_id": scope.scope_id,
+        "warmup_constructions": 1,
+        "constructions_per_sample": constructions_per_sample,
+        "measured_construction_count": repeats * constructions_per_sample,
+        "first_construction_seconds": first_seconds,
+        "warm_batch_samples_seconds": batches,
+        "warm_construction_samples_seconds": samples.tolist(),
+        "warm_construction_median_seconds": float(np.median(samples)),
+        "diagnostic_measurements": diagnostics.get("stage_measurements"),
+        "accounting_measurement": "measured-separate-diagnostic-process"
+        if diagnostic_mode
+        else "unmeasured-clean-timing-no-accounting-profiler",
+        "timing_is_headline": not diagnostic_mode,
+        "diagnostic_timing_is_headline": False,
+    }
+
+
 def _repeated_case(
     runner: Any,
     resolution: int,
@@ -2835,774 +2960,13 @@ def _repeated_case(
     }
 
 
-def _reject_nonfinite_json(value: str, /) -> NoReturn:
-    raise ValueError(f"Non-finite JSON value {value!r} is not permitted.")
-
-
-def _unique_json_object(pairs: list[tuple[str, object]], /) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for name, value in pairs:
-        if name in result:
-            raise ValueError(f"Qualification JSON contains duplicate field {name!r}.")
-        result[name] = value
-    return result
-
-
-def _captured_text(value: object, /) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode(errors="replace")
-    if isinstance(value, str):
-        return value
-    raise TypeError("Captured process output must be text, bytes, or None.")
-
-
-def _launcher_evidence(
-    started: float,
-    timeout: float,
-    /,
-    *,
-    terminated: bool,
-    returncode: int | None,
-) -> dict[str, object]:
-    peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-    return {
-        "hard_timeout": {
-            "limit_seconds": timeout,
-            "mechanism": "subprocess.run-timeout",
-            "completed_before_deadline": not terminated,
-            "terminated_by_launcher": terminated,
-            "returncode": returncode,
-        },
-        "resource_measurement": {
-            "child_process_peak_resident_bytes": peak
-            * (1 if sys.platform == "darwin" else 1024),
-            "scope": "launcher-lifetime-maximum-over-completed-children",
-            "per_attempt_peak_available": False,
-        },
-        "process_total_seconds": perf_counter() - started,
-    }
-
-
-def _complete_campaign_sample(
-    record: dict[str, Any],
-    capacity: int,
-    /,
-    *,
-    positive: bool,
-) -> dict[str, Any]:
-    """Attach the phase/resource evidence required on every attempted sample."""
-    record.setdefault("runtime", None)
-    record.setdefault("hard_timeout", None)
-    record.setdefault("independent_acceptance", None)
-    record.setdefault("mandatory_workflow_completion", "incomplete")
-    record["positive_completion"] = positive
-    phase_evidence = corpus_phase_evidence(record, capacity)
-    record["phase_evidence"] = phase_evidence
-    record["resource_evidence"] = phase_evidence["resources"]
-    return record
-
-
-def _qualification_positive_completion(record: dict[str, Any], engine: str, /) -> bool:
-    """Accept only the canonical child result, never a bare successful status."""
-    if engine != "native":
-        acceptance = record.get("independent_acceptance")
-        return (
-            record.get("status") == "passed"
-            and record.get("case_contract_completion") == "complete"
-            and record.get("independent_scientific_certification") == "passed"
-            and isinstance(acceptance, dict)
-            and acceptance.get("passed") is True
-        )
-    from tools.meshing_qualification import _validate_mandatory_workflow_result
-
-    workflow = _validate_mandatory_workflow_result(record.get("workflow_result"))
-    if workflow["observed_status"] != record.get("status"):
-        raise ValueError(
-            "Qualification status disagrees with its mandatory workflow result."
-        )
-    if record.get("positive_completion") is not workflow["positive_completion"]:
-        raise ValueError(
-            "Qualification completion disagrees with its mandatory workflow result."
-        )
-    return workflow["positive_completion"] is True
-
-
-def _native_campaign_sample(
-    case_name: str,
-    resolution: int,
-    capacity: int,
-    timeout: float,
-    repeats: int,
-    target_error: float,
-    adaptation_rounds: int,
-    engine: str,
-    *,
-    scenario_override: str | None = None,
-    controls: dict[str, str | int | float | tuple[float, ...]] | None = None,
-    attempt_index: int = 0,
-) -> dict[str, Any]:
-    """One isolated measured sample, including hard cancellation and failures."""
-    if attempt_index < 0:
-        raise ValueError("Campaign sample attempt index must be nonnegative.")
-    generic = scenario_override is not None
-    surface = case_name == "sphere-feature-surface"
-    polyhedral = case_name in POLYHEDRAL_CASE_NAMES
-    scenario = (
-        scenario_override
-        if generic
-        else "native-polyhedral-lifecycle"
-        if polyhedral
-        else "native-surface-pde"
-        if surface
-        else "native-lifecycle"
-        if engine == "native"
-        else "comparison-triangle-lifecycle"
-    )
-    effective_controls = dict(controls or {})
-    checkpoint_root = effective_controls.get("distributed_checkpoint_root")
-    if scenario == "native-distributed-lifecycle" and isinstance(checkpoint_root, str):
-        effective_controls["distributed_checkpoint_root"] = (
-            f"{checkpoint_root}-resolution-{resolution}-capacity-{capacity}"
-            f"-attempt-{attempt_index}"
-        )
-    command = [
-        sys.executable,
-        "-m",
-        "tools.meshing_qualification",
-        "--scenario",
-        scenario,
-        "--corpus-case",
-        "planar-hole-feature" if surface or polyhedral or generic else case_name,
-        "--resolution",
-        str(resolution),
-        "--capacity",
-        str(capacity),
-        "--timeout",
-        str(timeout),
-        "--repeats",
-        str(repeats),
-        "--target-error",
-        str(target_error),
-        "--adaptation-rounds",
-        str(adaptation_rounds),
-    ]
-    if polyhedral:
-        command.extend(("--polyhedral-source", case_name))
-    for name, value in sorted(effective_controls.items()):
-        command.append(f"--{name.replace('_', '-')}")
-        command.extend(
-            str(item) for item in (value if isinstance(value, tuple) else (value,))
-        )
-    frozen_controls = {
-        "case_name": case_name,
-        "scenario": scenario,
-        "engine": engine,
-        "resolution": resolution,
-        "entity_capacity": capacity,
-        "wall_seconds": timeout,
-        "solver_warm_repeats": repeats,
-        "target_error": target_error,
-        "adaptation_rounds": adaptation_rounds,
-        "scenario_controls": {
-            name: value for name, value in sorted(effective_controls.items())
-        },
-    }
-    ineligible = (
-        "No explicit baseline adapter matches this complete source/control/state contract."
-        if generic and engine != "native"
-        else "Triangle does not admit the nonconvex material polyhedral VEM/FV contract."
-        if polyhedral and engine != "native"
-        else "Triangle does not admit the source sphere/seam/pole/PDE contract."
-        if surface and engine != "native"
-        else None
-    )
-    if ineligible is not None:
-        return _complete_campaign_sample(
-            {
-                "status": "ineligible-comparison",
-                "engine": engine,
-                "command": command,
-                "frozen_controls": frozen_controls,
-                "frozen_controls_id": canonical_fingerprint(frozen_controls),
-                "process_started": False,
-                "failure": ineligible,
-            },
-            capacity,
-            positive=False,
-        )
-    started = perf_counter()
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=Path(__file__).resolve().parents[1],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as failure:
-        launcher = _launcher_evidence(started, timeout, terminated=True, returncode=None)
-        return _complete_campaign_sample(
-            {
-                "status": "timeout",
-                "engine": engine,
-                "command": command,
-                "frozen_controls": frozen_controls,
-                "frozen_controls_id": canonical_fingerprint(frozen_controls),
-                "process_started": True,
-                "failure": str(failure),
-                "stdout": _captured_text(failure.stdout),
-                "stderr": _captured_text(failure.stderr),
-                **launcher,
-            },
-            capacity,
-            positive=False,
-        )
-    launcher = _launcher_evidence(
-        started, timeout, terminated=False, returncode=completed.returncode
-    )
-    try:
-        record = json.loads(
-            completed.stdout,
-            parse_constant=_reject_nonfinite_json,
-            object_pairs_hook=_unique_json_object,
-        )
-    except (json.JSONDecodeError, ValueError) as failure:
-        return _complete_campaign_sample(
-            {
-                "status": "failed",
-                "engine": engine,
-                "command": command,
-                "frozen_controls": frozen_controls,
-                "frozen_controls_id": canonical_fingerprint(frozen_controls),
-                "process_started": True,
-                "failure": str(failure),
-                "stdout": completed.stdout,
-                "stderr": completed.stderr,
-                "returncode": completed.returncode,
-                **launcher,
-            },
-            capacity,
-            positive=False,
-        )
-    if not isinstance(record, dict):
-        return _complete_campaign_sample(
-            {
-                "status": "failed",
-                "engine": engine,
-                "command": command,
-                "frozen_controls": frozen_controls,
-                "frozen_controls_id": canonical_fingerprint(frozen_controls),
-                "process_started": True,
-                "failure": "Qualification output is not an evidence object.",
-                "stdout": completed.stdout,
-                "stderr": completed.stderr,
-                "returncode": completed.returncode,
-                **launcher,
-            },
-            capacity,
-            positive=False,
-        )
-    record.update(
-        {
-            "command": command,
-            "returncode": completed.returncode,
-            "stderr": completed.stderr,
-            "frozen_controls": frozen_controls,
-            "frozen_controls_id": canonical_fingerprint(frozen_controls),
-            "process_started": True,
-            **launcher,
-        }
-    )
-    if completed.returncode != 0 and record.get("status") not in ("failed", "timeout"):
-        record["status"] = "failed"
-    try:
-        positive = _qualification_positive_completion(record, engine)
-    except (TypeError, ValueError) as failure:
-        reported = record.get("status", "missing")
-        record.update(
-            {
-                "status": "failed",
-                "reported_status": reported,
-                "failure_phase": "qualification-result-schema",
-                "failure": f"{type(failure).__name__}: {failure}",
-            }
-        )
-        positive = False
-    return _complete_campaign_sample(record, capacity, positive=positive)
-
-
-def corpus_phase_evidence(sample: dict[str, Any], capacity: int) -> dict[str, Any]:
-    """Expose actual phase measurements without deriving missing work or bytes."""
-    epochs = sample.get("epochs", [])
-    compiler_records = []
-    stages = sample.get("stages_seconds", {})
-    if not isinstance(stages, dict):
-        raise TypeError("Qualification stage evidence must be a mapping.")
-    for epoch in epochs:
-        compiler = epoch.get("compiler", {})
-        index = epoch["epoch"]
-        compiler_records.append(
-            {
-                "epoch": index,
-                "controlling_entity_capacity": capacity,
-                "lowering_seconds": stages.get(f"solver_lowering_epoch_{index}"),
-                "compile_seconds": stages.get(f"solver_compile_epoch_{index}"),
-                "first_execution_seconds": stages.get(
-                    f"solver_first_execution_epoch_{index}"
-                ),
-                "warm_samples_seconds": compiler.get("warm_samples_seconds"),
-                "temporary_bytes": compiler.get("temporary_bytes"),
-                "output_bytes": compiler.get("output_bytes"),
-                "argument_bytes": compiler.get("argument_bytes"),
-                "generated_code_bytes": compiler.get("generated_code_bytes"),
-                "logical_retained_bytes": epoch.get("retained_bytes"),
-                "memory_status": compiler.get("memory_status", "unmeasured"),
-            }
-        )
-    measured_stages = [
-        {
-            "name": name,
-            "seconds": seconds,
-            "measurement": "wall-clock",
-            "accounting": "owned-interval-not-assumed-exclusive",
-        }
-        for name, seconds in sorted(stages.items())
-    ]
-    native_execution = sample.get("native_phases")
-    resources = {
-        "hard_timeout": sample.get("hard_timeout"),
-        "launcher_resource_measurement": sample.get("resource_measurement"),
-        "process_peak_resident_bytes": sample.get("peak_process_resident_bytes"),
-        "process_peak_scope": sample.get("process_peak_scope"),
-        "device_memory": sample.get("device_memory"),
-    }
-    recorded = bool(
-        measured_stages
-        or compiler_records
-        or native_execution
-        or any(value is not None for value in resources.values())
-    )
-    return {
-        "controlling_entity_capacity": capacity,
-        "measured_stages": measured_stages,
-        "compiler_epochs": compiler_records,
-        "native_execution": native_execution,
-        "resources": resources,
-        "scope": (
-            "Measured stage intervals, compiler analysis, logical retention, process peak, "
-            "and backend device reports remain separate; inclusive intervals are not summed."
-        ),
-        "missing_measurements_are_zero": False,
-        "status": "recorded" if recorded else "unmeasured",
-    }
-
-
-def benchmark_native_lifecycle(
-    case_name: str,
-    resolution: int,
-    capacity: int,
-    timeout: float,
-    repeats: int,
-    target_error: float,
-    adaptation_rounds: int,
-    comparison: str | None,
-    *,
-    scenario_override: str | None = None,
-    controls: dict[str, str | int | float | tuple[float, ...]] | None = None,
-    source_reference: dict[str, object] | None = None,
-) -> dict[str, object]:
-    """Freeze a common physical contract and retain every candidate's sample."""
-    from tools.meshing_qualification import _runtime_identity, _scenario_source_reference
-
-    polyhedral = case_name in POLYHEDRAL_CASE_NAMES
-    engines = ("native",) if comparison is None else ("native", comparison)
-    candidates = {}
-    identities: set[str] = set()
-    request_identity_complete = True
-    outcome_names = (
-        "passed",
-        "expected-refusal",
-        "failed",
-        "timeout",
-        "missing-dependency",
-        "ineligible-comparison",
-    )
-    for engine in engines:
-        samples = [
-            _native_campaign_sample(
-                case_name,
-                resolution,
-                capacity,
-                timeout,
-                3,
-                target_error,
-                adaptation_rounds,
-                engine,
-                scenario_override=scenario_override,
-                controls=controls,
-                attempt_index=attempt,
-            )
-            for attempt in range(repeats)
-        ]
-        candidate_identities = []
-        for sample in samples:
-            request_id = sample.get("request_id")
-            if isinstance(request_id, str):
-                candidate_identities.append(request_id)
-                identities.add(request_id)
-            else:
-                request_identity_complete = False
-        statuses = [sample["status"] for sample in samples]
-        accepted = [sample for sample in samples if sample["positive_completion"] is True]
-        times = [
-            sample["time_to_target_error_seconds"]
-            for sample in accepted
-            if isinstance(sample.get("time_to_target_error_seconds"), (int, float))
-        ]
-        peaks = [
-            sample["peak_process_resident_bytes"]
-            for sample in accepted
-            if isinstance(sample.get("peak_process_resident_bytes"), int)
-        ]
-        counts = {status: statuses.count(status) for status in outcome_names}
-        counts.update(
-            {
-                status: statuses.count(status)
-                for status in sorted(set(statuses) - set(outcome_names))
-            }
-        )
-        candidates[engine] = {
-            "samples": samples,
-            "attempts": len(samples),
-            "counts": counts,
-            "positive_completions": len(accepted),
-            "certified_refusals": statuses.count("expected-refusal"),
-            "refusals_count_as_positive_completion": False,
-            "success_rate": len(accepted) / len(samples),
-            "request_identities": sorted(set(candidate_identities)),
-            "request_identity_complete": len(candidate_identities) == len(samples),
-            "time_to_target_error_seconds": {
-                "median": None if not times else float(np.median(times)),
-                "minimum": None if not times else float(np.min(times)),
-                "maximum": None if not times else float(np.max(times)),
-            },
-            "peak_process_resident_bytes": None if not peaks else int(np.max(peaks)),
-            (
-                "worst_accepted_physics_error"
-                if polyhedral or scenario_override is not None
-                else "worst_accepted_l2_error"
-            ): (
-                None
-                if not accepted
-                else max(sample["physical_error"] for sample in accepted)
-            ),
-            "leadership_eligible": False,
-            "nonclaim": (
-                "No leadership claim until the complete mandatory corpus and all "
-                "equal construction-work/scratch/query guarantees are qualified."
-            ),
-        }
-    optional_baselines = {}
-    if polyhedral:
-        available = shutil.which("vc_mesh") is not None
-        baseline_status = "ineligible-comparison" if available else "missing-dependency"
-        optional_baselines["vorocrust"] = {
-            "status": baseline_status,
-            "attempts": 0,
-            "counts": {
-                status: int(status == baseline_status) for status in outcome_names
-            },
-            "dependency": "vc_mesh",
-            "detail": (
-                "Installed VoroCrust has no qualified adapter matching prescribed sites, "
-                "two-material organization, VEM/FV and consumed conservative state."
-                if available
-                else "Optional VoroCrust executable is not installed."
-            ),
-            "leadership_eligible": False,
-        }
-    normalized_controls = {
-        name: value for name, value in sorted((controls or {}).items())
-    }
-    if source_reference is not None:
-        case_identity = source_reference
-    else:
-        case_identity = (
-            {
-                **_scenario_source_reference(scenario_override, normalized_controls),
-                "scenario": scenario_override,
-                "frozen_scenario_controls": normalized_controls,
-            }
-            if scenario_override is not None
-            else polyhedral_identity(case_name)
-            if polyhedral
-            else corpus_identity(meshing_case(case_name))
-        )
-    site_count = resolution
-    if polyhedral and "sites" in case_identity:
-        sites = case_identity["sites"]
-        if not isinstance(sites, list):
-            raise TypeError("Polyhedral campaign sites must be a frozen list.")
-        site_count = len(sites)
-    frozen_controls: dict[str, object] = {
-        "resolution": resolution,
-        "entity_capacity": capacity,
-        "campaign_repeats": repeats,
-        "qualification_solver_warm_repeats": 3,
-        "adaptation_rounds": adaptation_rounds,
-        "timeout_seconds": timeout,
-        "target_error": target_error,
-        "comparison": comparison,
-        "scenario_controls": normalized_controls,
-    }
-    target_name = (
-        "physical_error"
-        if scenario_override is not None
-        else "maximum_physics_error"
-        if polyhedral
-        else "l2_error"
-    )
-    body: dict[str, object] = {
-        "kind": "native-meshing-benchmark-campaign",
-        "case": case_identity,
-        "runtime": _runtime_identity(),
-        "frozen_controls": frozen_controls,
-        "frozen_controls_id": canonical_fingerprint(frozen_controls),
-        "control_capacities": (
-            {
-                "requested_resolution": resolution,
-                "site_count": site_count,
-                "entity_capacity": capacity,
-                "adaptation_claimed": False,
-            }
-            if polyhedral
-            else {
-                "resolution": resolution,
-                "entity_capacity": capacity,
-                "adaptation_rounds": adaptation_rounds,
-            }
-        ),
-        "targets": {target_name: target_error, "wall_seconds": timeout},
-        "request_identities": sorted(identities),
-        "request_identity_complete": request_identity_complete,
-        "matching_request_identity": request_identity_complete and len(identities) == 1,
-        "candidates": candidates,
-        "comparison_scope": (
-            "Frozen native source/control/state/solver lifecycle; no exact baseline adapter admitted."
-            if scenario_override is not None
-            else "Restricted power generation, VEM/FV, conservative material remap and consumed FV update."
-            if polyhedral
-            else "Generation engines; identical native bisection/transfer/solver consumer."
-        ),
-        "optional_baselines": optional_baselines,
-        "mandatory_workflow_completion": "incomplete",
-        "hard_size_claim": False,
-        "release": "unassessed",
-        "leadership": "unassessed",
-    }
-    return {**body, "campaign_id": canonical_fingerprint(body)}
-
-
-_NATIVE_DRIVER_ARGUMENTS = {
-    "native-image-lifecycle": (
-        "image_size",
-        "transport_steps",
-        "transport_dt",
-        "balance_tolerance",
-        "oracle_capacity",
-    ),
-    "native-cad-lifecycle": ("cad_format",),
-    "native-envelope-lifecycle": (),
-    "native-periodic-lifecycle": ("periodic_case",),
-    "native-design-lifecycle": ("maximum_memory_bytes", "maximum_condition"),
-    "native-family-lifecycle": ("family_case",),
-    "native-surface-pde": ("surface_case",),
-    "native-hybrid-lifecycle": (
-        "layer_count",
-        "first_thickness",
-        "layer_growth",
-        "geometry_order",
-        "hybrid_profile",
-        "hybrid_archive",
-        "hybrid_content_id",
-        "hybrid_core_size",
-        "hybrid_region_densities",
-        "hybrid_material_site",
-    ),
-    "native-implicit-lifecycle": (
-        "maximum_memory_bytes",
-        "implicit_radius",
-        "implicit_fidelity",
-        "implicit_maximum_level",
-        "implicit_edge_isolation_depth",
-        "implicit_root_tolerance",
-        "implicit_refinement_rounds",
-        "implicit_improvement_passes",
-        "implicit_metric_passes",
-    ),
-    "native-distributed-lifecycle": (
-        "distributed_parts",
-        "restart_parts",
-        "distributed_processes",
-        "distributed_source",
-        "distributed_halo_width",
-        "distributed_halo_capacity",
-        "distributed_cavity_capacity",
-        "distributed_slack",
-        "distributed_checkpoint_root",
-        "distributed_host_packet_bytes",
-    ),
-    "native-overset-lifecycle": (
-        "overset_motion_steps",
-        "overset_wall_pairs",
-        "overset_donor_pairs",
-        "overset_overlap_pairs",
-    ),
-}
-
-
-_CAMPAIGN_REGISTRATION_FIELDS = frozenset(
-    {
-        "contains_benchmark_results",
-        "expected_artifacts",
-        "kind",
-        "license",
-        "phase_sections",
-        "provenance",
-        "required_result_fields",
-        "source_corpus_registration_id",
-        "workflows",
-    }
-)
-_CAMPAIGN_WORKFLOW_FIELDS = frozenset(
-    {
-        "expected_admission",
-        "profiles",
-        "refusal_counts_as_positive_completion",
-        "scenarios",
-        "workflow",
-    }
-)
-_CAMPAIGN_RESULT_FIELDS = (
-    "runtime",
-    "frozen_controls",
-    "hard_timeout",
-    "resource_evidence",
-    "phase_evidence",
-    "independent_acceptance",
-    "positive_completion",
-    "mandatory_workflow_completion",
-)
-_CAMPAIGN_PHASE_SECTIONS = (
-    "source_decode_and_geometry_preparation",
-    "constraint_metric_and_reusable_plan_preparation",
-    "generation_classification_refinement_improvement",
-    "projection_curving_and_independent_certification",
-    "publication_and_state_transfer",
-    "lowering_compilation_first_and_warmed_execution",
-    "compiler_process_device_and_logical_memory",
-    "partition_communication_checkpoint_restart",
-    "solver_time_and_memory_to_physical_target",
-)
-
-
-NATIVE_CAMPAIGN_REGISTRATION_PATH = (
-    Path(__file__).resolve().parents[1] / "benchmarks/native_meshing_campaigns.json"
-)
-
-
-def load_native_campaign_registration(
-    path: Path = NATIVE_CAMPAIGN_REGISTRATION_PATH,
-) -> dict[str, object]:
-    """Load the reviewed mandatory campaign matrix and verify its identity."""
-    value = json.loads(
-        path.read_text(encoding="utf-8"),
-        parse_constant=_reject_nonfinite_json,
-        object_pairs_hook=_unique_json_object,
-    )
-    if not isinstance(value, dict):
-        raise TypeError("Native meshing campaign registration must be a JSON object.")
-    record_id = value.get("registration_id")
-    body = {name: field for name, field in value.items() if name != "registration_id"}
-    workflows = body.get("workflows")
-    corpus = load_corpus_registration()
-    valid = (
-        set(body) == _CAMPAIGN_REGISTRATION_FIELDS
-        and record_id == canonical_fingerprint(body)
-        and body.get("kind") == "native-meshing-campaign-registration"
-        and body.get("license") == "LicenseRef-PHYDRA-Proprietary"
-        and body.get("contains_benchmark_results") is False
-        and body.get("expected_artifacts")
-        == [
-            "benchmarks/native_meshing_qualification.json",
-            "benchmarks/native_meshing_benchmarks.json",
-        ]
-        and body.get("required_result_fields") == list(_CAMPAIGN_RESULT_FIELDS)
-        and body.get("phase_sections") == list(_CAMPAIGN_PHASE_SECTIONS)
-        and body.get("source_corpus_registration_id") == corpus["registration_id"]
-        and isinstance(workflows, list)
-        and len(workflows) == len(MANDATORY_WORKFLOWS)
-    )
-    if valid:
-        for expected_workflow, entry in zip(MANDATORY_WORKFLOWS, workflows, strict=True):
-            valid = (
-                isinstance(entry, dict)
-                and set(entry) == _CAMPAIGN_WORKFLOW_FIELDS
-                and entry.get("workflow") == expected_workflow
-                and entry.get("expected_admission") == "positive"
-                and entry.get("refusal_counts_as_positive_completion") is False
-                and isinstance(entry.get("profiles"), list)
-                and bool(entry["profiles"])
-                and len(entry["profiles"]) == len(set(entry["profiles"]))
-                and all(isinstance(name, str) and name for name in entry["profiles"])
-                and isinstance(entry.get("scenarios"), list)
-                and bool(entry["scenarios"])
-                and len(entry["scenarios"]) == len(set(entry["scenarios"]))
-                and all(isinstance(name, str) and name for name in entry["scenarios"])
-            )
-            if not valid:
-                break
-    if not valid:
-        raise ValueError(
-            f"Native meshing campaign registration is stale or malformed: {path}"
-        )
-    return value
-
-
-def _native_driver_controls(
-    name: str,
-    args: argparse.Namespace,
-) -> dict[str, str | int | float | tuple[float, ...]]:
-    values = vars(args)
-    result: dict[str, str | int | float | tuple[float, ...]] = {}
-    for key in _NATIVE_DRIVER_ARGUMENTS[name]:
-        value = values[key]
-        if value is None:
-            continue
-        if key == "hybrid_region_densities":
-            if (
-                not isinstance(value, (tuple, list))
-                or not value
-                or any(
-                    not isinstance(item, (int, float)) or isinstance(item, bool)
-                    for item in value
-                )
-            ):
-                raise TypeError(
-                    "hybrid_region_densities must be the declared numeric sequence."
-                )
-            result[key] = tuple(value)
-            continue
-        if not isinstance(value, (str, int, float)) or isinstance(value, bool):
-            raise TypeError(f"{key} must be a declared scalar driver control.")
-        result[key] = value
-    return result
-
-
 _CASES = {
+    "fresh-imports": benchmark_fresh_imports,
+    "parallel-batches": benchmark_parallel_batches,
+    "scope-construction": benchmark_scope_construction,
+    "brep-containment": benchmark_brep_containment,
+    "brep-moments": benchmark_brep_moments,
+    "brep-orientation-audit": benchmark_brep_orientation_audit,
     "native-meshing": lambda resolution, repeats: benchmark_native_meshing(
         resolution, repeats
     ),
@@ -3638,12 +3002,14 @@ _CASES = {
         repeats,
     ),
     "lbvh": lambda resolution, repeats: _repeated_case(
-        benchmark_lbvh,
+        lambda value: qualify_bvh_scaling(value, measure=_timed),
         resolution,
         repeats,
     ),
     "overlap-pairs": lambda resolution, repeats: _repeated_case(
-        benchmark_overlap_pairs,
+        lambda value: qualify_overlap_pair_scaling(
+            value, measure=_timed, failure=qualification_failure
+        ),
         resolution,
         repeats,
     ),
@@ -3711,172 +3077,27 @@ _CASES = {
 }
 
 
-def _benchmark_registered_native_corpus(
-    args: argparse.Namespace,
+def _benchmark_parser(
     profiles: dict[str, dict[str, Any]],
-    /,
-) -> dict[str, object]:
-    """Execute the deterministic registered profile matrix without omitting gaps."""
-    arguments = vars(args)
-    requested = arguments["corpus_profile"]
-    selected = tuple(profiles) if requested is None else tuple(requested)
-    unknown = sorted(set(selected) - set(profiles))
-    if unknown or len(selected) != len(set(selected)):
-        raise ValueError(
-            f"Registered benchmark profiles must be unique and known; unknown={unknown}."
-        )
-    records: dict[str, object] = {}
-    missing_inputs: dict[str, list[str]] = {}
-    for name in selected:
-        profile = profiles[name]
-        scenario = profile.get("scenario")
-        case_name = profile.get("case_name")
-        workflow = profile.get("workflow")
-        source_reference = profile.get("source_reference")
-        profile_controls = profile.get("controls")
-        prerequisites = profile.get("prerequisites", ())
-        if (
-            scenario is not None
-            and not isinstance(scenario, str)
-            or not isinstance(case_name, str)
-            or not isinstance(workflow, str)
-            or not isinstance(source_reference, dict)
-            or not isinstance(profile_controls, dict)
-            or not isinstance(prerequisites, (tuple, list))
-            or not all(isinstance(value, str) for value in prerequisites)
-        ):
-            raise TypeError(f"Registered benchmark profile {name!r} is malformed.")
-        required = list(prerequisites)
-        if scenario == "native-distributed-lifecycle":
-            required.append("distributed_checkpoint_root")
-        missing = sorted({key for key in required if arguments.get(key) is None})
-        if missing:
-            missing_inputs[name] = missing
-            body: dict[str, object] = {
-                "kind": "native-meshing-benchmark-profile",
-                "profile": name,
-                "workflow": workflow,
-                "scenario": scenario,
-                "status": "blocked-missing-input",
-                "missing_inputs": missing,
-                "source_reference_id": canonical_fingerprint(source_reference),
-                "campaigns": [],
-            }
-            records[name] = {**body, "profile_result_id": canonical_fingerprint(body)}
-            continue
-        controls = {} if scenario is None else _native_driver_controls(scenario, args)
-        for control_name, control_value in profile_controls.items():
-            if (
-                not isinstance(control_name, str)
-                or isinstance(control_value, bool)
-                or not isinstance(control_value, (str, int, float, tuple))
-            ):
-                raise TypeError(
-                    f"Registered benchmark profile {name!r} has invalid controls."
-                )
-            controls[control_name] = control_value
-        rounds = (
-            0
-            if case_name in POLYHEDRAL_CASE_NAMES
-            and case_name != "polyhedral-periodic-cube"
-            else args.adaptation_rounds
-        )
-        campaigns = [
-            benchmark_native_lifecycle(
-                case_name,
-                resolution,
-                capacity,
-                args.timeout,
-                args.repeats,
-                args.target_error,
-                rounds,
-                args.comparison,
-                scenario_override=scenario,
-                controls=controls,
-                source_reference=source_reference,
-            )
-            for resolution in args.resolution
-            for capacity in args.capacity
-        ]
-        body = {
-            "kind": "native-meshing-benchmark-profile",
-            "profile": name,
-            "workflow": workflow,
-            "scenario": scenario,
-            "status": "attempted",
-            "missing_inputs": [],
-            "source_reference_id": canonical_fingerprint(source_reference),
-            "campaigns": campaigns,
-        }
-        records[name] = {**body, "profile_result_id": canonical_fingerprint(body)}
-    body = {
-        "kind": "registered-native-meshing-benchmark-corpus",
-        "selected_profiles": list(selected),
-        "missing_profile_inputs": missing_inputs,
-        "profiles": records,
-    }
-    return {**body, "corpus_benchmark_id": canonical_fingerprint(body)}
-
-
-def main() -> None:
-    from tools.meshing_qualification import (
-        _corpus_profiles,
-        _family_qualification_requirements,
-        _hybrid_qualification_requirements,
-        _surface_qualification_requirements,
+) -> argparse.ArgumentParser:
+    """Declare benchmark CLI controls and source/profile selectors."""
+    family_choices, family_default = FAMILY_CASES, "dual-hex"
+    surface_choices, surface_default = SURFACE_CASES, "sphere"
+    hybrid_choices, hybrid_default = HYBRID_PROFILES, "unit-box"
+    hybrid_density_default, hybrid_material_default, hybrid_core_default = (
+        (2.0, 3.0),
+        "two-material-density",
+        0.1,
     )
-
-    profiles = _corpus_profiles()
-
-    family_requirements = _family_qualification_requirements()
-    family_choices = family_requirements["parser_choices"]
-    family_default = family_requirements["parser_default"]
-    surface_arguments = _surface_qualification_requirements()["required_arguments"]
-    hybrid_arguments = _hybrid_qualification_requirements()["required_arguments"]
-    if (
-        not isinstance(family_choices, tuple)
-        or not all(isinstance(value, str) for value in family_choices)
-        or not isinstance(family_default, str)
-        or not isinstance(surface_arguments, dict)
-        or not isinstance(hybrid_arguments, dict)
-    ):
-        raise TypeError("Native benchmark parser contracts are malformed.")
-    surface_contract = surface_arguments["surface_case"]
-    hybrid_profile_contract = hybrid_arguments["hybrid_profile"]
-    hybrid_density_contract = hybrid_arguments["hybrid_region_densities"]
-    hybrid_material_contract = hybrid_arguments["hybrid_material_site"]
-    hybrid_core_contract = hybrid_arguments["hybrid_core_size"]
-    if (
-        not isinstance(surface_contract, dict)
-        or not isinstance(hybrid_profile_contract, dict)
-        or not isinstance(hybrid_density_contract, dict)
-        or not isinstance(hybrid_material_contract, dict)
-        or not isinstance(hybrid_core_contract, dict)
-    ):
-        raise TypeError("Native benchmark profile argument contracts must be mappings.")
-    surface_choices = surface_contract["choices"]
-    surface_default = surface_contract["default"]
-    hybrid_choices = hybrid_profile_contract["choices"]
-    hybrid_default = hybrid_profile_contract["default"]
-    hybrid_density_default = hybrid_density_contract["default"]
-    hybrid_material_default = hybrid_material_contract["default"]
-    hybrid_core_default = hybrid_core_contract["default"]
-    if (
-        not isinstance(surface_choices, (tuple, list))
-        or not all(isinstance(value, str) for value in surface_choices)
-        or not isinstance(surface_default, str)
-        or not isinstance(hybrid_choices, (tuple, list))
-        or not all(isinstance(value, str) for value in hybrid_choices)
-        or not isinstance(hybrid_default, str)
-        or not isinstance(hybrid_density_default, (tuple, list))
-        or not all(isinstance(value, float) for value in hybrid_density_default)
-        or not isinstance(hybrid_material_default, str)
-        or not isinstance(hybrid_core_default, float)
-    ):
-        raise TypeError("Native benchmark parser choices/defaults are malformed.")
     parser = argparse.ArgumentParser()
     parser.add_argument("--resolution", type=int, nargs="+", default=[8, 16])
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument(
+        "--benchmark-warm-repeats",
+        type=int,
+        default=5,
+        help="Warm solver samples per cold benchmark child; --repeats selects cold attempts.",
+    )
     parser.add_argument(
         "--corpus-case", choices=CASE_NAMES, default="planar-hole-feature"
     )
@@ -3894,7 +3115,12 @@ def main() -> None:
         default=list(POLYHEDRAL_CASE_NAMES),
     )
     parser.add_argument("--capacity", type=int, nargs="+", default=[20000])
-    parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=120.0,
+        help="Per-case whole-workflow deadline in seconds; stages and native calls share it.",
+    )
     parser.add_argument("--target-error", type=float, default=0.05)
     parser.add_argument("--adaptation-rounds", type=int, default=1)
     parser.add_argument("--comparison", choices=("triangle",), default=None)
@@ -3948,6 +3174,13 @@ def main() -> None:
         "--distributed-host-packet-bytes", type=int, default=64 * 1024 * 1024
     )
     parser.add_argument("--distributed-checkpoint-root", default=None)
+    parser.add_argument(
+        "--distributed-bisection-compatibility",
+        type=BisectionCompatibility,
+        choices=tuple(BisectionCompatibility),
+        default=BisectionCompatibility.REJECT,
+        help="Initial matching-label preparation, charged to the unchanged request limits.",
+    )
     parser.add_argument("--image-size", type=int, default=2)
     parser.add_argument("--transport-steps", type=int, default=5)
     parser.add_argument("--transport-dt", type=float, default=0.01)
@@ -3974,19 +3207,23 @@ def main() -> None:
         ),
         help="Run one named scaling case; defaults to native meshing only.",
     )
-    args = parser.parse_args()
-    if (
-        args.repeats < 1
-        or any(value < 1 for value in (*args.resolution, *args.capacity))
-        or args.timeout <= 0.0
-        or args.target_error <= 0.0
-        or args.adaptation_rounds < 0
-    ):
-        parser.error(
-            "resolutions, capacities, repeats, timeout and error must be positive; rounds nonnegative"
-        )
+    return parser
+
+
+@final
+class BenchmarkExecution(phx.StrictModule):
+    """Selected campaigns and their ordered benchmark results."""
+
+    selected: tuple[str, ...] = eqx.field(static=True)
+    output: dict[str, dict[str, object] | list[dict[str, object]]]
+
+
+def _run_benchmark_cases(
+    args: BenchmarkControls, profiles: dict[str, dict[str, Any]]
+) -> BenchmarkExecution:
+    """Execute requested scaling campaigns in CLI selection order."""
     selected = ("native-meshing",) if args.case is None else tuple(args.case)
-    output = {}
+    output: dict[str, dict[str, object] | list[dict[str, object]]] = {}
     for name in selected:
         if name == "native-corpus":
             output[name] = _benchmark_registered_native_corpus(args, profiles)
@@ -4004,6 +3241,7 @@ def main() -> None:
                     args.adaptation_rounds,
                     args.comparison,
                     scenario_override=name,
+                    benchmark_warm_repeats=args.benchmark_warm_repeats,
                     controls=controls,
                 )
                 for resolution in args.resolution
@@ -4021,6 +3259,7 @@ def main() -> None:
                     args.target_error,
                     0,
                     args.comparison,
+                    benchmark_warm_repeats=args.benchmark_warm_repeats,
                 )
                 for source in args.polyhedral_source
                 for sites in args.resolution
@@ -4038,27 +3277,56 @@ def main() -> None:
                     args.target_error,
                     args.adaptation_rounds,
                     args.comparison,
+                    benchmark_warm_repeats=args.benchmark_warm_repeats,
                 )
                 for resolution in args.resolution
                 for capacity in args.capacity
             ]
         else:
             output[name] = [
-                _CASES[name](value, args.repeats) for value in args.resolution
+                _CASES[name](value, args.repeats)
+                if name in ("fresh-imports", "parallel-batches")
+                else _clean_benchmark_case(
+                    name, lambda: _CASES[name](value, args.repeats)
+                )
+                for value in args.resolution
             ]
     if args.gmsh_semantic:
         with TemporaryDirectory(prefix="phydrax-gmsh-semantic-benchmark-") as temporary:
             directory = Path(temporary)
             output["gmsh_semantic"] = [
-                benchmark_gmsh_semantic(value, args.repeats, directory)
+                _clean_benchmark_case(
+                    "gmsh_semantic",
+                    lambda: benchmark_gmsh_semantic(value, args.repeats, directory),
+                )
                 for value in (2, 8, 32)
             ]
+    return BenchmarkExecution(selected=selected, output=output)
+
+
+def main() -> None:
+
+    profiles = _corpus_profiles()
+    parser = _benchmark_parser(profiles)
+    args = BenchmarkControls.from_namespace(parser.parse_args())
+    if (
+        args.repeats < 1
+        or args.benchmark_warm_repeats < 1
+        or any(value < 1 for value in (*args.resolution, *args.capacity))
+        or args.timeout <= 0.0
+        or args.target_error <= 0.0
+        or args.adaptation_rounds < 0
+    ):
+        parser.error(
+            "resolutions, capacities, repeats, timeout and error must be positive; rounds nonnegative"
+        )
+    execution = _run_benchmark_cases(args, profiles)
     registration = load_native_campaign_registration()
     suite: dict[str, object] = {
         "kind": "meshing-benchmark-suite",
         "campaign_registration_id": registration["registration_id"],
-        "selected_cases": list(selected),
-        "campaigns": output,
+        "selected_cases": list(execution.selected),
+        "campaigns": execution.output,
     }
     print(json.dumps({**suite, "suite_id": canonical_fingerprint(suite)}, indent=2))
 

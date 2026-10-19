@@ -32,12 +32,12 @@ from ._properties import (
     PropertyEvidence,
 )
 from ._spaces import (
-    _coordinate_dtype,
     _coordinate_pairing_weights,
     _has_diagonal_pairing,
     AbstractVectorSpace,
     ArraySpace,
     BlockSpace,
+    coordinate_dtype,
     DualSpace,
 )
 
@@ -110,13 +110,13 @@ def _validate_action_dtype(
 ) -> None:
     result_dtype = np.dtype(
         jax.dtypes.canonicalize_dtype(
-            np.result_type(np.dtype(coefficient_dtype), _coordinate_dtype(source))
+            np.result_type(np.dtype(coefficient_dtype), coordinate_dtype(source))
         )
     )
-    if result_dtype != _coordinate_dtype(target):
+    if result_dtype != coordinate_dtype(target):
         raise TypeError(
             f"{name} acting on source coordinates produces dtype {result_dtype}, "
-            f"but the target requires {_coordinate_dtype(target)}."
+            f"but the target requires {coordinate_dtype(target)}."
         )
 
 
@@ -230,7 +230,7 @@ def _dense_action(
     return target.unflatten(matrix @ coordinates)
 
 
-def _generic_adjoint(
+def generic_adjoint(
     operator: "AbstractLinearOperator",
     vector: PyTree[Any],
     /,
@@ -260,7 +260,7 @@ def _generic_adjoint(
     return operator.source.inverse_riesz(source_covector)
 
 
-def _materialize_by_basis(operator: "AbstractLinearOperator", /) -> Array:
+def materialize_by_basis(operator: "AbstractLinearOperator", /) -> Array:
     if operator.batch_shape:
         raise ValueError("Basis materialization does not support operator batches.")
     structure = operator.source.structure()
@@ -359,7 +359,7 @@ class AbstractLinearOperator(StrictModule):
     def _materialize_admitted(self, policy: MaterializationPolicy, /) -> Array:
         """Admit the full dense route before invoking its implementation."""
         entries = prod(self.batch_shape) * self.source.size * self.target.size
-        dtype = _coordinate_dtype(self.target)
+        dtype = coordinate_dtype(self.target)
         policy.require(entries, dtype)
         policy.require_workspace(entries * dtype.itemsize)
         return self._materialize()
@@ -551,7 +551,7 @@ class DenseLinearOperator(AbstractLinearOperator):
             elif not isinstance(target_pairing, EuclideanPairing):
                 if self.batch_shape:
                     raise ValueError("Custom pairings do not support batched adjoints.")
-                return _generic_adjoint(self, vector)
+                return generic_adjoint(self, vector)
             if isinstance(source_pairing, DiagonalPairing):
                 weights = jnp.asarray(source_pairing.weights).reshape((self.source.size,))
                 source_shape = (1,) * len(self.batch_shape) + (self.source.size, 1)
@@ -559,7 +559,7 @@ class DenseLinearOperator(AbstractLinearOperator):
             elif not isinstance(source_pairing, EuclideanPairing):
                 if self.batch_shape:
                     raise ValueError("Custom pairings do not support batched adjoints.")
-                return _generic_adjoint(self, vector)
+                return generic_adjoint(self, vector)
             return _dense_action(
                 matrix,
                 self.target,
@@ -569,7 +569,7 @@ class DenseLinearOperator(AbstractLinearOperator):
             )
         if self.batch_shape:
             raise ValueError("Batched PyTree adjoints are not supported.")
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         return self.matrix
@@ -678,7 +678,7 @@ class DiagonalLinearOperator(AbstractLinearOperator):
             return self._action(jnp.conj(self.diagonal), vector)
         if self.batch_shape:
             raise ValueError("Custom pairings do not support batched adjoints.")
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         identity = jnp.eye(self.source.size, dtype=self.diagonal.dtype)
@@ -805,20 +805,18 @@ class FunctionLinearOperator(AbstractLinearOperator):
         )
 
         def evaluate_function(vector: PyTree[Array]) -> PyTree[Array]:
-            return function_(vector)
+            return target.validate(function_(vector))
 
-        output = jax.eval_shape(evaluate_function, source.structure())
-        if eqx.tree_equal(output, target.structure()) is not True:
-            raise ValueError("function output structure must match target space.")
+        # Vector spaces own tree/shape/dtype admission; JAX weak typing is not
+        # a coordinate-space distinction.
+        jax.eval_shape(evaluate_function, source.structure())
         if transpose_ is not None and not same_action:
             transpose_function = transpose_
 
             def evaluate_transpose(vector: PyTree[Array]) -> PyTree[Array]:
-                return transpose_function(vector)
+                return source.validate(transpose_function(vector))
 
-            transposed = jax.eval_shape(evaluate_transpose, target.structure())
-            if eqx.tree_equal(transposed, source.structure()) is not True:
-                raise ValueError("transpose_action output must match source space.")
+            jax.eval_shape(evaluate_transpose, target.structure())
         self.source = source
         self.target = target
         self.function = function_
@@ -855,10 +853,10 @@ class FunctionLinearOperator(AbstractLinearOperator):
         return self.source.validate(transpose_action(value)[0])
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
-        return _materialize_by_basis(self)
+        return materialize_by_basis(self)
 
 
 class JacobianLinearOperator(AbstractLinearOperator):
@@ -906,10 +904,10 @@ class JacobianLinearOperator(AbstractLinearOperator):
         return self.linearization.vjp(vector)
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
-        return _materialize_by_basis(self)
+        return materialize_by_basis(self)
 
 
 class ScaledLinearOperator(AbstractLinearOperator):
@@ -1135,7 +1133,7 @@ class TransposeLinearOperator(AbstractLinearOperator):
         return self.operator.mv(vector)
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         return jnp.swapaxes(self.operator._materialize(), -1, -2)
@@ -1185,7 +1183,7 @@ class DualTransposeLinearOperator(AbstractLinearOperator):
         return self.operator.mv(covector)
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _generic_adjoint(self, vector)
+        return generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
         return jnp.swapaxes(self.operator._materialize(), -1, -2)
@@ -1299,7 +1297,7 @@ class AdjointLinearOperator(AbstractLinearOperator):
                 * matrix
                 * target_weights[..., None, :]
             )
-        return _materialize_by_basis(self)
+        return materialize_by_basis(self)
 
     def _assemble_diagonal(self, /) -> Array:
         diagonal = jnp.conj(_assemble_operator_diagonal(self.operator))
@@ -1446,11 +1444,9 @@ class BlockLinearOperator(AbstractLinearOperator):
         return self._materialize_blocks(None)
 
     def _materialize_admitted(self, policy: MaterializationPolicy, /) -> Array:
-        policy.require(
-            self.source.size * self.target.size, _coordinate_dtype(self.target)
-        )
+        policy.require(self.source.size * self.target.size, coordinate_dtype(self.target))
         policy.require_workspace(
-            self.source.size * self.target.size * _coordinate_dtype(self.target).itemsize
+            self.source.size * self.target.size * coordinate_dtype(self.target).itemsize
         )
         return self._materialize_blocks(policy)
 
@@ -1482,7 +1478,7 @@ class BlockLinearOperator(AbstractLinearOperator):
         for index, source_space in enumerate(self.source.spaces):
             block = self.blocks[index][index]
             values.append(
-                jnp.zeros((source_space.size,), dtype=_coordinate_dtype(source_space))
+                jnp.zeros((source_space.size,), dtype=coordinate_dtype(source_space))
                 if block is None
                 else _assemble_operator_diagonal(block)
             )
@@ -1490,7 +1486,7 @@ class BlockLinearOperator(AbstractLinearOperator):
 
 
 def _space_storage_bytes(space: AbstractVectorSpace, /) -> int:
-    return space.size * np.dtype(_coordinate_dtype(space)).itemsize
+    return space.size * np.dtype(coordinate_dtype(space)).itemsize
 
 
 def _operator_action_workspace(

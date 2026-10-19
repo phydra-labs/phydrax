@@ -205,7 +205,7 @@ class PreparedForestPartition(StrictModule, NonTrainableState):
         costs = _active_costs(weights, count, topology.signature.leaf_capacity)
         owners = _contiguous_owners(costs, parts)
         pairs = _ghost_adjacency(topology, plan.ghost_stencil)
-        halo = DistributedHaloPlan(
+        halo = DistributedHaloPlan.from_global(
             owners,
             pairs if pairs.size else np.zeros((0, 2), dtype=np.int64),
             parts,

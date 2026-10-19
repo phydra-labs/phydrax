@@ -22,6 +22,7 @@ from ....discretization import (
 )
 from ....geometry import CompiledGeometry, MeshRegion
 from ....typing import checked
+from ....units import METER
 from ._surface3d import SurfacePanelization3D
 
 
@@ -143,7 +144,7 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
                 "[geometry] Prepared surface DP0 routes do not match face order."
             )
 
-        geometry = region.compile()
+        geometry = region.compile(coordinate_unit=METER)
         panelization = SurfacePanelization3D(
             geometry.boundary_atlas,
             quadrature_order=int(quadrature_order),

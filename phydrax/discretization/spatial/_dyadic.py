@@ -17,8 +17,8 @@ from phydrax._trainable import NonTrainableState
 
 from ...typing import checked
 from ._morton import (
-    _morton_decode_host,
-    _morton_encode_host,
+    morton_decode_host,
+    morton_encode_host,
     MortonAddressPlan,
 )
 
@@ -375,7 +375,7 @@ class AdaptiveDyadicGridPlan(StrictModule):
             to_refine: set[LeafKey] = set()
             for leaf in tuple(leaves):
                 level, prefix = leaf
-                coordinate = _morton_decode_host(
+                coordinate = morton_decode_host(
                     prefix, self.address_plan.dimension, level
                 )
                 width = 1 << (self.address_plan.maximum_depth - level)
@@ -424,7 +424,7 @@ class AdaptiveDyadicGridPlan(StrictModule):
             coordinate = tuple(value >> shift for value in maximum_depth_coordinate)
             key = (
                 level,
-                _morton_encode_host(coordinate, self.address_plan.dimension, level),
+                morton_encode_host(coordinate, self.address_plan.dimension, level),
             )
             if key in leaves:
                 return key
@@ -455,7 +455,7 @@ class AdaptiveDyadicGridPlan(StrictModule):
         violations = 0
         for leaf in leaves:
             level, prefix = leaf
-            coordinate = _morton_decode_host(prefix, self.address_plan.dimension, level)
+            coordinate = morton_decode_host(prefix, self.address_plan.dimension, level)
             width = 1 << (self.address_plan.maximum_depth - level)
             lower = tuple(value * width for value in coordinate)
             center = [value + width // 2 for value in lower]

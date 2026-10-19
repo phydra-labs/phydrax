@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from enum import StrEnum
 from typing import Any, assert_never, Literal, TYPE_CHECKING
 
@@ -24,9 +25,10 @@ from ..._bvh import (
     reduce_packed_bvh_nodes,
     refit_packed_bvh_bounds,
 )
+from ..._fingerprint import tree_content_equal
 from ..._strict import StrictModule
-from ...typing import checked, Dim, Float64, Int32, parse
-from ._mesh import _closest_points_on_triangles, MeshQueryResult, TriangleMesh
+from ...typing import checked, Dim, Float64, Int32, parse, validate
+from ._mesh import closest_points_on_triangles, MeshQueryResult, TriangleMesh
 
 
 if TYPE_CHECKING:
@@ -149,6 +151,54 @@ class SegmentBVH(StrictModule):
         self.bvh = packed
         self.execution = execution_
         self.dense_workspace_bytes = dense_workspace_bytes
+
+    @classmethod
+    @checked
+    def from_stored_fields(cls: type[SegmentBVH], value: SegmentBVH, /) -> SegmentBVH:
+        """Restore a validated fixed hierarchy without changing refitted topology."""
+        from ..._model._structure import restore_registered_fields
+        from ...lifecycle._meshing_source_records import register_meshing_source_types
+
+        register_meshing_source_types()
+        if type(value) is not cls:
+            raise TypeError(
+                f"SegmentBVH.stored_fields must match its registered type; got {type(value).__name__}"
+            )
+        value.validate_restored()
+        return restore_registered_fields(
+            cls, {member.name: getattr(value, member.name) for member in fields(value)}
+        )
+
+    def validate_restored(self) -> None:
+        """Validate segment values, query policy, and every retained hierarchy binding."""
+        from ._topology import SegmentTopology
+
+        validate(self)
+        parse(self.execution, SegmentQueryExecution, "SegmentBVH.execution")
+        if type(self.dense_workspace_bytes) is not int or self.dense_workspace_bytes < 1:
+            raise ValueError(
+                f"SegmentBVH.dense_workspace_bytes must be a positive integer; got {self.dense_workspace_bytes!r}"
+            )
+        vertices = np.asarray(self.vertices)
+        if vertices.shape[0] == 0 or not np.all(np.isfinite(vertices)):
+            raise ValueError(
+                "SegmentBVH.vertices must contain finite nonempty planar coordinates; got empty or nonfinite vertices"
+            )
+        topology = SegmentTopology(self.edges, num_vertices=vertices.shape[0])
+        segments = vertices[np.asarray(topology.edges)]
+        if np.any(np.sum((segments[:, 1] - segments[:, 0]) ** 2, axis=-1) == 0.0):
+            raise ValueError(
+                "SegmentBVH.edges must define nonzero segment lengths; got a zero-length edge"
+            )
+        self.bvh.validate_restored()
+        for name, expected in (
+            ("item_bbox_min", np.min(segments, axis=1)),
+            ("item_bbox_max", np.max(segments, axis=1)),
+        ):
+            if not tree_content_equal(np.asarray(getattr(self.bvh, name)), expected):
+                raise ValueError(
+                    f"SegmentBVH.bvh.{name} must bind the stored segment coordinates; got changed item bounds"
+                )
 
     @property
     def segments(self) -> Array:
@@ -459,7 +509,7 @@ class TriangleBVH(StrictModule):
 
         def distance(point: Array, items: Array) -> Array:
             selected = self.vertices[self.faces[items]]
-            closest = _closest_points_on_triangles(point, selected)
+            closest = closest_points_on_triangles(point, selected)
             return jnp.sum((closest - point) ** 2, axis=-1)
 
         result = bvh_nearest_items(self.bvh, flat, k=k, item_distance_squared=distance)
@@ -473,7 +523,7 @@ class TriangleBVH(StrictModule):
         face = self.nearest_faces(flat).items[:, 0]
         triangle = self.vertices[self.faces[face]]
         closest = jax.vmap(
-            lambda point, vertices: _closest_points_on_triangles(point, vertices[None])[0]
+            lambda point, vertices: closest_points_on_triangles(point, vertices[None])[0]
         )(flat, triangle)
         normal = jnp.cross(
             triangle[:, 1] - triangle[:, 0], triangle[:, 2] - triangle[:, 0]

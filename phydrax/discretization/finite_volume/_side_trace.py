@@ -71,14 +71,14 @@ from ._structured import FiniteVolumeDiscretization
 from ._triangle_fv import TriangleFiniteVolumeDiscretization
 from ._triangle_polynomial import TriangleKExactReconstructionPlan
 from ._triangle_reconstruction import TriangleMUSCLReconstructionPlan
-from ._unstructured import UnstructuredFiniteVolumeDiscretization
+from ._unstructured_types import AbstractUnstructuredFiniteVolumeDiscretization
 from ._unstructured_weno import PreparedUnstructuredWENOZReconstruction
 from ._weno import WENOReconstructionPlan
 
 
-FiniteVolumeFacetOwner: TypeAlias = (
+type FiniteVolumeFacetOwner = (
     FiniteVolumeDiscretization
-    | UnstructuredFiniteVolumeDiscretization
+    | AbstractUnstructuredFiniteVolumeDiscretization
     | TriangleFiniteVolumeDiscretization
 )
 FiniteVolumeFaceReconstruction: TypeAlias = (
@@ -90,8 +90,8 @@ FiniteVolumeFaceReconstruction: TypeAlias = (
     | TriangleKExactReconstructionPlan
     | TriangleMUSCLReconstructionPlan
 )
-_MeshOwner: TypeAlias = (
-    UnstructuredFiniteVolumeDiscretization | TriangleFiniteVolumeDiscretization
+type _MeshOwner = (
+    AbstractUnstructuredFiniteVolumeDiscretization | TriangleFiniteVolumeDiscretization
 )
 # Coefficient layout of a published field: "state" is the owner's cell-average
 # state (cells..., components); "scalar" is the one component of a
@@ -106,7 +106,7 @@ def _require_owner(discretization: object, /) -> None:
         discretization,
         (
             FiniteVolumeDiscretization,
-            UnstructuredFiniteVolumeDiscretization,
+            AbstractUnstructuredFiniteVolumeDiscretization,
             TriangleFiniteVolumeDiscretization,
         ),
     ):
@@ -276,7 +276,7 @@ def mesh_cell_dimension(discretization: _MeshOwner, /) -> int:
     match discretization:
         case TriangleFiniteVolumeDiscretization():
             return 2
-        case UnstructuredFiniteVolumeDiscretization():
+        case AbstractUnstructuredFiniteVolumeDiscretization():
             return discretization.cell_dimension
         case _:
             assert_never(discretization)
@@ -317,7 +317,7 @@ def _facet_table(discretization: FiniteVolumeFacetOwner, /) -> _FacetTable:
         case FiniteVolumeDiscretization():
             return _structured_table(discretization)
         case (
-            UnstructuredFiniteVolumeDiscretization()
+            AbstractUnstructuredFiniteVolumeDiscretization()
             | TriangleFiniteVolumeDiscretization()
         ):
             return _mesh_table(discretization)
@@ -330,7 +330,7 @@ def _cell_entity_set_id(discretization: FiniteVolumeFacetOwner, /) -> str:
         case FiniteVolumeDiscretization():
             return discretization.cell_layout.entity_set_id
         case (
-            UnstructuredFiniteVolumeDiscretization()
+            AbstractUnstructuredFiniteVolumeDiscretization()
             | TriangleFiniteVolumeDiscretization()
         ):
             dimension = mesh_cell_dimension(discretization)
@@ -344,7 +344,7 @@ def _cell_count(discretization: FiniteVolumeFacetOwner, /) -> int:
         case FiniteVolumeDiscretization():
             return prod(discretization.cell_shape)
         case (
-            UnstructuredFiniteVolumeDiscretization()
+            AbstractUnstructuredFiniteVolumeDiscretization()
             | TriangleFiniteVolumeDiscretization()
         ):
             return discretization.cell_count
@@ -674,7 +674,7 @@ def _facet_frame(
         case FiniteVolumeDiscretization():
             return _structured_frame(discretization, table, facets, domain, rule, side_)
         case (
-            UnstructuredFiniteVolumeDiscretization()
+            AbstractUnstructuredFiniteVolumeDiscretization()
             | TriangleFiniteVolumeDiscretization()
         ):
             return _mesh_frame(discretization, table, facets, domain, rule, side_)
@@ -935,7 +935,7 @@ def _support_rows(
         case FiniteVolumeDiscretization():
             return np.unique(np.unravel_index(dofs, discretization.cell_shape)[0])
         case (
-            UnstructuredFiniteVolumeDiscretization()
+            AbstractUnstructuredFiniteVolumeDiscretization()
             | TriangleFiniteVolumeDiscretization()
         ):
             return np.unique(dofs)

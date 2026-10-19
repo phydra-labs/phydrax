@@ -31,13 +31,16 @@ from ..linalg import (
     TolerancePolicy,
 )
 from ..sparse import EdgeRelation, SparseCoordinateOperator
-from ..sparse._linear import _SparseStoragePlan
+from ..sparse._linear import SparseStoragePlan
+from ..typing import checked
 
 
 def gram_solve_policy(size: int, /, *, tolerance: float = 1e-10) -> LinearSolvePolicy:
     """Prepare native PCG/Jacobi with mathematical value and right-side derivatives."""
     if not np.isfinite(tolerance) or not 0.0 < tolerance < 1.0:
-        raise ValueError("gram_tolerance must be finite, positive, and below one.")
+        raise ValueError(
+            f"gram_solve_policy.gram_tolerance must be finite, positive, and below one; got {tolerance!r}"
+        )
     steps = max(1, 4 * size)
     return LinearSolvePolicy(
         PCG(),
@@ -51,6 +54,7 @@ def gram_solve_policy(size: int, /, *, tolerance: float = 1e-10) -> LinearSolveP
     )
 
 
+@checked
 def sparse_gram_space(
     targets: ArrayLike,
     sources: ArrayLike,
@@ -62,7 +66,7 @@ def sparse_gram_space(
     space_id: str,
     gram_tolerance: float = 1e-10,
     policy: LinearSolvePolicy | None = None,
-    storage_plan: _SparseStoragePlan | None = None,
+    storage_plan: SparseStoragePlan | None = None,
 ) -> tuple[ArraySpace, AbstractLinearOperator]:
     """Bind a symmetric SPD metric's static routes and dynamic real values.
 
@@ -74,21 +78,23 @@ def sparse_gram_space(
     identifier = canonical_identifier(space_id, "space_id")
     coefficients = jnp.asarray(values)
     if coefficients.ndim != 1 or jnp.issubdtype(coefficients.dtype, jnp.complexfloating):
-        raise ValueError("Gram route values must be one real vector.")
+        raise ValueError(
+            f"sparse_gram_space.values must be one real vector; got {coefficients.shape}, {coefficients.dtype}"
+        )
     coefficients = coefficients.astype(jnp.float64)
     # Routes are host structure: a traced relation would drop the prepared
     # row-gather layouts and change the operator pytree inside jit or scan.
     with jax.ensure_compile_time_eval():
         relation = EdgeRelation(sources, targets, source_size=size, target_size=size)
         if storage_plan is None:
-            storage_plan = _SparseStoragePlan(relation)
+            storage_plan = SparseStoragePlan(relation)
     if coefficients.shape != relation.source_indices.shape:
-        raise ValueError("Gram values must match the static route vector.")
+        raise ValueError(
+            f"sparse_gram_space.values must match the static route vector; got {coefficients.shape}"
+        )
     selected = (
         gram_solve_policy(size, tolerance=gram_tolerance) if policy is None else policy
     )
-    if not isinstance(selected, LinearSolvePolicy):
-        raise TypeError("policy must be a LinearSolvePolicy or None.")
     coefficients = eqx.error_if(
         coefficients, jnp.any(~jnp.isfinite(coefficients)), "Gram values must be finite."
     )
@@ -140,18 +146,20 @@ def diagonal_gram_space(
     identifier = canonical_identifier(space_id, "space_id")
     weights = jnp.asarray(measures)
     if weights.ndim != 1 or jnp.issubdtype(weights.dtype, jnp.complexfloating):
-        raise ValueError("Gram diagonal must be one real vector.")
+        raise ValueError(
+            f"diagonal_gram_space.measures must be one real vector; got {weights.shape}, {weights.dtype}"
+        )
     weights = weights.astype(jnp.float64)
     weights = eqx.error_if(
         weights,
         jnp.any(~jnp.isfinite(weights) | (weights <= 0.0)),
-        "Gram diagonal must be finite and positive.",
+        "diagonal_gram_space.measures must be finite and positive; got invalid diagonal entries",
     )
     size = weights.shape[0]
     cells = np.arange(size, dtype=np.int32)
     with jax.ensure_compile_time_eval():
         relation = EdgeRelation(cells, cells, source_size=size, target_size=size)
-        storage_plan = _SparseStoragePlan(relation)
+        storage_plan = SparseStoragePlan(relation)
     space = ArraySpace(
         (size,),
         dtype=dtype,

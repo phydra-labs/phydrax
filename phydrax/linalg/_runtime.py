@@ -31,15 +31,22 @@ from .._iteration import (
     IterationRuntimeState,
     IterationScope,
 )
+from ..typing import checked
 from ._binding import LinearSolveTemplate
 from ._bordered import _bordered_structure
+from ._constraints import _OrthogonalConstraintFrame, OrthogonalHyperplaneConstraint
 from ._dense_pseudoinverse import fixed_rank_pseudoinverse_action
 from ._gcrodr import initialize_recycling, refresh_recycling, solve_recycled
 from ._initial_guess import _select_proposal, AbstractInitialGuessProvider
-from ._operators import AbstractLinearOperator, adjoint, transpose
+from ._operators import AbstractLinearOperator, adjoint, FunctionLinearOperator, transpose
+from ._orthogonalization import _scaled_vector_normalization
+from ._pairings import EuclideanPairing
 from ._plans import (
     _derivative_restart,
+    _plan,
     _preconditioned_operator,
+    _require_selected_resources,
+    _selected_resource_requirements,
     LinearSolvePlan,
     plan as make_plan,
 )
@@ -53,6 +60,7 @@ from ._policies import (
     LinearSolveControl,
     LinearSolvePolicy,
     LSMR,
+    TolerancePolicy,
 )
 from ._preconditioners import (
     _AdjointApplicablePreconditioner,
@@ -71,6 +79,7 @@ from ._problems import (
 from ._rank import exact_spectrum_fixed_rank, singular_value_backward_error
 from ._rectangular_rank import RectangularRankCertificate
 from ._results import (
+    AggregateLinearSolveResult,
     InitialGuessDiagnostics,
     LinearIterationMetrics,
     LinearPrecisionEvidence,
@@ -82,7 +91,7 @@ from ._results import (
     LinearSolveStatus,
     MinimumNormEvidence,
 )
-from ._spaces import _coordinate_dtype, AbstractVectorSpace, RHSLayout
+from ._spaces import AbstractVectorSpace, ArraySpace, coordinate_dtype, RHSLayout
 from ._subspaces import KernelCertificate, LinearSubspace, NullspacePolicy
 from ._tree import _implicit_tree_value, _prepare_tree, TreeLinearOperator
 from .backends._jax_dense import (
@@ -101,6 +110,7 @@ from .krylov._results import KrylovBreakdownStatus
 
 
 _TreeT = TypeVar("_TreeT")
+type _AggregateConstraint = OrthogonalHyperplaneConstraint | _OrthogonalConstraintFrame
 
 
 class _PackedRHSLayout(NamedTuple):
@@ -454,7 +464,7 @@ def _precision_provenance(prepared: PreparedLinearSolve, /) -> dict[str, Any]:
         condition_limit = None
         maximum_refinement_steps = 0
     else:
-        operator_dtype = _coordinate_dtype(prepared.problem.operator.source)
+        operator_dtype = coordinate_dtype(prepared.problem.operator.source)
         factorization_dtype = None
         preconditioner_dtype = (
             None
@@ -705,6 +715,621 @@ def solve(
         else _solve_prepared
     )
     return execute(prepared, rhs, rhs_layout, initial_guess, control, iteration)
+
+
+@checked
+def solve_aggregate(
+    problem: LinearSystem,
+    rhs: ArrayLike,
+    aggregate: ArrayLike,
+    /,
+    *,
+    policy: LinearSolvePolicy | None = None,
+    additional_aggregates: tuple[ArrayLike, ...] = (),
+) -> AggregateLinearSolveResult:
+    """Eliminate one aggregate equation before a square native solve.
+
+    Additional aggregate vectors declare independent equations in the same target
+    space. Their normalized columns form ``W``; ``C = A.T @ W`` defines an affine
+    source chart. The complementary system retains every remaining equation.
+    Kernel charts and finite coarse elimination store only the supplied thin
+    banks, not a dense full-dimensional complement or Jacobian.
+
+    Full primal and independent derivative residual contracts remain in force.
+    Bank rank/conditioning and native reduced-solve diagnostics retain their own
+    scopes. Nonempty rank-one real Euclidean array spaces are supported. A
+    singleton delegates to its native scalar solve; a full bank dispatches no
+    zero-dimensional Krylov solve.
+    """
+    operator = problem.operator
+    source, target = operator.source, operator.target
+    if (
+        not isinstance(source, ArraySpace)
+        or not isinstance(target, ArraySpace)
+        or not isinstance(source.pairing, EuclideanPairing)
+        or not isinstance(target.pairing, EuclideanPairing)
+        or operator.batch_shape
+        or problem.nullspace_policy is not None
+    ):
+        raise ValueError(
+            "solve_aggregate.problem must be an unbatched Euclidean array system "
+            "without a nullspace policy; got incompatible spaces or structure"
+        )
+    if len(source.shape) != 1 or len(target.shape) != 1 or source.size < 1:
+        raise ValueError(
+            "solve_aggregate.spaces must be nonempty rank-one array spaces; "
+            f"got source={source.shape}, target={target.shape}"
+        )
+    rhs = target.validate(rhs)
+    aggregate = target.validate(aggregate)
+    columns = (aggregate,) + tuple(target.validate(row) for row in additional_aggregates)
+    count = len(columns)
+    if count > source.size:
+        raise ValueError(
+            "solve_aggregate.aggregates must contain at most one independent row per coordinate; "
+            f"got rows={count}, dimension={source.size}"
+        )
+    selected = LinearSolvePolicy() if policy is None else policy
+    if selected.derivative_solve.route != "krylov":
+        raise ValueError(
+            "solve_aggregate.policy.derivative_solve.route must be 'krylov'; "
+            f"got {selected.derivative_solve.route!r}"
+        )
+    # Retain the full problem's dimension-derived iteration caps after reduction.
+    selected = _aggregate_iteration_policy(selected, source.size)
+    if count > 1:
+        frame_bytes = (
+            32 * source.size * count + 8 * count * count + 32 * count
+        ) * rhs.dtype.itemsize
+        if frame_bytes > selected.resources.workspace_bytes:
+            return _aggregate_setup_refusal(problem, rhs, selected, count, frame_bytes)
+    source_chart, target_chart, weights = _aggregate_charts(operator, columns, selected)
+    raw_weights = jnp.stack(columns, axis=1)
+    lift = _aggregate_lift(source_chart, weights.T @ rhs, count)
+    reduced_size = source_chart.constraint.reduced_space.size
+    prepared: PreparedLinearSolve | None = None
+    if reduced_size == 0 and source.size > 1:
+        reduced = _empty_aggregate_result(operator, selected, count)
+    else:
+        if source.size == 1:
+            reduced_problem = problem
+            reduced_rhs = rhs
+        else:
+            prolongation = source_chart.constraint.prolongation
+            restriction = target_chart.constraint.prolongation
+
+            def reduced_action(value: Array) -> Array:
+                return restriction.transpose_mv(operator.mv(prolongation.mv(value)))
+
+            reduced_operator = FunctionLinearOperator(
+                reduced_action,
+                source=source_chart.constraint.reduced_space,
+                target=target_chart.constraint.reduced_space,
+                operator_id=f"{operator.operator_id}:aggregate-bank-{count}-eliminated",
+            )
+            reduced_problem = LinearSystem(reduced_operator)
+            reduced_rhs = restriction.transpose_mv(rhs - operator.mv(lift))
+        selected_plan = _plan(reduced_problem, selected, require_resources=False)
+        requirements = _selected_resource_requirements(
+            selected_plan.candidates[-1], selected
+        )
+        refusals = tuple(entry for entry in requirements if entry[1] > entry[2])
+        if refusals:
+            if selected.failure.mode == "error":
+                _require_selected_resources(selected_plan.candidates[-1], selected)
+            return _aggregate_resource_refusal(
+                operator,
+                rhs,
+                raw_weights,
+                source_chart,
+                target_chart,
+                reduced_rhs,
+                selected_plan,
+                refusals,
+            )
+        prepared = prepare(reduced_problem, selected_plan)
+        reduced = solve(prepared, reduced_rhs)
+    if source.size == 1:
+        value = reduced.value
+    else:
+        value = source_chart.constraint.expand(reduced.value, lift)
+        if selected.differentiation.mode in ("mathematical", "rhs-only"):
+            value = _implicit_aggregate_value(
+                operator,
+                rhs,
+                value,
+                source_chart,
+                target_chart,
+                weights,
+                selected,
+                prepared,
+            )
+        elif selected.differentiation.mode == "none":
+            value = jax.lax.stop_gradient(value)
+    residual = operator.mv(value) - rhs
+    residual_norm = jnp.linalg.norm(residual)
+    threshold = _aggregate_residual_threshold(selected, rhs, source.size)
+    row_norms, rank, condition, cutoff, chart_valid = _aggregate_chart_evidence(
+        source_chart, target_chart
+    )
+    input_finite = (
+        jnp.all(jnp.isfinite(rhs))
+        & jnp.all(jnp.isfinite(raw_weights))
+        & _operator_arrays_finite(operator)
+    )
+    output_finite = jnp.all(jnp.isfinite(value)) & jnp.isfinite(residual_norm)
+    status = jnp.where(
+        reduced.successful & (residual_norm > threshold),
+        int(LinearSolveStatus.RESIDUAL_TOO_LARGE),
+        reduced.status,
+    )
+    status = jnp.where(
+        ~output_finite & reduced.successful,
+        int(LinearSolveStatus.NONFINITE_OUTPUT),
+        status,
+    )
+    status = jnp.where(
+        ~chart_valid,
+        int(
+            LinearSolveStatus.SINGULAR if count == 1 else LinearSolveStatus.RANK_DEFICIENT
+        ),
+        status,
+    )
+    status = jnp.where(~input_finite, int(LinearSolveStatus.NONFINITE_INPUT), status)
+    if count > 1:
+        value = jnp.where(chart_valid, value, jnp.full_like(value, jnp.nan))
+    valid = status == int(LinearSolveStatus.SUCCESS)
+    if selected.differentiation.mode in ("mathematical", "rhs-only"):
+        value = guard_derivative_validity(
+            value,
+            valid,
+            failure=selected.failure.mode,
+            message="An aggregate-eliminated solve failed its original full residual contract.",
+        )
+    if selected.failure.mode == "error":
+        value = _error_on_failure(value, status)
+    contraction = raw_weights.T @ residual
+    return AggregateLinearSolveResult(
+        value=value,
+        status=status,
+        reduced=reduced,
+        full_residual_norm=residual_norm,
+        full_residual_threshold=threshold,
+        aggregate_residual=contraction[0] if count == 1 else contraction,
+        aggregate_row_norm=row_norms,
+        chart_valid=chart_valid,
+        aggregate_rank=rank,
+        aggregate_condition_estimate=condition,
+        aggregate_rank_cutoff=cutoff,
+        aggregate_setup_performed=jnp.asarray(True),
+        aggregate_count=count,
+        operator_id=operator.operator_id,
+    )
+
+
+def _aggregate_charts(
+    operator: AbstractLinearOperator,
+    columns: tuple[Array, ...],
+    policy: LinearSolvePolicy,
+    /,
+) -> tuple[_AggregateConstraint, _AggregateConstraint, Array]:
+    source, target = operator.source, operator.target
+    if not isinstance(source, ArraySpace) or not isinstance(target, ArraySpace):
+        raise TypeError(
+            "solve_aggregate.spaces must be ArraySpace; got incompatible chart spaces"
+        )
+    if len(columns) == 1:
+        target_chart = OrthogonalHyperplaneConstraint(
+            target, columns[0], constraint_id=f"{operator.operator_id}:aggregate-target"
+        )
+        weights = target_chart.unit_covector[:, None]
+        source_chart = OrthogonalHyperplaneConstraint(
+            source,
+            operator.transpose_mv(weights[:, 0]),
+            constraint_id=f"{operator.operator_id}:aggregate-source",
+        )
+        return source_chart, target_chart, weights
+    # A zero supplied row stays that zero covector for truthful rank evidence;
+    # it is never admitted as a normalized direction or a valid constraint.
+    weights = jnp.stack(
+        tuple(
+            jnp.where(jnp.all(row == 0.0), row, _scaled_vector_normalization(row)[0])
+            for row in columns
+        ),
+        axis=1,
+    )
+    target_frame = _OrthogonalConstraintFrame(
+        target,
+        weights,
+        policy.rank,
+        constraint_id=f"{operator.operator_id}:aggregate-bank-target",
+    )
+    source_rows = jnp.stack(
+        tuple(operator.transpose_mv(weights[:, index]) for index in range(len(columns))),
+        axis=1,
+    )
+    source_frame = _OrthogonalConstraintFrame(
+        source,
+        source_rows,
+        policy.rank,
+        constraint_id=f"{operator.operator_id}:aggregate-bank-source",
+    )
+    return source_frame, target_frame, weights
+
+
+def _aggregate_lift(chart: _AggregateConstraint, right: Array, count: int, /) -> Array:
+    return chart.lift(right[0] if count == 1 else right)
+
+
+def _aggregate_chart_evidence(
+    source: _AggregateConstraint, target: _AggregateConstraint, /
+) -> tuple[Array, Array, Array, Array, Array]:
+    match source, target:
+        case OrthogonalHyperplaneConstraint(), OrthogonalHyperplaneConstraint():
+            valid = source.valid & target.valid
+            return (
+                source.row_norm,
+                valid.astype(jnp.int32),
+                jnp.where(valid, 1.0, jnp.inf),
+                jnp.zeros((), dtype=source.row_norm.dtype),
+                valid,
+            )
+        case _OrthogonalConstraintFrame(), _OrthogonalConstraintFrame():
+            return (
+                source.pivot_norms,
+                jnp.minimum(source.rank, target.rank),
+                source.condition_estimate,
+                source.rank_cutoff,
+                source.valid & target.valid,
+            )
+        case _:
+            raise TypeError(
+                "solve_aggregate.charts must use matching kinds; got incompatible charts"
+            )
+
+
+def _empty_aggregate_result(
+    operator: AbstractLinearOperator, policy: LinearSolvePolicy, count: int, /
+) -> LinearSolveResult:
+    dtype = coordinate_dtype(operator.source)
+    return LinearSolveResult(
+        jnp.empty((0,), dtype=dtype),
+        jnp.asarray(int(LinearSolveStatus.SUCCESS), dtype=jnp.int32),
+        LinearSolveDiagnostics(
+            residual_norm=jnp.zeros((), dtype=dtype),
+            relative_residual=0.0,
+            rank=0,
+            nullity=0,
+            converged=True,
+        ),
+        LinearSolveProvenance(
+            backend="constraint-elimination",
+            method="exact-aggregate-elimination",
+            plan_id=f"{operator.operator_id}:full-aggregate-bank-{count}",
+            problem_id=f"{operator.operator_id}:empty-reduced-system",
+            reason="all equations eliminated; no reduced native solve dispatched",
+            prepared=False,
+        ),
+        differentiation=policy.differentiation,
+    )
+
+
+def _aggregate_setup_refusal(
+    problem: LinearSystem,
+    rhs: Array,
+    policy: LinearSolvePolicy,
+    count: int,
+    required: int,
+    /,
+) -> AggregateLinearSolveResult:
+    available = policy.resources.workspace_bytes
+    if policy.failure.mode == "error":
+        raise ValueError(
+            "solve_aggregate.resources.workspace_bytes must cover aggregate-frame setup; "
+            f"got required={required}, available={available}"
+        )
+    status = jnp.asarray(int(LinearSolveStatus.RESOURCE_LIMIT_REACHED), dtype=jnp.int32)
+    norm = jnp.linalg.norm(rhs)
+    reduced = LinearSolveResult(
+        jnp.zeros((problem.operator.source.size - count,), dtype=rhs.dtype),
+        status,
+        LinearSolveDiagnostics(
+            residual_norm=norm,
+            relative_residual=jnp.where(norm > 0.0, 1.0, 0.0),
+            finite=jnp.all(jnp.isfinite(rhs)),
+            converged=False,
+        ),
+        LinearSolveProvenance(
+            backend="unselected",
+            method=policy.method.name,
+            plan_id=f"{problem.problem_id}:aggregate-bank-{count}-setup-refusal",
+            problem_id=problem.problem_id,
+            reason=f"aggregate setup not executed; required={required}, available={available}",
+            prepared=False,
+        ),
+        differentiation=policy.differentiation,
+    )
+    value = (
+        guard_derivative_validity(
+            jnp.zeros_like(rhs),
+            jnp.asarray(False),
+            failure=policy.failure.mode,
+            message="An unexecuted aggregate setup has no mathematical derivative.",
+        )
+        if policy.differentiation.mode in ("mathematical", "rhs-only")
+        else jnp.zeros_like(rhs)
+    )
+    return AggregateLinearSolveResult(
+        value=value,
+        status=status,
+        reduced=reduced,
+        full_residual_norm=norm,
+        full_residual_threshold=_aggregate_residual_threshold(
+            policy, rhs, problem.operator.source.size
+        ),
+        aggregate_residual=jnp.full((count,), jnp.nan, dtype=rhs.dtype),
+        aggregate_row_norm=jnp.full((count,), jnp.nan, dtype=rhs.dtype),
+        chart_valid=jnp.asarray(False),
+        aggregate_rank=jnp.asarray(-1, dtype=jnp.int32),
+        aggregate_condition_estimate=jnp.asarray(jnp.nan, dtype=rhs.dtype),
+        aggregate_rank_cutoff=jnp.asarray(jnp.nan, dtype=rhs.dtype),
+        aggregate_setup_performed=jnp.asarray(False),
+        aggregate_count=count,
+        operator_id=problem.operator.operator_id,
+        resource_refusals=(("aggregate-frame workspace", required, available),),
+    )
+
+
+def _aggregate_residual_threshold(
+    policy: LinearSolvePolicy, rhs: Array, dimension: int, /
+) -> Array:
+    return policy.tolerance.absolute + jnp.maximum(
+        policy.tolerance.relative, 10.0 * jnp.finfo(rhs.dtype).eps * dimension
+    ) * jnp.linalg.norm(rhs)
+
+
+def _aggregate_resource_refusal(
+    operator: AbstractLinearOperator,
+    rhs: Array,
+    raw_weights: Array,
+    source_chart: _AggregateConstraint,
+    target_chart: _AggregateConstraint,
+    reduced_rhs: Array,
+    plan: LinearSolvePlan,
+    refusals: tuple[tuple[str, int, int], ...],
+    /,
+) -> AggregateLinearSolveResult:
+    """Record an unexecuted solve and every declared storage deficit."""
+    status = jnp.asarray(int(LinearSolveStatus.RESOURCE_LIMIT_REACHED), dtype=jnp.int32)
+    residual_norm = jnp.linalg.norm(reduced_rhs)
+    reason = "; ".join(
+        f"{name}: required={required}, available={available}"
+        for name, required, available in refusals
+    )
+    reduced = LinearSolveResult(
+        jnp.zeros_like(reduced_rhs),
+        status,
+        LinearSolveDiagnostics(
+            residual_norm=residual_norm,
+            relative_residual=jnp.where(residual_norm > 0.0, 1.0, 0.0),
+            finite=jnp.all(jnp.isfinite(reduced_rhs)),
+            converged=False,
+        ),
+        LinearSolveProvenance(
+            backend=plan.backend,
+            method=plan.method,
+            plan_id=plan.plan_id,
+            problem_id=plan.problem_id,
+            reason=f"not executed; resource refusal; {reason}",
+            prepared=False,
+            rejected=plan.rejected,
+        ),
+        differentiation=plan.policy.differentiation,
+    )
+    value = jnp.zeros_like(rhs)
+    if plan.policy.differentiation.mode in ("mathematical", "rhs-only"):
+        value = guard_derivative_validity(
+            value,
+            jnp.asarray(False),
+            failure=plan.policy.failure.mode,
+            message="An unexecuted resource-refused solve has no mathematical derivative.",
+        )
+    count = raw_weights.shape[1]
+    row_norms, rank, condition, cutoff, valid = _aggregate_chart_evidence(
+        source_chart, target_chart
+    )
+    contraction = -(raw_weights.T @ rhs)
+    return AggregateLinearSolveResult(
+        value=value,
+        status=status,
+        reduced=reduced,
+        full_residual_norm=jnp.linalg.norm(rhs),
+        full_residual_threshold=_aggregate_residual_threshold(
+            plan.policy, rhs, operator.source.size
+        ),
+        aggregate_residual=contraction[0] if count == 1 else contraction,
+        aggregate_row_norm=row_norms,
+        chart_valid=valid,
+        aggregate_rank=rank,
+        aggregate_condition_estimate=condition,
+        aggregate_rank_cutoff=cutoff,
+        aggregate_setup_performed=jnp.asarray(True),
+        aggregate_count=count,
+        operator_id=operator.operator_id,
+        resource_refusals=refusals,
+    )
+
+
+def _aggregate_iteration_policy(
+    policy: LinearSolvePolicy, dimension: int, /
+) -> LinearSolvePolicy:
+    """Retain the unreduced problem's default work limits without changing tolerances."""
+    tolerance, derivative = policy.tolerance, policy.derivative_solve
+    return eqx.tree_at(
+        lambda value: (value.tolerance, value.derivative_solve),
+        policy,
+        (
+            TolerancePolicy(
+                relative=tolerance.relative,
+                absolute=tolerance.absolute,
+                max_steps=tolerance.max_steps or dimension,
+            ),
+            LinearDerivativeSolvePolicy(
+                relative_tolerance=derivative.relative_tolerance,
+                absolute_tolerance=derivative.absolute_tolerance,
+                maximum_steps=derivative.maximum_steps or dimension,
+                nullspace_tolerance=derivative.nullspace_tolerance,
+                stability_lower_bound=derivative.stability_lower_bound,
+                require_nullspace=derivative.require_nullspace,
+                route=derivative.route,
+            ),
+        ),
+    )
+
+
+def _implicit_aggregate_value(
+    operator: AbstractLinearOperator,
+    rhs: Array,
+    initial: Array,
+    source_chart: _AggregateConstraint,
+    target_chart: _AggregateConstraint,
+    weights: Array,
+    policy: LinearSolvePolicy,
+    prepared: PreparedLinearSolve | None,
+    /,
+) -> Array:
+    """Differentiate the full equation using its block-eliminated inverse."""
+    plan = None if prepared is None else prepared.plan
+    if policy.differentiation.mode == "rhs-only":
+        operator = _stop_arrays(operator)
+    source_chart, target_chart, weights = _stop_arrays(
+        (source_chart, target_chart, weights)
+    )
+    preconditioner = (
+        None
+        if prepared is None
+        else _derivative_preconditioner(prepared, _checked_linear_system(prepared))
+    )
+    transpose_preconditioner = (
+        _TransposePreconditioner(preconditioner)
+        if isinstance(preconditioner, _AdjointApplicablePreconditioner)
+        else preconditioner
+    )
+
+    def residual(value: Array) -> Array:
+        return operator.mv(value) - rhs
+
+    def solve_tangent(action: Callable[[Array], Array], right: Array) -> Array:
+        return _aggregate_derivative_solve(
+            action,
+            right,
+            source_chart,
+            target_chart,
+            weights,
+            policy,
+            plan,
+            preconditioner,
+            transposed=False,
+        )
+
+    def solve_cotangent(action: Callable[[Array], Array], right: Array) -> Array:
+        return _aggregate_derivative_solve(
+            action,
+            right,
+            source_chart,
+            target_chart,
+            weights,
+            policy,
+            plan,
+            transpose_preconditioner,
+            transposed=True,
+        )
+
+    def tangent_solve(action: Callable[[Array], Array], right: Array) -> Array:
+        return jax.lax.custom_linear_solve(
+            action, right, solve=solve_tangent, transpose_solve=solve_cotangent
+        )
+
+    return custom_root(
+        residual,
+        jax.lax.stop_gradient(initial),
+        solve=lambda _, value: value,
+        tangent_solve=tangent_solve,
+    )
+
+
+def _aggregate_derivative_solve(
+    action: Callable[[Array], Array],
+    rhs: Array,
+    source_chart: _AggregateConstraint,
+    target_chart: _AggregateConstraint,
+    weights: Array,
+    policy: LinearSolvePolicy,
+    plan: LinearSolvePlan | None,
+    preconditioner: AbstractPreconditioner | None,
+    /,
+    *,
+    transposed: bool,
+) -> Array:
+    """Apply the triangular block inverse or its algebraic transpose."""
+    source = source_chart.constraint.prolongation
+    target = target_chart.constraint.prolongation
+    count = weights.shape[1]
+    if source.source.size == 0:
+        value = (
+            weights @ source_chart.transpose_lift(rhs).reshape((count,))
+            if transposed
+            else _aggregate_lift(source_chart, weights.T @ rhs, count)
+        )
+    else:
+        if plan is None:
+            raise RuntimeError(
+                "solve_aggregate.derivative_plan must exist for reduced equations; got missing"
+            )
+        if transposed:
+
+            def reduced_action(value: Array) -> Array:
+                return source.transpose_mv(action(target.mv(value)))
+
+            reduced_rhs = source.transpose_mv(rhs)
+            reduced = _callable_derivative_solve(
+                reduced_action, reduced_rhs, plan, preconditioner
+            )
+            complement = target.mv(reduced)
+            coefficient = source_chart.transpose_lift(rhs - action(complement)).reshape(
+                (count,)
+            )
+            value = complement + weights @ coefficient
+        else:
+            lift = _aggregate_lift(source_chart, weights.T @ rhs, count)
+
+            def reduced_action(value: Array) -> Array:
+                return target.transpose_mv(action(source.mv(value)))
+
+            reduced_rhs = target.transpose_mv(rhs - action(lift))
+            reduced = _callable_derivative_solve(
+                reduced_action, reduced_rhs, plan, preconditioner
+            )
+            value = source.mv(reduced) + lift
+    norm = jnp.linalg.norm(action(value) - rhs)
+    derivative_policy = policy.derivative_solve
+    threshold = (
+        derivative_policy.absolute_tolerance
+        + derivative_policy.relative_tolerance * jnp.linalg.norm(rhs)
+    )
+    finite = jnp.all(jnp.isfinite(value)) & jnp.isfinite(norm)
+    checked = _CallableLinearSolve(
+        value,
+        norm,
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+        finite & (norm <= threshold) & source_chart.valid & target_chart.valid,
+    )
+    return _checked_callable_value(
+        checked,
+        policy.failure.mode,
+        message="Implicit aggregate derivative solve failed its original full residual contract.",
+    )
 
 
 def _solve_prepared(
@@ -1322,7 +1947,7 @@ def _certified_minimum_norm_spectrum(
             jnp.where(matched, certificate.smallest_retained_singular_value, jnp.nan),
         )
     return jnp.asarray(-1, dtype=jnp.int32), jnp.asarray(
-        jnp.nan, dtype=jnp.finfo(_coordinate_dtype(operator.source)).dtype
+        jnp.nan, dtype=jnp.finfo(coordinate_dtype(operator.source)).dtype
     )
 
 
@@ -2617,9 +3242,9 @@ def _implicit_minimum_norm_value(
     def solve_cotangent(_: Callable[[Array], Array], right: Array) -> Array:
         # Coordinate transpose of `solve_tangent`: G^T c = conj(G^H conj(c)), with
         # G^H (c_x, c_y) = (c_x - M A* v, N v),
-        # v = (A*)^+ A^+ (A M^-1 c_x + N^-1 c_y) for source/target pairings M, N,
-        # using (A*)^+ = (A*)^+ A^+ A so that (A*)^+ acts only on A^+ images, as in
-        # the tangent.
+        # v = (A*)^+ (M^-1 c_x + A^+ (N^-1 c_y)) for source/target pairings M, N.
+        # Keep the input cotangent: projecting it through A first would bypass
+        # the independent evidence required for an out-of-range adjoint action.
         conjugated = jnp.conj(right)
         primal, constraint = (
             conjugated[..., :source_size, :],
@@ -2627,15 +3252,14 @@ def _implicit_minimum_norm_value(
         )
         lifted = _pseudoinverse_columns(
             fixed,
-            fixed.mv_block(_inverse_riesz_coordinates(source, primal))
-            + _inverse_riesz_coordinates(target, constraint),
+            _inverse_riesz_coordinates(target, constraint),
             plan,
             spectrum,
             adjoint=False,
         )
         direction = _pseudoinverse_columns(
             fixed,
-            lifted,
+            _inverse_riesz_coordinates(source, primal) + lifted,
             plan,
             spectrum,
             adjoint=True,
@@ -3398,6 +4022,7 @@ __all__ = [
     "refresh",
     "refresh_recycling",
     "solve",
+    "solve_aggregate",
     "solve_adjoint",
     "solve_many",
     "solve_recycled",

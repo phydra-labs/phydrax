@@ -9,113 +9,189 @@ faces. Non-star-visible components are decomposed into convex restricted pieces
 for the existing degree-one VEM/FV consumers; their site/component lineage is
 retained, not confused with a nodal interpolation map. Acceptance is independent
 of this construction and belongs to ``providers._native_polyhedral``.
+
+Native callers pass their request scope. Rational host phases reserve local
+tickets, retain one coordinate view across source/certificate preparation, and
+keep its live cache bytes reserved between native construction phases.
 """
 
 from __future__ import annotations
 
+import fractions as _owner_fractions
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
+from enum import StrEnum
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import assert_never, final, SupportsFloat, SupportsIndex
 
+import equinox as eqx
 import numpy as np
 
-
-if TYPE_CHECKING:
-    from ..discretization._coordinate_enclosure import CoordinateEnclosureBudget
+import phydrax._bvh as _owner_phydrax__bvh
+import phydrax._meshcore as _owner_phydrax__meshcore
+import phydrax.discretization._cell_geometry as _dependency_phydrax_discretization__cell_geometry
+import phydrax.discretization._cell_geometry_validity as _dependency_phydrax_discretization__cell_geometry_validity
+import phydrax.discretization._cell_mesh as _dependency_phydrax_discretization__cell_mesh
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.discretization._exact_power_geometry as _dependency_phydrax_discretization__exact_power_geometry
+import phydrax.discretization._mapped_geometry_measure as mapped_measure_owner
+import phydrax.discretization._periodic_exact as periodic_exact_owner
+import phydrax.discretization._periodic_topology as _dependency_phydrax_discretization__periodic_topology
+import phydrax.geometry._domain_coverage as domain_coverage_owner
+import phydrax.geometry._exact_polyhedral_geometry as _owner_phydrax_geometry__exact_polyhedral_geometry
+import phydrax.geometry._periodic_power_preparation as periodic_power_owner
+import phydrax.geometry._planar_primitives as planar_primitives_owner
+import phydrax.geometry._triangulation as _dependency_phydrax_geometry__triangulation
+import phydrax.linalg._small_batched as _owner_phydrax_linalg__small_batched
+import phydrax.meshing._contracts as _dependency_phydrax_meshing__contracts
+import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
+import phydrax.meshing._host_banks as _dependency_phydrax_meshing__host_banks
+import phydrax.meshing._periodic_constraint as periodic_constraint_owner
+import phydrax.meshing._plc_source as plc_source_owner
+import phydrax.meshing._volume_generation as _dependency_phydrax_meshing__volume_generation
+from phydrax.discretization._periodic_exact import PeriodicIsometryGroup
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import PLC_3D_COUNTERS, PlcRecovery3D, recover_plc_3d
+from .._meshcore import (
+    NativeBatchTicket,
+    NativeExecutionLimits,
+    NativeExecutionScope,
+    PlcRecovery3D,
+    recover_plc_3d,
+)
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer, positive_finite_float, positive_integer
 from ..discretization._cell_complex import PolyhedralConnectivity
-from ..discretization._cell_geometry import CellGeometrySpec
-from ..discretization._cell_geometry_validity import (
-    cell_geometry_id,
-    CellValidityStatus,
-    certify_cell_geometry_validity,
-)
-from ..discretization._cell_mesh import CellMesh
-from ..discretization._exact_power_geometry import (
-    ExactPowerCellGeometryLinearActionSource,
-    ExactPowerCellGeometrySource,
-)
-from ..discretization._periodic_topology import (
-    PeriodicIsometryGroup,
-    PeriodicMeshTopology,
-)
-from ..geometry._mesh_certificates import PiecewiseLinearDomain
-from ..geometry._triangulation import PeriodicPowerPreparation, RestrictedPowerDiagram
-from ..typing import ConvertibleToArray
-from ._controls import PeriodicConstraint
-from ._quad_generation import _family_host_array
-from ._volume_generation import _domain, PiecewiseLinearComplex
+from ..geometry._rational import rational_vector
+from ..typing import checked, ConvertibleToArray, parse
 
 
-@dataclass(frozen=True, slots=True)
-class NativePolyhedralSchedule:
-    """Bounded site/weight refinement, with hard requests never silently relaxed.
+@final
+class NativePolyhedralSchedule(StrictModule, NonTrainableState):
+    """Bound site refinement, weight optimization, and construction resources.
 
-    ``maximum_cell_diameter`` controls the actual restricted cell vertices, not
-    the spacing of the sites. ``target_site_volumes`` sums every disconnected
-    component of a site. Weight updates use the diagonal of the sparse power
-    volume Jacobian, computed from reciprocal faces. Feature sites supplied in
-    ``protected_sites`` are never relocated. Constrained curves additionally
-    force decomposition so that recovery's feature edges remain mesh edges.
+    ``maximum_cell_diameter`` bounds restricted cell vertices.
+    ``target_site_volumes`` sums disconnected components of each site.
+    Protected sites remain fixed during relocation; constrained curves retain
+    recovered feature edges through cell decomposition.
     """
 
-    maximum_vertices: int = 1 << 22
-    maximum_cells: int = 1 << 20
-    maximum_work_units: int = 1 << 26
-    maximum_scratch_bytes: int = 8_000_000_000
-    maximum_refinement_steps: int = 8
-    lloyd_steps: int = 0
-    maximum_cell_diameter: float | None = None
-    target_site_volumes: tuple[float, ...] = ()
-    relative_volume_tolerance: float = 1e-6
-    feature_tolerance: float = 1e-10
-    protected_sites: tuple[int, ...] = ()
-    require_every_site: bool = False
+    maximum_vertices: int = eqx.field(static=True)
+    maximum_cells: int = eqx.field(static=True)
+    maximum_work_units: int = eqx.field(static=True)
+    maximum_scratch_bytes: int = eqx.field(static=True)
+    maximum_refinement_steps: int = eqx.field(static=True)
+    lloyd_steps: int = eqx.field(static=True)
+    maximum_cell_diameter: float | None = eqx.field(static=True)
+    target_site_volumes: tuple[float, ...] = eqx.field(static=True)
+    relative_volume_tolerance: float = eqx.field(static=True)
+    feature_tolerance: float = eqx.field(static=True)
+    protected_sites: tuple[int, ...] = eqx.field(static=True)
+    require_every_site: bool = eqx.field(static=True)
 
-    def __post_init__(self) -> None:
-        for name in (
-            "maximum_vertices",
-            "maximum_cells",
-            "maximum_work_units",
-            "maximum_scratch_bytes",
-        ):
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                raise ValueError(f"{name} must be a positive integer.")
-        for name in ("maximum_refinement_steps", "lloyd_steps"):
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(f"{name} must be a nonnegative integer.")
-        for name in ("relative_volume_tolerance", "feature_tolerance"):
-            value = getattr(self, name)
-            if not math.isfinite(value) or value <= 0:
-                raise ValueError(f"{name} must be finite and positive.")
-        if self.maximum_cell_diameter is not None and (
-            not math.isfinite(self.maximum_cell_diameter)
-            or self.maximum_cell_diameter <= 0
-        ):
-            raise ValueError("maximum_cell_diameter must be finite and positive.")
-        if any(not math.isfinite(x) or x <= 0 for x in self.target_site_volumes):
-            raise ValueError("Target site volumes must be finite and positive.")
-        object.__setattr__(
-            self,
-            "target_site_volumes",
-            tuple(float(value) for value in self.target_site_volumes),
+    def __init__(
+        self,
+        maximum_vertices: int = 1 << 22,
+        maximum_cells: int = 1 << 20,
+        maximum_work_units: int = 1 << 26,
+        maximum_scratch_bytes: int = 8_000_000_000,
+        maximum_refinement_steps: int = 8,
+        lloyd_steps: int = 0,
+        maximum_cell_diameter: float | None = None,
+        target_site_volumes: Sequence[float] = (),
+        relative_volume_tolerance: float = 1e-6,
+        feature_tolerance: float = 1e-10,
+        protected_sites: Sequence[int] = (),
+        require_every_site: bool = False,
+    ) -> None:
+        vertices = positive_integer(maximum_vertices, "maximum_vertices")
+        cells = positive_integer(maximum_cells, "maximum_cells")
+        work_units = positive_integer(maximum_work_units, "maximum_work_units")
+        scratch_bytes = positive_integer(maximum_scratch_bytes, "maximum_scratch_bytes")
+        refinement_steps = nonnegative_integer(
+            maximum_refinement_steps, "maximum_refinement_steps"
         )
-        object.__setattr__(self, "protected_sites", tuple(self.protected_sites))
+        relocation_steps = nonnegative_integer(lloyd_steps, "lloyd_steps")
+        volume_tolerance = positive_finite_float(
+            relative_volume_tolerance,
+            "NativePolyhedralSchedule.relative_volume_tolerance",
+        )
+        distance_tolerance = positive_finite_float(
+            feature_tolerance, "NativePolyhedralSchedule.feature_tolerance"
+        )
+        diameter = (
+            None
+            if maximum_cell_diameter is None
+            else positive_finite_float(
+                maximum_cell_diameter, "NativePolyhedralSchedule.maximum_cell_diameter"
+            )
+        )
+        if any(not math.isfinite(x) or x <= 0 for x in target_site_volumes):
+            raise ValueError(
+                "NativePolyhedralSchedule.target_site_volumes must be finite and positive; "
+                f"got {target_site_volumes!r}"
+            )
+        volumes = tuple(float(value) for value in target_site_volumes)
+        protected = tuple(protected_sites)
+        self.maximum_vertices = vertices
+        self.maximum_cells = cells
+        self.maximum_work_units = work_units
+        self.maximum_scratch_bytes = scratch_bytes
+        self.maximum_refinement_steps = refinement_steps
+        self.lloyd_steps = relocation_steps
+        self.maximum_cell_diameter = diameter
+        self.target_site_volumes = volumes
+        self.relative_volume_tolerance = volume_tolerance
+        self.feature_tolerance = distance_tolerance
+        self.protected_sites = protected
+        self.require_every_site = require_every_site
+
+    @property
+    def schedule_id(self) -> str:
+        """Return the canonical fingerprint of the construction controls."""
+        return canonical_fingerprint(
+            {
+                "maximum_vertices": self.maximum_vertices,
+                "maximum_cells": self.maximum_cells,
+                "maximum_work_units": self.maximum_work_units,
+                "maximum_scratch_bytes": self.maximum_scratch_bytes,
+                "maximum_refinement_steps": self.maximum_refinement_steps,
+                "lloyd_steps": self.lloyd_steps,
+                "maximum_cell_diameter": self.maximum_cell_diameter,
+                "target_site_volumes": self.target_site_volumes,
+                "relative_volume_tolerance": self.relative_volume_tolerance,
+                "feature_tolerance": self.feature_tolerance,
+                "protected_sites": self.protected_sites,
+                "require_every_site": self.require_every_site,
+            }
+        )
+
+    def native_limits(self) -> NativeExecutionLimits:
+        """Return native execution bounds for construction."""
+        return _dependency_phydrax_meshing__contracts.MeshingLimits(
+            maximum_vertices=self.maximum_vertices,
+            maximum_cells=self.maximum_cells,
+            maximum_work_units=self.maximum_work_units,
+            maximum_scratch_bytes=self.maximum_scratch_bytes,
+        ).native_limits()
 
 
 @dataclass(frozen=True, slots=True)
 class PolyhedralConstruction:
-    mesh: CellMesh
-    geometry: CellGeometrySpec
-    domain: PiecewiseLinearDomain
+    """Retain the mesh, source geometry, and construction ancestry.
+
+    Cell and face banks follow mesh entity order. Site volumes sum disconnected
+    components, while component IDs distinguish their connectivity.
+    """
+
+    mesh: _dependency_phydrax_discretization__cell_mesh.CellMesh
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec
+    domain: domain_coverage_owner.PiecewiseLinearDomain
     recovery: PlcRecovery3D
-    diagram: RestrictedPowerDiagram
+    diagram: _dependency_phydrax_geometry__triangulation.RestrictedPowerDiagram
     cell_regions: np.ndarray
     cell_sites: np.ndarray
     face_facets: np.ndarray
@@ -137,46 +213,142 @@ class PolyhedralConstruction:
     maximum_cell_diameter: float
     construction_id: str
     work_units: int
-    periodic_constraints: tuple[PeriodicConstraint, ...] = ()
+    periodic_constraints: tuple[periodic_constraint_owner.PeriodicConstraint, ...] = ()
     seam_fragments: tuple[PeriodicPolyhedralSeamFragment, ...] = ()
     seam_face_pairs: np.ndarray | None = None
     seam_vertex_pairs: np.ndarray | None = None
 
 
-def _polyhedral_periodic_group(
-    constraints: tuple[PeriodicConstraint, ...],
+@checked
+def polyhedral_periodic_group(
+    constraints: tuple[periodic_constraint_owner.PeriodicConstraint, ...],
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> PeriodicIsometryGroup | None:
+    """Return the periodic group defined by authored transforms and tolerances."""
     if not constraints:
         return None
-    if not all(isinstance(value, PeriodicConstraint) for value in constraints):
-        raise TypeError("periodic_constraints must contain PeriodicConstraint values.")
+    if not all(
+        isinstance(value, periodic_constraint_owner.PeriodicConstraint)
+        for value in constraints
+    ):
+        raise TypeError(
+            "polyhedral.periodic_constraints must contain PeriodicConstraint values; "
+            f"got {tuple(type(value).__name__ for value in constraints)!r}"
+        )
     matrices = np.stack(
         [np.asarray(value.transform, dtype=np.float64) for value in constraints]
     )
-    # This is the numerical group's classification bound, not a replacement
-    # for ANY authored constraint. Original individual controls remain retained
-    # and the source preparation/seam proof require exact original actions.
+    # The group's numerical classification bound leaves each authored action
+    # unchanged for source preparation and seam coverage.
     return PeriodicIsometryGroup(
-        matrices, tolerance=max(value.tolerance for value in constraints)
+        matrices, tolerance=max(value.tolerance for value in constraints), budget=budget
     )
 
 
+class PolyhedralGenerationReason(StrEnum):
+    """Closed scientific and resource refusal reasons for polyhedral generation."""
+
+    AMBIGUOUS_FEATURE_ANCESTRY = "ambiguous_feature_ancestry"
+    COINCIDENT_POSITIVE_VOLUME_TARGETS = "coincident_positive_volume_targets"
+    FEATURE_CANDIDATE_BUDGET = "feature_candidate_budget"
+    FEATURE_COVERAGE_UNRESOLVED = "feature_coverage_unresolved"
+    FEATURE_MEASURE_UNREPRESENTABLE = "feature_measure_unrepresentable"
+    FIXED_SITE_DIAMETER_UNRESOLVED = "fixed_site_diameter_unresolved"
+    MISSING_FEATURE_EDGE = "missing_feature_edge"
+    PERIODIC_PIECE_GEOMETRY_UNRESOLVED = "periodic_piece_geometry_unresolved"
+    PERIODIC_SEAM_DEGENERATE_EDGE = "periodic_seam_degenerate_edge"
+    PERIODIC_SEAM_DEGENERATE_TRIANGLE = "periodic_seam_degenerate_triangle"
+    PERIODIC_SEAM_DOUBLE_COVERAGE = "periodic_seam_double_coverage"
+    PERIODIC_SEAM_EDGE_RANK = "periodic_seam_edge_rank"
+    PERIODIC_SEAM_EXACT_COVERAGE = "periodic_seam_exact_coverage"
+    PERIODIC_SEAM_FACET_SCOPE = "periodic_seam_facet_scope"
+    PERIODIC_SEAM_MISSING_FACET = "periodic_seam_missing_facet"
+    PERIODIC_SEAM_ORBIT_CYCLE = "periodic_seam_orbit_cycle"
+    PERIODIC_SEAM_SOURCE_ACTION = "periodic_seam_source_action"
+    PERIODIC_SEAM_SOURCE_BINDING = "periodic_seam_source_binding"
+    PERIODIC_SEAM_SOURCE_CONTAINMENT = "periodic_seam_source_containment"
+    PERIODIC_SEAM_SOURCE_RANK = "periodic_seam_source_rank"
+    PERIODIC_SEAM_TRANSFORM_DIMENSION = "periodic_seam_transform_dimension"
+    PERIODIC_SEAM_WINDING_BUDGET = "periodic_seam_winding_budget"
+    PERIODIC_VERTEX_BUDGET = "periodic_vertex_budget"
+    PERIODIC_VERTEX_IDENTITY_BUDGET = "periodic_vertex_identity_budget"
+    PERIODIC_VOLUME_OPTIMIZATION_UNRESOLVED = "periodic_volume_optimization_unresolved"
+    PIECE_GEOMETRY_UNRESOLVED = "piece_geometry_unresolved"
+    REFINEMENT_UNRESOLVED = "refinement_unresolved"
+    REQUIRED_EMPTY_SITES = "required_empty_sites"
+    SITE_INSERTION_STALLED = "site_insertion_stalled"
+    WEIGHT_JACOBIAN_UNRESOLVED = "weight_jacobian_unresolved"
+    WORK_BUDGET = "work_budget"
+
+    @property
+    def failure_category(self) -> _leaf_phydrax_meshing__failures.MeshingFailureCategory:
+        match self:
+            case (
+                PolyhedralGenerationReason.FEATURE_CANDIDATE_BUDGET
+                | PolyhedralGenerationReason.PERIODIC_SEAM_WINDING_BUDGET
+                | PolyhedralGenerationReason.PERIODIC_VERTEX_BUDGET
+                | PolyhedralGenerationReason.PERIODIC_VERTEX_IDENTITY_BUDGET
+                | PolyhedralGenerationReason.WORK_BUDGET
+            ):
+                return _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED
+            case (
+                PolyhedralGenerationReason.AMBIGUOUS_FEATURE_ANCESTRY
+                | PolyhedralGenerationReason.COINCIDENT_POSITIVE_VOLUME_TARGETS
+                | PolyhedralGenerationReason.FEATURE_COVERAGE_UNRESOLVED
+                | PolyhedralGenerationReason.FEATURE_MEASURE_UNREPRESENTABLE
+                | PolyhedralGenerationReason.FIXED_SITE_DIAMETER_UNRESOLVED
+                | PolyhedralGenerationReason.MISSING_FEATURE_EDGE
+                | PolyhedralGenerationReason.PERIODIC_PIECE_GEOMETRY_UNRESOLVED
+                | PolyhedralGenerationReason.PERIODIC_SEAM_DEGENERATE_EDGE
+                | PolyhedralGenerationReason.PERIODIC_SEAM_DEGENERATE_TRIANGLE
+                | PolyhedralGenerationReason.PERIODIC_SEAM_DOUBLE_COVERAGE
+                | PolyhedralGenerationReason.PERIODIC_SEAM_EDGE_RANK
+                | PolyhedralGenerationReason.PERIODIC_SEAM_EXACT_COVERAGE
+                | PolyhedralGenerationReason.PERIODIC_SEAM_FACET_SCOPE
+                | PolyhedralGenerationReason.PERIODIC_SEAM_MISSING_FACET
+                | PolyhedralGenerationReason.PERIODIC_SEAM_ORBIT_CYCLE
+                | PolyhedralGenerationReason.PERIODIC_SEAM_SOURCE_ACTION
+                | PolyhedralGenerationReason.PERIODIC_SEAM_SOURCE_BINDING
+                | PolyhedralGenerationReason.PERIODIC_SEAM_SOURCE_CONTAINMENT
+                | PolyhedralGenerationReason.PERIODIC_SEAM_SOURCE_RANK
+                | PolyhedralGenerationReason.PERIODIC_SEAM_TRANSFORM_DIMENSION
+                | PolyhedralGenerationReason.PERIODIC_VOLUME_OPTIMIZATION_UNRESOLVED
+                | PolyhedralGenerationReason.PIECE_GEOMETRY_UNRESOLVED
+                | PolyhedralGenerationReason.REFINEMENT_UNRESOLVED
+                | PolyhedralGenerationReason.REQUIRED_EMPTY_SITES
+                | PolyhedralGenerationReason.SITE_INSERTION_STALLED
+                | PolyhedralGenerationReason.WEIGHT_JACOBIAN_UNRESOLVED
+            ):
+                return _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED
+            case _:
+                assert_never(self)
+
+
 class PolyhedralGenerationError(RuntimeError):
-    """A bounded request remains unmet; actual entities and quantities survive."""
+    """Report unmet construction bounds with entity and quantity evidence."""
 
     def __init__(
-        self, reason: str, *, entities: tuple[int, ...] = (), achieved: object = None
+        self,
+        reason: PolyhedralGenerationReason,
+        *,
+        entities: tuple[int, ...] = (),
+        achieved: int | float | np.ndarray | dict[str, float] | None = None,
     ) -> None:
-        self.reason, self.entities, self.achieved = reason, entities, achieved
+        self.reason = parse(
+            reason, PolyhedralGenerationReason, "PolyhedralGenerationError.reason"
+        )
+        self.entities, self.achieved = entities, achieved
         super().__init__(
-            f"Native polyhedral generation: {reason}; entities={entities}; achieved={achieved}"
+            "polyhedral.generation must satisfy the construction request; "
+            f"got reason={self.reason}, entities={entities}, achieved={achieved}"
         )
 
 
 @dataclass(frozen=True, slots=True)
 class PeriodicPolyhedralSeamFragment:
-    """One exact common-refinement polygon with both original parent actions.
+    """Retain a common-refinement polygon and both source parent actions.
 
     ``vertices`` are in the target image. Source coefficients act on the
     source triangle BEFORE the authored transform; target coefficients act
@@ -200,13 +372,12 @@ def _seam_triangle_actions(
     triangle: tuple[tuple[Fraction, ...], ...],
     vertices: tuple[tuple[Fraction, ...], ...],
     axes: tuple[int, ...],
-    ledger: CoordinateEnclosureBudget,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[tuple[Fraction, ...], ...]:
-    from ..geometry._planar_coverage import _reserve_fraction_work
-    from ..linalg._small_batched import prepare_exact_small_linear_actions
 
-    ledger.reserve(0, 512 + 48 * len(vertices))
+    budget.reserve(0, 512 + 48 * len(vertices))
     matrix = (
         (Fraction(1),) * 3,
         tuple(point[axes[0]] for point in triangle),
@@ -217,22 +388,32 @@ def _seam_triangle_actions(
         tuple(point[axes[0]] for point in vertices),
         tuple(point[axes[1]] for point in vertices),
     )
-    solved = prepare_exact_small_linear_actions(matrix, right, coordinate_budget=ledger)
+    solved = _owner_phydrax_linalg__small_batched.prepare_exact_small_linear_actions(
+        matrix, right, budget=budget
+    )
     if solved.actions is None:
-        raise PolyhedralGenerationError("periodic_seam_source_rank")
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.PERIODIC_SEAM_SOURCE_RANK
+        )
     actions = tuple(
         tuple(row[column] for row in solved.actions) for column in range(len(vertices))
     )
-    _reserve_fraction_work((*triangle, *vertices), 40 * len(vertices), len(vertices), 6)
+    planar_primitives_owner.reserve_fraction_work(
+        (*triangle, *vertices), 40 * len(vertices), len(vertices), 6, budget=budget
+    )
     for coefficients, point in zip(actions, vertices, strict=True):
         if any(value < 0 for value in coefficients) or sum(coefficients) != 1:
-            raise PolyhedralGenerationError("periodic_seam_source_containment")
+            raise PolyhedralGenerationError(
+                PolyhedralGenerationReason.PERIODIC_SEAM_SOURCE_CONTAINMENT
+            )
         if any(
             sum(coefficients[index] * triangle[index][axis] for index in range(3))
             != point[axis]
             for axis in range(3)
         ):
-            raise PolyhedralGenerationError("periodic_seam_source_action")
+            raise PolyhedralGenerationError(
+                PolyhedralGenerationReason.PERIODIC_SEAM_SOURCE_ACTION
+            )
     return actions
 
 
@@ -254,30 +435,31 @@ def _seam_parent_triangles(
     offsets: np.ndarray,
     rows: np.ndarray,
     matrix: tuple[tuple[Fraction, ...], ...] | None,
-    ledger: CoordinateEnclosureBudget,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[_PeriodicSeamTriangle, ...]:
-    from ..geometry._exact_polyhedral_geometry import (
-        triangulate_loop,
-        triangulation_charge,
-    )
-    from ..geometry._planar_coverage import (
-        _reserve_fraction_work,
-        plane_key,
-        project,
-        signed_measure,
-    )
 
     result = []
     for face in faces:
         a, b = offsets[face : face + 2]
         loop = tuple(map(int, rows[a:b]))
-        work, storage = triangulation_charge(point_array, loop)
-        ledger.reserve(work, storage)
-        for triangle in triangulate_loop(point_array, loop):
+        work, storage = (
+            _owner_phydrax_geometry__exact_polyhedral_geometry.triangulation_charge(
+                point_array, loop, budget=budget
+            )
+        )
+        budget.reserve(work, storage)
+        for (
+            triangle
+        ) in _owner_phydrax_geometry__exact_polyhedral_geometry.triangulate_loop(
+            point_array, loop, budget=budget
+        ):
             points = tuple(coordinates[index] for index in triangle)
             if matrix is not None:
-                _reserve_fraction_work(points, 36, 9, 8)
+                planar_primitives_owner.reserve_fraction_work(
+                    points, 36, 9, 8, budget=budget
+                )
                 points = tuple(
                     tuple(
                         sum(matrix[axis][column] * point[column] for column in range(3))
@@ -286,13 +468,14 @@ def _seam_parent_triangles(
                     )
                     for point in points
                 )
-            key = plane_key(points)
+            key = planar_primitives_owner.plane_key(points, budget=budget)
             if key is None:
                 raise PolyhedralGenerationError(
-                    "periodic_seam_degenerate_triangle", entities=(int(face),)
+                    PolyhedralGenerationReason.PERIODIC_SEAM_DEGENERATE_TRIANGLE,
+                    entities=(int(face),),
                 )
-            projected = project(points, key[1])
-            ledger.reserve(1, 512)
+            projected = planar_primitives_owner.project(points, key[1], budget=budget)
+            budget.reserve(1, 512)
             result.append(
                 _PeriodicSeamTriangle(
                     int(face),
@@ -301,7 +484,7 @@ def _seam_parent_triangles(
                     key[0],
                     key[1],
                     projected,
-                    abs(signed_measure(projected)),
+                    abs(planar_primitives_owner.signed_measure(projected, budget=budget)),
                 )
             )
     return tuple(result)
@@ -311,34 +494,36 @@ def _seam_pair_fragment(
     source: _PeriodicSeamTriangle,
     target: _PeriodicSeamTriangle,
     constraint_id: str,
-    ledger: CoordinateEnclosureBudget,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> PeriodicPolyhedralSeamFragment | None:
-    from ..geometry._planar_coverage import (
-        _reserve_fraction_work,
-        intersection_polygon,
-        signed_measure,
-    )
 
-    ledger.reserve(1)
+    budget.reserve(1)
     if source.plane != target.plane:
         return None
-    raw_polygon = intersection_polygon(target.projected, source.projected)
-    # Compact only EXACT duplicate constructed intersections, never source
-    # coordinates or tolerance-near vertices. Keep the oriented clipping order.
-    ledger.reserve(len(raw_polygon), 256 + 16 * len(raw_polygon))
+    raw_polygon = planar_primitives_owner.intersection_polygon(
+        target.projected, source.projected, budget=budget
+    )
+    # Compact equal constructed intersections while retaining distinct source
+    # coordinates and oriented clipping order.
+    budget.reserve(len(raw_polygon), 256 + 16 * len(raw_polygon))
     polygon = tuple(
         point
         for index, point in enumerate(raw_polygon)
         if point != raw_polygon[index - 1]
     )
-    measure = abs(signed_measure(polygon))
+    measure = abs(planar_primitives_owner.signed_measure(polygon, budget=budget))
     if not measure:
         return None
     axes, plane = target.axes, target.plane
     missing_axis = next(axis for axis in range(3) if axis not in axes)
-    _reserve_fraction_work(
-        (*source.points, *target.points, *polygon), 6 * len(polygon), 3 * len(polygon), 12
+    planar_primitives_owner.reserve_fraction_work(
+        (*source.points, *target.points, *polygon),
+        6 * len(polygon),
+        3 * len(polygon),
+        12,
+        budget=budget,
     )
     vertices = []
     for point in polygon:
@@ -350,11 +535,13 @@ def _seam_pair_fragment(
         )
         vertices.append(tuple(row))
     bank = tuple(vertices)
-    source_actions = _seam_triangle_actions(source.points, bank, axes, ledger)
-    target_actions = _seam_triangle_actions(target.points, bank, axes, ledger)
+    source_actions = _seam_triangle_actions(source.points, bank, axes, budget=budget)
+    target_actions = _seam_triangle_actions(target.points, bank, axes, budget=budget)
     orientation = (
         1
-        if signed_measure(source.projected) * signed_measure(target.projected) > 0
+        if planar_primitives_owner.signed_measure(source.projected, budget=budget)
+        * planar_primitives_owner.signed_measure(target.projected, budget=budget)
+        > 0
         else -1
     )
     fragment = PeriodicPolyhedralSeamFragment(
@@ -370,7 +557,7 @@ def _seam_pair_fragment(
         axes,
         orientation,
     )
-    ledger.retain_basis(
+    budget.retain_basis(
         (
             fragment,
             constraint_id,
@@ -393,34 +580,37 @@ def _seam_group_fragments(
     source: tuple[_PeriodicSeamTriangle, ...],
     target: tuple[_PeriodicSeamTriangle, ...],
     constraint_id: str,
-    ledger: CoordinateEnclosureBudget,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[PeriodicPolyhedralSeamFragment, ...]:
-    from ..geometry._planar_coverage import _reserve_fraction_work, intersection
 
     for triangles in (source, target):
         for index, first in enumerate(triangles):
             for second_index in range(index + 1, len(triangles)):
                 second = triangles[second_index]
-                ledger.reserve(1)
+                budget.reserve(1)
                 if (
                     first.plane == second.plane
-                    and intersection(first.projected, second.projected) > 0
+                    and planar_primitives_owner.intersection(
+                        first.projected, second.projected, budget=budget
+                    )
+                    > 0
                 ):
                     raise PolyhedralGenerationError(
-                        "periodic_seam_double_coverage",
+                        PolyhedralGenerationReason.PERIODIC_SEAM_DOUBLE_COVERAGE,
                         entities=(first.face, second.face),
                     )
-    ledger.reserve(0, 256 + 16 * (len(source) + len(target)))
+    budget.reserve(0, 256 + 16 * (len(source) + len(target)))
     covered_source = [Fraction(0) for _ in source]
     covered_target = [Fraction(0) for _ in target]
     result = []
     for source_index, first in enumerate(source):
         for target_index, second in enumerate(target):
-            fragment = _seam_pair_fragment(first, second, constraint_id, ledger)
+            fragment = _seam_pair_fragment(first, second, constraint_id, budget=budget)
             if fragment is not None:
-                ledger.reserve(1, 16)
-                _reserve_fraction_work(
+                budget.reserve(1, 16)
+                planar_primitives_owner.reserve_fraction_work(
                     (
                         (
                             covered_source[source_index],
@@ -431,6 +621,7 @@ def _seam_group_fragments(
                     2,
                     2,
                     2,
+                    budget=budget,
                 )
                 result.append(fragment)
                 covered_source[source_index] += fragment.projected_measure
@@ -442,56 +633,63 @@ def _seam_group_fragments(
             if triangle.measure != measure
         )
         if bad:
-            raise PolyhedralGenerationError("periodic_seam_exact_coverage", entities=bad)
-    ledger.reserve(0, 256 + 8 * len(result))
+            raise PolyhedralGenerationError(
+                PolyhedralGenerationReason.PERIODIC_SEAM_EXACT_COVERAGE, entities=bad
+            )
+    budget.reserve(0, 256 + 8 * len(result))
     return tuple(result)
 
 
+@checked
 def prepare_periodic_polyhedral_seam_fragments(
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
+    mesh: _dependency_phydrax_discretization__cell_mesh.CellMesh,
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
     face_facets: np.ndarray,
-    constraints: Sequence[PeriodicConstraint],
+    constraints: Sequence[periodic_constraint_owner.PeriodicConstraint],
     /,
     *,
     maximum_work: int,
     maximum_scratch_bytes: int,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[PeriodicPolyhedralSeamFragment, ...]:
-    """Exact reciprocal seam common refinement of the actual source geometry.
+    """Return reciprocal seam common refinement of the source geometry.
 
-    Scientific facet scopes, not coordinate proximity, select parent faces.
-    Canonical source triangulation and clipping handle unequal subdivisions
-    and concave parent loops. Every selected triangle must be covered exactly
-    once on BOTH sides; an authored tolerance is never source normalization.
+    Scientific facet scopes select parent faces. Source triangulation and
+    clipping handle unequal subdivisions and concave parent loops. Every
+    selected triangle must have single coverage on both sides.
     """
-    from ..discretization._coordinate_enclosure import (
-        coordinate_enclosure_budget,
-        prepared_coordinate_source_bank,
-    )
 
-    c = _polyhedral_connectivity(mesh)
+    c = require_polyhedral_connectivity(mesh)
     facets = np.asarray(face_facets)
     if facets.shape != (c.face_count,) or not np.issubdtype(facets.dtype, np.integer):
         raise ValueError(
-            "face_facets must name every published face's scientific source facet."
+            "polyhedral.face_facets must name every face's source facet; "
+            f"got shape={facets.shape}, dtype={facets.dtype}, faces={c.face_count}"
         )
     values = tuple(constraints)
-    if not all(isinstance(value, PeriodicConstraint) for value in values):
-        raise TypeError("constraints must contain PeriodicConstraint values.")
+    if not all(
+        isinstance(value, periodic_constraint_owner.PeriodicConstraint)
+        for value in values
+    ):
+        raise TypeError(
+            "polyhedral.seam.constraints must contain PeriodicConstraint values; "
+            f"got {tuple(type(value).__name__ for value in values)!r}"
+        )
     offsets, rows = np.asarray(c.face_vertex_offsets), np.asarray(c.face_vertex_values)
-    ledger = coordinate_enclosure_budget(maximum_work, maximum_scratch_bytes)
     fragments: list[PeriodicPolyhedralSeamFragment] = []
-    with ledger.activate(), ledger.bound_stage(maximum_work, maximum_scratch_bytes):
-        coordinates = prepared_coordinate_source_bank(geometry)
-        geometry._resolve(mesh, exact_source_prepared=True)
-        ledger.reserve(0, 256 + 24 * len(coordinates))
+    with budget.bound_stage(maximum_work, maximum_scratch_bytes):
+        coordinates = geometry.rational_source_coordinates(budget=budget)
+        geometry.resolve(mesh, exact_source_prepared=True, budget=budget)
+        budget.reserve(0, 256 + 24 * len(coordinates))
         point_array = np.asarray(coordinates, dtype=object)
         for constraint in values:
             if (
                 constraint.source_scope.entity_dimension != 2
                 or constraint.target_scope.entity_dimension != 2
             ):
-                raise PolyhedralGenerationError("periodic_seam_facet_scope")
+                raise PolyhedralGenerationError(
+                    PolyhedralGenerationReason.PERIODIC_SEAM_FACET_SCOPE
+                )
             source_facets = tuple(
                 map(int, np.asarray(constraint.source_scope.entity_ids))
             )
@@ -510,33 +708,46 @@ def prepare_periodic_polyhedral_seam_fragments(
                     )
                 )
             matrix = tuple(
-                tuple(Fraction(float(value)) for value in row)
-                for row in np.asarray(constraint.transform)
+                rational_vector(row) for row in np.asarray(constraint.transform)
             )
             if len(matrix) != 4:
-                raise PolyhedralGenerationError("periodic_seam_transform_dimension")
+                raise PolyhedralGenerationError(
+                    PolyhedralGenerationReason.PERIODIC_SEAM_TRANSFORM_DIMENSION
+                )
             for source_group, target_group in groups:
                 source_faces = np.flatnonzero(np.isin(facets, source_group))
                 target_faces = np.flatnonzero(np.isin(facets, target_group))
                 if not source_faces.size or not target_faces.size:
                     raise PolyhedralGenerationError(
-                        "periodic_seam_missing_facet",
+                        PolyhedralGenerationReason.PERIODIC_SEAM_MISSING_FACET,
                         entities=(*source_group, *target_group),
                     )
                 source = _seam_parent_triangles(
-                    coordinates, point_array, source_faces, offsets, rows, matrix, ledger
+                    coordinates,
+                    point_array,
+                    source_faces,
+                    offsets,
+                    rows,
+                    matrix,
+                    budget=budget,
                 )
                 target = _seam_parent_triangles(
-                    coordinates, point_array, target_faces, offsets, rows, None, ledger
+                    coordinates,
+                    point_array,
+                    target_faces,
+                    offsets,
+                    rows,
+                    None,
+                    budget=budget,
                 )
                 group = _seam_group_fragments(
-                    source, target, constraint.constraint_id, ledger
+                    source, target, constraint.constraint_id, budget=budget
                 )
-                ledger.reserve(len(group), 256 + 16 * len(group))
+                budget.reserve(len(group), 256 + 16 * len(group))
                 fragments.extend(group)
-        ledger.reserve(0, 256 + 8 * len(fragments))
+        budget.reserve(0, 256 + 8 * len(fragments))
         result = tuple(fragments)
-        ledger.retain_basis((result,))
+        budget.retain_basis((result,))
     return result
 
 
@@ -553,25 +764,26 @@ class _PeriodicSeamBank:
 
 
 def _periodic_seam_bank(
-    source: ExactPowerCellGeometrySource,
-    diagram: RestrictedPowerDiagram,
+    source: _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometrySource,
+    diagram: _dependency_phydrax_geometry__triangulation.RestrictedPowerDiagram,
     fragments: tuple[PeriodicPolyhedralSeamFragment, ...],
-    constraints: tuple[PeriodicConstraint, ...],
+    constraints: tuple[periodic_constraint_owner.PeriodicConstraint, ...],
     maximum_vertices: int,
-    ledger: CoordinateEnclosureBudget,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> _PeriodicSeamBank:
-    from ..geometry._planar_coverage import _reserve_fraction_work
 
     preparation = diagram.periodic_preparation
     if preparation is None:
         raise ValueError(
-            "Periodic seam assembly requires its original power preparation."
+            "polyhedral.diagram.periodic_preparation must be retained for seam assembly; got None"
         )
-    prepared = source.prepare()
+    prepared = source.prepare(budget=budget)
     points: list[tuple[Fraction, ...]] = list(prepared.vertices)
     rank = len(preparation.orders)
-    ledger.reserve(len(points), 512 + 256 * len(points))
+    budget.reserve(len(points), 512 + 256 * len(points))
     parents = [(index, -1, -1) for index in range(len(points))]
     coefficients: list[tuple[Fraction, ...]] = [
         (Fraction(1), Fraction(0), Fraction(0))
@@ -614,9 +826,10 @@ def _periodic_seam_bank(
             return lookup[point]
         if len(points) >= maximum_vertices:
             raise PolyhedralGenerationError(
-                "periodic_vertex_budget", achieved=len(points) + 1
+                PolyhedralGenerationReason.PERIODIC_VERTEX_BUDGET,
+                achieved=len(points) + 1,
             )
-        ledger.reserve(1, 512)
+        budget.reserve(1, 512)
         index = len(points)
         points.append(point)
         parents.append(row)
@@ -630,7 +843,7 @@ def _periodic_seam_bank(
         }
         carriers.append(tuple(sorted(support)))
         lookup[point] = index
-        ledger.retain_basis((point, row, weights, exponents, carriers[-1]))
+        budget.retain_basis((point, row, weights, exponents, carriers[-1]))
         return index
 
     for fragment in fragments:
@@ -640,7 +853,8 @@ def _periodic_seam_bank(
             preparation.generators[generator]
         ) != array_tree_fingerprint(np.asarray(constraints[generator].transform)):
             raise ValueError(
-                "Seam constraint actions differ from their original periodic preparation."
+                "polyhedral.seam.transform must match the retained periodic generator; "
+                f"got constraint index={generator}"
             )
         left, right = [], []
         for point, source_weights, target_weights in zip(
@@ -652,7 +866,9 @@ def _periodic_seam_bank(
             triangle = tuple(
                 prepared.vertices[index] for index in fragment.source_triangle
             )
-            _reserve_fraction_work(triangle, 18, 3, 6)
+            planar_primitives_owner.reserve_fraction_work(
+                triangle, 18, 3, 6, budget=budget
+            )
             original = tuple(
                 sum(
                     (
@@ -681,7 +897,7 @@ def _periodic_seam_bank(
             )
             left.append(source_vertex)
             right.append(target_vertex)
-            ledger.reserve(1, 128)
+            budget.reserve(1, 128)
             vertex_pairs.append((source_vertex, target_vertex, generator))
         source_loop = tuple(left if fragment.relative_orientation > 0 else reversed(left))
         target_loop = tuple(right)
@@ -689,17 +905,23 @@ def _periodic_seam_bank(
         parts.setdefault(fragment.target_face, []).append(target_loop)
         paired_loops.append((source_loop, target_loop, generator))
     count = len(points)
-    parent_bank = _family_host_array((count, 3), np.int64)
-    action_bank = _family_host_array((count, rank), np.int64)
-    carrier_bank = _family_host_array(
-        (count, max(4, max(map(len, carriers), default=0))), np.int32
+    parent_bank = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (count, 3), np.int64, scope=scope
+    )
+    action_bank = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (count, rank), np.int64, scope=scope
+    )
+    carrier_bank = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (count, max(4, max(map(len, carriers), default=0))), np.int32, scope=scope
     )
     carrier_bank.fill(-1)
     for index in range(count):
         parent_bank[index] = parents[index]
         action_bank[index] = actions[index]
         carrier_bank[index, : len(carriers[index])] = carriers[index]
-    pairs = _family_host_array((len(vertex_pairs), 3), np.int64)
+    pairs = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (len(vertex_pairs), 3), np.int64, scope=scope
+    )
     for index, pair in enumerate(vertex_pairs):
         pairs[index] = pair
     return _PeriodicSeamBank(
@@ -717,11 +939,10 @@ def _periodic_seam_bank(
 def _seam_segment_subdivision(
     points: tuple[tuple[Fraction, ...], ...],
     loops: Sequence[tuple[int, ...]],
-    ledger: CoordinateEnclosureBudget,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> dict[tuple[int, int], tuple[int, ...]]:
-    from ..geometry._planar_coverage import _reserve_fraction_work
-    from ..linalg._small_batched import prepare_exact_small_linear_actions
 
     edges = {
         tuple(sorted((first, second)))
@@ -731,37 +952,46 @@ def _seam_segment_subdivision(
     result = {}
     for first, second in sorted(edges):
         start, stop = points[first], points[second]
-        _reserve_fraction_work((start, stop), 3, 3, 2)
+        planar_primitives_owner.reserve_fraction_work(
+            (start, stop), 3, 3, 2, budget=budget
+        )
         direction = tuple(b - a for a, b in zip(start, stop, strict=True))
         pivot = next((axis for axis, value in enumerate(direction) if value), None)
         if pivot is None:
             raise PolyhedralGenerationError(
-                "periodic_seam_degenerate_edge", entities=(first, second)
+                PolyhedralGenerationReason.PERIODIC_SEAM_DEGENERATE_EDGE,
+                entities=(first, second),
             )
         interior = []
         for index, point in enumerate(points):
             if index in (first, second):
                 continue
-            with ledger.temporary_scope():
-                _reserve_fraction_work((point, start), 1, 1, 2)
-                solve = prepare_exact_small_linear_actions(
+            with budget.temporary_scope():
+                planar_primitives_owner.reserve_fraction_work(
+                    (point, start), 1, 1, 2, budget=budget
+                )
+                solve = _owner_phydrax_linalg__small_batched.prepare_exact_small_linear_actions(
                     ((direction[pivot],),),
                     ((point[pivot] - start[pivot],),),
-                    coordinate_budget=ledger,
+                    budget=budget,
                 )
                 if solve.actions is None:
-                    raise PolyhedralGenerationError("periodic_seam_edge_rank")
+                    raise PolyhedralGenerationError(
+                        PolyhedralGenerationReason.PERIODIC_SEAM_EDGE_RANK
+                    )
                 parameter = solve.actions[0][0]
-                _reserve_fraction_work((start, direction, point), 9, 3, 4)
+                planar_primitives_owner.reserve_fraction_work(
+                    (start, direction, point), 9, 3, 4, budget=budget
+                )
                 inside = 0 < parameter < 1 and all(
                     start[axis] + parameter * direction[axis] == point[axis]
                     for axis in range(3)
                 )
             if inside:
-                ledger.retain_basis((parameter, index))
-                ledger.reserve(1, 128)
+                budget.retain_basis((parameter, index))
+                budget.reserve(1, 128)
                 interior.append((parameter, index))
-        ledger.reserve(
+        budget.reserve(
             len(interior) * max(1, len(interior).bit_length()), 256 + 16 * len(interior)
         )
         result[(first, second)] = (
@@ -784,20 +1014,21 @@ def _expanded_seam_loop(
     return tuple(result)
 
 
-def _seam_vertex_orbits(
+@checked
+def seam_vertex_orbits(
     points: tuple[tuple[Fraction, ...], ...],
     pairs: np.ndarray,
     identifiers: np.ndarray,
-    preparation: PeriodicPowerPreparation,
-    ledger: CoordinateEnclosureBudget,
+    preparation: periodic_power_owner.PeriodicPowerPreparation,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray]:
-    from ..discretization._periodic_topology import _exact_periodic_element
-    from ..geometry._planar_coverage import _reserve_fraction_work
+    """Return vertex orbit representatives and group-action exponents."""
 
     matrices = tuple(
-        tuple(tuple(Fraction(float(value)) for value in row) for row in matrix)
-        for matrix in preparation.generators
+        tuple(rational_vector(row) for row in matrix) for matrix in preparation.generators
     )
     orders = preparation.orders
     rank = len(orders)
@@ -813,7 +1044,7 @@ def _seam_vertex_orbits(
     def root(vertex: int) -> tuple[int, tuple[int, ...]]:
         total = (0,) * rank
         while parent[vertex] != vertex:
-            ledger.reserve(rank)
+            budget.reserve(rank)
             total = normalized(
                 tuple(a + b for a, b in zip(total, winding[vertex], strict=True))
             )
@@ -832,9 +1063,13 @@ def _seam_vertex_orbits(
             )
         )
         if source_root == target_root:
-            matrix = _exact_periodic_element(matrices, orders, difference)
+            matrix = periodic_exact_owner.exact_periodic_element(
+                matrices, orders, difference, budget=budget
+            )
             point = points[source_root]
-            _reserve_fraction_work((point, *matrix), 36, 3, 8)
+            planar_primitives_owner.reserve_fraction_work(
+                (point, *matrix), 36, 3, 8, budget=budget
+            )
             image = tuple(
                 sum(matrix[axis][column] * point[column] for column in range(3))
                 + matrix[axis][3]
@@ -842,15 +1077,20 @@ def _seam_vertex_orbits(
             )
             if image != point:
                 raise PolyhedralGenerationError(
-                    "periodic_seam_orbit_cycle", entities=(int(source), int(target))
+                    PolyhedralGenerationReason.PERIODIC_SEAM_ORBIT_CYCLE,
+                    entities=(int(source), int(target)),
                 )
         elif identifiers[source_root] < identifiers[target_root]:
             parent[target_root], winding[target_root] = source_root, difference
         else:
             parent[source_root] = target_root
             winding[source_root] = normalized(tuple(-value for value in difference))
-    representatives = _family_host_array((len(points),), np.int64)
-    shifts = _family_host_array((len(points), rank), np.int64)
+    representatives = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (len(points),), np.int64, scope=scope
+    )
+    shifts = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (len(points), rank), np.int64, scope=scope
+    )
     for index in range(len(points)):
         representative, values = root(index)
         if any(
@@ -858,7 +1098,7 @@ def _seam_vertex_orbits(
             for value in values
         ):
             raise PolyhedralGenerationError(
-                "periodic_seam_winding_budget", entities=(index,)
+                PolyhedralGenerationReason.PERIODIC_SEAM_WINDING_BUDGET, entities=(index,)
             )
         representatives[index], shifts[index] = representative, values
     return representatives, shifts
@@ -866,8 +1106,8 @@ def _seam_vertex_orbits(
 
 @dataclass(frozen=True, slots=True)
 class _PeriodicPolyhedralAssembly:
-    mesh: CellMesh
-    geometry: CellGeometrySpec
+    mesh: _dependency_phydrax_discretization__cell_mesh.CellMesh
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec
     parent_faces: np.ndarray
     vertex_carriers: np.ndarray
     face_pairs: np.ndarray
@@ -875,27 +1115,40 @@ class _PeriodicPolyhedralAssembly:
 
 
 def _reconcile_periodic_polyhedral(
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
-    diagram: RestrictedPowerDiagram,
+    mesh: _dependency_phydrax_discretization__cell_mesh.CellMesh,
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
+    diagram: _dependency_phydrax_geometry__triangulation.RestrictedPowerDiagram,
     fragments: tuple[PeriodicPolyhedralSeamFragment, ...],
-    constraints: tuple[PeriodicConstraint, ...],
+    constraints: tuple[periodic_constraint_owner.PeriodicConstraint, ...],
     group: PeriodicIsometryGroup,
     maximum_vertices: int,
-    ledger: CoordinateEnclosureBudget,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> _PeriodicPolyhedralAssembly:
     source = geometry.exact_source
-    if (
-        not isinstance(source, ExactPowerCellGeometrySource)
-        or diagram.periodic_preparation is None
-    ):
-        raise ValueError(
-            "Periodic reconciliation requires its actual original exact power source."
-        )
-    old = _polyhedral_connectivity(mesh)
+    match source:
+        case _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometrySource():
+            if diagram.periodic_preparation is None:
+                raise ValueError(
+                    "polyhedral.geometry.exact_source must retain a power source and periodic preparation; "
+                    "got preparation=None"
+                )
+        case invalid:
+            raise ValueError(
+                "polyhedral.geometry.exact_source must retain a power source and periodic preparation; "
+                f"got source={type(invalid).__name__}"
+            )
+    old = require_polyhedral_connectivity(mesh)
     bank = _periodic_seam_bank(
-        source, diagram, fragments, constraints, maximum_vertices, ledger
+        source,
+        diagram,
+        fragments,
+        constraints,
+        maximum_vertices,
+        scope=scope,
+        budget=budget,
     )
     offsets, vertices = (
         np.asarray(old.face_vertex_offsets),
@@ -906,7 +1159,7 @@ def _reconcile_periodic_polyhedral(
         for face, (a, b) in enumerate(zip(offsets[:-1], offsets[1:], strict=True))
     }
     all_loops = tuple(loop for loops in parts.values() for loop in loops)
-    subdivision = _seam_segment_subdivision(bank.points, all_loops, ledger)
+    subdivision = _seam_segment_subdivision(bank.points, all_loops, budget=budget)
     expanded = {
         face: tuple(_expanded_seam_loop(loop, subdivision) for loop in loops)
         for face, loops in parts.items()
@@ -929,25 +1182,31 @@ def _reconcile_periodic_polyhedral(
             ]
         )
     old_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    identifiers = _family_host_array((len(bank.points),), np.int64)
+    identifiers = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (len(bank.points),), np.int64, scope=scope
+    )
     identifiers[: len(old_ids)] = old_ids
     first = int(np.max(old_ids)) + 1
     if first + len(bank.points) - len(old_ids) > np.iinfo(np.int64).max:
-        raise PolyhedralGenerationError("periodic_vertex_identity_budget")
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.PERIODIC_VERTEX_IDENTITY_BUDGET
+        )
     identifiers[len(old_ids) :] = np.arange(
         first, first + len(bank.points) - len(old_ids), dtype=np.int64
     )
-    linear = ExactPowerCellGeometryLinearActionSource(
+    linear = _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometryLinearActionSource(
         source,
         bank.parents,
         bank.coefficients,
         bank.actions,
         periodic_preparation=diagram.periodic_preparation,
     )
-    prepared = linear.prepare()
+    prepared = linear.prepare(budget=budget)
     if prepared.vertices != bank.points:
-        raise PolyhedralGenerationError("periodic_seam_source_binding")
-    lifted = CellMesh.from_polyhedra(
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.PERIODIC_SEAM_SOURCE_BINDING
+        )
+    lifted = _dependency_phydrax_discretization__cell_mesh.CellMesh.from_polyhedra(
         prepared.rounded_vertices,
         cells,
         block_name="restricted-power",
@@ -955,23 +1214,41 @@ def _reconcile_periodic_polyhedral(
         vertex_global_ids=identifiers,
         cell_global_ids=np.asarray(old.cell_global_ids),
     )
-    lifted_geometry = CellGeometrySpec.power(lifted, linear)
-    representatives, shifts = _seam_vertex_orbits(
-        bank.points, bank.vertex_pairs, identifiers, diagram.periodic_preparation, ledger
+    lifted_geometry = (
+        _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec.power(
+            lifted, linear, budget=budget
+        )
     )
-    topology = PeriodicMeshTopology(
-        lifted, group, representatives, shifts, actual_geometry=lifted_geometry
+    representatives, shifts = seam_vertex_orbits(
+        bank.points,
+        bank.vertex_pairs,
+        identifiers,
+        diagram.periodic_preparation,
+        scope=scope,
+        budget=budget,
     )
-    bound = CellMesh(
+    topology = _dependency_phydrax_discretization__periodic_topology.PeriodicMeshTopology(
+        lifted,
+        group,
+        representatives,
+        shifts,
+        actual_geometry=lifted_geometry,
+        budget=budget,
+    )
+    bound = _dependency_phydrax_discretization__cell_mesh.CellMesh(
         lifted.coordinates,
         lifted.blocks,
         vertex_global_ids=lifted.vertex_global_ids,
-        polyhedral_connectivity=_polyhedral_connectivity(lifted),
+        polyhedral_connectivity=require_polyhedral_connectivity(lifted),
         periodic_topology=topology,
         numeric_version=lifted.numeric_version,
     )
-    bound_geometry = CellGeometrySpec.power(bound, linear)
-    connectivity = _polyhedral_connectivity(bound)
+    bound_geometry = (
+        _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec.power(
+            bound, linear, budget=budget
+        )
+    )
+    connectivity = require_polyhedral_connectivity(bound)
     new_offsets, new_vertices = (
         np.asarray(connectivity.face_vertex_offsets),
         np.asarray(connectivity.face_vertex_values),
@@ -980,10 +1257,14 @@ def _reconcile_periodic_polyhedral(
         tuple(sorted(map(int, new_vertices[a:b]))): face
         for face, (a, b) in enumerate(zip(new_offsets[:-1], new_offsets[1:], strict=True))
     }
-    parent_faces = _family_host_array((connectivity.face_count,), np.int64)
+    parent_faces = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (connectivity.face_count,), np.int64, scope=scope
+    )
     for key, face in lookup.items():
         parent_faces[face] = origins[key]
-    face_pairs = _family_host_array((len(bank.paired_loops), 3), np.int64)
+    face_pairs = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (len(bank.paired_loops), 3), np.int64, scope=scope
+    )
     for index, (left, right, generator) in enumerate(bank.paired_loops):
         face_pairs[index] = (
             lookup[tuple(sorted(_expanded_seam_loop(left, subdivision)))],
@@ -1001,11 +1282,19 @@ def _freeze(value: ConvertibleToArray, /) -> np.ndarray:
     return result
 
 
-def _polyhedral_connectivity(mesh: CellMesh, /) -> PolyhedralConnectivity:
-    connectivity = mesh.connectivity
-    if not isinstance(connectivity, PolyhedralConnectivity):
-        raise TypeError("This route requires canonical packed polyhedral connectivity.")
-    return connectivity
+@checked
+def require_polyhedral_connectivity(
+    mesh: _dependency_phydrax_discretization__cell_mesh.CellMesh, /
+) -> PolyhedralConnectivity:
+    """Return the mesh's packed polyhedral connectivity."""
+    match mesh.connectivity:
+        case PolyhedralConnectivity() as connectivity:
+            return connectivity
+        case invalid:
+            raise TypeError(
+                "polyhedral.mesh.connectivity must be PolyhedralConnectivity; "
+                f"got {type(invalid).__name__}"
+            )
 
 
 def _tet_facets(recovery: PlcRecovery3D) -> np.ndarray:
@@ -1027,16 +1316,22 @@ def _tet_facets(recovery: PlcRecovery3D) -> np.ndarray:
 
 
 def _publish(
-    diagram: RestrictedPowerDiagram,
+    diagram: _dependency_phydrax_geometry__triangulation.RestrictedPowerDiagram,
     recovery: PlcRecovery3D,
     revision: str,
     maximum_work: int,
     *,
-    domain_source: PiecewiseLinearComplex,
-    periodic_constraints: tuple[PeriodicConstraint, ...],
-) -> tuple[CellMesh, CellGeometrySpec, np.ndarray, np.ndarray]:
+    domain_source: plc_source_owner.PiecewiseLinearComplex,
+    periodic_constraints: tuple[periodic_constraint_owner.PeriodicConstraint, ...],
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[
+    _dependency_phydrax_discretization__cell_mesh.CellMesh,
+    _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
+    np.ndarray,
+    np.ndarray,
+]:
     data = diagram.construction
-    source = ExactPowerCellGeometrySource(
+    source = _dependency_phydrax_discretization__exact_power_geometry.ExactPowerCellGeometrySource(
         diagram.points,
         diagram.weights,
         recovery.points,
@@ -1049,7 +1344,7 @@ def _publish(
         domain_source=domain_source,
         periodic_constraints=periodic_constraints,
     )
-    exact = source.prepare()
+    exact = source.prepare(budget=budget)
     cells: list[list[np.ndarray]] = [[] for _ in data.cell_sites]
     for face, (left, right) in enumerate(
         zip(data.face_cells[:, 0], data.face_cells[:, 1], strict=True)
@@ -1059,23 +1354,27 @@ def _publish(
         cells[int(left)].append(loop)
         if right >= 0:
             cells[int(right)].append(loop[::-1])
-    mesh = CellMesh.from_polyhedra(
+    mesh = _dependency_phydrax_discretization__cell_mesh.CellMesh.from_polyhedra(
         exact.rounded_vertices,
         cells,
         block_name="restricted-power",
         numeric_version=revision,
     )
-    geometry = CellGeometrySpec.power(mesh, source)
+    geometry = _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec.power(
+        mesh, source, budget=budget
+    )
     # CellMesh groups arities, retaining input cell ids. Reorder all ancestry by
     # those ids rather than assuming publication preserves native row order.
-    order = np.asarray(_polyhedral_connectivity(mesh).cell_global_ids, dtype=np.int64)
+    order = np.asarray(
+        require_polyhedral_connectivity(mesh).cell_global_ids, dtype=np.int64
+    )
     native_faces = {
         tuple(sorted(map(int, data.face_vertices[a:b]))): index
         for index, (a, b) in enumerate(
             zip(data.face_offsets[:-1], data.face_offsets[1:], strict=True)
         )
     }
-    connectivity = _polyhedral_connectivity(mesh)
+    connectivity = require_polyhedral_connectivity(mesh)
     offsets, values = (
         np.asarray(connectivity.face_vertex_offsets),
         np.asarray(connectivity.face_vertex_values),
@@ -1090,10 +1389,15 @@ def _publish(
     return mesh, geometry, order, face_order
 
 
-def _diameters(mesh: CellMesh, geometry: CellGeometrySpec) -> np.ndarray:
-    # Twice the radius about the exact vertex mean bounds the ideal diameter.
-    c = _polyhedral_connectivity(mesh)
-    points = np.asarray(geometry.source_coordinates(), dtype=object)
+def _diameters(
+    mesh: _dependency_phydrax_discretization__cell_mesh.CellMesh,
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> np.ndarray:
+    # Twice the radius about the rational vertex mean bounds the cell diameter.
+    c = require_polyhedral_connectivity(mesh)
+    points = np.asarray(geometry.source_coordinates(budget=budget), dtype=object)
     offsets, values = np.asarray(c.cell_vertex_offsets), np.asarray(c.cell_vertex_values)
     bounds = []
     for a, b in zip(offsets[:-1], offsets[1:], strict=True):
@@ -1106,24 +1410,28 @@ def _diameters(mesh: CellMesh, geometry: CellGeometrySpec) -> np.ndarray:
             sum(((point[axis] - center[axis]) ** 2 for axis in range(3)), Fraction(0))
             for point in vertices
         )
-        bounds.append(_sqrt_upper(4 * squared_radius))
+        bounds.append(sqrt_upper(4 * squared_radius))
     return np.asarray(bounds, dtype=np.float64)
 
 
 def _centroid_in_kernel(
-    mesh: CellMesh, geometry: CellGeometrySpec, cell: int, point: np.ndarray
+    mesh: _dependency_phydrax_discretization__cell_mesh.CellMesh,
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
+    cell: int,
+    point: np.ndarray,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> bool:
-    from ..geometry._planar_coverage import plane_key
 
-    c = _polyhedral_connectivity(mesh)
+    c = require_polyhedral_connectivity(mesh)
     face_offsets, faces = np.asarray(c.cell_face_offsets), np.asarray(c.cell_face_values)
     signs = np.asarray(c.cell_face_sign_values)
     offsets, vertices = (
         np.asarray(c.face_vertex_offsets),
         np.asarray(c.face_vertex_values),
     )
-    coordinates = np.asarray(geometry.source_coordinates(), dtype=object)
-    query = tuple(Fraction(float(value)) for value in point)
+    coordinates = np.asarray(geometry.source_coordinates(budget=budget), dtype=object)
+    query = rational_vector(point)
     start, stop = face_offsets[cell : cell + 2]
     for face, sign in zip(faces[start:stop], signs[start:stop], strict=True):
         a, b = offsets[face : face + 2]
@@ -1133,9 +1441,14 @@ def _centroid_in_kernel(
         polygon = tuple(tuple(coordinates[index]) for index in loop)
         key = next(
             (
-                plane_key((polygon[0], polygon[index], polygon[index + 1]))
+                planar_primitives_owner.plane_key(
+                    (polygon[0], polygon[index], polygon[index + 1]), budget=budget
+                )
                 for index in range(1, len(polygon) - 1)
-                if plane_key((polygon[0], polygon[index], polygon[index + 1])) is not None
+                if planar_primitives_owner.plane_key(
+                    (polygon[0], polygon[index], polygon[index + 1]), budget=budget
+                )
+                is not None
             ),
             None,
         )
@@ -1148,72 +1461,89 @@ def _centroid_in_kernel(
     return True
 
 
-def _sqrt_upper(value: Fraction) -> float:
-    from fractions import Fraction
+@checked
+def sqrt_upper(value: _owner_fractions.Fraction) -> float:
+    """Return a binary64 upper bound for the square root."""
 
     if value == 0:
         return 0.0
     if float(value) == 0:
-        raise PolyhedralGenerationError("feature_measure_unrepresentable")
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.FEATURE_MEASURE_UNREPRESENTABLE
+        )
     result = float(np.nextafter(math.sqrt(float(value)), np.inf))
     if not math.isfinite(result):
-        raise PolyhedralGenerationError("feature_measure_unrepresentable")
-    while Fraction(result) ** 2 < value:
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.FEATURE_MEASURE_UNREPRESENTABLE
+        )
+    while _owner_fractions.Fraction(result) ** 2 < value:
         result = float(np.nextafter(result, np.inf))
     return result
 
 
+def _feature_coordinate_fraction(
+    value: Fraction | SupportsFloat | SupportsIndex | str, /
+) -> Fraction:
+    """Retain rational coordinates or lift a binary64 coordinate component."""
+    match value:
+        case Fraction():
+            return value
+        case scalar:
+            return Fraction(float(scalar))
+
+
 def _segment_evidence(
     ends: np.ndarray, a: np.ndarray, b: np.ndarray
-) -> tuple[Fraction, Fraction, float, float]:
-    from fractions import Fraction
+) -> tuple[_owner_fractions.Fraction, _owner_fractions.Fraction, float, float]:
 
-    origin = tuple(x if isinstance(x, Fraction) else Fraction(float(x)) for x in a)
+    origin = tuple(_feature_coordinate_fraction(x) for x in a)
     direction = tuple(
-        (y if isinstance(y, Fraction) else Fraction(float(y))) - x
-        for x, y in zip(origin, b, strict=True)
+        _feature_coordinate_fraction(y) - x for x, y in zip(origin, b, strict=True)
     )
-    squared_length = sum((x * x for x in direction), Fraction(0))
-    parameters: list[Fraction] = []
-    squared_distances: list[Fraction] = []
+    squared_length = sum((x * x for x in direction), _owner_fractions.Fraction(0))
+    parameters: list[_owner_fractions.Fraction] = []
+    squared_distances: list[_owner_fractions.Fraction] = []
     for end in ends:
         delta = tuple(
-            (x if isinstance(x, Fraction) else Fraction(float(x))) - y
-            for x, y in zip(end, origin, strict=True)
+            _feature_coordinate_fraction(x) - y for x, y in zip(end, origin, strict=True)
         )
         parameter = (
-            sum((x * y for x, y in zip(delta, direction, strict=True)), Fraction(0))
+            sum(
+                (x * y for x, y in zip(delta, direction, strict=True)),
+                _owner_fractions.Fraction(0),
+            )
             / squared_length
         )
         parameters.append(parameter)
-        nearest = min(Fraction(1), max(Fraction(0), parameter))
+        nearest = min(
+            _owner_fractions.Fraction(1), max(_owner_fractions.Fraction(0), parameter)
+        )
         squared_distances.append(
             sum(
                 ((x - nearest * y) ** 2 for x, y in zip(delta, direction, strict=True)),
-                Fraction(0),
+                _owner_fractions.Fraction(0),
             )
         )
     return (
-        max(Fraction(0), min(parameters)),
-        min(Fraction(1), max(parameters)),
-        _sqrt_upper(max(squared_distances)),
-        _sqrt_upper(squared_length),
+        max(_owner_fractions.Fraction(0), min(parameters)),
+        min(_owner_fractions.Fraction(1), max(parameters)),
+        sqrt_upper(max(squared_distances)),
+        sqrt_upper(squared_length),
     )
 
 
 def _source_feature_edges(
-    complex_: PiecewiseLinearComplex, recovery: PlcRecovery3D
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    recovery: PlcRecovery3D,
 ) -> np.ndarray:
-    """Preserve semantic curves AND geometric creases within one facet group."""
-    from .._meshcore import exact_orient3d
+    """Return semantic curve edges and geometric creases within facet groups."""
 
+    source_vertices = np.asarray(complex_.vertices, dtype=np.float64)
     triangles: dict[int, np.ndarray] = {}
     for triangle, polygon in zip(
         recovery.input_triangles, recovery.input_polygons, strict=True
     ):
-        triangles.setdefault(
-            int(polygon), np.asarray(complex_.vertices[triangle], dtype=np.float64)
-        )
+        triangles.setdefault(int(polygon), source_vertices[triangle])
     incidence: dict[tuple[int, ...], list[int]] = {}
     offsets = complex_.polygon_offsets
     for polygon, (a, b) in enumerate(zip(offsets[:-1], offsets[1:], strict=True)):
@@ -1232,7 +1562,7 @@ def _source_feature_edges(
         anchor = triangles[polygons[0]]
         for polygon in polygons[1:]:
             other = triangles[polygon]
-            signs = exact_orient3d(
+            signs = _owner_phydrax__meshcore.exact_orient3d(
                 np.broadcast_to(anchor[0], other.shape),
                 np.broadcast_to(anchor[1], other.shape),
                 np.broadcast_to(anchor[2], other.shape),
@@ -1244,90 +1574,190 @@ def _source_feature_edges(
     return np.asarray(edges, dtype=np.int32).reshape((-1, 2))
 
 
-def _feature_ancestry(
-    mesh: CellMesh,
-    geometry: CellGeometrySpec,
-    recovery: PlcRecovery3D,
-    diagram: RestrictedPowerDiagram,
-    source_edges: np.ndarray,
-    work_limit: int,
-    *,
-    vertex_carriers: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    """Carrier ancestry plus exact affine feature-distance/coverage bounds.
+@final
+class _FeaturePreparation(StrictModule):
+    carrier_sources: dict[tuple[int, ...], int]
+    source_points: np.ndarray
+    tree: _owner_phydrax__bvh.PackedBVH
+    lengths: tuple[float, ...]
 
-    Geometry alone cannot distinguish nearby thin features. An output edge
-    first names its tetrahedral carrier edge; recovered segment ancestry
-    identifies that edge's source. Unregistered crease subedges are accepted
-    only on an EXACT source segment, using a bounded BVH candidate search.
-    Ideal output coordinates are independently measured through the canonical
-    source coefficient bank; RNE carrier equality is not a source segment proof.
-    """
-    from fractions import Fraction
 
-    from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
+@final
+class _FeatureMatch(StrictModule):
+    source: int
+    work_units: int
 
-    edges = np.asarray(_polyhedral_connectivity(mesh).edges, dtype=np.int64)
-    points = np.asarray(geometry.source_coordinates(), dtype=object)
-    carriers = (
-        diagram.construction.vertex_carriers
-        if vertex_carriers is None
-        else vertex_carriers
-    )
-    sources = np.full(edges.shape[0], -1, dtype=np.int64)
-    distances = np.zeros(source_edges.shape[0])
-    gaps = np.zeros_like(distances)
-    if source_edges.shape[0] == 0:
-        return sources, distances, gaps, 0
+
+@final
+class _FeatureCoverage(StrictModule):
+    gaps: np.ndarray
+
+
+@final
+class _FeatureAncestry(StrictModule):
+    sources: np.ndarray
+    distances: np.ndarray
+    gaps: np.ndarray
+    work_units: int
+
+
+def _prepare_feature_ancestry(
+    recovery: PlcRecovery3D, source_edges: np.ndarray
+) -> _FeaturePreparation:
     carrier_sources = {
         tuple(sorted(map(int, pair))): source for source, pair in enumerate(source_edges)
     }
     for pair, source in zip(recovery.segments, recovery.segment_sources, strict=True):
         carrier_sources[tuple(sorted(map(int, pair)))] = int(source)
     source_points = recovery.points[source_edges]
-    tree = prepare_bvh(
+    tree = _owner_phydrax__bvh.prepare_bvh(
         np.min(source_points, axis=1), np.max(source_points, axis=1), dtype=np.float64
     )
-    intervals = [[] for _ in source_edges]
-    lengths = [_segment_evidence(pair, pair[0], pair[1])[3] for pair in source_points]
-    work = 0
+    lengths = tuple(
+        _segment_evidence(pair, pair[0], pair[1])[3] for pair in source_points
+    )
+    return _FeaturePreparation(
+        carrier_sources=carrier_sources,
+        source_points=source_points,
+        tree=tree,
+        lengths=lengths,
+    )
+
+
+def _match_feature_carrier(
+    preparation: _FeaturePreparation,
+    recovery: PlcRecovery3D,
+    key: tuple[int, ...],
+    edge: int,
+    work_units: int,
+    work_limit: int,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _FeatureMatch:
+    tree, source_points = preparation.tree, preparation.source_points
+    carrier_points = recovery.points[list(key)]
+    carrier_tree = _owner_phydrax__bvh.prepare_bvh(
+        np.min(carrier_points, axis=0)[None, :],
+        np.max(carrier_points, axis=0)[None, :],
+        dtype=np.float64,
+    )
+    matched = []
+    for candidates, _ in _owner_phydrax__bvh.bvh_overlap_pair_blocks(
+        tree, carrier_tree, include_touching=True
+    ):
+        for source in candidates:
+            work_units += 1
+            if work_units > work_limit:
+                raise PolyhedralGenerationError(
+                    PolyhedralGenerationReason.FEATURE_CANDIDATE_BUDGET,
+                    entities=(edge,),
+                    achieved=work_units,
+                )
+            budget.reserve(1)
+            a, b = source_points[source]
+            start, stop, residual, _ = _segment_evidence(carrier_points, a, b)
+            if residual == 0.0 and stop > start:
+                matched.append(int(source))
+    if len(matched) > 1:
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.AMBIGUOUS_FEATURE_ANCESTRY,
+            entities=(edge,),
+        )
+    return _FeatureMatch(source=matched[0] if matched else -1, work_units=work_units)
+
+
+def _feature_coverage(
+    intervals: list[list[tuple[Fraction, Fraction]]],
+    lengths: tuple[float, ...],
+    gaps: np.ndarray,
+) -> _FeatureCoverage:
+    missing = tuple(source for source, pieces in enumerate(intervals) if not pieces)
+    if missing:
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.MISSING_FEATURE_EDGE,
+            entities=missing,
+            achieved={"covered_segments": 0.0},
+        )
+    for source, pieces in enumerate(intervals):
+        cursor, gap = _owner_fractions.Fraction(0), _owner_fractions.Fraction(0)
+        for start, stop in sorted(pieces):
+            gap = max(gap, start - cursor)
+            cursor = max(cursor, stop)
+        gap = max(gap, _owner_fractions.Fraction(1) - cursor) * _owner_fractions.Fraction(
+            lengths[source]
+        )
+        upper_gap = float(gap)
+        if _owner_fractions.Fraction(upper_gap) < gap:
+            upper_gap = float(np.nextafter(upper_gap, np.inf))
+        gaps[source] = upper_gap
+    return _FeatureCoverage(gaps=gaps)
+
+
+def _feature_ancestry(
+    mesh: _dependency_phydrax_discretization__cell_mesh.CellMesh,
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
+    recovery: PlcRecovery3D,
+    diagram: _dependency_phydrax_geometry__triangulation.RestrictedPowerDiagram,
+    source_edges: np.ndarray,
+    work_limit: int,
+    *,
+    vertex_carriers: np.ndarray | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _FeatureAncestry:
+    """Return carrier ancestry and affine feature-distance/coverage bounds.
+
+    Recovered carrier ancestry distinguishes nearby thin features. Unregistered
+    crease subedges must lie on a source segment. Source coefficients supply
+    ideal coordinates independently of the rounded carrier coordinates.
+    """
+
+    edges = np.asarray(require_polyhedral_connectivity(mesh).edges, dtype=np.int64)
+    points = np.asarray(geometry.source_coordinates(budget=budget), dtype=object)
+    carriers = (
+        diagram.construction.vertex_carriers
+        if vertex_carriers is None
+        else vertex_carriers
+    )
+    sources = np.full(edges.shape[0], -1, dtype=np.int64)
+    distances = np.zeros(source_edges.shape[0], dtype=np.float64)
+    gaps = np.zeros_like(distances)
+    if source_edges.shape[0] == 0:
+        return _FeatureAncestry(
+            sources=sources, distances=distances, gaps=gaps, work_units=0
+        )
+    preparation = _prepare_feature_ancestry(recovery, source_edges)
+    carrier_sources, source_points = (
+        preparation.carrier_sources,
+        preparation.source_points,
+    )
+    intervals: list[list[tuple[Fraction, Fraction]]] = [[] for _ in source_edges]
+    work_units = 0
     for edge, pair in enumerate(edges):
-        work += 1
-        if work > work_limit:
+        work_units += 1
+        if work_units > work_limit:
             raise PolyhedralGenerationError(
-                "feature_candidate_budget", entities=(edge,), achieved=work
+                PolyhedralGenerationReason.FEATURE_CANDIDATE_BUDGET,
+                entities=(edge,),
+                achieved=work_units,
             )
+        budget.reserve(1)
         key = tuple(
             sorted({int(point) for point in carriers[pair].reshape(-1) if point >= 0})
         )
         if len(key) != 2:
             continue
         if key not in carrier_sources:
-            carrier_points = recovery.points[list(key)]
-            carrier_tree = prepare_bvh(
-                np.min(carrier_points, axis=0)[None, :],
-                np.max(carrier_points, axis=0)[None, :],
-                dtype=np.float64,
+            matched = _match_feature_carrier(
+                preparation,
+                recovery,
+                key,
+                edge,
+                work_units,
+                work_limit,
+                budget=budget,
             )
-            matched = []
-            for candidates, _ in bvh_overlap_pair_blocks(
-                tree, carrier_tree, include_touching=True
-            ):
-                for source in candidates:
-                    work += 1
-                    if work > work_limit:
-                        raise PolyhedralGenerationError(
-                            "feature_candidate_budget", entities=(edge,), achieved=work
-                        )
-                    a, b = source_points[source]
-                    start, stop, residual, _ = _segment_evidence(carrier_points, a, b)
-                    if residual == 0.0 and stop > start:
-                        matched.append(int(source))
-            if len(matched) > 1:
-                raise PolyhedralGenerationError(
-                    "ambiguous_feature_ancestry", entities=(edge,)
-                )
-            carrier_sources[key] = matched[0] if matched else -1
+            work_units = matched.work_units
+            carrier_sources[key] = matched.source
         source = carrier_sources[key]
         if source < 0:
             continue
@@ -1337,75 +1767,240 @@ def _feature_ancestry(
         distances[source] = max(distances[source], residual)
         if stop > start:
             intervals[source].append((start, stop))
-    missing = tuple(source for source, pieces in enumerate(intervals) if not pieces)
-    if missing:
-        raise PolyhedralGenerationError(
-            "missing_feature_edge", entities=missing, achieved={"covered_segments": 0.0}
-        )
-    for source, pieces in enumerate(intervals):
-        cursor, gap = Fraction(0), Fraction(0)
-        for start, stop in sorted(pieces):
-            gap = max(gap, start - cursor)
-            cursor = max(cursor, stop)
-        gap = max(gap, Fraction(1) - cursor) * Fraction(lengths[source])
-        upper_gap = float(gap)
-        if Fraction(upper_gap) < gap:
-            upper_gap = float(np.nextafter(upper_gap, np.inf))
-        gaps[source] = upper_gap
-    return sources, distances, gaps, work
+    coverage = _feature_coverage(intervals, preparation.lengths, gaps)
+    return _FeatureAncestry(
+        sources=sources, distances=distances, gaps=coverage.gaps, work_units=work_units
+    )
 
 
 def _numerical_power_sites(
-    diagram: RestrictedPowerDiagram,
-    ledger: CoordinateEnclosureBudget,
+    diagram: _dependency_phydrax_geometry__triangulation.RestrictedPowerDiagram,
     /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """RNE optimization view of retained images; never a geometry authority."""
-    from ..geometry._planar_coverage import _reserve_fraction_work, rational_points
+    """Return rounded optimization coordinates for retained periodic images."""
 
     preparation = diagram.periodic_preparation
     if preparation is None:
         return diagram.points, np.arange(len(diagram.points), dtype=np.int64)
-    points = _family_host_array((len(preparation.image_sites), 3), np.float64)
+    points = _dependency_phydrax_meshing__host_banks.family_host_array(
+        (len(preparation.image_sites), 3), np.float64, scope=scope
+    )
     offsets, components = (
         preparation.image_coordinate_offsets,
         preparation.image_coordinate_components,
     )
     for coordinate, (a, b) in enumerate(zip(offsets[:-1], offsets[1:], strict=True)):
-        with ledger.temporary_scope():
-            bank = rational_points(components[a:b].reshape((-1, 1)))
-            _reserve_fraction_work(bank, len(bank) + 1, 1, max(1, len(bank)))
+        with budget.temporary_scope():
+            bank = planar_primitives_owner.rational_points(
+                components[a:b].reshape((-1, 1)), budget=budget
+            )
+            planar_primitives_owner.reserve_fraction_work(
+                bank, len(bank) + 1, 1, max(1, len(bank)), budget=budget
+            )
             value = sum((row[0] for row in bank), Fraction(0))
             points[coordinate // 3, coordinate % 3] = float(value)
     return points, preparation.image_sites
 
 
-def generate_polyhedral_volume(
-    complex_: PiecewiseLinearComplex,
+def _polyhedral_coordinate_ticket(
+    maximum_work: int,
+    maximum_scratch_bytes: int,
     /,
     *,
-    sites: object | None = None,
-    weights: object | None = None,
-    schedule: NativePolyhedralSchedule | None = None,
-    source_id: str = "native-polyhedral",
-    seeds: object | None = None,
-    seed_regions: object | None = None,
-    protected_vertices: tuple[int, ...] = (),
-    periodic_constraints: Sequence[PeriodicConstraint] = (),
-    record_native_phase: Callable[[str, float, int | None, int], None] | None = None,
-) -> PolyhedralConstruction:
-    """Generate arbitrary nonconvex/material PLC-restricted power polyhedra.
+    scope: NativeExecutionScope,
+) -> NativeBatchTicket:
+    """Reserve a source-coordinate phase before host preparation."""
+    remaining = scope.remaining()
+    return scope.batch(
+        min(maximum_work, remaining.remaining_work_units),
+        queries_upper=remaining.remaining_geometry_queries,
+        bytes_upper=min(maximum_scratch_bytes, remaining.remaining_managed_bytes),
+    )
 
-    No accepted status is assigned here. The provider separately certifies the
-    actual coordinates, global embedding and declared material-domain coverage.
-    """
-    if not isinstance(complex_, PiecewiseLinearComplex):
-        raise TypeError("complex_ must be PiecewiseLinearComplex.")
-    policy = NativePolyhedralSchedule() if schedule is None else schedule
-    if not isinstance(policy, NativePolyhedralSchedule):
-        raise TypeError("schedule must be NativePolyhedralSchedule.")
-    periodic_values = tuple(periodic_constraints)
-    periodic_group = _polyhedral_periodic_group(periodic_values)
+
+@contextmanager
+def _polyhedral_coordinate_phase(
+    maximum_work: int,
+    maximum_scratch_bytes: int,
+    /,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> Iterator[None]:
+    """Bind source-coordinate work and native allocations to one admitted phase."""
+    ticket = _polyhedral_coordinate_ticket(
+        maximum_work, maximum_scratch_bytes, scope=scope
+    )
+    with (
+        budget.bind_ticket(ticket),
+        ticket.native_target(),
+        budget.bound_stage(maximum_work, maximum_scratch_bytes),
+    ):
+        yield
+
+
+@final
+class _PolyhedralSites(StrictModule):
+    points: np.ndarray
+    weights: np.ndarray
+    protected: frozenset[int]
+    targets: np.ndarray
+    split: np.ndarray
+    parents: np.ndarray
+    preserve_vertices: bool
+
+
+@final
+class _PolyhedralCarrier(StrictModule):
+    recovery: PlcRecovery3D
+    domain: domain_coverage_owner.PiecewiseLinearDomain
+    facets: np.ndarray
+    sites: _PolyhedralSites
+    work_units: int
+
+
+@final
+class _PolyhedralPublication(StrictModule):
+    diagram: _dependency_phydrax_geometry__triangulation.RestrictedPowerDiagram
+    mesh: _dependency_phydrax_discretization__cell_mesh.CellMesh
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec
+    order: np.ndarray
+    face_order: np.ndarray
+    unresolved: np.ndarray
+    work_units: int
+
+
+@final
+class _PolyhedralMeasures(StrictModule):
+    achieved: np.ndarray
+    empty: np.ndarray
+    diameters: np.ndarray
+    large: np.ndarray
+    residual: float
+    work_units: int
+
+
+@final
+class _PolyhedralWeightUpdate(StrictModule):
+    values: np.ndarray
+    work_units: int
+
+
+@final
+class _PolyhedralRelocation(StrictModule):
+    points: np.ndarray
+    work_units: int
+
+
+@final
+class _PolyhedralFinalization(StrictModule):
+    mesh: _dependency_phydrax_discretization__cell_mesh.CellMesh
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec
+    order: np.ndarray
+    regions: np.ndarray
+    face_recovery_triangles: np.ndarray
+    face_facets: np.ndarray
+    interface_faces: np.ndarray
+    sheet_faces: np.ndarray
+    diameters: np.ndarray
+    achieved: np.ndarray
+    residual: float
+    seam_fragments: tuple[PeriodicPolyhedralSeamFragment, ...]
+    assembly: _PeriodicPolyhedralAssembly | None
+    work_units: int
+
+
+@final
+class _PolyhedralFeatures(StrictModule):
+    sources: np.ndarray
+    source_edges: np.ndarray
+    distances: np.ndarray
+    gaps: np.ndarray
+    work_units: int
+
+
+@final
+class _PolyhedralLineage(StrictModule):
+    components: np.ndarray
+
+
+@final
+class _PolyhedralRefinement(StrictModule):
+    finished: bool
+    update_weights: bool
+    insert_sites: bool
+    relocate_sites: bool
+
+
+def _plan_polyhedral_refinement(
+    publication: _PolyhedralPublication,
+    state: _PolyhedralSites,
+    measures: _PolyhedralMeasures,
+    schedule_: NativePolyhedralSchedule,
+    refinement_steps: int,
+    lloyd_steps: int,
+) -> _PolyhedralRefinement:
+    """Choose the next refinement actions or refuse unmet bounded requests."""
+    needs_weights = (
+        bool(state.targets.size)
+        and measures.residual > schedule_.relative_volume_tolerance
+    )
+    if (
+        not measures.large.size
+        and not needs_weights
+        and lloyd_steps >= schedule_.lloyd_steps
+    ):
+        if schedule_.require_every_site and measures.empty.size:
+            raise PolyhedralGenerationError(
+                PolyhedralGenerationReason.REQUIRED_EMPTY_SITES,
+                entities=tuple(map(int, measures.empty)),
+            )
+        return _PolyhedralRefinement(
+            finished=True, update_weights=False, insert_sites=False, relocate_sites=False
+        )
+    if refinement_steps >= schedule_.maximum_refinement_steps:
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.REFINEMENT_UNRESOLVED,
+            entities=tuple(map(int, publication.order[measures.large])),
+            achieved={
+                "diameter_upper": float(np.max(measures.diameters)),
+                "relative_volume_residual": measures.residual,
+            },
+        )
+    if (
+        measures.large.size
+        and state.targets.size
+        and not needs_weights
+        and lloyd_steps >= schedule_.lloyd_steps
+    ):
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.FIXED_SITE_DIAMETER_UNRESOLVED,
+            entities=tuple(map(int, publication.order[measures.large])),
+            achieved={"cell_diameter_upper": float(np.max(measures.diameters))},
+        )
+    return _PolyhedralRefinement(
+        finished=False,
+        update_weights=needs_weights,
+        insert_sites=bool(measures.large.size) and not bool(state.targets.size),
+        relocate_sites=lloyd_steps < schedule_.lloyd_steps,
+    )
+
+
+def _prepare_polyhedral_carrier(
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    sites: ConvertibleToArray | None,
+    weights: ConvertibleToArray | None,
+    seeds: ConvertibleToArray | None,
+    seed_regions: ConvertibleToArray | None,
+    protected_vertices: tuple[int, ...],
+    source_id: str,
+    schedule_: NativePolyhedralSchedule,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _PolyhedralCarrier:
     recovery = recover_plc_3d(
         complex_.vertices,
         complex_.polygon_offsets,
@@ -1416,12 +2011,12 @@ def generate_polyhedral_volume(
         seeds=seeds,
         seed_regions=seed_regions,
         boundary_policy=complex_.boundary,
-        max_vertices=policy.maximum_vertices,
-        max_tetrahedra=policy.maximum_cells,
-        work_limit=policy.maximum_work_units,
-        max_scratch_bytes=policy.maximum_scratch_bytes,
+        max_vertices=schedule_.maximum_vertices,
+        max_tetrahedra=schedule_.maximum_cells,
+        work_limit=schedule_.maximum_work_units - budget.work_units,
+        max_scratch_bytes=schedule_.maximum_scratch_bytes,
     )
-    domain = _domain(
+    domain = _dependency_phydrax_meshing__volume_generation.domain(
         complex_, recovery.input_triangles, recovery.input_polygons, source_id
     )
     facets = _tet_facets(recovery)
@@ -1438,302 +2033,468 @@ def generate_polyhedral_volume(
         or site_array.shape[0] < 1
         or not np.all(np.isfinite(site_array))
     ):
-        raise ValueError("sites must be a finite nonempty (n, 3) array.")
+        raise ValueError(
+            "polyhedral.sites must be a finite nonempty (n, 3) array; "
+            f"got shape={site_array.shape}, finite={bool(np.all(np.isfinite(site_array)))}"
+        )
     site_array = site_array.copy()
     values = (
-        np.zeros(site_array.shape[0])
+        np.zeros(site_array.shape[0], dtype=np.float64)
         if weights is None
         else np.asarray(weights, dtype=np.float64).copy()
     )
     if values.shape != (site_array.shape[0],) or not np.all(np.isfinite(values)):
-        raise ValueError("weights must be a finite (site_count,) array.")
-    protected = set(policy.protected_sites)
+        raise ValueError(
+            "polyhedral.weights must be a finite (site_count,) array; "
+            f"got shape={values.shape}, site_count={site_array.shape[0]}"
+        )
+    protected = set(schedule_.protected_sites)
     if any(
         isinstance(x, bool) or not isinstance(x, int) or x < 0 or x >= site_array.shape[0]
         for x in protected
     ):
-        raise ValueError("protected_sites must name existing sites.")
-    targets = np.asarray(policy.target_site_volumes, dtype=np.float64)
+        raise ValueError(
+            "polyhedral.protected_sites must name existing sites; "
+            f"got {schedule_.protected_sites!r}, site_count={site_array.shape[0]}"
+        )
+    targets = np.asarray(schedule_.target_site_volumes, dtype=np.float64)
     if targets.size and targets.shape != values.shape:
-        raise ValueError("target_site_volumes must match the supplied sites.")
+        raise ValueError(
+            "polyhedral.target_site_volumes must match the supplied sites; "
+            f"got shape={targets.shape}, site_count={values.size}"
+        )
     if targets.size and np.unique(site_array, axis=0).shape[0] != site_array.shape[0]:
-        raise PolyhedralGenerationError("coincident_positive_volume_targets")
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.COINCIDENT_POSITIVE_VOLUME_TARGETS
+        )
     preserve_vertices = bool(protected_vertices)
     if any(
         vertex < 0 or vertex >= complex_.vertices.shape[0]
         for vertex in protected_vertices
     ):
-        raise ValueError("protected_vertices must name PLC input vertices.")
+        raise ValueError(
+            "polyhedral.protected_vertices must name PLC input vertices; "
+            f"got {protected_vertices!r}, vertex_count={complex_.vertices.shape[0]}"
+        )
     split = np.full(
         site_array.shape[0],
         bool(complex_.segments.shape[0]) or preserve_vertices,
         dtype=np.int8,
     )
     parents = np.arange(site_array.shape[0], dtype=np.int64)
-    refinement_steps = 0
-    lloyd_steps = 0
-    spent_work = int(recovery.counters[PLC_3D_COUNTERS.index("work_units")])
-    residual = 0.0
+    return _PolyhedralCarrier(
+        recovery=recovery,
+        domain=domain,
+        facets=facets,
+        sites=_PolyhedralSites(
+            points=site_array,
+            weights=values,
+            protected=frozenset(protected),
+            targets=targets,
+            split=split,
+            parents=parents,
+            preserve_vertices=preserve_vertices,
+        ),
+        work_units=budget.work_units + recovery.counters.work_units,
+    )
+
+
+def _construct_polyhedral_publication(
+    carrier: _PolyhedralCarrier,
+    state: _PolyhedralSites,
+    schedule_: NativePolyhedralSchedule,
+    work_units: int,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    periodic_values: tuple[periodic_constraint_owner.PeriodicConstraint, ...],
+    periodic_group: PeriodicIsometryGroup | None,
+    record_native_phase: Callable[[str, float, int | None, int], None] | None,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _PolyhedralPublication:
+    recovery, domain, facets = carrier.recovery, carrier.domain, carrier.facets
+    site_array, values, split = state.points, state.weights, state.split
+    if work_units >= schedule_.maximum_work_units:
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.WORK_BUDGET, achieved=work_units
+        )
+    diagram = _dependency_phydrax_geometry__triangulation.RestrictedPowerDiagram(
+        site_array,
+        values,
+        recovery.points,
+        recovery.tetrahedra,
+        recovery.tetrahedron_regions,
+        facets,
+        split_sites=split,
+        max_pieces=schedule_.maximum_cells,
+        max_vertices=schedule_.maximum_vertices,
+        work_limit=schedule_.maximum_work_units - work_units,
+        record_native_phase=record_native_phase,
+        periodic_group=periodic_group,
+        maximum_images=schedule_.maximum_work_units - work_units
+        if periodic_group is not None
+        else None,
+        scope=scope,
+        budget=budget,
+    )
+    work_units += (
+        diagram.construction.counters.clips + diagram.construction.counters.walk_steps
+    )
+    work_units += diagram.preparation_work_units
+    work_units += diagram.adjacency_work_units
+    work_units += diagram.construction.source_work_units
+    if work_units >= schedule_.maximum_work_units:
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.WORK_BUDGET, achieved=work_units
+        )
+    remaining_work = schedule_.maximum_work_units - work_units
+    before = budget.work_units
+    with _polyhedral_coordinate_phase(
+        remaining_work, schedule_.maximum_scratch_bytes, scope=scope, budget=budget
+    ):
+        mesh, geometry, order, face_order = _publish(
+            diagram,
+            recovery,
+            domain.source_revision,
+            schedule_.maximum_work_units - work_units,
+            domain_source=complex_,
+            periodic_constraints=periodic_values,
+            budget=budget,
+        )
+        validity = _dependency_phydrax_discretization__cell_geometry_validity.certify_cell_geometry_validity(
+            geometry, mesh=mesh, budget=budget
+        )
+    work_units += budget.work_units - before
+    unresolved = np.asarray(validity.status) != int(
+        _dependency_phydrax_discretization__cell_geometry_validity.CellValidityStatus.CERTIFIED_VALID
+    )
+    return _PolyhedralPublication(
+        diagram=diagram,
+        mesh=mesh,
+        geometry=geometry,
+        order=order,
+        face_order=face_order,
+        unresolved=unresolved,
+        work_units=work_units,
+    )
+
+
+def _measure_polyhedral_publication(
+    publication: _PolyhedralPublication,
+    state: _PolyhedralSites,
+    schedule_: NativePolyhedralSchedule,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _PolyhedralMeasures:
+    diagram, mesh, geometry, order = (
+        publication.diagram,
+        publication.mesh,
+        publication.geometry,
+        publication.order,
+    )
+    site_array, targets = state.points, state.targets
+    work_units = publication.work_units
+    remaining_work = schedule_.maximum_work_units - work_units
+    before = budget.work_units
+    with _polyhedral_coordinate_phase(
+        remaining_work, schedule_.maximum_scratch_bytes, scope=scope, budget=budget
+    ):
+        exact_volumes, _, _ = mapped_measure_owner.certified_cell_measures(
+            mesh, geometry, maximum_work=remaining_work, budget=budget
+        )
+    work_units += budget.work_units - before
+    achieved = np.bincount(
+        diagram.cell_original_sites[order],
+        weights=exact_volumes,
+        minlength=site_array.shape[0],
+    )
+    empty = np.flatnonzero(achieved == 0)
+    if schedule_.require_every_site and empty.size and not targets.size:
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.REQUIRED_EMPTY_SITES,
+            entities=tuple(map(int, empty)),
+        )
+    remaining_work = schedule_.maximum_work_units - work_units
+    before = budget.work_units
+    with _polyhedral_coordinate_phase(
+        remaining_work, schedule_.maximum_scratch_bytes, scope=scope, budget=budget
+    ):
+        diameters = _diameters(mesh, geometry, budget=budget)
+    work_units += budget.work_units - before
+    large = (
+        np.flatnonzero(diameters > schedule_.maximum_cell_diameter)
+        if schedule_.maximum_cell_diameter is not None
+        else np.zeros(0, dtype=np.int64)
+    )
+    residual = (
+        float(np.max(np.abs(achieved - targets) / targets)) if targets.size else 0.0
+    )
+    return _PolyhedralMeasures(
+        achieved=achieved,
+        empty=empty,
+        diameters=diameters,
+        large=large,
+        residual=residual,
+        work_units=work_units,
+    )
+
+
+def _revive_hidden_polyhedral_sites(
+    diagram: _dependency_phydrax_geometry__triangulation.RestrictedPowerDiagram,
+    recovery: PlcRecovery3D,
+    values: np.ndarray,
+    targets: np.ndarray,
+    empty: np.ndarray,
+    metric_sites: np.ndarray,
+    metric_owners: np.ndarray,
+) -> _PolyhedralWeightUpdate:
+    data = diagram.construction
+    # Revive hidden weighted sites by a sparse power-distance walk
+    # at an interior carrier point, not an all-site distance table.
+    point = np.mean(recovery.points[recovery.tetrahedra[0]], axis=0)
+    owner = int(data.cell_sites[0])
+    best = float(
+        np.sum((point - metric_sites[owner]) ** 2) - values[metric_owners[owner]]
+    )
     while True:
-        if spent_work >= policy.maximum_work_units:
-            raise PolyhedralGenerationError("work_budget", achieved=spent_work)
-        diagram = RestrictedPowerDiagram(
-            site_array,
-            values,
-            recovery.points,
-            recovery.tetrahedra,
-            recovery.tetrahedron_regions,
-            facets,
-            split_sites=split,
-            max_pieces=policy.maximum_cells,
-            max_vertices=policy.maximum_vertices,
-            work_limit=policy.maximum_work_units - spent_work,
-            record_native_phase=record_native_phase,
-            periodic_group=periodic_group,
-            maximum_images=policy.maximum_work_units - spent_work
-            if periodic_group is not None
-            else None,
-        )
-        spent_work += int(
-            diagram.construction.counters[0] + diagram.construction.counters[3]
-        )
-        spent_work += diagram.preparation_work_units
-        spent_work += diagram.adjacency_work_units
-        spent_work += diagram.construction.source_work_units
-        if spent_work >= policy.maximum_work_units:
-            raise PolyhedralGenerationError("work_budget", achieved=spent_work)
-        from ..discretization._coordinate_enclosure import CoordinateEnclosureBudget
-
-        exact_ledger = CoordinateEnclosureBudget(
-            policy.maximum_work_units - spent_work, policy.maximum_scratch_bytes
-        )
-        with exact_ledger.activate():
-            mesh, geometry, order, face_order = _publish(
-                diagram,
-                recovery,
-                domain.source_revision,
-                policy.maximum_work_units - spent_work,
-                domain_source=complex_,
-                periodic_constraints=periodic_values,
-            )
-            validity = certify_cell_geometry_validity(geometry, mesh=mesh)
-        spent_work += exact_ledger.work_units
-        unresolved = np.asarray(validity.status) != int(
-            CellValidityStatus.CERTIFIED_VALID
-        )
-        if np.any(unresolved):
-            offending = np.unique(diagram.cell_original_sites[order[unresolved]])
-            if np.any(split[offending]):
-                raise PolyhedralGenerationError(
-                    "piece_geometry_unresolved",
-                    entities=tuple(map(int, order[unresolved])),
-                )
-            split[offending] = 1
-            continue
-        from ..discretization._cell_geometry_transfer import _certified_cell_measures
-
-        measure_ledger = CoordinateEnclosureBudget(
-            policy.maximum_work_units - spent_work, policy.maximum_scratch_bytes
-        )
-        with measure_ledger.activate():
-            exact_volumes, _, _ = _certified_cell_measures(
-                mesh, geometry, maximum_work=policy.maximum_work_units - spent_work
-            )
-        spent_work += measure_ledger.work_units
-        achieved = np.bincount(
-            diagram.cell_original_sites[order],
-            weights=exact_volumes,
-            minlength=site_array.shape[0],
-        )
-        empty = np.flatnonzero(achieved == 0)
-        if policy.require_every_site and empty.size and not targets.size:
-            raise PolyhedralGenerationError(
-                "required_empty_sites", entities=tuple(map(int, empty))
-            )
-        diameters = _diameters(mesh, geometry)
-        large = (
-            np.flatnonzero(diameters > policy.maximum_cell_diameter)
-            if policy.maximum_cell_diameter is not None
-            else np.zeros(0, dtype=np.int64)
-        )
-        residual = (
-            float(np.max(np.abs(achieved - targets) / targets)) if targets.size else 0.0
-        )
-        needs_weights = targets.size and residual > policy.relative_volume_tolerance
-        if not large.size and not needs_weights and lloyd_steps >= policy.lloyd_steps:
-            if policy.require_every_site and empty.size:
-                raise PolyhedralGenerationError(
-                    "required_empty_sites", entities=tuple(map(int, empty))
-                )
-            break
-        if refinement_steps >= policy.maximum_refinement_steps:
-            raise PolyhedralGenerationError(
-                "refinement_unresolved",
-                entities=tuple(map(int, order[large])),
-                achieved={
-                    "diameter_upper": float(np.max(diameters)),
-                    "relative_volume_residual": residual,
-                },
-            )
-        if needs_weights:
-            # Sparse diagonal Jacobian: dV_i/dw_i = sum A_ij/(2|s_i-s_j|).
-            diagonal = np.zeros_like(values)
-            data = diagram.construction
-            image_ledger = CoordinateEnclosureBudget(
-                policy.maximum_work_units - spent_work, policy.maximum_scratch_bytes
-            )
-            with image_ledger.activate():
-                metric_sites, metric_owners = _numerical_power_sites(
-                    diagram, image_ledger
-                )
-                image_ledger.charge_native_work(
-                    image_ledger.work_units - image_ledger.native_charged_work_units
-                )
-            spent_work += image_ledger.work_units
-            for f, (left, right) in enumerate(
-                zip(data.face_cells[:, 0], data.face_cells[:, 1], strict=True)
-            ):
-                if right < 0:
-                    continue
-                i, j = (
-                    int(diagram.cell_original_sites[left]),
-                    int(diagram.cell_original_sites[right]),
-                )
-                if i == j:
-                    continue
-                a, b = data.face_offsets[f : f + 2]
-                polygon = data.vertices[data.face_vertices[a:b]]
-                area_vector = (
-                    np.sum(
-                        np.cross(
-                            polygon - polygon[0],
-                            np.roll(polygon, -1, axis=0) - polygon[0],
-                        ),
-                        axis=0,
-                    )
-                    / 2
-                )
-                derivative = np.linalg.norm(area_vector) / (
-                    2
-                    * np.linalg.norm(
-                        metric_sites[data.cell_sites[left]]
-                        - metric_sites[data.cell_sites[right]]
-                    )
-                )
-                diagonal[i] += derivative
-                diagonal[j] += derivative
-            if empty.size:
-                # Revive hidden weighted sites by a sparse power-distance walk
-                # at an interior carrier point, not an all-site distance table.
-                point = np.mean(recovery.points[recovery.tetrahedra[0]], axis=0)
-                owner = int(data.cell_sites[0])
-                best = float(
-                    np.sum((point - metric_sites[owner]) ** 2)
-                    - values[metric_owners[owner]]
-                )
-                while True:
-                    next_owner, next_best = owner, best
-                    a, b = diagram.neighbor_offsets[owner : owner + 2]
-                    for neighbor in diagram.neighbors[a:b]:
-                        if neighbor >= len(metric_sites):
-                            continue
-                        candidate = float(
-                            np.sum((point - metric_sites[neighbor]) ** 2)
-                            - values[metric_owners[neighbor]]
-                        )
-                        if candidate < next_best:
-                            next_owner, next_best = int(neighbor), candidate
-                    if next_owner == owner:
-                        break
-                    owner, best = next_owner, next_best
-                for site in empty:
-                    images = np.flatnonzero(metric_owners == site)
-                    distance = min(
-                        float(np.sum((point - metric_sites[image]) ** 2))
-                        for image in images
-                    )
-                    values[site] = float(
-                        distance - best + 0.1 * targets[site] ** (2.0 / 3.0)
-                    )
-                refinement_steps += 1
+        next_owner, next_best = owner, best
+        a, b = diagram.neighbor_offsets[owner : owner + 2]
+        for neighbor in diagram.neighbors[a:b]:
+            if neighbor >= len(metric_sites):
                 continue
-            if np.any(diagonal <= 0):
-                raise PolyhedralGenerationError(
-                    "weight_jacobian_unresolved",
-                    entities=tuple(map(int, np.flatnonzero(diagonal <= 0))),
-                )
-            values += 0.5 * (targets - achieved) / diagonal
-            values -= values[0]
-        if (
-            large.size
-            and targets.size
-            and not needs_weights
-            and lloyd_steps >= policy.lloyd_steps
-        ):
-            raise PolyhedralGenerationError(
-                "fixed_site_diameter_unresolved",
-                entities=tuple(map(int, order[large])),
-                achieved={"cell_diameter_upper": float(np.max(diameters))},
+            candidate = float(
+                np.sum((point - metric_sites[neighbor]) ** 2)
+                - values[metric_owners[neighbor]]
             )
-        if large.size and not targets.size:
-            c = _polyhedral_connectivity(mesh)
-            offsets, vertices = (
-                np.asarray(c.cell_vertex_offsets),
-                np.asarray(c.cell_vertex_values),
+            if candidate < next_best:
+                next_owner, next_best = int(neighbor), candidate
+        if next_owner == owner:
+            break
+        owner, best = next_owner, next_best
+    for site in empty:
+        images = np.flatnonzero(metric_owners == site)
+        distance = min(
+            float(np.sum((point - metric_sites[image]) ** 2)) for image in images
+        )
+        values[site] = float(distance - best + 0.1 * targets[site] ** (2.0 / 3.0))
+    return _PolyhedralWeightUpdate(values=values, work_units=0)
+
+
+def _update_polyhedral_weights(
+    publication: _PolyhedralPublication,
+    state: _PolyhedralSites,
+    measures: _PolyhedralMeasures,
+    carrier: _PolyhedralCarrier,
+    schedule_: NativePolyhedralSchedule,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _PolyhedralWeightUpdate:
+    diagram, recovery = publication.diagram, carrier.recovery
+    values, targets = state.weights, state.targets
+    achieved, empty, work_units = measures.achieved, measures.empty, measures.work_units
+    # Sparse diagonal Jacobian: dV_i/dw_i = sum A_ij/(2|s_i-s_j|).
+    diagonal = np.zeros_like(values)
+    data = diagram.construction
+    remaining_work = schedule_.maximum_work_units - work_units
+    before = budget.work_units
+    with _polyhedral_coordinate_phase(
+        remaining_work,
+        schedule_.maximum_scratch_bytes,
+        scope=scope,
+        budget=budget,
+    ):
+        metric_sites, metric_owners = _numerical_power_sites(
+            diagram, scope=scope, budget=budget
+        )
+    work_units += budget.work_units - before
+    for f, (left, right) in enumerate(
+        zip(data.face_cells[:, 0], data.face_cells[:, 1], strict=True)
+    ):
+        if right < 0:
+            continue
+        i, j = (
+            int(diagram.cell_original_sites[left]),
+            int(diagram.cell_original_sites[right]),
+        )
+        if i == j:
+            continue
+        a, b = data.face_offsets[f : f + 2]
+        polygon = data.vertices[data.face_vertices[a:b]]
+        area_vector = (
+            np.sum(
+                np.cross(
+                    polygon - polygon[0],
+                    np.roll(polygon, -1, axis=0) - polygon[0],
+                ),
+                axis=0,
             )
-            centers = np.asarray(
-                [
-                    np.mean(
-                        np.asarray(mesh.coordinates)[
-                            vertices[offsets[k] : offsets[k + 1]]
-                        ],
-                        axis=0,
-                    )
-                    for k in large
-                ]
+            / 2
+        )
+        derivative = np.linalg.norm(area_vector) / (
+            2
+            * np.linalg.norm(
+                metric_sites[data.cell_sites[left]] - metric_sites[data.cell_sites[right]]
             )
-            # A certified vertex-mean star center lies inside the actual cell.
-            new_sites = np.concatenate((site_array, centers))
-            if np.unique(new_sites, axis=0).shape[0] != new_sites.shape[0]:
-                raise PolyhedralGenerationError(
-                    "site_insertion_stalled", entities=tuple(map(int, order[large]))
-                )
-            source_sites = diagram.cell_original_sites[order[large]]
-            site_array = new_sites
-            values = np.concatenate((values, values[source_sites]))
-            parents = np.concatenate((parents, source_sites))
-            split = np.concatenate(
-                (
-                    split,
-                    np.full(
-                        large.size,
-                        bool(complex_.segments.shape[0]) or preserve_vertices,
-                        dtype=np.int8,
-                    ),
-                )
+        )
+        diagonal[i] += derivative
+        diagonal[j] += derivative
+    if empty.size:
+        revived = _revive_hidden_polyhedral_sites(
+            diagram, recovery, values, targets, empty, metric_sites, metric_owners
+        )
+        return _PolyhedralWeightUpdate(values=revived.values, work_units=work_units)
+    if np.any(diagonal <= 0):
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.WEIGHT_JACOBIAN_UNRESOLVED,
+            entities=tuple(map(int, np.flatnonzero(diagonal <= 0))),
+        )
+    values += 0.5 * (targets - achieved) / diagonal
+    values -= values[0]
+    return _PolyhedralWeightUpdate(values=values, work_units=work_units)
+
+
+def _insert_polyhedral_sites(
+    publication: _PolyhedralPublication,
+    state: _PolyhedralSites,
+    measures: _PolyhedralMeasures,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+) -> _PolyhedralSites:
+    mesh, diagram, order = publication.mesh, publication.diagram, publication.order
+    site_array, values, parents, split = (
+        state.points,
+        state.weights,
+        state.parents,
+        state.split,
+    )
+    preserve_vertices, large = state.preserve_vertices, measures.large
+    c = require_polyhedral_connectivity(mesh)
+    offsets, vertices = (
+        np.asarray(c.cell_vertex_offsets),
+        np.asarray(c.cell_vertex_values),
+    )
+    coordinates = np.asarray(mesh.coordinates, dtype=mesh.coordinates.dtype)
+    centers = np.asarray(
+        [
+            np.mean(
+                coordinates[vertices[offsets[k] : offsets[k + 1]]],
+                axis=0,
             )
-        if lloyd_steps < policy.lloyd_steps:
-            # Restrict relocation to single unsplit star-visible components;
-            # averaging disconnected components can move a site into a hole.
-            data = diagram.construction
-            multiplicity = np.bincount(
-                diagram.cell_original_sites, minlength=achieved.size
-            )
-            inverse_order = np.empty_like(order)
-            inverse_order[order] = np.arange(order.size)
-            for cell, site in enumerate(diagram.cell_original_sites):
-                if (
-                    int(site) not in protected
-                    and multiplicity[site] == 1
-                    and not split[site]
+            for k in large
+        ],
+        dtype=np.float64,
+    )
+    # A certified vertex-mean star center lies inside the restricted cell.
+    new_sites = np.concatenate((site_array, centers))
+    if np.unique(new_sites, axis=0).shape[0] != new_sites.shape[0]:
+        raise PolyhedralGenerationError(
+            PolyhedralGenerationReason.SITE_INSERTION_STALLED,
+            entities=tuple(map(int, order[large])),
+        )
+    source_sites = diagram.cell_original_sites[order[large]]
+    site_array = new_sites
+    values = np.concatenate((values, values[source_sites]))
+    parents = np.concatenate((parents, source_sites))
+    split = np.concatenate(
+        (
+            split,
+            np.full(
+                large.size,
+                bool(complex_.segments.shape[0]) or preserve_vertices,
+                dtype=np.int8,
+            ),
+        )
+    )
+    return _PolyhedralSites(
+        points=site_array,
+        weights=values,
+        protected=state.protected,
+        targets=state.targets,
+        split=split,
+        parents=parents,
+        preserve_vertices=preserve_vertices,
+    )
+
+
+def _relocate_polyhedral_sites(
+    publication: _PolyhedralPublication,
+    state: _PolyhedralSites,
+    measures: _PolyhedralMeasures,
+    schedule_: NativePolyhedralSchedule,
+    work_units: int,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _PolyhedralRelocation:
+    diagram, mesh, geometry, order = (
+        publication.diagram,
+        publication.mesh,
+        publication.geometry,
+        publication.order,
+    )
+    site_array, protected, split, achieved = (
+        state.points,
+        state.protected,
+        state.split,
+        measures.achieved,
+    )
+    # Restrict relocation to single unsplit star-visible components;
+    # averaging disconnected components can move a site into a hole.
+    data = diagram.construction
+    multiplicity = np.bincount(diagram.cell_original_sites, minlength=achieved.size)
+    inverse_order = np.empty_like(order)
+    inverse_order[order] = np.arange(order.size, dtype=np.int64)
+    remaining_work = schedule_.maximum_work_units - work_units
+    before = budget.work_units
+    with _polyhedral_coordinate_phase(
+        remaining_work,
+        schedule_.maximum_scratch_bytes,
+        scope=scope,
+        budget=budget,
+    ):
+        for cell, site in enumerate(diagram.cell_original_sites):
+            if int(site) not in protected and multiplicity[site] == 1 and not split[site]:
+                centroid = data.cell_moments[cell] / data.cell_volumes[cell]
+                if _centroid_in_kernel(
+                    mesh,
+                    geometry,
+                    int(inverse_order[cell]),
+                    centroid,
+                    budget=budget,
                 ):
-                    centroid = data.cell_moments[cell] / data.cell_volumes[cell]
-                    if _centroid_in_kernel(
-                        mesh, geometry, int(inverse_order[cell]), centroid
-                    ):
-                        site_array[site] = centroid
-            lloyd_steps += 1
-        refinement_steps += 1
+                    site_array[site] = centroid
+    work_units += budget.work_units - before
+    return _PolyhedralRelocation(points=site_array, work_units=work_units)
+
+
+def _finalize_polyhedral_periodicity(
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    publication: _PolyhedralPublication,
+    measures: _PolyhedralMeasures,
+    state: _PolyhedralSites,
+    carrier: _PolyhedralCarrier,
+    schedule_: NativePolyhedralSchedule,
+    periodic_values: tuple[periodic_constraint_owner.PeriodicConstraint, ...],
+    periodic_group: PeriodicIsometryGroup | None,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _PolyhedralFinalization:
+    diagram, mesh, geometry, order, face_order = (
+        publication.diagram,
+        publication.mesh,
+        publication.geometry,
+        publication.order,
+        publication.face_order,
+    )
+    recovery, site_array, targets = carrier.recovery, state.points, state.targets
+    diameters, achieved, residual, work_units = (
+        measures.diameters,
+        measures.achieved,
+        measures.residual,
+        measures.work_units,
+    )
     data = diagram.construction
     regions = data.cell_regions[order]
     face_recovery_triangles = data.face_facets[face_order]
@@ -1745,15 +2506,11 @@ def generate_polyhedral_volume(
     seam_fragments: tuple[PeriodicPolyhedralSeamFragment, ...] = ()
     assembly = None
     if periodic_group is not None:
-        from ..discretization._coordinate_enclosure import coordinate_enclosure_budget
-
         old_bounds = dict(zip(map(int, order), diameters, strict=True))
-        remaining = policy.maximum_work_units - spent_work
-        seam_ledger = coordinate_enclosure_budget(remaining, policy.maximum_scratch_bytes)
-        before = seam_ledger.work_units
-        with (
-            seam_ledger.activate(),
-            seam_ledger.bound_stage(remaining, policy.maximum_scratch_bytes),
+        remaining = schedule_.maximum_work_units - work_units
+        before = budget.work_units
+        with _polyhedral_coordinate_phase(
+            remaining, schedule_.maximum_scratch_bytes, scope=scope, budget=budget
         ):
             seam_fragments = prepare_periodic_polyhedral_seam_fragments(
                 mesh,
@@ -1761,7 +2518,8 @@ def generate_polyhedral_volume(
                 face_facets,
                 periodic_values,
                 maximum_work=remaining,
-                maximum_scratch_bytes=policy.maximum_scratch_bytes,
+                maximum_scratch_bytes=schedule_.maximum_scratch_bytes,
+                budget=budget,
             )
             assembly = _reconcile_periodic_polyhedral(
                 mesh,
@@ -1770,29 +2528,36 @@ def generate_polyhedral_volume(
                 seam_fragments,
                 periodic_values,
                 periodic_group,
-                policy.maximum_vertices,
-                seam_ledger,
+                schedule_.maximum_vertices,
+                scope=scope,
+                budget=budget,
             )
-            validity = certify_cell_geometry_validity(
-                assembly.geometry, mesh=assembly.mesh
+            validity = _dependency_phydrax_discretization__cell_geometry_validity.certify_cell_geometry_validity(
+                assembly.geometry, mesh=assembly.mesh, budget=budget
             )
             bad = np.flatnonzero(
-                np.asarray(validity.status) != int(CellValidityStatus.CERTIFIED_VALID)
+                np.asarray(validity.status)
+                != int(
+                    _dependency_phydrax_discretization__cell_geometry_validity.CellValidityStatus.CERTIFIED_VALID
+                )
             )
             if bad.size:
                 raise PolyhedralGenerationError(
-                    "periodic_piece_geometry_unresolved", entities=tuple(map(int, bad))
+                    PolyhedralGenerationReason.PERIODIC_PIECE_GEOMETRY_UNRESOLVED,
+                    entities=tuple(map(int, bad)),
                 )
             mesh, geometry = assembly.mesh, assembly.geometry
             face_facets = face_facets[assembly.parent_faces]
             face_recovery_triangles = face_recovery_triangles[assembly.parent_faces]
             order = np.asarray(
-                _polyhedral_connectivity(mesh).cell_global_ids, dtype=np.int64
+                require_polyhedral_connectivity(mesh).cell_global_ids, dtype=np.int64
             )
             regions = data.cell_regions[order]
-            diameters = np.asarray([old_bounds[int(cell)] for cell in order])
-            exact_volumes, _, _ = _certified_cell_measures(
-                mesh, geometry, maximum_work=remaining
+            diameters = np.asarray(
+                [old_bounds[int(cell)] for cell in order], dtype=np.float64
+            )
+            exact_volumes, _, _ = mapped_measure_owner.certified_cell_measures(
+                mesh, geometry, maximum_work=remaining, budget=budget
             )
             achieved = np.bincount(
                 diagram.cell_original_sites[order],
@@ -1804,15 +2569,12 @@ def generate_polyhedral_volume(
                 if targets.size
                 else 0.0
             )
-            if targets.size and residual > policy.relative_volume_tolerance:
+            if targets.size and residual > schedule_.relative_volume_tolerance:
                 raise PolyhedralGenerationError(
-                    "periodic_volume_optimization_unresolved",
+                    PolyhedralGenerationReason.PERIODIC_VOLUME_OPTIMIZATION_UNRESOLVED,
                     achieved={"relative_volume_residual": residual},
                 )
-            seam_ledger.charge_native_work(
-                seam_ledger.work_units - seam_ledger.native_charged_work_units
-            )
-        spent_work += seam_ledger.work_units - before
+        work_units += budget.work_units - before
     pairs = np.full((face_facets.size, 2), -1, dtype=np.int64)
     constrained = face_facets >= 0
     pairs[constrained] = complex_.facet_regions[face_facets[constrained]]
@@ -1823,26 +2585,86 @@ def generate_polyhedral_volume(
         & (pairs[:, 0] != pairs[:, 1])
     )
     sheets = np.flatnonzero(constrained & (pairs[:, 0] == pairs[:, 1]))
-    feature_source_edges = _source_feature_edges(complex_, recovery)
-    feature_sources, feature_distances, feature_gaps, feature_work = _feature_ancestry(
-        mesh,
-        geometry,
-        recovery,
-        diagram,
-        feature_source_edges,
-        policy.maximum_work_units - spent_work,
-        vertex_carriers=None if assembly is None else assembly.vertex_carriers,
+    return _PolyhedralFinalization(
+        mesh=mesh,
+        geometry=geometry,
+        order=order,
+        regions=regions,
+        face_recovery_triangles=face_recovery_triangles,
+        face_facets=face_facets,
+        interface_faces=interfaces,
+        sheet_faces=sheets,
+        diameters=diameters,
+        achieved=achieved,
+        residual=residual,
+        seam_fragments=seam_fragments,
+        assembly=assembly,
+        work_units=work_units,
     )
-    spent_work += feature_work
+
+
+def _certify_polyhedral_features(
+    finalization: _PolyhedralFinalization,
+    carrier: _PolyhedralCarrier,
+    diagram: _dependency_phydrax_geometry__triangulation.RestrictedPowerDiagram,
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    schedule_: NativePolyhedralSchedule,
+    *,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> _PolyhedralFeatures:
+    mesh, geometry, assembly = (
+        finalization.mesh,
+        finalization.geometry,
+        finalization.assembly,
+    )
+    recovery, work_units = carrier.recovery, finalization.work_units
+    feature_source_edges = _source_feature_edges(complex_, recovery)
+    remaining_work = schedule_.maximum_work_units - work_units
+    before = budget.work_units
+    with _polyhedral_coordinate_phase(
+        remaining_work, schedule_.maximum_scratch_bytes, scope=scope, budget=budget
+    ):
+        ancestry = _feature_ancestry(
+            mesh,
+            geometry,
+            recovery,
+            diagram,
+            feature_source_edges,
+            remaining_work,
+            vertex_carriers=None if assembly is None else assembly.vertex_carriers,
+            budget=budget,
+        )
+    feature_sources, feature_distances, feature_gaps = (
+        ancestry.sources,
+        ancestry.distances,
+        ancestry.gaps,
+    )
+    work_units += budget.work_units - before
     combined = feature_distances + feature_gaps
     combined = np.where(combined == 0, 0.0, np.nextafter(combined, np.inf))
-    bad_features = np.flatnonzero(combined > policy.feature_tolerance)
+    bad_features = np.flatnonzero(combined > schedule_.feature_tolerance)
     if bad_features.size:
         raise PolyhedralGenerationError(
-            "feature_coverage_unresolved",
+            PolyhedralGenerationReason.FEATURE_COVERAGE_UNRESOLVED,
             entities=tuple(map(int, bad_features)),
             achieved=feature_gaps[bad_features],
         )
+    return _PolyhedralFeatures(
+        sources=feature_sources,
+        source_edges=feature_source_edges,
+        distances=feature_distances,
+        gaps=feature_gaps,
+        work_units=work_units,
+    )
+
+
+def _polyhedral_component_lineage(
+    finalization: _PolyhedralFinalization,
+    diagram: _dependency_phydrax_geometry__triangulation.RestrictedPowerDiagram,
+) -> _PolyhedralLineage:
+    mesh, order, assembly = finalization.mesh, finalization.order, finalization.assembly
+    data = diagram.construction
     # Consumer-admissibility splitting is not a new connected site component.
     # Rejoin its lineage through reciprocal unconstrained same-site faces.
     parent = np.arange(data.cell_sites.size, dtype=np.int64)
@@ -1863,63 +2685,276 @@ def generate_polyhedral_volume(
             a, b = root(left), root(right)
             parent[max(a, b)] = min(a, b)
     if assembly is not None:
-        connectivity = _polyhedral_connectivity(mesh)
+        connectivity = require_polyhedral_connectivity(mesh)
         owners = np.asarray(connectivity.face_owner)
         for source_face, target_face, _ in assembly.face_pairs:
-            left, right = int(order[owners[source_face]]), int(order[owners[target_face]])
+            left, right = (
+                int(order[owners[source_face]]),
+                int(order[owners[target_face]]),
+            )
             if diagram.cell_original_sites[left] == diagram.cell_original_sites[right]:
                 a, b = root(left), root(right)
                 parent[max(a, b)] = min(a, b)
-    roots = np.asarray([root(cell) for cell in range(parent.size)])
+    roots = np.asarray([root(cell) for cell in range(parent.size)], dtype=np.int64)
     components = np.zeros_like(diagram.cell_original_sites)
     for site in np.unique(diagram.cell_original_sites):
         selected = np.flatnonzero(diagram.cell_original_sites == site)
         _, inverse = np.unique(roots[selected], return_inverse=True)
         components[selected] = inverse
+    return _PolyhedralLineage(components=components)
+
+
+def _assemble_polyhedral_construction(
+    carrier: _PolyhedralCarrier,
+    state: _PolyhedralSites,
+    publication: _PolyhedralPublication,
+    finalization: _PolyhedralFinalization,
+    features: _PolyhedralFeatures,
+    periodic_values: tuple[periodic_constraint_owner.PeriodicConstraint, ...],
+    refinement_steps: int,
+    lloyd_steps: int,
+) -> PolyhedralConstruction:
+    diagram, domain, recovery = publication.diagram, carrier.domain, carrier.recovery
+    data = diagram.construction
+    mesh, geometry, order = finalization.mesh, finalization.geometry, finalization.order
+    face_facets, face_recovery_triangles, regions = (
+        finalization.face_facets,
+        finalization.face_recovery_triangles,
+        finalization.regions,
+    )
+    diameters, achieved, residual = (
+        finalization.diameters,
+        finalization.achieved,
+        finalization.residual,
+    )
+    assembly, seam_fragments = finalization.assembly, finalization.seam_fragments
+    site_array, values, parents, split, targets = (
+        state.points,
+        state.weights,
+        state.parents,
+        state.split,
+        state.targets,
+    )
+    feature_sources, feature_source_edges, feature_distances, feature_gaps = (
+        features.sources,
+        features.source_edges,
+        features.distances,
+        features.gaps,
+    )
+    work_units = features.work_units
+    components = _polyhedral_component_lineage(finalization, diagram).components
+    interfaces, sheets = finalization.interface_faces, finalization.sheet_faces
     identity = canonical_fingerprint(
         {
             "kind": "native-polyhedral-construction",
             "source": domain.domain_id,
             "mesh": mesh.mesh_id,
-            "geometry": cell_geometry_id(geometry),
+            "geometry": _dependency_phydrax_discretization__cell_geometry_validity.cell_geometry_id(
+                geometry
+            ),
             "sites": array_tree_fingerprint((site_array, values)),
             "pieces": array_tree_fingerprint(
-                (data.piece_sites, data.piece_tets, data.piece_cells, data.piece_volumes)
+                (
+                    data.piece_sites,
+                    data.piece_tets,
+                    data.piece_cells,
+                    data.piece_volumes,
+                )
             ),
         }
     )
     return PolyhedralConstruction(
-        mesh,
-        geometry,
-        domain,
-        recovery,
-        diagram,
-        _freeze(regions),
-        _freeze(diagram.cell_original_sites[order]),
-        _freeze(face_facets),
-        _freeze(face_recovery_triangles),
-        _freeze(interfaces),
-        _freeze(sheets),
-        _freeze(feature_sources),
-        _freeze(feature_source_edges),
-        _freeze(feature_distances),
-        _freeze(feature_gaps),
-        _freeze(parents),
-        _freeze(components[order]),
-        _freeze(split),
-        _freeze(targets),
-        _freeze(achieved),
-        refinement_steps,
-        lloyd_steps,
-        residual,
-        float(np.max(diameters)),
-        identity,
-        spent_work,
+        mesh=mesh,
+        geometry=geometry,
+        domain=domain,
+        recovery=recovery,
+        diagram=diagram,
+        cell_regions=_freeze(regions),
+        cell_sites=_freeze(diagram.cell_original_sites[order]),
+        face_facets=_freeze(face_facets),
+        face_recovery_triangles=_freeze(face_recovery_triangles),
+        interface_faces=_freeze(interfaces),
+        sheet_faces=_freeze(sheets),
+        feature_edge_sources=_freeze(feature_sources),
+        feature_source_edges=_freeze(feature_source_edges),
+        feature_maximum_distance=_freeze(feature_distances),
+        feature_coverage_gap=_freeze(feature_gaps),
+        site_parents=_freeze(parents),
+        component_ids=_freeze(components[order]),
+        split_sites=_freeze(split),
+        requested_site_volumes=_freeze(targets),
+        achieved_site_volumes=_freeze(achieved),
+        refinement_steps=refinement_steps,
+        lloyd_steps=lloyd_steps,
+        optimization_relative_residual=residual,
+        maximum_cell_diameter=float(np.max(diameters)),
+        construction_id=identity,
+        work_units=work_units,
         periodic_constraints=periodic_values,
         seam_fragments=seam_fragments,
         seam_face_pairs=None if assembly is None else _freeze(assembly.face_pairs),
         seam_vertex_pairs=None if assembly is None else _freeze(assembly.vertex_pairs),
     )
+
+
+@checked
+def generate_polyhedral_volume(
+    complex_: plc_source_owner.PiecewiseLinearComplex,
+    /,
+    *,
+    sites: ConvertibleToArray | None = None,
+    weights: ConvertibleToArray | None = None,
+    schedule: NativePolyhedralSchedule | None = None,
+    source_id: str = "native-polyhedral",
+    seeds: ConvertibleToArray | None = None,
+    seed_regions: ConvertibleToArray | None = None,
+    protected_vertices: tuple[int, ...] = (),
+    periodic_constraints: Sequence[periodic_constraint_owner.PeriodicConstraint] = (),
+    record_native_phase: Callable[[str, float, int | None, int], None] | None = None,
+    scope: NativeExecutionScope,
+) -> PolyhedralConstruction:
+    """Generate arbitrary nonconvex/material PLC-restricted power polyhedra.
+
+    The provider separately certifies source coordinates, global embedding,
+    and declared material-domain coverage before assigning accepted status.
+    """
+    with ExitStack() as request:
+        schedule_ = NativePolyhedralSchedule() if schedule is None else schedule
+
+        def reserve_retained_storage(bytes_upper: int) -> NativeBatchTicket:
+            return scope.batch(0, bytes_upper=bytes_upper)
+
+        periodic_values = tuple(periodic_constraints)
+        ticket = _polyhedral_coordinate_ticket(
+            schedule_.maximum_work_units if periodic_values else 0,
+            schedule_.maximum_scratch_bytes,
+            scope=scope,
+        )
+        budget = _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=schedule_.maximum_work_units,
+            maximum_memory_bytes=schedule_.maximum_scratch_bytes,
+        )
+        with ticket, budget.activate():
+            periodic_group = polyhedral_periodic_group(periodic_values, budget=budget)
+        request.enter_context(budget.retained_storage(reserve_retained_storage))
+        carrier = _prepare_polyhedral_carrier(
+            complex_,
+            sites,
+            weights,
+            seeds,
+            seed_regions,
+            protected_vertices,
+            source_id,
+            schedule_,
+            budget=budget,
+        )
+        state = carrier.sites
+        refinement_steps = 0
+        lloyd_steps = 0
+        work_units = carrier.work_units
+        while True:
+            publication = _construct_polyhedral_publication(
+                carrier,
+                state,
+                schedule_,
+                work_units,
+                complex_,
+                periodic_values,
+                periodic_group,
+                record_native_phase,
+                scope=scope,
+                budget=budget,
+            )
+            work_units = publication.work_units
+            if np.any(publication.unresolved):
+                offending = np.unique(
+                    publication.diagram.cell_original_sites[
+                        publication.order[publication.unresolved]
+                    ]
+                )
+                if np.any(state.split[offending]):
+                    raise PolyhedralGenerationError(
+                        PolyhedralGenerationReason.PIECE_GEOMETRY_UNRESOLVED,
+                        entities=tuple(
+                            map(int, publication.order[publication.unresolved])
+                        ),
+                    )
+                state.split[offending] = 1
+                continue
+            measures = _measure_polyhedral_publication(
+                publication,
+                state,
+                schedule_,
+                scope=scope,
+                budget=budget,
+            )
+            work_units = measures.work_units
+            refinement = _plan_polyhedral_refinement(
+                publication, state, measures, schedule_, refinement_steps, lloyd_steps
+            )
+            if refinement.finished:
+                break
+            if refinement.update_weights:
+                update = _update_polyhedral_weights(
+                    publication,
+                    state,
+                    measures,
+                    carrier,
+                    schedule_,
+                    scope=scope,
+                    budget=budget,
+                )
+                work_units = update.work_units
+                if measures.empty.size:
+                    refinement_steps += 1
+                    continue
+            if refinement.insert_sites:
+                state = _insert_polyhedral_sites(publication, state, measures, complex_)
+            if refinement.relocate_sites:
+                relocation = _relocate_polyhedral_sites(
+                    publication,
+                    state,
+                    measures,
+                    schedule_,
+                    work_units,
+                    scope=scope,
+                    budget=budget,
+                )
+                work_units = relocation.work_units
+                lloyd_steps += 1
+            refinement_steps += 1
+        finalization = _finalize_polyhedral_periodicity(
+            complex_,
+            publication,
+            measures,
+            state,
+            carrier,
+            schedule_,
+            periodic_values,
+            periodic_group,
+            scope=scope,
+            budget=budget,
+        )
+        features = _certify_polyhedral_features(
+            finalization,
+            carrier,
+            publication.diagram,
+            complex_,
+            schedule_,
+            scope=scope,
+            budget=budget,
+        )
+        return _assemble_polyhedral_construction(
+            carrier,
+            state,
+            publication,
+            finalization,
+            features,
+            periodic_values,
+            refinement_steps,
+            lloyd_steps,
+        )
 
 
 __all__ = [

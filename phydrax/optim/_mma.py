@@ -31,7 +31,7 @@ from ._iterative._types import (
     OptimizationStatus,
     OptimizationTermination,
 )
-from ._nonlinear_constraints import _canonical_constraints, _constraint_layout
+from ._nonlinear_constraints import _canonical_constraints, constraint_layout
 
 
 class MMAPolicy(StrictModule):
@@ -427,7 +427,7 @@ def _solve_mma(
         constraints=problem.constraints,
         problem_id=problem.problem_id,
     )
-    layout = _constraint_layout(constraints_only, initial_parameters, args)
+    layout = constraint_layout(constraints_only, initial_parameters, args)
     if layout.equality_indices.size:
         raise ValueError("MMA currently supports inequalities, not equalities.")
 

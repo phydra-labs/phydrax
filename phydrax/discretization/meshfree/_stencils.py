@@ -352,7 +352,9 @@ def _safe_norm(values: Array) -> Array:
 
 
 @host_table_cache(max_entries=256, max_bytes=1048576)
-def _basis_exponents(dimension: int, degree: int) -> tuple[tuple[int, ...], ...]:
+def polynomial_basis_exponents(
+    dimension: int, degree: int
+) -> tuple[tuple[int, ...], ...]:
     """Constant followed by the total-degree monomial exponents (static).
 
     Host-only and trace-independent; the ordering is that of
@@ -372,7 +374,7 @@ def polynomial_design(coordinates: Array, degree: int) -> Array:
     stencil center, including the zero-exponent factors.
     """
     columns = []
-    for exponent in _basis_exponents(coordinates.shape[-1], degree):
+    for exponent in polynomial_basis_exponents(coordinates.shape[-1], degree):
         column = jnp.ones(coordinates.shape[:-1], dtype=coordinates.dtype)
         for axis, power in enumerate(exponent):
             if power:
@@ -593,7 +595,7 @@ def chart_stencil_kernel(
         raise ValueError(
             "Chart kernel shapes must match rows, neighbors and derivative terms."
         )
-    exponents = _basis_exponents(dimension, policy.polynomial_degree)
+    exponents = polynomial_basis_exponents(dimension, policy.polynomial_degree)
     features = len(exponents)
     if not multi_indices or any(
         len(index) != dimension

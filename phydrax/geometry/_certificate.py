@@ -4,20 +4,18 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, replace
 from enum import Enum
-from numbers import Real
 from typing import Literal, TypeAlias
 
-from .._validation import optional_identifier
-from ..typing import parse
+from .._validation import nonnegative_real_scalar, optional_identifier
+from ..typing import checked, parse
 
 
 FieldBoundOrigin: TypeAlias = Literal["declared", "established", "sampled"]
 """Provenance of a field's Lipschitz and evaluation-error bounds.
 
-``established`` bounds are derived by the owning representation (for example an
+``established`` bounds are derived by the field representation (for example an
 analytic signed distance); ``declared`` bounds are supplied by the caller and
 are trusted, not verified; ``sampled`` bounds are estimated from samples and
 bound nothing between them.
@@ -62,10 +60,10 @@ class FieldCertificate:
 
     `lipschitz_upper_bound` bounds the field's Lipschitz constant and
     `evaluation_error` bounds the absolute error of an evaluated field value;
-    both are `None` when undeclared. `bound_origin` states whether those bounds
-    are established by the owning representation, declared by the caller, or
-    sampled. `topology_identity` is the canonical identifier of the certified
-    region topology (`None` when uncertified).
+    both are `None` when undeclared. `bound_origin` distinguishes bounds derived
+    by the representation from caller-declared or sampled bounds.
+    `topology_identity` identifies the certified region topology
+    (`None` when uncertified).
     """
 
     zero_set_accuracy: ZeroSetAccuracy
@@ -86,15 +84,8 @@ class FieldCertificate:
             ("lipschitz_upper_bound", self.lipschitz_upper_bound),
             ("evaluation_error", self.evaluation_error),
         ):
-            if value is not None and (
-                isinstance(value, bool)
-                or not isinstance(value, Real)
-                or not math.isfinite(value)
-                or value < 0.0
-            ):
-                raise ValueError(
-                    f"FieldCertificate.{name} must be finite and non-negative when declared."
-                )
+            if value is not None:
+                nonnegative_real_scalar(value, f"FieldCertificate.{name}")
         optional_identifier(self.topology_identity, "FieldCertificate.topology_identity")
         parse(self.bound_origin, FieldBoundOrigin, "FieldCertificate.bound_origin")
 
@@ -104,7 +95,7 @@ class FieldCertificate:
 
     @property
     def bounds_established(self) -> bool:
-        """Whether declared Lipschitz/evaluation bounds are owner-established."""
+        """Whether the field representation establishes both bounds."""
         return (
             self.bound_origin == "established"
             and self.lipschitz_upper_bound is not None
@@ -118,24 +109,21 @@ class FieldCertificate:
 
 @dataclass(frozen=True, slots=True)
 class ExactSDFEnclosureCertificate:
-    """Global Lipschitz enclosure qualification of an exact SDF field certificate.
+    """Qualify global Lipschitz enclosures for a signed-distance field certificate.
 
     The field certificate owns the evaluation error and Lipschitz upper bound.
     This certificate qualifies interval sign classification only when those
-    bounds are established by the owning representation
+    bounds are established by the field representation
     (``certifies_global_enclosure``); caller-declared or sampled bounds leave the
-    enclosure unqualified. It does not by itself claim exact cell measures:
-    boxes intersecting the zero set remain as explicit lower/upper measure
-    uncertainty.
+    enclosure unqualified. Boxes intersecting the zero set retain explicit
+    lower/upper measure uncertainty.
     """
 
     field: FieldCertificate
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.field, FieldCertificate):
-            raise TypeError(
-                "ExactSDFEnclosureCertificate.field must be a FieldCertificate."
-            )
+    @checked
+    def __init__(self, field: FieldCertificate) -> None:
+        object.__setattr__(self, "field", field)
         if (
             self.field.zero_set_accuracy is not ZeroSetAccuracy.EXACT
             or self.field.sign_reliability is not SignReliability.RELIABLE
@@ -143,7 +131,7 @@ class ExactSDFEnclosureCertificate:
             or self.field.validity_region != "all_space"
         ):
             raise ValueError(
-                "Exact-SDF measure enclosure requires a globally reliable exact signed-distance certificate."
+                f"ExactSDFEnclosureCertificate.field must describe a globally reliable signed distance; got {self.field!r}"
             )
         if (
             self.field.evaluation_error is None
@@ -151,8 +139,7 @@ class ExactSDFEnclosureCertificate:
             or self.field.lipschitz_upper_bound < 1.0
         ):
             raise ValueError(
-                "Exact-SDF measure enclosure requires a declared evaluation error and "
-                "a declared Lipschitz upper bound of at least one."
+                f"ExactSDFEnclosureCertificate.field must declare evaluation error and Lipschitz bound >= 1; got {self.field!r}"
             )
 
     @property
@@ -176,7 +163,7 @@ _EXACT_SDF_CERTIFICATE = FieldCertificate(
 
 
 def exact_signed_distance_certificate(*, smooth: bool) -> FieldCertificate:
-    """Return the canonical certificate for an analytic signed distance."""
+    """Return analytic signed-distance guarantees."""
     regularity = FieldRegularity.SMOOTH if smooth else FieldRegularity.PIECEWISE_SMOOTH
     return replace(_EXACT_SDF_CERTIFICATE, regularity=regularity)
 
@@ -186,7 +173,7 @@ def sharp_union_certificate(
 ) -> FieldCertificate:
     """Propagate guarantees through a sharp negative-inside union."""
     if not certificates:
-        raise ValueError("A sharp union requires at least one field certificate.")
+        raise ValueError("sharp_union_certificate.certificates must be nonempty; got ()")
 
     zero_rank = {
         ZeroSetAccuracy.EXACT: 0,
@@ -223,12 +210,13 @@ def sharp_union_certificate(
     )
 
 
+@checked
 def level_set_interpolation_certificate(source: FieldCertificate, /) -> FieldCertificate:
     """Downgrade a sampled field to sparse multilinear level-set guarantees.
 
-    Interpolation does not preserve exact signed distance, source zero sets,
-    enclosure bounds, or topology identity. Sign authority is at most local
-    within complete sparse stencils, never stronger than the source authority.
+    Interpolation does not preserve the signed-distance identity, source zero
+    sets, enclosure bounds, or topology identity. Sign reliability is at most
+    local within populated sparse stencils and no stronger than the source's.
     Derivatives are piecewise smooth and no safe sphere-tracing step is claimed.
     """
     return FieldCertificate(

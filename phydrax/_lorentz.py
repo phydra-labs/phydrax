@@ -18,6 +18,7 @@ import math
 from typing import Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -31,7 +32,9 @@ from .typing import parse
 
 type SpectralEmissionCompleteness = Literal["complete", "truncated"]
 
-MINKOWSKI_METRIC = jnp.diag(jnp.asarray([1.0, -1.0, -1.0, -1.0], dtype=jnp.float64))
+MINKOWSKI_METRIC = jax.device_put(
+    np.diag(np.asarray([1.0, -1.0, -1.0, -1.0], dtype=np.float64))
+)
 
 
 def minkowski_dot(left: ArrayLike, right: ArrayLike, /) -> Array:

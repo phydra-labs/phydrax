@@ -45,6 +45,7 @@ MemoryMeasurementMethod: TypeAlias = Literal[
     "jax_memory_stats",
     "jax_live_arrays",
     "interval_sampling",
+    "observed_peak",
 ]
 HostMemoryProvider: TypeAlias = Literal["linux_procfs", "darwin_mach", "unsupported"]
 
@@ -133,18 +134,20 @@ class MemoryMeasurement:
     def is_upper_bound(self) -> bool:
         """Whether this value bounds every instantaneous value in its window.
 
-        Kernel and allocator high-water counters are maintained on every change,
-        so they bound the true peak. A maximum over discrete samples misses
-        transients between samples and is never an upper bound.
+        Host RSS counters are approximate accounting, and discrete samples miss
+        transients. Neither establishes a peak upper bound. Allocator high-water
+        counters bound allocations within that allocator's reported scope.
         """
 
         if self.value_bytes is None or self.scope != "peak":
             return False
         match self.method:
-            case "getrusage_max_rss" | "jax_memory_stats":
+            case "jax_memory_stats":
                 return True
             case (
                 "interval_sampling"
+                | "getrusage_max_rss"
+                | "observed_peak"
                 | "procfs_statm"
                 | "mach_task_basic_info"
                 | "sysconf_physical_pages"
@@ -170,8 +173,8 @@ class MemoryMeasurement:
 class HostMemorySample:
     """Process RSS, RSS high-water mark, and host memory at one instant.
 
-    ``process_peak_resident`` is the kernel high-water mark since process start;
-    it bounds the RSS peak of every phase that ran in this process.
+    ``process_peak_resident`` retains the raw process-lifetime kernel high-water
+    counter. Host RSS counters are approximate and do not certify an upper bound.
     ``host_available`` is the provider's reclaimable-memory estimate
     (Linux ``MemAvailable``; Darwin free plus inactive pages).
     """
@@ -376,10 +379,10 @@ class PhaseMemoryEvidence:
     """Bracketing samples and the sampled peak of one measured phase.
 
     ``sampled_peak_resident`` is the maximum RSS over ``sample_count`` discrete
-    samples at the declared interval; transients between samples are missed, so
-    it is reported as sampled and is never an upper bound. ``interval_peak_resident``
-    is exact (to counter resolution) only when the kernel high-water mark rose
-    during the phase; ``resident_peak_upper_bound`` always bounds the phase peak.
+    samples at the declared interval; transients between samples are missed.
+    ``observed_peak_resident`` also includes the raw bracketing process-lifetime
+    high-water readings. This observed process-lifetime maximum certifies
+    neither a phase-specific peak nor a bound in either direction.
     """
 
     phase: str
@@ -435,30 +438,40 @@ class PhaseMemoryEvidence:
 
     @property
     def resident_peak_upper_bound(self) -> MemoryMeasurement:
-        """Kernel RSS high-water mark at phase end; bounds the phase peak."""
+        """Return unavailable evidence: host accounting does not certify a bound."""
 
-        return self.final.process_peak_resident
+        return MemoryMeasurement.unavailable(
+            "getrusage_max_rss",
+            "peak",
+            "kernel RSS accounting does not establish a peak upper bound",
+        )
 
     @property
-    def interval_peak_resident(self) -> MemoryMeasurement:
-        """Exact phase RSS peak when the process high-water mark rose during it."""
+    def observed_peak_resident(self) -> MemoryMeasurement:
+        """Return the largest available raw or sampled resident observation.
 
-        before = self.baseline.process_peak_resident.value_bytes
-        after = self.final.process_peak_resident.value_bytes
-        if before is None or after is None:
+        Process-lifetime high-water readings can predate the phase. Counters
+        remain approximate, and unobserved transients are not reconstructed.
+        """
+
+        sources = (
+            self.baseline.process_resident,
+            self.final.process_resident,
+            self.baseline.process_peak_resident,
+            self.final.process_peak_resident,
+            self.sampled_peak_resident,
+        )
+        available = tuple(source for source in sources if source.available)
+        if not available:
             return MemoryMeasurement.unavailable(
-                "getrusage_max_rss",
+                "observed_peak",
                 "peak",
-                "the provider does not report the process RSS high-water mark",
+                "the providers do not report resident memory observations",
             )
-        if after <= before:
-            return MemoryMeasurement.unavailable(
-                "getrusage_max_rss",
-                "peak",
-                "the process RSS high-water mark predates the phase; "
-                "only its upper bound is known",
-            )
-        return self.final.process_peak_resident
+        peak = max(available, key=lambda source: source.value_bytes or 0)
+        return MemoryMeasurement(
+            "observed_peak", "peak", peak.value_bytes, peak.resolution_bytes
+        )
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -470,7 +483,8 @@ class PhaseMemoryEvidence:
             "baseline": self.baseline.to_payload(),
             "final": self.final.to_payload(),
             "sampled_peak_resident": self.sampled_peak_resident.to_payload(),
-            "interval_peak_resident": self.interval_peak_resident.to_payload(),
+            "observed_peak_resident": self.observed_peak_resident.to_payload(),
+            "resident_peak_upper_bound": self.resident_peak_upper_bound.to_payload(),
             "devices": [device.to_payload() for device in self.devices],
         }
 

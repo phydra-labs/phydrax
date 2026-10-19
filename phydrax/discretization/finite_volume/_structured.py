@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     )
 
 
-def _component_names(values: Sequence[str], /) -> tuple[str, ...]:
+def normalize_component_names(values: Sequence[str], /) -> tuple[str, ...]:
     names = tuple(str(value) for value in values)
     if not names or any(not name for name in names) or len(set(names)) != len(names):
         raise ValueError("component_names must contain unique non-empty names.")
@@ -99,7 +99,7 @@ class FiniteVolumePlan(AbstractDiscretizationPlan):
         field = str(field_name)
         if not field:
             raise ValueError("field_name must be non-empty.")
-        components = _component_names(component_names)
+        components = normalize_component_names(component_names)
         key_ = (
             DiscretizationKey(
                 "finite_volume",

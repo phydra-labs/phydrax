@@ -8,6 +8,95 @@ import pytest
 import phydrax as phx
 
 
+def _assert_phase_mass_balance(
+    ledger: phx.discretization.AcceptedConservationIntegralLedger,
+    before: np.ndarray,
+    after: np.ndarray,
+) -> None:
+    """Check local phase transport against independently scattered accepted faces."""
+    transported = np.zeros(before[:, :2].shape, dtype=np.longdouble)
+    scale = np.abs(before[:, :2]).astype(np.longdouble) + np.abs(after[:, :2])
+    degree = np.zeros(before.shape[0], dtype=np.int64)
+    unit_roundoff = max(np.finfo(before.dtype).eps, np.finfo(after.dtype).eps) / 2
+    for block in ledger.blocks:
+        flux = np.asarray(block.flux_integral)
+        unit_roundoff = max(unit_roundoff, np.finfo(flux.dtype).eps / 2)
+        active = np.asarray(block.active_mask)
+        owners = np.asarray(block.owner_cells)[active]
+        neighbors = np.asarray(block.neighbor_cells)[active]
+        phase_flux = flux[active, :2].astype(np.longdouble)
+        np.add.at(transported, owners, -phase_flux)
+        np.add.at(scale, owners, np.abs(phase_flux))
+        np.add.at(degree, owners, 1)
+        interior = neighbors >= 0
+        np.add.at(transported, neighbors[interior], phase_flux[interior])
+        np.add.at(scale, neighbors[interior], np.abs(phase_flux[interior]))
+        np.add.at(degree, neighbors[interior], 1)
+    # Higham's gamma_n bound: three stage scatters and five weighted-flux
+    # operations per incident face, plus 24 state/measure/SSPRK scalar operations.
+    operations = 8 * degree[:, None] + 24
+    gamma = operations * unit_roundoff / (1 - operations * unit_roundoff)
+    bound = gamma * scale
+    change = after[:, :2].astype(np.longdouble) - before[:, :2]
+    assert np.all(np.abs(change - transported) <= bound)
+    # This case has neither phase change nor a phase-mass source.
+    assert np.all(np.abs(np.asarray(ledger.source_integral)[:, :2]) <= bound)
+
+
+def _assert_flux_path_agreement(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    unit_roundoff = np.finfo(np.float64).eps / 2
+    # Three weighted products, two additions and dt scaling: two paths give 2γ₆.
+    gamma = 6 * unit_roundoff / (1 - 6 * unit_roundoff)
+    scale = np.maximum(np.max(np.abs(left), axis=0), np.max(np.abs(right), axis=0))
+    bound = 1e-12 * np.abs(right) + 2 * gamma * scale
+    assert np.all(np.abs(left - right) <= bound)
+    return bound
+
+
+def _assert_transport_path_agreement(
+    before: np.ndarray,
+    eager: phx.solver.FiniteVolumeAdvanceResult,
+    compiled: phx.solver.FiniteVolumeAdvanceResult,
+) -> None:
+    assert (
+        eager.accepted_flux_integrals.ledger_id
+        == compiled.accepted_flux_integrals.ledger_id
+    )
+    for result in (eager, compiled):
+        _assert_phase_mass_balance(
+            result.accepted_flux_integrals,
+            before,
+            np.asarray(result.runtime_state.content_state.conservative_content),
+        )
+    for eager_block, compiled_block in zip(
+        eager.accepted_flux_integrals.blocks,
+        compiled.accepted_flux_integrals.blocks,
+        strict=True,
+    ):
+        left = np.asarray(eager_block.flux_integral)
+        right = np.asarray(compiled_block.flux_integral)
+        bound = _assert_flux_path_agreement(left, right)
+        face = np.flatnonzero(np.asarray(eager_block.active_mask))[0]
+        corrupted_flux = left.copy()
+        corrupted_flux[face, 0] += 2 * bound[face, 0]
+        with pytest.raises(AssertionError):
+            _assert_flux_path_agreement(corrupted_flux, right)
+    ledger = eager.accepted_flux_integrals
+    first_block = ledger.blocks[0]
+    face = np.flatnonzero(np.asarray(first_block.active_mask))[0]
+    corrupted = eqx.tree_at(
+        lambda value: value.blocks[0].flux_integral,
+        ledger,
+        first_block.flux_integral.at[face, 0].add(1e-3),
+    )
+    with pytest.raises(AssertionError):
+        _assert_phase_mass_balance(
+            corrupted,
+            before,
+            np.asarray(eager.runtime_state.content_state.conservative_content),
+        )
+
+
 def _runtime(
     *,
     capillary: Any = False,
@@ -711,21 +800,9 @@ def test_two_material_vof_runtime_scenario_3() -> None:
             > 0.0
         )
 
-    assert (
-        eager.accepted_flux_integrals.ledger_id
-        == compiled.accepted_flux_integrals.ledger_id
+    _assert_transport_path_agreement(
+        np.asarray(initial.content_state.conservative_content), eager, compiled
     )
-    for eager_block, compiled_block in zip(
-        eager.accepted_flux_integrals.blocks,
-        compiled.accepted_flux_integrals.blocks,
-        strict=True,
-    ):
-        np.testing.assert_allclose(
-            compiled_block.flux_integral,
-            eager_block.flux_integral,
-            rtol=1.0e-12,
-            atol=1.0e-30,
-        )
 
 
 def test_active_rotated_contact_failure_rejects_eager_and_filter_jit_before_flux() -> (

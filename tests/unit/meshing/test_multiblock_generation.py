@@ -17,9 +17,16 @@ from examples.native_multiblock_meshing import (
 )
 from phydrax.discretization import CellGeometrySpec
 from phydrax.discretization._cell_geometry import coordinate_lagrange_element
-from phydrax.geometry.brep._patches import CircleCurve, LineCurve, PlanePatch
-from phydrax.meshing._assembly import MeshPart
-from phydrax.meshing._contracts import MeshingFailure
+from phydrax.geometry.brep._patches import LineCurve, PlanePatch
+from phydrax.meshing import (
+    assemble_independent_blocks,
+    generate_structured_block,
+    generate_sweep,
+    glue_structured_blocks,
+    SweepControl,
+    SweepMapKind,
+    TransfiniteBlock,
+)
 from phydrax.meshing._controls import (
     BlockInterfaceControl,
     LayerSchedule,
@@ -27,12 +34,15 @@ from phydrax.meshing._controls import (
     TransfiniteSurfaceControl,
 )
 from phydrax.meshing._coupling import OversetCoupling
-from phydrax.meshing._multiblock import (
-    assemble_independent_blocks,
-    glue_structured_blocks,
-)
-from phydrax.meshing._structured import generate_structured_block, TransfiniteBlock
-from phydrax.meshing._sweep import generate_sweep, SweepControl, SweepMapKind
+from phydrax.meshing._failures import MeshingFailure
+from phydrax.meshing._mesh_part import MeshPart
+from tests._support.structured_sources import annulus_sector, material_multiblock_request
+
+
+# These unit-scale interpolation fixtures have at most 32 contributing
+# binary64 roundoffs; gamma_32 < 1e-14 (Higham, Accuracy and Stability of
+# Numerical Algorithms, second edition, section 3.1). Keep the existing bound.
+INTERPOLATION_ATOL = 1.0e-14
 
 
 def test_native_provider_publishes_required_pure_quads_with_continuous_fidelity() -> None:
@@ -70,7 +80,7 @@ def test_wrong_face_permutation_rejected_even_with_matching_counts() -> None:
     left = generate_structured_block(rectangle("left", 0.0, 0.5, 2))
     right = generate_structured_block(rectangle("right", 0.5, 1.0, 2))
     interface = BlockInterfaceControl("left", 1, "right", 0, (0,), (True,))
-    with pytest.raises(ValueError, match="incompatible coordinates"):
+    with pytest.raises(ValueError, match="multiblock.interface.coordinates"):
         glue_structured_blocks((left, right), (interface,))
 
 
@@ -78,7 +88,7 @@ def test_nonconforming_face_counts_require_explicit_coupling() -> None:
     left = generate_structured_block(rectangle("left", 0.0, 0.5, 2))
     right = generate_structured_block(rectangle("right", 0.5, 1.0, 3))
     interface = BlockInterfaceControl("left", 1, "right", 0, (0,), (False,))
-    with pytest.raises(ValueError, match="exact common"):
+    with pytest.raises(ValueError, match="multiblock.interface.face_counts"):
         glue_structured_blocks((left, right), (interface,))
 
 
@@ -113,12 +123,12 @@ def test_declared_nonconforming_parts_transfer_linear_interface_field() -> None:
     values = 1.0 + 2.0 * left.point_coordinates(source)[:, 1]
     expected = 1.0 + 2.0 * right.point_coordinates(target)[:, 1]
     np.testing.assert_allclose(
-        assembly.couplings[0].transfer(values), expected, atol=1e-14
+        assembly.couplings[0].transfer(values), expected, atol=INTERPOLATION_ATOL
     )
     assert left_mesh.coordinates.shape[0] == 9
     assert right_mesh.coordinates.shape[0] == 16
     assert not transfer.conservative
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="multiblock.interface.faces"):
         assemble_independent_blocks(
             (left, right),
             (interface, interface),
@@ -133,40 +143,9 @@ def test_multiblock_fem_manufactured_poisson_converges() -> None:
     assert 0.0 < fine < coarse / 3.0
 
 
-def _annulus_sector(index: int, /) -> TransfiniteBlock:
-    first = index * np.pi / 2.0
-    last = (index + 1) * np.pi / 2.0
-    name = f"sector:{index}"
-    first_ray = np.asarray((np.cos(first), np.sin(first)), dtype=np.float64)
-    last_ray = np.asarray((np.cos(last), np.sin(last)), dtype=np.float64)
-    return TransfiniteBlock(
-        name,
-        (
-            TransfiniteCurveControl(
-                CircleCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 1.0),
-                "inner",
-                (first, last),
-                6,
-            ),
-            TransfiniteCurveControl(
-                CircleCurve((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), 2.0),
-                "outer",
-                (first, last),
-                6,
-            ),
-            TransfiniteCurveControl(
-                LineCurve(first_ray, first_ray), f"ray:{index}", (0.0, 1.0), 2
-            ),
-            TransfiniteCurveControl(
-                LineCurve(last_ray, last_ray), f"ray:{(index + 1) % 4}", (0.0, 1.0), 2
-            ),
-        ),
-    )
-
-
 def test_cylinder_ogrid_periodic_block_cycle_closes_without_axis_collapse() -> None:
     sectors = tuple(
-        generate_structured_block(_annulus_sector(index)) for index in range(4)
+        generate_structured_block(annulus_sector(index)) for index in range(4)
     )
     interfaces = tuple(
         BlockInterfaceControl(
@@ -254,7 +233,9 @@ def test_gluing_retains_curved_cell_interiors_and_rejects_a_cracked_trace() -> N
         glued.geometry.elements, glued.geometry.geometry_dofs, strict=True
     ):
         if not isinstance(coordinate_element, phx.discretization.FiniteElementSpec):
-            raise TypeError("Curved gluing must retain the actual tabulated source maps.")
+            raise TypeError(
+                "fixture.coordinate_element must retain a tabulated source map; got incompatible element"
+            )
         value = (
             np.asarray(
                 coordinate_element.tabulate(np.asarray(((0.5, 0.5),), dtype=np.float64))[
@@ -263,7 +244,9 @@ def test_gluing_retains_curved_cell_interiors_and_rejects_a_cracked_trace() -> N
             )
             @ np.asarray(glued.geometry.coordinates)[np.asarray(route)[0]]
         )
-        np.testing.assert_allclose(value[:, 1], 0.5 + 0.125 / 16.0, atol=1e-14, rtol=0.0)
+        np.testing.assert_allclose(
+            value[:, 1], 0.5 + 0.125 / 16.0, atol=INTERPOLATION_ATOL, rtol=0.0
+        )
     changed = np.asarray(constructions[1].geometry.coordinates).copy()
     changed[1, 0] += 0.01  # Same corners, different interior point of the shared trace.
     cracked_geometry = CellGeometrySpec(
@@ -300,7 +283,7 @@ def test_interface_tolerances_do_not_accumulate_at_a_shared_corner() -> None:
         BlockInterfaceControl("a", 1, "b", 0, (0,), (False,), tolerance=0.001),
         BlockInterfaceControl("b", 3, "c", 2, (0,), (False,), tolerance=0.001),
     )
-    with pytest.raises(ValueError, match="final node displacement tolerance"):
+    with pytest.raises(ValueError, match="multiblock.interface.displacement"):
         glue_structured_blocks(tuple(constructions), interfaces)
 
 
@@ -329,7 +312,7 @@ def test_public_multiblock_refuses_aggregate_cell_capacity_without_changing_sour
     None
 ):
     from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
-    from phydrax.geometry._mesh_certificates import ParametricCurveBoundarySource
+    from phydrax.geometry._source_fidelity import ParametricCurveBoundarySource
 
     blocks = (rectangle("left", 0.0, 0.5, 2), rectangle("right", 0.5, 1.0, 2))
     interface = BlockInterfaceControl("left", 1, "right", 0, (0,), (False,))
@@ -395,20 +378,10 @@ def test_public_multiblock_refuses_aggregate_cell_capacity_without_changing_sour
 def test_original_material_multiblock_publishes_exclusive_regions_and_exact_interface() -> (
     None
 ):
-    from argparse import Namespace
-
     from phydrax._fingerprint import array_tree_fingerprint
-    from phydrax.meshing._quad_generation import _entities
-    from tools.meshing_qualification import _family_qualification_fixture
+    from phydrax.meshing._host_banks import entities
 
-    source, specification, options, _ = _family_qualification_fixture(
-        Namespace(
-            family_case="multiblock-material-hex",
-            resolution=4,
-            capacity=20000,
-            timeout=120.0,
-        )
-    )
+    source, specification, options = material_multiblock_request()
     original = source.binding_id, array_tree_fingerprint(source)
     result = (
         phx.meshing.NativeMeshingProvider(options)
@@ -435,6 +408,6 @@ def test_original_material_multiblock_publishes_exclusive_regions_and_exact_inte
     rows = np.flatnonzero(np.isin(face_ids, np.asarray(interface.scope.entity_ids)))
     assert rows.size
     assert np.all(
-        np.asarray(result.mesh.coordinates)[_entities(result.mesh, 2)[rows], 0] == 1.0
+        np.asarray(result.mesh.coordinates)[entities(result.mesh, 2)[rows], 0] == 1.0
     )
     assert (source.binding_id, array_tree_fingerprint(source)) == original

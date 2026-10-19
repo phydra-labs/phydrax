@@ -18,20 +18,22 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from enum import StrEnum
-from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+
+import phydrax.discretization._cell_geometry as cell_geometry_owner
+import phydrax.discretization._cell_mesh as cell_mesh_owner
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
-from ..discretization import CellGeometrySpec, CellMesh
 from ..discretization._cell_geometry_validity import polyhedral_star_tables
 from ..linalg import (
     determinant_small_linear,
@@ -49,11 +51,11 @@ from ..optim import (
     ProjectedLBFGS,
 )
 from ..sparse import EdgeRelation, SparseLinearMap
-from ..typing import checked
+from ..typing import checked, parse
 from ._audit import audit_cell_mesh, CellMeshAuditPolicy
 from ._canonical import certify_cell_mesh
 from ._metric import interpolate_mesh_metric, MeshMetricField
-from ._quality import _corner_table, _ideal_vertices, evaluate_cell_quality
+from ._quality import corner_table, evaluate_cell_quality, ideal_vertices
 from ._result import CellMeshingResult
 
 
@@ -112,11 +114,11 @@ def _corner_frames(kind: str, arity: int, /) -> tuple[np.ndarray, np.ndarray]:
     the cell; every other kind keeps each positively oriented vertex frame.
     """
 
-    table = _corner_table(kind, arity)
+    table = corner_table(kind, arity)
     count = 1 if kind in _SIMPLEX_KINDS else table.vertices.size
     vertices = table.vertices[:count]
     neighbors = table.neighbors[:count]
-    ideal = _ideal_vertices(kind, arity)
+    ideal = ideal_vertices(kind, arity)
     frames = np.swapaxes(ideal[neighbors] - ideal[vertices][:, None, :], -1, -2)
     return np.concatenate((vertices[:, None], neighbors), axis=1), frames
 
@@ -231,7 +233,7 @@ class _TargetMatrixEnergy(StrictModule):
                 return jnp.sum((gram - identity) ** 2, axis=(-2, -1)) + (safe - 1.0) ** 2
             case _:
                 raise ValueError(
-                    f"Unsupported mesh quality objective {self.objective!r}."
+                    f"TargetMatrixOptimizationPlan.objective must be supported; got {self.objective!r}."
                 )
 
     def __call__(self, coordinates: Array, /) -> Array:
@@ -258,7 +260,8 @@ def _free_objective(free: Array, arguments: _FreeCoordinateArguments, /) -> Arra
 
 
 @eqx.filter_jit
-def _minimize_free_coordinates(
+@checked
+def minimize_free_coordinates(
     energy: Callable[[Array], Array],
     method: ProjectedLBFGS | NewtonTrustRegion,
     termination: OptimizationTermination,
@@ -291,29 +294,17 @@ def _minimize_free_coordinates(
                 args=arguments,
             )
         case _:
-            raise TypeError("method must be ProjectedLBFGS or NewtonTrustRegion.")
+            raise TypeError(
+                "minimize_free_coordinates.method must be ProjectedLBFGS or NewtonTrustRegion; got an unsupported method."
+            )
     return base.at[free_rows].set(result.parameters), result
 
 
 @eqx.filter_jit
-def _evaluate_energy(energy: _TargetMatrixEnergy, coordinates: Array, /) -> Any:
+def _evaluate_energy(
+    energy: _TargetMatrixEnergy, coordinates: Array, /
+) -> tuple[Array, Array]:
     return energy(coordinates), energy.corner_determinants(coordinates)
-
-
-def _method(method: ProjectedLBFGS | NewtonTrustRegion | None, /) -> Any:
-    resolved = ProjectedLBFGS() if method is None else method
-    if not isinstance(resolved, (ProjectedLBFGS, NewtonTrustRegion)):
-        raise TypeError("method must be ProjectedLBFGS, NewtonTrustRegion, or None.")
-    return resolved
-
-
-def _termination(termination: OptimizationTermination | None, /) -> Any:
-    resolved = (
-        OptimizationTermination(maximum_steps=100) if termination is None else termination
-    )
-    if not isinstance(resolved, OptimizationTermination):
-        raise TypeError("termination must be OptimizationTermination or None.")
-    return resolved
 
 
 def _fixed_mask(fixed: ArrayLike | None, rows: int, name: str, /) -> np.ndarray:
@@ -323,9 +314,13 @@ def _fixed_mask(fixed: ArrayLike | None, rows: int, name: str, /) -> np.ndarray:
         else np.asarray(fixed, dtype=np.bool_)
     )
     if mask.shape != (rows,):
-        raise ValueError(f"{name} must match the coordinate row count.")
+        raise ValueError(
+            f"MeshOptimization.{name} must match the coordinate row count; got shape {mask.shape} for {rows} rows."
+        )
     if np.all(mask):
-        raise ValueError(f"{name} leaves no free coordinates to optimize.")
+        raise ValueError(
+            f"MeshOptimization.{name} must leave free coordinates to optimize; got all {rows} rows fixed."
+        )
     return mask
 
 
@@ -348,12 +343,16 @@ class MeshUntanglingPolicy(StrictModule, NonTrainableState):
         self, *, maximum_stages: int = 4, regularization_threshold: float = 1.0e-3
     ) -> None:
         if not isinstance(maximum_stages, (int, np.integer)) or maximum_stages <= 0:
-            raise ValueError("maximum_stages must be a positive integer.")
+            raise ValueError(
+                "MeshUntanglingPolicy.maximum_stages must be a positive integer; got an invalid stage count."
+            )
         threshold = finite_real_scalar(
             regularization_threshold, "regularization_threshold"
         )
         if threshold <= 0.0:
-            raise ValueError("regularization_threshold must be positive.")
+            raise ValueError(
+                "MeshUntanglingPolicy.regularization_threshold must be positive; got a nonpositive threshold."
+            )
         self.maximum_stages = int(maximum_stages)
         self.regularization_threshold = threshold
         self.policy_id = canonical_fingerprint(
@@ -394,7 +393,9 @@ class MeshUntanglingEvidence(StrictModule, NonTrainableState):
         accept_valid_nonconverged: bool,
     ) -> None:
         if not minimizations or len(minimizations) != len(regularizations):
-            raise ValueError("Every untangling stage needs one minimization and delta.")
+            raise ValueError(
+                "MeshUntanglingEvidence.stages must have one minimization and delta per stage; got empty or misaligned stages."
+            )
         self.minimizations = tuple(minimizations)
         self.regularizations = tuple(float(value) for value in regularizations)
         self.optimizer_statuses = tuple(
@@ -434,7 +435,7 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
     iterate is ``NONCONVERGED`` and is not committed.
     """
 
-    mesh: CellMesh
+    mesh: cell_mesh_owner.CellMesh
     energy: _TargetMatrixEnergy
     fixed_vertices: Array
     lower: Array
@@ -450,7 +451,7 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
     @checked
     def __init__(
         self,
-        mesh: CellMesh,
+        mesh: cell_mesh_owner.CellMesh,
         /,
         *,
         objective: MeshQualityObjective = MeshQualityObjective.SHAPE_SIZE,
@@ -465,58 +466,71 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
         audit_policy: CellMeshAuditPolicy | None = None,
         accept_valid_nonconverged: bool = False,
     ) -> None:
-        if not isinstance(objective, MeshQualityObjective):
-            raise TypeError("objective must be MeshQualityObjective.")
-        if untangling is not None and not isinstance(untangling, MeshUntanglingPolicy):
-            raise TypeError("untangling must be MeshUntanglingPolicy or None.")
+        objective = parse(
+            objective, MeshQualityObjective, "TargetMatrixOptimizationPlan.objective"
+        )
         audit = CellMeshAuditPolicy() if audit_policy is None else audit_policy
-        if not isinstance(audit, CellMeshAuditPolicy):
-            raise TypeError("audit_policy must be CellMeshAuditPolicy or None.")
         if not isinstance(accept_valid_nonconverged, bool):
-            raise TypeError("accept_valid_nonconverged must be bool.")
-        method_ = _method(method)
-        termination_ = _termination(termination)
+            raise TypeError(
+                "TargetMatrixOptimizationPlan.accept_valid_nonconverged must be bool; got a nonboolean policy."
+            )
+        method_ = ProjectedLBFGS() if method is None else method
+        termination_ = (
+            OptimizationTermination(maximum_steps=100)
+            if termination is None
+            else termination
+        )
         rows, dimension = mesh.coordinates.shape
         target = np.asarray(
             mesh.coordinates if target_coordinates is None else target_coordinates,
             dtype=np.float64,
         )
         if target.shape != (rows, dimension) or not np.all(np.isfinite(target)):
-            raise ValueError("target_coordinates must match the finite mesh coordinates.")
+            raise ValueError(
+                "TargetMatrixOptimizationPlan.target_coordinates must match the finite mesh coordinates; got an incompatible shape or nonfinite values."
+            )
         if (metric is None) != (objective is not MeshQualityObjective.METRIC_ALIGNMENT):
-            raise ValueError("A metric is required exactly for METRIC_ALIGNMENT.")
+            raise ValueError(
+                "TargetMatrixOptimizationPlan.metric must be supplied exactly for METRIC_ALIGNMENT; got a metric/objective mismatch."
+            )
         weight = finite_real_scalar(displacement_weight, "displacement_weight")
         if weight < 0.0:
-            raise ValueError("displacement_weight must be non-negative.")
+            raise ValueError(
+                "TargetMatrixOptimizationPlan.displacement_weight must be non-negative; got a negative weight."
+            )
         fixed = _fixed_mask(fixed_vertices, rows, "fixed_vertices")
         lower, upper = _coordinate_box(coordinate_bounds, np.asarray(mesh.coordinates))
         if isinstance(method_, NewtonTrustRegion) and (
             np.any(np.isfinite(lower[~fixed])) or np.any(np.isfinite(upper[~fixed]))
         ):
-            raise ValueError("NewtonTrustRegion cannot enforce coordinate bounds.")
+            raise ValueError(
+                "MeshOptimization.method must support coordinate bounds when bounds are finite; got NewtonTrustRegion with coordinate bounds."
+            )
         solve_plan = SmallLinearSolvePlan(dimension)
         corners, targets, centroids = _corner_targets(mesh, target, metric, solve_plan)
-        inverse = inverse_small_linear(solve_plan, jnp.asarray(targets))
+        inverse = inverse_small_linear(solve_plan, jax.device_put(np.asarray(targets)))
         if not np.all(np.asarray(inverse.successful)):
-            raise ValueError("Target corner matrices must be well conditioned.")
+            raise ValueError(
+                "TargetMatrixOptimizationPlan.targets must be well conditioned; got an unsuccessful inverse result."
+            )
         measures = np.asarray(inverse.determinant)
         scale = float(np.mean(measures ** (1.0 / dimension)))
         self.mesh = mesh
         self.energy = _TargetMatrixEnergy(
-            corners=jnp.asarray(corners, dtype=jnp.int32),
+            corners=jax.device_put(np.asarray(corners, dtype=np.int32)),
             centroids=centroids,
             target_inverses=inverse.value,
-            weights=jnp.asarray(measures / np.sum(measures)),
-            reference=jnp.asarray(target),
-            displacement_scale=jnp.asarray(weight / scale**2),
-            regularization=jnp.asarray(0.0),
+            weights=jax.device_put(np.asarray(measures / np.sum(measures))),
+            reference=jax.device_put(np.asarray(target)),
+            displacement_scale=jax.device_put(np.asarray(weight / scale**2)),
+            regularization=jax.device_put(np.asarray(0.0)),
             solve_plan=solve_plan,
             objective=objective,
             untangling=False,
         )
-        self.fixed_vertices = jnp.asarray(fixed)
-        self.lower = jnp.asarray(lower)
-        self.upper = jnp.asarray(upper)
+        self.fixed_vertices = jax.device_put(np.asarray(fixed))
+        self.lower = jax.device_put(np.asarray(lower))
+        self.upper = jax.device_put(np.asarray(upper))
         self.method = method_
         self.termination = termination_
         self.untangling = untangling
@@ -553,7 +567,9 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
         """Objective value; infinite when any corner is inverted."""
         points = jnp.asarray(coordinates, dtype=self.energy.reference.dtype)
         if points.shape != self.energy.reference.shape:
-            raise ValueError("coordinates must match the mesh coordinate shape.")
+            raise ValueError(
+                "TargetMatrixOptimizationPlan.coordinates must match the mesh coordinate shape; got an incompatible shape."
+            )
         return _evaluate_energy(self.energy, points)[0]
 
 
@@ -564,7 +580,9 @@ def _coordinate_box(
         infinite = np.full(coordinates.shape, np.inf)
         return -infinite, infinite
     if len(bounds) != 2:
-        raise ValueError("coordinate_bounds must be one (lower, upper) pair.")
+        raise ValueError(
+            "MeshOptimization.coordinate_bounds must be one (lower, upper) pair; got an incompatible pair length."
+        )
     lower = np.broadcast_to(
         np.asarray(bounds[0], dtype=np.float64), coordinates.shape
     ).copy()
@@ -572,22 +590,30 @@ def _coordinate_box(
         np.asarray(bounds[1], dtype=np.float64), coordinates.shape
     ).copy()
     if np.any(np.isnan(lower)) or np.any(np.isnan(upper)) or np.any(lower > upper):
-        raise ValueError("coordinate_bounds must be ordered and not NaN.")
+        raise ValueError(
+            "MeshOptimization.coordinate_bounds must be ordered and not NaN; got unordered or NaN bounds."
+        )
     return lower, upper
 
 
-def _metric_rows(mesh: CellMesh, metric: MeshMetricField, /) -> np.ndarray:
+def _metric_rows(
+    mesh: cell_mesh_owner.CellMesh, metric: MeshMetricField, /
+) -> np.ndarray:
     scope = metric.scope
     vertices = mesh.entity_set(0)
     if scope.entity_dimension != 0 or scope.entity_set_id != vertices.entity_set_id:
-        raise ValueError("The alignment metric must be bound to the mesh vertices.")
+        raise ValueError(
+            "TargetMatrixOptimizationPlan.metric must be bound to the mesh vertices; got an incompatible entity scope."
+        )
     identifiers = np.asarray(scope.entity_ids, dtype=np.int64)
     order = np.argsort(identifiers)
     wanted = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
     positions = np.searchsorted(identifiers[order], wanted)
     positions = np.minimum(positions, identifiers.size - 1)
     if not np.array_equal(identifiers[order[positions]], wanted):
-        raise ValueError("The alignment metric must cover every mesh vertex.")
+        raise ValueError(
+            "TargetMatrixOptimizationPlan.metric must cover every mesh vertex; got missing vertex IDs."
+        )
     return order[positions]
 
 
@@ -600,12 +626,14 @@ def _cell_inverse_roots(metric_values: Array, vertices: np.ndarray, /) -> Array:
     )
     inverse_root = hermitian_inverse_sqrt(cell_metric)
     if not np.all(np.asarray(inverse_root.valid)):
-        raise ValueError("Cell metrics must be symmetric positive definite.")
+        raise ValueError(
+            "TargetMatrixOptimizationPlan.metric must be symmetric positive definite; got an invalid cell inverse root."
+        )
     return inverse_root.value
 
 
 def _polyhedral_stars(
-    mesh: CellMesh, cells: np.ndarray, /
+    mesh: cell_mesh_owner.CellMesh, cells: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray, _StarCentroids]:
     """Star-simplex routes of polyhedral ``cells`` into appended centroid rows."""
 
@@ -658,7 +686,7 @@ def _polyhedral_stars(
 
 
 def _corner_targets(
-    mesh: CellMesh,
+    mesh: cell_mesh_owner.CellMesh,
     target: np.ndarray,
     metric: MeshMetricField | None,
     solve_plan: SmallLinearSolvePlan,
@@ -677,7 +705,7 @@ def _corner_targets(
     for block in mesh.blocks:
         if block.topological_dimension != dimension:
             raise ValueError(
-                "Target-matrix optimization requires full-dimensional cells."
+                "TargetMatrixOptimizationPlan.cells must be full-dimensional; got a lower-dimensional cell block."
             )
         vertices = np.asarray(block.vertices, dtype=np.int64)
         cell_count = vertices.shape[0]
@@ -702,13 +730,13 @@ def _corner_targets(
                 )
             )
         offset += cell_count
-    centroids = None
+    local_centroids = None
     if polyhedral_cells:
         cells = np.concatenate(polyhedral_cells)
-        star_corners, star_cells, centroids = _polyhedral_stars(mesh, cells)
+        star_corners, star_cells, local_centroids = _polyhedral_stars(mesh, cells)
         corners.append(star_corners)
         star_targets = np.asarray(
-            _corner_matrices(centroids(points), jnp.asarray(star_corners))
+            _corner_matrices(local_centroids(points), jnp.asarray(star_corners))
         )
         if metric_values is not None:
             # Metric size and alignment with the target star shape.
@@ -722,8 +750,10 @@ def _corner_targets(
     targets_ = np.concatenate(targets, axis=0)
     determinants = np.asarray(determinant_small_linear(solve_plan, jnp.asarray(targets_)))
     if not np.all(np.isfinite(determinants)) or np.any(determinants <= 0.0):
-        raise ValueError("Target corner matrices must be positively oriented.")
-    return np.concatenate(corners, axis=0), targets_, centroids
+        raise ValueError(
+            "TargetMatrixOptimizationPlan.targets must be positively oriented; got nonfinite or nonpositive determinants."
+        )
+    return np.concatenate(corners, axis=0), targets_, local_centroids
 
 
 class MeshOptimizationResult(StrictModule, NonTrainableState):
@@ -750,6 +780,7 @@ class MeshOptimizationResult(StrictModule, NonTrainableState):
     inverted_count: int = eqx.field(static=True)
     optimization_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         plan: TargetMatrixOptimizationPlan,
@@ -764,10 +795,11 @@ class MeshOptimizationResult(StrictModule, NonTrainableState):
         final_objective: float,
         inverted_count: int,
     ) -> None:
-        if not isinstance(status, MeshOptimizationStatus):
-            raise TypeError("status must be MeshOptimizationStatus.")
+        status = parse(status, MeshOptimizationStatus, "MeshOptimizationResult.status")
         if (status in _ACCEPTED_STATUSES) != (result is not None):
-            raise ValueError("Exactly the accepted statuses carry a certified result.")
+            raise ValueError(
+                "MeshOptimizationResult.result must be present exactly for accepted statuses; got a status/result mismatch."
+            )
         optimizer_status = (
             None
             if minimization is None
@@ -777,21 +809,22 @@ class MeshOptimizationResult(StrictModule, NonTrainableState):
         match status:
             case MeshOptimizationStatus.OPTIMIZED:
                 if not converged:
-                    raise ValueError("An optimized status requires a converged solve.")
+                    raise ValueError(
+                        "MeshOptimizationResult.status must have a converged solve when optimized; got a nonconverged solve."
+                    )
             case (
                 MeshOptimizationStatus.VALID_NONCONVERGED
                 | MeshOptimizationStatus.NONCONVERGED
             ):
                 if optimizer_status is None or converged:
                     raise ValueError(
-                        "A non-converged status requires a non-converged solve."
+                        "MeshOptimizationResult.status must have a non-converged solve when nonconverged; got a missing or converged solve."
                     )
                 if (
                     status is MeshOptimizationStatus.VALID_NONCONVERGED
                 ) != plan.accept_valid_nonconverged:
                     raise ValueError(
-                        "Valid non-convergence is accepted exactly when the plan "
-                        "permits it."
+                        f"MeshOptimizationResult.status must accept valid nonconvergence only when the plan permits it; got status={status.value!r}, accept_valid_nonconverged={plan.accept_valid_nonconverged}"
                     )
             case (
                 MeshOptimizationStatus.INVERTED_INPUT
@@ -800,11 +833,13 @@ class MeshOptimizationResult(StrictModule, NonTrainableState):
             ):
                 pass
             case _:
-                raise ValueError(f"Unsupported mesh optimization status {status!r}.")
+                raise ValueError(
+                    f"MeshOptimizationResult.status must be supported; got {status!r}."
+                )
         values = np.asarray(coordinates, dtype=np.float64)
         self.status = status
         self.result = result
-        self.coordinates = jnp.asarray(values)
+        self.coordinates = jax.device_put(np.asarray(values))
         self.minimization = minimization
         self.untangling = untangling
         self.initial_objective = float(initial_objective)
@@ -856,9 +891,9 @@ def _inverted_count(
 
 def _audit_passed(
     plan: TargetMatrixOptimizationPlan, coordinates: Array, numeric_version: str, /
-) -> tuple[bool, CellMesh]:
+) -> tuple[bool, cell_mesh_owner.CellMesh]:
     candidate = plan.mesh.with_coordinates(coordinates, numeric_version=numeric_version)
-    geometry = CellGeometrySpec.affine(candidate)
+    geometry = cell_geometry_owner.CellGeometrySpec.affine(candidate)
     audit = audit_cell_mesh(
         candidate,
         geometry,
@@ -885,7 +920,7 @@ def _untangle(
     for _ in range(policy.maximum_stages):
         minimum = float(np.min(np.asarray(determinants)))
         delta = math.sqrt(epsilon * (epsilon - minimum)) if minimum < epsilon else 0.0
-        coordinates, minimization = _minimize_free_coordinates(
+        coordinates, minimization = minimize_free_coordinates(
             plan.energy.regularized(delta),
             plan.method,
             plan.termination,
@@ -918,6 +953,7 @@ def _untangle(
     )
 
 
+@checked
 def optimize_cell_mesh(
     plan: TargetMatrixOptimizationPlan,
     coordinate_contract: SpatialCoordinateContract,
@@ -936,16 +972,17 @@ def optimize_cell_mesh(
     non-convergence, and ``NONCONVERGED`` otherwise. Every non-accepted status
     returns the unmodified input coordinates.
     """
-    if not isinstance(plan, TargetMatrixOptimizationPlan):
-        raise TypeError("plan must be TargetMatrixOptimizationPlan.")
-    if not isinstance(coordinate_contract, SpatialCoordinateContract):
-        raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
     original = jnp.asarray(plan.mesh.coordinates, dtype=plan.energy.reference.dtype)
     initial_value, determinants = _evaluate_energy(plan.energy, original)
     initial = float(np.asarray(initial_value))
     inverted = _inverted_count(plan, original, determinants)
 
-    def failure(status: Any, count: Any, minimization: Any, untangling: Any) -> Any:
+    def failure(
+        status: MeshOptimizationStatus,
+        count: int,
+        minimization: MinimizationResult | None,
+        untangling: MeshUntanglingEvidence | None,
+    ) -> MeshOptimizationResult:
         return MeshOptimizationResult(
             plan,
             status,
@@ -979,7 +1016,7 @@ def optimize_cell_mesh(
                 untangling,
             )
     free = jnp.asarray(np.flatnonzero(~np.asarray(plan.fixed_vertices)), dtype=jnp.int32)
-    optimized, minimization = _minimize_free_coordinates(
+    optimized, minimization = minimize_free_coordinates(
         plan.energy,
         plan.method,
         plan.termination,
@@ -1041,8 +1078,9 @@ class CellGeometryOptimizationResult(StrictModule):
         return self.optimizer_status is OptimizationStatus.SUCCESS
 
 
+@checked
 def optimize_cell_geometry_coordinates(
-    geometry: CellGeometrySpec,
+    geometry: cell_geometry_owner.CellGeometrySpec,
     objective: Callable[[Array], Array],
     /,
     *,
@@ -1057,25 +1095,25 @@ def optimize_cell_geometry_coordinates(
     required curved-element validity (return ``inf`` for inadmissible states).
     Fixed rows are eliminated and stay bit-identical.
     """
-    if not isinstance(geometry, CellGeometrySpec):
-        raise TypeError("geometry must be CellGeometrySpec.")
-    if not callable(objective):
-        raise TypeError("objective must be callable.")
     coordinates = jnp.asarray(geometry.coordinates)
     if not jnp.issubdtype(coordinates.dtype, jnp.floating):
         coordinates = coordinates.astype(jnp.float64)
     fixed = _fixed_mask(fixed_coordinates, coordinates.shape[0], "fixed_coordinates")
     lower, upper = _coordinate_box(coordinate_bounds, np.asarray(coordinates))
-    method_ = _method(method)
+    method_ = ProjectedLBFGS() if method is None else method
     if isinstance(method_, NewtonTrustRegion) and (
         np.any(np.isfinite(lower[~fixed])) or np.any(np.isfinite(upper[~fixed]))
     ):
-        raise ValueError("NewtonTrustRegion cannot enforce coordinate bounds.")
+        raise ValueError(
+            "MeshOptimization.method must support coordinate bounds when bounds are finite; got NewtonTrustRegion with coordinate bounds."
+        )
     free = np.flatnonzero(~fixed)
-    optimized, minimization = _minimize_free_coordinates(
+    optimized, minimization = minimize_free_coordinates(
         objective,
         method_,
-        _termination(termination),
+        OptimizationTermination(maximum_steps=100)
+        if termination is None
+        else termination,
         coordinates,
         jnp.asarray(free, dtype=jnp.int32),
         jnp.asarray(lower[free], dtype=coordinates.dtype),

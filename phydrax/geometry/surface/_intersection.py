@@ -16,7 +16,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
-from ._model import _surface_connectivity, SurfaceRealization
+from ._model import surface_connectivity, SurfaceRealization
 
 
 class PlaneSectionStatus(str, Enum):
@@ -305,7 +305,7 @@ def intersect_plane_surface(
         )
 
     faces = np.asarray(
-        _surface_connectivity(realization.mesh).cell_vertices[:, :3], dtype=np.int32
+        surface_connectivity(realization.mesh).cell_vertices[:, :3], dtype=np.int32
     )
     vertex_global_ids = np.asarray(realization.mesh.vertex_global_ids, dtype=np.int64)
     chart_cell_ids = np.asarray(realization.chart_mapping.cell_global_ids, dtype=np.int64)

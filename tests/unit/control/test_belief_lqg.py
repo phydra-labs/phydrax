@@ -157,7 +157,17 @@ def test_belief_lqg_scenario_1() -> None:
     )
     np.testing.assert_array_equal(result.innovation_symmetry_residuals, [0.0])
     np.testing.assert_array_equal(result.posterior_covariance_symmetry_residuals, [0.0])
-    np.testing.assert_allclose(result.innovation_solve_residuals, 0.0)
+    gain = np.asarray(result.kalman_gains)[..., 0, 0]
+    np.testing.assert_allclose(gain, 2.0 / 5.0, rtol=0.0, atol=np.spacing(2.0 / 5.0))
+    # The scalar solve 5 K = 2 and its residual use division, multiplication,
+    # and subtraction; gamma_3 bounds their float64 roundoff, fused or not.
+    epsilon = np.finfo(gain.dtype).eps
+    gamma_3 = 3 * epsilon / (1 - 3 * epsilon)
+    residual_bound = float(np.max(gamma_3 * (5 * np.abs(gain) + 2)))
+    np.testing.assert_allclose(
+        result.innovation_solve_residuals, 0.0, rtol=0.0, atol=residual_bound
+    )
+    assert np.all(np.asarray(result.innovation_solve_residuals) >= 0.0)
     np.testing.assert_array_equal(
         result.innovation_solve_statuses,
         [[int(LinearSolveStatus.SUCCESS)]],

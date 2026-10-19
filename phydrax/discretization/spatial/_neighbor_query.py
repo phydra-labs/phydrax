@@ -23,10 +23,10 @@ from phydrax.sparse import EdgeRelation
 from ..._jax_config import x64_enabled
 from ...typing import parse
 from ._morton import (
-    _canonical_morton_point_order,
-    _MortonPointOrder,
+    canonical_morton_point_order,
     morton_encode_integer,
     MortonAddressPlan,
+    MortonPointOrder,
 )
 
 
@@ -116,7 +116,7 @@ class MortonRadiusRelationResult(NonTrainableState, StrictModule):
 
 
 class _SortedSources(NamedTuple):
-    order: _MortonPointOrder
+    order: MortonPointOrder
     search_codes: jax.Array
     coordinates: jax.Array
 
@@ -300,7 +300,7 @@ def _prepare_sources(
 ) -> _SortedSources:
     # One Morton sort serves every prefix level: each coarse cell at any level
     # is one contiguous span of the sorted codes, found by binary search.
-    order = _canonical_morton_point_order(
+    order = canonical_morton_point_order(
         address_plan,
         points,
         point_capacity=capacity,
@@ -917,7 +917,7 @@ _compiled_nearest_query = eqx.filter_jit(_nearest_query)
 
 
 def _cell_table(
-    address_plan: MortonAddressPlan, order: _MortonPointOrder, level: int
+    address_plan: MortonAddressPlan, order: MortonPointOrder, level: int
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Occupied level cells as contiguous spans of the canonical Morton order."""
     capacity = order.sorted_codes.shape[0]

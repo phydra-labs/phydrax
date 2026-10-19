@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import final
 
 import equinox as eqx
 import jax
@@ -13,23 +13,31 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+import phydrax.geometry.implicit._realization as realization_owner
+
 from ..._bvh import bvh_overlap_pairs_host, prepare_bvh
+from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...discretization._tensor_support import PreparedTensorGrid
 from ...ein import contract
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...nonlinear import ITP, NonlinearStatus, ScalarRootResult
+from ...typing import checked
 from .._certificate import FieldRegularity, SignReliability, ZeroSetAccuracy
 from .._contracts import CompiledGeometry, GeometryKernel, GeometryKind
 from ..design._schema import DesignState
 from ..simplicial import TriangleTopology
 from ._policy import ImplicitSurfacePolicy
-from ._projection import _field_and_gradient, ImplicitPointProjectionPlan
+from ._projection import field_and_gradient, ImplicitPointProjectionPlan
 
+
+_EDGE_ROOT_METHOD = ITP()
 
 _DEFAULT_SURFACE_POLICY = ImplicitSurfacePolicy()
 
 # Cube corners in the dual-contouring convention: corner c has lattice offset
 # _CORNER_OFFSETS[c] relative to the cell's lower lattice point.
-_CORNER_OFFSETS = np.asarray(
+CORNER_OFFSETS = np.asarray(
     (
         (0, 0, 0),
         (1, 0, 0),
@@ -60,18 +68,18 @@ _CUBE_EDGES = np.asarray(
     dtype=np.int64,
 )
 _CORNER_LOOKUP = np.zeros((2, 2, 2), dtype=np.int64)
-_CORNER_LOOKUP[tuple(_CORNER_OFFSETS.T)] = np.arange(8, dtype=np.int64)
-_EDGE_AXIS = np.argmax(
-    _CORNER_OFFSETS[_CUBE_EDGES[:, 0]] != _CORNER_OFFSETS[_CUBE_EDGES[:, 1]],
+_CORNER_LOOKUP[tuple(CORNER_OFFSETS.T)] = np.arange(8, dtype=np.int64)
+EDGE_AXIS = np.argmax(
+    CORNER_OFFSETS[_CUBE_EDGES[:, 0]] != CORNER_OFFSETS[_CUBE_EDGES[:, 1]],
     axis=1,
 )
-_EDGE_LOWER = np.minimum(
-    _CORNER_OFFSETS[_CUBE_EDGES[:, 0]],
-    _CORNER_OFFSETS[_CUBE_EDGES[:, 1]],
+EDGE_LOWER = np.minimum(
+    CORNER_OFFSETS[_CUBE_EDGES[:, 0]],
+    CORNER_OFFSETS[_CUBE_EDGES[:, 1]],
 )
 # Four cells around a lattice edge in cyclic order; row `axis` of this table
 # lists cell offsets relative to the edge's lower lattice point.
-_INCIDENT_CELL_OFFSETS = np.asarray(
+INCIDENT_CELL_OFFSETS = np.asarray(
     (
         ((0, -1, -1), (0, 0, -1), (0, 0, 0), (0, -1, 0)),
         ((-1, 0, -1), (-1, 0, 0), (0, 0, 0), (0, 0, -1)),
@@ -81,11 +89,6 @@ _INCIDENT_CELL_OFFSETS = np.asarray(
 )
 _QEF_REGULARIZATION_LEVELS = 12
 _QEF_SOLVE_PLAN = SmallLinearSolvePlan(3)
-# ITP root isolation (Oliveira & Takahashi 2020) on the unit edge parameter.
-_ITP_BRACKET_TOLERANCE = 2.0**-50
-_ITP_MAXIMUM_ITERATIONS = 51
-_ITP_K1 = 0.2
-_ITP_K2 = 2.0
 
 
 def _corner_component_tables() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -145,43 +148,53 @@ def _validate_discovery_inputs(
     policy: ImplicitSurfacePolicy,
     source_id: str,
 ) -> None:
-    if not isinstance(geometry, CompiledGeometry):
-        raise TypeError("geometry must be CompiledGeometry.")
-    if not isinstance(grid, PreparedTensorGrid):
-        raise TypeError("grid must be PreparedTensorGrid.")
-    if not isinstance(policy, ImplicitSurfacePolicy):
-        raise TypeError("policy must be ImplicitSurfacePolicy.")
     if not source_id:
-        raise ValueError("source_id must be non-empty.")
+        raise ValueError(
+            f"ImplicitDiscovery.source_id must be non-empty; got {source_id!r}"
+        )
     if geometry.ambient_dimension != 3 or geometry.kind is not GeometryKind.REGION:
         raise ValueError(
-            "Implicit surface discovery requires a three-dimensional region."
+            f"ImplicitSurfaceDiscovery.geometry must be a three-dimensional region; got dimension {geometry.ambient_dimension} and kind {geometry.kind}"
         )
     if len(grid.structured_axes) != 3:
-        raise ValueError("Implicit surface discovery requires a three-dimensional grid.")
+        raise ValueError(
+            f"ImplicitSurfaceDiscovery.grid must have three structured axes; got {len(grid.structured_axes)}"
+        )
     if any(axis.periodic for axis in grid.structured_axes):
-        raise ValueError("Implicit surface discovery requires nonperiodic axes.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.grid.axes must be nonperiodic; got periodic axes"
+        )
     if not bool(np.asarray(geometry.validity().accepted)):
-        raise ValueError("Implicit surface discovery geometry must be valid.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.geometry must have accepted validity evidence; got a rejected state"
+        )
     certificate = geometry.field_certificate
     if certificate.sign_reliability is not SignReliability.RELIABLE:
-        raise ValueError("Implicit surface discovery requires reliable field sign.")
+        raise ValueError(
+            f"ImplicitSurfaceDiscovery.field.sign_reliability must be reliable; got {certificate.sign_reliability.value}"
+        )
     if (
         certificate.zero_set_accuracy is ZeroSetAccuracy.APPROXIMATE
         and not policy.allow_approximate_zero_set
     ):
-        raise ValueError("Approximate zero sets require explicit policy approval.")
+        raise ValueError(
+            "ImplicitDiscovery.policy.allow_approximate_zero_set must permit approximate zero sets; got an approximate source with approval disabled"
+        )
     if (
         certificate.regularity is FieldRegularity.NONSMOOTH
         and not policy.allow_nonsmooth_field
     ):
-        raise ValueError("Nonsmooth fields require explicit selected-branch approval.")
+        raise ValueError(
+            "ImplicitDiscovery.policy.allow_nonsmooth_field must approve selected branches of nonsmooth fields; got a nonsmooth source with approval disabled"
+        )
     if not certificate.parameter_differentiable:
-        raise ValueError("Implicit realization requires parameter-differentiable fields.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.field.parameter_differentiable must be true; got a nondifferentiable field declaration"
+        )
 
 
 def _lattice_crossings(inside: np.ndarray, policy: ImplicitSurfacePolicy) -> _Crossings:
-    """Sign-change lattice edges in canonical (axis, i, j, k) order."""
+    """Return sign-changing lattice edges ordered by (axis, i, j, k)."""
 
     axes: list[np.ndarray] = []
     lowers: list[np.ndarray] = []
@@ -197,9 +210,13 @@ def _lattice_crossings(inside: np.ndarray, policy: ImplicitSurfacePolicy) -> _Cr
         lowers.append(lower)
         edge_index.append(index)
     if offset == 0:
-        raise ValueError("Implicit grid contains no surface crossings.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.grid.crossings must contain a surface crossing; got zero crossings"
+        )
     if offset > policy.maximum_crossings:
-        raise ValueError("Implicit surface exceeds maximum_crossings.")
+        raise ValueError(
+            f"ImplicitSurfaceDiscovery.crossings must fit maximum_crossings {policy.maximum_crossings}; got {offset}"
+        )
     return _Crossings(
         np.concatenate(axes),
         np.concatenate(lowers),
@@ -207,8 +224,34 @@ def _lattice_crossings(inside: np.ndarray, policy: ImplicitSurfacePolicy) -> _Cr
     )
 
 
+@final
+class RootIsolationResult(StrictModule, NonTrainableState):
+    """Edge coordinates, residuals, and native root status and work evidence."""
+
+    points: Array
+    residuals: Array
+    native_result: ScalarRootResult
+
+    def require_converged(self) -> None:
+        """Synchronize lane status at the host publication boundary and refuse failures."""
+        statuses = np.asarray(jax.device_get(self.native_result.status), dtype=np.int32)
+        if np.any(statuses != int(NonlinearStatus.SUCCESS)):
+            summary = tuple(
+                NonlinearStatus(value).name for value in np.unique(statuses).tolist()
+            )
+            diagnostics = self.native_result.nonlinear_result.diagnostics
+            iterations, evaluations = jax.device_get(
+                (diagnostics.iterations, diagnostics.residual_evaluations)
+            )
+            raise ValueError(
+                "RootIsolationResult.native_result.status must be SUCCESS; "
+                f"got {summary}, iterations={int(iterations)}, "
+                f"residual_evaluations={int(evaluations)}"
+            )
+
+
 @eqx.filter_jit
-def _isolate_roots(
+def isolate_roots(
     kernel: GeometryKernel,
     state: DesignState,
     lower_points: Array,
@@ -216,79 +259,22 @@ def _isolate_roots(
     lower_values: Array,
     upper_values: Array,
     tolerance: Array,
-) -> tuple[Array, Array]:
-    """Bracketed ITP root isolation over every lattice crossing in one program.
+) -> RootIsolationResult:
+    """Isolate lattice-edge roots with the prepared native ITP method.
 
-    Each lane solves f(lower + t (upper - lower)) = 0 on t in [0, 1]. ITP keeps
-    bisection's worst-case iteration bound while converging superlinearly on
-    smooth fields. Lanes freeze once |f| <= tolerance.
+    Each lane solves f(lower + t (upper - lower)) = 0 on t in [0, 1].
+    The edge parameter, callback arithmetic, and lane-freezing order are fixed.
     """
-
     direction = upper_points - lower_points
 
-    def field(parameter: Any) -> Any:
+    def field(parameter: Array) -> Array:
         return kernel.boundary_field(state, lower_points + parameter[:, None] * direction)
 
-    count = lower_points.shape[0]
-    initial = (
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.zeros((count,), dtype=lower_points.dtype),
-        jnp.ones((count,), dtype=lower_points.dtype),
-        lower_values,
-        upper_values,
-        jnp.zeros((count,), dtype=lower_points.dtype),
-        jnp.zeros((count,), dtype=jnp.bool_),
+    result = _EDGE_ROOT_METHOD.solve_batched(
+        field, lower_values, upper_values, tolerance, lower_points
     )
-
-    def active(carry: Any) -> Any:
-        _, left, right, _, _, _, converged = carry
-        return ~converged & (right - left > 2.0 * _ITP_BRACKET_TOLERANCE)
-
-    def condition(carry: Any) -> Any:
-        return (carry[0] < _ITP_MAXIMUM_ITERATIONS) & jnp.any(active(carry))
-
-    def body(carry: Any) -> Any:
-        iteration, left, right, left_value, right_value, root, converged = carry
-        running = active(carry)
-        width = right - left
-        middle = 0.5 * (left + right)
-        radius = jnp.maximum(
-            _ITP_BRACKET_TOLERANCE
-            * jnp.exp2(
-                (_ITP_MAXIMUM_ITERATIONS - 1 - iteration).astype(lower_points.dtype)
-            )
-            - 0.5 * width,
-            0.0,
-        )
-        truncation = _ITP_K1 * width**_ITP_K2
-        falsi = (right_value * left - left_value * right) / (right_value - left_value)
-        falsi = jnp.where(jnp.isfinite(falsi), falsi, middle)
-        sigma = jnp.sign(middle - falsi)
-        truncated = jnp.where(
-            truncation <= jnp.abs(middle - falsi), falsi + sigma * truncation, middle
-        )
-        candidate = jnp.where(
-            jnp.abs(truncated - middle) <= radius, truncated, middle - sigma * radius
-        )
-        value = field(candidate)
-        same_as_left = (value < 0.0) == (left_value < 0.0)
-        move_left = running & same_as_left
-        move_right = running & ~same_as_left
-        hit = running & (jnp.abs(value) <= tolerance)
-        return (
-            iteration + 1,
-            jnp.where(move_left, candidate, left),
-            jnp.where(move_right, candidate, right),
-            jnp.where(move_left, value, left_value),
-            jnp.where(move_right, value, right_value),
-            jnp.where(hit, candidate, root),
-            converged | hit,
-        )
-
-    _, left, right, _, _, root, converged = jax.lax.while_loop(condition, body, initial)
-    parameter = jnp.where(converged, root, 0.5 * (left + right))
-    points = lower_points + parameter[:, None] * direction
-    return points, jnp.abs(kernel.boundary_field(state, points))
+    points = lower_points + result.root[:, None] * direction
+    return RootIsolationResult(points, jnp.abs(result.value), result)
 
 
 def _dual_vertices(
@@ -302,7 +288,7 @@ def _dual_vertices(
     """
 
     configuration = np.zeros(tuple(size - 1 for size in inside.shape), dtype=np.int64)
-    for corner, (dx, dy, dz) in enumerate(_CORNER_OFFSETS):
+    for corner, (dx, dy, dz) in enumerate(CORNER_OFFSETS):
         corner_inside = inside[
             dx : inside.shape[0] - 1 + dx,
             dy : inside.shape[1] - 1 + dy,
@@ -315,9 +301,13 @@ def _dual_vertices(
     counts = _COMPONENT_COUNT[mixed_configuration]
     vertex_count = int(np.sum(counts))
     if vertex_count == 0:
-        raise ValueError("Implicit surface discovery produced no dual vertices.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.dual_vertices must be nonempty; got zero vertices"
+        )
     if vertex_count > policy.maximum_vertices:
-        raise ValueError("Implicit surface exceeds maximum_vertices.")
+        raise ValueError(
+            f"ImplicitSurfaceDiscovery.dual_vertices must fit maximum_vertices {policy.maximum_vertices}; got {vertex_count}"
+        )
     first_vertex = np.concatenate(((0,), np.cumsum(counts)[:-1])).astype(np.int64)
     mixed_index = np.full(configuration.shape, -1, dtype=np.int64)
     mixed_index[mixed] = np.arange(mixed_cells.shape[0], dtype=np.int64)
@@ -326,17 +316,19 @@ def _dual_vertices(
     vertex_cell = mixed_cells[owner]
     vertex_configuration = mixed_configuration[owner]
 
-    edge_cells = vertex_cell[:, None, :] + _EDGE_LOWER[None, :, :]
+    edge_cells = vertex_cell[:, None, :] + EDGE_LOWER[None, :, :]
     candidates = np.full((vertex_count, 12), -1, dtype=np.int64)
     for axis in range(3):
-        selected = _EDGE_AXIS == axis
+        selected = EDGE_AXIS == axis
         cells = edge_cells[:, selected]
         candidates[:, selected] = crossings.edge_index[axis][
             cells[..., 0], cells[..., 1], cells[..., 2]
         ]
     member = _EDGE_COMPONENT[vertex_configuration] == component[:, None]
     if np.any(member & (candidates < 0)):
-        raise ValueError("Implicit manifold incidence is incomplete.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.incidence must represent every required dual vertex and component; got missing incidences"
+        )
     anchor_count = np.sum(member, axis=1)
     width = int(np.max(anchor_count))
     ordered = np.sort(np.where(member, candidates, np.iinfo(np.int64).max), axis=1)
@@ -352,7 +344,7 @@ def _dual_vertices(
     )
 
 
-def _qef_vertices(
+def qef_vertices(
     anchors: np.ndarray,
     gradients: np.ndarray,
     anchor_indices: np.ndarray,
@@ -366,7 +358,9 @@ def _qef_vertices(
 
     norms = np.linalg.norm(gradients, axis=-1)
     if np.any(norms <= 0.0) or not np.all(np.isfinite(norms)):
-        raise ValueError("Implicit QEF anchors require finite nonzero gradients.")
+        raise ValueError(
+            "ImplicitQEF.anchor_gradients must be finite and nonzero; got nonfinite or zero gradient norms"
+        )
     unit = gradients / norms[:, None]
     mask = anchor_mask.astype(np.float64)
     points = anchors[anchor_indices]
@@ -410,7 +404,7 @@ def _qef_vertices(
         if np.all(done):
             return vertices, selected_regularization
     raise ValueError(
-        "Implicit QEF vertex left its discovery cell even after bounded regularization adaptation."
+        "ImplicitQEF.vertex must remain inside its discovery cell under the bounded regularization schedule; got an out-of-cell vertex"
     )
 
 
@@ -424,10 +418,12 @@ def _dual_faces(
 ) -> np.ndarray:
     """Split every crossing's dual quad into two field-oriented triangles."""
 
-    cells = crossings.lower[:, None, :] + _INCIDENT_CELL_OFFSETS[crossings.axis]
+    cells = crossings.lower[:, None, :] + INCIDENT_CELL_OFFSETS[crossings.axis]
     cell_shape = np.asarray(dual.mixed_index.shape)
     if np.any(cells < 0) or np.any(cells >= cell_shape):
-        raise ValueError("Implicit surface intersects the outer grid boundary.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.cells must remain inside the grid boundary; got exterior incident cells"
+        )
     upper = crossings.lower + np.eye(3, dtype=np.int64)[crossings.axis]
     lower_inside = inside[tuple(crossings.lower.T)]
     inside_point = np.where(lower_inside[:, None], crossings.lower, upper)
@@ -439,11 +435,15 @@ def _dual_faces(
     mixed = dual.mixed_index[cell_key]
     component = _COMPONENT_OF[dual.configuration[cell_key], corner]
     if np.any(mixed < 0) or np.any(component < 0):
-        raise ValueError("Implicit manifold incidence is incomplete.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.incidence must represent every required dual vertex and component; got missing incidences"
+        )
     quads = dual.first_vertex[mixed] + component
     ordered = np.sort(quads, axis=1)
     if np.any(ordered[:, 1:] == ordered[:, :-1]):
-        raise ValueError("Implicit manifold incidence produced a collapsed dual face.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.dual_faces must have distinct ordered vertices; got a collapsed dual face"
+        )
     diagonal_02 = np.linalg.norm(
         base_vertices[quads[:, 0]] - base_vertices[quads[:, 2]], axis=1
     )
@@ -455,15 +455,19 @@ def _dual_faces(
     second = np.where(short_02, quads[:, (0, 2, 3)], quads[:, (1, 2, 3)])
     faces = np.stack((first, second), axis=1).reshape((-1, 3))
     if faces.shape[0] > policy.maximum_faces:
-        raise ValueError("Implicit surface face count is empty or exceeds policy.")
+        raise ValueError(
+            f"ImplicitSurfaceDiscovery.faces must fit maximum_faces {policy.maximum_faces}; got {faces.shape[0]}"
+        )
     triangles = base_vertices[faces]
     normals = np.cross(
         triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
     )
     area = 0.5 * np.linalg.norm(normals, axis=1)
     if not np.all(np.isfinite(area)) or np.any(area <= policy.minimum_face_area):
-        raise ValueError("Implicit surface discovery produced a degenerate triangle.")
-    _, gradients = _field_and_gradient(
+        raise ValueError(
+            f"ImplicitSurfaceDiscovery.triangle_areas must be finite and exceed minimum_face_area {policy.minimum_face_area}; got a nonfinite or undersized triangle"
+        )
+    _, gradients = field_and_gradient(
         geometry.kernel,
         geometry.state,
         jnp.asarray(np.mean(triangles, axis=1)),
@@ -472,7 +476,9 @@ def _dual_faces(
     if not np.all(np.isfinite(gradients)) or np.any(
         np.linalg.norm(gradients, axis=1) == 0.0
     ):
-        raise ValueError("Implicit face orientation requires a regular field gradient.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.face_gradients must be finite and nonzero; got nonfinite or zero gradients"
+        )
     flip = np.sum(normals * gradients, axis=1) < 0.0
     return np.where(flip[:, None], faces[:, (0, 2, 1)], faces).astype(np.int32)
 
@@ -483,14 +489,14 @@ def _intersection_candidates(
     cell_upper: np.ndarray,
     policy: ImplicitSurfacePolicy,
 ) -> np.ndarray:
-    """Complete self-intersection candidates for every accepted realization.
+    """Enumerate all self-intersection candidates for every accepted realization.
 
     An accepted realization keeps each vertex inside its discovery cell expanded
     by root_tolerance, so a triangle stays inside the union box of its vertices'
     cells. The intersection predicate accepts parametric slack root_tolerance,
     which reaches at most root_tolerance times twice that box diagonal beyond the
     triangle. Face pairs whose padded boxes are disjoint therefore can never be
-    reported as intersecting, and the BVH overlap set is exact for this test.
+    reported as intersecting, and the BVH overlap set contains every intersecting pair for this test.
     """
 
     tolerance = policy.projection.root_tolerance
@@ -513,10 +519,13 @@ def _intersection_candidates(
     )
     pairs = np.stack((first[~shares_vertex], second[~shares_vertex]), axis=1)
     if pairs.shape[0] > policy.maximum_intersection_pairs:
-        raise ValueError("Implicit surface exceeds maximum_intersection_pairs.")
+        raise ValueError(
+            f"ImplicitSurfaceDiscovery.intersection_pairs must fit maximum_intersection_pairs {policy.maximum_intersection_pairs}; got {pairs.shape[0]}"
+        )
     return pairs.astype(np.int32)
 
 
+@checked
 def discover_implicit_surface(
     geometry: CompiledGeometry,
     grid: PreparedTensorGrid,
@@ -524,7 +533,7 @@ def discover_implicit_surface(
     *,
     policy: ImplicitSurfacePolicy = _DEFAULT_SURFACE_POLICY,
     source_id: str,
-) -> Any:
+) -> realization_owner.ImplicitSurfacePlan:
     """Discover a closed manifold dual surface and freeze its topology."""
 
     _validate_discovery_inputs(geometry, grid, policy, source_id)
@@ -533,19 +542,25 @@ def discover_implicit_surface(
         for axis in grid.structured_axes
     )
     if any(axis.size < 2 or np.any(np.diff(axis) <= 0.0) for axis in axes):
-        raise ValueError("Implicit grid axes must contain increasing point coordinates.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.grid.axes must contain at least two strictly increasing coordinates; got an undersized or unordered axis"
+        )
     shape = tuple(axis.size for axis in axes)
     if np.prod(shape, dtype=np.int64) > policy.maximum_lattice_points:
-        raise ValueError("Implicit lattice exceeds maximum_lattice_points.")
+        raise ValueError(
+            f"ImplicitSurfaceDiscovery.lattice must fit maximum_lattice_points {policy.maximum_lattice_points}; got shape {shape}"
+        )
     lattice_points = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
     values = np.asarray(
         geometry.boundary_field(jnp.asarray(lattice_points.reshape((-1, 3))))
     ).reshape(shape)
     if not np.all(np.isfinite(values)):
-        raise ValueError("Implicit lattice field contains nonfinite values.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.lattice.values must be finite; got nonfinite values"
+        )
     if np.any(np.abs(values) <= policy.lattice_zero_tolerance):
         raise ValueError(
-            "Implicit lattice contains an ambiguous zero; shift or refine the grid."
+            f"ImplicitSurfaceDiscovery.lattice.values must exclude ambiguous zero samples; got samples within tolerance {policy.lattice_zero_tolerance}"
         )
     inside = values < 0.0
     crossings = _lattice_crossings(inside, policy)
@@ -554,7 +569,7 @@ def discover_implicit_surface(
     upper_key = tuple((crossings.lower + np.eye(3, dtype=np.int64)[crossings.axis]).T)
     lower_points = lattice_points[lower_key]
     upper_points = lattice_points[upper_key]
-    anchors, residuals = _isolate_roots(
+    isolation = isolate_roots(
         geometry.kernel,
         geometry.state,
         jnp.asarray(lower_points),
@@ -563,9 +578,13 @@ def discover_implicit_surface(
         jnp.asarray(values[upper_key]),
         jnp.asarray(policy.projection.root_tolerance, dtype=jnp.float64),
     )
-    anchors = np.asarray(anchors)
+    anchors = np.asarray(isolation.points)
+    residuals = isolation.residuals
     if np.any(np.asarray(residuals) > policy.projection.root_tolerance):
-        raise ValueError("Implicit root isolation did not meet root_tolerance.")
+        raise ValueError(
+            "ImplicitDiscovery.root_residuals must meet root_tolerance; got residuals above the declared tolerance"
+        )
+    isolation.require_converged()
     trust_radii = policy.projection.trust_fraction * np.linalg.norm(
         upper_points - lower_points, axis=1
     )
@@ -578,12 +597,12 @@ def discover_implicit_surface(
     cell_upper = np.stack(
         [axis_coordinates[axis][dual.cell[:, axis] + 1] for axis in range(3)], axis=1
     )
-    _, anchor_gradients = _field_and_gradient(
+    _, anchor_gradients = field_and_gradient(
         geometry.kernel,
         geometry.state,
         jnp.asarray(anchors),
     )
-    base_vertices, qef_regularization = _qef_vertices(
+    base_vertices, qef_regularization = qef_vertices(
         anchors,
         np.asarray(anchor_gradients),
         dual.anchor_indices,
@@ -597,7 +616,9 @@ def discover_implicit_surface(
     # ty: ignore[invalid-argument-type]
     topology = TriangleTopology(faces, num_vertices=base_vertices.shape[0])
     if not topology.watertight:
-        raise ValueError("Implicit surface discovery did not produce a closed surface.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.topology must be watertight; got an open surface"
+        )
     pairs = _intersection_candidates(faces, cell_lower, cell_upper, policy)
     base_triangles = base_vertices[faces]
     base_face_normals = np.cross(
@@ -612,9 +633,8 @@ def discover_implicit_surface(
         policy=policy.projection,
         source_id=f"{source_id}:anchors",
     )
-    from ._realization import ImplicitSurfacePlan
 
-    plan = ImplicitSurfacePlan(
+    plan = realization_owner.ImplicitSurfacePlan(
         geometry=geometry,
         grid_points=lattice_points.reshape((-1, 3)),
         inside_pattern=inside.reshape((-1,)),
@@ -634,7 +654,9 @@ def discover_implicit_surface(
     )
     base = plan.realize(geometry.state)
     if not bool(np.asarray(base.accepted)):
-        raise ValueError("Implicit surface base realization failed runtime evidence.")
+        raise ValueError(
+            "ImplicitSurfaceDiscovery.base.accepted must be true; got rejected runtime evidence"
+        )
     return plan
 
 

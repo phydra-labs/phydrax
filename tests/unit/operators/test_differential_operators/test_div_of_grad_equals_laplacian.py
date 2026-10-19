@@ -12,11 +12,12 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import TimeInterval
 from phydrax.operators.differential import div, grad, laplacian
+from phydrax.units import METER
 
 
 def test_div_grad_equals_laplacian_scalar_point() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")
@@ -31,7 +32,7 @@ def test_div_grad_equals_laplacian_scalar_point() -> None:
 
 def test_div_grad_equals_laplacian_vector_point() -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
 
     @geom.Function("x")
@@ -46,7 +47,7 @@ def test_div_grad_equals_laplacian_vector_point() -> None:
 
 def test_div_grad_equals_laplacian_spacetime(sample_batch: Any) -> None:
     geom = phx.domain.GeometryDomain(
-        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile(coordinate_unit=METER)
     )
     dom = geom @ TimeInterval(0.0, 1.0)
 

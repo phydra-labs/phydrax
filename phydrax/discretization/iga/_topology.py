@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import prod
-from typing import TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -17,11 +16,8 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
 from .._topology import TensorTopology
+from . import _basis as basis_owner
 from ._identity import BaseSpanId, InterfaceId
-
-
-if TYPE_CHECKING:
-    from ._basis import TensorSplineBasisSpec
 
 
 class SplineSpanTopology(StrictModule, NonTrainableState):
@@ -38,30 +34,33 @@ class SplineSpanTopology(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        axis_names: Sequence[str] | TensorSplineBasisSpec,
+        axis_names: Sequence[str] | basis_owner.TensorSplineBasisSpec,
         span_indices: Sequence[ArrayLike] | None = None,
         /,
         *,
         patch_id: str = "patch",
     ) -> None:
-        from ._basis import TensorSplineBasisSpec
 
-        if isinstance(axis_names, TensorSplineBasisSpec):
-            basis = axis_names
-            names = tuple(str(name) for name in basis.axis_names)
-            indices = tuple(np.asarray(axis.span_indices) for axis in basis.axes)
-        else:
-            if span_indices is None:
-                raise TypeError(
-                    "SplineSpanTopology requires axis names and positive span indices."
-                )
-            names = tuple(str(name) for name in axis_names)
-            indices = tuple(np.asarray(value) for value in span_indices)
+        match axis_names:
+            case basis_owner.TensorSplineBasisSpec() as basis:
+                names = tuple(str(name) for name in basis.axis_names)
+                indices = tuple(np.asarray(axis.span_indices) for axis in basis.axes)
+            case _:
+                if span_indices is None:
+                    raise TypeError(
+                        "SplineSpanTopology.span_indices must accompany axis names; got None"
+                    )
+                names = tuple(str(name) for name in axis_names)
+                indices = tuple(np.asarray(value) for value in span_indices)
         patch = str(patch_id)
         if not patch:
-            raise ValueError("patch_id must be non-empty.")
+            raise ValueError(
+                f"SplineSpanTopology.patch_id must be non-empty; got {patch!r}"
+            )
         if len(names) != len(indices) or not names:
-            raise ValueError("One positive-span index array is required per axis.")
+            raise ValueError(
+                f"SplineSpanTopology.span_indices must have one array per nonempty axis set; got names={len(names)}, indices={len(indices)}"
+            )
         normalized = []
         for value in indices:
             if (
@@ -70,12 +69,12 @@ class SplineSpanTopology(StrictModule, NonTrainableState):
                 or value.size == 0
             ):
                 raise ValueError(
-                    "Positive span indices must be nonempty rank-1 integer arrays."
+                    f"SplineSpanTopology.span_indices must be nonempty rank-1 integer arrays; got shape={value.shape}, dtype={value.dtype}"
                 )
             value = value.astype(np.int32, copy=False)
             if np.any(value < 0) or np.any(np.diff(value) <= 0):
                 raise ValueError(
-                    "Positive span indices must be strictly increasing and nonnegative."
+                    f"SplineSpanTopology.span_indices must be strictly increasing and nonnegative; got {value}"
                 )
             normalized.append(value)
         shape = tuple(value.size for value in normalized)
@@ -115,7 +114,9 @@ class SplineSpanTopology(StrictModule, NonTrainableState):
     def span_id(self, row: int, /) -> BaseSpanId:
         row_ = int(row)
         if not 0 <= row_ < self.cell_count:
-            raise IndexError("Span row is outside this topology.")
+            raise IndexError(
+                f"SplineSpanTopology.row must be within the cell range; got row={row_}, cells={self.cell_count}"
+            )
         return self.span_ids[row_]
 
     def span_route(self, row: int, /) -> tuple[int, ...]:
@@ -133,20 +134,27 @@ class PatchAtlas(StrictModule, NonTrainableState):
     def __init__(
         self, patches: Mapping[str, SplineSpanTopology] | Sequence[SplineSpanTopology], /
     ) -> None:
-        if isinstance(patches, Mapping):
-            items = tuple((str(name), topology) for name, topology in patches.items())
-        else:
-            values = tuple(patches)
-            items = tuple((topology.patch_id, topology) for topology in values)
+        match patches:
+            case Mapping():
+                items = tuple((str(name), topology) for name, topology in patches.items())
+            case _:
+                values = tuple(patches)
+                items = tuple((topology.patch_id, topology) for topology in values)
         if not items or any(
             not isinstance(topology, SplineSpanTopology) for _, topology in items
         ):
-            raise TypeError("PatchAtlas requires one or more SplineSpanTopology values.")
+            raise TypeError(
+                "PatchAtlas.patches must contain one or more SplineSpanTopology values; got empty or untyped topologies"
+            )
         names = tuple(name for name, _ in items)
         if any(not name for name in names) or len(set(names)) != len(names):
-            raise ValueError("Patch atlas IDs must be nonempty and unique.")
+            raise ValueError(
+                f"PatchAtlas.patch_ids must be nonempty and unique; got {names!r}"
+            )
         if any(name != topology.patch_id for name, topology in items):
-            raise ValueError("Patch atlas keys must match topology patch IDs.")
+            raise ValueError(
+                f"PatchAtlas.patches must use keys matching topology patch IDs; got {names!r}"
+            )
         self.patch_ids = names
         self.topologies = tuple(topology for _, topology in items)
         self.atlas_id = canonical_fingerprint(
@@ -164,7 +172,7 @@ class PatchAtlas(StrictModule, NonTrainableState):
         for name, topology in zip(self.patch_ids, self.topologies, strict=True):
             if name == patch:
                 return topology
-        raise KeyError(f"Unknown IGA patch {patch!r}.")
+        raise KeyError(f"PatchAtlas.patch_id must name an atlas patch; got {patch!r}")
 
 
 class CellComplex(StrictModule, NonTrainableState):
@@ -180,17 +188,23 @@ class CellComplex(StrictModule, NonTrainableState):
     ) -> None:
         interface_values = tuple(interfaces)
         if not all(isinstance(interface, InterfaceId) for interface in interface_values):
-            raise TypeError("interfaces must contain InterfaceId values.")
+            raise TypeError(
+                "CellComplex.interfaces must contain InterfaceId values; got untyped interface"
+            )
         values = tuple(interface.value for interface in interface_values)
         if len(set(values)) != len(values):
-            raise ValueError("Cell complex interface identities must be unique.")
+            raise ValueError(
+                f"CellComplex.interfaces must have unique identities; got {values!r}"
+            )
         patches = set(atlas.patch_ids)
         if any(
             interface.left_patch_id not in patches
             or interface.right_patch_id not in patches
             for interface in interface_values
         ):
-            raise ValueError("Every interface must refer to patches in this atlas.")
+            raise ValueError(
+                "CellComplex.interfaces must refer to atlas patches; got unknown patch endpoint"
+            )
         self.atlas = atlas
         self.interfaces = interface_values
         self.complex_id = canonical_fingerprint(

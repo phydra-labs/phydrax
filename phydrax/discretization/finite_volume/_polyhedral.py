@@ -4,24 +4,31 @@
 
 from __future__ import annotations
 
-from typing import assert_never
+from contextlib import nullcontext
+from typing import assert_never, NamedTuple
 
-import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+
+import phydrax.discretization._periodic_exact as periodic_exact_owner
 
 from ..._fingerprint import canonical_fingerprint
 from ..._meshcore import exact_orient3d
-from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
-from ...geometry._mesh_certificates import GlobalEmbeddingCertificate
+from ...geometry._global_embedding import GlobalEmbeddingCertificate
+from ...typing import checked
+from .. import (
+    _cell_geometry_validity as imported_cell_geometry_validity,
+    _exact_power_consumers as imported_exact_power_consumers,
+    _polygon_geometry as imported_polygon_geometry,
+)
 from .._cell_complex import (
     PolyhedralConnectivity,
     prepare_polyhedral_worksets,
 )
-from .._cell_geometry import CellGeometrySpec
+from .._cell_geometry import CellGeometrySpec, owned_coordinate_preparation
 from .._cell_mesh import CellMesh
+from .._coordinate_budget import CoordinateEnclosureBudget
+from .._exact_algebraic_geometry import ExactAlgebraicCellGeometrySource
 from .._exact_plc_geometry import (
     ExactPlcCellGeometryConvexSource,
     ExactPlcCellGeometrySource,
@@ -31,48 +38,40 @@ from .._exact_power_geometry import (
     ExactPowerCellGeometryRestrictionSource,
     ExactPowerCellGeometrySource,
 )
+from .._exact_rational_geometry import ExactRationalCellGeometrySource
 from .._polygon_geometry import prepare_polyhedral_face_triangulation
+from . import _polyhedral_types as geometry_types_owner
 
 
-class PreparedPolyhedralFiniteVolumeGeometry(StrictModule, NonTrainableState):
-    """Certified fixed-capacity planar-face polyhedral FV geometry."""
-
-    cell_volumes: Array
-    cell_centers: Array
-    face_centers: Array
-    face_area_vectors: Array
-    face_measures: Array
-    face_quadrature_points: Array
-    face_quadrature_weights: Array
-    face_quadrature_valid: Array
-    cell_quadrature_points: Array
-    cell_quadrature_weights: Array
-    cell_quadrature_valid: Array
-    owner_cells: Array
-    neighbor_cells: Array
-    closure_residual: Array
-    mesh_id: str = eqx.field(static=True)
-    geometry_id: str = eqx.field(static=True)
-    face_triangulation_id: str = eqx.field(static=True)
+class _PeriodicPolyhedralFaces(NamedTuple):
+    neighbor_cells: np.ndarray
+    active: np.ndarray
+    frame_maps: np.ndarray
 
 
-def _periodic_polyhedral_faces(
+@checked
+def periodic_polyhedral_faces(
     mesh: CellMesh,
     /,
     *,
     actual_geometry: CellGeometrySpec | None = None,
     embedding: GlobalEmbeddingCertificate | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    budget: CoordinateEnclosureBudget,
+) -> _PeriodicPolyhedralFaces:
     """Pair SCI quotient facets once, retaining the neighbor's physical lift.
 
     ``actual_geometry`` is the accepted coordinate owner when the periodic
     topology deliberately carries only global embedding identity. A certified
-    ``embedding`` may provide independent authority for mapped or restricted
-    coordinates that intentionally retain no exact coordinate-source object.
+    ``embedding`` may provide independent coordinate-source evidence for mapped or restricted
+    coordinates that intentionally retain no certified coordinate-source object.
     """
-    connectivity = mesh.connectivity
-    if not isinstance(connectivity, PolyhedralConnectivity):
-        raise TypeError("Periodic polyhedral faces require polyhedral connectivity.")
+    match mesh.connectivity:
+        case PolyhedralConnectivity() as connectivity:
+            pass
+        case _:
+            raise TypeError(
+                "periodic_polyhedral_faces.mesh.connectivity must be polyhedral; got another connectivity kind."
+            )
     owner = np.asarray(connectivity.face_owner, dtype=np.int32)
     neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int32).copy()
     active = np.ones(owner.size, dtype=np.bool_)
@@ -84,28 +83,28 @@ def _periodic_polyhedral_faces(
     periodic = mesh.periodic_topology
     if periodic is None:
         if actual_geometry is not None:
-            raise ValueError("Explicit periodic geometry requires a periodic mesh.")
-        return neighbor, active, maps
+            raise ValueError(
+                "periodic_polyhedral_faces.actual_geometry must accompany periodic mesh topology; got a nonperiodic mesh."
+            )
+        return _PeriodicPolyhedralFaces(neighbor, active, maps)
     retained = periodic.actual_geometry
     geometry = retained if actual_geometry is None else actual_geometry
     if geometry is None:
         raise ValueError(
-            "Periodic polyhedral FV requires exact source geometry authority."
+            "finite_volume_geometry.cell_geometry must bind the periodic source map; got no source geometry."
         )
-    if not isinstance(geometry, CellGeometrySpec):
-        raise TypeError("actual_geometry must be a CellGeometrySpec.")
     if retained is not None:
-        from .._cell_geometry_validity import cell_geometry_id
-
-        if cell_geometry_id(retained) != cell_geometry_id(geometry):
+        if imported_cell_geometry_validity.cell_geometry_id(
+            retained
+        ) != imported_cell_geometry_validity.cell_geometry_id(geometry):
             raise ValueError(
-                "Explicit periodic geometry differs from retained authority."
+                "periodic_polyhedral_faces.actual_geometry must match the retained coordinate source; got a different geometry ID."
             )
     if embedding is not None:
-        if not isinstance(embedding, GlobalEmbeddingCertificate):
-            raise TypeError("embedding must be a GlobalEmbeddingCertificate.")
         if embedding.status != "certified":
-            raise ValueError("Periodic FV requires a certified global embedding.")
+            raise ValueError(
+                "periodic_polyhedral_faces.embedding.status must be certified; got another embedding status."
+            )
         embedding.binding.require(mesh, geometry)
     if (
         geometry.exact_source is None
@@ -113,14 +112,16 @@ def _periodic_polyhedral_faces(
         and embedding is None
     ):
         raise ValueError(
-            "Periodic polyhedral FV requires exact source or embedding authority."
+            "periodic_polyhedral_faces.cell_geometry must retain a coordinate source or certified embedding; got neither."
         )
-    _, routes, _ = geometry.resolve(mesh)
+    _, routes, _ = geometry.resolve(mesh, budget=budget)
     if any(
         route.ndim != 2 or route.shape[0] != block.cell_count
         for block, route in zip(mesh.blocks, routes, strict=True)
     ):
-        raise ValueError("Periodic FV geometry does not cover the mesh cells.")
+        raise ValueError(
+            "periodic_polyhedral_faces.geometry_dofs must cover every mesh cell; got incompatible block routes."
+        )
     owner_sign = np.zeros(owner.size, dtype=np.int32)
     offsets = np.asarray(connectivity.cell_face_offsets)
     face_rows = np.asarray(connectivity.cell_face_values)
@@ -130,14 +131,15 @@ def _periodic_polyhedral_faces(
         incident = face_rows[rows]
         owned = owner[incident] == cell
         owner_sign[incident[owned]] = signs[rows][owned]
-    from .._periodic_topology import _exact_periodic_element, _exact_periodic_generators
 
     degree = mesh.topological_dimension - 1
     start, stop = np.asarray(periodic.lifted_offsets)[degree : degree + 2]
     orbits = np.asarray(periodic.orbit_indices)[start:stop]
     orientations = np.asarray(periodic.orbit_orientations)[start:stop]
     shifts = np.asarray(periodic.orbit_shifts)[start:stop]
-    generators, orders = _exact_periodic_generators(periodic.cell)
+    generators, orders = periodic_exact_owner.exact_periodic_generators(
+        periodic.cell, budget=budget
+    )
     members: dict[int, list[int]] = {}
     for face in np.flatnonzero(neighbor < 0):
         members.setdefault(int(orbits[face]), []).append(int(face))
@@ -146,24 +148,30 @@ def _periodic_polyhedral_faces(
             continue
         if len(faces) != 2:
             raise ValueError(
-                "Periodic FV facet orbit must have two reciprocal physical sides."
+                "periodic_polyhedral_faces.facet_orbit must have two reciprocal physical sides; got a different orbit cardinality."
             )
         left, right = faces
         if (
             orientations[left] * owner_sign[left]
             == orientations[right] * owner_sign[right]
         ):
-            raise ValueError("Periodic FV reciprocal facet orientations must oppose.")
+            raise ValueError(
+                "periodic_polyhedral_faces.facet_orientations must oppose on reciprocal sides; got matching oriented signs."
+            )
         exponents = tuple(int(value) for value in shifts[right] - shifts[left])
         maps[left] = np.asarray(
-            _exact_periodic_element(generators, orders, exponents), dtype=np.float64
+            periodic_exact_owner.exact_periodic_element(
+                generators, orders, exponents, budget=budget
+            ),
+            dtype=np.float64,
         )
         neighbor[left] = owner[right]
         neighbor[right] = owner[left]
         active[right] = False
-    return neighbor, active, maps
+    return _PeriodicPolyhedralFaces(neighbor, active, maps)
 
 
+@checked
 def prepare_polyhedral_finite_volume_geometry(
     mesh: CellMesh,
     /,
@@ -172,14 +180,21 @@ def prepare_polyhedral_finite_volume_geometry(
     closure_tolerance: float = 1.0e-10,
     maximum_workset_entries: int = 100_000_000,
     cell_geometry: CellGeometrySpec | None = None,
-) -> PreparedPolyhedralFiniteVolumeGeometry:
-    """Prepare Newell/divergence geometry from canonical polyhedral connectivity."""
-    if not isinstance(mesh, CellMesh) or not isinstance(
-        mesh.connectivity, PolyhedralConnectivity
-    ):
-        raise TypeError(
-            "Polyhedral FV geometry requires a canonical polyhedral CellMesh."
-        )
+    budget: CoordinateEnclosureBudget | None = None,
+) -> geometry_types_owner.PreparedPolyhedralFiniteVolumeGeometry:
+    """Prepare Newell/divergence geometry from prepared polyhedral connectivity.
+
+    ``budget`` shares certified face/source preparation with the enclosing request.
+    Standalone host bounds come from that recipe and numeric buffer shapes;
+    native proof requests retain their separately declared native limits.
+    """
+    match mesh.connectivity:
+        case PolyhedralConnectivity() as connectivity:
+            pass
+        case _:
+            raise TypeError(
+                "prepare_polyhedral_finite_volume_geometry.mesh.connectivity must be polyhedral; got another connectivity kind."
+            )
     planarity = float(planarity_tolerance)
     closure = float(closure_tolerance)
     if (
@@ -188,40 +203,211 @@ def prepare_polyhedral_finite_volume_geometry(
         or not np.isfinite(closure)
         or closure <= 0
     ):
-        raise ValueError("Polyhedral geometry tolerances must be positive and finite.")
+        raise ValueError(
+            "prepare_polyhedral_finite_volume_geometry.tolerances must be positive and finite; got an invalid planarity or closure tolerance."
+        )
     if cell_geometry is None and mesh.periodic_topology is not None:
         cell_geometry = mesh.periodic_topology.actual_geometry
         if cell_geometry is None:
             raise ValueError(
-                "Periodic polyhedral geometry cannot use rounded carrier coordinates."
+                "prepare_polyhedral_finite_volume_geometry.cell_geometry must retain the periodic coordinate source; got None."
             )
     if cell_geometry is not None:
-        from .._exact_power_consumers import exact_power_finite_volume_geometry
-
         match cell_geometry.exact_source:
             case (
                 ExactPowerCellGeometrySource()
                 | ExactPowerCellGeometryRestrictionSource()
                 | ExactPowerCellGeometryLinearActionSource()
             ):
-                return exact_power_finite_volume_geometry(
-                    mesh, cell_geometry, maximum_entries=maximum_workset_entries
+                if budget is not None:
+                    return (
+                        imported_exact_power_consumers.exact_power_finite_volume_geometry(
+                            mesh,
+                            cell_geometry,
+                            maximum_entries=maximum_workset_entries,
+                            budget=budget,
+                        )
+                    )
+                work, memory, queries = (
+                    imported_exact_power_consumers.exact_power_finite_volume_preparation_bounds(
+                        mesh, cell_geometry
+                    )
                 )
-            case None | ExactPlcCellGeometrySource() | ExactPlcCellGeometryConvexSource():
+                with owned_coordinate_preparation(
+                    work, memory, maximum_geometry_queries=queries
+                ) as owner_budget:
+                    return (
+                        imported_exact_power_consumers.exact_power_finite_volume_geometry(
+                            mesh,
+                            cell_geometry,
+                            maximum_entries=maximum_workset_entries,
+                            budget=owner_budget,
+                        )
+                    )
+            case ExactAlgebraicCellGeometrySource():
                 raise ValueError(
-                    "Polyhedral FV source geometry requires exact power construction."
+                    "prepare_polyhedral_finite_volume_geometry.cell_geometry must use a power-polyhedron source; got an algebraic nodal source"
+                )
+            case (
+                None
+                | ExactPlcCellGeometrySource()
+                | ExactPlcCellGeometryConvexSource()
+                | ExactRationalCellGeometrySource()
+            ):
+                raise ValueError(
+                    "prepare_polyhedral_finite_volume_geometry.cell_geometry must use an ExactPowerCellGeometrySource construction; got another source kind."
                 )
             case invalid:
                 assert_never(invalid)
+    numeric_memory = _polyhedral_numeric_preparation_bytes(mesh, connectivity)
+    if budget is None:
+        work, memory, queries = polyhedral_finite_volume_preparation_bounds(
+            mesh, maximum_workset_entries=maximum_workset_entries
+        )
+        context = owned_coordinate_preparation(
+            work, memory, maximum_geometry_queries=queries
+        )
+    else:
+        context = nullcontext(budget)
+    with context as owner_budget, owner_budget.temporary_scope():
+        owner_budget.reserve(0, numeric_memory)
+        return _prepare_raw_polyhedral_finite_volume_geometry(
+            mesh,
+            connectivity,
+            planarity=planarity,
+            closure=closure,
+            maximum_workset_entries=maximum_workset_entries,
+            budget=owner_budget,
+        )
+
+
+def _polyhedral_numeric_preparation_bytes(
+    mesh: CellMesh, connectivity: PolyhedralConnectivity, /
+) -> int:
+    faces, cells = connectivity.face_count, connectivity.cell_count
+    face_width = connectivity.maximum_face_arity
+    cell_width = connectivity.maximum_cell_faces
+    vertex_width = connectivity.maximum_cell_vertices
+    face_capacity = max(face_width - 2, 0)
+    cell_capacity = cell_width * face_capacity
+    dimension = mesh.ambient_dimension
+    index_bytes = np.dtype(np.int32).itemsize
+    mask_bytes = np.dtype(np.bool_).itemsize
+    scalar_bytes = np.dtype(np.float64).itemsize
+    # Dense worksets and their host views, with every index/sign/mask shape.
+    worksets = 2 * (
+        faces * face_width * (index_bytes + mask_bytes)
+        + faces
+        * face_width
+        * (index_bytes + connectivity.face_edge_sign_values.dtype.itemsize + mask_bytes)
+        + cells
+        * cell_width
+        * (index_bytes + connectivity.cell_face_sign_values.dtype.itemsize + mask_bytes)
+        + cells * vertex_width * (index_bytes + mask_bytes)
+    )
+    quadrature = (faces * face_capacity + cells * cell_capacity) * (
+        (dimension + 1) * scalar_bytes + mask_bytes
+    )
+    cell_arrays = cells * (dimension + 2) * scalar_bytes
+    # Both face-loop triangle banks, vectors, centroids, weights and four
+    # contiguous predicate inputs; ten small vector-operation temporaries.
+    temporary_scalars = (
+        2 * 3 * dimension * face_capacity
+        + 2 * dimension * face_capacity
+        + face_capacity
+        + 4 * dimension * face_capacity
+        + 10 * dimension
+        + vertex_width * dimension
+        + cell_width
+    )
+    temporary = (
+        temporary_scalars * scalar_bytes + face_capacity * np.dtype(np.int8).itemsize
+    )
+    points = mesh.coordinates.size * scalar_bytes
+    routing = 2 * faces * index_bytes
+    return points + worksets + quadrature + cell_arrays + temporary + routing
+
+
+@checked
+def polyhedral_finite_volume_preparation_bounds(
+    mesh: CellMesh,
+    /,
+    *,
+    maximum_workset_entries: int,
+    cell_geometry: CellGeometrySpec | None = None,
+) -> tuple[int, int, int]:
+    """Bound the source-aware FV preparation route from its recipe and shapes."""
+
+    match mesh.connectivity:
+        case PolyhedralConnectivity() as connectivity:
+            pass
+        case _:
+            raise TypeError(
+                "prepare_polyhedral_finite_volume_geometry.mesh.connectivity must be polyhedral; got another connectivity kind."
+            )
+    if cell_geometry is None and mesh.periodic_topology is not None:
+        cell_geometry = mesh.periodic_topology.actual_geometry
+        if cell_geometry is None:
+            raise ValueError(
+                "prepare_polyhedral_finite_volume_geometry.cell_geometry must retain the periodic coordinate source; got None."
+            )
+    if cell_geometry is not None:
+        match cell_geometry.exact_source:
+            case (
+                ExactPowerCellGeometrySource()
+                | ExactPowerCellGeometryRestrictionSource()
+                | ExactPowerCellGeometryLinearActionSource()
+            ):
+                return imported_exact_power_consumers.exact_power_finite_volume_preparation_bounds(
+                    mesh, cell_geometry
+                )
+            case ExactAlgebraicCellGeometrySource():
+                raise ValueError(
+                    "polyhedral_finite_volume_preparation_bounds.cell_geometry must use a power-polyhedron source; got an algebraic nodal source"
+                )
+            case (
+                None
+                | ExactPlcCellGeometrySource()
+                | ExactPlcCellGeometryConvexSource()
+                | ExactRationalCellGeometrySource()
+            ):
+                raise ValueError(
+                    "prepare_polyhedral_finite_volume_geometry.cell_geometry must use an ExactPowerCellGeometrySource construction; got another source kind."
+                )
+            case invalid:
+                assert_never(invalid)
+
+    face_work, face_memory, face_queries = (
+        imported_polygon_geometry.polyhedral_face_preparation_bounds(
+            mesh, maximum_entries=maximum_workset_entries
+        )
+    )
+    numeric_memory = _polyhedral_numeric_preparation_bytes(mesh, connectivity)
+    # Native predicate work and queries are telemetry, not mechanical debits.
+    return face_work, face_memory + numeric_memory, face_queries
+
+
+def _prepare_raw_polyhedral_finite_volume_geometry(
+    mesh: CellMesh,
+    connectivity: PolyhedralConnectivity,
+    /,
+    *,
+    planarity: float,
+    closure: float,
+    maximum_workset_entries: int,
+    budget: CoordinateEnclosureBudget,
+) -> geometry_types_owner.PreparedPolyhedralFiniteVolumeGeometry:
     points = np.asarray(mesh.coordinates, dtype=np.float64)
-    connectivity = mesh.connectivity
     worksets = prepare_polyhedral_worksets(
         connectivity,
         maximum_entries=maximum_workset_entries,
     )
     face_count, max_vertices = worksets.face_vertices.shape
     prepared_faces = prepare_polyhedral_face_triangulation(
-        mesh, planarity_tolerance=planarity, maximum_entries=maximum_workset_entries
+        mesh,
+        planarity_tolerance=planarity,
+        maximum_entries=maximum_workset_entries,
+        budget=budget,
     )
     triangle_offsets = prepared_faces.triangle_offsets
     triangle_vertices = prepared_faces.triangle_vertices
@@ -274,6 +460,7 @@ def prepare_polyhedral_finite_volume_geometry(
             start, stop = triangle_offsets[face : face + 2]
             closure_vector += float(sign) * area_vectors[face]
             face_triangles = points[triangle_vertices[start:stop]]
+
             signs = exact_orient3d(
                 np.broadcast_to(star, face_triangles[:, 0].shape),
                 face_triangles[:, 0],
@@ -282,7 +469,7 @@ def prepare_polyhedral_finite_volume_geometry(
             )
             if np.any(signs * int(sign) <= 0):
                 raise ValueError(
-                    "Polyhedral cell has unresolved/nonpositive exact star visibility."
+                    "prepare_polyhedral_finite_volume_geometry.cell_centers must have positive facet visibility; got an unresolved or nonpositive orientation."
                 )
             for triangle in face_triangles:
                 volume = (
@@ -295,7 +482,7 @@ def prepare_polyhedral_finite_volume_geometry(
                 )
                 if not np.isfinite(volume) or volume <= 0:
                     raise ValueError(
-                        "Polyhedral cell is not star-shaped about its certified center."
+                        "prepare_polyhedral_finite_volume_geometry.cell_centers must lie strictly inside facet halfspaces; got a nonpositive star visibility."
                     )
                 centroid = (star + np.sum(triangle, axis=0)) / 4.0
                 volume_sum += volume
@@ -305,14 +492,18 @@ def prepare_polyhedral_finite_volume_geometry(
                 cell_q_valid[cell, slot] = True
                 slot += 1
         if not np.isfinite(volume_sum) or volume_sum <= 0:
-            raise ValueError("Polyhedral cells require positive oriented volume.")
+            raise ValueError(
+                "prepare_polyhedral_finite_volume_geometry.cell_volumes must be positive; got nonpositive oriented volume."
+            )
         cell_volumes[cell] = volume_sum
         cell_centers[cell] = first_moment / volume_sum
         closure_residual[cell] = np.linalg.norm(closure_vector) / max(
             np.sum(face_measures[cell_faces[cell, cell_face_valid[cell]]]), 1.0
         )
         if closure_residual[cell] > closure:
-            raise ValueError("Polyhedral cell fails its oriented closure certificate.")
+            raise ValueError(
+                "prepare_polyhedral_finite_volume_geometry.area_vectors must close within tolerance; got an excessive oriented closure residual."
+            )
         weight_sum = np.sum(cell_q_weights[cell])
         if not np.isclose(
             weight_sum,
@@ -321,7 +512,7 @@ def prepare_polyhedral_finite_volume_geometry(
             rtol=0,
         ):
             raise ValueError(
-                "Polyhedral positive tetrahedral quadrature misses cell volume."
+                "prepare_polyhedral_finite_volume_geometry.cell_quadrature_weights must reproduce cell volume; got a quadrature mass defect above tolerance."
             )
     owner = np.asarray(connectivity.face_owner, dtype=np.int32)
     neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int32)
@@ -335,7 +526,7 @@ def prepare_polyhedral_finite_volume_geometry(
             "face_triangulation": prepared_faces.triangulation_id,
         }
     )
-    return PreparedPolyhedralFiniteVolumeGeometry(
+    return geometry_types_owner.PreparedPolyhedralFiniteVolumeGeometry(
         jnp.asarray(cell_volumes),
         jnp.asarray(cell_centers),
         jnp.asarray(face_centers),
@@ -357,6 +548,6 @@ def prepare_polyhedral_finite_volume_geometry(
 
 
 __all__ = [
-    "PreparedPolyhedralFiniteVolumeGeometry",
     "prepare_polyhedral_finite_volume_geometry",
+    "polyhedral_finite_volume_preparation_bounds",
 ]

@@ -722,7 +722,7 @@ def _native_meshing_combination(
     required_evidence: tuple[str, ...],
     nonclaims: tuple[str, ...] = (),
 ) -> CapabilityDeclaration:
-    """Declare exact admission or an incomplete obligation, never a product.
+    """Declare admission or an unresolved obligation.
 
     Profiles remain unsigned and unreleased. Source-inspected admission is
     separate from corpus completion, independent certification, and release or
@@ -833,8 +833,9 @@ def _native_meshing_combination(
     )
 
 
+# This declarative capability table preserves slice order, evidence bindings, and callable identities without execution branching.
 def _native_meshing_declarations() -> tuple[CapabilityDeclaration, ...]:
-    """Exact admitted slices and still-open W15 mandatory combined workflows."""
+    """Return admitted slices and open W15 mandatory combined workflows."""
     return (
         _native_meshing_combination(
             "planar-affine-generation",
@@ -1073,8 +1074,10 @@ def _native_meshing_declarations() -> tuple[CapabilityDeclaration, ...]:
             "none-generation-only-subdivision-lineage",
             admission="implemented-admitted",
             source_references=(
-                "phydrax/meshing/providers/_native_dual.py",
+                "phydrax/meshing/_dual_extraction.py",
+                "phydrax/meshing/_family_execution.py",
                 "phydrax/meshing/_quad_generation.py",
+                "phydrax/meshing/providers/_native_dual.py",
             ),
             required_evidence=(
                 "independent-bilinear-jacobian-global-embedding-and-boundary-coverage",
@@ -1432,6 +1435,7 @@ def _native_meshing_declarations() -> tuple[CapabilityDeclaration, ...]:
             source_references=(
                 "phydrax/meshing/_adaptation.py",
                 "phydrax/meshing/_bisection.py",
+                "phydrax/meshing/_bisection_kernel_host.py",
             ),
             required_evidence=(
                 "complete-family-coarsening-and-refine-coarsen-roundtrip",
@@ -1454,8 +1458,10 @@ def _native_meshing_declarations() -> tuple[CapabilityDeclaration, ...]:
             "h1-field-and-geometry-preserving-transition",
             admission="mandatory-combination-not-closed",
             source_references=(
-                "phydrax/meshing/_quad_generation.py",
                 "phydrax/meshing/_curving.py",
+                "phydrax/meshing/_dual_extraction.py",
+                "phydrax/meshing/_family_execution.py",
+                "phydrax/meshing/_quad_generation.py",
             ),
             required_evidence=(
                 "feature-conforming-nontrivial-quad-positive-corpus",
@@ -1657,10 +1663,12 @@ def _native_meshing_declarations() -> tuple[CapabilityDeclaration, ...]:
             "h1-field-and-conservative-fv-remap",
             admission="mandatory-curved-general-all-hex-research-gate-not-closed",
             source_references=(
-                "phydrax/meshing/_quad_generation.py",
+                "phydrax/meshing/_dual_extraction.py",
+                "phydrax/meshing/_family_execution.py",
                 "phydrax/meshing/_hex_generation.py",
-                "phydrax/meshing/_structured.py",
                 "phydrax/meshing/_multiblock.py",
+                "phydrax/meshing/_quad_generation.py",
+                "phydrax/meshing/_structured.py",
             ),
             required_evidence=(
                 "mandatory-nonsweepable-all-hex-positive-corpus",
@@ -1735,8 +1743,9 @@ def _native_meshing_declarations() -> tuple[CapabilityDeclaration, ...]:
             "interpolative-pointwise-field-query",
             admission="mandatory-combination-not-closed",
             source_references=(
-                "phydrax/meshing/_overset.py",
                 "phydrax/meshing/_assembly.py",
+                "phydrax/meshing/_mesh_part.py",
+                "phydrax/meshing/_overset.py",
             ),
             required_evidence=(
                 "independent-hole-and-donor-classification",

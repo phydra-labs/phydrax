@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from math import comb
 from typing import TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
@@ -485,6 +487,64 @@ def point_charge_potential_matrix(
     return _contracted_one_body(basis, nuclei, evaluator)
 
 
+@partial(
+    jax.jit,
+    static_argnums=(4,),
+    static_argnames=("range_separation", "short_range"),
+)
+def _contracted_repulsion(
+    exponents: tuple[Array, ...],
+    coefficients: tuple[Array, ...],
+    masks: tuple[Array, ...],
+    centers: tuple[Array, ...],
+    angular: tuple[tuple[int, int, int], ...],
+    /,
+    *,
+    range_separation: float | None,
+    short_range: bool,
+) -> Array:
+    primitive_count = exponents[0].size
+
+    def accumulate(index: int, value: Array) -> Array:
+        # Keep pa/pb/pc/pd lexicographic addition order, with pd
+        # fastest, without expanding the primitive quartet product in AD graphs.
+        pd = index % primitive_count
+        pc = (index // primitive_count) % primitive_count
+        pb = (index // primitive_count**2) % primitive_count
+        pa = index // primitive_count**3
+        active = masks[0][pa] & masks[1][pb] & masks[2][pc] & masks[3][pd]
+        primitive = _primitive_electron_repulsion(
+            exponents[0][pa],
+            exponents[1][pb],
+            exponents[2][pc],
+            exponents[3][pd],
+            centers[0],
+            centers[1],
+            centers[2],
+            centers[3],
+            angular[0],
+            angular[1],
+            angular[2],
+            angular[3],
+            range_separation=range_separation,
+            short_range=short_range,
+        )
+        coefficient = (
+            coefficients[0][pa]
+            * coefficients[1][pb]
+            * coefficients[2][pc]
+            * coefficients[3][pd]
+        )
+        return value + jnp.where(active, coefficient * primitive, 0.0)
+
+    return jax.lax.fori_loop(
+        0,
+        primitive_count**4,
+        accumulate,
+        jnp.asarray(0.0, dtype=jnp.result_type(*centers, *exponents, *coefficients)),
+    )
+
+
 def contracted_electron_repulsion_element(
     basis: PreparedGaussianBasis,
     positions: ArrayLike,
@@ -502,45 +562,15 @@ def contracted_electron_repulsion_element(
     count = basis.cartesian_basis_function_count
     if any(index < 0 or index >= count for index in indices):
         raise IndexError("Cartesian Gaussian function index is out of range.")
-    center_a, center_b, center_c, center_d = (
-        coordinate[basis.center_indices[index]] for index in indices
+    return _contracted_repulsion(
+        tuple(basis.exponents[index] for index in indices),
+        tuple(basis.normalized_coefficients[index] for index in indices),
+        tuple(basis.primitive_mask[index] for index in indices),
+        tuple(coordinate[basis.center_indices[index]] for index in indices),
+        tuple(basis.angular_tuples[index] for index in indices),
+        range_separation=range_separation,
+        short_range=short_range,
     )
-    primitive_count = basis.exponents.shape[1]
-    value = jnp.asarray(0.0, dtype=coordinate.dtype)
-    for pa in range(primitive_count):
-        for pb in range(primitive_count):
-            for pc in range(primitive_count):
-                for pd in range(primitive_count):
-                    active = (
-                        basis.primitive_mask[a, pa]
-                        & basis.primitive_mask[b, pb]
-                        & basis.primitive_mask[c, pc]
-                        & basis.primitive_mask[d, pd]
-                    )
-                    primitive = _primitive_electron_repulsion(
-                        basis.exponents[a, pa],
-                        basis.exponents[b, pb],
-                        basis.exponents[c, pc],
-                        basis.exponents[d, pd],
-                        center_a,
-                        center_b,
-                        center_c,
-                        center_d,
-                        basis.angular_tuples[a],
-                        basis.angular_tuples[b],
-                        basis.angular_tuples[c],
-                        basis.angular_tuples[d],
-                        range_separation=range_separation,
-                        short_range=short_range,
-                    )
-                    coefficient = (
-                        basis.normalized_coefficients[a, pa]
-                        * basis.normalized_coefficients[b, pb]
-                        * basis.normalized_coefficients[c, pc]
-                        * basis.normalized_coefficients[d, pd]
-                    )
-                    value = value + jnp.where(active, coefficient * primitive, 0.0)
-    return value
 
 
 def electron_repulsion_tensor(

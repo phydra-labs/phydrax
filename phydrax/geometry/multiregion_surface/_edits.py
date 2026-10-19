@@ -27,12 +27,12 @@ from ...linalg import ArraySpace
 from ._contracts import DRY_FOAM_EDGE_VALENCE, DRY_FOAM_VERTEX_REGIONS
 from ._events import SurfaceEventKind, SurfaceEventPolicy, SurfaceEventStatus
 from ._state import MultiRegionSurfaceState
-from ._topology import _host_incidence, MultiRegionSurfaceTopology
+from ._topology import host_incidence, MultiRegionSurfaceTopology
 from ._validation import _degenerate_faces, _edge_wedges, _vertex_stars
 
 
 @dataclass(slots=True)
-class _WorkingMesh:
+class WorkingMesh:
     """Mutable capacity-sized host copy of one surface during one pass."""
 
     topology: MultiRegionSurfaceTopology
@@ -54,12 +54,12 @@ class _WorkingMesh:
     mode: PredicateMode
 
 
-def _working_mesh(
+def working_mesh(
     topology: MultiRegionSurfaceTopology,
     state: MultiRegionSurfaceState,
     policy: SurfaceEventPolicy,
     /,
-) -> _WorkingMesh:
+) -> WorkingMesh:
     vertices, faces_count = topology.vertex_count, topology.face_count
     positions = np.zeros((topology.vertex_capacity, 3), dtype=np.float64)
     positions[:vertices] = np.asarray(state.positions[:vertices], dtype=np.float64)
@@ -79,7 +79,7 @@ def _working_mesh(
     region_faces = np.bincount(
         labels[:faces_count].reshape(-1), minlength=topology.region_capacity
     )
-    return _WorkingMesh(
+    return WorkingMesh(
         topology=topology,
         positions=positions,
         vertex_ids=vertex_ids,
@@ -103,7 +103,7 @@ def _working_mesh(
 # ------------------------------------------------------------------ adjacency
 
 
-def _star(mesh: _WorkingMesh, vertices: Iterable[int], /) -> np.ndarray:
+def _star(mesh: WorkingMesh, vertices: Iterable[int], /) -> np.ndarray:
     """Alive faces incident to any of ``vertices`` (sorted)."""
     faces: set[int] = set()
     for vertex in vertices:
@@ -112,12 +112,12 @@ def _star(mesh: _WorkingMesh, vertices: Iterable[int], /) -> np.ndarray:
     return np.asarray(sorted(faces), dtype=np.int64)
 
 
-def _neighbors(mesh: _WorkingMesh, vertex: int, /) -> set[int]:
+def _neighbors(mesh: WorkingMesh, vertex: int, /) -> set[int]:
     star = _star(mesh, (vertex,))
     return set(mesh.faces[star].reshape(-1).tolist()) - {vertex}
 
 
-def _ring(mesh: _WorkingMesh, core: Iterable[int], depth: int, /) -> set[int]:
+def ring(mesh: WorkingMesh, core: Iterable[int], depth: int, /) -> set[int]:
     reached = set(core)
     frontier = set(reached)
     for _ in range(depth):
@@ -128,22 +128,22 @@ def _ring(mesh: _WorkingMesh, core: Iterable[int], depth: int, /) -> set[int]:
     return reached
 
 
-def _edge_faces(mesh: _WorkingMesh, first: int, second: int, /) -> list[int]:
+def _edge_faces(mesh: WorkingMesh, first: int, second: int, /) -> list[int]:
     return sorted(mesh.vertex_faces[first] & mesh.vertex_faces[second])
 
 
-def _pair(mesh: _WorkingMesh, face: int, /) -> tuple[int, int]:
+def _pair(mesh: WorkingMesh, face: int, /) -> tuple[int, int]:
     left, right = (int(value) for value in mesh.labels[face])
     return (left, right) if left < right else (right, left)
 
 
-def _is_feature_edge(mesh: _WorkingMesh, first: int, second: int, /) -> bool:
+def _is_feature_edge(mesh: WorkingMesh, first: int, second: int, /) -> bool:
     """A junction, border or label-changing edge (not the interior of one sheet)."""
     faces = _edge_faces(mesh, first, second)
     return len(faces) != 2 or _pair(mesh, faces[0]) != _pair(mesh, faces[1])
 
 
-def _vertex_rank(mesh: _WorkingMesh, vertex: int, /) -> int:
+def _vertex_rank(mesh: WorkingMesh, vertex: int, /) -> int:
     """0 sheet interior, 1 on one feature curve, 2 feature corner, 3 fixed."""
     if bool(mesh.fixed[vertex]):
         return 3
@@ -153,7 +153,7 @@ def _vertex_rank(mesh: _WorkingMesh, vertex: int, /) -> int:
     return 0 if features == 0 else 1 if features == 2 else 2
 
 
-def _slots_of(mesh: _WorkingMesh, global_ids: Sequence[int], /) -> tuple[int, ...] | None:
+def slots_of(mesh: WorkingMesh, global_ids: Sequence[int], /) -> tuple[int, ...] | None:
     """Working slots of alive vertices with the given global ids (``None`` if any is absent)."""
     ids = mesh.vertex_ids[: mesh.vertex_count]
     alive = mesh.vertex_alive[: mesh.vertex_count]
@@ -166,7 +166,7 @@ def _slots_of(mesh: _WorkingMesh, global_ids: Sequence[int], /) -> tuple[int, ..
     return tuple(slots)
 
 
-def _oriented_faces(mesh: _WorkingMesh, face: int, first: int, second: int, /) -> bool:
+def _oriented_faces(mesh: WorkingMesh, face: int, first: int, second: int, /) -> bool:
     """Whether ``face`` traverses the directed edge ``first -> second``."""
     row = mesh.faces[face].tolist()
     position = row.index(first)
@@ -201,7 +201,7 @@ class _CCDLeg:
 
 
 @dataclass(frozen=True, slots=True)
-class _Edit:
+class Edit:
     """One drafted local topology change in working-slot space.
 
     New vertices occupy provisional slots ``vertex_count + i`` in order;
@@ -241,8 +241,8 @@ def _new_edit(
     survivors: Sequence[tuple[int, Sequence[int]]] = (),
     legs: Sequence[_CCDLeg] = (),
     groups: Sequence[tuple[Sequence[int], Sequence[int]]] | None = None,
-) -> _Edit:
-    return _Edit(
+) -> Edit:
+    return Edit(
         kind=kind,
         removed_faces=tuple(sorted({int(face) for face in removed_faces})),
         new_faces=np.asarray(new_faces, dtype=np.int64).reshape((-1, 3)),
@@ -273,9 +273,9 @@ def _new_edit(
 
 
 def _with_positions(
-    edit: _Edit, new_positions: np.ndarray, moved: Mapping[int, np.ndarray], /
-) -> _Edit:
-    return _Edit(
+    edit: Edit, new_positions: np.ndarray, moved: Mapping[int, np.ndarray], /
+) -> Edit:
+    return Edit(
         kind=edit.kind,
         removed_faces=edit.removed_faces,
         new_faces=edit.new_faces,
@@ -291,7 +291,7 @@ def _with_positions(
     )
 
 
-def _edit_positions(mesh: _WorkingMesh, edit: _Edit, /) -> np.ndarray:
+def _edit_positions(mesh: WorkingMesh, edit: Edit, /) -> np.ndarray:
     """Working positions with the edit's moved and provisional vertices applied."""
     points = np.concatenate((mesh.positions[: mesh.vertex_count], edit.new_positions))
     for slot, position in edit.moved:
@@ -312,7 +312,7 @@ class _Patch:
     kept_slots: np.ndarray
 
 
-def _patch(mesh: _WorkingMesh, edit: _Edit, /) -> _Patch:
+def _patch(mesh: WorkingMesh, edit: Edit, /) -> _Patch:
     """The complete stars of every touched vertex before and after the edit."""
     moved = [slot for slot, _ in edit.moved]
     touched = sorted(
@@ -389,9 +389,9 @@ def _volume_jacobian(
     return jacobian.reshape((regions.size, 3 * free.size))
 
 
-def _restore_volumes(
-    mesh: _WorkingMesh, edit: _Edit, policy: SurfaceEventPolicy, /
-) -> tuple[_Edit, float, bool]:
+def restore_volumes(
+    mesh: WorkingMesh, edit: Edit, policy: SurfaceEventPolicy, /
+) -> tuple[Edit, float, bool]:
     """Minimum-norm restoration of the finite-region volumes an event changes.
 
     Host-only candidate preparation: the few affected region rows are solved
@@ -475,7 +475,7 @@ def _local_intersections(
     points: np.ndarray, faces: np.ndarray, changed: np.ndarray, others: np.ndarray, /
 ) -> bool:
     """Exact welded intersection of changed faces against the given faces."""
-    from ...meshing._audit_topology import _triangle_pairs_intersect
+    from ...meshing._audit_topology import triangle_pairs_intersect
 
     if changed.size == 0 or others.size == 0:
         return False
@@ -494,20 +494,20 @@ def _local_intersections(
     pairs = np.unique(np.sort(np.stack((left, right), axis=1), axis=1), axis=0)
     if pairs.size == 0:
         return False
-    hit, certain = _triangle_pairs_intersect(
+    hit, certain = triangle_pairs_intersect(
         points, faces[pairs[:, 0]], faces[pairs[:, 1]]
     )
     return bool(np.any(hit | ~certain))
 
 
-def _duplicate_faces(mesh: _WorkingMesh, edit: _Edit, /) -> bool:
+def duplicate_faces(mesh: WorkingMesh, edit: Edit, /) -> bool:
     """Whether the edited stars would contain the same triangle twice."""
     faces = _patch(mesh, edit).new_faces
     return np.unique(np.sort(faces, axis=1), axis=0).shape[0] != faces.shape[0]
 
 
-def _local_guards(
-    mesh: _WorkingMesh, edit: _Edit, policy: SurfaceEventPolicy, /
+def local_guards(
+    mesh: WorkingMesh, edit: Edit, policy: SurfaceEventPolicy, /
 ) -> SurfaceEventStatus:
     """Exact combinatorial and geometric guards of one drafted edit."""
     patch = _patch(mesh, edit)
@@ -515,7 +515,7 @@ def _local_guards(
     faces = patch.new_faces
     labels = patch.new_labels
     plan = mesh.topology.plan
-    if _duplicate_faces(mesh, edit):
+    if duplicate_faces(mesh, edit):
         return SurfaceEventStatus.DUPLICATE_FACE
     removed_regions = (
         np.bincount(
@@ -539,7 +539,7 @@ def _local_guards(
         return SurfaceEventStatus.DEGENERATE_FACE
     local, inverse = np.unique(faces, return_inverse=True)
     local_faces = inverse.reshape(faces.shape)
-    incidence = _host_incidence(local_faces, labels, local.size)
+    incidence = host_incidence(local_faces, labels, local.size)
     touched = np.isin(local, patch.touched)
     rows = np.flatnonzero(np.any(touched[incidence.edges], axis=1))
     edges = incidence.edges[rows]
@@ -626,8 +626,8 @@ def _local_guards(
 
 
 def _normal_rotation_exceeded(
-    mesh: _WorkingMesh,
-    edit: _Edit,
+    mesh: WorkingMesh,
+    edit: Edit,
     patch: _Patch,
     points: np.ndarray,
     policy: SurfaceEventPolicy,
@@ -654,9 +654,9 @@ def _normal_rotation_exceeded(
 
 
 def _environment_faces(
-    mesh: _WorkingMesh,
+    mesh: WorkingMesh,
     patch: _Patch,
-    edit: _Edit,
+    edit: Edit,
     points: np.ndarray,
     moving: np.ndarray,
     /,
@@ -684,7 +684,7 @@ def _environment_faces(
 # --------------------------------------------------------------------- CCD
 
 
-def _leg_environment(mesh: _WorkingMesh, edit: _Edit, leg: _CCDLeg, /) -> np.ndarray:
+def _leg_environment(mesh: WorkingMesh, edit: Edit, leg: _CCDLeg, /) -> np.ndarray:
     """Static alive faces near the swept bounds of one leg.
 
     Faces the edit removes and faces incident to existing vertices moving in
@@ -711,7 +711,7 @@ def _leg_environment(mesh: _WorkingMesh, edit: _Edit, leg: _CCDLeg, /) -> np.nda
 
 
 def _certify_leg(
-    mesh: _WorkingMesh, edit: _Edit, leg: _CCDLeg, policy: SurfaceEventPolicy, /
+    mesh: WorkingMesh, edit: Edit, leg: _CCDLeg, policy: SurfaceEventPolicy, /
 ) -> tuple[bool, float]:
     """Inclusion-CCD certification of one leg against its static environment."""
     # The contact package imports geometry; resolving it lazily keeps the
@@ -793,9 +793,7 @@ def _certify_leg(
     return certified, float(safety.minimum_time_of_impact)
 
 
-def _restoration_leg(
-    mesh: _WorkingMesh, draft: _Edit, restored: _Edit, /
-) -> _CCDLeg | None:
+def restoration_leg(mesh: WorkingMesh, draft: Edit, restored: Edit, /) -> _CCDLeg | None:
     """Candidate-topology motion from drafted to volume-restored positions."""
     before = _edit_positions(mesh, draft)
     after = _edit_positions(mesh, restored)
@@ -816,9 +814,9 @@ def _restoration_leg(
     )
 
 
-def _certify_legs(
-    mesh: _WorkingMesh,
-    edit: _Edit,
+def certify_legs(
+    mesh: WorkingMesh,
+    edit: Edit,
     legs: Sequence[_CCDLeg],
     policy: SurfaceEventPolicy,
     /,
@@ -836,8 +834,8 @@ def _certify_legs(
 # ----------------------------------------------------------------- apply
 
 
-def _apply_edit(
-    mesh: _WorkingMesh, edit: _Edit, /
+def apply_edit(
+    mesh: WorkingMesh, edit: Edit, /
 ) -> tuple[list[int], list[int], list[int]]:
     """Commit an accepted edit; returns created vertex ids, created face ids and slots."""
     created_vertices = []
@@ -877,7 +875,7 @@ def _apply_edit(
     return created_vertices, created_faces, created_slots
 
 
-def _capacity_admits(mesh: _WorkingMesh, edit: _Edit, /) -> bool:
+def capacity_admits(mesh: WorkingMesh, edit: Edit, /) -> bool:
     plan = mesh.topology.plan
     return (
         mesh.vertex_count + edit.new_positions.shape[0] <= plan.vertex_capacity

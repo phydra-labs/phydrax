@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
-from typing import TYPE_CHECKING
 
-import jax.numpy as jnp
+import jax
 import numpy as np
+
+from phydrax.discretization._polygon_types import PolyhedralFaceTriangulation
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..geometry._exact_polyhedral_geometry import (
@@ -16,36 +17,97 @@ from ..geometry._exact_polyhedral_geometry import (
     exact_vertices,
     star_tetrahedra,
     triangulate_loop,
+    triangulation_bounds,
 )
+from ..typing import checked
 from ._cell_complex import PolyhedralConnectivity, prepare_polyhedral_worksets
-from ._cell_geometry import CellGeometrySpec
+from ._cell_geometry import (
+    cell_geometry_preparation_bounds,
+    cell_geometry_preparation_query_upper,
+    CellGeometrySpec,
+)
 from ._cell_geometry_validity import cell_geometry_id
 from ._cell_mesh import CellMesh
-from ._polygon_geometry import PolyhedralFaceTriangulation
+from ._coordinate_budget import CoordinateEnclosureBudget
+from .finite_volume._polyhedral_types import PreparedPolyhedralFiniteVolumeGeometry
 
 
-if TYPE_CHECKING:
-    from .finite_volume._polyhedral import PreparedPolyhedralFiniteVolumeGeometry
-
-
-def exact_power_cell_measures(
-    mesh: CellMesh, geometry: CellGeometrySpec, /, *, maximum_work: int
-) -> tuple[np.ndarray, np.ndarray, bool]:
-    from ._coordinate_enclosure import _COORDINATE_BUDGET
-
-    ledger = _COORDINATE_BUDGET.get()
-    if ledger is not None:
-        connectivity = mesh.connectivity
-        if not isinstance(connectivity, PolyhedralConnectivity):
-            raise TypeError("Exact power integration requires polyhedral connectivity.")
-        face_sizes = np.diff(np.asarray(connectivity.face_vertex_offsets))
-        ledger.reserve(
-            sum(int(size) ** 3 for size in face_sizes)
-            + 40 * connectivity.cell_face_values.size
+@checked
+def exact_power_finite_volume_preparation_bounds(
+    mesh: CellMesh, geometry: CellGeometrySpec, /
+) -> tuple[int, int, int]:
+    """Bound the source, face proofs, star determinants, and FV arrays."""
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, PolyhedralConnectivity):
+        raise TypeError(
+            "exact_power_finite_volume.connectivity must be polyhedral; got another connectivity kind"
         )
-    stars = star_tetrahedra(mesh, exact_vertices(mesh, geometry))
+    source = geometry.exact_source
+    if source is None:
+        raise ValueError(
+            "exact_power_finite_volume.geometry.exact_source must retain the coordinate source; got None"
+        )
+    bits = max(source.maximum_bits, 1075)
+    source_work, source_memory = cell_geometry_preparation_bounds(geometry)
+    work, memory = 2 * source_work, 2 * source_memory
+    offsets = np.asarray(connectivity.face_vertex_offsets)
+    sizes = np.diff(offsets)
+    faces = np.asarray(connectivity.cell_face_values)
+    pieces = 0
+    for count in sizes:
+        size = int(count)
+        upper, storage = triangulation_bounds(size, bits)
+        work += upper + 3 * size
+        memory += storage
+    for face in faces:
+        size = int(sizes[face])
+        upper, storage = triangulation_bounds(size, bits)
+        work += upper + 3 * size
+        memory += storage
+        pieces += max(size - 2, 0)
+    # Star positivity and physical cell integration each form a determinant.
+    work += 2 * pieces * (4 * 3**3)
+    face_capacity = max((max(int(size) - 2, 0) for size in sizes), default=0)
+    # A cell cannot retain more fan entries than all admitted face occurrences.
+    cell_entries = connectivity.cell_count * pieces
+    face_entries = connectivity.face_count * face_capacity
+    memory += (cell_entries + face_entries) * (
+        3 * np.dtype(np.float64).itemsize
+        + np.dtype(np.float64).itemsize
+        + np.dtype(np.bool_).itemsize
+    )
+    queries = 4 * cell_geometry_preparation_query_upper(geometry)
+    return work, memory, queries
+
+
+@checked
+def exact_power_cell_measures(
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    maximum_work: int,
+    budget: CoordinateEnclosureBudget,
+) -> tuple[np.ndarray, np.ndarray, bool]:
+
+    ledger = budget
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, PolyhedralConnectivity):
+        raise TypeError(
+            "exact_power_cell_measures.connectivity must be polyhedral; got another connectivity kind"
+        )
+    face_sizes = np.diff(np.asarray(connectivity.face_vertex_offsets))
+    ledger.reserve(
+        sum(int(size) ** 3 for size in face_sizes)
+        + 40 * connectivity.cell_face_values.size
+    )
+    stars = star_tetrahedra(
+        mesh, exact_vertices(mesh, geometry, budget=budget), budget=budget
+    )
     if sum(len(star) * 40 for star in stars) > maximum_work:
-        raise ValueError("Exact power cell integration work budget exhausted.")
+        raise ValueError(
+            "exact_power_cell_measures.maximum_work must admit cell integration; got an exhausted work budget"
+        )
     integrals = tuple(
         sum(
             (
@@ -56,7 +118,8 @@ def exact_power_cell_measures(
                             for value, base in zip(point, tet[0], strict=True)
                         )
                         for point in tet[1:]
-                    )
+                    ),
+                    budget=budget,
                 )
                 / 6
                 for tet in star
@@ -78,28 +141,40 @@ def exact_power_cell_measures(
     return values, errors, True
 
 
+@checked
 def exact_power_face_triangulation(
-    mesh: CellMesh, geometry: CellGeometrySpec, /, *, maximum_entries: int
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    maximum_entries: int,
+    budget: CoordinateEnclosureBudget,
 ) -> PolyhedralFaceTriangulation:
     c = mesh.connectivity
     if not isinstance(c, PolyhedralConnectivity):
-        raise TypeError("Exact power face preparation requires polyhedral connectivity.")
+        raise TypeError(
+            "exact_power_face_triangulation.connectivity must be polyhedral; got another connectivity kind"
+        )
     offsets, values = np.asarray(c.face_vertex_offsets), np.asarray(c.face_vertex_values)
     if sum(int(size) ** 3 for size in np.diff(offsets)) > maximum_entries:
-        raise ValueError("Exact power face preparation work capacity exhausted.")
-    points = exact_vertices(mesh, geometry)
+        raise ValueError(
+            "exact_power_face_triangulation.maximum_entries must admit face preparation work; got exhausted work capacity"
+        )
+    points = exact_vertices(mesh, geometry, budget=budget)
     triangles, triangle_offsets, vectors, measures, centers = [], [0], [], [], []
     work = 0
     for face in range(c.face_count):
         row = tuple(values[offsets[face] : offsets[face + 1]].tolist())
         work += len(row) ** 3
         if work > maximum_entries:
-            raise ValueError("Exact power face preparation work capacity exhausted.")
-        pieces = triangulate_loop(points, row)
+            raise ValueError(
+                "exact_power_face_triangulation.maximum_entries must admit face preparation work; got exhausted work capacity"
+            )
+        pieces = triangulate_loop(points, row, budget=budget)
         triangles.extend(pieces)
         if 3 * len(triangles) > maximum_entries:
             raise ValueError(
-                "Exact power face triangulation retained capacity exhausted."
+                "exact_power_face_triangulation.maximum_entries must admit retained triangles; got exhausted retained capacity"
             )
         triangle_offsets.append(len(triangles))
         area = [Fraction(0)] * 3
@@ -138,8 +213,8 @@ def exact_power_face_triangulation(
             "maximum_entries": maximum_entries,
         }
     )
-    # This route did not execute a native triangulator; empty native evidence
-    # banks are intentional. Its evidence identity binds the original source.
+    # This route did not execute a native triangulator; the empty planar work
+    # bank and allocator-record tuple bind no fabricated native measurements.
     return PolyhedralFaceTriangulation(
         np.asarray(triangle_offsets, dtype=np.int64),
         np.asarray(triangles, dtype=np.int32),
@@ -147,31 +222,43 @@ def exact_power_face_triangulation(
         np.asarray(measures, dtype=np.float64),
         np.asarray(centers, dtype=np.float64),
         np.empty((0,), dtype=np.int64),
-        np.empty((0,), dtype=np.int64),
+        (),
         (identity,),
         identity,
     )
 
 
+@checked
 def exact_power_finite_volume_geometry(
-    mesh: CellMesh, geometry: CellGeometrySpec, /, *, maximum_entries: int
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    /,
+    *,
+    maximum_entries: int,
+    budget: CoordinateEnclosureBudget,
 ) -> PreparedPolyhedralFiniteVolumeGeometry:
-    from .finite_volume._polyhedral import PreparedPolyhedralFiniteVolumeGeometry
 
     c = mesh.connectivity
     if not isinstance(c, PolyhedralConnectivity):
-        raise TypeError("Exact power FV requires polyhedral connectivity.")
+        raise TypeError(
+            "exact_power_finite_volume.connectivity must be polyhedral; got another connectivity kind"
+        )
     worksets = prepare_polyhedral_worksets(c, maximum_entries=maximum_entries)
-    points = exact_vertices(mesh, geometry)
+    points = exact_vertices(mesh, geometry, budget=budget)
     faces = exact_power_face_triangulation(
-        mesh, geometry, maximum_entries=maximum_entries
+        mesh,
+        geometry,
+        maximum_entries=maximum_entries,
+        budget=budget,
     )
-    stars = star_tetrahedra(mesh, points)
+    stars = star_tetrahedra(mesh, points, budget=budget)
     face_capacity = worksets.face_vertices.shape[1] - 2
     cell_capacity = max(len(star) for star in stars)
     retained_entries = 5 * (len(stars) * cell_capacity + c.face_count * face_capacity)
     if retained_entries > maximum_entries:
-        raise ValueError("Exact power FV quadrature retained capacity exhausted.")
+        raise ValueError(
+            "exact_power_finite_volume.maximum_entries must admit retained quadrature; got exhausted retained capacity"
+        )
     cell_points, cell_weights, cell_valid = (
         np.zeros((len(stars), cell_capacity, 3), dtype=np.float64),
         np.zeros((len(stars), cell_capacity), dtype=np.float64),
@@ -189,7 +276,8 @@ def exact_power_finite_volume_geometry(
                             for value, base in zip(point, tet[0], strict=True)
                         )
                         for point in tet[1:]
-                    )
+                    ),
+                    budget=budget,
                 )
                 / 6
             )
@@ -226,7 +314,7 @@ def exact_power_finite_volume_geometry(
         np.asarray(worksets.cell_faces),
         np.asarray(worksets.cell_face_valid),
     )
-    # Topological oriented closure plus exact face-plane proof establishes zero
+    # Topological oriented closure plus face-plane proof establishes zero
     # ideal closure; numerical residual is separately exposed to FV consumers.
     residual = np.linalg.norm(
         np.sum(
@@ -247,20 +335,20 @@ def exact_power_finite_volume_geometry(
         }
     )
     return PreparedPolyhedralFiniteVolumeGeometry(
-        cell_volumes=jnp.asarray(volumes, dtype=jnp.float64),
-        cell_centers=jnp.asarray(centers, dtype=jnp.float64),
-        face_centers=jnp.asarray(faces.face_centroids),
-        face_area_vectors=jnp.asarray(faces.face_area_vectors),
-        face_measures=jnp.asarray(faces.face_measures),
-        face_quadrature_points=jnp.asarray(face_points),
-        face_quadrature_weights=jnp.asarray(face_weights),
-        face_quadrature_valid=jnp.asarray(face_valid),
-        cell_quadrature_points=jnp.asarray(cell_points),
-        cell_quadrature_weights=jnp.asarray(cell_weights),
-        cell_quadrature_valid=jnp.asarray(cell_valid),
+        cell_volumes=jax.device_put(np.asarray(volumes, dtype=np.float64)),
+        cell_centers=jax.device_put(np.asarray(centers, dtype=np.float64)),
+        face_centers=jax.device_put(faces.face_centroids),
+        face_area_vectors=jax.device_put(faces.face_area_vectors),
+        face_measures=jax.device_put(faces.face_measures),
+        face_quadrature_points=jax.device_put(face_points),
+        face_quadrature_weights=jax.device_put(face_weights),
+        face_quadrature_valid=jax.device_put(face_valid),
+        cell_quadrature_points=jax.device_put(cell_points),
+        cell_quadrature_weights=jax.device_put(cell_weights),
+        cell_quadrature_valid=jax.device_put(cell_valid),
         owner_cells=c.face_owner,
         neighbor_cells=c.face_neighbor,
-        closure_residual=jnp.asarray(residual),
+        closure_residual=jax.device_put(residual),
         mesh_id=mesh.mesh_id,
         geometry_id=identity,
         face_triangulation_id=faces.triangulation_id,

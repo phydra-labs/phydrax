@@ -236,6 +236,68 @@ def test_key_and_capacity_refusal_before_numerical_work() -> None:
         )
 
 
+@pytest.mark.parametrize("resident", [False, True], ids=["shell", "dense"])
+@pytest.mark.parametrize("workspace_owner", ["materialization", "solver"])
+def test_workspace_bounds_preserve_randomized_sketches_and_certificates(
+    resident: bool, workspace_owner: str
+) -> None:
+    matrix = _matrix(10, 7, np.dtype(np.float64))
+    problem = svd.SVDProblem(
+        la.DenseLinearOperator(matrix) if resident else _Shell(matrix)
+    )
+
+    def prepare(workspace_bytes: int) -> svd.PreparedSVDSolve:
+        policy = svd.SVDSolvePolicy(
+            svd.RandomizedSVD(oversampling=1, power_iterations=1),
+            count=2,
+            materialization=la.MaterializationPolicy(
+                max_workspace_bytes=workspace_bytes
+                if workspace_owner == "materialization"
+                else 64 * 1024 * 1024
+            ),
+            resources=svd.SVDResourcePolicy(
+                workspace_bytes=workspace_bytes
+                if workspace_owner == "solver"
+                else 512 * 1024 * 1024
+            ),
+        )
+        return svd.prepare_svd(problem, policy, key=jax.random.key(31))
+
+    first = prepare(1 << 20)
+    second = prepare(2 << 20)
+    assert first.plan.plan_id != second.plan.plan_id
+    assert isinstance(first.state, svd.RandomizedSVDState)
+    assert isinstance(second.state, svd.RandomizedSVDState)
+    first_result, second_result = svd.svd(first), svd.svd(second)
+    first_values = (
+        first.state.range_basis,
+        first.state.compressed_operator,
+        first.state.range_bound,
+        first.state.range_allowance,
+        first.state.audit_maximum_norm,
+        first_result.leading_evidence,
+        first_result.range_evidence,
+        first_result.primal_status,
+    )
+    second_values = (
+        second.state.range_basis,
+        second.state.compressed_operator,
+        second.state.range_bound,
+        second.state.range_allowance,
+        second.state.audit_maximum_norm,
+        second_result.leading_evidence,
+        second_result.range_evidence,
+        second_result.primal_status,
+    )
+    for left, right in zip(
+        jax.tree.leaves(first_values), jax.tree.leaves(second_values), strict=True
+    ):
+        left_host, right_host = np.asarray(left), np.asarray(right)
+        assert left_host.dtype == right_host.dtype
+        assert left_host.shape == right_host.shape
+        assert left_host.tobytes() == right_host.tobytes()
+
+
 @pytest.mark.parametrize("rank", [0, 2])
 def test_rank_deficient_primal_does_not_claim_algorithmic_derivative(rank: int) -> None:
     matrix = jnp.diag(

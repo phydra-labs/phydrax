@@ -25,6 +25,7 @@ from ..._mass import EstimatedMass, Mass, scale_mass
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from ..._polynomial._cubature import CubatureReference
 from ...typing import checked, parse, PRNGKey
+from ...units import ONE
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import (
     ClosestPointProvider,
@@ -64,9 +65,9 @@ from .._validity import (
     representation_validity,
 )
 from ..design._schema import (
-    _ParameterCollector,
     DesignState,
     ParameterBinding,
+    ParameterCollector,
     ParameterId,
 )
 
@@ -304,7 +305,7 @@ class RigidTransform(GeometrySource):
         if not self.feature_id:
             raise ValueError("feature_id must be non-empty.")
 
-    def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector, /) -> GeometryKernel:
         child = self.child._compile(context)
         if child.ambient_dimension != self.frame.dimension:
             raise ValueError("Rigid frame dimension must match child ambient dimension.")
@@ -312,11 +313,13 @@ class RigidTransform(GeometrySource):
             ParameterId(self.feature_id, "rotation"),
             self.frame.rotation,
             role="rotation_matrix",
+            unit=ONE,
         )
         translation = context.bind(
             ParameterId(self.feature_id, "translation"),
             self.frame.translation,
             role="position_offset",
+            unit=context.coordinate_unit,
         )
         return _RigidTransformKernel(
             child,
@@ -601,7 +604,7 @@ class Scaling(GeometrySource):
         self.uniform = uniform
         self.feature_id = feature_id or f"scaling-{uuid4().hex}"
 
-    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector) -> GeometryKernel:
         child = self.child._compile(context)
         scale = self.scale
         center = self.center
@@ -619,10 +622,17 @@ class Scaling(GeometrySource):
                 "scale and center dimensions must match child ambient dimension."
             )
         scale_binding = context.bind(
-            ParameterId(self.feature_id, "scale"), scale, role="scale", bounds=(0.0, None)
+            ParameterId(self.feature_id, "scale"),
+            scale,
+            role="scale",
+            unit=ONE,
+            bounds=(0.0, None),
         )
         center_binding = context.bind(
-            ParameterId(self.feature_id, "center"), center, role="position"
+            ParameterId(self.feature_id, "center"),
+            center,
+            role="position",
+            unit=context.coordinate_unit,
         )
         return _ScalingKernel(
             child,
@@ -995,7 +1005,7 @@ class SharpCSG(GeometrySource):
         self.children = children_
         self.operation = operation
 
-    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector) -> GeometryKernel:
         children = tuple(child._compile(context) for child in self.children)
         dimension = children[0].ambient_dimension
         if any(
@@ -1200,7 +1210,7 @@ class BlendCSG(GeometrySource):
         self.operation = operation
         self.feature_id = feature_id or f"blend-{uuid4().hex}"
 
-    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
+    def _compile(self, context: ParameterCollector) -> GeometryKernel:
         children = tuple(child._compile(context) for child in self.children)
         dimension = children[0].ambient_dimension
         if any(
@@ -1212,6 +1222,7 @@ class BlendCSG(GeometrySource):
             ParameterId(self.feature_id, "width"),
             self.width,
             role="blend_width",
+            unit=context.coordinate_unit,
             bounds=(0.0, None),
         )
         return _BlendCSGKernel(children, width, operation=self.operation)

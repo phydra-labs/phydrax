@@ -52,7 +52,7 @@ from phydrax.solver.coupling import (
     prepare_coupled_problem,
 )
 from phydrax.sparse import SparseCoordinateOperator
-from phydrax.units import ONE
+from phydrax.units import METER, ONE
 
 
 class TraceOptions(TypedDict, total=False):
@@ -75,7 +75,7 @@ def prepared_cloud_component(
     cloud = PointCloudPlan(points, measures, neighbors=20).prepare()
     view = prepare_point_cloud_field_reconstruction(
         cloud,
-        support_geometry=Rectangle((0.5, 0.5), (1.0, 1.0)).compile(),
+        support_geometry=Rectangle((0.5, 0.5), (1.0, 1.0)).compile(coordinate_unit=METER),
         radius=0.65,
         capacity=49,
         reconstruction=reconstruction,
@@ -244,7 +244,11 @@ def _half_plate(
             ([[1.0, shift], [2.0, shift], [2.0, 1.0 + shift]], falling)
         )
         selected = tuple(range(3, 3 + resolution))
-    atlas = Polygon([tuple(v) for v in vertices]).compile().boundary_atlas
+    atlas = (
+        Polygon([tuple(v) for v in vertices])
+        .compile(coordinate_unit=METER)
+        .boundary_atlas
+    )
     charts = PointBoundaryCharts(
         cloud,
         atlas,
@@ -291,7 +295,7 @@ def _trace_component(
     poisson = PointCloudPoissonPlan(cloud, plan).prepare(CONDUCTIVITY)
     reconstruction = prepare_point_cloud_field_reconstruction(
         cloud,
-        support_geometry=Rectangle((1.5, 0.5), (1.0, 1.0)).compile(),
+        support_geometry=Rectangle((1.5, 0.5), (1.0, 1.0)).compile(coordinate_unit=METER),
         radius=0.6,
         capacity=49,
     )
@@ -641,7 +645,7 @@ def coupled_ghost_component() -> MeshfreeTraceComponent:
     ).prepare(coefficients)
     reconstruction = prepare_point_cloud_field_reconstruction(
         cloud,
-        support_geometry=Rectangle((1.5, 0.5), (1.0, 1.0)).compile(),
+        support_geometry=Rectangle((1.5, 0.5), (1.0, 1.0)).compile(coordinate_unit=METER),
         radius=0.6,
         capacity=count,
     )

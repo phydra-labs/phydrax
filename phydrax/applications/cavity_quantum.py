@@ -1149,7 +1149,7 @@ def _hcurl_transfer(
     adaptation: MeshAdaptationResult,
     /,
 ) -> FiniteElementFieldTransfer | None:
-    """Explicit canonical form-moment transfer, never P1 vertex interpolation."""
+    """Prepare a form-moment transfer through the mesh adaptation."""
 
     source_space, target_space = source.discretization, target.discretization
     parents = refinement_parent_cells(adaptation)
@@ -1235,6 +1235,7 @@ class PreparedAdaptiveHcurlCapability(StrictModule, NonTrainableState):
     epoch: TopologyEpoch
     prepared_id: str = eqx.field(static=True)
 
+    @checked
     def adapt(
         self,
         adaptation: MeshAdaptationResult,
@@ -1253,17 +1254,23 @@ class PreparedAdaptiveHcurlCapability(StrictModule, NonTrainableState):
         ``accepted_boundary=False`` retains the accepted complex and field exactly.
         """
 
-        if not isinstance(adaptation, MeshAdaptationResult):
-            raise TypeError("adaptation must be MeshAdaptationResult.")
         if not isinstance(accepted_boundary, bool):
-            raise TypeError("accepted_boundary must be an explicit host bool.")
+            raise TypeError(
+                f"Hcurl.accepted_boundary must be a host bool; got {type(accepted_boundary).__name__}"
+            )
         values = jnp.asarray(edge_integrals)
         if values.shape != (self.space.hilbert_complex().space(1).size,):
-            raise ValueError("H(curl) state must hold every degree-one form moment.")
+            raise ValueError(
+                f"Hcurl.edge_integrals.shape must be {(self.space.hilbert_complex().space(1).size,)!r}; got {values.shape!r}"
+            )
         if adaptation.source.mesh.mesh_id != self.space.mesh.mesh_id:
-            raise ValueError("The adaptation does not start from this H(curl) mesh.")
+            raise ValueError(
+                f"Hcurl.adaptation.source.mesh_id must be {self.space.mesh.mesh_id!r}; got {adaptation.source.mesh.mesh_id!r}"
+            )
         if cell_geometry_id(adaptation.source.geometry) != self.epoch.geometry_id:
-            raise ValueError("The adaptation does not start from this H(curl) geometry.")
+            raise ValueError(
+                f"Hcurl.adaptation.source.geometry_id must be {self.epoch.geometry_id!r}; got {cell_geometry_id(adaptation.source.geometry)!r}"
+            )
 
         def retained(
             reason: str,
@@ -1393,7 +1400,9 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
         if order < 1:
             raise ValueError("requested_polynomial_order must be positive.")
         if not isinstance(require_adaptation, bool):
-            raise TypeError("require_adaptation must be bool.")
+            raise TypeError(
+                f"Hcurl.require_adaptation must be bool; got {type(require_adaptation).__name__}"
+            )
         edge_limit = int(maximum_edges)
         cell_limit = int(maximum_cells)
         if edge_limit < 1 or cell_limit < 1:

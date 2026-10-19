@@ -96,8 +96,10 @@ For a conservative hyperelastic solid, represent internal and external work as
 separate signed terms because they live on different measures:
 
 ```python
+from phydrax.units import METER
+
 geom = phx.domain.GeometryDomain(
-    phx.geometry.Square(center=(0.5, 0.5), side=1.0).compile()
+    phx.geometry.Square(center=(0.5, 0.5), side=1.0).compile(coordinate_unit=METER)
 )
 full_boundary = geom.component({"x": phx.domain.Boundary()})
 mu = 1.0

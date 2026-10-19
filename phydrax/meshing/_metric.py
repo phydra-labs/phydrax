@@ -17,7 +17,7 @@ import heapq
 import math
 from enum import StrEnum
 from functools import partial
-from typing import Any, final, NamedTuple
+from typing import final, NamedTuple
 
 import equinox as eqx
 import jax
@@ -27,12 +27,14 @@ from jax import Array
 from jax.scipy.special import logsumexp
 from jax.typing import ArrayLike
 
+import phydrax.linalg as _owner_phydrax_linalg
+import phydrax.meshing._scope as _dependency_phydrax_meshing__scope
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .._validation import finite_real_scalar
+from .._validation import finite_real_scalar, positive_integer, positive_real_scalar
 from ..linalg import (
     DensePropertyVerificationPolicy,
     hermitian_exp,
@@ -41,8 +43,7 @@ from ..linalg import (
     verify_dense_properties,
 )
 from ..nonlinear import Brent, NonlinearTermination, scalar_root, ScalarRootProblem
-from ..typing import checked, Dim, Float64, Identifier
-from ._scope import MeshingScope
+from ..typing import checked, Dim, Float64, Identifier, parse
 
 
 _SYMMETRY_POLICY = DensePropertyVerificationPolicy(require_hermitian=True)
@@ -66,17 +67,10 @@ class _MetricAxisDim(Dim, minimum=1):
     """Coordinate axes of one square metric tensor."""
 
 
-def _positive(value: object, name: str, /) -> float:
-    result = finite_real_scalar(value, name)
-    if result <= 0.0:
-        raise ValueError(f"{name} must be positive and finite.")
-    return result
-
-
 def _at_least_one(value: object, name: str, /) -> float:
     result = finite_real_scalar(value, name)
     if result < 1.0:
-        raise ValueError(f"{name} must be finite and at least one.")
+        raise ValueError(f"metric.{name} must be finite and at least one; got {result!r}")
     return result
 
 
@@ -90,7 +84,7 @@ def _tensor_array(values: ArrayLike, rows: int, /) -> np.ndarray:
         or not np.all(np.isfinite(tensors))
     ):
         raise ValueError(
-            "Metric tensors must be finite aligned square matrices of dimension 1-3."
+            f"metric.values must contain finite aligned square matrices of dimension 1-3; got shape={tensors.shape}"
         )
     return tensors
 
@@ -101,14 +95,17 @@ def _symmetric_spectrum(values: Array, /) -> tuple[Array, Array, Array]:
     return spectrum.eigenvalues, spectrum.eigenvectors, spectrum.valid
 
 
-def _host_spectrum(values: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+def host_spectrum(values: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     """Host eigenpairs of exactly symmetric tensors, ascending eigenvalues."""
     eigenvalues, eigenvectors, valid = _symmetric_spectrum(
         jnp.asarray(values, dtype=jnp.float64)
     )
-    if not np.all(np.asarray(valid)):
-        raise ValueError("Metric tensors must have a finite symmetric spectrum.")
-    return np.asarray(eigenvalues), np.asarray(eigenvectors)
+    if not np.all(np.asarray(jax.device_get(valid))):
+        raise ValueError(
+            "metric.values must have a finite symmetric spectrum; got failed spectral evidence"
+        )
+    host_values, host_vectors = jax.device_get((eigenvalues, eigenvectors))
+    return np.asarray(host_values), np.asarray(host_vectors)
 
 
 def _compose(eigenvalues: np.ndarray, eigenvectors: np.ndarray, /) -> np.ndarray:
@@ -125,14 +122,23 @@ class _TensorProperties(NamedTuple):
     tolerance: np.ndarray
 
 
-def _tensor_properties(values: np.ndarray, /) -> _TensorProperties:
+def tensor_properties(values: np.ndarray, /) -> _TensorProperties:
     evidence = verify_dense_properties(jnp.asarray(values), policy=_SYMMETRY_POLICY)
+    matrix, hermitian, positive_definite, defect, tolerance = jax.device_get(
+        (
+            evidence.matrix,
+            evidence.hermitian,
+            evidence.positive_definite,
+            evidence.hermitian_defect,
+            evidence.tolerance,
+        )
+    )
     return _TensorProperties(
-        np.asarray(evidence.matrix),
-        np.asarray(evidence.hermitian),
-        np.asarray(evidence.positive_definite),
-        np.asarray(evidence.hermitian_defect),
-        np.asarray(evidence.tolerance),
+        np.asarray(matrix),
+        np.asarray(hermitian),
+        np.asarray(positive_definite),
+        np.asarray(defect),
+        np.asarray(tolerance),
     )
 
 
@@ -144,7 +150,7 @@ class _BoundViolations(NamedTuple):
     maximum_anisotropy: np.ndarray
 
 
-def _bound_violations(
+def bound_violations(
     metric: np.ndarray,
     minimum_size: float,
     maximum_size: float,
@@ -163,9 +169,11 @@ def _bound_violations(
     """
     evidence = verify_dense_properties(jnp.asarray(metric), policy=_SPD_POLICY)
     if not np.all(np.asarray(evidence.hermitian)):
-        raise ValueError("Mesh metrics must be symmetric.")
+        raise ValueError("metric.values must be symmetric; got failed Hermitian evidence")
     if not np.all(np.asarray(evidence.positive_definite)):
-        raise ValueError("Mesh metrics must be positive definite.")
+        raise ValueError(
+            "metric.values must be positive definite; got failed positive-definite evidence"
+        )
     eigenvalues = np.asarray(evidence.eigenvalues)
     tolerance = np.asarray(evidence.tolerance)
     smallest, largest = eigenvalues[:, 0], eigenvalues[:, -1]
@@ -194,7 +202,7 @@ class MeshMetricField(StrictModule, NonTrainableState):
 
     __strict_contract__ = True
 
-    scope: MeshingScope
+    scope: _dependency_phydrax_meshing__scope.MeshingScope
     values: Float64[_MetricEntityDim, _MetricAxisDim, _MetricAxisDim]
     minimum_size: float = eqx.field(static=True)
     maximum_size: float = eqx.field(static=True)
@@ -204,7 +212,7 @@ class MeshMetricField(StrictModule, NonTrainableState):
     @checked
     def __init__(
         self,
-        scope: MeshingScope,
+        scope: _dependency_phydrax_meshing__scope.MeshingScope,
         values: ArrayLike,
         /,
         *,
@@ -212,22 +220,24 @@ class MeshMetricField(StrictModule, NonTrainableState):
         maximum_size: float,
         maximum_anisotropy: float = 100.0,
     ) -> None:
-        minimum = _positive(minimum_size, "minimum_size")
-        maximum = _positive(maximum_size, "maximum_size")
+        minimum = positive_real_scalar(minimum_size, "minimum_size")
+        maximum = positive_real_scalar(maximum_size, "maximum_size")
         anisotropy = _at_least_one(maximum_anisotropy, "maximum_anisotropy")
         if minimum > maximum:
-            raise ValueError("minimum_size cannot exceed maximum_size.")
+            raise ValueError(
+                f"metric.minimum_size must not exceed maximum_size; got {(minimum, maximum)!r}"
+            )
         metric = _tensor_array(values, scope.entity_ids.shape[0])
-        violations = _bound_violations(metric, minimum, maximum, anisotropy)
+        violations = bound_violations(metric, minimum, maximum, anisotropy)
         for name, rows in zip(violations._fields, violations, strict=True):
             if np.any(rows):
                 raise ValueError(
-                    f"Mesh metric rows {np.flatnonzero(rows)[:8].tolist()} violate "
-                    f"the declared {name}; bound untrusted tensors explicitly with "
-                    "normalize_mesh_metric."
+                    f"MeshMetricField.{name} must hold within the declared bounds; "
+                    f"got violating rows {np.flatnonzero(rows)[:8].tolist()}"
                 )
         self.scope = scope
-        self.values = jnp.asarray(metric)
+        _host_values = np.asarray(metric)
+        (self.values,) = jax.device_put((_host_values,))
         self.minimum_size = minimum
         self.maximum_size = maximum
         self.maximum_anisotropy = anisotropy
@@ -252,15 +262,18 @@ class MeshMetricSamples(StrictModule, NonTrainableState):
 
     __strict_contract__ = True
 
-    scope: MeshingScope
+    scope: _dependency_phydrax_meshing__scope.MeshingScope
     values: Float64[_MetricEntityDim, _MetricAxisDim, _MetricAxisDim]
     samples_id: Identifier = eqx.field(static=True)
 
     @checked
-    def __init__(self, scope: MeshingScope, values: ArrayLike, /) -> None:
+    def __init__(
+        self, scope: _dependency_phydrax_meshing__scope.MeshingScope, values: ArrayLike, /
+    ) -> None:
         tensors = _tensor_array(values, scope.entity_ids.shape[0])
         self.scope = scope
-        self.values = jnp.asarray(tensors)
+        _host_values = np.asarray(tensors)
+        (self.values,) = jax.device_put((_host_values,))
         self.samples_id = canonical_fingerprint(
             {
                 "kind": "mesh-metric-samples",
@@ -293,8 +306,8 @@ class MetricGradationStatus(StrEnum):
 class MetricGradationPolicy(StrictModule, NonTrainableState):
     """Scalar or anisotropic gradation with an explicit convergence budget.
 
-    Scalar gradation bounds the determinant size ``det(M)**(-1/(2d))`` by an
-    exact minimum-first relaxation and realizes it by uniform log-eigenvalue
+    Scalar gradation bounds the determinant size ``det(M)**(-1/(2d))`` by a
+    minimum-first graph relaxation and realizes it by uniform log-eigenvalue
     shifts saturated at the field's upper eigenvalue bound, which never
     increases anisotropy. Anisotropic gradation (Alauzet 2010) grows every metric
     along each incident edge and intersects the grown metric at the neighbor; an
@@ -325,15 +338,17 @@ class MetricGradationPolicy(StrictModule, NonTrainableState):
         maximum_sweeps: int = 1024,
     ) -> None:
         gradation = _at_least_one(maximum_gradation, "maximum_gradation")
-        if not isinstance(kind, MetricGradationKind):
-            raise TypeError("kind must be MetricGradationKind.")
+        kind = parse(kind, MetricGradationKind, "kind")
         if not isinstance(anisotropic, (bool, np.bool_)):
-            raise TypeError("anisotropic must be a bool.")
+            raise TypeError(
+                f"MetricGradationPolicy.anisotropic must be bool; got {anisotropic!r}"
+            )
         tolerance = finite_real_scalar(relative_tolerance, "relative_tolerance")
         if tolerance < 0.0:
-            raise ValueError("relative_tolerance must be non-negative.")
-        if not isinstance(maximum_sweeps, (int, np.integer)) or maximum_sweeps <= 0:
-            raise ValueError("maximum_sweeps must be a positive integer.")
+            raise ValueError(
+                f"MetricGradationPolicy.relative_tolerance must be nonnegative; got {tolerance!r}"
+            )
+        maximum_sweeps = positive_integer(maximum_sweeps, "maximum_sweeps")
         self.maximum_gradation = gradation
         self.kind = kind
         self.anisotropic = bool(anisotropic)
@@ -383,8 +398,7 @@ class MetricGradationEvidence(StrictModule, NonTrainableState):
         modified_count: int,
         maximum_violation: float,
     ) -> None:
-        if not isinstance(status, MetricGradationStatus):
-            raise TypeError("status must be MetricGradationStatus.")
+        status = parse(status, MetricGradationStatus, "status")
         self.policy_id = policy.policy_id
         self.status = status
         self.iterations = int(iterations)
@@ -415,9 +429,8 @@ class MetricGradationError(ValueError):
     def __init__(self, evidence: MetricGradationEvidence, /) -> None:
         self.evidence = evidence
         super().__init__(
-            "Metric gradation failed "
-            f"({evidence.status.value}, maximum violation "
-            f"{evidence.maximum_violation:.17g})."
+            "metric.gradation must converge within the declared bounds and sweep limit; "
+            f"got status={evidence.status.value}, maximum_violation={evidence.maximum_violation:.17g}"
         )
 
 
@@ -453,6 +466,7 @@ class MetricNormalizationPolicy(StrictModule, NonTrainableState):
     project_indefinite: bool = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         *,
@@ -464,22 +478,24 @@ class MetricNormalizationPolicy(StrictModule, NonTrainableState):
         symmetrize: bool = False,
         project_indefinite: bool = False,
     ) -> None:
-        minimum = _positive(minimum_size, "minimum_size")
-        maximum = _positive(maximum_size, "maximum_size")
+        minimum = positive_real_scalar(minimum_size, "minimum_size")
+        maximum = positive_real_scalar(maximum_size, "maximum_size")
         if minimum > maximum:
-            raise ValueError("minimum_size cannot exceed maximum_size.")
+            raise ValueError(
+                f"metric.minimum_size must not exceed maximum_size; got {(minimum, maximum)!r}"
+            )
         anisotropy = _at_least_one(maximum_anisotropy, "maximum_anisotropy")
         complexity = (
             None
             if target_complexity is None
-            else _positive(target_complexity, "target_complexity")
+            else positive_real_scalar(target_complexity, "target_complexity")
         )
-        if gradation is not None and not isinstance(gradation, MetricGradationPolicy):
-            raise TypeError("gradation must be MetricGradationPolicy or None.")
         if not isinstance(symmetrize, (bool, np.bool_)) or not isinstance(
             project_indefinite, (bool, np.bool_)
         ):
-            raise TypeError("symmetrize and project_indefinite must be bools.")
+            raise TypeError(
+                "MetricNormalizationPolicy.repair_controls must be bools; got nonboolean controls"
+            )
         self.minimum_size = minimum
         self.maximum_size = maximum
         self.maximum_anisotropy = anisotropy
@@ -541,10 +557,9 @@ class MetricNormalizationEvidence(StrictModule, NonTrainableState):
         final_complexity: float | None,
         gradation: MetricGradationEvidence | None,
     ) -> None:
-        if not isinstance(complexity_status, MetricComplexityStatus):
-            raise TypeError("complexity_status must be MetricComplexityStatus.")
-        if gradation is not None and not isinstance(gradation, MetricGradationEvidence):
-            raise TypeError("gradation must be MetricGradationEvidence or None.")
+        complexity_status = parse(
+            complexity_status, MetricComplexityStatus, "complexity_status"
+        )
         self.policy_id = policy.policy_id
         self.input_id = str(input_id)
         self.symmetrized_count = int(symmetrized_count)
@@ -643,14 +658,18 @@ class _ComplexityResidual(StrictModule):
 
 def _vertex_volumes(volumes: ArrayLike | None, rows: int, /) -> np.ndarray:
     if volumes is None:
-        raise ValueError("Metric complexity requires vertex_volumes.")
+        raise ValueError(
+            "metric.vertex_volumes must be supplied for complexity normalization; got None"
+        )
     result = np.asarray(volumes, dtype=np.float64)
     if (
         result.shape != (rows,)
         or not np.all(np.isfinite(result))
         or np.any(result <= 0.0)
     ):
-        raise ValueError("vertex_volumes must be positive, finite, and row aligned.")
+        raise ValueError(
+            f"metric.vertex_volumes must be positive, finite, and row aligned; got shape={result.shape}"
+        )
     return result
 
 
@@ -758,7 +777,9 @@ def _bound_spectrum(
 def _edges(adjacency: ArrayLike, rows: int, /) -> np.ndarray:
     edges = np.asarray(adjacency)
     if not np.issubdtype(edges.dtype, np.integer):
-        raise TypeError("Metric adjacency must contain integer vertex rows.")
+        raise TypeError(
+            f"metric.adjacency must contain integer vertex rows; got dtype={edges.dtype}"
+        )
     edges = edges.astype(np.int64, copy=False)
     if (
         edges.ndim != 2
@@ -767,18 +788,22 @@ def _edges(adjacency: ArrayLike, rows: int, /) -> np.ndarray:
         or np.any(edges >= rows)
         or np.any(edges[:, 0] == edges[:, 1])
     ):
-        raise ValueError("Metric adjacency must be (edges, 2) rows without self loops.")
+        raise ValueError(
+            f"metric.adjacency must contain valid (edges, 2) rows without self loops; got shape={edges.shape}"
+        )
     return edges
 
 
 def _points(coordinates: ArrayLike, rows: int, dimension: int, /) -> np.ndarray:
     points = np.asarray(coordinates, dtype=np.float64)
     if points.shape != (rows, dimension) or not np.all(np.isfinite(points)):
-        raise ValueError("Metric coordinates must be finite and row aligned.")
+        raise ValueError(
+            f"metric.coordinates must be finite and row aligned; got shape={points.shape}"
+        )
     return points
 
 
-def _grade_scalar_sizes(
+def grade_scalar_sizes(
     sizes: np.ndarray,
     edges: np.ndarray,
     lengths: np.ndarray,
@@ -786,7 +811,7 @@ def _grade_scalar_sizes(
     kind: MetricGradationKind,
     /,
 ) -> tuple[np.ndarray, int, int]:
-    """Exact minimum-first label-setting relaxation, ``O(E log V)`` on the host.
+    """Relax scalar sizes in minimum-first order, ``O(E log V)`` on the host.
 
     Each candidate ``c(h_p, l) >= h_p``, so a finalized vertex is never lowered by
     a later (larger) one, and every edge is certified when its smaller endpoint is
@@ -794,6 +819,7 @@ def _grade_scalar_sizes(
     values never relax each other), so the result is independent of numbering.
     Per-edge growth rates are supported for size-control resolution.
     """
+    kind = parse(kind, MetricGradationKind, "metric.kind")
     count = sizes.shape[0]
     values = sizes.astype(np.float64).tolist()
     if edges.shape[0] == 0:
@@ -805,7 +831,13 @@ def _grade_scalar_sizes(
     targets = second[order].tolist()
     lengths_ = np.concatenate((lengths, lengths))[order]
     rates = np.concatenate((growth, growth))[order]
-    physical = kind is MetricGradationKind.PHYSICAL
+    match kind:
+        case MetricGradationKind.PHYSICAL:
+            physical = True
+        case MetricGradationKind.METRIC:
+            physical = False
+        case _:
+            raise ValueError(f"metric.kind must be MetricGradationKind; got {kind!r}")
     increments = ((rates - 1.0) * lengths_).tolist()
     log_rates = (np.log(rates) * lengths_).tolist()
     heap = [(value, row) for row, value in enumerate(values)]
@@ -836,7 +868,7 @@ def _grade_scalar_sizes(
     return np.asarray(values, dtype=np.float64), pops, updates
 
 
-def _scalar_violation(
+def scalar_violation(
     sizes: np.ndarray,
     edges: np.ndarray,
     lengths: np.ndarray,
@@ -844,6 +876,7 @@ def _scalar_violation(
     kind: MetricGradationKind,
     /,
 ) -> float:
+    kind = parse(kind, MetricGradationKind, "metric.kind")
     if edges.shape[0] == 0:
         return 0.0
     first = np.concatenate((edges[:, 0], edges[:, 1]))
@@ -851,10 +884,13 @@ def _scalar_violation(
     lengths_ = np.concatenate((lengths, lengths))
     rates = np.concatenate((growth, growth))
     source = sizes[first]
-    if kind is MetricGradationKind.PHYSICAL:
-        log_bound = np.log(source + (rates - 1.0) * lengths_)
-    else:
-        log_bound = np.log(source) + np.log(rates) * lengths_ / source
+    match kind:
+        case MetricGradationKind.PHYSICAL:
+            log_bound = np.log(source + (rates - 1.0) * lengths_)
+        case MetricGradationKind.METRIC:
+            log_bound = np.log(source) + np.log(rates) * lengths_ / source
+        case _:
+            raise ValueError(f"metric.kind must be MetricGradationKind; got {kind!r}")
     excess = np.expm1(np.log(sizes[second]) - log_bound)
     return float(max(0.0, np.max(excess)))
 
@@ -897,7 +933,9 @@ def _realize_mean_sizes(
     return np.exp(np.minimum(logarithms + shift[:, None], caps))
 
 
-def _metric_sqrt_factors(eigenvalues: Array, eigenvectors: Array, /) -> Any:
+def _metric_sqrt_factors(
+    eigenvalues: Array, eigenvectors: Array, /
+) -> tuple[Array, Array]:
     transpose = jnp.swapaxes(eigenvectors, -1, -2)
     root = (eigenvectors * jnp.sqrt(eigenvalues)[..., None, :]) @ transpose
     inverse_root = (eigenvectors / jnp.sqrt(eigenvalues)[..., None, :]) @ transpose
@@ -924,7 +962,7 @@ def _canonical_intersection(candidates: Array, valid: Array, /) -> Array:
     """Order-independent fold of ``(n, k, d, d)`` metrics under row validity.
 
     The binary intersection is not associative, so candidates are folded in the
-    canonical lexicographic order of their upper-triangular entries (invalid
+    lexicographic order of their upper-triangular entries (invalid
     slots last). Permuting the inputs therefore cannot change the result.
     """
     dimension = candidates.shape[-1]
@@ -938,7 +976,7 @@ def _canonical_intersection(candidates: Array, valid: Array, /) -> Array:
     ordered = jnp.take_along_axis(candidates, order[..., None, None], axis=1)
     ordered_valid = jnp.take_along_axis(valid, order, axis=1)
 
-    def fold(accumulated: Any, slot: Any) -> Any:
+    def fold(accumulated: Array, slot: tuple[Array, Array]) -> tuple[Array, None]:
         tensor, active = slot
         combined = _intersect(accumulated, tensor)
         return jnp.where(active[:, None, None], combined, accumulated), None
@@ -961,20 +999,27 @@ def _grow_metrics(
     sources: Array,
     deltas: Array,
     log_growth: Array,
-    kind: str,
+    kind: MetricGradationKind,
     /,
 ) -> Array:
     """Grow each source metric along its directed edge (Alauzet 2010)."""
     values = eigenvalues[sources]
     vectors = eigenvectors[sources]
-    if kind == MetricGradationKind.PHYSICAL.value:
-        lengths = jnp.linalg.norm(deltas, axis=-1)
-        factor = 1.0 + jnp.sqrt(values) * jnp.expm1(log_growth) * lengths[:, None]
-        grown = values / factor**2
-        return (vectors * grown[:, None, :]) @ jnp.swapaxes(vectors, -1, -2)
-    projected = contract("eji,ej->ei", vectors, deltas)
-    metric_length = jnp.sqrt(jnp.sum(values * projected**2, axis=-1))
-    return jnp.exp(-2.0 * log_growth * metric_length)[:, None, None] * metrics[sources]
+    match kind:
+        case MetricGradationKind.PHYSICAL:
+            lengths = jnp.linalg.norm(deltas, axis=-1)
+            factor = 1.0 + jnp.sqrt(values) * jnp.expm1(log_growth) * lengths[:, None]
+            grown = values / factor**2
+            return (vectors * grown[:, None, :]) @ jnp.swapaxes(vectors, -1, -2)
+        case MetricGradationKind.METRIC:
+            projected = contract("eji,ej->ei", vectors, deltas)
+            metric_length = jnp.sqrt(jnp.sum(values * projected**2, axis=-1))
+            return (
+                jnp.exp(-2.0 * log_growth * metric_length)[:, None, None]
+                * metrics[sources]
+            )
+        case _:
+            raise ValueError(f"metric.kind must be MetricGradationKind; got {kind!r}")
 
 
 def _maximum_growth(metrics: Array, candidates: Array, /) -> Array:
@@ -1013,14 +1058,16 @@ def _anisotropic_gradation_kernel(
     tolerance: Array,
     bounds: Array,
     *,
-    kind: str,
+    kind: MetricGradationKind,
     maximum_sweeps: int,
 ) -> tuple[Array, Array, Array, Array, Array]:
     rows = metrics.shape[0]
     always = jnp.ones((rows, 1), dtype=jnp.bool_)
     candidate_valid = jnp.concatenate((always, slot_valid), axis=1)
 
-    def body(state: Any) -> Any:
+    def body(
+        state: tuple[Array, Array, Array, Array],
+    ) -> tuple[Array, Array, Array, Array]:
         current, sweeps, updates, _ = state
         spectrum = HermitianSpectrum(current)
         grown = _grow_metrics(
@@ -1048,7 +1095,7 @@ def _anisotropic_gradation_kernel(
             jnp.any(accept),
         )
 
-    def condition(state: Any) -> Any:
+    def condition(state: tuple[Array, Array, Array, Array]) -> Array:
         return state[3] & (state[1] < maximum_sweeps)
 
     final, sweeps, updates, changed = jax.lax.while_loop(
@@ -1105,12 +1152,12 @@ def _grade_eigenpairs(
         sizes = np.exp(-0.5 * np.mean(np.log(eigenvalues), axis=1))
         lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
         growth = np.full((edges.shape[0],), policy.maximum_gradation)
-        graded, pops, updates = _grade_scalar_sizes(
+        graded, pops, updates = grade_scalar_sizes(
             sizes, edges, lengths, growth, policy.kind
         )
         realized = _realize_mean_sizes(eigenvalues, graded, bounds[0] ** -2)
         achieved = np.exp(-0.5 * np.mean(np.log(realized), axis=1))
-        violation = _scalar_violation(achieved, edges, lengths, growth, policy.kind)
+        violation = scalar_violation(achieved, edges, lengths, growth, policy.kind)
         evidence = MetricGradationEvidence(
             policy,
             status=MetricGradationStatus.CONVERGED
@@ -1136,7 +1183,7 @@ def _grade_eigenpairs(
         jnp.asarray(math.log(policy.maximum_gradation)),
         jnp.asarray(policy.relative_tolerance),
         jnp.asarray((bounds[1] ** -2, bounds[0] ** -2, bounds[2]), dtype=jnp.float64),
-        kind=policy.kind.value,
+        kind=policy.kind,
         maximum_sweeps=policy.maximum_sweeps,
     )
     graded = np.asarray(final)
@@ -1161,6 +1208,7 @@ def _grade_eigenpairs(
     return graded, evidence
 
 
+@checked
 def grade_mesh_metric(
     metric: MeshMetricField,
     /,
@@ -1175,15 +1223,11 @@ def grade_mesh_metric(
     the row-aligned vertex positions. The returned evidence certifies every edge
     a posteriori and reports convergence.
     """
-    if not isinstance(metric, MeshMetricField):
-        raise TypeError("metric must be MeshMetricField.")
-    if not isinstance(policy, MetricGradationPolicy):
-        raise TypeError("policy must be MetricGradationPolicy.")
     values = np.asarray(metric.values, dtype=np.float64)
     rows, dimension = values.shape[0], values.shape[-1]
     edges = _edges(adjacency, rows)
     points = _points(coordinates, rows, dimension)
-    eigenvalues, eigenvectors = _host_spectrum(_tensor_properties(values).symmetric)
+    eigenvalues, eigenvectors = host_spectrum(tensor_properties(values).symmetric)
     graded, evidence = _grade_eigenpairs(
         (metric.minimum_size, metric.maximum_size, metric.maximum_anisotropy),
         eigenvalues,
@@ -1204,6 +1248,7 @@ def grade_mesh_metric(
     return field, evidence
 
 
+@checked
 def normalize_mesh_metric(
     metric: MeshMetricField | MeshMetricSamples,
     /,
@@ -1221,24 +1266,19 @@ def normalize_mesh_metric(
     complexity reporting; ``adjacency`` and ``coordinates`` are required for
     gradation.
     """
-    if not isinstance(metric, (MeshMetricField, MeshMetricSamples)):
-        raise TypeError("metric must be MeshMetricField or MeshMetricSamples.")
-    if not isinstance(policy, MetricNormalizationPolicy):
-        raise TypeError("policy must be MetricNormalizationPolicy.")
     raw = np.asarray(metric.values, dtype=np.float64)
     rows = raw.shape[0]
-    properties = _tensor_properties(raw)
+    properties = tensor_properties(raw)
     asymmetric = ~properties.hermitian
     if np.any(asymmetric) and not policy.symmetrize:
         raise ValueError(
-            "Metric samples are not symmetric; the policy does not request symmetrization."
+            "metric.samples must be symmetric when symmetrization is disabled; got asymmetric samples"
         )
-    eigenvalues, eigenvectors = _host_spectrum(properties.symmetric)
+    eigenvalues, eigenvectors = host_spectrum(properties.symmetric)
     nonpositive = eigenvalues <= properties.tolerance[:, None]
     if np.any(nonpositive) and not policy.project_indefinite:
         raise ValueError(
-            "Metric samples are not positive definite; the policy does not request "
-            "indefinite projection."
+            "metric.samples must be positive definite when indefinite projection is disabled; got nonpositive eigenvalues"
         )
     volumes = (
         None
@@ -1258,7 +1298,9 @@ def normalize_mesh_metric(
     final_complexity = bounded.scaled_complexity
     if policy.gradation is not None:
         if adjacency is None or coordinates is None:
-            raise ValueError("Metric gradation requires adjacency and coordinates.")
+            raise ValueError(
+                "metric.gradation_inputs must include adjacency and coordinates; got a missing input"
+            )
         values, gradation = _grade_eigenpairs(
             (policy.minimum_size, policy.maximum_size, policy.maximum_anisotropy),
             bounded.eigenvalues,
@@ -1268,7 +1310,7 @@ def normalize_mesh_metric(
             policy.gradation,
         )
         if volumes is not None:
-            final_complexity = _complexity(_host_spectrum(values)[0], volumes)
+            final_complexity = _complexity(host_spectrum(values)[0], volumes)
     evidence = MetricNormalizationEvidence(
         policy,
         metric.metric_id if isinstance(metric, MeshMetricField) else metric.samples_id,
@@ -1345,17 +1387,32 @@ class MetricCombinationEvidence(StrictModule, NonTrainableState):
             )
         )
         if masks[0].ndim != 1 or any(mask.shape != masks[0].shape for mask in masks):
-            raise ValueError("Combination conflicts must be aligned row masks.")
+            raise ValueError(
+                "MetricCombinationEvidence.conflicts must be aligned row masks; got incompatible shapes"
+            )
         if not isinstance(size_interval_conflict, (bool, np.bool_)):
-            raise TypeError("size_interval_conflict must be bool.")
+            raise TypeError(
+                f"MetricCombinationEvidence.size_interval_conflict must be bool; got {size_interval_conflict!r}"
+            )
         self.input_ids = tuple(str(value) for value in input_ids)
-        self.minimum_size = _positive(minimum_size, "minimum_size")
-        self.maximum_size = _positive(maximum_size, "maximum_size")
+        self.minimum_size = positive_real_scalar(minimum_size, "minimum_size")
+        self.maximum_size = positive_real_scalar(maximum_size, "maximum_size")
         self.maximum_anisotropy = _at_least_one(maximum_anisotropy, "maximum_anisotropy")
         self.size_interval_conflict = bool(size_interval_conflict)
-        self.minimum_size_conflict = jnp.asarray(masks[0])
-        self.maximum_size_conflict = jnp.asarray(masks[1])
-        self.anisotropy_conflict = jnp.asarray(masks[2])
+        _host_minimum_size_conflict = np.asarray(masks[0])
+        _host_maximum_size_conflict = np.asarray(masks[1])
+        _host_anisotropy_conflict = np.asarray(masks[2])
+        (
+            self.minimum_size_conflict,
+            self.maximum_size_conflict,
+            self.anisotropy_conflict,
+        ) = jax.device_put(
+            (
+                _host_minimum_size_conflict,
+                _host_maximum_size_conflict,
+                _host_anisotropy_conflict,
+            )
+        )
         self.conflict_count = int(self.size_interval_conflict) + int(
             np.count_nonzero(masks[0] | masks[1] | masks[2])
         )
@@ -1399,11 +1456,9 @@ class MetricCombinationResult(StrictModule, NonTrainableState):
         evidence: MetricCombinationEvidence,
         /,
     ) -> None:
-        if field is not None and not isinstance(field, MeshMetricField):
-            raise TypeError("field must be MeshMetricField or None.")
         if (field is not None) != evidence.passed:
             raise ValueError(
-                "A combined field exists exactly when the combination has no conflict."
+                "MetricCombinationResult.field must be present only for conflict-free evidence; got inconsistent field presence"
             )
         self.field = field
         self.evidence = evidence
@@ -1420,7 +1475,7 @@ class MetricCombinationResult(StrictModule, NonTrainableState):
 def combine_mesh_metrics(
     metrics: tuple[MeshMetricField, ...], /
 ) -> MetricCombinationResult:
-    """Intersect metrics on one scope by canonical simultaneous reduction.
+    """Intersect metrics on one scope by deterministically ordered simultaneous reduction.
 
     The intersection dominates every input (it requests the smallest size in
     every direction), is idempotent, and is independent of input order. Declared
@@ -1431,12 +1486,18 @@ def combine_mesh_metrics(
     """
     fields = tuple(metrics)
     if not fields or not all(isinstance(field, MeshMetricField) for field in fields):
-        raise TypeError("metrics must be a non-empty tuple of MeshMetricField.")
+        raise TypeError(
+            "metric.metrics must contain a nonempty tuple of MeshMetricField; got an empty or invalid collection"
+        )
     scope = fields[0].scope
     if any(field.scope.scope_id != scope.scope_id for field in fields):
-        raise ValueError("Combined metrics must share one exact scope.")
+        raise ValueError(
+            "metric.metrics must share one scope_id; got incompatible scopes"
+        )
     if len({field.values.shape for field in fields}) != 1:
-        raise ValueError("Combined metrics must share one tensor dimension.")
+        raise ValueError(
+            "metric.metrics must share one tensor dimension; got incompatible shapes"
+        )
     minimum = max(field.minimum_size for field in fields)
     maximum = min(field.maximum_size for field in fields)
     anisotropy = min(field.maximum_anisotropy for field in fields)
@@ -1462,7 +1523,7 @@ def combine_mesh_metrics(
     )
     evidence = MetricCombinationEvidence(
         input_ids,
-        *_bound_violations(combined, minimum, maximum, anisotropy),
+        *bound_violations(combined, minimum, maximum, anisotropy),
         minimum_size=minimum,
         maximum_size=maximum,
         maximum_anisotropy=anisotropy,
@@ -1518,7 +1579,9 @@ def interpolate_mesh_metric(values: ArrayLike, weights: ArrayLike, /) -> Array:
         or tensors.shape[-1] != tensors.shape[-2]
         or coefficients.shape != tensors.shape[:-2]
     ):
-        raise ValueError("values must be (..., k, d, d) and weights (..., k).")
+        raise ValueError(
+            f"metric.interpolation_inputs must align values (..., k, d, d) with weights (..., k); got {tensors.shape} and {coefficients.shape}"
+        )
     return _log_euclidean_mean(tensors, coefficients)
 
 
@@ -1530,7 +1593,7 @@ def _edge_lengths(tensors: Array, points: Array, edges: Array, /) -> Array:
     ratio = second / jnp.where(first > 0.0, first, 1.0)
     nearly_equal = jnp.abs(ratio - 1.0) <= 1.0e-6
     safe_ratio = jnp.where(nearly_equal, 2.0, ratio)
-    # Log-mean of endpoint lengths: exact for geometric size variation along pq.
+    # The log-mean integrates geometric size variation along pq.
     logarithmic = (first - second) / jnp.log(1.0 / safe_ratio)
     return jnp.where(nearly_equal, 0.5 * (first + second), logarithmic)
 
@@ -1540,8 +1603,8 @@ def metric_edge_lengths(
 ) -> Array:
     """Riemannian edge lengths ``(l_p - l_q) / log(l_p / l_q)`` (Alauzet 2010).
 
-    ``l_p`` is the length of ``pq`` in the endpoint metric ``M_p``; the log-mean is
-    the exact length when the size varies geometrically along the edge.
+    ``l_p`` is the length of ``pq`` in the endpoint metric ``M_p``. The log-mean
+    integrates geometric size variation; near-equal endpoints use its arithmetic-mean limit.
     """
     tensors = jnp.asarray(values)
     points = jnp.asarray(coordinates, dtype=tensors.dtype)
@@ -1555,19 +1618,20 @@ def metric_edge_lengths(
         or not jnp.issubdtype(pairs.dtype, jnp.integer)
     ):
         raise ValueError(
-            "values (n, d, d), coordinates (n, d), and integer edges (e, 2) are required."
+            "metric.edge_inputs must align values (n, d, d), coordinates (n, d), and integer edges (e, 2); got incompatible arrays"
         )
     return _edge_lengths(tensors, points, pairs)
 
 
 @partial(jax.jit, static_argnames=("dimension",))
-def _metric_shape_quality(metric: Array, corners: Array, /, *, dimension: int) -> Array:
+def metric_shape_quality(metric: Array, corners: Array, /, *, dimension: int) -> Array:
     """Metric mean ratio from one cell tensor and its physical tangent corners."""
-    from ..linalg import determinant_small_linear, SmallLinearSolvePlan
 
     basis = corners[:, 1:] - corners[:, :1]
     gram = basis @ metric @ jnp.swapaxes(basis, -1, -2)
-    determinant = determinant_small_linear(SmallLinearSolvePlan(dimension), gram)
+    determinant = _owner_phydrax_linalg.determinant_small_linear(
+        _owner_phydrax_linalg.SmallLinearSolvePlan(dimension), gram
+    )
     edge_sum = jnp.zeros((corners.shape[0],), dtype=metric.dtype)
     for first in range(dimension + 1):
         for second in range(first + 1, dimension + 1):
@@ -1587,7 +1651,7 @@ def _simplex_quality(
     samples = tensors[cells]
     weights = jnp.full(samples.shape[:-2], 1.0 / (dimension + 1), dtype=tensors.dtype)
     metric = _log_euclidean_mean(samples, weights)
-    return _metric_shape_quality(metric, points[cells], dimension=dimension)
+    return metric_shape_quality(metric, points[cells], dimension=dimension)
 
 
 def metric_simplex_quality(
@@ -1595,7 +1659,7 @@ def metric_simplex_quality(
 ) -> Array:
     """Metric mean-ratio quality of triangles or tetrahedra, one for regular cells.
 
-    The full SPD tensor is restricted to the actual cell tangent space through
+    The full SPD tensor is restricted to the cell tangent space through
     ``E M E.T``. Embedded triangles therefore use physical metric geometry,
     not UV quality or Euclidean edge-length surrogates. A tetrahedral sliver
     has quality approaching zero even when all six metric edges approach one.
@@ -1614,7 +1678,7 @@ def metric_simplex_quality(
         or simplices.shape[1] - 1 > points.shape[1]
     ):
         raise ValueError(
-            "Metrics, coordinates, and triangle/tetrahedron rows must align."
+            "metric.simplex_inputs must align metrics, coordinates, and triangle/tetrahedron rows; got incompatible arrays"
         )
     simplices = eqx.error_if(
         simplices,
@@ -1709,15 +1773,19 @@ def lp_metric_from_hessian(
         or tensors.shape[0] == 0
         or not np.all(np.isfinite(tensors))
     ):
-        raise ValueError("hessian must be finite (n, d, d) with d in 1-3.")
+        raise ValueError(
+            f"hessian_metric.hessian must be finite (n, d, d) with d in 1-3; got shape={tensors.shape}"
+        )
     order = finite_real_scalar(p, "p") if not math.isinf(float(p)) else math.inf
     if order < 1.0:
-        raise ValueError("p must be at least one.")
+        raise ValueError(f"hessian_metric.p must be at least one; got {order!r}")
     zero_tolerance = finite_real_scalar(
         relative_zero_tolerance, "relative_zero_tolerance"
     )
     if zero_tolerance < 0.0:
-        raise ValueError("relative_zero_tolerance must be non-negative.")
+        raise ValueError(
+            f"hessian_metric.relative_zero_tolerance must be nonnegative; got {zero_tolerance!r}"
+        )
     policy = MetricNormalizationPolicy(
         minimum_size=minimum_size,
         maximum_size=maximum_size,
@@ -1726,12 +1794,12 @@ def lp_metric_from_hessian(
     )
     rows, dimension = tensors.shape[0], tensors.shape[-1]
     volumes = _vertex_volumes(vertex_volumes, rows)
-    properties = _tensor_properties(tensors)
+    properties = tensor_properties(tensors)
     if not np.all(properties.hermitian):
         raise ValueError(
-            "Hessians must be symmetric; symmetrize recovered Hessians explicitly."
+            "hessian_metric.hessian must be symmetric; got failed Hermitian evidence"
         )
-    eigenvalues, eigenvectors = _host_spectrum(properties.symmetric)
+    eigenvalues, eigenvectors = host_spectrum(properties.symmetric)
     tolerance = properties.tolerance[:, None]
     negative = eigenvalues < -tolerance
     indefinite = np.any(negative, axis=1) & np.any(eigenvalues > tolerance, axis=1)

@@ -973,8 +973,8 @@ class PreparedColorGradientLBMDynamics(StrictModule, NonTrainableState):
 
     def scalar_diagnostics(
         self,
-        step_index: Array,
-        time: Array,
+        step_index: ArrayLike,
+        time: ArrayLike,
         state: ColorGradientLBMState,
         parameters: ColorGradientLBMRuntimeParameters,
         /,
@@ -1069,10 +1069,10 @@ class PreparedColorGradientLBMDynamics(StrictModule, NonTrainableState):
 
     def step_detailed(
         self,
-        step_index: Array,
-        time: Array,
+        step_index: ArrayLike,
+        time: ArrayLike,
         state: ColorGradientLBMState,
-        step_size: Array,
+        step_size: ArrayLike,
         args: Any,
         /,
     ) -> ColorGradientStepResult:

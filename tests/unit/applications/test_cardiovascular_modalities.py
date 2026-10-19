@@ -107,7 +107,6 @@ def _lge_plan(
 ) -> Any:
     shape = (2, 2, 2)
     if motion is None:
-        # ty: ignore[no-matching-overload]
         motion = np.eye(np.prod(shape))
     return LGEObservationPlan(
         shape,

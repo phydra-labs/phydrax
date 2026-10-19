@@ -18,7 +18,7 @@ _METADATA_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+/-]{0,127}\Z")
 _EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 _PHONE_OR_SSN = re.compile(r"(?:\+?\d[\d(). -]{6,}\d|\b\d{3}-\d{2}-\d{4}\b)")
 _DATE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
-# A canonical SHA-256 content digest. Its decimal-digit runs are hash output,
+# A SHA-256 content digest. Its decimal-digit runs are hash output,
 # not phone or SSN numbers; scanning them only yields false positives (and a
 # digit-run pattern could never detect a hashed person identifier anyway).
 _CONTENT_DIGEST = re.compile(r"[0-9a-f]{64}\Z")

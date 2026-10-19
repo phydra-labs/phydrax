@@ -3,7 +3,7 @@
 #
 """Metric-driven tetrahedral remeshing on the native constrained cavity owner.
 
-This is host-only epoch preparation. Native edits own exact legality and atomic
+This is host-only epoch preparation. Native edits certify legality and atomic
 rollback; this schedule owns the metric objective, source ancestry and budgets.
 No scalar equivalent size is substituted for a tensor metric.
 """
@@ -11,8 +11,8 @@ No scalar equivalent size is substituted for a tensor metric.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass, field
+from contextlib import contextmanager, ExitStack, nullcontext
+from dataclasses import dataclass, field, InitVar
 from enum import StrEnum
 from fractions import Fraction
 from itertools import combinations
@@ -20,39 +20,51 @@ from time import monotonic
 from typing import final, NamedTuple, TypeAlias, TypeVar
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, custom_jvp, lax
 from jax.typing import ArrayLike
 
+import phydrax._geometry_predicates as _dependency_phydrax__geometry_predicates
+import phydrax._geometry_predicates as _owner_phydrax__geometry_predicates
+import phydrax.discretization._cell_geometry as _dependency_phydrax_discretization__cell_geometry
+import phydrax.discretization._coordinate_budget as _dependency_phydrax_discretization__coordinate_budget
+import phydrax.discretization._exact_plc_geometry as _dependency_phydrax_discretization__exact_plc_geometry
+import phydrax.linalg._small_batched as _owner_phydrax_linalg__small_batched
+import phydrax.meshing._entity_keys as entity_keys_owner
+import phydrax.meshing._failures as _leaf_phydrax_meshing__failures
+import phydrax.meshing._metric as _dependency_phydrax_meshing__metric
+import phydrax.meshing._sizing as _dependency_phydrax_meshing__sizing
+import phydrax.meshing._topology_edit as _dependency_phydrax_meshing__topology_edit
+import phydrax.meshing._trace as _dependency_phydrax_meshing__trace
+import phydrax.meshing.providers._native_route_checks as _owner_phydrax_meshing_providers__native_publication
+from phydrax.geometry._rational import (
+    fraction_endpoint,
+    rational_vector as plc_rational_point,
+)
+
 from .._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._geometry_predicates import PredicateMode, PredicateSign
 from .._meshcore import (
-    current_native_execution_budget,
     exact_orient2d,
     exact_orient3d,
     MeshcoreError,
     MeshcoreStatus,
-    NativeExecutionBudget,
+    NativeBatchTicket,
+    NativeExecutionMemoryCounters,
+    NativeExecutionScope,
     TetMesh3D,
     TetMeshArrays,
     TetMeshEdgeConstruction,
     TetMeshInsertionPlan,
     TetMeshSourceComplex,
 )
+from .._resource_ticket import BatchTicket, ManagedBytesContributor
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer
 from ..discretization import CellMesh
-from ..discretization._cell_geometry import CellGeometrySpec
-from ..discretization._exact_plc_geometry import (
-    _ExactPlcBudget,
-    _in_entity,
-    _plc_storage_bounds,
-    _point,
-    ExactPlcCellGeometrySource,
-    ExactPoint,
-)
 from ..discretization._reference_cell import reference_cell_topology
 from ..linalg import (
     DenseQR,
@@ -65,19 +77,26 @@ from ..linalg import (
     solve_small_linear,
     TolerancePolicy,
 )
+from ..linalg._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
 from ..nonlinear import quadratic_event_bound
 from ..optim import (
     AbstractLeastSquaresTrialPolicy,
+    Bounds,
     compose_active_gradient_bank,
+    ConvexSolvePolicy,
+    ConvexTermination,
+    DensePrimalDualQP,
     least_squares,
     LeastSquaresTrialResult,
     LevenbergMarquardt,
     NonlinearLeastSquaresProblem,
     OptimizationStatus,
     OptimizationTermination,
+    QuadraticProgram,
+    solve_quadratic_program,
 )
-from ._contracts import MeshingFailure, MeshingFailureCategory
-from ._lineage import EntityLineageKind
+from ..typing import checked, parse
+from ._lineage_records import EntityLineageKind
 from ._measurements import (
     measure_phase,
     NativeExecutionRecord,
@@ -86,16 +105,13 @@ from ._measurements import (
     phase_started,
     record_elapsed,
 )
-from ._metric import interpolate_mesh_metric, metric_edge_lengths, metric_simplex_quality
-from ._sizing import SizeCompliancePolicy, SizeControlStrength, UniformSizeControl
-from ._topology_edit import (
-    CellTopologyEdit,
-    entity_keys,
-    EntityRelations,
-    key_rows,
-    source_family_blocks,
+from ._metric_execution import (
+    metric_execution_passes,
+    MetricExecutionSchedule,
+    validate_metric_operation_controls,
+    validate_metric_phase_recorder,
+    validate_metric_quality_floor,
 )
-from ._trace import MeshingStageKind
 
 
 _LOWER = 1.0 / np.sqrt(2.0)
@@ -113,7 +129,7 @@ _LINEAGE_RANK = {
 }
 
 
-def _lineage_operation_kind(
+def lineage_operation_kind(
     kind: EntityLineageKind, previous: tuple[int, ...], /
 ) -> EntityLineageKind:
     return max(
@@ -136,8 +152,218 @@ class MetricRemeshingCriterion(StrEnum):
 
 
 @final
+class MetricOptimizerEvidence(StrictModule, NonTrainableState):
+    """Optimizer termination, objective, proposal, and work counters."""
+
+    status_counts: tuple[int, ...] = eqx.field(static=True, default=())
+    terminations: tuple[tuple[int, int], ...] = eqx.field(static=True, default=())
+    method_id: str | None = eqx.field(static=True, default=None)
+    tolerances: tuple[float, ...] = eqx.field(static=True, default=())
+    iterations: int = eqx.field(static=True, default=0)
+    evaluations: int = eqx.field(static=True, default=0)
+    constraint_evaluations: int = eqx.field(static=True, default=0)
+    proposal_evaluations: int = eqx.field(static=True, default=0)
+    refused_proposals: int = eqx.field(static=True, default=0)
+    refusal_counts: tuple[tuple[str, int], ...] = eqx.field(static=True, default=())
+    host_work_units: int = eqx.field(static=True, default=0)
+
+    def __check_init__(self) -> None:
+        self.validate_restored()
+
+    def validate_restored(self) -> None:
+        """Validate optimizer counter domains and retained termination policy."""
+        counters = (
+            *self.status_counts,
+            self.iterations,
+            self.evaluations,
+            self.constraint_evaluations,
+            self.proposal_evaluations,
+            self.refused_proposals,
+            self.host_work_units,
+        )
+        if any(type(value) is not int or value < 0 for value in counters):
+            raise ValueError(
+                "MetricOptimizerEvidence.counters must be nonnegative integers; "
+                f"got {counters!r}"
+            )
+        if len(self.status_counts) not in (0, len(OptimizationStatus)) or any(
+            type(steps) is not int
+            or type(evaluations) is not int
+            or steps < 1
+            or evaluations < 1
+            for steps, evaluations in self.terminations
+        ):
+            raise ValueError(
+                "MetricOptimizerEvidence.terminations must retain positive integer "
+                f"limits and a full status table; got {self.terminations!r}"
+            )
+        if self.method_id is not None and (
+            type(self.method_id) is not str or not self.method_id
+        ):
+            raise ValueError(
+                "MetricOptimizerEvidence.method_id must be nonempty or None; "
+                f"got {self.method_id!r}"
+            )
+        if len(self.tolerances) not in (0, 4) or any(
+            not np.isfinite(value) or value < 0 for value in self.tolerances
+        ):
+            raise ValueError(
+                "MetricOptimizerEvidence.tolerances must contain four finite "
+                f"nonnegative thresholds or be empty; got {self.tolerances!r}"
+            )
+        if any(
+            type(name) is not str or not name or type(count) is not int or count < 0
+            for name, count in self.refusal_counts
+        ):
+            raise ValueError(
+                "MetricOptimizerEvidence.refusal_counts must contain named "
+                f"nonnegative integer counts; got {self.refusal_counts!r}"
+            )
+
+
+@final
+class MetricMemoryEvidence(StrictModule, NonTrainableState):
+    """Named native allocator measurements and optimizer scratch requirement."""
+
+    native_counters: NativeExecutionMemoryCounters | None = None
+    optimizer_scratch_required_bytes: int = eqx.field(static=True, default=0)
+
+    def __check_init__(self) -> None:
+        self.validate_restored()
+
+    def validate_restored(self) -> None:
+        """Validate memory counters without reconstructing discarded allocations."""
+        if (
+            self.native_counters is not None
+            and type(self.native_counters) is not NativeExecutionMemoryCounters
+        ):
+            raise ValueError(
+                "MetricMemoryEvidence.native_counters must be NativeExecutionMemoryCounters "
+                f"or None; got {type(self.native_counters).__name__}."
+            )
+        nonnegative_integer(
+            self.optimizer_scratch_required_bytes,
+            "MetricMemoryEvidence.optimizer_scratch_required_bytes",
+        )
+
+
+@final
+class _MetricMeasurements(StrictModule):
+    out_of_range: int = eqx.field(static=True)
+    minimum_length: float = eqx.field(static=True)
+    maximum_length: float = eqx.field(static=True)
+    minimum_quality: float = eqx.field(static=True)
+
+    @classmethod
+    def prepare(
+        cls,
+        lengths: np.ndarray,
+        quality: np.ndarray,
+        fidelity: float,
+        lower: float,
+        upper: float,
+    ) -> _MetricMeasurements:
+        if (
+            lengths.ndim != 1
+            or quality.ndim != 1
+            or not np.all(np.isfinite(lengths))
+            or not np.all(np.isfinite(quality))
+        ):
+            raise ValueError(
+                "MetricRemeshingEvidence.measurements must contain finite vectors; got an invalid measurement bank"
+            )
+        if not np.isfinite(fidelity) or fidelity < 0:
+            raise ValueError(
+                f"MetricRemeshingEvidence.maximum_fidelity_bound must be finite and nonnegative; got {fidelity!r}"
+            )
+        if (
+            not np.isfinite(lower)
+            or not np.isfinite(upper)
+            or not 0.0 <= lower <= upper
+            or upper <= 0.0
+        ):
+            raise ValueError(
+                "tetra_metric.metric_edge_band must be a finite nonnegative interval with positive upper bound; got invalid bounds"
+            )
+        return cls(
+            int(np.count_nonzero((lengths < lower) | (lengths > upper))),
+            float(np.min(lengths, initial=np.inf)) if lengths.size else 0.0,
+            float(np.max(lengths, initial=0.0)),
+            float(np.min(quality, initial=1.0)),
+        )
+
+
+@final
+class _MetricArcPreparation(StrictModule):
+    bounds: np.ndarray | None
+    edge_ids: np.ndarray | None
+    binding: str | None = eqx.field(static=True)
+
+    @classmethod
+    def prepare(
+        cls,
+        bounds: np.ndarray | None,
+        edge_ids: np.ndarray | None,
+        binding: str | None,
+        count: int | None,
+    ) -> _MetricArcPreparation:
+        if (bounds is None) != (edge_ids is None) or (bounds is None) != (
+            binding is None
+        ):
+            raise ValueError(
+                "MetricRemeshingEvidence.metric_arc_binding must accompany bounds and scientific edge IDs; got a partial bank"
+            )
+        if bounds is not None and edge_ids is not None:
+            if (
+                bounds.ndim != 2
+                or bounds.shape[1] != 2
+                or count is not None
+                and bounds.shape[0] != count
+                or edge_ids.shape != bounds.shape
+                or not np.issubdtype(edge_ids.dtype, np.integer)
+                or not np.all(np.isfinite(bounds))
+                or np.any(bounds[:, 0] < 0)
+                or np.any(bounds[:, 1] < bounds[:, 0])
+                or type(binding) is not str
+                or not binding
+            ):
+                raise ValueError(
+                    f"MetricRemeshingEvidence.metric_arc_bounds must contain finite outward bounds aligned with scientific edges; got bounds.shape={bounds.shape}, edge_ids.shape={edge_ids.shape}"
+                )
+        return cls(bounds, edge_ids, binding)
+
+
+@final
+class _MetricShapeLimits(StrictModule):
+    quality_floor: float | None = eqx.field(static=True)
+    radius_edge_bound: float | None = eqx.field(static=True)
+    minimum_dihedral_degrees: float | None = eqx.field(static=True)
+
+    def __check_init__(self) -> None:
+        if self.quality_floor is not None and (
+            not np.isfinite(self.quality_floor) or not 0.0 <= self.quality_floor <= 1.0
+        ):
+            raise ValueError(
+                f"MetricRemeshingEvidence.metric_quality_floor must lie in [0, 1]; got {self.quality_floor!r}"
+            )
+        if self.radius_edge_bound is not None and (
+            not np.isfinite(self.radius_edge_bound) or self.radius_edge_bound <= 0.0
+        ):
+            raise ValueError(
+                f"MetricRemeshingEvidence.shape_radius_edge_bound must be finite and positive; got {self.radius_edge_bound!r}"
+            )
+        if self.minimum_dihedral_degrees is not None and (
+            not np.isfinite(self.minimum_dihedral_degrees)
+            or not 0.0 <= self.minimum_dihedral_degrees <= 180.0
+        ):
+            raise ValueError(
+                f"MetricRemeshingEvidence.shape_minimum_dihedral_degrees must lie in [0, 180]; got {self.minimum_dihedral_degrees!r}"
+            )
+
+
+@final
 class MetricRemeshingEvidence(StrictModule, NonTrainableState):
-    """Closed-goal outcome and actual measurements; no feature edges excluded."""
+    """Remeshing goal, measurements, optimizer termination, and resource evidence."""
 
     status: MetricRemeshingStatus = eqx.field(static=True)
     criterion: MetricRemeshingCriterion = eqx.field(static=True)
@@ -155,12 +381,13 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
     maximum_metric_length: float = eqx.field(static=True)
     minimum_metric_quality: float = eqx.field(static=True)
     maximum_fidelity_bound: float = eqx.field(static=True)
-    predicate_mode: PredicateMode = eqx.field(static=True)
+    predicate_mode: _dependency_phydrax__geometry_predicates.PredicateMode = eqx.field(
+        static=True
+    )
     split_parameters: tuple[float, ...] = eqx.field(static=True)
     lower_metric_length: float = eqx.field(static=True)
     upper_metric_length: float = eqx.field(static=True)
     operation_attempts: int = eqx.field(static=True)
-    native_memory_evidence: tuple[int, ...] = eqx.field(static=True)
     source_candidate_pairs: int = eqx.field(static=True)
     size_requested: tuple[tuple[str, float], ...] = eqx.field(static=True)
     size_achieved: tuple[tuple[str, float], ...] = eqx.field(static=True)
@@ -171,18 +398,8 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
     resource_message: str | None = eqx.field(static=True)
     resource_requested: tuple[tuple[str, float], ...] = eqx.field(static=True)
     resource_achieved: tuple[tuple[str, float], ...] = eqx.field(static=True)
-    optimizer_status_counts: tuple[int, ...] = eqx.field(static=True)
-    optimizer_terminations: tuple[tuple[int, int], ...] = eqx.field(static=True)
-    optimizer_method_id: str | None = eqx.field(static=True)
-    optimizer_tolerances: tuple[float, ...] = eqx.field(static=True)
-    optimizer_iterations: int = eqx.field(static=True)
-    optimizer_evaluations: int = eqx.field(static=True)
-    optimizer_constraint_evaluations: int = eqx.field(static=True)
-    optimizer_proposal_evaluations: int = eqx.field(static=True)
-    optimizer_refused_proposals: int = eqx.field(static=True)
-    optimizer_refusal_counts: tuple[tuple[str, int], ...] = eqx.field(static=True)
-    optimizer_host_work_units: int = eqx.field(static=True)
-    optimizer_scratch_required_bytes: int = eqx.field(static=True)
+    optimizer: MetricOptimizerEvidence
+    memory: MetricMemoryEvidence
     native_work_units: int = eqx.field(static=True)
     execution_evidence: NativeExecutionRecord | None
     metric_arc_bounds: Array | None
@@ -190,6 +407,7 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
     metric_arc_binding: str | None = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         status: MetricRemeshingStatus,
@@ -206,7 +424,6 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
         lower_metric_length: float = _LOWER,
         upper_metric_length: float = _UPPER,
         operation_attempts: int = 0,
-        native_memory_evidence: tuple[int, ...] = (),
         size_requested: tuple[tuple[str, float], ...] = (),
         size_achieved: tuple[tuple[str, float], ...] = (),
         size_issues: tuple[str, ...] = (),
@@ -219,56 +436,24 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
         resource_achieved: tuple[tuple[str, float], ...] = (),
         compound_splits: int = 0,
         expanded_insertions: int = 0,
-        optimizer_status_counts: tuple[int, ...] = (),
-        optimizer_terminations: tuple[tuple[int, int], ...] = (),
-        optimizer_method_id: str | None = None,
-        optimizer_tolerances: tuple[float, ...] = (),
-        optimizer_iterations: int = 0,
-        optimizer_evaluations: int = 0,
-        optimizer_constraint_evaluations: int = 0,
-        optimizer_proposal_evaluations: int = 0,
-        optimizer_refused_proposals: int = 0,
-        optimizer_refusal_counts: tuple[tuple[str, int], ...] = (),
-        optimizer_host_work_units: int = 0,
-        optimizer_scratch_required_bytes: int = 0,
+        optimizer: MetricOptimizerEvidence | None = None,
+        memory: MetricMemoryEvidence | None = None,
         native_work_units: int | None = None,
         execution_evidence: NativeExecutionRecord | None = None,
         metric_arc_bounds: np.ndarray | None = None,
         metric_arc_edge_ids: np.ndarray | None = None,
         metric_arc_binding: str | None = None,
     ) -> None:
-        if not isinstance(status, MetricRemeshingStatus):
-            raise TypeError("status must be MetricRemeshingStatus.")
-        if not isinstance(criterion, MetricRemeshingCriterion):
-            raise TypeError("criterion must be MetricRemeshingCriterion.")
-        if execution_evidence is not None and not isinstance(
-            execution_evidence, NativeExecutionRecord
-        ):
-            raise TypeError("execution_evidence must be an actual ended native record.")
-        if (metric_arc_bounds is None) != (metric_arc_edge_ids is None) or (
-            metric_arc_bounds is None
-        ) != (metric_arc_binding is None):
-            raise ValueError(
-                "Metric arc bounds, scientific edge IDs and source binding are required together."
-            )
-        if metric_arc_bounds is not None and metric_arc_edge_ids is not None:
-            if (
-                metric_arc_bounds.shape != (lengths.size, 2)
-                or metric_arc_edge_ids.shape != (lengths.size, 2)
-                or not np.issubdtype(metric_arc_edge_ids.dtype, np.integer)
-                or not np.all(np.isfinite(metric_arc_bounds))
-                or np.any(metric_arc_bounds[:, 0] < 0)
-                or np.any(metric_arc_bounds[:, 1] < metric_arc_bounds[:, 0])
-                or not metric_arc_binding
-            ):
-                raise ValueError(
-                    "Metric arc evidence requires finite outward bounds bound to actual scientific edges."
-                )
+        status = parse(status, MetricRemeshingStatus, "status")
+        criterion = parse(criterion, MetricRemeshingCriterion, "criterion")
+        arcs = _MetricArcPreparation.prepare(
+            metric_arc_bounds, metric_arc_edge_ids, metric_arc_binding, lengths.size
+        )
         if any(
             not np.isfinite(value) or not 0.0 < value < 1.0 for value in split_parameters
         ):
             raise ValueError(
-                "Split parameters must be exact finite edge-interior fractions."
+                f"MetricRemeshingEvidence.split_parameters must contain finite edge-interior fractions; got {split_parameters!r}"
             )
         numbers = (
             expanded_insertions,
@@ -279,59 +464,18 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
             work_units,
             operation_attempts,
             source_candidate_pairs,
-            *optimizer_status_counts,
-            optimizer_iterations,
-            optimizer_evaluations,
-            optimizer_refused_proposals,
-            optimizer_host_work_units,
-            optimizer_scratch_required_bytes,
-            optimizer_constraint_evaluations,
-            optimizer_proposal_evaluations,
         )
-        if any(
-            isinstance(value, bool) or not isinstance(value, int) or value < 0
-            for value in numbers
-        ):
-            raise ValueError("Operation and work counters must be nonnegative integers.")
-        if (
-            lengths.ndim != 1
-            or quality.ndim != 1
-            or not np.all(np.isfinite(lengths))
-            or not np.all(np.isfinite(quality))
-        ):
-            raise ValueError("Metric measurements must be finite vectors.")
-        if not np.isfinite(maximum_fidelity_bound) or maximum_fidelity_bound < 0:
-            raise ValueError("The fidelity bound must be finite and nonnegative.")
-        if (
-            not np.isfinite(lower_metric_length)
-            or not np.isfinite(upper_metric_length)
-            or not 0.0 <= lower_metric_length <= upper_metric_length
-            or upper_metric_length <= 0.0
-        ):
-            raise ValueError(
-                "Metric edge bounds must form a finite nonnegative interval."
-            )
-        if len(native_memory_evidence) not in (0, 6) or any(
-            isinstance(value, bool) or not isinstance(value, int) or value < 0
-            for value in native_memory_evidence
-        ):
-            raise ValueError(
-                "Native memory evidence must be the actual six-counter table."
-            )
-        if len(optimizer_status_counts) not in (0, len(OptimizationStatus)) or any(
-            steps < 1 or evaluations < 1 for steps, evaluations in optimizer_terminations
-        ):
-            raise ValueError(
-                "Optimizer status and termination evidence must be complete."
-            )
-        if optimizer_method_id is not None and not optimizer_method_id:
-            raise ValueError("An optimizer method identifier must be non-empty.")
-        if len(optimizer_tolerances) not in (0, 4) or any(
-            not np.isfinite(value) or value < 0.0 for value in optimizer_tolerances
-        ):
-            raise ValueError(
-                "Optimizer tolerances must be its four actual finite nonnegative thresholds."
-            )
+        for index, value in enumerate(numbers):
+            nonnegative_integer(value, f"tetra_metric.counter[{index}]")
+        measurements = _MetricMeasurements.prepare(
+            lengths,
+            quality,
+            maximum_fidelity_bound,
+            lower_metric_length,
+            upper_metric_length,
+        )
+        optimizer = MetricOptimizerEvidence() if optimizer is None else optimizer
+        memory = MetricMemoryEvidence() if memory is None else memory
         native_work = work_units if native_work_units is None else native_work_units
         if (
             isinstance(native_work, bool)
@@ -340,46 +484,28 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
             or native_work > work_units
         ):
             raise ValueError(
-                "Native work must be a nonnegative part of total charged work."
-            )
-        if any(
-            not name or not isinstance(count, int) or count < 0
-            for name, count in optimizer_refusal_counts
-        ):
-            raise ValueError(
-                "Optimizer refusal evidence must contain named nonnegative counts."
+                f"MetricRemeshingEvidence.native_work_units must lie between zero and work_units; got {native_work!r} of {work_units!r}"
             )
         if any(
             not key or not np.isfinite(value)
             for key, value in (*size_requested, *size_achieved)
         ):
-            raise ValueError("Physical size evidence must contain named finite values.")
+            raise ValueError(
+                "MetricRemeshingEvidence.size_evidence must contain named finite quantities; got an invalid entry"
+            )
         if criterion is MetricRemeshingCriterion.SIZE_STATISTICS and (
             not size_requested or not size_achieved
         ):
             raise ValueError(
-                "Physical size remeshing must retain the original compliance evidence."
+                "MetricRemeshingEvidence.size_evidence must retain requested and achieved quantities for SIZE_STATISTICS; got an empty bank"
             )
         if status is MetricRemeshingStatus.COMPLETE and size_issues:
             raise ValueError(
-                "A completed physical size goal cannot retain failed obligations."
+                f"MetricRemeshingEvidence.size_issues must be empty for COMPLETE status; got {size_issues!r}"
             )
-        if metric_quality_floor is not None and (
-            not np.isfinite(metric_quality_floor)
-            or not 0.0 <= metric_quality_floor <= 1.0
-        ):
-            raise ValueError("The metric quality floor must lie in [0, 1].")
-        if shape_radius_edge_bound is not None and (
-            not np.isfinite(shape_radius_edge_bound) or shape_radius_edge_bound <= 0.0
-        ):
-            raise ValueError(
-                "The radius-edge proposal bound must be finite and positive."
-            )
-        if shape_minimum_dihedral_degrees is not None and (
-            not np.isfinite(shape_minimum_dihedral_degrees)
-            or not 0.0 <= shape_minimum_dihedral_degrees <= 180.0
-        ):
-            raise ValueError("The dihedral proposal bound must be finite and in degrees.")
+        shape = _MetricShapeLimits(
+            metric_quality_floor, shape_radius_edge_bound, shape_minimum_dihedral_degrees
+        )
         self.status = status
         self.criterion = criterion
         self.passes = passes
@@ -391,54 +517,42 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
         self.lower_metric_length = float(lower_metric_length)
         self.upper_metric_length = float(upper_metric_length)
         self.operation_attempts = operation_attempts
-        self.native_memory_evidence = native_memory_evidence
         self.size_requested = size_requested
         self.size_achieved = size_achieved
         self.size_issues = size_issues
         self.source_candidate_pairs = source_candidate_pairs
-        self.metric_quality_floor = metric_quality_floor
-        self.shape_radius_edge_bound = shape_radius_edge_bound
-        self.shape_minimum_dihedral_degrees = shape_minimum_dihedral_degrees
+        self.metric_quality_floor = shape.quality_floor
+        self.shape_radius_edge_bound = shape.radius_edge_bound
+        self.shape_minimum_dihedral_degrees = shape.minimum_dihedral_degrees
         self.resource_message = resource_message
         self.resource_requested = resource_requested
         self.resource_achieved = resource_achieved
-        self.optimizer_status_counts = optimizer_status_counts
-        self.optimizer_terminations = optimizer_terminations
-        self.optimizer_iterations = optimizer_iterations
-        self.optimizer_evaluations = optimizer_evaluations
-        self.optimizer_constraint_evaluations = optimizer_constraint_evaluations
-        self.optimizer_proposal_evaluations = optimizer_proposal_evaluations
-        self.optimizer_refused_proposals = optimizer_refused_proposals
-        self.optimizer_refusal_counts = optimizer_refusal_counts
-        self.optimizer_host_work_units = optimizer_host_work_units
-        self.optimizer_scratch_required_bytes = optimizer_scratch_required_bytes
+        self.optimizer = optimizer
+        self.memory = memory
         self.native_work_units = native_work
         self.execution_evidence = execution_evidence
-        self.metric_arc_bounds = (
-            None
-            if metric_arc_bounds is None
-            else jnp.asarray(metric_arc_bounds, dtype=jnp.float64)
+        _host_metric_arc_bounds = (
+            None if arcs.bounds is None else np.asarray(arcs.bounds, dtype=np.float64)
         )
-        self.metric_arc_edge_ids = (
-            None
-            if metric_arc_edge_ids is None
-            else jnp.asarray(metric_arc_edge_ids, dtype=jnp.int64)
+        _host_metric_arc_edge_ids = (
+            None if arcs.edge_ids is None else np.asarray(arcs.edge_ids, dtype=np.int64)
         )
-        self.metric_arc_binding = metric_arc_binding
-        self.optimizer_method_id = optimizer_method_id
-        self.optimizer_tolerances = optimizer_tolerances
-        self.out_of_range_edges = int(
-            np.count_nonzero(
-                (lengths < lower_metric_length) | (lengths > upper_metric_length)
+        (
+            self.metric_arc_bounds,
+            self.metric_arc_edge_ids,
+        ) = jax.device_put(
+            (
+                _host_metric_arc_bounds,
+                _host_metric_arc_edge_ids,
             )
         )
-        self.minimum_metric_length = (
-            float(np.min(lengths, initial=np.inf)) if lengths.size else 0.0
-        )
-        self.maximum_metric_length = float(np.max(lengths, initial=0.0))
-        self.minimum_metric_quality = float(np.min(quality, initial=1.0))
+        self.metric_arc_binding = metric_arc_binding
+        self.out_of_range_edges = measurements.out_of_range
+        self.minimum_metric_length = measurements.minimum_length
+        self.maximum_metric_length = measurements.maximum_length
+        self.minimum_metric_quality = measurements.minimum_quality
         self.maximum_fidelity_bound = maximum_fidelity_bound
-        self.predicate_mode = PredicateMode.EXACT
+        self.predicate_mode = _dependency_phydrax__geometry_predicates.PredicateMode.EXACT
         self.split_parameters = split_parameters
         self.evidence_id = self._source_identity(metric_arc_bounds, metric_arc_edge_ids)
 
@@ -463,7 +577,11 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
                 "split_parameters": self.split_parameters,
                 "edge_band": (self.lower_metric_length, self.upper_metric_length),
                 "operation_attempts": self.operation_attempts,
-                "native_memory_evidence": self.native_memory_evidence,
+                "native_memory_counters": (
+                    None
+                    if self.memory.native_counters is None
+                    else dict(self.memory.native_counters.items())
+                ),
                 "size_requested": self.size_requested,
                 "size_achieved": self.size_achieved,
                 "size_issues": self.size_issues,
@@ -476,18 +594,18 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
                 "resource_achieved": self.resource_achieved,
                 "compound_splits": self.compound_splits,
                 "expanded_insertions": self.expanded_insertions,
-                "optimizer_status_counts": self.optimizer_status_counts,
-                "optimizer_terminations": self.optimizer_terminations,
-                "optimizer_method_id": self.optimizer_method_id,
-                "optimizer_tolerances": self.optimizer_tolerances,
-                "optimizer_iterations": self.optimizer_iterations,
-                "optimizer_evaluations": self.optimizer_evaluations,
-                "optimizer_constraint_evaluations": self.optimizer_constraint_evaluations,
-                "optimizer_proposal_evaluations": self.optimizer_proposal_evaluations,
-                "optimizer_refused_proposals": self.optimizer_refused_proposals,
-                "optimizer_refusal_counts": self.optimizer_refusal_counts,
-                "optimizer_host_work_units": self.optimizer_host_work_units,
-                "optimizer_scratch_required_bytes": self.optimizer_scratch_required_bytes,
+                "optimizer_status_counts": self.optimizer.status_counts,
+                "optimizer_terminations": self.optimizer.terminations,
+                "optimizer_method_id": self.optimizer.method_id,
+                "optimizer_tolerances": self.optimizer.tolerances,
+                "optimizer_iterations": self.optimizer.iterations,
+                "optimizer_evaluations": self.optimizer.evaluations,
+                "optimizer_constraint_evaluations": self.optimizer.constraint_evaluations,
+                "optimizer_proposal_evaluations": self.optimizer.proposal_evaluations,
+                "optimizer_refused_proposals": self.optimizer.refused_proposals,
+                "optimizer_refusal_counts": self.optimizer.refusal_counts,
+                "optimizer_host_work_units": self.optimizer.host_work_units,
+                "optimizer_scratch_required_bytes": self.memory.optimizer_scratch_required_bytes,
                 "native_work_units": self.native_work_units,
                 "metric_arc_bounds": None
                 if metric_arc_bounds is None
@@ -506,10 +624,15 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
             or type(self.criterion) is not MetricRemeshingCriterion
         ):
             raise TypeError(
-                "Metric evidence requires its exact registered status and criterion."
+                "MetricRemeshingEvidence.selectors must use registered status and criterion types; got foreign selectors"
             )
-        if self.predicate_mode is not PredicateMode.EXACT:
-            raise ValueError("Metric evidence changed its original exact predicate law.")
+        if (
+            self.predicate_mode
+            is not _dependency_phydrax__geometry_predicates.PredicateMode.EXACT
+        ):
+            raise ValueError(
+                f"MetricRemeshingEvidence.predicate_mode must be EXACT; got {self.predicate_mode!r}"
+            )
         counters = (
             self.passes,
             self.splits,
@@ -523,14 +646,6 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
             self.out_of_range_edges,
             self.operation_attempts,
             self.source_candidate_pairs,
-            *self.optimizer_status_counts,
-            self.optimizer_iterations,
-            self.optimizer_evaluations,
-            self.optimizer_constraint_evaluations,
-            self.optimizer_proposal_evaluations,
-            self.optimizer_refused_proposals,
-            self.optimizer_host_work_units,
-            self.optimizer_scratch_required_bytes,
             self.native_work_units,
         )
         if (
@@ -538,8 +653,37 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
             or self.native_work_units > self.work_units
         ):
             raise ValueError(
-                "Restored metric counters violate their original work domains."
+                f"MetricRemeshingEvidence.counters must be nonnegative integers with native work no greater than total work; got {counters!r}"
             )
+        self._validate_restored_measurements()
+        if type(self.memory) is not MetricMemoryEvidence:
+            raise TypeError(
+                "MetricRemeshingEvidence.memory must be MetricMemoryEvidence; "
+                f"got {type(self.memory).__name__}"
+            )
+        self.memory.validate_restored()
+        if type(self.optimizer) is not MetricOptimizerEvidence:
+            raise TypeError(
+                "MetricRemeshingEvidence.optimizer must be MetricOptimizerEvidence; "
+                f"got {type(self.optimizer).__name__}"
+            )
+        self.optimizer.validate_restored()
+        self._validate_restored_obligations()
+        self._validate_restored_arcs()
+        if self.execution_evidence is not None:
+            if type(self.execution_evidence) is not NativeExecutionRecord:
+                raise TypeError(
+                    f"MetricRemeshingEvidence.execution_evidence must be NativeExecutionRecord; got {type(self.execution_evidence).__name__}"
+                )
+            self.execution_evidence.require_valid()
+        if self.evidence_id != self._source_identity(
+            self.metric_arc_bounds, self.metric_arc_edge_ids
+        ):
+            raise ValueError(
+                f"MetricRemeshingEvidence.evidence_id must match the restored aggregate fingerprint; got {self.evidence_id!r}"
+            )
+
+    def _validate_restored_measurements(self) -> None:
         if (
             not all(
                 np.isfinite(value)
@@ -555,45 +699,22 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
             or self.maximum_fidelity_bound < 0
         ):
             raise ValueError(
-                "Restored metric measurements must be finite with nonnegative fidelity."
+                "MetricRemeshingEvidence.measurements must be finite with nonnegative fidelity; got invalid retained measurements"
             )
         if (
             not 0 <= self.lower_metric_length <= self.upper_metric_length
             or self.upper_metric_length <= 0
         ):
-            raise ValueError("Restored metric edge band is invalid.")
-        if len(self.native_memory_evidence) not in (0, 6) or any(
-            type(value) is not int or value < 0 for value in self.native_memory_evidence
-        ):
             raise ValueError(
-                "Restored metric memory evidence lacks the actual six-counter domain."
+                "MetricRemeshingEvidence.metric_edge_band must be finite, nonnegative, and ordered; got invalid retained bounds"
             )
-        if len(self.optimizer_status_counts) not in (0, len(OptimizationStatus)) or any(
-            type(steps) is not int
-            or type(evaluations) is not int
-            or steps < 1
-            or evaluations < 1
-            for steps, evaluations in self.optimizer_terminations
-        ):
-            raise ValueError("Restored optimizer evidence is incomplete.")
-        if self.optimizer_method_id is not None and (
-            type(self.optimizer_method_id) is not str or not self.optimizer_method_id
-        ):
-            raise ValueError("Restored optimizer identity must be nonempty.")
-        if len(self.optimizer_tolerances) not in (0, 4) or any(
-            not np.isfinite(value) or value < 0 for value in self.optimizer_tolerances
-        ):
-            raise ValueError("Restored optimizer tolerances are invalid.")
-        if any(
-            type(name) is not str or not name or type(count) is not int or count < 0
-            for name, count in self.optimizer_refusal_counts
-        ):
-            raise ValueError("Restored optimizer refusal counts are invalid.")
+
+    def _validate_restored_obligations(self) -> None:
         if any(
             not np.isfinite(value) or not 0 < value < 1 for value in self.split_parameters
         ):
             raise ValueError(
-                "Restored split parameters leave the original edge interior."
+                f"MetricRemeshingEvidence.split_parameters must contain finite edge-interior fractions; got {self.split_parameters!r}"
             )
         if any(
             type(key) is not str or not key or not np.isfinite(value)
@@ -605,42 +726,52 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "Restored physical/resource evidence requires named finite quantities."
+                "MetricRemeshingEvidence.resource_evidence must contain named finite quantities; got an invalid retained entry"
             )
         if self.criterion is MetricRemeshingCriterion.SIZE_STATISTICS and (
             not self.size_requested or not self.size_achieved
         ):
             raise ValueError(
-                "Restored physical size evidence omits its original obligations."
+                "MetricRemeshingEvidence.size_evidence must retain requested and achieved quantities for SIZE_STATISTICS; got an empty bank"
             )
         if self.status is MetricRemeshingStatus.COMPLETE and self.size_issues:
             raise ValueError(
-                "Restored completed metric evidence retains failed obligations."
+                f"MetricRemeshingEvidence.size_issues must be empty for COMPLETE status; got {self.size_issues!r}"
             )
         if self.metric_quality_floor is not None and (
             not np.isfinite(self.metric_quality_floor)
             or not 0 <= self.metric_quality_floor <= 1
         ):
-            raise ValueError("Restored metric quality floor is invalid.")
+            raise ValueError(
+                f"MetricRemeshingEvidence.metric_quality_floor must lie in [0, 1]; got {self.metric_quality_floor!r}"
+            )
         if self.shape_radius_edge_bound is not None and (
             not np.isfinite(self.shape_radius_edge_bound)
             or self.shape_radius_edge_bound <= 0
         ):
-            raise ValueError("Restored radius-edge bound is invalid.")
+            raise ValueError(
+                f"MetricRemeshingEvidence.shape_radius_edge_bound must be finite and positive; got {self.shape_radius_edge_bound!r}"
+            )
         if self.shape_minimum_dihedral_degrees is not None and (
             not np.isfinite(self.shape_minimum_dihedral_degrees)
             or not 0 <= self.shape_minimum_dihedral_degrees <= 180
         ):
-            raise ValueError("Restored dihedral bound is invalid.")
+            raise ValueError(
+                f"MetricRemeshingEvidence.shape_minimum_dihedral_degrees must lie in [0, 180]; got {self.shape_minimum_dihedral_degrees!r}"
+            )
+
+    def _validate_restored_arcs(self) -> None:
         if (self.metric_arc_bounds is None) != (self.metric_arc_edge_ids is None) or (
             self.metric_arc_bounds is None
         ) != (self.metric_arc_binding is None):
-            raise ValueError("Restored metric arc source binding is incomplete.")
-        if self.metric_arc_bounds is not None:
-            bounds, identifiers = (
-                np.asarray(self.metric_arc_bounds),
-                np.asarray(self.metric_arc_edge_ids),
+            raise ValueError(
+                "MetricRemeshingEvidence.metric_arc_binding must accompany bounds and scientific edge IDs; got a partial retained bank"
             )
+        if self.metric_arc_bounds is not None:
+            host_bounds, host_identifiers = jax.device_get(
+                (self.metric_arc_bounds, self.metric_arc_edge_ids)
+            )
+            bounds, identifiers = np.asarray(host_bounds), np.asarray(host_identifiers)
             if (
                 bounds.ndim != 2
                 or bounds.shape[1] != 2
@@ -653,20 +784,8 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
                 or not self.metric_arc_binding
             ):
                 raise ValueError(
-                    "Restored metric arcs changed their scientific bound/edge bank."
+                    "MetricRemeshingEvidence.metric_arc_bounds must align finite outward bounds with scientific edges; got an invalid retained bank"
                 )
-        if self.execution_evidence is not None:
-            if type(self.execution_evidence) is not NativeExecutionRecord:
-                raise TypeError(
-                    "Restored metric execution evidence requires an actual native record."
-                )
-            self.execution_evidence.require_valid()
-        if self.evidence_id != self._source_identity(
-            self.metric_arc_bounds, self.metric_arc_edge_ids
-        ):
-            raise ValueError(
-                "Restored metric evidence differs from its original aggregate identity."
-            )
 
     @property
     def converged(self) -> bool:
@@ -677,26 +796,28 @@ class MetricRemeshingEvidence(StrictModule, NonTrainableState):
         return self.status is MetricRemeshingStatus.STALLED
 
 
-def _source_location_budget(maximum_pairs: int, candidates: int, /) -> MeshingFailure:
-    return MeshingFailure(
-        MeshingFailureCategory.RESOURCE_EXHAUSTED,
+def source_location_budget(
+    maximum_pairs: int, candidates: int, /
+) -> _leaf_phydrax_meshing__failures.MeshingFailure:
+    return _leaf_phydrax_meshing__failures.MeshingFailure(
+        _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
         "Metric source-location candidate budget is exhausted.",
-        stage=MeshingStageKind.GEOMETRY_ASSOCIATION.value,
+        stage=_dependency_phydrax_meshing__trace.MeshingStageKind.GEOMETRY_ASSOCIATION.value,
         requested=(("source_location_candidates", float(maximum_pairs)),),
         achieved=(("source_location_candidates", float(candidates)),),
     )
 
 
-def _stage_source_limits(
+def stage_source_limits(
     mesh: CellMesh, maximum_vertices: int, maximum_cells: int, /
 ) -> None:
     vertices = mesh.coordinates.shape[0]
     cells = sum(block.cell_count for block in mesh.blocks)
     if vertices > maximum_vertices or cells > maximum_cells:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
             "The metric construction budget cannot stage the accepted source.",
-            stage=MeshingStageKind.SOURCE_INSPECTION.value,
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.SOURCE_INSPECTION.value,
             requested=(
                 ("vertices", float(maximum_vertices)),
                 ("cells", float(maximum_cells)),
@@ -706,21 +827,26 @@ def _stage_source_limits(
 
 
 class TetraMetricOutcome(NamedTuple):
-    edit: CellTopologyEdit
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit
     metric: np.ndarray
     evidence: MetricRemeshingEvidence
-    exact_source: ExactPlcCellGeometrySource | None = None
+    exact_source: (
+        _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometrySource
+        | None
+    ) = None
 
 
-def _fresh_identifiers(first: int, count: int, /) -> np.ndarray:
+def fresh_identifiers(first: int, count: int, /) -> np.ndarray:
     maximum = np.iinfo(np.int64).max
     if count < 0:
-        raise RuntimeError("A native snapshot lost retained vertex slots.")
+        raise RuntimeError(
+            f"tetra_metric.vertex_count must not drop retained source slots; got {count!r}"
+        )
     if count and first + count - 1 > maximum:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
             "Scientific global-identifier capacity is exhausted.",
-            stage=MeshingStageKind.LINEAGE_CONSTRUCTION.value,
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.LINEAGE_CONSTRUCTION.value,
             requested=(("new_global_ids", float(count)),),
             achieved=(("available_global_ids", float(max(0, maximum - first + 1))),),
         )
@@ -739,6 +865,7 @@ class _Ancestry:
     vertex_successor: dict[int, int] | None = None
     cell_kinds: dict[int, int] | None = None
     relocated_vertices: set[int] | None = None
+    constrained_faces: dict[int, tuple[int, ...]] | None = None
 
 
 def _edges(cells: np.ndarray, /) -> np.ndarray:
@@ -746,7 +873,7 @@ def _edges(cells: np.ndarray, /) -> np.ndarray:
     return np.unique(np.sort(cells[:, local].reshape((-1, 2)), axis=1), axis=0)
 
 
-def _resolved_collapses(
+def resolved_collapses(
     identifiers: np.ndarray, source_count: int, successor: dict[int, int] | None, /
 ) -> dict[int, int]:
     result: dict[int, int] = {}
@@ -757,7 +884,9 @@ def _resolved_collapses(
         visited: set[int] = set()
         while current in successor:
             if current in visited:
-                raise RuntimeError("A collapse lineage contains a cycle.")
+                raise RuntimeError(
+                    f"tetra_metric.collapse_lineage must be acyclic; got a cycle at vertex {current!r}"
+                )
             visited.add(current)
             current = successor[current]
         if current != vertex:
@@ -765,7 +894,7 @@ def _resolved_collapses(
     return result
 
 
-def _subentity_relations(
+def subentity_relations(
     mesh: CellMesh,
     dimension: int,
     cells: np.ndarray,
@@ -774,15 +903,15 @@ def _subentity_relations(
     /,
     *,
     collapsed_vertices: dict[int, int] | None = None,
-) -> EntityRelations:
-    """Exact split/collapse ancestry from construction witnesses, not coordinates."""
+) -> _dependency_phydrax_meshing__topology_edit.EntityRelations:
+    """Return split/collapse ancestry derived from construction witnesses."""
     local = np.asarray(
         tuple(combinations(range(cells.shape[1]), dimension + 1)), dtype=np.int32
     )
     targets = np.unique(
         np.sort(cells[:, local].reshape((-1, dimension + 1)), axis=1), axis=0
     )
-    source_keys = entity_keys(mesh, dimension)
+    source_keys = entity_keys_owner.entity_keys(mesh, dimension)
     incidence: dict[int, set[int]] = {}
     for row, key in enumerate(source_keys.tolist()):
         for vertex in key:
@@ -816,7 +945,7 @@ def _subentity_relations(
                 descendants.append(list(key))
                 kinds.append(int(EntityLineageKind.COLLAPSED_INTO))
     width = dimension + 1
-    return EntityRelations(
+    return _dependency_phydrax_meshing__topology_edit.EntityRelations(
         dimension,
         np.asarray(sources, dtype=np.int64).reshape((-1, width)),
         np.asarray(descendants, dtype=np.int64).reshape((-1, width)),
@@ -828,7 +957,7 @@ def _bucket(rows: np.ndarray, /) -> np.ndarray:
     """Pad leading rows to a power-of-two count by repeating the first row.
 
     Rowwise compiled kernels then compile once per bucket instead of once per
-    actual cell, edge, cavity or query count; callers keep only actual rows.
+    cell, edge, cavity, or query count; callers retain only unpadded rows.
     """
     count = rows.shape[0]
     size = 8 if count <= 8 else 1 << (count - 1).bit_length()
@@ -838,29 +967,30 @@ def _bucket(rows: np.ndarray, /) -> np.ndarray:
 
 
 def _quality(points: np.ndarray, metric: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
-    return np.asarray(
-        metric_simplex_quality(_bucket(metric), _bucket(points), _bucket(cells)),
-        dtype=np.float64,
-    )[: cells.shape[0]]
+    result = _dependency_phydrax_meshing__metric.metric_simplex_quality(
+        _bucket(metric), _bucket(points), _bucket(cells)
+    )
+    return np.asarray(jax.device_get(result), dtype=np.float64)[: cells.shape[0]]
 
 
 def _lengths(points: np.ndarray, metric: np.ndarray, edges: np.ndarray, /) -> np.ndarray:
-    return np.asarray(
-        metric_edge_lengths(_bucket(metric), _bucket(points), _bucket(edges)),
-        dtype=np.float64,
-    )[: edges.shape[0]]
+    result = _dependency_phydrax_meshing__metric.metric_edge_lengths(
+        _bucket(metric), _bucket(points), _bucket(edges)
+    )
+    return np.asarray(jax.device_get(result), dtype=np.float64)[: edges.shape[0]]
 
 
 def _interpolate(values: np.ndarray, weights: np.ndarray, /) -> np.ndarray:
-    return np.asarray(
-        interpolate_mesh_metric(_bucket(values), _bucket(weights)), dtype=np.float64
-    )[: values.shape[0]]
+    result = _dependency_phydrax_meshing__metric.interpolate_mesh_metric(
+        _bucket(values), _bucket(weights)
+    )
+    return np.asarray(jax.device_get(result), dtype=np.float64)[: values.shape[0]]
 
 
 def _positive(points: np.ndarray, cells: np.ndarray, /) -> np.ndarray:
     corners = _bucket(points[cells])
     signs = exact_orient3d(corners[:, 0], corners[:, 1], corners[:, 2], corners[:, 3])
-    positive = signs == PredicateSign.POSITIVE
+    positive = signs == _dependency_phydrax__geometry_predicates.PredicateSign.POSITIVE
     return positive[: cells.shape[0]]
 
 
@@ -885,12 +1015,12 @@ def _labels(values: ArrayLike | None, count: int, name: str, /) -> np.ndarray:
         or np.any(array > np.iinfo(np.int32).max)
     ):
         raise ValueError(
-            f"{name} must be nonnegative int32-range labels aligned with entities."
+            f"tetra_metric.{name} must contain aligned nonnegative int32-range labels; got shape={array.shape}, dtype={array.dtype}"
         )
     return array.astype(np.int32)
 
 
-def _constraints(
+def constraints(
     mesh: CellMesh,
     cells: np.ndarray,
     regions: np.ndarray,
@@ -905,7 +1035,10 @@ def _constraints(
     )
     labels = _labels(facet_classes, mesh.entity_set(2).count, "facet_classes")
     vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
-    rows = key_rows(entity_keys(mesh, 2), np.sort(vertex_ids[keys], axis=1))
+    rows = entity_keys_owner.key_rows(
+        entity_keys_owner.entity_keys(mesh, 2),
+        np.sort(vertex_ids[keys], axis=1),
+    )
     low = np.full((keys.shape[0],), np.iinfo(np.int32).max, dtype=np.int32)
     high = np.full((keys.shape[0],), -1, dtype=np.int32)
     np.minimum.at(low, inverse, np.repeat(regions, 4))
@@ -917,7 +1050,10 @@ def _constraints(
     sources = np.arange(selected.shape[0], dtype=np.int32)
     boundary_edges = _edges(selected)
     edges = _edges(cells)
-    edge_rows = key_rows(entity_keys(mesh, 1), np.sort(vertex_ids[edges], axis=1))
+    edge_rows = entity_keys_owner.key_rows(
+        entity_keys_owner.entity_keys(mesh, 1),
+        np.sort(vertex_ids[edges], axis=1),
+    )
     feature = (
         _labels(edge_classes, mesh.entity_set(1).count, "edge_classes")[edge_rows] != 0
     )
@@ -930,33 +1066,37 @@ def _constraints(
 
 def _plc_native_constraints(
     mesh: CellMesh,
-    source: ExactPlcCellGeometrySource,
+    source: _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometrySource,
     faces: np.ndarray,
     segments: np.ndarray,
     protected: np.ndarray,
     edge_classes: ArrayLike | None,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, TetMeshSourceComplex]:
-    """Rebuild source IDs from exact membership, not newly assigned face slots."""
-    prepared = source.prepare(mesh.coordinates)
+    """Rebuild source IDs from predicate-certified membership in declared PLC entities."""
+    prepared = source.prepare(mesh.coordinates, budget=budget)
     points = np.asarray(source.source_points, dtype=np.float64)
-    budget = _ExactPlcBudget(source.maximum_work, source.maximum_bits)
-    execution = current_native_execution_budget()
-    from ..discretization._coordinate_enclosure import _COORDINATE_BUDGET
-
-    ledger = _COORDINATE_BUDGET.get()
-    if ledger is None:
-        raise RuntimeError(
-            "An exact PLC constraint proof requires its original coordinate ledger."
+    exact_work = _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcBudget(
+        source.maximum_work, source.maximum_bits, budget=budget
+    )
+    bank_upper, _ = (
+        _dependency_phydrax_discretization__exact_plc_geometry.plc_storage_bounds(
+            points.shape[0], 1075
         )
-    bank_upper, _ = _plc_storage_bounds(points.shape[0], 1075)
-    _, scratch_upper = _plc_storage_bounds(0, source.maximum_bits)
+    )
+    _, scratch_upper = (
+        _dependency_phydrax_discretization__exact_plc_geometry.plc_storage_bounds(
+            0, source.maximum_bits
+        )
+    )
     row_upper = (
         512 + 88 * source.source_triangles.shape[0] + 80 * source.source_segments.shape[0]
     )
-    with ledger.temporary_scope():
-        ledger.reserve(0, bank_upper + scratch_upper + row_upper)
-        source_points = tuple(_point(point) for point in points)
+    with budget.temporary_scope():
+        budget.reserve(0, bank_upper + scratch_upper + row_upper)
+        source_points = tuple(plc_rational_point(point) for point in points)
         triangles = tuple(
             tuple(source_points[int(index)] for index in row)
             for row in np.asarray(source.source_triangles, dtype=np.int32)
@@ -971,38 +1111,54 @@ def _plc_native_constraints(
         segment_ids, segment_groups = np.unique(original_segment_ids, return_inverse=True)
         selected_faces = np.empty((faces.shape[0],), dtype=np.int64)
         for slot, face in enumerate(faces):
+            if slot % 64 == 0:
+                budget.ticket.checkpoint()
             for row, corners in enumerate(triangles):
-                if execution is not None:
-                    execution.charge(geometry_queries=1)
-                budget.charge(192, tuple(value for point in corners for value in point))
-                if all(_in_entity(prepared.vertices[index], corners) for index in face):
+                budget.reserve_geometry_queries(1)
+                exact_work.charge(
+                    192, tuple(value for point in corners for value in point)
+                )
+                if all(
+                    _dependency_phydrax_discretization__exact_plc_geometry.in_entity(
+                        prepared.vertices[index], corners
+                    )
+                    for index in face
+                ):
                     selected_faces[slot] = triangle_ids[row]
                     break
             else:
                 raise ValueError(
-                    "A constrained target face has no exact declared PLC source row."
+                    "tetra_metric.constrained_faces must belong to declared PLC source rows; got an unassigned face"
                 )
         selected_segments: list[np.ndarray] = []
         selected_ids: list[int] = []
-        keys = entity_keys(mesh, 1)
+        keys = entity_keys_owner.entity_keys(mesh, 1)
         global_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
         classes = _labels(edge_classes, keys.shape[0], "edge_classes")
-        for segment in segments:
+        for slot, segment in enumerate(segments):
+            if slot % 64 == 0:
+                budget.ticket.checkpoint()
             for row, corners in enumerate(lines):
-                if execution is not None:
-                    execution.charge(geometry_queries=1)
-                budget.charge(128, tuple(value for point in corners for value in point))
+                budget.reserve_geometry_queries(1)
+                exact_work.charge(
+                    128, tuple(value for point in corners for value in point)
+                )
                 if all(
-                    _in_entity(prepared.vertices[index], corners) for index in segment
+                    _dependency_phydrax_discretization__exact_plc_geometry.in_entity(
+                        prepared.vertices[index], corners
+                    )
+                    for index in segment
                 ):
                     selected_segments.append(segment)
                     selected_ids.append(int(original_segment_ids[row]))
                     break
             else:
-                slot = key_rows(keys, np.sort(global_ids[segment])[None])[0]
+                slot = entity_keys_owner.key_rows(
+                    keys, np.sort(global_ids[segment])[None]
+                )[0]
                 if protected[slot] or classes[slot] != 0:
                     raise ValueError(
-                        "A protected edge requires an exact declared PLC source segment."
+                        "tetra_metric.protected_edges must belong to declared PLC source segments; got an unassigned edge"
                     )
                 # A triangulation diagonal is part of its facet, not a new feature.
         declared = TetMeshSourceComplex(
@@ -1038,7 +1194,7 @@ def _record(
     parents = set().union(*(value[1] for value in removed)) if removed else set()
     if ancestry.cell_kinds is None:
         ancestry.cell_kinds = {}
-    kind = _lineage_operation_kind(
+    kind = lineage_operation_kind(
         kind,
         tuple(
             ancestry.cell_kinds.get(identifier, int(EntityLineageKind.PRESERVED))
@@ -1049,7 +1205,7 @@ def _record(
         ancestry.cell_kinds.pop(old[key][0], None)
         del ancestry.cells[key]
     new_keys = sorted(keys - old.keys())
-    identifiers = _fresh_identifiers(ancestry.next_cell_id, len(new_keys))
+    identifiers = fresh_identifiers(ancestry.next_cell_id, len(new_keys))
     ancestry.next_cell_id += len(new_keys)
     for key, value in zip(new_keys, identifiers, strict=True):
         identifier = int(value)
@@ -1066,70 +1222,94 @@ def _collapse_cells(cells: np.ndarray, removed: int, kept: int, /) -> np.ndarray
 
 @dataclass(frozen=True, slots=True)
 class TetraMetricSource:
-    """Immutable authoritative affine source tables for tensor sampling.
+    """Retain immutable affine source tables for tensor sampling.
 
-    Tables retain supplied identifiers and vertex-row order. An exact PLC
-    geometry binds the original rational source S; without it the ordinary
-    binary64 affine path and its operation order remain unchanged.
+    Supplied identifiers and vertex-row order remain fixed. PLC geometry binds
+    rational source coordinates; otherwise the binary64 affine path retains
+    its floating-point operation order.
     """
 
     points: np.ndarray
     cells: np.ndarray
     vertex_global_ids: np.ndarray
     cell_global_ids: np.ndarray
-    source_geometry: CellGeometrySpec | None = None
+    source_geometry: (
+        _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec | None
+    ) = None
+    budget: InitVar[
+        _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    ] = field(kw_only=True)
     corners: np.ndarray = field(init=False, repr=False)
 
-    def __post_init__(self) -> None:
+    def __post_init__(
+        self,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> None:
         if self.points.ndim != 2 or self.points.shape[1] != 3:
-            raise ValueError("Metric source points must have three coordinates.")
+            raise ValueError(
+                f"TetraMetricSource.points must have three coordinate columns; got shape={self.points.shape}"
+            )
         if self.cells.ndim != 2 or self.cells.shape[1] != 4 or not self.cells.shape[0]:
-            raise ValueError("Metric source cells must be nonempty tetrahedral rows.")
+            raise ValueError(
+                f"TetraMetricSource.cells must contain nonempty tetrahedral rows; got shape={self.cells.shape}"
+            )
         if (
             not np.issubdtype(self.cells.dtype, np.integer)
             or np.any(self.cells < 0)
             or np.any(self.cells >= self.points.shape[0])
         ):
-            raise ValueError("Metric source cells must index their actual source points.")
+            raise ValueError(
+                f"TetraMetricSource.cells must index source points; got shape={self.cells.shape}"
+            )
         if self.vertex_global_ids.shape != (
             self.points.shape[0],
         ) or self.cell_global_ids.shape != (self.cells.shape[0],):
             raise ValueError(
-                "Metric source identifiers must align with their original rows."
+                "TetraMetricSource.identifiers must align with source rows; got incompatible lengths"
             )
         if self.source_geometry is not None:
-            if not isinstance(self.source_geometry, CellGeometrySpec):
-                raise TypeError("source_geometry must be CellGeometrySpec or None.")
             if not isinstance(
-                self.source_geometry.exact_source, ExactPlcCellGeometrySource
+                self.source_geometry,
+                _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec,
+            ):
+                raise TypeError(
+                    f"TetraMetricSource.source_geometry must be CellGeometrySpec or None; got {type(self.source_geometry).__name__}"
+                )
+            if not isinstance(
+                self.source_geometry.exact_source,
+                _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometrySource,
             ):
                 raise ValueError(
-                    "Exact tetrahedral metric sampling requires the original PLC source."
+                    "TetraMetricSource.source_geometry must retain an ExactPlcCellGeometrySource; got another source kind"
                 )
-            bank = self.source_geometry.source_coordinates()
+            bank = self.source_geometry.source_coordinates(budget=budget)
             if len(bank) != self.points.shape[0] or any(
                 len(point) != 3 for point in bank
             ):
                 raise ValueError(
-                    "Exact metric coordinates must bind their original source rows."
+                    "TetraMetricSource.source_coordinates must align with source rows; got incompatible coordinates"
                 )
-            from .._geometry_predicates import exact_charge
-            from ..discretization._coordinate_enclosure import _COORDINATE_BUDGET
 
             # The temporary source object bank and gathered corner slots
             # coexist. The immutable Fraction values and corner table remain
             # owned by the ledger for the entire metric-source lifetime.
-            with exact_charge(0, 8 * (3 * len(bank) + 3 * self.cells.size)):
+            with _owner_phydrax__geometry_predicates.exact_charge(
+                0, 8 * (3 * len(bank) + 3 * self.cells.size), budget=budget
+            ):
                 corners = np.asarray(bank, dtype=object)[self.cells]
-                ledger = _COORDINATE_BUDGET.get()
-                if ledger is not None:
-                    ledger.retain_basis((bank, corners))
+                budget.retain_basis((bank, corners))
                 object.__setattr__(self, "corners", corners)
             return
         object.__setattr__(self, "corners", self.points[self.cells])
 
     @classmethod
-    def from_mesh(cls, mesh: CellMesh, /) -> TetraMetricSource:
+    def from_mesh(
+        cls,
+        mesh: CellMesh,
+        /,
+        *,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    ) -> TetraMetricSource:
         return cls(
             np.asarray(mesh.coordinates, dtype=np.float64),
             np.concatenate(
@@ -1139,71 +1319,89 @@ class TetraMetricSource:
             np.concatenate(
                 [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
             ),
+            budget=budget,
         )
 
 
 @contextmanager
-def _exact_table_boxes(values: np.ndarray, /) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-    """Outward boxes of exact rows using the canonical rational rounding owner."""
-    from .._geometry_predicates import bigint_bytes, exact_bits, exact_charge
-    from ..discretization._coordinate_enclosure import outward
+def _exact_table_boxes(
+    values: np.ndarray,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    """Return outward boxes of rational rows using the shared rounding functions."""
 
-    bits = exact_bits(values)
+    bits = _owner_phydrax__geometry_predicates.exact_bits(values, budget=budget)
     # Each min/max comparison cross-multiplies two b-bit rational inputs;
     # two products and seven division/comparison temporaries fit 2b+1 bits.
-    # Both float buffers persist only until the owning BVH has consumed them.
-    storage = 48 * values.shape[0] + 7 * bigint_bytes(2 * bits + 1)
-    with exact_charge(4 * values.size + 6 * values.shape[0], storage):
+    # Both float buffers persist until the BVH has consumed them.
+    storage = 48 * values.shape[0] + 7 * _owner_phydrax__geometry_predicates.bigint_bytes(
+        2 * bits + 1
+    )
+    with _owner_phydrax__geometry_predicates.exact_charge(
+        4 * values.size + 6 * values.shape[0], storage, budget=budget
+    ):
         lower = np.empty((values.shape[0], 3), dtype=np.float64)
         upper = np.empty_like(lower)
         for row, corners in enumerate(values):
             for axis in range(3):
-                lower[row, axis] = outward(
-                    min(corner[axis] for corner in corners), -np.inf
+                lower[row, axis] = fraction_endpoint(
+                    min(corner[axis] for corner in corners), upper=False, saturate=True
                 )
-                upper[row, axis] = outward(
-                    max(corner[axis] for corner in corners), np.inf
+                upper[row, axis] = fraction_endpoint(
+                    max(corner[axis] for corner in corners), upper=True, saturate=True
                 )
         yield lower, upper
 
 
-def _metric_source_bvh(tables: TetraMetricSource, /) -> PackedBVH:
+def _metric_source_bvh(
+    tables: TetraMetricSource,
+    /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> PackedBVH:
     if tables.source_geometry is None:
         return prepare_bvh(
             np.min(tables.corners, axis=1),
             np.max(tables.corners, axis=1),
             dtype=jnp.float64,
         )
-    with _exact_table_boxes(tables.corners) as (lower, upper):
+    with _exact_table_boxes(tables.corners, budget=budget) as (lower, upper):
         return prepare_bvh(lower, upper, dtype=jnp.float64)
 
 
 def _exact_source_weights(
     corners: np.ndarray,
-    point: ExactPoint,
+    point: _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint,
     /,
+    *,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[Fraction, Fraction, Fraction, Fraction]:
-    from .._geometry_predicates import bigint_bytes, exact_bits, exact_charge
-    from ..discretization._coordinate_enclosure import _COORDINATE_BUDGET
-    from ..linalg._small_batched import prepare_exact_small_linear_actions
 
-    with exact_charge(0, 8 * 15):
-        bits = exact_bits(np.asarray((*corners, point), dtype=object))
+    with _owner_phydrax__geometry_predicates.exact_charge(0, 8 * 15, budget=budget):
+        bits = _owner_phydrax__geometry_predicates.exact_bits(
+            np.asarray((*corners, point), dtype=object), budget=budget
+        )
     # Nine source-edge and three query differences each have numerator and
-    # denominator bounded by 2b+1 bits. Elimination, minor bounds and actual
-    # operation counts belong exclusively to the shared exact linear owner.
-    with exact_charge(12, 12 * (2 * bigint_bytes(2 * bits + 1) + 64)):
+    # denominator bounded by 2b+1 bits. Elimination, minor bounds, and
+    # arithmetic operation counts belong to the shared rational linear owner.
+    with _owner_phydrax__geometry_predicates.exact_charge(
+        12,
+        12 * (2 * _owner_phydrax__geometry_predicates.bigint_bytes(2 * bits + 1) + 64),
+        budget=budget,
+    ):
         matrix = tuple(
             tuple(corners[column + 1, axis] - corners[0, axis] for column in range(3))
             for axis in range(3)
         )
         right = tuple((point[axis] - corners[0, axis],) for axis in range(3))
-        solved = prepare_exact_small_linear_actions(
-            matrix, right, coordinate_budget=_COORDINATE_BUDGET.get()
+        solved = _owner_phydrax_linalg__small_batched.prepare_exact_small_linear_actions(
+            matrix, right, budget=budget
         )
         if solved.actions is None or solved.determinant <= 0:
             raise ValueError(
-                "An exact tetrahedral metric source requires positive authoritative cells."
+                "TetraMetricSource.cells must have positive rational determinants; got a nonpositive source cell"
             )
         reference = tuple(row[0] for row in solved.actions)
         return (
@@ -1223,19 +1421,34 @@ def _locate_exact_source_stencil(
     require_coverage: bool,
     prepared_bvh: PackedBVH | None,
     work_counter: list[int] | None,
-    exact_points: tuple[ExactPoint, ...] | None,
+    exact_points: tuple[
+        _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint, ...
+    ]
+    | None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Select immutable original S cells and sample the tensor at authoritative S."""
-    from .._geometry_predicates import exact_charge
+    """Select immutable source cells and sample the tensor in source coordinates."""
 
-    bank = tuple(_point(row) for row in rounded) if exact_points is None else exact_points
+    bank = (
+        tuple(plc_rational_point(row) for row in rounded)
+        if exact_points is None
+        else exact_points
+    )
     if len(bank) != rounded.shape[0]:
         raise ValueError(
-            "Exact metric query witnesses must align with their carrier rows."
+            "tetra_metric.query_witnesses must align with carrier rows; got incompatible lengths"
         )
-    tree = _metric_source_bvh(tables) if prepared_bvh is None else prepared_bvh
-    with exact_charge(0, 8 * 3 * len(bank)):
-        with _exact_table_boxes(np.asarray(bank, dtype=object)[:, None, :]) as (
+    tree = (
+        _metric_source_bvh(tables, budget=budget)
+        if prepared_bvh is None
+        else prepared_bvh
+    )
+    with _owner_phydrax__geometry_predicates.exact_charge(
+        0, 8 * 3 * len(bank), budget=budget
+    ):
+        with _exact_table_boxes(
+            np.asarray(bank, dtype=object)[:, None, :], budget=budget
+        ) as (
             lower,
             upper,
         ):
@@ -1245,13 +1458,16 @@ def _locate_exact_source_stencil(
     weights = np.zeros((len(bank), 4), dtype=np.float64)
     work = 0
     for cells, points in bvh_overlap_pair_blocks(tree, queries, include_touching=True):
+        budget.ticket.checkpoint()
         for cell, query in zip(cells, points, strict=True):
             work += 1
             if work_counter is not None:
                 work_counter[0] += 1
             if work > maximum_pairs:
-                raise _source_location_budget(maximum_pairs, work)
-            coefficients = _exact_source_weights(tables.corners[cell], bank[query])
+                raise source_location_budget(maximum_pairs, work)
+            coefficients = _exact_source_weights(
+                tables.corners[cell], bank[query], budget=budget
+            )
             if (
                 min(coefficients) < 0
                 or tables.cell_global_ids[cell] >= selected_ids[query]
@@ -1261,10 +1477,10 @@ def _locate_exact_source_stencil(
             weights[query] = tuple(float(value) for value in coefficients)
     covered = selected >= 0
     if require_coverage and np.any(~covered):
-        raise MeshingFailure(
-            MeshingFailureCategory.LINEAGE_FAILED,
-            "A metric target source witness lacks an exactly certified original source host.",
-            stage=MeshingStageKind.LINEAGE_CONSTRUCTION.value,
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.LINEAGE_FAILED,
+            "tetra_metric.source_location must find a predicate-certified source host; got an uncovered target point",
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.LINEAGE_CONSTRUCTION.value,
         )
     weights[~covered, 0] = 1.0
     weights /= np.sum(weights, axis=1, keepdims=True)
@@ -1275,7 +1491,8 @@ def _locate_exact_source_stencil(
     )
 
 
-def _locate_stencil(
+@checked
+def locate_stencil(
     mesh: CellMesh,
     points: np.ndarray,
     maximum_pairs: int,
@@ -1284,15 +1501,17 @@ def _locate_stencil(
     require_coverage: bool = True,
     prepared_bvh: PackedBVH | None = None,
     work_counter: list[int] | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Locate in affine source tets; a supplied BVH must bind this exact source/order."""
+    """Locate points in affine tetrahedra with a BVH bound to source row order."""
     return _locate_source_stencil(
-        TetraMetricSource.from_mesh(mesh),
+        TetraMetricSource.from_mesh(mesh, budget=budget),
         points,
         maximum_pairs,
         require_coverage=require_coverage,
         prepared_bvh=prepared_bvh,
         work_counter=work_counter,
+        budget=budget,
     )
 
 
@@ -1305,18 +1524,22 @@ def _locate_source_stencil(
     require_coverage: bool = True,
     prepared_bvh: PackedBVH | None = None,
     work_counter: list[int] | None = None,
-    exact_points: tuple[ExactPoint, ...] | None = None,
+    exact_points: tuple[
+        _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint, ...
+    ]
+    | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """The shared exact affine kernel, bound to immutable original source rows."""
-    if prepared_bvh is not None and not isinstance(prepared_bvh, PackedBVH):
-        raise TypeError("prepared_bvh must be PackedBVH.")
+    """Locate points with the affine kernel bound to immutable source rows."""
     if work_counter is not None and (
         len(work_counter) != 1
         or isinstance(work_counter[0], bool)
         or not isinstance(work_counter[0], int)
         or work_counter[0] < 0
     ):
-        raise ValueError("work_counter must contain one nonnegative integer.")
+        raise ValueError(
+            "tetra_metric.work_counter must contain one nonnegative integer; got an invalid counter bank"
+        )
     if tables.source_geometry is not None:
         return _locate_exact_source_stencil(
             tables,
@@ -1326,6 +1549,7 @@ def _locate_source_stencil(
             prepared_bvh=prepared_bvh,
             work_counter=work_counter,
             exact_points=exact_points,
+            budget=budget,
         )
     cells = tables.cells
     cell_ids = tables.cell_global_ids
@@ -1345,7 +1569,7 @@ def _locate_source_stencil(
     for block_cell, block_query in bvh_overlap_pair_blocks(
         tree, queries, include_touching=True
     ):
-        # Bucket padding repeats query zero; only actual query pairs are charged.
+        # Bucket padding repeats query zero; only unpadded query pairs are charged.
         actual = block_query < points.shape[0]
         cell, query = block_cell[actual], block_query[actual]
         if not cell.size:
@@ -1354,7 +1578,7 @@ def _locate_source_stencil(
         if work_counter is not None:
             work_counter[0] += cell.size
         if work > maximum_pairs:
-            raise _source_location_budget(maximum_pairs, work)
+            raise source_location_budget(maximum_pairs, work)
         corners = _bucket(source[cell])
         target = _bucket(points[query])
         matrix = np.swapaxes(corners[:, 1:] - corners[:, :1], 1, 2)
@@ -1370,8 +1594,10 @@ def _locate_source_stencil(
             vertices = [corners[:, index] for index in range(4)]
             vertices[slot] = target
             signs = exact_orient3d(*vertices)[: cell.size]
-            valid &= signs >= PredicateSign.ZERO
-            coefficients[signs == PredicateSign.ZERO, slot] = 0.0
+            valid &= signs >= _dependency_phydrax__geometry_predicates.PredicateSign.ZERO
+            coefficients[
+                signs == _dependency_phydrax__geometry_predicates.PredicateSign.ZERO, slot
+            ] = 0.0
         accepted = np.flatnonzero(valid & (cell_ids[cell] < selected_ids[query]))
         order = accepted[np.lexsort((cell_ids[cell[accepted]], query[accepted]))]
         first = (
@@ -1387,10 +1613,10 @@ def _locate_source_stencil(
         weights[query[chosen]] = coefficients[chosen]
     covered = selected >= 0
     if require_coverage and np.any(~covered):
-        raise MeshingFailure(
-            MeshingFailureCategory.LINEAGE_FAILED,
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.LINEAGE_FAILED,
             "A metric target vertex lacks an exactly certified source host.",
-            stage=MeshingStageKind.LINEAGE_CONSTRUCTION.value,
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.LINEAGE_CONSTRUCTION.value,
         )
     weights = np.maximum(weights, 0.0)
     weights[~covered, 0] = 1.0
@@ -1399,6 +1625,42 @@ def _locate_source_stencil(
         ids[cells[np.maximum(selected, 0)]],
         weights,
         np.broadcast_to(covered[:, None], weights.shape),
+    )
+
+
+def _constrained_face_relations(
+    relations: _dependency_phydrax_meshing__topology_edit.EntityRelations,
+    snapshot: TetMeshArrays,
+    identifiers: np.ndarray,
+    parents: dict[int, tuple[int, ...]],
+    /,
+) -> _dependency_phydrax_meshing__topology_edit.EntityRelations:
+    """Retain native facet ancestry independently of interpolation support."""
+    targets = np.sort(identifiers[snapshot.faces], axis=1)
+    target_keys = {tuple(row) for row in targets.tolist()}
+    keep = np.asarray(
+        [tuple(row) not in target_keys for row in relations.target_keys.tolist()],
+        dtype=np.bool_,
+    )
+    sources = np.asarray(
+        [parents[int(identifier)] for identifier in snapshot.face_sources],
+        dtype=np.int64,
+    ).reshape((-1, 3))
+    changed = np.any(sources != targets, axis=1)
+    return _dependency_phydrax_meshing__topology_edit.EntityRelations(
+        2,
+        np.concatenate((relations.source_keys[keep], sources[changed])),
+        np.concatenate((relations.target_keys[keep], targets[changed])),
+        np.concatenate(
+            (
+                relations.kinds[keep],
+                np.full(
+                    np.count_nonzero(changed),
+                    int(EntityLineageKind.REFINED_FROM),
+                    dtype=np.int8,
+                ),
+            )
+        ),
     )
 
 
@@ -1411,8 +1673,12 @@ def _assemble(
     /,
     *,
     source_tables: TetraMetricSource | None = None,
-    exact_points: tuple[ExactPoint, ...] | None = None,
-) -> tuple[CellTopologyEdit, np.ndarray]:
+    exact_points: tuple[
+        _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint, ...
+    ]
+    | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> tuple[_dependency_phydrax_meshing__topology_edit.CellTopologyEdit, np.ndarray]:
     live = np.flatnonzero(snapshot.vertex_dimension >= 0)
     row_of = np.full((snapshot.points.shape[0],), -1, dtype=np.int32)
     row_of[live] = np.arange(live.size, dtype=np.int32)
@@ -1420,7 +1686,7 @@ def _assemble(
     ids = np.concatenate(
         (
             source_ids,
-            _fresh_identifiers(
+            fresh_identifiers(
                 int(np.max(source_ids)) + 1, snapshot.points.shape[0] - source_ids.size
             ),
         )
@@ -1445,21 +1711,25 @@ def _assemble(
         ],
         dtype=np.int32,
     )
-    blocks = source_family_blocks(
+    blocks = _dependency_phydrax_meshing__topology_edit.source_family_blocks(
         tuple((block.name, block.cell_kind) for block in mesh.blocks),
         tuple(cells[owners == index] for index in range(len(mesh.blocks))),
         tuple(cell_ids[owners == index] for index in range(len(mesh.blocks))),
     )
     stencil = (
-        _locate_stencil(mesh, snapshot.points[live], maximum_pairs)
+        locate_stencil(mesh, snapshot.points[live], maximum_pairs, budget=budget)
         if source_tables is None or source_tables.source_geometry is None
         else _locate_source_stencil(
-            source_tables, snapshot.points[live], maximum_pairs, exact_points=exact_points
+            source_tables,
+            snapshot.points[live],
+            maximum_pairs,
+            exact_points=exact_points,
+            budget=budget,
         )
     )
     relations = []
     live_ids = ids[live]
-    collapsed = _resolved_collapses(ids, source_ids.size, ancestry.vertex_successor)
+    collapsed = resolved_collapses(ids, source_ids.size, ancestry.vertex_successor)
     relocated = (
         set() if ancestry.relocated_vertices is None else ancestry.relocated_vertices
     )
@@ -1495,16 +1765,19 @@ def _assemble(
     ]
     for dimension in range(4):
         if dimension in (1, 2):
-            relations.append(
-                _subentity_relations(
-                    mesh,
-                    dimension,
-                    snapshot.tetrahedra,
-                    ids,
-                    ancestry.vertex_sources,
-                    collapsed_vertices=collapsed,
-                )
+            relation = subentity_relations(
+                mesh,
+                dimension,
+                snapshot.tetrahedra,
+                ids,
+                ancestry.vertex_sources,
+                collapsed_vertices=collapsed,
             )
+            if dimension == 2 and ancestry.constrained_faces is not None:
+                relation = _constrained_face_relations(
+                    relation, snapshot, ids, ancestry.constrained_faces
+                )
+            relations.append(relation)
             continue
         width = 1 if dimension in (0, 3) else dimension + 1
         pairs = vertex_pairs if dimension == 0 else cell_pairs
@@ -1514,13 +1787,13 @@ def _assemble(
             valid = np.isin(values[:, 1], live_ids if dimension == 0 else cell_ids)
             values = values[valid]
             relations.append(
-                EntityRelations(
+                _dependency_phydrax_meshing__topology_edit.EntityRelations(
                     dimension, values[:, :1], values[:, 1:2], values[:, 2].astype(np.int8)
                 )
             )
         else:
             relations.append(
-                EntityRelations(
+                _dependency_phydrax_meshing__topology_edit.EntityRelations(
                     dimension,
                     np.empty((0, width), dtype=np.int64),
                     np.empty((0, width), dtype=np.int64),
@@ -1532,7 +1805,7 @@ def _assemble(
         if np.array_equal(cell_ids, source_cell_ids) and live.size == source_ids.size
         else "local_reconnection"
     )
-    return CellTopologyEdit(
+    return _dependency_phydrax_meshing__topology_edit.CellTopologyEdit(
         operation, snapshot.points[live], live_ids, blocks, *stencil, tuple(relations)
     ), metric[live]
 
@@ -1540,16 +1813,56 @@ def _assemble(
 _OperationResult = TypeVar("_OperationResult")
 
 
+@contextmanager
+def _metric_coordinate_phase(
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    /,
+    *,
+    maximum_work_units: int,
+    maximum_cavity_cells: int,
+) -> Iterator[NativeBatchTicket]:
+    """Reserve a bounded host/native phase and retain its request counters."""
+    remaining = scope.remaining()
+    storage = budget.storage_ticket
+    retained_bytes = 0 if storage is None else storage.bytes_upper
+    ticket = scope.batch(
+        min(
+            maximum_work_units,
+            max(0, budget.maximum_work_units - budget.work_units),
+            remaining.remaining_work_units,
+        ),
+        queries_upper=remaining.remaining_geometry_queries,
+        bytes_upper=min(
+            max(0, budget.maximum_memory_bytes - retained_bytes),
+            remaining.remaining_managed_bytes,
+        ),
+        cavity_upper=min(maximum_cavity_cells, remaining.remaining_cavity_cells),
+    )
+    with budget.measurement(), budget.bind_ticket(ticket):
+        with ticket.native_target():
+            yield ticket
+
+
 @dataclass(slots=True)
 class _NativeMetricBudget:
     """Cumulative native work, source-pair and per-cavity epoch allowances."""
 
     native: TetMesh3D
-    initial_work: int
     maximum_work_units: int
     maximum_cavity_work: int
     source_tables: TetraMetricSource
     maximum_source_pairs: int
+    scope: NativeExecutionScope
+    coordinate_budget: (
+        _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    )
+    native_work_units: int = 0
+    coordinate_work_units: int = 0
+    phase_ticket: NativeBatchTicket | None = None
+    optimizer_storage: ManagedBytesContributor | None = None
+    band_snapshot: TetMeshArrays | None = None
+    band_incidence: dict[int, int] | None = None
     source_candidates: list[int] = field(default_factory=lambda: [0])
     source_bvh: PackedBVH | None = None
     exhausted: bool = False
@@ -1574,25 +1887,82 @@ class _NativeMetricBudget:
     optimizer_method_id: str | None = None
     optimizer_tolerances: tuple[float, ...] = ()
     record_phase: NativeMeshingPhaseRecorder | None = None
-    execution_budget: NativeExecutionBudget | None = None
     operation_started: float | None = None
     maximum_wall_seconds: float | None = None
 
-    def check_deadline(self) -> None:
-        """Check host preparation/dispatch against the original operation clock."""
-        if self.operation_started is None or self.maximum_wall_seconds is None:
-            if self.execution_budget is not None:
-                # A raw ambient scope owns its steady-clock deadline, but no
-                # Python start timestamp. Observe that same native deadline;
-                # zero is a dry bound, not invented charged work.
-                self.execution_budget.admit_work_bound(0)
+    @contextmanager
+    def phase(self) -> Iterator[None]:
+        """Share one explicit reservation across a bounded epoch phase."""
+        if self.phase_ticket is not None:
+            yield
             return
-        elapsed = monotonic() - self.operation_started
+        with _metric_coordinate_phase(
+            self.scope,
+            self.coordinate_budget,
+            maximum_work_units=max(0, self.maximum_work_units - self.work_units),
+            maximum_cavity_cells=self.maximum_cavity_cells,
+        ) as ticket:
+            with ticket.managed_storage() as storage:
+                self.phase_ticket = ticket
+                self.optimizer_storage = storage
+                try:
+                    yield
+                finally:
+                    self.band_snapshot = None
+                    self.band_incidence = None
+                    self.optimizer_storage = None
+                    self.phase_ticket = None
+
+    def commit_band(
+        self, snapshot: TetMeshArrays, removed: np.ndarray, proposed: np.ndarray, /
+    ) -> None:
+        """Advance phase-local incidence with the accepted cavity delta."""
+        incidence = self.band_incidence
+        if incidence is None:
+            return
+        if not self.optimizer_work(
+            6 * (removed.shape[0] + proposed.shape[0]),
+            self.optimizer_scratch_required_bytes,
+        ):
+            self.band_snapshot = None
+            self.band_incidence = None
+            return
+        for cells, sign in ((removed, -1), (proposed, 1)):
+            keys, counts = _edge_incidence(cells)
+            for key, count in zip(keys.tolist(), counts.tolist(), strict=True):
+                remaining = incidence.get(key, 0) + sign * count
+                if remaining < 0:
+                    raise RuntimeError(
+                        f"tetra_metric.band_incidence must remain nonnegative; got edge={key}, incidence={remaining}"
+                    )
+                if remaining:
+                    incidence[key] = remaining
+                else:
+                    del incidence[key]
+        self.band_snapshot = snapshot
+
+    def admit_optimizer_bound(self, units: int, /) -> None:
+        """Admit the numerical dispatch envelope without charging unexecuted work."""
+        ticket = self.coordinate_budget.ticket
+
+        if units > ticket.remaining_work_units:
+            ticket.refuse(units)
+
+    def check_deadline(self) -> None:
+        """Check host preparation and dispatch against the request clock."""
+        if self.maximum_wall_seconds is None:
+            return
+        started = (
+            self.scope.operation_started
+            if self.operation_started is None
+            else self.operation_started
+        )
+        elapsed = monotonic() - started
         if elapsed > self.maximum_wall_seconds:
-            raise MeshingFailure(
-                MeshingFailureCategory.TIMED_OUT,
+            raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                _leaf_phydrax_meshing__failures.MeshingFailureCategory.TIMED_OUT,
                 "Native meshing exceeded its enforced wall-time limit.",
-                stage=MeshingStageKind.VOLUME_FILL.value,
+                stage=_dependency_phydrax_meshing__trace.MeshingStageKind.VOLUME_FILL.value,
                 requested=(("maximum_wall_seconds", self.maximum_wall_seconds),),
                 achieved=(("elapsed_seconds", elapsed),),
             )
@@ -1616,10 +1986,12 @@ class _NativeMetricBudget:
 
     @property
     def work_units(self) -> int:
-        return self.native.work_units() - self.initial_work + self.optimizer_host_work
+        return (
+            self.native_work_units + self.optimizer_host_work + self.coordinate_work_units
+        )
 
     def optimizer_scratch(self, scratch_bytes: int, /) -> bool:
-        """Admit a bounded host-table reservation before its actual allocation."""
+        """Admit a bounded host-table reservation before allocating the table."""
         self.check_deadline()
         if self.exhausted:
             return False
@@ -1641,10 +2013,17 @@ class _NativeMetricBudget:
                 (("optimizer_scratch_required_bytes", float(scratch_bytes)),),
             )
             return False
+        storage = self.optimizer_storage
+        if storage is None:
+            raise RuntimeError(
+                "tetra_metric.optimizer_storage must belong to an admitted phase; got None"
+            )
+
+        storage.set_bound(max(storage.bound, scratch_bytes))
         return True
 
     def optimizer_work(self, units: int, scratch_bytes: int, /) -> bool:
-        """Reserve one finite host proposal, sharing the original total-work cap."""
+        """Reserve a finite host proposal against the shared total-work cap."""
         self.check_deadline()
         if self.exhausted:
             return False
@@ -1660,8 +2039,11 @@ class _NativeMetricBudget:
             return False
         if not self.optimizer_scratch(scratch_bytes):
             return False
-        if self.execution_budget is not None:
-            self.execution_budget.charge(work=units)
+        ticket = self.coordinate_budget.ticket
+
+        if units > ticket.remaining_work_units:
+            ticket.refuse(units)
+        ticket.consume(units)
         self.optimizer_host_work += units
         self.optimizer_evaluations += 1
         return True
@@ -1683,17 +2065,29 @@ class _NativeMetricBudget:
                     ("work_units", float(self.work_units)),
                     (
                         "native_work_units",
-                        float(self.native.work_units() - self.initial_work),
+                        float(self.native_work_units),
                     ),
                     ("optimizer_host_work_units", float(self.optimizer_host_work)),
                 ),
             )
             return None
+        ticket = self.phase_ticket
+        if ticket is None:
+            raise RuntimeError(
+                "tetra_metric.phase_ticket must belong to an admitted phase; got None"
+            )
+
+        before = ticket.native_work_units
         try:
-            self.native.set_work_limit(allowance)
-            result = operation(allowance)
-            self.check_deadline()
-            return result
+            try:
+                self.native.set_work_limit(allowance)
+                result = operation(allowance)
+                self.check_deadline()
+                return result
+            finally:
+                # The native-only local delta excludes host rational arithmetic
+                # and source predicates outside this mesh-operation callback.
+                self.native_work_units += ticket.native_work_units - before
         except MeshcoreError as error:
             if error.status is not MeshcoreStatus.CAPACITY_EXCEEDED:
                 raise
@@ -1705,10 +2099,7 @@ class _NativeMetricBudget:
                 ),
                 (
                     ("work_units", float(self.work_units)),
-                    (
-                        "native_work_units",
-                        float(self.native.work_units() - self.initial_work),
-                    ),
+                    ("native_work_units", float(self.native_work_units)),
                     ("optimizer_host_work_units", float(self.optimizer_host_work)),
                 ),
             )
@@ -1719,7 +2110,10 @@ class _NativeMetricBudget:
         points: np.ndarray,
         /,
         *,
-        exact_points: tuple[ExactPoint, ...] | None = None,
+        exact_points: tuple[
+            _dependency_phydrax_discretization__exact_plc_geometry.ExactPoint, ...
+        ]
+        | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
         self.check_deadline()
         remaining = self.maximum_source_pairs - self.source_candidates[0]
@@ -1732,12 +2126,11 @@ class _NativeMetricBudget:
                 (("source_candidate_pairs", float(self.source_candidates[0])),),
             )
             return None
-        if self.execution_budget is not None:
-            # One actual affine source/field evaluation per submitted point.
-            # Internal exact predicates are independent native telemetry.
-            self.execution_budget.charge(geometry_queries=points.shape[0])
+        self.coordinate_budget.reserve_geometry_queries(points.shape[0])
         if self.source_bvh is None:
-            self.source_bvh = _metric_source_bvh(self.source_tables)
+            self.source_bvh = _metric_source_bvh(
+                self.source_tables, budget=self.coordinate_budget
+            )
         try:
             return _locate_source_stencil(
                 self.source_tables,
@@ -1747,9 +2140,13 @@ class _NativeMetricBudget:
                 prepared_bvh=self.source_bvh,
                 work_counter=self.source_candidates,
                 exact_points=exact_points,
+                budget=self.coordinate_budget,
             )
-        except MeshingFailure as error:
-            if error.evidence.category is not MeshingFailureCategory.RESOURCE_EXHAUSTED:
+        except _leaf_phydrax_meshing__failures.MeshingFailure as error:
+            if (
+                error.evidence.category
+                is not _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED
+            ):
                 raise
             self.refuse(
                 error.evidence.message, error.evidence.requested, error.evidence.achieved
@@ -1759,54 +2156,87 @@ class _NativeMetricBudget:
 
 @dataclass(frozen=True, slots=True)
 class UniformSizeRemeshingGoal:
-    """Original physical size obligations of one admitted hard background.
+    """Retain physical size obligations for an admitted hard background.
 
-    ``minimum_relative_determinant`` is the publishing validity policy's
-    relative determinant floor: no accepted proposal creates a cell whose
-    exact determinant does not exceed it times its vertex-edge product.
+    ``minimum_relative_determinant`` is the publication validity policy's
+    relative determinant floor. Accepted cells must exceed the floor times
+    their vertex-edge product under the determinant predicate.
     """
 
-    control: UniformSizeControl
-    policy: SizeCompliancePolicy
+    control: _dependency_phydrax_meshing__sizing.UniformSizeControl
+    policy: _dependency_phydrax_meshing__sizing.SizeCompliancePolicy
     minimum_relative_determinant: float
     maximum_radius_edge: float | None = None
     minimum_dihedral_degrees: float | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.control, UniformSizeControl):
-            raise TypeError("A uniform size goal requires UniformSizeControl.")
-        if self.control.strength is not SizeControlStrength.HARD:
-            raise ValueError("A physical size-remeshing goal must be hard.")
-        if not isinstance(self.policy, SizeCompliancePolicy):
-            raise TypeError("A uniform size goal requires SizeCompliancePolicy.")
+        if not isinstance(
+            self.control, _dependency_phydrax_meshing__sizing.UniformSizeControl
+        ):
+            raise TypeError(
+                f"UniformSizeRemeshingGoal.control must be UniformSizeControl; got {type(self.control).__name__}"
+            )
+        if (
+            self.control.strength
+            is not _dependency_phydrax_meshing__sizing.SizeControlStrength.HARD
+        ):
+            raise ValueError(
+                f"UniformSizeRemeshingGoal.control.strength must be HARD; got {self.control.strength!r}"
+            )
+        if not isinstance(
+            self.policy, _dependency_phydrax_meshing__sizing.SizeCompliancePolicy
+        ):
+            raise TypeError(
+                f"UniformSizeRemeshingGoal.policy must be SizeCompliancePolicy; got {type(self.policy).__name__}"
+            )
         if not np.isfinite(self.minimum_relative_determinant) or not (
             0.0 <= self.minimum_relative_determinant < 1.0
         ):
-            raise ValueError("A relative determinant floor must lie in [0, 1).")
+            raise ValueError(
+                f"UniformSizeRemeshingGoal.minimum_relative_determinant must lie in [0, 1); got {self.minimum_relative_determinant!r}"
+            )
         if self.maximum_radius_edge is not None and (
             not np.isfinite(self.maximum_radius_edge) or self.maximum_radius_edge <= 0.0
         ):
-            raise ValueError("A proposal radius-edge bound must be finite and positive.")
+            raise ValueError(
+                f"UniformSizeRemeshingGoal.maximum_radius_edge must be finite and positive; got {self.maximum_radius_edge!r}"
+            )
         if self.minimum_dihedral_degrees is not None and (
             not np.isfinite(self.minimum_dihedral_degrees)
             or not 0.0 <= self.minimum_dihedral_degrees <= 180.0
         ):
-            raise ValueError("A proposal dihedral bound must be finite and in degrees.")
+            raise ValueError(
+                f"UniformSizeRemeshingGoal.minimum_dihedral_degrees must lie in [0, 180]; got {self.minimum_dihedral_degrees!r}"
+            )
 
 
-def _physical_size_compliance(
-    snapshot: TetMeshArrays, goal: UniformSizeRemeshingGoal, /
+def physical_size_compliance(
+    snapshot: TetMeshArrays,
+    goal: UniformSizeRemeshingGoal,
+    /,
+    *,
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec
+    | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None = None,
 ) -> tuple[list[tuple[str, float]], list[tuple[str, float]], list[str]]:
-    from .providers._native_publication import (
-        edge_size_evidence,
-        uniform_size_compliance,
-        unique_edges,
-    )
 
-    lengths, growth = edge_size_evidence(
-        snapshot.points, unique_edges(snapshot.tetrahedra, "tetrahedron")
+    lengths, growth = (
+        _owner_phydrax_meshing_providers__native_publication.edge_size_evidence(
+            snapshot.points,
+            _owner_phydrax_meshing_providers__native_publication.unique_edges(
+                snapshot.tetrahedra, "tetrahedron"
+            ),
+            geometry=geometry,
+            mesh=None
+            if geometry is None
+            else CellMesh.from_tetrahedra(snapshot.points, snapshot.tetrahedra),
+            budget=budget,
+        )
     )
-    return uniform_size_compliance(goal.control, goal.policy, lengths, growth)
+    return _owner_phydrax_meshing_providers__native_publication.uniform_size_compliance(
+        goal.control, goal.policy, lengths, growth
+    )
 
 
 def _physical_size_goal_met(
@@ -1815,8 +2245,16 @@ def _physical_size_goal_met(
     goal: UniformSizeRemeshingGoal | None,
     minimum_quality: float,
     /,
+    *,
+    geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec
+    | None = None,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+    | None = None,
 ) -> bool:
-    if goal is None or _physical_size_compliance(snapshot, goal)[2]:
+    if (
+        goal is None
+        or physical_size_compliance(snapshot, goal, geometry=geometry, budget=budget)[2]
+    ):
         return False
     return bool(
         np.all(_quality(snapshot.points, metric, snapshot.tetrahedra) >= minimum_quality)
@@ -1826,9 +2264,9 @@ def _physical_size_goal_met(
 def _preferred_size_fraction(target: float, delta: np.ndarray, /) -> float:
     """Condition the target fraction from squared physical distance.
 
-    Exact power-of-two scaling avoids overflow/underflow of the intermediate
+    Binary power-of-two scaling avoids overflow/underflow in intermediate
     squares and a rounded square-root followed by a second rounded division.
-    Native construction still owns exact represented incidence and admission.
+    Native construction still certifies represented incidence and admission.
     """
     target_mantissa, target_exponent = np.frexp(target)
     _, distance_exponent = np.frexp(np.max(np.abs(delta)))
@@ -1843,7 +2281,7 @@ def _preferred_size_fraction(target: float, delta: np.ndarray, /) -> float:
 
 
 def _edge_incidence(cells: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-    """Canonical tetrahedral edge keys and finite-cell incidence multiplicities."""
+    """Return sorted tetrahedral edge keys and finite-cell incidence counts."""
     pairs = np.sort(cells[:, _TET_EDGES].reshape((-1, 2)), axis=1).astype(np.uint64)
     encoded = (pairs[:, 0] << np.uint64(32)) | pairs[:, 1]
     return np.unique(encoded, return_counts=True)
@@ -1862,15 +2300,19 @@ def _proposal_rows(
     changed_value: np.ndarray | None,
     /,
 ) -> np.ndarray:
-    """Gather real rows, including one explicit append or relocation witness."""
+    """Gather retained rows together with an appended or relocated vertex value."""
     if changed_vertex is None:
         return values[rows]
     if changed_value is None:
-        raise ValueError("A changed vertex requires its actual proposed value.")
+        raise ValueError(
+            "tetra_metric.changed_value must accompany a changed vertex; got None"
+        )
     result = np.empty((*rows.shape, *values.shape[1:]), dtype=values.dtype)
     changed = rows == changed_vertex
     if np.any((rows[~changed] < 0) | (rows[~changed] >= values.shape[0])):
-        raise ValueError("A proposal references no actual or explicitly proposed vertex.")
+        raise ValueError(
+            "tetra_metric.proposal_rows must index retained or proposed vertices; got an invalid row"
+        )
     result[~changed] = values[rows[~changed]]
     result[changed] = changed_value
     return result
@@ -1892,11 +2334,12 @@ class _PhysicalSizeMerit:
 def _physical_size_merit(
     lengths: np.ndarray, growth: float, goal: UniformSizeRemeshingGoal, /
 ) -> _PhysicalSizeMerit:
-    """Numerical deficits from owning evidence, never an alternate acceptance."""
-    from .providers._native_publication import uniform_size_compliance
+    """Return numerical deficits from size-compliance evidence."""
 
-    requested, achieved, issues = uniform_size_compliance(
-        goal.control, goal.policy, lengths, growth
+    requested, achieved, issues = (
+        _owner_phydrax_meshing_providers__native_publication.uniform_size_compliance(
+            goal.control, goal.policy, lengths, growth
+        )
     )
     prefix = f"size:{goal.control.control_id}"
     request = dict(requested)
@@ -1934,9 +2377,9 @@ def _physical_size_merit(
             desired = request[f"{prefix}:maximum_growth_rate"]
             deviation = actual[f"{prefix}:maximum_local_edge_ratio"] - desired
             direction = np.abs(lengths / goal.control.target_size - 1.0)
-        # Only the owning failed-quantity list decides whether a deficit exists.
-        # The requested value normalizes its actual deviation; no quantile or
-        # tolerance comparison is reimplemented by the optimizer.
+        # The size-compliance failure list determines whether a deficit exists.
+        # Requested values normalize measured deviations; the optimizer
+        # does not reimplement quantile or tolerance comparisons.
         deficits.append(float(deviation / desired))
         penalty += float(np.sum(np.maximum(direction, 0.0)) / desired)
     return _PhysicalSizeMerit(
@@ -1950,10 +2393,10 @@ def _physical_size_merit(
 
 @dataclass(frozen=True, slots=True)
 class _PhysicalEdgeLedger:
-    """Sorted edge incidence and actual lengths of one immutable native state.
+    """Retain sorted edge incidence and physical lengths for a native state.
 
-    A bounded cavity delta projects global edge evidence in linear edge space,
-    without copying/sorting the complete tetrahedron table for each candidate.
+    Bounded cavity deltas project global edge evidence in linear edge space
+    without copying or sorting the tetrahedron table for every candidate.
     """
 
     keys: np.ndarray
@@ -1964,12 +2407,29 @@ class _PhysicalEdgeLedger:
 
     @classmethod
     def from_snapshot(
-        cls, snapshot: TetMeshArrays, goal: UniformSizeRemeshingGoal, /
+        cls,
+        snapshot: TetMeshArrays,
+        goal: UniformSizeRemeshingGoal,
+        /,
+        *,
+        geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec
+        | None = None,
+        budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget
+        | None = None,
     ) -> _PhysicalEdgeLedger:
-        from .providers._native_publication import edge_size_evidence
 
         keys, counts = _edge_incidence(snapshot.tetrahedra)
-        lengths, growth = edge_size_evidence(snapshot.points, _edge_rows(keys))
+        lengths, growth = (
+            _owner_phydrax_meshing_providers__native_publication.edge_size_evidence(
+                snapshot.points,
+                _edge_rows(keys),
+                geometry=geometry,
+                mesh=None
+                if geometry is None
+                else CellMesh.from_tetrahedra(snapshot.points, snapshot.tetrahedra),
+                budget=budget,
+            )
+        )
         return cls(
             keys,
             counts,
@@ -1988,7 +2448,6 @@ class _PhysicalEdgeLedger:
         changed_position: np.ndarray | None,
         /,
     ) -> _PhysicalEdgeLedger:
-        from .providers._native_publication import edge_growth_evidence
 
         old_keys, old_counts = _edge_incidence(removed)
         new_keys, new_counts = _edge_incidence(proposed)
@@ -2001,7 +2460,9 @@ class _PhysicalEdgeLedger:
         after_counts[np.searchsorted(affected, old_keys)] -= old_counts
         after_counts[np.searchsorted(affected, new_keys)] += new_counts
         if np.any(after_counts < 0):
-            raise RuntimeError("A metric cavity delta exceeds its actual edge incidence.")
+            raise RuntimeError(
+                "tetra_metric.edge_incidence must remain nonnegative after a cavity delta; got a negative count"
+            )
         edges = _edge_rows(affected)
         endpoints = _proposal_rows(points, edges, changed_vertex, changed_position)
         affected_lengths = np.linalg.norm(endpoints[:, 1] - endpoints[:, 0], axis=1)
@@ -2038,7 +2499,12 @@ class _PhysicalEdgeLedger:
         vertex_count = max(
             self.vertex_count, 0 if changed_vertex is None else changed_vertex + 1
         )
-        growth = edge_growth_evidence(lengths, _edge_rows(keys), vertex_count)
+
+        growth = (
+            _owner_phydrax_meshing_providers__native_publication.edge_growth_evidence(
+                lengths, _edge_rows(keys), vertex_count
+            )
+        )
         return _PhysicalEdgeLedger(
             keys,
             counts,
@@ -2057,7 +2523,7 @@ class _StatisticalProposal:
 
 @dataclass(slots=True)
 class _StatisticalObjective:
-    """Closed size-goal merit and original native shape guards of one epoch."""
+    """Retain size-goal merit and native shape guards for one epoch."""
 
     goal: UniformSizeRemeshingGoal
     edges: _PhysicalEdgeLedger
@@ -2068,7 +2534,7 @@ class _StatisticalObjective:
     _active_edge_keys: np.ndarray | None = None
 
     def offending_edge_keys(self) -> np.ndarray:
-        """Cache the current owning failed-statistic suffix or explicit violations."""
+        """Cache the current failed-statistic suffix or explicit edge violations."""
         if self._active_edge_keys is not None:
             return self._active_edge_keys
         ledger = self.edges
@@ -2206,6 +2672,437 @@ class NativeTetraMetricOutcome(NamedTuple):
     ancestry: _Ancestry
 
 
+class _NativeMetricDriver(StrictModule):
+    native: TetMesh3D
+    source: TetraMetricSource
+    epoch: _NativeMetricBudget
+    fixed_vertices: np.ndarray
+    protected_edges: set[tuple[int, int]]
+    maximum_vertices: int = eqx.field(static=True)
+    maximum_cells: int = eqx.field(static=True)
+    maximum_operations: int = eqx.field(static=True)
+    maximum_cavity_cells: int = eqx.field(static=True)
+    minimum_quality: float = eqx.field(static=True)
+    lower_length: float = eqx.field(static=True)
+    upper_length: float = eqx.field(static=True)
+    optimizer_scratch_bytes: int | None = eqx.field(static=True)
+
+
+class _NativeMetricState(StrictModule):
+    snapshot: TetMeshArrays
+    metric: np.ndarray
+    source_metric: np.ndarray
+    ancestry: _Ancestry
+    objective: _StatisticalObjective | None
+    counts: tuple[int, int, int, int] = eqx.field(static=True, default=(0, 0, 0, 0))
+    operations: int = eqx.field(static=True, default=0)
+    rejected: int = eqx.field(static=True, default=0)
+    compounds: int = eqx.field(static=True, default=0)
+    split_parameters: tuple[float, ...] = eqx.field(static=True, default=())
+
+
+class _NativeMetricStep(StrictModule):
+    state: _NativeMetricState
+    applied: int = eqx.field(static=True)
+    exhausted: bool = eqx.field(static=True)
+
+
+class _NativeMetricOperation(StrEnum):
+    SPLIT = "split"
+    COLLAPSE = "collapse"
+    FLIP = "flip"
+    RING = "ring"
+    RELOCATE = "relocate"
+
+
+def _prepare_native_metric_state(
+    driver: _NativeMetricDriver,
+    metric: np.ndarray,
+    size_goal: UniformSizeRemeshingGoal | None,
+    initial_geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec
+    | None = None,
+) -> _NativeMetricState:
+    with _measure_statistical_phase(driver.epoch, "metric_preparation"):
+        source_metric = _interpolate(
+            metric[:, None], np.ones((metric.shape[0], 1), dtype=np.float64)
+        )
+    values = source_metric.copy()
+    cells = driver.source.cells
+    identifiers = driver.source.cell_global_ids
+    ancestry = _Ancestry(
+        {
+            tuple(sorted(row)): (int(identifier), {int(identifier)})
+            for row, identifier in zip(cells.tolist(), identifiers, strict=True)
+        },
+        int(np.max(identifiers)) + 1,
+        [{int(identifier)} for identifier in driver.source.vertex_global_ids.tolist()],
+    )
+    # Metric interpolation precedes cavity and optimizer allowance binding.
+    driver.epoch.maximum_optimizer_scratch_bytes = driver.optimizer_scratch_bytes
+    driver.epoch.maximum_cavity_cells = driver.maximum_cavity_cells
+    snapshot = driver.native.arrays()
+    if np.unique(snapshot.face_sources).size == snapshot.faces.shape[0]:
+        ancestry.constrained_faces = {
+            int(identifier): tuple(sorted(driver.source.vertex_global_ids[face].tolist()))
+            for identifier, face in zip(
+                snapshot.face_sources, snapshot.faces, strict=True
+            )
+        }
+    objective = (
+        _StatisticalObjective(
+            size_goal,
+            _PhysicalEdgeLedger.from_snapshot(
+                snapshot,
+                size_goal,
+                geometry=initial_geometry,
+                budget=driver.epoch.coordinate_budget,
+            ),
+            driver.epoch,
+            driver.minimum_quality,
+            float(np.sum(_quality(snapshot.points, values, snapshot.tetrahedra))),
+            snapshot.tetrahedra.shape[0],
+        )
+        if size_goal is not None
+        else None
+    )
+    return _NativeMetricState(snapshot, values, source_metric, ancestry, objective)
+
+
+def _run_native_metric_operation(
+    operation: _NativeMetricOperation,
+    driver: _NativeMetricDriver,
+    state: _NativeMetricState,
+) -> _NativeMetricStep:
+    native, epoch = driver.native, driver.epoch
+    snapshot, values, ancestry = state.snapshot, state.metric, state.ancestry
+    objective = state.objective
+    remaining = driver.maximum_operations - state.operations
+    refusals, compounds, parameters, exhausted = 0, 0, (), False
+    match operation:
+        case _NativeMetricOperation.SPLIT:
+            with _measure_statistical_phase(epoch, "metric_split"):
+                (
+                    snapshot,
+                    values,
+                    changes,
+                    attempts,
+                    refusals,
+                    exhausted,
+                    parameters,
+                    compounds,
+                ) = _split_pass(
+                    native,
+                    snapshot,
+                    values,
+                    driver.source,
+                    state.source_metric,
+                    ancestry,
+                    driver.protected_edges,
+                    remaining,
+                    driver.maximum_vertices,
+                    driver.maximum_cells,
+                    driver.maximum_cavity_cells,
+                    epoch,
+                    driver.upper_length,
+                    objective,
+                )
+            count_index = 0
+        case _NativeMetricOperation.COLLAPSE:
+            with _measure_statistical_phase(epoch, "metric_collapse"):
+                snapshot, changes, attempts, refusals = _collapse_pass(
+                    native,
+                    snapshot,
+                    values,
+                    driver.fixed_vertices,
+                    ancestry,
+                    remaining,
+                    driver.minimum_quality,
+                    driver.maximum_cavity_cells,
+                    epoch,
+                    driver.lower_length,
+                    objective,
+                    metric_band=(driver.lower_length, driver.upper_length),
+                )
+            count_index = 1
+        case _NativeMetricOperation.FLIP:
+            with _measure_statistical_phase(epoch, "metric_reconnection"):
+                snapshot, changes, attempts = _flip_pass(
+                    native,
+                    snapshot,
+                    values,
+                    ancestry,
+                    remaining,
+                    epoch,
+                    objective,
+                    minimum_quality=driver.minimum_quality,
+                    metric_band=(driver.lower_length, driver.upper_length),
+                )
+            count_index = 2
+        case _NativeMetricOperation.RING:
+            with _measure_statistical_phase(epoch, "metric_reconnection"):
+                snapshot, changes, attempts, exhausted = _ring_pass(
+                    native,
+                    snapshot,
+                    values,
+                    ancestry,
+                    remaining,
+                    driver.maximum_cavity_cells,
+                    epoch,
+                    driver.maximum_cells,
+                    objective,
+                    minimum_quality=driver.minimum_quality,
+                    metric_band=(driver.lower_length, driver.upper_length),
+                )
+            count_index = 2
+        case _NativeMetricOperation.RELOCATE:
+            with _measure_statistical_phase(epoch, "metric_relocation"):
+                snapshot, changes, attempts = _relocate_pass(
+                    native,
+                    snapshot,
+                    values,
+                    driver.fixed_vertices,
+                    remaining,
+                    driver.source,
+                    state.source_metric,
+                    ancestry,
+                    epoch,
+                    objective,
+                    minimum_quality=driver.minimum_quality,
+                    metric_band=(driver.lower_length, driver.upper_length),
+                )
+            count_index = 3
+        case _:
+            raise ValueError(
+                f"tetra_metric.operation must select an epoch phase; got {operation!r}"
+            )
+    counts = list(state.counts)
+    counts[count_index] += changes
+    return _NativeMetricStep(
+        _NativeMetricState(
+            snapshot,
+            values,
+            state.source_metric,
+            ancestry,
+            objective,
+            (counts[0], counts[1], counts[2], counts[3]),
+            state.operations + attempts,
+            state.rejected + refusals,
+            state.compounds + compounds,
+            state.split_parameters + parameters,
+        ),
+        changes,
+        exhausted or epoch.exhausted,
+    )
+
+
+def _certify_native_metric_evidence(
+    driver: _NativeMetricDriver,
+    state: _NativeMetricState,
+    status: MetricRemeshingStatus,
+    passes: int,
+    topology_operations: bool,
+    size_goal: UniformSizeRemeshingGoal | None,
+    initial_geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec
+    | None = None,
+) -> MetricRemeshingEvidence:
+    epoch = driver.epoch
+    snapshot, values = state.snapshot, state.metric
+    edges = _edges(snapshot.tetrahedra)
+    epoch.check_deadline()
+    coordinate_before = epoch.coordinate_budget.work_units
+    lengths = _lengths(snapshot.points, values, edges)
+    quality = _quality(snapshot.points, values, snapshot.tetrahedra)
+    satisfied = (
+        _physical_size_goal_met(
+            snapshot,
+            values,
+            size_goal,
+            driver.minimum_quality,
+            geometry=initial_geometry,
+            budget=epoch.coordinate_budget,
+        )
+        if size_goal is not None
+        else topology_operations
+        and np.all((lengths >= driver.lower_length) & (lengths <= driver.upper_length))
+        and np.all(quality >= driver.minimum_quality)
+    )
+    if status is not MetricRemeshingStatus.RESOURCE_LIMIT and satisfied:
+        status = MetricRemeshingStatus.COMPLETE
+    requested, achieved, issues = (
+        physical_size_compliance(
+            state.snapshot,
+            size_goal,
+            geometry=initial_geometry,
+            budget=epoch.coordinate_budget,
+        )
+        if size_goal is not None
+        else ([], [], [])
+    )
+    arc_bounds, arc_ids, arc_binding = None, None, None
+    if initial_geometry is not None:
+        if size_goal is None:
+            raise ValueError(
+                "tetra_metric.initial_geometry must bind a physical size goal; got none"
+            )
+        mesh = CellMesh.from_tetrahedra(snapshot.points, snapshot.tetrahedra)
+        physical_lengths, _ = (
+            _owner_phydrax_meshing_providers__native_publication.edge_size_evidence(
+                snapshot.points,
+                edges,
+                geometry=initial_geometry,
+                mesh=mesh,
+                budget=epoch.coordinate_budget,
+            )
+        )
+        lengths = physical_lengths / size_goal.control.target_size
+        arc_bounds = (
+            _owner_phydrax_meshing_providers__native_publication.source_edge_arc_bounds(
+                mesh,
+                initial_geometry,
+                edges,
+                length_scale=size_goal.control.target_size,
+                budget=epoch.coordinate_budget,
+            )
+        )
+        arc_ids = driver.source.vertex_global_ids[edges]
+        arc_binding = canonical_fingerprint(
+            {
+                "coordinate_source": initial_geometry.geometry_layout_id,
+                "metric": array_tree_fingerprint(values),
+                "edges": array_tree_fingerprint(arc_ids),
+            }
+        )
+        achieved.extend(
+            (
+                (f"coordinate_source:{initial_geometry.geometry_layout_id}", 1.0),
+                (
+                    "coordinate_source_execution_error_upper",
+                    initial_geometry.source_execution_error(
+                        mesh, budget=epoch.coordinate_budget
+                    ),
+                ),
+            )
+        )
+        epoch.coordinate_work_units += (
+            epoch.coordinate_budget.work_units - coordinate_before
+        )
+        achieved.append(("coordinate_source_work_units", epoch.coordinate_work_units))
+    return MetricRemeshingEvidence(
+        status,
+        passes=passes,
+        counts=state.counts,
+        rejected_operations=state.rejected,
+        work_units=epoch.work_units,
+        lengths=lengths,
+        quality=quality,
+        criterion=(
+            MetricRemeshingCriterion.SIZE_STATISTICS
+            if size_goal is not None
+            else MetricRemeshingCriterion.UNIT_MESH
+            if topology_operations
+            else MetricRemeshingCriterion.RELOCATION_FIXED_POINT
+        ),
+        split_parameters=state.split_parameters,
+        lower_metric_length=driver.lower_length,
+        upper_metric_length=driver.upper_length,
+        operation_attempts=state.operations,
+        memory=MetricMemoryEvidence(
+            native_counters=driver.native.memory_counters(),
+            optimizer_scratch_required_bytes=epoch.optimizer_scratch_required_bytes,
+        ),
+        size_requested=tuple(requested),
+        size_achieved=tuple(achieved),
+        size_issues=tuple(issues),
+        source_candidate_pairs=epoch.source_candidates[0],
+        metric_quality_floor=driver.minimum_quality,
+        shape_radius_edge_bound=size_goal.maximum_radius_edge
+        if size_goal is not None
+        else None,
+        shape_minimum_dihedral_degrees=(
+            size_goal.minimum_dihedral_degrees if size_goal is not None else None
+        ),
+        resource_message=epoch.resource_message,
+        resource_requested=epoch.resource_requested,
+        resource_achieved=epoch.resource_achieved,
+        compound_splits=state.compounds,
+        expanded_insertions=epoch.expanded_insertions,
+        optimizer=MetricOptimizerEvidence(
+            status_counts=tuple(epoch.optimizer_status_counts)
+            if epoch.optimizer_terminations
+            else (),
+            terminations=tuple(epoch.optimizer_terminations),
+            method_id=epoch.optimizer_method_id,
+            tolerances=epoch.optimizer_tolerances,
+            iterations=epoch.optimizer_iterations,
+            evaluations=epoch.optimizer_objective_evaluations,
+            constraint_evaluations=epoch.optimizer_constraint_evaluations,
+            proposal_evaluations=epoch.optimizer_evaluations,
+            refused_proposals=epoch.optimizer_refused_proposals,
+            refusal_counts=tuple(sorted(epoch.optimizer_refusals.items())),
+            host_work_units=epoch.optimizer_host_work,
+        ),
+        native_work_units=epoch.native_work_units,
+        metric_arc_bounds=arc_bounds,
+        metric_arc_edge_ids=arc_ids,
+        metric_arc_binding=arc_binding,
+    )
+
+
+class _NativeMetricAdmission(StrictModule):
+    optimizer_scratch_bytes: int | None = eqx.field(static=True)
+    operation_started: float | None = eqx.field(static=True)
+    maximum_wall_seconds: float | None = eqx.field(static=True)
+
+    @classmethod
+    def prepare(
+        cls,
+        source: TetraMetricSource,
+        metric: np.ndarray,
+        fixed_vertices: np.ndarray,
+        minimum_quality: float,
+        size_goal: UniformSizeRemeshingGoal | None,
+        topology_operations: bool,
+        optimizer_scratch_bytes: int | None,
+        operation_started: float | None,
+        maximum_wall_seconds: float | None,
+    ) -> _NativeMetricAdmission:
+        validate_metric_quality_floor(
+            minimum_quality,
+            message="tetra_metric.minimum_metric_quality must lie in [0, 1]; got a value outside the unit interval",
+        )
+        if metric.shape != (source.points.shape[0], 3, 3):
+            raise ValueError(
+                f"tetra_metric.metric must have one 3D SPD tensor per source vertex; got shape={metric.shape}"
+            )
+        if fixed_vertices.shape != (source.points.shape[0],):
+            raise ValueError(
+                f"tetra_metric.fixed_vertices must align with source vertices; got shape={fixed_vertices.shape}"
+            )
+        if size_goal is not None and not topology_operations:
+            raise TypeError(
+                "tetra_metric.size_goal must enable topology operations; got a physical-size goal without topology operations"
+            )
+        if optimizer_scratch_bytes is not None:
+            optimizer_scratch_bytes = nonnegative_integer(
+                optimizer_scratch_bytes, "maximum_optimizer_scratch_bytes"
+            )
+        if (operation_started is None) != (maximum_wall_seconds is None):
+            raise ValueError(
+                "tetra_metric.deadline must provide the request clock and wall allowance together; got a partial deadline"
+            )
+        if operation_started is not None and (
+            not np.isfinite(operation_started)
+            or maximum_wall_seconds is None
+            or not np.isfinite(maximum_wall_seconds)
+            or maximum_wall_seconds < 0.0
+        ):
+            raise ValueError(
+                "tetra_metric.deadline must contain a finite clock and nonnegative wall allowance; got invalid deadline values"
+            )
+        return cls(optimizer_scratch_bytes, operation_started, maximum_wall_seconds)
+
+
+@checked
 def execute_native_tetra_metric(
     native: TetMesh3D,
     source_tables: TetraMetricSource,
@@ -2230,15 +3127,18 @@ def execute_native_tetra_metric(
     record_phase: NativeMeshingPhaseRecorder | None = None,
     size_goal: UniformSizeRemeshingGoal | None = None,
     maximum_optimizer_scratch_bytes: int | None = None,
-    execution_budget: NativeExecutionBudget | None = None,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
     operation_started: float | None = None,
     maximum_wall_seconds: float | None = None,
+    initial_geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec
+    | None = None,
 ) -> NativeTetraMetricOutcome:
-    """Run the canonical metric epoch on an existing native constrained owner.
+    """Run a metric epoch on an existing native constrained mesh.
 
-    The affine source carrier supports tensor interpolation and edit ancestry;
-    it never reconstructs the native state or reassigns material/facet/curve IDs.
-    Numerical edge bounds and actual cumulative native work are explicit.
+    The epoch retains native material, facet, and curve IDs. The source
+    carrier supplies tensor interpolation and edit ancestry; numerical edge
+    bounds and cumulative native work remain explicit.
     """
     if (
         not np.isfinite(lower_metric_length)
@@ -2246,8 +3146,21 @@ def execute_native_tetra_metric(
         or not 0.0 <= lower_metric_length <= upper_metric_length
         or upper_metric_length <= 0.0
     ):
-        raise ValueError("Metric edge bounds must form a finite nonnegative interval.")
-    budgets = (
+        raise ValueError(
+            "tetra_metric.metric_edge_band must be a finite nonnegative interval with positive upper bound; got invalid bounds"
+        )
+    schedule = MetricExecutionSchedule(
+        maximum_passes=maximum_passes,
+        maximum_vertices=maximum_vertices,
+        maximum_cells=maximum_cells,
+        maximum_operations=maximum_operations,
+        maximum_work_units=maximum_work_units,
+        maximum_location_pairs=maximum_location_pairs,
+        maximum_cavity_cells=maximum_cavity_cells,
+        maximum_cavity_work=maximum_cavity_work,
+        maximum_arc_work_units=0,
+    )
+    (
         maximum_passes,
         maximum_vertices,
         maximum_cells,
@@ -2256,488 +3169,204 @@ def execute_native_tetra_metric(
         maximum_location_pairs,
         maximum_cavity_cells,
         maximum_cavity_work,
+    ) = (
+        schedule.maximum_passes,
+        schedule.maximum_vertices,
+        schedule.maximum_cells,
+        schedule.maximum_operations,
+        schedule.maximum_work_units,
+        schedule.maximum_location_pairs,
+        schedule.maximum_cavity_cells,
+        schedule.maximum_cavity_work,
     )
-    if any(
-        isinstance(value, bool) or not isinstance(value, int) or value < 0
-        for value in budgets
-    ):
-        raise ValueError("Metric schedule budgets must be nonnegative integers.")
-    if not isinstance(topology_operations, bool) or not isinstance(relocation, bool):
-        raise TypeError("Operation controls must be bool.")
-    if not 0.0 <= minimum_metric_quality <= 1.0:
-        raise ValueError("minimum_metric_quality must lie in [0, 1].")
-    if metric.shape != (source_tables.points.shape[0], 3, 3):
-        raise ValueError("metric must have one 3D SPD tensor per source vertex.")
-    if fixed_vertices.shape != (source_tables.points.shape[0],):
-        raise ValueError("Fixed vertices must align with the source carrier.")
-    if size_goal is not None and (
-        not isinstance(size_goal, UniformSizeRemeshingGoal) or not topology_operations
-    ):
-        raise TypeError(
-            "Physical size-statistic remeshing requires its closed topology goal."
-        )
-    if maximum_optimizer_scratch_bytes is not None and (
-        isinstance(maximum_optimizer_scratch_bytes, bool)
-        or not isinstance(maximum_optimizer_scratch_bytes, int)
-        or maximum_optimizer_scratch_bytes < 0
-    ):
-        raise ValueError("The optimizer scratch allowance must be a nonnegative integer.")
-    if (operation_started is None) != (maximum_wall_seconds is None):
-        raise ValueError(
-            "Metric host deadlines require the original clock and wall allowance together."
-        )
-    if operation_started is not None and (
-        not np.isfinite(operation_started)
-        or maximum_wall_seconds is None
-        or not np.isfinite(maximum_wall_seconds)
-        or maximum_wall_seconds < 0.0
-    ):
-        raise ValueError(
-            "Metric host deadlines require a finite clock and nonnegative wall allowance."
-        )
-    active_budget = current_native_execution_budget()
-    if execution_budget is None:
-        execution_budget = active_budget
-    elif execution_budget is not active_budget:
-        raise ValueError(
-            "A metric epoch must borrow its actual active native execution budget."
-        )
-    budget = _NativeMetricBudget(
+    validate_metric_operation_controls(topology_operations, relocation)
+    admission = _NativeMetricAdmission.prepare(
+        source_tables,
+        metric,
+        fixed_vertices,
+        minimum_metric_quality,
+        size_goal,
+        topology_operations,
+        maximum_optimizer_scratch_bytes,
+        operation_started,
+        maximum_wall_seconds,
+    )
+    epoch = _NativeMetricBudget(
         native,
-        native.work_units(),
         maximum_work_units,
         maximum_cavity_work,
         source_tables,
         maximum_location_pairs,
         record_phase=record_phase,
-        execution_budget=execution_budget,
-        operation_started=operation_started,
-        maximum_wall_seconds=maximum_wall_seconds,
+        scope=scope,
+        coordinate_budget=budget,
+        operation_started=admission.operation_started,
+        maximum_wall_seconds=admission.maximum_wall_seconds,
     )
-    with _measure_statistical_phase(budget, "metric_preparation"):
-        metric = _interpolate(
-            metric[:, None], np.ones((metric.shape[0], 1), dtype=np.float64)
-        )
-    source_metric = metric
-    values = metric.copy()
-    cells = source_tables.cells
-    source_cell_ids = source_tables.cell_global_ids
-    ancestry = _Ancestry(
-        {
-            tuple(sorted(row)): (int(identifier), {int(identifier)})
-            for row, identifier in zip(cells.tolist(), source_cell_ids, strict=True)
-        },
-        int(np.max(source_cell_ids)) + 1,
-        [{int(identifier)} for identifier in source_tables.vertex_global_ids.tolist()],
+    driver = _NativeMetricDriver(
+        native,
+        source_tables,
+        epoch,
+        fixed_vertices,
+        protected_edges,
+        maximum_vertices,
+        maximum_cells,
+        maximum_operations,
+        maximum_cavity_cells,
+        minimum_metric_quality,
+        lower_metric_length,
+        upper_metric_length,
+        admission.optimizer_scratch_bytes,
     )
-    budget.maximum_optimizer_scratch_bytes = maximum_optimizer_scratch_bytes
-    budget.maximum_cavity_cells = maximum_cavity_cells
-    split_parameters: list[float] = []
-    counts = [0, 0, 0, 0]
-    compound_splits = 0
-    rejected, operations, passes = 0, 0, 0
+    if initial_geometry is not None:
+        if size_goal is None:
+            raise ValueError(
+                "execute_native_tetra_metric.initial_geometry must bind a physical size goal; got none"
+            )
+        inverse = 1.0 / size_goal.control.target_size
+        expected = np.eye(3, dtype=np.float64) * (inverse * inverse)
+        if not np.array_equal(metric, np.broadcast_to(expected, metric.shape)):
+            raise ValueError(
+                "execute_native_tetra_metric.initial_geometry must bind its global uniform metric; got another metric field"
+            )
+    coordinate_before = budget.work_units
+    with epoch.phase() if initial_geometry is not None else nullcontext():
+        state = _prepare_native_metric_state(driver, metric, size_goal, initial_geometry)
+    if initial_geometry is not None:
+        epoch.coordinate_work_units += budget.work_units - coordinate_before
+    passes = 0
     status = MetricRemeshingStatus.PASS_LIMIT
-    snapshot = native.arrays()
-    objective = (
-        _StatisticalObjective(
-            size_goal,
-            _PhysicalEdgeLedger.from_snapshot(snapshot, size_goal),
-            budget,
-            minimum_metric_quality,
-            float(np.sum(_quality(snapshot.points, values, snapshot.tetrahedra))),
-            snapshot.tetrahedra.shape[0],
-        )
-        if size_goal is not None
-        else None
-    )
-    for passes in range(1, maximum_passes + 1):
-        budget.check_deadline()
+    for passes in metric_execution_passes(schedule, epoch.check_deadline):
+        snapshot, values = state.snapshot, state.metric
         edges = _edges(snapshot.tetrahedra)
         lengths = _lengths(snapshot.points, values, edges)
         quality = _quality(snapshot.points, values, snapshot.tetrahedra)
-        satisfied = (
-            _physical_size_goal_met(snapshot, values, size_goal, minimum_metric_quality)
-            if size_goal is not None
-            else topology_operations
-            and np.all(
-                (lengths >= lower_metric_length) & (lengths <= upper_metric_length)
+        coordinate_before = budget.work_units
+        with epoch.phase() if initial_geometry is not None else nullcontext():
+            satisfied = (
+                _physical_size_goal_met(
+                    snapshot,
+                    values,
+                    size_goal,
+                    minimum_metric_quality,
+                    geometry=initial_geometry,
+                    budget=budget,
+                )
+                if size_goal is not None
+                else topology_operations
+                and np.all(
+                    (lengths >= lower_metric_length) & (lengths <= upper_metric_length)
+                )
+                and np.all(quality >= minimum_metric_quality)
             )
-            and np.all(quality >= minimum_metric_quality)
-        )
+        if initial_geometry is not None:
+            epoch.coordinate_work_units += budget.work_units - coordinate_before
         if satisfied:
             status = MetricRemeshingStatus.COMPLETE
             break
+        if initial_geometry is not None:
+            raise ValueError(
+                "execute_native_tetra_metric.initial_geometry must satisfy the initial goal before native mutations; got unresolved immutable source coordinates"
+            )
         applied = 0
-        if topology_operations:
-            with _measure_statistical_phase(budget, "metric_split"):
-                (
-                    snapshot,
-                    values,
-                    changes,
-                    attempts,
-                    refusals,
-                    exhausted,
-                    parameters,
-                    compounds,
-                ) = _split_pass(
-                    native,
-                    snapshot,
-                    values,
-                    source_tables,
-                    source_metric,
-                    ancestry,
-                    protected_edges,
-                    maximum_operations - operations,
-                    maximum_vertices,
-                    maximum_cells,
-                    maximum_cavity_cells,
-                    budget,
-                    upper_metric_length,
-                    objective,
-                )
-            counts[0] += changes
-            compound_splits += compounds
-            applied += changes
-            operations += attempts
-            rejected += refusals
-            split_parameters.extend(parameters)
-            if exhausted or budget.exhausted:
+        operations = (
+            (
+                _NativeMetricOperation.SPLIT,
+                _NativeMetricOperation.COLLAPSE,
+                _NativeMetricOperation.FLIP,
+                _NativeMetricOperation.RING,
+            )
+            if topology_operations
+            else ()
+        )
+        for operation in (*operations, _NativeMetricOperation.RELOCATE):
+            if operation is _NativeMetricOperation.RELOCATE and (
+                not relocation or state.operations >= maximum_operations
+            ):
+                continue
+            step = _run_native_metric_operation(operation, driver, state)
+            state = step.state
+            applied += step.applied
+            if step.exhausted:
                 status = MetricRemeshingStatus.RESOURCE_LIMIT
                 break
             if _physical_size_goal_met(
-                snapshot, values, size_goal, minimum_metric_quality
+                state.snapshot, state.metric, size_goal, minimum_metric_quality
             ):
                 status = MetricRemeshingStatus.COMPLETE
                 break
-            with _measure_statistical_phase(budget, "metric_collapse"):
-                snapshot, changes, attempts, refusals = _collapse_pass(
-                    native,
-                    snapshot,
-                    values,
-                    fixed_vertices,
-                    ancestry,
-                    maximum_operations - operations,
-                    minimum_metric_quality,
-                    maximum_cavity_cells,
-                    budget,
-                    lower_metric_length,
-                    objective,
-                )
-            counts[1] += changes
-            applied += changes
-            operations += attempts
-            rejected += refusals
-            if budget.exhausted:
-                status = MetricRemeshingStatus.RESOURCE_LIMIT
-                break
-            if _physical_size_goal_met(
-                snapshot, values, size_goal, minimum_metric_quality
-            ):
-                status = MetricRemeshingStatus.COMPLETE
-                break
-            with _measure_statistical_phase(budget, "metric_reconnection"):
-                snapshot, changes, attempts = _flip_pass(
-                    native,
-                    snapshot,
-                    values,
-                    ancestry,
-                    maximum_operations - operations,
-                    budget,
-                    objective,
-                )
-            counts[2] += changes
-            applied += changes
-            operations += attempts
-            if budget.exhausted:
-                status = MetricRemeshingStatus.RESOURCE_LIMIT
-                break
-            if _physical_size_goal_met(
-                snapshot, values, size_goal, minimum_metric_quality
-            ):
-                status = MetricRemeshingStatus.COMPLETE
-                break
-            with _measure_statistical_phase(budget, "metric_reconnection"):
-                snapshot, changes, attempts, exhausted = _ring_pass(
-                    native,
-                    snapshot,
-                    values,
-                    ancestry,
-                    maximum_operations - operations,
-                    maximum_cavity_cells,
-                    budget,
-                    maximum_cells,
-                    objective,
-                )
-            counts[2] += changes
-            applied += changes
-            operations += attempts
-            if exhausted or budget.exhausted:
-                status = MetricRemeshingStatus.RESOURCE_LIMIT
-                break
-            if _physical_size_goal_met(
-                snapshot, values, size_goal, minimum_metric_quality
-            ):
-                status = MetricRemeshingStatus.COMPLETE
-                break
-        if relocation and operations < maximum_operations:
-            with _measure_statistical_phase(budget, "metric_relocation"):
-                snapshot, changes, attempts = _relocate_pass(
-                    native,
-                    snapshot,
-                    values,
-                    fixed_vertices,
-                    maximum_operations - operations,
-                    source_tables,
-                    source_metric,
-                    ancestry,
-                    budget,
-                    objective,
-                )
-            counts[3] += changes
-            applied += changes
-            operations += attempts
-            if budget.exhausted:
-                status = MetricRemeshingStatus.RESOURCE_LIMIT
-                break
-            if _physical_size_goal_met(
-                snapshot, values, size_goal, minimum_metric_quality
-            ):
-                status = MetricRemeshingStatus.COMPLETE
-                break
+        if status in (
+            MetricRemeshingStatus.COMPLETE,
+            MetricRemeshingStatus.RESOURCE_LIMIT,
+        ):
+            break
         if applied == 0:
             status = (
                 MetricRemeshingStatus.RESOURCE_LIMIT
-                if operations >= maximum_operations
+                if state.operations >= maximum_operations
                 else MetricRemeshingStatus.STALLED
             )
             if (
                 not topology_operations
-                and operations < maximum_operations
+                and state.operations < maximum_operations
                 and np.all(quality >= minimum_metric_quality)
             ):
                 status = MetricRemeshingStatus.COMPLETE
             break
-    edges = _edges(snapshot.tetrahedra)
-    budget.check_deadline()
-    lengths = _lengths(snapshot.points, values, edges)
-    quality = _quality(snapshot.points, values, snapshot.tetrahedra)
-    satisfied = (
-        _physical_size_goal_met(snapshot, values, size_goal, minimum_metric_quality)
-        if size_goal is not None
-        else topology_operations
-        and np.all((lengths >= lower_metric_length) & (lengths <= upper_metric_length))
-        and np.all(quality >= minimum_metric_quality)
-    )
-    if status is not MetricRemeshingStatus.RESOURCE_LIMIT and satisfied:
-        status = MetricRemeshingStatus.COMPLETE
-    requested, achieved, issues = (
-        _physical_size_compliance(snapshot, size_goal)
-        if size_goal is not None
-        else ([], [], [])
-    )
-    evidence = MetricRemeshingEvidence(
-        status,
-        passes=passes,
-        counts=(counts[0], counts[1], counts[2], counts[3]),
-        rejected_operations=rejected,
-        work_units=budget.work_units,
-        lengths=lengths,
-        quality=quality,
-        criterion=(
-            MetricRemeshingCriterion.SIZE_STATISTICS
-            if size_goal is not None
-            else MetricRemeshingCriterion.UNIT_MESH
-            if topology_operations
-            else MetricRemeshingCriterion.RELOCATION_FIXED_POINT
-        ),
-        split_parameters=tuple(split_parameters),
-        lower_metric_length=lower_metric_length,
-        upper_metric_length=upper_metric_length,
-        operation_attempts=operations,
-        native_memory_evidence=tuple(int(value) for value in native.memory_evidence()),
-        size_requested=tuple(requested),
-        size_achieved=tuple(achieved),
-        size_issues=tuple(issues),
-        source_candidate_pairs=budget.source_candidates[0],
-        metric_quality_floor=minimum_metric_quality,
-        shape_radius_edge_bound=size_goal.maximum_radius_edge
-        if size_goal is not None
-        else None,
-        shape_minimum_dihedral_degrees=(
-            size_goal.minimum_dihedral_degrees if size_goal is not None else None
-        ),
-        resource_message=budget.resource_message,
-        resource_requested=budget.resource_requested,
-        resource_achieved=budget.resource_achieved,
-        compound_splits=compound_splits,
-        expanded_insertions=budget.expanded_insertions,
-        optimizer_status_counts=(
-            tuple(budget.optimizer_status_counts) if budget.optimizer_terminations else ()
-        ),
-        optimizer_terminations=tuple(budget.optimizer_terminations),
-        optimizer_method_id=budget.optimizer_method_id,
-        optimizer_tolerances=budget.optimizer_tolerances,
-        optimizer_iterations=budget.optimizer_iterations,
-        optimizer_evaluations=budget.optimizer_objective_evaluations,
-        optimizer_constraint_evaluations=budget.optimizer_constraint_evaluations,
-        optimizer_proposal_evaluations=budget.optimizer_evaluations,
-        optimizer_refused_proposals=budget.optimizer_refused_proposals,
-        optimizer_refusal_counts=tuple(sorted(budget.optimizer_refusals.items())),
-        optimizer_host_work_units=budget.optimizer_host_work,
-        optimizer_scratch_required_bytes=budget.optimizer_scratch_required_bytes,
-        native_work_units=native.work_units() - budget.initial_work,
-    )
-    native.set_work_limit(max(0, maximum_work_units - budget.work_units))
-    return NativeTetraMetricOutcome(snapshot, values, evidence, ancestry)
+    snapshot, values = state.snapshot, state.metric
+    with epoch.phase() if initial_geometry is not None else nullcontext():
+        evidence = _certify_native_metric_evidence(
+            driver,
+            state,
+            status,
+            passes,
+            topology_operations,
+            size_goal,
+            initial_geometry,
+        )
+    native.set_work_limit(max(0, maximum_work_units - epoch.work_units))
+    return NativeTetraMetricOutcome(snapshot, values, evidence, state.ancestry)
 
 
-def execute_tetra_metric_adaptation(
+class _TetraMetricInput(StrictModule):
+    points: np.ndarray
+    metric: np.ndarray
+    cells: np.ndarray
+    cell_ids: np.ndarray
+    regions: np.ndarray
+    protected: np.ndarray
+    fixed: np.ndarray
+    faces: np.ndarray
+    face_sources: np.ndarray
+    segments: np.ndarray
+    segment_sources: np.ndarray
+
+
+def _prepare_tetra_metric_input(
     mesh: CellMesh,
     metric: ArrayLike,
-    /,
-    *,
-    cell_classes: ArrayLike | None = None,
-    facet_classes: ArrayLike | None = None,
-    edge_classes: ArrayLike | None = None,
-    protected_edges: ArrayLike | None = None,
-    fixed_vertices: ArrayLike | None = None,
-    maximum_passes: int = 16,
-    topology_operations: bool = True,
-    relocation: bool = True,
-    minimum_metric_quality: float = 0.05,
-    maximum_vertices: int = 1000000,
-    maximum_cells: int = 6000000,
-    maximum_operations: int = 100000,
-    maximum_work_units: int = 1000000000,
-    lower_metric_length: float = _LOWER,
-    upper_metric_length: float = _UPPER,
-    maximum_location_pairs: int = 10000000,
-    maximum_cavity_cells: int = 512,
-    maximum_cavity_work: int = 10000,
-    maximum_scratch_bytes: int = 8000000000,
-    record_phase: NativeMeshingPhaseRecorder | None = None,
-    source_geometry: CellGeometrySpec | None = None,
-) -> TetraMetricOutcome:
-    """Native legal split/directional collapse, metric cavity improvement and relocation.
-
-    Input is an affine tetrahedral carrier. Curved-map admission/publication is
-    owned by the adaptation geometry transaction, not inferred here. All edges
-    count toward the unit criterion, including immutable features. Resource
-    exhaustion is distinct from a legal-operation fixed point.
-    """
-    if not isinstance(mesh, CellMesh):
-        raise TypeError("mesh must be CellMesh.")
-    if source_geometry is not None and not isinstance(source_geometry, CellGeometrySpec):
-        raise TypeError("source_geometry must be CellGeometrySpec or None.")
-    if mesh.ambient_dimension != 3 or any(
-        block.cell_kind != "tetrahedron" for block in mesh.blocks
-    ):
-        raise ValueError(
-            "Tetrahedral metric adaptation requires tetrahedron blocks in 3D."
-        )
-    budgets = (
-        maximum_passes,
-        maximum_vertices,
-        maximum_cells,
-        maximum_operations,
-        maximum_work_units,
-        maximum_location_pairs,
-        maximum_cavity_cells,
-        maximum_cavity_work,
-        maximum_scratch_bytes,
-    )
-    if any(
-        isinstance(value, bool) or not isinstance(value, int) or value < 0
-        for value in budgets
-    ):
-        raise ValueError("Metric schedule budgets must be nonnegative integers.")
-    _stage_source_limits(mesh, maximum_vertices, maximum_cells)
-    if not isinstance(topology_operations, bool) or not isinstance(relocation, bool):
-        raise TypeError("Operation controls must be bool.")
-    if record_phase is not None and not callable(record_phase):
-        raise TypeError("record_phase must be a phase recorder callable.")
-    if not 0.0 <= minimum_metric_quality <= 1.0:
-        raise ValueError("minimum_metric_quality must lie in [0, 1].")
-    if source_geometry is not None and isinstance(
-        source_geometry.exact_source, ExactPlcCellGeometrySource
-    ):
-        from ..discretization._coordinate_enclosure import (
-            _COORDINATE_BUDGET,
-            CoordinateEnclosureBudget,
-            CoordinateEnclosureResourceError,
-        )
-
-        ledger = _COORDINATE_BUDGET.get()
-        native_owner = current_native_execution_budget()
-        if ledger is None or native_owner is None:
-            ledger = (
-                CoordinateEnclosureBudget(maximum_work_units, maximum_scratch_bytes)
-                if ledger is None
-                else ledger
-            )
-            native_scope = (
-                NativeExecutionBudget(
-                    max_work=maximum_work_units,
-                    max_geometry_queries=maximum_location_pairs,
-                    max_cavity_cells=maximum_cavity_cells,
-                    max_scratch_bytes=maximum_scratch_bytes,
-                    max_wall_seconds=np.inf,
-                )
-                if native_owner is None
-                else nullcontext(native_owner)
-            )
-            try:
-                with native_scope, ledger.activate():
-                    return execute_tetra_metric_adaptation(
-                        mesh,
-                        metric,
-                        cell_classes=cell_classes,
-                        facet_classes=facet_classes,
-                        edge_classes=edge_classes,
-                        protected_edges=protected_edges,
-                        fixed_vertices=fixed_vertices,
-                        maximum_passes=maximum_passes,
-                        topology_operations=topology_operations,
-                        relocation=relocation,
-                        minimum_metric_quality=minimum_metric_quality,
-                        maximum_vertices=maximum_vertices,
-                        maximum_cells=maximum_cells,
-                        maximum_operations=maximum_operations,
-                        maximum_work_units=maximum_work_units,
-                        lower_metric_length=lower_metric_length,
-                        upper_metric_length=upper_metric_length,
-                        maximum_location_pairs=maximum_location_pairs,
-                        maximum_cavity_cells=maximum_cavity_cells,
-                        maximum_cavity_work=maximum_cavity_work,
-                        maximum_scratch_bytes=maximum_scratch_bytes,
-                        record_phase=record_phase,
-                        source_geometry=source_geometry,
-                    )
-            except CoordinateEnclosureResourceError as error:
-                raise MeshingFailure(
-                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
-                    "Exact tetrahedral source actions exhausted the original metric allowance.",
-                    stage=MeshingStageKind.OPTIMIZATION.value,
-                    requested=(
-                        ("maximum_work_units", maximum_work_units),
-                        ("maximum_scratch_bytes", maximum_scratch_bytes),
-                    ),
-                    achieved=(
-                        ("coordinate_work_units", ledger.work_units),
-                        ("coordinate_peak_bytes_upper", ledger.peak_bytes_upper),
-                    ),
-                ) from error
+    cell_classes: ArrayLike | None,
+    facet_classes: ArrayLike | None,
+    edge_classes: ArrayLike | None,
+    protected_edges: ArrayLike | None,
+    fixed_vertices: ArrayLike | None,
+) -> _TetraMetricInput:
     points = np.asarray(mesh.coordinates, dtype=np.float64)
     values = np.asarray(metric, dtype=np.float64)
     if values.shape != (points.shape[0], 3, 3):
-        raise ValueError("metric must have one 3D SPD tensor per vertex.")
+        raise ValueError(
+            f"tetra_metric.metric must have one 3D SPD tensor per vertex; got shape={values.shape}"
+        )
     cells = np.concatenate(
         [np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks]
     )
-    source_cell_ids = np.concatenate(
+    cell_ids = np.concatenate(
         [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
     )
-    rows = key_rows(entity_keys(mesh, 3), source_cell_ids[:, None])
+    rows = entity_keys_owner.key_rows(
+        entity_keys_owner.entity_keys(mesh, 3),
+        cell_ids[:, None],
+    )
     regions = _labels(cell_classes, mesh.entity_set(3).count, "cell_classes")[rows]
     block_rows = np.concatenate(
         [
@@ -2763,99 +3392,153 @@ def execute_tetra_metric_adaptation(
         points.shape[0],
     ):
         raise ValueError(
-            "Protected-edge and fixed-vertex masks must align with the source."
+            "tetra_metric.masks must align protected edges and fixed vertices with the source; got incompatible shapes"
         )
-    faces, face_sources, segments, segment_sources = _constraints(
+    faces, face_sources, segments, segment_sources = constraints(
         mesh, cells, regions, facet_classes, edge_classes, protected
     )
-    exact = None if source_geometry is None else source_geometry.exact_source
-    declared = None
-    if exact is not None:
-        if not isinstance(exact, ExactPlcCellGeometrySource):
-            raise ValueError(
-                "Tetrahedral metric source ancestry requires exact PLC geometry."
-            )
-        if source_geometry is None:
-            raise RuntimeError(
-                "An exact PLC metric source lost its coordinate specification."
-            )
-        source_geometry.resolve(mesh)
-        face_sources, segments, segment_sources, declared = _plc_native_constraints(
-            mesh,
-            exact,
-            faces,
-            segments,
-            protected,
-            edge_classes,
-        )
-    protected_keys = {
-        tuple(row)
-        for row in _edges(cells).tolist()
-        if protected[
-            key_rows(
-                entity_keys(mesh, 1),
-                np.sort(np.asarray(mesh.vertex_global_ids)[np.asarray(row)])[None],
-            )[0]
-        ]
-    }
-    source_tables = TetraMetricSource(
+    return _TetraMetricInput(
         points,
+        values,
         cells,
-        np.asarray(mesh.vertex_global_ids, dtype=np.int64),
-        source_cell_ids,
-        source_geometry=source_geometry
-        if isinstance(exact, ExactPlcCellGeometrySource)
-        else None,
+        cell_ids,
+        regions,
+        protected,
+        fixed,
+        faces,
+        face_sources,
+        segments,
+        segment_sources,
     )
-    with measure_phase(record_phase, "native_preparation"):
-        native = TetMesh3D(
-            points,
-            cells,
-            regions,
-            faces,
-            face_sources,
-            segments,
-            segment_sources,
-            boundary_policy="conforming",
-            max_vertices=maximum_vertices,
-            max_tetrahedra=maximum_cells,
-            max_scratch_bytes=maximum_scratch_bytes,
-            source=declared,
+
+
+class _TetraMetricSourcePreparation(StrictModule):
+    source_tables: TetraMetricSource
+    exact: (
+        _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometrySource
+        | None
+    )
+    declared: TetMeshSourceComplex | None
+    protected_keys: set[tuple[int, int]]
+    face_sources: np.ndarray
+    segments: np.ndarray
+    segment_sources: np.ndarray
+
+
+def _prepare_tetra_metric_source(
+    mesh: CellMesh,
+    request: _TetraMetricInput,
+    source_geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec
+    | None,
+    edge_classes: ArrayLike | None,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    maximum_work_units: int,
+    maximum_cavity_cells: int,
+) -> _TetraMetricSourcePreparation:
+    declared, exact = None, None
+    face_sources, segments, segment_sources = (
+        request.face_sources,
+        request.segments,
+        request.segment_sources,
+    )
+    with _metric_coordinate_phase(
+        scope,
+        budget,
+        maximum_work_units=maximum_work_units,
+        maximum_cavity_cells=maximum_cavity_cells,
+    ):
+        if source_geometry is not None:
+            match source_geometry.exact_source:
+                case None:
+                    pass
+                case (
+                    _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometrySource() as exact
+                ):
+                    source_geometry.resolve(mesh, budget=budget)
+                    face_sources, segments, segment_sources, declared = (
+                        _plc_native_constraints(
+                            mesh,
+                            exact,
+                            request.faces,
+                            segments,
+                            request.protected,
+                            edge_classes,
+                            budget=budget,
+                        )
+                    )
+                case _:
+                    raise ValueError(
+                        "tetra_metric.source_geometry must retain an ExactPlcCellGeometrySource; got another source kind"
+                    )
+        protected_keys = {
+            tuple(row)
+            for row in _edges(request.cells).tolist()
+            if request.protected[
+                entity_keys_owner.key_rows(
+                    entity_keys_owner.entity_keys(mesh, 1),
+                    np.sort(np.asarray(mesh.vertex_global_ids)[np.asarray(row)])[None],
+                )[0]
+            ]
+        }
+        source_tables = TetraMetricSource(
+            request.points,
+            request.cells,
+            np.asarray(mesh.vertex_global_ids, dtype=np.int64),
+            request.cell_ids,
+            source_geometry=source_geometry if exact is not None else None,
+            budget=budget,
         )
-    try:
-        outcome = execute_native_tetra_metric(
-            native,
-            source_tables,
-            values,
-            fixed_vertices=fixed,
-            protected_edges=protected_keys,
-            maximum_passes=maximum_passes,
-            topology_operations=topology_operations,
-            relocation=relocation,
-            minimum_metric_quality=minimum_metric_quality,
-            lower_metric_length=lower_metric_length,
-            upper_metric_length=upper_metric_length,
-            maximum_vertices=maximum_vertices,
-            maximum_cells=maximum_cells,
-            maximum_operations=maximum_operations,
-            maximum_work_units=maximum_work_units,
-            maximum_location_pairs=maximum_location_pairs,
-            maximum_cavity_cells=maximum_cavity_cells,
-            maximum_cavity_work=maximum_cavity_work,
-            record_phase=record_phase,
-        )
-        successor = None
-        target_source_points = None
-        if isinstance(exact, ExactPlcCellGeometrySource):
+    return _TetraMetricSourcePreparation(
+        source_tables,
+        exact,
+        declared,
+        protected_keys,
+        face_sources,
+        segments,
+        segment_sources,
+    )
+
+
+class _TetraMetricPublication(StrictModule):
+    edit: _dependency_phydrax_meshing__topology_edit.CellTopologyEdit
+    metric: np.ndarray
+    successor: (
+        _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometrySource
+        | None
+    )
+
+
+def _publish_tetra_metric(
+    mesh: CellMesh,
+    native: TetMesh3D,
+    source: _TetraMetricSourcePreparation,
+    outcome: NativeTetraMetricOutcome,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+    maximum_work_units: int,
+    maximum_cavity_cells: int,
+    maximum_location_pairs: int,
+    record_phase: NativeMeshingPhaseRecorder | None,
+) -> _TetraMetricPublication:
+    successor, target_source_points = None, None
+    with _metric_coordinate_phase(
+        scope,
+        budget,
+        maximum_work_units=maximum_work_units,
+        maximum_cavity_cells=maximum_cavity_cells,
+    ):
+        if source.exact is not None:
             live = np.flatnonzero(outcome.snapshot.vertex_dimension >= 0)
             witnesses = native.source_evidence()
-            successor = exact._with_witnesses(
+            successor = source.exact.with_witnesses(
                 witnesses.witness_strata[live],
                 witnesses.witness_entities[live],
                 witnesses.witness_parameters[live],
+                budget=budget,
             )
             target_source_points = successor.prepare(
-                outcome.snapshot.points[live]
+                outcome.snapshot.points[live], budget=budget
             ).vertices
         with measure_phase(record_phase, "lineage_construction"):
             edit, target_metric = _assemble(
@@ -2864,17 +3547,218 @@ def execute_tetra_metric_adaptation(
                 outcome.metric,
                 outcome.ancestry,
                 maximum_location_pairs,
-                source_tables=source_tables,
+                source_tables=source.source_tables,
                 exact_points=target_source_points,
+                budget=budget,
             )
-        return TetraMetricOutcome(edit, target_metric, outcome.evidence, successor)
-    finally:
-        native.close()
+    return _TetraMetricPublication(edit, target_metric, successor)
+
+
+@checked
+def execute_tetra_metric_adaptation(
+    mesh: CellMesh,
+    metric: ArrayLike,
+    /,
+    *,
+    cell_classes: ArrayLike | None = None,
+    facet_classes: ArrayLike | None = None,
+    edge_classes: ArrayLike | None = None,
+    protected_edges: ArrayLike | None = None,
+    fixed_vertices: ArrayLike | None = None,
+    maximum_passes: int = 16,
+    topology_operations: bool = True,
+    relocation: bool = True,
+    minimum_metric_quality: float = 0.05,
+    maximum_vertices: int = 1000000,
+    maximum_cells: int = 6000000,
+    maximum_operations: int = 100000,
+    maximum_work_units: int = 1000000000,
+    lower_metric_length: float = _LOWER,
+    upper_metric_length: float = _UPPER,
+    maximum_location_pairs: int = 10000000,
+    maximum_cavity_cells: int = 512,
+    maximum_cavity_work: int = 10000,
+    maximum_scratch_bytes: int = 8000000000,
+    record_phase: NativeMeshingPhaseRecorder | None = None,
+    source_geometry: _dependency_phydrax_discretization__cell_geometry.CellGeometrySpec
+    | None = None,
+    scope: NativeExecutionScope,
+    budget: _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureBudget,
+) -> TetraMetricOutcome:
+    """Native legal split/directional collapse, metric cavity improvement and relocation.
+
+    Input is an affine tetrahedral carrier. Curved-map admission/publication is
+    owned by the adaptation geometry transaction, not inferred here. All edges
+    count toward the unit criterion, including immutable features. Resource
+    exhaustion is distinct from a legal-operation fixed point.
+    """
+    if mesh.ambient_dimension != 3 or any(
+        block.cell_kind != "tetrahedron" for block in mesh.blocks
+    ):
+        raise ValueError(
+            "tetra_metric.mesh must contain tetrahedron blocks in 3D; got another cell kind or dimension"
+        )
+    schedule = MetricExecutionSchedule(
+        maximum_passes=maximum_passes,
+        maximum_vertices=maximum_vertices,
+        maximum_cells=maximum_cells,
+        maximum_operations=maximum_operations,
+        maximum_work_units=maximum_work_units,
+        maximum_location_pairs=maximum_location_pairs,
+        maximum_cavity_cells=maximum_cavity_cells,
+        maximum_cavity_work=maximum_cavity_work,
+        maximum_scratch_bytes=maximum_scratch_bytes,
+        maximum_arc_work_units=0,
+    )
+    (
+        maximum_passes,
+        maximum_vertices,
+        maximum_cells,
+        maximum_operations,
+        maximum_work_units,
+        maximum_location_pairs,
+        maximum_cavity_cells,
+        maximum_cavity_work,
+        maximum_scratch_bytes,
+    ) = (
+        schedule.maximum_passes,
+        schedule.maximum_vertices,
+        schedule.maximum_cells,
+        schedule.maximum_operations,
+        schedule.maximum_work_units,
+        schedule.maximum_location_pairs,
+        schedule.maximum_cavity_cells,
+        schedule.maximum_cavity_work,
+        schedule.maximum_scratch_bytes,
+    )
+    stage_source_limits(mesh, maximum_vertices, maximum_cells)
+    validate_metric_operation_controls(topology_operations, relocation)
+    validate_metric_phase_recorder(record_phase)
+    validate_metric_quality_floor(
+        minimum_metric_quality,
+        message="tetra_metric.minimum_metric_quality must lie in [0, 1]; got a value outside the unit interval",
+    )
+    request = _prepare_tetra_metric_input(
+        mesh,
+        metric,
+        cell_classes,
+        facet_classes,
+        edge_classes,
+        protected_edges,
+        fixed_vertices,
+    )
+    try:
+        source = _prepare_tetra_metric_source(
+            mesh,
+            request,
+            source_geometry,
+            edge_classes,
+            scope,
+            budget,
+            maximum_work_units,
+            maximum_cavity_cells,
+        )
+        with budget.measurement(), ExitStack() as storage:
+            if budget.storage_ticket is None:
+
+                def retain_storage(bytes_upper: int) -> BatchTicket:
+                    return scope.batch(0, bytes_upper=bytes_upper)
+
+                storage.enter_context(budget.retained_storage(retain_storage))
+            with measure_phase(record_phase, "native_preparation"):
+                native = TetMesh3D(
+                    request.points,
+                    request.cells,
+                    request.regions,
+                    request.faces,
+                    source.face_sources,
+                    source.segments,
+                    source.segment_sources,
+                    boundary_policy="conforming",
+                    max_vertices=maximum_vertices,
+                    max_tetrahedra=maximum_cells,
+                    max_scratch_bytes=maximum_scratch_bytes,
+                    source=source.declared,
+                )
+            try:
+                outcome = execute_native_tetra_metric(
+                    native,
+                    source.source_tables,
+                    request.metric,
+                    fixed_vertices=request.fixed,
+                    protected_edges=source.protected_keys,
+                    maximum_passes=maximum_passes,
+                    topology_operations=topology_operations,
+                    relocation=relocation,
+                    minimum_metric_quality=minimum_metric_quality,
+                    lower_metric_length=lower_metric_length,
+                    upper_metric_length=upper_metric_length,
+                    maximum_vertices=maximum_vertices,
+                    maximum_cells=maximum_cells,
+                    maximum_operations=maximum_operations,
+                    maximum_work_units=maximum_work_units,
+                    maximum_location_pairs=maximum_location_pairs,
+                    maximum_cavity_cells=maximum_cavity_cells,
+                    maximum_cavity_work=maximum_cavity_work,
+                    record_phase=record_phase,
+                    scope=scope,
+                    budget=budget,
+                )
+                publication = _publish_tetra_metric(
+                    mesh,
+                    native,
+                    source,
+                    outcome,
+                    scope,
+                    budget,
+                    maximum_work_units,
+                    maximum_cavity_cells,
+                    maximum_location_pairs,
+                    record_phase,
+                )
+                return TetraMetricOutcome(
+                    publication.edit,
+                    publication.metric,
+                    outcome.evidence,
+                    publication.successor,
+                )
+            finally:
+                native.close()
+    except _dependency_phydrax_discretization__coordinate_budget.CoordinateEnclosureResourceError as error:
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "tetra_metric.source_actions must fit the coordinate allowance; got resource exhaustion",
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.OPTIMIZATION.value,
+            requested=(
+                ("maximum_work_units", maximum_work_units),
+                ("maximum_scratch_bytes", maximum_scratch_bytes),
+            ),
+            achieved=(
+                ("coordinate_work_units", budget.work_units),
+                ("coordinate_peak_bytes_upper", budget.peak_bytes_upper),
+            ),
+        ) from error
+    except MeshcoreError as error:
+        if error.status is not MeshcoreStatus.CAPACITY_EXCEEDED:
+            raise
+        raise _leaf_phydrax_meshing__failures.MeshingFailure(
+            _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            str(error),
+            stage=_dependency_phydrax_meshing__trace.MeshingStageKind.OPTIMIZATION.value,
+            requested=(
+                ("maximum_work_units", maximum_work_units),
+                ("maximum_scratch_bytes", maximum_scratch_bytes),
+            ),
+            achieved=(
+                ("coordinate_work_units", budget.work_units),
+                ("coordinate_peak_bytes_upper", budget.peak_bytes_upper),
+            ),
+        ) from error
 
 
 @dataclass(frozen=True, slots=True)
 class _TangentSizePlan:
-    """One sampled final point and its admitted complete-cavity objective."""
+    """Retain a sampled final point and its admitted cavity objective."""
 
     position: np.ndarray
     metric: np.ndarray
@@ -2904,7 +3788,7 @@ def _compound_split_plan(
     operation_budget: int,
     /,
 ) -> _TangentSizePlan | None:
-    """Optimize one unpublished final split corner in its exact source stratum."""
+    """Optimize an unpublished final split corner within its declared source stratum."""
     keys = objective.offending_edge_keys()
     segments = snapshot.segments
     on_curve = np.any(
@@ -2976,7 +3860,7 @@ def _prepare_statistical_split(
     maximum_cavity_cells: int,
     /,
 ) -> tuple[_TangentSizePlan | None, bool, int]:
-    """Admit the actual native cavity before its one accepted-state commit."""
+    """Admit the native insertion cavity before its accepted-state commit."""
     budget = objective.budget
     first, second = edge
     # Every ghost is owned by a constrained external face. A cavity's old
@@ -3069,38 +3953,32 @@ def _prepare_statistical_split(
     return plan, True, evaluations
 
 
-def _split_pass(
-    native: TetMesh3D,
+class _SplitCandidates(StrictModule):
+    edges: np.ndarray
+    lengths: np.ndarray
+    indices: np.ndarray
+    exhausted: bool = eqx.field(static=True)
+
+
+def _prepare_split_candidates(
     snapshot: TetMeshArrays,
     values: np.ndarray,
-    source_tables: TetraMetricSource,
-    source_metric: np.ndarray,
-    ancestry: _Ancestry,
-    protected: set[tuple[int, int]],
-    budget: int,
-    maximum_vertices: int,
-    maximum_cells: int,
-    maximum_cavity_cells: int,
-    native_budget: _NativeMetricBudget,
     upper_metric_length: float,
+    native_budget: _NativeMetricBudget,
     objective: _StatisticalObjective | None,
-    /,
-) -> tuple[TetMeshArrays, np.ndarray, int, int, int, bool, tuple[float, ...], int]:
+) -> _SplitCandidates:
     edges = _edges(snapshot.tetrahedra)
     lengths = _lengths(snapshot.points, values, edges)
     candidates = np.argsort(-lengths, kind="stable")
     candidates = candidates[lengths[candidates] > upper_metric_length]
     if objective is not None:
-        # Source-stratum rigidity matters: repeatedly adding curve-only degrees
-        # of freedom cannot realize a global band of equal physical edges.
-        # An unconstrained short edge is a legal construction witness for a
-        # compound body insertion; its final position/cavity, not its midpoint,
-        # must improve the original statistics and satisfy every hard guard.
+        # Interior insertion degrees of freedom may improve size statistics
+        # when subdividing only constrained curve edges cannot realize them.
         scratch = 8 * (20 * edges.shape[0] + 12 * snapshot.faces.shape[0])
         if not native_budget.optimizer_work(
             edges.shape[0] + 3 * snapshot.faces.shape[0], scratch
         ):
-            return snapshot, values, 0, 0, 0, True, (), 0
+            return _SplitCandidates(edges, lengths, candidates, True)
         face_edges = np.sort(
             snapshot.faces[:, ((0, 1), (1, 2), (2, 0))].reshape((-1, 2)), axis=1
         )
@@ -3121,19 +3999,39 @@ def _split_pass(
         candidates = np.concatenate(
             (candidates[body[candidates]], structural, candidates[~body[candidates]])
         )
-    if candidates.size == 0:
-        return snapshot, values, 0, 0, 0, False, (), 0
+    return _SplitCandidates(edges, lengths, candidates, False)
+
+
+class _SplitConstructions(StrictModule):
+    proposals: tuple[tuple[int, int], ...] = eqx.field(static=True)
+    points: np.ndarray | None
+    fractions: tuple[float, ...] = eqx.field(static=True)
+    constructions: tuple[TetMeshEdgeConstruction, ...]
+    work: int = eqx.field(static=True)
+    rejected: int = eqx.field(static=True)
+    exhausted: bool = eqx.field(static=True)
+
+
+def _construct_metric_splits(
+    native: TetMesh3D,
+    snapshot: TetMeshArrays,
+    candidates: _SplitCandidates,
+    protected: set[tuple[int, int]],
+    budget: int,
+    native_budget: _NativeMetricBudget,
+    upper_metric_length: float,
+    objective: _StatisticalObjective | None,
+) -> _SplitConstructions:
     proposals: list[tuple[int, int]] = []
     positions: list[np.ndarray] = []
     fractions: list[float] = []
     constructions: list[TetMeshEdgeConstruction] = []
-    work, rejected = 0, 0
-    exhausted = False
-    for index in candidates:
+    work, rejected, exhausted = 0, 0, False
+    for index in candidates.indices:
         if work >= budget:
             exhausted = True
             break
-        first, second = edges[index].tolist()
+        first, second = candidates.edges[index].tolist()
         if (first, second) in protected:
             rejected += 1
             continue
@@ -3142,8 +4040,10 @@ def _split_pass(
             key = (np.uint64(first) << np.uint64(32)) | np.uint64(second)
             row = int(np.searchsorted(objective.edges.keys, key))
             if row >= objective.edges.keys.size or objective.edges.keys[row] != key:
-                raise RuntimeError("A split preference lacks its actual physical edge.")
-            if lengths[index] > upper_metric_length:
+                raise RuntimeError(
+                    "tetra_metric.split_preference must bind a physical edge; got a missing edge key"
+                )
+            if candidates.lengths[index] > upper_metric_length:
                 preferred_fraction = _preferred_size_fraction(
                     objective.goal.control.target_size,
                     snapshot.points[second] - snapshot.points[first],
@@ -3166,23 +4066,46 @@ def _split_pass(
         point, fraction = construction.position, construction.parameter
         if not np.isfinite(fraction) or not 0.0 < fraction < 1.0:
             raise RuntimeError(
-                "Native edge construction returned an invalid exact parameter."
+                f"tetra_metric.split_parameter must lie strictly inside the edge; got {fraction!r}"
             )
         proposals.append((first, second))
         positions.append(point)
         fractions.append(fraction)
         constructions.append(construction)
-    if native_budget.exhausted:
-        return snapshot, values, 0, work, rejected, True, (), 0
-    if not positions:
-        return snapshot, values, 0, work, rejected, exhausted, (), 0
-    points = np.stack(positions)
+    return _SplitConstructions(
+        tuple(proposals),
+        np.stack(positions) if positions and not native_budget.exhausted else None,
+        tuple(fractions),
+        tuple(constructions),
+        work,
+        rejected,
+        exhausted or native_budget.exhausted,
+    )
+
+
+class _SplitSamples(StrictModule):
+    metric: np.ndarray
+    valid: np.ndarray
+
+
+def _sample_metric_splits(
+    points: np.ndarray,
+    constructions: tuple[TetMeshEdgeConstruction, ...],
+    source_tables: TetraMetricSource,
+    source_metric: np.ndarray,
+    native_budget: _NativeMetricBudget,
+) -> _SplitSamples | None:
     authoritative = None
     if source_tables.source_geometry is not None:
         original_source = source_tables.source_geometry.exact_source
-        if not isinstance(original_source, ExactPlcCellGeometrySource):
-            raise RuntimeError("An exact metric source lost its canonical PLC authority.")
-        authoritative = original_source._prepare_witnesses(
+        if not isinstance(
+            original_source,
+            _dependency_phydrax_discretization__exact_plc_geometry.ExactPlcCellGeometrySource,
+        ):
+            raise RuntimeError(
+                "TetraMetricSource.source_geometry must retain an ExactPlcCellGeometrySource; got another source kind"
+            )
+        authoritative = original_source.prepare_witnesses(
             points,
             np.asarray(
                 [proposal.witness_stratum for proposal in constructions], dtype=np.int8
@@ -3194,20 +4117,74 @@ def _split_pass(
                 [proposal.witness_parameters for proposal in constructions],
                 dtype=np.float64,
             ),
-        )[0]
+            budget=native_budget.coordinate_budget,
+        ).vertices
     stencil = native_budget.stencil(points, exact_points=authoritative)
     if stencil is None:
-        return snapshot, values, 0, work, rejected, True, (), 0
-    source_rows = key_rows(
+        return None
+    source_rows = entity_keys_owner.key_rows(
         source_tables.vertex_global_ids[:, None],
         stencil[0].reshape((-1, 1)),
     ).reshape(stencil[0].shape)
-    samples = _interpolate(source_metric[source_rows], stencil[1])
+    return _SplitSamples(_interpolate(source_metric[source_rows], stencil[1]), stencil[2])
+
+
+def _split_pass(
+    native: TetMesh3D,
+    snapshot: TetMeshArrays,
+    values: np.ndarray,
+    source_tables: TetraMetricSource,
+    source_metric: np.ndarray,
+    ancestry: _Ancestry,
+    protected: set[tuple[int, int]],
+    budget: int,
+    maximum_vertices: int,
+    maximum_cells: int,
+    maximum_cavity_cells: int,
+    native_budget: _NativeMetricBudget,
+    upper_metric_length: float,
+    objective: _StatisticalObjective | None,
+    /,
+) -> tuple[TetMeshArrays, np.ndarray, int, int, int, bool, tuple[float, ...], int]:
+    candidates = _prepare_split_candidates(
+        snapshot, values, upper_metric_length, native_budget, objective
+    )
+    if candidates.exhausted or candidates.indices.size == 0:
+        return snapshot, values, 0, 0, 0, candidates.exhausted, (), 0
+    constructed = _construct_metric_splits(
+        native,
+        snapshot,
+        candidates,
+        protected,
+        budget,
+        native_budget,
+        upper_metric_length,
+        objective,
+    )
+    work, rejected, exhausted = (
+        constructed.work,
+        constructed.rejected,
+        constructed.exhausted,
+    )
+    points = constructed.points
+    if points is None:
+        return snapshot, values, 0, work, rejected, exhausted, (), 0
+    sampled = _sample_metric_splits(
+        points, constructed.constructions, source_tables, source_metric, native_budget
+    )
+    if sampled is None:
+        return snapshot, values, 0, work, rejected, True, (), 0
+    proposals, fractions, constructions = (
+        constructed.proposals,
+        constructed.fractions,
+        constructed.constructions,
+    )
+    samples = sampled.metric
     applied = 0
     compounds = 0
     accepted: list[float] = []
     for index, (first, second) in enumerate(proposals):
-        if not np.all(stencil[2][index]):
+        if not np.all(sampled.valid[index]):
             rejected += 1
             continue
         before = snapshot.tetrahedra
@@ -3276,7 +4253,9 @@ def _split_pass(
                 native_budget.refuse_optimizer("native_final_transaction")
             continue
         if inserted != values.shape[0]:
-            raise RuntimeError("Native edge split violated append-only vertex identity.")
+            raise RuntimeError(
+                f"tetra_metric.inserted_vertex must append to retained vertex rows; got row {inserted!r} for count {values.shape[0]}"
+            )
         sample = samples[index] if plan is None else plan.metric
         values = np.concatenate((values, sample[None]))
         ancestry.vertex_sources.append(
@@ -3307,6 +4286,83 @@ def _split_pass(
     )
 
 
+def _metric_cavity_merit(
+    snapshot: TetMeshArrays,
+    values: np.ndarray,
+    removed: np.ndarray,
+    proposed: np.ndarray,
+    minimum_quality: float,
+    metric_band: tuple[float, float],
+    native_budget: _NativeMetricBudget,
+    /,
+    *,
+    quality: tuple[float, float] | None = None,
+) -> bool:
+    """Compare the global edge delta under the epoch's unit-band goal."""
+    scratch = 8 * (
+        64 * snapshot.tetrahedra.shape[0]
+        + 128 * (removed.shape[0] + proposed.shape[0])
+        + 32 * snapshot.points.shape[0]
+    )
+    if native_budget.band_snapshot is not snapshot:
+        if not native_budget.optimizer_work(12 * snapshot.tetrahedra.shape[0], scratch):
+            return False
+        keys, counts = _edge_incidence(snapshot.tetrahedra)
+        native_budget.band_incidence = dict(
+            zip(keys.tolist(), counts.tolist(), strict=True)
+        )
+        native_budget.band_snapshot = snapshot
+    incidence = native_budget.band_incidence
+    if incidence is None:
+        raise RuntimeError(
+            "tetra_metric.band_incidence must bind the accepted state; got no incidence"
+        )
+    if not native_budget.optimizer_work(
+        12 * (removed.shape[0] + proposed.shape[0]), scratch
+    ):
+        return False
+    old_keys, old_counts = _edge_incidence(removed)
+    new_keys, new_counts = _edge_incidence(proposed)
+    affected = np.union1d(old_keys, new_keys)
+    before = np.asarray(
+        [incidence.get(key, 0) for key in affected.tolist()], dtype=np.int64
+    )
+    present = before > 0
+    after = before.copy()
+    after[np.searchsorted(affected, old_keys)] -= old_counts
+    after[np.searchsorted(affected, new_keys)] += new_counts
+    if np.any(after < 0):
+        raise RuntimeError(
+            "tetra_metric.band_incidence must remain nonnegative; got a negative count"
+        )
+    if not native_budget.optimizer_work(affected.size, scratch):
+        return False
+    changed = (present & (after == 0)) | (~present & (after > 0))
+    lengths = (
+        _lengths(snapshot.points, values, _edge_rows(affected[changed]))
+        if np.any(changed)
+        else np.empty((0,), dtype=np.float64)
+    )
+    old_quality, new_quality = (
+        (
+            float(np.min(_quality(snapshot.points, values, removed))),
+            float(np.min(_quality(snapshot.points, values, proposed))),
+        )
+        if quality is None
+        else quality
+    )
+    if new_quality < minimum_quality:
+        return False
+    return _metric_relocation_merit(
+        lengths[present[changed]],
+        lengths[~present[changed]],
+        old_quality,
+        new_quality,
+        minimum_quality,
+        metric_band,
+    )
+
+
 def _collapse_pass(
     native: TetMesh3D,
     snapshot: TetMeshArrays,
@@ -3320,6 +4376,8 @@ def _collapse_pass(
     lower_metric_length: float,
     objective: _StatisticalObjective | None,
     /,
+    *,
+    metric_band: tuple[float, float],
 ) -> tuple[TetMeshArrays, int, int, int]:
     edges = _edges(snapshot.tetrahedra)
     lengths = _lengths(snapshot.points, values, edges)
@@ -3342,10 +4400,10 @@ def _collapse_pass(
             changed = np.any(snapshot.tetrahedra == removed, axis=1)
             cavity_cells = 2 * np.count_nonzero(changed)
             if cavity_cells > maximum_cavity_cells:
-                raise MeshingFailure(
-                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                raise _leaf_phydrax_meshing__failures.MeshingFailure(
+                    _leaf_phydrax_meshing__failures.MeshingFailureCategory.RESOURCE_EXHAUSTED,
                     "A metric collapse exceeds its cavity-cell budget.",
-                    stage=MeshingStageKind.TOPOLOGY_REPAIR.value,
+                    stage=_dependency_phydrax_meshing__trace.MeshingStageKind.TOPOLOGY_REPAIR.value,
                     requested=(("cavity_cells", float(maximum_cavity_cells)),),
                     achieved=(("cavity_cells", float(cavity_cells)),),
                 )
@@ -3355,11 +4413,14 @@ def _collapse_pass(
                 continue
             statistical = None
             if objective is None:
-                metric_lengths = _lengths(snapshot.points, values, _edges(proposed))
-                if (
-                    np.any(metric_lengths > 2.0)
-                    or np.min(_quality(snapshot.points, values, proposed))
-                    < minimum_quality
+                if not _metric_cavity_merit(
+                    snapshot,
+                    values,
+                    snapshot.tetrahedra[changed],
+                    proposed,
+                    minimum_quality,
+                    metric_band,
+                    native_budget,
                 ):
                     rejected += 1
                     continue
@@ -3381,6 +4442,7 @@ def _collapse_pass(
                 rejected += 1
                 continue
             snapshot = native.arrays()
+            native_budget.commit_band(snapshot, before[changed], proposed)
             if ancestry.vertex_successor is None:
                 ancestry.vertex_successor = {}
             ancestry.vertex_successor[removed] = kept
@@ -3405,6 +4467,9 @@ def _flip_pass(
     native_budget: _NativeMetricBudget,
     objective: _StatisticalObjective | None,
     /,
+    *,
+    minimum_quality: float,
+    metric_band: tuple[float, float],
 ) -> tuple[TetMeshArrays, int, int]:
     faces = np.unique(
         np.sort(snapshot.tetrahedra[:, _FACES].reshape((-1, 3)), axis=1), axis=0
@@ -3434,9 +4499,22 @@ def _flip_pass(
             continue
         statistical = None
         if objective is None:
-            if (
-                np.min(_quality(snapshot.points, values, proposed))
-                <= np.min(_quality(snapshot.points, values, cavity)) + 1.0e-6
+            quality = (
+                float(np.min(_quality(snapshot.points, values, cavity))),
+                float(np.min(_quality(snapshot.points, values, proposed))),
+            )
+            # A 2-to-3 flip retains every old edge, so band deficit cannot fall.
+            if quality[1] < minimum_quality or quality[1] <= quality[0] + 1.0e-6:
+                continue
+            if not _metric_cavity_merit(
+                snapshot,
+                values,
+                cavity,
+                proposed,
+                minimum_quality,
+                metric_band,
+                native_budget,
+                quality=quality,
             ):
                 continue
         else:
@@ -3449,6 +4527,7 @@ def _flip_pass(
             lambda _: native.flip_face(face, require_improvement=False)
         ):
             snapshot = native.arrays()
+            native_budget.commit_band(snapshot, cavity, proposed)
             _record(ancestry, before, snapshot.tetrahedra, EntityLineageKind.SWAPPED_FROM)
             applied += 1
             if objective is not None and statistical is not None:
@@ -3497,6 +4576,109 @@ def _edge_ring(cavity: np.ndarray, first: int, second: int, /) -> tuple[int, ...
     return tuple(ring) if len(ring) == len(neighbors) else ()
 
 
+class _RingCandidates(StrictModule):
+    proposed: np.ndarray
+    positive: np.ndarray
+    quality: np.ndarray
+
+
+def _prepare_ring_candidates(
+    snapshot: TetMeshArrays,
+    values: np.ndarray,
+    triangles: tuple[tuple[tuple[int, int, int], ...], ...],
+    first: int,
+    second: int,
+    cell_count: int,
+) -> _RingCandidates:
+    proposed = np.asarray(
+        [
+            [(apex, *triangle) for triangle in triangulation for apex in (first, second)]
+            for triangulation in triangles
+        ],
+        dtype=np.int32,
+    )
+    proposed = _orient(snapshot.points, proposed.reshape((-1, 4))).reshape(proposed.shape)
+    positive = (
+        _positive(snapshot.points, proposed.reshape((-1, 4)))
+        .reshape((-1, cell_count))
+        .all(axis=1)
+    )
+    quality = (
+        _quality(snapshot.points, values, proposed.reshape((-1, 4)))
+        .reshape((-1, cell_count))
+        .min(axis=1)
+    )
+    return _RingCandidates(proposed, positive, quality)
+
+
+class _RingCommit(StrictModule):
+    snapshot: TetMeshArrays
+    applied: bool = eqx.field(static=True)
+    complete: bool = eqx.field(static=True)
+
+
+def _commit_ring_reconnection(
+    native: TetMesh3D,
+    snapshot: TetMeshArrays,
+    values: np.ndarray,
+    ancestry: _Ancestry,
+    cavity: np.ndarray,
+    candidates: _RingCandidates,
+    native_budget: _NativeMetricBudget,
+    objective: _StatisticalObjective | None,
+    *,
+    minimum_quality: float,
+    metric_band: tuple[float, float],
+    removed_edge_length: float,
+) -> _RingCommit:
+    worst = float(np.min(_quality(snapshot.points, values, cavity)))
+    order = np.argsort(-candidates.quality, kind="stable")
+    for candidate in order:
+        if not candidates.positive[candidate]:
+            continue
+        statistical = None
+        proposed = candidates.proposed[candidate]
+        if objective is None:
+            proposed_quality = float(candidates.quality[candidate])
+            if proposed_quality < minimum_quality:
+                break
+            # Only the central edge disappears. An in-band central edge cannot
+            # reduce deficit, irrespective of the polygon's new diagonals.
+            if (
+                metric_band[0] <= removed_edge_length <= metric_band[1]
+                and proposed_quality <= worst + 1.0e-6
+            ):
+                break
+            if not _metric_cavity_merit(
+                snapshot,
+                values,
+                cavity,
+                proposed,
+                minimum_quality,
+                metric_band,
+                native_budget,
+                quality=(worst, proposed_quality),
+            ):
+                continue
+        else:
+            statistical = objective.propose(snapshot, values, cavity, proposed)
+            if statistical is None:
+                continue
+        before = snapshot.tetrahedra
+        if native_budget.call(
+            lambda allowance: native.reconnect(cavity, proposed, work_limit=allowance)
+        ):
+            snapshot = native.arrays()
+            native_budget.commit_band(snapshot, cavity, proposed)
+            _record(ancestry, before, snapshot.tetrahedra, EntityLineageKind.SWAPPED_FROM)
+            complete = False
+            if objective is not None and statistical is not None:
+                objective.commit(statistical)
+                complete = objective.complete(snapshot, values)
+            return _RingCommit(snapshot, True, complete)
+    return _RingCommit(snapshot, False, False)
+
+
 def _ring_pass(
     native: TetMesh3D,
     snapshot: TetMeshArrays,
@@ -3508,9 +4690,14 @@ def _ring_pass(
     maximum_cells: int,
     objective: _StatisticalObjective | None,
     /,
+    *,
+    minimum_quality: float,
+    metric_band: tuple[float, float],
 ) -> tuple[TetMeshArrays, int, int, bool]:
     applied, work = 0, 0
-    for first, second in _edges(snapshot.tetrahedra).tolist():
+    edges = _edges(snapshot.tetrahedra)
+    lengths = _lengths(snapshot.points, values, edges)
+    for (first, second), length in zip(edges.tolist(), lengths.tolist(), strict=True):
         if native_budget.exhausted:
             return snapshot, applied, work, True
         rows = np.flatnonzero(
@@ -3533,75 +4720,33 @@ def _ring_pass(
             return snapshot, applied, work, True
         if snapshot.tetrahedra.shape[0] - rows.size + cell_count > maximum_cells:
             return snapshot, applied, work, True
-        proposed = np.asarray(
-            [
-                [
-                    (apex, *triangle)
-                    for triangle in triangulation
-                    for apex in (first, second)
-                ]
-                for triangulation in triangles
-            ],
-            dtype=np.int32,
-        )
-        proposed = _orient(snapshot.points, proposed.reshape((-1, 4))).reshape(
-            proposed.shape
-        )
-        positive = (
-            _positive(snapshot.points, proposed.reshape((-1, 4)))
-            .reshape((-1, cell_count))
-            .all(axis=1)
-        )
-        quality = (
-            _quality(snapshot.points, values, proposed.reshape((-1, 4)))
-            .reshape((-1, cell_count))
-            .min(axis=1)
+        candidates = _prepare_ring_candidates(
+            snapshot, values, triangles, first, second, cell_count
         )
         work += len(triangles)
-        worst = float(np.min(_quality(snapshot.points, values, cavity)))
-        order = np.argsort(-quality, kind="stable")
-        for candidate in order:
-            if not positive[candidate]:
-                continue
-            statistical = None
-            if objective is None:
-                if (
-                    quality[candidate] <= worst + 1.0e-6
-                    or np.max(
-                        _lengths(snapshot.points, values, _edges(proposed[candidate])),
-                        initial=0.0,
-                    )
-                    > 2.0
-                ):
-                    continue
-            else:
-                statistical = objective.propose(
-                    snapshot, values, cavity, proposed[candidate]
-                )
-                if statistical is None:
-                    continue
-            before = snapshot.tetrahedra
-            if native_budget.call(
-                lambda allowance: native.reconnect(
-                    cavity, proposed[candidate], work_limit=allowance
-                )
-            ):
-                snapshot = native.arrays()
-                _record(
-                    ancestry, before, snapshot.tetrahedra, EntityLineageKind.SWAPPED_FROM
-                )
-                applied += 1
-                if objective is not None and statistical is not None:
-                    objective.commit(statistical)
-                    if objective.complete(snapshot, values):
-                        return snapshot, applied, work, False
-                break
+        committed = _commit_ring_reconnection(
+            native,
+            snapshot,
+            values,
+            ancestry,
+            cavity,
+            candidates,
+            native_budget,
+            objective,
+            minimum_quality=minimum_quality,
+            metric_band=metric_band,
+            removed_edge_length=length,
+        )
+        snapshot = committed.snapshot
+        applied += int(committed.applied)
+        if committed.complete:
+            return snapshot, applied, work, False
     return snapshot, applied, work, False
 
 
 @dataclass(frozen=True, slots=True)
 class _TangentCoordinates:
-    """Immutable numerical coordinates of one actual scientific source stratum."""
+    """Retain immutable numerical coordinates for one source stratum."""
 
     vertex: int
     origin: np.ndarray
@@ -3619,7 +4764,9 @@ class _TangentCoordinates:
             for axes in ((0, 1), (0, 2), (1, 2)):
                 indices = np.asarray(axes, dtype=np.int32)
                 sign = exact_orient2d(first[indices], second[indices], position[indices])
-                if int(sign) != int(PredicateSign.ZERO):
+                if int(sign) != int(
+                    _dependency_phydrax__geometry_predicates.PredicateSign.ZERO
+                ):
                     return False
             return bool(
                 np.all(position >= np.minimum(first, second))
@@ -3635,7 +4782,12 @@ class _TangentCoordinates:
                 triangles[:, 2],
                 np.broadcast_to(position, (triangles.shape[0], 3)),
             )[: self.source_triangles.shape[0]]
-            return bool(np.all(signs == int(PredicateSign.ZERO)))
+            return bool(
+                np.all(
+                    signs
+                    == int(_dependency_phydrax__geometry_predicates.PredicateSign.ZERO)
+                )
+            )
         return True
 
 
@@ -3710,7 +4862,7 @@ def _tangent_coordinates(
 
 @dataclass(slots=True)
 class _TangentSizeObjective:
-    """Closed original-size objective and separately evidenced hard refusals."""
+    """Retain the size objective and evidence for hard refusals."""
 
     snapshot: TetMeshArrays
     metric: np.ndarray
@@ -3731,7 +4883,7 @@ class _TangentSizeObjective:
         if self.previous is not None and np.array_equal(parameters, self.previous):
             if self.evaluation is None:
                 raise RuntimeError(
-                    "A cached insertion proposal lacks its evaluated evidence."
+                    "tetra_metric.cached_proposal must retain evaluated evidence; got None"
                 )
             return self.evaluation
         budget = self.objective.budget
@@ -3799,7 +4951,7 @@ class _TangentSizeObjective:
         if stencil is None or not bool(np.all(stencil[2])):
             constraints[0] = 1.0
         else:
-            source_rows = key_rows(
+            source_rows = entity_keys_owner.key_rows(
                 budget.source_tables.vertex_global_ids[:, None],
                 stencil[0].reshape((-1, 1)),
             ).reshape(stencil[0].shape)
@@ -3812,7 +4964,7 @@ class _TangentSizeObjective:
         constraints[2] = self.objective.minimum_quality - float(np.min(quality))
         if positive:
             # The determinant floor is decided once, with its refusal reason,
-            # by the owning objective proposal that admission always runs.
+            # by the objective proposal that admission always runs.
             shape = budget.call(
                 lambda allowance: budget.native.proposal_shape(
                     local_points, cells, vertex_ids=vertices, work_limit=allowance
@@ -3840,8 +4992,11 @@ class _TangentSizeObjective:
                 position,
             )
             value = ledger.merit.normalized_deficit
-        except MeshingFailure as error:
-            if error.evidence.category is not MeshingFailureCategory.COMPLIANCE_FAILED:
+        except _leaf_phydrax_meshing__failures.MeshingFailure as error:
+            if (
+                error.evidence.category
+                is not _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED
+            ):
                 raise
             # An optimizer-domain trial with zero/nonfinite physical edges is
             # a nonfinite evaluation, never substituted finite size evidence.
@@ -3871,7 +5026,7 @@ class _TangentSizeObjective:
 
 
 _EQUAL_LENGTH_METHOD = LevenbergMarquardt(linear_policy=LinearSolvePolicy(DenseQR()))
-# Zero tolerances: each solve ends on its exact optimality/step stagnation, a
+# Zero tolerances: each solve ends at zero optimality or step stagnation, a
 # failed trust region, or the declared step/residual-evaluation caps below.
 _EQUAL_LENGTH_TERMINATION = OptimizationTermination(
     absolute_optimality=0.0,
@@ -3911,7 +5066,7 @@ def _equal_length_residual(coordinates: Array, args: _EqualLengthArgs, /) -> Arr
 def _equal_length_solve(
     args: _EqualLengthArgs, /
 ) -> tuple[Array, Array, Array, Array, Array]:
-    """Bounded exact-derivative least squares of one star at one target length."""
+    """Solve bounded least squares using AD derivatives for one star's target length."""
     basis = args[1]
     result = least_squares(
         _equal_length_residual,
@@ -3959,7 +5114,7 @@ def _equal_length_subsets(
 
 
 def _failed_statistic_sides(objective: _StatisticalObjective, /) -> tuple[bool, bool]:
-    """Whether a failed owning target statistic lies above and/or below target."""
+    """Return whether failed target statistics lie above or below the target."""
     merit = objective.edges.merit
     actual = dict(merit.achieved)
     prefix = f"size:{objective.goal.control.control_id}"
@@ -3991,13 +5146,12 @@ def _solve_tangent_size(
     *,
     insertion_seed: _EdgeInsertionSeed,
 ) -> _TangentSizePlan | None:
-    """Own a bounded source-stratum final insertion solve, never vertex relocation.
+    """Return the best admitted final insertion point in a source stratum.
 
-    Bounded selections of the vertex's governing physical edges are solved to
-    the original target length by exact-derivative Levenberg--Marquardt in the
-    vertex's source stratum. Every solution is admitted only through the
-    source, embedding, metric-quality and native shape refusals and the owning
-    statistical merit; the best admitted proposal is returned.
+    Bounded selections of governing physical edges are solved to the requested
+    target length by Levenberg--Marquardt with AD derivatives in the vertex's
+    source stratum. Source, embedding, metric-quality, native-shape, and
+    statistical-merit admission govern every returned proposal.
     """
     budget = objective.budget
     vertices = np.unique(proposed)
@@ -4102,7 +5256,7 @@ def _solve_tangent_size(
     deviations = np.abs(
         np.linalg.norm(snapshot.points[neighbors] - origin, axis=1) / target - 1.0
     )
-    # Every edge of an inserted vertex is new; deviation beyond the owning
+    # Every edge of an inserted vertex is new; deviation beyond the
     # compliance tolerance governs.
     governing = deviations > resolution
     subsets = _equal_length_subsets(governing, deviations, dimension)
@@ -4144,8 +5298,7 @@ def _solve_tangent_size(
         if bound > budget.maximum_work_units - budget.work_units:
             budget.optimizer_work(bound, scratch + solve_bytes)
             return None
-        if budget.execution_budget is not None:
-            budget.execution_budget.admit_work_bound(bound)
+        budget.admit_optimizer_bound(bound)
         budget.check_deadline()
         parameters, status, iterations, residuals, actions = _equal_length_solve(
             (
@@ -4177,7 +5330,7 @@ def _solve_tangent_size(
     return best
 
 
-class _GlobalSizeArgs(NamedTuple):
+class GlobalSizeArgs(NamedTuple):
     origins: Array
     basis: Array
     edges: Array
@@ -4212,14 +5365,24 @@ _GLOBAL_SIZE_TERMINATION = OptimizationTermination(
     maximum_evaluations=128,
 )
 _GLOBAL_TRIAL_SCALES = tuple(2.0**-level for level in range(16))
+_GLOBAL_SHAPE_PROJECTION_POLICY = ConvexSolvePolicy(
+    DensePrimalDualQP(max_kkt_dimension=3 * 32),
+    termination=ConvexTermination(
+        absolute=_GLOBAL_SIZE_METHOD.linear_policy.tolerance.absolute,
+        relative=0.0,
+        primal_infeasible=_GLOBAL_SIZE_METHOD.linear_policy.tolerance.absolute,
+        dual_infeasible=_GLOBAL_SIZE_METHOD.linear_policy.tolerance.absolute,
+        maximum_steps=_GLOBAL_LINEAR_STEPS,
+    ),
+)
 
 
-def _global_size_canonical_residual_bound() -> int:
+def global_size_canonical_residual_bound() -> int:
     """Bound only real native LM primals, never its separately charged models."""
     trials = _GLOBAL_SIZE_METHOD.maximum_trials
     # One initial model, one model plus at most one primal per trial/step,
     # and one final model. The outer evaluation guard can overshoot by one
-    # complete step before the final model; there is no auxiliary callback.
+    # full step before the final model; there is no auxiliary callback.
     bound = 2 + _GLOBAL_SIZE_TERMINATION.maximum_steps * (1 + trials)
     evaluations = _GLOBAL_SIZE_TERMINATION.maximum_evaluations
     return bound if evaluations is None else min(bound, evaluations + trials + 1)
@@ -4235,24 +5398,23 @@ def _size_quantile_parts(
     lower = jnp.floor(ranks).astype(jnp.int32)
     upper = jnp.ceil(ranks).astype(jnp.int32)
     fraction = ranks - lower
-    # Match the canonical native nanquantile linear interpolation operation
-    # order, rather than replacing it with an algebraically equal rounding.
+    # Match the native nanquantile linear-interpolation operation order,
+    # rather than replacing it with an algebraically equal rounding.
     statistic = ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
     return statistic, order, lower, upper, fraction
 
 
 @custom_jvp
-def _size_quantile(lengths: Array, quantiles: Array) -> Array:
-    """Canonical primal with a permutation-symmetric linear tie selection.
+def size_quantile(lengths: Array, quantiles: Array) -> Array:
+    """Return linear quantiles with a permutation-symmetric tie derivative.
 
-    This is the average rank-permutation derivative in exact tied blocks,
-    not the nonlinear one-sided directional derivative of an order statistic.
-    Trial merit checks must select their outgoing ranks independently.
+    Equal-value rank blocks use the average rank-permutation derivative.
+    One-sided trial derivatives select their outgoing ranks independently.
     """
     return _size_quantile_parts(lengths, quantiles)[0]
 
 
-@_size_quantile.defjvp
+@size_quantile.defjvp
 def _size_quantile_jvp(
     primals: tuple[Array, Array], tangents: tuple[Array, Array]
 ) -> tuple[Array, Array]:
@@ -4261,8 +5423,8 @@ def _size_quantile_jvp(
     statistic, order, lower, upper, fraction = _size_quantile_parts(lengths, quantiles)
     ordered = lengths[order]
     valid = ~jnp.isnan(ordered)
-    # Exact equality only: distinct adjacent floating values remain distinct
-    # branches. Groups and their coefficients belong to the prepared model.
+    # Equal floating values share a rank block; adjacent distinct values
+    # remain distinct branches with coefficients in the prepared model.
     start = jnp.concatenate(
         (jnp.ones((1,), dtype=jnp.bool_), ordered[1:] != ordered[:-1])
     )
@@ -4282,17 +5444,19 @@ def _size_quantile_jvp(
     return statistic, derivative
 
 
-_GLOBAL_SIZE_TRIAL_POLICY_ID = "exact-linear-quantile/tie-barycenter/gap-scaled-component-rank-frontier/finite-source-trajectory-hard-shape-model/outgoing-events"
+_GLOBAL_SIZE_TRIAL_POLICY_ID = "exact-linear-quantile/tie-barycenter/retained-joint-size-deficit-rank-frontier/finite-source-trajectory-hard-shape-bracket/raw-affine-third-trial/outgoing-events"
 
 
 def _global_size_trial_work(
     vertex_count: int, edge_count: int, cell_count: int, quantile_count: int
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int]:
     sort_work = 4 * edge_count * (edge_count - 1).bit_length() ** 2
     fixed = 4 * vertex_count + 30 * edge_count + 40 * cell_count + sort_work
-    model = vertex_count + 8 * edge_count + 400 * cell_count + sort_work
+    model = (
+        vertex_count + 8 * edge_count + 400 * cell_count + sort_work + 4 * quantile_count
+    )
     event = 100 * quantile_count * edge_count
-    return fixed, model, event
+    return fixed, model, event, 440 * cell_count
 
 
 def _global_size_branch_scratch(vertex_count: int) -> int:
@@ -4308,7 +5472,7 @@ def _global_size_branch_scratch(vertex_count: int) -> int:
     )
 
 
-class _GlobalSizeBranchBank(NamedTuple):
+class GlobalSizeBranchBank(NamedTuple):
     statistic: Array
     lower: Array
     upper: Array
@@ -4316,18 +5480,36 @@ class _GlobalSizeBranchBank(NamedTuple):
     overflow: Array
 
 
+class _GlobalSizeJointRows(NamedTuple):
+    keys: Array
+    gradients: Array
+    count: Array
+    overflow: Array
+
+
 _GlobalSizeFrontierCarry: TypeAlias = tuple[
-    _GlobalSizeBranchBank, Array, Array, Array, Array, Array, Array
+    GlobalSizeBranchBank,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    _GlobalSizeJointRows,
+]
+_GlobalSizeTrialCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
 ]
 
 
-def _append_global_size_branches(
-    bank: _GlobalSizeBranchBank,
+def append_global_size_branches(
+    bank: GlobalSizeBranchBank,
     statistic: Array,
     lower: Array,
     upper: Array,
     active: Array,
-) -> tuple[_GlobalSizeBranchBank, Array]:
+) -> tuple[GlobalSizeBranchBank, Array]:
     """Retain every requested branch or refuse the whole overflowing bank."""
     capacity = bank.statistic.size
     statistic = statistic.astype(bank.statistic.dtype)
@@ -4336,11 +5518,11 @@ def _append_global_size_branches(
     slots = jnp.arange(capacity)
 
     def append(
-        index: Array, carry: tuple[_GlobalSizeBranchBank, Array]
-    ) -> tuple[_GlobalSizeBranchBank, Array]:
+        index: Array, carry: tuple[GlobalSizeBranchBank, Array]
+    ) -> tuple[GlobalSizeBranchBank, Array]:
         current, checks = carry
 
-        def admitted(_: None) -> tuple[_GlobalSizeBranchBank, Array]:
+        def admitted(_: None) -> tuple[GlobalSizeBranchBank, Array]:
             present = jnp.any(
                 (slots < current.count)
                 & (current.statistic == statistic[index])
@@ -4348,10 +5530,10 @@ def _append_global_size_branches(
                 & (current.upper == upper[index])
             )
 
-            def insert(_: None) -> _GlobalSizeBranchBank:
-                def available(_: None) -> _GlobalSizeBranchBank:
+            def insert(_: None) -> GlobalSizeBranchBank:
+                def available(_: None) -> GlobalSizeBranchBank:
                     slot = current.count
-                    return _GlobalSizeBranchBank(
+                    return GlobalSizeBranchBank(
                         current.statistic.at[slot].set(statistic[index]),
                         current.lower.at[slot].set(lower[index]),
                         current.upper.at[slot].set(upper[index]),
@@ -4381,15 +5563,16 @@ def _append_global_size_branches(
     )
 
 
-def _global_size_branch_gradients(
-    bank: _GlobalSizeBranchBank,
+def global_size_branch_gradients(
+    bank: GlobalSizeBranchBank,
     delta: Array,
     lengths: Array,
     residual: Array,
     shape_gradient: Array,
-    args: _GlobalSizeArgs,
+    joint_gradients: Array,
+    args: GlobalSizeArgs,
 ) -> tuple[Array, Array, Array]:
-    """Oriented component rows in the actual admitted parameter tangent space."""
+    """Return source-tangent equalities, shape rows, and retained size-merit rows."""
     ranks = (jnp.sum(args.edge_valid > 0.0) - 1) * args.quantiles
     fraction = ranks - jnp.floor(ranks)
     active = jnp.arange(bank.statistic.size) < bank.count
@@ -4413,7 +5596,14 @@ def _global_size_branch_gradients(
                 )
                 return orientation * gradient
 
-            return lax.cond(statistic < 0, lambda _: -shape_gradient, size_row, None)
+            return lax.cond(
+                statistic < -1,
+                lambda _: joint_gradients[lower],
+                lambda _: lax.cond(
+                    statistic < 0, lambda _: -shape_gradient, size_row, None
+                ),
+                None,
+            )
 
         return lax.cond(admitted, evaluate, lambda _: jnp.zeros_like(args.origins), None)
 
@@ -4426,28 +5616,684 @@ def _global_size_branch_gradients(
     return gradients, active & ~equality, equality
 
 
-def _global_size_branch_targets(
-    bank: _GlobalSizeBranchBank,
+def _global_size_joint_gradient(
+    delta: Array,
+    lengths: Array,
+    residual: Array,
+    lower: Array,
+    upper: Array,
+    args: GlobalSizeArgs,
+    /,
+) -> Array:
+    """Differentiate the failed-statistic merit on selected rank support pairs."""
+    qids = jnp.arange(args.quantiles.size, dtype=jnp.int32)
+    bank = GlobalSizeBranchBank(
+        qids, lower, upper, jnp.asarray(qids.size), jnp.asarray(False)
+    )
+    zero = jnp.zeros_like(args.origins)
+    gradients, failed, _ = global_size_branch_gradients(
+        bank,
+        delta,
+        lengths,
+        residual,
+        zero,
+        jnp.zeros((1, *args.origins.shape), dtype=args.origins.dtype),
+        args,
+    )
+    return jnp.sum(jnp.where(failed[:, None, None], gradients, 0.0), axis=0)
+
+
+def _append_global_size_joint_rows(
+    bank: _GlobalSizeJointRows,
+    lower: Array,
+    upper: Array,
+    active: Array,
+    delta: Array,
+    lengths: Array,
+    residual: Array,
+    remaining_work: Array,
+    args: GlobalSizeArgs,
+    /,
+) -> tuple[_GlobalSizeJointRows, Array, Array, Array]:
+    """Retain failed-rank support keys and gradients in one invocation-local bank."""
+    capacity = bank.keys.shape[0]
+    failed = residual[: args.quantiles.size] != 0.0
+    keys = jnp.stack((lower, upper), axis=-1).astype(jnp.int32)
+    keys = jnp.where(failed[None, :, None], keys, -1).reshape((lower.shape[0], -1))
+    metadata_work = capacity * (keys.shape[1] + 4)
+    gradient_work = 10 * args.quantiles.size * args.origins.size
+
+    def append(
+        index: Array, carry: tuple[_GlobalSizeJointRows, Array, Array, Array]
+    ) -> tuple[_GlobalSizeJointRows, Array, Array, Array]:
+        current, destinations, work, resource = carry
+
+        def inspect(_: None) -> tuple[_GlobalSizeJointRows, Array, Array, Array]:
+            present = (jnp.arange(capacity) < current.count) & jnp.all(
+                current.keys == keys[index], axis=1
+            )
+            exists = jnp.any(present)
+            destination = jnp.argmax(present.astype(jnp.int32)).astype(jnp.int32)
+            spent = work + metadata_work
+
+            def retained(_: None) -> tuple[_GlobalSizeJointRows, Array, Array, Array]:
+                return current, destinations.at[index].set(destination), spent, resource
+
+            def insert(_: None) -> tuple[_GlobalSizeJointRows, Array, Array, Array]:
+                def admitted(_: None) -> tuple[_GlobalSizeJointRows, Array, Array, Array]:
+                    gradient = _global_size_joint_gradient(
+                        delta, lengths, residual, lower[index], upper[index], args
+                    )
+                    slot = current.count
+                    return (
+                        _GlobalSizeJointRows(
+                            current.keys.at[slot].set(keys[index]),
+                            current.gradients.at[slot].set(gradient),
+                            current.count + 1,
+                            current.overflow,
+                        ),
+                        destinations.at[index].set(slot),
+                        spent + gradient_work,
+                        resource,
+                    )
+
+                return lax.cond(
+                    current.count < capacity,
+                    lambda _: lax.cond(
+                        gradient_work <= remaining_work - spent,
+                        admitted,
+                        lambda _: (
+                            current,
+                            destinations,
+                            spent,
+                            jnp.asarray(True),
+                        ),
+                        None,
+                    ),
+                    lambda _: (
+                        current._replace(overflow=jnp.asarray(True)),
+                        destinations,
+                        spent,
+                        resource,
+                    ),
+                    None,
+                )
+
+            return lax.cond(exists, retained, insert, None)
+
+        return lax.cond(
+            active[index] & ~current.overflow & ~resource,
+            lambda _: lax.cond(
+                metadata_work <= remaining_work - work,
+                inspect,
+                lambda _: (current, destinations, work, jnp.asarray(True)),
+                None,
+            ),
+            lambda _: carry,
+            None,
+        )
+
+    return lax.fori_loop(
+        0,
+        lower.shape[0],
+        append,
+        (
+            bank,
+            jnp.zeros((lower.shape[0],), dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int64),
+            jnp.asarray(False),
+        ),
+    )
+
+
+def global_size_branch_targets(
+    bank: GlobalSizeBranchBank,
     residual: Array,
     inequality: Array,
     quantile_count: int,
 ) -> Array:
-    """Raw progress targets owned by each actual signed scientific component."""
+    """Return size-deficit or shape progress targets for active merit rows."""
     size_targets = jnp.abs(residual[jnp.maximum(bank.statistic, 0)])
     shape_target = jnp.sum(residual[quantile_count:] ** 2)
-    targets = jnp.where(bank.statistic < 0, shape_target, size_targets)
+    joint_target = jnp.sum(jnp.abs(residual[:quantile_count]))
+    targets = jnp.where(
+        bank.statistic < -1,
+        joint_target,
+        jnp.where(bank.statistic < 0, shape_target, size_targets),
+    )
     return jnp.where(inequality, targets, 0.0)
 
 
+def _global_size_raw_shape_rows(
+    points: Array, bank: GlobalSizeBranchBank, args: GlobalSizeArgs, /
+) -> tuple[Array, Array]:
+    """Gather bounded cell-local raw tangents, never a global shape Jacobian."""
+    cells = args.cells.shape[0]
+    active = (jnp.arange(bank.statistic.size) < bank.count) & (bank.statistic == -4)
+
+    def row(values: tuple[Array, Array]) -> tuple[Array, Array]:
+        index, admitted = values
+
+        def evaluate(_: None) -> tuple[Array, Array]:
+            cell = jnp.where(index < cells, index, (index - cells) // 6)
+            kind = jnp.where(index < cells, 1, 2 + (index - cells) % 6)
+            vertices = args.cells[cell]
+            local = args._replace(
+                cells=jnp.arange(4, dtype=jnp.int32)[None, :],
+                cell_valid=jnp.ones((1,), dtype=args.cell_valid.dtype),
+                initial_volume=args.initial_volume[cell][None],
+            )
+
+            def margin(corners: Array) -> Array:
+                return _global_size_shape_margins(corners, local)[kind]
+
+            value, corners = jax.value_and_grad(margin)(points[vertices])
+            gradient = jnp.zeros_like(points)
+            for corner in range(4):
+                vertex = vertices[corner]
+                tangent = args.target * jnp.sum(
+                    args.basis[vertex] * corners[corner, :, None], axis=0
+                )
+                gradient = gradient.at[vertex].add(tangent)
+            return gradient, value
+
+        return lax.cond(
+            admitted,
+            evaluate,
+            lambda _: (jnp.zeros_like(points), jnp.asarray(0.0, dtype=points.dtype)),
+            None,
+        )
+
+    return lax.map(row, (bank.lower, active))
+
+
+def _global_size_equality_projection(
+    rows: Array, direction: Array, equality: Array, remaining_work: Array, /
+) -> tuple[Array, Array, Array, Array, Array]:
+    """Project a bounded row bank into the existing satisfied-size null space."""
+    count = jnp.sum(equality)
+    parameter_size = direction.size
+    capacity = rows.shape[0]
+
+    def project(bucket: int) -> tuple[Array, Array, Array, Array, Array]:
+        work = (
+            8 * (bucket * bucket + bucket * capacity) * parameter_size
+            + 16 * (bucket + capacity) * parameter_size
+            + 64 * bucket**3
+            + 16 * bucket * bucket
+        )
+
+        def admitted(_: None) -> tuple[Array, Array, Array, Array, Array]:
+            indices = jnp.nonzero(equality, size=bucket, fill_value=0)[0]
+            included = jnp.arange(bucket) < count
+            equal = jnp.where(included[:, None, None], rows[indices], 0.0)
+            flat_equal = equal.reshape((bucket, -1))
+            flat_rows = rows.reshape((capacity, -1))
+            tolerance = _GLOBAL_SIZE_METHOD.linear_policy.tolerance
+            factors = factor_pseudoinverse(
+                flat_equal @ flat_equal.T,
+                RankPolicy(
+                    relative_cutoff=tolerance.relative,
+                    absolute_cutoff=tolerance.absolute,
+                ),
+                hermitian=True,
+            )
+            coefficients = apply_pseudoinverse(factors, flat_equal @ flat_rows.T)
+            projected = flat_rows - coefficients.T @ flat_equal
+            seed_coefficients = apply_pseudoinverse(
+                factors, flat_equal @ direction.reshape((-1,))
+            )
+            seed = direction.reshape((-1,)) - seed_coefficients @ flat_equal
+            return (
+                projected.reshape(rows.shape),
+                seed.reshape(direction.shape),
+                factors.finite,
+                jnp.asarray(work, dtype=jnp.int64),
+                jnp.asarray(False),
+            )
+
+        return lax.cond(
+            remaining_work >= work,
+            admitted,
+            lambda _: (
+                rows,
+                direction,
+                jnp.asarray(False),
+                jnp.asarray(0, dtype=jnp.int64),
+                jnp.asarray(True),
+            ),
+            None,
+        )
+
+    def bounded(_: None) -> tuple[Array, Array, Array, Array, Array]:
+        return lax.cond(
+            count <= 4,
+            lambda _: project(4),
+            lambda _: lax.cond(
+                count <= 8, lambda _: project(8), lambda _: project(16), None
+            ),
+            None,
+        )
+
+    return lax.cond(
+        (count == 0) | (count > 16),
+        lambda _: (
+            rows,
+            direction,
+            count == 0,
+            jnp.asarray(0, dtype=jnp.int64),
+            jnp.asarray(False),
+        ),
+        bounded,
+        None,
+    )
+
+
+def _global_size_affine_projection(
+    gradients: Array,
+    inequality: Array,
+    equality: Array,
+    raw: Array,
+    bounds: Array,
+    direction: Array,
+    remaining_work: Array,
+    /,
+) -> tuple[Array, Array, Array, Array]:
+    """Solve an affine projection in row/dual space within the 32-row bank."""
+    rows, seed, equal_valid, equal_work, equal_resource = (
+        _global_size_equality_projection(gradients, direction, equality, remaining_work)
+    )
+    count = jnp.sum(inequality)
+    capacity = gradients.shape[0]
+    projections = jnp.sum(rows * seed[None, :, :], axis=(1, 2))
+    norms = jnp.sqrt(jnp.sum(rows * rows, axis=(1, 2)))
+    progress = 0.5 * jnp.where(
+        projections > 0.0, projections, norms * jnp.sqrt(jnp.sum(seed * seed))
+    )
+    right = jnp.where(raw, bounds, -progress)
+    signed = jnp.where(raw[:, None, None], rows, -rows)
+
+    def project(bucket: int) -> tuple[Array, Array, Array, Array]:
+        preparation = (8 * bucket * bucket + 12 * bucket) * direction.size + 16 * capacity
+        step_work = 64 * bucket**3 + 32 * bucket * bucket + 16 * bucket
+        bound = preparation + (_GLOBAL_LINEAR_STEPS + 2) * step_work
+
+        def admitted(_: None) -> tuple[Array, Array, Array, Array]:
+            indices = jnp.nonzero(inequality, size=bucket, fill_value=0)[0]
+            included = jnp.arange(bucket) < count
+            local = jnp.where(included[:, None, None], signed[indices], 0.0)
+            lengths = norms[indices]
+            usable = (~included) | (
+                jnp.isfinite(lengths)
+                & (lengths > _GLOBAL_SIZE_METHOD.linear_policy.tolerance.absolute)
+            )
+            denominators = jnp.where(included & usable, lengths, 1.0)
+            normalized = local / denominators[:, None, None]
+            flat = normalized.reshape((bucket, -1))
+            rhs = jnp.where(included, right[indices] / denominators, 1.0)
+            quadratic = flat @ flat.T + jnp.diag((~included).astype(flat.dtype))
+            program = QuadraticProgram(
+                quadratic,
+                rhs - flat @ seed.reshape((-1,)),
+                bounds=Bounds(0.0, np.inf),
+                problem_id="source-stratum/raw-hard-shape-affine-projection",
+                convexity_evidence="normalized-gradient-gram",
+            )
+            result = solve_quadratic_program(
+                program, policy=_GLOBAL_SHAPE_PROJECTION_POLICY
+            )
+            corrected = (seed.reshape((-1,)) - result.primal @ flat).reshape(
+                direction.shape
+            )
+            actual = jnp.sum(gradients * corrected[None, :, :], axis=(1, 2))
+            valid = (
+                result.valid
+                & jnp.all(usable)
+                & jnp.all(jnp.isfinite(corrected))
+                & jnp.all(~(inequality & raw) | (actual <= bounds))
+                & jnp.all(~(inequality & ~raw) | (actual > 0.0))
+                & jnp.all(
+                    ~equality
+                    | (
+                        jnp.abs(actual)
+                        <= _GLOBAL_SIZE_METHOD.linear_policy.tolerance.relative
+                    )
+                )
+            )
+            work = equal_work + preparation + (result.iterations + 2) * step_work
+            return corrected, valid, work, jnp.asarray(False)
+
+        return lax.cond(
+            remaining_work - equal_work >= bound,
+            admitted,
+            lambda _: (direction, jnp.asarray(False), equal_work, jnp.asarray(True)),
+            None,
+        )
+
+    def bounded(_: None) -> tuple[Array, Array, Array, Array]:
+        return lax.cond(
+            count <= 4,
+            lambda _: project(4),
+            lambda _: lax.cond(
+                count <= 8,
+                lambda _: project(8),
+                lambda _: lax.cond(
+                    count <= 16, lambda _: project(16), lambda _: project(32), None
+                ),
+                None,
+            ),
+            None,
+        )
+
+    return lax.cond(
+        equal_valid & (count > 0) & (count <= 32),
+        bounded,
+        lambda _: (direction, jnp.asarray(False), equal_work, equal_resource),
+        None,
+    )
+
+
+def _global_size_outgoing_slope(
+    parameters: Array, direction: Array, residual: Array, args: GlobalSizeArgs, /
+) -> Array:
+    """Evaluate the true outgoing size slope for a feasible-point correction."""
+    points = args.origins + args.target * jnp.sum(
+        args.basis * parameters[:, None, :], axis=-1
+    )
+    displacement = args.target * jnp.sum(args.basis * direction[:, None, :], axis=-1)
+    delta = points[args.edges[:, 1]] - points[args.edges[:, 0]]
+    velocity = displacement[args.edges[:, 1]] - displacement[args.edges[:, 0]]
+    valid = args.edge_valid > 0.0
+    lengths = jnp.sqrt(jnp.where(valid, jnp.sum(delta * delta, axis=-1), 1.0))
+    tangent = jnp.sum(delta * velocity, axis=-1) / lengths
+    acceleration = (jnp.sum(velocity * velocity, axis=-1) - tangent * tangent) / lengths
+    order = jnp.lexsort((acceleration, tangent, jnp.where(valid, lengths, jnp.inf)))
+    ranks = (jnp.sum(valid) - 1) * args.quantiles
+    lower = order[jnp.floor(ranks).astype(jnp.int32)]
+    upper = order[jnp.ceil(ranks).astype(jnp.int32)]
+    fraction = ranks - jnp.floor(ranks)
+    derivative = (
+        tangent[lower] * (1.0 - fraction) + tangent[upper] * fraction
+    ) / args.target
+    # Incoming compliant statistics retain equality rows and finite admission.
+    # Their zero residual contributes no least-squares slope.
+    return jnp.sum(residual[: args.quantiles.size] * derivative)
+
+
+class _GlobalShapeDirectionState(NamedTuple):
+    bank: GlobalSizeBranchBank
+    direction: Array
+    valid: Array
+    finished: Array
+    resource: Array
+    work: Array
+    visits: Array
+
+
+def _global_size_shape_direction(
+    parameters: Array,
+    direction: Array,
+    residual: Array,
+    remaining_work: Array,
+    remaining_visits: Array,
+    args: GlobalSizeArgs,
+    /,
+) -> tuple[Array, Array, Array, Array, Array]:
+    """Restore a refused finite trajectory using raw hard-shape inequalities.
+
+    Kernel rationale: the bounded working-set loop owns physical row ordering,
+    shared rank-visit capacity, local AD tables, and budget-before-solve admission.
+    Full finite shape and native publication remain independent final guards.
+    """
+    capacity = 32
+    points = args.origins + args.target * jnp.sum(
+        args.basis * parameters[:, None, :], axis=-1
+    )
+    delta = points[args.edges[:, 1]] - points[args.edges[:, 0]]
+    valid_edges = args.edge_valid > 0.0
+    lengths = jnp.sqrt(jnp.where(valid_edges, jnp.sum(delta * delta, axis=-1), 1.0))
+    quantile_count, edge_count = args.quantiles.size, args.edges.shape[0]
+    cell_count = args.cells.shape[0]
+    qids = jnp.arange(quantile_count, dtype=jnp.int32)
+    hard_ids = jnp.arange(7 * cell_count, dtype=jnp.int32)
+    incoming_compliant = residual[:quantile_count] == 0.0
+    ranks = (jnp.sum(valid_edges) - 1) * args.quantiles
+    low_rank, high_rank = (
+        jnp.floor(ranks).astype(jnp.int32),
+        jnp.ceil(ranks).astype(jnp.int32),
+    )
+    sort_work = 4 * edge_count * (edge_count - 1).bit_length() ** 2
+    scan_work = (
+        2 * sort_work
+        + 2 * args.origins.shape[0]
+        + 8 * edge_count
+        + 400 * cell_count
+        + 12 * quantile_count
+    )
+    empty = jnp.zeros((capacity,), dtype=jnp.int32)
+    bank = GlobalSizeBranchBank(empty, empty, empty, jnp.asarray(0), jnp.asarray(False))
+
+    def refine(state: _GlobalShapeDirectionState) -> _GlobalShapeDirectionState:
+        def scan(_: None) -> _GlobalShapeDirectionState:
+            displacement = args.target * jnp.sum(
+                args.basis * state.direction[:, None, :], axis=-1
+            )
+            velocity = displacement[args.edges[:, 1]] - displacement[args.edges[:, 0]]
+            tangent = jnp.sum(delta * velocity, axis=-1) / lengths
+            acceleration = (
+                jnp.sum(velocity * velocity, axis=-1) - tangent * tangent
+            ) / lengths
+            order = jnp.lexsort(
+                (acceleration, tangent, jnp.where(valid_edges, lengths, jnp.inf))
+            )
+            current_low, current_high = order[low_rank], order[high_rank]
+            future_points = args.origins + args.target * jnp.sum(
+                args.basis * (parameters + state.direction)[:, None, :], axis=-1
+            )
+            future_delta = (
+                future_points[args.edges[:, 1]] - future_points[args.edges[:, 0]]
+            )
+            future_lengths = jnp.sqrt(
+                jnp.where(valid_edges, jnp.sum(future_delta * future_delta, axis=-1), 1.0)
+            )
+            future_order = jnp.argsort(jnp.where(valid_edges, future_lengths, jnp.inf))
+            future_low, future_high = future_order[low_rank], future_order[high_rank]
+            future_margin = _global_size_shape_margins(future_points, args)[cell_count:]
+            raw_active = future_margin > 0.0
+            statistics = jnp.concatenate(
+                (
+                    qids,
+                    qids,
+                    jnp.asarray((-2,), dtype=jnp.int32),
+                    -4 * jnp.ones_like(hard_ids),
+                )
+            )
+            lows = jnp.concatenate(
+                (current_low, future_low, jnp.asarray((0,), dtype=jnp.int32), hard_ids)
+            )
+            highs = jnp.concatenate(
+                (
+                    current_high,
+                    future_high,
+                    jnp.asarray((0,), dtype=jnp.int32),
+                    jnp.zeros_like(hard_ids),
+                )
+            )
+            active = jnp.concatenate(
+                (incoming_compliant, incoming_compliant, jnp.asarray((True,)), raw_active)
+            )
+            spent = state.work + scan_work
+            membership_bound = (
+                capacity + statistics.size + jnp.sum(active) * (8 * capacity + 4)
+            )
+
+            def append(_: None) -> _GlobalShapeDirectionState:
+                extended, append_work = append_global_size_branches(
+                    state.bank, statistics, lows, highs, active
+                )
+                appended = spent + append_work
+
+                def generate(_: None) -> _GlobalShapeDirectionState:
+                    raw = (jnp.arange(capacity) < extended.count) & (
+                        extended.statistic == -4
+                    )
+                    generation_work = (
+                        8 * capacity + 10 * quantile_count
+                    ) * args.origins.size + 400 * jnp.sum(raw)
+
+                    def admitted(_: None) -> _GlobalShapeDirectionState:
+                        raw_gradients, current_margin = _global_size_raw_shape_rows(
+                            points, extended, args
+                        )
+                        joint = _global_size_joint_gradient(
+                            delta, lengths, residual, current_low, current_high, args
+                        )
+                        # Raw slots are not size or hinge objective rows.
+                        merit_bank = GlobalSizeBranchBank(
+                            jnp.where(raw, -1, extended.statistic),
+                            jnp.where(raw, 0, extended.lower),
+                            jnp.where(raw, 0, extended.upper),
+                            extended.count,
+                            extended.overflow,
+                        )
+                        zero = jnp.zeros_like(direction)
+                        gradients, inequality, equality = global_size_branch_gradients(
+                            merit_bank,
+                            delta,
+                            lengths,
+                            residual,
+                            zero,
+                            joint[None, :, :],
+                            args,
+                        )
+                        gradients = jnp.where(
+                            raw[:, None, None], raw_gradients, gradients
+                        )
+                        slope = jnp.sum(
+                            gradients * state.direction[None, :, :], axis=(1, 2)
+                        )
+                        future = future_margin[
+                            jnp.minimum(extended.lower, hard_ids.size - 1)
+                        ]
+                        # Reserve the observed positive finite defect inward;
+                        # no positive incoming slack is invented at active rows.
+                        remainder = jnp.maximum(future - current_margin - slope, 0.0)
+                        bounds = jnp.minimum(
+                            -current_margin - remainder, -0.5 * jnp.maximum(future, 0.0)
+                        )
+                        generated = appended + generation_work
+                        corrected, valid, work, denied = _global_size_affine_projection(
+                            gradients,
+                            inequality,
+                            equality,
+                            raw,
+                            bounds,
+                            direction,
+                            remaining_work - generated,
+                        )
+                        return _GlobalShapeDirectionState(
+                            extended,
+                            corrected,
+                            valid,
+                            ~valid,
+                            denied,
+                            generated + work,
+                            state.visits + 1,
+                        )
+
+                    return lax.cond(
+                        generation_work <= remaining_work - appended,
+                        admitted,
+                        lambda _: state._replace(
+                            bank=extended,
+                            valid=jnp.asarray(False),
+                            finished=jnp.asarray(True),
+                            resource=jnp.asarray(True),
+                            work=appended,
+                            visits=state.visits + 1,
+                        ),
+                        None,
+                    )
+
+                slope = _global_size_outgoing_slope(
+                    parameters, state.direction, residual, args
+                )
+                finished = state.valid & ~jnp.any(raw_active) & (slope < 0.0)
+                return lax.cond(
+                    finished | extended.overflow,
+                    lambda _: state._replace(
+                        bank=extended,
+                        valid=finished & ~extended.overflow,
+                        finished=jnp.asarray(True),
+                        work=appended,
+                        visits=state.visits + 1,
+                    ),
+                    generate,
+                    None,
+                )
+
+            return lax.cond(
+                membership_bound <= remaining_work - spent,
+                append,
+                lambda _: state._replace(
+                    valid=jnp.asarray(False),
+                    finished=jnp.asarray(True),
+                    resource=jnp.asarray(True),
+                    work=spent,
+                    visits=state.visits + 1,
+                ),
+                None,
+            )
+
+        return lax.cond(
+            scan_work <= remaining_work - state.work,
+            scan,
+            lambda _: state._replace(
+                valid=jnp.asarray(False),
+                finished=jnp.asarray(True),
+                resource=jnp.asarray(True),
+            ),
+            None,
+        )
+
+    state = lax.while_loop(
+        lambda value: (
+            ~value.finished & ~value.resource & (value.visits < remaining_visits)
+        ),
+        refine,
+        _GlobalShapeDirectionState(
+            bank,
+            direction,
+            jnp.asarray(False),
+            jnp.asarray(False),
+            jnp.asarray(False),
+            jnp.asarray(0, dtype=jnp.int64),
+            jnp.asarray(0, dtype=jnp.int32),
+        ),
+    )
+    return (
+        state.direction,
+        state.valid & state.finished,
+        state.work,
+        state.visits,
+        state.resource,
+    )
+
+
+# Kernel rationale: the nested lax branches encode charged rank-frontier
+# admission. Keep their comparison, branch, and floating-point reduction order
+# together; extracting Python lifecycle phases would not reduce this device
+# kernel's numerical responsibility and could alter its traced closure.
+# Keep the resource-gated frontier in one traced while loop with fixed carry and branch order.
 def _global_size_bundle_direction(
     parameters: Array,
     direction: Array,
     residual: Array,
     shape_gradient: Array,
     remaining_work: Array,
-    args: _GlobalSizeArgs,
+    args: GlobalSizeArgs,
 ) -> tuple[Array, Array, Array, Array, Array]:
-    """Complete the generated current/full/outgoing rank frontier or refuse it."""
+    """Close joint size-merit ranks and satisfied-statistic equalities."""
     capacity, maximum_refinements = 32, 8
     valid_edges = args.edge_valid > 0.0
     points = args.origins + args.target * jnp.sum(
@@ -4461,28 +6307,28 @@ def _global_size_bundle_direction(
         jnp.ceil(ranks).astype(jnp.int32),
     )
     quantile_count, edge_count = args.quantiles.size, args.edges.shape[0]
-    qids, edge_ids = (
-        jnp.arange(quantile_count, dtype=jnp.int32),
-        jnp.arange(edge_count, dtype=jnp.int32),
-    )
+    qids = jnp.arange(quantile_count, dtype=jnp.int32)
+    incoming_compliant = residual[:quantile_count] == 0.0
+    any_failed = jnp.any(~incoming_compliant)
     sort_work = 4 * edge_count * (edge_count - 1).bit_length() ** 2
     scan_work = (
-        2 * sort_work
-        + 2 * args.origins.shape[0]
-        + 8 * edge_count
-        + 8 * quantile_count * edge_count
+        2 * sort_work + 2 * args.origins.shape[0] + 8 * edge_count + 12 * quantile_count
     )
     empty = jnp.zeros((capacity,), dtype=jnp.int32)
-    bank = _GlobalSizeBranchBank(empty, empty, empty, jnp.asarray(0), jnp.asarray(False))
+    bank = GlobalSizeBranchBank(empty, empty, empty, jnp.asarray(0), jnp.asarray(False))
     original_norm = jnp.sqrt(jnp.sum(direction * direction))
     tolerance = _GLOBAL_SIZE_METHOD.linear_policy.tolerance
     rank_policy = RankPolicy(
         relative_cutoff=tolerance.relative, absolute_cutoff=tolerance.absolute
     )
 
+    # This while body owns one atomic frontier visit and its resource-refusal carry.
     def refine(carry: _GlobalSizeFrontierCarry) -> _GlobalSizeFrontierCarry:
-        bank, candidate, admitted, finished, resource, work, visits = carry
+        bank, candidate, admitted, finished, resource, work, visits, previous, joint = (
+            carry
+        )
 
+        # Keep rank scanning and gated bank composition fused in the same traced visit.
         def scan(_: None) -> _GlobalSizeFrontierCarry:
             displacement = args.target * jnp.sum(
                 args.basis * candidate[:, None, :], axis=-1
@@ -4505,60 +6351,97 @@ def _global_size_bundle_direction(
                 jnp.where(valid_edges, jnp.sum(future_delta * future_delta, axis=-1), 1.0)
             )
             future_order = jnp.argsort(jnp.where(valid_edges, future_lengths, jnp.inf))
+            future_low, future_high = (
+                future_order[lower_rank],
+                future_order[upper_rank],
+            )
+            fraction = ranks - lower_rank
+            future_statistic = (
+                future_lengths[future_low] * (1.0 - fraction)
+                + future_lengths[future_high] * fraction
+            )
+            future_relative = (future_statistic - args.target) / args.target
+            future_size = jnp.where(
+                args.tolerance == 0.0,
+                future_relative,
+                future_relative
+                - jnp.clip(future_relative, -args.tolerance, args.tolerance),
+            )
+            # Future failed ranks matter only when the full scalar size merit
+            # does not improve. Individual failed components may trade progress
+            # under the same summed deficit used by accepted-state admission.
+            future_joint_active = any_failed & (
+                jnp.sum(jnp.abs(future_size))
+                >= jnp.sum(jnp.abs(residual[:quantile_count]))
+            )
             current_low, current_high = (
                 outgoing_order[lower_rank],
                 outgoing_order[upper_rank],
             )
-            ties = (
-                valid_edges[None, :]
-                & (residual[:quantile_count, None] != 0.0)
-                & (
-                    (lengths[None, :] == lengths[current_low, None])
-                    | (lengths[None, :] == lengths[current_high, None])
+            supports = jnp.stack(
+                (current_low, current_high, future_low, future_high), axis=-1
+            ).astype(jnp.int32)
+            joint_rows, joint_slots, joint_work, joint_resource = (
+                _append_global_size_joint_rows(
+                    joint,
+                    jnp.stack((current_low, future_low)),
+                    jnp.stack((current_high, future_high)),
+                    jnp.asarray((any_failed, future_joint_active)),
+                    delta,
+                    lengths,
+                    residual,
+                    remaining_work - work - scan_work,
+                    args,
                 )
             )
             statistics = jnp.concatenate(
                 (
-                    jnp.repeat(qids, edge_count),
                     qids,
                     qids,
-                    jnp.asarray((-1,), dtype=jnp.int32),
+                    jnp.asarray((-2, -2, -1), dtype=jnp.int32),
                 )
             )
             lows = jnp.concatenate(
                 (
-                    jnp.tile(edge_ids, quantile_count),
                     current_low,
-                    future_order[lower_rank],
+                    future_low,
+                    joint_slots,
                     jnp.asarray((0,), dtype=jnp.int32),
                 )
             )
             highs = jnp.concatenate(
                 (
-                    jnp.tile(edge_ids, quantile_count),
                     current_high,
-                    future_order[upper_rank],
-                    jnp.asarray((0,), dtype=jnp.int32),
+                    future_high,
+                    jnp.asarray((0, 0, 0), dtype=jnp.int32),
                 )
             )
             active = jnp.concatenate(
                 (
-                    ties.reshape(-1),
-                    jnp.ones((2 * quantile_count,), dtype=jnp.bool_),
-                    jnp.asarray((jnp.any(shape_gradient != 0.0),)),
+                    incoming_compliant,
+                    incoming_compliant,
+                    jnp.asarray(
+                        (any_failed, future_joint_active, jnp.any(shape_gradient != 0.0))
+                    ),
                 )
             )
-            scanned_work = work + scan_work
+            scanned_work = work + scan_work + joint_work
             membership_bound = (
                 capacity + statistics.size + jnp.sum(active) * (8 * capacity + 4)
             )
 
             def append(_: None) -> _GlobalSizeFrontierCarry:
-                extended, append_work = _append_global_size_branches(
+                extended, append_work = append_global_size_branches(
                     bank, statistics, lows, highs, active
                 )
                 spent = scanned_work + append_work
-                stable = admitted & (extended.count == bank.count) & ~extended.overflow
+                stable = (
+                    admitted
+                    & (extended.count == bank.count)
+                    & jnp.all(supports == previous)
+                    & (joint_rows.count == joint.count)
+                    & ~extended.overflow
+                )
 
                 def complete(_: None) -> _GlobalSizeFrontierCarry:
                     return (
@@ -4569,6 +6452,8 @@ def _global_size_bundle_direction(
                         resource,
                         spent,
                         visits + 1,
+                        supports,
+                        joint_rows,
                     )
 
                 def compose(_: None) -> _GlobalSizeFrontierCarry:
@@ -4576,7 +6461,7 @@ def _global_size_bundle_direction(
                         generation_work = 8 * bucket * args.origins.size
 
                         def generate(_: None) -> _GlobalSizeFrontierCarry:
-                            selected_bank = _GlobalSizeBranchBank(
+                            selected_bank = GlobalSizeBranchBank(
                                 extended.statistic[:bucket],
                                 extended.lower[:bucket],
                                 extended.upper[:bucket],
@@ -4584,12 +6469,13 @@ def _global_size_bundle_direction(
                                 extended.overflow,
                             )
                             gradients, inequality, equality = (
-                                _global_size_branch_gradients(
+                                global_size_branch_gradients(
                                     selected_bank,
                                     delta,
                                     lengths,
                                     residual,
                                     shape_gradient,
+                                    joint_rows.gradients,
                                     args,
                                 )
                             )
@@ -4617,17 +6503,19 @@ def _global_size_bundle_direction(
                                 )
 
                             def change(_: None) -> tuple[Array, Array, Array, Array]:
-                                target_work = 5 * bucket + 2 * (
-                                    residual.size - quantile_count
+                                target_work = (
+                                    5 * bucket
+                                    + 2 * (residual.size - quantile_count)
+                                    + 2 * quantile_count
                                 )
 
                                 def prepare_targets(
                                     _: None,
                                 ) -> tuple[Array, Array, Array, Array]:
-                                    # Select progress from the actual bank's scientific
-                                    # component, not a unit margin that overmoves a
-                                    # nearly satisfied quantile during frontier closure.
-                                    targets = _global_size_branch_targets(
+                                    # Preserve summed failed-size progress rather
+                                    # than impose unrequested Pareto descent.
+                                    # Satisfied rank rows remain equalities.
+                                    targets = global_size_branch_targets(
                                         selected_bank,
                                         residual,
                                         inequality,
@@ -4675,6 +6563,8 @@ def _global_size_bundle_direction(
                                 denied,
                                 total,
                                 visits + 1,
+                                supports,
+                                joint_rows,
                             )
 
                         return lax.cond(
@@ -4688,6 +6578,8 @@ def _global_size_bundle_direction(
                                 jnp.asarray(True),
                                 spent,
                                 visits + 1,
+                                supports,
+                                joint_rows,
                             ),
                             None,
                         )
@@ -4719,22 +6611,32 @@ def _global_size_bundle_direction(
                         resource,
                         spent,
                         visits + 1,
+                        supports,
+                        joint_rows,
                     ),
                     lambda _: lax.cond(stable, complete, compose, None),
                     None,
                 )
 
             return lax.cond(
-                membership_bound <= remaining_work - scanned_work,
+                ~joint_resource
+                & ~joint_rows.overflow
+                & (membership_bound <= remaining_work - scanned_work),
                 append,
                 lambda _: (
                     bank,
                     candidate,
                     jnp.asarray(False),
                     jnp.asarray(True),
-                    jnp.asarray(True),
+                    joint_resource
+                    | (
+                        ~joint_rows.overflow
+                        & (membership_bound > remaining_work - scanned_work)
+                    ),
                     scanned_work,
                     visits + 1,
+                    supports,
+                    joint_rows,
                 ),
                 None,
             )
@@ -4750,11 +6652,13 @@ def _global_size_bundle_direction(
                 jnp.asarray(True),
                 work,
                 visits,
+                previous,
+                joint,
             ),
             None,
         )
 
-    bank, selected, admitted, finished, resource, work, visits = lax.while_loop(
+    bank, selected, admitted, finished, resource, work, visits, _, _ = lax.while_loop(
         lambda carry: (~carry[3]) & (~carry[4]) & (carry[6] < maximum_refinements),
         refine,
         (
@@ -4765,13 +6669,20 @@ def _global_size_bundle_direction(
             jnp.asarray(False),
             jnp.asarray(0, dtype=jnp.int64),
             jnp.asarray(0, dtype=jnp.int32),
+            jnp.full((quantile_count, 4), -1, dtype=jnp.int32),
+            _GlobalSizeJointRows(
+                jnp.full((capacity, 2 * quantile_count), -1, dtype=jnp.int32),
+                jnp.zeros((capacity, *args.origins.shape), dtype=args.origins.dtype),
+                jnp.asarray(0, dtype=jnp.int32),
+                jnp.asarray(False),
+            ),
         ),
     )
     return selected, admitted & finished & ~bank.overflow, work, visits, resource
 
 
-class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
-    def termination_valid(self, residual: Array, args: _GlobalSizeArgs) -> Array:
+class GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
+    def termination_valid(self, residual: Array, args: GlobalSizeArgs) -> Array:
         # Zero selected generalized gradient is not a stationarity proof.
         # Source publication/admission remains with the scientific owner.
         return jnp.all(residual == 0.0)
@@ -4784,9 +6695,9 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
         residual: Array,
         jacobian: JacobianLinearOperator,
         remaining_model_work: Array,
-        args: _GlobalSizeArgs,
+        args: GlobalSizeArgs,
     ) -> LeastSquaresTrialResult:
-        fixed_work, _, _ = _global_size_trial_work(
+        fixed_work, _, _, _ = _global_size_trial_work(
             args.origins.shape[0],
             args.edges.shape[0],
             args.cells.shape[0],
@@ -4811,6 +6722,11 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
             None,
         )
 
+    # Kernel rationale: outgoing size/shape tangents, finite source models, and
+    # rank events form one ordered trial computation. Retain explicit algebra
+    # and lax branches so model visits, native solve actions, and work refusal
+    # remain in the same compiled order; host lifecycle phases live above it.
+    # Keep outgoing rank derivatives and ordered finite trials in one resource-accounted traced kernel.
     def _evaluate(
         self,
         parameters: Array,
@@ -4818,9 +6734,9 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
         residual: Array,
         jacobian: JacobianLinearOperator,
         remaining_model_work: Array,
-        args: _GlobalSizeArgs,
+        args: GlobalSizeArgs,
     ) -> LeastSquaresTrialResult:
-        fixed_work, model_work, event_work = _global_size_trial_work(
+        fixed_work, model_work, event_work, margin_work = _global_size_trial_work(
             args.origins.shape[0],
             args.edges.shape[0],
             args.cells.shape[0],
@@ -4855,8 +6771,8 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
             constant > 0.0, 0.5 * linear / safe_length, jnp.sqrt(quadratic)
         )
         acceleration = quadratic / safe_length - tangent * tangent / safe_length
-        # Exact represented length ties are ordered by outgoing first and
-        # second derivatives, never by SCI row identity or epsilon grouping.
+        # Equal represented lengths are ordered by outgoing first and second
+        # derivatives, rather than by SCI row identity or epsilon grouping.
         order = jnp.lexsort((acceleration, tangent, jnp.where(valid, lengths, jnp.inf)))
         ranks = (jnp.sum(valid) - 1) * args.quantiles
         lower = jnp.floor(ranks).astype(jnp.int32)
@@ -4886,7 +6802,7 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
             ),
         )
         # At a zero max hinge JAX's linear selection is half its raw
-        # derivative; recover the exact one-sided image only for this trial.
+        # derivative; recover the one-sided hinge derivative for this trial.
         shape_image = jnp.where(
             residual[args.quantiles.size :] == 0.0,
             jnp.maximum(2.0 * image[args.quantiles.size :], 0.0),
@@ -4940,12 +6856,14 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
 
         # Finite source-point sizes reselect every rank, including
         # second-order movement of initially stationary edges. This is
-        # a size/shape model, not an actual residual callback or Krylov J.
-        def finite_model(scale: Array) -> tuple[Array, Array]:
-            # Actual finite physical sizes and cell-shape constraints of the
-            # source-point trajectory; this is not a residual callback.
+        # a finite size/shape model, separate from residual callbacks and Krylov J.
+        def finite_model(
+            scale: Array, model_direction: Array
+        ) -> tuple[Array, Array, Array]:
+            # Physical sizes and cell-shape constraints of the finite
+            # source-point trajectory have separate model-work accounting.
             modeled_points = args.origins + args.target * jnp.sum(
-                args.basis * (parameters + scale * direction)[:, None, :], axis=-1
+                args.basis * (parameters + scale * model_direction)[:, None, :], axis=-1
             )
             modeled_delta = (
                 modeled_points[args.edges[:, 1]] - modeled_points[args.edges[:, 0]]
@@ -4953,7 +6871,7 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
             modeled_lengths = jnp.sqrt(
                 jnp.where(valid, jnp.sum(modeled_delta * modeled_delta, axis=-1), 1.0)
             )
-            modeled_statistic = _size_quantile(
+            modeled_statistic = size_quantile(
                 jnp.where(valid, modeled_lengths, jnp.nan), args.quantiles
             )
             modeled_relative = (modeled_statistic - args.target) / args.target
@@ -4963,15 +6881,20 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
                 modeled_relative
                 - jnp.clip(modeled_relative, -args.tolerance, args.tolerance),
             )
-            modeled_shape = _global_size_shape_residual(modeled_points, args)
+            modeled_margin = _global_size_shape_margins(modeled_points, args)
+            modeled_shape = jnp.maximum(modeled_margin, 0.0)
             modeled = jnp.concatenate((modeled_size, modeled_shape))
             change = modeled - residual
             prediction = -jnp.sum(residual * change) - 0.5 * jnp.sum(change * change)
             admissible = (
                 jnp.all(jnp.isfinite(modeled))
                 & jnp.all((~valid) | (modeled_lengths > 0.0))
+                & (
+                    jnp.sum(jnp.abs(modeled_size))
+                    <= jnp.sum(jnp.abs(residual[: args.quantiles.size]))
+                )
                 & jnp.all(
-                    jnp.abs(modeled_size) <= jnp.abs(residual[: args.quantiles.size])
+                    (residual[: args.quantiles.size] != 0.0) | (modeled_size == 0.0)
                 )
                 & jnp.all(
                     modeled_shape[cell_count:]
@@ -4980,13 +6903,13 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
                 & jnp.isfinite(prediction)
                 & (prediction > 0.0)
             )
-            return change / scale, admissible
+            return change / scale, admissible, modeled_margin
 
         merit_slope = jnp.sum(residual * trial_image)
 
         stage_budget = remaining_model_work - fixed_work - bundle_work
 
-        def refused(visits: int) -> tuple[Array, Array, Array, Array, Array, Array]:
+        def refused(visits: int, margin_evaluated: bool = False) -> _GlobalSizeTrialCarry:
             return (
                 jnp.asarray(1.0, dtype=residual.dtype),
                 trial_image,
@@ -4994,17 +6917,24 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
                 jnp.asarray(visits, dtype=jnp.int32),
                 jnp.asarray(False),
                 jnp.asarray(True),
+                jnp.asarray(margin_evaluated),
+                direction,
+                jnp.asarray(0, dtype=jnp.int64),
+                jnp.asarray(0, dtype=jnp.int32),
+                merit_slope,
             )
 
-        def select_trial(_: None) -> tuple[Array, Array, Array, Array, Array, Array]:
-            def full_trial(_: None) -> tuple[Array, Array, Array, Array, Array, Array]:
-                full_image, full_valid = finite_model(
-                    jnp.asarray(1.0, dtype=residual.dtype)
+        def select_trial(_: None) -> _GlobalSizeTrialCarry:
+            def full_trial(
+                _: None,
+            ) -> _GlobalSizeTrialCarry:
+                full_image, full_valid, full_margin = finite_model(
+                    jnp.asarray(1.0, dtype=residual.dtype), direction
                 )
 
                 def stationary_trial(
                     _: None,
-                ) -> tuple[Array, Array, Array, Array, Array, Array]:
+                ) -> _GlobalSizeTrialCarry:
                     curvature = jnp.sum(trial_image * trial_image)
                     stationary_scale = jnp.minimum(
                         1.0, -merit_slope / jnp.where(curvature > 0.0, curvature, 1.0)
@@ -5014,7 +6944,20 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
                     stationary_scale = jnp.where(
                         stationary_scale == 1.0, 0.5, stationary_scale
                     )
-                    image, admitted = finite_model(stationary_scale)
+                    # Clipped zero hinges contain no measure of incoming
+                    # feasibility. Use signed margins of the same cell algebra
+                    # to bracket a hard-shape crossing before another model.
+                    current_margin = _global_size_shape_margins(points, args)
+                    shape_scale = _hard_shape_trial_scale(
+                        current_margin[cell_count:],
+                        full_margin[cell_count:],
+                        residual[args.quantiles.size + cell_count :],
+                        stationary_scale,
+                    )
+                    stationary_scale = shape_scale
+                    image, admitted, _source_valid = finite_model(
+                        stationary_scale, direction
+                    )
                     admitted = (
                         admitted
                         & jnp.isfinite(stationary_scale)
@@ -5023,7 +6966,7 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
 
                     def event_trial(
                         _: None,
-                    ) -> tuple[Array, Array, Array, Array, Array, Array]:
+                    ) -> _GlobalSizeTrialCarry:
                         support = jnp.concatenate((lower_rows, upper_rows))
                         alpha, accepted = quadratic_event_bound(
                             quadratic[None, :] - quadratic[support, None],
@@ -5031,7 +6974,10 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
                             constant[None, :] - constant[support, None],
                             jnp.broadcast_to(valid[None, :], (support.size, valid.size)),
                         )
-                        image, finite_valid = finite_model(alpha)
+                        alpha = jnp.minimum(alpha, shape_scale)
+                        image, finite_valid, _source_valid = finite_model(
+                            alpha, direction
+                        )
                         return (
                             alpha,
                             image,
@@ -5039,6 +6985,89 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
                             jnp.asarray(3, dtype=jnp.int32),
                             jnp.asarray(True),
                             jnp.asarray(False),
+                            jnp.asarray(True),
+                            direction,
+                            jnp.asarray(0, dtype=jnp.int64),
+                            jnp.asarray(0, dtype=jnp.int32),
+                            merit_slope,
+                        )
+
+                    def shape_trial(_: None) -> _GlobalSizeTrialCarry:
+                        slope_work = (
+                            4
+                            * args.edges.shape[0]
+                            * (args.edges.shape[0] - 1).bit_length() ** 2
+                            + 4 * args.origins.shape[0]
+                            + 12 * args.edges.shape[0]
+                            + 10 * args.quantiles.size
+                        )
+                        allowance = (
+                            stage_budget - 3 * model_work - margin_work - slope_work
+                        )
+                        (
+                            corrected,
+                            shape_valid,
+                            shape_work,
+                            shape_visits,
+                            shape_resource,
+                        ) = _global_size_shape_direction(
+                            parameters,
+                            direction,
+                            residual,
+                            allowance,
+                            jnp.asarray(8, dtype=jnp.int32) - bundle_visits,
+                            args,
+                        )
+
+                        def evaluate(_: None) -> tuple[Array, Array, Array]:
+                            corrected_image, finite_valid, _source_valid = finite_model(
+                                jnp.asarray(1.0, dtype=residual.dtype), corrected
+                            )
+                            corrected_slope = _global_size_outgoing_slope(
+                                parameters, corrected, residual, args
+                            )
+                            return corrected_image, finite_valid, corrected_slope
+
+                        corrected_image, finite_valid, corrected_slope = lax.cond(
+                            shape_valid & ~shape_resource,
+                            evaluate,
+                            lambda _: (trial_image, jnp.asarray(False), merit_slope),
+                            None,
+                        )
+                        executed = (shape_valid & ~shape_resource).astype(jnp.int32)
+                        return (
+                            jnp.asarray(1.0, dtype=residual.dtype),
+                            corrected_image,
+                            finite_valid & shape_valid & ~shape_resource,
+                            jnp.asarray(2, dtype=jnp.int32) + executed,
+                            jnp.asarray(False),
+                            shape_resource,
+                            jnp.asarray(True),
+                            corrected,
+                            shape_work + executed.astype(jnp.int64) * slope_work,
+                            shape_visits,
+                            corrected_slope,
+                        )
+
+                    def third_trial(_: None) -> _GlobalSizeTrialCarry:
+                        needs_shape = jnp.all(
+                            residual[args.quantiles.size :] == 0.0
+                        ) & jnp.any(full_margin[cell_count:] > 0.0)
+                        return lax.cond(
+                            needs_shape,
+                            lambda _: lax.cond(
+                                stage_budget >= 3 * model_work + margin_work,
+                                shape_trial,
+                                lambda _: refused(2, True),
+                                None,
+                            ),
+                            lambda _: lax.cond(
+                                stage_budget >= 3 * model_work + event_work + margin_work,
+                                event_trial,
+                                lambda _: refused(2, True),
+                                None,
+                            ),
+                            None,
                         )
 
                     return lax.cond(
@@ -5050,13 +7079,13 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
                             jnp.asarray(2, dtype=jnp.int32),
                             jnp.asarray(False),
                             jnp.asarray(False),
+                            jnp.asarray(True),
+                            direction,
+                            jnp.asarray(0, dtype=jnp.int64),
+                            jnp.asarray(0, dtype=jnp.int32),
+                            merit_slope,
                         ),
-                        lambda _: lax.cond(
-                            stage_budget >= 3 * model_work + event_work,
-                            event_trial,
-                            lambda _: refused(2),
-                            None,
-                        ),
+                        third_trial,
                         None,
                     )
 
@@ -5069,9 +7098,14 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
                         jnp.asarray(1, dtype=jnp.int32),
                         jnp.asarray(False),
                         jnp.asarray(False),
+                        jnp.asarray(False),
+                        direction,
+                        jnp.asarray(0, dtype=jnp.int64),
+                        jnp.asarray(0, dtype=jnp.int32),
+                        merit_slope,
                     ),
                     lambda _: lax.cond(
-                        stage_budget >= 2 * model_work,
+                        stage_budget >= 2 * model_work + margin_work,
                         stationary_trial,
                         lambda _: refused(1),
                         None,
@@ -5092,6 +7126,11 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
             model_visits,
             event_executed,
             trial_resource,
+            margin_evaluated,
+            selected_direction,
+            shape_work,
+            shape_visits,
+            selected_slope,
         ) = lax.cond(
             bundle_valid
             & ~bundle_resource
@@ -5105,22 +7144,29 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
                 jnp.asarray(0, dtype=jnp.int32),
                 jnp.asarray(False),
                 jnp.asarray(False),
+                jnp.asarray(False),
+                direction,
+                jnp.asarray(0, dtype=jnp.int64),
+                jnp.asarray(0, dtype=jnp.int32),
+                merit_slope,
             ),
             None,
         )
         proposed_points = args.origins + args.target * jnp.sum(
-            args.basis * (parameters + scale * direction)[:, None, :], axis=-1
+            args.basis * (parameters + scale * selected_direction)[:, None, :], axis=-1
         )
         represented_motion = jnp.any(proposed_points != points)
-        # Exact outgoing slope admission remains independent of finite prediction.
+        # One-sided outgoing slope admission is independent of finite prediction.
         actual_work = (
             fixed_work
             + bundle_work
             + model_visits * model_work
             + event_executed.astype(jnp.int64) * event_work
+            + margin_evaluated.astype(jnp.int64) * margin_work
+            + shape_work
         )
         return LeastSquaresTrialResult(
-            direction=direction,
+            direction=selected_direction,
             scale=scale,
             model_image=selected_trial_image,
             valid=(
@@ -5129,23 +7175,38 @@ class _GlobalSizeTrialPolicy(AbstractLeastSquaresTrialPolicy):
                 & represented_motion
                 & ~bundle_resource
                 & ~trial_resource
-                & jnp.isfinite(merit_slope)
-                & (merit_slope < 0.0)
+                & jnp.isfinite(selected_slope)
+                & (selected_slope < 0.0)
             ),
             jvp_actions=jnp.asarray(1, dtype=jnp.int32),
             vjp_actions=jnp.asarray(1, dtype=jnp.int32),
             model_work_units=actual_work,
-            model_visits=bundle_visits + model_visits,
+            model_visits=bundle_visits + model_visits + shape_visits,
             resource_refused=bundle_resource | trial_resource,
         )
 
 
-def _global_size_shape_residual(points: Array, args: _GlobalSizeArgs, /) -> Array:
-    """One shared physical cell algebra for native primals and finite models."""
+def _hard_shape_trial_scale(
+    current: Array, future: Array, allowed: Array, scale: Array, /
+) -> Array:
+    """Interiorize a finite hard-shape crossing without changing its bound."""
+    slack = allowed - current
+    excess = future - allowed
+    violated = excess > 0.0
+    denominator = jnp.where(violated, slack + excess, 1.0)
+    crossing = jnp.where(violated, jnp.maximum(slack, 0.0) / denominator, jnp.inf)
+    bound = jnp.min(crossing)
+    # Zero incoming slack does not establish a positive crossing bracket.
+    # Retain the selected scales under unchanged finite hard-shape admission.
+    return jnp.where((bound > 0.0) & (bound < scale), 0.5 * bound, scale)
+
+
+def _global_size_shape_margins(points: Array, args: GlobalSizeArgs, /) -> Array:
+    """Retain signed excesses in the existing physical shape residual order."""
     corners = points[args.cells] / args.target
     frame = corners[:, 1:] - corners[:, :1]
     determinant = jnp.sum(frame[:, 0] * jnp.cross(frame[:, 1], frame[:, 2]), axis=-1)
-    volume = jnp.maximum(0.1 * args.initial_volume - determinant, 0.0)
+    volume = 0.1 * args.initial_volume - determinant
     faces = corners[:, jnp.asarray(_FACES)]
     normals = jnp.cross(faces[:, :, 1] - faces[:, :, 0], faces[:, :, 2] - faces[:, :, 0])
     squared = jnp.sum(normals * normals, axis=-1)
@@ -5153,7 +7214,7 @@ def _global_size_shape_residual(points: Array, args: _GlobalSizeArgs, /) -> Arra
     cosine = -jnp.sum(
         normals[:, pairs[:, 0]] * normals[:, pairs[:, 1]], axis=-1
     ) / jnp.sqrt(jnp.maximum(squared[:, pairs[:, 0]] * squared[:, pairs[:, 1]], 1.0e-30))
-    angles = jnp.maximum(cosine - args.dihedral_cosine, 0.0)
+    angles = cosine - args.dihedral_cosine
     solve = solve_small_linear(
         SmallLinearSolvePlan(3),
         frame,
@@ -5162,23 +7223,27 @@ def _global_size_shape_residual(points: Array, args: _GlobalSizeArgs, /) -> Arra
     cell_edges = corners[:, pairs[:, 1]] - corners[:, pairs[:, 0]]
     shortest = jnp.sqrt(jnp.min(jnp.sum(cell_edges * cell_edges, axis=-1), axis=-1))
     radius = jnp.sqrt(jnp.sum(solve.value * solve.value, axis=-1))
-    radius_excess = jnp.maximum(radius / shortest - args.radius_edge_bound, 0.0)
+    radius_excess = radius / shortest - args.radius_edge_bound
     return jnp.concatenate(
         (
-            16.0 * args.cell_valid * volume,
-            16.0 * args.cell_valid * radius_excess,
-            (16.0 * args.cell_valid[:, None] * angles).reshape((-1,)),
+            jnp.where(args.cell_valid > 0.0, 16.0 * volume, 0.0),
+            jnp.where(args.cell_valid > 0.0, 16.0 * radius_excess, 0.0),
+            jnp.where(args.cell_valid[:, None] > 0.0, 16.0 * angles, 0.0).reshape((-1,)),
         )
     )
 
 
-def _global_size_residual(parameters: Array, args: _GlobalSizeArgs, /) -> Array:
-    """Owning target quantiles and shape hinges on participating source strata.
+def global_size_shape_residual(points: Array, args: GlobalSizeArgs, /) -> Array:
+    """Evaluate the shared physical cell algebra for native primals and finite models."""
+    return jnp.maximum(_global_size_shape_margins(points, args), 0.0)
 
-    NumPy publication and this native proposal both use linear quantiles.
-    Actual publication statistics and shape checks remain with their owners.
-    Jacobian actions are differentiated edge gathers and cell-local algebra;
-    no dense global Jacobian or normal matrix is formed.
+
+def global_size_residual(parameters: Array, args: GlobalSizeArgs, /) -> Array:
+    """Evaluate target quantiles and shape hinges on participating source strata.
+
+    Publication and native proposals use linear quantiles. Publication
+    statistics and shape checks remain separate from this numerical model.
+    Jacobian actions use differentiated edge gathers and cell-local algebra.
     """
     points = args.origins + args.target * jnp.sum(
         args.basis * parameters[:, None, :], axis=-1
@@ -5193,27 +7258,27 @@ def _global_size_residual(parameters: Array, args: _GlobalSizeArgs, /) -> Array:
         jnp.sqrt(jnp.where(valid_edges, squared_lengths, 1.0)),
         jnp.nan,
     )
-    # The primal keeps the owning linear-quantile convention. A prepared
-    # exact-tie block has a linear, row-permutation-symmetric derivative;
-    # outgoing trial derivatives are a separate nonlinear rank operation.
-    statistic = _size_quantile(lengths, args.quantiles)
+    # The primal uses linear quantiles. Equal-value rank blocks have a
+    # row-permutation-symmetric linear derivative; outgoing trial derivatives
+    # remain a separate nonlinear rank operation.
+    statistic = size_quantile(lengths, args.quantiles)
     relative = (statistic - args.target) / args.target
     size = jnp.where(
         args.tolerance == 0.0,
         relative,
         relative - jnp.clip(relative, -args.tolerance, args.tolerance),
     )
-    return jnp.concatenate((size, _global_size_shape_residual(points, args)))
+    return jnp.concatenate((size, global_size_shape_residual(points, args)))
 
 
 @eqx.filter_jit
 def _global_size_solve(
-    args: _GlobalSizeArgs, model_work_limit: Array, /
+    args: GlobalSizeArgs, model_work_limit: Array, /
 ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array]:
     problem = NonlinearLeastSquaresProblem(
-        _global_size_residual,
+        global_size_residual,
         problem_id="source-stratum/global-size-linear-quantile",
-        trial_policy=_GlobalSizeTrialPolicy(),
+        trial_policy=GlobalSizeTrialPolicy(),
         trial_policy_id=_GLOBAL_SIZE_TRIAL_POLICY_ID,
         trial_model_work_limit=model_work_limit,
     )
@@ -5244,7 +7309,7 @@ def _global_size_solve(
 
 
 class _GlobalSizePlan(NamedTuple):
-    args: _GlobalSizeArgs
+    args: GlobalSizeArgs
     basis: np.ndarray
     vertices: np.ndarray
     edges: np.ndarray
@@ -5262,12 +7327,13 @@ class _GlobalSizePlan(NamedTuple):
 def _measure_statistical_phase(
     budget: _NativeMetricBudget, phase: NativeMeshingPhase, /
 ) -> Iterator[None]:
-    """Record actual charged work, including a refused phase, outside identity."""
+    """Record charged work and settle the explicit reservation on every exit."""
     budget.check_deadline()
     started = phase_started(budget.record_phase)
     before = budget.work_units if budget.record_phase is not None else 0
     try:
-        yield
+        with budget.phase():
+            yield
     finally:
         work = budget.work_units - before if budget.record_phase is not None else None
         record_elapsed(budget.record_phase, phase, started, work_units=work)
@@ -5360,7 +7426,7 @@ def _prepare_global_size(
     target = objective.goal.control.target_size
     ranks = np.arange(edge_capacity)
     quantiles = [
-        {"p50": 0.5, "p95": 0.95}[name]
+        _dependency_phydrax_meshing__sizing.size_statistic_quantile(name)
         for name in objective.goal.policy.target_statistics
     ]
     # Only the requested statistics enter the residual. Requiring every edge
@@ -5372,7 +7438,7 @@ def _prepare_global_size(
     corners = origins[cells]
     initial_volume = np.linalg.det(corners[:, 1:] - corners[:, :1]) / target**3
     edges = _edge_rows(objective.edges.keys)
-    args = _GlobalSizeArgs(
+    args = GlobalSizeArgs(
         jnp.asarray(origins),
         jnp.asarray(basis),
         jnp.asarray(_bucket(edges)),
@@ -5395,10 +7461,14 @@ def _prepare_global_size(
     # its JVP and transposed VJP reuse the prepared sort permutation.
     action_work = vertex_capacity + 8 * edge_capacity + 20 * cell_capacity
     group_work = 4 * edge_capacity
-    fixed_trial_work, model_trial_work, event_trial_work = _global_size_trial_work(
-        vertex_capacity, edge_capacity, cell_capacity, quantile_count
+    fixed_trial_work, model_trial_work, event_trial_work, margin_trial_work = (
+        _global_size_trial_work(
+            vertex_capacity, edge_capacity, cell_capacity, quantile_count
+        )
     )
-    trial_work = fixed_trial_work + 3 * model_trial_work + event_trial_work
+    trial_work = (
+        fixed_trial_work + 3 * model_trial_work + event_trial_work + margin_trial_work
+    )
     return _GlobalSizePlan(
         args,
         basis,
@@ -5440,12 +7510,12 @@ def _statistical_relocate_pass(
         2 + _GLOBAL_SIZE_METHOD.maximum_trials * (2 * _GLOBAL_LINEAR_STEPS + 12)
     )
     # Native LM trial primals are distinct from the source policy's finite
-    # models, whose sorts already consume its actual model-work receipt.
-    residual_bound = _global_size_canonical_residual_bound()
+    # models, whose sorts consume their separately charged model work.
+    residual_bound = global_size_canonical_residual_bound()
     policy_bound = (
         _GLOBAL_SIZE_TERMINATION.maximum_steps * _GLOBAL_SIZE_METHOD.maximum_trials
     )
-    action_bound += policy_bound * 2  # One actual prepared JVP and VJP per invocation.
+    action_bound += policy_bound * 2  # One prepared JVP and VJP per invocation.
     model_bound = _GLOBAL_SIZE_TERMINATION.maximum_steps + 2
     fixed_bound = (
         action_bound * work_per_action
@@ -5453,10 +7523,9 @@ def _statistical_relocate_pass(
         + model_bound * plan.group_work
     )
     remaining_work = budget.maximum_work_units - budget.work_units
-    if budget.execution_budget is not None:
-        remaining_work = min(
-            remaining_work, budget.execution_budget.remaining().remaining_work_units
-        )
+    remaining_work = min(
+        remaining_work, budget.coordinate_budget.ticket.remaining_work_units
+    )
     if fixed_bound > remaining_work:
         budget.optimizer_work(fixed_bound, scratch)
         return snapshot, 0, 0
@@ -5476,8 +7545,7 @@ def _statistical_relocate_pass(
         _GLOBAL_SIZE_TERMINATION.absolute_step,
         _GLOBAL_SIZE_TERMINATION.relative_step,
     )
-    if budget.execution_budget is not None:
-        budget.execution_budget.admit_work_bound(fixed_bound + model_work_limit)
+    budget.admit_optimizer_bound(fixed_bound + model_work_limit)
     with _measure_statistical_phase(budget, "metric_global_solve"):
         (
             parameters,
@@ -5493,7 +7561,7 @@ def _statistical_relocate_pass(
         ) = _global_size_solve(plan.args, jnp.asarray(model_work_limit, dtype=jnp.int64))
         if not bool(receipts_valid):
             raise ValueError(
-                "The native statistical trial-policy work receipts failed validation."
+                "tetra_metric.trial_policy_work must pass native accounting validation; got invalid work evidence"
             )
         budget.optimizer_status_counts[int(status)] += 1
         budget.optimizer_iterations += int(iterations)
@@ -5553,8 +7621,7 @@ def _admit_global_size(
     operation_budget: int,
     /,
 ) -> tuple[TetMeshArrays, int, int]:
-    """Check actual global merit/coverage and commit exactly once through native."""
-    from .providers._native_publication import edge_size_evidence
+    """Check global merit and source coverage before one native commit."""
 
     budget = objective.budget
     rows, scratch, preparation_work = (
@@ -5603,10 +7670,18 @@ def _admit_global_size(
                 (("cavity_union_cells", float(cavity_count)),),
             )
             return snapshot, 0, 1 + budget.optimizer_evaluations - before
+
         try:
-            lengths, growth = edge_size_evidence(points, plan.edges)
-        except MeshingFailure as error:
-            if error.evidence.category is not MeshingFailureCategory.COMPLIANCE_FAILED:
+            lengths, growth = (
+                _owner_phydrax_meshing_providers__native_publication.edge_size_evidence(
+                    points, plan.edges
+                )
+            )
+        except _leaf_phydrax_meshing__failures.MeshingFailure as error:
+            if (
+                error.evidence.category
+                is not _leaf_phydrax_meshing__failures.MeshingFailureCategory.COMPLIANCE_FAILED
+            ):
                 raise
             budget.refuse_optimizer("nonfinite_global_physical_edges")
             continue
@@ -5628,7 +7703,7 @@ def _admit_global_size(
         if stencil is None or not bool(np.all(stencil[2])):
             budget.refuse_optimizer("uncovered_global_size_proposal")
             continue
-        source_rows = key_rows(
+        source_rows = entity_keys_owner.key_rows(
             budget.source_tables.vertex_global_ids[:, None],
             stencil[0].reshape((-1, 1)),
         ).reshape(stencil[0].shape)
@@ -5686,7 +7761,7 @@ def _admit_global_size(
         ].tolist():
             identifier, _ = ancestry.cells[tuple(sorted(cell))]
             ancestry.cell_kinds[identifier] = int(
-                _lineage_operation_kind(
+                lineage_operation_kind(
                     EntityLineageKind.RELOCATED,
                     (
                         ancestry.cell_kinds.get(
@@ -5704,6 +7779,40 @@ def _admit_global_size(
     return snapshot, 0, 1 + budget.optimizer_evaluations - before
 
 
+def _metric_relocation_merit(
+    old_lengths: np.ndarray,
+    new_lengths: np.ndarray,
+    old_quality: float,
+    new_quality: float,
+    minimum_quality: float,
+    metric_band: tuple[float, float],
+    /,
+) -> bool:
+    """Admit band descent or monotone repair of an initially deficient cavity.
+
+    Repair steps remain inside the metric epoch. Completion independently
+    requires every cell to meet the floor; an admissible cavity cannot cross it.
+    """
+    if old_quality < minimum_quality:
+        return new_quality > old_quality + 1.0e-6
+    if new_quality < minimum_quality:
+        return False
+    lower, upper = metric_band
+    old_deficit = float(
+        np.sum(
+            np.maximum(lower - old_lengths, 0.0) + np.maximum(old_lengths - upper, 0.0)
+        )
+    )
+    new_deficit = float(
+        np.sum(
+            np.maximum(lower - new_lengths, 0.0) + np.maximum(new_lengths - upper, 0.0)
+        )
+    )
+    return new_deficit < old_deficit or (
+        new_deficit == old_deficit and new_quality > old_quality + 1.0e-6
+    )
+
+
 def _relocate_pass(
     native: TetMesh3D,
     snapshot: TetMeshArrays,
@@ -5716,6 +7825,9 @@ def _relocate_pass(
     native_budget: _NativeMetricBudget,
     objective: _StatisticalObjective | None,
     /,
+    *,
+    minimum_quality: float,
+    metric_band: tuple[float, float],
 ) -> tuple[TetMeshArrays, int, int]:
     if objective is not None:
         return _statistical_relocate_pass(
@@ -5724,12 +7836,19 @@ def _relocate_pass(
     edges = _edges(snapshot.tetrahedra)
     lengths = _lengths(snapshot.points, values, edges)
     delta = snapshot.points[edges[:, 1]] - snapshot.points[edges[:, 0]]
-    force = (1.0 - 1.0 / np.maximum(lengths, 1.0e-30))[:, None] * delta
+    lower, upper = metric_band
+    target = 1.0 if lower < 1.0 < upper else 0.5 * (lower + upper)
+    active = (lengths < lower) | (lengths > upper)
+    if not np.any(active) or np.any(
+        _quality(snapshot.points, values, snapshot.tetrahedra) < minimum_quality
+    ):
+        active[:] = True
+    force = (active * (1.0 - target / np.maximum(lengths, 1.0e-30)))[:, None] * delta
     total = np.zeros_like(snapshot.points)
     degree = np.zeros((snapshot.points.shape[0],), dtype=np.float64)
     np.add.at(total, edges[:, 0], force)
     np.add.at(total, edges[:, 1], -force)
-    np.add.at(degree, edges.reshape((-1,)), 1.0)
+    np.add.at(degree, edges.reshape((-1,)), np.repeat(active, 2))
     vertices = np.flatnonzero(snapshot.vertex_dimension == 3)
     vertices = vertices[
         ~np.asarray(
@@ -5746,7 +7865,7 @@ def _relocate_pass(
     stencil = native_budget.stencil(targets.reshape((-1, 3)))
     if stencil is None:
         return snapshot, 0, 0
-    source_rows = key_rows(
+    source_rows = entity_keys_owner.key_rows(
         source_tables.vertex_global_ids[:, None],
         stencil[0].reshape((-1, 1)),
     ).reshape(stencil[0].shape)
@@ -5755,7 +7874,9 @@ def _relocate_pass(
     applied, work = 0, 0
     for index, vertex in enumerate(vertices.tolist()):
         cavity = snapshot.tetrahedra[np.any(snapshot.tetrahedra == vertex, axis=1)]
-        old = np.min(_quality(snapshot.points, values, cavity))
+        old = float(np.min(_quality(snapshot.points, values, cavity)))
+        incident_edges = edges[np.any(edges == vertex, axis=1)]
+        old_lengths = _lengths(snapshot.points, values, incident_edges)
         for step in range(3):
             if work >= budget or native_budget.exhausted:
                 break
@@ -5766,9 +7887,16 @@ def _relocate_pass(
             proposed[vertex] = targets[index, step]
             metrics = values.copy()
             metrics[vertex] = samples[index, step]
-            if (
-                not np.all(_positive(proposed, cavity))
-                or np.min(_quality(proposed, metrics, cavity)) <= old + 1.0e-6
+            if not np.all(_positive(proposed, cavity)):
+                continue
+            new_quality = float(np.min(_quality(proposed, metrics, cavity)))
+            if not _metric_relocation_merit(
+                old_lengths,
+                _lengths(proposed, metrics, incident_edges),
+                old,
+                new_quality,
+                minimum_quality,
+                metric_band,
             ):
                 continue
             if native_budget.call(
@@ -5791,7 +7919,7 @@ def _relocate_pass(
                 for cell in cavity.tolist():
                     identifier, _ = ancestry.cells[tuple(sorted(cell))]
                     ancestry.cell_kinds[identifier] = int(
-                        _lineage_operation_kind(
+                        lineage_operation_kind(
                             EntityLineageKind.RELOCATED,
                             (
                                 ancestry.cell_kinds.get(
@@ -5806,6 +7934,8 @@ def _relocate_pass(
 
 
 __all__ = [
+    "MetricMemoryEvidence",
+    "MetricOptimizerEvidence",
     "MetricRemeshingCriterion",
     "MetricRemeshingEvidence",
     "MetricRemeshingStatus",

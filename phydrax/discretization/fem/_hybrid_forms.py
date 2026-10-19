@@ -19,76 +19,38 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from ... import linalg as linalg_owner
+from ..._host_table_cache import host_table_cache, logical_table_bytes
+from ..._resource_ticket import HostBatchTicket
+from ..._strict import StrictModule
 from ...ein import contract
+from ...typing import checked
+from .. import _coordinate_enclosure as algebra
+from .._coordinate_budget import CoordinateEnclosureBudget
 from .._reference_cell import reference_cell_topology
-from . import _form_elements as forms
+from . import (
+    _form_elements as forms,
+    _hybrid_functionals as hybrid_functionals_owner,
+    _hybrid_moments as hybrid_moments_owner,
+)
+from ._form_basis_types import AbstractReferenceFormBasis, FormElementFamily
+from ._hybrid_charts import entity_chart, entity_kind, hybrid_kind, trace_basis
 
 
 class HybridPreparation(NamedTuple):
-    prepared: forms._Prepared
-    coefficients: forms._HostArray
+    prepared: forms.PreparedForm
+    coefficients: forms.HostFormArray
     condition: float
     source_bank: tuple[tuple[Fraction, ...], ...]
     solve_error: float
     solve_status: np.ndarray
     body_test_exponents: tuple[tuple[int, ...], ...]
     body_test_source_bank: tuple[tuple[Fraction, ...], ...]
-    body_test_coefficients: forms._HostArray
+    body_test_coefficients: forms.HostFormArray
 
 
-def hybrid_kind(family: forms.FormElementFamily) -> str:
-    if family == "prism-trimmed":
-        return "prism"
-    if family == "pyramid-trimmed":
-        return "pyramid"
-    raise ValueError("A hybrid form family is required.")
-
-
-def entity_kind(family: forms.FormElementFamily, face: tuple[int, ...]) -> str:
-    if len(face) == 1:
-        return "simplex:0"
-    if len(face) == 2:
-        return "interval"
-    if len(face) == 3:
-        return "triangle"
-    if len(face) == 4:
-        return "quadrilateral"
-    return hybrid_kind(family)
-
-
-def entity_chart(
-    family: forms.FormElementFamily, face: tuple[int, ...]
-) -> tuple[forms._HostArray, forms._HostArray]:
-    topology = reference_cell_topology(hybrid_kind(family))
-    vertices = np.asarray(topology.vertices, dtype=np.float64)
-    if len(face) == len(vertices):
-        return np.zeros(3, dtype=np.float64), np.eye(3, dtype=np.float64)
-    origin = vertices[face[0]]
-    if len(face) == 4:
-        return origin, np.stack(
-            (vertices[face[1]] - origin, vertices[face[3]] - origin), axis=1
-        )
-    return origin, (vertices[list(face[1:])] - origin).T
-
-
-def trace_basis(
-    family: forms.FormElementFamily, k: int, r: int, face: tuple[int, ...]
-) -> forms.FormBasis:
-    kind = entity_kind(family, face)
-    n = reference_cell_topology(kind).dimension
-    if n == 3:
-        return forms.FormBasis(3, k, r, family, "untwisted")
-    return forms.FormBasis(
-        n,
-        k,
-        r,
-        "tensor-trimmed" if kind == "quadrilateral" else "trimmed",
-        "untwisted",
-    )
-
-
-def _derivative(poly: forms._Polynomial, axis: int) -> forms._Polynomial:
-    result: forms._Polynomial = {}
+def derivative(poly: forms.FormPolynomial, axis: int) -> forms.FormPolynomial:
+    result: forms.FormPolynomial = {}
     for alpha, value in poly.items():
         if alpha[axis]:
             lower = list(alpha)
@@ -97,61 +59,63 @@ def _derivative(poly: forms._Polynomial, axis: int) -> forms._Polynomial:
     return result
 
 
-def _sum_polynomials(
-    polys: tuple[forms._Polynomial, ...], factors: tuple[float, ...]
-) -> forms._Polynomial:
-    result: forms._Polynomial = {}
+def sum_polynomials(
+    polys: tuple[forms.FormPolynomial, ...], factors: tuple[float, ...]
+) -> forms.FormPolynomial:
+    result: forms.FormPolynomial = {}
     for poly, factor in zip(polys, factors, strict=True):
         for alpha, value in poly.items():
             result[alpha] = result.get(alpha, 0.0) + factor * value
     return {alpha: value for alpha, value in result.items() if value != 0}
 
 
-def _pyramid_coordinates() -> tuple[forms._Polynomial, ...]:
-    a: forms._Polynomial = {(1, 0, 0): 1.0}
-    b: forms._Polynomial = {(0, 1, 0): 1.0}
-    z: forms._Polynomial = {(0, 0, 1): 1.0}
-    one: forms._Polynomial = {(0, 0, 0): 1.0}
-    aa, bb, zz = (_sum_polynomials((one, p), (1.0, -1.0)) for p in (a, b, z))
+def _pyramid_coordinates() -> tuple[forms.FormPolynomial, ...]:
+    a: forms.FormPolynomial = {(1, 0, 0): 1.0}
+    b: forms.FormPolynomial = {(0, 1, 0): 1.0}
+    z: forms.FormPolynomial = {(0, 0, 1): 1.0}
+    one: forms.FormPolynomial = {(0, 0, 0): 1.0}
+    aa, bb, zz = (sum_polynomials((one, p), (1.0, -1.0)) for p in (a, b, z))
     return tuple(
-        forms._multiply(forms._multiply(x, y), zz)
+        forms.multiply_form_polynomials(forms.multiply_form_polynomials(x, y), zz)
         for x, y in ((aa, bb), (a, bb), (a, b), (aa, b))
     ) + (z,)
 
 
 def _whitney_polynomials(
-    coordinates: tuple[forms._Polynomial, ...],
+    coordinates: tuple[forms.FormPolynomial, ...],
     k: int,
     alpha: tuple[int, ...],
     sigma: tuple[int, ...],
     n: int,
-) -> tuple[forms._Polynomial, ...]:
+) -> tuple[forms.FormPolynomial, ...]:
     scalar = {(0,) * n: 1.0}
     for coordinate, power in zip(coordinates, alpha, strict=True):
-        scalar = forms._multiply(scalar, forms._power(coordinate, power, n))
-    components: list[forms._Polynomial] = []
+        scalar = forms.multiply_form_polynomials(
+            scalar, forms.power_form_polynomial(coordinate, power, n)
+        )
+    components: list[forms.FormPolynomial] = []
     for blade in combinations(range(n), k):
         summands, factors = [], []
         for position, vertex in enumerate(sigma):
             others = tuple(v for v in sigma if v != vertex)
             for order in permutations(range(k)):
-                term = forms._multiply(scalar, coordinates[vertex])
+                term = forms.multiply_form_polynomials(scalar, coordinates[vertex])
                 for i, axis in enumerate(blade):
-                    term = forms._multiply(
-                        term, _derivative(coordinates[others[order[i]]], axis)
+                    term = forms.multiply_form_polynomials(
+                        term, derivative(coordinates[others[order[i]]], axis)
                     )
                 sign = (-1) ** sum(
                     order[i] > order[j] for i in range(k) for j in range(i + 1, k)
                 )
                 summands.append(term)
                 factors.append(float(factorial(k) * (-1) ** position * sign))
-        components.append(_sum_polynomials(tuple(summands), tuple(factors)))
+        components.append(sum_polynomials(tuple(summands), tuple(factors)))
     return tuple(components)
 
 
-def _coefficient_array(
-    polys: tuple[tuple[forms._Polynomial, ...], ...],
-) -> tuple[tuple[tuple[int, ...], ...], forms._HostArray]:
+def coefficient_array(
+    polys: tuple[tuple[forms.FormPolynomial, ...], ...],
+) -> tuple[tuple[tuple[int, ...], ...], forms.HostFormArray]:
     exponents = tuple(
         sorted(
             {alpha for field in polys for component in field for alpha in component},
@@ -167,12 +131,12 @@ def _coefficient_array(
     return exponents, coefficients
 
 
-def _independent_columns(matrix: forms._HostArray) -> tuple[int, ...]:
+def independent_columns(matrix: forms.HostFormArray) -> tuple[int, ...]:
     # Modified Gram--Schmidt is host-only symbolic-space admission. Stable
     # lexicographic pivots preserve the declared monomial scientific identity.
     scale = np.max(np.linalg.norm(matrix, axis=0), initial=0.0)
     tolerance = 2048 * np.finfo(np.float64).eps * max(scale, 1.0)
-    orthogonal: list[forms._HostArray] = []
+    orthogonal: list[forms.HostFormArray] = []
     indices: list[int] = []
     for index in range(matrix.shape[1]):
         residual = matrix[:, index].copy()
@@ -186,19 +150,19 @@ def _independent_columns(matrix: forms._HostArray) -> tuple[int, ...]:
     return tuple(indices)
 
 
-@lru_cache(maxsize=32)
+@host_table_cache(max_entries=256, max_bytes=4194304)
 def _prism_generators(
     k: int, r: int
-) -> tuple[tuple[tuple[int, ...], ...], forms._HostArray]:
+) -> tuple[tuple[tuple[int, ...], ...], forms.HostFormArray]:
     exponents = tuple(product(range(r + 1), repeat=3))
     positions = {alpha: i for i, alpha in enumerate(exponents)}
     blades = tuple(combinations(range(3), k))
-    fields: list[forms._HostArray] = []
+    fields: list[forms.HostFormArray] = []
     for axial_degree in (0, 1):
         base_degree = k - axial_degree
         if not 0 <= base_degree <= 2:
             continue
-        base_exponents, base, _ = forms._generators(2, base_degree, r, True)
+        base_exponents, base, _ = forms.form_generators(2, base_degree, r, True)
         base_blades = tuple(combinations(range(2), base_degree))
         for column in range(base.shape[-1]):
             for power in range(r + 1 - axial_degree):
@@ -215,7 +179,12 @@ def _prism_generators(
     return exponents, coefficients
 
 
-def _exact_nullspace(matrix: forms._HostArray) -> tuple[tuple[Fraction, ...], ...]:
+def _exact_nullspace(matrix: forms.HostFormArray) -> tuple[tuple[Fraction, ...], ...]:
+    """Construct a rational basis for rectangular symbolic trace constraints.
+
+    Lexicographic free columns define generator identity. Singular constraints
+    are admitted here; the square-system solve_exact refusal contract differs.
+    """
     rows = [[Fraction(float(value)) for value in row] for row in matrix if np.any(row)]
     width = matrix.shape[1]
     pivots: list[int] = []
@@ -249,52 +218,158 @@ def _exact_nullspace(matrix: forms._HostArray) -> tuple[tuple[Fraction, ...], ..
     return tuple(tuple(vector[row] for vector in vectors) for row in range(width))
 
 
-@lru_cache(maxsize=32)
+def _pyramid_generators_bytes(
+    value: tuple[
+        tuple[tuple[int, ...], ...],
+        forms.HostFormArray,
+        tuple[tuple[Fraction, ...], ...],
+    ],
+    /,
+) -> int:
+    exponents, coefficients, source_bank = value
+    return (
+        logical_table_bytes(exponents)
+        + coefficients.nbytes
+        + sum(
+            logical_table_bytes(coefficient.numerator)
+            + logical_table_bytes(coefficient.denominator)
+            for row in source_bank
+            for coefficient in row
+        )
+    )
+
+
+def _pyramid_exterior_image(
+    r: int,
+) -> tuple[
+    tuple[tuple[int, ...], ...], forms.HostFormArray, tuple[tuple[Fraction, ...], ...]
+]:
+    source_exponents, source_coefficients, source_bank = _pyramid_generators(2, r)
+    source_blades = tuple(combinations(range(3), 2))
+    terms: dict[tuple[int, ...], list[Fraction]] = {}
+    width = source_coefficients.shape[-1]
+    for row, alpha in enumerate(source_exponents):
+        for axis in range(3):
+            if not alpha[axis]:
+                continue
+            lower = tuple(
+                power - int(column == axis) for column, power in enumerate(alpha)
+            )
+            target = terms.setdefault(lower, [Fraction(0)] * width)
+            for component, _, sign in forms.blade_derivative_terms(3, 2, axis):
+                for column, value in enumerate(
+                    source_bank[row * len(source_blades) + component]
+                ):
+                    target[column] += sign * alpha[axis] * value
+    exponents = tuple(sorted(terms, key=lambda alpha: (sum(alpha), alpha)))
+    bank = tuple(tuple(terms[alpha]) for alpha in exponents)
+    coefficients = np.asarray(bank, dtype=np.float64).reshape(len(exponents), 1, width)
+    coefficients.setflags(write=False)
+    return exponents, coefficients, bank
+
+
+# Reversed base-chart support and rational nullspace reduction preserve generator identity.
+def _pyramid_base_intersection(
+    k: int,
+    r: int,
+    exponents: tuple[tuple[int, ...], ...],
+    coefficients: forms.HostFormArray,
+    source_bank: tuple[tuple[Fraction, ...], ...],
+) -> tuple[forms.HostFormArray, tuple[tuple[Fraction, ...], ...]]:
+    base = reference_cell_topology("pyramid").entities[2][0]
+    origin, jacobian = entity_chart("pyramid-trimmed", base)
+    # The base chart has reversed x/y axes; substitute that chart in the
+    # collapsed coordinates before comparing polynomial support.
+    restricted = tuple(
+        forms.substitute_form_polynomial(alpha, origin, jacobian) for alpha in exponents
+    )
+    powers = tuple(
+        product(
+            *(
+                range(
+                    max(
+                        (alpha[axis] for poly in restricted for alpha in poly),
+                        default=0,
+                    )
+                    + 1
+                )
+                for axis in range(2)
+            )
+        )
+    )
+    positions = {alpha: i for i, alpha in enumerate(powers)}
+    pullback = (
+        forms.form_pullback_matrix(3, k, jacobian, "untwisted")
+        if k == 0
+        else np.asarray(
+            [
+                [
+                    forms.form_minor(jacobian, ambient, local)
+                    for ambient in combinations(range(3), k)
+                ]
+                for local in combinations(range(2), k)
+            ]
+        )
+    )
+    restriction = np.zeros(
+        (len(powers), len(tuple(combinations(range(2), k))), coefficients.shape[-1]),
+        dtype=np.float64,
+    )
+    for row, poly in enumerate(restricted):
+        for alpha, value in poly.items():
+            restriction[positions[alpha]] += value * (pullback @ coefficients[row])
+    disallowed: list[forms.HostFormArray] = []
+    for row, alpha in enumerate(powers):
+        for component, blade in enumerate(combinations(range(2), k)):
+            if any(alpha[axis] > r - int(axis in blade) for axis in range(2)):
+                disallowed.append(restriction[row, component])
+    constraints = (
+        np.stack(disallowed)
+        if disallowed
+        else np.zeros((0, coefficients.shape[-1]), dtype=np.float64)
+    )
+    if constraints.shape[0]:
+        kernel = _exact_nullspace(constraints)
+        source_bank = tuple(
+            tuple(
+                sum(
+                    (value * kernel[index][column] for index, value in enumerate(row)),
+                    Fraction(0),
+                )
+                for column in range(len(kernel[0]))
+            )
+            for row in source_bank
+        )
+        coefficients = np.asarray(source_bank, dtype=np.float64).reshape(
+            coefficients.shape[:2] + (len(kernel[0]),)
+        )
+    return coefficients, source_bank
+
+
+# Lexicographic admission and rational source banks preserve the rational pyramid space.
+@host_table_cache(max_entries=256, max_bytes=16777216, weight=_pyramid_generators_bytes)
 def _pyramid_generators(
     k: int, r: int
 ) -> tuple[
-    tuple[tuple[int, ...], ...], forms._HostArray, tuple[tuple[Fraction, ...], ...]
+    tuple[tuple[int, ...], ...], forms.HostFormArray, tuple[tuple[Fraction, ...], ...]
 ]:
     if k == 3:
-        # The terminal space is the exact exterior image of the trace-admitted
+        # The terminal space is the exterior image of the trace-admitted
         # flux space. Unrestricted four-vertex Whitney products on a five-
         # coordinate rational cone include a spurious top cohomology class.
-        source_exponents, source_coefficients, source_bank = _pyramid_generators(2, r)
-        source_blades = tuple(combinations(range(3), 2))
-        terms: dict[tuple[int, ...], list[Fraction]] = {}
-        width = source_coefficients.shape[-1]
-        for row, alpha in enumerate(source_exponents):
-            for axis in range(3):
-                if not alpha[axis]:
-                    continue
-                lower = tuple(
-                    power - int(column == axis) for column, power in enumerate(alpha)
-                )
-                target = terms.setdefault(lower, [Fraction(0)] * width)
-                for component, _, sign in forms._blade_derivative_terms(3, 2, axis):
-                    for column, value in enumerate(
-                        source_bank[row * len(source_blades) + component]
-                    ):
-                        target[column] += sign * alpha[axis] * value
-        exponents = tuple(sorted(terms, key=lambda alpha: (sum(alpha), alpha)))
-        bank = tuple(tuple(terms[alpha]) for alpha in exponents)
-        coefficients = np.asarray(bank, dtype=np.float64).reshape(
-            len(exponents), 1, width
-        )
-        coefficients.setflags(write=False)
-        return exponents, coefficients, bank
+        return _pyramid_exterior_image(r)
     coordinates = _pyramid_coordinates()
     labels = tuple(
         (alpha, sigma)
         for sigma in combinations(range(5), k + 1)
-        for alpha in forms._compositions(r - 1, 5)
+        for alpha in forms.form_compositions(r - 1, 5)
         if not (alpha[0] and alpha[2])
     )
     polys = tuple(
         _whitney_polynomials(coordinates, k, alpha, sigma, 3) for alpha, sigma in labels
     )
-    exponents, coefficients = _coefficient_array(polys)
-    independent = _independent_columns(coefficients.reshape(-1, len(labels)))
+    exponents, coefficients = coefficient_array(polys)
+    independent = independent_columns(coefficients.reshape(-1, len(labels)))
     coefficients = coefficients[:, :, independent]
     source_bank = tuple(
         tuple(Fraction(float(value)) for value in row)
@@ -303,81 +378,14 @@ def _pyramid_generators(
     # Triangular restrictions are Whitney polynomial forms automatically. The
     # base restriction must be explicitly intersected with Q_r^- Lambda^k.
     if k <= 2:
-        base = reference_cell_topology("pyramid").entities[2][0]
-        origin, jacobian = entity_chart("pyramid-trimmed", base)
-        # The base chart has reversed x/y axes; substitute that chart in the
-        # collapsed coordinates before comparing polynomial support.
-        restricted = tuple(
-            forms._substitute(alpha, origin, jacobian) for alpha in exponents
+        coefficients, source_bank = _pyramid_base_intersection(
+            k, r, exponents, coefficients, source_bank
         )
-        powers = tuple(
-            product(
-                *(
-                    range(
-                        max(
-                            (alpha[axis] for poly in restricted for alpha in poly),
-                            default=0,
-                        )
-                        + 1
-                    )
-                    for axis in range(2)
-                )
-            )
-        )
-        positions = {alpha: i for i, alpha in enumerate(powers)}
-        pullback = (
-            forms._form_pullback_matrix(3, k, jacobian, "untwisted")
-            if k == 0
-            else np.asarray(
-                [
-                    [
-                        forms._minor(jacobian, ambient, local)
-                        for ambient in combinations(range(3), k)
-                    ]
-                    for local in combinations(range(2), k)
-                ]
-            )
-        )
-        restriction = np.zeros(
-            (len(powers), len(tuple(combinations(range(2), k))), coefficients.shape[-1]),
-            dtype=np.float64,
-        )
-        for row, poly in enumerate(restricted):
-            for alpha, value in poly.items():
-                restriction[positions[alpha]] += value * (pullback @ coefficients[row])
-        disallowed: list[forms._HostArray] = []
-        for row, alpha in enumerate(powers):
-            for component, blade in enumerate(combinations(range(2), k)):
-                if any(alpha[axis] > r - int(axis in blade) for axis in range(2)):
-                    disallowed.append(restriction[row, component])
-        constraints = (
-            np.stack(disallowed)
-            if disallowed
-            else np.zeros((0, coefficients.shape[-1]), dtype=np.float64)
-        )
-        if constraints.shape[0]:
-            kernel = _exact_nullspace(constraints)
-            source_bank = tuple(
-                tuple(
-                    sum(
-                        (
-                            value * kernel[index][column]
-                            for index, value in enumerate(row)
-                        ),
-                        Fraction(0),
-                    )
-                    for column in range(len(kernel[0]))
-                )
-                for row in source_bank
-            )
-            coefficients = np.asarray(source_bank, dtype=np.float64).reshape(
-                coefficients.shape[:2] + (len(kernel[0]),)
-            )
     coefficients.setflags(write=False)
     return exponents, coefficients, source_bank
 
 
-def _expand(points: forms._HostArray) -> forms._HostArray:
+def _expand(points: forms.HostFormArray) -> forms.HostFormArray:
     return np.stack(
         (
             (1 - points[:, 2]) * points[:, 0] + 0.5 * points[:, 2],
@@ -388,7 +396,7 @@ def _expand(points: forms._HostArray) -> forms._HostArray:
     )
 
 
-def _cube_jacobian(points: forms._HostArray) -> forms._HostArray:
+def _cube_jacobian(points: forms.HostFormArray) -> forms.HostFormArray:
     s = 1 - points[:, 2]
     result = np.zeros((points.shape[0], 3, 3), dtype=np.float64)
     result[:, 0, 0] = s
@@ -400,45 +408,48 @@ def _cube_jacobian(points: forms._HostArray) -> forms._HostArray:
 
 
 def _body_rule(
-    family: forms.FormElementFamily, degree: int
-) -> tuple[forms._HostArray, forms._HostArray, forms._HostArray]:
+    family: FormElementFamily, degree: int
+) -> tuple[forms.HostFormArray, forms.HostFormArray, forms.HostFormArray]:
     if family == "prism-trimmed":
-        base, bw = forms._simplex_quadrature(2, degree)
-        interval, iw = forms._tensor_quadrature(1, degree)
+        base, bw = forms.simplex_form_quadrature(2, degree)
+        interval, iw = forms.tensor_form_quadrature(1, degree)
         points = np.asarray(
             [(x, y, z) for x, y in base for (z,) in interval], dtype=np.float64
         )
         return points, (bw[:, None] * iw[None, :]).reshape(-1), points
-    chart, weights = forms._tensor_quadrature(3, degree)
+    chart, weights = forms.tensor_form_quadrature(3, degree)
     return _expand(chart), weights * (1 - chart[:, 2]) ** 2, chart
 
 
-def _solve_hybrid_dual(
-    matrix: forms._HostArray,
-) -> tuple[forms._HostArray, float, np.ndarray]:
+def solve_hybrid_dual(
+    matrix: forms.HostFormArray,
+) -> tuple[forms.HostFormArray, float, np.ndarray]:
     """Solve one immutable host reference dual without compiler startup."""
-    from ...linalg import LinearSolveStatus
 
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
-        raise ValueError("Hybrid entity dual requires one square functional matrix.")
+        raise ValueError(
+            "hybrid_form.functional_matrix must be square; got an incompatible matrix shape"
+        )
     identity = np.eye(matrix.shape[0], dtype=np.float64)
     coefficients = np.linalg.solve(matrix, identity)
     if not np.all(np.isfinite(coefficients)):
-        raise ValueError("Hybrid entity dual solve produced non-finite coefficients.")
+        raise ValueError(
+            "hybrid_form.dual_coefficients must be finite; got non-finite solve output"
+        )
     residual = matrix @ coefficients - identity
     scale = max(
         float(np.max(np.abs(matrix) @ np.abs(coefficients), initial=0.0)),
         1.0,
     )
     solve_error = float(np.max(np.abs(residual), initial=0.0)) / scale
-    status = np.asarray(int(LinearSolveStatus.SUCCESS), dtype=np.int32)
+    status = np.asarray(int(linalg_owner.LinearSolveStatus.SUCCESS), dtype=np.int32)
     status.setflags(write=False)
     return coefficients, solve_error, status
 
 
-@lru_cache(maxsize=32)
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def _hybrid_exponent_cover(
-    family: forms.FormElementFamily, k: int, r: int
+    family: FormElementFamily, k: int, r: int
 ) -> tuple[tuple[int, ...], ...]:
     raw = (
         _prism_generators(k, r)[0]
@@ -459,10 +470,21 @@ def _hybrid_exponent_cover(
     return tuple(sorted(cover, key=lambda alpha: (sum(alpha), alpha)))
 
 
-@lru_cache(maxsize=48)
-def prepare_hybrid(family: forms.FormElementFamily, k: int, r: int) -> HybridPreparation:
-    kind = hybrid_kind(family)
-    topology = reference_cell_topology(kind)
+class _HybridGenerators(StrictModule):
+    exponents: tuple[tuple[int, ...], ...]
+    generators: forms.HostFormArray
+    source_bank: tuple[tuple[Fraction, ...], ...]
+
+
+class _HybridMoments(StrictModule):
+    blocks: tuple[forms.EntityFormMoments, ...]
+    test_exponents: tuple[tuple[int, ...], ...]
+    test_coefficients: forms.HostFormArray
+
+
+def _prepare_hybrid_generators(
+    family: FormElementFamily, kind: str, k: int, r: int
+) -> _HybridGenerators:
     # Bound the largest generator, cubature, or functional coefficient array
     # before allocating any of them. This is an entry-work allowance, not a
     # nominal order selector and not a claim about elapsed time or factor flops.
@@ -475,7 +497,7 @@ def prepare_hybrid(family: forms.FormElementFamily, k: int, r: int) -> HybridPre
     )
     if entry_work > 24_000_000:
         raise ValueError(
-            "Hybrid form preparation exceeds its 24000000 coefficient-entry work bound."
+            "hybrid_form.coefficient_work must not exceed 24000000 entries; got an excessive preparation bound"
         )
     if kind == "prism":
         exponents, generators = _prism_generators(k, r)
@@ -485,7 +507,7 @@ def prepare_hybrid(family: forms.FormElementFamily, k: int, r: int) -> HybridPre
         )
     else:
         exponents, generators, source_bank = _pyramid_generators(k, r)
-    independent = _independent_columns(generators.reshape(-1, generators.shape[-1]))
+    independent = independent_columns(generators.reshape(-1, generators.shape[-1]))
     generators = generators[:, :, independent]
     source_bank = tuple(tuple(row[index] for index in independent) for row in source_bank)
     if k:
@@ -513,14 +535,31 @@ def prepare_hybrid(family: forms.FormElementFamily, k: int, r: int) -> HybridPre
                         for _ in range(generators.shape[1])
                     )
             exponents, generators, source_bank = closed_exponents, expanded, tuple(bank)
-    dimension = generators.shape[-1]
+    return _HybridGenerators(exponents, generators, source_bank)
+
+
+def _prepare_hybrid_moments(
+    family: FormElementFamily,
+    k: int,
+    r: int,
+    entities: tuple[tuple[tuple[int, ...], ...], ...],
+    carrier: _HybridGenerators,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: dict[tuple[FormElementFamily, int, int], HybridPreparation],
+) -> _HybridMoments:
+    exponents, generators, source_bank = (
+        carrier.exponents,
+        carrier.generators,
+        carrier.source_bank,
+    )
     blades = tuple(combinations(range(3), k))
-    blocks: list[forms._EntityMoments] = []
-    trace_bases: dict[str, forms.FormBasis] = {}
-    for m, entities in enumerate(topology.entities[:-1]):
+    blocks: list[forms.EntityFormMoments] = []
+    trace_bases: dict[str, AbstractReferenceFormBasis] = {}
+    for m, level in enumerate(entities[:-1]):
         if m < k:
             continue
-        for face in entities:
+        for face in level:
             origin, jacobian = entity_chart(family, face)
             if m == 0:
                 points = origin[None, :]
@@ -530,9 +569,9 @@ def prepare_hybrid(family: forms.FormElementFamily, k: int, r: int) -> HybridPre
                 trace_kind = entity_kind(family, face)
                 trace = trace_bases.get(trace_kind)
                 if trace is None:
-                    trace = trace_basis(family, k, r, face)
+                    trace = trace_basis(family, k, r, face, budget=budget)
                     trace_bases[trace_kind] = trace
-                interior = forms._interior_dof_indices(trace.dof_labels, len(face))
+                interior = forms.interior_dof_indices(trace.dof_labels, len(face))
                 if not interior:
                     continue
                 points = (
@@ -540,7 +579,7 @@ def prepare_hybrid(family: forms.FormElementFamily, k: int, r: int) -> HybridPre
                 )
                 pullback = np.asarray(
                     [
-                        [forms._minor(jacobian, ambient, local) for ambient in blades]
+                        [forms.form_minor(jacobian, ambient, local) for ambient in blades]
                         for local in combinations(range(m), k)
                     ]
                 )
@@ -556,7 +595,7 @@ def prepare_hybrid(family: forms.FormElementFamily, k: int, r: int) -> HybridPre
                     for index in interior
                 )
             blocks.append(
-                forms._EntityMoments(
+                forms.EntityFormMoments(
                     labels,
                     points,
                     weights,
@@ -566,22 +605,43 @@ def prepare_hybrid(family: forms.FormElementFamily, k: int, r: int) -> HybridPre
                     np.broadcast_to(origin, (len(labels), 3)).copy(),
                 )
             )
-    from ._hybrid_functionals import exact_functional_moments, generator_functional_action
-    from ._hybrid_moments import body_moments
 
     boundary_labels = tuple(label for block in blocks for label in block.labels)
-    boundary_moments = exact_functional_moments(
+    boundary_moments = hybrid_functionals_owner.exact_functional_moments(
+        family, k, r, exponents, boundary_labels, (), (), budget=budget
+    )
+    boundary = hybrid_functionals_owner.generator_functional_action(
+        boundary_moments, source_bank, len(blades)
+    )
+    test_exponents, test_coefficients = hybrid_moments_owner.body_moments(
         family,
         k,
         r,
         exponents,
-        boundary_labels,
-        (),
-        (),
+        generators,
+        boundary,
+        source_bank,
+        budget=budget,
+        preparations=preparations,
     )
-    boundary = generator_functional_action(boundary_moments, source_bank, len(blades))
-    test_exponents, test_coefficients = body_moments(
-        family, k, r, exponents, generators, boundary, source_bank
+    return _HybridMoments(tuple(blocks), test_exponents, test_coefficients)
+
+
+def _prepare_hybrid_body(
+    family: FormElementFamily,
+    kind: str,
+    k: int,
+    face: tuple[int, ...],
+    carrier: _HybridGenerators,
+    moments: _HybridMoments,
+) -> forms.EntityFormMoments | None:
+    exponents = carrier.exponents
+    dimension = carrier.generators.shape[-1]
+    blades = tuple(combinations(range(3), k))
+    blocks = moments.blocks
+    test_exponents, test_coefficients = (
+        moments.test_exponents,
+        moments.test_coefficients,
     )
     body_count = test_coefficients.shape[-1]
     if body_count:
@@ -597,18 +657,18 @@ def prepare_hybrid(family: forms.FormElementFamily, k: int, r: int) -> HybridPre
         )
         if entries > 24_000_000:
             raise ValueError(
-                "Hybrid moment cubature exceeds its 24000000 coefficient-entry work bound before expansion."
+                "hybrid_form.cubature_work must not exceed 24000000 entries; got an excessive expansion bound"
             )
         points, measure, chart = _body_rule(family, degree)
         density = np.einsum(
-            "qm,mcb->qbc", forms._monomials(chart, test_exponents), test_coefficients
+            "qm,mcb->qbc", forms.form_monomials(chart, test_exponents), test_coefficients
         )
         if kind == "pyramid":
             jacobians = _cube_jacobian(chart)
             action = np.asarray(
                 [
                     [
-                        [forms._minor(matrix, ambient, local) for ambient in blades]
+                        [forms.form_minor(matrix, ambient, local) for ambient in blades]
                         for local in blades
                     ]
                     for matrix in jacobians
@@ -622,25 +682,47 @@ def prepare_hybrid(family: forms.FormElementFamily, k: int, r: int) -> HybridPre
             )
             chart_measure = measure
         body_weights = np.einsum("qbc,qce,q->bqe", density, action, chart_measure)
-        face = topology.entities[3][0]
         labels = tuple((face, (index,), ()) for index in range(body_count))
-        blocks.append(
-            forms._EntityMoments(
-                labels,
-                points,
-                body_weights,
-                np.zeros((body_count, len(exponents), len(blades)), dtype=np.float64),
-                np.broadcast_to(np.mean(points, axis=0), (body_count, 3)).copy(),
-            )
+        return forms.EntityFormMoments(
+            labels,
+            points,
+            body_weights,
+            np.zeros((body_count, len(exponents), len(blades)), dtype=np.float64),
+            np.broadcast_to(np.mean(points, axis=0), (body_count, 3)).copy(),
         )
-    prepared = forms._finish_prepared(exponents, generators, topology.entities, blocks)
+    return None
+
+
+def _finish_hybrid_preparation(
+    family: FormElementFamily,
+    k: int,
+    r: int,
+    entities: tuple[tuple[tuple[int, ...], ...], ...],
+    carrier: _HybridGenerators,
+    moments: _HybridMoments,
+    blocks: list[forms.EntityFormMoments],
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> HybridPreparation:
+    exponents, generators, source_bank = (
+        carrier.exponents,
+        carrier.generators,
+        carrier.source_bank,
+    )
+    test_exponents, test_coefficients = (
+        moments.test_exponents,
+        moments.test_coefficients,
+    )
+    blades = tuple(combinations(range(3), k))
+    body_count = test_coefficients.shape[-1]
+    prepared = forms.finish_form_preparation(exponents, generators, entities, blocks)
     body_source_bank = tuple(
         tuple(Fraction(float(value)) for value in row)
         for row in test_coefficients.reshape(
             len(test_exponents) * len(blades), body_count
         )
     )
-    exact_moments = exact_functional_moments(
+    exact_moments = hybrid_functionals_owner.exact_functional_moments(
         family,
         k,
         r,
@@ -648,22 +730,25 @@ def prepare_hybrid(family: forms.FormElementFamily, k: int, r: int) -> HybridPre
         prepared.labels,
         test_exponents,
         body_source_bank,
+        budget=budget,
     )
     prepared = prepared._replace(moments=np.asarray(exact_moments, dtype=np.float64))
-    matrix = generator_functional_action(exact_moments, source_bank, len(blades))
+    matrix = hybrid_functionals_owner.generator_functional_action(
+        exact_moments, source_bank, len(blades)
+    )
     spectrum = np.linalg.svd(matrix, compute_uv=False)
     condition = float(spectrum[0] / spectrum[-1])
     if not np.isfinite(condition) or condition > 1e12:
         raise ValueError(
-            "Hybrid entity dual is singular or exceeds condition bound 1e12."
+            "hybrid_form.dual_condition must be finite and at most 1e12; got a singular or ill-conditioned dual"
         )
-    coefficients, solve_error, solve_status = _solve_hybrid_dual(matrix)
+    coefficients, solve_error, solve_status = solve_hybrid_dual(matrix)
     for array in prepared[1:]:
         if isinstance(array, np.ndarray):
             array.setflags(write=False)
     coefficients.setflags(write=False)
     test_coefficients.setflags(write=False)
-    return HybridPreparation(
+    result = HybridPreparation(
         prepared,
         coefficients,
         condition,
@@ -674,13 +759,51 @@ def prepare_hybrid(family: forms.FormElementFamily, k: int, r: int) -> HybridPre
         body_source_bank,
         test_coefficients,
     )
+    return result
+
+
+def prepare_hybrid_active(
+    family: FormElementFamily,
+    k: int,
+    r: int,
+    *,
+    budget: CoordinateEnclosureBudget,
+    preparations: dict[tuple[FormElementFamily, int, int], HybridPreparation],
+) -> HybridPreparation:
+    key = family, k, r
+    cached = preparations.get(key)
+    if cached is not None:
+        return cached
+    kind = hybrid_kind(family)
+    topology = reference_cell_topology(kind)
+    carrier = _prepare_hybrid_generators(family, kind, k, r)
+    moments = _prepare_hybrid_moments(
+        family,
+        k,
+        r,
+        topology.entities,
+        carrier,
+        budget=budget,
+        preparations=preparations,
+    )
+    blocks = list(moments.blocks)
+    body = _prepare_hybrid_body(
+        family, kind, k, topology.entities[3][0], carrier, moments
+    )
+    if body is not None:
+        blocks.append(body)
+    result = _finish_hybrid_preparation(
+        family, k, r, topology.entities, carrier, moments, blocks, budget=budget
+    )
+    preparations[key] = result
+    return result
 
 
 def tabulate_hybrid(
     points: Array,
     coefficients: Array,
     exponents: tuple[tuple[int, ...], ...],
-    family: forms.FormElementFamily,
+    family: FormElementFamily,
     k: int,
 ) -> tuple[Array, Array]:
     """Vectorized local polynomial/rational evaluation and analytic gradients."""
@@ -765,7 +888,8 @@ def tabulate_hybrid(
 
 
 @lru_cache(maxsize=2)
-def _hybrid_symmetries(family: forms.FormElementFamily) -> tuple[tuple[int, ...], ...]:
+def _hybrid_symmetries(family: FormElementFamily) -> tuple[tuple[int, ...], ...]:
+    """Cache only the two fixed prism/pyramid groups of vertex permutations."""
     reference = np.asarray(
         reference_cell_topology(hybrid_kind(family)).vertices, dtype=np.float64
     )
@@ -779,13 +903,13 @@ def _hybrid_symmetries(family: forms.FormElementFamily) -> tuple[tuple[int, ...]
 
 
 def canonical_permutation(
-    family: forms.FormElementFamily, global_vertices: tuple[int, ...]
+    family: FormElementFamily, global_vertices: tuple[int, ...]
 ) -> tuple[int, ...]:
     if len(global_vertices) != len(
         reference_cell_topology(hybrid_kind(family)).vertices
     ) or len(set(global_vertices)) != len(global_vertices):
         raise ValueError(
-            "Provide one distinct scientific vertex identifier per hybrid vertex."
+            "hybrid_form.global_vertices must provide one distinct identifier per vertex; got duplicate IDs or a different count"
         )
     canonical = min(
         _hybrid_symmetries(family),
@@ -795,7 +919,10 @@ def canonical_permutation(
 
 
 def functional_weights_at(
-    basis: forms.FormBasis, face: tuple[int, ...], points: Array, quadrature: Array
+    basis: AbstractReferenceFormBasis,
+    face: tuple[int, ...],
+    points: Array,
+    quadrature: Array,
 ) -> tuple[Array, Array]:
     origin, jacobian = entity_chart(basis.family, face)
     if (
@@ -804,11 +931,11 @@ def functional_weights_at(
         or quadrature.shape != (points.shape[0],)
     ):
         raise ValueError(
-            "Entity cubature requires points(q,entity_dimension) and weights(q)."
+            "form_basis.cubature must align points(q,entity_dimension) and weights(q); got incompatible shapes"
         )
     reference = jnp.asarray(origin)[None, :] + points @ jnp.asarray(jacobian.T)
     blades = tuple(combinations(range(3), basis.form_degree))
-    indices = forms._entity_dof_indices(basis.dof_labels, face)
+    indices = forms.entity_dof_indices(basis.dof_labels, face)
     result = jnp.zeros(
         (basis.local_dof_count, points.shape[0], len(blades)), dtype=points.dtype
     )
@@ -850,7 +977,7 @@ def functional_weights_at(
         factors = basis.hybrid_factors
         if factors is None:
             raise ValueError(
-                "Hybrid moment densities require their complete source owner."
+                "hybrid_form.hybrid_factors must provide body moment densities; got None"
             )
         powers = jnp.asarray(factors.body_test_exponents, dtype=jnp.int32)
         degree = max(max(alpha) for alpha in factors.body_test_exponents)
@@ -872,12 +999,12 @@ def functional_weights_at(
         )
     else:
         trace = trace_basis(basis.family, basis.form_degree, basis.order, face)
-        interior = forms._interior_dof_indices(trace.dof_labels, len(face))
+        interior = forms.interior_dof_indices(trace.dof_labels, len(face))
         entity = trace.entity_vertices[-1][0]
         _, weights = trace.functional_weights_at(entity, points, quadrature)
         pullback = np.asarray(
             [
-                [forms._minor(jacobian, ambient, local) for ambient in blades]
+                [forms.form_minor(jacobian, ambient, local) for ambient in blades]
                 for local in combinations(range(points.shape[1]), basis.form_degree)
             ]
         )
@@ -885,3 +1012,58 @@ def functional_weights_at(
             "dql,lc->dqc", weights[jnp.asarray(interior)], jnp.asarray(pullback)
         )
     return reference, result.at[jnp.asarray(indices)].set(block)
+
+
+def hybrid_preparation_estimate(
+    family: FormElementFamily,
+    k: int,
+    r: int,
+) -> algebra.CoordinateEnclosureEstimate:
+    """Bound hybrid source preparation, including the derivative chain."""
+
+    generators_bound = 10 * (comb(r + 3, 4) - (comb(r + 1, 4) if r >= 3 else 0))
+    axis_points = 2 * r + 12
+    points_bound = axis_points**3 + 10 * axis_points**2 + 20 * axis_points + 6
+    entry_work = max(
+        (r + 2) ** 3 * 10 * (r + 4) ** 3, points_bound * 3 * generators_bound
+    )
+    if entry_work > 24_000_000:
+        raise ValueError(
+            "hybrid_form.coefficient_work must not exceed 24000000 entries; got an excessive preparation bound"
+        )
+    exponents = _hybrid_exponent_cover(family, k, r)
+    boundary = hybrid_functionals_owner.exact_functional_moments_estimate(
+        family, k, r, exponents
+    )
+    body = hybrid_moments_owner.body_moments_estimate(exponents)
+    stages = (boundary, body, boundary)
+    if k < 3:
+        stages += (hybrid_preparation_estimate(family, k + 1, r),)
+    return algebra.coordinate_estimate_bank(stages)
+
+
+@checked
+def prepare_hybrid(
+    family: FormElementFamily,
+    k: int,
+    r: int,
+    *,
+    budget: CoordinateEnclosureBudget | None = None,
+) -> HybridPreparation:
+    """Prepare immutable hybrid moment-dual data within an explicit work request."""
+    preparations: dict[tuple[FormElementFamily, int, int], HybridPreparation] = {}
+    if budget is not None:
+        return prepare_hybrid_active(
+            family, k, r, budget=budget, preparations=preparations
+        )
+    estimate = hybrid_preparation_estimate(family, k, r)
+    with HostBatchTicket(estimate.work_upper, bytes_upper=estimate.bytes_upper) as ticket:
+        ledger = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=estimate.work_upper,
+            maximum_memory_bytes=estimate.bytes_upper,
+        )
+        with ledger.activate():
+            return prepare_hybrid_active(
+                family, k, r, budget=ledger, preparations=preparations
+            )

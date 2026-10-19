@@ -1,19 +1,41 @@
-from dataclasses import dataclass
 from pathlib import Path
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._meshcore import meshcore_available
+from phydrax._meshcore import (
+    meshcore_available,
+    NativeExecutionScope,
+    NativeHostStorageWorkspace,
+)
+from phydrax._resource_ticket import HostBatchTicket
+from phydrax.discretization._coordinate_budget import CoordinateEnclosureBudget
+from phydrax.lifecycle._meshing_sources import (
+    native_family_audit_policy,
+    read_meshing_source_closure,
+    write_meshing_source_closure,
+)
 from phydrax.meshing._layer_core import (
-    _prepare_identity,
     layer_interval_classes,
     remap_layer_index_attribute,
     validate_layer_index_attributes,
 )
+from phydrax.meshing._layer_core_resources import LayerCoreSourceWork
+from phydrax.meshing._layer_core_topology import prepare_identity
 from phydrax.meshing._lineage import identity_lineage
+from phydrax.meshing.qualification import (
+    accepted_layer_core_lineage,
+    continue_layer_core_fields,
+    continue_layer_core_finite_volume,
+    continue_layer_core_history,
+    layer_core_material_declaration,
+    LayerCoreLifecyclePlans,
+    require_restored_layer_core_result_identity,
+)
+from tests._support.native_layer_sources import _case, _physical_layer_source, _result
 
 
 pytestmark = pytest.mark.skipif(
@@ -21,134 +43,16 @@ pytestmark = pytest.mark.skipif(
 )
 M = phx.meshing
 
-
-@dataclass(frozen=True)
-class _Case:
-    layers: M.BoundaryLayerMesh
-    core: M.PiecewiseLinearComplex
-    vertex_layer_ids: np.ndarray
-    cap_polygon_ids: np.ndarray
-    layer_regions: np.ndarray
-    region_ids: tuple[str, ...]
-    core_region_map: np.ndarray
-
-
-def _case(*, material_interface: bool = False) -> _Case:
-    wall = phx.discretization.CellMesh(
-        np.asarray(((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)), dtype=np.float64),
-        (
-            phx.discretization.CellBlock(
-                "wall", "triangle", np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int64)
-            ),
-        ),
-    )
-    entities = wall.entity_set(2)
-    scope = M.MeshingScope(
-        wall.mesh_id,
-        wall.numeric_version,
-        M.MeshingEntityKind.MESH,
-        2,
-        entities.entity_set_id,
-        entities.entity_ids,
-    )
-    control = M.BoundaryLayerControl(
-        scope,
-        M.LayerSchedule.geometric(2, 0.1, growth_rate=1.0),
-        route=M.BoundaryLayerRoute.ADVANCING,
-    )
-    layers = M.prepare_boundary_layers(wall, control)
-    if layers.cap is None:
-        raise RuntimeError("The square wall must produce a cap.")
-    cap = np.concatenate(
-        [np.asarray(block.vertices, dtype=np.int64) for block in layers.cap.blocks]
-    )
-    cap_points = np.asarray(layers.cap.coordinates, dtype=np.float64)
-    upper = cap_points.copy()
-    upper[:, 2] = 1.0
-    outer = np.asarray(
-        (
-            (4, 5, 6),
-            (4, 6, 7),
-            (0, 5, 4),
-            (0, 1, 5),
-            (1, 6, 5),
-            (1, 2, 6),
-            (2, 7, 6),
-            (2, 3, 7),
-            (3, 4, 7),
-            (3, 0, 4),
-        ),
-        dtype=np.int64,
-    )
-    polygons = np.concatenate((cap, outer))
-    core_region = 0
-    region_ids = ("wall-material", "core-material") if material_interface else ("fluid",)
-    complex_ = M.PiecewiseLinearComplex(
-        np.concatenate((cap_points, upper)),
-        tuple(polygons),
-        np.concatenate(
-            (
-                np.zeros(cap.shape[0], dtype=np.int64),
-                np.ones(outer.shape[0], dtype=np.int64),
-            )
-        ),
-        np.asarray(((core_region, -1), (-1, core_region)), dtype=np.int64),
-        (region_ids[-1],),
-        boundary="fixed",
-    )
-    return _Case(
-        layers,
-        complex_,
-        np.concatenate(
-            (
-                np.asarray(layers.cap_vertices, dtype=np.int64),
-                np.full(4, -1, dtype=np.int64),
-            )
-        ),
-        np.arange(cap.shape[0], dtype=np.int64),
-        np.zeros(sum(block.cell_count for block in layers.mesh.blocks), dtype=np.int64),
-        region_ids,
-        np.asarray([1 if material_interface else 0], dtype=np.int64),
-    )
-
-
-def _result(case: _Case) -> M.CellMeshingResult:
-    source = M.NativeLayerCoreSource(
-        case.layers,
-        case.core,
-        "layered-square",
-        "reference",
-        vertex_layer_ids=case.vertex_layer_ids,
-        cap_polygon_ids=case.cap_polygon_ids,
-        layer_regions=case.layer_regions,
-        region_ids=case.region_ids,
-        core_region_map=case.core_region_map,
-    )
-    scope = M.MeshingScope(
-        source.source_id,
-        source.source_revision,
-        M.MeshingEntityKind.GEOMETRY,
-        2,
-        "layered-core-facets",
-        np.arange(case.core.facet_count, dtype=np.int64),
-    )
-    specification = M.VolumeMeshingSpec(
-        M.CellMeshingTarget(
-            3, 3, M.CellFamilyPolicy(required=("prism", "tetrahedron"), allow_mixed=True)
-        ),
-        scope,
-        M.VolumeFillStrategy.SIMPLEX,
-        size_controls=(
-            M.UniformSizeControl(scope, 2.0, strength=M.SizeControlStrength.SOFT),
-        ),
-    )
-    return (
-        M.NativeMeshingProvider(M.NativeMeshingOptions("layer_core"))
-        .plan(
-            source, specification, coordinate_contract=phx.SpatialCoordinateContract.si()
-        )
-        .execute()
-    )
+# Empirical binary64 measure allowance retained from the square-wall and
+# periodic-ridge reference scenarios below; these are unit-cube/prism fixtures.
+# This preserves the pre-remediation tolerance, not a geometry acceptance bound.
+_PUBLISHED_MEASURE_RTOL = 1e-12
+# Meter-valued affine cube fidelity allowance from
+# test_original_open_wall_layers_cover_every_declared_cube_side, unchanged.
+_AFFINE_FIDELITY_DISTANCE_ATOL = 1e-12
+# Inventory allowance from test_material_continuation_uses_only_declared_source_regions,
+# retained unchanged for the specified uniform material densities.
+_REGION_INVENTORY_ATOL = 1e-12
 
 
 def test_native_open_layer_cap_and_complete_core_publish_one_volume() -> None:
@@ -160,12 +64,14 @@ def test_native_open_layer_cap_and_complete_core_publish_one_volume() -> None:
     )
     assert result.audit.passed and result.compliance.passed
     if result.certification is None or result.certification.coverage is None:
-        raise AssertionError("The combined layer/core needs independent coverage.")
+        raise AssertionError(
+            "CellMeshingResult.certification must include layer/core coverage; got missing certification or coverage."
+        )
     assert result.certification.passed
     np.testing.assert_allclose(
         np.asarray(result.certification.coverage.achieved_region_measures),
         (1.0,),
-        rtol=1e-12,
+        rtol=_PUBLISHED_MEASURE_RTOL,
     )
     assert {block.cell_kind for block in result.mesh.blocks} == {"prism", "tetrahedron"}
     assert {zone.name for zone in result.zones} == {"fluid"}
@@ -199,12 +105,14 @@ def test_native_open_layer_cap_and_complete_core_publish_one_volume() -> None:
 def test_native_layer_core_preserves_material_interface_and_region_measures() -> None:
     result = _result(_case(material_interface=True))
     if result.certification is None or result.certification.coverage is None:
-        raise AssertionError("Material coverage must be independently certified.")
+        raise AssertionError(
+            "CellMeshingResult.certification must include material coverage; got missing certification or coverage."
+        )
     assert result.certification.passed
     np.testing.assert_allclose(
         np.asarray(result.certification.coverage.achieved_region_measures),
         (0.2, 0.8),
-        rtol=1e-12,
+        rtol=_PUBLISHED_MEASURE_RTOL,
     )
     assert {zone.name for zone in result.zones} == {"wall-material", "core-material"}
     interface = next(label for label in result.labels if label.name == "interface")
@@ -216,8 +124,19 @@ def test_cap_identity_does_not_weld_numerically_equal_unrelated_vertices() -> No
     case = _case()
     mapping = case.vertex_layer_ids.copy()
     mapping[0] = -1
-    with pytest.raises(ValueError, match="exact layer vertex IDs"):
-        _prepare_identity(case.layers, case.core, mapping, case.cap_polygon_ids)
+    with (
+        HostBatchTicket(
+            2 * case.core.vertices.shape[0] + case.cap_polygon_ids.size
+        ) as ticket,
+        pytest.raises(ValueError, match="NativeLayerCoreSource.cap_polygon_ids"),
+    ):
+        prepare_identity(
+            case.layers,
+            case.core,
+            mapping,
+            case.cap_polygon_ids,
+            work=LayerCoreSourceWork(ticket.work_upper, ticket=ticket),
+        )
 
 
 def test_cap_reversed_orientation_is_refused_before_recovery() -> None:
@@ -232,10 +151,54 @@ def test_cap_reversed_orientation_is_refused_before_recovery() -> None:
         case.core.region_ids,
         boundary="fixed",
     )
-    with pytest.raises(ValueError, match="orientation"):
-        _prepare_identity(
-            case.layers, invalid, case.vertex_layer_ids, case.cap_polygon_ids
+    with (
+        HostBatchTicket(
+            2 * case.core.vertices.shape[0] + case.cap_polygon_ids.size
+        ) as ticket,
+        pytest.raises(ValueError, match="NativeLayerCoreSource.cap_polygon_ids"),
+    ):
+        prepare_identity(
+            case.layers,
+            invalid,
+            case.vertex_layer_ids,
+            case.cap_polygon_ids,
+            work=LayerCoreSourceWork(ticket.work_upper, ticket=ticket),
         )
+
+
+def test_affine_layer_core_publication_requires_complete_boundary_association() -> None:
+    case = _case()
+    result = _result(case)
+    policy = M.CellMeshAuditPolicy(
+        require_complete_association=True,
+        watertight_boundary=M.CellMeshAuditDisposition.REJECT,
+    )
+    assert result.audit.policy_id == policy.policy_id
+    assert result.audit.passed
+    face_set_id = result.mesh.entity_set(2).entity_set_id
+    retained = tuple(
+        association
+        for association in result.associations
+        if association.target_entity_set_id != face_set_id
+        or association.source_id == case.layers.result_id
+    )
+    assert any(
+        association.target_entity_set_id == face_set_id for association in retained
+    )
+    assert len(retained) < len(result.associations)
+    audit = M.audit_cell_mesh(
+        result.mesh,
+        result.geometry,
+        policy=policy,
+        prepared_validity=result.audit.validity,
+        patches=result.patches,
+        zones=result.zones,
+        labels=result.labels,
+        attributes=result.attributes,
+        associations=retained,
+    )
+    assert not audit.passed
+    assert "incomplete_geometry_association" in audit.issues
 
 
 def test_measured_active_columns_retain_each_physical_interval() -> None:
@@ -243,7 +206,9 @@ def test_measured_active_columns_retain_each_physical_interval() -> None:
     evidence = case.layers.evidence
     np.testing.assert_array_equal(evidence.active_column_counts, (4, 4))
     np.testing.assert_array_equal(evidence.column_active, np.ones((2, 4), dtype=np.bool_))
-    np.testing.assert_allclose(evidence.column_thicknesses, 0.1, rtol=1e-12)
+    np.testing.assert_allclose(
+        evidence.column_thicknesses, 0.1, rtol=_PUBLISHED_MEASURE_RTOL
+    )
 
 
 def test_unrelated_planar_marker_has_no_reserved_layer_semantics() -> None:
@@ -313,7 +278,7 @@ def test_reserved_layer_pair_validation_is_independent_of_unrelated_marker(
         attributes=attributes,
     )
     if not complete_pair:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"CellMeshingResult\.attributes"):
             validate_layer_index_attributes(source)
         return
     validate_layer_index_attributes(source)
@@ -399,7 +364,9 @@ def _periodic_material_source(
     layers = M.prepare_boundary_layers(wall, control)
     cap = layers.cap
     if cap is None or cap.periodic_topology is None:
-        raise RuntimeError("Periodic wall must retain its authored cap.")
+        raise RuntimeError(
+            "BoundaryLayerMesh.cap must retain periodic topology for the wall; got a missing cap or topology."
+        )
     cap_rows = np.concatenate(
         [np.asarray(block.vertices, dtype=np.int64) for block in cap.blocks]
     )
@@ -494,14 +461,18 @@ def _periodic_material_specification(
     )
     pairs = source.core_seam_polygon_pairs
     if pairs is None:
-        raise RuntimeError("The periodic fixture requires source-authored seam pairs.")
+        raise RuntimeError(
+            "NativeLayerCoreSource.core_seam_polygon_pairs must retain the authored seam pairs; got None."
+        )
     first = pairs[:, 0]
     second = pairs[:, 1]
     transform = np.eye(4, dtype=np.float64)
     roots = source.core_vertex_representatives
     shifts = source.core_vertex_shifts
     if roots is None or shifts is None:
-        raise RuntimeError("The periodic fixture requires source-authored seam roots.")
+        raise RuntimeError(
+            "NativeLayerCoreSource.core_vertex_representatives must be supplied with core_vertex_shifts; got missing seam roots."
+        )
     rows = source.complex.polygon_vertices.reshape(-1, 3)
     reverse = shifts[rows[first, 0], 0] > shifts[rows[second, 0], 0]
     first, second = np.where(reverse, second, first), np.where(reverse, first, second)
@@ -620,15 +591,17 @@ def test_periodic_fixed_core_retains_material_seams_cap_and_region_controls(
     if coverage is None or any(
         value is None for value in coverage.achieved_region_measures
     ):
-        raise AssertionError("Every requested physical material measure must be decided.")
+        raise AssertionError(
+            "CellMeshingResult.certification.coverage must contain each requested material measure; got missing coverage or an undecided measure."
+        )
     np.testing.assert_allclose(
         np.asarray(coverage.achieved_region_measures, dtype=np.float64),
         (0.02, 0.03),
-        rtol=1e-12,
+        rtol=_PUBLISHED_MEASURE_RTOL,
     )
     from phydrax.lifecycle._meshing_sources import (
-        _validate_layer_core_association,
         read_meshing_source_closure,
+        validate_layer_core_association,
         write_meshing_source_closure,
     )
 
@@ -674,11 +647,11 @@ def test_periodic_fixed_core_retains_material_seams_cap_and_region_controls(
         exact=True,
         source_dimensions=cap_association.source_dimensions,
         source_indices=wrong_indices,
-        source_entity_roles=cap_association.source_entity_roles,
+        source_entity_roles=cap_association.source_entities.roles(),
         orientations=cap_association.orientations,
     )
-    with pytest.raises(ValueError):
-        _validate_layer_core_association(
+    with pytest.raises(ValueError, match="require_layer_target_ancestry"):
+        validate_layer_core_association(
             result.certification.request, wrong, source, mesh=result.mesh
         )
     wrong_revision = M.GeometryAssociation(
@@ -695,11 +668,11 @@ def test_periodic_fixed_core_retains_material_seams_cap_and_region_controls(
         exact=True,
         source_dimensions=cap_association.source_dimensions,
         source_indices=cap_association.source_indices,
-        source_entity_roles=cap_association.source_entity_roles,
+        source_entity_roles=cap_association.source_entities.roles(),
         orientations=cap_association.orientations,
     )
-    with pytest.raises(ValueError):
-        _validate_layer_core_association(
+    with pytest.raises(ValueError, match=r"GeometryAssociation\.source_revision"):
+        validate_layer_core_association(
             result.certification.request, wrong_revision, source, mesh=result.mesh
         )
 
@@ -715,7 +688,7 @@ def test_periodic_core_refusal_preserves_accepted_layers(failure: str) -> None:
     original_pairs = source.core_seam_polygon_pairs
     if original_shifts is None or original_pairs is None:
         raise RuntimeError(
-            "The authored fixture requires its complete periodic ancestry."
+            "NativeLayerCoreSource.core_vertex_shifts must be supplied with core_seam_polygon_pairs; got missing periodic ancestry."
         )
     if failure == "phase":
         shifts = original_shifts.copy()
@@ -761,7 +734,7 @@ def test_periodic_core_refusal_preserves_accepted_layers(failure: str) -> None:
 def test_composite_material_map_cannot_swap_the_core_physical_identity() -> None:
     case = _case(material_interface=True)
     before = np.asarray(case.layers.mesh.coordinates).copy()
-    with pytest.raises(ValueError, match="exact authoritative material names"):
+    with pytest.raises(ValueError, match="NativeLayerCoreSource.core_region_map"):
         M.NativeLayerCoreSource(
             case.layers,
             case.core,
@@ -776,10 +749,42 @@ def test_composite_material_map_cannot_swap_the_core_physical_identity() -> None
     np.testing.assert_array_equal(case.layers.mesh.coordinates, before)
 
 
+def test_nonplanar_layer_core_canonical_publication_executes_required_closure() -> None:
+    source = _periodic_material_source(ridge=True)
+    specification = _periodic_material_specification(source)
+    result = (
+        M.NativeMeshingProvider(M.NativeMeshingOptions("layer_core"))
+        .plan(
+            source,
+            specification,
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+        )
+        .execute()
+    )
+    assert result.certification is not None
+    renewed = M.certify_cell_mesh(
+        result.mesh,
+        result.coordinate_contract,
+        geometry=result.geometry,
+        patches=result.patches,
+        zones=result.zones,
+        labels=result.labels,
+        attributes=result.attributes,
+        associations=result.associations,
+        region_evidence=result.region_evidence,
+        region_boundary_evidence=result.region_boundary_evidence,
+        certification_inputs=result.certification.request,
+        lineage=identity_lineage(result.mesh, result.mesh),
+    )
+    assert renewed.certification is not None and renewed.certification.passed
+    assert "open_boundary" in renewed.audit.evaluated_checks
+    assert dict(renewed.audit.check_counts)["open_boundary"] == 0
+
+
 def test_nonplanar_layer_source_transfer_rejects_changed_original_controls() -> None:
     import equinox as eqx
 
-    from phydrax.meshing._association import (
+    from phydrax.meshing import (
         AssociationPropagationError,
         MappedReferenceAssociationTransfer,
     )
@@ -819,7 +824,7 @@ def test_nonplanar_layer_source_transfer_rejects_changed_original_controls() -> 
             original = transfer.reference_geometries[layer_index]
             if original is None:
                 raise AssertionError(
-                    "The nonplanar layer needs its actual mapped source expression."
+                    "ComposedAssociationTransfer.reference_geometries must retain the nonplanar layer map; got a missing mapped source expression."
                 )
             coordinates = np.asarray(original.coordinates).copy()
             coordinates[:, 2] += 0.001
@@ -865,25 +870,19 @@ def _authored_columns(result: M.CellMeshingResult) -> M.MixedLayerColumns:
     )
 
 
-def test_reopened_layer_core_lineage_continues_fields_volumes_history_and_pde(
-    tmp_path: Path,
-) -> None:
-    import equinox as eqx
+type LayerLifecycle = tuple[
+    M.CellMeshingResult,
+    M.VolumeMeshingSpec,
+    M.MixedLayerColumns,
+    M.CellMeshingResult,
+    M.MeshAdaptationResult,
+    M.MeshAdaptationResult,
+]
 
-    from phydrax.lifecycle._meshing_source_families import native_family_audit_policy
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        write_meshing_source_closure,
-    )
-    from tools.layer_core_lifecycle_continuation import (
-        _LifecyclePlanCache,
-        _require_restored_result_identity,
-        accepted_lineage,
-        continue_fields,
-        continue_finite_volume,
-        continue_history,
-        material_declaration,
-    )
+
+@pytest.fixture(scope="module")
+def reopened_layer_lifecycle(tmp_path_factory: pytest.TempPathFactory) -> LayerLifecycle:
+    tmp_path = tmp_path_factory.mktemp("layer-lifecycle")
 
     source = _periodic_material_source(ridge=True)
     specification = _periodic_material_specification(source)
@@ -894,7 +893,9 @@ def test_reopened_layer_core_lineage_continues_fields_volumes_history_and_pde(
     )
     result = plan.execute()
     if result.certification is None:
-        raise AssertionError("The accepted layer/core source must be certified.")
+        raise AssertionError(
+            "CellMeshingResult.certification must be present for the accepted layer/core source; got None."
+        )
     records = {
         "certification_inputs": result.certification.request,
         "report": result.certification,
@@ -959,17 +960,47 @@ def test_reopened_layer_core_lineage_continues_fields_volumes_history_and_pde(
         {**records, "accepted_data": {"adaptation_results": (reopened, coarsening)}},
         retained_layer_core_plan=plan,
     )
-    restored, refined, coarsened = accepted_lineage(
+    restored, refined, coarsened = accepted_layer_core_lineage(
         read_meshing_source_closure(durable.path, expected_content_id=durable.content_id)
+    )
+    return result, specification, columns, restored, refined, coarsened
+
+
+def test_reopened_layer_core_preserves_volumes_and_source_identity(
+    reopened_layer_lifecycle: LayerLifecycle,
+) -> None:
+    result, specification, columns, restored, refined, coarsened = (
+        reopened_layer_lifecycle
     )
     counts = [
         sum(block.cell_count for block in current.mesh.blocks)
         for current in (restored, refined.target, coarsened.target)
     ]
     root_count = sum(block.cell_count for block in result.mesh.blocks)
-    # Lifecycle counts are relative to the accepted native root representation,
-    # not the superseded pre-cutover cell presentation.
-    assert counts == [root_count, root_count + 4, root_count]
+    # Rational split proofs remove rounded-midpoint false protections. The
+    # conforming closure may refine more parents; coarsening restores the root.
+    assert counts[0] == counts[2] == root_count
+    assert counts[1] > root_count
+    root_coverage = result.certification
+    assert root_coverage is not None and root_coverage.coverage is not None
+    for current in (restored, refined.target, coarsened.target):
+        assert current.audit.passed
+        findings = dict(current.audit.check_counts)
+        for check in (
+            "nonmanifold_facets",
+            "inconsistent_orientation",
+            "open_boundary",
+        ):
+            assert findings[check] == 0
+        certificate = current.certification
+        assert certificate is not None and certificate.passed
+        coverage = certificate.coverage
+        assert coverage is not None
+        np.testing.assert_allclose(
+            np.asarray(coverage.achieved_region_measures, dtype=np.float64),
+            np.asarray(root_coverage.coverage.achieved_region_measures, dtype=np.float64),
+            rtol=_PUBLISHED_MEASURE_RTOL,
+        )
     assert restored.mesh.mesh_id == result.mesh.mesh_id
     assert _authored_columns(coarsened.target).columns_id == columns.columns_id
     np.testing.assert_array_equal(
@@ -979,8 +1010,8 @@ def test_reopened_layer_core_lineage_continues_fields_volumes_history_and_pde(
         np.asarray(coarsened.target.mesh.coordinates).view(np.uint64),
         np.asarray(restored.mesh.coordinates).view(np.uint64),
     )
-    # Coarsening retains its actual restriction provenance. Equal restored
-    # coordinate maps are not an excuse to force historical geometry IDs.
+    # Coarsening retains restriction provenance; equal restored coordinate maps
+    # do not imply equal geometry IDs.
     np.testing.assert_array_equal(
         np.asarray(coarsened.target.geometry.coordinates).view(np.uint64),
         np.asarray(restored.geometry.coordinates).view(np.uint64),
@@ -991,21 +1022,35 @@ def test_reopened_layer_core_lineage_continues_fields_volumes_history_and_pde(
         strict=True,
     ):
         np.testing.assert_array_equal(current, original)
-    assert (
-        coarsened.target.geometry.source_coordinates()
-        == restored.geometry.source_coordinates()
-    )
-    _require_restored_result_identity(restored, coarsened.target)
+    with HostBatchTicket(
+        specification.limits.maximum_work_units,
+        queries_upper=specification.limits.maximum_geometry_queries,
+        bytes_upper=specification.limits.maximum_scratch_bytes,
+    ) as ticket:
+        budget = CoordinateEnclosureBudget(
+            ticket,
+            maximum_work_units=specification.limits.maximum_work_units,
+            maximum_memory_bytes=specification.limits.maximum_scratch_bytes,
+        )
+        with budget.activate():
+            assert coarsened.target.geometry.source_coordinates(
+                budget=budget
+            ) == restored.geometry.source_coordinates(budget=budget)
+    require_restored_layer_core_result_identity(restored, coarsened.target)
     restored_report = coarsened.target.certification
     if restored_report is None:
-        raise AssertionError("The restored result must retain source certification.")
-    from phydrax.geometry._mesh_certificates import PiecewiseLinearDomain
+        raise AssertionError(
+            "CellMeshingResult.certification must retain the restored source binding; got None."
+        )
+    from phydrax.geometry._domain_coverage import PiecewiseLinearDomain
     from phydrax.meshing._certification_inputs import MeshCertificationInputs
 
     request = restored_report.request
     domain = request.domain
     if not isinstance(domain, PiecewiseLinearDomain):
-        raise AssertionError("The direct layer/core fixture requires its PLC domain.")
+        raise AssertionError(
+            "MeshCertificationInputs.domain must be PiecewiseLinearDomain for this layer/core fixture; got a different domain kind."
+        )
     changed_vertices = np.asarray(domain.vertices).copy()
     nonzero = np.argwhere(changed_vertices != 0.0)[0]
     row, column = int(nonzero[0]), int(nonzero[1])
@@ -1036,32 +1081,38 @@ def test_reopened_layer_core_lineage_continues_fields_volumes_history_and_pde(
     changed_result = eqx.tree_at(
         lambda value: value.certification, coarsened.target, changed_report
     )
-    with pytest.raises(ValueError, match="source revision"):
-        _require_restored_result_identity(restored, changed_result)
-    plans = _LifecyclePlanCache()
-    fields = continue_fields(restored, refined, coarsened, plans=plans)
+    with pytest.raises(ValueError, match="restoration.result_identity"):
+        require_restored_layer_core_result_identity(restored, changed_result)
+
+
+def test_reopened_layer_core_continues_fields_inventories_and_history(
+    reopened_layer_lifecycle: LayerLifecycle,
+) -> None:
+    result, _, _, restored, refined, coarsened = reopened_layer_lifecycle
+    plans = LayerCoreLifecyclePlans()
+    fields = continue_layer_core_fields(restored, refined, coarsened, plans=plans)
     assert [summary["field"] for summary in fields] == ["H1", "DG", "Hcurl", "Hdiv"]
-    material = material_declaration(restored)
-    volumes = continue_finite_volume(
+    material = layer_core_material_declaration(restored)
+    volumes = continue_layer_core_finite_volume(
         restored,
         refined,
         coarsened,
         material=material,
         plans=plans,
     )
-    coverage = result.certification.coverage
+    coverage = None if result.certification is None else result.certification.coverage
     if coverage is None or any(
         value is None for value in coverage.achieved_region_measures
     ):
         raise AssertionError(
-            "Continued inventories need independently certified material measures."
+            "CellMeshingResult.certification.coverage must contain material measures for continued inventories; got missing coverage or an undecided measure."
         )
     np.testing.assert_allclose(
         volumes["region_inventories"],
         np.asarray(coverage.achieved_region_measures, dtype=np.float64) * (2.0, 3.0),
-        rtol=1e-12,
+        rtol=_PUBLISHED_MEASURE_RTOL,
     )
-    history = continue_history(
+    history = continue_layer_core_history(
         restored,
         refined,
         coarsened,
@@ -1099,98 +1150,14 @@ def test_reopened_layer_core_lineage_continues_fields_volumes_history_and_pde(
     transaction = phx.solver.FiniteElementTopologyTransaction(
         lambda *arguments: True, fields=(heterogeneous,)
     )
-    with pytest.raises(ValueError, match="unambiguous field-family"):
+    with pytest.raises(ValueError, match=r"FiniteElementFieldSpec\.elements"):
         transaction.execute(accepted, refined.target.mesh, coarsened)
 
 
 def test_original_open_wall_layers_cover_every_declared_cube_side() -> None:
-    from tests.unit.meshing.test_meshing_source_authority import _cube_domain, _cube_query
 
-    case = _case()
-    domain = _cube_domain()
-    query = _cube_query(domain)
-    boundary = M.MeshingScope(
-        domain.source_id,
-        domain.source_revision,
-        M.MeshingEntityKind.GEOMETRY,
-        2,
-        domain.entity_set_id(2),
-        np.arange(6, dtype=np.int64),
-    )
-    wall_scope = M.MeshingScope(
-        domain.source_id,
-        domain.source_revision,
-        M.MeshingEntityKind.GEOMETRY,
-        2,
-        domain.entity_set_id(2),
-        np.asarray([0], dtype=np.int64),
-    )
-    volume = M.MeshingScope(
-        domain.source_id,
-        domain.source_revision,
-        M.MeshingEntityKind.GEOMETRY,
-        3,
-        domain.entity_set_id(3),
-        np.asarray([0], dtype=np.int64),
-    )
-    wall = case.layers.source_wall
-    wall_ids = np.asarray(wall.entity_set(2).entity_ids, dtype=np.int64)
-    association = M.GeometryAssociation(
-        M.GeometryAssociationKind.SURFACE,
-        domain.source_id,
-        domain.source_revision,
-        wall.entity_set(2).entity_set_id,
-        wall_ids,
-        (f"{domain.source_revision}:surface:0",) * wall_ids.size,
-        np.zeros(wall_ids.size, dtype=np.float64),
-        exact=True,
-        source_dimensions=np.full(wall_ids.size, 2, dtype=np.int8),
-        source_indices=np.zeros(wall_ids.size, dtype=np.int64),
-        orientations=-np.ones(wall_ids.size, dtype=np.int8),
-    )
-    control = M.BoundaryLayerControl(
-        wall_scope,
-        case.layers.control.schedule,
-        route=M.BoundaryLayerRoute.ADVANCING,
-        volume_scope=volume,
-    )
-    layers = M.prepare_boundary_layers(
-        wall, control, wall_association=association, source_domain=domain
-    )
-    core = M.PiecewiseLinearComplex(
-        case.core.vertices,
-        tuple(case.core.polygon_vertices.reshape(-1, 3)),
-        np.repeat(np.arange(6, dtype=np.int64), 2),
-        np.asarray(((0, -1), *[(-1, 0)] * 5), dtype=np.int64),
-        case.core.region_ids,
-        boundary="fixed",
-    )
-    source = M.NativeLayerCoreSource(
-        layers,
-        core,
-        domain.source_id,
-        domain.source_revision,
-        vertex_layer_ids=case.vertex_layer_ids,
-        cap_polygon_ids=case.cap_polygon_ids,
-        layer_regions=case.layer_regions,
-        region_ids=case.region_ids,
-        core_region_map=case.core_region_map,
-        source_boundary_scope=boundary,
-        source_domain=domain,
-        fidelity_source=query,
-        core_facet_source_ids=np.asarray((-1, 1, 2, 3, 4, 5), dtype=np.int64),
-    )
-    specification = M.VolumeMeshingSpec(
-        M.CellMeshingTarget(
-            3, 3, M.CellFamilyPolicy(required=("prism", "tetrahedron"), allow_mixed=True)
-        ),
-        boundary,
-        M.VolumeFillStrategy.SIMPLEX,
-        size_controls=(
-            M.UniformSizeControl(boundary, 2.0, strength=M.SizeControlStrength.SOFT),
-        ),
-        layer_controls=(control,),
-    )
+    source, specification = _physical_layer_source()
+    layers = source.layers
     result = (
         M.NativeMeshingProvider(M.NativeMeshingOptions("layer_core"))
         .plan(
@@ -1203,39 +1170,137 @@ def test_original_open_wall_layers_cover_every_declared_cube_side() -> None:
     report = result.certification
     if report is None or report.coverage is None:
         raise AssertionError(
-            "The original open-wall layer source requires complete volume and scoped original-face evidence."
+            "CellMeshingResult.certification must include volume coverage and source-face fidelity for the open wall; got missing certification or coverage."
         )
     assert report.passed and len(report.scoped_fidelity) == 6
     assert all(
         certificate.status == "certified" for certificate in report.scoped_fidelity
     )
     assert all(
-        certificate.mesh_to_source_upper <= 1e-12
-        and certificate.source_to_mesh_upper <= 1e-12
+        certificate.mesh_to_source_upper <= _AFFINE_FIDELITY_DISTANCE_ATOL
+        and certificate.source_to_mesh_upper <= _AFFINE_FIDELITY_DISTANCE_ATOL
         for certificate in report.scoped_fidelity
     )
     measures = report.coverage.achieved_region_measures
     if any(value is None for value in measures):
         raise AssertionError(
-            "Original volume coverage must retain every independently measured material volume."
+            "DomainCoverageCertificate.achieved_region_measures must contain every material volume; got an undecided measure."
         )
-    np.testing.assert_allclose(np.asarray(measures, dtype=np.float64), (1.0,), rtol=1e-12)
+    np.testing.assert_allclose(
+        np.asarray(measures, dtype=np.float64), (1.0,), rtol=_PUBLISHED_MEASURE_RTOL
+    )
     np.testing.assert_array_equal(
         np.asarray(result.mesh.coordinates)[: layers.mesh.coordinates.shape[0]],
         layers.mesh.coordinates,
     )
 
 
+@pytest.mark.parametrize(
+    "requested_patch", (False, True), ids=("fidelity", "patch-fidelity")
+)
+def test_layer_publication_envelope_covers_visits_and_refuses_insufficient_work(
+    requested_patch: bool,
+) -> None:
+    import equinox as eqx
+
+    from phydrax._meshcore import MeshcoreError
+    from phydrax.meshing._layer_core import (
+        _layer_publication_work_upper,
+        generate_layer_core,
+    )
+    from phydrax.meshing._layer_core_controls import compose_layer_controls
+    from phydrax.meshing._layer_source_certification import layer_source_certification
+    from phydrax.meshing._volume_generation import native_volume_execution_budget
+    from phydrax.meshing.providers._native_layer import PreparedLayerCore
+
+    source, specification = _physical_layer_source()
+    if requested_patch:
+        boundary = specification.boundary_scope
+        scope = M.MeshingScope(
+            boundary.source_id,
+            boundary.source_revision,
+            boundary.entity_kind,
+            boundary.entity_dimension,
+            boundary.entity_set_id,
+            np.asarray([0], dtype=np.int64),
+        )
+        specification = eqx.tree_at(
+            lambda value: value.patch_controls,
+            specification,
+            (M.PatchControl("requested-cube-wall", scope, source.region_ids),),
+        )
+    contract = phx.SpatialCoordinateContract.si()
+    provider = M.NativeMeshingProvider(M.NativeMeshingOptions("layer_core"))
+    plan = provider.plan(source, specification, coordinate_contract=contract)
+    prepared = plan.prepared
+    if not isinstance(prepared, PreparedLayerCore):
+        raise AssertionError(
+            "NativeMeshingPlan.prepared must retain the layer construction schedule; got a different preparation"
+        )
+    with native_volume_execution_budget(specification.limits) as execution:
+        construction = generate_layer_core(
+            source.layers,
+            source.complex,
+            prepared.core_specification,
+            prepared.schedule,
+            scope=execution,
+            validity_policy=M.CellMeshAuditPolicy().validity_policy,
+            vertex_layer_ids=source.vertex_layer_ids,
+            cap_polygon_ids=source.cap_polygon_ids,
+            layer_regions=source.layer_regions,
+            source_id=source.source_id,
+            source_revision=source.source_revision,
+            input_id=plan.plan_id,
+            source_binding=source,
+        )
+    bound = _layer_publication_work_upper(source, specification, construction)
+    before = np.asarray(construction.mesh.coordinates).copy()
+    with (
+        native_volume_execution_budget(
+            M.MeshingLimits(maximum_work_units=bound)
+        ) as accepted,
+        accepted.batch(bound) as ticket,
+    ):
+        work = LayerCoreSourceWork(bound, ticket=ticket)
+        zones, patches = compose_layer_controls(
+            source, specification, construction, work=work
+        )
+        certification = layer_source_certification(
+            source, specification, construction, work=work
+        )
+        completed = work.work_units
+        assert 0 < completed <= bound
+        assert {zone.name for zone in zones} == set(source.region_ids)
+        assert patches
+        assert len(certification.scoped_fidelity) == 6
+    assert accepted.evidence is not None
+    assert accepted.evidence.externally_charged_work == completed
+    with (
+        pytest.raises(M.MeshingFailure),
+        native_volume_execution_budget(
+            M.MeshingLimits(maximum_work_units=completed - 1)
+        ) as refused,
+    ):
+        with pytest.raises(MeshcoreError):
+            refused.batch(bound)
+    assert refused.evidence is not None
+    assert refused.evidence.externally_charged_work == 0
+    np.testing.assert_array_equal(construction.mesh.coordinates, before)
+
+
 def test_layer_source_work_refusal_cannot_refund_consumed_budget() -> None:
     from phydrax.meshing._layer_core_resources import LayerCoreSourceWork
     from phydrax.meshing._volume_generation import native_volume_execution_budget
 
-    with native_volume_execution_budget(
-        M.MeshingLimits(maximum_work_units=5)
-    ) as execution:
-        work = LayerCoreSourceWork(5)
+    with (
+        native_volume_execution_budget(
+            M.MeshingLimits(maximum_work_units=5)
+        ) as execution,
+        execution.batch(5) as ticket,
+    ):
+        work = LayerCoreSourceWork(5, ticket=ticket)
         work.charge(3)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="source_work_units"):
             work.charge(-1)
         assert work.work_units == 3
         with pytest.raises(M.MeshingFailure):
@@ -1245,7 +1310,7 @@ def test_layer_source_work_refusal_cannot_refund_consumed_budget() -> None:
         assert work.work_units == 5
     assert execution.evidence is not None
     assert execution.evidence.externally_charged_work == 5
-    assert int(execution.evidence.work_evidence[1]) == 0
+    assert int(execution.evidence.work_counters.source_queries) == 0
 
 
 def test_standalone_prepared_layer_route_retains_actual_preparation_receipt() -> None:
@@ -1263,10 +1328,16 @@ def test_standalone_prepared_layer_route_retains_actual_preparation_receipt() ->
         coordinate_contract=contract,
     )
     if not isinstance(plan.prepared, PreparedLayerCore):
-        raise AssertionError("Layer/core planning must publish PreparedLayerCore.")
+        raise AssertionError(
+            "NativeMeshingPlan.prepared must be PreparedLayerCore; got a different preparation kind."
+        )
     prepared = plan.prepared
     original = np.asarray(source.layers.mesh.coordinates).view(np.uint64).copy()
-    with pytest.raises(ValueError, match="actual preparation receipt"):
+    with (
+        NativeExecutionScope(specification.limits.native_limits()) as scope,
+        NativeHostStorageWorkspace(scope) as workspace,
+        pytest.raises(ValueError, match="execute_layer_route.prepared"),
+    ):
         execute_layer_route(
             source,
             specification,
@@ -1274,18 +1345,39 @@ def test_standalone_prepared_layer_route_retains_actual_preparation_receipt() ->
             contract,
             M.NativeMeshingProvider.info(),
             plan.plan_id,
+            scope=scope,
+            workspace=workspace,
         )
     np.testing.assert_array_equal(
         np.asarray(source.layers.mesh.coordinates).view(np.uint64),
         original,
     )
-    result = execute_layer_route(
-        source,
-        specification,
-        prepared,
-        contract,
-        M.NativeMeshingProvider.info(),
-        plan.plan_id,
+    from phydrax.meshing.providers._native_publication import bind_native_execution_result
+
+    with (
+        NativeExecutionScope(specification.limits.native_limits()) as scope,
+        NativeHostStorageWorkspace(scope) as workspace,
+    ):
+        result = execute_layer_route(
+            source,
+            specification,
+            prepared,
+            contract,
+            M.NativeMeshingProvider.info(),
+            plan.plan_id,
+            scope=scope,
+            workspace=workspace,
+            preparation_evidence=plan.preparation_evidence,
+        )
+    if scope.evidence is None:
+        raise AssertionError(
+            "NativeExecutionScope.evidence must retain ended layer execution; got None."
+        )
+    result = bind_native_execution_result(
+        result,
+        scope.evidence,
+        specification.limits,
+        scope.operation_started,
         preparation_evidence=plan.preparation_evidence,
     )
     receipt = result.execution_evidence
@@ -1303,41 +1395,52 @@ def test_standalone_prepared_layer_route_retains_actual_preparation_receipt() ->
 def test_material_continuation_uses_only_declared_source_regions(
     material_interface: bool,
 ) -> None:
-    from tools.layer_core_lifecycle_continuation import (
-        _LifecyclePlanCache,
-        _material_values,
-        _measures,
-        _region_inventory,
-        _region_labels,
-        material_declaration,
+    from phydrax.meshing.qualification import (
+        layer_core_cell_measures,
+        layer_core_material_declaration,
+        layer_core_material_values,
+        layer_core_region_inventory,
+        layer_core_region_labels,
+        LayerCoreLifecyclePlans,
     )
 
     result = _result(_case(material_interface=material_interface))
     densities = (2.0, 3.0) if material_interface else (2.0,)
-    material = material_declaration(
+    material = layer_core_material_declaration(
         result, densities=densities, site_id="declared-fluid-density"
     )
-    actual = _material_values(result, material)
+    actual = layer_core_material_values(result, material)
     np.testing.assert_array_equal(actual, densities)
-    labels = _region_labels(result)
-    inventory = _region_inventory(
-        jnp.asarray(_measures(result, plans=_LifecyclePlanCache()) * actual[labels]),
+    labels = layer_core_region_labels(result)
+    inventory = layer_core_region_inventory(
+        jnp.asarray(
+            layer_core_cell_measures(result, plans=LayerCoreLifecyclePlans())
+            * actual[labels]
+        ),
         labels,
         len(densities),
     )
     expected = (0.4, 2.4) if material_interface else (2.0,)
-    np.testing.assert_allclose(inventory, expected, rtol=1.0e-12, atol=1.0e-12)
-    with pytest.raises(ValueError, match="original source or region namespace"):
-        _material_values(result, {**material, "source_id": "foreign-original-source"})
-    with pytest.raises(ValueError, match="exactly the original regions"):
-        material_declaration(
+    np.testing.assert_allclose(
+        inventory,
+        expected,
+        rtol=_PUBLISHED_MEASURE_RTOL,
+        atol=_REGION_INVENTORY_ATOL,
+    )
+    with pytest.raises(ValueError, match="material.declaration"):
+        layer_core_material_values(
+            result, {**material, "source_id": "foreign-original-source"}
+        )
+    with pytest.raises(ValueError, match="material.densities"):
+        layer_core_material_declaration(
             result, densities=(*densities, 4.0), site_id="declared-fluid-density"
         )
 
 
 def test_live_layer_preparation_requires_exact_same_root_handle() -> None:
+    from phydrax._meshcore import current_native_execution_scope
+    from phydrax.meshing._native_preparation import native_preparation_ledger
     from phydrax.meshing._volume_generation import (
-        _native_live_preparation_is_active,
         native_volume_execution_budget,
     )
     from phydrax.meshing.providers._native_layer import (
@@ -1351,18 +1454,26 @@ def test_live_layer_preparation_requires_exact_same_root_handle() -> None:
     contract = phx.SpatialCoordinateContract.si()
     historical = provider.plan(source, specification, coordinate_contract=contract)
     if not isinstance(historical.prepared, PreparedLayerCore):
-        raise AssertionError("Layer/core planning must publish PreparedLayerCore.")
+        raise AssertionError(
+            "NativeMeshingPlan.prepared must be PreparedLayerCore; got a different preparation kind."
+        )
     historical_prepared = historical.prepared
-    with native_volume_execution_budget(specification.limits):
+    with native_volume_execution_budget(specification.limits) as root:
+        ledger = native_preparation_ledger(root)
         current = provider.plan(source, specification, coordinate_contract=contract)
         if not isinstance(current.prepared, PreparedLayerCore):
-            raise AssertionError("Layer/core planning must publish PreparedLayerCore.")
+            raise AssertionError(
+                "NativeMeshingPlan.prepared must be PreparedLayerCore; got a different preparation kind."
+            )
         current_prepared = current.prepared
-        assert _native_live_preparation_is_active(current_prepared)
-        assert not _native_live_preparation_is_active(historical_prepared)
-        with native_volume_execution_budget(specification.limits, borrow_active=False):
-            assert _native_live_preparation_is_active(current_prepared)
-            with pytest.raises(ValueError, match="exact live prepared owner"):
+        assert ledger.live_contains(current_prepared)
+        assert not ledger.live_contains(historical_prepared)
+        with (
+            native_volume_execution_budget(specification.limits) as child,
+            NativeHostStorageWorkspace(child) as workspace,
+        ):
+            assert native_preparation_ledger(child).live_contains(current_prepared)
+            with pytest.raises(ValueError, match="execute_layer_route.prepared"):
                 execute_layer_route(
                     source,
                     specification,
@@ -1370,8 +1481,11 @@ def test_live_layer_preparation_requires_exact_same_root_handle() -> None:
                     contract,
                     provider.info(),
                     historical.plan_id,
+                    scope=child,
+                    workspace=workspace,
                 )
-    assert not _native_live_preparation_is_active(current_prepared)
+    assert current_native_execution_scope() is None
+    assert not ledger.live_contains(current_prepared)
 
 
 def test_closed_layer_preparation_scope_releases_its_strong_owner() -> None:
@@ -1397,7 +1511,7 @@ def test_closed_layer_preparation_scope_releases_its_strong_owner() -> None:
             )
             if not isinstance(candidate, PreparedLayerCore):
                 raise AssertionError(
-                    "Layer/core planning must publish PreparedLayerCore."
+                    "NativeMeshingPlan.prepared must be PreparedLayerCore; got a different preparation kind."
                 )
             reference = weakref.ref(candidate)
         return reference
@@ -1431,7 +1545,7 @@ def test_refused_layer_preparation_scope_releases_its_strong_owner() -> None:
                 )
                 if not isinstance(candidate, PreparedLayerCore):
                     raise AssertionError(
-                        "Layer/core planning must publish PreparedLayerCore."
+                        "NativeMeshingPlan.prepared must be PreparedLayerCore; got a different preparation kind."
                     )
                 reference = weakref.ref(candidate)
                 execution.charge(work=specification.limits.maximum_work_units + 1)

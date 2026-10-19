@@ -14,7 +14,10 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
-from ...discretization.finite_volume._hybrid_diffusion import _positive_tensor, _tensor
+from ...discretization.finite_volume._hybrid_diffusion import (
+    diffusion_tensor,
+    positive_tensor,
+)
 from ...units import (
     convert_value,
     derived_unit,
@@ -107,8 +110,8 @@ class PorousMaterial(StrictModule):
                 "Intrinsic permeability must be positive.",
             )
         elif permeability.ndim in (2, 3) and permeability.shape[-2:] == (3, 3):
-            _positive_tensor(
-                _tensor(
+            positive_tensor(
+                diffusion_tensor(
                     permeability, 1 if permeability.ndim == 2 else permeability.shape[0]
                 )
             )

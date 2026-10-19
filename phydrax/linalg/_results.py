@@ -78,6 +78,7 @@ class LinearSolveStatus(IntEnum):
     USER_STOPPED = 13
     INCOMPATIBLE_RHS = 14
     STATIONARITY_RESIDUAL_TOO_LARGE = 15
+    RESOURCE_LIMIT_REACHED = 16
 
 
 _STATUS_MESSAGES = {
@@ -102,6 +103,7 @@ _STATUS_MESSAGES = {
     LinearSolveStatus.STATIONARITY_RESIDUAL_TOO_LARGE: (
         "minimum-norm stationarity witness exceeds the requested tolerance"
     ),
+    LinearSolveStatus.RESOURCE_LIMIT_REACHED: "declared solver storage allowance exceeded",
 }
 
 
@@ -675,6 +677,42 @@ class LinearSolveResult(StrictModule):
                 raise ValueError(f"Linear solves do not use the {route.value} route.")
 
 
+class AggregateLinearSolveResult(StrictModule):
+    """Full-system residual evidence and the executed reduced-system result.
+
+    Rank, condition, iteration, and resource diagnostics in ``reduced`` describe
+    the reduced operator. For a singleton they describe the native scalar solve;
+    a full aggregate bank instead records an empty, unexecuted reduced system.
+    ``successful`` requires independent finite aggregate rows and the full
+    residual contract. ``aggregate_row_norm`` is a scalar norm for one row, or
+    successive orthogonalization pivot norms for a bank. Aggregate rank, cutoff,
+    and retained-mode condition evidence describe the thin source bank, not
+    the full operator. Unperformed setup retains unknown rank and conditioning.
+    """
+
+    value: Array
+    status: Array
+    reduced: LinearSolveResult
+    full_residual_norm: Array
+    full_residual_threshold: Array
+    aggregate_residual: Array
+    aggregate_row_norm: Array
+    chart_valid: Array
+    aggregate_rank: Array
+    aggregate_condition_estimate: Array
+    aggregate_rank_cutoff: Array
+    aggregate_setup_performed: Array
+    aggregate_count: int = eqx.field(static=True)
+    operator_id: str = eqx.field(static=True)
+    resource_refusals: tuple[tuple[str, int, int], ...] = eqx.field(
+        static=True, default=()
+    )
+
+    @property
+    def successful(self) -> Array:
+        return self.status == int(LinearSolveStatus.SUCCESS)
+
+
 MatrixInversionKind: TypeAlias = Literal["inverse", "pseudoinverse"]
 
 
@@ -914,6 +952,7 @@ class RecycledLinearSolveResult(StrictModule):
 
 
 __all__ = [
+    "AggregateLinearSolveResult",
     "InitialGuessDiagnostics",
     "LinearIterationMetrics",
     "LinearPrecisionEvidence",

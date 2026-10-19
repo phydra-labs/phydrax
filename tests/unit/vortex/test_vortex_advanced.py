@@ -70,6 +70,8 @@ def test_vortex_advanced_scenario_1() -> None:
         position,
         maximum_reference_displacement=0.01,
     ).evaluate(stale_source, targets)
+    if accelerated.velocity is None or direct.velocity is None:
+        raise RuntimeError("velocity results must be present for the request; got None")
 
     np.testing.assert_allclose(
         accelerated.velocity, direct.velocity, rtol=0.15, atol=2e-3
@@ -90,10 +92,8 @@ def test_vortex_advanced_scenario_1() -> None:
     method = phx.discretization.VortexParticleMethodPlan(
         VortexFMMPlan(
             reference,
-            # ty: ignore[invalid-argument-type]
-            (-1.0, -1.0),
-            # ty: ignore[invalid-argument-type]
-            (1.0, 1.0),
+            jnp.asarray((-1.0, -1.0), dtype=jnp.float64),
+            jnp.asarray((1.0, 1.0), dtype=jnp.float64),
             depth=1,
             maximum_reference_displacement=0.01,
         )

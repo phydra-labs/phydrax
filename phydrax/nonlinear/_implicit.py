@@ -14,6 +14,7 @@ from jax import Array
 from jax.typing import DTypeLike
 from jaxtyping import PyTree
 
+from .._admissibility import DerivativeFailureMode
 from .._custom_root import custom_root
 from .._strict import StrictModule
 from .._tree_math import validate_inexact_tree
@@ -36,7 +37,7 @@ from ..linalg import (
     transpose,
 )
 from ..linalg._runtime import _callable_gmres_for_policy
-from ..typing import checked
+from ..typing import checked, parse
 from ._components import admit_callable_components, admit_residual_components
 from ._fixed_point import FixedPointIteration
 from ._newton import NewtonKrylov, NewtonTrustRegion
@@ -304,6 +305,7 @@ def implicit_root_output(
     residual_and_output: Callable[[Array, Any], tuple[Array, Any]],
     root_space: ArraySpace,
     prepare_linear_solve: Callable[[AbstractLinearOperator], PreparedLinearSolve],
+    derivative_failure: DerivativeFailureMode = "error",
 ) -> tuple[Array, Any]:
     """Retain an existing root/output receipt and attach physical derivatives.
 
@@ -312,7 +314,15 @@ def implicit_root_output(
     and reverse actions follow the supplied endpoint equations and output map.
     ``arguments`` carries differentiable history/physical inputs. The callbacks
     and declared space are conditioned dynamic structure, not static arrays.
+    ``successful`` may include a certified endpoint-regularity admission.
+    ``derivative_failure="status"`` keeps the primal inspectable and returns
+    NaN derivative actions when admission or a native linear solve fails.
     """
+    derivative_failure = parse(
+        derivative_failure,
+        DerivativeFailureMode,
+        "implicit_root_output.derivative_failure",
+    )
     if len(root_space.shape) != 1:
         raise ValueError(
             "Implicit output attachment requires one native coordinate vector."
@@ -329,10 +339,17 @@ def _implicit_root_output_jvp(
     residual_and_output: Callable[[Array, Any], tuple[Array, Any]],
     root_space: ArraySpace,
     prepare_linear_solve: Callable[[AbstractLinearOperator], PreparedLinearSolve],
+    derivative_failure: DerivativeFailureMode = "error",
 ) -> tuple[tuple[Array, Any], tuple[Array, Any]]:
     root_state, arguments, receipt, successful = primals
     _, arguments_tangent, _, _ = tangents
-    root_state = eqx.error_if(root_state, ~successful, _FAILED_ROOT_MESSAGE)
+    derivative_failure = parse(
+        derivative_failure,
+        DerivativeFailureMode,
+        "implicit_root_output.derivative_failure",
+    )
+    if derivative_failure == "error":
+        root_state = eqx.error_if(root_state, ~successful, _FAILED_ROOT_MESSAGE)
     active = jax.tree.map(
         lambda primal, tangent: eqx.is_inexact_array(primal) and tangent is not None,
         arguments,
@@ -388,31 +405,55 @@ def _implicit_root_output_jvp(
         raise TypeError("The implicit endpoint input derivative must be an array.")
     prepared = prepare_linear_solve(operator)
 
+    def invalid_direction(right_hand_side: Array) -> Array:
+        # A NaN linear action poisons the transpose, including zero cotangents.
+        return jnp.asarray(jnp.nan, dtype=right_hand_side.dtype) * right_hand_side
+
     def solve_direction(_: Callable[[Array], Array], right_hand_side: Array) -> Array:
-        result = solve_linear(prepared, right_hand_side[:, None])
-        value = result.value
-        if not isinstance(value, Array):
-            raise TypeError(
-                "The native implicit derivative solve must return array coordinates."
-            )
-        return eqx.error_if(
-            value[:, 0],
-            jnp.any(result.status != int(LinearSolveStatus.SUCCESS)),
-            "Implicit output derivative solve failed; the physical root Jacobian is unresolved.",
-        )
+        def execute(right: Array) -> Array:
+            result = solve_linear(prepared, right[:, None])
+            value = result.value
+            if not isinstance(value, Array):
+                raise TypeError(
+                    f"implicit_root_output.derivative_solve.value must be an array of coordinates; got {type(value).__name__}."
+                )
+            if derivative_failure == "error":
+                return eqx.error_if(
+                    value[:, 0],
+                    jnp.any(result.status != int(LinearSolveStatus.SUCCESS)),
+                    "Implicit output derivative solve failed; the physical root Jacobian is unresolved.",
+                )
+            valid = jnp.all(result.status == int(LinearSolveStatus.SUCCESS))
+            scale = jnp.where(valid, 1.0, jnp.nan).astype(value.dtype)
+            dependency_scale = jnp.where(valid, 0.0, jnp.nan).astype(value.dtype)
+            return scale * value[:, 0] + dependency_scale * right
+
+        if derivative_failure == "error":
+            return execute(right_hand_side)
+        return jax.lax.cond(successful, execute, invalid_direction, right_hand_side)
 
     def solve_transposed(_: Callable[[Array], Array], right_hand_side: Array) -> Array:
-        result = solve_transpose(prepared, right_hand_side[:, None])
-        value = result.value
-        if not isinstance(value, Array):
-            raise TypeError(
-                "The native implicit adjoint solve must return array coordinates."
-            )
-        return eqx.error_if(
-            value[:, 0],
-            jnp.any(result.status != int(LinearSolveStatus.SUCCESS)),
-            "Implicit output adjoint solve failed; the physical root Jacobian is unresolved.",
-        )
+        def execute(right: Array) -> Array:
+            result = solve_transpose(prepared, right[:, None])
+            value = result.value
+            if not isinstance(value, Array):
+                raise TypeError(
+                    f"implicit_root_output.adjoint_solve.value must be an array of coordinates; got {type(value).__name__}."
+                )
+            if derivative_failure == "error":
+                return eqx.error_if(
+                    value[:, 0],
+                    jnp.any(result.status != int(LinearSolveStatus.SUCCESS)),
+                    "Implicit output adjoint solve failed; the physical root Jacobian is unresolved.",
+                )
+            valid = jnp.all(result.status == int(LinearSolveStatus.SUCCESS))
+            scale = jnp.where(valid, 1.0, jnp.nan).astype(value.dtype)
+            dependency_scale = jnp.where(valid, 0.0, jnp.nan).astype(value.dtype)
+            return scale * value[:, 0] + dependency_scale * right
+
+        if derivative_failure == "error":
+            return execute(right_hand_side)
+        return jax.lax.cond(successful, execute, invalid_direction, right_hand_side)
 
     direction = jax.lax.custom_linear_solve(
         forward, rhs, solve=solve_direction, transpose_solve=solve_transposed

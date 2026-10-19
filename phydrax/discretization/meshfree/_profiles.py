@@ -1,8 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Unreleased, evidence-gated meshfree capability declarations.
 
-Every support tuple is one exact conjunction of method, boundary, geometry
-authority, derivative class, provider, device, declared capacity, precision,
+Every support tuple is a conjunction of method, boundary, geometry source,
+derivative class, provider, device, declared capacity, precision,
 temporal method, reproducibility, and spatial dimension. Evidence for one tuple
 never stands in for another, and no declaration here is a release.
 """
@@ -10,13 +10,16 @@ never stands in for another, and no declaration here is a release.
 from __future__ import annotations
 
 from itertools import product
+from typing import Literal, TypeAlias
 
-from ...qualification._registry import CapabilityProfile, SupportTuple
+from ...qualification import CapabilityProfile, SupportTuple
+from ...typing import parse
 
 
 type SupportValue = str | int | bool
 type SupportAttributes = dict[str, SupportValue]
 type ProfileSpecification = tuple[str, tuple[SupportAttributes, ...], tuple[str, ...]]
+MeshfreeSupportPrecision: TypeAlias = Literal["float32", "float64", "mixed"]
 
 _PROVIDER = "phydrax-native"
 _SEEDED = "deterministic-seeded"
@@ -30,19 +33,22 @@ def meshfree_support(
     geometry_authority: str,
     derivative_class: str,
     capacity: int,
-    precision: str,
+    precision: MeshfreeSupportPrecision,
     temporal_method: str = "none",
     provider: str = _PROVIDER,
     device: str = "cpu",
     reproducibility: str = _SEEDED,
 ) -> SupportAttributes:
-    """One exact meshfree support tuple; every coordinate is explicit."""
+    """Return a meshfree support tuple with every coordinate explicit."""
     if type(dimension) is not int or dimension < 1:
-        raise ValueError("dimension must be a positive integer.")
+        raise ValueError(
+            f"meshfree_support.dimension must be a positive integer; got {dimension!r}"
+        )
     if type(capacity) is not int or capacity < 1:
-        raise ValueError("capacity must be a positive declared point capacity.")
-    if precision not in ("float32", "float64", "mixed"):
-        raise ValueError("precision must be float32, float64, or mixed.")
+        raise ValueError(
+            f"meshfree_support.capacity must be a positive declared point capacity; got {capacity!r}"
+        )
+    precision = parse(precision, MeshfreeSupportPrecision, "meshfree_support.precision")
     return {
         "dimension": dimension,
         "method": method,
@@ -369,7 +375,7 @@ def _higher_forms() -> tuple[SupportAttributes, ...]:
 
 
 def _abstract_clique_forms() -> tuple[SupportAttributes, ...]:
-    """Research-only abstract radius-clique complexes: no geometry authority."""
+    """Declare research support for abstract radius-clique complexes."""
     return (
         meshfree_support(
             dimension=2,
@@ -719,7 +725,7 @@ def _learned_coupled_law() -> tuple[SupportAttributes, ...]:
 
 
 def _calibrated_prediction() -> tuple[SupportAttributes, ...]:
-    """Split-conformal bands on disjoint complete cases; capacity is hybrid unknowns."""
+    """Declare split-conformal bands on disjoint cases; capacity is hybrid unknowns."""
     return (
         meshfree_support(
             dimension=2,
@@ -810,6 +816,7 @@ def _runtime_restart() -> tuple[SupportAttributes, ...]:
     )
 
 
+# Ordered support/gate declarations are qualification identity data, not a lifecycle dispatcher.
 def _specifications() -> tuple[ProfileSpecification, ...]:
     return (
         (
@@ -1212,4 +1219,4 @@ def meshfree_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     )
 
 
-__all__ = ["meshfree_candidate_profiles", "meshfree_support"]
+__all__ = ["MeshfreeSupportPrecision", "meshfree_candidate_profiles", "meshfree_support"]

@@ -12,7 +12,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._model import AbstractArrayModel, ModelBinding
-from phydrax.linalg.svd import RandomizedSVD, SVDTolerancePolicy
+from phydrax.linalg.svd import RandomizedSVD, SVDSolveStatus, SVDTolerancePolicy
 from phydrax.ml.compose import (
     ColumnTransformer,
     FeatureUnion,
@@ -317,6 +317,24 @@ def test_parallel_columns_scenario_1() -> None:
         )
 
 
+@pytest.mark.parametrize("seed", (0, 1, 7, 43))
+def test_randomized_pca_refuses_an_unseparated_leading_subspace(seed: int) -> None:
+    # A dominant spectrum can certify some streams; a repeated cutoff cannot.
+    identity = jnp.eye(3, dtype=jnp.float64)
+    features = jnp.concatenate((identity, -identity), axis=0)
+    uncertified = PCA(
+        1,
+        differentiate="none",
+        method=RandomizedSVD(oversampling=0, power_iterations=0),
+        tolerance=SVDTolerancePolicy(residual=1.0, orthogonality=1e-6),
+    ).fit_batch(phx.ml.MLBatch(features), key=jax.random.key(seed))
+    assert not bool(uncertified.valid)
+    assert int(uncertified.diagnostics.native_status) == int(
+        SVDSolveStatus.LEADING_UNCERTIFIED
+    )
+    assert not bool(uncertified.diagnostics.leading_certified)
+
+
 @pytest.mark.parametrize("composition", ("union", "columns"))
 def test_keyed_parallel_dense_and_randomized_subspaces_preserve_branch_values(
     composition: str,
@@ -335,10 +353,8 @@ def test_keyed_parallel_dense_and_randomized_subspaces_preserve_branch_values(
         feature_schema=phx.ml.FeatureSchema(("a", "b", "c", "d", "e", "f", "g")),
     )
     dense_recipe = PCA(1)
-    # A bare rank-one sketch nearly orthogonal to the leading right singular
-    # vector is correctly refused, so admissibility would hinge on the draw. One
-    # power iteration contracts that contamination by (0.6 / 16)**2, while branch
-    # keys still move the transform far beyond the comparison tolerance.
+    # One power iteration contracts subdominant contamination by the squared
+    # singular-value ratio, allowing the required leading-subspace certificate.
     random_recipe = PCA(
         1,
         differentiate="none",
@@ -374,9 +390,12 @@ def test_keyed_parallel_dense_and_randomized_subspaces_preserve_branch_values(
     assert bool(result.valid)
     assert int(result.status) == phx.ml.ML_SUCCESS
     dense = dense_recipe.fit_batch(dense_batch).as_trainable()
-    randomized = random_recipe.fit_batch(
+    randomized_result = random_recipe.fit_batch(
         random_batch, key=jax.random.split(root, 4)[2]
-    ).as_trainable()
+    )
+    assert bool(randomized_result.diagnostics.leading_certified)
+    assert int(randomized_result.diagnostics.native_status) == int(SVDSolveStatus.SUCCESS)
+    randomized = randomized_result.as_trainable()
     assert isinstance(dense, SubspaceModel)
     assert isinstance(randomized, SubspaceModel)
     assert isinstance(dense_batch.features, jax.Array)

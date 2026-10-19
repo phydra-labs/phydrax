@@ -3,103 +3,120 @@
 #
 from pathlib import Path
 
+import equinox as eqx
 import numpy as np
 import pytest
 
-from phydrax.discretization import CellMesh, PolyhedralConnectivity
+import phydrax as phx
+from phydrax._meshcore import NativeExecutionScope
+from phydrax.discretization import PolyhedralConnectivity
+from phydrax.discretization._cell_geometry import cell_geometry_preparation_query_upper
+from phydrax.discretization._cell_geometry_validity import cell_geometry_id
 from phydrax.discretization._reference_cell import reference_cell_topology
-from phydrax.discretization.finite_volume._unstructured import (
-    UnstructuredFiniteVolumePlan,
+from phydrax.discretization._transfer import TransferGeometryBinding
+from phydrax.discretization.vem._polyhedral import (
+    prepare_polyhedral_h1_virtual_element_3d,
 )
-from phydrax.discretization.finite_volume._unstructured_remap import (
-    UnstructuredConservativeRemapPlan,
+from phydrax.geometry._supermesh import (
+    CommonRefinementCoverage,
+    CommonRefinementPolicy,
+    CommonRefinementStatus,
+    prepare_common_refinement,
 )
-from phydrax.geometry._supermesh import CommonRefinementStatus
-from phydrax.meshing import PeriodicConstraint
+from phydrax.lifecycle._meshing_source_records import (
+    reconstruct_stored_fields,
+    register_meshing_source_types,
+)
+from phydrax.lifecycle._meshing_sources import (
+    read_meshing_source_closure,
+    write_meshing_source_closure,
+)
+from phydrax.meshing import (
+    MeshingFailure,
+    MeshingFailureCategory,
+    MeshingLimits,
+)
+from phydrax.meshing._periodic import bind_periodic_topology_edit
+from phydrax.meshing._plc_source import PiecewiseLinearComplex
 from phydrax.meshing._polyhedral_adaptation import (
     adapt_polyhedral_mesh,
-    PolyhedralAdaptationError,
     PolyhedralAdaptationOperation,
-    PolyhedralAdaptationOutcome,
     PolyhedralMeshAdaptation,
 )
-from phydrax.meshing._polyhedral_generation import PolyhedralConstruction
-from phydrax.meshing._topology_edit import assemble_topology_edit
-from phydrax.meshing._volume_generation import PiecewiseLinearComplex
+from phydrax.meshing._polyhedral_adaptation_shared import PolyhedralAdaptationError
+from phydrax.meshing._polyhedral_generation import (
+    generate_polyhedral_volume,
+    NativePolyhedralSchedule,
+)
+from phydrax.meshing._topology_edit import (
+    assemble_topology_edit,
+    CellTopologyEdit,
+    require_periodic_nonnested_geometry,
+)
+from tests._support.coordinate_references import coordinate_reference_budget
+from tests._support.polyhedral_meshes import (
+    boxes,
+    common_refinement_remap,
+    periodic_adaptation_source,
+)
 
 
-def _boxes(xs: tuple[float, ...]) -> CellMesh:
-    topology = reference_cell_topology("hexahedron")
-    coordinates = np.asarray(
-        [[x, y, z] for x in xs for z in (0.0, 1.0) for y in (0.0, 1.0)], dtype=np.float64
-    )
-    cells = []
-    for interval in range(len(xs) - 1):
-        vertices = [
-            4 * (interval + int(x)) + 2 * int(z) + int(y) for x, y, z in topology.vertices
-        ]
-        cells.append(
-            tuple(
-                np.asarray([vertices[index] for index in face], dtype=np.int32)
-                for face in topology.entities[2]
-            )
-        )
-    return CellMesh.from_polyhedra(
-        coordinates,
-        cells,
-        vertex_global_ids=np.arange(40, 40 + coordinates.shape[0], dtype=np.int64),
-        cell_global_ids=np.arange(20, 20 + len(cells), dtype=np.int64),
-    )
+# Retained acceptance envelopes from this module's pre-remediation unit-cube
+# constant-inventory/common-overlap and degree-one periodic edge-trace checks.
+# These empirical regression values are unchanged by the lifecycle decomposition.
+FV_TRACE_REGRESSION_ABS = 1e-13
+FV_INVENTORY_REGRESSION_ABS = 1e-12
 
 
-def _remap(
-    source: CellMesh, target: CellMesh, outcome: PolyhedralAdaptationOutcome
-) -> UnstructuredConservativeRemapPlan:
-    common = outcome.common_refinement
-    return UnstructuredConservativeRemapPlan(
-        UnstructuredFiniteVolumePlan.from_cell_mesh(source).prepare(),
-        UnstructuredFiniteVolumePlan.from_cell_mesh(target).prepare(),
-        common.target_offsets,
-        common.source_cells,
-        common.volumes,
-        method="common-refinement",
-        provenance=common.refinement_id,
-    )
+POLYHEDRAL_REFERENCE_LIMITS = MeshingLimits(
+    maximum_cells=1 << 24,
+    maximum_vertices=1 << 22,
+    maximum_work_units=1 << 26,
+    maximum_scratch_bytes=8_000_000_000,
+)
 
 
 def test_native_plane_split_closes_faces_and_transfers_fv_inventory() -> None:
-    source = _boxes((0.0, 1.0))
+    source = boxes((0.0, 1.0))
     request = PolyhedralMeshAdaptation(
         PolyhedralAdaptationOperation.PLANE_SPLIT, planes=[[1, 0, 0, 0.5]]
     )
     outcome = adapt_polyhedral_mesh(source, request, numeric_version="split")
-    target, _, stencil = assemble_topology_edit(
-        source, outcome.edit, numeric_version="split"
-    )
+    with coordinate_reference_budget(
+        POLYHEDRAL_REFERENCE_LIMITS,
+        queries_upper=POLYHEDRAL_REFERENCE_LIMITS.maximum_geometry_queries,
+    ) as budget:
+        target, _, stencil = assemble_topology_edit(
+            source, outcome.edit, numeric_version="split", budget=budget
+        )
     connectivity = target.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
-        raise TypeError("Plane splitting must preserve polyhedral connectivity.")
+        raise TypeError(
+            f"polyhedral_adaptation_test.target.connectivity must be PolyhedralConnectivity; got {type(connectivity).__name__}"
+        )
     assert outcome.common_refinement.status is CommonRefinementStatus.SUCCESS
     assert outcome.common_refinement.target_mesh_id == target.mesh_id
     assert connectivity.cell_count == 2
     assert np.count_nonzero(np.asarray(connectivity.face_neighbor) >= 0) == 1
     assert stencil is None
-    plan = _remap(source, target, outcome)
+    plan = common_refinement_remap(source, target, outcome)
     averages = np.asarray(plan.apply(np.asarray([3.0], dtype=np.float64)))
-    assert np.allclose(averages, 3.0, rtol=0, atol=1e-13)
+    assert np.allclose(averages, 3.0, rtol=0, atol=FV_TRACE_REGRESSION_ABS)
     assert np.dot(
         averages, np.asarray(outcome.common_refinement.target_measures)
-    ) == pytest.approx(3.0, abs=1e-12)
+    ) == pytest.approx(3.0, abs=FV_INVENTORY_REGRESSION_ABS)
 
 
 def test_plane_split_vertex_cap_retains_accepted_geometry_and_topology() -> None:
-    source = _boxes((0.0, 1.0))
+    source = boxes((0.0, 1.0))
     identity = source.mesh_id
     coordinates = np.asarray(source.coordinates).copy()
     request = PolyhedralMeshAdaptation(
         PolyhedralAdaptationOperation.PLANE_SPLIT, planes=[[1, 0, 0, 0.5]]
     )
-    with pytest.raises(PolyhedralAdaptationError, match="vertex budget"):
+    with pytest.raises(
+        PolyhedralAdaptationError, match=r"polyhedral_adaptation\.maximum_vertices"
+    ):
         adapt_polyhedral_mesh(
             source, request, maximum_vertices=source.coordinates.shape[0]
         )
@@ -108,24 +125,31 @@ def test_plane_split_vertex_cap_retains_accepted_geometry_and_topology() -> None
 
 
 def test_connected_agglomeration_removes_only_interior_faces_and_conserves() -> None:
-    source = _boxes((0.0, 0.5, 1.0))
+    source = boxes((0.0, 0.5, 1.0))
     request = PolyhedralMeshAdaptation(
         PolyhedralAdaptationOperation.AGGLOMERATE, agglomerations=((20, 21),)
     )
     outcome = adapt_polyhedral_mesh(source, request, numeric_version="coarse")
-    target, _, _ = assemble_topology_edit(source, outcome.edit, numeric_version="coarse")
+    with coordinate_reference_budget(
+        POLYHEDRAL_REFERENCE_LIMITS,
+        queries_upper=POLYHEDRAL_REFERENCE_LIMITS.maximum_geometry_queries,
+    ) as budget:
+        target, _, _ = assemble_topology_edit(
+            source, outcome.edit, numeric_version="coarse", budget=budget
+        )
     assert target.connectivity.cell_count == 1
-    plan = _remap(source, target, outcome)
+    plan = common_refinement_remap(source, target, outcome)
     assert np.allclose(
-        plan.apply(np.asarray([2.0, 4.0], dtype=np.float64)), [3.0], atol=1e-13
+        plan.apply(np.asarray([2.0, 4.0], dtype=np.float64)),
+        [3.0],
+        atol=FV_TRACE_REGRESSION_ABS,
     )
     assert np.asarray(outcome.common_refinement.target_measures)[0] == pytest.approx(
-        1.0, abs=1e-12
+        1.0, abs=FV_INVENTORY_REGRESSION_ABS
     )
 
 
 def test_exact_agglomeration_keeps_source_rows_after_interior_vertex_removal() -> None:
-    from phydrax.meshing._polyhedral_generation import generate_polyhedral_volume
 
     topology = reference_cell_topology("hexahedron")
     complex_ = PiecewiseLinearComplex(
@@ -135,17 +159,26 @@ def test_exact_agglomeration_keeps_source_rows_after_interior_vertex_removal() -
         np.asarray([[-1, 0]], dtype=np.int64),
         ("material",),
     )
-    construction = generate_polyhedral_volume(
-        complex_,
-        sites=np.asarray(
-            [[x, y, z] for x in (0.25, 0.75) for y in (0.25, 0.75) for z in (0.25, 0.75)],
-            dtype=np.float64,
-        ),
-    )
+    with NativeExecutionScope(NativePolyhedralSchedule().native_limits()) as scope:
+        construction = generate_polyhedral_volume(
+            complex_,
+            sites=np.asarray(
+                [
+                    [x, y, z]
+                    for x in (0.25, 0.75)
+                    for y in (0.25, 0.75)
+                    for z in (0.25, 0.75)
+                ],
+                dtype=np.float64,
+            ),
+            scope=scope,
+        )
     source = construction.mesh
     connectivity = source.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
-        raise TypeError("Exact agglomeration requires polyhedral connectivity.")
+        raise TypeError(
+            f"polyhedral_adaptation_test.source.connectivity must be PolyhedralConnectivity; got {type(connectivity).__name__}"
+        )
     ids = tuple(int(value) for value in np.asarray(connectivity.cell_global_ids))
     outcome = adapt_polyhedral_mesh(
         source,
@@ -155,9 +188,13 @@ def test_exact_agglomeration_keeps_source_rows_after_interior_vertex_removal() -
         source_geometry=construction.geometry,
         numeric_version="exact-agglomeration",
     )
-    target, _, _ = assemble_topology_edit(
-        source, outcome.edit, numeric_version="exact-agglomeration"
-    )
+    with coordinate_reference_budget(
+        POLYHEDRAL_REFERENCE_LIMITS,
+        queries_upper=POLYHEDRAL_REFERENCE_LIMITS.maximum_geometry_queries,
+    ) as budget:
+        target, _, _ = assemble_topology_edit(
+            source, outcome.edit, numeric_version="exact-agglomeration", budget=budget
+        )
     source_rows = {
         int(identifier): row
         for row, identifier in enumerate(np.asarray(source.vertex_global_ids))
@@ -172,12 +209,14 @@ def test_exact_agglomeration_keeps_source_rows_after_interior_vertex_removal() -
     np.testing.assert_array_equal(target.coordinates, expected)
     outcome.geometry.resolve(target)
     assert outcome.common_refinement.status is CommonRefinementStatus.SUCCESS
-    plan = _remap(source, target, outcome)
-    np.testing.assert_allclose(plan.apply(np.ones(len(ids))), [1.0], rtol=0, atol=1e-13)
+    plan = common_refinement_remap(source, target, outcome)
+    np.testing.assert_allclose(
+        plan.apply(np.ones(len(ids))), [1.0], rtol=0, atol=FV_TRACE_REGRESSION_ABS
+    )
 
 
 def test_regeneration_uses_nonnested_overlap_not_site_parent_interpolation() -> None:
-    source = _boxes((0.0, 0.5, 1.0))
+    source = boxes((0.0, 0.5, 1.0))
     topology = reference_cell_topology("hexahedron")
     coordinates = np.asarray(topology.vertices, dtype=np.float64)
     complex_ = PiecewiseLinearComplex(
@@ -193,44 +232,53 @@ def test_regeneration_uses_nonnested_overlap_not_site_parent_interpolation() -> 
         sites=[[0.5, 0.25, 0.5], [0.5, 0.75, 0.5]],
     )
     outcome = adapt_polyhedral_mesh(source, request, numeric_version="regenerated")
-    target, _, stencil = assemble_topology_edit(
-        source, outcome.edit, numeric_version="regenerated"
-    )
+    with coordinate_reference_budget(
+        POLYHEDRAL_REFERENCE_LIMITS,
+        queries_upper=POLYHEDRAL_REFERENCE_LIMITS.maximum_geometry_queries,
+    ) as budget:
+        target, _, stencil = assemble_topology_edit(
+            source, outcome.edit, numeric_version="regenerated", budget=budget
+        )
     assert stencil is None
     assert outcome.construction is not None
     assert outcome.common_refinement.target_mesh_id == target.mesh_id
     counts = np.diff(np.asarray(outcome.common_refinement.target_offsets))
     assert np.all(counts >= 2)
-    plan = _remap(source, target, outcome)
+    plan = common_refinement_remap(source, target, outcome)
     averages = np.asarray(plan.apply(np.asarray([2.0, 4.0], dtype=np.float64)))
-    assert np.allclose(averages, 3.0, rtol=0, atol=1e-12)
+    assert np.allclose(averages, 3.0, rtol=0, atol=FV_INVENTORY_REGRESSION_ABS)
     assert np.dot(
         averages, np.asarray(outcome.common_refinement.target_measures)
-    ) == pytest.approx(3.0, abs=1e-12)
+    ) == pytest.approx(3.0, abs=FV_INVENTORY_REGRESSION_ABS)
 
 
 def test_region_crossing_agglomeration_and_feature_removal_rollback() -> None:
-    source = _boxes((0.0, 0.5, 1.0))
+    source = boxes((0.0, 0.5, 1.0))
     connectivity = source.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
-        raise TypeError("The adaptation source must have polyhedral connectivity.")
+        raise TypeError(
+            f"polyhedral_adaptation_test.source.connectivity must be PolyhedralConnectivity; got {type(connectivity).__name__}"
+        )
     original = source.mesh_id
     request = PolyhedralMeshAdaptation(
         PolyhedralAdaptationOperation.AGGLOMERATE, agglomerations=((20, 21),)
     )
-    with pytest.raises(PolyhedralAdaptationError, match="class"):
+    with pytest.raises(
+        PolyhedralAdaptationError, match=r"polyhedral_adaptation\.cell_classes"
+    ):
         adapt_polyhedral_mesh(source, request, cell_classes=[0, 1])
     interior = np.flatnonzero(np.asarray(connectivity.face_neighbor) >= 0)
     face_ids = np.asarray(connectivity.face_global_ids)[interior]
-    with pytest.raises(PolyhedralAdaptationError, match="protected"):
+    with pytest.raises(
+        PolyhedralAdaptationError, match=r"polyhedral_adaptation\.protected_face_ids"
+    ):
         adapt_polyhedral_mesh(source, request, protected_face_ids=face_ids)
     assert source.mesh_id == original
 
 
 def test_regeneration_native_allocation_refusal_preserves_source() -> None:
-    from phydrax.meshing import MeshingFailure, MeshingFailureCategory
 
-    source = _boxes((0.0, 1.0))
+    source = boxes((0.0, 1.0))
     original_id = source.mesh_id
     original_coordinates = np.asarray(source.coordinates).copy()
     topology = reference_cell_topology("hexahedron")
@@ -254,14 +302,64 @@ def test_regeneration_native_allocation_refusal_preserves_source() -> None:
     np.testing.assert_array_equal(source.coordinates, original_coordinates)
 
 
+def test_common_refinement_replay_authenticates_retained_coverage() -> None:
+    source = boxes((0.0, 1.0))
+    target = boxes((0.0, 0.5))
+    common = prepare_common_refinement(
+        source,
+        target,
+        policy=CommonRefinementPolicy(coverage=CommonRefinementCoverage.PARTIAL),
+    )
+    assert common.status is CommonRefinementStatus.SUCCESS
+    assert common.evidence.source_gap_count == 1
+    register_meshing_source_types()
+    measure_bindings = {
+        "source_measures": common.source_measures,
+        "target_measures": common.target_measures,
+    }
+    evidence = reconstruct_stored_fields(common.evidence, bindings=measure_bindings)
+    assert evidence.evidence_id == common.evidence.evidence_id
+    assert (
+        evidence.maximum_relative_source_defect
+        == common.evidence.maximum_relative_source_defect
+    )
+    np.testing.assert_array_equal(
+        evidence.source_coverage_defects, common.evidence.source_coverage_defects
+    )
+    np.testing.assert_array_equal(
+        evidence.source_coverage_tolerances, common.evidence.source_coverage_tolerances
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"stored_fields\.CommonRefinementEvidence.*maximum_relative_source_defect",
+    ):
+        reconstruct_stored_fields(
+            common.evidence,
+            bindings={
+                **measure_bindings,
+                "source_measures": common.source_measures * 2.0,
+            },
+        )
+    mesh_bindings = {"source_mesh": source, "target_mesh": target}
+    rebuilt = reconstruct_stored_fields(common, bindings=mesh_bindings)
+    assert rebuilt.refinement_id == common.refinement_id
+    assert rebuilt.evidence.evidence_id == common.evidence.evidence_id
+    np.testing.assert_array_equal(rebuilt.volumes, common.volumes)
+    np.testing.assert_array_equal(rebuilt.target_offsets, common.target_offsets)
+    changed = eqx.tree_at(
+        lambda refinement: refinement.volumes,
+        common,
+        common.volumes * 0.5,
+    )
+    with pytest.raises(
+        ValueError, match=r"stored_fields\.PreparedCommonRefinement.*changed volumes"
+    ):
+        reconstruct_stored_fields(changed, bindings=mesh_bindings)
+
+
 def test_periodic_regeneration_restart_preserves_authored_constraint_controls(
     tmp_path: Path,
 ) -> None:
-    import phydrax as phx
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        write_meshing_source_closure,
-    )
 
     M = phx.meshing
     topology = reference_cell_topology("hexahedron")
@@ -304,7 +402,9 @@ def test_periodic_regeneration_restart_preserves_authored_constraint_controls(
     assert restored.periodic_constraints[0].constraint_id == constraint.constraint_id
     np.testing.assert_array_equal(restored.periodic_constraints[0].transform, transform)
     np.testing.assert_array_equal(restored.periodic_constraints[0].orientations, [-1])
-    with pytest.raises(ValueError, match="belong to site regeneration"):
+    with pytest.raises(
+        ValueError, match=r"PolyhedralMeshAdaptation\.periodic_constraints"
+    ):
         PolyhedralMeshAdaptation(
             PolyhedralAdaptationOperation.PLANE_SPLIT,
             planes=[[1, 0, 0, 0.5]],
@@ -312,83 +412,11 @@ def test_periodic_regeneration_restart_preserves_authored_constraint_controls(
         )
 
 
-def _periodic_adaptation_source() -> tuple[
-    PiecewiseLinearComplex,
-    tuple[PeriodicConstraint, ...],
-    PolyhedralConstruction,
-]:
-    import phydrax as phx
-    from phydrax.meshing._polyhedral_generation import generate_polyhedral_volume
-
-    M = phx.meshing
-    points = np.asarray(
-        [(i & 1, (i >> 1) & 1, (i >> 2) & 1) for i in range(8)], dtype=np.float64
-    )
-    loops = (
-        (0, 2, 3, 1),
-        (4, 5, 7, 6),
-        (0, 1, 5, 4),
-        (2, 6, 7, 3),
-        (0, 4, 6, 2),
-        (1, 3, 7, 5),
-    )
-    domain = PiecewiseLinearComplex(
-        points, loops, np.arange(6), [(-1, 0)] * 6, ("material-0",)
-    )
-    controls = []
-    for axis, first, second in ((0, 4, 5), (1, 2, 3), (2, 0, 1)):
-        source = M.MeshingScope(
-            "polyhedral-domain",
-            "r1",
-            M.MeshingEntityKind.GEOMETRY,
-            2,
-            f"source-{axis}",
-            [first],
-        )
-        target = M.MeshingScope(
-            "polyhedral-domain",
-            "r1",
-            M.MeshingEntityKind.GEOMETRY,
-            2,
-            f"target-{axis}",
-            [second],
-        )
-        matrix = np.eye(4)
-        matrix[axis, 3] = 1
-        controls.append(
-            M.PeriodicConstraint(
-                source,
-                target,
-                matrix,
-                tolerance=0,
-                source_entity_ids=np.asarray([first], dtype=np.int64),
-                orientations=np.asarray([-1], dtype=np.int8),
-            )
-        )
-    constraints = tuple(controls)
-    construction = generate_polyhedral_volume(
-        domain,
-        sites=np.asarray([[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]], dtype=np.float64),
-        periodic_constraints=constraints,
-    )
-    return domain, constraints, construction
-
-
 def test_periodic_regeneration_certifies_actual_new_source_and_rejects_forged_coverage(
     tmp_path: Path,
 ) -> None:
-    import equinox as eqx
 
-    from phydrax.lifecycle._meshing_sources import (
-        read_meshing_source_closure,
-        write_meshing_source_closure,
-    )
-    from phydrax.meshing._topology_edit import (
-        CellTopologyEdit,
-        require_periodic_nonnested_geometry,
-    )
-
-    domain, constraints, construction = _periodic_adaptation_source()
+    domain, constraints, construction = periodic_adaptation_source()
     source = construction.mesh
     request = PolyhedralMeshAdaptation(
         PolyhedralAdaptationOperation.REGENERATE,
@@ -402,9 +430,13 @@ def test_periodic_regeneration_certifies_actual_new_source_and_rejects_forged_co
         source_geometry=construction.geometry,
         numeric_version="periodic-new-source",
     )
-    target, _, _ = assemble_topology_edit(
-        source, outcome.edit, numeric_version="periodic-new-source"
-    )
+    with coordinate_reference_budget(
+        POLYHEDRAL_REFERENCE_LIMITS,
+        queries_upper=POLYHEDRAL_REFERENCE_LIMITS.maximum_geometry_queries,
+    ) as budget:
+        target, _, _ = assemble_topology_edit(
+            source, outcome.edit, numeric_version="periodic-new-source", budget=budget
+        )
     assert target.periodic_topology is not None
     assert target.periodic_topology.actual_geometry is not None
     assert outcome.common_refinement.target_mesh_id == target.mesh_id
@@ -420,28 +452,45 @@ def test_periodic_regeneration_certifies_actual_new_source_and_rejects_forged_co
         != outcome.geometry.exact_source.source_id
     )
     assert not np.intersect1d(source.vertex_global_ids, target.vertex_global_ids).size
-    transferred = _remap(source, target, outcome).apply(np.asarray([2.0, 4.0]))
-    np.testing.assert_allclose(transferred, 3.0, rtol=0, atol=1e-12)
+    transferred = common_refinement_remap(source, target, outcome).apply(
+        np.asarray([2.0, 4.0])
+    )
+    np.testing.assert_allclose(transferred, 3.0, rtol=0, atol=FV_INVENTORY_REGRESSION_ABS)
     assert source.periodic_topology is not None
     forged = eqx.tree_at(
         lambda common: common.volumes,
         authority.common_refinement,
         authority.common_refinement.volumes * 0.5,
     )
-    with pytest.raises(ValueError, match="certify|payload"):
+
+    queries_upper = cell_geometry_preparation_query_upper(
+        authority.source_geometry
+    ) + cell_geometry_preparation_query_upper(authority.target_geometry)
+
+    with (
+        coordinate_reference_budget(queries_upper=queries_upper) as budget,
+        pytest.raises(ValueError, match=r"CellTopologyEdit\.nonnested_geometry"),
+    ):
         require_periodic_nonnested_geometry(
-            source.periodic_topology, target, authority._replace(common_refinement=forged)
+            source.periodic_topology,
+            target,
+            authority._replace(common_refinement=forged),
+            budget=budget,
         )
     changed_geometry = eqx.tree_at(
         lambda geometry: geometry.coordinates,
         authority.target_geometry,
         authority.target_geometry.coordinates + 0.125,
     )
-    with pytest.raises(ValueError):
+    with (
+        coordinate_reference_budget(queries_upper=queries_upper) as budget,
+        pytest.raises(ValueError, match=r"\.rounded_vertices"),
+    ):
         require_periodic_nonnested_geometry(
             source.periodic_topology,
             target,
             authority._replace(target_geometry=changed_geometry),
+            budget=budget,
         )
     receipt = write_meshing_source_closure(
         tmp_path / "nonnested-periodic-edit", outcome.edit
@@ -455,17 +504,21 @@ def test_periodic_regeneration_certifies_actual_new_source_and_rejects_forged_co
         and cold_edit.periodic_orbits.nonnested_geometry is not None
     )
     cold_authority = cold_edit.periodic_orbits.nonnested_geometry
-    cold_target, _, _ = assemble_topology_edit(
-        cold_authority.source,
-        cold_edit,
-        numeric_version=cold_authority.target.numeric_version,
-    )
+    with coordinate_reference_budget(
+        POLYHEDRAL_REFERENCE_LIMITS,
+        queries_upper=POLYHEDRAL_REFERENCE_LIMITS.maximum_geometry_queries,
+    ) as budget:
+        cold_target, _, _ = assemble_topology_edit(
+            cold_authority.source,
+            cold_edit,
+            numeric_version=cold_authority.target.numeric_version,
+            budget=budget,
+        )
     assert cold_target.mesh_id == target.mesh_id
     np.testing.assert_array_equal(cold_target.coordinates, target.coordinates)
     np.testing.assert_array_equal(
         cold_authority.common_refinement.volumes, outcome.common_refinement.volumes
     )
-    from phydrax.meshing._periodic import bind_periodic_topology_edit
 
     other_source_epoch = source.with_coordinates(
         source.coordinates, numeric_version="other-source-epoch"
@@ -474,10 +527,14 @@ def test_periodic_regeneration_certifies_actual_new_source_and_rejects_forged_co
     np.testing.assert_array_equal(
         other_source_epoch.vertex_global_ids, source.vertex_global_ids
     )
-    with pytest.raises(ValueError, match="numeric/scientific source epoch"):
-        bind_periodic_topology_edit(
-            other_source_epoch, target, outcome.edit.periodic_orbits
-        )
+    with pytest.raises(ValueError, match=r"CellTopologyEdit\.nonnested_geometry"):
+        with coordinate_reference_budget(
+            POLYHEDRAL_REFERENCE_LIMITS,
+            queries_upper=POLYHEDRAL_REFERENCE_LIMITS.maximum_geometry_queries,
+        ) as budget:
+            bind_periodic_topology_edit(
+                other_source_epoch, target, outcome.edit.periodic_orbits, budget=budget
+            )
     other_target_epoch = target.with_coordinates(
         target.coordinates, numeric_version="other-target-epoch"
     )
@@ -485,16 +542,19 @@ def test_periodic_regeneration_certifies_actual_new_source_and_rejects_forged_co
     np.testing.assert_array_equal(
         other_target_epoch.vertex_global_ids, target.vertex_global_ids
     )
-    with pytest.raises(ValueError, match="stale mesh/geometry/scientific"):
+    with (
+        coordinate_reference_budget(queries_upper=queries_upper) as budget,
+        pytest.raises(ValueError, match=r"CellTopologyEdit\.nonnested_geometry"),
+    ):
         require_periodic_nonnested_geometry(
-            source.periodic_topology, other_target_epoch, authority
+            source.periodic_topology, other_target_epoch, authority, budget=budget
         )
 
 
 def test_periodic_plane_split_and_connected_agglomeration_preserve_exact_source_and_fv_inventory() -> (
     None
 ):
-    _, _, construction = _periodic_adaptation_source()
+    _, _, construction = periodic_adaptation_source()
     source = construction.mesh
     refined = adapt_polyhedral_mesh(
         source,
@@ -505,26 +565,25 @@ def test_periodic_plane_split_and_connected_agglomeration_preserve_exact_source_
         source_geometry=construction.geometry,
         numeric_version="periodic-split",
     )
-    fine, _, trace = assemble_topology_edit(
-        source, refined.edit, numeric_version="periodic-split"
-    )
+    with coordinate_reference_budget(
+        POLYHEDRAL_REFERENCE_LIMITS,
+        queries_upper=POLYHEDRAL_REFERENCE_LIMITS.maximum_geometry_queries,
+    ) as budget:
+        fine, _, trace = assemble_topology_edit(
+            source, refined.edit, numeric_version="periodic-split", budget=budget
+        )
     assert trace is not None
     source_x = np.asarray(source.coordinates)[:, 0]
     nodal = np.asarray(
         trace.apply(source.vertex_global_ids, 0.5 * np.minimum(source_x, 1 - source_x))
     )
     fine_x = np.asarray(fine.coordinates)[:, 0]
-    # This independent periodic tent field is affine on each original cell's
-    # source edges, including any source-authored seam subdivision vertices.
+    # The independent periodic tent field is affine on the source cells' edges,
+    # including source-authored seam subdivision vertices.
     np.testing.assert_allclose(
-        nodal, 0.5 * np.minimum(fine_x, 1 - fine_x), rtol=0, atol=1e-13
+        nodal, 0.5 * np.minimum(fine_x, 1 - fine_x), rtol=0, atol=FV_TRACE_REGRESSION_ABS
     )
     assert fine.periodic_topology is not None
-    from phydrax.discretization._cell_geometry_validity import cell_geometry_id
-    from phydrax.discretization._transfer import TransferGeometryBinding
-    from phydrax.discretization.vem._polyhedral import (
-        prepare_polyhedral_h1_virtual_element_3d,
-    )
 
     source_vem = prepare_polyhedral_h1_virtual_element_3d(
         source, cell_geometry=construction.geometry
@@ -557,10 +616,12 @@ def test_periodic_plane_split_and_connected_agglomeration_preserve_exact_source_
         field_transfer.primal_operator.mv(quotient_values),
         nodal[fine_rows],
         rtol=0,
-        atol=1e-13,
+        atol=FV_TRACE_REGRESSION_ABS,
     )
     assert fine.connectivity.cell_count > source.connectivity.cell_count
-    values = np.asarray(_remap(source, fine, refined).apply(np.asarray([2.0, 4.0])))
+    values = np.asarray(
+        common_refinement_remap(source, fine, refined).apply(np.asarray([2.0, 4.0]))
+    )
     common = refined.common_refinement
     groups = []
     for source_row in range(common.source_cell_count):
@@ -578,40 +639,57 @@ def test_periodic_plane_split_and_connected_agglomeration_preserve_exact_source_
         source_geometry=refined.geometry,
         numeric_version="periodic-agglomerated",
     )
-    target, _, restriction = assemble_topology_edit(
-        fine, coarse.edit, numeric_version="periodic-agglomerated"
-    )
+    with coordinate_reference_budget(
+        POLYHEDRAL_REFERENCE_LIMITS,
+        queries_upper=POLYHEDRAL_REFERENCE_LIMITS.maximum_geometry_queries,
+    ) as budget:
+        target, _, restriction = assemble_topology_edit(
+            fine, coarse.edit, numeric_version="periodic-agglomerated", budget=budget
+        )
     assert restriction is not None
     current_x = np.asarray(target.coordinates)[:, 0]
     np.testing.assert_allclose(
         restriction.apply(fine.vertex_global_ids, nodal),
         0.5 * np.minimum(current_x, 1 - current_x),
         rtol=0,
-        atol=1e-13,
+        atol=FV_TRACE_REGRESSION_ABS,
     )
     assert target.periodic_topology is not None
     assert target.periodic_topology.actual_geometry is not None
     assert target.connectivity.cell_count == source.connectivity.cell_count
-    restored = np.asarray(_remap(fine, target, coarse).apply(values))
-    np.testing.assert_allclose(restored, [2.0, 4.0], rtol=0, atol=1e-12)
+    restored = np.asarray(common_refinement_remap(fine, target, coarse).apply(values))
+    np.testing.assert_allclose(
+        restored, [2.0, 4.0], rtol=0, atol=FV_INVENTORY_REGRESSION_ABS
+    )
     np.testing.assert_allclose(
         np.dot(restored, np.asarray(coarse.common_refinement.target_measures)),
         np.dot(
             np.asarray([2.0, 4.0]), np.asarray(refined.common_refinement.source_measures)
         ),
         rtol=0,
-        atol=1e-12,
+        atol=FV_INVENTORY_REGRESSION_ABS,
     )
 
 
-@pytest.mark.parametrize("change", ["domain", "group", "source-revision"])
-def test_periodic_regeneration_rejects_changed_original_authority_atomically(
+@pytest.mark.parametrize(
+    ("change", "field"),
+    [
+        pytest.param("domain", r"CellTopologyEdit\.nonnested_geometry", id="domain"),
+        pytest.param("group", r"prepare_periodic_edit_target\.source", id="group"),
+        pytest.param(
+            "source-revision",
+            r"CellTopologyEdit\.nonnested_geometry",
+            id="source-revision",
+        ),
+    ],
+)
+def test_periodic_regeneration_rejects_changed_source_controls_atomically(
     change: str,
+    field: str,
 ) -> None:
-    import phydrax as phx
 
     M = phx.meshing
-    domain, constraints, construction = _periodic_adaptation_source()
+    domain, constraints, construction = periodic_adaptation_source()
     source = construction.mesh
     identity = source.mesh_id
     coordinates = np.asarray(source.coordinates).copy()
@@ -670,9 +748,7 @@ def test_periodic_regeneration_rejects_changed_original_authority_atomically(
         sites=[[0.5, 0.25, 0.5], [0.5, 0.75, 0.5]],
         periodic_constraints=constraints,
     )
-    with pytest.raises(
-        ValueError, match="group|domain/facets/materials/periodic controls"
-    ):
+    with pytest.raises(ValueError, match=field):
         adapt_polyhedral_mesh(
             source,
             request,
@@ -684,7 +760,6 @@ def test_periodic_regeneration_rejects_changed_original_authority_atomically(
 
 
 def test_crossing_plane_cut_does_not_claim_unknown_virtual_face_trace() -> None:
-    from phydrax.meshing._polyhedral_generation import generate_polyhedral_volume
 
     topology = reference_cell_topology("hexahedron")
     domain = PiecewiseLinearComplex(
@@ -694,9 +769,10 @@ def test_crossing_plane_cut_does_not_claim_unknown_virtual_face_trace() -> None:
         np.asarray([[-1, 0]], dtype=np.int64),
         ("material",),
     )
-    construction = generate_polyhedral_volume(
-        domain, sites=[[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]]
-    )
+    with NativeExecutionScope(NativePolyhedralSchedule().native_limits()) as scope:
+        construction = generate_polyhedral_volume(
+            domain, sites=[[0.25, 0.5, 0.5], [0.75, 0.5, 0.5]], scope=scope
+        )
     source = construction.mesh
     identity = source.mesh_id
     outcome = adapt_polyhedral_mesh(
@@ -708,18 +784,21 @@ def test_crossing_plane_cut_does_not_claim_unknown_virtual_face_trace() -> None:
         source_geometry=construction.geometry,
         numeric_version="unknown-face-trace",
     )
-    _, _, nodal = assemble_topology_edit(
-        source, outcome.edit, numeric_version="unknown-face-trace"
-    )
-    # The crossing plane creates nodes inside original source faces. Their
-    # coordinate convex coefficients do not evaluate a virtual H1 field.
+    with coordinate_reference_budget(
+        POLYHEDRAL_REFERENCE_LIMITS,
+        queries_upper=POLYHEDRAL_REFERENCE_LIMITS.maximum_geometry_queries,
+    ) as budget:
+        _, _, nodal = assemble_topology_edit(
+            source, outcome.edit, numeric_version="unknown-face-trace", budget=budget
+        )
+    # Crossing planes create nodes inside the source faces. Their geometric
+    # convex coefficients do not evaluate a virtual H1 field.
     assert nodal is None
     assert outcome.common_refinement.status is CommonRefinementStatus.SUCCESS
     assert source.mesh_id == identity
 
 
 def test_polyhedral_edit_rejects_foreign_exact_geometry_before_changing_source() -> None:
-    from phydrax.meshing._polyhedral_generation import generate_polyhedral_volume
 
     topology = reference_cell_topology("hexahedron")
     points = np.asarray(topology.vertices, dtype=np.float64)
@@ -737,12 +816,18 @@ def test_polyhedral_edit_rejects_foreign_exact_geometry_before_changing_source()
         np.asarray([[-1, 0]], dtype=np.int64),
         ("material",),
     )
-    construction = generate_polyhedral_volume(domain, sites=[[0.5, 0.5, 0.5]])
-    foreign = generate_polyhedral_volume(other_domain, sites=[[3.5, 0.5, 0.5]])
+    with NativeExecutionScope(NativePolyhedralSchedule().native_limits()) as scope:
+        construction = generate_polyhedral_volume(
+            domain, sites=[[0.5, 0.5, 0.5]], scope=scope
+        )
+    with NativeExecutionScope(NativePolyhedralSchedule().native_limits()) as scope:
+        foreign = generate_polyhedral_volume(
+            other_domain, sites=[[3.5, 0.5, 0.5]], scope=scope
+        )
     source = construction.mesh
     identity = source.mesh_id
     coordinates = np.asarray(source.coordinates).copy()
-    with pytest.raises(ValueError, match="carrier differs"):
+    with pytest.raises(ValueError, match=r"CellGeometrySpec\.resolve\.inputs"):
         adapt_polyhedral_mesh(
             source,
             PolyhedralMeshAdaptation(

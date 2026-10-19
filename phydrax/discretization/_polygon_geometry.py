@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import math
-from typing import assert_never, TYPE_CHECKING
+from contextlib import ExitStack
+from fractions import Fraction
+from typing import assert_never
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,7 +17,15 @@ from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
+from .. import integration as imported_integration
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._geometry_predicates import bigint_bytes
+from .._meshcore import (
+    exact_orient2d,
+    NativeExecutionLimits,
+    NativeExecutionMemoryCounters,
+    NativeExecutionScope,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..geometry._polygon import (
@@ -23,6 +33,17 @@ from ..geometry._polygon import (
     signed_area2 as _signed_area2,
     validate_simple_polygon as _validate_simple_polygon,
 )
+from ..geometry._triangulation import ConstrainedDelaunayTriangulation
+from ..typing import checked
+from . import (
+    _exact_power_consumers as imported_exact_power_consumers,
+    _exact_rational_geometry as exact_rational_geometry_owner,
+)
+from ._cell_complex import PolyhedralConnectivity
+from ._cell_geometry import CellGeometrySpec, owned_coordinate_preparation
+from ._cell_mesh import CellMesh
+from ._coordinate_budget import CoordinateEnclosureBudget
+from ._exact_algebraic_geometry import ExactAlgebraicCellGeometrySource
 from ._exact_plc_geometry import (
     ExactPlcCellGeometryConvexSource,
     ExactPlcCellGeometrySource,
@@ -32,27 +53,76 @@ from ._exact_power_geometry import (
     ExactPowerCellGeometryRestrictionSource,
     ExactPowerCellGeometrySource,
 )
+from ._polygon_types import PolyhedralFaceTriangulation
 
 
-if TYPE_CHECKING:
-    from ._cell_geometry import CellGeometrySpec
-    from ._cell_mesh import CellMesh
+def _face_fraction_proof_bounds(count: int, /) -> tuple[int, int]:
+    """Bound the unchanged shoelace and reciprocal partition arithmetic."""
+    triangles = count - 2
+    # Each shoelace term lifts four scalars, multiplies twice, subtracts and
+    # accumulates. Each partition term lifts eight scalars, takes four
+    # differences, multiplies twice, subtracts and accumulates.
+    work = 8 * count + 16 * triangles
+    # Binary64 Fractions have at most 1075 input bits. Unreduced shoelace
+    # differences need 4*b+1 bits; differences-of-products of input
+    # differences need 8*b+5 bits. Each summed term adds one further bit.
+    bits = max(count * (4 * 1075 + 2) + 1, triangles * (8 * 1075 + 6) + 1)
+    integer = bigint_bytes(bits)
+    return work, work * (2 * integer + 64) + 7 * bigint_bytes(2 * bits + 1)
 
 
-class PolyhedralFaceTriangulation(StrictModule, NonTrainableState):
-    """Shared native boundary-preserving triangles of planar polyhedral faces."""
+def _face_numeric_preparation_memory(sizes: np.ndarray, /) -> int:
+    """Bound output and per-face float/index/evidence buffer shapes."""
+    face_count = sizes.size
+    triangle_count = int(np.sum(sizes - 2))
+    memory = (
+        (face_count + 1) * 8
+        + triangle_count * 3 * 4
+        + face_count * (7 * 8 + 9 * 8 + 6 * 8)
+    )
+    for size in sizes:
+        count = int(size)
+        memory += (
+            count * (3 * 8 + 3 * 8 + 2 * 8 + 2 * 4)
+            + (count - 2) * (3 * 4 + 3 * 4 + 9 * 8 + 3 * 8 + 8)
+            + count * (2 * 8 + 2 * 4 + 4 + 8)
+            + (2 * count + 4) * 6 * 4
+        )
+    return memory
 
-    triangle_offsets: np.ndarray
-    triangle_vertices: np.ndarray
-    face_area_vectors: np.ndarray
-    face_measures: np.ndarray
-    face_centroids: np.ndarray
-    native_work_evidence: np.ndarray
-    native_memory_evidence: np.ndarray
-    evidence_ids: tuple[str, ...] = eqx.field(static=True)
-    triangulation_id: str = eqx.field(static=True)
+
+@checked
+def polyhedral_face_preparation_bounds(
+    mesh: CellMesh,
+    /,
+    *,
+    maximum_entries: int,
+) -> tuple[int, int, int]:
+    """Bound host face proofs and buffers, not the independent native CDT."""
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, PolyhedralConnectivity):
+        raise TypeError(
+            "PolyhedralFaceTriangulation.connectivity must be polyhedral; got another connectivity kind"
+        )
+    offsets = np.asarray(connectivity.face_vertex_offsets)
+    sizes = np.diff(offsets)
+    counts = sizes - 2
+    if np.any(counts < 1) or 3 * int(np.sum(counts)) > maximum_entries:
+        raise ValueError(
+            "PolyhedralFaceTriangulation.maximum_entries must admit triangulation capacity; got an exceeded capacity"
+        )
+    memory = _face_numeric_preparation_memory(sizes)
+    work = 0
+    for size in sizes:
+        proof_work, proof_memory = _face_fraction_proof_bounds(int(size))
+        work += proof_work
+        memory += proof_memory
+    # Raw native orientation queries remain primitive telemetry, not a new
+    # source-query or host work debit. CDT owns its preexisting native controls.
+    return work, memory, 0
 
 
+@checked
 def prepare_polyhedral_face_triangulation(
     mesh: CellMesh,
     /,
@@ -60,6 +130,7 @@ def prepare_polyhedral_face_triangulation(
     planarity_tolerance: float = 1e-10,
     maximum_entries: int = 100_000_000,
     cell_geometry: CellGeometrySpec | None = None,
+    budget: CoordinateEnclosureBudget | None = None,
 ) -> PolyhedralFaceTriangulation:
     """Triangulate every face exactly in projection, retaining all boundary nodes.
 
@@ -68,52 +139,239 @@ def prepare_polyhedral_face_triangulation(
     incidence and projected area are independently checked here; zero-area
     triangles, discarded boundary points and unresolved native status refuse.
     """
-    from fractions import Fraction
 
-    from .._meshcore import exact_orient2d
-    from ..geometry._triangulation import ConstrainedDelaunayTriangulation
-    from ._cell_complex import PolyhedralConnectivity
-    from ._cell_mesh import CellMesh
-
-    if not isinstance(mesh, CellMesh) or not isinstance(
-        mesh.connectivity, PolyhedralConnectivity
-    ):
+    connectivity = mesh.connectivity
+    if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError(
-            "Polyhedral face preparation requires canonical polyhedral connectivity."
+            "PolyhedralFaceTriangulation.connectivity must be polyhedral; got another connectivity kind"
         )
     tolerance = float(planarity_tolerance)
     if not math.isfinite(tolerance) or tolerance <= 0:
-        raise ValueError("planarity_tolerance must be finite and positive.")
+        raise ValueError(
+            f"PolyhedralFaceTriangulation.planarity_tolerance must be finite and positive; got {tolerance!r}"
+        )
     if (
         isinstance(maximum_entries, bool)
         or not isinstance(maximum_entries, int)
         or maximum_entries < 1
     ):
-        raise ValueError("maximum_entries must be a positive integer.")
+        raise ValueError(
+            f"PolyhedralFaceTriangulation.maximum_entries must be a positive integer; got {maximum_entries!r}"
+        )
     if cell_geometry is not None:
-        from ._exact_power_consumers import exact_power_face_triangulation
-
         match cell_geometry.exact_source:
             case (
                 ExactPowerCellGeometrySource()
                 | ExactPowerCellGeometryRestrictionSource()
                 | ExactPowerCellGeometryLinearActionSource()
             ):
-                return exact_power_face_triangulation(
-                    mesh, cell_geometry, maximum_entries=maximum_entries
+                if budget is not None:
+                    return imported_exact_power_consumers.exact_power_face_triangulation(
+                        mesh,
+                        cell_geometry,
+                        maximum_entries=maximum_entries,
+                        budget=budget,
+                    )
+                work, memory, queries = (
+                    imported_exact_power_consumers.exact_power_finite_volume_preparation_bounds(
+                        mesh, cell_geometry
+                    )
                 )
-            case None | ExactPlcCellGeometrySource() | ExactPlcCellGeometryConvexSource():
+                with owned_coordinate_preparation(
+                    work, memory, maximum_geometry_queries=queries
+                ) as budget:
+                    return imported_exact_power_consumers.exact_power_face_triangulation(
+                        mesh,
+                        cell_geometry,
+                        maximum_entries=maximum_entries,
+                        budget=budget,
+                    )
+            case ExactAlgebraicCellGeometrySource():
                 raise ValueError(
-                    "Polyhedral source face preparation requires exact power geometry."
+                    "PolyhedralFaceTriangulation.cell_geometry.exact_source must be a power source; got an algebraic nodal source"
+                )
+            case (
+                None
+                | ExactPlcCellGeometrySource()
+                | ExactPlcCellGeometryConvexSource()
+                | exact_rational_geometry_owner.ExactRationalCellGeometrySource()
+            ):
+                raise ValueError(
+                    "PolyhedralFaceTriangulation.cell_geometry.exact_source must be a power source; got another coordinate source"
                 )
             case invalid:
                 assert_never(invalid)
+    with ExitStack() as resources:
+        if budget is None:
+            work, memory, queries = polyhedral_face_preparation_bounds(
+                mesh, maximum_entries=maximum_entries
+            )
+            budget = resources.enter_context(
+                owned_coordinate_preparation(
+                    work, memory, maximum_geometry_queries=queries
+                )
+            )
+        resources.enter_context(budget.temporary_scope())
+        return _prepare_raw_polyhedral_face_triangulation(
+            mesh, connectivity, tolerance, maximum_entries, budget=budget
+        )
+
+
+class _ProjectedFace(StrictModule):
+    """A planar physical face and its rational projected area."""
+
+    normal: np.ndarray
+    projected: np.ndarray
+    area2: Fraction = eqx.field(static=True)
+    boundary: np.ndarray
+
+
+class _CertifiedFaceTriangles(StrictModule):
+    """Boundary-preserving triangles with native work and memory evidence."""
+
+    local: np.ndarray
+    work: np.ndarray
+    memory_counters: NativeExecutionMemoryCounters
+    evidence_id: str = eqx.field(static=True)
+
+
+def _project_polyhedral_face(
+    polygon: np.ndarray, face: int, tolerance: float, budget: CoordinateEnclosureBudget, /
+) -> _ProjectedFace:
+    shifted = polygon - polygon[0]
+    vector = np.sum(np.cross(shifted, np.roll(shifted, -1, axis=0)), axis=0) / 2
+    magnitude = float(np.linalg.norm(vector))
+    if not math.isfinite(magnitude) or magnitude <= 0:
+        raise ValueError(
+            f"PolyhedralFaceTriangulation.faces must have resolved positive area; got degenerate face {face}"
+        )
+    normal = vector / magnitude
+    if np.max(np.abs(shifted @ normal)) > tolerance * max(
+        1.0, float(np.max(np.linalg.norm(shifted, axis=1)))
+    ):
+        raise ValueError(
+            f"PolyhedralFaceTriangulation.faces must satisfy planarity admission; got nonplanar face {face}"
+        )
+    axis = int(np.argmax(np.abs(vector)))
+    axes = ((axis + 1) % 3, (axis + 2) % 3)
+    projected = polygon[:, axes]
+    count = polygon.shape[0]
+    _, proof_memory = _face_fraction_proof_bounds(count)
+    budget.reserve(8 * count, proof_memory)
+    area2 = sum(
+        Fraction(float(a[0])) * Fraction(float(b[1]))
+        - Fraction(float(a[1])) * Fraction(float(b[0]))
+        for a, b in zip(projected, np.roll(projected, -1, axis=0), strict=True)
+    )
+    if area2 == 0:
+        raise ValueError(
+            f"PolyhedralFaceTriangulation.faces must have nonzero projected area; got zero area at face {face}"
+        )
+    boundary = np.column_stack((np.arange(count), np.roll(np.arange(count), -1)))
+    return _ProjectedFace(normal, projected, area2, boundary)
+
+
+def _triangulate_projected_face(
+    projection: _ProjectedFace, face: int, budget: CoordinateEnclosureBudget, /
+) -> _CertifiedFaceTriangles:
+    projected, area2, boundary = (
+        projection.projected,
+        projection.area2,
+        projection.boundary,
+    )
+    count = projected.shape[0]
+
+    cavity = max(1, 2 * count + 4)
+    # CDT retains the primitive's preexisting work and scratch limits.
+    limits = NativeExecutionLimits(
+        (1 << 63) - 1,
+        (1 << 64) - 1,
+        cavity,
+        (1 << 63) - 1,
+        math.inf,
+    )
+    with NativeExecutionScope(limits):
+        prepared = ConstrainedDelaunayTriangulation(
+            projected,
+            boundary,
+            max_steiner=0,
+            max_triangles=2 * count + 4,
+            max_cavity_cells=cavity,
+        )
+    if (
+        prepared.evidence.status != "ok"
+        or prepared.points.shape != projected.shape
+        or not np.array_equal(prepared.points, projected)
+    ):
+        raise ValueError(
+            f"PolyhedralFaceTriangulation.faces must retain resolved boundary-preserving native triangles; got unresolved triangulation at face {face}"
+        )
+    local = np.asarray(prepared.triangles, dtype=np.int32).copy()
+    if local.shape != (count - 2, 3) or not np.array_equal(
+        np.unique(local), np.arange(count)
+    ):
+        raise ValueError(
+            f"PolyhedralFaceTriangulation.faces must retain boundary topology; got missing boundary incidence at face {face}"
+        )
+    if area2 < 0:
+        local[:, [1, 2]] = local[:, [2, 1]]
+
+    signs = exact_orient2d(
+        projected[local[:, 0]], projected[local[:, 1]], projected[local[:, 2]]
+    )
+    if np.any(signs != (1 if area2 > 0 else -1)):
+        raise ValueError(
+            f"PolyhedralFaceTriangulation.faces must contain positive triangles; got nonpositive triangles at face {face}"
+        )
+    directed: dict[tuple[int, int], int] = {}
+    partition = Fraction(0)
+    budget.reserve(16 * local.shape[0])
+    for triangle in local:
+        corners = projected[triangle]
+        partition += (Fraction(float(corners[1, 0])) - Fraction(float(corners[0, 0]))) * (
+            Fraction(float(corners[2, 1])) - Fraction(float(corners[0, 1]))
+        ) - (Fraction(float(corners[1, 1])) - Fraction(float(corners[0, 1]))) * (
+            Fraction(float(corners[2, 0])) - Fraction(float(corners[0, 0]))
+        )
+        for a, b in zip(triangle, np.roll(triangle, -1), strict=True):
+            a, b = int(a), int(b)
+            edge = (min(a, b), max(a, b))
+            directed[edge] = directed.get(edge, 0) + (1 if a < b else -1)
+    expected = {
+        (min(int(a), int(b)), max(int(a), int(b))): (1 if a < b else -1)
+        for a, b in boundary
+    }
+    actual = {edge: sign for edge, sign in directed.items() if sign}
+    if actual != expected or partition != area2:
+        raise ValueError(
+            f"PolyhedralFaceTriangulation.faces must close reciprocal boundary and projected area; got inconsistent closure at face {face}"
+        )
+    return _CertifiedFaceTriangles(
+        local,
+        prepared.work_evidence,
+        prepared.memory_counters,
+        prepared.evidence.evidence_id,
+    )
+
+
+def _prepare_raw_polyhedral_face_triangulation(
+    mesh: CellMesh,
+    connectivity: PolyhedralConnectivity,
+    tolerance: float,
+    maximum_entries: int,
+    /,
+    *,
+    budget: CoordinateEnclosureBudget,
+) -> PolyhedralFaceTriangulation:
     points = np.asarray(mesh.coordinates, dtype=np.float64)
-    c = mesh.connectivity
+    c = connectivity
     offsets, values = np.asarray(c.face_vertex_offsets), np.asarray(c.face_vertex_values)
     counts = np.diff(offsets) - 2
     if np.any(counts < 1) or 3 * int(np.sum(counts)) > maximum_entries:
-        raise ValueError("Polyhedral face triangulation capacity exceeded.")
+        raise ValueError(
+            "PolyhedralFaceTriangulation.maximum_entries must admit triangulation capacity; got an exceeded capacity"
+        )
+    budget.reserve(0, _face_numeric_preparation_memory(np.diff(offsets)))
     triangle_offsets = np.concatenate(([0], np.cumsum(counts))).astype(np.int64)
     triangles = np.empty((int(triangle_offsets[-1]), 3), dtype=np.int32)
     vectors = np.empty((c.face_count, 3), dtype=np.float64)
@@ -122,81 +380,9 @@ def prepare_polyhedral_face_triangulation(
     work, memory, evidence = [], [], []
     for face, (start, stop) in enumerate(zip(offsets[:-1], offsets[1:], strict=True)):
         loop = values[start:stop]
-        polygon = points[loop]
-        shifted = polygon - polygon[0]
-        vector = np.sum(np.cross(shifted, np.roll(shifted, -1, axis=0)), axis=0) / 2
-        magnitude = float(np.linalg.norm(vector))
-        if not math.isfinite(magnitude) or magnitude <= 0:
-            raise ValueError(f"Polyhedral face {face} has unresolved/degenerate area.")
-        normal = vector / magnitude
-        if np.max(np.abs(shifted @ normal)) > tolerance * max(
-            1.0, float(np.max(np.linalg.norm(shifted, axis=1)))
-        ):
-            raise ValueError(f"Polyhedral face {face} fails planarity admission.")
-        axis = int(np.argmax(np.abs(vector)))
-        axes = ((axis + 1) % 3, (axis + 2) % 3)
-        projected = polygon[:, axes]
-        area2 = sum(
-            Fraction(float(a[0])) * Fraction(float(b[1]))
-            - Fraction(float(a[1])) * Fraction(float(b[0]))
-            for a, b in zip(projected, np.roll(projected, -1, axis=0), strict=True)
-        )
-        if area2 == 0:
-            raise ValueError(f"Polyhedral face {face} has zero projected area.")
-        boundary = np.column_stack(
-            (np.arange(loop.size), np.roll(np.arange(loop.size), -1))
-        )
-        prepared = ConstrainedDelaunayTriangulation(
-            projected,
-            boundary,
-            max_steiner=0,
-            max_triangles=int(2 * loop.size + 4),
-            max_cavity_cells=max(1, int(2 * loop.size + 4)),
-        )
-        if (
-            prepared.evidence.status != "ok"
-            or prepared.points.shape != projected.shape
-            or not np.array_equal(prepared.points, projected)
-        ):
-            raise ValueError(
-                f"Polyhedral face {face} lacks a resolved boundary-preserving native triangulation."
-            )
-        local = np.asarray(prepared.triangles, dtype=np.int32).copy()
-        if local.shape != (loop.size - 2, 3) or not np.array_equal(
-            np.unique(local), np.arange(loop.size)
-        ):
-            raise ValueError(
-                f"Polyhedral face {face} triangulation loses its boundary topology."
-            )
-        if area2 < 0:
-            local[:, [1, 2]] = local[:, [2, 1]]
-        signs = exact_orient2d(
-            projected[local[:, 0]], projected[local[:, 1]], projected[local[:, 2]]
-        )
-        if np.any(signs != (1 if area2 > 0 else -1)):
-            raise ValueError(f"Polyhedral face {face} contains nonpositive triangles.")
-        directed = {}
-        partition = Fraction(0)
-        for triangle in local:
-            corners = projected[triangle]
-            partition += (
-                Fraction(float(corners[1, 0])) - Fraction(float(corners[0, 0]))
-            ) * (Fraction(float(corners[2, 1])) - Fraction(float(corners[0, 1]))) - (
-                Fraction(float(corners[1, 1])) - Fraction(float(corners[0, 1]))
-            ) * (Fraction(float(corners[2, 0])) - Fraction(float(corners[0, 0])))
-            for a, b in zip(triangle, np.roll(triangle, -1), strict=True):
-                a, b = int(a), int(b)
-                edge = (min(a, b), max(a, b))
-                directed[edge] = directed.get(edge, 0) + (1 if a < b else -1)
-        expected = {
-            (min(int(a), int(b)), max(int(a), int(b))): (1 if a < b else -1)
-            for a, b in boundary
-        }
-        actual = {edge: sign for edge, sign in directed.items() if sign}
-        if actual != expected or partition != area2:
-            raise ValueError(
-                f"Polyhedral face {face} triangulation fails reciprocal boundary/area closure."
-            )
+        projection = _project_polyhedral_face(points[loop], face, tolerance, budget)
+        prepared = _triangulate_projected_face(projection, face, budget)
+        local, normal = prepared.local, projection.normal
         global_triangles = loop[local]
         triangle_points = points[global_triangles]
         triangle_vectors = (
@@ -209,7 +395,7 @@ def prepare_polyhedral_face_triangulation(
         weights = triangle_vectors @ normal
         if np.any(~np.isfinite(weights)) or np.any(weights <= 0):
             raise ValueError(
-                f"Polyhedral face {face} has unresolved physical triangle measures."
+                f"PolyhedralFaceTriangulation.faces must have resolved physical triangle measures; got invalid measures at face {face}"
             )
         triangles[triangle_offsets[face] : triangle_offsets[face + 1]] = global_triangles
         vectors[face] = np.sum(triangle_vectors, axis=0)
@@ -218,9 +404,9 @@ def prepare_polyhedral_face_triangulation(
             np.sum(weights[:, None] * np.mean(triangle_points, axis=1), axis=0)
             / measures[face]
         )
-        work.append(prepared.work_evidence)
-        memory.append(prepared.memory_evidence)
-        evidence.append(prepared.evidence.evidence_id)
+        work.append(prepared.work)
+        memory.append(prepared.memory_counters)
+        evidence.append(prepared.evidence_id)
     arrays = (
         triangle_offsets,
         triangles,
@@ -228,12 +414,12 @@ def prepare_polyhedral_face_triangulation(
         measures,
         centers,
         np.asarray(work),
-        np.asarray(memory),
     )
     for array in arrays:
         array.setflags(write=False)
     return PolyhedralFaceTriangulation(
         *arrays,
+        tuple(memory),
         tuple(evidence),
         canonical_fingerprint(
             {
@@ -317,11 +503,15 @@ def _ear_clip(points: np.ndarray, /) -> tuple[tuple[int, int, int], ...]:
             clipped = True
             break
         if not clipped:
-            raise ValueError("Polygon triangulation could not identify a valid ear.")
+            raise ValueError(
+                "PolygonTriangulation.coordinates must admit a valid ear; got unresolved polygon triangulation"
+            )
     if len(remaining) == 3:
         triangles.append((remaining[0], remaining[1], remaining[2]))
     if not triangles:
-        raise ValueError("Polygon triangulation produced no positive triangles.")
+        raise ValueError(
+            "PolygonTriangulation.coordinates must produce positive triangles; got no positive triangles"
+        )
     return tuple(triangles)
 
 
@@ -374,7 +564,9 @@ def _kernel_witness(points: np.ndarray, /) -> tuple[np.ndarray, float]:
             kernel, points[index], points[(index + 1) % points.shape[0]]
         )
         if not kernel:
-            raise ValueError("Polygon is not star-shaped.")
+            raise ValueError(
+                "PolygonTriangulation.coordinates must be star-shaped; got an empty star kernel"
+            )
     witness = np.mean(np.stack(kernel), axis=0)
     edge = np.roll(points, -1, axis=0) - points
     lengths = np.sqrt(np.sum(edge * edge, axis=1))
@@ -405,7 +597,9 @@ class PolygonAdmissibilityPolicy(StrictModule, NonTrainableState):
         star = float(minimum_star_margin)
         edge = float(minimum_edge_ratio)
         if star < 0.0 or edge < 0.0:
-            raise ValueError("Polygon admissibility thresholds must be nonnegative.")
+            raise ValueError(
+                "PolygonAdmissibilityPolicy.thresholds must be nonnegative; got a negative threshold"
+            )
         self.minimum_star_margin = star
         self.minimum_edge_ratio = edge
         self.policy_id = canonical_fingerprint(
@@ -465,9 +659,13 @@ def prepare_polygon_triangulation(
     points = np.asarray(coordinates, dtype=np.float64)
     cells_ = np.asarray(cells, dtype=np.int32)
     if points.ndim != 2 or points.shape[1] != 2:
-        raise ValueError("Polygon coordinates must have shape (vertices, 2).")
+        raise ValueError(
+            "PolygonTriangulation.coordinates must have shape (vertices, 2); got incompatible coordinate shape"
+        )
     if cells_.ndim != 2 or cells_.shape[1] < 3:
-        raise ValueError("Polygon cells must have shape (cells, arity >= 3).")
+        raise ValueError(
+            "PolygonTriangulation.cells must have shape (cells, arity >= 3); got incompatible connectivity shape"
+        )
     selected = points[cells_]
     capacity = cells_.shape[1] - 2
     triangles = np.zeros((cells_.shape[0], capacity, 3), dtype=np.int32)
@@ -484,7 +682,9 @@ def prepare_polygon_triangulation(
             valid[cell, index] = True
         witness, star_margin = _kernel_witness(polygon)
         if star_margin < policy_.minimum_star_margin:
-            raise ValueError("Polygon star-kernel margin is below policy.")
+            raise ValueError(
+                "PolygonTriangulation.coordinates must satisfy the star-kernel margin policy; got a margin below policy"
+            )
         augmented = np.concatenate((polygon.T, np.ones((1, polygon.shape[0]))), axis=0)
         target = np.concatenate((witness, np.ones((1,))))
         weights = np.linalg.lstsq(augmented, target, rcond=None)[0]
@@ -610,17 +810,18 @@ def polygon_cubature(
     degree: int,
     /,
 ) -> PolygonCubature:
-    from ..integration import (
-        GaussLegendreRule,
-        reference_rule_data,
-        ReferenceTriangleRule,
-    )
 
     degree_ = int(degree)
     if degree_ < 0:
-        raise ValueError("Polygon cubature degree must be nonnegative.")
+        raise ValueError(
+            f"PolygonTriangulation.cubature_degree must be nonnegative; got {degree}"
+        )
     order = max(2, (degree_ + 3) // 2)
-    data = reference_rule_data(ReferenceTriangleRule(GaussLegendreRule(order)))
+    data = imported_integration.reference_rule_data(
+        imported_integration.ReferenceTriangleRule(
+            imported_integration.GaussLegendreRule(order)
+        )
+    )
     reference = jnp.asarray(data.points)
     reference_weights = jnp.asarray(data.weights)
     triangles = geometry.triangle_points

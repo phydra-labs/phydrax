@@ -266,7 +266,7 @@ class TabulatedPropertyLaw(StrictModule):
 
 
 class ConcentrationTemperaturePropertyLaw(StrictModule):
-    """Bounded bilinear electrolyte property on concentration-temperature axes."""
+    """Bounded bilinear electrolyte property that preserves constant values exactly."""
 
     concentration_nodes_mol_m3: Array
     temperature_nodes_k: Array
@@ -421,11 +421,21 @@ class ConcentrationTemperaturePropertyLaw(StrictModule):
             coordinates,
             boundary=("constant", "constant"),
         )
-        return apply_gather_stencil(
-            self.values.reshape((-1,)),
+        # Interpolate differences, not the constant offset. A constant surface
+        # therefore broadcasts its stored value exactly, without weighting that
+        # value by query-dependent interpolation coefficients.
+        reference = self.values.reshape((-1,))[
+            jnp.argmax(self.source_mask.reshape((-1,)))
+        ]
+        result = apply_gather_stencil(
+            (self.values - reference).reshape((-1,)),
             stencil,
             source_mask=self.source_mask.reshape((-1,)),
             mask_mode="strict",
+        )
+        return InterpolationResult(
+            jnp.where(result.support, result.values + reference, 0.0),
+            result.support,
         )
 
     def __call__(

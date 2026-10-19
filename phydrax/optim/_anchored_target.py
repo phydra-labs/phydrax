@@ -28,7 +28,7 @@ from ._least_squares import (
     BoundedGaussNewton,
     least_squares,
 )
-from ._nonlinear_constraints import _canonical_constraints, _constraint_layout
+from ._nonlinear_constraints import _canonical_constraints, constraint_layout
 
 
 # Evidence is a fixed-structure JAX PyTree, not a host execution record.
@@ -442,7 +442,7 @@ def solve_anchored_target(
             ),
         ),
     )
-    layout = _constraint_layout(constraints, (design, values), args)
+    layout = constraint_layout(constraints, (design, values), args)
     n_equal = layout.equality_indices.size
     n_inequal = layout.lower_indices.size + layout.upper_indices.size
     constraint_scales = jax.lax.stop_gradient(

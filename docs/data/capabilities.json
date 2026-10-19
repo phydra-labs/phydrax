@@ -1,5 +1,5 @@
 {
-  "catalog_id": "46698e64ac47aa14344004b5afc890a8878ae944ad28230b99217bba6f96b543",
+  "catalog_id": "b415b17b068b8f2c377ef4c2879a57da675d65d604bc8c9dae458b13a3e8da3b",
   "declarations": [
     {
       "capability": "accelerator.csr-1d",
@@ -18289,7 +18289,7 @@
     },
     {
       "capability": "meshing.native.mandatory-general-all-hex",
-      "declaration_id": "138755c2aa2c84f5ed248c0ddf725a7cb409c749aed11273c9efd77af52f3fd1",
+      "declaration_id": "3081aff54cbf7a87d172d4a33406444d7a3b431454646d941dc16de2dbccc11e",
       "dependencies": [],
       "disposition": "research",
       "documentation": [
@@ -18358,6 +18358,8 @@
         "required-evidence:parity-singularity-and-positive-global-embedding",
         "required-evidence:repeated-phase-timing-compile-memory-and-failure-tails",
         "required-evidence:source-request-policy-runtime-bound-identities",
+        "source-reference:phydrax/meshing/_dual_extraction.py",
+        "source-reference:phydrax/meshing/_family_execution.py",
         "source-reference:phydrax/meshing/_hex_generation.py",
         "source-reference:phydrax/meshing/_multiblock.py",
         "source-reference:phydrax/meshing/_quad_generation.py",
@@ -19112,7 +19114,7 @@
     },
     {
       "capability": "meshing.native.mandatory-moving-overset-interpolative",
-      "declaration_id": "331841331359ddac36b9a657b314eec02b9bb4a10ecca7f279b9d93938f34ce0",
+      "declaration_id": "947df871ebc7db0b7f019ce539a595f263e811d8e09329a62164913390ee419b",
       "dependencies": [],
       "disposition": "research",
       "documentation": [
@@ -19182,6 +19184,7 @@
         "required-evidence:repeated-phase-timing-compile-memory-and-failure-tails",
         "required-evidence:source-request-policy-runtime-bound-identities",
         "source-reference:phydrax/meshing/_assembly.py",
+        "source-reference:phydrax/meshing/_mesh_part.py",
         "source-reference:phydrax/meshing/_overset.py"
       ],
       "kind": "capability-declaration",
@@ -19525,7 +19528,7 @@
     },
     {
       "capability": "meshing.native.mandatory-planar-curved-features",
-      "declaration_id": "2c4e6ef5582e273f2798d9bd2e2d530ffe1600a39673065f639a46d7c8416715",
+      "declaration_id": "f95a5acf0b352d9291b8b93703c011e9be2df1d257cd4261faea91d7ce1ce326",
       "dependencies": [],
       "disposition": "research",
       "documentation": [
@@ -19595,6 +19598,8 @@
         "required-evidence:repeated-phase-timing-compile-memory-and-failure-tails",
         "required-evidence:source-request-policy-runtime-bound-identities",
         "source-reference:phydrax/meshing/_curving.py",
+        "source-reference:phydrax/meshing/_dual_extraction.py",
+        "source-reference:phydrax/meshing/_family_execution.py",
         "source-reference:phydrax/meshing/_quad_generation.py"
       ],
       "kind": "capability-declaration",
@@ -20872,7 +20877,7 @@
     },
     {
       "capability": "meshing.native.planar-dual-quadrilateral-generation",
-      "declaration_id": "383876ee73dcb8362be14ee627aac2ffe34edcee7f25c790b31a463b779f04b8",
+      "declaration_id": "f7572604dc3cc5e49f41e65283f6fef071d25e481100cf0c877858eae974b9fc",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [
@@ -20941,6 +20946,8 @@
         "required-evidence:pure-quad-family-and-protected-feature-subdivision",
         "required-evidence:repeated-phase-timing-compile-memory-and-failure-tails",
         "required-evidence:source-request-policy-runtime-bound-identities",
+        "source-reference:phydrax/meshing/_dual_extraction.py",
+        "source-reference:phydrax/meshing/_family_execution.py",
         "source-reference:phydrax/meshing/_quad_generation.py",
         "source-reference:phydrax/meshing/providers/_native_dual.py"
       ],
@@ -22774,7 +22781,7 @@
     },
     {
       "capability": "meshing.native.tetrahedron-bisection-transfer",
-      "declaration_id": "1716d58836d2370b6ba52de166d94c53f40f6b988d6fa0dc20f1665bce7f437b",
+      "declaration_id": "e51c4c42dbce0fd63ad4ee2a9f7336cdde97fc747079e8efae2f96ead2fe5650",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [
@@ -22843,7 +22850,8 @@
         "required-evidence:repeated-phase-timing-compile-memory-and-failure-tails",
         "required-evidence:source-request-policy-runtime-bound-identities",
         "source-reference:phydrax/meshing/_adaptation.py",
-        "source-reference:phydrax/meshing/_bisection.py"
+        "source-reference:phydrax/meshing/_bisection.py",
+        "source-reference:phydrax/meshing/_bisection_kernel_host.py"
       ],
       "kind": "capability-declaration",
       "nonclaims": [

@@ -643,7 +643,7 @@ def solve_hdg_poisson(
     block = discretization.mesh.blocks[0]
     if block.cell_kind != "triangle":
         raise ValueError("HDG Poisson currently supports triangular cells.")
-    field_index = discretization._field_index(field_name)
+    field_index = discretization.field_index(field_name)
     element = discretization.elements[field_index][0]
     dof_map = discretization.dof_maps[field_index]
     if (

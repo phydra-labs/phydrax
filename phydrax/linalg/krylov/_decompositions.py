@@ -757,7 +757,7 @@ def _orthonormalize_block(
     The eigendecomposition of the stopped Gram matrix makes every decision:
     basis frame, singular values, and the retained rank. Raw ``eigh``
     differentiation divides by eigenvalue gaps and is undefined for a
-    degenerate Gram, for example an orthonormal start block or an exact
+    degenerate Gram, for example an orthonormal start block or a Krylov
     breakdown. Derivatives are instead those of the retained subspace at fixed
     rank. Separated retained eigenpairs rotate exactly as the eigendecomposition
     does. A degenerate retained cluster is orthonormalized symmetrically

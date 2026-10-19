@@ -4,11 +4,10 @@
 
 from typing import Any
 
-import jax
+from phydrax import config as pxconfig
 
 
-jax.config.update("jax_enable_x64", True)
-
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 import numpy as np
 
 import phydrax as phx
@@ -18,7 +17,7 @@ from phydrax.discretization.fem import (
     form_element,
     prepare_nested_field_transfer,
 )
-from phydrax.discretization.fem._generic import _evaluate_paired_field_basis
+from phydrax.discretization.fem._generic import evaluate_paired_field_basis
 
 
 D = phx.discretization
@@ -30,6 +29,24 @@ _FACES = ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3))
 _GAUSS_NODES, _GAUSS_WEIGHTS = np.polynomial.legendre.leggauss(4)
 _GAUSS_NODES = 0.5 * (_GAUSS_NODES + 1.0)
 _GAUSS_WEIGHTS = 0.5 * _GAUSS_WEIGHTS
+
+
+# Empirical `test_tetrahedral_nedelec_element_has_unit_oriented_edge_circulations`: matched max |delta|=9.65491e-18; joint allowance fraction=0.000965491, margin=99.9035%.
+_NEDELEC_EDGE_CIRCULATION_ATOL = 1e-14
+# Empirical `test_generic_tetrahedral_hcurl_matches_the_edge_operator_space`: matched max |delta|=2.13163e-14; joint allowance fraction=0.00518109, margin=99.4819%.
+_HCURL_EDGE_OPERATOR_RTOL = 1e-12
+# Empirical `test_generic_tetrahedral_hcurl_matches_the_edge_operator_space`: matched max |delta|=2.13163e-14; joint allowance fraction=0.00518109, margin=99.4819%.
+_HCURL_EDGE_OPERATOR_ATOL = 1e-12
+# Empirical `test_second_order_tetrahedral_nedelec_is_dual_to_its_moments`: matched max |delta|=1.61727e-15; joint allowance fraction=0.0161727, margin=98.3827%.
+_SECOND_ORDER_MOMENT_DUALITY_ATOL = 1e-13
+# Empirical `test_second_order_nedelec_interpolates_its_space_with_continuous_traces`: matched max |delta|=3.55271e-15; joint allowance fraction=1.26308e-05, margin=99.9987%.
+_SECOND_ORDER_INTERPOLATED_VALUES_ATOL = 1e-12
+# Empirical `test_second_order_nested_transfer_preserves_independent_entity_moments`: matched max |delta|=5.77316e-15; joint allowance fraction=2.50312e-06, margin=99.9997%.
+_SECOND_ORDER_TRANSFER_MOMENTS_ATOL = 2e-12
+# Empirical `test_paired_curved_nedelec_derivative_includes_piola_factor_derivatives`: matched max |delta|=8.47603e-10; joint allowance fraction=0.00339278, margin=99.6607%.
+_CURVED_PIOLA_DERIVATIVE_ATOL = 2e-7
+# Empirical `test_paired_curved_nedelec_derivative_includes_piola_factor_derivatives`: matched max |delta|=8.47603e-10; joint allowance fraction=0.00339278, margin=99.6607%.
+_CURVED_PIOLA_DERIVATIVE_RTOL = 2e-8
 
 
 def _kuhn_cube(count: int) -> Any:
@@ -73,7 +90,7 @@ def _exact_curl(points: np.ndarray) -> np.ndarray:
 
 
 def _edge_circulations(mesh: Any) -> np.ndarray:
-    """Gauss line integrals of the exact field along lower-to-higher edges."""
+    """Gauss line integrals of the analytic field along lower-to-higher edges."""
 
     coordinates = np.asarray(mesh.coordinates)
     edges = np.asarray(mesh.connectivity.edges)
@@ -153,7 +170,7 @@ def _oriented_basis(discretization: Any) -> tuple[Any, ...]:
 
 
 def _solve_maxwell(count: int, degree: int = 0) -> tuple[float, float]:
-    """Solve curl curl E + E = f with exact tangential traces; L2 and curl errors."""
+    """Solve curl curl E + E = f with analytic tangential traces; L2 and curl errors."""
 
     mesh = _kuhn_cube(count)
     discretization = D.FiniteElementPlan(
@@ -198,7 +215,9 @@ def test_tetrahedral_nedelec_element_has_unit_oriented_edge_circulations() -> No
         values, _ = element.tabulate(points)
         circulations[edge] = _GAUSS_WEIGHTS @ (np.asarray(values) @ tangent)
 
-    np.testing.assert_allclose(circulations, np.eye(6), atol=1e-14)
+    np.testing.assert_allclose(
+        circulations, np.eye(6), atol=_NEDELEC_EDGE_CIRCULATION_ATOL
+    )
 
 
 def test_generic_tetrahedral_hcurl_matches_the_edge_operator_space() -> None:
@@ -226,8 +245,8 @@ def test_generic_tetrahedral_hcurl_matches_the_edge_operator_space() -> None:
             .differential(1)
             .transpose_mv(space.hodge_star(2, space.exterior_derivative(1, values)))
         ),
-        rtol=1e-12,
-        atol=1e-12,
+        rtol=_HCURL_EDGE_OPERATOR_RTOL,
+        atol=_HCURL_EDGE_OPERATOR_ATOL,
     )
 
 
@@ -271,12 +290,14 @@ def test_second_order_tetrahedral_nedelec_is_dual_to_its_moments() -> None:
         rows.append(area_weights @ (values @ (_VERTICES[b] - _VERTICES[a])))
 
     # The wedge-paired edge and face functionals are independently integrated.
-    np.testing.assert_allclose(np.stack(rows), np.eye(20), atol=1e-13)
+    np.testing.assert_allclose(
+        np.stack(rows), np.eye(20), atol=_SECOND_ORDER_MOMENT_DUALITY_ATOL
+    )
 
 
 def test_second_order_nedelec_interpolates_its_space_with_continuous_traces() -> None:
     # a + B x + x × (A x) spans the second-order first-kind space; its
-    # canonical moments on a Kuhn cube (every edge and face orientation occurs)
+    # moments on a Kuhn cube (every edge and face orientation occurs)
     # must reproduce it on every cell through the cell transformations.
     constant = np.asarray((0.3, -1.0, 0.7))
     linear = np.asarray(((0.5, -1.2, 0.1), (0.4, 0.9, -0.3), (-0.6, 0.2, 1.1)))
@@ -297,7 +318,9 @@ def test_second_order_nedelec_interpolates_its_space_with_continuous_traces() ->
         "cqiv,ci->cqv", basis, _second_order_moments(mesh, field)[routes]
     )
 
-    np.testing.assert_allclose(interpolated, field(points), atol=1e-12)
+    np.testing.assert_allclose(
+        interpolated, field(points), atol=_SECOND_ORDER_INTERPOLATED_VALUES_ATOL
+    )
 
 
 def test_second_order_tetrahedral_maxwell_converges_quadratically() -> None:
@@ -350,7 +373,7 @@ def test_second_order_nested_transfer_preserves_independent_entity_moments() -> 
     np.testing.assert_allclose(
         transferred,
         _second_order_moments(target_mesh, field),
-        atol=2e-12,
+        atol=_SECOND_ORDER_TRANSFER_MOMENTS_ATOL,
     )
 
 
@@ -394,7 +417,7 @@ def test_paired_curved_nedelec_derivative_includes_piola_factor_derivatives() ->
     step = 1e-6
     for axis in range(3):
         shift = np.eye(3)[axis] * step
-        plus, plus_valid = _evaluate_paired_field_basis(
+        plus, plus_valid = evaluate_paired_field_basis(
             discretization,
             "E",
             0,
@@ -402,7 +425,7 @@ def test_paired_curved_nedelec_derivative_includes_piola_factor_derivatives() ->
             pullback(physical_points + shift),
             coordinates,
         )
-        minus, minus_valid = _evaluate_paired_field_basis(
+        minus, minus_valid = evaluate_paired_field_basis(
             discretization,
             "E",
             0,
@@ -410,12 +433,17 @@ def test_paired_curved_nedelec_derivative_includes_piola_factor_derivatives() ->
             pullback(physical_points - shift),
             coordinates,
         )
-        derivative, valid = _evaluate_paired_field_basis(
+        derivative, valid = evaluate_paired_field_basis(
             discretization, "E", 0, selected, reference, coordinates, derivative_axis=axis
         )
         actual = _contract("piv,i->pv", derivative, local)
         expected = _contract("piv,i->pv", (plus - minus) / (2.0 * step), local)
         assert np.all(valid) and np.all(plus_valid) and np.all(minus_valid)
-        # A frozen-J Piola gradient passes affine cases but fails this actual
+        # A frozen-J Piola gradient passes affine cases but fails this
         # curved physical-coordinate derivative.
-        np.testing.assert_allclose(actual, expected, atol=2e-7, rtol=2e-8)
+        np.testing.assert_allclose(
+            actual,
+            expected,
+            atol=_CURVED_PIOLA_DERIVATIVE_ATOL,
+            rtol=_CURVED_PIOLA_DERIVATIVE_RTOL,
+        )

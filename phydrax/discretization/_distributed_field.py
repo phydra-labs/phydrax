@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import replace
 
 import equinox as eqx
 import jax
@@ -18,11 +19,18 @@ from .._execution_runtime import ExecutionGroup
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import checked
+from ..typing import AnyShape, Bool, checked, Int32, Int64, Scalar, validate
 from ._cell_mesh import CellMesh
+from ._distributed_preparation import (
+    owner_local_host_array,
+    prepare_field_query_rows,
+    prepare_field_query_sources,
+    replicated_host_array,
+    require_owner_local_storage,
+)
 
 
-def _color_directed_pairs(
+def color_directed_pairs(
     pairs: Iterable[tuple[int, int]],
     /,
     *,
@@ -48,22 +56,167 @@ def _color_directed_pairs(
     return tuple(phases)
 
 
+class _OwnerLocalIdentity(StrictModule):
+    ids: np.ndarray
+    owned: np.ndarray
+    valid: np.ndarray
+    global_count: int
+    index: int
+    parts: int
+    evidence: str
+
+
+def _prepare_owner_local_identity(
+    local_global_ids: ArrayLike,
+    local_owned: ArrayLike,
+    local_valid: ArrayLike | None,
+    global_entity_count: int,
+    partition_index: int,
+    part_count: int,
+    evidence_id: str,
+    /,
+) -> _OwnerLocalIdentity:
+    ids = owner_local_host_array(local_global_ids)
+    owned = owner_local_host_array(local_owned, dtype=np.bool_)
+    parts = int(part_count)
+    valid = (
+        np.ones(ids.shape, dtype=np.bool_)
+        if local_valid is None
+        else owner_local_host_array(local_valid, dtype=np.bool_)
+    )
+    active = ids[valid] if valid.shape == ids.shape else np.empty((0,), dtype=np.int64)
+    if (
+        ids.ndim != 1
+        or ids.size == 0
+        or not np.issubdtype(ids.dtype, np.integer)
+        or valid.shape != ids.shape
+        or not np.array_equal(valid, np.arange(ids.size) < np.count_nonzero(valid))
+        or np.any(active < 0)
+        or np.unique(active).size != active.size
+        or not np.array_equal(ids[~valid], np.arange(-np.count_nonzero(~valid), 0))
+        or owned.shape != ids.shape
+        or np.any(owned & ~valid)
+        or global_entity_count is None
+        or int(global_entity_count) < active.size
+        or partition_index is None
+        or not 0 <= int(partition_index) < parts
+        or evidence_id is None
+        or not str(evidence_id).strip()
+    ):
+        raise ValueError(
+            "DistributedHaloPlan.local_global_ids must identify valid owned/ghost rows "
+            "within the declared partition coverage; got inconsistent IDs, masks, or evidence"
+        )
+    return _OwnerLocalIdentity(
+        ids,
+        owned,
+        valid,
+        int(global_entity_count),
+        int(partition_index),
+        parts,
+        str(evidence_id),
+    )
+
+
+class _OwnerLocalRoutes(StrictModule):
+    send: np.ndarray
+    receive: np.ndarray
+    send_valid: np.ndarray
+    receive_valid: np.ndarray
+    phases: tuple[tuple[tuple[int, int], ...], ...]
+
+
+def _prepare_owner_local_routes(
+    identity: _OwnerLocalIdentity,
+    phase_send_indices: ArrayLike,
+    phase_receive_indices: ArrayLike,
+    phase_send_valid: ArrayLike,
+    phase_receive_valid: ArrayLike,
+    permutations: tuple[tuple[tuple[int, int], ...], ...],
+    /,
+) -> _OwnerLocalRoutes:
+    phases = tuple(tuple((int(a), int(b)) for a, b in phase) for phase in permutations)
+    send = owner_local_host_array(phase_send_indices)
+    receive = owner_local_host_array(phase_receive_indices)
+    send_valid = owner_local_host_array(phase_send_valid, dtype=np.bool_)
+    receive_valid = owner_local_host_array(phase_receive_valid, dtype=np.bool_)
+    if (
+        send.ndim != 2
+        or send.shape[0] != len(phases)
+        or send.shape[1] < 1
+        or receive.shape != send.shape
+        or send_valid.shape != send.shape
+        or receive_valid.shape != send.shape
+        or not np.issubdtype(send.dtype, np.integer)
+        or not np.issubdtype(receive.dtype, np.integer)
+        or np.any(send[send_valid] < 0)
+        or np.any(send[send_valid] >= identity.ids.size)
+        or np.any(receive[receive_valid] < 0)
+        or np.any(receive[receive_valid] >= identity.ids.size)
+    ):
+        raise ValueError(
+            "DistributedHaloPlan.phase_send_indices must align with valid local receive "
+            "indices and phase masks; got incompatible phase arrays"
+        )
+    for phase_index, phase in enumerate(phases):
+        sources = [a for a, _ in phase]
+        targets = [b for _, b in phase]
+        if (
+            len(set(sources)) != len(sources)
+            or len(set(targets)) != len(targets)
+            or any(
+                a == b or not 0 <= a < identity.parts or not 0 <= b < identity.parts
+                for a, b in phase
+            )
+            or (np.any(send_valid[phase_index]) and identity.index not in sources)
+            or (np.any(receive_valid[phase_index]) and identity.index not in targets)
+            or np.unique(send[phase_index][send_valid[phase_index]]).size
+            != np.count_nonzero(send_valid[phase_index])
+        ):
+            raise ValueError(
+                "DistributedHaloPlan.permutations must color unique participating peers; "
+                f"got invalid phase {phase_index}"
+            )
+    ghost_rows = receive[receive_valid]
+    if (
+        np.any(~identity.owned[send[send_valid]])
+        or np.any(identity.owned[ghost_rows])
+        or np.unique(ghost_rows).size != ghost_rows.size
+        or not np.array_equal(
+            np.sort(ghost_rows), np.flatnonzero(identity.valid & ~identity.owned)
+        )
+    ):
+        raise ValueError(
+            "DistributedHaloPlan.phase_receive_indices must cover every ghost once "
+            "with sends from owned rows; got inconsistent ownership routes"
+        )
+    return _OwnerLocalRoutes(
+        np.where(send_valid, send, 0).astype(np.int32),
+        np.where(receive_valid, receive, 0).astype(np.int32),
+        send_valid,
+        receive_valid,
+        phases,
+    )
+
+
 class DistributedHaloPlan(StrictModule, NonTrainableState):
     """Padded owned/halo layout and colored peer permutations.
 
     Every communication phase has at most one outgoing and incoming peer per
     partition, so ``lax.ppermute`` routes fixed-size packed messages without an
-    all-gather. Canonical global IDs determine ownership and transpose routing.
+    all-gather. global IDs determine ownership and transpose routing.
     """
 
-    entity_owner: Array
-    local_global_ids: Array
-    local_valid: Array
-    local_owned: Array
-    phase_send_indices: Array
-    phase_receive_indices: Array
-    phase_send_valid: Array
-    phase_receive_valid: Array
+    __strict_contract__ = True
+
+    entity_owner: Int32[AnyShape]
+    local_global_ids: Int32[AnyShape] | Int64[AnyShape]
+    local_valid: Bool[AnyShape]
+    local_owned: Bool[AnyShape]
+    phase_send_indices: Int32[AnyShape]
+    phase_receive_indices: Int32[AnyShape]
+    phase_send_valid: Bool[AnyShape]
+    phase_receive_valid: Bool[AnyShape]
     permutations: tuple[tuple[tuple[int, int], ...], ...] = eqx.field(static=True)
     reverse_permutations: tuple[tuple[tuple[int, int], ...], ...] = eqx.field(static=True)
     entity_count: int = eqx.field(static=True)
@@ -72,63 +225,20 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
     message_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     owner_local: bool = eqx.field(static=True)
-    partition_index: Array
+    partition_index: Int32[Scalar]
     evidence_id: str = eqx.field(static=True)
 
-    def __init__(
-        self,
-        entity_owner: ArrayLike | None,
-        adjacency: ArrayLike | None,
+    @classmethod
+    def from_global(
+        cls,
+        entity_owner: ArrayLike,
+        adjacency: ArrayLike,
         part_count: int,
         /,
-        *,
-        local_global_ids: ArrayLike | None = None,
-        local_owned: ArrayLike | None = None,
-        local_valid: ArrayLike | None = None,
-        global_entity_count: int | None = None,
-        partition_index: int | None = None,
-        phase_send_indices: ArrayLike | None = None,
-        phase_receive_indices: ArrayLike | None = None,
-        phase_send_valid: ArrayLike | None = None,
-        phase_receive_valid: ArrayLike | None = None,
-        permutations: tuple[tuple[tuple[int, int], ...], ...] | None = None,
-        evidence_id: str | None = None,
-    ) -> None:
-        if local_global_ids is not None:
-            if entity_owner is not None or adjacency is not None:
-                raise ValueError("Owner-local halos cannot capture global ownership.")
-            self._initialize_owner_local(
-                local_global_ids,
-                local_owned,
-                local_valid,
-                global_entity_count,
-                partition_index,
-                part_count,
-                phase_send_indices,
-                phase_receive_indices,
-                phase_send_valid,
-                phase_receive_valid,
-                permutations,
-                evidence_id,
-            )
-            return
-        if any(
-            value is not None
-            for value in (
-                local_owned,
-                global_entity_count,
-                partition_index,
-                phase_send_indices,
-                phase_receive_indices,
-                phase_send_valid,
-                phase_receive_valid,
-                permutations,
-                evidence_id,
-            )
-        ):
-            raise ValueError("Owner-local halo metadata requires local_global_ids.")
-        owner = np.asarray(entity_owner)
-        pairs = np.asarray(adjacency)
+    ) -> DistributedHaloPlan:
+        """Prepare padded halo routes from host global ownership and adjacency."""
+        owner = owner_local_host_array(entity_owner)
+        pairs = owner_local_host_array(adjacency)
         parts = int(part_count)
         if (
             owner.ndim != 1
@@ -139,7 +249,9 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
             or np.any(owner >= parts)
             or np.unique(owner).size != parts
         ):
-            raise ValueError("Distributed entity ownership must cover every partition.")
+            raise ValueError(
+                "DistributedHaloPlan.entity_owner must cover every partition; got invalid owners or partition coverage"
+            )
         if (
             pairs.ndim != 2
             or pairs.shape[1:] != (2,)
@@ -149,7 +261,7 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
             or np.any(pairs[:, 0] == pairs[:, 1])
         ):
             raise ValueError(
-                "Distributed adjacency must contain valid distinct entity pairs."
+                "DistributedHaloPlan.adjacency must contain distinct in-range entity pairs; got invalid adjacency"
             )
         local_ids: list[np.ndarray] = []
         local_owned: list[np.ndarray] = []
@@ -162,8 +274,10 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
                     halo.add(int(right))
                 if int(right) in owned and owner[left] != part:
                     halo.add(int(left))
-            ids = np.asarray((*sorted(owned), *sorted(halo)), dtype=np.int32)
-            flags = np.asarray([value in owned for value in ids], dtype=np.bool_)
+            ids = owner_local_host_array((*sorted(owned), *sorted(halo)), dtype=np.int32)
+            flags = owner_local_host_array(
+                [value in owned for value in ids], dtype=np.bool_
+            )
             local_ids.append(ids)
             local_owned.append(flags)
             maps.append({int(value): index for index, value in enumerate(ids)})
@@ -185,7 +299,7 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
                 pair_messages.setdefault((source, receiver), []).append(
                     (maps[source][int(global_id)], local_index)
                 )
-        phases = _color_directed_pairs(pair_messages)
+        phases = color_directed_pairs(pair_messages)
         message_capacity = max(
             (len(message) for message in pair_messages.values()), default=1
         )
@@ -203,168 +317,138 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
                 receive[phase_index, target, :count] = [value[1] for value in message]
                 send_valid[phase_index, source, :count] = True
                 receive_valid[phase_index, target, :count] = True
-        self.entity_owner = jnp.asarray(owner, dtype=jnp.int32)
-        self.local_global_ids = jnp.asarray(global_ids)
-        self.local_valid = jnp.asarray(valid)
-        self.local_owned = jnp.asarray(owned_mask)
-        self.phase_send_indices = jnp.asarray(send)
-        self.phase_receive_indices = jnp.asarray(receive)
-        self.phase_send_valid = jnp.asarray(send_valid)
-        self.phase_receive_valid = jnp.asarray(receive_valid)
-        self.permutations = tuple(permutations)
-        self.reverse_permutations = tuple(
-            tuple((target, source) for source, target in phase) for phase in permutations
-        )
-        self.entity_count, self.part_count = owner.size, parts
-        self.local_capacity, self.message_capacity = capacity, message_capacity
-        self.owner_local = False
-        self.partition_index = jnp.asarray(-1, dtype=jnp.int32)
-        self.evidence_id = ""
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "distributed-halo-plan",
-                "owner": owner,
-                "adjacency": pairs,
-                "local_global_ids": global_ids,
-                "local_owned": owned_mask,
-                "permutations": permutations,
-            }
+        return cls(
+            entity_owner=jnp.asarray(owner, dtype=jnp.int32),
+            local_global_ids=jnp.asarray(global_ids),
+            local_valid=jnp.asarray(valid),
+            local_owned=jnp.asarray(owned_mask),
+            phase_send_indices=jnp.asarray(send),
+            phase_receive_indices=jnp.asarray(receive),
+            phase_send_valid=jnp.asarray(send_valid),
+            phase_receive_valid=jnp.asarray(receive_valid),
+            permutations=tuple(permutations),
+            reverse_permutations=tuple(
+                tuple((target, source) for source, target in phase)
+                for phase in permutations
+            ),
+            entity_count=owner.size,
+            part_count=parts,
+            local_capacity=capacity,
+            message_capacity=message_capacity,
+            plan_id=canonical_fingerprint(
+                {
+                    "kind": "distributed-halo-plan",
+                    "owner": owner,
+                    "adjacency": pairs,
+                    "local_global_ids": global_ids,
+                    "local_owned": owned_mask,
+                    "permutations": permutations,
+                }
+            ),
+            owner_local=False,
+            partition_index=jnp.asarray(-1, dtype=jnp.int32),
+            evidence_id="",
         )
 
-    def _initialize_owner_local(
-        self,
-        local_global_ids: ArrayLike,
-        local_owned: ArrayLike | None,
-        local_valid: ArrayLike | None,
-        global_entity_count: int | None,
-        partition_index: int | None,
+    @classmethod
+    def from_owner_local(
+        cls,
         part_count: int,
-        phase_send_indices: ArrayLike | None,
-        phase_receive_indices: ArrayLike | None,
-        phase_send_valid: ArrayLike | None,
-        phase_receive_valid: ArrayLike | None,
-        permutations: tuple[tuple[tuple[int, int], ...], ...] | None,
-        evidence_id: str | None,
         /,
-    ) -> None:
-        ids = np.asarray(local_global_ids)
-        owned = np.asarray(local_owned, dtype=np.bool_)
-        parts = int(part_count)
-        valid = (
-            np.ones(ids.shape, dtype=np.bool_)
-            if local_valid is None
-            else np.asarray(local_valid, dtype=np.bool_)
+        *,
+        local_global_ids: ArrayLike,
+        local_owned: ArrayLike,
+        global_entity_count: int,
+        partition_index: int,
+        phase_send_indices: ArrayLike,
+        phase_receive_indices: ArrayLike,
+        phase_send_valid: ArrayLike,
+        phase_receive_valid: ArrayLike,
+        permutations: tuple[tuple[tuple[int, int], ...], ...],
+        evidence_id: str,
+        local_valid: ArrayLike | None = None,
+    ) -> DistributedHaloPlan:
+        """Prepare sparse halo routes from one process-local storage closure."""
+        identity = _prepare_owner_local_identity(
+            local_global_ids,
+            local_owned,
+            local_valid,
+            global_entity_count,
+            partition_index,
+            part_count,
+            evidence_id,
         )
-        active = (
-            ids[valid] if valid.shape == ids.shape else np.empty((0,), dtype=np.int64)
-        )
-        if (
-            ids.ndim != 1
-            or ids.size == 0
-            or not np.issubdtype(ids.dtype, np.integer)
-            or valid.shape != ids.shape
-            or not np.array_equal(valid, np.arange(ids.size) < np.count_nonzero(valid))
-            or np.any(active < 0)
-            or np.unique(active).size != active.size
-            or not np.array_equal(ids[~valid], np.arange(-np.count_nonzero(~valid), 0))
-            or owned.shape != ids.shape
-            or np.any(owned & ~valid)
-            or global_entity_count is None
-            or int(global_entity_count) < active.size
-            or partition_index is None
-            or not 0 <= int(partition_index) < parts
-            or evidence_id is None
-            or not str(evidence_id).strip()
-            or permutations is None
-        ):
-            raise ValueError("Owner-local halo identity and coverage are incomplete.")
-        index = int(partition_index)
-        phases = tuple(
-            tuple((int(a), int(b)) for a, b in phase) for phase in permutations
-        )
-        send = np.asarray(phase_send_indices)
-        receive = np.asarray(phase_receive_indices)
-        send_valid = np.asarray(phase_send_valid, dtype=np.bool_)
-        receive_valid = np.asarray(phase_receive_valid, dtype=np.bool_)
-        if (
-            send.ndim != 2
-            or send.shape[0] != len(phases)
-            or send.shape[1] < 1
-            or receive.shape != send.shape
-            or send_valid.shape != send.shape
-            or receive_valid.shape != send.shape
-            or not np.issubdtype(send.dtype, np.integer)
-            or not np.issubdtype(receive.dtype, np.integer)
-            or np.any(send[send_valid] < 0)
-            or np.any(send[send_valid] >= ids.size)
-            or np.any(receive[receive_valid] < 0)
-            or np.any(receive[receive_valid] >= ids.size)
-        ):
-            raise ValueError("Owner-local halo phases require valid local index arrays.")
-        for phase_index, phase in enumerate(phases):
-            sources = [a for a, _ in phase]
-            targets = [b for _, b in phase]
-            if (
-                len(set(sources)) != len(sources)
-                or len(set(targets)) != len(targets)
-                or any(
-                    a == b or not 0 <= a < parts or not 0 <= b < parts for a, b in phase
-                )
-                or (np.any(send_valid[phase_index]) and index not in sources)
-                or (np.any(receive_valid[phase_index]) and index not in targets)
-                or np.unique(send[phase_index][send_valid[phase_index]]).size
-                != np.count_nonzero(send_valid[phase_index])
-            ):
-                raise ValueError(
-                    "Owner-local halo coloring or phase participation is invalid."
-                )
-        ghost_rows = receive[receive_valid]
-        if (
-            np.any(~owned[send[send_valid]])
-            or np.any(owned[ghost_rows])
-            or np.unique(ghost_rows).size != ghost_rows.size
-            or not np.array_equal(np.sort(ghost_rows), np.flatnonzero(valid & ~owned))
-        ):
+        if permutations is None:
             raise ValueError(
-                "Halo routes must send owners and cover every ghost exactly once."
+                "DistributedHaloPlan.permutations must declare communication phases; got None"
             )
-        send = np.where(send_valid, send, 0).astype(np.int32)
-        receive = np.where(receive_valid, receive, 0).astype(np.int32)
-        self.entity_owner = jnp.empty((0,), dtype=jnp.int32)
-        self.local_global_ids = jnp.asarray(ids, dtype=jnp.int64)
-        self.local_valid = jnp.asarray(valid)
-        self.local_owned = jnp.asarray(owned, dtype=jnp.bool_)
-        self.phase_send_indices = jnp.asarray(send, dtype=jnp.int32)
-        self.phase_receive_indices = jnp.asarray(receive, dtype=jnp.int32)
-        self.phase_send_valid = jnp.asarray(send_valid, dtype=jnp.bool_)
-        self.phase_receive_valid = jnp.asarray(receive_valid, dtype=jnp.bool_)
-        self.permutations = phases
-        self.reverse_permutations = tuple(
-            tuple((b, a) for a, b in phase) for phase in phases
+        routes = _prepare_owner_local_routes(
+            identity,
+            phase_send_indices,
+            phase_receive_indices,
+            phase_send_valid,
+            phase_receive_valid,
+            permutations,
         )
-        self.entity_count = int(global_entity_count)
-        self.part_count = parts
-        self.local_capacity = ids.size
-        self.message_capacity = send.shape[1]
-        self.owner_local = True
-        self.partition_index = jnp.asarray(index, dtype=jnp.int32)
-        self.evidence_id = str(evidence_id)
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "owner-local-distributed-halo",
-                "ids": ids,
-                "owned": owned,
-                "send": send,
-                "receive": receive,
-                "local_valid": valid,
-                "send_valid": send_valid,
-                "receive_valid": receive_valid,
-                "permutations": phases,
-                "partition_index": index,
-                "global_entity_count": self.entity_count,
-                "part_count": parts,
-                "evidence_id": self.evidence_id,
-            }
+        return cls(
+            entity_owner=jnp.empty((0,), dtype=jnp.int32),
+            local_global_ids=jnp.asarray(identity.ids, dtype=jnp.int64),
+            local_valid=jnp.asarray(identity.valid),
+            local_owned=jnp.asarray(identity.owned, dtype=jnp.bool_),
+            phase_send_indices=jnp.asarray(routes.send, dtype=jnp.int32),
+            phase_receive_indices=jnp.asarray(routes.receive, dtype=jnp.int32),
+            phase_send_valid=jnp.asarray(routes.send_valid, dtype=jnp.bool_),
+            phase_receive_valid=jnp.asarray(routes.receive_valid, dtype=jnp.bool_),
+            permutations=routes.phases,
+            reverse_permutations=tuple(
+                tuple((b, a) for a, b in phase) for phase in routes.phases
+            ),
+            entity_count=identity.global_count,
+            part_count=identity.parts,
+            local_capacity=identity.ids.size,
+            message_capacity=routes.send.shape[1],
+            plan_id=canonical_fingerprint(
+                {
+                    "kind": "owner-local-distributed-halo",
+                    "ids": identity.ids,
+                    "owned": identity.owned,
+                    "send": routes.send,
+                    "receive": routes.receive,
+                    "local_valid": identity.valid,
+                    "send_valid": routes.send_valid,
+                    "receive_valid": routes.receive_valid,
+                    "permutations": routes.phases,
+                    "partition_index": identity.index,
+                    "global_entity_count": identity.global_count,
+                    "part_count": identity.parts,
+                    "evidence_id": identity.evidence,
+                }
+            ),
+            owner_local=True,
+            partition_index=jnp.asarray(identity.index, dtype=jnp.int32),
+            evidence_id=identity.evidence,
+        )
+
+    @classmethod
+    @checked
+    def from_stored_fields(cls, value: DistributedHaloPlan, /) -> DistributedHaloPlan:
+        """Rebuild a retained halo plan through its storage-mode admission."""
+        validate(value)
+        if not value.owner_local:
+            return replace(value)
+        return cls.from_owner_local(
+            value.part_count,
+            local_global_ids=value.local_global_ids,
+            local_valid=value.local_valid,
+            local_owned=value.local_owned,
+            global_entity_count=value.entity_count,
+            partition_index=int(owner_local_host_array(value.partition_index)),
+            phase_send_indices=value.phase_send_indices,
+            phase_receive_indices=value.phase_receive_indices,
+            phase_send_valid=value.phase_send_valid,
+            phase_receive_valid=value.phase_receive_valid,
+            permutations=value.permutations,
+            evidence_id=value.evidence_id,
         )
 
     def collective_certificate(self, /, *, axis_name: str) -> Array:
@@ -376,7 +460,7 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
         """
         if not self.owner_local:
             raise ValueError(
-                "Collective route certificates require owner-local metadata."
+                "DistributedHaloPlan.owner_local must be True for collective certification; got global layout"
             )
         valid = (
             (jax.lax.axis_index(axis_name) == self.partition_index)
@@ -429,14 +513,17 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
     def _require_global_layout(self, /) -> None:
         if self.owner_local:
             raise ValueError(
-                "Owner-local halos cannot pack or unpack global arrays; use an explicit bounded export."
+                "DistributedHaloPlan.owner_local must be False to pack or unpack global arrays; got owner-local layout requiring a bounded export"
             )
 
     def pack_owned(self, global_values: ArrayLike, /) -> Array:
         self._require_global_layout()
         values = jnp.asarray(global_values)
         if values.ndim == 0 or values.shape[0] != self.entity_count:
-            raise ValueError("Global field leading axis must match distributed entities.")
+            raise ValueError(
+                "DistributedHaloPlan.global_values must match the entity count on the leading axis; "
+                f"got shape {values.shape} for {self.entity_count} entities"
+            )
         packed = values[self.local_global_ids]
         mask = self.local_owned.reshape(self.local_owned.shape + (1,) * (values.ndim - 1))
         return jnp.where(mask, packed, jnp.zeros_like(packed))
@@ -445,7 +532,10 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
         self._require_global_layout()
         values = jnp.asarray(global_values)
         if values.ndim == 0 or values.shape[0] != self.entity_count:
-            raise ValueError("Global field leading axis must match distributed entities.")
+            raise ValueError(
+                "DistributedHaloPlan.global_values must match the entity count on the leading axis; "
+                f"got shape {values.shape} for {self.entity_count} entities"
+            )
         packed = values[self.local_global_ids]
         mask = self.local_valid.reshape(self.local_valid.shape + (1,) * (values.ndim - 1))
         return jnp.where(mask, packed, jnp.zeros_like(packed))
@@ -454,7 +544,9 @@ class DistributedHaloPlan(StrictModule, NonTrainableState):
         self._require_global_layout()
         values = jnp.asarray(local_values)
         if values.shape[:2] != (self.part_count, self.local_capacity):
-            raise ValueError("Local distributed field shape disagrees with halo plan.")
+            raise ValueError(
+                "DistributedHaloPlan.local_values must match the local row capacity; got incompatible field shape"
+            )
         result = jnp.zeros((self.entity_count,) + values.shape[2:], dtype=values.dtype)
         for part in range(self.part_count):
             ids = self.local_global_ids[part]
@@ -548,7 +640,9 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
     ) -> None:
         name = str(operator_name).strip()
         if not name:
-            raise ValueError("Distributed operator name is required.")
+            raise ValueError(
+                "DistributedLocalOperator.operator_name must be nonempty; got an empty name"
+            )
         self.halo, self.local_action, self.local_transpose = (
             halo,
             local_action,
@@ -586,7 +680,7 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         )
         if self.halo.part_count != len(devices):
             raise ValueError(
-                "Distributed execution requires one assigned JAX device per partition."
+                "DistributedLocalOperator.devices must assign one device per partition; got incompatible placement"
             )
         mesh = Mesh(np.asarray(devices, dtype=object), (axis_name,))
         packed = self.halo.pack_owned(global_values)
@@ -659,7 +753,7 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         )
         if self.halo.part_count != len(devices):
             raise ValueError(
-                "Distributed transpose requires one assigned JAX device per partition."
+                "DistributedLocalOperator.devices must assign one device per partition for transpose execution; got incompatible placement"
             )
         mesh = Mesh(np.asarray(devices, dtype=object), (axis_name,))
         packed = self.halo.pack_owned(global_values)
@@ -712,11 +806,12 @@ def make_owner_local_field_array(
     values = tuple(jnp.asarray(value) for value in local_values)
     if any(not value.is_fully_addressable for value in values):
         raise ValueError(
-            "Local field buckets must be addressable; global fields require explicit local shard selection."
+            "owner_local.local_values must be process-local addressable arrays; "
+            "got a global field requiring explicit local shard selection"
         )
     if not assigned or len(set(assigned)) != len(assigned):
         raise ValueError(
-            "Owner-local execution requires distinct declared actual devices."
+            "owner_local.devices must contain distinct declared devices; got empty or duplicate placement"
         )
     expected = tuple(
         index
@@ -725,13 +820,14 @@ def make_owner_local_field_array(
     )
     if ranks != expected or len(values) != len(ranks) or not values:
         raise ValueError(
-            "Local buckets must cover exactly the process-addressable declared partitions."
+            "owner_local.partition_indices must cover the process-addressable declared partitions; "
+            f"got ranks {ranks} for {len(values)} buckets, expected {expected}"
         )
     shape = values[0].shape
     dtype = values[0].dtype
     if any(value.shape != shape or value.dtype != dtype for value in values):
         raise ValueError(
-            "Owner-local execution requires uniform local shape/dtype buckets; padding is not implicit."
+            "owner_local.local_values must have uniform shape and dtype; got incompatible local buckets"
         )
     mesh = Mesh(np.asarray(assigned, dtype=object), (axis_name,))
     sharding = NamedSharding(mesh, PartitionSpec(axis_name))
@@ -744,7 +840,7 @@ def make_owner_local_field_array(
     )
 
 
-def _exchange_owner_local_packets(
+def exchange_owner_local_packets(
     packets: Array,
     permutations: tuple[tuple[tuple[int, int], ...], ...],
     mesh: Mesh,
@@ -784,11 +880,11 @@ def prepare_owner_local_halo_plans(
     axis_name: str,
     message_capacity: int,
 ) -> tuple[DistributedHaloPlan, ...]:
-    """Derive sparse owner routes from actual bounded peer stable-ID requests.
+    """Derive sparse owner routes from bounded peer stable-ID requests.
 
     Only process-local closures are inspected. Ring-colored request packets are
     exchanged by real JAX permutations; received IDs are resolved against owned
-    rows, never a complete global entity table. ``message_capacity`` is an
+    rows, never a global entity table. ``message_capacity`` is an
     explicit admission bound, not an allocation of that many entity rows.
     """
     local_meshes = tuple(meshes)
@@ -798,25 +894,19 @@ def prepare_owner_local_halo_plans(
     axis = str(axis_name).strip()
     if not local_meshes or capacity < 1 or not axis:
         raise ValueError(
-            "Halo preparation requires local meshes, a positive bound, and a named axis."
+            "halo_preparation.meshes must align with a positive message_capacity and nonempty axis_name; got invalid preparation inputs"
         )
+
+    storages = tuple(require_owner_local_storage(mesh) for mesh in local_meshes)
     if any(
-        not isinstance(mesh, CellMesh) or mesh.storage is None for mesh in local_meshes
-    ):
-        raise ValueError(
-            "Halo preparation requires canonical owner-local CellMesh storage."
-        )
-    storages = tuple(mesh.storage for mesh in local_meshes)
-    if any(
-        storage is None
-        or not 0 <= degree < len(storage.global_entity_counts)
+        not 0 <= degree < len(storage.global_entity_counts)
         or storage.partition_count != len(assigned)
         for storage in storages
     ):
         raise ValueError(
-            "Halo entity degree and declared placement must match canonical storage."
+            "halo_preparation.entity_degree must match storage coverage and placement; got an invalid degree or partition count"
         )
-    ranks = tuple(storage.partition_index for storage in storages if storage is not None)
+    ranks = tuple(storage.partition_index for storage in storages)
     parts = len(assigned)
     request_permutations = tuple(
         tuple((rank, (rank + offset) % parts) for rank in range(parts))
@@ -831,10 +921,8 @@ def prepare_owner_local_halo_plans(
     maxima = []
     identities = []
     for storage in storages:
-        if storage is None:
-            raise ValueError("Owner-local storage is required.")
-        ids = np.asarray(storage.entity_global_ids[degree], dtype=np.int64)
-        owners = np.asarray(storage.entity_owner[degree], dtype=np.int32)
+        ids = owner_local_host_array(storage.entity_global_ids[degree], dtype=np.int64)
+        owners = owner_local_host_array(storage.entity_owner[degree], dtype=np.int32)
         phase_rows = []
         for offset in range(1, parts):
             owner = (storage.partition_index + offset) % parts
@@ -884,9 +972,14 @@ def prepare_owner_local_halo_plans(
         out_specs=(PartitionSpec(), PartitionSpec()),
         check_vma=False,
     )(maximum_array, identity_array)
-    if not bool(np.asarray(agreed)) or int(np.asarray(required)) > capacity:
-        raise ValueError("Collective halo identity or bounded message admission failed.")
-    width = max(int(np.asarray(required)), 1)
+    if (
+        not bool(replicated_host_array(agreed))
+        or int(replicated_host_array(required)) > capacity
+    ):
+        raise ValueError(
+            "halo_preparation.message_capacity must admit collectively agreed halo requests; got disagreement or excess width"
+        )
+    width = max(int(replicated_host_array(required)), 1)
     packets = []
     receives = []
     receives_valid = []
@@ -903,16 +996,16 @@ def prepare_owner_local_halo_plans(
         receives_valid.append(valid)
     packet_array = make_owner_local_field_array(packets, ranks, assigned, axis_name=axis)
 
-    incoming = _exchange_owner_local_packets(
+    incoming = exchange_owner_local_packets(
         packet_array,
         request_permutations,
         mesh,
         axis,
     )
     local_incoming = {
-        (0 if shard.index[0].start is None else int(shard.index[0].start)): np.asarray(
-            shard.data
-        )[0]
+        (
+            0 if shard.index[0].start is None else int(shard.index[0].start)
+        ): owner_local_host_array(shard.data)[0]
         for shard in incoming.addressable_shards
     }
     plans = []
@@ -920,10 +1013,8 @@ def prepare_owner_local_halo_plans(
     for storage, receive, receive_valid in zip(
         storages, receives, receives_valid, strict=True
     ):
-        if storage is None:
-            raise ValueError("Owner-local storage is required.")
-        ids = np.asarray(storage.entity_global_ids[degree], dtype=np.int64)
-        owned = np.asarray(storage.entity_owned[degree], dtype=np.bool_)
+        ids = owner_local_host_array(storage.entity_global_ids[degree], dtype=np.int64)
+        owned = owner_local_host_array(storage.entity_owned[degree], dtype=np.bool_)
         messages = local_incoming[storage.partition_index]
         lookup = {
             int(identifier): row for row, identifier in enumerate(ids) if owned[row]
@@ -947,14 +1038,12 @@ def prepare_owner_local_halo_plans(
         out_specs=PartitionSpec(),
         check_vma=False,
     )(missing_array)
-    if bool(np.asarray(failed)):
+    if bool(replicated_host_array(failed)):
         raise ValueError(
-            "A peer requested a stable ID absent from its declared owner's local closure."
+            "halo_preparation.requests must exist in the declared owner closure; got an absent stable ID"
         )
     return tuple(
-        DistributedHaloPlan(
-            None,
-            None,
+        DistributedHaloPlan.from_owner_local(
             parts,
             local_global_ids=ids,
             local_owned=owned,
@@ -984,58 +1073,35 @@ def resolve_owner_local_field_values(
     axis_name: str,
     message_capacity: int,
 ) -> tuple[Array, ...]:
-    """Resolve actual carried fields in exact predecessor-transfer query ID order.
+    """Resolve carried fields in predecessor-transfer query ID order.
 
-    ``query_owners`` must come from the accepted immediate predecessor ownership
-    proof. Values are read only from authoritative owned predecessor rows, never
-    ghost copies, complete global field arrays, or an analytic seed. Queries and
-    responses use the same bounded peer packet execution as canonical halos.
-    Returned arrays remain on assigned local devices and may have different query
-    counts; only communication packets are padded.
+    Query owners bind the accepted predecessor ownership proof. Only owned
+    predecessor rows supply values. Bounded peer packets retain query ordering;
+    result arrays remain on assigned devices with unpadded local query counts.
     """
-    meshes = tuple(source_meshes)
-    values = tuple(jnp.asarray(value) for value in source_values)
-    if any(not value.is_fully_addressable for value in values) or any(
-        isinstance(value, Array) and not value.is_fully_addressable
-        for group in (query_global_ids, query_owners)
-        for value in group
-    ):
-        raise ValueError(
-            "Predecessor query IDs, owners, and values must be process-local addressable arrays."
-        )
-    query_ids = tuple(np.asarray(identifiers) for identifiers in query_global_ids)
-    owners = tuple(np.asarray(placement) for placement in query_owners)
-    assigned = tuple(devices)
-    degree = int(entity_degree)
-    bound = int(message_capacity)
-    axis = str(axis_name).strip()
-    if (
-        not meshes
-        or bound < 1
-        or not axis
-        or len(values) != len(meshes)
-        or len(query_ids) != len(meshes)
-        or len(owners) != len(meshes)
-    ):
-        raise ValueError(
-            "Field resolution requires aligned local sources, queries, and a positive peer bound."
-        )
-    if any(
-        not isinstance(mesh, CellMesh)
-        or mesh.storage is None
-        or not 0 <= degree < len(mesh.storage.global_entity_counts)
-        or mesh.storage.partition_count != len(assigned)
-        or mesh.storage.logical_topology_id != source_topology_id
-        for mesh in meshes
-    ):
-        raise ValueError(
-            "Field queries must bind the actual accepted predecessor topology and placement."
-        )
-    storages = tuple(mesh.storage for mesh in meshes)
-    ranks = tuple(storage.partition_index for storage in storages if storage is not None)
-    values = tuple(
-        jax.device_put(value, assigned[rank])
-        for rank, value in zip(ranks, values, strict=True)
+    sources = prepare_field_query_sources(
+        source_meshes,
+        source_values,
+        query_global_ids,
+        query_owners,
+        entity_degree,
+        source_topology_id,
+        devices,
+        axis_name,
+        message_capacity,
+    )
+    storages, values, query_ids, owners = (
+        sources.storages,
+        sources.values,
+        sources.query_ids,
+        sources.owners,
+    )
+    assigned, ranks, degree, bound, axis = (
+        sources.assigned,
+        sources.ranks,
+        sources.degree,
+        sources.bound,
+        sources.axis,
     )
     parts = len(assigned)
     requests = tuple(
@@ -1057,68 +1123,25 @@ def resolve_owner_local_field_values(
     for storage, field, ids, placement in zip(
         storages, values, query_ids, owners, strict=True
     ):
-        if storage is None:
-            raise ValueError("Accepted predecessor storage is required.")
-        source_ids = np.asarray(storage.entity_global_ids[degree], dtype=np.int64)
-        owned = np.asarray(storage.entity_owned[degree], dtype=np.bool_)
-        if (
-            not field.is_fully_addressable
-            or field.shape != (source_ids.size,) + component_shape
-            or field.dtype != dtype
-            or ids.ndim != 1
-            or ids.dtype.kind not in "iu"
-            or np.any(ids < 0)
-            or np.any(ids > np.iinfo(np.int64).max)
-            or placement.shape != ids.shape
-            or placement.dtype.kind not in "iu"
-            or np.any(placement < 0)
-            or np.any(placement >= parts)
-        ):
-            raise ValueError(
-                "Local field components and accepted query IDs/owners are incompatible."
-            )
-        lookup = {
-            int(identifier): row
-            for row, identifier in enumerate(source_ids)
-            if owned[row]
-        }
-        lookups.append(lookup)
-        phase_rows = tuple(
-            np.flatnonzero(
-                placement == (storage.partition_index + offset) % parts
-            ).astype(np.int32)
-            for offset in range(1, parts)
+        rows = prepare_field_query_rows(
+            storage,
+            field,
+            ids,
+            placement,
+            degree,
+            component_shape,
+            dtype,
+            parts,
+            source_topology_id,
+            bound,
         )
-        query_rows.append(phase_rows)
-        own = np.flatnonzero(placement == storage.partition_index).astype(np.int32)
-        source_rows = np.asarray(
-            [lookup.get(int(ids[row]), -1) for row in own], dtype=np.int32
-        )
-        own_rows.append(own)
-        own_source_rows.append(source_rows)
-        local_missing.append(bool(np.any(source_rows < 0)))
-        maxima.append(
-            jnp.asarray(max((row.size for row in phase_rows), default=0), dtype=jnp.int32)
-        )
-        identity = canonical_fingerprint(
-            {
-                "kind": "accepted-owner-local-field-query",
-                "topology": source_topology_id,
-                "degree": degree,
-                "count": storage.global_entity_counts[degree],
-                "evidence": storage.evidence_id,
-                "parts": parts,
-                "component_shape": component_shape,
-                "dtype": str(dtype),
-                "message_bound": bound,
-            }
-        )
-        identities.append(
-            jnp.asarray(
-                [int(identity[offset : offset + 7], 16) for offset in range(0, 64, 7)],
-                dtype=jnp.int32,
-            )
-        )
+        lookups.append(rows.lookup)
+        query_rows.append(rows.phase_rows)
+        own_rows.append(rows.own)
+        own_source_rows.append(rows.source_rows)
+        local_missing.append(rows.missing)
+        maxima.append(rows.maximum)
+        identities.append(rows.metadata)
     mesh = Mesh(np.asarray(assigned, dtype=object), (axis,))
     spec = PartitionSpec(axis)
     maximum_array = make_owner_local_field_array(maxima, ranks, assigned, axis_name=axis)
@@ -1139,25 +1162,28 @@ def resolve_owner_local_field_values(
         out_specs=(PartitionSpec(), PartitionSpec()),
         check_vma=False,
     )(maximum_array, identity_array)
-    if not bool(np.asarray(agreed)) or int(np.asarray(required)) > bound:
+    if (
+        not bool(replicated_host_array(agreed))
+        or int(replicated_host_array(required)) > bound
+    ):
         raise ValueError(
-            "Collective predecessor field identity or bounded query admission failed."
+            "resolve_owner_local_field_values.message_capacity must admit collectively agreed predecessor queries; got disagreement or excess width"
         )
-    width = max(int(np.asarray(required)), 1)
+    width = max(int(replicated_host_array(required)), 1)
     packets = []
     for ids, phase_rows in zip(query_ids, query_rows, strict=True):
         packet = np.full((parts - 1, width), -1, dtype=np.int64)
         for phase, rows in enumerate(phase_rows):
             packet[phase, : rows.size] = ids[rows]
         packets.append(jnp.asarray(packet, dtype=jnp.int64))
-    incoming = _exchange_owner_local_packets(
+    incoming = exchange_owner_local_packets(
         make_owner_local_field_array(packets, ranks, assigned, axis_name=axis),
         requests,
         mesh,
         axis,
     )
     local_messages = {
-        int(shard.index[0].start): np.asarray(shard.data)[0]
+        int(shard.index[0].start): owner_local_host_array(shard.data)[0]
         for shard in incoming.addressable_shards
     }
     response_values = []
@@ -1186,11 +1212,12 @@ def resolve_owner_local_field_values(
         out_specs=PartitionSpec(),
         check_vma=False,
     )(make_owner_local_field_array(missing, ranks, assigned, axis_name=axis))
-    if bool(np.asarray(failed)):
+    if bool(replicated_host_array(failed)):
         raise ValueError(
-            "A transfer query ID is absent from its accepted authoritative owner closure."
+            "resolve_owner_local_field_values.query_global_ids must exist in their "
+            "accepted owner closure; got an absent transfer query ID"
         )
-    returned = _exchange_owner_local_packets(
+    returned = exchange_owner_local_packets(
         make_owner_local_field_array(response_values, ranks, assigned, axis_name=axis),
         responses,
         mesh,

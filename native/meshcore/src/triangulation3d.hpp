@@ -38,6 +38,7 @@
 #include <span>
 
 #include "bounded_memory.hpp"
+#include "geometry3.hpp"
 
 #include "cavity.hpp"
 #include "phydrax_meshcore.h"
@@ -109,7 +110,7 @@ class Triangulation3D {
     std::size_t third = 2;
     while (third < count) {
       if (!spend(1)) return PHX_MC_CAPACITY_EXCEEDED;
-      if (!collinear3d(point(a), point(b), point(order[third]))) break;
+      if (!geometry::collinear(point(a), point(b), point(order[third]))) break;
       ++third;
     }
     if (third == count) {

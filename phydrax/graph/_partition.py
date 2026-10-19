@@ -4,8 +4,8 @@
 
 """Deterministic multilevel k-way partitioning of weighted CSR graphs.
 
-`phydrax.graph` owns the partition semantics: graph validation and canonical
-form, target shares and balance capacities, the nonempty-part policy, work
+`phydrax.graph` owns graph validation and sorted CSR form, target shares and
+balance capacities, the nonempty-part policy, work
 budgets, and the evidence measured on the result. The serial compiled multilevel
 kernel ships in meshcore. Owner-local globally logical CSR views use the
 Phydrax-owned XLA multilevel route: two heavy-edge contraction levels, scalar
@@ -22,18 +22,20 @@ from collections.abc import Sequence
 from typing import final, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._meshcore import graph_partition, GRAPH_PARTITION_COUNTERS, meshcore_identity
+from .._meshcore import graph_partition, GraphPartitionCounters, meshcore_identity
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar, nonnegative_integer, positive_integer
 from ..typing import (
     AnyShape,
+    checked,
     ConvertibleToArray,
     Dim,
     Float64,
@@ -46,6 +48,7 @@ from ..typing import (
     parse,
     Scope,
 )
+from ._distributed_partition import execute, logical_id, PartitionMeasurements
 
 
 GraphEmptyPartPolicy: TypeAlias = Literal["require_nonempty", "permit_empty"]
@@ -87,12 +90,18 @@ class _GraphIndivisibleDim(Dim):
 def _integer_vector(value: ConvertibleToArray, name: str, /) -> np.ndarray:
     array = np.asarray(value)
     if array.ndim != 1:
-        raise ValueError(f"{name} must be one-dimensional.")
+        raise ValueError(
+            f"WeightedCSRGraph.{name} must be one-dimensional; got shape {array.shape}"
+        )
     # An empty sequence carries no dtype of its own.
     if array.dtype.kind not in "iu" and array.size:
-        raise TypeError(f"{name} must be an integer array.")
+        raise TypeError(
+            f"WeightedCSRGraph.{name} must be an integer array; got dtype {array.dtype}"
+        )
     if array.dtype == np.uint64 and np.any(array > np.iinfo(np.int64).max):
-        raise ValueError(f"{name} exceeds the int64 range.")
+        raise ValueError(
+            f"WeightedCSRGraph.{name} must fit the int64 range; got overflowing uint64 values"
+        )
     return array.astype(np.int64)
 
 
@@ -101,11 +110,17 @@ def _weights(value: ConvertibleToArray | None, size: int, name: str, /) -> np.nd
         return np.ones((size,), dtype=np.int64)
     weights = _integer_vector(value, name)
     if weights.shape != (size,):
-        raise ValueError(f"{name} must have shape ({size},).")
+        raise ValueError(
+            f"WeightedCSRGraph.{name} must have shape ({size},); got {weights.shape}"
+        )
     if np.any(weights < 0):
-        raise ValueError(f"{name} must be nonnegative.")
+        raise ValueError(
+            f"WeightedCSRGraph.{name} must be nonnegative; got negative weights"
+        )
     if sum(map(int, weights)) > _WEIGHT_LIMIT:
-        raise ValueError(f"{name} must total at most 2**53.")
+        raise ValueError(
+            f"WeightedCSRGraph.{name} must total at most 2**53; got an oversized total"
+        )
     return weights
 
 
@@ -116,23 +131,157 @@ def _canonical_rows(
     count = offsets.size - 1
     rows = np.repeat(np.arange(count, dtype=np.int64), np.diff(offsets))
     if np.any((neighbors < 0) | (neighbors >= count)):
-        raise ValueError("Graph neighbors must be vertex indices.")
+        raise ValueError(
+            "WeightedCSRGraph.neighbors must be vertex indices; got out-of-range adjacency"
+        )
     if np.any(rows == neighbors):
-        raise ValueError("Graph rows must not contain self loops.")
+        raise ValueError(
+            "WeightedCSRGraph.neighbors must exclude self loops; got a self loop"
+        )
     order = np.lexsort((neighbors, rows))
     neighbors, edge_weights = neighbors[order], edge_weights[order]
     keys = rows * count + neighbors
     if np.any(keys[1:] == keys[:-1]):
-        raise ValueError("Graph rows must not repeat a neighbor.")
+        raise ValueError(
+            "WeightedCSRGraph.neighbors must not repeat a neighbor; got duplicate adjacency"
+        )
     mirror = np.argsort(neighbors * count + rows, kind="stable")
     if not (
         np.array_equal(neighbors[mirror] * count + rows[mirror], keys)
         and np.array_equal(edge_weights[mirror], edge_weights)
     ):
         raise ValueError(
-            "Graph adjacency must be symmetric with equal weights in both directions."
+            "WeightedCSRGraph.adjacency must be symmetric with equal weights; got unmatched directed edges"
         )
     return rows, neighbors, edge_weights
+
+
+class _OwnerCSR(StrictModule):
+    offsets: Array
+    neighbors: Array
+    edges: Array
+    vertices: Array
+    vertex_ids: Array
+    vertex_owners: Array
+    vertex_valid: Array
+    vertex_count: int = eqx.field(static=True)
+    graph_id: str = eqx.field(static=True)
+
+
+def _prepare_owner_csr(
+    offsets: ConvertibleToArray,
+    neighbors: ConvertibleToArray,
+    edge_weights: ConvertibleToArray | None,
+    vertex_weights: ConvertibleToArray | None,
+    vertex_ids: Array | None,
+    vertex_owners: Array | None,
+    vertex_valid: Array | None,
+    mesh: Mesh,
+    axis_name: str | None,
+) -> _OwnerCSR:
+    if axis_name is None or len(mesh.axis_names) != 1 or axis_name not in mesh.axis_names:
+        raise ValueError(
+            f"WeightedCSRGraph.axis_name must name one execution mesh axis; got {axis_name!r}"
+        )
+    match offsets, neighbors:
+        case Array(), Array():
+            pass
+        case _:
+            raise TypeError(
+                "WeightedCSRGraph.rows must use globally logical JAX arrays; got non-array rows"
+            )
+    if vertex_ids is None or vertex_owners is None or vertex_valid is None:
+        raise TypeError(
+            "WeightedCSRGraph.ownership must include ID, owner and validity arrays; got missing arrays"
+        )
+    if any(
+        value.ndim != 2
+        for value in (offsets, neighbors, vertex_ids, vertex_owners, vertex_valid)
+    ):
+        raise ValueError(
+            "WeightedCSRGraph.rows must align with mesh and ID rows; got non-rank-2 arrays"
+        )
+    ranks, capacity = vertex_ids.shape
+    entries = neighbors.shape[1]
+    if (
+        ranks != mesh.shape[axis_name]
+        or offsets.shape != (ranks, capacity + 1)
+        or vertex_owners.shape != (ranks, capacity)
+        or vertex_valid.shape != (ranks, capacity)
+    ):
+        raise ValueError(
+            "WeightedCSRGraph.rows must align with mesh and ID rows; got mismatched shapes"
+        )
+    if (
+        capacity < 1
+        or entries < 1
+        or neighbors.shape[0] != ranks
+        or ranks * capacity > _VERTEX_LIMIT
+        or ranks * entries > _VERTEX_LIMIT
+    ):
+        raise ValueError(
+            "WeightedCSRGraph.capacity must be positive and int32-addressable; got invalid capacities"
+        )
+    match edge_weights:
+        case None:
+            admitted_edges = None
+        case Array():
+            admitted_edges = edge_weights
+        case _:
+            raise TypeError(
+                "WeightedCSRGraph.edge_weights must be logical JAX arrays; got non-array weights"
+            )
+    match vertex_weights:
+        case None:
+            admitted_vertices = None
+        case Array():
+            admitted_vertices = vertex_weights
+        case _:
+            raise TypeError(
+                "WeightedCSRGraph.vertex_weights must be logical JAX arrays; got non-array weights"
+            )
+    edges = jnp.ones_like(neighbors) if admitted_edges is None else admitted_edges
+    vertices = (
+        jnp.ones_like(vertex_ids) if admitted_vertices is None else admitted_vertices
+    )
+    for value in (offsets, neighbors, edges, vertices, vertex_ids):
+        if value.dtype != jnp.int64:
+            raise TypeError(
+                f"WeightedCSRGraph.rows must use int64 IDs, offsets and weights; got {value.dtype}"
+            )
+    if vertex_owners.dtype != jnp.int32 or vertex_valid.dtype != jnp.bool_:
+        raise TypeError(
+            "WeightedCSRGraph.ownership must use int32 owners and bool masks; got invalid dtypes"
+        )
+    if edges.shape != neighbors.shape or vertices.shape != vertex_ids.shape:
+        raise ValueError(
+            "WeightedCSRGraph.weights must align with CSR rows; got mismatched shapes"
+        )
+    placement = NamedSharding(mesh, PartitionSpec(axis_name))
+    arrays = (
+        offsets,
+        neighbors,
+        edges,
+        vertices,
+        vertex_ids,
+        vertex_owners,
+        vertex_valid,
+    )
+    if any(not value.sharding.is_equivalent_to(placement, ndim=2) for value in arrays):
+        raise ValueError(
+            "WeightedCSRGraph.rows must use declared rank-row sharding; got different placement"
+        )
+    return _OwnerCSR(
+        offsets=offsets,
+        neighbors=neighbors,
+        edges=edges,
+        vertices=vertices,
+        vertex_ids=vertex_ids,
+        vertex_owners=vertex_owners,
+        vertex_valid=vertex_valid,
+        vertex_count=ranks * capacity,
+        graph_id=logical_id(arrays),
+    )
 
 
 @final
@@ -142,7 +291,7 @@ class WeightedCSRGraph(StrictModule, NonTrainableState):
     Row ``v`` lists the neighbors of vertex ``v`` in ``neighbors[offsets[v]:
     offsets[v + 1]]``. Every undirected edge appears in both rows with the same
     weight; self loops and repeated neighbors are refused. Rows are stored
-    sorted by neighbor, which is the canonical identity. Weights default to one;
+    sorted by neighbor to define graph identity. Weights default to one;
     each weight total is at most ``2**53`` and the vertex total is positive.
     """
 
@@ -160,6 +309,7 @@ class WeightedCSRGraph(StrictModule, NonTrainableState):
     mesh: Mesh | None = eqx.field(static=True)
     axis_name: str | None = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         offsets: ConvertibleToArray,
@@ -175,122 +325,57 @@ class WeightedCSRGraph(StrictModule, NonTrainableState):
         axis_name: str | None = None,
     ) -> None:
         if mesh is not None:
-            from ._distributed_partition import logical_id
-
-            if (
-                axis_name is None
-                or len(mesh.axis_names) != 1
-                or axis_name not in mesh.axis_names
-            ):
-                raise ValueError(
-                    "Owner-local CSR requires one named execution mesh axis."
-                )
-            if (
-                not isinstance(offsets, Array)
-                or not isinstance(neighbors, Array)
-                or not isinstance(vertex_ids, Array)
-                or not isinstance(vertex_owners, Array)
-                or not isinstance(vertex_valid, Array)
-            ):
-                raise TypeError(
-                    "Owner-local CSR leaves must be globally logical JAX arrays."
-                )
-            if any(
-                value.ndim != 2
-                for value in (offsets, neighbors, vertex_ids, vertex_owners, vertex_valid)
-            ):
-                raise ValueError(
-                    "Owner-local CSR shapes must align with the mesh and ID rows."
-                )
-            ranks, capacity = vertex_ids.shape
-            entries = neighbors.shape[1]
-            if (
-                ranks != mesh.shape[axis_name]
-                or offsets.shape != (ranks, capacity + 1)
-                or vertex_owners.shape != (ranks, capacity)
-                or vertex_valid.shape != (ranks, capacity)
-            ):
-                raise ValueError(
-                    "Owner-local CSR shapes must align with the mesh and ID rows."
-                )
-            if (
-                capacity < 1
-                or entries < 1
-                or neighbors.shape[0] != ranks
-                or ranks * capacity > _VERTEX_LIMIT
-                or ranks * entries > _VERTEX_LIMIT
-            ):
-                raise ValueError(
-                    "Owner-local CSR needs positive int32-addressable capacities."
-                )
-            if edge_weights is not None and not isinstance(edge_weights, Array):
-                raise TypeError("Owner-local edge weights must be logical JAX arrays.")
-            if vertex_weights is not None and not isinstance(vertex_weights, Array):
-                raise TypeError("Owner-local vertex weights must be logical JAX arrays.")
-            edges = jnp.ones_like(neighbors) if edge_weights is None else edge_weights
-            vertices = (
-                jnp.ones_like(vertex_ids) if vertex_weights is None else vertex_weights
-            )
-            for value in (offsets, neighbors, edges, vertices, vertex_ids):
-                if value.dtype != jnp.int64:
-                    raise TypeError(
-                        "Owner-local CSR IDs, offsets and weights must be int64."
-                    )
-            if vertex_owners.dtype != jnp.int32 or vertex_valid.dtype != jnp.bool_:
-                raise TypeError("Owner-local owners must be int32 and masks bool.")
-            if edges.shape != neighbors.shape or vertices.shape != vertex_ids.shape:
-                raise ValueError("Owner-local weights must align with their CSR rows.")
-            placement = NamedSharding(mesh, PartitionSpec(axis_name))
-            arrays = (
+            prepared = _prepare_owner_csr(
                 offsets,
                 neighbors,
-                edges,
-                vertices,
+                edge_weights,
+                vertex_weights,
                 vertex_ids,
                 vertex_owners,
                 vertex_valid,
+                mesh,
+                axis_name,
             )
-            if any(
-                not value.sharding.is_equivalent_to(placement, ndim=2) for value in arrays
-            ):
-                raise ValueError(
-                    "Owner-local CSR leaves must use the declared rank-row sharding."
-                )
-            graph_id = logical_id(arrays)
-            self.offsets = offsets
-            self.neighbors = neighbors
-            self.edge_weights = edges
-            self.vertex_weights = vertices
-            self.vertex_ids = vertex_ids
-            self.vertex_owners = vertex_owners
-            self.vertex_valid = vertex_valid
+            self.offsets = prepared.offsets
+            self.neighbors = prepared.neighbors
+            self.edge_weights = prepared.edges
+            self.vertex_weights = prepared.vertices
+            self.vertex_ids = prepared.vertex_ids
+            self.vertex_owners = prepared.vertex_owners
+            self.vertex_valid = prepared.vertex_valid
             self.mesh = mesh
             self.axis_name = axis_name
-            self.vertex_count = ranks * capacity
-            self.graph_id = graph_id
+            self.vertex_count = prepared.vertex_count
+            self.graph_id = prepared.graph_id
             return
         if any(
             value is not None
             for value in (vertex_ids, vertex_owners, vertex_valid, axis_name)
         ):
-            raise ValueError("Logical ID/ownership views require an execution mesh.")
+            raise ValueError(
+                "WeightedCSRGraph.ownership must include an execution mesh; got ID/ownership views without mesh"
+            )
         row_offsets = _integer_vector(offsets, "offsets")
         adjacency = _integer_vector(neighbors, "neighbors")
         count = row_offsets.size - 1
         if count < 1 or count > _VERTEX_LIMIT:
-            raise ValueError(f"A graph needs between 1 and {_VERTEX_LIMIT} vertices.")
+            raise ValueError(
+                f"WeightedCSRGraph.vertex_count must lie between 1 and {_VERTEX_LIMIT}; got {count}"
+            )
         if (
             row_offsets[0] != 0
             or np.any(np.diff(row_offsets) < 0)
             or row_offsets[-1] != adjacency.size
         ):
             raise ValueError(
-                "offsets must start at 0, not decrease, and end at the neighbor count."
+                "WeightedCSRGraph.offsets must start at 0, not decrease, and end at the neighbor count; got invalid CSR offsets"
             )
         edges = _weights(edge_weights, adjacency.size, "edge_weights")
         vertices = _weights(vertex_weights, count, "vertex_weights")
         if not np.any(vertices > 0):
-            raise ValueError("vertex_weights must have a positive total.")
+            raise ValueError(
+                "WeightedCSRGraph.vertex_weights must have a positive total; got zero total"
+            )
         _, adjacency, edges = _canonical_rows(row_offsets, adjacency, edges)
         scope = Scope()
         self.offsets = parse(
@@ -325,6 +410,7 @@ class WeightedCSRGraph(StrictModule, NonTrainableState):
         )
 
     @classmethod
+    @checked
     def owner_local(
         cls,
         offsets: Array,
@@ -363,12 +449,16 @@ class WeightedCSRGraph(StrictModule, NonTrainableState):
     @property
     def neighbor_ids(self) -> Array:
         if self.mesh is None:
-            raise ValueError("Scientific neighbor IDs belong to an owner-local CSR view.")
-        if not isinstance(self.neighbors, Array):
-            raise RuntimeError(
-                "Owner-local CSR neighbors must remain logical JAX arrays."
+            raise ValueError(
+                "WeightedCSRGraph.neighbor_ids must belong to an owner-local view; got serial graph"
             )
-        return self.neighbors
+        match self.neighbors:
+            case Array():
+                return self.neighbors
+            case _:
+                raise RuntimeError(
+                    "WeightedCSRGraph.neighbors must retain logical JAX arrays; got host adjacency"
+                )
 
 
 def _frozen(array: np.ndarray | Array, /) -> np.ndarray:
@@ -417,14 +507,24 @@ class GraphPartitionPlan(StrictModule, NonTrainableState):
         refinement_passes: int = 8,
         work_limit: int | None = None,
     ) -> None:
-        parts = positive_integer(part_count, "part_count")
-        tolerance = finite_real_scalar(maximum_imbalance, "maximum_imbalance")
+        parts = positive_integer(part_count, "GraphPartitionPlan.part_count")
+        tolerance = finite_real_scalar(
+            maximum_imbalance, "GraphPartitionPlan.maximum_imbalance"
+        )
         if tolerance < 1.0:
-            raise ValueError("maximum_imbalance must be at least one.")
-        policy = parse(empty_parts, GraphEmptyPartPolicy, "empty_parts")
-        passes = nonnegative_integer(refinement_passes, "refinement_passes")
+            raise ValueError(
+                "GraphPartitionPlan.maximum_imbalance must be at least one; got a value below one"
+            )
+        policy = parse(
+            empty_parts, GraphEmptyPartPolicy, "GraphPartitionPlan.empty_parts"
+        )
+        passes = nonnegative_integer(
+            refinement_passes, "GraphPartitionPlan.refinement_passes"
+        )
         budget = (
-            None if work_limit is None else nonnegative_integer(work_limit, "work_limit")
+            None
+            if work_limit is None
+            else nonnegative_integer(work_limit, "GraphPartitionPlan.work_limit")
         )
         self.part_count = parts
         self.maximum_imbalance = tolerance
@@ -449,13 +549,17 @@ def _shares(value: Sequence[float] | None, parts: int, /) -> tuple[float, ...]:
     if value is None:
         return (1.0 / parts,) * parts
     if isinstance(value, (str, bytes)) or len(value) != parts:
-        raise ValueError("part_shares must hold one share per part.")
+        raise ValueError(
+            "GraphPartitionPlan.part_shares must hold one share per part; got mismatched shares"
+        )
     shares = tuple(
-        finite_real_scalar(share, f"part_shares[{index}]")
+        finite_real_scalar(share, f"GraphPartitionPlan.part_shares[{index}]")
         for index, share in enumerate(value)
     )
     if any(share <= 0.0 for share in shares):
-        raise ValueError("part_shares must be positive.")
+        raise ValueError(
+            "GraphPartitionPlan.part_shares must be positive; got a nonpositive share"
+        )
     total = math.fsum(shares)
     return tuple(share / total for share in shares)
 
@@ -481,25 +585,88 @@ class GraphPartitionWork(StrictModule, NonTrainableState):
     adjacency_visits: int = eqx.field(static=True)
     candidate_evaluations: int = eqx.field(static=True)
 
-    def __init__(self, counters: np.ndarray, /) -> None:
-        if counters.shape != (len(GRAPH_PARTITION_COUNTERS),):
-            raise ValueError("Native partition counters have an invalid shape.")
-        if counters.dtype != np.int64 or np.any(counters < 0):
+    @checked
+    def __init__(self, counters: GraphPartitionCounters, /) -> None:
+        if any(
+            type(value) is not int or value < 0 or value > np.iinfo(np.int64).max
+            for _, value in counters.items()
+        ):
             raise ValueError(
-                "Native partition counters must be nonnegative int64 values."
+                "GraphPartitionWork.counters must be nonnegative int64 values; got invalid counters"
             )
-        values = dict(zip(GRAPH_PARTITION_COUNTERS, counters.tolist(), strict=True))
-        self.coarsening_levels = values["coarsening_levels"]
-        self.coarsest_vertex_count = values["coarsest_vertex_count"]
-        self.matched_pairs = values["matched_pairs"]
-        self.bisection_trials = values["bisection_trials"]
-        self.refinement_passes = values["refinement_passes"]
-        self.moves_committed = values["moves_committed"]
-        self.moves_rolled_back = values["moves_rolled_back"]
-        self.balance_moves = values["balance_moves"]
-        self.nonempty_repairs = values["nonempty_repairs"]
-        self.adjacency_visits = values["adjacency_visits"]
-        self.candidate_evaluations = values["candidate_evaluations"]
+        self.coarsening_levels = counters.coarsening_levels
+        self.coarsest_vertex_count = counters.coarsest_vertex_count
+        self.matched_pairs = counters.matched_pairs
+        self.bisection_trials = counters.bisection_trials
+        self.refinement_passes = counters.refinement_passes
+        self.moves_committed = counters.moves_committed
+        self.moves_rolled_back = counters.moves_rolled_back
+        self.balance_moves = counters.balance_moves
+        self.nonempty_repairs = counters.nonempty_repairs
+        self.adjacency_visits = counters.adjacency_visits
+        self.candidate_evaluations = counters.candidate_evaluations
+
+
+class _CollectiveHostMeasurements(StrictModule):
+    weights: np.ndarray
+    counts: np.ndarray
+    targets: np.ndarray
+    capacities: np.ndarray
+    resource: int = eqx.field(static=True)
+    cut: int = eqx.field(static=True)
+    cut_count: int = eqx.field(static=True)
+    boundary: int = eqx.field(static=True)
+    migration: int = eqx.field(static=True)
+    ghosts: int = eqx.field(static=True)
+    maximum: int = eqx.field(static=True)
+
+
+def _collective_host_measurements(
+    measured: PartitionMeasurements,
+) -> _CollectiveHostMeasurements:
+    weights, counts, targets, capacities, *scalars = jax.device_get(
+        (
+            measured.part_weights,
+            measured.part_vertex_counts,
+            measured.targets,
+            measured.capacities,
+            measured.resource_status,
+            measured.edge_cut,
+            measured.cut_edge_count,
+            measured.boundary_vertex_count,
+            measured.migration_vertex_count,
+            measured.ghost_entry_count,
+            measured.maximum_vertex_weight,
+        )
+    )
+    resource, cut, cut_count, boundary, migration, ghosts, maximum = (
+        int(value) for value in scalars
+    )
+    if resource == 0 and (
+        np.any(weights < 0)
+        or np.any(counts < 0)
+        or np.any(~np.isfinite(targets))
+        or np.any(targets <= 0)
+        or any(
+            value < 0 for value in (cut, cut_count, boundary, migration, ghosts, maximum)
+        )
+    ):
+        raise ValueError(
+            "GraphPartitionEvidence.measurements must be nonnegative with positive finite targets on acceptance; got invalid measurements"
+        )
+    return _CollectiveHostMeasurements(
+        weights=weights,
+        counts=counts,
+        targets=targets,
+        capacities=capacities,
+        resource=resource,
+        cut=cut,
+        cut_count=cut_count,
+        boundary=boundary,
+        migration=migration,
+        ghosts=ghosts,
+        maximum=maximum,
+    )
 
 
 @final
@@ -548,162 +715,46 @@ class GraphPartitionEvidence(StrictModule, NonTrainableState):
     migration_vertex_count: int = eqx.field(static=True)
     ghost_entry_count: int = eqx.field(static=True)
 
-    def __init__(
-        self,
+    @classmethod
+    @checked
+    def serial(
+        cls,
         graph: WeightedCSRGraph,
-        parts: np.ndarray | Array,
-        targets: np.ndarray | Array,
-        capacities: np.ndarray | Array,
+        parts: np.ndarray,
+        targets: np.ndarray,
+        capacities: np.ndarray,
         work: GraphPartitionWork,
         backend: str,
         /,
-        *,
-        collective_measurements: tuple | None = None,
-        indivisible_ids: Array | None = None,
-    ) -> None:
-        self.accepted = True
-        self.resource_status = 0
-        self.migration_vertex_count = 0
-        self.ghost_entry_count = 0
+    ) -> GraphPartitionEvidence:
+        """Measure cut, balance and work from a serial partition."""
         if graph.mesh is not None:
-            if collective_measurements is None or indivisible_ids is None:
-                raise ValueError(
-                    "Owner-local evidence requires measured collective kernel output."
-                )
-            if graph.vertex_ids is None:
-                raise RuntimeError(
-                    "Owner-local graph evidence requires scientific vertex IDs."
-                )
-            if not isinstance(parts, Array):
-                raise TypeError("Owner-local partition parts must be logical JAX arrays.")
-            (
-                weights,
-                counts,
-                measured_targets,
-                measured_capacities,
-                _,
-                resource,
-                cut,
-                cut_count,
-                boundary,
-                migration,
-                ghosts,
-                maximum,
-            ) = collective_measurements
-            count = targets.size
-            if (
-                parts.dtype != jnp.int32
-                or parts.shape != graph.vertex_ids.shape
-                or indivisible_ids.dtype != jnp.int64
-                or indivisible_ids.shape != parts.shape
-            ):
-                raise ValueError(
-                    "Owner-local parts and indivisible IDs must align with graph rows."
-                )
-            if (
-                any(
-                    value.dtype != jnp.int64 or value.shape != (count,)
-                    for value in (weights, counts, capacities)
-                )
-                or targets.dtype != jnp.float64
-                or targets.shape != (count,)
-            ):
-                raise ValueError(
-                    "Collective weights, counts, targets and capacities have invalid contracts."
-                )
-            resource, cut, cut_count, boundary, migration, ghosts, maximum = (
-                int(np.asarray(value))
-                for value in (
-                    resource,
-                    cut,
-                    cut_count,
-                    boundary,
-                    migration,
-                    ghosts,
-                    maximum,
-                )
+            raise ValueError(
+                "GraphPartitionEvidence.graph must be serial; got owner-local graph"
             )
-            host_weights, host_counts, host_targets, host_capacities = (
-                np.asarray(value) for value in (weights, counts, targets, capacities)
-            )
-            if not np.array_equal(
-                host_targets, np.asarray(measured_targets)
-            ) or not np.array_equal(host_capacities, np.asarray(measured_capacities)):
-                raise ValueError(
-                    "Collective evidence differs from its measured target table."
-                )
-            if resource == 0 and (
-                np.any(host_weights < 0)
-                or np.any(host_counts < 0)
-                or np.any(~np.isfinite(host_targets))
-                or np.any(host_targets <= 0)
-                or any(
-                    value < 0
-                    for value in (cut, cut_count, boundary, migration, ghosts, maximum)
-                )
-            ):
-                raise ValueError(
-                    "Accepted collective evidence must have valid numerical measurements."
-                )
-            self.part_weights = weights
-            self.part_vertex_counts = counts
-            self.part_targets = targets
-            self.part_capacities = capacities
-            self.indivisible_vertices = indivisible_ids
-            self.status = (
-                "indivisible_vertex_overload"
-                if maximum > np.max(host_capacities)
-                else "balanced"
-                if np.all(host_weights <= host_capacities)
-                else "balance_not_reached"
-            )
-            self.imbalance = (
-                float(np.max(host_weights / host_targets))
-                if np.all(host_targets > 0)
-                else math.inf
-            )
-            self.imbalance_lower_bound = (
-                max(1.0, maximum / float(np.max(host_targets)))
-                if np.max(host_targets) > 0
-                else math.inf
-            )
-            self.edge_cut = cut
-            self.cut_edge_count = cut_count
-            self.boundary_vertex_count = boundary
-            self.empty_part_count = int(np.count_nonzero(host_counts == 0))
-            self.work = work
-            self.determinism = "owner-local multilevel heavy-edge matching; scientific-ID scalar priorities; exact integer gains; capacity-first weighted allocation; bounded gain refinement"
-            self.backend = backend
-            self.accepted = resource == 0
-            self.resource_status = resource
-            self.migration_vertex_count = migration
-            self.ghost_entry_count = ghosts
-            self.evidence_id = canonical_fingerprint(
-                dict(
-                    kind="owner-local-graph-partition-evidence",
-                    graph=graph.graph_id,
-                    parts=_logical_parts_id(parts),
-                    resource_status=resource,
-                    weights=host_weights.tolist(),
-                    cut=cut,
-                )
-            )
-            return
+        accepted, resource_status = True, 0
+        migration_vertex_count, ghost_entry_count = 0, 0
         count = targets.size
         if parts.dtype != np.int32 or parts.shape != (graph.vertex_count,):
-            raise ValueError("Partition parts must be int32 with one entry per vertex.")
+            raise ValueError(
+                "GraphPartitionEvidence.parts must be int32 with one entry per vertex; got invalid dtype or shape"
+            )
         if np.any((parts < 0) | (parts >= count)):
-            raise ValueError("Partition parts contain an out-of-range part index.")
+            raise ValueError(
+                "GraphPartitionEvidence.parts must contain in-range part indices; got out-of-range part index"
+            )
         if capacities.dtype != np.int64 or capacities.shape != (count,):
             raise ValueError(
-                "Partition capacities must be int64 with one entry per part."
+                "GraphPartitionEvidence.capacities must be int64 with one entry per part; got invalid dtype or shape"
             )
         if (
             targets.dtype != np.float64
             or np.any(~np.isfinite(targets))
             or np.any(targets <= 0)
         ):
-            raise ValueError("Partition targets must be positive finite float64 values.")
+            raise ValueError(
+                "GraphPartitionEvidence.targets must be positive finite float64 values; got invalid targets"
+            )
         weights = np.zeros((count,), dtype=np.int64)
         np.add.at(weights, parts, graph.vertex_weights)
         rows = np.repeat(
@@ -718,47 +769,184 @@ class GraphPartitionEvidence(StrictModule, NonTrainableState):
         else:
             status = "balance_not_reached"
         scope = Scope()
-        self.part_weights = parse(
+        part_weights = parse(
             _frozen(weights), HostInt64[_GraphPartDim], "part_weights", scope=scope
         )
-        self.part_targets = parse(
+        part_targets = parse(
             _frozen(targets), HostFloat64[_GraphPartDim], "part_targets", scope=scope
         )
-        self.part_capacities = parse(
+        part_capacities = parse(
             _frozen(capacities), HostInt64[_GraphPartDim], "part_capacities", scope=scope
         )
-        self.part_vertex_counts = parse(
+        part_vertex_counts = parse(
             _frozen(np.bincount(parts, minlength=count).astype(np.int64)),
             HostInt64[_GraphPartDim],
             "part_vertex_counts",
             scope=scope,
         )
-        self.indivisible_vertices = parse(
+        indivisible_vertices = parse(
             _frozen(indivisible.astype(np.int64)),
             HostInt64[_GraphIndivisibleDim],
             "indivisible_vertices",
         )
-        self.status = status
-        self.imbalance = float(np.max(weights / targets))
-        self.imbalance_lower_bound = max(
+        imbalance = float(np.max(weights / targets))
+        imbalance_lower_bound = max(
             1.0, float(np.max(graph.vertex_weights)) / float(np.max(targets))
         )
-        self.edge_cut = int(np.sum(graph.edge_weights[crossing])) // 2
-        self.cut_edge_count = int(np.count_nonzero(crossing)) // 2
-        self.boundary_vertex_count = np.unique(rows[crossing]).size
-        self.empty_part_count = int(np.count_nonzero(self.part_vertex_counts == 0))
-        self.work = work
-        self.determinism = _DETERMINISM
-        self.backend = backend
-        self.evidence_id = canonical_fingerprint(
+        edge_cut = int(np.sum(graph.edge_weights[crossing])) // 2
+        cut_edge_count = int(np.count_nonzero(crossing)) // 2
+        boundary_vertex_count = np.unique(rows[crossing]).size
+        empty_part_count = int(np.count_nonzero(part_vertex_counts == 0))
+        determinism = _DETERMINISM
+        evidence_id = canonical_fingerprint(
             {
                 "kind": "graph-partition-evidence",
                 "status": status,
                 "part_weights": array_tree_fingerprint(weights),
                 "part_capacities": array_tree_fingerprint(capacities),
-                "edge_cut": self.edge_cut,
+                "edge_cut": edge_cut,
                 "backend": backend,
             }
+        )
+        return cls(
+            part_weights=part_weights,
+            part_targets=part_targets,
+            part_capacities=part_capacities,
+            part_vertex_counts=part_vertex_counts,
+            indivisible_vertices=indivisible_vertices,
+            status=status,
+            imbalance=imbalance,
+            imbalance_lower_bound=imbalance_lower_bound,
+            edge_cut=edge_cut,
+            cut_edge_count=cut_edge_count,
+            boundary_vertex_count=boundary_vertex_count,
+            empty_part_count=empty_part_count,
+            work=work,
+            determinism=determinism,
+            backend=backend,
+            evidence_id=evidence_id,
+            accepted=accepted,
+            resource_status=resource_status,
+            migration_vertex_count=migration_vertex_count,
+            ghost_entry_count=ghost_entry_count,
+        )
+
+    @classmethod
+    @checked
+    def collective(
+        cls,
+        graph: WeightedCSRGraph,
+        parts: Array,
+        measurements: PartitionMeasurements,
+        indivisible_ids: Array,
+        work: GraphPartitionWork,
+        backend: str,
+        /,
+    ) -> GraphPartitionEvidence:
+        """Build evidence from the collective kernel's measured output."""
+        if graph.mesh is None or graph.vertex_ids is None:
+            raise ValueError(
+                "GraphPartitionEvidence.graph must be owner-local; got serial graph"
+            )
+        targets, capacities = measurements.targets, measurements.capacities
+        weights, counts = measurements.part_weights, measurements.part_vertex_counts
+        count = targets.size
+        if (
+            parts.dtype != jnp.int32
+            or parts.shape != graph.vertex_ids.shape
+            or indivisible_ids.dtype != jnp.int64
+            or indivisible_ids.shape != parts.shape
+        ):
+            raise ValueError(
+                "GraphPartitionEvidence.parts must align with ID rows using int32 parts and int64 indivisible IDs; got invalid dtype or shape"
+            )
+        if (
+            any(
+                value.dtype != jnp.int64 or value.shape != (count,)
+                for value in (weights, counts, capacities)
+            )
+            or targets.dtype != jnp.float64
+            or targets.shape != (count,)
+        ):
+            raise ValueError(
+                "GraphPartitionEvidence.measurements must have aligned int64 weights, counts, capacities and float64 targets; got invalid dtype or shape"
+            )
+        host = _collective_host_measurements(measurements)
+        resource, cut, cut_count = host.resource, host.cut, host.cut_count
+        boundary, migration, ghosts, maximum = (
+            host.boundary,
+            host.migration,
+            host.ghosts,
+            host.maximum,
+        )
+        host_weights, host_counts, host_targets, host_capacities = (
+            host.weights,
+            host.counts,
+            host.targets,
+            host.capacities,
+        )
+        part_weights = weights
+        part_vertex_counts = counts
+        part_targets = targets
+        part_capacities = capacities
+        indivisible_vertices = indivisible_ids
+        status: GraphPartitionStatus = (
+            "indivisible_vertex_overload"
+            if maximum > np.max(host_capacities)
+            else "balanced"
+            if np.all(host_weights <= host_capacities)
+            else "balance_not_reached"
+        )
+        imbalance = (
+            float(np.max(host_weights / host_targets))
+            if np.all(host_targets > 0)
+            else math.inf
+        )
+        imbalance_lower_bound = (
+            max(1.0, maximum / float(np.max(host_targets)))
+            if np.max(host_targets) > 0
+            else math.inf
+        )
+        edge_cut = cut
+        cut_edge_count = cut_count
+        boundary_vertex_count = boundary
+        empty_part_count = int(np.count_nonzero(host_counts == 0))
+        determinism = "owner-local multilevel heavy-edge matching; scientific-ID scalar priorities; exact integer gains; capacity-first weighted allocation; bounded gain refinement"
+        accepted = resource == 0
+        resource_status = resource
+        migration_vertex_count = migration
+        ghost_entry_count = ghosts
+        evidence_id = canonical_fingerprint(
+            dict(
+                kind="owner-local-graph-partition-evidence",
+                graph=graph.graph_id,
+                parts=_logical_parts_id(parts),
+                resource_status=resource,
+                weights=host_weights.tolist(),
+                cut=cut,
+            )
+        )
+        return cls(
+            part_weights=part_weights,
+            part_targets=part_targets,
+            part_capacities=part_capacities,
+            part_vertex_counts=part_vertex_counts,
+            indivisible_vertices=indivisible_vertices,
+            status=status,
+            imbalance=imbalance,
+            imbalance_lower_bound=imbalance_lower_bound,
+            edge_cut=edge_cut,
+            cut_edge_count=cut_edge_count,
+            boundary_vertex_count=boundary_vertex_count,
+            empty_part_count=empty_part_count,
+            work=work,
+            determinism=determinism,
+            backend=backend,
+            evidence_id=evidence_id,
+            accepted=accepted,
+            resource_status=resource_status,
+            migration_vertex_count=migration_vertex_count,
+            ghost_entry_count=ghost_entry_count,
         )
 
 
@@ -774,6 +962,7 @@ class GraphPartitionResult(StrictModule, NonTrainableState):
     plan_id: Identifier = eqx.field(static=True)
     result_id: Identifier = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         graph: WeightedCSRGraph,
@@ -798,12 +987,11 @@ class GraphPartitionResult(StrictModule, NonTrainableState):
         }
         if graph.mesh is None:
             identity["parts"] = array_tree_fingerprint(self.parts)
-        # Collective evidence already binds the canonical parts content digest.
+        # Collective evidence binds the parts digest, avoiding a second hash.
         self.result_id = canonical_fingerprint(identity)
 
 
 def _logical_parts_id(parts: Array, /) -> str:
-    from ._distributed_partition import logical_id
 
     return logical_id((parts,))
 
@@ -811,24 +999,28 @@ def _logical_parts_id(parts: Array, /) -> str:
 def _partition_owner_local(
     graph: WeightedCSRGraph, plan: GraphPartitionPlan, /
 ) -> GraphPartitionResult:
-    from ._distributed_partition import execute
 
     if graph.vertex_ids is None:
-        raise RuntimeError("Owner-local partitioning requires scientific vertex IDs.")
+        raise RuntimeError(
+            "WeightedCSRGraph.vertex_ids must be present for owner-local partitioning; got None"
+        )
     if plan.part_count != graph.vertex_ids.shape[0]:
-        raise ValueError("Owner-local part count must match the execution mesh.")
+        raise ValueError(
+            "GraphPartitionPlan.part_count must match the execution mesh; got mismatched count"
+        )
     parts, heavy, measured = execute(graph, plan)
-    _, _, targets, capacities, counters, *_ = measured
     backend = "xla/compiled-local-shard"
-    evidence = GraphPartitionEvidence(
+    evidence = GraphPartitionEvidence.collective(
         graph,
         parts,
-        targets,
-        capacities,
-        GraphPartitionWork(np.asarray(counters)),
+        measured,
+        heavy,
+        GraphPartitionWork(
+            GraphPartitionCounters.from_slots(
+                np.asarray(jax.device_get(measured.counters.slots))
+            )
+        ),
         backend,
-        collective_measurements=measured,
-        indivisible_ids=heavy,
     )
     return GraphPartitionResult(graph, plan, parts, evidence)
 
@@ -851,6 +1043,7 @@ def _part_table(
     return targets, whole, np.maximum(capacities, whole)
 
 
+@checked
 def partition_graph(
     graph: WeightedCSRGraph, plan: GraphPartitionPlan, /
 ) -> GraphPartitionResult:
@@ -865,26 +1058,24 @@ def partition_graph(
     candidate and retain incoming owners; inspect ``evidence.accepted`` before
     using its map for a migration transaction.
     """
-    if not isinstance(graph, WeightedCSRGraph):
-        raise TypeError("graph must be WeightedCSRGraph.")
-    if not isinstance(plan, GraphPartitionPlan):
-        raise TypeError("plan must be GraphPartitionPlan.")
     if graph.mesh is not None:
         return _partition_owner_local(graph, plan)
     require_nonempty = plan.empty_parts == "require_nonempty"
     if require_nonempty and plan.part_count > graph.vertex_count:
-        raise ValueError("part_count exceeds the vertex count of a nonempty partition.")
+        raise ValueError(
+            "GraphPartitionPlan.part_count must not exceed the vertex count of a nonempty partition; got too many parts"
+        )
     offsets, neighbors = graph.offsets, graph.neighbors
     edge_weights, vertex_weights = graph.edge_weights, graph.vertex_weights
-    if (
-        not isinstance(offsets, np.ndarray)
-        or not isinstance(neighbors, np.ndarray)
-        or not isinstance(edge_weights, np.ndarray)
-        or not isinstance(vertex_weights, np.ndarray)
-    ):
-        raise RuntimeError("Serial graph partitioning requires prepared host CSR arrays.")
+    match offsets, neighbors, edge_weights, vertex_weights:
+        case np.ndarray(), np.ndarray(), np.ndarray(), np.ndarray():
+            pass
+        case _:
+            raise RuntimeError(
+                "WeightedCSRGraph.rows must be prepared host CSR arrays for serial partitioning; got device arrays"
+            )
     targets, whole, capacities = _part_table(int(np.sum(graph.vertex_weights)), plan)
-    parts, counters = graph_partition(
+    native = graph_partition(
         offsets,
         neighbors,
         edge_weights,
@@ -895,7 +1086,9 @@ def partition_graph(
         refinement_passes=plan.refinement_passes,
         work_limit=np.iinfo(np.int64).max if plan.work_limit is None else plan.work_limit,
     )
-    evidence = GraphPartitionEvidence(
+    parts = native.parts
+    counters = native.counters
+    evidence = GraphPartitionEvidence.serial(
         graph,
         parts,
         targets,
@@ -904,7 +1097,9 @@ def partition_graph(
         meshcore_identity(),
     )
     if require_nonempty and evidence.empty_part_count:
-        raise RuntimeError("The native partition left a required part empty.")
+        raise RuntimeError(
+            "GraphPartitionResult.part_vertex_counts must be positive for required parts; got an empty part"
+        )
     return GraphPartitionResult(graph, plan, parts, evidence)
 
 

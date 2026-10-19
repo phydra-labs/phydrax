@@ -5,7 +5,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import fields
+from dis import get_instructions
+from inspect import getattr_static
 from math import isfinite
+from types import CodeType, FunctionType
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -16,12 +20,15 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import _hidden_arrays
 from ..linalg import (
     AbstractLinearOperator,
+    AbstractVectorSpace,
     FunctionLinearOperator,
     JacobianLinearOperator,
     LinearizationPolicy,
     prepare_linearization,
+    PreparedLinearization,
     PyTreeSpace,
 )
 from ..linalg._named_blocks import _CoordinateRebasedLinearOperator
@@ -233,6 +240,195 @@ def _jacobian_solve_direction(
     return operator.source.validate(value)
 
 
+def _prepare_autodiff_linearization(
+    problem: NonlinearSystemProblem,
+    state: PyTree[Any],
+    source: AbstractVectorSpace,
+    policy: LinearizationPolicy,
+    args: Any,
+    callback_code: CodeType | None = None,
+    /,
+) -> PreparedLinearization:
+    # Code is static compilation identity, not a snapshot of callback state.
+    del callback_code
+    # Trace callback arrays as inputs in both cold preparation and refreshes.
+    # Concrete closure captures can deduplicate differently from traced inputs,
+    # changing the retained tangent tape's PyTree structure.
+    function = (
+        (lambda candidate: problem.evaluate(candidate, args))
+        if problem.has_aux
+        else (lambda candidate: problem.residual(candidate, args))
+    )
+    return prepare_linearization(
+        function,
+        state,
+        source=source,
+        has_aux=problem.has_aux,
+        target=problem.residual_space,
+        policy=policy,
+        linearization_id=f"{problem.problem_id}/jacobian/autodiff",
+    )
+
+
+_compiled_autodiff_linearization = eqx.filter_jit(_prepare_autodiff_linearization)
+
+
+def _keyed_autodiff_state(value: Any, /, *, static: bool = False) -> bool:
+    """Prove that state consists only of keyed records and numerical leaves."""
+    if value is None or type(value) in (str, bytes, bool, int, float, complex):
+        return True
+    if eqx.is_array(value):
+        return not static
+    if type(value) is tuple:
+        return all(_keyed_autodiff_state(item, static=static) for item in value)
+    if static:
+        # Mutable objects in treedef metadata do not get value-based cache keys.
+        return False
+    if type(value) in (list, dict):
+        items = value if type(value) is list else (*value.keys(), *value.values())
+        return all(_keyed_autodiff_state(item) for item in items)
+    if not isinstance(value, StrictModule):
+        # Includes functions, bound methods, partials, and opaque args.
+        return False
+    if type(value).__getattribute__ is not StrictModule.__getattribute__:
+        return False
+    attributes = vars(value)
+    for field in fields(value):
+        if field.name not in attributes:
+            return False
+        item = attributes[field.name]
+        if getattr_static(value, field.name) is not item:
+            # A descriptor can read state absent from the declared field.
+            return False
+        if not _keyed_autodiff_state(item, static=field.metadata.get("static", False)):
+            return False
+    return True
+
+
+def _keyed_autodiff_call(callback: Any, state: PyTree[Any], args: Any, /) -> bool:
+    """Prove a straight-line numerical callback has no external execution state.
+
+    This deliberately admits only field reads and numerical arithmetic. Calls,
+    global/closure reads, descriptors, control flow, and unknown bytecode remain
+    request-local rather than assuming purity of their transitive dependencies.
+    """
+    if not isinstance(callback, StrictModule):
+        return False
+    function = getattr_static(type(callback), "__call__", None)
+    if not isinstance(function, FunctionType):
+        return False
+    code = function.__code__
+    if (
+        function.__closure__
+        or function.__defaults__
+        or function.__kwdefaults__
+        or code.co_argcount != 3
+        or code.co_kwonlyargcount
+        or code.co_flags & 0x0C  # Variadic positional or keyword arguments.
+    ):
+        return False
+    # The marker denotes an array-valued expression, never retained runtime data.
+    numeric = object()
+    local = dict(zip(code.co_varnames[:3], (callback, state, args), strict=True))
+    stack: list[Any] = []
+
+    def is_numeric(value: Any) -> bool:
+        return (
+            value is numeric
+            or eqx.is_array(value)
+            or type(value) in (bool, int, float, complex)
+        )
+
+    for instruction in get_instructions(function):
+        match instruction.opname:
+            case "RESUME" | "NOP":
+                continue
+            case "LOAD_FAST":
+                if instruction.argval not in local:
+                    return False
+                stack.append(local[instruction.argval])
+            case "STORE_FAST":
+                local[instruction.argval] = stack.pop()
+            case "LOAD_CONST":
+                if not is_numeric(instruction.argval):
+                    return False
+                stack.append(instruction.argval)
+            case "LOAD_ATTR":
+                owner = stack.pop()
+                if not isinstance(owner, StrictModule):
+                    return False
+                if instruction.argval not in {field.name for field in fields(owner)}:
+                    return False
+                stack.append(vars(owner)[instruction.argval])
+            case "BINARY_OP":
+                right, left = stack.pop(), stack.pop()
+                if not (is_numeric(left) and is_numeric(right)):
+                    return False
+                stack.append(numeric)
+            case "UNARY_NEGATIVE" | "UNARY_POSITIVE" | "UNARY_INVERT":
+                if not is_numeric(stack.pop()):
+                    return False
+                stack.append(numeric)
+            case "RETURN_VALUE":
+                return len(stack) == 1 and is_numeric(stack[0])
+            case _:
+                return False
+    return False
+
+
+def _can_share_autodiff_preparation(
+    problem: NonlinearSystemProblem, state: PyTree[Any], args: Any, /
+) -> bool:
+    """Return whether callback execution and args are proven keyed runtime state."""
+    return (
+        _keyed_autodiff_state(problem)
+        and _keyed_autodiff_state(args)
+        and _keyed_autodiff_state(state)
+        and _keyed_autodiff_call(problem.residual_function, state, args)
+        and not _hidden_arrays((problem, state, args), eqx.is_array)
+    )
+
+
+def _prepare_autodiff_tape(
+    problem: NonlinearSystemProblem,
+    state: PyTree[Any],
+    source: AbstractVectorSpace,
+    policy: LinearizationPolicy,
+    args: Any,
+    /,
+) -> PreparedLinearization:
+    """Choose request-local or shared compilation for the retained autodiff tape."""
+    if not _can_share_autodiff_preparation(problem, state, args):
+        # A fresh identity rereads unkeyed state on each host preparation request.
+        @eqx.filter_jit
+        def prepare_current(
+            current_problem: NonlinearSystemProblem,
+            current_state: PyTree[Any],
+            current_source: AbstractVectorSpace,
+            current_policy: LinearizationPolicy,
+            current_args: Any,
+        ) -> PreparedLinearization:
+            return _prepare_autodiff_linearization(
+                current_problem,
+                current_state,
+                current_source,
+                current_policy,
+                current_args,
+            )
+
+        linearization = prepare_current(problem, state, source, policy, args)
+    else:
+        linearization = _compiled_autodiff_linearization(
+            problem,
+            state,
+            source,
+            policy,
+            args,
+            getattr_static(type(problem.residual_function), "__call__").__code__,
+        )
+    return linearization
+
+
 def prepare_jacobian(
     problem: NonlinearSystemProblem,
     state: PyTree[Any],
@@ -240,7 +436,12 @@ def prepare_jacobian(
     args: Any = None,
     /,
 ) -> PreparedJacobian:
-    """Prepare one Jacobian action without silently changing derivative source."""
+    """Prepare one Jacobian action without changing derivative source.
+
+    Cold and refreshed autodiff tapes use compiled preparation. Unproven callback
+    execution or args use a request-local boundary; proven numerical PyTrees retain
+    shared compilation. Sparse topology and provider operators retain host preparation.
+    """
     if not isinstance(problem, NonlinearSystemProblem):
         raise TypeError("problem must be a NonlinearSystemProblem.")
     if not isinstance(policy, JacobianPolicy):
@@ -248,19 +449,8 @@ def prepare_jacobian(
     source = PyTreeSpace(state) if problem.state_space is None else problem.state_space
 
     if policy.mode == "autodiff":
-        function = (
-            (lambda candidate: problem.evaluate(candidate, args))
-            if problem.has_aux
-            else (lambda candidate: problem.residual(candidate, args))
-        )
-        linearization = prepare_linearization(
-            function,
-            state,
-            source=source,
-            has_aux=problem.has_aux,
-            target=problem.residual_space,
-            policy=policy.linearization_policy,
-            linearization_id=f"{problem.problem_id}/jacobian/autodiff",
+        linearization = _prepare_autodiff_tape(
+            problem, state, source, policy.linearization_policy, args
         )
         operator: AbstractLinearOperator = JacobianLinearOperator(
             linearization,

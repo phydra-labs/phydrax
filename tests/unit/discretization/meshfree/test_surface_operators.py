@@ -24,6 +24,7 @@ from phydrax.discretization.meshfree._surface_geometry import ImplicitSurfaceGeo
 from phydrax.discretization.meshfree._surface_quadrature import SurfaceQuadraturePolicy
 from phydrax.geometry.analytic import Sphere
 from phydrax.metrix._ambient import RegularLevelSetManifold
+from phydrax.units import METER
 
 
 def _numeric_metric(metrics: Mapping[str, object], name: str) -> float:
@@ -106,7 +107,7 @@ def test_fixed_support_refresh_jit_projection_jvp_and_refusal() -> None:
 
 def test_native_surface_values_refuse_off_surface_inside_region() -> None:
     prepared = surface_plan(size=96, neighbors=16).prepare()
-    envelope = Sphere(jnp.zeros(3), 2.0).compile()
+    envelope = Sphere(jnp.zeros(3), 2.0).compile(coordinate_unit=METER)
     reconstruction = prepared.prepare_field_reconstruction(support_geometry=envelope)
     route, on_surface = reconstruction.kernel.locate(prepared.points, (0, 0, 0), None)
     _, off_surface = reconstruction.kernel.locate(0.8 * prepared.points, (0, 0, 0), None)

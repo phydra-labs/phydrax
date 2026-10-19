@@ -21,7 +21,10 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-from phydrax._fingerprint import canonical_fingerprint
+from examples.native_polyhedral_meshing import material_domain
+from examples.native_surface_meshing import sphere
+from phydrax import canonical_fingerprint
+from phydrax.meshing import NativeVolumeSchedule
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,16 +42,20 @@ class MeshingCase:
 
     def __post_init__(self) -> None:
         if self.expected_admission not in ("positive", "refusal"):
-            raise ValueError("Meshing corpus admission must be positive or refusal.")
+            raise ValueError(
+                f"MeshingCase.expected_admission must be 'positive' or 'refusal'; got {self.expected_admission!r}."
+            )
         if self.dimension not in (2, 3) or not self.name or not self.workflow:
-            raise ValueError("Meshing corpus cases require a named 2D or 3D workflow.")
+            raise ValueError(
+                f"MeshingCase.workflow must have a nonempty name and workflow and dimension 2 or 3; got {(self.name, self.workflow, self.dimension)!r}."
+            )
         if not self.controls or not self.expected_regions:
             raise ValueError(
-                "Meshing corpus cases require controls and analytic references."
+                f"MeshingCase.controls must include controls and analytic region references; got {(self.controls, self.expected_regions)!r}."
             )
         if not self.license_id or not self.source_author or not self.provenance:
             raise ValueError(
-                "Meshing corpus source provenance and license are mandatory."
+                f"MeshingCase.provenance must include license, author and source provenance; got {(self.license_id, self.source_author, self.provenance)!r}."
             )
 
     def to_record(self) -> dict[str, object]:
@@ -67,7 +74,7 @@ class MeshingCase:
             "expected_admission": self.expected_admission,
             "controls": list(self.controls),
             "expected_region_measures": dict(self.expected_regions),
-            "minimum_angle_radians": np.radians(25.0)
+            "minimum_angle_radians": np.radians(25.0).item()
             if "minimum-angle" in self.controls
             else None,
             "minimum_mean_ratio": 0.05 if "minimum-quality" in self.controls else None,
@@ -288,7 +295,9 @@ def meshing_case(name: str) -> MeshingCase:
     for case in (*CORPUS, SURFACE_CASE):
         if case.name == name:
             return case
-    raise ValueError(f"Unknown meshing corpus case: {name}")
+    raise ValueError(
+        f"meshing_case.name must identify a registered meshing corpus case; got {name!r}."
+    )
 
 
 def _box(lower: tuple[float, ...], upper: tuple[float, ...]) -> np.ndarray:
@@ -610,7 +619,9 @@ def prepare_case(
 ) -> tuple[Any, Any, Any]:
     """Freeze a source, physical request and native route without executing it."""
     if resolution < 1 or capacity < 1 or not np.isfinite(timeout) or timeout <= 0.0:
-        raise ValueError("Resolution, capacity and timeout must be positive.")
+        raise ValueError(
+            f"prepare_case.bounds must have positive resolution, capacity and finite timeout; got {(resolution, capacity, timeout)!r}."
+        )
     identity = corpus_identity(case)
     revision = str(identity["source_revision"])
     payload = source_payload(case)
@@ -730,8 +741,8 @@ def prepare_case(
             region_controls=tuple(
                 phx.meshing.RegionControl(
                     phx.meshing.MeshingScope(
-                        source.source_id,
-                        source.source_revision,
+                        scope.source_id,
+                        scope.source_revision,
                         phx.meshing.MeshingEntityKind.GEOMETRY,
                         3,
                         "solid-regions",
@@ -749,8 +760,8 @@ def prepare_case(
                     if case.name == "plc-material-cavity"
                     else f"interface-{facet}",
                     phx.meshing.MeshingScope(
-                        source.source_id,
-                        source.source_revision,
+                        scope.source_id,
+                        scope.source_revision,
                         phx.meshing.MeshingEntityKind.GEOMETRY,
                         2,
                         "solid-facets",
@@ -765,8 +776,6 @@ def prepare_case(
         )
         options = phx.meshing.NativeMeshingOptions("plc_tetrahedral")
         if case.name == "plc-sliver-rich":
-            from phydrax.meshing._volume_generation import NativeVolumeSchedule
-
             options = phx.meshing.NativeMeshingOptions(
                 "plc_tetrahedral",
                 volume_schedule=NativeVolumeSchedule(
@@ -784,11 +793,12 @@ def prepare_sphere_case(
     capacity: int,
     timeout: float,
 ) -> tuple[Any, Any, Any]:
-    """Reuse the owning smooth seam/pole fixture with a frozen hard request."""
-    from examples.native_surface_meshing import sphere
+    """Reuse the smooth seam/pole fixture with a frozen hard request."""
 
     if resolution < 1 or capacity < 1 or not np.isfinite(timeout) or timeout <= 0.0:
-        raise ValueError("Resolution, capacity and timeout must be positive.")
+        raise ValueError(
+            f"prepare_sphere_case.bounds must have positive resolution, capacity and finite timeout; got {(resolution, capacity, timeout)!r}."
+        )
     domain = sphere()
     domain = phx.geometry.MeshingDomain(
         domain.patches,
@@ -858,8 +868,17 @@ def prepare_sphere_case(
 def frozen_request_record(
     source: Any, specification: Any, options: Any
 ) -> dict[str, object]:
-    """Serialize the exact immutable source/request controls used by a campaign."""
-    quality = specification.quality_target
+    """Serialize the immutable source/request controls used by a campaign."""
+    match specification:
+        case phx.meshing.SurfaceMeshingSpec():
+            quality = specification.quality_target
+        case phx.meshing.VolumeMeshingSpec():
+            quality = None
+        case _:
+            raise TypeError(
+                "frozen_request_record.specification must be SurfaceMeshingSpec or "
+                f"VolumeMeshingSpec; got {type(specification).__name__}"
+            )
     family = specification.target.cell_families
     controls = [
         {
@@ -927,13 +946,13 @@ def _source_files_digest(root: Path, paths: Iterable[Path]) -> str:
 
 @lru_cache(maxsize=1)
 def python_source_revision(package_root: Path) -> str:
-    """Digest the Python package actually imported, not an assumed checkout."""
+    """Digest the Python package imported, not an assumed checkout."""
     return _source_files_digest(package_root, package_root.rglob("*.py"))
 
 
 @lru_cache(maxsize=1)
 def source_tree_revision() -> str:
-    """Digest actual first-party build inputs, including uncommitted edits."""
+    """Digest first-party build inputs, including uncommitted edits."""
     root = Path(__file__).resolve().parents[1]
     native = root.joinpath("native/meshcore")
     paths = sorted(
@@ -947,7 +966,7 @@ def source_tree_revision() -> str:
             native.joinpath("pyproject.toml"),
             root.joinpath("pyproject.toml"),
             Path(__file__),
-            root.joinpath("tools/meshing_qualification.py"),
+            *root.joinpath("tools/meshing_qualification").rglob("*.py"),
             root.joinpath("examples/native_surface_meshing.py"),
             root.joinpath("examples/native_polyhedral_meshing.py"),
             root.joinpath("tools/meshing_benchmarks.py"),
@@ -1013,11 +1032,12 @@ def polyhedral_case(name: str) -> MeshingCase:
     for case in POLYHEDRAL_CASES:
         if case.name == name:
             return case
-    raise ValueError(f"Unknown polyhedral corpus case: {name}")
+    raise ValueError(
+        f"polyhedral_case.name must identify a registered polyhedral corpus case; got {name!r}."
+    )
 
 
 def _polyhedral_complex(name: str) -> Any:
-    from examples.native_polyhedral_meshing import material_domain
 
     case = polyhedral_case(name)
     if name == "polyhedral-periodic-cube":
@@ -1102,14 +1122,16 @@ def prepare_polyhedral_case(
     *,
     source: bool = False,
 ) -> tuple[Any, Any, Any]:
-    """Freeze exact material PLC, explicit dyadic sites and requested resources."""
+    """Freeze material PLC, explicit dyadic sites and requested resources."""
     if site_count < 1 or capacity < 1 or not np.isfinite(timeout) or timeout <= 0.0:
-        raise ValueError("Site count, capacity and timeout must be positive.")
+        raise ValueError(
+            f"prepare_polyhedral_case.bounds must have positive site count, capacity and finite timeout; got {(site_count, capacity, timeout)!r}."
+        )
     if name == "polyhedral-periodic-cube":
         return _prepare_periodic_polyhedral_case(capacity, timeout)
     complex_ = _polyhedral_complex(name)
     scale = 2.0 if name == "polyhedral-stretched-L" else 1.0
-    # Dyadic y slabs keep the fixture's bisectors exact under binary64;
+    # Dyadic y slabs keep the fixture's bisectors representable in binary64;
     # nonbinary-site adversaries are a separate, still-unobserved corpus gate.
     denominator = 1 << (site_count - 1).bit_length()
     sites = np.column_stack(
@@ -1198,7 +1220,7 @@ def prepare_polyhedral_case(
 def _prepare_periodic_polyhedral_case(
     capacity: int, timeout: float
 ) -> tuple[Any, Any, Any]:
-    """Retain the original cube source SCI, sites, weights and exact periods."""
+    """Retain the cube source SCI, sites, weights and periods."""
     complex_ = _polyhedral_complex("polyhedral-periodic-cube")
     geometry = phx.meshing.NativePolyhedralSource(
         complex_,
@@ -1276,14 +1298,16 @@ def _prepare_periodic_polyhedral_case(
 
 
 def _reject_nonfinite_json(value: str, /) -> NoReturn:
-    raise ValueError(f"Non-finite JSON value {value!r} is not permitted.")
+    raise ValueError(f"_reject_nonfinite_json.value must be finite JSON; got {value!r}.")
 
 
 def _unique_json_object(pairs: list[tuple[str, object]], /) -> dict[str, object]:
     result: dict[str, object] = {}
     for name, value in pairs:
         if name in result:
-            raise ValueError(f"Corpus JSON contains duplicate field {name!r}.")
+            raise ValueError(
+                f"_unique_json_object.name must occur once in the JSON object; got {name!r}."
+            )
         result[name] = value
     return result
 
@@ -1295,7 +1319,9 @@ def _strict_json_object(raw: str | bytes, name: str, /) -> dict[str, object]:
         object_pairs_hook=_unique_json_object,
     )
     if not isinstance(value, dict):
-        raise TypeError(f"{name} must be a JSON object.")
+        raise TypeError(
+            f"_strict_json_object.value must be a JSON object; got {type(value).__name__!r}."
+        )
     return value
 
 
@@ -1309,7 +1335,7 @@ CURVED_PERIODIC_SOURCE_REGISTRATION_PATH = (
 
 @lru_cache(maxsize=1)
 def corpus_registration_record() -> dict[str, object]:
-    """Canonical deterministic registration of every bounded source fixture."""
+    """Register every bounded source fixture in deterministic order."""
     cases = [
         corpus_identity(case)
         for case in sorted((*CORPUS, SURFACE_CASE), key=lambda item: item.name)
@@ -1334,7 +1360,9 @@ def load_corpus_registration(
         path.read_text(encoding="utf-8"), "Meshing corpus registration"
     )
     if value != corpus_registration_record():
-        raise ValueError(f"Meshing corpus registration is stale or malformed: {path}")
+        raise ValueError(
+            f"load_corpus_registration.value must equal corpus_registration_record(); got {value!r}."
+        )
     return value
 
 
@@ -1358,7 +1386,7 @@ def load_curved_periodic_source_registration(
         or len(sources) != 2
     ):
         raise ValueError(
-            f"Curved periodic source registration is stale or malformed: {path}"
+            f"load_curved_periodic_source_registration.value must contain two registered meter-valued periodic sources and a matching registration fingerprint; got {value!r}."
         )
     roles: set[str] = set()
     for source in sources:
@@ -1390,12 +1418,12 @@ def load_curved_periodic_source_registration(
             or not isinstance(source["periodic_trace"], dict)
         ):
             raise ValueError(
-                "Curved periodic source records require complete unique identities."
+                f"load_curved_periodic_source_registration.source must include unique role, source and revision identities, source artifact, control points, orbit IDs and periodic trace; got {source!r}."
             )
         roles.add(source["role"])
     if roles != {"positive", "negative-refusal"}:
         raise ValueError(
-            "Curved periodic source records require one positive and one refusal."
+            f"load_curved_periodic_source_registration.roles must contain 'positive' and 'negative-refusal'; got {roles!r}."
         )
     return {**value, "file_sha256": sha256(raw).hexdigest()}
 
@@ -1424,7 +1452,7 @@ def load_cad_fixture(path: Path = CAD_FIXTURE_PATH) -> dict[str, object]:
         or body.get("coordinate_unit") != "meter"
     ):
         raise ValueError(
-            f"CAD corpus fixture identity, license, or units are invalid: {path}"
+            f"load_cad_fixture.value must match the authored CAD fixture kind, license, meter units and record fingerprint; got {value!r}."
         )
     provenance = body.get("provenance")
     reference = body.get("independent_reference")
@@ -1445,7 +1473,7 @@ def load_cad_fixture(path: Path = CAD_FIXTURE_PATH) -> dict[str, object]:
         or len(operands) != 2
     ):
         raise ValueError(
-            "CAD corpus fixture provenance, reference, or operands are malformed."
+            f"load_cad_fixture.body must contain declared provenance and reference fields and two operands; got {body!r}."
         )
     for operand in operands:
         if (
@@ -1464,6 +1492,210 @@ def load_cad_fixture(path: Path = CAD_FIXTURE_PATH) -> dict[str, object]:
             )
         ):
             raise ValueError(
-                "CAD corpus fixture operands require finite named 3D bounds."
+                f"load_cad_fixture.operand must contain a name and finite three-dimensional lower and upper bounds; got {operand!r}."
             )
     return {**value, "file_sha256": sha256(raw).hexdigest()}
+
+
+def _hybrid_qualification_original_layer_whole(mesh: Any) -> Any:
+    cells = mesh.entity_set(2)
+    return phx.meshing.MeshingScope(
+        mesh.mesh_id,
+        mesh.numeric_version,
+        phx.meshing.MeshingEntityKind.MESH,
+        2,
+        cells.entity_set_id,
+        cells.entity_ids,
+    )
+
+
+def _hybrid_qualification_original_wall(points: Any, triangles: Any) -> Any:
+    return phx.discretization.CellMesh(
+        np.asarray(points, dtype=np.float64),
+        (
+            phx.discretization.CellBlock(
+                "triangles",
+                "triangle",
+                np.asarray(triangles, dtype=np.int64),
+                global_ids=np.arange(len(triangles), dtype=np.int64),
+            ),
+        ),
+    )
+
+
+def _hybrid_qualification_original_whole(mesh: Any) -> Any:
+    cells = mesh.entity_set(2)
+    return phx.meshing.MeshingScope(
+        mesh.mesh_id,
+        mesh.numeric_version,
+        phx.meshing.MeshingEntityKind.MESH,
+        2,
+        cells.entity_set_id,
+        cells.entity_ids,
+    )
+
+
+def _hybrid_qualification_original_control(
+    mesh: Any, schedule: Any, **options: Any
+) -> Any:
+    return phx.meshing.BoundaryLayerControl(
+        _hybrid_qualification_original_whole(mesh),
+        schedule,
+        route=phx.meshing.BoundaryLayerRoute.ADVANCING,
+        **options,
+    )
+
+
+def _hybrid_qualification_original_plate(
+    count: Any, height: Any = 0.0, *, flip: Any = False
+) -> Any:
+    values = np.linspace(0.0, 1.0, count + 1)
+    x, y = np.meshgrid(values, values, indexing="ij")
+    points = np.stack((x.ravel(), y.ravel(), np.full(x.size, height)), axis=1)
+    index = np.arange(points.shape[0]).reshape(count + 1, count + 1)
+    triangles = []
+    for i in range(count):
+        for j in range(count):
+            a, b, c, d = (
+                index[i, j],
+                index[i + 1, j],
+                index[i + 1, j + 1],
+                index[i, j + 1],
+            )
+            triangles.extend(((a, b, c), (a, c, d)))
+    triangles = np.asarray(triangles)
+    return (points, triangles[:, ::-1] if flip else triangles)
+
+
+def _hybrid_qualification_original_oriented(
+    points: Any, triangles: Any, center: Any, outward: Any
+) -> Any:
+    corners = points[triangles]
+    normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+    away = np.sum(normals * (corners.mean(axis=1) - center), axis=1) > 0.0
+    flip = away != outward
+    triangles = triangles.copy()
+    triangles[flip] = triangles[flip][:, ::-1]
+    return triangles
+
+
+def _hybrid_qualification_original_icosphere(radius: Any, subdivisions: Any) -> Any:
+    t = (1.0 + 5.0**0.5) / 2.0
+    points = [
+        np.asarray(value, dtype=np.float64)
+        for value in (
+            (-1, t, 0),
+            (1, t, 0),
+            (-1, -t, 0),
+            (1, -t, 0),
+            (0, -1, t),
+            (0, 1, t),
+            (0, -1, -t),
+            (0, 1, -t),
+            (t, 0, -1),
+            (t, 0, 1),
+            (-t, 0, -1),
+            (-t, 0, 1),
+        )
+    ]
+    points = [value / np.linalg.norm(value) for value in points]
+    faces = [
+        (0, 11, 5),
+        (0, 5, 1),
+        (0, 1, 7),
+        (0, 7, 10),
+        (0, 10, 11),
+        (1, 5, 9),
+        (5, 11, 4),
+        (11, 10, 2),
+        (10, 7, 6),
+        (7, 1, 8),
+        (3, 9, 4),
+        (3, 4, 2),
+        (3, 2, 6),
+        (3, 6, 8),
+        (3, 8, 9),
+        (4, 9, 5),
+        (2, 4, 11),
+        (6, 2, 10),
+        (8, 6, 7),
+        (9, 8, 1),
+    ]
+    for _ in range(subdivisions):
+        middle = {}
+
+        def split(first: Any, second: Any, *, middle: Any = middle) -> Any:
+            key = (min(first, second), max(first, second))
+            if key not in middle:
+                value = points[first] + points[second]
+                points.append(value / np.linalg.norm(value))
+                middle[key] = len(points) - 1
+            return middle[key]
+
+        refined = []
+        for a, b, c in faces:
+            ab, bc, ca = (split(a, b), split(b, c), split(c, a))
+            refined.extend(((a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)))
+        faces = refined
+    points = radius * np.asarray(points)
+    return (
+        points,
+        _hybrid_qualification_original_oriented(
+            points, np.asarray(faces), np.zeros(3), True
+        ),
+    )
+
+
+def _hybrid_qualification_original_box(
+    lower: Any, upper: Any, count: Any, *, outward: Any
+) -> Any:
+    lower = np.asarray(lower, dtype=np.float64)
+    upper = np.asarray(upper, dtype=np.float64)
+    index: dict[tuple[float, ...], int] = {}
+    points = []
+    triangles = []
+    grid = np.linspace(0.0, 1.0, count + 1)
+
+    def vertex(value: Any) -> Any:
+        key = tuple(np.round(value, 12))
+        if key not in index:
+            index[key] = len(points)
+            points.append(value)
+        return index[key]
+
+    for axis in range(3):
+        u, v = (value for value in range(3) if value != axis)
+        for bound in (lower[axis], upper[axis]):
+            for i in range(count):
+                for j in range(count):
+                    quad = []
+                    for di, dj in ((0, 0), (1, 0), (1, 1), (0, 1)):
+                        value = np.zeros(3)
+                        value[axis] = bound
+                        value[u] = lower[u] + (upper[u] - lower[u]) * grid[i + di]
+                        value[v] = lower[v] + (upper[v] - lower[v]) * grid[j + dj]
+                        quad.append(vertex(value))
+                    a, b, c, d = quad
+                    triangles.extend(((a, b, c), (a, c, d)))
+    points = np.asarray(points)
+    return (
+        points,
+        _hybrid_qualification_original_oriented(
+            points, np.asarray(triangles), 0.5 * (lower + upper), outward
+        ),
+    )
+
+
+def _hybrid_qualification_original_channel(gap: Any) -> Any:
+    lower, lower_triangles = _hybrid_qualification_original_plate(4)
+    upper, upper_triangles = _hybrid_qualification_original_plate(4, gap, flip=True)
+    return _hybrid_qualification_original_wall(
+        np.concatenate((lower, upper)),
+        np.concatenate((lower_triangles, upper_triangles + lower.shape[0])),
+    )
+
+
+@lru_cache(maxsize=1)
+def original_wall_layer_schedule() -> phx.meshing.LayerSchedule:
+    """Prepare the shared authored three-layer wall schedule once per process."""
+    return phx.meshing.LayerSchedule.geometric(3, 0.01, growth_rate=1.2)

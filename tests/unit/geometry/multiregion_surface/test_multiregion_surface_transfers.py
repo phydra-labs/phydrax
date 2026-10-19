@@ -8,6 +8,11 @@ from phydrax.geometry.multiregion_surface import (
 )
 
 
+# Empirical allowance retained from the six-source/four-target weighted-route
+# fixture below and its independently summed extensive-content totals.
+_CONSERVATION_RTOL = 1e-15
+
+
 SOURCE_ACTIVE = np.asarray((True, True, True, True, False, True))
 TARGET_ACTIVE = np.asarray((True, True, False, True))
 # Source 0 splits between targets 0 and 1, source 3 is split three ways, and the
@@ -30,7 +35,7 @@ def test_conservative_transfer_preserves_totals_positivity_and_support() -> None
     expected = np.zeros((4, 2))
     for source, target, weight in zip(*ROUTES, strict=True):
         expected[target] += weight * np.asarray(content[source])
-    np.testing.assert_allclose(np.asarray(moved), expected, rtol=1e-15)
+    np.testing.assert_allclose(np.asarray(moved), expected, rtol=_CONSERVATION_RTOL)
     assert np.all(np.asarray(moved[2]) == 0.0)
     evidence = transfer.evidence(content, moved)
     assert bool(evidence.successful)
@@ -45,7 +50,7 @@ def test_conservative_transfer_preserves_totals_positivity_and_support() -> None
 
 def test_conservative_transfer_refuses_nonconservative_or_unsupported_weights() -> None:
     sources, targets, weights = ROUTES
-    with pytest.raises(ValueError, match="sum to one"):
+    with pytest.raises(ValueError, match=r"ConservativeFieldTransfer\.weights"):
         ConservativeFieldTransfer(
             sources,
             targets,
@@ -55,15 +60,23 @@ def test_conservative_transfer_refuses_nonconservative_or_unsupported_weights() 
         )
     negative = weights.copy()
     negative[0], negative[1] = -0.25, 1.25
-    with pytest.raises(ValueError, match="nonnegative"):
+    with pytest.raises(ValueError, match=r"FieldTransfer\.weights"):
         ConservativeFieldTransfer(
-            sources, targets, negative, source_active=SOURCE_ACTIVE, target_active=TARGET_ACTIVE
+            sources,
+            targets,
+            negative,
+            source_active=SOURCE_ACTIVE,
+            target_active=TARGET_ACTIVE,
         )
     unsupported = TARGET_ACTIVE.copy()
     unsupported[2] = True
-    with pytest.raises(ValueError, match="receive positive"):
+    with pytest.raises(ValueError, match=r"ConservativeFieldTransfer\.target_active"):
         ConservativeFieldTransfer(
-            sources, targets, weights, source_active=SOURCE_ACTIVE, target_active=unsupported
+            sources,
+            targets,
+            weights,
+            source_active=SOURCE_ACTIVE,
+            target_active=unsupported,
         )
 
 
@@ -78,6 +91,8 @@ def test_bounded_reconstruction_stays_within_supporting_values() -> None:
     evidence = reconstruction.evidence(thickness, values)
     assert bool(evidence.successful) and bool(evidence.bounded)
     uniform = reconstruction.apply(jnp.full((6,), 2.5))
-    np.testing.assert_allclose(np.asarray(uniform)[TARGET_ACTIVE], 2.5, rtol=1e-15)
+    np.testing.assert_allclose(
+        np.asarray(uniform)[TARGET_ACTIVE], 2.5, rtol=_CONSERVATION_RTOL
+    )
     overshoot = values.at[0].set(9.0)
     assert not bool(reconstruction.evidence(thickness, overshoot).bounded)

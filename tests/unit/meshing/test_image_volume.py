@@ -1,11 +1,7 @@
-import json
-import subprocess
-import sys
 from dataclasses import replace
 from pathlib import Path
 
 import equinox as eqx
-import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -20,7 +16,22 @@ from phydrax.meshing._compartments import (
     prepare_compartment_complex,
     revalidate_region_evidence,
 )
+from tests._support.distributed_meshing.cold_lifecycle_identities import (
+    image_source_identity,
+)
+from tests._support.distributed_meshing.cold_lifecycle_images import (
+    categorical_extraction,
+)
+from tests._support.forced_devices import run_on_forced_devices
 from tests._support.image_sources import _execute, _region_measure_array, _source
+
+
+# Empirical `test_oblique_anisotropic_and_reflected_images_preserve_interface_and_measure`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+AFFINE_IMAGE_REGION_VOLUME_ATOL = 1e-12
+# Empirical `test_oblique_anisotropic_and_reflected_images_preserve_interface_and_measure`: matched max |delta|=0; joint allowance fraction=0, margin=100%.
+AFFINE_IMAGE_INTERFACE_COORDINATE_ATOL = 1e-12
+# Empirical `test_categorical_sample_reconstruction_fills_its_declared_interface_not_voxel_cells`: matched max |delta|=4.44089e-16; joint allowance fraction=0.000444089, margin=99.9556%.
+CATEGORICAL_REGION_VOLUME_ATOL = 1e-12
 
 
 @pytest.mark.parametrize(
@@ -61,11 +72,13 @@ def test_oblique_anisotropic_and_reflected_images_preserve_interface_and_measure
         _region_measure_array(evidence),
         np.asarray((2 * voxel_measure, 2 * voxel_measure), dtype=np.float64),
         rtol=0.0,
-        atol=1e-12,
+        atol=AFFINE_IMAGE_REGION_VOLUME_ATOL,
     )
     connectivity = result.mesh.connectivity
     if not isinstance(connectivity, phx.discretization.TetrahedralConnectivity):
-        raise TypeError("The image fixture must have tetrahedral incidence.")
+        raise TypeError(
+            "fixture.connectivity must have tetrahedral incidence; got incompatible connectivity"
+        )
     faces = np.asarray(connectivity.faces, dtype=np.int64)
     ids = np.asarray(result.mesh.entity_set(2).entity_ids, dtype=np.int64)
     interface = np.asarray(
@@ -79,7 +92,9 @@ def test_oblique_anisotropic_and_reflected_images_preserve_interface_and_measure
     image_points = source.labels.asset.spatial_affine.world_to_index(
         np.asarray(result.mesh.coordinates)[np.unique(faces[interface])]
     )
-    np.testing.assert_allclose(image_points[:, 0], 0.5, rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(
+        image_points[:, 0], 0.5, rtol=0.0, atol=AFFINE_IMAGE_INTERFACE_COORDINATE_ATOL
+    )
     assert evidence.adjacency_pairs == (("region:1", "region:2"),)
 
 
@@ -157,87 +172,6 @@ def test_finite_image_background_is_exterior_not_centroid_relabeling() -> None:
     assert np.max(points[:, 0]) == 1.5
 
 
-def _categorical_extraction() -> (
-    phx.geometry.multiregion_surface.LabelFieldSurfaceExtractionResult
-):
-    labels = np.zeros((2, 2, 2), dtype=np.int32)
-    labels[1] = 1
-    state = phx.threshold_dynamics.LabelFieldState(
-        jnp.asarray(labels, dtype=jnp.int32),
-        jnp.asarray((True, True), dtype=jnp.bool_),
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0.0, dtype=jnp.float64),
-        label_ids=("left", "right"),
-        route_id="categorical-image-test",
-        prepared_id="categorical-image-prepared",
-        site_id="categorical-image-sites",
-    )
-    capacity = phx.geometry.multiregion_surface.MultiRegionSurfaceCapacityPlan(
-        vertex_capacity=4096,
-        edge_capacity=8192,
-        face_capacity=8192,
-        region_capacity=4,
-        region_pair_capacity=6,
-        maximum_edge_valence=3,
-        maximum_vertex_region_pairs=6,
-        resource_id="categorical-image-volume",
-    )
-    extraction = (
-        phx.geometry.multiregion_surface.LabelFieldSurfaceExtractionPlan(
-            ("left", "right"), capacity, spacing=(1.0, 1.0, 1.0), origin=(0.0, 0.0, 0.0)
-        )
-        .prepare(labels.shape)
-        .extract(state)
-    )
-    return extraction
-
-
-def _image_source_cold_identity(source: object) -> dict[str, object]:
-    if not isinstance(
-        source, (phx.geometry.CompartmentMeshingSource, LabelFieldVolumeBinding)
-    ):
-        raise TypeError(
-            "A cold image oracle requires the actual interpreted source owner."
-        )
-    source.validate_source_integrity()
-    identity: dict[str, object] = {
-        "type": f"{type(source).__module__}.{type(source).__qualname__}",
-        "source": source.source_id,
-        "revision": source.source_revision,
-        "interpretation": source.interpretation,
-        "coordinates": source.coordinate_contract.spatial_id,
-        "interfaces": source.interface_definitions,
-    }
-    if isinstance(source, phx.geometry.CompartmentMeshingSource):
-        identity.update(
-            {
-                "values": array_tree_fingerprint(source.labels.asset.values),
-                "valid_mask": array_tree_fingerprint(source.labels.asset.valid_mask),
-                "affine": array_tree_fingerprint(
-                    source.labels.asset.spatial_affine.matrix
-                ),
-                "labels": source.labels.label_volume_id,
-                "ontology": source.labels.ontology.ontology_content_id,
-                "complex": source.compartments.complex_id,
-                "extraction": source.interfaces.extraction_id,
-                "outer": source.outer_surface.model_id,
-                "complex_alias": source.interfaces.complex is source.compartments,
-            }
-        )
-    else:
-        identity.update(
-            {
-                "binding": source.binding_id,
-                "extraction": array_tree_fingerprint(source.extraction),
-                "domain": array_tree_fingerprint(source.domain),
-                "lineage_alias": source.lineage is source.extraction.lineage,
-                "evidence_alias": source.extraction_evidence
-                is source.extraction.evidence,
-            }
-        )
-    return identity
-
-
 @pytest.mark.parametrize("interpretation", ("occupied", "reconstructed"))
 def test_image_source_cold_restore_preserves_actual_interpretation_and_authority(
     tmp_path: Path,
@@ -257,7 +191,7 @@ def test_image_source_cold_restore_preserves_actual_interpretation_and_authority
         source = _source(values, matrix)
     else:
         source = LabelFieldVolumeBinding(
-            _categorical_extraction(), phx.SpatialCoordinateContract.si()
+            categorical_extraction(), phx.SpatialCoordinateContract.si()
         )
     receipt = write_meshing_source_closure(tmp_path / "image-source", source)
     restored = read_meshing_source_closure(
@@ -296,30 +230,20 @@ def test_image_source_cold_restore_preserves_actual_interpretation_and_authority
         assert array_tree_fingerprint(restored.domain) == array_tree_fingerprint(
             source.domain
         )
-    script = """
-import json
-import sys
-from phydrax.lifecycle._meshing_sources import read_meshing_source_closure
-from tests.unit.meshing.test_image_volume import _image_source_cold_identity
-source = read_meshing_source_closure(sys.argv[1], expected_content_id=sys.argv[2])
-print(json.dumps(_image_source_cold_identity(source), sort_keys=True))
-"""
-    cold = subprocess.run(
-        (sys.executable, "-c", script, str(receipt.path), receipt.content_id),
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=120,
+    cold = run_on_forced_devices(
+        "tests._support.distributed_meshing.cold_lifecycle_images",
+        "interpreted_image_source",
+        (str(receipt.path), receipt.content_id),
+        devices=1,
+        env={},
     )
-    assert json.loads(cold.stdout) == json.loads(
-        json.dumps(_image_source_cold_identity(source))
-    )
+    assert cold == image_source_identity(source)
 
 
 def test_categorical_sample_reconstruction_fills_its_declared_interface_not_voxel_cells() -> (
     None
 ):
-    extraction = _categorical_extraction()
+    extraction = categorical_extraction()
     assert extraction.accepted
     source = LabelFieldVolumeBinding(extraction, phx.SpatialCoordinateContract.si())
     topology, geometry_state = extraction.topology, extraction.state
@@ -346,7 +270,7 @@ def test_categorical_sample_reconstruction_fills_its_declared_interface_not_voxe
         _region_measure_array(evidence),
         expected_volumes,
         rtol=0.0,
-        atol=1e-12,
+        atol=CATEGORICAL_REGION_VOLUME_ATOL,
     )
     assert np.sum(expected_volumes) != pytest.approx(8.0)
     assert set(evidence.cell_region_ids) == {"left", "right"}
@@ -433,7 +357,7 @@ def test_occupied_image_publication_counts_canonical_incidence_connectivity() ->
 def test_categorical_volume_rejects_stale_or_noncanonical_active_authority(
     change: str,
 ) -> None:
-    extraction = _categorical_extraction()
+    extraction = categorical_extraction()
     state = extraction.state
     topology = extraction.topology
     assert state is not None and topology is not None
@@ -455,7 +379,10 @@ def test_categorical_volume_rejects_stale_or_noncanonical_active_authority(
         case _:
             raise ValueError(change)
     candidate = eqx.tree_at(lambda value: value.state, extraction, changed)
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError,
+        match=r"^(Multiregion surface validation failed with status |PreparedMultiRegionSurface\.restored|LabelFieldVolumeBinding\.state_masks)",
+    ):
         LabelFieldVolumeBinding(candidate, phx.SpatialCoordinateContract.si())
 
 
@@ -503,7 +430,7 @@ def test_image_preparation_reserves_against_original_live_native_storage() -> No
         ) as execution:
             retained = execution.allocate_host_array((1024**2 - 32768,), np.uint8)
             retained.fill(17)
-            prepare_compartment_complex(source, limits=limits)
+            prepare_compartment_complex(source, limits=limits, scope=execution)
     assert refused.value.category is phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED
     assert execution.evidence is not None
     assert execution.evidence.externally_charged_geometry_queries == 0

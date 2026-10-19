@@ -333,7 +333,9 @@ def test_masked_conservation_rejects_source_on_inactive_cells(case: Any) -> None
     _, mesh, geometry = case
     source = np.zeros((geometry.cell_capacity, 1))
     source[np.flatnonzero(~np.asarray(mesh.cell_active))[0]] = 1.0
-    with pytest.raises(eqx.EquinoxRuntimeError, match="exactly zero on inactive cells"):
+    with pytest.raises(
+        eqx.EquinoxRuntimeError, match=r"source_rate.*zero on inactive cells"
+    ):
         phx.discretization.evaluate_masked_fv_conservation(
             geometry, np.zeros((geometry.face_capacity, 1)), source
         )

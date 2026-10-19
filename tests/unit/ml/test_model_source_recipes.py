@@ -80,7 +80,7 @@ def test_native_recipe_refuses_incompatible_form_proxy() -> None:
     payload = spec.to_dict()
     payload["proxy"] = "circulation"
     recipe["payload"] = model_structure_recipe(payload)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="proxy.*incompatible"):
         model_from_logical_array_recipe(recipe, {}, prefix="form")
 
 
@@ -128,7 +128,7 @@ def test_native_recipe_refuses_inexact_registered_field_set(field_change: str) -
     else:
         recipe["items"].append({"kind": "literal", "value": None})
 
-    with pytest.raises(ValueError, match="field count"):
+    with pytest.raises(ValueError, match=r"\.items"):
         model_from_array_recipe(recipe, arrays, prefix="curve")
 
 
@@ -139,7 +139,7 @@ def test_native_recipe_refuses_corrupted_numerical_dtype() -> None:
     name = next(iter(arrays))
     arrays[name] = np.asarray(arrays[name], dtype=np.float32)
 
-    with pytest.raises(ValueError, match="shape/dtype"):
+    with pytest.raises(ValueError, match=r"\.payload"):
         model_from_logical_array_recipe(recipe, arrays, prefix="curve")
 
 
@@ -154,7 +154,7 @@ def test_native_recipe_refuses_inexact_array_coverage(array_change: str) -> None
     else:
         arrays["unbound-coefficients"] = np.asarray([1.0], dtype=np.float64)
 
-    with pytest.raises(ValueError, match="exact inventory"):
+    with pytest.raises(ValueError, match=r"recipe\.arrays"):
         model_from_logical_array_recipe(recipe, arrays, prefix="curve")
 
 
@@ -162,7 +162,7 @@ def test_native_recipe_bounds_static_payload_before_reconstruction() -> None:
     recipe = model_structure_recipe(("native-source-description" * 10, _curve()))
     limits = replace(ArrayArchiveLimits(), max_manifest_bytes=128)
 
-    with pytest.raises(ValueError, match="manifest byte limit"):
+    with pytest.raises(ValueError, match=r"recipe\.bytes"):
         validate_model_structure_recipe(recipe, limits=limits)
 
 
@@ -376,7 +376,7 @@ def test_recipe_limits_refuse_distinct_arrays_with_equal_content() -> None:
         limits=limits,
     )
 
-    with pytest.raises(ValueError, match="total array-byte limit"):
+    with pytest.raises(ValueError, match=r"recipe\.array_bytes"):
         validate_model_structure_recipe(
             model_structure_recipe((first, second)),
             limits=limits,
@@ -423,7 +423,7 @@ _ARRAY_RECIPE = {"kind": "array", "shape": [2], "dtype": "float64", "backend": "
 def test_recipe_refuses_reference_without_completed_earlier_object(
     items: list[dict[str, object]],
 ) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"recipe.*(target|kind|exactly)"):
         model_from_structure_recipe({"kind": "tuple", "items": items})
 
 
@@ -490,7 +490,7 @@ _ARRAY_NODE = {"kind": "array", "shape": [2], "dtype": "float64", "backend": "ja
     ],
 )
 def test_wire_recipe_refuses_hostile_node_table(text: str) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="recipe"):
         model_recipe_from_wire_json(text)
 
 
@@ -503,7 +503,7 @@ def test_wire_static_sharing_obeys_logical_manifest_budget(repetitions: int) -> 
     limits = ArrayArchiveLimits(max_manifest_bytes=8192)
     assert len(text.encode("ascii")) < limits.max_manifest_bytes
     if repetitions == 8:
-        with pytest.raises(ValueError, match="manifest byte limit"):
+        with pytest.raises(ValueError, match=r"recipe\.static_bytes"):
             model_recipe_from_wire_json(text, limits=limits)
     else:
         recipe = model_recipe_from_wire_json(text, limits=limits)
@@ -531,7 +531,7 @@ def test_wire_recipe_keeps_constant_nesting_and_exact_logical_sharing() -> None:
         epoch = epoch.source
     np.testing.assert_array_equal(epoch.source, device)
     assert model_structure_recipe(restored) == recipe
-    with pytest.raises(ValueError, match="not canonical"):
+    with pytest.raises(ValueError, match=r"recipe\.wire"):
         model_recipe_from_wire_json(json.dumps(json.loads(text)), limits=shallow)
 
 
@@ -603,16 +603,16 @@ def test_model_stream_refuses_inconsistent_shared_leaf_payloads() -> None:
     )
     stream.seek(0)
 
-    with pytest.raises(ValueError, match="inconsistent serialized payloads"):
+    with pytest.raises(ValueError, match=r"model\.shared_array"):
         deserialize_model_tree(stream, recipe)
 
 
 @pytest.mark.parametrize(
     ("rejection", "message"),
     [
-        ("recipe-budget", "limit"),
-        ("extra-array", "exact inventory"),
-        ("corrupt-dtype", "shape/dtype"),
+        ("recipe-budget", r"recipe\.elements"),
+        ("extra-array", r"recipe\.arrays"),
+        ("corrupt-dtype", r"\.payload"),
     ],
 )
 def test_host_recipe_rejects_before_any_payload_materialization(
@@ -636,7 +636,10 @@ def test_host_recipe_rejects_before_any_payload_materialization(
         *_args: object,
         **_kwargs: object,
     ) -> NoReturn:
-        raise RuntimeError("A refused host recipe attempted to materialize a payload.")
+        raise RuntimeError(
+            "host_recipe_fixture.payload must stay unmaterialized after refusal; "
+            "got materialization"
+        )
 
     monkeypatch.setattr(structure_module.np, "asarray", forbid_materialization)
     with pytest.raises(ValueError, match=message):
@@ -660,7 +663,7 @@ def test_mapping_refuses_indistinguishable_nan_key_recipes() -> None:
         float("nan"): np.asarray([2.0], dtype=np.float64),
         float("nan"): np.asarray([3.0], dtype=np.float64),
     }
-    with pytest.raises(TypeError, match="same canonical encoding"):
+    with pytest.raises(TypeError, match=r"model\.keys"):
         model_structure_recipe(value)
 
 
@@ -742,5 +745,5 @@ def test_fraction_recipe_bounds_integer_components_before_reduction() -> None:
     recipe = {"kind": "fraction", "numerator": 1 << 600, "denominator": 1}
     limits = replace(ArrayArchiveLimits(), max_manifest_bytes=128)
 
-    with pytest.raises(ValueError, match="manifest byte limit"):
+    with pytest.raises(ValueError, match=r"recipe\.bytes"):
         model_from_structure_recipe(recipe, limits=limits)

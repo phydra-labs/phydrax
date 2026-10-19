@@ -119,7 +119,7 @@ def apply_gather_stencil(
         else:
             valid = valid & gather_routes(stencil.relation, mask)
     weights = jnp.where(valid, stencil.weights, 0)
-    scale = jnp.maximum(1.0, jnp.max(jnp.abs(stencil.weights)))
+    scale = jnp.maximum(1.0, jnp.max(jnp.abs(stencil.weights), initial=0.0))
     tolerance = jnp.finfo(stencil.weights.real.dtype).eps * scale
 
     if source_mask is not None and mask_mode == "renormalize":

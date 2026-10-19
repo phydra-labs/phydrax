@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -12,7 +13,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from scipy.stats.qmc import Halton, LatinHypercube, Sobol
 
 from ..typing import PRNGKey
 from ._types import (
@@ -27,6 +27,10 @@ from ._types import (
     resolve_design,
     SobolDesign,
 )
+
+
+if TYPE_CHECKING:
+    from scipy.stats.qmc import Halton, Sobol
 
 
 def seed_from_key(key: ArrayLike, /) -> int:
@@ -65,6 +69,8 @@ def _qmc_engine(
     dimension: int,
     seed: int | np.random.Generator,
 ) -> Halton | Sobol:
+    from scipy.stats.qmc import Halton, Sobol
+
     if isinstance(design, RandomizedQMCDesign):
         sequence = design.sequence
         scrambled = design.scrambled
@@ -84,7 +90,9 @@ def _validate_design_count(design: DesignLike, count: int, /) -> None:
         and count > 0
         and count & (count - 1)
     ):
-        raise ValueError("Sobol design count must be a power of two by default.")
+        raise ValueError(
+            f"design.count must be a power of two for Sobol unless arbitrary counts are enabled; got {count}."
+        )
 
 
 def host_design(
@@ -101,15 +109,17 @@ def host_design(
     dimension_ = int(dimension)
     start_ = int(start)
     if count_ < 0:
-        raise ValueError("count must be non-negative.")
+        raise ValueError(f"host_design.count must be nonnegative; got {count_}.")
     if dimension_ < 1:
-        raise ValueError("dimension must be positive.")
+        raise ValueError(f"host_design.dimension must be positive; got {dimension_}.")
     if start_ < 0:
-        raise ValueError("start must be non-negative.")
+        raise ValueError(f"host_design.start must be nonnegative; got {start_}.")
     _validate_design_count(resolved, count_)
     capabilities = design_capabilities(resolved)
     if start_ and not capabilities.random_access:
-        raise ValueError(f"{design_name(resolved)} does not support a start index.")
+        raise ValueError(
+            f"host_design.start must be zero for {design_name(resolved)}; got {start_}."
+        )
     if count_ == 0:
         return np.empty((0, dimension_), dtype=np.float64)
     if isinstance(resolved, IIDDesign):
@@ -126,6 +136,8 @@ def host_design(
         )
         return np.stack(columns, axis=1)
     if isinstance(resolved, LatinHypercubeDesign):
+        from scipy.stats.qmc import LatinHypercube
+
         engine = LatinHypercube(dimension_, seed=seed)
     else:
         engine = _qmc_engine(resolved, dimension_, seed)
@@ -146,12 +158,16 @@ def host_design_factory(
     resolved = resolve_design(design)
     dimension_ = int(dimension)
     if dimension_ < 1:
-        raise ValueError("dimension must be positive.")
+        raise ValueError(
+            f"host_design_factory.dimension must be positive; got {dimension_}."
+        )
 
     def checked_count(count: int, /) -> int:
         count_ = int(count)
         if count_ < 0:
-            raise ValueError("count must be non-negative.")
+            raise ValueError(
+                f"host_design_factory.count must be nonnegative; got {count_}."
+            )
         _validate_design_count(resolved, count_)
         return count_
 
@@ -172,8 +188,7 @@ def host_design_factory(
                 return np.empty((0, dimension_), dtype=np.float64)
             if materialized:
                 raise ValueError(
-                    "Hammersley is count-dependent and cannot extend a rejected "
-                    "design; use a prefix-stable or randomized sampler."
+                    f"host_design_factory.materialized must be false when extending Hammersley; got {materialized}."
                 )
             materialized = True
             return host_design(
@@ -185,6 +200,8 @@ def host_design_factory(
 
         return materialize_hammersley
     if isinstance(resolved, LatinHypercubeDesign):
+        from scipy.stats.qmc import LatinHypercube
+
         engine = LatinHypercube(dimension_, seed=seed)
     else:
         engine = _qmc_engine(resolved, dimension_, seed)
@@ -212,23 +229,31 @@ def materialize_design(
     dimension_ = int(dimension)
     start_ = int(start)
     if count_ < 0:
-        raise ValueError("count must be non-negative.")
+        raise ValueError(f"materialize_design.count must be nonnegative; got {count_}.")
     if dimension_ < 1:
-        raise ValueError("dimension must be positive.")
+        raise ValueError(
+            f"materialize_design.dimension must be positive; got {dimension_}."
+        )
     if start_ < 0:
-        raise ValueError("start must be non-negative.")
+        raise ValueError(f"materialize_design.start must be nonnegative; got {start_}.")
     _validate_design_count(resolved, count_)
     capabilities = design_capabilities(resolved)
     if start_ and not capabilities.random_access:
-        raise ValueError(f"{design_name(resolved)} does not support a start index.")
+        raise ValueError(
+            f"materialize_design.start must be zero for {design_name(resolved)}; got {start_}."
+        )
     if count_ == 0:
         return jnp.zeros((0, dimension_), dtype=jnp.float64)
     if isinstance(resolved, IIDDesign):
         if key is None:
-            raise ValueError("uniform randomized designs require a key.")
+            raise ValueError(
+                f"materialize_design.key must be provided for uniform randomized designs; got {key}."
+            )
         return jr.uniform(key, (count_, dimension_), dtype=jnp.float64)
     if capabilities.randomized and key is None:
-        raise ValueError(f"{design_name(resolved)} requires a key.")
+        raise ValueError(
+            f"materialize_design.key must be provided for {design_name(resolved)}; got {key}."
+        )
     if key is None:
         return jnp.asarray(
             host_design(
